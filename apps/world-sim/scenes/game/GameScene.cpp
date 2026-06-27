@@ -51,6 +51,7 @@
 #include <ecs/components/Appearance.h>
 #include <ecs/components/Attributes.h>
 #include <ecs/components/Colonist.h>
+#include <ecs/components/Colony.h>
 #include <ecs/components/DecisionTrace.h>
 #include <ecs/components/FacingDirection.h>
 #include <ecs/components/Inventory.h>
@@ -126,6 +127,7 @@ namespace {
 				m_placementExecutor = std::move(preloadedState->placementExecutor);
 				m_processedChunks = std::move(preloadedState->processedChunks);
 				m_spawnPosition = preloadedState->spawnPosition;
+				m_colony = preloadedState->colony;
 
 				LOG_INFO(Game, "Pre-loaded state: %zu chunks, %zu processed", m_chunkManager->loadedChunkCount(), m_processedChunks.size());
 			} else {
@@ -1008,7 +1010,9 @@ namespace {
 			auto& aiDecisionSystem = ecsWorld->getSystem<ecs::AIDecisionSystem>();
 			aiDecisionSystem.setChunkManager(m_chunkManager.get());
 
-			// AI resolves a navmesh route at the destination seam; null mesh = beeline.
+			// AI resolves a navmesh route for every move; with no route possible the colonist holds
+			// (pre-mesh / off-area) or stops (believed wall), and an off-mesh colonist snaps to
+			// valid ground. There is no straight-line beeline in the running game.
 			aiDecisionSystem.setNavigationSystem(&navSystem);
 
 			// Wire ConstructionSystem with placement data for footprint-clearing queries. The
@@ -1101,24 +1105,31 @@ namespace {
 
 			// The drop point picked in GameLoadingScene comes from the 2D river-channel
 			// model, which can disagree with the runtime tile classification the navmesh
-			// reads. A colonist dropped on a water tile is stranded (water is non-walkable),
-			// so validate against the real tiles and nudge to the nearest walkable land.
-			if (isWaterAt(m_spawnPosition)) {
-				const glm::vec2 corrected = nearestWalkable(m_spawnPosition);
-				if (corrected != m_spawnPosition) {
-					LOG_INFO(Game, "Spawn on water: nudged colonist from (%.1f, %.1f) to (%.1f, %.1f)",
-							 m_spawnPosition.x, m_spawnPosition.y, corrected.x, corrected.y);
-					m_spawnPosition = corrected;
-					// Keep the camera (set from the spawn in GameLoadingScene) in sync.
-					m_camera->setPosition({m_spawnPosition.x, m_spawnPosition.y});
-				} else {
-					LOG_WARNING(Game, "Spawn on water at (%.1f, %.1f) but no walkable tile within range; leaving as-is",
-								m_spawnPosition.x, m_spawnPosition.y);
-				}
-			}
+			// reads -- and, untouched, it can sit on a navmesh triangle BOUNDARY EDGE (off
+			// the mesh by a few cm, which locateTriangle rejects) with trees/rocks placed
+			// right on top of it. Either strands the colonist and makes the off-mesh
+			// recovery snap fire at spawn. prepareLandingClearing() fixes it at the source:
+			// snap to a walkable tile CENTER (solidly inside a walkable face, not on an
+			// edge), remove the placed entities in a radius so there is an open clearing,
+			// and return that as the guaranteed-clear, on-mesh spawn point.
+			m_spawnPosition = prepareLandingClearing(m_spawnPosition);
 
-			// Spawn the initial colonist at the chosen water-adjacent drop point
-			// (riverbank/shore from GameLoadingScene; origin when none was near).
+			// The clearing center is the colony's home anchor. Store it once here, in the one
+			// place that owns colony state for the session; every other consumer reads it from
+			// m_colony.originPosition rather than keeping its own copy.
+			m_colony.originPosition = m_spawnPosition;
+			LOG_INFO(Game, "Colony origin set to (%.2f, %.2f)", m_colony.originPosition.x, m_colony.originPosition.y);
+
+			// Keep the camera (set from the spawn in GameLoadingScene) in sync with the clearing.
+			m_camera->setPosition({m_spawnPosition.x, m_spawnPosition.y});
+
+			// Hand the colony origin to the AI: if a stranded colonist ever finds no walkable
+			// navmesh face in range, the off-mesh recovery snaps it back to home. The engine
+			// can't see app-level GameWorldState, so the origin is pushed across the boundary;
+			// the AI holds it as a read of this single store, not an independently computed copy.
+			ecsWorld->getSystem<ecs::AIDecisionSystem>().setColonyOrigin(m_colony.originPosition);
+
+			// Spawn the initial colonist in the middle of the cleared, on-mesh clearing.
 			spawnColonist(m_spawnPosition, "Bob");
 
 			LOG_INFO(Game, "ECS initialized with 1 colonist");
@@ -1182,6 +1193,83 @@ namespace {
 				}
 			}
 			return worldMeters;
+		}
+
+		/// Radius (world meters) of the open clearing carved at the colonist's landing spot.
+		/// Generous next to the 0.3 m agent radius so the spawn tile and its immediate
+		/// neighbourhood are obstacle-free and the navmesh triangulates open walkable ground there.
+		static constexpr float kLandingClearRadius = 2.5F;
+
+		/// Turn the raw drop point into a guaranteed-clear, on-mesh spawn:
+		///  1. snap to the nearest WALKABLE (non-water) tile, then to that tile's CENTER -- a tile
+		///     center sits solidly inside a walkable navmesh face, never on the boundary edge that
+		///     locateTriangle rejects (which is what made the off-mesh snap fire at spawn);
+		///  2. clear the placed entities (trees/rocks) within kLandingClearRadius so nothing is
+		///     triangulated as an obstacle on top of the spawn -- an open clearing.
+		/// Returns the clearing center. Runs at ECS init, BEFORE the first navmesh build, so the
+		/// removed obstacles never enter the mesh input and the colonist drops onto open ground.
+		[[nodiscard]] glm::vec2 prepareLandingClearing(glm::vec2 rawSpawn) {
+			// Step 1: nearest walkable land, then its tile center. kTileSize is 1 m, so flooring to
+			// the tile and adding half a tile lands dead-center -- away from every tile/triangle edge.
+			const glm::vec2 walkable = nearestWalkable(rawSpawn);
+			const glm::vec2 center{std::floor(walkable.x) + 0.5F * engine::world::kTileSize,
+								   std::floor(walkable.y) + 0.5F * engine::world::kTileSize};
+			if (center != rawSpawn) {
+				LOG_INFO(Game, "Landing: drop (%.1f, %.1f) -> walkable tile center (%.2f, %.2f)",
+						 rawSpawn.x, rawSpawn.y, center.x, center.y);
+			}
+
+			// Step 2: carve the clearing.
+			clearLandingArea(center, kLandingClearRadius);
+			return center;
+		}
+
+		/// Remove every placed entity (trees, rocks, ...) within `radius` of `center` so the spawn
+		/// drops into an open clearing. Entities near the radius can straddle a chunk boundary, so we
+		/// gather from every chunk the clearing circle overlaps, not just the spawn chunk. After
+		/// removing from the placement index (the same source the navmesh and renderer read), release
+		/// each touched chunk's baked render mesh so it re-bakes WITHOUT the removed entities.
+		void clearLandingArea(glm::vec2 center, float radius) {
+			// Tile/meter are 1:1 (kTileSize == 1), so the spatial-index radius is the meter radius.
+			std::unordered_set<engine::world::ChunkCoordinate> touchedChunks;
+			const engine::world::ChunkCoordinate cMin =
+				engine::world::worldToChunk({center.x - radius, center.y - radius});
+			const engine::world::ChunkCoordinate cMax =
+				engine::world::worldToChunk({center.x + radius, center.y + radius});
+
+			size_t removed = 0;
+			for (int32_t cy = cMin.y; cy <= cMax.y; ++cy) {
+				for (int32_t cx = cMin.x; cx <= cMax.x; ++cx) {
+					const engine::world::ChunkCoordinate coord{cx, cy};
+					const auto* index = m_placementExecutor->getChunkIndex(coord);
+					if (index == nullptr) {
+						continue;
+					}
+					// Copy out the (defName, position) of in-radius entities first: removeEntity
+					// mutates the index, which would invalidate the queryRadius pointers mid-loop.
+					std::vector<std::pair<std::string, glm::vec2>> victims;
+					for (const auto* e : index->queryRadius(center, radius)) {
+						victims.emplace_back(e->defName, e->position);
+					}
+					for (const auto& [defName, pos] : victims) {
+						if (m_placementExecutor->removeEntity(coord, pos, defName)) {
+							++removed;
+						}
+					}
+					if (!victims.empty()) {
+						touchedChunks.insert(coord);
+					}
+				}
+			}
+
+			// Re-bake the touched chunks so the cleared entities also disappear visually. The
+			// renderer re-bakes any processed chunk missing from its cache on the next render.
+			for (const engine::world::ChunkCoordinate& coord : touchedChunks) {
+				m_entityRenderer->releaseBakedChunkCache(coord);
+			}
+
+			LOG_INFO(Game, "Landing: cleared %zu ent(s) within %.1f m of (%.2f, %.2f) across %zu chunk(s)",
+					 removed, radius, center.x, center.y, touchedChunks.size());
 		}
 
 		/// Spawn a new colonist entity at the given position.
@@ -1597,6 +1685,10 @@ namespace {
 		std::unique_ptr<engine::world::ChunkManager>	   m_chunkManager;
 		std::unique_ptr<engine::world::WorldCamera>		   m_camera;
 		glm::vec2										   m_spawnPosition{0.0F, 0.0F};
+		// The colony: home anchor for the session. Single source of truth for the colony
+		// origin (the cleared, on-mesh clearing center), set once at landing. Read by the
+		// camera-home sync and pushed to AIDecisionSystem for the off-mesh recovery snap.
+		ecs::Colony										   m_colony;
 		std::unique_ptr<engine::world::ChunkRenderer>	   m_renderer;
 		std::unique_ptr<engine::world::EntityRenderer>	   m_entityRenderer;
 		std::unique_ptr<engine::assets::PlacementExecutor> m_placementExecutor;

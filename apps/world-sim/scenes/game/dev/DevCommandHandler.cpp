@@ -30,8 +30,11 @@
 #include <ecs/components/StructureBlueprint.h>
 #include <ecs/components/StructureHealth.h>
 #include <ecs/components/Transform.h>
+#include <ecs/components/WorkQueue.h>
 #include <ecs/systems/ConstructionSystem.h>
 #include <ecs/systems/TimeSystem.h>
+
+#include <assets/RecipeRegistry.h>
 
 #include <utils/Log.h>
 
@@ -71,6 +74,8 @@ namespace world_sim {
 			devWalls(cmd);
 		} else if (cmd.verb == "opening") {
 			devOpening(cmd);
+		} else if (cmd.verb == "craft") {
+			devCraft(cmd);
 		} else {
 			LOG_WARNING(Game, "[DevAPI] Unknown dev command verb '%s'", cmd.verb.c_str());
 		}
@@ -515,6 +520,45 @@ namespace world_sim {
 			built ? 1 : 0
 		);
 		m_ctx.ui->pushNotification("Dev", built ? "Built opening placed" : "Opening blueprint placed", UI::ToastSeverity::Info);
+	}
+
+	void DevCommandHandler::devCraft(const Foundation::DevCommand& cmd) {
+		const std::string recipe = cmd.param("recipe", "Recipe_AxePrimitive");
+		const long		  qtyRaw = std::strtol(cmd.param("n", "1").c_str(), nullptr, 10);
+		const auto		  qty = static_cast<uint32_t>(qtyRaw < 1 ? 1 : qtyRaw);
+
+		if (engine::assets::RecipeRegistry::Get().getRecipe(recipe) == nullptr) {
+			LOG_WARNING(Game, "[DevAPI] craft: unknown recipe '%s'", recipe.c_str());
+			m_ctx.ui->pushNotification("Dev", "Unknown recipe: " + recipe, UI::ToastSeverity::Warning);
+			return;
+		}
+
+		// Queue the job at the nearest crafting station (entity with a WorkQueue) to `at`.
+		const Foundation::Vec2 at = parsePoint(cmd.param("at"));
+		ecs::WorkQueue*		   best = nullptr;
+		float				   bestDistSq = 0.0F;
+		ecs::EntityID		   bestEntity = ecs::kInvalidEntity;
+		for (auto [entity, workQueue, pos] : m_ctx.world->view<ecs::WorkQueue, ecs::Position>()) {
+			const float dx = pos.value.x - at.x;
+			const float dy = pos.value.y - at.y;
+			const float distSq = dx * dx + dy * dy;
+			if (best == nullptr || distSq < bestDistSq) {
+				best = &workQueue;
+				bestDistSq = distSq;
+				bestEntity = entity;
+			}
+		}
+		if (best == nullptr) {
+			LOG_WARNING(Game, "[DevAPI] craft: no crafting station found (spawn a CraftingSpot first)");
+			m_ctx.ui->pushNotification("Dev", "No crafting station to queue at", UI::ToastSeverity::Warning);
+			return;
+		}
+
+		best->addJob(recipe, qty);
+		LOG_INFO(
+			Game, "[DevAPI] craft: queued %u x %s at station #%llu", qty, recipe.c_str(), static_cast<unsigned long long>(bestEntity)
+		);
+		m_ctx.ui->pushNotification("Dev", "Queued " + std::to_string(qty) + " " + recipe, UI::ToastSeverity::Info);
 	}
 
 	Foundation::Vec2 DevCommandHandler::parsePoint(const std::string& spec) {

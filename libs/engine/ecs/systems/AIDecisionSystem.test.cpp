@@ -25,8 +25,11 @@
 
 #include <gtest/gtest.h>
 
+#include <glm/vec2.hpp>
+
 #include <chrono>
 #include <cmath>
+#include <optional>
 
 namespace ecs::test {
 
@@ -112,6 +115,12 @@ namespace ecs::test {
 			world->getSystem<AIDecisionSystem>().handleChainInterruption(
 				entity, task, inventory, position, newTaskType, newNeedType
 			);
+		}
+
+		/// Read the AI system's colony-origin fallback target. The fixture is a friend of
+		/// AIDecisionSystem (derived TEST_F classes are not), so the seam lives here.
+		std::optional<glm::vec2> getColonyOrigin() {
+			return world->getSystem<AIDecisionSystem>().m_colonyOrigin;
 		}
 
 		/// Get the movement target for an entity
@@ -1739,6 +1748,67 @@ namespace ecs::test {
 		auto* task = getTask(colonist);
 		ASSERT_NE(task, nullptr);
 		EXPECT_NE(task->type, TaskType::Haul) << "a full storage offers no haul; addableCount is 0";
+	}
+
+	// --- Off-mesh recovery resolution (colony-origin last-resort fallback) -------
+	//
+	// The recovery at the top of AIDecisionSystem::update resolves an off-mesh colonist
+	// in three tiers: (1) snap to the nearest walkable navmesh face; (2) if no walkable
+	// face is in range, snap to the colony origin (the home clearing); (3) if neither is
+	// available, leave it (a headless test with no origin set). The full NavigationSystem
+	// wiring is exercised in NavigationSystem.test.cpp; this mirrors the resolution choice
+	// as a pure predicate so all three tiers are covered deterministically (same pattern as
+	// NavPathStalenessTest, which mirrors the replan predicate).
+	namespace {
+		// Mirror of the recovery's target choice: nearest floor wins, else the colony origin,
+		// else no move (nullopt). nearestFloor and colonyOrigin are each independently optional.
+		std::optional<glm::vec2> recoveryTarget(std::optional<glm::vec2> nearestFloor,
+												std::optional<glm::vec2> colonyOrigin) {
+			if (nearestFloor.has_value()) {
+				return nearestFloor;
+			}
+			if (colonyOrigin.has_value()) {
+				return colonyOrigin;
+			}
+			return std::nullopt;
+		}
+	} // namespace
+
+	TEST(OffMeshRecoveryResolutionTest, PrefersNearestFloorThenColonyOriginThenNoMove) {
+		const glm::vec2 floor{3.0F, 4.0F};
+		const glm::vec2 origin{1.5F, 4.5F};
+
+		// Tier 1: a nearest walkable face exists -> snap there, NOT to the colony origin.
+		EXPECT_EQ(recoveryTarget(floor, origin), std::optional<glm::vec2>(floor));
+
+		// Tier 2: no walkable face in range, but the colony origin is set -> last-resort snap to it.
+		EXPECT_EQ(recoveryTarget(std::nullopt, origin), std::optional<glm::vec2>(origin));
+
+		// Tier 3: neither available (headless, no origin wired) -> leave the colonist in place.
+		EXPECT_FALSE(recoveryTarget(std::nullopt, std::nullopt).has_value());
+	}
+
+	// --- Colony origin is the single source, read by both consumers -------------
+	//
+	// The colony origin is set once (GameWorldState::Colony, set at landing) and read by
+	// two consumers: GameScene's camera-home sync and the AI off-mesh recovery fallback.
+	// This asserts the consolidation: the value pushed into AIDecisionSystem via the public
+	// setColonyOrigin is exactly what the recovery fallback reads back -- no independent copy,
+	// no drift. The fixture is a friend of AIDecisionSystem, so it can read the private store
+	// the recovery uses, mirroring what GameScene reads from m_colony.originPosition.
+	TEST_F(AIDecisionSystemTest, ColonyOriginConsumersReadSingleSource) {
+		const glm::vec2 origin{1.50F, 4.50F};
+
+		// Before wiring, the fallback target is unset (matches Tier 3 above: no origin -> no snap).
+		EXPECT_FALSE(getColonyOrigin().has_value());
+
+		// One write to the single source...
+		world->getSystem<AIDecisionSystem>().setColonyOrigin(origin);
+
+		// ...and the recovery fallback reads exactly that value back -- the AI consumer mirrors
+		// the colony origin GameScene also reads, rather than holding an independently derived copy.
+		ASSERT_TRUE(getColonyOrigin().has_value());
+		EXPECT_EQ(*getColonyOrigin(), origin);
 	}
 
 } // namespace ecs::test

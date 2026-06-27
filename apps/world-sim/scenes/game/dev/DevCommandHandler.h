@@ -84,6 +84,7 @@ namespace world_sim {
 		void devFoundation(const Foundation::DevCommand& cmd);
 		void devWalls(const Foundation::DevCommand& cmd);
 		void devOpening(const Foundation::DevCommand& cmd);
+		void devCraft(const Foundation::DevCommand& cmd);
 
 		// --- entity lookup / spawn helpers ---
 		ecs::EntityID	nearestColonist(Foundation::Vec2 at);

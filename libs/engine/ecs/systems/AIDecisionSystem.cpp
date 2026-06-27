@@ -337,6 +337,15 @@ namespace ecs {
 								continue;
 							}
 
+							// Craft-station deliveries don't remove the item from inventory -- they only
+							// credit the goal -- so a re-deposit of already-credited units is a no-op. Suppress
+							// the option once everything carried is staged (carried <= delivered); otherwise the
+							// colonist parks at the bench re-depositing instead of fetching the units it still
+							// lacks. Blueprint deliveries consume the item, so they keep the carried>0 gate.
+							if (!toBlueprint && carried <= goal->deliveredAmount) {
+								continue;
+							}
+
 							EvaluatedOption haulOption;
 							haulOption.taskType = TaskType::Haul;
 							haulOption.needType = NeedType::Count;
@@ -370,8 +379,13 @@ namespace ecs {
 								continue;
 							}
 							const auto& itemDefName = registry.getDefName(looseItem.defNameId);
-							// Already carrying some? The inventory-source option above is cheaper, so skip.
-							if (ecs::availableQuantity(inventory, itemDefName) > 0) {
+							// A craft-station delivery only CREDITS the goal; it never removes the material
+							// from inventory (the Craft action consumes it later from there). So the colonist
+							// must physically gather the recipe's full count (targetAmount) into its own pack.
+							// Fetch while it still holds fewer than that, regardless of how many are already
+							// credited -- a recipe needing 2 when the colonist holds 1 still needs a 2nd loose
+							// unit fetched. Once it holds the full count, stop fetching and let the deposit finish.
+							if (ecs::availableQuantity(inventory, itemDefName) >= goal->targetAmount) {
 								continue;
 							}
 							const auto* itemDef = registry.getDefinition(itemDefName);
@@ -748,25 +762,42 @@ namespace ecs {
 			 world->view<Position, NeedsComponent, Memory, Task, MovementTarget, Inventory>()) {
 
 			// Stranded-colonist recovery. A colonist standing off the walkable mesh -- it beelined
-			// into a water hole before the async mesh finished building, spawned somewhere bad, or
-			// terrain shifted under it -- can never plan a route from where it stands, and freezes.
-			// Snap it to the nearest pathable point and clear its task so it re-decides from solid
-			// ground. Colonists on a fresh route are provably on-mesh, so skip them: this keeps the
-			// check off the hot path, effectively running only at startup (the mesh finally lands
-			// under colonists that beelined into water meanwhile) and right after a mesh rebuild.
+			// into a water hole before the async mesh finished building, spawned on a riverbank
+			// edge, was teleported there, or terrain shifted under it -- can never plan a route
+			// from where it stands, and freezes. Snap it to the nearest pathable point and clear
+			// its task so it re-decides from solid ground.
+			//
+			// A "fresh route" (a valid NavPath stamped to the current mesh generation) does NOT
+			// prove on-mesh: a teleport or a recenter can leave a current-version path under a
+			// colonist that is itself off-mesh, and the route's first waypoint is the standing
+			// point the locate already rejects. So recovery keys ONLY on isOnMesh; the snap nudge
+			// (nearestPathablePoint biases a hair toward the triangle centroid) lifts the colonist
+			// off the boundary edge that locate excludes.
 			if (m_navSystem != nullptr && m_navSystem->hasMesh()) {
-				const auto* navPath		 = world->getComponent<NavPath>(entity);
-				const bool	onFreshRoute = navPath != nullptr && navPath->valid &&
-										   navPath->builtNavVersion == m_navSystem->generation();
 				if (!m_navSystem->isOnMesh(position.value)) {
 					const auto snapped = m_navSystem->nearestPathablePoint(position.value);
 					LOG_DEBUG(Engine,
-						"[NavDiag] reconcile %llu offMesh at (%.2f, %.2f): freshRoute=%d nearestFloor=%d (%.2f, %.2f)",
+						"[NavDiag] reconcile %llu offMesh at (%.2f, %.2f): nearestFloor=%d (%.2f, %.2f)",
 						static_cast<unsigned long long>(entity), position.value.x, position.value.y,
-						onFreshRoute ? 1 : 0, snapped.has_value() ? 1 : 0, snapped.has_value() ? snapped->x : -999.0F,
+						snapped.has_value() ? 1 : 0, snapped.has_value() ? snapped->x : -999.0F,
 						snapped.has_value() ? snapped->y : -999.0F);
-					if (!onFreshRoute && snapped) {
+					if (snapped) {
 						position.value = *snapped;
+						if (auto* np = world->getComponent<NavPath>(entity)) {
+							np->valid = false;
+						}
+						task.clear();
+					} else if (m_colonyOrigin.has_value()) {
+						// Last-resort guarantee: the mesh has NO walkable face anywhere in range
+						// (nearestPathablePoint found nothing -- a degenerate or all-blocked local
+						// mesh), so there is nowhere nearer to snap. Teleport back to the colony
+						// origin (the home clearing), which the spawn path guarantees is an open,
+						// on-mesh walkable spot. Without this the colonist would be permanently stranded.
+						LOG_DEBUG(Engine,
+							"[NavDiag] reconcile %llu offMesh at (%.2f, %.2f): no nearestFloor; snapping to colony origin (%.2f, %.2f)",
+							static_cast<unsigned long long>(entity), position.value.x, position.value.y,
+							m_colonyOrigin->x, m_colonyOrigin->y);
+						position.value = *m_colonyOrigin;
 						if (auto* np = world->getComponent<NavPath>(entity)) {
 							np->valid = false;
 						}
@@ -813,6 +844,24 @@ namespace ecs {
 						task.navStateHold = 0;
 					}
 				}
+			}
+
+			// Chain-leg repath: a multi-phase task (Haul Pickup->Deposit, PlacePackaged
+			// Pickup->Place) hands off to its next leg inside ActionSystem by re-pointing the
+			// task at the new goal (state Moving, MovementTarget active) and dropping the now-stale
+			// pickup-leg route. Because it's the SAME task, the re-eval below sees isSameTask and
+			// never runs selectTaskFromTrace -- the only OTHER place a route is requested. So
+			// without this, the colonist would carry an active MovementTarget and no NavPath, which
+			// MovementSystem would steer straight at the goal (a beeline). Request the navmesh path
+			// for the new leg HERE so every move follows an A* route. Gate on a Moving task with an
+			// active target but no live route, which the replan-on-discovery block above (valid
+			// route only) does not cover. The off-mesh recovery at the top of update() has already
+			// snapped any stranded colonist onto valid ground before we get here.
+			if (auto* navPath = world->getComponent<NavPath>(entity); task.state == TaskState::Moving &&
+				movementTarget.active && (navPath == nullptr || !navPath->valid)) {
+				const NavRequestOutcome outcome = requestNavPath(entity, task.targetPosition, position, memory, movementTarget);
+				task.navState = (outcome == NavRequestOutcome::Blocked) ? NavState::CantFindWayTo : NavState::Traveling;
+				task.navStateHold = 0;
 			}
 
 			// Drain the Rerouting hold counter so "Re-routing" is a brief visible beat.
@@ -1286,17 +1335,17 @@ namespace ecs {
 		const geometry::nav::BeliefFilter belief{&memory.knownSegments, &memory.knownOpenings};
 		const bool						  haveMesh = (m_navSystem != nullptr) && m_navSystem->hasMesh();
 
-		// Firm "can I actually navigate right now?" gate. An idle wander dead-reckons toward a
-		// random point; with no navmesh yet (the costly startup window) the colonist has no idea
-		// what's walkable, and isReachable can't help -- it returns true ("can't prove unreachable")
-		// when there's no mesh, so the old check was leaky and the colonist committed to a wander it
-		// couldn't follow, then stalled. So only OFFER the wander when navigation is genuinely
-		// possible: a mesh exists, or there's no nav system at all (headless/tests, where
-		// straight-line movement is intended). With a nav system but no mesh, emit no idle option;
-		// the colonist holds (see the no-option hold in selectTaskFromTrace) until the mesh lands.
-		// Needs and work keep their own options and still beeline to known targets; only the aimless
-		// idle walk waits. (Off-mesh stranding is handled separately by the snap-to-mesh recovery at
-		// the top of update().)
+		// Firm "can I actually navigate right now?" gate. An idle wander picks a random point;
+		// with no navmesh yet (the costly startup window) the colonist has no idea what's walkable,
+		// and isReachable can't help -- it returns true ("can't prove unreachable") when there's no
+		// mesh, so the old check was leaky and the colonist committed to a wander it couldn't follow,
+		// then stalled. So only OFFER the wander when navigation is genuinely possible: a mesh
+		// exists, or there's no nav system at all (headless/tests, direct movement). With a nav
+		// system but no mesh, emit no idle option; the colonist holds (see the no-option hold in
+		// selectTaskFromTrace) until the mesh lands. Needs and work keep their own options, but they
+		// too only MOVE once requestNavPath returns a route -- an off-area or pre-mesh leg HOLDS, it
+		// does not slide blind. (Off-mesh stranding is handled separately by the snap-to-mesh
+		// recovery at the top of update().)
 		const bool canNavigate = (m_navSystem == nullptr) || haveMesh;
 		if (canNavigate) {
 			// Only offer a wander we can ACTUALLY reach. Probe a few random points; if none are
@@ -1492,8 +1541,8 @@ namespace ecs {
 			const Memory* memory = world->getComponent<Memory>(entity);
 			if (memory != nullptr) {
 				const NavRequestOutcome outcome = requestNavPath(entity, task.targetPosition, position, *memory, movementTarget);
-				// Only a belief denial (mesh present, no route) is "can't find a way"; a
-				// no-mesh beeline is ordinary travel.
+				// Only a belief denial (mesh present, no route) is "can't find a way". Waiting
+				// (mesh not built / off-area) and Unmeshed (headless) are ordinary travel states.
 				task.navState = (outcome == NavRequestOutcome::Blocked) ? NavState::CantFindWayTo : NavState::Traveling;
 				task.navStateHold = 0;
 			}
@@ -1503,14 +1552,16 @@ namespace ecs {
 	AIDecisionSystem::NavRequestOutcome AIDecisionSystem::requestNavPath(
 		EntityID entity, const glm::vec2& goal, const Position& position, const Memory& memory,
 		MovementTarget& movementTarget) {
-		// No nav system wired at all (headless / tests): straight-line beeline is the intended
-		// fallback. Invalidate any route left over from a previous task so a stale path isn't
-		// followed, and leave movementTarget active so MovementSystem carries the colonist.
+		// No NavigationSystem wired at all (headless / tests only -- the running game always wires
+		// one). With no system there is no mesh to plan over, so MovementSystem follows the active
+		// MovementTarget directly. This branch is unreachable in the game; the movement invariant
+		// (path-or-snap) holds there because m_navSystem is non-null. Invalidate any route left over
+		// from a previous task so a stale path isn't followed.
 		if (m_navSystem == nullptr) {
 			if (auto* navPath = world->getComponent<NavPath>(entity)) {
 				navPath->valid = false;
 			}
-			return NavRequestOutcome::Beelined;
+			return NavRequestOutcome::Unmeshed;
 		}
 
 		// A navmesh exists as a system but hasn't finished building yet -- the costly startup
@@ -1531,21 +1582,26 @@ namespace ecs {
 			return NavRequestOutcome::Waiting;
 		}
 
-		// LOD seam: if either endpoint is outside the simulation area the exact mesh
-		// can't answer the query (the off-area leg is beyond LOD0). Treat it the same as
-		// the no-mesh case -- invalidate any stale NavPath and keep movementTarget active
-		// so the colonist beelines toward the area (or toward the goal directly).
+		// LOD seam: if either endpoint is outside the BUILT simulation area the exact mesh can't
+		// answer the query (the off-area leg is beyond LOD0, and there is no coarse far-field graph
+		// yet). A colonist may NOT slide blind toward an off-area goal -- that is the beeline this
+		// architecture forbids. HOLD instead, exactly like the no-mesh case: deactivate movement,
+		// zero velocity, invalidate any stale route. The periodic re-eval re-offers the task once
+		// the camera-tracked sim area covers both endpoints (or the goal is rejected as unreachable).
 		//
-		// FUTURE LOD1: path to the area edge via LOD0, hand off to a coarse regional
-		// graph for the long-haul leg, re-enter LOD0 near the goal; for now the whole
-		// off-area leg is a beeline.
+		// FUTURE LOD1: path to the area edge via LOD0, hand off to a coarse regional graph for the
+		// long-haul leg, re-enter LOD0 near the goal. Until that lands, off-area goals are held.
 		if (!m_navSystem->inSimArea(position.value) || !m_navSystem->inSimArea(goal)) {
 			if (auto* navPath = world->getComponent<NavPath>(entity)) {
 				navPath->valid = false;
 			}
-			LOG_DEBUG(Engine, "[Nav] Entity %llu: off-area endpoint, beeline to (%.2f, %.2f)",
+			movementTarget.active = false;
+			if (auto* velocity = world->getComponent<Velocity>(entity)) {
+				velocity->value = {0.0F, 0.0F};
+			}
+			LOG_DEBUG(Engine, "[Nav] Entity %llu: off-area endpoint, holding (no LOD0 route to (%.2f, %.2f))",
 				static_cast<unsigned long long>(entity), goal.x, goal.y);
-			return NavRequestOutcome::Beelined;
+			return NavRequestOutcome::Waiting;
 		}
 
 		// Agent footprint feeds the disc-clearance query; default if the entity has none.

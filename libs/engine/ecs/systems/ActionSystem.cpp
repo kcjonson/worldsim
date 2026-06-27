@@ -7,6 +7,7 @@
 #include "../components/Inventory.h"
 #include "../components/Memory.h"
 #include "../components/Movement.h"
+#include "../components/NavPath.h"
 #include "../components/Needs.h"
 #include "../components/Packaged.h"
 #include "../components/Skills.h"
@@ -220,10 +221,26 @@ namespace ecs {
 		// The action is cleared but the task persists. This differs from single-phase
 		// tasks that clear both action and task at the end of this function.
 		if (task.type == TaskType::Haul && action.type == ActionType::Pickup) {
-			// Phase 1 complete (Pickup) - move to phase 2 (Deposit)
+			// Phase 1 complete (Pickup) - hand off to phase 2 (Deposit). Re-point the task at the
+			// deposit goal and set it Moving; the colonist drives itself to the station. The deposit
+			// leg is the SAME haul task, so AIDecisionSystem keeps it (isSameTask) and never calls
+			// selectTaskFromTrace. Set MovementTarget to the deposit GOAL so the AI's per-tick
+			// chain-leg repath (a Moving task with an active target but no live route) requests a
+			// navmesh path for it -- the colonist follows that A* route, it does NOT slide straight
+			// at the bench. Invalidate the pickup-leg route, which still points at the source.
 			task.targetPosition = task.haulTargetPosition;
-			task.state = TaskState::Pending;
+			task.state = TaskState::Moving; // Must be Moving for MovementSystem to set Arrived
 			task.chainStep++; // Advance chain: step 0 (Pickup) → step 1 (Deposit)
+
+			auto* movementTarget = world->getComponent<MovementTarget>(entity);
+			if (movementTarget != nullptr) {
+				movementTarget->target = task.haulTargetPosition;
+				movementTarget->active = true;
+			}
+			if (auto* navPath = world->getComponent<NavPath>(entity)) {
+				navPath->valid = false;
+			}
+
 			action.clear();
 			LOG_DEBUG(
 				Engine,
@@ -276,17 +293,22 @@ namespace ecs {
 				}
 			}
 
-			// Transition to phase 2 - walk to placement target
+			// Transition to phase 2 - walk to placement target. Re-point the task at the place
+			// GOAL and set it Moving; the AI's per-tick chain-leg repath (a Moving task with an
+			// active target but no live route) requests a navmesh path, and the colonist follows
+			// that A* route to the bench. Invalidate the pickup-leg route, which still points at
+			// the source, so the stale path can't carry the colonist the wrong way for a frame.
 			task.targetPosition = task.placeTargetPosition;
 			task.state = TaskState::Moving;  // Must be Moving for MovementSystem to set Arrived
 			task.chainStep++; // Advance chain: step 0 (PickupPackaged) → step 1 (Place)
 
-			// Update MovementTarget to the new destination
-			// This is critical - without this, the movement system won't know where to go
 			auto* movementTarget = world->getComponent<MovementTarget>(entity);
 			if (movementTarget != nullptr) {
 				movementTarget->target = task.placeTargetPosition;
 				movementTarget->active = true;
+			}
+			if (auto* navPath = world->getComponent<NavPath>(entity)) {
+				navPath->valid = false;
 			}
 
 			action.clear();

@@ -1040,3 +1040,129 @@ TEST(NavMesh, RealYConfluence_OpenGrassIsFloor) {
 	}
 	EXPECT_TRUE(grassOnFloor) << "no floor triangle covers the open grass at (1500, 4500)";
 }
+
+// Bisection of the real confluence (which complication triggers the all-blocked
+// land?). provenance ids: border=-3, water=-1, tree=-2 (see NavMeshRealRings.test.h).
+// Strip to: flat (border only, no holes), border + the single non-convex water
+// ring, and border + 637 convex tree holes. On the buggy baseline this isolates the
+// trigger; all three must be walkable once the hole-bridge fix is in.
+TEST(NavMesh, RealYConfluence_Bisect_BorderOnly_Flat) {
+	NavMeshInput in;
+	in.polygons.push_back(NavInputPolygon{testdata::realBorderRing(), false, -3});
+	NavMesh m = buildNavMesh(in);
+	int floor = 0;
+	for (const NavTriangle& t : m.triangles) {
+		if (isFloorFace(t)) {
+			++floor;
+		}
+	}
+	EXPECT_GT(floor, 0) << "flat border-only (no holes) must be all floor; got " << floor << "/" << m.triangles.size();
+}
+
+TEST(NavMesh, RealYConfluence_Bisect_WaterOnly) {
+	NavMeshInput in;
+	in.polygons.push_back(NavInputPolygon{testdata::realBorderRing(), false, -3});
+	in.polygons.push_back(NavInputPolygon{testdata::realWaterRing(), true, -1, kNoOpening, true});
+	NavMesh m = buildNavMesh(in);
+	int floor = 0;
+	for (const NavTriangle& t : m.triangles) {
+		if (isFloorFace(t)) {
+			++floor;
+		}
+	}
+	EXPECT_GT(floor, 0) << "border + the single non-convex water ring: floor=" << floor << "/" << m.triangles.size();
+}
+
+TEST(NavMesh, RealYConfluence_Bisect_TreesOnly) {
+	NavMeshInput in;
+	in.polygons.push_back(NavInputPolygon{testdata::realBorderRing(), false, -3});
+	for (const std::vector<Vec2i64>& tree : testdata::realTreeRings()) {
+		in.polygons.push_back(NavInputPolygon{tree, true, -2});
+	}
+	NavMesh m = buildNavMesh(in);
+	int floor = 0;
+	for (const NavTriangle& t : m.triangles) {
+		if (isFloorFace(t)) {
+			++floor;
+		}
+	}
+	EXPECT_GT(floor, 0) << "border + 637 convex tree holes: floor=" << floor << "/" << m.triangles.size();
+}
+
+// Is the trees-only failure about hole COUNT/density or about holes near an EDGE?
+// border x[-63000,65000] y[-60000,68000]. "Interior" = centroid >~18m off every
+// border edge; "border band" = the complement (near a border edge); "half" = first
+// 318 by list order (mixed positions). Run on the buggy baseline to separate the two.
+TEST(NavMesh, RealYConfluence_Bisect_InteriorTreesOnly) {
+	auto ab = [](long long v) { return v < 0 ? -v : v; };
+	NavMeshInput in;
+	in.polygons.push_back(NavInputPolygon{testdata::realBorderRing(), false, -3});
+	int kept = 0;
+	for (const std::vector<Vec2i64>& tree : testdata::realTreeRings()) {
+		long long cx = 0, cy = 0;
+		for (const Vec2i64& p : tree) {
+			cx += p.x;
+			cy += p.y;
+		}
+		cx /= static_cast<long long>(tree.size());
+		cy /= static_cast<long long>(tree.size());
+		if (ab(cx) < 45000 && ab(cy) < 45000) {
+			in.polygons.push_back(NavInputPolygon{tree, true, -2});
+			++kept;
+		}
+	}
+	NavMesh m = buildNavMesh(in);
+	int floor = 0;
+	for (const NavTriangle& t : m.triangles) {
+		if (isFloorFace(t)) {
+			++floor;
+		}
+	}
+	EXPECT_GT(floor, 0) << "interior trees only (far from border) n=" << kept << ": floor=" << floor << "/" << m.triangles.size();
+}
+
+TEST(NavMesh, RealYConfluence_Bisect_BorderBandTreesOnly) {
+	auto ab = [](long long v) { return v < 0 ? -v : v; };
+	NavMeshInput in;
+	in.polygons.push_back(NavInputPolygon{testdata::realBorderRing(), false, -3});
+	int kept = 0;
+	for (const std::vector<Vec2i64>& tree : testdata::realTreeRings()) {
+		long long cx = 0, cy = 0;
+		for (const Vec2i64& p : tree) {
+			cx += p.x;
+			cy += p.y;
+		}
+		cx /= static_cast<long long>(tree.size());
+		cy /= static_cast<long long>(tree.size());
+		if (!(ab(cx) < 45000 && ab(cy) < 45000)) {
+			in.polygons.push_back(NavInputPolygon{tree, true, -2});
+			++kept;
+		}
+	}
+	NavMesh m = buildNavMesh(in);
+	int floor = 0;
+	for (const NavTriangle& t : m.triangles) {
+		if (isFloorFace(t)) {
+			++floor;
+		}
+	}
+	EXPECT_GT(floor, 0) << "border-band trees only (near border) n=" << kept << ": floor=" << floor << "/" << m.triangles.size();
+}
+
+TEST(NavMesh, RealYConfluence_Bisect_HalfTrees) {
+	NavMeshInput in;
+	in.polygons.push_back(NavInputPolygon{testdata::realBorderRing(), false, -3});
+	const std::vector<std::vector<Vec2i64>>& trees = testdata::realTreeRings();
+	const std::size_t half = trees.size() / 2;
+	for (std::size_t i = 0; i < half; ++i) {
+		in.polygons.push_back(NavInputPolygon{trees[i], true, -2});
+	}
+	NavMesh m = buildNavMesh(in);
+	int floor = 0;
+	for (const NavTriangle& t : m.triangles) {
+		if (isFloorFace(t)) {
+			++floor;
+		}
+	}
+	EXPECT_GT(floor, 0) << "first half of trees by list order n=" << half << ": floor=" << floor << "/" << m.triangles.size();
+}

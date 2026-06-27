@@ -54,9 +54,17 @@ public:
 	/// Set the ChunkManager for terrain queries (required for smart toilet location)
 	void setChunkManager(engine::world::ChunkManager* chunkManager) { m_chunkManager = chunkManager; }
 
-	/// Set the NavigationSystem used to resolve a navmesh path when a task picks a
-	/// destination (optional; null falls back to straight-line beeline movement).
+	/// Set the NavigationSystem used to resolve a navmesh path when a task picks a destination.
+	/// The running game always wires this; null is only for headless tests, where movement is a
+	/// direct MovementTarget follow (no mesh exists to path over).
 	void setNavigationSystem(NavigationSystem* navSystem) { m_navSystem = navSystem; }
+
+	/// Set the colony origin: the validated, entity-cleared walkable clearing the colonist spawned
+	/// into (the home anchor, owned by GameWorldState::Colony and pushed here because the engine
+	/// can't see app state). The off-mesh recovery snaps a stranded colonist here as a last resort
+	/// when nearestPathablePoint finds no walkable face in range, so a colonist can never be
+	/// permanently stranded off the mesh. This is a read of the colony origin, not an independent copy.
+	void setColonyOrigin(glm::vec2 origin) { m_colonyOrigin = origin; }
 
 	/// Set callback for dropping items on the ground (when chain is interrupted)
 	/// Same signature as ActionSystem's drop callback for consistency
@@ -99,20 +107,24 @@ private:
 		const struct DecisionTrace& trace,
 		const struct Position& position);
 
-	/// Resolve a navmesh path to `goal` for `entity` and attach it as a NavPath, planning
-	/// over the colonist's structural belief (its known segments/openings). On success the
-	/// NavPath is stamped with the belief/nav versions so the replan loop can detect
-	/// staleness. Behavior when no path is found splits by cause: with no mesh yet (startup
-	/// / outdoor) it invalidates the NavPath and lets the beeline MovementTarget carry the
-	/// colonist; with a mesh present (a believed-route denial) it instead STOPS movement
-	/// (clears movementTarget.active) so the colonist doesn't dishonestly beeline through a
-	/// wall it believes is there.
-	/// The outcome lets callers pick the right nav state: only Blocked is "can't find a way";
-	/// Beelined and Waiting are not stuck (no belief denial).
+	/// Resolve a navmesh path to `goal` for `entity` and attach it as a NavPath, planning over
+	/// the colonist's structural belief (its known segments/openings). On success the NavPath is
+	/// stamped with the belief/nav versions so the replan loop can detect staleness.
+	///
+	/// MOVEMENT INVARIANT: a colonist moves ONLY by following a NavPath. There is no straight-line
+	/// "beeline" toward a goal without a route. When a path can't be produced, this STOPS the
+	/// colonist (clears movementTarget.active, zeros velocity) rather than sliding it blind:
+	///   - no mesh yet (startup window): hold, the re-eval picks the task back up once it lands;
+	///   - endpoint outside the built sim area (beyond LOD0): hold, can't plan that leg yet;
+	///   - mesh present but belief admits no route (a believed wall): stop, re-decide.
+	/// The ONE non-path exception is the off-mesh recovery snap at the top of update() (teleport to
+	/// nearest valid ground), which runs BEFORE any path request. The Unmeshed outcome exists only
+	/// for headless tests with no NavigationSystem wired; it never occurs in the running game.
+	/// Outcome -> nav state: only Blocked is "can't find a way"; Waiting/Unmeshed are not stuck.
 	enum class NavRequestOutcome {
 		Routed,	  // a believed route was found and attached
-		Beelined, // no nav system at all (headless/tests): straight-line fallback, not stuck
-		Waiting,  // a navmesh exists as a system but hasn't built yet: hold in place, don't move
+		Unmeshed, // no NavigationSystem wired at all (headless/tests only): direct move, not stuck
+		Waiting,  // no path possible right now (mesh not built, or endpoint off-area): held in place
 		Blocked,  // mesh exists but belief admits no route: colonist stopped
 	};
 	NavRequestOutcome requestNavPath(EntityID entity, const glm::vec2& goal, const struct Position& position,
@@ -145,8 +157,14 @@ private:
 	/// ChunkManager for terrain queries (optional, fallback to current position if null)
 	engine::world::ChunkManager* m_chunkManager = nullptr;
 
-	/// NavigationSystem for navmesh path queries (optional; null = beeline movement)
+	/// NavigationSystem for navmesh path queries (null only in headless tests: direct movement)
 	NavigationSystem* m_navSystem = nullptr;
+
+	/// Colony origin: the validated walkable clearing the colonist spawned into, read from the
+	/// single source (GameWorldState::Colony) via setColonyOrigin. Last-resort snap target for the
+	/// off-mesh recovery. Unset until GameScene wires it; the recovery only uses it once a real
+	/// value is present (it has no meaning in headless tests).
+	std::optional<glm::vec2> m_colonyOrigin;
 
 	/// How often to re-evaluate tasks (seconds)
 	static constexpr float kReEvalInterval = 0.5F;

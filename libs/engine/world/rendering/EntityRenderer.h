@@ -88,6 +88,10 @@ class EntityRenderer {
 	/// several chunk bakes complete at once while scrolling.
 	void queueBakedChunk(const ChunkCoordinate& coord, BakedChunkCPUData&& cpuData);
 
+	/// Release a chunk's baked GPU mesh so it re-bakes (without removed entities) on the next
+	/// render. Used after clearing placed entities, e.g. carving the landing clearing at spawn.
+	void releaseBakedChunkCache(const ChunkCoordinate& coord);
+
 	/// Enable/disable GPU instancing (for A/B testing and fallback)
 	void setInstancingEnabled(bool enabled) { m_useInstancing = enabled; }
 	[[nodiscard]] bool isInstancingEnabled() const { return m_useInstancing; }
@@ -193,9 +197,6 @@ class EntityRenderer {
 	/// Only used when a still-loaded chunk's baked mesh was LRU-evicted; new
 	/// chunks arrive pre-baked via uploadBakedChunk.
 	void buildBakedChunkMesh(const assets::PlacementExecutor& executor, const ChunkCoordinate& coord);
-
-	/// Release baked mesh GPU resources for a chunk.
-	void releaseBakedChunkCache(const ChunkCoordinate& coord);
 
 	/// Render static entities using baked per-chunk meshes (glDrawElements, no instancing).
 	void renderBakedChunks(

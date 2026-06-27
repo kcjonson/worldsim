@@ -29,27 +29,54 @@ namespace ecs {
 		const bool twoHand	= ecs::itemIsTwoHand(registry, depEff.itemDefName);
 
 		// Craft-material delivery: the target is a crafting station with no storage
-		// container. The harvested materials stay in the colonist's inventory (the Craft
+		// container. The harvested/fetched materials stay in the colonist's inventory (the Craft
 		// action consumes them from there); arriving here just marks them delivered so the
 		// parent Craft goal advances out of Blocked.
+		//
+		// Idempotent credit: the delivered material is NOT removed from inventory, so a multi-trip
+		// fetch (carry 1 of a needed 2, deposit, fetch the 2nd) re-runs this deposit while still
+		// holding the earlier units. Crediting `delivered` each time would double-count one physical
+		// stone and falsely satisfy the recipe. So track the goal's delivered count against what the
+		// colonist now PHYSICALLY carries: credit only the increment that lifts deliveredAmount up to
+		// min(carried, target). Re-depositing the same inventory is then a no-op, and the goal stays
+		// Available -- driving the colonist to fetch the remaining units -- until it truly holds them all.
 		if (depEff.deliverToCraftStation) {
 			uint32_t carried = ecs::availableQuantity(inventory, depEff.itemDefName);
-			uint32_t delivered = std::min(carried, depEff.quantity);
-			if (delivered > 0 && task.type == TaskType::Haul && task.haulGoalId != 0) {
-				auto& goalRegistry = GoalTaskRegistry::Get();
-				goalRegistry.recordDelivery(task.haulGoalId, delivered);
-
+			if (carried > 0 && task.type == TaskType::Haul && task.haulGoalId != 0) {
+				auto&		goalRegistry = GoalTaskRegistry::Get();
 				const auto* goal = goalRegistry.getGoal(task.haulGoalId);
-				if (goal != nullptr && goal->availableCapacity() == 0) {
-					goalRegistry.removeGoal(task.haulGoalId);
+				if (goal != nullptr) {
+					const uint32_t target = goal->targetAmount;
+					const uint32_t already = goal->deliveredAmount;
+					const uint32_t want = std::min(carried, target); // physical units staged for this material
+					const uint32_t increment = want > already ? want - already : 0;
+					if (increment > 0) {
+						goalRegistry.recordDelivery(task.haulGoalId, increment);
+						LOG_INFO(
+							Engine,
+							"[Action] Delivered %u x %s to crafting station %llu (now %u/%u staged, kept in inventory for craft)",
+							increment,
+							depEff.itemDefName.c_str(),
+							static_cast<unsigned long long>(depEff.storageEntityId),
+							want,
+							target
+						);
+					} else {
+						LOG_DEBUG(
+							Engine,
+							"[Action] Re-deposit of %s at station %llu credited nothing (%u/%u already staged)",
+							depEff.itemDefName.c_str(),
+							static_cast<unsigned long long>(depEff.storageEntityId),
+							already,
+							target
+						);
+					}
+
+					const auto* refreshed = goalRegistry.getGoal(task.haulGoalId);
+					if (refreshed != nullptr && refreshed->availableCapacity() == 0) {
+						goalRegistry.removeGoal(task.haulGoalId);
+					}
 				}
-				LOG_INFO(
-					Engine,
-					"[Action] Delivered %u x %s to crafting station %llu (kept in inventory for craft)",
-					delivered,
-					depEff.itemDefName.c_str(),
-					static_cast<unsigned long long>(depEff.storageEntityId)
-				);
 			} else {
 				LOG_WARNING(
 					Engine,
