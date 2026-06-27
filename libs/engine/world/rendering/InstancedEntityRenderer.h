@@ -7,8 +7,9 @@
 
 #include "assets/placement/PlacementExecutor.h"
 #include "primitives/InstanceData.h"
-#include "world/camera/WorldCamera.h"
 #include "world/rendering/InstancingUniforms.h"
+#include "world/rendering/RenderContext.h"
+#include "world/rendering/TemplateMeshCache.h"
 
 #include <cstdint>
 #include <string>
@@ -27,14 +28,7 @@ class InstancedEntityRenderer {
 	~InstancedEntityRenderer();
 
 	/// Render dynamic entities (per-frame rebuild) via GPU instancing.
-	void renderDynamic(
-		const std::vector<assets::PlacedEntity>* dynamicEntities,
-		const WorldCamera&						 camera,
-		int										 viewportWidth,
-		int										 viewportHeight,
-		float									 pixelsPerMeter,
-		RenderStats&							 stats
-	);
+	void renderDynamic(const RenderContext& ctx, RenderStats& stats);
 
   private:
 	// Maximum instances per mesh type for GPU instancing
@@ -49,11 +43,8 @@ class InstancedEntityRenderer {
 	// Used ONLY for dynamic entities that change per-frame
 	std::unordered_map<std::string, std::vector<Renderer::InstanceData>> m_instanceBatches;
 
-	// Cache for template meshes (keyed by defName)
-	std::unordered_map<std::string, const renderer::TessellatedMesh*> m_templateCache;
-
-	/// Get or cache a template mesh
-	const renderer::TessellatedMesh* getTemplate(const std::string& defName);
+	// Memoized template meshes (keyed by defName)
+	TemplateMeshCache m_templateCache;
 
 	/// Get or create GPU mesh handle for a template
 	Renderer::InstancedMeshHandle& getOrCreateMeshHandle(

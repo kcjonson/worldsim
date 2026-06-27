@@ -128,8 +128,7 @@ namespace engine::assets {
 				result.bakedMesh = world::bakeChunkEntities(
 					entityPtrs, chunkData.coord,
 					[](const std::string& defName) -> const renderer::TessellatedMesh* {
-						const auto* def = AssetRegistry::Get().getDefinition(defName);
-						if (def != nullptr && def->role == AssetRole::Groundcover) {
+						if (world::isGroundcoverDef(defName)) {
 							return nullptr; // groundcover renders via the instanced path, not baking
 						}
 						return AssetRegistry::Get().getTemplate(defName);

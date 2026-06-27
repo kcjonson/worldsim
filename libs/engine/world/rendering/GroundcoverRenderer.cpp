@@ -88,8 +88,7 @@ void GroundcoverRenderer::buildGroundcoverChunk(
 	cache.byDef.clear();
 	cache.built = true;
 
-	WorldPosition	chunkOrigin = coord.origin();
-	constexpr float kChunkWorldSize = static_cast<float>(kChunkSize) * kTileSize;
+	WorldPosition chunkOrigin = coord.origin();
 	cache.minX = chunkOrigin.x;
 	cache.minY = chunkOrigin.y;
 	cache.maxX = chunkOrigin.x + kChunkWorldSize;
@@ -122,24 +121,14 @@ void GroundcoverRenderer::buildGroundcoverChunk(
 	}
 }
 
-void GroundcoverRenderer::render(
-	const assets::PlacementExecutor&		   executor,
-	const std::unordered_set<ChunkCoordinate>& processedChunks,
-	const WorldCamera&						   camera,
-	int										   viewportWidth,
-	int										   viewportHeight,
-	float									   pixelsPerMeter,
-	uint64_t								   frameCounter,
-	InstancingUniforms&						   uniforms,
-	RenderStats&							   stats
-) {
+void GroundcoverRenderer::render(const RenderContext& ctx, InstancingUniforms& uniforms, RenderStats& stats) {
 	auto* batchRenderer = Renderer::Primitives::getBatchRenderer();
 	if (batchRenderer == nullptr) {
 		return;
 	}
 
-	const float zoom = camera.zoom();
-	const float ppm = pixelsPerMeter;
+	const float zoom = ctx.camera.zoom();
+	const float ppm = ctx.pixelsPerMeter;
 
 	// Zoom LOD: a tuft is kGroundcoverHeightM tall; below kGroundcoverLodCutoffPx on screen
 	// we skip the geometry entirely and let the grass tile texture carry it. Tunable.
@@ -149,16 +138,9 @@ void GroundcoverRenderer::render(
 		return;
 	}
 
-	const float camX = camera.position().x;
-	const float camY = camera.position().y;
-	const float scale = ppm * zoom;
-	const float viewWorldW = static_cast<float>(viewportWidth) / scale;
-	const float viewWorldH = static_cast<float>(viewportHeight) / scale;
-	constexpr float kMargin = 2.0F;
-	const float		visMinX = camX - (viewWorldW * 0.5F) - kMargin;
-	const float		visMaxX = camX + (viewWorldW * 0.5F) + kMargin;
-	const float		visMinY = camY - (viewWorldH * 0.5F) - kMargin;
-	const float		visMaxY = camY + (viewWorldH * 0.5F) + kMargin;
+	const float			camX = ctx.camera.position().x;
+	const float			camY = ctx.camera.position().y;
+	const VisibleBounds vis = computeVisibleBounds(ctx.camera, ctx.viewportWidth, ctx.viewportHeight, ppm);
 
 	GLuint shaderProgram = batchRenderer->getShaderProgram();
 	glUseProgram(shaderProgram);
@@ -180,13 +162,13 @@ void GroundcoverRenderer::render(
 	}
 
 	const Foundation::Vec2 cameraPos(camX, camY);
-	for (const auto& coord : processedChunks) {
+	for (const auto& coord : ctx.processedChunks) {
 		auto& cache = m_groundcoverChunkCache[coord];
-		cache.lastAccessFrame = frameCounter;
+		cache.lastAccessFrame = ctx.frameCounter;
 		if (!cache.built) {
-			buildGroundcoverChunk(executor, coord, cache);
+			buildGroundcoverChunk(ctx.executor, coord, cache);
 		}
-		if (cache.maxX < visMinX || cache.minX > visMaxX || cache.maxY < visMinY || cache.minY > visMaxY) {
+		if (cache.maxX < vis.minX || cache.minX > vis.maxX || cache.maxY < vis.minY || cache.minY > vis.maxY) {
 			continue;
 		}
 		for (auto& [defName, buckets] : cache.byDef) {

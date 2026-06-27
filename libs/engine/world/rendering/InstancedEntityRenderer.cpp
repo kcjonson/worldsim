@@ -1,7 +1,5 @@
 #include "InstancedEntityRenderer.h"
 
-#include "assets/AssetRegistry.h"
-
 #include <primitives/BatchRenderer.h>
 #include <primitives/Primitives.h>
 
@@ -16,20 +14,6 @@ namespace engine::world {
 			}
 		}
 		m_meshHandles.clear();
-	}
-
-	const renderer::TessellatedMesh* InstancedEntityRenderer::getTemplate(const std::string& defName) {
-		// Check cache first
-		auto it = m_templateCache.find(defName);
-		if (it != m_templateCache.end()) {
-			return it->second;
-		}
-
-		// Get from registry and cache
-		auto&		registry = assets::AssetRegistry::Get();
-		const auto* mesh = registry.getTemplate(defName);
-		m_templateCache[defName] = mesh;
-		return mesh;
 	}
 
 	Renderer::InstancedMeshHandle&
@@ -52,49 +36,32 @@ namespace engine::world {
 		return insertedIt->second;
 	}
 
-	void InstancedEntityRenderer::renderDynamic(
-		const std::vector<assets::PlacedEntity>* dynamicEntities,
-		const WorldCamera&						 camera,
-		int										 viewportWidth,
-		int										 viewportHeight,
-		float									 pixelsPerMeter,
-		RenderStats&							 stats
-	) {
-		// --- Phase 3: Render dynamic entities (per-frame rebuild) ---
+	void InstancedEntityRenderer::renderDynamic(const RenderContext& ctx, RenderStats& stats) {
 		// Dynamic entities (from ECS) change position each frame, so we rebuild them.
 		// GL state note: BatchRenderer::drawInstanced() sets up its own GL state internally,
-		// so we don't need to carry state from renderCachedChunks() here.
+		// so we don't need to carry state from the baked path here.
+		const auto* dynamicEntities = ctx.dynamicEntities;
 		if (dynamicEntities != nullptr && !dynamicEntities->empty()) {
 			// Clear per-frame instance batches (keep capacity for reuse)
 			for (auto& [defName, batch] : m_instanceBatches) {
 				batch.clear();
 			}
 
-			float zoom = camera.zoom();
-			float camX = camera.position().x;
-			float camY = camera.position().y;
+			float zoom = ctx.camera.zoom();
+			float camX = ctx.camera.position().x;
+			float camY = ctx.camera.position().y;
 
-			// Calculate visible world bounds (in tiles/meters)
-			float scale = pixelsPerMeter * zoom;
-			float viewWorldW = static_cast<float>(viewportWidth) / scale;
-			float viewWorldH = static_cast<float>(viewportHeight) / scale;
-
-			// Visible world bounds with small margin for entities on edges
-			constexpr float kMargin = 2.0F;
-			float			minWorldX = camX - (viewWorldW * 0.5F) - kMargin;
-			float			maxWorldX = camX + (viewWorldW * 0.5F) + kMargin;
-			float			minWorldY = camY - (viewWorldH * 0.5F) - kMargin;
-			float			maxWorldY = camY + (viewWorldH * 0.5F) + kMargin;
+			const VisibleBounds vis = computeVisibleBounds(ctx.camera, ctx.viewportWidth, ctx.viewportHeight, ctx.pixelsPerMeter);
 
 			for (const auto& entity : *dynamicEntities) {
 				// Frustum culling for dynamic entities
-				if (entity.position.x < minWorldX || entity.position.x > maxWorldX || entity.position.y < minWorldY ||
-					entity.position.y > maxWorldY) {
+				if (entity.position.x < vis.minX || entity.position.x > vis.maxX || entity.position.y < vis.minY ||
+					entity.position.y > vis.maxY) {
 					continue;
 				}
 
 				// Get or create mesh handle for this asset type
-				const auto* templateMesh = getTemplate(entity.defName);
+				const auto* templateMesh = m_templateCache.get(entity.defName);
 				if (templateMesh == nullptr) {
 					continue;
 				}
@@ -133,7 +100,7 @@ namespace engine::world {
 					// Stats note: drawInstanced increments BatchRenderer's own counters,
 					// so these draws are NOT added to stats.drawCalls (avoids double count)
 					batchRenderer->drawInstanced(
-						handleIt->second, instances.data(), static_cast<uint32_t>(instances.size()), cameraPos, zoom, pixelsPerMeter
+						handleIt->second, instances.data(), static_cast<uint32_t>(instances.size()), cameraPos, zoom, ctx.pixelsPerMeter
 					);
 				}
 			}

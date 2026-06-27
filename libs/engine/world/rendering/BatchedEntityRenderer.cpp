@@ -1,6 +1,5 @@
 #include "BatchedEntityRenderer.h"
 
-#include "assets/AssetRegistry.h"
 #include "world/chunk/ChunkCoordinate.h"
 
 #include <cmath>
@@ -9,30 +8,7 @@
 
 namespace engine::world {
 
-	const renderer::TessellatedMesh* BatchedEntityRenderer::getTemplate(const std::string& defName) {
-		// Check cache first
-		auto it = m_templateCache.find(defName);
-		if (it != m_templateCache.end()) {
-			return it->second;
-		}
-
-		// Get from registry and cache
-		auto&		registry = assets::AssetRegistry::Get();
-		const auto* mesh = registry.getTemplate(defName);
-		m_templateCache[defName] = mesh;
-		return mesh;
-	}
-
-	void BatchedEntityRenderer::render(
-		const assets::PlacementExecutor&		   executor,
-		const std::unordered_set<ChunkCoordinate>& processedChunks,
-		const std::vector<assets::PlacedEntity>*   dynamicEntities,
-		const WorldCamera&						   camera,
-		int										   viewportWidth,
-		int										   viewportHeight,
-		float									   pixelsPerMeter,
-		RenderStats&							   stats
-	) {
+	void BatchedEntityRenderer::render(const RenderContext& ctx, InstancingUniforms& /*uniforms*/, RenderStats& stats) {
 		stats.entities = 0;
 		stats.drawCalls = 0;
 		stats.triangles = 0;
@@ -52,38 +28,29 @@ namespace engine::world {
 			m_indices.reserve(kExpectedIndices);
 		}
 
-		float halfViewW = static_cast<float>(viewportWidth) * 0.5F;
-		float halfViewH = static_cast<float>(viewportHeight) * 0.5F;
-		float zoom = camera.zoom();
-		float scale = pixelsPerMeter * zoom;
-		float camX = camera.position().x;
-		float camY = camera.position().y;
+		float halfViewW = static_cast<float>(ctx.viewportWidth) * 0.5F;
+		float halfViewH = static_cast<float>(ctx.viewportHeight) * 0.5F;
+		float zoom = ctx.camera.zoom();
+		float scale = ctx.pixelsPerMeter * zoom;
+		float camX = ctx.camera.position().x;
+		float camY = ctx.camera.position().y;
 
-		// Calculate visible world bounds (in tiles/meters)
-		float viewWorldW = static_cast<float>(viewportWidth) / scale;
-		float viewWorldH = static_cast<float>(viewportHeight) / scale;
-
-		// Visible world bounds with small margin for entities on edges
-		constexpr float kMargin = 2.0F;
-		float			minWorldX = camX - (viewWorldW * 0.5F) - kMargin;
-		float			maxWorldX = camX + (viewWorldW * 0.5F) + kMargin;
-		float			minWorldY = camY - (viewWorldH * 0.5F) - kMargin;
-		float			maxWorldY = camY + (viewWorldH * 0.5F) + kMargin;
+		const VisibleBounds vis = computeVisibleBounds(ctx.camera, ctx.viewportWidth, ctx.viewportHeight, ctx.pixelsPerMeter);
 
 		uint32_t vertexIndex = 0;
 
 		// Process each chunk, query only visible entities
-		for (const auto& coord : processedChunks) {
-			const auto* index = executor.getChunkIndex(coord);
+		for (const auto& coord : ctx.processedChunks) {
+			const auto* index = ctx.executor.getChunkIndex(coord);
 			if (index == nullptr) {
 				continue;
 			}
 
 			// Query only entities within visible bounds (view frustum culling)
-			auto visibleEntities = index->queryRect(minWorldX, minWorldY, maxWorldX, maxWorldY);
+			auto visibleEntities = index->queryRect(vis.minX, vis.minY, vis.maxX, vis.maxY);
 
 			for (const auto* entity : visibleEntities) {
-				const auto* templateMesh = getTemplate(entity->defName);
+				const auto* templateMesh = m_templateCache.get(entity->defName);
 				if (templateMesh == nullptr) {
 					continue;
 				}
@@ -170,15 +137,15 @@ namespace engine::world {
 		}
 
 		// Process dynamic entities (from ECS)
-		if (dynamicEntities != nullptr) {
-			for (const auto& entity : *dynamicEntities) {
+		if (ctx.dynamicEntities != nullptr) {
+			for (const auto& entity : *ctx.dynamicEntities) {
 				// Frustum culling for dynamic entities
-				if (entity.position.x < minWorldX || entity.position.x > maxWorldX || entity.position.y < minWorldY ||
-					entity.position.y > maxWorldY) {
+				if (entity.position.x < vis.minX || entity.position.x > vis.maxX || entity.position.y < vis.minY ||
+					entity.position.y > vis.maxY) {
 					continue;
 				}
 
-				const auto* templateMesh = getTemplate(entity.defName);
+				const auto* templateMesh = m_templateCache.get(entity.defName);
 				if (templateMesh == nullptr) {
 					continue;
 				}

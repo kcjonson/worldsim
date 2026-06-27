@@ -352,7 +352,7 @@ namespace engine::assets {
 
 	/// Complete asset definition parsed from XML
 	struct AssetDefinition {
-		std::string			  defName; // Unique identifier (e.g., "Flora_GrassBlade")
+		std::string			  defName; // Unique identifier (e.g., "Groundcover_Grass")
 		std::string			  label;   // Human-readable name
 		AssetType			  assetType = AssetType::Procedural;
 		std::string			  generatorName;	  // Generator to use (e.g., "GrassBlade") - C++ generators

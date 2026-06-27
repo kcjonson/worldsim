@@ -5,6 +5,7 @@
 // render thread (re-bake of an evicted chunk); GL upload lives in
 // EntityRenderer::uploadBakedChunk. Touches no GL state.
 
+#include "assets/AssetRegistry.h"
 #include "assets/placement/SpatialIndex.h"
 #include "world/chunk/ChunkCoordinate.h"
 
@@ -15,6 +16,7 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <string>
 #include <vector>
 
 namespace engine::world {
@@ -63,6 +65,15 @@ struct BakedChunkCPUData {
 	std::array<BakedSubChunkCPUData, kSubChunkCount> subChunks;
 	uint32_t										 totalEntityCount = 0;
 };
+
+/// True if `defName` is a groundcover asset. Groundcover is skipped by the baked
+/// path (it renders via the instanced GroundcoverRenderer), so the bake-time
+/// template lookups in both BakedChunkRenderer and AsyncChunkProcessor return
+/// null for it. Shared so that skip rule lives in one place.
+[[nodiscard]] inline bool isGroundcoverDef(const std::string& defName) {
+	const auto* def = assets::AssetRegistry::Get().getDefinition(defName);
+	return def != nullptr && def->role == assets::AssetRole::Groundcover;
+}
 
 /// Resolves an asset defName to its tessellated template mesh.
 /// Must be safe to call from the thread running the bake.

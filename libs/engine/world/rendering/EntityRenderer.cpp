@@ -17,8 +17,9 @@ namespace engine::world {
 		if (m_useInstancing) {
 			renderInstanced(executor, processedChunks, nullptr, camera, viewportWidth, viewportHeight);
 		} else {
-			RenderStats stats;
-			batched.render(executor, processedChunks, nullptr, camera, viewportWidth, viewportHeight, m_pixelsPerMeter, stats);
+			RenderStats	  stats;
+			RenderContext ctx{executor, processedChunks, nullptr, camera, viewportWidth, viewportHeight, m_pixelsPerMeter, frameCounter};
+			batched.render(ctx, m_uniforms, stats);
 			m_lastEntityCount = stats.entities;
 			m_lastDrawCallCount = stats.drawCalls;
 			m_lastTriangleCount = stats.triangles;
@@ -36,8 +37,11 @@ namespace engine::world {
 		if (m_useInstancing) {
 			renderInstanced(executor, processedChunks, &dynamicEntities, camera, viewportWidth, viewportHeight);
 		} else {
-			RenderStats stats;
-			batched.render(executor, processedChunks, &dynamicEntities, camera, viewportWidth, viewportHeight, m_pixelsPerMeter, stats);
+			RenderStats	  stats;
+			RenderContext ctx{
+				executor, processedChunks, &dynamicEntities, camera, viewportWidth, viewportHeight, m_pixelsPerMeter, frameCounter
+			};
+			batched.render(ctx, m_uniforms, stats);
 			m_lastEntityCount = stats.entities;
 			m_lastDrawCallCount = stats.drawCalls;
 			m_lastTriangleCount = stats.triangles;
@@ -54,37 +58,40 @@ namespace engine::world {
 		int										   viewportWidth,
 		int										   viewportHeight
 	) {
-		// Increment frame counter for LRU tracking
+		// Increment frame counter for LRU tracking, then freeze the per-frame
+		// inputs into one context shared by every render path.
 		frameCounter++;
+		RenderContext ctx{
+			executor, processedChunks, dynamicEntities, camera, viewportWidth, viewportHeight, m_pixelsPerMeter, frameCounter
+		};
 
 		// Canonical per-frame metrics: reset once, then each sub-renderer adds to it.
 		RenderStats stats;
 
-		// --- Phase 1: Integrate baked meshes ---
-		// Budgeted upload of worker-baked chunks (capped bytes per frame)
+		// Integrate baked meshes: budgeted upload of worker-baked chunks (capped
+		// bytes per frame), then a synchronous re-bake only for processed chunks
+		// whose baked mesh was LRU-evicted and later revisited (new chunks arrive
+		// via the queue).
 		baked.processPendingUploads();
-
-		// Synchronous re-bake only for processed chunks whose baked mesh was
-		// LRU-evicted and later revisited; new chunks arrive via the queue.
 		for (const auto& coord : processedChunks) {
 			if (baked.needsBake(coord)) {
 				baked.buildBakedChunkMesh(executor, coord, frameCounter);
 			}
 		}
 
-		// --- Phase 2: Render static entities from baked per-chunk meshes ---
-		// Fast path: single glDrawElements per chunk, no instancing overhead.
-		baked.renderBakedChunks(processedChunks, camera, viewportWidth, viewportHeight, m_pixelsPerMeter, frameCounter, m_uniforms, stats);
+		// Static entities from baked per-chunk meshes: single glDrawElements per
+		// chunk, no instancing overhead.
+		baked.renderBakedChunks(ctx, m_uniforms, stats);
 
-		// --- Phase 2b: Render groundcover (grass) via GPU instancing ---
-		// Groundcover entities are skipped by the baked path and drawn here as instanced
-		// variant tufts, with a zoom LOD that fades to the grass tile texture when zoomed out.
-		groundcover.render(executor, processedChunks, camera, viewportWidth, viewportHeight, m_pixelsPerMeter, frameCounter, m_uniforms, stats);
+		// Groundcover (grass) via GPU instancing. Skipped by the baked path and
+		// drawn here as instanced variant tufts, with a zoom LOD that fades to the
+		// grass tile texture when zoomed out.
+		groundcover.render(ctx, m_uniforms, stats);
 
-		// --- Phase 3: Render dynamic entities (per-frame rebuild) ---
-		instancedDynamic.renderDynamic(dynamicEntities, camera, viewportWidth, viewportHeight, m_pixelsPerMeter, stats);
+		// Dynamic (ECS) entities, rebuilt per frame.
+		instancedDynamic.renderDynamic(ctx, stats);
 
-		// --- Phase 4: LRU cache eviction ---
+		// LRU cache eviction.
 		baked.evictLRU(processedChunks);
 		groundcover.evictLRU(processedChunks);
 

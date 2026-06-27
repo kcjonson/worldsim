@@ -11,8 +11,8 @@
 -- this script -- no engine recompile.
 
 local nMin, nMax     = getFloatRange("bladeCount", 8, 12)
-local lenMin, lenMax = getFloatRange("bladeLength", 0.28, 0.50)
-local hwMin, hwMax   = getFloatRange("bladeHalfWidth", 0.005, 0.009)
+local lenMin, lenMax = getFloatRange("bladeLength", 0.40, 0.65)
+local hwMin, hwMax   = getFloatRange("bladeHalfWidth", 0.014, 0.022)
 local spread         = getFloat("fanSpread", 0.5)   -- max lean from vertical (radians)
 local curveAmt       = getFloat("bladeCurve", 0.12) -- lateral bow toward the tip (meters)
 local jitter         = getFloat("baseJitter", 0.03) -- base scatter around the origin (meters)

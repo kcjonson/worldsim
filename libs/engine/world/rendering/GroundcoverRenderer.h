@@ -10,9 +10,9 @@
 
 #include "assets/placement/PlacementExecutor.h"
 #include "primitives/InstanceData.h"
-#include "world/camera/WorldCamera.h"
 #include "world/chunk/ChunkCoordinate.h"
 #include "world/rendering/InstancingUniforms.h"
+#include "world/rendering/RenderContext.h"
 
 #include <cstdint>
 #include <string>
@@ -25,17 +25,7 @@ namespace engine::world {
 /// Draws groundcover (grass) for the visible chunks via GPU instancing, with the zoom LOD.
 class GroundcoverRenderer {
   public:
-	void render(
-		const assets::PlacementExecutor&		   executor,
-		const std::unordered_set<ChunkCoordinate>& processedChunks,
-		const WorldCamera&						   camera,
-		int										   viewportWidth,
-		int										   viewportHeight,
-		float									   pixelsPerMeter,
-		uint64_t								   frameCounter,
-		InstancingUniforms&						   uniforms,
-		RenderStats&							   stats
-	);
+	void render(const RenderContext& ctx, InstancingUniforms& uniforms, RenderStats& stats);
 
 	/// Release uploaded variant meshes on teardown.
 	~GroundcoverRenderer();

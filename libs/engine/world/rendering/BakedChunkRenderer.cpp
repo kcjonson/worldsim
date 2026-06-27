@@ -1,6 +1,5 @@
 #include "BakedChunkRenderer.h"
 
-#include "assets/AssetRegistry.h"
 #include "world/chunk/ChunkCoordinate.h"
 
 #include <algorithm>
@@ -17,20 +16,6 @@ namespace engine::world {
 	// CPU bake (vertex transform) lives in BakedEntityMesh.cpp so it can run on
 	// worker threads; this file owns only the GL upload and rendering.
 
-	const renderer::TessellatedMesh* BakedChunkRenderer::getTemplate(const std::string& defName) {
-		// Check cache first
-		auto it = m_templateCache.find(defName);
-		if (it != m_templateCache.end()) {
-			return it->second;
-		}
-
-		// Get from registry and cache
-		auto&		registry = assets::AssetRegistry::Get();
-		const auto* mesh = registry.getTemplate(defName);
-		m_templateCache[defName] = mesh;
-		return mesh;
-	}
-
 	void BakedChunkRenderer::buildBakedChunkMesh(
 		const assets::PlacementExecutor& executor, const ChunkCoordinate& coord, uint64_t frameCounter
 	) {
@@ -40,17 +25,15 @@ namespace engine::world {
 		}
 
 		WorldPosition chunkOrigin = coord.origin();
-		constexpr float kChunkWorldSize = static_cast<float>(kChunkSize) * kTileSize;
 		auto entities = index->queryRect(
 			chunkOrigin.x, chunkOrigin.y, chunkOrigin.x + kChunkWorldSize, chunkOrigin.y + kChunkWorldSize
 		);
 
 		auto cpuData = bakeChunkEntities(entities, coord, [this](const std::string& defName) -> const renderer::TessellatedMesh* {
-			const auto* def = assets::AssetRegistry::Get().getDefinition(defName);
-			if (def != nullptr && def->role == assets::AssetRole::Groundcover) {
+			if (isGroundcoverDef(defName)) {
 				return nullptr; // groundcover renders via the instanced path, not baking
 			}
-			return getTemplate(defName);
+			return m_templateCache.get(defName);
 		});
 		uploadBakedChunk(coord, std::move(cpuData), frameCounter);
 	}
@@ -170,16 +153,7 @@ namespace engine::world {
 		m_bakedChunkCache.erase(coord);
 	}
 
-	void BakedChunkRenderer::renderBakedChunks(
-		const std::unordered_set<ChunkCoordinate>& processedChunks,
-		const WorldCamera&						   camera,
-		int										   viewportWidth,
-		int										   viewportHeight,
-		float									   pixelsPerMeter,
-		uint64_t								   frameCounter,
-		InstancingUniforms&						   uniforms,
-		RenderStats&							   stats
-	) {
+	void BakedChunkRenderer::renderBakedChunks(const RenderContext& ctx, InstancingUniforms& uniforms, RenderStats& stats) {
 		auto* batchRenderer = Renderer::Primitives::getBatchRenderer();
 		if (batchRenderer == nullptr) {
 			return;
@@ -189,22 +163,13 @@ namespace engine::world {
 		batchRenderer->flush();
 
 		// Set viewport on BatchRenderer
-		batchRenderer->setViewport(viewportWidth, viewportHeight);
+		batchRenderer->setViewport(ctx.viewportWidth, ctx.viewportHeight);
 
 		// Calculate visible world bounds for sub-chunk culling
-		float zoom = camera.zoom();
-		float camX = camera.position().x;
-		float camY = camera.position().y;
-		float scale = pixelsPerMeter * zoom;
-		float viewWorldW = static_cast<float>(viewportWidth) / scale;
-		float viewWorldH = static_cast<float>(viewportHeight) / scale;
-
-		// Visible world bounds with small margin for entities on edges
-		constexpr float kMargin = 2.0F;
-		float			visMinX = camX - (viewWorldW * 0.5F) - kMargin;
-		float			visMaxX = camX + (viewWorldW * 0.5F) + kMargin;
-		float			visMinY = camY - (viewWorldH * 0.5F) - kMargin;
-		float			visMaxY = camY + (viewWorldH * 0.5F) + kMargin;
+		float zoom = ctx.camera.zoom();
+		float camX = ctx.camera.position().x;
+		float camY = ctx.camera.position().y;
+		VisibleBounds vis = computeVisibleBounds(ctx.camera, ctx.viewportWidth, ctx.viewportHeight, ctx.pixelsPerMeter);
 
 		// Save GL state before modifying
 		GLboolean blendEnabled = glIsEnabled(GL_BLEND);
@@ -226,7 +191,7 @@ namespace engine::world {
 
 		// Set up projection matrix
 		Foundation::Mat4 projection =
-			glm::ortho(0.0F, static_cast<float>(viewportWidth), static_cast<float>(viewportHeight), 0.0F, -1.0F, 1.0F);
+			glm::ortho(0.0F, static_cast<float>(ctx.viewportWidth), static_cast<float>(ctx.viewportHeight), 0.0F, -1.0F, 1.0F);
 		glUniformMatrix4fv(uniforms.projection, 1, GL_FALSE, glm::value_ptr(projection));
 
 		// Identity transform
@@ -237,32 +202,32 @@ namespace engine::world {
 		glUniform1i(uniforms.instanced, 2);
 		glUniform2f(uniforms.cameraPosition, camX, camY);
 		glUniform1f(uniforms.cameraZoom, zoom);
-		glUniform1f(uniforms.pixelsPerMeter, pixelsPerMeter);
-		glUniform2f(uniforms.viewportSize, static_cast<float>(viewportWidth), static_cast<float>(viewportHeight));
+		glUniform1f(uniforms.pixelsPerMeter, ctx.pixelsPerMeter);
+		glUniform2f(uniforms.viewportSize, static_cast<float>(ctx.viewportWidth), static_cast<float>(ctx.viewportHeight));
 
 		// Far-zoom impostor handoff: pixels of on-screen height per meter of
 		// entity height; short flora fades out below kImpostorCutoffPx because
 		// the grass tile texture carries the appearance at that distance
-		float pixelsPerWorldMeter = pixelsPerMeter * zoom;
+		float pixelsPerWorldMeter = ctx.pixelsPerMeter * zoom;
 		float currentAlpha = 1.0F;
 		if (uniforms.bakedAlpha >= 0) {
 			glUniform1f(uniforms.bakedAlpha, currentAlpha);
 		}
 
 		// Draw visible sub-chunks from each cached chunk
-		for (const auto& coord : processedChunks) {
+		for (const auto& coord : ctx.processedChunks) {
 			auto cacheIt = m_bakedChunkCache.find(coord);
 			if (cacheIt == m_bakedChunkCache.end()) {
 				continue; // Not cached yet - will be built next frame
 			}
 
 			auto& cache = cacheIt->second;
-			cache.lastAccessFrame = frameCounter; // Update LRU timestamp
+			cache.lastAccessFrame = ctx.frameCounter; // Update LRU timestamp
 
 			// Check each sub-chunk for visibility
 			for (const auto& subChunk : cache.subChunks) {
 				// AABB intersection test: is sub-chunk visible?
-				if (subChunk.maxX < visMinX || subChunk.minX > visMaxX || subChunk.maxY < visMinY || subChunk.minY > visMaxY) {
+				if (subChunk.maxX < vis.minX || subChunk.minX > vis.maxX || subChunk.maxY < vis.minY || subChunk.minY > vis.maxY) {
 					continue; // Sub-chunk is completely off-screen
 				}
 

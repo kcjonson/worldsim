@@ -9,23 +9,19 @@
 #include "assets/placement/PlacementExecutor.h"
 #include "gl/GLBuffer.h"
 #include "gl/GLVertexArray.h"
-#include "world/camera/WorldCamera.h"
 #include "world/chunk/ChunkCoordinate.h"
 #include "world/rendering/BakedEntityMesh.h"
 #include "world/rendering/InstancingUniforms.h"
+#include "world/rendering/RenderContext.h"
+#include "world/rendering/TemplateMeshCache.h"
 
 #include <array>
 #include <cstdint>
-#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
 #include <GL/glew.h>
-
-namespace renderer {
-struct TessellatedMesh;
-}
 
 namespace engine::world {
 
@@ -57,20 +53,11 @@ class BakedChunkRenderer {
 	}
 
 	/// Render static entities using baked per-chunk meshes (glDrawElements, no instancing).
-	void renderBakedChunks(
-		const std::unordered_set<ChunkCoordinate>& processedChunks,
-		const WorldCamera&						   camera,
-		int										   viewportWidth,
-		int										   viewportHeight,
-		float									   pixelsPerMeter,
-		uint64_t								   frameCounter,
-		InstancingUniforms&						   uniforms,
-		RenderStats&							   stats
-	);
+	void renderBakedChunks(const RenderContext& ctx, InstancingUniforms& uniforms, RenderStats& stats);
 
-	/// Phase 4: LRU cache eviction. Keep recently-used chunks cached even when
-	/// not visible, to avoid re-uploading when panning back and forth. Only
-	/// evict oldest when cache exceeds threshold.
+	/// LRU cache eviction. Keep recently-used chunks cached even when not visible,
+	/// to avoid re-uploading when panning back and forth. Only evict oldest when
+	/// cache exceeds threshold.
 	void evictLRU(const std::unordered_set<ChunkCoordinate>& processedChunks);
 
   private:
@@ -121,11 +108,8 @@ class BakedChunkRenderer {
 	};
 	std::vector<PendingUpload> m_pendingUploads;
 
-	// Cache for template meshes (keyed by defName)
-	std::unordered_map<std::string, const renderer::TessellatedMesh*> m_templateCache;
-
-	/// Get or cache a template mesh
-	const renderer::TessellatedMesh* getTemplate(const std::string& defName);
+	// Memoized template meshes (keyed by defName)
+	TemplateMeshCache m_templateCache;
 
 	/// Upload a single sub-chunk's buffers into an existing cache entry.
 	/// @return Bytes of vertex+index data uploaded

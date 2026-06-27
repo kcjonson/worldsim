@@ -21,6 +21,7 @@
 #include "world/rendering/GroundcoverRenderer.h"
 #include "world/rendering/InstancedEntityRenderer.h"
 #include "world/rendering/InstancingUniforms.h"
+#include "world/rendering/RenderContext.h"
 
 #include <cstdint>
 #include <unordered_set>
