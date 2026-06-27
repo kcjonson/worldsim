@@ -825,17 +825,18 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 
 ## Deferred Epics
 
-### ⏸️ Animated Vector Graphics Performance Optimization
+### ⏸️ Complex Flora CPU Optimization (deferred)
 **Spec/Documentation:** `/docs/technical/vector-graphics/animation-performance.md`
 **Dependencies:** Vector Graphics Validation (completed)
 **Status:** deferred
 
-**Reason:** Setting aside performance work to focus on MVP game systems. GPU instancing (Phase 2) is complete and provides sufficient performance (34k+ entities at 60 FPS).
+**Scope:** Tier 2/3 CPU-side optimization (arena allocators, temporal coherence caching, SIMD Bezier flattening) for *complex close-up* world objects with true Bezier curve deformation (large trees), capped count, high zoom only. This is NOT the grass/groundcover path and NOT wind: dense groundcover renders via static GPU instancing and animates in the vertex shader (see Living Environment Rendering). Renamed from "Animated Vector Graphics Performance Optimization" because the old name collided with wind animation, which this epic does not own.
+
+**Reason deferred:** MVP game systems take priority. GPU instancing already gives sufficient performance for current needs.
 
 **Remaining Work (deferred):**
-- Phase 1: CPU Optimization Stack (arena allocators, temporal coherence, SIMD)
-- Phase 2.2: Vertex Shader Animation (wind displacement)
-- Phase 3: Tiered System Integration
+- Phase 1: CPU Optimization Stack (arena allocators, temporal coherence, SIMD Bezier)
+- Phase 3: Tiered selector (route complex assets between the CPU and instanced paths by distance/complexity)
 
 ---
 
@@ -894,12 +895,14 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 
 ---
 
-### 2D Render Performance Overhaul
-**Spec/Documentation:** `.claude/plans/render-performance-overhaul.md`, `/docs/development-log/entries/2026-06-09-render-performance-analysis.md`
+### ✅ 2D Render Performance Overhaul (foundation, Phases 1-3 complete)
+**Spec/Documentation:** `.claude/plans/render-performance-overhaul.md`, `/docs/development-log/entries/2026-06-10-render-performance-overhaul.md`
 **Dependencies:** None
-**Status:** ready
+**Status:** core complete (Phases 1-3 landed 2026-06-10); Phases 4-5 parked as a small follow-up, not a blocker
 
 **Goal:** Fix the measured collapse at zoom-out (4 FPS at 0.25x) and scroll hitches (112-443ms). Persistent GPU tile geometry, async entity bake, far-zoom impostor handoff. Target 120 FPS at every zoom at current flora density (headroom for massively increased density later); 4x density stress must hold 60+.
+
+**Foundation note:** This epic established groundcover's two-representation contract: vector geometry up close, baked tile texture far away, with the impostor handoff between them at ~3px on-screen blade height. Living Environment Rendering builds directly on that contract.
 
 **Tasks:**
 - [x] Profiling tooling (camera/vsync control endpoints, perf-capture.ps1, draw call metrics fix)
@@ -914,14 +917,20 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 ---
 
 ### Living Environment Rendering
-**Spec/Documentation:** `.claude/plans/living-environment-rendering.md`
-**Dependencies:** 2D Render Performance Overhaul (Phases 1-3)
-**Status:** ready
+**Spec/Documentation:** `.claude/plans/living-environment-rendering.md`, `.claude/plans/we-have-a-number-fuzzy-pearl.md` (grass capacity + groundcover plan)
+**Dependencies:** 2D Render Performance Overhaul (Phases 1-3, complete)
+**Status:** in progress
 
-**Goal:** Wind-blown grass at scale, grass parting around colonists with footprint trails, animated reactive water. Vertex-shader animation + interaction displacement maps; no per-frame CPU tessellation.
+**Goal:** Wind-blown grass at scale (potentially hundreds of thousands of blades), grass parting around colonists with footprint trails, animated reactive water. Vertex-shader animation + interaction displacement maps; no per-frame CPU tessellation. Prerequisite surfaced 2026-06-26: grass currently renders through the static *baked* path, which cannot hold that density (memory + upload). A dense-flora render path (static GPU instancing) must land before wind.
 
 **Tasks:**
-- [ ] M-A: WindSystem + vertex-shader wind for instanced and baked flora
+- [x] Story 0: Groundcover asset class + dense flora render path
+  - [x] Restore grass visibility: grass biome coverage (was absent at the XericShrubland quickstart spawn)
+  - [x] AssetRole taxonomy (Groundcover vs WorldObject); grass moved to Groundcover_Grass + tagged groundcover; dead RenderingTier removed
+  - [x] Grass authored as a procedural Lua asset (grass.lua + XML params); all look/feel data-driven, hardcoded GroundcoverMesh deleted
+  - [x] Capacity spike: proven ~486k instanced tufts / 13.2M tris at 1.75ms / locked 120fps (RelWithDebInfo, dense BorealForest)
+  - [x] GPU-instanced groundcover render path: role-routed (skipped by the bake), buildMesh-per-seed variant meshes, position-hash variant buckets, tunable zoom LOD; verified in-game
+- [ ] M-A: WindSystem + vertex-shader wind for instanced and baked flora (depends on Story 0)
 - [ ] M-B: Interaction displacement map (trampling) + footprint persistence
 - [ ] M-C: Water ripple/foam/sparkle + interaction rings
 - [ ] M-D: Far-zoom wind sheen, tree sway, particles, blob shadows

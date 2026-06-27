@@ -85,6 +85,12 @@ namespace engine::world {
 		m_uniformLocations.pixelsPerMeter = glGetUniformLocation(shaderProgram, "u_pixelsPerMeter");
 		m_uniformLocations.viewportSize = glGetUniformLocation(shaderProgram, "u_viewportSize");
 		m_uniformLocations.bakedAlpha = glGetUniformLocation(shaderProgram, "u_bakedAlpha");
+		m_uniformLocations.grassMode = glGetUniformLocation(shaderProgram, "u_grassMode");
+		m_uniformLocations.grassOpenness = glGetUniformLocation(shaderProgram, "u_grassOpenness");
+		m_uniformLocations.grassReach = glGetUniformLocation(shaderProgram, "u_grassReach");
+		m_uniformLocations.cursorWorld = glGetUniformLocation(shaderProgram, "u_cursorWorld");
+		m_uniformLocations.cursorRadius = glGetUniformLocation(shaderProgram, "u_cursorRadius");
+		m_uniformLocations.cursorStrength = glGetUniformLocation(shaderProgram, "u_cursorStrength");
 		m_uniformLocations.initialized = true;
 	}
 
@@ -134,6 +140,11 @@ namespace engine::world {
 		// --- Phase 2: Render static entities from baked per-chunk meshes ---
 		// Fast path: single glDrawElements per chunk, no instancing overhead.
 		renderBakedChunks(processedChunks, camera, viewportWidth, viewportHeight);
+
+		// --- Phase 2b: Render groundcover (grass) via GPU instancing ---
+		// Groundcover entities are skipped by the baked path and drawn here as instanced
+		// variant tufts, with a zoom LOD that fades to the grass tile texture when zoomed out.
+		renderGroundcover(executor, processedChunks, camera, viewportWidth, viewportHeight);
 
 		// --- Phase 3: Render dynamic entities (per-frame rebuild) ---
 		// Dynamic entities (from ECS) change position each frame, so we rebuild them.
@@ -524,7 +535,13 @@ namespace engine::world {
 			chunkOrigin.x, chunkOrigin.y, chunkOrigin.x + kChunkWorldSize, chunkOrigin.y + kChunkWorldSize
 		);
 
-		auto cpuData = bakeChunkEntities(entities, coord, [this](const std::string& defName) { return getTemplate(defName); });
+		auto cpuData = bakeChunkEntities(entities, coord, [this](const std::string& defName) -> const renderer::TessellatedMesh* {
+			const auto* def = assets::AssetRegistry::Get().getDefinition(defName);
+			if (def != nullptr && def->role == assets::AssetRole::Groundcover) {
+				return nullptr; // groundcover renders via the instanced path, not baking
+			}
+			return getTemplate(defName);
+		});
 		uploadBakedChunk(coord, std::move(cpuData));
 	}
 
@@ -789,5 +806,171 @@ namespace engine::world {
 			glDisable(GL_CULL_FACE);
 		}
 	}
+
+// --- Groundcover (grass) GPU-instanced path ---
+
+namespace {
+	// Tunable groundcover constants.
+	constexpr float	   kGroundcoverHeightM = 0.5F;	  // blade height used for the zoom LOD
+	constexpr float	   kGroundcoverLodCutoffPx = 6.0F; // fade out below this on-screen height (px)
+	constexpr float	   kGroundcoverReachM = 0.55F;	  // max tuft reach (deform; flat at rest)
+	constexpr uint32_t kGroundcoverMaxInstancesPerVariant = 100000;
+} // namespace
+
+const std::vector<Renderer::InstancedMeshHandle>& EntityRenderer::ensureGroundcoverVariants(const std::string& defName) {
+	auto it = m_groundcoverHandles.find(defName);
+	if (it != m_groundcoverHandles.end()) {
+		return it->second;
+	}
+
+	// Generate the asset's variant tufts via the asset system (one buildMesh per seed) so the
+	// look lives entirely in the asset (grass.lua + params), not here.
+	std::vector<Renderer::InstancedMeshHandle> handles;
+	auto*									   batchRenderer = Renderer::Primitives::getBatchRenderer();
+	auto&									   registry = assets::AssetRegistry::Get();
+	const auto*								   def = registry.getDefinition(defName);
+	if (batchRenderer != nullptr && def != nullptr) {
+		const uint32_t variantCount = std::max<uint32_t>(1, def->variantCount);
+		handles.reserve(variantCount);
+		for (uint32_t seed = 0; seed < variantCount; ++seed) {
+			renderer::TessellatedMesh mesh;
+			if (registry.buildMesh(defName, seed, mesh) && !mesh.vertices.empty()) {
+				handles.push_back(batchRenderer->uploadInstancedMesh(mesh, kGroundcoverMaxInstancesPerVariant));
+			} else {
+				handles.emplace_back(); // invalid placeholder keeps variant indices aligned
+			}
+		}
+	}
+	auto [insIt, _] = m_groundcoverHandles.emplace(defName, std::move(handles));
+	return insIt->second;
+}
+
+void EntityRenderer::buildGroundcoverChunk(
+	const assets::PlacementExecutor& executor, const ChunkCoordinate& coord, GroundcoverChunkCache& cache
+) {
+	cache.byDef.clear();
+	cache.built = true;
+
+	WorldPosition	chunkOrigin = coord.origin();
+	constexpr float kChunkWorldSize = static_cast<float>(kChunkSize) * kTileSize;
+	cache.minX = chunkOrigin.x;
+	cache.minY = chunkOrigin.y;
+	cache.maxX = chunkOrigin.x + kChunkWorldSize;
+	cache.maxY = chunkOrigin.y + kChunkWorldSize;
+
+	const auto* index = executor.getChunkIndex(coord);
+	if (index == nullptr) {
+		return;
+	}
+
+	auto& registry = assets::AssetRegistry::Get();
+	auto  entities = index->queryRect(cache.minX, cache.minY, cache.maxX, cache.maxY);
+	for (const auto* e : entities) {
+		const auto* def = registry.getDefinition(e->defName);
+		if (def == nullptr || def->role != assets::AssetRole::Groundcover) {
+			continue;
+		}
+		const uint32_t variantCount = std::max<uint32_t>(1, def->variantCount);
+		auto&		   buckets = cache.byDef[e->defName];
+		if (buckets.size() != variantCount) {
+			buckets.resize(variantCount);
+		}
+		// Deterministic variant from quantized world position (chunk re-builds identically).
+		auto	 hx = static_cast<uint32_t>(static_cast<int32_t>(std::floor(e->position.x * 4.0F)));
+		auto	 hy = static_cast<uint32_t>(static_cast<int32_t>(std::floor(e->position.y * 4.0F)));
+		uint32_t v = ((hx * 73856093u) ^ (hy * 19349663u)) % variantCount;
+		buckets[v].emplace_back(
+			Foundation::Vec2(e->position.x, e->position.y), e->rotation, e->scale, Foundation::Color(e->colorTint)
+		);
+	}
+}
+
+void EntityRenderer::renderGroundcover(
+	const assets::PlacementExecutor&		   executor,
+	const std::unordered_set<ChunkCoordinate>& processedChunks,
+	const WorldCamera&						   camera,
+	int										   viewportWidth,
+	int										   viewportHeight
+) {
+	auto* batchRenderer = Renderer::Primitives::getBatchRenderer();
+	if (batchRenderer == nullptr) {
+		return;
+	}
+
+	const float zoom = camera.zoom();
+	const float ppm = m_pixelsPerMeter;
+
+	// Zoom LOD: a tuft is kGroundcoverHeightM tall; below kGroundcoverLodCutoffPx on screen
+	// we skip the geometry entirely and let the grass tile texture carry it. Tunable.
+	const float bladeScreenPx = kGroundcoverHeightM * ppm * zoom;
+	const float lodAlpha = std::clamp((bladeScreenPx - kGroundcoverLodCutoffPx) / kGroundcoverLodCutoffPx, 0.0F, 1.0F);
+	if (lodAlpha <= 0.0F) {
+		return;
+	}
+
+	const float camX = camera.position().x;
+	const float camY = camera.position().y;
+	const float scale = ppm * zoom;
+	const float viewWorldW = static_cast<float>(viewportWidth) / scale;
+	const float viewWorldH = static_cast<float>(viewportHeight) / scale;
+	constexpr float kMargin = 2.0F;
+	const float		visMinX = camX - (viewWorldW * 0.5F) - kMargin;
+	const float		visMaxX = camX + (viewWorldW * 0.5F) + kMargin;
+	const float		visMinY = camY - (viewWorldH * 0.5F) - kMargin;
+	const float		visMaxY = camY + (viewWorldH * 0.5F) + kMargin;
+
+	GLuint shaderProgram = batchRenderer->getShaderProgram();
+	glUseProgram(shaderProgram);
+	initUniformLocations(shaderProgram);
+	if (m_uniformLocations.grassMode >= 0) {
+		glUniform1i(m_uniformLocations.grassMode, 1);
+	}
+	if (m_uniformLocations.grassOpenness >= 0) {
+		glUniform1f(m_uniformLocations.grassOpenness, 1.0F);
+	}
+	if (m_uniformLocations.grassReach >= 0) {
+		glUniform1f(m_uniformLocations.grassReach, kGroundcoverReachM);
+	}
+	if (m_uniformLocations.cursorRadius >= 0) {
+		glUniform1f(m_uniformLocations.cursorRadius, 0.0F); // no interaction deform yet
+	}
+	if (m_uniformLocations.bakedAlpha >= 0) {
+		glUniform1f(m_uniformLocations.bakedAlpha, lodAlpha);
+	}
+
+	const Foundation::Vec2 cameraPos(camX, camY);
+	for (const auto& coord : processedChunks) {
+		auto& cache = m_groundcoverChunkCache[coord];
+		cache.lastAccessFrame = frameCounter;
+		if (!cache.built) {
+			buildGroundcoverChunk(executor, coord, cache);
+		}
+		if (cache.maxX < visMinX || cache.minX > visMaxX || cache.maxY < visMinY || cache.minY > visMaxY) {
+			continue;
+		}
+		for (auto& [defName, buckets] : cache.byDef) {
+			const auto&	 handles = ensureGroundcoverVariants(defName);
+			const size_t count = std::min(buckets.size(), handles.size());
+			for (size_t v = 0; v < count; ++v) {
+				auto& inst = buckets[v];
+				if (inst.empty() || !handles[v].isValid()) {
+					continue;
+				}
+				batchRenderer->drawInstanced(
+					handles[v], inst.data(), static_cast<uint32_t>(inst.size()), cameraPos, zoom, ppm
+				);
+				m_lastEntityCount += static_cast<uint32_t>(inst.size());
+			}
+		}
+	}
+
+	// Restore normal (non-grass) instancing state for the rest of the frame.
+	if (m_uniformLocations.grassMode >= 0) {
+		glUniform1i(m_uniformLocations.grassMode, 0);
+	}
+	if (m_uniformLocations.bakedAlpha >= 0) {
+		glUniform1f(m_uniformLocations.bakedAlpha, 1.0F);
+	}
+}
 
 } // namespace engine::world
