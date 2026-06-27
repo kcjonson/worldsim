@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-26 (Physical carry & stacks epics complete and merged (#218/#219/#224/#228/#230/#232/#233): two-hand wood armfuls + strength-derived carry, then a universal physical "stack" model -- one material capped at its own stackSize everywhere -- plus construction sites that hold their required materials directly and dump to the ground on demolish. See dev log 2026-06-26-physical-stack-inventory.md and plan 2026-06-26-bulk-material-carry-felling.md. Earlier: 2D landscape from 3D hydrology epic complete and merged (#212) -- replaced the noise-flood ponds with sparse biome/precip-weighted ponds + desert oases, implemented Distribution::Spaced with grove/glade/thicket clustering for denser natural forests, and fixed riparian plants (reeds on the mud bank + bankside bushes); follows the merged 2D rivers #208 and tributaries/springs #210. See dev log 2026-06-22-hydrology-ponds-and-proper-forests.md. Earlier: Realistic chained build loop: mass-based carry weight + axe-gated chopping + wood-unit tree harvesting; the colonist chops to its carry cap, hauls, repeats, then builds. Plus the task-chaining UI/AI fixes found verifying it (in-progress-work priority calc, friendly labels, full-width info-panel task lines, "Next" chain step, build-progress percent + on-map fill, global task list Build umbrella + who's-working-it) — see dev log 2026-06-20-carry-weight-axe-gated-harvest.md. Earlier on main: Asset Manager epic #205 (dev log 2026-06-20-asset-manager.md), Cryosphere #199, Navigation P4 belief filtering #189/#191/#194, Vision System #172-184, Salvage UI cutover #176-181)
+Last Updated: 2026-06-27 (Groundcover render path complete and merged (#238): grass is now a first-class GPU-instanced groundcover role driven by a procedural Lua asset (24 variants, ~486k tufts @ 120fps/1.75ms), placed entities no longer randomly tilt (opt-in <randomRotation>), and the EntityRenderer god-class was decomposed into per-path renderers. Story 0 of Living Environment Rendering; M-A wind next. See dev log 2026-06-27-groundcover-render-path.md. Earlier: Worldgen M7 complete: input-validation envelope + fail-loud reason channel, golden full-pipeline worldHash gate that turns dual-platform CI into a cross-platform determinism check (+ worldgen-cli --expect-hash), and a benchmark-calibrated default resolution (gen-time sweep on the reference machine; kept n=1024 as a documented kDefaultGridSubdivision). Closes the last engineering task of the World Generation & Creator epic; only the deferred planet-DB streaming and landing-difficulty UX remain. See dev log 2026-06-26-worldgen-m7-hardening.md. Earlier: Physical carry & stacks epics complete and merged (#218/#219/#224/#228/#230/#232/#233): two-hand wood armfuls + strength-derived carry, then a universal physical "stack" model -- one material capped at its own stackSize everywhere -- plus construction sites that hold their required materials directly and dump to the ground on demolish. See dev log 2026-06-26-physical-stack-inventory.md and plan 2026-06-26-bulk-material-carry-felling.md. Earlier: 2D landscape from 3D hydrology epic complete and merged (#212) -- replaced the noise-flood ponds with sparse biome/precip-weighted ponds + desert oases, implemented Distribution::Spaced with grove/glade/thicket clustering for denser natural forests, and fixed riparian plants (reeds on the mud bank + bankside bushes); follows the merged 2D rivers #208 and tributaries/springs #210. See dev log 2026-06-22-hydrology-ponds-and-proper-forests.md. Earlier: Realistic chained build loop: mass-based carry weight + axe-gated chopping + wood-unit tree harvesting; the colonist chops to its carry cap, hauls, repeats, then builds. Plus the task-chaining UI/AI fixes found verifying it (in-progress-work priority calc, friendly labels, full-width info-panel task lines, "Next" chain step, build-progress percent + on-map fill, global task list Build umbrella + who's-working-it) — see dev log 2026-06-20-carry-weight-axe-gated-harvest.md. Earlier on main: Asset Manager epic #205 (dev log 2026-06-20-asset-manager.md), Cryosphere #199, Navigation P4 belief filtering #189/#191/#194, Vision System #172-184, Salvage UI cutover #176-181)
 
 ## Epic/Story/Task Template
 
@@ -620,7 +620,7 @@ while (running) {
 - [x] M3d: Precipitation + rivers (P5)
 - [x] M3e: Oceans, biomes, snow, summary (P6–P9)
 - [x] M3f: planet-view lib (renderer, camera, picker, colorizer; chunked-LOD deferred to M3f-2)
-- [ ] Hex conversion + scalable crisp globe rendering (`.claude/plans/lets-work-on-the-serene-waterfall.md`)
+- [x] Hex conversion + scalable crisp globe rendering (`.claude/plans/lets-work-on-the-serene-waterfall.md`)
   - [x] Phase 1: SphereGrid Goldberg hex semantics (vertex-centered tiles, 10n²+2, cube-round assignment, 6-neighbor offsets, locateHex)
   - [x] Phase 2: consumers re-baselined (neighbors=6, locateHex sampling, PlanetIO version bump)
   - [x] Phase 3: two-tier crisp rendering — base mips (async bake, dirty-flag coalescing) + detail page cache (130×130 pages, 2D-array atlas, LRU, page table), per-pixel hex assignment in planet.frag, camera deep-zoom near-plane + n-aware min distance. Supersedes the M3f-2 "chunked LOD" placeholder.
@@ -634,7 +634,11 @@ while (running) {
   - [x] Quick Start: cached pre-generated planet (PlanetIO save/load), bypasses generation
   - [x] Persist accepted world on landing confirm
   - [ ] Landing site local preview + difficulty rating (UX spec, deferred)
-- [ ] M7: Hardening, benchmark-gated default resolution, cross-platform determinism
+- [x] M7: Hardening, benchmark-gated default resolution, cross-platform determinism
+  - [x] Input-validation envelope + fail-loud reason channel (PlanetParams::validate, GenerationError, bad_alloc/NaN guards)
+  - [x] Golden full-pipeline worldHash gate (PlanetGeneratorHeavy.GoldenWorldHash; dual-platform CI = cross-platform gate); worldgen-cli --expect-hash
+  - [x] Benchmark-calibrated default n (sweep on reference machine; kDefaultGridSubdivision=1024, documented). See dev log 2026-06-26-worldgen-m7-hardening.md
+- [x] Quickstart planet: prebuilt + shipped at max res (n=2048), build-time bake (worldgen-cli --save-planet + quickstart-planet CMake target); loader load-only, menu disables Quick Start when absent. Never generated at runtime. See dev log 2026-06-26-quickstart-prebuilt-planet.md
 - [ ] Future: planet database — mmap/streamed reads from PlanetIO files for n>=4096 planets instead of whole-planet RAM residency (PlanetIO v1 SoA layout is already offset-addressable; see development log)
 
 ---
@@ -825,17 +829,18 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 
 ## Deferred Epics
 
-### ⏸️ Animated Vector Graphics Performance Optimization
+### ⏸️ Complex Flora CPU Optimization (deferred)
 **Spec/Documentation:** `/docs/technical/vector-graphics/animation-performance.md`
 **Dependencies:** Vector Graphics Validation (completed)
 **Status:** deferred
 
-**Reason:** Setting aside performance work to focus on MVP game systems. GPU instancing (Phase 2) is complete and provides sufficient performance (34k+ entities at 60 FPS).
+**Scope:** Tier 2/3 CPU-side optimization (arena allocators, temporal coherence caching, SIMD Bezier flattening) for *complex close-up* world objects with true Bezier curve deformation (large trees), capped count, high zoom only. This is NOT the grass/groundcover path and NOT wind: dense groundcover renders via static GPU instancing and animates in the vertex shader (see Living Environment Rendering). Renamed from "Animated Vector Graphics Performance Optimization" because the old name collided with wind animation, which this epic does not own.
+
+**Reason deferred:** MVP game systems take priority. GPU instancing already gives sufficient performance for current needs.
 
 **Remaining Work (deferred):**
-- Phase 1: CPU Optimization Stack (arena allocators, temporal coherence, SIMD)
-- Phase 2.2: Vertex Shader Animation (wind displacement)
-- Phase 3: Tiered System Integration
+- Phase 1: CPU Optimization Stack (arena allocators, temporal coherence, SIMD Bezier)
+- Phase 3: Tiered selector (route complex assets between the CPU and instanced paths by distance/complexity)
 
 ---
 
@@ -894,12 +899,14 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 
 ---
 
-### 2D Render Performance Overhaul
-**Spec/Documentation:** `.claude/plans/render-performance-overhaul.md`, `/docs/development-log/entries/2026-06-09-render-performance-analysis.md`
+### ✅ 2D Render Performance Overhaul (foundation, Phases 1-3 complete)
+**Spec/Documentation:** `.claude/plans/render-performance-overhaul.md`, `/docs/development-log/entries/2026-06-10-render-performance-overhaul.md`
 **Dependencies:** None
-**Status:** ready
+**Status:** core complete (Phases 1-3 landed 2026-06-10); Phases 4-5 parked as a small follow-up, not a blocker
 
 **Goal:** Fix the measured collapse at zoom-out (4 FPS at 0.25x) and scroll hitches (112-443ms). Persistent GPU tile geometry, async entity bake, far-zoom impostor handoff. Target 120 FPS at every zoom at current flora density (headroom for massively increased density later); 4x density stress must hold 60+.
+
+**Foundation note:** This epic established groundcover's two-representation contract: vector geometry up close, baked tile texture far away, with the impostor handoff between them at ~3px on-screen blade height. Living Environment Rendering builds directly on that contract.
 
 **Tasks:**
 - [x] Profiling tooling (camera/vsync control endpoints, perf-capture.ps1, draw call metrics fix)
@@ -914,14 +921,21 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 ---
 
 ### Living Environment Rendering
-**Spec/Documentation:** `.claude/plans/living-environment-rendering.md`
-**Dependencies:** 2D Render Performance Overhaul (Phases 1-3)
-**Status:** ready
+**Spec/Documentation:** `.claude/plans/living-environment-rendering.md`, `.claude/plans/we-have-a-number-fuzzy-pearl.md` (grass capacity + groundcover plan)
+**Dependencies:** 2D Render Performance Overhaul (Phases 1-3, complete)
+**Status:** in progress — Story 0 (render path) shipped in PR #238 (merged 2026-06-27); reactive animation (M-A onward) continues, split in Specboard as the "Living Environment: reactive flora & water" epic.
 
-**Goal:** Wind-blown grass at scale, grass parting around colonists with footprint trails, animated reactive water. Vertex-shader animation + interaction displacement maps; no per-frame CPU tessellation.
+**Goal:** Wind-blown grass at scale (potentially hundreds of thousands of blades), grass parting around colonists with footprint trails, animated reactive water. Vertex-shader animation + interaction displacement maps; no per-frame CPU tessellation. Prerequisite surfaced 2026-06-26: grass currently renders through the static *baked* path, which cannot hold that density (memory + upload). A dense-flora render path (static GPU instancing) must land before wind.
 
 **Tasks:**
-- [ ] M-A: WindSystem + vertex-shader wind for instanced and baked flora
+- [x] Story 0: Groundcover asset class + dense flora render path — SHIPPED in PR #238 (merged 2026-06-27)
+  - [x] Restore grass visibility: grass biome coverage (was absent at the XericShrubland quickstart spawn)
+  - [x] AssetRole taxonomy (Groundcover vs WorldObject); grass moved to Groundcover_Grass + tagged groundcover; dead RenderingTier removed
+  - [x] Grass authored as a procedural Lua asset (grass.lua + XML params); all look/feel data-driven, hardcoded GroundcoverMesh deleted
+  - [x] Capacity spike: proven ~486k instanced tufts / 13.2M tris at 1.75ms / locked 120fps (RelWithDebInfo, dense BorealForest)
+  - [x] GPU-instanced groundcover render path: role-routed (skipped by the bake), buildMesh-per-seed variant meshes, position-hash variant buckets, tunable zoom LOD; verified in-game
+  - [x] Placement upright-rotation fix (opt-in `<randomRotation>`); EntityRenderer decomposed into per-path renderers; local 5-agent review + cleanup
+- [ ] M-A: WindSystem + vertex-shader wind for instanced and baked flora (depends on Story 0)
 - [ ] M-B: Interaction displacement map (trampling) + footprint persistence
 - [ ] M-C: Water ripple/foam/sparkle + interaction rings
 - [ ] M-D: Far-zoom wind sheen, tree sway, particles, blob shadows

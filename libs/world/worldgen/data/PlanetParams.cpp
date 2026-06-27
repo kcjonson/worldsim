@@ -2,7 +2,32 @@
 
 #include <math/DeterministicMath.h>
 
+#include <string>
+
 namespace worldgen {
+
+std::optional<std::string> PlanetParams::validate() const {
+    if (gridSubdivision < kMinGridSubdivision || gridSubdivision > kMaxGridSubdivision)
+        return "gridSubdivision " + std::to_string(gridSubdivision) + " out of range ["
+             + std::to_string(kMinGridSubdivision) + ", "
+             + std::to_string(kMaxGridSubdivision) + "]";
+    if (tectonicPlateCount < 2 || tectonicPlateCount > 30)
+        return "tectonicPlateCount " + std::to_string(tectonicPlateCount)
+             + " out of range [2, 30]";
+    if (waterAmount < 0.0 || waterAmount > 1.0)
+        return "waterAmount " + std::to_string(waterAmount) + " out of range [0, 1]";
+    if (eccentricity < 0.0 || eccentricity > 0.95)
+        return "eccentricity " + std::to_string(eccentricity) + " out of range [0, 0.95]";
+    if (starMass <= 0.0)        return "starMass must be > 0";
+    if (starRadius <= 0.0)      return "starRadius must be > 0";
+    if (starTemperature <= 0.0) return "starTemperature must be > 0";
+    if (planetRadius <= 0.0)    return "planetRadius must be > 0";
+    if (planetMass <= 0.0)      return "planetMass must be > 0";
+    if (rotationRate <= 0.0)    return "rotationRate must be > 0";
+    if (semiMajorAxis <= 0.0)   return "semiMajorAxis must be > 0";
+    if (atmosphereStrength < 0.0) return "atmosphereStrength must be >= 0";
+    return std::nullopt;
+}
 
 PlanetParams PlanetParams::preset(Preset p) {
     PlanetParams params;

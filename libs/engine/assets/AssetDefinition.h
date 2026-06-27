@@ -210,10 +210,11 @@ namespace engine::assets {
 		Spaced	 // Maintains minimum distance between instances
 	};
 
-	/// Asset complexity - affects rendering strategy
+	/// Asset complexity - within a WorldObject, picks the tessellation/anim strategy.
+	/// Groundcover always uses the dense instanced path regardless of this.
 	enum class AssetComplexity {
-		Simple, // Uses GPU instancing (grass, small flora)
-		Complex // Individual tessellation (trees, buildings)
+		Simple, // Static tessellated geometry, baked
+		Complex // Tier 2/3 CPU Bezier deformation (large close-up trees; deferred)
 	};
 
 	/// Animation type - how animation is applied
@@ -223,11 +224,14 @@ namespace engine::assets {
 		BezierDeform // Full Bezier curve deformation (CPU, expensive)
 	};
 
-	/// Rendering tier - determines batching strategy
-	enum class RenderingTier {
-		Instanced, // Single template + GPU instancing
-		Batched,   // Multiple variants in batched draw calls
-		Individual // Each instance drawn separately
+	/// Asset role - the render/placement role that drives the pipeline.
+	/// Groundcover: dense, homogeneous, static GPU-instanced, hands off to the grass
+	/// tile texture at distance, uniform vertex-shader wind, non-interactive (grass).
+	/// WorldObject: everything else scattered in the world (trees, bushes, rocks,
+	/// sticks, stones) - sparse, heterogeneous, individually placed and baked.
+	enum class AssetRole {
+		WorldObject, // General placed world asset (default)
+		Groundcover  // Dense instanced ground cover (grass)
 	};
 
 	/// Key-value parameter store for generator configuration.
@@ -348,21 +352,26 @@ namespace engine::assets {
 
 	/// Complete asset definition parsed from XML
 	struct AssetDefinition {
-		std::string			  defName; // Unique identifier (e.g., "Flora_GrassBlade")
+		std::string			  defName; // Unique identifier (e.g., "Groundcover_Grass")
 		std::string			  label;   // Human-readable name
 		AssetType			  assetType = AssetType::Procedural;
 		std::string			  generatorName;	  // Generator to use (e.g., "GrassBlade") - C++ generators
 		std::string			  scriptPath;		  // For Lua generators: path to Lua script (relative to assets/)
 		std::string			  svgPath;			  // For Simple assets: path to SVG file
+		std::string			  motionPath;		  // Optional motion (animation clips) file; @shared/ or relative to baseFolder
 		std::filesystem::path baseFolder;		  // Folder containing this asset's definition (for relative path resolution)
 		float				  worldHeight = 1.0F; // World height in meters (for SVG normalization)
+		// Half-range of random placement rotation, in radians. 0 = upright (default): placed
+		// assets are upright billboards (trees, grass, bushes) and look wrong tilted. Opt-in (>0)
+		// only for ground scatter with no canonical orientation (loose rocks, debris).
+		float				  maxRandomRotation = 0.0F;
 		GeneratorParams		  params;			  // Parameters for generator
 		AnimationParams		  animation;
 		PlacementParams					  placement;	   // Where this asset spawns
 		EntityCapabilities				  capabilities;	   // What actions can be performed on/with this entity
 		std::optional<ItemProperties>	  itemProperties;  // Properties when in inventory (if carryable)
+		AssetRole						  role = AssetRole::WorldObject;
 		AssetComplexity					  complexity = AssetComplexity::Simple;
-		RenderingTier					  renderingTier = RenderingTier::Instanced;
 		uint32_t						  variantCount = 1; // Number of variants to pre-generate
 
 		CollisionShape collision; // Physical footprint for navmesh/collision; default None = doesn't block

@@ -9,6 +9,8 @@
     <assetType>simple</assetType>
     <svgPath>mossy_boulder.svg</svgPath>
     <worldHeight>0.4</worldHeight>
+    <!-- Ground scatter: no canonical orientation, so randomize placement angle. -->
+    <randomRotation>180</randomRotation>
 
     <rendering>
       <complexity>simple</complexity>

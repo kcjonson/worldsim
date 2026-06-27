@@ -48,6 +48,7 @@
 // ECS
 #include <ecs/World.h>
 #include <ecs/components/Action.h>
+#include <ecs/components/AnimationState.h>
 #include <ecs/components/Appearance.h>
 #include <ecs/components/Attributes.h>
 #include <ecs/components/Colonist.h>
@@ -1281,6 +1282,7 @@ namespace {
 			ecsWorld->addComponent<ecs::Velocity>(entity, ecs::Velocity{{0.0F, 0.0F}});
 			ecsWorld->addComponent<ecs::MovementTarget>(entity, ecs::MovementTarget{{0.0F, 0.0F}, 2.0F, false});
 			ecsWorld->addComponent<ecs::FacingDirection>(entity, ecs::FacingDirection{}); // Default: Down
+			ecsWorld->addComponent<ecs::AnimationState>(entity, ecs::AnimationState{});	 // Walk-cycle phase
 			ecsWorld->addComponent<ecs::Appearance>(entity, ecs::Appearance{"Colonist", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
 			ecsWorld->addComponent<ecs::Colonist>(entity, ecs::Colonist{newName});
 			ecsWorld->addComponent<ecs::NeedsComponent>(entity, ecs::NeedsComponent::createDefault());

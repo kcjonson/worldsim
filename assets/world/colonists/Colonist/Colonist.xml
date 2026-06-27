@@ -6,6 +6,7 @@
     <defName>Colonist</defName>
     <assetType>simple</assetType>
     <svgPath>colonist.svg</svgPath>
+    <motion>biped.motion.xml</motion>
     <worldHeight>1.0</worldHeight>
   </AssetDef>
 
@@ -14,6 +15,7 @@
     <defName>Colonist_up</defName>
     <assetType>simple</assetType>
     <svgPath>colonist_up.svg</svgPath>
+    <motion>biped.motion.xml</motion>
     <worldHeight>1.0</worldHeight>
   </AssetDef>
 
@@ -21,6 +23,7 @@
     <defName>Colonist_down</defName>
     <assetType>simple</assetType>
     <svgPath>colonist_down.svg</svgPath>
+    <motion>biped.motion.xml</motion>
     <worldHeight>1.0</worldHeight>
   </AssetDef>
 
@@ -28,6 +31,7 @@
     <defName>Colonist_left</defName>
     <assetType>simple</assetType>
     <svgPath>colonist_left.svg</svgPath>
+    <motion>biped.motion.xml</motion>
     <worldHeight>1.0</worldHeight>
   </AssetDef>
 
@@ -35,6 +39,7 @@
     <defName>Colonist_right</defName>
     <assetType>simple</assetType>
     <svgPath>colonist_right.svg</svgPath>
+    <motion>biped.motion.xml</motion>
     <worldHeight>1.0</worldHeight>
   </AssetDef>
 </AssetDefinitions>

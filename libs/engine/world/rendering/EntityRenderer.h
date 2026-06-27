@@ -7,20 +7,25 @@
 // Supports two rendering paths:
 // 1. GPU Instancing (default): One draw call per mesh type, transforms on GPU
 // 2. CPU Batching (fallback): All entities in one draw call, transforms on CPU
+//
+// This class is a thin orchestrator: it owns shared state (pixelsPerMeter, the
+// frame counter, the cached uniform locations, and the per-frame metrics) and
+// delegates each render path to a dedicated sub-renderer.
 
 #include "assets/placement/PlacementExecutor.h"
-#include "gl/GLBuffer.h"
-#include "gl/GLVertexArray.h"
-#include "world/rendering/BakedEntityMesh.h"
-#include "primitives/InstanceData.h"
-#include "vector/Tessellator.h"
 #include "world/camera/WorldCamera.h"
-#include "world/chunk/Chunk.h"
 #include "world/chunk/ChunkCoordinate.h"
+#include "world/rendering/BakedChunkRenderer.h"
+#include "world/rendering/BakedEntityMesh.h"
+#include "world/rendering/BatchedEntityRenderer.h"
+#include "world/rendering/GroundcoverRenderer.h"
+#include "world/rendering/InstancedEntityRenderer.h"
+#include "world/rendering/InstancingUniforms.h"
+#include "world/rendering/RenderContext.h"
 
-#include <GL/glew.h>
-#include <unordered_map>
+#include <cstdint>
 #include <unordered_set>
+#include <vector>
 
 namespace engine::world {
 
@@ -40,6 +45,10 @@ class EntityRenderer {
 	EntityRenderer& operator=(const EntityRenderer&) = delete;
 	EntityRenderer(EntityRenderer&&) = delete;
 	EntityRenderer& operator=(EntityRenderer&&) = delete;
+
+	/// Release a chunk's baked render mesh so it re-bakes (e.g. after entities
+	/// were removed from the placement index). Delegates to the baked sub-renderer.
+	void releaseBakedChunkCache(const ChunkCoordinate& coord) { baked.releaseBakedChunkCache(coord); }
 
 	/// Render entities from processed chunks
 	/// @param executor PlacementExecutor containing entity data
@@ -88,10 +97,6 @@ class EntityRenderer {
 	/// several chunk bakes complete at once while scrolling.
 	void queueBakedChunk(const ChunkCoordinate& coord, BakedChunkCPUData&& cpuData);
 
-	/// Release a chunk's baked GPU mesh so it re-bakes (without removed entities) on the next
-	/// render. Used after clearing placed entities, e.g. carving the landing clearing at spawn.
-	void releaseBakedChunkCache(const ChunkCoordinate& coord);
-
 	/// Enable/disable GPU instancing (for A/B testing and fallback)
 	void setInstancingEnabled(bool enabled) { m_useInstancing = enabled; }
 	[[nodiscard]] bool isInstancingEnabled() const { return m_useInstancing; }
@@ -103,140 +108,20 @@ class EntityRenderer {
 	uint32_t m_lastTriangleCount = 0;
 	uint64_t frameCounter = 0;  // Incremented each render call (for LRU tracking)
 
-	// --- LRU Cache Configuration ---
-	// Keep recently-used chunks cached even when not visible, to avoid re-uploading
-	// when panning back and forth. Only evict oldest when cache exceeds threshold.
-	static constexpr size_t kMaxCachedChunks = 64;     // Max chunks to keep in cache
-	static constexpr size_t kEvictionBatchSize = 8;    // How many to evict when over limit
-
 	// --- Instancing Mode ---
 	bool m_useInstancing = true;
 
-	// Cache for GPU mesh handles (keyed by defName)
-	// These hold the SHARED mesh geometry (VBO/IBO) that all chunks reference
-	std::unordered_map<std::string, Renderer::InstancedMeshHandle> m_meshHandles;
+	/// Shared cached uniform locations for the baked + groundcover paths.
+	InstancingUniforms m_uniforms;
 
-	// Per-frame instance batches (grouped by mesh type, reused each frame)
-	// Used ONLY for dynamic entities that change per-frame
-	std::unordered_map<std::string, std::vector<Renderer::InstanceData>> m_instanceBatches;
-
-	// --- Baked Static Mesh Path with Sub-Chunk Culling ---
-	// Entity vertices are pre-transformed to world space once per chunk (on a
-	// worker thread via AsyncChunkProcessor, or on the render thread when an
-	// evicted chunk is revisited). Sub-regions are culled against the viewport.
-	// CPU bake types/constants live in BakedEntityMesh.h.
-
-	/// GPU resources for one height bucket of one sub-region.
-	struct BakedMeshGPU {
-		Renderer::GLVertexArray vao;     // VAO with baked vertex data
-		Renderer::GLBuffer vertexVBO;    // Pre-transformed vertices (world-space)
-		Renderer::GLBuffer indexIBO;     // Combined indices
-		uint32_t indexCount = 0;         // Total indices in IBO
-		uint32_t entityCount = 0;        // For debugging/metrics
-		float maxEntityHeight = 0.0F;    // Drives the far-zoom cutoff (short bucket)
-	};
-
-	/// GPU resources for a single sub-region's baked entity meshes.
-	struct BakedSubChunkData {
-		std::array<BakedMeshGPU, kFloraBucketCount> buckets;
-		float minX = 0, minY = 0;        // World-space bounds for culling
-		float maxX = 0, maxY = 0;
-	};
-
-	/// GPU resources for a chunk, subdivided into sub-regions.
-	struct BakedChunkData {
-		std::array<BakedSubChunkData, kSubChunkCount> subChunks;
-		uint32_t totalEntityCount = 0;   // For debugging/metrics
-		uint64_t lastAccessFrame = 0;    // For LRU eviction
-	};
-
-	/// Cache of baked per-chunk meshes.
-	std::unordered_map<ChunkCoordinate, BakedChunkData> m_bakedChunkCache;
-
-	/// CPU bakes waiting for budgeted GPU upload (FIFO; partially uploaded
-	/// chunks track progress via nextSubChunk)
-	struct PendingUpload {
-		ChunkCoordinate coord;
-		BakedChunkCPUData cpuData;
-		int nextSubChunk = 0;
-	};
-	std::vector<PendingUpload> m_pendingUploads;
-
-	/// Max bytes of baked vertex/index data uploaded per frame. A byte budget
-	/// (rather than a sub-chunk count) keeps the per-frame cost flat as flora
-	/// density grows; 2MB is well under 1ms of PCIe transfer.
-	static constexpr size_t kUploadBudgetBytesPerFrame = 2 * 1024 * 1024;
-
-	/// Upload pending sub-chunks until the byte budget is exhausted (render thread)
-	void processPendingUploads(size_t budgetBytes);
-
-	/// Upload a single sub-chunk's buffers into an existing cache entry.
-	/// @return Bytes of vertex+index data uploaded
-	size_t uploadSubChunk(BakedChunkData& bakedData, BakedSubChunkCPUData& cpu, int subIndex);
-
-	/// Cached uniform locations for instanced rendering (avoid glGetUniformLocation per frame).
-	struct CachedUniformLocations {
-		GLint projection = -1;
-		GLint transform = -1;
-		GLint instanced = -1;
-		GLint cameraPosition = -1;
-		GLint cameraZoom = -1;
-		GLint pixelsPerMeter = -1;
-		GLint viewportSize = -1;
-		GLint bakedAlpha = -1;
-		bool initialized = false;
-	};
-	CachedUniformLocations m_uniformLocations;
-
-	/// Initialize cached uniform locations from shader program.
-	void initUniformLocations(GLuint shaderProgram);
-
-	// --- Baked Static Mesh Methods ---
-
-	/// Re-bake a chunk from the executor's spatial index on the render thread.
-	/// Only used when a still-loaded chunk's baked mesh was LRU-evicted; new
-	/// chunks arrive pre-baked via uploadBakedChunk.
-	void buildBakedChunkMesh(const assets::PlacementExecutor& executor, const ChunkCoordinate& coord);
-
-	/// Render static entities using baked per-chunk meshes (glDrawElements, no instancing).
-	void renderBakedChunks(
-		const std::unordered_set<ChunkCoordinate>& processedChunks,
-		const WorldCamera& camera,
-		int viewportWidth,
-		int viewportHeight
-	);
-
-	/// Get or create GPU mesh handle for a template
-	Renderer::InstancedMeshHandle& getOrCreateMeshHandle(
-		const std::string& defName,
-		const renderer::TessellatedMesh* mesh
-	);
+	// --- Path sub-renderers (owned by value) ---
+	BakedChunkRenderer		 baked;
+	GroundcoverRenderer		 groundcover;
+	InstancedEntityRenderer	 instancedDynamic;
+	BatchedEntityRenderer	 batched;
 
 	/// Render using GPU instancing path
 	void renderInstanced(
-		const assets::PlacementExecutor& executor,
-		const std::unordered_set<ChunkCoordinate>& processedChunks,
-		const std::vector<assets::PlacedEntity>* dynamicEntities,
-		const WorldCamera& camera,
-		int viewportWidth,
-		int viewportHeight
-	);
-
-	// --- CPU Batching Mode (Fallback) ---
-
-	// Cache for template meshes (keyed by defName)
-	std::unordered_map<std::string, const renderer::TessellatedMesh*> m_templateCache;
-
-	// Per-frame geometry buffers (reused each frame)
-	std::vector<Foundation::Vec2> m_vertices;
-	std::vector<Foundation::Color> m_colors;
-	std::vector<uint16_t> m_indices;
-
-	/// Get or cache a template mesh
-	const renderer::TessellatedMesh* getTemplate(const std::string& defName);
-
-	/// Render using CPU batching path (original implementation)
-	void renderBatched(
 		const assets::PlacementExecutor& executor,
 		const std::unordered_set<ChunkCoordinate>& processedChunks,
 		const std::vector<assets::PlacedEntity>* dynamicEntities,

@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -68,9 +69,17 @@ class PlanetGenerator {
     // Returns nullptr if not complete. Clears the internal reference.
     std::shared_ptr<const GeneratedWorld> takeResult();
 
+    // Human-readable reason for the last Failed state (empty otherwise).
+    // Set by input validation, allocation failure, and stage invariant
+    // violations. Read by the loading scene to surface why a run failed.
+    std::string failureReason() const;
+
   private:
     void runPipeline(PlanetParams params);
     void publishSnapshot(std::shared_ptr<GeneratedWorld> world);
+
+    // Record a reason and transition to Failed. Thread-safe.
+    void fail(const std::string& reason);
 
     // Debug: compute a simple FNV checksum over all valid arrays
     static uint64_t computeFieldChecksums(const GeneratedWorld& w);
@@ -91,6 +100,10 @@ class PlanetGenerator {
     // Published snapshot — mutex-guarded pointer copy
     mutable std::mutex            snapshotMutex;
     std::shared_ptr<GeneratedWorld> latestSnapshot;
+
+    // Failure reason — guarded separately so progress() stays lock-free.
+    mutable std::mutex            failureMutex;
+    std::string                   failureReasonStr;
 
     // Total stage weight sum (computed at construction)
     float totalWeight{};

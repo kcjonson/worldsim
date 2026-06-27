@@ -8,6 +8,8 @@
     <assetType>simple</assetType>
     <svgPath>granite.svg</svgPath>
     <worldHeight>0.45</worldHeight>
+    <!-- Ground scatter: no canonical orientation, so randomize placement angle. -->
+    <randomRotation>180</randomRotation>
 
     <rendering>
       <complexity>simple</complexity>

@@ -212,7 +212,9 @@ namespace engine::assets {
 		// RNG distributions
 		std::uniform_real_distribution<float> chanceDist(0.0F, 1.0F);
 		std::uniform_real_distribution<float> offsetDist(0.0F, 1.0F); // Position within tile
-		std::uniform_real_distribution<float> rotationDist(-0.3F, 0.3F);
+		// Random orientation only for assets that opt in (ground scatter); upright by default so
+		// trees, grass, and other standing billboards are not tilted. Zero range yields 0 rotation.
+		std::uniform_real_distribution<float> rotationDist(-def->maxRandomRotation, def->maxRandomRotation);
 		std::uniform_real_distribution<float> scaleDist(0.8F, 1.2F);
 		std::uniform_real_distribution<float> colorDist(-0.08F, 0.08F);
 

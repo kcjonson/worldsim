@@ -3,6 +3,7 @@
 #include "../ISystem.h"
 #include "assets/placement/SpatialIndex.h"
 
+#include <deque>
 #include <vector>
 
 namespace ecs {
@@ -24,6 +25,11 @@ public:
 
 private:
     std::vector<engine::assets::PlacedEntity> renderData;
+
+    // Per-frame backing store for animated entities' per-part transforms. A deque so push_back
+    // keeps earlier entries' addresses stable (PlacedEntity::partTransforms points in here).
+    // Cleared at the top of each update.
+    std::deque<std::vector<engine::assets::PartTransform>> m_partXformStore;
 };
 
 }  // namespace ecs

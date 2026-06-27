@@ -10,6 +10,7 @@ namespace renderer {
 
 /// A loaded SVG shape with flattened paths ready for tessellation
 struct LoadedSVGShape {
+	std::string				id;			 ///< The shape's SVG `id` attribute ("" if none); the part tag for rigging
 	std::vector<VectorPath> paths;		 ///< Flattened polygon paths (Beziers already linearized)
 	bool					hasFill{true};	  ///< Whether the shape has a fill (false for stroke-only)
 	Foundation::Color		fillColor;	 ///< Solid fill color (and fallback when a gradient is ignored)

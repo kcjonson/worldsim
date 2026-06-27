@@ -37,6 +37,7 @@
 #include "worldgen/stages/TerrainStage.h"
 
 #include "worldgen/data/WorldData.h"
+#include "worldgen/pipeline/GenerationError.h"
 #include "worldgen/tectonics/CoarseSampler.h"
 #include "worldgen/tectonics/TectonicHistory.h"
 #include "worldgen/tectonics/TectonicParams.h"
@@ -345,7 +346,8 @@ void TerrainStage::run(StageContext& ctx) {
     // The coarse tectonic history is the source of thickness/orogeny/volcanism/
     // convergence. CrustStage runs before this stage and never clears it.
     const auto& hist = ctx.world.tectonicHistory;
-    assert(hist && "TerrainStage requires TectonicHistory (run after CrustStage)");
+    if (!hist)
+        throw GenerationError("TerrainStage requires TectonicHistory (run after CrustStage)");
     const SphereGrid& coarseGrid = *hist->grid;
     const float kWarpAmp = tectonics::warpAmplitude(coarseGrid);
 

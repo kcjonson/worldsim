@@ -10,6 +10,8 @@
     <assetType>simple</assetType>
     <svgPath>big_rock.svg</svgPath>
     <worldHeight>1.5</worldHeight>
+    <!-- Ground scatter: no canonical orientation, so randomize placement angle. -->
+    <randomRotation>180</randomRotation>
 
     <rendering>
       <complexity>simple</complexity>

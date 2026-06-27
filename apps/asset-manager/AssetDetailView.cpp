@@ -233,6 +233,7 @@ namespace asset_manager {
 			const float inner = std::max(8.0F, side - (2.0F * theme::s2));
 			m_variants[i].setSize(inner, inner);
 			m_variants[i].setPosition(fx + ((side - inner) * 0.5F), fy + ((side - inner) * 0.5F));
+			m_variants[i].setAnimated(true); // detail preview sweeps motion; nav thumbnails don't
 		};
 
 		if (m_procedural) {

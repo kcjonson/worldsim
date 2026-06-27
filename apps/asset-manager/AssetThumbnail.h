@@ -22,6 +22,10 @@ namespace asset_manager {
 		void setAsset(std::string defName, uint32_t seed = 42U);
 		void setSize(float width, float height);
 
+		// Opt in to sweeping the asset's motion clip over time (the big detail preview only;
+		// the nav-tree thumbnails stay still). No-op for assets without a motion.
+		void setAnimated(bool animated) { m_animated = animated; }
+
 		// Drop all cached meshes (call after an asset reload so thumbnails rebuild).
 		static void clearCache();
 
@@ -56,6 +60,7 @@ namespace asset_manager {
 		Foundation::Rect				 m_sourceBounds{0.0F, 0.0F, 0.0F, 0.0F}; // raw mesh bounds for the current asset
 		Foundation::Rect				 m_targetRect{0.0F, 0.0F, 0.0F, 0.0F};	 // fit target rect (pixel space)
 		bool							 m_dirty = true;
+		bool							 m_animated = false; // sweep the motion clip (detail preview only)
 			uint64_t						 m_cacheGen = 0; // meshCache generation m_mesh was fetched at; stale => refetch
 	};
 

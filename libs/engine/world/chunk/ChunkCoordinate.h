@@ -14,6 +14,7 @@ namespace engine::world {
 /// Constants for chunk system
 inline constexpr int32_t kChunkSize = 512;	// Tiles per chunk dimension
 inline constexpr float kTileSize = 1.0F;	// Meters per tile
+inline constexpr float kChunkWorldSize = static_cast<float>(kChunkSize) * kTileSize; // Meters per chunk dimension
 
 /// Corners of a chunk (for biome sampling)
 enum class ChunkCorner : uint8_t {

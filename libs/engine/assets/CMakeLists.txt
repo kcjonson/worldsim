@@ -2,6 +2,8 @@ add_library(assets
     ActionTypeRegistry.cpp
     AssetRegistry.cpp
     AssetRenderer.cpp
+    SvgPathNodes.cpp
+    MotionEval.cpp
     AssetValidator.cpp
     ConstructionRegistry.cpp
     AssetBatcher.cpp
