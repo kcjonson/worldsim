@@ -510,6 +510,11 @@ namespace engine::assets {
 			def.svgPath = defNode.child_value("svgPath");
 			def.worldHeight = static_cast<float>(defNode.child("worldHeight").text().as_double(1.0));
 
+			// Random placement rotation (XML in degrees -> radians). Default 0 = upright.
+			constexpr float kDegToRad = 0.01745329252F;
+			def.maxRandomRotation =
+				static_cast<float>(defNode.child("randomRotation").text().as_double(0.0)) * kDegToRad;
+
 			// Rendering settings
 			pugi::xml_node renderNode = defNode.child("rendering");
 			if (renderNode) {

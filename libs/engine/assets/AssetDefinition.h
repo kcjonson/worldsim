@@ -360,6 +360,10 @@ namespace engine::assets {
 		std::string			  svgPath;			  // For Simple assets: path to SVG file
 		std::filesystem::path baseFolder;		  // Folder containing this asset's definition (for relative path resolution)
 		float				  worldHeight = 1.0F; // World height in meters (for SVG normalization)
+		// Half-range of random placement rotation, in radians. 0 = upright (default): placed
+		// assets are upright billboards (trees, grass, bushes) and look wrong tilted. Opt-in (>0)
+		// only for ground scatter with no canonical orientation (loose rocks, debris).
+		float				  maxRandomRotation = 0.0F;
 		GeneratorParams		  params;			  // Parameters for generator
 		AnimationParams		  animation;
 		PlacementParams					  placement;	   // Where this asset spawns

@@ -8,6 +8,8 @@
     <assetType>simple</assetType>
     <svgPath>frost_shattered_rock.svg</svgPath>
     <worldHeight>0.3</worldHeight>
+    <!-- Ground scatter: no canonical orientation, so randomize placement angle. -->
+    <randomRotation>180</randomRotation>
 
     <rendering>
       <complexity>simple</complexity>
