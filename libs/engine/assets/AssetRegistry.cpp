@@ -2,6 +2,7 @@
 // Handles XML parsing with pugixml and asset generation.
 
 #include "assets/AssetRegistry.h"
+#include "assets/SvgPathNodes.h"
 #include "assets/lua/LuaGenerator.h"
 
 #include <utils/Log.h>
@@ -10,6 +11,7 @@
 
 #include <pugixml.hpp>
 
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <limits>
@@ -353,6 +355,95 @@ namespace engine::assets {
 			return frame;
 		}
 
+		// --- Motion (animation) parsing helpers -------------------------------------------------
+
+		MotionChannel parseMotionChannel(const std::string& s) {
+			if (s == "posX") {
+				return MotionChannel::PosX;
+			}
+			if (s == "posY") {
+				return MotionChannel::PosY;
+			}
+			if (s == "scaleX") {
+				return MotionChannel::ScaleX;
+			}
+			if (s == "scaleY") {
+				return MotionChannel::ScaleY;
+			}
+			return MotionChannel::Rotation;
+		}
+
+		MotionWave parseMotionWave(const std::string& s) { return (s == "triangle") ? MotionWave::Triangle : MotionWave::Sine; }
+
+		// Parse a <Motion>/<clip>/<drive> file into unresolved drivers (pivots not yet bound).
+		bool parseMotionXml(const std::string& path, MotionDef& out) {
+			pugi::xml_document doc;
+			if (!doc.load_file(path.c_str())) {
+				return false;
+			}
+			pugi::xml_node root = doc.child("Motion");
+			if (!root) {
+				root = doc.first_child();
+			}
+			if (!root) {
+				return false;
+			}
+			for (pugi::xml_node clipNode : root.children("clip")) {
+				MotionClip clip;
+				clip.name	= clipNode.attribute("name").as_string();
+				clip.stride = clipNode.attribute("stride").as_float(1.0F);
+				for (pugi::xml_node drvNode : clipNode.children("drive")) {
+					MotionDriver d;
+					d.part		  = drvNode.attribute("part").as_string();
+					d.node		  = drvNode.attribute("node").as_int(0);
+					d.channel	  = parseMotionChannel(drvNode.attribute("channel").as_string("rotation"));
+					d.wave		  = parseMotionWave(drvNode.attribute("fn").as_string("sine"));
+					d.amp		  = drvNode.attribute("amp").as_float(0.0F);
+					d.freq		  = drvNode.attribute("freq").as_float(1.0F);
+					d.phaseOffset = drvNode.attribute("phase").as_float(0.0F);
+					clip.drivers.push_back(d);
+				}
+				out.clips.push_back(std::move(clip));
+			}
+			return !out.clips.empty();
+		}
+
+		// First <path> in a subtree, in document order ("" if none).
+		std::string firstPathInSubtree(const pugi::xml_node& node) {
+			for (pugi::xml_node child : node.children()) {
+				if (std::string(child.name()) == "path") {
+					return child.attribute("d").value();
+				}
+				std::string d = firstPathInSubtree(child);
+				if (!d.empty()) {
+					return d;
+				}
+			}
+			return {};
+		}
+
+		// The `d` of the part identified by `partId`: if a <g id=partId>, its first descendant
+		// <path>'s d; if a <path id=partId>, its own d. "" when not found.
+		std::string findPartFirstPathD(const pugi::xml_node& node, const std::string& partId) {
+			for (pugi::xml_node child : node.children()) {
+				const pugi::xml_attribute idAttr = child.attribute("id");
+				if (idAttr && partId == idAttr.value()) {
+					if (std::string(child.name()) == "path") {
+						return child.attribute("d").value();
+					}
+					std::string d = firstPathInSubtree(child);
+					if (!d.empty()) {
+						return d;
+					}
+				}
+				std::string d = findPartFirstPathD(child, partId);
+				if (!d.empty()) {
+					return d;
+				}
+			}
+			return {};
+		}
+
 	} // namespace
 
 	std::optional<CollisionShape> AssetRegistry::loadCollisionFromSvgMetadata(const std::string& absoluteSvgPath, float worldHeight) {
@@ -508,6 +599,7 @@ namespace engine::assets {
 
 			// SVG path and world height (for simple assets)
 			def.svgPath = defNode.child_value("svgPath");
+			def.motionPath = defNode.child_value("motion"); // optional animation clips file
 			def.worldHeight = static_cast<float>(defNode.child("worldHeight").text().as_double(1.0));
 
 			// Random placement rotation (XML in degrees -> radians). Default 0 = upright.
@@ -935,6 +1027,15 @@ namespace engine::assets {
 			}
 		}
 
+		// Eager motion resolution (simple assets declaring a <motion> file): resolve + cache + log
+		// now, so the animation system finds it ready and any parse/pivot problems surface at load.
+		for (const std::string& name : loadedNames) {
+			auto it = definitions.find(name);
+			if (it != definitions.end() && !it->second.motionPath.empty()) {
+				getMotion(name);
+			}
+		}
+
 		LOG_DEBUG(Engine, "Loaded %d asset definitions from %s", loadedCount, xmlPath.c_str());
 		return loadedCount > 0;
 	}
@@ -1139,6 +1240,105 @@ namespace engine::assets {
 		return &templateCache[defName];
 	}
 
+	const MotionDef* AssetRegistry::getMotion(const std::string& defName) {
+		{
+			std::lock_guard<std::mutex> lk(m_motionCacheMutex);
+			auto					   it = m_motionCache.find(defName);
+			if (it != m_motionCache.end()) {
+				return it->second.empty() ? nullptr : &it->second;
+			}
+		}
+
+		MotionDef			   resolved; // stays empty unless resolution fully succeeds
+		const AssetDefinition* def = getDefinition(defName);
+		if (def != nullptr && !def->motionPath.empty() && def->assetType == AssetType::Simple && !def->svgPath.empty()) {
+			// Resolve the motion file path (@shared/<...> or relative to the asset folder).
+			std::filesystem::path motionFile;
+			const std::string&	  mp = def->motionPath;
+			const std::string	  sharedPrefix = "@shared/";
+			if (mp.rfind(sharedPrefix, 0) == 0 && !m_sharedScriptsPath.empty()) {
+				motionFile = m_sharedScriptsPath.parent_path() / mp.substr(sharedPrefix.size());
+			} else {
+				motionFile = def->resolvePath(mp);
+			}
+
+			MotionDef parsed;
+			if (!parseMotionXml(motionFile.string(), parsed)) {
+				LOG_WARNING(Engine, "[Motion] %s: failed to parse %s", defName.c_str(), motionFile.string().c_str());
+			} else {
+				// Load the SVG for the meter frame (scaleFactor) and the authored node coordinates.
+				const std::string					  svgFile = def->resolvePath(def->svgPath).string();
+				std::vector<renderer::LoadedSVGShape> shapes;
+				pugi::xml_document					  svgDoc;
+				const bool							  svgOk =
+					renderer::loadSVG(svgFile, kSvgCurveTolerance, shapes) && svgDoc.load_file(svgFile.c_str());
+				const SvgMeterFrame frame = svgOk ? computeSvgMeterFrame(shapes, def->worldHeight) : SvgMeterFrame{};
+				if (!svgOk || !frame.valid) {
+					LOG_WARNING(Engine, "[Motion] %s: SVG load/frame failed; motion unresolved", defName.c_str());
+				} else {
+					const float							 sf = frame.scaleFactor;
+					const pugi::xml_node				 svgRoot = svgDoc.child("svg");
+					std::unordered_map<std::string, std::vector<glm::vec2>> partNodes;
+					auto nodesFor = [&](const std::string& part) -> const std::vector<glm::vec2>& {
+						auto found = partNodes.find(part);
+						if (found == partNodes.end()) {
+							const std::string d = findPartFirstPathD(svgRoot, part);
+							found = partNodes.emplace(part, parseSvgPathNodes(d)).first;
+						}
+						return found->second;
+					};
+
+					int count = 0;
+					for (auto& clip : parsed.clips) {
+						for (auto& drv : clip.drivers) {
+							const auto& nodes = nodesFor(drv.part);
+							if (drv.node >= 0 && static_cast<size_t>(drv.node) < nodes.size()) {
+								drv.pivot	 = nodes[static_cast<size_t>(drv.node)] * sf; // scaled, uncentered (= template space)
+								drv.hasPivot = true;
+							} else {
+								LOG_WARNING(
+									Engine,
+									"[Motion] %s: part '%s' node %d out of range (%zu nodes)",
+									defName.c_str(),
+									drv.part.c_str(),
+									drv.node,
+									nodes.size()
+								);
+							}
+							// Bring amplitudes into runtime units: rotation -> radians, pos -> meters.
+							constexpr float kDegToRad = 3.14159265358979323846F / 180.0F;
+							if (drv.channel == MotionChannel::Rotation) {
+								drv.amp *= kDegToRad;
+							} else if (drv.channel == MotionChannel::PosX || drv.channel == MotionChannel::PosY) {
+								drv.amp *= sf;
+							}
+							++count;
+							LOG_DEBUG(
+								Engine,
+								"[Motion] %s '%s' part=%s node=%d pivot=(%.4f,%.4f) amp=%.4f freq=%.2f phase=%.2f",
+								defName.c_str(),
+								clip.name.c_str(),
+								drv.part.c_str(),
+								drv.node,
+								drv.pivot.x,
+								drv.pivot.y,
+								drv.amp,
+								drv.freq,
+								drv.phaseOffset
+							);
+						}
+					}
+					resolved = std::move(parsed);
+					LOG_INFO(Engine, "[Motion] %s resolved %d driver(s), scaleFactor=%.5f", defName.c_str(), count, sf);
+				}
+			}
+		}
+
+		std::lock_guard<std::mutex> lk(m_motionCacheMutex);
+		auto						emplaced = m_motionCache.emplace(defName, std::move(resolved));
+		return emplaced.first->second.empty() ? nullptr : &emplaced.first->second;
+	}
+
 	bool AssetRegistry::generateAsset(const std::string& defName, uint32_t seed, GeneratedAsset& outAsset) {
 		const AssetDefinition* def = getDefinition(defName);
 		if (def == nullptr) {
@@ -1264,6 +1464,10 @@ namespace engine::assets {
 		}
 		definitions.clear();
 		templateCache.clear();
+		{
+			std::lock_guard<std::mutex> lk(m_motionCacheMutex);
+			m_motionCache.clear();
+		}
 		groupIndex.clear();
 		// Reset the string-interning index too (mirrors clearDefinitions); otherwise name<->id
 		// and capability lookups return stale mappings for now-destroyed defs until a reload.
@@ -1461,6 +1665,10 @@ namespace engine::assets {
 	void AssetRegistry::clearDefinitions() {
 		definitions.clear();
 		templateCache.clear();
+		{
+			std::lock_guard<std::mutex> lk(m_motionCacheMutex);
+			m_motionCache.clear();
+		}
 		groupIndex.clear();
 		m_defNameToId.clear();
 		m_idToDefName.clear();

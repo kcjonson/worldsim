@@ -1,10 +1,13 @@
 #include "AssetThumbnail.h"
 
+#include <assets/AssetRegistry.h>
 #include <assets/AssetRenderer.h>
+#include <assets/MotionEval.h>
 #include <graphics/Color.h>
 #include <primitives/Primitives.h>
 
 #include <algorithm>
+#include <chrono>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -34,6 +37,15 @@ namespace asset_manager {
 		uint64_t& cacheGeneration() {
 			static uint64_t gen = 0;
 			return gen;
+		}
+
+		// Wall-clock-driven walk phase [0,1) for the preview sweep, so an asset with a motion
+		// animates continuously through its cycle. ~0.8 cycles/sec reads as a relaxed walk.
+		float sweepPhase() {
+			static const auto start = std::chrono::steady_clock::now();
+			const float		  secs = std::chrono::duration<float>(std::chrono::steady_clock::now() - start).count();
+			const float		  p = secs * 0.8F;
+			return p - std::floor(p);
 		}
 	} // namespace
 
@@ -144,6 +156,48 @@ namespace asset_manager {
 		// Reused across frames/instances so translating verts to m_pos doesn't allocate each frame.
 		thread_local std::vector<Foundation::Vec2> verts;
 		verts.assign(m_mesh->vertices.begin(), m_mesh->vertices.end());
+
+		// Animate: if this asset declares a motion, sweep its first clip's phase over time and
+		// deform the part vertex ranges in the fitted preview space, so the preview shows the
+		// walk cycle in motion. Assets without a motion (the vast majority) skip this entirely.
+		if (m_animated && !m_mesh->parts.empty()) {
+			const auto* motion = engine::assets::AssetRegistry::Get().getMotion(m_defName);
+			if (motion != nullptr) {
+				const engine::assets::MotionClip* walk = motion->findClip("walk");
+				const engine::assets::MotionClip* clip = (walk != nullptr) ? walk : &motion->clips.front();
+				const Foundation::Rect&			  src = m_sourceBounds;
+				const Foundation::Rect&			  dst = m_targetRect;
+				if (!clip->drivers.empty() && src.width > 0.0F && src.height > 0.0F) {
+					std::unordered_map<std::string, engine::assets::PartTransform> xforms;
+					engine::assets::evaluateClip(*clip, sweepPhase(), xforms);
+
+					const float		s = std::min(dst.width / src.width, dst.height / src.height);
+					const glm::vec2 srcC{src.x + src.width * 0.5F, src.y + src.height * 0.5F};
+					const glm::vec2 dstC{dst.x + dst.width * 0.5F, dst.y + dst.height * 0.5F};
+					for (const auto& part : m_mesh->parts) {
+						if (part.name.empty()) {
+							continue;
+						}
+						auto it = xforms.find(part.name);
+						if (it == xforms.end()) {
+							continue;
+						}
+						// Convert pivot + translate from meter space into the fitted preview space
+						// (rotation and scale are scale-invariant).
+						engine::assets::PartTransform pt = it->second;
+						pt.pivot	 = {dstC.x + (pt.pivot.x - srcC.x) * s, dstC.y + (pt.pivot.y - srcC.y) * s};
+						pt.translate = {pt.translate.x * s, pt.translate.y * s};
+						const uint32_t end =
+							std::min<uint32_t>(part.vertexStart + part.vertexCount, static_cast<uint32_t>(verts.size()));
+						for (uint32_t i = part.vertexStart; i < end; ++i) {
+							const glm::vec2 r = pt.apply({verts[i].x, verts[i].y});
+							verts[i] = {r.x, r.y};
+						}
+					}
+				}
+			}
+		}
+
 		for (auto& v : verts) {
 			v.x += m_pos.x;
 			v.y += m_pos.y;

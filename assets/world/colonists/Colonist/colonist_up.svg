@@ -1,18 +1,55 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Colonist facing UP (away from camera) - sees back of head -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 100">
-  <!-- Head at top (back of head, no eyes) -->
-  <polygon points="30,5 40,8 44,15 40,22 30,25 20,22 16,15 20,8" fill="#9CA3AF"/>
+<!-- Colonist facing UP (away from camera) - back of head, full hair, no face.
+     Same body as DOWN; head is all hair with a small nape of neck showing.
+     Cutout-animation ready: every movable body part is its own <g id="..."> with its
+     OWN dark rim plus colored fills. Each part's first <path> starts its `d` at the
+     part's pivot joint (M = node 0 = rotation node). -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 100" width="60" height="100">
 
-  <!-- Body -->
-  <polygon points="30,24 46,36 46,65 30,80 14,65 14,36" fill="#6B7280"/>
+  <!-- ===== leg_left (pivot: hip, top of leg) ===== -->
+  <g id="leg_left">
+    <path d="M24,63 C27,63 31,66 31,70 L31,86 C31,90 28,93 24,93 C20,93 17,90 17,86 L17,70 C17,66 21,63 24,63 Z" fill="#1e1712"/>
+    <path d="M24,65 C27,65 30,66 30,68 L30,85 L18,85 L18,68 C18,66 21,65 24,65 Z" fill="#403a45"/>
+    <path d="M24,66 L24,80 L19,80 L19,69 C20,67 22,66 24,66 Z" fill="#4d4653"/>
+    <path d="M18,83 L30,83 L30,88 C30,91 27,92 24,92 C21,92 18,91 18,88 Z" fill="#2a2018"/>
+  </g>
 
-  <!-- Left arm -->
-  <polygon points="12,40 5,50 9,54 16,46" fill="#9CA3AF"/>
-  <!-- Right arm -->
-  <polygon points="48,40 55,50 51,54 44,46" fill="#9CA3AF"/>
+  <!-- ===== leg_right (pivot: hip, top of leg) ===== -->
+  <g id="leg_right">
+    <path d="M36,63 C39,63 43,66 43,70 L43,86 C43,90 40,93 36,93 C32,93 29,90 29,86 L29,70 C29,66 33,63 36,63 Z" fill="#1e1712"/>
+    <path d="M36,65 C39,65 42,66 42,68 L42,85 L30,85 L30,68 C30,66 33,65 36,65 Z" fill="#403a45"/>
+    <path d="M36,66 L36,80 L31,80 L31,69 C32,67 34,66 36,66 Z" fill="#4d4653"/>
+    <path d="M30,83 L42,83 L42,88 C42,91 39,92 36,92 C33,92 30,91 30,88 Z" fill="#2a2018"/>
+  </g>
 
-  <!-- Feet at bottom -->
-  <polygon points="24,78 20,92 28,92" fill="#4B5563"/>
-  <polygon points="36,78 40,92 32,92" fill="#4B5563"/>
+  <!-- ===== arm_left (pivot: shoulder, top of arm) ===== -->
+  <g id="arm_left">
+    <path d="M16,36 C20,36 21,40 20,46 L19,59 C19,64 11,64 10,59 L9,44 C9,39 12,36 16,36 Z" fill="#1e1712"/>
+    <path d="M16,38 C19,38 19.5,41 19,46 L18,57 C18,61 12,61 11,57 L11,44 C11,40 13,38 16,38 Z" fill="#48627f"/>
+    <path d="M13.5,40 C15,39 16,40 16,43 L15.5,52 L12.5,52 L12.5,43 C12.5,41 12.5,40 13.5,40 Z" fill="#5e7896"/>
+    <path d="M11,55 C14,54 18,55 18,58 C18,61 11,61 11,58 Z" fill="#d8a07c"/>
+  </g>
+
+  <!-- ===== arm_right (pivot: shoulder, top of arm) ===== -->
+  <g id="arm_right">
+    <path d="M44,36 C40,36 39,40 40,46 L41,59 C41,64 49,64 50,59 L51,44 C51,39 48,36 44,36 Z" fill="#1e1712"/>
+    <path d="M44,38 C41,38 40.5,41 41,46 L42,57 C42,61 48,61 49,57 L49,44 C49,40 47,38 44,38 Z" fill="#48627f"/>
+    <path d="M42,55 C45,54 49,55 49,58 C49,61 42,61 42,58 Z" fill="#d8a07c"/>
+  </g>
+
+  <!-- ===== torso (pivot: torso base-center) ===== -->
+  <g id="torso">
+    <path d="M30,73 C24,73 19,71 17,69 C11.5,50 12,41 13,33 C21,29 39,29 47,33 C48,41 48.5,50 41,69 C39,71 36,73 30,73 Z" fill="#1e1712"/>
+    <path d="M30,71 C24,71 21,71 21,67.5 C14,50 14,42 14,42 C15,34.5 22,31 30,31 C38,31 45,34.5 46,42 C46,50 41,64 39,67.5 C36,71 36,71 30,71 Z" fill="#48627f"/>
+    <path d="M22,35 C26,33 30,33 32,35 C29,38 26,47 25,56 C21,49 18,40 22,35 Z" fill="#5e7896"/>
+  </g>
+
+  <!-- ===== head (all hair; pivot: neck base, bottom-center) ===== -->
+  <g id="head">
+    <path d="M30,34 C21.5,34 14.5,27 14.5,18.5 C14.5,10 21.5,3 30,3 C38.5,3 45.5,10 45.5,18.5 C45.5,27 38.5,34 30,34 Z" fill="#1e1712"/>
+    <path d="M30,31 C29.5,32.5 27,33 27,30 C27,30 28,33 30,33 C32,33 33,30 33,30 C33,32.5 30.5,32.5 30,31 Z" fill="#d8a07c"/>
+    <path d="M30,31 C22.5,31 16.5,26 16.5,18.5 C16.5,11 22.5,5 30,5 C37.5,5 43.5,11 43.5,18.5 C43.5,26 37.5,31 30,31 Z" fill="#5c4029"/>
+    <path d="M22,11 C25,8 30,7 33,9 C29,13 26,20 25,27 C21,21 19,15 22,11 Z" fill="#7d5c38"/>
+    <path d="M29.4,7 C29.7,7 30,7 30,8 L30,29 C30,30 29,30 29,29 L28.7,8 C28.7,7.3 29,7 29.4,7 Z" fill="#4a3320"/>
+  </g>
 </svg>

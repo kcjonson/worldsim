@@ -235,6 +235,7 @@ bool loadSVG(const std::string& filepath, float curveTolerance, std::vector<Load
 		}
 
 		LoadedSVGShape loadedShape;
+		loadedShape.id = shape->id; // NanoSVG keeps the element (or group) id; "" when absent
 		loadedShape.width = image->width;
 		loadedShape.height = image->height;
 		loadedShape.hasFill = !fillNone;
@@ -291,6 +292,10 @@ bool loadSVG(const std::string& filepath, float curveTolerance, std::vector<Load
 }
 
 void appendShapeMesh(const LoadedSVGShape& shape, TessellatedMesh& outMesh) {
+	// Record where this shape's geometry begins so we can tag the contributed range as a named
+	// MeshPart (fill + stroke) once both are emitted. This is what the animation layer transforms.
+	const auto partVertexStart = static_cast<uint32_t>(outMesh.vertices.size());
+
 	// --- Fill ---
 	if (shape.hasFill) {
 		Tessellator tessellator;
@@ -343,6 +348,12 @@ void appendShapeMesh(const LoadedSVGShape& shape, TessellatedMesh& outMesh) {
 		for (const auto& sub : shape.paths) {
 			appendStrokeBand(sub.vertices, sub.isClosed, shape.strokeWidth, shape.strokeColor, outMesh);
 		}
+	}
+
+	// Tag the geometry this shape contributed as one named part. Skipped when it added nothing.
+	const auto partVertexCount = static_cast<uint32_t>(outMesh.vertices.size()) - partVertexStart;
+	if (partVertexCount > 0) {
+		outMesh.parts.push_back(MeshPart{shape.id, partVertexStart, partVertexCount});
 	}
 }
 

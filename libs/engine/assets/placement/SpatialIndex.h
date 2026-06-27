@@ -27,6 +27,8 @@
 // Memory: One vector per occupied cell. Empty cells use no memory.
 // Thread Safety: NOT thread-safe. Use separate instances per thread for parallel generation.
 
+#include "assets/MotionDef.h"
+
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -45,6 +47,12 @@ namespace engine::assets {
 		float		rotation = 0.0F; // Rotation in radians
 		float		scale = 1.0F;	// Scale factor
 		glm::vec4	colorTint{1.0F, 1.0F, 1.0F, 1.0F}; // RGBA color tint
+
+		// Optional per-part animation transforms (meter/template space), one entry per MeshPart
+		// of this entity's template, by index (identity where a part isn't driven). Null = not
+		// animated; such entities render through the fast instanced path. The pointee is owned by
+		// the producer (DynamicEntityRenderSystem) for the frame; PlacedEntity only references it.
+		const std::vector<PartTransform>* partTransforms = nullptr;
 	};
 
 	/// Grid-based spatial index for efficient neighbor queries.
