@@ -19,6 +19,7 @@
 #include "worldgen/debug/ColorMaps.h"
 #include "worldgen/debug/DebugImageExporter.h"
 #include "worldgen/debug/WorldStats.h"
+#include "worldgen/io/PlanetIO.h"
 #include "worldgen/pipeline/PlanetGenerator.h"
 #include "worldgen/tectonics/PlateSim.h"
 #include "worldgen/tectonics/TectonicHistory.h"
@@ -52,6 +53,9 @@ struct CliArgs {
     bool     simOnly{false};    // --sim-only: run PlateSim directly, dump frames
     uint32_t nCoarse{128};      // --n-coarse (sim-only)
     int      frameEvery{10};    // --frame-every (sim-only)
+    bool     hasExpectHash{false}; // --expect-hash <hex>: gate worldHash
+    uint64_t expectHash{0};        // expected worldHash (exit 5 on mismatch)
+    std::string savePlanetPath;    // --save-planet <path>: write .wsplanet, skip BMP/stats
 };
 
 static void printUsage() {
@@ -65,6 +69,10 @@ static void printUsage() {
         "  --threads <int>    thread pool size 0=hw default (default 0)\n"
         "  --verify-threads a,b  run twice with thread counts a and b;\n"
         "                        exit 2 on worldHash mismatch\n"
+        "  --expect-hash <hex>   assert worldHash equals this value (hex, 0x ok);\n"
+        "                        exit 5 on mismatch — cross-machine determinism check\n"
+        "  --save-planet <path>  generate and write a .wsplanet file, then exit\n"
+        "                        (skips BMP/stats export; --out not required)\n"
         "  --sim-only            run the coarse PlateSim directly (no pipeline),\n"
         "                        dump plateId + crustAge frames + final boundaryType\n"
         "  --n-coarse <int>      sim-only coarse subdivision (default 128)\n"
@@ -111,6 +119,13 @@ static bool parseArgs(int argc, char** argv, CliArgs& out) {
             *comma = '\0';
             out.verifyA = static_cast<int>(std::strtol(v,      nullptr, 10));
             out.verifyB = static_cast<int>(std::strtol(comma+1, nullptr, 10));
+        } else if (eq("--expect-hash")) {
+            const char* v = next(); if (!v) return false;
+            out.expectHash    = std::strtoull(v, nullptr, 0); // base 0: 0x hex or decimal
+            out.hasExpectHash = true;
+        } else if (eq("--save-planet")) {
+            const char* v = next(); if (!v) return false;
+            out.savePlanetPath = v;
         } else if (eq("--sim-only")) {
             out.simOnly = true;
         } else if (eq("--n-coarse")) {
@@ -124,8 +139,8 @@ static bool parseArgs(int argc, char** argv, CliArgs& out) {
             return false;
         }
     }
-    if (out.outDir.empty()) {
-        std::fprintf(stderr, "--out <dir> is required\n");
+    if (out.outDir.empty() && out.savePlanetPath.empty()) {
+        std::fprintf(stderr, "--out <dir> is required (unless --save-planet is given)\n");
         return false;
     }
     return true;
@@ -870,7 +885,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    if (!mkdirP(args.outDir)) {
+    if (args.savePlanetPath.empty() && !mkdirP(args.outDir)) {
         return 4;
     }
 
@@ -902,6 +917,22 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // Bake mode: write the .wsplanet and exit, skipping the BMP/stats export.
+    if (!args.savePlanetPath.empty()) {
+        std::error_code ec;
+        std::filesystem::create_directories(
+            std::filesystem::path(args.savePlanetPath).parent_path(), ec);
+        if (!worldgen::savePlanet(*res.world, args.savePlanetPath)) {
+            std::fprintf(stderr, "Failed to save planet to %s\n", args.savePlanetPath.c_str());
+            return 4;
+        }
+        std::printf("Saved planet to %s  (worldHash 0x%016llx, %.2f s)\n",
+                    args.savePlanetPath.c_str(),
+                    static_cast<unsigned long long>(res.world->worldHash),
+                    res.wallSeconds);
+        return 0;
+    }
+
     std::printf("Generation complete (%.2f s).  Exporting...\n", res.wallSeconds);
     std::fflush(stdout);
 
@@ -918,6 +949,23 @@ int main(int argc, char** argv) {
 
     // Print human summary.
     printSummary(stats, res.wallSeconds, res.world->worldHash);
+
+    // ---- Optional cross-machine hash gate ----
+    if (args.hasExpectHash) {
+        uint64_t got = res.world->worldHash;
+        if (got == args.expectHash) {
+            std::printf("PASS: worldHash 0x%016llx matches --expect-hash\n",
+                        static_cast<unsigned long long>(got));
+        } else {
+            std::fprintf(stderr,
+                         "FAIL: worldHash mismatch!\n"
+                         "  expected 0x%016llx\n"
+                         "  got      0x%016llx\n",
+                         static_cast<unsigned long long>(args.expectHash),
+                         static_cast<unsigned long long>(got));
+            return 5;
+        }
+    }
 
     // ---- Optional determinism check ----
     if (args.verifyA > 0 && args.verifyB > 0) {

@@ -3,7 +3,8 @@
 //
 // Always plays on a generated planet: the pending GameStartConfig either carries
 // a world from the creator flow, or (Quick Start / direct scene jump) the scene
-// loads the cached quickstart planet, generating and caching it on first run.
+// loads the prebuilt quickstart planet shipped with the game (built by the
+// `quickstart-planet` CMake target). It is never generated at runtime.
 
 #include "GameStartConfig.h"
 #include "GameWorldState.h"
@@ -28,6 +29,7 @@
 #include <scene/SceneManager.h>
 #include <shapes/Shapes.h>
 #include <utils/Log.h>
+#include <utils/ResourcePath.h>
 #include <world/camera/WorldCamera.h>
 #include <world/chunk/Chunk.h>
 #include <world/chunk/ChunkCoordinate.h>
@@ -36,14 +38,11 @@
 #include <world/rendering/ChunkRenderer.h>
 #include <world/rendering/EntityRenderer.h>
 
-#include <worldgen/data/PlanetParams.h>
 #include <worldgen/io/PlanetIO.h>
-#include <worldgen/pipeline/PlanetGenerator.h>
 #include <worldgen/sampling/LandingSite.h>
 #include <worldgen/sampling/SpawnSite.h>
 
 #include <algorithm>
-#include <filesystem>
 #include <memory>
 #include <sstream>
 #include <vector>
@@ -53,11 +52,6 @@ namespace {
 	constexpr const char* kSceneName = "gameloading";
 	constexpr float		  kPixelsPerMeter = 8.0F;
 	constexpr int		  kTargetChunks = 9; // 3×3 grid (center + 8 adjacent)
-
-	// Quickstart planet: fixed params so the cache file stays valid across runs.
-	constexpr uint64_t	  kQuickstartSeed = 424242;
-	constexpr uint32_t	  kQuickstartSubdivision = 256;
-	constexpr const char* kQuickstartPlanetPath = "planets/quickstart.wsplanet";
 
 	/// Loading phases
 	enum class LoadingPhase { PreparingPlanet, Initializing, ConfigError, LoadingChunks, PlacingEntities, Complete, Cancelling };
@@ -73,7 +67,6 @@ namespace {
 			chunksProcessed = 0;
 			configErrorLogged = false;
 			asyncProcessor.reset();
-			planetGenerator.reset();
 			needsLayout = true; // Defer position update until first render (viewport not ready in onEnter)
 
 			// Direct scene jumps (debug API, --scene=game) have no pending
@@ -238,7 +231,6 @@ namespace {
 		void onExit() override {
 			LOG_INFO(Game, "GameLoadingScene - Exiting");
 			asyncProcessor.reset();
-			planetGenerator.reset();
 			title.reset();
 			statusText.reset();
 			// Note: worldState is moved to GameWorldState::SetPending() before exit
@@ -254,8 +246,10 @@ namespace {
 
 	  private:
 		/// Phase 0: ensure we have a planet to land on.
-		/// Creator flow already provides one; Quick Start loads the cached
-		/// planet or generates it once (progress 0-30%) and caches it.
+		/// Creator flow already provides one; Quick Start loads the prebuilt
+		/// planet shipped with the game. It is never generated at runtime — the
+		/// main menu disables Quick Start when the file is absent, so a missing
+		/// file here is a packaging error, not a recoverable player state.
 		void preparePlanet() {
 			if (startConfig->world) {
 				phase = LoadingPhase::Initializing;
@@ -263,54 +257,28 @@ namespace {
 				return;
 			}
 
-			if (!planetGenerator) {
-				// First try the cache; a missing file is the expected first-run
-				// state, not an error worth logging
-				if (std::filesystem::exists(kQuickstartPlanetPath)) {
-					if (auto cached = worldgen::loadPlanet(kQuickstartPlanetPath)) {
-						LOG_INFO(Game, "GameLoadingScene - Loaded quickstart planet from cache");
-						adoptQuickstartPlanet(std::move(cached));
-						return;
-					}
-					// Corrupt/stale cache: loadPlanet logged why; regenerate
-				}
-
-				LOG_INFO(Game, "GameLoadingScene - No cached quickstart planet, generating (n=%u seed=%llu)",
-				         kQuickstartSubdivision,
-				         static_cast<unsigned long long>(kQuickstartSeed));
-				updateStatusText("Generating planet (first run)...");
-				worldgen::PlanetParams params = worldgen::PlanetParams::preset(worldgen::Preset::EarthLike);
-				params.gridSubdivision = kQuickstartSubdivision;
-				params.seed = kQuickstartSeed;
-				planetGenerator = std::make_unique<worldgen::PlanetGenerator>();
-				planetGenerator->start(params);
+			updateStatusText("Loading planet...");
+			auto resolved = Foundation::findResource(world_sim::kQuickstartPlanetResource);
+			if (!resolved) {
+				LOG_ERROR(Game, "GameLoadingScene - Quickstart planet not found (%s); "
+				                "build the quickstart-planet target",
+				          world_sim::kQuickstartPlanetResource);
+				phase = LoadingPhase::ConfigError;
 				return;
 			}
 
-			auto prog = planetGenerator->progress();
-			progress = prog.totalFraction * 0.3F;
-
-			if (prog.state == worldgen::GenerationProgress::State::Complete) {
-				auto result = planetGenerator->takeResult();
-				planetGenerator.reset();
-				if (!result) {
-					LOG_ERROR(Game, "GameLoadingScene - Planet generation returned no result");
-					phase = LoadingPhase::ConfigError;
-					return;
-				}
-				if (worldgen::savePlanet(*result, kQuickstartPlanetPath)) {
-					LOG_INFO(Game, "GameLoadingScene - Cached quickstart planet to %s", kQuickstartPlanetPath);
-				}
-				adoptQuickstartPlanet(std::move(result));
-			} else if (prog.state == worldgen::GenerationProgress::State::Failed ||
-			           prog.state == worldgen::GenerationProgress::State::Cancelled) {
-				LOG_ERROR(Game, "GameLoadingScene - Planet generation failed/cancelled");
-				planetGenerator.reset();
+			auto planet = worldgen::loadPlanet(*resolved);
+			if (!planet) {
+				LOG_ERROR(Game, "GameLoadingScene - Failed to load quickstart planet from %s",
+				          resolved->string().c_str());
 				phase = LoadingPhase::ConfigError;
-			} else {
-				int percent = static_cast<int>(prog.totalFraction * 100.0F);
-				updateStatusText("Generating planet (first run)... " + std::to_string(percent) + "%");
+				return;
 			}
+
+			LOG_INFO(Game, "GameLoadingScene - Loaded quickstart planet (n=%u)",
+			         planet->params.gridSubdivision);
+			progress = 0.3F;
+			adoptQuickstartPlanet(std::move(planet));
 		}
 
 		void adoptQuickstartPlanet(std::shared_ptr<const worldgen::GeneratedWorld> planet) {
@@ -463,16 +431,6 @@ namespace {
 
 		/// Cancel loading - waits for async tasks to complete with UI feedback
 		void cancelLoading() {
-			// Stop planet generation if it's still running
-			if (planetGenerator) {
-				planetGenerator->cancel();
-				auto prog = planetGenerator->progress();
-				if (prog.state == worldgen::GenerationProgress::State::Running) {
-					return; // Keep polling until the worker observes the cancel
-				}
-				planetGenerator.reset();
-			}
-
 			// Poll for completed tasks (non-blocking)
 			if (asyncProcessor) {
 				asyncProcessor->pollCompleted();
@@ -572,9 +530,6 @@ namespace {
 
 		// How this game starts (planet + landing site)
 		std::unique_ptr<world_sim::GameStartConfig> startConfig;
-
-		// Quickstart planet generation (only on cache miss)
-		std::unique_ptr<worldgen::PlanetGenerator> planetGenerator;
 
 		// UI elements
 		std::unique_ptr<UI::Text> title;

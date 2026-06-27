@@ -506,4 +506,65 @@ TEST(PlanetGeneratorHeavy, WaterExtreme005Completes) {
     EXPECT_NEAR(of, 0.05f, 0.05f) << "ocean fraction " << of << " far from 0.05";
 }
 
+// ============================================================================
+// Golden worldHash: cross-platform determinism gate.
+//
+// CI runs the heavy bucket on BOTH Windows and Linux. If each platform's full
+// pipeline reproduces this same committed hash for a fixed (seed, n), then the
+// two platforms agree with each other — a single golden constant IS the
+// cross-platform gate, no inter-runner artifact comparison needed.
+//
+// UPDATE POLICY (mirrors PlateSimHeavy.GoldenProductHash): this value pins the
+// output so an *accidental* change to generation is caught. Only re-pin it when
+// you intend to change worldgen output, and say why in the commit. A surprise
+// failure here means some stage changed its result — investigate before
+// updating the constant.
+// ============================================================================
+
+TEST(PlanetGeneratorHeavy, GoldenWorldHash) {
+    PlanetParams params = PlanetParams::preset(Preset::EarthLike);
+    params.gridSubdivision = 64;
+    params.seed            = 0x5151515151515151ULL;
+
+    auto world = runToCompletion(params, /*timeoutSeconds=*/120);
+    ASSERT_NE(world, nullptr) << "generation did not complete";
+
+    constexpr uint64_t kGoldenWorldHash = 0xc296bb3b9c7debe8ULL;
+    EXPECT_EQ(world->worldHash, kGoldenWorldHash)
+        << "worldHash drifted. If this change was intentional, re-pin "
+           "kGoldenWorldHash to 0x" << std::hex << world->worldHash
+        << " and explain why in the commit. Otherwise a stage changed output.";
+}
+
+// ============================================================================
+// Hardening: invalid params fail loud and synchronously (no worker, no crash),
+// with a non-empty reason — instead of UB deep in a stage.
+// ============================================================================
+
+TEST(PlanetGenerator, RejectsInvalidParams) {
+    auto expectRejected = [](const PlanetParams& p, const char* what) {
+        PlanetGenerator gen;
+        gen.start(p);
+        // Validation is synchronous: state is Failed by the time start() returns.
+        EXPECT_EQ(gen.progress().state, GenerationProgress::State::Failed)
+            << "expected rejection for " << what;
+        EXPECT_FALSE(gen.failureReason().empty())
+            << "expected a failure reason for " << what;
+        EXPECT_EQ(gen.takeResult(), nullptr) << "no world for " << what;
+    };
+
+    PlanetParams base = PlanetParams::preset(Preset::EarthLike);
+    base.gridSubdivision = 16;
+
+    PlanetParams badN = base;       badN.gridSubdivision = kMaxGridSubdivision + 1;
+    PlanetParams badWater = base;   badWater.waterAmount = 2.0;
+    PlanetParams badPlates = base;  badPlates.tectonicPlateCount = 1;
+    PlanetParams badEcc = base;     badEcc.eccentricity = 1.5;
+
+    expectRejected(badN, "gridSubdivision over cap");
+    expectRejected(badWater, "waterAmount > 1");
+    expectRejected(badPlates, "tectonicPlateCount < 2");
+    expectRejected(badEcc, "eccentricity > 0.95");
+}
+
 } // namespace worldgen

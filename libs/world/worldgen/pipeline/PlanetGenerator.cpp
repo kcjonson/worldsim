@@ -1,5 +1,6 @@
 #include "worldgen/pipeline/PlanetGenerator.h"
 
+#include "worldgen/pipeline/GenerationError.h"
 #include "worldgen/stages/AtmosphereStage.h"
 #include "worldgen/stages/BiomeStage.h"
 #include "worldgen/stages/CrustStage.h"
@@ -12,11 +13,14 @@
 #include "worldgen/stages/TerrainStage.h"
 
 #include <random/SplitMix64.h>
+#include <utils/Log.h>
 #include <utils/WorldHash.h>
 
 #include <bit>
+#include <cmath>
 #include <cstring>
 #include <numeric>
+#include <string>
 
 namespace worldgen {
 
@@ -51,6 +55,29 @@ bool worldHasLandIce(const GeneratedWorld& w) {
         if (f & kFlagGlacier) return true;
     }
     return false;
+}
+
+// Sum of sizeof() over every WorldData SoA element — see the 33 bytes/tile note
+// in WorldData.h. Used only for the pre-flight memory estimate / cap, not for
+// layout, so an approximation that tracks the documented value is fine.
+inline constexpr uint64_t kBytesPerTile = 33;
+
+// Hard ceiling on estimated WorldData array bytes. n=2048 (the subdivision cap)
+// is ~1.4 GB; this rejects anything beyond a generous headroom before we even
+// try to allocate, so an absurd request fails loud instead of thrashing swap.
+inline constexpr uint64_t kMaxPlanetDataBytes = 8ull * 1024 * 1024 * 1024;
+
+// Scan the only two float fields (the only ones that can carry NaN/Inf) for a
+// non-finite value. Returns the field name + first bad TileId, or nullptr if
+// all finite. Integer fields cannot be non-finite, so they are skipped.
+const char* firstNonFiniteField(const WorldData& d, uint32_t& badTileOut) {
+    for (uint32_t t = 0; t < d.elevation.size(); ++t) {
+        if (!std::isfinite(d.elevation[t])) { badTileOut = t; return "elevation"; }
+    }
+    for (uint32_t t = 0; t < d.flowAccum.size(); ++t) {
+        if (!std::isfinite(d.flowAccum[t])) { badTileOut = t; return "flowAccum"; }
+    }
+    return nullptr;
 }
 
 } // namespace
@@ -102,6 +129,33 @@ void PlanetGenerator::start(const PlanetParams& params) {
 #ifndef NDEBUG
         lastPublishedChecksum = 0;
 #endif
+    }
+    {
+        std::lock_guard<std::mutex> lock(failureMutex);
+        failureReasonStr.clear();
+    }
+
+    // Validate inputs synchronously so a bad request surfaces on the calling
+    // thread (no worker spawned, state == Failed with a reason) instead of
+    // crashing deep in a stage after the UI has moved on.
+    if (auto err = params.validate()) {
+        fail(*err);
+        return;
+    }
+
+    // Pre-flight memory estimate. tileCount = 10*n*n + 2 (Goldberg). Reject
+    // before allocating if the WorldData arrays alone would blow the cap.
+    const uint64_t n      = params.gridSubdivision;
+    const uint64_t tiles  = 10ull * n * n + 2ull;
+    const uint64_t bytes  = tiles * kBytesPerTile;
+    LOG_INFO(World, "world generation: n=%llu, %llu tiles, ~%llu MB WorldData",
+             static_cast<unsigned long long>(n),
+             static_cast<unsigned long long>(tiles),
+             static_cast<unsigned long long>(bytes / (1024 * 1024)));
+    if (bytes > kMaxPlanetDataBytes) {
+        fail("estimated " + std::to_string(bytes / (1024 * 1024)) + " MB at n="
+             + std::to_string(n) + " exceeds the planet memory cap");
+        return;
     }
 
     cancelFlag.store(false, std::memory_order_release);
@@ -165,16 +219,33 @@ std::shared_ptr<const GeneratedWorld> PlanetGenerator::takeResult() {
 }
 
 // ============================================================================
+// Failure
+// ============================================================================
+
+void PlanetGenerator::fail(const std::string& reason) {
+    {
+        std::lock_guard<std::mutex> lock(failureMutex);
+        failureReasonStr = reason;
+    }
+    LOG_ERROR(World, "world generation failed: %s", reason.c_str());
+    atomicState.store(static_cast<int>(GenerationProgress::State::Failed),
+                      std::memory_order_release);
+}
+
+std::string PlanetGenerator::failureReason() const {
+    std::lock_guard<std::mutex> lock(failureMutex);
+    return failureReasonStr;
+}
+
+// ============================================================================
 // Pipeline runner
 // ============================================================================
 
 void PlanetGenerator::runPipeline(PlanetParams params) {
+    // params are pre-validated in start(); tectonicPlateCount is guaranteed in
+    // [2, 30] and gridSubdivision in [1, kMaxGridSubdivision] by the time we get
+    // here, so the pipeline no longer silently clamps.
     try {
-        // Clamp tectonicPlateCount to the documented valid range [2, 30].
-        // Plate count of 0 or 1 would produce modulo-by-zero or degenerate results.
-        if (params.tectonicPlateCount < 2)  params.tectonicPlateCount = 2;
-        if (params.tectonicPlateCount > 30) params.tectonicPlateCount = 30;
-
         // Build the GeneratedWorld
         auto world = std::make_shared<GeneratedWorld>();
         world->params  = params;
@@ -254,6 +325,19 @@ void PlanetGenerator::runPipeline(PlanetParams params) {
 
             stages[i]->run(ctx);
             publishSnapshot(world);
+
+#ifndef NDEBUG
+            // Localize which stage first introduces a non-finite float. Debug
+            // only: the all-builds end-of-pipeline sweep is the shipping guard.
+            {
+                uint32_t badTile = 0;
+                if (const char* field = firstNonFiniteField(world->data, badTile)) {
+                    throw GenerationError(std::string("non-finite ") + field
+                                          + " at tile " + std::to_string(badTile)
+                                          + " after stage " + stages[i]->name());
+                }
+            }
+#endif
         };
 
         // Pass 1: the full pipeline, no ice feedback. Capture the validFields set just
@@ -332,6 +416,17 @@ void PlanetGenerator::runPipeline(PlanetParams params) {
                 : 0.0f;
         }
 
+        // Fail loud on non-finite float output (NaN/Inf in elevation or
+        // flowAccum) rather than baking it into the hash and shipping a corrupt
+        // world. One linear pass in all builds; cheap next to generation.
+        {
+            uint32_t badTile = 0;
+            if (const char* field = firstNonFiniteField(world->data, badTile)) {
+                throw GenerationError(std::string("non-finite ") + field + " at tile "
+                                      + std::to_string(badTile));
+            }
+        }
+
         // Compute worldHash: FNV-1a over all valid field arrays in fixed order
         world->worldHash = computeFieldChecksums(*world);
 
@@ -345,9 +440,17 @@ void PlanetGenerator::runPipeline(PlanetParams params) {
     } catch (const CancelledException&) {
         atomicState.store(static_cast<int>(GenerationProgress::State::Cancelled),
                           std::memory_order_release);
+    } catch (const GenerationError& e) {
+        fail(e.what());
+    } catch (const std::bad_alloc&) {
+        const uint64_t n     = params.gridSubdivision;
+        const uint64_t bytes = (10ull * n * n + 2ull) * kBytesPerTile;
+        fail("out of memory at n=" + std::to_string(n) + " (~"
+             + std::to_string(bytes / (1024 * 1024)) + " MB)");
+    } catch (const std::exception& e) {
+        fail(std::string("unexpected error: ") + e.what());
     } catch (...) {
-        atomicState.store(static_cast<int>(GenerationProgress::State::Failed),
-                          std::memory_order_release);
+        fail("unknown error during generation");
     }
 }
 

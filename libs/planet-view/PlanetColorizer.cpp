@@ -14,7 +14,7 @@
 namespace planetview {
 
 namespace {
-// Base-tier resolution cap = the product subdivision max (PlanetIO kMaxSubdivision
+// Base-tier resolution cap = the product subdivision max (kMaxGridSubdivision
 // = 2048). At this cap mip 0 carries one texel per tile for every generatable world,
 // which is exactly what the shader's analytic per-pixel hex render reads (one
 // exact tile color per cell); finer than one-texel-per-tile is never needed.

@@ -11,9 +11,17 @@
 
 namespace world_sim {
 
+// The prebuilt Quick Start planet, resolved next to the executable via
+// Foundation::findResource. Generated at build time by the `quickstart-planet`
+// CMake target (n=2048, seed 424242) and shipped in the package — players never
+// generate it. The main menu disables Quick Start when this file is absent;
+// GameLoadingScene loads it (no in-game generation fallback).
+inline constexpr const char* kQuickstartPlanetResource =
+	"assets/planets/quickstart.wsplanet";
+
 struct GameStartConfig {
-	// QuickStart: GameLoadingScene loads the cached planet (generating and
-	// caching it on first run) and picks the default landing site itself.
+	// QuickStart: GameLoadingScene loads the prebuilt shipped planet and picks
+	// the default landing site itself.
 	// NewGame: world and landing site are filled in by the creator flow.
 	enum class Source { QuickStart, NewGame };
 
