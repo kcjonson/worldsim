@@ -65,6 +65,27 @@ namespace engine::world {
 			const float halfViewW = static_cast<float>(ctx.viewportWidth) * 0.5F;
 			const float halfViewH = static_cast<float>(ctx.viewportHeight) * 0.5F;
 
+			// Emit the accumulated animated batch as one CPU draw, then reset it. The batch uses a
+			// 16-bit index space, so we flush before it would overflow (only reachable at very high
+			// animated-entity counts) and once at the end. A mid-loop flush draws under the
+			// instanced entities; the common single end-flush draws over them.
+			auto flushAnim = [&]() {
+				if (m_animIndices.empty()) {
+					return;
+				}
+				Renderer::Primitives::drawTriangles(Renderer::Primitives::TrianglesArgs{
+					.vertices = m_animVertices.data(),
+					.indices = m_animIndices.data(),
+					.vertexCount = m_animVertices.size(),
+					.indexCount = m_animIndices.size(),
+					.colors = m_animColors.data()
+				});
+				m_animVertices.clear();
+				m_animColors.clear();
+				m_animIndices.clear();
+				animVertexBase = 0;
+			};
+
 			for (const auto& entity : *dynamicEntities) {
 				// Frustum culling for dynamic entities
 				if (entity.position.x < vis.minX || entity.position.x > vis.maxX || entity.position.y < vis.minY ||
@@ -81,6 +102,10 @@ namespace engine::world {
 				// Animated entities carry per-part transforms; they can't be GPU-instanced (each
 				// has unique deformed geometry), so emit them to the CPU batch with their parts moved.
 				if (entity.partTransforms != nullptr && !entity.partTransforms->empty() && !templateMesh->parts.empty()) {
+					// Keep the batch inside the 16-bit index space: flush if this entity overflows it.
+					if (animVertexBase + static_cast<uint32_t>(templateMesh->vertices.size()) > 65535U) {
+						flushAnim();
+					}
 					const auto& xforms = *entity.partTransforms;
 					const bool	hasMeshColors = templateMesh->hasColors();
 
@@ -160,17 +185,7 @@ namespace engine::world {
 
 			// Draw the animated dynamic entities (CPU per-part deformed) over the instanced ones,
 			// so a colonist's limbs sit on top of any instanced ground items.
-			if (!m_animIndices.empty()) {
-				Renderer::Primitives::drawTriangles(
-					Renderer::Primitives::TrianglesArgs{
-						.vertices = m_animVertices.data(),
-						.indices = m_animIndices.data(),
-						.vertexCount = m_animVertices.size(),
-						.indexCount = m_animIndices.size(),
-						.colors = m_animColors.data()
-					}
-				);
-			}
+			flushAnim();
 		}
 	}
 

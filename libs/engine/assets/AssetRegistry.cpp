@@ -1306,13 +1306,14 @@ namespace engine::assets {
 								);
 							}
 							// Bring amplitudes into runtime units: rotation -> radians, pos -> meters.
+							constexpr float kDegToRad = 3.14159265358979323846F / 180.0F;
 							if (drv.channel == MotionChannel::Rotation) {
-								drv.amp *= 3.14159265358979323846F / 180.0F;
+								drv.amp *= kDegToRad;
 							} else if (drv.channel == MotionChannel::PosX || drv.channel == MotionChannel::PosY) {
 								drv.amp *= sf;
 							}
 							++count;
-							LOG_INFO(
+							LOG_DEBUG(
 								Engine,
 								"[Motion] %s '%s' part=%s node=%d pivot=(%.4f,%.4f) amp=%.4f freq=%.2f phase=%.2f",
 								defName.c_str(),

@@ -27,6 +27,8 @@
 // Memory: One vector per occupied cell. Empty cells use no memory.
 // Thread Safety: NOT thread-safe. Use separate instances per thread for parallel generation.
 
+#include "assets/MotionDef.h"
+
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -35,8 +37,6 @@
 
 #include <glm/vec2.hpp>
 #include <glm/vec4.hpp>
-
-#include "assets/MotionDef.h"
 
 namespace engine::assets {
 

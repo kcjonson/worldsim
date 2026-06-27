@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Walk motion for the biped colonist. Pure data: each <drive> is one animated channel of
      one part. The C++ animator evaluates value = amp * fn(2*pi*(freq*phase + phase)) per frame
-     and applies it to the part's mesh about node 0 (the part's pivot/joint in its SVG).
+     and applies it about node 0 (the part's pivot/joint in its SVG). "phase" is the per-driver
+     phase OFFSET; the global walk phase advances with the colonist's speed.
      Rotation amp is degrees; posX/posY amp is SVG user units (scaled to meters at load);
      legs swing in antiphase, arms antiphase to the opposite leg, body bobs at 2x. -->
 <Motion>

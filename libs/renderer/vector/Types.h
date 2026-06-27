@@ -110,8 +110,6 @@ namespace renderer {
 		std::string name;
 		uint32_t	vertexStart{0};
 		uint32_t	vertexCount{0};
-		uint32_t	indexStart{0};
-		uint32_t	indexCount{0};
 	};
 
 	// TessellatedMesh represents the triangulated output of tessellation

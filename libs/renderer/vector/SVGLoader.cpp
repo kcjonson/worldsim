@@ -295,7 +295,6 @@ void appendShapeMesh(const LoadedSVGShape& shape, TessellatedMesh& outMesh) {
 	// Record where this shape's geometry begins so we can tag the contributed range as a named
 	// MeshPart (fill + stroke) once both are emitted. This is what the animation layer transforms.
 	const auto partVertexStart = static_cast<uint32_t>(outMesh.vertices.size());
-	const auto partIndexStart  = static_cast<uint32_t>(outMesh.indices.size());
 
 	// --- Fill ---
 	if (shape.hasFill) {
@@ -353,9 +352,8 @@ void appendShapeMesh(const LoadedSVGShape& shape, TessellatedMesh& outMesh) {
 
 	// Tag the geometry this shape contributed as one named part. Skipped when it added nothing.
 	const auto partVertexCount = static_cast<uint32_t>(outMesh.vertices.size()) - partVertexStart;
-	const auto partIndexCount  = static_cast<uint32_t>(outMesh.indices.size()) - partIndexStart;
 	if (partVertexCount > 0) {
-		outMesh.parts.push_back(MeshPart{shape.id, partVertexStart, partVertexCount, partIndexStart, partIndexCount});
+		outMesh.parts.push_back(MeshPart{shape.id, partVertexStart, partVertexCount});
 	}
 }
 
