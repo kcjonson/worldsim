@@ -10,7 +10,7 @@ interface DevToolsPanelProps {
 // constraint -- any defName can be typed; the server rejects unknown ones with a toast.
 const FLORA = [
   'Flora_TreeOak', 'Flora_TreeMaple', 'Flora_TreePalm',
-  'Flora_BerryBush', 'Flora_WoodyBush', 'Flora_GrassBlade', 'Flora_Reed',
+  'Flora_BerryBush', 'Flora_WoodyBush', 'Groundcover_Grass', 'Flora_Reed',
 ];
 const PLACEABLES = [...FLORA, 'CraftingSpot', 'BasicBox', 'BasicShelf'];
 const MATERIALS = ['Wood', 'Stick', 'SmallStone', 'Berry', 'PlantFiber', 'Misc_BioPile'];

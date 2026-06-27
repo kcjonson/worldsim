@@ -16,7 +16,7 @@ the base textures scale with n² up to the 2048 product cap (see GPU memory budg
 
 The globe renders from a single **base texture** per rhombus (RGBA8 + full mips,
 `baseSize = min(n, kBaseMax)`, `kBaseMax = 2048` = the product cap
-`PlanetIO kMaxSubdivision`, so `baseSize == n` and mip 0 holds exactly one texel
+`kMaxGridSubdivision`, so `baseSize == n` and mip 0 holds exactly one texel
 per tile). That texture is just the per-tile color store — the hexagons are drawn
 **analytically per pixel** in the shader (next section), so the globe stays crisp
 vector hexagons at any zoom. The mip chain is used only to average tiles into a

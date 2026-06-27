@@ -13,6 +13,11 @@ add_library(engine
     world/rendering/BakedEntityMesh.cpp
     world/rendering/ChunkRenderer.cpp
     world/rendering/EntityRenderer.cpp
+    world/rendering/BakedChunkRenderer.cpp
+    world/rendering/GroundcoverRenderer.cpp
+    world/rendering/InstancedEntityRenderer.cpp
+    world/rendering/BatchedEntityRenderer.cpp
+    world/rendering/TemplateMeshCache.cpp
     ecs/systems/TimeSystem.cpp
     ecs/systems/MovementSystem.cpp
     ecs/systems/PhysicsSystem.cpp

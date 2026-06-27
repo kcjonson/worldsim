@@ -25,11 +25,9 @@ namespace {
 
 constexpr char kMagic[4] = {'W', 'S', 'P', 'L'};
 constexpr uint32_t kFormatVersion = 4;
-// loadPlanet allocates every WorldData array at tileCount (10*n^2 + 2) elements,
-// so the cap is bounded by what fits in memory today: 2048 is ~42M tiles
-// (~1.1 GB) and is also the UI maximum ("Ultra 2048"). Raise only once the
-// mmap/streamed planet database exists (see status.md).
-constexpr uint32_t kMaxSubdivision = 2048;
+// Subdivision cap is shared with PlanetParams::validate() so file loads and
+// generation reject the same out-of-range n. Raise kMaxGridSubdivision only once
+// the mmap/streamed planet database exists (see status.md).
 constexpr uint32_t kMaxPlateCount = 1u << 16;
 
 struct Writer {
@@ -80,7 +78,7 @@ struct Reader {
 
 bool savePlanet(const GeneratedWorld& world, const std::filesystem::path& path) {
 	const uint32_t n = world.params.gridSubdivision;
-	if (n == 0 || n > kMaxSubdivision) {
+	if (n < kMinGridSubdivision || n > kMaxGridSubdivision) {
 		LOG_ERROR(World, "savePlanet: invalid gridSubdivision %u", n);
 		return false;
 	}
@@ -245,7 +243,7 @@ std::shared_ptr<const GeneratedWorld> loadPlanet(const std::filesystem::path& pa
 		return nullptr;
 	}
 	const uint32_t n = p.gridSubdivision;
-	if (n == 0 || n > kMaxSubdivision) {
+	if (n < kMinGridSubdivision || n > kMaxGridSubdivision) {
 		LOG_ERROR(World, "loadPlanet: %s has invalid gridSubdivision %u",
 			path.string().c_str(), n);
 		return nullptr;
@@ -317,7 +315,12 @@ std::shared_ptr<const GeneratedWorld> loadPlanet(const std::filesystem::path& pa
 		LOG_ERROR(World, "loadPlanet: %s truncated in field arrays", path.string().c_str());
 		return nullptr;
 	}
-	if (in.peek() != std::istream::traits_type::eof()) {
+	// Exact-size check: the field arrays must run to EOF. r.good() above already
+	// caught truncation (too small); a successful peek here means trailing bytes
+	// (too big). Together they pin the file to its expected length. Read one byte
+	// rather than trusting peek alone so a stream error can't masquerade as EOF.
+	in.get();
+	if (!in.eof()) {
 		LOG_ERROR(World, "loadPlanet: %s has trailing data after field arrays",
 			path.string().c_str());
 		return nullptr;

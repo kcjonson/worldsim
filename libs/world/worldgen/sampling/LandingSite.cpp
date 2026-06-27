@@ -2,8 +2,9 @@
 
 #include "worldgen/data/GeneratedWorld.h"
 
+#include <utils/Log.h>
+
 #include <array>
-#include <cassert>
 #include <cmath>
 #include <limits>
 
@@ -98,7 +99,10 @@ bool tileOrNeighborHasFlag(const GeneratedWorld& world, TileId t, uint8_t flag) 
 } // namespace
 
 WaterClass classifyWater(const GeneratedWorld& world, TileId tile) {
-    assert(world.grid != nullptr);
+    if (!world.grid) {
+        LOG_ERROR(World, "classifyWater: world has no grid");
+        return WaterClass::RainFed;
+    }
 
     // River and lake flags only exist when Flags were written. Without them we
     // can only distinguish coast (from elevation) vs rain-fed.
@@ -173,8 +177,12 @@ LatLon findDefaultLandingSite(const GeneratedWorld& world) {
     constexpr uint32_t kRequiredFields =
         static_cast<uint32_t>(WorldField::Elevation) |
         static_cast<uint32_t>(WorldField::Flags);
-    assert(world.grid != nullptr);
-    assert((world.validFields & kRequiredFields) == kRequiredFields);
+    if (!world.grid || (world.validFields & kRequiredFields) != kRequiredFields) {
+        LOG_ERROR(World, "findDefaultLandingSite: missing grid or required fields "
+                         "(validFields=0x%x); returning origin",
+                  world.validFields);
+        return LatLon{0.0, 0.0};
+    }
 
     constexpr double kMaxPreferredLatDeg = 45.0;
 

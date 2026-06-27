@@ -160,18 +160,15 @@ namespace engine::assets {
 			return AssetComplexity::Simple;
 		}
 
-		RenderingTier parseRenderingTier(const char* str) {
+		AssetRole parseAssetRole(const char* str) {
 			if (str == nullptr) {
-				return RenderingTier::Instanced;
+				return AssetRole::WorldObject;
 			}
 			std::string s(str);
-			if (s == "batched" || s == "Batched") {
-				return RenderingTier::Batched;
+			if (s == "groundcover" || s == "Groundcover") {
+				return AssetRole::Groundcover;
 			}
-			if (s == "individual" || s == "Individual") {
-				return RenderingTier::Individual;
-			}
-			return RenderingTier::Instanced;
+			return AssetRole::WorldObject;
 		}
 
 		AnimationType parseAnimationType(const char* str) {
@@ -581,8 +578,9 @@ namespace engine::assets {
 				def.label = def.defName;
 			}
 
-			// Asset type
+			// Asset type and render/placement category
 			def.assetType = parseAssetType(defNode.child_value("assetType"));
+			def.role = parseAssetRole(defNode.child_value("role"));
 
 			// Generator (for procedural assets)
 			pugi::xml_node genNode = defNode.child("generator");
@@ -604,11 +602,15 @@ namespace engine::assets {
 			def.motionPath = defNode.child_value("motion"); // optional animation clips file
 			def.worldHeight = static_cast<float>(defNode.child("worldHeight").text().as_double(1.0));
 
+			// Random placement rotation (XML in degrees -> radians). Default 0 = upright.
+			constexpr float kDegToRad = 0.01745329252F;
+			def.maxRandomRotation =
+				static_cast<float>(defNode.child("randomRotation").text().as_double(0.0)) * kDegToRad;
+
 			// Rendering settings
 			pugi::xml_node renderNode = defNode.child("rendering");
 			if (renderNode) {
 				def.complexity = parseComplexity(renderNode.child_value("complexity"));
-				def.renderingTier = parseRenderingTier(renderNode.child_value("tier"));
 			}
 
 			// Animation settings

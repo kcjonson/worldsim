@@ -37,6 +37,10 @@ vcpkg_installed/
 tests/golden/*.actual.png
 tests/diffs/
 
+# Generated planet files (quickstart bake + runtime world saves)
+*.wsplanet
+/planets/
+
 # Logs
 *.log
 

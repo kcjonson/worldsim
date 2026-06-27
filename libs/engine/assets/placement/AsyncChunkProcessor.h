@@ -127,7 +127,12 @@ namespace engine::assets {
 				}
 				result.bakedMesh = world::bakeChunkEntities(
 					entityPtrs, chunkData.coord,
-					[](const std::string& defName) { return AssetRegistry::Get().getTemplate(defName); }
+					[](const std::string& defName) -> const renderer::TessellatedMesh* {
+						if (world::isGroundcoverDef(defName)) {
+							return nullptr; // groundcover renders via the instanced path, not baking
+						}
+						return AssetRegistry::Get().getTemplate(defName);
+					}
 				);
 
 				return result;

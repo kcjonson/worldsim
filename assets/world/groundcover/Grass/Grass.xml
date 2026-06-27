@@ -1,0 +1,194 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Grass Asset Definition
+     Groundcover grass tuft, procedural (Lua generator). All look/feel lives in grass.lua
+     and the <params> below, so it is tunable without recompiling the engine.
+-->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>Groundcover_Grass</defName>
+    <label>Grass</label>
+    <assetType>procedural</assetType>
+
+    <!-- Render/placement role: dense, static-instanced, wind-swept ground cover.
+         Distinct from <category>, which is the inventory ItemCategory. -->
+    <role>groundcover</role>
+
+    <!-- Procedural Lua generator. Geometry is authored at world meter scale (not normalized).
+         The engine generates several variant tufts (buildMesh per seed) and GPU-instances them. -->
+    <generator>
+      <scriptPath>grass.lua</scriptPath>
+      <!-- Look/feel knobs, all read by grass.lua: muted greens harmonized with the grass
+           tile, plus blade shape ranges. Tune here with no recompile. -->
+      <params>
+        <bladeCount>8,12</bladeCount>
+        <bladeLength>0.40,0.65</bladeLength>
+        <bladeHalfWidth>0.014,0.022</bladeHalfWidth>
+        <fanSpread>0.5</fanSpread>
+        <bladeCurve>0.12</bladeCurve>
+        <baseJitter>0.03</baseJitter>
+        <darkR>0.21</darkR><darkG>0.33</darkG><darkB>0.16</darkB>
+        <midR>0.31</midR><midG>0.47</midG><midB>0.24</midB>
+        <tipR>0.46</tipR><tipG>0.63</tipG><tipB>0.33</tipB>
+      </params>
+    </generator>
+    <!-- Approx tuft height in meters (metadata + the groundcover zoom-LOD bucket). -->
+    <worldHeight>0.7</worldHeight>
+
+    <!-- The engine generates this many procedural variant tufts and GPU-instances them.
+         Top-level: the parser reads <variantCount> off the AssetDef, not from <rendering>. -->
+    <variantCount>24</variantCount>
+
+    <animation>
+      <!-- Parametric = sin-based wind sway in vertex shader -->
+      <type>parametric</type>
+      <!-- How much wind affects this asset (0-1) -->
+      <windResponse>0.4</windResponse>
+      <!-- Animation speed range (cycles per second) -->
+      <swayFrequency>0.5,1.0</swayFrequency>
+    </animation>
+
+    <!-- Per-biome placement configuration -->
+    <!-- Each biome can have different spawn behavior -->
+    <placement>
+      <!-- Coverage must be a superset of the grass-textured biomes so the near
+           (vector blades) and far (grass tile texture) representations agree.
+           Grassland group (TropicalSavanna/TemperateGrassland/AlpineGrassland) and
+           the forests paint grass-green ground; the quickstart spawns in the dry
+           XericShrubland, so that biome carries sparse tufts to make grass visible
+           at landing. With 512x512 tiles per chunk, spawnChance controls clump
+           frequency. -->
+
+      <!-- Grassland group: dense, the canonical grass biomes -->
+      <biome name="TemperateGrassland">
+        <!-- Dense patches with bare gaps: a fraction of tiles seed a clump, each a tight
+             cluster of many tufts almost touching. spawnChance = patch frequency. -->
+        <spawnChance>0.27</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>22,44</clumpSize>
+          <clumpRadius>0.55,1.15</clumpRadius>
+          <clumpSpacing>1,2</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="TropicalSavanna">
+        <spawnChance>0.45</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>3,10</clumpSize>
+          <clumpRadius>0.5,1.5</clumpRadius>
+          <clumpSpacing>2,4</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="AlpineGrassland">
+        <spawnChance>0.4</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>3,8</clumpSize>
+          <clumpRadius>0.5,1.2</clumpRadius>
+          <clumpSpacing>2,4</clumpSpacing>
+        </clumping>
+      </biome>
+
+      <!-- Forests: grass in clearings; the forest floor reads grass-green -->
+      <biome name="TemperateDeciduousForest">
+        <spawnChance>0.15</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>3,8</clumpSize>
+          <clumpRadius>0.3,0.8</clumpRadius>
+          <clumpSpacing>3,6</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="TemperateRainforest">
+        <spawnChance>0.15</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>3,8</clumpSize>
+          <clumpRadius>0.3,0.8</clumpRadius>
+          <clumpSpacing>3,6</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="TropicalSeasonalForest">
+        <spawnChance>0.15</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>3,8</clumpSize>
+          <clumpRadius>0.3,0.8</clumpRadius>
+          <clumpSpacing>3,6</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="BorealForest">
+        <spawnChance>0.15</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>3,6</clumpSize>
+          <clumpRadius>0.3,0.8</clumpRadius>
+          <clumpSpacing>4,8</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="MontaneForest">
+        <spawnChance>0.15</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>3,6</clumpSize>
+          <clumpRadius>0.3,0.8</clumpRadius>
+          <clumpSpacing>4,8</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="TropicalRainforest">
+        <spawnChance>0.15</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>3,6</clumpSize>
+          <clumpRadius>0.3,0.8</clumpRadius>
+          <clumpSpacing>4,8</clumpSpacing>
+        </clumping>
+      </biome>
+
+      <!-- Wetland: taller grass in patches -->
+      <biome name="TemperateWetland">
+        <spawnChance>0.08</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>5,12</clumpSize>
+          <clumpRadius>0.3,0.8</clumpRadius>
+          <clumpSpacing>2,4</clumpSpacing>
+        </clumping>
+      </biome>
+
+      <!-- Dry shrubland / desert margins: sparse dry tufts. The quickstart spawns
+           in XericShrubland, so this is what makes grass visible at landing. -->
+      <biome name="XericShrubland">
+        <spawnChance>0.12</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>2,5</clumpSize>
+          <clumpRadius>0.4,1.0</clumpRadius>
+          <clumpSpacing>4,8</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="SemiDesert">
+        <spawnChance>0.05</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>2,4</clumpSize>
+          <clumpRadius>0.4,1.0</clumpRadius>
+          <clumpSpacing>6,10</clumpSpacing>
+        </clumping>
+      </biome>
+
+      <!-- Groups this asset belongs to -->
+      <groups>
+        <group>grass</group>
+        <group>small_flora</group>
+        <group>ground_cover</group>
+      </groups>
+
+      <!-- Relationships with other entities -->
+      <relationships>
+        <!-- Grass has slight affinity for trees (grows in clearings around them) -->
+        <affinity group="trees" distance="5.0" strength="1.2"/>
+      </relationships>
+    </placement>
+  </AssetDef>
+</AssetDefinitions>

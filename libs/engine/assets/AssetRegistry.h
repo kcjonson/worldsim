@@ -52,7 +52,7 @@ namespace engine::assets {
 		size_t loadDefinitionsFromFolder(const std::string& folderPath, const std::function<void(int)>& onProgress = {});
 
 		/// Get an asset definition by name
-		/// @param defName The definition name (e.g., "Flora_GrassBlade")
+		/// @param defName The definition name (e.g., "Groundcover_Grass")
 		/// @return Pointer to definition, or nullptr if not found
 		const AssetDefinition* getDefinition(const std::string& defName) const;
 

@@ -33,6 +33,10 @@ namespace engine::assets {
 			return s == "simple" || s == "Simple" || s == "procedural" || s == "Procedural";
 		}
 
+		bool isKnownRole(const std::string& s) {
+			return s == "groundcover" || s == "Groundcover" || s == "worldobject" || s == "WorldObject";
+		}
+
 		// Resolve a generator script path the way AssetRegistry::generateAsset does.
 		// Returns an empty path if @shared/ is used without a configured shared path.
 		fs::path resolveScriptPath(const std::string& scriptPath, const fs::path& assetFolder, const fs::path& sharedScriptsPath) {
@@ -126,6 +130,13 @@ namespace engine::assets {
 				const std::string assetType = assetDef.child("assetType").text().as_string();
 				if (!assetType.empty() && !isKnownAssetType(assetType)) {
 					report.add(Severity::Warning, defName, "assetType", "Unknown assetType; the loader treats it as Procedural", assetType);
+				}
+
+				// Unknown role silently becomes WorldObject. (Distinct from <category>,
+				// which is the inventory ItemCategory.)
+				const std::string role = assetDef.child("role").text().as_string();
+				if (!role.empty() && !isKnownRole(role)) {
+					report.add(Severity::Warning, defName, "role", "Unknown role; the loader treats it as WorldObject", role);
 				}
 
 				// svgPath must resolve to a real file.
