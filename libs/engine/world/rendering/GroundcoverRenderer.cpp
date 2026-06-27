@@ -5,12 +5,46 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
+#include <vector>
 #include <primitives/BatchRenderer.h>
 #include <primitives/Primitives.h>
 
 namespace engine::world {
 
 // --- Groundcover (grass) GPU-instanced path ---
+
+GroundcoverRenderer::~GroundcoverRenderer() {
+	auto* batchRenderer = Renderer::Primitives::getBatchRenderer();
+	if (batchRenderer != nullptr) {
+		for (auto& [defName, handles] : m_groundcoverHandles) {
+			for (auto& handle : handles) {
+				if (handle.isValid()) {
+					batchRenderer->releaseInstancedMesh(handle);
+				}
+			}
+		}
+	}
+	m_groundcoverHandles.clear();
+}
+
+void GroundcoverRenderer::evictLRU(const std::unordered_set<ChunkCoordinate>& processedChunks) {
+	if (m_groundcoverChunkCache.size() <= kMaxCachedChunks) {
+		return;
+	}
+	std::vector<std::pair<ChunkCoordinate, uint64_t>> byAge;
+	byAge.reserve(m_groundcoverChunkCache.size());
+	for (const auto& [coord, cache] : m_groundcoverChunkCache) {
+		if (processedChunks.find(coord) == processedChunks.end()) { // never evict visible chunks
+			byAge.emplace_back(coord, cache.lastAccessFrame);
+		}
+	}
+	std::sort(byAge.begin(), byAge.end(), [](const auto& a, const auto& b) { return a.second < b.second; });
+	const size_t toEvict = std::min(byAge.size(), kEvictionBatchSize);
+	for (size_t i = 0; i < toEvict; ++i) {
+		m_groundcoverChunkCache.erase(byAge[i].first);
+	}
+}
 
 namespace {
 	// Tunable groundcover constants.

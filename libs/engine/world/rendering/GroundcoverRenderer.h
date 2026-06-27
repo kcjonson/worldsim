@@ -37,7 +37,18 @@ class GroundcoverRenderer {
 		RenderStats&							   stats
 	);
 
+	/// Release uploaded variant meshes on teardown.
+	~GroundcoverRenderer();
+
+	/// Evict cached chunk instance buckets not recently visible (mirrors the baked LRU) so the
+	/// per-chunk InstanceData cache does not grow unbounded over a long pan/play session.
+	void evictLRU(const std::unordered_set<ChunkCoordinate>& processedChunks);
+
   private:
+	// LRU bound: keep recently-visible chunks' instance buckets; evict oldest beyond the cap.
+	static constexpr size_t kMaxCachedChunks = 64;
+	static constexpr size_t kEvictionBatchSize = 8;
+
 	/// Per-chunk groundcover instances: defName -> per-variant instance buckets. Built lazily
 	/// from the placement spatial index the first time a chunk is drawn.
 	struct GroundcoverChunkCache {

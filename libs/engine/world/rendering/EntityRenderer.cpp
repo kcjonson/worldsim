@@ -86,6 +86,7 @@ namespace engine::world {
 
 		// --- Phase 4: LRU cache eviction ---
 		baked.evictLRU(processedChunks);
+		groundcover.evictLRU(processedChunks);
 
 		m_lastEntityCount = stats.entities;
 		m_lastDrawCallCount = stats.drawCalls;

@@ -34,10 +34,9 @@
     <!-- Approx tuft height in meters (metadata + the groundcover zoom-LOD bucket). -->
     <worldHeight>0.7</worldHeight>
 
-    <rendering>
-      <!-- The engine generates this many procedural variant tufts and instances them. -->
-      <variantCount>24</variantCount>
-    </rendering>
+    <!-- The engine generates this many procedural variant tufts and GPU-instances them.
+         Top-level: the parser reads <variantCount> off the AssetDef, not from <rendering>. -->
+    <variantCount>24</variantCount>
 
     <animation>
       <!-- Parametric = sin-based wind sway in vertex shader -->
