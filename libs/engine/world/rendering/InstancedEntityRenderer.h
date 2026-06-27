@@ -11,6 +11,9 @@
 #include "world/rendering/RenderContext.h"
 #include "world/rendering/TemplateMeshCache.h"
 
+#include <graphics/Color.h>
+#include <math/Types.h>
+
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -45,6 +48,12 @@ class InstancedEntityRenderer {
 
 	// Memoized template meshes (keyed by defName)
 	TemplateMeshCache m_templateCache;
+
+	// Per-frame CPU geometry for animated entities (per-part deformed, so not GPU-instanceable):
+	// their parts are transformed on the CPU and drawn in one batch over the instanced entities.
+	std::vector<Foundation::Vec2>  m_animVertices;
+	std::vector<Foundation::Color> m_animColors;
+	std::vector<uint16_t>		   m_animIndices;
 
 	/// Get or create GPU mesh handle for a template
 	Renderer::InstancedMeshHandle& getOrCreateMeshHandle(
