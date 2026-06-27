@@ -169,7 +169,6 @@ namespace engine::world {
 
 		m_quadVAO.bind();
 
-		constexpr float kChunkWorldSize = static_cast<float>(kChunkSize) * kTileSize;
 		for (const Chunk* chunk : visibleChunks) {
 			if (!chunk->isReady()) {
 				continue;

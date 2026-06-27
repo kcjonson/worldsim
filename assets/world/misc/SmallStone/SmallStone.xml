@@ -10,6 +10,8 @@
     <assetType>simple</assetType>
     <svgPath>small_stone.svg</svgPath>
     <worldHeight>0.15</worldHeight>
+    <!-- Ground scatter: no canonical orientation, so randomize placement angle. -->
+    <randomRotation>180</randomRotation>
 
     <rendering>
       <complexity>simple</complexity>

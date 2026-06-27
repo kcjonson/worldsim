@@ -671,8 +671,11 @@ namespace Renderer {
 
 	// --- GPU Instancing Methods ---
 
-	// Maximum allowed instances to prevent excessive GPU memory allocation
-	constexpr uint32_t kMaxAllowedInstances = 100000;
+	// Maximum allowed instances to prevent excessive GPU memory allocation.
+	// Groundcover (dense grass) needs hundreds of thousands per instanced mesh, so
+	// this is sized for that; the instance buffer is only as large as the requested
+	// maxInstances (e.g. 250k blades = 8MB), not this cap.
+	constexpr uint32_t kMaxAllowedInstances = 2000000;
 
 	InstancedMeshHandle BatchRenderer::uploadInstancedMesh(
 		const renderer::TessellatedMesh& mesh,
