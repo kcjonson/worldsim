@@ -239,6 +239,16 @@ function App() {
     });
   };
 
+  // Surface server messages we couldn't parse, right in the log view. Throttled
+  // so a fully-malformed stream reports loudly without burying real logs.
+  const parseErrorCountRef = useRef(0);
+  const handleParseError = (streamType: string) => {
+    const n = ++parseErrorCountRef.current;
+    if (n === 1 || n % 25 === 0) {
+      addSystemLog('ERROR', `Dropped ${n} malformed ${streamType} message(s) from server (unparseable JSON; raw payload in browser console)`);
+    }
+  };
+
   useEffect(() => {
     const connection = new ServerConnection(serverUrl);
 
@@ -257,7 +267,8 @@ function App() {
         onDisconnect: () => {
           setConnectionStatus('connecting');
           addSystemLog('WARN', `Disconnected from ${serverUrl} - attempting to reconnect...`);
-        }
+        },
+        onParseError: () => handleParseError('metric')
       });
 
       connection.connect('logs', {
@@ -267,6 +278,7 @@ function App() {
           const updated = [...prev, data];
           return updated.slice(-logsMaxEntries);
         }),
+        onParseError: () => handleParseError('log')
       });
     } catch (error) {
       console.error('Failed to connect:', error);

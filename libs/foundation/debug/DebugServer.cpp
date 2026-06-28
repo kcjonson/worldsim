@@ -149,7 +149,14 @@ namespace Foundation {
 					escaped += "\\t";
 					break;
 				default:
-					escaped += c;
+					if (static_cast<unsigned char>(c) < 0x20) {
+						// Any other control char is invalid raw in JSON; emit \u00XX.
+						char unicodeEscape[7];
+						std::snprintf(unicodeEscape, sizeof(unicodeEscape), "\\u%04x", static_cast<unsigned char>(c));
+						escaped += unicodeEscape;
+					} else {
+						escaped += c;
+					}
 			}
 		}
 		return escaped;
@@ -196,22 +203,26 @@ namespace Foundation {
 		}
 	}
 
-	// Global buffer for LogEntry::toJSON() (thread_local to be thread-safe)
-	static thread_local char g_logJsonBuffer[512];
-
 	const char* LogEntry::toJSON() const { // NOLINT(readability-convert-member-functions-to-static)
-		std::snprintf(
-			g_logJsonBuffer,
-			sizeof(g_logJsonBuffer),
-			R"({"level":"%s","category":"%s","message":"%s","timestamp":%llu,"file":"%s","line":%d})",
-			logLevelToString(level),
-			logCategoryToString(category),
-			message,
-			static_cast<unsigned long long>(timestamp),
-			(file != nullptr) ? file : "",
-			line
-		);
-		return g_logJsonBuffer;
+		// message and file must be JSON-escaped. file comes from __FILE__, and on
+		// Windows its backslash path (C:\Users\...) is a string of invalid JSON
+		// escapes; left raw, the client's JSON.parse rejects every entry and the
+		// log view silently shows nothing.
+		static thread_local std::string json;
+		json = R"({"level":")";
+		json += logLevelToString(level);
+		json += R"(","category":")";
+		json += logCategoryToString(category);
+		json += R"(","message":")";
+		json += escapeJsonString(message);
+		json += R"(","timestamp":)";
+		json += std::to_string(static_cast<unsigned long long>(timestamp));
+		json += R"(,"file":")";
+		json += escapeJsonString((file != nullptr) ? file : "");
+		json += R"(","line":)";
+		json += std::to_string(line);
+		json += "}";
+		return json.c_str();
 	}
 
 	DebugServer::DebugServer() // NOLINT(cppcoreguidelines-pro-type-member-init,modernize-use-equals-default)
