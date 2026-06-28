@@ -6,6 +6,9 @@ interface StreamConfig {
   handler: (data: any) => void;
   onConnect?: () => void;
   onDisconnect?: () => void;
+  // Fired when an event arrives but its payload can't be JSON-parsed. Without
+  // this the failure is invisible (console-only) and the stream just looks empty.
+  onParseError?: (raw: string, error: unknown) => void;
 }
 
 export class ServerConnection {
@@ -27,6 +30,7 @@ export class ServerConnection {
         config.handler(data);
       } catch (error) {
         console.error(`Failed to parse ${streamType} event:`, error);
+        config.onParseError?.(event.data, error);
       }
     });
 
