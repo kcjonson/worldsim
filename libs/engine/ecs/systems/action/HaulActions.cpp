@@ -234,7 +234,7 @@ namespace ecs {
 		}
 	}
 
-	void ActionSystem::startHaulAction(Task& task, Action& action, const Position& position, Memory& memory) {
+	void ActionSystem::startHaulAction(Task& task, Action& action, const Position& position, Memory& memory, const Inventory& inventory) {
 		auto& registry = engine::assets::AssetRegistry::Get();
 
 		constexpr float kPositionTolerance = 0.5F;
@@ -269,7 +269,15 @@ namespace ecs {
 		// Standard haul is a two-phase task:
 		// Phase 1: At source position → Pickup the item
 		// Phase 2: At storage position → Deposit the item
-		// We determine which phase by checking which position we're closer to
+		//
+		// Phase is carry-state-first, position-second. A haul deposits only once it actually
+		// carries the item; until then it must pick up. Position alone is ambiguous when the
+		// source pile and the destination sit within arrival tolerance of each other (a loose
+		// stack right beside the crafting station): the colonist is then atSource AND atTarget,
+		// and a position-only check would Deposit an empty pack, fail, and re-issue the same
+		// fetch every tick -- an infinite "deposit nothing -> refetch" loop that strands the
+		// craft half-provisioned.
+		const bool carryingHaulItem = ecs::availableQuantity(inventory, task.haulItemDefName) > 0;
 
 		glm::vec2 diffToSource = position.value - task.haulSourcePosition;
 		float	  distSqToSource = diffToSource.x * diffToSource.x + diffToSource.y * diffToSource.y;
@@ -279,7 +287,9 @@ namespace ecs {
 		float	  distSqToTarget = diffToTarget.x * diffToTarget.x + diffToTarget.y * diffToTarget.y;
 		bool	  atTarget = distSqToTarget <= kPositionTolerance * kPositionTolerance;
 
-		if (atSource && !atTarget) {
+		// Not carrying yet: this is the pickup leg, regardless of also being in range of the
+		// destination. Pick up at the source.
+		if (!carryingHaulItem && atSource) {
 			// Phase 1: At source - do Pickup
 			// Look for a carryable entity at the source position matching the item we want to haul
 			std::optional<std::pair<glm::vec2, uint32_t>> staleAtSource;
@@ -330,8 +340,8 @@ namespace ecs {
 				staleAtSource.has_value() ? " - forgot stale entry" : ""
 			);
 			action.clear();
-		} else if (atTarget) {
-			// Phase 2: At storage target - do Deposit (use same quantity as pickup)
+		} else if (carryingHaulItem && atTarget) {
+			// Phase 2: carrying the item and at the destination - do Deposit.
 			// First validate storage is still valid (not packaged/being moved)
 			auto storageEntity = static_cast<EntityID>(task.haulTargetStorageId);
 			if (world->hasComponent<Packaged>(storageEntity)) {

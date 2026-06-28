@@ -783,6 +783,91 @@ TEST_F(ActionSystemGoalTest, LooseFetchHaulCommitsToDepositAndCreditsCraftStatio
 	EXPECT_EQ(registry.getGoal(craftId)->deliveredAmount, 1U) << "Parent craft not double-credited either";
 }
 
+// Regression: a loose fetch where the source pile sits right beside the crafting station --
+// within arrival tolerance, so the colonist standing on the source is ALSO "at" the station.
+// A position-only phase check (atSource && !atTarget for pickup, else atTarget for deposit)
+// would skip the pickup (because atTarget is also true) and deposit an EMPTY pack, fail, and
+// re-issue the same fetch every tick -- an infinite loop that strands the craft with the
+// material still on the ground. Phase must be carry-state-first: not carrying -> pick up,
+// even when also in range of the destination.
+TEST_F(ActionSystemGoalTest, LooseFetchPicksUpWhenSourceOverlapsStation) {
+	engine::assets::AssetDefinition stoneDef;
+	stoneDef.defName = "SmallStone";
+	stoneDef.label = "Small Stone";
+	stoneDef.handsRequired = 1;
+	stoneDef.category = engine::assets::ItemCategory::RawMaterial;
+	stoneDef.capabilities.carryable = engine::assets::CarryableCapability{1};
+	stoneDef.itemProperties = engine::assets::ItemProperties{};
+	stoneDef.itemProperties->stackSize = 10;
+	stoneDef.itemProperties->massKg = 1.5F;
+	engine::assets::AssetRegistry::Get().registerTestDefinition(std::move(stoneDef));
+
+	auto& registry = GoalTaskRegistry::Get();
+	// Source and station overlap: 0.3 m apart, inside the 0.5 m arrival tolerance. The colonist
+	// standing on the source is simultaneously atSource and atTarget.
+	const glm::vec2 sourcePos{1.0F, 1.0F};
+	const glm::vec2 stationPos{1.3F, 1.0F};
+
+	const EntityID station = world->createEntity();
+	world->addComponent<Position>(station, Position{stationPos});
+	world->addComponent<WorkQueue>(station, WorkQueue{});
+	world->addComponent<Inventory>(station, Inventory::createForStorage());
+
+	GoalTask craft;
+	craft.type = TaskType::Craft;
+	craft.owner = GoalOwner::CraftingGoalSystem;
+	craft.destinationEntity = station;
+	craft.destinationPosition = stationPos;
+	craft.targetAmount = 1;
+	craft.status = GoalStatus::Blocked;
+	const uint64_t craftId = registry.createGoal(std::move(craft));
+
+	GoalTask haul;
+	haul.type = TaskType::Haul;
+	haul.owner = GoalOwner::CraftingGoalSystem;
+	haul.destinationEntity = station;
+	haul.destinationPosition = stationPos;
+	haul.acceptedDefNameIds = {engine::assets::AssetRegistry::Get().getDefNameId("SmallStone")};
+	haul.targetAmount = 1;
+	haul.parentGoalId = craftId;
+	haul.status = GoalStatus::Available;
+	const uint64_t haulId = registry.createGoal(std::move(haul));
+
+	// Colonist standing on the loose stone (which it remembers), empty pack.
+	auto  colonist = createColonist(sourcePos);
+	auto* memory = world->getComponent<Memory>(colonist);
+	memory->rememberWorldEntity(
+		sourcePos, engine::assets::AssetRegistry::Get().getDefNameId("SmallStone"),
+		engine::assets::AssetRegistry::Get().getCapabilityMask(
+			engine::assets::AssetRegistry::Get().getDefNameId("SmallStone")));
+	auto pile = world->createEntity();
+	world->addComponent<Position>(pile, Position{sourcePos});
+	world->addComponent<Appearance>(pile, Appearance{"SmallStone", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+
+	auto* task = world->getComponent<Task>(colonist);
+	task->type = TaskType::Haul;
+	task->state = TaskState::Arrived;
+	task->haulGoalId = haulId;
+	task->haulItemDefName = "SmallStone";
+	task->haulQuantity = 1;
+	task->haulSourcePosition = sourcePos;
+	task->haulTargetStorageId = static_cast<uint64_t>(station);
+	task->haulTargetPosition = stationPos;
+	task->haulFromInventory = false;
+	task->targetPosition = sourcePos;
+
+	world->update(0.1F); // start: empty pack at an overlapping source -> must Pickup, not Deposit
+	auto* action = world->getComponent<Action>(colonist);
+	ASSERT_NE(action, nullptr);
+	EXPECT_EQ(action->type, ActionType::Pickup)
+		<< "An empty-pack fetch at a source overlapping the station picks up, it must not deposit nothing";
+
+	world->update(1.0F); // complete Pickup (0.5s)
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	EXPECT_EQ(inventory->getQuantity("SmallStone"), 1U)
+		<< "The overlapping-source fetch actually collected the stone (no empty-deposit loop)";
+}
+
 // =============================================================================
 // Tree felling: a two-hand bulk material (Wood) destructive harvest
 // =============================================================================

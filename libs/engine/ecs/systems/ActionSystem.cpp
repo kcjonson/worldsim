@@ -139,7 +139,7 @@ namespace ecs {
 
 		// Handle Haul tasks - pickup from source, then deposit to storage
 		if (task.type == TaskType::Haul) {
-			startHaulAction(task, action, position, memory);
+			startHaulAction(task, action, position, memory, inventory);
 			return;
 		}
 

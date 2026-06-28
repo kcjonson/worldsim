@@ -199,11 +199,15 @@ private:
 
 	/// Start a haul action (pickup from source, then deposit to storage)
 	/// Memory is mutable so a vanished pickup target can be forgotten.
+	/// Inventory decides phase: a standard haul deposits only once it actually carries the
+	/// item, otherwise it picks up first (position alone is ambiguous when source and target
+	/// sit within arrival tolerance of each other).
 	void startHaulAction(
 		struct Task& task,
 		struct Action& action,
 		const struct Position& position,
-		struct Memory& memory
+		struct Memory& memory,
+		const struct Inventory& inventory
 	);
 
 	/// Start a place packaged action (pickup packaged item, then place at target)
