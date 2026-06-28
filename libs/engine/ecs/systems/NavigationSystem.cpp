@@ -325,10 +325,14 @@ namespace ecs {
 		};
 
 		// Pass 1: a desired region whose EVERY driver sits comfortably inside an existing
-		// region's built rect keeps that region as-is (no recenter, no rebuild unless its
-		// obstacle inputs changed). This shuts the gate for a stationary/slow driver and for
-		// a camera pan that stays well inside the built viewport region.
+		// region's built rect AND whose size matches that region (within kSizeChangeThreshold)
+		// keeps that region as-is (no recenter, no rebuild unless its obstacle inputs changed).
+		// This shuts the gate for a stationary/slow driver and for a camera pan that stays well
+		// inside the built viewport region; a large zoom in/out fails the size check and
+		// resizes the region in Pass 2.
 		for (std::size_t d = 0; d < desired.size(); ++d) {
+			const std::int64_t wantHalf =
+				clampHalfExtent(std::max(desired[d].rect.halfExtentX(), desired[d].rect.halfExtentY()));
 			for (std::size_t r = 0; r < regions.size(); ++r) {
 				if (regionMatched[r]) {
 					continue;
@@ -341,7 +345,15 @@ namespace ecs {
 						break;
 					}
 				}
-				if (allInside) {
+				// Size match: the desired half-extent is within kSizeChangeThreshold of the
+				// built one. A big zoom (>20%) fails this and forces a resize.
+				bool sizeMatch = false;
+				if (regions[r].halfExtent > 0) {
+					const double ratio = static_cast<double>(wantHalf) / static_cast<double>(regions[r].halfExtent);
+					const double delta = (ratio > 1.0) ? (ratio - 1.0) : (1.0 - ratio);
+					sizeMatch		   = delta <= kSizeChangeThreshold;
+				}
+				if (allInside && sizeMatch) {
 					regionMatched[r]  = true;
 					desiredHandled[d] = true;
 					// Rect unchanged, but an obstacle-input change (a wall edit, a

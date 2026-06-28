@@ -316,6 +316,9 @@ class NavigationSystem : public ISystem {
 	// Margin (mm) inside a region rect: a driver closer than this to the edge triggers a
 	// recenter. Keeps a colonist comfortably away from the off-mesh boundary.
 	static constexpr std::int64_t kEdgeMarginMm = 8000; // 8 m
+	// Half-extent fractional change that triggers a region resize (0.20 = 20%). A zoom
+	// in/out past this rebuilds the region at the new size; small jitter stays gated.
+	static constexpr double kSizeChangeThreshold = 0.20;
 
 	engine::world::ChunkManager*							  chunkManager	   = nullptr;
 	engine::assets::PlacementExecutor*						  placement		   = nullptr;
