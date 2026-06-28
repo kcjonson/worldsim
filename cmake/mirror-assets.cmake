@@ -21,6 +21,9 @@ foreach(src_sub IN LISTS source_subdirs)
     set(dst_sub "${DEST_DIR}/${name}")
 
     if(IS_DIRECTORY "${src_sub}")
+        # On a clean build DEST_DIR may not exist yet, and rsync (unlike robocopy)
+        # won't create the destination's missing parent dirs. Create the target first.
+        file(MAKE_DIRECTORY "${dst_sub}")
         if(CMAKE_HOST_WIN32)
             # robocopy exit codes: 0-7 are all success variants.
             # 8+ mean real errors (access denied, out of space, etc.).
