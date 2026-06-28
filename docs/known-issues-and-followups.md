@@ -1,0 +1,43 @@
+# Known issues & follow-ups — colonist nav + craft
+
+**Branch:** `debug/navmesh-zero-walkable` (PR #240) · **As of:** 2026-06-28
+
+Running list of bugs found and fixed, work in flight, and open follow-ups from the
+navmesh + colonist-navigation + craft-provisioning work. The nav rework's design lives
+in the approved plan `~/.claude/plans/ok-some-bugs-related-resilient-treasure.md`.
+
+## Fixed this session (on #240)
+- [x] **Navmesh zero walkable faces** — `mergeHoles` Eberly +x-ray hole-bridge fouled on multi-hole merges, so the land face triangulated to nothing. Validate each bridge + fall back to the nearest reachable loop vertex. (`Triangulation.cpp`)
+- [x] **Off-mesh recovery freeze** — recovery snap was suppressed by a "fresh route" gate; a colonist spawning 3 cm off-mesh froze forever. Recover whenever off-mesh. (`AIDecisionSystem.cpp`)
+- [x] **Loose-ground fetch haul thrash** (3 coupled defects) — deposit-leg movement never re-armed, craft-station credit double-counted, multi-unit fetch deadlocked.
+- [x] **Beeline movement removed** — every move is a navmesh A* path or an explicit error-snap to valid ground; the path graph already excludes blocked faces.
+- [x] **Guaranteed-clear on-mesh landing** + durable **colony origin** (`ecs::Colony` in `GameWorldState`) + last-resort snap-to-origin recovery.
+- [x] **Phase 1 multi-region nav** — sim area follows colonists + viewport as clustered square regions, each with its own mesh; rebuilds self-gated on movement hysteresis (no per-frame camera push). Fixes the camera-drag freeze + the river-snap.
+- [x] **Craft-fetch carry-capacity gate** — kills the infinite "hauling" loop when the colonist's pack is full.
+- [x] **Crafting works like construction** — haul materials INTO the station's store; the Craft action consumes from the station. Over-weight colonists can now provision.
+- [x] **Log-stream per-connection cursor** — multiple dev-tools viewers no longer starve each other's log feed.
+- [x] **Asset-staging mirror** — `robocopy /MIR` / `rsync --delete` so assets deleted from source are pruned from the build dir (no more stale `GrassBlade` loading).
+
+## Recently fixed (commits ee67dd4 / fbf912e)
+- [x] **Craft never starts / infinite haul loop** — `startHaulAction` chose its Pickup/Deposit phase by POSITION (`atSource`/`atTarget`, 0.5 m tolerance). When a loose pile sits within tolerance of the station, the colonist is `atSource` AND `atTarget` at once, skips Pickup, runs an empty Deposit ("deposit failed"), and the AI re-emits the fetch forever — half-full store, craft never starts. Fixed: phase is now carry-state-first (pick up until actually carrying; deposit only once carrying). (`HaulActions.cpp` + `ActionSystem`.)
+- [x] **Harvest carry-loop** ("stuck harvesting by the river") — `evaluateHarvestOptions` lacked a carry gate; an over-weight colonist looped on `Collected 0 (carry-limited)`. Fixed with a carry gate (skip when `cargoUnitsThatFit == 0`). The river was incidental — it was a loop, not nav.
+
+## In progress (fix agent)
+- [ ] **Reliable end-to-end crafting** — drive a queued craft to consistently complete (provision → craft) across realistic scenarios on navigable ground; fix any AI-arbitration / discovery blocker that stops a colonist finishing a queued job.
+- [x] **Generic `isValidPosition` + block invalid spawning/placement** (done, commit `2d882c6`: `isValidPosition` = thin `NavigationSystem::isOnMesh` wrapper reading only the nav mesh, wired into dev spawn / give / colonist / teleport + build-placement, ad-hoc checks deleted, 840 engine-tests, in-game verified) — ONE canonical predicate every world-positioning path respects (One Path Rule): valid IFF the point is on a walkable NAV FACE in an active sim region — a thin query over `NavigationSystem::isOnMesh`. The nav mesh is the runtime walkability authority; do NOT read world/chunk source data (NOT `terrainTraversable` / `isWaterAt`) — that's load-time-only data (see memory `world-data-vs-runtime-boundary`). A position outside any active mesh is not placeable for now (Phase 2 coarse global mesh extends this later; leave a code comment on the constraint). Wired into dev tools (spawn / give / teleport / move) + build-placement; each refuses + errors on invalid (dev returns an error and creates/moves nothing; preview shows invalid). Surfaced while testing crafting (the test agent kept dropping unreachable resources in the river); a first attempt that read world data was reset to `fbf912e`.
+
+## Open follow-ups / known issues
+- [ ] **`findValidPositionNear(origin, minDist=1m, maxDist=unbounded)` + unify ground-drops.** Companion to `isValidPosition`: returns the nearest valid nav-mesh position at least `minDist` from the origin (default 1m, so it never drops right on the origin). `maxDist` defaults to unbounded so a drop never fails to place; it self-bounds in practice to the active mesh, since the dropper is already on it. Built on the same nav authority, homed beside `NavigationSystem::nearestPathablePoint` (a drop-spot search, not a recovery snap). The single "where does a dropped thing land" primitive for inventory overflow, generic ground-drops, cancelling a foundation that still holds materials, deconstructing a crafting station that holds contents, and completing a craft with a full pack. No occupancy/collision modeling in the search: entities will take space in the nav mesh itself in future, so the mesh encodes "occupied" as not-walkable and the search just returns a valid nearby position. Unifies the per-system ad-hoc drop logic (e.g. harvest overflow-drop). Build WITH its consumers, not speculatively; the craft-with-full-pack drop is part of "crafting fully working".
+  - **Algorithm (not a ring sweep).** `minDist` is a provable lower bound on the answer, so once the circle of radius `minDist` touches walkable mesh, a point on it is optimal and no search is needed. Three tiers, cheap to costly: (1) `locateTriangle(origin)`; (2) one-query shortcut: test the point at `minDist` in the preferred direction with `isValidPosition`, and if it misses, intersect the `minDist` circle with the origin face + adjacency neighbors and pick a point on a walkable arc (exact, distance == `minDist`); (3) rare fallback for an origin pinned in a sub-`minDist` pocket: best-first over mesh adjacency, faces popped by nearest distance, each yielding its closest point at least `minDist` out (closest-point-on-triangle, pushed onto the circle), first hit wins, stop when the frontier lower bound passes it. Exact (continuous circle-vs-triangle, no angular stepping), near-constant in the common case, reuses locate + the adjacency graph + closest-point-on-triangle. Direction pick is a per-consumer parameter: a deterministic seed so drops fan out, plus optional aim (overflow spreads; craft output toward the colonist).
+- [ ] **Phase 2 nav** (approved plan): static **coarse geography mesh** — big impassables only (rivers as polylines, NO assets), built once per chunk, never recalculated — for **long-range routing** across unsimulated space; plus **skip-nav-for-stationary** agents.
+- [ ] **AI arbitration / "reliably do the queued job"** — a colonist can be pulled toward harvesting or wandering before finishing a queued craft; a colonist who ends up in an unmeshed region won't path to nearby loose stock. The recurring "colonist doesn't reliably do the work" complaint.
+- [ ] **Discovery-gating UX** — a queued craft + dropped materials doesn't reliably start a colonist until he *discovers* the materials via vision; no feedback when nothing happens. The original "colonist does nothing" theme.
+- [ ] **Navmesh build perf** — `buildNavMesh` is O(n²) (~8–12 s for the full area). Phase 1's smaller per-colonist regions reduce the cost, but the algorithm itself is still O(n²).
+- [ ] **Slow world-load placement** — grassland on the high-res planet places a lot of grass; loading takes minutes (not a hang).
+- [ ] **Session save/load** — there is no gameplay/colony session save (only the procedural planet is persisted). The colony origin and colony state don't survive save/load. Future epic; the origin is now in the right place to be persisted.
+- [ ] **Materials-in-station vs hauler's pack** — resolved (now deposits into the station). Watch for multi-colonist edge cases (one colonist staging, another crafting).
+
+## Before flipping #240 to ready
+- [ ] Strip the `[NavBuild]` / `[NavDiag]` debug instrumentation (kept per the debug protocol until the fixes are user-confirmed).
+- [ ] Run the full engine + geometry suites on a clean build.
+- [ ] Final in-game end-to-end pass: clear on-mesh spawn → navigate → craft an axe from both cut sources and loose materials, with pan/zoom not freezing the colonist.
