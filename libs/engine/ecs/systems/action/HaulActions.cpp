@@ -11,6 +11,7 @@
 #include "../../components/StructureBlueprint.h"
 #include "../../components/Task.h"
 #include "../../components/Transform.h"
+#include "../../components/WorkQueue.h"
 
 #include "assets/AssetRegistry.h"
 
@@ -28,62 +29,63 @@ namespace ecs {
 		auto&	   registry = engine::assets::AssetRegistry::Get();
 		const bool twoHand	= ecs::itemIsTwoHand(registry, depEff.itemDefName);
 
-		// Craft-material delivery: the target is a crafting station with no storage
-		// container. The harvested/fetched materials stay in the colonist's inventory (the Craft
-		// action consumes them from there); arriving here just marks them delivered so the
-		// parent Craft goal advances out of Blocked.
-		//
-		// Idempotent credit: the delivered material is NOT removed from inventory, so a multi-trip
-		// fetch (carry 1 of a needed 2, deposit, fetch the 2nd) re-runs this deposit while still
-		// holding the earlier units. Crediting `delivered` each time would double-count one physical
-		// stone and falsely satisfy the recipe. So track the goal's delivered count against what the
-		// colonist now PHYSICALLY carries: credit only the increment that lifts deliveredAmount up to
-		// min(carried, target). Re-depositing the same inventory is then a no-op, and the goal stays
-		// Available -- driving the colonist to fetch the remaining units -- until it truly holds them all.
+		// Craft-material delivery, mirroring the build-site path: the material is MOVED from the
+		// colonist's pack/hands into the crafting station's own Inventory store. The colonist's
+		// pack empties; the station holds the staged materials, and the Craft action later
+		// consumes them from the station (not from the colonist). Crediting the Haul goal by what
+		// physically landed in the station lifts the parent Craft goal out of Blocked once every
+		// input is present, exactly as construction gates on materialsComplete().
 		if (depEff.deliverToCraftStation) {
-			uint32_t carried = ecs::availableQuantity(inventory, depEff.itemDefName);
-			if (carried > 0 && task.type == TaskType::Haul && task.haulGoalId != 0) {
-				auto&		goalRegistry = GoalTaskRegistry::Get();
-				const auto* goal = goalRegistry.getGoal(task.haulGoalId);
-				if (goal != nullptr) {
-					const uint32_t target = goal->targetAmount;
-					const uint32_t already = goal->deliveredAmount;
-					const uint32_t want = std::min(carried, target); // physical units staged for this material
-					const uint32_t increment = want > already ? want - already : 0;
-					if (increment > 0) {
-						goalRegistry.recordDelivery(task.haulGoalId, increment);
-						LOG_INFO(
-							Engine,
-							"[Action] Delivered %u x %s to crafting station %llu (now %u/%u staged, kept in inventory for craft)",
-							increment,
-							depEff.itemDefName.c_str(),
-							static_cast<unsigned long long>(depEff.storageEntityId),
-							want,
-							target
-						);
-					} else {
-						LOG_DEBUG(
-							Engine,
-							"[Action] Re-deposit of %s at station %llu credited nothing (%u/%u already staged)",
-							depEff.itemDefName.c_str(),
-							static_cast<unsigned long long>(depEff.storageEntityId),
-							already,
-							target
-						);
-					}
-
-					const auto* refreshed = goalRegistry.getGoal(task.haulGoalId);
-					if (refreshed != nullptr && refreshed->availableCapacity() == 0) {
-						goalRegistry.removeGoal(task.haulGoalId);
-					}
-				}
-			} else {
+			const auto stationEntity = static_cast<EntityID>(depEff.storageEntityId);
+			auto*	   stationInv = world->getComponent<Inventory>(stationEntity);
+			if (stationInv == nullptr) {
 				LOG_WARNING(
 					Engine,
-					"[Action] Craft delivery of %s found nothing carried (carried=%u)",
+					"[Action] Craft delivery of %s: station %llu has no Inventory store, items kept in pack",
 					depEff.itemDefName.c_str(),
-					carried
+					static_cast<unsigned long long>(depEff.storageEntityId)
 				);
+				return;
+			}
+
+			const uint32_t carried = ecs::availableQuantity(inventory, depEff.itemDefName);
+			uint32_t	   removed = twoHand ? ecs::removeFromHands(inventory, depEff.itemDefName, carried)
+											 : inventory.removeItem(depEff.itemDefName, carried);
+			if (removed == 0) {
+				LOG_WARNING(Engine, "[Action] Craft deposit failed: %s not in inventory", depEff.itemDefName.c_str());
+				return;
+			}
+
+			uint32_t added = stationInv->addItem(depEff.itemDefName, removed);
+			if (added < removed) {
+				// Station store full (slot-limited): return the surplus to the colonist so it
+				// isn't lost. createForStorage() gives ample slots, so this is a guard, not the
+				// common path.
+				uint32_t leftover = removed - added;
+				if (twoHand) {
+					ecs::addArmful(inventory, registry, depEff.itemDefName, leftover);
+				} else {
+					inventory.addItem(depEff.itemDefName, leftover);
+				}
+				LOG_WARNING(Engine, "[Action] Craft station full: deposited %u of %u x %s", added, removed, depEff.itemDefName.c_str());
+			}
+
+			LOG_INFO(
+				Engine,
+				"[Action] Delivered %u x %s into crafting station %llu (now in station store)",
+				added,
+				depEff.itemDefName.c_str(),
+				static_cast<unsigned long long>(depEff.storageEntityId)
+			);
+
+			if (added > 0 && task.type == TaskType::Haul && task.haulGoalId != 0) {
+				auto& goalRegistry = GoalTaskRegistry::Get();
+				goalRegistry.recordDelivery(task.haulGoalId, added);
+
+				const auto* goal = goalRegistry.getGoal(task.haulGoalId);
+				if (goal != nullptr && goal->availableCapacity() == 0) {
+					goalRegistry.removeGoal(task.haulGoalId);
+				}
 			}
 		} else {
 
@@ -240,24 +242,25 @@ namespace ecs {
 		// Inventory-source haul: the colonist already carries the harvested items, so there is
 		// no ground pickup. It walks to the destination and deposits. Single-phase. The deposit
 		// mode depends on the destination: a build site (blueprint) records the material onto its
-		// manifest for real; a crafting station has no blueprint, so "delivery" just credits the
-		// goal and the items stay in inventory for the Craft action to consume.
+		// manifest; a crafting station (WorkQueue) moves it into the station's own store and
+		// credits the parent Craft goal. The station is identified by its WorkQueue, since it now
+		// also carries an Inventory store just like a plain storage container does.
 		if (task.haulFromInventory) {
-			const bool targetIsBuildSite =
-				world->hasComponent<StructureBlueprint>(static_cast<EntityID>(task.haulTargetStorageId));
+			const auto targetEntity = static_cast<EntityID>(task.haulTargetStorageId);
+			const bool targetIsCraftStation = world->hasComponent<WorkQueue>(targetEntity);
 			action = Action::Deposit(
 				task.haulItemDefName,
 				task.haulQuantity,
 				task.haulTargetStorageId,
 				task.haulTargetPosition,
-				/*deliverToCraftStation=*/!targetIsBuildSite
+				/*deliverToCraftStation=*/targetIsCraftStation
 			);
 			LOG_DEBUG(
 				Engine,
 				"[Action] Haul-from-inventory: deliver %u x %s to %s %llu",
 				task.haulQuantity,
 				task.haulItemDefName.c_str(),
-				targetIsBuildSite ? "build site" : "crafting station",
+				targetIsCraftStation ? "crafting station" : "build site",
 				static_cast<unsigned long long>(task.haulTargetStorageId)
 			);
 			return;
@@ -342,17 +345,16 @@ namespace ecs {
 				return;
 			}
 
-			// A crafting-station target has no blueprint and no Inventory: deliver-to-craft-station
-			// keeps the items in inventory for the Craft action and just credits the goal. A build
-			// site (blueprint) or a storage container takes the goods for real.
-			const bool toBuildSite = world->hasComponent<StructureBlueprint>(storageEntity);
-			const bool toStorage = world->hasComponent<Inventory>(storageEntity);
+			// A crafting station (WorkQueue) takes the goods into its own store and credits the
+			// parent Craft goal; a build site or plain storage container takes them as before.
+			// The station carries an Inventory too, so the WorkQueue is what distinguishes it.
+			const bool toCraftStation = world->hasComponent<WorkQueue>(storageEntity);
 			action = Action::Deposit(
 				task.haulItemDefName,
 				task.haulQuantity,
 				task.haulTargetStorageId,
 				task.haulTargetPosition,
-				/*deliverToCraftStation=*/!toBuildSite && !toStorage
+				/*deliverToCraftStation=*/toCraftStation
 			);
 			LOG_DEBUG(
 				Engine,

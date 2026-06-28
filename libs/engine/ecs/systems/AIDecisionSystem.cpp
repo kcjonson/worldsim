@@ -337,14 +337,10 @@ namespace ecs {
 								continue;
 							}
 
-							// Craft-station deliveries don't remove the item from inventory -- they only
-							// credit the goal -- so a re-deposit of already-credited units is a no-op. Suppress
-							// the option once everything carried is staged (carried <= delivered); otherwise the
-							// colonist parks at the bench re-depositing instead of fetching the units it still
-							// lacks. Blueprint deliveries consume the item, so they keep the carried>0 gate.
-							if (!toBlueprint && carried <= goal->deliveredAmount) {
-								continue;
-							}
+							// Both craft and construction deposits MOVE the carried material into the
+							// destination (station store or blueprint manifest), so the pack empties on
+							// delivery; the next tick the colonist carries 0 and this option drops out.
+							// Just gate on carrying something.
 
 							EvaluatedOption haulOption;
 							haulOption.taskType = TaskType::Haul;
@@ -370,8 +366,8 @@ namespace ecs {
 					}
 
 					// Craft-only fetch: the colonist isn't carrying the material, so bring a remembered
-					// loose stock to the station (two-phase pickup -> deposit; the deposit keeps it in
-					// inventory for the Craft action). Construction never fetches; its goods come from a cut.
+					// loose stock to the station (two-phase pickup -> deposit into the station store).
+					// Construction never fetches; its goods come from a cut.
 					if (isCraftHaul && goal->status == GoalStatus::Available) {
 						for (const auto& [key, looseItem] : memory.knownWorldEntities) {
 							const bool accepted = std::find(goal->acceptedDefNameIds.begin(), goal->acceptedDefNameIds.end(), looseItem.defNameId) != goal->acceptedDefNameIds.end();
@@ -379,13 +375,13 @@ namespace ecs {
 								continue;
 							}
 							const auto& itemDefName = registry.getDefName(looseItem.defNameId);
-							// A craft-station delivery only CREDITS the goal; it never removes the material
-							// from inventory (the Craft action consumes it later from there). So the colonist
-							// must physically gather the recipe's full count (targetAmount) into its own pack.
-							// Fetch while it still holds fewer than that, regardless of how many are already
-							// credited -- a recipe needing 2 when the colonist holds 1 still needs a 2nd loose
-							// unit fetched. Once it holds the full count, stop fetching and let the deposit finish.
-							if (ecs::availableQuantity(inventory, itemDefName) >= goal->targetAmount) {
+							// Deposits move the material into the station, so the pack empties between
+							// trips. Stop fetching once enough is already staged in the station
+							// (deliveredAmount) plus what the colonist is carrying toward this delivery
+							// (carried) to satisfy the goal; otherwise keep fetching the next unit. A
+							// recipe needing 2 with 1 staged and 0 in hand still needs a 2nd unit fetched.
+							const uint32_t carried = ecs::availableQuantity(inventory, itemDefName);
+							if (goal->deliveredAmount + carried >= goal->targetAmount) {
 								continue;
 							}
 							const auto* itemDef = registry.getDefinition(itemDefName);
@@ -393,13 +389,11 @@ namespace ecs {
 								continue;
 							}
 							// Only fetch what the pickup can actually lift. The Pickup action clamps to
-							// carry weight (cargoUnitsThatFit); at or over the cap it adds 0, the staged
-							// count never rises, and the AI re-issues this same fetch every tick -- an
-							// infinite "fetch -> collect 0 -> fetch" loop that never completes the craft.
-							// Craft-station deliveries KEEP the staged materials in the pack, so a colonist
-							// gathering a multi-material recipe (or already loaded with other cargo) fills up
-							// and the last material can't be lifted. Skip the fetch when no unit fits; the
-							// craft stays pending until the colonist has room, instead of spinning.
+							// carry weight (cargoUnitsThatFit); at or over the cap it adds 0, the fetch
+							// collects nothing, and the AI re-issues it every tick -- an infinite "fetch ->
+							// collect 0 -> fetch" loop. A colonist already loaded with unrelated cargo (or
+							// mid-trip carrying the previous unit) can hit this. Skip the fetch when no unit
+							// fits; the craft stays pending until the colonist has room, instead of spinning.
 							if (ecs::cargoUnitsThatFit(inventory, registry, itemDefName) == 0) {
 								continue;
 							}
@@ -1288,12 +1282,17 @@ namespace ecs {
 				continue;
 			}
 
-			// Does the colonist already hold every input? (A wood armful in hand counts, not just the pack.)
-			bool hasAllInputs = true;
-			for (const auto& input : recipe->inputs) {
-				if (ecs::availableQuantity(inventory, input.defName) < input.count) {
-					hasAllInputs = false;
-					break;
+			// Does the STATION's store already hold every input? Materials are hauled into the
+			// station during provisioning (mirroring construction); the craft work is only
+			// available once they're all physically present in the station, not in the colonist.
+			const auto* stationStore = world->getComponent<Inventory>(stationEntity);
+			bool		hasAllInputs = stationStore != nullptr;
+			if (hasAllInputs) {
+				for (const auto& input : recipe->inputs) {
+					if (stationStore->getQuantity(input.defName) < input.count) {
+						hasAllInputs = false;
+						break;
+					}
 				}
 			}
 
@@ -1316,7 +1315,7 @@ namespace ecs {
 			craftOption.skillBonus = craftSkillBonus;
 
 			// Provisioning the materials is the goal-driven Harvest/Haul options' job; the Craft
-			// option is the crafting WORK, workable only once the colonist holds every input.
+			// option is the crafting WORK, workable only once the station holds every input.
 			if (hasAllInputs) {
 				craftOption.status = OptionStatus::Available;
 				craftOption.reason = "Crafting " + recipe->label;

@@ -1,7 +1,9 @@
 #include "CraftingGoalSystem.h"
 
 #include "../GoalTaskRegistry.h"
+#include "../InventoryMass.h"
 #include "../World.h"
+#include "../components/Inventory.h"
 #include "../components/Memory.h"
 #include "../components/Transform.h"
 #include "../components/WorkQueue.h"
@@ -68,6 +70,19 @@ namespace ecs {
 					if (known != nullptr && known->defNameId == itemDefNameId) {
 						return true;
 					}
+				}
+			}
+			return false;
+		}
+
+		// Does any colonist already PHYSICALLY carry this item? If so, the recipe input should be a
+		// Haul (deliver-from-inventory into the station), not a fresh Harvest -- a colonist holding a
+		// Stick must deliver it, not go cut another one.
+		bool colonyCarriesStock(World* world, const std::string& itemDefName) {
+			for (auto [colonist, inventory] : world->view<Inventory>()) {
+				(void)colonist;
+				if (ecs::availableQuantity(inventory, itemDefName) > 0) {
+					return true;
 				}
 			}
 			return false;
@@ -199,10 +214,17 @@ namespace ecs {
 
 			uint32_t recipeId = recipeIdentity(nextJob->recipeDefName);
 
-			// Build the child Harvest/Haul hierarchy under a Craft goal. Returns the total
-			// number of input items the recipe needs (the Craft goal's targetAmount).
-			auto buildChildHierarchy = [&](uint64_t craftGoalId) -> uint32_t {
+			// Materials already in the station's store count as delivered: only the shortfall needs
+			// provisioning. This mirrors construction reading the blueprint's delivered[] manifest,
+			// and keeps a re-queued job or leftover stock from re-gathering what's already on hand.
+			const auto* stationStore = world->getComponent<Inventory>(entity);
+
+			// Build the child Harvest/Haul hierarchy under a Craft goal. Returns {targetAmount,
+			// alreadyStaged}: the total inputs the recipe needs, and how many of those the station
+			// store already holds (pre-credited to the Craft goal so it unblocks once the rest arrive).
+			auto buildChildHierarchy = [&](uint64_t craftGoalId) -> std::pair<uint32_t, uint32_t> {
 				uint32_t totalInputsNeeded = 0;
+				uint32_t alreadyStaged = 0;
 				for (const auto& input : recipe->inputs) {
 					uint32_t inputDefNameId = assetRegistry.getDefNameId(input.defName);
 					if (inputDefNameId == 0) {
@@ -211,18 +233,30 @@ namespace ecs {
 
 					totalInputsNeeded += input.count;
 
+					// Subtract what the station already holds; only provision the remainder.
+					const uint32_t inStore = stationStore != nullptr ? stationStore->getQuantity(input.defName) : 0U;
+					const uint32_t staged = std::min(inStore, input.count);
+					alreadyStaged += staged;
+					const uint32_t stillNeeded = input.count - staged;
+					if (stillNeeded == 0) {
+						continue; // fully satisfied from the store; no child goal needed
+					}
+
 					// Check if this input can come from harvestable sources
 					bool canHarvest = canItemBeHarvested(assetRegistry, input.defName);
 
 					// Generate chain ID to link Harvest → Haul (for continuity bonus)
 					uint64_t chainId = generateChainId();
 
-					// Resolve this input against colony knowledge (any colonist's memory):
-					//  - known carryable stock    -> Haul it (Available, fetched from that source)
+					// Resolve this input against colony state (any colonist):
+					//  - already carried in a pack -> Haul it straight into the station (deliver it,
+					//                                 don't go harvest a fresh one)
+					//  - known carryable stock     -> Haul it (Available, fetched from that source)
 					//  - else a known harvestable  -> Harvest (cut); its Haul is created lazily
 					//  - else                      -> a Haul that waits, NoSource ("none found")
 					// NoSource children are re-resolved each tick as colonists discover sources.
-					const bool stockKnown = colonyKnowsStock(world, inputDefNameId);
+					const bool carried = colonyCarriesStock(world, input.defName);
+					const bool stockKnown = carried || colonyKnowsStock(world, inputDefNameId);
 					const bool harvestKnown =
 						!stockKnown && canHarvest && colonyKnowsHarvestableSource(world, assetRegistry, inputDefNameId);
 
@@ -235,7 +269,7 @@ namespace ecs {
 						harvestGoal.destinationDefNameId = 0;
 						harvestGoal.acceptedDefNameIds = {inputDefNameId};
 						harvestGoal.acceptedCategory = engine::assets::ItemCategory::None;
-						harvestGoal.targetAmount = input.count;
+						harvestGoal.targetAmount = stillNeeded;
 						harvestGoal.deliveredAmount = 0;
 						harvestGoal.createdAt = 0.0F;
 						harvestGoal.parentGoalId = craftGoalId;
@@ -255,7 +289,7 @@ namespace ecs {
 						haulGoal.destinationDefNameId = 0;
 						haulGoal.acceptedDefNameIds = {inputDefNameId};
 						haulGoal.acceptedCategory = engine::assets::ItemCategory::None;
-						haulGoal.targetAmount = input.count;
+						haulGoal.targetAmount = stillNeeded;
 						haulGoal.deliveredAmount = 0;
 						haulGoal.createdAt = 0.0F;
 						haulGoal.parentGoalId = craftGoalId;
@@ -265,7 +299,7 @@ namespace ecs {
 						goalRegistry.createGoal(std::move(haulGoal));
 					}
 				}
-				return totalInputsNeeded;
+				return {totalInputsNeeded, alreadyStaged};
 			};
 
 			// Check if goal already exists
@@ -294,12 +328,13 @@ namespace ecs {
 				for (uint64_t childId : oldChildIds) {
 					goalRegistry.removeGoalWithChildren(childId);
 				}
-				uint32_t totalInputsNeeded = buildChildHierarchy(craftGoalId);
+				auto [totalInputsNeeded, alreadyStaged] = buildChildHierarchy(craftGoalId);
 				goalRegistry.updateGoal(craftGoalId, [&](GoalTask& goal) {
 					goal.recipeNameId = recipeId;
 					goal.targetAmount = totalInputsNeeded;
-					goal.deliveredAmount = 0;
-					goal.status = GoalStatus::Blocked;
+					goal.deliveredAmount = alreadyStaged;
+					// If the store already holds every input, the craft is workable immediately.
+					goal.status = alreadyStaged >= totalInputsNeeded ? GoalStatus::Available : GoalStatus::Blocked;
 				});
 				stationsWithGoals.erase(entity);
 				activeGoalCount++;
@@ -324,12 +359,16 @@ namespace ecs {
 
 			uint64_t craftGoalId = goalRegistry.createGoal(std::move(craftGoal));
 
-			// 2. For each recipe input, create Harvest and/or Haul goals
-			uint32_t totalInputsNeeded = buildChildHierarchy(craftGoalId);
+			// 2. For each recipe input, create Harvest and/or Haul goals (only for the shortfall
+			//    the station store doesn't already hold).
+			auto [totalInputsNeeded, alreadyStaged] = buildChildHierarchy(craftGoalId);
 
-			// Update craft goal with total inputs needed (the material total it tracks)
+			// Update craft goal with the material total it tracks, pre-crediting what the store
+			// already holds. If everything is already staged, it's workable right away.
 			goalRegistry.updateGoal(craftGoalId, [&](GoalTask& goal) {
 				goal.targetAmount = totalInputsNeeded;
+				goal.deliveredAmount = alreadyStaged;
+				goal.status = alreadyStaged >= totalInputsNeeded ? GoalStatus::Available : GoalStatus::Blocked;
 			});
 
 			stationsWithGoals.erase(entity);

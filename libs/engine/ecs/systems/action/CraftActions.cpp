@@ -24,14 +24,22 @@ namespace ecs {
 
 		auto& assetRegistry = engine::assets::AssetRegistry::Get();
 
-		// Consume inputs. Two-hand materials (e.g. wood) ride in the hands, not the backpack,
-		// so pull them from there; everything else comes from the pack.
+		// Consume inputs from the STATION's store, not the colonist's pack: the materials were
+		// hauled into the station's Inventory during provisioning (mirroring construction, where
+		// the build consumes from the on-site manifest). The crafted output goes to the colonist.
+		auto* stationInv = world->getComponent<Inventory>(static_cast<EntityID>(craftEff.stationEntityId));
+		if (stationInv == nullptr) {
+			LOG_WARNING(
+				Engine,
+				"[Action] Craft aborted: station %llu has no Inventory store to consume from",
+				static_cast<unsigned long long>(craftEff.stationEntityId)
+			);
+			return;
+		}
 		for (const auto& [itemName, count] : craftEff.inputs) {
-			uint32_t removed = ecs::itemIsTwoHand(assetRegistry, itemName)
-								   ? ecs::removeFromHands(inventory, itemName, count)
-								   : inventory.removeItem(itemName, count);
+			uint32_t removed = stationInv->removeItem(itemName, count);
 			if (removed < count) {
-				LOG_WARNING(Engine, "[Action] Craft failed to consume %u x %s (only had %u)", count, itemName.c_str(), removed);
+				LOG_WARNING(Engine, "[Action] Craft failed to consume %u x %s from station (only had %u)", count, itemName.c_str(), removed);
 			}
 		}
 
@@ -87,7 +95,7 @@ namespace ecs {
 		}
 	}
 
-	void ActionSystem::startCraftAction(Task& task, Action& action, const Inventory& inventory) {
+	void ActionSystem::startCraftAction(Task& task, Action& action) {
 		auto& recipeRegistry = engine::assets::RecipeRegistry::Get();
 
 		// Get the recipe
@@ -98,11 +106,18 @@ namespace ecs {
 			return;
 		}
 
-		// Verify colonist has all required inputs (backpack or, for two-hand goods, the hands)
+		// Verify the station's store holds all required inputs (hauled in during provisioning).
+		// This mirrors construction gating on materialsComplete() before the build proceeds.
+		const auto* stationInv = world->getComponent<Inventory>(static_cast<EntityID>(task.targetStationId));
+		if (stationInv == nullptr) {
+			LOG_WARNING(Engine, "[Action] Cannot craft %s - station has no Inventory store", recipe->label.c_str());
+			action.clear();
+			return;
+		}
 		for (const auto& input : recipe->inputs) {
-			if (ecs::availableQuantity(inventory, input.defName) < input.count) {
+			if (stationInv->getQuantity(input.defName) < input.count) {
 				LOG_WARNING(
-					Engine, "[Action] Cannot craft %s - missing %u x %s", recipe->label.c_str(), input.count, input.defName.c_str()
+					Engine, "[Action] Cannot craft %s - station missing %u x %s", recipe->label.c_str(), input.count, input.defName.c_str()
 				);
 				action.clear();
 				return;

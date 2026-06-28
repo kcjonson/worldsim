@@ -166,12 +166,9 @@ private:
 	/// Apply a completed PlacePackaged effect (phase 2): move the carried entity to target and unpackage.
 	void applyPlacePackagedEffect(const struct Action& action, struct Inventory& inventory);
 
-	/// Start a crafting action based on the task's recipe
-	void startCraftAction(
-		struct Task& task,
-		struct Action& action,
-		const struct Inventory& inventory
-	);
+	/// Start a crafting action based on the task's recipe. Validates the recipe inputs against the
+	/// crafting station's own Inventory store (materials were hauled into it during provisioning).
+	void startCraftAction(struct Task& task, struct Action& action);
 
 	/// Start a Build or Deconstruct action on the task's blueprint.
 	/// Reads the colonist's Construction skill (if any) to scale the work rate, and validates

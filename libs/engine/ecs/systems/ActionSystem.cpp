@@ -133,7 +133,7 @@ namespace ecs {
 	) {
 		// Handle Craft tasks separately
 		if (task.type == TaskType::Craft) {
-			startCraftAction(task, action, inventory);
+			startCraftAction(task, action);
 			return;
 		}
 

@@ -202,9 +202,12 @@ namespace world_sim {
 		const auto* assetDef = assetRegistry.getDefinition(defName);
 
 		if (assetDef != nullptr && assetDef->capabilities.craftable.has_value()) {
-			// Crafting station - add WorkQueue
+			// Crafting station - add WorkQueue plus a material store Inventory. Colonists haul
+			// recipe inputs INTO this store during provisioning (like a build site holds its
+			// delivered materials), and the Craft action consumes them from here.
 			ecsWorld->addComponent<ecs::WorkQueue>(entity, ecs::WorkQueue{});
-			LOG_INFO(Game, "Spawned station '%s' at (%.1f, %.1f) with WorkQueue", defName.c_str(), worldPos.x, worldPos.y);
+			ecsWorld->addComponent<ecs::Inventory>(entity, ecs::Inventory::createForStorage());
+			LOG_INFO(Game, "Spawned station '%s' at (%.1f, %.1f) with WorkQueue and material store", defName.c_str(), worldPos.x, worldPos.y);
 		} else if (assetDef != nullptr && assetDef->capabilities.storage.has_value()) {
 			// Storage container - add Inventory configured from StorageCapability
 			const auto&	   storageCap = assetDef->capabilities.storage.value();
