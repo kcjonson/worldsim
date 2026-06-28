@@ -818,6 +818,8 @@ namespace ecs {
 			if (m_navSystem != nullptr && m_navSystem->inSimArea(position.value)) {
 				if (!m_navSystem->isOnMesh(position.value)) {
 					const auto snapped = m_navSystem->nearestPathablePoint(position.value);
+					// Permanent stranded-recovery diagnostic (DEBUG, gated to the off-mesh branch):
+					// records the snap decision for the colonist-freeze bug class. Keep on cleanup.
 					LOG_DEBUG(Engine,
 						"[NavDiag] reconcile %llu offMesh at (%.2f, %.2f): nearestFloor=%d (%.2f, %.2f)",
 						static_cast<unsigned long long>(entity), position.value.x, position.value.y,
@@ -1416,17 +1418,6 @@ namespace ecs {
 				wanderOption.reason			= "All needs satisfied";
 				wanderOption.targetPosition = wanderTarget;
 				trace.options.push_back(wanderOption);
-			} else if (haveMesh) {
-				// DIAGNOSTIC (temporary): nowhere reachable to wander. Log what the mesh thinks here
-				// so we can tell a genuinely hemmed-in spot from a mesh that's wrong/incomplete.
-				std::size_t meshTris = 0;
-				for (const auto& rv : m_navSystem->builtRegions()) {
-					meshTris += rv.mesh->triangles.size();
-				}
-				LOG_DEBUG(Engine,
-					"[NavDiag] Entity %llu at (%.2f, %.2f): 0/6 wander probes reachable; onMesh=%d regions=%zu meshTris=%zu",
-					static_cast<unsigned long long>(entity), position.value.x, position.value.y,
-					m_navSystem->isOnMesh(position.value) ? 1 : 0, m_navSystem->regionCount(), meshTris);
 			}
 		}
 

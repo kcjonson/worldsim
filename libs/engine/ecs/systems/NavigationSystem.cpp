@@ -259,7 +259,9 @@ namespace ecs {
 				++walkableBorders;
 			}
 		}
-		LOG_INFO(Engine, "[NavBuild] region %d buildInput %.2f ms: polys=%zu walkableBorders=%zu blockedRings=%zu",
+		// Permanent nav-build diagnostic (per-region input-extraction timing + walkable/blocked
+		// ring balance). At DEBUG: visible via the dev-tools log server, compiled out in release.
+		LOG_DEBUG(Engine, "[NavBuild] region %d buildInput %.2f ms: polys=%zu walkableBorders=%zu blockedRings=%zu",
 				 region.id, inputMs, input.polygons.size(), walkableBorders, input.polygons.size() - walkableBorders);
 
 		region.future = std::async(std::launch::async, [input = std::move(input), id = region.id]() {
@@ -267,7 +269,8 @@ namespace ecs {
 			geometry::nav::NavMesh m		  = gnav::buildNavMesh(input);
 			const double		   buildMs =
 				std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - buildStart).count();
-			LOG_INFO(Engine, "[NavBuild] region %d buildNavMesh %.2f ms: tris=%zu verts=%zu", id, buildMs,
+			// Permanent worker-thread build-timing diagnostic. DEBUG keeps it off the default stream.
+			LOG_DEBUG(Engine, "[NavBuild] region %d buildNavMesh %.2f ms: tris=%zu verts=%zu", id, buildMs,
 					 m.triangles.size(), m.vertices.size());
 			return m;
 		});
@@ -296,7 +299,9 @@ namespace ecs {
 					++walkable;
 				}
 			}
-			LOG_INFO(Engine,
+			// Permanent mesh-swap face-count diagnostic: the per-rebuild walkable/floor/blocked
+			// verdict (walkable=0 is the zero-walkable-navmesh signature). DEBUG, dev-tools log server.
+			LOG_DEBUG(Engine,
 					 "[NavBuild] region %d mesh swapped gen=%llu tris=%zu walkable=%zu floor=%zu blocked=%zu",
 					 region.id, static_cast<unsigned long long>(region.meshGeneration), region.navMesh.triangles.size(),
 					 walkable, floor, region.navMesh.triangles.size() - walkable);
@@ -399,7 +404,8 @@ namespace ecs {
 				region.halfExtent		 = wantHalf;
 				regionMatched[static_cast<std::size_t>(best)] = true;
 				launchBuild(region);
-				LOG_INFO(Engine, "[NavBuild] region %d recenter -> (%lld, %lld) half=%lld", region.id,
+				// Permanent region-lifecycle diagnostic (recenter onto a moved driver/viewport).
+				LOG_DEBUG(Engine, "[NavBuild] region %d recenter -> (%lld, %lld) half=%lld", region.id,
 						 static_cast<long long>(wantCenter.x), static_cast<long long>(wantCenter.y),
 						 static_cast<long long>(wantHalf));
 			} else {
@@ -408,7 +414,8 @@ namespace ecs {
 				region.center	  = wantCenter;
 				region.halfExtent = wantHalf;
 				launchBuild(region);
-				LOG_INFO(Engine, "[NavBuild] region %d NEW -> (%lld, %lld) half=%lld", region.id,
+				// Permanent region-lifecycle diagnostic (new simulation region created).
+				LOG_DEBUG(Engine, "[NavBuild] region %d NEW -> (%lld, %lld) half=%lld", region.id,
 						 static_cast<long long>(wantCenter.x), static_cast<long long>(wantCenter.y),
 						 static_cast<long long>(wantHalf));
 				regions.push_back(std::move(region));
@@ -433,7 +440,8 @@ namespace ecs {
 					++it;
 				}
 			}
-			LOG_INFO(Engine, "[NavBuild] region %d dropped", goneId);
+			// Permanent region-lifecycle diagnostic (region torn down, no longer wanted).
+			LOG_DEBUG(Engine, "[NavBuild] region %d dropped", goneId);
 			regions.erase(regions.begin() + static_cast<std::ptrdiff_t>(r));
 		}
 	}

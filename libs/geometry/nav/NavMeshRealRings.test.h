@@ -8,9 +8,36 @@
 // walkable=0 / floor=0 / blocked=1848 in the [NavBuild] verdict, so the navmesh
 // tests reproduce the real failure without the engine.
 //
-// Captured via a one-shot dump in NavInputBuilder::buildInput. All coordinates
-// are region-local millimetres. provenance ids match engine::nav: water=-1,
-// tree=-2, border=-3.
+// All coordinates are region-local millimetres. provenance ids match engine::nav:
+// water=-1, tree=-2, border=-3. Expected sizes (asserted in NavMesh.test.cpp's
+// RealYConfluence_OpenGrassIsFloor so a truncated fixture fails loudly): border = 4
+// verts, water = 564 verts, trees = 637 rings.
+//
+// REGENERATING THIS FIXTURE
+// -------------------------
+// 1. Drop a one-shot dump at the end of engine::nav::buildInput() (NavInputBuilder.cpp),
+//    right before it returns the assembled NavMeshInput `input`:
+//
+//      #include <cstdio>
+//      static bool dumped = false;
+//      if (!dumped) {
+//          dumped = true;
+//          for (const NavInputPolygon& p : input.polygons) {
+//              std::fprintf(stderr, "RING prov=%lld blocked=%d hole=%d:",
+//                  (long long)p.provenanceId, p.blocked ? 1 : 0, p.holeCapable ? 1 : 0);
+//              for (const geometry::Vec2i64& v : p.ring)
+//                  std::fprintf(stderr, " {%lld,%lld}", (long long)v.x, (long long)v.y);
+//              std::fprintf(stderr, "\n");
+//          }
+//      }
+//
+// 2. Run the quickstart so it builds the first region's nav input:
+//      apps/world-sim --scene=game        (quickstart default planet, seed 424242)
+//    The dump prints once on the first buildInput. Split the RING lines by provenance
+//    (border=-3 -> realBorderRing, water=-1 -> realWaterRing, tree=-2 -> realTreeRings)
+//    and paste the coordinates back into the three functions below.
+// 3. Delete the dump from NavInputBuilder.cpp. Update the asserted sizes above and in
+//    NavMesh.test.cpp if the capture's vertex/ring counts changed.
 
 #include "../core/Vec2i64.h"
 
