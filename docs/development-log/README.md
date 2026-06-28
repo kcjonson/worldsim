@@ -64,6 +64,7 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 #### June 2026
 
+- [2026-06-28 - Navmesh zero-walkable fix, multi-region nav, and reliable craft provisioning](./entries/2026-06-28-navmesh-crafting-reliability.md)
 - [2026-06-27 - Groundcover: GPU-instanced grass from a procedural Lua asset](./entries/2026-06-27-groundcover-render-path.md)
 - [2026-06-26 - Physical stack inventory: universal stacks + construction-direct materials](./entries/2026-06-26-physical-stack-inventory.md)
 - [2026-06-22 - Hydrology ponds + oasis, proper forests, riparian plants](./entries/2026-06-22-hydrology-ponds-and-proper-forests.md)
@@ -114,7 +115,7 @@ Development log entries are **immutable history**. Don't update old entries — 
 ## Quick Stats
 
 - **Total Entries:** 76 (entry files; the Major Milestones list below highlights notable ones)
-- **Latest Entry:** 2026-06-27
+- **Latest Entry:** 2026-06-28
 - **Major Milestones:**
   - Cryosphere: physical sea ice, snow, and glaciers (PDD + perfect-plastic) with a two-pass ice-climate feedback (2026-06-20)
   - Navigation P4: belief-filtered navigation, colonists path against what they've personally seen, not the live truth (2026-06-19)

@@ -40,6 +40,63 @@ in the approved plan `~/.claude/plans/ok-some-bugs-related-resilient-treasure.md
 - [ ] **Session save/load** — there is no gameplay/colony session save (only the procedural planet is persisted). The colony origin and colony state don't survive save/load. Future epic; the origin is now in the right place to be persisted.
 - [ ] **Materials-in-station vs hauler's pack** — resolved (now deposits into the station). Watch for multi-colonist edge cases (one colonist staging, another crafting).
 
+## Code review follow-ups (PR #240, multi-agent review)
+10-dimension adversarial review, 54 findings raised / 45 confirmed. Severities below are the **verifier's adjusted** severities, not the finders' originals (the skeptic pass downgraded most of the memory-safety / concurrency / architecture column once dev-only and draft context was accounted for). Two raised-high findings ("Chain-interrupted 2-handed armful loses all but one unit", "Craft-output drop dangles ComponentPool refs") did NOT survive verification and are intentionally omitted.
+
+### Must fix
+- [ ] **Multi-unit craft job stalls at 1/N** — `CraftingGoalSystem.cpp:332-341` — after unit 1 consumes the station store, `deliveredAmount` is never decremented, so the same-recipe branch keeps the Craft goal at `deliveredAmount >= targetAmount`, never rebuilds Haul/Harvest children; job hangs forever (reachable via `craft n=3`). Fix: recompute `deliveredAmount` from the live station store each tick (mirror `buildChildHierarchy`'s `alreadyStaged`). **(being fixed now)**
+
+### Should fix
+File decomposition (highest-leverage, mechanical):
+- [ ] **Extract AIDecisionSystem evaluators** (adj. high) — `AIDecisionSystem.cpp:44-782` — the anon-namespace evaluators (`evaluateHaul/Harvest/Build/Deconstruct/PlacePackagedOptions`, `populatePriorityBonuses`, `isOptionCurrentTask`) take all deps as params, zero private-state coupling; move to `AIOptionEvaluators.cpp/.h`, drops ~740 lines from a 1822-line file.
+- [ ] **Split `buildDecisionTrace`** (adj. medium) — `AIDecisionSystem.cpp` ~953-1342 (~390 lines) — break into a need-eval pass + per-task dispatch pass + short orchestrator.
+- [ ] **Extract GameScene landing-clearing cluster** (adj. low) — `GameScene.cpp:1140-1260` — `isWaterAt`/`nearestWalkable`/`prepareLandingClearing`/`clearLandingArea` (~120 lines) into a `LandingClearing` helper.
+- [ ] **Split oversized test files** (adj. low/nit) — `ActionSystem.test.cpp` (2061 lines, 9 fixtures) and `AIDecisionSystem.test.cpp` (1984 lines, 46/53 in one fixture); do only alongside the source-side split.
+
+Water-predicate duplication / boundary leak:
+- [ ] **Extract one `engine::nav::tileIsNavWater(const TileData&)`** (adj. medium) — duplicated literal `tile.surface == Surface::Water || isWater(tile.primaryBiome)` at `NavInputBuilder.cpp:183`, `:524`, and `GameScene::isWaterAt` (~1140); the GameScene copy re-introduces a runtime terrain-source read that `NavigationSystem.h:200` forbids. Call the one helper from all three sites and narrow the header comment to carve out the documented pre-mesh bootstrap exception (the timing justification is real; don't do the heavy synchronous-mesh refactor).
+
+Navmesh build perf:
+- [ ] **Hole-nesting per-pair allocation** (adj. high) — `NavMesh.cpp:708-740` — `ringPoints` heap-allocates the outer ring on every (cw-cycle, walkable-face) pair, no AABB prefilter; O(faces×cycles), the likely ~10s-build culprit. Precompute each face's outer ring once before the loop, add an AABB reject.
+- [ ] **Face classification step 4b** (adj. low) — `NavMesh.cpp:762-797` — O(faces×blockedRings) point-in-polygon with no spatial pruning; cache each `BlockedRing`'s AABB.
+
+AI hot-path scans:
+- [ ] **Craft-fetch scans full 10k memory map** (adj. medium) — `AIDecisionSystem.cpp:374-380` — use the existing `getEntitiesWithCapability(Carryable)` index instead of walking `knownWorldEntities`; same pattern in `evaluateHarvestOptions` (~568).
+- [ ] **Stranded colonist re-runs full trace every frame** (adj. medium) — `AIDecisionSystem.cpp:1064-1066` — `CantFindWayTo` bypasses the 0.5s throttle; keep the fast first frame, then fall back to `kReEvalInterval`.
+
+Meter-accounting cluster (all verifier-downgraded; narrow windows):
+- [ ] **Haul→Harvest swap conflates two `deliveredAmount` meters** (adj. medium) — `CraftingGoalSystem.cpp:173-174` — on swap reset `deliveredAmount=0`, `targetAmount=old->availableCapacity()`.
+- [ ] **Deposit metered against station's current head-job recipe** (adj. low) — `HaulActions.cpp:34-49` — meter against the Haul goal's own remaining need; self-heals via re-resolution today.
+- [ ] **Haul advances to deposit when pickup collected nothing** (adj. low) — `ActionSystem.cpp:223-252` — add an `added==0` guard (verifier note: the "source vanished" path actually mints phantom items, not a wasted trip).
+
+Concurrency:
+- [ ] **Pass-2 recenter blocks main thread on in-flight future** (adj. medium) — `NavigationSystem.cpp:401` — move-assign over a live `std::async` future blocks in its destructor; guard with `if (!region.future.valid()) launchBuild(region)` like Pass 1.
+
+Test coverage:
+- [ ] **Triangulation hole-bridge fix lacks a focused test** (adj. low) — `Triangulation.cpp:281-345` — `bridgeIsClear`/`bridgeHitsHole`/brute-force fallback; gap is narrow since `RotatedConvexHolesInSquare` stress test already covers the geometry.
+- [ ] **Off-mesh recovery tier 2 tested via re-implemented lambda** (adj. low) — `AIDecisionSystem.test.cpp:1934-1968` / colony-origin fallback path — add an end-to-end `update()` test (also covers the teleport-loop nit below).
+
+### Nits
+- [ ] **Stray double blank line** — `DecisionTrace.h:47-48` — gather-field deletion artifact.
+- [ ] **New `m_`-prefixed members vs standard** — `AIDecisionSystem.h:167` (`m_colonyOrigin`), `GameScene.cpp:287` (`m_colony`) — name them `colonyOrigin`/`colony`.
+- [ ] **`[NavBuild]` logs at INFO** — `NavigationSystem.cpp:288,296,332,444,453,479` — build-timing/lifecycle telemetry that spams on pan; lower to `LOG_DEBUG` (lower only, never raise existing DEBUG).
+- [ ] **Long single functions wanting internal helpers** — `CraftingGoalSystem::update` (~223 lines), `HaulActions.cpp` `applyDepositEffect`/`startHaulAction` (~178/~168), `NavMesh.cpp` width/portal-capacity cluster — no file split needed.
+- [ ] **Copy-pasted bounce-leftover block** — `HaulActions.cpp:109-113,151-155,179-183` (4th at 219-223 differs: `removed` not `leftover`) — extract a helper.
+- [ ] **Near-duplicate chain-leg handoff blocks** — `ActionSystem.cpp:231-242` vs `301-312` — extract `handOffToNextLeg`.
+- [ ] **Harvest item-add bypasses `giveItemToColonist` + dup two-hand dispatch** — `HarvestActions.cpp:110-115,196-234` — refactor nit only; the cargo-to-backpack divergence is intentional (not the high-severity bug it was filed as).
+- [ ] **Misleading `terrainTraversable` name** — `NavMesh.h:151` — pure triangle classifier, trips grep-based boundary audits; rename or annotate.
+- [ ] **`RealYConfluence_Bisect_*` investigation scaffolding** — `NavMesh.test.cpp:1049-1168` — six "run on the buggy baseline" tests asserting only `floor > 0` on subsets of the main test; collapse or remove.
+- [ ] **Tests assert re-implemented lambdas / single tick** — `DevSpawnGuard` (`NavigationSystem.test.cpp:991-1024`), `OverweightColonist*` (`AIDecisionSystem.test.cpp:1757-1900`, one tick not loop-stability).
+- [ ] **Dumped fixture not regenerable** — `NavMeshRealRings.test.h:1-755` — no capture script, no load-time size invariant (637 tree rings / 564-vtx water ring).
+- [ ] **`representativeOutsideHoles` allocs for hole-free faces** — `NavMesh.cpp:94-104` — add `if (holes.empty()) return fallback;` first.
+- [ ] **`representativeOutsideHoles` can return a point inside a hole** — `NavMesh.cpp:108-126` — silent water/floor parity mis-tag on rare degenerate geometry; assert/log on fallback.
+- [ ] **NavOverlay per-edge string allocs every frame** — `NavOverlay.cpp:53-77` — debug-only overlay; ~4 allocs/triangle (finder's `ri`/`builtRegions()` evidence was partly hallucinated).
+- [ ] **DevCommandHandler null-nav refuses everything with misleading message** — `DevCommandHandler.cpp:201-211` — effectively dead branch today; distinguish "navigation not wired" from "off-mesh".
+- [ ] **`LockFreeRingBuffer::peekAt` torn-read race** — `LockFreeRingBuffer.h:55-64` — dev-only debug SSE path, worst case a garbled log line; add seqlock re-validation or document the caller contract. (Same race surfaced under correctness/memory-safety/concurrency; worker-thread-logging variant is temporary `[NavBuild]` instrumentation already slated for stripping.)
+- [ ] **`onExit` resets ecsWorld while NavOverlay/DevCommandHandler hold raw nav pointers** — `GameScene.cpp:931-944` — unreachable after `onExit` (implicit dtor order is safe); reset them alongside `m_placementSystem` for consistency.
+- [ ] **Off-mesh recovery can teleport-loop on colony origin** — `AIDecisionSystem.cpp:832-847` — guard the origin snap with `isOnMesh(*m_colonyOrigin)`; only bites when the whole local mesh is degenerate.
+- [ ] **Off-mesh recovery clears in-flight craft-haul without dropping/re-crediting** — `AIDecisionSystem.cpp:826-847` — self-healing today; document the intentional clear-and-keep vs chain-interruption clear-and-drop asymmetry.
+
 ## Before flipping #240 to ready
 - [ ] Strip the `[NavBuild]` / `[NavDiag]` debug instrumentation (kept per the debug protocol until the fixes are user-confirmed).
 - [ ] Run the full engine + geometry suites on a clean build.

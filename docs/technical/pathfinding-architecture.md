@@ -87,6 +87,99 @@ The hard requirement, decomposed:
 
 **Agent shape: routing vs collision (decided 2026-06-23).** Collision (this tier) uses the agent's real, possibly non-circular, per-direction footprint: a long creature is a long thin rectangle, and `FacingDirection` already drives four directional sprites. Routing (Tiers 1 and 2), though, reduces each agent to a scalar clearance equal to half its narrow cross-section, because facing follows velocity, so a creature moving down a corridor presents its narrow side and the long body trails the head along the routed path (articulated). The funnel and the reachability widths therefore consume one scalar (`AgentRadius.radiusMeters`, reread as half the narrow width), not a bounding circle (a snake's bounding circle is huge, so it could enter nothing) and not a fixed set of size classes. Per-direction collision shapes, and deriving the routing clearance from an asset's collision shape, are Tier-3 and asset work, not the router's concern. A resting agent sprawled across a path is a *dynamic* obstacle for crowd avoidance (P5), never baked into the static mesh.
 
+### As built: multi-region sim area, runtime validity, and beeline removal (2026-06-28)
+
+The Tier-2 mesh is no longer a single camera-tracked arrangement. `NavigationSystem` owns a
+**collection of regions** that follow the colonists plus the viewport, the first half of the
+two-tier model the tier table sketches.
+
+**Multi-region sim area (Phase 1).** Each tick `NavigationSystem` reads colonist `Position`s and
+the viewport rect (`GameScene` pushes the rect as plain data, it no longer drives the mesh),
+builds a square region per driver, **clusters overlapping squares into merged regions**, and
+self-gates rebuilds off the render clock: a region recenters only when one of its drivers nears
+the region-rect edge or its obstacle inputs change. A stationary colonist under a held camera
+triggers zero rebuilds; panning far spawns a separate viewport region instead of dragging a
+colonist's region with it. Queries dispatch by position: `requestPath` / `isReachable` /
+`isOnMesh` / `nearestPathablePoint` / `inSimArea` select the region containing the point.
+`requestPath` holds when the endpoints fall in different regions or outside all regions
+(long-range routing across unsimulated space is Phase 2). RRA* caches are keyed by region id plus
+goal triangle. Recovery (snap an off-mesh colonist back onto a face) fires only for a colonist
+*inside* a region but off a face; a colonist no region covers is left where he stands. That last
+rule fixes the camera-pan freeze (panning used to drag the mesh off a colonist, who was then
+"off-mesh" and got snapped into the river).
+
+**The two-tier plan.** Phase 1 (above) is the per-driver dynamic mesh for full-fidelity local
+nav. **Phase 2** (planned) adds a STATIC coarse global **geography mesh**: big impassables only
+(rivers as polylines, no assets), built once per chunk and never recalculated, for long-range
+routing across unsimulated space, plus skip-nav-for-stationary agents. This is the concrete shape
+of the Tier 0/1 "loaded-but-far" idea for the colony's own space. A position outside every active
+region's mesh is not interactively placeable yet; Phase 2 extends reach there.
+
+**`isValidPosition`: the one runtime walkability predicate.** `NavigationSystem::isValidPosition`
+is a thin wrapper over `isOnMesh`: a point is valid IFF it sits on a walkable nav face inside an
+active sim region. This is the single canonical predicate every world-positioning path respects
+(One Path Rule) — dev spawn / give-loose / colonist / teleport and build-placement preview (the
+ghost reads validity from the mesh each frame, goes red off-mesh, blocks the click). All ad-hoc
+checks were deleted.
+
+**World-data-vs-runtime boundary (load-bearing).** The 3D world/planet data exists ONLY to spawn
+chunk data at initial load and during chunk generation. It is NOT read at runtime for anything
+else. Runtime walkability / "is this a valid world position" is a nav-mesh query, never a
+world-data query: do NOT reach back into `terrainTraversable` / `isWaterAt` to answer validity.
+The nav mesh already bakes in water, obstacles, clearance, and connectivity, so it is the single
+runtime authority; this keeps a clean load-time-vs-runtime separation. The active-mesh-only
+constraint (a point outside every active region is not placeable until Phase 2) is documented in a
+code comment at the predicate.
+
+**Vector, not tile/grid.** Runtime positions are continuous and walkability is polygonal nav
+faces. No "tile" or grid math for runtime positioning or validity. Entity occupancy and collision
+will be represented IN the mesh in future (agents take space in the mesh, so the mesh encodes
+"occupied" as not-walkable, consistent with risk 7's "block this tile while crafting" being
+occupancy cost, not geometry); placement and drops are therefore not designed around occupancy,
+they just find a valid nearby mesh position.
+
+**Beeline removal.** All straight-line movement is gone (it superseded the section 2 baseline).
+Every move is a navmesh A* path or an explicit error-snap to valid ground; the path graph already
+excludes blocked faces. A durable `ecs::Colony` origin in `GameWorldState` is the last-resort
+recovery snap, and on-mesh landing is guaranteed-clear (clear entities in a radius, spawn at the
+walkable face center).
+
+**`findValidPositionNear` (designed, not yet built).** The companion to `isValidPosition` and the
+single "where does a dropped thing land" primitive: inventory overflow, generic ground-drops,
+cancelling a foundation that still holds materials, deconstructing a station that holds contents,
+and completing a craft with a full pack. Signature
+`findValidPositionNear(origin, minDist = 1m, maxDist = unbounded)`: returns the nearest valid
+nav-mesh position at least `minDist` from the origin. `minDist` defaults to 1m so a drop never
+lands on the origin; `maxDist` is unbounded so a drop never fails to place (it self-bounds to the
+active mesh, since the dropper is already on it). Homed beside `nearestPathablePoint` (a drop-spot
+search, not a recovery snap). No occupancy modeling in the search — the mesh encodes occupancy as
+not-walkable, so the search just returns a valid nearby position. Build it WITH its consumers, not
+speculatively.
+
+The algorithm is three tiers, not a ring sweep. `minDist` is a provable lower bound on the
+answer, so once the circle of radius `minDist` touches walkable mesh, a point on it is optimal and
+no search is needed:
+
+1. `locateTriangle(origin)`.
+2. One-query shortcut: test the point at `minDist` in the preferred direction with
+   `isValidPosition`; if it misses, intersect the `minDist` circle with the origin face plus
+   adjacency neighbors and pick a point on a walkable arc (exact, distance == `minDist`).
+3. Rare fallback for an origin pinned in a sub-`minDist` pocket: best-first over mesh adjacency,
+   faces popped by nearest distance, each yielding its closest point at least `minDist` out
+   (closest-point-on-triangle, pushed onto the circle), first hit wins, stop when the frontier
+   lower bound passes it.
+
+Exact (continuous circle-vs-triangle, no angular stepping), near-constant in the common case,
+reuses locate plus the adjacency graph plus closest-point-on-triangle. Direction pick is a
+per-consumer parameter: a deterministic seed so drops fan out, plus optional aim (overflow
+spreads; craft output toward the colonist).
+
+A navmesh zero-walkable bug was also fixed here (2026-06-28): `Triangulation.cpp`'s `mergeHoles`
+Eberly +x-ray hole-bridge fouled once a few hundred holes (tree colliders) merged, so the land
+face triangulated to zero triangles and every face read blocked. Fix: validate each bridge and
+fall back to the nearest reachable loop vertex. See dev log
+`entries/2026-06-28-navmesh-crafting-reliability.md`.
+
 ### Tier handoffs
 
 The two classic failure points, with the standard solutions:
