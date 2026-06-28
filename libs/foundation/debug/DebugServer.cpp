@@ -888,42 +888,38 @@ namespace Foundation {
 			res.set_header("Access-Control-Allow-Origin", "*");
 
 			res.set_chunked_content_provider("text/event-stream", [this](size_t /*offset*/, httplib::DataSink& sink) {
-				const int  updateRateHz = 10;
-				const auto updateInterval = std::chrono::milliseconds(1000 / updateRateHz);
-				auto	   lastUpdate = std::chrono::steady_clock::now();
+				const auto updateInterval = std::chrono::milliseconds(100); // 10 Hz
 
-				// Track which logs we've already sent
-				uint64_t lastSentTimestamp = 0;
+				// Per-connection read cursor into the log ring. Each client keeps its OWN position and
+				// reads forward via peekAt (non-consuming), so several panels each receive every log
+				// line -- the old shared, consuming read() let one reader starve the rest. Start a
+				// ring's-worth behind the write cursor so a freshly-opened panel sees recent history.
+				const size_t ringSize = logBuffer.capacity();
+				size_t logCursor = logBuffer.writeCursor();
+				logCursor = (logCursor > ringSize) ? (logCursor - ringSize) : 0;
 
+				auto lastUpdate = std::chrono::steady_clock::now();
 				while (running.load() && sink.is_writable()) {
 					auto now = std::chrono::steady_clock::now();
-					auto elapsed = now - lastUpdate;
-
-					// Send updates at throttled rate
-					if (elapsed >= updateInterval) {
-						// Read all available log entries from ring buffer
-						LogEntry entry;
-						while (logBuffer.read(entry)) {
-							// Only send logs we haven't sent yet
-							// Use >= to handle multiple logs with same timestamp
-							if (entry.timestamp >= lastSentTimestamp) {
-								std::ostringstream event;
-								event << "event: log\n";
-								event << "data: " << entry.toJSON() << "\n\n";
-
-								std::string eventStr = event.str();
-								if (!sink.write(eventStr.c_str(), eventStr.size())) {
-									return false; // Client disconnected
-								}
-
-								lastSentTimestamp = entry.timestamp;
-							}
+					if (now - lastUpdate >= updateInterval) {
+						const size_t writeIdx = logBuffer.writeCursor();
+						// If the writer lapped us, skip to the oldest still-buffered entry.
+						if (logCursor + ringSize < writeIdx) {
+							logCursor = writeIdx - ringSize;
 						}
-
+						LogEntry entry;
+						while (logCursor < writeIdx && logBuffer.peekAt(logCursor, entry)) {
+							std::ostringstream event;
+							event << "event: log\n";
+							event << "data: " << entry.toJSON() << "\n\n";
+							const std::string eventStr = event.str();
+							if (!sink.write(eventStr.c_str(), eventStr.size())) {
+								return false; // Client disconnected
+							}
+							++logCursor;
+						}
 						lastUpdate = now;
 					}
-
-					// Sleep briefly to avoid busy-waiting
 					std::this_thread::sleep_for(std::chrono::milliseconds(10));
 				}
 

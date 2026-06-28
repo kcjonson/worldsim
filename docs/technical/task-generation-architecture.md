@@ -2,7 +2,7 @@
 
 **Status:** Technical Design
 **Created:** 2025-01-02
-**Related:** [Task Registry System](../design/game-systems/colonists/task-registry.md)
+**Related:** [Task Registry System](../design/game-systems/colonists/task-registry.md), [Crafting & Material Provisioning](./crafting-provisioning-architecture.md)
 
 ---
 
@@ -272,7 +272,7 @@ Player can choose:
 | Goal System | Task Type | Creates Task When | Removes Task When |
 |-------------|-----------|-------------------|-------------------|
 | StorageSystem | Haul | Storage has capacity | Storage filled completely |
-| CraftingSystem | Gather | Recipe queued, needs materials | Recipe completed/cancelled |
+| CraftingSystem | Haul / Harvest | Recipe queued, needs materials (provisioned into the station store, lazy-haul + availability-resolved) | Recipe completed/cancelled |
 | NeedsSystem | FulfillNeed | Need below threshold | Need satisfied |
 | BuildSystem | Haul/Place | Build order placed, needs materials | Build completed/cancelled |
 

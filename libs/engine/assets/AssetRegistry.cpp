@@ -19,6 +19,41 @@
 
 namespace engine::assets {
 
+	namespace {
+		/// Pack a definition's present capabilities into the bitmask the interning index stores.
+		[[nodiscard]] uint8_t computeCapabilityMask(const AssetDefinition& def) {
+			uint8_t mask = 0;
+			if (def.capabilities.edible.has_value()) {
+				mask |= (1 << static_cast<uint8_t>(CapabilityType::Edible));
+			}
+			if (def.capabilities.drinkable.has_value()) {
+				mask |= (1 << static_cast<uint8_t>(CapabilityType::Drinkable));
+			}
+			if (def.capabilities.sleepable.has_value()) {
+				mask |= (1 << static_cast<uint8_t>(CapabilityType::Sleepable));
+			}
+			if (def.capabilities.toilet.has_value()) {
+				mask |= (1 << static_cast<uint8_t>(CapabilityType::Toilet));
+			}
+			if (def.capabilities.waste.has_value()) {
+				mask |= (1 << static_cast<uint8_t>(CapabilityType::Waste));
+			}
+			if (def.capabilities.carryable.has_value()) {
+				mask |= (1 << static_cast<uint8_t>(CapabilityType::Carryable));
+			}
+			if (def.capabilities.harvestable.has_value()) {
+				mask |= (1 << static_cast<uint8_t>(CapabilityType::Harvestable));
+			}
+			if (def.capabilities.craftable.has_value()) {
+				mask |= (1 << static_cast<uint8_t>(CapabilityType::Craftable));
+			}
+			if (def.capabilities.storage.has_value()) {
+				mask |= (1 << static_cast<uint8_t>(CapabilityType::Storage));
+			}
+			return mask;
+		}
+	} // namespace
+
 	// ============================================================================
 	// GeneratorParams Implementation
 	// ============================================================================
@@ -1546,38 +1581,7 @@ namespace engine::assets {
 		for (const auto& [defName, def] : definitions) {
 			m_defNameToId[defName] = nextId;
 			m_idToDefName.push_back(defName);
-
-			// Pre-compute capability mask for this definition
-			uint8_t mask = 0;
-			if (def.capabilities.edible.has_value()) {
-				mask |= (1 << static_cast<uint8_t>(CapabilityType::Edible));
-			}
-			if (def.capabilities.drinkable.has_value()) {
-				mask |= (1 << static_cast<uint8_t>(CapabilityType::Drinkable));
-			}
-			if (def.capabilities.sleepable.has_value()) {
-				mask |= (1 << static_cast<uint8_t>(CapabilityType::Sleepable));
-			}
-			if (def.capabilities.toilet.has_value()) {
-				mask |= (1 << static_cast<uint8_t>(CapabilityType::Toilet));
-			}
-			if (def.capabilities.waste.has_value()) {
-				mask |= (1 << static_cast<uint8_t>(CapabilityType::Waste));
-			}
-			if (def.capabilities.carryable.has_value()) {
-				mask |= (1 << static_cast<uint8_t>(CapabilityType::Carryable));
-			}
-			if (def.capabilities.harvestable.has_value()) {
-				mask |= (1 << static_cast<uint8_t>(CapabilityType::Harvestable));
-			}
-			if (def.capabilities.craftable.has_value()) {
-				mask |= (1 << static_cast<uint8_t>(CapabilityType::Craftable));
-			}
-			if (def.capabilities.storage.has_value()) {
-				mask |= (1 << static_cast<uint8_t>(CapabilityType::Storage));
-			}
-			m_capabilityMasks.push_back(mask);
-
+			m_capabilityMasks.push_back(computeCapabilityMask(def));
 			nextId++;
 		}
 
@@ -1654,10 +1658,29 @@ namespace engine::assets {
 
 	void AssetRegistry::registerTestDefinition(AssetDefinition def) {
 		std::string defName = def.defName;
+		const uint8_t mask = computeCapabilityMask(def);
 		definitions[defName] = std::move(def);
 
-		// Rebuild indices to include new definition
-		buildDefNameIndex();
+		// Assign the interning id by APPENDING, never by rebuilding the whole index. A full rebuild
+		// iterates the unordered definitions map, so every prior id could be reshuffled when the map
+		// rehashes -- making a defNameId captured between two registrations silently come to name a
+		// different definition (it stayed put on MSVC, reordered on libstdc++, surfacing as a CI-only
+		// AIDecisionSystem failure). Appending keeps already-issued ids stable across registrations.
+		if (m_idToDefName.empty()) {
+			// First registration: seat the reserved invalid id 0 (mirrors buildDefNameIndex).
+			m_idToDefName.push_back("");
+			m_capabilityMasks.push_back(0);
+		}
+		auto existing = m_defNameToId.find(defName);
+		if (existing != m_defNameToId.end()) {
+			// Re-registration of the same name updates its mask in place; id is unchanged.
+			m_capabilityMasks[existing->second] = mask;
+		} else {
+			const auto newId = static_cast<uint32_t>(m_idToDefName.size());
+			m_defNameToId[defName] = newId;
+			m_idToDefName.push_back(defName);
+			m_capabilityMasks.push_back(mask);
+		}
 
 		LOG_DEBUG(Engine, "Registered test definition: %s", defName.c_str());
 	}

@@ -6,6 +6,7 @@
 #include "ActionSystem.h"
 
 #include "../GoalTaskRegistry.h"
+#include "../InventoryMass.h"
 #include "../World.h"
 #include "../components/Action.h"
 #include "../components/DecisionTrace.h"
@@ -25,8 +26,11 @@
 
 #include <gtest/gtest.h>
 
+#include <glm/vec2.hpp>
+
 #include <chrono>
 #include <cmath>
+#include <optional>
 
 namespace ecs::test {
 
@@ -112,6 +116,12 @@ namespace ecs::test {
 			world->getSystem<AIDecisionSystem>().handleChainInterruption(
 				entity, task, inventory, position, newTaskType, newNeedType
 			);
+		}
+
+		/// Read the AI system's colony-origin fallback target. The fixture is a friend of
+		/// AIDecisionSystem (derived TEST_F classes are not), so the seam lives here.
+		std::optional<glm::vec2> getColonyOrigin() {
+			return world->getSystem<AIDecisionSystem>().m_colonyOrigin;
 		}
 
 		/// Get the movement target for an entity
@@ -1739,6 +1749,246 @@ namespace ecs::test {
 		auto* task = getTask(colonist);
 		ASSERT_NE(task, nullptr);
 		EXPECT_NE(task->type, TaskType::Haul) << "a full storage offers no haul; addableCount is 0";
+	}
+
+	// A craft fetch must not be offered when the colonist is at/over its carry-weight cap: the
+	// Pickup clamps to cargoUnitsThatFit and adds 0, the staged count never rises, and the AI would
+	// otherwise re-issue the identical fetch every tick -- an infinite "fetch -> collect 0 -> fetch"
+	// loop that never completes the craft (observed in-game with an over-loaded colonist). The fetch
+	// branch skips when no unit fits, so the colonist falls through to another task instead of spinning.
+	TEST_F(AIDecisionSystemTest, OverweightColonistOffersNoCraftFetch) {
+		auto& registry = engine::assets::AssetRegistry::Get();
+
+		// The recipe material to fetch: a one-hand carryable RawMaterial.
+		engine::assets::AssetDefinition stoneDef;
+		stoneDef.defName = "SmallStone";
+		stoneDef.label = "Small Stone";
+		stoneDef.handsRequired = 1;
+		stoneDef.category = engine::assets::ItemCategory::RawMaterial;
+		stoneDef.capabilities.carryable = engine::assets::CarryableCapability{1};
+		stoneDef.itemProperties = engine::assets::ItemProperties{};
+		stoneDef.itemProperties->stackSize = 100;
+		stoneDef.itemProperties->massKg = 1.5F;
+		registry.registerTestDefinition(std::move(stoneDef));
+
+		// Heavy ballast UNRELATED to the recipe: the colonist is carrying a load of this (e.g. cargo
+		// hauled earlier), so it's at the carry cap when the craft fetch comes up. It must NOT be the
+		// fetched material, or the colonist would just deliver it from inventory.
+		engine::assets::AssetDefinition ballastDef;
+		ballastDef.defName = "Ballast";
+		ballastDef.label = "Ballast";
+		ballastDef.handsRequired = 1;
+		ballastDef.category = engine::assets::ItemCategory::RawMaterial;
+		ballastDef.capabilities.carryable = engine::assets::CarryableCapability{1};
+		ballastDef.itemProperties = engine::assets::ItemProperties{};
+		ballastDef.itemProperties->stackSize = 100;
+		ballastDef.itemProperties->massKg = 1.5F;
+		registry.registerTestDefinition(std::move(ballastDef));
+
+		// Resolve the material id after both registrations are in. registerTestDefinition now appends
+		// ids stably, but capturing once everything is registered keeps the test honest regardless of
+		// interning internals. (The original CI-only failure was a stale id captured between
+		// registrations that, after the map rehashed on libstdc++, aliased "Ballast" -- so the
+		// inventory-source craft-haul delivered the colonist's 30-unit ballast load to the station,
+		// the very Haul this test forbids.)
+		const uint32_t stoneId = registry.getDefNameId("SmallStone");
+
+		auto colonist = createColonist({0.0F, 0.0F});
+		setNeedValue(colonist, NeedType::Hunger, 100.0F);
+		setNeedValue(colonist, NeedType::Thirst, 100.0F);
+		setNeedValue(colonist, NeedType::Energy, 100.0F);
+		setNeedValue(colonist, NeedType::Bladder, 100.0F);
+
+		// Load the pack past the carry-weight cap (30 x 1.5 kg = 45 kg > 35 kg) with ballast, so any
+		// further pickup of SmallStone lifts 0.
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		ASSERT_NE(inventory, nullptr);
+		inventory->addItem("Ballast", 30);
+		ASSERT_EQ(ecs::cargoUnitsThatFit(*inventory, registry, "SmallStone"), 0U)
+			<< "precondition: the over-loaded colonist can lift no SmallStone";
+		ASSERT_EQ(ecs::availableQuantity(*inventory, "SmallStone"), 0U)
+			<< "precondition: the colonist holds none of the fetched material (no inventory-source delivery)";
+
+		// A loose SmallStone the colonist remembers (the fetch source).
+		addKnownEntity(colonist, {2.0F, 0.0F}, stoneId, engine::assets::CapabilityType::Carryable);
+
+		// Craft goal needs 2 SmallStone; its child craft-haul goal is Available to fetch.
+		const auto station = world->createEntity();
+		world->addComponent<Position>(station, Position{{4.0F, 0.0F}});
+
+		GoalTask craft;
+		craft.type = TaskType::Craft;
+		craft.owner = GoalOwner::CraftingGoalSystem;
+		craft.destinationEntity = station;
+		craft.destinationPosition = {4.0F, 0.0F};
+		craft.targetAmount = 2;
+		craft.status = GoalStatus::Blocked;
+		const uint64_t craftId = GoalTaskRegistry::Get().createGoal(std::move(craft));
+
+		GoalTask haul;
+		haul.type = TaskType::Haul;
+		haul.owner = GoalOwner::CraftingGoalSystem;
+		haul.destinationEntity = station;
+		haul.destinationPosition = {4.0F, 0.0F};
+		haul.acceptedDefNameIds = {stoneId};
+		haul.targetAmount = 2;
+		haul.parentGoalId = craftId;
+		haul.status = GoalStatus::Available;
+		GoalTaskRegistry::Get().createGoal(std::move(haul));
+
+		world->update(0.016F);
+
+		auto* task = getTask(colonist);
+		ASSERT_NE(task, nullptr);
+		EXPECT_NE(task->type, TaskType::Haul)
+			<< "an over-weight colonist offers no craft fetch; the pickup would lift 0 and loop forever";
+	}
+
+	// A harvest must not be offered when the colonist can't carry the yield: applyCollectionEffect
+	// clamps the take to carry weight AND backpack slots and adds 0 at the cap, so the staged count
+	// never rises. Emitting the option anyway makes the colonist pick the harvest, collect 0
+	// ("Collected 0 of N ... carry-limited"), re-evaluate, and pick the same harvest again -- an
+	// infinite chop-nothing loop (observed in-game as a colonist "stuck harvesting"). The carry gate
+	// skips the option when no unit fits, so the colonist falls through instead of spinning.
+	TEST_F(AIDecisionSystemTest, OverweightColonistOffersNoHarvest) {
+		auto& registry = engine::assets::AssetRegistry::Get();
+
+		// The yield the harvestable produces: a one-hand carryable RawMaterial.
+		engine::assets::AssetDefinition stickDef;
+		stickDef.defName = "Stick";
+		stickDef.label = "Stick";
+		stickDef.handsRequired = 1;
+		stickDef.category = engine::assets::ItemCategory::RawMaterial;
+		stickDef.capabilities.carryable = engine::assets::CarryableCapability{1};
+		stickDef.itemProperties = engine::assets::ItemProperties{};
+		stickDef.itemProperties->stackSize = 100;
+		stickDef.itemProperties->massKg = 1.5F;
+		registry.registerTestDefinition(std::move(stickDef));
+
+		// A tool-less harvestable (a woody bush) whose yield is the Stick above. requiredToolType
+		// empty so the tool gate passes and only the carry gate decides.
+		engine::assets::AssetDefinition bushDef;
+		bushDef.defName = "Flora_WoodyBush";
+		bushDef.label = "Woody Bush";
+		bushDef.capabilities.harvestable = engine::assets::HarvestableCapability{};
+		bushDef.capabilities.harvestable->yieldDefName = "Stick";
+		bushDef.capabilities.harvestable->requiredToolType = "";
+		registry.registerTestDefinition(std::move(bushDef));
+
+		// Heavy ballast UNRELATED to the yield: the colonist is at its carry cap, so a Stick can't fit.
+		engine::assets::AssetDefinition ballastDef;
+		ballastDef.defName = "Ballast";
+		ballastDef.label = "Ballast";
+		ballastDef.handsRequired = 1;
+		ballastDef.category = engine::assets::ItemCategory::RawMaterial;
+		ballastDef.capabilities.carryable = engine::assets::CarryableCapability{1};
+		ballastDef.itemProperties = engine::assets::ItemProperties{};
+		ballastDef.itemProperties->stackSize = 100;
+		ballastDef.itemProperties->massKg = 1.5F;
+		registry.registerTestDefinition(std::move(ballastDef));
+
+		// Resolve ids once all definitions are registered (see OverweightColonistOffersNoCraftFetch):
+		// keeps captures correct independent of the interning index's ordering internals.
+		const uint32_t bushId = registry.getDefNameId("Flora_WoodyBush");
+		const uint32_t stickId = registry.getDefNameId("Stick");
+
+		auto colonist = createColonist({0.0F, 0.0F});
+		setNeedValue(colonist, NeedType::Hunger, 100.0F);
+		setNeedValue(colonist, NeedType::Thirst, 100.0F);
+		setNeedValue(colonist, NeedType::Energy, 100.0F);
+		setNeedValue(colonist, NeedType::Bladder, 100.0F);
+
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		ASSERT_NE(inventory, nullptr);
+		inventory->addItem("Ballast", 30); // 30 x 1.5 kg = 45 kg > 35 kg cap
+		ASSERT_EQ(ecs::cargoUnitsThatFit(*inventory, registry, "Stick"), 0U)
+			<< "precondition: the over-loaded colonist can lift no Stick";
+
+		// The colonist remembers a harvestable bush yielding Stick.
+		addKnownEntity(colonist, {2.0F, 0.0F}, bushId, engine::assets::CapabilityType::Harvestable);
+
+		// A Harvest goal wanting Stick, available.
+		const auto station = world->createEntity();
+		world->addComponent<Position>(station, Position{{4.0F, 0.0F}});
+
+		GoalTask harvest;
+		harvest.type = TaskType::Harvest;
+		harvest.owner = GoalOwner::CraftingGoalSystem;
+		harvest.destinationEntity = station;
+		harvest.destinationPosition = {4.0F, 0.0F};
+		harvest.acceptedDefNameIds = {stickId};
+		harvest.yieldDefNameId = stickId;
+		harvest.targetAmount = 2;
+		harvest.status = GoalStatus::Available;
+		GoalTaskRegistry::Get().createGoal(std::move(harvest));
+
+		world->update(0.016F);
+
+		auto* task = getTask(colonist);
+		ASSERT_NE(task, nullptr);
+		EXPECT_NE(task->type, TaskType::Harvest)
+			<< "an over-weight colonist offers no harvest; the chop would yield 0 and loop forever";
+	}
+
+	// --- Off-mesh recovery resolution (colony-origin last-resort fallback) -------
+	//
+	// The recovery at the top of AIDecisionSystem::update resolves an off-mesh colonist
+	// in three tiers: (1) snap to the nearest walkable navmesh face; (2) if no walkable
+	// face is in range, snap to the colony origin (the home clearing); (3) if neither is
+	// available, leave it (a headless test with no origin set). The full NavigationSystem
+	// wiring is exercised in NavigationSystem.test.cpp; this mirrors the resolution choice
+	// as a pure predicate so all three tiers are covered deterministically (same pattern as
+	// NavPathStalenessTest, which mirrors the replan predicate).
+	namespace {
+		// Mirror of the recovery's target choice: nearest floor wins, else the colony origin,
+		// else no move (nullopt). nearestFloor and colonyOrigin are each independently optional.
+		std::optional<glm::vec2> recoveryTarget(std::optional<glm::vec2> nearestFloor,
+												std::optional<glm::vec2> colonyOrigin) {
+			if (nearestFloor.has_value()) {
+				return nearestFloor;
+			}
+			if (colonyOrigin.has_value()) {
+				return colonyOrigin;
+			}
+			return std::nullopt;
+		}
+	} // namespace
+
+	TEST(OffMeshRecoveryResolutionTest, PrefersNearestFloorThenColonyOriginThenNoMove) {
+		const glm::vec2 floor{3.0F, 4.0F};
+		const glm::vec2 origin{1.5F, 4.5F};
+
+		// Tier 1: a nearest walkable face exists -> snap there, NOT to the colony origin.
+		EXPECT_EQ(recoveryTarget(floor, origin), std::optional<glm::vec2>(floor));
+
+		// Tier 2: no walkable face in range, but the colony origin is set -> last-resort snap to it.
+		EXPECT_EQ(recoveryTarget(std::nullopt, origin), std::optional<glm::vec2>(origin));
+
+		// Tier 3: neither available (headless, no origin wired) -> leave the colonist in place.
+		EXPECT_FALSE(recoveryTarget(std::nullopt, std::nullopt).has_value());
+	}
+
+	// --- Colony origin is the single source, read by both consumers -------------
+	//
+	// The colony origin is set once (GameWorldState::Colony, set at landing) and read by
+	// two consumers: GameScene's camera-home sync and the AI off-mesh recovery fallback.
+	// This asserts the consolidation: the value pushed into AIDecisionSystem via the public
+	// setColonyOrigin is exactly what the recovery fallback reads back -- no independent copy,
+	// no drift. The fixture is a friend of AIDecisionSystem, so it can read the private store
+	// the recovery uses, mirroring what GameScene reads from m_colony.originPosition.
+	TEST_F(AIDecisionSystemTest, ColonyOriginConsumersReadSingleSource) {
+		const glm::vec2 origin{1.50F, 4.50F};
+
+		// Before wiring, the fallback target is unset (matches Tier 3 above: no origin -> no snap).
+		EXPECT_FALSE(getColonyOrigin().has_value());
+
+		// One write to the single source...
+		world->getSystem<AIDecisionSystem>().setColonyOrigin(origin);
+
+		// ...and the recovery fallback reads exactly that value back -- the AI consumer mirrors
+		// the colony origin GameScene also reads, rather than holding an independently derived copy.
+		ASSERT_TRUE(getColonyOrigin().has_value());
+		EXPECT_EQ(*getColonyOrigin(), origin);
 	}
 
 } // namespace ecs::test

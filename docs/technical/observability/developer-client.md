@@ -19,8 +19,15 @@ The developer client is an external TypeScript/Vite web application that connect
 - **Performance** / **Logs** — read-only, fed by the SSE streams below.
 - **Dev Tools** — the only tab that *sends* rather than streams. It drives the running game with
   one-shot `fetch()` calls: the dev verbs (`GET /api/dev/<verb>` — spawn, colonist, give, need,
-  time, teleport, select, kill, complete, freebuild) and the synchronous world-state readback
-  (`GET /api/state?what=summary|colonists|construction|time`). `DevToolsService.ts` wraps these;
+  time, teleport, select, kill, complete, freebuild, foundation, walls, opening, and `craft`) and
+  the synchronous world-state readback (`GET /api/state?what=summary|colonists|construction|stations|time`).
+  `craft?recipe=<def>&n=<count>&at=<x,y>` validates the recipe against the RecipeRegistry and queues
+  N jobs at the nearest crafting station (entity with a WorkQueue) to `at` — the on-demand way to
+  exercise the craft/provisioning chain without setting up a colony by hand. `what=stations` reads
+  back each crafting station's id, position, queued jobs (recipe/completed/quantity), and material
+  store, so a stalled craft can be inspected without screenshots. The placement verbs
+  (give/spawn/colonist/teleport) refuse an `at` that is off the active walkable navmesh.
+  `DevToolsService.ts` wraps these;
   `DevToolsPanel.tsx` is the form. Still no web server of its own — the static `file://` page reaches
   the debug server because it sets CORS `*`. Dev builds only. See the
   [dev-tools dev-log entry](../../development-log/entries/2026-06-16-dev-tools-api-and-tab.md) and

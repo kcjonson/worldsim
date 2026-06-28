@@ -20,6 +20,7 @@
 #include "../components/StructureBlueprint.h"
 #include "../components/Task.h"
 #include "../components/Transform.h"
+#include "../components/WorkQueue.h"
 
 #include "assets/AssetRegistry.h"
 #include "assets/RecipeDef.h"
@@ -512,12 +513,14 @@ class ActionSystemGoalTest : public ::testing::Test {
   protected:
 	void SetUp() override {
 		GoalTaskRegistry::Get().clear();
+		engine::assets::RecipeRegistry::Get().clear();
 		world = std::make_unique<World>();
 		world->registerSystem<ActionSystem>();
 	}
 
 	void TearDown() override {
 		GoalTaskRegistry::Get().clear();
+		engine::assets::RecipeRegistry::Get().clear();
 		engine::assets::AssetRegistry::Get().clearDefinitions();
 		world.reset();
 	}
@@ -540,11 +543,28 @@ class ActionSystemGoalTest : public ::testing::Test {
 
 // A completed Harvest credits its harvest goal by the ACTUAL yield (not 1-per-action) and,
 // once satisfied, unblocks the dependent Haul. Then an inventory-sourced Haul delivering to
-// the crafting station credits the parent Craft goal and unblocks it - while keeping the
-// materials in inventory for the subsequent Craft action to consume.
+// the crafting station MOVES the materials into the station's store (the colonist's pack
+// empties) and credits the parent Craft goal, unblocking it - mirroring construction, where
+// materials go onto the build site and the build consumes from there.
 TEST_F(ActionSystemGoalTest, HarvestThenInventoryHaulDeliversMaterialsAndUnblocksCraft) {
-	auto&	 registry = GoalTaskRegistry::Get();
-	EntityID station = static_cast<EntityID>(777);
+	auto& registry = GoalTaskRegistry::Get();
+
+	// The deposit is metered to the station's remaining recipe need, so the station must have a
+	// real queued recipe (2 Sticks) for the delivery to land. This mirrors the running game, where
+	// a craft station always has a recipe; the metering reads it.
+	engine::assets::RecipeDef recipe;
+	recipe.defName = "Recipe_TwoStick";
+	recipe.label = "Two Stick";
+	recipe.inputs.push_back({"Stick", 0, 2});
+	engine::assets::RecipeRegistry::Get().registerTestRecipe(recipe);
+
+	// A crafting station entity: WorkQueue marks it a station; Inventory is its material store.
+	EntityID station = world->createEntity();
+	world->addComponent<Position>(station, Position{{5.0F, 0.0F}});
+	WorkQueue stationQueue;
+	stationQueue.addJob("Recipe_TwoStick", 1);
+	world->addComponent<WorkQueue>(station, std::move(stationQueue));
+	world->addComponent<Inventory>(station, Inventory::createForStorage());
 
 	// Craft goal needs 2 Sticks total, born Blocked.
 	GoalTask craft;
@@ -566,16 +586,8 @@ TEST_F(ActionSystemGoalTest, HarvestThenInventoryHaulDeliversMaterialsAndUnblock
 	harvest.status = GoalStatus::Available;
 	uint64_t harvestId = registry.createGoal(std::move(harvest));
 
-	GoalTask haul;
-	haul.type = TaskType::Haul;
-	haul.owner = GoalOwner::CraftingGoalSystem;
-	haul.destinationEntity = station;
-	haul.destinationPosition = {5.0F, 0.0F};
-	haul.targetAmount = 2;
-	haul.parentGoalId = craftId;
-	haul.dependsOnGoalId = harvestId;
-	haul.status = GoalStatus::WaitingForItems;
-	uint64_t haulId = registry.createGoal(std::move(haul));
+	// No pre-made Haul: the carrying Haul is spawned lazily when the harvest below completes.
+	// haulId is bound from that goal in Phase 1.
 
 	// --- Phase 1: drive a Harvest action that yields 2 Sticks ---
 	auto colonist = createColonist({1.0F, 1.0F});
@@ -594,12 +606,23 @@ TEST_F(ActionSystemGoalTest, HarvestThenInventoryHaulDeliversMaterialsAndUnblock
 
 	auto* inventory = world->getComponent<Inventory>(colonist);
 	EXPECT_EQ(inventory->getQuantity("Stick"), 2U) << "Harvest yield should be in inventory";
-	// Harvest goal credited by the real yield (2), so it completed and was removed; the
-	// dependent Haul flipped to Available.
+	// Harvest goal credited by the real yield (2), so it completed and was removed; the carrying
+	// Haul was created lazily in its place.
 	EXPECT_EQ(registry.getGoal(harvestId), nullptr) << "Completed harvest goal removed";
-	ASSERT_NE(registry.getGoal(haulId), nullptr);
-	EXPECT_EQ(registry.getGoal(haulId)->status, GoalStatus::Available)
-	    << "Dependent Haul unblocked once harvest completed";
+
+	// The lazily-created Haul is the only Haul child of the Craft: Available, targeting the yield.
+	const GoalTask* lazyHaul = nullptr;
+	for (const auto* child : registry.getChildGoals(craftId)) {
+		if (child->type == TaskType::Haul) {
+			lazyHaul = child;
+			break;
+		}
+	}
+	ASSERT_NE(lazyHaul, nullptr) << "Completing the harvest creates the carrying Haul";
+	EXPECT_EQ(lazyHaul->status, GoalStatus::Available) << "Lazily-created Haul starts available";
+	EXPECT_EQ(lazyHaul->targetAmount, 2U);
+	uint64_t haulId = lazyHaul->id;
+
 	EXPECT_EQ(registry.getGoal(craftId)->deliveredAmount, 0U)
 	    << "Harvest must NOT credit the Craft - materials are only in inventory, not at station";
 
@@ -620,15 +643,449 @@ TEST_F(ActionSystemGoalTest, HarvestThenInventoryHaulDeliversMaterialsAndUnblock
 	world->update(0.1F); // start the deliver-to-station deposit
 	world->update(2.0F); // complete (deposit duration 1s)
 
-	// Materials stay in inventory for the Craft action; the goal hierarchy advanced.
-	EXPECT_EQ(inventory->getQuantity("Stick"), 2U)
-	    << "Craft-station delivery keeps items in inventory for crafting";
+	// Materials moved into the station's store; the colonist's pack emptied; the hierarchy advanced.
+	EXPECT_EQ(inventory->getQuantity("Stick"), 0U)
+	    << "Craft-station delivery moves items out of the colonist's pack";
+	auto* stationStore = world->getComponent<Inventory>(station);
+	ASSERT_NE(stationStore, nullptr);
+	EXPECT_EQ(stationStore->getQuantity("Stick"), 2U)
+	    << "Delivered materials now live in the station's store";
 	EXPECT_EQ(registry.getGoal(haulId), nullptr) << "Completed haul goal removed";
 	ASSERT_NE(registry.getGoal(craftId), nullptr);
 	EXPECT_EQ(registry.getGoal(craftId)->deliveredAmount, 2U)
 	    << "Delivery to station credited the parent Craft goal";
 	EXPECT_EQ(registry.getGoal(craftId)->status, GoalStatus::Available)
 	    << "Craft leaves Blocked once all materials delivered";
+}
+
+// The craft-station deposit is METERED to the recipe's remaining need: a colonist carrying more
+// than the recipe wants deposits only the shortfall and KEEPS the surplus. The station store
+// therefore never banks excess beyond its bill of materials (same invariant as a build site).
+TEST_F(ActionSystemGoalTest, CraftDepositMetersToRecipeNeedAndKeepsSurplus) {
+	// PlantFiber: a 1-hand carryable. Recipe wants 1; the colonist will carry 3.
+	engine::assets::AssetDefinition fiberDef;
+	fiberDef.defName = "PlantFiber";
+	fiberDef.label = "Plant Fiber";
+	fiberDef.handsRequired = 1;
+	fiberDef.category = engine::assets::ItemCategory::RawMaterial;
+	fiberDef.capabilities.carryable = engine::assets::CarryableCapability{1};
+	fiberDef.itemProperties = engine::assets::ItemProperties{};
+	fiberDef.itemProperties->stackSize = 10;
+	engine::assets::AssetRegistry::Get().registerTestDefinition(std::move(fiberDef));
+
+	engine::assets::RecipeDef recipe;
+	recipe.defName = "Recipe_OneFiber";
+	recipe.label = "One Fiber";
+	recipe.inputs.push_back({"PlantFiber", 0, 1}); // recipe needs exactly 1
+	engine::assets::RecipeRegistry::Get().registerTestRecipe(recipe);
+
+	auto&			registry = GoalTaskRegistry::Get();
+	const glm::vec2 stationPos{5.0F, 0.0F};
+
+	const EntityID station = world->createEntity();
+	world->addComponent<Position>(station, Position{stationPos});
+	WorkQueue stationQueue;
+	stationQueue.addJob("Recipe_OneFiber", 1);
+	world->addComponent<WorkQueue>(station, std::move(stationQueue));
+	world->addComponent<Inventory>(station, Inventory::createForStorage());
+
+	GoalTask craft;
+	craft.type = TaskType::Craft;
+	craft.owner = GoalOwner::CraftingGoalSystem;
+	craft.destinationEntity = station;
+	craft.destinationPosition = stationPos;
+	craft.targetAmount = 1;
+	craft.status = GoalStatus::Blocked;
+	const uint64_t craftId = registry.createGoal(std::move(craft));
+
+	GoalTask haul;
+	haul.type = TaskType::Haul;
+	haul.owner = GoalOwner::CraftingGoalSystem;
+	haul.destinationEntity = station;
+	haul.destinationPosition = stationPos;
+	haul.acceptedDefNameIds = {engine::assets::AssetRegistry::Get().getDefNameId("PlantFiber")};
+	haul.targetAmount = 1;
+	haul.parentGoalId = craftId;
+	haul.status = GoalStatus::Available;
+	const uint64_t haulId = registry.createGoal(std::move(haul));
+
+	// Colonist carries 3 PlantFiber (over-cut a Reed), standing at the station, delivering.
+	auto colonist = createColonist(stationPos);
+	world->getComponent<Inventory>(colonist)->addItem("PlantFiber", 3);
+
+	auto* task = world->getComponent<Task>(colonist);
+	task->type = TaskType::Haul;
+	task->state = TaskState::Arrived;
+	task->haulGoalId = haulId;
+	task->haulItemDefName = "PlantFiber";
+	task->haulQuantity = 1;
+	task->haulTargetStorageId = static_cast<uint64_t>(station);
+	task->haulTargetPosition = stationPos;
+	task->haulFromInventory = true;
+	task->targetPosition = stationPos;
+
+	world->update(0.1F); // start deposit
+	world->update(2.0F); // complete
+
+	auto* store = world->getComponent<Inventory>(station);
+	ASSERT_NE(store, nullptr);
+	EXPECT_EQ(store->getQuantity("PlantFiber"), 1U) << "Station holds exactly the recipe need, no surplus";
+	EXPECT_EQ(world->getComponent<Inventory>(colonist)->getQuantity("PlantFiber"), 2U)
+	    << "The 2 surplus units stay on the colonist";
+	EXPECT_EQ(registry.getGoal(craftId)->deliveredAmount, 1U) << "Craft credited by exactly the metered deposit";
+}
+
+// A craft fetch from a multi-unit ground PILE takes only the remaining recipe need and leaves the
+// rest in the pile (the pile is at a known, reachable spot). Pile of 7, recipe needs 2 -> pick up
+// 2, pile keeps 5. (Contrast with a harvest, which takes all it can carry; see the harvest tests.)
+TEST_F(ActionSystemGoalTest, CraftFetchFromPileTakesOnlyRemainingNeedLeavesRest) {
+	engine::assets::AssetDefinition stoneDef;
+	stoneDef.defName = "SmallStone";
+	stoneDef.label = "Small Stone";
+	stoneDef.handsRequired = 1;
+	stoneDef.category = engine::assets::ItemCategory::RawMaterial;
+	stoneDef.capabilities.carryable = engine::assets::CarryableCapability{1};
+	stoneDef.itemProperties = engine::assets::ItemProperties{};
+	stoneDef.itemProperties->stackSize = 10;
+	stoneDef.itemProperties->massKg = 0.5F;
+	engine::assets::AssetRegistry::Get().registerTestDefinition(std::move(stoneDef));
+
+	auto&			registry = GoalTaskRegistry::Get();
+	const glm::vec2 pilePos{1.0F, 1.0F};
+
+	// Craft goal needs 2 SmallStone; the child craft-haul fetches them.
+	GoalTask craft;
+	craft.type = TaskType::Craft;
+	craft.owner = GoalOwner::CraftingGoalSystem;
+	craft.targetAmount = 2;
+	craft.status = GoalStatus::Blocked;
+	const uint64_t craftId = registry.createGoal(std::move(craft));
+
+	GoalTask haul;
+	haul.type = TaskType::Haul;
+	haul.owner = GoalOwner::CraftingGoalSystem;
+	haul.acceptedDefNameIds = {engine::assets::AssetRegistry::Get().getDefNameId("SmallStone")};
+	haul.targetAmount = 2; // recipe need
+	haul.parentGoalId = craftId;
+	haul.status = GoalStatus::Available;
+	const uint64_t haulId = registry.createGoal(std::move(haul));
+
+	// A loose ResourceStack PILE of 7 SmallStone at the source.
+	auto pile = world->createEntity();
+	world->addComponent<Position>(pile, Position{pilePos});
+	world->addComponent<Appearance>(pile, Appearance{"SmallStone", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+	world->addComponent<ResourceStack>(pile, ResourceStack{7});
+
+	auto colonist = createColonist(pilePos);
+	auto* memory = world->getComponent<Memory>(colonist);
+	const uint32_t stoneId = engine::assets::AssetRegistry::Get().getDefNameId("SmallStone");
+	memory->rememberWorldEntity(pilePos, stoneId, engine::assets::AssetRegistry::Get().getCapabilityMask(stoneId));
+
+	auto* task = world->getComponent<Task>(colonist);
+	task->type = TaskType::Haul;
+	task->state = TaskState::Arrived;
+	task->haulGoalId = haulId;
+	task->haulItemDefName = "SmallStone";
+	task->haulQuantity = 2;
+	task->haulSourcePosition = pilePos;
+	task->haulTargetStorageId = 0;
+	task->haulTargetPosition = {5.0F, 0.0F};
+	task->haulFromInventory = false;
+	task->targetPosition = pilePos;
+
+	world->update(0.1F); // start Pickup
+	world->update(1.0F); // complete
+
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	EXPECT_EQ(inventory->getQuantity("SmallStone"), 2U) << "Picked up exactly the recipe need (2)";
+	auto* stack = world->getComponent<ResourceStack>(pile);
+	ASSERT_NE(stack, nullptr) << "Pile survives -- it still holds the surplus";
+	EXPECT_EQ(stack->quantity, 5U) << "The other 5 stay in the pile";
+}
+
+// A HARVEST takes the whole yield up to carry capacity even when it exceeds the recipe need: a
+// far harvest spot shouldn't strand cut resources, so the surplus rides along (the deposit later
+// meters only the need into the station). Yield 5 for a recipe wanting 2 -> the colonist carries 5.
+TEST_F(ActionSystemGoalTest, HarvestTakesFullYieldEvenAboveRecipeNeed) {
+	engine::assets::AssetDefinition fiberDef;
+	fiberDef.defName = "PlantFiber";
+	fiberDef.label = "Plant Fiber";
+	fiberDef.handsRequired = 1;
+	fiberDef.category = engine::assets::ItemCategory::RawMaterial;
+	fiberDef.itemProperties = engine::assets::ItemProperties{};
+	fiberDef.itemProperties->stackSize = 10;
+	fiberDef.itemProperties->massKg = 0.1F; // light: weight never binds below 5
+	engine::assets::AssetRegistry::Get().registerTestDefinition(std::move(fiberDef));
+
+	auto&		   registry = GoalTaskRegistry::Get();
+	const glm::vec2 reedPos{1.0F, 1.0F};
+
+	// Craft goal needs only 2 PlantFiber; the child Harvest cuts a Reed that yields 5.
+	GoalTask craft;
+	craft.type = TaskType::Craft;
+	craft.owner = GoalOwner::CraftingGoalSystem;
+	craft.targetAmount = 2;
+	craft.status = GoalStatus::Blocked;
+	const uint64_t craftId = registry.createGoal(std::move(craft));
+
+	GoalTask harvest;
+	harvest.type = TaskType::Harvest;
+	harvest.owner = GoalOwner::CraftingGoalSystem;
+	harvest.targetAmount = 2; // the craft only needs 2
+	harvest.parentGoalId = craftId;
+	harvest.status = GoalStatus::Available;
+	const uint64_t harvestId = registry.createGoal(std::move(harvest));
+
+	auto colonist = createColonist(reedPos);
+	auto* task = world->getComponent<Task>(colonist);
+	task->type = TaskType::Harvest;
+	task->state = TaskState::Arrived;
+	task->harvestGoalId = harvestId;
+	task->targetPosition = reedPos;
+
+	// Reed yields 5 PlantFiber (source defName differs from the yield -> harvest path, not a pickup).
+	auto* action = world->getComponent<Action>(colonist);
+	*action = Action::Harvest("PlantFiber", 5, 4.0F, reedPos, "Flora_Reed",
+							  /*destructive=*/true, /*regrowthTime=*/0.0F);
+
+	world->update(0.1F); // start
+	world->update(5.0F); // complete (4s)
+
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	EXPECT_EQ(inventory->getQuantity("PlantFiber"), 5U)
+	    << "Harvest carries the full yield (5), not just the recipe need (2)";
+}
+
+// Two-phase loose-ground craft fetch haul: pick a loose SmallStone off the ground, then deposit
+// it INTO the crafting station's store. Two regressions are guarded here:
+//
+//  1. Deposit-leg commitment. The Pickup phase must re-arm movement (state Moving + active
+//     MovementTarget pointed at the station) so the colonist drives itself to the deposit. It
+//     used to leave the task Pending with movement off, relying on an AI re-eval to re-path --
+//     but the deposit leg is the SAME task, so the AI never re-pathed and the colonist froze on
+//     the pickup spot, dropping the fetch chain.
+//
+//  2. Per-trip credit. Each fetch+deposit MOVES one stone from the pack into the station store
+//     (the pack empties) and credits the goal once. A recipe needing 2 takes two trips; the second
+//     deposit can't double-count the first stone because that stone already left the pack.
+TEST_F(ActionSystemGoalTest, LooseFetchHaulCommitsToDepositAndCreditsCraftStationOnce) {
+	// SmallStone: a 1-hand carryable raw material (rides in the backpack).
+	engine::assets::AssetDefinition stoneDef;
+	stoneDef.defName = "SmallStone";
+	stoneDef.label = "Small Stone";
+	stoneDef.handsRequired = 1;
+	stoneDef.category = engine::assets::ItemCategory::RawMaterial;
+	stoneDef.capabilities.carryable = engine::assets::CarryableCapability{1};
+	stoneDef.itemProperties = engine::assets::ItemProperties{};
+	stoneDef.itemProperties->stackSize = 10;
+	stoneDef.itemProperties->massKg = 1.5F;
+	engine::assets::AssetRegistry::Get().registerTestDefinition(std::move(stoneDef));
+
+	// The deposit meters to the station's remaining recipe need, so queue a real recipe (2 stone).
+	engine::assets::RecipeDef recipe;
+	recipe.defName = "Recipe_TwoStone";
+	recipe.label = "Two Stone";
+	recipe.inputs.push_back({"SmallStone", 0, 2});
+	engine::assets::RecipeRegistry::Get().registerTestRecipe(recipe);
+
+	auto&			registry = GoalTaskRegistry::Get();
+	const glm::vec2 sourcePos{1.0F, 1.0F};
+	const glm::vec2 stationPos{5.0F, 0.0F};
+
+	// A crafting station entity with a material store.
+	const EntityID station = world->createEntity();
+	world->addComponent<Position>(station, Position{stationPos});
+	WorkQueue stationQueue;
+	stationQueue.addJob("Recipe_TwoStone", 1);
+	world->addComponent<WorkQueue>(station, std::move(stationQueue));
+	world->addComponent<Inventory>(station, Inventory::createForStorage());
+
+	// Craft goal needs 2 SmallStone; child craft-haul goal is available to fetch.
+	GoalTask craft;
+	craft.type = TaskType::Craft;
+	craft.owner = GoalOwner::CraftingGoalSystem;
+	craft.destinationEntity = station;
+	craft.destinationPosition = stationPos;
+	craft.targetAmount = 2;
+	craft.status = GoalStatus::Blocked;
+	const uint64_t craftId = registry.createGoal(std::move(craft));
+
+	GoalTask haul;
+	haul.type = TaskType::Haul;
+	haul.owner = GoalOwner::CraftingGoalSystem;
+	haul.destinationEntity = station;
+	haul.destinationPosition = stationPos;
+	haul.acceptedDefNameIds = {engine::assets::AssetRegistry::Get().getDefNameId("SmallStone")};
+	haul.targetAmount = 2;
+	haul.parentGoalId = craftId;
+	haul.status = GoalStatus::Available;
+	const uint64_t haulId = registry.createGoal(std::move(haul));
+
+	// A loose SmallStone the colonist remembers at the source.
+	auto colonist = createColonist(sourcePos);
+	auto* memory = world->getComponent<Memory>(colonist);
+	memory->rememberWorldEntity(
+		sourcePos, engine::assets::AssetRegistry::Get().getDefNameId("SmallStone"),
+		engine::assets::AssetRegistry::Get().getCapabilityMask(engine::assets::AssetRegistry::Get().getDefNameId("SmallStone")));
+	// The pile entity the Pickup will find at the source (Appearance defName == the material).
+	auto pile = world->createEntity();
+	world->addComponent<Position>(pile, Position{sourcePos});
+	world->addComponent<Appearance>(pile, Appearance{"SmallStone", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+
+	auto* task = world->getComponent<Task>(colonist);
+	task->type = TaskType::Haul;
+	task->state = TaskState::Arrived;
+	task->haulGoalId = haulId;
+	task->haulItemDefName = "SmallStone";
+	task->haulQuantity = 1;
+	task->haulSourcePosition = sourcePos;
+	task->haulTargetStorageId = static_cast<uint64_t>(station);
+	task->haulTargetPosition = stationPos;
+	task->haulFromInventory = false;
+	task->targetPosition = sourcePos; // phase 1: at the source
+	task->chainId = 42;
+	task->chainStep = 0;
+
+	// --- Phase 1: Pickup the loose stone ---
+	world->update(0.1F); // start Pickup
+	world->update(1.0F); // complete (Pickup duration 0.5s)
+
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	EXPECT_EQ(inventory->getQuantity("SmallStone"), 1U) << "Loose stone collected into the backpack";
+
+	// Deposit-leg commitment: the pickup must hand off to a self-driving deposit, NOT freeze.
+	EXPECT_EQ(task->state, TaskState::Moving) << "Pickup re-arms the task to drive to the station";
+	EXPECT_EQ(task->chainStep, 1U) << "Chain advanced: pickup (0) -> deposit (1)";
+	auto* movement = world->getComponent<MovementTarget>(colonist);
+	ASSERT_NE(movement, nullptr);
+	EXPECT_TRUE(movement->active) << "Movement re-armed toward the station";
+	EXPECT_FLOAT_EQ(movement->target.x, stationPos.x);
+	EXPECT_FLOAT_EQ(movement->target.y, stationPos.y);
+
+	// --- Phase 2: arrive at the station and deposit ---
+	world->getComponent<Position>(colonist)->value = stationPos;
+	task->state = TaskState::Arrived;
+	world->getComponent<Action>(colonist)->clear();
+
+	world->update(0.1F); // start Deposit
+	world->update(2.0F); // complete (Deposit duration 1s)
+
+	auto* stationStore = world->getComponent<Inventory>(station);
+	ASSERT_NE(stationStore, nullptr);
+	EXPECT_EQ(inventory->getQuantity("SmallStone"), 0U) << "Craft delivery moves the stone out of the pack";
+	EXPECT_EQ(stationStore->getQuantity("SmallStone"), 1U) << "The stone now lives in the station store";
+	ASSERT_NE(registry.getGoal(haulId), nullptr) << "Goal still wants a 2nd stone, not yet retired";
+	EXPECT_EQ(registry.getGoal(haulId)->deliveredAmount, 1U) << "Exactly one stone credited";
+	EXPECT_EQ(registry.getGoal(craftId)->deliveredAmount, 1U) << "Parent craft credited once";
+
+	// --- No double-count: re-running a deliver-from-inventory deposit with an EMPTY pack stages
+	// nothing (the first stone already left for the station). The colonist must fetch a 2nd unit. ---
+	task->clear();
+	task->type = TaskType::Haul;
+	task->state = TaskState::Arrived;
+	task->haulGoalId = haulId;
+	task->haulItemDefName = "SmallStone";
+	task->haulQuantity = 1;
+	task->haulSourcePosition = stationPos; // already here, no pickup
+	task->haulTargetStorageId = static_cast<uint64_t>(station);
+	task->haulTargetPosition = stationPos;
+	task->haulFromInventory = true; // deliver-from-inventory deposit
+	task->targetPosition = stationPos;
+	world->getComponent<Action>(colonist)->clear();
+
+	world->update(0.1F);
+	world->update(2.0F);
+
+	ASSERT_NE(registry.getGoal(haulId), nullptr) << "Goal must survive an empty-pack deposit attempt";
+	EXPECT_EQ(stationStore->getQuantity("SmallStone"), 1U) << "Empty-pack deposit adds nothing to the station";
+	EXPECT_EQ(registry.getGoal(haulId)->deliveredAmount, 1U)
+		<< "An empty-pack deposit credits nothing (no double-count)";
+	EXPECT_EQ(registry.getGoal(craftId)->deliveredAmount, 1U) << "Parent craft not double-credited either";
+}
+
+// Regression: a loose fetch where the source pile sits right beside the crafting station --
+// within arrival tolerance, so the colonist standing on the source is ALSO "at" the station.
+// A position-only phase check (atSource && !atTarget for pickup, else atTarget for deposit)
+// would skip the pickup (because atTarget is also true) and deposit an EMPTY pack, fail, and
+// re-issue the same fetch every tick -- an infinite loop that strands the craft with the
+// material still on the ground. Phase must be carry-state-first: not carrying -> pick up,
+// even when also in range of the destination.
+TEST_F(ActionSystemGoalTest, LooseFetchPicksUpWhenSourceOverlapsStation) {
+	engine::assets::AssetDefinition stoneDef;
+	stoneDef.defName = "SmallStone";
+	stoneDef.label = "Small Stone";
+	stoneDef.handsRequired = 1;
+	stoneDef.category = engine::assets::ItemCategory::RawMaterial;
+	stoneDef.capabilities.carryable = engine::assets::CarryableCapability{1};
+	stoneDef.itemProperties = engine::assets::ItemProperties{};
+	stoneDef.itemProperties->stackSize = 10;
+	stoneDef.itemProperties->massKg = 1.5F;
+	engine::assets::AssetRegistry::Get().registerTestDefinition(std::move(stoneDef));
+
+	auto& registry = GoalTaskRegistry::Get();
+	// Source and station overlap: 0.3 m apart, inside the 0.5 m arrival tolerance. The colonist
+	// standing on the source is simultaneously atSource and atTarget.
+	const glm::vec2 sourcePos{1.0F, 1.0F};
+	const glm::vec2 stationPos{1.3F, 1.0F};
+
+	const EntityID station = world->createEntity();
+	world->addComponent<Position>(station, Position{stationPos});
+	world->addComponent<WorkQueue>(station, WorkQueue{});
+	world->addComponent<Inventory>(station, Inventory::createForStorage());
+
+	GoalTask craft;
+	craft.type = TaskType::Craft;
+	craft.owner = GoalOwner::CraftingGoalSystem;
+	craft.destinationEntity = station;
+	craft.destinationPosition = stationPos;
+	craft.targetAmount = 1;
+	craft.status = GoalStatus::Blocked;
+	const uint64_t craftId = registry.createGoal(std::move(craft));
+
+	GoalTask haul;
+	haul.type = TaskType::Haul;
+	haul.owner = GoalOwner::CraftingGoalSystem;
+	haul.destinationEntity = station;
+	haul.destinationPosition = stationPos;
+	haul.acceptedDefNameIds = {engine::assets::AssetRegistry::Get().getDefNameId("SmallStone")};
+	haul.targetAmount = 1;
+	haul.parentGoalId = craftId;
+	haul.status = GoalStatus::Available;
+	const uint64_t haulId = registry.createGoal(std::move(haul));
+
+	// Colonist standing on the loose stone (which it remembers), empty pack.
+	auto  colonist = createColonist(sourcePos);
+	auto* memory = world->getComponent<Memory>(colonist);
+	memory->rememberWorldEntity(
+		sourcePos, engine::assets::AssetRegistry::Get().getDefNameId("SmallStone"),
+		engine::assets::AssetRegistry::Get().getCapabilityMask(
+			engine::assets::AssetRegistry::Get().getDefNameId("SmallStone")));
+	auto pile = world->createEntity();
+	world->addComponent<Position>(pile, Position{sourcePos});
+	world->addComponent<Appearance>(pile, Appearance{"SmallStone", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+
+	auto* task = world->getComponent<Task>(colonist);
+	task->type = TaskType::Haul;
+	task->state = TaskState::Arrived;
+	task->haulGoalId = haulId;
+	task->haulItemDefName = "SmallStone";
+	task->haulQuantity = 1;
+	task->haulSourcePosition = sourcePos;
+	task->haulTargetStorageId = static_cast<uint64_t>(station);
+	task->haulTargetPosition = stationPos;
+	task->haulFromInventory = false;
+	task->targetPosition = sourcePos;
+
+	world->update(0.1F); // start: empty pack at an overlapping source -> must Pickup, not Deposit
+	auto* action = world->getComponent<Action>(colonist);
+	ASSERT_NE(action, nullptr);
+	EXPECT_EQ(action->type, ActionType::Pickup)
+		<< "An empty-pack fetch at a source overlapping the station picks up, it must not deposit nothing";
+
+	world->update(1.0F); // complete Pickup (0.5s)
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	EXPECT_EQ(inventory->getQuantity("SmallStone"), 1U)
+		<< "The overlapping-source fetch actually collected the stone (no empty-deposit loop)";
 }
 
 // =============================================================================
@@ -858,8 +1315,10 @@ class LoosePileHaulTest : public ::testing::Test {
 		return entity;
 	}
 
-	// Drive one Pickup of the loose pile at `pilePos` to completion. The Pickup's quantity (1)
-	// and destroySource flag are ignored by the loose-pile branch.
+	// Drive one Pickup of the loose pile at `pilePos` to completion. The loose-pile branch takes
+	// min(requested, pile, carry-fit); pass UINT32_MAX to request "a full armful" so the weight
+	// cap is what binds (the storage-haul / take-what-you-can-carry case). A metered craft fetch
+	// would instead pass its exact remaining need here.
 	void pickUpPile(EntityID colonist, glm::vec2 pilePos) {
 		auto* task = world->getComponent<Task>(colonist);
 		task->type = TaskType::Harvest; // generic collection task; no harvest goal bookkeeping
@@ -867,7 +1326,7 @@ class LoosePileHaulTest : public ::testing::Test {
 		task->targetPosition = pilePos;
 
 		auto* action = world->getComponent<Action>(colonist);
-		*action = Action::Pickup("Wood", 1, pilePos, "Wood");
+		*action = Action::Pickup("Wood", UINT32_MAX, pilePos, "Wood");
 
 		world->update(0.1F); // start
 		world->update(1.0F); // complete (Pickup duration 0.5s)
@@ -952,7 +1411,7 @@ TEST_F(LoosePileHaulTest, TwoPilesAtSamePositionRemovesOnlyTheDrainedEntity) {
 // Wood rides in BOTH hands as a mirrored armful, never the backpack. A deposit must
 // pull from the hands, bounce any storage-full or destroyed-storage remainder back to
 // the hands (mirror intact), and credit the haul goal only by what actually landed in
-// storage. A craft must consume its Wood input from the hands too.
+// storage. A craft consumes its Wood input from the station's store.
 
 class HandMaterialActionTest : public ::testing::Test {
   protected:
@@ -971,7 +1430,8 @@ class HandMaterialActionTest : public ::testing::Test {
 		woodDef.itemProperties->massKg = 2.5F;
 		engine::assets::AssetRegistry::Get().registerTestDefinition(std::move(woodDef));
 
-		// Plank: a one-hand craft output so the produced item lands in the backpack.
+		// Plank: a one-hand craft output. Through the canonical give-to-colonist cascade it lands
+		// in an empty hand first (then belt, then backpack), so the test reads it via availableQuantity.
 		engine::assets::AssetDefinition plankDef;
 		plankDef.defName = "Plank";
 		plankDef.label = "Plank";
@@ -1305,9 +1765,10 @@ TEST_F(HandMaterialActionTest, FullStorageRetiresHaulGoalAndAcceptsNothing) {
 	EXPECT_EQ(registry.getGoal(haulId), nullptr) << "A genuinely full storage's goal is retired";
 }
 
-// A craft whose only input is two-hand Wood consumes it straight from the hands: the
-// hands decrement by the input count (mirror stays synced) and the output is produced.
-TEST_F(HandMaterialActionTest, CraftConsumesWoodFromHandsAndProducesOutput) {
+// A craft consumes its inputs from the STATION's store (where provisioning hauled them), not
+// from the colonist: the station's Wood decrements by the input count and the output is produced
+// into the colonist's inventory. Mirrors construction consuming from the on-site manifest.
+TEST_F(HandMaterialActionTest, CraftConsumesWoodFromStationStoreAndProducesOutput) {
 	engine::assets::RecipeDef recipe;
 	recipe.defName = "Recipe_Plank";
 	recipe.label = "Plank";
@@ -1317,12 +1778,16 @@ TEST_F(HandMaterialActionTest, CraftConsumesWoodFromHandsAndProducesOutput) {
 	recipe.outputs.push_back({"Plank", 0, 1});
 	engine::assets::RecipeRegistry::Get().registerTestRecipe(recipe);
 
-	EntityID station = static_cast<EntityID>(555);
+	// A crafting station holding 10 Wood in its store (hauled in during provisioning).
+	EntityID station = world->createEntity();
+	world->addComponent<Position>(station, Position{{0.0F, 0.0F}});
+	world->addComponent<WorkQueue>(station, WorkQueue{});
+	auto stationInv = Inventory::createForStorage();
+	stationInv.addItem("Wood", 10);
+	world->addComponent<Inventory>(station, stationInv);
 
 	auto  colonist = createColonist({0.0F, 0.0F});
 	auto* inventory = world->getComponent<Inventory>(colonist);
-	seatArmful(*inventory, 10); // 10 Wood in hands, empty backpack
-	ASSERT_EQ(inventory->getQuantity("Wood"), 0U);
 
 	auto* task = world->getComponent<Task>(colonist);
 	task->type = TaskType::Craft;
@@ -1331,17 +1796,18 @@ TEST_F(HandMaterialActionTest, CraftConsumesWoodFromHandsAndProducesOutput) {
 	task->targetStationId = static_cast<uint64_t>(station);
 	task->targetPosition = {0.0F, 0.0F};
 
-	world->update(0.1F); // startCraftAction builds the Craft action (readiness gate sees hand Wood)
+	world->update(0.1F); // startCraftAction builds the Craft action (readiness gate sees station Wood)
 	auto* action = world->getComponent<Action>(colonist);
-	ASSERT_TRUE(action->hasCraftingEffect()) << "Hand-carried Wood satisfies the craft readiness gate";
+	ASSERT_TRUE(action->hasCraftingEffect()) << "Station-stored Wood satisfies the craft readiness gate";
 
 	world->update(1.0F); // complete the 0.5s craft
 
-	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 6U) << "4 Wood consumed from the hands (10 - 4)";
-	ASSERT_TRUE(inventory->leftHand.has_value());
-	ASSERT_TRUE(inventory->rightHand.has_value());
-	EXPECT_EQ(inventory->leftHand->quantity, inventory->rightHand->quantity) << "Hand mirror stays synced";
-	EXPECT_EQ(inventory->getQuantity("Plank"), 1U) << "Craft produced its output";
+	auto* storeAfter = world->getComponent<Inventory>(station);
+	ASSERT_NE(storeAfter, nullptr);
+	EXPECT_EQ(storeAfter->getQuantity("Wood"), 6U) << "4 Wood consumed from the station store (10 - 4)";
+	// The canonical cascade seats a one-hand output in an empty hand first, so count hands + backpack.
+	EXPECT_EQ(ecs::availableQuantity(*inventory, "Plank"), 1U) << "Craft produced its output into the colonist";
+	EXPECT_TRUE(inventory->isHolding("Plank")) << "Output seats in an empty hand before the backpack";
 }
 
 // =============================================================================

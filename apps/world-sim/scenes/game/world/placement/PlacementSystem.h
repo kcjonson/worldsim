@@ -23,6 +23,10 @@ namespace engine::assets {
 	class PlacementExecutor;
 }
 
+namespace ecs {
+	class NavigationSystem;
+}
+
 namespace world_sim {
 
 /// PlacementSystem - Coordinates entity placement workflow.
@@ -49,6 +53,7 @@ class PlacementSystem {
 		ecs::World*						 world;
 		engine::world::WorldCamera*		 camera;
 		engine::assets::PlacementExecutor* placementExecutor; // owns harvestable resource pools
+		ecs::NavigationSystem*			 navigation;		  // world-position validity (isValidPosition)
 		Callbacks						 callbacks;
 	};
 
@@ -105,6 +110,7 @@ class PlacementSystem {
 	ecs::World*						   ecsWorld = nullptr;
 	engine::world::WorldCamera*		   camera = nullptr;
 	engine::assets::PlacementExecutor* placementExecutor = nullptr;
+	ecs::NavigationSystem*			   navigation = nullptr;
 	Callbacks						   callbacks;
 
 	PlacementMode placementMode;

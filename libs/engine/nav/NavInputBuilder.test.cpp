@@ -158,6 +158,79 @@ TEST(NavInputBuilder, Water_OriginOffsetMapsToWorldMm) {
 	}
 }
 
+// End-to-end repro for the "zero walkable faces" navmesh bug at a RIVER CONFLUENCE
+// that EXITS the simulation area. Water reaches the marching grid on every side (the
+// river flows out of the area), with dry land in the middle reaching no edge. This is
+// the real extractWaterObstacles -> borderRing -> buildNavMesh path buildInput runs.
+//
+// When water touches all sides, extractWaterObstacles emits a water OUTER boundary
+// that closes against the out-of-grid land, so its ring surrounds the whole area, plus
+// the dry land as a CW hole ring. The surrounding water face's outer cycle is the area
+// border, whose representative point falls in the central land hole; classifying the
+// water from there used to mistag it (and, in the in-game shape, leave zero floor).
+// Land beside the river must be walkable floor; the river must block.
+TEST(NavInputBuilder, Water_RiverExitsArea_LandBesideRiverIsFloor) {
+	// Per-tile water predicate over the AREA (tiles [0,areaW)x[0,areaH)): a water frame
+	// on the outer two rings of tiles (the river, exiting every side), dry land inside.
+	constexpr int areaW = 11;
+	constexpr int areaH = 11;
+	auto isWaterArea = [](int x, int y) { return x <= 1 || x >= areaW - 2 || y <= 1 || y >= areaH - 2; };
+
+	// buildInput marches over the area expanded by a one-tile margin so edge-touching
+	// water still closes against the out-of-grid land. Replicate that here.
+	constexpr int margin = 1;
+	auto isWaterGrid = [&](int gx, int gy) { return isWaterArea(gx - margin, gy - margin); };
+	const Vec2i64 originMm{-margin * 1000, -margin * 1000};
+	std::vector<NavInputPolygon> water =
+		extractWaterObstacles(areaW + 2 * margin, areaH + 2 * margin, isWaterGrid, originMm);
+	// A river exiting on every side leaves dry land as an interior hole: outer water ring
+	// + at least one land-island ring.
+	ASSERT_GE(water.size(), 2u) << "edge-touching water with interior land emits an outer ring plus a land hole";
+
+	NavMeshInput input;
+	input.polygons.push_back(borderRing({0, 0}, {areaW * 1000, areaH * 1000}));
+	for (NavInputPolygon& p : water) {
+		input.polygons.push_back(std::move(p));
+	}
+
+	NavMesh mesh = geometry::nav::buildNavMesh(input);
+	ASSERT_FALSE(mesh.triangles.empty());
+
+	// Centroid of a triangle (floored to mm).
+	auto centroid = [&](const NavMesh& m, const std::array<std::uint32_t, 3>& v) -> Vec2i64 {
+		return {(m.vertices[v[0]].x + m.vertices[v[1]].x + m.vertices[v[2]].x) / 3,
+				(m.vertices[v[0]].y + m.vertices[v[1]].y + m.vertices[v[2]].y) / 3};
+	};
+	// The dry land block in mm: area tiles [2, areaW-3] x [2, areaH-3].
+	const std::int64_t landMinX = 2 * 1000, landMaxX = (areaW - 2) * 1000;
+	const std::int64_t landMinY = 2 * 1000, landMaxY = (areaH - 2) * 1000;
+
+	int landFloor = 0;
+	int riverBlocked = 0;
+	int totalFloor = 0;
+	for (const geometry::nav::NavTriangle& t : mesh.triangles) {
+		const bool floor = geometry::nav::isFloorFace(t);
+		if (floor) {
+			++totalFloor;
+		}
+		const Vec2i64 c = centroid(mesh, t.v);
+		const bool inLand = c.x > landMinX && c.x < landMaxX && c.y > landMinY && c.y < landMaxY;
+		if (inLand && floor) {
+			++landFloor;
+		}
+		// A triangle on the very outer ring of the area (a river tile) must not be floor.
+		const bool onAreaEdge = c.x < 1000 || c.x > (areaW - 1) * 1000 || c.y < 1000 || c.y > (areaH - 1) * 1000;
+		if (onAreaEdge && geometry::nav::isCommonKnowledgeTerrainFace(t)) {
+			++riverBlocked;
+		}
+	}
+
+	EXPECT_GT(totalFloor, 0) << "a river exiting the area must leave walkable floor; got zero "
+							 << "(the in-game walkable=0 symptom)";
+	EXPECT_GT(landFloor, 0) << "the dry land in the middle of the confluence must be walkable floor";
+	EXPECT_GT(riverBlocked, 0) << "the river water on the area edge must be a terrain blocker";
+}
+
 // ---------------------------------------------------------------------------
 // Flora
 // ---------------------------------------------------------------------------

@@ -30,8 +30,12 @@
 #include <ecs/components/StructureBlueprint.h>
 #include <ecs/components/StructureHealth.h>
 #include <ecs/components/Transform.h>
+#include <ecs/components/WorkQueue.h>
 #include <ecs/systems/ConstructionSystem.h>
+#include <ecs/systems/NavigationSystem.h>
 #include <ecs/systems/TimeSystem.h>
+
+#include <assets/RecipeRegistry.h>
 
 #include <utils/Log.h>
 
@@ -71,6 +75,8 @@ namespace world_sim {
 			devWalls(cmd);
 		} else if (cmd.verb == "opening") {
 			devOpening(cmd);
+		} else if (cmd.verb == "craft") {
+			devCraft(cmd);
 		} else {
 			LOG_WARNING(Game, "[DevAPI] Unknown dev command verb '%s'", cmd.verb.c_str());
 		}
@@ -109,6 +115,9 @@ namespace world_sim {
 				return;
 			}
 			const Foundation::Vec2 at = parsePoint(cmd.param("at"));
+			if (!requireValidPosition(at, "give loose")) {
+				return;
+			}
 			// Each packaged item is its own entity (no ground stacks); cap so a big N can't spawn thousands.
 			constexpr uint32_t kMaxLoose = 50;
 			const uint32_t	   count = n < kMaxLoose ? n : kMaxLoose;
@@ -156,6 +165,9 @@ namespace world_sim {
 			return;
 		}
 		const Foundation::Vec2 at = parsePoint(cmd.param("at"));
+		if (!requireValidPosition(at, "spawn")) {
+			return;
+		}
 		const long			   nRaw = std::strtol(cmd.param("n", "1").c_str(), nullptr, 10);
 		const long			   n = nRaw < 1 ? 1 : nRaw;
 		const float			   scatter = std::strtof(cmd.param("scatter", "0").c_str(), nullptr);
@@ -170,6 +182,9 @@ namespace world_sim {
 
 	void DevCommandHandler::devColonist(const Foundation::DevCommand& cmd) {
 		const Foundation::Vec2 at = parsePoint(cmd.param("at"));
+		if (!requireValidPosition(at, "colonist")) {
+			return;
+		}
 		const long			   nRaw = std::strtol(cmd.param("n", "1").c_str(), nullptr, 10);
 		const long			   n = nRaw < 1 ? 1 : nRaw;
 		const std::string	   baseName = cmd.param("name", "Dev");
@@ -181,6 +196,20 @@ namespace world_sim {
 		}
 		LOG_INFO(Game, "[DevAPI] colonist: spawned %ld at (%.1f, %.1f)", n, at.x, at.y);
 		m_ctx.ui->pushNotification("Dev", "Spawned " + std::to_string(n) + " colonist(s)", UI::ToastSeverity::Info);
+	}
+
+	bool DevCommandHandler::requireValidPosition(Foundation::Vec2 at, const char* verb) {
+		// Single validity gate: a world position is placeable IFF it is on an active
+		// walkable nav face (NavigationSystem::isValidPosition). No terrain/world-source
+		// reads here -- runtime walkability is owned by the nav mesh.
+		if (m_ctx.navigation != nullptr && m_ctx.navigation->isValidPosition({at.x, at.y})) {
+			return true;
+		}
+		LOG_WARNING(Game, "[DevAPI] %s: error: %.1f,%.1f not on an active walkable nav mesh, refused", verb, at.x, at.y);
+		m_ctx.ui->pushNotification(
+			"Dev", "Refused: (" + std::to_string(at.x) + ", " + std::to_string(at.y) + ") not on walkable nav mesh", UI::ToastSeverity::Warning
+		);
+		return false;
 	}
 
 	ecs::EntityID DevCommandHandler::nearestColonist(Foundation::Vec2 at) {
@@ -318,6 +347,9 @@ namespace world_sim {
 			return;
 		}
 		const Foundation::Vec2 to = parsePoint(cmd.param("to"));
+		if (!requireValidPosition(to, "teleport")) {
+			return;
+		}
 		pos->value = {to.x, to.y};
 		if (auto* target = m_ctx.world->getComponent<ecs::MovementTarget>(id)) {
 			target->active = false;
@@ -517,6 +549,45 @@ namespace world_sim {
 		m_ctx.ui->pushNotification("Dev", built ? "Built opening placed" : "Opening blueprint placed", UI::ToastSeverity::Info);
 	}
 
+	void DevCommandHandler::devCraft(const Foundation::DevCommand& cmd) {
+		const std::string recipe = cmd.param("recipe", "Recipe_AxePrimitive");
+		const long		  qtyRaw = std::strtol(cmd.param("n", "1").c_str(), nullptr, 10);
+		const auto		  qty = static_cast<uint32_t>(qtyRaw < 1 ? 1 : qtyRaw);
+
+		if (engine::assets::RecipeRegistry::Get().getRecipe(recipe) == nullptr) {
+			LOG_WARNING(Game, "[DevAPI] craft: unknown recipe '%s'", recipe.c_str());
+			m_ctx.ui->pushNotification("Dev", "Unknown recipe: " + recipe, UI::ToastSeverity::Warning);
+			return;
+		}
+
+		// Queue the job at the nearest crafting station (entity with a WorkQueue) to `at`.
+		const Foundation::Vec2 at = parsePoint(cmd.param("at"));
+		ecs::WorkQueue*		   best = nullptr;
+		float				   bestDistSq = 0.0F;
+		ecs::EntityID		   bestEntity = ecs::kInvalidEntity;
+		for (auto [entity, workQueue, pos] : m_ctx.world->view<ecs::WorkQueue, ecs::Position>()) {
+			const float dx = pos.value.x - at.x;
+			const float dy = pos.value.y - at.y;
+			const float distSq = dx * dx + dy * dy;
+			if (best == nullptr || distSq < bestDistSq) {
+				best = &workQueue;
+				bestDistSq = distSq;
+				bestEntity = entity;
+			}
+		}
+		if (best == nullptr) {
+			LOG_WARNING(Game, "[DevAPI] craft: no crafting station found (spawn a CraftingSpot first)");
+			m_ctx.ui->pushNotification("Dev", "No crafting station to queue at", UI::ToastSeverity::Warning);
+			return;
+		}
+
+		best->addJob(recipe, qty);
+		LOG_INFO(
+			Game, "[DevAPI] craft: queued %u x %s at station #%llu", qty, recipe.c_str(), static_cast<unsigned long long>(bestEntity)
+		);
+		m_ctx.ui->pushNotification("Dev", "Queued " + std::to_string(qty) + " " + recipe, UI::ToastSeverity::Info);
+	}
+
 	Foundation::Vec2 DevCommandHandler::parsePoint(const std::string& spec) {
 		const std::vector<Foundation::Vec2> pts = parsePointList(spec);
 		return pts.empty() ? Foundation::Vec2{0.0F, 0.0F} : pts.front();
@@ -614,6 +685,8 @@ namespace world_sim {
 			serializeColonists(out);
 		} else if (what == "construction") {
 			serializeConstruction(out);
+		} else if (what == "stations") {
+			serializeStations(out);
 		} else if (what == "time") {
 			serializeTime(out);
 		} else {
@@ -678,6 +751,38 @@ namespace world_sim {
 				<< "\",\"state\":\"" << (foundation.state == engine::construction::FoundationState::Built ? "Built" : "Blueprint")
 				<< "\",\"entity\":" << static_cast<unsigned long long>(foundation.entity) << ",\"area\":" << world.areaSquareMeters(foundation.id)
 				<< "}";
+		}
+		out << "]}";
+	}
+
+	void DevCommandHandler::serializeStations(std::ostringstream& out) {
+		out << "{\"stations\":[";
+		bool first = true;
+		for (auto [entity, workQueue, pos] : m_ctx.world->view<ecs::WorkQueue, ecs::Position>()) {
+			out << (first ? "" : ",");
+			first = false;
+			out << "{\"id\":" << static_cast<unsigned long long>(entity) << ",\"x\":" << pos.value.x << ",\"y\":" << pos.value.y;
+
+			out << ",\"jobs\":[";
+			bool firstJob = true;
+			for (const auto& job : workQueue.jobs) {
+				out << (firstJob ? "" : ",") << "{\"recipe\":\"" << jsonEscape(job.recipeDefName) << "\",\"completed\":" << job.completed
+					<< ",\"quantity\":" << job.quantity << "}";
+				firstJob = false;
+			}
+			out << "]";
+
+			// Material store: what the station physically holds for the queued recipe.
+			if (const auto* inv = m_ctx.world->getComponent<ecs::Inventory>(entity)) {
+				out << ",\"store\":{";
+				bool firstItem = true;
+				for (const auto& stack : inv->items) {
+					out << (firstItem ? "" : ",") << "\"" << jsonEscape(stack.defName) << "\":" << stack.quantity;
+					firstItem = false;
+				}
+				out << "}";
+			}
+			out << "}";
 		}
 		out << "]}";
 	}

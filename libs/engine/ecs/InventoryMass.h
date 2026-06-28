@@ -203,4 +203,70 @@ namespace ecs {
 		return lifted;
 	}
 
+	/// Canonical "give an item to a colonist" cascade, weight-respecting at every step.
+	/// A fresh output (a crafted tool, a gift) lands somewhere sensible instead of being
+	/// force-stuffed into one slot. Seating order for a ONE-hand item:
+	///   1. an empty hand           (so a just-made axe is actually held)
+	///   2. a free belt slot        (quick-draw stow when hands are full)
+	///   3. the backpack            (stack/slot limited)
+	///   4. drop on the ground      (nothing fits) -- via onDrop, at the colonist's position
+	/// A TWO-hand item can only ride in the hands (addArmful) or drop; it never enters belt/backpack.
+	/// Weight binds throughout: cargoUnitsThatFit gates how many units may be carried before the
+	/// carry-weight cap, so an over-weight colonist's output drops rather than exceeding the cap.
+	/// `onDrop(defName, count)` performs the loose-ground drop (the harvest overflow mechanism).
+	/// Returns the number of units that ended up carried (hands + belt + backpack); the rest dropped.
+	template <typename DropFn>
+	inline uint32_t giveItemToColonist(
+		Inventory& inv, const engine::assets::AssetRegistry& registry, const std::string& defName, uint32_t quantity, DropFn&& onDrop
+	) {
+		if (quantity == 0) {
+			return 0;
+		}
+
+		// Two-hand bulk goods live in the hands only; whatever weight/hands can't take drops.
+		if (ecs::itemIsTwoHand(registry, defName)) {
+			const uint32_t carried	 = ecs::addArmful(inv, registry, defName, quantity);
+			const uint32_t remainder = quantity - carried;
+			if (remainder > 0) {
+				onDrop(defName, remainder);
+			}
+			return carried;
+		}
+
+		// One-hand item: weight is the first gate. Anything over the carry-weight cap drops.
+		const uint32_t fits = ecs::cargoUnitsThatFit(inv, registry, defName);
+		uint32_t	   toCarry = std::min(quantity, fits);
+		uint32_t	   carried = 0;
+
+		// 1. Empty hand(s): one unit per free hand (a hand stack is quantity 1).
+		while (carried < toCarry && inv.freeHandCount() > 0) {
+			if (!inv.rightHand.has_value()) {
+				inv.rightHand = ItemStack{defName, 1};
+			} else {
+				inv.leftHand = ItemStack{defName, 1};
+			}
+			++carried;
+		}
+
+		// 2. Free belt slots: one one-hand item each.
+		while (carried < toCarry && inv.beltHasFreeSlot()) {
+			if (!inv.stowToBelt(defName)) {
+				break;
+			}
+			++carried;
+		}
+
+		// 3. Backpack: stack/slot limited; addItem reports what it actually seated.
+		if (carried < toCarry) {
+			carried += inv.addItem(defName, toCarry - carried);
+		}
+
+		// 4. Anything that didn't fit (weight cap or no slot anywhere) drops on the ground.
+		const uint32_t dropped = quantity - carried;
+		if (dropped > 0) {
+			onDrop(defName, dropped);
+		}
+		return carried;
+	}
+
 } // namespace ecs

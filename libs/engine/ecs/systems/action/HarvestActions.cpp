@@ -101,11 +101,17 @@ namespace ecs {
 								   ? findLoosePile(world, collEff.itemDefName, collEff.sourcePosition)
 								   : LoosePile{};
 		if (pile.stack) {
+			// A pickup from a ground pile takes only what was REQUESTED (collEff.quantity, the
+			// remaining craft need), not the whole pile -- the pile is at a known reachable spot,
+			// so leaving the surplus there costs nothing (pile of 7, need 2 -> take 2, leave 5).
+			// Carry capacity still clamps. A harvest (the pool/single-shot branches below) instead
+			// takes all it can carry, because a far harvest spot shouldn't strand cut resources.
+			const uint32_t requested = std::min(collEff.quantity, pile.stack->quantity);
 			if (ecs::itemIsTwoHand(harvestRegistry, collEff.itemDefName)) {
-				added = ecs::addArmful(inventory, harvestRegistry, collEff.itemDefName, pile.stack->quantity);
+				added = ecs::addArmful(inventory, harvestRegistry, collEff.itemDefName, requested);
 			} else {
 				const uint32_t fit = ecs::cargoUnitsThatFit(inventory, harvestRegistry, collEff.itemDefName);
-				added = inventory.addItem(collEff.itemDefName, std::min(pile.stack->quantity, fit));
+				added = inventory.addItem(collEff.itemDefName, std::min(requested, fit));
 			}
 
 			pile.stack->quantity -= added; // mutate the live component so the pile tracks what is left
@@ -210,7 +216,19 @@ namespace ecs {
 				// A fell completes regardless of how much landed in hands; bulk goods never regrow.
 				destroySource = collEff.destroySource;
 			} else {
-				added = inventory.addItem(collEff.itemDefName, wanted);
+				// A loose-item fetch (source IS the material, e.g. picking up a SmallStone) yields
+				// only that one entity's carryable count -- never more than is physically there, even
+				// if the craft requested a larger remaining need (the shortfall is met by fetching
+				// further items). A harvest cut (source differs from the yield, e.g. a bush yielding
+				// Sticks) is NOT capped this way: its yield is whatever the harvestable gives.
+				uint32_t take = wanted;
+				if (collEff.sourceDefName == collEff.itemDefName) {
+					const auto* srcDef = harvestRegistry.getDefinition(collEff.itemDefName);
+					if (srcDef != nullptr && srcDef->capabilities.carryable.has_value()) {
+						take = std::min(take, srcDef->capabilities.carryable->quantity);
+					}
+				}
+				added = inventory.addItem(collEff.itemDefName, take);
 				destroySource = added > 0 && collEff.destroySource;
 				regrowSource = added > 0 && !collEff.destroySource && collEff.regrowthTime > 0.0F;
 			}
@@ -271,84 +289,12 @@ namespace ecs {
 			// Check if goal is now complete
 			const auto* goal = goalRegistry.getGoal(task.harvestGoalId);
 			if (goal != nullptr && goal->availableCapacity() == 0) {
-				// Harvest goal complete - notify dependent goals (the Haul that carries
-				// these items to the station unblocks) then remove the harvest goal.
-				goalRegistry.notifyGoalCompleted(task.harvestGoalId);
+				// Harvest done: the material is in the colonist's inventory now, so the Haul that
+				// carries it to the station can be created here (not up front), then the goal is retired.
+				goalRegistry.createHaulForCompletedHarvest(task.harvestGoalId);
 				goalRegistry.removeGoal(task.harvestGoalId);
 			}
 		}
-	}
-
-	void ActionSystem::startGatherAction(Task& task, Action& action, const Position& position, const Memory& memory) {
-		auto& registry = engine::assets::AssetRegistry::Get();
-
-		// Find the entity at the target position that we want to gather from
-		constexpr float kPositionTolerance = 0.5F;
-
-		for (const auto& [key, entity] : memory.knownWorldEntities) {
-			// Check if entity is at target position
-			glm::vec2 diff = entity.position - task.targetPosition;
-			float	  distSq = diff.x * diff.x + diff.y * diff.y;
-			if (distSq > kPositionTolerance * kPositionTolerance) {
-				continue;
-			}
-
-			// Check if entity has Carryable capability (direct pickup)
-			if (registry.hasCapability(entity.defNameId, engine::assets::CapabilityType::Carryable)) {
-				const auto& defName = registry.getDefName(entity.defNameId);
-				const auto* def = registry.getDefinition(defName);
-				if (def != nullptr && def->capabilities.carryable.has_value()) {
-					const auto& carryableCap = def->capabilities.carryable.value();
-					action = Action::Pickup(defName, carryableCap.quantity, entity.position, defName);
-					LOG_DEBUG(Engine, "[Action] Starting Pickup action for %s (qty %u)", defName.c_str(), carryableCap.quantity);
-					return;
-				}
-			}
-
-			// Check if entity has Harvestable capability
-			if (registry.hasCapability(entity.defNameId, engine::assets::CapabilityType::Harvestable)) {
-				const auto& defName = registry.getDefName(entity.defNameId);
-				const auto* def = registry.getDefinition(defName);
-				if (def != nullptr && def->capabilities.harvestable.has_value()) {
-					const auto& harvestCap = def->capabilities.harvestable.value();
-
-					// Calculate yield amount (skip RNG if range is single value)
-					uint32_t yieldAmount = harvestCap.amountMin;
-					if (harvestCap.amountMax > harvestCap.amountMin) {
-						std::uniform_int_distribution<uint32_t> yieldDist(harvestCap.amountMin, harvestCap.amountMax);
-						yieldAmount = yieldDist(m_rng);
-					}
-
-					action = Action::Harvest(
-						harvestCap.yieldDefName,
-						yieldAmount,
-						harvestCap.durability,
-						entity.position,
-						defName,
-						harvestCap.destructive,
-						harvestCap.regrowthTime
-					);
-					LOG_DEBUG(
-						Engine,
-						"[Action] Starting Harvest action for %s from %s (durability %.0f)",
-						harvestCap.yieldDefName.c_str(),
-						defName.c_str(),
-						harvestCap.durability
-					);
-					return;
-				}
-			}
-		}
-
-		// No valid entity found at target - clear action
-		LOG_WARNING(
-			Engine,
-			"[Action] No gatherable entity found at (%.1f, %.1f) for item %s",
-			task.targetPosition.x,
-			task.targetPosition.y,
-			task.gatherItemDefName.c_str()
-		);
-		action.clear();
 	}
 
 	void ActionSystem::startHarvestAction(Task& task, Action& action, const Position& position, Memory& memory, const Inventory& inventory) {

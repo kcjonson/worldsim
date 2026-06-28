@@ -24,34 +24,49 @@ namespace ecs {
 
 		auto& assetRegistry = engine::assets::AssetRegistry::Get();
 
-		// Consume inputs. Two-hand materials (e.g. wood) ride in the hands, not the backpack,
-		// so pull them from there; everything else comes from the pack.
+		// Consume inputs from the STATION's store, not the colonist's pack: the materials were
+		// hauled into the station's Inventory during provisioning (mirroring construction, where
+		// the build consumes from the on-site manifest). The crafted output goes to the colonist.
+		auto* stationInv = world->getComponent<Inventory>(static_cast<EntityID>(craftEff.stationEntityId));
+		if (stationInv == nullptr) {
+			LOG_WARNING(
+				Engine,
+				"[Action] Craft aborted: station %llu has no Inventory store to consume from",
+				static_cast<unsigned long long>(craftEff.stationEntityId)
+			);
+			return;
+		}
 		for (const auto& [itemName, count] : craftEff.inputs) {
-			uint32_t removed = ecs::itemIsTwoHand(assetRegistry, itemName)
-								   ? ecs::removeFromHands(inventory, itemName, count)
-								   : inventory.removeItem(itemName, count);
+			uint32_t removed = stationInv->removeItem(itemName, count);
 			if (removed < count) {
-				LOG_WARNING(Engine, "[Action] Craft failed to consume %u x %s (only had %u)", count, itemName.c_str(), removed);
+				LOG_WARNING(Engine, "[Action] Craft failed to consume %u x %s from station (only had %u)", count, itemName.c_str(), removed);
 			}
 		}
 
-		// Add outputs to inventory (or drop on ground if non-backpackable)
+		// Route each output through the canonical "give to colonist" cascade: an empty hand, then
+		// a belt slot, then the backpack, then a loose ground drop -- weight-respecting at every
+		// step. This is the ONE path for handing a fresh item to a colonist; force-adding to a
+		// single slot (the old addItem-only path) ignored hand/belt seating and carry weight, so a
+		// run of crafts could pile multiple one-hand tools into a place they don't belong.
+		const glm::vec2 dropPos = action.targetPosition; // colonist crafts standing at the station
 		for (const auto& [itemName, count] : craftEff.outputs) {
-			bool canBackpack = !ecs::itemIsTwoHand(assetRegistry, itemName);
-
-			if (canBackpack) {
-				uint32_t added = inventory.addItem(itemName, count);
-				LOG_INFO(Engine, "[Action] Crafted %u x %s (added to inventory)", added, itemName.c_str());
-			} else {
-				// Non-backpackable item - drop on ground at crafting station
-				if (m_onDropItem) {
-					for (uint32_t i = 0; i < count; ++i) {
-						m_onDropItem(itemName, action.targetPosition.x, action.targetPosition.y);
+			const uint32_t carried = ecs::giveItemToColonist(
+				inventory, assetRegistry, itemName, count,
+				[&](const std::string& def, uint32_t qty) {
+					// Overflow drops as a loose ground pile (the harvest overflow mechanism), at the
+					// colonist's position -- which is on the mesh, so the pile is reachable/haulable.
+					if (m_onDropResource) {
+						m_onDropResource(def, dropPos.x, dropPos.y, qty);
+					} else {
+						LOG_WARNING(Engine, "[Action] Crafted %s overflow but no drop callback set (lost)", def.c_str());
 					}
-					LOG_INFO(Engine, "[Action] Crafted %u x %s (dropped on ground)", count, itemName.c_str());
-				} else {
-					LOG_WARNING(Engine, "[Action] Crafted non-backpackable item %s but no drop callback set", itemName.c_str());
 				}
+			);
+			const uint32_t dropped = count - carried;
+			if (dropped > 0) {
+				LOG_INFO(Engine, "[Action] Crafted %u x %s (%u carried, %u dropped - no room)", count, itemName.c_str(), carried, dropped);
+			} else {
+				LOG_INFO(Engine, "[Action] Crafted %u x %s (added to inventory)", carried, itemName.c_str());
 			}
 		}
 
@@ -87,7 +102,7 @@ namespace ecs {
 		}
 	}
 
-	void ActionSystem::startCraftAction(Task& task, Action& action, const Inventory& inventory) {
+	void ActionSystem::startCraftAction(Task& task, Action& action) {
 		auto& recipeRegistry = engine::assets::RecipeRegistry::Get();
 
 		// Get the recipe
@@ -98,11 +113,18 @@ namespace ecs {
 			return;
 		}
 
-		// Verify colonist has all required inputs (backpack or, for two-hand goods, the hands)
+		// Verify the station's store holds all required inputs (hauled in during provisioning).
+		// This mirrors construction gating on materialsComplete() before the build proceeds.
+		const auto* stationInv = world->getComponent<Inventory>(static_cast<EntityID>(task.targetStationId));
+		if (stationInv == nullptr) {
+			LOG_WARNING(Engine, "[Action] Cannot craft %s - station has no Inventory store", recipe->label.c_str());
+			action.clear();
+			return;
+		}
 		for (const auto& input : recipe->inputs) {
-			if (ecs::availableQuantity(inventory, input.defName) < input.count) {
+			if (stationInv->getQuantity(input.defName) < input.count) {
 				LOG_WARNING(
-					Engine, "[Action] Cannot craft %s - missing %u x %s", recipe->label.c_str(), input.count, input.defName.c_str()
+					Engine, "[Action] Cannot craft %s - station missing %u x %s", recipe->label.c_str(), input.count, input.defName.c_str()
 				);
 				action.clear();
 				return;

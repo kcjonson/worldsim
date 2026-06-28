@@ -9,6 +9,7 @@
 #include <ecs/components/StorageConfiguration.h>
 #include <ecs/components/Transform.h>
 #include <ecs/components/WorkQueue.h>
+#include <ecs/systems/NavigationSystem.h>
 #include <primitives/Primitives.h>
 #include <utils/Log.h>
 #include <world/chunk/ChunkCoordinate.h>
@@ -22,6 +23,7 @@ namespace world_sim {
 		: ecsWorld(args.world),
 		  camera(args.camera),
 		  placementExecutor(args.placementExecutor),
+		  navigation(args.navigation),
 		  callbacks(args.callbacks) {
 		// Initialize placement mode with callback to handle placement
 		placementMode = PlacementMode{PlacementMode::Args{.onPlace = [this](const std::string& defName, Foundation::Vec2 worldPos) {
@@ -116,7 +118,10 @@ namespace world_sim {
 		}
 
 		auto worldPos = camera->screenToWorld(screenX, screenY, viewportW, viewportH, kPixelsPerMeter);
-		placementMode.updateGhostPosition({worldPos.x, worldPos.y});
+		// Valid IFF the spot is on an active walkable nav face. The nav mesh owns runtime
+		// walkability; no terrain/world-source read here. No nav system => nothing placeable.
+		const bool valid = navigation != nullptr && navigation->isValidPosition({worldPos.x, worldPos.y});
+		placementMode.updateGhostPosition({worldPos.x, worldPos.y}, valid);
 	}
 
 	bool PlacementSystem::handleClick() {
@@ -202,9 +207,12 @@ namespace world_sim {
 		const auto* assetDef = assetRegistry.getDefinition(defName);
 
 		if (assetDef != nullptr && assetDef->capabilities.craftable.has_value()) {
-			// Crafting station - add WorkQueue
+			// Crafting station - add WorkQueue plus a material store Inventory. Colonists haul
+			// recipe inputs INTO this store during provisioning (like a build site holds its
+			// delivered materials), and the Craft action consumes them from here.
 			ecsWorld->addComponent<ecs::WorkQueue>(entity, ecs::WorkQueue{});
-			LOG_INFO(Game, "Spawned station '%s' at (%.1f, %.1f) with WorkQueue", defName.c_str(), worldPos.x, worldPos.y);
+			ecsWorld->addComponent<ecs::Inventory>(entity, ecs::Inventory::createForStorage());
+			LOG_INFO(Game, "Spawned station '%s' at (%.1f, %.1f) with WorkQueue and material store", defName.c_str(), worldPos.x, worldPos.y);
 		} else if (assetDef != nullptr && assetDef->capabilities.storage.has_value()) {
 			// Storage container - add Inventory configured from StorageCapability
 			const auto&	   storageCap = assetDef->capabilities.storage.value();

@@ -111,9 +111,8 @@ namespace ecs {
 					return "Pickup"; // Both start with picking something up
 				case TaskType::Craft:
 					return "Craft";
-				case TaskType::Gather:
 				case TaskType::Harvest:
-					return "Harvest"; // Both gather and harvest use the Harvest action
+					return "Harvest";
 				case TaskType::Deconstruct:
 					// Config-driven like Build: the Deconstruct action is defined in
 					// action-types.xml (needsHands=true), so actionNeedsHands reads it.
@@ -211,8 +210,6 @@ namespace ecs {
 				case TaskType::Craft:
 					return option.craftRecipeDefName == currentTask.craftRecipeDefName &&
 						   option.stationEntityId == currentTask.targetStationId;
-				case TaskType::Gather:
-					return option.gatherTargetEntityId == currentTask.gatherTargetEntityId;
 				case TaskType::Haul:
 					return option.haulItemDefName == currentTask.haulItemDefName &&
 						   option.haulTargetStorageId == currentTask.haulTargetStorageId;
@@ -322,11 +319,13 @@ namespace ecs {
 				//    blueprint, where the deposit records the material onto the blueprint's delivered[] manifest.
 				// Both skip the memory scan and emit only once the dependency completed (status
 				// Available) and the colonist actually carries the material.
-				bool inventorySourceHaul = goal->owner == GoalOwner::ConstructionGoalSystem;
-				if (!inventorySourceHaul && goal->parentGoalId.has_value()) {
+				const bool isConstructionHaul = goal->owner == GoalOwner::ConstructionGoalSystem;
+				bool isCraftHaul = false;
+				if (!isConstructionHaul && goal->parentGoalId.has_value()) {
 					const auto* parent = goalRegistry.getGoal(goal->parentGoalId.value());
-					inventorySourceHaul = parent != nullptr && parent->type == TaskType::Craft;
+					isCraftHaul = parent != nullptr && parent->type == TaskType::Craft;
 				}
+				const bool inventorySourceHaul = isConstructionHaul || isCraftHaul;
 				if (inventorySourceHaul) {
 					if (goal->status == GoalStatus::Available) {
 						const bool toBlueprint = goal->owner == GoalOwner::ConstructionGoalSystem;
@@ -337,6 +336,11 @@ namespace ecs {
 							if (carried == 0) {
 								continue;
 							}
+
+							// Both craft and construction deposits MOVE the carried material into the
+							// destination (station store or blueprint manifest), so the pack empties on
+							// delivery; the next tick the colonist carries 0 and this option drops out.
+							// Just gate on carrying something.
 
 							EvaluatedOption haulOption;
 							haulOption.taskType = TaskType::Haul;
@@ -353,11 +357,75 @@ namespace ecs {
 							haulOption.haulTargetPosition = goal->destinationPosition;
 							haulOption.haulGoalId = goal->id;
 							haulOption.haulFromInventory = true;
+							// A craft-material delivery provisions an active work order; floor its
+							// priority above idle Wander so a distant station can't strand the craft.
+							haulOption.servesActiveWorkOrder = isCraftHaul;
 							haulOption.tiebreakId = goal->id ^ (static_cast<uint64_t>(acceptedId) << 1);
 							haulOption.status = OptionStatus::Available;
 							haulOption.reason = toBlueprint ? "Delivering " + itemDefName + " to build site"
 															: "Delivering " + itemDefName + " to crafting station";
 							trace.options.push_back(haulOption);
+						}
+					}
+
+					// Craft-only fetch: the colonist isn't carrying the material, so bring a remembered
+					// loose stock to the station (two-phase pickup -> deposit into the station store).
+					// Construction never fetches; its goods come from a cut.
+					if (isCraftHaul && goal->status == GoalStatus::Available) {
+						for (const auto& [key, looseItem] : memory.knownWorldEntities) {
+							const bool accepted = std::find(goal->acceptedDefNameIds.begin(), goal->acceptedDefNameIds.end(), looseItem.defNameId) != goal->acceptedDefNameIds.end();
+							if (!accepted || !registry.hasCapability(looseItem.defNameId, engine::assets::CapabilityType::Carryable)) {
+								continue;
+							}
+							const auto& itemDefName = registry.getDefName(looseItem.defNameId);
+							// Deposits move the material into the station, so the pack empties between
+							// trips. Stop fetching once enough is already staged in the station
+							// (deliveredAmount) plus what the colonist is carrying toward this delivery
+							// (carried) to satisfy the goal; otherwise keep fetching the next unit. A
+							// recipe needing 2 with 1 staged and 0 in hand still needs a 2nd unit fetched.
+							const uint32_t carried = ecs::availableQuantity(inventory, itemDefName);
+							if (goal->deliveredAmount + carried >= goal->targetAmount) {
+								continue;
+							}
+							const auto* itemDef = registry.getDefinition(itemDefName);
+							if (itemDef == nullptr || !itemDef->capabilities.carryable.has_value()) {
+								continue;
+							}
+							// Only fetch what the pickup can actually lift. The Pickup action clamps to
+							// carry weight (cargoUnitsThatFit); at or over the cap it adds 0, the fetch
+							// collects nothing, and the AI re-issues it every tick -- an infinite "fetch ->
+							// collect 0 -> fetch" loop. A colonist already loaded with unrelated cargo (or
+							// mid-trip carrying the previous unit) can hit this. Skip the fetch when no unit
+							// fits; the craft stays pending until the colonist has room, instead of spinning.
+							if (ecs::cargoUnitsThatFit(inventory, registry, itemDefName) == 0) {
+								continue;
+							}
+
+							float tripDistance = glm::distance(position, looseItem.position) + glm::distance(looseItem.position, goal->destinationPosition);
+
+							EvaluatedOption fetchOption;
+							fetchOption.taskType = TaskType::Haul;
+							fetchOption.needType = NeedType::Count;
+							fetchOption.needValue = 100.0F;
+							fetchOption.threshold = 0.0F;
+							fetchOption.targetPosition = looseItem.position;
+							fetchOption.targetDefNameId = looseItem.defNameId;
+							fetchOption.distanceToTarget = tripDistance;
+							fetchOption.haulItemDefName = itemDefName;
+							fetchOption.haulQuantity = std::min(itemDef->capabilities.carryable.value().quantity, goal->availableCapacity());
+							fetchOption.haulSourcePosition = looseItem.position;
+							fetchOption.haulTargetStorageId = static_cast<uint64_t>(goal->destinationEntity);
+							fetchOption.haulTargetPosition = goal->destinationPosition;
+							fetchOption.haulGoalId = goal->id;
+							fetchOption.haulFromInventory = false;
+							// Fetching loose stock to provision a started craft is committed work;
+							// floor it above Wander so a far pile can't strand the craft (this is the
+							// exact case that left axes half-provisioned and the colonist wandering).
+							fetchOption.servesActiveWorkOrder = true;
+							fetchOption.tiebreakId = goal->id ^ (key << 1);
+							fetchOption.status = OptionStatus::Available;
+							fetchOption.reason = "Fetching " + itemDefName + " for crafting";
+							trace.options.push_back(fetchOption);
 						}
 					}
 					continue;
@@ -471,8 +539,8 @@ namespace ecs {
 					continue; // Goal is full or null
 				}
 
-				// Skip goals that are waiting on dependencies
-				if (goal->status == GoalStatus::WaitingForItems || goal->status == GoalStatus::Blocked) {
+				// Skip goals that aren't workable yet.
+				if (goal->status == GoalStatus::Blocked) {
 					continue;
 				}
 
@@ -480,6 +548,14 @@ namespace ecs {
 				// We need to find harvestable entities in memory that yield this item
 				if (goal->yieldDefNameId == 0) {
 					continue; // No yield specified
+				}
+
+				// A Harvest that feeds a Craft goal provisions an active work order: its priority is
+				// floored above idle Wander so a far harvestable can't strand a started craft.
+				bool servesWorkOrder = false;
+				if (goal->parentGoalId.has_value()) {
+					const auto* parent = goalRegistry.getGoal(goal->parentGoalId.value());
+					servesWorkOrder = parent != nullptr && parent->type == TaskType::Craft;
 				}
 
 				// Search memory for harvestables that yield the target item
@@ -509,6 +585,19 @@ namespace ecs {
 						continue;
 					}
 
+					// Carry gate (mirrors the craft-fetch gate above): the harvest yield must fit.
+					// applyCollectionEffect clamps the take to carry weight AND backpack slots; at
+					// the cap it adds 0. Emitting the option anyway makes a full/over-weight colonist
+					// pick the harvest, collect 0 ("Collected 0 of N ... carry-limited"), re-evaluate,
+					// and pick the same harvest again -- an infinite chop-nothing loop. Skip the
+					// option when no unit fits (no stack/slot headroom and no carry weight), leaving
+					// the harvest for a trip when the colonist has room.
+					const std::string& yieldName = def->capabilities.harvestable->yieldDefName;
+					if (ecs::cargoUnitsThatFit(inventory, registry, yieldName) == 0 ||
+						inventory.addableCount(yieldName) == 0) {
+						continue;
+					}
+
 					// Calculate distance to harvestable
 					float distanceToHarvestable = glm::distance(position, knownEntity.position);
 
@@ -527,6 +616,7 @@ namespace ecs {
 					// Tiebreak on (goal, target) so two equidistant harvestables feeding the same
 					// goal still resolve deterministically, not by memory's hash order.
 					harvestOption.tiebreakId = goal->id ^ (key << 1);
+					harvestOption.servesActiveWorkOrder = servesWorkOrder;
 					harvestOption.status = OptionStatus::Available;
 
 					// Harvesting uses Farming skill
@@ -705,6 +795,61 @@ namespace ecs {
 		for (auto [entity, position, needs, memory, task, movementTarget, inventory] :
 			 world->view<Position, NeedsComponent, Memory, Task, MovementTarget, Inventory>()) {
 
+			// Stranded-colonist recovery. A colonist standing off the walkable mesh -- it beelined
+			// into a water hole before the async mesh finished building, spawned on a riverbank
+			// edge, was teleported there, or terrain shifted under it -- can never plan a route
+			// from where it stands, and freezes. Snap it to the nearest pathable point and clear
+			// its task so it re-decides from solid ground.
+			//
+			// GATE: only recover a colonist that is genuinely STRANDED -- inside a sim region but
+			// off a walkable face. A colonist that NO region currently covers (off-camera, an
+			// unsimulated corner) is left exactly where it stands: there is no mesh to judge it
+			// against, and relocating it merely because the sim area moved away is the bug this
+			// rework fixes (it dumped a wandering colonist into the river when a camera pan rebuilt
+			// the area off him). inSimArea() is true only when a built region contains the point,
+			// so inSimArea && !isOnMesh is exactly "in a region, off its mesh".
+			//
+			// A "fresh route" (a valid NavPath stamped to the current mesh generation) does NOT
+			// prove on-mesh: a teleport or a recenter can leave a current-version path under a
+			// colonist that is itself off-mesh, and the route's first waypoint is the standing
+			// point the locate already rejects. So recovery keys ONLY on isOnMesh; the snap nudge
+			// (nearestPathablePoint biases a hair toward the triangle centroid) lifts the colonist
+			// off the boundary edge that locate excludes.
+			if (m_navSystem != nullptr && m_navSystem->inSimArea(position.value)) {
+				if (!m_navSystem->isOnMesh(position.value)) {
+					const auto snapped = m_navSystem->nearestPathablePoint(position.value);
+					// Permanent stranded-recovery diagnostic (DEBUG, gated to the off-mesh branch):
+					// records the snap decision for the colonist-freeze bug class. Keep on cleanup.
+					LOG_DEBUG(Engine,
+						"[NavDiag] reconcile %llu offMesh at (%.2f, %.2f): nearestFloor=%d (%.2f, %.2f)",
+						static_cast<unsigned long long>(entity), position.value.x, position.value.y,
+						snapped.has_value() ? 1 : 0, snapped.has_value() ? snapped->x : -999.0F,
+						snapped.has_value() ? snapped->y : -999.0F);
+					if (snapped) {
+						position.value = *snapped;
+						if (auto* np = world->getComponent<NavPath>(entity)) {
+							np->valid = false;
+						}
+						task.clear();
+					} else if (m_colonyOrigin.has_value()) {
+						// Last-resort guarantee: the mesh has NO walkable face anywhere in range
+						// (nearestPathablePoint found nothing -- a degenerate or all-blocked local
+						// mesh), so there is nowhere nearer to snap. Teleport back to the colony
+						// origin (the home clearing), which the spawn path guarantees is an open,
+						// on-mesh walkable spot. Without this the colonist would be permanently stranded.
+						LOG_DEBUG(Engine,
+							"[NavDiag] reconcile %llu offMesh at (%.2f, %.2f): no nearestFloor; snapping to colony origin (%.2f, %.2f)",
+							static_cast<unsigned long long>(entity), position.value.x, position.value.y,
+							m_colonyOrigin->x, m_colonyOrigin->y);
+						position.value = *m_colonyOrigin;
+						if (auto* np = world->getComponent<NavPath>(entity)) {
+							np->valid = false;
+						}
+						task.clear();
+					}
+				}
+			}
+
 			// Get optional Action component (may be nullptr if entity doesn't have one)
 			auto* action = world->getComponent<Action>(entity);
 
@@ -743,6 +888,24 @@ namespace ecs {
 						task.navStateHold = 0;
 					}
 				}
+			}
+
+			// Chain-leg repath: a multi-phase task (Haul Pickup->Deposit, PlacePackaged
+			// Pickup->Place) hands off to its next leg inside ActionSystem by re-pointing the
+			// task at the new goal (state Moving, MovementTarget active) and dropping the now-stale
+			// pickup-leg route. Because it's the SAME task, the re-eval below sees isSameTask and
+			// never runs selectTaskFromTrace -- the only OTHER place a route is requested. So
+			// without this, the colonist would carry an active MovementTarget and no NavPath, which
+			// MovementSystem would steer straight at the goal (a beeline). Request the navmesh path
+			// for the new leg HERE so every move follows an A* route. Gate on a Moving task with an
+			// active target but no live route, which the replan-on-discovery block above (valid
+			// route only) does not cover. The off-mesh recovery at the top of update() has already
+			// snapped any stranded colonist onto valid ground before we get here.
+			if (auto* navPath = world->getComponent<NavPath>(entity); task.state == TaskState::Moving &&
+				movementTarget.active && (navPath == nullptr || !navPath->valid)) {
+				const NavRequestOutcome outcome = requestNavPath(entity, task.targetPosition, position, memory, movementTarget);
+				task.navState = (outcome == NavRequestOutcome::Blocked) ? NavState::CantFindWayTo : NavState::Traveling;
+				task.navStateHold = 0;
 			}
 
 			// Drain the Rerouting hold counter so "Re-routing" is a brief visible beat.
@@ -786,8 +949,11 @@ namespace ecs {
 					// Compare task type
 					bool sameType = (task.type == selected->taskType);
 
-					// For wander tasks, same type is enough - don't interrupt just because target changed
-					if (sameType && task.type == TaskType::Wander) {
+					// For wander tasks, same type is enough - don't interrupt just because target
+					// changed. EXCEPT when nav has stopped this wander (no believed route to its
+					// point): it MUST then be free to pick a fresh, reachable target, or it stays
+					// pinned to the unreachable one forever -- a permanent freeze.
+					if (sameType && task.type == TaskType::Wander && task.navState != NavState::CantFindWayTo) {
 						isSameTask = true;
 					} else {
 						bool sameTarget = false;
@@ -802,18 +968,6 @@ namespace ecs {
 								sameTarget = (dist < 0.5F);
 							}
 						}
-						// For gather tasks, also check if targeting same entity
-						bool sameGatherTarget = true;
-						if (selected->taskType == TaskType::Gather) {
-							// Both IDs must be valid (non-zero) to compare
-							if (task.gatherTargetEntityId != 0U && selected->gatherTargetEntityId != 0U) {
-								sameGatherTarget = (task.gatherTargetEntityId == selected->gatherTargetEntityId);
-							} else {
-								// At least one gather target is invalid/unset; treat as different targets
-								sameGatherTarget = false;
-							}
-						}
-
 						// For PlacePackaged tasks, check entity ID instead of position
 						// (position changes mid-task from source to target after phase 1)
 						bool samePlaceTarget = true;
@@ -829,7 +983,7 @@ namespace ecs {
 							}
 						}
 
-						isSameTask = sameType && sameTarget && sameGatherTarget && samePlaceTarget;
+						isSameTask = sameType && sameTarget && samePlaceTarget;
 					}
 				}
 
@@ -901,6 +1055,15 @@ namespace ecs {
 		// Note: We still re-evaluate even with action in progress to update DecisionTrace for UI
 		// The actual task switch decision is made AFTER re-evaluation based on priority gap
 		if (task.state == TaskState::Arrived) {
+			return true;
+		}
+
+		// Nav has stopped the colonist: no believed route to its target (a wander point or work
+		// site across water, or a route the freshly-built mesh invalidated). Re-evaluate so it
+		// picks a reachable target instead of standing frozen -- a Wander would otherwise never
+		// re-eval while "Moving". selectTaskFromTrace re-stamps navState from the new route, so this
+		// clears as soon as a reachable target is chosen (no thrash).
+		if (task.navState == NavState::CantFindWayTo) {
 			return true;
 		}
 
@@ -1150,74 +1313,20 @@ namespace ecs {
 				continue;
 			}
 
-			// Check if colonist has all required inputs and track missing ones
-			bool										  hasAllInputs = true;
-			std::vector<std::pair<std::string, uint32_t>> missingInputs; // defName, countNeeded
-			for (const auto& input : recipe->inputs) {
-				// A colonist holding a wood armful in hand is ready to craft, not just one with a full pack.
-				uint32_t have = ecs::availableQuantity(inventory, input.defName);
-				if (have < input.count) {
-					hasAllInputs = false;
-					missingInputs.emplace_back(input.defName, input.count - have);
-				}
-			}
-
-			// PHASE 6.2: Input Validation using Memory
-			// Before adding gather options, verify ALL missing inputs have known sources in memory.
-			// Colonist should only "know" they can craft if they've seen sources for everything.
-			struct GatherSource {
-				std::string		 inputDefName;
-				KnownWorldEntity source;
-				bool			 isHarvestable; // true = harvest, false = pickup
-			};
-			std::vector<GatherSource> gatherSources;
-			bool					  allInputsObtainable = true;
-
-			if (!hasAllInputs) {
-				for (const auto& [inputDefName, countNeeded] : missingInputs) {
-					bool	 foundSource = false;
-					uint32_t inputDefNameId = m_registry.getDefNameId(inputDefName);
-
-					// Look for Carryable sources (e.g., SmallStone on ground)
-					// Optimize for total trip: colonist -> resource -> crafting station
-					auto matchingCarryable =
-						findOptimalForTrip(memory, position.value, stationPos.value, [&](const KnownWorldEntity& entity) {
-							return entity.defNameId == inputDefNameId &&
-								   m_registry.hasCapability(entity.defNameId, engine::assets::CapabilityType::Carryable);
-						});
-
-					if (matchingCarryable.has_value()) {
-						gatherSources.push_back({inputDefName, *matchingCarryable, false});
-						foundSource = true;
-					} else {
-						// Look for Harvestable sources that yield this item
-						// Optimize for total trip: colonist -> resource -> crafting station
-						auto harvestableSource =
-							findOptimalForTrip(memory, position.value, stationPos.value, [&](const KnownWorldEntity& entity) {
-								if (!m_registry.hasCapability(entity.defNameId, engine::assets::CapabilityType::Harvestable)) {
-									return false;
-								}
-								const auto& defName = m_registry.getDefName(entity.defNameId);
-								const auto* def = m_registry.getDefinition(defName);
-								if (def == nullptr || !def->capabilities.harvestable.has_value()) {
-									return false;
-								}
-								return def->capabilities.harvestable->yieldDefName == inputDefName;
-							});
-
-						if (harvestableSource.has_value()) {
-							gatherSources.push_back({inputDefName, *harvestableSource, true});
-							foundSource = true;
-						}
-					}
-
-					if (!foundSource) {
-						// This input has no known source - colonist can't obtain it
-						allInputsObtainable = false;
-						break; // No need to check further
+			// Does the STATION's store already hold every input? Materials are hauled into the
+			// station during provisioning (mirroring construction); the craft work is only
+			// available once they're all physically present in the station, not in the colonist.
+			const auto* stationStore = world->getComponent<Inventory>(stationEntity);
+			bool		hasAllInputs = stationStore != nullptr;
+			if (hasAllInputs) {
+				for (const auto& input : recipe->inputs) {
+					if (stationStore->getQuantity(input.defName) < input.count) {
+						hasAllInputs = false;
+						break;
 					}
 				}
 			}
+
 
 			// Add craft option with skill bonus
 			EvaluatedOption craftOption;
@@ -1236,51 +1345,18 @@ namespace ecs {
 			craftOption.skillLevel = craftSkillLevel;
 			craftOption.skillBonus = craftSkillBonus;
 
+			// Provisioning the materials is the goal-driven Harvest/Haul options' job; the Craft
+			// option is the crafting WORK, workable only once the station holds every input.
 			if (hasAllInputs) {
 				craftOption.status = OptionStatus::Available;
 				craftOption.reason = "Crafting " + recipe->label;
-			} else if (allInputsObtainable) {
-				// Missing materials but colonist knows where to get them all
-				craftOption.status = OptionStatus::NoSource;
-				craftOption.reason = "Crafting " + recipe->label + " (gathering materials)";
 			} else {
-				// Missing materials and colonist doesn't know where to find some
 				craftOption.status = OptionStatus::NoSource;
-				craftOption.reason = "Crafting " + recipe->label + " (unknown sources)";
+				craftOption.reason = "Crafting " + recipe->label + " (awaiting materials)";
 			}
 
 			trace.options.push_back(craftOption);
 
-			// Only add gather options if ALL inputs are obtainable
-			// This prevents partial gathering when colonist can't complete the recipe
-			if (!hasAllInputs && allInputsObtainable) {
-				for (const auto& gatherSource : gatherSources) {
-					EvaluatedOption gatherOption;
-					gatherOption.taskType = TaskType::Gather;
-					gatherOption.needType = NeedType::Count;
-					gatherOption.needValue = 100.0F;
-					gatherOption.threshold = 0.0F;
-					gatherOption.targetPosition = gatherSource.source.position;
-					gatherOption.targetDefNameId = gatherSource.source.defNameId;
-					gatherOption.distanceToTarget = glm::distance(position.value, gatherSource.source.position);
-					gatherOption.gatherItemDefName = gatherSource.inputDefName;
-					// Tiebreak on the source's stable world-entity hash (quantized position + def),
-					// which is sim state, so equal-priority gather sources resolve deterministically.
-					gatherOption.tiebreakId = static_cast<uint64_t>(stationEntity) ^
-						hashWorldEntity(gatherSource.source.position, gatherSource.source.defNameId);
-					gatherOption.status = OptionStatus::Available;
-					gatherOption.reason = "Gathering " + gatherSource.inputDefName + " for crafting";
-
-					// For harvestable sources, use Farming skill; pickups don't need skill
-					if (gatherSource.isHarvestable) {
-						auto [gatherSkillLevel, gatherSkillBonus] = calculateSkillBonus(skills, kSkillFarming);
-						gatherOption.skillLevel = gatherSkillLevel;
-						gatherOption.skillBonus = gatherSkillBonus;
-					}
-
-					trace.options.push_back(gatherOption);
-				}
-			}
 		}
 
 		// Tier 6.4: Haul loose items to storage containers (goal-driven), and deliver
@@ -1299,14 +1375,51 @@ namespace ecs {
 		// Tier 6.35: Place packaged items at target locations
 		evaluatePlacePackagedOptions(world, position.value, inventory, trace);
 
-		// Add wander option
-		EvaluatedOption wanderOption;
-		wanderOption.taskType = TaskType::Wander;
-		wanderOption.needType = NeedType::Count; // N/A
-		wanderOption.status = OptionStatus::Available;
-		wanderOption.reason = "All needs satisfied";
-		wanderOption.targetPosition = generateWanderTarget(position.value);
-		trace.options.push_back(wanderOption);
+		// Agent footprint + belief for the reachability checks below (reachable-wander generation
+		// and the option filter). Defined once here so both uses share them.
+		float agentRadius = 0.3F;
+		if (const auto* ar = world->getComponent<AgentRadius>(entity)) {
+			agentRadius = ar->radiusMeters;
+		}
+		const geometry::nav::BeliefFilter belief{&memory.knownSegments, &memory.knownOpenings};
+		const bool						  haveMesh = (m_navSystem != nullptr) && m_navSystem->hasMesh();
+
+		// Firm "can I actually navigate right now?" gate. An idle wander picks a random point;
+		// with no navmesh yet (the costly startup window) the colonist has no idea what's walkable,
+		// and isReachable can't help -- it returns true ("can't prove unreachable") when there's no
+		// mesh, so the old check was leaky and the colonist committed to a wander it couldn't follow,
+		// then stalled. So only OFFER the wander when navigation is genuinely possible: a mesh
+		// exists, or there's no nav system at all (headless/tests, direct movement). With a nav
+		// system but no mesh, emit no idle option; the colonist holds (see the no-option hold in
+		// selectTaskFromTrace) until the mesh lands. Needs and work keep their own options, but they
+		// too only MOVE once requestNavPath returns a route -- an off-area or pre-mesh leg HOLDS, it
+		// does not slide blind. (Off-mesh stranding is handled separately by the snap-to-mesh
+		// recovery at the top of update().)
+		const bool canNavigate = (m_navSystem == nullptr) || haveMesh;
+		if (canNavigate) {
+			// Only offer a wander we can ACTUALLY reach. Probe a few random points; if none are
+			// reachable -- a colonist hemmed in by water/obstacles where every point lands somewhere
+			// it can't path to -- emit no idle option at all. The no-option hold then makes it stand
+			// and look around instead of committing to an unreachable point and thrashing on it.
+			glm::vec2 wanderTarget	= generateWanderTarget(position.value);
+			bool	  foundReachable = !haveMesh || m_navSystem->isReachable(position.value, wanderTarget, agentRadius, belief);
+			for (int attempt = 0; !foundReachable && attempt < 5; ++attempt) {
+				const glm::vec2 candidate = generateWanderTarget(position.value);
+				if (m_navSystem->isReachable(position.value, candidate, agentRadius, belief)) {
+					wanderTarget   = candidate;
+					foundReachable = true;
+				}
+			}
+			if (foundReachable) {
+				EvaluatedOption wanderOption;
+				wanderOption.taskType		= TaskType::Wander;
+				wanderOption.needType		= NeedType::Count; // N/A
+				wanderOption.status			= OptionStatus::Available;
+				wanderOption.reason			= "All needs satisfied";
+				wanderOption.targetPosition = wanderTarget;
+				trace.options.push_back(wanderOption);
+			}
+		}
 
 		// Populate priority bonuses for all options using PriorityConfig
 		// This includes: distance bonus, in-progress bonus, task age bonus (from GoalTaskRegistry)
@@ -1330,13 +1443,26 @@ namespace ecs {
 			return a.tiebreakId < b.tiebreakId;
 		});
 
-		// Mark the first actionable option as Selected
+		// Select the first actionable option the colonist can actually REACH, scanning in priority
+		// order. isReachable is a sound, cheap pre-filter: false means DEFINITELY unreachable
+		// (off-mesh, or a disconnected component -- e.g. a reed or water across a river with no land
+		// bridge). Probing in priority order means we only test down to the best reachable option,
+		// not the whole list. An unreachable higher-priority option drops to NoSource so the colonist
+		// won't commit to it and freeze at the bank; Wander is never filtered, so there is always a
+		// fallback that keeps it moving and exploring for new sources. No mesh yet -> isReachable
+		// returns true, so startup / outdoor beelining is unaffected.
 		for (auto& option : trace.options) {
-			if (option.status == OptionStatus::Available) {
-				option.status = OptionStatus::Selected;
-				trace.selectionSummary = "Selected: " + option.reason;
-				break;
+			if (option.status != OptionStatus::Available) {
+				continue;
 			}
+			if (haveMesh && option.taskType != TaskType::Wander && option.targetPosition.has_value() &&
+				!m_navSystem->isReachable(position.value, option.targetPosition.value(), agentRadius, belief)) {
+				option.status = OptionStatus::NoSource; // unreachable: skip it rather than freeze on it
+				continue;
+			}
+			option.status = OptionStatus::Selected;
+			trace.selectionSummary = "Selected: " + option.reason;
+			break;
 		}
 	}
 
@@ -1349,9 +1475,20 @@ namespace ecs {
 	) {
 		const auto* selected = trace.getSelected();
 		if (selected == nullptr) {
-			// No actionable option - shouldn't happen, but fallback to wander
-			task.type = TaskType::Wander;
-			task.reason = "No actionable options";
+			// Nothing to navigate to right now -- typically all needs are met and the navmesh isn't
+			// built yet, so the idle wander was withheld on purpose (can't navigate). Hold: stand in
+			// place, movement off, velocity zeroed. state=Moving (not Arrived) keeps shouldReEvaluate
+			// from re-deciding every frame; the periodic re-eval still fires, so the colonist picks
+			// up a real wander within a tick of the mesh landing.
+			task.type			  = TaskType::Wander;
+			task.state			  = TaskState::Moving;
+			task.navState		  = NavState::Traveling;
+			task.targetPosition	  = position.value;
+			task.reason			  = "Waiting for the area to settle";
+			movementTarget.active = false;
+			if (auto* velocity = world->getComponent<Velocity>(entity)) {
+				velocity->value = {0.0F, 0.0F};
+			}
 			return;
 		}
 
@@ -1366,11 +1503,6 @@ namespace ecs {
 			task.targetStationId = selected->stationEntityId;
 		}
 
-		// Copy gathering-specific fields for Gather tasks
-		if (selected->taskType == TaskType::Gather) {
-			task.gatherItemDefName = selected->gatherItemDefName;
-			task.gatherTargetEntityId = selected->gatherTargetEntityId;
-		}
 
 		// Copy harvest-specific fields for Harvest tasks
 		// Harvest is part of a Harvest→Haul chain: colonist harvests, then linked haul becomes available
@@ -1451,8 +1583,8 @@ namespace ecs {
 			const Memory* memory = world->getComponent<Memory>(entity);
 			if (memory != nullptr) {
 				const NavRequestOutcome outcome = requestNavPath(entity, task.targetPosition, position, *memory, movementTarget);
-				// Only a belief denial (mesh present, no route) is "can't find a way"; a
-				// no-mesh beeline is ordinary travel.
+				// Only a belief denial (mesh present, no route) is "can't find a way". Waiting
+				// (mesh not built / off-area) and Unmeshed (headless) are ordinary travel states.
 				task.navState = (outcome == NavRequestOutcome::Blocked) ? NavState::CantFindWayTo : NavState::Traveling;
 				task.navStateHold = 0;
 			}
@@ -1462,34 +1594,56 @@ namespace ecs {
 	AIDecisionSystem::NavRequestOutcome AIDecisionSystem::requestNavPath(
 		EntityID entity, const glm::vec2& goal, const Position& position, const Memory& memory,
 		MovementTarget& movementTarget) {
-		// No nav system wired, or no mesh built yet: fall back to the straight-line
-		// beeline MovementSystem already set up via MovementTarget. This is the outdoor /
-		// pre-mesh startup case, NOT a belief denial -- don't stop the colonist. Invalidate
-		// any route left over from a previous task so a stale path isn't followed.
-		if (m_navSystem == nullptr || !m_navSystem->hasMesh()) {
+		// No NavigationSystem wired at all (headless / tests only -- the running game always wires
+		// one). With no system there is no mesh to plan over, so MovementSystem follows the active
+		// MovementTarget directly. This branch is unreachable in the game; the movement invariant
+		// (path-or-snap) holds there because m_navSystem is non-null. Invalidate any route left over
+		// from a previous task so a stale path isn't followed.
+		if (m_navSystem == nullptr) {
 			if (auto* navPath = world->getComponent<NavPath>(entity)) {
 				navPath->valid = false;
 			}
-			LOG_DEBUG(Engine, "[Nav] Entity %llu: no mesh, beeline to (%.2f, %.2f)",
-				static_cast<unsigned long long>(entity), goal.x, goal.y);
-			return NavRequestOutcome::Beelined;
+			return NavRequestOutcome::Unmeshed;
 		}
 
-		// LOD seam: if either endpoint is outside the simulation area the exact mesh
-		// can't answer the query (the off-area leg is beyond LOD0). Treat it the same as
-		// the no-mesh case -- invalidate any stale NavPath and keep movementTarget active
-		// so the colonist beelines toward the area (or toward the goal directly).
+		// A navmesh exists as a system but hasn't finished building yet -- the costly startup
+		// window while chunks stream in. NOTHING moves without a navmesh: dead-reckoning toward a
+		// goal with no idea what's walkable is exactly what stranded and stalled colonists. HOLD
+		// here -- deactivate movement and zero velocity -- instead of beelining blind. The task
+		// stays; the periodic re-evaluation picks it back up the moment the mesh lands.
+		if (!m_navSystem->hasMesh()) {
+			if (auto* navPath = world->getComponent<NavPath>(entity)) {
+				navPath->valid = false;
+			}
+			movementTarget.active = false;
+			if (auto* velocity = world->getComponent<Velocity>(entity)) {
+				velocity->value = {0.0F, 0.0F};
+			}
+			LOG_DEBUG(Engine, "[Nav] Entity %llu: no mesh yet, holding (nothing moves without a navmesh)",
+				static_cast<unsigned long long>(entity));
+			return NavRequestOutcome::Waiting;
+		}
+
+		// LOD seam: if either endpoint is outside the BUILT simulation area the exact mesh can't
+		// answer the query (the off-area leg is beyond LOD0, and there is no coarse far-field graph
+		// yet). A colonist may NOT slide blind toward an off-area goal -- that is the beeline this
+		// architecture forbids. HOLD instead, exactly like the no-mesh case: deactivate movement,
+		// zero velocity, invalidate any stale route. The periodic re-eval re-offers the task once
+		// the camera-tracked sim area covers both endpoints (or the goal is rejected as unreachable).
 		//
-		// FUTURE LOD1: path to the area edge via LOD0, hand off to a coarse regional
-		// graph for the long-haul leg, re-enter LOD0 near the goal; for now the whole
-		// off-area leg is a beeline.
+		// FUTURE LOD1: path to the area edge via LOD0, hand off to a coarse regional graph for the
+		// long-haul leg, re-enter LOD0 near the goal. Until that lands, off-area goals are held.
 		if (!m_navSystem->inSimArea(position.value) || !m_navSystem->inSimArea(goal)) {
 			if (auto* navPath = world->getComponent<NavPath>(entity)) {
 				navPath->valid = false;
 			}
-			LOG_DEBUG(Engine, "[Nav] Entity %llu: off-area endpoint, beeline to (%.2f, %.2f)",
+			movementTarget.active = false;
+			if (auto* velocity = world->getComponent<Velocity>(entity)) {
+				velocity->value = {0.0F, 0.0F};
+			}
+			LOG_DEBUG(Engine, "[Nav] Entity %llu: off-area endpoint, holding (no LOD0 route to (%.2f, %.2f))",
 				static_cast<unsigned long long>(entity), goal.x, goal.y);
-			return NavRequestOutcome::Beelined;
+			return NavRequestOutcome::Waiting;
 		}
 
 		// Agent footprint feeds the disc-clearance query; default if the entity has none.
@@ -1506,10 +1660,11 @@ namespace ecs {
 
 		auto path = m_navSystem->requestPath(position.value, goal, radius, belief);
 		if (!path.has_value()) {
-			// A mesh exists but the colonist's belief admits no route: a believed wall
-			// cuts the corridor. STOP rather than beeline dishonestly through that wall --
-			// clear movementTarget.active so MovementSystem doesn't carry the colonist
-			// straight at the geometry it believes is solid.
+			// A mesh exists but the colonist's belief admits no route: a believed wall cuts the
+			// corridor. STOP rather than beeline dishonestly through that wall -- clear
+			// movementTarget.active so MovementSystem doesn't carry the colonist straight at the
+			// geometry it believes is solid. (An OFF-mesh start can't happen here: the per-colonist
+			// loop snaps stranded colonists back onto the mesh before any path request.)
 			if (auto* navPath = world->getComponent<NavPath>(entity)) {
 				navPath->valid = false;
 			}

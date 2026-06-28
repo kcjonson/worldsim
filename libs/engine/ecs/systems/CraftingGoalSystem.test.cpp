@@ -10,6 +10,7 @@
 #include "../GoalTaskRegistry.h"
 #include "../World.h"
 #include "../components/Inventory.h"
+#include "../components/Memory.h"
 #include "../components/StorageConfiguration.h"
 #include "../components/Transform.h"
 #include "../components/WorkQueue.h"
@@ -298,6 +299,313 @@ TEST_F(MultiSystemGoalTest, RecipeWithInputsCreatesChildGoals) {
 	EXPECT_EQ(haulGoalsAfter, haulGoals) << "Haul goal count changed - regeneration bug!";
 }
 
+// Materials already sitting in the station's store count as delivered: the craft goal is born
+// Available with no child Haul/Harvest, because nothing more needs provisioning. Mirrors a build
+// site whose delivered[] manifest is already satisfied.
+TEST_F(MultiSystemGoalTest, PrestagedStoreMaterialsCreateNoChildGoalsAndUnblockCraft) {
+	engine::assets::RecipeDef recipeWithInputs;
+	recipeWithInputs.defName = "RecipeWithInputs";
+	recipeWithInputs.label = "Recipe With Inputs";
+	recipeWithInputs.stationDefName = "";
+	recipeWithInputs.workAmount = 100.0F;
+	recipeWithInputs.inputs.push_back(engine::assets::RecipeInput{.defName = "Stick", .defNameId = 0, .count = 2});
+	engine::assets::RecipeRegistry::Get().registerTestRecipe(recipeWithInputs);
+
+	// A station whose store ALREADY holds the full recipe input (2 Sticks).
+	auto  station = createCraftingStation({0.0F, 0.0F}, "RecipeWithInputs");
+	auto& store = world->addComponent<Inventory>(station, Inventory::createForStorage());
+	store.addItem("Stick", 2);
+
+	runUpdates(60);
+
+	auto& registry = GoalTaskRegistry::Get();
+	EXPECT_EQ(registry.goalCount(TaskType::Craft), 1U) << "one craft goal for the station";
+	EXPECT_EQ(registry.goalCount(TaskType::Haul), 0U) << "no haul: the store already holds the input";
+	EXPECT_EQ(registry.goalCount(TaskType::Harvest), 0U) << "no harvest either";
+
+	const auto* craft = registry.getGoalByDestination(station);
+	ASSERT_NE(craft, nullptr);
+	EXPECT_EQ(craft->deliveredAmount, 2U) << "store contents pre-credit the craft goal";
+	EXPECT_EQ(craft->targetAmount, 2U);
+	EXPECT_EQ(craft->status, GoalStatus::Available) << "all inputs present -> craft is workable immediately";
+}
+
+// Regression: a multi-unit craft must not stall at 1/N. deliveredAmount on the Craft goal tracks
+// what the station store currently holds toward the NEXT unit; finishing a unit drains the store,
+// so the goal must re-read the live store each tick and rebuild provisioning for the next unit.
+// The old code treated deliveredAmount as a monotonic counter: after unit 1 the store emptied but
+// deliveredAmount stayed >= targetAmount, the Craft never re-blocked, no new Haul/Harvest children
+// were built, and the job hung forever at 1/N. Here we drive all 3 units by mirroring exactly what
+// CraftActions does on unit completion (drain the recipe inputs from the store, bump job.completed)
+// and confirm the goal system re-provisions between units and the job runs to 3/3.
+TEST_F(MultiSystemGoalTest, MultiUnitCraftReprovisionsBetweenUnitsAndCompletesAllN) {
+	engine::assets::RecipeDef recipe;
+	recipe.defName = "MultiUnitRecipe";
+	recipe.label = "Multi Unit Recipe";
+	recipe.stationDefName = "";
+	recipe.workAmount = 100.0F;
+	recipe.inputs.push_back(engine::assets::RecipeInput{.defName = "Stick", .defNameId = 0, .count = 2});
+	engine::assets::RecipeRegistry::Get().registerTestRecipe(recipe);
+
+	// Station with a 3-unit job. createCraftingStation hardcodes quantity=1, so queue the job here.
+	auto  station = world->createEntity();
+	world->addComponent<Position>(station, Position{{0.0F, 0.0F}});
+	auto& queue = world->addComponent<WorkQueue>(station);
+	queue.addJob("MultiUnitRecipe", 3);
+	auto& store = world->addComponent<Inventory>(station, Inventory::createForStorage());
+
+	auto& registry = GoalTaskRegistry::Get();
+
+	// Mirror one unit of crafting: consume the recipe inputs from the store and bump completed,
+	// exactly as ActionSystem::applyCraftingEffect does on a finished craft.
+	auto craftOneUnit = [&]() {
+		for (const auto& input : recipe.inputs) {
+			store.removeItem(input.defName, input.count);
+		}
+		auto* job = queue.getNextJob();
+		ASSERT_NE(job, nullptr);
+		job->completed++;
+		queue.cleanupCompleted();
+	};
+
+	uint32_t unitsCrafted = 0;
+	for (int unit = 0; unit < 3; ++unit) {
+		// Stage materials for this unit (a colonist hauling them in -> store holds 2 Sticks).
+		store.addItem("Stick", 2);
+		runUpdates(60);
+
+		const auto* craft = registry.getGoalByDestination(station);
+		ASSERT_NE(craft, nullptr) << "Craft goal must persist across all units (unit " << unit << ")";
+		EXPECT_EQ(craft->targetAmount, 2U) << "material total per unit is constant";
+		EXPECT_EQ(craft->deliveredAmount, 2U)
+		    << "deliveredAmount recomputed from the live store, fully staged for this unit (unit " << unit << ")";
+		EXPECT_EQ(craft->status, GoalStatus::Available)
+		    << "fully staged -> craft is workable for this unit (unit " << unit << ")";
+
+		// This unit crafts: store drains, job advances.
+		craftOneUnit();
+		++unitsCrafted;
+
+		// Goal system sees the drained store: deliveredAmount drops, craft re-blocks, and (because
+		// no provisioning children remain) the Haul hierarchy for the next unit is rebuilt -- unless
+		// this was the last unit, in which case the job is gone and the whole hierarchy is reaped.
+		runUpdates(60);
+		if (unit < 2) {
+			const auto* next = registry.getGoalByDestination(station);
+			ASSERT_NE(next, nullptr) << "Craft goal still present for remaining units";
+			EXPECT_EQ(next->deliveredAmount, 0U)
+			    << "store drained by the finished unit -> nothing staged for the next unit yet";
+			EXPECT_EQ(next->status, GoalStatus::Blocked)
+			    << "craft re-blocked, waiting on the next unit's materials";
+			EXPECT_GE(registry.goalCount(TaskType::Haul), 1U)
+			    << "provisioning rebuilt: a Haul exists to gather the next unit's materials";
+		}
+	}
+
+	EXPECT_EQ(unitsCrafted, 3U) << "all three units crafted, no stall at 1/3";
+	EXPECT_EQ(queue.getNextJob(), nullptr) << "the 3-unit job is fully complete";
+	EXPECT_EQ(registry.goalCount(TaskType::Craft), 0U) << "no pending work -> craft hierarchy reaped";
+}
+
+// A harvestable input (something a tree yields) creates only a Harvest goal up front. The Haul
+// that carries the cut material to the station is created lazily on harvest completion, so no
+// speculative haul shows in the task list before there is anything to haul.
+TEST_F(MultiSystemGoalTest, HarvestableInputCreatesHarvestNotHaul) {
+	auto& assetReg = engine::assets::AssetRegistry::Get();
+
+	engine::assets::AssetDefinition woodDef;
+	woodDef.defName = "Wood";
+	woodDef.label = "Wood";
+	woodDef.category = engine::assets::ItemCategory::RawMaterial;
+	woodDef.itemProperties = engine::assets::ItemProperties{};
+	woodDef.itemProperties->stackSize = 40;
+	assetReg.registerTestDefinition(std::move(woodDef));
+
+	// A harvestable that yields Wood makes canItemBeHarvested("Wood") true.
+	engine::assets::AssetDefinition treeDef;
+	treeDef.defName = "TestTree";
+	treeDef.label = "Test Tree";
+	treeDef.capabilities.harvestable = engine::assets::HarvestableCapability{};
+	treeDef.capabilities.harvestable->yieldDefName = "Wood";
+	assetReg.registerTestDefinition(std::move(treeDef));
+
+	engine::assets::RecipeDef woodRecipe;
+	woodRecipe.defName = "WoodRecipe";
+	woodRecipe.label = "Wood Recipe";
+	woodRecipe.stationDefName = "";
+	woodRecipe.workAmount = 100.0F;
+	woodRecipe.inputs.push_back(engine::assets::RecipeInput{.defName = "Wood", .defNameId = 0, .count = 1});
+	engine::assets::RecipeRegistry::Get().registerTestRecipe(woodRecipe);
+
+	// Resolution is memory-driven: a colonist must KNOW a harvestable source for the input to
+	// resolve to a Harvest (otherwise it waits as NoSource). Give one a remembered TestTree.
+	auto  colonist = world->createEntity();
+	auto& mem = world->addComponent<Memory>(colonist);
+	uint32_t treeId = assetReg.getDefNameId("TestTree");
+	mem.rememberWorldEntity({2.0F, 2.0F}, treeId, assetReg.getCapabilityMask(treeId));
+
+	auto  station = createCraftingStation({0.0F, 0.0F}, "WoodRecipe");
+	auto& registry = GoalTaskRegistry::Get();
+
+	runUpdates(60);
+
+	EXPECT_EQ(registry.goalCount(TaskType::Craft), 1U) << "one craft goal for the station";
+	EXPECT_EQ(registry.goalCount(TaskType::Harvest), 1U) << "harvestable input gets a Harvest goal";
+	EXPECT_EQ(registry.goalCount(TaskType::Haul), 0U)
+	    << "no Haul exists until the cut completes (lazy haul)";
+}
+
+// Regression: leftover material sitting in ANOTHER station's (or storage's) store must NOT count
+// as "carried stock". colonyCarriesStock once viewed every Inventory, so a stack stranded in a
+// second crafting station made the input resolve to a fetch Haul that can never source it (a
+// craft-material haul only delivers from a colonist's pack or a loose ground pile), stranding the
+// craft. It must still resolve to a Harvest of the known source.
+TEST_F(MultiSystemGoalTest, LeftoverInOtherStationStoreDoesNotBlockHarvest) {
+	auto& assetReg = engine::assets::AssetRegistry::Get();
+
+	engine::assets::AssetDefinition woodDef;
+	woodDef.defName = "Wood";
+	woodDef.label = "Wood";
+	woodDef.category = engine::assets::ItemCategory::RawMaterial;
+	woodDef.itemProperties = engine::assets::ItemProperties{};
+	woodDef.itemProperties->stackSize = 40;
+	assetReg.registerTestDefinition(std::move(woodDef));
+
+	engine::assets::AssetDefinition treeDef;
+	treeDef.defName = "TestTree";
+	treeDef.label = "Test Tree";
+	treeDef.capabilities.harvestable = engine::assets::HarvestableCapability{};
+	treeDef.capabilities.harvestable->yieldDefName = "Wood";
+	assetReg.registerTestDefinition(std::move(treeDef));
+
+	engine::assets::RecipeDef woodRecipe;
+	woodRecipe.defName = "WoodRecipe";
+	woodRecipe.label = "Wood Recipe";
+	woodRecipe.stationDefName = "";
+	woodRecipe.workAmount = 100.0F;
+	woodRecipe.inputs.push_back(engine::assets::RecipeInput{.defName = "Wood", .defNameId = 0, .count = 1});
+	engine::assets::RecipeRegistry::Get().registerTestRecipe(woodRecipe);
+
+	// A colonist who KNOWS a TestTree (so the input CAN resolve to a Harvest).
+	auto	 colonist = world->createEntity();
+	auto&	 mem = world->addComponent<Memory>(colonist);
+	uint32_t treeId = assetReg.getDefNameId("TestTree");
+	mem.rememberWorldEntity({2.0F, 2.0F}, treeId, assetReg.getCapabilityMask(treeId));
+
+	// A SECOND, unrelated crafting station holding leftover Wood in its store. This is the trap:
+	// it is an Inventory-bearing entity, but it is not a colonist, so its store is not deliverable.
+	auto  otherStation = createCraftingStation({50.0F, 50.0F}, ""); // no job
+	auto& otherStore = world->addComponent<Inventory>(otherStation, Inventory::createForStorage());
+	otherStore.addItem("Wood", 5);
+
+	// The station that actually needs Wood.
+	createCraftingStation({0.0F, 0.0F}, "WoodRecipe");
+	auto& registry = GoalTaskRegistry::Get();
+
+	runUpdates(60);
+
+	EXPECT_EQ(registry.goalCount(TaskType::Craft), 1U) << "one craft goal for the working station";
+	EXPECT_EQ(registry.goalCount(TaskType::Harvest), 1U)
+	    << "input resolves to Harvest despite leftover Wood in another station's store";
+	EXPECT_EQ(registry.goalCount(TaskType::Haul), 0U)
+	    << "no fetch Haul: the other station's store is not carried/deliverable stock";
+}
+
+// With no colonist aware of any source, a craft input resolves to a NoSource Haul ("none found"),
+// not a speculative workable goal.
+TEST_F(MultiSystemGoalTest, UnknownSourceInputBecomesNoSource) {
+	auto& assetReg = engine::assets::AssetRegistry::Get();
+
+	engine::assets::AssetDefinition woodDef;
+	woodDef.defName = "Wood";
+	woodDef.label = "Wood";
+	woodDef.category = engine::assets::ItemCategory::RawMaterial;
+	woodDef.itemProperties = engine::assets::ItemProperties{};
+	woodDef.itemProperties->stackSize = 40;
+	assetReg.registerTestDefinition(std::move(woodDef));
+
+	engine::assets::AssetDefinition treeDef;
+	treeDef.defName = "TestTree";
+	treeDef.label = "Test Tree";
+	treeDef.capabilities.harvestable = engine::assets::HarvestableCapability{};
+	treeDef.capabilities.harvestable->yieldDefName = "Wood";
+	assetReg.registerTestDefinition(std::move(treeDef));
+
+	engine::assets::RecipeDef woodRecipe;
+	woodRecipe.defName = "WoodRecipe";
+	woodRecipe.label = "Wood Recipe";
+	woodRecipe.stationDefName = "";
+	woodRecipe.workAmount = 100.0F;
+	woodRecipe.inputs.push_back(engine::assets::RecipeInput{.defName = "Wood", .defNameId = 0, .count = 1});
+	engine::assets::RecipeRegistry::Get().registerTestRecipe(woodRecipe);
+
+	auto  station = createCraftingStation({0.0F, 0.0F}, "WoodRecipe");
+	auto& registry = GoalTaskRegistry::Get();
+
+	runUpdates(60);
+
+	// Nobody knows a tree or stock, so the input waits as one NoSource Haul.
+	EXPECT_EQ(registry.goalCount(TaskType::Harvest), 0U) << "no harvestable known -> no Harvest goal";
+	ASSERT_EQ(registry.goalCount(TaskType::Haul), 1U) << "the input is one Haul need";
+	const auto* craft = registry.getGoalByDestination(station);
+	ASSERT_NE(craft, nullptr);
+	const GoalTask* need = nullptr;
+	for (const auto* child : registry.getChildGoals(craft->id)) {
+		if (child->type == TaskType::Haul) {
+			need = child;
+			break;
+		}
+	}
+	ASSERT_NE(need, nullptr);
+	EXPECT_EQ(need->status, GoalStatus::NoSource) << "waiting: none found";
+}
+
+// A NoSource need flips to a Harvest the moment a colonist discovers a harvestable source.
+TEST_F(MultiSystemGoalTest, NoSourceReresolvesToHarvestWhenSourceDiscovered) {
+	auto& assetReg = engine::assets::AssetRegistry::Get();
+
+	engine::assets::AssetDefinition woodDef;
+	woodDef.defName = "Wood";
+	woodDef.label = "Wood";
+	woodDef.category = engine::assets::ItemCategory::RawMaterial;
+	woodDef.itemProperties = engine::assets::ItemProperties{};
+	woodDef.itemProperties->stackSize = 40;
+	assetReg.registerTestDefinition(std::move(woodDef));
+
+	engine::assets::AssetDefinition treeDef;
+	treeDef.defName = "TestTree";
+	treeDef.label = "Test Tree";
+	treeDef.capabilities.harvestable = engine::assets::HarvestableCapability{};
+	treeDef.capabilities.harvestable->yieldDefName = "Wood";
+	assetReg.registerTestDefinition(std::move(treeDef));
+
+	engine::assets::RecipeDef woodRecipe;
+	woodRecipe.defName = "WoodRecipe";
+	woodRecipe.label = "Wood Recipe";
+	woodRecipe.stationDefName = "";
+	woodRecipe.workAmount = 100.0F;
+	woodRecipe.inputs.push_back(engine::assets::RecipeInput{.defName = "Wood", .defNameId = 0, .count = 1});
+	engine::assets::RecipeRegistry::Get().registerTestRecipe(woodRecipe);
+
+	auto  station = createCraftingStation({0.0F, 0.0F}, "WoodRecipe");
+	auto& registry = GoalTaskRegistry::Get();
+
+	runUpdates(60);
+	ASSERT_EQ(registry.goalCount(TaskType::Haul), 1U) << "starts as a NoSource Haul need";
+	ASSERT_EQ(registry.goalCount(TaskType::Harvest), 0U);
+
+	// A colonist discovers a tree.
+	auto  colonist = world->createEntity();
+	auto& mem = world->addComponent<Memory>(colonist);
+	uint32_t treeId = assetReg.getDefNameId("TestTree");
+	mem.rememberWorldEntity({2.0F, 2.0F}, treeId, assetReg.getCapabilityMask(treeId));
+
+	runUpdates(60); // re-resolution pass
+
+	EXPECT_EQ(registry.goalCount(TaskType::Harvest), 1U) << "NoSource need re-resolved to a Harvest";
+	EXPECT_EQ(registry.goalCount(TaskType::Haul), 0U) << "the NoSource Haul was swapped out";
+}
+
 TEST_F(MultiSystemGoalTest, BothSystemsRunWithoutInterference) {
 	// Create both a crafting station and a storage
 	auto station = createCraftingStation({0.0F, 0.0F}, "TestRecipe");
@@ -496,8 +804,7 @@ class GoalHierarchyTest : public ::testing::Test {
 		haul.destinationEntity = station;
 		haul.targetAmount = 1;
 		haul.parentGoalId = craftId;
-		haul.dependsOnGoalId = harvestId;
-		haul.status = GoalStatus::WaitingForItems;
+		haul.status = GoalStatus::Available;
 		uint64_t haulId = registry.createGoal(std::move(haul));
 
 		return {craftId, harvestId, haulId};
@@ -555,20 +862,6 @@ TEST_F(CraftingGoalSystemTest, JobRemovedReapsChildGoals) {
 	EXPECT_EQ(registry.goalCount(), 0U) << "All goals reaped when job removed";
 
 	engine::assets::AssetRegistry::Get().clearDefinitions();
-}
-
-// (b) Dependency unlock: completing a Harvest flips its dependent Haul to Available
-TEST_F(GoalHierarchyTest, NotifyGoalCompletedUnlocksDependents) {
-	auto& registry = GoalTaskRegistry::Get();
-	auto  h = buildCraftHierarchy(static_cast<EntityID>(7));
-
-	ASSERT_EQ(registry.getGoal(h.haulId)->status, GoalStatus::WaitingForItems);
-	ASSERT_EQ(registry.getDependentGoals(h.harvestId).size(), 1U);
-
-	registry.notifyGoalCompleted(h.harvestId);
-
-	EXPECT_EQ(registry.getGoal(h.haulId)->status, GoalStatus::Available)
-	    << "Haul should unblock once its Harvest dependency completes";
 }
 
 // (c) Delivery completion: recordDelivery increments deliveredAmount and completes at target
@@ -635,6 +928,51 @@ TEST_F(GoalHierarchyTest, ChildHaulDeliveryCreditsParentCraftAndUnblocks) {
 	EXPECT_EQ(registry.getGoal(craftId)->deliveredAmount, 3U);
 	EXPECT_EQ(registry.getGoal(craftId)->status, GoalStatus::Available)
 	    << "Craft leaves Blocked once materials are satisfied";
+}
+
+// Lazy haul: completing a Harvest spawns the carrying Haul (Available, same parent Craft and chain
+// id), replacing the old pre-created WaitingForItems haul that got flipped to Available.
+TEST_F(GoalHierarchyTest, CreateHaulForCompletedHarvestSpawnsAvailableHaul) {
+	auto& registry = GoalTaskRegistry::Get();
+
+	GoalTask craft;
+	craft.type = TaskType::Craft;
+	craft.owner = GoalOwner::CraftingGoalSystem;
+	craft.destinationEntity = static_cast<EntityID>(55);
+	craft.targetAmount = 2;
+	craft.status = GoalStatus::Blocked;
+	uint64_t craftId = registry.createGoal(std::move(craft));
+
+	GoalTask harvest;
+	harvest.type = TaskType::Harvest;
+	harvest.owner = GoalOwner::CraftingGoalSystem;
+	harvest.destinationEntity = static_cast<EntityID>(55);
+	harvest.destinationPosition = {3.0F, 4.0F};
+	harvest.acceptedDefNameIds = {77};
+	harvest.targetAmount = 2;
+	harvest.parentGoalId = craftId;
+	harvest.status = GoalStatus::Available;
+	harvest.chainId = 999;
+	uint64_t harvestId = registry.createGoal(std::move(harvest));
+
+	uint64_t haulId = registry.createHaulForCompletedHarvest(harvestId);
+	ASSERT_NE(haulId, 0U);
+
+	const auto* haul = registry.getGoal(haulId);
+	ASSERT_NE(haul, nullptr);
+	EXPECT_EQ(haul->type, TaskType::Haul);
+	EXPECT_EQ(haul->status, GoalStatus::Available);
+	ASSERT_TRUE(haul->parentGoalId.has_value());
+	EXPECT_EQ(haul->parentGoalId.value(), craftId);
+	ASSERT_TRUE(haul->chainId.has_value());
+	EXPECT_EQ(haul->chainId.value(), 999U);
+	ASSERT_FALSE(haul->acceptedDefNameIds.empty());
+	EXPECT_EQ(haul->acceptedDefNameIds[0], 77U);
+	EXPECT_EQ(haul->destinationEntity, static_cast<EntityID>(55));
+	EXPECT_EQ(haul->targetAmount, 2U);
+
+	// A non-Harvest goal id is a no-op (returns 0).
+	EXPECT_EQ(registry.createHaulForCompletedHarvest(craftId), 0U);
 }
 
 } // namespace ecs::test

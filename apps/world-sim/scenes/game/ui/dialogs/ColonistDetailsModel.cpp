@@ -164,9 +164,6 @@ void ColonistDetailsModel::extractBioData(const ecs::World& world, ecs::EntityID
 								? ecs::needLabel(task->needToFulfill)
 								: "need";
 							break;
-						case ecs::TaskType::Gather:
-							dest = task->gatherItemDefName.empty() ? "item" : task->gatherItemDefName;
-							break;
 						case ecs::TaskType::Craft:
 							dest = "crafting station";
 							break;
@@ -201,10 +198,6 @@ void ColonistDetailsModel::extractBioData(const ecs::World& world, ecs::EntityID
 					bioData.currentTask = (task->needToFulfill != ecs::NeedType::Count)
 						? std::string("Fulfilling ") + ecs::needLabel(task->needToFulfill)
 						: "Fulfilling need";
-					bioData.currentTaskColor = UI::status_ok;
-					break;
-				case ecs::TaskType::Gather:
-					bioData.currentTask = "Gathering " + task->gatherItemDefName;
 					bioData.currentTaskColor = UI::status_ok;
 					break;
 				case ecs::TaskType::Craft:

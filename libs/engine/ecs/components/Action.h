@@ -227,11 +227,11 @@ namespace ecs {
 		/// Target storage container entity ID
 		uint64_t storageEntityId = 0;
 
-		/// Craft-material delivery: the target is a crafting station, not a storage
-		/// container. The items stay in the colonist's inventory (the Craft action consumes
-		/// them from there); the deposit only marks the materials as delivered to the station
-		/// so the goal hierarchy advances. When true, storageEntityId is the station and is
-		/// not expected to have an Inventory component.
+		/// Craft-material delivery: the target is a crafting station. The items are MOVED from
+		/// the colonist's inventory into the station's own Inventory store (the Craft action
+		/// later consumes them from the station), and the deposit credits the parent Craft goal
+		/// so the goal hierarchy advances. When true, storageEntityId is the station, which
+		/// carries both a WorkQueue and an Inventory store.
 		bool deliverToCraftStation = false;
 	};
 

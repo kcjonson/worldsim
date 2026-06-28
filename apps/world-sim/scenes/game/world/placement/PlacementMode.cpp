@@ -26,7 +26,8 @@ void PlacementMode::selectItem(const std::string& defName) {
 	}
 	m_selectedDefName = defName;
 	m_state = PlacementState::Placing;
-	m_isValidPlacement = true;
+	// Invalid until the first ghost update reports a placeable spot under the cursor.
+	m_isValidPlacement = false;
 	LOG_DEBUG(Game, "PlacementMode: selected '%s' for placement", defName.c_str());
 }
 
@@ -37,14 +38,12 @@ void PlacementMode::cancel() {
 	LOG_DEBUG(Game, "PlacementMode: cancelled from state %d", static_cast<int>(m_state));
 	m_state = PlacementState::None;
 	m_selectedDefName.clear();
-	m_isValidPlacement = true;
+	m_isValidPlacement = false;
 }
 
-void PlacementMode::updateGhostPosition(Foundation::Vec2 worldPos) {
+void PlacementMode::updateGhostPosition(Foundation::Vec2 worldPos, bool valid) {
 	m_ghostPosition = worldPos;
-	// For now, all positions are valid
-	// Future: Check for obstacles, terrain validity, etc.
-	m_isValidPlacement = true;
+	m_isValidPlacement = valid;
 }
 
 bool PlacementMode::tryPlace() {

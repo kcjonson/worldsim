@@ -166,12 +166,9 @@ private:
 	/// Apply a completed PlacePackaged effect (phase 2): move the carried entity to target and unpackage.
 	void applyPlacePackagedEffect(const struct Action& action, struct Inventory& inventory);
 
-	/// Start a crafting action based on the task's recipe
-	void startCraftAction(
-		struct Task& task,
-		struct Action& action,
-		const struct Inventory& inventory
-	);
+	/// Start a crafting action based on the task's recipe. Validates the recipe inputs against the
+	/// crafting station's own Inventory store (materials were hauled into it during provisioning).
+	void startCraftAction(struct Task& task, struct Action& action);
 
 	/// Start a Build or Deconstruct action on the task's blueprint.
 	/// Reads the colonist's Construction skill (if any) to scale the work rate, and validates
@@ -189,14 +186,6 @@ private:
 	/// not elapsed time. @return true if the action reached completion this tick.
 	bool advanceConstructionWork(float deltaTime, struct Action& action);
 
-	/// Start a gather action (pickup or harvest) for crafting materials
-	void startGatherAction(
-		struct Task& task,
-		struct Action& action,
-		const struct Position& position,
-		const struct Memory& memory
-	);
-
 	/// Start a harvest action for goal-driven harvesting (crafting materials)
 	/// Finds harvestable at target position that yields the required item type.
 	/// Memory is mutable so a vanished target can be forgotten (prevents re-selection).
@@ -210,11 +199,15 @@ private:
 
 	/// Start a haul action (pickup from source, then deposit to storage)
 	/// Memory is mutable so a vanished pickup target can be forgotten.
+	/// Inventory decides phase: a standard haul deposits only once it actually carries the
+	/// item, otherwise it picks up first (position alone is ambiguous when source and target
+	/// sit within arrival tolerance of each other).
 	void startHaulAction(
 		struct Task& task,
 		struct Action& action,
 		const struct Position& position,
-		struct Memory& memory
+		struct Memory& memory,
+		const struct Inventory& inventory
 	);
 
 	/// Start a place packaged action (pickup packaged item, then place at target)

@@ -26,6 +26,7 @@ namespace Foundation {
 }
 namespace ecs {
 	class World;
+	class NavigationSystem;
 	struct Inventory;
 	enum class NeedType : std::uint8_t;
 }
@@ -53,6 +54,7 @@ namespace world_sim {
 		world_sim::SelectionSystem*	 selection = nullptr;
 		world_sim::GameUI*			 ui = nullptr;
 		engine::world::ChunkManager* chunks = nullptr;
+		ecs::NavigationSystem*		 navigation = nullptr; // world-position validity (isValidPosition)
 
 		std::function<ecs::EntityID(glm::vec2, const std::string&)> spawnColonist;
 	};
@@ -84,6 +86,12 @@ namespace world_sim {
 		void devFoundation(const Foundation::DevCommand& cmd);
 		void devWalls(const Foundation::DevCommand& cmd);
 		void devOpening(const Foundation::DevCommand& cmd);
+		void devCraft(const Foundation::DevCommand& cmd);
+
+		// --- world-position validity (single gate for every placing/moving verb) ---
+		// True when `at` is on an active walkable nav face. On false, logs+toasts the
+		// refusal in the standard rejection style and the caller creates/moves NOTHING.
+		bool requireValidPosition(Foundation::Vec2 at, const char* verb);
 
 		// --- entity lookup / spawn helpers ---
 		ecs::EntityID	nearestColonist(Foundation::Vec2 at);
@@ -96,6 +104,7 @@ namespace world_sim {
 		// --- state serialization ---
 		void serializeColonists(std::ostringstream& out);
 		void serializeConstruction(std::ostringstream& out);
+		void serializeStations(std::ostringstream& out);
 		void serializeTime(std::ostringstream& out);
 		void serializeSummary(std::ostringstream& out);
 
