@@ -3,6 +3,7 @@
 #include "../GoalTaskRegistry.h"
 #include "../InventoryMass.h"
 #include "../World.h"
+#include "../components/Colonist.h"
 #include "../components/Inventory.h"
 #include "../components/Memory.h"
 #include "../components/Transform.h"
@@ -75,11 +76,17 @@ namespace ecs {
 			return false;
 		}
 
-		// Does any colonist already PHYSICALLY carry this item? If so, the recipe input should be a
+		// Does any COLONIST already PHYSICALLY carry this item? If so, the recipe input should be a
 		// Haul (deliver-from-inventory into the station), not a fresh Harvest -- a colonist holding a
 		// Stick must deliver it, not go cut another one.
+		// Scope to entities with a Colonist tag: a craft-material haul only sources from a colonist's
+		// own pack (deliver-from-inventory) or a loose ground pile, never another station's or
+		// storage's store. Viewing every Inventory would count a leftover stack sitting in a
+		// different crafting station as "carried", building a fetch Haul that can never source it --
+		// the craft then strands with that input missing. Stations/storage lack the Colonist tag.
 		bool colonyCarriesStock(World* world, const std::string& itemDefName) {
-			for (auto [colonist, inventory] : world->view<Inventory>()) {
+			for (auto [entity, colonist, inventory] : world->view<Colonist, Inventory>()) {
+				(void)entity;
 				(void)colonist;
 				if (ecs::availableQuantity(inventory, itemDefName) > 0) {
 					return true;
@@ -108,9 +115,17 @@ namespace ecs {
 			return false;
 		}
 
-		// Re-resolve a craft's NoSource children (a Haul with no known source) as colony knowledge
-		// grows: known stock -> Available fetch Haul; known harvestable -> swap to a Harvest goal.
-		// In-progress Harvest/Haul children are left untouched.
+		// Re-resolve a craft's Haul children against current colony knowledge each tick:
+		//  - a NoSource Haul whose stock becomes known    -> Available fetch Haul
+		//  - a Haul (NoSource OR Available) whose stock is GONE but a harvestable source is known
+		//    -> swap to a Harvest goal (cut it)
+		// The second case is the rescue: a fetch Haul is created Available when loose stock is known
+		// (e.g. natural ground scatter), but that stock gets consumed/forgotten while the craft is
+		// only half-provisioned. The fetch then finds nothing to pick up, emits no AI option, and
+		// the craft strands forever. Swapping it to cut a known source recovers it. We only swap
+		// when NOBODY can still fetch it (no known loose stock, none carried) so an in-flight
+		// delivery is never yanked out from under a colonist.
+		// In-progress Harvest children are left untouched (only Haul children are re-resolved).
 		void reresolveUnsourcedChildren(
 			World* world, GoalTaskRegistry& registry, const engine::assets::AssetRegistry& reg, uint64_t craftGoalId
 		) {
@@ -118,20 +133,29 @@ namespace ecs {
 				uint64_t id;
 				uint32_t inputDefNameId;
 			};
-			std::vector<Pending> unsourced;
+			std::vector<Pending> candidates;
 			for (const auto* child : registry.getChildGoals(craftGoalId)) {
-				if (child->type == TaskType::Haul && child->status == GoalStatus::NoSource && !child->acceptedDefNameIds.empty()) {
-					unsourced.push_back({child->id, child->acceptedDefNameIds.front()});
+				const bool reresolvable =
+					child->status == GoalStatus::NoSource || child->status == GoalStatus::Available;
+				if (child->type == TaskType::Haul && reresolvable && !child->acceptedDefNameIds.empty()) {
+					candidates.push_back({child->id, child->acceptedDefNameIds.front()});
 				}
 			}
 
-			for (const auto& p : unsourced) {
-				if (colonyKnowsStock(world, p.inputDefNameId)) {
-					registry.updateGoal(p.id, [](GoalTask& g) { g.status = GoalStatus::Available; });
+			for (const auto& p : candidates) {
+				const std::string& inputDefName = reg.getDefName(p.inputDefNameId);
+				const bool			stockFetchable = colonyCarriesStock(world, inputDefName) || colonyKnowsStock(world, p.inputDefNameId);
+				if (stockFetchable) {
+					// Stock is still reachable as loose pile or in a pack: keep it a fetch Haul.
+					registry.updateGoal(p.id, [](GoalTask& g) {
+						if (g.status == GoalStatus::NoSource) {
+							g.status = GoalStatus::Available;
+						}
+					});
 					continue;
 				}
 				if (!colonyKnowsHarvestableSource(world, reg, p.inputDefNameId)) {
-					continue; // still nothing known -> stays NoSource
+					continue; // no stock and no harvestable known -> wait (stays as-is)
 				}
 				// Swap the unsourced Haul for a Harvest (type change = remove + recreate).
 				const GoalTask* old = registry.getGoal(p.id);

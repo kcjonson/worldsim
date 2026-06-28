@@ -9,6 +9,7 @@
 
 #include <glm/vec2.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -71,6 +72,12 @@ namespace ecs {
 		// Build-specific fields (for Build tasks)
 		uint64_t buildBlueprintEntityId = 0; // Blueprint entity whose workDone is advanced
 
+		// True when this Haul/Harvest provisions an active work order (it is a child of a Craft
+		// goal that has a queued job). Provisioning a started craft is committed work, not a loose
+		// chore: its priority is floored above idle Wander (see calculatePriority) so a far material
+		// source can't make the colonist abandon a half-provisioned craft and wander off.
+		bool servesActiveWorkOrder = false;
+
 		// Skill-related fields (for work tasks with skill requirements)
 		float	skillLevel = 0.0F; // Colonist's skill level for this work
 		int16_t skillBonus = 0;	   // Calculated skill bonus for priority
@@ -102,10 +109,28 @@ namespace ecs {
 		/// - Chain continuation bonus (+2000 for next step in chain)
 		/// - In-progress bonus (+200 for current task)
 		/// - Task age bonus (0 to +100 for old unclaimed tasks)
+		/// Idle Wander's flat priority. Every actionable work/need option must beat this to keep a
+		/// colonist from wandering when there is real work to do.
+		static constexpr float kWanderPriority = 10.0F;
+
+		/// Floor for a Haul/Harvest that provisions an active work order (a Craft child). The
+		/// distance penalty (down to -50) would otherwise push a far material source below
+		/// kWanderPriority, so the colonist would abandon a half-provisioned craft and wander.
+		/// Flooring here keeps provisioning above idle without lifting it over needs or other work.
+		static constexpr float kWorkOrderProvisionFloor = 20.0F;
+
 		[[nodiscard]] float calculatePriority() const {
 			// Helper to compute total bonus for work tasks
 			auto workBonus = [this]() {
 				return static_cast<float>(distanceBonus + skillBonus + chainBonus + inProgressBonus + taskAgeBonus);
+			};
+
+			// A provisioning Haul/Harvest serving an active work order is committed work: floor it
+			// above idle Wander so a far source can't strand a started craft. The floor only lifts
+			// the value when the distance penalty has dragged it down; nearer sources still rank
+			// higher, and needs/other work (all >= 36 base) stay above it.
+			auto floorIfProvisioning = [this](float p) {
+				return servesActiveWorkOrder ? std::max(p, kWorkOrderProvisionFloor) : p;
 			};
 
 			// A work task keeps its full tier priority whether it's merely Available or already
@@ -140,7 +165,7 @@ namespace ecs {
 			}
 			// Tier 6.4: Hauling loose items to storage - priority 37 + bonuses (no skill bonus)
 			if (taskType == TaskType::Haul && actionable) {
-				return 37.0F + static_cast<float>(distanceBonus + chainBonus + inProgressBonus + taskAgeBonus);
+				return floorIfProvisioning(37.0F + static_cast<float>(distanceBonus + chainBonus + inProgressBonus + taskAgeBonus));
 			}
 			// Tier 6.45: Construction build work - priority 41 + all bonuses. Sits just above
 			// crafting (40) so staged build sites get finished; Construction skill feeds workBonus.
@@ -158,11 +183,11 @@ namespace ecs {
 			}
 			// Tier 6.7: Harvesting resources (cutting trees, etc.) - priority 36 + all bonuses
 			if (taskType == TaskType::Harvest && actionable) {
-				return 36.0F + workBonus();
+				return floorIfProvisioning(36.0F + workBonus());
 			}
 			// Tier 7: Wander (lowest priority among active options - no bonuses)
 			if (taskType == TaskType::Wander) {
-				return 10.0F;
+				return kWanderPriority;
 			}
 			// Satisfied needs have no priority
 			return 0.0F;

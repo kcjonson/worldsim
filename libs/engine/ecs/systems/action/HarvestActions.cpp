@@ -101,11 +101,17 @@ namespace ecs {
 								   ? findLoosePile(world, collEff.itemDefName, collEff.sourcePosition)
 								   : LoosePile{};
 		if (pile.stack) {
+			// A pickup from a ground pile takes only what was REQUESTED (collEff.quantity, the
+			// remaining craft need), not the whole pile -- the pile is at a known reachable spot,
+			// so leaving the surplus there costs nothing (pile of 7, need 2 -> take 2, leave 5).
+			// Carry capacity still clamps. A harvest (the pool/single-shot branches below) instead
+			// takes all it can carry, because a far harvest spot shouldn't strand cut resources.
+			const uint32_t requested = std::min(collEff.quantity, pile.stack->quantity);
 			if (ecs::itemIsTwoHand(harvestRegistry, collEff.itemDefName)) {
-				added = ecs::addArmful(inventory, harvestRegistry, collEff.itemDefName, pile.stack->quantity);
+				added = ecs::addArmful(inventory, harvestRegistry, collEff.itemDefName, requested);
 			} else {
 				const uint32_t fit = ecs::cargoUnitsThatFit(inventory, harvestRegistry, collEff.itemDefName);
-				added = inventory.addItem(collEff.itemDefName, std::min(pile.stack->quantity, fit));
+				added = inventory.addItem(collEff.itemDefName, std::min(requested, fit));
 			}
 
 			pile.stack->quantity -= added; // mutate the live component so the pile tracks what is left
@@ -210,7 +216,19 @@ namespace ecs {
 				// A fell completes regardless of how much landed in hands; bulk goods never regrow.
 				destroySource = collEff.destroySource;
 			} else {
-				added = inventory.addItem(collEff.itemDefName, wanted);
+				// A loose-item fetch (source IS the material, e.g. picking up a SmallStone) yields
+				// only that one entity's carryable count -- never more than is physically there, even
+				// if the craft requested a larger remaining need (the shortfall is met by fetching
+				// further items). A harvest cut (source differs from the yield, e.g. a bush yielding
+				// Sticks) is NOT capped this way: its yield is whatever the harvestable gives.
+				uint32_t take = wanted;
+				if (collEff.sourceDefName == collEff.itemDefName) {
+					const auto* srcDef = harvestRegistry.getDefinition(collEff.itemDefName);
+					if (srcDef != nullptr && srcDef->capabilities.carryable.has_value()) {
+						take = std::min(take, srcDef->capabilities.carryable->quantity);
+					}
+				}
+				added = inventory.addItem(collEff.itemDefName, take);
 				destroySource = added > 0 && collEff.destroySource;
 				regrowSource = added > 0 && !collEff.destroySource && collEff.regrowthTime > 0.0F;
 			}

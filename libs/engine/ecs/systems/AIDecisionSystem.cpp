@@ -357,6 +357,9 @@ namespace ecs {
 							haulOption.haulTargetPosition = goal->destinationPosition;
 							haulOption.haulGoalId = goal->id;
 							haulOption.haulFromInventory = true;
+							// A craft-material delivery provisions an active work order; floor its
+							// priority above idle Wander so a distant station can't strand the craft.
+							haulOption.servesActiveWorkOrder = isCraftHaul;
 							haulOption.tiebreakId = goal->id ^ (static_cast<uint64_t>(acceptedId) << 1);
 							haulOption.status = OptionStatus::Available;
 							haulOption.reason = toBlueprint ? "Delivering " + itemDefName + " to build site"
@@ -415,6 +418,10 @@ namespace ecs {
 							fetchOption.haulTargetPosition = goal->destinationPosition;
 							fetchOption.haulGoalId = goal->id;
 							fetchOption.haulFromInventory = false;
+							// Fetching loose stock to provision a started craft is committed work;
+							// floor it above Wander so a far pile can't strand the craft (this is the
+							// exact case that left axes half-provisioned and the colonist wandering).
+							fetchOption.servesActiveWorkOrder = true;
 							fetchOption.tiebreakId = goal->id ^ (key << 1);
 							fetchOption.status = OptionStatus::Available;
 							fetchOption.reason = "Fetching " + itemDefName + " for crafting";
@@ -543,6 +550,14 @@ namespace ecs {
 					continue; // No yield specified
 				}
 
+				// A Harvest that feeds a Craft goal provisions an active work order: its priority is
+				// floored above idle Wander so a far harvestable can't strand a started craft.
+				bool servesWorkOrder = false;
+				if (goal->parentGoalId.has_value()) {
+					const auto* parent = goalRegistry.getGoal(goal->parentGoalId.value());
+					servesWorkOrder = parent != nullptr && parent->type == TaskType::Craft;
+				}
+
 				// Search memory for harvestables that yield the target item
 				for (const auto& [key, knownEntity] : memory.knownWorldEntities) {
 					// Check if this entity is harvestable
@@ -601,6 +616,7 @@ namespace ecs {
 					// Tiebreak on (goal, target) so two equidistant harvestables feeding the same
 					// goal still resolve deterministically, not by memory's hash order.
 					harvestOption.tiebreakId = goal->id ^ (key << 1);
+					harvestOption.servesActiveWorkOrder = servesWorkOrder;
 					harvestOption.status = OptionStatus::Available;
 
 					// Harvesting uses Farming skill

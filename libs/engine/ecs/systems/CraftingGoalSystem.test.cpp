@@ -378,6 +378,62 @@ TEST_F(MultiSystemGoalTest, HarvestableInputCreatesHarvestNotHaul) {
 	    << "no Haul exists until the cut completes (lazy haul)";
 }
 
+// Regression: leftover material sitting in ANOTHER station's (or storage's) store must NOT count
+// as "carried stock". colonyCarriesStock once viewed every Inventory, so a stack stranded in a
+// second crafting station made the input resolve to a fetch Haul that can never source it (a
+// craft-material haul only delivers from a colonist's pack or a loose ground pile), stranding the
+// craft. It must still resolve to a Harvest of the known source.
+TEST_F(MultiSystemGoalTest, LeftoverInOtherStationStoreDoesNotBlockHarvest) {
+	auto& assetReg = engine::assets::AssetRegistry::Get();
+
+	engine::assets::AssetDefinition woodDef;
+	woodDef.defName = "Wood";
+	woodDef.label = "Wood";
+	woodDef.category = engine::assets::ItemCategory::RawMaterial;
+	woodDef.itemProperties = engine::assets::ItemProperties{};
+	woodDef.itemProperties->stackSize = 40;
+	assetReg.registerTestDefinition(std::move(woodDef));
+
+	engine::assets::AssetDefinition treeDef;
+	treeDef.defName = "TestTree";
+	treeDef.label = "Test Tree";
+	treeDef.capabilities.harvestable = engine::assets::HarvestableCapability{};
+	treeDef.capabilities.harvestable->yieldDefName = "Wood";
+	assetReg.registerTestDefinition(std::move(treeDef));
+
+	engine::assets::RecipeDef woodRecipe;
+	woodRecipe.defName = "WoodRecipe";
+	woodRecipe.label = "Wood Recipe";
+	woodRecipe.stationDefName = "";
+	woodRecipe.workAmount = 100.0F;
+	woodRecipe.inputs.push_back(engine::assets::RecipeInput{.defName = "Wood", .defNameId = 0, .count = 1});
+	engine::assets::RecipeRegistry::Get().registerTestRecipe(woodRecipe);
+
+	// A colonist who KNOWS a TestTree (so the input CAN resolve to a Harvest).
+	auto	 colonist = world->createEntity();
+	auto&	 mem = world->addComponent<Memory>(colonist);
+	uint32_t treeId = assetReg.getDefNameId("TestTree");
+	mem.rememberWorldEntity({2.0F, 2.0F}, treeId, assetReg.getCapabilityMask(treeId));
+
+	// A SECOND, unrelated crafting station holding leftover Wood in its store. This is the trap:
+	// it is an Inventory-bearing entity, but it is not a colonist, so its store is not deliverable.
+	auto  otherStation = createCraftingStation({50.0F, 50.0F}, ""); // no job
+	auto& otherStore = world->addComponent<Inventory>(otherStation, Inventory::createForStorage());
+	otherStore.addItem("Wood", 5);
+
+	// The station that actually needs Wood.
+	createCraftingStation({0.0F, 0.0F}, "WoodRecipe");
+	auto& registry = GoalTaskRegistry::Get();
+
+	runUpdates(60);
+
+	EXPECT_EQ(registry.goalCount(TaskType::Craft), 1U) << "one craft goal for the working station";
+	EXPECT_EQ(registry.goalCount(TaskType::Harvest), 1U)
+	    << "input resolves to Harvest despite leftover Wood in another station's store";
+	EXPECT_EQ(registry.goalCount(TaskType::Haul), 0U)
+	    << "no fetch Haul: the other station's store is not carried/deliverable stock";
+}
+
 // With no colonist aware of any source, a craft input resolves to a NoSource Haul ("none found"),
 // not a speculative workable goal.
 TEST_F(MultiSystemGoalTest, UnknownSourceInputBecomesNoSource) {

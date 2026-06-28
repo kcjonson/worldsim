@@ -5,6 +5,8 @@
 
 #include <gtest/gtest.h>
 
+#include <functional>
+
 using namespace ecs;
 
 // ============================================================================
@@ -183,4 +185,113 @@ TEST_F(ArmfulStackClampTest, GrowsOnlyUpToStackCap) {
 	EXPECT_EQ(addArmful(inv, reg, "Feather", 3), 3U); // seat 3
 	EXPECT_EQ(addArmful(inv, reg, "Feather", 5), 2U); // grow toward the 5 cap: only 2 more fit
 	EXPECT_EQ(handHeldQuantity(inv, "Feather"), 5U);
+}
+
+// ============================================================================
+// giveItemToColonist: the canonical hand -> belt -> backpack -> drop cascade a
+// freshly crafted item flows through, weight-respecting at every step.
+// ============================================================================
+
+class GiveItemCascadeTest : public ::testing::Test {
+  protected:
+	void SetUp() override {
+		auto& reg = engine::assets::AssetRegistry::Get();
+		// Axe: one-hand tool. Tools are equipment (excluded from carry weight), so seating is
+		// gated only by hand/belt/backpack slots -- the case that matters for a crafted tool.
+		engine::assets::AssetDefinition axe;
+		axe.defName = "Axe";
+		axe.handsRequired = 1;
+		axe.category = engine::assets::ItemCategory::Tool;
+		axe.itemProperties = engine::assets::ItemProperties{};
+		axe.itemProperties->stackSize = 1; // tools don't stack
+		axe.itemProperties->massKg = 1.5F;
+		reg.registerTestDefinition(std::move(axe));
+		// Brick: one-hand cargo (not a tool), heavy, so carry weight binds. 10 kg each against a
+		// 35 kg cap -> only 3 fit. Used to prove weight gates the cascade and overflow drops.
+		engine::assets::AssetDefinition brick;
+		brick.defName = "Brick";
+		brick.handsRequired = 1;
+		brick.category = engine::assets::ItemCategory::None;
+		brick.itemProperties = engine::assets::ItemProperties{};
+		brick.itemProperties->stackSize = 10;
+		brick.itemProperties->massKg = 10.0F;
+		reg.registerTestDefinition(std::move(brick));
+	}
+	void TearDown() override { engine::assets::AssetRegistry::Get().clearDefinitions(); }
+
+	// Collect everything the cascade drops, so a test can assert on overflow.
+	struct DropLog {
+		uint32_t total = 0;
+		void	 operator()(const std::string&, uint32_t qty) { total += qty; }
+	};
+};
+
+TEST_F(GiveItemCascadeTest, EmptyColonist_GoesToHandFirst) {
+	Inventory inv = Inventory::createForColonist();
+	auto&	  reg = engine::assets::AssetRegistry::Get();
+	DropLog	  drops;
+	EXPECT_EQ(giveItemToColonist(inv, reg, "Axe", 1, std::ref(drops)), 1U);
+	EXPECT_TRUE(inv.isHolding("Axe")); // landed in a hand, not the backpack
+	EXPECT_FALSE(inv.hasItem("Axe"));  // backpack untouched
+	EXPECT_EQ(drops.total, 0U);
+}
+
+TEST_F(GiveItemCascadeTest, FullHands_SpillsToBelt) {
+	Inventory inv = Inventory::createForColonist();
+	auto&	  reg = engine::assets::AssetRegistry::Get();
+	inv.leftHand = ItemStack{"Axe", 1};
+	inv.rightHand = ItemStack{"Axe", 1}; // both hands occupied (distinct one-hand items)
+	DropLog drops;
+	EXPECT_EQ(giveItemToColonist(inv, reg, "Axe", 1, std::ref(drops)), 1U);
+	EXPECT_TRUE(inv.belt[0].has_value()); // spilled to the first belt slot
+	EXPECT_EQ(inv.belt[0]->defName, "Axe");
+	EXPECT_FALSE(inv.hasItem("Axe")); // not yet in the backpack
+	EXPECT_EQ(drops.total, 0U);
+}
+
+TEST_F(GiveItemCascadeTest, FullHandsAndBelt_SpillsToBackpack) {
+	Inventory inv = Inventory::createForColonist();
+	auto&	  reg = engine::assets::AssetRegistry::Get();
+	inv.leftHand = ItemStack{"Axe", 1};
+	inv.rightHand = ItemStack{"Axe", 1};
+	inv.belt[0] = ItemStack{"Axe", 1};
+	inv.belt[1] = ItemStack{"Axe", 1}; // hands + both belt slots full
+	DropLog drops;
+	EXPECT_EQ(giveItemToColonist(inv, reg, "Axe", 1, std::ref(drops)), 1U);
+	EXPECT_TRUE(inv.hasItem("Axe")); // backpack catches it
+	EXPECT_EQ(inv.getQuantity("Axe"), 1U);
+	EXPECT_EQ(drops.total, 0U);
+}
+
+TEST_F(GiveItemCascadeTest, NoSlotAnywhere_Drops) {
+	Inventory inv = Inventory::createForColonist();
+	auto&	  reg = engine::assets::AssetRegistry::Get();
+	inv.maxCapacity = 0; // no backpack slots at all
+	inv.leftHand = ItemStack{"Axe", 1};
+	inv.rightHand = ItemStack{"Axe", 1};
+	inv.belt[0] = ItemStack{"Axe", 1};
+	inv.belt[1] = ItemStack{"Axe", 1}; // hands + belt full, backpack has zero slots
+	DropLog drops;
+	EXPECT_EQ(giveItemToColonist(inv, reg, "Axe", 1, std::ref(drops)), 0U);
+	EXPECT_EQ(drops.total, 1U); // nowhere to put it -> dropped
+}
+
+TEST_F(GiveItemCascadeTest, WeightCapBinds_OverflowDrops) {
+	Inventory inv = Inventory::createForColonist(); // 35 kg cap
+	auto&	  reg = engine::assets::AssetRegistry::Get();
+	DropLog	  drops;
+	// 5 bricks at 10 kg each = 50 kg, but only 35 kg fits -> 3 carried, 2 dropped.
+	EXPECT_EQ(giveItemToColonist(inv, reg, "Brick", 5, std::ref(drops)), 3U);
+	EXPECT_EQ(drops.total, 2U);
+	EXPECT_LE(carriedCargoMassKg(inv, reg), 35.0F); // never exceeds the cap
+}
+
+TEST_F(GiveItemCascadeTest, OverweightColonist_OutputDropsEntirely) {
+	Inventory inv = Inventory::createForColonist();
+	auto&	  reg = engine::assets::AssetRegistry::Get();
+	// Preload to the cap: 3 bricks (30 kg) leaves 5 kg, not enough for another 10 kg brick.
+	inv.addItem("Brick", 3);
+	DropLog drops;
+	EXPECT_EQ(giveItemToColonist(inv, reg, "Brick", 1, std::ref(drops)), 0U);
+	EXPECT_EQ(drops.total, 1U); // over weight -> the whole output drops
 }

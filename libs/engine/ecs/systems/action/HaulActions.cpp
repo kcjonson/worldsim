@@ -14,6 +14,7 @@
 #include "../../components/WorkQueue.h"
 
 #include "assets/AssetRegistry.h"
+#include "assets/RecipeRegistry.h"
 
 #include <utils/Log.h>
 
@@ -22,6 +23,36 @@
 #include <utility>
 
 namespace ecs {
+
+	namespace {
+		// Remaining units of `itemDefName` a crafting station still needs for its current recipe:
+		// the recipe's required count minus what its store already holds (0 if already satisfied or
+		// the item isn't a recipe input). This is the crafting-station analogue of
+		// StructureBlueprint::remaining() -- both express "how much more does this destination need",
+		// the single concept the metered deposit below caps every delivery to so neither a build site
+		// nor a station ever banks surplus beyond its bill of materials.
+		uint32_t craftStationRemaining(World* world, EntityID station, const Inventory& store, const std::string& itemDefName) {
+			const auto* workQueue = world->getComponent<WorkQueue>(station);
+			if (workQueue == nullptr) {
+				return 0;
+			}
+			const CraftingJob* job = workQueue->getNextJob();
+			if (job == nullptr) {
+				return 0;
+			}
+			const auto* recipe = engine::assets::RecipeRegistry::Get().getRecipe(job->recipeDefName);
+			if (recipe == nullptr) {
+				return 0;
+			}
+			for (const auto& input : recipe->inputs) {
+				if (input.defName == itemDefName) {
+					const uint32_t inStore = store.getQuantity(itemDefName);
+					return input.count > inStore ? input.count - inStore : 0U;
+				}
+			}
+			return 0;
+		}
+	} // namespace
 
 	void ActionSystem::applyDepositEffect(const Action& action, Task& task, Inventory& inventory) {
 		const auto& depEff = action.depositEffect();
@@ -48,19 +79,32 @@ namespace ecs {
 				return;
 			}
 
+			// Meter the deposit to the station's REMAINING recipe need (same invariant as a build
+			// site's StructureBlueprint::remaining()): the store only ever accumulates up to exactly
+			// the recipe's bill of materials, never a surplus. A colonist who cut more than the recipe
+			// needs (a Reed yields up to 3 Plant Fiber, the recipe wants 1) deposits only the
+			// shortfall and keeps the rest on himself. Banking the excess would masquerade as
+			// available stock for later crafts and mis-route their provisioning.
 			const uint32_t carried = ecs::availableQuantity(inventory, depEff.itemDefName);
-			uint32_t	   removed = twoHand ? ecs::removeFromHands(inventory, depEff.itemDefName, carried)
-											 : inventory.removeItem(depEff.itemDefName, carried);
+			const uint32_t toDeposit = std::min(carried, craftStationRemaining(world, stationEntity, *stationInv, depEff.itemDefName));
+			if (toDeposit == 0) {
+				// Station already holds the full requirement for this input; keep the surplus carried.
+				LOG_DEBUG(Engine, "[Action] Craft deposit skipped: station %llu already has enough %s",
+					static_cast<unsigned long long>(stationEntity), depEff.itemDefName.c_str());
+				return;
+			}
+			uint32_t removed = twoHand ? ecs::removeFromHands(inventory, depEff.itemDefName, toDeposit)
+									   : inventory.removeItem(depEff.itemDefName, toDeposit);
 			if (removed == 0) {
 				LOG_WARNING(Engine, "[Action] Craft deposit failed: %s not in inventory", depEff.itemDefName.c_str());
 				return;
 			}
 
+			// removed is already capped to the remaining recipe need, so the store has room for all
+			// of it (createForStorage gives ample slots); add and credit exactly that.
 			uint32_t added = stationInv->addItem(depEff.itemDefName, removed);
 			if (added < removed) {
-				// Station store full (slot-limited): return the surplus to the colonist so it
-				// isn't lost. createForStorage() gives ample slots, so this is a guard, not the
-				// common path.
+				// Defensive: store slot-limited below the metered amount. Keep the surplus carried.
 				uint32_t leftover = removed - added;
 				if (twoHand) {
 					ecs::addArmful(inventory, registry, depEff.itemDefName, leftover);
@@ -311,10 +355,34 @@ namespace ecs {
 				const auto* def = registry.getDefinition(defName);
 				if (def != nullptr && def->capabilities.carryable.has_value()) {
 					const auto& carryableCap = def->capabilities.carryable.value();
-					action = Action::Pickup(defName, carryableCap.quantity, entity.position, defName);
+					// A pickup from a ground source takes only what's needed, never more than is
+					// there. For a craft-material fetch the request is the EXACT remaining recipe need
+					// (target minus delivered minus already carried): a multi-unit ResourceStack pile
+					// then yields exactly that and leaves the surplus in the pile (clamped in
+					// applyCollectionEffect) -- a 7-unit pile for a recipe needing 2 leaves 5 behind;
+					// a single loose item is capped to its own carryable count there, so a pickup
+					// never mints more than is present. A non-craft haul keeps the asset default. This
+					// contrasts with a HARVEST, which takes all it can carry so freshly cut resources
+					// aren't stranded at a far harvest spot.
+					uint32_t	pickupQty = carryableCap.quantity;
+					const auto* goal = task.haulGoalId != 0 ? GoalTaskRegistry::Get().getGoal(task.haulGoalId) : nullptr;
+					if (goal != nullptr && goal->owner == GoalOwner::CraftingGoalSystem && goal->targetAmount > 0) {
+						// targetAmount is an item count for a craft haul, so the remaining need is exact.
+						const uint32_t carried = ecs::availableQuantity(inventory, task.haulItemDefName);
+						const uint32_t accountedFor = goal->deliveredAmount + carried;
+						pickupQty = goal->targetAmount > accountedFor ? goal->targetAmount - accountedFor : 0U;
+						if (pickupQty == 0) {
+							// Already delivered/carrying enough for the goal: nothing more to pick up.
+							// Clear so the AI re-evaluates (on to the deposit).
+							action.clear();
+							return;
+						}
+					}
+					action = Action::Pickup(defName, pickupQty, entity.position, defName);
 					LOG_DEBUG(
 						Engine,
-						"[Action] Haul phase 1: Pickup %s at (%.1f, %.1f)",
+						"[Action] Haul phase 1: Pickup %u x %s at (%.1f, %.1f)",
+						pickupQty,
 						defName.c_str(),
 						entity.position.x,
 						entity.position.y
