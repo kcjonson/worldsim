@@ -658,6 +658,8 @@ namespace world_sim {
 			serializeColonists(out);
 		} else if (what == "construction") {
 			serializeConstruction(out);
+		} else if (what == "stations") {
+			serializeStations(out);
 		} else if (what == "time") {
 			serializeTime(out);
 		} else {
@@ -722,6 +724,38 @@ namespace world_sim {
 				<< "\",\"state\":\"" << (foundation.state == engine::construction::FoundationState::Built ? "Built" : "Blueprint")
 				<< "\",\"entity\":" << static_cast<unsigned long long>(foundation.entity) << ",\"area\":" << world.areaSquareMeters(foundation.id)
 				<< "}";
+		}
+		out << "]}";
+	}
+
+	void DevCommandHandler::serializeStations(std::ostringstream& out) {
+		out << "{\"stations\":[";
+		bool first = true;
+		for (auto [entity, workQueue, pos] : m_ctx.world->view<ecs::WorkQueue, ecs::Position>()) {
+			out << (first ? "" : ",");
+			first = false;
+			out << "{\"id\":" << static_cast<unsigned long long>(entity) << ",\"x\":" << pos.value.x << ",\"y\":" << pos.value.y;
+
+			out << ",\"jobs\":[";
+			bool firstJob = true;
+			for (const auto& job : workQueue.jobs) {
+				out << (firstJob ? "" : ",") << "{\"recipe\":\"" << jsonEscape(job.recipeDefName) << "\",\"completed\":" << job.completed
+					<< ",\"quantity\":" << job.quantity << "}";
+				firstJob = false;
+			}
+			out << "]";
+
+			// Material store: what the station physically holds for the queued recipe.
+			if (const auto* inv = m_ctx.world->getComponent<ecs::Inventory>(entity)) {
+				out << ",\"store\":{";
+				bool firstItem = true;
+				for (const auto& stack : inv->items) {
+					out << (firstItem ? "" : ",") << "\"" << jsonEscape(stack.defName) << "\":" << stack.quantity;
+					firstItem = false;
+				}
+				out << "}";
+			}
+			out << "}";
 		}
 		out << "]}";
 	}

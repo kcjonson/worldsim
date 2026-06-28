@@ -97,6 +97,7 @@ namespace world_sim {
 		// --- state serialization ---
 		void serializeColonists(std::ostringstream& out);
 		void serializeConstruction(std::ostringstream& out);
+		void serializeStations(std::ostringstream& out);
 		void serializeTime(std::ostringstream& out);
 		void serializeSummary(std::ostringstream& out);
 

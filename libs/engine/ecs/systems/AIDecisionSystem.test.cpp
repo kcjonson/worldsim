@@ -1772,9 +1772,9 @@ namespace ecs::test {
 		registry.registerTestDefinition(std::move(stoneDef));
 		const uint32_t stoneId = registry.getDefNameId("SmallStone");
 
-		// Heavy ballast UNRELATED to the recipe: the colonist hauled a load of this earlier and the
-		// craft-station deposits keep it in the pack, so it's at the carry cap when the fetch comes up.
-		// It must NOT be the fetched material, or the colonist would just deliver it from inventory.
+		// Heavy ballast UNRELATED to the recipe: the colonist is carrying a load of this (e.g. cargo
+		// hauled earlier), so it's at the carry cap when the craft fetch comes up. It must NOT be the
+		// fetched material, or the colonist would just deliver it from inventory.
 		engine::assets::AssetDefinition ballastDef;
 		ballastDef.defName = "Ballast";
 		ballastDef.label = "Ballast";

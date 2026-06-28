@@ -20,6 +20,7 @@
 #include "../components/StructureBlueprint.h"
 #include "../components/Task.h"
 #include "../components/Transform.h"
+#include "../components/WorkQueue.h"
 
 #include "assets/AssetRegistry.h"
 #include "assets/RecipeDef.h"
@@ -540,11 +541,17 @@ class ActionSystemGoalTest : public ::testing::Test {
 
 // A completed Harvest credits its harvest goal by the ACTUAL yield (not 1-per-action) and,
 // once satisfied, unblocks the dependent Haul. Then an inventory-sourced Haul delivering to
-// the crafting station credits the parent Craft goal and unblocks it - while keeping the
-// materials in inventory for the subsequent Craft action to consume.
+// the crafting station MOVES the materials into the station's store (the colonist's pack
+// empties) and credits the parent Craft goal, unblocking it - mirroring construction, where
+// materials go onto the build site and the build consumes from there.
 TEST_F(ActionSystemGoalTest, HarvestThenInventoryHaulDeliversMaterialsAndUnblocksCraft) {
-	auto&	 registry = GoalTaskRegistry::Get();
-	EntityID station = static_cast<EntityID>(777);
+	auto& registry = GoalTaskRegistry::Get();
+
+	// A crafting station entity: WorkQueue marks it a station; Inventory is its material store.
+	EntityID station = world->createEntity();
+	world->addComponent<Position>(station, Position{{5.0F, 0.0F}});
+	world->addComponent<WorkQueue>(station, WorkQueue{});
+	world->addComponent<Inventory>(station, Inventory::createForStorage());
 
 	// Craft goal needs 2 Sticks total, born Blocked.
 	GoalTask craft;
@@ -623,9 +630,13 @@ TEST_F(ActionSystemGoalTest, HarvestThenInventoryHaulDeliversMaterialsAndUnblock
 	world->update(0.1F); // start the deliver-to-station deposit
 	world->update(2.0F); // complete (deposit duration 1s)
 
-	// Materials stay in inventory for the Craft action; the goal hierarchy advanced.
-	EXPECT_EQ(inventory->getQuantity("Stick"), 2U)
-	    << "Craft-station delivery keeps items in inventory for crafting";
+	// Materials moved into the station's store; the colonist's pack emptied; the hierarchy advanced.
+	EXPECT_EQ(inventory->getQuantity("Stick"), 0U)
+	    << "Craft-station delivery moves items out of the colonist's pack";
+	auto* stationStore = world->getComponent<Inventory>(station);
+	ASSERT_NE(stationStore, nullptr);
+	EXPECT_EQ(stationStore->getQuantity("Stick"), 2U)
+	    << "Delivered materials now live in the station's store";
 	EXPECT_EQ(registry.getGoal(haulId), nullptr) << "Completed haul goal removed";
 	ASSERT_NE(registry.getGoal(craftId), nullptr);
 	EXPECT_EQ(registry.getGoal(craftId)->deliveredAmount, 2U)
@@ -635,7 +646,7 @@ TEST_F(ActionSystemGoalTest, HarvestThenInventoryHaulDeliversMaterialsAndUnblock
 }
 
 // Two-phase loose-ground craft fetch haul: pick a loose SmallStone off the ground, then deposit
-// it at the crafting station. Two regressions are guarded here:
+// it INTO the crafting station's store. Two regressions are guarded here:
 //
 //  1. Deposit-leg commitment. The Pickup phase must re-arm movement (state Moving + active
 //     MovementTarget pointed at the station) so the colonist drives itself to the deposit. It
@@ -643,12 +654,9 @@ TEST_F(ActionSystemGoalTest, HarvestThenInventoryHaulDeliversMaterialsAndUnblock
 //     but the deposit leg is the SAME task, so the AI never re-pathed and the colonist froze on
 //     the pickup spot, dropping the fetch chain.
 //
-//  2. Idempotent craft-station credit. A craft delivery only CREDITS the goal; the material stays
-//     in inventory for the Craft action. A multi-trip fetch (carry 1 of a needed 2, deposit, fetch
-//     the 2nd) re-runs the deposit while still holding the first unit, so crediting the carried
-//     amount each time double-counts one physical stone and falsely satisfies the recipe. The
-//     credit must reflect what is PHYSICALLY carried (capped at need), so re-depositing the same
-//     inventory is a no-op.
+//  2. Per-trip credit. Each fetch+deposit MOVES one stone from the pack into the station store
+//     (the pack empties) and credits the goal once. A recipe needing 2 takes two trips; the second
+//     deposit can't double-count the first stone because that stone already left the pack.
 TEST_F(ActionSystemGoalTest, LooseFetchHaulCommitsToDepositAndCreditsCraftStationOnce) {
 	// SmallStone: a 1-hand carryable raw material (rides in the backpack).
 	engine::assets::AssetDefinition stoneDef;
@@ -662,10 +670,15 @@ TEST_F(ActionSystemGoalTest, LooseFetchHaulCommitsToDepositAndCreditsCraftStatio
 	stoneDef.itemProperties->massKg = 1.5F;
 	engine::assets::AssetRegistry::Get().registerTestDefinition(std::move(stoneDef));
 
-	auto&		   registry = GoalTaskRegistry::Get();
-	const EntityID station = static_cast<EntityID>(888);
+	auto&			registry = GoalTaskRegistry::Get();
 	const glm::vec2 sourcePos{1.0F, 1.0F};
 	const glm::vec2 stationPos{5.0F, 0.0F};
+
+	// A crafting station entity with a material store.
+	const EntityID station = world->createEntity();
+	world->addComponent<Position>(station, Position{stationPos});
+	world->addComponent<WorkQueue>(station, WorkQueue{});
+	world->addComponent<Inventory>(station, Inventory::createForStorage());
 
 	// Craft goal needs 2 SmallStone; child craft-haul goal is available to fetch.
 	GoalTask craft;
@@ -737,12 +750,16 @@ TEST_F(ActionSystemGoalTest, LooseFetchHaulCommitsToDepositAndCreditsCraftStatio
 	world->update(0.1F); // start Deposit
 	world->update(2.0F); // complete (Deposit duration 1s)
 
-	EXPECT_EQ(inventory->getQuantity("SmallStone"), 1U) << "Craft delivery keeps the stone in inventory";
+	auto* stationStore = world->getComponent<Inventory>(station);
+	ASSERT_NE(stationStore, nullptr);
+	EXPECT_EQ(inventory->getQuantity("SmallStone"), 0U) << "Craft delivery moves the stone out of the pack";
+	EXPECT_EQ(stationStore->getQuantity("SmallStone"), 1U) << "The stone now lives in the station store";
 	ASSERT_NE(registry.getGoal(haulId), nullptr) << "Goal still wants a 2nd stone, not yet retired";
 	EXPECT_EQ(registry.getGoal(haulId)->deliveredAmount, 1U) << "Exactly one stone credited";
 	EXPECT_EQ(registry.getGoal(craftId)->deliveredAmount, 1U) << "Parent craft credited once";
 
-	// --- Idempotence: re-deposit the SAME single stone. It must credit NOTHING (no double-count). ---
+	// --- No double-count: re-running a deliver-from-inventory deposit with an EMPTY pack stages
+	// nothing (the first stone already left for the station). The colonist must fetch a 2nd unit. ---
 	task->clear();
 	task->type = TaskType::Haul;
 	task->state = TaskState::Arrived;
@@ -759,9 +776,10 @@ TEST_F(ActionSystemGoalTest, LooseFetchHaulCommitsToDepositAndCreditsCraftStatio
 	world->update(0.1F);
 	world->update(2.0F);
 
-	ASSERT_NE(registry.getGoal(haulId), nullptr) << "Goal must survive a no-op re-deposit";
+	ASSERT_NE(registry.getGoal(haulId), nullptr) << "Goal must survive an empty-pack deposit attempt";
+	EXPECT_EQ(stationStore->getQuantity("SmallStone"), 1U) << "Empty-pack deposit adds nothing to the station";
 	EXPECT_EQ(registry.getGoal(haulId)->deliveredAmount, 1U)
-		<< "Re-depositing the same physical stone credits nothing (no double-count)";
+		<< "An empty-pack deposit credits nothing (no double-count)";
 	EXPECT_EQ(registry.getGoal(craftId)->deliveredAmount, 1U) << "Parent craft not double-credited either";
 }
 
@@ -1086,7 +1104,7 @@ TEST_F(LoosePileHaulTest, TwoPilesAtSamePositionRemovesOnlyTheDrainedEntity) {
 // Wood rides in BOTH hands as a mirrored armful, never the backpack. A deposit must
 // pull from the hands, bounce any storage-full or destroyed-storage remainder back to
 // the hands (mirror intact), and credit the haul goal only by what actually landed in
-// storage. A craft must consume its Wood input from the hands too.
+// storage. A craft consumes its Wood input from the station's store.
 
 class HandMaterialActionTest : public ::testing::Test {
   protected:
@@ -1439,9 +1457,10 @@ TEST_F(HandMaterialActionTest, FullStorageRetiresHaulGoalAndAcceptsNothing) {
 	EXPECT_EQ(registry.getGoal(haulId), nullptr) << "A genuinely full storage's goal is retired";
 }
 
-// A craft whose only input is two-hand Wood consumes it straight from the hands: the
-// hands decrement by the input count (mirror stays synced) and the output is produced.
-TEST_F(HandMaterialActionTest, CraftConsumesWoodFromHandsAndProducesOutput) {
+// A craft consumes its inputs from the STATION's store (where provisioning hauled them), not
+// from the colonist: the station's Wood decrements by the input count and the output is produced
+// into the colonist's inventory. Mirrors construction consuming from the on-site manifest.
+TEST_F(HandMaterialActionTest, CraftConsumesWoodFromStationStoreAndProducesOutput) {
 	engine::assets::RecipeDef recipe;
 	recipe.defName = "Recipe_Plank";
 	recipe.label = "Plank";
@@ -1451,12 +1470,16 @@ TEST_F(HandMaterialActionTest, CraftConsumesWoodFromHandsAndProducesOutput) {
 	recipe.outputs.push_back({"Plank", 0, 1});
 	engine::assets::RecipeRegistry::Get().registerTestRecipe(recipe);
 
-	EntityID station = static_cast<EntityID>(555);
+	// A crafting station holding 10 Wood in its store (hauled in during provisioning).
+	EntityID station = world->createEntity();
+	world->addComponent<Position>(station, Position{{0.0F, 0.0F}});
+	world->addComponent<WorkQueue>(station, WorkQueue{});
+	auto stationInv = Inventory::createForStorage();
+	stationInv.addItem("Wood", 10);
+	world->addComponent<Inventory>(station, stationInv);
 
 	auto  colonist = createColonist({0.0F, 0.0F});
 	auto* inventory = world->getComponent<Inventory>(colonist);
-	seatArmful(*inventory, 10); // 10 Wood in hands, empty backpack
-	ASSERT_EQ(inventory->getQuantity("Wood"), 0U);
 
 	auto* task = world->getComponent<Task>(colonist);
 	task->type = TaskType::Craft;
@@ -1465,17 +1488,16 @@ TEST_F(HandMaterialActionTest, CraftConsumesWoodFromHandsAndProducesOutput) {
 	task->targetStationId = static_cast<uint64_t>(station);
 	task->targetPosition = {0.0F, 0.0F};
 
-	world->update(0.1F); // startCraftAction builds the Craft action (readiness gate sees hand Wood)
+	world->update(0.1F); // startCraftAction builds the Craft action (readiness gate sees station Wood)
 	auto* action = world->getComponent<Action>(colonist);
-	ASSERT_TRUE(action->hasCraftingEffect()) << "Hand-carried Wood satisfies the craft readiness gate";
+	ASSERT_TRUE(action->hasCraftingEffect()) << "Station-stored Wood satisfies the craft readiness gate";
 
 	world->update(1.0F); // complete the 0.5s craft
 
-	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 6U) << "4 Wood consumed from the hands (10 - 4)";
-	ASSERT_TRUE(inventory->leftHand.has_value());
-	ASSERT_TRUE(inventory->rightHand.has_value());
-	EXPECT_EQ(inventory->leftHand->quantity, inventory->rightHand->quantity) << "Hand mirror stays synced";
-	EXPECT_EQ(inventory->getQuantity("Plank"), 1U) << "Craft produced its output";
+	auto* storeAfter = world->getComponent<Inventory>(station);
+	ASSERT_NE(storeAfter, nullptr);
+	EXPECT_EQ(storeAfter->getQuantity("Wood"), 6U) << "4 Wood consumed from the station store (10 - 4)";
+	EXPECT_EQ(inventory->getQuantity("Plank"), 1U) << "Craft produced its output into the colonist";
 }
 
 // =============================================================================

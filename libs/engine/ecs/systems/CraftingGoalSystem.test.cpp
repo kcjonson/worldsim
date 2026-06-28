@@ -299,6 +299,37 @@ TEST_F(MultiSystemGoalTest, RecipeWithInputsCreatesChildGoals) {
 	EXPECT_EQ(haulGoalsAfter, haulGoals) << "Haul goal count changed - regeneration bug!";
 }
 
+// Materials already sitting in the station's store count as delivered: the craft goal is born
+// Available with no child Haul/Harvest, because nothing more needs provisioning. Mirrors a build
+// site whose delivered[] manifest is already satisfied.
+TEST_F(MultiSystemGoalTest, PrestagedStoreMaterialsCreateNoChildGoalsAndUnblockCraft) {
+	engine::assets::RecipeDef recipeWithInputs;
+	recipeWithInputs.defName = "RecipeWithInputs";
+	recipeWithInputs.label = "Recipe With Inputs";
+	recipeWithInputs.stationDefName = "";
+	recipeWithInputs.workAmount = 100.0F;
+	recipeWithInputs.inputs.push_back(engine::assets::RecipeInput{.defName = "Stick", .defNameId = 0, .count = 2});
+	engine::assets::RecipeRegistry::Get().registerTestRecipe(recipeWithInputs);
+
+	// A station whose store ALREADY holds the full recipe input (2 Sticks).
+	auto  station = createCraftingStation({0.0F, 0.0F}, "RecipeWithInputs");
+	auto& store = world->addComponent<Inventory>(station, Inventory::createForStorage());
+	store.addItem("Stick", 2);
+
+	runUpdates(60);
+
+	auto& registry = GoalTaskRegistry::Get();
+	EXPECT_EQ(registry.goalCount(TaskType::Craft), 1U) << "one craft goal for the station";
+	EXPECT_EQ(registry.goalCount(TaskType::Haul), 0U) << "no haul: the store already holds the input";
+	EXPECT_EQ(registry.goalCount(TaskType::Harvest), 0U) << "no harvest either";
+
+	const auto* craft = registry.getGoalByDestination(station);
+	ASSERT_NE(craft, nullptr);
+	EXPECT_EQ(craft->deliveredAmount, 2U) << "store contents pre-credit the craft goal";
+	EXPECT_EQ(craft->targetAmount, 2U);
+	EXPECT_EQ(craft->status, GoalStatus::Available) << "all inputs present -> craft is workable immediately";
+}
+
 // A harvestable input (something a tree yields) creates only a Harvest goal up front. The Haul
 // that carries the cut material to the station is created lazily on harvest completion, so no
 // speculative haul shows in the task list before there is anything to haul.
