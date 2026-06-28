@@ -1,5 +1,9 @@
 #include "NavigationSystem.h"
 
+#include "../World.h"
+#include "../components/Colonist.h"
+#include "../components/Transform.h"
+
 #include "nav/NavCoords.h"
 #include "nav/NavInputBuilder.h"
 
@@ -25,11 +29,6 @@ namespace ecs {
 	namespace {
 		namespace gnav = geometry::nav;
 
-		// Pad (mm) around the construction-world bounds when synthesizing the
-		// fallback walkable border. The border must enclose the wall bands with a
-		// margin, otherwise an outside-the-room query point lands off-mesh.
-		constexpr std::int64_t kConstructionBorderPadMm = 2000;
-
 		// Squared distance and closest-point-on-segment, in meters. Used by
 		// nearestPathablePoint; kept local and free of glm free functions.
 		float dist2(glm::vec2 a, glm::vec2 b) {
@@ -44,20 +43,86 @@ namespace ecs {
 			t					  = t < 0.0F ? 0.0F : (t > 1.0F ? 1.0F : t);
 			return glm::vec2{a.x + t * ab.x, a.y + t * ab.y};
 		}
+
+		// Nearest walkable point on a single mesh to `meters`, or nullopt when the mesh
+		// has no walkable floor. Shared by nearestPathablePoint after region dispatch.
+		std::optional<glm::vec2> nearestPathableOnMesh(const gnav::NavMesh& navMesh, glm::vec2 meters) {
+			bool	  found	 = false;
+			float	  bestD2 = 0.0F;
+			glm::vec2 best{0.0F, 0.0F};
+			for (const gnav::NavTriangle& t : navMesh.triangles) {
+				if (!gnav::terrainTraversable(t)) {
+					continue; // skip common-knowledge blockers (water/tree); snap only onto walkable ground
+				}
+				const glm::vec2 a = engine::nav::toMeters(navMesh.vertices[t.v[0]]);
+				const glm::vec2 b = engine::nav::toMeters(navMesh.vertices[t.v[1]]);
+				const glm::vec2 c = engine::nav::toMeters(navMesh.vertices[t.v[2]]);
+				glm::vec2 cand = closestOnSegment(meters, a, b);
+				float	  cd2  = dist2(meters, cand);
+				const glm::vec2 p2 = closestOnSegment(meters, b, c);
+				if (const float d2 = dist2(meters, p2); d2 < cd2) {
+					cd2	 = d2;
+					cand = p2;
+				}
+				const glm::vec2 p3 = closestOnSegment(meters, c, a);
+				if (const float d2 = dist2(meters, p3); d2 < cd2) {
+					cd2	 = d2;
+					cand = p3;
+				}
+				if (!found || cd2 < bestD2) {
+					// Nudge a hair toward the centroid so the snapped point sits unambiguously
+					// inside this walkable triangle, not on a boundary edge where locate is ambiguous.
+					const glm::vec2 centroid = (a + b + c) / 3.0F;
+					best					 = cand + (centroid - cand) * 0.05F;
+					bestD2					 = cd2;
+					found					 = true;
+				}
+			}
+			return found ? std::optional<glm::vec2>(best) : std::nullopt;
+		}
 	} // namespace
 
+	std::vector<SimAabb> clusterAabbs(const std::vector<SimAabb>& boxes) {
+		// Union-find over overlap. Small n (a handful of colonists + one viewport), so an
+		// O(n^2) merge with a fixed-point sweep is plenty and stays order-independent.
+		std::vector<SimAabb> clusters;
+		clusters.reserve(boxes.size());
+		for (const SimAabb& b : boxes) {
+			SimAabb merged	  = b;
+			bool	mergedAny = true;
+			// Repeatedly absorb any existing cluster the (growing) box overlaps, removing
+			// it from the list, until no more overlaps -- so a box bridging two clusters
+			// collapses all three into one.
+			while (mergedAny) {
+				mergedAny = false;
+				for (std::size_t i = 0; i < clusters.size();) {
+					if (merged.overlaps(clusters[i])) {
+						merged.unionWith(clusters[i]);
+						clusters[i] = clusters.back();
+						clusters.pop_back();
+						mergedAny = true;
+					} else {
+						++i;
+					}
+				}
+			}
+			clusters.push_back(merged);
+		}
+		return clusters;
+	}
+
 	NavigationSystem::~NavigationSystem() {
-		// Block on any in-flight build so the worker can't outlive this object and
-		// touch the moved-in (now-destroyed) input or write into a dead future.
-		if (future.valid()) {
-			future.wait();
+		// Block on any in-flight builds so no worker outlives this object and touches the
+		// moved-in (now-destroyed) input or writes into a dead future.
+		for (SimulationRegion& r : regions) {
+			if (r.future.valid()) {
+				r.future.wait();
+			}
 		}
 	}
 
 	std::int64_t NavigationSystem::clampHalfExtent(std::int64_t requested) const {
-		// Bound to [min, max] first.
 		std::int64_t clamped = std::max(kMinSimHalfExtentMm, std::min(kMaxSimHalfExtentMm, requested));
-		// Then to the loaded-chunk extent so we never sweep never-loaded tiles.
 		if (chunkManager != nullptr) {
 			const std::int64_t chunkMm	  = static_cast<std::int64_t>(engine::world::kChunkSize) * 1000;
 			const std::int64_t loadRadius = static_cast<std::int64_t>(chunkManager->loadRadius());
@@ -72,10 +137,6 @@ namespace ecs {
 			return 0; // headless / construction-only: this trigger is inert
 		}
 
-		// Derive the chunk-coordinate range overlapping the area AABB the SAME way
-		// buildInput does: floor/ceil the area bounds to tiles (+/-1 margin), then map the
-		// corner tiles to chunk coords. The area covers at most ~2x2 chunks at 64 m, so the
-		// loop below is trivially cheap.
 		const geometry::Vec2i64 minMm{center.x - halfExtent, center.y - halfExtent};
 		const geometry::Vec2i64 maxMm{center.x + halfExtent, center.y + halfExtent};
 		const double	   tileMm	= static_cast<double>(engine::world::kTileSize) * 1000.0;
@@ -88,10 +149,6 @@ namespace ecs {
 		const engine::world::ChunkCoordinate cMax =
 			engine::world::worldToChunk({static_cast<float>(tileMaxX), static_cast<float>(tileMaxY)});
 
-		// XOR-fold a per-coord hash over the in-area coords PRESENT in the processed set.
-		// XOR is order-independent (the loop order can't perturb the result) and a coord
-		// joining/leaving the set flips its term, so the signature changes iff the in-area
-		// processed set changes.
 		std::uint64_t sig = 0;
 		const std::hash<engine::world::ChunkCoordinate> coordHash;
 		for (std::int32_t cy = cMin.y; cy <= cMax.y; ++cy) {
@@ -105,142 +162,94 @@ namespace ecs {
 		return sig;
 	}
 
-	bool NavigationSystem::needsRebuild(std::int64_t clampedHalfExtent) const {
-		if (!haveBuiltOnce) {
-			return true;
-		}
+	bool NavigationSystem::regionObstaclesChanged(const SimulationRegion& region) const {
 		const std::uint64_t version = (constructionWorld != nullptr) ? constructionWorld->version() : 0;
-		if (version != builtVersion) {
+		if (version != region.builtVersion) {
 			return true;
 		}
-		// Re-center: camera panned far enough from the built center.
-		const std::int64_t dx = requestedCenter.x - builtCenter.x;
-		const std::int64_t dy = requestedCenter.y - builtCenter.y;
-		const std::int64_t distSq = dx * dx + dy * dy;
-		const std::int64_t threshSq = kRecenterThresholdMm * kRecenterThresholdMm;
-		if (distSq > threshSq) {
-			return true;
-		}
-		// Resize: clamped half-extent changed by more than kSizeChangeThreshold.
-		if (builtHalfExtent > 0) {
-			const double ratio = static_cast<double>(clampedHalfExtent) / static_cast<double>(builtHalfExtent);
-			const double delta = (ratio > 1.0) ? (ratio - 1.0) : (1.0 - ratio);
-			if (delta > kSizeChangeThreshold) {
-				return true;
-			}
-		} else if (clampedHalfExtent > 0) {
-			return true; // first real extent after a zero-extent build
-		}
-		// In-area placement changed: a chunk overlapping the current clamped area joined or
-		// left the processed set since the build. Without this, a stationary player whose
-		// spawn-ring chunks finish placement after the first build would keep a mesh missing
-		// every obstacle from those chunks until they panned/zoomed. Inert when headless.
-		if (areaChunkSignature(requestedCenter, clampedHalfExtent) != builtAreaChunkSignature) {
+		if (areaChunkSignature(region.center, region.halfExtent) != region.builtAreaChunkSignature) {
 			return true;
 		}
 		return false;
 	}
 
-	void NavigationSystem::update(float /*deltaTime*/) {
-		// Drain a finished build first so a mesh completed last frame is queryable
-		// this frame (and a fresh rebuild can be launched on top of it below).
-		if (future.valid()) {
-			if (future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
-				navMesh = future.get(); // swap the new mesh in; old mesh is dropped
-				++meshGeneration;		// a new mesh: any path stamped to the prior generation is stale
-				// Diagnostic: how much of the built mesh is actually WALKABLE. walkable==0 means the
-				// build produced no navigable ground at all (the symptom we are chasing).
-				std::size_t walkable = 0;
-				std::size_t floor	 = 0;
-				for (const gnav::NavTriangle& t : navMesh.triangles) {
-					if (gnav::isFloorFace(t)) {
-						++floor;
-					}
-					if (gnav::terrainTraversable(t)) {
-						++walkable;
-					}
-				}
-				LOG_INFO(Engine, "[NavBuild] mesh swapped gen=%llu tris=%zu walkable=%zu floor=%zu blocked=%zu",
-						 static_cast<unsigned long long>(meshGeneration), navMesh.triangles.size(), walkable, floor,
-						 navMesh.triangles.size() - walkable);
-				// Triangle indices are stale after a rebuild, so the goal-triangle-keyed
-				// RRA* caches must be dropped (a stale key would target the wrong triangle).
-				rraCaches.clear();
-				future = {};
-			} else {
-				return; // build still running: keep serving the old mesh, no new launch
+	std::vector<NavigationSystem::DesiredRegion> NavigationSystem::computeDesiredRegions() const {
+		// A driver is a point (colonist position or viewport center) and its own square.
+		struct Driver {
+			geometry::Vec2i64 center;
+			SimAabb			  box;
+		};
+		std::vector<Driver> drivers;
+
+		// One square per colonist: center +/- kSimRadiusMm. ECS view is colonist-only; the
+		// world is always wired when this runs in-game (null only in headless tests with no
+		// colonists, where the viewport drives the regions instead).
+		if (world != nullptr) {
+			for (auto [entity, position, colonist] : world->view<Position, Colonist>()) {
+				(void)entity;
+				(void)colonist;
+				const geometry::Vec2i64 c = engine::nav::toMm(position.value);
+				drivers.push_back(
+					{c, {c.x - kSimRadiusMm, c.y - kSimRadiusMm, c.x + kSimRadiusMm, c.y + kSimRadiusMm}});
 			}
 		}
 
-		// buildInput needs the (non-thread-safe) ConstructionWorld for the walls and
-		// the fallback border, so there is nothing meaningful to build without it.
-		// Return WITHOUT latching haveBuiltOnce, so the first real build happens once
-		// the world is wired -- otherwise an empty mesh would stick and no later
-		// version change would trigger a rebuild.
-		if (constructionWorld == nullptr) {
-			return;
+		// One square for the viewport, half-extents clamped so a zoomed-out viewport doesn't
+		// ask for an unbuildable region. The viewport square is independent of any colonist
+		// square; clustering merges them only when they actually overlap.
+		if (haveViewport) {
+			const geometry::Vec2i64 c  = engine::nav::toMm(viewportCenterM);
+			const std::int64_t		hx = clampHalfExtent(
+				 static_cast<std::int64_t>(std::llround(static_cast<double>(viewportHalfM.x) * 1000.0)));
+			const std::int64_t hy = clampHalfExtent(
+				static_cast<std::int64_t>(std::llround(static_cast<double>(viewportHalfM.y) * 1000.0)));
+			drivers.push_back({c, {c.x - hx, c.y - hy, c.x + hx, c.y + hy}});
 		}
 
-		// The area path needs a ChunkManager AND a pushed area. With both, build over
-		// the simulation area; without them, fall back to the construction-only path
-		// (headless tests, before the area is wired) so walls are still navigable. We
-		// must NOT latch haveBuiltOnce when we cannot produce a real build, or no later
-		// change would retrigger it.
-		const bool canBuildArea = (chunkManager != nullptr) && haveRequestedArea;
-
-		// Clamp the requested half-extent now (used for both the rebuild check and the
-		// actual build). In the fallback path this is unused but harmless.
-		const std::int64_t clampedHalfExtent = canBuildArea ? clampHalfExtent(requestedHalfExtent) : 0;
-
-		if (!needsRebuild(clampedHalfExtent)) {
-			return;
+		// Cluster the driver squares (transitive overlap -> one bounding rect), carrying each
+		// driver's center into its cluster. Same union-find sweep as clusterAabbs, but on
+		// DesiredRegion so the driver points ride along for the self-gate.
+		std::vector<DesiredRegion> clusters;
+		for (const Driver& dr : drivers) {
+			DesiredRegion merged;
+			merged.rect = dr.box;
+			merged.drivers.push_back(dr.center);
+			bool mergedAny = true;
+			while (mergedAny) {
+				mergedAny = false;
+				for (std::size_t i = 0; i < clusters.size();) {
+					if (merged.rect.overlaps(clusters[i].rect)) {
+						merged.rect.unionWith(clusters[i].rect);
+						merged.drivers.insert(merged.drivers.end(), clusters[i].drivers.begin(),
+											  clusters[i].drivers.end());
+						clusters[i] = std::move(clusters.back());
+						clusters.pop_back();
+						mergedAny = true;
+					} else {
+						++i;
+					}
+				}
+			}
+			clusters.push_back(std::move(merged));
 		}
+		return clusters;
+	}
 
-		// Snapshot the input ON THE MAIN THREAD: buildInput reads ConstructionWorld
-		// (NOT thread-safe) and the per-chunk placement/tile data, so the extraction
-		// must run here. The worker then owns a self-contained NavMeshInput by value.
+	void NavigationSystem::launchBuild(SimulationRegion& region) {
+		// Snapshot the input ON THE MAIN THREAD: buildInput reads ConstructionWorld (NOT
+		// thread-safe) and per-chunk placement/tile data, so the extraction must run here.
+		// The worker then owns a self-contained NavMeshInput by value.
 		gnav::NavMeshInput input;
 		const auto		   inputStart = std::chrono::steady_clock::now();
 
-		if (canBuildArea) {
-			engine::assets::PlacementExecutor  emptyPlacement(engine::assets::AssetRegistry::Get());
-			engine::assets::PlacementExecutor& exec = (placement != nullptr) ? *placement : emptyPlacement;
-			input = engine::nav::buildInput(requestedCenter, clampedHalfExtent, *chunkManager, exec,
-											engine::assets::AssetRegistry::Get(), *constructionWorld,
-											engine::assets::ConstructionRegistry::Get());
-		} else {
-			// Construction-only fallback: no chunks/area, so there is no terrain border.
-			// extractWalls alone has no unblocked polygon and buildNavMesh would yield an
-			// empty mesh, so synthesize one walkable border from the construction-world
-			// vertex bounds and let the wall bands tile inside it.
-			engine::nav::extractWalls(*constructionWorld, engine::assets::ConstructionRegistry::Get(), input.polygons,
-									  input.doors);
-			if (!constructionWorld->vertices().empty()) {
-				geometry::Vec2i64 minMm = constructionWorld->vertices().front().pos;
-				geometry::Vec2i64 maxMm = minMm;
-				for (const engine::construction::Vertex& v : constructionWorld->vertices()) {
-					minMm.x = std::min(minMm.x, v.pos.x);
-					minMm.y = std::min(minMm.y, v.pos.y);
-					maxMm.x = std::max(maxMm.x, v.pos.x);
-					maxMm.y = std::max(maxMm.y, v.pos.y);
-				}
-				minMm.x -= kConstructionBorderPadMm;
-				minMm.y -= kConstructionBorderPadMm;
-				maxMm.x += kConstructionBorderPadMm;
-				maxMm.y += kConstructionBorderPadMm;
-				input.polygons.insert(input.polygons.begin(), engine::nav::borderRing(minMm, maxMm));
-			}
-		}
+		engine::assets::PlacementExecutor  emptyPlacement(engine::assets::AssetRegistry::Get());
+		engine::assets::PlacementExecutor& exec = (placement != nullptr) ? *placement : emptyPlacement;
+		input = engine::nav::buildInput(region.center, region.halfExtent, *chunkManager, exec,
+										engine::assets::AssetRegistry::Get(), *constructionWorld,
+										engine::assets::ConstructionRegistry::Get());
 
-		// Record what we snapshotted so the next frame's needsRebuild compares
-		// against THIS input's version, not a later-mutated world. The chunk signature is
-		// computed over the SAME (center, clampedHalfExtent) the check uses, so an unchanged
-		// world won't spuriously retrigger; a later in-area placement flips it and rebuilds.
-		builtVersion = constructionWorld->version();
-		builtCenter = requestedCenter;
-		builtHalfExtent = clampedHalfExtent;
-		builtAreaChunkSignature = areaChunkSignature(requestedCenter, clampedHalfExtent);
-		haveBuiltOnce = true;
+		region.builtVersion				= constructionWorld->version();
+		region.builtAreaChunkSignature	= areaChunkSignature(region.center, region.halfExtent);
 
 		const double inputMs =
 			std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - inputStart).count();
@@ -250,74 +259,263 @@ namespace ecs {
 				++walkableBorders;
 			}
 		}
-		LOG_INFO(Engine, "[NavBuild] buildInput %.2f ms: polys=%zu walkableBorders=%zu blockedRings=%zu",
-				 inputMs, input.polygons.size(), walkableBorders, input.polygons.size() - walkableBorders);
+		LOG_INFO(Engine, "[NavBuild] region %d buildInput %.2f ms: polys=%zu walkableBorders=%zu blockedRings=%zu",
+				 region.id, inputMs, input.polygons.size(), walkableBorders, input.polygons.size() - walkableBorders);
 
-		// Heavy triangulation off the main thread; the lambda owns `input` by value (moved) so
-		// there's no dangling reference to main-thread state. Time the build so we can see whether
-		// it finishes and how costly it is.
-		future = std::async(std::launch::async, [input = std::move(input)]() {
+		region.future = std::async(std::launch::async, [input = std::move(input), id = region.id]() {
 			const auto			   buildStart = std::chrono::steady_clock::now();
 			geometry::nav::NavMesh m		  = gnav::buildNavMesh(input);
 			const double		   buildMs =
 				std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - buildStart).count();
-			LOG_INFO(Engine, "[NavBuild] buildNavMesh %.2f ms: tris=%zu verts=%zu", buildMs, m.triangles.size(),
-					 m.vertices.size());
+			LOG_INFO(Engine, "[NavBuild] region %d buildNavMesh %.2f ms: tris=%zu verts=%zu", id, buildMs,
+					 m.triangles.size(), m.vertices.size());
 			return m;
 		});
 	}
 
-	bool NavigationSystem::inSimArea(glm::vec2 meters) const {
-		// No built area yet: return false so callers fall through to the no-mesh beeline.
-		if (!haveBuiltOnce) {
-			return false;
+	void NavigationSystem::drainFinishedBuilds() {
+		for (SimulationRegion& region : regions) {
+			if (!region.future.valid()) {
+				continue;
+			}
+			if (region.future.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+				continue; // still building: keep serving the old mesh
+			}
+			region.navMesh = region.future.get(); // swap the new mesh in; old mesh is dropped
+			region.future	= {};
+			++region.meshGeneration;
+			meshGeneration = std::max(meshGeneration, region.meshGeneration);
+
+			std::size_t walkable = 0;
+			std::size_t floor	 = 0;
+			for (const gnav::NavTriangle& t : region.navMesh.triangles) {
+				if (gnav::isFloorFace(t)) {
+					++floor;
+				}
+				if (gnav::terrainTraversable(t)) {
+					++walkable;
+				}
+			}
+			LOG_INFO(Engine,
+					 "[NavBuild] region %d mesh swapped gen=%llu tris=%zu walkable=%zu floor=%zu blocked=%zu",
+					 region.id, static_cast<unsigned long long>(region.meshGeneration), region.navMesh.triangles.size(),
+					 walkable, floor, region.navMesh.triangles.size() - walkable);
+
+			// Triangle indices are stale after this region's rebuild, so drop its RRA caches.
+			for (auto it = rraCaches.begin(); it != rraCaches.end();) {
+				if (it->first.region == region.id) {
+					it = rraCaches.erase(it);
+				} else {
+					++it;
+				}
+			}
 		}
+	}
+
+	void NavigationSystem::reconcileRegions(const std::vector<DesiredRegion>& desired) {
+		std::vector<bool> regionMatched(regions.size(), false);
+		std::vector<bool> desiredHandled(desired.size(), false);
+
+		// A driver point is "comfortably inside" a built rect when it sits >= kEdgeMarginMm
+		// from every edge. This is the movement-tied self-gate: a region is reused untouched
+		// only while none of its drivers nears its edge.
+		auto driverInsideMargin = [](geometry::Vec2i64 p, const SimAabb& have) {
+			return p.x >= have.minX + kEdgeMarginMm && p.x <= have.maxX - kEdgeMarginMm
+				&& p.y >= have.minY + kEdgeMarginMm && p.y <= have.maxY - kEdgeMarginMm;
+		};
+
+		// Pass 1: a desired region whose EVERY driver sits comfortably inside an existing
+		// region's built rect keeps that region as-is (no recenter, no rebuild unless its
+		// obstacle inputs changed). This shuts the gate for a stationary/slow driver and for
+		// a camera pan that stays well inside the built viewport region.
+		for (std::size_t d = 0; d < desired.size(); ++d) {
+			for (std::size_t r = 0; r < regions.size(); ++r) {
+				if (regionMatched[r]) {
+					continue;
+				}
+				const SimAabb have	  = regions[r].rect();
+				bool		  allInside = true;
+				for (const geometry::Vec2i64& p : desired[d].drivers) {
+					if (!driverInsideMargin(p, have)) {
+						allInside = false;
+						break;
+					}
+				}
+				if (allInside) {
+					regionMatched[r]  = true;
+					desiredHandled[d] = true;
+					// Rect unchanged, but an obstacle-input change (a wall edit, a
+					// late-finishing chunk) still forces an in-place rebuild.
+					if (!regions[r].future.valid() && regionObstaclesChanged(regions[r])) {
+						launchBuild(regions[r]);
+					}
+					break;
+				}
+			}
+		}
+
+		// Pass 2: each remaining desired region recenters the best-overlapping unmatched
+		// region (a driver crossed the margin -- same region, moved) or spawns a new one (a
+		// disjoint cluster: the camera panned far, or a second colonist). Recentering reuses
+		// the region slot+id so a colonist's region stays "his" across moves.
+		for (std::size_t d = 0; d < desired.size(); ++d) {
+			if (desiredHandled[d]) {
+				continue;
+			}
+			const SimAabb&			want	   = desired[d].rect;
+			const geometry::Vec2i64 wantCenter = want.center();
+			const std::int64_t		wantHalf   = clampHalfExtent(std::max(want.halfExtentX(), want.halfExtentY()));
+
+			int			 best		= -1;
+			std::int64_t bestDistSq = 0;
+			for (std::size_t r = 0; r < regions.size(); ++r) {
+				if (regionMatched[r] || !regions[r].rect().overlaps(want)) {
+					continue;
+				}
+				const std::int64_t dx	  = regions[r].center.x - wantCenter.x;
+				const std::int64_t dy	  = regions[r].center.y - wantCenter.y;
+				const std::int64_t distSq = dx * dx + dy * dy;
+				if (best < 0 || distSq < bestDistSq) {
+					best	   = static_cast<int>(r);
+					bestDistSq = distSq;
+				}
+			}
+
+			if (best >= 0) {
+				SimulationRegion& region = regions[static_cast<std::size_t>(best)];
+				region.center			 = wantCenter;
+				region.halfExtent		 = wantHalf;
+				regionMatched[static_cast<std::size_t>(best)] = true;
+				launchBuild(region);
+				LOG_INFO(Engine, "[NavBuild] region %d recenter -> (%lld, %lld) half=%lld", region.id,
+						 static_cast<long long>(wantCenter.x), static_cast<long long>(wantCenter.y),
+						 static_cast<long long>(wantHalf));
+			} else {
+				SimulationRegion region;
+				region.id		  = nextRegionId++;
+				region.center	  = wantCenter;
+				region.halfExtent = wantHalf;
+				launchBuild(region);
+				LOG_INFO(Engine, "[NavBuild] region %d NEW -> (%lld, %lld) half=%lld", region.id,
+						 static_cast<long long>(wantCenter.x), static_cast<long long>(wantCenter.y),
+						 static_cast<long long>(wantHalf));
+				regions.push_back(std::move(region));
+				regionMatched.push_back(true);
+			}
+		}
+
+		// Drop regions no longer wanted. Block on any in-flight build first so its worker
+		// can't write into a future we're about to destroy. Also purge their RRA caches.
+		for (std::size_t r = regions.size(); r-- > 0;) {
+			if (regionMatched[r]) {
+				continue;
+			}
+			if (regions[r].future.valid()) {
+				regions[r].future.wait();
+			}
+			const std::int32_t goneId = regions[r].id;
+			for (auto it = rraCaches.begin(); it != rraCaches.end();) {
+				if (it->first.region == goneId) {
+					it = rraCaches.erase(it);
+				} else {
+					++it;
+				}
+			}
+			LOG_INFO(Engine, "[NavBuild] region %d dropped", goneId);
+			regions.erase(regions.begin() + static_cast<std::ptrdiff_t>(r));
+		}
+	}
+
+	void NavigationSystem::update(float /*deltaTime*/) {
+		// Drain finished builds first so a mesh completed last frame is queryable this
+		// frame (and a fresh rebuild can be launched on top of it below).
+		drainFinishedBuilds();
+
+		// buildInput needs the (non-thread-safe) ConstructionWorld for walls and the
+		// fallback border, and a ChunkManager for terrain. Without both there is nothing
+		// to build -- the very early frames before the scene wires them. Return without
+		// touching regions so the first real build happens once everything is wired.
+		if (constructionWorld == nullptr || chunkManager == nullptr) {
+			return;
+		}
+
+		// Compute the desired regions from colonists + viewport, then reconcile. The
+		// reconcile self-gates: a region whose drivers stay comfortably inside it and whose
+		// obstacles are unchanged is left untouched (no rebuild) -- nav generation is off
+		// the render clock.
+		const std::vector<DesiredRegion> desired = computeDesiredRegions();
+		reconcileRegions(desired);
+	}
+
+	int NavigationSystem::regionContaining(glm::vec2 meters) const {
 		const geometry::Vec2i64 pMm = engine::nav::toMm(meters);
-		return std::abs(pMm.x - builtCenter.x) <= builtHalfExtent
-			&& std::abs(pMm.y - builtCenter.y) <= builtHalfExtent;
+		for (std::size_t r = 0; r < regions.size(); ++r) {
+			if (regions[r].hasMesh() && regions[r].rect().contains(pMm)) {
+				return static_cast<int>(r);
+			}
+		}
+		return -1;
+	}
+
+	bool NavigationSystem::hasMesh() const {
+		for (const SimulationRegion& r : regions) {
+			if (r.hasMesh()) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	std::vector<NavigationSystem::RegionView> NavigationSystem::builtRegions() const {
+		std::vector<RegionView> out;
+		out.reserve(regions.size());
+		for (const SimulationRegion& r : regions) {
+			if (r.hasMesh()) {
+				out.push_back({&r.navMesh, r.center, r.halfExtent});
+			}
+		}
+		return out;
+	}
+
+	bool NavigationSystem::inSimArea(glm::vec2 meters) const {
+		return regionContaining(meters) >= 0;
 	}
 
 	std::optional<std::vector<glm::vec2>>
 	NavigationSystem::requestPath(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
 								  gnav::BeliefFilter belief) const {
-		if (navMesh.triangles.empty()) {
+		// Dispatch by position: both endpoints must lie in the SAME built region. Different
+		// regions (or a goal outside every region) -> hold the task; long-range routing
+		// across unsimulated space is Phase 2.
+		const int startRegion = regionContaining(startMeters);
+		const int goalRegion  = regionContaining(goalMeters);
+		if (startRegion < 0 || startRegion != goalRegion) {
 			return std::nullopt;
 		}
+		const SimulationRegion& region	= regions[static_cast<std::size_t>(startRegion)];
+		const gnav::NavMesh&	navMesh = region.navMesh;
 
 		const geometry::Vec2i64 startMm = engine::nav::toMm(startMeters);
-		const geometry::Vec2i64 goalMm = engine::nav::toMm(goalMeters);
-		// Agent clearance is honored: pathThrough shrinks the funnel by this radius
-		// and rejects corridors narrower than the disc.
+		const geometry::Vec2i64 goalMm	= engine::nav::toMm(goalMeters);
 		const std::int64_t radiusMm =
 			static_cast<std::int64_t>(std::llround(static_cast<double>(agentRadiusMeters) * 1000.0));
 
-		// RRA* heuristic: locate the goal triangle and hand pathThrough the resumable
-		// reverse-search cache for it (one per goal serves every agent; it resumes across
-		// queries). When the goal is off-mesh, locate returns -1 and we pass no cache, so
-		// pathThrough falls back to the straight-line heuristic and routes exactly as
-		// before. The cache map is goal-triangle-keyed and is cleared on every mesh swap.
+		// RRA* heuristic: locate the goal triangle in THIS region and hand pathThrough the
+		// resumable reverse-search cache for it (keyed by region id + goal triangle).
 		gnav::RraCache*	   rra	   = nullptr;
 		const std::int32_t goalTri = gnav::locateTriangle(navMesh, goalMm);
 		if (goalTri >= 0) {
-			// Bound the map: a churn of distinct goals must not grow it without limit.
-			// When a NEW goal would push past the cap, drop the whole map (cheap to
-			// rebuild lazily); an already-cached goal reuses its entry and never grows it.
-			if (rraCaches.size() >= kMaxRraCaches && rraCaches.find(goalTri) == rraCaches.end()) {
+			const RraKey key{region.id, goalTri};
+			if (rraCaches.size() >= kMaxRraCaches && rraCaches.find(key) == rraCaches.end()) {
 				rraCaches.clear();
 			}
-			gnav::RraCache& cache = rraCaches[goalTri];
-			cache.goalTri		  = goalTri; // freshly default-constructed entries start at -1
+			gnav::RraCache& cache = rraCaches[key];
+			cache.goalTri		  = goalTri;
 			rra					  = &cache;
 		}
 
-		// belief is applied at query time, not via a second mesh: a default (empty)
-		// filter reproduces the truth query; a colonist's known-structures filter routes
-		// over its remembered geometry. Consumed synchronously, so the pointers it holds
-		// stay valid for the call.
 		const gnav::PathResult result = gnav::pathThrough(navMesh, startMm, goalMm, radiusMm, belief, rra);
 
-		// Aggregate A* instrumentation for a reachable solve (where the counts are
-		// meaningful). LOG_DEBUG per query is fine; it compiles out in release.
 		if (result.reachable) {
 			++navStats.totalQueries;
 			navStats.totalNodesExpanded += static_cast<std::uint64_t>(result.nodesExpanded);
@@ -343,24 +541,19 @@ namespace ecs {
 
 	bool NavigationSystem::isReachable(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
 									   gnav::BeliefFilter belief) const {
-		// No mesh yet: can't prove unreachable, so don't reject. Colonists beeline
-		// legitimately during startup/outdoor play; blocking everything until the first
-		// mesh lands would starve them of any movement. Callers that need certainty
-		// can check hasMesh() first.
-		if (navMesh.triangles.empty()) {
+		// No single region covers both endpoints (no mesh yet, off-area endpoint, or a
+		// cross-region pair): can't prove unreachable, so don't reject. Colonists beeline
+		// legitimately during startup/outdoor play; the agent moves toward the area and
+		// switches to in-region routing once both endpoints share a region.
+		const int startRegion = regionContaining(startMeters);
+		const int goalRegion  = regionContaining(goalMeters);
+		if (startRegion < 0 || startRegion != goalRegion) {
 			return true;
 		}
-
-		// Off-area endpoint: the mesh covers only the simulation area. A goal (or start)
-		// outside that area lies off-mesh, so the exact component/bottleneck check would
-		// produce a false negative. Return true ("can't prove unreachable") -- the agent
-		// will beeline toward the area, then switch to LOD0 routing once it enters.
-		if (!inSimArea(startMeters) || !inSimArea(goalMeters)) {
-			return true;
-		}
+		const gnav::NavMesh& navMesh = regions[static_cast<std::size_t>(startRegion)].navMesh;
 
 		const geometry::Vec2i64 startMm = engine::nav::toMm(startMeters);
-		const geometry::Vec2i64 goalMm  = engine::nav::toMm(goalMeters);
+		const geometry::Vec2i64 goalMm	= engine::nav::toMm(goalMeters);
 		const std::int64_t radiusMm =
 			static_cast<std::int64_t>(std::llround(static_cast<double>(agentRadiusMeters) * 1000.0));
 
@@ -368,54 +561,24 @@ namespace ecs {
 	}
 
 	bool NavigationSystem::isOnMesh(glm::vec2 meters) const {
-		if (navMesh.triangles.empty()) {
+		const int r = regionContaining(meters);
+		if (r < 0) {
 			return false;
 		}
-		// "On the mesh" means standing on WALKABLE ground, not merely inside some triangle. Water and
-		// tree obstacles are triangulated too, as blocking faces, and a colonist standing on one
-		// can't path anywhere -- counting those as on-mesh is what stranded a colonist dropped onto a
-		// water/tree tile. Use terrainTraversable (anything that isn't a common-knowledge terrain
-		// blocker): outdoor ground is NOT a kNoBlocker "floor" face (that's constructed indoor floor),
-		// so isFloorFace would reject all open terrain.
+		const gnav::NavMesh& navMesh = regions[static_cast<std::size_t>(r)].navMesh;
+		// "On the mesh" means standing on WALKABLE ground, not merely inside some triangle.
+		// Use terrainTraversable: outdoor ground is NOT a kNoBlocker "floor" face (that's
+		// constructed indoor floor), so isFloorFace would reject all open terrain.
 		const std::int32_t tri = gnav::locateTriangle(navMesh, engine::nav::toMm(meters));
 		return tri >= 0 && gnav::terrainTraversable(navMesh.triangles[static_cast<std::size_t>(tri)]);
 	}
 
 	std::optional<glm::vec2> NavigationSystem::nearestPathablePoint(glm::vec2 meters) const {
-		bool	  found	 = false;
-		float	  bestD2 = 0.0F;
-		glm::vec2 best{0.0F, 0.0F};
-		for (const gnav::NavTriangle& t : navMesh.triangles) {
-			if (!gnav::terrainTraversable(t)) {
-				continue; // skip common-knowledge blockers (water/tree); snap only onto walkable ground
-			}
-			const glm::vec2 a = engine::nav::toMeters(navMesh.vertices[t.v[0]]);
-			const glm::vec2 b = engine::nav::toMeters(navMesh.vertices[t.v[1]]);
-			const glm::vec2 c = engine::nav::toMeters(navMesh.vertices[t.v[2]]);
-			// The query point is off-mesh, so the closest point on this triangle lies on one of
-			// its three edges. Take the nearest of the three.
-			glm::vec2 cand = closestOnSegment(meters, a, b);
-			float	  cd2  = dist2(meters, cand);
-			const glm::vec2 p2 = closestOnSegment(meters, b, c);
-			if (const float d2 = dist2(meters, p2); d2 < cd2) {
-				cd2	 = d2;
-				cand = p2;
-			}
-			const glm::vec2 p3 = closestOnSegment(meters, c, a);
-			if (const float d2 = dist2(meters, p3); d2 < cd2) {
-				cd2	 = d2;
-				cand = p3;
-			}
-			if (!found || cd2 < bestD2) {
-				// Nudge a hair toward the centroid so the snapped point sits unambiguously inside
-				// this walkable triangle, not exactly on a boundary edge where locate is ambiguous.
-				const glm::vec2 centroid = (a + b + c) / 3.0F;
-				best					 = cand + (centroid - cand) * 0.05F;
-				bestD2					 = cd2;
-				found					 = true;
-			}
+		const int r = regionContaining(meters);
+		if (r < 0) {
+			return std::nullopt; // off every region: caller leaves the colonist put
 		}
-		return found ? std::optional<glm::vec2>(best) : std::nullopt;
+		return nearestPathableOnMesh(regions[static_cast<std::size_t>(r)].navMesh, meters);
 	}
 
 } // namespace ecs

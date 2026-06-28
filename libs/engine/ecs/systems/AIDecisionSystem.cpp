@@ -767,13 +767,21 @@ namespace ecs {
 			// from where it stands, and freezes. Snap it to the nearest pathable point and clear
 			// its task so it re-decides from solid ground.
 			//
+			// GATE: only recover a colonist that is genuinely STRANDED -- inside a sim region but
+			// off a walkable face. A colonist that NO region currently covers (off-camera, an
+			// unsimulated corner) is left exactly where it stands: there is no mesh to judge it
+			// against, and relocating it merely because the sim area moved away is the bug this
+			// rework fixes (it dumped a wandering colonist into the river when a camera pan rebuilt
+			// the area off him). inSimArea() is true only when a built region contains the point,
+			// so inSimArea && !isOnMesh is exactly "in a region, off its mesh".
+			//
 			// A "fresh route" (a valid NavPath stamped to the current mesh generation) does NOT
 			// prove on-mesh: a teleport or a recenter can leave a current-version path under a
 			// colonist that is itself off-mesh, and the route's first waypoint is the standing
 			// point the locate already rejects. So recovery keys ONLY on isOnMesh; the snap nudge
 			// (nearestPathablePoint biases a hair toward the triangle centroid) lifts the colonist
 			// off the boundary edge that locate excludes.
-			if (m_navSystem != nullptr && m_navSystem->hasMesh()) {
+			if (m_navSystem != nullptr && m_navSystem->inSimArea(position.value)) {
 				if (!m_navSystem->isOnMesh(position.value)) {
 					const auto snapped = m_navSystem->nearestPathablePoint(position.value);
 					LOG_DEBUG(Engine,
@@ -1372,10 +1380,14 @@ namespace ecs {
 			} else if (haveMesh) {
 				// DIAGNOSTIC (temporary): nowhere reachable to wander. Log what the mesh thinks here
 				// so we can tell a genuinely hemmed-in spot from a mesh that's wrong/incomplete.
+				std::size_t meshTris = 0;
+				for (const auto& rv : m_navSystem->builtRegions()) {
+					meshTris += rv.mesh->triangles.size();
+				}
 				LOG_DEBUG(Engine,
-					"[NavDiag] Entity %llu at (%.2f, %.2f): 0/6 wander probes reachable; onMesh=%d meshTris=%zu",
+					"[NavDiag] Entity %llu at (%.2f, %.2f): 0/6 wander probes reachable; onMesh=%d regions=%zu meshTris=%zu",
 					static_cast<unsigned long long>(entity), position.value.x, position.value.y,
-					m_navSystem->isOnMesh(position.value) ? 1 : 0, m_navSystem->mesh().triangles.size());
+					m_navSystem->isOnMesh(position.value) ? 1 : 0, m_navSystem->regionCount(), meshTris);
 			}
 		}
 

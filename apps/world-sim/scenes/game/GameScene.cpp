@@ -80,7 +80,6 @@
 #include <ecs/systems/DynamicEntityRenderSystem.h>
 #include <ecs/systems/MovementSystem.h>
 #include <ecs/systems/NavigationSystem.h>
-#include <nav/NavCoords.h>
 #include <ecs/systems/NeedsDecaySystem.h>
 #include <ecs/systems/PhysicsSystem.h>
 #include <ecs/systems/RoomDetectionSystem.h>
@@ -769,27 +768,22 @@ namespace {
 			m_camera->update(dt);
 			m_chunkManager->update(m_camera->position());
 
-			// Push the simulation area to NavigationSystem each frame. The visible
-			// rect gives the exact extent the player sees at the current zoom; we
-			// expand it by kViewportMargin for scroll/zoom headroom. NavigationSystem
-			// clamps to [kMinSimHalfExtentMm, kMaxSimHalfExtentMm] and to the loaded-
-			// chunk extent, then rebuilds only when the area drifts past its thresholds
-			// -- the per-frame camera lerp stays well under them.
+			// Feed the viewport rect to NavigationSystem as PLAIN DATA -- the scene no
+			// longer drives the navmesh. NavigationSystem owns the sim area: it tracks the
+			// colonists plus this viewport, clusters them into regions, and self-gates the
+			// rebuilds off the render clock. The visible rect (expanded by kViewportMargin
+			// for scroll/zoom headroom) is the camera's contribution; the system clamps the
+			// half-extents and decides internally when a region needs (re)building.
 			{
 				int vpW = 0;
 				int vpH = 0;
 				Renderer::Primitives::getLogicalViewport(vpW, vpH);
 				Foundation::Rect vis = m_camera->getVisibleRect(vpW, vpH, kPixelsPerMeter);
-				// True half-diagonal of the visible rect * margin, converted to mm. Using the
-				// corner distance (not max(w,h)*0.5) keeps the area covering the viewport
-				// corners regardless of aspect ratio. Clamped to kMaxSimHalfExtentMm downstream.
-				const float halfDiagMeters =
-					0.5F * std::sqrt(vis.width * vis.width + vis.height * vis.height) * ecs::NavigationSystem::kViewportMargin;
-				const auto halfExtentMm =
-					static_cast<std::int64_t>(std::llround(static_cast<double>(halfDiagMeters) * 1000.0));
+				const glm::vec2 halfExtentMeters{
+					0.5F * vis.width * ecs::NavigationSystem::kViewportMargin,
+					0.5F * vis.height * ecs::NavigationSystem::kViewportMargin};
 				const engine::world::WorldPosition pos = m_camera->position();
-				const geometry::Vec2i64 centerMm = engine::nav::toMm(glm::vec2{pos.x, pos.y});
-				ecsWorld->getSystem<ecs::NavigationSystem>().setSimulationArea(centerMm, halfExtentMm);
+				ecsWorld->getSystem<ecs::NavigationSystem>().setViewportRect(glm::vec2{pos.x, pos.y}, halfExtentMeters);
 			}
 
 			// Process newly loaded chunks for entity placement
