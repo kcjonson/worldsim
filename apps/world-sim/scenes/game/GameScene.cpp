@@ -296,6 +296,7 @@ namespace {
 				.world = ecsWorld.get(),
 				.camera = m_camera.get(),
 				.placementExecutor = m_placementExecutor.get(),
+				.navigation = &ecsWorld->getSystem<ecs::NavigationSystem>(),
 				.callbacks = {
 					.onBuildMenuVisibility = [this](bool active) { gameUI->setBuildModeActive(active); },
 					.onShowBuildMenu = [this](const std::vector<world_sim::BuildMenuItem>& items) { gameUI->showBuildMenu(items); },
@@ -494,6 +495,7 @@ namespace {
 				.selection = m_selectionSystem.get(),
 				.ui = gameUI.get(),
 				.chunks = m_chunkManager.get(),
+				.navigation = &ecsWorld->getSystem<ecs::NavigationSystem>(),
 				.spawnColonist = [this](glm::vec2 pos, const std::string& name) { return spawnColonist(pos, name); },
 			});
 

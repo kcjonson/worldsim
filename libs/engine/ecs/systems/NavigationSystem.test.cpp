@@ -142,6 +142,36 @@ namespace {
 		[[nodiscard]] uint64_t getWorldSeed() const override { return 7u; }
 	};
 
+	// Mostly-land sampler with a water patch carved into the origin chunk: sectors whose
+	// local tile range covers ~[32 m, 48 m) on both axes read Ocean, the rest grassland.
+	// Lets a test assert isValidPosition is false on a real water face inside the region
+	// while a nearby land face is valid. (Sector = localTile / 16; chunk is 512 tiles.)
+	class WaterPatchSampler : public engine::world::IWorldSampler {
+	  public:
+		[[nodiscard]] engine::world::ChunkSampleResult sampleChunk(engine::world::ChunkCoordinate coord) const override {
+			engine::world::ChunkSampleResult r;
+			for (auto& cb : r.cornerBiomes) {
+				cb = engine::world::BiomeWeights::single(engine::world::Biome::TemperateGrassland);
+			}
+			r.cornerElevations = {1.0F, 1.0F, 1.0F, 1.0F};
+			r.computeSectorGrid();
+			// Only carve the patch in the origin chunk so points near (0,0) stay land.
+			if (coord.x == 0 && coord.y == 0) {
+				const engine::world::BiomeWeights ocean =
+					engine::world::BiomeWeights::single(engine::world::Biome::Ocean);
+				// Tiles [32,48) -> sectors [2,3); a 16 m square of open water at ~(40,40).
+				for (int sy = 2; sy < 3; ++sy) {
+					for (int sx = 2; sx < 3; ++sx) {
+						r.sectorGrid[static_cast<size_t>(sy * engine::world::kSectorGridSize + sx)] = ocean;
+					}
+				}
+			}
+			return r;
+		}
+		[[nodiscard]] float	   sampleElevation(engine::world::WorldPosition) const override { return 1.0F; }
+		[[nodiscard]] uint64_t getWorldSeed() const override { return 7u; }
+	};
+
 	class NavigationSystemTest : public ::testing::Test {
 	  protected:
 		void SetUp() override {
@@ -907,6 +937,98 @@ TEST_F(NavigationSystemTest, InSimAreaTrueInsideFalseOutside) {
 	// but the system clamps that to kMaxSimHalfExtentMm = 64 m, so 100 m is outside).
 	EXPECT_FALSE(sys.inSimArea({100.0F, 0.0F}));
 	EXPECT_FALSE(sys.inSimArea({0.0F, 100.0F}));
+}
+
+// --- isValidPosition: the canonical spawn/placement validity predicate ----------
+//
+// isValidPosition delegates to isOnMesh: a position is valid IFF it sits on a walkable
+// nav face inside an active region. A walkable face is valid; a water face inside the
+// region is invalid; a point no region covers is invalid (can't place off-mesh yet).
+
+TEST_F(NavigationSystemTest, IsValidPositionTrueOnWalkableFaceFalseOnWaterAndOffMesh) {
+	// Mostly-land world with a 16 m water patch at ~(40,40) inside the origin chunk.
+	auto chunks = std::make_unique<engine::world::ChunkManager>(std::make_unique<WaterPatchSampler>());
+	chunks->setLoadRadius(2);
+	chunks->setUnloadRadius(4);
+	chunks->update({0.0F, 0.0F});
+	chunks->finishPendingGeneration();
+
+	ConstructionWorld cw; // empty: open terrain plus the water patch obstacle
+
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(chunks.get());
+	pushArea(sys, {0, 0}, 60000); // 60 m region (clamped to 64) covers origin and the patch
+	sys.setConstructionWorld(&cw);
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+
+	// A clearly-land point near origin sits on a walkable face: VALID.
+	const glm::vec2 land{2.0F, 2.0F};
+	ASSERT_TRUE(sys.inSimArea(land)) << "land point must be inside the region";
+	EXPECT_TRUE(sys.isValidPosition(land)) << "a walkable land face must be a valid position";
+
+	// A point inside the water patch is off-mesh (water face): INVALID, but still in-region.
+	const glm::vec2 water{40.0F, 40.0F};
+	ASSERT_TRUE(sys.inSimArea(water)) << "the water point must be inside the region";
+	EXPECT_FALSE(sys.isOnMesh(water)) << "the water tile must not be a walkable face";
+	EXPECT_FALSE(sys.isValidPosition(water)) << "a water face must be an invalid position";
+
+	// A point no region covers is invalid: you cannot place outside an active mesh yet.
+	const glm::vec2 offMesh{500.0F, 500.0F};
+	ASSERT_FALSE(sys.inSimArea(offMesh)) << "the far point must be outside every region";
+	EXPECT_FALSE(sys.isValidPosition(offMesh)) << "a point off every region must be invalid";
+}
+
+// Before any mesh is built nothing is placeable: isValidPosition is false everywhere.
+TEST_F(NavigationSystemTest, IsValidPositionFalseBeforeAnyMesh) {
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+
+	ASSERT_FALSE(sys.hasMesh());
+	EXPECT_FALSE(sys.isValidPosition({0.0F, 0.0F}));
+}
+
+// Dev-spawn refusal contract: every dev verb that places an entity guards on
+// isValidPosition and, on false, creates NOTHING. This mirrors the exact guard in
+// DevCommandHandler::devSpawn (the app binary has no test target, so the guard's
+// decision is exercised here against a real NavigationSystem + World): an off-mesh
+// position must leave the entity count unchanged; a valid one creates the entity.
+TEST_F(NavigationSystemTest, DevSpawnGuardRefusesOffMeshCreatesOnValid) {
+	ConstructionWorld cw; // empty: open walkable terrain over the origin region
+
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys); // ChunkManager (all land) + 60 m region at origin
+	sys.setConstructionWorld(&cw);
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+
+	// The guard the dev verbs run before any createEntity. createNothing == refused.
+	auto guardedSpawn = [&](glm::vec2 at) -> bool {
+		if (!sys.isValidPosition(at)) {
+			return false; // refused: create nothing
+		}
+		const EntityID e = world.createEntity();
+		world.addComponent<Position>(e, Position{at});
+		return true;
+	};
+
+	auto entityCount = [&] {
+		std::size_t n = 0;
+		for (auto row : world.view<Position>()) {
+			(void)row;
+			++n;
+		}
+		return n;
+	};
+
+	// Off-mesh (no region covers it): refused, nothing created.
+	const std::size_t before = entityCount();
+	EXPECT_FALSE(guardedSpawn({500.0F, 500.0F})) << "off-mesh dev-spawn must be refused";
+	EXPECT_EQ(entityCount(), before) << "a refused dev-spawn must create nothing";
+
+	// On a walkable face: accepted, exactly one entity created.
+	EXPECT_TRUE(guardedSpawn({2.0F, 2.0F})) << "on-mesh dev-spawn must be accepted";
+	EXPECT_EQ(entityCount(), before + 1) << "an accepted dev-spawn creates exactly one entity";
 }
 
 // isReachable returns true for an off-area goal even when a mesh is present and

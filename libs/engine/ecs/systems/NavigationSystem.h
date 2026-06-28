@@ -189,6 +189,17 @@ class NavigationSystem : public ISystem {
 	// colonist (recover by snapping back onto land) from one merely walled off.
 	[[nodiscard]] bool isOnMesh(glm::vec2 meters) const;
 
+	// Canonical world-position validity for spawn/placement/teleport. A position is VALID
+	// IFF it sits on a WALKABLE NAV FACE inside an ACTIVE sim region -- exactly isOnMesh.
+	//
+	// CONSTRAINT: validity is owned entirely by the runtime nav mesh. The 3D world/terrain
+	// source is load-time / chunk-generation data and is NOT consulted here. A position
+	// outside every active region's mesh is simply NOT placeable for now: you cannot place
+	// outside an active mesh yet. (A future Phase 2 coarse global geography mesh will extend
+	// this to unsimulated space.) This is the ONE predicate every world-positioning path
+	// goes through; do not reintroduce ad-hoc terrain/isWaterAt checks elsewhere.
+	[[nodiscard]] bool isValidPosition(glm::vec2 meters) const { return isOnMesh(meters); }
+
 	// Nearest walkable point in the region that contains `meters`, or nullopt when no
 	// region covers it / that region has no walkable floor. Used to snap a stranded
 	// (off-mesh, in-region) colonist back onto pathable ground.

@@ -61,9 +61,10 @@ class PlacementMode {
 	/// Cancel placement and return to normal (transitions any -> None)
 	void cancel();
 
-	/// Update ghost position from world coordinates
-	/// Called each frame while in Placing state
-	void updateGhostPosition(Foundation::Vec2 worldPos);
+	/// Update ghost position from world coordinates and whether that spot is placeable.
+	/// `valid` comes from the nav-mesh validity gate (NavigationSystem::isValidPosition);
+	/// PlacementMode itself owns no terrain knowledge. Called each frame while Placing.
+	void updateGhostPosition(Foundation::Vec2 worldPos, bool valid);
 
 	/// Attempt to place at current ghost position
 	/// Returns true if placement succeeded (transitions Placing -> None)
@@ -73,7 +74,7 @@ class PlacementMode {
 	PlacementState m_state = PlacementState::None;
 	std::string m_selectedDefName;
 	Foundation::Vec2 m_ghostPosition{0.0F, 0.0F};
-	bool m_isValidPlacement = true; // Always valid for now
+	bool m_isValidPlacement = false; // set each frame from the nav-mesh validity gate
 
 	PlaceCallback m_onPlace;
 };

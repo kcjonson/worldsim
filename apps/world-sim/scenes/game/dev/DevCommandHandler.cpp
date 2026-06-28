@@ -32,6 +32,7 @@
 #include <ecs/components/Transform.h>
 #include <ecs/components/WorkQueue.h>
 #include <ecs/systems/ConstructionSystem.h>
+#include <ecs/systems/NavigationSystem.h>
 #include <ecs/systems/TimeSystem.h>
 
 #include <assets/RecipeRegistry.h>
@@ -114,6 +115,9 @@ namespace world_sim {
 				return;
 			}
 			const Foundation::Vec2 at = parsePoint(cmd.param("at"));
+			if (!requireValidPosition(at, "give loose")) {
+				return;
+			}
 			// Each packaged item is its own entity (no ground stacks); cap so a big N can't spawn thousands.
 			constexpr uint32_t kMaxLoose = 50;
 			const uint32_t	   count = n < kMaxLoose ? n : kMaxLoose;
@@ -161,6 +165,9 @@ namespace world_sim {
 			return;
 		}
 		const Foundation::Vec2 at = parsePoint(cmd.param("at"));
+		if (!requireValidPosition(at, "spawn")) {
+			return;
+		}
 		const long			   nRaw = std::strtol(cmd.param("n", "1").c_str(), nullptr, 10);
 		const long			   n = nRaw < 1 ? 1 : nRaw;
 		const float			   scatter = std::strtof(cmd.param("scatter", "0").c_str(), nullptr);
@@ -175,6 +182,9 @@ namespace world_sim {
 
 	void DevCommandHandler::devColonist(const Foundation::DevCommand& cmd) {
 		const Foundation::Vec2 at = parsePoint(cmd.param("at"));
+		if (!requireValidPosition(at, "colonist")) {
+			return;
+		}
 		const long			   nRaw = std::strtol(cmd.param("n", "1").c_str(), nullptr, 10);
 		const long			   n = nRaw < 1 ? 1 : nRaw;
 		const std::string	   baseName = cmd.param("name", "Dev");
@@ -186,6 +196,20 @@ namespace world_sim {
 		}
 		LOG_INFO(Game, "[DevAPI] colonist: spawned %ld at (%.1f, %.1f)", n, at.x, at.y);
 		m_ctx.ui->pushNotification("Dev", "Spawned " + std::to_string(n) + " colonist(s)", UI::ToastSeverity::Info);
+	}
+
+	bool DevCommandHandler::requireValidPosition(Foundation::Vec2 at, const char* verb) {
+		// Single validity gate: a world position is placeable IFF it is on an active
+		// walkable nav face (NavigationSystem::isValidPosition). No terrain/world-source
+		// reads here -- runtime walkability is owned by the nav mesh.
+		if (m_ctx.navigation != nullptr && m_ctx.navigation->isValidPosition({at.x, at.y})) {
+			return true;
+		}
+		LOG_WARNING(Game, "[DevAPI] %s: error: %.1f,%.1f not on an active walkable nav mesh, refused", verb, at.x, at.y);
+		m_ctx.ui->pushNotification(
+			"Dev", "Refused: (" + std::to_string(at.x) + ", " + std::to_string(at.y) + ") not on walkable nav mesh", UI::ToastSeverity::Warning
+		);
+		return false;
 	}
 
 	ecs::EntityID DevCommandHandler::nearestColonist(Foundation::Vec2 at) {
@@ -323,6 +347,9 @@ namespace world_sim {
 			return;
 		}
 		const Foundation::Vec2 to = parsePoint(cmd.param("to"));
+		if (!requireValidPosition(to, "teleport")) {
+			return;
+		}
 		pos->value = {to.x, to.y};
 		if (auto* target = m_ctx.world->getComponent<ecs::MovementTarget>(id)) {
 			target->active = false;
