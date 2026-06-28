@@ -1770,7 +1770,6 @@ namespace ecs::test {
 		stoneDef.itemProperties->stackSize = 100;
 		stoneDef.itemProperties->massKg = 1.5F;
 		registry.registerTestDefinition(std::move(stoneDef));
-		const uint32_t stoneId = registry.getDefNameId("SmallStone");
 
 		// Heavy ballast UNRELATED to the recipe: the colonist is carrying a load of this (e.g. cargo
 		// hauled earlier), so it's at the carry cap when the craft fetch comes up. It must NOT be the
@@ -1785,6 +1784,14 @@ namespace ecs::test {
 		ballastDef.itemProperties->stackSize = 100;
 		ballastDef.itemProperties->massKg = 1.5F;
 		registry.registerTestDefinition(std::move(ballastDef));
+
+		// Resolve the material id after both registrations are in. registerTestDefinition now appends
+		// ids stably, but capturing once everything is registered keeps the test honest regardless of
+		// interning internals. (The original CI-only failure was a stale id captured between
+		// registrations that, after the map rehashed on libstdc++, aliased "Ballast" -- so the
+		// inventory-source craft-haul delivered the colonist's 30-unit ballast load to the station,
+		// the very Haul this test forbids.)
+		const uint32_t stoneId = registry.getDefNameId("SmallStone");
 
 		auto colonist = createColonist({0.0F, 0.0F});
 		setNeedValue(colonist, NeedType::Hunger, 100.0F);
@@ -1867,8 +1874,6 @@ namespace ecs::test {
 		bushDef.capabilities.harvestable->yieldDefName = "Stick";
 		bushDef.capabilities.harvestable->requiredToolType = "";
 		registry.registerTestDefinition(std::move(bushDef));
-		const uint32_t bushId = registry.getDefNameId("Flora_WoodyBush");
-		const uint32_t stickId = registry.getDefNameId("Stick");
 
 		// Heavy ballast UNRELATED to the yield: the colonist is at its carry cap, so a Stick can't fit.
 		engine::assets::AssetDefinition ballastDef;
@@ -1881,6 +1886,11 @@ namespace ecs::test {
 		ballastDef.itemProperties->stackSize = 100;
 		ballastDef.itemProperties->massKg = 1.5F;
 		registry.registerTestDefinition(std::move(ballastDef));
+
+		// Resolve ids once all definitions are registered (see OverweightColonistOffersNoCraftFetch):
+		// keeps captures correct independent of the interning index's ordering internals.
+		const uint32_t bushId = registry.getDefNameId("Flora_WoodyBush");
+		const uint32_t stickId = registry.getDefNameId("Stick");
 
 		auto colonist = createColonist({0.0F, 0.0F});
 		setNeedValue(colonist, NeedType::Hunger, 100.0F);
