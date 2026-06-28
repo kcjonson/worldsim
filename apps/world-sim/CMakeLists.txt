@@ -109,14 +109,17 @@ add_custom_command(TARGET world-sim POST_BUILD
     COMMENT "Copying fonts to world-sim directory"
 )
 
-# Create a custom target that always syncs assets (runs every build).
-# Use the target's actual output dir (TARGET_FILE_DIR) so this is correct under
-# multi-config generators (e.g. MSVC, where the exe lives in a Debug/ subdir).
+# Mirror assets to the executable directory every build.
+# Uses cmake/mirror-assets.cmake which mirrors each source subdir independently
+# via robocopy /MIR (Win) / rsync --delete (non-Win). Per-subdir mirroring means
+# extra dest dirs not in source (e.g. assets/planets/ staged separately) are left
+# untouched, while deletions within source-managed subdirs are propagated.
 add_custom_target(world-sim-assets ALL
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-    ${CMAKE_SOURCE_DIR}/assets
-    $<TARGET_FILE_DIR:world-sim>/assets
-    COMMENT "Syncing assets to world-sim directory"
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/assets
+        -DDEST_DIR=$<TARGET_FILE_DIR:world-sim>/assets
+        -P ${CMAKE_SOURCE_DIR}/cmake/mirror-assets.cmake
+    COMMENT "Mirroring assets to world-sim directory"
 )
 
 # Make world-sim depend on shader and asset sync so they are copied before running

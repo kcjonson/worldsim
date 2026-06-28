@@ -9,6 +9,7 @@ CMakeFiles/
 cmake_install.cmake
 *.cmake
 !CMakeLists.txt
+!cmake/*.cmake
 
 # Compile commands
 compile_commands.json
