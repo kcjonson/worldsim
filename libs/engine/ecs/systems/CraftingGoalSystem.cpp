@@ -243,6 +243,24 @@ namespace ecs {
 			// and keeps a re-queued job or leftover stock from re-gathering what's already on hand.
 			const auto* stationStore = world->getComponent<Inventory>(entity);
 
+			// {targetAmount, alreadyStaged}: the total inputs the recipe needs, and how many of those
+			// the station store currently holds (clamped per-input, summed). Recomputed from the LIVE
+			// store, never accumulated: when a finished unit drains the store, this drops, which is how
+			// the Craft goal learns the next unit still needs provisioning.
+			auto computeStaged = [&]() -> std::pair<uint32_t, uint32_t> {
+				uint32_t totalInputsNeeded = 0;
+				uint32_t alreadyStaged = 0;
+				for (const auto& input : recipe->inputs) {
+					if (assetRegistry.getDefNameId(input.defName) == 0) {
+						continue;
+					}
+					totalInputsNeeded += input.count;
+					const uint32_t inStore = stationStore != nullptr ? stationStore->getQuantity(input.defName) : 0U;
+					alreadyStaged += std::min(inStore, input.count);
+				}
+				return {totalInputsNeeded, alreadyStaged};
+			};
+
 			// Build the child Harvest/Haul hierarchy under a Craft goal. Returns {targetAmount,
 			// alreadyStaged}: the total inputs the recipe needs, and how many of those the station
 			// store already holds (pre-credited to the Craft goal so it unblocks once the rest arrive).
@@ -330,11 +348,33 @@ namespace ecs {
 			const auto* existingGoal = goalRegistry.getGoalByDestination(entity);
 			if (existingGoal != nullptr) {
 				if (existingGoal->recipeNameId == recipeId) {
-					// Same recipe - keep the hierarchy, just refresh remaining job count.
-					// Don't clobber targetAmount (it's the material total, not the job count)
-					// or deliveredAmount (delivery progress). Re-resolve any still-unsourced
-					// (NoSource) child against current colony knowledge: a discovered stockpile
-					// upgrades it to a fetch Haul, a discovered harvestable swaps it to a Harvest.
+					// Same recipe across a multi-unit job. deliveredAmount tracks materials staged in
+					// the station store toward the NEXT unit, so it must be recomputed from the live
+					// store every tick, not treated as a monotonic counter: finishing a unit drains the
+					// store (CraftActions consumes the inputs), and only re-reading the store reflects
+					// that drop. Treating it as monotonic was the multi-unit stall -- after unit 1 the
+					// store emptied but deliveredAmount stayed >= targetAmount, so the Craft never went
+					// back to Blocked and its provisioning children were never rebuilt (hung at 1/N).
+					auto [totalInputsNeeded, alreadyStaged] = computeStaged();
+
+					// A unit was consumed if the store no longer covers the recipe AND no provisioning
+					// children are currently outstanding for this Craft. Rebuild the Harvest/Haul
+					// hierarchy for the shortfall (children already provisioning an in-flight unit are
+					// left alone; we only rebuild once they're gone and the store is short).
+					const bool hasChildren = !goalRegistry.getChildGoals(existingGoal->id).empty();
+					if (alreadyStaged < totalInputsNeeded && !hasChildren) {
+						buildChildHierarchy(existingGoal->id);
+					}
+
+					goalRegistry.updateGoal(existingGoal->id, [&](GoalTask& goal) {
+						goal.targetAmount = totalInputsNeeded;
+						goal.deliveredAmount = alreadyStaged;
+						goal.status = alreadyStaged >= totalInputsNeeded ? GoalStatus::Available : GoalStatus::Blocked;
+					});
+
+					// Re-resolve any still-unsourced (NoSource) child against current colony knowledge:
+					// a discovered stockpile upgrades it to a fetch Haul, a discovered harvestable swaps
+					// it to a Harvest.
 					reresolveUnsourcedChildren(world, goalRegistry, assetRegistry, existingGoal->id);
 					stationsWithGoals.erase(entity);
 					activeGoalCount++;

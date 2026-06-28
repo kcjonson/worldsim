@@ -330,6 +330,83 @@ TEST_F(MultiSystemGoalTest, PrestagedStoreMaterialsCreateNoChildGoalsAndUnblockC
 	EXPECT_EQ(craft->status, GoalStatus::Available) << "all inputs present -> craft is workable immediately";
 }
 
+// Regression: a multi-unit craft must not stall at 1/N. deliveredAmount on the Craft goal tracks
+// what the station store currently holds toward the NEXT unit; finishing a unit drains the store,
+// so the goal must re-read the live store each tick and rebuild provisioning for the next unit.
+// The old code treated deliveredAmount as a monotonic counter: after unit 1 the store emptied but
+// deliveredAmount stayed >= targetAmount, the Craft never re-blocked, no new Haul/Harvest children
+// were built, and the job hung forever at 1/N. Here we drive all 3 units by mirroring exactly what
+// CraftActions does on unit completion (drain the recipe inputs from the store, bump job.completed)
+// and confirm the goal system re-provisions between units and the job runs to 3/3.
+TEST_F(MultiSystemGoalTest, MultiUnitCraftReprovisionsBetweenUnitsAndCompletesAllN) {
+	engine::assets::RecipeDef recipe;
+	recipe.defName = "MultiUnitRecipe";
+	recipe.label = "Multi Unit Recipe";
+	recipe.stationDefName = "";
+	recipe.workAmount = 100.0F;
+	recipe.inputs.push_back(engine::assets::RecipeInput{.defName = "Stick", .defNameId = 0, .count = 2});
+	engine::assets::RecipeRegistry::Get().registerTestRecipe(recipe);
+
+	// Station with a 3-unit job. createCraftingStation hardcodes quantity=1, so queue the job here.
+	auto  station = world->createEntity();
+	world->addComponent<Position>(station, Position{{0.0F, 0.0F}});
+	auto& queue = world->addComponent<WorkQueue>(station);
+	queue.addJob("MultiUnitRecipe", 3);
+	auto& store = world->addComponent<Inventory>(station, Inventory::createForStorage());
+
+	auto& registry = GoalTaskRegistry::Get();
+
+	// Mirror one unit of crafting: consume the recipe inputs from the store and bump completed,
+	// exactly as ActionSystem::applyCraftingEffect does on a finished craft.
+	auto craftOneUnit = [&]() {
+		for (const auto& input : recipe.inputs) {
+			store.removeItem(input.defName, input.count);
+		}
+		auto* job = queue.getNextJob();
+		ASSERT_NE(job, nullptr);
+		job->completed++;
+		queue.cleanupCompleted();
+	};
+
+	uint32_t unitsCrafted = 0;
+	for (int unit = 0; unit < 3; ++unit) {
+		// Stage materials for this unit (a colonist hauling them in -> store holds 2 Sticks).
+		store.addItem("Stick", 2);
+		runUpdates(60);
+
+		const auto* craft = registry.getGoalByDestination(station);
+		ASSERT_NE(craft, nullptr) << "Craft goal must persist across all units (unit " << unit << ")";
+		EXPECT_EQ(craft->targetAmount, 2U) << "material total per unit is constant";
+		EXPECT_EQ(craft->deliveredAmount, 2U)
+		    << "deliveredAmount recomputed from the live store, fully staged for this unit (unit " << unit << ")";
+		EXPECT_EQ(craft->status, GoalStatus::Available)
+		    << "fully staged -> craft is workable for this unit (unit " << unit << ")";
+
+		// This unit crafts: store drains, job advances.
+		craftOneUnit();
+		++unitsCrafted;
+
+		// Goal system sees the drained store: deliveredAmount drops, craft re-blocks, and (because
+		// no provisioning children remain) the Haul hierarchy for the next unit is rebuilt -- unless
+		// this was the last unit, in which case the job is gone and the whole hierarchy is reaped.
+		runUpdates(60);
+		if (unit < 2) {
+			const auto* next = registry.getGoalByDestination(station);
+			ASSERT_NE(next, nullptr) << "Craft goal still present for remaining units";
+			EXPECT_EQ(next->deliveredAmount, 0U)
+			    << "store drained by the finished unit -> nothing staged for the next unit yet";
+			EXPECT_EQ(next->status, GoalStatus::Blocked)
+			    << "craft re-blocked, waiting on the next unit's materials";
+			EXPECT_GE(registry.goalCount(TaskType::Haul), 1U)
+			    << "provisioning rebuilt: a Haul exists to gather the next unit's materials";
+		}
+	}
+
+	EXPECT_EQ(unitsCrafted, 3U) << "all three units crafted, no stall at 1/3";
+	EXPECT_EQ(queue.getNextJob(), nullptr) << "the 3-unit job is fully complete";
+	EXPECT_EQ(registry.goalCount(TaskType::Craft), 0U) << "no pending work -> craft hierarchy reaped";
+}
+
 // A harvestable input (something a tree yields) creates only a Harvest goal up front. The Haul
 // that carries the cut material to the station is created lazily on harvest completion, so no
 // speculative haul shows in the task list before there is anything to haul.
