@@ -392,6 +392,17 @@ namespace ecs {
 							if (itemDef == nullptr || !itemDef->capabilities.carryable.has_value()) {
 								continue;
 							}
+							// Only fetch what the pickup can actually lift. The Pickup action clamps to
+							// carry weight (cargoUnitsThatFit); at or over the cap it adds 0, the staged
+							// count never rises, and the AI re-issues this same fetch every tick -- an
+							// infinite "fetch -> collect 0 -> fetch" loop that never completes the craft.
+							// Craft-station deliveries KEEP the staged materials in the pack, so a colonist
+							// gathering a multi-material recipe (or already loaded with other cargo) fills up
+							// and the last material can't be lifted. Skip the fetch when no unit fits; the
+							// craft stays pending until the colonist has room, instead of spinning.
+							if (ecs::cargoUnitsThatFit(inventory, registry, itemDefName) == 0) {
+								continue;
+							}
 
 							float tripDistance = glm::distance(position, looseItem.position) + glm::distance(looseItem.position, goal->destinationPosition);
 

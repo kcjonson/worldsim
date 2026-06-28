@@ -6,6 +6,7 @@
 #include "ActionSystem.h"
 
 #include "../GoalTaskRegistry.h"
+#include "../InventoryMass.h"
 #include "../World.h"
 #include "../components/Action.h"
 #include "../components/DecisionTrace.h"
@@ -1748,6 +1749,92 @@ namespace ecs::test {
 		auto* task = getTask(colonist);
 		ASSERT_NE(task, nullptr);
 		EXPECT_NE(task->type, TaskType::Haul) << "a full storage offers no haul; addableCount is 0";
+	}
+
+	// A craft fetch must not be offered when the colonist is at/over its carry-weight cap: the
+	// Pickup clamps to cargoUnitsThatFit and adds 0, the staged count never rises, and the AI would
+	// otherwise re-issue the identical fetch every tick -- an infinite "fetch -> collect 0 -> fetch"
+	// loop that never completes the craft (observed in-game with an over-loaded colonist). The fetch
+	// branch skips when no unit fits, so the colonist falls through to another task instead of spinning.
+	TEST_F(AIDecisionSystemTest, OverweightColonistOffersNoCraftFetch) {
+		auto& registry = engine::assets::AssetRegistry::Get();
+
+		// The recipe material to fetch: a one-hand carryable RawMaterial.
+		engine::assets::AssetDefinition stoneDef;
+		stoneDef.defName = "SmallStone";
+		stoneDef.label = "Small Stone";
+		stoneDef.handsRequired = 1;
+		stoneDef.category = engine::assets::ItemCategory::RawMaterial;
+		stoneDef.capabilities.carryable = engine::assets::CarryableCapability{1};
+		stoneDef.itemProperties = engine::assets::ItemProperties{};
+		stoneDef.itemProperties->stackSize = 100;
+		stoneDef.itemProperties->massKg = 1.5F;
+		registry.registerTestDefinition(std::move(stoneDef));
+		const uint32_t stoneId = registry.getDefNameId("SmallStone");
+
+		// Heavy ballast UNRELATED to the recipe: the colonist hauled a load of this earlier and the
+		// craft-station deposits keep it in the pack, so it's at the carry cap when the fetch comes up.
+		// It must NOT be the fetched material, or the colonist would just deliver it from inventory.
+		engine::assets::AssetDefinition ballastDef;
+		ballastDef.defName = "Ballast";
+		ballastDef.label = "Ballast";
+		ballastDef.handsRequired = 1;
+		ballastDef.category = engine::assets::ItemCategory::RawMaterial;
+		ballastDef.capabilities.carryable = engine::assets::CarryableCapability{1};
+		ballastDef.itemProperties = engine::assets::ItemProperties{};
+		ballastDef.itemProperties->stackSize = 100;
+		ballastDef.itemProperties->massKg = 1.5F;
+		registry.registerTestDefinition(std::move(ballastDef));
+
+		auto colonist = createColonist({0.0F, 0.0F});
+		setNeedValue(colonist, NeedType::Hunger, 100.0F);
+		setNeedValue(colonist, NeedType::Thirst, 100.0F);
+		setNeedValue(colonist, NeedType::Energy, 100.0F);
+		setNeedValue(colonist, NeedType::Bladder, 100.0F);
+
+		// Load the pack past the carry-weight cap (30 x 1.5 kg = 45 kg > 35 kg) with ballast, so any
+		// further pickup of SmallStone lifts 0.
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		ASSERT_NE(inventory, nullptr);
+		inventory->addItem("Ballast", 30);
+		ASSERT_EQ(ecs::cargoUnitsThatFit(*inventory, registry, "SmallStone"), 0U)
+			<< "precondition: the over-loaded colonist can lift no SmallStone";
+		ASSERT_EQ(ecs::availableQuantity(*inventory, "SmallStone"), 0U)
+			<< "precondition: the colonist holds none of the fetched material (no inventory-source delivery)";
+
+		// A loose SmallStone the colonist remembers (the fetch source).
+		addKnownEntity(colonist, {2.0F, 0.0F}, stoneId, engine::assets::CapabilityType::Carryable);
+
+		// Craft goal needs 2 SmallStone; its child craft-haul goal is Available to fetch.
+		const auto station = world->createEntity();
+		world->addComponent<Position>(station, Position{{4.0F, 0.0F}});
+
+		GoalTask craft;
+		craft.type = TaskType::Craft;
+		craft.owner = GoalOwner::CraftingGoalSystem;
+		craft.destinationEntity = station;
+		craft.destinationPosition = {4.0F, 0.0F};
+		craft.targetAmount = 2;
+		craft.status = GoalStatus::Blocked;
+		const uint64_t craftId = GoalTaskRegistry::Get().createGoal(std::move(craft));
+
+		GoalTask haul;
+		haul.type = TaskType::Haul;
+		haul.owner = GoalOwner::CraftingGoalSystem;
+		haul.destinationEntity = station;
+		haul.destinationPosition = {4.0F, 0.0F};
+		haul.acceptedDefNameIds = {stoneId};
+		haul.targetAmount = 2;
+		haul.parentGoalId = craftId;
+		haul.status = GoalStatus::Available;
+		GoalTaskRegistry::Get().createGoal(std::move(haul));
+
+		world->update(0.016F);
+
+		auto* task = getTask(colonist);
+		ASSERT_NE(task, nullptr);
+		EXPECT_NE(task->type, TaskType::Haul)
+			<< "an over-weight colonist offers no craft fetch; the pickup would lift 0 and loop forever";
 	}
 
 	// --- Off-mesh recovery resolution (colony-origin last-resort fallback) -------
