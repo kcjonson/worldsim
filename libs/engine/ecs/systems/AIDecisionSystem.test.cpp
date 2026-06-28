@@ -1837,6 +1837,89 @@ namespace ecs::test {
 			<< "an over-weight colonist offers no craft fetch; the pickup would lift 0 and loop forever";
 	}
 
+	// A harvest must not be offered when the colonist can't carry the yield: applyCollectionEffect
+	// clamps the take to carry weight AND backpack slots and adds 0 at the cap, so the staged count
+	// never rises. Emitting the option anyway makes the colonist pick the harvest, collect 0
+	// ("Collected 0 of N ... carry-limited"), re-evaluate, and pick the same harvest again -- an
+	// infinite chop-nothing loop (observed in-game as a colonist "stuck harvesting"). The carry gate
+	// skips the option when no unit fits, so the colonist falls through instead of spinning.
+	TEST_F(AIDecisionSystemTest, OverweightColonistOffersNoHarvest) {
+		auto& registry = engine::assets::AssetRegistry::Get();
+
+		// The yield the harvestable produces: a one-hand carryable RawMaterial.
+		engine::assets::AssetDefinition stickDef;
+		stickDef.defName = "Stick";
+		stickDef.label = "Stick";
+		stickDef.handsRequired = 1;
+		stickDef.category = engine::assets::ItemCategory::RawMaterial;
+		stickDef.capabilities.carryable = engine::assets::CarryableCapability{1};
+		stickDef.itemProperties = engine::assets::ItemProperties{};
+		stickDef.itemProperties->stackSize = 100;
+		stickDef.itemProperties->massKg = 1.5F;
+		registry.registerTestDefinition(std::move(stickDef));
+
+		// A tool-less harvestable (a woody bush) whose yield is the Stick above. requiredToolType
+		// empty so the tool gate passes and only the carry gate decides.
+		engine::assets::AssetDefinition bushDef;
+		bushDef.defName = "Flora_WoodyBush";
+		bushDef.label = "Woody Bush";
+		bushDef.capabilities.harvestable = engine::assets::HarvestableCapability{};
+		bushDef.capabilities.harvestable->yieldDefName = "Stick";
+		bushDef.capabilities.harvestable->requiredToolType = "";
+		registry.registerTestDefinition(std::move(bushDef));
+		const uint32_t bushId = registry.getDefNameId("Flora_WoodyBush");
+		const uint32_t stickId = registry.getDefNameId("Stick");
+
+		// Heavy ballast UNRELATED to the yield: the colonist is at its carry cap, so a Stick can't fit.
+		engine::assets::AssetDefinition ballastDef;
+		ballastDef.defName = "Ballast";
+		ballastDef.label = "Ballast";
+		ballastDef.handsRequired = 1;
+		ballastDef.category = engine::assets::ItemCategory::RawMaterial;
+		ballastDef.capabilities.carryable = engine::assets::CarryableCapability{1};
+		ballastDef.itemProperties = engine::assets::ItemProperties{};
+		ballastDef.itemProperties->stackSize = 100;
+		ballastDef.itemProperties->massKg = 1.5F;
+		registry.registerTestDefinition(std::move(ballastDef));
+
+		auto colonist = createColonist({0.0F, 0.0F});
+		setNeedValue(colonist, NeedType::Hunger, 100.0F);
+		setNeedValue(colonist, NeedType::Thirst, 100.0F);
+		setNeedValue(colonist, NeedType::Energy, 100.0F);
+		setNeedValue(colonist, NeedType::Bladder, 100.0F);
+
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		ASSERT_NE(inventory, nullptr);
+		inventory->addItem("Ballast", 30); // 30 x 1.5 kg = 45 kg > 35 kg cap
+		ASSERT_EQ(ecs::cargoUnitsThatFit(*inventory, registry, "Stick"), 0U)
+			<< "precondition: the over-loaded colonist can lift no Stick";
+
+		// The colonist remembers a harvestable bush yielding Stick.
+		addKnownEntity(colonist, {2.0F, 0.0F}, bushId, engine::assets::CapabilityType::Harvestable);
+
+		// A Harvest goal wanting Stick, available.
+		const auto station = world->createEntity();
+		world->addComponent<Position>(station, Position{{4.0F, 0.0F}});
+
+		GoalTask harvest;
+		harvest.type = TaskType::Harvest;
+		harvest.owner = GoalOwner::CraftingGoalSystem;
+		harvest.destinationEntity = station;
+		harvest.destinationPosition = {4.0F, 0.0F};
+		harvest.acceptedDefNameIds = {stickId};
+		harvest.yieldDefNameId = stickId;
+		harvest.targetAmount = 2;
+		harvest.status = GoalStatus::Available;
+		GoalTaskRegistry::Get().createGoal(std::move(harvest));
+
+		world->update(0.016F);
+
+		auto* task = getTask(colonist);
+		ASSERT_NE(task, nullptr);
+		EXPECT_NE(task->type, TaskType::Harvest)
+			<< "an over-weight colonist offers no harvest; the chop would yield 0 and loop forever";
+	}
+
 	// --- Off-mesh recovery resolution (colony-origin last-resort fallback) -------
 	//
 	// The recovery at the top of AIDecisionSystem::update resolves an off-mesh colonist

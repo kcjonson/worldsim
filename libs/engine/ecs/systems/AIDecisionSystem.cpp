@@ -570,6 +570,19 @@ namespace ecs {
 						continue;
 					}
 
+					// Carry gate (mirrors the craft-fetch gate above): the harvest yield must fit.
+					// applyCollectionEffect clamps the take to carry weight AND backpack slots; at
+					// the cap it adds 0. Emitting the option anyway makes a full/over-weight colonist
+					// pick the harvest, collect 0 ("Collected 0 of N ... carry-limited"), re-evaluate,
+					// and pick the same harvest again -- an infinite chop-nothing loop. Skip the
+					// option when no unit fits (no stack/slot headroom and no carry weight), leaving
+					// the harvest for a trip when the colonist has room.
+					const std::string& yieldName = def->capabilities.harvestable->yieldDefName;
+					if (ecs::cargoUnitsThatFit(inventory, registry, yieldName) == 0 ||
+						inventory.addableCount(yieldName) == 0) {
+						continue;
+					}
+
 					// Calculate distance to harvestable
 					float distanceToHarvestable = glm::distance(position, knownEntity.position);
 
