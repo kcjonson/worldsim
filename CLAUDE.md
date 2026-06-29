@@ -397,39 +397,10 @@ See `/docs/development-log/README.md` for the full template.
 
 ## Worktree Management
 
-**IMPORTANT: Never remove worktrees.** They're valuable for future work.
+Worktrees are disposable scratch space, not permanent fixtures. Remove a worktree when the session that created it ends; its branch and commits stay in the repo after removal, so nothing is lost. This goes double for sub-agent worktrees (`isolation: "worktree"`): they are per-agent and should be removed as soon as the agent finishes, never left to accumulate under `.claude/worktrees/`.
 
-### When a PR is Merged
-
-After a worktree's branch has been merged, switch it to a temporary placeholder branch:
-
-```bash
-# From the worktree directory (e.g., /Volumes/Code/worldsim-treeA):
-git checkout -b worldsim-treeA-temp
-
-# Or from main checkout:
-git -C /Volumes/Code/worldsim-treeA checkout -b worldsim-treeA-temp
-```
-
-**Naming convention:** `{worktree-name}-temp` (e.g., `worldsim-treeA-temp`, `worldsim-treeB-temp`)
-
-### Rules for Temp Branches
-
-- **Never push temp branches** - they exist only as local placeholders
-- **Never do work on temp branches** - always create a new feature branch first
-- **Why this exists:** Git doesn't allow multiple worktrees to have the same branch checked out, so we can't have all worktrees on `main`
-
-### Starting New Work in a Worktree
-
-When reusing a worktree for new work:
-
-```bash
-# From the worktree directory:
-git fetch origin
-git checkout -b feature/new-feature-name origin/main
-```
-
-This creates a new feature branch based on latest main, ready for development.
+- Clean up with `git worktree remove <path>`, then `git worktree prune`. It refuses a worktree with uncommitted changes unless you pass `--force`; leave those in place and surface them rather than discarding unsaved work.
+- Removing a worktree keeps its branch. If there's uncommitted work worth saving, commit it to the branch before removing.
 
 ## Plan File Archival
 
