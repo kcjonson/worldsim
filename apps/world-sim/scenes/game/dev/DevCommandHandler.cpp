@@ -225,12 +225,7 @@ namespace world_sim {
 		if (m_ctx.navigation == nullptr) {
 			return true;
 		}
-		std::vector<glm::vec2> poly;
-		poly.reserve(pts.size());
-		for (const auto& p : pts) {
-			poly.emplace_back(p.x, p.y);
-		}
-		if (m_ctx.navigation->isAreaWalkable(poly)) {
+		if (m_ctx.navigation->isAreaWalkable(Foundation::toGlmVec2(pts))) {
 			return true;
 		}
 		LOG_WARNING(Game, "[DevAPI] %s: error: footprint not fully on an active walkable nav mesh, refused", verb);
@@ -242,12 +237,7 @@ namespace world_sim {
 		if (m_ctx.navigation == nullptr) {
 			return true;
 		}
-		std::vector<glm::vec2> chain;
-		chain.reserve(pts.size());
-		for (const auto& p : pts) {
-			chain.emplace_back(p.x, p.y);
-		}
-		if (m_ctx.navigation->isPolylineWalkable(chain)) {
+		if (m_ctx.navigation->isPolylineWalkable(Foundation::toGlmVec2(pts))) {
 			return true;
 		}
 		LOG_WARNING(Game, "[DevAPI] %s: error: chain not fully on an active walkable nav mesh, refused", verb);
@@ -276,18 +266,8 @@ namespace world_sim {
 	}
 
 	ecs::Inventory* DevCommandHandler::nearestStorageInventory(Foundation::Vec2 at) {
-		ecs::Inventory* best = nullptr;
-		float			bestDistSq = 0.0F;
-		for (auto [entity, storage, pos, inventory] : m_ctx.world->view<ecs::StorageConfiguration, ecs::Position, ecs::Inventory>()) {
-			const float dx = pos.value.x - at.x;
-			const float dy = pos.value.y - at.y;
-			const float distSq = dx * dx + dy * dy;
-			if (best == nullptr || distSq < bestDistSq) {
-				best = &inventory;
-				bestDistSq = distSq;
-			}
-		}
-		return best;
+		const ecs::EntityID id = nearestStorageEntity(at);
+		return id == ecs::kInvalidEntity ? nullptr : m_ctx.world->getComponent<ecs::Inventory>(id);
 	}
 
 	ecs::EntityID DevCommandHandler::nearestStorageEntity(Foundation::Vec2 at) {
@@ -675,7 +655,6 @@ namespace world_sim {
 			return;
 		}
 
-		// Parse category (default: RawMaterial)
 		engine::assets::ItemCategory category = engine::assets::ItemCategory::RawMaterial;
 		const std::string			  categoryStr = cmd.param("category", "RawMaterial");
 		if (equalsIgnoreCase(categoryStr, "Food")) {
@@ -687,9 +666,7 @@ namespace world_sim {
 		} else if (equalsIgnoreCase(categoryStr, "None")) {
 			category = engine::assets::ItemCategory::None;
 		}
-		// RawMaterial is the default (already set above)
 
-		// Parse priority (default: Medium)
 		ecs::StoragePriority priority = ecs::StoragePriority::Medium;
 		const std::string	 priorityStr = cmd.param("priority", "Medium");
 		if (equalsIgnoreCase(priorityStr, "Low")) {
@@ -699,7 +676,6 @@ namespace world_sim {
 		} else if (equalsIgnoreCase(priorityStr, "Critical")) {
 			priority = ecs::StoragePriority::Critical;
 		}
-		// Medium is the default (already set above)
 
 		const std::string defName = cmd.param("item", "*");
 		const auto		  minAmount = static_cast<uint32_t>(std::strtol(cmd.param("min", "0").c_str(), nullptr, 10));
@@ -910,6 +886,24 @@ namespace world_sim {
 	}
 
 	void DevCommandHandler::serializeConstruction(std::ostringstream& out) {
+		// Emit a StructureBlueprint's required/delivered material maps + progress (shared by the
+		// foundation and wall serializers, which carry the same material bookkeeping).
+		auto emitMaterialProgress = [](std::ostringstream& os, const ecs::StructureBlueprint& bp) {
+			os << ",\"required\":{";
+			bool firstReq = true;
+			for (const auto& [defName, qty] : bp.required) {
+				os << (firstReq ? "" : ",") << "\"" << jsonEscape(defName) << "\":" << qty;
+				firstReq = false;
+			}
+			os << "},\"delivered\":{";
+			bool firstDel = true;
+			for (const auto& [defName, qty] : bp.delivered) {
+				os << (firstDel ? "" : ",") << "\"" << jsonEscape(defName) << "\":" << qty;
+				firstDel = false;
+			}
+			os << "},\"progress\":" << bp.progress();
+		};
+
 		const auto& cworld = m_ctx.drawing->world();
 		out << "{\"foundations\":[";
 		bool first = true;
@@ -931,19 +925,7 @@ namespace world_sim {
 						case ecs::StructureBlueprint::BuildPhase::Complete: phaseStr = "Complete"; break;
 					}
 					out << ",\"phase\":\"" << phaseStr << "\"";
-					out << ",\"required\":{";
-					bool firstReq = true;
-					for (const auto& [defName, qty] : bp->required) {
-						out << (firstReq ? "" : ",") << "\"" << jsonEscape(defName) << "\":" << qty;
-						firstReq = false;
-					}
-					out << "},\"delivered\":{";
-					bool firstDel = true;
-					for (const auto& [defName, qty] : bp->delivered) {
-						out << (firstDel ? "" : ",") << "\"" << jsonEscape(defName) << "\":" << qty;
-						firstDel = false;
-					}
-					out << "},\"progress\":" << bp->progress();
+					emitMaterialProgress(out, *bp);
 				}
 			}
 
@@ -972,19 +954,7 @@ namespace world_sim {
 			// Material progress from ECS mirror entity's StructureBlueprint
 			if (seg.entity != ecs::kInvalidEntity) {
 				if (const auto* bp = m_ctx.world->getComponent<ecs::StructureBlueprint>(seg.entity)) {
-					out << ",\"required\":{";
-					bool firstReq = true;
-					for (const auto& [defName, qty] : bp->required) {
-						out << (firstReq ? "" : ",") << "\"" << jsonEscape(defName) << "\":" << qty;
-						firstReq = false;
-					}
-					out << "},\"delivered\":{";
-					bool firstDel = true;
-					for (const auto& [defName, qty] : bp->delivered) {
-						out << (firstDel ? "" : ",") << "\"" << jsonEscape(defName) << "\":" << qty;
-						firstDel = false;
-					}
-					out << "},\"progress\":" << bp->progress();
+					emitMaterialProgress(out, *bp);
 				}
 			}
 

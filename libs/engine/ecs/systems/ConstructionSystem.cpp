@@ -1,5 +1,7 @@
 #include "ConstructionSystem.h"
 
+#include "GoalSystemHelpers.h"
+
 #include "../GoalTaskRegistry.h"
 #include "../InventoryMass.h"
 #include "../World.h"
@@ -409,7 +411,7 @@ namespace ecs {
 
 		// One trip's carry weight for this site, shared across all of its materials. Each
 		// material's per-trip unit count is then this weight divided by that material's mass.
-		const float carryCapacityKg = colonistCarryCapacityKg();
+		const float carryCapacityKg = colonistCarryCapacityKg(world);
 
 		for (const auto& [defName, requiredQty] : blueprint.required) {
 			const uint32_t remaining = blueprint.remaining(defName);
@@ -518,18 +520,6 @@ namespace ecs {
 			total += inventory.getQuantity(defName);
 		}
 		return total;
-	}
-
-	float ConstructionSystem::colonistCarryCapacityKg() const {
-		// Largest carry weight among colonists: how much one of them can haul in one trip. A
-		// max (not a sum or the first hit) keeps this independent of view iteration order, so
-		// the harvest-demand bound stays deterministic. Falls back to the colonist default if
-		// no colonist exists yet (headless/unit context).
-		float capacity = 0.0F;
-		for (auto [entity, needs, inventory] : world->view<NeedsComponent, Inventory>()) {
-			capacity = std::max(capacity, inventory.carryCapacityKg);
-		}
-		return capacity > 0.0F ? capacity : Inventory::createForColonist().carryCapacityKg;
 	}
 
 	uint64_t ConstructionSystem::ensureUmbrellaGoal(EntityID blueprintEntity, const StructureBlueprint& blueprint, GoalStatus status) {

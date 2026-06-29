@@ -205,10 +205,11 @@ namespace ecs {
 					const auto* goal = goalRegistry.getGoal(task.haulGoalId);
 					// Retire signal depends on the goal kind:
 					//  - A stocking carry-in (StorageGoalSystem haul WITH a chainId) is a one-shot
-					//    delivery of a single chopped armful: it's done the moment it deposits, exactly
-					//    like a craft/construction inventory haul. StorageGoalSystem re-emits a fresh
-					//    Harvest next tick if the box still wants more, so leaving it would just strand
-					//    an empty (carried==0) goal.
+					//    delivery of a single chopped armful: done once it actually deposits (added > 0),
+					//    like a craft/construction inventory haul. If the box bounced the whole load
+					//    (added == 0, a race against another deposit filling it), the goal stays live and
+					//    re-drives to the box rather than stranding the wood in hand. StorageGoalSystem
+					//    re-emits a fresh Harvest next tick if the box still wants more.
 					//  - A normal storage haul's targetAmount is a slot count and its deliveredAmount
 					//    sums across item types, so availableCapacity() is the wrong "done" signal -- it
 					//    would retire after a single stack. Retire it on the storage's LIVE state
@@ -218,7 +219,7 @@ namespace ecs {
 					bool done = false;
 					if (goal != nullptr) {
 						if (goal->owner == GoalOwner::StorageGoalSystem) {
-							done = goal->chainId.has_value() ? true : !storageInv->hasSpace();
+							done = goal->chainId.has_value() ? (added > 0) : !storageInv->hasSpace();
 						} else {
 							done = goal->availableCapacity() == 0;
 						}
@@ -629,7 +630,7 @@ namespace ecs {
 		// A held one-hand tool blocks a two-hand armful (both hands needed). Move it out of the way
 		// (belt -> pack -> drop). The drop is per-unit loose items, matching clearHandItem's one-hand
 		// drop; a tool is quantity 1, so this is a single dropped axe at the colonist's feet.
-		ecs::stowHeldToolsToFreeHands(
+		ecs::stowHeldOneHandItemsToFreeHands(
 			inventory,
 			engine::assets::AssetRegistry::Get(),
 			[this, dropPosition](const std::string& defName, uint32_t count) {

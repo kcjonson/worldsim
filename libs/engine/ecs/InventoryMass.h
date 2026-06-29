@@ -207,11 +207,11 @@ namespace ecs {
 	/// two-hand armful. Stow order per slot: belt (if a slot is free) -> pack (by weight) -> drop.
 	/// A two-hand item already in the hands (an existing armful mirrored across both hands) is left
 	/// alone -- it can't be stowed anywhere, and a fresh two-hand pickup grows it rather than needing
-	/// free hands. Tools (an axe) stay valid for the harvest tool-check once belted/packed, so the
-	/// colonist keeps working after stowing. `onDrop(defName, count)` performs the loose-ground drop
+	/// free hands. A stowed tool (an axe) stays valid for the harvest tool-check once belted/packed, so
+	/// the colonist keeps working after stowing. `onDrop(defName, count)` performs the loose-ground drop
 	/// for whatever neither the belt nor the pack can take.
 	template <typename DropFn>
-	inline void stowHeldToolsToFreeHands(Inventory& inv, const engine::assets::AssetRegistry& registry, DropFn&& onDrop) {
+	inline void stowHeldOneHandItemsToFreeHands(Inventory& inv, const engine::assets::AssetRegistry& registry, DropFn&& onDrop) {
 		auto stowOne = [&](std::optional<ItemStack>& hand) {
 			if (!hand.has_value()) {
 				return;

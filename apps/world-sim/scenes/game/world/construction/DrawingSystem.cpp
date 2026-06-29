@@ -163,11 +163,7 @@ namespace world_sim {
 		if (navigation_ == nullptr) {
 			return true;
 		}
-		std::vector<glm::vec2> world;
-		world.reserve(pts.size());
-		for (const auto& p : pts) {
-			world.emplace_back(p.x, p.y);
-		}
+		const std::vector<glm::vec2> world = Foundation::toGlmVec2(pts);
 		const bool ok = (activeTool_ == ToolKind::Wall) ? navigation_->isPolylineWalkable(world) : navigation_->isAreaWalkable(world);
 		if (ok) {
 			return true;

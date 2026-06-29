@@ -1,11 +1,11 @@
 #include "StorageGoalSystem.h"
 
+#include "GoalSystemHelpers.h"
+
 #include "../GoalTaskRegistry.h"
 #include "../InventoryMass.h"
 #include "../World.h"
-#include "../components/Colonist.h"
 #include "../components/Inventory.h"
-#include "../components/Memory.h"
 #include "../components/StorageConfiguration.h"
 #include "../components/Transform.h"
 
@@ -27,28 +27,6 @@ namespace ecs {
 			return nextChainId++;
 		}
 
-		// Does any colonist remember a harvestable whose yield is this item (e.g. a tree for Wood)?
-		// Colony "availability" = the union of colonist memories (no god-view); mirrors
-		// CraftingGoalSystem's check of the same name. A goal created from this is still only
-		// fulfilled by a colonist that actually remembers the source.
-		bool colonyKnowsHarvestableSource(World* world, const engine::assets::AssetRegistry& reg, uint32_t yieldDefNameId) {
-			for (auto [colonist, memory] : world->view<Memory>()) {
-				(void)colonist;
-				for (uint64_t key : memory.getEntitiesWithCapability(engine::assets::CapabilityType::Harvestable)) {
-					const KnownWorldEntity* known = memory.getWorldEntity(key);
-					if (known == nullptr) {
-						continue;
-					}
-					const auto& srcDefName = reg.getDefName(known->defNameId);
-					const auto* srcDef = reg.getDefinition(srcDefName);
-					if (srcDef != nullptr && srcDef->capabilities.harvestable.has_value() &&
-						reg.getDefNameId(srcDef->capabilities.harvestable->yieldDefName) == yieldDefNameId) {
-						return true;
-					}
-				}
-			}
-			return false;
-		}
 	} // namespace
 
 	void StorageGoalSystem::update(float /*deltaTime*/) {
@@ -75,19 +53,8 @@ namespace ecs {
 
 		activeGoalCount = 0;
 
-		// One trip's carry budget for sizing stocking harvests: the largest carry weight among
-		// colonists (a max, not a sum or first-hit, so it's independent of view iteration order and
-		// stays deterministic). Falls back to the colonist default in a headless/unit context with
-		// no colonists yet. Mirrors ConstructionSystem::colonistCarryCapacityKg.
-		float maxColonistCarryKg = 0.0F;
-		for (auto [colonistEntity, colonist, inv] : world->view<Colonist, Inventory>()) {
-			(void)colonistEntity;
-			(void)colonist;
-			maxColonistCarryKg = std::max(maxColonistCarryKg, inv.carryCapacityKg);
-		}
-		if (maxColonistCarryKg <= 0.0F) {
-			maxColonistCarryKg = Inventory::createForColonist().carryCapacityKg;
-		}
+		// One trip's carry budget for sizing stocking harvests (shared with the other goal systems).
+		const float maxColonistCarryKg = colonistCarryCapacityKg(world);
 
 		// Cascade-remove a storage's umbrella Haul goal AND its stocking children (Harvest goals
 		// and the carry-in Hauls they spawn hang off the umbrella as children). A plain
@@ -172,7 +139,7 @@ namespace ecs {
 				goal.owner = GoalOwner::StorageGoalSystem;
 				goal.destinationEntity = entity;
 				goal.destinationPosition = position.value;
-				goal.destinationDefNameId = 0; // Could be set from storage's defName if available
+				goal.destinationDefNameId = 0;
 				goal.acceptedDefNameIds = acceptedDefNameIds;
 				goal.acceptedCategory = primaryCategory;
 				goal.targetAmount = availableSlots;
@@ -215,15 +182,17 @@ namespace ecs {
 		// What stocking work is already in flight for this box, per item: a Harvest child being cut,
 		// or a carry-in Haul child (chainId'd) carrying the cut yield in. Either means "this item is
 		// being stocked right now" -- don't emit a duplicate Harvest for it.
-		std::unordered_set<uint32_t> itemsBeingStocked;
+		// A box stocks only a handful of distinct items; a small vector with a linear scan beats a
+		// per-tick heap-allocating set.
+		std::vector<uint32_t> itemsBeingStocked;
 		for (const auto* child : registry.getChildGoals(umbrellaId)) {
 			if (child == nullptr) {
 				continue;
 			}
 			if (child->type == TaskType::Harvest && child->yieldDefNameId != 0) {
-				itemsBeingStocked.insert(child->yieldDefNameId);
+				itemsBeingStocked.push_back(child->yieldDefNameId);
 			} else if (child->type == TaskType::Haul && child->chainId.has_value() && !child->acceptedDefNameIds.empty()) {
-				itemsBeingStocked.insert(child->acceptedDefNameIds.front());
+				itemsBeingStocked.push_back(child->acceptedDefNameIds.front());
 			}
 		}
 
@@ -242,7 +211,7 @@ namespace ecs {
 			if (itemDefNameId == 0) {
 				continue; // unknown item
 			}
-			if (itemsBeingStocked.count(itemDefNameId) != 0) {
+			if (std::find(itemsBeingStocked.begin(), itemsBeingStocked.end(), itemDefNameId) != itemsBeingStocked.end()) {
 				continue; // already harvesting / carrying this item in
 			}
 

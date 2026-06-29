@@ -201,6 +201,8 @@ namespace world_sim {
 		/// freestanding); when `built`, the created segments flip to Built so they
 		/// enclose rooms immediately. Reconciles segment entities once. Returns the
 		/// number of segments created.
+		/// Precondition: callers must nav-validate the chain first (the dev verb does
+		/// via requireWalkableChain); this bypasses the on-mesh check.
 		int devCommitWalls(
 			const std::vector<Foundation::Vec2>& pts,
 			const std::string&					 material,

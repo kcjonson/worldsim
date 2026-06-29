@@ -1,5 +1,7 @@
 #include "CraftingGoalSystem.h"
 
+#include "GoalSystemHelpers.h"
+
 #include "../GoalTaskRegistry.h"
 #include "../InventoryMass.h"
 #include "../World.h"
@@ -90,26 +92,6 @@ namespace ecs {
 				(void)colonist;
 				if (ecs::availableQuantity(inventory, itemDefName) > 0) {
 					return true;
-				}
-			}
-			return false;
-		}
-
-		// Does any colonist remember a harvestable whose yield is this item (e.g. a tree for Wood)?
-		bool colonyKnowsHarvestableSource(World* world, const engine::assets::AssetRegistry& reg, uint32_t yieldDefNameId) {
-			for (auto [colonist, memory] : world->view<Memory>()) {
-				(void)colonist;
-				for (uint64_t key : memory.getEntitiesWithCapability(engine::assets::CapabilityType::Harvestable)) {
-					const KnownWorldEntity* known = memory.getWorldEntity(key);
-					if (known == nullptr) {
-						continue;
-					}
-					const auto& srcDefName = reg.getDefName(known->defNameId);
-					const auto* srcDef = reg.getDefinition(srcDefName);
-					if (srcDef != nullptr && srcDef->capabilities.harvestable.has_value() &&
-						reg.getDefNameId(srcDef->capabilities.harvestable->yieldDefName) == yieldDefNameId) {
-						return true;
-					}
 				}
 			}
 			return false;

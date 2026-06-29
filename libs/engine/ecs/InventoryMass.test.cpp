@@ -297,7 +297,7 @@ TEST_F(GiveItemCascadeTest, OverweightColonist_OutputDropsEntirely) {
 }
 
 // ============================================================================
-// stowHeldToolsToFreeHands: move a held one-hand tool out of the hands (belt ->
+// stowHeldOneHandItemsToFreeHands: move a held one-hand tool out of the hands (belt ->
 // pack -> drop) so both hands are free for a two-hand armful. Reuses the cascade
 // fixture's Axe (one-hand tool) and Brick (heavy one-hand cargo).
 // ============================================================================
@@ -307,7 +307,7 @@ TEST_F(GiveItemCascadeTest, StowHeldTool_GoesToBeltFirst) {
 	auto&	  reg = engine::assets::AssetRegistry::Get();
 	inv.rightHand = ItemStack{"Axe", 1};
 	DropLog drops;
-	stowHeldToolsToFreeHands(inv, reg, std::ref(drops));
+	stowHeldOneHandItemsToFreeHands(inv, reg, std::ref(drops));
 	EXPECT_TRUE(inv.hasHandsFree(2)) << "Both hands freed for an armful";
 	EXPECT_TRUE(inv.belt[0].has_value() && inv.belt[0]->defName == "Axe") << "Axe parked on the belt";
 	EXPECT_EQ(drops.total, 0U);
@@ -320,7 +320,7 @@ TEST_F(GiveItemCascadeTest, StowHeldTool_BeltFull_FallsBackToPack) {
 	inv.belt[0] = ItemStack{"Axe", 1};
 	inv.belt[1] = ItemStack{"Axe", 1}; // belt full
 	DropLog drops;
-	stowHeldToolsToFreeHands(inv, reg, std::ref(drops));
+	stowHeldOneHandItemsToFreeHands(inv, reg, std::ref(drops));
 	EXPECT_TRUE(inv.hasHandsFree(2));
 	EXPECT_EQ(inv.getQuantity("Axe"), 1U) << "Belt full -> tool stowed to the pack";
 	EXPECT_EQ(drops.total, 0U);
@@ -334,7 +334,7 @@ TEST_F(GiveItemCascadeTest, StowHeldTool_NoRoomAnywhere_Drops) {
 	inv.belt[0] = ItemStack{"Axe", 1};
 	inv.belt[1] = ItemStack{"Axe", 1}; // belt full
 	DropLog drops;
-	stowHeldToolsToFreeHands(inv, reg, std::ref(drops));
+	stowHeldOneHandItemsToFreeHands(inv, reg, std::ref(drops));
 	EXPECT_TRUE(inv.hasHandsFree(2)) << "Hand freed even when the tool had to be dropped";
 	EXPECT_EQ(drops.total, 1U) << "Nowhere to stow -> dropped on the ground";
 }
@@ -354,7 +354,7 @@ TEST_F(GiveItemCascadeTest, StowHeldTool_TwoHandArmfulLeftAlone) {
 	inv.leftHand = ItemStack{"BulkLog", 5};
 	inv.rightHand = ItemStack{"BulkLog", 5}; // a mirrored two-hand armful
 	DropLog drops;
-	stowHeldToolsToFreeHands(inv, reg, std::ref(drops));
+	stowHeldOneHandItemsToFreeHands(inv, reg, std::ref(drops));
 	// A two-hand armful can't be stowed and isn't in its own way; it stays put.
 	EXPECT_EQ(handHeldQuantity(inv, "BulkLog"), 5U) << "Two-hand armful untouched";
 	EXPECT_EQ(drops.total, 0U);

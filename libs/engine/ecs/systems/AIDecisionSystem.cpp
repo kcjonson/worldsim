@@ -861,8 +861,10 @@ namespace ecs {
 					// collision band. The bare nearest-walkable point sits on the walkable-face
 					// edge, inside the band, so WallCollisionSystem would shove the colonist back
 					// off-mesh and the two would oscillate forever (the colonist-wall-trap bug).
-					const float recoverRadius =
-						(world->getComponent<AgentRadius>(entity) != nullptr) ? world->getComponent<AgentRadius>(entity)->radiusMeters : 0.3F;
+					float recoverRadius = 0.3F;
+					if (const auto* ar = world->getComponent<AgentRadius>(entity)) {
+						recoverRadius = ar->radiusMeters;
+					}
 					const auto snapped = m_navSystem->nearestPathablePoint(position.value, recoverRadius);
 					// Permanent stranded-recovery diagnostic (DEBUG, gated to the off-mesh branch):
 					// records the snap decision for the colonist-freeze bug class. Keep on cleanup.
@@ -1542,6 +1544,9 @@ namespace ecs {
 				// nullopt means the target is outside every active sim region (off-area): drop the
 				// option to NoSource so the colonist prefers a reachable nearby source and never
 				// commits to an off-area target it would hold on forever.
+				// The snap nudge stays within HarvestActions' kPositionTolerance (0.5 m) of the target,
+				// so the colonist still registers "at source" on arrival. (The arbitration epic's
+				// locate-by-entity supersedes this position-based snap.)
 				const auto snapped = m_navSystem->nearestPathablePoint(option.targetPosition.value());
 				if (!snapped.has_value()) {
 					option.status = OptionStatus::NoSource; // off every active region: don't commit
