@@ -44,6 +44,10 @@ namespace engine::assets {
 	struct OpeningTypeDef;
 }
 
+namespace ecs {
+	class NavigationSystem;
+}
+
 namespace world_sim {
 
 	/// Drawing tool state. Idle when no tool is on; Drawing while collecting
@@ -96,6 +100,7 @@ namespace world_sim {
 		struct Args {
 			ecs::World*					world;
 			engine::world::WorldCamera* camera;
+			ecs::NavigationSystem*		navigation; // world-position validity (isValidPosition); same predicate as the dev verbs
 			Callbacks					callbacks;
 		};
 
@@ -215,6 +220,23 @@ namespace world_sim {
 		devCommitOpening(engine::construction::SegmentId segment, float t, const std::string& openingType, bool built);
 
 	  private:
+		// --- Nav-mesh placement validity (shared by foundation + wall + opening) ---
+
+		/// Whether `p` (world meters) sits on a walkable nav face -- the ONE runtime
+		/// placement predicate (NavigationSystem::isValidPosition), the same gate the
+		/// /api/dev foundation/walls verbs use. No world/terrain/water reads here. When
+		/// no nav system is wired (headless/test) validity is owned elsewhere; mirror the
+		/// dev verbs' permissive fallback and treat the point as on-mesh.
+		[[nodiscard]] bool pointOnMesh(Foundation::Vec2 p) const;
+
+		/// True when the WHOLE footprint of `pts` is on the walkable nav mesh: the foundation
+		/// polygon's area (interior + edges) via NavigationSystem::isAreaWalkable, or the wall
+		/// chain's centerline via isPolylineWalkable (selected by the active tool) -- the SAME
+		/// shared predicate the /api/dev verbs use. A footprint that spans water between on-land
+		/// corners, or clips a water hole, fails. On failure toasts "Can't build here" and
+		/// returns false so the caller commits NOTHING -- no partial structure on water.
+		[[nodiscard]] bool requireAllOnMesh(const std::vector<Foundation::Vec2>& pts, const char* what);
+
 		// --- Foundation tool ---
 
 		/// Quantize, commit, and spawn the foundation blueprint entity. Surfaces
@@ -305,6 +327,7 @@ namespace world_sim {
 
 		ecs::World*					ecsWorld_ = nullptr;
 		engine::world::WorldCamera* camera_ = nullptr;
+		ecs::NavigationSystem*		navigation_ = nullptr;
 		Callbacks					callbacks_;
 
 		engine::construction::ConstructionWorld constructionWorld_;
@@ -322,6 +345,12 @@ namespace world_sim {
 		// whose closed ring is valid). Recomputed every move; drives the closing-halo
 		// feedback and suppresses the invalid highlight.
 		bool willClose_ = false;
+
+		// True when the snapped cursor is off the walkable nav mesh (on water / no active
+		// mesh). Recomputed every move for the foundation + wall tools; drives the red
+		// invalid preview so the player sees they can't place there BEFORE committing. The
+		// commit gate re-checks every vertex regardless, so this is feedback only.
+		bool cursorOffMesh_ = false;
 
 		// Wall chain host: the foundation the first chain point landed on. Every
 		// segment of the chain hosts here; a later point leaving it is rejected.

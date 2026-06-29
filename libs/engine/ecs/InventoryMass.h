@@ -203,6 +203,46 @@ namespace ecs {
 		return lifted;
 	}
 
+	/// Stow any ONE-hand items held in the hands out of the way so both hands are free for a
+	/// two-hand armful. Stow order per slot: belt (if a slot is free) -> pack (by weight) -> drop.
+	/// A two-hand item already in the hands (an existing armful mirrored across both hands) is left
+	/// alone -- it can't be stowed anywhere, and a fresh two-hand pickup grows it rather than needing
+	/// free hands. Tools (an axe) stay valid for the harvest tool-check once belted/packed, so the
+	/// colonist keeps working after stowing. `onDrop(defName, count)` performs the loose-ground drop
+	/// for whatever neither the belt nor the pack can take.
+	template <typename DropFn>
+	inline void stowHeldToolsToFreeHands(Inventory& inv, const engine::assets::AssetRegistry& registry, DropFn&& onDrop) {
+		auto stowOne = [&](std::optional<ItemStack>& hand) {
+			if (!hand.has_value()) {
+				return;
+			}
+			const std::string defName  = hand->defName;
+			const uint32_t	  quantity = hand->quantity;
+			// A two-hand item occupies both hands as one mirrored stack; it can't go to belt/pack and
+			// must not be dropped here (it's not in the way of itself). Leave it for addArmful to grow.
+			if (ecs::itemIsTwoHand(registry, defName)) {
+				return;
+			}
+			// 1. Belt: one one-hand item per slot, quantity 1 (the common held-tool case).
+			if (quantity == 1 && inv.stowToBelt(defName)) {
+				hand.reset();
+				return;
+			}
+			// 2. Pack: weight-respecting, only as many units as fit under the cargo cap.
+			const uint32_t fits	 = ecs::cargoUnitsThatFit(inv, registry, defName);
+			const uint32_t toPack = std::min(quantity, fits);
+			const uint32_t packed = toPack > 0 ? inv.addItem(defName, toPack) : 0U;
+			// 3. Ground: whatever the belt and pack couldn't take drops at the colonist's feet.
+			const uint32_t dropped = quantity - packed;
+			if (dropped > 0) {
+				onDrop(defName, dropped);
+			}
+			hand.reset();
+		};
+		stowOne(inv.leftHand);
+		stowOne(inv.rightHand);
+	}
+
 	/// Canonical "give an item to a colonist" cascade, weight-respecting at every step.
 	/// A fresh output (a crafted tool, a gift) lands somewhere sensible instead of being
 	/// force-stuffed into one slot. Seating order for a ONE-hand item:

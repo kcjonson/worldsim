@@ -128,6 +128,9 @@ namespace {
 				m_processedChunks = std::move(preloadedState->processedChunks);
 				m_spawnPosition = preloadedState->spawnPosition;
 				m_colony = preloadedState->colony;
+				m_planet = std::move(preloadedState->planet);
+				m_landingLatDeg = preloadedState->landingLatDeg;
+				m_landingLonDeg = preloadedState->landingLonDeg;
 
 				LOG_INFO(Game, "Pre-loaded state: %zu chunks, %zu processed", m_chunkManager->loadedChunkCount(), m_processedChunks.size());
 			} else {
@@ -312,6 +315,7 @@ namespace {
 			m_drawingSystem = std::make_unique<world_sim::DrawingSystem>(world_sim::DrawingSystem::Args{
 				.world = ecsWorld.get(),
 				.camera = m_camera.get(),
+				.navigation = &ecsWorld->getSystem<ecs::NavigationSystem>(),
 				.callbacks = {
 					.onToolActive = [this](bool /*active*/) {
 						// Visibility is driven by the per-frame status push in update().
@@ -496,6 +500,9 @@ namespace {
 				.ui = gameUI.get(),
 				.chunks = m_chunkManager.get(),
 				.navigation = &ecsWorld->getSystem<ecs::NavigationSystem>(),
+				.planet = m_planet,
+				.landingLatDeg = m_landingLatDeg,
+				.landingLonDeg = m_landingLonDeg,
 				.spawnColonist = [this](glm::vec2 pos, const std::string& name) { return spawnColonist(pos, name); },
 			});
 
@@ -1683,6 +1690,11 @@ namespace {
 		std::unique_ptr<engine::world::ChunkManager>	   m_chunkManager;
 		std::unique_ptr<engine::world::WorldCamera>		   m_camera;
 		glm::vec2										   m_spawnPosition{0.0F, 0.0F};
+		// Planet forwarded from GameWorldState for the /api/state?what=landing readback.
+		// Null when running in mock-world mode (no preloaded planet).
+		std::shared_ptr<const worldgen::GeneratedWorld>    m_planet;
+		double                                             m_landingLatDeg = 0.0;
+		double                                             m_landingLonDeg = 0.0;
 		// The colony: home anchor for the session. Single source of truth for the colony
 		// origin (the cleared, on-mesh clearing center), set once at landing. Read by the
 		// camera-home sync and pushed to AIDecisionSystem for the off-mesh recovery snap.

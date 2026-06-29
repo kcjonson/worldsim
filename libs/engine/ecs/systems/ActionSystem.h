@@ -98,6 +98,7 @@ private:
 
 	/// Start an action based on the task's need type
 	void startAction(
+		EntityID entity,
 		struct Task& task,
 		struct Action& action,
 		const struct Position& position,
@@ -201,8 +202,12 @@ private:
 	/// Memory is mutable so a vanished pickup target can be forgotten.
 	/// Inventory decides phase: a standard haul deposits only once it actually carries the
 	/// item, otherwise it picks up first (position alone is ambiguous when source and target
-	/// sit within arrival tolerance of each other).
+	/// sit within arrival tolerance of each other). A colonist that arrives at the source
+	/// already carrying the item (at carry cap, or holding leftover stock the option routed
+	/// back to the source) is redirected to the deposit leg from here, which is why this needs
+	/// the entity to re-point its MovementTarget/NavPath.
 	void startHaulAction(
+		EntityID entity,
 		struct Task& task,
 		struct Action& action,
 		const struct Position& position,
@@ -225,6 +230,15 @@ private:
 	/// @param inventory Colonist's inventory to modify
 	/// @param dropPosition Position to drop items that can't be stowed
 	void clearHandsForTwoHandedPickup(
+		struct Inventory& inventory,
+		glm::vec2 dropPosition
+	);
+
+	/// Stow any held ONE-hand tool out of the hands (belt -> pack -> drop) so both hands are free
+	/// for a two-hand armful (wood). Called just before lifting an armful at harvest/haul time so a
+	/// crafted axe in hand doesn't block the pickup. A one-hand tool the belt/pack can't take is
+	/// dropped loose at `dropPosition` via m_onDropItem. A two-hand item already held is left alone.
+	void stowHeldToolsForArmful(
 		struct Inventory& inventory,
 		glm::vec2 dropPosition
 	);

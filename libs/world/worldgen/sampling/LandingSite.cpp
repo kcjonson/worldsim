@@ -7,6 +7,7 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <optional>
 
 namespace worldgen {
 
@@ -173,7 +174,8 @@ Habitability rateHabitability(const GeneratedWorld& world, TileId tile, WaterCla
     return Habitability::Harsh;
 }
 
-LatLon findDefaultLandingSite(const GeneratedWorld& world) {
+LatLon findDefaultLandingSite(const GeneratedWorld& world,
+                              std::optional<Biome> preferredBiome) {
     constexpr uint32_t kRequiredFields =
         static_cast<uint32_t>(WorldField::Elevation) |
         static_cast<uint32_t>(WorldField::Flags);
@@ -185,6 +187,13 @@ LatLon findDefaultLandingSite(const GeneratedWorld& world) {
     }
 
     constexpr double kMaxPreferredLatDeg = 45.0;
+    // Bonus added to the score of any tile whose biome matches preferredBiome.
+    // Value 5 is decisive: it exceeds the full habitability spread (+4 to -4 = 8)
+    // with enough margin that even a Harsh preferred-biome tile beats an Easy
+    // non-preferred tile on the same water tier. A same-tier preferred tile wins
+    // by 5 points vs. any non-preferred tile, and degrades gracefully (best
+    // preferred tile, else best green tile) when no preferred tile exists.
+    constexpr int kBiomeBias = 5;
 
     const SphereGrid& grid = *world.grid;
     const uint32_t tileCount = grid.tileCount();
@@ -215,8 +224,12 @@ LatLon findDefaultLandingSite(const GeneratedWorld& world) {
         if (haveBiome && !isPreferredLandingBiome(static_cast<Biome>(world.data.biome[t]))) continue;
 
         const WaterClass wc = classifyWater(world, t);
-        const int score = waterScore(world, t, wc) +
-                          habitabilityScore(rateHabitability(world, t, wc));
+        int score = waterScore(world, t, wc) +
+                    habitabilityScore(rateHabitability(world, t, wc));
+        if (preferredBiome.has_value() && haveBiome &&
+                static_cast<Biome>(world.data.biome[t]) == *preferredBiome) {
+            score += kBiomeBias;
+        }
         if (score > bestScore) {
             bestScore = score;
             best = t;

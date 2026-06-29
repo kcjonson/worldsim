@@ -16,6 +16,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -36,6 +37,9 @@ namespace engine::world {
 namespace engine::construction {
 	using FoundationId = std::uint64_t;
 }
+namespace worldgen {
+	struct GeneratedWorld;
+}
 
 namespace world_sim {
 
@@ -55,6 +59,13 @@ namespace world_sim {
 		world_sim::GameUI*			 ui = nullptr;
 		engine::world::ChunkManager* chunks = nullptr;
 		ecs::NavigationSystem*		 navigation = nullptr; // world-position validity (isValidPosition)
+
+		// Planet used for the current session; populated from GameStartConfig. Used by
+		// serializeLanding (/api/state?what=landing) for biome + water readback. May be
+		// null for test/fallback sessions that have no planet (readback degrades gracefully).
+		std::shared_ptr<const worldgen::GeneratedWorld> planet;
+		double landingLatDeg = 0.0;
+		double landingLonDeg = 0.0;
 
 		std::function<ecs::EntityID(glm::vec2, const std::string&)> spawnColonist;
 	};
@@ -87,16 +98,32 @@ namespace world_sim {
 		void devWalls(const Foundation::DevCommand& cmd);
 		void devOpening(const Foundation::DevCommand& cmd);
 		void devCraft(const Foundation::DevCommand& cmd);
+		void devStorage(const Foundation::DevCommand& cmd);
 
 		// --- world-position validity (single gate for every placing/moving verb) ---
 		// True when `at` is on an active walkable nav face. On false, logs+toasts the
 		// refusal in the standard rejection style and the caller creates/moves NOTHING.
 		bool requireValidPosition(Foundation::Vec2 at, const char* verb);
 
+		// True when the WHOLE foundation footprint (the closed polygon `pts`: vertices,
+		// edges, AND interior) sits on walkable nav mesh -- NavigationSystem::isAreaWalkable,
+		// the same shared predicate the UI build tool uses. A footprint whose corners are on
+		// land but that spans a river, or whose edge/interior clips a water hole, is refused
+		// so no partial-on-water structure is stamped. On rejection logs+toasts and returns
+		// false; the caller creates NOTHING.
+		bool requireWalkableArea(const std::vector<Foundation::Vec2>& pts, const char* verb);
+
+		// True when the WHOLE wall chain `pts` lies on walkable nav mesh -- every consecutive
+		// segment's endpoints AND its centerline samples (NavigationSystem::isPolylineWalkable,
+		// the shared linear predicate). A segment that bridges water between two on-land points
+		// is refused. On rejection logs+toasts and returns false; the caller creates NOTHING.
+		bool requireWalkableChain(const std::vector<Foundation::Vec2>& pts, const char* verb);
+
 		// --- entity lookup / spawn helpers ---
 		ecs::EntityID	nearestColonist(Foundation::Vec2 at);
 		ecs::Inventory* nearestColonistInventory(Foundation::Vec2 at);
 		ecs::Inventory* nearestStorageInventory(Foundation::Vec2 at);
+		ecs::EntityID	nearestStorageEntity(Foundation::Vec2 at);
 		ecs::EntityID	spawnFoundationBlueprintEntity(
 			  engine::construction::FoundationId id, const std::vector<Foundation::Vec2>& pts, const std::string& material
 		  );
@@ -105,7 +132,9 @@ namespace world_sim {
 		void serializeColonists(std::ostringstream& out);
 		void serializeConstruction(std::ostringstream& out);
 		void serializeStations(std::ostringstream& out);
+		void serializeStorage(std::ostringstream& out);
 		void serializeTime(std::ostringstream& out);
+		void serializeLanding(std::ostringstream& out);
 		void serializeSummary(std::ostringstream& out);
 
 		// --- pure parsing helpers ---

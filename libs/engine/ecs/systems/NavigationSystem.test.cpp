@@ -893,6 +893,67 @@ TEST_F(NavigationSystemTest, InAreaPlacementCompletionTriggersRebuild) {
 		<< "the newly-placed in-area flora must change the mesh triangulation";
 }
 
+// A destructive harvest fells a tree: it is removed from the live chunk index, which leaves
+// the chunk membership and construction version UNCHANGED. The placement removal epoch is the
+// only signal that the in-area obstacle set shrank, so it must drive the rebuild -- otherwise
+// the felled trunk's hole lingers in the mesh and that tile never becomes walkable again.
+TEST_F(NavigationSystemTest, InAreaEntityRemovalTriggersRebuildAndReclaimsHole) {
+	AssetRegistry&	reg = AssetRegistry::Get();
+	AssetDefinition tree;
+	tree.defName					 = "Test_NavFellTree";
+	tree.collision.type				 = CollisionShapeType::Rect;
+	tree.collision.halfExtentsMeters = {0.4F, 0.4F};
+	reg.registerTestDefinition(tree);
+
+	// Start WITH the tree placed and its chunk processed, so the first mesh carves the trunk.
+	PlacementExecutor					executor(reg);
+	std::unordered_set<ChunkCoordinate> processed;
+	const glm::vec2						treeAt{10.0F, 10.0F};
+	const ChunkCoordinate				coord = engine::world::worldToChunk({treeAt.x, treeAt.y});
+	{
+		SpatialIndex index;
+		PlacedEntity pe;
+		pe.defName	= "Test_NavFellTree";
+		pe.position = treeAt;
+		index.insert(pe);
+		engine::assets::AsyncChunkPlacementResult result;
+		result.coord		= coord;
+		result.spatialIndex = std::move(index);
+		executor.storeChunkResult(std::move(result));
+		processed.insert(coord);
+	}
+
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys);
+	sys.setPlacementData(&executor, &processed);
+	sys.setConstructionWorld(&cw);
+
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "initial navmesh never built";
+	const std::uint64_t gen1		 = sys.generation();
+	const std::size_t	triWithTree	 = firstMesh(sys).triangles.size();
+
+	// Fell the tree: remove it from the index. Chunk stays processed, construction version is
+	// unchanged -- the removal epoch is the sole trigger for the rebuild.
+	ASSERT_TRUE(executor.removeEntity(coord, treeAt, "Test_NavFellTree")) << "tree must be removed from the index";
+
+	bool rebuilt = false;
+	for (int i = 0; i < 500 && !rebuilt; ++i) {
+		sys.update(0.0F);
+		rebuilt = sys.generation() != gen1;
+		std::this_thread::sleep_for(std::chrono::milliseconds(2));
+	}
+	ASSERT_TRUE(rebuilt) << "an in-area entity removal must trigger a rebuild (reclaim the trunk hole)";
+	EXPECT_GT(sys.generation(), gen1) << "generation must bump on the removal-driven rebuild";
+	// Hole reclaimed: the mesh with the tree gone differs from the mesh with it carved in.
+	EXPECT_NE(firstMesh(sys).triangles.size(), triWithTree)
+		<< "felling the in-area flora must change the mesh triangulation (the trunk hole is reclaimed)";
+
+	// The felled tree's footprint is now walkable ground (locate succeeds + terrain-traversable).
+	EXPECT_TRUE(sys.isOnMesh(treeAt)) << "the felled tree's tile must become walkable after the rebuild";
+}
+
 // --- Phase C: query LOD seam (inSimArea + isReachable off-area policy) -------
 //
 // inSimArea returns true for a point inside the BUILT area, false for a point
@@ -977,6 +1038,106 @@ TEST_F(NavigationSystemTest, IsValidPositionTrueOnWalkableFaceFalseOnWaterAndOff
 	const glm::vec2 offMesh{500.0F, 500.0F};
 	ASSERT_FALSE(sys.inSimArea(offMesh)) << "the far point must be outside every region";
 	EXPECT_FALSE(sys.isValidPosition(offMesh)) << "a point off every region must be invalid";
+}
+
+// --- Whole-footprint walkability: isAreaWalkable / isSegmentWalkable -------------
+//
+// Vertex-only validity is insufficient: a footprint can have every corner on land yet
+// span water, or fully enclose a water pond. These predicates sample edges + interior
+// (isAreaWalkable) or the centerline (isSegmentWalkable) so any off-mesh part rejects.
+// All use the WaterPatchSampler's 16 m water square at world ~[32,48) on both axes.
+
+namespace {
+	// Set up a system over the water-patch world + a 60 m origin region with a built mesh.
+	// Returns the ChunkManager the caller must keep alive for the system's lifetime.
+	std::unique_ptr<engine::world::ChunkManager> wireWaterPatch(NavigationSystem& sys, ConstructionWorld& cw) {
+		auto chunks = std::make_unique<engine::world::ChunkManager>(std::make_unique<WaterPatchSampler>());
+		chunks->setLoadRadius(2);
+		chunks->setUnloadRadius(4);
+		chunks->update({0.0F, 0.0F});
+		chunks->finishPendingGeneration();
+		sys.setChunkManager(chunks.get());
+		// 60 m region at origin (clamped to 64), exactly as the existing water-patch test
+		// wires it: covers the origin land AND the [32,48] water square. (Viewport center/
+		// half in meters; mirrors NavigationSystemTest::pushArea, inlined for a free helper.)
+		sys.setViewportRect(glm::vec2{0.0F, 0.0F}, glm::vec2{60.0F, 60.0F});
+		sys.setConstructionWorld(&cw);
+		return chunks;
+	}
+} // namespace
+
+TEST_F(NavigationSystemTest, IsAreaWalkableTrueWhenWhollyOnLand) {
+	ConstructionWorld cw;
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	auto chunks = wireWaterPatch(sys, cw);
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+
+	// A 4 m square wholly on land (well clear of the [32,48] water patch).
+	const std::vector<glm::vec2> onLand{{4.0F, 4.0F}, {8.0F, 4.0F}, {8.0F, 8.0F}, {4.0F, 8.0F}};
+	for (const auto& v : onLand) {
+		ASSERT_TRUE(sys.isValidPosition(v)) << "each corner must be on walkable land for the test premise";
+	}
+	EXPECT_TRUE(sys.isAreaWalkable(onLand)) << "a footprint wholly on land must be walkable";
+}
+
+TEST_F(NavigationSystemTest, IsAreaWalkableFalseWhenFootprintSpansWater) {
+	ConstructionWorld cw;
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	auto chunks = wireWaterPatch(sys, cw);
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+
+	// Corners straddle the water square horizontally: x=28 and x=52 are LAND (outside
+	// [32,48]), but the footprint's middle (and its top/bottom edges) crosses the water.
+	// Vertex-only validation would WRONGLY accept this; the edge samples catch the water.
+	const std::vector<glm::vec2> spanning{{28.0F, 38.0F}, {52.0F, 38.0F}, {52.0F, 42.0F}, {28.0F, 42.0F}};
+	ASSERT_TRUE(sys.isValidPosition(spanning[0])) << "left corners must be on land (premise)";
+	ASSERT_TRUE(sys.isValidPosition(spanning[1])) << "right corners must be on land (premise)";
+	ASSERT_FALSE(sys.isValidPosition({40.0F, 40.0F})) << "the span's middle must be water (premise)";
+	EXPECT_FALSE(sys.isAreaWalkable(spanning)) << "a footprint spanning water must be rejected";
+}
+
+TEST_F(NavigationSystemTest, IsAreaWalkableFalseWhenFootprintEnclosesWaterPond) {
+	ConstructionWorld cw;
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	auto chunks = wireWaterPatch(sys, cw);
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+
+	// A big square whose corners AND edges are all on land but that fully encloses the
+	// [32,48] water square. Only the INTERIOR grid sampling can catch this -- the edge
+	// pass alone would pass. Corners at 28 and 52 are land; edges run along y=28/y=52 and
+	// x=28/x=52, all outside the water square.
+	const std::vector<glm::vec2> enclosing{{28.0F, 28.0F}, {52.0F, 28.0F}, {52.0F, 52.0F}, {28.0F, 52.0F}};
+	for (const auto& v : enclosing) {
+		ASSERT_TRUE(sys.isValidPosition(v)) << "each corner must be on land (premise)";
+	}
+	ASSERT_FALSE(sys.isValidPosition({40.0F, 40.0F})) << "the enclosed center must be water (premise)";
+	EXPECT_FALSE(sys.isAreaWalkable(enclosing)) << "a footprint enclosing a water pond must be rejected";
+}
+
+TEST_F(NavigationSystemTest, IsSegmentAndPolylineWalkableCatchWaterCrossing) {
+	ConstructionWorld cw;
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	auto chunks = wireWaterPatch(sys, cw);
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+
+	// A wall segment fully on land is walkable.
+	EXPECT_TRUE(sys.isSegmentWalkable({4.0F, 4.0F}, {8.0F, 4.0F})) << "an all-land segment must be walkable";
+
+	// A segment whose endpoints are land (x=28, x=52) but that crosses the water square
+	// is rejected: the centerline samples land inside the water.
+	EXPECT_FALSE(sys.isSegmentWalkable({28.0F, 40.0F}, {52.0F, 40.0F})) << "a segment crossing water must be rejected";
+
+	// A chain with one good segment and one water-crossing segment is rejected as a whole.
+	const std::vector<glm::vec2> chain{{4.0F, 4.0F}, {8.0F, 4.0F}, {28.0F, 40.0F}, {52.0F, 40.0F}};
+	EXPECT_FALSE(sys.isPolylineWalkable(chain)) << "a chain with any water-crossing segment must be rejected";
+
+	// An all-land chain passes.
+	const std::vector<glm::vec2> landChain{{4.0F, 4.0F}, {8.0F, 4.0F}, {8.0F, 8.0F}};
+	EXPECT_TRUE(sys.isPolylineWalkable(landChain)) << "an all-land chain must be walkable";
 }
 
 // Before any mesh is built nothing is placeable: isValidPosition is false everywhere.
@@ -1208,6 +1369,48 @@ TEST_F(NavigationSystemTest, OffMeshColonistSnappedOntoMesh) {
 	ASSERT_NE(pos, nullptr);
 	EXPECT_NE(pos->value, offMesh) << "recovery must move the in-region off-mesh colonist";
 	EXPECT_TRUE(nav.isOnMesh(pos->value)) << "the colonist must land on a walkable mesh face";
+}
+
+// Band-aware recovery snap: the radius overload of nearestPathablePoint must return a
+// point that clears the BUILT-wall collision band (the same halfThickness + radius
+// WallCollisionSystem enforces). This is the colonist-wall-trap fix. A recovered point
+// that sits inside the band is the one WallCollisionSystem ejects, and if that ejection
+// lands off-mesh (a region edge or an adjacent carve), the snap and the push oscillate
+// forever. The fix guarantees the recovered point is OUTSIDE the band, so the safety-net
+// has nothing left to move.
+TEST_F(NavigationSystemTest, RecoverySnapClearsWallCollisionBand) {
+	ConstructionWorld cw;
+	// One built Wood/Standard wall along the x-axis (centerline y=0). halfThickness 0.10 m;
+	// for a 0.30 m agent the collision clearance is 0.40 m from the centerline.
+	buildWall(cw, {0, 0}, {4000, 0});
+
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys);
+	sys.setConstructionWorld(&cw);
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+
+	const float kWallHalfThickness = 0.10F; // Wood/Standard, from materials.xml
+	const float kClearance		   = kWallHalfThickness + kAgentRadius; // 0.40 m
+
+	auto distToWall = [](glm::vec2 p) {
+		// The wall centerline is the segment y=0, x in [0,4]; x stays in range here, so the
+		// distance to it is just |y|.
+		return std::abs(p.y);
+	};
+
+	// A query point right beside the wall, INSIDE the collision band (0.15 m from centerline
+	// < 0.40 m clearance). nearestPathablePoint(.,radius) must move it clear of the band.
+	const glm::vec2 nearWall{2.0F, 0.15F};
+	const std::optional<glm::vec2> clearSnap = sys.nearestPathablePoint(nearWall, kAgentRadius);
+	ASSERT_TRUE(clearSnap.has_value()) << "recovery must find a walkable point beside the wall";
+	EXPECT_TRUE(sys.isOnMesh(*clearSnap)) << "the recovered point must be on a walkable face";
+	EXPECT_GE(distToWall(*clearSnap), kClearance)
+		<< "band-aware snap landed inside the wall collision band at " << clearSnap->x << "," << clearSnap->y;
+
+	// The point fed in is itself inside the band: prove the call actually had to move it out,
+	// i.e. the clearance is what the overload guarantees (not an accident of the input).
+	EXPECT_LT(distToWall(nearWall), kClearance) << "test setup: the input point should start inside the band";
 }
 
 // Recovery GATE: a colonist that NO region covers is left exactly where it stands. The

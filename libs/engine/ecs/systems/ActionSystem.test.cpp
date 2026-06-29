@@ -1089,6 +1089,119 @@ TEST_F(ActionSystemGoalTest, LooseFetchPicksUpWhenSourceOverlapsStation) {
 }
 
 // =============================================================================
+// Regression (loose-pile haul DEADLOCK): a colonist arrives at a loose-item SOURCE pile while
+// ALREADY carrying that same two-hand item (a Wood armful at carry cap, left over from
+// over-chopping for a foundation). The source and the storage box are far apart, so it is
+// atSource && !atTarget while carrying. The old phase logic handled only (!carrying && atSource)
+// and (carrying && atTarget); this state fell to the else, logged "Haul started but not at
+// source or target position", cleared the action to None, and the AI re-routed it straight back
+// to the source -- a hard deadlock (action stuck None, box never fills). The fix redirects to the
+// deposit leg at ACTION time (reading the real carry state, not the option-build-time armful
+// churn): re-point the task at the box, Moving, MovementTarget re-armed, chain advanced. The
+// colonist then walks the carried wood to the box and deposits it.
+TEST_F(ActionSystemGoalTest, CarryingAtSourceRedirectsToDepositInsteadOfDeadlock) {
+	// Wood: two-hand bulk material, rides in the hands (never the pack).
+	engine::assets::AssetDefinition woodDef;
+	woodDef.defName = "Wood";
+	woodDef.label = "Wood";
+	woodDef.handsRequired = 2;
+	woodDef.category = engine::assets::ItemCategory::RawMaterial;
+	woodDef.itemProperties = engine::assets::ItemProperties{};
+	woodDef.itemProperties->stackSize = 40;
+	woodDef.itemProperties->massKg = 2.5F;
+	engine::assets::AssetRegistry::Get().registerTestDefinition(std::move(woodDef));
+
+	auto& registry = GoalTaskRegistry::Get();
+	// Source pile and the storage box are far apart: the colonist is at the source, NOT the box.
+	const glm::vec2 sourcePos{1.0F, 1.0F};
+	const glm::vec2 boxPos{20.0F, 20.0F};
+
+	// A storage box: an Inventory store with NO WorkQueue (a plain container, not a station).
+	const EntityID box = world->createEntity();
+	world->addComponent<Position>(box, Position{boxPos});
+	world->addComponent<Inventory>(box, Inventory::createForStorage());
+
+	// An ordinary storage Haul goal (StorageGoalSystem, no chainId) wanting Wood in the box.
+	GoalTask haul;
+	haul.type = TaskType::Haul;
+	haul.owner = GoalOwner::StorageGoalSystem;
+	haul.destinationEntity = box;
+	haul.destinationPosition = boxPos;
+	haul.acceptedDefNameIds = {engine::assets::AssetRegistry::Get().getDefNameId("Wood")};
+	haul.targetAmount = 10;
+	haul.status = GoalStatus::Available;
+	const uint64_t haulId = registry.createGoal(std::move(haul));
+
+	// Colonist standing ON the loose Wood pile, already carrying a Wood armful in its hands
+	// (the leftover from chopping -- simulating the at-carry-cap state).
+	auto  colonist = createColonist(sourcePos);
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	const uint32_t carried = ecs::addArmful(*inventory, engine::assets::AssetRegistry::Get(), "Wood", 14);
+	ASSERT_GT(carried, 0U) << "Colonist must actually be holding a Wood armful for this repro";
+	ASSERT_TRUE(inventory->isHolding("Wood"));
+
+	// A loose Wood pile entity at the source (so a naive pickup path would 'see' a source).
+	auto pile = world->createEntity();
+	world->addComponent<Position>(pile, Position{sourcePos});
+	world->addComponent<Appearance>(pile, Appearance{"Wood", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+
+	// The haul task is on its pickup leg: target == source, not from inventory.
+	auto* task = world->getComponent<Task>(colonist);
+	task->type = TaskType::Haul;
+	task->state = TaskState::Arrived;
+	task->haulGoalId = haulId;
+	task->haulItemDefName = "Wood";
+	task->haulQuantity = 10;
+	task->haulSourcePosition = sourcePos;
+	task->haulTargetStorageId = static_cast<uint64_t>(box);
+	task->haulTargetPosition = boxPos;
+	task->haulFromInventory = false;
+	task->targetPosition = sourcePos; // arrived at the source while carrying
+	task->chainStep = 0;
+
+	world->update(0.1F); // startHaulAction runs: carrying && atSource && !atTarget
+
+	// The action must NOT be left stuck at None: the colonist redirects to the deposit leg.
+	auto* action = world->getComponent<Action>(colonist);
+	ASSERT_NE(action, nullptr);
+	EXPECT_FALSE(action->isActive())
+		<< "No deposit action yet (not at the box), but it must not be a Pickup/Deposit at the source";
+	EXPECT_NE(action->type, ActionType::Pickup) << "Carrying at cap -- it cannot pick up more, it must deliver";
+
+	// Task re-pointed at the box and re-armed to move there (the chain-leg handoff).
+	EXPECT_EQ(task->state, TaskState::Moving) << "Redirected to drive to the box, not stalled";
+	EXPECT_FLOAT_EQ(task->targetPosition.x, boxPos.x);
+	EXPECT_FLOAT_EQ(task->targetPosition.y, boxPos.y);
+	EXPECT_EQ(task->chainStep, 1U) << "Chain advanced toward the deposit leg";
+
+	auto* movement = world->getComponent<MovementTarget>(colonist);
+	ASSERT_NE(movement, nullptr);
+	EXPECT_TRUE(movement->active) << "Movement re-armed toward the box";
+	EXPECT_FLOAT_EQ(movement->target.x, boxPos.x);
+	EXPECT_FLOAT_EQ(movement->target.y, boxPos.y);
+
+	// --- Drive it home: arrive at the box, the carried wood deposits, the box fills. ---
+	world->getComponent<Position>(colonist)->value = boxPos;
+	task->state = TaskState::Arrived;
+	action->clear();
+
+	world->update(0.1F); // start Deposit
+	world->update(2.0F); // complete (Deposit duration 1s)
+
+	// The deposit moves haulQuantity (10) of the carried wood into the box -- the deadlock is
+	// resolved and the box fills. The colonist keeps the remainder of its armful (14 - 10 = 4),
+	// which it carries off to deposit on the next trip; the point is that wood reached the box
+	// instead of the colonist spinning forever at the source.
+	auto* boxStore = world->getComponent<Inventory>(box);
+	ASSERT_NE(boxStore, nullptr);
+	EXPECT_EQ(boxStore->getQuantity("Wood"), 10U)
+		<< "The carried wood landed in the box (deadlock resolved, box fills)";
+	EXPECT_GT(boxStore->getQuantity("Wood"), 0U) << "Box received wood -- no longer stuck empty";
+	EXPECT_EQ(ecs::handHeldQuantity(*inventory, "Wood"), carried - 10U)
+		<< "Colonist keeps the armful remainder beyond the haul quantity";
+}
+
+// =============================================================================
 // Tree felling: a two-hand bulk material (Wood) destructive harvest
 // =============================================================================
 // Felling is one destructive action. The colonist takes a weight-limited armful
@@ -1204,6 +1317,81 @@ TEST_F(FellingTest, HandsFullStillDropsWholeYieldAndRemovesTree) {
 	EXPECT_EQ(dropCalls, 1) << "Whole yield dropped as a pile";
 	EXPECT_EQ(lastDropQty, 30U) << "added == 0, so all 30 drop";
 	EXPECT_EQ(removeCalls, 1) << "Tree removed despite full hands";
+}
+
+// Combined-flow blocker: a colonist who CRAFTS an axe gets it seated in a HAND. When he then
+// fells a tree (two-hand Wood armful), the held axe must be stowed (belt -> pack -> drop) so the
+// wood goes INTO the hands instead of all dropping for want of a free hand. Belt has a free slot,
+// so the axe lands there; both hands fill with the armful; the axe stays valid for the next chop.
+TEST_F(FellingTest, HeldAxeStowedToBeltFreeingHandsForWoodArmful) {
+	// An Axe: a ONE-hand tool. Tools don't count as cargo weight and are stowable to the belt.
+	engine::assets::AssetDefinition axeDef;
+	axeDef.defName = "Axe";
+	axeDef.label = "Axe";
+	axeDef.handsRequired = 1;
+	axeDef.category = engine::assets::ItemCategory::Tool;
+	axeDef.toolType = "Axe";
+	axeDef.itemProperties = engine::assets::ItemProperties{};
+	axeDef.itemProperties->stackSize = 1;
+	axeDef.itemProperties->massKg = 1.5F;
+	engine::assets::AssetRegistry::Get().registerTestDefinition(std::move(axeDef));
+
+	auto  colonist = createColonist({1.0F, 1.0F});
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	// Simulate the crafted axe seated in a hand (giveItemToColonist's hand-first cascade).
+	inventory->rightHand = ItemStack{"Axe", 1};
+	ASSERT_TRUE(inventory->isHolding("Axe"));
+	ASSERT_FALSE(inventory->hasHandsFree(2)) << "Axe in hand: only one hand free, an armful would otherwise drop";
+
+	fell(colonist, 30);
+
+	// The axe was stowed to the belt (a slot was free), freeing both hands for the wood.
+	EXPECT_TRUE(inventory->belt[0].has_value() && inventory->belt[0]->defName == "Axe")
+		<< "Held axe stowed to the belt to free the hands";
+	EXPECT_FALSE(inventory->isHolding("Axe")) << "Axe no longer in a hand";
+
+	// Both hands now carry the wood armful (14 units, the 35 kg cap), not zero.
+	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 14U) << "Wood went INTO the hands (axe was out of the way)";
+	EXPECT_EQ(inventory->getQuantity("Wood"), 0U) << "Wood never enters the backpack";
+
+	// The remainder dropped as a loose pile, and the tree fell -- the normal felling outcome.
+	EXPECT_EQ(dropCalls, 1) << "16-unit remainder dropped once";
+	EXPECT_EQ(lastDropDef, "Wood");
+	EXPECT_EQ(lastDropQty, 16U) << "30 yield - 14 carried = 16";
+	EXPECT_EQ(removeCalls, 1) << "Tree felled in one action";
+
+	// The axe stays valid for the harvest tool-check from the belt, so the colonist keeps chopping.
+	EXPECT_TRUE(ecs::inventoryHoldsToolType(*inventory, engine::assets::AssetRegistry::Get(), "Axe"))
+		<< "Belted axe still satisfies the chop tool-check";
+}
+
+// Stow fallback: hands hold an axe but the belt is already FULL (both slots). The axe can't be
+// belted, so it falls back to the pack, still freeing the hands for the wood armful.
+TEST_F(FellingTest, HeldAxeFallsBackToPackWhenBeltFull) {
+	engine::assets::AssetDefinition axeDef;
+	axeDef.defName = "Axe";
+	axeDef.label = "Axe";
+	axeDef.handsRequired = 1;
+	axeDef.category = engine::assets::ItemCategory::Tool;
+	axeDef.toolType = "Axe";
+	axeDef.itemProperties = engine::assets::ItemProperties{};
+	axeDef.itemProperties->stackSize = 1;
+	axeDef.itemProperties->massKg = 1.5F;
+	engine::assets::AssetRegistry::Get().registerTestDefinition(std::move(axeDef));
+
+	auto  colonist = createColonist({1.0F, 1.0F});
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	inventory->rightHand = ItemStack{"Axe", 1};
+	// Fill both belt slots with junk one-hand items so the axe has nowhere to belt.
+	inventory->belt[0] = ItemStack{"Filler", 1};
+	inventory->belt[1] = ItemStack{"Filler", 1};
+
+	fell(colonist, 30);
+
+	EXPECT_EQ(inventory->getQuantity("Axe"), 1U) << "Belt full -> axe stowed to the pack instead";
+	EXPECT_FALSE(inventory->isHolding("Axe"));
+	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 14U) << "Hands freed -> wood armful lifted";
+	EXPECT_EQ(removeCalls, 1) << "Tree felled";
 }
 
 // Regression: a wood-carrying colonist tasked with a PlacePackaged (no empty-hands

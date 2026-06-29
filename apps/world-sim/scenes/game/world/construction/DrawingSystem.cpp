@@ -8,6 +8,7 @@
 #include <ecs/components/StructureBlueprint.h>
 #include <ecs/components/StructureHealth.h>
 #include <ecs/components/Transform.h>
+#include <ecs/systems/NavigationSystem.h>
 #include <offset/WallOffset.h>
 #include <predicates/Predicates.h>
 #include <primitives/Primitives.h>
@@ -142,7 +143,40 @@ namespace world_sim {
 	DrawingSystem::DrawingSystem(const Args& args)
 		: ecsWorld_(args.world),
 		  camera_(args.camera),
+		  navigation_(args.navigation),
 		  callbacks_(args.callbacks) {}
+
+	bool DrawingSystem::pointOnMesh(Foundation::Vec2 p) const {
+		// The ONE runtime placement predicate: isValidPosition (== isOnMesh). No nav system
+		// wired (headless/test) -> validity is owned elsewhere; mirror the dev verbs' permissive
+		// fallback so the tools still work in that build.
+		if (navigation_ == nullptr) {
+			return true;
+		}
+		return navigation_->isValidPosition({p.x, p.y});
+	}
+
+	bool DrawingSystem::requireAllOnMesh(const std::vector<Foundation::Vec2>& pts, const char* what) {
+		// Whole-footprint walkability through the shared NavigationSystem predicate -- the SAME
+		// gate the /api/dev verbs use. Foundations check the closed polygon area (interior + edges),
+		// walls the chain centerline. One off-mesh part refuses the whole placement (commit nothing).
+		if (navigation_ == nullptr) {
+			return true;
+		}
+		std::vector<glm::vec2> world;
+		world.reserve(pts.size());
+		for (const auto& p : pts) {
+			world.emplace_back(p.x, p.y);
+		}
+		const bool ok = (activeTool_ == ToolKind::Wall) ? navigation_->isPolylineWalkable(world) : navigation_->isAreaWalkable(world);
+		if (ok) {
+			return true;
+		}
+		if (callbacks_.onToast) {
+			callbacks_.onToast("Can't build here", std::string(what) + ": not on walkable ground");
+		}
+		return false;
+	}
 
 	void DrawingSystem::activateFoundationTool() {
 		state_ = DrawingState::Drawing;
@@ -151,6 +185,7 @@ namespace world_sim {
 		lastSnap_ = {};
 		lastValidation_ = {};
 		willClose_ = false;
+		cursorOffMesh_ = false;
 		wallHost_ = ec::kInvalidFoundation;
 		if (callbacks_.onToolActive) {
 			callbacks_.onToolActive(true);
@@ -165,6 +200,7 @@ namespace world_sim {
 		lastSnap_ = {};
 		lastValidation_ = {};
 		willClose_ = false;
+		cursorOffMesh_ = false;
 		wallHost_ = ec::kInvalidFoundation;
 		if (callbacks_.onToolActive) {
 			callbacks_.onToolActive(true);
@@ -180,6 +216,7 @@ namespace world_sim {
 		lastSnap_ = {};
 		lastValidation_ = {};
 		willClose_ = false;
+		cursorOffMesh_ = false;
 		wallHost_ = ec::kInvalidFoundation;
 		openingSnap_ = {};
 		openingValidation_ = {};
@@ -195,6 +232,7 @@ namespace world_sim {
 		lastSnap_ = {};
 		lastValidation_ = {};
 		willClose_ = false;
+		cursorOffMesh_ = false;
 		wallHost_ = ec::kInvalidFoundation;
 		openingSnap_ = {};
 		openingValidation_ = {};
@@ -230,6 +268,10 @@ namespace world_sim {
 
 		ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
 		lastValidation_ = validator.validatePoint(points_, cursor_);
+
+		// Live nav feedback: is the snapped cursor itself off the walkable mesh? Drives the
+		// red preview (see render). The commit gate re-checks the whole footprint regardless.
+		cursorOffMesh_ = !pointOnMesh(cursor_);
 
 		// "Snap not block": with a closeable shape, a click near the start that would
 		// otherwise be rejected closes instead of erroring -- but only when the closed
@@ -279,6 +321,16 @@ namespace world_sim {
 				callbacks_.onToast("Invalid point", ec::validationReason(lastValidation_.code));
 			}
 			return true; // consumed: the click was a deliberate (rejected) action
+		}
+
+		// Nav gate: refuse a vertex that lands off the walkable mesh (on water) before it
+		// enters the ring. The whole-footprint re-check on commit (requireAllOnMesh) still
+		// catches an edge or interior that crosses water between two on-mesh vertices.
+		if (cursorOffMesh_) {
+			if (callbacks_.onToast) {
+				callbacks_.onToast("Can't build here", "foundation: not on walkable ground");
+			}
+			return true;
 		}
 
 		points_.push_back(cursor_);
@@ -349,7 +401,8 @@ namespace world_sim {
 		}
 		points_.pop_back();
 		lastValidation_ = {};
-		willClose_ = false; // recomputed on the next move; don't leave a stale closing halo
+		willClose_ = false;	   // recomputed on the next move; don't leave a stale closing halo
+		cursorOffMesh_ = false; // recomputed on the next move
 		if (points_.empty()) {
 			// The chain's host is determined by its first point; once empty, the next
 			// first click re-picks it.
@@ -400,6 +453,12 @@ namespace world_sim {
 			if (callbacks_.onToast) {
 				callbacks_.onToast("Cannot close", ec::validationReason(result.code));
 			}
+			return;
+		}
+
+		// The whole footprint must sit on walkable ground (interior + edges, not just the
+		// vertices). Refuse a foundation that spans water or clips an off-mesh hole.
+		if (!requireAllOnMesh(points_, "foundation")) {
 			return;
 		}
 
@@ -512,6 +571,10 @@ namespace world_sim {
 		lastSnap_ = snap.snapWall(points_, world, freeform, halfThick, UserSettings::Get().alignSnapToExistingFoundations);
 		cursor_ = lastSnap_.point;
 
+		// Live nav feedback for the wall rubber-band: off-mesh cursor reads red (see
+		// renderWallChainPreview). The commit gate re-checks the whole chain regardless.
+		cursorOffMesh_ = !pointOnMesh(cursor_);
+
 		if (preset == nullptr) {
 			lastValidation_ = {};
 			return;
@@ -543,6 +606,16 @@ namespace world_sim {
 		// edge fill (design: Edge Fill).
 		if (ctrl) {
 			tryEdgeFill(world);
+			return true;
+		}
+
+		// Nav gate: refuse a point that lands off the walkable mesh (on water) before it
+		// enters the chain, with clear feedback. The whole-chain re-check on commit still
+		// catches a segment that bridges water between two on-mesh points.
+		if (cursorOffMesh_) {
+			if (callbacks_.onToast) {
+				callbacks_.onToast("Can't build here", "wall: not on walkable ground");
+			}
 			return true;
 		}
 
@@ -583,6 +656,15 @@ namespace world_sim {
 	void DrawingSystem::commitWallChain() {
 		const auto* preset = activePreset();
 		if (preset == nullptr || points_.size() < 2) {
+			points_.clear();
+			wallHost_ = ec::kInvalidFoundation;
+			lastValidation_ = {};
+			return;
+		}
+
+		// The whole chain centerline must sit on walkable ground. One off-mesh segment
+		// (e.g. one that bridges water) refuses the WHOLE chain so nothing is stamped.
+		if (!requireAllOnMesh(points_, "wall")) {
 			points_.clear();
 			wallHost_ = ec::kInvalidFoundation;
 			lastValidation_ = {};
@@ -735,6 +817,12 @@ namespace world_sim {
 		// "Alignment"). Adjacent edge fills share each corner exactly, joining cleanly.
 		const Foundation::Vec2 bestA = ec::outerFaceFlushCorner(ring, bestEdge, preset->halfThicknessMm);
 		const Foundation::Vec2 bestB = ec::outerFaceFlushCorner(ring, (bestEdge + 1) % n, preset->halfThicknessMm);
+
+		// Edge fill bypasses the chain-commit gate, so apply the same whole-centerline nav
+		// check here: the inset corners must lie on walkable ground (one shared predicate).
+		if (!requireAllOnMesh({bestA, bestB}, "wall")) {
+			return false;
+		}
 
 		auto&					  registry = ConstructionRegistry::Get();
 		ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
@@ -1105,8 +1193,8 @@ namespace world_sim {
 
 		if (activeTool_ == ToolKind::Wall) {
 			s.thicknessPreset = activeThicknessPreset_;
-			s.valid = lastValidation_.ok();
-			s.message = ec::validationReason(lastValidation_.code);
+			s.valid = lastValidation_.ok() && !cursorOffMesh_;
+			s.message = cursorOffMesh_ ? "not on walkable ground" : ec::validationReason(lastValidation_.code);
 
 			// Length of the committed chain so far, plus the live rubber-band segment.
 			auto dist = [](Foundation::Vec2 a, Foundation::Vec2 b) -> float {
@@ -1134,13 +1222,15 @@ namespace world_sim {
 			return s;
 		}
 
-		// Foundation: area preview only meaningful once a closeable shape exists.
+		// Foundation: area preview only meaningful once a closeable shape exists. The live
+		// off-mesh cursor flag folds into validity (same cheap signal the red preview uses);
+		// the authoritative whole-footprint walkability check runs at commit.
 		if (points_.size() >= 3) {
 			auto&					  registry = ConstructionRegistry::Get();
 			ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
 			const auto				  ring = validator.validateRing(points_);
-			s.valid = ring.ok();
-			s.message = ec::validationReason(ring.code);
+			s.valid = ring.ok() && !cursorOffMesh_;
+			s.message = cursorOffMesh_ ? "not on walkable ground" : ec::validationReason(ring.code);
 			// Recompute area regardless of validity so the readout tracks the shape.
 			geometry::Ring quantized;
 			quantized.reserve(points_.size());
@@ -1149,8 +1239,8 @@ namespace world_sim {
 			}
 			s.areaSquareMeters = static_cast<float>(std::abs(geometry::signedAreaSquareMeters(quantized)));
 		} else {
-			s.valid = lastValidation_.ok();
-			s.message = ec::validationReason(lastValidation_.code);
+			s.valid = lastValidation_.ok() && !cursorOffMesh_;
+			s.message = cursorOffMesh_ ? "not on walkable ground" : ec::validationReason(lastValidation_.code);
 		}
 		return s;
 	}
@@ -1294,7 +1384,10 @@ namespace world_sim {
 			return;
 		}
 
-		const bool				valid = lastValidation_.ok();
+		// Off-mesh cursor (on water) reads as invalid just like a geometry violation, so the
+		// rubber-band + fill turn red before the player commits. The closing case keeps its
+		// own (willClose_) green halo treatment below.
+		const bool				valid = lastValidation_.ok() && !cursorOffMesh_;
 		const Foundation::Color okColor = UI::status_ok;	 // green
 		const Foundation::Color badColor = UI::status_crit; // red
 		const Foundation::Color lineColor = valid ? okColor : badColor;
@@ -1408,17 +1501,31 @@ namespace world_sim {
 			});
 		}
 
-		// Red highlight on the offending edge/vertex when invalid -- but not when the
-		// click will close (willClose_: the explicit origin snap, or the near-start
-		// rescue of a would-be-blocked vertex). A pending close reads as "closing", not
-		// "error".
-		if (!valid && !willClose_ && !screen.empty()) {
+		// Red highlight on the offending PLACED vertex/edge when a geometry constraint is
+		// violated -- but not when the click will close (willClose_: the explicit origin
+		// snap, or the near-start rescue). A pending close reads as "closing", not "error".
+		// Gated on the geometry result (not `valid`) because lastValidation_.vertexIndex
+		// only indexes a placed vertex; the off-mesh case is signalled at the cursor below.
+		if (!lastValidation_.ok() && !willClose_ && !screen.empty()) {
 			const std::size_t vi = std::min(lastValidation_.vertexIndex, screen.size() - 1);
 			Renderer::Primitives::drawCircle({
 				.center = screen[vi],
 				.radius = ps.invalidVertexRadiusPx,
 				.style = {.fill = {badColor.r, badColor.g, badColor.b, 0.5F}},
 				.id = "drawing_invalid_vertex",
+				.zIndex = 905,
+			});
+		}
+
+		// Off-mesh cursor (on water): a red dot AT the cursor so the player sees the exact
+		// point that can't be placed. Distinct from the geometry-violation highlight above,
+		// which marks a placed vertex. Suppressed on a pending close (reads as "closing").
+		if (cursorOffMesh_ && !willClose_) {
+			Renderer::Primitives::drawCircle({
+				.center = toScreen(cursor_),
+				.radius = ps.invalidVertexRadiusPx,
+				.style = {.fill = {badColor.r, badColor.g, badColor.b, 0.5F}},
+				.id = "drawing_offmesh_cursor",
 				.zIndex = 905,
 			});
 		}
@@ -1965,7 +2072,9 @@ namespace world_sim {
 			return camera_->worldToScreen(w.x, w.y, viewportW, viewportH, kPixelsPerMeter);
 		};
 
-		const bool				valid = lastValidation_.ok();
+		// Off-mesh cursor (on water) reads as invalid like a geometry violation: the
+		// rubber-band band + centerline turn red before the player commits.
+		const bool				valid = lastValidation_.ok() && !cursorOffMesh_;
 		const Foundation::Color okColor = UI::status_ok;	 // green
 		const Foundation::Color badColor = UI::status_crit; // red
 

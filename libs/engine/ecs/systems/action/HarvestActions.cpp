@@ -108,6 +108,9 @@ namespace ecs {
 			// takes all it can carry, because a far harvest spot shouldn't strand cut resources.
 			const uint32_t requested = std::min(collEff.quantity, pile.stack->quantity);
 			if (ecs::itemIsTwoHand(harvestRegistry, collEff.itemDefName)) {
+				// A two-hand armful needs both hands; stow any held one-hand tool (belt -> pack -> drop)
+				// so an axe in hand doesn't block the lift.
+				stowHeldToolsForArmful(inventory, collEff.sourcePosition);
 				added = ecs::addArmful(inventory, harvestRegistry, collEff.itemDefName, requested);
 			} else {
 				const uint32_t fit = ecs::cargoUnitsThatFit(inventory, harvestRegistry, collEff.itemDefName);
@@ -199,6 +202,10 @@ namespace ecs {
 			bool regrowSource = false;
 
 			if (isTwoHand) {
+				// Felling yields a two-hand armful (wood) that needs both hands. If the colonist
+				// crafted/holds a one-hand axe, it sits in a hand and would block the lift; stow it
+				// (belt -> pack -> drop) first so the wood goes into the hands rather than dropping.
+				stowHeldToolsForArmful(inventory, collEff.sourcePosition);
 				added = ecs::addArmful(inventory, harvestRegistry, collEff.itemDefName, collEff.quantity);
 
 				const uint32_t remainder = collEff.quantity - added;

@@ -7,6 +7,8 @@
 #include "../../components/Appearance.h"
 #include "../../components/Inventory.h"
 #include "../../components/Memory.h"
+#include "../../components/Movement.h"
+#include "../../components/NavPath.h"
 #include "../../components/Packaged.h"
 #include "../../components/StructureBlueprint.h"
 #include "../../components/Task.h"
@@ -201,15 +203,26 @@ namespace ecs {
 					}
 
 					const auto* goal = goalRegistry.getGoal(task.haulGoalId);
-					// A storage goal's targetAmount is a slot count and its deliveredAmount sums
-					// across item types, so availableCapacity() is the wrong "done" signal -- it
-					// would retire after a single stack. Retire it on the storage's LIVE state
-					// instead: done once no free slot remains, whether or not this deposit landed
-					// anything (StorageGoalSystem re-confirms each tick). Other goals that deposit
-					// into a storage Inventory keep using their counter.
-					const bool done = (goal != nullptr) &&
-									  (goal->owner == GoalOwner::StorageGoalSystem ? !storageInv->hasSpace()
-																				   : goal->availableCapacity() == 0);
+					// Retire signal depends on the goal kind:
+					//  - A stocking carry-in (StorageGoalSystem haul WITH a chainId) is a one-shot
+					//    delivery of a single chopped armful: it's done the moment it deposits, exactly
+					//    like a craft/construction inventory haul. StorageGoalSystem re-emits a fresh
+					//    Harvest next tick if the box still wants more, so leaving it would just strand
+					//    an empty (carried==0) goal.
+					//  - A normal storage haul's targetAmount is a slot count and its deliveredAmount
+					//    sums across item types, so availableCapacity() is the wrong "done" signal -- it
+					//    would retire after a single stack. Retire it on the storage's LIVE state
+					//    instead: done once no free slot remains.
+					//  - Other (craft/construction) goals that deposit into a storage Inventory keep
+					//    using their counter.
+					bool done = false;
+					if (goal != nullptr) {
+						if (goal->owner == GoalOwner::StorageGoalSystem) {
+							done = goal->chainId.has_value() ? true : !storageInv->hasSpace();
+						} else {
+							done = goal->availableCapacity() == 0;
+						}
+					}
 					if (done) {
 						goalRegistry.removeGoal(task.haulGoalId);
 					}
@@ -278,7 +291,7 @@ namespace ecs {
 		}
 	}
 
-	void ActionSystem::startHaulAction(Task& task, Action& action, const Position& position, Memory& memory, const Inventory& inventory) {
+	void ActionSystem::startHaulAction(EntityID entity, Task& task, Action& action, const Position& position, Memory& memory, const Inventory& inventory) {
 		auto& registry = engine::assets::AssetRegistry::Get();
 
 		constexpr float kPositionTolerance = 0.5F;
@@ -441,6 +454,42 @@ namespace ecs {
 				task.haulItemDefName.c_str(),
 				static_cast<unsigned long long>(task.haulTargetStorageId)
 			);
+		} else if (carryingHaulItem) {
+			// Carrying the haul item but standing somewhere other than the destination -- the
+			// colonist arrived at the SOURCE pile already holding (often at carry cap) some of
+			// that same item. The deposit clause above only fires when atTarget, and the pickup
+			// clause needs empty hands, so without this the state falls to the lost-warning below,
+			// clears to None, the AI re-routes back to the source (the storage-stocking option
+			// targets the loose pile), and the colonist deadlocks: spamming "not at source or
+			// target", never filling the box, action stuck at None.
+			//
+			// Redirect to the deposit leg, reading the colonist's ACTUAL carry state HERE at action
+			// time -- not at option-build time, where an over-cap two-hand armful is momentarily
+			// dropped and re-picked each tick (availableQuantity reads 0) and any "am I carrying?"
+			// test on the option is unreliable. Mirror completeAction's Pickup->Deposit handoff:
+			// re-point the task at the destination, set it Moving, advance the chain step, re-point
+			// MovementTarget at the goal, and drop the stale pickup-leg route so the AI's per-tick
+			// chain-leg repath plans a fresh A* path. The colonist walks to the box and deposits.
+			task.targetPosition = task.haulTargetPosition;
+			task.state = TaskState::Moving; // Must be Moving for MovementSystem to re-arrive at the destination
+			++task.chainStep;
+
+			if (auto* movementTarget = world->getComponent<MovementTarget>(entity)) {
+				movementTarget->target = task.haulTargetPosition;
+				movementTarget->active = true;
+			}
+			if (auto* navPath = world->getComponent<NavPath>(entity)) {
+				navPath->valid = false;
+			}
+
+			action.clear();
+			LOG_DEBUG(
+				Engine,
+				"[Action] Haul: carrying %s at source, redirecting to deposit at (%.1f, %.1f)",
+				task.haulItemDefName.c_str(),
+				task.haulTargetPosition.x,
+				task.haulTargetPosition.y
+			);
 		} else {
 			LOG_WARNING(Engine, "[Action] Haul started but not at source or target position");
 			action.clear();
@@ -574,6 +623,30 @@ namespace ecs {
 		}
 
 		handSlot.reset();
+	}
+
+	void ActionSystem::stowHeldToolsForArmful(Inventory& inventory, glm::vec2 dropPosition) {
+		// A held one-hand tool blocks a two-hand armful (both hands needed). Move it out of the way
+		// (belt -> pack -> drop). The drop is per-unit loose items, matching clearHandItem's one-hand
+		// drop; a tool is quantity 1, so this is a single dropped axe at the colonist's feet.
+		ecs::stowHeldToolsToFreeHands(
+			inventory,
+			engine::assets::AssetRegistry::Get(),
+			[this, dropPosition](const std::string& defName, uint32_t count) {
+				if (m_onDropItem) {
+					for (uint32_t i = 0; i < count; ++i) {
+						m_onDropItem(defName, dropPosition.x, dropPosition.y);
+					}
+				} else {
+					LOG_WARNING(
+						Engine,
+						"[Action] Cannot drop %u x %s freeing hands for armful - drop callback not configured (lost)",
+						count,
+						defName.c_str()
+					);
+				}
+			}
+		);
 	}
 
 	void ActionSystem::clearHandsForTwoHandedPickup(Inventory& inventory, glm::vec2 dropPosition) {

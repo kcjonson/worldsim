@@ -41,6 +41,10 @@
 
 #include <world/chunk/ChunkManager.h>
 
+#include <worldgen/data/Biome.h>
+#include <worldgen/data/GeneratedWorld.h>
+#include <worldgen/sampling/LandingSite.h>
+
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -77,6 +81,8 @@ namespace world_sim {
 			devOpening(cmd);
 		} else if (cmd.verb == "craft") {
 			devCraft(cmd);
+		} else if (cmd.verb == "storage") {
+			devStorage(cmd);
 		} else {
 			LOG_WARNING(Game, "[DevAPI] Unknown dev command verb '%s'", cmd.verb.c_str());
 		}
@@ -212,6 +218,43 @@ namespace world_sim {
 		return false;
 	}
 
+	bool DevCommandHandler::requireWalkableArea(const std::vector<Foundation::Vec2>& pts, const char* verb) {
+		// The WHOLE footprint must be on walkable mesh, not just the vertices. Without a nav
+		// system wired (headless/test), validity is owned elsewhere; mirror requireValidPosition's
+		// permissive fallback.
+		if (m_ctx.navigation == nullptr) {
+			return true;
+		}
+		std::vector<glm::vec2> poly;
+		poly.reserve(pts.size());
+		for (const auto& p : pts) {
+			poly.emplace_back(p.x, p.y);
+		}
+		if (m_ctx.navigation->isAreaWalkable(poly)) {
+			return true;
+		}
+		LOG_WARNING(Game, "[DevAPI] %s: error: footprint not fully on an active walkable nav mesh, refused", verb);
+		m_ctx.ui->pushNotification("Dev", "Refused: footprint not fully on walkable ground", UI::ToastSeverity::Warning);
+		return false;
+	}
+
+	bool DevCommandHandler::requireWalkableChain(const std::vector<Foundation::Vec2>& pts, const char* verb) {
+		if (m_ctx.navigation == nullptr) {
+			return true;
+		}
+		std::vector<glm::vec2> chain;
+		chain.reserve(pts.size());
+		for (const auto& p : pts) {
+			chain.emplace_back(p.x, p.y);
+		}
+		if (m_ctx.navigation->isPolylineWalkable(chain)) {
+			return true;
+		}
+		LOG_WARNING(Game, "[DevAPI] %s: error: chain not fully on an active walkable nav mesh, refused", verb);
+		m_ctx.ui->pushNotification("Dev", "Refused: wall chain not fully on walkable ground", UI::ToastSeverity::Warning);
+		return false;
+	}
+
 	ecs::EntityID DevCommandHandler::nearestColonist(Foundation::Vec2 at) {
 		ecs::EntityID best = ecs::kInvalidEntity;
 		float		  bestDistSq = 0.0F;
@@ -241,6 +284,21 @@ namespace world_sim {
 			const float distSq = dx * dx + dy * dy;
 			if (best == nullptr || distSq < bestDistSq) {
 				best = &inventory;
+				bestDistSq = distSq;
+			}
+		}
+		return best;
+	}
+
+	ecs::EntityID DevCommandHandler::nearestStorageEntity(Foundation::Vec2 at) {
+		ecs::EntityID best = ecs::kInvalidEntity;
+		float		  bestDistSq = 0.0F;
+		for (auto [entity, storage, pos] : m_ctx.world->view<ecs::StorageConfiguration, ecs::Position>()) {
+			const float dx = pos.value.x - at.x;
+			const float dy = pos.value.y - at.y;
+			const float distSq = dx * dx + dy * dy;
+			if (best == ecs::kInvalidEntity || distSq < bestDistSq) {
+				best = entity;
 				bestDistSq = distSq;
 			}
 		}
@@ -413,6 +471,12 @@ namespace world_sim {
 			LOG_WARNING(Game, "[DevAPI] foundation: pts needs >= 3 'x,y' pairs (got %zu)", pts.size());
 			return;
 		}
+		// The WHOLE footprint must sit on buildable land (vertices, edges, AND interior).
+		// A footprint that spans water between on-land corners, or clips a water hole,
+		// refuses the whole placement (stamp nothing), matching the real build tool's gate.
+		if (!requireWalkableArea(pts, "foundation")) {
+			return;
+		}
 		const std::string material = cmd.param("material", "Wood");
 
 		auto&	   constructionWorld = m_ctx.drawing->world();
@@ -464,6 +528,14 @@ namespace world_sim {
 		const bool		  close = (closeStr == "1" || closeStr == "on" || closeStr == "true" || closeStr == "yes");
 		if (close && pts.size() >= 3) {
 			pts.push_back(pts.front()); // close the loop so the chain encloses
+		}
+
+		// The WHOLE chain must lie on buildable land: every segment's endpoints AND its
+		// centerline samples. A segment that bridges water between two on-land points refuses
+		// the whole placement (stamp nothing). Checked AFTER the close-loop append so the
+		// closing segment (last->first) is validated too.
+		if (!requireWalkableChain(pts, "walls")) {
+			return;
 		}
 
 		const int n = m_ctx.drawing->devCommitWalls(pts, material, thickness, host, built);
@@ -588,6 +660,72 @@ namespace world_sim {
 		m_ctx.ui->pushNotification("Dev", "Queued " + std::to_string(qty) + " " + recipe, UI::ToastSeverity::Info);
 	}
 
+	void DevCommandHandler::devStorage(const Foundation::DevCommand& cmd) {
+		const Foundation::Vec2 at = parsePoint(cmd.param("at"));
+		const ecs::EntityID	   id = nearestStorageEntity(at);
+		if (id == ecs::kInvalidEntity) {
+			LOG_WARNING(Game, "[DevAPI] storage: no storage entity found near (%.1f, %.1f)", at.x, at.y);
+			m_ctx.ui->pushNotification("Dev", "No storage entity found", UI::ToastSeverity::Warning);
+			return;
+		}
+		auto* storageConfig = m_ctx.world->getComponent<ecs::StorageConfiguration>(id);
+		if (storageConfig == nullptr) {
+			LOG_WARNING(Game, "[DevAPI] storage: entity #%llu has no StorageConfiguration", static_cast<unsigned long long>(id));
+			m_ctx.ui->pushNotification("Dev", "Entity has no StorageConfiguration", UI::ToastSeverity::Warning);
+			return;
+		}
+
+		// Parse category (default: RawMaterial)
+		engine::assets::ItemCategory category = engine::assets::ItemCategory::RawMaterial;
+		const std::string			  categoryStr = cmd.param("category", "RawMaterial");
+		if (equalsIgnoreCase(categoryStr, "Food")) {
+			category = engine::assets::ItemCategory::Food;
+		} else if (equalsIgnoreCase(categoryStr, "Tool")) {
+			category = engine::assets::ItemCategory::Tool;
+		} else if (equalsIgnoreCase(categoryStr, "Furniture")) {
+			category = engine::assets::ItemCategory::Furniture;
+		} else if (equalsIgnoreCase(categoryStr, "None")) {
+			category = engine::assets::ItemCategory::None;
+		}
+		// RawMaterial is the default (already set above)
+
+		// Parse priority (default: Medium)
+		ecs::StoragePriority priority = ecs::StoragePriority::Medium;
+		const std::string	 priorityStr = cmd.param("priority", "Medium");
+		if (equalsIgnoreCase(priorityStr, "Low")) {
+			priority = ecs::StoragePriority::Low;
+		} else if (equalsIgnoreCase(priorityStr, "High")) {
+			priority = ecs::StoragePriority::High;
+		} else if (equalsIgnoreCase(priorityStr, "Critical")) {
+			priority = ecs::StoragePriority::Critical;
+		}
+		// Medium is the default (already set above)
+
+		const std::string defName = cmd.param("item", "*");
+		const auto		  minAmount = static_cast<uint32_t>(std::strtol(cmd.param("min", "0").c_str(), nullptr, 10));
+		const auto		  maxAmount = static_cast<uint32_t>(std::strtol(cmd.param("max", "0").c_str(), nullptr, 10));
+
+		ecs::StorageRule rule;
+		rule.defName = defName;
+		rule.category = category;
+		rule.priority = priority;
+		rule.minAmount = minAmount;
+		rule.maxAmount = maxAmount;
+		storageConfig->addRule(std::move(rule));
+
+		LOG_INFO(
+			Game,
+			"[DevAPI] storage: added rule to #%llu (item=%s, category=%s, priority=%s, min=%u, max=%u)",
+			static_cast<unsigned long long>(id),
+			defName.c_str(),
+			categoryStr.c_str(),
+			priorityStr.c_str(),
+			minAmount,
+			maxAmount
+		);
+		m_ctx.ui->pushNotification("Dev", "Added storage rule: " + defName + " (" + categoryStr + ")", UI::ToastSeverity::Info);
+	}
+
 	Foundation::Vec2 DevCommandHandler::parsePoint(const std::string& spec) {
 		const std::vector<Foundation::Vec2> pts = parsePointList(spec);
 		return pts.empty() ? Foundation::Vec2{0.0F, 0.0F} : pts.front();
@@ -687,8 +825,12 @@ namespace world_sim {
 			serializeConstruction(out);
 		} else if (what == "stations") {
 			serializeStations(out);
+		} else if (what == "storage") {
+			serializeStorage(out);
 		} else if (what == "time") {
 			serializeTime(out);
+		} else if (what == "landing") {
+			serializeLanding(out);
 		} else {
 			serializeSummary(out);
 		}
@@ -732,7 +874,34 @@ namespace world_sim {
 					out << (firstItem ? "" : ",") << "\"" << jsonEscape(defName) << "\":" << qty;
 					firstItem = false;
 				}
-				out << "},\"cargoKg\":" << ecs::carriedCargoMassKg(*inv, engine::assets::AssetRegistry::Get())
+				out << "}";
+
+				// Hands and belt, broken out explicitly so the carry surfaces (armful vs belted tool)
+				// are visible -- the aggregate above folds hands into the same map as the backpack, so
+				// it can't tell a held axe from a stowed one. A two-hand armful mirrors both hands; show
+				// the single logical stack.
+				auto handJson = [&](const std::optional<ecs::ItemStack>& hand) {
+					if (hand.has_value()) {
+						out << "{\"" << jsonEscape(hand->defName) << "\":" << hand->quantity << "}";
+					} else {
+						out << "null";
+					}
+				};
+				out << ",\"hands\":{\"left\":";
+				handJson(inv->leftHand);
+				out << ",\"right\":";
+				handJson(inv->rightHand);
+				out << "},\"belt\":[";
+				bool firstBelt = true;
+				for (const auto& slot : inv->belt) {
+					if (slot.has_value()) {
+						out << (firstBelt ? "" : ",") << "\"" << jsonEscape(slot->defName) << "\"";
+						firstBelt = false;
+					}
+				}
+				out << "]";
+
+				out << ",\"cargoKg\":" << ecs::carriedCargoMassKg(*inv, engine::assets::AssetRegistry::Get())
 					<< ",\"carryCapacityKg\":" << inv->carryCapacityKg;
 			}
 			out << "}";
@@ -741,16 +910,85 @@ namespace world_sim {
 	}
 
 	void DevCommandHandler::serializeConstruction(std::ostringstream& out) {
-		const auto& world = m_ctx.drawing->world();
+		const auto& cworld = m_ctx.drawing->world();
 		out << "{\"foundations\":[";
 		bool first = true;
-		for (const auto& foundation : world.foundations()) {
+		for (const auto& foundation : cworld.foundations()) {
 			out << (first ? "" : ",");
 			first = false;
 			out << "{\"id\":" << static_cast<unsigned long long>(foundation.id) << ",\"material\":\"" << jsonEscape(foundation.material)
 				<< "\",\"state\":\"" << (foundation.state == engine::construction::FoundationState::Built ? "Built" : "Blueprint")
-				<< "\",\"entity\":" << static_cast<unsigned long long>(foundation.entity) << ",\"area\":" << world.areaSquareMeters(foundation.id)
-				<< "}";
+				<< "\",\"entity\":" << static_cast<unsigned long long>(foundation.entity) << ",\"area\":" << cworld.areaSquareMeters(foundation.id);
+
+			// Include material progress from the ECS mirror entity's StructureBlueprint
+			if (foundation.entity != ecs::kInvalidEntity) {
+				if (const auto* bp = m_ctx.world->getComponent<ecs::StructureBlueprint>(foundation.entity)) {
+					const char* phaseStr = "Clearing";
+					switch (bp->phase) {
+						case ecs::StructureBlueprint::BuildPhase::Clearing: phaseStr = "Clearing"; break;
+						case ecs::StructureBlueprint::BuildPhase::AwaitingMaterials: phaseStr = "AwaitingMaterials"; break;
+						case ecs::StructureBlueprint::BuildPhase::UnderConstruction: phaseStr = "UnderConstruction"; break;
+						case ecs::StructureBlueprint::BuildPhase::Complete: phaseStr = "Complete"; break;
+					}
+					out << ",\"phase\":\"" << phaseStr << "\"";
+					out << ",\"required\":{";
+					bool firstReq = true;
+					for (const auto& [defName, qty] : bp->required) {
+						out << (firstReq ? "" : ",") << "\"" << jsonEscape(defName) << "\":" << qty;
+						firstReq = false;
+					}
+					out << "},\"delivered\":{";
+					bool firstDel = true;
+					for (const auto& [defName, qty] : bp->delivered) {
+						out << (firstDel ? "" : ",") << "\"" << jsonEscape(defName) << "\":" << qty;
+						firstDel = false;
+					}
+					out << "},\"progress\":" << bp->progress();
+				}
+			}
+
+			out << "}";
+		}
+
+		// Wall segments with build state, material, endpoints (mm -> meters), and material progress
+		out << "],\"walls\":[";
+		bool firstWall = true;
+		for (const auto& seg : cworld.segments()) {
+			out << (firstWall ? "" : ",");
+			firstWall = false;
+
+			const auto* v0 = cworld.getVertex(seg.v0);
+			const auto* v1 = cworld.getVertex(seg.v1);
+			out << "{\"id\":" << static_cast<unsigned long long>(seg.id) << ",\"material\":\"" << jsonEscape(seg.material) << "\",\"state\":\""
+				<< (seg.state == engine::construction::FoundationState::Built ? "Built" : "Blueprint") << "\",\"entity\":"
+				<< static_cast<unsigned long long>(seg.entity);
+			if (v0 != nullptr) {
+				out << ",\"x0\":" << (static_cast<double>(v0->pos.x) / 1000.0) << ",\"y0\":" << (static_cast<double>(v0->pos.y) / 1000.0);
+			}
+			if (v1 != nullptr) {
+				out << ",\"x1\":" << (static_cast<double>(v1->pos.x) / 1000.0) << ",\"y1\":" << (static_cast<double>(v1->pos.y) / 1000.0);
+			}
+
+			// Material progress from ECS mirror entity's StructureBlueprint
+			if (seg.entity != ecs::kInvalidEntity) {
+				if (const auto* bp = m_ctx.world->getComponent<ecs::StructureBlueprint>(seg.entity)) {
+					out << ",\"required\":{";
+					bool firstReq = true;
+					for (const auto& [defName, qty] : bp->required) {
+						out << (firstReq ? "" : ",") << "\"" << jsonEscape(defName) << "\":" << qty;
+						firstReq = false;
+					}
+					out << "},\"delivered\":{";
+					bool firstDel = true;
+					for (const auto& [defName, qty] : bp->delivered) {
+						out << (firstDel ? "" : ",") << "\"" << jsonEscape(defName) << "\":" << qty;
+						firstDel = false;
+					}
+					out << "},\"progress\":" << bp->progress();
+				}
+			}
+
+			out << "}";
 		}
 		out << "]}";
 	}
@@ -787,10 +1025,98 @@ namespace world_sim {
 		out << "]}";
 	}
 
+	void DevCommandHandler::serializeStorage(std::ostringstream& out) {
+		out << "{\"storages\":[";
+		bool first = true;
+		for (auto [entity, storageConfig, pos, inventory] : m_ctx.world->view<ecs::StorageConfiguration, ecs::Position, ecs::Inventory>()) {
+			out << (first ? "" : ",");
+			first = false;
+
+			// Attempt to look up the defName from an Appearance or Structure component;
+			// fall back to empty string if neither is present.
+			std::string defName;
+			if (const auto* appearance = m_ctx.world->getComponent<ecs::Appearance>(entity)) {
+				defName = appearance->defName;
+			}
+
+			out << "{\"id\":" << static_cast<unsigned long long>(entity) << ",\"defName\":\"" << jsonEscape(defName) << "\",\"x\":"
+				<< pos.value.x << ",\"y\":" << pos.value.y;
+
+			// Inventory contents (backpack only; storage containers don't use hand slots)
+			out << ",\"inventory\":{";
+			bool firstItem = true;
+			for (const auto& stack : inventory.getAllItems()) {
+				out << (firstItem ? "" : ",") << "\"" << jsonEscape(stack.defName) << "\":" << stack.quantity;
+				firstItem = false;
+			}
+			out << "},\"slots\":" << inventory.getSlotCount() << ",\"maxSlots\":" << inventory.maxCapacity;
+
+			// Storage rules
+			out << ",\"rules\":[";
+			bool firstRule = true;
+			for (const auto& rule : storageConfig.rules) {
+				out << (firstRule ? "" : ",");
+				firstRule = false;
+				out << "{\"item\":\"" << jsonEscape(rule.defName) << "\",\"category\":\"";
+				switch (rule.category) {
+					case engine::assets::ItemCategory::None: out << "None"; break;
+					case engine::assets::ItemCategory::RawMaterial: out << "RawMaterial"; break;
+					case engine::assets::ItemCategory::Food: out << "Food"; break;
+					case engine::assets::ItemCategory::Tool: out << "Tool"; break;
+					case engine::assets::ItemCategory::Furniture: out << "Furniture"; break;
+					default: out << "Unknown"; break;
+				}
+				out << "\",\"priority\":\"" << ecs::storagePriorityToString(rule.priority) << "\",\"min\":" << rule.minAmount
+					<< ",\"max\":" << rule.maxAmount << "}";
+			}
+			out << "]}";
+		}
+		out << "]}";
+	}
+
 	void DevCommandHandler::serializeTime(std::ostringstream& out) {
 		const auto snap = m_ctx.world->getSystem<ecs::TimeSystem>().snapshot();
 		out << "{\"day\":" << snap.day << ",\"season\":\"" << ecs::seasonName(snap.season) << "\",\"timeOfDay\":" << snap.timeOfDay
 			<< ",\"speed\":" << static_cast<int>(snap.speed) << ",\"paused\":" << (snap.isPaused ? "true" : "false") << "}";
+	}
+
+	void DevCommandHandler::serializeLanding(std::ostringstream& out) {
+		out << "{\"landingLatDeg\":" << m_ctx.landingLatDeg
+		    << ",\"landingLonDeg\":" << m_ctx.landingLonDeg;
+
+		if (!m_ctx.planet || !m_ctx.planet->grid) {
+			// No planet available (test/fallback session): return coords only.
+			out << ",\"biome\":null,\"waterClass\":null,\"riverInTile\":null}";
+			return;
+		}
+
+		const worldgen::GeneratedWorld& planet = *m_ctx.planet;
+		const worldgen::TileId tile = planet.grid->fromLatLon(m_ctx.landingLatDeg, m_ctx.landingLonDeg);
+
+		// Biome at the landing tile.
+		const bool haveBiome = (planet.validFields & static_cast<uint32_t>(worldgen::WorldField::Biome)) != 0;
+		if (haveBiome && tile != worldgen::kInvalidTile && tile < planet.data.biome.size()) {
+			const worldgen::Biome b = static_cast<worldgen::Biome>(planet.data.biome[tile]);
+			out << ",\"biome\":\"" << worldgen::biomeToString(b) << "\"";
+		} else {
+			out << ",\"biome\":null";
+		}
+
+		// Water classification using the same logic as the landing-site scorer.
+		const bool haveFlags = (planet.validFields & static_cast<uint32_t>(worldgen::WorldField::Flags)) != 0;
+		if (haveFlags && tile != worldgen::kInvalidTile && tile < planet.data.flags.size()) {
+			const worldgen::WaterClass wc = worldgen::classifyWater(planet, tile);
+			out << ",\"waterClass\":\"" << worldgen::waterClassToString(wc) << "\"";
+
+			// River-through-tile is the "best" water signal: the landing origin IS the
+			// channel center, which means a riverbank is within a few meters of spawn.
+			const bool riverInTile = (planet.data.flags[tile] & worldgen::kFlagRiver) != 0;
+			out << ",\"riverInTile\":" << (riverInTile ? "true" : "false");
+		} else {
+			out << ",\"waterClass\":null,\"riverInTile\":null";
+		}
+
+		out << "}";
 	}
 
 	void DevCommandHandler::serializeSummary(std::ostringstream& out) {

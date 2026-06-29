@@ -192,6 +192,15 @@ namespace engine::assets {
 		///         is erased, so a following getResourceCount() returns nullopt (= depleted).
 		uint32_t decrementResourceCount(world::ChunkCoordinate coord, glm::vec2 position, const std::string& defName, uint32_t requested);
 
+		/// Monotonic counter bumped every time a placed entity is removed from a chunk index
+		/// (a destructive harvest felling a tree, a depleted resource node). The nav mesh
+		/// gathers its flora obstacle rings from the LIVE chunk indices, so a removal must
+		/// force the covering region to rebuild -- otherwise the felled tree's trunk hole
+		/// lingers in the mesh and that tile never becomes walkable. NavigationSystem folds
+		/// this epoch into its rebuild gate; chunk membership and the construction version
+		/// alone don't see an in-chunk entity removal.
+		[[nodiscard]] uint64_t removalEpoch() const { return m_removalEpoch; }
+
 		/// Get spawn order (for debugging/testing)
 		[[nodiscard]] const std::vector<std::string>& getSpawnOrder() const { return m_spawnOrder; }
 
@@ -209,6 +218,9 @@ namespace engine::assets {
 
 		// Per-chunk spatial indices
 		std::unordered_map<world::ChunkCoordinate, SpatialIndex> m_chunkIndices;
+
+		// Bumped on every successful entity removal; see removalEpoch().
+		uint64_t m_removalEpoch = 0;
 
 		/// Entity cooldown key - uniquely identifies an entity for cooldown tracking
 		/// Uses quantized position (integer tile coordinates) for reliable hashing

@@ -1,14 +1,55 @@
 #include "StorageGoalSystem.h"
 
 #include "../GoalTaskRegistry.h"
+#include "../InventoryMass.h"
 #include "../World.h"
+#include "../components/Colonist.h"
 #include "../components/Inventory.h"
+#include "../components/Memory.h"
 #include "../components/StorageConfiguration.h"
 #include "../components/Transform.h"
 
 #include <assets/AssetRegistry.h>
 
+#include <algorithm>
+#include <cstdint>
+
 namespace ecs {
+
+	namespace {
+		// Generate a unique chain ID linking a stocking Harvest to the carry-in Haul it spawns
+		// (createHaulForCompletedHarvest copies the chainId). The carry-in Haul is recognized as a
+		// stocking delivery -- not an ordinary loose-pile haul -- by being StorageGoalSystem-owned
+		// AND having a chainId, so the chainId must be non-zero/unique. Internal linkage: a static
+		// local counter, distinct from other systems' generators.
+		uint64_t generateChainId() {
+			static uint64_t nextChainId = 1;
+			return nextChainId++;
+		}
+
+		// Does any colonist remember a harvestable whose yield is this item (e.g. a tree for Wood)?
+		// Colony "availability" = the union of colonist memories (no god-view); mirrors
+		// CraftingGoalSystem's check of the same name. A goal created from this is still only
+		// fulfilled by a colonist that actually remembers the source.
+		bool colonyKnowsHarvestableSource(World* world, const engine::assets::AssetRegistry& reg, uint32_t yieldDefNameId) {
+			for (auto [colonist, memory] : world->view<Memory>()) {
+				(void)colonist;
+				for (uint64_t key : memory.getEntitiesWithCapability(engine::assets::CapabilityType::Harvestable)) {
+					const KnownWorldEntity* known = memory.getWorldEntity(key);
+					if (known == nullptr) {
+						continue;
+					}
+					const auto& srcDefName = reg.getDefName(known->defNameId);
+					const auto* srcDef = reg.getDefinition(srcDefName);
+					if (srcDef != nullptr && srcDef->capabilities.harvestable.has_value() &&
+						reg.getDefNameId(srcDef->capabilities.harvestable->yieldDefName) == yieldDefNameId) {
+						return true;
+					}
+				}
+			}
+			return false;
+		}
+	} // namespace
 
 	void StorageGoalSystem::update(float /*deltaTime*/) {
 		if (world == nullptr) {
@@ -34,14 +75,38 @@ namespace ecs {
 
 		activeGoalCount = 0;
 
+		// One trip's carry budget for sizing stocking harvests: the largest carry weight among
+		// colonists (a max, not a sum or first-hit, so it's independent of view iteration order and
+		// stays deterministic). Falls back to the colonist default in a headless/unit context with
+		// no colonists yet. Mirrors ConstructionSystem::colonistCarryCapacityKg.
+		float maxColonistCarryKg = 0.0F;
+		for (auto [colonistEntity, colonist, inv] : world->view<Colonist, Inventory>()) {
+			(void)colonistEntity;
+			(void)colonist;
+			maxColonistCarryKg = std::max(maxColonistCarryKg, inv.carryCapacityKg);
+		}
+		if (maxColonistCarryKg <= 0.0F) {
+			maxColonistCarryKg = Inventory::createForColonist().carryCapacityKg;
+		}
+
+		// Cascade-remove a storage's umbrella Haul goal AND its stocking children (Harvest goals
+		// and the carry-in Hauls they spawn hang off the umbrella as children). A plain
+		// removeGoalByDestination drops only the top-level Haul and would orphan the children.
+		auto removeStorageGoalTree = [&registry](EntityID storage) {
+			const auto* g = registry.getGoalByDestination(storage);
+			if (g != nullptr) {
+				registry.removeGoalWithChildren(g->id);
+			}
+		};
+
 		// Query all entities with StorageConfiguration + Inventory + Position
 		for (auto [entity, config, inventory, position] :
 			 world->view<StorageConfiguration, Inventory, Position>()) {
 			// Only process storages with rules configured
 			if (!config.hasRules()) {
 				// No rules = storage not configured yet
-				// Remove any existing goal
-				registry.removeGoalByDestination(entity);
+				// Remove any existing goal (and stocking children)
+				removeStorageGoalTree(entity);
 				storagesWithGoals.erase(entity);
 				continue;
 			}
@@ -61,8 +126,8 @@ namespace ecs {
 			}
 
 			if (availableSlots == 0) {
-				// Full - remove goal if exists
-				registry.removeGoalByDestination(entity);
+				// Full - remove goal (and stocking children) if exists
+				removeStorageGoalTree(entity);
 				storagesWithGoals.erase(entity);
 				continue;
 			}
@@ -86,44 +151,155 @@ namespace ecs {
 			}
 
 			// Check if goal already exists
+			uint64_t	umbrellaId = 0;
 			const auto* existingGoal = registry.getGoalByDestination(entity);
 			if (existingGoal != nullptr) {
 				// Refresh the "wants items" signal from the live free-slot count (deposits shrank
 				// it). deliveredAmount resets to 0 each refresh: it isn't a real quota for storage
 				// (a haul's true clamp is the destination's per-item addableCount at deposit
 				// time), just bookkeeping so availableCapacity() == targetAmount == free slots.
+				umbrellaId = existingGoal->id;
 				registry.updateGoal(existingGoal->id, [&](GoalTask& goal) {
 					goal.targetAmount = availableSlots;
 					goal.deliveredAmount = 0;
 					goal.acceptedDefNameIds = acceptedDefNameIds;
 					goal.acceptedCategory = primaryCategory;
 				});
-				storagesWithGoals.erase(entity);
-				activeGoalCount++;
-				continue;
+			} else {
+				// Create new umbrella Haul goal
+				GoalTask goal;
+				goal.type = TaskType::Haul;
+				goal.owner = GoalOwner::StorageGoalSystem;
+				goal.destinationEntity = entity;
+				goal.destinationPosition = position.value;
+				goal.destinationDefNameId = 0; // Could be set from storage's defName if available
+				goal.acceptedDefNameIds = acceptedDefNameIds;
+				goal.acceptedCategory = primaryCategory;
+				goal.targetAmount = availableSlots;
+				goal.deliveredAmount = 0;
+				goal.createdAt = 0.0F; // TODO: use actual game time
+
+				umbrellaId = registry.createGoal(std::move(goal));
 			}
 
-			// Create new goal
-			GoalTask goal;
-			goal.type = TaskType::Haul;
-			goal.owner = GoalOwner::StorageGoalSystem;
-			goal.destinationEntity = entity;
-			goal.destinationPosition = position.value;
-			goal.destinationDefNameId = 0; // Could be set from storage's defName if available
-			goal.acceptedDefNameIds = acceptedDefNameIds;
-			goal.acceptedCategory = primaryCategory;
-			goal.targetAmount = availableSlots;
-			goal.deliveredAmount = 0;
-			goal.createdAt = 0.0F; // TODO: use actual game time
+			// Stocking demand: a SPECIFIC-ITEM rule (not a category wildcard) with minAmount above
+			// the count already in the box drives chopping to produce the wanted item. For each such
+			// shortfall, if a colonist knows a harvestable that yields the item, emit a Harvest goal
+			// (a child of the umbrella) so the colonist cuts -> the cut yield is carried -> a carry-in
+			// Haul (spawned on harvest completion, inheriting the chainId) deposits it into the box,
+			// until the box holds minAmount. Category wildcard rules never drive harvest: they only
+			// accept hauled items, as before. Stocking work is floored ABOVE Wander but strictly BELOW
+			// construction/craft work orders (see DecisionTrace kStorageStockingFloor).
+			if (umbrellaId != 0) {
+				reconcileStockingHarvests(registry, assetRegistry, config, inventory, umbrellaId, maxColonistCarryKg);
+			}
 
-			registry.createGoal(std::move(goal));
 			storagesWithGoals.erase(entity);
 			activeGoalCount++;
 		}
 
-		// Remove goals for storages that no longer exist
+		// Remove goals (and stocking children) for storages that no longer exist
 		for (EntityID oldStorage : storagesWithGoals) {
-			registry.removeGoalByDestination(oldStorage);
+			removeStorageGoalTree(oldStorage);
+		}
+	}
+
+	void StorageGoalSystem::reconcileStockingHarvests(
+		GoalTaskRegistry&					 registry,
+		const engine::assets::AssetRegistry& assetRegistry,
+		const StorageConfiguration&			 config,
+		const Inventory&					 inventory,
+		uint64_t							 umbrellaId,
+		float								 maxColonistCarryKg
+	) {
+		// What stocking work is already in flight for this box, per item: a Harvest child being cut,
+		// or a carry-in Haul child (chainId'd) carrying the cut yield in. Either means "this item is
+		// being stocked right now" -- don't emit a duplicate Harvest for it.
+		std::unordered_set<uint32_t> itemsBeingStocked;
+		for (const auto* child : registry.getChildGoals(umbrellaId)) {
+			if (child == nullptr) {
+				continue;
+			}
+			if (child->type == TaskType::Harvest && child->yieldDefNameId != 0) {
+				itemsBeingStocked.insert(child->yieldDefNameId);
+			} else if (child->type == TaskType::Haul && child->chainId.has_value() && !child->acceptedDefNameIds.empty()) {
+				itemsBeingStocked.insert(child->acceptedDefNameIds.front());
+			}
+		}
+
+		const auto* umbrella = registry.getGoal(umbrellaId);
+		if (umbrella == nullptr) {
+			return;
+		}
+		const EntityID	destinationEntity = umbrella->destinationEntity;
+		const glm::vec2 destinationPosition = umbrella->destinationPosition;
+
+		for (const auto& rule : config.rules) {
+			if (rule.isWildcard() || rule.minAmount == 0) {
+				continue; // wildcards never drive harvest; a 0 minimum has no pull
+			}
+			const uint32_t itemDefNameId = assetRegistry.getDefNameId(rule.defName);
+			if (itemDefNameId == 0) {
+				continue; // unknown item
+			}
+			if (itemsBeingStocked.count(itemDefNameId) != 0) {
+				continue; // already harvesting / carrying this item in
+			}
+
+			// Shortfall against the configured minimum, measured from what the box already holds.
+			const uint32_t current = inventory.getQuantity(rule.defName);
+			if (current >= rule.minAmount) {
+				continue; // minimum already met
+			}
+			const uint32_t shortfall = rule.minAmount - current;
+
+			// Physical headroom: don't chop what the box can't actually hold (e.g. its slot for this
+			// item is at the stack cap with no free slot). addableCount is stack room + freeSlots *
+			// stackSize, the same clamp the haul sizing uses.
+			const uint32_t headroom = inventory.addableCount(rule.defName);
+			if (headroom == 0) {
+				continue;
+			}
+
+			// Only chop if a colonist actually knows a harvestable source for this item; otherwise
+			// the box just waits for the item to be hauled in (or never filled). Mirrors the
+			// crafting BOM-shortfall harvest gate.
+			if (!colonyKnowsHarvestableSource(world, assetRegistry, itemDefNameId)) {
+				continue;
+			}
+
+			// Size the chop to ONE trip's carry capacity, capped by the shortfall and the box's
+			// headroom. A shortfall larger than a colonist can carry is filled over multiple trips:
+			// the Harvest completes at one trip's worth, spawns the carry-in Haul, and the next tick
+			// re-emits a fresh Harvest for the remaining shortfall (mirrors ConstructionSystem's
+			// per-trip harvest demand). Without the cap the Harvest would never reach availableCapacity
+			// 0 (the colonist fills up first), never spawn the carry-in, and strand the box.
+			const uint32_t perTrip = ecs::cargoUnitsPerTrip(assetRegistry, rule.defName, maxColonistCarryKg);
+			const uint32_t demand = std::min({shortfall, headroom, perTrip > 0 ? perTrip : shortfall});
+			if (demand == 0) {
+				continue;
+			}
+
+			GoalTask harvest;
+			harvest.type = TaskType::Harvest;
+			harvest.owner = GoalOwner::StorageGoalSystem;
+			harvest.destinationEntity = destinationEntity;
+			harvest.destinationPosition = destinationPosition;
+			harvest.destinationDefNameId = 0;
+			harvest.acceptedDefNameIds = {itemDefNameId};
+			harvest.acceptedCategory = engine::assets::ItemCategory::None;
+			harvest.targetAmount = demand;
+			harvest.deliveredAmount = 0;
+			harvest.createdAt = 0.0F;
+			harvest.parentGoalId = umbrellaId;
+			harvest.status = GoalStatus::Available;
+			harvest.yieldDefNameId = itemDefNameId;
+			// chainId tags the carry-in Haul (spawned on harvest completion) as a stocking delivery,
+			// so the decision layer routes it from inventory into the box rather than treating it as
+			// an ordinary loose-pile haul.
+			harvest.chainId = generateChainId();
+
+			registry.createGoal(std::move(harvest));
 		}
 	}
 

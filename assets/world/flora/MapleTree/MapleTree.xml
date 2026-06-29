@@ -47,7 +47,7 @@
     <placement>
       <!-- Forest: Common, spaced out -->
       <biome name="TemperateDeciduousForest">
-        <spawnChance>0.22</spawnChance>
+        <spawnChance>0.40</spawnChance>
         <distribution>spaced</distribution>
         <spacing>
           <minDistance>2.8</minDistance>

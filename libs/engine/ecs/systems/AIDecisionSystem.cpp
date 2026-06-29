@@ -311,13 +311,17 @@ namespace ecs {
 					continue; // Goal is full
 				}
 
-				// Inventory-source haul: the colonist already carries the harvested material, so
-				// there is no loose ground pickup. Two cases use this path:
+				// Inventory-source haul: the colonist already carries the material, so there is no
+				// loose ground pickup. Three cases use this path:
 				//  - Craft-material hauls (Haul is a child of a Craft goal): deliver to the
 				//    crafting station (items stay in inventory for the Craft action).
 				//  - Construction-material hauls (owner ConstructionGoalSystem): deliver to the
 				//    blueprint, where the deposit records the material onto the blueprint's delivered[] manifest.
-				// Both skip the memory scan and emit only once the dependency completed (status
+				//  - Storage-stocking hauls (owner StorageGoalSystem WITH a chainId): the colonist just
+				//    chopped the wanted item to fill a box toward its minimum, so it carries the yield
+				//    and walks it into the storage container. A storage haul WITHOUT a chainId is the
+				//    ordinary loose-pile haul handled by the memory scan below, not this path.
+				// All skip the memory scan and emit only once the dependency completed (status
 				// Available) and the colonist actually carries the material.
 				const bool isConstructionHaul = goal->owner == GoalOwner::ConstructionGoalSystem;
 				bool isCraftHaul = false;
@@ -325,10 +329,14 @@ namespace ecs {
 					const auto* parent = goalRegistry.getGoal(goal->parentGoalId.value());
 					isCraftHaul = parent != nullptr && parent->type == TaskType::Craft;
 				}
-				const bool inventorySourceHaul = isConstructionHaul || isCraftHaul;
+				// A storage haul carries from inventory only when it was spawned from a completed
+				// stocking Harvest (it inherits that Harvest's chainId). Ordinary storage hauls have
+				// no chainId and fall through to the loose-pile scan.
+				const bool isStorageStockingHaul = goal->owner == GoalOwner::StorageGoalSystem && goal->chainId.has_value();
+				const bool inventorySourceHaul = isConstructionHaul || isCraftHaul || isStorageStockingHaul;
 				if (inventorySourceHaul) {
 					if (goal->status == GoalStatus::Available) {
-						const bool toBlueprint = goal->owner == GoalOwner::ConstructionGoalSystem;
+						const bool toBlueprint = isConstructionHaul;
 						for (uint32_t acceptedId : goal->acceptedDefNameIds) {
 							const auto& itemDefName = registry.getDefName(acceptedId);
 							// Hand-carried two-hand goods (a wood armful) count too, not just the pack.
@@ -342,6 +350,20 @@ namespace ecs {
 							// delivery; the next tick the colonist carries 0 and this option drops out.
 							// Just gate on carrying something.
 
+							// Storage destinations are slot-counted: the goal's availableCapacity() is a
+							// free-slot count, not an item count, so size the carry-in by the box's real
+							// per-item headroom (addableCount: stack room + freeSlots * stackSize), exactly
+							// as the loose-pile path does. Craft/construction destinations meter at deposit
+							// time, so the goal's availableCapacity() bounds them correctly.
+							uint32_t haulCap = goal->availableCapacity();
+							if (isStorageStockingHaul) {
+								const auto* destInv = world != nullptr ? world->getComponent<Inventory>(goal->destinationEntity) : nullptr;
+								haulCap = destInv != nullptr ? destInv->addableCount(itemDefName) : 0U;
+								if (haulCap == 0) {
+									continue; // box can't take any more of this item right now
+								}
+							}
+
 							EvaluatedOption haulOption;
 							haulOption.taskType = TaskType::Haul;
 							haulOption.needType = NeedType::Count;
@@ -351,19 +373,22 @@ namespace ecs {
 							haulOption.targetDefNameId = acceptedId;
 							haulOption.distanceToTarget = glm::distance(position, goal->destinationPosition);
 							haulOption.haulItemDefName = itemDefName;
-							haulOption.haulQuantity = std::min(carried, goal->availableCapacity());
+							haulOption.haulQuantity = std::min(carried, haulCap);
 							haulOption.haulSourcePosition = position; // already carrying
 							haulOption.haulTargetStorageId = static_cast<uint64_t>(goal->destinationEntity);
 							haulOption.haulTargetPosition = goal->destinationPosition;
 							haulOption.haulGoalId = goal->id;
 							haulOption.haulFromInventory = true;
-							// A craft-material delivery provisions an active work order; floor its
-							// priority above idle Wander so a distant station can't strand the craft.
-							haulOption.servesActiveWorkOrder = isCraftHaul;
+							// Craft/construction deliveries provision an active work order (full floor).
+							// Storage stocking is real work too but ranks strictly below work orders, so
+							// it gets the lower stocking floor instead. Mutually exclusive flags.
+							haulOption.servesActiveWorkOrder = isCraftHaul || isConstructionHaul;
+							haulOption.servesStorageStocking = isStorageStockingHaul;
 							haulOption.tiebreakId = goal->id ^ (static_cast<uint64_t>(acceptedId) << 1);
 							haulOption.status = OptionStatus::Available;
-							haulOption.reason = toBlueprint ? "Delivering " + itemDefName + " to build site"
-															: "Delivering " + itemDefName + " to crafting station";
+							haulOption.reason = toBlueprint		   ? "Delivering " + itemDefName + " to build site"
+												: isStorageStockingHaul ? "Stocking " + itemDefName + " into storage"
+																		: "Delivering " + itemDefName + " to crafting station";
 							trace.options.push_back(haulOption);
 						}
 					}
@@ -550,13 +575,19 @@ namespace ecs {
 					continue; // No yield specified
 				}
 
-				// A Harvest that feeds a Craft goal provisions an active work order: its priority is
-				// floored above idle Wander so a far harvestable can't strand a started craft.
+				// A Harvest that feeds a Craft or Build goal provisions an active work order: its
+				// priority is floored above idle Wander so a far harvestable can't strand a started
+				// craft or construction.
 				bool servesWorkOrder = false;
 				if (goal->parentGoalId.has_value()) {
 					const auto* parent = goalRegistry.getGoal(goal->parentGoalId.value());
-					servesWorkOrder = parent != nullptr && parent->type == TaskType::Craft;
+					servesWorkOrder = parent != nullptr && (parent->type == TaskType::Craft || parent->type == TaskType::Build);
 				}
+				// A Harvest owned by StorageGoalSystem is stocking work (chopping to fill a box toward
+				// its minimum). It is floored above Wander but STRICTLY below work orders, so a colonist
+				// always prefers building/crafting over stocking. Mutually exclusive with servesWorkOrder
+				// (a storage harvest parents a Haul umbrella, never a Craft/Build).
+				const bool servesStocking = goal->owner == GoalOwner::StorageGoalSystem;
 
 				// Search memory for harvestables that yield the target item
 				for (const auto& [key, knownEntity] : memory.knownWorldEntities) {
@@ -617,6 +648,7 @@ namespace ecs {
 					// goal still resolve deterministically, not by memory's hash order.
 					harvestOption.tiebreakId = goal->id ^ (key << 1);
 					harvestOption.servesActiveWorkOrder = servesWorkOrder;
+					harvestOption.servesStorageStocking = servesStocking;
 					harvestOption.status = OptionStatus::Available;
 
 					// Harvesting uses Farming skill
@@ -673,6 +705,11 @@ namespace ecs {
 				buildOption.distanceToTarget = glm::distance(position, goal->destinationPosition);
 				buildOption.buildBlueprintEntityId = goal->destinationEntity;
 				buildOption.tiebreakId = goal->id;
+				// A blueprint reaches this option only when fully provisioned and UnderConstruction:
+				// the build is committed work. Floor its priority above idle Wander so a far site's
+				// distance penalty can't drop it below Wander and strand the ready foundation
+				// (the abandonment bug: provision 18/18 wood, then wander off and never build).
+				buildOption.servesActiveWorkOrder = true;
 				buildOption.status = OptionStatus::Available;
 
 				auto [buildSkillLevel, buildSkillBonus] = calculateSkillBonus(skills, kSkillConstruction);
@@ -715,6 +752,9 @@ namespace ecs {
 				deconstructOption.distanceToTarget = glm::distance(position, goal->destinationPosition);
 				deconstructOption.buildBlueprintEntityId = goal->destinationEntity;
 				deconstructOption.tiebreakId = goal->id;
+				// Committed construction work (mirrors Build): floor above Wander so a far site's
+				// distance penalty can't strand an in-progress demolish.
+				deconstructOption.servesActiveWorkOrder = true;
 				deconstructOption.status = OptionStatus::Available;
 
 				auto [deconstructSkillLevel, deconstructSkillBonus] = calculateSkillBonus(skills, kSkillConstruction);
@@ -817,7 +857,13 @@ namespace ecs {
 			// off the boundary edge that locate excludes.
 			if (m_navSystem != nullptr && m_navSystem->inSimArea(position.value)) {
 				if (!m_navSystem->isOnMesh(position.value)) {
-					const auto snapped = m_navSystem->nearestPathablePoint(position.value);
+					// Snap to the nearest walkable point that ALSO clears the colonist's wall
+					// collision band. The bare nearest-walkable point sits on the walkable-face
+					// edge, inside the band, so WallCollisionSystem would shove the colonist back
+					// off-mesh and the two would oscillate forever (the colonist-wall-trap bug).
+					const float recoverRadius =
+						(world->getComponent<AgentRadius>(entity) != nullptr) ? world->getComponent<AgentRadius>(entity)->radiusMeters : 0.3F;
+					const auto snapped = m_navSystem->nearestPathablePoint(position.value, recoverRadius);
 					// Permanent stranded-recovery diagnostic (DEBUG, gated to the off-mesh branch):
 					// records the snap decision for the colonist-freeze bug class. Keep on cleanup.
 					LOG_DEBUG(Engine,
@@ -990,6 +1036,29 @@ namespace ecs {
 				// Decision: Should we switch tasks?
 				// Don't switch if it's the same task we're already doing
 				bool shouldSwitch = !isSameTask;
+
+				// Protect an in-flight two-hand delivery against a same-yield harvest. A two-hand armful
+				// (e.g. Wood) rides in BOTH hands and can't be stowed, so a switch to a Harvest (whose
+				// first action needs the hands) makes the chain-interruption below DROP the whole load.
+				// Dropping it to go chop MORE of the same item is pure waste and a loop: clearing a
+				// footprint emits a high-prio Harvest for the blockers' yield (Wood) that outranks the
+				// delivery, so the colonist drops the wood, the now-empty hands re-enable the harvest,
+				// it chops, fills, re-picks the delivery, and drops again -- an endless chop->drop->chop
+				// that never provisions the site. Hold the delivery so it completes; the colonist
+				// re-evaluates with empty hands once the load is deposited. Only the Harvest-of-the-same-
+				// item case is held: a switch to a DIFFERENT task (a need, a different material, a
+				// genuinely better delivery) is left alone, so this can't pin the colonist on a stuck
+				// haul. And it never fires when the delivery itself has no believed route to its
+				// destination (navState CantFindWayTo) -- holding then would strand an undeliverable load.
+				const bool currentHaulUnreachable = (task.navState == NavState::CantFindWayTo);
+				if (shouldSwitch && !currentHaulUnreachable && selected != nullptr && task.type == TaskType::Haul &&
+					!task.haulItemDefName.empty() && ecs::itemIsTwoHand(m_registry, task.haulItemDefName) &&
+					inventory.isHolding(task.haulItemDefName) && selected->taskType == TaskType::Harvest &&
+					selected->harvestYieldDefNameId == m_registry.getDefNameId(task.haulItemDefName)) {
+					shouldSwitch = false;
+					task.timeSinceEvaluation = 0.0F; // we did evaluate; hold the delivery
+				}
+
 				if (isSameTask) {
 					task.timeSinceEvaluation = 0.0F; // Reset timer, we did evaluate
 					// Update priority even when staying on same task
@@ -1455,7 +1524,32 @@ namespace ecs {
 			if (option.status != OptionStatus::Available) {
 				continue;
 			}
-			if (haveMesh && option.taskType != TaskType::Wander && option.targetPosition.has_value() &&
+			const bool needsTarget = option.taskType != TaskType::Wander && option.targetPosition.has_value();
+			// Snap only the task types whose action looks its target up by entity/footprint and so
+			// is satisfied by arriving ADJACENT: Harvest (incl. footprint clearing), Build, and
+			// Deconstruct. Their stored target is a CENTER that can sit in a navmesh hole -- a tree
+			// trunk's collision carves the tile out, so the pathfinder (which needs the goal point
+			// itself on a walkable triangle and never snaps) can never reach it. Snapping to the
+			// nearest walkable point makes the chop/clear/build reachable; a center already walkable
+			// snaps essentially in place. Haul/Craft are EXCLUDED: their actions validate arrival
+			// against the EXACT source/target position (haulSourcePosition / haulTargetPosition /
+			// station) within a tight tolerance, and their targets (loose piles, storage, stations)
+			// already sit on walkable ground -- snapping would move the nav goal off the tolerance-
+			// checked point and the action would report "not at source or target" forever.
+			const bool snapEligible = option.taskType == TaskType::Harvest ||
+									  option.taskType == TaskType::Build || option.taskType == TaskType::Deconstruct;
+			if (haveMesh && needsTarget && snapEligible) {
+				// nullopt means the target is outside every active sim region (off-area): drop the
+				// option to NoSource so the colonist prefers a reachable nearby source and never
+				// commits to an off-area target it would hold on forever.
+				const auto snapped = m_navSystem->nearestPathablePoint(option.targetPosition.value());
+				if (!snapped.has_value()) {
+					option.status = OptionStatus::NoSource; // off every active region: don't commit
+					continue;
+				}
+				option.targetPosition = snapped;
+			}
+			if (haveMesh && needsTarget &&
 				!m_navSystem->isReachable(position.value, option.targetPosition.value(), agentRadius, belief)) {
 				option.status = OptionStatus::NoSource; // unreachable: skip it rather than freeze on it
 				continue;

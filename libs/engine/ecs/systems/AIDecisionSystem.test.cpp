@@ -1096,6 +1096,131 @@ namespace ecs::test {
 		EXPECT_FLOAT_EQ(option.calculatePriority(), 0.0F);
 	}
 
+	// A fully-provisioned Build that serves the work order must NOT drop below idle Wander even at
+	// max distance penalty with zero Construction skill. Without the floor, 41 + (-50) = -9 < 10
+	// (Wander), and the colonist abandons the ready foundation and wanders off. The work-order floor
+	// pulls it back to 20 so it returns and finishes the build.
+	TEST_F(AIDecisionSystemTest, BuildActionFlooredAboveWanderWhenFarFromSite) {
+		EvaluatedOption build;
+		build.taskType = TaskType::Build;
+		build.status = OptionStatus::Available;
+		build.servesActiveWorkOrder = true;
+		build.distanceBonus = -50; // far site, max distance penalty
+		build.skillBonus = 0;	   // unskilled builder
+
+		EXPECT_FLOAT_EQ(build.calculatePriority(), EvaluatedOption::kWorkOrderProvisionFloor);
+		EXPECT_GT(build.calculatePriority(), EvaluatedOption::kWanderPriority)
+			<< "a ready build must outrank idle Wander even from far away";
+	}
+
+	// The three committed-work floors must order strictly: work-order (build/craft provisioning) >
+	// storage stocking > Wander. Pin the exact constants and the ordering so a future tweak can't
+	// silently let stocking outrank a build, or sink either below idle.
+	TEST_F(AIDecisionSystemTest, StockingFlooredBelowWorkOrderAndAboveWander) {
+		// All three at max distance penalty so each lands on its floor.
+		EvaluatedOption workOrderHaul;
+		workOrderHaul.taskType = TaskType::Haul;
+		workOrderHaul.status = OptionStatus::Available;
+		workOrderHaul.servesActiveWorkOrder = true;
+		workOrderHaul.distanceBonus = -50;
+
+		EvaluatedOption stockingHaul;
+		stockingHaul.taskType = TaskType::Haul;
+		stockingHaul.status = OptionStatus::Available;
+		stockingHaul.servesStorageStocking = true;
+		stockingHaul.distanceBonus = -50;
+
+		EvaluatedOption stockingHarvest;
+		stockingHarvest.taskType = TaskType::Harvest;
+		stockingHarvest.status = OptionStatus::Available;
+		stockingHarvest.servesStorageStocking = true;
+		stockingHarvest.distanceBonus = -50;
+		stockingHarvest.skillBonus = 0;
+
+		EXPECT_FLOAT_EQ(workOrderHaul.calculatePriority(), EvaluatedOption::kWorkOrderProvisionFloor);
+		EXPECT_FLOAT_EQ(stockingHaul.calculatePriority(), EvaluatedOption::kStorageStockingFloor);
+		EXPECT_FLOAT_EQ(stockingHarvest.calculatePriority(), EvaluatedOption::kStorageStockingFloor);
+
+		// Strict ordering: work-order > stocking > Wander.
+		EXPECT_GT(workOrderHaul.calculatePriority(), stockingHaul.calculatePriority());
+		EXPECT_GT(stockingHaul.calculatePriority(), EvaluatedOption::kWanderPriority);
+	}
+
+	// At equal distance and skill, a craft/construction provisioning haul/harvest edges out the
+	// storage-stocking equivalent: stocking sits one base point lower, so it ranks strictly below
+	// work-order provisioning even when neither is distance-penalized onto its floor.
+	TEST_F(AIDecisionSystemTest, StockingRanksBelowWorkOrderProvisioningAtEqualDistance) {
+		EvaluatedOption workOrderHaul;
+		workOrderHaul.taskType = TaskType::Haul;
+		workOrderHaul.status = OptionStatus::Available;
+		workOrderHaul.servesActiveWorkOrder = true;
+		workOrderHaul.distanceBonus = 0; // nearby; base tier governs
+
+		EvaluatedOption stockingHaul;
+		stockingHaul.taskType = TaskType::Haul;
+		stockingHaul.status = OptionStatus::Available;
+		stockingHaul.servesStorageStocking = true;
+		stockingHaul.distanceBonus = 0;
+
+		EXPECT_GT(workOrderHaul.calculatePriority(), stockingHaul.calculatePriority())
+			<< "craft/construction provisioning outranks stocking at equal distance";
+
+		EvaluatedOption workOrderHarvest;
+		workOrderHarvest.taskType = TaskType::Harvest;
+		workOrderHarvest.status = OptionStatus::Available;
+		workOrderHarvest.servesActiveWorkOrder = true;
+
+		EvaluatedOption stockingHarvest;
+		stockingHarvest.taskType = TaskType::Harvest;
+		stockingHarvest.status = OptionStatus::Available;
+		stockingHarvest.servesStorageStocking = true;
+
+		EXPECT_GT(workOrderHarvest.calculatePriority(), stockingHarvest.calculatePriority())
+			<< "provisioning harvest outranks stocking harvest at equal distance/skill";
+	}
+
+	// Proactive Gather Food (FulfillNeed sentinel: needValue==100, threshold==0) is a Tier-6 idle
+	// activity per ai-behavior.md: it must rank ABOVE Wander but BELOW every real work type. The
+	// regression it guards: gather-food used to compute 50 + bonuses, OUT-ranking Build (41) and
+	// Craft (40), and once selected the +200 in-progress bonus pinned it at ~317 so a colonist with
+	// a full belly but empty pockets gathered food forever and NEVER built a fully-provisioned
+	// foundation. Pin the ordering, including the in-progress case that caused the permanent stall.
+	TEST_F(AIDecisionSystemTest, GatherFoodRanksBelowRealWorkAndAboveWander) {
+		EvaluatedOption gather;
+		gather.taskType = TaskType::FulfillNeed;
+		gather.needType = NeedType::Hunger;
+		gather.needValue = 100.0F; // sentinel: not a real need, proactive stockpiling work
+		gather.threshold = 0.0F;
+		gather.status = OptionStatus::Available;
+		gather.skillBonus = 30;	 // Farming skill: must NOT lift gather above real work
+		gather.distanceBonus = 50; // nearest food right here: still must lose to real work
+
+		// Even with max skill+distance bonuses AND the in-progress bonus (the stuck case), the flat
+		// gather-food priority ignores all bonuses, so it stays a low idle chore.
+		gather.inProgressBonus = 200;
+
+		EXPECT_FLOAT_EQ(gather.calculatePriority(), EvaluatedOption::kGatherFoodPriority);
+
+		// A ready, fully-provisioned Build that serves the work order, with the WORST case for it
+		// (far site -> -50 distance, unskilled -> 0 skill): floored to kWorkOrderProvisionFloor.
+		EvaluatedOption build;
+		build.taskType = TaskType::Build;
+		build.status = OptionStatus::Available;
+		build.servesActiveWorkOrder = true;
+		build.distanceBonus = -50;
+		build.skillBonus = 0;
+
+		// Crafting work with no bonuses (base tier only).
+		EvaluatedOption craft;
+		craft.taskType = TaskType::Craft;
+		craft.status = OptionStatus::Available;
+
+		EXPECT_GT(build.calculatePriority(), gather.calculatePriority())
+			<< "a ready build must outrank proactive food-gathering, even far/unskilled vs near/skilled gather";
+		EXPECT_GT(craft.calculatePriority(), gather.calculatePriority()) << "crafting must outrank proactive food-gathering";
+		EXPECT_GT(gather.calculatePriority(), EvaluatedOption::kWanderPriority) << "gather food still beats idle Wander";
+	}
+
 	TEST_F(AIDecisionSystemTest, IsActionableReturnsCorrectly) {
 		EvaluatedOption option;
 

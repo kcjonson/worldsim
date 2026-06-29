@@ -17,7 +17,15 @@
 #include <cstddef>
 #include <cstdint>
 
+namespace engine::assets {
+	class AssetRegistry;
+}
+
 namespace ecs {
+
+	class GoalTaskRegistry;
+	struct StorageConfiguration;
+	struct Inventory;
 
 	/// System that creates Haul goals from storage containers
 	/// Priority: 55 (runs after NeedsDecay, before AIDecision)
@@ -34,6 +42,19 @@ namespace ecs {
 		[[nodiscard]] size_t getActiveGoalCount() const { return activeGoalCount; }
 
 	  private:
+		/// Emit/maintain stocking Harvest goals for a storage's specific-item rules whose minAmount
+		/// exceeds the count already in the box, when a colonist knows a harvestable source. Each is
+		/// a child of the storage's umbrella Haul goal. Drives the chop -> carry-in chain that fills
+		/// the box to its configured minimum; lower priority than construction/craft work.
+		void reconcileStockingHarvests(
+			GoalTaskRegistry&					 registry,
+			const engine::assets::AssetRegistry& assetRegistry,
+			const StorageConfiguration&			 config,
+			const Inventory&					 inventory,
+			uint64_t							 umbrellaId,
+			float								 maxColonistCarryKg
+		);
+
 
 		// Throttle updates (not needed every frame)
 		uint32_t				 frameCounter = 0;

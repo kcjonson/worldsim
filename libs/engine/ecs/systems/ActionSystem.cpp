@@ -62,7 +62,7 @@ namespace ecs {
 				if (task.type == TaskType::Build || task.type == TaskType::Deconstruct) {
 					startBuildAction(entity, task, action);
 				} else {
-					startAction(task, action, position, memory, needs, inventory);
+					startAction(entity, task, action, position, memory, needs, inventory);
 				}
 
 				// Harvest is work-based, not a fixed time: the action is created with the
@@ -78,13 +78,31 @@ namespace ecs {
 					action.duration /= harvestWorkRate(harvestSkill);
 				}
 
-				LOG_INFO(
-					Engine,
-					"[Action] Entity %llu: Started %s action (%.1fs duration)",
-					static_cast<unsigned long long>(entity),
-					actionTypeName(action.type),
-					action.duration
-				);
+				// Only log a genuine start. A start routine may decline to start an action (no
+				// reachable pickup, or a chain handoff that re-points the task), leaving it None;
+				// logging "Started None action" then is just noise.
+				if (action.isActive()) {
+					LOG_INFO(
+						Engine,
+						"[Action] Entity %llu: Started %s action (%.1fs duration)",
+						static_cast<unsigned long long>(entity),
+						actionTypeName(action.type),
+						action.duration
+					);
+				}
+
+				// Start-time chain handoff: a start routine can decline to start an action and
+				// instead re-point the task to its next leg (state flipped back to Moving), e.g. a
+				// haul that arrives at the SOURCE already carrying the item redirects to the deposit
+				// leg. The task must then drive itself to the new target; there is no action to
+				// process or complete this tick. Bail before the process/complete block below, which
+				// would otherwise "complete" the inactive (None) action and clear the task -- the
+				// behavior the OTHER no-action paths (pickup target gone) intentionally rely on to
+				// recover a stuck task. Gate strictly on Moving so only a deliberate handoff skips;
+				// a stall leaves the task Arrived and still falls through to that recovery.
+				if (!action.isActive() && task.state == TaskState::Moving) {
+					continue;
+				}
 			}
 
 			// Construction actions advance continuously by workDone, not by elapsed/duration.
@@ -124,6 +142,7 @@ namespace ecs {
 	}
 
 	void ActionSystem::startAction(
+		EntityID			  entity,
 		Task&				  task,
 		Action&				  action,
 		const Position&		  position,
@@ -139,7 +158,7 @@ namespace ecs {
 
 		// Handle Haul tasks - pickup from source, then deposit to storage
 		if (task.type == TaskType::Haul) {
-			startHaulAction(task, action, position, memory, inventory);
+			startHaulAction(entity, task, action, position, memory, inventory);
 			return;
 		}
 
