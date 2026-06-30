@@ -40,6 +40,17 @@ public:
 	using DropItemCallback = std::function<void(const std::string& defName, float x, float y)>;
 	void setDropItemCallback(DropItemCallback callback) { m_onDropItem = std::move(callback); }
 
+	/// Set callback for spawning a crafted FURNITURE output as a PACKAGED entity at the station.
+	/// Furniture (ItemCategory::Furniture) is never seated in the colonist's hands like a tool or
+	/// resource: it comes out packaged and is installed a short distance off the station via the
+	/// existing PlacePackaged carry+install flow. The app resolves a valid spot near `stationPos`
+	/// (NavigationSystem::findValidPositionNear) and spawns the packaged entity there with its
+	/// targetPosition set, so BuildGoalSystem auto-creates the place goal. Fires from inside the
+	/// ActionSystem view loop, so the app must ENQUEUE the spawn (deferred-spawn rule), never
+	/// spawn synchronously here.
+	using SpawnPackagedAtCallback = std::function<void(const std::string& defName, glm::vec2 stationPos)>;
+	void setSpawnPackagedAtCallback(SpawnPackagedAtCallback callback) { m_onSpawnPackagedAt = std::move(callback); }
+
 	/// Set callback for dropping a loose, haulable resource pile of `quantity` units.
 	/// Called when a fell yields more than the colonist could carry off: the remainder lands
 	/// as a single ground entity carrying a ResourceStack, hauled away in later armfuls. Unlike
@@ -261,6 +272,9 @@ private:
 
 	/// Callback for dropping items on the ground (non-backpackable items)
 	DropItemCallback m_onDropItem = nullptr;
+
+	/// Callback for spawning a crafted furniture output as a packaged entity at the station
+	SpawnPackagedAtCallback m_onSpawnPackagedAt = nullptr;
 
 	/// Callback for dropping a loose, haulable resource pile (felling remainder)
 	DropResourceCallback m_onDropResource = nullptr;

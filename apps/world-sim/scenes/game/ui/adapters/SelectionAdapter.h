@@ -58,16 +58,16 @@ using ResourceQueryCallback = std::function<std::optional<uint32_t>(const std::s
 );
 
 /// Convert furniture entity data into panel content
-/// Shows [Place] button for packaged furniture, [Package] button for placed furniture
+/// Shows [Place] button for packaged furniture, [Move] button for placed furniture
 /// Shows [Configure] button for storage containers
 /// @param onPlace Callback for placing packaged furniture
-/// @param onPackage Callback for re-packaging placed furniture
+/// @param onMoveFurniture Callback for moving (re-packaging + relocating) placed furniture
 /// @param onConfigure Callback for opening storage configuration dialog
 [[nodiscard]] PanelContent adaptFurniture(
 	const engine::assets::AssetRegistry& registry,
 	const FurnitureSelection& selection,
 	const std::function<void()>& onPlace = {},
-	const std::function<void()>& onPackage = {},
+	const std::function<void()>& onMoveFurniture = {},
 	const std::function<void()>& onConfigure = {}
 );
 

@@ -55,7 +55,7 @@ class EntityInfoView : public UI::Component {
 		QueueRecipeCallback   onQueueRecipe;		// Called when recipe is queued at station (legacy, kept for compatibility)
 		OpenCraftingDialogCallback onOpenCraftingDialog; // Called to open crafting dialog
 		std::function<void()> onPlace;				// Called when Place button clicked for packaged furniture
-		std::function<void()> onPackage;			// Called when Package button clicked for placed furniture
+		std::function<void()> onMoveFurniture;		// Called when Move button clicked for placed furniture
 		OpenStorageConfigCallback onOpenStorageConfig;	// Called to open storage config dialog for containers
 		ResourceQueryCallback queryResources;		// Query remaining resource count for harvestable entities
 		std::function<void()>	   onDemolishFoundation; // Called when Demolish foundation clicked (clear foundation only)
@@ -143,7 +143,7 @@ class EntityInfoView : public UI::Component {
 	QueueRecipeCallback   onQueueRecipeCallback;
 	OpenCraftingDialogCallback onOpenCraftingDialogCallback;
 	std::function<void()> onPlaceCallback;
-	std::function<void()> onPackageCallback;
+	std::function<void()> onMoveFurnitureCallback;
 	OpenStorageConfigCallback onOpenStorageConfigCallback;
 	ResourceQueryCallback queryResourcesCallback;
 	std::function<void()> onDemolishFoundationCallback;

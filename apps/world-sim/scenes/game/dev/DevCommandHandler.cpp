@@ -178,12 +178,25 @@ namespace world_sim {
 		const long			   n = nRaw < 1 ? 1 : nRaw;
 		const float			   scatter = std::strtof(cmd.param("scatter", "0").c_str(), nullptr);
 
+		// requireValidPosition gated the CENTER, but each scattered offset is its own point that
+		// can land off-mesh (in a river). Snap every scattered position onto walkable ground with
+		// the same primitive the colonist drops use: minDist 0 keeps a position that is already
+		// valid and otherwise returns the nearest walkable point, so nothing spawns in water. A
+		// position with no mesh anywhere near it (nullopt) is skipped rather than placed off-mesh.
+		long spawned = 0;
 		for (long i = 0; i < n; ++i) {
 			const Foundation::Vec2 off = spreadOffset(i, n, scatter);
-			m_ctx.placement->spawnEntity(def, {at.x + off.x, at.y + off.y});
+			const glm::vec2		   raw{at.x + off.x, at.y + off.y};
+			const std::optional<glm::vec2> placed =
+				(m_ctx.navigation != nullptr) ? m_ctx.navigation->findValidPositionNear(raw, 0.0F) : std::optional<glm::vec2>{raw};
+			if (!placed.has_value()) {
+				continue;
+			}
+			m_ctx.placement->spawnEntity(def, {placed->x, placed->y});
+			++spawned;
 		}
-		LOG_INFO(Game, "[DevAPI] spawn: %ld x '%s' near (%.1f, %.1f)", n, def.c_str(), at.x, at.y);
-		m_ctx.ui->pushNotification("Dev", "Spawned " + std::to_string(n) + " " + def, UI::ToastSeverity::Info);
+		LOG_INFO(Game, "[DevAPI] spawn: %ld/%ld x '%s' near (%.1f, %.1f)", spawned, n, def.c_str(), at.x, at.y);
+		m_ctx.ui->pushNotification("Dev", "Spawned " + std::to_string(spawned) + " " + def, UI::ToastSeverity::Info);
 	}
 
 	void DevCommandHandler::devColonist(const Foundation::DevCommand& cmd) {

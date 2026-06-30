@@ -88,6 +88,7 @@ namespace world_sim {
 			.onQueueRecipe = args.onQueueRecipe,
 			.onOpenCraftingDialog = args.onOpenCraftingDialog,
 			.onPlace = args.onPlaceFurniture,
+			.onMoveFurniture = args.onMoveFurniture,
 			.onOpenStorageConfig = args.onOpenStorageConfig,
 			.queryResources = args.queryResources,
 			.onDemolishFoundation = args.onDemolishFoundation,

@@ -172,6 +172,36 @@ namespace {
 		[[nodiscard]] uint64_t getWorldSeed() const override { return 7u; }
 	};
 
+	// Inverse of WaterPatchSampler: open water EVERYWHERE except one 16 m land sector
+	// (the "island") carved into the origin chunk at world [32,48) on both axes. The only
+	// walkable face in the whole region is that island, which lets a test drop an origin in
+	// the surrounding water close to the island and force findValidPositionNear's Tier-3
+	// PUSH branch: nearest walkable (the island, ~4 m off) is inside minDist, yet a 24 m ring
+	// clears the island entirely (its farthest corner is ~21.5 m from the origin) so no ring
+	// sample is on mesh, and the radial push to minDist lands past the island back in water.
+	class LandIslandSampler : public engine::world::IWorldSampler {
+	  public:
+		[[nodiscard]] engine::world::ChunkSampleResult sampleChunk(engine::world::ChunkCoordinate coord) const override {
+			engine::world::ChunkSampleResult r;
+			// Default the whole chunk to water by seeding every corner Ocean.
+			for (auto& cb : r.cornerBiomes) {
+				cb = engine::world::BiomeWeights::single(engine::world::Biome::Ocean);
+			}
+			r.cornerElevations = {1.0F, 1.0F, 1.0F, 1.0F};
+			r.computeSectorGrid();
+			// Carve the single land island only in the origin chunk so the rest stays water.
+			if (coord.x == 0 && coord.y == 0) {
+				const engine::world::BiomeWeights land =
+					engine::world::BiomeWeights::single(engine::world::Biome::TemperateGrassland);
+				// Tiles [32,48) -> sector (2,2): one 16 m square of walkable land at ~(40,40).
+				r.sectorGrid[static_cast<size_t>(2 * engine::world::kSectorGridSize + 2)] = land;
+			}
+			return r;
+		}
+		[[nodiscard]] float	   sampleElevation(engine::world::WorldPosition) const override { return 1.0F; }
+		[[nodiscard]] uint64_t getWorldSeed() const override { return 7u; }
+	};
+
 	class NavigationSystemTest : public ::testing::Test {
 	  protected:
 		void SetUp() override {
@@ -1441,6 +1471,156 @@ TEST_F(NavigationSystemTest, OffRegionColonistNotRelocated) {
 	const auto* pos = world.getComponent<Position>(colonist);
 	ASSERT_NE(pos, nullptr);
 	EXPECT_EQ(pos->value, farAway) << "a colonist no region covers must NOT be relocated";
+}
+
+// --- findValidPositionNear: place a thing a short distance off an origin --------
+//
+// The reusable "give me a walkable spot >= minDist from here" primitive behind the
+// packaged-furniture placement (a crafted box must come out beside its station, not
+// on top of it) and, later, the items-in-river drop fix. Deterministic: a fixed angle
+// set with a fixed start and no RNG, so identical inputs yield identical points.
+
+// Open ground: the result is on mesh, about minDist from the origin, and not the origin.
+TEST_F(NavigationSystemTest, FindValidPositionNearOpenGroundReturnsPointAtDistance) {
+	ConstructionWorld cw; // empty: open walkable terrain over the origin region
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys);
+	sys.setConstructionWorld(&cw);
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+
+	const glm::vec2 origin{2.0F, 2.0F};
+	ASSERT_TRUE(sys.isOnMesh(origin)) << "origin must be on open ground for the premise";
+
+	const float					   minDist = 1.5F;
+	const std::optional<glm::vec2> result = sys.findValidPositionNear(origin, minDist);
+	ASSERT_TRUE(result.has_value()) << "open ground must yield a nearby valid position";
+	EXPECT_TRUE(sys.isOnMesh(*result)) << "the result must sit on walkable mesh";
+	EXPECT_NE(*result, origin) << "the result must be offset from the origin";
+	const float dist = glm::distance(origin, *result);
+	EXPECT_GE(dist, minDist - 0.01F) << "the result must be at least minDist away";
+	EXPECT_NEAR(dist, minDist, 0.01F) << "an open-ground hit sits exactly on the minDist ring";
+}
+
+// Origin wedged inside a water hole whose radius exceeds minDist: every ring sample at
+// minDist is off-mesh, so the Tier-3 fallback snaps to the nearest walkable face -- still
+// on mesh and at least minDist away (the hole boundary is farther than minDist here).
+TEST_F(NavigationSystemTest, FindValidPositionNearInPocketFallsBackToNearestWalkable) {
+	ConstructionWorld cw;
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	auto chunks = wireWaterPatch(sys, cw); // 16 m water square at world [32,48)
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+
+	// Center of the water square: in-region but off-mesh, and a 1 m ring around it is wholly
+	// inside the ~16 m water hole, so no ring sample is walkable -> Tier-3 fallback.
+	const glm::vec2 origin{40.0F, 40.0F};
+	ASSERT_TRUE(sys.inSimArea(origin)) << "origin must be inside the region";
+	ASSERT_FALSE(sys.isOnMesh(origin)) << "origin must be off-mesh (inside the water hole)";
+
+	const float					   minDist = 1.0F;
+	const std::optional<glm::vec2> result = sys.findValidPositionNear(origin, minDist);
+	ASSERT_TRUE(result.has_value()) << "the region has walkable land, so a result must exist";
+	EXPECT_TRUE(sys.isOnMesh(*result)) << "the fallback result must be on walkable mesh";
+	EXPECT_GE(glm::distance(origin, *result), minDist - 0.01F)
+		<< "the fallback result must be at least minDist from the origin";
+}
+
+namespace {
+	// Wire the LandIslandSampler world (water everywhere except one 16 m land island at world
+	// [32,48)) onto a system over a 60 m origin region with a built mesh. Returns the
+	// ChunkManager the caller must keep alive for the system's lifetime.
+	std::unique_ptr<engine::world::ChunkManager> wireLandIsland(NavigationSystem& sys, ConstructionWorld& cw) {
+		auto chunks = std::make_unique<engine::world::ChunkManager>(std::make_unique<LandIslandSampler>());
+		chunks->setLoadRadius(2);
+		chunks->setUnloadRadius(4);
+		chunks->update({0.0F, 0.0F});
+		chunks->finishPendingGeneration();
+		sys.setChunkManager(chunks.get());
+		sys.setViewportRect(glm::vec2{0.0F, 0.0F}, glm::vec2{60.0F, 60.0F});
+		sys.setConstructionWorld(&cw);
+		return chunks;
+	}
+} // namespace
+
+// Tier-3 PUSH branch (distinct from the early-return the pocket test above hits): the origin
+// sits in open water 4 m off a lone 16 m land island, the ONLY walkable face in the region.
+// nearestPathableOnMesh(origin) lands on the island ~4 m away (< minDist), so the fallback
+// pushes that point radially out to minDist=24 m -- which overshoots the island back into
+// water. Pre-fix that off-mesh pushed point was returned verbatim (a target a colonist could
+// never path to, stalling the place goal); the isOnMesh gate now falls back to the island
+// point. We assert the result is on mesh, which fails without the gate and passes with it.
+TEST_F(NavigationSystemTest, FindValidPositionNearPushedFallbackStaysOnMesh) {
+	ConstructionWorld cw;
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	auto chunks = wireLandIsland(sys, cw); // 16 m land island at world [32,48), water elsewhere
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+
+	// 4 m west of the island's west face (x=32); the whole island lies within ~21.5 m, so a
+	// 24 m ring clears it and every ring sample is off-mesh -> the Tier-3 push fires.
+	const glm::vec2 origin{28.0F, 40.0F};
+	ASSERT_TRUE(sys.inSimArea(origin)) << "origin must be inside the region";
+	ASSERT_FALSE(sys.isOnMesh(origin)) << "origin must be off-mesh (in the surrounding water)";
+	const std::optional<glm::vec2> nearest = sys.findValidPositionNear(origin, 0.0F);
+	ASSERT_TRUE(nearest.has_value()) << "the island gives a nearest walkable point";
+	ASSERT_LT(glm::distance(origin, *nearest), 24.0F) << "nearest island point must be inside minDist (push premise)";
+
+	const float					   minDist = 24.0F;
+	const std::optional<glm::vec2> result = sys.findValidPositionNear(origin, minDist);
+	ASSERT_TRUE(result.has_value()) << "the region has a walkable island, so a result must exist";
+	EXPECT_TRUE(sys.isOnMesh(*result))
+		<< "the pushed Tier-3 fallback must be re-validated on mesh, not returned off-mesh in water";
+}
+
+// Determinism: two identical calls return the exact same point (no RNG, fixed angle set).
+TEST_F(NavigationSystemTest, FindValidPositionNearIsDeterministic) {
+	ConstructionWorld cw;
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys);
+	sys.setConstructionWorld(&cw);
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+
+	const glm::vec2 origin{3.0F, 3.0F};
+	const std::optional<glm::vec2> a = sys.findValidPositionNear(origin, 1.0F, {0.5F, 0.5F});
+	const std::optional<glm::vec2> b = sys.findValidPositionNear(origin, 1.0F, {0.5F, 0.5F});
+	ASSERT_TRUE(a.has_value());
+	ASSERT_TRUE(b.has_value());
+	EXPECT_EQ(*a, *b) << "identical inputs must yield an identical point (deterministic)";
+}
+
+// preferredDir={1,0} on open ground places the result exactly origin + {minDist, 0}: the
+// preferred candidate is on mesh, so it is taken directly (no ring search).
+TEST_F(NavigationSystemTest, FindValidPositionNearHonorsPreferredDirOnOpenGround) {
+	ConstructionWorld cw;
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys);
+	sys.setConstructionWorld(&cw);
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+
+	const glm::vec2 origin{2.0F, 2.0F};
+	const float		minDist = 2.0F;
+	const std::optional<glm::vec2> result = sys.findValidPositionNear(origin, minDist, {1.0F, 0.0F});
+	ASSERT_TRUE(result.has_value());
+	EXPECT_NEAR(result->x, origin.x + minDist, 0.001F) << "preferred +X candidate taken directly";
+	EXPECT_NEAR(result->y, origin.y, 0.001F) << "preferred +X candidate has no Y offset";
+}
+
+// Origin outside every region: nullopt (no mesh to place against, like nearestPathablePoint).
+TEST_F(NavigationSystemTest, FindValidPositionNearOutsideRegionReturnsNullopt) {
+	ConstructionWorld cw;
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys); // 60 m region at origin
+	sys.setConstructionWorld(&cw);
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+
+	const glm::vec2 farAway{500.0F, 500.0F};
+	ASSERT_FALSE(sys.inSimArea(farAway)) << "test point must be outside every region";
+	EXPECT_FALSE(sys.findValidPositionNear(farAway, 1.0F).has_value())
+		<< "an origin no region covers must return nullopt";
 }
 
 // --- AABB clustering (overlap -> merge, disjoint -> separate) -----------------

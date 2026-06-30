@@ -109,9 +109,9 @@ struct PanelContent {
 	// Colonist-specific: callback for Details button
 	std::function<void()> onDetails;
 
-	// Furniture-specific: callbacks for Place/Package actions
-	std::function<void()> onPlace;	 // Called when [Place] button clicked (for packaged furniture)
-	std::function<void()> onPackage; // Called when [Package] button clicked (for placed furniture)
+	// Furniture-specific: callbacks for Place/Move actions
+	std::function<void()> onPlace;		  // Called when [Place] button clicked (for packaged furniture)
+	std::function<void()> onMoveFurniture; // Called when [Move] button clicked (for placed furniture)
 
 	// Storage-specific: callback for Configure button (opens StorageConfigDialog)
 	std::function<void()> onConfigure;
