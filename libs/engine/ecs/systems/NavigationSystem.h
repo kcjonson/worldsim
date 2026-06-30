@@ -249,6 +249,21 @@ class NavigationSystem : public ISystem {
 	// only when no region covers `meters` or the region has no walkable floor at all.
 	[[nodiscard]] std::optional<glm::vec2> nearestPathablePoint(glm::vec2 meters, float agentRadiusMeters) const;
 
+	// A walkable point at least `minDistMeters` away from `origin`, used to place a thing a
+	// short distance OFF the spot that produced it (a crafted furniture box coming out of a
+	// station, an item that must not drop into a river). Returns meters, like
+	// nearestPathablePoint; deterministic (no RNG, a fixed angle set with a fixed start, a
+	// deterministic tiebreak) so the same inputs always yield the same point.
+	//
+	// `preferredDir` biases the first candidate (e.g. away from the crafting colonist so a
+	// run of boxes fans out instead of stacking); a zero vector falls back to {1,0} so the
+	// result stays canonical. The search: a single candidate at origin + minDist*dir, then a
+	// ring of fixed angles at that radius, then a fallback that pushes the nearest walkable
+	// point out to minDist. nullopt only when `origin` is outside every region or its region
+	// has no walkable floor at all -- whenever any walkable floor exists, the result is non-null.
+	[[nodiscard]] std::optional<glm::vec2>
+	findValidPositionNear(glm::vec2 origin, float minDistMeters = 1.0F, glm::vec2 preferredDir = {0.0F, 0.0F}) const;
+
 	// True when ANY region has a built, non-empty mesh. (A region whose first build is
 	// still in flight does not count until it lands.)
 	[[nodiscard]] bool hasMesh() const;

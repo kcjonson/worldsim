@@ -828,9 +828,22 @@ namespace {
 			if (!m_pendingSpawns.empty()) {
 				for (const PendingSpawn& spawn : m_pendingSpawns) {
 					if (spawn.packaged) {
-						auto entity = m_placementSystem->spawnEntity(spawn.defName, {spawn.x, spawn.y});
-						ecsWorld->addComponent<ecs::Packaged>(entity, ecs::Packaged{});
-						LOG_INFO(Game, "Spawned packaged '%s' - awaiting placement", spawn.defName.c_str());
+						// Spawn AT the resolved target (when one is set) so the box never overlaps
+						// the station: the colonist walks over and installs it via PlacePackaged.
+						// targetPosition wired here -> BuildGoalSystem raises the place goal next
+						// frame. nullopt -> spawn in place, await the player's [Place] click.
+						const glm::vec2 spawnAt =
+							spawn.targetPosition.has_value() ? *spawn.targetPosition : glm::vec2{spawn.x, spawn.y};
+						auto entity = m_placementSystem->spawnEntity(spawn.defName, spawnAt);
+						ecs::Packaged packaged;
+						packaged.targetPosition = spawn.targetPosition;
+						ecsWorld->addComponent<ecs::Packaged>(entity, packaged);
+						if (spawn.targetPosition.has_value()) {
+							LOG_INFO(Game, "Spawned packaged '%s' at (%.1f, %.1f) - auto-placing", spawn.defName.c_str(),
+									 spawnAt.x, spawnAt.y);
+						} else {
+							LOG_INFO(Game, "Spawned packaged '%s' - awaiting placement", spawn.defName.c_str());
+						}
 					} else {
 						dropResourcePiles(spawn.defName, spawn.x, spawn.y, spawn.quantity);
 					}
@@ -1062,7 +1075,27 @@ namespace {
 			// Offset from crafting station so items don't stack on top (2x typical station size).
 			constexpr float kDropOffset = 2.0F;
 			actionSystem.setDropItemCallback([this, kDropOffset](const std::string& defName, float x, float y) {
-				m_pendingSpawns.push_back({defName, x + kDropOffset, y, 0, /*packaged=*/true});
+				m_pendingSpawns.push_back({defName, x + kDropOffset, y, 0, /*packaged=*/true, std::nullopt});
+			});
+
+			// Crafted FURNITURE comes out PACKAGED and auto-installs a short distance off the
+			// station via the existing PlacePackaged flow (it must not seat in the colonist's
+			// hands or stack on the station). Resolve a walkable spot >= 1 m away; the aim rotates
+			// by the golden angle each spawn so a queued run of boxes FANS OUT instead of stacking
+			// on one target. If no mesh covers the station (findValidPositionNear -> nullopt), fall
+			// back to the manual packaged drop (spawn beside the station, await a [Place] click) so
+			// crafting never hard-fails. ENQUEUE only -- fires from inside the ActionSystem view loop.
+			actionSystem.setSpawnPackagedAtCallback([this, &navSystem](const std::string& defName, glm::vec2 stationPos) {
+				constexpr float kGoldenAngle = 2.39996323F; // ~137.5 deg, spreads successive aims evenly
+				const float		angle		 = static_cast<float>(m_packagedSpawnSeq++) * kGoldenAngle;
+				const glm::vec2 aim{std::cos(angle), std::sin(angle)};
+				const std::optional<glm::vec2> target = navSystem.findValidPositionNear(stationPos, 1.0F, aim);
+				if (target.has_value()) {
+					m_pendingSpawns.push_back({defName, target->x, target->y, 0, /*packaged=*/true, target});
+				} else {
+					// No mesh at the station: fall back to the player-driven packaged drop.
+					m_pendingSpawns.push_back({defName, stationPos.x + kDropOffset, stationPos.y, 0, /*packaged=*/true, std::nullopt});
+				}
 			});
 
 			// Drop a loose, haulable resource pile (felling remainder, or a cancelled build site's
@@ -1778,8 +1811,17 @@ namespace {
 			float		y = 0.0F;
 			uint32_t	quantity = 0; // resource-pile count; unused for packaged items
 			bool		packaged = false;
+			// Auto-place target for a packaged spawn (a crafted furniture box). When set, the
+			// entity spawns AT this point with Packaged.targetPosition wired, so BuildGoalSystem
+			// raises the place goal immediately (no manual [Place]). nullopt -> the player-driven
+			// path (spawn in place, await a [Place] click) for a manually dropped packaged item.
+			std::optional<glm::vec2> targetPosition;
 		};
 		std::vector<PendingSpawn> m_pendingSpawns;
+
+		// Monotonic counter rotating the placement aim for crafted furniture so a run of boxes
+		// from one station fans out (golden-angle stepped) instead of stacking on a single spot.
+		std::uint32_t m_packagedSpawnSeq = 0;
 	};
 
 } // namespace
