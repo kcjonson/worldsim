@@ -35,6 +35,9 @@ class StorageConfigDialog : public UI::Component {
   public:
 	struct Args {
 		std::function<void()> onClose;
+		// Fired once per (container, item) when a configured specific-item rule has no colony-known
+		// source. Wired to the toast stack; mirrors the existing onClose seam.
+		std::function<void(const std::string& title, const std::string& message)> onNotify;
 	};
 
 	explicit StorageConfigDialog(const Args& args);
@@ -82,7 +85,8 @@ class StorageConfigDialog : public UI::Component {
 	// Center column fills remaining space
 
 	// Callbacks
-	std::function<void()> onCloseCallback;
+	std::function<void()>													  onCloseCallback;
+	std::function<void(const std::string& title, const std::string& message)> onNotifyCallback;
 
 	// Model
 	StorageConfigDialogModel model;

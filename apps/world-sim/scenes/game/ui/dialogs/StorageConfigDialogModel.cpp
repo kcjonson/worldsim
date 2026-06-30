@@ -1,10 +1,13 @@
 #include "StorageConfigDialogModel.h"
 
+#include "scenes/game/ui/adapters/CraftingAdapter.h"
+
 #include <ecs/components/Inventory.h>
 #include <ecs/components/StorageConfiguration.h>
 
 #include <algorithm>
 #include <cctype>
+#include <unordered_map>
 
 namespace world_sim {
 
@@ -40,6 +43,11 @@ void StorageConfigDialogModel::setContainer(ecs::EntityID containerId,
 	items.clear();
 	containerCategories.clear();
 
+	// Reset known-source / toast de-dup state for the new container
+	toastedUnknownSourceItems.clear();
+	newlyUnknownItems.clear();
+	knownSourceByDefName.clear();
+
 	// Reset change detection
 	prevRuleCount = 0;
 	prevTotalItems = 0;
@@ -55,10 +63,13 @@ void StorageConfigDialogModel::clear() {
 	groups.clear();
 	items.clear();
 	containerCategories.clear();
+	toastedUnknownSourceItems.clear();
+	newlyUnknownItems.clear();
+	knownSourceByDefName.clear();
 }
 
 StorageConfigDialogModel::UpdateType StorageConfigDialogModel::refresh(
-	const ecs::World& world, const engine::assets::AssetRegistry& registry) {
+	ecs::World& world, const engine::assets::AssetRegistry& registry) {
 	if (currentContainerId == ecs::EntityID{0}) {
 		valid = false;
 		return UpdateType::None;
@@ -87,6 +98,7 @@ StorageConfigDialogModel::UpdateType StorageConfigDialogModel::refresh(
 	// Extract all data
 	extractAvailableItems(registry);
 	updateInventoryCounts(world);
+	updateKnownSources(world);
 	updateSelectedItemRules(world);
 
 	// If we just became valid, it's a full update
@@ -366,6 +378,53 @@ void StorageConfigDialogModel::updateInventoryCounts(const ecs::World& world) {
 	}
 }
 
+void StorageConfigDialogModel::updateKnownSources(ecs::World& world) {
+	knownSourceByDefName.clear();
+	newlyUnknownItems.clear();
+
+	const auto* config = world.getComponent<ecs::StorageConfiguration>(currentContainerId);
+	if (config == nullptr) {
+		// No rules => nothing configured can be unknown; drop any stale toast state.
+		toastedUnknownSourceItems.clear();
+		return;
+	}
+
+	// Which specific items are still configured this frame, so an item removed from config drops
+	// out of the toast set (and re-toasts once if added back later while still unsourced).
+	std::unordered_set<std::string> configuredSpecificItems;
+
+	for (const auto& rule : config->rules) {
+		if (rule.isWildcard()) {
+			continue; // a wildcard names no single item to source
+		}
+		configuredSpecificItems.insert(rule.defName);
+		if (knownSourceByDefName.find(rule.defName) != knownSourceByDefName.end()) {
+			continue; // already evaluated this item this frame
+		}
+
+		const bool known = isStorageSourceKnown(world, currentContainerId, rule.defName);
+		knownSourceByDefName[rule.defName] = known;
+
+		if (known) {
+			// Recovered (or already had) a source: erasing lets a future loss re-toast once.
+			toastedUnknownSourceItems.erase(rule.defName);
+		} else if (toastedUnknownSourceItems.find(rule.defName) == toastedUnknownSourceItems.end()) {
+			// Newly unknown: flag for the view to toast, and remember we've toasted it.
+			newlyUnknownItems.push_back(rule.defName);
+			toastedUnknownSourceItems.insert(rule.defName);
+		}
+	}
+
+	// Forget toast state for items no longer configured here.
+	for (auto it = toastedUnknownSourceItems.begin(); it != toastedUnknownSourceItems.end();) {
+		if (configuredSpecificItems.find(*it) == configuredSpecificItems.end()) {
+			it = toastedUnknownSourceItems.erase(it);
+		} else {
+			++it;
+		}
+	}
+}
+
 void StorageConfigDialogModel::updateSelectedItemRules(const ecs::World& world) {
 	selectedItemRules.clear();
 
@@ -405,6 +464,12 @@ void StorageConfigDialogModel::updateSelectedItemRules(const ecs::World& world) 
 		display.maxAmount = rule.maxAmount;
 		display.isWildcard = rule.isWildcard();
 		display.category = rule.category;
+		// Specific-item rules carry the known-source flag computed in updateKnownSources(); wildcards
+		// name no single item to source, so they keep the default (true) and render no affordance.
+		if (!display.isWildcard) {
+			auto it = knownSourceByDefName.find(rule.defName);
+			display.knownSource = (it == knownSourceByDefName.end()) || it->second;
+		}
 
 		// Create display label
 		if (display.isWildcard) {

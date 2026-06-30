@@ -109,7 +109,10 @@ namespace world_sim {
 
 		// Create storage config dialog
 		storageConfigDialog = std::make_unique<StorageConfigDialog>(StorageConfigDialog::Args{
-			.onClose = [this]() { hideStorageConfigDialog(); }
+			.onClose = [this]() { hideStorageConfigDialog(); },
+			.onNotify = [this](const std::string& title, const std::string& message) {
+				pushNotification(title, message, UI::ToastSeverity::Warning);
+			}
 		});
 
 		// Create task list view (position set in layout())

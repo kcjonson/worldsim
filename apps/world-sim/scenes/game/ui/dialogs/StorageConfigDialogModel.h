@@ -17,6 +17,8 @@
 #include <ecs/components/StorageConfiguration.h>
 
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace world_sim {
@@ -49,6 +51,9 @@ struct DisplayRule {
 	uint32_t					   maxAmount;  // 0 = unlimited
 	bool						   isWildcard; // defName == "*"
 	engine::assets::ItemCategory category;
+	// Whether the colony knows a source to fill this box with this item (engine pull's source set).
+	// Only meaningful for specific-item rules; wildcards name no single item to source, so left true.
+	bool						   knownSource{true};
 };
 
 /// ViewModel for StorageConfigDialog
@@ -73,7 +78,9 @@ class StorageConfigDialogModel {
 
 	/// Refresh model from ECS world
 	/// @return Type of update the dialog should perform
-	[[nodiscard]] UpdateType refresh(const ecs::World& world,
+	/// World is non-const: the known-source check resolves storage sources via World::view, which
+	/// has no const overload.
+	[[nodiscard]] UpdateType refresh(ecs::World& world,
 									 const engine::assets::AssetRegistry& registry);
 
 	/// Select an item by defName (for rule editing)
@@ -132,6 +139,13 @@ class StorageConfigDialogModel {
 		return selectedItemRules;
 	}
 
+	/// DefNames of configured specific-item rules that newly lost their known source on the last
+	/// refresh() and have not yet been toasted. The view drains this to fire one warning toast per
+	/// (container, item); an item that recovers a source is erased so a future loss re-toasts once.
+	[[nodiscard]] const std::vector<std::string>& newlyUnknownSourceItems() const {
+		return newlyUnknownItems;
+	}
+
 	// Pending rule settings (for center column form)
 	[[nodiscard]] ecs::StoragePriority pendingRulePriority() const { return pendingPriority; }
 	[[nodiscard]] uint32_t pendingRuleMinAmount() const { return pendingMinAmount; }
@@ -149,6 +163,10 @@ class StorageConfigDialogModel {
 
 	/// Update inventory counts from container
 	void updateInventoryCounts(const ecs::World& world);
+
+	/// Compute, per configured specific-item rule, whether the colony knows a source the engine pull
+	/// would use to fill this box with that item; drive the unknown-source toast de-dup from it.
+	void updateKnownSources(ecs::World& world);
 
 	/// Update rules for selected item
 	void updateSelectedItemRules(const ecs::World& world);
@@ -172,6 +190,16 @@ class StorageConfigDialogModel {
 	// Selection
 	std::string				 selectedItem;
 	std::vector<DisplayRule> selectedItemRules;
+
+	// Unknown-source toast de-dup. Items whose configured rule currently has no known source (so a
+	// toast already fired and shouldn't repeat). `newlyUnknownItems` is the subset that crossed into
+	// "unknown" on the last refresh; the view drains it. Both reset on container change.
+	std::unordered_set<std::string> toastedUnknownSourceItems;
+	std::vector<std::string>		newlyUnknownItems;
+
+	// Per-refresh cache of defName -> hasKnownSource for every configured specific-item rule, so the
+	// right-column DisplayRule build reuses the world scan refresh() already paid for.
+	std::unordered_map<std::string, bool> knownSourceByDefName;
 
 	// Pending rule settings (center column form state)
 	ecs::StoragePriority pendingPriority = ecs::StoragePriority::Medium;
