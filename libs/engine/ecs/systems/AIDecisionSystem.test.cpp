@@ -1752,6 +1752,252 @@ namespace ecs::test {
 			<< "an unknown source box must not be pulled from (no magic discovery)";
 	}
 
+	// 9. Two-hand carry holds against a fresh same-tier pull (the drop-loop regression). A pull is a
+	//    two-phase Haul: walk to SOURCE box A, Withdraw the armful, then carry to DEST box B and
+	//    deposit. Mid-carry (phase 2, target B, the two-hand Wood riding in both hands), the colonist
+	//    is still standing on A which still holds Wood, so evaluateHaulOptions' pull-source scan
+	//    re-emits a FRESH withdraw option pointing back at A with a high score (distance ~0). The
+	//    gate's isSameTask compares the in-flight deposit target (B) to the fresh option target (A) ->
+	//    different -> would treat it as a same-tier switch and drop the un-stowable armful, then
+	//    withdraw + drop again forever. The two-hand-carry guard must HOLD the delivery so it
+	//    completes. Real two-hand Wood; this exercises the re-eval mid-carry the action round-trip
+	//    test (WithdrawTwoHandWoodRidesInHandsThenDepositsIntoDestBox) skipped.
+	TEST_F(AIDecisionSystemTest, TwoHandPullHoldsAgainstFreshSamePriorityPullMidCarry) {
+		auto& registry = engine::assets::AssetRegistry::Get();
+		// A REAL two-hand bulk material (handsRequired==2): rides in both hands, can't stow to
+		// belt/backpack, so an interruption would DROP it. registerPullItem registers a one-hand item,
+		// so build Wood explicitly here.
+		engine::assets::AssetDefinition woodDef;
+		woodDef.defName = "Wood";
+		woodDef.label = "Wood";
+		woodDef.handsRequired = 2;
+		woodDef.category = engine::assets::ItemCategory::RawMaterial;
+		woodDef.capabilities.carryable = engine::assets::CarryableCapability{1};
+		woodDef.itemProperties = engine::assets::ItemProperties{};
+		woodDef.itemProperties->stackSize = 40;
+		woodDef.itemProperties->massKg = 2.5F;
+		registry.registerTestDefinition(std::move(woodDef));
+		const uint32_t woodId = registry.getDefNameId("Wood");
+		registerStorageDef(registry, "Box");
+		const uint32_t boxDefId = registry.getDefNameId("Box");
+
+		// Source A (Low) still holds Wood -> the pull-source scan keeps re-emitting a source-A option.
+		// Dest B (High) wants Wood. Repro mirrors the in-game report (A Low 30, B High min 20).
+		const glm::vec2 srcPos{2.0F, 0.0F};
+		const glm::vec2 destPos{4.0F, 0.0F};
+		const EntityID srcBox = makeStorageBox(srcPos, "Box", "Wood", ecs::StoragePriority::Low, /*qty=*/30);
+		const EntityID destBox = makeStorageBox(destPos, "Box", "Wood", ecs::StoragePriority::High, /*qty=*/0, /*min=*/20);
+
+		// Colonist standing ON the source box, mid-carry: a two-hand Wood armful in hands, task on its
+		// deposit leg (phase 2) heading to the dest box. priorityTier 6 = the opportunistic-stocking
+		// tier the original pull selection stamped (a same-tier challenger must NOT preempt it).
+		auto  colonist = createColonist(srcPos);
+		satisfyAllNeeds(*getNeeds(colonist));
+		addKnownEntity(colonist, srcPos, boxDefId, engine::assets::CapabilityType::Storage);
+		addKnownEntity(colonist, destPos, boxDefId, engine::assets::CapabilityType::Storage);
+
+		const uint64_t haulId = makeUmbrellaGoal(destBox, destPos, woodId);
+
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		ASSERT_NE(inventory, nullptr);
+		const uint32_t carried = ecs::addArmful(*inventory, registry, "Wood", 14); // the in-game two-hand load
+		ASSERT_EQ(carried, 14U) << "seat the full armful into both hands";
+		ASSERT_TRUE(inventory->isHolding("Wood"));
+
+		auto* task = getTask(colonist);
+		ASSERT_NE(task, nullptr);
+		task->type = TaskType::Haul;
+		task->state = TaskState::Moving; // in-flight toward the dest box (phase 2)
+		task->navState = NavState::Traveling; // has a believed route (NOT CantFindWayTo) -> guard applies
+		task->haulGoalId = haulId;
+		task->haulItemDefName = "Wood";
+		task->haulQuantity = 14;
+		task->haulSourceStorageId = static_cast<uint64_t>(srcBox);
+		task->haulSourcePosition = srcPos;
+		task->haulTargetStorageId = static_cast<uint64_t>(destBox);
+		task->haulTargetPosition = destPos;
+		task->haulFromInventory = false;
+		task->targetPosition = destPos; // the deposit leg targets B; the fresh pull option targets A
+		task->chainId = haulId;
+		task->chainStep = 1; // past the Withdraw leg
+		task->priorityTier = 6; // opportunistic stocking tier
+		task->timeSinceEvaluation = 1.0F; // > kReEvalInterval (0.5) -> force a re-eval this tick
+
+		world->update(0.016F);
+
+		// The bug's trigger must actually be present: a fresh pull option still sourced from box A.
+		const auto* freshPull = findPullOption(*getTrace(colonist));
+		ASSERT_NE(freshPull, nullptr) << "the pull-source scan re-emits a source-A option mid-carry (the trigger)";
+		EXPECT_EQ(freshPull->haulSourceStorageId, static_cast<uint64_t>(srcBox));
+		ASSERT_TRUE(freshPull->targetPosition.has_value());
+		EXPECT_FLOAT_EQ(freshPull->targetPosition->x, srcPos.x)
+			<< "the fresh option targets the SOURCE (A), differing from the in-flight deposit target (B)";
+
+		// The colonist must HOLD the in-flight delivery: still hauling the same Wood to box B, with the
+		// armful still in hands. No switch, no drop loop.
+		EXPECT_EQ(task->type, TaskType::Haul) << "stays on the haul (did not switch tasks)";
+		EXPECT_EQ(task->haulTargetStorageId, static_cast<uint64_t>(destBox)) << "still delivering to the dest box";
+		EXPECT_FLOAT_EQ(task->targetPosition.x, destPos.x) << "still targeting the deposit leg, not re-pointed at A";
+		EXPECT_TRUE(inventory->isHolding("Wood")) << "the two-hand armful stayed in hands (not dropped)";
+		EXPECT_EQ(ecs::handHeldQuantity(*inventory, "Wood"), 14U) << "the full armful is intact -- nothing dropped";
+	}
+
+	// 9b. Two-hand carry holds against idle Wander when no pull is left (the second-haul abandonment).
+	//     Same mid-carry setup as #9, but the source box is drained to its OWN min so the pull-source
+	//     scan offers NOTHING. With needs met and no haul option, the top option is Wander (tier 7).
+	//     The old guard only blocked a same-tier *Haul*, so Wander -- not a Haul -- slipped past and the
+	//     colonist walked off carrying the un-stowable armful indefinitely (dest box stalls, Wood
+	//     stranded in hands). The broadened guard (ANY same-or-lower-priority challenger) must HOLD the
+	//     delivery against Wander so the deposit completes.
+	TEST_F(AIDecisionSystemTest, TwoHandPullHoldsAgainstWanderWhenSourceDrainedMidCarry) {
+		auto& registry = engine::assets::AssetRegistry::Get();
+		// REAL two-hand Wood (handsRequired==2): rides in both hands, can't stow -> a switch drops it.
+		engine::assets::AssetDefinition woodDef;
+		woodDef.defName = "Wood";
+		woodDef.label = "Wood";
+		woodDef.handsRequired = 2;
+		woodDef.category = engine::assets::ItemCategory::RawMaterial;
+		woodDef.capabilities.carryable = engine::assets::CarryableCapability{1};
+		woodDef.itemProperties = engine::assets::ItemProperties{};
+		woodDef.itemProperties->stackSize = 40;
+		woodDef.itemProperties->massKg = 2.5F;
+		registry.registerTestDefinition(std::move(woodDef));
+		const uint32_t woodId = registry.getDefNameId("Wood");
+		registerStorageDef(registry, "Box");
+		const uint32_t boxDefId = registry.getDefNameId("Box");
+
+		// Source A (Low) is at its OWN min (held == minAmount == 8) -> 0 drainable -> NO pull offered.
+		// Dest B (High) still wants Wood. Mirrors the in-game state after the FIRST haul drained A to min.
+		const glm::vec2 srcPos{2.0F, 0.0F};
+		const glm::vec2 destPos{4.0F, 0.0F};
+		const EntityID srcBox = makeStorageBox(srcPos, "Box", "Wood", ecs::StoragePriority::Low, /*qty=*/8, /*min=*/8);
+		const EntityID destBox = makeStorageBox(destPos, "Box", "Wood", ecs::StoragePriority::High, /*qty=*/13, /*min=*/20);
+
+		// Colonist mid-carry: a two-hand Wood armful in hands, task on its deposit leg (phase 2) to B.
+		auto colonist = createColonist(srcPos);
+		satisfyAllNeeds(*getNeeds(colonist)); // all needs met -> idle; the only floor option is Wander
+		addKnownEntity(colonist, srcPos, boxDefId, engine::assets::CapabilityType::Storage);
+		addKnownEntity(colonist, destPos, boxDefId, engine::assets::CapabilityType::Storage);
+
+		const uint64_t haulId = makeUmbrellaGoal(destBox, destPos, woodId);
+
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		ASSERT_NE(inventory, nullptr);
+		const uint32_t carried = ecs::addArmful(*inventory, registry, "Wood", 14);
+		ASSERT_EQ(carried, 14U) << "seat the full armful into both hands";
+		ASSERT_TRUE(inventory->isHolding("Wood"));
+
+		auto* task = getTask(colonist);
+		ASSERT_NE(task, nullptr);
+		task->type = TaskType::Haul;
+		task->state = TaskState::Moving;	  // in-flight toward the dest box (phase 2)
+		task->navState = NavState::Traveling; // has a believed route (NOT CantFindWayTo) -> guard applies
+		task->haulGoalId = haulId;
+		task->haulItemDefName = "Wood";
+		task->haulQuantity = 14;
+		task->haulSourceStorageId = static_cast<uint64_t>(srcBox);
+		task->haulSourcePosition = srcPos;
+		task->haulTargetStorageId = static_cast<uint64_t>(destBox);
+		task->haulTargetPosition = destPos;
+		task->haulFromInventory = false;
+		task->targetPosition = destPos;
+		task->chainId = haulId;
+		task->chainStep = 1;			   // past the Withdraw leg
+		task->priorityTier = 6;			   // opportunistic stocking tier
+		task->timeSinceEvaluation = 1.0F;  // > kReEvalInterval (0.5) -> force a re-eval this tick
+
+		world->update(0.016F);
+
+		// The bug's trigger must be present: the source offers no pull, so Wander is the top option.
+		ASSERT_EQ(findPullOption(*getTrace(colonist)), nullptr)
+			<< "source drained to its min -> no pull option offered (the trigger for the Wander abandonment)";
+		const auto* selected = getTrace(colonist)->getSelected();
+		ASSERT_NE(selected, nullptr);
+		EXPECT_EQ(selected->taskType, TaskType::Wander)
+			<< "with needs met and no haul, the highest-ranked option is idle Wander (tier 7)";
+
+		// The colonist must HOLD the in-flight delivery despite Wander outranking it: still hauling Wood
+		// to box B, armful still in hands. NOT switched to Wander, NOT carrying the load off forever.
+		EXPECT_EQ(task->type, TaskType::Haul) << "did NOT switch to Wander -- the two-hand carry is held to finish";
+		EXPECT_EQ(task->haulTargetStorageId, static_cast<uint64_t>(destBox)) << "still delivering to the dest box";
+		EXPECT_FLOAT_EQ(task->targetPosition.x, destPos.x) << "still targeting the deposit leg (box B)";
+		EXPECT_TRUE(inventory->isHolding("Wood")) << "the two-hand armful stayed in hands (not stranded by a wander)";
+		EXPECT_EQ(ecs::handHeldQuantity(*inventory, "Wood"), 14U) << "the full armful is intact -- nothing dropped";
+	}
+
+	// 9c. The broadening must NOT over-hold: a strictly-HIGHER-tier challenger (a critical need, tier 2)
+	//     must still preempt the mid-carry two-hand haul (tier 6). Dropping the load for an emergency is
+	//     acceptable; the guard only blocks same-or-lower-priority challengers. Guards the broadened
+	//     condition from pinning a colonist on a haul through a genuine emergency.
+	TEST_F(AIDecisionSystemTest, TwoHandPullYieldsToCriticalNeedMidCarry) {
+		auto& registry = engine::assets::AssetRegistry::Get();
+		engine::assets::AssetDefinition woodDef;
+		woodDef.defName = "Wood";
+		woodDef.label = "Wood";
+		woodDef.handsRequired = 2;
+		woodDef.category = engine::assets::ItemCategory::RawMaterial;
+		woodDef.capabilities.carryable = engine::assets::CarryableCapability{1};
+		woodDef.itemProperties = engine::assets::ItemProperties{};
+		woodDef.itemProperties->stackSize = 40;
+		woodDef.itemProperties->massKg = 2.5F;
+		registry.registerTestDefinition(std::move(woodDef));
+		const uint32_t woodId = registry.getDefNameId("Wood");
+		registerStorageDef(registry, "Box");
+		const uint32_t boxDefId = registry.getDefNameId("Box");
+
+		const glm::vec2 srcPos{2.0F, 0.0F};
+		const glm::vec2 destPos{4.0F, 0.0F};
+		const EntityID srcBox = makeStorageBox(srcPos, "Box", "Wood", ecs::StoragePriority::Low, /*qty=*/8, /*min=*/8);
+		const EntityID destBox = makeStorageBox(destPos, "Box", "Wood", ecs::StoragePriority::High, /*qty=*/13, /*min=*/20);
+
+		auto colonist = createColonist(srcPos);
+		addKnownEntity(colonist, srcPos, boxDefId, engine::assets::CapabilityType::Storage);
+		addKnownEntity(colonist, destPos, boxDefId, engine::assets::CapabilityType::Storage);
+		// A critical hunger (5%) with a valid eat-from-inventory path -> tier 2, strictly above the haul.
+		auto* needsForPreempt = getNeeds(colonist);
+		needsForPreempt->get(NeedType::Thirst).value = 100.0F;
+		needsForPreempt->get(NeedType::Energy).value = 100.0F;
+		needsForPreempt->get(NeedType::Bladder).value = 100.0F;
+		needsForPreempt->get(NeedType::Digestion).value = 100.0F;
+		needsForPreempt->get(NeedType::Hunger).value = 5.0F; // critical -> tier 2
+
+		const uint64_t haulId = makeUmbrellaGoal(destBox, destPos, woodId);
+
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		ASSERT_NE(inventory, nullptr);
+		inventory->addItem("Berry", 3); // the eat-from-inventory fulfillment path for critical hunger
+		const uint32_t carried = ecs::addArmful(*inventory, registry, "Wood", 14);
+		ASSERT_GT(carried, 0U) << "a two-hand Wood armful is seated in both hands (exact count is immaterial here)";
+		ASSERT_TRUE(inventory->isHolding("Wood"));
+
+		auto* task = getTask(colonist);
+		ASSERT_NE(task, nullptr);
+		task->type = TaskType::Haul;
+		task->state = TaskState::Moving;
+		task->navState = NavState::Traveling;
+		task->haulGoalId = haulId;
+		task->haulItemDefName = "Wood";
+		task->haulQuantity = carried;
+		task->haulSourceStorageId = static_cast<uint64_t>(srcBox);
+		task->haulSourcePosition = srcPos;
+		task->haulTargetStorageId = static_cast<uint64_t>(destBox);
+		task->haulTargetPosition = destPos;
+		task->haulFromInventory = false;
+		task->targetPosition = destPos;
+		task->chainId = haulId;
+		task->chainStep = 1;
+		task->priorityTier = 6;
+		task->timeSinceEvaluation = 1.0F;
+
+		world->update(0.016F);
+
+		// A critical need outranks the stocking haul: the guard must NOT hold here. The colonist switches
+		// off the haul to the need (dropping the armful is the accepted emergency cost).
+		EXPECT_NE(task->type, TaskType::Haul) << "a critical need (tier 2) preempts the held haul (tier 6)";
+		EXPECT_EQ(task->type, TaskType::FulfillNeed) << "switched to fulfilling the critical need";
+		EXPECT_EQ(task->needToFulfill, NeedType::Hunger) << "the critical hunger is the new task";
+	}
+
 	// The gather-food sentinel (needValue==100, threshold==0, emitted when the colonist has no food
 	// and knows an edible harvestable) classifies at tier 7 (idle) and, with my wander-floor fix,
 	// outranks the same-tier wander option because wander's within-tier score is pinned to 0.

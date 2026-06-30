@@ -1280,26 +1280,47 @@ namespace ecs {
 				// Don't switch if it's the same task we're already doing
 				bool shouldSwitch = !isSameTask;
 
-				// Protect an in-flight two-hand delivery against a same-yield harvest. A two-hand armful
-				// (e.g. Wood) rides in BOTH hands and can't be stowed, so a switch to a Harvest (whose
-				// first action needs the hands) makes the chain-interruption below DROP the whole load.
-				// Dropping it to go chop MORE of the same item is pure waste and a loop: clearing a
-				// footprint emits a high-prio Harvest for the blockers' yield (Wood) that outranks the
-				// delivery, so the colonist drops the wood, the now-empty hands re-enable the harvest,
-				// it chops, fills, re-picks the delivery, and drops again -- an endless chop->drop->chop
-				// that never provisions the site. Hold the delivery so it completes; the colonist
-				// re-evaluates with empty hands once the load is deposited. Only the Harvest-of-the-same-
-				// item case is held: a switch to a DIFFERENT task (a need, a different material, a
-				// genuinely better delivery) is left alone, so this can't pin the colonist on a stuck
-				// haul. And it never fires when the delivery itself has no believed route to its
-				// destination (navState CantFindWayTo) -- holding then would strand an undeliverable load.
+				// Two-hand-carry-must-finish-deposit invariant. A two-hand armful (e.g. Wood) rides in
+				// BOTH hands and can't be stowed to belt/backpack, so ANY switch whose first action needs
+				// the hands makes the chain-interruption below DROP the whole load on the ground. Protect
+				// the in-flight delivery against any same-or-lower-priority challenger that would otherwise
+				// drop it -- whether to fetch MORE of the very item it's already carrying (a withdraw/drop
+				// loop that never provisions the destination) or to wander off idle with the load still in
+				// hand. Hold the delivery so it completes; the colonist
+				// re-evaluates with empty hands once the load is deposited.
+				//
+				// Two escapes/limits keep this from ever pinning a colonist on a stuck haul:
+				//   - It never fires when the delivery itself has no believed route to its destination
+				//     (navState CantFindWayTo) -- holding an undeliverable load would strand it.
+				//   - A strictly-higher-tier challenger (critical need, active work order) still preempts;
+				//     dropping for an emergency is acceptable. Only same-or-lower-priority challengers
+				//     (the opportunistic pull, idle Wander) are blocked.
 				const bool currentHaulUnreachable = (task.navState == NavState::CantFindWayTo);
-				if (shouldSwitch && !currentHaulUnreachable && selected != nullptr && task.type == TaskType::Haul &&
-					!task.haulItemDefName.empty() && ecs::itemIsTwoHand(m_registry, task.haulItemDefName) &&
-					inventory.isHolding(task.haulItemDefName) && selected->taskType == TaskType::Harvest &&
-					selected->harvestYieldDefNameId == m_registry.getDefNameId(task.haulItemDefName)) {
-					shouldSwitch = false;
-					task.timeSinceEvaluation = 0.0F; // we did evaluate; hold the delivery
+				const bool carryingTwoHandLoad = task.type == TaskType::Haul && !task.haulItemDefName.empty() &&
+					ecs::itemIsTwoHand(m_registry, task.haulItemDefName) && inventory.isHolding(task.haulItemDefName);
+				if (shouldSwitch && !currentHaulUnreachable && carryingTwoHandLoad && selected != nullptr) {
+					// Case 1: a Harvest of the same yield (e.g. clearing a footprint emits a Harvest for the
+					// blockers' Wood). Held regardless of tier -- the chop->drop->chop loop it forms is the
+					// original two-hand-drop bug this guard was built for.
+					const bool sameYieldHarvest = selected->taskType == TaskType::Harvest &&
+						selected->harvestYieldDefNameId == m_registry.getDefNameId(task.haulItemDefName);
+					// Case 2: ANY same-or-lower-priority challenger. A two-hand carry must finish its deposit
+					// before taking on any task that does not outrank it -- idle Wander (tier 7) included. Two
+					// ways this fires: (a) the storage-priority pull, where mid-carry evaluateHaulOptions'
+					// pull-source scan re-emits a fresh withdraw option still pointing at the SOURCE box (it
+					// still has stock) with a high score (distance 0, the colonist is standing on it), whose
+					// targetPosition is the source rather than the in-flight deposit target, so the isSameTask
+					// check above sees a different target and treats it as a switch -- dropping the un-stowable
+					// armful to withdraw again, then dropping again, in a loop; (b) the source is drained to
+					// its min so no pull is offered and the top option is Wander, which -- not being a Haul
+					// -- the old taskType==Haul restriction let slip past, so the colonist walked off
+					// carrying the load indefinitely. A strictly-higher-tier challenger (critical need,
+					// active work order) still preempts; dropping for an emergency is acceptable.
+					const bool sameOrLowerPriorityChallenger = selected->tier >= task.priorityTier;
+					if (sameYieldHarvest || sameOrLowerPriorityChallenger) {
+						shouldSwitch = false;
+						task.timeSinceEvaluation = 0.0F; // we did evaluate; hold the delivery
+					}
 				}
 
 				if (isSameTask) {
