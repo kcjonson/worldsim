@@ -1251,7 +1251,7 @@ namespace ecs {
 			return true;
 		}
 
-		// Check if any critical need requires immediate attention (Tier 3 interrupts all lower tiers)
+		// Check if any critical need requires immediate attention (tier 2 interrupts all lower tiers)
 		bool hasCriticalNeed = false;
 		for (auto needType : NeedsComponent::kActionableNeeds) {
 			if (needs.get(needType).isCritical()) {
@@ -1423,7 +1423,7 @@ namespace ecs {
 			trace.options.push_back(option);
 		}
 
-		// Add "Gather Food" work option (Tier 6)
+		// Add "Gather Food" work option (tier 7)
 		// Only show if colonist has no food in inventory
 		if (!hasEdibleFood(inventory)) {
 			// Look for harvestable food sources that yield EDIBLE items
@@ -1474,7 +1474,7 @@ namespace ecs {
 			trace.options.push_back(gatherOption);
 		}
 
-		// Add "Crafting Work" options (Tier 6.5) and "Gather" options (Tier 6.6)
+		// Add "Crafting Work" options and "Gather" options (tier classification set by the evaluators)
 		// Find all stations with pending work that colonist can do
 		for (auto [stationEntity, stationPos, workQueue] : world->view<Position, WorkQueue>()) {
 			if (!workQueue.hasPendingWork()) {
@@ -1538,20 +1538,21 @@ namespace ecs {
 
 		}
 
-		// Tier 6.4: Haul loose items to storage containers (goal-driven), and deliver
+		// Haul loose items to storage containers (goal-driven), and deliver
 		// harvested craft materials from inventory to crafting stations
+		// (tier per option: tier 4 when serving an active work order, else tier 6)
 		evaluateHaulOptions(world, m_registry, memory, inventory, position.value, trace);
 
-		// Tier 6.7: Harvest resources for crafting (goal-driven)
+		// Harvest resources for crafting (goal-driven)
 		evaluateHarvestOptions(m_registry, memory, inventory, position.value, skills, trace);
 
-		// Tier 6.45: Build staged construction blueprints (goal-driven, priority 41)
+		// Build staged construction blueprints (goal-driven)
 		evaluateBuildOptions(world, position.value, skills, trace);
 
-		// Tier 6.45: Deconstruct demolishing structures (goal-driven, priority 41 - same as Build)
+		// Deconstruct demolishing structures (goal-driven, same tier as Build)
 		evaluateDeconstructOptions(world, position.value, skills, trace);
 
-		// Tier 6.35: Place packaged items at target locations
+		// Place packaged items at target locations
 		evaluatePlacePackagedOptions(world, position.value, inventory, trace);
 
 		// Agent footprint + belief for the reachability checks below (reachable-wander generation

@@ -1431,6 +1431,61 @@ namespace ecs::test {
 		EXPECT_EQ(harvestOption->tier, 6) << "a stocking harvest classifies at tier 6 (opportunistic)";
 	}
 
+	// Runtime hysteresis, driven through world->update() (the static comparator test above only pins
+	// the KEY math on hand-built options). A colonist committed to harvesting bush A must NOT thrash
+	// to an equidistant same-tier bush B on the next re-eval (the in-progress option carries the +50
+	// margin), but DOES switch to a third bush C placed clearly closer (its distance factor beats the
+	// in-progress score plus the margin). Only AIDecisionSystem runs in this fixture, so the colonist
+	// never physically arrives; distances stay fixed and the committed Task target is the assertion.
+	TEST_F(AIDecisionSystemTest, HysteresisHoldsThenYieldsThroughUpdate) {
+		auto& registry = engine::assets::AssetRegistry::Get();
+		auto [bushId, stickId] = registerHarvestableYielding(registry, "Flora_HystBush", "HystStick");
+
+		auto colonist = createColonist({0.0F, 0.0F});
+		satisfyAllNeeds(*getNeeds(colonist)); // idle of needs: only the stocking harvest competes
+
+		// Two equidistant harvestable sources (30 m each). The distance curve is 5 score/m, so the 50
+		// margin is worth ~10 m: B at the same distance can never overcome A's stickiness.
+		addKnownEntity(colonist, {30.0F, 0.0F}, bushId, engine::assets::CapabilityType::Harvestable);  // A
+		addKnownEntity(colonist, {0.0F, 30.0F}, bushId, engine::assets::CapabilityType::Harvestable);  // B
+
+		// A stocking goal makes both bushes Available tier-6 harvest options.
+		auto storage = world->createEntity();
+		world->addComponent<Position>(storage, Position{{2.0F, 2.0F}});
+		GoalTask harvest;
+		harvest.type = TaskType::Harvest;
+		harvest.owner = GoalOwner::StorageGoalSystem;
+		harvest.destinationEntity = storage;
+		harvest.destinationPosition = {2.0F, 2.0F};
+		harvest.yieldDefNameId = stickId;
+		harvest.targetAmount = 99;
+		harvest.status = GoalStatus::Available;
+		GoalTaskRegistry::Get().createGoal(std::move(harvest));
+
+		// First re-eval: the system commits to one of the two equidistant bushes (deterministic via
+		// tiebreakId). Capture that target; it is now the in-progress option.
+		world->update(0.5F);
+		auto* task = getTask(colonist);
+		ASSERT_NE(task, nullptr);
+		ASSERT_EQ(task->type, TaskType::Harvest) << "colonist commits to the stocking harvest";
+		const uint64_t committedTarget = task->harvestTargetEntityId;
+		ASSERT_NE(committedTarget, 0U) << "a concrete harvest target was selected";
+
+		// Second re-eval with the equidistant sibling still present: the in-progress target holds.
+		// Its +50 hysteresis margin is unbeatable by an equal-distance, equal-skill challenger.
+		world->update(0.5F);
+		EXPECT_EQ(task->harvestTargetEntityId, committedTarget)
+			<< "an equidistant same-tier sibling must not overcome the hysteresis margin (no thrash)";
+
+		// Now introduce a clearly-closer source (5 m vs 30 m: 25 m closer, far beyond the ~10 m margin).
+		// Its distance factor (~275) beats the in-progress score (150 + 50). The next re-eval switches.
+		addKnownEntity(colonist, {5.0F, 0.0F}, bushId, engine::assets::CapabilityType::Harvestable);  // C
+		world->update(0.5F);
+		EXPECT_EQ(task->type, TaskType::Harvest);
+		EXPECT_NE(task->harvestTargetEntityId, committedTarget)
+			<< "a clearly-closer same-tier target overcomes hysteresis and wins the switch";
+	}
+
 	// The gather-food sentinel (needValue==100, threshold==0, emitted when the colonist has no food
 	// and knows an edible harvestable) classifies at tier 7 (idle) and, with my wander-floor fix,
 	// outranks the same-tier wander option because wander's within-tier score is pinned to 0.

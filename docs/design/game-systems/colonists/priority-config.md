@@ -8,9 +8,9 @@
 
 ## Overview
 
-Task priority is calculated using a lexicographic `(tier: int, score: float)` key. Tier is compared first (lower number = higher priority) and is inviolable — a far tier-4 option always beats a near tier-5 one. Score orders options within the same tier only. All score weights and tier assignments are defined in `assets/config/work/priority-tuning.xml`, allowing tuning without code changes.
+Task priority is calculated using a lexicographic `(tier: int, score: float)` key. Tier is compared first (lower number = higher priority) and is inviolable; a far tier-4 option always beats a near tier-5 one. Score orders options within the same tier only. All score weights and tier assignments are defined in `assets/config/work/priority-tuning.xml`, allowing tuning without code changes.
 
-The numeric bands documented below (`Critical 30000`, `Needs 10000`, etc.) **no longer drive AI arbitration** — they have been replaced by the tier integer. The bands and `getBandBase()` survive only for the separate work-type **display-priority** path (the global task list UI), which is unchanged. See [Colonist Task Arbitration](../../../technical/colonist-task-arbitration.md) for the full implementation.
+The numeric bands documented below (`Critical 30000`, `Needs 10000`, etc.) **no longer drive AI arbitration**; they have been replaced by the tier integer. The bands and `getBandBase()` survive only for the separate work-type **display-priority** path (the global task list UI), which is unchanged. See [Colonist Task Arbitration](../../../technical/colonist-task-arbitration.md) for the full implementation.
 
 **Design Goal:** Make priority tuning a data-driven process. When testers report "colonists walk too far for low-priority tasks," designers can adjust distance penalties without programmer involvement.
 
@@ -51,9 +51,9 @@ Buildings and entities can be marked with urgency:
 AI arbitration is a `(tier, score)` key, not a single float. Within the same tier:
 
 ```
-score = distanceFactor          // dominant; 300*max(0,1-d/60) — nearest source wins
+score = distanceFactor          // dominant; 300*max(0,1-d/60), nearest source wins
       + skillBonus              // colonist's skill level for this work type
-      + goalPriority adjustment // urgent storage etc. — within-tier lift only
+      + goalPriority adjustment // urgent storage etc., within-tier lift only
       + taskAgeBonus            // stale tasks slowly rise
       + hysteresisBonus         // +50 on the current in-progress option only
 ```
@@ -69,29 +69,29 @@ Chain steps (`servesActiveWorkOrder == true`) are classified at tier 4, not scor
 When a colonist selects their next task, options are compared as `(tier, score)` pairs. Tier comes from the task type's definition in `priority-tuning.xml <TaskTiers>` (validated at startup; unassigned types fail with an error). Score orders within a tier only:
 
 ```
-score = distanceFactor      // dominant: 300 * max(0, 1 - d/60) — nearest source wins
+score = distanceFactor      // dominant: 300 * max(0, 1 - d/60), nearest source wins
       + skillBonus          // 0 to +100
       + taskAgeBonus        // 0 to +100 (old tasks rise)
       + hysteresisBonus     // +50 applied to the in-progress option only (same tier)
 ```
 
-`chainBonus` (+2000) is gone — a chain step is classified at tier 4 (active work order), not scored higher within tier 6. `inProgressBonus` is gone — it is replaced by the `hysteresisBonus` (50) applied within the same tier only. `kWorkOrderProvisionFloor` and `kStorageStockingFloor` are deleted; tiers make them unnecessary.
+`chainBonus` (+2000) is gone; a chain step is classified at tier 4 (active work order), not scored higher within tier 6. `inProgressBonus` is gone; it is replaced by the `hysteresisBonus` (50) applied within the same tier only. `kWorkOrderProvisionFloor` and `kStorageStockingFloor` are deleted; tiers make them unnecessary.
 
 ### Display priority (UI task list only)
 
 For the global task list (no colonist context), a separate display-priority path is unchanged:
 
 ```
-displayPriority = basePriority - (distance * distancePenaltyMultiplier)
+displayPriority = basePriority - distancePenalty(distance)
 ```
 
-`basePriority` here comes from `getBandBase()` / the `<Bands>` section of `priority-tuning.xml`, which survives solely for this display path.
+`basePriority` here comes from `getBandBase()` / the `<Bands>` section of `priority-tuning.xml`, which survives solely for this display path. (There is no `distancePenaltyMultiplier` config field; the display penalty is a simple monotonic function of distance.)
 
 ---
 
 ## Priority Bands (display path only)
 
-These bands are **display-priority only** — they drive the global task list UI, not AI arbitration. AI arbitration uses the tier integer from `<TaskTiers>` instead. Colonist work type preferences (1-9) still map into the Work bands for display purposes.
+These bands are **display-priority only**; they drive the global task list UI, not AI arbitration. AI arbitration uses the tier integer from `<TaskTiers>` instead. Colonist work type preferences (1-9) still map into the Work bands for display purposes.
 
 | Band Name | Base Value | Description |
 |-----------|------------|-------------|
@@ -131,7 +131,7 @@ Formula: `bandBase + (10 - userPriority) * step`
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <PriorityTuning>
-  <!-- Priority bands define the int16 ranges for each tier -->
+  <!-- Priority bands: work-type DISPLAY priority only (NOT the AI arbitration tiers) -->
   <Bands>
     <Band name="Critical" base="30000">
       <description>Life-threatening situations (critical needs)</description>
@@ -235,10 +235,10 @@ Formula: `bandBase + (10 - userPriority) * step`
          option's score by this amount to trigger a switch. Matches InProgress.bonus. -->
     <taskSwitchThreshold>50</taskSwitchThreshold>
 
-    <!-- How often colonists re-evaluate tasks (seconds) — unchanged -->
+    <!-- How often colonists re-evaluate tasks (seconds), unchanged -->
     <reEvalInterval>0.5</reEvalInterval>
 
-    <!-- Reservation timeout: release if no progress (seconds) — unchanged -->
+    <!-- Reservation timeout: release if no progress (seconds), unchanged -->
     <reservationTimeout>10.0</reservationTimeout>
   </Thresholds>
 
@@ -343,28 +343,10 @@ The "hauling problem" (from RimWorld) occurs when colonists haul everything befo
 4. **Perishable Items:** Food that will spoil in < 60s gets +800 boost
 5. **Batch Nearby Items:** Group items within 8m into single task (max 5 per batch)
 
-```cpp
-int16_t calculateHaulPriority(const HaulTask& task, const HaulingConfig& config) {
-    int16_t priority = WorkLow;  // Base: hauling is low priority
-
-    // Storage critical?
-    if (getStorageFullness(task.itemCategory) < config.storageCriticalThreshold) {
-        priority += config.storageCriticalBonus;
-    }
-
-    // Blocking construction?
-    if (isBlockingConstruction(task.sourcePosition)) {
-        priority += config.blockingConstructionBonus;
-    }
-
-    // Perishable?
-    if (task.spoilTime > 0 && task.spoilTime - gameTime < config.perishableSpoilThreshold) {
-        priority += config.perishableBonus;
-    }
-
-    return priority;
-}
-```
+Hauling no longer computes a single additive priority. A haul's rank is its `(tier, score)` key:
+a haul serving an active work order is tier 4; an opportunistic haul is tier 6. The situational
+factors above (storage critical, blocking construction, perishable) are within-tier score lifts,
+applied only against other tier-6 hauls, and can never push a haul across a tier boundary.
 
 ---
 
@@ -379,28 +361,37 @@ public:
 
     bool loadFromFile(const std::string& xmlPath);
 
-    // Band queries
+    // Task tier queries (AI arbitration). Tier is compared first; lower = higher priority.
+    int getTaskTier(const std::string& taskTypeName) const;            // base tier, or kUnassignedTier
+    static constexpr int kUnassignedTier = 9999;
+    bool validateTaskTiers(const std::vector<std::string>& requiredTypeNames,
+                           std::vector<std::string>& missingOut) const; // fail-loud at load
+
+    // Band queries (work-type DISPLAY priority only, not the AI arbitration)
     int16_t getBandBase(const std::string& bandName) const;
     int16_t userPriorityToBase(uint8_t userPriority) const;
 
-    // Bonus calculations
-    int16_t calculateDistanceBonus(float distance) const;
+    // Within-tier score terms
+    float   calculateDistanceFactor(float distance) const; // dominant: 300*max(0,1-d/60)
     int16_t calculateSkillBonus(float skillLevel) const;
-    int16_t calculateChainBonus(uint64_t currentChainId, uint8_t currentStep,
-                                uint64_t candidateChainId, uint8_t candidateStep) const;
     int16_t calculateTaskAgeBonus(float taskAge) const;
-    int16_t calculateHaulBonus(const HaulContext& context) const;
+    int16_t getInProgressBonus() const;                    // within-tier hysteresis margin (50)
+    int16_t calculateDistanceBonus(float distance) const;  // legacy +-50; display path only
 
     // Thresholds
-    float getTaskSwitchThreshold() const;
-    float getReEvalInterval() const;
-    float getReservationTimeout() const;
+    int16_t getTaskSwitchThreshold() const;
+    float   getReEvalInterval() const;
+    float   getReservationTimeout() const;
 
 private:
-    BandConfig m_bands;
-    BonusConfig m_bonuses;
-    ThresholdConfig m_thresholds;
-    HaulingConfig m_hauling;
+    std::unordered_map<std::string, int> taskTiers;  // per-task-type base tier (arbitration)
+    std::unordered_map<std::string, int16_t> bands;  // display-priority bands
+    DistanceFactorConfig  distanceFactorConfig;
+    SkillBonusConfig      skillConfig;
+    InProgressBonusConfig inProgressConfig;
+    TaskAgeBonusConfig    taskAgeConfig;
+    HaulingTuningConfig   haulingConfig;
+    TimingConfig          timingConfig;
 };
 ```
 
@@ -435,11 +426,12 @@ void initializeGameSystems() {
 
 **Fix:** Increase `multiplier` (but watch for skill bonus dominating distance).
 
-### When to Increase Chain Bonus
+### Chain continuation (no score to tune)
 
-**Symptom:** Colonists drop items mid-haul for other tasks.
-
-**Fix:** Increase `chainContinuationBonus` (2000 is already large).
+There is no chain score to tune. A provisioning step (`servesActiveWorkOrder == true`) is
+classified at tier 4, and tier beats score, so the colonist stays on the chain by construction.
+If chains break, the bug is in tier classification (the option not being marked as serving the
+work order), not in a bonus value.
 
 ### When to Adjust Hauling Config
 

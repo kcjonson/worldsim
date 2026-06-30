@@ -106,9 +106,11 @@ struct Task {
 	float timeSinceEvaluation = 0.0F;
 
 	/// Arbitration tier of this task when selected (lower = higher priority). Paired with `priority`
-	/// (the within-tier score) to form the (tier, score) key. The action-interruption gate compares
-	/// tiers first: a strictly higher-tier challenger interrupts; a same-tier challenger must beat
-	/// the within-tier score by the switch threshold.
+	/// (the within-tier score) to form the (tier, score) key. The action-interruption gate is
+	/// tier-only: a strictly higher-tier challenger interrupts, a same-tier (or lower) challenger
+	/// does not. The anti-thrash margin is NOT re-applied here; it already lives in the score at
+	/// selection (the in-progress option carries the hysteresis bonus), so re-checking it at the
+	/// gate would double-count.
 	int priorityTier = 7;
 
 	/// Within-tier score when this task was selected (used for the same-tier switch threshold).
