@@ -1068,14 +1068,26 @@ namespace {
 				LOG_INFO(Game, "Item crafted notification: %s", itemLabel.c_str());
 			});
 
+			// Every ground drop -- a felled tree's uncarried remainder, craft overflow, a stowed
+			// tool, a cancelled build site's salvage -- snaps to a walkable nav point before it
+			// lands, so a drop whose raw origin sits in a river / off-mesh (a tree felled on a
+			// bank) ends up on solid ground instead of in the water. findValidPositionNear is the
+			// one primitive for this; the snap lives here, at the two drop funnels (loose pile,
+			// packaged item), so no upstream drop site needs its own nav check (One-Path). It is
+			// deterministic (no RNG, canonical +X bias) and returns nullopt only when no mesh
+			// covers the origin -- then we keep the raw origin so a drop never hard-fails.
+			auto snapDropToGround = [&navSystem](float x, float y) -> glm::vec2 {
+				const std::optional<glm::vec2> onGround = navSystem.findValidPositionNear({x, y}, 1.0F);
+				return onGround.value_or(glm::vec2{x, y});
+			};
+
 			// Wire up ActionSystem to drop non-backpackable items on the ground as packaged.
 			// These callbacks fire from inside the ActionSystem view loop, so they only ENQUEUE;
 			// the real spawnEntity runs at the pending-spawn drain after ecsWorld->update() (see
 			// m_pendingSpawns) to avoid reallocating component pools out from under the live view.
-			// Offset from crafting station so items don't stack on top (2x typical station size).
-			constexpr float kDropOffset = 2.0F;
-			actionSystem.setDropItemCallback([this, kDropOffset](const std::string& defName, float x, float y) {
-				m_pendingSpawns.push_back({defName, x + kDropOffset, y, 0, /*packaged=*/true, std::nullopt});
+			actionSystem.setDropItemCallback([this, snapDropToGround](const std::string& defName, float x, float y) {
+				const glm::vec2 at = snapDropToGround(x, y);
+				m_pendingSpawns.push_back({defName, at.x, at.y, 0, /*packaged=*/true, std::nullopt});
 			});
 
 			// Crafted FURNITURE comes out PACKAGED and auto-installs a short distance off the
@@ -1093,8 +1105,9 @@ namespace {
 				if (target.has_value()) {
 					m_pendingSpawns.push_back({defName, target->x, target->y, 0, /*packaged=*/true, target});
 				} else {
-					// No mesh at the station: fall back to the player-driven packaged drop.
-					m_pendingSpawns.push_back({defName, stationPos.x + kDropOffset, stationPos.y, 0, /*packaged=*/true, std::nullopt});
+					// No mesh at the station: fall back to the player-driven packaged drop, nudged
+					// ~2 m off the station (no mesh to snap to) so the box doesn't stack on it.
+					m_pendingSpawns.push_back({defName, stationPos.x + 2.0F, stationPos.y, 0, /*packaged=*/true, std::nullopt});
 				}
 			});
 
@@ -1104,8 +1117,9 @@ namespace {
 			// ActionSystem fell-remainder drop and the ConstructionSystem cancelled-site drop fire
 			// from inside their system's view loop, so both ENQUEUE; the drain runs dropResourcePiles
 			// (the single pile-split spawn path) after ecsWorld->update().
-			auto enqueueResourceDrop = [this](const std::string& defName, float x, float y, uint32_t quantity) {
-				m_pendingSpawns.push_back({defName, x, y, quantity, /*packaged=*/false});
+			auto enqueueResourceDrop = [this, snapDropToGround](const std::string& defName, float x, float y, uint32_t quantity) {
+				const glm::vec2 at = snapDropToGround(x, y);
+				m_pendingSpawns.push_back({defName, at.x, at.y, quantity, /*packaged=*/false});
 			};
 			actionSystem.setDropResourceCallback(enqueueResourceDrop);
 			constructionSystem.setDropResourceCallback(enqueueResourceDrop);
