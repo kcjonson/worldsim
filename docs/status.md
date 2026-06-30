@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-27 (Groundcover render path complete and merged (#238): grass is now a first-class GPU-instanced groundcover role driven by a procedural Lua asset (24 variants, ~486k tufts @ 120fps/1.75ms), placed entities no longer randomly tilt (opt-in <randomRotation>), and the EntityRenderer god-class was decomposed into per-path renderers. Story 0 of Living Environment Rendering; M-A wind next. See dev log 2026-06-27-groundcover-render-path.md. Earlier: Worldgen M7 complete: input-validation envelope + fail-loud reason channel, golden full-pipeline worldHash gate that turns dual-platform CI into a cross-platform determinism check (+ worldgen-cli --expect-hash), and a benchmark-calibrated default resolution (gen-time sweep on the reference machine; kept n=1024 as a documented kDefaultGridSubdivision). Closes the last engineering task of the World Generation & Creator epic; only the deferred planet-DB streaming and landing-difficulty UX remain. See dev log 2026-06-26-worldgen-m7-hardening.md. Earlier: Physical carry & stacks epics complete and merged (#218/#219/#224/#228/#230/#232/#233): two-hand wood armfuls + strength-derived carry, then a universal physical "stack" model -- one material capped at its own stackSize everywhere -- plus construction sites that hold their required materials directly and dump to the ground on demolish. See dev log 2026-06-26-physical-stack-inventory.md and plan 2026-06-26-bulk-material-carry-felling.md. Earlier: 2D landscape from 3D hydrology epic complete and merged (#212) -- replaced the noise-flood ponds with sparse biome/precip-weighted ponds + desert oases, implemented Distribution::Spaced with grove/glade/thicket clustering for denser natural forests, and fixed riparian plants (reeds on the mud bank + bankside bushes); follows the merged 2D rivers #208 and tributaries/springs #210. See dev log 2026-06-22-hydrology-ponds-and-proper-forests.md. Earlier: Realistic chained build loop: mass-based carry weight + axe-gated chopping + wood-unit tree harvesting; the colonist chops to its carry cap, hauls, repeats, then builds. Plus the task-chaining UI/AI fixes found verifying it (in-progress-work priority calc, friendly labels, full-width info-panel task lines, "Next" chain step, build-progress percent + on-map fill, global task list Build umbrella + who's-working-it) — see dev log 2026-06-20-carry-weight-axe-gated-harvest.md. Earlier on main: Asset Manager epic #205 (dev log 2026-06-20-asset-manager.md), Cryosphere #199, Navigation P4 belief filtering #189/#191/#194, Vision System #172-184, Salvage UI cutover #176-181)
+Last Updated: 2026-06-29 (Colonist gameplay stabilization complete and merged (#241): grass is now a first-class GPU-instanced groundcover role driven by a procedural Lua asset (24 variants, ~486k tufts @ 120fps/1.75ms), placed entities no longer randomly tilt (opt-in <randomRotation>), and the EntityRenderer god-class was decomposed into per-path renderers. Story 0 of Living Environment Rendering; M-A wind next. See dev log 2026-06-27-groundcover-render-path.md. Earlier: Worldgen M7 complete: input-validation envelope + fail-loud reason channel, golden full-pipeline worldHash gate that turns dual-platform CI into a cross-platform determinism check (+ worldgen-cli --expect-hash), and a benchmark-calibrated default resolution (gen-time sweep on the reference machine; kept n=1024 as a documented kDefaultGridSubdivision). Closes the last engineering task of the World Generation & Creator epic; only the deferred planet-DB streaming and landing-difficulty UX remain. See dev log 2026-06-26-worldgen-m7-hardening.md. Earlier: Physical carry & stacks epics complete and merged (#218/#219/#224/#228/#230/#232/#233): two-hand wood armfuls + strength-derived carry, then a universal physical "stack" model -- one material capped at its own stackSize everywhere -- plus construction sites that hold their required materials directly and dump to the ground on demolish. See dev log 2026-06-26-physical-stack-inventory.md and plan 2026-06-26-bulk-material-carry-felling.md. Earlier: 2D landscape from 3D hydrology epic complete and merged (#212) -- replaced the noise-flood ponds with sparse biome/precip-weighted ponds + desert oases, implemented Distribution::Spaced with grove/glade/thicket clustering for denser natural forests, and fixed riparian plants (reeds on the mud bank + bankside bushes); follows the merged 2D rivers #208 and tributaries/springs #210. See dev log 2026-06-22-hydrology-ponds-and-proper-forests.md. Earlier: Realistic chained build loop: mass-based carry weight + axe-gated chopping + wood-unit tree harvesting; the colonist chops to its carry cap, hauls, repeats, then builds. Plus the task-chaining UI/AI fixes found verifying it (in-progress-work priority calc, friendly labels, full-width info-panel task lines, "Next" chain step, build-progress percent + on-map fill, global task list Build umbrella + who's-working-it) — see dev log 2026-06-20-carry-weight-axe-gated-harvest.md. Earlier on main: Asset Manager epic #205 (dev log 2026-06-20-asset-manager.md), Cryosphere #199, Navigation P4 belief filtering #189/#191/#194, Vision System #172-184, Salvage UI cutover #176-181)
 
 ## Epic/Story/Task Template
 
@@ -27,6 +27,30 @@ Use this template for all work items:
 ---
 
 ## Recently Completed Epics (Last 4)
+
+### ✅ Colonist gameplay stabilization (craft → harvest → construction loop)
+**Spec/Documentation:** dev log `2026-06-29-colonist-gameplay-stabilization.md`; arbitration spec `docs/technical/colonist-task-arbitration.md`; testing suite `docs/testing/`
+**Dependencies:** Navmesh/craft reliability (#240), Building & Construction
+**Status:** complete (merged PR #241)
+
+**Goal:** Drive four end-to-end gameplay scenarios to reliable completion: craft axe, craft + stock storage box, fill a box to ~200 wood by real chop + haul, build a wood foundation with wall clearing + provisioning + construction.
+
+**Tasks:**
+- [x] Harvest/build target snap to reachable adjacent point + off-area reject (keystone)
+- [x] Destructive fell reclaims navmesh hole (PlacementExecutor removalEpoch → region rebuild)
+- [x] Belt stow-to-free-hands on armful pickup (axe → belt before two-hand wood armful)
+- [x] Loose-pile haul: carry-state-first phase, deposit-redirect on carrying-at-source
+- [x] Wall-collision-aware off-mesh recovery snap
+- [x] Whole-footprint on-water placement refusal (NavigationSystem::isAreaWalkable; DrawingSystem + dev verbs)
+- [x] Gather-food priority lowered + construction provisioning/build-action priority floors (interim)
+- [x] StorageRule.minAmount shortfall → harvest goals (chop-and-stock loop)
+- [x] Forest-by-river quickstart landing + denser forest + fail-fast on missing prebuilt planet
+- [x] Construction readback: walls, delivered/required/progress, phase
+- [x] Dev tooling: /api/dev/storage, /api/state?what=storage|landing, hands/belt in colonist state
+- [x] docs/testing/ scenario suite (4 scenarios, regression log)
+- [x] Arbitration spec (docs/technical/colonist-task-arbitration.md) + Specboard epic filed
+
+**Result:** All four gameplay scenarios complete end-to-end. 872 engine tests green. Open follow-ups: crafted-box placement/packaged-furniture lifecycle, items-in-river/findValidPositionNear, mirrored colonist sprites, dev-tools spawn UX, arbitration implementation. ✅
 
 ### ✅ Physical carry & stacks (two-hand armfuls, universal stacks, construction-direct materials)
 **Spec/Documentation:** dev log `2026-06-26-physical-stack-inventory.md`, plan `2026-06-26-bulk-material-carry-felling.md`; specs `/docs/technical/bulk-materials-carry-and-felling.md`, `/docs/technical/physical-stack-inventory.md`
@@ -72,25 +96,6 @@ Use this template for all work items:
 - [x] Phase 5: GUI (apps/asset-manager: master-detail browser, category tree with per-row thumbnails on the left, detail pane on the right showing the faithful preview, metadata, per-asset validation warnings, and the asset's XML config; search filter, collapsible groups, reload; built from libs/ui components against scoped prototype design tokens; sandbox/asset-manager moved to their own debug ports 8090/8070)
 
 **Result:** One shared defName+seed render path (tessellator + BatchRenderer, never the CPU rasterizer) under a headless CLI and a dogfooded libs/ui designer GUI; assets validate on load and the splash gates on errors. Follow-ups: procedural sample-and-refresh strip, SDF font atlases for the prototype typefaces. ✅
-
-### ✅ Cryosphere (sea ice, snow, physical glaciers, ice-climate feedback)
-**Spec/Documentation:** `/docs/technical/cryosphere-ice-and-glaciers.md`, `/docs/development-log/entries/2026-06-20-cryosphere-ice-and-glaciers.md`
-**Dependencies:** Climate, Biome & Shelf Realism Retune
-**Status:** complete (merged PR #199)
-
-**Goal:** Give Earth-like worlds polar ice caps and let a cold-enough world freeze its whole ocean, all physically derived: sea ice (frozen ocean), a thin permanent-snow land layer, and glaciers with real thickness and flow, with ice cooling its own climate so the caps sit where the physics puts them.
-
-**Completed Tasks:**
-- [x] Data model: ice flags + `iceThickness`/`iceFlow` fields + PlanetIO v4
-- [x] SnowStage sea ice (frozen ocean as solid thickness-based ice, land-only snow)
-- [x] GlacierStage rewritten to physical model: PDD (Calov-Greve) surface mass balance + perfect-plastic (Nye) thickness via deterministic distance-to-margin Dijkstra + steepest-descent flow
-- [x] Ice -> climate two-pass feedback: elevation-lapse-on-ice-surface + ice/snow albedo cooling; snapshot-safe in-place tail rewrite
-- [x] High-latitude land/ocean thermal contrast (sin^4 polar-land cooling, zero-sum) so polar summers fall below freezing
-- [x] Rendering: opaque hard-edged ice + thickness shading, `Ice` color mode, ice stats (WorldStats/CLI), landing-details ice rows
-- [x] Reserved progress band for the conditional feedback pass
-- [x] Three review rounds cleared (Copilot snapshot/marginless/labels; heavy-bucket biome gate -> sin^4 + gate 0.20; progress-bar + ocean-stage doc accuracy)
-
-**Result:** Three physically-derived ice surfaces with an ice-climate feedback loop; EarthLike land ice ~4% of land, mean ArcticTundra ~17.6%, determinism preserved across thread counts. Glaciers come from sourced glaciology (PDD + perfect-plastic, tau0 validated to Greenland), not a heuristic. The season slider + dynamic seasonal snow it motivated are a separate planned epic. ✅
 
 ### ✅ Dev/Test Tools (HTTP verbs + developer-client tab)
 **Spec/Documentation:** `/docs/development-log/entries/2026-06-16-dev-tools-api-and-tab.md`, `/docs/development-log/plans/2026-06-16-dev-tools-api-and-tab.md`
@@ -845,6 +850,23 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 ---
 
 ## Planned Epics
+
+### Colonist Task Arbitration
+**Spec/Documentation:** `docs/technical/colonist-task-arbitration.md`
+**Dependencies:** Colonist gameplay stabilization (complete), Goal-Driven Task Generation (in progress)
+**Status:** ready (spec complete, Specboard epic filed)
+
+**Goal:** Restore the documented lexicographic `(tier, score)` priority hierarchy the code drifted from, and add a job-lifecycle model so a colonist commits to an active work order across distractions (harvest, haul, build, craft all complete reliably without being abandoned mid-chain).
+
+**Tasks:**
+- [ ] Implement the `(tier, score)` lexicographic arbitrator in AIDecisionSystem
+- [ ] Restore documented priority tier assignments for all action types
+- [ ] Job-lifecycle: a colonist in an active work order stays committed until completion or explicit interrupt
+- [ ] Retire stale haul/harvest jobs when their source target is consumed or unreachable
+- [ ] Fold in stale-stocking-harvest retirement (currently loops on consumed stock)
+- [ ] Verify all four gameplay scenarios still pass the docs/testing/ regression suite
+
+---
 
 ### UI Scale setting
 **Spec/Documentation:** `docs/design/ui/ui-scale-setting.md`
