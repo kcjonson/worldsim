@@ -866,8 +866,12 @@ namespace ecs {
 						continue;
 					}
 
-					// Calculate distance to harvestable
-					float distanceToHarvestable = glm::distance(position, knownEntity.position);
+					// Score by the full provisioning round-trip (colonist -> harvestable -> destination), not just
+					// colonist -> harvestable, so the source nearest where the yield is needed (the crafting
+					// station / storage box) wins. Matches the haul-fetch source scoring above; without it a
+					// colonist chops the tree nearest itself even when one sits beside the station it provisions.
+					float tripDistance = glm::distance(position, knownEntity.position) +
+										 glm::distance(knownEntity.position, goal->destinationPosition);
 
 					// Create harvest option
 					EvaluatedOption harvestOption;
@@ -877,7 +881,7 @@ namespace ecs {
 					harvestOption.threshold = 0.0F;
 					harvestOption.targetPosition = knownEntity.position;
 					harvestOption.targetDefNameId = knownEntity.defNameId;
-					harvestOption.distanceToTarget = distanceToHarvestable;
+					harvestOption.distanceToTarget = tripDistance;
 					harvestOption.harvestTargetEntityId = key; // The world entity ID
 					harvestOption.harvestGoalId = goal->id;
 					harvestOption.harvestYieldDefNameId = goal->yieldDefNameId;
