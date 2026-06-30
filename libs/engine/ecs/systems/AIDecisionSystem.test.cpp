@@ -22,6 +22,7 @@
 
 #include "assets/ActionTypeRegistry.h"
 #include "assets/AssetRegistry.h"
+#include "assets/PriorityConfig.h"
 #include "assets/RecipeRegistry.h"
 
 #include <gtest/gtest.h>
@@ -44,6 +45,13 @@ namespace ecs::test {
 			// Goals are global (singleton registry); clear so a Deconstruct goal from one test
 			// can't leak into another.
 			GoalTaskRegistry::Get().clear();
+
+			// PriorityConfig is a singleton too. These tests rely on its DEFAULT arbitration tiers
+			// (installed in the constructor) because they never load priority-tuning.xml. An earlier
+			// suite that loads a partial XML now (post the loadFromFile-clears-taskTiers fix) leaves
+			// the singleton's tier table empty, so getTaskTier would return the unassigned sentinel
+			// here. Reset to defaults so classifyTier sees the real per-task tiers regardless of order.
+			engine::assets::PriorityConfig::Get().clear();
 
 			// Initialize AssetRegistry (singleton) - needed for capability lookups
 			auto& registry = engine::assets::AssetRegistry::Get();
@@ -805,11 +813,12 @@ namespace ecs::test {
 		ASSERT_NE(trace, nullptr);
 		ASSERT_GE(trace->options.size(), 2u);
 
-		// Verify options are sorted by priority (descending)
+		// Verify options are sorted by the (tier, score) key: each option is >= the next, i.e. the
+		// next is never strictly higher priority than the previous.
 		for (size_t i = 1; i < trace->options.size(); ++i) {
-			float prevPriority = trace->options[i - 1].calculatePriority();
-			float currPriority = trace->options[i].calculatePriority();
-			EXPECT_GE(prevPriority, currPriority) << "Options not sorted at index " << i;
+			const auto& prev = trace->options[i - 1];
+			const auto& curr = trace->options[i];
+			EXPECT_FALSE(EvaluatedOption::higherPriority(curr, prev)) << "Options not sorted at index " << i;
 		}
 	}
 
@@ -1034,191 +1043,203 @@ namespace ecs::test {
 	}
 
 	// =============================================================================
-	// EvaluatedOption Priority Calculation Tests
+	// (tier, score) arbitration key tests
+	//
+	// These pin the KEY semantics on bare EvaluatedOptions: tier is set directly (the system's
+	// classifyTier() is .cpp-private). Classification itself is exercised end-to-end by the
+	// "...ClassifiesTier..." integration tests further down, which build a real DecisionTrace through
+	// world->update() and assert the tier the system stamped on the resulting option.
+	// The tier numbers mirror the spec ladder: 2 critical need, 4 active work order, 5 actionable
+	// need, 6 opportunistic work, 7 idle. score = distanceFactor + skill + age + hysteresis.
 	// =============================================================================
 
-	TEST_F(AIDecisionSystemTest, PriorityCalculationCriticalNeeds) {
-		EvaluatedOption option;
-		option.taskType = TaskType::FulfillNeed;
-		option.needType = NeedType::Hunger;
-		option.threshold = 50.0F;
-		option.status = OptionStatus::Available;
+	namespace {
+		// Mirror PriorityConfig's default DistanceFactor curve so these unit tests can build scores
+		// the same way the system does: factor(d) = maxFactor * max(0, 1 - d/maxDistance).
+		constexpr float kDistMaxFactor = 300.0F;
+		constexpr float kDistMaxDistance = 60.0F;
+		[[nodiscard]] float distanceFactorAt(float d) {
+			if (d <= 0.0F) {
+				return kDistMaxFactor;
+			}
+			if (d >= kDistMaxDistance) {
+				return 0.0F;
+			}
+			return kDistMaxFactor * (1.0F - d / kDistMaxDistance);
+		}
+	} // namespace
 
-		// Critical need at 5% should give priority 305
-		option.needValue = 5.0F;
-		EXPECT_FLOAT_EQ(option.calculatePriority(), 305.0F);
+	// Tier dominance: a tier-4 active-work-order option, even FAR away (low score), beats a tier-5
+	// actionable-need option that is RIGHT HERE (max score). This is the categorical guarantee the
+	// floors used to fake -- now it falls out of the key, no floor constant needed.
+	TEST_F(AIDecisionSystemTest, TierDominanceWorkOrderBeatsNearerNeed) {
+		EvaluatedOption farWorkOrder;
+		farWorkOrder.taskType = TaskType::Build;
+		farWorkOrder.status = OptionStatus::Available;
+		farWorkOrder.tier = 4;					// active work order
+		farWorkOrder.distanceFactor = distanceFactorAt(59.0F); // ~5: nearly out of range
+		farWorkOrder.skillBonus = 0;
+		farWorkOrder.score = farWorkOrder.computeScore();
 
-		// Critical need at 9% should give priority 301
-		option.needValue = 9.0F;
-		EXPECT_FLOAT_EQ(option.calculatePriority(), 301.0F);
+		EvaluatedOption nearNeed;
+		nearNeed.taskType = TaskType::FulfillNeed;
+		nearNeed.needType = NeedType::Hunger;
+		nearNeed.status = OptionStatus::Available;
+		nearNeed.tier = 5;								   // actionable need
+		nearNeed.distanceFactor = distanceFactorAt(0.0F); // 300: right here
+		nearNeed.taskAgeBonus = 100;					   // pile on every within-tier term
+		nearNeed.score = nearNeed.computeScore();
 
-		// Edge case: exactly 10% is NOT critical, falls to actionable
-		option.needValue = 10.0F;
-		float priority = option.calculatePriority();
-		EXPECT_LT(priority, 300.0F); // Not in critical range
-		EXPECT_GE(priority, 100.0F); // In actionable range
+		EXPECT_LT(farWorkOrder.score, nearNeed.score) << "sanity: the work order has the LOWER score";
+		EXPECT_TRUE(EvaluatedOption::higherPriority(farWorkOrder, nearNeed))
+			<< "tier 4 must beat tier 5 regardless of score (no floor needed)";
+		EXPECT_FALSE(EvaluatedOption::higherPriority(nearNeed, farWorkOrder));
 	}
 
-	TEST_F(AIDecisionSystemTest, PriorityCalculationActionableNeeds) {
-		EvaluatedOption option;
-		option.taskType = TaskType::FulfillNeed;
-		option.needType = NeedType::Hunger;
-		option.threshold = 50.0F;
-		option.status = OptionStatus::Available;
+	// Opportunistic work can't preempt a work order: a tier-6 haul with a huge skill bonus cannot
+	// outrank any tier-4 option, even a far/zero-skill one.
+	TEST_F(AIDecisionSystemTest, OpportunisticCannotPreemptWorkOrder) {
+		EvaluatedOption opportunisticHaul;
+		opportunisticHaul.taskType = TaskType::Haul;
+		opportunisticHaul.status = OptionStatus::Available;
+		opportunisticHaul.tier = 6;								  // opportunistic
+		opportunisticHaul.distanceFactor = distanceFactorAt(0.0F); // right here
+		opportunisticHaul.skillBonus = 100;						  // max skill
+		opportunisticHaul.taskAgeBonus = 100;					  // max age
+		opportunisticHaul.score = opportunisticHaul.computeScore();
 
-		// Actionable at 40% with threshold 50 should give priority 110
-		option.needValue = 40.0F;
-		EXPECT_FLOAT_EQ(option.calculatePriority(), 110.0F);
+		EvaluatedOption farWorkOrder;
+		farWorkOrder.taskType = TaskType::Craft;
+		farWorkOrder.status = OptionStatus::Available;
+		farWorkOrder.tier = 4;
+		farWorkOrder.distanceFactor = distanceFactorAt(55.0F); // far
+		farWorkOrder.score = farWorkOrder.computeScore();
 
-		// Actionable at 30% with threshold 50 should give priority 120
-		option.needValue = 30.0F;
-		EXPECT_FLOAT_EQ(option.calculatePriority(), 120.0F);
+		EXPECT_TRUE(EvaluatedOption::higherPriority(farWorkOrder, opportunisticHaul))
+			<< "tier 4 work order outranks tier 6 opportunistic haul regardless of score";
+		EXPECT_FALSE(EvaluatedOption::higherPriority(opportunisticHaul, farWorkOrder));
 	}
 
-	TEST_F(AIDecisionSystemTest, PriorityCalculationWander) {
-		EvaluatedOption option;
-		option.taskType = TaskType::Wander;
-		option.status = OptionStatus::Available;
+	// Within a tier, the nearest source wins even when a farther one has the max skill bonus. This
+	// is the "chops the adjacent tree, not the one 70 m away" guarantee: the distance factor
+	// dominates skill across the working range.
+	TEST_F(AIDecisionSystemTest, WithinTierNearestDominatesSkill) {
+		EvaluatedOption nearHarvest;
+		nearHarvest.taskType = TaskType::Harvest;
+		nearHarvest.status = OptionStatus::Available;
+		nearHarvest.tier = 6;
+		nearHarvest.distanceToTarget = 3.0F;
+		nearHarvest.distanceFactor = distanceFactorAt(3.0F);
+		nearHarvest.skillBonus = 0; // unskilled
+		nearHarvest.score = nearHarvest.computeScore();
 
-		// Wander always has priority 10
-		EXPECT_FLOAT_EQ(option.calculatePriority(), 10.0F);
+		EvaluatedOption farSkilledHarvest;
+		farSkilledHarvest.taskType = TaskType::Harvest;
+		farSkilledHarvest.status = OptionStatus::Available;
+		farSkilledHarvest.tier = 6;
+		farSkilledHarvest.distanceToTarget = 70.0F; // out of range -> factor 0
+		farSkilledHarvest.distanceFactor = distanceFactorAt(70.0F);
+		farSkilledHarvest.skillBonus = 100; // max skill
+		farSkilledHarvest.taskAgeBonus = 100;
+		farSkilledHarvest.score = farSkilledHarvest.computeScore();
+
+		EXPECT_TRUE(EvaluatedOption::higherPriority(nearHarvest, farSkilledHarvest))
+			<< "nearest same-tier source wins even against max skill+age on a far one";
 	}
 
-	TEST_F(AIDecisionSystemTest, PriorityCalculationSatisfied) {
-		EvaluatedOption option;
-		option.taskType = TaskType::FulfillNeed;
-		option.needType = NeedType::Hunger;
-		option.needValue = 80.0F; // Above threshold
-		option.threshold = 50.0F;
-		option.status = OptionStatus::Satisfied;
+	// Hysteresis: the in-progress option is NOT dropped for a same-tier challenger with a tiny score
+	// advantage, but a clearly-closer same-tier target DOES overcome the hysteresis margin. The
+	// in-progress option carries +hysteresisBonus (= taskSwitchThreshold, 50).
+	TEST_F(AIDecisionSystemTest, HysteresisResistsThrashButYieldsToClearlyCloser) {
+		constexpr int16_t kHysteresis = 50; // = priority-tuning InProgress bonus / taskSwitchThreshold
 
-		// Satisfied needs have zero priority
-		EXPECT_FLOAT_EQ(option.calculatePriority(), 0.0F);
+		// In-progress harvest at 30 m, with the stickiness margin applied. The distance curve is
+		// 5 score/m (300 over 60 m), so the 50 margin equals ~10 m of distance: a challenger must be
+		// at least ~10 m closer than the in-progress target to overcome it.
+		EvaluatedOption inProgress;
+		inProgress.taskType = TaskType::Harvest;
+		inProgress.status = OptionStatus::Available;
+		inProgress.tier = 6;
+		inProgress.distanceFactor = distanceFactorAt(30.0F); // 150
+		inProgress.hysteresisBonus = kHysteresis;
+		inProgress.score = inProgress.computeScore(); // 200
+
+		// A marginally closer challenger (29 m, ~5 score gain) with NO stickiness: the gain is far
+		// below the 50 margin, so it must NOT win.
+		EvaluatedOption tinyBetter;
+		tinyBetter.taskType = TaskType::Harvest;
+		tinyBetter.status = OptionStatus::Available;
+		tinyBetter.tier = 6;
+		tinyBetter.distanceFactor = distanceFactorAt(29.0F); // 155
+		tinyBetter.tiebreakId = 1;							  // distinct id; must still lose on score
+		tinyBetter.score = tinyBetter.computeScore();
+
+		EXPECT_TRUE(EvaluatedOption::higherPriority(inProgress, tinyBetter))
+			<< "a tiny same-tier improvement must not overcome the hysteresis margin";
+
+		// A clearly closer challenger (right here, 0 m, factor 300): 30 m closer, a gain (150) well
+		// past the 50 margin, so the colonist DOES switch within a re-eval.
+		EvaluatedOption clearlyCloser;
+		clearlyCloser.taskType = TaskType::Harvest;
+		clearlyCloser.status = OptionStatus::Available;
+		clearlyCloser.tier = 6;
+		clearlyCloser.distanceFactor = distanceFactorAt(0.0F); // 300
+		clearlyCloser.tiebreakId = 2;
+		clearlyCloser.score = clearlyCloser.computeScore();
+
+		EXPECT_GT(clearlyCloser.score, inProgress.score)
+			<< "sanity: the closer target's score beats the in-progress (hysteresis-boosted) score";
+		EXPECT_TRUE(EvaluatedOption::higherPriority(clearlyCloser, inProgress))
+			<< "a clearly-closer same-tier target overcomes hysteresis";
 	}
 
-	// A fully-provisioned Build that serves the work order must NOT drop below idle Wander even at
-	// max distance penalty with zero Construction skill. Without the floor, 41 + (-50) = -9 < 10
-	// (Wander), and the colonist abandons the ready foundation and wanders off. The work-order floor
-	// pulls it back to 20 so it returns and finishes the build.
-	TEST_F(AIDecisionSystemTest, BuildActionFlooredAboveWanderWhenFarFromSite) {
-		EvaluatedOption build;
-		build.taskType = TaskType::Build;
-		build.status = OptionStatus::Available;
-		build.servesActiveWorkOrder = true;
-		build.distanceBonus = -50; // far site, max distance penalty
-		build.skillBonus = 0;	   // unskilled builder
+	// Tiebreak determinism: equal (tier, score) resolves on tiebreakId ascending (the multiplayer
+	// desync guard), never on container order.
+	TEST_F(AIDecisionSystemTest, EqualKeyBreaksTiesOnTiebreakId) {
+		EvaluatedOption a;
+		a.taskType = TaskType::Harvest;
+		a.tier = 6;
+		a.distanceFactor = distanceFactorAt(5.0F);
+		a.score = a.computeScore();
+		a.tiebreakId = 10;
 
-		EXPECT_FLOAT_EQ(build.calculatePriority(), EvaluatedOption::kWorkOrderProvisionFloor);
-		EXPECT_GT(build.calculatePriority(), EvaluatedOption::kWanderPriority)
-			<< "a ready build must outrank idle Wander even from far away";
+		EvaluatedOption b = a; // identical tier+score
+		b.tiebreakId = 20;
+
+		EXPECT_TRUE(EvaluatedOption::higherPriority(a, b)) << "lower tiebreakId wins an exact tie";
+		EXPECT_FALSE(EvaluatedOption::higherPriority(b, a));
 	}
 
-	// The three committed-work floors must order strictly: work-order (build/craft provisioning) >
-	// storage stocking > Wander. Pin the exact constants and the ordering so a future tweak can't
-	// silently let stocking outrank a build, or sink either below idle.
-	TEST_F(AIDecisionSystemTest, StockingFlooredBelowWorkOrderAndAboveWander) {
-		// All three at max distance penalty so each lands on its floor.
-		EvaluatedOption workOrderHaul;
-		workOrderHaul.taskType = TaskType::Haul;
-		workOrderHaul.status = OptionStatus::Available;
-		workOrderHaul.servesActiveWorkOrder = true;
-		workOrderHaul.distanceBonus = -50;
+	// Within the idle tier (7), a reachable gather-food option must outrank wander. Wander never sets
+	// distanceToTarget, so before the fix its distance factor computed to the MAX (~300) and it beat
+	// gather-food; the fix pins wander's within-tier score to 0 (the idle floor). A gather-food
+	// sentinel (needValue>=100, threshold==0) with a nearby reachable source carries a positive
+	// distance factor plus any Farming skill, so it wins the (tier, score) key.
+	TEST_F(AIDecisionSystemTest, GatherFoodRanksAboveWanderInIdleTier) {
+		// Wander after the fix: tier 7, score 0 (no distance/skill/age/hysteresis).
+		EvaluatedOption wander;
+		wander.taskType = TaskType::Wander;
+		wander.status = OptionStatus::Available;
+		wander.tier = 7;
+		wander.score = 0.0F; // the idle floor
 
-		EvaluatedOption stockingHaul;
-		stockingHaul.taskType = TaskType::Haul;
-		stockingHaul.status = OptionStatus::Available;
-		stockingHaul.servesStorageStocking = true;
-		stockingHaul.distanceBonus = -50;
+		// Gather-food sentinel: tier 7, a nearby (5 m) reachable food source plus modest Farming skill.
+		EvaluatedOption gatherFood;
+		gatherFood.taskType = TaskType::FulfillNeed;
+		gatherFood.needType = NeedType::Hunger;
+		gatherFood.needValue = 100.0F; // sentinel marker (not a real hunger need)
+		gatherFood.threshold = 0.0F;   // sentinel marker
+		gatherFood.status = OptionStatus::Available;
+		gatherFood.tier = 7;
+		gatherFood.distanceToTarget = 5.0F;
+		gatherFood.distanceFactor = distanceFactorAt(5.0F); // ~275
+		gatherFood.skillBonus = 20;							// some Farming skill
+		gatherFood.score = gatherFood.computeScore();
 
-		EvaluatedOption stockingHarvest;
-		stockingHarvest.taskType = TaskType::Harvest;
-		stockingHarvest.status = OptionStatus::Available;
-		stockingHarvest.servesStorageStocking = true;
-		stockingHarvest.distanceBonus = -50;
-		stockingHarvest.skillBonus = 0;
-
-		EXPECT_FLOAT_EQ(workOrderHaul.calculatePriority(), EvaluatedOption::kWorkOrderProvisionFloor);
-		EXPECT_FLOAT_EQ(stockingHaul.calculatePriority(), EvaluatedOption::kStorageStockingFloor);
-		EXPECT_FLOAT_EQ(stockingHarvest.calculatePriority(), EvaluatedOption::kStorageStockingFloor);
-
-		// Strict ordering: work-order > stocking > Wander.
-		EXPECT_GT(workOrderHaul.calculatePriority(), stockingHaul.calculatePriority());
-		EXPECT_GT(stockingHaul.calculatePriority(), EvaluatedOption::kWanderPriority);
-	}
-
-	// At equal distance and skill, a craft/construction provisioning haul/harvest edges out the
-	// storage-stocking equivalent: stocking sits one base point lower, so it ranks strictly below
-	// work-order provisioning even when neither is distance-penalized onto its floor.
-	TEST_F(AIDecisionSystemTest, StockingRanksBelowWorkOrderProvisioningAtEqualDistance) {
-		EvaluatedOption workOrderHaul;
-		workOrderHaul.taskType = TaskType::Haul;
-		workOrderHaul.status = OptionStatus::Available;
-		workOrderHaul.servesActiveWorkOrder = true;
-		workOrderHaul.distanceBonus = 0; // nearby; base tier governs
-
-		EvaluatedOption stockingHaul;
-		stockingHaul.taskType = TaskType::Haul;
-		stockingHaul.status = OptionStatus::Available;
-		stockingHaul.servesStorageStocking = true;
-		stockingHaul.distanceBonus = 0;
-
-		EXPECT_GT(workOrderHaul.calculatePriority(), stockingHaul.calculatePriority())
-			<< "craft/construction provisioning outranks stocking at equal distance";
-
-		EvaluatedOption workOrderHarvest;
-		workOrderHarvest.taskType = TaskType::Harvest;
-		workOrderHarvest.status = OptionStatus::Available;
-		workOrderHarvest.servesActiveWorkOrder = true;
-
-		EvaluatedOption stockingHarvest;
-		stockingHarvest.taskType = TaskType::Harvest;
-		stockingHarvest.status = OptionStatus::Available;
-		stockingHarvest.servesStorageStocking = true;
-
-		EXPECT_GT(workOrderHarvest.calculatePriority(), stockingHarvest.calculatePriority())
-			<< "provisioning harvest outranks stocking harvest at equal distance/skill";
-	}
-
-	// Proactive Gather Food (FulfillNeed sentinel: needValue==100, threshold==0) is a Tier-6 idle
-	// activity per ai-behavior.md: it must rank ABOVE Wander but BELOW every real work type. The
-	// regression it guards: gather-food used to compute 50 + bonuses, OUT-ranking Build (41) and
-	// Craft (40), and once selected the +200 in-progress bonus pinned it at ~317 so a colonist with
-	// a full belly but empty pockets gathered food forever and NEVER built a fully-provisioned
-	// foundation. Pin the ordering, including the in-progress case that caused the permanent stall.
-	TEST_F(AIDecisionSystemTest, GatherFoodRanksBelowRealWorkAndAboveWander) {
-		EvaluatedOption gather;
-		gather.taskType = TaskType::FulfillNeed;
-		gather.needType = NeedType::Hunger;
-		gather.needValue = 100.0F; // sentinel: not a real need, proactive stockpiling work
-		gather.threshold = 0.0F;
-		gather.status = OptionStatus::Available;
-		gather.skillBonus = 30;	 // Farming skill: must NOT lift gather above real work
-		gather.distanceBonus = 50; // nearest food right here: still must lose to real work
-
-		// Even with max skill+distance bonuses AND the in-progress bonus (the stuck case), the flat
-		// gather-food priority ignores all bonuses, so it stays a low idle chore.
-		gather.inProgressBonus = 200;
-
-		EXPECT_FLOAT_EQ(gather.calculatePriority(), EvaluatedOption::kGatherFoodPriority);
-
-		// A ready, fully-provisioned Build that serves the work order, with the WORST case for it
-		// (far site -> -50 distance, unskilled -> 0 skill): floored to kWorkOrderProvisionFloor.
-		EvaluatedOption build;
-		build.taskType = TaskType::Build;
-		build.status = OptionStatus::Available;
-		build.servesActiveWorkOrder = true;
-		build.distanceBonus = -50;
-		build.skillBonus = 0;
-
-		// Crafting work with no bonuses (base tier only).
-		EvaluatedOption craft;
-		craft.taskType = TaskType::Craft;
-		craft.status = OptionStatus::Available;
-
-		EXPECT_GT(build.calculatePriority(), gather.calculatePriority())
-			<< "a ready build must outrank proactive food-gathering, even far/unskilled vs near/skilled gather";
-		EXPECT_GT(craft.calculatePriority(), gather.calculatePriority()) << "crafting must outrank proactive food-gathering";
-		EXPECT_GT(gather.calculatePriority(), EvaluatedOption::kWanderPriority) << "gather food still beats idle Wander";
+		EXPECT_GT(gatherFood.score, wander.score) << "reachable gather-food scores above the wander floor";
+		EXPECT_TRUE(EvaluatedOption::higherPriority(gatherFood, wander))
+			<< "gather-food wins the (tier, score) key over wander within tier 7";
+		EXPECT_FALSE(EvaluatedOption::higherPriority(wander, gatherFood));
 	}
 
 	TEST_F(AIDecisionSystemTest, IsActionableReturnsCorrectly) {
@@ -1259,12 +1280,241 @@ namespace ecs::test {
 		ASSERT_NE(trace, nullptr);
 		ASSERT_FALSE(trace->options.empty());
 
-		// First option (highest priority) should be the critical hunger
+		// First option (highest priority) should be the critical hunger, classified at tier 2.
 		const auto& first = trace->options[0];
 		EXPECT_EQ(first.taskType, TaskType::FulfillNeed);
 		EXPECT_EQ(first.needType, NeedType::Hunger);
 		EXPECT_EQ(first.status, OptionStatus::Selected);
-		EXPECT_GE(first.calculatePriority(), 300.0F); // In critical range
+		EXPECT_EQ(first.tier, 2) << "a critical need (<10%) is tier 2";
+	}
+
+	// =============================================================================
+	// classifyTier() integration tests
+	//
+	// These build a REAL DecisionTrace through world->update() (the only path that calls the
+	// .cpp-private classifyTier on every option) and assert the tier the system stamped onto the
+	// resulting option. They cover each runtime classification rule from the spec Model table:
+	// work-order Haul/Harvest -> 4, stocking Haul/Harvest -> 6, gather-food sentinel -> 7 (above
+	// wander), critical need -> 2, actionable need -> 5.
+	// =============================================================================
+
+	namespace {
+		// Find the first option matching a predicate in a trace (nullptr if none).
+		template <typename Pred>
+		[[nodiscard]] const EvaluatedOption* findOption(const DecisionTrace& trace, Pred pred) {
+			for (const auto& option : trace.options) {
+				if (pred(option)) {
+					return &option;
+				}
+			}
+			return nullptr;
+		}
+
+		// Register a tool-less harvestable whose yield is a light, one-hand carryable RawMaterial, so
+		// a non-overweight colonist that remembers it produces an Available Harvest option (both the
+		// tool gate and the carry gate pass). Returns {harvestableId, yieldId}.
+		struct HarvestableIds {
+			uint32_t harvestableId;
+			uint32_t yieldId;
+		};
+		[[nodiscard]] HarvestableIds registerHarvestableYielding(
+			engine::assets::AssetRegistry& registry, const std::string& harvestableDef, const std::string& yieldDef
+		) {
+			engine::assets::AssetDefinition yield;
+			yield.defName = yieldDef;
+			yield.label = yieldDef;
+			yield.handsRequired = 1;
+			yield.category = engine::assets::ItemCategory::RawMaterial;
+			yield.capabilities.carryable = engine::assets::CarryableCapability{1};
+			yield.itemProperties = engine::assets::ItemProperties{};
+			yield.itemProperties->stackSize = 100;
+			yield.itemProperties->massKg = 0.1F; // light: carry weight never binds the gate
+			registry.registerTestDefinition(std::move(yield));
+
+			engine::assets::AssetDefinition harvestable;
+			harvestable.defName = harvestableDef;
+			harvestable.label = harvestableDef;
+			harvestable.capabilities.harvestable = engine::assets::HarvestableCapability{};
+			harvestable.capabilities.harvestable->yieldDefName = yieldDef;
+			harvestable.capabilities.harvestable->requiredToolType = ""; // tool-less: gate passes
+			registry.registerTestDefinition(std::move(harvestable));
+
+			return {registry.getDefNameId(harvestableDef), registry.getDefNameId(yieldDef)};
+		}
+
+		void satisfyAllNeeds(NeedsComponent& needs) {
+			needs.get(NeedType::Hunger).value = 100.0F;
+			needs.get(NeedType::Thirst).value = 100.0F;
+			needs.get(NeedType::Energy).value = 100.0F;
+			needs.get(NeedType::Bladder).value = 100.0F;
+			needs.get(NeedType::Digestion).value = 100.0F;
+		}
+	} // namespace
+
+	// A Harvest that provisions an active work order (its parent goal is a Craft) classifies at
+	// tier 4. This is the chain-becomes-tier-lock: servesActiveWorkOrder -> tier 4, no score bonus.
+	TEST_F(AIDecisionSystemTest, WorkOrderHarvestClassifiesTier4) {
+		auto& registry = engine::assets::AssetRegistry::Get();
+		auto [bushId, stickId] = registerHarvestableYielding(registry, "Flora_WorkBush", "WorkStick");
+
+		auto colonist = createColonist({0.0F, 0.0F});
+		satisfyAllNeeds(*getNeeds(colonist));
+		addKnownEntity(colonist, {2.0F, 0.0F}, bushId, engine::assets::CapabilityType::Harvestable);
+
+		const auto station = world->createEntity();
+		world->addComponent<Position>(station, Position{{4.0F, 0.0F}});
+
+		// Parent Craft goal + its child Harvest goal (the provisioning step).
+		GoalTask craft;
+		craft.type = TaskType::Craft;
+		craft.owner = GoalOwner::CraftingGoalSystem;
+		craft.destinationEntity = station;
+		craft.destinationPosition = {4.0F, 0.0F};
+		craft.targetAmount = 2;
+		craft.status = GoalStatus::Blocked;
+		const uint64_t craftId = GoalTaskRegistry::Get().createGoal(std::move(craft));
+
+		GoalTask harvest;
+		harvest.type = TaskType::Harvest;
+		harvest.owner = GoalOwner::CraftingGoalSystem;
+		harvest.destinationEntity = station;
+		harvest.destinationPosition = {4.0F, 0.0F};
+		harvest.yieldDefNameId = stickId;
+		harvest.targetAmount = 2;
+		harvest.parentGoalId = craftId;
+		harvest.status = GoalStatus::Available;
+		GoalTaskRegistry::Get().createGoal(std::move(harvest));
+
+		world->update(0.016F);
+
+		auto* trace = getTrace(colonist);
+		ASSERT_NE(trace, nullptr);
+		const auto* harvestOption = findOption(*trace, [](const EvaluatedOption& o) { return o.taskType == TaskType::Harvest; });
+		ASSERT_NE(harvestOption, nullptr) << "a work-order harvest option should be present";
+		EXPECT_TRUE(harvestOption->servesActiveWorkOrder) << "harvest feeding a Craft serves the work order";
+		EXPECT_EQ(harvestOption->tier, 4) << "a work-order harvest classifies at tier 4";
+	}
+
+	// A stocking Harvest (owned by StorageGoalSystem, no Craft/Build parent) is opportunistic work:
+	// it classifies at tier 6, strictly below work orders.
+	TEST_F(AIDecisionSystemTest, StockingHarvestClassifiesTier6) {
+		auto& registry = engine::assets::AssetRegistry::Get();
+		auto [bushId, stickId] = registerHarvestableYielding(registry, "Flora_StockBush", "StockStick");
+
+		auto colonist = createColonist({0.0F, 0.0F});
+		satisfyAllNeeds(*getNeeds(colonist));
+		addKnownEntity(colonist, {2.0F, 0.0F}, bushId, engine::assets::CapabilityType::Harvestable);
+
+		auto storage = world->createEntity();
+		world->addComponent<Position>(storage, Position{{4.0F, 0.0F}});
+
+		// A stocking harvest: StorageGoalSystem chops to fill a box toward its minimum. No Craft/Build
+		// parent, so servesActiveWorkOrder is false and it stays at the opportunistic base tier.
+		GoalTask harvest;
+		harvest.type = TaskType::Harvest;
+		harvest.owner = GoalOwner::StorageGoalSystem;
+		harvest.destinationEntity = storage;
+		harvest.destinationPosition = {4.0F, 0.0F};
+		harvest.yieldDefNameId = stickId;
+		harvest.targetAmount = 5;
+		harvest.status = GoalStatus::Available;
+		GoalTaskRegistry::Get().createGoal(std::move(harvest));
+
+		world->update(0.016F);
+
+		auto* trace = getTrace(colonist);
+		ASSERT_NE(trace, nullptr);
+		const auto* harvestOption = findOption(*trace, [](const EvaluatedOption& o) { return o.taskType == TaskType::Harvest; });
+		ASSERT_NE(harvestOption, nullptr) << "a stocking harvest option should be present";
+		EXPECT_FALSE(harvestOption->servesActiveWorkOrder) << "stocking is not a work order";
+		EXPECT_TRUE(harvestOption->servesStorageStocking);
+		EXPECT_EQ(harvestOption->tier, 6) << "a stocking harvest classifies at tier 6 (opportunistic)";
+	}
+
+	// The gather-food sentinel (needValue==100, threshold==0, emitted when the colonist has no food
+	// and knows an edible harvestable) classifies at tier 7 (idle) and, with my wander-floor fix,
+	// outranks the same-tier wander option because wander's within-tier score is pinned to 0.
+	TEST_F(AIDecisionSystemTest, GatherFoodClassifiesTier7AndBeatsWander) {
+		auto& registry = engine::assets::AssetRegistry::Get();
+		// A harvestable yielding the already-registered edible Berry, so the gather-food path fires.
+		engine::assets::AssetDefinition berryBush;
+		berryBush.defName = "Flora_BerryBush";
+		berryBush.label = "Berry Bush";
+		berryBush.capabilities.harvestable = engine::assets::HarvestableCapability{};
+		berryBush.capabilities.harvestable->yieldDefName = "Berry";
+		berryBush.capabilities.harvestable->requiredToolType = "";
+		registry.registerTestDefinition(std::move(berryBush));
+		const uint32_t berryBushId = registry.getDefNameId("Flora_BerryBush");
+
+		auto colonist = createColonist({0.0F, 0.0F});
+		satisfyAllNeeds(*getNeeds(colonist)); // all needs met -> idle tier; no food in inventory
+		// A nearby edible harvestable: drives the gather-food sentinel (and a reachable food source).
+		addKnownEntity(colonist, {3.0F, 0.0F}, berryBushId, engine::assets::CapabilityType::Harvestable);
+
+		world->update(0.016F);
+
+		auto* trace = getTrace(colonist);
+		ASSERT_NE(trace, nullptr);
+
+		// The gather-food sentinel reuses FulfillNeed with needValue==100 && threshold==0.
+		const auto* gatherFood = findOption(*trace, [](const EvaluatedOption& o) {
+			return o.taskType == TaskType::FulfillNeed && o.needValue >= 100.0F && o.threshold == 0.0F;
+		});
+		const auto* wander = findOption(*trace, [](const EvaluatedOption& o) { return o.taskType == TaskType::Wander; });
+		ASSERT_NE(gatherFood, nullptr) << "an empty-inventory colonist with a known edible source gathers food";
+		ASSERT_NE(wander, nullptr) << "wander is always offered as the idle floor";
+
+		EXPECT_EQ(gatherFood->tier, 7) << "the gather-food sentinel is tier 7 (idle)";
+		EXPECT_EQ(wander->tier, 7) << "wander is tier 7 (idle)";
+		EXPECT_FLOAT_EQ(wander->score, 0.0F) << "wander is the idle floor: within-tier score pinned to 0";
+		EXPECT_GT(gatherFood->score, wander->score) << "reachable gather-food outranks wander within the idle tier";
+		EXPECT_TRUE(EvaluatedOption::higherPriority(*gatherFood, *wander))
+			<< "gather-food wins the (tier, score) key over wander";
+	}
+
+	// A critical need (needValue < 10%) classifies at tier 2 (above everything in Phase 1/2).
+	TEST_F(AIDecisionSystemTest, CriticalNeedClassifiesTier2) {
+		auto colonist = createColonist({0.0F, 0.0F});
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		inventory->addItem("Berry", 3); // a valid hunger fulfillment path (eat from inventory)
+
+		setNeedValue(colonist, NeedType::Hunger, 5.0F); // critical
+		setNeedValue(colonist, NeedType::Thirst, 100.0F);
+		setNeedValue(colonist, NeedType::Energy, 100.0F);
+		setNeedValue(colonist, NeedType::Bladder, 100.0F);
+
+		world->update(0.016F);
+
+		auto* trace = getTrace(colonist);
+		ASSERT_NE(trace, nullptr);
+		const auto* hunger = findOption(*trace, [](const EvaluatedOption& o) {
+			return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Hunger;
+		});
+		ASSERT_NE(hunger, nullptr);
+		EXPECT_EQ(hunger->tier, 2) << "a need below the 10% critical threshold classifies at tier 2";
+	}
+
+	// An actionable need (below its seek threshold but not critical) classifies at tier 5.
+	TEST_F(AIDecisionSystemTest, ActionableNeedClassifiesTier5) {
+		auto colonist = createColonist({0.0F, 0.0F});
+		// A known water source so thirst is actionable (Available), not NoSource.
+		addKnownEntity(colonist, {3.0F, 4.0F}, kWaterDefId, engine::assets::CapabilityType::Drinkable);
+
+		setNeedValue(colonist, NeedType::Hunger, 100.0F);
+		setNeedValue(colonist, NeedType::Thirst, 40.0F); // actionable, above the 10% critical line
+		setNeedValue(colonist, NeedType::Energy, 100.0F);
+		setNeedValue(colonist, NeedType::Bladder, 100.0F);
+
+		world->update(0.016F);
+
+		auto* trace = getTrace(colonist);
+		ASSERT_NE(trace, nullptr);
+		const auto* thirst = findOption(*trace, [](const EvaluatedOption& o) {
+			return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Thirst;
+		});
+		ASSERT_NE(thirst, nullptr);
+		EXPECT_EQ(thirst->status, OptionStatus::Selected) << "the actionable thirst is the chosen task";
+		EXPECT_EQ(thirst->tier, 5) << "an actionable (non-critical) need classifies at tier 5";
 	}
 
 	// =============================================================================
@@ -1276,6 +1526,11 @@ namespace ecs::test {
 	  protected:
 		void SetUp() override {
 			world = std::make_unique<World>();
+
+			// Reset the PriorityConfig singleton to its default arbitration tiers: task selection here
+			// depends on the per-task tier table, and an earlier suite that loads a partial
+			// priority-tuning.xml now leaves it empty (loadFromFile is authoritative post-fix).
+			engine::assets::PriorityConfig::Get().clear();
 
 			auto& registry = engine::assets::AssetRegistry::Get();
 
@@ -1488,33 +1743,27 @@ namespace ecs::test {
 		EXPECT_EQ(task->chainStep, 0);
 	}
 
-	TEST_F(AIDecisionSystemTest, ChainBonusNotAppliedForNewTask) {
-		// Unit test: Verify chainStep field correctly distinguishes new vs mid-chain tasks.
-		// The chain bonus (+2000) is only applied when chainStep > 0, meaning the colonist
-		// has already picked up an item and is mid-delivery.
-		// NOTE: The actual bonus calculation is in populatePriorityBonuses(); this test
-		// verifies the data structure supports the required semantics.
-		auto colonist = createColonist({0.0F, 0.0F});
+	TEST_F(AIDecisionSystemTest, ChainHasNoScoreTermOnlyTierClassification) {
+		// The old +2000 chain SCORE bonus is GONE from arbitration. A mid-chain provisioning task is
+		// now a TIER-4 classification (servesActiveWorkOrder), not a score inflation. The
+		// AvailableWorkOrderHaulClassifiesTier4 / ...Tier6 integration tests below exercise that
+		// classification end-to-end through a real trace; this unit test pins the score side: the
+		// within-tier score is composed ONLY of distanceFactor + skill + age + hysteresis, with no
+		// hidden +2000 chain term, so a far provisioning haul cannot swamp a near one inside tier 4.
+		EvaluatedOption provisioningHaul;
+		provisioningHaul.taskType = TaskType::Haul;
+		provisioningHaul.status = OptionStatus::Available;
+		provisioningHaul.servesActiveWorkOrder = true; // mid-chain provisioning
+		provisioningHaul.distanceFactor = distanceFactorAt(20.0F);
+		provisioningHaul.skillBonus = 30;
+		provisioningHaul.taskAgeBonus = 10;
+		provisioningHaul.hysteresisBonus = 0;
 
-		auto* task = getTask(colonist);
-		ASSERT_NE(task, nullptr);
-
-		// Set up task with chainId but chainStep=0 (just selected, not yet picked up)
-		task->type = TaskType::Haul;
-		task->chainId = 1ULL;
-		task->chainStep = 0;
-		task->state = TaskState::Moving;
-		task->haulItemDefName = "Berry";
-		task->targetPosition = {10.0F, 10.0F};
-
-		// Chain bonus condition: chainStep > 0
-		// At step 0, this condition is false → no bonus applied
-		EXPECT_EQ(task->chainStep, 0);
-		EXPECT_FALSE(task->chainStep > 0) << "chainStep=0 should NOT qualify for chain bonus";
-
-		// After pickup phase, chainStep advances to 1
-		task->chainStep = 1;
-		EXPECT_TRUE(task->chainStep > 0) << "chainStep=1 SHOULD qualify for chain bonus";
+		const float expected = provisioningHaul.distanceFactor + 30.0F + 10.0F + 0.0F;
+		EXPECT_FLOAT_EQ(provisioningHaul.computeScore(), expected)
+			<< "score is exactly the four within-tier terms; no chain bonus is added";
+		EXPECT_LT(provisioningHaul.computeScore(), 1000.0F)
+			<< "the deleted +2000 chain inflation must not reappear in the score";
 	}
 
 	TEST_F(AIDecisionSystemTest, ChainStepTracksCurrent) {

@@ -18,13 +18,36 @@
   Players do NOT set priority on individual tasks.
   Tasks inherit priority from: goals + colonist preferences + situational bonuses.
 
-  Full formula:
-  Priority = basePriority + distanceBonus + skillBonus + chainBonus + inProgressBonus + taskAgeBonus
+  AI ARBITRATION uses a lexicographic (tier, score) key (see colonist-task-arbitration.md):
+    - tier (TaskTiers below): categorical, compared first. Lower number = higher priority.
+      Runtime classifiers promote specific options (critical need -> 2, serves-work-order -> 4).
+    - score = distanceFactor + skillBonus + taskAgeBonus + hysteresisBonus, compared only WITHIN
+      a tier. It can never lift an option across a tier boundary.
+
+  The <Bands> below are the SEPARATE work-type display priority, not the AI arbitration.
 
   See /docs/design/game-systems/colonists/priority-config.md for details.
 -->
 <PriorityTuning>
-  <!-- Priority bands define the int16 ranges for each tier -->
+  <!--
+    AI arbitration tiers, per task type. Lower number = higher priority; tier is compared before
+    score. These are BASE tiers; AIDecisionSystem promotes specific options at runtime:
+      FulfillNeed: needValue<10% -> 2 (critical); gather-food sentinel -> 7; else stays 5.
+      Haul/Harvest/PlacePackaged: serving an active work order (or carrying) -> 4; else stays 6.
+    Every task type the engine can evaluate MUST have an entry here or load fails (validateTaskTiers).
+  -->
+  <TaskTiers>
+    <Task name="FulfillNeed" tier="5"/>
+    <Task name="Craft" tier="4"/>
+    <Task name="Build" tier="4"/>
+    <Task name="Deconstruct" tier="4"/>
+    <Task name="Haul" tier="6"/>
+    <Task name="Harvest" tier="6"/>
+    <Task name="PlacePackaged" tier="6"/>
+    <Task name="Wander" tier="7"/>
+  </TaskTiers>
+
+  <!-- Priority bands: work-type DISPLAY priority (NOT the AI arbitration above) -->
   <Bands>
     <Band name="Critical" base="30000">
       <description>Life-threatening situations (critical needs)</description>
@@ -75,7 +98,17 @@
 
   <!-- Bonus calculations -->
   <Bonuses>
-    <!-- Distance bonus: closer tasks score higher -->
+    <!-- Within-tier distance factor (AI arbitration): the dominant within-tier score term.
+         factor(d) = maxFactor * max(0, 1 - d/maxDistance). Weighted to dominate skill (0-100)
+         and task age (0-100) across the working range, so the nearest reachable source wins
+         within a tier. maxFactor (300) also exceeds the hysteresis margin (50) for a clearly
+         closer alternative, so a much nearer same-tier target overcomes stickiness. -->
+    <DistanceFactor>
+      <maxDistance>60.0</maxDistance>
+      <maxFactor>300.0</maxFactor>
+    </DistanceFactor>
+
+    <!-- Legacy distance bonus (+-50): work-type display priority path only, NOT the arbitration -->
     <Distance>
       <optimalDistance>5.0</optimalDistance>
       <maxPenaltyDistance>50.0</maxPenaltyDistance>
@@ -89,14 +122,17 @@
       <maxBonus>100</maxBonus>
     </Skill>
 
-    <!-- Chain continuation: strongly prefer finishing multi-step tasks -->
+    <!-- Chain continuation: work-type display priority path only. The AI arbitration no longer
+         uses a chain score bonus; a mid-chain provisioning task is classified at tier 4 instead. -->
     <ChainContinuation>
       <bonus>2000</bonus>
     </ChainContinuation>
 
-    <!-- In-progress: resist switching away from current task -->
+    <!-- In-progress: within-tier hysteresis margin. Added to the current task's score so a
+         same-tier challenger must beat it by more than this to win (prevents thrashing). Equals
+         taskSwitchThreshold below. Only matters within a tier; never lifts across a tier. -->
     <InProgress>
-      <bonus>200</bonus>
+      <bonus>50</bonus>
     </InProgress>
 
     <!-- Task age: old unclaimed tasks slowly rise in priority -->

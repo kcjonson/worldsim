@@ -18,8 +18,26 @@ namespace engine::assets {
 		return instance;
 	}
 
+	namespace {
+		/// Default per-task-type BASE tiers for the (tier, score) arbitration (lower = higher
+		/// priority). These mirror the spec's tier ladder; runtime classifiers in AIDecisionSystem
+		/// promote specific options (critical need -> 2, serves-work-order -> 4, etc.). The XML
+		/// <TaskTiers> block overrides these so designers can retune without a code change; these
+		/// defaults are the same values, kept in sync as the validation/tuning source of truth.
+		void installDefaultTaskTiers(std::unordered_map<std::string, int>& tiers) {
+			tiers["FulfillNeed"] = 5; // base = actionable need; promoted to 2 (critical) or 7 (gather-food sentinel)
+			tiers["Craft"] = 4;
+			tiers["Build"] = 4;
+			tiers["Deconstruct"] = 4;
+			tiers["Haul"] = 6;			// base = opportunistic; promoted to 4 when serving a work order
+			tiers["Harvest"] = 6;		// base = opportunistic; promoted to 4 when serving a work order
+			tiers["PlacePackaged"] = 6; // base = opportunistic; promoted to 4 when serving/carrying
+			tiers["Wander"] = 7;
+		}
+	} // namespace
+
 	PriorityConfig::PriorityConfig() {
-		// Initialize default bands
+		// Initialize default bands (work-type display priority)
 		bands["Critical"] = 30000;
 		bands["PlayerDraft"] = 20000;
 		bands["Needs"] = 10000;
@@ -27,6 +45,8 @@ namespace engine::assets {
 		bands["WorkMedium"] = 3000;
 		bands["WorkLow"] = 1000;
 		bands["Idle"] = 0;
+
+		installDefaultTaskTiers(taskTiers);
 	}
 
 	bool PriorityConfig::loadFromFile(const std::string& xmlPath) {
@@ -44,9 +64,20 @@ namespace engine::assets {
 			return false;
 		}
 
+		// The loaded XML is the authoritative source for arbitration tiers: clear the
+		// constructor-installed defaults BEFORE parsing <TaskTiers> so a type missing from the XML
+		// (or a deleted <TaskTiers> block) actually fails validateTaskTiers rather than silently
+		// falling back to a C++ default. A default-constructed PriorityConfig (unit tests that never
+		// load XML) keeps the constructor's defaults; only this file-load path is authoritative.
+		taskTiers.clear();
+
 		// Parse sections
 		if (auto bandsNode = root.child("Bands")) {
 			parseBands(&bandsNode);
+		}
+
+		if (auto tiersNode = root.child("TaskTiers")) {
+			parseTaskTiers(&tiersNode);
 		}
 
 		if (auto userPriorityNode = root.child("UserPriorityMapping")) {
@@ -85,8 +116,12 @@ namespace engine::assets {
 		bands["WorkLow"] = 1000;
 		bands["Idle"] = 0;
 
+		taskTiers.clear();
+		installDefaultTaskTiers(taskTiers);
+
 		userPriorityStep = 100;
 		distanceConfig = DistanceBonusConfig{};
+		distanceFactorConfig = DistanceFactorConfig{};
 		skillConfig = SkillBonusConfig{};
 		chainConfig = ChainBonusConfig{};
 		inProgressConfig = InProgressBonusConfig{};
@@ -95,6 +130,24 @@ namespace engine::assets {
 		timingConfig = TimingConfig{};
 		categoryOrder.clear();
 		categoryTiers.clear();
+	}
+
+	int PriorityConfig::getTaskTier(const std::string& taskTypeName) const {
+		auto it = taskTiers.find(taskTypeName);
+		if (it != taskTiers.end()) {
+			return it->second;
+		}
+		return kUnassignedTier;
+	}
+
+	bool PriorityConfig::validateTaskTiers(const std::vector<std::string>& requiredTypeNames, std::vector<std::string>& missingOut) const {
+		missingOut.clear();
+		for (const auto& name : requiredTypeNames) {
+			if (taskTiers.find(name) == taskTiers.end()) {
+				missingOut.push_back(name);
+			}
+		}
+		return missingOut.empty();
 	}
 
 	int16_t PriorityConfig::getBandBase(const std::string& bandName) const {
@@ -148,6 +201,16 @@ namespace engine::assets {
 		return static_cast<int16_t>(std::round(bonus));
 	}
 
+	float PriorityConfig::calculateDistanceFactor(float distance) const {
+		if (distance <= 0.0F) {
+			return distanceFactorConfig.maxFactor;
+		}
+		if (distance >= distanceFactorConfig.maxDistance) {
+			return 0.0F;
+		}
+		return distanceFactorConfig.maxFactor * (1.0F - distance / distanceFactorConfig.maxDistance);
+	}
+
 	int16_t PriorityConfig::calculateSkillBonus(float skillLevel) const {
 		int16_t bonus = static_cast<int16_t>(skillLevel * static_cast<float>(skillConfig.multiplier));
 		return std::min(bonus, skillConfig.maxBonus);
@@ -189,8 +252,35 @@ namespace engine::assets {
 		}
 	}
 
+	void PriorityConfig::parseTaskTiers(const void* nodePtr) {
+		const pugi::xml_node& node = *static_cast<const pugi::xml_node*>(nodePtr);
+
+		for (pugi::xml_node tierNode : node.children("Task")) {
+			std::string name = tierNode.attribute("name").as_string();
+			if (name.empty()) {
+				continue;
+			}
+			// tier attribute is required per task; a missing/zero attribute is a config error caught
+			// by validateTaskTiers only when the whole entry is absent, so default to the sentinel
+			// here so a malformed entry surfaces as "unassigned" rather than silently tier 0.
+			int tier = tierNode.attribute("tier").as_int(kUnassignedTier);
+			taskTiers[name] = tier;
+			LOG_DEBUG(Engine, "Task tier: %s = %d", name.c_str(), tier);
+		}
+	}
+
 	void PriorityConfig::parseBonuses(const void* nodePtr) {
 		const pugi::xml_node& node = *static_cast<const pugi::xml_node*>(nodePtr);
+
+		// Within-tier distance factor (arbitration)
+		if (auto dfNode = node.child("DistanceFactor")) {
+			if (auto n = dfNode.child("maxDistance")) {
+				distanceFactorConfig.maxDistance = n.text().as_float(60.0F);
+			}
+			if (auto n = dfNode.child("maxFactor")) {
+				distanceFactorConfig.maxFactor = n.text().as_float(300.0F);
+			}
+		}
 
 		// Distance
 		if (auto distNode = node.child("Distance")) {

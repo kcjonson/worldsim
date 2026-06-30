@@ -155,8 +155,9 @@ namespace ecs {
 			// (a child of the umbrella) so the colonist cuts -> the cut yield is carried -> a carry-in
 			// Haul (spawned on harvest completion, inheriting the chainId) deposits it into the box,
 			// until the box holds minAmount. Category wildcard rules never drive harvest: they only
-			// accept hauled items, as before. Stocking work is floored ABOVE Wander but strictly BELOW
-			// construction/craft work orders (see DecisionTrace kStorageStockingFloor).
+			// accept hauled items, as before. Stocking work is tier 6 (opportunistic) in the
+			// (tier, score) arbitration: above idle (tier 7) but strictly below active work orders
+			// (tier 4), so a colonist always prefers construction/craft work over filling a box.
 			if (umbrellaId != 0) {
 				reconcileStockingHarvests(registry, assetRegistry, config, inventory, umbrellaId, maxColonistCarryKg);
 			}
