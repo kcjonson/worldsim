@@ -152,6 +152,11 @@ bool isStorageSourceKnown(ecs::World& world, ecs::EntityID destBox, const std::s
 			if (!(static_cast<uint8_t>(srcPriority) < static_cast<uint8_t>(destPriority))) {
 				return false;
 			}
+			// Mirror the engine's drainable gate: a box pinned exactly at its configured
+			// minimum has nothing to give, so it must not show as a valid source.
+			if (inv.getQuantity(itemDefName) <= srcConfig->getMinAmountFor(itemDefName, category)) {
+				return false;
+			}
 			return ecs::colonyKnowsStorageEntity(&world, registry, source);
 		}
 	);
