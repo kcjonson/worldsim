@@ -586,6 +586,10 @@ namespace world_sim {
 		}
 	}
 
+	void GameUI::toggleDecisionInspector() {
+		toggleTaskList();
+	}
+
 	// --- Build Mode API ---
 
 	void GameUI::setBuildModeActive(bool /*active*/) {

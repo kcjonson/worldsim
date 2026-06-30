@@ -196,6 +196,9 @@ class GameUI {
 	/// Check if global task list is expanded (for blocking scroll zoom)
 	[[nodiscard]] bool isGlobalTaskListExpanded() const;
 
+	/// Toggle the per-colonist decision inspector panel (T hotkey)
+	void toggleDecisionInspector();
+
   private:
 	std::unique_ptr<TopBar> topBar;
 	std::unique_ptr<DebugOverlay> debugOverlay;
