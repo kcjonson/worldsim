@@ -180,9 +180,34 @@ namespace ecs {
 		uint64_t							 umbrellaId,
 		float								 maxColonistCarryKg
 	) {
+		// Per-yield configured minimum: a stocking Harvest exists only to fill a specific-item rule's
+		// minAmount, so retirement checks that minimum against the box's current count. Small linear
+		// scan over the (handful of) rules; built once and reused for both retirement and emission.
+		auto minAmountFor = [&](uint32_t itemDefNameId) -> uint32_t {
+			for (const auto& rule : config.rules) {
+				if (rule.isWildcard() || rule.minAmount == 0) {
+					continue;
+				}
+				if (assetRegistry.getDefNameId(rule.defName) == itemDefNameId) {
+					return rule.minAmount;
+				}
+			}
+			return 0; // no specific rule drives this yield anymore
+		};
+
+		// A stocking Harvest child is STALE (retire it, never loop) when its reason to exist is gone:
+		//   (a) the box already holds >= the rule's minAmount for its yield (filled by other means), or
+		//   (b) no colony-known harvestable source for its yield remains (the source vanished),
+		// also covering the case where the driving rule itself was removed (minAmount -> 0). Retiring
+		// here is the folded-in stale-stocking-harvest retirement: without it a stocking Harvest whose
+		// minimum was met elsewhere, or whose tree was felled, would persist and the AI would keep
+		// re-selecting it.
+		std::vector<uint64_t> staleHarvestIds;
+
 		// What stocking work is already in flight for this box, per item: a Harvest child being cut,
 		// or a carry-in Haul child (chainId'd) carrying the cut yield in. Either means "this item is
-		// being stocked right now" -- don't emit a duplicate Harvest for it.
+		// being stocked right now" -- don't emit a duplicate Harvest for it. A retired (stale) Harvest
+		// is NOT counted here, so emission can re-resolve if a fresh shortfall still warrants it.
 		// A box stocks only a handful of distinct items; a small vector with a linear scan beats a
 		// per-tick heap-allocating set.
 		std::vector<uint32_t> itemsBeingStocked;
@@ -191,10 +216,27 @@ namespace ecs {
 				continue;
 			}
 			if (child->type == TaskType::Harvest && child->yieldDefNameId != 0) {
-				itemsBeingStocked.push_back(child->yieldDefNameId);
+				const uint32_t yield = child->yieldDefNameId;
+				const uint32_t minAmount = minAmountFor(yield);
+				const bool	   minimumMet = minAmount == 0 || inventory.getQuantity(assetRegistry.getDefName(yield)) >= minAmount;
+				const bool	   sourceGone = !colonyKnowsHarvestableSource(world, assetRegistry, yield);
+				if (minimumMet || sourceGone) {
+					staleHarvestIds.push_back(child->id);
+					continue; // do not treat a retiring child as "in flight"
+				}
+				itemsBeingStocked.push_back(yield);
 			} else if (child->type == TaskType::Haul && child->chainId.has_value() && !child->acceptedDefNameIds.empty()) {
 				itemsBeingStocked.push_back(child->acceptedDefNameIds.front());
 			}
+		}
+
+		// Retire the stale stocking-Harvest children up front, before emission re-resolves the live
+		// shortfall. removeGoal (not ...WithChildren): a stocking Harvest has no goal-children -- its
+		// carry-in Haul is a SIBLING under the umbrella (createHaulForCompletedHarvest inherits the
+		// harvest's parentGoalId), so an in-flight delivery already in a colonist's pack is never
+		// yanked out from under them by retiring the Harvest.
+		for (uint64_t staleId : staleHarvestIds) {
+			registry.removeGoal(staleId);
 		}
 
 		const auto* umbrella = registry.getGoal(umbrellaId);

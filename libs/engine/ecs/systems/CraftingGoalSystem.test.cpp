@@ -5,6 +5,7 @@
 // times, and checks if goal count stays stable.
 
 #include "CraftingGoalSystem.h"
+#include "GoalSystemHelpers.h"
 #include "StorageGoalSystem.h"
 
 #include "../GoalTaskRegistry.h"
@@ -897,6 +898,65 @@ TEST_F(MultiSystemGoalTest, MetMinimumEmitsNoHarvest) {
 
 	auto& registry = GoalTaskRegistry::Get();
 	EXPECT_EQ(registry.goalCount(TaskType::Harvest), 0U) << "minimum already met -> no chopping";
+}
+
+// Retire (a): an existing stocking Harvest is REMOVED once the box reaches minAmount by other means
+// (e.g. material hauled in), and is not re-emitted. Without retirement the stale Harvest would
+// persist and the AI would keep re-selecting it -- a job that never reaches a terminal state.
+TEST_F(MultiSystemGoalTest, StockingHarvestRetiresWhenBoxReachesMinimum) {
+	registerWoodAndTree();
+	giveColonistKnownTree(*world, {5.0F, 5.0F});
+	auto storage = createStorageWithMin(*world, {0.0F, 0.0F}, "Wood", engine::assets::ItemCategory::RawMaterial, 10);
+
+	runUpdates(60);
+
+	auto& registry = GoalTaskRegistry::Get();
+	ASSERT_EQ(registry.goalCount(TaskType::Harvest), 1U) << "shortfall drives a stocking Harvest";
+
+	// The box fills to its minimum by other means (a hauled-in delivery, simulated directly).
+	world->getComponent<Inventory>(storage)->addItem("Wood", 10);
+
+	runUpdates(60); // reconcile pass sees the met minimum
+
+	EXPECT_EQ(registry.goalCount(TaskType::Harvest), 0U)
+	    << "stocking Harvest retired once the box holds >= minAmount";
+
+	// Stays retired across further ticks (no re-emit).
+	runUpdates(120);
+	EXPECT_EQ(registry.goalCount(TaskType::Harvest), 0U) << "retired Harvest is not re-emitted";
+}
+
+// Retire (b): an existing stocking Harvest is REMOVED when no colony-known harvestable source for
+// its yield remains (the source vanished / was forgotten), and is not re-emitted.
+TEST_F(MultiSystemGoalTest, StockingHarvestRetiresWhenSourceVanishes) {
+	registerWoodAndTree();
+
+	// Inline the colonist so we can vanish its knowledge of the tree later.
+	auto&	 assetReg = engine::assets::AssetRegistry::Get();
+	auto	 colonist = world->createEntity();
+	auto&	 mem = world->addComponent<Memory>(colonist);
+	uint32_t treeId = assetReg.getDefNameId("TestTree");
+	mem.rememberWorldEntity({5.0F, 5.0F}, treeId, assetReg.getCapabilityMask(treeId));
+
+	createStorageWithMin(*world, {0.0F, 0.0F}, "Wood", engine::assets::ItemCategory::RawMaterial, 10);
+
+	runUpdates(60);
+
+	auto& registry = GoalTaskRegistry::Get();
+	ASSERT_EQ(registry.goalCount(TaskType::Harvest), 1U) << "a known source drives a stocking Harvest";
+
+	// The only colony source for Wood disappears (tree felled / forgotten).
+	world->getComponent<Memory>(colonist)->clear();
+	ASSERT_FALSE(colonyKnowsHarvestableSource(world.get(), assetReg, assetReg.getDefNameId("Wood")))
+	    << "no colony-known Wood source remains";
+
+	runUpdates(60); // reconcile pass sees the vanished source
+
+	EXPECT_EQ(registry.goalCount(TaskType::Harvest), 0U)
+	    << "stocking Harvest retired when its source is no longer known";
+
+	runUpdates(120);
+	EXPECT_EQ(registry.goalCount(TaskType::Harvest), 0U) << "retired Harvest is not re-emitted";
 }
 
 // =============================================================================

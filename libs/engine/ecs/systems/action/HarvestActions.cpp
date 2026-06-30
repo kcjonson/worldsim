@@ -17,8 +17,6 @@
 
 #include <algorithm>
 #include <random>
-#include <utility>
-#include <vector>
 
 namespace ecs {
 
@@ -305,100 +303,114 @@ namespace ecs {
 	}
 
 	void ActionSystem::startHarvestAction(Task& task, Action& action, const Position& position, Memory& memory, const Inventory& inventory) {
+		(void)position; // the harvest target is the remembered entity, not the colonist's stand point
 		auto& registry = engine::assets::AssetRegistry::Get();
 
-		// Goal-driven harvest: Find a harvestable entity at the target position that yields
-		// the item type specified by the Harvest goal (harvestYieldDefNameId)
-		constexpr float kPositionTolerance = 0.5F;
-
-		// Track stale memory entries sitting at the target so we can forget them if no valid
-		// harvestable is actually there (phantom target). Otherwise AIDecision keeps
-		// re-selecting the dead entity and floods warnings until LRU eviction.
-		std::vector<std::pair<glm::vec2, uint32_t>> staleAtTarget;
-
-		for (const auto& [key, entity] : memory.knownWorldEntities) {
-			// Check if entity is at target position
-			glm::vec2 diff = entity.position - task.targetPosition;
-			float	  distSq = diff.x * diff.x + diff.y * diff.y;
-			if (distSq > kPositionTolerance * kPositionTolerance) {
-				continue;
-			}
-
-			staleAtTarget.emplace_back(entity.position, entity.defNameId);
-
-			// Check if entity has Harvestable capability
-			if (!registry.hasCapability(entity.defNameId, engine::assets::CapabilityType::Harvestable)) {
-				continue;
-			}
-
-			const auto& defName = registry.getDefName(entity.defNameId);
-			const auto* def = registry.getDefinition(defName);
-			if (def == nullptr || !def->capabilities.harvestable.has_value()) {
-				continue;
-			}
-
-			const auto& harvestCap = def->capabilities.harvestable.value();
-
-			// Verify this harvestable yields the item we need
-			uint32_t yieldDefNameId = registry.getDefNameId(harvestCap.yieldDefName);
-			if (yieldDefNameId != task.harvestYieldDefNameId) {
-				continue; // Wrong yield type
-			}
-
-			// Chopping a tree needs the right tool. The decision layer already filters these
-			// out for tool-less colonists; this guards against a stale task producing a chop
-			// the colonist can't actually perform.
-			if (!ecs::inventoryHoldsToolType(inventory, registry, harvestCap.requiredToolType)) {
-				LOG_DEBUG(
-					Engine, "[Action] Cannot harvest %s without a %s tool", defName.c_str(), harvestCap.requiredToolType.c_str()
-				);
-				continue;
-			}
-
-			// Calculate yield amount
-			uint32_t yieldAmount = harvestCap.amountMin;
-			if (harvestCap.amountMax > harvestCap.amountMin) {
-				std::uniform_int_distribution<uint32_t> yieldDist(harvestCap.amountMin, harvestCap.amountMax);
-				yieldAmount = yieldDist(m_rng);
-			}
-
-			action = Action::Harvest(
-				harvestCap.yieldDefName,
-				yieldAmount,
-				harvestCap.durability,
-				entity.position,
-				defName,
-				harvestCap.destructive,
-				harvestCap.regrowthTime
-			);
+		// Goal-driven harvest: locate the harvestable DIRECTLY by the memory key the evaluator chose
+		// (harvestTargetEntityId == the knownWorldEntities key from evaluateHarvestOptions), NOT by a
+		// proximity search around task.targetPosition. The stand point is snapped to an adjacent
+		// reachable nav face (tree centers are navmesh holes), so it sits >0.5 m from the tree; a
+		// proximity scan finds nothing, forgets the (live) entry, and the AI re-selects -> the
+		// phantom-harvest loop. Keying on the id harvests the exact tree the evaluator picked,
+		// regardless of how far the stand point is from it.
+		auto it = memory.knownWorldEntities.find(task.harvestTargetEntityId);
+		if (it == memory.knownWorldEntities.end()) {
+			// The chosen entity is gone from memory (consumed, forgotten, evicted). Clear the action
+			// so the AI re-resolves to another source or retires -- never fall back to a proximity
+			// scan that could grab a different nearby entity.
 			LOG_DEBUG(
 				Engine,
-				"[Action] Starting goal-driven Harvest action for %s from %s (durability %.0f, goal %llu)",
-				harvestCap.yieldDefName.c_str(),
-				defName.c_str(),
-				harvestCap.durability,
+				"[Action] Harvest target %llu no longer in memory (goal %llu) - clearing for re-resolve",
+				static_cast<unsigned long long>(task.harvestTargetEntityId),
 				static_cast<unsigned long long>(task.harvestGoalId)
 			);
+			action.clear();
 			return;
 		}
 
-		// No valid harvestable found at target - the memory entry (if any) is stale. Forget
-		// it so AIDecision stops re-selecting the phantom target on the next tick.
-		for (const auto& [pos, defNameId] : staleAtTarget) {
-			memory.forgetWorldEntity(pos, defNameId);
+		const KnownWorldEntity& entity = it->second;
+		const auto&				defName = registry.getDefName(entity.defNameId);
+		const auto*				def = registry.getDefinition(defName);
+
+		// Validate the remembered entity is still a harvestable yielding what the goal wants. If not,
+		// the memory entry is stale for this purpose: forget THIS specific entry (by its real
+		// position/defName) and clear, so the AI re-resolves rather than chopping the wrong thing.
+		const bool stillHarvestable =
+			registry.hasCapability(entity.defNameId, engine::assets::CapabilityType::Harvestable) && def != nullptr &&
+			def->capabilities.harvestable.has_value();
+		if (!stillHarvestable) {
+			memory.forgetWorldEntity(entity.position, entity.defNameId);
+			LOG_WARNING(
+				Engine,
+				"[Action] Harvest target %s at (%.1f, %.1f) is no longer harvestable (goal %llu) - forgot, clearing",
+				defName.c_str(),
+				entity.position.x,
+				entity.position.y,
+				static_cast<unsigned long long>(task.harvestGoalId)
+			);
+			action.clear();
+			return;
 		}
 
-		LOG_WARNING(
-			Engine,
-			"[Action] No harvestable entity found at (%.1f, %.1f) for yield %u (goal %llu) - forgot %zu stale entr%s",
-			task.targetPosition.x,
-			task.targetPosition.y,
-			task.harvestYieldDefNameId,
-			static_cast<unsigned long long>(task.harvestGoalId),
-			staleAtTarget.size(),
-			staleAtTarget.size() == 1 ? "y" : "ies"
+		const auto& harvestCap = def->capabilities.harvestable.value();
+
+		// Verify this harvestable yields the item the goal needs. A mismatch means the chosen target
+		// no longer serves this goal: forget it and clear so a correct source is re-resolved.
+		uint32_t yieldDefNameId = registry.getDefNameId(harvestCap.yieldDefName);
+		if (yieldDefNameId != task.harvestYieldDefNameId) {
+			memory.forgetWorldEntity(entity.position, entity.defNameId);
+			LOG_WARNING(
+				Engine,
+				"[Action] Harvest target %s yields %u, goal wants %u (goal %llu) - forgot, clearing",
+				defName.c_str(),
+				yieldDefNameId,
+				task.harvestYieldDefNameId,
+				static_cast<unsigned long long>(task.harvestGoalId)
+			);
+			action.clear();
+			return;
+		}
+
+		// Chopping a tree needs the right tool. The decision layer already filters these out for
+		// tool-less colonists; this guards against a stale task producing a chop the colonist can't
+		// perform. The entity itself is still valid (a real tree), so do NOT forget it -- just clear
+		// the action and let the AI re-resolve; another colonist with an axe can still cut it.
+		if (!ecs::inventoryHoldsToolType(inventory, registry, harvestCap.requiredToolType)) {
+			LOG_DEBUG(
+				Engine, "[Action] Cannot harvest %s without a %s tool - clearing", defName.c_str(), harvestCap.requiredToolType.c_str()
+			);
+			action.clear();
+			return;
+		}
+
+		// Calculate yield amount
+		uint32_t yieldAmount = harvestCap.amountMin;
+		if (harvestCap.amountMax > harvestCap.amountMin) {
+			std::uniform_int_distribution<uint32_t> yieldDist(harvestCap.amountMin, harvestCap.amountMax);
+			yieldAmount = yieldDist(m_rng);
+		}
+
+		// Build the Harvest at the ENTITY's position (the actual tree), not task.targetPosition (the
+		// snapped stand point). applyCollectionEffect resolves the source pool/pile by this position.
+		action = Action::Harvest(
+			harvestCap.yieldDefName,
+			yieldAmount,
+			harvestCap.durability,
+			entity.position,
+			defName,
+			harvestCap.destructive,
+			harvestCap.regrowthTime
 		);
-		action.clear();
+		LOG_DEBUG(
+			Engine,
+			"[Action] Starting goal-driven Harvest action for %s from %s at (%.1f, %.1f) (durability %.0f, goal %llu)",
+			harvestCap.yieldDefName.c_str(),
+			defName.c_str(),
+			entity.position.x,
+			entity.position.y,
+			harvestCap.durability,
+			static_cast<unsigned long long>(task.harvestGoalId)
+		);
 	}
 
 } // namespace ecs
