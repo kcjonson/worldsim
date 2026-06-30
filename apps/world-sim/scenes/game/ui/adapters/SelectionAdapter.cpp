@@ -435,7 +435,8 @@ namespace world_sim {
 			);
 		}
 
-		// Place/Package button based on state
+		// Place (packaged) vs Move (installed). Move re-packages the box in place and immediately
+		// enters relocation, so the player picks a new spot and a colonist carries + reinstalls it.
 		if (selection.isPackaged) {
 			content.slots.push_back(
 				ActionButtonSlot{
@@ -446,7 +447,7 @@ namespace world_sim {
 		} else {
 			content.slots.push_back(
 				ActionButtonSlot{
-					.label = "Package",
+					.label = "Move",
 					.onClick = onPackage,
 				}
 			);

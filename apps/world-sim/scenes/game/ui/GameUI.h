@@ -75,6 +75,7 @@ class GameUI {
 		std::function<void(ecs::GameSpeed)> onSpeedChange;			 ///< Called when speed changed
 		std::function<void()> onMenuClick;								 ///< Called when menu button clicked
 		std::function<void()> onPlaceFurniture;						 ///< Called when Place button clicked for packaged furniture
+		std::function<void()> onMoveFurniture;						 ///< Called when Move button clicked for an installed box (re-packages + relocates)
 		std::function<void()> onDemolishFoundation; ///< Called when Demolish foundation clicked (clear foundation only)
 		std::function<void()> onDemolishBuilding;	///< Called when Demolish building clicked (cascade: walls + openings + foundation)
 		std::function<void()> onDemolishWallSegment;				 ///< Called when Demolish button clicked for a wall segment

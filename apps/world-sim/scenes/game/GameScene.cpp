@@ -221,6 +221,7 @@ namespace {
 					},
 				.onMenuClick = [this]() { sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu)); },
 				.onPlaceFurniture = [this]() { handlePlaceFurniture(); },
+				.onMoveFurniture = [this]() { handleMoveFurniture(); },
 				.onDemolishFoundation = [this]() { handleDemolishFoundation(); },
 				.onDemolishBuilding = [this]() { handleDemolishBuilding(); },
 				.onDemolishWallSegment = [this]() { handleDemolishWallSegment(); },
@@ -1462,6 +1463,34 @@ namespace {
 
 			// Begin relocation via PlacementSystem
 			m_placementSystem->beginRelocation(furnitureSel->entityId, furnitureSel->defName);
+		}
+
+		/// Re-package an INSTALLED box so it can be moved, then drive the existing relocation flow.
+		/// Re-adds Packaged (targetPosition nullopt = awaiting the player's spot pick) and immediately
+		/// enters placement mode. The box's Inventory rides along untouched -- contents survive the move
+		/// (RimWorld-style). Once the player picks the spot, the standard PlacePackaged pipeline carries
+		/// + installs it (Packaged removed, navmesh reclaims the old footprint via the entity-move path).
+		void handleMoveFurniture() {
+			const auto& sel = m_selectionSystem->current();
+			auto*		furnitureSel = std::get_if<world_sim::FurnitureSelection>(&sel);
+			if (furnitureSel == nullptr) {
+				LOG_WARNING(Game, "Cannot move furniture: no furniture selected");
+				return;
+			}
+			// Only installed boxes are movable here; an already-packaged one uses the Place flow.
+			if (furnitureSel->isPackaged || ecsWorld->hasComponent<ecs::Packaged>(furnitureSel->entityId)) {
+				LOG_WARNING(Game, "Cannot move furniture: entity %u is already packaged",
+							static_cast<uint32_t>(furnitureSel->entityId));
+				return;
+			}
+
+			// Re-package in place: nullopt target = awaiting the player's spot pick. Inventory stays put.
+			ecsWorld->addComponent<ecs::Packaged>(furnitureSel->entityId, ecs::Packaged{std::nullopt, false});
+
+			// Reuse the exact relocation pipeline a packaged box's [Place] button uses.
+			m_placementSystem->beginRelocation(furnitureSel->entityId, furnitureSel->defName);
+			LOG_INFO(Game, "Re-packaged installed box '%s' (entity %u) for move - awaiting placement",
+					 furnitureSel->defName.c_str(), static_cast<uint32_t>(furnitureSel->entityId));
 		}
 
 		/// Handle recipe queue request from crafting station UI.
