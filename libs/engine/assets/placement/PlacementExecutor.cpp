@@ -748,6 +748,10 @@ namespace engine::assets {
 
 		bool removed = it->second.remove(position, defName);
 		if (removed) {
+			// A removed flora obstacle changes the nav obstacle set: bump the epoch so the
+			// NavigationSystem rebuilds the covering region and reclaims the trunk hole as
+			// walkable ground.
+			++m_removalEpoch;
 			LOG_DEBUG(
 				Engine,
 				"PlacementExecutor: Removed entity %s at (%.1f, %.1f) in chunk (%d, %d)",

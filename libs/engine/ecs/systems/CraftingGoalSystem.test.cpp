@@ -762,6 +762,144 @@ TEST_F(MultiSystemGoalTest, GoalOwnershipIsSetCorrectly) {
 }
 
 // =============================================================================
+// Storage stocking: an unfilled minAmount drives chopping (Task B)
+// =============================================================================
+
+namespace {
+	// Register Wood + a TestTree that yields Wood. Returns the Wood defNameId.
+	uint32_t registerWoodAndTree() {
+		auto& assetReg = engine::assets::AssetRegistry::Get();
+
+		engine::assets::AssetDefinition woodDef;
+		woodDef.defName = "Wood";
+		woodDef.label = "Wood";
+		woodDef.category = engine::assets::ItemCategory::RawMaterial;
+		woodDef.capabilities.carryable = engine::assets::CarryableCapability{6};
+		woodDef.itemProperties = engine::assets::ItemProperties{};
+		woodDef.itemProperties->stackSize = 40;
+		woodDef.itemProperties->massKg = 1.0F;
+		assetReg.registerTestDefinition(std::move(woodDef));
+
+		engine::assets::AssetDefinition treeDef;
+		treeDef.defName = "TestTree";
+		treeDef.label = "Test Tree";
+		treeDef.capabilities.harvestable = engine::assets::HarvestableCapability{};
+		treeDef.capabilities.harvestable->yieldDefName = "Wood";
+		assetReg.registerTestDefinition(std::move(treeDef));
+
+		return assetReg.getDefNameId("Wood");
+	}
+
+	// A colonist who remembers a TestTree at the given spot (so a Wood source is "known").
+	void giveColonistKnownTree(World& world, glm::vec2 treePos) {
+		auto&	 assetReg = engine::assets::AssetRegistry::Get();
+		auto	 colonist = world.createEntity();
+		auto&	 mem = world.addComponent<Memory>(colonist);
+		uint32_t treeId = assetReg.getDefNameId("TestTree");
+		mem.rememberWorldEntity(treePos, treeId, assetReg.getCapabilityMask(treeId));
+	}
+
+	// A storage with a SPECIFIC-item rule: keep at least `minAmount` of `defName`.
+	EntityID createStorageWithMin(World& world, glm::vec2 pos, const std::string& defName,
+								  engine::assets::ItemCategory category, uint32_t minAmount) {
+		auto entity = world.createEntity();
+		world.addComponent<Position>(entity, Position{pos});
+		world.addComponent<Inventory>(entity, Inventory::createForStorage());
+		auto& config = world.addComponent<StorageConfiguration>(entity);
+		config.addRule(StorageRule{
+		    .defName = defName,
+		    .category = category,
+		    .priority = StoragePriority::Medium,
+		    .minAmount = minAmount,
+		    .maxAmount = 0});
+		return entity;
+	}
+} // namespace
+
+// A specific-item rule whose minAmount exceeds the box's current count emits a stocking Harvest
+// (yield = that item) when a colonist knows a harvestable source. Net chain start: shortfall -> chop.
+TEST_F(MultiSystemGoalTest, SpecificItemMinAmountDrivesHarvestWhenSourceKnown) {
+	registerWoodAndTree();
+	giveColonistKnownTree(*world, {5.0F, 5.0F});
+	auto storage = createStorageWithMin(*world, {0.0F, 0.0F}, "Wood", engine::assets::ItemCategory::RawMaterial, 10);
+
+	runUpdates(60);
+
+	auto&		registry = GoalTaskRegistry::Get();
+	const auto* umbrella = registry.getGoalByDestination(storage);
+	ASSERT_NE(umbrella, nullptr);
+	EXPECT_EQ(umbrella->type, TaskType::Haul) << "storage umbrella is the slot-based Haul goal";
+
+	// Exactly one stocking Harvest child for Wood, owned by StorageGoalSystem, chainId set so its
+	// carry-in haul is recognized as a stocking delivery.
+	auto children = registry.getChildGoals(umbrella->id);
+	int	 harvestChildren = 0;
+	for (const auto* c : children) {
+		if (c->type == TaskType::Harvest) {
+			harvestChildren++;
+			EXPECT_EQ(c->owner, GoalOwner::StorageGoalSystem);
+			EXPECT_EQ(c->yieldDefNameId, engine::assets::AssetRegistry::Get().getDefNameId("Wood"));
+			EXPECT_TRUE(c->chainId.has_value()) << "stocking harvest must carry a chainId";
+			EXPECT_GT(c->targetAmount, 0U);
+		}
+	}
+	EXPECT_EQ(harvestChildren, 1) << "one stocking Harvest for the Wood shortfall";
+}
+
+// No harvestable source known -> no stocking Harvest. The box just waits for items to be hauled in
+// (it still has its normal slot-based Haul umbrella), exactly as before.
+TEST_F(MultiSystemGoalTest, MinAmountDoesNotDriveHarvestWithoutKnownSource) {
+	registerWoodAndTree();
+	// No colonist memory of any tree.
+	auto storage = createStorageWithMin(*world, {0.0F, 0.0F}, "Wood", engine::assets::ItemCategory::RawMaterial, 10);
+
+	runUpdates(60);
+
+	auto& registry = GoalTaskRegistry::Get();
+	EXPECT_EQ(registry.goalCount(TaskType::Harvest), 0U)
+	    << "no known Wood source -> no stocking harvest";
+	EXPECT_GE(registry.goalCount(GoalOwner::StorageGoalSystem), 1U) << "umbrella Haul still exists";
+}
+
+// A category WILDCARD rule must NOT drive harvest even with minAmount set: wildcards only accept
+// hauled items. (StorageRule.minAmount on a wildcard has no per-item meaning.)
+TEST_F(MultiSystemGoalTest, WildcardRuleDoesNotDriveHarvest) {
+	registerWoodAndTree();
+	giveColonistKnownTree(*world, {5.0F, 5.0F});
+
+	auto  storage = world->createEntity();
+	world->addComponent<Position>(storage, Position{{0.0F, 0.0F}});
+	world->addComponent<Inventory>(storage, Inventory::createForStorage());
+	auto& config = world->addComponent<StorageConfiguration>(storage);
+	config.addRule(StorageRule{
+	    .defName = "*",
+	    .category = engine::assets::ItemCategory::RawMaterial,
+	    .priority = StoragePriority::Medium,
+	    .minAmount = 10, // inert on a wildcard
+	    .maxAmount = 0});
+
+	runUpdates(60);
+
+	auto& registry = GoalTaskRegistry::Get();
+	EXPECT_EQ(registry.goalCount(TaskType::Harvest), 0U)
+	    << "a category wildcard never drives harvest, even with minAmount";
+}
+
+// Once the box already holds at least minAmount, no stocking Harvest is emitted.
+TEST_F(MultiSystemGoalTest, MetMinimumEmitsNoHarvest) {
+	registerWoodAndTree();
+	giveColonistKnownTree(*world, {5.0F, 5.0F});
+	auto storage = createStorageWithMin(*world, {0.0F, 0.0F}, "Wood", engine::assets::ItemCategory::RawMaterial, 10);
+	// Pre-stock the box to its minimum.
+	world->getComponent<Inventory>(storage)->addItem("Wood", 10);
+
+	runUpdates(60);
+
+	auto& registry = GoalTaskRegistry::Get();
+	EXPECT_EQ(registry.goalCount(TaskType::Harvest), 0U) << "minimum already met -> no chopping";
+}
+
+// =============================================================================
 // Goal Hierarchy & Lifecycle Tests (registry semantics)
 // =============================================================================
 

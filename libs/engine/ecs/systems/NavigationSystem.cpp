@@ -23,6 +23,8 @@
 #include <chrono>
 #include <cmath>
 #include <functional>
+#include <utility>
+#include <vector>
 
 namespace ecs {
 
@@ -77,6 +79,199 @@ namespace ecs {
 					bestD2					 = cd2;
 					found					 = true;
 				}
+			}
+			return found ? std::optional<glm::vec2>(best) : std::nullopt;
+		}
+
+		// --- Built-wall collision-band clearance (recovery-snap side) ----------------
+		// The recovery snap must land OUTSIDE the same band WallCollisionSystem pushes
+		// agents out of, or the two oscillate. These mirror WallCollisionSystem's band
+		// model exactly (centerline endpoints in meters, halfThickness + r clearance,
+		// pathable door-gap spans exempt) so a point this code calls "clear" is a point
+		// that system will never move.
+
+		constexpr float kBandClearMarginMeters = 0.02F; // 2 cm past clearance so a re-locate isn't borderline
+
+		struct WallBandM {
+			glm::vec2							 v0;
+			glm::vec2							 v1;
+			float								 halfThicknessMeters;
+			std::vector<std::pair<float, float>> doorSpans; // centerline [t0,t1] of pathable openings
+		};
+
+		// Closest point on segment param t in [0,1], plus that point, in meters.
+		float closestParam(glm::vec2 p, glm::vec2 a, glm::vec2 b) {
+			const glm::vec2 ab	  = b - a;
+			const float		denom = ab.x * ab.x + ab.y * ab.y;
+			if (denom <= 1e-12F) {
+				return 0.0F;
+			}
+			const float t = ((p.x - a.x) * ab.x + (p.y - a.y) * ab.y) / denom;
+			return t < 0.0F ? 0.0F : (t > 1.0F ? 1.0F : t);
+		}
+
+		// Resolve the BUILT wall bands once (same Built-only gate, thickness preset, and
+		// door-span precompute as WallCollisionSystem). Empty when no construction world
+		// or no built walls.
+		std::vector<WallBandM> resolveBuiltBands(const engine::construction::ConstructionWorld* cw) {
+			std::vector<WallBandM> bands;
+			if (cw == nullptr) {
+				return bands;
+			}
+			namespace cons	  = engine::construction;
+			const auto& registry = engine::assets::ConstructionRegistry::Get();
+			constexpr float kMmPerM = 1000.0F;
+			bands.reserve(cw->segments().size());
+			for (const cons::WallSegment& seg : cw->segments()) {
+				if (seg.state != cons::FoundationState::Built) {
+					continue;
+				}
+				const cons::Vertex* v0 = cw->getVertex(seg.v0);
+				const cons::Vertex* v1 = cw->getVertex(seg.v1);
+				if (v0 == nullptr || v1 == nullptr) {
+					continue;
+				}
+				const auto* preset = registry.getThicknessPreset(seg.material, seg.thicknessPreset);
+				if (preset == nullptr || preset->halfThicknessMm <= 0) {
+					continue;
+				}
+				WallBandM band;
+				band.v0					 = {static_cast<float>(v0->pos.x) / kMmPerM, static_cast<float>(v0->pos.y) / kMmPerM};
+				band.v1					 = {static_cast<float>(v1->pos.x) / kMmPerM, static_cast<float>(v1->pos.y) / kMmPerM};
+				band.halfThicknessMeters = static_cast<float>(preset->halfThicknessMm) / kMmPerM;
+
+				const float dx			= (band.v1.x - band.v0.x) * kMmPerM;
+				const float dy			= (band.v1.y - band.v0.y) * kMmPerM;
+				const float segLengthMm = std::sqrt(dx * dx + dy * dy);
+				if (segLengthMm > 0.0F) {
+					for (const cons::Opening& op : cw->openings()) {
+						if (op.segment != seg.id || op.state != cons::FoundationState::Built) {
+							continue;
+						}
+						const auto* type = registry.getOpeningType(op.type);
+						if (type == nullptr || !type->pathable) {
+							continue;
+						}
+						const float halfExtent = (static_cast<float>(type->widthMm) * 0.5F) / segLengthMm;
+						band.doorSpans.emplace_back(std::clamp(op.t - halfExtent, 0.0F, 1.0F),
+													std::clamp(op.t + halfExtent, 0.0F, 1.0F));
+					}
+				}
+				bands.push_back(std::move(band));
+			}
+			return bands;
+		}
+
+		// True when `p` is clear of every built band for an agent of radius r (outside
+		// halfThickness + r, or inside a pathable door gap). A point with no bands is clear.
+		bool clearOfBands(glm::vec2 p, float r, const std::vector<WallBandM>& bands) {
+			for (const WallBandM& band : bands) {
+				const float t	  = closestParam(p, band.v0, band.v1);
+				const glm::vec2 c = band.v0 + (band.v1 - band.v0) * t;
+				const float dx	  = p.x - c.x;
+				const float dy	  = p.y - c.y;
+				const float dist  = std::sqrt(dx * dx + dy * dy);
+				if (dist >= band.halfThicknessMeters + r) {
+					continue;
+				}
+				bool inDoor = false;
+				for (const std::pair<float, float>& span : band.doorSpans) {
+					if (t >= span.first && t <= span.second) {
+						inDoor = true;
+						break;
+					}
+				}
+				if (!inDoor) {
+					return false;
+				}
+			}
+			return true;
+		}
+
+		// Push `p` out of every band it penetrates, to exactly halfThickness + r + margin,
+		// with the same 2-iteration relaxation WallCollisionSystem uses so a corner between
+		// two walls settles against both. Door gaps are exempt (no push there).
+		glm::vec2 ejectFromBands(glm::vec2 p, float r, const std::vector<WallBandM>& bands) {
+			for (int iter = 0; iter < 2; ++iter) {
+				for (const WallBandM& band : bands) {
+					const float t	  = closestParam(p, band.v0, band.v1);
+					const glm::vec2 c = band.v0 + (band.v1 - band.v0) * t;
+					glm::vec2		toA{p.x - c.x, p.y - c.y};
+					const float		dist	  = std::sqrt(toA.x * toA.x + toA.y * toA.y);
+					const float		clearance = band.halfThicknessMeters + r + kBandClearMarginMeters;
+					if (dist >= clearance) {
+						continue;
+					}
+					bool inDoor = false;
+					for (const std::pair<float, float>& span : band.doorSpans) {
+						if (t >= span.first && t <= span.second) {
+							inDoor = true;
+							break;
+						}
+					}
+					if (inDoor) {
+						continue;
+					}
+					glm::vec2 normal;
+					if (dist > 1e-4F) {
+						normal = {toA.x / dist, toA.y / dist};
+					} else {
+						const glm::vec2 d = band.v1 - band.v0;
+						const float		l = std::sqrt(d.x * d.x + d.y * d.y);
+						normal			  = (l > 1e-6F) ? glm::vec2{-d.y / l, d.x / l} : glm::vec2{1.0F, 0.0F};
+					}
+					p.x += normal.x * (clearance - dist);
+					p.y += normal.y * (clearance - dist);
+				}
+			}
+			return p;
+		}
+
+		// Nearest point to `meters` that is on a walkable face AND clears every built band.
+		// Scans walkable triangles; for each, takes the closest interior point to `meters`
+		// (clamped to the centroid-nudged region) and, if still in-band, the centroid; keeps
+		// the nearest candidate that passes isOnMeshFn + clearOfBands. The centroid is a deep
+		// interior point that any triangle wider than ~2r clears, so a sub-clearance sliver
+		// next to the agent is skipped in favour of the nearest roomy face (the wall's open
+		// side). nullopt when no walkable face yields a clear point.
+		template <typename OnMeshFn>
+		std::optional<glm::vec2> nearestClearOnMesh(const gnav::NavMesh& navMesh, glm::vec2 meters, float r,
+													const std::vector<WallBandM>& bands, const OnMeshFn& isOnMeshFn) {
+			bool	  found = false;
+			float	  bestD2 = 0.0F;
+			glm::vec2 best{0.0F, 0.0F};
+			auto consider = [&](glm::vec2 p) {
+				if (!clearOfBands(p, r, bands) || !isOnMeshFn(p)) {
+					return;
+				}
+				const float d2 = dist2(meters, p);
+				if (!found || d2 < bestD2) {
+					best   = p;
+					bestD2 = d2;
+					found  = true;
+				}
+			};
+			for (const gnav::NavTriangle& t : navMesh.triangles) {
+				if (!gnav::terrainTraversable(t)) {
+					continue;
+				}
+				const glm::vec2 a = engine::nav::toMeters(navMesh.vertices[t.v[0]]);
+				const glm::vec2 b = engine::nav::toMeters(navMesh.vertices[t.v[1]]);
+				const glm::vec2 c = engine::nav::toMeters(navMesh.vertices[t.v[2]]);
+				const glm::vec2 centroid = (a + b + c) / 3.0F;
+				// Closest edge point to `meters`, then biased a third toward the centroid so
+				// the probe sits inside the face rather than on the edge that locate excludes.
+				glm::vec2	cand = closestOnSegment(meters, a, b);
+				float		cd2	 = dist2(meters, cand);
+				if (const glm::vec2 p2 = closestOnSegment(meters, b, c); dist2(meters, p2) < cd2) {
+					cand = p2;
+					cd2	 = dist2(meters, p2);
+				}
+				if (const glm::vec2 p3 = closestOnSegment(meters, c, a); dist2(meters, p3) < cd2) {
+					cand = p3;
+				}
+				consider(cand + (centroid - cand) * 0.34F);
+				consider(centroid);
 			}
 			return found ? std::optional<glm::vec2>(best) : std::nullopt;
 		}
@@ -170,6 +365,16 @@ namespace ecs {
 		if (areaChunkSignature(region.center, region.halfExtent) != region.builtAreaChunkSignature) {
 			return true;
 		}
+		// A felled tree / depleted node is removed from the live chunk index but leaves no
+		// chunk-membership or construction-version change, so neither check above sees it.
+		// The placement removal epoch does: any removal forces the covering region to rebuild
+		// and reclaim the trunk hole as walkable ground (the mesh re-gathers flora rings from
+		// the live index). Region-wide, not per-position -- a removal anywhere rebuilds, which
+		// is fine: harvests are infrequent relative to the gate.
+		const std::uint64_t epoch = (placement != nullptr) ? placement->removalEpoch() : 0;
+		if (epoch != region.builtRemovalEpoch) {
+			return true;
+		}
 		return false;
 	}
 
@@ -250,6 +455,9 @@ namespace ecs {
 
 		region.builtVersion				= constructionWorld->version();
 		region.builtAreaChunkSignature	= areaChunkSignature(region.center, region.halfExtent);
+		// Snapshot the removal epoch from the SAME live index buildInput just read, so the
+		// gate only refires on a removal that lands after this build.
+		region.builtRemovalEpoch		= (placement != nullptr) ? placement->removalEpoch() : 0;
 
 		const double inputMs =
 			std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - inputStart).count();
@@ -593,12 +801,151 @@ namespace ecs {
 		return tri >= 0 && gnav::terrainTraversable(navMesh.triangles[static_cast<std::size_t>(tri)]);
 	}
 
+	bool NavigationSystem::isSegmentWalkable(glm::vec2 aMeters, glm::vec2 bMeters) const {
+		// The segment is walkable IFF both endpoints and every interior sample at the
+		// footprint pitch are on walkable mesh (isOnMesh is the per-point authority). The
+		// interior samples catch a water sliver the endpoints straddle. Step in mm for
+		// resolution-stable sampling regardless of segment orientation/length.
+		if (!isOnMesh(aMeters) || !isOnMesh(bMeters)) {
+			return false;
+		}
+		const double dx	   = static_cast<double>(bMeters.x) - aMeters.x;
+		const double dy	   = static_cast<double>(bMeters.y) - aMeters.y;
+		const double lenMm = std::sqrt(dx * dx + dy * dy) * static_cast<double>(geometry::kMillimetersPerMeter);
+		const auto	 steps = static_cast<std::int64_t>(lenMm / static_cast<double>(kFootprintSampleStepMm));
+		for (std::int64_t i = 1; i < steps; ++i) {
+			const double t = static_cast<double>(i) / static_cast<double>(steps);
+			const glm::vec2 p{static_cast<float>(aMeters.x + dx * t), static_cast<float>(aMeters.y + dy * t)};
+			if (!isOnMesh(p)) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	bool NavigationSystem::isPolylineWalkable(const std::vector<glm::vec2>& ptsMeters) const {
+		if (ptsMeters.empty()) {
+			return true;
+		}
+		if (ptsMeters.size() == 1) {
+			return isOnMesh(ptsMeters.front());
+		}
+		for (std::size_t i = 0; i + 1 < ptsMeters.size(); ++i) {
+			if (!isSegmentWalkable(ptsMeters[i], ptsMeters[i + 1])) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	bool NavigationSystem::isAreaWalkable(const std::vector<glm::vec2>& polygonMeters) const {
+		// Fewer than 3 points is not an area: fall back to validating the point(s) we have.
+		if (polygonMeters.size() < 3) {
+			return isPolylineWalkable(polygonMeters);
+		}
+
+		// 1) Every edge (closing edge included) entirely on walkable mesh. This also
+		//    covers all vertices and any water sliver an edge crosses between two on-land
+		//    corners (e.g. a foundation spanning a river).
+		const std::size_t n = polygonMeters.size();
+		for (std::size_t i = 0; i < n; ++i) {
+			if (!isSegmentWalkable(polygonMeters[i], polygonMeters[(i + 1) % n])) {
+				return false;
+			}
+		}
+
+		// 2) Interior on a grid at the same pitch. The edge pass alone misses a hole
+		//    fully inside the ring (a water pond an outer boundary encloses), so probe
+		//    every grid point that lies inside the polygon and require it walkable.
+		//    Foundations are small, so this is a few hundred O(1)-ish probes at most.
+		const double stepMeters = static_cast<double>(kFootprintSampleStepMm) / static_cast<double>(geometry::kMillimetersPerMeter);
+		float minX = polygonMeters[0].x;
+		float maxX = polygonMeters[0].x;
+		float minY = polygonMeters[0].y;
+		float maxY = polygonMeters[0].y;
+		for (const auto& p : polygonMeters) {
+			minX = std::min(minX, p.x);
+			maxX = std::max(maxX, p.x);
+			minY = std::min(minY, p.y);
+			maxY = std::max(maxY, p.y);
+		}
+
+		// Even-odd point-in-polygon (ring is implicitly closed). Float test is fine here:
+		// it only decides WHICH grid points to probe; the walkability decision per probe is
+		// the exact integer locateTriangle. A point misclassified right on an edge is still
+		// covered by the edge pass above.
+		auto inside = [&](float px, float py) -> bool {
+			bool in = false;
+			for (std::size_t i = 0, j = n - 1; i < n; j = i++) {
+				const float xi = polygonMeters[i].x;
+				const float yi = polygonMeters[i].y;
+				const float xj = polygonMeters[j].x;
+				const float yj = polygonMeters[j].y;
+				if (((yi > py) != (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) {
+					in = !in;
+				}
+			}
+			return in;
+		};
+
+		for (double y = static_cast<double>(minY) + stepMeters; y < static_cast<double>(maxY); y += stepMeters) {
+			for (double x = static_cast<double>(minX) + stepMeters; x < static_cast<double>(maxX); x += stepMeters) {
+				const auto fx = static_cast<float>(x);
+				const auto fy = static_cast<float>(y);
+				if (inside(fx, fy) && !isOnMesh({fx, fy})) {
+					return false;
+				}
+			}
+		}
+		return true;
+	}
+
 	std::optional<glm::vec2> NavigationSystem::nearestPathablePoint(glm::vec2 meters) const {
 		const int r = regionContaining(meters);
 		if (r < 0) {
 			return std::nullopt; // off every region: caller leaves the colonist put
 		}
 		return nearestPathableOnMesh(regions[static_cast<std::size_t>(r)].navMesh, meters);
+	}
+
+	std::optional<glm::vec2> NavigationSystem::nearestPathablePoint(glm::vec2 meters, float agentRadiusMeters) const {
+		const int region = regionContaining(meters);
+		if (region < 0) {
+			return std::nullopt; // off every region: caller leaves the colonist put
+		}
+		const gnav::NavMesh&		 navMesh = regions[static_cast<std::size_t>(region)].navMesh;
+		const std::vector<WallBandM> bands	 = resolveBuiltBands(constructionWorld);
+
+		// No built walls -> no band to clear; the plain nearest-walkable point is already safe.
+		if (bands.empty()) {
+			return nearestPathableOnMesh(navMesh, meters);
+		}
+
+		auto onMesh = [&](glm::vec2 p) { return isOnMesh(p); };
+
+		// Fast path: take the bare nearest-walkable point and push it out of the bands. In
+		// the common case (a roomy face beside the wall) the ejected point stays on that
+		// face and clears the band -- snap done, no broad scan.
+		if (const std::optional<glm::vec2> bare = nearestPathableOnMesh(navMesh, meters)) {
+			const glm::vec2 ejected = ejectFromBands(*bare, agentRadiusMeters, bands);
+			if (onMesh(ejected) && clearOfBands(ejected, agentRadiusMeters, bands)) {
+				return ejected;
+			}
+		}
+
+		// Slow path: the closest pocket is too thin to hold the agent clear of the wall
+		// (the ejected point fell off-mesh). Find the nearest walkable face that DOES have
+		// room -- typically the wall's open side. This is what frees a colonist sealed into
+		// a sub-clearance gap instead of letting it oscillate there forever.
+		if (const std::optional<glm::vec2> clear = nearestClearOnMesh(navMesh, meters, agentRadiusMeters, bands, onMesh)) {
+			return clear;
+		}
+
+		// Last resort: every walkable face is inside some band (degenerate local mesh). Return
+		// the bare nearest point so the caller still moves the colonist onto the mesh; the
+		// AIDecisionSystem recovery then falls through to the colony-origin teleport if this
+		// point is still off-mesh next frame.
+		return nearestPathableOnMesh(navMesh, meters);
 	}
 
 } // namespace ecs

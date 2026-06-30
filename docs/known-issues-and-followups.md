@@ -1,6 +1,44 @@
-# Known issues & follow-ups — colonist nav + craft
+# Known issues & follow-ups — colonist nav + craft + gameplay stabilization
 
-**Branch:** `debug/navmesh-zero-walkable` (PR #240) · **As of:** 2026-06-28
+**Branches:** `debug/navmesh-zero-walkable` (PR #240, merged), `colonist-gameplay-stabilization` (PR #241, merged) · **As of:** 2026-06-29
+
+---
+
+## 2026-06-29 session (PR #241 — colonist gameplay stabilization)
+
+Four end-to-end gameplay scenarios driven to completion (craft axe, craft + stock box, build
+foundation, build walls). See dev log
+`docs/development-log/entries/2026-06-29-colonist-gameplay-stabilization.md`.
+
+**Fixed this session (on #241):**
+- [x] **Harvest/build target snap to reachable adjacent point + off-area reject** — tree centers are
+  navmesh holes; targets now snap to an adjacent reachable point, and out-of-area targets are
+  rejected. Keystone fix.
+- [x] **Destructive fell reclaims navmesh hole** — `PlacementExecutor` removalEpoch → regional
+  rebuild; cleared ground becomes walkable.
+- [x] **Belt stow-to-free-hands on armful pickup** — axe moves belt→pack→drop before a two-hand
+  wood armful, stays tool-check-valid from the belt.
+- [x] **Loose-pile haul: carrying-at-source deposit-redirect** — carry-state-first phase logic
+  eliminates the pickup/deposit deadlock.
+- [x] **Wall-collision-aware off-mesh recovery snap** — snap target is now wall-collision-clear;
+  no more colonist stuck inside a built wall.
+- [x] **Whole-footprint on-water placement refusal** — `NavigationSystem::isAreaWalkable`, wired
+  into `DrawingSystem` and dev verbs.
+- [x] **Gather-food priority lowered + construction provisioning/build-action floors** — interim
+  fix keeping construction work above idle; superseded by the arbitration epic implementation.
+- [x] **StorageRule.minAmount shortfall → harvest goals** — box falling below min level triggers
+  harvest, enabling the chop-and-stock loop.
+- [x] **Forest-by-river quickstart landing + denser forest + fail-fast on missing prebuilt planet.**
+- [x] **Construction readback: walls + delivered/required/progress + phase** in `/api/state`.
+- [x] **Dev tooling**: `/api/dev/storage`, `/api/state?what=storage|landing`, colonist state now
+  exposes `hands`/`belt`.
+- [x] **Docs/testing scenario suite** (`docs/testing/`) — four manual + AI-automated regression
+  scenarios.
+- [x] **Arbitration spec filed** (`docs/technical/colonist-task-arbitration.md`) + Specboard epic.
+
+---
+
+**Branch:** `debug/navmesh-zero-walkable` (PR #240, merged) · **As of:** 2026-06-28
 
 Running list of bugs found and fixed, work in flight, and open follow-ups from the
 navmesh + colonist-navigation + craft-provisioning work. The nav rework's design lives
@@ -29,11 +67,12 @@ in the approved plan `~/.claude/plans/ok-some-bugs-related-resilient-treasure.md
 
 ## Open follow-ups / known issues
 - [ ] **Prefer-nearest-source provisioning** (efficiency, not correctness; surfaced by `716e540`) — with natural ground-scatter (SmallStone is everywhere), a craft prefers fetching far scattered stock over cutting an adjacent source, so provisioning takes long round-trips. Completion is guaranteed by the priority floor + re-resolve; it's just not efficient. A "prefer nearest source" pass in the haul/harvest resolution would tighten it.
-- [ ] **Consolidate item-add sites onto `giveItemToColonist`** (One-Path) — craft output now uses the canonical hand→belt→backpack→drop cascade (`InventoryMass.h`), but harvest-yield and pickup still add via `addItem` / `addArmful` directly. Route them all through the one cascade.
+- [ ] **Consolidate item-add sites onto `giveItemToColonist`** (One-Path) — craft output now uses the canonical hand→belt→backpack→drop cascade (`InventoryMass.h`), but harvest-yield and pickup still add via `addItem` / `addArmful` directly. Route them all through the one cascade. (Partial: the two-hand armful sites in `HarvestActions.cpp` now run `stowHeldToolsForArmful` first, so a held axe is moved belt→pack→drop before the wood is lifted — see "Belt stow-to-free-hands" below.)
+- [x] **Belt stow-to-free-hands on armful pickup** (combined-flow blocker, bulk-materials spec §4) — a colonist who CRAFTED an axe got it seated in a HAND (`giveItemToColonist` hand-first), then `addArmful` for the two-hand wood needed both hands free, returned 0, and the whole fell yield dropped ("Collected 0 … carry-limited"); wood never reached the hands or the box. Fixed: `ecs::stowHeldToolsToFreeHands` (`InventoryMass.h`) moves a held one-hand tool belt→pack→drop, wired as `ActionSystem::stowHeldToolsForArmful` (`HaulActions.cpp`) and called before both two-hand `addArmful` sites in `HarvestActions.cpp` (fell completion + loose-pile haul). The axe stays valid for the chop tool-check from the belt (`inventoryHoldsToolType` already scans it). Belt is 2 one-hand slots (`Inventory::belt`). Engine-tests 872 green (+6 new); in-game: crafted-axe colonist fells → "Collected 14 of 18 x Wood" into hands, axe stowed to belt, hauls 14 to the box. Colonist state readback now exposes `hands`/`belt` (`DevCommandHandler.cpp`).
 - [ ] **`findValidPositionNear(origin, minDist=1m, maxDist=unbounded)` + unify ground-drops.** Companion to `isValidPosition`: returns the nearest valid nav-mesh position at least `minDist` from the origin (default 1m, so it never drops right on the origin). `maxDist` defaults to unbounded so a drop never fails to place; it self-bounds in practice to the active mesh, since the dropper is already on it. Built on the same nav authority, homed beside `NavigationSystem::nearestPathablePoint` (a drop-spot search, not a recovery snap). The single "where does a dropped thing land" primitive for inventory overflow, generic ground-drops, cancelling a foundation that still holds materials, deconstructing a crafting station that holds contents, and completing a craft with a full pack. No occupancy/collision modeling in the search: entities will take space in the nav mesh itself in future, so the mesh encodes "occupied" as not-walkable and the search just returns a valid nearby position. Unifies the per-system ad-hoc drop logic (e.g. harvest overflow-drop). Build WITH its consumers, not speculatively; the craft-with-full-pack drop is part of "crafting fully working".
   - **Algorithm (not a ring sweep).** `minDist` is a provable lower bound on the answer, so once the circle of radius `minDist` touches walkable mesh, a point on it is optimal and no search is needed. Three tiers, cheap to costly: (1) `locateTriangle(origin)`; (2) one-query shortcut: test the point at `minDist` in the preferred direction with `isValidPosition`, and if it misses, intersect the `minDist` circle with the origin face + adjacency neighbors and pick a point on a walkable arc (exact, distance == `minDist`); (3) rare fallback for an origin pinned in a sub-`minDist` pocket: best-first over mesh adjacency, faces popped by nearest distance, each yielding its closest point at least `minDist` out (closest-point-on-triangle, pushed onto the circle), first hit wins, stop when the frontier lower bound passes it. Exact (continuous circle-vs-triangle, no angular stepping), near-constant in the common case, reuses locate + the adjacency graph + closest-point-on-triangle. Direction pick is a per-consumer parameter: a deterministic seed so drops fan out, plus optional aim (overflow spreads; craft output toward the colonist).
 - [ ] **Phase 2 nav** (approved plan): static **coarse geography mesh** — big impassables only (rivers as polylines, NO assets), built once per chunk, never recalculated — for **long-range routing** across unsimulated space; plus **skip-nav-for-stationary** agents.
-- [ ] **AI arbitration / "reliably do the queued job"** — a colonist can be pulled toward harvesting or wandering before finishing a queued craft; a colonist who ends up in an unmeshed region won't path to nearby loose stock. The recurring "colonist doesn't reliably do the work" complaint.
+- [x] **AI arbitration / "reliably do the queued job"** — CONSOLIDATED into spec + epic (see "AI-arbitration" section below). Spec: `docs/technical/colonist-task-arbitration.md`.
 - [ ] **Discovery-gating UX** — a queued craft + dropped materials doesn't reliably start a colonist until he *discovers* the materials via vision; no feedback when nothing happens. The original "colonist does nothing" theme.
 - [ ] **Navmesh build perf** — `buildNavMesh` is O(n²) (~8–12 s for the full area). Phase 1's smaller per-colonist regions reduce the cost, but the algorithm itself is still O(n²).
 - [ ] **Slow world-load placement** — grassland on the high-res planet places a lot of grass; loading takes minutes (not a hang).
@@ -83,7 +122,7 @@ Test coverage:
 - [ ] **Long single functions wanting internal helpers** — `CraftingGoalSystem::update` (~223 lines), `HaulActions.cpp` `applyDepositEffect`/`startHaulAction` (~178/~168), `NavMesh.cpp` width/portal-capacity cluster — no file split needed.
 - [ ] **Copy-pasted bounce-leftover block** — `HaulActions.cpp:109-113,151-155,179-183` (4th at 219-223 differs: `removed` not `leftover`) — extract a helper.
 - [ ] **Near-duplicate chain-leg handoff blocks** — `ActionSystem.cpp:231-242` vs `301-312` — extract `handOffToNextLeg`.
-- [ ] **Harvest item-add bypasses `giveItemToColonist` + dup two-hand dispatch** — `HarvestActions.cpp:110-115,196-234` — refactor nit only; the cargo-to-backpack divergence is intentional (not the high-severity bug it was filed as).
+- [ ] **Harvest item-add bypasses `giveItemToColonist` + dup two-hand dispatch** — `HarvestActions.cpp:110-115,196-234` — refactor nit only; the cargo-to-backpack divergence is intentional (not the high-severity bug it was filed as). (Both two-hand branches now call `stowHeldToolsForArmful` before `addArmful`, so the held-axe-blocks-armful case is handled even though the add still goes through the dedicated path.)
 - [ ] **Misleading `terrainTraversable` name** — `NavMesh.h:151` — pure triangle classifier, trips grep-based boundary audits; rename or annotate.
 - [ ] **`RealYConfluence_Bisect_*` investigation scaffolding** — `NavMesh.test.cpp:1049-1168` — six "run on the buggy baseline" tests asserting only `floor > 0` on subsets of the main test; collapse or remove.
 - [ ] **Tests assert re-implemented lambdas / single tick** — `DevSpawnGuard` (`NavigationSystem.test.cpp:991-1024`), `OverweightColonist*` (`AIDecisionSystem.test.cpp:1757-1900`, one tick not loop-stability).
@@ -103,7 +142,36 @@ Test coverage:
 - [ ] Final in-game end-to-end pass: clear on-mesh spawn → navigate → craft an axe from both cut sources and loose materials, with pan/zoom not freezing the colonist.
 
 ## Next-session bugs (found testing the merged build, 2026-06-28)
-- [ ] **Crafted box lands on the crafting station, not beside it, and can't be re-packaged** — crafting a basic box puts the finished box directly on top of the station (overlapping, hard to select; took several clicks). It should appear NEXT TO the spot (via `findValidPositionNear`, its first real consumer) and in its PACKAGED state, ready to install. Also: an existing box can't be re-packaged to move / re-install it. Furniture craft-output placement + packaged-furniture lifecycle.
-- [ ] **Foundation blueprint freezes the colonist in an infinite loop** — tasked "cutting tree for maple wood" but stands nowhere near the tree, can't reach one right in front, despite having already crafted an axe. Construction-provisioning harvest commits to an unreachable harvest target and loops. Likely nav (can't path to the chosen tree) or harvest-target selection. Check whether construction reuses the craft-provisioning machinery #240 fixed.
-- [ ] **Dev-tools spawn: confusing options + unstacked items** — the destination options "site / loose / storage / colonist" aren't explained; "colonist" wrongly still accepts coordinates (should drop into the colonist's inventory, no position); spawning N of an item makes N separate items instead of one ResourceStack of N. Dev-tools UI (DevCommandHandler + the Dev Tools tab) + spawn quantity behavior.
-- [ ] **Colonist directional sprites are mirrored** — up looks down, left looks right, and so on. The direction-to-sprite mapping (or an axis) is inverted in the colonist render / animation path (the recent data-driven `<motion>` work).
+
+The foundation/harvest freeze and the general harvest-carry/loop issues were resolved by the
+keystone harvest-reachability fix and the build-action priority floor (PR #241). The off-mesh
+placement is resolved by `NavigationSystem::isAreaWalkable` (PR #241).
+
+- [x] **Foundation blueprint freezes colonist in an infinite loop** — FIXED in PR #241 (harvest-
+  target snap to reachable adjacent point; off-area reject; build-action priority floor).
+- [ ] **Crafted box lands on the crafting station, not beside it, and can't be re-packaged** —
+  STILL OPEN. The box appears overlapping the station (hard to select). Needs `findValidPositionNear`
+  as its first real consumer, plus packaged-furniture lifecycle (craft output in PACKAGED state,
+  ready to place; re-packaging an installed box to move it). See `docs/technical/colonist-task-arbitration.md`
+  note on item drops.
+- [ ] **Items-in-river / `findValidPositionNear`** — STILL OPEN. Dropped items (overflow, craft
+  output with a full pack, cancelled foundations) can land in the river because there is no
+  valid-position-aware drop. `findValidPositionNear` (designed in #240, not yet built) is the
+  fix; build it with its first consumer (craft-with-full-pack drop / box placement).
+- [ ] **Dev-tools spawn: confusing options + unstacked items** — STILL OPEN. Destination labels
+  aren't explained; "colonist" still accepts coordinates; spawning N items makes N separate stacks.
+  Note: the off-mesh spawn refusal WAS added in #241 (invalid positions are rejected). Remaining:
+  UX labels, `colonist` dest semantics, spawn-N-as-one-stack.
+- [ ] **Colonist directional sprites are mirrored** — STILL OPEN. Up looks down, left looks right.
+  Direction-to-sprite mapping (or an axis) is inverted in the colonist render / animation path
+  (the data-driven `<motion>` work).
+
+## AI-arbitration / "reliably do the queued job"
+
+Previously tracked as an open follow-up. Now consolidated into a spec + Specboard epic:
+- **Spec:** `docs/technical/colonist-task-arbitration.md` — lexicographic `(tier, score)` key
+  that restores the documented priority hierarchy the code drifted from; job-lifecycle model so a
+  colonist commits to an active work order across distractions.
+- **Specboard epic:** filed (see the spec for the link).
+- The stale-stocking-harvest retirement (a haul job targeting consumed stock loops instead of
+  retiring) is folded into this epic's job-lifecycle work.

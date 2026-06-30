@@ -91,7 +91,7 @@
 
       <!-- Forests: grass in clearings; the forest floor reads grass-green -->
       <biome name="TemperateDeciduousForest">
-        <spawnChance>0.15</spawnChance>
+        <spawnChance>0.08</spawnChance>
         <distribution>clumped</distribution>
         <clumping>
           <clumpSize>3,8</clumpSize>

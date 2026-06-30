@@ -38,6 +38,7 @@
 #include <world/rendering/ChunkRenderer.h>
 #include <world/rendering/EntityRenderer.h>
 
+#include <worldgen/data/Biome.h>
 #include <worldgen/io/PlanetIO.h>
 #include <worldgen/sampling/LandingSite.h>
 #include <worldgen/sampling/SpawnSite.h>
@@ -260,9 +261,13 @@ namespace {
 			updateStatusText("Loading planet...");
 			auto resolved = Foundation::findResource(world_sim::kQuickstartPlanetResource);
 			if (!resolved) {
-				LOG_ERROR(Game, "GameLoadingScene - Quickstart planet not found (%s); "
-				                "build the quickstart-planet target",
-				          world_sim::kQuickstartPlanetResource);
+				// Best-effort: show the primary expected path (exe-relative) so the user
+				// knows exactly what's missing, even though findResource searched several roots.
+				auto expectedPath = (Foundation::getExecutableDir() / world_sim::kQuickstartPlanetResource).string();
+				LOG_ERROR(Game,
+				          "No pre-generated planet found at '%s'. Cannot start game. "
+				          "Bake it (target quickstart-planet) or junction planets/ from the main checkout.",
+				          expectedPath.c_str());
 				phase = LoadingPhase::ConfigError;
 				return;
 			}
@@ -282,7 +287,7 @@ namespace {
 		}
 
 		void adoptQuickstartPlanet(std::shared_ptr<const worldgen::GeneratedWorld> planet) {
-			auto site = worldgen::findDefaultLandingSite(*planet);
+			auto site = worldgen::findDefaultLandingSite(*planet, worldgen::Biome::TemperateDeciduousForest);
 			startConfig->world = std::move(planet);
 			startConfig->landingLatDeg = site.latDeg;
 			startConfig->landingLonDeg = site.lonDeg;
@@ -308,6 +313,9 @@ namespace {
 			auto sampler = std::make_unique<engine::world::GeneratedWorldSampler>(
 				startConfig->world, startConfig->landingLatDeg, startConfig->landingLonDeg);
 			worldState->worldSeed = sampler->getWorldSeed();
+			worldState->planet = startConfig->world;
+			worldState->landingLatDeg = startConfig->landingLatDeg;
+			worldState->landingLonDeg = startConfig->landingLonDeg;
 			worldState->chunkManager = std::make_unique<engine::world::ChunkManager>(std::move(sampler));
 
 			// Only load 3×3 grid (center + 8 adjacent) - chunks are large!

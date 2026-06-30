@@ -200,10 +200,54 @@ class NavigationSystem : public ISystem {
 	// goes through; do not reintroduce ad-hoc terrain/isWaterAt checks elsewhere.
 	[[nodiscard]] bool isValidPosition(glm::vec2 meters) const { return isOnMesh(meters); }
 
+	// Whole-FOOTPRINT validity for an area structure (a foundation polygon). True IFF
+	// EVERY part of the closed polygon -- vertices, edges, and interior -- sits on
+	// walkable nav mesh. A footprint whose corners are on land but that spans a river,
+	// or whose edge/interior clips a water hole or off-mesh gap, is REJECTED. Built on
+	// the same per-point authority as isValidPosition (locateTriangle + terrainTraversable):
+	// it samples every edge at <= kFootprintSampleStepMm and the interior on a grid of the
+	// same pitch, requiring all samples to be walkable. No world/terrain/water source reads.
+	// `polygonMeters` is the ring in world meters (no repeated closing vertex needed). A
+	// ring of fewer than 3 points validates only its points. This is the ONE area predicate
+	// for placement; the UI build tool and the dev verbs both go through it.
+	[[nodiscard]] bool isAreaWalkable(const std::vector<glm::vec2>& polygonMeters) const;
+
+	// Whole-CENTERLINE validity for a linear structure (a wall segment / chain edge). True
+	// IFF the segment a->b lies entirely on walkable mesh: both endpoints plus every sample
+	// along it at <= kFootprintSampleStepMm. The chain variant requires every consecutive
+	// pair to pass. Wall thickness is not separately modeled here (the centerline at fine
+	// spacing is the gate); same per-point authority and sampling pitch as isAreaWalkable.
+	[[nodiscard]] bool isSegmentWalkable(glm::vec2 aMeters, glm::vec2 bMeters) const;
+
+	// Whole-chain variant of isSegmentWalkable: every consecutive (pts[i], pts[i+1]) edge
+	// must lie entirely on walkable mesh. A chain of one point validates just that point;
+	// empty is trivially true. Used for the wall tool's full chain and the /api/dev/walls verb.
+	[[nodiscard]] bool isPolylineWalkable(const std::vector<glm::vec2>& ptsMeters) const;
+
+	// Sampling pitch (mm) for the whole-footprint / whole-centerline walkability checks.
+	// 0.5 m is fine enough to catch a ~1-tile water sliver between two on-land vertices.
+	// Footprints are small, so even a dense interior grid at this pitch is a few hundred
+	// O(1)-ish locateTriangle probes -- cheap enough for a per-frame live preview.
+	static constexpr std::int64_t kFootprintSampleStepMm = 500; // 0.5 m
+
 	// Nearest walkable point in the region that contains `meters`, or nullopt when no
 	// region covers it / that region has no walkable floor. Used to snap a stranded
 	// (off-mesh, in-region) colonist back onto pathable ground.
 	[[nodiscard]] std::optional<glm::vec2> nearestPathablePoint(glm::vec2 meters) const;
+
+	// Like nearestPathablePoint, but the returned point also clears the BUILT-wall
+	// collision bands for an agent of radius `agentRadiusMeters` (the same
+	// halfThickness + radius clearance WallCollisionSystem enforces). Recovery snaps
+	// MUST use this: the bare nearest-walkable point sits on the walkable-face edge,
+	// only halfThickness from a wall centerline, i.e. INSIDE the collision band -- so
+	// WallCollisionSystem would shove the just-snapped colonist straight back off-mesh,
+	// and the two systems oscillate (the colonist-wall-trap bug). This finds a point
+	// that is BOTH on a walkable face AND outside every built band, so neither system
+	// has anything left to correct. Falls back to the nearest band-clear walkable
+	// triangle interior when the closest pocket is too thin to hold the agent (so a
+	// colonist trapped in a sub-clearance sliver recovers to the roomy side). nullopt
+	// only when no region covers `meters` or the region has no walkable floor at all.
+	[[nodiscard]] std::optional<glm::vec2> nearestPathablePoint(glm::vec2 meters, float agentRadiusMeters) const;
 
 	// True when ANY region has a built, non-empty mesh. (A region whose first build is
 	// still in flight does not count until it lands.)
@@ -280,6 +324,7 @@ class NavigationSystem : public ISystem {
 		std::future<geometry::nav::NavMesh> future; // in-flight build (valid only while running)
 		std::uint64_t			 builtVersion			 = UINT64_MAX; // ConstructionWorld::version at launch
 		std::uint64_t			 builtAreaChunkSignature = 0;		   // processed-chunk hash at launch
+		std::uint64_t			 builtRemovalEpoch		 = UINT64_MAX; // PlacementExecutor::removalEpoch at launch
 		std::uint64_t			 meshGeneration			 = 0;		   // bumped on this region's mesh swap
 
 		[[nodiscard]] bool hasMesh() const { return !navMesh.triangles.empty(); }

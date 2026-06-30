@@ -41,7 +41,7 @@
 
     <placement>
       <biome name="TemperateDeciduousForest">
-        <spawnChance>0.25</spawnChance>
+        <spawnChance>0.45</spawnChance>
         <distribution>spaced</distribution>
         <spacing>
           <minDistance>3.0</minDistance>

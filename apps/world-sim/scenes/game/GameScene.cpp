@@ -128,6 +128,9 @@ namespace {
 				m_processedChunks = std::move(preloadedState->processedChunks);
 				m_spawnPosition = preloadedState->spawnPosition;
 				m_colony = preloadedState->colony;
+				m_planet = std::move(preloadedState->planet);
+				m_landingLatDeg = preloadedState->landingLatDeg;
+				m_landingLonDeg = preloadedState->landingLonDeg;
 
 				LOG_INFO(Game, "Pre-loaded state: %zu chunks, %zu processed", m_chunkManager->loadedChunkCount(), m_processedChunks.size());
 			} else {
@@ -312,6 +315,7 @@ namespace {
 			m_drawingSystem = std::make_unique<world_sim::DrawingSystem>(world_sim::DrawingSystem::Args{
 				.world = ecsWorld.get(),
 				.camera = m_camera.get(),
+				.navigation = &ecsWorld->getSystem<ecs::NavigationSystem>(),
 				.callbacks = {
 					.onToolActive = [this](bool /*active*/) {
 						// Visibility is driven by the per-frame status push in update().
@@ -496,6 +500,9 @@ namespace {
 				.ui = gameUI.get(),
 				.chunks = m_chunkManager.get(),
 				.navigation = &ecsWorld->getSystem<ecs::NavigationSystem>(),
+				.planet = m_planet,
+				.landingLatDeg = m_landingLatDeg,
+				.landingLonDeg = m_landingLonDeg,
 				.spawnColonist = [this](glm::vec2 pos, const std::string& name) { return spawnColonist(pos, name); },
 			});
 
@@ -808,6 +815,24 @@ namespace {
 				m_pendingEntityRemoval.clear();
 			}
 
+			// Drain deferred drops AFTER the ECS update, for the same reason as the removals above:
+			// spawnEntity grows the component pools and a synchronous spawn from inside a system's
+			// view loop (a colonist freeing its hands, a fell's uncarried remainder) would reallocate
+			// and dangle that view's bound refs. A packaged item spawns one entity with a Packaged
+			// tag; a resource pile routes through dropResourcePiles (stack-capped split).
+			if (!m_pendingSpawns.empty()) {
+				for (const PendingSpawn& spawn : m_pendingSpawns) {
+					if (spawn.packaged) {
+						auto entity = m_placementSystem->spawnEntity(spawn.defName, {spawn.x, spawn.y});
+						ecsWorld->addComponent<ecs::Packaged>(entity, ecs::Packaged{});
+						LOG_INFO(Game, "Spawned packaged '%s' - awaiting placement", spawn.defName.c_str());
+					} else {
+						dropResourcePiles(spawn.defName, spawn.x, spawn.y, spawn.quantity);
+					}
+				}
+				m_pendingSpawns.clear();
+			}
+
 			// Feed the current selection's room id to the overlay so it can draw the
 			// gold selected highlight; 0 (no room selected) clears it.
 			{
@@ -1025,26 +1050,27 @@ namespace {
 				LOG_INFO(Game, "Item crafted notification: %s", itemLabel.c_str());
 			});
 
-			// Wire up ActionSystem to drop non-backpackable items on the ground as packaged
-			// Note: m_placementSystem is created after initializeECS, but callback is invoked at runtime
-			// Offset from crafting station so items don't stack on top (2x typical station size)
+			// Wire up ActionSystem to drop non-backpackable items on the ground as packaged.
+			// These callbacks fire from inside the ActionSystem view loop, so they only ENQUEUE;
+			// the real spawnEntity runs at the pending-spawn drain after ecsWorld->update() (see
+			// m_pendingSpawns) to avoid reallocating component pools out from under the live view.
+			// Offset from crafting station so items don't stack on top (2x typical station size).
 			constexpr float kDropOffset = 2.0F;
 			actionSystem.setDropItemCallback([this, kDropOffset](const std::string& defName, float x, float y) {
-				auto entity = m_placementSystem->spawnEntity(defName, {x + kDropOffset, y});
-				// Mark as packaged - player needs to place it via ghost preview
-				ecsWorld->addComponent<ecs::Packaged>(entity, ecs::Packaged{});
-				LOG_INFO(Game, "Spawned packaged '%s' - awaiting placement", defName.c_str());
+				m_pendingSpawns.push_back({defName, x + kDropOffset, y, 0, /*packaged=*/true});
 			});
 
 			// Drop a loose, haulable resource pile (felling remainder, or a cancelled build site's
 			// staged materials). Unlike the crafting drop above, this pile is NOT packaged: a
-			// per-entity ResourceStack holds the count and it is immediately haulable. ActionSystem
-			// and ConstructionSystem share this single spawn path (dropResourcePiles).
-			auto dropResource = [this](const std::string& defName, float x, float y, uint32_t quantity) {
-				dropResourcePiles(defName, x, y, quantity);
+			// per-entity ResourceStack holds the count and it is immediately haulable. Both the
+			// ActionSystem fell-remainder drop and the ConstructionSystem cancelled-site drop fire
+			// from inside their system's view loop, so both ENQUEUE; the drain runs dropResourcePiles
+			// (the single pile-split spawn path) after ecsWorld->update().
+			auto enqueueResourceDrop = [this](const std::string& defName, float x, float y, uint32_t quantity) {
+				m_pendingSpawns.push_back({defName, x, y, quantity, /*packaged=*/false});
 			};
-			actionSystem.setDropResourceCallback(dropResource);
-			constructionSystem.setDropResourceCallback(dropResource);
+			actionSystem.setDropResourceCallback(enqueueResourceDrop);
+			constructionSystem.setDropResourceCallback(enqueueResourceDrop);
 
 			// Wire up ActionSystem to remove harvested entities (destructive harvest)
 			actionSystem.setRemoveEntityCallback([this](const std::string& defName, float x, float y) {
@@ -1683,6 +1709,11 @@ namespace {
 		std::unique_ptr<engine::world::ChunkManager>	   m_chunkManager;
 		std::unique_ptr<engine::world::WorldCamera>		   m_camera;
 		glm::vec2										   m_spawnPosition{0.0F, 0.0F};
+		// Planet forwarded from GameWorldState for the /api/state?what=landing readback.
+		// Null when running in mock-world mode (no preloaded planet).
+		std::shared_ptr<const worldgen::GeneratedWorld>    m_planet;
+		double                                             m_landingLatDeg = 0.0;
+		double                                             m_landingLonDeg = 0.0;
 		// The colony: home anchor for the session. Single source of truth for the colony
 		// origin (the cleared, on-mesh clearing center), set once at landing. Read by the
 		// camera-home sync and pushed to AIDecisionSystem for the off-mesh recovery snap.
@@ -1729,6 +1760,21 @@ namespace {
 		// Entities queued for destruction, drained after ecsWorld->update() so we
 		// never destroyEntity mid-view-iteration (deconstruct callback, demolish).
 		std::vector<ecs::EntityID> m_pendingEntityRemoval;
+
+		// Drops requested from inside the ActionSystem view loop (a colonist stows a held tool to
+		// free its hands, or a fell drops its uncarried remainder). spawnEntity grows the component
+		// pools, which would reallocate and dangle the live view's bound refs -- so the drop
+		// callbacks ENQUEUE here and the real spawn happens at the drain below, after
+		// ecsWorld->update(), next to the removal drain. `packaged` items spawn one entity with a
+		// Packaged tag; resource piles route through dropResourcePiles (stack-capped split).
+		struct PendingSpawn {
+			std::string defName;
+			float		x = 0.0F;
+			float		y = 0.0F;
+			uint32_t	quantity = 0; // resource-pile count; unused for packaged items
+			bool		packaged = false;
+		};
+		std::vector<PendingSpawn> m_pendingSpawns;
 	};
 
 } // namespace

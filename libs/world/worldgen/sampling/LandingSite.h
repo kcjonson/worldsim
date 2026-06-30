@@ -1,8 +1,10 @@
 #pragma once
 
+#include "worldgen/data/Biome.h"
 #include "worldgen/grid/SphereGrid.h" // TileId
 
 #include <cstdint>
+#include <optional>
 
 namespace worldgen {
 
@@ -71,6 +73,13 @@ Habitability rateHabitability(const GeneratedWorld& world, TileId tile, WaterCla
 // Land = not ocean/lake-flagged and elevation >= sea level.
 // Requires Elevation and Flags valid; uses Biome (desert skip), TemperatureMean,
 // and Precipitation (habitability) when present.
-LatLon findDefaultLandingSite(const GeneratedWorld& world);
+//
+// preferredBiome: when set, tiles matching that biome receive a +5 bonus added
+// on top of the normal water + habitability score, making a preferred-biome tile
+// on the same water tier win decisively. The caller (quickstart path) passes
+// TemperateDeciduousForest; all other callers omit it and get identical behaviour
+// to before.
+LatLon findDefaultLandingSite(const GeneratedWorld& world,
+                              std::optional<Biome> preferredBiome = std::nullopt);
 
 } // namespace worldgen

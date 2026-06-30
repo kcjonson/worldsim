@@ -12,6 +12,8 @@
 #include <world/rendering/ChunkRenderer.h>
 #include <world/rendering/EntityRenderer.h>
 
+#include <worldgen/data/GeneratedWorld.h>
+
 #include <glm/vec2.hpp>
 
 #include <memory>
@@ -32,6 +34,13 @@ namespace world_sim {
 		std::unordered_set<engine::world::ChunkCoordinate> processedChunks;
 
 		uint64_t worldSeed = 0;
+
+		/// The generated planet for this session. Forwarded from GameStartConfig so
+		/// GameScene can pass it to DevCommandHandler for /api/state?what=landing.
+		/// Null when GameScene falls back to mock-world mode (no planet available).
+		std::shared_ptr<const worldgen::GeneratedWorld> planet;
+		double landingLatDeg = 0.0;
+		double landingLonDeg = 0.0;
 
 		/// Colonist drop point (2D world meters): dry land beside clean water,
 		/// chosen by findRiverbankSpawn. Defaults to the landing origin. GameScene

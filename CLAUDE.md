@@ -402,6 +402,22 @@ Worktrees are disposable scratch space, not permanent fixtures. Remove a worktre
 - Clean up with `git worktree remove <path>`, then `git worktree prune`. It refuses a worktree with uncommitted changes unless you pass `--force`; leave those in place and surface them rather than discarding unsaved work.
 - Removing a worktree keeps its branch. If there's uncommitted work worth saving, commit it to the branch before removing.
 
+### Sharing the pre-generated world across worktrees
+
+The quickstart planet (`planets/quickstart.wsplanet`, ~1.3 GiB) is gitignored and baked per worktree by the `quickstart-planet` CMake target (~90 s; n=2048, seed 424242). A fresh worktree has no `planets/` dir, so it re-bakes on first build and keeps its own 1.3 GiB copy. Don't let it. Point the worktree's `planets/` at the main checkout's via a directory junction (Windows, no admin or Developer Mode needed):
+
+```powershell
+New-Item -ItemType Junction -Path "<worktree>\planets" -Target "C:\Users\kevin\Code\worldsim\planets"
+```
+
+The game loads a copy staged beside the exe at `build/apps/world-sim/<config>/assets/planets/quickstart.wsplanet` (that staged copy, via `findResource`, not the source, is what's read). With the junction in place the build stages from the shared source instead of re-baking. To skip even the per-config staged copy, hardlink it (same volume, no admin):
+
+```powershell
+New-Item -ItemType HardLink -Path "<worktree>\build\apps\world-sim\RelWithDebInfo\assets\planets\quickstart.wsplanet" -Target "C:\Users\kevin\Code\worldsim\planets\quickstart.wsplanet"
+```
+
+Caveat: the planet is format-versioned (`kFormatVersion`). Sharing is safe across branches that only change game logic. A branch that changes the worldgen binary format won't load the shared planet (it fails gracefully to a config error, no corruption) and needs its own fresh bake, so junction only when the branch's worldgen format matches main's.
+
 ## Plan File Archival
 
 When a plan file is confirmed complete (has `# COMPLETE` on first line), archive it to the development log:
