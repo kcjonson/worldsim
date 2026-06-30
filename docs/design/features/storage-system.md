@@ -104,6 +104,6 @@ Different containers hold different item categories:
 
 **Phase 1:** Stockpile zones only. Simple "allowed/not allowed" per item type. No priority levels.
 
-**Phase 2:** Priority levels. Max amounts. Pull behavior.
+**Phase 2 (implemented, PR #244):** Priority levels, max amounts, and higher-pulls-from-lower pull behavior. A box pulls an item from strictly-lower-priority storage (plus loose piles and harvestables), never laterally or from same/higher priority, so items flow monotonically up the ladder (cycle-free without reservations); clamped by the source's own min and the destination's max. Storage priority orders stocking within the opportunistic work tier, never preempting a need or an active work order. Includes the colony-memory "known source" affordance + unknown-source toast (no magic discovery: a colonist only fetches from a source the colony has seen).
 
 **Phase 3:** Multiple container types. Preservation effects.
