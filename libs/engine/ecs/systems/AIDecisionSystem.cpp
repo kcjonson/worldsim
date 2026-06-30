@@ -1,5 +1,7 @@
 #include "AIDecisionSystem.h"
 
+#include "GoalSystemHelpers.h"
+
 #include "../GoalTaskRegistry.h"
 #include "../InventoryMass.h"
 #include "../World.h"
@@ -315,10 +317,11 @@ namespace ecs {
 		/// Sets option.tier (classifyTier) and the within-tier score breakdown (distanceFactor,
 		/// taskAgeBonus, hysteresisBonus), then composes option.score. skillBonus is set by the
 		/// evaluators. The chain bonus is GONE: a mid-chain provisioning task is tier 4 instead.
+		/// @param world ECS world (to read a stocking haul's destination box priority); may be null
 		/// @param option The option to populate (skillBonus already set by its evaluator)
 		/// @param currentTask Current colonist task (for the hysteresis margin)
 		/// @param currentTime Current game time (for task age calculation)
-		void populatePriorityBonuses(EvaluatedOption& option, const Task& currentTask, float currentTime) {
+		void populatePriorityBonuses(World* world, EvaluatedOption& option, const Task& currentTask, float currentTime) {
 			const auto& priorityConfig = engine::assets::PriorityConfig::Get();
 
 			// Categorical tier first: it is compared before any score term.
@@ -345,6 +348,26 @@ namespace ecs {
 			// by more than this to win (prevents thrashing). Only matters within a tier.
 			if (isOptionCurrentTask(option, currentTask)) {
 				option.hysteresisBonus = priorityConfig.getInProgressBonus();
+			}
+
+			// Storage-priority within-tier bias: a storage-stocking haul (a pull from a lower-priority
+			// box, or a stocking carry-in) is ordered within tier 6 by its DESTINATION box's priority
+			// for the item. Rank the dest box's StoragePriority (Low=0..Critical=3) and weight it to
+			// dominate distance, so a Critical box farther away beats a Low box nearer. Tier is compared
+			// first, so this never lets stocking preempt a tier-5 need or tier-4 work order. 0 for every
+			// non-stocking option.
+			if (option.servesStorageStocking && option.haulTargetStorageId != 0 && world != nullptr) {
+				const auto destEntity = static_cast<EntityID>(option.haulTargetStorageId);
+				const auto* destConfig = world->getComponent<StorageConfiguration>(destEntity);
+				if (destConfig != nullptr) {
+					const auto& reg = engine::assets::AssetRegistry::Get();
+					const auto* itemDef = reg.getDefinition(option.haulItemDefName);
+					if (itemDef != nullptr) {
+						const StoragePriority destPriority = destConfig->getPriorityFor(option.haulItemDefName, itemDef->category);
+						const auto rank = static_cast<int16_t>(static_cast<uint8_t>(destPriority)); // 0..3
+						option.storagePriorityBias = static_cast<int16_t>(rank * priorityConfig.getStoragePriorityWeight());
+					}
+				}
 			}
 
 			// Task age bonus: old unclaimed goals rise within their tier.
@@ -615,7 +638,10 @@ namespace ecs {
 					// up to 3 full stacks of wood (~120), not 3 wood. Then over-propose only as far
 					// as the colonist can carry (weight); the pickup clamps to the live
 					// ResourceStack and remaining carry capacity, and the deposit clamps to the
-					// storage again, so nothing overfills.
+					// storage's PHYSICAL slot capacity (addableCount), NOT the configured max -- storage
+					// max is a soft target. A single colonist's per-trip storageHeadroom clamp keeps it
+					// within physical room, but two concurrent hauls can both pass it and transiently
+					// overfill past the configured max; slot capacity is the only hard cap.
 					uint32_t storageHeadroom = UINT32_MAX;
 					if (const auto* destInv = world != nullptr ? world->getComponent<Inventory>(goal->destinationEntity) : nullptr) {
 						storageHeadroom = destInv->addableCount(itemDefName);
@@ -635,6 +661,117 @@ namespace ecs {
 					haulOption.status = OptionStatus::Available;
 					haulOption.reason = "Hauling " + itemDefName + " to storage";
 					trace.options.push_back(haulOption);
+				}
+
+				// Storage-to-storage pull (storage priority, Phase 2): for an ordinary storage umbrella
+				// goal (StorageGoalSystem-owned, no chainId/craft parent -- those returned above via
+				// inventorySourceHaul), ALSO scan other storage boxes as sources. A higher-priority
+				// destination box pulls items UP from strictly-lower-priority boxes. The strict-< gate is
+				// the load-bearing invariant: items flow monotonically up the 4-level ladder
+				// (Low<Medium<High<Critical), never sideways or down, which makes A->B->A cycles
+				// impossible with no reservation system.
+				if (world != nullptr && goal->owner == GoalOwner::StorageGoalSystem) {
+					const auto destEntity = goal->destinationEntity;
+					const auto* destConfig = world->getComponent<StorageConfiguration>(destEntity);
+					const auto* destInv = world->getComponent<Inventory>(destEntity);
+					if (destConfig != nullptr && destInv != nullptr) {
+						for (uint32_t acceptedId : goal->acceptedDefNameIds) {
+							const auto& itemDefName = registry.getDefName(acceptedId);
+							const auto* itemDef = registry.getDefinition(itemDefName);
+							if (itemDef == nullptr || !registry.hasCapability(acceptedId, engine::assets::CapabilityType::Carryable)) {
+								continue;
+							}
+							const engine::assets::ItemCategory cat = itemDef->category;
+							const StoragePriority destPriority = destConfig->getPriorityFor(itemDefName, cat);
+
+							// Dest headroom for this item (stack room + free slots * stackSize) and the
+							// dest's own max clamp (don't overfill past the configured max). Computed once
+							// per item, outside the source loop.
+							const uint32_t destHeadroom = destInv->addableCount(itemDefName);
+							if (destHeadroom == 0) {
+								continue; // dest box can't take any more of this item
+							}
+							const uint32_t destMax = destConfig->getMaxAmountFor(itemDefName, cat);
+							const uint32_t destHas = destInv->getQuantity(itemDefName);
+							const uint32_t maxRemaining = destMax == 0 ? UINT32_MAX : (destMax > destHas ? destMax - destHas : 0U);
+							if (maxRemaining == 0) {
+								continue; // dest already at its configured max
+							}
+							const uint32_t perTrip = ecs::cargoUnitsPerTrip(registry, itemDefName, inventory.carryCapacityKg);
+							if (perTrip == 0) {
+								continue; // colonist can't carry a single unit of this item
+							}
+
+							for (auto [srcEntity, srcConfig, srcInv, srcPos] : world->view<StorageConfiguration, Inventory, Position>()) {
+								if (srcEntity == destEntity) {
+									continue; // never pull from the destination itself
+								}
+								const uint32_t srcHas = srcInv.getQuantity(itemDefName);
+								if (srcHas == 0) {
+									continue; // source holds none of this item
+								}
+								// Strict-< gate: pull only from a STRICTLY lower-priority box. Never same,
+								// never higher. This is what keeps the flow monotonic and cycle-free.
+								//
+								// INTENDED: getPriorityFor returns Low when the source box has no rule for this item,
+								// so an UNCONFIGURED box holding it is a valid pull source for any Medium+ dest. This
+								// consolidates stray contents upward into boxes that actually want them. Monotonicity
+								// still holds -- Low is the floor, so the strict-< gate can never form a cycle.
+								const StoragePriority srcPriority = srcConfig.getPriorityFor(itemDefName, cat);
+								if (!(static_cast<uint8_t>(srcPriority) < static_cast<uint8_t>(destPriority))) {
+									continue;
+								}
+								// Discovery-gating: the colony must KNOW the source box (no god-view),
+								// mirroring how a loose pickup is gated on the pile being in memory.
+								if (!ecs::colonyKnowsStorageEntity(world, registry, srcEntity)) {
+									continue;
+								}
+								// Don't drain the source below ITS OWN configured minimum for this item.
+								const uint32_t srcMin = srcConfig.getMinAmountFor(itemDefName, cat);
+								const uint32_t drainable = srcHas > srcMin ? srcHas - srcMin : 0U;
+								if (drainable == 0) {
+									continue;
+								}
+								// Three clamps + one trip, min wins: don't drain source below its min,
+								// don't exceed dest headroom, don't overfill past dest max, carry one trip.
+								const uint32_t qty = std::min({drainable, destHeadroom, maxRemaining, perTrip});
+								if (qty == 0) {
+									continue;
+								}
+
+								// Mirror the loose-pile haul option field-for-field, but the source is the
+								// box: walk to it, Withdraw, then the unchanged deposit leg stocks the dest.
+								const float tripDistance =
+									glm::distance(position, srcPos.value) + glm::distance(srcPos.value, goal->destinationPosition);
+
+								EvaluatedOption pullOption;
+								pullOption.taskType = TaskType::Haul;
+								pullOption.needType = NeedType::Count;
+								pullOption.needValue = 100.0F;
+								pullOption.threshold = 0.0F;
+								pullOption.targetPosition = srcPos.value;
+								pullOption.targetDefNameId = acceptedId;
+								pullOption.distanceToTarget = tripDistance;
+								pullOption.haulItemDefName = itemDefName;
+								pullOption.haulQuantity = qty;
+								pullOption.haulSourcePosition = srcPos.value;
+								pullOption.haulSourceStorageId = static_cast<uint64_t>(srcEntity);
+								pullOption.haulTargetStorageId = static_cast<uint64_t>(destEntity);
+								pullOption.haulTargetPosition = goal->destinationPosition;
+								pullOption.haulGoalId = goal->id;
+								pullOption.haulFromInventory = false;
+								// A pull tops up a box toward its config: opportunistic stocking (tier 6),
+								// ordered within-tier by the dest box priority (populatePriorityBonuses).
+								pullOption.servesStorageStocking = true;
+								// Deterministic tiebreak on (umbrella goal, source box), independent of
+								// view iteration order.
+								pullOption.tiebreakId = goal->id ^ (static_cast<uint64_t>(srcEntity) << 1);
+								pullOption.status = OptionStatus::Available;
+								pullOption.reason = "Pulling " + itemDefName + " from lower-priority storage";
+								trace.options.push_back(pullOption);
+							}
+						}
+					}
 				}
 			}
 		}
@@ -1605,7 +1742,7 @@ namespace ecs {
 		// seconds-since-start clock; goal createdAt is still 0 (no wired game clock yet), so age ==
 		// elapsed, harmless and monotonic for the within-tier age term.
 		for (auto& option : trace.options) {
-			populatePriorityBonuses(option, currentTask, m_elapsedTime);
+			populatePriorityBonuses(world, option, currentTask, m_elapsedTime);
 		}
 
 		// Sort by the lexicographic (tier asc, score desc, tiebreakId asc) key. Tier is categorical
@@ -1739,6 +1876,7 @@ namespace ecs {
 			task.haulItemDefName = selected->haulItemDefName;
 			task.haulQuantity = selected->haulQuantity;
 			task.haulSourcePosition = selected->haulSourcePosition.value_or(glm::vec2{0.0F, 0.0F});
+			task.haulSourceStorageId = selected->haulSourceStorageId;
 			task.haulTargetStorageId = selected->haulTargetStorageId;
 			task.haulGoalId = selected->haulGoalId;
 			task.haulTargetPosition = selected->haulTargetPosition.value_or(glm::vec2{0.0F, 0.0F});

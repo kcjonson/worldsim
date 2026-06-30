@@ -140,6 +140,15 @@
       <bonusPerMinute>1</bonusPerMinute>
       <maxBonus>100</maxBonus>
     </TaskAge>
+
+    <!-- Storage priority: within-tier (tier 6) ordering of storage-stocking hauls by the
+         destination box's per-item priority (Low..Critical, ranked 0..3). The within-tier score
+         gains rank * weight, so a higher-priority box wins even when farther. Set to the distance
+         factor's max (300) so storage priority DOMINATES distance within tier 6. Tier is compared
+         first, so this can never preempt a tier-5 need or tier-4 work order. -->
+    <StoragePriority>
+      <weight>300</weight>
+    </StoragePriority>
   </Bonuses>
 
   <!-- Thresholds and timings -->

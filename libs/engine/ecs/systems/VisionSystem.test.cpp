@@ -138,7 +138,7 @@ namespace {
 			}
 			// A synthetic discoverable def with one capability so memory keeps it.
 			reg.registerSyntheticDefinition(
-				kTargetDefName, static_cast<uint8_t>(1u << static_cast<uint8_t>(CapabilityType::Edible)));
+				kTargetDefName, static_cast<uint16_t>(1u << static_cast<size_t>(CapabilityType::Edible)));
 			ASSERT_NE(reg.getDefNameId(kTargetDefName), 0u) << "target def must get a non-zero id";
 		}
 		void TearDown() override { ConstructionRegistry::Get().clear(); }

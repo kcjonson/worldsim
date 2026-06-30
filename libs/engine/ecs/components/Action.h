@@ -40,8 +40,9 @@ namespace ecs {
 		Toilet, // Using toilet or ground relief
 
 		// Resource Collection Actions
-		Pickup,	 // Pick up ground item directly into inventory
-		Harvest, // Harvest from entity (bush, plant) into inventory
+		Pickup,	  // Pick up ground item directly into inventory
+		Harvest,  // Harvest from entity (bush, plant) into inventory
+		Withdraw, // Take items out of a storage container's inventory into the colonist's (storage->storage pull)
 
 		// Work Actions
 		Craft,	 // Creating items at workbench
@@ -146,6 +147,12 @@ namespace ecs {
 
 		/// If destroySource is false and this > 0, entity enters cooldown (regrowth)
 		float regrowthTime = 0.0F;
+
+		/// Storage-to-storage pull only (ActionType::Withdraw): the SOURCE box entity to take items
+		/// FROM. When non-zero the collection removes `quantity` of `itemDefName` from that box's
+		/// Inventory (clamped to the live quantity) instead of touching a ground entity; the pile/pool/
+		/// single-shot ground paths are bypassed. 0 for a ground Pickup or a Harvest.
+		uint64_t sourceStorageId = 0;
 	};
 
 	/// Effect for consuming items from inventory (Eat action)
@@ -510,6 +517,35 @@ namespace ecs {
 			return action;
 		}
 
+		/// Factory: Withdraw action - take items out of a storage container into the colonist's
+		/// inventory (the pickup leg of a storage->storage pull). Mirrors Pickup, but the source is a
+		/// box's Inventory (sourceStorageId), not a ground entity: the effect removes from that box
+		/// (clamped to its live quantity) and never destroys it.
+		/// @param itemDefName Item to take from the source box and add to inventory
+		/// @param quantity Number of items to withdraw
+		/// @param sourceStorageId Entity ID of the source storage container
+		/// @param sourcePos Position of the source box (the walk-to target)
+		static Action Withdraw(const std::string& itemDefName, uint32_t quantity, uint64_t sourceStorageId, glm::vec2 sourcePos) {
+			Action action;
+			action.type = ActionType::Withdraw;
+			action.state = ActionState::Starting;
+			action.duration = 0.5F; // Quick withdraw, mirrors Pickup
+			action.targetPosition = sourcePos;
+			action.interruptable = false; // Don't interrupt mid-withdraw
+
+			CollectionEffect collEff;
+			collEff.itemDefName = itemDefName;
+			collEff.quantity = quantity;
+			collEff.sourcePosition = sourcePos;
+			collEff.sourceDefName = itemDefName; // unused by the box-withdraw path, but kept consistent
+			collEff.destroySource = false; // never destroy the box
+			collEff.regrowthTime = 0.0F;
+			collEff.sourceStorageId = sourceStorageId;
+			action.effect = collEff;
+
+			return action;
+		}
+
 		/// Factory: Harvest action - harvest items from an entity
 		/// @param itemDefName Item definition to yield
 		/// @param quantity Number of items to harvest
@@ -720,6 +756,8 @@ namespace ecs {
 				return "Pickup";
 			case ActionType::Harvest:
 				return "Harvest";
+			case ActionType::Withdraw:
+				return "Withdraw";
 			case ActionType::Craft:
 				return "Craft";
 			case ActionType::Deposit:

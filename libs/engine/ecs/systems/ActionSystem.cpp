@@ -239,14 +239,14 @@ namespace ecs {
 		// two-phase task (Pickup→Deposit), so after phase 1 we set up phase 2 and return.
 		// The action is cleared but the task persists. This differs from single-phase
 		// tasks that clear both action and task at the end of this function.
-		if (task.type == TaskType::Haul && action.type == ActionType::Pickup) {
-			// Phase 1 complete (Pickup) - hand off to phase 2 (Deposit). Re-point the task at the
-			// deposit goal and set it Moving; the colonist drives itself to the station. The deposit
-			// leg is the SAME haul task, so AIDecisionSystem keeps it (isSameTask) and never calls
-			// selectTaskFromTrace. Set MovementTarget to the deposit GOAL so the AI's per-tick
-			// chain-leg repath (a Moving task with an active target but no live route) requests a
-			// navmesh path for it -- the colonist follows that A* route, it does NOT slide straight
-			// at the bench. Invalidate the pickup-leg route, which still points at the source.
+		if (task.type == TaskType::Haul && (action.type == ActionType::Pickup || action.type == ActionType::Withdraw)) {
+			// Phase 1 complete (Pickup, or Withdraw for a storage->storage pull) - hand off to phase 2
+			// (Deposit). Re-point the task at the deposit goal and set it Moving; the colonist drives
+			// itself to the station. The deposit leg is the SAME haul task, so AIDecisionSystem keeps it
+			// (isSameTask) and never calls selectTaskFromTrace. Set MovementTarget to the deposit GOAL so
+			// the AI's per-tick chain-leg repath (a Moving task with an active target but no live route)
+			// requests a navmesh path for it -- the colonist follows that A* route, it does NOT slide
+			// straight at the bench. Invalidate the pickup-leg route, which still points at the source.
 			task.targetPosition = task.haulTargetPosition;
 			task.state = TaskState::Moving; // Must be Moving for MovementSystem to set Arrived
 			task.chainStep++; // Advance chain: step 0 (Pickup) → step 1 (Deposit)

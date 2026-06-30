@@ -5,9 +5,11 @@
 // "does any colonist know a source" and "one trip's carry budget" have one definition.
 
 #include "../World.h"
+#include "../components/Appearance.h"
 #include "../components/Inventory.h"
 #include "../components/Memory.h"
 #include "../components/Needs.h"
+#include "../components/Transform.h"
 
 #include <assets/AssetDefinition.h>
 #include <assets/AssetRegistry.h>
@@ -16,6 +18,30 @@
 #include <cstdint>
 
 namespace ecs {
+
+	/// Does any colonist remember this storage box? A storage-to-storage pull may only source from a
+	/// box the colony actually knows about (no god-view), mirroring how a loose pickup is gated on the
+	/// pile being in memory. A box is recorded in memory by its Appearance defName + Position (the same
+	/// key VisionSystem's Pass 2 uses when it sees the box), so resolve those from the entity and test
+	/// every colonist's memory. A colony-placed/-built box is normally already in memory.
+	[[nodiscard]] inline bool colonyKnowsStorageEntity(World* world, const engine::assets::AssetRegistry& reg, EntityID box) {
+		const auto* appearance = world->getComponent<Appearance>(box);
+		const auto* boxPos = world->getComponent<Position>(box);
+		if (appearance == nullptr || boxPos == nullptr) {
+			return false;
+		}
+		const uint32_t defNameId = reg.getDefNameId(appearance->defName);
+		if (defNameId == 0) {
+			return false;
+		}
+		for (auto [colonist, memory] : world->view<Memory>()) {
+			(void)colonist;
+			if (memory.knowsWorldEntity(boxPos->value, defNameId)) {
+				return true;
+			}
+		}
+		return false;
+	}
 
 	/// Does any colonist remember a harvestable whose yield is this item (e.g. a tree for Wood)?
 	/// Colony "availability" = the union of colonist memories (no god-view). A goal created from

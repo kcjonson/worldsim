@@ -62,3 +62,34 @@ TEST(AssetRegistryAsyncTest, MissingFolderRecordsValidationError) {
 
 	reg.clear();
 }
+
+// Capability bitmask must cover ALL 9 capability types, including Storage at bit 8 and Craftable
+// at bit 7 -- both overflow a uint8_t and were dropped before the mask widened to uint16_t and
+// kCapabilityTypeCount went 7 -> 9. This guards the widening directly: if getCapabilityMask ever
+// narrows back to uint8_t, the Storage bit vanishes and this test fails (the indirect storage-haul
+// tests would all still pass, so the bug would otherwise slip through).
+TEST(AssetRegistryCapabilityTest, MaskCoversStorageAndCraftableHighBits) {
+	auto& reg = AssetRegistry::Get();
+	reg.clearDefinitions();
+
+	AssetDefinition def;
+	def.defName = "Test_StorageCraftable";
+	def.label = "Test Storage Craftable";
+	def.category = ItemCategory::Furniture;
+	def.capabilities.storage = StorageCapability{};   // bit 8 -- overflows uint8_t
+	def.capabilities.craftable = CraftableCapability{}; // bit 7 -- also fixed by the count bump
+	reg.registerTestDefinition(std::move(def));
+
+	const uint32_t id = reg.getDefNameId("Test_StorageCraftable");
+	ASSERT_NE(id, 0u) << "the def must get a non-zero interning id";
+
+	const uint16_t mask = reg.getCapabilityMask(id);
+	const uint16_t storageBit = static_cast<uint16_t>(1u << static_cast<size_t>(CapabilityType::Storage));
+	const uint16_t craftableBit = static_cast<uint16_t>(1u << static_cast<size_t>(CapabilityType::Craftable));
+	EXPECT_NE(mask & storageBit, 0) << "Storage (bit 8) must survive in the widened mask";
+	EXPECT_NE(mask & craftableBit, 0) << "Craftable (bit 7) must survive in the widened mask";
+	EXPECT_TRUE(reg.hasCapability(id, CapabilityType::Storage)) << "hasCapability must see Storage at bit 8";
+	EXPECT_TRUE(reg.hasCapability(id, CapabilityType::Craftable)) << "hasCapability must see Craftable at bit 7";
+
+	reg.clearDefinitions();
+}

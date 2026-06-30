@@ -81,7 +81,7 @@ namespace ecs {
 		auto& registry = engine::assets::AssetRegistry::Get();
 
 		// Create capability mask for shore (Drinkable - colonists drink AT the shore)
-		m_shoreTileCapabilityMask = (1 << static_cast<uint8_t>(engine::assets::CapabilityType::Drinkable));
+		m_shoreTileCapabilityMask = static_cast<uint16_t>(1U << static_cast<size_t>(engine::assets::CapabilityType::Drinkable));
 
 		// Register synthetic shore tile definition
 		m_shoreTileDefNameId = registry.registerSyntheticDefinition(kShoreTileDefName, m_shoreTileCapabilityMask);
@@ -345,7 +345,7 @@ namespace ecs {
 							if (defNameId == 0) {
 								continue;
 							}
-							uint8_t capabilityMask = registry.getCapabilityMask(defNameId);
+							uint16_t capabilityMask = registry.getCapabilityMask(defNameId);
 
 							// Remember in colonist's memory (returns true only for NEW discoveries)
 							bool isNewDiscovery = memory.rememberWorldEntity(placedEntity->position, defNameId, capabilityMask);
@@ -383,7 +383,7 @@ namespace ecs {
 					// Get defNameId and capability mask from registry
 					uint32_t defNameId = registry.getDefNameId(appearance.defName);
 					if (defNameId != 0) {
-						uint8_t capabilityMask = registry.getCapabilityMask(defNameId);
+						uint16_t capabilityMask = registry.getCapabilityMask(defNameId);
 
 						// Remember in colonist's memory (returns true only for NEW discoveries)
 						bool isNewDiscovery = memory.rememberWorldEntity(otherPos.value, defNameId, capabilityMask);

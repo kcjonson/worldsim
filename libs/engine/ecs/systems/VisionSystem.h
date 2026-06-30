@@ -100,7 +100,7 @@ class VisionSystem : public ISystem {
 
 	// Cached defNameId for shore tiles (registered on first update)
 	uint32_t m_shoreTileDefNameId = 0;
-	uint8_t	 m_shoreTileCapabilityMask = 0;
+	uint16_t m_shoreTileCapabilityMask = 0;
 	bool	 m_terrainDefsRegistered = false;
 
 	// Callback for recipe discovery notifications

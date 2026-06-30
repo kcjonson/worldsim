@@ -9,12 +9,14 @@
 #include "../InventoryMass.h"
 #include "../World.h"
 #include "../components/Action.h"
+#include "../components/Appearance.h"
 #include "../components/DecisionTrace.h"
 #include "../components/Inventory.h"
 #include "../components/Memory.h"
 #include "../components/Movement.h"
 #include "../components/Needs.h"
 #include "../components/Skills.h"
+#include "../components/StorageConfiguration.h"
 #include "../components/Structure.h"
 #include "../components/StructureBlueprint.h"
 #include "../components/Task.h"
@@ -108,7 +110,7 @@ namespace ecs::test {
 			auto* memory = world->getComponent<Memory>(entity);
 			ASSERT_NE(memory, nullptr);
 			// Create capability mask from single capability
-			uint8_t capabilityMask = static_cast<uint8_t>(1 << static_cast<size_t>(capability));
+			uint16_t capabilityMask = static_cast<uint16_t>(1U << static_cast<size_t>(capability));
 			memory->rememberWorldEntity(position, defNameId, capabilityMask);
 		}
 
@@ -137,6 +139,49 @@ namespace ecs::test {
 
 		/// Get the needs component for an entity
 		NeedsComponent* getNeeds(EntityID entity) { return world->getComponent<NeedsComponent>(entity); }
+
+		/// Build a storage box entity: StorageConfiguration (one rule for `item` at `priority` with the
+		/// given min/max) + Inventory (createForStorage, pre-filled with `initialQty`) + Position +
+		/// Appearance (defName `boxDef`, a registered Storage def so colonyKnowsStorageEntity can key it).
+		EntityID makeStorageBox(
+			glm::vec2 pos, const std::string& boxDef, const std::string& item, ecs::StoragePriority priority,
+			uint32_t initialQty = 0, uint32_t minAmount = 0, uint32_t maxAmount = 0
+		) {
+			auto box = world->createEntity();
+			world->addComponent<Position>(box, Position{pos});
+			world->addComponent<Appearance>(box, Appearance{boxDef, 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+
+			auto inv = Inventory::createForStorage();
+			if (initialQty > 0) {
+				inv.addItem(item, initialQty);
+			}
+			world->addComponent<Inventory>(box, std::move(inv));
+
+			ecs::StorageConfiguration config;
+			config.addRule(ecs::StorageRule{
+				.defName = item,
+				.category = engine::assets::ItemCategory::RawMaterial,
+				.priority = priority,
+				.minAmount = minAmount,
+				.maxAmount = maxAmount,
+			});
+			world->addComponent<ecs::StorageConfiguration>(box, std::move(config));
+			return box;
+		}
+
+		/// Create the ordinary umbrella Haul goal (StorageGoalSystem-owned, NO chainId) that a storage
+		/// box raises when it wants items. This is the goal whose evaluation runs the pull scan.
+		uint64_t makeUmbrellaGoal(EntityID destBox, glm::vec2 destPos, uint32_t itemDefNameId) {
+			GoalTask haul;
+			haul.type = TaskType::Haul;
+			haul.owner = GoalOwner::StorageGoalSystem;
+			haul.destinationEntity = destBox;
+			haul.destinationPosition = destPos;
+			haul.acceptedDefNameIds = {itemDefNameId};
+			haul.targetAmount = 10;
+			haul.status = GoalStatus::Available;
+			return GoalTaskRegistry::Get().createGoal(std::move(haul));
+		}
 
 		std::unique_ptr<World> world;
 
@@ -1429,6 +1474,282 @@ namespace ecs::test {
 		EXPECT_FALSE(harvestOption->servesActiveWorkOrder) << "stocking is not a work order";
 		EXPECT_TRUE(harvestOption->servesStorageStocking);
 		EXPECT_EQ(harvestOption->tier, 6) << "a stocking harvest classifies at tier 6 (opportunistic)";
+	}
+
+	// =============================================================================
+	// Storage-to-storage pull (storage priority, Phase 2)
+	// =============================================================================
+	// A higher-priority destination box pulls items UP from strictly-lower-priority boxes. The
+	// helpers below register a one-hand carryable item and build storage boxes (StorageConfiguration
+	// + Inventory + Position + Appearance) whose Appearance defName resolves so colonyKnowsStorageEntity
+	// can key the box in memory.
+
+	namespace {
+		// Register a light one-hand carryable RawMaterial; returns its defNameId. Light so carry
+		// weight never binds the pull's per-trip clamp.
+		[[nodiscard]] uint32_t registerPullItem(engine::assets::AssetRegistry& registry, const std::string& defName) {
+			engine::assets::AssetDefinition item;
+			item.defName = defName;
+			item.label = defName;
+			item.handsRequired = 1;
+			item.category = engine::assets::ItemCategory::RawMaterial;
+			item.capabilities.carryable = engine::assets::CarryableCapability{1};
+			item.itemProperties = engine::assets::ItemProperties{};
+			item.itemProperties->stackSize = 100;
+			item.itemProperties->massKg = 0.1F;
+			registry.registerTestDefinition(std::move(item));
+			return registry.getDefNameId(defName);
+		}
+
+		// Register a storage container asset def (Storage capability). One def is shared by all boxes
+		// in a test; its defName is what colonyKnowsStorageEntity resolves from a box's Appearance.
+		void registerStorageDef(engine::assets::AssetRegistry& registry, const std::string& defName) {
+			engine::assets::AssetDefinition box;
+			box.defName = defName;
+			box.label = defName;
+			box.capabilities.storage = engine::assets::StorageCapability{};
+			registry.registerTestDefinition(std::move(box));
+		}
+
+		// Find the storage->storage pull option (a Haul with a source box set) in a trace.
+		[[nodiscard]] const EvaluatedOption* findPullOption(const DecisionTrace& trace) {
+			return findOption(trace, [](const EvaluatedOption& o) {
+				return o.taskType == TaskType::Haul && o.haulSourceStorageId != 0;
+			});
+		}
+	} // namespace
+
+	// 1. Pull from lower: a Low box holds Wood, a High box wants Wood -> a pull option sourced from the
+	//    Low box, targeting the High box.
+	TEST_F(AIDecisionSystemTest, PullFromLowerPriorityBox) {
+		auto& registry = engine::assets::AssetRegistry::Get();
+		const uint32_t woodId = registerPullItem(registry, "Wood");
+		registerStorageDef(registry, "Box");
+		const uint32_t boxDefId = registry.getDefNameId("Box");
+
+		const glm::vec2 lowPos{2.0F, 0.0F};
+		const glm::vec2 highPos{4.0F, 0.0F};
+		const EntityID lowBox = makeStorageBox(lowPos, "Box", "Wood", ecs::StoragePriority::Low, /*qty=*/10);
+		const EntityID highBox = makeStorageBox(highPos, "Box", "Wood", ecs::StoragePriority::High);
+
+		auto colonist = createColonist({0.0F, 0.0F});
+		satisfyAllNeeds(*getNeeds(colonist));
+		addKnownEntity(colonist, lowPos, boxDefId, engine::assets::CapabilityType::Storage);
+		addKnownEntity(colonist, highPos, boxDefId, engine::assets::CapabilityType::Storage);
+
+		makeUmbrellaGoal(highBox, highPos, woodId);
+
+		world->update(0.016F);
+
+		const auto* pull = findPullOption(*getTrace(colonist));
+		ASSERT_NE(pull, nullptr) << "a high box should pull Wood from a low box";
+		EXPECT_EQ(pull->haulSourceStorageId, static_cast<uint64_t>(lowBox));
+		EXPECT_EQ(pull->haulTargetStorageId, static_cast<uint64_t>(highBox));
+		EXPECT_TRUE(pull->servesStorageStocking);
+	}
+
+	// 2. Never from same: two Medium boxes both holding Wood -> NO pull between them (strict-< gate).
+	TEST_F(AIDecisionSystemTest, NoPullBetweenSamePriorityBoxes) {
+		auto& registry = engine::assets::AssetRegistry::Get();
+		const uint32_t woodId = registerPullItem(registry, "Wood");
+		registerStorageDef(registry, "Box");
+		const uint32_t boxDefId = registry.getDefNameId("Box");
+
+		const glm::vec2 aPos{2.0F, 0.0F};
+		const glm::vec2 bPos{4.0F, 0.0F};
+		makeStorageBox(aPos, "Box", "Wood", ecs::StoragePriority::Medium, /*qty=*/10);
+		const EntityID boxB = makeStorageBox(bPos, "Box", "Wood", ecs::StoragePriority::Medium, /*qty=*/10);
+
+		auto colonist = createColonist({0.0F, 0.0F});
+		satisfyAllNeeds(*getNeeds(colonist));
+		addKnownEntity(colonist, aPos, boxDefId, engine::assets::CapabilityType::Storage);
+		addKnownEntity(colonist, bPos, boxDefId, engine::assets::CapabilityType::Storage);
+
+		makeUmbrellaGoal(boxB, bPos, woodId);
+
+		world->update(0.016F);
+
+		EXPECT_EQ(findPullOption(*getTrace(colonist)), nullptr)
+			<< "equal priority must not pull (strict-< gate)";
+	}
+
+	// 3. Never from higher: a High box holds Wood, a Low box wants Wood -> no pull from High into Low.
+	TEST_F(AIDecisionSystemTest, NoPullFromHigherPriorityBox) {
+		auto& registry = engine::assets::AssetRegistry::Get();
+		const uint32_t woodId = registerPullItem(registry, "Wood");
+		registerStorageDef(registry, "Box");
+		const uint32_t boxDefId = registry.getDefNameId("Box");
+
+		const glm::vec2 highPos{2.0F, 0.0F};
+		const glm::vec2 lowPos{4.0F, 0.0F};
+		makeStorageBox(highPos, "Box", "Wood", ecs::StoragePriority::High, /*qty=*/10);
+		const EntityID lowBox = makeStorageBox(lowPos, "Box", "Wood", ecs::StoragePriority::Low);
+
+		auto colonist = createColonist({0.0F, 0.0F});
+		satisfyAllNeeds(*getNeeds(colonist));
+		addKnownEntity(colonist, highPos, boxDefId, engine::assets::CapabilityType::Storage);
+		addKnownEntity(colonist, lowPos, boxDefId, engine::assets::CapabilityType::Storage);
+
+		makeUmbrellaGoal(lowBox, lowPos, woodId);
+
+		world->update(0.016F);
+
+		EXPECT_EQ(findPullOption(*getTrace(colonist)), nullptr)
+			<< "a low box must not pull from a higher box";
+	}
+
+	// 4. Conflict, higher dest wins: a Low box holds Wood; a High box and a Critical box both want it.
+	//    The selected option's destination is the Critical box (storagePriorityBias breaks the tie
+	//    within tier 6), deterministically.
+	TEST_F(AIDecisionSystemTest, PullConflictHigherDestinationWins) {
+		auto& registry = engine::assets::AssetRegistry::Get();
+		const uint32_t woodId = registerPullItem(registry, "Wood");
+		registerStorageDef(registry, "Box");
+		const uint32_t boxDefId = registry.getDefNameId("Box");
+
+		const glm::vec2 lowPos{2.0F, 0.0F};
+		const glm::vec2 highPos{4.0F, 0.0F};
+		const glm::vec2 critPos{6.0F, 0.0F};
+		const EntityID lowBox = makeStorageBox(lowPos, "Box", "Wood", ecs::StoragePriority::Low, /*qty=*/10);
+		const EntityID highBox = makeStorageBox(highPos, "Box", "Wood", ecs::StoragePriority::High);
+		const EntityID critBox = makeStorageBox(critPos, "Box", "Wood", ecs::StoragePriority::Critical);
+
+		auto colonist = createColonist({0.0F, 0.0F});
+		satisfyAllNeeds(*getNeeds(colonist));
+		addKnownEntity(colonist, lowPos, boxDefId, engine::assets::CapabilityType::Storage);
+		addKnownEntity(colonist, highPos, boxDefId, engine::assets::CapabilityType::Storage);
+		addKnownEntity(colonist, critPos, boxDefId, engine::assets::CapabilityType::Storage);
+
+		makeUmbrellaGoal(highBox, highPos, woodId);
+		makeUmbrellaGoal(critBox, critPos, woodId);
+
+		world->update(0.016F);
+
+		const auto* selected = getTrace(colonist)->getSelected();
+		ASSERT_NE(selected, nullptr);
+		EXPECT_EQ(selected->haulSourceStorageId, static_cast<uint64_t>(lowBox));
+		EXPECT_EQ(selected->haulTargetStorageId, static_cast<uint64_t>(critBox))
+			<< "the Critical destination outranks the High one within tier 6";
+	}
+
+	// 5. Don't-drain-below-min: source Low box holds 10 Wood with its OWN rule min=8 -> pull qty == 2.
+	TEST_F(AIDecisionSystemTest, PullDoesNotDrainSourceBelowItsMin) {
+		auto& registry = engine::assets::AssetRegistry::Get();
+		const uint32_t woodId = registerPullItem(registry, "Wood");
+		registerStorageDef(registry, "Box");
+		const uint32_t boxDefId = registry.getDefNameId("Box");
+
+		const glm::vec2 lowPos{2.0F, 0.0F};
+		const glm::vec2 highPos{4.0F, 0.0F};
+		makeStorageBox(lowPos, "Box", "Wood", ecs::StoragePriority::Low, /*qty=*/10, /*min=*/8);
+		const EntityID highBox = makeStorageBox(highPos, "Box", "Wood", ecs::StoragePriority::High);
+
+		auto colonist = createColonist({0.0F, 0.0F});
+		satisfyAllNeeds(*getNeeds(colonist));
+		addKnownEntity(colonist, lowPos, boxDefId, engine::assets::CapabilityType::Storage);
+		addKnownEntity(colonist, highPos, boxDefId, engine::assets::CapabilityType::Storage);
+
+		makeUmbrellaGoal(highBox, highPos, woodId);
+
+		world->update(0.016F);
+
+		const auto* pull = findPullOption(*getTrace(colonist));
+		ASSERT_NE(pull, nullptr);
+		EXPECT_EQ(pull->haulQuantity, 2U) << "10 held - 8 source min = 2 drainable";
+	}
+
+	// 6. Don't-overfill: dest High box max=15 already holds 10; source Low box holds 10 -> pull qty == 5.
+	TEST_F(AIDecisionSystemTest, PullDoesNotOverfillDestinationMax) {
+		auto& registry = engine::assets::AssetRegistry::Get();
+		const uint32_t woodId = registerPullItem(registry, "Wood");
+		registerStorageDef(registry, "Box");
+		const uint32_t boxDefId = registry.getDefNameId("Box");
+
+		const glm::vec2 lowPos{2.0F, 0.0F};
+		const glm::vec2 highPos{4.0F, 0.0F};
+		makeStorageBox(lowPos, "Box", "Wood", ecs::StoragePriority::Low, /*qty=*/10);
+		const EntityID highBox =
+			makeStorageBox(highPos, "Box", "Wood", ecs::StoragePriority::High, /*qty=*/10, /*min=*/0, /*max=*/15);
+
+		auto colonist = createColonist({0.0F, 0.0F});
+		satisfyAllNeeds(*getNeeds(colonist));
+		addKnownEntity(colonist, lowPos, boxDefId, engine::assets::CapabilityType::Storage);
+		addKnownEntity(colonist, highPos, boxDefId, engine::assets::CapabilityType::Storage);
+
+		makeUmbrellaGoal(highBox, highPos, woodId);
+
+		world->update(0.016F);
+
+		const auto* pull = findPullOption(*getTrace(colonist));
+		ASSERT_NE(pull, nullptr);
+		EXPECT_EQ(pull->haulQuantity, 5U) << "dest max 15 - 10 already held = 5 room";
+	}
+
+	// 7. Within-tier ordering: a Critical-dest pull and a Low-dest pull -> both at tier 6, the
+	//    Critical-dest pull has the higher score and is Selected.
+	TEST_F(AIDecisionSystemTest, PullCriticalDestinationOutscoresLowWithinTier6) {
+		auto& registry = engine::assets::AssetRegistry::Get();
+		const uint32_t woodId = registerPullItem(registry, "Wood");
+		registerStorageDef(registry, "Box");
+		const uint32_t boxDefId = registry.getDefNameId("Box");
+
+		// One shared Low source feeds BOTH a Medium dest and a Critical dest (Low < both, so each is a
+		// legal pull). Both pulls are tier 6; the Critical destination's bias gives it the higher score.
+		const glm::vec2 lowSrcPos{2.0F, 0.0F};
+		const glm::vec2 medDestPos{4.0F, 0.0F};
+		const glm::vec2 critDestPos{6.0F, 0.0F};
+		makeStorageBox(lowSrcPos, "Box", "Wood", ecs::StoragePriority::Low, /*qty=*/10);
+		const EntityID medBox = makeStorageBox(medDestPos, "Box", "Wood", ecs::StoragePriority::Medium);
+		const EntityID critBox = makeStorageBox(critDestPos, "Box", "Wood", ecs::StoragePriority::Critical);
+
+		auto colonist = createColonist({0.0F, 0.0F});
+		satisfyAllNeeds(*getNeeds(colonist));
+		addKnownEntity(colonist, lowSrcPos, boxDefId, engine::assets::CapabilityType::Storage);
+		addKnownEntity(colonist, medDestPos, boxDefId, engine::assets::CapabilityType::Storage);
+		addKnownEntity(colonist, critDestPos, boxDefId, engine::assets::CapabilityType::Storage);
+
+		makeUmbrellaGoal(medBox, medDestPos, woodId);
+		makeUmbrellaGoal(critBox, critDestPos, woodId);
+
+		world->update(0.016F);
+
+		const auto* medPull = findOption(*getTrace(colonist), [medBox](const EvaluatedOption& o) {
+			return o.haulSourceStorageId != 0 && o.haulTargetStorageId == static_cast<uint64_t>(medBox);
+		});
+		const auto* critPull = findOption(*getTrace(colonist), [critBox](const EvaluatedOption& o) {
+			return o.haulSourceStorageId != 0 && o.haulTargetStorageId == static_cast<uint64_t>(critBox);
+		});
+		ASSERT_NE(medPull, nullptr);
+		ASSERT_NE(critPull, nullptr);
+		EXPECT_EQ(medPull->tier, 6) << "stocking pulls stay at tier 6";
+		EXPECT_EQ(critPull->tier, 6) << "stocking pulls stay at tier 6";
+		EXPECT_GT(critPull->score, medPull->score) << "Critical destination outscores Medium within the tier";
+		EXPECT_EQ(getTrace(colonist)->getSelected()->haulTargetStorageId, static_cast<uint64_t>(critBox));
+	}
+
+	// 8. Discovery-gating: the source box is NOT in any colonist's memory -> no pull option (no god-view).
+	TEST_F(AIDecisionSystemTest, PullRequiresColonyToKnowSourceBox) {
+		auto& registry = engine::assets::AssetRegistry::Get();
+		const uint32_t woodId = registerPullItem(registry, "Wood");
+		registerStorageDef(registry, "Box");
+		const uint32_t boxDefId = registry.getDefNameId("Box");
+
+		const glm::vec2 lowPos{2.0F, 0.0F};
+		const glm::vec2 highPos{4.0F, 0.0F};
+		makeStorageBox(lowPos, "Box", "Wood", ecs::StoragePriority::Low, /*qty=*/10);
+		const EntityID highBox = makeStorageBox(highPos, "Box", "Wood", ecs::StoragePriority::High);
+
+		auto colonist = createColonist({0.0F, 0.0F});
+		satisfyAllNeeds(*getNeeds(colonist));
+		// Knows the DESTINATION box only; the source Low box is deliberately unknown.
+		addKnownEntity(colonist, highPos, boxDefId, engine::assets::CapabilityType::Storage);
+
+		makeUmbrellaGoal(highBox, highPos, woodId);
+
+		world->update(0.016F);
+
+		EXPECT_EQ(findPullOption(*getTrace(colonist)), nullptr)
+			<< "an unknown source box must not be pulled from (no magic discovery)";
 	}
 
 	// The gather-food sentinel (needValue==100, threshold==0, emitted when the colonist has no food
