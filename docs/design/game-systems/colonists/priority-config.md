@@ -8,7 +8,9 @@
 
 ## Overview
 
-Task priority is calculated using a formula with tunable weights. All weights are defined in XML config files, allowing designers to balance the system without code changes.
+Task priority is calculated using a lexicographic `(tier: int, score: float)` key. Tier is compared first (lower number = higher priority) and is inviolable — a far tier-4 option always beats a near tier-5 one. Score orders options within the same tier only. All score weights and tier assignments are defined in `assets/config/work/priority-tuning.xml`, allowing tuning without code changes.
+
+The numeric bands documented below (`Critical 30000`, `Needs 10000`, etc.) **no longer drive AI arbitration** — they have been replaced by the tier integer. The bands and `getBandBase()` survive only for the separate work-type **display-priority** path (the global task list UI), which is unchanged. See [Colonist Task Arbitration](../../../technical/colonist-task-arbitration.md) for the full implementation.
 
 **Design Goal:** Make priority tuning a data-driven process. When testers report "colonists walk too far for low-priority tasks," designers can adjust distance penalties without programmer involvement.
 
@@ -44,47 +46,52 @@ Buildings and entities can be marked with urgency:
 - Affects all tasks that target that goal
 - Players define outcomes ("fill this with stone"), not individual tasks
 
-### How They Combine
+### How They Combine (AI selection)
+
+AI arbitration is a `(tier, score)` key, not a single float. Within the same tier:
 
 ```
-taskPriority = colonistWorkTypePreference  // Bob prefers Farming
-             + goalPriority                // This storage is urgent
-             + distanceBonus               // It's nearby
-             + skillBonus                  // Bob is skilled at this
-             + chainBonus                  // Continuing previous step
-             + situationalBonuses          // Perishable, blocking, etc.
+score = distanceFactor          // dominant; 300*max(0,1-d/60) — nearest source wins
+      + skillBonus              // colonist's skill level for this work type
+      + goalPriority adjustment // urgent storage etc. — within-tier lift only
+      + taskAgeBonus            // stale tasks slowly rise
+      + hysteresisBonus         // +50 on the current in-progress option only
 ```
+
+Chain steps (`servesActiveWorkOrder == true`) are classified at tier 4, not scored higher within tier 6. Work type preference (1-9) affects within-tier ordering for tier 6 opportunistic work.
 
 ---
 
 ## Priority Formula
 
-### Full Formula (Colonist Selection)
+### AI Selection: lexicographic (tier, score)
 
-When a colonist selects their next task:
+When a colonist selects their next task, options are compared as `(tier, score)` pairs. Tier comes from the task type's definition in `priority-tuning.xml <TaskTiers>` (validated at startup; unassigned types fail with an error). Score orders within a tier only:
 
 ```
-finalPriority = basePriority
-              + distanceBonus        // -50 to +50
-              + skillBonus           // 0 to +100
-              + chainBonus           // +2000 if continuing chain
-              + inProgressBonus      // +200 if already doing this
-              + taskAgeBonus         // 0 to +100 (old tasks rise)
+score = distanceFactor      // dominant: 300 * max(0, 1 - d/60) — nearest source wins
+      + skillBonus          // 0 to +100
+      + taskAgeBonus        // 0 to +100 (old tasks rise)
+      + hysteresisBonus     // +50 applied to the in-progress option only (same tier)
 ```
 
-### Simplified Formula (UI Display)
+`chainBonus` (+2000) is gone — a chain step is classified at tier 4 (active work order), not scored higher within tier 6. `inProgressBonus` is gone — it is replaced by the `hysteresisBonus` (50) applied within the same tier only. `kWorkOrderProvisionFloor` and `kStorageStockingFloor` are deleted; tiers make them unnecessary.
 
-For the global task list (no colonist context):
+### Display priority (UI task list only)
+
+For the global task list (no colonist context), a separate display-priority path is unchanged:
 
 ```
 displayPriority = basePriority - (distance * distancePenaltyMultiplier)
 ```
 
+`basePriority` here comes from `getBandBase()` / the `<Bands>` section of `priority-tuning.xml`, which survives solely for this display path.
+
 ---
 
-## Priority Bands (int16)
+## Priority Bands (display path only)
 
-Tasks are grouped into priority bands. Colonist work type preferences (1-9) map into the Work bands.
+These bands are **display-priority only** — they drive the global task list UI, not AI arbitration. AI arbitration uses the tier integer from `<TaskTiers>` instead. Colonist work type preferences (1-9) still map into the Work bands for display purposes.
 
 | Band Name | Base Value | Description |
 |-----------|------------|-------------|
@@ -170,17 +177,15 @@ Formula: `bandBase + (10 - userPriority) * step`
 
   <!-- Bonus calculations -->
   <Bonuses>
-    <!-- Distance bonus: closer tasks score higher -->
+    <!-- Distance factor: dominant within-tier term; nearest source wins -->
     <Distance>
-      <optimalDistance>5.0</optimalDistance>
-      <maxPenaltyDistance>50.0</maxPenaltyDistance>
-      <maxBonus>50</maxBonus>
-      <maxPenalty>50</maxPenalty>
-      <formula>
-        <!-- At optimalDistance: +maxBonus
-             At maxPenaltyDistance: -maxPenalty
-             Linear interpolation between -->
-      </formula>
+      <formula>300 * max(0, 1 - distance / 60)</formula>
+      <description>
+        Yields 0-300 across the working range (~60m). Dominates skill and age
+        so that the nearest reachable source reliably wins within a tier.
+        Replaces the old -50..+50 distanceBonus, which was too narrow relative
+        to the skill/age terms and allowed distant tasks to win via bonuses.
+      </description>
     </Distance>
 
     <!-- Skill bonus: skilled colonists prefer work they're good at -->
@@ -190,21 +195,26 @@ Formula: `bandBase + (10 - userPriority) * step`
       <formula>min(skillLevel * multiplier, maxBonus)</formula>
     </Skill>
 
-    <!-- Chain continuation: strongly prefer finishing multi-step tasks -->
+    <!-- Chain continuation: chain steps are classified at tier 4 (active work order),
+         not scored higher within tier 6. The +2000 score term is deleted;
+         servesActiveWorkOrder == true drives the tier assignment instead. -->
     <ChainContinuation>
-      <bonus>2000</bonus>
+      <bonus>0</bonus>
       <description>
-        Applied when colonist completed previous step of same chain.
-        This ensures pickup → deposit stays together.
+        SUPERSEDED: chain bonus is now a tier-4 classification, not a score term.
+        A provisioning haul/harvest with servesActiveWorkOrder=true is assigned
+        tier 4 rather than tier 6; no score inflation needed or applied.
       </description>
     </ChainContinuation>
 
-    <!-- In-progress: resist switching away from current task -->
+    <!-- In-progress: within-tier hysteresis margin (replaces the old cross-tier bonus) -->
     <InProgress>
-      <bonus>200</bonus>
+      <bonus>50</bonus>
       <description>
-        Applied to current task to prevent minor priority fluctuations
-        from causing constant task switching.
+        Applied to the currently in-progress option when comparing within the same tier.
+        Prevents thrashing on small score differences. A same-tier challenger must
+        exceed the in-progress option's score by this margin to trigger a switch.
+        This is the taskSwitchThreshold from Thresholds (kept in sync).
       </description>
     </InProgress>
 
@@ -221,13 +231,14 @@ Formula: `bandBase + (10 - userPriority) * step`
 
   <!-- Thresholds and timings -->
   <Thresholds>
-    <!-- Minimum priority gap to switch tasks while action in progress -->
+    <!-- Within-tier hysteresis margin: same-tier challenger must exceed in-progress
+         option's score by this amount to trigger a switch. Matches InProgress.bonus. -->
     <taskSwitchThreshold>50</taskSwitchThreshold>
 
-    <!-- How often colonists re-evaluate tasks (seconds) -->
+    <!-- How often colonists re-evaluate tasks (seconds) — unchanged -->
     <reEvalInterval>0.5</reEvalInterval>
 
-    <!-- Reservation timeout: release if no progress (seconds) -->
+    <!-- Reservation timeout: release if no progress (seconds) — unchanged -->
     <reservationTimeout>10.0</reservationTimeout>
   </Thresholds>
 
@@ -255,33 +266,24 @@ Formula: `bandBase + (10 - userPriority) * step`
 
 ## Bonus Details
 
-### Distance Bonus
+### Distance factor
 
-Encourages colonists to do nearby work first.
+The dominant within-tier term; nearest reachable source wins.
 
 ```cpp
-int16_t calculateDistanceBonus(float distance, const DistanceConfig& config) {
-    if (distance <= config.optimalDistance) {
-        return config.maxBonus;  // +50 for very close
-    }
-
-    if (distance >= config.maxPenaltyDistance) {
-        return -config.maxPenalty;  // -50 for very far
-    }
-
-    // Linear interpolation
-    float range = config.maxPenaltyDistance - config.optimalDistance;
-    float normalized = (distance - config.optimalDistance) / range;
-    return static_cast<int16_t>(config.maxBonus - normalized * (config.maxBonus + config.maxPenalty));
+float distanceFactor(float distance) {
+    return 300.0f * std::max(0.0f, 1.0f - distance / 60.0f);
 }
 ```
 
 **Examples:**
-- 3m away: +50 (optimal)
-- 15m away: +25
-- 30m away: 0
-- 45m away: -25
-- 50m+ away: -50 (max penalty)
+- 0m away: 300 (maximum)
+- 15m away: 225
+- 30m away: 150
+- 45m away: 75
+- 60m+ away: 0
+
+The old `±50 distanceBonus` range was too narrow relative to the skill/age terms; a high-skill colonist could prefer a tree 70m away over an adjacent one. The new range (0-300) dominates skill (0-100) and age (0-100), so the nearest source reliably wins within a tier.
 
 ### Skill Bonus
 
@@ -302,26 +304,11 @@ int16_t calculateSkillBonus(float skillLevel, const SkillConfig& config) {
 - Skill level 8: +80
 - Skill level 10+: +100 (capped)
 
-### Chain Continuation Bonus
+### Chain continuation
 
-Keeps multi-step tasks together. A colonist who picked up an item strongly prefers depositing it.
+Chain steps are kept together by tier classification, not score inflation. Any haul or harvest task with `servesActiveWorkOrder == true` is assigned tier 4 (active work order). Since tier 4 beats tier 5 (actionable needs) and tier 6 (opportunistic work), chain steps stay bound to their parent order without a score term. The old `+2000 chainBonus` is deleted.
 
-```cpp
-int16_t calculateChainBonus(
-    const Task& currentTask,
-    const GlobalTask& candidateTask,
-    const ChainConfig& config
-) {
-    // Must be same chain, and candidate is next step
-    if (currentTask.chainId == candidateTask.chainId &&
-        candidateTask.chainStep == currentTask.chainStep + 1) {
-        return config.bonus;  // +2000
-    }
-    return 0;
-}
-```
-
-**Effect:** The +2000 bonus is larger than most band differences, ensuring chain completion unless interrupted by Critical needs.
+**Effect:** A colonist finishing a provisioning haul cannot be pulled away by a non-critical need or an opportunistic task, because the chain step is tier 4 and those alternatives are tier 5 or tier 6.
 
 ### Task Age Bonus
 

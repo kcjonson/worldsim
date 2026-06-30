@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-29 (Colonist gameplay stabilization complete and merged (#241): grass is now a first-class GPU-instanced groundcover role driven by a procedural Lua asset (24 variants, ~486k tufts @ 120fps/1.75ms), placed entities no longer randomly tilt (opt-in <randomRotation>), and the EntityRenderer god-class was decomposed into per-path renderers. Story 0 of Living Environment Rendering; M-A wind next. See dev log 2026-06-27-groundcover-render-path.md. Earlier: Worldgen M7 complete: input-validation envelope + fail-loud reason channel, golden full-pipeline worldHash gate that turns dual-platform CI into a cross-platform determinism check (+ worldgen-cli --expect-hash), and a benchmark-calibrated default resolution (gen-time sweep on the reference machine; kept n=1024 as a documented kDefaultGridSubdivision). Closes the last engineering task of the World Generation & Creator epic; only the deferred planet-DB streaming and landing-difficulty UX remain. See dev log 2026-06-26-worldgen-m7-hardening.md. Earlier: Physical carry & stacks epics complete and merged (#218/#219/#224/#228/#230/#232/#233): two-hand wood armfuls + strength-derived carry, then a universal physical "stack" model -- one material capped at its own stackSize everywhere -- plus construction sites that hold their required materials directly and dump to the ground on demolish. See dev log 2026-06-26-physical-stack-inventory.md and plan 2026-06-26-bulk-material-carry-felling.md. Earlier: 2D landscape from 3D hydrology epic complete and merged (#212) -- replaced the noise-flood ponds with sparse biome/precip-weighted ponds + desert oases, implemented Distribution::Spaced with grove/glade/thicket clustering for denser natural forests, and fixed riparian plants (reeds on the mud bank + bankside bushes); follows the merged 2D rivers #208 and tributaries/springs #210. See dev log 2026-06-22-hydrology-ponds-and-proper-forests.md. Earlier: Realistic chained build loop: mass-based carry weight + axe-gated chopping + wood-unit tree harvesting; the colonist chops to its carry cap, hauls, repeats, then builds. Plus the task-chaining UI/AI fixes found verifying it (in-progress-work priority calc, friendly labels, full-width info-panel task lines, "Next" chain step, build-progress percent + on-map fill, global task list Build umbrella + who's-working-it) — see dev log 2026-06-20-carry-weight-axe-gated-harvest.md. Earlier on main: Asset Manager epic #205 (dev log 2026-06-20-asset-manager.md), Cryosphere #199, Navigation P4 belief filtering #189/#191/#194, Vision System #172-184, Salvage UI cutover #176-181)
+Last Updated: 2026-06-29 (Colonist task arbitration complete: (tier,score) key, 7-tier ladder, job lifecycle, TaskListView inspector, 879 engine-tests green, combined four-scenario flow verified end-to-end. Earlier: Colonist gameplay stabilization complete and merged (#241): grass is now a first-class GPU-instanced groundcover role driven by a procedural Lua asset (24 variants, ~486k tufts @ 120fps/1.75ms), placed entities no longer randomly tilt (opt-in <randomRotation>), and the EntityRenderer god-class was decomposed into per-path renderers. Story 0 of Living Environment Rendering; M-A wind next. See dev log 2026-06-27-groundcover-render-path.md. Earlier: Worldgen M7 complete: input-validation envelope + fail-loud reason channel, golden full-pipeline worldHash gate that turns dual-platform CI into a cross-platform determinism check (+ worldgen-cli --expect-hash), and a benchmark-calibrated default resolution (gen-time sweep on the reference machine; kept n=1024 as a documented kDefaultGridSubdivision). Closes the last engineering task of the World Generation & Creator epic; only the deferred planet-DB streaming and landing-difficulty UX remain. See dev log 2026-06-26-worldgen-m7-hardening.md. Earlier: Physical carry & stacks epics complete and merged (#218/#219/#224/#228/#230/#232/#233): two-hand wood armfuls + strength-derived carry, then a universal physical "stack" model -- one material capped at its own stackSize everywhere -- plus construction sites that hold their required materials directly and dump to the ground on demolish. See dev log 2026-06-26-physical-stack-inventory.md and plan 2026-06-26-bulk-material-carry-felling.md. Earlier: 2D landscape from 3D hydrology epic complete and merged (#212) -- replaced the noise-flood ponds with sparse biome/precip-weighted ponds + desert oases, implemented Distribution::Spaced with grove/glade/thicket clustering for denser natural forests, and fixed riparian plants (reeds on the mud bank + bankside bushes); follows the merged 2D rivers #208 and tributaries/springs #210. See dev log 2026-06-22-hydrology-ponds-and-proper-forests.md. Earlier: Realistic chained build loop: mass-based carry weight + axe-gated chopping + wood-unit tree harvesting; the colonist chops to its carry cap, hauls, repeats, then builds. Plus the task-chaining UI/AI fixes found verifying it (in-progress-work priority calc, friendly labels, full-width info-panel task lines, "Next" chain step, build-progress percent + on-map fill, global task list Build umbrella + who's-working-it) — see dev log 2026-06-20-carry-weight-axe-gated-harvest.md. Earlier on main: Asset Manager epic #205 (dev log 2026-06-20-asset-manager.md), Cryosphere #199, Navigation P4 belief filtering #189/#191/#194, Vision System #172-184, Salvage UI cutover #176-181)
 
 ## Epic/Story/Task Template
 
@@ -27,6 +27,24 @@ Use this template for all work items:
 ---
 
 ## Recently Completed Epics (Last 4)
+
+### ✅ Colonist task arbitration
+**Spec/Documentation:** `docs/technical/colonist-task-arbitration.md`
+**Dependencies:** Colonist gameplay stabilization (complete), Goal-Driven Task Generation (in progress)
+**Status:** complete (3 commits on this branch)
+
+**Goal:** Replace the drifted additive-float priority with a lexicographic `(tier, score)` key; add a job-lifecycle model so a colonist commits to an active work order across distractions.
+
+**Tasks:**
+- [x] Implement the `(tier, score)` lexicographic arbitrator in AIDecisionSystem
+- [x] 7-tier ladder classification for all action types (tiers in `assets/config/work/priority-tuning.xml <TaskTiers>`, fail-loud startup validation)
+- [x] Within-tier score: distanceFactor (300*max(0,1-d/60), dominant), skillBonus, taskAgeBonus, hysteresis margin (50)
+- [x] Job lifecycle: harvest locate-by-entity-id (kills phantom loop); StorageGoalSystem retires stale stocking-harvests; floor constants deleted
+- [x] TaskListView inspector: tier/score/breakdown/selectionSummary, live update, T hotkey
+- [x] Acceptance: combined four-scenario flow end-to-end, zero phantom harvest-loops, zero queued-job stalls, 879 engine-tests green
+- [x] Docs updated (this file, ai-behavior.md, priority-config.md, colonist-task-arbitration.md, dev log entry)
+
+**Result:** Lexicographic arbitration restored; phantom harvest-loop and queued-job stall fixed. Follow-ups: packaged-furniture lifecycle + findValidPositionNear; stocking re-arm / discovery-gating. ✅
 
 ### ✅ Colonist gameplay stabilization (craft → harvest → construction loop)
 **Spec/Documentation:** dev log `2026-06-29-colonist-gameplay-stabilization.md`; arbitration spec `docs/technical/colonist-task-arbitration.md`; testing suite `docs/testing/`
@@ -80,22 +98,6 @@ Use this template for all work items:
 - [x] Riparian plants: reeds on the mud bank (`near="Mud"`, mud now forms on sand too); bankside berry/woody bushes in forest biomes (#212)
 
 **Result:** The 2D world now grows rivers, sparse ponds, desert oases, clustered forests, and waterside plants from the 3D hydrology/biome data. Self-review on #212 fixed 4/5 findings; the 5th (cross-chunk Spaced spacing) is filed as Worldsim bug `e0c87da0`. Follow-ups: pond inlet/outlet streams, water-loving riparian trees. ✅
-
-### ✅ Asset Manager (shared render path, validation, CLI, async splash, designer GUI)
-**Spec/Documentation:** `/docs/design/features/asset-manager/`, `/docs/technical/asset-manager/`, `/docs/development-log/entries/2026-06-20-asset-manager.md`
-**Dependencies:** None
-**Status:** complete (merged PR #205; Phases 1-4 merged earlier)
-
-**Goal:** Standalone tool to browse, inspect, validate, and render the asset library through the game's own render path, with a designer GUI and a headless CLI over one shared core.
-
-**Completed Tasks:**
-- [x] Phase 1: Shared render path (renderer MeshBounds computeBounds/fitToRect; AssetRegistry::buildMesh; assets AssetRenderer prepare + renderToPixels/Png; foundation PngEncoder + DebugServer refactor; determinism + fidelity tests)
-- [x] Phase 2: Load-time validation (AssetValidator + ValidationReport: missing refs, duplicate defNames, name/folder mismatch, ignored fields, variantCount drift, bad assetType, orphan SVGs; validates on load via getValidationReport; full GL render smoke deferred to the CLI)
-- [x] Phase 3: Headless CLI (apps/asset-cli: list/search/inspect/validate/render; --json; exit codes; server-less for parallel runs; render via hidden GL context; getExecutableDir implemented on Windows so resources resolve regardless of cwd)
-- [x] Phase 4: Async loading + splash (AssetRegistry::beginLoadAsync worker thread + LoadProgress; AppConfig.loadAssetsAsync, async only on the default splash path, synchronous on a --scene override; splash polls progress, transitions to the menu on clean load, or blocks with an error summary on validation errors)
-- [x] Phase 5: GUI (apps/asset-manager: master-detail browser, category tree with per-row thumbnails on the left, detail pane on the right showing the faithful preview, metadata, per-asset validation warnings, and the asset's XML config; search filter, collapsible groups, reload; built from libs/ui components against scoped prototype design tokens; sandbox/asset-manager moved to their own debug ports 8090/8070)
-
-**Result:** One shared defName+seed render path (tessellator + BatchRenderer, never the CPU rasterizer) under a headless CLI and a dogfooded libs/ui designer GUI; assets validate on load and the splash gates on errors. Follow-ups: procedural sample-and-refresh strip, SDF font atlases for the prototype typefaces. ✅
 
 ### ✅ Dev/Test Tools (HTTP verbs + developer-client tab)
 **Spec/Documentation:** `/docs/development-log/entries/2026-06-16-dev-tools-api-and-tab.md`, `/docs/development-log/plans/2026-06-16-dev-tools-api-and-tab.md`
@@ -850,23 +852,6 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 ---
 
 ## Planned Epics
-
-### Colonist Task Arbitration
-**Spec/Documentation:** `docs/technical/colonist-task-arbitration.md`
-**Dependencies:** Colonist gameplay stabilization (complete), Goal-Driven Task Generation (in progress)
-**Status:** ready (spec complete, Specboard epic filed)
-
-**Goal:** Restore the documented lexicographic `(tier, score)` priority hierarchy the code drifted from, and add a job-lifecycle model so a colonist commits to an active work order across distractions (harvest, haul, build, craft all complete reliably without being abandoned mid-chain).
-
-**Tasks:**
-- [ ] Implement the `(tier, score)` lexicographic arbitrator in AIDecisionSystem
-- [ ] Restore documented priority tier assignments for all action types
-- [ ] Job-lifecycle: a colonist in an active work order stays committed until completion or explicit interrupt
-- [ ] Retire stale haul/harvest jobs when their source target is consumed or unreachable
-- [ ] Fold in stale-stocking-harvest retirement (currently loops on consumed stock)
-- [ ] Verify all four gameplay scenarios still pass the docs/testing/ regression suite
-
----
 
 ### UI Scale setting
 **Spec/Documentation:** `docs/design/ui/ui-scale-setting.md`

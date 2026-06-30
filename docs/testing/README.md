@@ -19,8 +19,9 @@ for the fixed-bug repro checklist.
 | 04 | Build walls | [scenarios/04-build-walls.md](./scenarios/04-build-walls.md) |
 
 **Run each scenario in isolation** from a fresh launch, or use `give` / `need` dev verbs to
-set preconditions from a running instance. The fully-combined four-scenario flow is not yet
-reliable; see [Known-open caveats](#known-open-caveats) below.
+set preconditions from a running instance. The fully-combined four-scenario flow now runs
+reliably end-to-end with one colonist; see [Known-open caveats](#known-open-caveats) for
+remaining cosmetic issues.
 
 ---
 
@@ -41,7 +42,7 @@ Unit tests (independent of the scenario suite):
 ```powershell
 cmake --build build --config Debug --target engine-tests
 build\libs\engine\Debug\engine-tests.exe
-# currently 872 green
+# currently 879 green
 ```
 
 ### Pre-generated world
@@ -170,9 +171,11 @@ curl.exe "http://127.0.0.1:<PORT>/api/dev/need?colonist=<id>&need=Energy&value=9
 
 These are **open bugs**, not test failures. Do not flag them as regressions.
 
-- **Combined flow unreliable.** Running all four scenarios back-to-back with one colonist is not
-  yet reliable — blocked by a phantom harvest-loop, a harvest snap/find-tolerance mismatch on
-  dense or large trees, and an AI-arbitration issue with queued jobs. Run scenarios individually
-  (fresh launch per scenario, or set preconditions with `give`/`need`).
+- **Combined flow: reliable as of 2026-06-29.** The phantom harvest-loop and queued-job stall
+  are fixed (colonist task arbitration epic). Running all four scenarios back-to-back with one
+  colonist now completes end-to-end.
 - **Crafted box placement.** A freshly crafted `BasicBox` lands on the crafting station
-  (cosmetic; the box is still usable).
+  (cosmetic; the box is still usable). `findValidPositionNear` follow-up in flight.
+- **Box won't fill to full minimum unaided.** Once the colonist exhausts the trees he's
+  discovered, the storage box stalls below its minimum — the system needs to re-arm harvest
+  goals when new trees are discovered. Discovery-gating follow-up in flight.

@@ -1,7 +1,9 @@
 # Colonist Task Arbitration
 
-Status: Spec (planning)
+Status: Implemented (2026-06-29)
 Created: 2026-06-29
+
+Landed across 3 commits; 879 engine-tests green; combined four-scenario flow verified end-to-end. Discovery-gating stocking re-arm and packaged-furniture placement are tracked as follow-ups.
 
 This spec **restores the documented decision hierarchy** — it is not a new architecture. The
 categorical tier ordering was already designed in
