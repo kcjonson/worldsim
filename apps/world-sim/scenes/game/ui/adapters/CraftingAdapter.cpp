@@ -4,7 +4,9 @@
 #include <assets/AssetRegistry.h>
 #include <ecs/components/Inventory.h>
 #include <ecs/components/Memory.h>
+#include <ecs/components/StorageConfiguration.h>
 #include <ecs/components/WorkQueue.h>
+#include <ecs/systems/GoalSystemHelpers.h>
 
 #include <sstream>
 #include <utility>
@@ -25,35 +27,9 @@ namespace {
 	}
 } // namespace
 
-std::unordered_set<uint32_t> collectObtainableMaterials(ecs::World& world) {
+std::unordered_set<uint32_t> collectMemorySources(ecs::World& world) {
 	auto&						 registry = engine::assets::AssetRegistry::Get();
 	std::unordered_set<uint32_t> obtainable;
-
-	// Already-held stock: items in any inventory (storage or colonist backpack), plus items
-	// actively held in hand (unless the hands carry a packaged entity, which is furniture in
-	// transit, not a raw material).
-	for (auto [entity, inventory] : world.view<ecs::Inventory>()) {
-		(void)entity;
-		for (const auto& stack : inventory.items) {
-			if (stack.quantity == 0) {
-				continue;
-			}
-			const uint32_t id = registry.getDefNameId(stack.defName);
-			if (id != 0) {
-				obtainable.insert(id);
-			}
-		}
-		if (!inventory.carryingPackagedEntity.has_value()) {
-			for (const ecs::ItemStack* hand : {inventory.getLeftHand(), inventory.getRightHand()}) {
-				if (hand != nullptr && hand->quantity > 0) {
-					const uint32_t id = registry.getDefNameId(hand->defName);
-					if (id != 0) {
-						obtainable.insert(id);
-					}
-				}
-			}
-		}
-	}
 
 	// Known sources in any colonist's Memory: a discovered loose carryable of a type, or a
 	// discovered harvestable whose yield is that type. Iterate the per-capability index sets
@@ -84,6 +60,107 @@ std::unordered_set<uint32_t> collectObtainableMaterials(ecs::World& world) {
 	}
 
 	return obtainable;
+}
+
+std::unordered_set<uint32_t> collectInventorySources(
+	ecs::World& world, const std::function<bool(ecs::EntityID, const ecs::Inventory&)>& accept
+) {
+	auto&						 registry = engine::assets::AssetRegistry::Get();
+	std::unordered_set<uint32_t> obtainable;
+
+	// Already-held stock: items in any inventory (storage or colonist backpack), plus items
+	// actively held in hand (unless the hands carry a packaged entity, which is furniture in
+	// transit, not a raw material). An inventory only contributes when `accept` admits it; the
+	// always-true predicate reproduces the unconditional scan crafting relies on.
+	for (auto [entity, inventory] : world.view<ecs::Inventory>()) {
+		if (!accept(entity, inventory)) {
+			continue;
+		}
+		for (const auto& stack : inventory.items) {
+			if (stack.quantity == 0) {
+				continue;
+			}
+			const uint32_t id = registry.getDefNameId(stack.defName);
+			if (id != 0) {
+				obtainable.insert(id);
+			}
+		}
+		if (!inventory.carryingPackagedEntity.has_value()) {
+			for (const ecs::ItemStack* hand : {inventory.getLeftHand(), inventory.getRightHand()}) {
+				if (hand != nullptr && hand->quantity > 0) {
+					const uint32_t id = registry.getDefNameId(hand->defName);
+					if (id != 0) {
+						obtainable.insert(id);
+					}
+				}
+			}
+		}
+	}
+
+	return obtainable;
+}
+
+std::unordered_set<uint32_t> collectObtainableMaterials(ecs::World& world) {
+	std::unordered_set<uint32_t> obtainable = collectMemorySources(world);
+	const auto inventory = collectInventorySources(world, [](ecs::EntityID, const ecs::Inventory&) { return true; });
+	obtainable.insert(inventory.begin(), inventory.end());
+	return obtainable;
+}
+
+bool isStorageSourceKnown(ecs::World& world, ecs::EntityID destBox, const std::string& itemDefName) {
+	auto&		   registry = engine::assets::AssetRegistry::Get();
+	const uint32_t itemId = registry.getDefNameId(itemDefName);
+	if (itemId == 0) {
+		return false;
+	}
+
+	// A loose pile or a known harvestable's yield satisfies the pull straight from Memory.
+	if (collectMemorySources(world).count(itemId) > 0) {
+		return true;
+	}
+
+	// Otherwise the engine pull only sources from a STRICTLY-lower-priority box the colony KNOWS.
+	// Mirror evaluateHaulOptions' source gate exactly: same item, strict-< getPriorityFor on the
+	// item's category, colonyKnowsStorageEntity. getPriorityFor falls back to Low for an
+	// unconfigured box, so an unknown-priority box holding the item is a valid lower source.
+	const auto* itemDef = registry.getDefinition(itemDefName);
+	if (itemDef == nullptr) {
+		return false;
+	}
+	const engine::assets::ItemCategory category = itemDef->category;
+
+	const auto* destConfig = world.getComponent<ecs::StorageConfiguration>(destBox);
+	if (destConfig == nullptr) {
+		return false;
+	}
+	const ecs::StoragePriority destPriority = destConfig->getPriorityFor(itemDefName, category);
+
+	const auto known = collectInventorySources(
+		world,
+		[&](ecs::EntityID source, const ecs::Inventory& inv) {
+			if (source == destBox) {
+				return false;
+			}
+			if (inv.getQuantity(itemDefName) == 0) {
+				return false;
+			}
+			const auto* srcConfig = world.getComponent<ecs::StorageConfiguration>(source);
+			if (srcConfig == nullptr) {
+				return false;
+			}
+			const ecs::StoragePriority srcPriority = srcConfig->getPriorityFor(itemDefName, category);
+			if (!(static_cast<uint8_t>(srcPriority) < static_cast<uint8_t>(destPriority))) {
+				return false;
+			}
+			// Mirror the engine's drainable gate: a box pinned exactly at its configured
+			// minimum has nothing to give, so it must not show as a valid source.
+			if (inv.getQuantity(itemDefName) <= srcConfig->getMinAmountFor(itemDefName, category)) {
+				return false;
+			}
+			return ecs::colonyKnowsStorageEntity(&world, registry, source);
+		}
+	);
+	return known.count(itemId) > 0;
 }
 
 bool isMaterialObtainable(const std::unordered_set<uint32_t>& obtainable, const std::string& itemDefName) {

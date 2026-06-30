@@ -16,7 +16,7 @@ namespace {
 namespace world_sim {
 
 	StorageConfigDialog::StorageConfigDialog(const Args& args)
-		: onCloseCallback(args.onClose) {
+		: onCloseCallback(args.onClose), onNotifyCallback(args.onNotify) {
 		createDialog();
 	}
 
@@ -142,6 +142,18 @@ namespace world_sim {
 
 		// Refresh model data
 		auto updateType = model.refresh(world, registry);
+
+		// Toast once per (container, item) for any specific-item rule that just lost its known
+		// source. The model de-dupes; we only resolve a label and push the warning.
+		if (onNotifyCallback) {
+			for (const auto& defName : model.newlyUnknownSourceItems()) {
+				const auto* def = registry.getDefinition(defName);
+				const std::string label = (def != nullptr && !def->label.empty()) ? def->label : defName;
+				onNotifyCallback(
+					"No known source", label + " - no colonist has seen a source. Take direct control to fetch it."
+				);
+			}
+		}
 
 		// Build initial content after first model refresh
 		if (needsInitialRebuild) {
@@ -666,10 +678,11 @@ namespace world_sim {
 						details += ", Unlimited";
 					}
 
-					// Rule row
+					// Rule row. Specific-item rules carry an extra source-known line, so they're taller.
+					const bool showSourceLine = !rule.isWildcard;
 					auto ruleRow = UI::LayoutContainer(
 						UI::LayoutContainer::Args{
-							.size = {kRightColumnWidth - 32, 48},
+							.size = {kRightColumnWidth - 32, showSourceLine ? 64.0F : 48.0F},
 							.direction = UI::Direction::Vertical,
 							.hAlign = UI::HAlign::Left,
 							.vAlign = UI::VAlign::Top,
@@ -690,6 +703,23 @@ namespace world_sim {
 							}
 						)
 					);
+
+					// Source-known affordance: same green [OK] / red [X] treatment as crafting's
+					// material lines. Only specific-item rules name a single item to source; a
+					// wildcard names none, so it shows nothing.
+					if (showSourceLine) {
+						const std::string sourceLine =
+							rule.knownSource ? "Source known [OK]" : "No known source [X]";
+						ruleRow.addChild(
+							UI::Text(
+								UI::Text::Args{
+									.text = sourceLine,
+									.style = {.color = rule.knownSource ? UI::status_ok : UI::status_crit, .fontSize = 10},
+									.margin = 1.0F
+								}
+							)
+						);
+					}
 
 					// Delete button on the side
 					size_t ruleIndex = rule.ruleIndex;

@@ -63,7 +63,7 @@ namespace ecs {
 		static constexpr size_t kMaxWorldEntities = 10000;
 
 		/// Number of capability types (must match AssetRegistry::kCapabilityTypeCount)
-		static constexpr size_t kCapabilityTypeCount = 7;
+		static constexpr size_t kCapabilityTypeCount = 9;
 
 		// --- Owner ---
 
@@ -144,7 +144,7 @@ namespace ecs {
 		/// @param defNameId Asset definition ID from AssetRegistry::getDefNameId()
 		/// @param capabilityMask Bitmask of capabilities from AssetRegistry::getCapabilityMask()
 		/// @return true if this was a NEW discovery, false if already known (just touched LRU)
-		bool rememberWorldEntity(const glm::vec2& position, uint32_t defNameId, uint8_t capabilityMask) {
+		bool rememberWorldEntity(const glm::vec2& position, uint32_t defNameId, uint16_t capabilityMask) {
 			// Skip entities with no capabilities - they're purely decorative (grass, etc.)
 			// and have no gameplay relevance for colonist decision-making
 			if (capabilityMask == 0) {
@@ -189,7 +189,7 @@ namespace ecs {
 			if (defNameId == 0) {
 				return; // Unknown defName
 			}
-			uint8_t capabilityMask = registry.getCapabilityMask(defNameId);
+			uint16_t capabilityMask = registry.getCapabilityMask(defNameId);
 			rememberWorldEntity(position, defNameId, capabilityMask);
 		}
 

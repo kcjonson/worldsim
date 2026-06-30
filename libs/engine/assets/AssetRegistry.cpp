@@ -21,34 +21,35 @@ namespace engine::assets {
 
 	namespace {
 		/// Pack a definition's present capabilities into the bitmask the interning index stores.
-		[[nodiscard]] uint8_t computeCapabilityMask(const AssetDefinition& def) {
-			uint8_t mask = 0;
+		/// 16-bit: there are 9 capability types and Storage is bit 8, which overflows a uint8_t.
+		[[nodiscard]] uint16_t computeCapabilityMask(const AssetDefinition& def) {
+			uint16_t mask = 0;
 			if (def.capabilities.edible.has_value()) {
-				mask |= (1 << static_cast<uint8_t>(CapabilityType::Edible));
+				mask |= static_cast<uint16_t>(1U << static_cast<uint8_t>(CapabilityType::Edible));
 			}
 			if (def.capabilities.drinkable.has_value()) {
-				mask |= (1 << static_cast<uint8_t>(CapabilityType::Drinkable));
+				mask |= static_cast<uint16_t>(1U << static_cast<uint8_t>(CapabilityType::Drinkable));
 			}
 			if (def.capabilities.sleepable.has_value()) {
-				mask |= (1 << static_cast<uint8_t>(CapabilityType::Sleepable));
+				mask |= static_cast<uint16_t>(1U << static_cast<uint8_t>(CapabilityType::Sleepable));
 			}
 			if (def.capabilities.toilet.has_value()) {
-				mask |= (1 << static_cast<uint8_t>(CapabilityType::Toilet));
+				mask |= static_cast<uint16_t>(1U << static_cast<uint8_t>(CapabilityType::Toilet));
 			}
 			if (def.capabilities.waste.has_value()) {
-				mask |= (1 << static_cast<uint8_t>(CapabilityType::Waste));
+				mask |= static_cast<uint16_t>(1U << static_cast<uint8_t>(CapabilityType::Waste));
 			}
 			if (def.capabilities.carryable.has_value()) {
-				mask |= (1 << static_cast<uint8_t>(CapabilityType::Carryable));
+				mask |= static_cast<uint16_t>(1U << static_cast<uint8_t>(CapabilityType::Carryable));
 			}
 			if (def.capabilities.harvestable.has_value()) {
-				mask |= (1 << static_cast<uint8_t>(CapabilityType::Harvestable));
+				mask |= static_cast<uint16_t>(1U << static_cast<uint8_t>(CapabilityType::Harvestable));
 			}
 			if (def.capabilities.craftable.has_value()) {
-				mask |= (1 << static_cast<uint8_t>(CapabilityType::Craftable));
+				mask |= static_cast<uint16_t>(1U << static_cast<uint8_t>(CapabilityType::Craftable));
 			}
 			if (def.capabilities.storage.has_value()) {
-				mask |= (1 << static_cast<uint8_t>(CapabilityType::Storage));
+				mask |= static_cast<uint16_t>(1U << static_cast<uint8_t>(CapabilityType::Storage));
 			}
 			return mask;
 		}
@@ -1604,7 +1605,7 @@ namespace engine::assets {
 		return kEmptyString;
 	}
 
-	uint8_t AssetRegistry::getCapabilityMask(uint32_t id) const {
+	uint16_t AssetRegistry::getCapabilityMask(uint32_t id) const {
 		if (id < m_capabilityMasks.size()) {
 			return m_capabilityMasks[id];
 		}
@@ -1612,8 +1613,8 @@ namespace engine::assets {
 	}
 
 	bool AssetRegistry::hasCapability(uint32_t id, CapabilityType capability) const {
-		uint8_t mask = getCapabilityMask(id);
-		return (mask & (1 << static_cast<uint8_t>(capability))) != 0;
+		uint16_t mask = getCapabilityMask(id);
+		return (mask & static_cast<uint16_t>(1U << static_cast<uint8_t>(capability))) != 0;
 	}
 
 	float AssetRegistry::getItemMassKg(const std::string& defName) const {
@@ -1634,7 +1635,7 @@ namespace engine::assets {
 		return kEmptyString;
 	}
 
-	uint32_t AssetRegistry::registerSyntheticDefinition(const std::string& defName, uint8_t capabilityMask) {
+	uint32_t AssetRegistry::registerSyntheticDefinition(const std::string& defName, uint16_t capabilityMask) {
 		// Check if already registered
 		auto it = m_defNameToId.find(defName);
 		if (it != m_defNameToId.end()) {
@@ -1647,7 +1648,7 @@ namespace engine::assets {
 		m_idToDefName.push_back(defName);
 		m_capabilityMasks.push_back(capabilityMask);
 
-		LOG_DEBUG(Engine, "Registered synthetic definition '%s' with ID %u, capabilities 0x%02X", defName.c_str(), newId, capabilityMask);
+		LOG_DEBUG(Engine, "Registered synthetic definition '%s' with ID %u, capabilities 0x%04X", defName.c_str(), newId, capabilityMask);
 
 		return newId;
 	}
@@ -1658,7 +1659,7 @@ namespace engine::assets {
 
 	void AssetRegistry::registerTestDefinition(AssetDefinition def) {
 		std::string defName = def.defName;
-		const uint8_t mask = computeCapabilityMask(def);
+		const uint16_t mask = computeCapabilityMask(def);
 		definitions[defName] = std::move(def);
 
 		// Assign the interning id by APPENDING, never by rebuilding the whole index. A full rebuild

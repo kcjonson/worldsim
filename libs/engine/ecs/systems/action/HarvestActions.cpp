@@ -86,6 +86,51 @@ namespace ecs {
 
 		uint32_t added = 0;
 
+		// Storage-to-storage pull (ActionType::Withdraw): take the item OUT of the source box's
+		// Inventory, not a ground entity. removeItem clamps to the box's live quantity, so a concurrent
+		// second colonist that beat us to it just withdraws less and the AI re-evaluates next tick -- the
+		// same self-correcting race handling the loose pickup relies on. Add exactly what we removed to
+		// the colonist (sized by carry weight + slots via `wanted`). This intercepts before every ground
+		// path; a Withdraw never touches a pile, pool, or single-shot source.
+		if (collEff.sourceStorageId != 0) {
+			const auto sourceBox = static_cast<EntityID>(collEff.sourceStorageId);
+			auto*	   sourceInv = world != nullptr ? world->getComponent<Inventory>(sourceBox) : nullptr;
+			if (sourceInv == nullptr) {
+				LOG_WARNING(
+					Engine,
+					"[Action] Withdraw failed: source box %llu has no Inventory",
+					static_cast<unsigned long long>(collEff.sourceStorageId)
+				);
+				return;
+			}
+			const uint32_t removed = sourceInv->removeItem(collEff.itemDefName, wanted);
+			// A two-hand good (wood) can't ride in the pack: it must seat into the hands as a
+			// weight-limited armful, mirroring the loose-pile and single-shot branches above/below.
+			// Stow any held one-hand tool first so it doesn't block the lift. addItem would silently
+			// violate the two-hand invariant, then the deposit leg's removeFromHands would find empty
+			// hands and strand the good -- breaking the Wood box-to-box case.
+			if (ecs::itemIsTwoHand(harvestRegistry, collEff.itemDefName)) {
+				stowHeldToolsForArmful(inventory, collEff.sourcePosition);
+				added = ecs::addArmful(inventory, harvestRegistry, collEff.itemDefName, removed);
+			} else {
+				added = inventory.addItem(collEff.itemDefName, removed);
+			}
+			if (added < removed) {
+				// Colonist couldn't hold all we pulled (raced carry/slot state, or a two-hand stack/
+				// weight cap): put the remainder back in the source box so nothing is lost.
+				sourceInv->addItem(collEff.itemDefName, removed - added);
+			}
+			LOG_INFO(
+				Engine,
+				"[Action] Withdrew %u x %s from box %llu (now carrying %u)",
+				added,
+				collEff.itemDefName.c_str(),
+				static_cast<unsigned long long>(collEff.sourceStorageId),
+				inventory.getQuantity(collEff.itemDefName)
+			);
+			return; // a pull's harvest-goal credit is N/A; the deposit leg credits the umbrella
+		}
+
 		// A loose ground pile: one world entity whose Appearance defName IS the material and
 		// which carries a per-entity ResourceStack (the haulable remainder a fell left behind).
 		// Hauling it must lift a weight-limited armful and decrement the LIVE stack, removing

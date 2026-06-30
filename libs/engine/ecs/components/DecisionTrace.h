@@ -54,6 +54,7 @@ namespace ecs {
 		std::string				 haulItemDefName;		  // Item to haul
 		uint32_t				 haulQuantity = 1;		  // Quantity to haul
 		std::optional<glm::vec2> haulSourcePosition;	  // Where to pick up from
+		uint64_t				 haulSourceStorageId = 0; // Source box entity ID for a storage->storage pull (0 = loose/inventory source)
 		uint64_t				 haulTargetStorageId = 0; // Storage container entity ID
 		std::optional<glm::vec2> haulTargetPosition;	  // Where to deposit
 		uint64_t				 haulGoalId = 0;		  // Goal being fulfilled (for reservation)
@@ -103,6 +104,12 @@ namespace ecs {
 		int16_t taskAgeBonus = 0;	   // Old unclaimed tasks rise within their tier (0 to +100)
 		int16_t hysteresisBonus = 0;   // Stickiness margin, applied only to the in-progress option
 
+		// Storage-stocking only (servesStorageStocking): destination box priority rank (0..3) * weight.
+		// Orders stocking hauls WITHIN tier 6 so a higher-priority destination box wins even when
+		// farther. Weighted to dominate distanceFactor; 0 for every non-stocking option. Never crosses
+		// a tier (tier is compared first).
+		int16_t storagePriorityBias = 0;
+
 		// Stable tiebreak key for deterministic option ordering. When two options have the same
 		// (tier, score) (e.g. two equidistant, equal-skill build sites), the sort must not fall back
 		// to container iteration order: the goal registry is backed by unordered containers, so that
@@ -118,7 +125,8 @@ namespace ecs {
 		/// tier only (tier is compared first), so it never needs to encode categorical priority.
 		/// distanceFactor dominates; skill and age refine; hysteresis sticks the in-progress option.
 		[[nodiscard]] float computeScore() const {
-			return distanceFactor + static_cast<float>(skillBonus) + static_cast<float>(taskAgeBonus) + static_cast<float>(hysteresisBonus);
+			return distanceFactor + static_cast<float>(skillBonus) + static_cast<float>(taskAgeBonus) + static_cast<float>(hysteresisBonus) +
+				   static_cast<float>(storagePriorityBias);
 		}
 
 		/// Lexicographic (tier, score) ordering: returns true if `a` is HIGHER priority than `b`.

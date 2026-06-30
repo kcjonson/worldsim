@@ -73,6 +73,16 @@ namespace engine::assets {
 		int16_t maxBonus = 100;		// Cap for age bonus
 	};
 
+	/// Storage-priority weight config (AI arbitration, within tier 6 only).
+	/// A storage-stocking option's destination box has a StoragePriority for the item (Low..Critical,
+	/// ranked 0..3). The within-tier score gains rank * weight, so a higher-priority destination box
+	/// outranks a lower-priority one even when farther. Set to the distance factor's max (300) so
+	/// storage priority DOMINATES distance within tier 6 (a Critical box farther away beats a Low box
+	/// nearer). It can never cross a tier boundary: tier is compared first, lexicographically.
+	struct StoragePriorityConfig {
+		int16_t weight = 300; // Per-priority-rank score weight (rank 0..3 * weight)
+	};
+
 	/// Hauling-specific tuning
 	struct HaulingTuningConfig {
 		float	storageCriticalThreshold = 0.2F;  // Below this, storage is critical
@@ -169,6 +179,10 @@ namespace engine::assets {
 		/// @return In-progress bonus value
 		[[nodiscard]] int16_t getInProgressBonus() const;
 
+		/// Get the per-rank storage-priority score weight (AI arbitration, within tier 6).
+		/// @return Storage-priority weight value
+		[[nodiscard]] int16_t getStoragePriorityWeight() const;
+
 		/// Calculate task age bonus
 		/// @param taskAge Age of task in seconds
 		/// @return Age bonus
@@ -181,6 +195,7 @@ namespace engine::assets {
 		[[nodiscard]] const SkillBonusConfig&	   getSkillConfig() const { return skillConfig; }
 		[[nodiscard]] const ChainBonusConfig&	   getChainConfig() const { return chainConfig; }
 		[[nodiscard]] const InProgressBonusConfig& getInProgressConfig() const { return inProgressConfig; }
+		[[nodiscard]] const StoragePriorityConfig& getStoragePriorityConfig() const { return storagePriorityConfig; }
 		[[nodiscard]] const TaskAgeBonusConfig&	   getTaskAgeConfig() const { return taskAgeConfig; }
 		[[nodiscard]] const HaulingTuningConfig&   getHaulingConfig() const { return haulingConfig; }
 		[[nodiscard]] const TimingConfig&		   getTimingConfig() const { return timingConfig; }
@@ -237,6 +252,7 @@ namespace engine::assets {
 		SkillBonusConfig	  skillConfig;
 		ChainBonusConfig	  chainConfig;
 		InProgressBonusConfig inProgressConfig;
+		StoragePriorityConfig storagePriorityConfig;
 		TaskAgeBonusConfig	  taskAgeConfig;
 		HaulingTuningConfig	  haulingConfig;
 		TimingConfig		  timingConfig;

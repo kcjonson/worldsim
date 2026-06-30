@@ -125,6 +125,7 @@ namespace engine::assets {
 		skillConfig = SkillBonusConfig{};
 		chainConfig = ChainBonusConfig{};
 		inProgressConfig = InProgressBonusConfig{};
+		storagePriorityConfig = StoragePriorityConfig{};
 		taskAgeConfig = TaskAgeBonusConfig{};
 		haulingConfig = HaulingTuningConfig{};
 		timingConfig = TimingConfig{};
@@ -228,6 +229,10 @@ namespace engine::assets {
 		return inProgressConfig.bonus;
 	}
 
+	int16_t PriorityConfig::getStoragePriorityWeight() const {
+		return storagePriorityConfig.weight;
+	}
+
 	int16_t PriorityConfig::calculateTaskAgeBonus(float taskAge) const {
 		float	minutes = taskAge / 60.0F;
 		int16_t bonus = static_cast<int16_t>(minutes * static_cast<float>(taskAgeConfig.bonusPerMinute));
@@ -325,6 +330,13 @@ namespace engine::assets {
 				// Fallback matches the struct default, the XML value, and taskSwitchThreshold (50):
 				// the within-tier hysteresis margin. An empty node must not yield the old 200.
 				inProgressConfig.bonus = static_cast<int16_t>(n.text().as_int(50));
+			}
+		}
+
+		// Storage priority (within-tier arbitration weight per priority rank)
+		if (auto spNode = node.child("StoragePriority")) {
+			if (auto n = spNode.child("weight")) {
+				storagePriorityConfig.weight = static_cast<int16_t>(n.text().as_int(300));
 			}
 		}
 

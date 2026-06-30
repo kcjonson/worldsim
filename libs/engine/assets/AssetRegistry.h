@@ -155,10 +155,11 @@ namespace engine::assets {
 		[[nodiscard]] const std::string& getDefName(uint32_t id) const;
 
 		/// Get all capability types for a defName by ID (for capability indexing)
-		/// Returns a bitmask where bit N is set if capability N is present.
+		/// Returns a bitmask where bit N is set if capability N is present. 16-bit because there are
+		/// 9 capability types (Edible..Storage); Storage is bit 8, which overflows a uint8_t.
 		/// @param id The defName ID
 		/// @return Capability bitmask (0 if not found)
-		[[nodiscard]] uint8_t getCapabilityMask(uint32_t id) const;
+		[[nodiscard]] uint16_t getCapabilityMask(uint32_t id) const;
 
 		/// Check if a defName ID has a specific capability
 		[[nodiscard]] bool hasCapability(uint32_t id, CapabilityType capability) const;
@@ -175,10 +176,10 @@ namespace engine::assets {
 		/// @param defName The definition name (e.g., "Terrain_Water")
 		/// @param capabilityMask Bitmask of capabilities
 		/// @return The assigned defNameId, or 0 if registration failed
-		uint32_t registerSyntheticDefinition(const std::string& defName, uint8_t capabilityMask);
+		uint32_t registerSyntheticDefinition(const std::string& defName, uint16_t capabilityMask);
 
-		/// Get the total number of capability types
-		static constexpr size_t kCapabilityTypeCount = 7;
+		/// Get the total number of capability types (Edible..Storage)
+		static constexpr size_t kCapabilityTypeCount = 9;
 
 		// --- Testing API ---
 
@@ -221,8 +222,8 @@ namespace engine::assets {
 		std::unordered_map<std::string, uint32_t> m_defNameToId;
 		std::vector<std::string>				  m_idToDefName; // Index 0 = empty string (invalid)
 
-		// Pre-computed capability masks by ID (for O(1) capability checks)
-		std::vector<uint8_t> m_capabilityMasks;
+		// Pre-computed capability masks by ID (for O(1) capability checks). 16-bit: 9 capability types.
+		std::vector<uint16_t> m_capabilityMasks;
 
 		// Path to shared scripts folder (for @shared/ prefix resolution)
 		std::filesystem::path m_sharedScriptsPath;

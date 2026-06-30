@@ -659,6 +659,206 @@ TEST_F(ActionSystemGoalTest, HarvestThenInventoryHaulDeliversMaterialsAndUnblock
 	    << "Craft leaves Blocked once all materials delivered";
 }
 
+// Storage-to-storage pull (storage priority): the two-phase Withdraw->Deposit haul. Phase 1
+// (Withdraw) takes the item OUT of the source box's Inventory and into the colonist's; the
+// chain hands off (like Pickup) to phase 2 (Deposit), which lands it in the destination box and
+// credits the umbrella goal. Mirrors the loose-pickup haul test but the source is a box.
+TEST_F(ActionSystemGoalTest, WithdrawPullsFromSourceBoxThenDepositsIntoDestBox) {
+	// PlantFiber: a 1-hand carryable that lives in the pack (simpler than two-hand Wood).
+	engine::assets::AssetDefinition fiberDef;
+	fiberDef.defName = "PlantFiber";
+	fiberDef.label = "Plant Fiber";
+	fiberDef.handsRequired = 1;
+	fiberDef.category = engine::assets::ItemCategory::RawMaterial;
+	fiberDef.itemProperties = engine::assets::ItemProperties{};
+	fiberDef.itemProperties->stackSize = 50;
+	fiberDef.itemProperties->massKg = 0.1F; // light: carry weight never binds
+	engine::assets::AssetRegistry::Get().registerTestDefinition(std::move(fiberDef));
+	const std::string item = "PlantFiber";
+
+	auto& registry = GoalTaskRegistry::Get();
+	const glm::vec2 srcPos{1.0F, 1.0F};
+	const glm::vec2 destPos{20.0F, 20.0F};
+
+	// Source box (lower priority) holding 8 PlantFiber.
+	const EntityID srcBox = world->createEntity();
+	world->addComponent<Position>(srcBox, Position{srcPos});
+	world->addComponent<Inventory>(srcBox, Inventory::createForStorage());
+	world->getComponent<Inventory>(srcBox)->addItem(item, 8);
+
+	// Destination box (higher priority), empty.
+	const EntityID destBox = world->createEntity();
+	world->addComponent<Position>(destBox, Position{destPos});
+	world->addComponent<Inventory>(destBox, Inventory::createForStorage());
+
+	// The umbrella Haul goal (StorageGoalSystem, no chainId) wanting PlantFiber in the dest box.
+	GoalTask haul;
+	haul.type = TaskType::Haul;
+	haul.owner = GoalOwner::StorageGoalSystem;
+	haul.destinationEntity = destBox;
+	haul.destinationPosition = destPos;
+	haul.acceptedDefNameIds = {engine::assets::AssetRegistry::Get().getDefNameId(item)};
+	haul.targetAmount = 10;
+	haul.status = GoalStatus::Available;
+	const uint64_t haulId = registry.createGoal(std::move(haul));
+
+	// Colonist standing on the source box, task on its Withdraw (pickup) leg: haulSourceStorageId set.
+	auto  colonist = createColonist(srcPos);
+	auto* task = world->getComponent<Task>(colonist);
+	task->type = TaskType::Haul;
+	task->state = TaskState::Arrived;
+	task->haulGoalId = haulId;
+	task->haulItemDefName = item;
+	task->haulQuantity = 5;
+	task->haulSourceStorageId = static_cast<uint64_t>(srcBox);
+	task->haulSourcePosition = srcPos;
+	task->haulTargetStorageId = static_cast<uint64_t>(destBox);
+	task->haulTargetPosition = destPos;
+	task->haulFromInventory = false;
+	task->targetPosition = srcPos;
+	task->chainStep = 0;
+
+	// --- Phase 1: Withdraw removes from the source box and adds to the colonist. ---
+	world->update(0.1F); // startHaulAction: !carrying && atSource && haulSourceStorageId -> Withdraw
+	auto* action = world->getComponent<Action>(colonist);
+	ASSERT_NE(action, nullptr);
+	EXPECT_EQ(action->type, ActionType::Withdraw) << "phase-1 of a pull is a Withdraw, not a ground Pickup";
+	world->update(1.0F); // complete the Withdraw (duration 0.5s) -> chain hands off to deposit
+
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	auto* srcStore = world->getComponent<Inventory>(srcBox);
+	ASSERT_NE(inventory, nullptr);
+	ASSERT_NE(srcStore, nullptr);
+	EXPECT_EQ(inventory->getQuantity(item), 5U) << "Withdraw moved 5 into the colonist";
+	EXPECT_EQ(srcStore->getQuantity(item), 3U) << "source box drained by exactly the withdrawn 5 (8 - 5)";
+
+	// The chain handed off to the deposit leg (same as a Pickup): task re-pointed at the dest box.
+	EXPECT_EQ(task->state, TaskState::Moving) << "Withdraw triggers the Pickup-style handoff to deposit";
+	EXPECT_FLOAT_EQ(task->targetPosition.x, destPos.x);
+	EXPECT_FLOAT_EQ(task->targetPosition.y, destPos.y);
+	EXPECT_EQ(task->chainStep, 1U) << "chain advanced toward the deposit leg";
+
+	// --- Phase 2: arrive at the dest box; the carried item deposits + credits the umbrella. ---
+	world->getComponent<Position>(colonist)->value = destPos;
+	task->state = TaskState::Arrived;
+	action->clear();
+
+	world->update(0.1F); // start Deposit
+	world->update(2.0F); // complete (Deposit duration 1s)
+
+	auto* destStore = world->getComponent<Inventory>(destBox);
+	ASSERT_NE(destStore, nullptr);
+	EXPECT_EQ(destStore->getQuantity(item), 5U) << "the withdrawn item landed in the destination box";
+	EXPECT_EQ(inventory->getQuantity(item), 0U) << "colonist's pack emptied on deposit";
+	// The umbrella goal (slot-counted, owner StorageGoalSystem, no chainId) stays live while the box
+	// has free slots; it is NOT removed after a single stack.
+	ASSERT_NE(registry.getGoal(haulId), nullptr) << "umbrella goal persists while the dest box has room";
+	EXPECT_GT(registry.getGoal(haulId)->deliveredAmount, 0U) << "the deposit credited the umbrella goal";
+}
+
+// Storage-to-storage pull of a REAL two-hand good (Wood, handsRequired==2). Unlike the one-hand
+// PlantFiber pull above, Wood cannot enter the backpack: the Withdraw must seat it into the HANDS
+// as an armful, or the deposit leg's removeFromHands finds empty hands and strands the good. This
+// is the spec's headline Wood box-to-box case (storage-system.md). Assert: the source box drains by
+// the pulled qty, the good rides in the hands during carry (getQuantity backpack == 0), and the
+// deposit lands it in the dest box with the umbrella credited.
+TEST_F(ActionSystemGoalTest, WithdrawTwoHandWoodRidesInHandsThenDepositsIntoDestBox) {
+	// Wood: a two-hand bulk material at 2.5 kg/unit, stackSize 40. handsRequired==2 routes it to the
+	// hands as an armful, never the pack (the 35 kg cap allows 14 units, well above the 5 pulled here).
+	engine::assets::AssetDefinition woodDef;
+	woodDef.defName = "Wood";
+	woodDef.label = "Wood";
+	woodDef.handsRequired = 2;
+	woodDef.category = engine::assets::ItemCategory::RawMaterial;
+	woodDef.itemProperties = engine::assets::ItemProperties{};
+	woodDef.itemProperties->stackSize = 40;
+	woodDef.itemProperties->massKg = 2.5F;
+	engine::assets::AssetRegistry::Get().registerTestDefinition(std::move(woodDef));
+	const std::string item = "Wood";
+
+	auto& registry = GoalTaskRegistry::Get();
+	const glm::vec2 srcPos{1.0F, 1.0F};
+	const glm::vec2 destPos{20.0F, 20.0F};
+
+	// Source box (lower priority) holding 8 Wood. A storage box holds goods in slots regardless of
+	// the colonist hand rule, so seeding two-hand Wood here is fine.
+	const EntityID srcBox = world->createEntity();
+	world->addComponent<Position>(srcBox, Position{srcPos});
+	world->addComponent<Inventory>(srcBox, Inventory::createForStorage());
+	world->getComponent<Inventory>(srcBox)->addItem(item, 8);
+
+	// Destination box (higher priority), empty.
+	const EntityID destBox = world->createEntity();
+	world->addComponent<Position>(destBox, Position{destPos});
+	world->addComponent<Inventory>(destBox, Inventory::createForStorage());
+
+	// The umbrella Haul goal (StorageGoalSystem, no chainId) wanting Wood in the dest box.
+	GoalTask haul;
+	haul.type = TaskType::Haul;
+	haul.owner = GoalOwner::StorageGoalSystem;
+	haul.destinationEntity = destBox;
+	haul.destinationPosition = destPos;
+	haul.acceptedDefNameIds = {engine::assets::AssetRegistry::Get().getDefNameId(item)};
+	haul.targetAmount = 10;
+	haul.status = GoalStatus::Available;
+	const uint64_t haulId = registry.createGoal(std::move(haul));
+
+	// Colonist standing on the source box, task on its Withdraw (pickup) leg: haulSourceStorageId set.
+	auto  colonist = createColonist(srcPos);
+	auto* task = world->getComponent<Task>(colonist);
+	task->type = TaskType::Haul;
+	task->state = TaskState::Arrived;
+	task->haulGoalId = haulId;
+	task->haulItemDefName = item;
+	task->haulQuantity = 5;
+	task->haulSourceStorageId = static_cast<uint64_t>(srcBox);
+	task->haulSourcePosition = srcPos;
+	task->haulTargetStorageId = static_cast<uint64_t>(destBox);
+	task->haulTargetPosition = destPos;
+	task->haulFromInventory = false;
+	task->targetPosition = srcPos;
+	task->chainStep = 0;
+
+	// --- Phase 1: Withdraw removes from the source box and seats the armful into the hands. ---
+	world->update(0.1F); // startHaulAction: !carrying && atSource && haulSourceStorageId -> Withdraw
+	auto* action = world->getComponent<Action>(colonist);
+	ASSERT_NE(action, nullptr);
+	EXPECT_EQ(action->type, ActionType::Withdraw) << "phase-1 of a pull is a Withdraw, not a ground Pickup";
+	world->update(1.0F); // complete the Withdraw (duration 0.5s) -> chain hands off to deposit
+
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	auto* srcStore = world->getComponent<Inventory>(srcBox);
+	ASSERT_NE(inventory, nullptr);
+	ASSERT_NE(srcStore, nullptr);
+	// The good rides in the HANDS, not the pack: a two-hand armful. getQuantity counts only the
+	// backpack, so it must read 0 while handHeldQuantity reads the withdrawn 5.
+	EXPECT_EQ(ecs::handHeldQuantity(*inventory, item), 5U) << "two-hand Wood withdrawn into the hands as an armful";
+	EXPECT_EQ(inventory->getQuantity(item), 0U) << "two-hand Wood never enters the backpack";
+	EXPECT_TRUE(inventory->isHolding(item)) << "the armful occupies the hands during carry";
+	EXPECT_EQ(srcStore->getQuantity(item), 3U) << "source box drained by exactly the withdrawn 5 (8 - 5)";
+
+	// The chain handed off to the deposit leg (same as a Pickup): task re-pointed at the dest box.
+	EXPECT_EQ(task->state, TaskState::Moving) << "Withdraw triggers the Pickup-style handoff to deposit";
+	EXPECT_FLOAT_EQ(task->targetPosition.x, destPos.x);
+	EXPECT_FLOAT_EQ(task->targetPosition.y, destPos.y);
+	EXPECT_EQ(task->chainStep, 1U) << "chain advanced toward the deposit leg";
+
+	// --- Phase 2: arrive at the dest box; the hand-carried armful deposits + credits the umbrella. ---
+	world->getComponent<Position>(colonist)->value = destPos;
+	task->state = TaskState::Arrived;
+	action->clear();
+
+	world->update(0.1F); // start Deposit
+	world->update(2.0F); // complete (Deposit duration 1s)
+
+	auto* destStore = world->getComponent<Inventory>(destBox);
+	ASSERT_NE(destStore, nullptr);
+	EXPECT_EQ(destStore->getQuantity(item), 5U) << "the hand-carried two-hand Wood landed in the destination box";
+	EXPECT_EQ(ecs::handHeldQuantity(*inventory, item), 0U) << "colonist's hands emptied on deposit (removeFromHands)";
+	ASSERT_NE(registry.getGoal(haulId), nullptr) << "umbrella goal persists while the dest box has room";
+	EXPECT_GT(registry.getGoal(haulId)->deliveredAmount, 0U) << "the deposit credited the umbrella goal";
+}
+
 // The craft-station deposit is METERED to the recipe's remaining need: a colonist carrying more
 // than the recipe wants deposits only the shortfall and KEEPS the surplus. The station store
 // therefore never banks excess beyond its bill of materials (same invariant as a build site).

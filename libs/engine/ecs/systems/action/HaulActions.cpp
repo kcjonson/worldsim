@@ -354,6 +354,36 @@ namespace ecs {
 		// Not carrying yet: this is the pickup leg, regardless of also being in range of the
 		// destination. Pick up at the source.
 		if (!carryingHaulItem && atSource) {
+			// Storage-to-storage pull: the source is a BOX, not a loose ground pile. Emit Withdraw
+			// (the box-withdraw variant of Pickup); its effect removes the item from the source box's
+			// Inventory (clamped to the live quantity) and adds it to the colonist. No memory scan: the
+			// source box and quantity are already resolved on the task.
+			if (task.haulSourceStorageId != 0) {
+				const auto sourceBox = static_cast<EntityID>(task.haulSourceStorageId);
+				if (world->hasComponent<Packaged>(sourceBox)) {
+					// Source box is being moved -- abandon and re-resolve rather than withdrawing mid-move.
+					LOG_WARNING(
+						Engine,
+						"[Action] Haul pull aborted: source box %llu is packaged (being moved)",
+						static_cast<unsigned long long>(task.haulSourceStorageId)
+					);
+					task.clear();
+					action.clear();
+					return;
+				}
+				action = Action::Withdraw(task.haulItemDefName, task.haulQuantity, task.haulSourceStorageId, task.haulSourcePosition);
+				LOG_DEBUG(
+					Engine,
+					"[Action] Haul phase 1: Withdraw %u x %s from box %llu at (%.1f, %.1f)",
+					task.haulQuantity,
+					task.haulItemDefName.c_str(),
+					static_cast<unsigned long long>(task.haulSourceStorageId),
+					task.haulSourcePosition.x,
+					task.haulSourcePosition.y
+				);
+				return;
+			}
+
 			// Phase 1: At source - do Pickup
 			// Look for a carryable entity at the source position matching the item we want to haul
 			std::optional<std::pair<glm::vec2, uint32_t>> staleAtSource;
