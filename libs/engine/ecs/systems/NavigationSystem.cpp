@@ -1016,8 +1016,14 @@ namespace ecs {
 		if (awayLen >= minDist) {
 			return *nearest; // already at/beyond the requested distance
 		}
+		// Pushing radially to minDist can cross a hole/water edge in a tight pocket, so re-validate.
+		// If the pushed point is off-mesh, fall back to *nearest (on-mesh by construction -- it snaps
+		// to a walkable triangle and nudges toward the centroid). This holds the "never return an
+		// off-mesh point" guarantee; a sub-minDist but valid point beats a far invalid one, which a
+		// requestPath to an off-mesh target would reject, stalling the consumer.
 		const glm::vec2 outDir = (awayLen > 1e-6F) ? glm::vec2{away.x / awayLen, away.y / awayLen} : dir;
-		return origin + outDir * minDist;
+		const glm::vec2 pushed = origin + outDir * minDist;
+		return isOnMesh(pushed) ? pushed : *nearest;
 	}
 
 } // namespace ecs

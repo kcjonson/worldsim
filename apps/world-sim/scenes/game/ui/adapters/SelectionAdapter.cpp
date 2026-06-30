@@ -389,7 +389,7 @@ namespace world_sim {
 		const engine::assets::AssetRegistry& registry,
 		const FurnitureSelection&			 selection,
 		const std::function<void()>&		 onPlace,
-		const std::function<void()>&		 onPackage,
+		const std::function<void()>&		 onMoveFurniture,
 		const std::function<void()>&		 onConfigure
 	) {
 		PanelContent content;
@@ -398,7 +398,7 @@ namespace world_sim {
 
 		// Store callbacks for UI
 		content.onPlace = onPlace;
-		content.onPackage = onPackage;
+		content.onMoveFurniture = onMoveFurniture;
 		content.onConfigure = onConfigure;
 
 		// Look up asset definition for properties
@@ -448,7 +448,7 @@ namespace world_sim {
 			content.slots.push_back(
 				ActionButtonSlot{
 					.label = "Move",
-					.onClick = onPackage,
+					.onClick = onMoveFurniture,
 				}
 			);
 		}
