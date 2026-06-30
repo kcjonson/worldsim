@@ -1434,10 +1434,13 @@ namespace ecs {
 			return true;
 		}
 
-		// No critical needs - don't interrupt wander while moving
-		// Wandering gives the colonist a chance to discover new sources (water, food)
+		// Idle Wander is freely preemptible: re-evaluate it every tick so any higher-tier task is taken
+		// the instant it appears, with no commitment lag. This does not cut the wander short for
+		// discovery -- when nothing better exists the trace still selects Wander and isSameTask keeps the
+		// same target, so the colonist keeps walking the same leg; it just also checks each tick. Real
+		// work (tiers 1-6) keeps its periodic throttle / anti-thrash commitment above.
 		if (task.type == TaskType::Wander && task.state == TaskState::Moving) {
-			return false;
+			return true;
 		}
 
 		return false;
