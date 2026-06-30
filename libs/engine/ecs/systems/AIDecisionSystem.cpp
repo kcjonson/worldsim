@@ -195,7 +195,92 @@ namespace ecs {
 			return {skillLevel, bonus};
 		}
 
-		/// Check if an option matches the current task (for in-progress bonus)
+		/// Config name for a TaskType, used to look up its BASE tier in PriorityConfig's TaskTiers
+		/// table. Must match the names in priority-tuning.xml's <TaskTiers> block.
+		[[nodiscard]] const char* taskTypeConfigName(TaskType type) {
+			switch (type) {
+				case TaskType::FulfillNeed:
+					return "FulfillNeed";
+				case TaskType::Harvest:
+					return "Harvest";
+				case TaskType::Craft:
+					return "Craft";
+				case TaskType::Haul:
+					return "Haul";
+				case TaskType::PlacePackaged:
+					return "PlacePackaged";
+				case TaskType::Build:
+					return "Build";
+				case TaskType::Deconstruct:
+					return "Deconstruct";
+				case TaskType::Wander:
+					return "Wander";
+				case TaskType::None:
+					return "None";
+			}
+			return "None";
+		}
+
+		/// Arbitration tier promotion thresholds. Named so the classifier rules mirror the spec
+		/// table directly rather than hiding magic numbers.
+		constexpr int	kTierCriticalNeed = 2; // a need past its critical threshold
+		constexpr int	kTierActiveWorkOrder = 4; // committed/queued work + its provisioning chain
+		constexpr int	kTierIdle = 7;			  // gather-food sentinel and Wander
+		constexpr float kCriticalNeedThreshold = 10.0F; // needValue below this is critical
+
+		/// Classify an option's arbitration tier: the config BASE tier for its task type, with a
+		/// small set of named runtime promotions layered on (mirrors the spec's classification
+		/// table exactly). Lower tier = higher priority.
+		///
+		///   FulfillNeed: needValue < 10%        -> tier 2 (critical need)
+		///                gather-food sentinel    -> tier 7 (idle)   (needValue>=100 && threshold==0)
+		///                else (actionable)       -> config base (5)
+		///   Haul/Harvest: servesActiveWorkOrder  -> tier 4 (work order, incl. mid-chain provisioning)
+		///                 else                    -> config base (6, covers stocking + opportunistic)
+		///   PlacePackaged: serving a work order OR already carrying (in-transit) -> tier 4
+		///                  else                   -> config base (6)
+		///   Craft/Build/Deconstruct               -> config base (4)
+		///   Wander                                -> config base (7)
+		[[nodiscard]] int classifyTier(const EvaluatedOption& option) {
+			const int baseTier = engine::assets::PriorityConfig::Get().getTaskTier(taskTypeConfigName(option.taskType));
+
+			switch (option.taskType) {
+				case TaskType::FulfillNeed: {
+					// Gather-food sentinel: needValue==100 && threshold==0 (a real hunger need always
+					// has needValue<100 and a positive threshold). Idle filler, ranks at tier 7.
+					const bool gatherFoodSentinel = option.needValue >= 100.0F && option.threshold == 0.0F;
+					if (gatherFoodSentinel) {
+						return kTierIdle;
+					}
+					// A satisfied need needs no action; sort it to the idle tier so it can't outrank
+					// real work in the trace (it's filtered from selection anyway by its status).
+					if (option.status == OptionStatus::Satisfied) {
+						return kTierIdle;
+					}
+					if (option.needValue < kCriticalNeedThreshold) {
+						return kTierCriticalNeed;
+					}
+					return baseTier; // actionable need
+				}
+				case TaskType::Haul:
+				case TaskType::Harvest:
+					return option.servesActiveWorkOrder ? kTierActiveWorkOrder : baseTier;
+				case TaskType::PlacePackaged:
+					// Serving a work order, or already carrying the item (the in-transit case: old
+					// needValue>100 sentinel set by evaluatePlacePackagedOptions). Either way it's
+					// committed delivery -> tier 4, so a carrying colonist isn't rerouted mid-carry.
+					return (option.servesActiveWorkOrder || option.needValue > 100.0F) ? kTierActiveWorkOrder : baseTier;
+				case TaskType::Craft:
+				case TaskType::Build:
+				case TaskType::Deconstruct:
+				case TaskType::Wander:
+				case TaskType::None:
+					return baseTier;
+			}
+			return baseTier;
+		}
+
+		/// Check if an option matches the current task (for the hysteresis margin)
 		[[nodiscard]] bool isOptionCurrentTask(const EvaluatedOption& option, const Task& currentTask) {
 			if (!currentTask.isActive() || option.status != OptionStatus::Available) {
 				return false;
@@ -226,31 +311,43 @@ namespace ecs {
 			}
 		}
 
-		/// Populate priority bonuses for an evaluated option
-		/// Uses PriorityConfig for calculations and goal registry for age bonus
-		/// @param option The option to populate bonuses for
-		/// @param currentTask Current colonist task (for in-progress bonus)
+		/// Populate the (tier, score) arbitration key for an evaluated option.
+		/// Sets option.tier (classifyTier) and the within-tier score breakdown (distanceFactor,
+		/// taskAgeBonus, hysteresisBonus), then composes option.score. skillBonus is set by the
+		/// evaluators. The chain bonus is GONE: a mid-chain provisioning task is tier 4 instead.
+		/// @param option The option to populate (skillBonus already set by its evaluator)
+		/// @param currentTask Current colonist task (for the hysteresis margin)
 		/// @param currentTime Current game time (for task age calculation)
 		void populatePriorityBonuses(EvaluatedOption& option, const Task& currentTask, float currentTime) {
 			const auto& priorityConfig = engine::assets::PriorityConfig::Get();
 
-			// Distance bonus: closer targets get higher priority (0 distance = max bonus)
-			option.distanceBonus = priorityConfig.calculateDistanceBonus(option.distanceToTarget);
+			// Categorical tier first: it is compared before any score term.
+			option.tier = classifyTier(option);
 
-			// In-progress bonus: current task gets priority to resist switching
-			bool isCurrentTask = isOptionCurrentTask(option, currentTask);
-			if (isCurrentTask) {
-				option.inProgressBonus = priorityConfig.getInProgressBonus();
+			// Wander is the idle floor; no nearest-source preference applies. It never sets
+			// distanceToTarget, so the distance factor would otherwise compute to its MAX (~300) and
+			// make wander outrank a same-tier gather-food option. Pin its whole within-tier score to 0
+			// (no distance, skill, age, or hysteresis) so any reachable gather-food ranks above it.
+			if (option.taskType == TaskType::Wander) {
+				option.distanceFactor = 0.0F;
+				option.skillBonus = 0;
+				option.taskAgeBonus = 0;
+				option.hysteresisBonus = 0;
+				option.score = 0.0F;
+				return;
 			}
 
-			// Chain continuation bonus: large bonus for continuing a multi-step task
-			// Applied when colonist is mid-chain (has completed step 0) and option is the same task
-			// This makes colonists strongly prefer finishing chains (e.g., depositing after pickup)
-			if (isCurrentTask && currentTask.chainId.has_value() && currentTask.chainStep > 0) {
-				option.chainBonus = priorityConfig.getChainBonus();
+			// Within-tier distance factor: the dominant score term, decreasing with distance, so the
+			// nearest reachable source wins within a tier.
+			option.distanceFactor = priorityConfig.calculateDistanceFactor(option.distanceToTarget);
+
+			// Hysteresis margin: stick the in-progress option so a same-tier challenger must beat it
+			// by more than this to win (prevents thrashing). Only matters within a tier.
+			if (isOptionCurrentTask(option, currentTask)) {
+				option.hysteresisBonus = priorityConfig.getInProgressBonus();
 			}
 
-			// Task age bonus: old unclaimed goals rise in priority
+			// Task age bonus: old unclaimed goals rise within their tier.
 			// For Haul tasks, look up the goal directly by ID
 			if (option.taskType == TaskType::Haul && option.status == OptionStatus::Available && option.haulGoalId != 0) {
 				const auto* goal = GoalTaskRegistry::Get().getGoal(option.haulGoalId);
@@ -267,6 +364,9 @@ namespace ecs {
 					option.taskAgeBonus = priorityConfig.calculateTaskAgeBonus(goalAge);
 				}
 			}
+
+			// Compose the within-tier score from the breakdown fields (kept for the UI display).
+			option.score = option.computeScore();
 		}
 
 		/// Evaluate haul options by querying Haul goals from GoalTaskRegistry
@@ -831,6 +931,9 @@ namespace ecs {
 		  m_rng(rngSeed.value_or(std::random_device{}())) {}
 
 	void AIDecisionSystem::update(float deltaTime) {
+		// Advance this system's monotonic clock (used for lastEvaluationTime + within-tier task age).
+		m_elapsedTime += deltaTime;
+
 		// Process all entities with the required components
 		for (auto [entity, position, needs, memory, task, movementTarget, inventory] :
 			 world->view<Position, NeedsComponent, Memory, Task, MovementTarget, Inventory>()) {
@@ -973,8 +1076,8 @@ namespace ecs {
 				continue;
 			}
 
-			// Store current task state for priority comparison
-			float	  currentPriority = task.priority;
+			// Store current task state for the (tier, score) interruption comparison
+			int		  currentTier = task.priorityTier;
 			bool	  hasActiveAction = (action != nullptr && action->isActive());
 			TaskState previousState = task.state;
 
@@ -987,9 +1090,10 @@ namespace ecs {
 				// Build full decision trace (always, for UI updates)
 				buildDecisionTrace(entity, position, needs, memory, task, inventory, skills, *trace);
 
-				// Get the best option's priority
+				// Get the best option's (tier, score) key
 				const auto* selected = trace->getSelected();
-				float		newPriority = (selected != nullptr) ? selected->calculatePriority() : 0.0F;
+				int			newTier = (selected != nullptr) ? selected->tier : kTierIdle;
+				float		newScore = (selected != nullptr) ? selected->score : 0.0F;
 
 				// Check if the new task is actually different from current task
 				bool isSameTask = false;
@@ -1063,26 +1167,28 @@ namespace ecs {
 
 				if (isSameTask) {
 					task.timeSinceEvaluation = 0.0F; // Reset timer, we did evaluate
-					// Update priority even when staying on same task
-					// (priority can change, e.g., PlacePackaged goes from 38 to 150 when carrying)
-					task.priority = newPriority;
+					// Update the (tier, score) key even when staying on the same task (the score can
+					// change, e.g. PlacePackaged promotes to tier 4 when the colonist starts carrying).
+					task.priorityTier = newTier;
+					task.priority = newScore;
 				}
 
-				// If action in progress, check if we can/should interrupt
+				// If action in progress, check if we can/should interrupt. Tier is inviolable; the
+				// within-tier anti-thrash margin is already applied at SELECTION (the in-progress
+				// option carries the hysteresis bonus), so re-applying a score gap here would
+				// double-count it. The gate's remaining job is the tier rule and the
+				// non-interruptable block.
 				if (shouldSwitch && hasActiveAction && previousState == TaskState::Arrived) {
-					// Check if action is interruptable at all
 					if (!action->interruptable) {
 						// Biological necessities (Eat, Drink, Toilet) cannot be interrupted
 						shouldSwitch = false;
 						task.timeSinceEvaluation = 0.0F; // Reset timer, we did evaluate
-					} else {
-						// Action is interruptable - use priority gap threshold
-						float priorityGap = newPriority - currentPriority;
-						if (priorityGap < kPrioritySwitchThreshold) {
-							// Priority gap too small - don't interrupt current action
-							shouldSwitch = false;
-							task.timeSinceEvaluation = 0.0F; // Reset timer, we did evaluate
-						}
+					} else if (newTier > currentTier) {
+						// A lower-tier challenger never preempts in-progress work. (A higher tier
+						// always interrupts; a same-tier winner already beat the hysteresis margin at
+						// selection, so it is honored.)
+						shouldSwitch = false;
+						task.timeSinceEvaluation = 0.0F; // Reset timer, we did evaluate
 					}
 				}
 
@@ -1096,13 +1202,15 @@ namespace ecs {
 					task.clear();
 					task.timeSinceEvaluation = 0.0F;
 					selectTaskFromTrace(entity, task, movementTarget, *trace, position);
-					task.priority = newPriority; // Store priority for future comparisons
+					task.priorityTier = newTier; // Store the (tier, score) key for future comparisons
+					task.priority = newScore;
 
 					LOG_INFO(
 						Engine,
-						"[AI] Entity %llu: %s (priority %.0f) → (%.1f, %.1f)",
+						"[AI] Entity %llu: %s (tier %d, score %.0f) → (%.1f, %.1f)",
 						static_cast<unsigned long long>(entity),
 						task.reason.c_str(),
+						task.priorityTier,
 						task.priority,
 						task.targetPosition.x,
 						task.targetPosition.y
@@ -1143,7 +1251,7 @@ namespace ecs {
 			return true;
 		}
 
-		// Check if any critical need requires immediate attention (Tier 3 interrupts all lower tiers)
+		// Check if any critical need requires immediate attention (tier 2 interrupts all lower tiers)
 		bool hasCriticalNeed = false;
 		for (auto needType : NeedsComponent::kActionableNeeds) {
 			if (needs.get(needType).isCritical()) {
@@ -1315,7 +1423,7 @@ namespace ecs {
 			trace.options.push_back(option);
 		}
 
-		// Add "Gather Food" work option (Tier 6)
+		// Add "Gather Food" work option (tier 7)
 		// Only show if colonist has no food in inventory
 		if (!hasEdibleFood(inventory)) {
 			// Look for harvestable food sources that yield EDIBLE items
@@ -1366,7 +1474,7 @@ namespace ecs {
 			trace.options.push_back(gatherOption);
 		}
 
-		// Add "Crafting Work" options (Tier 6.5) and "Gather" options (Tier 6.6)
+		// Add "Crafting Work" options and "Gather" options (tier classification set by the evaluators)
 		// Find all stations with pending work that colonist can do
 		for (auto [stationEntity, stationPos, workQueue] : world->view<Position, WorkQueue>()) {
 			if (!workQueue.hasPendingWork()) {
@@ -1430,20 +1538,21 @@ namespace ecs {
 
 		}
 
-		// Tier 6.4: Haul loose items to storage containers (goal-driven), and deliver
+		// Haul loose items to storage containers (goal-driven), and deliver
 		// harvested craft materials from inventory to crafting stations
+		// (tier per option: tier 4 when serving an active work order, else tier 6)
 		evaluateHaulOptions(world, m_registry, memory, inventory, position.value, trace);
 
-		// Tier 6.7: Harvest resources for crafting (goal-driven)
+		// Harvest resources for crafting (goal-driven)
 		evaluateHarvestOptions(m_registry, memory, inventory, position.value, skills, trace);
 
-		// Tier 6.45: Build staged construction blueprints (goal-driven, priority 41)
+		// Build staged construction blueprints (goal-driven)
 		evaluateBuildOptions(world, position.value, skills, trace);
 
-		// Tier 6.45: Deconstruct demolishing structures (goal-driven, priority 41 - same as Build)
+		// Deconstruct demolishing structures (goal-driven, same tier as Build)
 		evaluateDeconstructOptions(world, position.value, skills, trace);
 
-		// Tier 6.35: Place packaged items at target locations
+		// Place packaged items at target locations
 		evaluatePlacePackagedOptions(world, position.value, inventory, trace);
 
 		// Agent footprint + belief for the reachability checks below (reachable-wander generation
@@ -1492,27 +1601,21 @@ namespace ecs {
 			}
 		}
 
-		// Populate priority bonuses for all options using PriorityConfig
-		// This includes: distance bonus, in-progress bonus, task age bonus (from GoalTaskRegistry)
-		// Note: Using 0.0F for currentTime as task age tracking is refined in later phases
+		// Populate the (tier, score) key for all options: classify tier, compute the within-tier
+		// score (distance factor, skill, age, hysteresis). m_elapsedTime is this system's monotonic
+		// seconds-since-start clock; goal createdAt is still 0 (no wired game clock yet), so age ==
+		// elapsed, harmless and monotonic for the within-tier age term.
 		for (auto& option : trace.options) {
-			populatePriorityBonuses(option, currentTask, 0.0F);
+			populatePriorityBonuses(option, currentTask, m_elapsedTime);
 		}
 
-		// Sort by priority (highest first), breaking ties on the stable tiebreak id so the order
-		// is a deterministic total order independent of container iteration. std::sort is not
-		// stable and selection takes the first element, so without the tiebreak two equal-priority
-		// options (e.g. two equidistant, equal-skill build sites) would resolve by hash-bucket
-		// order and route colonists nondeterministically (a multiplayer desync). Lower tiebreak
-		// id wins ties; goals get smaller ids the earlier they were created.
-		std::sort(trace.options.begin(), trace.options.end(), [](const auto& a, const auto& b) {
-			const float pa = a.calculatePriority();
-			const float pb = b.calculatePriority();
-			if (pa != pb) {
-				return pa > pb;
-			}
-			return a.tiebreakId < b.tiebreakId;
-		});
+		// Sort by the lexicographic (tier asc, score desc, tiebreakId asc) key. Tier is categorical
+		// and compared first: a far tier-4 option always beats any tier-5 option, with no floor
+		// constants. The tiebreak id gives a deterministic total order independent of container
+		// iteration (the goal registry is hash-bucket ordered), so two equal-(tier,score) options
+		// can't route colonists nondeterministically (a multiplayer desync). higherPriority()
+		// encodes the full ordering.
+		std::sort(trace.options.begin(), trace.options.end(), EvaluatedOption::higherPriority);
 
 		// Select the first actionable option the colonist can actually REACH, scanning in priority
 		// order. isReachable is a sound, cheap pre-filter: false means DEFINITELY unreachable
@@ -1563,6 +1666,12 @@ namespace ecs {
 			trace.selectionSummary = "Selected: " + option.reason;
 			break;
 		}
+
+		// Stamp the evaluation time so the inspector can detect a changed trace. m_elapsedTime is
+		// this system's monotonic seconds-since-start clock (deltaTime accumulated in update); a real
+		// game-time clock isn't wired to this system yet, but a monotonic timestamp is all the UI
+		// needs to know the trace was rebuilt.
+		trace.lastEvaluationTime = m_elapsedTime;
 	}
 
 	void AIDecisionSystem::selectTaskFromTrace(

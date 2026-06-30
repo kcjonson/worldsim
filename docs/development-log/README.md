@@ -64,6 +64,7 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 #### June 2026
 
+- [2026-06-29 - Colonist task arbitration: (tier,score) key, 7-tier ladder, job lifecycle](./entries/2026-06-29-colonist-task-arbitration.md)
 - [2026-06-29 - Colonist gameplay stabilization: craft, harvest, construction loop](./entries/2026-06-29-colonist-gameplay-stabilization.md)
 - [2026-06-28 - Navmesh zero-walkable fix, multi-region nav, and reliable craft provisioning](./entries/2026-06-28-navmesh-crafting-reliability.md)
 - [2026-06-27 - Groundcover: GPU-instanced grass from a procedural Lua asset](./entries/2026-06-27-groundcover-render-path.md)
@@ -115,7 +116,7 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 ## Quick Stats
 
-- **Total Entries:** 77 (entry files; the Major Milestones list below highlights notable ones)
+- **Total Entries:** 78 (entry files; the Major Milestones list below highlights notable ones)
 - **Latest Entry:** 2026-06-29
 - **Major Milestones:**
   - Cryosphere: physical sea ice, snow, and glaciers (PDD + perfect-plastic) with a two-pass ice-climate feedback (2026-06-20)

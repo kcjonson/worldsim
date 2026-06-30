@@ -23,6 +23,25 @@ namespace world_sim {
 			}
 			return UI::LineStatus::Available;
 		}
+
+		// Human label for each arbitration tier (1 best, 7 idle)
+		const char* tierLabel(int tier) {
+			switch (tier) {
+				case 1: return "Survival";
+				case 2: return "Critical need";
+				case 3: return "Forced order";
+				case 4: return "Work order";
+				case 5: return "Need";
+				case 6: return "Opportunistic";
+				case 7: return "Idle";
+				default: return "Unknown";
+			}
+		}
+
+		// Format a signed int16 bonus term, e.g. "+30" or "0"
+		std::string fmtBonus(int16_t v) {
+			return std::to_string(static_cast<int>(v));
+		}
 	} // namespace
 
 	TaskListView::TaskListView(const Args& args)
@@ -103,11 +122,16 @@ namespace world_sim {
 	}
 
 	void TaskListView::update(const ecs::World& world, ecs::EntityID colonistId) {
-		// Only rebuild if colonist changed or content hasn't been built yet
-		if (contentBuilt && lastColonistId == colonistId) {
+		// Rebuild when: colonist changed, content not yet built, or trace advanced (live update)
+		float traceTime = -1.0F;
+		if (auto* trace = world.getComponent<ecs::DecisionTrace>(colonistId)) {
+			traceTime = trace->lastEvaluationTime;
+		}
+		if (contentBuilt && lastColonistId == colonistId && traceTime <= lastEvaluationTime) {
 			return;
 		}
 		lastColonistId = colonistId;
+		lastEvaluationTime = traceTime;
 		contentBuilt = true;
 		rebuildContent(world, colonistId);
 	}
@@ -175,6 +199,23 @@ namespace world_sim {
 			.direction = UI::Direction::Vertical,
 			.hAlign = UI::HAlign::Left
 		});
+
+		// --- Selection summary (why the winning option won) ---
+		if (auto* trace = world.getComponent<ecs::DecisionTrace>(colonistId)) {
+			if (!trace->selectionSummary.empty()) {
+				m_contentLayout->addChild(
+					UI::StatusTextLine(
+						UI::StatusTextLine::Args{
+							.text = trace->selectionSummary,
+							.status = UI::LineStatus::Active,
+							.fontSize = kTextFontSize,
+							.margin = kLineSpacing * 0.5F,
+							.id = "selection_summary"
+						}
+					)
+				);
+			}
+		}
 
 		// --- Current Task Section ---
 		m_contentLayout->addChild(
@@ -262,14 +303,39 @@ namespace world_sim {
 					continue; // Skip satisfied needs
 				}
 
+				// Primary line: "[T4 Work order] reason - score N"
+				std::string primaryText =
+					"[T" + std::to_string(option.tier) + " " + tierLabel(option.tier) + "] " +
+					option.reason +
+					" - score " + std::to_string(static_cast<int>(option.score));
+
 				m_contentLayout->addChild(
 					UI::StatusTextLine(
 						UI::StatusTextLine::Args{
-							.text = option.reason,
+							.text = primaryText,
 							.status = toLineStatus(option.status),
 							.fontSize = kTextFontSize,
 							.margin = kLineSpacing * 0.5F,
-							.id = "queue_item_" + std::to_string(itemIndex++)
+							.id = "queue_item_" + std::to_string(itemIndex)
+						}
+					)
+				);
+
+				// Detail line: bonus breakdown, indented
+				std::string detailText =
+					"  dist " + std::to_string(static_cast<int>(option.distanceFactor)) +
+					", skill " + fmtBonus(option.skillBonus) +
+					", age " + fmtBonus(option.taskAgeBonus) +
+					", hys " + fmtBonus(option.hysteresisBonus);
+
+				m_contentLayout->addChild(
+					UI::StatusTextLine(
+						UI::StatusTextLine::Args{
+							.text = detailText,
+							.status = UI::LineStatus::Idle,
+							.fontSize = kTextFontSize - 1.0F,
+							.margin = kLineSpacing * 0.25F,
+							.id = "queue_item_detail_" + std::to_string(itemIndex++)
 						}
 					)
 				);

@@ -14,17 +14,18 @@
 
 namespace ecs {
 
-/// Task types that colonists can perform
+/// Task types that colonists can perform. Arbitration tiers (assigned in priority-tuning.xml's
+/// <TaskTiers> + classifyTier promotions): see colonist-task-arbitration.md.
 enum class TaskType : uint8_t {
 	None = 0,
-	FulfillNeed,   // Tier 3/5: Moving to target for need fulfillment
-	Harvest,	   // Tier 6.7: Harvesting resources (cutting trees, harvesting bushes)
-	Craft,		   // Tier 6.5: Crafting at a station
-	Haul,		   // Tier 6.4: Moving loose items to storage containers
-	PlacePackaged, // Tier 6.35: Carrying packaged items to placement locations
-	Build,		   // Tier 6.45: Advancing construction work on a blueprint (priority 41, just above Craft)
-	Deconstruct,   // Tearing down a structure
-	Wander		   // Tier 7: Random exploration
+	FulfillNeed,   // Need fulfillment: tier 2 (critical), 5 (actionable), or 7 (gather-food sentinel)
+	Harvest,	   // Harvesting resources: tier 4 if serving a work order, else 6 (opportunistic)
+	Craft,		   // Crafting at a station: tier 4 (active work order)
+	Haul,		   // Moving loose items to storage: tier 4 if serving a work order, else 6
+	PlacePackaged, // Carrying packaged items to placement: tier 4 if serving/carrying, else 6
+	Build,		   // Advancing construction on a blueprint: tier 4 (active work order)
+	Deconstruct,   // Tearing down a structure: tier 4 (active work order)
+	Wander		   // Random exploration: tier 7 (idle)
 };
 
 /// Task state machine
@@ -94,16 +95,25 @@ struct Task {
 	glm::vec2 placeSourcePosition{0.0F, 0.0F};	   // Where the packaged item currently is
 	glm::vec2 placeTargetPosition{0.0F, 0.0F};	   // Where to place it (from Packaged.targetPosition)
 
-	/// Task chain tracking (for multi-step tasks like pickup→deposit) - Phase 5 infrastructure
-	/// Planned behavior: when a colonist completes a chain step and selects the next task,
-	/// if the candidate is the next step in the same chain, it receives a +2000 priority bonus.
+	/// Task chain tracking (for multi-step tasks like pickup→deposit).
+	/// A mid-chain provisioning task (servesActiveWorkOrder) is classified at tier 4 in the
+	/// (tier, score) arbitration, which is what keeps a colonist on its provisioning chain (the
+	/// former +2000 chain score bonus is gone; see colonist-task-arbitration.md).
 	std::optional<uint64_t> chainId;  // Which chain this task belongs to (nullopt = not part of chain)
 	uint8_t chainStep = 0;			  // Step index within the chain (0 = first step)
 
 	/// Time since last decision re-evaluation (seconds)
 	float timeSinceEvaluation = 0.0F;
 
-	/// Priority score when this task was selected (used for switch threshold comparison)
+	/// Arbitration tier of this task when selected (lower = higher priority). Paired with `priority`
+	/// (the within-tier score) to form the (tier, score) key. The action-interruption gate is
+	/// tier-only: a strictly higher-tier challenger interrupts, a same-tier (or lower) challenger
+	/// does not. The anti-thrash margin is NOT re-applied here; it already lives in the score at
+	/// selection (the in-progress option carries the hysteresis bonus), so re-checking it at the
+	/// gate would double-count.
+	int priorityTier = 7;
+
+	/// Within-tier score when this task was selected (used for the same-tier switch threshold).
 	float priority = 0.0F;
 
 	/// Debug reason for task selection (e.g., "Hunger at 45%")
@@ -138,6 +148,7 @@ struct Task {
 		placeTargetPosition = glm::vec2{0.0F, 0.0F};
 		chainId.reset();
 		chainStep = 0;
+		priorityTier = 7;
 		priority = 0.0F;
 		// Note: timeSinceEvaluation NOT reset here - caller handles timer logic
 		reason.clear();

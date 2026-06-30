@@ -86,6 +86,7 @@ class TaskListView : public UI::Component {
 	// Cache to avoid rebuilding content every frame
 	ecs::EntityID lastColonistId{};
 	bool contentBuilt = false;
+	float lastEvaluationTime = -1.0F; // Last trace timestamp we rendered
 
 	// Fixed UI elements (manually positioned)
 	UI::LayerHandle m_backgroundHandle;

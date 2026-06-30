@@ -498,6 +498,23 @@ namespace {
 				return false;
 			}
 
+			// Every task type the AI can evaluate must have an explicit arbitration tier in
+			// priority-tuning.xml's <TaskTiers> block, or the (tier, score) ordering would default a
+			// new type to an unintended tier. Fail loud at load rather than mis-rank silently.
+			{
+				static const std::vector<std::string> kRequiredTaskTiers = {
+					"FulfillNeed", "Harvest", "Craft", "Haul", "PlacePackaged", "Build", "Deconstruct", "Wander"};
+				std::vector<std::string> missingTiers;
+				if (!PriorityConfig::Get().validateTaskTiers(kRequiredTaskTiers, missingTiers)) {
+					std::string joined;
+					for (const auto& name : missingTiers) {
+						joined += (joined.empty() ? "" : ", ") + name;
+					}
+					LOG_ERROR(Game, "priority-tuning.xml is missing an arbitration tier for task type(s): %s", joined.c_str());
+					return false;
+				}
+			}
+
 			if (!ConstructionRegistry::Get().load(basePath + "construction")) {
 				LOG_ERROR(Game, "Failed to load construction config");
 				return false;

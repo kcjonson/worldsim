@@ -47,9 +47,24 @@ namespace engine::assets {
 		int16_t bonus = 2000; // Bonus for continuing a chain
 	};
 
-	/// In-progress task config
+	/// In-progress task config.
+	/// Repurposed for the (tier, score) arbitration as the within-tier hysteresis margin: the
+	/// stickiness added to the currently in-progress option's score so a same-tier challenger must
+	/// beat it by more than this margin to win. It can never lift an option across a tier boundary
+	/// (score only compares within a tier). Defaults to taskSwitchThreshold (50) below.
 	struct InProgressBonusConfig {
-		int16_t bonus = 200; // Bonus for current task (resist switching)
+		int16_t bonus = 50; // Within-tier hysteresis margin for the in-progress option
+	};
+
+	/// Within-tier distance factor config.
+	/// Replaces the old +-50 distanceBonus for the (tier, score) arbitration. The distance factor is
+	/// the dominant within-tier score term: it decreases monotonically with distance and is weighted
+	/// to dominate skill (0-100) and task age (0-100) across the working range, so the nearest
+	/// reachable source wins within a tier (fixes "chops a tree 70 m away over an adjacent one").
+	/// Linear curve: factor(d) = maxFactor * max(0, 1 - d / maxDistance), clamped to [0, maxFactor].
+	struct DistanceFactorConfig {
+		float maxDistance = 60.0F; // Distance (m) at which the factor reaches 0
+		float maxFactor = 300.0F;  // Factor at distance 0 (dominates skill+age, exceeds hysteresis)
 	};
 
 	/// Task age bonus config
@@ -93,7 +108,26 @@ namespace engine::assets {
 		/// Clear all loaded config (reset to defaults)
 		void clear();
 
-		// --- Priority Band Queries ---
+		// --- Task Tier Queries (arbitration) ---
+
+		/// Get the base tier for a task type by name (lower number = higher priority).
+		/// This is the BASE tier from config; runtime classifiers in AIDecisionSystem may promote a
+		/// specific option to a higher tier (e.g. a critical need, or a haul serving a work order).
+		/// @param taskTypeName Task type name (e.g. "Craft", "Haul", "Wander")
+		/// @return Base tier, or kUnassignedTier if the type has no explicit tier configured
+		[[nodiscard]] int getTaskTier(const std::string& taskTypeName) const;
+
+		/// Sentinel tier for a task type that has no explicit entry in the config. Used by
+		/// validateTaskTiers to fail loud at load if any required type is missing a tier.
+		static constexpr int kUnassignedTier = 9999;
+
+		/// Validate that every required task type has an explicit base tier configured. Returns true
+		/// and leaves missingOut empty when all are present; otherwise returns false and fills
+		/// missingOut with the names of the unassigned types. Called at config load so a task type
+		/// added without a tier fails loud rather than defaulting silently.
+		[[nodiscard]] bool validateTaskTiers(const std::vector<std::string>& requiredTypeNames, std::vector<std::string>& missingOut) const;
+
+		// --- Priority Band Queries (work-type DISPLAY priority; not the AI arbitration) ---
 
 		/// Get base priority for a band by name
 		/// @param bandName Band name (e.g., "Critical", "WorkHigh")
@@ -110,10 +144,17 @@ namespace engine::assets {
 
 		// --- Bonus Calculations ---
 
-		/// Calculate distance bonus/penalty
+		/// Calculate distance bonus/penalty (legacy +-50 range; retained for the work-type display
+		/// priority path, NOT used by the (tier, score) arbitration).
 		/// @param distance Distance to task target
 		/// @return Bonus (positive) or penalty (negative)
 		[[nodiscard]] int16_t calculateDistanceBonus(float distance) const;
+
+		/// Calculate the within-tier distance factor for the (tier, score) arbitration: a strong,
+		/// monotonically-decreasing nearest-source term. factor(d) = maxFactor * max(0, 1 - d/maxDistance).
+		/// @param distance Distance to task target (meters)
+		/// @return Distance factor in [0, maxFactor]
+		[[nodiscard]] float calculateDistanceFactor(float distance) const;
 
 		/// Calculate skill bonus
 		/// @param skillLevel Colonist's skill level (0-20)
@@ -136,6 +177,7 @@ namespace engine::assets {
 		// --- Config Getters ---
 
 		[[nodiscard]] const DistanceBonusConfig&   getDistanceConfig() const { return distanceConfig; }
+		[[nodiscard]] const DistanceFactorConfig&  getDistanceFactorConfig() const { return distanceFactorConfig; }
 		[[nodiscard]] const SkillBonusConfig&	   getSkillConfig() const { return skillConfig; }
 		[[nodiscard]] const ChainBonusConfig&	   getChainConfig() const { return chainConfig; }
 		[[nodiscard]] const InProgressBonusConfig& getInProgressConfig() const { return inProgressConfig; }
@@ -163,6 +205,9 @@ namespace engine::assets {
 		/// Parse bands from XML node
 		void parseBands(const void* node);
 
+		/// Parse per-task-type tier table from XML node
+		void parseTaskTiers(const void* node);
+
 		/// Parse bonuses from XML node
 		void parseBonuses(const void* node);
 
@@ -177,14 +222,18 @@ namespace engine::assets {
 
 		// --- Storage ---
 
-		/// Priority bands by name
+		/// Priority bands by name (work-type display priority)
 		std::unordered_map<std::string, int16_t> bands;
+
+		/// Per-task-type base tier for the (tier, score) arbitration (lower number = higher priority)
+		std::unordered_map<std::string, int> taskTiers;
 
 		/// User priority step size
 		int16_t userPriorityStep = 100;
 
 		/// Bonus configs
 		DistanceBonusConfig	  distanceConfig;
+		DistanceFactorConfig  distanceFactorConfig;
 		SkillBonusConfig	  skillConfig;
 		ChainBonusConfig	  chainConfig;
 		InProgressBonusConfig inProgressConfig;

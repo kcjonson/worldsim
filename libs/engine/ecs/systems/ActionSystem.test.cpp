@@ -2210,6 +2210,9 @@ class ActionSystemHarvestTimeTest : public ::testing::Test {
 		task.type = TaskType::Harvest;
 		task.state = TaskState::Arrived;
 		task.targetPosition = treePos;
+		// startHarvestAction now locates the harvestable by id (the memory key), not by proximity,
+		// so the task must carry the key the evaluator would have stored for this tree.
+		task.harvestTargetEntityId = ecs::hashWorldEntity(treePos, registry.getDefNameId("Flora_TestTree"));
 		task.harvestYieldDefNameId = registry.getDefNameId("TestWood");
 		world->addComponent<Task>(entity, std::move(task));
 
@@ -2244,6 +2247,137 @@ TEST_F(ActionSystemHarvestTimeTest, ConvertsDurabilityToSecondsAtSkillTen) {
 	ASSERT_EQ(action->type, ActionType::Harvest);
 	EXPECT_NEAR(action->duration, 60.0F / harvestWorkRate(10.0F), 0.001F);
 	EXPECT_NEAR(action->duration, 60.0F / 18.0F, 0.001F);
+}
+
+// =============================================================================
+// Harvest locate-by-entity-id (NOT 0.5 m proximity) -- the phantom-harvest-loop fix
+// =============================================================================
+//
+// startHarvestAction must locate the harvestable by task.harvestTargetEntityId (the
+// knownWorldEntities key the evaluator chose), not by re-scanning memory for an entity within
+// 0.5 m of task.targetPosition. The stabilization PR snaps a harvest target to an ADJACENT
+// reachable nav point (tree centers are navmesh holes), so task.targetPosition is offset from
+// the tree by well over 0.5 m. A proximity scan would find nothing, forget the (live) entry,
+// and the AI would re-select -> loop.
+class ActionSystemHarvestLocateTest : public ::testing::Test {
+  protected:
+	void SetUp() override {
+		world = std::make_unique<World>();
+
+		engine::assets::AssetDefinition wood;
+		wood.defName = "TestWood";
+		wood.label = "Test Wood";
+		wood.itemProperties = engine::assets::ItemProperties{};
+		wood.itemProperties->stackSize = 50;
+		engine::assets::AssetRegistry::Get().registerTestDefinition(std::move(wood));
+
+		engine::assets::AssetDefinition tree;
+		tree.defName = "Flora_TestTree";
+		tree.label = "Test Tree";
+		engine::assets::HarvestableCapability cap;
+		cap.yieldDefName = "TestWood";
+		cap.amountMin = 1; // deterministic yield, no RNG
+		cap.amountMax = 1;
+		cap.durability = 60.0F;
+		cap.destructive = true;
+		cap.regrowthTime = 0.0F;
+		cap.requiredToolType = ""; // tool-less colonist passes the gate
+		tree.capabilities.harvestable = cap;
+		engine::assets::AssetRegistry::Get().registerTestDefinition(std::move(tree));
+
+		world->registerSystem<ActionSystem>();
+	}
+
+	void TearDown() override {
+		engine::assets::AssetRegistry::Get().clearDefinitions();
+		world.reset();
+	}
+
+	/// A colonist whose Harvest task is keyed to the tree at `treePos` by harvestTargetEntityId,
+	/// while its targetPosition is the SNAPPED stand point `standPos` (>0.5 m from the tree).
+	/// Seeds memory with the tree so the lookup resolves.
+	EntityID createHarvesterTargetingId(glm::vec2 treePos, glm::vec2 standPos) {
+		auto& registry = engine::assets::AssetRegistry::Get();
+
+		auto entity = world->createEntity();
+		world->addComponent<Position>(entity, Position{standPos});
+		world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
+		world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
+		world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+		world->addComponent<Inventory>(entity, Inventory::createForColonist());
+		world->addComponent<Action>(entity, Action{});
+
+		Skills skills;
+		skills.setLevel("Harvesting", 0.0F);
+		world->addComponent<Skills>(entity, std::move(skills));
+
+		const uint32_t treeDefNameId = registry.getDefNameId("Flora_TestTree");
+
+		Memory memory;
+		memory.rememberWorldEntity(treePos, treeDefNameId, registry.getCapabilityMask(treeDefNameId));
+		world->addComponent<Memory>(entity, std::move(memory));
+
+		Task task;
+		task.type = TaskType::Harvest;
+		task.state = TaskState::Arrived;
+		task.targetPosition = standPos; // the snapped stand point, NOT the tree
+		task.harvestTargetEntityId = ecs::hashWorldEntity(treePos, treeDefNameId); // the memory key
+		task.harvestYieldDefNameId = registry.getDefNameId("TestWood");
+		world->addComponent<Task>(entity, std::move(task));
+
+		return entity;
+	}
+
+	std::unique_ptr<World> world;
+};
+
+// The keystone: the tree is 5 m from the snapped stand point (10x the old 0.5 m tolerance), yet
+// the harvest must still start, sourcing from the tree's position -- proving the locate keys on
+// harvestTargetEntityId, not proximity to targetPosition.
+TEST_F(ActionSystemHarvestLocateTest, HarvestsByEntityIdWhenTargetPositionIsSnappedAway) {
+	const glm::vec2 treePos{20.0F, 20.0F};
+	const glm::vec2 standPos{25.0F, 20.0F}; // 5 m away -- far outside the old 0.5 m proximity window
+	auto			harvester = createHarvesterTargetingId(treePos, standPos);
+
+	world->update(0.1F); // triggers startHarvestAction
+
+	auto* action = world->getComponent<Action>(harvester);
+	ASSERT_EQ(action->type, ActionType::Harvest)
+	    << "harvest must start from the entity id even though the tree is 5 m from the stand point";
+	const auto& collEff = action->collectionEffect();
+	EXPECT_EQ(collEff.sourceDefName, "Flora_TestTree");
+	EXPECT_FLOAT_EQ(collEff.sourcePosition.x, treePos.x) << "source is the tree, not the snapped stand point";
+	EXPECT_FLOAT_EQ(collEff.sourcePosition.y, treePos.y);
+
+	// Sanity: the snap distance asserted is well beyond the deleted 0.5 m tolerance.
+	EXPECT_GT(glm::distance(treePos, standPos), 0.5F);
+}
+
+// A vanished target id clears the action WITHOUT grabbing a nearby decoy harvestable. The decoy
+// sits right at the stand point (distance 0) -- the old proximity scan would have chopped it; the
+// id-based locate must not, because the chosen id is gone from memory.
+TEST_F(ActionSystemHarvestLocateTest, VanishedTargetIdClearsActionWithoutGrabbingDecoy) {
+	auto& registry = engine::assets::AssetRegistry::Get();
+
+	const glm::vec2 treePos{20.0F, 20.0F};
+	const glm::vec2 standPos{25.0F, 20.0F};
+	auto			harvester = createHarvesterTargetingId(treePos, standPos);
+
+	// A DECOY tree sitting exactly at the stand point, also in memory. The colonist's task id still
+	// points at the original tree; we then forget the original so its id is absent.
+	const uint32_t treeDefNameId = registry.getDefNameId("Flora_TestTree");
+	auto*		   memory = world->getComponent<Memory>(harvester);
+	memory->rememberWorldEntity(standPos, treeDefNameId, registry.getCapabilityMask(treeDefNameId));
+	// The original target id is now stale: forget the original tree entry.
+	memory->forgetWorldEntity(treePos, treeDefNameId);
+	ASSERT_FALSE(memory->knowsWorldEntity(treePos, treeDefNameId)) << "original target removed from memory";
+	ASSERT_TRUE(memory->knowsWorldEntity(standPos, treeDefNameId)) << "decoy remains in memory at the stand point";
+
+	world->update(0.1F);
+
+	auto* action = world->getComponent<Action>(harvester);
+	EXPECT_EQ(action->type, ActionType::None)
+	    << "vanished target id clears the action; the nearby decoy must NOT be chopped";
 }
 
 } // namespace ecs::test

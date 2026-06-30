@@ -1,12 +1,15 @@
 #pragma once
 
 // AI Decision System for Colonist Autonomous Behavior
-// Evaluates colonist needs and assigns movement targets based on tier priority:
-// - Tier 3: Critical Needs (<10%) - immediate fulfillment
-// - Tier 5: Actionable Needs (below seek threshold, varies by need type) - seek fulfillment
-// - Tier 6: Gather Food - proactive harvesting when no food in inventory
-// - Tier 7: Wander - random exploration when all needs satisfied
-// See /docs/design/game-systems/colonists/ai-behavior.md for design details.
+// Evaluates options and selects a task via a lexicographic (tier, score) key (tier compared
+// first, inviolable; score orders within a tier only). Tier ladder (lower = higher priority):
+// - Tier 2: Critical needs (<10%)
+// - Tier 4: Active work orders (queued craft/build + their provisioning chain) - STICKY
+// - Tier 5: Actionable needs (below seek threshold)
+// - Tier 6: Opportunistic work (loose hauls, stocking, undirected harvest)
+// - Tier 7: Idle (gather food, wander)
+// See /docs/technical/colonist-task-arbitration.md for the (tier, score) design.
+// See /docs/design/game-systems/colonists/ai-behavior.md for the design intent.
 // See /docs/design/game-systems/colonists/decision-trace.md for task queue display.
 
 #include "../EntityID.h"
@@ -169,15 +172,14 @@ private:
 	/// How often to re-evaluate tasks (seconds)
 	static constexpr float kReEvalInterval = 0.5F;
 
-	/// Minimum priority gap required to switch tasks while an action is in progress.
-	/// This prevents minor priority fluctuations from causing task switches, but allows
-	/// emergencies (fires, critical needs ~300 vs actionable ~100) to interrupt.
-	/// Example: Current task priority 110, new task 115 (gap 5) → NO switch
-	/// Example: Current task priority 110, new task 305 (gap 195) → SWITCH
-	static constexpr float kPrioritySwitchThreshold = 50.0F;
-
 	/// Maximum distance for wander targets
 	static constexpr float kWanderRadius = 8.0F;
+
+	/// Monotonic seconds-since-start clock for this system (deltaTime accumulated each update).
+	/// Used to stamp DecisionTrace::lastEvaluationTime (so the inspector can detect a rebuilt trace)
+	/// and as the currentTime for the within-tier task-age term. A real game-time clock (TimeSystem)
+	/// is not wired to this system yet; this monotonic accumulator is sufficient for both uses.
+	float m_elapsedTime = 0.0F;
 
 	/// Random number generator for wander behavior (seeded from random_device by default)
 	std::mt19937 m_rng;

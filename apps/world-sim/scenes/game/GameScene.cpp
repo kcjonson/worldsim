@@ -668,6 +668,11 @@ namespace {
 				setVisionOverlayActive(!m_visionOverlay->isActive());
 			}
 
+			// T toggles the per-colonist decision inspector panel.
+			if (input.isKeyPressed(engine::Key::T)) {
+				gameUI->toggleDecisionInspector();
+			}
+
 			// Handle time controls
 			auto& timeSystem = ecsWorld->getSystem<ecs::TimeSystem>();
 			if (input.isKeyPressed(engine::Key::Space)) {
