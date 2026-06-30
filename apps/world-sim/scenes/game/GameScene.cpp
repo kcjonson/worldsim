@@ -221,6 +221,7 @@ namespace {
 					},
 				.onMenuClick = [this]() { sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu)); },
 				.onPlaceFurniture = [this]() { handlePlaceFurniture(); },
+				.onMoveFurniture = [this]() { handleMoveFurniture(); },
 				.onDemolishFoundation = [this]() { handleDemolishFoundation(); },
 				.onDemolishBuilding = [this]() { handleDemolishBuilding(); },
 				.onDemolishWallSegment = [this]() { handleDemolishWallSegment(); },
@@ -828,9 +829,22 @@ namespace {
 			if (!m_pendingSpawns.empty()) {
 				for (const PendingSpawn& spawn : m_pendingSpawns) {
 					if (spawn.packaged) {
-						auto entity = m_placementSystem->spawnEntity(spawn.defName, {spawn.x, spawn.y});
-						ecsWorld->addComponent<ecs::Packaged>(entity, ecs::Packaged{});
-						LOG_INFO(Game, "Spawned packaged '%s' - awaiting placement", spawn.defName.c_str());
+						// Spawn AT the resolved target (when one is set) so the box never overlaps
+						// the station: the colonist walks over and installs it via PlacePackaged.
+						// targetPosition wired here -> BuildGoalSystem raises the place goal next
+						// frame. nullopt -> spawn in place, await the player's [Place] click.
+						const glm::vec2 spawnAt =
+							spawn.targetPosition.has_value() ? *spawn.targetPosition : glm::vec2{spawn.x, spawn.y};
+						auto entity = m_placementSystem->spawnEntity(spawn.defName, spawnAt);
+						ecs::Packaged packaged;
+						packaged.targetPosition = spawn.targetPosition;
+						ecsWorld->addComponent<ecs::Packaged>(entity, packaged);
+						if (spawn.targetPosition.has_value()) {
+							LOG_INFO(Game, "Spawned packaged '%s' at (%.1f, %.1f) - auto-placing", spawn.defName.c_str(),
+									 spawnAt.x, spawnAt.y);
+						} else {
+							LOG_INFO(Game, "Spawned packaged '%s' - awaiting placement", spawn.defName.c_str());
+						}
 					} else {
 						dropResourcePiles(spawn.defName, spawn.x, spawn.y, spawn.quantity);
 					}
@@ -1055,14 +1069,47 @@ namespace {
 				LOG_INFO(Game, "Item crafted notification: %s", itemLabel.c_str());
 			});
 
+			// Every ground drop -- a felled tree's uncarried remainder, craft overflow, a stowed
+			// tool, a cancelled build site's salvage -- snaps to a walkable nav point before it
+			// lands, so a drop whose raw origin sits in a river / off-mesh (a tree felled on a
+			// bank) ends up on solid ground instead of in the water. findValidPositionNear is the
+			// one primitive for this; the snap lives here, at the two drop funnels (loose pile,
+			// packaged item), so no upstream drop site needs its own nav check (One-Path). It is
+			// deterministic (no RNG, canonical +X bias) and returns nullopt only when no mesh
+			// covers the origin -- then we keep the raw origin so a drop never hard-fails.
+			auto snapDropToGround = [&navSystem](float x, float y) -> glm::vec2 {
+				const std::optional<glm::vec2> onGround = navSystem.findValidPositionNear({x, y}, 1.0F);
+				return onGround.value_or(glm::vec2{x, y});
+			};
+
 			// Wire up ActionSystem to drop non-backpackable items on the ground as packaged.
 			// These callbacks fire from inside the ActionSystem view loop, so they only ENQUEUE;
 			// the real spawnEntity runs at the pending-spawn drain after ecsWorld->update() (see
 			// m_pendingSpawns) to avoid reallocating component pools out from under the live view.
-			// Offset from crafting station so items don't stack on top (2x typical station size).
-			constexpr float kDropOffset = 2.0F;
-			actionSystem.setDropItemCallback([this, kDropOffset](const std::string& defName, float x, float y) {
-				m_pendingSpawns.push_back({defName, x + kDropOffset, y, 0, /*packaged=*/true});
+			actionSystem.setDropItemCallback([this, snapDropToGround](const std::string& defName, float x, float y) {
+				const glm::vec2 at = snapDropToGround(x, y);
+				m_pendingSpawns.push_back({defName, at.x, at.y, 0, /*packaged=*/true, std::nullopt});
+			});
+
+			// Crafted FURNITURE comes out PACKAGED and auto-installs a short distance off the
+			// station via the existing PlacePackaged flow (it must not seat in the colonist's
+			// hands or stack on the station). Resolve a walkable spot >= 1 m away; the aim rotates
+			// by the golden angle each spawn so a queued run of boxes FANS OUT instead of stacking
+			// on one target. If no mesh covers the station (findValidPositionNear -> nullopt), fall
+			// back to the manual packaged drop (spawn beside the station, await a [Place] click) so
+			// crafting never hard-fails. ENQUEUE only -- fires from inside the ActionSystem view loop.
+			actionSystem.setSpawnPackagedAtCallback([this, &navSystem](const std::string& defName, glm::vec2 stationPos) {
+				constexpr float kGoldenAngle = 2.39996323F; // ~137.5 deg, spreads successive aims evenly
+				const float		angle		 = static_cast<float>(m_packagedSpawnSeq++) * kGoldenAngle;
+				const glm::vec2 aim{std::cos(angle), std::sin(angle)};
+				const std::optional<glm::vec2> target = navSystem.findValidPositionNear(stationPos, 1.0F, aim);
+				if (target.has_value()) {
+					m_pendingSpawns.push_back({defName, target->x, target->y, 0, /*packaged=*/true, target});
+				} else {
+					// No mesh at the station: fall back to the player-driven packaged drop, nudged
+					// ~2 m off the station (no mesh to snap to) so the box doesn't stack on it.
+					m_pendingSpawns.push_back({defName, stationPos.x + 2.0F, stationPos.y, 0, /*packaged=*/true, std::nullopt});
+				}
 			});
 
 			// Drop a loose, haulable resource pile (felling remainder, or a cancelled build site's
@@ -1071,8 +1118,9 @@ namespace {
 			// ActionSystem fell-remainder drop and the ConstructionSystem cancelled-site drop fire
 			// from inside their system's view loop, so both ENQUEUE; the drain runs dropResourcePiles
 			// (the single pile-split spawn path) after ecsWorld->update().
-			auto enqueueResourceDrop = [this](const std::string& defName, float x, float y, uint32_t quantity) {
-				m_pendingSpawns.push_back({defName, x, y, quantity, /*packaged=*/false});
+			auto enqueueResourceDrop = [this, snapDropToGround](const std::string& defName, float x, float y, uint32_t quantity) {
+				const glm::vec2 at = snapDropToGround(x, y);
+				m_pendingSpawns.push_back({defName, at.x, at.y, quantity, /*packaged=*/false});
 			};
 			actionSystem.setDropResourceCallback(enqueueResourceDrop);
 			constructionSystem.setDropResourceCallback(enqueueResourceDrop);
@@ -1415,6 +1463,34 @@ namespace {
 
 			// Begin relocation via PlacementSystem
 			m_placementSystem->beginRelocation(furnitureSel->entityId, furnitureSel->defName);
+		}
+
+		/// Re-package an INSTALLED box so it can be moved, then drive the existing relocation flow.
+		/// Re-adds Packaged (targetPosition nullopt = awaiting the player's spot pick) and immediately
+		/// enters placement mode. The box's Inventory rides along untouched -- contents survive the move
+		/// (RimWorld-style). Once the player picks the spot, the standard PlacePackaged pipeline carries
+		/// + installs it (Packaged removed, navmesh reclaims the old footprint via the entity-move path).
+		void handleMoveFurniture() {
+			const auto& sel = m_selectionSystem->current();
+			auto*		furnitureSel = std::get_if<world_sim::FurnitureSelection>(&sel);
+			if (furnitureSel == nullptr) {
+				LOG_WARNING(Game, "Cannot move furniture: no furniture selected");
+				return;
+			}
+			// Only installed boxes are movable here; an already-packaged one uses the Place flow.
+			if (furnitureSel->isPackaged || ecsWorld->hasComponent<ecs::Packaged>(furnitureSel->entityId)) {
+				LOG_WARNING(Game, "Cannot move furniture: entity %u is already packaged",
+							static_cast<uint32_t>(furnitureSel->entityId));
+				return;
+			}
+
+			// Re-package in place: nullopt target = awaiting the player's spot pick. Inventory stays put.
+			ecsWorld->addComponent<ecs::Packaged>(furnitureSel->entityId, ecs::Packaged{std::nullopt, false});
+
+			// Reuse the exact relocation pipeline a packaged box's [Place] button uses.
+			m_placementSystem->beginRelocation(furnitureSel->entityId, furnitureSel->defName);
+			LOG_INFO(Game, "Re-packaged installed box '%s' (entity %u) for move - awaiting placement",
+					 furnitureSel->defName.c_str(), static_cast<uint32_t>(furnitureSel->entityId));
 		}
 
 		/// Handle recipe queue request from crafting station UI.
@@ -1778,8 +1854,17 @@ namespace {
 			float		y = 0.0F;
 			uint32_t	quantity = 0; // resource-pile count; unused for packaged items
 			bool		packaged = false;
+			// Auto-place target for a packaged spawn (a crafted furniture box). When set, the
+			// entity spawns AT this point with Packaged.targetPosition wired, so BuildGoalSystem
+			// raises the place goal immediately (no manual [Place]). nullopt -> the player-driven
+			// path (spawn in place, await a [Place] click) for a manually dropped packaged item.
+			std::optional<glm::vec2> targetPosition;
 		};
 		std::vector<PendingSpawn> m_pendingSpawns;
+
+		// Monotonic counter rotating the placement aim for crafted furniture so a run of boxes
+		// from one station fans out (golden-angle stepped) instead of stacking on a single spot.
+		std::uint32_t m_packagedSpawnSeq = 0;
 	};
 
 } // namespace

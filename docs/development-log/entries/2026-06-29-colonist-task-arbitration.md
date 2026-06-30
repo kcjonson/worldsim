@@ -11,7 +11,7 @@ queued-job stalls.
 
 ## Details
 
-### This is a restoration, not a new architecture
+### Restoring the categorical arbitration the design always specified
 
 The `(tier, score)` key is what [Priority Configuration System](../../design/game-systems/colonists/priority-config.md)
 always specified: wide numeric bands (Critical 30000, Needs 10000, Work 1000-5000, Idle 0)
@@ -35,7 +35,7 @@ the code back to the documented design; the floor constants (`kWorkOrderProvisio
   is assigned tier 4 at evaluation time instead.
 - `inProgressBonus` (+200 cross-tier) replaced by a within-tier hysteresis margin (50)
   applied only when comparing same-tier options.
-- `distanceFactor` formula: `300 * max(0, 1 - d/60)` — yields 0-300, dominates skill (0-100)
+- `distanceFactor` formula: `300 * max(0, 1 - d/60)`, yields 0-300, dominates skill (0-100)
   and age (0-100) so the nearest source reliably wins within a tier.
 - 7-tier ladder loaded authoritatively from `assets/config/work/priority-tuning.xml
   <TaskTiers>` with fail-loud startup validation (unassigned task type = startup error).
@@ -44,7 +44,7 @@ the code back to the documented design; the floor constants (`kWorkOrderProvisio
   world → `NoSource`, not a re-queue to a random nearby entity. This kills the phantom
   "no harvestable entity found" loop.
 - `StorageGoalSystem::reconcileStockingHarvests` retires a stocking-harvest when the storage
-  minimum is already met or the source entity is gone — previously it looped indefinitely.
+  minimum is already met or the source entity is gone; previously it looped indefinitely.
 
 **Commit 2: TaskListView decision inspector**
 
@@ -95,10 +95,10 @@ within-tier nearest preference, multi-unit craft completion).
 
 ## Related Documentation
 
-- `docs/technical/colonist-task-arbitration.md` — the spec; now marked Implemented
-- `docs/design/game-systems/colonists/ai-behavior.md` — tier table reconciled
-- `docs/design/game-systems/colonists/priority-config.md` — bonus roles updated
-- `docs/testing/README.md` — combined-flow caveat updated
+- `docs/technical/colonist-task-arbitration.md`: the spec, now marked Implemented
+- `docs/design/game-systems/colonists/ai-behavior.md`: tier table reconciled
+- `docs/design/game-systems/colonists/priority-config.md`: bonus roles updated
+- `docs/testing/README.md`: combined-flow caveat updated
 
 ## Follow-ups
 
@@ -106,5 +106,5 @@ within-tier nearest preference, multi-unit craft completion).
   crafting station (cosmetic). The broader fix is `findValidPositionNear` placing dropped
   items off the station and off water; also covers items landing in rivers.
 - **Stocking re-arm / discovery-gating**: a box won't fill to its full minimum unaided once
-  the colonist exhausts the trees he's discovered — the storage goal system needs to re-arm
+  the colonist exhausts the trees he's discovered, the storage goal system needs to re-arm
   harvest goals when the colonist discovers new trees. Discovery-gating follow-up.

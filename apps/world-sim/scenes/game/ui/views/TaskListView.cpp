@@ -127,11 +127,11 @@ namespace world_sim {
 		if (auto* trace = world.getComponent<ecs::DecisionTrace>(colonistId)) {
 			traceTime = trace->lastEvaluationTime;
 		}
-		if (contentBuilt && lastColonistId == colonistId && traceTime <= m_lastEvaluationTime) {
+		if (contentBuilt && lastColonistId == colonistId && traceTime <= lastEvaluationTime) {
 			return;
 		}
 		lastColonistId = colonistId;
-		m_lastEvaluationTime = traceTime;
+		lastEvaluationTime = traceTime;
 		contentBuilt = true;
 		rebuildContent(world, colonistId);
 	}

@@ -43,13 +43,34 @@ namespace ecs {
 			}
 		}
 
-		// Route each output through the canonical "give to colonist" cascade: an empty hand, then
-		// a belt slot, then the backpack, then a loose ground drop -- weight-respecting at every
-		// step. This is the ONE path for handing a fresh item to a colonist; force-adding to a
-		// single slot (the old addItem-only path) ignored hand/belt seating and carry weight, so a
-		// run of crafts could pile multiple one-hand tools into a place they don't belong.
+		// Route each output by category. FURNITURE (shelves, boxes, stations) is never seated in
+		// the colonist's hands: it comes out PACKAGED and is installed a short distance off the
+		// station via the existing PlacePackaged flow, so it can't overlap the station. Everything
+		// else (tools, raw materials) goes through the canonical "give to colonist" cascade: an
+		// empty hand, then a belt slot, then the backpack, then a loose ground drop -- weight-
+		// respecting at every step. Keying on category (not handsRequired) is deliberate: Wood is
+		// also two-hand but must stay a carryable resource, not become a packaged install.
 		const glm::vec2 dropPos = action.targetPosition; // colonist crafts standing at the station
 		for (const auto& [itemName, count] : craftEff.outputs) {
+			const auto* outputDef = assetRegistry.getDefinition(itemName);
+			const bool	isFurniture =
+				outputDef != nullptr && outputDef->category == engine::assets::ItemCategory::Furniture;
+
+			if (isFurniture) {
+				// Spawn one packaged entity per unit at the station; the app resolves a valid spot
+				// nearby and wires its targetPosition so the place pipeline installs it. Deferred
+				// (ENQUEUE) -- the callback never spawns synchronously inside this view loop.
+				if (m_onSpawnPackagedAt) {
+					for (uint32_t i = 0; i < count; ++i) {
+						m_onSpawnPackagedAt(itemName, dropPos);
+					}
+					LOG_INFO(Engine, "[Action] Crafted %u x %s (packaged for placement near station)", count, itemName.c_str());
+				} else {
+					LOG_WARNING(Engine, "[Action] Crafted furniture %s but no spawn-packaged callback set (lost)", itemName.c_str());
+				}
+				continue;
+			}
+
 			const uint32_t carried = ecs::giveItemToColonist(
 				inventory, assetRegistry, itemName, count,
 				[&](const std::string& def, uint32_t qty) {

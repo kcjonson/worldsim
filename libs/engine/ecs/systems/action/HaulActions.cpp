@@ -254,9 +254,15 @@ namespace ecs {
 		// Get the packaged entity
 		auto packagedEntity = static_cast<EntityID>(placeEff.packagedEntityId);
 
-		// Clear the colonist's carrying state and hands
-		// Log warning if hands were already empty (indicates pickup phase may have failed)
-		if (!inventory.leftHand.has_value() && !inventory.rightHand.has_value()) {
+		// Clear the colonist's carrying state and hands. Empty hands are only a problem when this
+		// colonist was actually carrying THIS box: a crafted-furniture box spawns AT its place
+		// target (source == target), so startPlacePackagedAction skips the degenerate pickup phase
+		// and goes straight to phase 2 -- the box installs correctly with hands legitimately empty.
+		// carryingPackagedEntity (set only by a real PickupPackaged) is the authoritative carry
+		// state; warn only when it says we should be holding the box yet the hands are empty.
+		const bool shouldBeCarrying = inventory.carryingPackagedEntity.has_value()
+									  && inventory.carryingPackagedEntity.value() == placeEff.packagedEntityId;
+		if (shouldBeCarrying && !inventory.leftHand.has_value() && !inventory.rightHand.has_value()) {
 			LOG_WARNING(
 				Engine,
 				"[Action] Colonist completed PlacePackaged but hands were already empty - pickup phase may have failed"

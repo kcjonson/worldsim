@@ -389,7 +389,7 @@ namespace world_sim {
 		const engine::assets::AssetRegistry& registry,
 		const FurnitureSelection&			 selection,
 		const std::function<void()>&		 onPlace,
-		const std::function<void()>&		 onPackage,
+		const std::function<void()>&		 onMoveFurniture,
 		const std::function<void()>&		 onConfigure
 	) {
 		PanelContent content;
@@ -398,7 +398,7 @@ namespace world_sim {
 
 		// Store callbacks for UI
 		content.onPlace = onPlace;
-		content.onPackage = onPackage;
+		content.onMoveFurniture = onMoveFurniture;
 		content.onConfigure = onConfigure;
 
 		// Look up asset definition for properties
@@ -435,7 +435,8 @@ namespace world_sim {
 			);
 		}
 
-		// Place/Package button based on state
+		// Place (packaged) vs Move (installed). Move re-packages the box in place and immediately
+		// enters relocation, so the player picks a new spot and a colonist carries + reinstalls it.
 		if (selection.isPackaged) {
 			content.slots.push_back(
 				ActionButtonSlot{
@@ -446,8 +447,8 @@ namespace world_sim {
 		} else {
 			content.slots.push_back(
 				ActionButtonSlot{
-					.label = "Package",
-					.onClick = onPackage,
+					.label = "Move",
+					.onClick = onMoveFurniture,
 				}
 			);
 		}

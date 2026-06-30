@@ -144,7 +144,11 @@ namespace engine::assets {
 	bool PriorityConfig::validateTaskTiers(const std::vector<std::string>& requiredTypeNames, std::vector<std::string>& missingOut) const {
 		missingOut.clear();
 		for (const auto& name : requiredTypeNames) {
-			if (taskTiers.find(name) == taskTiers.end()) {
+			auto it = taskTiers.find(name);
+			// Absent key OR a sentinel value (malformed/non-integer tier= parsed to kUnassignedTier)
+			// both count as unassigned, so a <Task name="Craft"/> with no valid tier fails loud
+			// rather than silently sorting to the bottom.
+			if (it == taskTiers.end() || it->second == kUnassignedTier) {
 				missingOut.push_back(name);
 			}
 		}
@@ -323,7 +327,9 @@ namespace engine::assets {
 		// In-progress
 		if (auto ipNode = node.child("InProgress")) {
 			if (auto n = ipNode.child("bonus")) {
-				inProgressConfig.bonus = static_cast<int16_t>(n.text().as_int(200));
+				// Fallback matches the struct default, the XML value, and taskSwitchThreshold (50):
+				// the within-tier hysteresis margin. An empty node must not yield the old 200.
+				inProgressConfig.bonus = static_cast<int16_t>(n.text().as_int(50));
 			}
 		}
 

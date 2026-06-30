@@ -2,6 +2,7 @@
 // Tests action factory methods, state machine progression, need restoration, and side effects.
 
 #include "ActionSystem.h"
+#include "BuildGoalSystem.h"
 
 #include "../GoalTaskRegistry.h"
 #include "../InventoryMass.h"
@@ -1401,6 +1402,71 @@ TEST_F(ActionSystemGoalTest, CarryingAtSourceRedirectsToDepositInsteadOfDeadlock
 		<< "Colonist keeps the armful remainder beyond the haul quantity";
 }
 
+// End-to-end PlacePackaged from a craft: a packaged entity whose targetPosition is set (exactly
+// what the furniture-craft path spawns) is auto-picked-up by BuildGoalSystem (raises the goal),
+// then the EXISTING two-phase PlacePackaged pipeline installs it -- the Packaged component is
+// removed and the entity's Position ends at the target. ZERO new carry/place/install code: this
+// drives the same goal + PickupPackaged + PlacePackaged path a player-placed box would.
+TEST_F(ActionSystemGoalTest, PlacePackagedFromCraftInstallsAtTargetAndUnpackages) {
+	auto& registry = GoalTaskRegistry::Get();
+	world->registerSystem<BuildGoalSystem>(); // raises the PlacePackaged goal from the Packaged entity
+
+	// A crafted BasicBox sits packaged at the station spot, with its install target a short walk
+	// away (what setSpawnPackagedAtCallback wires: spawn AT target, targetPosition set).
+	const glm::vec2 sourcePos{2.0F, 2.0F};
+	const glm::vec2 targetPos{3.0F, 2.0F};
+	EntityID		box = world->createEntity();
+	world->addComponent<Position>(box, Position{sourcePos});
+	world->addComponent<Appearance>(box, Appearance{"BasicBox", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+	ecs::Packaged packaged;
+	packaged.targetPosition = targetPos;
+	world->addComponent<ecs::Packaged>(box, packaged);
+
+	// BuildGoalSystem throttles to every 30 frames; pump past that so it raises the place goal
+	// from the Packaged entity (proving the auto-creation the furniture path relies on).
+	for (int i = 0; i < 35; ++i) {
+		world->update(0.016F);
+	}
+	const auto* placeGoal = registry.getGoalByDestination(box);
+	ASSERT_NE(placeGoal, nullptr) << "BuildGoalSystem must raise a PlacePackaged goal from the Packaged entity";
+	EXPECT_EQ(placeGoal->type, TaskType::PlacePackaged);
+
+	// Drive the existing two-phase pipeline. A colonist standing at the box runs PickupPackaged,
+	// then (teleported to the target, as the movement layer would deliver it) runs PlacePackaged.
+	// This is the same task the AI would assign from the goal above; we step it deterministically.
+	auto  colonist = createColonist(sourcePos);
+	auto* task = world->getComponent<Task>(colonist);
+	task->type = TaskType::PlacePackaged;
+	task->state = TaskState::Arrived;
+	task->placePackagedEntityId = static_cast<uint64_t>(box);
+	task->placeSourcePosition = sourcePos;
+	task->placeTargetPosition = targetPos;
+	task->targetPosition = sourcePos; // phase 1: at the source
+
+	// --- Phase 1: PickupPackaged ---
+	world->update(0.1F); // start PickupPackaged
+	world->update(2.0F); // complete it (clears hands, marks beingCarried, advances to phase 2)
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	ASSERT_TRUE(inventory->carryingPackagedEntity.has_value()) << "phase 1 must pick the box up";
+	EXPECT_EQ(inventory->carryingPackagedEntity.value(), static_cast<uint64_t>(box));
+
+	// --- Phase 2: arrive at the target and PlacePackaged ---
+	world->getComponent<Position>(colonist)->value = targetPos;
+	task->state = TaskState::Arrived;
+	task->targetPosition = targetPos;
+	world->getComponent<Action>(colonist)->clear();
+
+	world->update(0.1F); // start PlacePackaged
+	world->update(2.0F); // complete it (installs: moves entity to target, removes Packaged)
+
+	// Installed: the Packaged component is gone and the entity sits at the target.
+	EXPECT_EQ(world->getComponent<ecs::Packaged>(box), nullptr) << "install must remove the Packaged component";
+	const auto* boxPos = world->getComponent<Position>(box);
+	ASSERT_NE(boxPos, nullptr);
+	EXPECT_FLOAT_EQ(boxPos->value.x, targetPos.x) << "the box must end at its install target";
+	EXPECT_FLOAT_EQ(boxPos->value.y, targetPos.y);
+}
+
 // =============================================================================
 // Tree felling: a two-hand bulk material (Wood) destructive harvest
 // =============================================================================
@@ -2196,6 +2262,130 @@ TEST_F(HandMaterialActionTest, CraftConsumesWoodFromStationStoreAndProducesOutpu
 	// The canonical cascade seats a one-hand output in an empty hand first, so count hands + backpack.
 	EXPECT_EQ(ecs::availableQuantity(*inventory, "Plank"), 1U) << "Craft produced its output into the colonist";
 	EXPECT_TRUE(inventory->isHolding("Plank")) << "Output seats in an empty hand before the backpack";
+}
+
+// A crafted FURNITURE output (BasicBox) does NOT seat in the colonist's hands: it routes to the
+// new spawn-packaged callback with the station position, leaving both hands empty. This is what
+// keeps a crafted box from overlapping the station -- it comes out packaged and is installed a
+// short distance away via the existing PlacePackaged flow.
+TEST_F(HandMaterialActionTest, CraftFurnitureOutputLeavesHandsEmptyAndFiresSpawnPackaged) {
+	// BasicBox: a furniture output (two-hand, like the real packaged items).
+	engine::assets::AssetDefinition boxDef;
+	boxDef.defName = "BasicBox";
+	boxDef.label = "Basic Box";
+	boxDef.handsRequired = 2;
+	boxDef.category = engine::assets::ItemCategory::Furniture;
+	engine::assets::AssetRegistry::Get().registerTestDefinition(std::move(boxDef));
+
+	engine::assets::RecipeDef recipe;
+	recipe.defName = "Recipe_BasicBox";
+	recipe.label = "Basic Box";
+	recipe.stationDefName = "CraftingSpot";
+	recipe.workAmount = 50.0F; // -> 0.5s craft
+	recipe.inputs.push_back({"Wood", 0, 4});
+	recipe.outputs.push_back({"BasicBox", 0, 1});
+	engine::assets::RecipeRegistry::Get().registerTestRecipe(recipe);
+
+	// Capture the spawn-packaged callback (the app would resolve a spot and enqueue a spawn).
+	int		  spawnFires = 0;
+	std::string spawnedDef;
+	glm::vec2 spawnedStationPos{-999.0F, -999.0F};
+	world->getSystem<ActionSystem>().setSpawnPackagedAtCallback(
+		[&](const std::string& defName, glm::vec2 stationPos) {
+			++spawnFires;
+			spawnedDef = defName;
+			spawnedStationPos = stationPos;
+		});
+
+	const glm::vec2 stationPos{3.0F, 7.0F};
+	EntityID station = world->createEntity();
+	world->addComponent<Position>(station, Position{stationPos});
+	world->addComponent<WorkQueue>(station, WorkQueue{});
+	auto stationInv = Inventory::createForStorage();
+	stationInv.addItem("Wood", 10);
+	world->addComponent<Inventory>(station, stationInv);
+
+	auto  colonist = createColonist(stationPos);
+	auto* inventory = world->getComponent<Inventory>(colonist);
+
+	auto* task = world->getComponent<Task>(colonist);
+	task->type = TaskType::Craft;
+	task->state = TaskState::Arrived;
+	task->craftRecipeDefName = "Recipe_BasicBox";
+	task->targetStationId = static_cast<uint64_t>(station);
+	task->targetPosition = stationPos;
+
+	world->update(0.1F); // startCraftAction
+	world->update(1.0F); // complete the 0.5s craft
+
+	// The box is NOT in the colonist's inventory -- it went out packaged via the callback.
+	EXPECT_FALSE(inventory->leftHand.has_value()) << "left hand must stay empty (box is not carried)";
+	EXPECT_FALSE(inventory->rightHand.has_value()) << "right hand must stay empty (box is not carried)";
+	EXPECT_EQ(ecs::availableQuantity(*inventory, "BasicBox"), 0U) << "furniture output must not enter inventory";
+
+	// And the spawn-packaged callback fired once, with the station's position.
+	EXPECT_EQ(spawnFires, 1) << "the furniture output must fire the spawn-packaged callback exactly once";
+	EXPECT_EQ(spawnedDef, "BasicBox");
+	EXPECT_FLOAT_EQ(spawnedStationPos.x, stationPos.x);
+	EXPECT_FLOAT_EQ(spawnedStationPos.y, stationPos.y);
+
+	// The station's Wood was still consumed (the craft ran).
+	EXPECT_EQ(world->getComponent<Inventory>(station)->getQuantity("Wood"), 6U) << "4 Wood consumed (10 - 4)";
+}
+
+// Regression: a non-furniture craft (an AxePrimitive tool) STILL routes through the
+// give-to-colonist cascade and lands in the colonist's hand/belt/pack -- the furniture branch
+// must not change tool output. Also proves the predicate keys on category, not handsRequired
+// (a one-hand tool would never have hit the two-hand drop path anyway, but this pins the
+// category gate: a Tool is not treated as furniture).
+TEST_F(HandMaterialActionTest, CraftToolOutputStillRoutesToColonistInventory) {
+	engine::assets::AssetDefinition axeDef;
+	axeDef.defName = "AxePrimitive";
+	axeDef.label = "Primitive Axe";
+	axeDef.handsRequired = 1;
+	axeDef.category = engine::assets::ItemCategory::Tool;
+	axeDef.itemProperties = engine::assets::ItemProperties{};
+	axeDef.itemProperties->stackSize = 1;
+	axeDef.itemProperties->massKg = 1.0F;
+	engine::assets::AssetRegistry::Get().registerTestDefinition(std::move(axeDef));
+
+	engine::assets::RecipeDef recipe;
+	recipe.defName = "Recipe_AxePrimitive";
+	recipe.label = "Primitive Axe";
+	recipe.stationDefName = "CraftingSpot";
+	recipe.workAmount = 50.0F;
+	recipe.inputs.push_back({"Wood", 0, 4});
+	recipe.outputs.push_back({"AxePrimitive", 0, 1});
+	engine::assets::RecipeRegistry::Get().registerTestRecipe(recipe);
+
+	// Wire the spawn-packaged callback too, to PROVE it does NOT fire for a tool.
+	int spawnFires = 0;
+	world->getSystem<ActionSystem>().setSpawnPackagedAtCallback(
+		[&](const std::string&, glm::vec2) { ++spawnFires; });
+
+	EntityID station = world->createEntity();
+	world->addComponent<Position>(station, Position{{0.0F, 0.0F}});
+	world->addComponent<WorkQueue>(station, WorkQueue{});
+	auto stationInv = Inventory::createForStorage();
+	stationInv.addItem("Wood", 10);
+	world->addComponent<Inventory>(station, stationInv);
+
+	auto  colonist = createColonist({0.0F, 0.0F});
+	auto* inventory = world->getComponent<Inventory>(colonist);
+
+	auto* task = world->getComponent<Task>(colonist);
+	task->type = TaskType::Craft;
+	task->state = TaskState::Arrived;
+	task->craftRecipeDefName = "Recipe_AxePrimitive";
+	task->targetStationId = static_cast<uint64_t>(station);
+	task->targetPosition = {0.0F, 0.0F};
+
+	world->update(0.1F);
+	world->update(1.0F);
+
+	EXPECT_EQ(spawnFires, 0) << "a tool output must NOT fire the furniture spawn-packaged callback";
+	EXPECT_EQ(ecs::availableQuantity(*inventory, "AxePrimitive"), 1U) << "the tool landed in the colonist's inventory";
+	EXPECT_TRUE(inventory->isHolding("AxePrimitive")) << "a one-hand tool seats in an empty hand";
 }
 
 // =============================================================================

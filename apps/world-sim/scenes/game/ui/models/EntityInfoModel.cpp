@@ -232,7 +232,7 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 				cb(entityId, defName);
 			};
 		}
-		contentData = adaptFurniture(assetRegistry, furnitureSel, callbacks.onPlace, callbacks.onPackage, onConfigure);
+		contentData = adaptFurniture(assetRegistry, furnitureSel, callbacks.onPlace, callbacks.onMoveFurniture, onConfigure);
 	} else if (isWallSegment && constructionWorld != nullptr) {
 		const auto& wallSel = std::get<WallSegmentSelection>(selection);
 		contentData = adaptWallSegment(world, *constructionWorld, wallSel, callbacks.onDemolishWallSegment);

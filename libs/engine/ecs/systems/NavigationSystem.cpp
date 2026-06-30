@@ -46,6 +46,29 @@ namespace ecs {
 			return glm::vec2{a.x + t * ab.x, a.y + t * ab.y};
 		}
 
+		// Closest point to `p` on the triangle (a,b,c) -- the nearer of its three edge
+		// projections -- with that squared distance. One source of closest-point-on-triangle
+		// math: both nearestPathableOnMesh and findValidPositionNear's fallback use it. A point
+		// already inside the triangle still resolves to its nearest edge, which is what both
+		// callers want (they then bias toward the centroid for an unambiguous in-face locate).
+		struct ClosestPoint {
+			glm::vec2 point;
+			float	  dist2;
+		};
+		ClosestPoint closestPointOnTriangle(glm::vec2 p, glm::vec2 a, glm::vec2 b, glm::vec2 c) {
+			glm::vec2 cand = closestOnSegment(p, a, b);
+			float	  cd2  = dist2(p, cand);
+			if (const glm::vec2 p2 = closestOnSegment(p, b, c); dist2(p, p2) < cd2) {
+				cand = p2;
+				cd2	 = dist2(p, p2);
+			}
+			if (const glm::vec2 p3 = closestOnSegment(p, c, a); dist2(p, p3) < cd2) {
+				cand = p3;
+				cd2	 = dist2(p, p3);
+			}
+			return {cand, cd2};
+		}
+
 		// Nearest walkable point on a single mesh to `meters`, or nullopt when the mesh
 		// has no walkable floor. Shared by nearestPathablePoint after region dispatch.
 		std::optional<glm::vec2> nearestPathableOnMesh(const gnav::NavMesh& navMesh, glm::vec2 meters) {
@@ -59,18 +82,9 @@ namespace ecs {
 				const glm::vec2 a = engine::nav::toMeters(navMesh.vertices[t.v[0]]);
 				const glm::vec2 b = engine::nav::toMeters(navMesh.vertices[t.v[1]]);
 				const glm::vec2 c = engine::nav::toMeters(navMesh.vertices[t.v[2]]);
-				glm::vec2 cand = closestOnSegment(meters, a, b);
-				float	  cd2  = dist2(meters, cand);
-				const glm::vec2 p2 = closestOnSegment(meters, b, c);
-				if (const float d2 = dist2(meters, p2); d2 < cd2) {
-					cd2	 = d2;
-					cand = p2;
-				}
-				const glm::vec2 p3 = closestOnSegment(meters, c, a);
-				if (const float d2 = dist2(meters, p3); d2 < cd2) {
-					cd2	 = d2;
-					cand = p3;
-				}
+				const ClosestPoint cp = closestPointOnTriangle(meters, a, b, c);
+				const glm::vec2	   cand = cp.point;
+				const float		   cd2	= cp.dist2;
 				if (!found || cd2 < bestD2) {
 					// Nudge a hair toward the centroid so the snapped point sits unambiguously
 					// inside this walkable triangle, not on a boundary edge where locate is ambiguous.
@@ -946,6 +960,70 @@ namespace ecs {
 		// AIDecisionSystem recovery then falls through to the colony-origin teleport if this
 		// point is still off-mesh next frame.
 		return nearestPathableOnMesh(navMesh, meters);
+	}
+
+	std::optional<glm::vec2>
+	NavigationSystem::findValidPositionNear(glm::vec2 origin, float minDistMeters, glm::vec2 preferredDir) const {
+		// Tier 1: must start inside a region (otherwise there is no mesh to place against, same
+		// gate as nearestPathablePoint). Candidate validity below is the per-point isOnMesh, which
+		// locates against the containing region's mesh itself, so no separate locate is needed here.
+		const int region = regionContaining(origin);
+		if (region < 0) {
+			return std::nullopt;
+		}
+		const gnav::NavMesh& navMesh = regions[static_cast<std::size_t>(region)].navMesh;
+
+		const float minDist = std::max(minDistMeters, 0.0F);
+
+		// Canonical direction: the preferred bias if non-zero, else +X. Normalizing a near-zero
+		// vector would be undefined, so fall back to the canonical axis for determinism.
+		glm::vec2	dir{1.0F, 0.0F};
+		const float dirLen2 = preferredDir.x * preferredDir.x + preferredDir.y * preferredDir.y;
+		if (dirLen2 > 1e-12F) {
+			const float invLen = 1.0F / std::sqrt(dirLen2);
+			dir					= {preferredDir.x * invLen, preferredDir.y * invLen};
+		}
+
+		// Tier 2: the preferred candidate, then a fixed ring at the same radius. The ring starts
+		// at `dir` and steps through kRingSamples evenly spaced angles, so the angle set and its
+		// order are fixed -- deterministic, no RNG. First on-mesh sample wins.
+		const glm::vec2 preferred = origin + dir * minDist;
+		if (isOnMesh(preferred)) {
+			return preferred;
+		}
+		constexpr int kRingSamples	 = 32;
+		const float	  baseAngle		 = std::atan2(dir.y, dir.x);
+		constexpr float kTwoPi		 = 6.28318530717958647692F;
+		for (int i = 1; i < kRingSamples; ++i) {
+			const float a = baseAngle + kTwoPi * (static_cast<float>(i) / static_cast<float>(kRingSamples));
+			const glm::vec2 cand{origin.x + minDist * std::cos(a), origin.y + minDist * std::sin(a)};
+			if (isOnMesh(cand)) {
+				return cand;
+			}
+		}
+
+		// Tier 3 (fallback): no ring sample is on mesh (origin wedged in a sub-minDist pocket
+		// near a hole/edge). Take the nearest walkable point and, if it is closer than minDist,
+		// push it radially out to minDist so the result still clears the requested gap. Guarantees
+		// a non-null result whenever any walkable floor exists.
+		// TODO(tier-3): best-first adjacency walk
+		const std::optional<glm::vec2> nearest = nearestPathableOnMesh(navMesh, origin);
+		if (!nearest) {
+			return std::nullopt; // region has no walkable floor at all
+		}
+		glm::vec2	away	= *nearest - origin;
+		const float awayLen = std::sqrt(away.x * away.x + away.y * away.y);
+		if (awayLen >= minDist) {
+			return *nearest; // already at/beyond the requested distance
+		}
+		// Pushing radially to minDist can cross a hole/water edge in a tight pocket, so re-validate.
+		// If the pushed point is off-mesh, fall back to *nearest (on-mesh by construction -- it snaps
+		// to a walkable triangle and nudges toward the centroid). This holds the "never return an
+		// off-mesh point" guarantee; a sub-minDist but valid point beats a far invalid one, which a
+		// requestPath to an off-mesh target would reject, stalling the consumer.
+		const glm::vec2 outDir = (awayLen > 1e-6F) ? glm::vec2{away.x / awayLen, away.y / awayLen} : dir;
+		const glm::vec2 pushed = origin + outDir * minDist;
+		return isOnMesh(pushed) ? pushed : *nearest;
 	}
 
 } // namespace ecs

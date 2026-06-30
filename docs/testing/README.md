@@ -177,5 +177,5 @@ These are **open bugs**, not test failures. Do not flag them as regressions.
 - **Crafted box placement.** A freshly crafted `BasicBox` lands on the crafting station
   (cosmetic; the box is still usable). `findValidPositionNear` follow-up in flight.
 - **Box won't fill to full minimum unaided.** Once the colonist exhausts the trees he's
-  discovered, the storage box stalls below its minimum — the system needs to re-arm harvest
+  discovered, the storage box stalls below its minimum, the system needs to re-arm harvest
   goals when new trees are discovered. Discovery-gating follow-up in flight.

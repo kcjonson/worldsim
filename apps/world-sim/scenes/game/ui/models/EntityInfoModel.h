@@ -81,7 +81,7 @@ class EntityInfoModel {
 		QueueRecipeCallback onQueueRecipe;		// Queue recipe at station
 		OpenCraftingDialogCallback onOpenCraftingDialog; // Open crafting dialog for station
 		std::function<void()> onPlace;			// Place packaged furniture
-		std::function<void()> onPackage;		// Package placed furniture
+		std::function<void()> onMoveFurniture;	// Move (re-package + relocate) placed furniture
 		OpenStorageConfigCallback onOpenStorageConfig;	// Open storage config dialog for containers
 		ResourceQueryCallback queryResources;	// Query remaining resource count for harvestable entities
 		std::function<void()>	   onDemolishFoundation;  // Demolish just the (clear) foundation
