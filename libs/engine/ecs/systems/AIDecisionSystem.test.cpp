@@ -475,11 +475,12 @@ namespace ecs::test {
 	TEST_F(AIDecisionSystemTest, TimerIncrementsWhenNotReEvaluating) {
 		auto colonist = createColonist({0.0F, 0.0F});
 
-		addKnownEntity(colonist, {20.0F, 20.0F}, kBerryBushDefId, engine::assets::CapabilityType::Harvestable);
-
-		// Actionable need - will create task and start timer
-		setNeedValue(colonist, NeedType::Hunger, 40.0F);
-		setNeedValue(colonist, NeedType::Thirst, 100.0F);
+		// A reachable water source + actionable thirst -> a FulfillNeed task (Moving). Unlike wander
+		// (which now re-evaluates every tick), a moving need task is not re-evaluated, so its
+		// timeSinceEvaluation accumulates between the periodic re-evals.
+		addKnownEntity(colonist, {8.0F, 3.0F}, kWaterDefId, engine::assets::CapabilityType::Drinkable);
+		setNeedValue(colonist, NeedType::Hunger, 100.0F);
+		setNeedValue(colonist, NeedType::Thirst, 40.0F);
 		setNeedValue(colonist, NeedType::Energy, 100.0F);
 		setNeedValue(colonist, NeedType::Bladder, 100.0F);
 
@@ -487,6 +488,7 @@ namespace ecs::test {
 
 		auto* task = getTask(colonist);
 		ASSERT_NE(task, nullptr);
+		ASSERT_EQ(task->type, TaskType::FulfillNeed) << "a real need task, not wander";
 		EXPECT_EQ(task->timeSinceEvaluation, 0.0F); // Just evaluated
 
 		// Multiple updates while moving (not arrived)
@@ -495,6 +497,33 @@ namespace ecs::test {
 
 		world->update(0.1F);
 		EXPECT_NEAR(task->timeSinceEvaluation, 0.2F, 0.01F);
+	}
+
+	// Bug 89: idle wander must yield to a higher-tier task the very next tick, not lag until the
+	// periodic kReEvalInterval (0.5s) re-eval. A moving wander now re-evaluates every tick.
+	TEST_F(AIDecisionSystemTest, WanderYieldsImmediatelyToActionableNeed) {
+		auto colonist = createColonist({0.0F, 0.0F});
+
+		// All needs satisfied -> the colonist wanders.
+		setNeedValue(colonist, NeedType::Hunger, 100.0F);
+		setNeedValue(colonist, NeedType::Thirst, 100.0F);
+		setNeedValue(colonist, NeedType::Energy, 100.0F);
+		setNeedValue(colonist, NeedType::Bladder, 100.0F);
+
+		world->update(0.016F);
+		auto* task = getTask(colonist);
+		ASSERT_NE(task, nullptr);
+		ASSERT_EQ(task->type, TaskType::Wander);
+		ASSERT_EQ(task->state, TaskState::Moving) << "wandering toward its point";
+
+		// Thirst crosses into actionable with a reachable water source known. One tick later -- far
+		// under kReEvalInterval (0.5s) -- the colonist must abandon wander for the higher-tier need.
+		addKnownEntity(colonist, {8.0F, 3.0F}, kWaterDefId, engine::assets::CapabilityType::Drinkable);
+		setNeedValue(colonist, NeedType::Thirst, 40.0F);
+
+		world->update(0.016F);
+		EXPECT_EQ(task->type, TaskType::FulfillNeed) << "wander yields immediately to the actionable need";
+		EXPECT_EQ(task->needToFulfill, NeedType::Thirst);
 	}
 
 	// =============================================================================

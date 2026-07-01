@@ -6,6 +6,7 @@
 #include "../components/NavPath.h"
 #include "../components/Task.h"
 #include "../components/Transform.h"
+#include "TimeSystem.h"
 
 #include <numbers>
 
@@ -16,8 +17,31 @@
 
 namespace ecs {
 
+namespace {
+// When fast-forwarding, cap the per-tick speed so one scaled integration step lands on the target
+// at `distance` instead of overshooting it. PhysicsSystem integrates pos += vel * deltaTime *
+// timeScale, so at 10x a 2 m/s colonist would step ~0.33 m -- past the 0.1 m arrival threshold --
+// and circle its goal without ever registering Arrived. Capping the step also stops a colonist
+// cutting across a path corner (through a wall) when a big step would skip a waypoint. A no-op at 1x
+// (scaledDt == deltaTime) and in TimeSystem-less tests, so existing movement behavior is unchanged.
+float clampStepSpeed(float speed, float distance, float scaledDt, bool fastForward) {
+    if (fastForward && speed * scaledDt > distance) {
+        return distance / scaledDt;
+    }
+    return speed;
+}
+}  // namespace
+
 void MovementSystem::update(float deltaTime) {
-    (void)deltaTime;  // Not used directly - we set velocity, PhysicsSystem applies it
+    // Movement runs on game time: PhysicsSystem scales the integration step by the same factor, and
+    // we cap each step here so fast-forward can't overshoot a waypoint (see clampStepSpeed). At 1x
+    // and in tests without a TimeSystem, timeScale is 1.0 and nothing below changes.
+    float timeScale = 1.0F;
+    if (auto* timeSystem = world->tryGetSystem<TimeSystem>()) {
+        timeScale = timeSystem->effectiveTimeScale();
+    }
+    const float scaledDt = deltaTime * timeScale;
+    const bool  fastForward = scaledDt > deltaTime;
 
     // Final-waypoint arrival threshold - stop when close enough. The same value gates arrival
     // whether the colonist is following a NavPath (the in-game route) or moving directly (only
@@ -72,7 +96,7 @@ void MovementSystem::update(float deltaTime) {
             }
 
             if (distance > 0.0001f) {
-                vel.value = (toWaypoint / distance) * target.speed;
+                vel.value = (toWaypoint / distance) * clampStepSpeed(target.speed, distance, scaledDt, fastForward);
             } else {
                 vel.value = {0.0f, 0.0f};
             }
@@ -98,7 +122,7 @@ void MovementSystem::update(float deltaTime) {
 
         // Set velocity toward target at movement speed
         glm::vec2 direction = toTarget / distance;  // Normalize
-        vel.value = direction * target.speed;
+        vel.value = direction * clampStepSpeed(target.speed, distance, scaledDt, fastForward);
     }
 
     // Update facing direction based on velocity

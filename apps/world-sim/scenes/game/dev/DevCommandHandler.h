@@ -105,13 +105,13 @@ namespace world_sim {
 		// refusal in the standard rejection style and the caller creates/moves NOTHING.
 		bool requireValidPosition(Foundation::Vec2 at, const char* verb);
 
-		// True when the WHOLE foundation footprint (the closed polygon `pts`: vertices,
-		// edges, AND interior) sits on walkable nav mesh -- NavigationSystem::isAreaWalkable,
-		// the same shared predicate the UI build tool uses. A footprint whose corners are on
-		// land but that spans a river, or whose edge/interior clips a water hole, is refused
-		// so no partial-on-water structure is stamped. On rejection logs+toasts and returns
-		// false; the caller creates NOTHING.
-		bool requireWalkableArea(const std::vector<Foundation::Vec2>& pts, const char* verb);
+		// True when the WHOLE foundation footprint (the closed polygon `pts`: vertices, edges, AND
+		// interior) is BUILDABLE -- NavigationSystem::isAreaBuildable, the same terrain-only predicate the
+		// UI foundation tool uses: geography (water) and built walls block, clearable entities (trees/
+		// rocks) do not. A footprint that spans a river or clips a water hole is refused so no
+		// partial-on-water structure is stamped. On rejection logs+toasts and returns false; the caller
+		// creates NOTHING.
+		bool requireBuildableArea(const std::vector<Foundation::Vec2>& pts, const char* verb);
 
 		// True when the WHOLE wall chain `pts` lies on walkable nav mesh -- every consecutive
 		// segment's endpoints AND its centerline samples (NavigationSystem::isPolylineWalkable,

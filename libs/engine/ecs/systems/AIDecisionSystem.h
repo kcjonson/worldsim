@@ -104,7 +104,10 @@ private:
 	/// @param task Current task
 	/// @param needs Current needs component
 	/// @param action Optional action component (nullptr if entity has no Action component)
-	[[nodiscard]] bool shouldReEvaluate(const struct Task& task, const struct NeedsComponent& needs, const struct Action* action);
+	/// @param movementTargetActive Whether the entity's MovementTarget is active (walking to a point);
+	///        a moving Wander re-evaluates every tick only when true, so the no-option hold (movement off)
+	///        keeps its periodic throttle
+	[[nodiscard]] bool shouldReEvaluate(const struct Task& task, const struct NeedsComponent& needs, const struct Action* action, bool movementTargetActive);
 
 	/// Build decision trace by evaluating all options
 	/// Populates the trace with all needs + wander, sorted by priority

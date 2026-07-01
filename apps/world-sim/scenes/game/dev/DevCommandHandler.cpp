@@ -231,18 +231,19 @@ namespace world_sim {
 		return false;
 	}
 
-	bool DevCommandHandler::requireWalkableArea(const std::vector<Foundation::Vec2>& pts, const char* verb) {
-		// The WHOLE footprint must be on walkable mesh, not just the vertices. Without a nav
-		// system wired (headless/test), validity is owned elsewhere; mirror requireValidPosition's
-		// permissive fallback.
+	bool DevCommandHandler::requireBuildableArea(const std::vector<Foundation::Vec2>& pts, const char* verb) {
+		// The WHOLE footprint must be BUILDABLE, matching the foundation build tool (DrawingSystem):
+		// geography (water) and built walls block, but clearable entities (trees/rocks) do not -- they
+		// become clear tasks. Without a nav system wired (headless/test), validity is owned elsewhere;
+		// mirror requireValidPosition's permissive fallback.
 		if (m_ctx.navigation == nullptr) {
 			return true;
 		}
-		if (m_ctx.navigation->isAreaWalkable(Foundation::toGlmVec2(pts))) {
+		if (m_ctx.navigation->isAreaBuildable(Foundation::toGlmVec2(pts))) {
 			return true;
 		}
-		LOG_WARNING(Game, "[DevAPI] %s: error: footprint not fully on an active walkable nav mesh, refused", verb);
-		m_ctx.ui->pushNotification("Dev", "Refused: footprint not fully on walkable ground", UI::ToastSeverity::Warning);
+		LOG_WARNING(Game, "[DevAPI] %s: error: footprint not on buildable ground (water/wall), refused", verb);
+		m_ctx.ui->pushNotification("Dev", "Refused: footprint not on buildable ground", UI::ToastSeverity::Warning);
 		return false;
 	}
 
@@ -467,7 +468,7 @@ namespace world_sim {
 		// The WHOLE footprint must sit on buildable land (vertices, edges, AND interior).
 		// A footprint that spans water between on-land corners, or clips a water hole,
 		// refuses the whole placement (stamp nothing), matching the real build tool's gate.
-		if (!requireWalkableArea(pts, "foundation")) {
+		if (!requireBuildableArea(pts, "foundation")) {
 			return;
 		}
 		const std::string material = cmd.param("material", "Wood");

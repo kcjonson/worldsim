@@ -486,7 +486,7 @@ namespace engine::nav {
 
 	gnav::NavMeshInput buildInput(geometry::Vec2i64 areaCenterMm, std::int64_t areaRadiusMm, engine::world::ChunkManager& chunks,
 								  const assets::PlacementExecutor& placement, const assets::AssetRegistry& assetReg,
-								  const construction::ConstructionWorld& world, const assets::ConstructionRegistry& cfg) {
+								  const construction::ConstructionWorld& world, const assets::ConstructionRegistry& cfg, bool includeFlora) {
 		gnav::NavMeshInput input;
 
 		const geometry::Vec2i64 minMm{areaCenterMm.x - areaRadiusMm, areaCenterMm.y - areaRadiusMm};
@@ -530,40 +530,43 @@ namespace engine::nav {
 			}
 		}
 
-		// 3) Flora: only the chunks overlapping the area AABB are visited (the few coords
-		// covering the corner-to-corner tile span), and within each only the entities
-		// queryRect returns for the area's tile bounds -- never allEntities(). Chunks are
-		// visited in (x,y) order and the per-chunk entities are sorted by (position,
-		// defName) so the emission order is stable regardless of queryRect's layout.
-		const engine::world::ChunkCoordinate cMin =
-			engine::world::worldToChunk({static_cast<float>(tileMinX), static_cast<float>(tileMinY)});
-		const engine::world::ChunkCoordinate cMax =
-			engine::world::worldToChunk({static_cast<float>(tileMaxX), static_cast<float>(tileMaxY)});
-		const float areaTileMinX = static_cast<float>(minMm.x) / static_cast<float>(kTileMm);
-		const float areaTileMinY = static_cast<float>(minMm.y) / static_cast<float>(kTileMm);
-		const float areaTileMaxX = static_cast<float>(maxMm.x) / static_cast<float>(kTileMm);
-		const float areaTileMaxY = static_cast<float>(maxMm.y) / static_cast<float>(kTileMm);
-		for (std::int32_t cy = cMin.y; cy <= cMax.y; ++cy) {
-			for (std::int32_t cx = cMin.x; cx <= cMax.x; ++cx) {
-				const assets::SpatialIndex* index = placement.getChunkIndex({cx, cy});
-				if (index == nullptr) {
-					continue;
-				}
-				std::vector<const assets::PlacedEntity*> hits =
-					index->queryRect(areaTileMinX, areaTileMinY, areaTileMaxX, areaTileMaxY);
-				std::sort(hits.begin(), hits.end(), [](const assets::PlacedEntity* l, const assets::PlacedEntity* r) {
-					if (l->position.x != r->position.x) {
-						return l->position.x < r->position.x;
+		// 3) Flora (entities): the clearable tree/rock obstacles. Skipped when includeFlora is
+		// false (the terrain-only placement mesh) so they don't read as off-mesh holes there.
+		// Only the chunks overlapping the area AABB are visited, and within each only the entities
+		// queryRect returns for the area's tile bounds -- never allEntities(). Chunks are visited
+		// in (x,y) order and the per-chunk entities sorted by (position, defName) so the emission
+		// order is stable regardless of queryRect's layout.
+		if (includeFlora) {
+			const engine::world::ChunkCoordinate cMin =
+				engine::world::worldToChunk({static_cast<float>(tileMinX), static_cast<float>(tileMinY)});
+			const engine::world::ChunkCoordinate cMax =
+				engine::world::worldToChunk({static_cast<float>(tileMaxX), static_cast<float>(tileMaxY)});
+			const float areaTileMinX = static_cast<float>(minMm.x) / static_cast<float>(kTileMm);
+			const float areaTileMinY = static_cast<float>(minMm.y) / static_cast<float>(kTileMm);
+			const float areaTileMaxX = static_cast<float>(maxMm.x) / static_cast<float>(kTileMm);
+			const float areaTileMaxY = static_cast<float>(maxMm.y) / static_cast<float>(kTileMm);
+			for (std::int32_t cy = cMin.y; cy <= cMax.y; ++cy) {
+				for (std::int32_t cx = cMin.x; cx <= cMax.x; ++cx) {
+					const assets::SpatialIndex* index = placement.getChunkIndex({cx, cy});
+					if (index == nullptr) {
+						continue;
 					}
-					if (l->position.y != r->position.y) {
-						return l->position.y < r->position.y;
-					}
-					return l->defName < r->defName;
-				});
-				for (const assets::PlacedEntity* e : hits) {
-					std::optional<gnav::NavInputPolygon> poly = floraRingFor(*e, assetReg);
-					if (poly.has_value()) {
-						input.polygons.push_back(std::move(*poly));
+					std::vector<const assets::PlacedEntity*> hits =
+						index->queryRect(areaTileMinX, areaTileMinY, areaTileMaxX, areaTileMaxY);
+					std::sort(hits.begin(), hits.end(), [](const assets::PlacedEntity* l, const assets::PlacedEntity* r) {
+						if (l->position.x != r->position.x) {
+							return l->position.x < r->position.x;
+						}
+						if (l->position.y != r->position.y) {
+							return l->position.y < r->position.y;
+						}
+						return l->defName < r->defName;
+					});
+					for (const assets::PlacedEntity* e : hits) {
+						std::optional<gnav::NavInputPolygon> poly = floraRingFor(*e, assetReg);
+						if (poly.has_value()) {
+							input.polygons.push_back(std::move(*poly));
+						}
 					}
 				}
 			}

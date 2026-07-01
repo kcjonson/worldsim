@@ -147,29 +147,34 @@ namespace world_sim {
 		  callbacks_(args.callbacks) {}
 
 	bool DrawingSystem::pointOnMesh(Foundation::Vec2 p) const {
-		// The ONE runtime placement predicate: isValidPosition (== isOnMesh). No nav system
-		// wired (headless/test) -> validity is owned elsewhere; mirror the dev verbs' permissive
-		// fallback so the tools still work in that build.
+		// Per-vertex / cursor placeability for the ACTIVE tool. No nav system wired (headless/test) ->
+		// validity is owned elsewhere; mirror the dev verbs' permissive fallback. A FOUNDATION vertex
+		// may sit over a clearable entity (tree/rock) -- those become clear tasks -- so it uses the
+		// terrain-only buildability check, agreeing with the commit gate (isAreaBuildable). A WALL
+		// vertex needs clear on-mesh ground (no wall footprint-clearing yet).
 		if (navigation_ == nullptr) {
 			return true;
 		}
-		return navigation_->isValidPosition({p.x, p.y});
+		return (activeTool_ == ToolKind::Foundation) ? navigation_->isPointBuildable({p.x, p.y})
+													 : navigation_->isValidPosition({p.x, p.y});
 	}
 
-	bool DrawingSystem::requireAllOnMesh(const std::vector<Foundation::Vec2>& pts, const char* what) {
-		// Whole-footprint walkability through the shared NavigationSystem predicate -- the SAME
-		// gate the /api/dev verbs use. Foundations check the closed polygon area (interior + edges),
-		// walls the chain centerline. One off-mesh part refuses the whole placement (commit nothing).
+	bool DrawingSystem::requirePlaceable(const std::vector<Foundation::Vec2>& pts, const char* what) {
+		// Placement gate (the SAME check the /api/dev verbs use). A FOUNDATION may sit over clearable
+		// entities (trees/rocks) -- placing over them spawns clear tasks and the build waits for the
+		// footprint to clear -- so it validates against BUILDABILITY (terrain + built walls, no flora).
+		// Walls have no footprint-clearing yet, so they still require clear on-mesh ground along the
+		// chain centerline. One blocked part refuses the whole placement (commit nothing).
 		if (navigation_ == nullptr) {
 			return true;
 		}
 		const std::vector<glm::vec2> world = Foundation::toGlmVec2(pts);
-		const bool ok = (activeTool_ == ToolKind::Wall) ? navigation_->isPolylineWalkable(world) : navigation_->isAreaWalkable(world);
+		const bool ok = (activeTool_ == ToolKind::Foundation) ? navigation_->isAreaBuildable(world) : navigation_->isPolylineWalkable(world);
 		if (ok) {
 			return true;
 		}
 		if (callbacks_.onToast) {
-			callbacks_.onToast("Can't build here", std::string(what) + ": not on walkable ground");
+			callbacks_.onToast("Can't build here", std::string(what) + ": not on buildable ground");
 		}
 		return false;
 	}
@@ -319,12 +324,13 @@ namespace world_sim {
 			return true; // consumed: the click was a deliberate (rejected) action
 		}
 
-		// Nav gate: refuse a vertex that lands off the walkable mesh (on water) before it
-		// enters the ring. The whole-footprint re-check on commit (requireAllOnMesh) still
-		// catches an edge or interior that crosses water between two on-mesh vertices.
+		// Nav gate: refuse a vertex that lands on genuinely unbuildable ground (water, a built wall).
+		// A vertex over a clearable entity (tree/rock) is allowed -- pointOnMesh routes foundations
+		// through the terrain-only buildability check. The whole-footprint re-check on commit
+		// (requirePlaceable) still catches an edge or interior that crosses water between two vertices.
 		if (cursorOffMesh_) {
 			if (callbacks_.onToast) {
-				callbacks_.onToast("Can't build here", "foundation: not on walkable ground");
+				callbacks_.onToast("Can't build here", "foundation: not on buildable ground");
 			}
 			return true;
 		}
@@ -454,7 +460,7 @@ namespace world_sim {
 
 		// The whole footprint must sit on walkable ground (interior + edges, not just the
 		// vertices). Refuse a foundation that spans water or clips an off-mesh hole.
-		if (!requireAllOnMesh(points_, "foundation")) {
+		if (!requirePlaceable(points_, "foundation")) {
 			return;
 		}
 
@@ -660,7 +666,7 @@ namespace world_sim {
 
 		// The whole chain centerline must sit on walkable ground. One off-mesh segment
 		// (e.g. one that bridges water) refuses the WHOLE chain so nothing is stamped.
-		if (!requireAllOnMesh(points_, "wall")) {
+		if (!requirePlaceable(points_, "wall")) {
 			points_.clear();
 			wallHost_ = ec::kInvalidFoundation;
 			lastValidation_ = {};
@@ -816,7 +822,7 @@ namespace world_sim {
 
 		// Edge fill bypasses the chain-commit gate, so apply the same whole-centerline nav
 		// check here: the inset corners must lie on walkable ground (one shared predicate).
-		if (!requireAllOnMesh({bestA, bestB}, "wall")) {
+		if (!requirePlaceable({bestA, bestB}, "wall")) {
 			return false;
 		}
 
@@ -1226,7 +1232,7 @@ namespace world_sim {
 			ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
 			const auto				  ring = validator.validateRing(points_);
 			s.valid = ring.ok() && !cursorOffMesh_;
-			s.message = cursorOffMesh_ ? "not on walkable ground" : ec::validationReason(ring.code);
+			s.message = cursorOffMesh_ ? "not on buildable ground" : ec::validationReason(ring.code);
 			// Recompute area regardless of validity so the readout tracks the shape.
 			geometry::Ring quantized;
 			quantized.reserve(points_.size());
@@ -1236,7 +1242,7 @@ namespace world_sim {
 			s.areaSquareMeters = static_cast<float>(std::abs(geometry::signedAreaSquareMeters(quantized)));
 		} else {
 			s.valid = lastValidation_.ok() && !cursorOffMesh_;
-			s.message = cursorOffMesh_ ? "not on walkable ground" : ec::validationReason(lastValidation_.code);
+			s.message = cursorOffMesh_ ? "not on buildable ground" : ec::validationReason(lastValidation_.code);
 		}
 		return s;
 	}

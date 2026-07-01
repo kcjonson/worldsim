@@ -118,9 +118,14 @@ namespace engine::nav {
 	//    defName) so the order is stable regardless of queryRect's internal layout.
 	//  - Walls: extractWalls over the whole construction world, then rings entirely
 	//    outside the area AABB are dropped (door portals touching the area are kept).
+	//
+	// `includeFlora` gates ONLY the flora step. Pass false to build a geography-and-structures
+	// mesh (border, water, walls) with no tree/rock entity obstacles -- the terrain-only mesh
+	// placement validation runs against, so a footprint over clearable entities (which become
+	// clear tasks) still reads as buildable while water and walls still block.
 	[[nodiscard]] geometry::nav::NavMeshInput buildInput(geometry::Vec2i64 areaCenterMm, std::int64_t areaRadiusMm,
 														 engine::world::ChunkManager& chunks, const assets::PlacementExecutor& placement,
 														 const assets::AssetRegistry& assetReg, const construction::ConstructionWorld& world,
-														 const assets::ConstructionRegistry& cfg);
+														 const assets::ConstructionRegistry& cfg, bool includeFlora = true);
 
 } // namespace engine::nav

@@ -224,6 +224,19 @@ class NavigationSystem : public ISystem {
 	// empty is trivially true. Used for the wall tool's full chain and the /api/dev/walls verb.
 	[[nodiscard]] bool isPolylineWalkable(const std::vector<glm::vec2>& ptsMeters) const;
 
+	// Whole-FOOTPRINT BUILDABILITY for an area structure. Like isAreaWalkable, but validated against
+	// a TERRAIN-ONLY mesh (geography + built walls, no tree/rock entity obstacles) built on demand
+	// over the footprint's local area. So a footprint over clearable entities reads as buildable
+	// (ConstructionSystem turns those into clear tasks), while water and walls still block. This is
+	// the placement gate for the build tool; isAreaWalkable stays the pure on-mesh predicate. Falls
+	// back to isAreaWalkable when the nav build inputs aren't wired (headless/tests).
+	[[nodiscard]] bool isAreaBuildable(const std::vector<glm::vec2>& polygonMeters) const;
+
+	// Single-point buildability: the per-vertex / live-cursor counterpart of isAreaBuildable, against
+	// the same cached terrain-only mesh. True over clearable entities (trees/rocks), false on water or
+	// a built wall. Falls back to isOnMesh when the build inputs aren't wired (headless/tests).
+	[[nodiscard]] bool isPointBuildable(glm::vec2 meters) const;
+
 	// Sampling pitch (mm) for the whole-footprint / whole-centerline walkability checks.
 	// 0.5 m is fine enough to catch a ~1-tile water sliver between two on-land vertices.
 	// Footprints are small, so even a dense interior grid at this pitch is a few hundred
@@ -367,6 +380,19 @@ class NavigationSystem : public ISystem {
 	// Snapshots input on the main thread; the worker owns it by value.
 	void launchBuild(SimulationRegion& region);
 
+	// Build a TERRAIN-ONLY navmesh (border + water + walls, no flora entities) over the square area
+	// centered at `center` with half-extent `radius` (world mm), for placement validation. Runs
+	// synchronously on the caller's (main) thread -- buildInput reads the non-thread-safe
+	// ConstructionWorld -- but the footprint-sized area keeps it cheap. Requires chunkManager and
+	// constructionWorld; callers guard for null.
+	[[nodiscard]] geometry::nav::NavMesh buildTerrainOnlyMesh(geometry::Vec2i64 center, std::int64_t radius) const;
+
+	// The cached terrain-only placement mesh, (re)built to cover [minMm, maxMm] and kept current with
+	// the construction world. Reused across a drawing gesture (many vertex/cursor probes plus the
+	// commit re-check); rebuilt only when the query leaves the cached area or a wall changes. Requires
+	// chunkManager and constructionWorld.
+	[[nodiscard]] const geometry::nav::NavMesh& terrainMeshCovering(geometry::Vec2i64 minMm, geometry::Vec2i64 maxMm) const;
+
 	// True if `region` must (re)build: never built, world version changed, a driver
 	// nears its edge (handled by the caller before this), or its in-area processed-chunk
 	// set changed.
@@ -407,6 +433,18 @@ class NavigationSystem : public ISystem {
 
 	// Max over all regions' meshGeneration; see generation().
 	std::uint64_t meshGeneration = 0;
+
+	// Cached terrain-only mesh for placement buildability (isAreaBuildable / isPointBuildable). Built
+	// on demand over a generous area so a whole drawing gesture reuses one build; invalidated when a
+	// query falls outside it or the construction world changes (walls). Mutable: filled by const
+	// queries. Main-thread only (DrawingSystem), like the buildInput it wraps.
+	static constexpr std::int64_t  kTerrainCacheHalfExtentMm = 48000; // 48 m default gesture area
+	static constexpr std::int64_t  kTerrainCacheMarginMm	   = 4000;	 // slack so the footprint sits inside
+	mutable geometry::nav::NavMesh terrainMesh_;
+	mutable geometry::Vec2i64	   terrainMeshCenter_{0, 0};
+	mutable std::int64_t		   terrainMeshHalfExtent_		   = 0;
+	mutable std::uint64_t		   terrainMeshConstructionVersion_ = UINT64_MAX;
+	mutable std::uint64_t		   terrainMeshChunkSignature_	   = UINT64_MAX;
 
 	// Resumable RRA* reverse-search caches, keyed by (regionId, goalTriangle). Triangle
 	// indices are per-region and invalidated by a rebuild, so an entry is dropped when its
