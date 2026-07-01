@@ -231,13 +231,14 @@ namespace world_sim {
 		/// dev verbs' permissive fallback and treat the point as on-mesh.
 		[[nodiscard]] bool pointOnMesh(Foundation::Vec2 p) const;
 
-		/// True when the WHOLE footprint of `pts` is on the walkable nav mesh: the foundation
-		/// polygon's area (interior + edges) via NavigationSystem::isAreaWalkable, or the wall
-		/// chain's centerline via isPolylineWalkable (selected by the active tool) -- the SAME
-		/// shared predicate the /api/dev verbs use. A footprint that spans water between on-land
-		/// corners, or clips a water hole, fails. On failure toasts "Can't build here" and
-		/// returns false so the caller commits NOTHING -- no partial structure on water.
-		[[nodiscard]] bool requireAllOnMesh(const std::vector<Foundation::Vec2>& pts, const char* what);
+		/// True when the WHOLE footprint of `pts` may be placed. A FOUNDATION validates its polygon
+		/// area against NavigationSystem::isAreaBuildable -- a terrain-only mesh, so geography (water)
+		/// and built walls block but clearable entities (trees/rocks) do NOT: placing over them spawns
+		/// clear tasks and the build waits for the footprint to clear. A WALL validates its chain
+		/// centerline against isPolylineWalkable (no wall footprint-clearing yet, so it still needs
+		/// clear ground). The SAME shared predicates the /api/dev verbs use. On failure toasts
+		/// "Can't build here" and returns false so the caller commits NOTHING -- no partial structure.
+		[[nodiscard]] bool requirePlaceable(const std::vector<Foundation::Vec2>& pts, const char* what);
 
 		// --- Foundation tool ---
 

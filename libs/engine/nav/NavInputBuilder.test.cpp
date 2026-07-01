@@ -705,6 +705,43 @@ TEST_F(NavFloraTest, Area_BorderEqualsAreaBounds) {
 	EXPECT_EQ(maxY, center.y + radius);
 }
 
+// includeFlora=false omits tree/rock entity obstacles (the terrain-only placement mesh): the same
+// area that emits flora rings by default emits none when flora is excluded, while the walkable border
+// ring is still produced. This is the seam NavigationSystem::isAreaBuildable builds on so a footprint
+// over clearable entities reads as buildable while geography and walls still block.
+TEST_F(NavFloraTest, Area_ExcludesFloraWhenNotRequested) {
+	AssetRegistry&	reg = AssetRegistry::Get();
+	AssetDefinition tree;
+	tree.defName					 = "Test_ExcludeTree";
+	tree.collision.type				 = CollisionShapeType::Rect;
+	tree.collision.halfExtentsMeters = {0.2F, 0.2F};
+	reg.registerTestDefinition(tree);
+
+	auto			  mgr = readyChunks(std::make_unique<WaterRegionSampler>(std::vector<ChunkCoordinate>{}));
+	PlacementExecutor placement(reg);
+
+	AsyncChunkPlacementResult result;
+	result.coord = engine::world::worldToChunk({256.0F, 256.0F});
+	for (int i = 0; i < 4; ++i) {
+		PlacedEntity e;
+		e.defName  = "Test_ExcludeTree";
+		e.position = {256.0F + static_cast<float>(i), 256.0F};
+		result.spatialIndex.insert(e);
+	}
+	placement.storeChunkResult(std::move(result));
+
+	ConstructionWorld  cw;
+	const Vec2i64	   center{256000, 256000};
+	const std::int64_t radius = 20000;
+
+	const NavMeshInput withFlora   = buildInput(center, radius, *mgr, placement, reg, cw, ConstructionRegistry::Get(), true);
+	const NavMeshInput terrainOnly = buildInput(center, radius, *mgr, placement, reg, cw, ConstructionRegistry::Get(), false);
+
+	EXPECT_GT(countFlora(withFlora), 0) << "default build emits the in-area trees";
+	EXPECT_EQ(countFlora(terrainOnly), 0) << "includeFlora=false emits no tree rings";
+	EXPECT_NE(findBorder(terrainOnly), nullptr) << "the walkable border is still produced";
+}
+
 // The area scopes flora: trees are placed across several chunks, most far outside
 // the area; the build emits rings ONLY for the in-area trees, bounded (not all).
 TEST_F(NavFloraTest, Area_ScopesFloraToInAreaTrees) {

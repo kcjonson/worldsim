@@ -802,116 +802,176 @@ namespace ecs {
 		return gnav::reachable(navMesh, startMm, goalMm, radiusMm, belief);
 	}
 
+	namespace {
+
+		// Per-point "on walkable ground" against a SPECIFIC mesh (no region dispatch): the point is
+		// inside a triangle AND that triangle is terrain-traversable. Outdoor ground is not a
+		// kNoBlocker "floor" face (that's constructed indoor floor), so isFloorFace would reject all
+		// open terrain.
+		bool pointOnNavMesh(const gnav::NavMesh& mesh, glm::vec2 meters) {
+			const std::int32_t tri = gnav::locateTriangle(mesh, engine::nav::toMm(meters));
+			return tri >= 0 && gnav::terrainTraversable(mesh.triangles[static_cast<std::size_t>(tri)]);
+		}
+
+		// Whole-segment walkability under a per-point predicate: both endpoints plus every interior
+		// sample at the footprint pitch must pass. Templated on the predicate so the SAME sampling
+		// serves the region-dispatched runtime check (isOnMesh) and a one-off terrain-only mesh check.
+		template <typename OnMesh>
+		bool segmentWalkableUnder(const OnMesh& onMesh, glm::vec2 a, glm::vec2 b) {
+			if (!onMesh(a) || !onMesh(b)) {
+				return false;
+			}
+			const double dx	   = static_cast<double>(b.x) - a.x;
+			const double dy	   = static_cast<double>(b.y) - a.y;
+			const double lenMm = std::sqrt(dx * dx + dy * dy) * static_cast<double>(geometry::kMillimetersPerMeter);
+			const auto	 steps = static_cast<std::int64_t>(lenMm / static_cast<double>(NavigationSystem::kFootprintSampleStepMm));
+			for (std::int64_t i = 1; i < steps; ++i) {
+				const double	t = static_cast<double>(i) / static_cast<double>(steps);
+				const glm::vec2 p{static_cast<float>(a.x + dx * t), static_cast<float>(a.y + dy * t)};
+				if (!onMesh(p)) {
+					return false;
+				}
+			}
+			return true;
+		}
+
+		// Whole-chain walkability: every consecutive edge must pass. One point validates just it.
+		template <typename OnMesh>
+		bool polylineWalkableUnder(const OnMesh& onMesh, const std::vector<glm::vec2>& pts) {
+			if (pts.empty()) {
+				return true;
+			}
+			if (pts.size() == 1) {
+				return onMesh(pts.front());
+			}
+			for (std::size_t i = 0; i + 1 < pts.size(); ++i) {
+				if (!segmentWalkableUnder(onMesh, pts[i], pts[i + 1])) {
+					return false;
+				}
+			}
+			return true;
+		}
+
+		// Whole-footprint walkability: every edge (closing edge included) plus the interior on a grid
+		// at the footprint pitch. Fewer than 3 points validates the point(s) as a polyline.
+		template <typename OnMesh>
+		bool areaWalkableUnder(const OnMesh& onMesh, const std::vector<glm::vec2>& poly) {
+			if (poly.size() < 3) {
+				return polylineWalkableUnder(onMesh, poly);
+			}
+			const std::size_t n = poly.size();
+			for (std::size_t i = 0; i < n; ++i) {
+				if (!segmentWalkableUnder(onMesh, poly[i], poly[(i + 1) % n])) {
+					return false;
+				}
+			}
+			// Interior on a grid at the same pitch catches a hole fully inside the ring (an enclosed
+			// pond). Foundations are small: a few hundred O(1)-ish probes at most.
+			const double stepMeters =
+				static_cast<double>(NavigationSystem::kFootprintSampleStepMm) / static_cast<double>(geometry::kMillimetersPerMeter);
+			float minX = poly[0].x, maxX = poly[0].x, minY = poly[0].y, maxY = poly[0].y;
+			for (const auto& p : poly) {
+				minX = std::min(minX, p.x);
+				maxX = std::max(maxX, p.x);
+				minY = std::min(minY, p.y);
+				maxY = std::max(maxY, p.y);
+			}
+			// Even-odd point-in-polygon (ring implicitly closed). The float test only decides WHICH grid
+			// points to probe; each probe's walkability is the exact integer locateTriangle, and a point
+			// misclassified right on an edge is already covered by the edge pass above.
+			auto inside = [&](float px, float py) -> bool {
+				bool in = false;
+				for (std::size_t i = 0, j = n - 1; i < n; j = i++) {
+					const float xi = poly[i].x, yi = poly[i].y;
+					const float xj = poly[j].x, yj = poly[j].y;
+					if (((yi > py) != (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) {
+						in = !in;
+					}
+				}
+				return in;
+			};
+			for (double y = static_cast<double>(minY) + stepMeters; y < static_cast<double>(maxY); y += stepMeters) {
+				for (double x = static_cast<double>(minX) + stepMeters; x < static_cast<double>(maxX); x += stepMeters) {
+					const auto fx = static_cast<float>(x);
+					const auto fy = static_cast<float>(y);
+					if (inside(fx, fy) && !onMesh({fx, fy})) {
+						return false;
+					}
+				}
+			}
+			return true;
+		}
+
+		// Footprint AABB (world mm) expanded by a margin, as {center, halfExtent}, for the terrain-only
+		// placement mesh: the margin gives the local terrain (and any nearby water boundary) room to
+		// triangulate and keeps the footprint inside the mesh's walkable border. Requires a non-empty ring.
+		std::pair<geometry::Vec2i64, std::int64_t> footprintAreaMm(const std::vector<glm::vec2>& ptsMeters) {
+			float minX = ptsMeters[0].x, maxX = ptsMeters[0].x, minY = ptsMeters[0].y, maxY = ptsMeters[0].y;
+			for (const auto& p : ptsMeters) {
+				minX = std::min(minX, p.x);
+				maxX = std::max(maxX, p.x);
+				minY = std::min(minY, p.y);
+				maxY = std::max(maxY, p.y);
+			}
+			const geometry::Vec2i64 minMm = engine::nav::toMm({minX, minY});
+			const geometry::Vec2i64 maxMm = engine::nav::toMm({maxX, maxY});
+			const geometry::Vec2i64 center{(minMm.x + maxMm.x) / 2, (minMm.y + maxMm.y) / 2};
+			constexpr std::int64_t	kMarginMm = 4000; // 4 m of terrain context around the footprint
+			const std::int64_t		radius	  = std::max((maxMm.x - minMm.x) / 2, (maxMm.y - minMm.y) / 2) + kMarginMm;
+			return {center, radius};
+		}
+
+	} // namespace
+
 	bool NavigationSystem::isOnMesh(glm::vec2 meters) const {
 		const int r = regionContaining(meters);
 		if (r < 0) {
 			return false;
 		}
-		const gnav::NavMesh& navMesh = regions[static_cast<std::size_t>(r)].navMesh;
-		// "On the mesh" means standing on WALKABLE ground, not merely inside some triangle.
-		// Use terrainTraversable: outdoor ground is NOT a kNoBlocker "floor" face (that's
-		// constructed indoor floor), so isFloorFace would reject all open terrain.
-		const std::int32_t tri = gnav::locateTriangle(navMesh, engine::nav::toMm(meters));
-		return tri >= 0 && gnav::terrainTraversable(navMesh.triangles[static_cast<std::size_t>(tri)]);
+		return pointOnNavMesh(regions[static_cast<std::size_t>(r)].navMesh, meters);
 	}
 
 	bool NavigationSystem::isSegmentWalkable(glm::vec2 aMeters, glm::vec2 bMeters) const {
-		// The segment is walkable IFF both endpoints and every interior sample at the
-		// footprint pitch are on walkable mesh (isOnMesh is the per-point authority). The
-		// interior samples catch a water sliver the endpoints straddle. Step in mm for
-		// resolution-stable sampling regardless of segment orientation/length.
-		if (!isOnMesh(aMeters) || !isOnMesh(bMeters)) {
-			return false;
-		}
-		const double dx	   = static_cast<double>(bMeters.x) - aMeters.x;
-		const double dy	   = static_cast<double>(bMeters.y) - aMeters.y;
-		const double lenMm = std::sqrt(dx * dx + dy * dy) * static_cast<double>(geometry::kMillimetersPerMeter);
-		const auto	 steps = static_cast<std::int64_t>(lenMm / static_cast<double>(kFootprintSampleStepMm));
-		for (std::int64_t i = 1; i < steps; ++i) {
-			const double t = static_cast<double>(i) / static_cast<double>(steps);
-			const glm::vec2 p{static_cast<float>(aMeters.x + dx * t), static_cast<float>(aMeters.y + dy * t)};
-			if (!isOnMesh(p)) {
-				return false;
-			}
-		}
-		return true;
+		// Region-dispatched per-point authority (isOnMesh) under the shared segment sampler: both
+		// endpoints plus every interior sample at the footprint pitch on walkable mesh. The interior
+		// samples catch a water sliver the endpoints straddle.
+		return segmentWalkableUnder([this](glm::vec2 p) { return isOnMesh(p); }, aMeters, bMeters);
 	}
 
 	bool NavigationSystem::isPolylineWalkable(const std::vector<glm::vec2>& ptsMeters) const {
-		if (ptsMeters.empty()) {
-			return true;
-		}
-		if (ptsMeters.size() == 1) {
-			return isOnMesh(ptsMeters.front());
-		}
-		for (std::size_t i = 0; i + 1 < ptsMeters.size(); ++i) {
-			if (!isSegmentWalkable(ptsMeters[i], ptsMeters[i + 1])) {
-				return false;
-			}
-		}
-		return true;
+		return polylineWalkableUnder([this](glm::vec2 p) { return isOnMesh(p); }, ptsMeters);
 	}
 
 	bool NavigationSystem::isAreaWalkable(const std::vector<glm::vec2>& polygonMeters) const {
-		// Fewer than 3 points is not an area: fall back to validating the point(s) we have.
-		if (polygonMeters.size() < 3) {
-			return isPolylineWalkable(polygonMeters);
-		}
+		return areaWalkableUnder([this](glm::vec2 p) { return isOnMesh(p); }, polygonMeters);
+	}
 
-		// 1) Every edge (closing edge included) entirely on walkable mesh. This also
-		//    covers all vertices and any water sliver an edge crosses between two on-land
-		//    corners (e.g. a foundation spanning a river).
-		const std::size_t n = polygonMeters.size();
-		for (std::size_t i = 0; i < n; ++i) {
-			if (!isSegmentWalkable(polygonMeters[i], polygonMeters[(i + 1) % n])) {
-				return false;
-			}
-		}
+	geometry::nav::NavMesh NavigationSystem::buildTerrainOnlyMesh(geometry::Vec2i64 center, std::int64_t radius) const {
+		// Geography + built structures, no flora entities: buildInput with includeFlora=false. It reads
+		// live ConstructionWorld/placement/tiles, so it runs synchronously on the caller's (main)
+		// thread; the footprint-sized area keeps the build cheap.
+		engine::assets::PlacementExecutor  emptyPlacement(engine::assets::AssetRegistry::Get());
+		engine::assets::PlacementExecutor& exec = (placement != nullptr) ? *placement : emptyPlacement;
+		gnav::NavMeshInput input = engine::nav::buildInput(center, radius, *chunkManager, exec,
+			engine::assets::AssetRegistry::Get(), *constructionWorld, engine::assets::ConstructionRegistry::Get(),
+			/*includeFlora=*/false);
+		return gnav::buildNavMesh(input);
+	}
 
-		// 2) Interior on a grid at the same pitch. The edge pass alone misses a hole
-		//    fully inside the ring (a water pond an outer boundary encloses), so probe
-		//    every grid point that lies inside the polygon and require it walkable.
-		//    Foundations are small, so this is a few hundred O(1)-ish probes at most.
-		const double stepMeters = static_cast<double>(kFootprintSampleStepMm) / static_cast<double>(geometry::kMillimetersPerMeter);
-		float minX = polygonMeters[0].x;
-		float maxX = polygonMeters[0].x;
-		float minY = polygonMeters[0].y;
-		float maxY = polygonMeters[0].y;
-		for (const auto& p : polygonMeters) {
-			minX = std::min(minX, p.x);
-			maxX = std::max(maxX, p.x);
-			minY = std::min(minY, p.y);
-			maxY = std::max(maxY, p.y);
+	bool NavigationSystem::isAreaBuildable(const std::vector<glm::vec2>& polygonMeters) const {
+		if (polygonMeters.empty()) {
+			return true;
 		}
-
-		// Even-odd point-in-polygon (ring is implicitly closed). Float test is fine here:
-		// it only decides WHICH grid points to probe; the walkability decision per probe is
-		// the exact integer locateTriangle. A point misclassified right on an edge is still
-		// covered by the edge pass above.
-		auto inside = [&](float px, float py) -> bool {
-			bool in = false;
-			for (std::size_t i = 0, j = n - 1; i < n; j = i++) {
-				const float xi = polygonMeters[i].x;
-				const float yi = polygonMeters[i].y;
-				const float xj = polygonMeters[j].x;
-				const float yj = polygonMeters[j].y;
-				if (((yi > py) != (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) {
-					in = !in;
-				}
-			}
-			return in;
-		};
-
-		for (double y = static_cast<double>(minY) + stepMeters; y < static_cast<double>(maxY); y += stepMeters) {
-			for (double x = static_cast<double>(minX) + stepMeters; x < static_cast<double>(maxX); x += stepMeters) {
-				const auto fx = static_cast<float>(x);
-				const auto fy = static_cast<float>(y);
-				if (inside(fx, fy) && !isOnMesh({fx, fy})) {
-					return false;
-				}
-			}
+		// Clearable entities (trees, rocks) must NOT block placement -- ConstructionSystem turns them
+		// into clear tasks -- so validate the footprint against a terrain-only mesh (no flora) rather
+		// than the runtime mesh, which carries them as holes. Water and built walls stay in that mesh
+		// and still block. Fall back to the runtime-mesh check when the build inputs aren't wired.
+		if (chunkManager == nullptr || constructionWorld == nullptr) {
+			return isAreaWalkable(polygonMeters);
 		}
-		return true;
+		const auto [center, radius] = footprintAreaMm(polygonMeters);
+		const gnav::NavMesh mesh	= buildTerrainOnlyMesh(center, radius);
+		return areaWalkableUnder([&mesh](glm::vec2 p) { return pointOnNavMesh(mesh, p); }, polygonMeters);
 	}
 
 	std::optional<glm::vec2> NavigationSystem::nearestPathablePoint(glm::vec2 meters) const {

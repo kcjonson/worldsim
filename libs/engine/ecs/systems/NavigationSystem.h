@@ -224,6 +224,14 @@ class NavigationSystem : public ISystem {
 	// empty is trivially true. Used for the wall tool's full chain and the /api/dev/walls verb.
 	[[nodiscard]] bool isPolylineWalkable(const std::vector<glm::vec2>& ptsMeters) const;
 
+	// Whole-FOOTPRINT BUILDABILITY for an area structure. Like isAreaWalkable, but validated against
+	// a TERRAIN-ONLY mesh (geography + built walls, no tree/rock entity obstacles) built on demand
+	// over the footprint's local area. So a footprint over clearable entities reads as buildable
+	// (ConstructionSystem turns those into clear tasks), while water and walls still block. This is
+	// the placement gate for the build tool; isAreaWalkable stays the pure on-mesh predicate. Falls
+	// back to isAreaWalkable when the nav build inputs aren't wired (headless/tests).
+	[[nodiscard]] bool isAreaBuildable(const std::vector<glm::vec2>& polygonMeters) const;
+
 	// Sampling pitch (mm) for the whole-footprint / whole-centerline walkability checks.
 	// 0.5 m is fine enough to catch a ~1-tile water sliver between two on-land vertices.
 	// Footprints are small, so even a dense interior grid at this pitch is a few hundred
@@ -366,6 +374,13 @@ class NavigationSystem : public ISystem {
 	// Launch (or relaunch) the async build for `region` over its current center/extent.
 	// Snapshots input on the main thread; the worker owns it by value.
 	void launchBuild(SimulationRegion& region);
+
+	// Build a TERRAIN-ONLY navmesh (border + water + walls, no flora entities) over the square area
+	// centered at `center` with half-extent `radius` (world mm), for placement validation. Runs
+	// synchronously on the caller's (main) thread -- buildInput reads the non-thread-safe
+	// ConstructionWorld -- but the footprint-sized area keeps it cheap. Requires chunkManager and
+	// constructionWorld; callers guard for null.
+	[[nodiscard]] geometry::nav::NavMesh buildTerrainOnlyMesh(geometry::Vec2i64 center, std::int64_t radius) const;
 
 	// True if `region` must (re)build: never built, world version changed, a driver
 	// nears its edge (handled by the caller before this), or its in-area processed-chunk
