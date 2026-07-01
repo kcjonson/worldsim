@@ -8,6 +8,7 @@
 #include <ecs/components/Inventory.h>
 #include <ecs/components/Mood.h>
 #include <ecs/components/Needs.h>
+#include <ecs/components/PlayerControlled.h>
 #include <ecs/components/Room.h>
 #include <ecs/components/StorageConfiguration.h>
 #include <ecs/components/StructureBlueprint.h>
@@ -202,7 +203,8 @@ namespace world_sim {
 		);
 	}
 
-	PanelContent adaptColonistStatus(const ecs::World& world, ecs::EntityID entityId, const std::function<void()>& onDetails) {
+	PanelContent adaptColonistStatus(const ecs::World& world, ecs::EntityID entityId, const std::function<void()>& onDetails,
+		const std::function<void(ecs::EntityID)>& onToggleControl) {
 		PanelContent content;
 		content.layout = PanelLayout::TwoColumn;
 
@@ -222,9 +224,12 @@ namespace world_sim {
 		content.header.moodLabel = moodToLabel(moodValue);
 
 		// LEFT COLUMN: Current task, Next task, Gear list
-		// Current task
+		// Current task. Under direct player control the colonist's autonomous task is suspended, so
+		// show "Controlled" rather than the cleared-task "Idle" (or a transient walk order).
 		std::string currentTask = "Idle";
-		if (auto* task = world.getComponent<ecs::Task>(entityId)) {
+		if (world.getComponent<ecs::PlayerControlled>(entityId) != nullptr) {
+			currentTask = "Controlled";
+		} else if (auto* task = world.getComponent<ecs::Task>(entityId)) {
 			currentTask = formatTask(*task);
 			// Build/Deconstruct advance the blueprint's workDone continuously (the colonist
 			// stands in place). Append the percent so a long build reads as progressing rather
@@ -307,6 +312,19 @@ namespace world_sim {
 				.items = std::move(gearItems),
 			}
 		);
+
+		// Control / Release button (left column, below the gear). Renders in the narrow left column
+		// so it doesn't overlap the needs bars on the right. The label reflects live control state.
+		if (onToggleControl) {
+			const bool controlled = world.getComponent<ecs::PlayerControlled>(entityId) != nullptr;
+			content.leftColumn.push_back(SpacerSlot{.height = 8.0F});
+			content.leftColumn.push_back(
+				ActionButtonSlot{
+					.label = controlled ? "Release" : "Control",
+					.onClick = [onToggleControl, entityId]() { onToggleControl(entityId); },
+				}
+			);
+		}
 
 		// RIGHT COLUMN: "Needs:" header + need bars
 		// The "Needs:" header is rendered by the view, not as a slot

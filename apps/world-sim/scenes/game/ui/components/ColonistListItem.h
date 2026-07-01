@@ -29,6 +29,7 @@ class ColonistListItem : public UI::Component {
 		float width = 184.0F;
 		float height = 46.0F;
 		bool isSelected = false;
+		bool isControlled = false;
 		float itemMargin = 0.0F;
 		SelectCallback onSelect = nullptr;
 		std::string id = "colonist_item";
@@ -43,6 +44,7 @@ class ColonistListItem : public UI::Component {
 
 	// Data updates
 	void setSelected(bool newSelected) { selected = newSelected; }
+	void setControlled(bool newControlled) { controlled = newControlled; }
 	void setMood(float newMood) { mood = newMood; }
 	void setActivity(const std::string& label, float progress) {
 		activity = label;
@@ -64,6 +66,7 @@ class ColonistListItem : public UI::Component {
 	std::string activity;             // current task label, empty when idle
 	float activityProgress = -1.0F;   // 0..1 while acting; <0 = traveling / idle
 	bool selected = false;
+	bool controlled = false;          // under direct player control (distinct tile styling)
 	SelectCallback onSelect;
 };
 

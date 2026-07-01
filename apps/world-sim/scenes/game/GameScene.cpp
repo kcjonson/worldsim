@@ -179,6 +179,22 @@ namespace {
 							m_camera->setPosition({pos->value.x, pos->value.y});
 						}
 					},
+				.onColonistControlToggle =
+					[this](ecs::EntityID entityId) {
+						auto& ai = ecsWorld->getSystem<ecs::AIDecisionSystem>();
+						if (m_controlledColonist == entityId) {
+							ai.releaseControl(entityId);
+							m_controlledColonist = 0;
+							m_moveMarkerTtl = 0.0F;
+						} else {
+							// One colonist is controlled at a time; release any prior one first.
+							if (m_controlledColonist != 0) {
+								ai.releaseControl(m_controlledColonist);
+							}
+							ai.enterControl(entityId);
+							m_controlledColonist = entityId;
+						}
+					},
 				.onBuildToggle =
 					[this]() {
 						// One tool owns world input: drop the foundation tool first.
@@ -486,8 +502,20 @@ namespace {
 				.camera = m_camera.get(),
 				.placementExecutor = m_placementExecutor.get(),
 				.constructionWorld = &m_drawingSystem->world(),
-				.callbacks = {.onSelectionChanged = [](const world_sim::Selection&) {
-					// Selection state is queried each frame - no action needed on change
+				.callbacks = {.onSelectionChanged = [this](const world_sim::Selection& sel) {
+					// Control is bound to selection: when the selection moves off the controlled
+					// colonist (deselect, or selecting something else), release control and cancel
+					// any pending move marker. Re-selecting the colonist later starts fresh via the
+					// Control button. Re-selecting the same colonist is a no-op (guarded below).
+					if (m_controlledColonist == 0) {
+						return;
+					}
+					const auto* colonistSel = std::get_if<world_sim::ColonistSelection>(&sel);
+					if (colonistSel == nullptr || colonistSel->entityId != m_controlledColonist) {
+						ecsWorld->getSystem<ecs::AIDecisionSystem>().releaseControl(m_controlledColonist);
+						m_controlledColonist = 0;
+						m_moveMarkerTtl = 0.0F;
+					}
 				}}
 			});
 
@@ -601,6 +629,19 @@ namespace {
 
 			// Handle entity selection on left click release (only if UI didn't consume it)
 			if (!consumed && event.type == UI::InputEvent::Type::MouseUp) {
+				// Right-click while a controlled colonist is selected: walk it to the clicked point
+				// (snapped to the nearest walkable spot inside issuePlayerMoveOrder). Return before the
+				// selection dispatch so right-click never changes the selection or falls through.
+				if (event.button == engine::MouseButton::Right && m_controlledColonist != 0) {
+					const auto worldPt = m_camera->screenToWorld(event.position.x, event.position.y, logicalW, logicalH, kPixelsPerMeter);
+					auto& ai = ecsWorld->getSystem<ecs::AIDecisionSystem>();
+					if (const auto goal = ai.issuePlayerMoveOrder(m_controlledColonist, glm::vec2{worldPt.x, worldPt.y})) {
+						m_moveMarkerWorld = *goal;
+						m_moveMarkerTtl = 1.0F;
+					}
+					return true;
+				}
+
 				// While the room overlay is active it owns the LEFT click: hit a room ->
 				// RoomSelection, miss -> deselect. It never falls through to structure
 				// selection (rooms aren't in the SelectionSystem ladder). Routed through
@@ -621,6 +662,11 @@ namespace {
 
 		void update(float dt) override {
 			auto& input = engine::InputManager::Get();
+
+			// Fade out the player move-order marker.
+			if (m_moveMarkerTtl > 0.0F) {
+				m_moveMarkerTtl -= dt;
+			}
 
 			// Handle Escape - cancel the drawing tool / placement first, then exit
 			if (input.isKeyPressed(engine::Key::Escape)) {
@@ -816,6 +862,12 @@ namespace {
 			// would swap-and-pop the component pools out from under a live view.
 			if (!m_pendingEntityRemoval.empty()) {
 				for (ecs::EntityID entity : m_pendingEntityRemoval) {
+					// Drop control if the controlled colonist is being destroyed, so a recycled
+					// entity index can't later resolve m_controlledColonist to a different live entity.
+					if (entity == m_controlledColonist) {
+						m_controlledColonist = 0;
+						m_moveMarkerTtl = 0.0F;
+					}
 					ecsWorld->destroyEntity(entity);
 				}
 				m_pendingEntityRemoval.clear();
@@ -928,6 +980,22 @@ namespace {
 
 			// Render selection indicator in world-space (after entities, before UI)
 			m_selectionSystem->renderIndicator(w, h);
+
+			// Player move-order destination marker: a brief gold ring at the last right-click walk
+			// target for the controlled colonist. Drawn in world-space (converted to screen), fading
+			// via its TTL. Radius is in screen pixels so it stays a constant size across zoom.
+			if (m_moveMarkerTtl > 0.0F) {
+				const auto s = m_camera->worldToScreen(m_moveMarkerWorld.x, m_moveMarkerWorld.y, w, h, kPixelsPerMeter);
+				Renderer::Primitives::drawCircle(
+					Renderer::Primitives::CircleArgs{
+						.center = Foundation::Vec2{s.x, s.y},
+						.radius = 7.0F,
+						.style = Foundation::CircleStyle{.fill = Foundation::Color(1.0F, 0.85F, 0.0F, 0.85F)}, // Gold, matches selection
+						.id = "colonist-move-marker",
+						.zIndex = 100,
+					}
+				);
+			}
 
 			// Render placement ghost preview (if in placing mode)
 			m_placementSystem->render(w, h);
@@ -1790,6 +1858,14 @@ namespace {
 		std::unique_ptr<engine::world::ChunkManager>	   m_chunkManager;
 		std::unique_ptr<engine::world::WorldCamera>		   m_camera;
 		glm::vec2										   m_spawnPosition{0.0F, 0.0F};
+
+		// Direct player control of a colonist. m_controlledColonist is the entity currently driven
+		// by the player (0 = none); it is always the selected colonist (control is released when the
+		// selection changes away from it). The move marker is a short-lived gold ring at the last
+		// right-click walk target, fading via its TTL (seconds).
+		ecs::EntityID									   m_controlledColonist = 0;
+		glm::vec2										   m_moveMarkerWorld{0.0F, 0.0F};
+		float											   m_moveMarkerTtl = 0.0F;
 		// Planet forwarded from GameWorldState for the /api/state?what=landing readback.
 		// Null when running in mock-world mode (no preloaded planet).
 		std::shared_ptr<const worldgen::GeneratedWorld>    m_planet;

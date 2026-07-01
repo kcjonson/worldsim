@@ -25,6 +25,7 @@ ColonistListItem::ColonistListItem(const Args& args)
 	, activity(args.colonist.activity)
 	, activityProgress(args.colonist.activityProgress)
 	, selected(args.isSelected)
+	, controlled(args.isControlled)
 	, onSelect(args.onSelect) {
 	size = {args.width, args.height};
 	margin = args.itemMargin;
@@ -42,6 +43,7 @@ void ColonistListItem::setColonistData(const adapters::ColonistData& data) {
 	mood = data.mood;
 	activity = data.activity;
 	activityProgress = data.activityProgress;
+	controlled = data.playerControlled;
 }
 
 void ColonistListItem::render() {
@@ -54,16 +56,23 @@ void ColonistListItem::render() {
 	const float moodRatio = std::clamp(mood / 100.0F, 0.0F, 1.0F);
 	const Foundation::Color moodCol = UI::toneColor(UI::Tone::Auto, moodRatio);
 
-	// Card surface (raised + amber left edge when active).
+	// Card surface. Raised when selected or controlled. A controlled colonist gets a teal
+	// border (UI::data) to read distinctly from the amber selection accent; the two coexist
+	// (selection = amber left edge, control = teal right edge), so a tile can show both.
 	drawRect(Renderer::Primitives::RectArgs{
 		.bounds = {p.x, p.y, w, h},
-		.style = {.fill = selected ? UI::bg_panel_raised : UI::bg_panel,
+		.style = {.fill = (selected || controlled) ? UI::bg_panel_raised : UI::bg_panel,
 				  .border = Foundation::BorderStyle{
-					  .color = UI::line_hairline, .width = UI::bw, .cornerRadius = UI::r_md, .position = Foundation::BorderPosition::Inside}}});
+					  .color = controlled ? UI::data : UI::line_hairline, .width = UI::bw, .cornerRadius = UI::r_md, .position = Foundation::BorderPosition::Inside}}});
 	if (selected) {
 		drawRect(Renderer::Primitives::RectArgs{
 			.bounds = {p.x, p.y + 2.0F, 2.0F, h - 4.0F},
 			.style = {.fill = UI::accent}});
+	}
+	if (controlled) {
+		drawRect(Renderer::Primitives::RectArgs{
+			.bounds = {p.x + w - 2.0F, p.y + 2.0F, 2.0F, h - 4.0F},
+			.style = {.fill = UI::data}});
 	}
 
 	// Avatar (mood-tinted, selected ring).

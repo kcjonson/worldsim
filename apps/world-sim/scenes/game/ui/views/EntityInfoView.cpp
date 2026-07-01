@@ -13,6 +13,7 @@ namespace world_sim {
 		  panelX(args.position.x),
 		  onCloseCallback(args.onClose),
 		  onDetailsCallback(args.onDetails),
+		  onToggleControlCallback(args.onToggleControl),
 		  onQueueRecipeCallback(args.onQueueRecipe),
 		  onOpenCraftingDialogCallback(args.onOpenCraftingDialog),
 		  onPlaceCallback(args.onPlace),
@@ -484,6 +485,7 @@ namespace world_sim {
 		// Prepare callbacks for model
 		EntityInfoModel::Callbacks callbacks{
 			.onDetails = onDetailsCallback,
+			.onToggleControl = onToggleControlCallback,
 			.onQueueRecipe = onQueueRecipeCallback,
 			.onOpenCraftingDialog = onOpenCraftingDialogCallback,
 			.onPlace = onPlaceCallback,
@@ -559,6 +561,9 @@ namespace world_sim {
 		// Column: kHeaderFontSize(12) + kItemGap(4) + 8 needs * (kNeedBarHeight(16) + kItemGap(4)) = 16 + 160 = 176px
 		// Bottom: kPadding(12) = 12px
 		// Total = 88 + 40 + 176 + 12 = 316px, plus 4px extra padding for breathing room -> 320px
+		// The needs column (right) sets the height budget; the colonist left column carries the
+		// Gear list plus a Control/Release button (spacer + kActionButtonHeight) below it, which
+		// stays within this fixed height even with a full backpack (the left column is shorter).
 		constexpr float kFixedPanelHeight = 320.0F;
 		float			totalHeight = kFixedPanelHeight;
 
@@ -804,7 +809,7 @@ namespace world_sim {
 				} else if constexpr (std::is_same_v<T, IconSlot>) {
 					return renderIconSlot(s, yOffset);
 				} else if constexpr (std::is_same_v<T, ActionButtonSlot>) {
-					return renderActionButtonSlot(s, yOffset);
+					return renderActionButtonSlot(s, yOffset, xOffset, maxWidth);
 				}
 				return 0.0F;
 			},
@@ -955,31 +960,35 @@ namespace world_sim {
 		return slot.size + kLabelFontSize + kSectionGap;
 	}
 
-	float EntityInfoView::renderActionButtonSlot(const ActionButtonSlot& slot, float yOffset) {
+	float EntityInfoView::renderActionButtonSlot(const ActionButtonSlot& slot, float yOffset, float xOffset, float maxWidth) {
 		if (usedActionButtons >= actionButtonHandles.size()) {
 			return 0.0F;
 		}
 
 		auto& button = actionButtonHandles[usedActionButtons];
-		float buttonX = panelX + kPadding;
+		// Honor the column offset/width so a button placed in the colonist left column sits in that
+		// narrow column instead of spanning the panel (and overlapping the needs bars on the right).
+		// Single-column callers pass maxWidth=0, which keeps the original full-content-width behavior.
+		float buttonX = panelX + kPadding + xOffset;
+		float buttonWidth = (maxWidth > 0.0F) ? maxWidth : contentWidth;
 
 		// Position button background
 		if (auto* bg = getChild<UI::Rectangle>(button.background)) {
 			bg->visible = true;
 			bg->position = {buttonX, yOffset};
-			bg->size = {contentWidth, kActionButtonHeight};
+			bg->size = {buttonWidth, kActionButtonHeight};
 		}
 
 		// Position button text (centered)
 		if (auto* text = getChild<UI::Text>(button.text)) {
 			text->visible = true;
-			text->position = {buttonX + contentWidth * 0.5F, yOffset + kActionButtonHeight * 0.5F};
+			text->position = {buttonX + buttonWidth * 0.5F, yOffset + kActionButtonHeight * 0.5F};
 			text->text = slot.label;
 		}
 
 		// Store callback and bounds for click handling
 		actionButtonCallbacks[usedActionButtons] = slot.onClick;
-		actionButtonBounds[usedActionButtons] = Foundation::Rect{buttonX, yOffset, contentWidth, kActionButtonHeight};
+		actionButtonBounds[usedActionButtons] = Foundation::Rect{buttonX, yOffset, buttonWidth, kActionButtonHeight};
 
 		++usedActionButtons;
 		return kActionButtonHeight + kItemGap;
@@ -1022,6 +1031,7 @@ namespace world_sim {
 		size_t barIndex = 0;
 		size_t textIndex = 0;
 		size_t listItemIndex = 0;
+		size_t actionButtonIndex = 0;
 
 		// Helper to update slots from a vector
 		auto updateSlots = [&](const std::vector<InfoSlot>& slots) {
@@ -1063,6 +1073,17 @@ namespace world_sim {
 						}
 					}
 					usedListItems = listItemIndex;
+				} else if (const auto* buttonSlot = std::get_if<ActionButtonSlot>(&slot)) {
+					// Refresh button label + callback in place (the colonist Control/Release button
+					// flips its label without changing the slot count, so it arrives as a Values
+					// update, not a Structure rebuild).
+					if (actionButtonIndex < actionButtonHandles.size()) {
+						if (auto* text = getChild<UI::Text>(actionButtonHandles[actionButtonIndex].text)) {
+							text->text = buttonSlot->label;
+						}
+						actionButtonCallbacks[actionButtonIndex] = buttonSlot->onClick;
+					}
+					++actionButtonIndex;
 				}
 			}
 		};

@@ -52,6 +52,7 @@ class EntityInfoView : public UI::Component {
 		std::string			  id = "entity_info";
 		std::function<void()> onClose;				// Called when close button clicked
 		std::function<void()> onDetails;			// Called when Details button clicked
+		std::function<void(ecs::EntityID)> onToggleControl; // Called when the colonist Control/Release button is clicked
 		QueueRecipeCallback   onQueueRecipe;		// Called when recipe is queued at station (legacy, kept for compatibility)
 		OpenCraftingDialogCallback onOpenCraftingDialog; // Called to open crafting dialog
 		std::function<void()> onPlace;				// Called when Place button clicked for packaged furniture
@@ -123,7 +124,7 @@ class EntityInfoView : public UI::Component {
 	float renderClickableTextSlot(const ClickableTextSlot& slot, float yOffset, float xOffset);
 	float renderRecipeSlot(const RecipeSlot& slot, float yOffset);
 	float renderIconSlot(const IconSlot& slot, float yOffset);
-	float renderActionButtonSlot(const ActionButtonSlot& slot, float yOffset);
+	float renderActionButtonSlot(const ActionButtonSlot& slot, float yOffset, float xOffset, float maxWidth);
 
 	/// Get close button top-left position for current panel position
 	[[nodiscard]] Foundation::Vec2 getCloseButtonPosition(float panelY) const;
@@ -140,6 +141,7 @@ class EntityInfoView : public UI::Component {
 	// Callbacks
 	std::function<void()> onCloseCallback;
 	std::function<void()> onDetailsCallback;
+	std::function<void(ecs::EntityID)> onToggleControlCallback;
 	QueueRecipeCallback   onQueueRecipeCallback;
 	OpenCraftingDialogCallback onOpenCraftingDialogCallback;
 	std::function<void()> onPlaceCallback;
@@ -215,8 +217,8 @@ class EntityInfoView : public UI::Component {
 	std::vector<std::function<void()>> recipeCallbacks;
 	std::vector<Foundation::Rect> recipeButtonBounds;
 
-	// Action buttons (for ActionButtonSlot - Place/Package)
-	static constexpr size_t kMaxActionButtons = 2;
+	// Action buttons (for ActionButtonSlot - Place/Package, colonist Control/Release)
+	static constexpr size_t kMaxActionButtons = 3;
 	struct ActionButtonHandles {
 		UI::LayerHandle background;
 		UI::LayerHandle text;

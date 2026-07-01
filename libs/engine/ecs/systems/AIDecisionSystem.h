@@ -74,6 +74,25 @@ public:
 	using DropItemCallback = std::function<void(const std::string& defName, float x, float y)>;
 	void setDropItemCallback(DropItemCallback callback) { m_onDropItem = std::move(callback); }
 
+	/// Enter direct player control: suspend this colonist's autonomous task selection. While the
+	/// PlayerControlled tag is present, update() skips task (re)selection, so the colonist stands
+	/// and waits until the player issues a move order. Abandons the current task and stops; there
+	/// is no reservation system, so clearing the task is the whole "release its work" story, and
+	/// any carried items ride along (handled normally once control is released). Vision is a
+	/// separate system and keeps running.
+	void enterControl(EntityID entity);
+
+	/// Leave direct player control: remove the tag and clear the player-issued task so the next
+	/// update() re-selects autonomously from a clean slate.
+	void releaseControl(EntityID entity);
+
+	/// Issue a player walk order to a (controlled) colonist. An unwalkable goal (water, inside a
+	/// wall, off the sim area) snaps to the nearest pathable point. Sets a Moving task and resolves
+	/// a navmesh route through the normal pipeline (so vision-driven repath and the arrival hand-off
+	/// work for free). Returns the goal actually routed to (post-snap), or nullopt if nothing
+	/// reachable is near the click (no order issued).
+	[[nodiscard]] std::optional<glm::vec2> issuePlayerMoveOrder(EntityID entity, glm::vec2 worldGoal);
+
 	[[nodiscard]] int priority() const override { return 60; }
 	[[nodiscard]] const char* name() const override { return "AIDecision"; }
 
