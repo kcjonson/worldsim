@@ -902,10 +902,8 @@ namespace ecs {
 			return true;
 		}
 
-		// Footprint AABB (world mm) expanded by a margin, as {center, halfExtent}, for the terrain-only
-		// placement mesh: the margin gives the local terrain (and any nearby water boundary) room to
-		// triangulate and keeps the footprint inside the mesh's walkable border. Requires a non-empty ring.
-		std::pair<geometry::Vec2i64, std::int64_t> footprintAreaMm(const std::vector<glm::vec2>& ptsMeters) {
+		// Footprint AABB in world mm, as {min, max}. Requires a non-empty ring.
+		std::pair<geometry::Vec2i64, geometry::Vec2i64> footprintBoundsMm(const std::vector<glm::vec2>& ptsMeters) {
 			float minX = ptsMeters[0].x, maxX = ptsMeters[0].x, minY = ptsMeters[0].y, maxY = ptsMeters[0].y;
 			for (const auto& p : ptsMeters) {
 				minX = std::min(minX, p.x);
@@ -913,12 +911,7 @@ namespace ecs {
 				minY = std::min(minY, p.y);
 				maxY = std::max(maxY, p.y);
 			}
-			const geometry::Vec2i64 minMm = engine::nav::toMm({minX, minY});
-			const geometry::Vec2i64 maxMm = engine::nav::toMm({maxX, maxY});
-			const geometry::Vec2i64 center{(minMm.x + maxMm.x) / 2, (minMm.y + maxMm.y) / 2};
-			constexpr std::int64_t	kMarginMm = 4000; // 4 m of terrain context around the footprint
-			const std::int64_t		radius	  = std::max((maxMm.x - minMm.x) / 2, (maxMm.y - minMm.y) / 2) + kMarginMm;
-			return {center, radius};
+			return {engine::nav::toMm({minX, minY}), engine::nav::toMm({maxX, maxY})};
 		}
 
 	} // namespace
@@ -958,6 +951,28 @@ namespace ecs {
 		return gnav::buildNavMesh(input);
 	}
 
+	const geometry::nav::NavMesh& NavigationSystem::terrainMeshCovering(geometry::Vec2i64 minMm, geometry::Vec2i64 maxMm) const {
+		// Reuse the cache when it still covers the query AABB and no wall has changed since it was
+		// built (water/terrain in a loaded area is static). Otherwise rebuild it, centered on the
+		// query and sized so a whole drawing gesture's probes stay inside it. constructionWorld->version()
+		// bumps on any wall build/remove, which is the only geography the terrain-only mesh carries
+		// besides water.
+		const std::uint64_t cv = (constructionWorld != nullptr) ? constructionWorld->version() : 0;
+		const bool			covered = !terrainMesh_.triangles.empty()
+									 && minMm.x >= terrainMeshCenter_.x - terrainMeshHalfExtent_
+									 && minMm.y >= terrainMeshCenter_.y - terrainMeshHalfExtent_
+									 && maxMm.x <= terrainMeshCenter_.x + terrainMeshHalfExtent_
+									 && maxMm.y <= terrainMeshCenter_.y + terrainMeshHalfExtent_;
+		if (!covered || terrainMeshConstructionVersion_ != cv) {
+			const geometry::Vec2i64 center{(minMm.x + maxMm.x) / 2, (minMm.y + maxMm.y) / 2};
+			terrainMesh_					= buildTerrainOnlyMesh(center, kTerrainCacheHalfExtentMm);
+			terrainMeshCenter_				= center;
+			terrainMeshHalfExtent_			= kTerrainCacheHalfExtentMm;
+			terrainMeshConstructionVersion_ = cv;
+		}
+		return terrainMesh_;
+	}
+
 	bool NavigationSystem::isAreaBuildable(const std::vector<glm::vec2>& polygonMeters) const {
 		if (polygonMeters.empty()) {
 			return true;
@@ -969,9 +984,21 @@ namespace ecs {
 		if (chunkManager == nullptr || constructionWorld == nullptr) {
 			return isAreaWalkable(polygonMeters);
 		}
-		const auto [center, radius] = footprintAreaMm(polygonMeters);
-		const gnav::NavMesh mesh	= buildTerrainOnlyMesh(center, radius);
+		const auto [minMm, maxMm] = footprintBoundsMm(polygonMeters);
+		const gnav::NavMesh& mesh  = terrainMeshCovering(minMm, maxMm);
 		return areaWalkableUnder([&mesh](glm::vec2 p) { return pointOnNavMesh(mesh, p); }, polygonMeters);
+	}
+
+	bool NavigationSystem::isPointBuildable(glm::vec2 meters) const {
+		// Per-vertex / cursor buildability: the same terrain-only authority as isAreaBuildable, for one
+		// point (so the live preview agrees with the commit gate). Fall back to the runtime-mesh point
+		// check when the build inputs aren't wired.
+		if (chunkManager == nullptr || constructionWorld == nullptr) {
+			return isOnMesh(meters);
+		}
+		const geometry::Vec2i64 p	 = engine::nav::toMm(meters);
+		const gnav::NavMesh&	mesh = terrainMeshCovering(p, p);
+		return pointOnNavMesh(mesh, meters);
 	}
 
 	std::optional<glm::vec2> NavigationSystem::nearestPathablePoint(glm::vec2 meters) const {

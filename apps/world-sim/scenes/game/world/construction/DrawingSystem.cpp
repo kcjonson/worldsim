@@ -147,13 +147,16 @@ namespace world_sim {
 		  callbacks_(args.callbacks) {}
 
 	bool DrawingSystem::pointOnMesh(Foundation::Vec2 p) const {
-		// The ONE runtime placement predicate: isValidPosition (== isOnMesh). No nav system
-		// wired (headless/test) -> validity is owned elsewhere; mirror the dev verbs' permissive
-		// fallback so the tools still work in that build.
+		// Per-vertex / cursor placeability for the ACTIVE tool. No nav system wired (headless/test) ->
+		// validity is owned elsewhere; mirror the dev verbs' permissive fallback. A FOUNDATION vertex
+		// may sit over a clearable entity (tree/rock) -- those become clear tasks -- so it uses the
+		// terrain-only buildability check, agreeing with the commit gate (isAreaBuildable). A WALL
+		// vertex needs clear on-mesh ground (no wall footprint-clearing yet).
 		if (navigation_ == nullptr) {
 			return true;
 		}
-		return navigation_->isValidPosition({p.x, p.y});
+		return (activeTool_ == ToolKind::Wall) ? navigation_->isValidPosition({p.x, p.y})
+											   : navigation_->isPointBuildable({p.x, p.y});
 	}
 
 	bool DrawingSystem::requirePlaceable(const std::vector<Foundation::Vec2>& pts, const char* what) {
@@ -321,12 +324,13 @@ namespace world_sim {
 			return true; // consumed: the click was a deliberate (rejected) action
 		}
 
-		// Nav gate: refuse a vertex that lands off the walkable mesh (on water) before it
-		// enters the ring. The whole-footprint re-check on commit (requirePlaceable) still
-		// catches an edge or interior that crosses water between two on-mesh vertices.
+		// Nav gate: refuse a vertex that lands on genuinely unbuildable ground (water, a built wall).
+		// A vertex over a clearable entity (tree/rock) is allowed -- pointOnMesh routes foundations
+		// through the terrain-only buildability check. The whole-footprint re-check on commit
+		// (requirePlaceable) still catches an edge or interior that crosses water between two vertices.
 		if (cursorOffMesh_) {
 			if (callbacks_.onToast) {
-				callbacks_.onToast("Can't build here", "foundation: not on walkable ground");
+				callbacks_.onToast("Can't build here", "foundation: not on buildable ground");
 			}
 			return true;
 		}

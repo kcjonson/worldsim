@@ -923,6 +923,56 @@ TEST_F(NavigationSystemTest, InAreaPlacementCompletionTriggersRebuild) {
 		<< "the newly-placed in-area flora must change the mesh triangulation";
 }
 
+// The build-over-trees guard: a foundation footprint sitting on a tree is REFUSED by the runtime-mesh
+// check (the tree carves a hole) but ALLOWED by isAreaBuildable / isPointBuildable, which validate
+// against a terrain-only mesh so the tree becomes a clear task instead of blocking placement.
+TEST_F(NavigationSystemTest, FootprintOverTreeIsBuildableButNotOnMesh) {
+	AssetRegistry&	reg = AssetRegistry::Get();
+	AssetDefinition tree;
+	tree.defName					 = "Test_NavBuildableTree";
+	tree.collision.type				 = CollisionShapeType::Rect;
+	tree.collision.halfExtentsMeters = {0.4F, 0.4F};
+	reg.registerTestDefinition(tree);
+
+	PlacementExecutor					executor(reg);
+	std::unordered_set<ChunkCoordinate> processed;
+	const glm::vec2						treeAt{10.0F, 10.0F};
+	const ChunkCoordinate				coord = engine::world::worldToChunk({treeAt.x, treeAt.y});
+	{
+		SpatialIndex index;
+		PlacedEntity pe;
+		pe.defName	= "Test_NavBuildableTree";
+		pe.position = treeAt;
+		index.insert(pe);
+		engine::assets::AsyncChunkPlacementResult result;
+		result.coord		= coord;
+		result.spatialIndex = std::move(index);
+		executor.storeChunkResult(std::move(result));
+		processed.insert(coord);
+	}
+
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys);
+	sys.setPlacementData(&executor, &processed);
+	sys.setConstructionWorld(&cw);
+
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "initial navmesh never built";
+
+	// A small footprint square centered on the tree (inside the ~0.9 m carved hole).
+	const std::vector<glm::vec2> footprint{
+		{treeAt.x - 0.3F, treeAt.y - 0.3F},
+		{treeAt.x + 0.3F, treeAt.y - 0.3F},
+		{treeAt.x + 0.3F, treeAt.y + 0.3F},
+		{treeAt.x - 0.3F, treeAt.y + 0.3F},
+	};
+
+	EXPECT_FALSE(sys.isAreaWalkable(footprint)) << "the runtime mesh carves the tree as a hole";
+	EXPECT_TRUE(sys.isAreaBuildable(footprint)) << "terrain-only: the tree is clearable, not a blocker";
+	EXPECT_TRUE(sys.isPointBuildable(treeAt)) << "the tree center is buildable (it becomes a clear task)";
+}
+
 // A destructive harvest fells a tree: it is removed from the live chunk index, which leaves
 // the chunk membership and construction version UNCHANGED. The placement removal epoch is the
 // only signal that the in-area obstacle set shrank, so it must drive the rebuild -- otherwise
