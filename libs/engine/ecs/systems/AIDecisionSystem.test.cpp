@@ -3058,4 +3058,33 @@ namespace ecs::test {
 		EXPECT_FLOAT_EQ(task->targetPosition.y, goal.y);
 	}
 
+	// Taking control mid-action abandons the in-progress Action too, not just the Task. Otherwise
+	// ActionSystem (which starts a new action only when the current one is inactive) would later run
+	// the stale action against whatever task the colonist picks up after release, applying a
+	// mismatched effect. Uses a non-interruptable Drink -- the case the normal task-switch path is
+	// structurally forbidden from abandoning, which taking control abandons unconditionally.
+	TEST_F(AIDecisionSystemTest, EnterControlClearsInProgressAction) {
+		auto colonist = createColonist({0.0F, 0.0F});
+		Action drinking;
+		drinking.type = ActionType::Drink;
+		drinking.state = ActionState::InProgress;
+		drinking.interruptable = false;
+		world->addComponent<Action>(colonist, drinking);
+
+		auto* task = getTask(colonist);
+		ASSERT_NE(task, nullptr);
+		task->type = TaskType::FulfillNeed;
+		task->state = TaskState::Arrived;
+
+		world->getSystem<AIDecisionSystem>().enterControl(colonist);
+
+		auto* action = world->getComponent<Action>(colonist);
+		ASSERT_NE(action, nullptr);
+		EXPECT_FALSE(action->isActive()); // stale action cleared: won't fire against a later task
+
+		task = getTask(colonist);
+		ASSERT_NE(task, nullptr);
+		EXPECT_FALSE(task->isActive());
+	}
+
 } // namespace ecs::test

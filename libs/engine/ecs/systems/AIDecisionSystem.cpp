@@ -2199,6 +2199,14 @@ namespace ecs {
 			task->clear();
 			task->timeSinceEvaluation = 0.0F;
 		}
+		// Clear any in-progress action too. Unlike the normal task-switch path (which is gated so a
+		// non-interruptable Eat/Drink/Toilet is never abandoned), taking control unconditionally
+		// abandons the task, so a stale active Action must be cleared here -- otherwise ActionSystem
+		// would later run it against whatever task the colonist picks up after release (it starts a
+		// new action only when the current one is inactive), applying a mismatched effect.
+		if (auto* action = world->getComponent<Action>(entity)) {
+			action->clear();
+		}
 		if (auto* navPath = world->getComponent<NavPath>(entity)) {
 			navPath->valid = false;
 		}
@@ -2219,6 +2227,9 @@ namespace ecs {
 		if (auto* task = world->getComponent<Task>(entity)) {
 			task->clear();
 			task->timeSinceEvaluation = 0.0F;
+		}
+		if (auto* action = world->getComponent<Action>(entity)) {
+			action->clear();
 		}
 		if (auto* navPath = world->getComponent<NavPath>(entity)) {
 			navPath->valid = false;
@@ -2266,7 +2277,13 @@ namespace ecs {
 
 		if (const Memory* memory = world->getComponent<Memory>(entity)) {
 			const NavRequestOutcome outcome = requestNavPath(entity, goal, *position, *memory, *movementTarget);
-			task->navState = (outcome == NavRequestOutcome::Blocked) ? NavState::CantFindWayTo : NavState::Traveling;
+			// Routed (and the headless Unmeshed beeline) = traveling. Blocked and Waiting both leave
+			// movementTarget inactive inside requestNavPath, and a controlled colonist can't retry on
+			// its own (the control gate skips re-eval), so surface "can't get there" rather than a
+			// "going to" that stands still -- the player re-clicks to try again.
+			task->navState = (outcome == NavRequestOutcome::Routed || outcome == NavRequestOutcome::Unmeshed)
+								  ? NavState::Traveling
+								  : NavState::CantFindWayTo;
 		}
 		return goal;
 	}

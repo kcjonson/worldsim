@@ -862,6 +862,12 @@ namespace {
 			// would swap-and-pop the component pools out from under a live view.
 			if (!m_pendingEntityRemoval.empty()) {
 				for (ecs::EntityID entity : m_pendingEntityRemoval) {
+					// Drop control if the controlled colonist is being destroyed, so a recycled
+					// entity index can't later resolve m_controlledColonist to a different live entity.
+					if (entity == m_controlledColonist) {
+						m_controlledColonist = 0;
+						m_moveMarkerTtl = 0.0F;
+					}
 					ecsWorld->destroyEntity(entity);
 				}
 				m_pendingEntityRemoval.clear();

@@ -561,6 +561,9 @@ namespace world_sim {
 		// Column: kHeaderFontSize(12) + kItemGap(4) + 8 needs * (kNeedBarHeight(16) + kItemGap(4)) = 16 + 160 = 176px
 		// Bottom: kPadding(12) = 12px
 		// Total = 88 + 40 + 176 + 12 = 316px, plus 4px extra padding for breathing room -> 320px
+		// The needs column (right) sets the height budget; the colonist left column carries the
+		// Gear list plus a Control/Release button (spacer + kActionButtonHeight) below it, which
+		// stays within this fixed height even with a full backpack (the left column is shorter).
 		constexpr float kFixedPanelHeight = 320.0F;
 		float			totalHeight = kFixedPanelHeight;
 
