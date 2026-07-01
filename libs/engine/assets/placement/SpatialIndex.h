@@ -51,10 +51,22 @@ namespace engine::assets {
 		// 2.5D depth key: the bottom-most (max) ground-contact world-Y of this
 		// renderable's mesh, in world meters. Larger draws later, so it appears in
 		// front (screen-Y linearly encodes world-Y under the scaled ortho camera).
-		// Produced for dynamic entities by DynamicEntityRenderSystem; static
-		// occluders derive it at gather time (WorldDepthGather), so it stays 0 on
-		// the frozen index copies and is not baked into the per-chunk mesh.
+		// Produced for dynamic entities by DynamicEntityRenderSystem; for static
+		// occluders it is computed once at placement time (PlacementExecutor) and
+		// stored on the index copies, so WorldDepthGather reads it instead of
+		// re-deriving it per frame. Not baked into the per-chunk mesh.
 		float		anchorY = 0.0F;
+
+		// True when this static is a tall upright occluder: worldHeight
+		// (== (templateMaxY - templateMinY) * scale) >= kShortFloraMaxHeight and the
+		// def is not groundcover. These are the statics WorldDepthGather pulls off
+		// the baked/instanced background to interleave with actors in the Y-sorted
+		// stream; short flora stays baked and groundcover renders instanced.
+		// Computed once at placement time with the same threshold BakedEntityMesh
+		// bakes by, so the tall/short partition is identical either way. Always
+		// false for dynamic entities: they are gathered unconditionally and must
+		// never be taken for a static occluder.
+		bool		isTallOccluder = false;
 
 		// Optional per-part animation transforms (meter/template space), one entry per MeshPart
 		// of this entity's template, by index (identity where a part isn't driven). Null = not

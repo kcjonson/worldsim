@@ -14,10 +14,9 @@
 // this is a pure CPU painter's sort.
 
 #include "assets/placement/SpatialIndex.h"
+#include "world/rendering/BakedEntityMesh.h" // kShortFloraMaxHeight, isGroundcoverDef (short/tall split)
 #include "world/rendering/RenderContext.h"
-#include "world/rendering/TemplateMeshCache.h"
 
-#include <unordered_map>
 #include <vector>
 
 namespace renderer {
@@ -43,6 +42,23 @@ namespace engine::world {
 	};
 	[[nodiscard]] MeshYExtent meshYExtent(const renderer::TessellatedMesh* mesh);
 
+	// Placement-time 2.5D depth attributes for one static occluder. Computed once
+	// per placed static (PlacementExecutor) and stored on its PlacedEntity, so the
+	// per-frame gather never re-derives them. worldHeight (== (maxY-minY)*scale) and
+	// the >= kShortFloraMaxHeight threshold are bit-identical to the bake's short/
+	// tall split (BakedEntityMesh), so a static lands on the same side of the
+	// partition whether classified here or baked. Groundcover is never tall (it
+	// renders on the instanced path).
+	struct StaticDepthAttribs {
+		float anchorY = 0.0F;
+		bool  isTallOccluder = false;
+	};
+	[[nodiscard]] inline StaticDepthAttribs
+	computeStaticDepthAttribs(float originWorldY, MeshYExtent ext, float scale, bool isGroundcover) {
+		const float worldHeight = (ext.maxY - ext.minY) * scale;
+		return {computeAnchorY(originWorldY, ext.maxY, scale), worldHeight >= kShortFloraMaxHeight && !isGroundcover};
+	}
+
 	// One sortable reference into the merged upright-occluder + actor stream.
 	struct DepthSortItem {
 		float						anchorY = 0.0F;
@@ -56,9 +72,9 @@ namespace engine::world {
 
 	// Gathers one frame's frustum-culled, Y-sorted upright stream: visible static
 	// occluders from the placement index merged with the dynamic ECS entities,
-	// stable-sorted by anchorY. Static anchorY is derived here (not read from the
-	// frozen index copy, which stays 0); dynamic anchorY is read from
-	// PlacedEntity::anchorY (produced by DynamicEntityRenderSystem).
+	// stable-sorted by anchorY. Both anchorY and the tall/short classification are
+	// precomputed (statics at placement time in PlacementExecutor, dynamics in
+	// DynamicEntityRenderSystem), so this does no per-entity string/mesh lookups.
 	//
 	// backgroundOnFastPath == true (instanced path): short flora and groundcover
 	// are drawn on their own fast paths (baked mesh + GroundcoverRenderer) and so
@@ -68,12 +84,6 @@ namespace engine::world {
 	class WorldDepthGather {
 	  public:
 		void gather(const RenderContext& ctx, std::vector<DepthSortItem>& out, bool backgroundOnFastPath);
-
-	  private:
-		[[nodiscard]] MeshYExtent cachedExtent(const renderer::TessellatedMesh* mesh);
-
-		TemplateMeshCache												 m_templateCache;
-		std::unordered_map<const renderer::TessellatedMesh*, MeshYExtent> m_extentCache;
 	};
 
 } // namespace engine::world

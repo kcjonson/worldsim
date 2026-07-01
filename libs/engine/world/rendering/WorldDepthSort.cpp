@@ -1,7 +1,5 @@
 #include "WorldDepthSort.h"
 
-#include "world/rendering/BakedEntityMesh.h" // isGroundcoverDef, kShortFloraMaxHeight
-
 #include <vector/Types.h>
 
 #include <algorithm>
@@ -27,23 +25,17 @@ namespace engine::world {
 		});
 	}
 
-	MeshYExtent WorldDepthGather::cachedExtent(const renderer::TessellatedMesh* mesh) {
-		auto it = m_extentCache.find(mesh);
-		if (it != m_extentCache.end()) {
-			return it->second;
-		}
-		const MeshYExtent ext = meshYExtent(mesh);
-		m_extentCache.emplace(mesh, ext);
-		return ext;
-	}
-
 	void WorldDepthGather::gather(const RenderContext& ctx, std::vector<DepthSortItem>& out, bool backgroundOnFastPath) {
 		out.clear();
 		const VisibleBounds vis = computeVisibleBounds(ctx.camera, ctx.viewportWidth, ctx.viewportHeight, ctx.pixelsPerMeter);
 
 		// Visible static occluders, gathered live from the placement index (same
-		// per-chunk queryRect the batched path uses). Tall occluders are pulled off
-		// the baked fast path so they can interleave with actors by anchorY.
+		// per-chunk queryRect the batched path uses). anchorY + isTallOccluder were
+		// computed once at placement time, so this walks the query results with no
+		// per-entity string/mesh lookups. On the instanced fast path only tall
+		// occluders join the sorted stream (short flora is baked, groundcover
+		// renders instanced); the batched fallback has no separate background, so it
+		// keeps every static.
 		for (const auto& coord : ctx.processedChunks) {
 			const auto* index = ctx.executor.getChunkIndex(coord);
 			if (index == nullptr) {
@@ -51,23 +43,10 @@ namespace engine::world {
 			}
 			const auto visible = index->queryRect(vis.minX, vis.minY, vis.maxX, vis.maxY);
 			for (const auto* entity : visible) {
-				// On the instanced path groundcover is drawn by GroundcoverRenderer;
-				// exclude it here so it isn't drawn twice. The batched fallback has no
-				// such path, so it keeps groundcover in the sorted stream.
-				if (backgroundOnFastPath && isGroundcoverDef(entity->defName)) {
+				if (backgroundOnFastPath && !entity->isTallOccluder) {
 					continue;
 				}
-				const auto* mesh = m_templateCache.get(entity->defName);
-				if (mesh == nullptr) {
-					continue;
-				}
-				const MeshYExtent ext = cachedExtent(mesh);
-				const float		  worldHeight = (ext.maxY - ext.minY) * entity->scale;
-				// Short flora stays baked as background on the instanced path.
-				if (backgroundOnFastPath && worldHeight < kShortFloraMaxHeight) {
-					continue;
-				}
-				out.push_back({computeAnchorY(entity->position.y, ext.maxY, entity->scale), entity, false});
+				out.push_back({entity->anchorY, entity, false});
 			}
 		}
 
