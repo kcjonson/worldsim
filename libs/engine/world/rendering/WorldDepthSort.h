@@ -14,8 +14,7 @@
 // this is a pure CPU painter's sort.
 
 #include "assets/placement/SpatialIndex.h"
-#include "world/rendering/BakedEntityMesh.h" // kShortFloraMaxHeight, isGroundcoverDef (short/tall split)
-#include "world/rendering/RenderContext.h"
+#include "world/rendering/BakedEntityMesh.h" // kShortFloraMaxHeight (short/tall split)
 
 #include <vector>
 
@@ -24,6 +23,12 @@ struct TessellatedMesh;
 }
 
 namespace engine::world {
+
+	// RenderContext is only referenced by-reference in WorldDepthGather::gather's
+	// signature; forward-declaring it keeps RenderContext.h (which transitively pulls in
+	// PlacementExecutor and other heavy deps) out of this widely-included header. The
+	// include lives in WorldDepthSort.cpp, where gather() is defined.
+	struct RenderContext;
 
 	// Canonical anchorY rule: the bottom-most (max) world-Y of a renderable's mesh,
 	// i.e. its ground-contact line. One formula reconciles the two position

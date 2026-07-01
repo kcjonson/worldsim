@@ -1,5 +1,7 @@
 #include "WorldDepthSort.h"
 
+#include "world/rendering/RenderContext.h"
+
 #include <vector/Types.h>
 
 #include <algorithm>
@@ -36,7 +38,14 @@ namespace engine::world {
 		// occluders join the sorted stream (short flora is baked, groundcover
 		// renders instanced); the batched fallback has no separate background, so it
 		// keeps every static.
-		for (const auto& coord : ctx.processedChunks) {
+		// Iterate visible chunks in a deterministic (y, x) order. processedChunks is an
+		// unordered_set whose iteration order can shift on rehash; fixing the order keeps
+		// stable_sort's tie behavior (equal anchorY across chunks) identical frame to frame.
+		std::vector<ChunkCoordinate> orderedChunks(ctx.processedChunks.begin(), ctx.processedChunks.end());
+		std::sort(orderedChunks.begin(), orderedChunks.end(), [](const ChunkCoordinate& a, const ChunkCoordinate& b) {
+			return a.y != b.y ? a.y < b.y : a.x < b.x;
+		});
+		for (const auto& coord : orderedChunks) {
 			const auto* index = ctx.executor.getChunkIndex(coord);
 			if (index == nullptr) {
 				continue;
