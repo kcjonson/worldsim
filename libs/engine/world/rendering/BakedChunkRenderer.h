@@ -83,12 +83,12 @@ class BakedChunkRenderer {
 		Renderer::GLBuffer indexIBO;     // Combined indices
 		uint32_t indexCount = 0;         // Total indices in IBO
 		uint32_t entityCount = 0;        // For debugging/metrics
-		float maxEntityHeight = 0.0F;    // Drives the far-zoom cutoff (short bucket)
+		float maxEntityHeight = 0.0F;    // Drives the far-zoom short-flora cutoff
 	};
 
-	/// GPU resources for a single sub-region's baked entity meshes.
+	/// GPU resources for a single sub-region's baked short flora.
 	struct BakedSubChunkData {
-		std::array<BakedMeshGPU, kFloraBucketCount> buckets;
+		BakedMeshGPU floraMesh;          // Baked short flora for this sub-region
 		float minX = 0, minY = 0;        // World-space bounds for culling
 		float maxX = 0, maxY = 0;
 	};

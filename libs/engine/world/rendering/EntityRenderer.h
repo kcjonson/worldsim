@@ -22,6 +22,7 @@
 #include "world/rendering/InstancedEntityRenderer.h"
 #include "world/rendering/InstancingUniforms.h"
 #include "world/rendering/RenderContext.h"
+#include "world/rendering/WorldDepthSort.h"
 
 #include <cstdint>
 #include <unordered_set>
@@ -119,6 +120,11 @@ class EntityRenderer {
 	GroundcoverRenderer		 groundcover;
 	InstancedEntityRenderer	 instancedDynamic;
 	BatchedEntityRenderer	 batched;
+
+	// Gathers + sorts the visible upright stream (tall statics + dynamic ECS) each
+	// frame; m_sortedUprights is reused to keep its capacity across frames.
+	WorldDepthGather		   uprightGather;
+	std::vector<DepthSortItem> m_sortedUprights;
 
 	/// Render using GPU instancing path
 	void renderInstanced(

@@ -39,154 +39,145 @@ namespace engine::world {
 		return insertedIt->second;
 	}
 
-	void InstancedEntityRenderer::renderDynamic(const RenderContext& ctx, RenderStats& stats) {
-		// Dynamic entities (from ECS) change position each frame, so we rebuild them.
+	void InstancedEntityRenderer::emitAnimated(
+		const assets::PlacedEntity&		 entity,
+		const renderer::TessellatedMesh* mesh,
+		float camX, float camY, float scale, float halfViewW, float halfViewH,
+		uint32_t& animVertexBase
+	) {
+		const auto& xforms = *entity.partTransforms;
+		const bool	hasMeshColors = mesh->hasColors();
+
+		// Copy the template verts, then deform each part's range by its transform.
+		thread_local std::vector<Foundation::Vec2> animVerts;
+		animVerts.assign(mesh->vertices.begin(), mesh->vertices.end());
+		for (size_t k = 0; k < mesh->parts.size() && k < xforms.size(); ++k) {
+			const auto&	   part = mesh->parts[k];
+			const uint32_t end = std::min<uint32_t>(part.vertexStart + part.vertexCount, static_cast<uint32_t>(animVerts.size()));
+			for (uint32_t i = part.vertexStart; i < end; ++i) {
+				const glm::vec2 r = xforms[k].apply({animVerts[i].x, animVerts[i].y});
+				animVerts[i] = {r.x, r.y};
+			}
+		}
+
+		const float entityScale = entity.scale;
+		for (size_t i = 0; i < animVerts.size(); ++i) {
+			const float worldX = animVerts[i].x * entityScale + entity.position.x;
+			const float worldY = animVerts[i].y * entityScale + entity.position.y;
+			m_animVertices.emplace_back((worldX - camX) * scale + halfViewW, (worldY - camY) * scale + halfViewH);
+			if (hasMeshColors) {
+				const auto& mc = mesh->colors[i];
+				m_animColors.emplace_back(
+					mc.r * entity.colorTint.r, mc.g * entity.colorTint.g, mc.b * entity.colorTint.b, mc.a * entity.colorTint.a
+				);
+			} else {
+				m_animColors.emplace_back(entity.colorTint.r, entity.colorTint.g, entity.colorTint.b, entity.colorTint.a);
+			}
+		}
+		for (const auto idx : mesh->indices) {
+			m_animIndices.push_back(static_cast<uint16_t>(animVertexBase + idx));
+		}
+		animVertexBase += static_cast<uint32_t>(animVerts.size());
+	}
+
+	void InstancedEntityRenderer::emitSorted(const std::vector<DepthSortItem>& items, const RenderContext& ctx, RenderStats& stats) {
 		// GL state note: BatchRenderer::drawInstanced() sets up its own GL state internally,
 		// so we don't need to carry state from the baked path here.
-		const auto* dynamicEntities = ctx.dynamicEntities;
-		if (dynamicEntities != nullptr && !dynamicEntities->empty()) {
-			// Clear per-frame instance batches (keep capacity for reuse)
-			for (auto& [defName, batch] : m_instanceBatches) {
-				batch.clear();
+		auto* batchRenderer = Renderer::Primitives::getBatchRenderer();
+		if (batchRenderer == nullptr || items.empty()) {
+			return;
+		}
+
+		const float			   zoom = ctx.camera.zoom();
+		const float			   camX = ctx.camera.position().x;
+		const float			   camY = ctx.camera.position().y;
+		const float			   scale = ctx.pixelsPerMeter * zoom;
+		const float			   halfViewW = static_cast<float>(ctx.viewportWidth) * 0.5F;
+		const float			   halfViewH = static_cast<float>(ctx.viewportHeight) * 0.5F;
+		const Foundation::Vec2 cameraPos(camX, camY);
+
+		m_runInstances.clear();
+		m_runDefName.clear();
+		m_animVertices.clear();
+		m_animColors.clear();
+		m_animIndices.clear();
+		uint32_t animVertexBase = 0;
+
+		// drawInstanced draws immediately; the CPU triangle batch only draws when the
+		// BatchRenderer is flushed. To keep submission order == depth order we flush the
+		// current instanced run before an interleaving animated entity (so the run sits
+		// behind it), and force the anim batch out (drawTriangles + flush) before a
+		// following instanced run (so the anim sits behind that run). Only one of the two
+		// pending batches is ever non-empty at a time, so the two flushes don't fight.
+		auto flushRun = [&]() {
+			if (m_runInstances.empty()) {
+				return;
 			}
-
-			float zoom = ctx.camera.zoom();
-			float camX = ctx.camera.position().x;
-			float camY = ctx.camera.position().y;
-
-			const VisibleBounds vis = computeVisibleBounds(ctx.camera, ctx.viewportWidth, ctx.viewportHeight, ctx.pixelsPerMeter);
-
-			// Per-frame CPU batch for animated entities (per-part deformed; not GPU-instanceable).
+			auto it = m_meshHandles.find(m_runDefName);
+			if (it != m_meshHandles.end() && it->second.isValid()) {
+				batchRenderer->drawInstanced(
+					it->second, m_runInstances.data(), static_cast<uint32_t>(m_runInstances.size()), cameraPos, zoom, ctx.pixelsPerMeter
+				);
+			}
+			m_runInstances.clear();
+			m_runDefName.clear();
+		};
+		auto flushAnim = [&]() {
+			if (m_animIndices.empty()) {
+				return;
+			}
+			Renderer::Primitives::drawTriangles(Renderer::Primitives::TrianglesArgs{
+				.vertices = m_animVertices.data(),
+				.indices = m_animIndices.data(),
+				.vertexCount = m_animVertices.size(),
+				.indexCount = m_animIndices.size(),
+				.colors = m_animColors.data()
+			});
+			batchRenderer->flush(); // draw now, at this sorted position
 			m_animVertices.clear();
 			m_animColors.clear();
 			m_animIndices.clear();
-			uint32_t	animVertexBase = 0;
-			const float scale = ctx.pixelsPerMeter * zoom;
-			const float halfViewW = static_cast<float>(ctx.viewportWidth) * 0.5F;
-			const float halfViewH = static_cast<float>(ctx.viewportHeight) * 0.5F;
+			animVertexBase = 0;
+		};
 
-			// Emit the accumulated animated batch as one CPU draw, then reset it. The batch uses a
-			// 16-bit index space, so we flush before it would overflow (only reachable at very high
-			// animated-entity counts) and once at the end. A mid-loop flush draws under the
-			// instanced entities; the common single end-flush draws over them.
-			auto flushAnim = [&]() {
-				if (m_animIndices.empty()) {
-					return;
+		for (const auto& item : items) {
+			const assets::PlacedEntity& entity = *item.entity;
+			const auto*					templateMesh = m_templateCache.get(entity.defName);
+			if (templateMesh == nullptr) {
+				continue;
+			}
+
+			// Animated entities carry per-part transforms; they can't be GPU-instanced
+			// (each has unique deformed geometry), so emit them on the CPU triangle path.
+			if (item.isAnimated && entity.partTransforms != nullptr && !entity.partTransforms->empty() && !templateMesh->parts.empty()) {
+				flushRun(); // draw the pending run behind this actor
+				// Keep the CPU batch inside the 16-bit index space.
+				if (animVertexBase + static_cast<uint32_t>(templateMesh->vertices.size()) > 65535U) {
+					flushAnim();
 				}
-				Renderer::Primitives::drawTriangles(Renderer::Primitives::TrianglesArgs{
-					.vertices = m_animVertices.data(),
-					.indices = m_animIndices.data(),
-					.vertexCount = m_animVertices.size(),
-					.indexCount = m_animIndices.size(),
-					.colors = m_animColors.data()
-				});
-				m_animVertices.clear();
-				m_animColors.clear();
-				m_animIndices.clear();
-				animVertexBase = 0;
-			};
-
-			for (const auto& entity : *dynamicEntities) {
-				// Frustum culling for dynamic entities
-				if (entity.position.x < vis.minX || entity.position.x > vis.maxX || entity.position.y < vis.minY ||
-					entity.position.y > vis.maxY) {
-					continue;
-				}
-
-				// Get or create mesh handle for this asset type
-				const auto* templateMesh = m_templateCache.get(entity.defName);
-				if (templateMesh == nullptr) {
-					continue;
-				}
-
-				// Animated entities carry per-part transforms; they can't be GPU-instanced (each
-				// has unique deformed geometry), so emit them to the CPU batch with their parts moved.
-				if (entity.partTransforms != nullptr && !entity.partTransforms->empty() && !templateMesh->parts.empty()) {
-					// Keep the batch inside the 16-bit index space: flush if this entity overflows it.
-					if (animVertexBase + static_cast<uint32_t>(templateMesh->vertices.size()) > 65535U) {
-						flushAnim();
-					}
-					const auto& xforms = *entity.partTransforms;
-					const bool	hasMeshColors = templateMesh->hasColors();
-
-					// Copy the template verts, then deform each part's range by its transform.
-					thread_local std::vector<Foundation::Vec2> animVerts;
-					animVerts.assign(templateMesh->vertices.begin(), templateMesh->vertices.end());
-					for (size_t k = 0; k < templateMesh->parts.size() && k < xforms.size(); ++k) {
-						const auto&	   part = templateMesh->parts[k];
-						const uint32_t end =
-							std::min<uint32_t>(part.vertexStart + part.vertexCount, static_cast<uint32_t>(animVerts.size()));
-						for (uint32_t i = part.vertexStart; i < end; ++i) {
-							const glm::vec2 r = xforms[k].apply({animVerts[i].x, animVerts[i].y});
-							animVerts[i] = {r.x, r.y};
-						}
-					}
-
-					const float entityScale = entity.scale;
-					for (size_t i = 0; i < animVerts.size(); ++i) {
-						const float worldX = animVerts[i].x * entityScale + entity.position.x;
-						const float worldY = animVerts[i].y * entityScale + entity.position.y;
-						m_animVertices.emplace_back((worldX - camX) * scale + halfViewW, (worldY - camY) * scale + halfViewH);
-						if (hasMeshColors) {
-							const auto& mc = templateMesh->colors[i];
-							m_animColors.emplace_back(
-								mc.r * entity.colorTint.r, mc.g * entity.colorTint.g, mc.b * entity.colorTint.b, mc.a * entity.colorTint.a
-							);
-						} else {
-							m_animColors.emplace_back(entity.colorTint.r, entity.colorTint.g, entity.colorTint.b, entity.colorTint.a);
-						}
-					}
-					for (const auto idx : templateMesh->indices) {
-						m_animIndices.push_back(static_cast<uint16_t>(animVertexBase + idx));
-					}
-					animVertexBase += static_cast<uint32_t>(animVerts.size());
-					stats.entities++;
-					continue;
-				}
-
-				// Ensure mesh handle exists
-				auto& handle = getOrCreateMeshHandle(entity.defName, templateMesh);
-				if (!handle.isValid()) {
-					continue;
-				}
-
-				// Create instance data (world-space - GPU does the transform!)
-				Renderer::InstanceData instance(
-					Foundation::Vec2(entity.position.x, entity.position.y), entity.rotation, entity.scale, entity.colorTint
-				);
-
-				// Add to batch for this mesh type
-				m_instanceBatches[entity.defName].push_back(instance);
+				emitAnimated(entity, templateMesh, camX, camY, scale, halfViewW, halfViewH, animVertexBase);
 				stats.entities++;
+				continue;
 			}
 
-			// Draw dynamic entities with per-frame upload
-			auto* batchRenderer = Renderer::Primitives::getBatchRenderer();
-			if (batchRenderer != nullptr) {
-				Foundation::Vec2 cameraPos(camX, camY);
-
-				for (auto& [defName, instances] : m_instanceBatches) {
-					if (instances.empty()) {
-						continue;
-					}
-
-					auto handleIt = m_meshHandles.find(defName);
-					if (handleIt == m_meshHandles.end() || !handleIt->second.isValid()) {
-						continue;
-					}
-
-					// Stats note: drawInstanced increments BatchRenderer's own counters,
-					// so these draws are NOT added to stats.drawCalls (avoids double count)
-					batchRenderer->drawInstanced(
-						handleIt->second, instances.data(), static_cast<uint32_t>(instances.size()), cameraPos, zoom, ctx.pixelsPerMeter
-					);
-				}
+			// Non-animated: coalesce consecutive same-defName entities into one run.
+			auto& handle = getOrCreateMeshHandle(entity.defName, templateMesh);
+			if (!handle.isValid()) {
+				continue;
 			}
-
-			// Draw the animated dynamic entities (CPU per-part deformed) over the instanced ones,
-			// so a colonist's limbs sit on top of any instanced ground items.
-			flushAnim();
+			flushAnim(); // draw any pending anim behind this run
+			if (!m_runInstances.empty() && m_runDefName != entity.defName) {
+				flushRun();
+			}
+			m_runDefName = entity.defName;
+			m_runInstances.emplace_back(
+				Foundation::Vec2(entity.position.x, entity.position.y), entity.rotation, entity.scale, entity.colorTint
+			);
+			stats.entities++;
 		}
+
+		flushRun();
+		flushAnim();
 	}
 
 } // namespace engine::world

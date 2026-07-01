@@ -79,8 +79,8 @@ namespace engine::world {
 			}
 		}
 
-		// Static entities from baked per-chunk meshes: single glDrawElements per
-		// chunk, no instancing overhead.
+		// Background: baked SHORT flora only (tall occluders are gathered live
+		// below). Single glDrawElements per chunk sub-region, no instancing overhead.
 		baked.renderBakedChunks(ctx, m_uniforms, stats);
 
 		// Groundcover (grass) via GPU instancing. Skipped by the baked path and
@@ -88,8 +88,12 @@ namespace engine::world {
 		// grass tile texture when zoomed out.
 		groundcover.render(ctx, m_uniforms, stats);
 
-		// Dynamic (ECS) entities, rebuilt per frame.
-		instancedDynamic.renderDynamic(ctx, stats);
+		// Y-sorted upright stream: visible tall static occluders merged with the
+		// dynamic ECS entities, stable-sorted ascending by ground-contact anchorY,
+		// then emitted in that order so submission order == depth order (larger
+		// anchorY drawn later / in front).
+		uprightGather.gather(ctx, m_sortedUprights, /*backgroundOnFastPath=*/true);
+		instancedDynamic.emitSorted(m_sortedUprights, ctx, stats);
 
 		// LRU cache eviction.
 		baked.evictLRU(processedChunks);

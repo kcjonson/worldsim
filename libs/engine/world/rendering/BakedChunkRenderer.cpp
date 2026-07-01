@@ -47,45 +47,43 @@ namespace engine::world {
 		subChunk.maxX = cpu.maxX;
 		subChunk.maxY = cpu.maxY;
 
-		for (int bucketIndex = 0; bucketIndex < kFloraBucketCount; ++bucketIndex) {
-			auto& cpuBucket = cpu.buckets[bucketIndex];
-			auto& gpuBucket = subChunk.buckets[bucketIndex];
+		auto& cpuMesh = cpu.floraMesh;
+		auto& gpuMesh = subChunk.floraMesh;
 
-			gpuBucket.entityCount = cpuBucket.entityCount;
-			gpuBucket.maxEntityHeight = cpuBucket.maxEntityHeight;
+		gpuMesh.entityCount = cpuMesh.entityCount;
+		gpuMesh.maxEntityHeight = cpuMesh.maxEntityHeight;
 
-			if (cpuBucket.vertices.empty()) {
-				gpuBucket.indexCount = 0;
-				continue;
-			}
-			gpuBucket.indexCount = static_cast<uint32_t>(cpuBucket.indices.size());
-
-			gpuBucket.vao = Renderer::GLVertexArray::create();
-			gpuBucket.vao.bind();
-
-			gpuBucket.vertexVBO = Renderer::GLBuffer(
-				GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(cpuBucket.vertices.size() * sizeof(BakedVertex)), cpuBucket.vertices.data(),
-				GL_STATIC_DRAW
-			);
-
-			glEnableVertexAttribArray(0);
-			glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(BakedVertex), reinterpret_cast<void*>(0));
-			glEnableVertexAttribArray(2);
-			glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(BakedVertex), reinterpret_cast<void*>(offsetof(BakedVertex, color)));
-
-			gpuBucket.indexIBO = Renderer::GLBuffer(
-				GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(cpuBucket.indices.size() * sizeof(uint32_t)), cpuBucket.indices.data(),
-				GL_STATIC_DRAW
-			);
-
-			Renderer::GLVertexArray::unbind();
-
-			bytesUploaded += cpuBucket.vertices.size() * sizeof(BakedVertex) + cpuBucket.indices.size() * sizeof(uint32_t);
-
-			// Release CPU-side arrays as they're consumed
-			cpuBucket.vertices = {};
-			cpuBucket.indices = {};
+		if (cpuMesh.vertices.empty()) {
+			gpuMesh.indexCount = 0;
+			return bytesUploaded;
 		}
+		gpuMesh.indexCount = static_cast<uint32_t>(cpuMesh.indices.size());
+
+		gpuMesh.vao = Renderer::GLVertexArray::create();
+		gpuMesh.vao.bind();
+
+		gpuMesh.vertexVBO = Renderer::GLBuffer(
+			GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(cpuMesh.vertices.size() * sizeof(BakedVertex)), cpuMesh.vertices.data(),
+			GL_STATIC_DRAW
+		);
+
+		glEnableVertexAttribArray(0);
+		glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(BakedVertex), reinterpret_cast<void*>(0));
+		glEnableVertexAttribArray(2);
+		glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(BakedVertex), reinterpret_cast<void*>(offsetof(BakedVertex, color)));
+
+		gpuMesh.indexIBO = Renderer::GLBuffer(
+			GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(cpuMesh.indices.size() * sizeof(uint32_t)), cpuMesh.indices.data(),
+			GL_STATIC_DRAW
+		);
+
+		Renderer::GLVertexArray::unbind();
+
+		bytesUploaded += cpuMesh.vertices.size() * sizeof(BakedVertex) + cpuMesh.indices.size() * sizeof(uint32_t);
+
+		// Release CPU-side arrays as they're consumed
+		cpuMesh.vertices = {};
+		cpuMesh.indices = {};
 
 		return bytesUploaded;
 	}
@@ -129,11 +127,9 @@ namespace engine::world {
 				// Defer a sub-chunk that would blow the remaining budget, unless
 				// nothing was uploaded yet this frame (avoids starving oversized
 				// sub-chunks; worst-case overshoot is then one sub-chunk)
-				auto&  cpu = pending.cpuData.subChunks[pending.nextSubChunk];
-				size_t estimatedBytes = 0;
-				for (const auto& bucket : cpu.buckets) {
-					estimatedBytes += bucket.vertices.size() * sizeof(BakedVertex) + bucket.indices.size() * sizeof(uint32_t);
-				}
+				auto&		cpu = pending.cpuData.subChunks[pending.nextSubChunk];
+				const auto& mesh = cpu.floraMesh;
+				size_t		estimatedBytes = mesh.vertices.size() * sizeof(BakedVertex) + mesh.indices.size() * sizeof(uint32_t);
 				if (bytesUploaded > 0 && bytesUploaded + estimatedBytes > budgetBytes) {
 					return;
 				}
@@ -231,30 +227,28 @@ namespace engine::world {
 					continue; // Sub-chunk is completely off-screen
 				}
 
-				for (const auto& bucket : subChunk.buckets) {
-					if (bucket.indexCount == 0) {
-						continue; // Empty bucket
-					}
-
-					// Cutoff with a fade band from kImpostorCutoffPx to 2x that.
-					// Tall flora's maxEntityHeight keeps it drawn far past the
-					// zoom where grass hands off to the tile texture.
-					float screenHeightPx = bucket.maxEntityHeight * pixelsPerWorldMeter;
-					float alpha = std::clamp((screenHeightPx - kImpostorCutoffPx) / kImpostorCutoffPx, 0.0F, 1.0F);
-					if (alpha <= 0.0F) {
-						continue;
-					}
-					if (alpha != currentAlpha && uniforms.bakedAlpha >= 0) {
-						glUniform1f(uniforms.bakedAlpha, alpha);
-						currentAlpha = alpha;
-					}
-
-					stats.entities += bucket.entityCount;
-					stats.drawCalls++;
-					stats.triangles += bucket.indexCount / 3;
-					bucket.vao.bind();
-					glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(bucket.indexCount), GL_UNSIGNED_INT, nullptr);
+				const auto& mesh = subChunk.floraMesh;
+				if (mesh.indexCount == 0) {
+					continue; // Empty sub-region
 				}
+
+				// Cutoff with a fade band from kImpostorCutoffPx to 2x that: short
+				// flora hands off to the grass tile texture at that zoom.
+				float screenHeightPx = mesh.maxEntityHeight * pixelsPerWorldMeter;
+				float alpha = std::clamp((screenHeightPx - kImpostorCutoffPx) / kImpostorCutoffPx, 0.0F, 1.0F);
+				if (alpha <= 0.0F) {
+					continue;
+				}
+				if (alpha != currentAlpha && uniforms.bakedAlpha >= 0) {
+					glUniform1f(uniforms.bakedAlpha, alpha);
+					currentAlpha = alpha;
+				}
+
+				stats.entities += mesh.entityCount;
+				stats.drawCalls++;
+				stats.triangles += mesh.indexCount / 3;
+				mesh.vao.bind();
+				glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(mesh.indexCount), GL_UNSIGNED_INT, nullptr);
 			}
 		}
 

@@ -18,6 +18,7 @@ add_library(engine
     world/rendering/InstancedEntityRenderer.cpp
     world/rendering/BatchedEntityRenderer.cpp
     world/rendering/TemplateMeshCache.cpp
+    world/rendering/WorldDepthSort.cpp
     ecs/systems/TimeSystem.cpp
     ecs/systems/MovementSystem.cpp
     ecs/systems/PhysicsSystem.cpp
