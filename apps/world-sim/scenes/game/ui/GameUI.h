@@ -64,6 +64,7 @@ class GameUI {
 		std::function<void()> onSelectionCleared;
 		std::function<void(ecs::EntityID)> onColonistSelected;
 		std::function<void(ecs::EntityID)> onColonistFollowed;		 ///< Called on double-click to follow
+		std::function<void(ecs::EntityID)> onColonistControlToggle;	 ///< Called when the colonist Control/Release button is clicked
 		std::function<void()> onBuildToggle;							 ///< Called when build button clicked
 		std::function<void(const std::string&)> onBuildItemSelected; ///< Called when item selected from build menu
 		std::function<void(const std::string&)> onProductionSelected; ///< Called when production item selected (e.g., CraftingSpot)

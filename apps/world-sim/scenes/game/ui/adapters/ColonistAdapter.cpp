@@ -4,6 +4,7 @@
 #include <ecs/components/Colonist.h>
 #include <ecs/components/Mood.h>
 #include <ecs/components/Needs.h>
+#include <ecs/components/PlayerControlled.h>
 #include <ecs/components/StructureBlueprint.h>
 #include <ecs/components/Task.h>
 
@@ -74,6 +75,7 @@ namespace world_sim::adapters {
 				.mood = mood,
 				.activity = std::move(activity.label),
 				.activityProgress = activity.progress,
+				.playerControlled = world.getComponent<ecs::PlayerControlled>(entity) != nullptr,
 			});
 		}
 

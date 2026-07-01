@@ -26,6 +26,10 @@ struct ColonistData {
 	// track in that case).
 	std::string activity;
 	float activityProgress = -1.0F;
+
+	// True when the colonist is under direct player control (drives the roster tile's
+	// controlled-state styling so the player can spot the driven colonist in the list).
+	bool playerControlled = false;
 };
 
 /// A colonist's current activity: a concise label and the running action's progress.

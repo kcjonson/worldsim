@@ -99,6 +99,7 @@ void ColonistListView::rebuildUI(const std::vector<adapters::ColonistData>& colo
 			.width = contentWidth,
 			.height = itemHeight - kItemSpacing,
 			.isSelected = (colonist.id == selectedId),
+			.isControlled = colonist.playerControlled,
 			.itemMargin = kItemSpacing * 0.5F,
 			.onSelect = onColonistSelected,
 			.id = "colonist_" + std::to_string(i)
@@ -129,6 +130,7 @@ void ColonistListView::updateItemValues(const std::vector<adapters::ColonistData
 		if (auto* item = itemLayout->getChild<ColonistListItem>(itemHandles[i])) {
 			item->setMood(colonists[i].mood);
 			item->setActivity(colonists[i].activity, colonists[i].activityProgress);
+			item->setControlled(colonists[i].playerControlled);
 		}
 	}
 }

@@ -43,10 +43,12 @@ using ResourceQueryCallback = std::function<std::optional<uint32_t>(const std::s
 /// Left column: task info, gear list
 /// Right column: needs bars
 /// @param onDetails Optional callback for opening colonist details modal
+/// @param onToggleControl Optional callback for the Control/Release button (toggles direct player control)
 [[nodiscard]] PanelContent adaptColonistStatus(
 	const ecs::World& world,
 	ecs::EntityID entityId,
-	const std::function<void()>& onDetails = {}
+	const std::function<void()>& onDetails = {},
+	const std::function<void(ecs::EntityID)>& onToggleControl = {}
 );
 
 /// Convert world entity data into panel content

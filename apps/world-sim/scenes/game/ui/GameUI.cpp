@@ -85,6 +85,7 @@ namespace world_sim {
 						showColonistDetails(selectedColonistId);
 					}
 				},
+			.onToggleControl = args.onColonistControlToggle,
 			.onQueueRecipe = args.onQueueRecipe,
 			.onOpenCraftingDialog = args.onOpenCraftingDialog,
 			.onPlace = args.onPlaceFurniture,

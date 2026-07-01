@@ -78,6 +78,7 @@ class EntityInfoModel {
 	/// Callbacks needed for content generation
 	struct Callbacks {
 		std::function<void()> onDetails;		// Open colonist details modal
+		std::function<void(ecs::EntityID)> onToggleControl; // Toggle direct player control of the colonist
 		QueueRecipeCallback onQueueRecipe;		// Queue recipe at station
 		OpenCraftingDialogCallback onOpenCraftingDialog; // Open crafting dialog for station
 		std::function<void()> onPlace;			// Place packaged furniture
@@ -118,7 +119,8 @@ class EntityInfoModel {
 	[[nodiscard]] PanelContent getColonistContent(
 		const ecs::World& world,
 		ecs::EntityID entityId,
-		const std::function<void()>& onDetails
+		const std::function<void()>& onDetails,
+		const std::function<void(ecs::EntityID)>& onToggleControl
 	) const;
 
 	/// Generate content for crafting station (status + "Open Crafting Menu" button)

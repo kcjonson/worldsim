@@ -15,6 +15,7 @@
 #include "../components/Memory.h"
 #include "../components/Movement.h"
 #include "../components/Needs.h"
+#include "../components/PlayerControlled.h"
 #include "../components/Skills.h"
 #include "../components/StorageConfiguration.h"
 #include "../components/Structure.h"
@@ -2985,6 +2986,76 @@ namespace ecs::test {
 		// the colony origin GameScene also reads, rather than holding an independently derived copy.
 		ASSERT_TRUE(getColonyOrigin().has_value());
 		EXPECT_EQ(*getColonyOrigin(), origin);
+	}
+
+	// =============================================================================
+	// Direct player control
+	// =============================================================================
+
+	// Under player control the AI must NOT pick a task even when a need is actionable and a
+	// fulfilling source is known; releasing control resumes normal selection.
+	TEST_F(AIDecisionSystemTest, PlayerControlSuppressesTaskSelection) {
+		auto colonist = createColonist({0.0F, 0.0F});
+		addKnownEntity(colonist, {8.0F, 3.0F}, kWaterDefId, engine::assets::CapabilityType::Drinkable);
+		setNeedValue(colonist, NeedType::Hunger, 100.0F);
+		setNeedValue(colonist, NeedType::Thirst, 40.0F); // actionable: normally picks a FulfillNeed task
+		setNeedValue(colonist, NeedType::Energy, 100.0F);
+		setNeedValue(colonist, NeedType::Bladder, 100.0F);
+
+		world->getSystem<AIDecisionSystem>().enterControl(colonist);
+		EXPECT_NE(world->getComponent<PlayerControlled>(colonist), nullptr);
+
+		world->update(0.016F);
+
+		auto* task = getTask(colonist);
+		ASSERT_NE(task, nullptr);
+		EXPECT_EQ(task->type, TaskType::None); // selection suppressed: colonist stands and waits
+
+		// Release: the AI resumes and selects the thirst task on the next tick.
+		world->getSystem<AIDecisionSystem>().releaseControl(colonist);
+		EXPECT_EQ(world->getComponent<PlayerControlled>(colonist), nullptr);
+
+		world->update(0.016F);
+		task = getTask(colonist);
+		ASSERT_NE(task, nullptr);
+		EXPECT_EQ(task->type, TaskType::FulfillNeed);
+		EXPECT_EQ(task->needToFulfill, NeedType::Thirst);
+	}
+
+	// A player move order sets a Moving task pointed at the goal, and the control gate keeps it
+	// (doesn't re-select) across a tick. No NavigationSystem is wired (headless), so the goal is
+	// taken as-is rather than snapped.
+	TEST_F(AIDecisionSystemTest, PlayerMoveOrderSetsMovingTaskToGoal) {
+		auto colonist = createColonist({0.0F, 0.0F});
+		auto& ai = world->getSystem<AIDecisionSystem>();
+		ai.enterControl(colonist);
+
+		const glm::vec2 goal{5.0F, 7.0F};
+		const auto routed = ai.issuePlayerMoveOrder(colonist, goal);
+		ASSERT_TRUE(routed.has_value());
+		EXPECT_FLOAT_EQ(routed->x, goal.x);
+		EXPECT_FLOAT_EQ(routed->y, goal.y);
+
+		auto* task = getTask(colonist);
+		ASSERT_NE(task, nullptr);
+		EXPECT_EQ(task->state, TaskState::Moving);
+		EXPECT_EQ(task->type, TaskType::None);
+		EXPECT_FLOAT_EQ(task->targetPosition.x, goal.x);
+		EXPECT_FLOAT_EQ(task->targetPosition.y, goal.y);
+
+		auto* movementTarget = world->getComponent<MovementTarget>(colonist);
+		ASSERT_NE(movementTarget, nullptr);
+		EXPECT_TRUE(movementTarget->active);
+		EXPECT_FLOAT_EQ(movementTarget->target.x, goal.x);
+		EXPECT_FLOAT_EQ(movementTarget->target.y, goal.y);
+
+		// The control gate preserves the player order: a tick doesn't re-select it away.
+		world->update(0.016F);
+		task = getTask(colonist);
+		ASSERT_NE(task, nullptr);
+		EXPECT_EQ(task->state, TaskState::Moving);
+		EXPECT_FLOAT_EQ(task->targetPosition.x, goal.x);
+		EXPECT_FLOAT_EQ(task->targetPosition.y, goal.y);
 	}
 
 } // namespace ecs::test

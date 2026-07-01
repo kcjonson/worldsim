@@ -218,7 +218,7 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 
 	// Generate content
 	if (isColonist) {
-		contentData = getColonistContent(world, colonistId, callbacks.onDetails);
+		contentData = getColonistContent(world, colonistId, callbacks.onDetails, callbacks.onToggleControl);
 	} else if (isStation) {
 		contentData = getCraftingStationContent(world, stationId, stationDefName, callbacks.onOpenCraftingDialog);
 	} else if (isFurniture) {
@@ -272,10 +272,11 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 PanelContent EntityInfoModel::getColonistContent(
 	const ecs::World& world,
 	ecs::EntityID entityId,
-	const std::function<void()>& onDetails
+	const std::function<void()>& onDetails,
+	const std::function<void(ecs::EntityID)>& onToggleControl
 ) const {
-	// Generate two-column colonist content with onDetails callback
-	return adaptColonistStatus(world, entityId, onDetails);
+	// Generate two-column colonist content with the Details + Control/Release callbacks
+	return adaptColonistStatus(world, entityId, onDetails, onToggleControl);
 }
 
 PanelContent EntityInfoModel::getCraftingStationContent(

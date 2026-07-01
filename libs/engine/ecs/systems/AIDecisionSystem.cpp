@@ -16,6 +16,7 @@
 #include "../components/Movement.h"
 #include "../components/Needs.h"
 #include "../components/Packaged.h"
+#include "../components/PlayerControlled.h"
 #include "../components/Skills.h"
 #include "../components/StorageConfiguration.h"
 #include "../components/StructureBlueprint.h"
@@ -1206,6 +1207,16 @@ namespace ecs {
 				}
 			}
 
+			// Direct player control: skip autonomous task selection entirely. The player drives this
+			// colonist via issuePlayerMoveOrder, which sets a Moving task that the repath-on-discovery
+			// and chain-leg repath blocks above carry exactly like an AI route; the colonist otherwise
+			// stands and waits. Only buildDecisionTrace/selectTaskFromTrace are suppressed -- off-mesh
+			// recovery and repath still run, and VisionSystem is independent, so discovery keeps working.
+			if (world->getComponent<PlayerControlled>(entity) != nullptr) {
+				task.timeSinceEvaluation = 0.0F;
+				continue;
+			}
+
 			// Check if we should re-evaluate (uses current timer value)
 			if (!shouldReEvaluate(task, needs, action)) {
 				// Only increment timer when NOT re-evaluating (timer tracks time since last eval)
@@ -2175,6 +2186,89 @@ namespace ecs {
 				position.value.y
 			);
 		}
+	}
+
+	void AIDecisionSystem::enterControl(EntityID entity) {
+		if (world->getComponent<PlayerControlled>(entity) == nullptr) {
+			world->addComponent<PlayerControlled>(entity);
+		}
+		// Abandon the current task. There is no reservation/claim system (goals are re-evaluated
+		// fresh each tick), so clearing the task fully releases its work back to the pool; any
+		// carried items stay with the colonist and are handled normally once control is released.
+		if (auto* task = world->getComponent<Task>(entity)) {
+			task->clear();
+			task->timeSinceEvaluation = 0.0F;
+		}
+		if (auto* navPath = world->getComponent<NavPath>(entity)) {
+			navPath->valid = false;
+		}
+		if (auto* mt = world->getComponent<MovementTarget>(entity)) {
+			mt->active = false;
+		}
+		if (auto* velocity = world->getComponent<Velocity>(entity)) {
+			velocity->value = {0.0F, 0.0F};
+		}
+	}
+
+	void AIDecisionSystem::releaseControl(EntityID entity) {
+		if (world->getComponent<PlayerControlled>(entity) != nullptr) {
+			world->removeComponent<PlayerControlled>(entity);
+		}
+		// Clear the player-issued move task so the next update() re-selects autonomously; a
+		// half-finished walk order shouldn't masquerade as an AI task.
+		if (auto* task = world->getComponent<Task>(entity)) {
+			task->clear();
+			task->timeSinceEvaluation = 0.0F;
+		}
+		if (auto* navPath = world->getComponent<NavPath>(entity)) {
+			navPath->valid = false;
+		}
+		if (auto* mt = world->getComponent<MovementTarget>(entity)) {
+			mt->active = false;
+		}
+	}
+
+	std::optional<glm::vec2> AIDecisionSystem::issuePlayerMoveOrder(EntityID entity, glm::vec2 worldGoal) {
+		auto* position = world->getComponent<Position>(entity);
+		auto* task = world->getComponent<Task>(entity);
+		auto* movementTarget = world->getComponent<MovementTarget>(entity);
+		if (position == nullptr || task == nullptr || movementTarget == nullptr) {
+			return std::nullopt;
+		}
+
+		// Snap an unwalkable click (water, inside a wall, off the sim area) to the nearest pathable
+		// point so a near-miss click still walks the colonist as close as it can get. With no
+		// NavigationSystem (headless), take the raw goal -- there's no mesh to judge it against.
+		float radius = 0.3F;
+		if (const auto* agentRadius = world->getComponent<AgentRadius>(entity)) {
+			radius = agentRadius->radiusMeters;
+		}
+		glm::vec2 goal = worldGoal;
+		if (m_navSystem != nullptr && !m_navSystem->isOnMesh(goal)) {
+			const auto snapped = m_navSystem->nearestPathablePoint(goal, radius);
+			if (!snapped.has_value()) {
+				return std::nullopt;  // nothing reachable near the click; leave the colonist be
+			}
+			goal = *snapped;
+		}
+
+		// Express the walk as an ordinary Moving task so the existing repath-on-discovery and
+		// arrival hand-off carry it. type=None means ActionSystem does nothing on arrival -- the
+		// colonist just stands at the destination. Leave movementTarget.speed alone (spawn-owned).
+		task->clear();
+		task->type = TaskType::None;
+		task->state = TaskState::Moving;
+		task->navState = NavState::Traveling;
+		task->targetPosition = goal;
+		task->timeSinceEvaluation = 0.0F;
+		movementTarget->target = goal;
+		movementTarget->active = true;
+
+		if (const Memory* memory = world->getComponent<Memory>(entity)) {
+			const NavRequestOutcome outcome = requestNavPath(entity, goal, *position, *memory, *movementTarget);
+			task->navState = (outcome == NavRequestOutcome::Blocked) ? NavState::CantFindWayTo : NavState::Traveling;
+		}
+		return goal;
 	}
 
 } // namespace ecs
