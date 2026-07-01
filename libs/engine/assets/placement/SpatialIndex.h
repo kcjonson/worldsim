@@ -48,6 +48,14 @@ namespace engine::assets {
 		float		scale = 1.0F;	// Scale factor
 		glm::vec4	colorTint{1.0F, 1.0F, 1.0F, 1.0F}; // RGBA color tint
 
+		// 2.5D depth key: the bottom-most (max) ground-contact world-Y of this
+		// renderable's mesh, in world meters. Larger draws later, so it appears in
+		// front (screen-Y linearly encodes world-Y under the scaled ortho camera).
+		// Produced for dynamic entities by DynamicEntityRenderSystem; static
+		// occluders derive it at gather time (WorldDepthGather), so it stays 0 on
+		// the frozen index copies and is not baked into the per-chunk mesh.
+		float		anchorY = 0.0F;
+
 		// Optional per-part animation transforms (meter/template space), one entry per MeshPart
 		// of this entity's template, by index (identity where a part isn't driven). Null = not
 		// animated; such entities render through the fast instanced path. The pointee is owned by
