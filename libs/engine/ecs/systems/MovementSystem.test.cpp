@@ -10,6 +10,7 @@
 
 #include "../World.h"
 #include "../components/Movement.h"
+#include "../components/NavPath.h"
 #include "../components/Transform.h"
 
 #include <glm/geometric.hpp>
@@ -97,6 +98,28 @@ TEST_F(MovementTimeScaleTest, FastForwardStillArrivesWithoutOvershoot) {
 
 	const auto* pos = world->getComponent<Position>(entity);
 	EXPECT_LT(glm::distance(pos->value, kTarget), 0.1F) << "Stops on the target, not short or past it";
+}
+
+// The in-game path: MovementSystem follows a NavPath's waypoints (the direct-movement branch above is
+// only the headless no-NavigationSystem fallback). At 10x the step cap must still land on each corner,
+// so the mover advances through the intermediates and registers Arrived rather than cutting a corner or
+// circling the goal.
+TEST_F(MovementTimeScaleTest, FastForwardFollowsNavPathAndArrives) {
+	timeSystem->setSpeed(GameSpeed::VeryFast);
+	const glm::vec2 goal{6.0F, 3.0F};
+	auto			entity = createMover({0.0F, 0.0F}, goal);
+
+	NavPath path;
+	path.waypoints = {{3.0F, 0.0F}, {3.0F, 3.0F}, goal}; // right, up, right -- two corners to round
+	path.valid	   = true;
+	world->addComponent<NavPath>(entity, path);
+
+	const int ticks = runToArrival(entity, kDt, 400);
+	ASSERT_GT(ticks, 0) << "10x NavPath movement must advance through the waypoints and arrive";
+
+	const auto* pos = world->getComponent<Position>(entity);
+	EXPECT_LT(glm::distance(pos->value, goal), 0.1F) << "stops on the final waypoint";
+	EXPECT_TRUE(world->getComponent<NavPath>(entity)->done()) << "the path is fully consumed";
 }
 
 }  // namespace

@@ -438,11 +438,13 @@ class NavigationSystem : public ISystem {
 	// on demand over a generous area so a whole drawing gesture reuses one build; invalidated when a
 	// query falls outside it or the construction world changes (walls). Mutable: filled by const
 	// queries. Main-thread only (DrawingSystem), like the buildInput it wraps.
-	static constexpr std::int64_t  kTerrainCacheHalfExtentMm = 48000; // 48 m
+	static constexpr std::int64_t  kTerrainCacheHalfExtentMm = 48000; // 48 m default gesture area
+	static constexpr std::int64_t  kTerrainCacheMarginMm	   = 4000;	 // slack so the footprint sits inside
 	mutable geometry::nav::NavMesh terrainMesh_;
 	mutable geometry::Vec2i64	   terrainMeshCenter_{0, 0};
 	mutable std::int64_t		   terrainMeshHalfExtent_		   = 0;
 	mutable std::uint64_t		   terrainMeshConstructionVersion_ = UINT64_MAX;
+	mutable std::uint64_t		   terrainMeshChunkSignature_	   = UINT64_MAX;
 
 	// Resumable RRA* reverse-search caches, keyed by (regionId, goalTriangle). Triangle
 	// indices are per-region and invalidated by a rebuild, so an entry is dropped when its

@@ -1211,7 +1211,7 @@ namespace ecs {
 			}
 
 			// Check if we should re-evaluate (uses current timer value)
-			if (!shouldReEvaluate(task, needs, action)) {
+			if (!shouldReEvaluate(task, needs, action, movementTarget.active)) {
 				// Only increment timer when NOT re-evaluating (timer tracks time since last eval)
 				task.timeSinceEvaluation += deltaTime;
 				continue;
@@ -1385,7 +1385,8 @@ namespace ecs {
 	bool AIDecisionSystem::shouldReEvaluate(
 		const Task&			  task,
 		const NeedsComponent& needs,
-		const Action* /*action (reserved for future interruptability checks)*/
+		const Action* /*action (reserved for future interruptability checks)*/,
+		bool				  movementTargetActive
 	) {
 		// Always re-evaluate if no active task
 		if (!task.isActive()) {
@@ -1434,13 +1435,15 @@ namespace ecs {
 			return true;
 		}
 
-		// Idle Wander is freely preemptible: re-evaluate it every tick so any higher-tier task is taken
-		// the instant it appears, with no commitment lag. This does not cut the wander short for
-		// discovery -- when nothing better exists the trace still selects Wander and isSameTask keeps the
-		// same target, so the colonist keeps walking the same leg; it just also checks each tick. Real
-		// work (tiers 1-6) keeps its periodic throttle / anti-thrash commitment above.
+		// Idle Wander with a LIVE target is freely preemptible: re-evaluate every tick so any higher-tier
+		// task is taken the instant it appears, with no commitment lag. isSameTask keeps the wander target
+		// from thrashing (nothing better -> stays on the same leg), so discovery is preserved; this trades
+		// a per-tick decision-trace rebuild for that responsiveness, acceptable at current colony scale.
+		// Real work (tiers 1-6) keeps its periodic throttle above. Gate on an ACTIVE target so the
+		// no-option HOLD (selectTaskFromTrace parks a Wander with movement OFF when nothing is reachable)
+		// stays on the periodic throttle instead of rebuilding the trace every frame while standing still.
 		if (task.type == TaskType::Wander && task.state == TaskState::Moving) {
-			return true;
+			return movementTargetActive;
 		}
 
 		return false;

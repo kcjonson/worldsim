@@ -1197,6 +1197,27 @@ TEST_F(NavigationSystemTest, IsAreaWalkableFalseWhenFootprintEnclosesWaterPond) 
 	EXPECT_FALSE(sys.isAreaWalkable(enclosing)) << "a footprint enclosing a water pond must be rejected";
 }
 
+// Water is geography, not a clearable entity, so it must block the terrain-only BUILDABLE checks too
+// (unlike a tree, which is buildable-over). Guards the terrain cache: a footprint spanning or enclosing
+// the [32,48] water square is unbuildable, a point in the water is not a buildable vertex, and land is.
+TEST_F(NavigationSystemTest, WaterBlocksBuildabilityUnlikeTrees) {
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
+	auto			  chunks = wireWaterPatch(sys, cw);
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+
+	const std::vector<glm::vec2> spanning{{28.0F, 38.0F}, {52.0F, 38.0F}, {52.0F, 42.0F}, {28.0F, 42.0F}};
+	const std::vector<glm::vec2> enclosing{{28.0F, 28.0F}, {52.0F, 28.0F}, {52.0F, 52.0F}, {28.0F, 52.0F}};
+	const std::vector<glm::vec2> onLand{{4.0F, 4.0F}, {8.0F, 4.0F}, {8.0F, 8.0F}, {4.0F, 8.0F}};
+
+	EXPECT_FALSE(sys.isAreaBuildable(spanning)) << "a footprint spanning water is not buildable";
+	EXPECT_FALSE(sys.isAreaBuildable(enclosing)) << "a footprint enclosing a water pond is not buildable";
+	EXPECT_FALSE(sys.isPointBuildable({40.0F, 40.0F})) << "a point in the water is not a buildable vertex";
+	EXPECT_TRUE(sys.isAreaBuildable(onLand)) << "a footprint wholly on land is buildable";
+	EXPECT_TRUE(sys.isPointBuildable({6.0F, 6.0F})) << "a point on land is a buildable vertex";
+}
+
 TEST_F(NavigationSystemTest, IsSegmentAndPolylineWalkableCatchWaterCrossing) {
 	ConstructionWorld cw;
 	World world;

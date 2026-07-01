@@ -952,23 +952,29 @@ namespace ecs {
 	}
 
 	const geometry::nav::NavMesh& NavigationSystem::terrainMeshCovering(geometry::Vec2i64 minMm, geometry::Vec2i64 maxMm) const {
-		// Reuse the cache when it still covers the query AABB and no wall has changed since it was
-		// built (water/terrain in a loaded area is static). Otherwise rebuild it, centered on the
-		// query and sized so a whole drawing gesture's probes stay inside it. constructionWorld->version()
-		// bumps on any wall build/remove, which is the only geography the terrain-only mesh carries
-		// besides water.
+		// Reuse the cache only when it still covers the query AABB AND none of its inputs changed:
+		// walls (constructionWorld->version(), which bumps on every wall build/remove) and the in-area
+		// terrain -- water tiles that appear as chunks finish streaming, which version() is blind to, so
+		// key that on areaChunkSignature exactly as regionObstaclesChanged does (else a foundation drawn
+		// over a not-yet-ready chunk could stay "buildable" after water streams in under it). Otherwise
+		// rebuild, centered on the query and sized to cover it -- a footprint wider than the default
+		// gesture area still fits, so a large plaza doesn't wrongly read unbuildable at its far corners.
 		const std::uint64_t cv = (constructionWorld != nullptr) ? constructionWorld->version() : 0;
 		const bool			covered = !terrainMesh_.triangles.empty()
 									 && minMm.x >= terrainMeshCenter_.x - terrainMeshHalfExtent_
 									 && minMm.y >= terrainMeshCenter_.y - terrainMeshHalfExtent_
 									 && maxMm.x <= terrainMeshCenter_.x + terrainMeshHalfExtent_
 									 && maxMm.y <= terrainMeshCenter_.y + terrainMeshHalfExtent_;
-		if (!covered || terrainMeshConstructionVersion_ != cv) {
+		const std::uint64_t cs = covered ? areaChunkSignature(terrainMeshCenter_, terrainMeshHalfExtent_) : 0;
+		if (!covered || terrainMeshConstructionVersion_ != cv || terrainMeshChunkSignature_ != cs) {
 			const geometry::Vec2i64 center{(minMm.x + maxMm.x) / 2, (minMm.y + maxMm.y) / 2};
-			terrainMesh_					= buildTerrainOnlyMesh(center, kTerrainCacheHalfExtentMm);
+			const std::int64_t		halfSpan = std::max((maxMm.x - minMm.x) / 2, (maxMm.y - minMm.y) / 2);
+			const std::int64_t		radius	 = std::max(kTerrainCacheHalfExtentMm, halfSpan + kTerrainCacheMarginMm);
+			terrainMesh_					= buildTerrainOnlyMesh(center, radius);
 			terrainMeshCenter_				= center;
-			terrainMeshHalfExtent_			= kTerrainCacheHalfExtentMm;
+			terrainMeshHalfExtent_			= radius;
 			terrainMeshConstructionVersion_ = cv;
+			terrainMeshChunkSignature_		= areaChunkSignature(center, radius);
 		}
 		return terrainMesh_;
 	}

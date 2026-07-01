@@ -66,8 +66,10 @@ class TimeSystem : public ISystem {
 	[[nodiscard]] GameTimeSnapshot snapshot() const;
 
 	// --- Time Scale (for other systems) ---
-	/// Returns the effective time multiplier for this frame (game-minutes per real-second)
-	/// Returns 0.0 when paused
+	/// Returns the effective time multiplier for this frame (game-minutes per real-second).
+	/// Returns 0.0 when paused. NOTE: this also scales MovementSystem/PhysicsSystem integration, so
+	/// baseTimeScale must stay a pure speed multiplier -- do not repurpose it as a clock-rate knob, or
+	/// colonists would move at that rate (e.g. baseTimeScale 60 => 60x movement, not just a fast clock).
 	[[nodiscard]] float effectiveTimeScale() const;
 
 	// --- Configuration ---

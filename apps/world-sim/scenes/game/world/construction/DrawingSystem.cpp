@@ -155,8 +155,8 @@ namespace world_sim {
 		if (navigation_ == nullptr) {
 			return true;
 		}
-		return (activeTool_ == ToolKind::Wall) ? navigation_->isValidPosition({p.x, p.y})
-											   : navigation_->isPointBuildable({p.x, p.y});
+		return (activeTool_ == ToolKind::Foundation) ? navigation_->isPointBuildable({p.x, p.y})
+													 : navigation_->isValidPosition({p.x, p.y});
 	}
 
 	bool DrawingSystem::requirePlaceable(const std::vector<Foundation::Vec2>& pts, const char* what) {
@@ -169,7 +169,7 @@ namespace world_sim {
 			return true;
 		}
 		const std::vector<glm::vec2> world = Foundation::toGlmVec2(pts);
-		const bool ok = (activeTool_ == ToolKind::Wall) ? navigation_->isPolylineWalkable(world) : navigation_->isAreaBuildable(world);
+		const bool ok = (activeTool_ == ToolKind::Foundation) ? navigation_->isAreaBuildable(world) : navigation_->isPolylineWalkable(world);
 		if (ok) {
 			return true;
 		}
@@ -1232,7 +1232,7 @@ namespace world_sim {
 			ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
 			const auto				  ring = validator.validateRing(points_);
 			s.valid = ring.ok() && !cursorOffMesh_;
-			s.message = cursorOffMesh_ ? "not on walkable ground" : ec::validationReason(ring.code);
+			s.message = cursorOffMesh_ ? "not on buildable ground" : ec::validationReason(ring.code);
 			// Recompute area regardless of validity so the readout tracks the shape.
 			geometry::Ring quantized;
 			quantized.reserve(points_.size());
@@ -1242,7 +1242,7 @@ namespace world_sim {
 			s.areaSquareMeters = static_cast<float>(std::abs(geometry::signedAreaSquareMeters(quantized)));
 		} else {
 			s.valid = lastValidation_.ok() && !cursorOffMesh_;
-			s.message = cursorOffMesh_ ? "not on walkable ground" : ec::validationReason(lastValidation_.code);
+			s.message = cursorOffMesh_ ? "not on buildable ground" : ec::validationReason(lastValidation_.code);
 		}
 		return s;
 	}
