@@ -4,6 +4,8 @@
 
 #include <utils/Log.h>
 #include <world/chunk/ChunkCoordinate.h>
+#include <world/rendering/BakedEntityMesh.h>  // isGroundcoverDef (short/tall split source of truth)
+#include <world/rendering/WorldDepthSort.h>   // meshYExtent, computeStaticDepthAttribs
 
 #include <glm/vec2.hpp>
 
@@ -206,6 +208,26 @@ namespace engine::assets {
 			return;
 		}
 
+		// Resolve this def's 2.5D depth-sort inputs ONCE per type (not per placed
+		// instance, and not per frame in WorldDepthGather): the template's local-Y
+		// extent and whether it is groundcover. getTemplate on the singleton returns
+		// the same cached template the entity bake reads, so the tall/short split
+		// here is bit-identical to the bake's. getTemplate is mutex-guarded and
+		// getDefinition is read-only, so both are safe on the placement worker.
+		const world::MeshYExtent templateExtent = world::meshYExtent(AssetRegistry::Get().getTemplate(defName));
+		const bool				 isGroundcover = world::isGroundcoverDef(defName);
+
+		// Stamp a placed instance's depth attributes, then file it in the chunk index
+		// and the result list. anchorY + isTallOccluder then ride along on the frozen
+		// index copies for the gather to read directly.
+		auto placeAndRecord = [&](PlacedEntity& entity) {
+			const auto depth = world::computeStaticDepthAttribs(entity.position.y, templateExtent, entity.scale, isGroundcover);
+			entity.anchorY = depth.anchorY;
+			entity.isTallOccluder = depth.isTallOccluder;
+			chunkIndex.insert(entity);
+			outEntities.push_back(entity);
+		};
+
 		// Get chunk origin for world position calculation
 		world::WorldPosition origin = context.coord.origin();
 
@@ -365,8 +387,7 @@ namespace engine::assets {
 							entity.scale = scaleDist(rng);
 							entity.colorTint = glm::vec4(brightness, brightness, brightness, 1.0F);
 
-							chunkIndex.insert(entity);
-							outEntities.push_back(entity);
+							placeAndRecord(entity);
 						}
 						break;
 					}
@@ -422,8 +443,7 @@ namespace engine::assets {
 						entity.scale = scaleDist(rng);
 						entity.colorTint = glm::vec4(brightness, brightness, brightness, 1.0F);
 
-						chunkIndex.insert(entity);
-						outEntities.push_back(entity);
+						placeAndRecord(entity);
 						break;
 					}
 
@@ -471,8 +491,7 @@ namespace engine::assets {
 						entity.scale = scaleDist(rng);
 						entity.colorTint = glm::vec4(brightness, brightness, brightness, 1.0F);
 
-						chunkIndex.insert(entity);
-						outEntities.push_back(entity);
+						placeAndRecord(entity);
 						break;
 					}
 				}

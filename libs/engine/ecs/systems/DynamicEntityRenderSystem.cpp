@@ -10,6 +10,7 @@
 
 #include "assets/AssetRegistry.h"
 #include "assets/MotionEval.h"
+#include "world/rendering/WorldDepthSort.h" // computeAnchorY (canonical ground-contact rule)
 
 #include <cmath>
 #include <unordered_map>
@@ -78,6 +79,9 @@ void DynamicEntityRenderSystem::update(float deltaTime) {
             crate.rotation = 0.0F;
             crate.scale = 1.0F;
             crate.colorTint = glm::vec4(1.0F, 1.0F, 1.0F, 1.0F);
+            // Crate + item share the ground baseline; equal anchorY + stable sort
+            // keeps the crate (pushed first) behind the item after the global sort.
+            crate.anchorY = bottomY;
             renderData.push_back(std::move(crate));
 
             // Then render the packaged item (shrunk, centered in crate)
@@ -91,6 +95,7 @@ void DynamicEntityRenderSystem::update(float deltaTime) {
             item.rotation = 0.0F;
             item.scale = appearance.scale * kPackagedScaleFactor;
             item.colorTint = appearance.colorTint;
+            item.anchorY = bottomY;
             renderData.push_back(std::move(item));
             continue;
         }
@@ -110,6 +115,7 @@ void DynamicEntityRenderSystem::update(float deltaTime) {
         // Entity position is the center - we need to offset so the mesh renders centered
         float centerOffsetX = 0.0F;
         float centerOffsetY = 0.0F;
+        float meshMaxY = 0.0F;  // Bottom-most local-Y (feet); drives the depth anchor
         const auto* mesh = assetRegistry.getTemplate(defName);
         if (mesh != nullptr && !mesh->vertices.empty()) {
             float minX = mesh->vertices[0].x;
@@ -124,12 +130,15 @@ void DynamicEntityRenderSystem::update(float deltaTime) {
             }
             centerOffsetX = -(minX + maxX) * 0.5F;
             centerOffsetY = -(minY + maxY) * 0.5F;
+            meshMaxY = maxY;
         }
 
         placed.position = glm::vec2(pos.value.x + centerOffsetX, pos.value.y + centerOffsetY);
         placed.rotation = 0.0F;  // Dynamic entities don't rotate - use FacingDirection for sprites
         placed.scale = appearance.scale;
         placed.colorTint = appearance.colorTint;
+        // Feet (bottom-most world-Y) are the 2.5D depth anchor.
+        placed.anchorY = engine::world::computeAnchorY(placed.position.y, meshMaxY, placed.scale);
 
         // Walk animation: advance this entity's phase from its movement speed and evaluate its
         // motion clip into per-part transforms (aligned to the template's MeshParts). Only entities

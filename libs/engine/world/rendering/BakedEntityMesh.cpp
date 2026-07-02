@@ -63,8 +63,8 @@ namespace engine::world {
 				continue;
 			}
 
-			auto&					subChunk = data.subChunks[subIndex];
-			std::array<uint32_t, 2> vertexOffsets{0, 0};
+			auto&	 subChunk = data.subChunks[subIndex];
+			uint32_t vertexOffset = 0;
 
 			for (const auto* entity : bin) {
 				const auto* templateMesh = getTemplate(entity->defName);
@@ -74,9 +74,11 @@ namespace engine::world {
 
 				float entityScale = entity->scale;
 				float worldHeight = templateHeight(templateMesh) * entityScale;
-				int	  bucketIndex = (worldHeight < kShortFloraMaxHeight) ? kShortFloraBucket : kTallFloraBucket;
-				auto& bucket = subChunk.buckets[bucketIndex];
-				auto& vertexOffset = vertexOffsets[bucketIndex];
+				// Tall occluders draw live in the Y-sorted upright stream, not baked.
+				if (worldHeight >= kShortFloraMaxHeight) {
+					continue;
+				}
+				auto& bucket = subChunk.floraMesh;
 				bucket.maxEntityHeight = std::max(bucket.maxEntityHeight, worldHeight);
 
 				float posX = entity->position.x;
@@ -131,7 +133,7 @@ namespace engine::world {
 				bucket.entityCount++;
 			}
 
-			data.totalEntityCount += subChunk.buckets[kShortFloraBucket].entityCount + subChunk.buckets[kTallFloraBucket].entityCount;
+			data.totalEntityCount += subChunk.floraMesh.entityCount;
 		}
 
 		return data;
