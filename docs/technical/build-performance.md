@@ -153,8 +153,9 @@ CI warm numbers to be filled from real PR runs during the measurement week.
 
 | Metric | Before | After |
 |--------|-------:|------:|
-| CI gate, non-worldgen PR (warm) | 49:00 | tbd (target 10-13 min) |
-| CI gate, worldgen PR (warm) | 49:00 | tbd |
+| CI gate, non-worldgen PR (warm) | 49:00 | 11:35 (Windows job; Linux 9:36) |
+| CI Tests warm build step | 6:29 / 9:51 | 0:54 Linux / 1:29 Windows (sccache hit rate 99%+) |
+| CI heavy worldgen step (cold, sharded) | 16:00 / 27:08 | 7:43 Linux / 14:20 Windows |
 | Local clean Debug build | 6:18 (MSBuild) | 1:14 (Ninja, cold ccache) |
 | Local clean rebuild, warm ccache (= fresh worktree) | 6:18 | 0:28 |
 | Local no-op build | 4.1 s | 0.6 s |
@@ -165,6 +166,11 @@ CI warm numbers to be filled from real PR runs during the measurement week.
 The warm-rebuild number still includes ~110 real recompiles (test targets' hardcoded `/Zi`
 made them uncacheable in the measurement); it improves further once the /Zi removal and the
 presets PR are both in.
+
+Warm-gate breakdown: the fast-test phase (~5 min) is now the biggest CI chunk — engine-tests
+plus the PROCESSORS-serialized world-tests/planet-view-tests dominate it. If it grows,
+sharding engine-tests the same way the heavy bucket is sharded is the next lever
+(measurement-week item).
 
 ## Related
 
