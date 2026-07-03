@@ -1,6 +1,6 @@
 # World-space depth sorting (2.5D layering)
 
-**Status:** spec / not started
+**Status:** implemented — Story A (entity Y-sort) landed in PR #248; Story B (committed construction to the ground sub-layer + world/UI flush split) landed 2026-07-03. Walls were cut from the Y-sorted stream (angled walls need per-segment anchoring, not one anchorY); committed walls draw in the ground sub-layer instead, below all uprights.
 **Epic:** Handle Visual Layering in the game world (Specboard, Worldsim)
 **Type:** technical
 
@@ -95,6 +95,8 @@ Committed foundations and walls are "essentially just dynamically drawn entities
 - A thin adapter that emits committed segments as dynamic `PlacedEntity` records each frame.
 
 Either way, removing the committed-construction draw from the post-entity overlay pass fixes the bug where construction paints over UI, because it is no longer a late pass. The in-progress preview/ghost stays near the top (below UI). Document what `DrawingSystem::render` draws today and exactly what moves.
+
+**Implementation decision (Story B, 2026-07-03):** neither candidate mechanism. With walls cut from the Y-sorted stream, nothing in committed construction needs an `anchorY`, so the layer outcome is achieved by pass order alone: `DrawingSystem::render` split into `renderCommitted` (foundations, walls, openings — called between the terrain and entity passes and flushed immediately, forming the ground sub-layer) and `renderPreview` (in-progress feedback, after entities with the other ghosts). A `Primitives::flush()` before `gameUI->render()` separates the world and UI z-sort domains, so no world primitive can sort above UI regardless of zIndex — the over-UI bug is closed structurally, not by z-value bookkeeping. Consequence of the walls cut: a colonist never hides behind a wall (construction is always behind entities); revisit if/when walls get per-segment anchoring. The ECS-entity render representation is deferred to C6 (baked element-emitter), which replaces this interim `DrawingSystem` render path wholesale.
 
 ## Edge cases
 

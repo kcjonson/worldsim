@@ -1252,16 +1252,12 @@ namespace world_sim {
 	// C6 replaces it with the baked element-emitter + build-progress prefix.
 	// =========================================================================
 
-	void DrawingSystem::render(int viewportW, int viewportH) {
+	void DrawingSystem::renderCommitted(int viewportW, int viewportH) {
 		if (camera_ == nullptr) {
 			return;
 		}
 
-		const auto& style = ConstructionRegistry::Get().rendering();
-		const auto& fs = style.foundation;
-		const auto& ps = style.preview;
-
-		const float scale = kPixelsPerMeter * camera_->zoom();
+		const auto& fs = ConstructionRegistry::Get().rendering().foundation;
 
 		auto toScreen = [&](Foundation::Vec2 w) -> Foundation::Vec2 {
 			return camera_->worldToScreen(w.x, w.y, viewportW, viewportH, kPixelsPerMeter);
@@ -1366,13 +1362,24 @@ namespace world_sim {
 		renderCommittedWalls(viewportW, viewportH);
 
 		// Committed openings fill the gaps the wall render leaves (above the bands
-		// at z 60-62, below the in-progress preview at 900+).
+		// at z 60-62). The z values here only order committed construction against
+		// itself: the caller flushes this pass before the entity pass, so they
+		// never compete with entity, preview, or UI draw order.
 		renderCommittedOpenings(viewportW, viewportH);
+	}
 
-		// --- In-progress preview ----------------------------------------------
-		if (state_ != DrawingState::Drawing) {
+	void DrawingSystem::renderPreview(int viewportW, int viewportH) {
+		if (camera_ == nullptr || state_ != DrawingState::Drawing) {
 			return;
 		}
+
+		const auto& ps = ConstructionRegistry::Get().rendering().preview;
+
+		const float scale = kPixelsPerMeter * camera_->zoom();
+
+		auto toScreen = [&](Foundation::Vec2 w) -> Foundation::Vec2 {
+			return camera_->worldToScreen(w.x, w.y, viewportW, viewportH, kPixelsPerMeter);
+		};
 
 		// Wall chain preview is a centerline + thickness band, not a closed polygon.
 		if (activeTool_ == ToolKind::Wall) {

@@ -186,6 +186,12 @@ namespace Renderer::Primitives {
 		}
 	}
 
+	void flush() {
+		if (g_batchRenderer != nullptr) {
+			g_batchRenderer->flush();
+		}
+	}
+
 	void setViewport(int width, int height) {
 		if (g_batchRenderer != nullptr) {
 			g_batchRenderer->setViewport(width, height);

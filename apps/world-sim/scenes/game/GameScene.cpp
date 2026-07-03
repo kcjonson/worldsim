@@ -955,6 +955,15 @@ namespace {
 			m_renderer->render(*m_chunkManager, *m_camera, w, h);
 			float tileMs = elapsedMs(tileStart, Clock::now());
 
+			// Committed construction (foundations, walls, openings) is the flat
+			// ground sub-layer of the world-depth-sorting layer model: above terrain,
+			// below groundcover and every Y-sorted upright, so trees and colonists
+			// paint over a building rather than under it. Flushed immediately so
+			// these batched primitives land before the entity pass's immediate-mode
+			// draws (interim path; C6 replaces committed-construction rendering).
+			m_drawingSystem->renderCommitted(w, h);
+			Renderer::Primitives::flush();
+
 			// Time entity rendering (includes dynamic ECS entities)
 			auto		entityStart = Clock::now();
 			auto&		renderSystem = ecsWorld->getSystem<ecs::DynamicEntityRenderSystem>();
@@ -965,13 +974,14 @@ namespace {
 			m_entityRenderer->render(*m_placementExecutor, m_processedChunks, dynamicEntities, *m_camera, w, h);
 			float entityMs = elapsedMs(entityStart, Clock::now());
 
-			// Render committed foundations + in-progress drawing preview (interim;
-			// C6 replaces committed-foundation rendering). Drawn after entities so
-			// foundations sit above terrain and below the cursor ghost/UI.
-			m_drawingSystem->render(w, h);
+			// In-progress drawing preview (rubber-band, snap guides, opening ghost)
+			// rides above the entities like the placement ghost; committed
+			// construction already went out in the ground sub-layer before the
+			// entity pass.
+			m_drawingSystem->renderPreview(w, h);
 
-			// Rooms overlay (tint/outline/label) above foundation fills, below walls.
-			// No-op unless toggled on (R).
+			// Rooms overlay (tint/outline/label) above committed construction and
+			// entities. No-op unless toggled on (R).
 			m_roomOverlay->render(w, h);
 
 			// Nav debug overlay (navmesh wireframe + agent routes) above wall bands.
@@ -1002,6 +1012,13 @@ namespace {
 
 			// Render placement ghost preview (if in placing mode)
 			m_placementSystem->render(w, h);
+
+			// World/UI draw-order barrier: flush all world-space drawing before the
+			// UI submits. Batched groups only z-sort within one flush, so this keeps
+			// the world zIndex space (previews ~900, overlays) and the UI zIndex
+			// space (panels 0, dialogs 500, menus 1000) independent — no world
+			// primitive can ever sort above the UI.
+			Renderer::Primitives::flush();
 
 			// Render unified game UI (overlay + info panel)
 			gameUI->render();
