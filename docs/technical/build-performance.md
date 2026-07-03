@@ -103,12 +103,31 @@ Local before/after timings: see Results below.
   ccache --set-config base_dir=<dir containing checkout and worktrees>
   ccache --set-config hash_dir=false
   ccache --set-config sloppiness=pch_defines,time_macros
+  ccache --set-config depend_mode=true
   ```
 
+  On Windows, `scripts/setup-msvc-env.ps1` applies this block; macOS sets it by hand.
   `base_dir` + `hash_dir=false` normalize absolute paths so every worktree shares one cache:
   a fresh worktree's first build is mostly cache replay. Caveat: replayed objects embed the
   original worktree's paths in debug records; the debugger opens a sibling worktree's file
   with identical content. Harmless for iteration.
+- **`depend_mode=true` is load-bearing, not an optimization** (found 2026-07-03 as a stale
+  scene table after editing `SceneTypes.h` in one of two parallel worktrees). Classic direct
+  mode stores the include-file list in its manifests as absolute paths; `base_dir` rewrites
+  the command line and the cached `/showIncludes` stdout but not the manifest. A lookup from
+  worktree B therefore verifies header content against worktree A's files, and when A still
+  holds the old header, B gets A's object despite different local content — size and hash
+  checks all pass, on the wrong file. Depend mode builds the manifest from the compiler's
+  dependency output (`/showIncludes` / `-MD`), which ccache does rewrite to base_dir-relative,
+  so verification reads the requesting worktree's own files. Measured on the `ui` target
+  (170 TU): warm hits identical (2.9 s), cold misses ~15% faster (22.5 s vs 26.9 s, no
+  separate preprocessor pass).
+- **A cache populated before `depend_mode` was set stays poisoned-capable**: depend mode
+  reuses the same manifest keys, so old absolute-path entries keep matching first. Retire
+  them without wiping the cache: `ccache --set-config namespace=worldsim-1` (the namespace
+  is hashed into every lookup, so pre-namespace entries stop matching and age out via LRU;
+  bump the suffix if it's ever needed again). One-off recovery on an unfixed machine: delete
+  the target's `.obj` files and rebuild with `CCACHE_RECACHE=1`.
 - **`scripts/setup-msvc-env.ps1`** (Windows, one-time, idempotent): persists the vcvars64
   environment (PATH additions, `INCLUDE`, `LIB`) plus `VCPKG_ROOT` to the User environment so
   `cl`, `ninja`, and vcpkg resolve from any plain shell. Re-run after a VS Build Tools update;

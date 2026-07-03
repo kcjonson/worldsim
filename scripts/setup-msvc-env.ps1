@@ -8,6 +8,7 @@
 #
 # What it persists (User scope): PATH additions for the MSVC compiler, the
 # Windows SDK tools (rc/mt), and the VS-bundled Ninja; INCLUDE; LIB; VCPKG_ROOT.
+# Also applies the per-machine ccache config from docs/technical/build-performance.md.
 
 $ErrorActionPreference = 'Stop'
 
@@ -62,6 +63,25 @@ if (-not [Environment]::GetEnvironmentVariable('VCPKG_ROOT', 'User')) {
     } else {
         Write-Warning "No vcpkg found at '$vcpkgRoot'; VCPKG_ROOT not persisted. Install vcpkg (README step 1) and re-run."
     }
+}
+
+# ccache per-machine config (docs/technical/build-performance.md). depend_mode is
+# load-bearing, not a tweak: classic direct mode stores absolute include paths in its
+# manifests, which base_dir does not rewrite, so a sibling worktree's copy of a header
+# can satisfy the lookup and hand back a stale object. Depend-mode manifests store
+# base_dir-relative paths and verify against the requesting worktree's files.
+$ccacheCmd = Get-Command ccache -ErrorAction SilentlyContinue
+if ($ccacheCmd) {
+    $repoRoot = Split-Path -Parent $PSScriptRoot
+    if ($repoRoot -match '^(.*)\\\.claude\\worktrees\\') { $repoRoot = $Matches[1] }
+    ccache --set-config max_size=30G
+    ccache --set-config "base_dir=$repoRoot"
+    ccache --set-config hash_dir=false
+    ccache --set-config sloppiness=pch_defines,time_macros
+    ccache --set-config depend_mode=true
+    Write-Host "ccache configured: base_dir=$repoRoot, depend_mode=true"
+} else {
+    Write-Warning "ccache not found on PATH; install it (winget install Ccache.Ccache) and re-run."
 }
 
 Write-Host "Persisted to User environment:"
