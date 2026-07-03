@@ -4,6 +4,8 @@
 // Used by GameLoadingScene to pre-load chunks and entity placement,
 // then transferred to GameScene for gameplay.
 
+#include "NewGameSetup.h"
+
 #include <assets/placement/PlacementExecutor.h>
 #include <ecs/components/Colony.h>
 #include <world/camera/WorldCamera.h>
@@ -41,6 +43,10 @@ namespace world_sim {
 		std::shared_ptr<const worldgen::GeneratedWorld> planet;
 		double landingLatDeg = 0.0;
 		double landingLonDeg = 0.0;
+
+		/// Crew to spawn at landing, forwarded from GameStartConfig. Empty ->
+		/// GameScene spawns the single default colonist.
+		std::vector<PartyMember> party;
 
 		/// Colonist drop point (2D world meters): dry land beside clean water,
 		/// chosen by findRiverbankSpawn. Defaults to the landing origin. GameScene

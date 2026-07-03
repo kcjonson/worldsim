@@ -3,6 +3,7 @@ add_executable(world-sim
     SceneTypes.cpp
     GameWorldState.cpp
     GameStartConfig.cpp
+    NewGameSetup.cpp
     # Game scene UI - views
     scenes/game/ui/views/ColonistListView.cpp
     scenes/game/ui/views/EntityInfoView.cpp
@@ -65,6 +66,8 @@ add_executable(world-sim
     scenes/shared/GlobeView.cpp
     scenes/splash/SplashScene.cpp
     scenes/menu/MainMenuScene.cpp
+    scenes/scenario-select/ScenarioSelectScene.cpp
+    scenes/party-select/PartySelectScene.cpp
     scenes/world-creator/WorldCreatorScene.cpp
     scenes/world-creator/WorldCreatorModel.cpp
     scenes/world-creator/ui/ParameterPanel.cpp
