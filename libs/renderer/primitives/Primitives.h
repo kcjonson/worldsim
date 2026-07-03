@@ -122,6 +122,12 @@ namespace Renderer {
 		void beginFrame();
 		void endFrame(); // Flushes all batches
 
+		// Draw-order barrier: flush pending batched primitives now. Groups only
+		// z-sort against each other within one flush, so flushing between two
+		// passes (e.g. world drawing vs UI) keeps their zIndex spaces independent
+		// and guarantees the later pass paints on top.
+		void flush();
+
 		// Set viewport dimensions for projection matrix
 		void setViewport(int width, int height);
 
