@@ -17,7 +17,9 @@
 
 #include <ecs/World.h>
 #include <math/Types.h>
+#include <polygon/Polygon.h> // geometry::Ring
 #include <world/camera/WorldCamera.h>
+#include <world/rendering/AssetInstanceTransform.h> // shared local<->world affine
 
 #include <cstdint>
 #include <functional>
@@ -26,6 +28,7 @@
 
 namespace engine::assets {
 class PlacementExecutor;
+struct PlacedEntity;
 }
 
 namespace engine::construction {
@@ -110,6 +113,20 @@ class SelectionSystem {
 	/// every click; never caches entity pointers across clicks.
 	[[nodiscard]] std::vector<Selection> gatherCandidates(glm::vec2 worldPos);
 
+	/// Stroke a cached silhouette (rings in template-local mm) as a thick gold outline:
+	/// each ring vertex is mapped local->world through `t` then world->screen, and the
+	/// closed loop is emitted as drawLine segments plus a filled dot at every vertex for
+	/// round joins. The single flat top pass every selected-asset branch shares.
+	void strokeSilhouette(
+		const std::vector<geometry::Ring>& rings, const engine::world::AssetInstanceTransform& t, int viewportW, int viewportH
+	);
+
+	/// Re-resolve the live PlacedEntity a WorldEntitySelection refers to (it carries no
+	/// id): scan the selection's chunk + its 8 neighbors for a matching defName at
+	/// (approximately) the stored position. Returns nullptr when the entity is gone
+	/// (felled / chunk unloaded).
+	[[nodiscard]] const engine::assets::PlacedEntity* resolveWorldEntity(const WorldEntitySelection& sel) const;
+
 	ecs::World*								 ecsWorld = nullptr;
 	engine::world::WorldCamera*				 camera = nullptr;
 	engine::assets::PlacementExecutor*		 placementExecutor = nullptr;
@@ -132,9 +149,16 @@ class SelectionSystem {
 	/// not handleClick so the next same-spot click starts fresh.
 	void resetCycleState();
 
-	static constexpr float kSelectionRadius = 2.0F;		 // meters
+	// Broad-phase pick radii only (centroid pre-cull / spatial query); the precise
+	// silhouette test decides the actual hit. Dynamic ECS types scan globally and
+	// pre-cull to kSelectionRadius; world entities widen to kWorldEntitySelectRadius so
+	// a large canopy far from its trunk anchor is still caught before the silhouette test.
+	static constexpr float kSelectionRadius = 2.0F;			 // meters
+	static constexpr float kWorldEntitySelectRadius = 8.0F;	 // meters
 	static constexpr float kPixelsPerMeter = 8.0F;
-	static constexpr float kIndicatorRadius = 1.0F;		 // meters
+
+	// Thickness of the gold selection outline, in logical pixels.
+	static constexpr float kOutlineWidthPx = 4.0F;
 
 	// Pick slop for thin wall segments: a thin wall's half-thickness is a small
 	// target, so a click within this radius of the centerline still hits. mm,

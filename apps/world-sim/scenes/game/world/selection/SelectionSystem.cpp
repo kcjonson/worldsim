@@ -8,6 +8,7 @@
 #include <core/Vec2i64.h>
 #include <ecs/components/Appearance.h>
 #include <ecs/components/Colonist.h>
+#include <ecs/components/FacingDirection.h>
 #include <ecs/components/Inventory.h>
 #include <ecs/components/Packaged.h>
 #include <ecs/components/Transform.h>
@@ -17,9 +18,12 @@
 #include <primitives/Primitives.h>
 #include <utils/Log.h>
 #include <world/chunk/ChunkCoordinate.h>
+#include <world/rendering/PackagedLayout.h> // shared crate+item placement (no drift)
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
+#include <string>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -51,6 +55,93 @@ namespace {
 		return maxHalf;
 	}
 
+	// Direction suffix the dynamic render path appends for a directional sprite. Mirrors
+	// DynamicEntityRenderSystem::getDirectionSuffix so the hit-test and outline pick the
+	// exact directional template the entity draws.
+	const char* directionSuffix(ecs::CardinalDirection dir) {
+		switch (dir) {
+			case ecs::CardinalDirection::Up:
+				return "_up";
+			case ecs::CardinalDirection::Down:
+				return "_down";
+			case ecs::CardinalDirection::Left:
+				return "_left";
+			case ecs::CardinalDirection::Right:
+				return "_right";
+		}
+		return "_down";
+	}
+
+	// The defName the dynamic render path resolves for an entity: its base Appearance
+	// defName plus the facing suffix when it carries a FacingDirection.
+	std::string dynamicRenderDefName(ecs::World* world, ecs::EntityID entity, const std::string& baseDefName) {
+		if (const auto* facing = world->getComponent<ecs::FacingDirection>(entity)) {
+			return baseDefName + directionSuffix(facing->direction);
+		}
+		return baseDefName;
+	}
+
+	// True if `worldPos` (meters) lies inside any ring of `sil` under transform `t`. The
+	// click is mapped into the template-local frame and quantized to mm to match the
+	// silhouette rings (which are template-local integer millimeters).
+	bool silhouetteRingsContain(
+		const engine::assets::AssetSilhouette& sil, const engine::world::AssetInstanceTransform& t, glm::vec2 worldPos
+	) {
+		const glm::vec2			local = t.toLocal(worldPos);
+		const geometry::Vec2i64 localMm = geometry::quantize(Foundation::Vec2{local.x, local.y});
+		for (const auto& ring : sil.rings) {
+			if (geometry::pointInPolygon(localMm, ring) == geometry::PointInPolygon::Inside) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	// True if the click is under a placed (static/baked) entity's rendered silhouette,
+	// using the SAME position-as-origin transform BatchedEntityRenderer draws it with.
+	// Falls back to a centroid radius test when the def has no cached silhouette so a
+	// silhouette-less asset stays selectable. Reused for world entities and for each
+	// packaged crate/item sub-entity (both are drawn as position-as-origin instances).
+	bool placedUnderClick(const engine::assets::PlacedEntity& pe, glm::vec2 worldPos, float fallbackRadius) {
+		const auto* sil = engine::assets::AssetRegistry::Get().getSilhouette(pe.defName);
+		if (sil == nullptr || !sil->valid) {
+			const float dx = pe.position.x - worldPos.x;
+			const float dy = pe.position.y - worldPos.y;
+			return (dx * dx + dy * dy) < (fallbackRadius * fallbackRadius);
+		}
+		return silhouetteRingsContain(*sil, engine::world::staticInstanceTransform(pe.position, pe.rotation, pe.scale), worldPos);
+	}
+
+	// True if the click is under a dynamic ECS entity's rendered silhouette. Resolves the
+	// render defName (Appearance defName + facing suffix) and the dynamic (bbox-centered)
+	// transform exactly as DynamicEntityRenderSystem. Returns true (defer to the caller's
+	// centroid pre-cull) when the def has no cached silhouette so silhouette-less types
+	// stay selectable.
+	bool dynamicUnderClick(
+		ecs::World* world, ecs::EntityID entity, const std::string& baseDefName, float scale, glm::vec2 entityPos, glm::vec2 worldPos
+	) {
+		const std::string defName = dynamicRenderDefName(world, entity, baseDefName);
+		const auto*		  sil = engine::assets::AssetRegistry::Get().getSilhouette(defName);
+		if (sil == nullptr || !sil->valid) {
+			return true;
+		}
+		return silhouetteRingsContain(*sil, engine::world::dynamicInstanceTransform(entityPos, scale, sil->boundsCenterMeters), worldPos);
+	}
+
+	// True if the click is under a packaged item's drawn sprite: the crate behind or the
+	// shrunk item in front, laid out and transformed exactly as the render path via
+	// packagedLayout + the per-sub-entity position-as-origin transform.
+	bool packagedUnderClick(const ecs::Appearance& appearance, glm::vec2 entityPos, glm::vec2 worldPos, float fallbackRadius) {
+		float itemWorldHeight = 0.6F; // matches DynamicEntityRenderSystem's fallback
+		if (const auto* itemDef = engine::assets::AssetRegistry::Get().getDefinition(appearance.defName)) {
+			itemWorldHeight = itemDef->worldHeight;
+		}
+		const engine::world::PackagedLayout pl = engine::world::packagedLayout(
+			entityPos, appearance.defName, appearance.scale, appearance.colorTint, itemWorldHeight
+		);
+		return placedUnderClick(pl.crate, worldPos, fallbackRadius) || placedUnderClick(pl.item, worldPos, fallbackRadius);
+	}
+
 	// Stable identity for a candidate: (variant type index, structure/entity id). Lets
 	// handleClick tell "the same stack is under the cursor" from "a different stack",
 	// so a same-spot click only cycles when the set is unchanged. NoSelection never
@@ -75,13 +166,15 @@ namespace {
 				} else if constexpr (std::is_same_v<T, FoundationSelection>) {
 					return {type, static_cast<std::uint64_t>(s.id)};
 				} else if constexpr (std::is_same_v<T, WorldEntitySelection>) {
-					// Positional, no integer id: key on the quantized position (low 32
-					// bits of each mm axis) so two different world entities under the
-					// same spot are distinct keys, not both {type, 0}.
+					// Positional, no integer id: fold the quantized position (low 32 bits
+					// of each mm axis) with a hash of the defName so two different-defName
+					// entities stacked at the same spot get distinct, frame-stable keys
+					// (same entity -> same key, so click-cycling holds).
 					const auto			mm = geometry::quantize(s.position);
 					const std::uint64_t x = static_cast<std::uint64_t>(mm.x) & 0xFFFFFFFFULL;
 					const std::uint64_t y = static_cast<std::uint64_t>(mm.y) & 0xFFFFFFFFULL;
-					return {type, (x << 32) | y};
+					const std::uint64_t nameHash = std::hash<std::string>{}(s.defName);
+					return {type, ((x << 32) | y) ^ nameHash};
 				} else {
 					// NoSelection never appears in a candidate list.
 					return {type, 0};
@@ -102,7 +195,10 @@ SelectionSystem::SelectionSystem(const Args& args)
 std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 	std::vector<Selection> candidates;
 
-	// Priority 1: Check ECS colonists first (dynamic, moving entities)
+	// Priority 1: Check ECS colonists first (dynamic, moving entities). Centroid pre-cull
+	// to kSelectionRadius, then a precise silhouette hit; nearest containing colonist wins
+	// (single-select). The pre-cull bound only shrinks on an accepted hit, so a closer
+	// silhouette-miss never blocks a farther silhouette-hit.
 	float		  closestColonistDist = kSelectionRadius;
 	ecs::EntityID closestColonist = 0;
 
@@ -111,17 +207,27 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 		float dy = pos.value.y - worldPos.y;
 		float dist = std::sqrt(dx * dx + dy * dy);
 
-		if (dist < closestColonistDist) {
-			closestColonistDist = dist;
-			closestColonist = entity;
+		if (dist >= closestColonistDist) {
+			continue;
 		}
+		// A colonist without an Appearance has no template to test; accept on the pre-cull.
+		const auto* appearance = ecsWorld->getComponent<ecs::Appearance>(entity);
+		const bool	under = (appearance == nullptr)
+							 ? true
+							 : dynamicUnderClick(ecsWorld, entity, appearance->defName, appearance->scale, pos.value, worldPos);
+		if (!under) {
+			continue;
+		}
+		closestColonistDist = dist;
+		closestColonist = entity;
 	}
 
 	if (closestColonist != 0) {
 		candidates.emplace_back(ColonistSelection{closestColonist});
 	}
 
-	// Priority 1.5: Check ECS stations (entities with WorkQueue)
+	// Priority 1.5: Check ECS stations (entities with WorkQueue). Same centroid pre-cull
+	// then silhouette test as colonists.
 	float		  closestStationDist = kSelectionRadius;
 	ecs::EntityID closestStation = 0;
 
@@ -130,10 +236,14 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 		float dy = pos.value.y - worldPos.y;
 		float dist = std::sqrt(dx * dx + dy * dy);
 
-		if (dist < closestStationDist) {
-			closestStationDist = dist;
-			closestStation = entity;
+		if (dist >= closestStationDist) {
+			continue;
 		}
+		if (!dynamicUnderClick(ecsWorld, entity, appearance.defName, appearance.scale, pos.value, worldPos)) {
+			continue;
+		}
+		closestStationDist = dist;
+		closestStation = entity;
 	}
 
 	if (closestStation != 0) {
@@ -146,7 +256,9 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 		}
 	}
 
-	// Priority 1.6: Check ECS storage containers (entities with Inventory but no WorkQueue)
+	// Priority 1.6: Check ECS storage containers (entities with Inventory but no
+	// WorkQueue). Packaged ones test the crate + item sprite; placed ones test their own
+	// silhouette. Centroid pre-cull first, same as the other dynamic types.
 	float		  closestStorageDist = kSelectionRadius;
 	ecs::EntityID closestStorage = 0;
 
@@ -164,10 +276,18 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 		float dy = pos.value.y - worldPos.y;
 		float dist = std::sqrt(dx * dx + dy * dy);
 
-		if (dist < closestStorageDist) {
-			closestStorageDist = dist;
-			closestStorage = entity;
+		if (dist >= closestStorageDist) {
+			continue;
 		}
+		const bool packaged = ecsWorld->getComponent<ecs::Packaged>(entity) != nullptr;
+		const bool under = packaged
+							 ? packagedUnderClick(appearance, pos.value, worldPos, kSelectionRadius)
+							 : dynamicUnderClick(ecsWorld, entity, appearance.defName, appearance.scale, pos.value, worldPos);
+		if (!under) {
+			continue;
+		}
+		closestStorageDist = dist;
+		closestStorage = entity;
 	}
 
 	if (closestStorage != 0) {
@@ -181,37 +301,43 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 		}
 	}
 
-	// Priority 2: Check world entities (static placed assets)
+	// Priority 2: Check world entities (static placed assets). Broad-phase the click
+	// chunk plus its 8 neighbors (a large canopy can sit far from its trunk anchor, or
+	// straddle a chunk edge), each queried at the widened kWorldEntitySelectRadius; the
+	// precise silhouette test then filters the false positives. Every containing entity
+	// is pushed as its own candidate, ordered topmost-first (largest anchorY draws
+	// frontmost) so a same-spot click cycles front to back through the stack.
 	if (placementExecutor != nullptr) {
 		auto&						   assetRegistry = engine::assets::AssetRegistry::Get();
-		engine::world::ChunkCoordinate chunkCoord = engine::world::worldToChunk(engine::world::WorldPosition{worldPos.x, worldPos.y});
-		const auto*					   spatialIndex = placementExecutor->getChunkIndex(chunkCoord);
-		if (spatialIndex != nullptr) {
-			auto nearbyEntities = spatialIndex->queryRadius({worldPos.x, worldPos.y}, kSelectionRadius);
+		const engine::world::ChunkCoordinate cc =
+			engine::world::worldToChunk(engine::world::WorldPosition{worldPos.x, worldPos.y});
 
-			float								closestEntityDist = kSelectionRadius;
-			const engine::assets::PlacedEntity* closestWorldEntity = nullptr;
-
-			for (const auto* placedEntity : nearbyEntities) {
-				// Only select entities with capabilities (not grass/decorative)
-				const auto* def = assetRegistry.getDefinition(placedEntity->defName);
-				if (def == nullptr || !def->capabilities.hasAny()) {
+		std::vector<const engine::assets::PlacedEntity*> hits;
+		for (int dyC = -1; dyC <= 1; ++dyC) {
+			for (int dxC = -1; dxC <= 1; ++dxC) {
+				const auto* spatialIndex = placementExecutor->getChunkIndex(engine::world::ChunkCoordinate{cc.x + dxC, cc.y + dyC});
+				if (spatialIndex == nullptr) {
 					continue;
 				}
-
-				float dx = placedEntity->position.x - worldPos.x;
-				float dy = placedEntity->position.y - worldPos.y;
-				float dist = std::sqrt(dx * dx + dy * dy);
-
-				if (dist < closestEntityDist) {
-					closestEntityDist = dist;
-					closestWorldEntity = placedEntity;
+				for (const auto* placedEntity : spatialIndex->queryRadius({worldPos.x, worldPos.y}, kWorldEntitySelectRadius)) {
+					// Only select entities with capabilities (not grass/decorative)
+					const auto* def = assetRegistry.getDefinition(placedEntity->defName);
+					if (def == nullptr || !def->capabilities.hasAny()) {
+						continue;
+					}
+					if (!placedUnderClick(*placedEntity, worldPos, kSelectionRadius)) {
+						continue;
+					}
+					hits.push_back(placedEntity);
 				}
 			}
+		}
 
-			if (closestWorldEntity != nullptr) {
-				candidates.emplace_back(WorldEntitySelection{closestWorldEntity->defName, closestWorldEntity->position});
-			}
+		std::sort(hits.begin(), hits.end(), [](const engine::assets::PlacedEntity* a, const engine::assets::PlacedEntity* b) {
+			return a->anchorY > b->anchorY; // largest anchorY = frontmost = topmost candidate
+		});
+		for (const auto* placedEntity : hits) {
+			candidates.emplace_back(WorldEntitySelection{placedEntity->defName, placedEntity->position});
 		}
 	}
 
@@ -475,55 +601,154 @@ void SelectionSystem::renderIndicator(int viewportW, int viewportH) {
 		return;
 	}
 
-	// Get world position from selection (colonists, stations, and furniture have ECS positions)
-	glm::vec2 worldPos{0.0F, 0.0F};
-	bool	  hasPosition = false;
-
-	if (auto* colonistSel = std::get_if<ColonistSelection>(&selection)) {
-		if (auto* pos = ecsWorld->getComponent<ecs::Position>(colonistSel->entityId)) {
-			worldPos = pos->value;
-			hasPosition = true;
+	// World entities: they carry no id, so re-resolve the live PlacedEntity by defName +
+	// position and stroke its silhouette at the static/baked transform. A felled or
+	// unloaded entity resolves to nullptr and draws nothing.
+	if (auto* worldSel = std::get_if<WorldEntitySelection>(&selection)) {
+		const engine::assets::PlacedEntity* pe = resolveWorldEntity(*worldSel);
+		if (pe != nullptr) {
+			const auto* sil = engine::assets::AssetRegistry::Get().getSilhouette(pe->defName);
+			if (sil != nullptr && sil->valid) {
+				strokeSilhouette(
+					sil->rings, engine::world::staticInstanceTransform(pe->position, pe->rotation, pe->scale), viewportW, viewportH
+				);
+			}
 		}
-	} else if (auto* stationSel = std::get_if<CraftingStationSelection>(&selection)) {
-		if (auto* pos = ecsWorld->getComponent<ecs::Position>(stationSel->entityId)) {
-			worldPos = pos->value;
-			hasPosition = true;
-		}
-	} else if (auto* furnitureSel = std::get_if<FurnitureSelection>(&selection)) {
-		if (auto* pos = ecsWorld->getComponent<ecs::Position>(furnitureSel->entityId)) {
-			worldPos = pos->value;
-			hasPosition = true;
-		}
-	}
-
-	if (!hasPosition) {
 		return;
 	}
 
-	// Convert world position to screen position
-	auto screenPos = camera->worldToScreen(worldPos.x, worldPos.y, viewportW, viewportH, kPixelsPerMeter);
+	// Colonists, crafting stations, and placed furniture all outline the dynamic
+	// (bbox-centered) silhouette of their Appearance sprite; packaged furniture instead
+	// outlines its crate + item at the packaged layout. Everything resolves from the ECS.
+	ecs::EntityID entityId = 0;
+	bool		  isFurniture = false;
+	if (auto* colonistSel = std::get_if<ColonistSelection>(&selection)) {
+		entityId = colonistSel->entityId;
+	} else if (auto* stationSel = std::get_if<CraftingStationSelection>(&selection)) {
+		entityId = stationSel->entityId;
+	} else if (auto* furnitureSel = std::get_if<FurnitureSelection>(&selection)) {
+		entityId = furnitureSel->entityId;
+		isFurniture = true;
+	}
+	if (entityId == 0) {
+		return;
+	}
 
-	// Convert selection radius from world units to screen pixels
-	float screenRadius = camera->worldDistanceToScreen(kIndicatorRadius, kPixelsPerMeter);
+	auto* pos = ecsWorld->getComponent<ecs::Position>(entityId);
+	auto* appearance = ecsWorld->getComponent<ecs::Appearance>(entityId);
+	if (pos == nullptr || appearance == nullptr) {
+		return;
+	}
 
-	// Draw selection circle with border-only style (transparent fill)
-	Renderer::Primitives::drawCircle(
-		Renderer::Primitives::CircleArgs{
-			.center = Foundation::Vec2{screenPos.x, screenPos.y},
-			.radius = screenRadius,
-			.style =
-				Foundation::CircleStyle{
-					.fill = Foundation::Color(0.0F, 0.0F, 0.0F, 0.0F), // Transparent fill
-					.border =
-						Foundation::BorderStyle{
-							.color = Foundation::Color(1.0F, 0.85F, 0.0F, 0.8F), // Gold color
-							.width = 2.0F,
-						},
-				},
-			.id = "selection-indicator",
-			.zIndex = 100, // Above entities
+	auto& assetRegistry = engine::assets::AssetRegistry::Get();
+
+	// Packaged furniture: stroke the crate + item at their layout transforms (both drawn
+	// as position-as-origin instances, matching the render path).
+	if (isFurniture && ecsWorld->getComponent<ecs::Packaged>(entityId) != nullptr) {
+		float itemWorldHeight = 0.6F; // matches DynamicEntityRenderSystem's fallback
+		if (const auto* itemDef = assetRegistry.getDefinition(appearance->defName)) {
+			itemWorldHeight = itemDef->worldHeight;
 		}
-	);
+		const engine::world::PackagedLayout pl = engine::world::packagedLayout(
+			pos->value, appearance->defName, appearance->scale, appearance->colorTint, itemWorldHeight
+		);
+		for (const engine::assets::PlacedEntity* sub : {&pl.crate, &pl.item}) {
+			const auto* sil = assetRegistry.getSilhouette(sub->defName);
+			if (sil != nullptr && sil->valid) {
+				strokeSilhouette(
+					sil->rings, engine::world::staticInstanceTransform(sub->position, sub->rotation, sub->scale), viewportW, viewportH
+				);
+			}
+		}
+		return;
+	}
+
+	// Non-packaged dynamic entity: the facing sprite's silhouette at the dynamic transform.
+	const std::string defName = dynamicRenderDefName(ecsWorld, entityId, appearance->defName);
+	const auto*		  sil = assetRegistry.getSilhouette(defName);
+	if (sil != nullptr && sil->valid) {
+		strokeSilhouette(
+			sil->rings, engine::world::dynamicInstanceTransform(pos->value, appearance->scale, sil->boundsCenterMeters), viewportW, viewportH
+		);
+	}
+}
+
+void SelectionSystem::strokeSilhouette(
+	const std::vector<geometry::Ring>& rings, const engine::world::AssetInstanceTransform& t, int viewportW, int viewportH
+) {
+	if (camera == nullptr) {
+		return;
+	}
+	constexpr Foundation::Color kGold(1.0F, 0.85F, 0.0F, 0.9F);
+	for (const auto& ring : rings) {
+		const std::size_t n = ring.size();
+		if (n < 2) {
+			continue;
+		}
+		for (std::size_t i = 0; i < n; ++i) {
+			const Foundation::Vec2 la = geometry::dequantize(ring[i]);
+			const Foundation::Vec2 lb = geometry::dequantize(ring[(i + 1) % n]);
+			const glm::vec2		   wa = t.toWorld(glm::vec2{la.x, la.y});
+			const glm::vec2		   wb = t.toWorld(glm::vec2{lb.x, lb.y});
+			const auto			   sa = camera->worldToScreen(wa.x, wa.y, viewportW, viewportH, kPixelsPerMeter);
+			const auto			   sb = camera->worldToScreen(wb.x, wb.y, viewportW, viewportH, kPixelsPerMeter);
+			Renderer::Primitives::drawLine(
+				Renderer::Primitives::LineArgs{
+					.start = Foundation::Vec2{sa.x, sa.y},
+					.end = Foundation::Vec2{sb.x, sb.y},
+					.style =
+						Foundation::LineStyle{
+							.color = kGold,
+							.width = kOutlineWidthPx,
+						},
+					.id = "silhouette-selection-outline",
+					.zIndex = 100,
+				}
+			);
+			// Filled dot at each vertex for round joins (drawLine has butt caps, so sharp
+			// silhouette corners would otherwise show a notch).
+			Renderer::Primitives::drawCircle(
+				Renderer::Primitives::CircleArgs{
+					.center = Foundation::Vec2{sa.x, sa.y},
+					.radius = kOutlineWidthPx * 0.5F,
+					.style = Foundation::CircleStyle{.fill = kGold},
+					.id = "silhouette-selection-joint",
+					.zIndex = 100,
+				}
+			);
+		}
+	}
+}
+
+const engine::assets::PlacedEntity* SelectionSystem::resolveWorldEntity(const WorldEntitySelection& sel) const {
+	if (placementExecutor == nullptr) {
+		return nullptr;
+	}
+	const engine::world::ChunkCoordinate cc =
+		engine::world::worldToChunk(engine::world::WorldPosition{sel.position.x, sel.position.y});
+	// The stored position is an exact copy of the placed entity's; a millimeter of slop
+	// absorbs any float round-trip. Match on defName too so a same-spot stack of
+	// different assets never cross-resolves.
+	constexpr float kMatchTolMeters = 0.001F;
+	for (int dyC = -1; dyC <= 1; ++dyC) {
+		for (int dxC = -1; dxC <= 1; ++dxC) {
+			const auto* spatialIndex = placementExecutor->getChunkIndex(engine::world::ChunkCoordinate{cc.x + dxC, cc.y + dyC});
+			if (spatialIndex == nullptr) {
+				continue;
+			}
+			for (const auto* pe : spatialIndex->queryRadius({sel.position.x, sel.position.y}, kWorldEntitySelectRadius)) {
+				if (pe->defName != sel.defName) {
+					continue;
+				}
+				const float ex = pe->position.x - sel.position.x;
+				const float ey = pe->position.y - sel.position.y;
+				if (ex * ex + ey * ey <= kMatchTolMeters * kMatchTolMeters) {
+					return pe;
+				}
+			}
+		}
+	}
+	return nullptr;
 }
 
 } // namespace world_sim
