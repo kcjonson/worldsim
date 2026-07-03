@@ -54,6 +54,7 @@ add_executable(world-sim
     scenes/game/world/placement/PlacementMode.cpp
     scenes/game/world/placement/PlacementSystem.cpp
     scenes/game/world/selection/SelectionSystem.cpp
+    scenes/game/world/construction/CommittedGeometryCache.cpp
     scenes/game/world/construction/DrawingSystem.cpp
     scenes/game/world/rooms/RoomOverlay.cpp
     scenes/game/world/nav/NavOverlay.cpp

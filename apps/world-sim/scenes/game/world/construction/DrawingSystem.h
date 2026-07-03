@@ -24,7 +24,13 @@
 // Rendering here is INTERIM: it draws the in-progress preview AND committed
 // foundations + wall bands via Primitives so the tools are verifiable end to
 // end. C6 replaces committed-structure rendering with the baked element-emitter
-// + progress prefix; this whole render path goes away then.
+// + progress prefix; this whole render path goes away then. The two halves
+// draw in different world layers (see world-depth-sorting.md): renderCommitted
+// is the flat ground sub-layer between terrain and the entity pass, so every
+// entity paints over a building; renderPreview rides above the entities with
+// the other cursor ghosts.
+
+#include "CommittedGeometryCache.h"
 
 #include <construction/ConstructionValidator.h>
 #include <construction/ConstructionWorld.h>
@@ -162,18 +168,30 @@ namespace world_sim {
 
 		// --- Rendering (INTERIM, see file header) ---
 
-		void render(int viewportW, int viewportH);
+		/// Committed construction (foundations, walls, openings). Called between
+		/// the terrain and entity passes: the flat ground sub-layer, below
+		/// groundcover and every Y-sorted upright. Geometry comes from the
+		/// version-keyed CommittedGeometryCache and is culled to the viewport, so
+		/// per-frame cost scales with what is VISIBLE, not with the whole world.
+		void renderCommitted(int viewportW, int viewportH);
+
+		/// In-progress drawing feedback (preview polygon/chain, snap guides,
+		/// opening ghost). Called after the entity pass, alongside the placement
+		/// ghost, below UI.
+		void renderPreview(int viewportW, int viewportH);
 
 	  private:
-		/// Render committed wall segments as trimmed bands + junction polygons
-		/// (resolveWallBands), styled per segment by build progress. A segment that
-		/// hosts openings is drawn as solid sub-bands around each opening's gap
-		/// instead of one continuous band. INTERIM.
-		void renderCommittedWalls(int viewportW, int viewportH);
+		/// Draw the cached wall bands + junction polygons that intersect
+		/// `visibleWorld`, styled per segment by build progress. INTERIM.
+		void renderCommittedWalls(const Foundation::Rect& visibleWorld, int viewportW, int viewportH);
 
-		/// Render each committed opening as a procedural door/window fill in its
-		/// wall-band gap, styled by build progress. INTERIM.
-		void renderCommittedOpenings(int viewportW, int viewportH);
+		/// Draw each cached opening footprint that intersects `visibleWorld` as a
+		/// procedural door/window fill, styled by build progress. INTERIM.
+		void renderCommittedOpenings(const Foundation::Rect& visibleWorld, int viewportW, int viewportH);
+
+		/// Build progress in [0,1] for a committed record: Built renders full, a
+		/// blueprint reads workDone/workTotal off its ECS mirror (0 when unspawned).
+		[[nodiscard]] float blueprintProgress(bool built, ecs::EntityID entity) const;
 
 		/// Render the opening tool's ghost at the snapped position, colorized for
 		/// validity. INTERIM.
@@ -335,6 +353,10 @@ namespace world_sim {
 		Callbacks					callbacks_;
 
 		engine::construction::ConstructionWorld constructionWorld_;
+
+		// Committed-construction geometry, rebuilt only when constructionWorld_'s
+		// version moves (see CommittedGeometryCache.h).
+		CommittedGeometryCache committedCache_;
 
 		DrawingState						   state_ = DrawingState::Idle;
 		ToolKind							   activeTool_ = ToolKind::Foundation;

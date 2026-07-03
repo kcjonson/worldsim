@@ -21,6 +21,14 @@ namespace ecs {
 
 	/// Sparse set component storage with O(1) add/remove/has operations.
 	/// Uses dense array for cache-friendly iteration.
+	///
+	/// Components are stored BY VALUE and relocate when the dense vector grows or
+	/// swap-removes. Growth may COPY rather than move (vector reallocation uses
+	/// move_if_noexcept, and a component whose implicit move is not noexcept —
+	/// any std::unordered_map member does that on MSVC — falls back to copy). So
+	/// a component type must never hold pointers or iterators into its own
+	/// members: a deep copy has to be self-consistent on its own. Store indices,
+	/// not iterators (see Memory's LRU, which crashed the game before that rule).
 	template <typename T>
 	class ComponentPool : public IComponentPool {
 	  public:
