@@ -61,10 +61,12 @@ ResourcesPanel::ResourcesPanel(const Args& args)
 	// Create empty message text (shown when no storage containers exist)
 	emptyMessageHandle = addChild(UI::Text(UI::Text::Args{
 		.position = {UI::space_2, kHeaderHeight + UI::space_2},
-		.text = "No stockpiles built.\nCreate one to track\ncolony resources.",
+		.width = panelWidth - UI::space_2 * 2.0F,
+		.text = "No stockpiles built. Create one to track colony resources.",
 		.style = {
 			.color = UI::text_dim,
-			.fontSize = UI::fs_sm
+			.fontSize = UI::fs_sm,
+			.wordWrap = true
 		},
 		.id = "resources_empty_msg",
 		.visible = false
