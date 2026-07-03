@@ -1,4 +1,6 @@
-cmake_minimum_required(VERSION 3.20)
+# 3.25 for CMAKE_MSVC_DEBUG_INFORMATION_FORMAT (CMP0141): the Windows preset
+# selects /Z7 embedded debug info, which ccache requires to cache MSVC objects.
+cmake_minimum_required(VERSION 3.25)
 project(world-sim VERSION 0.1.0 LANGUAGES CXX)
 
 # Set C++20 standard

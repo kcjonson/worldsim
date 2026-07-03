@@ -24,17 +24,21 @@ target_compile_features(foundation PUBLIC cxx_std_20)
 # logging out of every Windows build.
 target_compile_definitions(foundation PUBLIC $<$<CONFIG:Debug,RelWithDebInfo>:DEVELOPMENT_BUILD>)
 
-# Link dependencies
+# Link dependencies. glm is PUBLIC (public headers expose glm types); httplib
+# and OpenGL are implementation details of DebugServer.cpp — PRIVATE keeps their
+# include dirs off every downstream TU (DebugServer.h forward-declares), while
+# static-lib link requirements still propagate to final executables.
 target_link_libraries(foundation
     PUBLIC
         glm::glm
+    PRIVATE
         httplib::httplib
         OpenGL::GL  # DebugServer uses glReadPixels and glGetIntegerv
 )
 
 # Link CoreFoundation on macOS (required by httplib for DNS resolution)
 if(APPLE)
-    target_link_libraries(foundation PUBLIC "-framework CoreFoundation")
+    target_link_libraries(foundation PRIVATE "-framework CoreFoundation")
 endif()
 
 # Tests

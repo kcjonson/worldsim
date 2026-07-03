@@ -142,16 +142,25 @@ When choosing libraries, architectures, or approaches:
 ### Running Tests
 
 ```bash
-# Build with tests
-cmake -B build -DBUILD_TESTING=ON
-cmake --build build
+# Build with tests (BUILD_TESTING is ON by default via CTest)
+cmake --preset windows   # or: cmake --preset default (macOS/Linux)
+cmake --build build --config Debug
 
-# Run all tests
-ctest --test-dir build
+# Run the fast suite in parallel (-j collapses wall time to the largest exe).
+# On Windows (multi-config) -C Debug is required; omit it on macOS/Linux.
+# Don't use "-L fast" — only world-tests carries labels, it would run one exe.
+ctest --test-dir build -C Debug -LE heavy -E benchmarks -j 13 --output-on-failure
 
-# Run specific test
-./build/libs/new-lib/tests/new_lib_tests
+# One library's tests
+ctest --test-dir build -C Debug -R engine-tests --output-on-failure
+
+# Heavy worldgen bucket (slow; CI runs it only when worldgen paths change)
+ctest --test-dir build -C Debug -L heavy -j 4 --output-on-failure
 ```
+
+Note for MSVC test targets: don't add `/Zi` via `target_compile_options` — the presets
+select embedded debug info (`/Z7`) so ccache can cache objects; an explicit `/Zi` overrides
+it and silently disables caching for that target.
 
 ### Creating Scenes (in ui-sandbox)
 
