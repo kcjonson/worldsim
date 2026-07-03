@@ -3,9 +3,11 @@
 #include <assets/ConstructionRegistry.h>
 #include <construction/OpeningGeometry.h>
 #include <offset/WallOffset.h>
+#include <utils/Log.h>
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace world_sim {
 
@@ -165,6 +167,12 @@ namespace world_sim {
 			if (f.ring.size() < 3) {
 				continue;
 			}
+			// The fan indexes with uint16_t; a ring past that is pathological
+			// (repeated dev-verb unions), but skip it rather than wrap silently.
+			if (f.ring.size() > std::numeric_limits<uint16_t>::max()) {
+				LOG_WARNING(Game, "Foundation #%llu ring has %zu vertices (> 65535), not rendered", static_cast<unsigned long long>(f.id), f.ring.size());
+				continue;
+			}
 			FoundationGeom g;
 			g.ring = dequantizeRing(f.ring);
 			g.fan.reserve((g.ring.size() - 2) * 3);
@@ -178,6 +186,30 @@ namespace world_sim {
 			g.built = (f.state == ec::FoundationState::Built);
 			g.entity = f.entity;
 			foundations_.push_back(std::move(g));
+		}
+
+		// --- Openings: oriented footprint + type-derived styling inputs -----
+		// Deliberately independent of the wall-band resolve below: openings read
+		// only topology + config, so they must still render when the band
+		// offsetter rejects the graph and walls fall back to centerlines.
+		for (const auto& op : world.openings()) {
+			const geometry::Ring footprint = ec::openingFootprint(world, op);
+			if (footprint.size() < 4) {
+				continue;
+			}
+			const auto* type = ConstructionRegistry::Get().getOpeningType(op.type);
+			if (type == nullptr) {
+				continue;
+			}
+			OpeningGeom g;
+			g.footprint = dequantizeRing(footprint);
+			g.aabb = boundsOf(g.footprint);
+			g.matColor = materialColor(type->material, style.opening.doorFallbackColor);
+			g.widthMeters = footprintWidthMeters(footprint);
+			g.window = !type->pathable; // windows are not pathable; doors are
+			g.built = (op.state == ec::FoundationState::Built);
+			g.entity = op.entity;
+			openings_.push_back(std::move(g));
 		}
 
 		// --- Walls: whole-graph band resolve ---------------------------------
@@ -212,7 +244,8 @@ namespace world_sim {
 			if (bands.status != geometry::OffsetStatus::Ok) {
 				// Reject-don't-repair: a degenerate offset means the topology fed it
 				// bad input; cache bare centerlines so the render still shows the
-				// walls exist, never garbage bands.
+				// walls exist, never garbage bands. Openings were already cached
+				// above; only the bands and junctions are skipped.
 				bandsFailed_ = true;
 				for (const auto& wseg : segs) {
 					const ec::Vertex* v0 = world.getVertex(wseg.v0);
@@ -327,27 +360,6 @@ namespace world_sim {
 				g.matColor = materialColor(junctionMaterial, style.wall.fallbackColor);
 				junctions_.push_back(std::move(g));
 			}
-		}
-
-		// --- Openings: oriented footprint + type-derived styling inputs -----
-		for (const auto& op : world.openings()) {
-			const geometry::Ring footprint = ec::openingFootprint(world, op);
-			if (footprint.size() < 4) {
-				continue;
-			}
-			const auto* type = ConstructionRegistry::Get().getOpeningType(op.type);
-			if (type == nullptr) {
-				continue;
-			}
-			OpeningGeom g;
-			g.footprint = dequantizeRing(footprint);
-			g.aabb = boundsOf(g.footprint);
-			g.matColor = materialColor(type->material, style.opening.doorFallbackColor);
-			g.widthMeters = footprintWidthMeters(footprint);
-			g.window = !type->pathable; // windows are not pathable; doors are
-			g.built = (op.state == ec::FoundationState::Built);
-			g.entity = op.entity;
-			openings_.push_back(std::move(g));
 		}
 	}
 

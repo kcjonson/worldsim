@@ -1209,7 +1209,10 @@ namespace world_sim {
 		if (built) {
 			return 1.0F;
 		}
-		if (ecsWorld_ != nullptr && entity != ecs::kInvalidEntity) {
+		// isAlive checks the generation word; ComponentPool::get matches by index
+		// only, so a stale cached handle whose index was recycled would otherwise
+		// read a DIFFERENT entity's blueprint progress.
+		if (ecsWorld_ != nullptr && entity != ecs::kInvalidEntity && ecsWorld_->isAlive(entity)) {
 			if (const auto* bp = ecsWorld_->getComponent<ecs::StructureBlueprint>(entity)) {
 				return bp->progress();
 			}
@@ -1501,7 +1504,10 @@ namespace world_sim {
 			if (n < 3) {
 				return;
 			}
-			std::vector<uint16_t> indices;
+			// Scratch fan-index buffer reused across calls (several calls per
+			// visible ring per frame); drawTriangles copies before returning.
+			static thread_local std::vector<uint16_t> indices;
+			indices.clear();
 			indices.reserve((n - 2) * 3);
 			for (std::size_t i = 1; i + 1 < n; ++i) {
 				indices.push_back(0);
