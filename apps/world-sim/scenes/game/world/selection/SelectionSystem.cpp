@@ -346,7 +346,10 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 			}
 		}
 
-		std::sort(hits.begin(), hits.end(), [](const engine::assets::PlacedEntity* a, const engine::assets::PlacedEntity* b) {
+		// stable_sort so entities with equal anchorY keep a deterministic order (matches
+		// WorldDepthSort's stability): the candidate-key vector stays identical across
+		// same-spot clicks, so click-cycling advances instead of resetting.
+		std::stable_sort(hits.begin(), hits.end(), [](const engine::assets::PlacedEntity* a, const engine::assets::PlacedEntity* b) {
 			return a->anchorY > b->anchorY; // largest anchorY = frontmost = topmost candidate
 		});
 		for (const auto* placedEntity : hits) {
@@ -629,6 +632,10 @@ engine::world::SelectionOutline SelectionSystem::buildEntityOutline() const {
 	auto&		assetRegistry = engine::assets::AssetRegistry::Get();
 	const float kNoY = -std::numeric_limits<float>::max();
 	float		maxY = kNoY;
+	// Prefer the entity's canonical depth key (PlacedEntity::anchorY) when available so the
+	// outline injects at the exact depth the entity draws; the silhouette-vertex maxY is only
+	// a fallback (raster maxY can differ slightly from the template's).
+	float canonicalAnchorY = kNoY;
 
 	// World entities: re-resolve the live PlacedEntity by defName + position and
 	// build its silhouette at the static/baked transform. A felled or unloaded
@@ -638,6 +645,7 @@ engine::world::SelectionOutline SelectionSystem::buildEntityOutline() const {
 		if (pe == nullptr) {
 			return outline;
 		}
+		canonicalAnchorY = pe->anchorY; // exact placement depth key, not the raster maxY
 		const auto* sil = assetRegistry.getSilhouette(pe->defName);
 		if (sil == nullptr || !sil->valid) {
 			return outline;
@@ -702,8 +710,10 @@ engine::world::SelectionOutline SelectionSystem::buildEntityOutline() const {
 
 	outline.valid = !outline.worldRings.empty();
 	if (outline.valid) {
-		outline.anchorY = maxY;			 // max world-Y over all verts = ground-contact depth key
-		outline.rgba = {1.0F, 0.85F, 0.0F, 0.9F};
+		// Canonical placement anchorY when we have it (world entities), else the silhouette
+		// ground-contact (dynamic entities, whose sprite bottom == the silhouette bottom).
+		outline.anchorY = (canonicalAnchorY != kNoY) ? canonicalAnchorY : maxY;
+		outline.rgba	= {1.0F, 0.85F, 0.0F, 0.9F};
 		outline.widthPx = kOutlineWidthPx;
 	}
 	return outline;
