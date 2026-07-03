@@ -8,6 +8,14 @@ on:
       - 'docs/**'
       - '**.md'
       - '.claude/**'
+  # Actions caches are branch-scoped; the post-merge main run seeds the Release
+  # sccache cache that new PRs warm-start from (this job is the only Release build).
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - '.claude/**'
 
 concurrency:
   group: build-${{ github.event.pull_request.number || github.ref }}

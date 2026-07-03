@@ -83,7 +83,9 @@ if(BUILD_TESTING)
         # internal pool is hardware_concurrency - 1. Declare that footprint so
         # parallel ctest doesn't co-schedule other pool-spawning exes and starve
         # the generation past its deadline (bit us on the 4-core CI runners).
-        set_tests_properties(planet-view-tests PROPERTIES PROCESSORS 3)
+        # TIMEOUT: 4 generate()-calling tests x 300 s worst-case deadline = 1200 s
+        # hang budget; 1500 keeps margin over it. Re-size if tests add generations.
+        set_tests_properties(planet-view-tests PROPERTIES PROCESSORS 3 TIMEOUT 1500)
     endif()
 
     if(PLANET_VIEW_BENCHMARK_SOURCES)

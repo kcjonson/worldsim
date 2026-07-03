@@ -162,6 +162,23 @@ add_dependencies(quickstart-planet world-sim)
 # config; CI uses that to keep npm out of single-config Debug test jobs.
 set(BUILD_DEVELOPER_CLIENT AUTO CACHE STRING
     "Build the React developer-client web app: AUTO, ON, or OFF (requires npm)")
+set_property(CACHE BUILD_DEVELOPER_CLIENT PROPERTY STRINGS AUTO ON OFF)
+# Migrate build dirs configured before the tri-state: option() left a BOOL cache
+# entry whose OFF default still auto-built in single-config Debug, so a surviving
+# legacy OFF must become AUTO (same semantics), not a forced-off.
+get_property(_bdc_legacy_type CACHE BUILD_DEVELOPER_CLIENT PROPERTY TYPE)
+if(_bdc_legacy_type STREQUAL "BOOL")
+    if(BUILD_DEVELOPER_CLIENT)
+        set(BUILD_DEVELOPER_CLIENT ON CACHE STRING
+            "Build the React developer-client web app: AUTO, ON, or OFF (requires npm)" FORCE)
+    else()
+        set(BUILD_DEVELOPER_CLIENT AUTO CACHE STRING
+            "Build the React developer-client web app: AUTO, ON, or OFF (requires npm)" FORCE)
+    endif()
+endif()
+if(NOT BUILD_DEVELOPER_CLIENT MATCHES "^(AUTO|ON|OFF)$")
+    message(FATAL_ERROR "BUILD_DEVELOPER_CLIENT must be AUTO, ON, or OFF (got '${BUILD_DEVELOPER_CLIENT}')")
+endif()
 if(BUILD_DEVELOPER_CLIENT STREQUAL "ON"
    OR (BUILD_DEVELOPER_CLIENT STREQUAL "AUTO"
        AND (CMAKE_BUILD_TYPE STREQUAL "Development" OR CMAKE_BUILD_TYPE STREQUAL "Debug")))
