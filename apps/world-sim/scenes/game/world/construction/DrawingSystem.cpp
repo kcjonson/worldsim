@@ -1501,7 +1501,9 @@ namespace world_sim {
 			int								  zEdge
 		) {
 			const std::size_t n = screen.size();
-			if (n < 3) {
+			// Upper bound is the uint16_t fan-index range (mirrors the foundation
+			// fan guard in CommittedGeometryCache).
+			if (n < 3 || n > std::numeric_limits<uint16_t>::max()) {
 				return;
 			}
 			// Scratch fan-index buffer reused across calls (several calls per
