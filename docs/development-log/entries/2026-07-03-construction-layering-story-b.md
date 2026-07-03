@@ -60,6 +60,31 @@ colonist (`/api/dev/colonist`) hard-crashes the game right after the
 `Colonist_up` SVG template load. Filed as a Specboard bug; not related to this
 change.
 
+## Performance (measured)
+
+Controlled A/B, RelWithDebInfo, identical protocol per binary (fresh launch,
+dev-API stamp of a 10x10 grid = 90 accepted buildings / 360 wall segments,
+90 s settle, paused sim, n=24 samples at a fixed camera, vsync off; note the
+app has a hard 120 fps pacing cap):
+
+- Frame time: 8.32 ms avg on both (cap-bound); fps 120 locked on both. No
+  user-visible regression.
+- Draw calls: 391 -> 392. The entire committed pass adds ONE draw call; flush
+  count is per-frame constant, it does not scale with building count.
+- Scene-render CPU (includes all flushes; endFrame runs inside this timer):
+  before median 2.19 ms, after median 3.11 ms at 90 buildings. A real
+  +0.9 ms: the committed batch is now uploaded/drawn mid-frame in its own
+  flush instead of merged into endFrame, and entityRenderMs rises 0.75 ->
+  1.44 ms despite untouched entity-pass code, pointing at driver-side buffer
+  sync on the shared batch VBO (the same-VBO in-frame reuse hazard already
+  flagged in the Story A review, tracked under Story C).
+- Scale math: committed-construction render costs ~24 us/building/frame after
+  (~14 before), linear, no visibility culling. A ~300-building city would
+  break the 8.3 ms budget on the after build (~450 on before, but rendered
+  wrongly). The interim per-frame CPU re-triangulation is the bottleneck in
+  both builds; C6's baked element-emitter is the real fix, and Story C now has
+  a measured baseline.
+
 ## Related Documentation
 
 - /docs/technical/rendering/world-depth-sorting.md (status + implementation
