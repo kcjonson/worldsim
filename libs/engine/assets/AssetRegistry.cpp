@@ -5,7 +5,9 @@
 #include "assets/SvgPathNodes.h"
 #include "assets/lua/LuaGenerator.h"
 
+#include <silhouette/Silhouette.h>
 #include <utils/Log.h>
+#include <vector/MeshBounds.h>
 #include <vector/SVGLoader.h>
 #include <vector/Tessellator.h>
 
@@ -1276,6 +1278,105 @@ namespace engine::assets {
 		return &templateCache[defName];
 	}
 
+	std::vector<geometry::Ring> AssetRegistry::buildSilhouetteContours(const std::string& defName) {
+		std::vector<geometry::Ring> rings;
+		const AssetDefinition*		def = getDefinition(defName);
+		if (def == nullptr) {
+			return rings;
+		}
+
+		auto addPath = [&](const std::vector<Foundation::Vec2>& verts, float scale) {
+			if (verts.size() < 3) {
+				return;
+			}
+			geometry::Ring r;
+			r.reserve(verts.size());
+			for (const auto& v : verts) {
+				r.push_back(geometry::quantize({v.x * scale, v.y * scale}));
+			}
+			rings.push_back(std::move(r));
+		};
+
+		if (def->assetType == AssetType::Simple) {
+			if (def->svgPath.empty()) {
+				return rings;
+			}
+			const std::string					  resolvedSvgPath = def->resolvePath(def->svgPath).string();
+			std::vector<renderer::LoadedSVGShape> shapes;
+			if (!renderer::loadSVG(resolvedSvgPath, kSvgCurveTolerance, shapes)) {
+				return rings;
+			}
+			// Match the template frame: SVG paths are scaled by worldHeight/svgHeight and
+			// left uncentered (getTemplate scales, DynamicEntityRenderSystem centers at runtime).
+			// Only filled shapes contribute — stroke-only shapes render thin bands, not a body,
+			// and a stroke centerline is not a fill ring.
+			const SvgMeterFrame frame = computeSvgMeterFrame(shapes, def->worldHeight);
+			const float			scale = frame.valid ? frame.scaleFactor : 1.0F;
+			for (const auto& shape : shapes) {
+				if (!shape.hasFill) {
+					continue;
+				}
+				for (const auto& path : shape.paths) {
+					addPath(path.vertices, scale);
+				}
+			}
+		} else {
+			GeneratedAsset asset;
+			if (!generateAsset(defName, 42, asset)) { // fixed template seed, matches getTemplate
+				return rings;
+			}
+			// Procedural GeneratedPath vertices are already in template-local meters.
+			for (const auto& path : asset.paths) {
+				addPath(path.vertices, 1.0F);
+			}
+		}
+		return rings;
+	}
+
+	const AssetSilhouette* AssetRegistry::getSilhouette(const std::string& defName) {
+		{
+			std::lock_guard<std::mutex> lk(m_silhouetteCacheMutex);
+			auto						it = m_silhouetteCache.find(defName);
+			if (it != m_silhouetteCache.end()) {
+				return &it->second;
+			}
+		}
+
+		// Compute outside the silhouette lock (the raster flood-fill can be heavy),
+		// mirroring getMotion. getTemplate guards itself with a separate mutex.
+		AssetSilhouette sil;
+
+		// Bounds centre in the template frame == the dynamic render path's -centerOffset,
+		// so the shared instance transform, the outline, and the hit-test never drift.
+		const renderer::TessellatedMesh* tmpl = getTemplate(defName);
+		if (tmpl != nullptr) {
+			const Foundation::Rect b = renderer::computeBounds(*tmpl);
+			sil.boundsCenterMeters	 = {b.x + b.width * 0.5F, b.y + b.height * 0.5F};
+		}
+
+		sil.rings = geometry::silhouetteOfRings(buildSilhouetteContours(defName));
+
+		// Stroke-only / 0-fill assets (e.g. PlantFiber) yield no contours; hug the mesh
+		// AABB rather than drawing nothing, and flag it so the asset-manager surfaces the gap.
+		if (sil.rings.empty() && tmpl != nullptr) {
+			const Foundation::Rect b = renderer::computeBounds(*tmpl);
+			if (b.width > 0.0F && b.height > 0.0F) {
+				sil.rings.push_back({
+					geometry::quantize({b.x, b.y}),
+					geometry::quantize({b.x + b.width, b.y}),
+					geometry::quantize({b.x + b.width, b.y + b.height}),
+					geometry::quantize({b.x, b.y + b.height}),
+				});
+				LOG_WARNING(Engine, "Silhouette: %s has no fill contours; fell back to mesh-bounds rect", defName.c_str());
+			}
+		}
+		sil.valid = !sil.rings.empty();
+
+		std::lock_guard<std::mutex> lk(m_silhouetteCacheMutex);
+		auto [it, inserted] = m_silhouetteCache.emplace(defName, std::move(sil));
+		return &it->second;
+	}
+
 	const MotionDef* AssetRegistry::getMotion(const std::string& defName) {
 		{
 			std::lock_guard<std::mutex> lk(m_motionCacheMutex);
@@ -1504,6 +1605,10 @@ namespace engine::assets {
 			std::lock_guard<std::mutex> lk(m_motionCacheMutex);
 			m_motionCache.clear();
 		}
+		{
+			std::lock_guard<std::mutex> lk(m_silhouetteCacheMutex);
+			m_silhouetteCache.clear();
+		}
 		groupIndex.clear();
 		// Reset the string-interning index too (mirrors clearDefinitions); otherwise name<->id
 		// and capability lookups return stale mappings for now-destroyed defs until a reload.
@@ -1692,6 +1797,10 @@ namespace engine::assets {
 		{
 			std::lock_guard<std::mutex> lk(m_motionCacheMutex);
 			m_motionCache.clear();
+		}
+		{
+			std::lock_guard<std::mutex> lk(m_silhouetteCacheMutex);
+			m_silhouetteCache.clear();
 		}
 		groupIndex.clear();
 		m_defNameToId.clear();

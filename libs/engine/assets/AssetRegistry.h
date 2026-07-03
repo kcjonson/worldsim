@@ -9,6 +9,7 @@
 #include "assets/IAssetGenerator.h"
 #include "assets/MotionDef.h"
 
+#include <polygon/Polygon.h>
 #include <vector/Types.h>
 
 #include <atomic>
@@ -29,6 +30,19 @@ namespace engine::assets {
 		std::atomic<bool> started{false};
 		std::atomic<bool> done{false};
 		std::atomic<int>  defsLoaded{0};
+	};
+
+	/// Cached per-defName selection silhouette: the filled outer outline of the
+	/// asset's rendered fill (holes filled, disjoint blobs kept as separate rings),
+	/// in the template-local (scaled, uncentered) frame in integer millimeters.
+	/// Drives the thick selection outline and the precise hit-test; reusable later
+	/// for shadows. `boundsCenterMeters` is the template mesh bbox centre in the
+	/// same frame — it equals the dynamic render path's -centerOffset, stored so
+	/// outline and hit-test share the render transform and can't drift.
+	struct AssetSilhouette {
+		std::vector<geometry::Ring> rings;
+		glm::vec2					boundsCenterMeters{0.0F, 0.0F};
+		bool						valid = false;
 	};
 
 	/// Central registry for asset definitions and generated templates.
@@ -68,6 +82,12 @@ namespace engine::assets {
 		/// index) into the mesh's scaled meter frame, so a part rotates about the right joint.
 		/// Rotation amps are returned in radians, posX/posY amps in meters. Lazily loaded + cached.
 		const MotionDef* getMotion(const std::string& defName);
+
+		/// Get the cached selection silhouette for a def (see AssetSilhouette).
+		/// Lazily computed from the asset's fill contours via geometry::silhouetteOfRings;
+		/// stroke-only / 0-fill assets fall back to the mesh-bounds rectangle. Thread-safe
+		/// (own mutex, heavy compute off-lock), safe to call from chunk workers like getTemplate.
+		const AssetSilhouette* getSilhouette(const std::string& defName);
 
 		/// Generate an asset directly (does not cache)
 		/// @param defName The definition name
@@ -209,6 +229,17 @@ namespace engine::assets {
 		// Resolved motion per def (empty MotionDef = "resolved, has none"). Guarded separately.
 		std::unordered_map<std::string, MotionDef> m_motionCache;
 		mutable std::mutex						   m_motionCacheMutex;
+
+		// Lazily-computed selection silhouette per def. Guarded separately; the raster
+		// flood-fill runs off-lock (like getMotion), the cache lock is held only to
+		// check/insert. Populated from the asset's fill contours in the template frame.
+		std::unordered_map<std::string, AssetSilhouette> m_silhouetteCache;
+		mutable std::mutex								 m_silhouetteCacheMutex;
+
+		// Source the asset's fill contour rings in the template-local (scaled,
+		// uncentered) frame, in mm — SVG paths scaled by the SvgMeterFrame, procedural
+		// GeneratedPath vertices as-is. Input to geometry::silhouetteOfRings.
+		std::vector<geometry::Ring> buildSilhouetteContours(const std::string& defName);
 
 		// getTemplate lazily tessellates into templateCache and is called from
 		// chunk worker threads (entity mesh baking) as well as the render thread
