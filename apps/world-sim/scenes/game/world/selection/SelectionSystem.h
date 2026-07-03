@@ -20,6 +20,7 @@
 #include <polygon/Polygon.h> // geometry::Ring
 #include <world/camera/WorldCamera.h>
 #include <world/rendering/AssetInstanceTransform.h> // shared local<->world affine
+#include <world/rendering/SelectionOutline.h>		 // entity outline injected into the depth-sort pass
 
 #include <cstdint>
 #include <functional>
@@ -93,8 +94,15 @@ class SelectionSystem {
 
 	// --- Rendering ---
 
-	/// Render selection indicator (call during render phase)
+	/// Render selection indicator (call during render phase). Draws only the flat
+	/// construction outlines (foundation/wall/opening/room); entity-backed outlines
+	/// are built by buildEntityOutline and drawn inside the entity depth-sort pass.
 	void renderIndicator(int viewportW, int viewportH);
+
+	/// Build the selected entity's silhouette outline in world space for injection
+	/// into the entity depth-sort render pass (so a nearer entity occludes it).
+	/// Returns an invalid outline (valid=false) for construction/room/no selection.
+	[[nodiscard]] engine::world::SelectionOutline buildEntityOutline() const;
 
 	// --- State Queries ---
 
@@ -112,14 +120,6 @@ class SelectionSystem {
 	/// appends each level's best hit instead of returning on the first. Re-gathered
 	/// every click; never caches entity pointers across clicks.
 	[[nodiscard]] std::vector<Selection> gatherCandidates(glm::vec2 worldPos);
-
-	/// Stroke a cached silhouette (rings in template-local mm) as a thick gold outline:
-	/// each ring vertex is mapped local->world through `t` then world->screen, and the
-	/// closed loop is emitted as drawLine segments plus a filled dot at every vertex for
-	/// round joins. The single flat top pass every selected-asset branch shares.
-	void strokeSilhouette(
-		const std::vector<geometry::Ring>& rings, const engine::world::AssetInstanceTransform& t, int viewportW, int viewportH
-	);
 
 	/// Re-resolve the live PlacedEntity a WorldEntitySelection refers to (it carries no
 	/// id): scan the selection's chunk + its 8 neighbors for a matching defName at

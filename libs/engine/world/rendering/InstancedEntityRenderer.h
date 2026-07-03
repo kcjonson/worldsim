@@ -9,6 +9,7 @@
 #include "primitives/InstanceData.h"
 #include "world/rendering/InstancingUniforms.h"
 #include "world/rendering/RenderContext.h"
+#include "world/rendering/SelectionOutline.h"
 #include "world/rendering/TemplateMeshCache.h"
 #include "world/rendering/WorldDepthSort.h"
 
@@ -38,6 +39,10 @@ class InstancedEntityRenderer {
 	/// Emit the pre-sorted upright stream in order (ascending anchorY).
 	void emitSorted(const std::vector<DepthSortItem>& items, const RenderContext& ctx, RenderStats& stats);
 
+	/// Set (or clear) the selected entity's outline for this frame. Injected into
+	/// the depth-sort stream at its anchorY so nearer entities occlude it.
+	void setSelectionOutline(const SelectionOutline& o) { m_selectionOutline = o; }
+
   private:
 	// Maximum instances per mesh type for GPU instancing
 	// Set high enough to handle extreme zoom-out scenarios (observed 34k+ entities)
@@ -61,6 +66,10 @@ class InstancedEntityRenderer {
 	std::vector<Foundation::Vec2>  m_animVertices;
 	std::vector<Foundation::Color> m_animColors;
 	std::vector<uint16_t>		   m_animIndices;
+
+	// The selected entity's outline for this frame (valid=false when nothing
+	// entity-backed is selected). Drawn at its anchorY inside emitSorted.
+	SelectionOutline m_selectionOutline;
 
 	/// Get or create GPU mesh handle for a template
 	Renderer::InstancedMeshHandle& getOrCreateMeshHandle(

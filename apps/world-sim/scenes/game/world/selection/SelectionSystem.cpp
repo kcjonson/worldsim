@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <limits>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -182,6 +183,32 @@ namespace {
 			},
 			sel
 		);
+	}
+
+	// Map each template-local silhouette ring through `t` into world meters and append
+	// it as a closed loop, tracking the max world-Y over every appended vertex (the
+	// silhouette's ground-contact, used as the outline's depth key). Degenerate rings
+	// (<2 verts) are skipped so worldRings stays free of undrawable entries.
+	void appendWorldRings(
+		const std::vector<geometry::Ring>&			 rings,
+		const engine::world::AssetInstanceTransform& t,
+		std::vector<std::vector<Foundation::Vec2>>&	 out,
+		float&										 maxY
+	) {
+		for (const auto& ring : rings) {
+			if (ring.size() < 2) {
+				continue;
+			}
+			std::vector<Foundation::Vec2> worldRing;
+			worldRing.reserve(ring.size());
+			for (const geometry::Vec2i64& mm : ring) {
+				const Foundation::Vec2 dq = geometry::dequantize(mm);
+				const glm::vec2		   w = t.toWorld({dq.x, dq.y});
+				worldRing.push_back(Foundation::Vec2{w.x, w.y});
+				maxY = std::max(maxY, w.y);
+			}
+			out.push_back(std::move(worldRing));
+		}
 	}
 } // namespace
 
@@ -601,123 +628,99 @@ void SelectionSystem::renderIndicator(int viewportW, int viewportH) {
 		return;
 	}
 
-	// World entities: they carry no id, so re-resolve the live PlacedEntity by defName +
-	// position and stroke its silhouette at the static/baked transform. A felled or
-	// unloaded entity resolves to nullptr and draws nothing.
-	if (auto* worldSel = std::get_if<WorldEntitySelection>(&selection)) {
-		const engine::assets::PlacedEntity* pe = resolveWorldEntity(*worldSel);
-		if (pe != nullptr) {
-			const auto* sil = engine::assets::AssetRegistry::Get().getSilhouette(pe->defName);
-			if (sil != nullptr && sil->valid) {
-				strokeSilhouette(
-					sil->rings, engine::world::staticInstanceTransform(pe->position, pe->rotation, pe->scale), viewportW, viewportH
-				);
-			}
-		}
-		return;
-	}
-
-	// Colonists, crafting stations, and placed furniture all outline the dynamic
-	// (bbox-centered) silhouette of their Appearance sprite; packaged furniture instead
-	// outlines its crate + item at the packaged layout. Everything resolves from the ECS.
-	ecs::EntityID entityId = 0;
-	bool		  isFurniture = false;
-	if (auto* colonistSel = std::get_if<ColonistSelection>(&selection)) {
-		entityId = colonistSel->entityId;
-	} else if (auto* stationSel = std::get_if<CraftingStationSelection>(&selection)) {
-		entityId = stationSel->entityId;
-	} else if (auto* furnitureSel = std::get_if<FurnitureSelection>(&selection)) {
-		entityId = furnitureSel->entityId;
-		isFurniture = true;
-	}
-	if (entityId == 0) {
-		return;
-	}
-
-	auto* pos = ecsWorld->getComponent<ecs::Position>(entityId);
-	auto* appearance = ecsWorld->getComponent<ecs::Appearance>(entityId);
-	if (pos == nullptr || appearance == nullptr) {
-		return;
-	}
-
-	auto& assetRegistry = engine::assets::AssetRegistry::Get();
-
-	// Packaged furniture: stroke the crate + item at their layout transforms (both drawn
-	// as position-as-origin instances, matching the render path).
-	if (isFurniture && ecsWorld->getComponent<ecs::Packaged>(entityId) != nullptr) {
-		float itemWorldHeight = 0.6F; // matches DynamicEntityRenderSystem's fallback
-		if (const auto* itemDef = assetRegistry.getDefinition(appearance->defName)) {
-			itemWorldHeight = itemDef->worldHeight;
-		}
-		const engine::world::PackagedLayout pl = engine::world::packagedLayout(
-			pos->value, appearance->defName, appearance->scale, appearance->colorTint, itemWorldHeight
-		);
-		for (const engine::assets::PlacedEntity* sub : {&pl.crate, &pl.item}) {
-			const auto* sil = assetRegistry.getSilhouette(sub->defName);
-			if (sil != nullptr && sil->valid) {
-				strokeSilhouette(
-					sil->rings, engine::world::staticInstanceTransform(sub->position, sub->rotation, sub->scale), viewportW, viewportH
-				);
-			}
-		}
-		return;
-	}
-
-	// Non-packaged dynamic entity: the facing sprite's silhouette at the dynamic transform.
-	const std::string defName = dynamicRenderDefName(ecsWorld, entityId, appearance->defName);
-	const auto*		  sil = assetRegistry.getSilhouette(defName);
-	if (sil != nullptr && sil->valid) {
-		strokeSilhouette(
-			sil->rings, engine::world::dynamicInstanceTransform(pos->value, appearance->scale, sil->boundsCenterMeters), viewportW, viewportH
-		);
-	}
+	// Entity-backed selections (world entities, colonists, stations, furniture,
+	// packaged items) no longer draw here: their outlines are built by
+	// buildEntityOutline and injected into the entity depth-sort render pass so a
+	// nearer entity correctly occludes a farther selection's outline.
 }
 
-void SelectionSystem::strokeSilhouette(
-	const std::vector<geometry::Ring>& rings, const engine::world::AssetInstanceTransform& t, int viewportW, int viewportH
-) {
-	if (camera == nullptr) {
-		return;
+engine::world::SelectionOutline SelectionSystem::buildEntityOutline() const {
+	engine::world::SelectionOutline outline;
+	if (ecsWorld == nullptr) {
+		return outline;
 	}
-	constexpr Foundation::Color kGold(1.0F, 0.85F, 0.0F, 0.9F);
-	for (const auto& ring : rings) {
-		const std::size_t n = ring.size();
-		if (n < 2) {
-			continue;
+
+	auto&		assetRegistry = engine::assets::AssetRegistry::Get();
+	const float kNoY = -std::numeric_limits<float>::max();
+	float		maxY = kNoY;
+
+	// World entities: re-resolve the live PlacedEntity by defName + position and
+	// build its silhouette at the static/baked transform. A felled or unloaded
+	// entity resolves to nullptr -> invalid outline (draws nothing).
+	if (const auto* worldSel = std::get_if<WorldEntitySelection>(&selection)) {
+		const engine::assets::PlacedEntity* pe = resolveWorldEntity(*worldSel);
+		if (pe == nullptr) {
+			return outline;
 		}
-		for (std::size_t i = 0; i < n; ++i) {
-			const Foundation::Vec2 la = geometry::dequantize(ring[i]);
-			const Foundation::Vec2 lb = geometry::dequantize(ring[(i + 1) % n]);
-			const glm::vec2		   wa = t.toWorld(glm::vec2{la.x, la.y});
-			const glm::vec2		   wb = t.toWorld(glm::vec2{lb.x, lb.y});
-			const auto			   sa = camera->worldToScreen(wa.x, wa.y, viewportW, viewportH, kPixelsPerMeter);
-			const auto			   sb = camera->worldToScreen(wb.x, wb.y, viewportW, viewportH, kPixelsPerMeter);
-			Renderer::Primitives::drawLine(
-				Renderer::Primitives::LineArgs{
-					.start = Foundation::Vec2{sa.x, sa.y},
-					.end = Foundation::Vec2{sb.x, sb.y},
-					.style =
-						Foundation::LineStyle{
-							.color = kGold,
-							.width = kOutlineWidthPx,
-						},
-					.id = "silhouette-selection-outline",
-					.zIndex = 100,
-				}
+		const auto* sil = assetRegistry.getSilhouette(pe->defName);
+		if (sil == nullptr || !sil->valid) {
+			return outline;
+		}
+		appendWorldRings(
+			sil->rings, engine::world::staticInstanceTransform(pe->position, pe->rotation, pe->scale), outline.worldRings, maxY
+		);
+	} else {
+		// Colonists, crafting stations, and placed furniture all resolve from the ECS.
+		ecs::EntityID entityId = 0;
+		bool		  isFurniture = false;
+		if (const auto* colonistSel = std::get_if<ColonistSelection>(&selection)) {
+			entityId = colonistSel->entityId;
+		} else if (const auto* stationSel = std::get_if<CraftingStationSelection>(&selection)) {
+			entityId = stationSel->entityId;
+		} else if (const auto* furnitureSel = std::get_if<FurnitureSelection>(&selection)) {
+			entityId = furnitureSel->entityId;
+			isFurniture = true;
+		}
+		if (entityId == 0) {
+			return outline; // construction / room / no selection: not entity-backed
+		}
+
+		const auto* pos = ecsWorld->getComponent<ecs::Position>(entityId);
+		const auto* appearance = ecsWorld->getComponent<ecs::Appearance>(entityId);
+		if (pos == nullptr || appearance == nullptr) {
+			return outline;
+		}
+
+		// Packaged furniture: crate + item at their layout transforms (both drawn as
+		// position-as-origin instances, matching the render path; sub-entities are NOT
+		// re-centered).
+		if (isFurniture && ecsWorld->getComponent<ecs::Packaged>(entityId) != nullptr) {
+			float itemWorldHeight = 0.6F; // matches DynamicEntityRenderSystem's fallback
+			if (const auto* itemDef = assetRegistry.getDefinition(appearance->defName)) {
+				itemWorldHeight = itemDef->worldHeight;
+			}
+			const engine::world::PackagedLayout pl = engine::world::packagedLayout(
+				pos->value, appearance->defName, appearance->scale, appearance->colorTint, itemWorldHeight
 			);
-			// Filled dot at each vertex for round joins (drawLine has butt caps, so sharp
-			// silhouette corners would otherwise show a notch).
-			Renderer::Primitives::drawCircle(
-				Renderer::Primitives::CircleArgs{
-					.center = Foundation::Vec2{sa.x, sa.y},
-					.radius = kOutlineWidthPx * 0.5F,
-					.style = Foundation::CircleStyle{.fill = kGold},
-					.id = "silhouette-selection-joint",
-					.zIndex = 100,
+			for (const engine::assets::PlacedEntity* sub : {&pl.crate, &pl.item}) {
+				const auto* sil = assetRegistry.getSilhouette(sub->defName);
+				if (sil != nullptr && sil->valid) {
+					appendWorldRings(
+						sil->rings, engine::world::staticInstanceTransform(sub->position, sub->rotation, sub->scale), outline.worldRings, maxY
+					);
 				}
+			}
+		} else {
+			// Non-packaged dynamic entity: the facing sprite's silhouette at the dynamic
+			// (bbox-centered) transform.
+			const std::string defName = dynamicRenderDefName(ecsWorld, entityId, appearance->defName);
+			const auto*		  sil = assetRegistry.getSilhouette(defName);
+			if (sil == nullptr || !sil->valid) {
+				return outline;
+			}
+			appendWorldRings(
+				sil->rings, engine::world::dynamicInstanceTransform(pos->value, appearance->scale, sil->boundsCenterMeters), outline.worldRings, maxY
 			);
 		}
 	}
+
+	outline.valid = !outline.worldRings.empty();
+	if (outline.valid) {
+		outline.anchorY = maxY;			 // max world-Y over all verts = ground-contact depth key
+		outline.rgba = {1.0F, 0.85F, 0.0F, 0.9F};
+		outline.widthPx = kOutlineWidthPx;
+	}
+	return outline;
 }
 
 const engine::assets::PlacedEntity* SelectionSystem::resolveWorldEntity(const WorldEntitySelection& sel) const {

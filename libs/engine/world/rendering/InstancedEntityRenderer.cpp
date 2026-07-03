@@ -140,7 +140,49 @@ namespace engine::world {
 			animVertexBase = 0;
 		};
 
+		// Stroke the selected entity's outline (world-space rings -> screen) and flush
+		// it now, so it sits at this depth in the stream and nearer entities occlude it.
+		auto drawOutline = [&]() {
+			if (!m_selectionOutline.valid) {
+				return;
+			}
+			const auto&				so = m_selectionOutline;
+			const Foundation::Color col{so.rgba.r, so.rgba.g, so.rgba.b, so.rgba.a};
+			for (const auto& ring : so.worldRings) {
+				const size_t n = ring.size();
+				if (n < 2) {
+					continue;
+				}
+				for (size_t i = 0; i < n; ++i) {
+					const Foundation::Vec2 a =
+						ctx.camera.worldToScreen(ring[i].x, ring[i].y, ctx.viewportWidth, ctx.viewportHeight, ctx.pixelsPerMeter);
+					const Foundation::Vec2 b = ctx.camera.worldToScreen(
+						ring[(i + 1) % n].x, ring[(i + 1) % n].y, ctx.viewportWidth, ctx.viewportHeight, ctx.pixelsPerMeter
+					);
+					Renderer::Primitives::drawLine(Renderer::Primitives::LineArgs{
+						.start = a, .end = b, .style = {.color = col, .width = so.widthPx}, .id = "sel-outline", .zIndex = 0
+					});
+					// Filled dot per vertex for round joins (drawLine has butt caps).
+					Renderer::Primitives::drawCircle(Renderer::Primitives::CircleArgs{
+						.center = a, .radius = so.widthPx * 0.5F, .style = {.fill = col}, .id = "sel-join", .zIndex = 0
+					});
+				}
+			}
+			batchRenderer->flush(); // draw at this sorted position
+		};
+
+		bool outlineInjected = false;
 		for (const auto& item : items) {
+			// Inject the outline right before the first entity strictly nearer than it,
+			// so everything at-or-behind its depth draws first (and it occludes them),
+			// and everything nearer draws after (occluding it).
+			if (!outlineInjected && m_selectionOutline.valid && item.anchorY > m_selectionOutline.anchorY) {
+				flushRun();
+				flushAnim();
+				drawOutline();
+				outlineInjected = true;
+			}
+
 			const assets::PlacedEntity& entity = *item.entity;
 			const auto*					templateMesh = m_templateCache.get(entity.defName);
 			if (templateMesh == nullptr) {
@@ -178,6 +220,9 @@ namespace engine::world {
 
 		flushRun();
 		flushAnim();
+		if (!outlineInjected) {
+			drawOutline(); // frontmost selection: draw last, on top of everything
+		}
 	}
 
 } // namespace engine::world
