@@ -1278,61 +1278,6 @@ namespace engine::assets {
 		return &templateCache[defName];
 	}
 
-	std::vector<geometry::Ring> AssetRegistry::buildSilhouetteContours(const std::string& defName) {
-		std::vector<geometry::Ring> rings;
-		const AssetDefinition*		def = getDefinition(defName);
-		if (def == nullptr) {
-			return rings;
-		}
-
-		auto addPath = [&](const std::vector<Foundation::Vec2>& verts, float scale) {
-			if (verts.size() < 3) {
-				return;
-			}
-			geometry::Ring r;
-			r.reserve(verts.size());
-			for (const auto& v : verts) {
-				r.push_back(geometry::quantize({v.x * scale, v.y * scale}));
-			}
-			rings.push_back(std::move(r));
-		};
-
-		if (def->assetType == AssetType::Simple) {
-			if (def->svgPath.empty()) {
-				return rings;
-			}
-			const std::string					  resolvedSvgPath = def->resolvePath(def->svgPath).string();
-			std::vector<renderer::LoadedSVGShape> shapes;
-			if (!renderer::loadSVG(resolvedSvgPath, kSvgCurveTolerance, shapes)) {
-				return rings;
-			}
-			// Match the template frame: SVG paths are scaled by worldHeight/svgHeight and
-			// left uncentered (getTemplate scales, DynamicEntityRenderSystem centers at runtime).
-			// Only filled shapes contribute — stroke-only shapes render thin bands, not a body,
-			// and a stroke centerline is not a fill ring.
-			const SvgMeterFrame frame = computeSvgMeterFrame(shapes, def->worldHeight);
-			const float			scale = frame.valid ? frame.scaleFactor : 1.0F;
-			for (const auto& shape : shapes) {
-				if (!shape.hasFill) {
-					continue;
-				}
-				for (const auto& path : shape.paths) {
-					addPath(path.vertices, scale);
-				}
-			}
-		} else {
-			GeneratedAsset asset;
-			if (!generateAsset(defName, 42, asset)) { // fixed template seed, matches getTemplate
-				return rings;
-			}
-			// Procedural GeneratedPath vertices are already in template-local meters.
-			for (const auto& path : asset.paths) {
-				addPath(path.vertices, 1.0F);
-			}
-		}
-		return rings;
-	}
-
 	const AssetSilhouette* AssetRegistry::getSilhouette(const std::string& defName) {
 		{
 			std::lock_guard<std::mutex> lk(m_silhouetteCacheMutex);
@@ -1342,33 +1287,36 @@ namespace engine::assets {
 			}
 		}
 
-		// Compute outside the silhouette lock (the raster flood-fill can be heavy),
-		// mirroring getMotion. getTemplate guards itself with a separate mutex.
+		// Compute outside the silhouette lock (rasterization can be heavy), mirroring
+		// getMotion. getTemplate guards itself with a separate mutex.
+		constexpr std::int64_t kSilhouetteResolution	 = 256; // pixels along the longest side
+		constexpr std::int64_t kHitRegionCloseRadiusPx = 4;	// bridge disjoint-blob gaps (whole-clump)
+
 		AssetSilhouette sil;
 
-		// Bounds centre in the template frame == the dynamic render path's -centerOffset,
-		// so the shared instance transform, the outline, and the hit-test never drift.
 		const renderer::TessellatedMesh* tmpl = getTemplate(defName);
-		if (tmpl != nullptr) {
+		if (tmpl != nullptr && !tmpl->vertices.empty() && !tmpl->indices.empty()) {
+			// Bounds centre in the template frame == the dynamic render path's -centerOffset,
+			// so the shared instance transform, outline, and hit-test never drift.
 			const Foundation::Rect b = renderer::computeBounds(*tmpl);
 			sil.boundsCenterMeters	 = {b.x + b.width * 0.5F, b.y + b.height * 0.5F};
+
+			// Rasterize the ACTUAL rendered geometry: expand the tessellated triangles into
+			// the template-local mm frame. This captures fills AND stroke bands (e.g. a reed's
+			// stroke stem, which a fill-contour silhouette would miss), so the outline hugs
+			// exactly what is drawn and the reed stays one connected shape.
+			std::vector<geometry::Vec2i64> triVerts;
+			triVerts.reserve(tmpl->indices.size());
+			for (const auto idx : tmpl->indices) {
+				const Foundation::Vec2& v = tmpl->vertices[idx];
+				triVerts.push_back(geometry::quantize({v.x, v.y}));
+			}
+			sil.rings	  = geometry::silhouetteOfTriangles(triVerts, kSilhouetteResolution, 0);
+			sil.hitRegion = geometry::silhouetteOfTriangles(triVerts, kSilhouetteResolution, kHitRegionCloseRadiusPx);
 		}
 
-		sil.rings = geometry::silhouetteOfRings(buildSilhouetteContours(defName));
-
-		// Stroke-only / 0-fill assets (e.g. PlantFiber) yield no contours; hug the mesh
-		// AABB rather than drawing nothing, and flag it so the asset-manager surfaces the gap.
-		if (sil.rings.empty() && tmpl != nullptr) {
-			const Foundation::Rect b = renderer::computeBounds(*tmpl);
-			if (b.width > 0.0F && b.height > 0.0F) {
-				sil.rings.push_back({
-					geometry::quantize({b.x, b.y}),
-					geometry::quantize({b.x + b.width, b.y}),
-					geometry::quantize({b.x + b.width, b.y + b.height}),
-					geometry::quantize({b.x, b.y + b.height}),
-				});
-				LOG_WARNING(Engine, "Silhouette: %s has no fill contours; fell back to mesh-bounds rect", defName.c_str());
-			}
+		if (sil.hitRegion.empty()) {
+			sil.hitRegion = sil.rings; // single-blob / degenerate: the outline is the hit region
 		}
 		sil.valid = !sil.rings.empty();
 

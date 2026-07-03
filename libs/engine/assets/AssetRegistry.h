@@ -33,14 +33,19 @@ namespace engine::assets {
 	};
 
 	/// Cached per-defName selection silhouette: the filled outer outline of the
-	/// asset's rendered fill (holes filled, disjoint blobs kept as separate rings),
-	/// in the template-local (scaled, uncentered) frame in integer millimeters.
-	/// Drives the thick selection outline and the precise hit-test; reusable later
-	/// for shadows. `boundsCenterMeters` is the template mesh bbox centre in the
-	/// same frame — it equals the dynamic render path's -centerOffset, stored so
-	/// outline and hit-test share the render transform and can't drift.
+	/// asset's RENDERED footprint (rasterized from the tessellated mesh triangles, so
+	/// it captures fills AND stroke bands — e.g. a reed's stroke stem — exactly what is
+	/// drawn), in the template-local (scaled, uncentered) frame in integer millimeters.
+	/// `rings` is the crisp outline (holes filled, disjoint blobs kept separate) used for
+	/// the selection outline and later shadows; `hitRegion` is the same closed with a
+	/// small morphological radius so gaps between disjoint blobs are clickable
+	/// (whole-clump) and narrow concavities forgive slightly — used for hit-testing.
+	/// `boundsCenterMeters` is the template mesh bbox centre in the same frame — it
+	/// equals the dynamic render path's -centerOffset, stored so outline and hit-test
+	/// share the render transform and can't drift.
 	struct AssetSilhouette {
 		std::vector<geometry::Ring> rings;
+		std::vector<geometry::Ring> hitRegion;
 		glm::vec2					boundsCenterMeters{0.0F, 0.0F};
 		bool						valid = false;
 	};
@@ -231,15 +236,10 @@ namespace engine::assets {
 		mutable std::mutex						   m_motionCacheMutex;
 
 		// Lazily-computed selection silhouette per def. Guarded separately; the raster
-		// flood-fill runs off-lock (like getMotion), the cache lock is held only to
-		// check/insert. Populated from the asset's fill contours in the template frame.
+		// rasterize/flood-fill runs off-lock (like getMotion), the cache lock is held only
+		// to check/insert. Rasterized from the template mesh triangles.
 		std::unordered_map<std::string, AssetSilhouette> m_silhouetteCache;
 		mutable std::mutex								 m_silhouetteCacheMutex;
-
-		// Source the asset's fill contour rings in the template-local (scaled,
-		// uncentered) frame, in mm — SVG paths scaled by the SvgMeterFrame, procedural
-		// GeneratedPath vertices as-is. Input to geometry::silhouetteOfRings.
-		std::vector<geometry::Ring> buildSilhouetteContours(const std::string& defName);
 
 		// getTemplate lazily tessellates into templateCache and is called from
 		// chunk worker threads (entity mesh baking) as well as the render thread

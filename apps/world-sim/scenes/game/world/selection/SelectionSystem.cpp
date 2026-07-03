@@ -90,7 +90,9 @@ namespace {
 	) {
 		const glm::vec2			local = t.toLocal(worldPos);
 		const geometry::Vec2i64 localMm = geometry::quantize(Foundation::Vec2{local.x, local.y});
-		for (const auto& ring : sil.rings) {
+		// Hit-test against the closed hitRegion (whole-clump: gaps between disjoint
+		// blobs are clickable), not the crisp outline rings.
+		for (const auto& ring : sil.hitRegion) {
 			if (geometry::pointInPolygon(localMm, ring) == geometry::PointInPolygon::Inside) {
 				return true;
 			}

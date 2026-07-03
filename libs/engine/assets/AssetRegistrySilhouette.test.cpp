@@ -117,10 +117,10 @@ TEST(AssetRegistrySilhouette, EnclosesTessellatedFill) {
 	reg.clear();
 }
 
-// A stroke-only asset (no fill contours) falls back to a 4-vertex mesh-bounds
-// rectangle rather than drawing nothing. PlantFiber is the canonical case
-// (plant_fiber.svg is entirely fill="none").
-TEST(AssetRegistrySilhouette, StrokeOnlyFallsBackToBoundsRect) {
+// A stroke-only asset (SVG entirely fill="none", e.g. PlantFiber) still gets a real
+// silhouette: rasterizing the tessellated STROKE BANDS captures the drawn strands, so
+// no bounds-rect fallback is needed. Guards that stroke geometry reaches the silhouette.
+TEST(AssetRegistrySilhouette, StrokeOnlyGetsRealSilhouette) {
 	auto& reg = AssetRegistry::Get();
 	reg.clear();
 	if (!loadWorld(reg)) {
@@ -135,8 +135,8 @@ TEST(AssetRegistrySilhouette, StrokeOnlyFallsBackToBoundsRect) {
 	const AssetSilhouette* sil = reg.getSilhouette("PlantFiber");
 	ASSERT_NE(sil, nullptr);
 	EXPECT_TRUE(sil->valid);
-	ASSERT_EQ(sil->rings.size(), 1U);
-	EXPECT_EQ(sil->rings[0].size(), 4U); // axis-aligned bounds rectangle
+	EXPECT_FALSE(sil->rings.empty());
+	EXPECT_FALSE(sil->hitRegion.empty());
 
 	reg.clear();
 }
