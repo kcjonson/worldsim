@@ -310,3 +310,186 @@ TEST(LayoutContainerTest, InvisibleChildrenAreSkipped) {
 	EXPECT_FLOAT_EQ(child1->position.y, 0.0F);
 	EXPECT_FLOAT_EQ(child3->position.y, 30.0F);  // child1 height only
 }
+
+// ============================================================================
+// Characterization Tests - pin current (buggy) engine behavior
+// ============================================================================
+
+// Component that counts layout() calls, to observe propagation (or its absence).
+class LayoutCountingComponent : public Component {
+  public:
+	LayoutCountingComponent(float width, float height) { size = {width, height}; }
+
+	void render() override {}
+
+	void layout(const Foundation::Rect& newBounds) override {
+		layoutCallCount++;
+		Component::layout(newBounds);
+	}
+
+	int layoutCallCount{0};
+};
+
+// CHARACTERIZATION: documents current behavior, will be updated when the engine is fixed (A2)
+// layout() adopts the bounds position but ignores the parent-assigned size:
+// the container keeps its constructed size and never resolves against bounds.
+TEST(LayoutContainerCharacterization, LayoutAdoptsBoundsPositionButIgnoresSize) {
+	LayoutContainer layout(LayoutContainer::Args{
+		.position = {0.0F, 0.0F},
+		.size = {100.0F, 50.0F}});
+
+	layout.layout(Foundation::Rect{25.0F, 35.0F, 400.0F, 300.0F});
+
+	EXPECT_FLOAT_EQ(layout.position.x, 25.0F);
+	EXPECT_FLOAT_EQ(layout.position.y, 35.0F);
+	// Size unchanged: bounds.width/height were dropped on the floor
+	EXPECT_FLOAT_EQ(layout.getWidth(), 100.0F);
+	EXPECT_FLOAT_EQ(layout.getHeight(), 50.0F);
+}
+
+// CHARACTERIZATION: documents current behavior, will be updated when the engine is fixed (A2)
+// Even after layout() hands the container a 400px-wide bounds, alignment math
+// still uses the constructed size (0 = Hug), so a centered child lands at
+// negative X instead of being centered in the assigned bounds.
+TEST(LayoutContainerCharacterization, ParentAssignedSizeNeverReachesAlignmentMath) {
+	LayoutContainer layout(LayoutContainer::Args{
+		.position = {0.0F, 0.0F},
+		.size = {0.0F, 0.0F},
+		.direction = Direction::Vertical,
+		.hAlign = HAlign::Center});
+
+	auto handle = layout.addChild(MockComponent(50.0F, 30.0F));
+	layout.layout(Foundation::Rect{0.0F, 0.0F, 400.0F, 300.0F});
+	layout.render();
+
+	auto* child = layout.getChild<MockComponent>(handle);
+	ASSERT_NE(child, nullptr);
+
+	// Centered against contentWidth=0, not the 400px bounds: (0 - 50) / 2
+	EXPECT_FLOAT_EQ(child->position.x, -25.0F);
+}
+
+// CHARACTERIZATION: documents current behavior, will be updated when the engine is fixed (A2)
+// Hug sizing (size == 0) + Center alignment: contentWidth is 0, so the child
+// is pushed to negative X relative to the container instead of hugging.
+TEST(LayoutContainerCharacterization, HugWithCenterAlignProducesNegativeChildX) {
+	LayoutContainer layout(LayoutContainer::Args{
+		.position = {100.0F, 0.0F},
+		.size = {0.0F, 0.0F},
+		.direction = Direction::Vertical,
+		.hAlign = HAlign::Center});
+
+	auto handle = layout.addChild(MockComponent(50.0F, 30.0F));
+	layout.render();
+
+	auto* child = layout.getChild<MockComponent>(handle);
+	ASSERT_NE(child, nullptr);
+
+	// 100 + (0 - 50) * 0.5 = 75: escapes the container's left edge by 25px
+	EXPECT_FLOAT_EQ(child->position.x, 75.0F);
+}
+
+// CHARACTERIZATION: documents current behavior, will be updated when the engine is fixed (A2)
+// Hug sizing + Right alignment: child lands a full child-width left of the container.
+TEST(LayoutContainerCharacterization, HugWithRightAlignProducesNegativeChildX) {
+	LayoutContainer layout(LayoutContainer::Args{
+		.position = {100.0F, 0.0F},
+		.size = {0.0F, 0.0F},
+		.direction = Direction::Vertical,
+		.hAlign = HAlign::Right});
+
+	auto handle = layout.addChild(MockComponent(50.0F, 30.0F));
+	layout.render();
+
+	auto* child = layout.getChild<MockComponent>(handle);
+	ASSERT_NE(child, nullptr);
+
+	// 100 + 0 - 50 = 50
+	EXPECT_FLOAT_EQ(child->position.x, 50.0F);
+}
+
+// CHARACTERIZATION: documents current behavior, will be updated when the engine is fixed (A2)
+// Hug sizing + Center vAlign in a horizontal layout: same defect on the Y axis.
+TEST(LayoutContainerCharacterization, HugWithCenterVAlignProducesNegativeChildY) {
+	LayoutContainer layout(LayoutContainer::Args{
+		.position = {0.0F, 100.0F},
+		.size = {0.0F, 0.0F},
+		.direction = Direction::Horizontal,
+		.vAlign = VAlign::Center});
+
+	auto handle = layout.addChild(MockComponent(50.0F, 30.0F));
+	layout.render();
+
+	auto* child = layout.getChild<MockComponent>(handle);
+	ASSERT_NE(child, nullptr);
+
+	// 100 + (0 - 30) * 0.5 = 85
+	EXPECT_FLOAT_EQ(child->position.y, 85.0F);
+}
+
+// CHARACTERIZATION: documents current behavior, will be updated when the engine is fixed (A2)
+// Nested LayoutContainers are positioned and dirty-marked (via dynamic_cast in
+// computeLayout) but never receive a resolved size: an inner Hug container
+// stays Hug regardless of the outer container's cross-axis width.
+TEST(LayoutContainerCharacterization, NestedContainerIsPositionedButNeverSized) {
+	LayoutContainer outer(LayoutContainer::Args{
+		.position = {10.0F, 20.0F},
+		.size = {300.0F, 200.0F},
+		.direction = Direction::Vertical,
+		.hAlign = HAlign::Left});
+
+	LayoutContainer inner(LayoutContainer::Args{
+		.size = {0.0F, 0.0F},
+		.direction = Direction::Vertical});
+	auto innerHandle = outer.addChild(std::move(inner));
+
+	auto* innerPtr = outer.getChild<LayoutContainer>(innerHandle);
+	ASSERT_NE(innerPtr, nullptr);
+	auto childHandle = innerPtr->addChild(MockComponent(50.0F, 30.0F));
+
+	outer.render();
+
+	// Inner adopted the outer's content position...
+	EXPECT_FLOAT_EQ(innerPtr->position.x, 10.0F);
+	EXPECT_FLOAT_EQ(innerPtr->position.y, 20.0F);
+	// ...but was never given the outer's 300px width: it still hugs its child
+	EXPECT_FLOAT_EQ(innerPtr->getWidth(), 50.0F);
+	EXPECT_FLOAT_EQ(innerPtr->getHeight(), 30.0F);
+
+	// The inner container did recompute (dirty flag propagated), placing its child
+	auto* innerChild = innerPtr->getChild<MockComponent>(childHandle);
+	ASSERT_NE(innerChild, nullptr);
+	EXPECT_FLOAT_EQ(innerChild->position.x, 10.0F);
+	EXPECT_FLOAT_EQ(innerChild->position.y, 20.0F);
+}
+
+// CHARACTERIZATION: documents current behavior, will be updated when the engine is fixed (A2)
+// computeLayout never calls layout() on children: plain Components get
+// setPosition() only, so a child's own layout pass never runs.
+TEST(LayoutContainerCharacterization, ChildLayoutIsNeverCalled) {
+	LayoutContainer layout(LayoutContainer::Args{
+		.position = {0.0F, 0.0F},
+		.size = {200.0F, 200.0F},
+		.direction = Direction::Vertical});
+
+	auto handle = layout.addChild(LayoutCountingComponent(50.0F, 30.0F));
+	layout.render();
+
+	auto* child = layout.getChild<LayoutCountingComponent>(handle);
+	ASSERT_NE(child, nullptr);
+	EXPECT_EQ(child->layoutCallCount, 0);
+}
+
+// CHARACTERIZATION: documents current behavior, will be updated when the engine is fixed (A2)
+// An explicit size does not cap the reported size: getWidth/getHeight add
+// margin on top of the explicit size, so a 100x50 container with margin 10
+// reports 120x70 to its parent.
+TEST(LayoutContainerCharacterization, ExplicitSizePlusMarginInflatesReportedSize) {
+	LayoutContainer layout(LayoutContainer::Args{
+		.position = {0.0F, 0.0F},
+		.size = {100.0F, 50.0F},
+		.margin = 10.0F});
+
+	EXPECT_FLOAT_EQ(layout.getWidth(), 120.0F);
+	EXPECT_FLOAT_EQ(layout.getHeight(), 70.0F);
+}
