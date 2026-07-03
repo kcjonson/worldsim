@@ -68,7 +68,7 @@ if(BUILD_TESTING)
                 GTest::gtest_main
         )
         if(MSVC)
-            target_compile_options(assets-tests PRIVATE /Od /Zi)
+            target_compile_options(assets-tests PRIVATE /Od)
         else()
             target_compile_options(assets-tests PRIVATE -O0 -g)
         endif()

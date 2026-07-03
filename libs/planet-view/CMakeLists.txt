@@ -74,11 +74,18 @@ if(BUILD_TESTING)
                 GTest::gtest_main
         )
         if(MSVC)
-            target_compile_options(planet-view-tests PRIVATE /Od /Zi)
+            target_compile_options(planet-view-tests PRIVATE /Od)
         else()
             target_compile_options(planet-view-tests PRIVATE -O0 -g)
         endif()
         add_test(NAME planet-view-tests COMMAND planet-view-tests)
+        # The PlanetColorizerBake tests run full PlanetGenerator pipelines whose
+        # internal pool is hardware_concurrency - 1. Declare that footprint so
+        # parallel ctest doesn't co-schedule other pool-spawning exes and starve
+        # the generation past its deadline (bit us on the 4-core CI runners).
+        # TIMEOUT: 4 generate()-calling tests x 300 s worst-case deadline = 1200 s
+        # hang budget; 1500 keeps margin over it. Re-size if tests add generations.
+        set_tests_properties(planet-view-tests PROPERTIES PROCESSORS 3 TIMEOUT 1500)
     endif()
 
     if(PLANET_VIEW_BENCHMARK_SOURCES)

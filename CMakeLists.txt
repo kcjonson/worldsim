@@ -156,11 +156,32 @@ add_custom_target(quickstart-planet
 add_dependencies(quickstart-planet world-sim)
 
 # Developer client (web app)
-# Multi-config generators (Visual Studio) have no CMAKE_BUILD_TYPE at configure
-# time, so Windows/VS users opt in with -DBUILD_DEVELOPER_CLIENT=ON; single-config
-# Debug/Development builds keep auto-building it.
-option(BUILD_DEVELOPER_CLIENT "Build the React developer-client web app (requires npm)" OFF)
-if(BUILD_DEVELOPER_CLIENT OR CMAKE_BUILD_TYPE STREQUAL "Development" OR CMAKE_BUILD_TYPE STREQUAL "Debug")
+# Tri-state: AUTO builds it in single-config Debug/Development (multi-config
+# generators have no CMAKE_BUILD_TYPE, so AUTO never fires there — Windows users
+# opt in with -DBUILD_DEVELOPER_CLIENT=ON). OFF forces it off regardless of
+# config; CI uses that to keep npm out of single-config Debug test jobs.
+set(BUILD_DEVELOPER_CLIENT AUTO CACHE STRING
+    "Build the React developer-client web app: AUTO, ON, or OFF (requires npm)")
+set_property(CACHE BUILD_DEVELOPER_CLIENT PROPERTY STRINGS AUTO ON OFF)
+# Migrate build dirs configured before the tri-state: option() left a BOOL cache
+# entry whose OFF default still auto-built in single-config Debug, so a surviving
+# legacy OFF must become AUTO (same semantics), not a forced-off.
+get_property(_bdc_legacy_type CACHE BUILD_DEVELOPER_CLIENT PROPERTY TYPE)
+if(_bdc_legacy_type STREQUAL "BOOL")
+    if(BUILD_DEVELOPER_CLIENT)
+        set(BUILD_DEVELOPER_CLIENT ON CACHE STRING
+            "Build the React developer-client web app: AUTO, ON, or OFF (requires npm)" FORCE)
+    else()
+        set(BUILD_DEVELOPER_CLIENT AUTO CACHE STRING
+            "Build the React developer-client web app: AUTO, ON, or OFF (requires npm)" FORCE)
+    endif()
+endif()
+if(NOT BUILD_DEVELOPER_CLIENT MATCHES "^(AUTO|ON|OFF)$")
+    message(FATAL_ERROR "BUILD_DEVELOPER_CLIENT must be AUTO, ON, or OFF (got '${BUILD_DEVELOPER_CLIENT}')")
+endif()
+if(BUILD_DEVELOPER_CLIENT STREQUAL "ON"
+   OR (BUILD_DEVELOPER_CLIENT STREQUAL "AUTO"
+       AND (CMAKE_BUILD_TYPE STREQUAL "Development" OR CMAKE_BUILD_TYPE STREQUAL "Debug")))
     # Check if npm is available
     find_program(NPM_EXECUTABLE npm)
     if(NPM_EXECUTABLE)

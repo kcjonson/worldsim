@@ -572,6 +572,19 @@ while (running) {
 
 ## In Progress Epics
 
+### Build & Test Speed Improvements
+**Spec/Documentation:** `/docs/technical/build-performance.md`
+**Dependencies:** none
+**Status:** in progress (Specboard epic; baseline measured 2026-07-03: CI gate 49 min, local MSBuild serial-per-project)
+
+**Goal:** Ninja + compiler caching everywhere (ccache local, sccache CI), path-gated heavy worldgen tests, parallel/sharded ctest. Target: ~10-13 min CI gate on non-worldgen PRs; local clean builds in minutes, fresh-worktree builds mostly cache replay.
+
+**Tasks:**
+- [ ] CI overhaul: sccache, Windows CI on Ninja, heavy bucket sharded + moved to path-gated tests-heavy.yml (PR: ci-speed)
+- [ ] Local builds: Ninja Multi-Config + ccache presets, setup-msvc-env.ps1, foundation link hygiene (PR: local-build-speed)
+- [ ] PCH rollout after measuring cache interaction
+- [ ] Measurement week: fill spec Results table, revisit deferred items (lld-link, test selection)
+
 ### Salvage UI Cutover (one unified UI library)
 **Spec/Documentation:** `/docs/design/ui/`
 **Dependencies:** UI Design System (Salvage) — extraction

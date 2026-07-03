@@ -74,7 +74,7 @@ if(BUILD_TESTING)
                 GTest::gtest_main
         )
         if(MSVC)
-            target_compile_options(ui-tests PRIVATE /Od /Zi)
+            target_compile_options(ui-tests PRIVATE /Od)
         else()
             target_compile_options(ui-tests PRIVATE -O0 -g)
         endif()
