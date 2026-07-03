@@ -3,6 +3,7 @@
 #include "font/FontRenderer.h"
 #include "utils/Log.h"
 #include "utils/ResourcePath.h"
+#include <cassert>
 #include <cstdlib>
 #include <fstream>
 #include <memory>
@@ -20,6 +21,30 @@ namespace ui {
 			"Barlow-SDF",		// FontFamily::Barlow
 			"JetBrainsMono-SDF" // FontFamily::JetBrainsMono
 		};
+
+		// The single advance iteration shared by MeasureText and generateGlyphQuads,
+		// so measured width always equals rendered width (alignment depends on it).
+		// Resolves each char with '?' fallback, invokes fn(glyph, penX) at the
+		// glyph's pen position, and returns the final pen x. Letter-spacing sits
+		// between glyphs only (n glyphs -> n-1 gaps).
+		template <typename GlyphMap, typename Fn>
+		float ForEachGlyph(const GlyphMap& glyphs, const std::string& text, float fontSize, float letterSpacing, Fn&& fn) {
+			float penX = 0.0F;
+			for (size_t i = 0; i < text.size(); ++i) {
+				auto it = glyphs.find(text[i]);
+				if (it == glyphs.end()) {
+					it = glyphs.find('?');
+				}
+				if (it != glyphs.end()) {
+					fn(it->second, penX);
+					penX += it->second.advance * fontSize;
+				}
+				if (i + 1 < text.size()) {
+					penX += letterSpacing;
+				}
+			}
+			return penX;
+		}
 	} // namespace
 
 	FontRenderer::FontRenderer() = default;
@@ -88,31 +113,12 @@ namespace ui {
 			return glm::vec2(0.0F, 0.0F);
 		}
 
-		const Atlas&				   atlas = atlasFor(family);
-		const std::map<char, SDFGlyph>& sdfGlyphs = atlas.glyphs;
+		const Atlas& atlas = atlasFor(family);
 
-		constexpr float BASE_FONT_SIZE = 16.0F; // scale=1.0 renders at this size
-		float			totalWidth = 0.0F;
+		constexpr float BASE_FONT_SIZE = 16.0F;			   // scale=1.0 renders at this size
 		float			fontSize = BASE_FONT_SIZE * scale; // Requested rendering size, not atlas size
 
-		for (char c : text) {
-			auto it = sdfGlyphs.find(c);
-			if (it != sdfGlyphs.end()) {
-				totalWidth += it->second.advance * fontSize;
-			} else {
-				// Fallback to '?' if character not found
-				auto fallbackIt = sdfGlyphs.find('?');
-				if (fallbackIt != sdfGlyphs.end()) {
-					totalWidth += fallbackIt->second.advance * fontSize;
-				}
-			}
-		}
-
-		// letter-spacing sits between glyphs only (n glyphs -> n-1 gaps).
-		const auto glyphCount = static_cast<float>(text.size());
-		if (glyphCount > 1.0F) {
-			totalWidth += letterSpacing * (glyphCount - 1.0F);
-		}
+		float totalWidth = ForEachGlyph(atlas.glyphs, text, fontSize, letterSpacing, [](const auto&, float) {});
 
 		// For height, use the line height from atlas metadata
 		float textHeight = atlas.metadata.lineHeight * fontSize;
@@ -156,6 +162,19 @@ namespace ui {
 				return false;
 			}
 
+			for (const char* field : {"distanceRange", "size", "width", "height"}) {
+				if (!json["atlas"].contains(field)) {
+					LOG_ERROR(UI, "SDF metadata missing atlas.%s: %s", field, jsonPath.c_str());
+					return false;
+				}
+			}
+			for (const char* field : {"emSize", "ascender", "descender", "lineHeight"}) {
+				if (!json["metrics"].contains(field)) {
+					LOG_ERROR(UI, "SDF metadata missing metrics.%s: %s", field, jsonPath.c_str());
+					return false;
+				}
+			}
+
 			atlasMetadata.distanceRange = json["atlas"]["distanceRange"].get<float>();
 			atlasMetadata.glyphSize = json["atlas"]["size"].get<int>();
 			atlasMetadata.atlasWidth = json["atlas"]["width"].get<int>();
@@ -181,6 +200,8 @@ namespace ui {
 		std::map<char, SDFGlyph>& sdfGlyphs = atlas.glyphs;
 
 		// Parse glyphs with error handling
+		int missingAtlasBounds = 0;
+		int missingPlaneBounds = 0;
 		try {
 			const auto& glyphsJson = json["glyphs"];
 			for (auto it = glyphsJson.begin(); it != glyphsJson.end(); ++it) {
@@ -199,37 +220,28 @@ namespace ui {
 				SDFGlyph glyph{};
 				glyph.advance = glyphJson["advance"].get<float>();
 
-				// Check if glyph has geometry (not whitespace)
+				// A null "atlas" marks whitespace (advance only). A non-null one
+				// requires atlasBounds (actual glyph content within the cell,
+				// https://github.com/Chlumsky/msdf-atlas-gen/issues/2) and plane
+				// bounds; sampling the full cell instead would bleed neighboring
+				// glyphs, so incomplete glyphs are kept advance-only.
 				if (glyphJson.contains("atlas") && !glyphJson["atlas"].is_null()) {
-					glyph.hasGeometry = true;
-
-					// Atlas UV coordinates (normalized 0-1) - full allocated cell
-					glyph.atlasUVMin.x = glyphJson["atlas"]["x"].get<float>();
-					glyph.atlasUVMin.y = glyphJson["atlas"]["y"].get<float>();
-					glyph.atlasUVMax.x = glyph.atlasUVMin.x + glyphJson["atlas"]["width"].get<float>();
-					glyph.atlasUVMax.y = glyph.atlasUVMin.y + glyphJson["atlas"]["height"].get<float>();
-
-					// Atlas bounds UV coordinates (normalized 0-1) - actual glyph content
-					// Reference: https://github.com/Chlumsky/msdf-atlas-gen/issues/2
-					// atlasBounds defines where the actual rendered glyph is within the cell
-					// Fall back to full cell if atlasBounds not present (older atlas format)
-					if (glyphJson.contains("atlasBounds") && !glyphJson["atlasBounds"].is_null()) {
+					const bool hasAtlasBounds = glyphJson.contains("atlasBounds") && !glyphJson["atlasBounds"].is_null();
+					const bool hasPlaneBounds = glyphJson.contains("plane") && !glyphJson["plane"].is_null();
+					if (hasAtlasBounds && hasPlaneBounds) {
+						glyph.hasGeometry = true;
 						glyph.atlasBoundsMin.x = glyphJson["atlasBounds"]["left"].get<float>();
 						glyph.atlasBoundsMin.y = glyphJson["atlasBounds"]["bottom"].get<float>();
 						glyph.atlasBoundsMax.x = glyphJson["atlasBounds"]["right"].get<float>();
 						glyph.atlasBoundsMax.y = glyphJson["atlasBounds"]["top"].get<float>();
-					} else {
-						// Fallback: use full atlas cell if atlasBounds not available
-						glyph.atlasBoundsMin = glyph.atlasUVMin;
-						glyph.atlasBoundsMax = glyph.atlasUVMax;
-					}
-
-					// Plane bounds (in em units)
-					if (glyphJson.contains("plane") && !glyphJson["plane"].is_null()) {
 						glyph.planeBoundsMin.x = glyphJson["plane"]["left"].get<float>();
 						glyph.planeBoundsMin.y = glyphJson["plane"]["bottom"].get<float>();
 						glyph.planeBoundsMax.x = glyphJson["plane"]["right"].get<float>();
 						glyph.planeBoundsMax.y = glyphJson["plane"]["top"].get<float>();
+					} else {
+						missingAtlasBounds += hasAtlasBounds ? 0 : 1;
+						missingPlaneBounds += hasPlaneBounds ? 0 : 1;
+						glyph.hasGeometry = false;
 					}
 				} else {
 					glyph.hasGeometry = false;
@@ -240,6 +252,17 @@ namespace ui {
 		} catch (const std::exception& e) {
 			LOG_ERROR(UI, "Failed to parse SDF glyphs: %s", e.what());
 			return false;
+		}
+
+		if (missingAtlasBounds > 0 || missingPlaneBounds > 0) {
+			LOG_WARNING(
+				UI,
+				"SDF atlas %s: %d glyphs missing atlasBounds, %d missing plane bounds (rendered as whitespace)",
+				jsonPath.c_str(),
+				missingAtlasBounds,
+				missingPlaneBounds
+			);
+			assert(false && "SDF atlas has glyphs with incomplete bounds; regenerate the atlas");
 		}
 
 		LOG_INFO(UI, "Loaded %zu SDF glyphs", sdfGlyphs.size());
@@ -302,6 +325,20 @@ namespace ui {
 		const Atlas&					atlas = atlasFor(family);
 		const std::map<char, SDFGlyph>& sdfGlyphs = atlas.glyphs;
 
+		// IMPORTANT: fontSize should be the REQUESTED rendering size, not atlas glyph size!
+		// The atlas may be generated at higher resolution (e.g., 32px) for quality,
+		// but scale=1.0 should render at BASE_FONT_SIZE (16px), not glyphSize (32px).
+		// The glyph metrics are in EM units, so we scale by the requested pixel size.
+		constexpr float BASE_FONT_SIZE = 16.0F;							// scale=1.0 renders at this size
+		float			fontSize = BASE_FONT_SIZE * scale;				// Requested rendering size in pixels
+		float			baselineY = atlas.metadata.ascender * fontSize; // Relative to origin for caching
+
+		// The run origin the renderer snaps to the pixel grid is the pen origin AT
+		// THE BASELINE (not the box top-left): aligning the baseline is what makes
+		// stroke bottoms land on pixel boundaries, and it's shared by every glyph
+		// of the run so advances/kerning are untouched.
+		const glm::vec2 penOrigin = position + glm::vec2(0.0F, baselineY);
+
 		// Try cache lookup if enabled
 		if (FontRendererConfig::kEnableGlyphQuadCache) {
 			CacheKey key{family, text, scale, letterSpacing};
@@ -320,6 +357,7 @@ namespace ui {
 					GlyphQuad quad = cachedQuad;
 					// Adjust position (cached quads are relative to origin)
 					quad.position += position;
+					quad.runOrigin = penOrigin;
 					// Update color (cached quads have color from first render)
 					quad.color = color;
 					outQuads.push_back(quad);
@@ -332,69 +370,26 @@ namespace ui {
 		// Cache miss or caching disabled - generate quads
 		size_t startIdx = outQuads.size(); // Track where we started adding
 
-		// Calculate baseline position
-		// IMPORTANT: fontSize should be the REQUESTED rendering size, not atlas glyph size!
-		// The atlas may be generated at higher resolution (e.g., 32px) for quality,
-		// but scale=1.0 should render at BASE_FONT_SIZE (16px), not glyphSize (32px).
-		// The glyph metrics are in EM units, so we scale by the requested pixel size.
-		constexpr float BASE_FONT_SIZE = 16.0F; // scale=1.0 renders at this size
-		float			fontSize = BASE_FONT_SIZE * scale; // Requested rendering size in pixels
-		float			ascenderAtCurrentScale = atlas.metadata.ascender * fontSize;
-
-		glm::vec2 penPosition = glm::vec2(0, 0); // Generate relative to origin for caching
-		penPosition.y += ascenderAtCurrentScale; // Move to baseline
-
-		for (size_t charIdx = 0; charIdx < text.size(); ++charIdx) {
-			char			currentChar = text[charIdx];
-			auto			it = sdfGlyphs.find(currentChar);
-			const SDFGlyph* glyphPtr = nullptr;
-
-			if (it != sdfGlyphs.end()) {
-				glyphPtr = &it->second;
-			} else {
-				// Fallback to '?' if character not found
-				auto fallbackIt = sdfGlyphs.find('?');
-				if (fallbackIt != sdfGlyphs.end()) {
-					glyphPtr = &fallbackIt->second;
-				}
-			}
-
-			if (!glyphPtr) {
-				continue; // Skip if no valid glyph or fallback
-			}
-
-			const SDFGlyph& glyph = *glyphPtr;
-
+		ForEachGlyph(sdfGlyphs, text, fontSize, letterSpacing, [&](const SDFGlyph& glyph, float penX) {
 			// Only generate quad if glyph has geometry (not whitespace)
-			if (glyph.hasGeometry) {
-				// Calculate quad position in screen space
-				float xpos = penPosition.x + glyph.planeBoundsMin.x * fontSize;
-				float ypos = penPosition.y - glyph.planeBoundsMax.y * fontSize; // Top-left corner
-
-				float w = (glyph.planeBoundsMax.x - glyph.planeBoundsMin.x) * fontSize;
-				float h = (glyph.planeBoundsMax.y - glyph.planeBoundsMin.y) * fontSize;
-
-				// Create glyph quad
-				// Use atlasBounds (actual glyph content) instead of atlas (full cell)
-				// Reference: https://github.com/Chlumsky/msdf-atlas-gen/issues/2
-				// This ensures we only sample the actual glyph pixels, not the empty padding
-				GlyphQuad quad{};
-				quad.position = glm::vec2(xpos, ypos);
-				quad.size = glm::vec2(w, h);
-				quad.uvMin = glyph.atlasBoundsMin;
-				quad.uvMax = glyph.atlasBoundsMax;
-				quad.color = color;
-
-				outQuads.push_back(quad);
+			if (!glyph.hasGeometry) {
+				return;
 			}
 
-			// Advance pen position; letter-spacing sits between glyphs, not after
-			// the last one.
-			penPosition.x += glyph.advance * fontSize;
-			if (charIdx + 1 < text.size()) {
-				penPosition.x += letterSpacing;
-			}
-		}
+			// Use atlasBounds (actual glyph content) instead of the full atlas cell
+			// Reference: https://github.com/Chlumsky/msdf-atlas-gen/issues/2
+			// This ensures we only sample the actual glyph pixels, not the empty padding
+			GlyphQuad quad{};
+			quad.position = glm::vec2(penX + glyph.planeBoundsMin.x * fontSize, baselineY - glyph.planeBoundsMax.y * fontSize);
+			quad.size = glm::vec2(
+				(glyph.planeBoundsMax.x - glyph.planeBoundsMin.x) * fontSize, (glyph.planeBoundsMax.y - glyph.planeBoundsMin.y) * fontSize
+			);
+			quad.uvMin = glyph.atlasBoundsMin;
+			quad.uvMax = glyph.atlasBoundsMax;
+			quad.color = color;
+
+			outQuads.push_back(quad);
+		});
 
 		// Cache the generated quads if enabled
 		if (FontRendererConfig::kEnableGlyphQuadCache) {
@@ -424,11 +419,13 @@ namespace ui {
 			// Now adjust positions in outQuads for the caller
 			for (size_t i = startIdx; i < outQuads.size(); ++i) {
 				outQuads[i].position += position;
+				outQuads[i].runOrigin = penOrigin;
 			}
 		} else {
 			// No caching - just adjust positions
 			for (size_t i = startIdx; i < outQuads.size(); ++i) {
 				outQuads[i].position += position;
+				outQuads[i].runOrigin = penOrigin;
 			}
 		}
 	}
@@ -563,8 +560,8 @@ namespace ui {
 		return wrappedTextCache[key].result;
 	}
 
-	glm::vec2 FontRenderer::measureTextWithWrapping(const std::string& text, float scale, float maxWidth, Renderer::FontFamily family)
-		const {
+	glm::vec2
+	FontRenderer::measureTextWithWrapping(const std::string& text, float scale, float maxWidth, Renderer::FontFamily family) const {
 		if (maxWidth <= 0.0F) {
 			// No wrapping - use simple measurement
 			return MeasureText(text, scale, family);

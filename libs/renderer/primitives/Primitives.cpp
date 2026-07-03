@@ -5,17 +5,17 @@
 #include "CoordinateSystem/CoordinateSystem.h"
 #include "graphics/ClipTypes.h"
 #include "primitives/BatchRenderer.h"
-#include <font/FontRenderer.h>
-#include <utils/Log.h>
 #include <GL/glew.h>
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <font/FontRenderer.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <memory>
 #include <numbers>
 #include <optional>
 #include <stack>
+#include <utils/Log.h>
 #include <vector>
 
 // Text rendering is implemented via the unified uber shader in BatchRenderer.
@@ -49,11 +49,11 @@ namespace Renderer::Primitives {
 
 	// Draw command for deferred rendering
 	struct DrawCommand {
-		BatchKey					 batchKey;		 // GPU state for batching
-		float						 zIndex = 0.0F;	 // Render order
-		bool						 isTransparent = false; // Opaque vs transparent pass
-		std::optional<Foundation::Rect> scissor;		 // Optional clipping region
-		const char*					 id = nullptr;	 // Debug identifier
+		BatchKey						batchKey;			   // GPU state for batching
+		float							zIndex = 0.0F;		   // Render order
+		bool							isTransparent = false; // Opaque vs transparent pass
+		std::optional<Foundation::Rect> scissor;			   // Optional clipping region
+		const char*						id = nullptr;		   // Debug identifier
 
 		// Vertex data (triangles, lines, etc.)
 		std::vector<float> vertices;
@@ -288,7 +288,9 @@ namespace Renderer::Primitives {
 
 		// Single AddQuad call handles fill, border, rounded corners, and an optional
 		// gradient (per-corner vertex colors) via the GPU.
-		g_batchRenderer->addQuad(args.bounds, args.style.fill, args.style.border, cornerRadius, args.style.gradient, static_cast<float>(args.zIndex));
+		g_batchRenderer->addQuad(
+			args.bounds, args.style.fill, args.style.border, cornerRadius, args.style.gradient, static_cast<float>(args.zIndex)
+		);
 	}
 
 	void drawLine(const LineArgs& args) {
@@ -398,8 +400,12 @@ namespace Renderer::Primitives {
 
 	void drawText(const TextArgs& args) {
 		if (g_fontRenderer == nullptr || g_batchRenderer == nullptr) {
-			LOG_WARNING(Engine, "drawText called but renderer not initialized (font=%p, batch=%p)",
-				static_cast<void*>(g_fontRenderer), static_cast<void*>(g_batchRenderer.get()));
+			LOG_WARNING(
+				Engine,
+				"drawText called but renderer not initialized (font=%p, batch=%p)",
+				static_cast<void*>(g_fontRenderer),
+				static_cast<void*>(g_batchRenderer.get())
+			);
 			return;
 		}
 
@@ -437,8 +443,8 @@ namespace Renderer::Primitives {
 		const auto emit = [&](Foundation::Vec2 pos, const Foundation::Color& col) {
 			std::vector<ui::FontRenderer::GlyphQuad> quads;
 			g_fontRenderer->generateGlyphQuads(
-				effective, glm::vec2(pos.x, pos.y), args.scale, glm::vec4(col.r, col.g, col.b, col.a), quads, args.font,
-				args.letterSpacing);
+				effective, glm::vec2(pos.x, pos.y), args.scale, glm::vec4(col.r, col.g, col.b, col.a), quads, args.font, args.letterSpacing
+			);
 			for (const auto& quad : quads) {
 				g_batchRenderer->addTextQuad(
 					Foundation::Vec2(quad.position.x, quad.position.y),
@@ -446,8 +452,10 @@ namespace Renderer::Primitives {
 					Foundation::Vec2(quad.uvMin.x, quad.uvMin.y),
 					Foundation::Vec2(quad.uvMax.x, quad.uvMax.y),
 					Foundation::Color(quad.color.r, quad.color.g, quad.color.b, quad.color.a),
+					Foundation::Vec2(quad.runOrigin.x, quad.runOrigin.y),
 					atlasTexture,
-					static_cast<float>(args.zIndex));
+					static_cast<float>(args.zIndex)
+				);
 			}
 		};
 
@@ -601,19 +609,13 @@ namespace Renderer::Primitives {
 
 	void pushClipRoundedRect(const Foundation::Rect& bounds, float cornerRadius) {
 		Foundation::ClipSettings settings;
-		settings.shape = Foundation::ClipRoundedRect{
-			.bounds = bounds,
-			.cornerRadius = cornerRadius
-		};
+		settings.shape = Foundation::ClipRoundedRect{.bounds = bounds, .cornerRadius = cornerRadius};
 		pushClip(settings);
 	}
 
 	void pushClipCircle(const Foundation::Vec2& center, float radius) {
 		Foundation::ClipSettings settings;
-		settings.shape = Foundation::ClipCircle{
-			.center = center,
-			.radius = radius
-		};
+		settings.shape = Foundation::ClipCircle{.center = center, .radius = radius};
 		pushClip(settings);
 	}
 

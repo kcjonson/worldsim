@@ -19,9 +19,9 @@
 #include "vector/Tessellator.h"
 #include <GL/glew.h>
 #include <cstdint>
+#include <glm/vec4.hpp>
 #include <optional>
 #include <vector>
-#include <glm/vec4.hpp>
 
 namespace Renderer { // NOLINT(readability-identifier-naming)
 
@@ -85,13 +85,13 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		// Add raw triangles (for circles, polygons, etc.)
 		// If inputColors is provided, uses per-vertex colors; otherwise uses uniform color
 		void addTriangles(
-			const Foundation::Vec2*	  inputVertices,
-			const uint16_t*			  inputIndices,
-			size_t					  vertexCount,
-			size_t					  indexCount,
-			const Foundation::Color&  color,
-			const Foundation::Color*  inputColors = nullptr,
-			float					  zIndex = 0.0F
+			const Foundation::Vec2*	 inputVertices,
+			const uint16_t*			 inputIndices,
+			size_t					 vertexCount,
+			size_t					 indexCount,
+			const Foundation::Color& color,
+			const Foundation::Color* inputColors = nullptr,
+			float					 zIndex = 0.0F
 		);
 
 		// --- Text rendering (MSDF) ---
@@ -101,6 +101,11 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		// size: glyph dimensions in screen pixels
 		// uvMin/uvMax: texture coordinates in MSDF atlas
 		// color: text color with alpha
+		// runOrigin: pen origin of the text run at the baseline (same value for
+		//   every glyph of a run, i.e. FontRenderer::GlyphQuad::runOrigin). Under
+		//   identity/translate-only transforms the run origin is snapped to the
+		//   device pixel grid and every glyph shifted by the same delta, keeping
+		//   glyph edges stable without disturbing advances/kerning.
 		// atlasTexture: MSDF atlas this glyph samples from. 0 selects the default
 		//   atlas set via setFontAtlas() (Roboto), preserving prior behavior for
 		//   callers that don't pass a texture. A frame may mix multiple atlases;
@@ -111,6 +116,7 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 			const Foundation::Vec2&	 uvMin,
 			const Foundation::Vec2&	 uvMax,
 			const Foundation::Color& color,
+			const Foundation::Vec2&	 runOrigin,
 			GLuint					 atlasTexture = 0,
 			float					 zIndex = 0.0F
 		);
@@ -183,10 +189,7 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		/// @param mesh Tessellated mesh to upload
 		/// @param maxInstances Maximum number of instances to support (default 10000)
 		/// @return Handle for subsequent draw calls
-		InstancedMeshHandle uploadInstancedMesh(
-			const renderer::TessellatedMesh& mesh,
-			uint32_t maxInstances = 10000
-		);
+		InstancedMeshHandle uploadInstancedMesh(const renderer::TessellatedMesh& mesh, uint32_t maxInstances = 10000);
 
 		/// Release GPU resources for an instanced mesh.
 		/// @param handle Handle to release (will be invalidated)
@@ -202,22 +205,22 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		/// @param pixelsPerMeter World scale factor
 		void drawInstanced(
 			const InstancedMeshHandle& handle,
-			const InstanceData* instances,
-			uint32_t count,
-			Foundation::Vec2 cameraPosition,
-			float cameraZoom,
-			float pixelsPerMeter
+			const InstanceData*		   instances,
+			uint32_t				   count,
+			Foundation::Vec2		   cameraPosition,
+			float					   cameraZoom,
+			float					   pixelsPerMeter
 		);
 
 	  private:
 		// Vertex data (CPU-side accumulation)
-		std::vector<UberVertex>	 vertices;
-		std::vector<uint32_t>	 indices;
+		std::vector<UberVertex> vertices;
+		std::vector<uint32_t>	indices;
 
 		// Per-vertex atlas tag, parallel to `vertices`. 0 = shape (no texture
 		// requirement); non-zero = the MSDF atlas a text vertex must sample from.
 		// flush() uses these to split text into per-atlas draw runs.
-		std::vector<GLuint>		 vertexAtlas;
+		std::vector<GLuint> vertexAtlas;
 
 		// Per-draw-call z-order groups. Each add* records one {indexStart, indexCount,
 		// zIndex}. flush() keeps submission order untouched unless some group carries
@@ -236,9 +239,9 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 
 		// OpenGL resources (RAII wrappers for automatic cleanup)
 		GLVertexArray vao;
-		GLBuffer vbo;
-		GLBuffer ibo;
-		Shader shader;
+		GLBuffer	  vbo;
+		GLBuffer	  ibo;
+		Shader		  shader;
 
 		// Uniform locations (standard batched rendering)
 		GLint projectionLoc = -1;
@@ -269,14 +272,21 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		// (0,0,0,0) means no clipping
 		Foundation::Vec4 currentClipBounds{0.0F, 0.0F, 0.0F, 0.0F};
 
+		// Classification of currentTransform, cached once per setTransform() to
+		// avoid per-vertex checks. Text snapping runs for Identity/TranslateOnly
+		// (where "on the pixel grid" is well-defined); General falls back to the
+		// full matrix multiply with no snapping.
+		enum class TransformClass : uint8_t { kIdentity, kTranslateOnly, kGeneral };
+
 		// Current transform matrix (baked into vertex positions at add-time)
 		Foundation::Mat4 currentTransform{1.0F}; // Identity
-		bool			 transformIsIdentity = true; // Cached to avoid per-vertex checks
+		TransformClass	 transformClass = TransformClass::kIdentity;
+		Foundation::Vec2 transformTranslation{0.0F, 0.0F}; // Valid for kTranslateOnly (zero for kIdentity)
 
 		// Statistics
 		size_t drawCallCount = 0;
-	size_t frameVertexCount = 0;	// Cumulative vertex count for the frame
-	size_t frameTriangleCount = 0;	// Cumulative triangle count for the frame
+		size_t frameVertexCount = 0;   // Cumulative vertex count for the frame
+		size_t frameTriangleCount = 0; // Cumulative triangle count for the frame
 	};
 
 } // namespace Renderer
