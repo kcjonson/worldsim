@@ -588,7 +588,8 @@ namespace UI {
 				Foundation::Vec2(glyph.size.x, glyph.size.y),
 				Foundation::Vec2(glyph.uvMin.x, glyph.uvMin.y),
 				Foundation::Vec2(glyph.uvMax.x, glyph.uvMax.y),
-				textColor
+				textColor,
+				Foundation::Vec2(glyph.runOrigin.x, glyph.runOrigin.y)
 			);
 		}
 	}
@@ -714,7 +715,8 @@ namespace UI {
 				Foundation::Vec2(glyph.size.x, glyph.size.y),
 				Foundation::Vec2(glyph.uvMin.x, glyph.uvMin.y),
 				Foundation::Vec2(glyph.uvMax.x, glyph.uvMax.y),
-				placeholderColor
+				placeholderColor,
+				Foundation::Vec2(glyph.runOrigin.x, glyph.runOrigin.y)
 			);
 		}
 	}
@@ -804,8 +806,7 @@ namespace UI {
 
 	bool TextInput::containsPoint(Foundation::Vec2 point) const {
 		// Hit testing includes the margin area
-		return point.x >= position.x && point.x <= position.x + getWidth() &&
-			   point.y >= position.y && point.y <= position.y + getHeight();
+		return point.x >= position.x && point.x <= position.x + getWidth() && point.y >= position.y && point.y <= position.y + getHeight();
 	}
 
 } // namespace UI

@@ -7,8 +7,8 @@
 #include "primitives/FontFamily.h"
 #include "shader/Shader.h"
 #include <GL/glew.h>
-#include <glm/glm.hpp>
 #include <array>
+#include <glm/glm.hpp>
 #include <map>
 #include <string>
 #include <unordered_map>
@@ -83,11 +83,12 @@ namespace ui {
 		 * Glyph quad data for batched text rendering
 		 */
 		struct GlyphQuad {
-			glm::vec2 position; // Top-left position of the quad
-			glm::vec2 size;		// Width and height of the quad
-			glm::vec2 uvMin;	// Texture coordinate bottom-left
-			glm::vec2 uvMax;	// Texture coordinate top-right
-			glm::vec4 color;	// RGBA color
+			glm::vec2 position;	 // Top-left position of the quad
+			glm::vec2 size;		 // Width and height of the quad
+			glm::vec2 uvMin;	 // Texture coordinate bottom-left
+			glm::vec2 uvMax;	 // Texture coordinate top-right
+			glm::vec4 color;	 // RGBA color
+			glm::vec2 runOrigin; // Pen origin of the run at the baseline (shared per run, for pixel snapping)
 		};
 
 		/**
@@ -131,8 +132,7 @@ namespace ui {
 		 * @return Cached reference to wrapped result (lines, dimensions)
 		 */
 		const WrappedTextResult&
-		wrapText(const std::string& text, float scale, float maxWidth, Renderer::FontFamily family = Renderer::FontFamily::Roboto)
-			const;
+		wrapText(const std::string& text, float scale, float maxWidth, Renderer::FontFamily family = Renderer::FontFamily::Roboto) const;
 
 		/**
 		 * Measure text with optional wrapping
@@ -201,8 +201,6 @@ namespace ui {
 		 * SDF atlas-based glyph information
 		 */
 		struct SDFGlyph {
-			glm::vec2 atlasUVMin;	  // Bottom-left UV in atlas texture
-			glm::vec2 atlasUVMax;	  // Top-right UV in atlas texture
 			glm::vec2 atlasBoundsMin; // Bottom-left UV of actual glyph content
 			glm::vec2 atlasBoundsMax; // Top-right UV of actual glyph content
 			glm::vec2 planeBoundsMin; // Glyph bounds min (in em units)
@@ -230,12 +228,12 @@ namespace ui {
 		 * font metrics derived from them. One Atlas per FontFamily.
 		 */
 		struct Atlas {
-			std::map<char, SDFGlyph> glyphs;				 // Map of SDF glyphs
-			SDFAtlasMetadata		 metadata{};			 // SDF atlas metadata
-			GLuint					 texture = 0;			 // SDF atlas GL texture
-			float					 scaledAscender = 0.0F;	 // Ascender for the base font size
+			std::map<char, SDFGlyph> glyphs;						// Map of SDF glyphs
+			SDFAtlasMetadata		 metadata{};					// SDF atlas metadata
+			GLuint					 texture = 0;					// SDF atlas GL texture
+			float					 scaledAscender = 0.0F;			// Ascender for the base font size
 			float					 maxGlyphHeightUnscaled = 0.0F; // Unscaled max glyph height
-			bool					 loaded = false;		 // True once successfully loaded
+			bool					 loaded = false;				// True once successfully loaded
 		};
 
 		/**
@@ -264,7 +262,7 @@ namespace ui {
 
 			bool operator==(const CacheKey& other) const {
 				return family == other.family && text == other.text && std::abs(scale - other.scale) < 0.001F &&
-					std::abs(letterSpacing - other.letterSpacing) < 0.001F;
+					   std::abs(letterSpacing - other.letterSpacing) < 0.001F;
 			}
 		};
 
@@ -307,7 +305,7 @@ namespace ui {
 
 			bool operator==(const WrapCacheKey& other) const {
 				return family == other.family && text == other.text && std::abs(scale - other.scale) < 0.001F &&
-					std::abs(wrapWidth - other.wrapWidth) < 0.1F;
+					   std::abs(wrapWidth - other.wrapWidth) < 0.1F;
 			}
 		};
 
