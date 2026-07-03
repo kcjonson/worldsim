@@ -229,6 +229,20 @@ class ButtonScene : public engine::IScene {
 			}
 		}
 
+		std::vector<const UI::IComponent*> getUiRoots() const override {
+			std::vector<const UI::IComponent*> roots;
+			for (const auto& label : labels) {
+				roots.push_back(label.get());
+			}
+			if (clickCounterText) {
+				roots.push_back(clickCounterText.get());
+			}
+			for (const auto& button : buttons) {
+				roots.push_back(button.get());
+			}
+			return roots;
+		}
+
 	  private:
 		// UI Components
 		std::vector<std::unique_ptr<UI::Button>> buttons;

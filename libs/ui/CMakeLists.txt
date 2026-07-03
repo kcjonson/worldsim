@@ -21,6 +21,8 @@ add_library(ui
     components/tooltip/TooltipManager.cpp
     components/slider/Slider.cpp
     components/contextmenu/ContextMenu.cpp
+    debug/UiTreeSerializer.cpp
+    debug/LayoutLint.cpp
     focus/FocusManager.cpp
     input/InputEvent.cpp
     layout/LayoutContainer.cpp

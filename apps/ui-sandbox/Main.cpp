@@ -5,14 +5,50 @@
 #include "SceneTypes.h"
 #include <application/AppLauncher.h>
 #include <application/Application.h>
+#include <debug/DebugServer.h>
+#include <debug/LayoutLint.h>
+#include <debug/UiTreeSerializer.h>
 #include <primitives/Primitives.h>
 #include <scene/SceneManager.h>
 #include <utils/Log.h>
 
 #include <optional>
+#include <string>
+#include <vector>
 
 // Navigation menu (only created when no --scene argument)
 static std::optional<UI::NavigationMenu> g_navigationMenu;
+
+// Serve a pending /api/state, /api/ui/tree, or /api/ui/lint request against the
+// current scene's UI roots. Runs on the main thread once per frame (after the
+// scene rendered, so LayoutContainer positions are fresh); mirrors GameScene's
+// drain in world-sim.
+static void serveUiStateRequests() {
+	auto* debugServer = engine::AppLauncher::getDebugServer();
+	if (debugServer == nullptr) {
+		return;
+	}
+	std::string what;
+	if (!debugServer->consumeStateRequest(what)) {
+		return;
+	}
+	if (what != "ui.tree" && what != "ui.lint") {
+		debugServer->deliverState("{\"error\":\"unknown state query (ui-sandbox serves ui.tree and ui.lint)\"}");
+		return;
+	}
+	engine::IScene* scene = engine::SceneManager::Get().getCurrentScene();
+	std::vector<const UI::IComponent*> roots;
+	if (scene != nullptr) {
+		roots = scene->getUiRoots();
+	}
+	int viewportW = 0;
+	int viewportH = 0;
+	Renderer::Primitives::getLogicalViewport(viewportW, viewportH);
+	const Foundation::Vec2 viewport{static_cast<float>(viewportW), static_cast<float>(viewportH)};
+	debugServer->deliverState(
+		what == "ui.tree" ? UI::serializeUiTreeJson(roots, viewport) : UI::lintUiTreeJson(roots, viewport)
+	);
+}
 
 int main(int argc, char* argv[]) {
 	engine::AppConfig config{
@@ -57,8 +93,12 @@ int main(int argc, char* argv[]) {
 		LOG_INFO(UI, "Navigation menu overlay registered (%zu scenes available)", sceneNames.size());
 	}
 
-	// Overlay renderer just for Primitives::endFrame()
-	ctx.app->setOverlayRenderer([]() { Renderer::Primitives::endFrame(); });
+	// Overlay renderer: flush primitives, then serve any pending UI-tree/lint
+	// readback (post-render, so the snapshot sees this frame's layout)
+	ctx.app->setOverlayRenderer([]() {
+		Renderer::Primitives::endFrame();
+		serveUiStateRequests();
+	});
 
 	// Window resize notifies SceneManager which forwards to overlays
 	engine::AppLauncher::setWindowResizeCallback([]() { engine::SceneManager::Get().onWindowResize(); });

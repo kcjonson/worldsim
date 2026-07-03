@@ -95,6 +95,9 @@ class Button : public Component, public FocusableBase<Button> {
 	// The text actually rendered (equals `label`).
 	[[nodiscard]] const std::string& renderedLabel() const { return label; }
 
+	const char* debugTypeName() const override { return "Button"; }
+	const char* debugId() const override { return id; }
+
 	// State management
 	void setFocused(bool newFocused) { focused = newFocused; }
 	void setDisabled(bool newDisabled) { disabled = newDisabled; }
