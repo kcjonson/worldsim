@@ -583,6 +583,39 @@ namespace world_sim {
 		}
 	}
 
+	std::vector<const UI::IComponent*> GameUI::getUiRoots() const {
+		std::vector<const UI::IComponent*> roots;
+		auto add = [&roots](const UI::IComponent* component) {
+			if (component != nullptr) {
+				roots.push_back(component);
+			}
+		};
+		add(topBar.get());
+		add(debugOverlay.get());
+		add(zoomControlPanel.get());
+		add(gameplayBar.get());
+		add(configStrip.get());
+		if (infoPanel && infoPanel->isVisible()) {
+			add(infoPanel.get());
+		}
+		if (taskListExpanded && taskListPanel && taskListPanel->visible) {
+			add(taskListPanel.get());
+		}
+		add(resourcesPanel.get());
+		add(globalTaskList.get());
+		add(toastStack.get());
+		if (colonistDetailsDialog && colonistDetailsDialog->isOpen()) {
+			add(colonistDetailsDialog.get());
+		}
+		if (craftingDialog && craftingDialog->isOpen()) {
+			add(craftingDialog.get());
+		}
+		if (storageConfigDialog && storageConfigDialog->isOpen()) {
+			add(storageConfigDialog.get());
+		}
+		return roots;
+	}
+
 	void GameUI::pushNotification(
 		const std::string&	  title,
 		const std::string&	  message,

@@ -1,10 +1,12 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
-// Forward declaration for UI event dispatch
+// Forward declarations for UI event dispatch and tree introspection
 namespace UI {
 	struct InputEvent;
+	struct IComponent;
 }
 
 namespace engine {
@@ -76,6 +78,11 @@ namespace engine {
 		/// @param event The input event to handle
 		/// @return true if the event was consumed
 		virtual bool handleInput(UI::InputEvent& /*event*/) { return false; }
+
+		/// @brief Top-level UI roots for the /api/ui/tree and /api/ui/lint snapshot.
+		/// Scenes that build IComponent trees override this so the app-side state
+		/// drain can serialize and lint them. Default: no UI to inspect.
+		virtual std::vector<const UI::IComponent*> getUiRoots() const { return {}; }
 
 	  protected:
 		/// @brief SceneManager reference for scene transitions and exit requests
