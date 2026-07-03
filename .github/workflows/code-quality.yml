@@ -4,6 +4,14 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     branches: [ "**" ]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - '.claude/**'
+
+concurrency:
+  group: code-quality-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   code-quality:

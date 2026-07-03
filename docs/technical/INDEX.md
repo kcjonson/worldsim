@@ -56,7 +56,7 @@ Applications:
 | Document | Description |
 |----------|-------------|
 | [Monorepo Structure](./monorepo-structure.md) | Library organization and dependencies |
-| [Build System](./build-system.md) | CMake + vcpkg configuration |
+| [Build & Test Performance](./build-performance.md) | Ninja + ccache/sccache, path-gated heavy tests, CI caching |
 | [C++ Coding Standards](./cpp-coding-standards.md) | Style guide and best practices |
 | [Technical Notes](./technical-notes.md) | Research notes, open questions |
 

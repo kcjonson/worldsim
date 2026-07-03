@@ -1,26 +1,32 @@
-name: Tests
+name: Tests (heavy worldgen)
 
+# The heavy bucket (full PlanetGenerator pipelines, PlateSim histories) is the
+# most expensive CI step by far, and worldgen changes at a different cadence
+# than game code. So it runs only when worldgen inputs change, plus a nightly
+# run on main as the backstop for anything the path filter misses (toolchain
+# drift, indirect golden-hash breakage).
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     branches: [ "**" ]
-    paths-ignore:
-      - 'docs/**'
-      - '**.md'
-      - '.claude/**'
+    paths:
+      - 'libs/world/**'
+      - 'libs/foundation/**'
+      - 'vcpkg.json'
+      - 'CMakeLists.txt'
+      - '.github/workflows/tests-heavy.yml'
+  schedule:
+    - cron: '0 8 * * *'  # nightly on main
+  workflow_dispatch:
 
-# A force-push supersedes the in-flight run for the same PR; cancel it.
 concurrency:
-  group: tests-${{ github.event.pull_request.number || github.ref }}
+  group: tests-heavy-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-# Heavy worldgen tests live in tests-heavy.yml, path-gated to worldgen changes
-# (libs/world, libs/foundation, vcpkg.json, root CMakeLists) with a nightly
-# backstop run. This workflow is the always-on fast gate.
 jobs:
-  test:
-    # Skip while the PR is a draft; re-runs when marked ready for review.
-    if: github.event.pull_request.draft == false
+  test-heavy:
+    # Draft-skip applies only to PR events; nightly/dispatch always run.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     env:
       SCCACHE_GHA_ENABLED: "true"
@@ -56,31 +62,31 @@ jobs:
         CC: clang
         CXX: clang++
 
-    - name: Build
-      run: cmake --build build -j$(nproc)
+    # Only the heavy bucket's executable, not the whole tree.
+    - name: Build world-tests
+      run: cmake --build build --target world-tests -j$(nproc)
 
     - name: sccache stats
       run: sccache --show-stats
 
-    # Gating step: every unit-test target except benchmarks and the heavy
-    # worldgen bucket (which runs in tests-heavy.yml). -j4 matches the runner's
-    # cores; the per-lib test exes are independent.
-    - name: Run fast tests
+    # 4 gtest shards registered in libs/world/CMakeLists.txt; -j4 runs them
+    # concurrently on the 4-core runner.
+    - name: Run heavy worldgen tests
       run: |
         cd build
-        ctest -j4 --output-on-failure -E "(benchmarks|world-tests-heavy)"
+        ctest -j4 --output-on-failure -L heavy
 
     - name: Upload test results
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: test-results
+        name: test-results-heavy
         path: build/Testing/
         retention-days: 7
 
-  test-windows:
-    # Skip while the PR is a draft; re-runs when marked ready for review.
-    if: github.event.pull_request.draft == false
+  test-heavy-windows:
+    # Draft-skip applies only to PR events; nightly/dispatch always run.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: windows-latest
     env:
       SCCACHE_GHA_ENABLED: "true"
@@ -89,8 +95,6 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    # Ninja needs cl.exe on PATH (the VS generator found MSVC itself, but it
-    # cannot run compiler launchers, which sccache requires).
     - name: Setup MSVC environment
       uses: ilammy/msvc-dev-cmd@v1
       with:
@@ -104,10 +108,6 @@ jobs:
       with:
         vcpkgGitCommitId: '8f54ef5453e7e76ff01e15988bf243e7247c5eb5'
 
-    # CMP0141=NEW + Embedded selects /Z7 debug info; sccache cannot cache /Zi
-    # compilations. BUILD_DEVELOPER_CLIENT=OFF keeps the npm web-app build out
-    # of this job (it never ran here under the VS generator, where
-    # CMAKE_BUILD_TYPE is empty).
     - name: Configure CMake
       shell: bash
       run: |
@@ -123,25 +123,24 @@ jobs:
           -DBUILD_DEVELOPER_CLIENT=OFF \
           -DBUILD_TESTING=ON
 
-    - name: Build
+    - name: Build world-tests
       shell: bash
-      run: cmake --build build
+      run: cmake --build build --target world-tests
 
     - name: sccache stats
       shell: bash
       run: sccache --show-stats
 
-    # Single-config Ninja: no -C Debug needed.
-    - name: Run fast tests
+    - name: Run heavy worldgen tests
       shell: bash
       run: |
         cd build
-        ctest -j4 --output-on-failure -E "(benchmarks|world-tests-heavy)"
+        ctest -j4 --output-on-failure -L heavy
 
     - name: Upload test results
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: test-results-windows
+        name: test-results-heavy-windows
         path: build/Testing/
         retention-days: 7

@@ -65,8 +65,8 @@ if(BUILD_TESTING)
         if(NOT MSVC)
             target_compile_options(world-tests PRIVATE -O0 -g)
         endif()
-        # Two ctest entries against the SAME executable, split by gtest SUITE name:
-        # any suite whose name ends in "Heavy" is the heavy bucket. The filters use
+        # Fast/heavy split by gtest SUITE name against the SAME executable: any
+        # suite whose name ends in "Heavy" is the heavy bucket. The filters use
         # "*Heavy.*" (Heavy immediately before the Suite.Test separator) so only a
         # suite-name suffix classifies a test, never a "Heavy" substring in a test
         # name. Add the "Heavy" suffix to a test's SUITE to make it heavy; no list to
@@ -86,8 +86,22 @@ if(BUILD_TESTING)
         # If the fast wall time grows, rerun and set TIMEOUT = max(300, ceil(newWall * 12)).
         add_test(NAME world-tests COMMAND world-tests --gtest_filter=-*Heavy.*)
         set_tests_properties(world-tests PROPERTIES LABELS "fast" TIMEOUT 300)
-        add_test(NAME world-tests-heavy COMMAND world-tests --gtest_filter=*Heavy.*)
-        set_tests_properties(world-tests-heavy PROPERTIES LABELS "heavy" TIMEOUT 2400)
+
+        # The heavy bucket runs as gtest shards so `ctest -j -L heavy` spreads it
+        # across cores (one entry serialized ~16 min Linux / ~27 min Windows on CI).
+        # gtest distributes filtered tests round-robin by index, so the dominant
+        # suites (PlateSimHeavy, TerrainStageHeavy: 13 tests each) split evenly with
+        # no suite list to maintain. TIMEOUT is per-shard: worst observed CI shard
+        # plus margin (was 2400 for the whole bucket).
+        set(WORLD_HEAVY_SHARDS 4)
+        math(EXPR _heavy_last_shard "${WORLD_HEAVY_SHARDS} - 1")
+        foreach(shard RANGE ${_heavy_last_shard})
+            add_test(NAME world-tests-heavy-${shard} COMMAND world-tests --gtest_filter=*Heavy.*)
+            set_tests_properties(world-tests-heavy-${shard} PROPERTIES
+                LABELS "heavy"
+                TIMEOUT 1200
+                ENVIRONMENT "GTEST_TOTAL_SHARDS=${WORLD_HEAVY_SHARDS};GTEST_SHARD_INDEX=${shard}")
+        endforeach()
     endif()
 
     # Create benchmark executable if benchmarks found

@@ -4,12 +4,24 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     branches: [ "**" ]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - '.claude/**'
 
+concurrency:
+  group: build-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# Proves a clean Release build compiles and links. No artifact upload: the old
+# multi-GB build/ upload had no consumers.
 jobs:
   build:
     # Skip while the PR is a draft; re-runs when marked ready for review.
     if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
+    env:
+      SCCACHE_GHA_ENABLED: "true"
 
     steps:
     - name: Checkout code
@@ -28,6 +40,9 @@ jobs:
         sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-21 100
         sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-21 100
 
+    - name: Setup sccache
+      uses: mozilla-actions/sccache-action@v0.0.10
+
     - name: Setup vcpkg
       uses: lukka/run-vcpkg@v11
       with:
@@ -38,6 +53,8 @@ jobs:
         cmake -S . -B build \
           -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake \
+          -DCMAKE_C_COMPILER_LAUNCHER=sccache \
+          -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
           -DBUILD_TESTING=OFF
       env:
         CC: clang
@@ -46,10 +63,5 @@ jobs:
     - name: Build
       run: cmake --build build -j$(nproc)
 
-    - name: Upload build artifacts
-      if: success()
-      uses: actions/upload-artifact@v4
-      with:
-        name: build-artifacts
-        path: build/
-        retention-days: 1
+    - name: sccache stats
+      run: sccache --show-stats
