@@ -14,7 +14,8 @@ A C++20 game project featuring 3D procedural world generation and 2D tile-based 
 ## Prerequisites
 
 - **C++20 compiler** (Clang, GCC, or MSVC)
-- **CMake 3.20+**
+- **CMake 3.25+**
+- **Ninja + ccache** (build toolchain, setup below)
 - **vcpkg** (for dependency management)
 - **VSCode** (recommended) with extensions:
   - C/C++ (ms-vscode.cpptools)
@@ -68,8 +69,10 @@ The script makes `cl.exe` and the VS-bundled Ninja available in any plain shell,
 developer prompt needed. Re-run it after a Visual Studio update (the symptom of a stale
 environment is `cannot open include file: 'corecrt.h'`).
 
-Then configure the cache (any OS; `base_dir` is the parent of your checkout so all
-worktrees share one cache):
+Then configure the cache (any OS). `base_dir` makes ccache normalize absolute paths under
+it so identical sources hit the same cache entries from any checkout beneath it: point it
+at your checkout dir — git worktrees live inside it under `.claude/worktrees/`, so one
+cache serves them all.
 
 ```bash
 ccache --set-config max_size=30G

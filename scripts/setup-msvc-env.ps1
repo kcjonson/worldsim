@@ -18,10 +18,13 @@ $vsRoot = & $vswhere -products * -latest -requires Microsoft.VisualStudio.Compon
 if (-not $vsRoot) { throw "No Visual Studio installation with the C++ x64 toolset found." }
 Write-Host "Visual Studio: $vsRoot"
 
-# Run vcvars64 in a child cmd and capture the resulting environment.
+# Run vcvars64 in a child cmd and capture the resulting environment. INCLUDE/LIB
+# are cleared first so the captured values are purely vcvars-produced — otherwise
+# re-running from a shell that already has them set (a dev prompt, or any shell
+# opened after a previous run) would persist duplicated entries.
 $vcvars = Join-Path $vsRoot 'VC\Auxiliary\Build\vcvars64.bat'
 $vcvarsEnv = @{}
-cmd /c "`"$vcvars`" >nul 2>&1 && set" | ForEach-Object {
+cmd /c "set INCLUDE=&& set LIB=&& `"$vcvars`" >nul 2>&1 && set" | ForEach-Object {
     $name, $value = $_ -split '=', 2
     if ($name -and $value) { $vcvarsEnv[$name] = $value }
 }
@@ -48,8 +51,17 @@ $newPath = ($userPath + $wanted) -join ';'
 [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
 [Environment]::SetEnvironmentVariable('INCLUDE', $vcvarsEnv['INCLUDE'], 'User')
 [Environment]::SetEnvironmentVariable('LIB', $vcvarsEnv['LIB'], 'User')
+
+# VCPKG_ROOT: prefer whatever the current shell already uses (profile/session),
+# fall back to the conventional C:\vcpkg, and never persist a path that doesn't
+# hold a vcpkg — a wrong User-scope value would shadow a working profile one.
 if (-not [Environment]::GetEnvironmentVariable('VCPKG_ROOT', 'User')) {
-    [Environment]::SetEnvironmentVariable('VCPKG_ROOT', 'C:\vcpkg', 'User')
+    $vcpkgRoot = if ($env:VCPKG_ROOT) { $env:VCPKG_ROOT } else { 'C:\vcpkg' }
+    if (Test-Path (Join-Path $vcpkgRoot '.vcpkg-root')) {
+        [Environment]::SetEnvironmentVariable('VCPKG_ROOT', $vcpkgRoot, 'User')
+    } else {
+        Write-Warning "No vcpkg found at '$vcpkgRoot'; VCPKG_ROOT not persisted. Install vcpkg (README step 1) and re-run."
+    }
 }
 
 Write-Host "Persisted to User environment:"

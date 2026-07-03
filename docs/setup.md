@@ -5,8 +5,13 @@ recipe see the main [README](../README.md); this doc covers the details and the 
 
 ## Prerequisites
 
-- **C++20 compiler**: Clang (macOS/Linux), or MSVC via Visual Studio 2022 (Windows)
-- **CMake 3.20+** for the raw-cmake build; **3.21+** to use the `CMakePresets.json` presets below
+- **C++20 compiler**: Clang (macOS/Linux), or MSVC via Visual Studio 2022 / Build Tools (Windows)
+- **CMake 3.25+** (`CMAKE_MSVC_DEBUG_INFORMATION_FORMAT` / CMP0141)
+- **Ninja + ccache**: the presets use Ninja generators with a ccache compiler launcher.
+  macOS/Linux: `brew install ccache ninja` (or apt equivalents). Windows:
+  `winget install Ccache.Ccache`, then run `./scripts/setup-msvc-env.ps1` once to persist
+  the MSVC toolchain paths (cl/rc/VS-bundled Ninja), INCLUDE/LIB, and VCPKG_ROOT to the
+  User environment. ccache config is in the README's setup section.
 - **vcpkg** for dependencies
 - **Node.js / npm** (optional, only for the developer-client web app in Debug builds)
 
@@ -41,29 +46,38 @@ Set `VCPKG_ROOT` persistently (shell profile, or Windows user environment variab
 
 ## Configure and build
 
-**macOS / Linux** (single-config generator, Make or Ninja):
+The presets carry the generator (Ninja / Ninja Multi-Config), the vcpkg toolchain (via
+`VCPKG_ROOT`), and the ccache launcher — always configure through them.
+
+**macOS / Linux** (Ninja, single-config):
 
 ```bash
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake
-cmake --build build -j
+cmake --preset default
+cmake --build build
 ./build/apps/world-sim/world-sim
 ```
 
-**Windows** (Visual Studio 2022 + MSVC), from PowerShell:
+**Windows** (Ninja Multi-Config + MSVC), from any shell after the one-time setup script:
 
 ```powershell
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
-  -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+cmake --preset windows
 cmake --build build --config Debug
 ./build/apps/world-sim/Debug/world-sim.exe
 ```
 
 ### Binary locations differ by generator
 
-Multi-config generators (MSVC, Xcode) put binaries in a per-config subdirectory
-(`build/apps/world-sim/Debug/`); single-config generators (Make, Ninja) put them directly in the
-target directory (`build/apps/world-sim/`). CMake copies runtime assets next to the executable via
-`$<TARGET_FILE_DIR:...>`, so both layouts work; just mind the path when launching by hand.
+The Windows multi-config generator puts binaries in a per-config subdirectory
+(`build/apps/world-sim/Debug/`, `.../RelWithDebInfo/`); the single-config macOS/Linux build puts
+them directly in the target directory (`build/apps/world-sim/`). CMake copies runtime assets next
+to the executable via `$<TARGET_FILE_DIR:...>`, so both layouts work; just mind the path when
+launching by hand.
+
+### Switching from a pre-Ninja checkout
+
+Build dirs configured with the old Visual Studio generator error on reconfigure after the preset
+change: delete `build/` once and re-run `cmake --preset windows`. With a warm ccache the rebuild
+is fast (~30 s on the reference machine). Check hit rates anytime with `ccache -s`.
 
 ### Font atlas
 
@@ -74,9 +88,13 @@ artifact, so a fresh checkout produces it automatically with no manual step.
 ## Tests
 
 ```bash
-ctest --test-dir build --output-on-failure          # macOS/Linux
-ctest --test-dir build -C Debug --output-on-failure  # Windows (specify config)
+# Fast suite, parallel across the per-lib test exes (-C Debug only on Windows multi-config)
+ctest --test-dir build -LE heavy -E benchmarks -j 13 --output-on-failure           # macOS/Linux
+ctest --test-dir build -C Debug -LE heavy -E benchmarks -j 13 --output-on-failure  # Windows
 ```
+
+The heavy worldgen bucket (`-L heavy`) is slow by design; CI runs it only when worldgen
+paths change. See `docs/workflows.md` for the details.
 
 ## Cross-platform notes
 
