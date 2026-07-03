@@ -14,7 +14,8 @@ A C++20 game project featuring 3D procedural world generation and 2D tile-based 
 ## Prerequisites
 
 - **C++20 compiler** (Clang, GCC, or MSVC)
-- **CMake 3.20+**
+- **CMake 3.25+**
+- **Ninja + ccache** (build toolchain, setup below)
 - **vcpkg** (for dependency management)
 - **VSCode** (recommended) with extensions:
   - C/C++ (ms-vscode.cpptools)
@@ -45,13 +46,47 @@ $env:VCPKG_ROOT = "C:\vcpkg"                                    # current sessio
 > `git -C $VCPKG_ROOT fetch && git -C $VCPKG_ROOT checkout <builtin-baseline> && $VCPKG_ROOT/bootstrap-vcpkg.{sh,bat}`,
 > or just pull the latest master (the version database only grows).
 
-### 2. Configure and Build
+### 2. Install the build toolchain (once per machine)
 
-**macOS / Linux** (single-config generator):
+Local builds use Ninja with a ccache compiler cache (the presets wire both in). ccache is
+what makes clean rebuilds, branch switches, and fresh git worktrees cheap: identical
+compilations replay from the cache instead of re-running the compiler.
+
+**macOS / Linux:**
 
 ```bash
-# Configure
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake
+brew install ccache ninja   # or apt-get install ccache ninja-build
+```
+
+**Windows** (needs VS 2022 or VS Build Tools with the C++ x64 workload):
+
+```powershell
+winget install Ccache.Ccache
+./scripts/setup-msvc-env.ps1   # persists cl/ninja/rc paths + VCPKG_ROOT to the User env
+```
+
+The script makes `cl.exe` and the VS-bundled Ninja available in any plain shell, no VS
+developer prompt needed. Re-run it after a Visual Studio update (the symptom of a stale
+environment is `cannot open include file: 'corecrt.h'`).
+
+Then configure the cache (any OS). `base_dir` makes ccache normalize absolute paths under
+it so identical sources hit the same cache entries from any checkout beneath it: point it
+at your checkout dir — git worktrees live inside it under `.claude/worktrees/`, so one
+cache serves them all.
+
+```bash
+ccache --set-config max_size=30G
+ccache --set-config base_dir=C:/Users/you/Code/worldsim   # your checkout dir
+ccache --set-config hash_dir=false
+ccache --set-config sloppiness=pch_defines,time_macros
+```
+
+### 3. Configure and Build
+
+**macOS / Linux** (Ninja, single-config):
+
+```bash
+cmake --preset default
 
 # Build
 cmake --build build
@@ -60,12 +95,10 @@ cmake --build build
 ./build/apps/world-sim/world-sim
 ```
 
-**Windows** (Visual Studio 2022 + MSVC), from PowerShell:
+**Windows** (Ninja Multi-Config + MSVC), from any shell:
 
 ```powershell
-# Configure (multi-config generator)
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
-  -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+cmake --preset windows
 
 # Build (pick a config)
 cmake --build build --config Debug
@@ -75,11 +108,13 @@ cmake --build build --config Debug
 ```
 
 The build generates the SDF font atlas (`fonts/Roboto-SDF.png`) automatically, so a fresh
-checkout needs no manual asset steps. On multi-config generators (MSVC) binaries land in a
-per-config subdirectory (`Debug/`, `Release/`); on single-config (Make/Ninja) they're in the
-target directory directly.
+checkout needs no manual asset steps. On the multi-config Windows generator binaries land in
+a per-config subdirectory (`Debug/`, `RelWithDebInfo/`); on single-config (macOS/Linux)
+they're in the target directory directly.
 
-### 3. VSCode Setup
+Check cache effectiveness anytime with `ccache -s` (a warm rebuild should be >90% hits).
+
+### 4. VSCode Setup
 
 Open the project in VSCode. CMake should configure automatically.
 
@@ -87,7 +122,7 @@ Open the project in VSCode. CMake should configure automatically.
 **Format code**: `Shift+Alt+F` (manual - not on save)
 **Debug**: Use the debug configurations in Run & Debug panel
 
-### 4. Git Hooks Setup (Optional but Recommended)
+### 5. Git Hooks Setup (Optional but Recommended)
 
 Enable automatic code formatting on commit:
 

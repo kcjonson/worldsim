@@ -1,31 +1,40 @@
 {
   "version": 3,
-  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
   "configurePresets": [
     {
       "name": "base",
       "hidden": true,
       "binaryDir": "${sourceDir}/build",
       "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
-      "cacheVariables": { "CMAKE_EXPORT_COMPILE_COMMANDS": "ON" }
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_C_COMPILER_LAUNCHER": "ccache",
+        "CMAKE_CXX_COMPILER_LAUNCHER": "ccache"
+      }
     },
     {
       "name": "default",
-      "displayName": "Default (macOS / Linux)",
+      "displayName": "Default (macOS / Linux, Ninja + ccache)",
       "inherits": "base",
+      "generator": "Ninja",
       "condition": { "type": "notEquals", "lhs": "${hostSystemName}", "rhs": "Windows" }
     },
     {
       "name": "windows",
-      "displayName": "Windows (Visual Studio 2022, MSVC)",
+      "displayName": "Windows (Ninja Multi-Config, MSVC + ccache)",
       "inherits": "base",
-      "generator": "Visual Studio 17 2022",
-      "architecture": "x64",
-      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+      "generator": "Ninja Multi-Config",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "cl",
+        "CMAKE_MSVC_DEBUG_INFORMATION_FORMAT": "$<$<CONFIG:Debug,RelWithDebInfo>:Embedded>"
+      }
     }
   ],
   "buildPresets": [
     { "name": "default", "configurePreset": "default" },
-    { "name": "windows", "configurePreset": "windows", "configuration": "Debug" }
+    { "name": "windows", "configurePreset": "windows", "configuration": "Debug" },
+    { "name": "windows-relwithdebinfo", "configurePreset": "windows", "configuration": "RelWithDebInfo" }
   ]
 }
