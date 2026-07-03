@@ -41,7 +41,7 @@ class InstancedEntityRenderer {
 
 	/// Set (or clear) the selected entity's outline for this frame. Injected into
 	/// the depth-sort stream at its anchorY so nearer entities occlude it.
-	void setSelectionOutline(const SelectionOutline& o) { m_selectionOutline = o; }
+	void setSelectionOutline(SelectionOutline o) { m_selectionOutline = std::move(o); }
 
   private:
 	// Maximum instances per mesh type for GPU instancing

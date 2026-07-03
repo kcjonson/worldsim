@@ -56,28 +56,12 @@ namespace {
 		return maxHalf;
 	}
 
-	// Direction suffix the dynamic render path appends for a directional sprite. Mirrors
-	// DynamicEntityRenderSystem::getDirectionSuffix so the hit-test and outline pick the
-	// exact directional template the entity draws.
-	const char* directionSuffix(ecs::CardinalDirection dir) {
-		switch (dir) {
-			case ecs::CardinalDirection::Up:
-				return "_up";
-			case ecs::CardinalDirection::Down:
-				return "_down";
-			case ecs::CardinalDirection::Left:
-				return "_left";
-			case ecs::CardinalDirection::Right:
-				return "_right";
-		}
-		return "_down";
-	}
-
 	// The defName the dynamic render path resolves for an entity: its base Appearance
-	// defName plus the facing suffix when it carries a FacingDirection.
+	// defName plus the facing suffix when it carries a FacingDirection. Uses the shared
+	// ecs::directionSuffix so the hit-test/outline pick the exact template the entity draws.
 	std::string dynamicRenderDefName(ecs::World* world, ecs::EntityID entity, const std::string& baseDefName) {
 		if (const auto* facing = world->getComponent<ecs::FacingDirection>(entity)) {
-			return baseDefName + directionSuffix(facing->direction);
+			return baseDefName + ecs::directionSuffix(facing->direction);
 		}
 		return baseDefName;
 	}

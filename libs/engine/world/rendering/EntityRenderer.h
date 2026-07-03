@@ -105,7 +105,7 @@ class EntityRenderer {
 
 	/// Set (or clear) the selected entity's outline for the next render, injected
 	/// into the depth-sorted entity stream so nearer entities occlude it.
-	void setSelectionOutline(const SelectionOutline& o) { instancedDynamic.setSelectionOutline(o); }
+	void setSelectionOutline(SelectionOutline o) { instancedDynamic.setSelectionOutline(std::move(o)); }
 
   private:
 	float m_pixelsPerMeter = 16.0F;

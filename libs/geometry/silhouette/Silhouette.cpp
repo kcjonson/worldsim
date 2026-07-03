@@ -14,26 +14,6 @@ namespace geometry {
 
 	namespace {
 
-		// Exact integer winding number of p about ring r (Sunday's algorithm).
-		int windingNumber(const Vec2i64& p, const Ring& r) {
-			int				  wn = 0;
-			const std::size_t n	 = r.size();
-			for (std::size_t i = 0; i < n; ++i) {
-				const Vec2i64& a = r[i];
-				const Vec2i64& b = r[(i + 1) % n];
-				if (a.y <= p.y) {
-					if (b.y > p.y && orientation(a, b, p) == Orientation::CounterClockwise) {
-						++wn;
-					}
-				} else {
-					if (b.y <= p.y && orientation(a, b, p) == Orientation::Clockwise) {
-						--wn;
-					}
-				}
-			}
-			return wn;
-		}
-
 		// Exact point-in-triangle including the boundary. Inside iff no edge puts p
 		// strictly CW while another puts it strictly CCW; collinear (on-edge) counts
 		// toward neither, so triangles sharing an edge both claim the edge pixels and
@@ -298,62 +278,6 @@ namespace geometry {
 		}
 
 	} // namespace
-
-	std::vector<Ring> silhouetteOfRings(const std::vector<Ring>& rings, std::int64_t targetResolution) {
-		if (targetResolution < 1) {
-			targetResolution = 1;
-		}
-
-		// Integer bbox over rings with >= 3 vertices.
-		bool		 any = false;
-		std::int64_t minX = 0, minY = 0, maxX = 0, maxY = 0;
-		for (const Ring& r : rings) {
-			if (r.size() < 3) {
-				continue;
-			}
-			for (const Vec2i64& v : r) {
-				if (!any) {
-					minX = maxX = v.x;
-					minY = maxY = v.y;
-					any			= true;
-				} else {
-					minX = std::min(minX, v.x);
-					maxX = std::max(maxX, v.x);
-					minY = std::min(minY, v.y);
-					maxY = std::max(maxY, v.y);
-				}
-			}
-		}
-		if (!any) {
-			return {};
-		}
-
-		Grid g;
-		if (!makeGrid(minX, minY, maxX, maxY, targetResolution, 1, g)) {
-			return {};
-		}
-
-		// Coverage: nonzero total winding at each pixel center.
-		std::vector<char> cov(static_cast<std::size_t>(g.gw) * g.gh, 0);
-		for (int j = 0; j < g.gh; ++j) {
-			const std::int64_t cy = g.originY + static_cast<std::int64_t>(j) * g.ps + g.ps / 2;
-			for (int i = 0; i < g.gw; ++i) {
-				const Vec2i64 c{g.originX + static_cast<std::int64_t>(i) * g.ps + g.ps / 2, cy};
-				int			  w = 0;
-				for (const Ring& r : rings) {
-					if (r.size() < 3) {
-						continue;
-					}
-					w += windingNumber(c, r);
-				}
-				if (w != 0) {
-					cov[static_cast<std::size_t>(j) * g.gw + i] = 1;
-				}
-			}
-		}
-
-		return maskToRings(cov, g, 0);
-	}
 
 	std::vector<Ring> silhouetteOfTriangles(const std::vector<Vec2i64>& triangleVerts, std::int64_t targetResolution,
 											std::int64_t closeRadiusPx) {

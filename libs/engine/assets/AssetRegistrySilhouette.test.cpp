@@ -1,8 +1,9 @@
 // Tests for AssetRegistry::getSilhouette (Story B): the per-defName selection
 // silhouette, plus the tessellator coverage-oracle cross-check that geometry
-// can't run (it can't link the renderer). The silhouette must ENCLOSE the
-// region the tessellator fills (it fills holes, so silhouette >= fill), and
-// stroke-only assets must fall back to the mesh-bounds rectangle.
+// can't run (it can't link the renderer). The silhouette is rasterized from the
+// tessellated mesh triangles, so it must ENCLOSE the region the tessellator fills
+// (it fills holes, so silhouette >= fill), and stroke-only assets get a real
+// silhouette from their stroke bands (no bounds-rect fallback).
 
 #include "assets/AssetRegistry.h"
 

@@ -89,9 +89,11 @@ namespace engine::assets {
 		const MotionDef* getMotion(const std::string& defName);
 
 		/// Get the cached selection silhouette for a def (see AssetSilhouette).
-		/// Lazily computed from the asset's fill contours via geometry::silhouetteOfRings;
-		/// stroke-only / 0-fill assets fall back to the mesh-bounds rectangle. Thread-safe
-		/// (own mutex, heavy compute off-lock), safe to call from chunk workers like getTemplate.
+		/// Lazily rasterized from the tessellated template mesh triangles (fills AND stroke
+		/// bands) via geometry::silhouetteOfTriangles: `rings` at close 0, `hitRegion` at a
+		/// small close; holes filled, disjoint blobs kept separate. `valid` is false only when
+		/// the template has no geometry (no bounds-rect fallback). Thread-safe (own mutex, heavy
+		/// compute off-lock), safe to call from chunk workers like getTemplate.
 		const AssetSilhouette* getSilhouette(const std::string& defName);
 
 		/// Generate an asset directly (does not cache)

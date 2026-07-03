@@ -19,21 +19,6 @@
 
 namespace ecs {
 
-namespace {
-
-/// Get direction suffix for asset name based on FacingDirection
-const char* getDirectionSuffix(CardinalDirection dir) {
-    switch (dir) {
-        case CardinalDirection::Up:    return "_up";
-        case CardinalDirection::Down:  return "_down";
-        case CardinalDirection::Left:  return "_left";
-        case CardinalDirection::Right: return "_right";
-    }
-    return "_down";  // Default fallback
-}
-
-}  // namespace
-
 void DynamicEntityRenderSystem::update(float deltaTime) {
     renderData.clear();
     m_partXformStore.clear();
@@ -72,7 +57,7 @@ void DynamicEntityRenderSystem::update(float deltaTime) {
         // Check if entity has FacingDirection for directional sprite selection
         std::string defName = appearance.defName;
         if (auto* facing = world->getComponent<FacingDirection>(entity)) {
-            defName += getDirectionSuffix(facing->direction);
+            defName += directionSuffix(facing->direction);
         }
 
         placed.defName = defName;

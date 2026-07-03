@@ -84,9 +84,12 @@ namespace engine::world {
 		// GL state note: BatchRenderer::drawInstanced() sets up its own GL state internally,
 		// so we don't need to carry state from the baked path here.
 		auto* batchRenderer = Renderer::Primitives::getBatchRenderer();
-		if (batchRenderer == nullptr || items.empty()) {
+		if (batchRenderer == nullptr) {
 			return;
 		}
+		// NOTE: do NOT early-out on items.empty(). A selectable static below the tall-occluder
+		// height (small rock/bush) is drawn by the baked path, so `items` can be empty while a
+		// selection outline still needs stroking; the loop no-ops and the trailing drawOutline runs.
 
 		const float			   zoom = ctx.camera.zoom();
 		const float			   camX = ctx.camera.position().x;
