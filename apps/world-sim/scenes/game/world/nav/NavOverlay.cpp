@@ -19,7 +19,9 @@ namespace world_sim {
 		constexpr Foundation::Color kPathLine{1.0F, 0.2F, 0.8F, 0.95F};
 		constexpr Foundation::Color kWaypointMarker{1.0F, 0.9F, 0.2F, 1.0F};
 
-		constexpr int kZMeshEdge = 66; // above wall bands (~60-64)
+		// Post-entity world flush domain: committed construction flushes earlier,
+		// so the toggled overlay always paints over it regardless of these values.
+		constexpr int kZMeshEdge = 66;
 		constexpr int kZPathLine = 70;
 		constexpr int kZMarker = 71;
 

@@ -71,6 +71,10 @@ app has a hard 120 fps pacing cap):
   user-visible regression.
 - Draw calls: 391 -> 392. The entire committed pass adds ONE draw call; flush
   count is per-frame constant, it does not scale with building count.
+- Metric caveat: the GPU-timer window (`gpuRenderTime`) now includes the two
+  mid-frame flushes' draws, which previously happened in endFrame after
+  `m_gpuTimer.end()` — that metric reads higher for identical GPU work, so
+  don't A/B it across this change.
 - Scene-render CPU (includes all flushes; endFrame runs inside this timer):
   before median 2.19 ms, after median 3.11 ms at 90 buildings. A real
   +0.9 ms: the committed batch is now uploaded/drawn mid-frame in its own
