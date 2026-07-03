@@ -316,6 +316,7 @@ namespace {
 			worldState->planet = startConfig->world;
 			worldState->landingLatDeg = startConfig->landingLatDeg;
 			worldState->landingLonDeg = startConfig->landingLonDeg;
+			worldState->party = std::move(startConfig->party);
 			worldState->chunkManager = std::make_unique<engine::world::ChunkManager>(std::move(sampler));
 
 			// Only load 3×3 grid (center + 8 adjacent) - chunks are large!
