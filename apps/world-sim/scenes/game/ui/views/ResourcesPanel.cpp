@@ -1,8 +1,12 @@
 #include "ResourcesPanel.h"
 
+#include <components/list/ListRow.h>
+#include <layout/LayoutContainer.h>
 #include <primitives/Primitives.h>
 #include <theme/Tokens.h>
 
+#include <algorithm>
+#include <format>
 #include <string>
 
 namespace world_sim {
@@ -11,10 +15,13 @@ namespace {
 // Chevron icon size and positioning
 constexpr float kChevronSize = 12.0F;
 constexpr float kChevronRightPadding = 8.0F;
+// Right-side reserve so row counts never sit under the scrollbar
+constexpr float kScrollbarReserve = 16.0F;
 } // namespace
 
 ResourcesPanel::ResourcesPanel(const Args& args)
-	: panelWidth(args.width) {
+	: panelWidth(args.width),
+	  onToggle(args.onToggle) {
 
 	// Create header button (chevron icon is separate)
 	headerButtonHandle = addChild(UI::Button(UI::Button::Args{
@@ -38,7 +45,7 @@ ResourcesPanel::ResourcesPanel(const Args& args)
 	// Create content background (only visible when expanded)
 	contentBackgroundHandle = addChild(UI::Rectangle(UI::Rectangle::Args{
 		.position = {0.0F, kHeaderHeight},
-		.size = {panelWidth, kExpandedHeight - kHeaderHeight},
+		.size = {panelWidth, kEmptyExpandedHeight - kHeaderHeight},
 		.style = {
 			.fill = UI::bg_panel,
 			.border = Foundation::BorderStyle{
@@ -51,17 +58,34 @@ ResourcesPanel::ResourcesPanel(const Args& args)
 		.visible = false
 	}));
 
-	// Create empty message text
+	// Create empty message text (shown when no storage containers exist)
 	emptyMessageHandle = addChild(UI::Text(UI::Text::Args{
-		.position = {kPadding, kHeaderHeight + kPadding},
+		.position = {UI::space_2, kHeaderHeight + UI::space_2},
 		.text = "No stockpiles built.\nCreate one to track\ncolony resources.",
 		.style = {
 			.color = UI::text_dim,
-			.fontSize = 12.0F
+			.fontSize = UI::fs_sm
 		},
 		.id = "resources_empty_msg",
 		.visible = false
 	}));
+
+	// Create scroll container with a vertical layout of resource rows inside
+	auto scrollContainer = UI::ScrollContainer(UI::ScrollContainer::Args{
+		.position = {UI::space_2, kHeaderHeight + UI::space_2},
+		.size = {panelWidth - UI::space_2 * 2.0F, kMaxExpandedHeight - kHeaderHeight - UI::space_2 * 2.0F},
+		.id = "resources_scroll"
+	});
+	scrollContainer.visible = false;
+
+	auto layout = UI::LayoutContainer(UI::LayoutContainer::Args{
+		.position = {0.0F, 0.0F},
+		.size = {panelWidth - UI::space_2 * 2.0F - kScrollbarReserve, 0.0F},
+		.direction = UI::Direction::Vertical,
+		.id = "resources_layout"
+	});
+	layoutHandle = scrollContainer.addChild(std::move(layout));
+	scrollContainerHandle = addChild(std::move(scrollContainer));
 
 	// Start collapsed - updateLayout sets visibility
 	updateLayout();
@@ -69,8 +93,33 @@ ResourcesPanel::ResourcesPanel(const Args& args)
 
 void ResourcesPanel::setAnchorPosition(float x, float y) {
 	// Anchor is top-right, so offset by panel width
-	anchorPosition = {x, y};
 	position = {x - panelWidth, y};
+	updateLayout();
+}
+
+void ResourcesPanel::setResources(const std::vector<adapters::ResourceRowData>& rows, size_t containers) {
+	rowCount = rows.size();
+	containerCount = containers;
+
+	auto* scroll = getChild<UI::ScrollContainer>(scrollContainerHandle);
+	auto* layout = scroll != nullptr ? scroll->getChild<UI::LayoutContainer>(layoutHandle) : nullptr;
+	if (layout != nullptr) {
+		layout->clearChildren();
+		const float rowWidth = panelWidth - UI::space_2 * 2.0F - kScrollbarReserve;
+		for (size_t i = 0; i < rows.size(); ++i) {
+			layout->addChild(UI::ListRow(UI::ListRow::Args{
+				.label = rows[i].displayName,
+				.trailing = std::to_string(rows[i].count),
+				.size = {rowWidth, kRowHeight},
+				.id = std::format("resource_row_{}", i)
+			}));
+		}
+	}
+	if (scroll != nullptr) {
+		scroll->setContentHeight(static_cast<float>(rows.size()) * kRowHeight);
+		scroll->setViewportSize({panelWidth - UI::space_2 * 2.0F, expandedHeight() - kHeaderHeight - UI::space_2 * 2.0F});
+	}
+
 	updateLayout();
 }
 
@@ -78,6 +127,17 @@ void ResourcesPanel::toggle() {
 	expanded = !expanded;
 	updateChevron();
 	updateLayout();
+	if (onToggle) {
+		onToggle();
+	}
+}
+
+float ResourcesPanel::expandedHeight() const {
+	if (containerCount == 0) {
+		return kEmptyExpandedHeight;
+	}
+	const float contentHeight = static_cast<float>(std::max<size_t>(rowCount, 1)) * kRowHeight + UI::space_2 * 2.0F;
+	return std::min(kHeaderHeight + contentHeight, kMaxExpandedHeight);
 }
 
 void ResourcesPanel::updateChevron() {
@@ -104,26 +164,41 @@ void ResourcesPanel::updateLayout() {
 		chevron->setPosition(chevronX, chevronY);
 	}
 
-	// Show/hide expanded content
-	auto* contentBg = getChild<UI::Rectangle>(contentBackgroundHandle);
-	auto* emptyMsg = getChild<UI::Text>(emptyMessageHandle);
+	const bool showEmpty = expanded && containerCount == 0;
+	const bool showRows = expanded && containerCount > 0;
 
+	auto* contentBg = getChild<UI::Rectangle>(contentBackgroundHandle);
 	if (contentBg) {
 		contentBg->visible = expanded;
+		contentBg->size = {panelWidth, expandedHeight() - kHeaderHeight};
 		contentBg->setPosition(position.x, position.y + kHeaderHeight);
 	}
 
+	auto* emptyMsg = getChild<UI::Text>(emptyMessageHandle);
 	if (emptyMsg) {
-		emptyMsg->visible = expanded;
-		emptyMsg->setPosition(position.x + kPadding, position.y + kHeaderHeight + kPadding);
+		emptyMsg->visible = showEmpty;
+		emptyMsg->setPosition(position.x + UI::space_2, position.y + kHeaderHeight + UI::space_2);
+	}
+
+	auto* scroll = getChild<UI::ScrollContainer>(scrollContainerHandle);
+	if (scroll) {
+		scroll->visible = showRows;
+		scroll->setPosition(position.x + UI::space_2, position.y + kHeaderHeight + UI::space_2);
 	}
 
 	// Update overall size
-	size = {panelWidth, expanded ? kExpandedHeight : kCollapsedHeight};
+	size = {panelWidth, expanded ? expandedHeight() : kCollapsedHeight};
 }
 
 Foundation::Rect ResourcesPanel::getBounds() const {
-	return {position.x, position.y, panelWidth, expanded ? kExpandedHeight : kCollapsedHeight};
+	return {position.x, position.y, panelWidth, expanded ? expandedHeight() : kCollapsedHeight};
+}
+
+void ResourcesPanel::update(float deltaTime) {
+	auto* scroll = getChild<UI::ScrollContainer>(scrollContainerHandle);
+	if (scroll) {
+		scroll->update(deltaTime);
+	}
 }
 
 bool ResourcesPanel::handleEvent(UI::InputEvent& event) {
