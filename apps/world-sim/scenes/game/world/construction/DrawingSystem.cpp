@@ -91,53 +91,6 @@ namespace world_sim {
 			return {static_cast<float>(cx / (6.0 * a)), static_cast<float>(cy / (6.0 * a))};
 		}
 
-		// Segment length in mm (its two vertex positions), or 0 if either vertex is
-		// missing. The opening's clear width maps to a centerline half-extent of
-		// (widthMm/2) / lengthMm, so a zero-length segment yields no intervals.
-		double segmentLengthMm(const ec::ConstructionWorld& world, const ec::WallSegment& seg) {
-			const ec::Vertex* v0 = world.getVertex(seg.v0);
-			const ec::Vertex* v1 = world.getVertex(seg.v1);
-			if (v0 == nullptr || v1 == nullptr) {
-				return 0.0;
-			}
-			const double dx = static_cast<double>(v1->pos.x - v0->pos.x);
-			const double dy = static_cast<double>(v1->pos.y - v0->pos.y);
-			return std::sqrt(dx * dx + dy * dy);
-		}
-
-		// The centerline [t0,t1] intervals every opening on `segmentId` occupies,
-		// sorted ascending and clamped to [0,1]. An opening at param t with clear
-		// width w on a segment of length L spans [t - (w/2)/L, t + (w/2)/L]. Stable
-		// order (openings() insertion order, then t) keeps the gap render deterministic.
-		std::vector<std::pair<float, float>> openingIntervalsForSegment(const ec::ConstructionWorld& world, ec::SegmentId segmentId) {
-			std::vector<std::pair<float, float>> intervals;
-			const ec::WallSegment*				 seg = world.getSegment(segmentId);
-			if (seg == nullptr) {
-				return intervals;
-			}
-			const double lengthMm = segmentLengthMm(world, *seg);
-			if (lengthMm <= 0.0) {
-				return intervals;
-			}
-			for (const auto& op : world.openings()) {
-				if (op.segment != segmentId) {
-					continue;
-				}
-				const auto* type = ConstructionRegistry::Get().getOpeningType(op.type);
-				if (type == nullptr || type->widthMm <= 0) {
-					continue;
-				}
-				const float half = static_cast<float>((static_cast<double>(type->widthMm) * 0.5) / lengthMm);
-				const float t0 = std::clamp(op.t - half, 0.0F, 1.0F);
-				const float t1 = std::clamp(op.t + half, 0.0F, 1.0F);
-				if (t1 > t0) {
-					intervals.emplace_back(t0, t1);
-				}
-			}
-			std::sort(intervals.begin(), intervals.end());
-			return intervals;
-		}
-
 	} // namespace
 
 	DrawingSystem::DrawingSystem(const Args& args)
@@ -1252,10 +1205,38 @@ namespace world_sim {
 	// C6 replaces it with the baked element-emitter + build-progress prefix.
 	// =========================================================================
 
+	float DrawingSystem::blueprintProgress(bool built, ecs::EntityID entity) const {
+		if (built) {
+			return 1.0F;
+		}
+		// isAlive checks the generation word; ComponentPool::get matches by index
+		// only, so a stale cached handle whose index was recycled would otherwise
+		// read a DIFFERENT entity's blueprint progress.
+		if (ecsWorld_ != nullptr && entity != ecs::kInvalidEntity && ecsWorld_->isAlive(entity)) {
+			if (const auto* bp = ecsWorld_->getComponent<ecs::StructureBlueprint>(entity)) {
+				return bp->progress();
+			}
+		}
+		return 0.0F;
+	}
+
 	void DrawingSystem::renderCommitted(int viewportW, int viewportH) {
 		if (camera_ == nullptr) {
 			return;
 		}
+
+		// Geometry + state-derived styling come from the version-keyed cache;
+		// only build progress (ECS blueprint workDone/workTotal) is read per frame.
+		committedCache_.refresh(constructionWorld_);
+
+		// Cull to the viewport. The margin covers outline widths and the band
+		// half-thickness so edge geometry doesn't pop at the screen border.
+		constexpr float	 kCullMarginMeters = 2.0F;
+		Foundation::Rect visibleWorld = camera_->getVisibleRect(viewportW, viewportH, kPixelsPerMeter);
+		visibleWorld.x -= kCullMarginMeters;
+		visibleWorld.y -= kCullMarginMeters;
+		visibleWorld.width += 2.0F * kCullMarginMeters;
+		visibleWorld.height += 2.0F * kCullMarginMeters;
 
 		const auto& fs = ConstructionRegistry::Get().rendering().foundation;
 
@@ -1270,49 +1251,25 @@ namespace world_sim {
 		// brightness firms up as the structure approaches Built. A proportional opacity
 		// ramp is the slice's progress viz; the baked element-emitter index-prefix (a
 		// deterministic per-element reveal) is the later optimization noted in D8.
-		for (const auto& f : constructionWorld_.foundations()) {
-			const std::size_t n = f.ring.size();
-			if (n < 3) {
+		std::vector<Foundation::Vec2> screen;
+		for (const auto& g : committedCache_.foundations()) {
+			if (!g.aabb.intersects(visibleWorld)) {
 				continue;
 			}
-			const bool built = (f.state == engine::construction::FoundationState::Built);
+			const float progress = blueprintProgress(g.built, g.entity);
 
-			// Progress in [0,1] from the ECS mirror's blueprint. Built foundations render full.
-			float progress = built ? 1.0F : 0.0F;
-			if (!built && ecsWorld_ != nullptr && f.entity != ecs::kInvalidEntity) {
-				if (const auto* bp = ecsWorld_->getComponent<ecs::StructureBlueprint>(f.entity)) {
-					progress = bp->progress();
-				}
-			}
-
-			// Material color (palette front) drives the progress fill; fall back to the
-			// configured fallback color.
-			const auto*		  mat = ConstructionRegistry::Get().getMaterial(f.material);
-			Foundation::Color matColor = toColor(fs.fallbackColor);
-			if (mat != nullptr && !mat->pattern.palette.empty()) {
-				const auto& c = mat->pattern.palette.front();
-				matColor = {c.r / 255.0F, c.g / 255.0F, c.b / 255.0F, 1.0F};
-			}
-
-			std::vector<Foundation::Vec2> screen;
-			screen.reserve(n);
-			for (const auto& v : f.ring) {
-				screen.push_back(toScreen(geometry::dequantize(v)));
-			}
-			std::vector<uint16_t> indices;
-			indices.reserve((n - 2) * 3);
-			for (std::size_t i = 1; i + 1 < n; ++i) {
-				indices.push_back(0);
-				indices.push_back(static_cast<uint16_t>(i));
-				indices.push_back(static_cast<uint16_t>(i + 1));
+			screen.clear();
+			screen.reserve(g.ring.size());
+			for (const auto& v : g.ring) {
+				screen.push_back(toScreen(v));
 			}
 
 			// Layer 1: faint blueprint base (always present, reads as the planned footprint).
 			Renderer::Primitives::drawTriangles({
 				.vertices = screen.data(),
-				.indices = indices.data(),
+				.indices = g.fan.data(),
 				.vertexCount = screen.size(),
-				.indexCount = indices.size(),
+				.indexCount = g.fan.size(),
 				.color = toColor(fs.blueprintFill),
 				.id = "committed_foundation_base",
 				.zIndex = 50,
@@ -1322,13 +1279,13 @@ namespace world_sim {
 			// barely-there tint at 0% to a solid floor at 100% / Built.
 			if (progress > 0.0F) {
 				const float fillAlpha =
-					built ? fs.progressAlphaMax : (fs.progressAlphaMin + (fs.progressAlphaMax - fs.progressAlphaMin) * progress);
+					g.built ? fs.progressAlphaMax : (fs.progressAlphaMin + (fs.progressAlphaMax - fs.progressAlphaMin) * progress);
 				Renderer::Primitives::drawTriangles({
 					.vertices = screen.data(),
-					.indices = indices.data(),
+					.indices = g.fan.data(),
 					.vertexCount = screen.size(),
-					.indexCount = indices.size(),
-					.color = {matColor.r, matColor.g, matColor.b, fillAlpha},
+					.indexCount = g.fan.size(),
+					.color = {g.matColor.r, g.matColor.g, g.matColor.b, fillAlpha},
 					.id = "committed_foundation_progress",
 					.zIndex = 51,
 				});
@@ -1337,35 +1294,24 @@ namespace world_sim {
 			// Layer 3: outline. A Built foundation wears a darker shade of its own
 			// material; a blueprint keeps the cool outline, firming up toward Built.
 			const float				outlineAlpha = fs.outlineAlphaMin + (fs.outlineAlphaMax - fs.outlineAlphaMin) * progress;
-			const Foundation::Color outline = built ? darken(matColor, fs.builtEdgeDarken) : toColor(fs.outlineColor, outlineAlpha);
-			for (std::size_t i = 0; i < n; ++i) {
+			const Foundation::Color outline = g.built ? darken(g.matColor, fs.builtEdgeDarken) : toColor(fs.outlineColor, outlineAlpha);
+			for (std::size_t i = 0; i < screen.size(); ++i) {
 				Renderer::Primitives::drawLine({
 					.start = screen[i],
-					.end = screen[(i + 1) % n],
-					.style = {.color = outline, .width = built ? fs.outlineWidthBuilt : fs.outlineWidthBlueprint},
+					.end = screen[(i + 1) % screen.size()],
+					.style = {.color = outline, .width = g.built ? fs.outlineWidthBuilt : fs.outlineWidthBlueprint},
 					.id = "committed_foundation_edge",
 					.zIndex = 52,
 				});
 			}
 		}
 
-		// --- Committed walls: trimmed bands + junction polygons (D8) -----------
-		// Build a geometry::WallSegment per committed segment (centerline + the
-		// preset's halfThicknessMm) and run the whole graph through resolveWallBands;
-		// it groups segments by shared integer vertex and emits one trimmed band per
-		// segment (same order) plus a junction polygon per join, tiling with no
-		// overlap/gap so translucent blueprint fills don't double-draw (D8). Bands
-		// take each segment's style (blueprint / progress-ramp / built, like the
-		// foundation render); junction polygons take a neutral built-vs-blueprint
-		// fill from their incident segments. This is INTERIM, same as the foundation
-		// render above.
-		renderCommittedWalls(viewportW, viewportH);
-
-		// Committed openings fill the gaps the wall render leaves (above the bands
-		// at z 60-62). The z values here only order committed construction against
-		// itself: the caller flushes this pass before the entity pass, so they
-		// never compete with entity, preview, or UI draw order.
-		renderCommittedOpenings(viewportW, viewportH);
+		// Walls (trimmed bands + junction polygons) and the opening fills in their
+		// gaps, all from the same cache. The z values (50-64) only order committed
+		// construction against itself: the caller flushes this pass before the
+		// entity pass, so they never compete with entity, preview, or UI order.
+		renderCommittedWalls(visibleWorld, viewportW, viewportH);
+		renderCommittedOpenings(visibleWorld, viewportW, viewportH);
 	}
 
 	void DrawingSystem::renderPreview(int viewportW, int viewportH) {
@@ -1555,10 +1501,15 @@ namespace world_sim {
 			int								  zEdge
 		) {
 			const std::size_t n = screen.size();
-			if (n < 3) {
+			// Upper bound is the uint16_t fan-index range (mirrors the foundation
+			// fan guard in CommittedGeometryCache).
+			if (n < 3 || n > std::numeric_limits<uint16_t>::max()) {
 				return;
 			}
-			std::vector<uint16_t> indices;
+			// Scratch fan-index buffer reused across calls (several calls per
+			// visible ring per frame); drawTriangles copies before returning.
+			static thread_local std::vector<uint16_t> indices;
+			indices.clear();
 			indices.reserve((n - 2) * 3);
 			for (std::size_t i = 1; i + 1 < n; ++i) {
 				indices.push_back(0);
@@ -1587,75 +1538,20 @@ namespace world_sim {
 
 	} // namespace
 
-	void DrawingSystem::renderCommittedWalls(int viewportW, int viewportH) {
-		namespace ec = engine::construction;
-
+	void DrawingSystem::renderCommittedWalls(const Foundation::Rect& visibleWorld, int viewportW, int viewportH) {
 		const auto& ws = ConstructionRegistry::Get().rendering().wall;
 
-		const auto& segs = constructionWorld_.segments();
-		if (segs.empty()) {
-			return;
-		}
-
-		// Palette color for a wall material (drives both the band fill and the built
-		// junction fill). Falls back to the configured color when there is no palette.
-		auto wallMatColor = [&](const std::string& name) -> Foundation::Color {
-			const auto* m = ConstructionRegistry::Get().getMaterial(name);
-			if (m != nullptr && !m->pattern.palette.empty()) {
-				const auto& c = m->pattern.palette.front();
-				return {c.r / 255.0F, c.g / 255.0F, c.b / 255.0F, 1.0F};
-			}
-			return toColor(ws.fallbackColor);
-		};
-
-		auto toScreen = [&](geometry::Vec2i64 mm) -> Foundation::Vec2 {
-			const auto w = geometry::dequantize(mm);
+		auto toScreen = [&](Foundation::Vec2 w) -> Foundation::Vec2 {
 			return camera_->worldToScreen(w.x, w.y, viewportW, viewportH, kPixelsPerMeter);
 		};
 
-		// Build the offsetter input for the WHOLE graph at once: shared integer
-		// vertices mean resolveWallBands derives every junction by exact-endpoint
-		// grouping. A malformed segment (missing vertex or unresolved thickness
-		// preset) is SKIPPED rather than fed as a zero-length placeholder, because
-		// resolveWallBands rejects any zero-length segment up front and would fail
-		// the whole graph. offsetToSeg maps each offsetter index (and the segment
-		// indices reported back in bands/junctionSegments) to its original segs index.
-		std::vector<geometry::WallSegment> offsetSegs;
-		std::vector<std::size_t>		   offsetToSeg;
-		offsetSegs.reserve(segs.size());
-		offsetToSeg.reserve(segs.size());
-		for (std::size_t i = 0; i < segs.size(); ++i) {
-			const ec::WallSegment& wseg = segs[i];
-			const ec::Vertex*	   v0 = constructionWorld_.getVertex(wseg.v0);
-			const ec::Vertex*	   v1 = constructionWorld_.getVertex(wseg.v1);
-			std::int64_t		   halfThick = 0;
-			if (const auto* preset = ConstructionRegistry::Get().getThicknessPreset(wseg.material, wseg.thicknessPreset)) {
-				halfThick = preset->halfThicknessMm;
-			}
-			if (v0 == nullptr || v1 == nullptr || halfThick <= 0) {
-				continue;
-			}
-			offsetSegs.push_back({v0->pos, v1->pos, halfThick});
-			offsetToSeg.push_back(i);
-		}
-		if (offsetSegs.empty()) {
-			return;
-		}
-
-		const geometry::WallBands bands = geometry::resolveWallBands(offsetSegs, geometry::kDefaultMiterLimit);
-		if (bands.status != geometry::OffsetStatus::Ok) {
-			// Reject-don't-repair: a degenerate offset means the topology fed it bad
-			// input; skip the band render this frame rather than draw garbage. The
-			// centerlines below still show the walls exist.
-			for (const auto& wseg : segs) {
-				const ec::Vertex* v0 = constructionWorld_.getVertex(wseg.v0);
-				const ec::Vertex* v1 = constructionWorld_.getVertex(wseg.v1);
-				if (v0 == nullptr || v1 == nullptr) {
-					continue;
-				}
+		// Reject-don't-repair: resolveWallBands refused the graph at rebuild time;
+		// bare centerlines still show the walls exist, never garbage bands.
+		if (committedCache_.bandsFailed()) {
+			for (const auto& line : committedCache_.fallbackCenterlines()) {
 				Renderer::Primitives::drawLine({
-					.start = toScreen(v0->pos),
-					.end = toScreen(v1->pos),
+					.start = toScreen(line[0]),
+					.end = toScreen(line[1]),
 					.style = {.color = toColor(ws.outlineColor, 0.8F), .width = ws.outlineWidthBuilt},
 					.id = "committed_wall_fallback",
 					.zIndex = 60,
@@ -1665,150 +1561,59 @@ namespace world_sim {
 		}
 
 		// Per-segment bands, styled like the foundation render (z 60-62, above
-		// foundations at 50-52, below the in-progress preview at 900+). bands[i]
-		// corresponds to offsetSegs[i], i.e. segs[offsetToSeg[i]].
-		for (std::size_t i = 0; i < bands.bands.size() && i < offsetToSeg.size(); ++i) {
-			const ec::WallSegment& wseg = segs[offsetToSeg[i]];
-			const geometry::Ring&  ring = bands.bands[i];
-			if (ring.size() < 3) {
+		// foundations at 50-52). A segment hosting openings is cached as solid
+		// sub-bands around each opening's gap instead of one trimmed band.
+		std::vector<Foundation::Vec2> screen;
+		for (const auto& g : committedCache_.walls()) {
+			if (!g.aabb.intersects(visibleWorld)) {
 				continue;
 			}
-
-			const bool built = (wseg.state == ec::FoundationState::Built);
-			float	   progress = built ? 1.0F : 0.0F;
-			if (!built && ecsWorld_ != nullptr && wseg.entity != ecs::kInvalidEntity) {
-				if (const auto* bp = ecsWorld_->getComponent<ecs::StructureBlueprint>(wseg.entity)) {
-					progress = bp->progress();
-				}
-			}
-
-			const Foundation::Color matColor = wallMatColor(wseg.material);
+			const float progress = blueprintProgress(g.built, g.entity);
 
 			const float fillAlpha =
-				built ? ws.progressAlphaMax : (ws.progressAlphaMin + (ws.progressAlphaMax - ws.progressAlphaMin) * progress);
+				g.built ? ws.progressAlphaMax : (ws.progressAlphaMin + (ws.progressAlphaMax - ws.progressAlphaMin) * progress);
 			// Built walls wear a darker shade of their own material; blueprints keep the
 			// cool outline so blue stays the "planned" signal.
 			const Foundation::Color outline =
-				built ? darken(matColor, ws.builtEdgeDarken)
-					  : toColor(ws.outlineColor, ws.outlineAlphaMin + (ws.outlineAlphaMax - ws.outlineAlphaMin) * progress);
+				g.built ? darken(g.matColor, ws.builtEdgeDarken)
+						: toColor(ws.outlineColor, ws.outlineAlphaMin + (ws.outlineAlphaMax - ws.outlineAlphaMin) * progress);
 
-			auto drawWallRing = [&](const std::vector<Foundation::Vec2>& screen) {
+			for (const auto& ring : g.rings) {
+				screen.clear();
+				screen.reserve(ring.size());
+				for (const auto& v : ring) {
+					screen.push_back(toScreen(v));
+				}
 				// Blueprint base always; progress fill ramps with workDone/workTotal.
 				fillRing(screen, toColor(ws.blueprintFill), toColor(ws.outlineColor, 0.0F), 0.0F, "committed_wall_base", "", 60, 60);
 				fillRing(
 					screen,
-					{matColor.r, matColor.g, matColor.b, fillAlpha},
+					{g.matColor.r, g.matColor.g, g.matColor.b, fillAlpha},
 					outline,
-					built ? ws.outlineWidthBuilt : ws.outlineWidthBlueprint,
+					g.built ? ws.outlineWidthBuilt : ws.outlineWidthBlueprint,
 					"committed_wall_progress",
 					"committed_wall_edge",
 					61,
 					62
 				);
-			};
-
-			// A segment hosting openings can't use the single resolved band: it must
-			// show a gap where each opening sits. Replace the band with solid sub-bands
-			// over the centerline runs between the gaps, computed from the segment's own
-			// v0->v1 centerline. This drops the whole-graph junction trim on this one
-			// segment (square cuts at the gap edges, an accepted interim approximation);
-			// the junction polygons still fill the corners. Segments with no openings
-			// keep the trimmed band unchanged.
-			const auto intervals = openingIntervalsForSegment(constructionWorld_, wseg.id);
-			if (intervals.empty()) {
-				std::vector<Foundation::Vec2> screen;
-				screen.reserve(ring.size());
-				for (const auto& v : ring) {
-					screen.push_back(toScreen(v));
-				}
-				drawWallRing(screen);
-				continue;
 			}
-
-			const ec::Vertex* v0 = constructionWorld_.getVertex(wseg.v0);
-			const ec::Vertex* v1 = constructionWorld_.getVertex(wseg.v1);
-			std::int64_t	  halfThick = 0;
-			if (const auto* preset = ConstructionRegistry::Get().getThicknessPreset(wseg.material, wseg.thicknessPreset)) {
-				halfThick = preset->halfThicknessMm;
-			}
-			if (v0 == nullptr || v1 == nullptr || halfThick <= 0) {
-				continue;
-			}
-
-			// Walk the centerline cutting out each [t0,t1] gap; render a sub-band over
-			// each solid run that has positive length.
-			auto lerpMm = [&](float t) -> geometry::Vec2i64 {
-				const double ax = static_cast<double>(v0->pos.x);
-				const double ay = static_cast<double>(v0->pos.y);
-				const double bx = static_cast<double>(v1->pos.x);
-				const double by = static_cast<double>(v1->pos.y);
-				return {
-					static_cast<std::int64_t>(std::llround(ax + (bx - ax) * t)),
-					static_cast<std::int64_t>(std::llround(ay + (by - ay) * t)),
-				};
-			};
-			float runStart = 0.0F;
-			auto  emitRun = [&](float a, float b) {
-				 if (b - a <= 1e-4F) {
-					 return;
-				 }
-				 const geometry::Ring sub = geometry::band(lerpMm(a), lerpMm(b), halfThick);
-				 if (sub.size() < 3) {
-					 return;
-				 }
-				 std::vector<Foundation::Vec2> screen;
-				 screen.reserve(sub.size());
-				 for (const auto& v : sub) {
-					 screen.push_back(toScreen(v));
-				 }
-				 drawWallRing(screen);
-			};
-			for (const auto& iv : intervals) {
-				emitRun(runStart, iv.first);
-				runStart = iv.second;
-			}
-			emitRun(runStart, 1.0F);
 		}
 
-		// Junction polygons fill the corner gaps the trimmed bands leave. Styling is
-		// per junction, from its own incident segments: a junction reads as built only
-		// when it has incident segments and every one is built, in which case it takes
-		// the wall material color so corners read as continuous material; otherwise it
-		// keeps the cool blueprint tint. So a blueprint's corners stay blue even while a
-		// finished structure elsewhere shows wood corners. junctionSegments holds
-		// offsetter indices, mapped back to segs via offsetToSeg.
-		for (std::size_t j = 0; j < bands.junctions.size(); ++j) {
-			const geometry::Ring& ring = bands.junctions[j];
-			if (ring.size() < 3) {
+		// Junction polygons fill the corner gaps the trimmed bands leave. A built
+		// junction (every incident segment built, resolved at rebuild) takes the
+		// wall material color so corners read as continuous material; otherwise it
+		// keeps the cool blueprint tint, so a blueprint's corners stay blue even
+		// while a finished structure elsewhere shows wood corners.
+		for (const auto& g : committedCache_.junctions()) {
+			if (!g.aabb.intersects(visibleWorld)) {
 				continue;
 			}
-
-			// Default to blueprint styling; only a fully-built junction with a known
-			// incident set flips to built, so a missing/out-of-sync segment list can't
-			// masquerade as built.
-			bool		junctionBuilt = (j < bands.junctionSegments.size() && !bands.junctionSegments[j].empty());
-			std::string junctionMaterial;
-			if (j < bands.junctionSegments.size()) {
-				for (const std::size_t offIdx : bands.junctionSegments[j]) {
-					if (offIdx >= offsetToSeg.size()) {
-						continue;
-					}
-					const ec::WallSegment& iseg = segs[offsetToSeg[offIdx]];
-					if (junctionMaterial.empty()) {
-						junctionMaterial = iseg.material;
-					}
-					if (iseg.state != ec::FoundationState::Built) {
-						junctionBuilt = false;
-					}
-				}
-			}
-			const Foundation::Color jMat = wallMatColor(junctionMaterial);
-			const Foundation::Color junctionFill = junctionBuilt ? Foundation::Color{jMat.r, jMat.g, jMat.b, ws.junctionAlphaBuilt}
-																 : toColor(ws.junctionColor, ws.junctionAlphaBlueprint);
-
-			std::vector<Foundation::Vec2> screen;
-			screen.reserve(ring.size());
-			for (const auto& v : ring) {
+			const Foundation::Color junctionFill = g.built
+													   ? Foundation::Color{g.matColor.r, g.matColor.g, g.matColor.b, ws.junctionAlphaBuilt}
+													   : toColor(ws.junctionColor, ws.junctionAlphaBlueprint);
+			screen.clear();
+			screen.reserve(g.ring.size());
+			for (const auto& v : g.ring) {
 				screen.push_back(toScreen(v));
 			}
 			fillRing(screen, junctionFill, toColor(ws.outlineColor, 0.0F), 0.0F, "committed_wall_junction", "", 61, 61);
@@ -1816,34 +1621,6 @@ namespace world_sim {
 	}
 
 	namespace {
-
-		// Material color (palette front) or a fallback. Doors fall back to a warm
-		// wood-brown, windows to the same so the frame reads as the material; the
-		// pane tint is derived in the draw below.
-		Foundation::Color openingMaterialColor(const std::string& materialName) {
-			const auto* mat = ConstructionRegistry::Get().getMaterial(materialName);
-			if (mat != nullptr && !mat->pattern.palette.empty()) {
-				const auto& c = mat->pattern.palette.front();
-				return {c.r / 255.0F, c.g / 255.0F, c.b / 255.0F, 1.0F};
-			}
-			return toColor(ConstructionRegistry::Get().rendering().opening.doorFallbackColor);
-		}
-
-		// The opening's footprint width in world meters: the long edge of the oriented
-		// footprint rectangle. Derived from the actual geometry (not the type's nominal
-		// width), so width-based styling like the mullion count matches what's drawn and
-		// stays correct even if the footprint were ever clamped near a wall end.
-		float footprintWidthMeters(const geometry::Ring& f) {
-			if (f.size() < 4) {
-				return 0.0F;
-			}
-			auto edgeLen = [](geometry::Vec2i64 a, geometry::Vec2i64 b) {
-				const double dx = static_cast<double>(b.x - a.x);
-				const double dy = static_cast<double>(b.y - a.y);
-				return std::sqrt(dx * dx + dy * dy);
-			};
-			return static_cast<float>(std::max(edgeLen(f[0], f[1]), edgeLen(f[0], f[3])) / geometry::kMillimetersPerMeter);
-		}
 
 		// Draw a procedural door/window over the opening footprint (the 4 CCW screen-
 		// space corners of the oriented wall-thickness rectangle). `alpha` scales the
@@ -1977,55 +1754,30 @@ namespace world_sim {
 
 	} // namespace
 
-	void DrawingSystem::renderCommittedOpenings(int viewportW, int viewportH) {
-		const auto& ops = constructionWorld_.openings();
-		if (ops.empty()) {
-			return;
-		}
-
+	void DrawingSystem::renderCommittedOpenings(const Foundation::Rect& visibleWorld, int viewportW, int viewportH) {
 		const auto& os = ConstructionRegistry::Get().rendering().opening;
 
-		auto toScreen = [&](geometry::Vec2i64 mm) -> Foundation::Vec2 {
-			const auto w = geometry::dequantize(mm);
+		auto toScreen = [&](Foundation::Vec2 w) -> Foundation::Vec2 {
 			return camera_->worldToScreen(w.x, w.y, viewportW, viewportH, kPixelsPerMeter);
 		};
 
-		for (const ec::Opening& op : ops) {
-			const geometry::Ring footprint = openingFootprint(constructionWorld_, op);
-			if (footprint.size() < 3) {
+		std::vector<Foundation::Vec2> screen;
+		for (const auto& g : committedCache_.openings()) {
+			if (!g.aabb.intersects(visibleWorld)) {
 				continue;
 			}
-
-			const auto* type = ConstructionRegistry::Get().getOpeningType(op.type);
-			if (type == nullptr) {
-				continue;
-			}
-			const bool window = !type->pathable; // windows are not pathable; doors are
-
 			// Progress styling mirrors walls: a Built opening renders solid, a blueprint
-			// dims with workDone/workTotal from its ECS mirror (falling back to the
-			// topology state when there's no entity yet).
-			const bool built = (op.state == ec::FoundationState::Built);
-			float	   progress = built ? 1.0F : 0.0F;
-			if (!built && ecsWorld_ != nullptr && op.entity != ecs::kInvalidEntity) {
-				if (const auto* bp = ecsWorld_->getComponent<ecs::StructureBlueprint>(op.entity)) {
-					progress = bp->progress();
-				}
-			}
-			const float alpha = built ? 1.0F : (os.progressAlphaMin + (os.progressAlphaMax - os.progressAlphaMin) * progress);
+			// dims with workDone/workTotal from its ECS mirror.
+			const float progress = blueprintProgress(g.built, g.entity);
+			const float alpha = g.built ? 1.0F : (os.progressAlphaMin + (os.progressAlphaMax - os.progressAlphaMin) * progress);
 
-			std::vector<Foundation::Vec2> screen;
-			screen.reserve(footprint.size());
-			for (const auto& v : footprint) {
+			screen.clear();
+			screen.reserve(g.footprint.size());
+			for (const auto& v : g.footprint) {
 				screen.push_back(toScreen(v));
 			}
 			drawOpeningFill(
-				screen,
-				openingMaterialColor(type->material),
-				window,
-				footprintWidthMeters(footprint),
-				alpha,
-				built ? os.outlineWidthBuilt : os.outlineWidthBlueprint
+				screen, g.matColor, g.window, g.widthMeters, alpha, g.built ? os.outlineWidthBuilt : os.outlineWidthBlueprint
 			);
 		}
 	}
