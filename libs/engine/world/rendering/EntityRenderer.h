@@ -22,6 +22,7 @@
 #include "world/rendering/InstancedEntityRenderer.h"
 #include "world/rendering/InstancingUniforms.h"
 #include "world/rendering/RenderContext.h"
+#include "world/rendering/SelectionOutline.h"
 #include "world/rendering/WorldDepthSort.h"
 
 #include <cstdint>
@@ -101,6 +102,10 @@ class EntityRenderer {
 	/// Enable/disable GPU instancing (for A/B testing and fallback)
 	void setInstancingEnabled(bool enabled) { m_useInstancing = enabled; }
 	[[nodiscard]] bool isInstancingEnabled() const { return m_useInstancing; }
+
+	/// Set (or clear) the selected entity's outline for the next render, injected
+	/// into the depth-sorted entity stream so nearer entities occlude it.
+	void setSelectionOutline(SelectionOutline o) { instancedDynamic.setSelectionOutline(std::move(o)); }
 
   private:
 	float m_pixelsPerMeter = 16.0F;

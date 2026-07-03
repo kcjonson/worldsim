@@ -5,6 +5,7 @@ add_library(geometry
     arrangement/HalfEdge.cpp
     offset/WallOffset.cpp
     boolean/RingBoolean.cpp
+    silhouette/Silhouette.cpp
     triangulation/Triangulation.cpp
     visibility/Visibility.cpp
     nav/NavMesh.cpp

@@ -959,6 +959,9 @@ namespace {
 			auto		entityStart = Clock::now();
 			auto&		renderSystem = ecsWorld->getSystem<ecs::DynamicEntityRenderSystem>();
 			const auto& dynamicEntities = renderSystem.getRenderData();
+			// Feed the selected entity's outline into the depth-sort pass so nearer
+			// entities occlude it (construction outlines still draw flat below).
+			m_entityRenderer->setSelectionOutline(m_selectionSystem->buildEntityOutline());
 			m_entityRenderer->render(*m_placementExecutor, m_processedChunks, dynamicEntities, *m_camera, w, h);
 			float entityMs = elapsedMs(entityStart, Clock::now());
 

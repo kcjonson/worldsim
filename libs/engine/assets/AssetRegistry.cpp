@@ -5,7 +5,9 @@
 #include "assets/SvgPathNodes.h"
 #include "assets/lua/LuaGenerator.h"
 
+#include <silhouette/Silhouette.h>
 #include <utils/Log.h>
+#include <vector/MeshBounds.h>
 #include <vector/SVGLoader.h>
 #include <vector/Tessellator.h>
 
@@ -1276,6 +1278,53 @@ namespace engine::assets {
 		return &templateCache[defName];
 	}
 
+	const AssetSilhouette* AssetRegistry::getSilhouette(const std::string& defName) {
+		{
+			std::lock_guard<std::mutex> lk(m_silhouetteCacheMutex);
+			auto						it = m_silhouetteCache.find(defName);
+			if (it != m_silhouetteCache.end()) {
+				return &it->second;
+			}
+		}
+
+		// Compute outside the silhouette lock (rasterization can be heavy), mirroring
+		// getMotion. getTemplate guards itself with a separate mutex.
+		constexpr std::int64_t kSilhouetteResolution	 = 256; // pixels along the longest side
+		constexpr std::int64_t kHitRegionCloseRadiusPx = 4;	// bridge disjoint-blob gaps (whole-clump)
+
+		AssetSilhouette sil;
+
+		const renderer::TessellatedMesh* tmpl = getTemplate(defName);
+		if (tmpl != nullptr && !tmpl->vertices.empty() && !tmpl->indices.empty()) {
+			// Bounds centre in the template frame == the dynamic render path's -centerOffset,
+			// so the shared instance transform, outline, and hit-test never drift.
+			const Foundation::Rect b = renderer::computeBounds(*tmpl);
+			sil.boundsCenterMeters	 = {b.x + b.width * 0.5F, b.y + b.height * 0.5F};
+
+			// Rasterize the ACTUAL rendered geometry: expand the tessellated triangles into
+			// the template-local mm frame. This captures fills AND stroke bands (e.g. a reed's
+			// stroke stem, which a fill-contour silhouette would miss), so the outline hugs
+			// exactly what is drawn and the reed stays one connected shape.
+			std::vector<geometry::Vec2i64> triVerts;
+			triVerts.reserve(tmpl->indices.size());
+			for (const auto idx : tmpl->indices) {
+				const Foundation::Vec2& v = tmpl->vertices[idx];
+				triVerts.push_back(geometry::quantize({v.x, v.y}));
+			}
+			sil.rings	  = geometry::silhouetteOfTriangles(triVerts, kSilhouetteResolution, 0);
+			sil.hitRegion = geometry::silhouetteOfTriangles(triVerts, kSilhouetteResolution, kHitRegionCloseRadiusPx);
+		}
+
+		if (sil.hitRegion.empty()) {
+			sil.hitRegion = sil.rings; // single-blob / degenerate: the outline is the hit region
+		}
+		sil.valid = !sil.rings.empty();
+
+		std::lock_guard<std::mutex> lk(m_silhouetteCacheMutex);
+		auto [it, inserted] = m_silhouetteCache.emplace(defName, std::move(sil));
+		return &it->second;
+	}
+
 	const MotionDef* AssetRegistry::getMotion(const std::string& defName) {
 		{
 			std::lock_guard<std::mutex> lk(m_motionCacheMutex);
@@ -1504,6 +1553,10 @@ namespace engine::assets {
 			std::lock_guard<std::mutex> lk(m_motionCacheMutex);
 			m_motionCache.clear();
 		}
+		{
+			std::lock_guard<std::mutex> lk(m_silhouetteCacheMutex);
+			m_silhouetteCache.clear();
+		}
 		groupIndex.clear();
 		// Reset the string-interning index too (mirrors clearDefinitions); otherwise name<->id
 		// and capability lookups return stale mappings for now-destroyed defs until a reload.
@@ -1692,6 +1745,10 @@ namespace engine::assets {
 		{
 			std::lock_guard<std::mutex> lk(m_motionCacheMutex);
 			m_motionCache.clear();
+		}
+		{
+			std::lock_guard<std::mutex> lk(m_silhouetteCacheMutex);
+			m_silhouetteCache.clear();
 		}
 		groupIndex.clear();
 		m_defNameToId.clear();

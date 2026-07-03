@@ -9,6 +9,7 @@
 #include "assets/IAssetGenerator.h"
 #include "assets/MotionDef.h"
 
+#include <polygon/Polygon.h>
 #include <vector/Types.h>
 
 #include <atomic>
@@ -29,6 +30,24 @@ namespace engine::assets {
 		std::atomic<bool> started{false};
 		std::atomic<bool> done{false};
 		std::atomic<int>  defsLoaded{0};
+	};
+
+	/// Cached per-defName selection silhouette: the filled outer outline of the
+	/// asset's RENDERED footprint (rasterized from the tessellated mesh triangles, so
+	/// it captures fills AND stroke bands — e.g. a reed's stroke stem — exactly what is
+	/// drawn), in the template-local (scaled, uncentered) frame in integer millimeters.
+	/// `rings` is the crisp outline (holes filled, disjoint blobs kept separate) used for
+	/// the selection outline and later shadows; `hitRegion` is the same closed with a
+	/// small morphological radius so gaps between disjoint blobs are clickable
+	/// (whole-clump) and narrow concavities forgive slightly — used for hit-testing.
+	/// `boundsCenterMeters` is the template mesh bbox centre in the same frame — it
+	/// equals the dynamic render path's -centerOffset, stored so outline and hit-test
+	/// share the render transform and can't drift.
+	struct AssetSilhouette {
+		std::vector<geometry::Ring> rings;
+		std::vector<geometry::Ring> hitRegion;
+		glm::vec2					boundsCenterMeters{0.0F, 0.0F};
+		bool						valid = false;
 	};
 
 	/// Central registry for asset definitions and generated templates.
@@ -68,6 +87,14 @@ namespace engine::assets {
 		/// index) into the mesh's scaled meter frame, so a part rotates about the right joint.
 		/// Rotation amps are returned in radians, posX/posY amps in meters. Lazily loaded + cached.
 		const MotionDef* getMotion(const std::string& defName);
+
+		/// Get the cached selection silhouette for a def (see AssetSilhouette).
+		/// Lazily rasterized from the tessellated template mesh triangles (fills AND stroke
+		/// bands) via geometry::silhouetteOfTriangles: `rings` at close 0, `hitRegion` at a
+		/// small close; holes filled, disjoint blobs kept separate. `valid` is false only when
+		/// the template has no geometry (no bounds-rect fallback). Thread-safe (own mutex, heavy
+		/// compute off-lock), safe to call from chunk workers like getTemplate.
+		const AssetSilhouette* getSilhouette(const std::string& defName);
 
 		/// Generate an asset directly (does not cache)
 		/// @param defName The definition name
@@ -209,6 +236,12 @@ namespace engine::assets {
 		// Resolved motion per def (empty MotionDef = "resolved, has none"). Guarded separately.
 		std::unordered_map<std::string, MotionDef> m_motionCache;
 		mutable std::mutex						   m_motionCacheMutex;
+
+		// Lazily-computed selection silhouette per def. Guarded separately; the raster
+		// rasterize/flood-fill runs off-lock (like getMotion), the cache lock is held only
+		// to check/insert. Rasterized from the template mesh triangles.
+		std::unordered_map<std::string, AssetSilhouette> m_silhouetteCache;
+		mutable std::mutex								 m_silhouetteCacheMutex;
 
 		// getTemplate lazily tessellates into templateCache and is called from
 		// chunk worker threads (entity mesh baking) as well as the render thread
