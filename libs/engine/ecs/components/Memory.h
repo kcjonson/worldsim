@@ -15,7 +15,6 @@
 
 #include <array>
 #include <cstdint>
-#include <list>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -87,12 +86,32 @@ namespace ecs {
 		std::array<std::unordered_set<uint64_t>, kCapabilityTypeCount> capabilityIndex;
 
 		// --- LRU Eviction ---
+		//
+		// Index-linked LRU in flat vectors. Components live by value in the ECS
+		// ComponentPool's dense vector, which relocates them on growth (adding a
+		// second colonist) and move-assigns them on swap-remove — so a component
+		// must survive being copied or moved wholesale. The previous std::list +
+		// map-of-list-iterators scheme did not: a copy's iterators still pointed
+		// into the SOURCE component's list nodes, and the first touchLRU after a
+		// pool reallocation erased a freed node (heap corruption, crashed the game
+		// whenever a second colonist spawned). Indices stay meaningful in a copy;
+		// no pointers, nothing to dangle.
 
-		/// LRU order: front = oldest (evict first), back = newest
-		std::list<uint64_t> lruOrder;
+		static constexpr uint32_t kLruNull = 0xFFFFFFFFU;
+		struct LruNode {
+			uint64_t key = 0;
+			uint32_t prev = kLruNull;
+			uint32_t next = kLruNull;
+		};
 
-		/// Map from entity key to LRU list iterator (for O(1) updates)
-		std::unordered_map<uint64_t, std::list<uint64_t>::iterator> lruMap;
+		/// Node storage; unlinked slots are recycled via lruFreeSlots.
+		std::vector<LruNode> lruNodes;
+		std::vector<uint32_t> lruFreeSlots;
+		uint32_t lruHead = kLruNull; // oldest (evict first)
+		uint32_t lruTail = kLruNull; // newest
+
+		/// Map from entity key to its lruNodes index (for O(1) touch/remove)
+		std::unordered_map<uint64_t, uint32_t> lruMap;
 
 		// --- Configuration ---
 
@@ -161,7 +180,7 @@ namespace ecs {
 			}
 
 			// Evict oldest entries if at capacity
-			while (knownWorldEntities.size() >= kMaxWorldEntities && !lruOrder.empty()) {
+			while (knownWorldEntities.size() >= kMaxWorldEntities && lruHead != kLruNull) {
 				evictOldest();
 			}
 
@@ -175,9 +194,8 @@ namespace ecs {
 				}
 			}
 
-			// Add to LRU list (back = newest)
-			lruOrder.push_back(key);
-			lruMap[key] = std::prev(lruOrder.end());
+			// Add to LRU list (tail = newest)
+			lruMap[key] = lruLinkTail(key);
 			return true; // New discovery
 		}
 
@@ -210,7 +228,10 @@ namespace ecs {
 			for (auto& index : capabilityIndex) {
 				index.clear();
 			}
-			lruOrder.clear();
+			lruNodes.clear();
+			lruFreeSlots.clear();
+			lruHead = kLruNull;
+			lruTail = kLruNull;
 			lruMap.clear();
 			knownSegments.clear();
 			knownOpenings.clear();
@@ -324,22 +345,68 @@ namespace ecs {
 		[[nodiscard]] size_t knownOpeningCount() const { return knownOpenings.size(); }
 
 	  private:
-		/// Update LRU position for an entity (move to back = most recently accessed)
+		/// Detach node `idx` from the linked order (slot stays allocated).
+		void lruUnlink(uint32_t idx) {
+			LruNode& n = lruNodes[idx];
+			if (n.prev != kLruNull) {
+				lruNodes[n.prev].next = n.next;
+			} else {
+				lruHead = n.next;
+			}
+			if (n.next != kLruNull) {
+				lruNodes[n.next].prev = n.prev;
+			} else {
+				lruTail = n.prev;
+			}
+			n.prev = kLruNull;
+			n.next = kLruNull;
+		}
+
+		/// Allocate (or recycle) a node for `key` and link it at the tail (newest).
+		/// Returns the node index.
+		uint32_t lruLinkTail(uint64_t key) {
+			uint32_t idx = kLruNull;
+			if (!lruFreeSlots.empty()) {
+				idx = lruFreeSlots.back();
+				lruFreeSlots.pop_back();
+				lruNodes[idx] = LruNode{key, kLruNull, kLruNull};
+			} else {
+				idx = static_cast<uint32_t>(lruNodes.size());
+				lruNodes.push_back(LruNode{key, kLruNull, kLruNull});
+			}
+			lruNodes[idx].prev = lruTail;
+			if (lruTail != kLruNull) {
+				lruNodes[lruTail].next = idx;
+			} else {
+				lruHead = idx;
+			}
+			lruTail = idx;
+			return idx;
+		}
+
+		/// Update LRU position for an entity (move to tail = most recently accessed)
 		void touchLRU(uint64_t key) {
 			auto mapIt = lruMap.find(key);
-			if (mapIt != lruMap.end()) {
-				lruOrder.erase(mapIt->second);
-				lruOrder.push_back(key);
-				mapIt->second = std::prev(lruOrder.end());
+			if (mapIt == lruMap.end() || mapIt->second == lruTail) {
+				return;
 			}
+			const uint32_t idx = mapIt->second;
+			lruUnlink(idx);
+			lruNodes[idx].prev = lruTail;
+			if (lruTail != kLruNull) {
+				lruNodes[lruTail].next = idx;
+			} else {
+				lruHead = idx;
+			}
+			lruTail = idx;
 		}
 
 		/// Evict the oldest entity from memory
 		void evictOldest() {
-			if (lruOrder.empty()) {
+			if (lruHead == kLruNull) {
 				return;
 			}
-			uint64_t oldestKey = lruOrder.front();
+			uint64_t oldestKey = lruNodes[lruHead].key;
 			removeEntity(oldestKey);
 		}
 
@@ -355,10 +422,11 @@ namespace ecs {
 				knownWorldEntities.erase(it);
 			}
 
-			// Remove from LRU tracking
+			// Remove from LRU tracking (recycle the node slot)
 			auto lruIt = lruMap.find(key);
 			if (lruIt != lruMap.end()) {
-				lruOrder.erase(lruIt->second);
+				lruUnlink(lruIt->second);
+				lruFreeSlots.push_back(lruIt->second);
 				lruMap.erase(lruIt);
 			}
 		}
