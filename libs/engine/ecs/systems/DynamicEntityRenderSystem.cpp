@@ -10,6 +10,8 @@
 
 #include "assets/AssetRegistry.h"
 #include "assets/MotionEval.h"
+#include "world/rendering/AssetInstanceTransform.h" // shared local<->world affine (no drift)
+#include "world/rendering/PackagedLayout.h" // shared crate+item placement (no drift)
 #include "world/rendering/WorldDepthSort.h" // computeAnchorY (canonical ground-contact rule)
 
 #include <cmath>
@@ -36,12 +38,6 @@ void DynamicEntityRenderSystem::update(float deltaTime) {
     renderData.clear();
     m_partXformStore.clear();
 
-    // Constants for packaged item rendering
-    constexpr float kPackagedScaleFactor = 0.85F;  // Scale packaged items to 85% of tile size
-    constexpr float kCrateWorldHeight = 0.2F;      // PackagingCrate's worldHeight
-    constexpr float kCrateWidth = 1.0F;            // PackagingCrate is 1m wide
-    constexpr float kItemLiftOffset = 0.03F;       // Lift item up slightly (~2px at typical zoom)
-
     auto& assetRegistry = engine::assets::AssetRegistry::Get();
 
     // Collect all entities with position and appearance
@@ -55,48 +51,18 @@ void DynamicEntityRenderSystem::update(float deltaTime) {
             continue;
         }
 
-        // For packaged entities (not being carried), render with crate overlay
+        // For packaged entities (not being carried), render crate-behind-item via the
+        // shared layout so the packaged hit-test/outline match the drawn sprite.
         if (packaged != nullptr) {
-            // Get item's worldHeight for proper bottom alignment
-            float itemWorldHeight = 0.6F;  // Default fallback
+            float itemWorldHeight = 0.6F; // fallback
             if (const auto* itemDef = assetRegistry.getDefinition(appearance.defName)) {
                 itemWorldHeight = itemDef->worldHeight;
             }
-            float scaledItemHeight = itemWorldHeight * kPackagedScaleFactor;
-
-            // Entity position is the bottom/baseline - offset each sprite by its height
-            // so both bottoms align at the entity position
-            float bottomY = pos.value.y;
-
-            // Crate is centered on entity position
-            float crateCenterX = pos.value.x;
-            float crateLeftX = crateCenterX - kCrateWidth * 0.5F;
-
-            // First render the crate (so it appears behind the item)
-            engine::assets::PlacedEntity crate;
-            crate.defName = "PackagingCrate";
-            crate.position = glm::vec2(crateLeftX, bottomY - kCrateWorldHeight);
-            crate.rotation = 0.0F;
-            crate.scale = 1.0F;
-            crate.colorTint = glm::vec4(1.0F, 1.0F, 1.0F, 1.0F);
-            // Crate + item share the ground baseline; equal anchorY + stable sort
-            // keeps the crate (pushed first) behind the item after the global sort.
-            crate.anchorY = bottomY;
-            renderData.push_back(std::move(crate));
-
-            // Then render the packaged item (shrunk, centered in crate)
-            engine::assets::PlacedEntity item;
-            item.defName = appearance.defName;
-            // Estimate item width from height (assume ~1.4:1 aspect ratio like BasicBox 40x28)
-            constexpr float kItemAspectRatio = 1.4F;
-            float scaledItemWidth = itemWorldHeight * kItemAspectRatio * kPackagedScaleFactor;
-            float itemLeftX = crateCenterX - scaledItemWidth * 0.5F;
-            item.position = glm::vec2(itemLeftX, bottomY - scaledItemHeight - kItemLiftOffset);
-            item.rotation = 0.0F;
-            item.scale = appearance.scale * kPackagedScaleFactor;
-            item.colorTint = appearance.colorTint;
-            item.anchorY = bottomY;
-            renderData.push_back(std::move(item));
+            const engine::world::PackagedLayout pl = engine::world::packagedLayout(
+                pos.value, appearance.defName, appearance.scale, appearance.colorTint, itemWorldHeight
+            );
+            renderData.push_back(pl.crate); // crate first: drawn behind the item
+            renderData.push_back(pl.item);
             continue;
         }
 
@@ -111,12 +77,11 @@ void DynamicEntityRenderSystem::update(float deltaTime) {
 
         placed.defName = defName;
 
-        // Calculate centering offset from mesh bounds
-        // Entity position is the center - we need to offset so the mesh renders centered
-        float centerOffsetX = 0.0F;
-        float centerOffsetY = 0.0F;
-        float meshMaxY = 0.0F;  // Bottom-most local-Y (feet); drives the depth anchor
-        const auto* mesh = assetRegistry.getTemplate(defName);
+        // Re-center the mesh on its bbox (entity position is the center) and derive the
+        // world transform through the shared helper so render, outline, and hit-test agree.
+        glm::vec2   boundsCenter{0.0F, 0.0F};
+        float       meshMaxY = 0.0F;  // Bottom-most local-Y (feet); drives the depth anchor
+        const auto* mesh	 = assetRegistry.getTemplate(defName);
         if (mesh != nullptr && !mesh->vertices.empty()) {
             float minX = mesh->vertices[0].x;
             float maxX = mesh->vertices[0].x;
@@ -128,12 +93,11 @@ void DynamicEntityRenderSystem::update(float deltaTime) {
                 minY = std::min(minY, v.y);
                 maxY = std::max(maxY, v.y);
             }
-            centerOffsetX = -(minX + maxX) * 0.5F;
-            centerOffsetY = -(minY + maxY) * 0.5F;
-            meshMaxY = maxY;
+            boundsCenter = {(minX + maxX) * 0.5F, (minY + maxY) * 0.5F};
+            meshMaxY	 = maxY;
         }
 
-        placed.position = glm::vec2(pos.value.x + centerOffsetX, pos.value.y + centerOffsetY);
+        placed.position = engine::world::dynamicInstanceTransform(pos.value, appearance.scale, boundsCenter).origin;
         placed.rotation = 0.0F;  // Dynamic entities don't rotate - use FacingDirection for sprites
         placed.scale = appearance.scale;
         placed.colorTint = appearance.colorTint;
