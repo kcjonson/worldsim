@@ -79,6 +79,11 @@ if(BUILD_TESTING)
             target_compile_options(planet-view-tests PRIVATE -O0 -g)
         endif()
         add_test(NAME planet-view-tests COMMAND planet-view-tests)
+        # The PlanetColorizerBake tests run full PlanetGenerator pipelines whose
+        # internal pool is hardware_concurrency - 1. Declare that footprint so
+        # parallel ctest doesn't co-schedule other pool-spawning exes and starve
+        # the generation past its deadline (bit us on the 4-core CI runners).
+        set_tests_properties(planet-view-tests PROPERTIES PROCESSORS 3)
     endif()
 
     if(PLANET_VIEW_BENCHMARK_SOURCES)

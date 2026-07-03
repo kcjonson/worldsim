@@ -68,6 +68,15 @@ Local before/after timings: see Results below.
   commit predates vcpkg's removal of the `x-gha` binary-cache backend; refreshing the pin
   will silently break binary caching. When a `vcpkg.json` baseline bump forces a newer vcpkg,
   switch binary caching to `VCPKG_DEFAULT_BINARY_CACHE` + `actions/cache` in the same PR.
+- **tests.yml and build.yml also run on push to main.** Actions caches are branch-scoped: a
+  PR run can only restore caches created on the same PR or on main. Without a main run, every
+  new PR would start cold; the post-merge run is what seeds the warm start. (Public repo,
+  minutes are free.)
+- **Pool-spawning test exes declare `PROCESSORS`.** world-tests and planet-view-tests run
+  PlanetGenerator pipelines whose internal pool is `hardware_concurrency - 1`; under
+  `ctest -j4` on a 4-core runner they starved each other (planet-view's generate() blew its
+  deadline and baked the gray sheet its own tests guard against). `PROCESSORS 3` keeps ctest
+  from co-scheduling them. Any new test exe that runs full pipelines needs the same property.
 - **Hygiene:** every workflow got a per-PR `concurrency` group with `cancel-in-progress` (a
   force-push cancels the superseded run) and `paths-ignore: docs/**, **.md, .claude/**`.
   Draft PRs still skip CI entirely.
@@ -139,17 +148,23 @@ Local before/after timings: see Results below.
 
 ## Results
 
-Fill in as measured. CI numbers from workflow runs; local via `Measure-Command`.
+Local numbers measured 2026-07-03 (32-core Windows box, Debug, warm vcpkg binary cache).
+CI warm numbers to be filled from real PR runs during the measurement week.
 
 | Metric | Before | After |
 |--------|-------:|------:|
-| CI gate, non-worldgen PR (warm) | 49:00 | tbd |
+| CI gate, non-worldgen PR (warm) | 49:00 | tbd (target 10-13 min) |
 | CI gate, worldgen PR (warm) | 49:00 | tbd |
-| Local clean Debug build (32 cores) | tbd (MSBuild) | tbd (Ninja, cold ccache) |
-| Local no-op build | tbd | tbd |
-| Local incremental (1 engine .cpp) | tbd | tbd |
-| Fresh worktree first Debug build | ~= clean build | tbd (warm ccache) |
-| Local fast test suite | tbd (sequential) | tbd (`-j 13`) |
+| Local clean Debug build | 6:18 (MSBuild) | 1:14 (Ninja, cold ccache) |
+| Local clean rebuild, warm ccache (= fresh worktree) | 6:18 | 0:28 |
+| Local no-op build | 4.1 s | 0.6 s |
+| Local incremental (1 engine .cpp) | 4.6 s | 2.6 s |
+| Local configure | 13.9 s | 11.9 s |
+| Local fast test suite | 2:58 (sequential) | 1:09 (`-j 13`) |
+
+The warm-rebuild number still includes ~110 real recompiles (test targets' hardcoded `/Zi`
+made them uncacheable in the measurement); it improves further once the /Zi removal and the
+presets PR are both in.
 
 ## Related
 

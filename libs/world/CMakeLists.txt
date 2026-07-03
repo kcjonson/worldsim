@@ -85,7 +85,11 @@ if(BUILD_TESTING)
         #   300s gives >4x margin over the worst-case Debug-CI estimate.
         # If the fast wall time grows, rerun and set TIMEOUT = max(300, ceil(newWall * 12)).
         add_test(NAME world-tests COMMAND world-tests --gtest_filter=-*Heavy.*)
-        set_tests_properties(world-tests PROPERTIES LABELS "fast" TIMEOUT 300)
+        # PROCESSORS: even fast-bucket tests run PlanetGenerator pipelines whose
+        # internal pool is hardware_concurrency - 1; declaring the footprint keeps
+        # parallel ctest from co-scheduling other pool-spawning exes (they starve
+        # each other on 4-core CI runners).
+        set_tests_properties(world-tests PROPERTIES LABELS "fast" TIMEOUT 300 PROCESSORS 3)
 
         # The heavy bucket runs as gtest shards so `ctest -j -L heavy` spreads it
         # across cores (one entry serialized ~16 min Linux / ~27 min Windows on CI).

@@ -34,15 +34,26 @@ std::shared_ptr<const worldgen::GeneratedWorld> generate(uint32_t n) {
 
     worldgen::PlanetGenerator gen;
     gen.start(params);
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    // Generous deadline: under parallel ctest the runner is shared with other
+    // worldgen-spawning test processes (each pool is hardware_concurrency - 1),
+    // so wall time runs far above the uncontended cost. Only a real hang should
+    // trip this. Bailing out with a partial world here once baked as the exact
+    // gray sheet these tests guard against — hence the hard failure below.
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(300);
+    auto state = worldgen::GenerationProgress::State::Idle;
     while (std::chrono::steady_clock::now() < deadline) {
-        auto prog = gen.progress();
-        if (prog.state == worldgen::GenerationProgress::State::Complete ||
-            prog.state == worldgen::GenerationProgress::State::Failed ||
-            prog.state == worldgen::GenerationProgress::State::Cancelled) {
+        state = gen.progress().state;
+        if (state == worldgen::GenerationProgress::State::Complete ||
+            state == worldgen::GenerationProgress::State::Failed ||
+            state == worldgen::GenerationProgress::State::Cancelled) {
             break;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    if (state != worldgen::GenerationProgress::State::Complete) {
+        ADD_FAILURE() << "world generation (n=" << n << ") did not complete: state="
+                      << static_cast<int>(state) << " — overloaded machine or generator hang";
+        return nullptr;
     }
     return gen.takeResult();
 }

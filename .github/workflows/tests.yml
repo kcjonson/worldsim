@@ -8,6 +8,15 @@ on:
       - 'docs/**'
       - '**.md'
       - '.claude/**'
+  # Actions caches are branch-scoped: PR runs can only restore caches created on
+  # the same PR or on main. The post-merge run on main is what seeds the sccache
+  # cache every new PR warm-starts from.
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - '.claude/**'
 
 # A force-push supersedes the in-flight run for the same PR; cancel it.
 concurrency:
@@ -20,7 +29,7 @@ concurrency:
 jobs:
   test:
     # Skip while the PR is a draft; re-runs when marked ready for review.
-    if: github.event.pull_request.draft == false
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     env:
       SCCACHE_GHA_ENABLED: "true"
@@ -80,7 +89,7 @@ jobs:
 
   test-windows:
     # Skip while the PR is a draft; re-runs when marked ready for review.
-    if: github.event.pull_request.draft == false
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: windows-latest
     env:
       SCCACHE_GHA_ENABLED: "true"
