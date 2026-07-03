@@ -22,13 +22,12 @@ namespace {
 		return p.parent_path().parent_path().parent_path().parent_path();
 	}
 
+	// Complete-or-not, distinct from assets being absent: a load that never
+	// finishes is a FAILURE, not a skip, so a real asset-load regression can't
+	// silently stop being tested.
 	bool loadWorld(AssetRegistry& reg) {
-		const std::filesystem::path world = projectRoot() / "assets" / "world";
-		if (!std::filesystem::exists(world)) {
-			return false;
-		}
 		reg.setSharedScriptsPath(projectRoot() / "assets" / "shared" / "scripts");
-		reg.beginLoadAsync(world.string());
+		reg.beginLoadAsync((projectRoot() / "assets" / "world").string());
 		for (int i = 0; i < 1000 && !reg.isLoadComplete(); ++i) {
 			std::this_thread::sleep_for(std::chrono::milliseconds(10));
 		}
@@ -38,11 +37,12 @@ namespace {
 } // namespace
 
 TEST(ColonistDirectionalAssets, AllDirectionTemplatesAndMotionsResolve) {
-	auto& reg = AssetRegistry::Get();
-	reg.clear();
-	if (!loadWorld(reg)) {
+	if (!std::filesystem::exists(projectRoot() / "assets" / "world")) {
 		GTEST_SKIP() << "assets/world not found";
 	}
+	auto& reg = AssetRegistry::Get();
+	reg.clear();
+	ASSERT_TRUE(loadWorld(reg)) << "asset load did not complete within 10s";
 
 	for (const char* name : {"Colonist_down", "Colonist_up", "Colonist_left", "Colonist_right"}) {
 		SCOPED_TRACE(name);

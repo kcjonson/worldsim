@@ -104,14 +104,54 @@ namespace ecs {
 			uint32_t next = kLruNull;
 		};
 
-		/// Node storage; unlinked slots are recycled via lruFreeSlots.
-		std::vector<LruNode> lruNodes;
-		std::vector<uint32_t> lruFreeSlots;
-		uint32_t lruHead = kLruNull; // oldest (evict first)
-		uint32_t lruTail = kLruNull; // newest
+		/// The LRU bookkeeping as one unit so its move operations can uphold the
+		/// invariant that head/tail always index into THIS instance's nodes. A
+		/// member-wise move would empty the containers but copy the indices,
+		/// leaving the moved-from side pointing past an empty node pool — an
+		/// out-of-bounds write on reuse, the same corruption family the
+		/// index-linked rewrite exists to prevent. Moves reset the source to
+		/// empty, so a moved-from Memory stays safely reusable.
+		struct Lru {
+			std::vector<LruNode>				   nodes; // unlinked slots recycled via freeSlots
+			std::vector<uint32_t>				   freeSlots;
+			uint32_t							   head = kLruNull; // oldest (evict first)
+			uint32_t							   tail = kLruNull; // newest
+			std::unordered_map<uint64_t, uint32_t> map;				// key -> nodes index
 
-		/// Map from entity key to its lruNodes index (for O(1) touch/remove)
-		std::unordered_map<uint64_t, uint32_t> lruMap;
+			Lru() = default;
+			Lru(const Lru&) = default;
+			Lru& operator=(const Lru&) = default;
+			Lru(Lru&& other)
+				: nodes(std::move(other.nodes)),
+				  freeSlots(std::move(other.freeSlots)),
+				  head(other.head),
+				  tail(other.tail),
+				  map(std::move(other.map)) {
+				other.reset();
+			}
+			Lru& operator=(Lru&& other) {
+				if (this != &other) {
+					nodes = std::move(other.nodes);
+					freeSlots = std::move(other.freeSlots);
+					head = other.head;
+					tail = other.tail;
+					map = std::move(other.map);
+					other.reset();
+				}
+				return *this;
+			}
+
+			/// Back to the empty state. clear() on the (possibly moved-from)
+			/// containers guarantees empty rather than "valid but unspecified".
+			void reset() {
+				nodes.clear();
+				freeSlots.clear();
+				head = kLruNull;
+				tail = kLruNull;
+				map.clear();
+			}
+		};
+		Lru lru;
 
 		// --- Configuration ---
 
@@ -180,7 +220,7 @@ namespace ecs {
 			}
 
 			// Evict oldest entries if at capacity
-			while (knownWorldEntities.size() >= kMaxWorldEntities && lruHead != kLruNull) {
+			while (knownWorldEntities.size() >= kMaxWorldEntities && lru.head != kLruNull) {
 				evictOldest();
 			}
 
@@ -195,7 +235,7 @@ namespace ecs {
 			}
 
 			// Add to LRU list (tail = newest)
-			lruMap[key] = lruLinkTail(key);
+			lru.map[key] = lruLinkTail(key);
 			return true; // New discovery
 		}
 
@@ -228,11 +268,11 @@ namespace ecs {
 			for (auto& index : capabilityIndex) {
 				index.clear();
 			}
-			lruNodes.clear();
-			lruFreeSlots.clear();
-			lruHead = kLruNull;
-			lruTail = kLruNull;
-			lruMap.clear();
+			lru.nodes.clear();
+			lru.freeSlots.clear();
+			lru.head = kLruNull;
+			lru.tail = kLruNull;
+			lru.map.clear();
 			knownSegments.clear();
 			knownOpenings.clear();
 			// Clearing structural belief is a belief change: bump so any path planned
@@ -347,16 +387,16 @@ namespace ecs {
 	  private:
 		/// Detach node `idx` from the linked order (slot stays allocated).
 		void lruUnlink(uint32_t idx) {
-			LruNode& n = lruNodes[idx];
+			LruNode& n = lru.nodes[idx];
 			if (n.prev != kLruNull) {
-				lruNodes[n.prev].next = n.next;
+				lru.nodes[n.prev].next = n.next;
 			} else {
-				lruHead = n.next;
+				lru.head = n.next;
 			}
 			if (n.next != kLruNull) {
-				lruNodes[n.next].prev = n.prev;
+				lru.nodes[n.next].prev = n.prev;
 			} else {
-				lruTail = n.prev;
+				lru.tail = n.prev;
 			}
 			n.prev = kLruNull;
 			n.next = kLruNull;
@@ -366,47 +406,47 @@ namespace ecs {
 		/// Returns the node index.
 		uint32_t lruLinkTail(uint64_t key) {
 			uint32_t idx = kLruNull;
-			if (!lruFreeSlots.empty()) {
-				idx = lruFreeSlots.back();
-				lruFreeSlots.pop_back();
-				lruNodes[idx] = LruNode{key, kLruNull, kLruNull};
+			if (!lru.freeSlots.empty()) {
+				idx = lru.freeSlots.back();
+				lru.freeSlots.pop_back();
+				lru.nodes[idx] = LruNode{key, kLruNull, kLruNull};
 			} else {
-				idx = static_cast<uint32_t>(lruNodes.size());
-				lruNodes.push_back(LruNode{key, kLruNull, kLruNull});
+				idx = static_cast<uint32_t>(lru.nodes.size());
+				lru.nodes.push_back(LruNode{key, kLruNull, kLruNull});
 			}
-			lruNodes[idx].prev = lruTail;
-			if (lruTail != kLruNull) {
-				lruNodes[lruTail].next = idx;
+			lru.nodes[idx].prev = lru.tail;
+			if (lru.tail != kLruNull) {
+				lru.nodes[lru.tail].next = idx;
 			} else {
-				lruHead = idx;
+				lru.head = idx;
 			}
-			lruTail = idx;
+			lru.tail = idx;
 			return idx;
 		}
 
 		/// Update LRU position for an entity (move to tail = most recently accessed)
 		void touchLRU(uint64_t key) {
-			auto mapIt = lruMap.find(key);
-			if (mapIt == lruMap.end() || mapIt->second == lruTail) {
+			auto mapIt = lru.map.find(key);
+			if (mapIt == lru.map.end() || mapIt->second == lru.tail) {
 				return;
 			}
 			const uint32_t idx = mapIt->second;
 			lruUnlink(idx);
-			lruNodes[idx].prev = lruTail;
-			if (lruTail != kLruNull) {
-				lruNodes[lruTail].next = idx;
+			lru.nodes[idx].prev = lru.tail;
+			if (lru.tail != kLruNull) {
+				lru.nodes[lru.tail].next = idx;
 			} else {
-				lruHead = idx;
+				lru.head = idx;
 			}
-			lruTail = idx;
+			lru.tail = idx;
 		}
 
 		/// Evict the oldest entity from memory
 		void evictOldest() {
-			if (lruHead == kLruNull) {
+			if (lru.head == kLruNull) {
 				return;
 			}
-			uint64_t oldestKey = lruNodes[lruHead].key;
+			uint64_t oldestKey = lru.nodes[lru.head].key;
 			removeEntity(oldestKey);
 		}
 
@@ -423,11 +463,11 @@ namespace ecs {
 			}
 
 			// Remove from LRU tracking (recycle the node slot)
-			auto lruIt = lruMap.find(key);
-			if (lruIt != lruMap.end()) {
+			auto lruIt = lru.map.find(key);
+			if (lruIt != lru.map.end()) {
 				lruUnlink(lruIt->second);
-				lruFreeSlots.push_back(lruIt->second);
-				lruMap.erase(lruIt);
+				lru.freeSlots.push_back(lruIt->second);
+				lru.map.erase(lruIt);
 			}
 		}
 	};

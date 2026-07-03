@@ -12,6 +12,7 @@
 
 #include <gtest/gtest.h>
 
+#include <utility>
 #include <vector>
 
 namespace {
@@ -88,8 +89,64 @@ TEST(MemoryComponent, EvictsOldestRespectingTouch) {
 	EXPECT_EQ(m.worldEntityCount(), ecs::Memory::kMaxWorldEntities);
 }
 
-// clear() resets the LRU as well: a cleared component accepts a fresh
-// capacity's worth of entries and evicts in the new insertion order.
+// A recycled node slot must be fully relinked: forget a middle entry, remember
+// it again (recycles the slot at the newest position), then overflow and check
+// the eviction order end to end.
+TEST(MemoryComponent, SlotRecycleKeepsEvictionOrder) {
+	ecs::Memory m;
+	for (size_t i = 0; i < ecs::Memory::kMaxWorldEntities; ++i) {
+		ASSERT_TRUE(m.rememberWorldEntity(posFor(i), kDefId, kMask));
+	}
+	// Forget a middle entry, then re-remember it: its node slot is recycled and
+	// it becomes the NEWEST entry.
+	m.forgetWorldEntity(posFor(5), kDefId);
+	EXPECT_EQ(m.worldEntityCount(), ecs::Memory::kMaxWorldEntities - 1);
+	EXPECT_TRUE(m.rememberWorldEntity(posFor(5), kDefId, kMask));
+	EXPECT_EQ(m.worldEntityCount(), ecs::Memory::kMaxWorldEntities);
+
+	// Two overflows evict the two oldest untouched entries (0 then 1), not the
+	// recycled entry.
+	EXPECT_TRUE(m.rememberWorldEntity({-10.0F, 0.0F}, kDefId, kMask));
+	EXPECT_TRUE(m.rememberWorldEntity({-20.0F, 0.0F}, kDefId, kMask));
+	EXPECT_FALSE(m.knowsWorldEntity(posFor(0), kDefId));
+	EXPECT_FALSE(m.knowsWorldEntity(posFor(1), kDefId));
+	EXPECT_TRUE(m.knowsWorldEntity(posFor(2), kDefId));
+	EXPECT_TRUE(m.knowsWorldEntity(posFor(5), kDefId));
+	EXPECT_EQ(m.worldEntityCount(), ecs::Memory::kMaxWorldEntities);
+}
+
+// A moved-from Memory must be safely reusable (empty, not corrupting): the LRU
+// move operations reset the source's head/tail/node pool together.
+TEST(MemoryComponent, MovedFromIsReusable) {
+	ecs::Memory a;
+	for (size_t i = 0; i < 8; ++i) {
+		a.rememberWorldEntity(posFor(i), kDefId, kMask);
+	}
+
+	ecs::Memory b = std::move(a);
+	EXPECT_EQ(b.worldEntityCount(), 8U);
+
+	// Reuse the moved-from source: remember, touch, forget, all through the LRU.
+	for (size_t i = 0; i < 4; ++i) {
+		EXPECT_TRUE(a.rememberWorldEntity(posFor(100 + i), kDefId, kMask));
+	}
+	EXPECT_FALSE(a.rememberWorldEntity(posFor(100), kDefId, kMask)); // touch
+	for (size_t i = 0; i < 4; ++i) {
+		a.forgetWorldEntity(posFor(100 + i), kDefId);
+	}
+	EXPECT_EQ(a.worldEntityCount(), 0U);
+
+	// Same through move-assignment.
+	ecs::Memory c;
+	c = std::move(b);
+	EXPECT_EQ(c.worldEntityCount(), 8U);
+	EXPECT_TRUE(b.rememberWorldEntity(posFor(200), kDefId, kMask));
+	EXPECT_FALSE(b.rememberWorldEntity(posFor(200), kDefId, kMask)); // touch
+	EXPECT_EQ(b.worldEntityCount(), 1U);
+}
+
+// clear() resets the LRU as well: a cleared component accepts a fresh set of
+// entries with fully working touch/forget bookkeeping.
 TEST(MemoryComponent, ClearResetsLru) {
 	ecs::Memory m;
 	for (size_t i = 0; i < 32; ++i) {
