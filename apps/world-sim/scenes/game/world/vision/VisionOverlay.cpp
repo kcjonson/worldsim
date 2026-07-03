@@ -20,6 +20,9 @@ namespace world_sim {
 		// Occluder segments: red so they stand out against world geometry.
 		constexpr Foundation::Color kOccluder{1.0F, 0.2F, 0.2F, 0.85F};
 
+		// Post-entity world flush domain: these z values only order this overlay
+		// against other post-entity world draws; committed construction flushes
+		// earlier, so the toggled overlay always paints over it.
 		constexpr int kZPolyFill = 62;
 		constexpr int kZPolyOutline = 64;
 		constexpr int kZOccluder = 65;

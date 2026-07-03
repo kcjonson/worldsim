@@ -23,8 +23,12 @@ namespace world_sim {
 		constexpr Foundation::Color kSelectedTint{0.35F, 0.75F, 1.0F, 0.38F};
 		constexpr Foundation::Color kSelectedOutline{1.0F, 0.85F, 0.0F, 0.95F};
 
-		constexpr int kZFill = 56;	  // above foundation fills (~50-52)
-		constexpr int kZOutline = 57; // below wall bands (~60-64)
+		// Overlays draw in the post-entity world pass, a separate flush domain
+		// from committed construction (which flushes before the entity pass), so
+		// these z values only order overlay primitives against OTHER post-entity
+		// world draws — a toggled overlay always paints over construction.
+		constexpr int kZFill = 56;
+		constexpr int kZOutline = 57;
 		constexpr int kZLabel = 58;
 		constexpr int kZSelected = 100; // gold highlight, matches SelectionSystem indicators
 	} // namespace
