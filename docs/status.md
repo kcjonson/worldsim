@@ -580,8 +580,8 @@ while (running) {
 **Goal:** Ninja + compiler caching everywhere (ccache local, sccache CI), path-gated heavy worldgen tests, parallel/sharded ctest. Target: ~10-13 min CI gate on non-worldgen PRs; local clean builds in minutes, fresh-worktree builds mostly cache replay.
 
 **Tasks:**
-- [ ] CI overhaul: sccache, Windows CI on Ninja, heavy bucket sharded + moved to path-gated tests-heavy.yml (PR: ci-speed)
-- [ ] Local builds: Ninja Multi-Config + ccache presets, setup-msvc-env.ps1, foundation link hygiene (PR: local-build-speed)
+- [x] CI overhaul: sccache, Windows CI on Ninja, heavy bucket sharded + moved to path-gated tests-heavy.yml (PR #252, merged)
+- [x] Local builds: Ninja Multi-Config + ccache presets, setup-msvc-env.ps1, foundation link hygiene (PR #253, merged)
 - [ ] PCH rollout after measuring cache interaction
 - [ ] Measurement week: fill spec Results table, revisit deferred items (lld-link, test selection)
 
