@@ -47,11 +47,17 @@ TEST(ColonistDirectionalAssets, AllDirectionTemplatesAndMotionsResolve) {
 	for (const char* name : {"Colonist_down", "Colonist_up", "Colonist_left", "Colonist_right"}) {
 		SCOPED_TRACE(name);
 		const renderer::TessellatedMesh* mesh = reg.getTemplate(name);
-		ASSERT_NE(mesh, nullptr);
+		if (mesh == nullptr) {
+			ADD_FAILURE() << "getTemplate returned null";
+			continue;
+		}
 		EXPECT_FALSE(mesh->vertices.empty());
 		EXPECT_FALSE(mesh->indices.empty());
 		// The animated render path needs named parts aligned with the motion clip.
 		EXPECT_FALSE(mesh->parts.empty());
 		EXPECT_NE(reg.getMotion(name), nullptr);
 	}
+
+	// Don't leak the populated global registry into other tests in this binary.
+	reg.clear();
 }

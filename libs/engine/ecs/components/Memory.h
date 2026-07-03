@@ -268,11 +268,7 @@ namespace ecs {
 			for (auto& index : capabilityIndex) {
 				index.clear();
 			}
-			lru.nodes.clear();
-			lru.freeSlots.clear();
-			lru.head = kLruNull;
-			lru.tail = kLruNull;
-			lru.map.clear();
+			lru.reset();
 			knownSegments.clear();
 			knownOpenings.clear();
 			// Clearing structural belief is a belief change: bump so any path planned
