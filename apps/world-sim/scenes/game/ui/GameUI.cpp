@@ -68,9 +68,7 @@ namespace world_sim {
 		});
 
 		// Create info view (position set in layout())
-		// Initial position at (0,0) - will be updated in layout()
 		infoPanel = std::make_unique<EntityInfoView>(EntityInfoView::Args{
-			.position = {0.0F, 0.0F},
 			.width = kPanelWidth,
 			.id = "entity_panel",
 			.onClose =
@@ -87,7 +85,7 @@ namespace world_sim {
 					}
 				},
 			.onToggleControl = args.onColonistControlToggle,
-			.onQueueRecipe = args.onQueueRecipe,
+			.onGoTo = args.onColonistFollowed, // same camera-follow path as roster double-click
 			.onOpenCraftingDialog = args.onOpenCraftingDialog,
 			.onPlace = args.onPlaceFurniture,
 			.onMoveFurniture = args.onMoveFurniture,
@@ -117,6 +115,12 @@ namespace world_sim {
 				pushNotification(title, message, UI::ToastSeverity::Warning);
 			}
 		});
+
+		// Dialogs are top-level roots that overlap the HUD; a modal zIndex keeps
+		// render order honest and exempts the overlap in the layout lint.
+		colonistDetailsDialog->zIndex = static_cast<short>(UI::z_modal);
+		craftingDialog->zIndex = static_cast<short>(UI::z_modal);
+		storageConfigDialog->zIndex = static_cast<short>(UI::z_modal);
 
 		// Create task list view (position set in layout())
 		taskListPanel = std::make_unique<TaskListView>(TaskListView::Args{

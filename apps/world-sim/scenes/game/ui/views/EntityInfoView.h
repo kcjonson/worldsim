@@ -1,31 +1,34 @@
 #pragma once
 
-// EntityInfoView - UI panel showing selected entity information
+// EntityInfoView - bottom-left panel showing the selected entity.
 //
-// Uses a slot-based architecture for flexible content display:
-// - Receives PanelContent from SelectionAdapter
-// - Dynamically renders slots (TextSlot, ProgressBarSlot, TextListSlot)
-// - Panel handles only rendering, not data transformation
+// Composition: an immediate-mode UI::Panel surface behind a LayoutContainer
+// tree; the layout engine owns all positioning (no manual yOffset math).
+// - Colonist: header row (Avatar + name + mood/task meters + eye/close
+//   buttons), TabBar (Needs/Bio/Gear/Log), the active tab body, and an action
+//   row (Draft / Go to / Priorities).
+// - Everything else: title row + slot rows rebuilt from the EntityInfoModel's
+//   InfoSlot list on structure changes, updated in place on value changes.
 //
-// Performance optimization: Three-tier update system
-// - Visibility tier: O(1) toggle when selection changes to/from NoSelection
-// - Structure tier: Full relayout when different entity selected
-// - Value tier: O(dynamic) update only for progress bars when same entity
+// Bottom-left anchored: height hugs content, Y derives from viewport height.
+// Child components live in the component arena (stable addresses), so the
+// static tree is held by typed pointers; only the generic slot rows are
+// rebuilt (clearChildren + addChild) and then only on structure changes.
 
-#include "scenes/game/ui/adapters/CraftingAdapter.h"
-#include "scenes/game/ui/components/InfoSlot.h"
 #include "scenes/game/ui/components/NeedBar.h"
-#include "scenes/game/world/selection/SelectionTypes.h"
 #include "scenes/game/ui/models/EntityInfoModel.h"
+#include "scenes/game/world/selection/SelectionTypes.h"
 
 #include <assets/AssetRegistry.h>
 #include <assets/RecipeRegistry.h>
 #include <component/Component.h>
+#include <components/button/Button.h>
+#include <components/progress/ProgressBar.h>
+#include <components/tabbar/TabBar.h>
 #include <construction/ConstructionWorld.h>
 #include <ecs/World.h>
-#include <graphics/Color.h>
 #include <input/InputEvent.h>
-#include <layer/Layer.h>
+#include <layout/LayoutContainer.h>
 #include <shapes/Shapes.h>
 
 #include <functional>
@@ -37,41 +40,36 @@ namespace world_sim {
 /// Callback to query remaining resource count for a world entity
 using ResourceQueryCallback = std::function<std::optional<uint32_t>(const std::string& defName, Foundation::Vec2 position)>;
 
-/// UI panel for displaying selected entity information via slots
+/// UI panel for displaying selected entity information
 class EntityInfoView : public UI::Component {
   public:
-	/// Callback to open crafting dialog for a station
 	using OpenCraftingDialogCallback = std::function<void(ecs::EntityID, const std::string&)>;
-
-	/// Callback to open storage config dialog for a container
 	using OpenStorageConfigCallback = std::function<void(ecs::EntityID, const std::string&)>;
 
 	struct Args {
-		Foundation::Vec2	  position{0.0F, 0.0F};
-		float				  width = 340.0F;		// Per plan: 340px for two-column layout
+		float				  width = 320.0F;
 		std::string			  id = "entity_info";
-		std::function<void()> onClose;				// Called when close button clicked
-		std::function<void()> onDetails;			// Called when Details button clicked
-		std::function<void(ecs::EntityID)> onToggleControl; // Called when the colonist Control/Release button is clicked
-		QueueRecipeCallback   onQueueRecipe;		// Called when recipe is queued at station (legacy, kept for compatibility)
-		OpenCraftingDialogCallback onOpenCraftingDialog; // Called to open crafting dialog
-		std::function<void()> onPlace;				// Called when Place button clicked for packaged furniture
-		std::function<void()> onMoveFurniture;		// Called when Move button clicked for placed furniture
-		OpenStorageConfigCallback onOpenStorageConfig;	// Called to open storage config dialog for containers
-		ResourceQueryCallback queryResources;		// Query remaining resource count for harvestable entities
-		std::function<void()>	   onDemolishFoundation; // Called when Demolish foundation clicked (clear foundation only)
-		std::function<void()>	   onDemolishBuilding;	 // Called when Demolish building clicked (cascade)
-		std::function<void()> onDemolishWallSegment; // Called when Demolish button clicked for a wall segment
-		std::function<void()>	   onDemolishOpening;	  // Called when Demolish button clicked for an opening
+		std::function<void()> onClose;	 // Close button clicked
+		std::function<void()> onDetails; // Eye button clicked (opens the dossier)
+		std::function<void(ecs::EntityID)> onToggleControl; // Draft/Release button
+		std::function<void(ecs::EntityID)> onGoTo;			// Go to button (center camera)
+		OpenCraftingDialogCallback onOpenCraftingDialog;
+		std::function<void()>	   onPlace;
+		std::function<void()>	   onMoveFurniture;
+		OpenStorageConfigCallback  onOpenStorageConfig;
+		ResourceQueryCallback	   queryResources;
+		std::function<void()>	   onDemolishFoundation;
+		std::function<void()>	   onDemolishBuilding;
+		std::function<void()>	   onDemolishWallSegment;
+		std::function<void()>	   onDemolishOpening;
 	};
 
 	explicit EntityInfoView(const Args& args);
 
-	/// Update panel with current selection
-	/// @param world ECS world (for adapter)
-	/// @param assetRegistry Asset registry (for adapter)
-	/// @param recipeRegistry Recipe registry (for crafting stations)
-	/// @param selection Current selection state
+	// Unhide ILayer::update(float) next to the data-refresh overload below
+	using UI::Component::update;
+
+	/// Update panel with current selection (called every frame by GameUI)
 	void update(
 		ecs::World&									   world,
 		const engine::assets::AssetRegistry&		   assetRegistry,
@@ -81,212 +79,125 @@ class EntityInfoView : public UI::Component {
 		const ecs::RoomDetectionSystem*				   roomDetection = nullptr
 	);
 
-	/// Check if panel is visible
 	[[nodiscard]] bool isVisible() const { return visible; }
 
-	/// Get current panel height (dynamic based on content)
-	[[nodiscard]] float getHeight() const override { return panelHeight; }
-
 	/// Update panel position with bottom-left alignment
-	/// @param x Left edge X coordinate
-	/// @param viewportHeight Total viewport height (panel bottom will align to this)
 	void setBottomLeftPosition(float x, float viewportHeight);
 
-	/// Handle input event, returns true if consumed
+	void render() override;
 	bool handleEvent(UI::InputEvent& event) override;
+	bool containsPoint(Foundation::Vec2 point) const override;
+
+	const char* debugTypeName() const override { return "EntityInfoView"; }
+	const char* debugId() const override { return m_id.c_str(); }
 
   private:
-	/// Render PanelContent by laying out slots (structure tier update)
-	void renderContent(const PanelContent& content);
+	// Small leaf components defined in the .cpp
+	class AvatarChip;
+	class GlyphButton;
+	class BadgeChip;
+	class EmptyStateBox;
 
-	/// Render single-column layout (items, flora, fauna, crafting stations)
-	void renderSingleColumnLayout(const PanelContent& content, float panelY);
+	/// Push model content into the component tree. structural = rebuild slot
+	/// rows / reset tab; otherwise update values in place.
+	void applyContent(const PanelContent& content, bool structural);
+	void applyColonist(const ColonistPanelData& data, bool structural);
+	void applyGeneric(const PanelContent& content, bool structural);
 
-	/// Render two-column layout (colonists)
-	void renderTwoColumnLayout(const PanelContent& content, float panelY);
+	/// Rebuild the generic slot rows in slot order (structure changes only)
+	void rebuildSlots(const std::vector<InfoSlot>& slots);
 
-	/// Update only dynamic values (progress bars) without relayout (value tier update)
-	void updateValues(const PanelContent& content);
+	/// Update generic slot rows in place (value changes)
+	void updateSlots(const std::vector<InfoSlot>& slots);
 
-	/// Hide all slot UI elements via visibility flag
-	void hideSlots();
+	/// Show the tab body matching the TabBar selection
+	void setActiveTab(const std::string& tabId);
 
-	/// Render an individual slot at given Y offset, returns height consumed
-	/// @param xOffset X offset from panel left edge (for column layouts)
-	/// @param maxWidth Max width for this slot (0 = use contentWidth)
-	float renderSlot(const InfoSlot& slot, float yOffset, float xOffset = 0.0F, float maxWidth = 0.0F);
+	/// Re-anchor the panel to the viewport bottom from the measured height
+	void applyAnchor();
 
-	// Slot type rendering helpers
-	float renderTextSlot(const TextSlot& slot, float yOffset, float xOffset);
-	float renderProgressBarSlot(const ProgressBarSlot& slot, float yOffset, float xOffset, float maxWidth);
-	float renderTextListSlot(const TextListSlot& slot, float yOffset, float xOffset);
-	float renderSpacerSlot(const SpacerSlot& slot, float yOffset);
-	float renderClickableTextSlot(const ClickableTextSlot& slot, float yOffset, float xOffset);
-	float renderRecipeSlot(const RecipeSlot& slot, float yOffset);
-	float renderIconSlot(const IconSlot& slot, float yOffset);
-	float renderActionButtonSlot(const ActionButtonSlot& slot, float yOffset, float xOffset, float maxWidth);
-
-	/// Get close button top-left position for current panel position
-	[[nodiscard]] Foundation::Vec2 getCloseButtonPosition(float panelY) const;
-
-	/// Get details button top-left position for current panel position
-	[[nodiscard]] Foundation::Vec2 getDetailsButtonPosition(float panelY) const;
-
-	/// Update details icon line positions (avoids duplication between constructor and renderContent)
-	void updateDetailsIcon(bool visible, const Foundation::Vec2& buttonPos);
+	/// Mark the layout containers dirty after content mutation
+	void markLayoutDirty();
 
 	// ViewModel (owns selection cache, content generation)
 	EntityInfoModel m_model;
 
 	// Callbacks
-	std::function<void()> onCloseCallback;
-	std::function<void()> onDetailsCallback;
+	std::function<void()>			   onCloseCallback;
+	std::function<void()>			   onDetailsCallback;
 	std::function<void(ecs::EntityID)> onToggleControlCallback;
-	QueueRecipeCallback   onQueueRecipeCallback;
-	OpenCraftingDialogCallback onOpenCraftingDialogCallback;
-	std::function<void()> onPlaceCallback;
-	std::function<void()> onMoveFurnitureCallback;
-	OpenStorageConfigCallback onOpenStorageConfigCallback;
-	ResourceQueryCallback queryResourcesCallback;
-	std::function<void()> onDemolishFoundationCallback;
-	std::function<void()>	   onDemolishBuildingCallback;
-	std::function<void()> onDemolishWallSegmentCallback;
-	std::function<void()>	   onDemolishOpeningCallback;
+	std::function<void(ecs::EntityID)> onGoToCallback;
+	OpenCraftingDialogCallback		   onOpenCraftingDialogCallback;
+	std::function<void()>			   onPlaceCallback;
+	std::function<void()>			   onMoveFurnitureCallback;
+	OpenStorageConfigCallback		   onOpenStorageConfigCallback;
+	ResourceQueryCallback			   queryResourcesCallback;
+	std::function<void()>			   onDemolishFoundationCallback;
+	std::function<void()>			   onDemolishBuildingCallback;
+	std::function<void()>			   onDemolishWallSegmentCallback;
+	std::function<void()>			   onDemolishOpeningCallback;
 
-	// Background panel
-	UI::LayerHandle backgroundHandle;
+	// Static component tree (arena-owned; addresses stable for the view's life)
+	UI::LayoutContainer* root{nullptr};		  // vertical, padded
+	UI::LayoutContainer* headerRow{nullptr};  // avatar | identity | buttons
+	AvatarChip*			 avatar{nullptr};
+	UI::LayoutContainer* identityCol{nullptr}; // name, subtitle, mood, task
+	UI::Text*			 nameText{nullptr};
+	UI::Text*			 subtitleText{nullptr};
+	UI::ProgressBar*	 moodBar{nullptr};
+	UI::ProgressBar*	 taskBar{nullptr};
+	UI::LayoutContainer* buttonCol{nullptr}; // eye, close
+	GlyphButton*		 eyeButton{nullptr};
+	GlyphButton*		 closeButton{nullptr};
+	UI::TabBar*			 tabBar{nullptr};
+	UI::LayoutContainer* needsBody{nullptr};
+	UI::LayoutContainer* bioBody{nullptr};
+	UI::LayoutContainer* gearBody{nullptr};
+	UI::LayoutContainer* logBody{nullptr};
+	UI::LayoutContainer* actionRow{nullptr};
+	UI::Button*			 draftButton{nullptr};
+	UI::Button*			 goToButton{nullptr};
+	UI::LayoutContainer* slotsBody{nullptr}; // generic slot rows
 
-	// Close button [X]
-	UI::LayerHandle closeButtonBgHandle;
-	UI::LayerHandle closeButtonTextHandle;
+	// Needs tab bars (fixed pool, one per ecs::NeedType)
+	std::vector<NeedBar*> needBars;
 
-	// Header text (entity name/title) - used for single-column layout
-	UI::LayerHandle titleHandle;
+	// Bio tab rows
+	UI::Text* bioAge{nullptr};
+	UI::Text* bioMood{nullptr};
 
-	// Colonist header elements (two-column layout)
-	UI::LayerHandle portraitHandle;			 // Gray placeholder rectangle (64×64)
-	UI::LayerHandle headerNameHandle;		 // "Sarah Chen, 28"
-	UI::LayerHandle headerMoodBarHandle;	 // Mood bar (NeedBar with no label, uses color gradient)
-	UI::LayerHandle headerMoodLabelHandle;	 // "72% Content" (right of bar)
-	UI::LayerHandle needsLabelHandle;		 // "Needs:" section header
+	// Gear tab rows
+	UI::Text*				gearHands{nullptr};
+	UI::LayoutContainer*	beltRow{nullptr};
+	std::vector<BadgeChip*> beltChips;
+	UI::Text*				beltEmpty{nullptr};
+	UI::ProgressBar*		carryBar{nullptr};
+	UI::Text*				gearPack{nullptr};
 
-	// Centered icon (single-column layout for items/flora)
-	UI::LayerHandle centeredIconHandle;	 // Icon placeholder (48×48)
-	UI::LayerHandle centeredLabelHandle; // Entity name below icon
+	// Generic slot rows (into slotsBody, grouped by slot type in slot order;
+	// refreshed by rebuildSlots, mutated in place by updateSlots)
+	std::vector<UI::Text*>				slotTexts;
+	std::vector<NeedBar*>				slotBars;
+	std::vector<UI::Button*>			slotButtons;
+	std::vector<std::vector<UI::Text*>> slotListItems; // per TextListSlot
+	std::vector<size_t>					slotListSizes; // item counts at build time
 
-	// Details button icon (only shown for colonists)
-	// Icon: "open in new window" - a small rectangle with arrow pointing out
-	UI::LayerHandle detailsButtonBgHandle;
-	UI::LayerHandle detailsIconLine1Handle; // Top-left to bottom-left
-	UI::LayerHandle detailsIconLine2Handle; // Bottom-left to bottom-right
-	UI::LayerHandle detailsIconLine3Handle; // Top-left to top-mid
-	UI::LayerHandle detailsIconLine4Handle; // Arrow diagonal
-	UI::LayerHandle detailsIconLine5Handle; // Arrow head part 1
-	UI::LayerHandle detailsIconLine6Handle; // Arrow head part 2
+	// State
+	std::string	  m_id;
+	float		  panelWidth;
+	float		  contentWidth;
+	float		  panelX{0.0F};
+	float		  m_viewportHeight{0.0F};
+	ecs::EntityID selectedColonistId{0};
 
-	// Pool of reusable slot UI elements
-	// Text elements (for TextSlot label:value pairs)
-	static constexpr size_t kMaxTextSlots = 8;
-	std::vector<UI::LayerHandle> textHandles;
-
-	// Progress bars (for ProgressBarSlot)
-	static constexpr size_t kMaxProgressBars = 12; // Mood + all needs
-	std::vector<UI::LayerHandle> progressBarHandles;
-
-	// List items (for TextListSlot)
-	static constexpr size_t kMaxListItems = 8;
-	UI::LayerHandle listHeaderHandle;
-	std::vector<UI::LayerHandle> listItemHandles;
-
-	// Clickable text (for ClickableTextSlot)
-	UI::LayerHandle clickableTextHandle;
-	std::function<void()> clickableCallback;
-	Foundation::Vec2 clickableBoundsMin;
-	Foundation::Vec2 clickableBoundsMax;
-
-	// Recipe cards (for RecipeSlot)
-	static constexpr size_t kMaxRecipeCards = 8;
-	struct RecipeCardHandles {
-		UI::LayerHandle background;
-		UI::LayerHandle nameText;
-		UI::LayerHandle ingredientsText;
-		UI::LayerHandle queueButton;
-		UI::LayerHandle queueButtonText;
-	};
-	std::vector<RecipeCardHandles> recipeCardHandles;
-	std::vector<std::function<void()>> recipeCallbacks;
-	std::vector<Foundation::Rect> recipeButtonBounds;
-
-	// Action buttons (for ActionButtonSlot - Place/Package, colonist Control/Release)
-	static constexpr size_t kMaxActionButtons = 3;
-	struct ActionButtonHandles {
-		UI::LayerHandle background;
-		UI::LayerHandle text;
-	};
-	std::vector<ActionButtonHandles> actionButtonHandles;
-	std::vector<std::function<void()>> actionButtonCallbacks;
-	std::vector<Foundation::Rect> actionButtonBounds;
-
-	// Pool indices (track which elements are in use)
-	size_t usedTextSlots = 0;
-	size_t usedProgressBars = 0;
-	size_t usedListItems = 0;
-	size_t usedRecipeCards = 0;
-	size_t usedActionButtons = 0;
-
-	// State (note: visible is inherited from IComponent)
-	float panelWidth;
-	float panelHeight;
-	float contentWidth;
-
-	// Cached position for layout (X is left edge, Y computed from viewportHeight)
-	float panelX{0.0F};
-	float m_viewportHeight{0.0F};
-
-	// Layout constants (per plan)
-	static constexpr float kPadding = 12.0F;		  // Outer padding
-	static constexpr float kSectionGap = 12.0F;		  // Gap between sections
-	static constexpr float kItemGap = 4.0F;			  // Gap between items
-	static constexpr float kNameFontSize = 15.0F;	  // Entity name (colonist name can be bigger)
-	static constexpr float kLabelFontSize = 12.0F;	  // Property labels (match NeedBar)
-	static constexpr float kHeaderFontSize = 12.0F;	  // Section headers
-	static constexpr float kNeedBarHeight = 16.0F;	  // Need bars (slightly taller)
-	static constexpr float kCloseButtonSize = 16.0F;
-
-	// Portrait/Icon sizes
-	static constexpr float kPortraitSize = 64.0F;	  // Colonist portrait
-	static constexpr float kEntityIconSize = 48.0F;	  // Item/flora/fauna icon
-
-	// Header mood bar (compact summary, next to name)
-	// Note: Height intentionally differs from NeedBar::kCompactHeight (10px) for tighter header layout
-	static constexpr float kHeaderMoodBarWidth = 50.0F;   // Half width - it's a summary
-	static constexpr float kHeaderMoodBarHeight = 8.0F;
-	static constexpr float kMoodLabelFontSize = 11.0F;	  // Slightly smaller for mood percentage text
-
-	// Two-column layout constants (colonists)
-	static constexpr float kColumnGap = 16.0F;			 // Gap between columns
-	static constexpr float kLeftColumnWidth = 140.0F;	 // Fixed left column width
-
-	// Details button layout (square icon button, same size as close button)
-	static constexpr float kDetailsButtonSize = 16.0F;
-	static constexpr float kButtonGap = 4.0F;			  // Gap between buttons (e.g., Details and Close)
-
-	// Spacing constants
-	static constexpr float kIconLabelGap = 8.0F;		  // Gap between icon and label below it
-	static constexpr float kHeaderMoodBarOffset = 8.0F;   // Vertical offset for mood bar below name
-	static constexpr float kBorderWidth = 1.0F;			  // Standard border width for UI elements
-
-	// Recipe card layout constants
-	static constexpr float kRecipeCardHeight = 58.0F;	  // Total height of recipe card
-	static constexpr float kRecipeCardPadding = 10.0F;	  // Padding inside card
-	static constexpr float kRecipeNameFontSize = 14.0F;	  // Recipe name text size
-	static constexpr float kRecipeIngredientsFontSize = 12.0F; // Ingredients text size
-	static constexpr float kRecipeQueueButtonSize = 32.0F;	  // [+] button size
-	static constexpr float kRecipeCardSpacing = 8.0F;	  // Space between cards
-
-	// Action button layout constants (for Place/Package buttons)
-	static constexpr float kActionButtonHeight = 32.0F;	  // Button height
-	static constexpr float kActionButtonFontSize = 14.0F; // Button text size
+	// Layout constants
+	static constexpr float kPad = 12.0F;	// UI::space_3
+	static constexpr float kGap = 8.0F;		// UI::space_2
+	static constexpr float kAvatarSize = 52.0F;
+	static constexpr float kIconButtonSize = 18.0F;
+	static constexpr float kMeterWidth = 188.0F; // identity column meters
+	static constexpr float kActionButtonHeight = 26.0F;
+	static constexpr float kSlotButtonHeight = 28.0F;
 };
 
 } // namespace world_sim
