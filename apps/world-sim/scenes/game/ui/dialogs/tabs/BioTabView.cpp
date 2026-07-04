@@ -20,6 +20,7 @@ constexpr float kRowGap = 10.0F; // gap between stacked sections
 
 void BioTabView::create(const Foundation::Rect& bounds) {
 	contentBounds = bounds;
+	size = {bounds.width, bounds.height};
 }
 
 void BioTabView::update(const BioData& data) {

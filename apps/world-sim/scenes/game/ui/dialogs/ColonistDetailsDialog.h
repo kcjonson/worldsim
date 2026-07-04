@@ -2,7 +2,7 @@
 
 // ColonistDetailsDialog - Full-screen dialog showing detailed colonist information
 //
-// Displays 8 tabs: Bio, Health, Skills, Social, Gear, Memory, Tasks, Log.
+// Displays 8 tabs: Bio, Needs, Skills, Social, Gear, Memory, Tasks, Log.
 // A persistent header band (Avatar + 2x2 Stat grid) sits above the tab bar,
 // shared across all tabs. A footer holds Close / Work Priorities / Draft.
 //
@@ -11,7 +11,7 @@
 #include "ColonistDetailsModel.h"
 #include "tabs/BioTabView.h"
 #include "tabs/GearTabView.h"
-#include "tabs/HealthTabView.h"
+#include "tabs/NeedsTabView.h"
 #include "tabs/LogTabView.h"
 #include "tabs/MemoryTabView.h"
 #include "tabs/SkillsTabView.h"
@@ -69,7 +69,7 @@ class ColonistDetailsDialog : public UI::Component {
   private:
 	// Tab IDs
 	static constexpr const char* kTabBio = "bio";
-	static constexpr const char* kTabHealth = "health";
+	static constexpr const char* kTabNeeds = "needs";
 	static constexpr const char* kTabSkills = "skills";
 	static constexpr const char* kTabSocial = "social";
 	static constexpr const char* kTabGear = "gear";
@@ -77,9 +77,9 @@ class ColonistDetailsDialog : public UI::Component {
 	static constexpr const char* kTabTasks = "tasks";
 	static constexpr const char* kTabLog = "log";
 
-	// Dialog dimensions
+	// Dialog dimensions (prototype dossier proportions: 760x900 design px)
 	static constexpr float kDialogWidth = 760.0F;
-	static constexpr float kDialogHeight = 600.0F;
+	static constexpr float kDialogHeight = 900.0F;
 	static constexpr float kFooterHeight = 52.0F;
 	static constexpr float kHeaderBandHeight = 92.0F; // Avatar + stat grid band
 	static constexpr float kTabBarHeight = 36.0F;
@@ -101,7 +101,7 @@ class ColonistDetailsDialog : public UI::Component {
 
 	// Tab views (children of content layout)
 	UI::LayerHandle bioTabHandle;
-	UI::LayerHandle healthTabHandle;
+	UI::LayerHandle needsTabHandle;
 	UI::LayerHandle skillsTabHandle;
 	UI::LayerHandle socialTabHandle;
 	UI::LayerHandle gearTabHandle;

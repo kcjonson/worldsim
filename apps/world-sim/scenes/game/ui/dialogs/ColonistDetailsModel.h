@@ -2,13 +2,13 @@
 
 // ColonistDetailsModel - Aggregator model for ColonistDetailsDialog
 //
-// Encapsulates all ECS queries needed for the 5 tabs.
+// Encapsulates all ECS queries needed for the dossier tabs.
 // Each tab's data types are defined in their respective tab view headers.
 // Supports per-frame refresh with change detection for live updates.
 
 #include "tabs/BioTabView.h"
 #include "tabs/GearTabView.h"
-#include "tabs/HealthTabView.h"
+#include "tabs/NeedsTabView.h"
 #include "tabs/MemoryTabView.h"
 #include "tabs/SocialTabView.h"
 #include "tabs/TasksTabView.h"
@@ -43,7 +43,7 @@ namespace world_sim {
 
 		/// Get data for each tab
 		[[nodiscard]] const BioData&	 bio() const { return bioData; }
-		[[nodiscard]] const HealthData&  health() const { return healthData; }
+		[[nodiscard]] const NeedsData&	 needs() const { return needsData; }
 		[[nodiscard]] const SocialData&  social() const { return socialData; }
 		[[nodiscard]] const GearData&	 gear() const { return gearData; }
 		[[nodiscard]] const MemoryData&  memory() const { return memoryData; }
@@ -53,8 +53,8 @@ namespace world_sim {
 		/// Extract Bio tab data
 		void extractBioData(const ecs::World& world, ecs::EntityID colonistId);
 
-		/// Extract Health tab data
-		void extractHealthData(const ecs::World& world, ecs::EntityID colonistId);
+		/// Extract Needs tab data
+		void extractNeedsData(const ecs::World& world, ecs::EntityID colonistId);
 
 		/// Extract Social tab data (placeholder for now)
 		void extractSocialData();
@@ -77,7 +77,7 @@ namespace world_sim {
 
 		// Cached data for each tab
 		BioData		 bioData;
-		HealthData	 healthData;
+		NeedsData	 needsData;
 		SocialData	 socialData;
 		GearData	 gearData;
 		MemoryData	 memoryData;
@@ -86,7 +86,7 @@ namespace world_sim {
 		// Previous values for change detection
 		std::array<float, 8> prevNeedValues{};
 		float				 prevMood = 0.0F;
-		size_t				 prevInventorySize = 0;
+		std::string			 prevGearSig;
 		size_t				 prevMemoryCount = 0;
 		size_t				 prevTaskCount = 0;
 		// The bio "Current:" line is derived from task type + state + navState + labels;

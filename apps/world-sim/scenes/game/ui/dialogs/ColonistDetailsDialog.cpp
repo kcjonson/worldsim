@@ -31,25 +31,28 @@ namespace world_sim {
 		}
 
 		// Draw a Salvage-style footer button. Variant drives fill/border/label color.
+		// alpha < 1 is the disabled treatment (these buttons also take no input).
 		enum class BtnVariant { Ghost, Secondary, Primary };
 
-		void drawButton(const Foundation::Rect& bounds, const std::string& label, BtnVariant variant) {
+		constexpr float kDisabledAlpha = 0.4F;
+
+		void drawButton(const Foundation::Rect& bounds, const std::string& label, BtnVariant variant, float alpha = 1.0F) {
 			Foundation::RectStyle style;
 			Foundation::Color	  labelColor;
 			switch (variant) {
 				case BtnVariant::Primary:
-					style.gradient = Foundation::LinearGradient{.from = UI::accent_bright, .to = UI::accent, .horizontal = false};
-					style.border   = Foundation::BorderStyle{.color = UI::accent_bright, .width = UI::bw, .cornerRadius = UI::r_sm, .position = Foundation::BorderPosition::Inside};
-					labelColor	   = UI::accent_contrast;
+					style.gradient = Foundation::LinearGradient{.from = UI::withAlpha(UI::accent_bright, alpha), .to = UI::withAlpha(UI::accent, alpha), .horizontal = false};
+					style.border   = Foundation::BorderStyle{.color = UI::withAlpha(UI::accent_bright, alpha), .width = UI::bw, .cornerRadius = UI::r_sm, .position = Foundation::BorderPosition::Inside};
+					labelColor	   = UI::withAlpha(UI::accent_contrast, alpha);
 					break;
 				case BtnVariant::Secondary:
 					style.fill	 = Foundation::Color::transparent();
-					style.border = Foundation::BorderStyle{.color = UI::line_edge, .width = UI::bw, .cornerRadius = UI::r_sm, .position = Foundation::BorderPosition::Inside};
-					labelColor	 = UI::text;
+					style.border = Foundation::BorderStyle{.color = UI::withAlpha(UI::line_edge, UI::line_edge.a * alpha), .width = UI::bw, .cornerRadius = UI::r_sm, .position = Foundation::BorderPosition::Inside};
+					labelColor	 = UI::withAlpha(UI::text, alpha);
 					break;
 				case BtnVariant::Ghost:
 					style.fill = Foundation::Color::transparent();
-					labelColor = UI::text_dim;
+					labelColor = UI::withAlpha(UI::text_dim, alpha);
 					break;
 			}
 
@@ -73,6 +76,9 @@ namespace world_sim {
 
 	ColonistDetailsDialog::ColonistDetailsDialog(const Args& args)
 		: onCloseCallback(args.onClose) {
+		// Dialogs layer over the HUD roots by render order; the zIndex declares that
+		// stacking to the layout lint's sibling-overlap exemption.
+		zIndex = static_cast<short>(UI::z_modal);
 		createDialog();
 	}
 
@@ -114,7 +120,7 @@ namespace world_sim {
 				.width = contentBounds.width,
 				.tabs =
 					{{.id = kTabBio, .label = "Bio"},
-					 {.id = kTabHealth, .label = "Health"},
+					 {.id = kTabNeeds, .label = "Needs"},
 					 {.id = kTabSkills, .label = "Skills"},
 					 {.id = kTabSocial, .label = "Social"},
 					 {.id = kTabGear, .label = "Gear"},
@@ -135,11 +141,11 @@ namespace world_sim {
 		bioTab.setPosition(0.0F, contentTop);
 		bioTabHandle = dialog->addChild(std::move(bioTab));
 
-		auto healthTab = HealthTabView();
-		healthTab.create(tabContentBounds);
-		healthTab.setPosition(0.0F, contentTop);
-		healthTab.visible = false;
-		healthTabHandle = dialog->addChild(std::move(healthTab));
+		auto needsTab = NeedsTabView();
+		needsTab.create(tabContentBounds);
+		needsTab.setPosition(0.0F, contentTop);
+		needsTab.visible = false;
+		needsTabHandle = dialog->addChild(std::move(needsTab));
 
 		auto skillsTab = SkillsTabView();
 		skillsTab.create(tabContentBounds);
@@ -181,6 +187,11 @@ namespace world_sim {
 	void ColonistDetailsDialog::open(ecs::EntityID newColonistId, float screenWidth, float screenHeight) {
 		colonistId = newColonistId;
 		currentTab = kTabBio;
+
+		// Report full-screen bounds while open (the inner Dialog claims the whole
+		// screen too) so the debug UI tree / lint sees real geometry, not a 0x0 root.
+		position = {0.0F, 0.0F};
+		size = {screenWidth, screenHeight};
 
 		auto* dialog = getChild<UI::Dialog>(dialogHandle);
 		if (dialog != nullptr) {
@@ -315,8 +326,9 @@ namespace world_sim {
 		const float closeX = workX - kBtnGap - wClose;
 
 		drawButton({closeX, btnY, wClose, kBtnHeight}, "Close", BtnVariant::Ghost);
-		drawButton({workX, btnY, wWork, kBtnHeight}, "Work Priorities", BtnVariant::Secondary);
-		drawButton({draftX, btnY, wDraft, kBtnHeight}, "Draft", BtnVariant::Primary);
+		// Work Priorities and Draft wait on their systems; disabled until then.
+		drawButton({workX, btnY, wWork, kBtnHeight}, "Work Priorities", BtnVariant::Secondary, kDisabledAlpha);
+		drawButton({draftX, btnY, wDraft, kBtnHeight}, "Draft", BtnVariant::Primary, kDisabledAlpha);
 	}
 
 	bool ColonistDetailsDialog::handleEvent(UI::InputEvent& event) {
@@ -361,8 +373,8 @@ namespace world_sim {
 		if (auto* tab = dialog->getChild<BioTabView>(bioTabHandle)) {
 			tab->visible = (tabId == kTabBio);
 		}
-		if (auto* tab = dialog->getChild<HealthTabView>(healthTabHandle)) {
-			tab->visible = (tabId == kTabHealth);
+		if (auto* tab = dialog->getChild<NeedsTabView>(needsTabHandle)) {
+			tab->visible = (tabId == kTabNeeds);
 		}
 		if (auto* tab = dialog->getChild<SkillsTabView>(skillsTabHandle)) {
 			tab->visible = (tabId == kTabSkills);
@@ -395,8 +407,8 @@ namespace world_sim {
 		if (auto* tab = dialog->getChild<BioTabView>(bioTabHandle)) {
 			tab->update(model.bio());
 		}
-		if (auto* tab = dialog->getChild<HealthTabView>(healthTabHandle)) {
-			tab->update(model.health());
+		if (auto* tab = dialog->getChild<NeedsTabView>(needsTabHandle)) {
+			tab->update(model.needs());
 		}
 		if (auto* tab = dialog->getChild<SkillsTabView>(skillsTabHandle)) {
 			tab->update(SkillsData{});

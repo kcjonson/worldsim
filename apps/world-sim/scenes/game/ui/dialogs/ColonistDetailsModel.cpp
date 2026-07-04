@@ -35,18 +35,33 @@ ColonistDetailsModel::UpdateType ColonistDetailsModel::refresh(ecs::World& world
 
 	// Extract all data
 	extractBioData(world, colonistId);
-	extractHealthData(world, colonistId);
+	extractNeedsData(world, colonistId);
 	extractSocialData();
 	extractGearData(world, colonistId);
 	extractMemoryData(world, colonistId);
 	extractTasksData(world, colonistId);
 
+	// Gear signature: hands, belt, and pack contents. Catches quantity-only
+	// changes (a growing armful) that a stack-count diff would miss.
+	std::string gearSig;
+	auto appendSlot = [&gearSig](const std::optional<GearItem>& item) {
+		gearSig += item.has_value() ? item->name + ":" + std::to_string(item->quantity) : "-";
+		gearSig += "|";
+	};
+	appendSlot(gearData.leftHand);
+	appendSlot(gearData.rightHand);
+	appendSlot(gearData.belt[0]);
+	appendSlot(gearData.belt[1]);
+	for (const auto& item : gearData.items) {
+		gearSig += item.name + ":" + std::to_string(item.quantity) + "|";
+	}
+
 	// Detect what changed
 	if (colonistChanged) {
 		// Save current values for next comparison
-		prevNeedValues = healthData.needValues;
-		prevMood = healthData.mood;
-		prevInventorySize = gearData.items.size();
+		prevNeedValues = needsData.needValues;
+		prevMood = needsData.mood;
+		prevGearSig = std::move(gearSig);
 		prevMemoryCount = memoryData.totalKnown;
 		prevTaskCount = tasksData.totalCount;
 		prevBioTask = bioData.currentTask;
@@ -59,19 +74,19 @@ ColonistDetailsModel::UpdateType ColonistDetailsModel::refresh(ecs::World& world
 
 	// Check needs
 	for (size_t i = 0; i < 8; ++i) {
-		if (std::abs(healthData.needValues[i] - prevNeedValues[i]) > 0.1F) {
+		if (std::abs(needsData.needValues[i] - prevNeedValues[i]) > 0.1F) {
 			valuesChanged = true;
 			break;
 		}
 	}
 
 	// Check mood
-	if (std::abs(healthData.mood - prevMood) > 0.5F) {
+	if (std::abs(needsData.mood - prevMood) > 0.5F) {
 		valuesChanged = true;
 	}
 
-	// Check inventory size
-	if (gearData.items.size() != prevInventorySize) {
+	// Check carried gear
+	if (gearSig != prevGearSig) {
 		valuesChanged = true;
 	}
 
@@ -97,9 +112,9 @@ ColonistDetailsModel::UpdateType ColonistDetailsModel::refresh(ecs::World& world
 	}
 
 	// Update previous values
-	prevNeedValues = healthData.needValues;
-	prevMood = healthData.mood;
-	prevInventorySize = gearData.items.size();
+	prevNeedValues = needsData.needValues;
+	prevMood = needsData.mood;
+	prevGearSig = std::move(gearSig);
 	prevMemoryCount = memoryData.totalKnown;
 	prevTaskCount = tasksData.totalCount;
 	prevBioTask = bioData.currentTask;
@@ -240,23 +255,23 @@ void ColonistDetailsModel::extractBioData(const ecs::World& world, ecs::EntityID
 	}
 }
 
-void ColonistDetailsModel::extractHealthData(const ecs::World& world, ecs::EntityID colonistId) {
+void ColonistDetailsModel::extractNeedsData(const ecs::World& world, ecs::EntityID colonistId) {
 	const auto* needs = world.getComponent<ecs::NeedsComponent>(colonistId);
 	if (needs != nullptr) {
 		for (size_t i = 0; i < 8; ++i) {
 			const auto& need = needs->needs[i];
-			healthData.needValues[i] = need.value;
-			healthData.needsAttention[i] = need.needsAttention();
-			healthData.isCritical[i] = need.isCritical();
+			needsData.needValues[i] = need.value;
+			needsData.needsAttention[i] = need.needsAttention();
+			needsData.isCritical[i] = need.isCritical();
 		}
-		healthData.mood = ecs::computeMood(*needs);
-		healthData.moodLabel = getMoodLabel(healthData.mood);
+		needsData.mood = ecs::computeMood(*needs);
+		needsData.moodLabel = getMoodLabel(needsData.mood);
 	} else {
-		healthData.needValues.fill(100.0F);
-		healthData.needsAttention.fill(false);
-		healthData.isCritical.fill(false);
-		healthData.mood = 100.0F;
-		healthData.moodLabel = "Unknown";
+		needsData.needValues.fill(100.0F);
+		needsData.needsAttention.fill(false);
+		needsData.isCritical.fill(false);
+		needsData.mood = 100.0F;
+		needsData.moodLabel = "Unknown";
 	}
 }
 
@@ -266,32 +281,62 @@ void ColonistDetailsModel::extractSocialData() {
 }
 
 void ColonistDetailsModel::extractGearData(const ecs::World& world, ecs::EntityID colonistId) {
+	gearData = GearData{};
+
 	const auto* inventory = world.getComponent<ecs::Inventory>(colonistId);
-	if (inventory != nullptr) {
-		// Hand items (a two-hand armful mirrors across both hands)
-		gearData.leftHand = inventory->leftHand;
-		gearData.rightHand = inventory->rightHand;
+	if (inventory == nullptr) {
+		return;
+	}
 
-		// Belt tool slots
-		gearData.belt = inventory->belt;
+	const auto& registry = engine::assets::AssetRegistry::Get();
+	auto toItem = [&](const ecs::ItemStack& stack) {
+		const auto* def = registry.getDefinition(stack.defName);
+		std::string name = (def != nullptr && !def->label.empty()) ? def->label : stack.defName;
+		const float kg = registry.getItemMassKg(stack.defName) * static_cast<float>(stack.quantity);
+		return GearItem{std::move(name), stack.quantity, kg};
+	};
 
-		// Backpack items
-		gearData.items = inventory->getAllItems();
-		gearData.slotCount = inventory->getSlotCount();
-		gearData.maxSlots = inventory->maxCapacity;
+	// Hands: a two-hand item mirrors identically across both hands; collapse the
+	// mirror so the UI shows one spanning slot and the mass counts once. The
+	// registry check matters: two separate one-hand items of the same type (an
+	// axe in each hand) also match by name but are NOT a mirrored armful.
+	gearData.bothHands = inventory->leftHand.has_value() && inventory->rightHand.has_value() &&
+						 inventory->leftHand->defName == inventory->rightHand->defName &&
+						 ecs::itemIsTwoHand(registry, inventory->leftHand->defName);
+	if (inventory->leftHand.has_value()) {
+		gearData.leftHand = toItem(*inventory->leftHand);
+	}
+	if (inventory->rightHand.has_value() && !gearData.bothHands) {
+		gearData.rightHand = toItem(*inventory->rightHand);
+	}
 
-		// Cargo weight (tools excluded) vs the colonist's strength-derived capacity
-		gearData.carriedKg = ecs::carriedCargoMassKg(*inventory, engine::assets::AssetRegistry::Get());
-		gearData.capacityKg = inventory->carryCapacityKg;
-	} else {
-		gearData.leftHand.reset();
-		gearData.rightHand.reset();
-		gearData.belt = {};
-		gearData.items.clear();
-		gearData.slotCount = 0;
-		gearData.maxSlots = 0;
-		gearData.carriedKg = 0.0F;
-		gearData.capacityKg = 0.0F;
+	for (size_t i = 0; i < inventory->belt.size(); ++i) {
+		if (inventory->belt[i].has_value()) {
+			gearData.belt[i] = toItem(*inventory->belt[i]);
+			gearData.beltKg += gearData.belt[i]->totalKg;
+		}
+	}
+
+	for (const auto& stack : inventory->getAllItems()) {
+		gearData.items.push_back(toItem(stack));
+	}
+	gearData.slotCount = inventory->getSlotCount();
+	gearData.maxSlots = inventory->maxCapacity;
+
+	// Cargo weight (tools excluded) vs the colonist's strength-derived capacity
+	gearData.cargoKg = ecs::carriedCargoMassKg(*inventory, registry);
+	gearData.capacityKg = inventory->carryCapacityKg;
+
+	// Everything carried, tools included: hands (mirror counted once) + belt + pack
+	gearData.totalKg = gearData.beltKg;
+	if (gearData.leftHand.has_value()) {
+		gearData.totalKg += gearData.leftHand->totalKg;
+	}
+	if (gearData.rightHand.has_value()) {
+		gearData.totalKg += gearData.rightHand->totalKg;
+	}
+	for (const auto& item : gearData.items) {
+		gearData.totalKg += item.totalKg;
 	}
 }
 
