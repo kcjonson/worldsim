@@ -1,29 +1,30 @@
 // Party Select Scene - New Game step 2 of 3.
 //
-// Stub of the prototype's PartySelect screen: a left roster of crew cards
-// (one per scenario party slot), a right dossier panel for the selected
-// member (identity, stats, backstory, skills, traits), a Randomize reroll,
-// and a Back/Generate footer. Hand layout; full fidelity comes with the
-// upgraded layout engine. The assembled party is stored in NewGameSetup and
-// spawns at landing.
+// Prototype-fidelity PartySelect: a 280px roster column of crew cards beside
+// a raised, accented dossier panel for the selected member, over a shared
+// header/footer column laid out by LayoutContainer. The roster scrolls when
+// the party outgrows the column; the dossier scrolls its own content. The
+// assembled party is stored in NewGameSetup and spawns at landing.
 
 #include "NewGameSetup.h"
 #include "SceneTypes.h"
 #include "scenes/party-select/MockCrew.h"
 #include "scenes/scenario-select/Scenarios.h"
 #include "scenes/shared/Starfield.h"
+#include "scenes/shared/UiStateDrain.h"
+#include "scenes/shared/Widgets.h"
 #include <GL/glew.h>
 
 #include <components/avatar/Avatar.h>
 #include <components/badge/Badge.h>
 #include <components/button/Button.h>
-#include <components/divider/Divider.h>
 #include <components/panel/Panel.h>
 #include <components/progress/ProgressBar.h>
 #include <components/stat/Stat.h>
 #include <graphics/PrimitiveStyles.h>
 #include <input/InputEvent.h>
 #include <input/InputManager.h>
+#include <layout/LayoutContainer.h>
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
@@ -35,6 +36,7 @@
 #include <algorithm>
 #include <array>
 #include <format>
+#include <functional>
 #include <memory>
 #include <random>
 #include <string>
@@ -43,17 +45,8 @@
 namespace {
 
 	constexpr const char* kSceneName = "party_select";
-
-	constexpr float kColX = 80.0F;
-	constexpr float kContentTop = 150.0F;
-	constexpr float kRosterWidth = 360.0F;
-	constexpr float kCardHeightMax = 64.0F;
-	constexpr float kCardHeightMin = 44.0F;
-	constexpr float kCardGap = 8.0F;
-	constexpr float kDetailGap = 24.0F;
-	constexpr float kPad = 20.0F;
-
-	float textScale(float px) { return px / 16.0F; }
+	constexpr float		  kRosterWidth = 280.0F;
+	constexpr float		  kCardHeight = 64.0F;
 
 	size_t partySizeForScenario(const std::string& scenarioId) {
 		for (const world_sim::ScenarioDef& s : world_sim::kScenarios) {
@@ -92,6 +85,348 @@ namespace {
 		return UI::Tone::Default;
 	}
 
+	struct RosterSlot {
+		const world_sim::CrewDef* def; // template: origin/backstory/skills/traits
+		std::string				  name;
+		std::string				  role;
+		int						  age;
+		float					  mood;
+	};
+
+	void drawCardTicks(const Foundation::Rect& r, Foundation::Color color) {
+		using Renderer::Primitives::drawRect;
+		constexpr float kInset = 3.0F;
+		constexpr float kLen = 6.0F;
+		const float x0 = r.x + kInset;
+		const float y0 = r.y + kInset;
+		const float x1 = r.x + r.width - kInset;
+		const float y1 = r.y + r.height - kInset;
+		drawRect({.bounds = {x0, y0, kLen, 1.0F}, .style = {.fill = color}});
+		drawRect({.bounds = {x0, y0, 1.0F, kLen}, .style = {.fill = color}});
+		drawRect({.bounds = {x1 - kLen, y0, kLen, 1.0F}, .style = {.fill = color}});
+		drawRect({.bounds = {x1 - 1.0F, y0, 1.0F, kLen}, .style = {.fill = color}});
+		drawRect({.bounds = {x0, y1 - 1.0F, kLen, 1.0F}, .style = {.fill = color}});
+		drawRect({.bounds = {x0, y1 - kLen, 1.0F, kLen}, .style = {.fill = color}});
+		drawRect({.bounds = {x1 - kLen, y1 - 1.0F, kLen, 1.0F}, .style = {.fill = color}});
+		drawRect({.bounds = {x1 - 1.0F, y1 - kLen, 1.0F, kLen}, .style = {.fill = color}});
+	}
+
+	class RosterCard : public world_sim::Widget {
+	  public:
+		RosterCard(int index, std::function<void(int)> onSelect)
+			: index(index), onSelect(std::move(onSelect)) {
+			widthMode = UI::SizeMode::Hug;
+			size.y = kCardHeight;
+		}
+
+		void setSlot(const RosterSlot& slot) {
+			name = slot.name;
+			role = slot.role;
+			mood = slot.mood;
+		}
+
+		bool selected{false};
+
+		bool handleEvent(UI::InputEvent& event) override {
+			using UI::InputEvent;
+			if (event.type == InputEvent::Type::MouseMove) {
+				hovered = containsPoint(event.position);
+				return false;
+			}
+			if (event.type == InputEvent::Type::MouseUp && event.button == engine::MouseButton::Left &&
+			    containsPoint(event.position)) {
+				onSelect(index);
+				event.consume();
+				return true;
+			}
+			return false;
+		}
+
+		bool containsPoint(Foundation::Vec2 p) const override {
+			return p.x >= position.x && p.x <= position.x + size.x && p.y >= position.y &&
+				   p.y <= position.y + size.y;
+		}
+
+		void render() override {
+			using Renderer::Primitives::drawRect;
+			using Renderer::Primitives::drawText;
+
+			const Foundation::Rect r{position.x, position.y, size.x, size.y};
+			drawRect({.bounds = r,
+					  .style = {.fill = selected ? UI::bg_active : (hovered ? UI::bg_hover : UI::bg_panel),
+								.border = Foundation::BorderStyle{
+									.color = selected ? UI::accent : (hovered ? UI::line_edge : UI::line_hairline),
+									.width = UI::bw}}});
+			if (selected || hovered) {
+				drawCardTicks(r, selected ? UI::accent : UI::line_edge);
+			}
+
+			UI::Avatar({.position = {r.x + UI::space_3, r.y + (r.height - 40.0F) * 0.5F},
+						.size = 40.0F,
+						.seed = name,
+						.mood = mood,
+						.selected = selected})
+				.render();
+
+			const float textX = r.x + UI::space_3 + 40.0F + UI::space_3;
+			drawText({.text = name,
+					  .position = {textX, r.y + 14.0F},
+					  .scale = UI::fs_md / 16.0F,
+					  .color = UI::text_bright,
+					  .font = UI::fontDisplay,
+					  .vAlign = Foundation::VerticalAlign::Top});
+			drawText({.text = role,
+					  .position = {textX, r.y + 36.0F},
+					  .scale = UI::fs_2xs / 16.0F,
+					  .color = UI::text_faint,
+					  .font = UI::fontMono,
+					  .vAlign = Foundation::VerticalAlign::Top,
+					  .letterSpacing = UI::fs_2xs * UI::ls_wide,
+					  .transform = Foundation::TextTransform::Uppercase});
+
+			// Mood column, right-aligned: meter over its label.
+			constexpr float kMoodW = 56.0F;
+			const float		moodX = r.x + r.width - UI::space_3 - kMoodW;
+			UI::ProgressBar moodBar({.position = {moodX, r.y + 22.0F},
+									 .width = kMoodW,
+									 .value = mood,
+									 .tone = UI::Tone::Auto,
+									 .size = UI::Size::Sm});
+			moodBar.render();
+			drawText({.text = moodLabel(mood),
+					  .position = {moodX, r.y + 32.0F},
+					  .scale = UI::fs_2xs / 16.0F,
+					  .color = UI::text_faint,
+					  .font = UI::fontMono,
+					  .hAlign = Foundation::HorizontalAlign::Right,
+					  .vAlign = Foundation::VerticalAlign::Top,
+					  .boxWidth = kMoodW,
+					  .letterSpacing = UI::fs_2xs * UI::ls_wide,
+					  .transform = Foundation::TextTransform::Uppercase});
+		}
+
+		const char* debugTypeName() const override { return "RosterCard"; }
+
+	  private:
+		int						 index;
+		std::function<void(int)> onSelect;
+		std::string				 name;
+		std::string				 role;
+		float					 mood{1.0F};
+		bool					 hovered{false};
+	};
+
+	// --- Dossier content rows (local coords inside the dossier scroll) ---
+
+	class HeroRow : public world_sim::Widget {
+	  public:
+		HeroRow() {
+			widthMode = UI::SizeMode::Hug;
+			size.y = 92.0F;
+		}
+		std::string name;
+		std::string role;
+		float		mood{1.0F};
+
+		void render() override {
+			using Renderer::Primitives::drawRect;
+			using Renderer::Primitives::drawText;
+			UI::Avatar({.position = {position.x, position.y}, .size = 72.0F, .seed = name, .mood = mood}).render();
+			drawText({.text = name,
+					  .position = {position.x + 88.0F, position.y + 6.0F},
+					  .scale = UI::fs_2xl / 16.0F,
+					  .color = UI::text_bright,
+					  .font = UI::fontDisplay,
+					  .vAlign = Foundation::VerticalAlign::Top});
+			drawText({.text = role,
+					  .position = {position.x + 88.0F, position.y + 44.0F},
+					  .scale = UI::fs_xs / 16.0F,
+					  .color = UI::accent,
+					  .font = UI::fontMono,
+					  .vAlign = Foundation::VerticalAlign::Top,
+					  .letterSpacing = UI::fs_xs * UI::ls_wide,
+					  .transform = Foundation::TextTransform::Uppercase});
+			drawRect({.bounds = {position.x, position.y + size.y - 1.0F, size.x, 1.0F},
+					  .style = {.fill = UI::line_hairline}});
+		}
+		const char* debugTypeName() const override { return "HeroRow"; }
+	};
+
+	class StatsRow : public world_sim::Widget {
+	  public:
+		StatsRow() {
+			widthMode = UI::SizeMode::Hug;
+			size.y = 44.0F;
+		}
+		std::string origin;
+		int			age{0};
+		float		mood{1.0F};
+
+		void render() override {
+			UI::Stat({.position = {position.x, position.y},
+					  .label = "Origin",
+					  .value = origin,
+					  .size = UI::Size::Sm})
+				.render();
+			UI::Stat({.position = {position.x + 280.0F, position.y},
+					  .label = "Age",
+					  .value = std::to_string(age),
+					  .unit = " yrs",
+					  .size = UI::Size::Sm})
+				.render();
+			UI::Stat({.position = {position.x + 420.0F, position.y},
+					  .label = "Mood",
+					  .value = moodLabel(mood),
+					  .tone = moodTone(mood),
+					  .size = UI::Size::Sm})
+				.render();
+		}
+		const char* debugTypeName() const override { return "StatsRow"; }
+	};
+
+	class SkillRow : public world_sim::Widget {
+	  public:
+		SkillRow(const world_sim::CrewSkillDef& skill) : skill(&skill) {
+			widthMode = UI::SizeMode::Hug;
+			size.y = 20.0F;
+		}
+
+		void render() override {
+			using Renderer::Primitives::drawText;
+			constexpr float kNameW = 140.0F;
+			constexpr float kValueW = 32.0F;
+			drawText({.text = skill->name,
+					  .position = {position.x, position.y + 2.0F},
+					  .scale = UI::fs_xs / 16.0F,
+					  .color = UI::text_dim,
+					  .font = UI::fontMono,
+					  .vAlign = Foundation::VerticalAlign::Top,
+					  .letterSpacing = UI::fs_xs * UI::ls_wide,
+					  .transform = Foundation::TextTransform::Uppercase});
+			UI::ProgressBar bar({.position = {position.x + kNameW, position.y + 6.0F},
+								 .width = std::max(40.0F, size.x - kNameW - kValueW - UI::space_2),
+								 .value = skill->level / 20.0F,
+								 .tone = UI::Tone::Accent,
+								 .size = UI::Size::Sm});
+			bar.render();
+			drawText({.text = std::format("{:.0f}", skill->level),
+					  .position = {position.x + size.x - kValueW, position.y + 2.0F},
+					  .scale = UI::fs_xs / 16.0F,
+					  .color = UI::accent_bright,
+					  .font = UI::fontMono,
+					  .hAlign = Foundation::HorizontalAlign::Right,
+					  .vAlign = Foundation::VerticalAlign::Top,
+					  .boxWidth = kValueW});
+		}
+		const char* debugTypeName() const override { return "SkillRow"; }
+
+	  private:
+		const world_sim::CrewSkillDef* skill;
+	};
+
+	class TraitsRow : public world_sim::Widget {
+	  public:
+		explicit TraitsRow(const world_sim::CrewDef& def) : def(&def) {
+			widthMode = UI::SizeMode::Hug;
+			size.y = 24.0F;
+		}
+
+		void render() override {
+			float badgeX = position.x;
+			for (const world_sim::CrewTraitDef& trait : def->traits) {
+				if (trait.name == nullptr) continue;
+				const float badgeW = UI::Badge::MeasureWidth(trait.name);
+				if (badgeX + badgeW > position.x + size.x && badgeX > position.x) break;
+				UI::Badge({.position = {badgeX, position.y}, .label = trait.name, .tone = traitTone(trait.tone)})
+					.render();
+				badgeX += badgeW + UI::space_2;
+			}
+		}
+		const char* debugTypeName() const override { return "TraitsRow"; }
+
+	  private:
+		const world_sim::CrewDef* def;
+	};
+
+	// Raised accent panel hosting the scrollable dossier for the active member.
+	class DossierView : public world_sim::Widget {
+	  public:
+		DossierView() {
+			widthMode = UI::SizeMode::Fill;
+			heightMode = UI::SizeMode::Fill;
+			scroll = std::make_unique<UI::ScrollContainer>(UI::ScrollContainer::Args{.size = {1.0F, 1.0F}});
+		}
+
+		void setMember(const RosterSlot& slot) {
+			scroll->clearChildren();
+			scroll->scrollToTop();
+
+			UI::LayoutContainer content(UI::LayoutContainer::Args{
+				.direction = UI::Direction::Vertical,
+				.gap = UI::space_4,
+				.crossAlign = UI::CrossAlign::Stretch,
+				.id = "dossier_content"});
+
+			HeroRow hero;
+			hero.name = slot.name;
+			hero.role = slot.role;
+			hero.mood = slot.mood;
+			content.addChild(std::move(hero));
+
+			StatsRow stats;
+			stats.origin = slot.def->origin;
+			stats.age = slot.age;
+			stats.mood = slot.mood;
+			content.addChild(std::move(stats));
+
+			content.addChild(world_sim::DividerRow("Background"));
+			content.addChild(UI::Text(UI::Text::Args{
+				.text = slot.def->backstory,
+				.style = {.color = UI::text, .fontSize = UI::fs_base, .wordWrap = true},
+				.id = "dossier_backstory"}));
+
+			content.addChild(world_sim::DividerRow("Skills"));
+			for (const world_sim::CrewSkillDef& skill : slot.def->skills) {
+				content.addChild(SkillRow(skill));
+			}
+
+			content.addChild(world_sim::DividerRow("Traits"));
+			content.addChild(TraitsRow(*slot.def));
+
+			scroll->addChild(std::move(content));
+		}
+
+		void render() override {
+			UI::Panel panel({.position = position,
+							 .size = size,
+							 .variant = UI::PanelVariant::Raised,
+							 .accent = UI::PanelAccent::Accent});
+			panel.render();
+
+			const Foundation::Rect body = panel.bodyBounds();
+			const Foundation::Vec2 scrollPos = scroll->getPosition();
+			if (scrollPos.x != body.x || scrollPos.y != body.y) {
+				scroll->setPosition(body.x, body.y);
+			}
+			if (scroll->size.x != body.width || scroll->size.y != body.height) {
+				scroll->setViewportSize({body.width, body.height});
+			}
+			if (!scroll->getChildren().empty()) {
+				scroll->getChildren().front()->setLayoutSize(body.width - 12.0F, UI::kSizeKeep);
+			}
+			scroll->render();
+		}
+
+		bool handleEvent(UI::InputEvent& event) override { return scroll->handleEvent(event); }
+		bool containsPoint(Foundation::Vec2 p) const override { return scroll->containsPoint(p); }
+
+		const char* debugTypeName() const override { return "DossierView"; }
+		const char* debugId() const override { return "party_dossier"; }
+
+	  private:
+		std::unique_ptr<UI::ScrollContainer> scroll;
+	};
+
 	class PartySelectScene : public engine::IScene {
 	  public:
 		void onEnter() override {
@@ -107,30 +442,8 @@ namespace {
 				resetRoster();
 			}
 			selectedIndex = 0;
-			hoveredIndex = -1;
-
-			backButton = std::make_unique<UI::Button>(UI::Button::Args{
-				.label = "Back",
-				.size = {120.0F, 40.0F},
-				.type = UI::Button::Type::Secondary,
-				.onClick = [this]() { goBack(); },
-				.id = "btn_party_back",
-			});
-			generateButton = std::make_unique<UI::Button>(UI::Button::Args{
-				.label = "Generate Planet",
-				.size = {220.0F, 40.0F},
-				.type = UI::Button::Type::Primary,
-				.onClick = [this]() { confirm(); },
-				.id = "btn_party_generate",
-			});
-			randomizeButton = std::make_unique<UI::Button>(UI::Button::Args{
-				.label = "Randomize",
-				.size = {150.0F, 36.0F},
-				.type = UI::Button::Type::Data,
-				.onClick = [this]() { randomize(); },
-				.id = "btn_party_randomize",
-			});
-			needsLayout = true;
+			lastViewport = {0.0F, 0.0F};
+			buildUI();
 		}
 
 		void onExit() override {
@@ -138,31 +451,13 @@ namespace {
 			// Persist the crew so Back from the world creator (and the final
 			// land) sees the same roster.
 			world_sim::NewGameSetup::Get().party = buildParty();
-			backButton.reset();
-			generateButton.reset();
-			randomizeButton.reset();
-			cardRects.clear();
+			root.reset();
+			cards.clear();
+			dossier = nullptr;
 		}
 
 		bool handleInput(UI::InputEvent& event) override {
-			if (backButton && backButton->handleEvent(event)) return true;
-			if (generateButton && generateButton->handleEvent(event)) return true;
-			if (randomizeButton && randomizeButton->handleEvent(event)) return true;
-
-			using UI::InputEvent;
-			if (event.type == InputEvent::Type::MouseMove) {
-				hoveredIndex = cardAtPoint(event.position);
-				return false;
-			}
-			if (event.type == InputEvent::Type::MouseUp && event.button == engine::MouseButton::Left) {
-				const int idx = cardAtPoint(event.position);
-				if (idx >= 0) {
-					selectedIndex = idx;
-					event.consume();
-					return true;
-				}
-			}
-			return false;
+			return root && root->handleEvent(event);
 		}
 
 		void update(float dt) override {
@@ -170,16 +465,10 @@ namespace {
 				goBack();
 				return;
 			}
-			if (backButton) backButton->update(dt);
-			if (generateButton) generateButton->update(dt);
-			if (randomizeButton) randomizeButton->update(dt);
+			if (root) root->update(dt);
 		}
 
 		void render() override {
-			using Renderer::Primitives::drawText;
-
-			if (needsLayout) layout();
-
 			glClearColor(UI::bg_void.r, UI::bg_void.g, UI::bg_void.b, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
 
@@ -187,50 +476,13 @@ namespace {
 			const float screenH = Renderer::Primitives::PercentHeight(100.0F);
 			world_sim::renderStarfield(static_cast<int>(screenW), static_cast<int>(screenH), 57U, true);
 
-			// Header.
-			drawText({.text = "// NEW GAME    STEP 02 / 03",
-					  .position = {kColX, 40.0F},
-					  .scale = textScale(UI::fs_2xs),
-					  .color = UI::text_faint,
-					  .font = UI::fontMono,
-					  .vAlign = Foundation::VerticalAlign::Top,
-					  .letterSpacing = UI::fs_2xs * UI::ls_wider});
-			drawText({.text = "Assemble the Crew",
-					  .position = {kColX, 56.0F},
-					  .scale = textScale(UI::fs_3xl),
-					  .color = UI::text_bright,
-					  .font = UI::fontDisplay,
-					  .vAlign = Foundation::VerticalAlign::Top,
-					  .letterSpacing = UI::fs_3xl * UI::ls_wide});
-			drawText({.text = survivorLine(partySize),
-					  .position = {kColX, 106.0F},
-					  .scale = textScale(UI::fs_md),
-					  .color = UI::text_dim,
-					  .font = UI::fontUi,
-					  .vAlign = Foundation::VerticalAlign::Top});
-
-			// Everything below depends on layout(); skip it until the viewport
-			// is ready and the card rects match the roster.
-			if (needsLayout || cardRects.size() != roster.size()) return;
-
-			for (size_t i = 0; i < roster.size(); ++i) {
-				renderCard(i);
+			if (root != nullptr && (screenW != lastViewport.x || screenH != lastViewport.y) && screenW > 1.0F) {
+				lastViewport = {screenW, screenH};
+				root->layout({0.0F, 0.0F, screenW, screenH});
 			}
+			if (root) root->render();
 
-			// Roster actions row.
-			if (randomizeButton) randomizeButton->render();
-			drawText({.text = std::format("{} / {} SLOTS", roster.size(), partySize),
-					  .position = {kColX + 162.0F, rosterActionsY + 12.0F},
-					  .scale = textScale(UI::fs_2xs),
-					  .color = UI::text_faint,
-					  .font = UI::fontMono,
-					  .vAlign = Foundation::VerticalAlign::Top,
-					  .letterSpacing = UI::fs_2xs * UI::ls_wide});
-
-			renderDetail();
-
-			if (backButton) backButton->render();
-			if (generateButton) generateButton->render();
+			world_sim::serveUiStateRequests(*this);
 		}
 
 		std::string exportState() override {
@@ -243,208 +495,154 @@ namespace {
 		}
 		const char* getName() const override { return kSceneName; }
 
+		std::vector<const UI::IComponent*> getUiRoots() const override {
+			if (!root) return {};
+			return {root.get()};
+		}
+
 	  private:
-		struct RosterSlot {
-			const world_sim::CrewDef* def; // template: origin/backstory/skills/traits
-			std::string				  name;
-			std::string				  role;
-			int						  age;
-			float					  mood;
-		};
+		void buildUI() {
+			using namespace UI;
 
-		void layout() {
-			const float screenW = Renderer::Primitives::PercentWidth(100.0F);
-			const float screenH = Renderer::Primitives::PercentHeight(100.0F);
-			if (screenW < 1.0F || screenH < 1.0F) return; // viewport not ready
+			root = std::make_unique<LayoutContainer>(LayoutContainer::Args{
+				.size = {1.0F, 1.0F},
+				.direction = Direction::Vertical,
+				.gap = space_5,
+				.padding = Insets{space_8, space_10, space_8, space_10},
+				.crossAlign = CrossAlign::Stretch,
+				.id = "party_root"});
 
-			const float footerY = screenH - 68.0F;
-			const float count = static_cast<float>(roster.size());
-			// Fit every card plus the actions row (36 button + margins = 56)
-			// above the footer; large parties get compact cards.
-			const float availForCards = footerY - kContentTop - 56.0F - count * kCardGap;
-			cardHeight = std::clamp(availForCards / count, kCardHeightMin, kCardHeightMax);
+			LayoutContainer header(LayoutContainer::Args{
+				.direction = Direction::Vertical, .gap = space_2, .crossAlign = CrossAlign::Stretch,
+				.id = "party_header"});
+			header.addChild(world_sim::Label({
+				.text = "// NEW GAME    STEP 02 / 03",
+				.fontSize = fs_2xs,
+				.color = accent,
+				.font = fontMono,
+				.letterSpacingEm = ls_wider,
+				.transform = Foundation::TextTransform::Uppercase,
+				.id = "kicker"}));
+			header.addChild(world_sim::Label({
+				.text = "Assemble the Crew",
+				.fontSize = fs_3xl,
+				.color = text_bright,
+				.font = fontDisplay,
+				.id = "title"}));
+			header.addChild(Text(Text::Args{
+				.text = survivorLine(partySize),
+				.style = {.color = text_dim, .fontSize = fs_base, .wordWrap = true},
+				.id = "subtitle"}));
+			root->addChild(std::move(header));
 
-			cardRects.clear();
+			// Main two-pane row: fixed roster column | dossier fills the rest.
+			LayoutContainer main(LayoutContainer::Args{
+				.direction = Direction::Horizontal, .gap = space_5, .crossAlign = CrossAlign::Stretch,
+				.id = "party_main"});
+			main.heightMode = SizeMode::Fill;
+
+			LayoutContainer rosterCol(LayoutContainer::Args{
+				.size = {kRosterWidth, 0.0F},
+				.direction = Direction::Vertical,
+				.gap = space_3,
+				.crossAlign = CrossAlign::Stretch,
+				.id = "party_roster"});
+
+			world_sim::ScrollRegion rosterScroll("roster_scroll");
+			rosterScroll.widthMode = SizeMode::Hug;
+			rosterScroll.heightMode = SizeMode::Fill;
+			LayoutContainer rosterList(LayoutContainer::Args{
+				.direction = Direction::Vertical, .gap = space_2, .crossAlign = CrossAlign::Stretch,
+				.id = "roster_list"});
+			std::vector<LayerHandle> cardHandles;
 			for (size_t i = 0; i < roster.size(); ++i) {
-				cardRects.push_back({kColX, kContentTop + static_cast<float>(i) * (cardHeight + kCardGap),
-									 kRosterWidth, cardHeight});
+				RosterCard card(static_cast<int>(i), [this](int idx) { select(idx); });
+				card.setSlot(roster[i]);
+				cardHandles.push_back(rosterList.addChild(std::move(card)));
 			}
-			rosterActionsY = kContentTop + count * (cardHeight + kCardGap) + 8.0F;
-			randomizeButton->setPosition(kColX, rosterActionsY);
+			auto* listPtr = &rosterScroll.container();
+			LayerHandle listHandle = rosterScroll.container().addChild(std::move(rosterList));
+			rosterCol.addChild(std::move(rosterScroll));
 
-			detailX = kColX + kRosterWidth + kDetailGap;
-			detailW = std::min(640.0F, screenW - detailX - kColX);
-			detailH = 494.0F;
+			LayoutContainer actions(LayoutContainer::Args{
+				.direction = Direction::Vertical, .gap = space_2, .crossAlign = CrossAlign::Stretch,
+				.id = "roster_actions"});
+			Rectangle actionsRule(Rectangle::Args{.size = {0.0F, 1.0F}, .style = {.fill = line_hairline}});
+			actionsRule.widthMode = SizeMode::Hug;
+			actions.addChild(actionsRule);
+			LayoutContainer actionsRow(LayoutContainer::Args{
+				.direction = Direction::Horizontal, .distribution = Distribution::SpaceBetween,
+				.crossAlign = CrossAlign::Center, .id = "roster_actions_row"});
+			actionsRow.addChild(Button(Button::Args{
+				.label = "Randomize",
+				.size = {130.0F, 36.0F},
+				.type = Button::Type::Data,
+				.onClick = [this]() { randomize(); },
+				.id = "btn_party_randomize",
+				.iconGlyph = "dice"}));
+			actionsRow.addChild(world_sim::Label({
+				.text = std::format("{} / {} SLOTS", roster.size(), partySize),
+				.fontSize = fs_2xs,
+				.color = text_faint,
+				.font = fontMono,
+				.letterSpacingEm = ls_wide,
+				.id = "slots_label"}));
+			actions.addChild(std::move(actionsRow));
+			rosterCol.addChild(std::move(actions));
+			main.addChild(std::move(rosterCol));
 
-			backButton->setPosition(kColX, footerY);
-			generateButton->setPosition(detailX + detailW - 220.0F, footerY);
-			needsLayout = false;
+			LayerHandle dossierHandle = main.addChild(DossierView());
+			LayerHandle mainHandle = root->addChild(std::move(main));
+
+			LayoutContainer footer(LayoutContainer::Args{
+				.direction = Direction::Vertical, .gap = space_3, .crossAlign = CrossAlign::Stretch,
+				.id = "party_footer"});
+			Rectangle hairline(Rectangle::Args{.size = {0.0F, 1.0F}, .style = {.fill = line_hairline}, .id = "footer_rule"});
+			hairline.widthMode = SizeMode::Hug;
+			footer.addChild(hairline);
+			LayoutContainer footerRow(LayoutContainer::Args{
+				.direction = Direction::Horizontal, .distribution = Distribution::SpaceBetween,
+				.crossAlign = CrossAlign::Center, .id = "party_footer_row"});
+			footerRow.addChild(Button(Button::Args{
+				.label = "Back",
+				.size = {120.0F, 40.0F},
+				.type = Button::Type::Secondary,
+				.onClick = [this]() { goBack(); },
+				.id = "btn_party_back",
+				.iconGlyph = "chevronLeft"}));
+			footerRow.addChild(Button(Button::Args{
+				.label = "Generate Planet",
+				.size = {220.0F, 40.0F},
+				.type = Button::Type::Primary,
+				.onClick = [this]() { confirm(); },
+				.id = "btn_party_generate",
+				.iconGlyph = "arrowRight"}));
+			footer.addChild(std::move(footerRow));
+			root->addChild(std::move(footer));
+
+			// Resolve stable pointers now that everything is arena-placed.
+			auto* mainPtr = root->getChild<LayoutContainer>(mainHandle);
+			dossier = mainPtr->getChild<DossierView>(dossierHandle);
+			auto* list = listPtr->getChild<LayoutContainer>(listHandle);
+			cards.clear();
+			for (LayerHandle handle : cardHandles) {
+				cards.push_back(list->getChild<RosterCard>(handle));
+			}
+			select(selectedIndex);
 		}
 
-		void renderCard(size_t i) {
-			using Renderer::Primitives::drawRect;
-			using Renderer::Primitives::drawText;
-
-			const RosterSlot&		slot = roster[i];
-			const Foundation::Rect& r = cardRects[i];
-			const bool selected = static_cast<int>(i) == selectedIndex;
-			const bool hovered = static_cast<int>(i) == hoveredIndex;
-
-			drawRect({.bounds = r,
-					  .style = {.fill = selected ? UI::bg_active : (hovered ? UI::bg_hover : UI::bg_panel),
-								.border = Foundation::BorderStyle{
-									.color = selected ? UI::accent : UI::line_edge,
-									.width = UI::bw}}});
-
-			// Interior scales with card height so compact cards stay readable.
-			const float avatarSize = std::clamp(r.height - 24.0F, 28.0F, 40.0F);
-			const float textX = r.x + 12.0F + avatarSize + 12.0F;
-			const float nameY = r.y + (r.height - 36.0F) * 0.5F;
-
-			UI::Avatar avatar({.position = {r.x + 12.0F, r.y + (r.height - avatarSize) * 0.5F},
-							   .size = avatarSize,
-							   .seed = slot.name,
-							   .mood = slot.mood,
-							   .selected = selected});
-			avatar.render();
-
-			drawText({.text = slot.name,
-					  .position = {textX, nameY},
-					  .scale = textScale(UI::fs_md),
-					  .color = selected ? UI::accent_bright : UI::text_bright,
-					  .font = UI::fontDisplay,
-					  .vAlign = Foundation::VerticalAlign::Top});
-			drawText({.text = slot.role,
-					  .position = {textX, nameY + 22.0F},
-					  .scale = textScale(UI::fs_xs),
-					  .color = UI::text_dim,
-					  .font = UI::fontMono,
-					  .vAlign = Foundation::VerticalAlign::Top});
-
-			UI::ProgressBar moodBar({.position = {r.x + 250.0F, r.y + r.height * 0.5F - 14.0F},
-									 .width = 96.0F,
-									 .value = slot.mood,
-									 .tone = UI::Tone::Auto,
-									 .size = UI::Size::Sm});
-			moodBar.render();
-			drawText({.text = moodLabel(slot.mood),
-					  .position = {r.x + 250.0F, r.y + r.height * 0.5F},
-					  .scale = textScale(UI::fs_2xs),
-					  .color = UI::toneColor(moodTone(slot.mood)),
-					  .font = UI::fontMono,
-					  .hAlign = Foundation::HorizontalAlign::Right,
-					  .vAlign = Foundation::VerticalAlign::Top,
-					  .boxWidth = 96.0F});
+		void select(int idx) {
+			selectedIndex = idx;
+			for (size_t i = 0; i < cards.size(); ++i) {
+				if (cards[i] != nullptr) cards[i]->selected = static_cast<int>(i) == idx;
+			}
+			if (dossier != nullptr) dossier->setMember(roster[static_cast<size_t>(idx)]);
 		}
 
-		void renderDetail() {
-			using Renderer::Primitives::drawText;
-
-			const RosterSlot&		  slot = roster[static_cast<size_t>(selectedIndex)];
-			const world_sim::CrewDef& def = *slot.def;
-			const float px = detailX;
-			const float py = kContentTop;
-			const float innerW = detailW - kPad * 2.0F;
-
-			UI::Panel panel({.position = {px, py},
-							 .size = {detailW, detailH},
-							 .variant = UI::PanelVariant::Raised,
-							 .accent = UI::PanelAccent::Accent});
-			panel.render();
-
-			// Hero: portrait + identity.
-			UI::Avatar avatar({.position = {px + kPad, py + kPad},
-							   .size = 72.0F,
-							   .seed = slot.name,
-							   .mood = slot.mood});
-			avatar.render();
-			drawText({.text = slot.name,
-					  .position = {px + kPad + 88.0F, py + 24.0F},
-					  .scale = textScale(UI::fs_2xl),
-					  .color = UI::text_bright,
-					  .font = UI::fontDisplay,
-					  .vAlign = Foundation::VerticalAlign::Top});
-			drawText({.text = slot.role,
-					  .position = {px + kPad + 88.0F, py + 62.0F},
-					  .scale = textScale(UI::fs_sm),
-					  .color = UI::accent,
-					  .font = UI::fontMono,
-					  .vAlign = Foundation::VerticalAlign::Top,
-					  .letterSpacing = UI::fs_sm * UI::ls_wide,
-					  .transform = Foundation::TextTransform::Uppercase});
-
-			// Stats row.
-			const float statsY = py + 112.0F;
-			UI::Stat({.position = {px + kPad, statsY},
-					  .label = "Origin",
-					  .value = def.origin,
-					  .size = UI::Size::Sm})
-				.render();
-			UI::Stat({.position = {px + kPad + 280.0F, statsY},
-					  .label = "Age",
-					  .value = std::to_string(slot.age),
-					  .unit = " yrs",
-					  .size = UI::Size::Sm})
-				.render();
-			UI::Stat({.position = {px + kPad + 400.0F, statsY},
-					  .label = "Mood",
-					  .value = moodLabel(slot.mood),
-					  .tone = moodTone(slot.mood),
-					  .size = UI::Size::Sm})
-				.render();
-
-			// Background.
-			UI::Divider({.position = {px + kPad, py + 168.0F}, .width = innerW, .label = "Background"}).render();
-			UI::Text backstory(UI::Text::Args{
-				.position = {px + kPad, py + 184.0F},
-				.width = innerW,
-				.text = def.backstory,
-				.style = {.color = UI::text, .fontSize = UI::fs_base, .wordWrap = true},
-			});
-			backstory.render();
-
-			// Skills.
-			UI::Divider({.position = {px + kPad, py + 254.0F}, .width = innerW, .label = "Skills"}).render();
-			float skillY = py + 272.0F;
-			for (const world_sim::CrewSkillDef& skill : def.skills) {
-				drawText({.text = skill.name,
-						  .position = {px + kPad, skillY},
-						  .scale = textScale(UI::fs_sm),
-						  .color = UI::text,
-						  .font = UI::fontUi,
-						  .vAlign = Foundation::VerticalAlign::Top});
-				UI::ProgressBar bar({.position = {px + kPad + 150.0F, skillY + 4.0F},
-									 .width = innerW - 150.0F - 40.0F,
-									 .value = skill.level / 20.0F,
-									 .tone = UI::Tone::Accent,
-									 .size = UI::Size::Sm});
-				bar.render();
-				drawText({.text = std::format("{:.0f}", skill.level),
-						  .position = {px + kPad + innerW - 32.0F, skillY},
-						  .scale = textScale(UI::fs_xs),
-						  .color = UI::accent_bright,
-						  .font = UI::fontMono,
-						  .hAlign = Foundation::HorizontalAlign::Right,
-						  .vAlign = Foundation::VerticalAlign::Top,
-						  .boxWidth = 32.0F});
-				skillY += 26.0F;
+		void refreshCards() {
+			for (size_t i = 0; i < cards.size() && i < roster.size(); ++i) {
+				if (cards[i] != nullptr) cards[i]->setSlot(roster[i]);
 			}
-
-			// Traits.
-			UI::Divider({.position = {px + kPad, py + 438.0F}, .width = innerW, .label = "Traits"}).render();
-			float badgeX = px + kPad;
-			for (const world_sim::CrewTraitDef& trait : def.traits) {
-				if (trait.name == nullptr) continue;
-				UI::Badge({.position = {badgeX, py + 454.0F}, .label = trait.name, .tone = traitTone(trait.tone)}).render();
-				badgeX += UI::Badge::MeasureWidth(trait.name) + UI::space_2;
-			}
-		}
-
-		int cardAtPoint(Foundation::Vec2 p) const {
-			for (size_t i = 0; i < cardRects.size(); ++i) {
-				if (cardRects[i].contains(p)) return static_cast<int>(i);
-			}
-			return -1;
 		}
 
 		void resetRoster() {
@@ -509,7 +707,8 @@ namespace {
 				}
 				roster.push_back(std::move(slot));
 			}
-			selectedIndex = 0;
+			refreshCards();
+			select(0);
 			LOG_INFO(Game, "PartySelectScene - Randomized crew");
 		}
 
@@ -542,21 +741,14 @@ namespace {
 			sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::WorldCreator));
 		}
 
-		std::vector<RosterSlot>		  roster;
-		std::unique_ptr<UI::Button>	  backButton;
-		std::unique_ptr<UI::Button>	  generateButton;
-		std::unique_ptr<UI::Button>	  randomizeButton;
-		std::vector<Foundation::Rect> cardRects;
-		std::mt19937				  rng{std::random_device{}()};
-		size_t						  partySize = 3;
-		float						  cardHeight = kCardHeightMax;
-		float						  rosterActionsY = 0.0F;
-		float						  detailX = 0.0F;
-		float						  detailW = 0.0F;
-		float						  detailH = 0.0F;
-		int							  selectedIndex = 0;
-		int							  hoveredIndex = -1;
-		bool						  needsLayout = true;
+		std::vector<RosterSlot>				 roster;
+		std::unique_ptr<UI::LayoutContainer> root;
+		std::vector<RosterCard*>			 cards;
+		DossierView*						 dossier{nullptr};
+		std::mt19937						 rng{std::random_device{}()};
+		size_t								 partySize = 3;
+		Foundation::Vec2					 lastViewport{0.0F, 0.0F};
+		int									 selectedIndex = 0;
 	};
 
 } // namespace
