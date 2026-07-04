@@ -52,6 +52,8 @@ LayoutContainer::LayoutContainer(const Args& args)
 	margin = args.margin;
 	widthMode = size.x > 0.0F ? SizeMode::Fixed : SizeMode::Hug;
 	heightMode = size.y > 0.0F ? SizeMode::Fixed : SizeMode::Hug;
+	widthDefinite = widthMode == SizeMode::Fixed;
+	heightDefinite = heightMode == SizeMode::Fixed;
 }
 
 void LayoutContainer::update(float deltaTime) {
@@ -74,18 +76,20 @@ void LayoutContainer::layout(const Foundation::Rect& bounds) {
 }
 
 void LayoutContainer::setLayoutSize(float w, float h) {
-	if (w >= 0.0F && size.x != w) {
+	if (w >= 0.0F && (!widthDefinite || size.x != w)) {
+		widthDefinite = true;
 		size.x = w;
 		invalidateLayout();
 	}
-	if (h >= 0.0F && size.y != h) {
+	if (h >= 0.0F && (!heightDefinite || size.y != h)) {
+		heightDefinite = true;
 		size.y = h;
 		invalidateLayout();
 	}
 }
 
 float LayoutContainer::getWidth() const {
-	if (size.x > 0.0F) {
+	if (widthDefinite) {
 		return size.x + margin * 2.0F;
 	}
 	const float content = direction == Direction::Vertical ? hugCrossContent() : hugMainContent();
@@ -93,7 +97,7 @@ float LayoutContainer::getWidth() const {
 }
 
 float LayoutContainer::getHeight() const {
-	if (size.y > 0.0F) {
+	if (heightDefinite) {
 		return size.y + margin * 2.0F;
 	}
 	const float content = direction == Direction::Vertical ? hugMainContent() : hugCrossContent();
@@ -157,8 +161,9 @@ void LayoutContainer::resolveChildSizes() {
 
 	// Cross pass: Stretch/Fill children adopt the content box cross size
 	const float sizeCross = vertical ? size.x : size.y;
+	const bool	crossDef = vertical ? widthDefinite : heightDefinite;
 	const float paddingCross = vertical ? padding.horizontal() : padding.vertical();
-	const float contentCross = sizeCross > 0.0F ? std::max(sizeCross - paddingCross, 0.0F) : hugCrossContent();
+	const float contentCross = crossDef ? std::max(sizeCross - paddingCross, 0.0F) : hugCrossContent();
 	for (auto* child : children) {
 		if (!child->visible) {
 			continue;
@@ -179,8 +184,10 @@ void LayoutContainer::resolveChildSizes() {
 
 	// Main pass: leftover space goes to Fill children by fillWeight.
 	// A Hug main axis has no leftover; Fill children keep their intrinsic size.
+	// A main axis resolved to zero IS definite: Fill children get 0.
 	const float sizeMain = vertical ? size.y : size.x;
-	if (sizeMain <= 0.0F) {
+	const bool	mainDef = vertical ? heightDefinite : widthDefinite;
+	if (!mainDef) {
 		return;
 	}
 	const float paddingMain = vertical ? padding.vertical() : padding.horizontal();
@@ -219,11 +226,13 @@ void LayoutContainer::positionChildren() {
 	const Foundation::Vec2 contentOrigin{position.x + margin + padding.left, position.y + margin + padding.top};
 
 	const float sizeMain = vertical ? size.y : size.x;
+	const bool	mainDef = vertical ? heightDefinite : widthDefinite;
 	const float paddingMain = vertical ? padding.vertical() : padding.horizontal();
-	const float contentMain = sizeMain > 0.0F ? std::max(sizeMain - paddingMain, 0.0F) : hugMainContent();
+	const float contentMain = mainDef ? std::max(sizeMain - paddingMain, 0.0F) : hugMainContent();
 	const float sizeCross = vertical ? size.x : size.y;
+	const bool	crossDef = vertical ? widthDefinite : heightDefinite;
 	const float paddingCross = vertical ? padding.horizontal() : padding.vertical();
-	const float contentCross = sizeCross > 0.0F ? std::max(sizeCross - paddingCross, 0.0F) : hugCrossContent();
+	const float contentCross = crossDef ? std::max(sizeCross - paddingCross, 0.0F) : hugCrossContent();
 
 	float totalMain = 0.0F;
 	int	  count = 0;

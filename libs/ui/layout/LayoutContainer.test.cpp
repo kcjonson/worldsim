@@ -34,9 +34,9 @@ class WrappingMockComponent : public Component {
 	}
 
 	void setLayoutSize(float w, float h) override {
-		if (w > 0.0F) {
+		if (w >= 0.0F) {
 			size.x = w;
-			size.y = area / w;
+			size.y = w == 0.0F ? 0.0F : area / w;
 		}
 		if (h >= 0.0F) {
 			size.y = h;
@@ -956,6 +956,94 @@ TEST(LayoutContainerEngine, NestingThreeDeepPropagatesStretch) {
 }
 
 // ============================================================================
+// Engine Tests - definite axes (zero is a valid resolved size)
+// ============================================================================
+
+// A Fill container squeezed out of a full parent resolves to 0 and REPORTS 0,
+// even though it has children to hug: the sibling after it lands right where
+// the leftover math says, not shifted by a phantom hug measurement.
+TEST(LayoutContainerEngine, FillContainerResolvedToZeroReportsZero) {
+	LayoutContainer parent(LayoutContainer::Args{
+		.size = {100.0F, 100.0F},
+		.direction = Direction::Vertical});
+
+	auto topHandle = parent.addChild(MockComponent(50.0F, 60.0F));
+	LayoutContainer fill(LayoutContainer::Args{.size = {50.0F, 0.0F}});
+	fill.heightMode = SizeMode::Fill;
+	auto fillHandle = parent.addChild(std::move(fill));
+	auto* fillPtr = parent.getChild<LayoutContainer>(fillHandle);
+	ASSERT_NE(fillPtr, nullptr);
+	fillPtr->addChild(MockComponent(40.0F, 30.0F)); // would hug to 30
+	auto bottomHandle = parent.addChild(MockComponent(50.0F, 40.0F));
+
+	parent.render();
+
+	// 60 + 40 fixed leaves no leftover: the Fill container is 0, not 30
+	EXPECT_FLOAT_EQ(fillPtr->getHeight(), 0.0F);
+	EXPECT_FLOAT_EQ(parent.getChild<MockComponent>(topHandle)->position.y, 0.0F);
+	EXPECT_FLOAT_EQ(fillPtr->position.y, 60.0F);
+	EXPECT_FLOAT_EQ(parent.getChild<MockComponent>(bottomHandle)->position.y, 60.0F);
+}
+
+// A nested Hug container stretched on the cross axis adopts the assigned
+// size even when the parent's content box has collapsed to 0.
+TEST(LayoutContainerEngine, StretchedHugContainerAdoptsZeroCrossSize) {
+	LayoutContainer outer(LayoutContainer::Args{
+		.size = {20.0F, 100.0F},
+		.direction = Direction::Vertical,
+		.padding = Insets{0.0F, 10.0F, 0.0F, 10.0F}, // content width = 0
+		.crossAlign = CrossAlign::Stretch});
+
+	LayoutContainer inner(LayoutContainer::Args{});
+	auto innerHandle = outer.addChild(std::move(inner));
+	auto* innerPtr = outer.getChild<LayoutContainer>(innerHandle);
+	ASSERT_NE(innerPtr, nullptr);
+	innerPtr->addChild(MockComponent(50.0F, 30.0F)); // would hug to 50
+
+	outer.render();
+
+	EXPECT_FLOAT_EQ(innerPtr->getWidth(), 0.0F);
+	EXPECT_FLOAT_EQ(innerPtr->getHeight(), 30.0F); // main axis still hugs
+}
+
+// Direct contract: setLayoutSize(0, 0) on a Hug container beats hugging.
+TEST(LayoutContainerEngine, ResolvedZeroBeatsHugMeasurement) {
+	LayoutContainer layout(LayoutContainer::Args{});
+	layout.addChild(MockComponent(50.0F, 30.0F));
+
+	EXPECT_FLOAT_EQ(layout.getWidth(), 50.0F); // unresolved: hugs
+	EXPECT_FLOAT_EQ(layout.getHeight(), 30.0F);
+
+	layout.setLayoutSize(0.0F, 0.0F);
+
+	EXPECT_FLOAT_EQ(layout.getWidth(), 0.0F);
+	EXPECT_FLOAT_EQ(layout.getHeight(), 0.0F);
+}
+
+// A standalone Hug container that never received setLayoutSize keeps
+// measuring live from its children.
+TEST(LayoutContainerEngine, UnresolvedHugContainerStillHugsChildren) {
+	LayoutContainer layout(LayoutContainer::Args{.direction = Direction::Vertical});
+	layout.addChild(MockComponent(50.0F, 30.0F));
+	layout.addChild(MockComponent(70.0F, 40.0F));
+	layout.render();
+
+	EXPECT_FLOAT_EQ(layout.getWidth(), 70.0F);	// max child width
+	EXPECT_FLOAT_EQ(layout.getHeight(), 70.0F); // summed heights
+}
+
+// A Fixed container reports its explicit size no matter what its children
+// measure.
+TEST(LayoutContainerEngine, FixedContainerReportsExplicitSize) {
+	LayoutContainer layout(LayoutContainer::Args{.size = {100.0F, 50.0F}});
+	layout.addChild(MockComponent(200.0F, 200.0F)); // overflows
+	layout.render();
+
+	EXPECT_FLOAT_EQ(layout.getWidth(), 100.0F);
+	EXPECT_FLOAT_EQ(layout.getHeight(), 50.0F);
+}
+
+// ============================================================================
 // Engine Tests - wrap-aware sizing (the "text fits" fix)
 // ============================================================================
 
@@ -984,6 +1072,22 @@ TEST(LayoutContainerEngine, WrapAwareFillChildGrowsHugHeight) {
 	// container grows with it
 	EXPECT_FLOAT_EQ(narrow.getChild<WrappingMockComponent>(narrowHandle)->size.y, 60.0F);
 	EXPECT_FLOAT_EQ(narrow.getHeight(), 60.0F);
+}
+
+// A wrap-aware child assigned width 0 (collapsed content box) accepts the
+// assignment and collapses to 0x0 instead of ignoring it (or dividing by 0).
+TEST(LayoutContainerEngine, WrapAwareChildAcceptsZeroWidth) {
+	LayoutContainer layout(LayoutContainer::Args{
+		.size = {20.0F, 0.0F},
+		.direction = Direction::Vertical,
+		.padding = Insets{0.0F, 10.0F, 0.0F, 10.0F}}); // content width = 0
+	auto handle = layout.addChild(WrappingMockComponent(3000.0F));
+	layout.render();
+
+	auto* child = layout.getChild<WrappingMockComponent>(handle);
+	EXPECT_FLOAT_EQ(child->size.x, 0.0F);
+	EXPECT_FLOAT_EQ(child->size.y, 0.0F);
+	EXPECT_FLOAT_EQ(layout.getHeight(), 0.0F);
 }
 
 // Text wiring for the same fix: a parent-assigned width becomes the wrap

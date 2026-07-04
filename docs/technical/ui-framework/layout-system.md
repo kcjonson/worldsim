@@ -82,6 +82,13 @@ non-zero is Fixed. Set `widthMode`/`heightMode = Fill` on the container itself
   Start and children overflow past the end edge.
 - **Hug main axis has no leftover.** Fill children in a Hug axis are measured
   at their intrinsic size; distribution is inert.
+- **Zero is a valid resolved size.** A container axis is *definite* once a
+  size is established for it: an explicit constructed size, or any
+  `setLayoutSize()`/`layout()` resolution (zero included). Definite axes
+  report the stored size and never fall back to hug measurement, so a Fill
+  container with no leftover reports 0 and a Hug container stretched into a
+  collapsed content box adopts 0. Only a never-resolved Hug/Fill axis
+  measures from children.
 - **Invalidation is manual after content mutation.** There are no parent
   back-pointers (v1): after changing a child's text, size, or visibility,
   call `invalidateLayout()` on the owning container. Adding children and the
