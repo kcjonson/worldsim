@@ -27,8 +27,14 @@
 // - A constructed size > 0 maps to SizeMode::Fixed for that axis, size 0 to
 //   Hug (legacy auto-size). Set widthMode/heightMode = Fill before adding the
 //   container to a parent to make it share leftover space.
-// - Hug axes measure live from children: max child cross size, or the sum of
-//   child main sizes plus gaps, plus padding.
+// - An axis is DEFINITE once a size is established for it: an explicit
+//   constructed size (> 0, Fixed) or any parent resolution via
+//   setLayoutSize()/layout() (any value >= 0). A definite axis reports its
+//   stored size even at zero: a Fill child with no leftover, or a Hug child
+//   stretched into a collapsed content box, reports 0 and never falls back
+//   to hug measurement. Only a non-definite axis (Hug/Fill, never resolved)
+//   measures live from children: max child cross size, or the sum of child
+//   main sizes plus gaps, plus padding.
 // - layout(bounds) is a final-rect assignment: position and size are adopted
 //   (content = bounds - margin*2; zero-sized bounds axes are ignored). A
 //   LayoutContainer parent passes Fixed children their own measured size, so
@@ -114,7 +120,8 @@ class LayoutContainer : public Container {
 		}
 	}
 
-	// Margin-box size: resolved size when set, otherwise measured from children
+	// Margin-box size: definite axes (constructed or parent-resolved, zero
+	// included) report the stored size; non-definite axes measure from children
 	[[nodiscard]] float getWidth() const override;
 	[[nodiscard]] float getHeight() const override;
 
@@ -158,6 +165,11 @@ class LayoutContainer : public Container {
 
 	bool		layoutDirty{true};
 	bool		childSizesDirty{true};
+	// Definite axes report the stored size even at zero (no hug fallback).
+	// Set at construction for explicit sizes and by any resolution through
+	// setLayoutSize()/layout(). See the doc block above.
+	bool		widthDefinite{false};
+	bool		heightDefinite{false};
 	const char* id{nullptr};
 
 	void computeLayout();
