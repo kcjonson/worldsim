@@ -9,6 +9,7 @@
 #include <layout/LayoutContainer.h>
 #include <layout/LayoutTypes.h>
 #include <memory>
+#include <vector>
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
@@ -41,7 +42,7 @@ class LayoutScene : public engine::IScene {
 		// ================================================================
 		verticalLabel = std::make_unique<Text>(Text::Args{
 			.position = {50.0F, 70.0F},
-			.text = "Vertical Layout (buttons with margin):",
+			.text = "Vertical Layout (margins):",
 			.style = {.color = Color::yellow(), .fontSize = 16.0F},
 			.id = "vertical_label"});
 
@@ -274,6 +275,25 @@ class LayoutScene : public engine::IScene {
 		if (shapesLayout) {
 			shapesLayout->render();
 		}
+	}
+
+	std::vector<const UI::IComponent*> getUiRoots() const override {
+		std::vector<const UI::IComponent*> roots;
+		auto add = [&roots](const UI::IComponent* root) {
+			if (root != nullptr) {
+				roots.push_back(root);
+			}
+		};
+		add(title.get());
+		add(verticalLabel.get());
+		add(horizontalLabel.get());
+		add(centeredLabel.get());
+		add(shapesLabel.get());
+		add(verticalLayout.get());
+		add(horizontalLayout.get());
+		add(centeredLayout.get());
+		add(shapesLayout.get());
+		return roots;
 	}
 
   private:

@@ -21,6 +21,8 @@
 #include <application/AppLauncher.h>
 #include <debug/DebugServer.h>
 #include <algorithm>
+#include <debug/LayoutLint.h>
+#include <debug/UiTreeSerializer.h>
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -792,7 +794,21 @@ namespace {
 
 				std::string stateQuery;
 				if (debugServer->consumeStateRequest(stateQuery)) {
-					debugServer->deliverState(m_devHandler->serializeState(stateQuery));
+					// "ui.tree"/"ui.lint" (/api/ui/tree, /api/ui/lint) read the live UI
+					// hierarchy; everything else is DevCommandHandler world state.
+					if (stateQuery == "ui.tree" || stateQuery == "ui.lint") {
+						int viewportW = 0;
+						int viewportH = 0;
+						Renderer::Primitives::getLogicalViewport(viewportW, viewportH);
+						const Foundation::Vec2 viewport{static_cast<float>(viewportW), static_cast<float>(viewportH)};
+						const auto			   roots = gameUI->getUiRoots();
+						debugServer->deliverState(
+							stateQuery == "ui.tree" ? UI::serializeUiTreeJson(roots, viewport)
+													: UI::lintUiTreeJson(roots, viewport)
+						);
+					} else {
+						debugServer->deliverState(m_devHandler->serializeState(stateQuery));
+					}
 				}
 			}
 			dx += m_debugPanX;

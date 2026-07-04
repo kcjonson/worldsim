@@ -693,6 +693,25 @@ namespace Foundation {
 			}
 		});
 
+		// UI-tree snapshot and layout lint. Same synchronous handshake as /api/state:
+		// the query string ("ui.tree" / "ui.lint") rides the state channel and the
+		// app-side drain routes it to the UI serializer/linter on the main thread.
+		// DebugServer stays domain-agnostic; it never touches UI types.
+		auto uiStateRoute = [this](const char* what) {
+			return [this, what](const httplib::Request&, httplib::Response& res) {
+				res.set_header("Access-Control-Allow-Origin", "*");
+				std::string json;
+				if (requestState(what, json, 2000)) {
+					res.set_content(json, "application/json");
+				} else {
+					res.status = 503;
+					res.set_content("{\"error\":\"ui state unavailable (timed out, busy, or no UI drain running)\"}", "application/json");
+				}
+			};
+		};
+		server->Get("/api/ui/tree", uiStateRoute("ui.tree"));
+		server->Get("/api/ui/lint", uiStateRoute("ui.lint"));
+
 		// Control endpoint - allows control of sandbox via HTTP GET with query params
 		// Examples: /api/control?action=exit
 		//           /api/control?action=scene&scene=arena

@@ -23,6 +23,7 @@
 #include "scenes/game/ui/views/GlobalTaskListView.h"
 #include "scenes/game/ui/models/ColonistListModel.h"
 #include "scenes/game/ui/models/GlobalTaskListModel.h"
+#include "scenes/game/ui/models/ResourcesModel.h"
 #include "scenes/game/ui/models/TimeModel.h"
 #include "scenes/game/ui/views/EntityInfoView.h"
 #include "scenes/game/ui/views/ZoomControlPanel.h"
@@ -201,6 +202,11 @@ class GameUI {
 	/// Toggle the per-colonist decision inspector panel (T hotkey)
 	void toggleDecisionInspector();
 
+	/// Top-level UI roots for the /api/ui/tree and /api/ui/lint snapshot.
+	/// Mirrors render()'s gating so the snapshot only carries what is drawn.
+	/// BuildMenu and ColonistListView are not IComponents and are excluded.
+	[[nodiscard]] std::vector<const UI::IComponent*> getUiRoots() const;
+
   private:
 	std::unique_ptr<TopBar> topBar;
 	std::unique_ptr<DebugOverlay> debugOverlay;
@@ -222,6 +228,7 @@ class GameUI {
 	TimeModel timeModel;
 	ColonistListModel colonistListModel;
 	GlobalTaskListModel globalTaskListModel;
+	ResourcesModel resourcesModel;
 
 	// Task list expansion state
 	bool taskListExpanded = false;
@@ -241,6 +248,11 @@ class GameUI {
 
 	// Toggle task list panel visibility
 	void toggleTaskList();
+
+	// Re-position the top-right panel stack (resources panel + global task list
+	// below it); called from layout() and whenever the resources panel's height
+	// changes (toggle or row count change)
+	void positionRightStack();
 };
 
 } // namespace world_sim

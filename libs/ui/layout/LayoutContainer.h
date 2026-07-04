@@ -107,6 +107,9 @@ class LayoutContainer : public Container {
 		return totalHeight + margin * 2.0F;
 	}
 
+	const char* debugTypeName() const override { return "LayoutContainer"; }
+	const char* debugId() const override { return id; }
+
 	// Setters for layout properties
 	void setDirection(Direction dir) {
 		direction = dir;

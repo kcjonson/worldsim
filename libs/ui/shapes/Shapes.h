@@ -52,6 +52,11 @@ namespace UI {
 		float getHeight() const override { return size.y + margin * 2.0F; }
 		void  setPosition(float x, float y) override { position = {x + margin, y + margin}; }
 
+		// Debug introspection (position stores the content origin, so back out margin)
+		Foundation::Vec2 getPosition() const override { return {position.x - margin, position.y - margin}; }
+		const char*		 debugTypeName() const override { return "Rectangle"; }
+		const char*		 debugId() const override { return id; }
+
 		void render() override;
 	};
 
@@ -88,6 +93,11 @@ namespace UI {
 		float getWidth() const override { return radius * 2.0F + margin * 2.0F; }
 		float getHeight() const override { return radius * 2.0F + margin * 2.0F; }
 		void  setPosition(float x, float y) override { center = {x + margin + radius, y + margin + radius}; }
+
+		// Debug introspection
+		Foundation::Vec2 getPosition() const override { return {center.x - radius - margin, center.y - radius - margin}; }
+		const char*		 debugTypeName() const override { return "Circle"; }
+		const char*		 debugId() const override { return id; }
 
 		void render() override;
 	};
@@ -140,6 +150,13 @@ namespace UI {
 			end.y += dy;
 		}
 
+		// Debug introspection
+		Foundation::Vec2 getPosition() const override {
+			return {std::min(start.x, end.x) - margin, std::min(start.y, end.y) - margin};
+		}
+		const char* debugTypeName() const override { return "Line"; }
+		const char* debugId() const override { return id; }
+
 		void render() override;
 	};
 
@@ -183,6 +200,11 @@ namespace UI {
 		float getWidth() const override;
 		float getHeight() const override;
 		void  setPosition(float x, float y) override { position = {x + margin, y + margin}; }
+
+		// Debug introspection (position stores the content origin, so back out margin)
+		Foundation::Vec2 getPosition() const override { return {position.x - margin, position.y - margin}; }
+		const char*		 debugTypeName() const override { return "Text"; }
+		const char*		 debugId() const override { return id; }
 
 		void render() override;
 

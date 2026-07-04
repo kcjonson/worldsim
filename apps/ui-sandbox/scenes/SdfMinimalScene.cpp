@@ -1,13 +1,13 @@
 // Minimal SDF Test Scene - Single line of text to verify SDF rendering works
 // Uses the unified uber shader for combined shape + text rendering
 
+#include "SceneTypes.h"
 #include <font/FontRenderer.h>
 #include <graphics/Color.h>
 #include <primitives/BatchRenderer.h>
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
-#include "SceneTypes.h"
 #include <utils/Log.h>
 
 #include <GL/glew.h>
@@ -18,9 +18,9 @@
 
 namespace {
 
-constexpr const char* kSceneName = "sdf_minimal";
+	constexpr const char* kSceneName = "sdf_minimal";
 
-class SDFMinimalScene : public engine::IScene {
+	class SDFMinimalScene : public engine::IScene {
 	  public:
 		void onEnter() override {
 			LOG_INFO(UI, "=== SDF Minimal Test Scene (Uber Shader) ===");
@@ -52,7 +52,7 @@ class SDFMinimalScene : public engine::IScene {
 			// Begin frame for primitives
 			Renderer::Primitives::beginFrame();
 
-			float scale = 2.0f; // 2.0 = 32px (base is 16px)
+			float			  scale = 2.0f;						 // 2.0 = 32px (base is 16px)
 			Foundation::Color textColor(1.0F, 1.0F, 1.0F, 1.0F); // White
 
 			// Render uppercase alphabet
@@ -74,7 +74,9 @@ class SDFMinimalScene : public engine::IScene {
 			batchRenderer = nullptr;
 		}
 
-		std::string exportState() override { return R"({"scene": "sdf_minimal", "description": "Minimal SDF rendering test with uber shader"})"; }
+		std::string exportState() override {
+			return R"({"scene": "sdf_minimal", "description": "Minimal SDF rendering test with uber shader"})";
+		}
 
 		const char* getName() const override { return kSceneName; }
 
@@ -86,7 +88,7 @@ class SDFMinimalScene : public engine::IScene {
 			}
 
 			// Generate glyph quads
-			glm::vec4 glyphColor(color.r, color.g, color.b, color.a);
+			glm::vec4								 glyphColor(color.r, color.g, color.b, color.a);
 			std::vector<ui::FontRenderer::GlyphQuad> glyphs;
 			fontRenderer->generateGlyphQuads(text, position, scale, glyphColor, glyphs);
 
@@ -97,12 +99,13 @@ class SDFMinimalScene : public engine::IScene {
 					Foundation::Vec2(glyph.size.x, glyph.size.y),
 					Foundation::Vec2(glyph.uvMin.x, glyph.uvMin.y),
 					Foundation::Vec2(glyph.uvMax.x, glyph.uvMax.y),
-					color
+					color,
+					Foundation::Vec2(glyph.runOrigin.x, glyph.runOrigin.y)
 				);
 			}
 		}
 
-		ui::FontRenderer* fontRenderer = nullptr;
+		ui::FontRenderer*		 fontRenderer = nullptr;
 		Renderer::BatchRenderer* batchRenderer = nullptr;
 	};
 
@@ -111,4 +114,4 @@ class SDFMinimalScene : public engine::IScene {
 // Export scene info for registry
 namespace ui_sandbox::scenes {
 	extern const ui_sandbox::SceneInfo SdfMinimal = {kSceneName, []() { return std::make_unique<SDFMinimalScene>(); }};
-}
+} // namespace ui_sandbox::scenes

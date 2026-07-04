@@ -70,6 +70,8 @@ class Container : public Component {
 	// Get current content offset.
 	[[nodiscard]] Foundation::Vec2 getContentOffset() const { return m_contentOffset; }
 
+	const char* debugTypeName() const override { return "Container"; }
+
 	// Override render to apply clipping and content offset.
 	// Order: Push transform → Push clip → Render children → Pop clip → Pop transform
 	void render() override {
