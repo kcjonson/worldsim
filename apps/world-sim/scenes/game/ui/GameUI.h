@@ -23,6 +23,7 @@
 #include "scenes/game/ui/views/GlobalTaskListView.h"
 #include "scenes/game/ui/models/ColonistListModel.h"
 #include "scenes/game/ui/models/GlobalTaskListModel.h"
+#include "scenes/game/ui/models/ResourcesModel.h"
 #include "scenes/game/ui/models/TimeModel.h"
 #include "scenes/game/ui/views/EntityInfoView.h"
 #include "scenes/game/ui/views/ZoomControlPanel.h"
@@ -227,6 +228,7 @@ class GameUI {
 	TimeModel timeModel;
 	ColonistListModel colonistListModel;
 	GlobalTaskListModel globalTaskListModel;
+	ResourcesModel resourcesModel;
 
 	// Task list expansion state
 	bool taskListExpanded = false;
@@ -246,6 +248,11 @@ class GameUI {
 
 	// Toggle task list panel visibility
 	void toggleTaskList();
+
+	// Re-position the top-right panel stack (resources panel + global task list
+	// below it); called from layout() and whenever the resources panel's height
+	// changes (toggle or row count change)
+	void positionRightStack();
 };
 
 } // namespace world_sim

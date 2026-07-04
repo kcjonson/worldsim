@@ -1,6 +1,7 @@
 #include "GameUI.h"
 
 #include <primitives/Primitives.h>
+#include <theme/Tokens.h>
 
 namespace world_sim {
 
@@ -123,7 +124,9 @@ namespace world_sim {
 		});
 
 		// Create resources panel (top-right, below where minimap will be)
-		resourcesPanel = std::make_unique<ResourcesPanel>(ResourcesPanel::Args{.width = 232.0F, .id = "resources_panel"});
+		resourcesPanel = std::make_unique<ResourcesPanel>(ResourcesPanel::Args{
+			.width = 232.0F, .id = "resources_panel", .onToggle = [this]() { positionRightStack(); }
+		});
 
 		// Create global task list panel (top-right, below resources panel)
 		globalTaskList = std::make_unique<GlobalTaskListView>(GlobalTaskListView::Args{.width = 232.0F});
@@ -229,23 +232,26 @@ namespace world_sim {
 			toastStack->setPosition(newBounds.width - rightMargin, newBounds.height - bottomMargin);
 		}
 
-		// Position resources panel in top-right corner, below zoom controls
-		// Zoom controls are at Y=80, height=28, so start at Y=120
-		if (resourcesPanel) {
-			float rightMargin = 12.0F; // Match prototype --space-3
-			float topMargin = 60.0F;  // Right stack top per prototype (just below the 52px top bar)
-			resourcesPanel->setAnchorPosition(newBounds.width - rightMargin, topMargin);
-		}
+		// Position the top-right stack (resources panel + global task list below it)
+		positionRightStack();
+	}
 
-		// Position global task list below resources panel
+	void GameUI::positionRightStack() {
+		if (viewportBounds.width <= 0.0F) {
+			return;
+		}
+		const float rightMargin = UI::space_3; // Match prototype --space-3
+		const float topMargin = 60.0F;		   // Right stack top per prototype (just below the 52px top bar)
+		if (resourcesPanel) {
+			resourcesPanel->setAnchorPosition(viewportBounds.width - rightMargin, topMargin);
+		}
 		if (globalTaskList) {
-			float rightMargin = 12.0F;
-			float taskListY = 120.0F; // Start at resources panel position
+			float taskListY = topMargin;
 			if (resourcesPanel) {
 				// Position below resources panel bounds
-				taskListY = resourcesPanel->getBounds().y + resourcesPanel->getBounds().height + 8.0F;
+				taskListY = resourcesPanel->getBounds().y + resourcesPanel->getBounds().height + UI::space_2;
 			}
-			globalTaskList->setAnchorPosition(newBounds.width - rightMargin, taskListY);
+			globalTaskList->setAnchorPosition(viewportBounds.width - rightMargin, taskListY);
 		}
 	}
 
@@ -431,6 +437,15 @@ namespace world_sim {
 			}
 			colonistListModel.setSelectedId(currentlySelected);
 			colonistList->update(colonistListModel, ecsWorld);
+		}
+
+		// Update resources panel (throttled 2Hz refresh)
+		if (resourcesPanel) {
+			resourcesPanel->update(deltaTime);
+			if (resourcesModel.refresh(ecsWorld, assetRegistry, deltaTime)) {
+				resourcesPanel->setResources(resourcesModel.rows(), resourcesModel.containerCount());
+				positionRightStack();
+			}
 		}
 
 		// Update global task list (throttled 5Hz refresh)

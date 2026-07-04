@@ -25,12 +25,14 @@ add_executable(world-sim
     scenes/game/ui/adapters/ColonistAdapter.cpp
     scenes/game/ui/adapters/CraftingAdapter.cpp
     scenes/game/ui/adapters/GlobalTaskAdapter.cpp
+    scenes/game/ui/adapters/ResourcesAdapter.cpp
     scenes/game/ui/adapters/SelectionAdapter.cpp
     scenes/game/ui/adapters/TimeAdapter.cpp
     # Game scene UI - models
     scenes/game/ui/models/ColonistListModel.cpp
     scenes/game/ui/models/GlobalTaskListModel.cpp
     scenes/game/ui/models/EntityInfoModel.cpp
+    scenes/game/ui/models/ResourcesModel.cpp
     scenes/game/ui/models/TimeModel.cpp
     # Game scene UI - dialogs
     scenes/game/ui/dialogs/ColonistDetailsDialog.cpp
