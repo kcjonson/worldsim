@@ -13,6 +13,7 @@ add_executable(world-sim
     scenes/game/ui/views/DebugOverlay.cpp
     scenes/game/ui/views/ZoomControlPanel.cpp
     scenes/game/ui/views/TopBar.cpp
+    scenes/game/ui/views/RegionMinimapPanel.cpp
     scenes/game/ui/views/ResourcesPanel.cpp
     scenes/game/ui/views/GlobalTaskListView.cpp
     # Game scene UI - components

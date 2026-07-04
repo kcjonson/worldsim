@@ -15,10 +15,13 @@ void ZoomControlPanel::layout(const Foundation::Rect& newBounds) {
 	Component::layout(newBounds);
 
 	if (auto* control = getChild<ZoomControl>(zoomControlHandle)) {
-		// Position on right side of viewport
-		float zoomX = newBounds.x + newBounds.width - kRightMargin - kControlWidth;
-		float zoomY = newBounds.y + newBounds.height - kBottomMargin - kControlHeight;
+		// Dock the column in the bottom-right corner
+		float zoomX = newBounds.x + newBounds.width - kRightMargin - ZoomControl::kTotalWidth;
+		float zoomY = newBounds.y + newBounds.height - kBottomMargin - ZoomControl::kTotalHeight;
 		control->setPosition(zoomX, zoomY);
+		// The panel's own reported bounds wrap the control (lint reads these)
+		position = {zoomX, zoomY};
+		size = {ZoomControl::kTotalWidth, ZoomControl::kTotalHeight};
 	}
 }
 

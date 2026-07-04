@@ -53,6 +53,9 @@ GameplayBar::GameplayBar(const Args& args)
 						.position = Foundation::BorderPosition::Inside},
 			},
 		.id = "gameplay_bar_background"}));
+	if (auto* bg = getChild<UI::Rectangle>(backgroundHandle)) {
+		bg->zIndex = -1; // beneath the buttons it backs (lint: overlap needs distinct z)
+	}
 
 	// Create Actions dropdown (stub items for now)
 	actionsDropdownHandle = addChild(UI::DropdownButton(UI::DropdownButton::Args{
@@ -147,6 +150,21 @@ GameplayBar::GameplayBar(const Args& args)
 		.id = "furniture_dropdown",
 		.openUpward = true}));
 
+	// Zones dropdown. Entries are disabled placeholders: no zone system exists
+	// yet, this stakes out the bar slot the zones epic will fill.
+	zonesDropdownHandle = addChild(UI::DropdownButton(UI::DropdownButton::Args{
+		.label = "Zones",
+		.position = {0.0F, 0.0F},
+		.buttonSize = {kButtonWidth, kButtonHeight},
+		.items =
+			{
+				UI::DropdownItem{.label = "Stockpile", .enabled = false},
+				UI::DropdownItem{.label = "Growing", .enabled = false},
+				UI::DropdownItem{.label = "Dumping", .enabled = false},
+			},
+		.id = "zones_dropdown",
+		.openUpward = true}));
+
 	// Rooms overlay toggle. A plain button (not a dropdown) whose fill reflects the
 	// overlay active state; click flips it via onRoomsToggle (the same path the R
 	// hotkey drives), and GameUI pushes the result back via setRoomsActive.
@@ -168,12 +186,16 @@ GameplayBar::GameplayBar(const Args& args)
 void GameplayBar::layout(const Foundation::Rect& newBounds) {
 	Component::layout(newBounds);
 
-	// Calculate and cache bar layout (used by positionElements). Four dropdowns plus
+	// Calculate and cache bar layout (used by positionElements). Five dropdowns plus
 	// the Rooms toggle, with a spacing between each.
-	float totalButtonWidth = (kButtonWidth * 4.0F) + kRoomsButtonWidth + (kButtonSpacing * 4.0F);
+	float totalButtonWidth = (kButtonWidth * 5.0F) + kRoomsButtonWidth + (kButtonSpacing * 5.0F);
 	cachedBarWidth = totalButtonWidth + (kHorizontalPadding * 2.0F);
 	cachedBarX = bounds.x + (bounds.width - cachedBarWidth) / 2.0F;
 	cachedBarY = bounds.y + bounds.height - kBarHeight - kBottomMargin;
+
+	// Reported bounds are the bar rect itself (lint reads these)
+	position = {cachedBarX, cachedBarY};
+	size = {cachedBarWidth, kBarHeight};
 
 	if (auto* bg = getChild<UI::Rectangle>(backgroundHandle)) {
 		bg->size = {cachedBarWidth, kBarHeight};
@@ -208,6 +230,11 @@ void GameplayBar::positionElements() {
 		x += kButtonWidth + kButtonSpacing;
 	}
 
+	if (auto* dropdown = getChild<UI::DropdownButton>(zonesDropdownHandle)) {
+		dropdown->setPosition(x, buttonY);
+		x += kButtonWidth + kButtonSpacing;
+	}
+
 	if (auto* roomsButton = getChild<UI::Button>(roomsButtonHandle)) {
 		roomsButton->setPosition(x, buttonY);
 	}
@@ -235,6 +262,9 @@ void GameplayBar::closeAllDropdowns() {
 		dropdown->closeMenu();
 	}
 	if (auto* dropdown = getChild<UI::DropdownButton>(furnitureDropdownHandle)) {
+		dropdown->closeMenu();
+	}
+	if (auto* dropdown = getChild<UI::DropdownButton>(zonesDropdownHandle)) {
 		dropdown->closeMenu();
 	}
 }

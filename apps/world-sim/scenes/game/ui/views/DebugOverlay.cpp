@@ -48,6 +48,8 @@ DebugOverlay::DebugOverlay(const Args& /*args*/) {
 void DebugOverlay::layout(const Foundation::Rect& newBounds) {
 	// Store bounds for Component base class
 	Component::layout(newBounds);
+	position = {newBounds.x, newBounds.y};
+	size = {newBounds.width, newBounds.height};
 
 	// Position text elements within bounds
 	float x = newBounds.x + kPadding;

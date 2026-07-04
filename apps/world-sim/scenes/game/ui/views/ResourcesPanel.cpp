@@ -89,6 +89,19 @@ ResourcesPanel::ResourcesPanel(const Args& args)
 	layoutHandle = scrollContainer.addChild(std::move(layout));
 	scrollContainerHandle = addChild(std::move(scrollContainer));
 
+	// Overlapping siblings need distinct z for the layout lint: the chevron
+	// rides on the header button; message and rows ride on the content bg.
+	if (auto* chevron = getChild<UI::Icon>(chevronHandle)) {
+		chevron->zIndex = 1;
+	}
+	if (auto* msg = getChild<UI::Text>(emptyMessageHandle)) {
+		msg->zIndex = 1;
+	}
+	if (auto* scroll = getChild<UI::ScrollContainer>(scrollContainerHandle)) {
+		scroll->zIndex = 1;
+	}
+	markChildrenNeedSorting();
+
 	// Start collapsed - updateLayout sets visibility
 	updateLayout();
 }

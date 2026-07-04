@@ -3,7 +3,7 @@
 // ZoomControlPanel - Floating zoom control positioned in viewport.
 //
 // Wraps ZoomControl and handles viewport-relative positioning.
-// Positioned on the right side of the viewport.
+// Docked bottom-right as a vertical column.
 // Extends UI::Component to use the Layer system for child management.
 
 #include "scenes/game/ui/components/ZoomControl.h"
@@ -46,8 +46,6 @@ class ZoomControlPanel : public UI::Component {
 	// Layout constants
 	static constexpr float kRightMargin = 12.0F;
 	static constexpr float kBottomMargin = 12.0F;  // Bottom-right per prototype
-	static constexpr float kControlHeight = 28.0F;
-	static constexpr float kControlWidth = 146.0F;  // 28+4+50+4+28+4+28
 };
 
 }  // namespace world_sim

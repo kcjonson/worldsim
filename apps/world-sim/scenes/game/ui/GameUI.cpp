@@ -123,7 +123,12 @@ namespace world_sim {
 			.width = kTaskListWidth, .maxHeight = kTaskListMaxHeight, .onClose = [this]() { toggleTaskList(); }, .id = "task_list"
 		});
 
-		// Create resources panel (top-right, below where minimap will be)
+		// Create region minimap (first item in the top-right stack)
+		minimapPanel = std::make_unique<RegionMinimapPanel>(RegionMinimapPanel::Args{
+			.width = 232.0F, .id = "region_minimap"
+		});
+
+		// Create resources panel (top-right, below the minimap)
 		resourcesPanel = std::make_unique<ResourcesPanel>(ResourcesPanel::Args{
 			.width = 232.0F, .id = "resources_panel", .onToggle = [this]() { positionRightStack(); }
 		});
@@ -164,7 +169,7 @@ namespace world_sim {
 			Foundation::Rect debugBounds{
 				newBounds.x,
 				debugY,
-				200.0F, // Width for debug text
+				320.0F, // Wide enough for the longest biome line
 				80.0F	// Height for 3 lines of text
 			};
 			debugOverlay->layout(debugBounds);
@@ -228,11 +233,13 @@ namespace world_sim {
 		// Per design spec: Notifications appear bottom-right, stacking upward
 		if (toastStack) {
 			float rightMargin = 20.0F;
-			float bottomMargin = 60.0F; // Above gameplay bar
+			// Above the zoom column (which owns the corner) rather than the old
+			// fixed 60px: toasts must never sit on the zoom buttons.
+			float bottomMargin = ZoomControl::kTotalHeight + 12.0F + 8.0F;
 			toastStack->setPosition(newBounds.width - rightMargin, newBounds.height - bottomMargin);
 		}
 
-		// Position the top-right stack (resources panel + global task list below it)
+		// Position the top-right stack (minimap + resources panel + global task list)
 		positionRightStack();
 	}
 
@@ -242,16 +249,25 @@ namespace world_sim {
 		}
 		const float rightMargin = UI::space_3; // Match prototype --space-3
 		const float topMargin = 60.0F;		   // Right stack top per prototype (just below the 52px top bar)
+		const float anchorX = viewportBounds.width - rightMargin;
+		float stackY = topMargin;
+		if (minimapPanel) {
+			minimapPanel->setAnchorPosition(anchorX, stackY);
+			stackY = minimapPanel->getBounds().y + minimapPanel->getBounds().height + UI::space_2;
+		}
 		if (resourcesPanel) {
-			resourcesPanel->setAnchorPosition(viewportBounds.width - rightMargin, topMargin);
+			resourcesPanel->setAnchorPosition(anchorX, stackY);
+			stackY = resourcesPanel->getBounds().y + resourcesPanel->getBounds().height + UI::space_2;
 		}
 		if (globalTaskList) {
-			float taskListY = topMargin;
-			if (resourcesPanel) {
-				// Position below resources panel bounds
-				taskListY = resourcesPanel->getBounds().y + resourcesPanel->getBounds().height + UI::space_2;
-			}
-			globalTaskList->setAnchorPosition(viewportBounds.width - rightMargin, taskListY);
+			globalTaskList->setAnchorPosition(anchorX, stackY);
+		}
+	}
+
+	void GameUI::setMinimapContext(Foundation::Vec2 crashSite, double latDeg, double lonDeg, float pixelsPerMeter) {
+		worldPixelsPerMeter = pixelsPerMeter;
+		if (minimapPanel) {
+			minimapPanel->setContext(crashSite, latDeg, lonDeg);
 		}
 	}
 
@@ -292,6 +308,16 @@ namespace world_sim {
 		// Toast stack (highest z-order - notifications)
 		if (toastStack) {
 			if (toastStack->handleEvent(event)) {
+				return true;
+			}
+			if (event.isConsumed()) {
+				return true;
+			}
+		}
+
+		// Region minimap (top of the right stack)
+		if (minimapPanel) {
+			if (minimapPanel->handleEvent(event)) {
 				return true;
 			}
 			if (event.isConsumed()) {
@@ -417,6 +443,9 @@ namespace world_sim {
 		if (topBar) {
 			timeModel.refresh(ecsWorld);
 			topBar->updateData(timeModel, static_cast<int>(colonistListModel.colonists().size()));
+			if (toastStack) {
+				topBar->setAlertCount(toastStack->getActiveCountBySeverity(UI::ToastSeverity::Critical));
+			}
 		}
 
 		// Update debug overlay display values
@@ -437,6 +466,16 @@ namespace world_sim {
 			}
 			colonistListModel.setSelectedId(currentlySelected);
 			colonistList->update(colonistListModel, ecsWorld);
+		}
+
+		// Update region minimap (camera viewport rect + colonist dots)
+		if (minimapPanel && worldPixelsPerMeter > 0.0F) {
+			minimapPanel->updateData(
+				camera.getVisibleRect(
+					static_cast<int>(viewportBounds.width), static_cast<int>(viewportBounds.height), worldPixelsPerMeter
+				),
+				colonistListModel.colonists()
+			);
 		}
 
 		// Update resources panel (throttled 2Hz refresh)
@@ -552,6 +591,11 @@ namespace world_sim {
 			taskListPanel->render();
 		}
 
+		// Render region minimap (top of the right stack)
+		if (minimapPanel) {
+			minimapPanel->render();
+		}
+
 		// Render resources panel (top-right)
 		if (resourcesPanel) {
 			resourcesPanel->render();
@@ -601,6 +645,7 @@ namespace world_sim {
 		if (taskListExpanded && taskListPanel && taskListPanel->visible) {
 			add(taskListPanel.get());
 		}
+		add(minimapPanel.get());
 		add(resourcesPanel.get());
 		add(globalTaskList.get());
 		add(toastStack.get());
