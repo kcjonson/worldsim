@@ -79,7 +79,10 @@ if ($ccacheCmd) {
     ccache --set-config hash_dir=false
     ccache --set-config sloppiness=pch_defines,time_macros
     ccache --set-config depend_mode=true
-    Write-Host "ccache configured: base_dir=$repoRoot, depend_mode=true"
+    # Retires pre-depend-mode manifests, which can still serve poisoned absolute-path
+    # hits on machines upgrading from the old config. Bump on future breaking changes.
+    ccache --set-config namespace=worldsim-1
+    Write-Host "ccache configured: base_dir=$repoRoot, depend_mode=true, namespace=worldsim-1"
 } else {
     Write-Warning "ccache not found on PATH; install it (winget install Ccache.Ccache) and re-run."
 }
