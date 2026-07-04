@@ -2,9 +2,9 @@
 
 // Mock crew for the party-select stub, ported from the UI prototype
 // (docs/ui-prototype/src/data/mock.ts COLONISTS + RESERVE_COLONISTS), plus a
-// small name/role pool for Randomize rerolls. Placeholder until crew becomes
-// data-driven. Skill names follow the engine's defNames (Farming, not the
-// prototype's Growing).
+// name/role pool that seeds roster slots beyond the pool and feeds Randomize
+// rerolls. Placeholder until crew becomes data-driven. Skill names follow the
+// engine's defNames (Farming, not the prototype's Growing).
 
 #include <array>
 #include <cstddef>
@@ -61,13 +61,14 @@ inline constexpr std::array<CrewDef, 4> kCrewPool{{
 	 {{{"Trigger-Steady", TraitTone::Good}, {"Abrasive", TraitTone::Bad}, {nullptr, TraitTone::Neutral}}}},
 }};
 
-inline constexpr std::size_t kPartySize = 3;
-
-// Reroll pools for the Randomize action.
-inline constexpr std::array<const char*, 8> kRerollNames{
+// Reroll pools. Names must stay disjoint from kCrewPool's and large enough to
+// cover the biggest scenario party (8) rerolling every slot.
+inline constexpr std::array<const char*, 12> kRerollNames{
 	"Joon Barta", "Vale Okiro", "Sefa Lindqvist", "Bram Holt",
-	"Nia Solano", "Kellan Dray", "Petra Voss", "Ondrej Silt"};
-inline constexpr std::array<const char*, 6> kRerollRoles{
-	"Geologist", "Rigger", "Navigator", "Quartermaster", "Surveyor", "Mechanic"};
+	"Nia Solano", "Kellan Dray", "Petra Voss", "Ondrej Silt",
+	"Tamsin Reyes", "Callum Iri", "Yusuf Andrade", "Freya Malin"};
+inline constexpr std::array<const char*, 8> kRerollRoles{
+	"Geologist", "Rigger", "Navigator", "Quartermaster",
+	"Surveyor", "Mechanic", "Comms Officer", "Hydroponicist"};
 
 } // namespace world_sim

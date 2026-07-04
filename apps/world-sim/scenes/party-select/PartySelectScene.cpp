@@ -1,14 +1,16 @@
 // Party Select Scene - New Game step 2 of 3.
 //
-// Stub of the prototype's PartySelect screen: a left roster of three crew
-// cards, a right dossier panel for the selected member (identity, stats,
-// backstory, skills, traits), a Randomize reroll, and a Back/Generate footer.
-// Hand layout; full fidelity comes with the upgraded layout engine. The
-// assembled party is stored in NewGameSetup and spawns at landing.
+// Stub of the prototype's PartySelect screen: a left roster of crew cards
+// (one per scenario party slot), a right dossier panel for the selected
+// member (identity, stats, backstory, skills, traits), a Randomize reroll,
+// and a Back/Generate footer. Hand layout; full fidelity comes with the
+// upgraded layout engine. The assembled party is stored in NewGameSetup and
+// spawns at landing.
 
 #include "NewGameSetup.h"
 #include "SceneTypes.h"
 #include "scenes/party-select/MockCrew.h"
+#include "scenes/scenario-select/Scenarios.h"
 #include "scenes/shared/Starfield.h"
 #include <GL/glew.h>
 
@@ -19,7 +21,6 @@
 #include <components/panel/Panel.h>
 #include <components/progress/ProgressBar.h>
 #include <components/stat/Stat.h>
-#include <font/FontRenderer.h>
 #include <graphics/PrimitiveStyles.h>
 #include <input/InputEvent.h>
 #include <input/InputManager.h>
@@ -46,12 +47,28 @@ namespace {
 	constexpr float kColX = 80.0F;
 	constexpr float kContentTop = 150.0F;
 	constexpr float kRosterWidth = 360.0F;
-	constexpr float kCardHeight = 64.0F;
+	constexpr float kCardHeightMax = 64.0F;
+	constexpr float kCardHeightMin = 44.0F;
 	constexpr float kCardGap = 8.0F;
 	constexpr float kDetailGap = 24.0F;
 	constexpr float kPad = 20.0F;
 
 	float textScale(float px) { return px / 16.0F; }
+
+	size_t partySizeForScenario(const std::string& scenarioId) {
+		for (const world_sim::ScenarioDef& s : world_sim::kScenarios) {
+			if (scenarioId == s.id) return static_cast<size_t>(s.partyCount);
+		}
+		return 3; // direct scene jumps arrive with no scenario chosen
+	}
+
+	std::string survivorLine(size_t n) {
+		constexpr std::array<const char*, 8> kWords{"One", "Two", "Three", "Four",
+													"Five", "Six", "Seven", "Eight"};
+		const std::string count = (n >= 1 && n <= kWords.size()) ? kWords[n - 1] : std::to_string(n);
+		return std::format("{} survivor{} walked away from the wreck. Learn who they are.",
+						   count, n == 1 ? "" : "s");
+	}
 
 	const char* moodLabel(float mood) {
 		if (mood < 0.3F) return "Distressed";
@@ -81,10 +98,13 @@ namespace {
 			LOG_INFO(Game, "PartySelectScene - Entering");
 
 			const auto& setup = world_sim::NewGameSetup::Get();
-			if (setup.party.empty()) {
-				resetRoster();
-			} else {
+			partySize = partySizeForScenario(setup.scenarioId);
+			// Re-seed whenever the stored party doesn't match the scenario's
+			// size (first visit, or Back + a different scenario pick).
+			if (setup.party.size() == partySize) {
 				restoreRoster(setup.party);
+			} else {
+				resetRoster();
 			}
 			selectedIndex = 0;
 			hoveredIndex = -1;
@@ -182,12 +202,16 @@ namespace {
 					  .font = UI::fontDisplay,
 					  .vAlign = Foundation::VerticalAlign::Top,
 					  .letterSpacing = UI::fs_3xl * UI::ls_wide});
-			drawText({.text = "Three survivors walked away from the wreck. Learn who they are.",
+			drawText({.text = survivorLine(partySize),
 					  .position = {kColX, 106.0F},
 					  .scale = textScale(UI::fs_md),
 					  .color = UI::text_dim,
 					  .font = UI::fontUi,
 					  .vAlign = Foundation::VerticalAlign::Top});
+
+			// Everything below depends on layout(); skip it until the viewport
+			// is ready and the card rects match the roster.
+			if (needsLayout || cardRects.size() != roster.size()) return;
 
 			for (size_t i = 0; i < roster.size(); ++i) {
 				renderCard(i);
@@ -195,7 +219,7 @@ namespace {
 
 			// Roster actions row.
 			if (randomizeButton) randomizeButton->render();
-			drawText({.text = std::format("{} / {} SLOTS", roster.size(), world_sim::kPartySize),
+			drawText({.text = std::format("{} / {} SLOTS", roster.size(), partySize),
 					  .position = {kColX + 162.0F, rosterActionsY + 12.0F},
 					  .scale = textScale(UI::fs_2xs),
 					  .color = UI::text_faint,
@@ -233,19 +257,25 @@ namespace {
 			const float screenH = Renderer::Primitives::PercentHeight(100.0F);
 			if (screenW < 1.0F || screenH < 1.0F) return; // viewport not ready
 
+			const float footerY = screenH - 68.0F;
+			const float count = static_cast<float>(roster.size());
+			// Fit every card plus the actions row (36 button + margins = 56)
+			// above the footer; large parties get compact cards.
+			const float availForCards = footerY - kContentTop - 56.0F - count * kCardGap;
+			cardHeight = std::clamp(availForCards / count, kCardHeightMin, kCardHeightMax);
+
 			cardRects.clear();
-			for (size_t i = 0; i < world_sim::kPartySize; ++i) {
-				cardRects.push_back({kColX, kContentTop + static_cast<float>(i) * (kCardHeight + kCardGap),
-									 kRosterWidth, kCardHeight});
+			for (size_t i = 0; i < roster.size(); ++i) {
+				cardRects.push_back({kColX, kContentTop + static_cast<float>(i) * (cardHeight + kCardGap),
+									 kRosterWidth, cardHeight});
 			}
-			rosterActionsY = kContentTop + static_cast<float>(world_sim::kPartySize) * (kCardHeight + kCardGap) + 8.0F;
+			rosterActionsY = kContentTop + count * (cardHeight + kCardGap) + 8.0F;
 			randomizeButton->setPosition(kColX, rosterActionsY);
 
 			detailX = kColX + kRosterWidth + kDetailGap;
 			detailW = std::min(640.0F, screenW - detailX - kColX);
 			detailH = 494.0F;
 
-			const float footerY = screenH - 68.0F;
 			backButton->setPosition(kColX, footerY);
 			generateButton->setPosition(detailX + detailW - 220.0F, footerY);
 			needsLayout = false;
@@ -266,34 +296,39 @@ namespace {
 									.color = selected ? UI::accent : UI::line_edge,
 									.width = UI::bw}}});
 
-			UI::Avatar avatar({.position = {r.x + 12.0F, r.y + 12.0F},
-							   .size = 40.0F,
+			// Interior scales with card height so compact cards stay readable.
+			const float avatarSize = std::clamp(r.height - 24.0F, 28.0F, 40.0F);
+			const float textX = r.x + 12.0F + avatarSize + 12.0F;
+			const float nameY = r.y + (r.height - 36.0F) * 0.5F;
+
+			UI::Avatar avatar({.position = {r.x + 12.0F, r.y + (r.height - avatarSize) * 0.5F},
+							   .size = avatarSize,
 							   .seed = slot.name,
 							   .mood = slot.mood,
 							   .selected = selected});
 			avatar.render();
 
 			drawText({.text = slot.name,
-					  .position = {r.x + 64.0F, r.y + 12.0F},
+					  .position = {textX, nameY},
 					  .scale = textScale(UI::fs_md),
 					  .color = selected ? UI::accent_bright : UI::text_bright,
 					  .font = UI::fontDisplay,
 					  .vAlign = Foundation::VerticalAlign::Top});
 			drawText({.text = slot.role,
-					  .position = {r.x + 64.0F, r.y + 34.0F},
+					  .position = {textX, nameY + 22.0F},
 					  .scale = textScale(UI::fs_xs),
 					  .color = UI::text_dim,
 					  .font = UI::fontMono,
 					  .vAlign = Foundation::VerticalAlign::Top});
 
-			UI::ProgressBar moodBar({.position = {r.x + 250.0F, r.y + 18.0F},
+			UI::ProgressBar moodBar({.position = {r.x + 250.0F, r.y + r.height * 0.5F - 14.0F},
 									 .width = 96.0F,
 									 .value = slot.mood,
 									 .tone = UI::Tone::Auto,
 									 .size = UI::Size::Sm});
 			moodBar.render();
 			drawText({.text = moodLabel(slot.mood),
-					  .position = {r.x + 250.0F, r.y + 32.0F},
+					  .position = {r.x + 250.0F, r.y + r.height * 0.5F},
 					  .scale = textScale(UI::fs_2xs),
 					  .color = UI::toneColor(moodTone(slot.mood)),
 					  .font = UI::fontMono,
@@ -401,18 +436,8 @@ namespace {
 			for (const world_sim::CrewTraitDef& trait : def.traits) {
 				if (trait.name == nullptr) continue;
 				UI::Badge({.position = {badgeX, py + 454.0F}, .label = trait.name, .tone = traitTone(trait.tone)}).render();
-				badgeX += badgeWidth(trait.name) + UI::space_2;
+				badgeX += UI::Badge::MeasureWidth(trait.name) + UI::space_2;
 			}
-		}
-
-		// Mirror of Badge's internal width so a row of badges can be advanced
-		// without overlap (Badge doesn't expose measurement).
-		static float badgeWidth(const std::string& label) {
-			float labelWidth = 60.0F;
-			if (const ui::FontRenderer* font = Renderer::Primitives::getFontRenderer(); font != nullptr) {
-				labelWidth = font->MeasureText(label, textScale(UI::fs_2xs), UI::fontMono, UI::fs_2xs * UI::ls_wider).x;
-			}
-			return UI::space_2 * 2.0F + labelWidth;
 		}
 
 		int cardAtPoint(Foundation::Vec2 p) const {
@@ -424,15 +449,25 @@ namespace {
 
 		void resetRoster() {
 			roster.clear();
-			for (size_t i = 0; i < world_sim::kPartySize; ++i) {
-				const world_sim::CrewDef& def = world_sim::kCrewPool[i];
-				roster.push_back({&def, def.name, def.role, def.age, def.mood});
+			for (size_t i = 0; i < partySize; ++i) {
+				const world_sim::CrewDef& def = world_sim::kCrewPool[i % world_sim::kCrewPool.size()];
+				RosterSlot slot{&def, def.name, def.role, def.age, def.mood};
+				// Slots past the pool reuse a template but get a distinct
+				// identity from the reroll pools.
+				if (i >= world_sim::kCrewPool.size()) {
+					const size_t extra = i - world_sim::kCrewPool.size();
+					slot.name = world_sim::kRerollNames[extra % world_sim::kRerollNames.size()];
+					slot.role = world_sim::kRerollRoles[extra % world_sim::kRerollRoles.size()];
+					slot.age = 26 + static_cast<int>(extra) * 4;
+					slot.mood = 0.55F + 0.08F * static_cast<float>(extra % 4);
+				}
+				roster.push_back(std::move(slot));
 			}
 		}
 
 		void restoreRoster(const std::vector<world_sim::PartyMember>& party) {
 			roster.clear();
-			for (size_t i = 0; i < party.size() && i < world_sim::kPartySize; ++i) {
+			for (size_t i = 0; i < party.size(); ++i) {
 				const world_sim::PartyMember& member = party[i];
 				// Origin is unique per template, so it recovers the CrewDef the
 				// member was rolled from.
@@ -449,36 +484,33 @@ namespace {
 		}
 
 		void randomize() {
-			std::array<size_t, world_sim::kCrewPool.size()> order{};
-			for (size_t i = 0; i < order.size(); ++i) order[i] = i;
-			std::shuffle(order.begin(), order.end(), rng);
+			std::array<size_t, world_sim::kCrewPool.size()> defOrder{};
+			for (size_t i = 0; i < defOrder.size(); ++i) defOrder[i] = i;
+			std::shuffle(defOrder.begin(), defOrder.end(), rng);
+			// Drawing reroll names from a shuffled order keeps them unique
+			// without rejection sampling.
+			std::array<size_t, world_sim::kRerollNames.size()> nameOrder{};
+			for (size_t i = 0; i < nameOrder.size(); ++i) nameOrder[i] = i;
+			std::shuffle(nameOrder.begin(), nameOrder.end(), rng);
+			size_t nextName = 0;
 
-			std::vector<std::string> usedNames;
 			roster.clear();
-			for (size_t i = 0; i < world_sim::kPartySize; ++i) {
-				const world_sim::CrewDef& def = world_sim::kCrewPool[order[i]];
+			for (size_t i = 0; i < partySize; ++i) {
+				const world_sim::CrewDef& def = world_sim::kCrewPool[defOrder[i % defOrder.size()]];
 				RosterSlot slot{&def, def.name, def.role, def.age, def.mood};
-				if (std::bernoulli_distribution{0.5}(rng)) {
-					slot.name = pickUnusedName(usedNames);
+				// Slots past the pool repeat a template, so they must reroll to
+				// stay distinct; pool slots reroll half the time for variety.
+				if (i >= defOrder.size() || std::bernoulli_distribution{0.5}(rng)) {
+					slot.name = world_sim::kRerollNames[nameOrder[nextName++]];
 					slot.role = world_sim::kRerollRoles[std::uniform_int_distribution<size_t>{
 						0, world_sim::kRerollRoles.size() - 1}(rng)];
 					slot.age = std::uniform_int_distribution<int>{23, 45}(rng);
 					slot.mood = std::uniform_real_distribution<float>{0.35F, 0.9F}(rng);
 				}
-				usedNames.push_back(slot.name);
 				roster.push_back(std::move(slot));
 			}
 			selectedIndex = 0;
 			LOG_INFO(Game, "PartySelectScene - Randomized crew");
-		}
-
-		std::string pickUnusedName(const std::vector<std::string>& usedNames) {
-			std::uniform_int_distribution<size_t> dist{0, world_sim::kRerollNames.size() - 1};
-			std::string candidate = world_sim::kRerollNames[dist(rng)];
-			while (std::find(usedNames.begin(), usedNames.end(), candidate) != usedNames.end()) {
-				candidate = world_sim::kRerollNames[dist(rng)];
-			}
-			return candidate;
 		}
 
 		std::vector<world_sim::PartyMember> buildParty() const {
@@ -516,6 +548,8 @@ namespace {
 		std::unique_ptr<UI::Button>	  randomizeButton;
 		std::vector<Foundation::Rect> cardRects;
 		std::mt19937				  rng{std::random_device{}()};
+		size_t						  partySize = 3;
+		float						  cardHeight = kCardHeightMax;
 		float						  rosterActionsY = 0.0F;
 		float						  detailX = 0.0F;
 		float						  detailW = 0.0F;
