@@ -48,6 +48,7 @@ DebugOverlay::DebugOverlay(const Args& /*args*/) {
 void DebugOverlay::layout(const Foundation::Rect& newBounds) {
 	// Store bounds for Component base class
 	Component::layout(newBounds);
+	position = {newBounds.x, newBounds.y};
 
 	// Position text elements within bounds
 	float x = newBounds.x + kPadding;
@@ -95,6 +96,27 @@ void DebugOverlay::updateData(
 		}
 		text->text = oss.str();
 	}
+}
+
+float DebugOverlay::getWidth() const {
+	// Hug the widest text line (the lines outgrow any fixed bounds guess)
+	float right = position.x;
+	for (const auto* child : children) {
+		if (child->visible) {
+			right = std::max(right, child->getPosition().x + child->getWidth());
+		}
+	}
+	return (right - position.x) + kPadding;
+}
+
+float DebugOverlay::getHeight() const {
+	float bottom = position.y;
+	for (const auto* child : children) {
+		if (child->visible) {
+			bottom = std::max(bottom, child->getPosition().y + child->getHeight());
+		}
+	}
+	return (bottom - position.y) + kPadding;
 }
 
 // render() is inherited from Component - automatically renders all children

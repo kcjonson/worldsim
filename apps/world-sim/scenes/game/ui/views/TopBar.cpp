@@ -56,6 +56,9 @@ TopBar::TopBar(const Args& args)
 
 void TopBar::layout(const Foundation::Rect& newBounds) {
 	Component::layout(newBounds);
+	// Report real bounds (full-width strip) so the layout lint sees children inside
+	position = {newBounds.x, newBounds.y};
+	size = {newBounds.width, kBarHeight};
 	positionElements();
 }
 

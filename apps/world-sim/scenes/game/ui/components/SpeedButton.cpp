@@ -10,7 +10,9 @@ SpeedButton::SpeedButton(const Args& args)
 	position = args.position;
 	size = {kButtonSize, kButtonSize};
 
-	// Create background rectangle
+	// Create background rectangle. Children carry no ids: a c_str() captured
+	// here would dangle once this component moves into the parent's arena
+	// (invalid bytes in /api/ui/tree); debugId below names the button itself.
 	backgroundHandle = addChild(UI::Rectangle(UI::Rectangle::Args{
 		.position = {0.0F, 0.0F},
 		.size = {kButtonSize, kButtonSize},
@@ -24,7 +26,6 @@ SpeedButton::SpeedButton(const Args& args)
 						.cornerRadius = 4.0F,
 						.position = Foundation::BorderPosition::Inside},
 			},
-		.id = id.c_str(),
 		.zIndex = 501}));
 
 	// Create icon centered in button
@@ -32,8 +33,7 @@ SpeedButton::SpeedButton(const Args& args)
 		.position = {0.0F, 0.0F},
 		.size = kIconSize,
 		.svgPath = "assets/" + args.iconPath,
-		.tint = UI::text_dim,
-		.id = (id + "_icon").c_str()}));
+		.tint = UI::text_dim}));
 
 	if (auto* iconPtr = getChild<UI::Icon>(iconHandle)) {
 		iconPtr->zIndex = 502;

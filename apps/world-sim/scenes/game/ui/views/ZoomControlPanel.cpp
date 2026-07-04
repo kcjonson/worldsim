@@ -14,10 +14,13 @@ ZoomControlPanel::ZoomControlPanel(const Args& args) {
 void ZoomControlPanel::layout(const Foundation::Rect& newBounds) {
 	Component::layout(newBounds);
 
+	// Position on right side of viewport; the panel reports the control's rect
+	float zoomX = newBounds.x + newBounds.width - kRightMargin - kControlWidth;
+	float zoomY = newBounds.y + newBounds.height - kBottomMargin - kControlHeight;
+	position = {zoomX, zoomY};
+	size = {kControlWidth, kControlHeight};
+
 	if (auto* control = getChild<ZoomControl>(zoomControlHandle)) {
-		// Position on right side of viewport
-		float zoomX = newBounds.x + newBounds.width - kRightMargin - kControlWidth;
-		float zoomY = newBounds.y + newBounds.height - kBottomMargin - kControlHeight;
 		control->setPosition(zoomX, zoomY);
 	}
 }

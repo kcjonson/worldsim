@@ -38,7 +38,8 @@ GameplayBar::GameplayBar(const Args& args)
 	, onStructureSelected(args.onStructureSelected)
 	, onRoomsToggle(args.onRoomsToggle) {
 
-	// Create background rectangle (added first so it renders behind other children)
+	// Background rectangle sits a zIndex below the controls: renders behind them
+	// and the layout lint reads the overlap as intentional layering.
 	backgroundHandle = addChild(UI::Rectangle(UI::Rectangle::Args{
 		.position = {0.0F, 0.0F},
 		.size = {400.0F, kBarHeight},  // Width will be set in layout()
@@ -52,7 +53,8 @@ GameplayBar::GameplayBar(const Args& args)
 						.cornerRadius = UI::r_md,
 						.position = Foundation::BorderPosition::Inside},
 			},
-		.id = "gameplay_bar_background"}));
+		.id = "gameplay_bar_background",
+		.zIndex = -1}));
 
 	// Create Actions dropdown (stub items for now)
 	actionsDropdownHandle = addChild(UI::DropdownButton(UI::DropdownButton::Args{
@@ -174,6 +176,10 @@ void GameplayBar::layout(const Foundation::Rect& newBounds) {
 	cachedBarWidth = totalButtonWidth + (kHorizontalPadding * 2.0F);
 	cachedBarX = bounds.x + (bounds.width - cachedBarWidth) / 2.0F;
 	cachedBarY = bounds.y + bounds.height - kBarHeight - kBottomMargin;
+
+	// Report real bounds so the layout lint sees children inside the bar
+	position = {cachedBarX, cachedBarY};
+	size = {cachedBarWidth, kBarHeight};
 
 	if (auto* bg = getChild<UI::Rectangle>(backgroundHandle)) {
 		bg->size = {cachedBarWidth, kBarHeight};

@@ -1,5 +1,7 @@
 #include "ToastStack.h"
 
+#include <algorithm>
+
 namespace UI {
 
 ToastStack::ToastStack(const Args& args)
@@ -178,6 +180,51 @@ void ToastStack::update(float deltaTime) {
 
 	// Remove finished toasts
 	removeFinishedToasts();
+
+	// An empty stack draws nothing and has no extent; hiding it keeps the debug
+	// UI-tree/lint from seeing a zero-size box parked at the anchor point.
+	visible = getVisibleToastCount() > 0;
+}
+
+Foundation::Vec2 ToastStack::getPosition() const {
+	Foundation::Vec2 minPos = position;
+	bool			 any = false;
+	for (const auto& toast : toasts) {
+		if (toast->isFinished()) {
+			continue;
+		}
+		const Foundation::Vec2 p = toast->getPosition();
+		if (!any) {
+			minPos = p;
+			any = true;
+		} else {
+			minPos.x = std::min(minPos.x, p.x);
+			minPos.y = std::min(minPos.y, p.y);
+		}
+	}
+	return minPos;
+}
+
+float ToastStack::getWidth() const {
+	const Foundation::Vec2 origin = getPosition();
+	float				   right = origin.x;
+	for (const auto& toast : toasts) {
+		if (!toast->isFinished()) {
+			right = std::max(right, toast->getPosition().x + toast->getWidth());
+		}
+	}
+	return right - origin.x;
+}
+
+float ToastStack::getHeight() const {
+	const Foundation::Vec2 origin = getPosition();
+	float				   bottom = origin.y;
+	for (const auto& toast : toasts) {
+		if (!toast->isFinished()) {
+			bottom = std::max(bottom, toast->getPosition().y + toast->getHeight());
+		}
+	}
+	return bottom - origin.y;
 }
 
 void ToastStack::render() {

@@ -6,6 +6,7 @@ namespace world_sim {
 
 ZoomControl::ZoomControl(const Args& args) {
 	position = args.position;
+	size = {kButtonSize * 3.0F + kTextWidth + kSpacing * 3.0F, kButtonSize};
 
 	// Zoom out button (-)
 	zoomOutButtonHandle = addChild(UI::Button(UI::Button::Args{
@@ -18,7 +19,10 @@ ZoomControl::ZoomControl(const Args& args) {
 		.iconPath = "assets/ui/icons/zoom_out.svg",
 		.iconSize = kIconSize}));
 
-	// Zoom percentage text (centered between buttons)
+	// Zoom percentage text (centered between buttons). vAlign stays Top with the
+	// centering done in positionElements: a Middle anchor reports the center as
+	// the box origin, which reads as an out-of-bounds child in the layout lint.
+	// The zIndex marks the (anchor-reported) overlap with the buttons as layered.
 	zoomTextHandle = addChild(UI::Text(UI::Text::Args{
 		.position = {0.0F, 0.0F},
 		.text = "100%",
@@ -27,9 +31,10 @@ ZoomControl::ZoomControl(const Args& args) {
 				.color = Foundation::Color::white(),
 				.fontSize = kFontSize,
 				.hAlign = Foundation::HorizontalAlign::Center,
-				.vAlign = Foundation::VerticalAlign::Middle,
+				.vAlign = Foundation::VerticalAlign::Top,
 			},
-		.id = "zoom_text"}));
+		.id = "zoom_text",
+		.zIndex = 1}));
 
 	// Zoom in button (+)
 	zoomInButtonHandle = addChild(UI::Button(UI::Button::Args{
@@ -82,7 +87,7 @@ void ZoomControl::positionElements() {
 	x += kButtonSize + kSpacing;
 
 	if (auto* text = getChild<UI::Text>(zoomTextHandle)) {
-		text->setPosition(x + kTextWidth * 0.5F, y + kButtonSize * 0.5F);
+		text->setPosition(x + kTextWidth * 0.5F, y + (kButtonSize - text->getHeight()) * 0.5F);
 	}
 	x += kTextWidth + kSpacing;
 

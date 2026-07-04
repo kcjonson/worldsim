@@ -83,6 +83,12 @@ class ToastStack : public Component {
 	bool containsPoint(Foundation::Vec2 point) const override;
 	void setPosition(float x, float y) override;
 
+	// Reported bounds are the live toasts' bounding box (the stored position is
+	// just the anchor point; toasts stack away from it). Empty stack: see update.
+	[[nodiscard]] Foundation::Vec2 getPosition() const override;
+	[[nodiscard]] float			   getWidth() const override;
+	[[nodiscard]] float			   getHeight() const override;
+
 	// ILayer overrides
 	void update(float deltaTime) override;
 
