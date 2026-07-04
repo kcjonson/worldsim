@@ -1,12 +1,13 @@
 #pragma once
 
-// LandingSiteDetailsPanel - non-modal side panel for the landing scene.
+// LandingSiteDetailsPanel - the right-column "Landing Zone" panel of the
+// landing sub-phase.
 //
-// Renders a LandingSiteDetails (built by LandingSiteDetailsModel) as a corner
-// panel: location header, the water verdict headline, a difficulty badge, then
-// Water / Terrain / Climate sections. Immediate-mode, matching the rest of the
-// landing scene. It draws in the top-right so it never covers the globe under
-// the cursor.
+// Renders a LandingSiteDetails (built by LandingSiteDetailsModel) inside a
+// UI::Panel (title "Landing Zone", kicker "Site Analysis", accent): coords
+// readout, biome-name header, Recommended badge, Temp/Rainfall stat row, a
+// skull-pip difficulty inset, the water verdict, and the field-report
+// sections. Immediate-mode; the scene hands it the column rect.
 
 #include "scenes/landing/LandingSiteDetailsModel.h"
 
@@ -16,20 +17,9 @@ namespace world_sim {
 
 class LandingSiteDetailsPanel {
   public:
-	// Top-right anchored: the panel's right edge sits at anchorRightX, top at
-	// anchorTopY. Returns the bounds it drew into (for hit-testing if needed).
-	Foundation::Rect render(const LandingSiteDetails& details,
-	                        float anchorRightX, float anchorTopY) const;
+	void render(const LandingSiteDetails& details, const Foundation::Rect& bounds) const;
 
-	static constexpr float kWidth = 270.0F;
-
-  private:
-	static constexpr float kPadding		 = 14.0F;
-	static constexpr float kSectionGap	 = 10.0F;
-	static constexpr float kRowHeight	 = 19.0F;
-	static constexpr float kHeaderHeight = 20.0F;
-	static constexpr float kVerdictHeight = 34.0F; // two-line allowance
-	static constexpr float kBadgeHeight	 = 24.0F;
+	static constexpr float kWidth = 360.0F;
 };
 
 } // namespace world_sim

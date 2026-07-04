@@ -66,6 +66,7 @@ add_executable(world-sim
     # Scenes
     scenes/shared/GlobeView.cpp
     scenes/shared/DecorativePlanet.cpp
+    scenes/shared/UiStateDrain.cpp
     scenes/splash/SplashScene.cpp
     scenes/menu/MainMenuScene.cpp
     scenes/scenario-select/ScenarioSelectScene.cpp
@@ -73,6 +74,7 @@ add_executable(world-sim
     scenes/world-creator/WorldCreatorScene.cpp
     scenes/world-creator/WorldCreatorModel.cpp
     scenes/world-creator/ui/ParameterPanel.cpp
+    scenes/world-creator/ui/WorldSurveyPanel.cpp
     scenes/landing/LandingSiteDetailsModel.cpp
     scenes/landing/LandingSiteDetailsPanel.cpp
     scenes/loading/GameLoadingScene.cpp
