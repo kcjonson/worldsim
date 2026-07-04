@@ -604,8 +604,27 @@ while (running) {
 - [x] Phase 4: tokenize the remaining shared widgets + dialogs; inline the Dialog/Tooltip/Icon layout constants; delete `theme/Theme.h` + `PanelStyle.h`
 - [x] Dialog terminology: "Dialog" is the type, "modal" is a property (#186); renamed SalvageModalScene + design-system "Modal" primitive to Dialog
 - [x] De-hand-roll the dialog lists: new `ListRow` primitive; CraftingDialog recipe list (#187) and StorageConfigDialog item/category list (#188) rebuilt on it. No hand-rolled selectable lists or hardcoded washes remain; the colonist dossier + tabs were already composed.
-- [ ] Optional polish: full prototype-fidelity pass on the dialogs (tabbed dossier treatment, footers)
-- [ ] Re-wire or delete the orphaned per-colonist `TaskListView` (no open path in the current UI)
+- [x] Optional polish: full prototype-fidelity pass on the dialogs (tabbed dossier treatment, footers) — done in the Game UI to Prototype Polish epic
+- [x] Re-wire or delete the orphaned per-colonist `TaskListView` — resolved 2026-06-29: it is the task-arbitration decision inspector, opened via the `T` hotkey (not orphaned)
+
+### Game UI to Prototype Polish
+**Spec/Documentation:** `docs/design/ui/fidelity-gaps.md`, `docs/design/ui/ui-improvements-phase-2.md`, plan `~/.claude/plans/we-need-to-work-hashed-robin.md`
+**Dependencies:** Salvage UI Cutover
+**Status:** in progress — foundations + screens merged (PRs #256-#261); layout engine (PR #263) and the Wave-3 fidelity branches in the merge queue
+
+**Tasks:**
+- [x] Layout verification harness: `/api/ui/tree` + `/api/ui/lint` endpoints, UiTreeSerializer + LayoutLint, characterization tests (PR #259)
+- [x] Text rendering fixes: baseline run-origin pixel snapping, unified measurement, atlas validation, per-run snap cache (PR #258)
+- [x] ScenarioSelect + PartySelect scenes with scenario-driven party size and party→spawn wiring (PR #257)
+- [x] ResourcesPanel wired to colony storage via ResourcesAdapter/Model (PR #256)
+- [x] Starfield nebula/vignette + DecorativePlanet backdrops; planet-view alpha compositing (PR #261)
+- [x] ccache cross-worktree poisoning root-caused and fixed (depend_mode + namespace, PR #260)
+- [ ] LayoutContainer auto-layout engine: gap/padding/distribution/Fill-Hug, three-pass layout, auto text wrap width (PR #263, in queue)
+- [ ] EntityInfoView rebuild on the engine: Avatar header, tabs, real Draft/Go-to; slot paths preserved (branch entity-info-rebuild)
+- [ ] Region minimap panel + HUD batch: vertical zoom, TopBar bell/mark, Zones stub; LayerHandle z-sort fix (branch hud-minimap-batch)
+- [ ] Dossier Gear paperdoll + Health→Needs rename, tab order, overflow pass (branch dossier-gear-tabs)
+- [ ] Pre-game screen fidelity: ScenarioSelect/PartySelect/Splash/MainMenu/WorldCreator/Landing/GameLoading + pre-game harness drain (branch pregame-fidelity)
+- [ ] Close-out: docs, dev log, full-flow verification at integration
 
 ### Fluvial Erosion (worldgen)
 **Spec/Documentation:** `.claude/plans/erosion.md`, `/docs/development-log/entries/2026-06-15-worldgen-fluvial-erosion.md`
@@ -890,16 +909,18 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 **Goal:** Bring the in-game C++ `ColonistDetailsDialog` to full parity with the prototype. The dialog shell, persistent header, kicker/footer, 8-tab bar, and Bio/Health/Memory/Tasks layouts are built and match at the element level. Remaining:
 
 **Tasks:**
-- [ ] **Gear tab — build the prototype paper-doll** (biggest gap; currently a sparse hands + inventory readout). 3-column worn slots + center figure + hand slots; weight-based pack with item stacks; belt slot grid; carry-load meter. See prototype `GearTab.tsx` / `GearTab.module.css` and `in-game-dossier-gear.png`.
-- [ ] Bio traits as `Badge` chips (tone by good/bad/neutral), not a plain comma list
+- [x] **Gear tab — prototype paper-doll built** (branch dossier-gear-tabs): 3-column worn stubs + silhouette + real hand slots; weight-based pack with stacks; belt grid; carry meter
+- [x] Bio traits as `Badge` chips (tone by good/bad/neutral)
+- [x] Health tab renamed Needs (`NeedsTabView`); final tab order Bio/Needs/Skills/Social/Gear/Memory/Tasks/Log
+- [x] Footer disabled treatment for Work Priorities + Draft (wiring still needs the underlying systems)
+- [x] Text-overflow pass with a data-rich colonist (dev-verb populated); ASCII-only atlas fallbacks applied
+- [x] Root-cause the rare first-open crash — concluded resolved by PR #254's Memory-LRU heap-corruption fix (15/15 clean first-opens under cdb; all dialog-side leads ruled out; see the 2026-07-03 investigation)
 - [ ] Tasks: richer current-task panel (type + target + nav state + distance + progress meter) once the data is surfaced
-- [ ] Memory: distance-from-colonist on entity rows (have x,y; need colonist position) instead of raw coords; real Threats category when a threat system exists
+- [ ] Memory: distance-from-colonist on entity rows; real Threats category when a threat system exists
 - [ ] Skills tab: real content when a skills/proficiency system exists (placeholder today)
 - [ ] Social tab: real content when relationships are tracked (placeholder today)
 - [ ] Log tab: real content when an activity/event log exists (placeholder today)
-- [ ] Footer: wire Work Priorities (needs the work-priorities system) and Draft (needs drafting); visual-only today
-- [ ] Text-overflow pass with a **data-rich colonist** (long backstory, full gear, many known entities/tasks) — only placeholder data exercised so far
-- [ ] Root-cause the rare first-open crash seen once during testing (did not reproduce; PR #204 notes it)
+- [ ] Footer: functional Work Priorities (needs the work-priorities system); Draft is live in EntityInfoView via direct control
 
 ---
 
@@ -1163,17 +1184,17 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 **Goal:** Add minimap for world overview and navigation.
 
 **Tasks:**
+- [x] Panel shell: `RegionMinimapPanel` first in the right stack (256 m window on the crash site, grid, coord label) — Game UI to Prototype Polish epic
+- [x] Colonist dots + off-map bearing chevrons
+- [x] Camera viewport rectangle overlay
 - [ ] Minimap Rendering
   - [ ] Render-to-texture world overview
   - [ ] Terrain colors by surface type
   - [ ] Building indicators
-  - [ ] Colonist dots
   - [ ] Threat indicators (red)
 - [ ] Minimap Interaction
-  - [ ] Camera viewport rectangle overlay
   - [ ] Click to navigate camera
   - [ ] Minimap zoom controls (+/-)
-- [ ] Position in top-right, above Resources Panel
 
 **Notes:** Deferred from Information Systems epic due to GPU complexity. May require significant render-to-texture optimization work.
 
