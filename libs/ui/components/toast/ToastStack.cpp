@@ -10,6 +10,7 @@ ToastStack::ToastStack(const Args& args)
 	position = args.position;
 	// Size is dynamic based on toasts
 	size = {toastWidth, 0.0F};
+	visible = false; // empty stack; addToast flips this on
 }
 
 void ToastStack::addToast(const std::string& title, const std::string& message,
@@ -59,6 +60,7 @@ void ToastStack::addToast(Toast::Args args) {
 	toast->zIndex = zIndex + static_cast<int>(toasts.size());
 
 	toasts.push_back(std::move(toast));
+	visible = true;
 	repositionToasts();
 }
 
@@ -72,6 +74,39 @@ size_t ToastStack::getVisibleToastCount() const {
 	size_t count = 0;
 	for (const auto& toast : toasts) {
 		if (!toast->isFinished()) {
+			++count;
+		}
+	}
+	return count;
+}
+
+float ToastStack::getHeight() const {
+	float height = 0.0F;
+	size_t counted = 0;
+	for (const auto& toast : toasts) {
+		if (toast->isFinished()) {
+			continue;
+		}
+		height += toast->getHeight();
+		++counted;
+	}
+	if (counted > 1) {
+		height += spacing * static_cast<float>(counted - 1);
+	}
+	return height;
+}
+
+Foundation::Vec2 ToastStack::getPosition() const {
+	const bool fromRight = anchor == ToastAnchor::TopRight || anchor == ToastAnchor::BottomRight;
+	const bool fromBottom = anchor == ToastAnchor::BottomRight || anchor == ToastAnchor::BottomLeft;
+	return {fromRight ? position.x - toastWidth : position.x,
+			fromBottom ? position.y - getHeight() : position.y};
+}
+
+size_t ToastStack::getActiveCountBySeverity(ToastSeverity severity) const {
+	size_t count = 0;
+	for (const auto& toast : toasts) {
+		if (toast->getSeverity() == severity && !toast->isFinished() && !toast->isDismissing()) {
 			++count;
 		}
 	}
@@ -178,6 +213,8 @@ void ToastStack::update(float deltaTime) {
 
 	// Remove finished toasts
 	removeFinishedToasts();
+
+	visible = !toasts.empty();
 }
 
 void ToastStack::render() {

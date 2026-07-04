@@ -303,15 +303,9 @@ namespace UI {
 		}
 
 		void render() override {
-			// Sort children by zIndex when needed (stable sort preserves insertion order for equal zIndex)
-			if (childrenNeedSorting) {
-				std::stable_sort(children.begin(), children.end(), [](const IComponent* a, const IComponent* b) {
-					return a->zIndex < b->zIndex;
-				});
-				childrenNeedSorting = false;
-			}
+			ensureRenderOrder();
 
-			for (auto* child : children) {
+			for (auto* child : renderOrder) {
 				if (!child->visible) {
 					continue;
 				}
@@ -331,6 +325,7 @@ namespace UI {
 		/// After calling this, all existing LayerHandles become invalid.
 		void clearChildren() {
 			children.clear();
+			renderOrder.clear();
 			arena.clear();
 			generation++; // Invalidate all existing handles
 			childrenNeedSorting = false;
@@ -341,16 +336,10 @@ namespace UI {
 		/// This is the core of the event system - call this from containers
 		/// instead of manually delegating to each child.
 		bool dispatchEvent(InputEvent& event) {
-			// Ensure children are sorted by zIndex
-			if (childrenNeedSorting) {
-				std::stable_sort(children.begin(), children.end(), [](const IComponent* a, const IComponent* b) {
-					return a->zIndex < b->zIndex;
-				});
-				childrenNeedSorting = false;
-			}
+			ensureRenderOrder();
 
 			// Dispatch in reverse order (highest zIndex first)
-			for (auto it = children.rbegin(); it != children.rend(); ++it) {
+			for (auto it = renderOrder.rbegin(); it != renderOrder.rend(); ++it) {
 				IComponent* child = *it;
 				if (!child->visible) {
 					continue;
@@ -375,6 +364,21 @@ namespace UI {
 		Foundation::Rect		 bounds;
 		uint16_t				 generation{0};
 		bool					 childrenNeedSorting{false};
+
+		// z-sorted view over children. The sort must NEVER reorder `children`
+		// itself: LayerHandle indexes into it, so an in-place sort would remap
+		// every handle to a different child.
+		std::vector<IComponent*> renderOrder;
+
+		void ensureRenderOrder() {
+			if (childrenNeedSorting) {
+				renderOrder = children;
+				std::stable_sort(renderOrder.begin(), renderOrder.end(), [](const IComponent* a, const IComponent* b) {
+					return a->zIndex < b->zIndex;
+				});
+				childrenNeedSorting = false;
+			}
+		}
 	};
 
 } // namespace UI
