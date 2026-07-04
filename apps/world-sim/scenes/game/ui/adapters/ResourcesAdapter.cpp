@@ -28,8 +28,14 @@ StorageResourcesData getStorageResources(ecs::World& world, const engine::assets
 
 	std::unordered_map<std::string, uint32_t> totals;
 	for (auto [entity, storageConfig, pos, inventory] : world.view<ecs::StorageConfiguration, ecs::Position, ecs::Inventory>()) {
+		(void)entity;
+		(void)storageConfig;
+		(void)pos;
 		++data.containerCount;
 		for (const auto& stack : inventory.items) {
+			if (stack.defName.empty() || stack.quantity == 0) {
+				continue; // never surface a blank or zero-count HUD row
+			}
 			totals[stack.defName] += stack.quantity;
 		}
 	}
