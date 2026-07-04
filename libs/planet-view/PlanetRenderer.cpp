@@ -103,7 +103,8 @@ void PlanetRenderer::cacheUniforms() {
     planetUniforms.baseTex      = glGetUniformLocation(planetShader, "u_baseTex");
     planetUniforms.n            = glGetUniformLocation(planetShader, "u_n");
 
-    blitUniforms.tex = glGetUniformLocation(blitShader, "u_tex");
+    blitUniforms.tex   = glGetUniformLocation(blitShader, "u_tex");
+    blitUniforms.alpha = glGetUniformLocation(blitShader, "u_alpha");
 }
 
 void PlanetRenderer::destroyFbo() {
@@ -154,7 +155,9 @@ void PlanetRenderer::render(const PlanetMesh& mesh, const PlanetColorizer& color
     glFrontFace(GL_CCW);        // mesh assumes CCW winding
 
     // Use glClearBuffer* to avoid touching global clear-color state.
-    const GLfloat clearColor[] = {0.0F, 0.0F, 0.02F, 1.0F}; // near-black space
+    // Alpha 0: blitToScreen composites, so only the planet disc reaches the
+    // backbuffer and the scene's own backdrop shows around it.
+    const GLfloat clearColor[] = {0.0F, 0.0F, 0.02F, 0.0F};
     glClearBufferfv(GL_COLOR, 0, clearColor);
     const GLfloat clearDepth = 1.0F;
     glClearBufferfv(GL_DEPTH, 0, &clearDepth);
@@ -212,12 +215,20 @@ void PlanetRenderer::render(const PlanetMesh& mesh, const PlanetColorizer& color
     glActiveTexture(static_cast<GLenum>(prevActiveTexture));
 }
 
-void PlanetRenderer::blitToScreen(int widthPx, int heightPx) {
+void PlanetRenderer::blitToScreen(int widthPx, int heightPx, float alpha) {
     if (!isReady() || !colorTex) return;
 
     // Save relevant state.
     GLboolean prevDepthTest     = glIsEnabled(GL_DEPTH_TEST);
     GLboolean prevBlend         = glIsEnabled(GL_BLEND);
+    GLint prevBlendSrcRgb       = 0;
+    GLint prevBlendDstRgb       = 0;
+    GLint prevBlendSrcAlpha     = 0;
+    GLint prevBlendDstAlpha     = 0;
+    glGetIntegerv(GL_BLEND_SRC_RGB,   &prevBlendSrcRgb);
+    glGetIntegerv(GL_BLEND_DST_RGB,   &prevBlendDstRgb);
+    glGetIntegerv(GL_BLEND_SRC_ALPHA, &prevBlendSrcAlpha);
+    glGetIntegerv(GL_BLEND_DST_ALPHA, &prevBlendDstAlpha);
     GLint prevProgram           = 0;
     glGetIntegerv(GL_CURRENT_PROGRAM, &prevProgram);
     GLint prevVao               = 0;
@@ -229,10 +240,12 @@ void PlanetRenderer::blitToScreen(int widthPx, int heightPx) {
     glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTex0Binding);
 
     glDisable(GL_DEPTH_TEST);
-    glDisable(GL_BLEND);
+    glEnable(GL_BLEND);
+    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
     glUseProgram(blitShader);
     glBindTexture(GL_TEXTURE_2D, colorTex);
     glUniform1i(blitUniforms.tex, 0);
+    glUniform1f(blitUniforms.alpha, alpha);
 
     glBindVertexArray(blitVao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -241,6 +254,8 @@ void PlanetRenderer::blitToScreen(int widthPx, int heightPx) {
     // Restore state.
     if (prevDepthTest) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
     if (prevBlend)     glEnable(GL_BLEND);       else glDisable(GL_BLEND);
+    glBlendFuncSeparate(static_cast<GLenum>(prevBlendSrcRgb),  static_cast<GLenum>(prevBlendDstRgb),
+                        static_cast<GLenum>(prevBlendSrcAlpha), static_cast<GLenum>(prevBlendDstAlpha));
     glUseProgram(static_cast<GLuint>(prevProgram));
     // Restore unit-0 binding while unit 0 is active, then restore the active unit.
     glActiveTexture(GL_TEXTURE0);
