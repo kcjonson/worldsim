@@ -31,6 +31,10 @@ class OrbitCamera {
     // the grid subdivision so a single tile can reach ~50 px even at high n.
     void setMinDistance(float minDist);
 
+    // Snap the orbit distance (planet radii), clamped to [minDist, kMaxDist].
+    // Sets the zoom target too, so update() doesn't ease back.
+    void setDistance(float dist);
+
     // Input feed methods — call each frame from the scene.
     void beginDrag(float mouseX, float mouseY);
     void drag(float mouseX, float mouseY);

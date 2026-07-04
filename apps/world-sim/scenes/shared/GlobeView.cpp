@@ -70,7 +70,7 @@ bool GlobeView::isReady() const {
 	return builtGrid != nullptr && mesh.isBuilt() && renderer.isReady() && colorizer.isReady();
 }
 
-void GlobeView::render(const Foundation::Rect& rect, float logicalW, float logicalH) {
+void GlobeView::render(const Foundation::Rect& rect, float logicalW, float logicalH, float alpha) {
 	if (!isReady()) {
 		return;
 	}
@@ -95,7 +95,7 @@ void GlobeView::render(const Foundation::Rect& rect, float logicalW, float logic
 
 	// GL viewport origin is bottom-left; UI rect origin is top-left
 	glViewport(px, vp[3] - py - ph, pw, ph);
-	renderer.blitToScreen(pw, ph);
+	renderer.blitToScreen(pw, ph, alpha);
 	glViewport(vp[0], vp[1], vp[2], vp[3]);
 }
 

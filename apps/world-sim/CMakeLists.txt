@@ -64,6 +64,7 @@ add_executable(world-sim
     scenes/game/ui/views/ConstructionConfigStrip.cpp
     # Scenes
     scenes/shared/GlobeView.cpp
+    scenes/shared/DecorativePlanet.cpp
     scenes/splash/SplashScene.cpp
     scenes/menu/MainMenuScene.cpp
     scenes/scenario-select/ScenarioSelectScene.cpp
