@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-29 (Colonist task arbitration complete: (tier,score) key, 7-tier ladder, job lifecycle, TaskListView inspector, 879 engine-tests green, combined four-scenario flow verified end-to-end. Earlier: Colonist gameplay stabilization complete and merged (#241): grass is now a first-class GPU-instanced groundcover role driven by a procedural Lua asset (24 variants, ~486k tufts @ 120fps/1.75ms), placed entities no longer randomly tilt (opt-in <randomRotation>), and the EntityRenderer god-class was decomposed into per-path renderers. Story 0 of Living Environment Rendering; M-A wind next. See dev log 2026-06-27-groundcover-render-path.md. Earlier: Worldgen M7 complete: input-validation envelope + fail-loud reason channel, golden full-pipeline worldHash gate that turns dual-platform CI into a cross-platform determinism check (+ worldgen-cli --expect-hash), and a benchmark-calibrated default resolution (gen-time sweep on the reference machine; kept n=1024 as a documented kDefaultGridSubdivision). Closes the last engineering task of the World Generation & Creator epic; only the deferred planet-DB streaming and landing-difficulty UX remain. See dev log 2026-06-26-worldgen-m7-hardening.md. Earlier: Physical carry & stacks epics complete and merged (#218/#219/#224/#228/#230/#232/#233): two-hand wood armfuls + strength-derived carry, then a universal physical "stack" model -- one material capped at its own stackSize everywhere -- plus construction sites that hold their required materials directly and dump to the ground on demolish. See dev log 2026-06-26-physical-stack-inventory.md and plan 2026-06-26-bulk-material-carry-felling.md. Earlier: 2D landscape from 3D hydrology epic complete and merged (#212) -- replaced the noise-flood ponds with sparse biome/precip-weighted ponds + desert oases, implemented Distribution::Spaced with grove/glade/thicket clustering for denser natural forests, and fixed riparian plants (reeds on the mud bank + bankside bushes); follows the merged 2D rivers #208 and tributaries/springs #210. See dev log 2026-06-22-hydrology-ponds-and-proper-forests.md. Earlier: Realistic chained build loop: mass-based carry weight + axe-gated chopping + wood-unit tree harvesting; the colonist chops to its carry cap, hauls, repeats, then builds. Plus the task-chaining UI/AI fixes found verifying it (in-progress-work priority calc, friendly labels, full-width info-panel task lines, "Next" chain step, build-progress percent + on-map fill, global task list Build umbrella + who's-working-it). See dev log 2026-06-20-carry-weight-axe-gated-harvest.md. Earlier on main: Asset Manager epic #205 (dev log 2026-06-20-asset-manager.md), Cryosphere #199, Navigation P4 belief filtering #189/#191/#194, Vision System #172-184, Salvage UI cutover #176-181)
+Last Updated: 2026-07-04 (Game UI to Prototype Polish complete: 8 PRs merged (#256-#261, #263, #264) — layout verification harness (/api/ui/tree + /api/ui/lint), LayoutContainer auto-layout engine (Fill/Hug/Fixed, distribution, gap/padding, auto text wrap), MSDF text fixes, ScenarioSelect + PartySelect scenes with party→spawn wiring, starfield/planet backdrops, EntityInfoView rebuild, region minimap panel, dossier Gear paperdoll, full pre-game screen fidelity; lint reports zero violations on every screen. See dev log 2026-07-03-game-ui-prototype-polish.md. Earlier: Colonist task arbitration complete: (tier,score) key, 7-tier ladder, job lifecycle, TaskListView inspector, 879 engine-tests green, combined four-scenario flow verified end-to-end. Earlier: Colonist gameplay stabilization complete and merged (#241): grass is now a first-class GPU-instanced groundcover role driven by a procedural Lua asset (24 variants, ~486k tufts @ 120fps/1.75ms), placed entities no longer randomly tilt (opt-in <randomRotation>), and the EntityRenderer god-class was decomposed into per-path renderers. Story 0 of Living Environment Rendering; M-A wind next. See dev log 2026-06-27-groundcover-render-path.md. Earlier: Worldgen M7 complete: input-validation envelope + fail-loud reason channel, golden full-pipeline worldHash gate that turns dual-platform CI into a cross-platform determinism check (+ worldgen-cli --expect-hash), and a benchmark-calibrated default resolution (gen-time sweep on the reference machine; kept n=1024 as a documented kDefaultGridSubdivision). Closes the last engineering task of the World Generation & Creator epic; only the deferred planet-DB streaming and landing-difficulty UX remain. See dev log 2026-06-26-worldgen-m7-hardening.md. Earlier: Physical carry & stacks epics complete and merged (#218/#219/#224/#228/#230/#232/#233): two-hand wood armfuls + strength-derived carry, then a universal physical "stack" model -- one material capped at its own stackSize everywhere -- plus construction sites that hold their required materials directly and dump to the ground on demolish. See dev log 2026-06-26-physical-stack-inventory.md and plan 2026-06-26-bulk-material-carry-felling.md. Earlier: 2D landscape from 3D hydrology epic complete and merged (#212) -- replaced the noise-flood ponds with sparse biome/precip-weighted ponds + desert oases, implemented Distribution::Spaced with grove/glade/thicket clustering for denser natural forests, and fixed riparian plants (reeds on the mud bank + bankside bushes); follows the merged 2D rivers #208 and tributaries/springs #210. See dev log 2026-06-22-hydrology-ponds-and-proper-forests.md. Earlier: Realistic chained build loop: mass-based carry weight + axe-gated chopping + wood-unit tree harvesting; the colonist chops to its carry cap, hauls, repeats, then builds. Plus the task-chaining UI/AI fixes found verifying it (in-progress-work priority calc, friendly labels, full-width info-panel task lines, "Next" chain step, build-progress percent + on-map fill, global task list Build umbrella + who's-working-it). See dev log 2026-06-20-carry-weight-axe-gated-harvest.md. Earlier on main: Asset Manager epic #205 (dev log 2026-06-20-asset-manager.md), Cryosphere #199, Navigation P4 belief filtering #189/#191/#194, Vision System #172-184, Salvage UI cutover #176-181)
 
 ## Epic/Story/Task Template
 
@@ -27,6 +27,27 @@ Use this template for all work items:
 ---
 
 ## Recently Completed Epics (Last 4)
+
+### ✅ Game UI to Prototype Polish
+**Spec/Documentation:** `docs/design/ui/fidelity-gaps.md`, `docs/design/ui/ui-improvements-phase-2.md`, dev log `2026-07-03-game-ui-prototype-polish.md`
+**Dependencies:** Salvage UI Cutover
+**Status:** complete (merged #256, #257, #258, #259, #260, #261, #263, #264)
+
+**Tasks:**
+- [x] Layout verification harness: `/api/ui/tree` + `/api/ui/lint`, UiTreeSerializer + LayoutLint, characterization tests (#259)
+- [x] LayoutContainer auto-layout engine: Fill/Hug/Fixed + fillWeight, Distribution, CrossAlign, gap/padding, three-pass layout, auto text wrap width, per-axis definite sizes (#263)
+- [x] Text rendering fixes: baseline run-origin pixel snapping, unified measurement, atlas validation, per-run snap cache (#258)
+- [x] ScenarioSelect + PartySelect scenes, scenario-driven party size, party→spawn wiring (#257)
+- [x] ResourcesPanel wired to colony storage via ResourcesAdapter/Model (#256)
+- [x] Starfield nebula/vignette + DecorativePlanet backdrops; planet-view alpha compositing (#261)
+- [x] ccache cross-worktree poisoning root-caused and fixed (depend_mode + namespace, #260)
+- [x] EntityInfoView rebuilt on the engine: Avatar header, tabs, real Draft/Go-to; all selection paths preserved (#264)
+- [x] Region minimap panel + HUD batch: vertical zoom, TopBar bell/mark, Zones stub; LayerHandle z-sort fix (#264)
+- [x] Dossier Gear paperdoll, Health→Needs rename, tab order, overflow pass (#264)
+- [x] Pre-game screen fidelity: all 7 screens + pre-game harness drain (#264)
+- [x] Close-out: docs, dev log, full-flow verification (lint zero on every screen; New Game walked end-to-end; Quick Start intact)
+
+**Result:** The game UI matches the prototype's structure and polish on every screen, verified by machine-checked layout linting. Follow-ups recorded in the dev log: ASCII-only font atlas, font-family threading for wrapped text, window-size flag for multi-resolution lint, Hug-freeze engine wart. ✅
 
 ### ✅ Colonist task arbitration
 **Spec/Documentation:** `docs/technical/colonist-task-arbitration.md`
@@ -606,25 +627,6 @@ while (running) {
 - [x] De-hand-roll the dialog lists: new `ListRow` primitive; CraftingDialog recipe list (#187) and StorageConfigDialog item/category list (#188) rebuilt on it. No hand-rolled selectable lists or hardcoded washes remain; the colonist dossier + tabs were already composed.
 - [x] Optional polish: full prototype-fidelity pass on the dialogs (tabbed dossier treatment, footers) — done in the Game UI to Prototype Polish epic
 - [x] Re-wire or delete the orphaned per-colonist `TaskListView` — resolved 2026-06-29: it is the task-arbitration decision inspector, opened via the `T` hotkey (not orphaned)
-
-### Game UI to Prototype Polish
-**Spec/Documentation:** `docs/design/ui/fidelity-gaps.md`, `docs/design/ui/ui-improvements-phase-2.md`, plan `~/.claude/plans/we-need-to-work-hashed-robin.md`
-**Dependencies:** Salvage UI Cutover
-**Status:** in progress — foundations + screens merged (PRs #256-#261); layout engine (PR #263) and the Wave-3 fidelity branches in the merge queue
-
-**Tasks:**
-- [x] Layout verification harness: `/api/ui/tree` + `/api/ui/lint` endpoints, UiTreeSerializer + LayoutLint, characterization tests (PR #259)
-- [x] Text rendering fixes: baseline run-origin pixel snapping, unified measurement, atlas validation, per-run snap cache (PR #258)
-- [x] ScenarioSelect + PartySelect scenes with scenario-driven party size and party→spawn wiring (PR #257)
-- [x] ResourcesPanel wired to colony storage via ResourcesAdapter/Model (PR #256)
-- [x] Starfield nebula/vignette + DecorativePlanet backdrops; planet-view alpha compositing (PR #261)
-- [x] ccache cross-worktree poisoning root-caused and fixed (depend_mode + namespace, PR #260)
-- [ ] LayoutContainer auto-layout engine: gap/padding/distribution/Fill-Hug, three-pass layout, auto text wrap width (PR #263, in queue)
-- [ ] EntityInfoView rebuild on the engine: Avatar header, tabs, real Draft/Go-to; slot paths preserved (branch entity-info-rebuild)
-- [ ] Region minimap panel + HUD batch: vertical zoom, TopBar bell/mark, Zones stub; LayerHandle z-sort fix (branch hud-minimap-batch)
-- [ ] Dossier Gear paperdoll + Health→Needs rename, tab order, overflow pass (branch dossier-gear-tabs)
-- [ ] Pre-game screen fidelity: ScenarioSelect/PartySelect/Splash/MainMenu/WorldCreator/Landing/GameLoading + pre-game harness drain (branch pregame-fidelity)
-- [ ] Close-out: docs, dev log, full-flow verification at integration
 
 ### Fluvial Erosion (worldgen)
 **Spec/Documentation:** `.claude/plans/erosion.md`, `/docs/development-log/entries/2026-06-15-worldgen-fluvial-erosion.md`
