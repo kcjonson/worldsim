@@ -49,7 +49,6 @@ class TextWrapScene : public engine::IScene {
 			.position = {50.0F, 110.0F},
 			.size = {400.0F, 200.0F},
 			.direction = Direction::Vertical,
-			.hAlign = HAlign::Left,
 			.id = "autosize_layout"});
 
 		// These Text elements don't set width/height - they auto-size!

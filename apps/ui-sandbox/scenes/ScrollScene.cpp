@@ -60,7 +60,6 @@ namespace {
 					.position = {0.0F, 0.0F},
 					.size = {192.0F, 0.0F}, // Width excluding scrollbar
 					.direction = Direction::Vertical,
-					.hAlign = HAlign::Left,
 					.id = "content_1"
 				}
 			);
@@ -100,7 +99,7 @@ namespace {
 					.position = {0.0F, 0.0F},
 					.size = {212.0F, 0.0F},
 					.direction = Direction::Vertical,
-					.hAlign = HAlign::Center,
+					.crossAlign = CrossAlign::Center,
 					.id = "content_2"
 				}
 			);

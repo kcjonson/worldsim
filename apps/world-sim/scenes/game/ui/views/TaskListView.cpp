@@ -197,7 +197,6 @@ namespace world_sim {
 			.position = {m_panelX + kPadding, 0.0F}, // Y will be set after height calculation
 			.size = {contentWidth, 0.0F},
 			.direction = UI::Direction::Vertical,
-			.hAlign = UI::HAlign::Left
 		});
 
 		// --- Selection summary (why the winning option won) ---

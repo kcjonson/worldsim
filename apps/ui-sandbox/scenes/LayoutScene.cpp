@@ -50,7 +50,6 @@ class LayoutScene : public engine::IScene {
 			.position = {50.0F, 100.0F},
 			.size = {200.0F, 250.0F},
 			.direction = Direction::Vertical,
-			.hAlign = HAlign::Left,
 			.id = "vertical_layout"});
 
 		// Add buttons with margin for spacing
@@ -91,7 +90,7 @@ class LayoutScene : public engine::IScene {
 			.position = {300.0F, 100.0F},
 			.size = {450.0F, 60.0F},
 			.direction = Direction::Horizontal,
-			.vAlign = VAlign::Center,
+			.crossAlign = CrossAlign::Center,
 			.id = "horizontal_layout"});
 
 		horizontalLayout->addChild(Button(Button::Args{
@@ -131,7 +130,7 @@ class LayoutScene : public engine::IScene {
 			.position = {300.0F, 210.0F},
 			.size = {200.0F, 150.0F},
 			.direction = Direction::Vertical,
-			.hAlign = HAlign::Center,
+			.crossAlign = CrossAlign::Center,
 			.id = "centered_layout"});
 
 		centeredLayout->addChild(Button(Button::Args{
@@ -171,7 +170,7 @@ class LayoutScene : public engine::IScene {
 			.position = {550.0F, 210.0F},
 			.size = {200.0F, 200.0F},
 			.direction = Direction::Vertical,
-			.hAlign = HAlign::Center,
+			.crossAlign = CrossAlign::Center,
 			.id = "shapes_layout"});
 
 		shapesLayout->addChild(Rectangle(Rectangle::Args{

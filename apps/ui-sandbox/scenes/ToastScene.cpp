@@ -59,7 +59,6 @@ namespace {
 				.position = {50.0F, 95.0F},
 				.size = {0.0F, 0.0F}, // Auto-size
 				.direction = Direction::Horizontal,
-				.vAlign = VAlign::Top,
 				.id = "button_layout"});
 
 			// Info button
@@ -110,8 +109,6 @@ namespace {
 				.margin = 4.0F,
 			}));
 
-			buttonLayout->layout(Rect{50.0F, 95.0F, 400.0F, 50.0F});
-
 			// ================================================================
 			// Demo 2: Special Actions
 			// ================================================================
@@ -125,7 +122,6 @@ namespace {
 				.position = {50.0F, 185.0F},
 				.size = {0.0F, 0.0F},
 				.direction = Direction::Horizontal,
-				.vAlign = VAlign::Top,
 				.id = "action_layout"});
 
 			// Dismiss All button
@@ -153,8 +149,6 @@ namespace {
 					},
 				.margin = 4.0F,
 			}));
-
-			actionLayout->layout(Rect{50.0F, 185.0F, 300.0F, 50.0F});
 
 			// ================================================================
 			// Demo 3: Standalone Toast (manual positioning)

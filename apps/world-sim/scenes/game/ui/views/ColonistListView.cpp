@@ -87,7 +87,6 @@ void ColonistListView::rebuildUI(const std::vector<adapters::ColonistData>& colo
 		.position = {panelX + kPadding, panelY + kPadding},
 		.size = {contentWidth, 0.0F},  // Height determined by children
 		.direction = UI::Direction::Vertical,
-		.hAlign = UI::HAlign::Left
 	});
 
 	// Add colonist items
