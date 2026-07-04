@@ -283,6 +283,17 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		TransformClass	 transformClass = TransformClass::kIdentity;
 		Foundation::Vec2 transformTranslation{0.0F, 0.0F}; // Valid for kTranslateOnly (zero for kIdentity)
 
+		// Caches addTextQuad's run-origin snap: every glyph of a text run shares the
+		// same {pixelRatio, translation, runOrigin}, so the delta is computed once per
+		// run instead of per glyph. pixelRatio 0 marks the cache empty.
+		struct TextSnapCache {
+			float			 pixelRatio = 0.0F;
+			Foundation::Vec2 translation{0.0F, 0.0F};
+			Foundation::Vec2 runOrigin{0.0F, 0.0F};
+			Foundation::Vec2 delta{0.0F, 0.0F};
+		};
+		TextSnapCache textSnapCache;
+
 		// Statistics
 		size_t drawCallCount = 0;
 		size_t frameVertexCount = 0;   // Cumulative vertex count for the frame
