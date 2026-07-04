@@ -59,16 +59,20 @@ namespace {
 } // namespace
 
 void DecorativePlanet::update(float dt) {
-	if (!worldSet) {
+	if (!worldSet && !planetAbsent) {
 		std::lock_guard<std::mutex> lock(planetMutex);
 		if (!loadStarted) {
 			loadStarted = true;
 			startSessionLoad();
 		}
-		if (loadDone && cachedPlanet) {
-			globe.setWorld(cachedPlanet);
-			globe.setViewDistance(kViewDistance);
-			worldSet = true;
+		if (loadDone) {
+			if (cachedPlanet) {
+				globe.setWorld(cachedPlanet);
+				globe.setViewDistance(kViewDistance);
+				worldSet = true;
+			} else {
+				planetAbsent = true; // stop taking the lock every frame
+			}
 		}
 	}
 	if (!worldSet) return;

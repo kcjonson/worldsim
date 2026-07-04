@@ -23,6 +23,7 @@ class DecorativePlanet {
   private:
 	GlobeView globe;
 	bool	  worldSet{false};
+	bool	  planetAbsent{false};
 	float	  fade{0.0F};
 };
 
