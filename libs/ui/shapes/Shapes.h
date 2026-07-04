@@ -52,12 +52,12 @@ namespace UI {
 		float getHeight() const override { return size.y + margin * 2.0F; }
 		void  setPosition(float x, float y) override { position = {x + margin, y + margin}; }
 		void  setLayoutSize(float w, float h) override {
-			 if (w >= 0.0F) {
-				 size.x = w;
-			 }
-			 if (h >= 0.0F) {
-				 size.y = h;
-			 }
+			if (w >= 0.0F) {
+				size.x = w;
+			}
+			if (h >= 0.0F) {
+				size.y = h;
+			}
 		}
 
 		// Debug introspection (position stores the content origin, so back out margin)

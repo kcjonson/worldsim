@@ -43,6 +43,10 @@
 //   every mode degrades to Start and children overflow past the end edge.
 // - No parent back-pointers (v1): after mutating a child's content (text,
 //   size, visibility), call invalidateLayout() on the owning container.
+// - Non-resizable leaves (Circle, Line) inherit the no-op setLayoutSize and
+//   SILENTLY ignore Fill/Stretch assignments — they keep their intrinsic
+//   size. Wrap them in a Component or use Rectangle when an element must
+//   fill; the layout lint's zero-size rule catches the accidental cases.
 //
 // Usage:
 //   auto layout = LayoutContainer(LayoutContainer::Args{

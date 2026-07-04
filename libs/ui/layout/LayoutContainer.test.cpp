@@ -575,6 +575,24 @@ TEST(LayoutContainerEngine, GapGrowsHugMainAxis) {
 	EXPECT_FLOAT_EQ(layout.getWidth(), 50.0F);  // cross axis: max, no gap
 }
 
+// Contract: non-resizable leaves (Circle, Line) inherit the no-op
+// setLayoutSize, so Fill/Stretch assignments are silently ignored and the
+// shape keeps its intrinsic size (see the LayoutContainer.h doc block).
+TEST(LayoutContainerEngine, NonResizableLeafIgnoresFillAssignment) {
+	LayoutContainer layout(LayoutContainer::Args{
+		.size = {200.0F, 300.0F},
+		.direction = Direction::Vertical,
+		.crossAlign = CrossAlign::Stretch});
+
+	auto circle = Circle(Circle::Args{.radius = 20.0F});
+	circle.widthMode = SizeMode::Fill;
+	auto handle = layout.addChild(std::move(circle));
+	layout.render();
+
+	EXPECT_FLOAT_EQ(layout.getChild<Circle>(handle)->getWidth(), 40.0F);
+	EXPECT_FLOAT_EQ(layout.getChild<Circle>(handle)->getHeight(), 40.0F);
+}
+
 // ============================================================================
 // Engine Tests - padding
 // ============================================================================
