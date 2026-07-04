@@ -52,8 +52,6 @@ namespace world_sim {
 				.position = {0, 0},
 				.size = {bounds.width, bounds.height},
 				.direction = UI::Direction::Horizontal,
-				.hAlign = UI::HAlign::Left,
-				.vAlign = UI::VAlign::Top,
 				.id = "content-layout"
 			}
 		);
@@ -72,8 +70,6 @@ namespace world_sim {
 					.position = {0, 0},
 					.size = {centerWidth, bounds.height},
 					.direction = UI::Direction::Vertical,
-					.hAlign = UI::HAlign::Left,
-					.vAlign = UI::VAlign::Top,
 					.id = "rule-config",
 					.margin = kColumnGap / 2
 				}
@@ -267,8 +263,6 @@ namespace world_sim {
 			.position = {0, 0},
 			.size = {kLeftColumnWidth, 0},
 			.direction = UI::Direction::Vertical,
-			.hAlign = UI::HAlign::Left,
-			.vAlign = UI::VAlign::Top
 		});
 
 		const auto& groups = model.categoryGroups();
@@ -340,8 +334,7 @@ namespace world_sim {
 			UI::LayoutContainer::Args{
 				.size = {0, 32},
 				.direction = UI::Direction::Horizontal,
-				.hAlign = UI::HAlign::Left,
-				.vAlign = UI::VAlign::Center,
+				.crossAlign = UI::CrossAlign::Center,
 				.margin = 4.0F
 			}
 		);
@@ -405,8 +398,7 @@ namespace world_sim {
 			UI::LayoutContainer::Args{
 				.size = {centerWidth - 16, 36},
 				.direction = UI::Direction::Horizontal,
-				.hAlign = UI::HAlign::Left,
-				.vAlign = UI::VAlign::Center,
+				.crossAlign = UI::CrossAlign::Center,
 				.margin = 2.0F
 			}
 		);
@@ -455,8 +447,7 @@ namespace world_sim {
 			UI::LayoutContainer::Args{
 				.size = {centerWidth - 16, 36},
 				.direction = UI::Direction::Horizontal,
-				.hAlign = UI::HAlign::Left,
-				.vAlign = UI::VAlign::Center,
+				.crossAlign = UI::CrossAlign::Center,
 				.margin = 2.0F
 			}
 		);
@@ -488,8 +479,7 @@ namespace world_sim {
 			UI::LayoutContainer::Args{
 				.size = {centerWidth - 16, 36},
 				.direction = UI::Direction::Horizontal,
-				.hAlign = UI::HAlign::Left,
-				.vAlign = UI::VAlign::Center,
+				.crossAlign = UI::CrossAlign::Center,
 				.margin = 2.0F
 			}
 		);
@@ -565,8 +555,7 @@ namespace world_sim {
 			UI::LayoutContainer::Args{
 				.size = {centerWidth - 16, 40},
 				.direction = UI::Direction::Horizontal,
-				.hAlign = UI::HAlign::Left,
-				.vAlign = UI::VAlign::Center,
+				.crossAlign = UI::CrossAlign::Center,
 				.margin = 8.0F
 			}
 		);
@@ -616,8 +605,6 @@ namespace world_sim {
 				.position = {0, 0},
 				.size = {kRightColumnWidth - 16, 0},
 				.direction = UI::Direction::Vertical,
-				.hAlign = UI::HAlign::Left,
-				.vAlign = UI::VAlign::Top
 			}
 		);
 
@@ -684,8 +671,6 @@ namespace world_sim {
 						UI::LayoutContainer::Args{
 							.size = {kRightColumnWidth - 32, showSourceLine ? 64.0F : 48.0F},
 							.direction = UI::Direction::Vertical,
-							.hAlign = UI::HAlign::Left,
-							.vAlign = UI::VAlign::Top,
 							.margin = 2.0F
 						}
 					);

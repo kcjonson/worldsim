@@ -153,7 +153,7 @@ namespace {
 				.position = {300.0F, 95.0F},
 				.size = {0.0F, 0.0F}, // Auto-size
 				.direction = Direction::Horizontal,
-				.vAlign = VAlign::Center,
+				.crossAlign = CrossAlign::Center,
 				.id = "icon_layout"});
 
 			layoutContainer->addChild(Icon(Icon::Args{
@@ -185,9 +185,6 @@ namespace {
 				.svgPath = kBushPath,
 				.margin = 4.0F,
 			}));
-
-			// Force layout calculation
-			layoutContainer->layout(Rect{300.0F, 95.0F, 400.0F, 100.0F});
 
 			// ================================================================
 			// Instructions

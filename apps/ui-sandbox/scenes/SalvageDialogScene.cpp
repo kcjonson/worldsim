@@ -29,7 +29,7 @@ class SalvageDialogScene : public engine::IScene {
 
 		// Demo a column of selectable ListRows inside the dialog content.
 		auto list = UI::LayoutContainer(UI::LayoutContainer::Args{
-			.position = {0.0F, 0.0F}, .size = {340.0F, 0.0F}, .direction = UI::Direction::Vertical, .hAlign = UI::HAlign::Left, .vAlign = UI::VAlign::Top});
+			.position = {0.0F, 0.0F}, .size = {340.0F, 0.0F}, .direction = UI::Direction::Vertical});
 		const char* items[] = {"Wooden Wall", "Stone Wall", "Campfire", "Crafting Spot", "Wooden Door", "Storage Shelf"};
 		for (int i = 0; i < 6; ++i) {
 			list.addChild(UI::ListRow(UI::ListRow::Args{

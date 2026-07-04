@@ -3,6 +3,7 @@
 #include "core/RenderContext.h"
 #include "input/InputEvent.h"
 #include "layer/Layer.h"
+#include "layout/LayoutTypes.h"
 
 #include <graphics/Rect.h>
 #include <math/Types.h>
@@ -51,6 +52,12 @@ namespace UI {
 		/// The element should render its content at position + margin
 		virtual void setPosition(float x, float y) = 0;
 
+		/// Parent-assigned content size (margin excluded), called by layout
+		/// containers for Fill/Stretch children. Pass kSizeKeep to leave an
+		/// axis untouched. Default no-op: elements that cannot be resized
+		/// (Circle, Line) simply ignore the assignment.
+		virtual void setLayoutSize(float /*w*/, float /*h*/) {}
+
 		// ========== Debug Introspection API ==========
 		// Read by the UI-tree snapshot (/api/ui/tree) and layout lint.
 		// getPosition returns the margin-box origin: paired with getWidth/getHeight
@@ -67,6 +74,16 @@ namespace UI {
 		// - Reported size includes margin (getWidth/getHeight)
 		// - Content renders at position + margin
 		float margin{0.0F};
+
+		// Per-axis sizing consumed by LayoutContainer (see LayoutTypes.h).
+		// Fixed preserves pre-engine semantics for untouched views; Text
+		// defaults to Hug, LayoutContainer maps size==0 onto Hug.
+		SizeMode widthMode{SizeMode::Fixed};
+		SizeMode heightMode{SizeMode::Fixed};
+
+		// Share of leftover main-axis space this element gets when widthMode/
+		// heightMode is Fill on the container's main axis.
+		float fillWeight{1.0F};
 
 		// Z-index for render ordering (higher values render on top)
 		// Valid range: -32768 to 32767 (signed 16-bit)
@@ -198,6 +215,16 @@ namespace UI {
 
 		/// Set position (layout containers call this)
 		void setPosition(float x, float y) override { position = {x, y}; }
+
+		/// Adopt a parent-assigned content size (kSizeKeep leaves an axis alone)
+		void setLayoutSize(float w, float h) override {
+			if (w >= 0.0F) {
+				size.x = w;
+			}
+			if (h >= 0.0F) {
+				size.y = h;
+			}
+		}
 
 		/// Margin-box origin (setPosition stores the margin box, content renders at +margin)
 		Foundation::Vec2 getPosition() const override { return position; }

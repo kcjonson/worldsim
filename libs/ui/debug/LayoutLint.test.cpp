@@ -146,24 +146,21 @@ TEST(LayoutLintTest, InvisibleSubtreeIsSkipped) {
 	EXPECT_TRUE(result.clean());
 }
 
-// The linter catches the real engine defect the characterization tests pin:
-// a Hug container with Center alignment pushes its child outside its own bounds.
-TEST(LayoutLintTest, CatchesHugCenterEngineDefect) {
+// FIXED (A2): the Hug + Center defect this test used to pin is gone - the
+// child now centers within the hug extent and the linter stays clean.
+TEST(LayoutLintTest, HugCenterContainerIsClean) {
 	LayoutContainer layout(LayoutContainer::Args{
 		.position = {100.0F, 100.0F},
 		.size = {0.0F, 0.0F},
 		.direction = Direction::Vertical,
-		.hAlign = HAlign::Center,
+		.crossAlign = CrossAlign::Center,
 		.id = "hug_center"});
 	layout.addChild(StubComponent(50.0F, 30.0F));
 	layout.render();
 
 	LintResult result = lintUiTree({&layout}, kViewport);
 
-	ASSERT_EQ(result.violations.size(), 1U);
-	EXPECT_EQ(result.violations[0].rule, LintRule::ChildOutsideParent);
-	EXPECT_EQ(result.violations[0].path, "hug_center/Component[0]");
-	EXPECT_FLOAT_EQ(result.violations[0].bounds.x, 75.0F);
+	EXPECT_TRUE(result.clean());
 }
 
 TEST(LayoutLintTest, JsonEntryPointMatchesDirectResult) {
