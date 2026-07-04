@@ -36,6 +36,12 @@ struct DetailSection {
 
 struct LandingSiteDetails {
 	std::string					location;   // "12.3 N, 45.6 W"
+	std::string					coords;     // "14.7 N  79.2 W" (site-analysis readout)
+	std::string					biomeName;  // display-spaced biome ("Temperate Deciduous Forest")
+	std::string					tempRange;  // "9 to 22 C" (mean +/- seasonal half-swing)
+	std::string					rainfall;   // "620 mm/yr"
+	int							difficulty{0}; // 1..5 skulls, from habitability
+	bool						recommended{false};
 	std::string					verdict;    // one-line water verdict (the headline)
 	Foundation::Color			verdictColor;
 	worldgen::Habitability		habitability{worldgen::Habitability::Moderate};

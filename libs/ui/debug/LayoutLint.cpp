@@ -146,7 +146,9 @@ namespace UI {
 	}
 
 	std::string lintUiTreeJson(const std::vector<const IComponent*>& roots, Foundation::Vec2 viewportSize) {
-		return lintResultToJson(lintUiTree(roots, viewportSize)).dump();
+		// replace, not throw: a stray non-UTF-8 debugId must not abort the frame's
+		// update (the drain swallows the exception and the endpoint times out).
+		return lintResultToJson(lintUiTree(roots, viewportSize)).dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
 	}
 
 } // namespace UI

@@ -1,9 +1,10 @@
 #include "SelectionAdapter.h"
 
+#include "scenes/game/ui/adapters/ColonistAdapter.h"
+
 #include <assets/ConstructionRegistry.h>
 #include <core/Vec2i64.h>
-#include <ecs/GoalTaskRegistry.h>
-#include <ecs/components/Action.h>
+#include <ecs/InventoryMass.h>
 #include <ecs/components/Colonist.h>
 #include <ecs/components/Inventory.h>
 #include <ecs/components/Mood.h>
@@ -13,7 +14,6 @@
 #include <ecs/components/StorageConfiguration.h>
 #include <ecs/components/StructureBlueprint.h>
 #include <ecs/components/Task.h>
-#include <ecs/components/WorkQueue.h>
 
 #include <cmath>
 #include <iomanip>
@@ -70,70 +70,6 @@ namespace world_sim {
 			return "Unknown";
 		}
 
-		// Classify a chain's destination entity so the "Next" line can name what comes after
-		// the current step (deliver to a build site vs a crafting station vs storage).
-		enum class NextDest { Build, Craft, Storage, Unknown };
-
-		NextDest classifyDestination(const ecs::World& world, ecs::EntityID dest) {
-			if (dest == ecs::EntityID{0}) {
-				return NextDest::Unknown;
-			}
-			if (world.getComponent<ecs::StructureBlueprint>(dest) != nullptr) {
-				return NextDest::Build;
-			}
-			if (world.getComponent<ecs::WorkQueue>(dest) != nullptr) {
-				return NextDest::Craft;
-			}
-			if (world.getComponent<ecs::StorageConfiguration>(dest) != nullptr) {
-				return NextDest::Storage;
-			}
-			return NextDest::Unknown;
-		}
-
-		// The next step in the colonist's current chain (Harvest -> Haul -> Build/Craft), for
-		// the info panel's "Next" line. "--" when there is no meaningful next step.
-		std::string formatNextStep(const ecs::World& world, const ecs::Task& task) {
-			switch (task.type) {
-				case ecs::TaskType::Harvest: {
-					if (!task.chainId.has_value()) {
-						return "--"; // a one-off harvest (e.g. food) has no chained follow-up
-					}
-					// A chained harvest feeds a haul to the goal's destination.
-					ecs::EntityID dest{0};
-					if (const auto* goal = ecs::GoalTaskRegistry::Get().getGoal(task.harvestGoalId)) {
-						dest = static_cast<ecs::EntityID>(goal->destinationEntity);
-					}
-					switch (classifyDestination(world, dest)) {
-						case NextDest::Build:
-							return "Haul to build site";
-						case NextDest::Craft:
-							return "Haul to station";
-						default:
-							return "Haul the load";
-					}
-				}
-				case ecs::TaskType::Haul:
-					switch (classifyDestination(world, static_cast<ecs::EntityID>(task.haulTargetStorageId))) {
-						case NextDest::Build:
-							return "Build structure";
-						case NextDest::Craft:
-							return "Craft item";
-						default:
-							return "--"; // delivering to storage is the end of the chain
-					}
-				default:
-					return "--";
-			}
-		}
-
-		// Format position for display
-		std::string formatPosition(Foundation::Vec2 pos) {
-			std::ostringstream oss;
-			oss << std::fixed << std::setprecision(1);
-			oss << "(" << pos.x << ", " << pos.y << ")";
-			return oss.str();
-		}
-
 	} // namespace
 
 	std::optional<PanelContent> adaptSelection(
@@ -153,11 +89,10 @@ namespace world_sim {
 				if constexpr (std::is_same_v<T, NoSelection>) {
 					return std::nullopt;
 				} else if constexpr (std::is_same_v<T, ColonistSelection>) {
-					// Validate entity still exists
-					if (!world.isAlive(sel.entityId)) {
-						return std::nullopt;
-					}
-					return adaptColonistStatus(world, sel.entityId);
+					// Colonists need a non-const world (activity progress);
+					// EntityInfoModel::refresh calls adaptColonistStatus directly.
+					// This arm just keeps the visit exhaustive.
+					return std::nullopt;
 				} else if constexpr (std::is_same_v<T, WorldEntitySelection>) {
 					return adaptWorldEntity(registry, sel, queryResources);
 				} else if constexpr (std::is_same_v<T, FoundationSelection>) {
@@ -203,135 +138,44 @@ namespace world_sim {
 		);
 	}
 
-	PanelContent adaptColonistStatus(const ecs::World& world, ecs::EntityID entityId, const std::function<void()>& onDetails,
-		const std::function<void(ecs::EntityID)>& onToggleControl) {
+	PanelContent adaptColonistStatus(ecs::World& world, ecs::EntityID entityId) {
 		PanelContent content;
-		content.layout = PanelLayout::TwoColumn;
 
-		// Store onDetails callback for the Details button
-		content.onDetails = onDetails;
+		ColonistPanelData data;
+		data.id = entityId;
 
-		// HEADER: Portrait area with name and mood
 		auto* colonist = world.getComponent<ecs::Colonist>(entityId);
-		content.header.name = colonist ? colonist->name : "Colonist";
+		data.name = colonist ? colonist->name : "Colonist";
+		content.title = data.name;
 
-		// Get mood value and label
-		float moodValue = 50.0F;
 		if (auto* needs = world.getComponent<ecs::NeedsComponent>(entityId)) {
-			moodValue = ecs::computeMood(*needs);
+			data.moodValue = ecs::computeMood(*needs);
+		} else {
+			data.moodValue = 50.0F;
 		}
-		content.header.moodValue = moodValue;
-		content.header.moodLabel = moodToLabel(moodValue);
+		data.moodLabel = moodToLabel(data.moodValue);
 
-		// LEFT COLUMN: Current task, Next task, Gear list
-		// Current task. Under direct player control the colonist's autonomous task is suspended, so
-		// show "Controlled" rather than the cleared-task "Idle" (or a transient walk order).
-		std::string currentTask = "Idle";
-		if (world.getComponent<ecs::PlayerControlled>(entityId) != nullptr) {
-			currentTask = "Controlled";
+		data.controlled = world.getComponent<ecs::PlayerControlled>(entityId) != nullptr;
+
+		// Current task. Under direct player control the colonist's autonomous task is
+		// suspended, so show "Controlled" rather than the cleared-task "Idle".
+		if (data.controlled) {
+			data.currentTask = "Controlled";
 		} else if (auto* task = world.getComponent<ecs::Task>(entityId)) {
-			currentTask = formatTask(*task);
-			// Build/Deconstruct advance the blueprint's workDone continuously (the colonist
-			// stands in place). Append the percent so a long build reads as progressing rather
-			// than frozen. Deconstruct counts workDone DOWN, so show the complement (see
-			// StructureBlueprint::displayProgress) -- raw progress() would run backwards.
-			if ((task->type == ecs::TaskType::Build || task->type == ecs::TaskType::Deconstruct) &&
-				task->buildBlueprintEntityId != 0) {
-				if (const auto* bp =
-						world.getComponent<ecs::StructureBlueprint>(static_cast<ecs::EntityID>(task->buildBlueprintEntityId))) {
-					const float shown = bp->displayProgress(task->type == ecs::TaskType::Deconstruct);
-					currentTask += " (" + std::to_string(static_cast<int>(shown * 100.0F)) + "%)";
-				}
-			}
+			data.currentTask = formatTask(*task);
+		} else {
+			data.currentTask = "Idle";
 		}
-		content.leftColumn.push_back(
-			TextSlot{
-				.label = "Current",
-				.value = currentTask,
-			}
-		);
+		// Running action progress for the header task meter (blueprint-aware; <0 while
+		// traveling or idle, which the meter renders as an empty track).
+		data.taskProgress = adapters::getColonistActivity(world, entityId).progress;
 
-		// Next task: the upcoming step in the current chain (Harvest -> Haul -> Build/Craft),
-		// so the panel shows where the colonist is headed, not just what they're doing now.
-		std::string nextTask = "--";
-		if (auto* task = world.getComponent<ecs::Task>(entityId)) {
-			if (task->isActive()) {
-				nextTask = formatNextStep(world, *task);
-			}
-		}
-		content.leftColumn.push_back(
-			TextSlot{
-				.label = "Next",
-				.value = nextTask,
-			}
-		);
-
-		// Gear list (from inventory) - always show, even if empty
-		content.leftColumn.push_back(SpacerSlot{.height = 8.0F});
-
-		auto* inventory = world.getComponent<ecs::Inventory>(entityId);
-
-		std::vector<std::string> gearItems;
-
-		// Hand items first (what colonist is holding)
-		if (inventory != nullptr) {
-			bool hasLeft = inventory->leftHand.has_value();
-			bool hasRight = inventory->rightHand.has_value();
-
-			if (hasLeft && hasRight && inventory->leftHand->defName == inventory->rightHand->defName) {
-				// Same item in both hands (2-handed carry)
-				gearItems.push_back("[Holding] " + inventory->leftHand->defName);
-			} else if (hasLeft || hasRight) {
-				if (hasLeft) {
-					gearItems.push_back("[L] " + inventory->leftHand->defName);
-				}
-				if (hasRight) {
-					gearItems.push_back("[R] " + inventory->rightHand->defName);
-				}
-			}
-		}
-
-		// Backpack items
-		auto backpackItems = inventory ? inventory->getAllItems() : std::vector<ecs::ItemStack>{};
-		for (const auto& item : backpackItems) {
-			std::ostringstream oss;
-			oss << item.defName;
-			if (item.quantity > 1) {
-				oss << " x" << item.quantity;
-			}
-			gearItems.push_back(oss.str());
-		}
-
-		// Show "(empty)" only if nothing in hands or backpack
-		if (gearItems.empty()) {
-			gearItems.push_back("(empty)");
-		}
-		content.leftColumn.push_back(
-			TextListSlot{
-				.header = "Gear",
-				.items = std::move(gearItems),
-			}
-		);
-
-		// Control / Release button (left column, below the gear). Renders in the narrow left column
-		// so it doesn't overlap the needs bars on the right. The label reflects live control state.
-		if (onToggleControl) {
-			const bool controlled = world.getComponent<ecs::PlayerControlled>(entityId) != nullptr;
-			content.leftColumn.push_back(SpacerSlot{.height = 8.0F});
-			content.leftColumn.push_back(
-				ActionButtonSlot{
-					.label = controlled ? "Release" : "Control",
-					.onClick = [onToggleControl, entityId]() { onToggleControl(entityId); },
-				}
-			);
-		}
-
-		// RIGHT COLUMN: "Needs:" header + need bars
-		// The "Needs:" header is rendered by the view, not as a slot
+		// Needs bars
 		if (auto* needs = world.getComponent<ecs::NeedsComponent>(entityId)) {
+			data.needs.reserve(kNeedCount);
 			for (size_t i = 0; i < kNeedCount; ++i) {
 				auto needType = static_cast<ecs::NeedType>(i);
-				content.rightColumn.push_back(
+				data.needs.push_back(
 					ProgressBarSlot{
 						.label = ecs::needLabel(needType), // Uses bounds-checked helper
 						.value = needs->get(needType).value,
@@ -340,6 +184,46 @@ namespace world_sim {
 			}
 		}
 
+		// Gear: hands line, belt chips, backpack lines, carry mass
+		auto* inventory = world.getComponent<ecs::Inventory>(entityId);
+		if (inventory != nullptr) {
+			const bool hasLeft = inventory->leftHand.has_value();
+			const bool hasRight = inventory->rightHand.has_value();
+			if (hasLeft && hasRight && inventory->leftHand->defName == inventory->rightHand->defName) {
+				// Same item in both hands: a two-hand armful (counted once)
+				data.hands = inventory->leftHand->defName;
+				if (inventory->leftHand->quantity > 1) {
+					data.hands += " x" + std::to_string(inventory->leftHand->quantity);
+				}
+				data.hands += " (both hands)";
+			} else if (hasLeft || hasRight) {
+				data.hands = "L: " + (hasLeft ? inventory->leftHand->defName : std::string{"--"}) +
+							 "  R: " + (hasRight ? inventory->rightHand->defName : std::string{"--"});
+			} else {
+				data.hands = "(empty)";
+			}
+
+			for (const auto& slot : inventory->belt) {
+				if (slot.has_value()) {
+					data.belt.push_back(slot->defName);
+				}
+			}
+
+			for (const auto& item : inventory->getAllItems()) {
+				std::string line = item.defName;
+				if (item.quantity > 1) {
+					line += " x" + std::to_string(item.quantity);
+				}
+				data.backpack.push_back(std::move(line));
+			}
+
+			data.carriedKg = ecs::carriedCargoMassKg(*inventory, engine::assets::AssetRegistry::Get());
+			data.capacityKg = inventory->carryCapacityKg;
+		} else {
+			data.hands = "(empty)";
+		}
+
+		content.colonist = std::move(data);
 		return content;
 	}
 
@@ -349,56 +233,42 @@ namespace world_sim {
 		const ResourceQueryCallback&		 queryResources
 	) {
 		PanelContent content;
-		content.layout = PanelLayout::TwoColumn; // Same layout as colonists
+		content.title = selection.defName;
 
-		// HEADER: Same slot as colonist portrait - icon placeholder + name
-		content.header.name = selection.defName;
-
-		// Default values
-		content.header.moodValue = 100.0F;
-		content.header.moodLabel = "Full";
-
-		// Look up asset definition for properties
 		const auto* def = registry.getDefinition(selection.defName);
-		if (def != nullptr) {
-			const auto& capabilities = def->capabilities;
-
-			// Check if this is a harvestable entity with resource pool
-			if (capabilities.harvestable.has_value()) {
-				const auto& harvestable = capabilities.harvestable.value();
-
-				// Try to get actual resource count
-				if (queryResources) {
-					auto resourceCount = queryResources(selection.defName, selection.position);
-					if (resourceCount.has_value()) {
-						// Show remaining count with yield item name
-						// Use format "X remaining (ItemName)" to avoid naive pluralization issues
-						std::string yieldName = harvestable.yieldDefName;
-						content.header.moodLabel = std::to_string(resourceCount.value()) + " remaining (" + yieldName + ")";
-
-						// Calculate percentage based on max possible resources
-						uint32_t maxResources = harvestable.totalResourceMax;
-						if (maxResources > 0) {
-							content.header.moodValue =
-								(static_cast<float>(resourceCount.value()) / static_cast<float>(maxResources)) * 100.0F;
-						}
-					} else {
-						// No resource pool - just show as harvestable
-						content.header.moodLabel = "Harvestable";
-					}
-				} else {
-					// No callback - fallback to simple label
-					content.header.moodLabel = "Harvestable";
-				}
-			} else if (capabilities.edible.has_value()) {
-				content.header.moodLabel = "Edible";
-			} else if (capabilities.drinkable.has_value()) {
-				content.header.moodLabel = "Available";
-			}
+		if (def == nullptr) {
+			return content;
 		}
+		const auto& capabilities = def->capabilities;
 
-		// LEFT/RIGHT COLUMNS: Empty for now (same height as colonist, just unused space)
-		// Will be populated with entity-specific info in future updates
+		if (capabilities.harvestable.has_value()) {
+			const auto& harvestable = capabilities.harvestable.value();
+			std::optional<uint32_t> resourceCount;
+			if (queryResources) {
+				resourceCount = queryResources(selection.defName, selection.position);
+			}
+			if (resourceCount.has_value()) {
+				// "X remaining (ItemName)" avoids naive pluralization issues
+				content.subtitle =
+					std::to_string(resourceCount.value()) + " remaining (" + harvestable.yieldDefName + ")";
+				if (harvestable.totalResourceMax > 0) {
+					content.slots.push_back(
+						ProgressBarSlot{
+							.label = "Resources",
+							.value = (static_cast<float>(resourceCount.value()) /
+									  static_cast<float>(harvestable.totalResourceMax)) *
+									 100.0F,
+						}
+					);
+				}
+			} else {
+				content.subtitle = "Harvestable";
+			}
+		} else if (capabilities.edible.has_value()) {
+			content.subtitle = "Edible";
+		} else if (capabilities.drinkable.has_value()) {
+			content.subtitle = "Available";
+		}
 
 		return content;
 	}
@@ -411,13 +281,7 @@ namespace world_sim {
 		const std::function<void()>&		 onConfigure
 	) {
 		PanelContent content;
-		content.layout = PanelLayout::SingleColumn;
 		content.title = selection.defName;
-
-		// Store callbacks for UI
-		content.onPlace = onPlace;
-		content.onMoveFurniture = onMoveFurniture;
-		content.onConfigure = onConfigure;
 
 		// Look up asset definition for properties
 		const auto* def = registry.getDefinition(selection.defName);
@@ -439,9 +303,6 @@ namespace world_sim {
 			oss << storage.maxCapacity << " slots";
 			content.slots.push_back(TextSlot{"Capacity", oss.str()});
 		}
-
-		// Add action buttons
-		content.slots.push_back(SpacerSlot{.height = 8.0F});
 
 		// Configure button for storage containers (only when placed)
 		if (isStorage && !selection.isPackaged && onConfigure) {
@@ -521,7 +382,6 @@ namespace world_sim {
 		const std::function<void()>&				   onDemolishBuilding
 	) {
 		PanelContent content;
-		content.layout = PanelLayout::SingleColumn;
 
 		const auto* foundation = constructionWorld.get(selection.id);
 		const std::string material = (foundation != nullptr) ? foundation->material : std::string{"Foundation"};
@@ -559,7 +419,6 @@ namespace world_sim {
 		// path passes no onDemolishBuilding, so guard against a dead (null-callback)
 		// button there by falling back to plain Demolish.
 		const bool hasWalls = constructionWorld.foundationHasWalls(selection.id);
-		content.slots.push_back(SpacerSlot{.height = 8.0F});
 		if (hasWalls && onDemolishBuilding) {
 			content.slots.push_back(
 				ActionButtonSlot{
@@ -586,7 +445,6 @@ namespace world_sim {
 		const std::function<void()>&					onDemolish
 	) {
 		PanelContent content;
-		content.layout = PanelLayout::SingleColumn;
 
 		const auto* segment = constructionWorld.getSegment(selection.id);
 		const std::string material = (segment != nullptr) ? segment->material : std::string{"Wall"};
@@ -637,7 +495,6 @@ namespace world_sim {
 		// Demolish action. Per-segment removal is the design's wall demolition unit;
 		// GameScene's handler removes only this segment. Immediate, mirroring the
 		// foundation precedent (see GameScene::handleDemolishWallSegment).
-		content.slots.push_back(SpacerSlot{.height = 8.0F});
 		content.slots.push_back(
 			ActionButtonSlot{
 				.label = "Demolish",
@@ -655,7 +512,6 @@ namespace world_sim {
 		const std::function<void()>&				   onDemolish
 	) {
 		PanelContent content;
-		content.layout = PanelLayout::SingleColumn;
 
 		const auto*		  opening = constructionWorld.getOpening(selection.id);
 		const std::string typeName = (opening != nullptr) ? opening->type : std::string{"Opening"};
@@ -694,7 +550,6 @@ namespace world_sim {
 		// Demolish action. The opening is its own demolition unit (independent of the
 		// wall it sits on); GameScene's handler removes just this opening. Immediate,
 		// mirroring the wall precedent (see GameScene::handleDemolishOpening).
-		content.slots.push_back(SpacerSlot{.height = 8.0F});
 		content.slots.push_back(
 			ActionButtonSlot{
 				.label = "Demolish",
@@ -707,7 +562,6 @@ namespace world_sim {
 
 	PanelContent adaptRoom(const ecs::World& world, const ecs::RoomDetectionSystem::RoomRecord& record) {
 		PanelContent content;
-		content.layout = PanelLayout::SingleColumn;
 		content.title = record.name;
 
 		content.slots.push_back(TextSlot{"Name", record.name});

@@ -1306,6 +1306,12 @@ namespace {
 			// Keep the camera (set from the spawn in GameLoadingScene) in sync with the clearing.
 			m_camera->setPosition({m_spawnPosition.x, m_spawnPosition.y});
 
+			// The clearing center is also the region minimap's fixed window center;
+			// hand it over with the landing coordinates once, here, where it is final.
+			gameUI->setMinimapContext(
+				{m_spawnPosition.x, m_spawnPosition.y}, m_landingLatDeg, m_landingLonDeg, kPixelsPerMeter
+			);
+
 			// Hand the colony origin to the AI: if a stranded colonist ever finds no walkable
 			// navmesh face in range, the off-mesh recovery snaps it back to home. The engine
 			// can't see app-level GameWorldState, so the origin is pushed across the boundary;

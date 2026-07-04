@@ -14,9 +14,6 @@
 namespace world_sim {
 
 namespace {
-	// Visual spacing
-	constexpr float kSectionSpacing = 8.0F;
-
 	// Display label for a material defName (asset label, else the raw defName).
 	std::string materialLabel(const std::string& defName) {
 		const auto* def = engine::assets::AssetRegistry::Get().getDefinition(defName);
@@ -180,29 +177,6 @@ std::vector<std::string> unobtainableInputs(
 	return missing;
 }
 
-std::string formatRecipeLabel(const engine::assets::RecipeDef& recipe) {
-	// Use label if available, otherwise defName
-	std::string name = recipe.label.empty() ? recipe.defName : recipe.label;
-
-	// Add input summary if recipe has inputs
-	if (!recipe.inputs.empty()) {
-		std::ostringstream stream;
-		stream << name << " (";
-		bool first = true;
-		for (const auto& input : recipe.inputs) {
-			if (!first) {
-				stream << ", ";
-			}
-			stream << input.count << "x " << input.defName;
-			first = false;
-		}
-		stream << ")";
-		return stream.str();
-	}
-
-	return name;
-}
-
 PanelContent adaptCraftingStatus(ecs::World& world, ecs::EntityID entityId, const std::string& stationDefName) {
 	PanelContent content;
 	content.title = stationDefName;
@@ -278,7 +252,6 @@ PanelContent adaptCraftingStatus(ecs::World& world, ecs::EntityID entityId, cons
 				for (const auto& defName : missing) {
 					labels.push_back(materialLabel(defName));
 				}
-				content.slots.push_back(SpacerSlot{.height = kSectionSpacing});
 				content.slots.push_back(
 					TextSlot{
 						.label = "Blocked",
@@ -297,8 +270,6 @@ PanelContent adaptCraftingStatus(ecs::World& world, ecs::EntityID entityId, cons
 
 	// Show all queued jobs as a list
 	if (!workQueue->jobs.empty()) {
-		content.slots.push_back(SpacerSlot{.height = kSectionSpacing});
-
 		std::vector<std::string> jobStrings;
 		jobStrings.reserve(workQueue->jobs.size());
 		for (const auto& job : workQueue->jobs) {
@@ -314,52 +285,6 @@ PanelContent adaptCraftingStatus(ecs::World& world, ecs::EntityID entityId, cons
 			TextListSlot{
 				.header = "Work Orders",
 				.items = std::move(jobStrings),
-			}
-		);
-	}
-
-	return content;
-}
-
-PanelContent adaptCraftingRecipes(
-	const std::string&					  stationDefName,
-	const engine::assets::RecipeRegistry& registry,
-	QueueRecipeCallback					  onQueueRecipe
-) {
-	PanelContent content;
-	content.title = "Recipes";
-
-	// Get recipes available at this station
-	auto recipes = registry.getRecipesForStation(stationDefName);
-
-	if (recipes.empty()) {
-		content.slots.push_back(
-			TextSlot{
-				.label = "Available",
-				.value = "No recipes",
-			}
-		);
-		return content;
-	}
-
-	// Add each recipe as a clickable slot
-	for (const auto* recipe : recipes) {
-		if (recipe == nullptr) {
-			continue;
-		}
-
-		// Capture recipe defName for the callback
-		std::string recipeDefName = recipe->defName;
-
-		content.slots.push_back(
-			ClickableTextSlot{
-				.label = formatRecipeLabel(*recipe),
-				.value = "> Queue",
-				.onClick = [onQueueRecipe, recipeDefName]() {
-					if (onQueueRecipe) {
-						onQueueRecipe(recipeDefName, 1);
-					}
-				},
 			}
 		);
 	}

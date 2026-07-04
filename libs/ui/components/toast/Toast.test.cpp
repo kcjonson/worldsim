@@ -313,6 +313,42 @@ TEST(ToastStackTest, UpdateRemovesFinishedToasts) {
 	EXPECT_EQ(stack.getToastCount(), 0);
 }
 
+TEST(ToastStackTest, ActiveCountBySeverityCountsLiveToastsOnly) {
+	ToastStack stack(ToastStack::Args{
+		.position = {800.0F, 600.0F},
+	});
+
+	EXPECT_EQ(stack.getActiveCountBySeverity(ToastSeverity::Critical), 0);
+
+	stack.addToast("Info", "Message", ToastSeverity::Info, 0.0F);
+	stack.addToast("Crit 1", "Message", ToastSeverity::Critical, 0.0F);
+	stack.addToast("Crit 2", "Message", ToastSeverity::Critical, 0.0F);
+
+	EXPECT_EQ(stack.getActiveCountBySeverity(ToastSeverity::Critical), 2);
+	EXPECT_EQ(stack.getActiveCountBySeverity(ToastSeverity::Info), 1);
+	EXPECT_EQ(stack.getActiveCountBySeverity(ToastSeverity::Warning), 0);
+
+	// Dismissing toasts drop out of the active count immediately (they are
+	// animating away, no longer live alerts).
+	stack.dismissAll();
+	EXPECT_EQ(stack.getActiveCountBySeverity(ToastSeverity::Critical), 0);
+}
+
+TEST(ToastStackTest, ActiveCountBySeverityDropsOnAutoDismiss) {
+	ToastStack stack(ToastStack::Args{
+		.position = {800.0F, 600.0F},
+	});
+
+	stack.addToast("Crit", "Message", ToastSeverity::Critical, 0.5F);
+	EXPECT_EQ(stack.getActiveCountBySeverity(ToastSeverity::Critical), 1);
+
+	// Fade in, hit the auto-dismiss timer, fade out.
+	for (int i = 0; i < 20; ++i) {
+		stack.update(0.1F);
+	}
+	EXPECT_EQ(stack.getActiveCountBySeverity(ToastSeverity::Critical), 0);
+}
+
 TEST(ToastStackTest, ContainsPointDelegatesToToasts) {
 	ToastStack stack(ToastStack::Args{
 		.position = {500.0F, 400.0F},

@@ -21,6 +21,8 @@ GlobalTaskRow::GlobalTaskRow(const Args& args)
 		args.task.position,
 		args.task.distance);
 
+	// No per-child ids: a temporary's c_str() stored here dangles (garbage
+	// bytes in /api/ui/tree that can break the JSON dump).
 	line1Handle = addChild(UI::Text(UI::Text::Args{
 		.position = {kPadding, kPadding},
 		.text = line1Text,
@@ -28,7 +30,7 @@ GlobalTaskRow::GlobalTaskRow(const Args& args)
 			.color = UI::text,
 			.fontSize = kLine1FontSize
 		},
-		.id = (args.id + "_line1").c_str()
+		.id = nullptr
 	}));
 
 	// Line 2: "Available • Known by: Bob, Alice" or "Blocked • 0/11 materials"
@@ -47,7 +49,7 @@ GlobalTaskRow::GlobalTaskRow(const Args& args)
 			.color = getStatusColor(args.task),
 			.fontSize = kLine2FontSize
 		},
-		.id = (args.id + "_line2").c_str()
+		.id = nullptr
 	}));
 }
 

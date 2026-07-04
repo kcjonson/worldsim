@@ -3,9 +3,9 @@
 // GameplayBar - Main gameplay action bar at bottom of screen.
 //
 // Layout:
-// ┌─────────────────────────────────────────────────────────────────┐
-// │        [Actions▾]  [Build▾]  [Production▾]  [Furniture▾]        │
-// └─────────────────────────────────────────────────────────────────┘
+// ┌────────────────────────────────────────────────────────────────────────┐
+// │   [Actions▾]  [Build▾]  [Production▾]  [Furniture▾]  [Zones▾]  [Rooms] │
+// └────────────────────────────────────────────────────────────────────────┘
 //
 // Each dropdown expands to show relevant options.
 // Replaces the simple BuildToolbar with full category access.
@@ -82,6 +82,7 @@ class GameplayBar : public UI::Component {
 	UI::LayerHandle buildDropdownHandle;
 	UI::LayerHandle productionDropdownHandle;
 	UI::LayerHandle furnitureDropdownHandle;
+	UI::LayerHandle zonesDropdownHandle;
 	UI::LayerHandle roomsButtonHandle;
 
 	// Callbacks

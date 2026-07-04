@@ -9,8 +9,12 @@
 #include "GameStartConfig.h"
 #include "GameWorldState.h"
 #include "SceneTypes.h"
+#include "scenes/shared/Starfield.h"
+#include "scenes/shared/UiStateDrain.h"
 
 #include <GL/glew.h>
+#include <theme/Tokens.h>
+#include <theme/Variants.h>
 
 #include <assets/ActionTypeRegistry.h>
 #include <assets/AssetRegistry.h>
@@ -68,7 +72,6 @@ namespace {
 			chunksProcessed = 0;
 			configErrorLogged = false;
 			asyncProcessor.reset();
-			needsLayout = true; // Defer position update until first render (viewport not ready in onEnter)
 
 			// Direct scene jumps (debug API, --scene=game) have no pending
 			// config; treat them as Quick Start.
@@ -80,57 +83,7 @@ namespace {
 
 			// Create the world state that will be transferred to GameScene
 			worldState = std::make_unique<world_sim::GameWorldState>();
-
-			// Create UI elements once with initial positions (will be updated in layoutUI)
-			title = std::make_unique<UI::Text>(UI::Text::Args{
-				.position = {0.0F, 0.0F},
-				.text = "Loading World",
-				.style =
-					{
-						.color = Foundation::Color::white(),
-						.fontSize = 48.0F,
-						.hAlign = Foundation::HorizontalAlign::Center,
-						.vAlign = Foundation::VerticalAlign::Middle,
-					},
-				.id = "loading_title"
-			});
-
-			statusText = std::make_unique<UI::Text>(UI::Text::Args{
-				.position = {0.0F, 0.0F},
-				.text = "Initializing...",
-				.style =
-					{
-						.color = Foundation::Color(0.7F, 0.7F, 0.7F, 1.0F),
-						.fontSize = 18.0F,
-						.hAlign = Foundation::HorizontalAlign::Center,
-						.vAlign = Foundation::VerticalAlign::Middle,
-					},
-				.id = "loading_status"
-			});
-		}
-
-		/// Update UI element positions based on current viewport size
-		void layoutUI() {
-			// Use percentage-based positioning (same pattern as SplashScene)
-			float centerX = Renderer::Primitives::PercentWidth(50.0F);
-			float centerY = Renderer::Primitives::PercentHeight(50.0F);
-
-			// Check if viewport is ready (values will be 0 if not)
-			if (centerX < 1.0F || centerY < 1.0F) {
-				return; // Viewport not ready yet
-			}
-
-			// Update positions of existing UI elements
-			title->position = {centerX, centerY - 80.0F};
-			statusText->position = {centerX, centerY + 60.0F};
-
-			// Progress bar dimensions
-			barWidth = 400.0F;
-			barHeight = 24.0F;
-			barX = centerX - (barWidth / 2.0F);
-			barY = centerY;
-
-			needsLayout = false;
+			statusMessage = "Initializing...";
 		}
 
 		void update(float /*dt*/) override {
@@ -182,58 +135,83 @@ namespace {
 		}
 
 		void render() override {
-			// Deferred layout - viewport is only valid during render
-			if (needsLayout) {
-				layoutUI();
-			}
+			using namespace UI;
+			using Renderer::Primitives::drawRect;
+			using Renderer::Primitives::drawText;
 
-			// Dark background
-			glClearColor(0.05F, 0.08F, 0.12F, 1.0F);
+			glClearColor(bg_void.r, bg_void.g, bg_void.b, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
 
-			// Render title
-			if (title) {
-				title->render();
+			const float screenW = Renderer::Primitives::PercentWidth(100.0F);
+			const float screenH = Renderer::Primitives::PercentHeight(100.0F);
+			world_sim::renderStarfield(static_cast<int>(screenW), static_cast<int>(screenH), 5U, true);
+			const float cx = screenW * 0.5F;
+			const float cy = screenH * 0.5F;
+
+			// Identity block in the splash idiom: mono kicker over a display title.
+			drawText({.text = "// EXPEDITION    DESCENT",
+					  .position = {0.0F, cy - 96.0F},
+					  .scale = fs_2xs / 16.0F,
+					  .color = accent,
+					  .font = fontMono,
+					  .hAlign = Foundation::HorizontalAlign::Center,
+					  .vAlign = Foundation::VerticalAlign::Middle,
+					  .boxWidth = screenW,
+					  .letterSpacing = fs_2xs * ls_wider});
+			drawText({.text = "Making Planetfall",
+					  .position = {0.0F, cy - 56.0F},
+					  .scale = fs_3xl / 16.0F,
+					  .color = text_bright,
+					  .font = fontDisplay,
+					  .hAlign = Foundation::HorizontalAlign::Center,
+					  .vAlign = Foundation::VerticalAlign::Middle,
+					  .boxWidth = screenW,
+					  .letterSpacing = fs_3xl * ls_wide});
+
+			// Tokenized 3px loader, consistent with Splash/WorldCreator.
+			const bool	err = phase == LoadingPhase::ConfigError;
+			const float barW = std::min(420.0F, screenW * 0.8F);
+			const float barX = cx - barW * 0.5F;
+			const float barY = cy + 24.0F;
+			drawText({.text = statusMessage,
+					  .position = {barX, barY - 20.0F},
+					  .scale = fs_xs / 16.0F,
+					  .color = err ? status_crit : text,
+					  .font = fontMono,
+					  .vAlign = Foundation::VerticalAlign::Top,
+					  .letterSpacing = fs_xs * ls_wide,
+					  .transform = Foundation::TextTransform::Uppercase});
+			if (!err) {
+				drawText({.text = std::to_string(static_cast<int>(progress * 100.0F)) + "%",
+						  .position = {barX, barY - 20.0F},
+						  .scale = fs_xs / 16.0F,
+						  .color = accent_bright,
+						  .font = fontMono,
+						  .hAlign = Foundation::HorizontalAlign::Right,
+						  .vAlign = Foundation::VerticalAlign::Top,
+						  .boxWidth = barW});
+				const float radius = std::min(r_pill, 1.5F);
+				drawRect({.bounds = {barX, barY, barW, 3.0F},
+						  .style = {.fill = bg_inset,
+									.border = Foundation::BorderStyle{
+										.color = bg_inset, .width = 0.0F, .cornerRadius = radius,
+										.position = Foundation::BorderPosition::Inside}}});
+				const float fillW = barW * std::clamp(progress, 0.0F, 1.0F);
+				if (fillW > 3.0F) {
+					drawRect({.bounds = {barX, barY, fillW, 3.0F},
+							  .style = {.fill = accent,
+										.border = Foundation::BorderStyle{
+											.color = accent, .width = 0.0F, .cornerRadius = radius,
+											.position = Foundation::BorderPosition::Inside}}});
+				}
 			}
 
-			// Render progress bar background
-			Renderer::Primitives::drawRect({
-				.bounds = {barX, barY, barWidth, barHeight},
-				.style = {.fill = Foundation::Color(0.15F, 0.15F, 0.2F, 1.0F)},
-			});
-
-			// Render progress bar fill
-			float fillWidth = barWidth * progress;
-			if (fillWidth > 0.0F) {
-				Renderer::Primitives::drawRect({
-					.bounds = {barX, barY, fillWidth, barHeight},
-					.style = {.fill = Foundation::Color(0.2F, 0.6F, 0.3F, 1.0F)},
-				});
-			}
-
-			// Render progress bar border
-			Renderer::Primitives::drawRect({
-				.bounds = {barX, barY, barWidth, barHeight},
-				.style = {
-					.fill = Foundation::Color(0.0F, 0.0F, 0.0F, 0.0F), // Transparent fill
-					.border = Foundation::BorderStyle{
-						.color = Foundation::Color(0.4F, 0.4F, 0.5F, 1.0F),
-						.width = 2.0F,
-					},
-				},
-			});
-
-			// Render status text
-			if (statusText) {
-				statusText->render();
-			}
+			world_sim::serveUiStateRequests(*this);
 		}
 
 		void onExit() override {
 			LOG_INFO(Game, "GameLoadingScene - Exiting");
 			asyncProcessor.reset();
-			title.reset();
-			statusText.reset();
 			// Note: worldState is moved to GameWorldState::SetPending() before exit
 		}
 
@@ -411,10 +389,7 @@ namespace {
 			progress = 0.65F + 0.35F * (static_cast<float>(chunksProcessed) / static_cast<float>(kTargetChunks));
 			progress = std::min(progress, 1.0F);
 
-			// Update status with progress
-			int			percent = static_cast<int>(progress * 100.0F);
-			std::string status = "Placing entities... " + std::to_string(percent) + "%";
-			updateStatusText(status);
+			updateStatusText("Placing entities...");
 
 			// Check if all tasks are complete (every loaded chunk processed and
 			// nothing in flight; chunks still generating haven't launched yet)
@@ -455,12 +430,7 @@ namespace {
 			sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu));
 		}
 
-		/// Update the status text content (not the element itself)
-		void updateStatusText(const std::string& text) {
-			if (statusText) {
-				statusText->text = text;
-			}
-		}
+		void updateStatusText(const std::string& text) { statusMessage = text; }
 
 		/// Load work configuration files (actions, chains, work types, priority tuning)
 		/// Returns false if any config fails to load or validate
@@ -557,16 +527,8 @@ namespace {
 		// How this game starts (planet + landing site)
 		std::unique_ptr<world_sim::GameStartConfig> startConfig;
 
-		// UI elements
-		std::unique_ptr<UI::Text> title;
-		std::unique_ptr<UI::Text> statusText;
-		bool					  needsLayout = false;
-
-		// Progress bar layout
-		float barX = 0.0F;
-		float barY = 0.0F;
-		float barWidth = 400.0F;
-		float barHeight = 24.0F;
+		// Loader status line (drawn each frame)
+		std::string statusMessage;
 	};
 
 } // namespace

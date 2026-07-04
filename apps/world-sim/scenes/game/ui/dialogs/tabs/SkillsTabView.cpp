@@ -5,6 +5,7 @@ namespace world_sim {
 
 void SkillsTabView::create(const Foundation::Rect& bounds) {
 	contentBounds = bounds;
+	size = {bounds.width, bounds.height};
 }
 
 void SkillsTabView::update(const SkillsData& /*data*/) {}

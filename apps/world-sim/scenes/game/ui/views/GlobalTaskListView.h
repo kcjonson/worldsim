@@ -94,6 +94,9 @@ class GlobalTaskListView : public UI::Component {
 	/// Update chevron icon direction (up when expanded, down when collapsed)
 	void updateChevron();
 
+	/// Content bg shows when expanded; the scroll shows only with rows in it
+	void updateContentVisibility();
+
 	/// Update child positions after state change
 	void updateLayout();
 

@@ -42,6 +42,7 @@ UI::Tone statusTone(const std::string& status) {
 
 void TasksTabView::create(const Foundation::Rect& bounds) {
 	contentBounds = bounds;
+	size = {bounds.width, bounds.height};
 }
 
 void TasksTabView::update(const TasksTabData& data) {

@@ -1,4 +1,4 @@
-#include "HealthTabView.h"
+#include "NeedsTabView.h"
 #include "MeterDraw.h"
 #include "TabStyles.h"
 
@@ -31,15 +31,16 @@ const char* needLabel(size_t i) {
 
 } // namespace
 
-void HealthTabView::create(const Foundation::Rect& bounds) {
+void NeedsTabView::create(const Foundation::Rect& bounds) {
 	contentBounds = bounds;
+	size = {bounds.width, bounds.height};
 }
 
-void HealthTabView::update(const HealthData& data) {
+void NeedsTabView::update(const NeedsData& data) {
 	data_ = data;
 }
 
-void HealthTabView::render() {
+void NeedsTabView::render() {
 	using namespace tabs;
 	using namespace UI;
 
@@ -51,7 +52,8 @@ void HealthTabView::render() {
 	// ---- Full-width Mood meter ----
 	const float		  mood01 = data_.mood / 100.0F;
 	const UI::Tone	  moodTone = data_.mood < 25.0F ? UI::Tone::Crit : (data_.mood < 50.0F ? UI::Tone::Warn : UI::Tone::Ok);
-	const std::string moodValue = std::to_string(static_cast<int>(data_.mood)) + "% \xC2\xB7 " + (data_.moodLabel.empty() ? "Mood" : data_.moodLabel);
+	// ASCII separator: the SDF font atlas has no middot glyph.
+	const std::string moodValue = std::to_string(static_cast<int>(data_.mood)) + "% - " + (data_.moodLabel.empty() ? "Mood" : data_.moodLabel);
 
 	float y = drawMeter(o.x, o.y, width, "MOOD", mood01, moodValue, UI::toneColor(moodTone));
 	y += kMoodGap;

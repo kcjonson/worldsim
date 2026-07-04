@@ -28,14 +28,18 @@ GlobalTaskListView::GlobalTaskListView(const Args& args)
 		.id = "tasks_header"
 	}));
 
-	// Create chevron icon (down arrow when collapsed, up when expanded)
-	chevronHandle = addChild(UI::Icon(UI::Icon::Args{
+	// Create chevron icon (down arrow when collapsed, up when expanded). It sits
+	// on the header button by design; the higher zIndex marks the overlap as
+	// intentional layering for the layout lint.
+	auto chevron = UI::Icon(UI::Icon::Args{
 		.position = {0.0F, 0.0F},  // Will be updated in updateLayout
 		.size = kChevronSize,
 		.svgPath = "assets/ui/icons/chevron_down.svg",
 		.tint = Foundation::Color::white(),
 		.id = "tasks_chevron"
-	}));
+	});
+	chevron.zIndex = 1;
+	chevronHandle = addChild(std::move(chevron));
 
 	// Create content background (only visible when expanded)
 	contentBackgroundHandle = addChild(UI::Rectangle(UI::Rectangle::Args{
@@ -71,6 +75,16 @@ GlobalTaskListView::GlobalTaskListView(const Args& args)
 	layoutHandle = scrollContainer.addChild(std::move(layout));
 
 	scrollContainerHandle = addChild(std::move(scrollContainer));
+
+	// Overlapping siblings need distinct z for the layout lint: the chevron
+	// rides on the header button; the scroll rides on the content bg.
+	if (auto* chevron = getChild<UI::Icon>(chevronHandle)) {
+		chevron->zIndex = 1;
+	}
+	if (auto* scroll = getChild<UI::ScrollContainer>(scrollContainerHandle)) {
+		scroll->zIndex = 1;
+	}
+	markChildrenNeedSorting();
 }
 
 void GlobalTaskListView::setAnchorPosition(float x, float y) {
@@ -83,15 +97,18 @@ void GlobalTaskListView::toggle() {
 	expanded = !expanded;
 	updateHeaderText();
 	updateChevron();
+	updateContentVisibility();
+	updateLayout();
+}
 
-	auto* contentBg = getChild<UI::Rectangle>(contentBackgroundHandle);
-	auto* scroll = getChild<UI::ScrollContainer>(scrollContainerHandle);
-
-	if (contentBg) {
+void GlobalTaskListView::updateContentVisibility() {
+	if (auto* contentBg = getChild<UI::Rectangle>(contentBackgroundHandle)) {
 		contentBg->visible = expanded;
 	}
-	if (scroll) {
-		scroll->visible = expanded;
+	// An empty scroll would lint as a zero-height layout; the bare content bg
+	// is the empty state.
+	if (auto* scroll = getChild<UI::ScrollContainer>(scrollContainerHandle)) {
+		scroll->visible = expanded && cachedTaskCount > 0;
 	}
 }
 
@@ -150,6 +167,7 @@ void GlobalTaskListView::setTaskCount(size_t count) {
 	if (cachedTaskCount != count) {
 		cachedTaskCount = count;
 		updateHeaderText();
+		updateContentVisibility();
 	}
 }
 

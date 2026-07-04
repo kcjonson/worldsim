@@ -72,6 +72,9 @@ class ToastStack : public Component {
 	// Get number of visible toasts (not finished)
 	[[nodiscard]] size_t getVisibleToastCount() const;
 
+	// Get number of live toasts (not dismissing or finished) of a severity
+	[[nodiscard]] size_t getActiveCountBySeverity(ToastSeverity severity) const;
+
 	// Accessors
 	[[nodiscard]] ToastAnchor getAnchor() const { return anchor; }
 	[[nodiscard]] float		  getSpacing() const { return spacing; }
@@ -82,6 +85,14 @@ class ToastStack : public Component {
 	bool handleEvent(InputEvent& event) override;
 	bool containsPoint(Foundation::Vec2 point) const override;
 	void setPosition(float x, float y) override;
+
+	// Reported bounds are the stacked-toast envelope, not the anchor point
+	// (position is the anchor; toasts extend up/left of it for bottom/right
+	// anchors). The stack marks itself invisible while empty so the UI lint
+	// skips it rather than flagging a zero-height root.
+	[[nodiscard]] Foundation::Vec2 getPosition() const override;
+	[[nodiscard]] float getWidth() const override { return toastWidth; }
+	[[nodiscard]] float getHeight() const override;
 
 	// ILayer overrides
 	void update(float deltaTime) override;

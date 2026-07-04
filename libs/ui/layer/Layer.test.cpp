@@ -1,4 +1,6 @@
 #include "layer/Layer.h"
+#include "component/Component.h"
+#include "shapes/Shapes.h"
 #include <gtest/gtest.h>
 
 using namespace UI;
@@ -96,4 +98,37 @@ TEST(LayerHandleTest, MaxGenerationWithNonMaxIndexIsValid) {
 	EXPECT_TRUE(handle.isValid());
 	EXPECT_EQ(handle.getGeneration(), 0xFFFF);
 	EXPECT_EQ(handle.getIndex(), 0);
+}
+
+// ============================================================================
+// Handle stability under z-sorting
+// ============================================================================
+
+namespace {
+class HandleHost : public Component {
+  public:
+	using Component::addChild;
+	using Component::getChild;
+};
+} // namespace
+
+TEST(ComponentHandleTest, HandlesSurviveZIndexSort) {
+	HandleHost host;
+
+	LayerHandle rectHandle = host.addChild(Rectangle(Rectangle::Args{.size = {10.0F, 10.0F}, .id = "rect"}));
+	LayerHandle textHandle = host.addChild(Text(Text::Args{.text = "hi", .id = "text"}));
+
+	// Raise the second child above the first, then render (which z-sorts).
+	host.getChild<Text>(textHandle)->zIndex = 5;
+	host.markChildrenNeedSorting();
+	host.render();
+
+	// The sort must not remap handles: each handle still resolves to its
+	// original child (an in-place sort of `children` used to break this).
+	auto* rect = host.getChild<Rectangle>(rectHandle);
+	auto* text = host.getChild<Text>(textHandle);
+	ASSERT_NE(rect, nullptr);
+	ASSERT_NE(text, nullptr);
+	EXPECT_STREQ(rect->debugId(), "rect");
+	EXPECT_STREQ(text->debugId(), "text");
 }

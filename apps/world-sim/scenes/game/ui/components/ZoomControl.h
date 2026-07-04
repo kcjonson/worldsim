@@ -1,7 +1,7 @@
 #pragma once
 
-// ZoomControl - Compact zoom level display with +/- buttons.
-// Shows current zoom percentage and allows step-based zoom changes.
+// ZoomControl - vertical zoom column (+ / reset / -) with a mono % readout
+// beneath, docked bottom-right by ZoomControlPanel.
 // Uses Button with SVG icons.
 // Extends UI::Component to use the Layer system for child management.
 
@@ -37,25 +37,27 @@ class ZoomControl : public UI::Component {
 	/// Dispatch an input event - delegates to children via dispatchEvent
 	bool handleEvent(UI::InputEvent& event) override;
 
-	// render() inherited from Component - auto-renders children
+	/// Buttons render as children; the mono % readout paints beneath them
+	void render() override;
+
+	// Layout constants (column footprint, used by ZoomControlPanel)
+	static constexpr float kButtonSize = 28.0F;
+	static constexpr float kSpacing = 4.0F;
+	static constexpr float kLabelHeight = 14.0F;
+	static constexpr float kTotalWidth = kButtonSize;
+	static constexpr float kTotalHeight = kButtonSize * 3.0F + kSpacing * 3.0F + kLabelHeight;
 
   private:
 	int zoomPercent = 100;
 
-	UI::LayerHandle zoomOutButtonHandle;
-	UI::LayerHandle zoomTextHandle;
 	UI::LayerHandle zoomInButtonHandle;
 	UI::LayerHandle zoomResetButtonHandle;
+	UI::LayerHandle zoomOutButtonHandle;
 
-	void updateZoomText();
 	void positionElements();
 
-	// Layout constants
-	static constexpr float kButtonSize = 28.0F;
 	static constexpr float kIconSize = 16.0F;
-	static constexpr float kTextWidth = 50.0F;
-	static constexpr float kSpacing = 4.0F;
-	static constexpr float kFontSize = 14.0F;
+	static constexpr float kFontSize = 11.0F;
 };
 
 }  // namespace world_sim

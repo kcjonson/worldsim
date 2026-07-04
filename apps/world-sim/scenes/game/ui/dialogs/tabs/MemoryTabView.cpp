@@ -68,6 +68,7 @@ float drawCategory(float x, float y, float colWidth, const MemoryCategory& cat) 
 
 void MemoryTabView::create(const Foundation::Rect& bounds) {
 	contentBounds = bounds;
+	size = {bounds.width, bounds.height};
 }
 
 void MemoryTabView::update(const MemoryData& data) {

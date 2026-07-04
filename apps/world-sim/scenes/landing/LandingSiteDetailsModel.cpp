@@ -4,6 +4,7 @@
 #include <worldgen/data/GeneratedWorld.h>
 #include <worldgen/data/WorldData.h>
 
+#include <cctype>
 #include <cmath>
 #include <format>
 
@@ -54,6 +55,28 @@ void waterVerdict(worldgen::WaterClass w, uint16_t rainMm,
 	}
 }
 
+// "TemperateDeciduousForest" -> "Temperate Deciduous Forest" for display.
+std::string spacedBiomeName(const char* name) {
+	std::string out;
+	for (const char* c = name; *c != '\0'; ++c) {
+		if (std::isupper(static_cast<unsigned char>(*c)) && !out.empty()) {
+			out += ' ';
+		}
+		out += *c;
+	}
+	return out;
+}
+
+int difficultySkulls(worldgen::Habitability h) {
+	switch (h) {
+		case worldgen::Habitability::Easy:     return 1;
+		case worldgen::Habitability::Moderate: return 2;
+		case worldgen::Habitability::Hard:     return 4;
+		case worldgen::Habitability::Harsh:    return 5;
+	}
+	return 3;
+}
+
 } // namespace
 
 LandingSiteDetails buildLandingSiteDetails(
@@ -61,6 +84,9 @@ LandingSiteDetails buildLandingSiteDetails(
 	LandingSiteDetails out;
 
 	out.location = std::format("{:.2f} {}, {:.2f} {}",
+		std::abs(latDeg), latDeg >= 0.0 ? "N" : "S",
+		std::abs(lonDeg), lonDeg >= 0.0 ? "E" : "W");
+	out.coords = std::format("{:.1f} {}  {:.1f} {}",
 		std::abs(latDeg), latDeg >= 0.0 ? "N" : "S",
 		std::abs(lonDeg), lonDeg >= 0.0 ? "E" : "W");
 
@@ -84,6 +110,29 @@ LandingSiteDetails buildLandingSiteDetails(
 	out.habitability = worldgen::rateHabitability(world, tile, water);
 	out.habitabilityText = worldgen::habitabilityToString(out.habitability);
 	out.habitabilityColor = habitabilityColor(out.habitability);
+	out.difficulty = difficultySkulls(out.habitability);
+	out.recommended = worldgen::isFreshwater(water) &&
+					  (out.habitability == worldgen::Habitability::Easy ||
+					   out.habitability == worldgen::Habitability::Moderate);
+
+	if (hasField(world, worldgen::WorldField::Biome) && tile < world.data.biome.size()) {
+		out.biomeName = spacedBiomeName(
+			worldgen::biomeToString(static_cast<worldgen::Biome>(world.data.biome[tile])));
+	}
+	if (hasField(world, worldgen::WorldField::TemperatureMean) &&
+	    tile < world.data.temperatureMean.size()) {
+		const float meanC = world.data.temperatureMean[tile] / 10.0F;
+		if (hasField(world, worldgen::WorldField::TemperatureRange) &&
+		    tile < world.data.temperatureRange.size()) {
+			const float halfSwing = world.data.temperatureRange[tile] / 10.0F;
+			out.tempRange = std::format("{:.0f} to {:.0f} C", meanC - halfSwing, meanC + halfSwing);
+		} else {
+			out.tempRange = std::format("{:.0f} C", meanC);
+		}
+	}
+	if (hasField(world, worldgen::WorldField::Precipitation)) {
+		out.rainfall = std::format("{} mm/yr", rainMm);
+	}
 
 	// Water section: the classification plus the drinkable/not note.
 	{

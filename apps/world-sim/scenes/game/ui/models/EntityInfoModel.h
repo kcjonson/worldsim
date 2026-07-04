@@ -14,7 +14,6 @@
 
 #include "scenes/game/ui/components/InfoSlot.h"
 #include "scenes/game/world/selection/SelectionTypes.h"
-#include "scenes/game/ui/adapters/CraftingAdapter.h"
 
 #include <assets/AssetRegistry.h>
 #include <assets/RecipeRegistry.h>
@@ -75,11 +74,9 @@ class EntityInfoModel {
 	/// Callback to open storage config dialog for a container
 	using OpenStorageConfigCallback = std::function<void(ecs::EntityID, const std::string&)>;
 
-	/// Callbacks needed for content generation
+	/// Callbacks needed for content generation. Colonist actions (Draft, Go to,
+	/// details) live on the view; the model only wires entity-action buttons.
 	struct Callbacks {
-		std::function<void()> onDetails;		// Open colonist details modal
-		std::function<void(ecs::EntityID)> onToggleControl; // Toggle direct player control of the colonist
-		QueueRecipeCallback onQueueRecipe;		// Queue recipe at station
 		OpenCraftingDialogCallback onOpenCraftingDialog; // Open crafting dialog for station
 		std::function<void()> onPlace;			// Place packaged furniture
 		std::function<void()> onMoveFurniture;	// Move (re-package + relocate) placed furniture
@@ -115,14 +112,6 @@ class EntityInfoModel {
 	[[nodiscard]] bool isColonist() const { return isColonistFlag; }
 
   private:
-	/// Generate content for colonist (two-column layout)
-	[[nodiscard]] PanelContent getColonistContent(
-		const ecs::World& world,
-		ecs::EntityID entityId,
-		const std::function<void()>& onDetails,
-		const std::function<void(ecs::EntityID)>& onToggleControl
-	) const;
-
 	/// Generate content for crafting station (status + "Open Crafting Menu" button)
 	[[nodiscard]] PanelContent getCraftingStationContent(
 		ecs::World& world,

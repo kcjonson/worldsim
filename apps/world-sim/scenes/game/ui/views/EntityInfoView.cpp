@@ -1,20 +1,180 @@
 #include "EntityInfoView.h"
 
-#include "scenes/game/ui/adapters/SelectionAdapter.h"
+#include "scenes/game/ui/dialogs/tabs/MeterDraw.h"
 
+#include <components/avatar/Avatar.h>
+#include <components/badge/Badge.h>
+#include <components/icon/Icon.h>
+#include <components/panel/Panel.h>
 #include <ecs/components/Needs.h>
+#include <primitives/Primitives.h>
 #include <theme/Tokens.h>
-#include <utils/Log.h>
+#include <theme/Variants.h>
+
+#include <string>
+#include <utility>
 
 namespace world_sim {
 
+	// ========================================================================
+	// Leaf components (arena-owned, layout-engine sized)
+	// ========================================================================
+
+	/// Deterministic colonist portrait, mood-tinted (wraps the immediate-mode
+	/// UI::Avatar so it can live in a LayoutContainer).
+	class EntityInfoView::AvatarChip : public UI::Component {
+	  public:
+		explicit AvatarChip(float sizePx) { size = {sizePx, sizePx}; }
+
+		void setIdentity(const std::string& newSeed, float newMood) {
+			seed = newSeed;
+			mood = newMood;
+		}
+
+		void render() override {
+			UI::Avatar(UI::Avatar::Args{.position = getContentPosition(), .size = size.x, .seed = seed, .mood = mood}).render();
+		}
+
+		const char* debugTypeName() const override { return "AvatarChip"; }
+		const char* debugId() const override { return "entity_info_avatar"; }
+
+		bool containsPoint(Foundation::Vec2 point) const override {
+			return point.x >= position.x && point.x <= position.x + size.x && point.y >= position.y && point.y <= position.y + size.y;
+		}
+
+	  private:
+		std::string seed;
+		float		mood{1.0F};
+	};
+
+	/// Small square icon button (eye/close) drawn from a Salvage glyph.
+	class EntityInfoView::GlyphButton : public UI::Component {
+	  public:
+		struct Args {
+			std::string			  glyph;
+			std::function<void()> onClick;
+			const char*			  id{nullptr};
+		};
+
+		explicit GlyphButton(Args args)
+			: onClick(std::move(args.onClick)),
+			  id(args.id) {
+			size = {kIconButtonSize, kIconButtonSize};
+			iconHandle = addChild(UI::Icon(UI::Icon::Args{
+				.size = kIconButtonSize - kIconPad * 2.0F,
+				.glyph = std::move(args.glyph),
+				.tint = UI::text_dim,
+			}));
+		}
+
+		void setPosition(float x, float y) override {
+			Component::setPosition(x, y);
+			if (auto* icon = getChild<UI::Icon>(iconHandle)) {
+				icon->setPosition(x + kIconPad, y + kIconPad);
+			}
+		}
+
+		void render() override {
+			const Foundation::Rect bounds{position.x, position.y, size.x, size.y};
+			Renderer::Primitives::drawRect(
+				{.bounds = bounds,
+				 .style = {
+					 .fill = UI::bg_inset,
+					 .border = Foundation::BorderStyle{
+						 .color = UI::line_edge, .width = UI::bw, .cornerRadius = UI::r_sm, .position = Foundation::BorderPosition::Inside}}}
+			);
+			if (hovered) {
+				Renderer::Primitives::drawRect({.bounds = bounds, .style = {.fill = UI::bg_hover}});
+			}
+			Component::render();
+		}
+
+		bool handleEvent(UI::InputEvent& event) override {
+			if (event.type == UI::InputEvent::Type::MouseMove) {
+				hovered = containsPoint(event.position);
+				return false;
+			}
+			if (event.type == UI::InputEvent::Type::MouseUp && event.button == engine::MouseButton::Left &&
+				containsPoint(event.position)) {
+				if (onClick) {
+					onClick();
+				}
+				event.consume();
+				return true;
+			}
+			return false;
+		}
+
+		bool containsPoint(Foundation::Vec2 point) const override {
+			return point.x >= position.x && point.x <= position.x + size.x && point.y >= position.y && point.y <= position.y + size.y;
+		}
+
+		const char* debugTypeName() const override { return "GlyphButton"; }
+		const char* debugId() const override { return id; }
+
+	  private:
+		static constexpr float kIconPad = 3.0F;
+
+		std::function<void()> onClick;
+		const char*			  id{nullptr};
+		UI::LayerHandle		  iconHandle;
+		bool				  hovered{false};
+	};
+
+	/// Inline badge pill (belt tool chip); width follows the label.
+	class EntityInfoView::BadgeChip : public UI::Component {
+	  public:
+		BadgeChip() { size = {16.0F, kBadgeHeight}; }
+
+		void setLabel(const std::string& newLabel) {
+			label = newLabel;
+			size = {UI::Badge::MeasureWidth(label), kBadgeHeight};
+		}
+
+		void render() override {
+			UI::Badge(UI::Badge::Args{.position = position, .label = label, .tone = UI::Tone::Data}).render();
+		}
+
+		const char* debugTypeName() const override { return "BadgeChip"; }
+		const char* debugId() const override { return "entity_info_belt_chip"; }
+
+	  private:
+		// Matches Badge.cpp's fixed pill height
+		static constexpr float kBadgeHeight = 20.0F;
+
+		std::string label;
+	};
+
+	/// Dashed empty-state panel (Log tab stub; no activity-log system yet).
+	class EntityInfoView::EmptyStateBox : public UI::Component {
+	  public:
+		EmptyStateBox(float width, std::string newTitle, std::string newSubtitle)
+			: title(std::move(newTitle)),
+			  subtitle(std::move(newSubtitle)) {
+			size = {width, 64.0F};
+		}
+
+		void render() override {
+			tabs::drawEmptyState({position.x, position.y, size.x, size.y}, title, subtitle);
+		}
+
+		const char* debugTypeName() const override { return "EmptyStateBox"; }
+		const char* debugId() const override { return "entity_info_log_empty"; }
+
+	  private:
+		std::string title;
+		std::string subtitle;
+	};
+
+	// ========================================================================
+	// EntityInfoView
+	// ========================================================================
+
 	EntityInfoView::EntityInfoView(const Args& args)
-		: panelWidth(args.width),
-		  panelX(args.position.x),
-		  onCloseCallback(args.onClose),
+		: onCloseCallback(args.onClose),
 		  onDetailsCallback(args.onDetails),
 		  onToggleControlCallback(args.onToggleControl),
-		  onQueueRecipeCallback(args.onQueueRecipe),
+		  onGoToCallback(args.onGoTo),
 		  onOpenCraftingDialogCallback(args.onOpenCraftingDialog),
 		  onPlaceCallback(args.onPlace),
 		  onMoveFurnitureCallback(args.onMoveFurniture),
@@ -23,455 +183,279 @@ namespace world_sim {
 		  onDemolishFoundationCallback(args.onDemolishFoundation),
 		  onDemolishBuildingCallback(args.onDemolishBuilding),
 		  onDemolishWallSegmentCallback(args.onDemolishWallSegment),
-		  onDemolishOpeningCallback(args.onDemolishOpening) {
+		  onDemolishOpeningCallback(args.onDemolishOpening),
+		  m_id(args.id),
+		  panelWidth(args.width),
+		  contentWidth(args.width - kPad * 2.0F) {
+		size = {panelWidth, 0.0F};
+		zIndex = static_cast<short>(UI::z_panel); // exempts root-sibling overlaps (e.g. debug overlay) in the layout lint
 
-		contentWidth = panelWidth - (2.0F * kPadding);
+		auto rootLocal = UI::LayoutContainer(UI::LayoutContainer::Args{
+			.size = {panelWidth, 0.0F}, // fixed width, hug height
+			.direction = UI::Direction::Vertical,
+			.gap = kGap,
+			.padding = UI::Insets{kPad},
+			.id = "entity_info_root",
+		});
 
-		// Estimate max panel height (will resize dynamically based on content)
-		panelHeight = 160.0F;
+		// ---- Header row: avatar | identity column | eye+close buttons ----
+		auto headerLocal = UI::LayoutContainer(UI::LayoutContainer::Args{
+			.direction = UI::Direction::Horizontal,
+			.gap = kGap,
+			.id = "entity_info_header",
+		});
+		headerLocal.widthMode = UI::SizeMode::Fill; // stretch across the panel
 
-		// Add background panel (semi-transparent dark)
-		backgroundHandle = addChild(
-			UI::Rectangle(
-				UI::Rectangle::Args{
-					.position = args.position,
-					.size = {panelWidth, panelHeight},
-					.style = {.fill = UI::bg_panel, .border = Foundation::BorderStyle{.color = UI::line_edge, .width = UI::bw, .cornerRadius = UI::r_md, .position = Foundation::BorderPosition::Inside}},
-					.id = (args.id + "_bg").c_str()
-				}
-			)
-		);
+		auto avatarHandle = headerLocal.addChild(AvatarChip(kAvatarSize));
+		avatar = headerLocal.getChild<AvatarChip>(avatarHandle);
 
-		// Add close button background [X] in top-right corner
-		auto closePos = getCloseButtonPosition(args.position.y);
-		closeButtonBgHandle = addChild(
-			UI::Rectangle(
-				UI::Rectangle::Args{
-					.position = closePos,
-					.size = {kCloseButtonSize, kCloseButtonSize},
-					.style = {.fill = UI::bg_inset, .border = Foundation::BorderStyle{.color = UI::line_edge, .width = UI::bw, .cornerRadius = UI::r_sm, .position = Foundation::BorderPosition::Inside}},
-					.id = (args.id + "_close_bg").c_str()
-				}
-			)
-		);
+		auto identityLocal = UI::LayoutContainer(UI::LayoutContainer::Args{
+			.direction = UI::Direction::Vertical,
+			.gap = UI::space_1,
+			.id = "entity_info_identity",
+		});
+		identityLocal.widthMode = UI::SizeMode::Fill; // take the leftover header width
 
-		// Add close button text
-		closeButtonTextHandle = addChild(
-			UI::Text(
-				UI::Text::Args{
-					.position = {closePos.x + kCloseButtonSize * 0.5F, closePos.y + kCloseButtonSize * 0.5F - 1.0F},
-					.text = "X",
-					.style =
-						{
-							.color = UI::text_dim,
-							.fontSize = 10.0F,
-							.hAlign = Foundation::HorizontalAlign::Center,
-							.vAlign = Foundation::VerticalAlign::Middle,
-						},
-					.id = (args.id + "_close_text").c_str()
-				}
-			)
-		);
-
-		// Title text (used for single-column layout)
-		titleHandle = addChild(
-			UI::Text(
-				UI::Text::Args{
-					.position = {args.position.x + kPadding, args.position.y + kPadding},
-					.text = "",
-					.style =
-						{
-							.color = UI::text_bright,
-							.fontSize = kNameFontSize,
-							.hAlign = Foundation::HorizontalAlign::Left,
-							.vAlign = Foundation::VerticalAlign::Top,
-						},
-					.id = (args.id + "_title").c_str()
-				}
-			)
-		);
-
-		// ========== Colonist header elements (two-column layout) ==========
-
-		// Portrait placeholder (gray rectangle)
-		portraitHandle = addChild(
-			UI::Rectangle(
-				UI::Rectangle::Args{
-					.position = {args.position.x + kPadding, args.position.y + kPadding},
-					.size = {kPortraitSize, kPortraitSize},
-					.style =
-						{.fill = Foundation::Color(0.20F, 0.20F, 0.25F, 1.0F),
-						 .border = Foundation::BorderStyle{.color = Foundation::Color(0.30F, 0.30F, 0.35F, 1.0F), .width = 1.0F}},
-					.id = (args.id + "_portrait").c_str()
-				}
-			)
-		);
-
-		// Header name "Sarah Chen, 28"
-		headerNameHandle = addChild(
-			UI::Text(
-				UI::Text::Args{
-					.position = {args.position.x + kPadding + kPortraitSize + kSectionGap, args.position.y + kPadding},
-					.text = "",
-					.style =
-						{
-							.color = UI::text_bright,
-							.fontSize = kNameFontSize,
-							.hAlign = Foundation::HorizontalAlign::Left,
-							.vAlign = Foundation::VerticalAlign::Top,
-						},
-					.id = (args.id + "_header_name").c_str()
-				}
-			)
-		);
-
-		// Header mood bar - uses NeedBar component for consistent color gradient
-		// No label (label is rendered separately on the right side)
-		headerMoodBarHandle = addChild(NeedBar(
-			NeedBar::Args{
-				.position =
-					{args.position.x + kPadding + kPortraitSize + kSectionGap, args.position.y + kPadding + kNameFontSize + kItemGap},
-				.width = kHeaderMoodBarWidth,
-				.height = kHeaderMoodBarHeight,
-				.size = NeedBarSize::Compact,
-				.label = "", // No label - we render "72% Content" separately on the right
-				.id = args.id + "_mood_bar"
-			}
-		));
-
-		// Header mood label "72% Content"
-		headerMoodLabelHandle = addChild(
-			UI::Text(
-				UI::Text::Args{
-					.position =
-						{args.position.x + kPadding + kPortraitSize + kSectionGap + kHeaderMoodBarWidth + kIconLabelGap,
-						 args.position.y + kPadding + kNameFontSize + kItemGap},
-					.text = "",
-					.style =
-						{
-							.color = UI::text_dim,
-							.fontSize = kLabelFontSize,
-							.hAlign = Foundation::HorizontalAlign::Left,
-							.vAlign = Foundation::VerticalAlign::Top,
-						},
-					.id = (args.id + "_mood_label").c_str()
-				}
-			)
-		);
-
-		// "Needs:" section header (right column)
-		needsLabelHandle = addChild(
-			UI::Text(
-				UI::Text::Args{
-					.position = {args.position.x + kPadding, args.position.y},
-					.text = "Needs:",
-					.style =
-						{
-							.color = UI::text_dim,
-							.fontSize = kHeaderFontSize,
-							.hAlign = Foundation::HorizontalAlign::Left,
-							.vAlign = Foundation::VerticalAlign::Top,
-						},
-					.id = (args.id + "_needs_label").c_str()
-				}
-			)
-		);
-
-		// ========== Single-column layout elements (items/flora) ==========
-
-		// Centered icon placeholder
-		centeredIconHandle = addChild(
-			UI::Rectangle(
-				UI::Rectangle::Args{
-					.position = {args.position.x + (panelWidth - kEntityIconSize) * 0.5F, args.position.y + kPadding},
-					.size = {kEntityIconSize, kEntityIconSize},
-					.style =
-						{.fill = Foundation::Color(0.25F, 0.25F, 0.30F, 1.0F),
-						 .border = Foundation::BorderStyle{.color = Foundation::Color(0.35F, 0.35F, 0.40F, 1.0F), .width = 1.0F}},
-					.id = (args.id + "_centered_icon").c_str()
-				}
-			)
-		);
-
-		// Centered entity label
-		centeredLabelHandle = addChild(
-			UI::Text(
-				UI::Text::Args{
-					.position = {args.position.x + panelWidth * 0.5F, args.position.y + kPadding + kEntityIconSize + kIconLabelGap},
-					.text = "",
-					.style =
-						{
-							.color = UI::text_bright,
-							.fontSize = kNameFontSize,
-							.hAlign = Foundation::HorizontalAlign::Center,
-							.vAlign = Foundation::VerticalAlign::Top,
-						},
-					.id = (args.id + "_centered_label").c_str()
-				}
-			)
-		);
-
-		// Create text slot pool (positions set when shown via renderContent)
-		textHandles.reserve(kMaxTextSlots);
-		for (size_t i = 0; i < kMaxTextSlots; ++i) {
-			textHandles.push_back(addChild(
-				UI::Text(
-					UI::Text::Args{
-						.position = {args.position.x + kPadding, args.position.y},
-						.text = "",
-						.style =
-							{
-								.color = UI::text,
-								.fontSize = kLabelFontSize,
-								.hAlign = Foundation::HorizontalAlign::Left,
-								.vAlign = Foundation::VerticalAlign::Top,
-							},
-						.id = (args.id + "_text_" + std::to_string(i)).c_str()
-					}
-				)
-			));
+		{
+			auto text = UI::Text(UI::Text::Args{
+				.text = "",
+				.style = {.color = UI::text_bright, .fontSize = UI::fs_md, .wordWrap = true},
+				.id = "entity_info_name",
+			});
+			text.widthMode = UI::SizeMode::Fill;
+			nameText = identityLocal.getChild<UI::Text>(identityLocal.addChild(std::move(text)));
 		}
-
-		// Create progress bar pool for needs (positions set when shown via renderContent)
-		// Labels come from ecs::needLabel() - single source of truth with bounds checking
-		progressBarHandles.reserve(kMaxProgressBars);
-		for (size_t i = 0; i < kMaxProgressBars; ++i) {
-			// Use actual need label for first N needs, empty for extras
-			const char* label = (i < static_cast<size_t>(ecs::NeedType::Count)) ? ecs::needLabel(static_cast<ecs::NeedType>(i)) : "";
-			progressBarHandles.push_back(addChild(NeedBar(
-				NeedBar::Args{
-					.position = {args.position.x + kPadding, args.position.y},
-					.width = contentWidth,
-					.height = kNeedBarHeight,
-					.label = label,
-					.id = args.id + "_bar_" + std::to_string(i)
-				}
-			)));
+		{
+			auto text = UI::Text(UI::Text::Args{
+				.text = "",
+				.style = {.color = UI::text_dim, .fontSize = UI::fs_xs, .wordWrap = true},
+				.id = "entity_info_subtitle",
+			});
+			text.widthMode = UI::SizeMode::Fill;
+			subtitleText = identityLocal.getChild<UI::Text>(identityLocal.addChild(std::move(text)));
 		}
+		moodBar = identityLocal.getChild<UI::ProgressBar>(identityLocal.addChild(UI::ProgressBar(UI::ProgressBar::Args{
+			.width = kMeterWidth,
+			.value = 1.0F,
+			.tone = UI::Tone::Auto,
+			.label = "Mood",
+			.size = UI::Size::Sm,
+			.inlineLabel = true,
+			.id = "entity_info_mood",
+		})));
+		taskBar = identityLocal.getChild<UI::ProgressBar>(identityLocal.addChild(UI::ProgressBar(UI::ProgressBar::Args{
+			.width = kMeterWidth,
+			.value = 0.0F,
+			.tone = UI::Tone::Accent,
+			.label = "Idle",
+			.size = UI::Size::Sm,
+			.inlineLabel = true,
+			.id = "entity_info_task",
+		})));
 
-		// Create list header (position set when shown via renderContent)
-		listHeaderHandle = addChild(
-			UI::Text(
-				UI::Text::Args{
-					.position = {args.position.x + kPadding, args.position.y},
-					.text = "",
-					.style =
-						{
-							.color = UI::text,
-							.fontSize = kLabelFontSize,
-							.hAlign = Foundation::HorizontalAlign::Left,
-							.vAlign = Foundation::VerticalAlign::Top,
-						},
-					.id = (args.id + "_list_header").c_str()
+		auto buttonsLocal = UI::LayoutContainer(UI::LayoutContainer::Args{
+			.direction = UI::Direction::Horizontal,
+			.gap = UI::space_1,
+			.id = "entity_info_buttons",
+		});
+		eyeButton = buttonsLocal.getChild<GlyphButton>(buttonsLocal.addChild(GlyphButton(GlyphButton::Args{
+			.glyph = "eye",
+			.onClick = [this]() {
+				if (onDetailsCallback) {
+					onDetailsCallback();
 				}
-			)
-		);
-
-		// Create list item pool (positions set when shown via renderContent)
-		listItemHandles.reserve(kMaxListItems);
-		for (size_t i = 0; i < kMaxListItems; ++i) {
-			listItemHandles.push_back(addChild(
-				UI::Text(
-					UI::Text::Args{
-						.position = {args.position.x + kPadding + 8.0F, args.position.y},
-						.text = "",
-						.style =
-							{
-								.color = UI::status_ok,
-								.fontSize = kLabelFontSize,
-								.hAlign = Foundation::HorizontalAlign::Left,
-								.vAlign = Foundation::VerticalAlign::Top,
-							},
-						.id = (args.id + "_list_" + std::to_string(i)).c_str()
-					}
-				)
-			));
-		}
-
-		// Create clickable text element (for ClickableTextSlot)
-		clickableTextHandle = addChild(
-			UI::Text(
-				UI::Text::Args{
-					.position = {args.position.x + kPadding, args.position.y},
-					.text = "",
-					.style =
-						{
-							.color = UI::data,
-							.fontSize = kLabelFontSize,
-							.hAlign = Foundation::HorizontalAlign::Left,
-							.vAlign = Foundation::VerticalAlign::Top,
-						},
-					.id = (args.id + "_clickable").c_str()
+			},
+			.id = "entity_info_details",
+		})));
+		closeButton = buttonsLocal.getChild<GlyphButton>(buttonsLocal.addChild(GlyphButton(GlyphButton::Args{
+			.glyph = "close",
+			.onClick = [this]() {
+				if (onCloseCallback) {
+					onCloseCallback();
 				}
-			)
-		);
+			},
+			.id = "entity_info_close",
+		})));
 
-		// Create recipe card pool (for RecipeSlot)
-		recipeCardHandles.reserve(kMaxRecipeCards);
-		recipeCallbacks.resize(kMaxRecipeCards);
-		recipeButtonBounds.resize(kMaxRecipeCards);
-		for (size_t i = 0; i < kMaxRecipeCards; ++i) {
-			RecipeCardHandles card;
+		identityCol = headerLocal.getChild<UI::LayoutContainer>(headerLocal.addChild(std::move(identityLocal)));
+		buttonCol = headerLocal.getChild<UI::LayoutContainer>(headerLocal.addChild(std::move(buttonsLocal)));
+		headerRow = rootLocal.getChild<UI::LayoutContainer>(rootLocal.addChild(std::move(headerLocal)));
 
-			// Card background
-			card.background = addChild(
-				UI::Rectangle(
-					UI::Rectangle::Args{
-						.position = {args.position.x + kPadding, args.position.y},
-						.size = {contentWidth, kRecipeCardHeight},
-						.style = {.fill = UI::bg_inset, .border = Foundation::BorderStyle{.color = UI::line_edge, .width = UI::bw, .cornerRadius = UI::r_sm, .position = Foundation::BorderPosition::Inside}},
-						.id = (args.id + "_recipe_bg_" + std::to_string(i)).c_str()
-					}
-				)
-			);
+		// ---- Tab bar (colonists only) ----
+		tabBar = rootLocal.getChild<UI::TabBar>(rootLocal.addChild(UI::TabBar(UI::TabBar::Args{
+			.width = contentWidth,
+			.tabs =
+				{{.id = "needs", .label = "Needs"},
+				 {.id = "bio", .label = "Bio"},
+				 {.id = "gear", .label = "Gear"},
+				 {.id = "log", .label = "Log"}},
+			.selectedId = "needs",
+			.onSelect = [this](const std::string& tabId) { setActiveTab(tabId); },
+			.id = "entity_info_tabs",
+		})));
 
-			// Recipe name text
-			card.nameText = addChild(
-				UI::Text(
-					UI::Text::Args{
-						.position = {args.position.x + kPadding + kRecipeCardPadding, args.position.y},
-						.text = "",
-						.style =
-							{
-								.color = UI::text_bright,
-								.fontSize = kRecipeNameFontSize,
-								.hAlign = Foundation::HorizontalAlign::Left,
-								.vAlign = Foundation::VerticalAlign::Top,
-							},
-						.id = (args.id + "_recipe_name_" + std::to_string(i)).c_str()
-					}
-				)
-			);
-
-			// Ingredients text
-			card.ingredientsText = addChild(
-				UI::Text(
-					UI::Text::Args{
-						.position = {args.position.x + kPadding + kRecipeCardPadding, args.position.y},
-						.text = "",
-						.style =
-							{
-								.color = UI::text_dim,
-								.fontSize = kRecipeIngredientsFontSize,
-								.hAlign = Foundation::HorizontalAlign::Left,
-								.vAlign = Foundation::VerticalAlign::Top,
-							},
-						.id = (args.id + "_recipe_ingredients_" + std::to_string(i)).c_str()
-					}
-				)
-			);
-
-			// Queue button background [+]
-			card.queueButton = addChild(
-				UI::Rectangle(
-					UI::Rectangle::Args{
-						.position = {args.position.x + contentWidth - kRecipeQueueButtonSize, args.position.y},
-						.size = {kRecipeQueueButtonSize, kRecipeQueueButtonSize},
-						.style = {.fill = UI::bg_inset, .border = Foundation::BorderStyle{.color = UI::line_edge, .width = UI::bw, .cornerRadius = UI::r_sm, .position = Foundation::BorderPosition::Inside}},
-						.id = (args.id + "_recipe_btn_" + std::to_string(i)).c_str()
-					}
-				)
-			);
-
-			// Queue button text
-			card.queueButtonText = addChild(
-				UI::Text(
-					UI::Text::Args{
-						.position = {args.position.x + contentWidth - kRecipeQueueButtonSize * 0.5F, args.position.y},
-						.text = "+",
-						.style =
-							{
-								.color = UI::text_bright,
-								.fontSize = 14.0F,
-								.hAlign = Foundation::HorizontalAlign::Center,
-								.vAlign = Foundation::VerticalAlign::Middle,
-							},
-						.id = (args.id + "_recipe_btn_text_" + std::to_string(i)).c_str()
-					}
-				)
-			);
-
-			recipeCardHandles.push_back(card);
+		// ---- Needs tab: one bar per need ----
+		auto needsLocal = UI::LayoutContainer(UI::LayoutContainer::Args{
+			.direction = UI::Direction::Vertical,
+			.gap = UI::space_1,
+			.id = "entity_info_needs",
+		});
+		const auto needCount = static_cast<size_t>(ecs::NeedType::Count);
+		needBars.reserve(needCount);
+		for (size_t i = 0; i < needCount; ++i) {
+			auto handle = needsLocal.addChild(NeedBar(NeedBar::Args{
+				.width = contentWidth,
+				.label = ecs::needLabel(static_cast<ecs::NeedType>(i)),
+				.id = "entity_info_need_" + std::to_string(i),
+			}));
+			needBars.push_back(needsLocal.getChild<NeedBar>(handle));
 		}
+		needsBody = rootLocal.getChild<UI::LayoutContainer>(rootLocal.addChild(std::move(needsLocal)));
 
-		// Create action button pool (for ActionButtonSlot - Place/Package)
-		actionButtonHandles.reserve(kMaxActionButtons);
-		actionButtonCallbacks.resize(kMaxActionButtons);
-		actionButtonBounds.resize(kMaxActionButtons);
-		for (size_t i = 0; i < kMaxActionButtons; ++i) {
-			ActionButtonHandles button;
-
-			// Button background
-			button.background = addChild(
-				UI::Rectangle(
-					UI::Rectangle::Args{
-						.position = {args.position.x + kPadding, args.position.y},
-						.size = {contentWidth, kActionButtonHeight},
-						.style = {.fill = UI::bg_inset, .border = Foundation::BorderStyle{.color = UI::line_edge, .width = UI::bw, .cornerRadius = UI::r_sm, .position = Foundation::BorderPosition::Inside}},
-						.id = (args.id + "_action_bg_" + std::to_string(i)).c_str()
-					}
-				)
-			);
-
-			// Button text
-			button.text = addChild(
-				UI::Text(
-					UI::Text::Args{
-						.position = {args.position.x + contentWidth * 0.5F, args.position.y + kActionButtonHeight * 0.5F},
-						.text = "",
-						.style =
-							{
-								.color = UI::text_bright,
-								.fontSize = kActionButtonFontSize,
-								.hAlign = Foundation::HorizontalAlign::Center,
-								.vAlign = Foundation::VerticalAlign::Middle,
-							},
-						.id = (args.id + "_action_text_" + std::to_string(i)).c_str()
-					}
-				)
-			);
-
-			actionButtonHandles.push_back(button);
-		}
-
-		// Create details button icon (hidden initially, shown for colonists)
-		// Icon: "open in new window" - rectangle outline + arrow
-		auto detailsPos = getDetailsButtonPosition(args.position.y);
-		detailsButtonBgHandle = addChild(
-			UI::Rectangle(
-				UI::Rectangle::Args{
-					.position = detailsPos,
-					.size = {kDetailsButtonSize, kDetailsButtonSize},
-					.style = {.fill = UI::bg_inset, .border = Foundation::BorderStyle{.color = UI::line_edge, .width = UI::bw, .cornerRadius = UI::r_sm, .position = Foundation::BorderPosition::Inside}},
-					.id = (args.id + "_details_bg").c_str()
-				}
-			)
-		);
-
-		// Create icon line elements (positions set by updateDetailsIcon)
-		Foundation::Color iconColor = UI::text_bright;
-		constexpr float	  lineWidth = 1.5F;
-		auto			  createLine = [&]() {
-			 return addChild(
-				 UI::Line(UI::Line::Args{.start = {0.0F, 0.0F}, .end = {0.0F, 0.0F}, .style = {.color = iconColor, .width = lineWidth}})
-			 );
+		// ---- Bio tab ----
+		auto bioLocal = UI::LayoutContainer(UI::LayoutContainer::Args{
+			.direction = UI::Direction::Vertical,
+			.gap = UI::space_1,
+			.id = "entity_info_bio",
+		});
+		auto makeBioRow = [this, &bioLocal](const char* id) {
+			auto text = UI::Text(UI::Text::Args{
+				.width = contentWidth,
+				.text = "",
+				.style = {.color = UI::text, .fontSize = UI::fs_sm, .wordWrap = true},
+				.id = id,
+			});
+			return bioLocal.getChild<UI::Text>(bioLocal.addChild(std::move(text)));
 		};
-		detailsIconLine1Handle = createLine();
-		detailsIconLine2Handle = createLine();
-		detailsIconLine3Handle = createLine();
-		detailsIconLine4Handle = createLine();
-		detailsIconLine5Handle = createLine();
-		detailsIconLine6Handle = createLine();
+		bioAge = makeBioRow("entity_info_bio_age");
+		bioMood = makeBioRow("entity_info_bio_mood");
+		bioBody = rootLocal.getChild<UI::LayoutContainer>(rootLocal.addChild(std::move(bioLocal)));
 
-		// Set initial positions (icon starts hidden)
-		updateDetailsIcon(false, detailsPos);
+		// ---- Gear tab: armed line, belt chips, carry meter, backpack ----
+		auto gearLocal = UI::LayoutContainer(UI::LayoutContainer::Args{
+			.direction = UI::Direction::Vertical,
+			.gap = UI::space_1_5,
+			.id = "entity_info_gear",
+		});
+		{
+			auto text = UI::Text(UI::Text::Args{
+				.width = contentWidth,
+				.text = "Armed: (empty)",
+				.style = {.color = UI::text, .fontSize = UI::fs_sm, .wordWrap = true},
+				.id = "entity_info_gear_hands",
+			});
+			gearHands = gearLocal.getChild<UI::Text>(gearLocal.addChild(std::move(text)));
+		}
+		auto beltLocal = UI::LayoutContainer(UI::LayoutContainer::Args{
+			.direction = UI::Direction::Horizontal,
+			.gap = UI::space_1,
+			.crossAlign = UI::CrossAlign::Center,
+			.id = "entity_info_belt",
+		});
+		{
+			auto label = UI::Text(UI::Text::Args{
+				.text = "Belt:",
+				.style = {.color = UI::text_dim, .fontSize = UI::fs_sm},
+				.id = "entity_info_belt_label",
+			});
+			beltLocal.addChild(std::move(label));
+		}
+		// ecs::Inventory has two belt slots
+		for (size_t i = 0; i < 2; ++i) {
+			auto chip = BadgeChip();
+			chip.visible = false;
+			beltChips.push_back(beltLocal.getChild<BadgeChip>(beltLocal.addChild(std::move(chip))));
+		}
+		{
+			auto text = UI::Text(UI::Text::Args{
+				.text = "(empty)",
+				.style = {.color = UI::text_dim, .fontSize = UI::fs_sm},
+				.id = "entity_info_belt_empty",
+			});
+			beltEmpty = beltLocal.getChild<UI::Text>(beltLocal.addChild(std::move(text)));
+		}
+		beltRow = gearLocal.getChild<UI::LayoutContainer>(gearLocal.addChild(std::move(beltLocal)));
+		carryBar = gearLocal.getChild<UI::ProgressBar>(gearLocal.addChild(UI::ProgressBar(UI::ProgressBar::Args{
+			.width = contentWidth,
+			.value = 0.0F,
+			.tone = UI::Tone::Data,
+			.label = "Carry",
+			.size = UI::Size::Sm,
+			.inlineLabel = true,
+			.id = "entity_info_carry",
+		})));
+		{
+			auto text = UI::Text(UI::Text::Args{
+				.width = contentWidth,
+				.text = "Backpack: (empty)",
+				.style = {.color = UI::text_dim, .fontSize = UI::fs_sm, .wordWrap = true},
+				.id = "entity_info_gear_pack",
+			});
+			gearPack = gearLocal.getChild<UI::Text>(gearLocal.addChild(std::move(text)));
+		}
+		gearBody = rootLocal.getChild<UI::LayoutContainer>(rootLocal.addChild(std::move(gearLocal)));
 
-		// Disable child sorting to preserve LayerHandle indices
-		childrenNeedSorting = false;
+		// ---- Log tab: empty-state stub (no activity-log system yet) ----
+		auto logLocal = UI::LayoutContainer(UI::LayoutContainer::Args{
+			.direction = UI::Direction::Vertical,
+			.id = "entity_info_log",
+		});
+		logLocal.addChild(EmptyStateBox(contentWidth, "No activity log yet", "A chronological log arrives with the events update."));
+		logBody = rootLocal.getChild<UI::LayoutContainer>(rootLocal.addChild(std::move(logLocal)));
 
-		// Start hidden (inherited IComponent::visible defaults to true)
+		// ---- Action row: Draft | Go to | Priorities ----
+		auto actionLocal = UI::LayoutContainer(UI::LayoutContainer::Args{
+			.direction = UI::Direction::Horizontal,
+			.gap = kGap,
+			.id = "entity_info_actions",
+		});
+		const float actionButtonWidth = (contentWidth - kGap * 2.0F) / 3.0F;
+		draftButton = actionLocal.getChild<UI::Button>(actionLocal.addChild(UI::Button(UI::Button::Args{
+			.label = "Draft",
+			.size = {actionButtonWidth, kActionButtonHeight},
+			.type = UI::Button::Type::Secondary,
+			.onClick =
+				[this]() {
+					if (onToggleControlCallback && selectedColonistId != ecs::EntityID{0}) {
+						onToggleControlCallback(selectedColonistId);
+					}
+				},
+			.id = "entity_info_draft",
+		})));
+		goToButton = actionLocal.getChild<UI::Button>(actionLocal.addChild(UI::Button(UI::Button::Args{
+			.label = "Go to",
+			.size = {actionButtonWidth, kActionButtonHeight},
+			.type = UI::Button::Type::Secondary,
+			.onClick =
+				[this]() {
+					if (onGoToCallback && selectedColonistId != ecs::EntityID{0}) {
+						onGoToCallback(selectedColonistId);
+					}
+				},
+			.id = "entity_info_goto",
+		})));
+		// Disabled stub: no priorities system yet
+		actionLocal.addChild(UI::Button(UI::Button::Args{
+			.label = "Priorities",
+			.size = {actionButtonWidth, kActionButtonHeight},
+			.type = UI::Button::Type::Secondary,
+			.disabled = true,
+			.id = "entity_info_priorities",
+		}));
+		actionRow = rootLocal.getChild<UI::LayoutContainer>(rootLocal.addChild(std::move(actionLocal)));
+
+		// ---- Generic slot rows (non-colonist selections) ----
+		auto slotsLocal = UI::LayoutContainer(UI::LayoutContainer::Args{
+			.size = {contentWidth, 0.0F},
+			.direction = UI::Direction::Vertical,
+			.gap = kGap,
+			.id = "entity_info_slots",
+		});
+		slotsBody = rootLocal.getChild<UI::LayoutContainer>(rootLocal.addChild(std::move(slotsLocal)));
+
+		root = getChild<UI::LayoutContainer>(addChild(std::move(rootLocal)));
+
 		visible = false;
-		hideSlots();
 	}
 
 	void EntityInfoView::update(
@@ -482,11 +466,7 @@ namespace world_sim {
 		const engine::construction::ConstructionWorld* constructionWorld,
 		const ecs::RoomDetectionSystem*				   roomDetection
 	) {
-		// Prepare callbacks for model
 		EntityInfoModel::Callbacks callbacks{
-			.onDetails = onDetailsCallback,
-			.onToggleControl = onToggleControlCallback,
-			.onQueueRecipe = onQueueRecipeCallback,
 			.onOpenCraftingDialog = onOpenCraftingDialogCallback,
 			.onPlace = onPlaceCallback,
 			.onMoveFurniture = onMoveFurnitureCallback,
@@ -498,619 +478,303 @@ namespace world_sim {
 			.onDemolishOpening = onDemolishOpeningCallback,
 		};
 
-		// Let model handle all the logic (selection detection, change detection, content generation)
-		auto updateType = m_model.refresh(selection, world, assetRegistry, recipeRegistry, callbacks, constructionWorld, roomDetection);
+		const auto updateType = m_model.refresh(selection, world, assetRegistry, recipeRegistry, callbacks, constructionWorld, roomDetection);
 
-		// React based on update type
 		switch (updateType) {
 			case EntityInfoModel::UpdateType::None:
-				// No change needed
 				break;
-
 			case EntityInfoModel::UpdateType::Hide:
 				visible = false;
-				hideSlots();
 				break;
-
 			case EntityInfoModel::UpdateType::Show:
 				visible = true;
-				renderContent(m_model.content());
+				applyContent(m_model.content(), true);
 				break;
-
 			case EntityInfoModel::UpdateType::Structure:
-				renderContent(m_model.content());
+				applyContent(m_model.content(), true);
 				break;
-
 			case EntityInfoModel::UpdateType::Values:
-				updateValues(m_model.content());
+				applyContent(m_model.content(), false);
 				break;
+		}
+
+		if (visible) {
+			applyAnchor();
 		}
 	}
 
-	void EntityInfoView::renderContent(const PanelContent& content) {
-		// Reset slot usage counters
-		usedTextSlots = 0;
-		usedProgressBars = 0;
-		usedListItems = 0;
-		usedRecipeCards = 0;
-		usedActionButtons = 0;
-
-		// Clear clickable slot state (will be set if content has ClickableTextSlot)
-		clickableCallback = nullptr;
-		clickableBoundsMin = {};
-		clickableBoundsMax = {};
-
-		// Clear recipe callbacks
-		for (auto& cb : recipeCallbacks) {
-			cb = nullptr;
-		}
-
-		// Clear action button callbacks
-		for (auto& cb : actionButtonCallbacks) {
-			cb = nullptr;
-		}
-
-		// Hide all pool elements first (will show ones we use)
-		hideSlots();
-
-		// Fixed panel height for all entity types - ensures visual consistency
-		// Header: kPadding(12) + kPortraitSize(64) + kSectionGap(12) = 88px
-		//         Name text and mood bar are positioned within the portrait band
-		// Task lines (full width, above the columns): Current + Next + Spacer
-		//         = 2 * (kLabelFontSize(12) + kItemGap(4)) + 8 = 40px
-		// Column: kHeaderFontSize(12) + kItemGap(4) + 8 needs * (kNeedBarHeight(16) + kItemGap(4)) = 16 + 160 = 176px
-		// Bottom: kPadding(12) = 12px
-		// Total = 88 + 40 + 176 + 12 = 316px, plus 4px extra padding for breathing room -> 320px
-		// The needs column (right) sets the height budget; the colonist left column carries the
-		// Gear list plus a Control/Release button (spacer + kActionButtonHeight) below it, which
-		// stays within this fixed height even with a full backpack (the left column is shorter).
-		constexpr float kFixedPanelHeight = 320.0F;
-		float			totalHeight = kFixedPanelHeight;
-
-		panelHeight = totalHeight;
-		float panelY = m_viewportHeight - panelHeight;
-
-		// Show and position background
-		if (auto* bg = getChild<UI::Rectangle>(backgroundHandle)) {
-			bg->visible = true;
-			bg->position = {panelX, panelY};
-			bg->size.y = panelHeight;
-		}
-
-		// Show and position close button
-		auto closePos = getCloseButtonPosition(panelY);
-		if (auto* closeBg = getChild<UI::Rectangle>(closeButtonBgHandle)) {
-			closeBg->visible = true;
-			closeBg->position = closePos;
-		}
-		if (auto* closeText = getChild<UI::Text>(closeButtonTextHandle)) {
-			closeText->visible = true;
-			closeText->position = {closePos.x + kCloseButtonSize * 0.5F, closePos.y + kCloseButtonSize * 0.5F - 1.0F};
-		}
-
-		// Dispatch to appropriate layout renderer
-		if (content.layout == PanelLayout::TwoColumn) {
-			renderTwoColumnLayout(content, panelY);
+	void EntityInfoView::applyContent(const PanelContent& content, bool structural) {
+		const bool isColonist = content.colonist.has_value();
+		nameText->text = isColonist ? content.colonist->name : content.title;
+		if (isColonist) {
+			applyColonist(*content.colonist, structural);
 		} else {
-			renderSingleColumnLayout(content, panelY);
+			applyGeneric(content, structural);
 		}
+		markLayoutDirty();
 	}
 
-	void EntityInfoView::renderSingleColumnLayout(const PanelContent& content, float panelY) {
-		// Hide colonist-specific header elements
-		if (auto* portrait = getChild<UI::Rectangle>(portraitHandle)) {
-			portrait->visible = false;
-		}
-		if (auto* headerName = getChild<UI::Text>(headerNameHandle)) {
-			headerName->visible = false;
-		}
-		if (auto* moodBar = getChild<NeedBar>(headerMoodBarHandle)) {
-			moodBar->visible = false;
-		}
-		if (auto* moodLabel = getChild<UI::Text>(headerMoodLabelHandle)) {
-			moodLabel->visible = false;
-		}
-		if (auto* needsLabel = getChild<UI::Text>(needsLabelHandle)) {
-			needsLabel->visible = false;
-		}
-		if (auto* title = getChild<UI::Text>(titleHandle)) {
-			title->visible = false;
-		}
+	void EntityInfoView::applyColonist(const ColonistPanelData& data, bool structural) {
+		selectedColonistId = data.id;
 
-		// Hide details button for non-colonist selections
-		if (auto* detailsBg = getChild<UI::Rectangle>(detailsButtonBgHandle)) {
-			detailsBg->visible = false;
-		}
-		// Hide all icon lines
-		if (auto* line = getChild<UI::Line>(detailsIconLine1Handle))
-			line->visible = false;
-		if (auto* line = getChild<UI::Line>(detailsIconLine2Handle))
-			line->visible = false;
-		if (auto* line = getChild<UI::Line>(detailsIconLine3Handle))
-			line->visible = false;
-		if (auto* line = getChild<UI::Line>(detailsIconLine4Handle))
-			line->visible = false;
-		if (auto* line = getChild<UI::Line>(detailsIconLine5Handle))
-			line->visible = false;
-		if (auto* line = getChild<UI::Line>(detailsIconLine6Handle))
-			line->visible = false;
+		avatar->visible = true;
+		avatar->setIdentity(data.name, data.moodValue / 100.0F);
+		subtitleText->visible = false;
+		moodBar->visible = true;
+		taskBar->visible = true;
+		eyeButton->visible = static_cast<bool>(onDetailsCallback);
+		tabBar->visible = true;
+		actionRow->visible = true;
+		slotsBody->visible = false;
 
-		// Show centered icon placeholder
-		float iconX = panelX + (panelWidth - kEntityIconSize) * 0.5F;
-		if (auto* icon = getChild<UI::Rectangle>(centeredIconHandle)) {
-			icon->visible = true;
-			icon->position = {iconX, panelY + kPadding};
-		}
+		moodBar->setValue(data.moodValue / 100.0F);
+		moodBar->setValueText(std::to_string(static_cast<int>(data.moodValue)) + "% " + data.moodLabel);
 
-		// Get entity name from first IconSlot if present
-		std::string entityName = content.title;
-		for (const auto& slot : content.slots) {
-			if (const auto* iconSlot = std::get_if<IconSlot>(&slot)) {
-				entityName = iconSlot->label;
-				break;
+		const bool acting = data.taskProgress >= 0.0F;
+		taskBar->setLabel(data.currentTask);
+		taskBar->setValue(acting ? data.taskProgress : 0.0F);
+		taskBar->setValueText(acting ? std::to_string(static_cast<int>(data.taskProgress * 100.0F)) + "%" : "");
+
+		for (size_t i = 0; i < needBars.size(); ++i) {
+			const bool has = i < data.needs.size();
+			needBars[i]->visible = has;
+			if (has) {
+				needBars[i]->setLabel(data.needs[i].label);
+				needBars[i]->setValue(data.needs[i].value);
 			}
 		}
 
-		// Show centered entity label below icon
-		if (auto* label = getChild<UI::Text>(centeredLabelHandle)) {
-			label->visible = true;
-			label->position = {panelX + panelWidth * 0.5F, panelY + kPadding + kEntityIconSize + kItemGap};
-			label->text = entityName;
-		}
+		bioAge->text = "Age: " + data.age;
+		bioMood->text = "Mood: " + std::to_string(static_cast<int>(data.moodValue)) + "% " + data.moodLabel;
 
-		// Render remaining slots below the centered icon/label
-		float yOffset = panelY + kPadding + kEntityIconSize + kItemGap + kNameFontSize + kSectionGap;
-		for (const auto& slot : content.slots) {
-			// Skip IconSlot (already rendered as centered icon)
-			if (std::holds_alternative<IconSlot>(slot)) {
-				continue;
-			}
-			yOffset += renderSlot(slot, yOffset, 0.0F, 0.0F);
-		}
-	}
-
-	void EntityInfoView::renderTwoColumnLayout(const PanelContent& content, float panelY) {
-		// Hide single-column elements
-		if (auto* centeredIcon = getChild<UI::Rectangle>(centeredIconHandle)) {
-			centeredIcon->visible = false;
-		}
-		if (auto* centeredLabel = getChild<UI::Text>(centeredLabelHandle)) {
-			centeredLabel->visible = false;
-		}
-		if (auto* title = getChild<UI::Text>(titleHandle)) {
-			title->visible = false;
-		}
-
-		// ========== HEADER AREA ==========
-		// Portrait placeholder (64×64)
-		if (auto* portrait = getChild<UI::Rectangle>(portraitHandle)) {
-			portrait->visible = true;
-			portrait->position = {panelX + kPadding, panelY + kPadding};
-		}
-
-		// Name to right of portrait: "Sarah Chen"
-		float headerTextX = panelX + kPadding + kPortraitSize + kSectionGap;
-		if (auto* headerName = getChild<UI::Text>(headerNameHandle)) {
-			headerName->visible = true;
-			headerName->position = {headerTextX, panelY + kPadding};
-			headerName->text = content.header.name;
-		}
-
-		// Compact mood bar (8px height) below name with spacing
-		// Uses NeedBar component which handles color gradient automatically
-		float moodBarY = panelY + kPadding + kNameFontSize + kHeaderMoodBarOffset;
-		if (auto* moodBar = getChild<NeedBar>(headerMoodBarHandle)) {
-			moodBar->visible = true;
-			moodBar->setPosition({headerTextX, moodBarY});
-			moodBar->setValue(content.header.moodValue); // NeedBar handles color gradient
-		}
-
-		// Mood label: "72% Content" - vertically centered with mood bar
-		// Pre-allocate string to avoid temporary allocations
-		std::string moodText;
-		{
-			auto valueStr = std::to_string(static_cast<int>(content.header.moodValue));
-			moodText.reserve(valueStr.size() + 2U + content.header.moodLabel.size());
-			moodText.append(valueStr);
-			moodText.append("% ");
-			moodText.append(content.header.moodLabel);
-		}
-		if (auto* moodLabel = getChild<UI::Text>(headerMoodLabelHandle)) {
-			moodLabel->visible = true;
-			// Center text with bar: compute offset from bar height and font size
-			const float moodLabelVerticalOffset = (kHeaderMoodBarHeight - kMoodLabelFontSize) * 0.5F;
-			moodLabel->position = {headerTextX + kHeaderMoodBarWidth + kIconLabelGap, moodBarY + moodLabelVerticalOffset};
-			moodLabel->text = std::move(moodText);
-		}
-
-		// Details icon button at top-right (only for colonists - check if callback is set)
-		bool showDetailsButton = (content.onDetails != nullptr);
-		auto detailsPos = getDetailsButtonPosition(panelY);
-		if (auto* detailsBg = getChild<UI::Rectangle>(detailsButtonBgHandle)) {
-			detailsBg->visible = showDetailsButton;
-			detailsBg->position = detailsPos;
-		}
-		updateDetailsIcon(showDetailsButton, detailsPos);
-
-		// ========== TWO-COLUMN CONTENT AREA ==========
-		float columnsY = panelY + kPadding + kPortraitSize + kSectionGap;
-
-		// Column widths (left is fixed, right fills remaining)
-		float rightColumnWidth = contentWidth - kLeftColumnWidth - kColumnGap;
-		float rightColumnX = kLeftColumnWidth + kColumnGap;
-
-		// The task lines (Current/Next) render at FULL width so a long task description doesn't
-		// collide with the needs column; the Gear list and the needs sit side-by-side BELOW
-		// them. The adapter's SpacerSlot between the task lines and the gear marks the boundary.
-		float  leftY = columnsY;
-		size_t slotIdx = 0;
-		for (; slotIdx < content.leftColumn.size(); ++slotIdx) {
-			const auto& slot = content.leftColumn[slotIdx];
-			leftY += renderSlot(slot, leftY, 0.0F, contentWidth);
-			if (std::holds_alternative<SpacerSlot>(slot)) {
-				++slotIdx; // consume the spacer; the rest is the (narrow) gear column
-				break;
+		gearHands->text = "Armed: " + data.hands;
+		for (size_t i = 0; i < beltChips.size(); ++i) {
+			const bool has = i < data.belt.size();
+			beltChips[i]->visible = has;
+			if (has) {
+				beltChips[i]->setLabel(data.belt[i]);
 			}
 		}
+		beltEmpty->visible = data.belt.empty();
 
-		// Both the Gear list and the needs begin below the full-width task lines.
-		const float columnsBeginY = leftY;
-
-		// LEFT COLUMN (below task lines): Gear list at the narrow left width.
-		for (; slotIdx < content.leftColumn.size(); ++slotIdx) {
-			leftY += renderSlot(content.leftColumn[slotIdx], leftY, 0.0F, kLeftColumnWidth);
-		}
-
-		// RIGHT COLUMN: "Needs:" header + need bars (only if has content)
-		float rightY = columnsBeginY;
-		bool  hasNeedsContent = !content.rightColumn.empty();
-
-		// "Needs:" section header (only show if we have needs)
-		if (auto* needsLabel = getChild<UI::Text>(needsLabelHandle)) {
-			needsLabel->visible = hasNeedsContent;
-			if (hasNeedsContent) {
-				needsLabel->position = {panelX + kPadding + rightColumnX, rightY};
-			}
-		}
-		if (hasNeedsContent) {
-			rightY += kHeaderFontSize + kItemGap;
-		}
-
-		// Need bars
-		for (const auto& slot : content.rightColumn) {
-			rightY += renderSlot(slot, rightY, rightColumnX, rightColumnWidth);
-		}
-	}
-
-	void EntityInfoView::hideSlots() {
-		// Hide all children via inherited Component::children vector
-		// This is O(n) but n is small (~30 elements) and avoids handle lookups
-		for (auto* child : children) {
-			child->visible = false;
-		}
-	}
-
-	float EntityInfoView::renderSlot(const InfoSlot& slot, float yOffset, float xOffset, float maxWidth) {
-		return std::visit(
-			[this, yOffset, xOffset, maxWidth](const auto& s) -> float {
-				using T = std::decay_t<decltype(s)>;
-				if constexpr (std::is_same_v<T, TextSlot>) {
-					return renderTextSlot(s, yOffset, xOffset);
-				} else if constexpr (std::is_same_v<T, ProgressBarSlot>) {
-					return renderProgressBarSlot(s, yOffset, xOffset, maxWidth);
-				} else if constexpr (std::is_same_v<T, TextListSlot>) {
-					return renderTextListSlot(s, yOffset, xOffset);
-				} else if constexpr (std::is_same_v<T, SpacerSlot>) {
-					return renderSpacerSlot(s, yOffset);
-				} else if constexpr (std::is_same_v<T, ClickableTextSlot>) {
-					return renderClickableTextSlot(s, yOffset, xOffset);
-				} else if constexpr (std::is_same_v<T, RecipeSlot>) {
-					return renderRecipeSlot(s, yOffset);
-				} else if constexpr (std::is_same_v<T, IconSlot>) {
-					return renderIconSlot(s, yOffset);
-				} else if constexpr (std::is_same_v<T, ActionButtonSlot>) {
-					return renderActionButtonSlot(s, yOffset, xOffset, maxWidth);
-				}
-				return 0.0F;
-			},
-			slot
+		const float ratio = data.capacityKg > 0.0F ? data.carriedKg / data.capacityKg : 0.0F;
+		carryBar->setValue(ratio);
+		carryBar->setValueText(
+			std::to_string(static_cast<int>(data.carriedKg + 0.5F)) + " / " + std::to_string(static_cast<int>(data.capacityKg + 0.5F)) +
+			" kg"
 		);
-	}
 
-	float EntityInfoView::renderTextSlot(const TextSlot& slot, float yOffset, float xOffset) {
-		if (usedTextSlots >= textHandles.size()) {
-			return 0.0F;
-		}
-
-		if (auto* text = getChild<UI::Text>(textHandles[usedTextSlots])) {
-			text->visible = true;
-			text->position = {panelX + kPadding + xOffset, yOffset};
-			// Pre-allocate string to avoid temporary allocations
-			std::string combined;
-			combined.reserve(slot.label.size() + 2U + slot.value.size());
-			combined.append(slot.label);
-			combined.append(": ");
-			combined.append(slot.value);
-			text->text = std::move(combined);
-		}
-
-		++usedTextSlots;
-		return kLabelFontSize + kItemGap;
-	}
-
-	float EntityInfoView::renderProgressBarSlot(const ProgressBarSlot& slot, float yOffset, float xOffset, float maxWidth) {
-		if (usedProgressBars >= progressBarHandles.size()) {
-			return 0.0F;
-		}
-
-		float barWidth = (maxWidth > 0.0F) ? maxWidth : contentWidth;
-
-		if (auto* bar = getChild<NeedBar>(progressBarHandles[usedProgressBars])) {
-			bar->visible = true;
-			bar->setPosition({panelX + kPadding + xOffset, yOffset});
-			bar->setWidth(barWidth);
-			bar->setValue(slot.value);
-			bar->setLabel(slot.label);
-		}
-
-		++usedProgressBars;
-		return kNeedBarHeight + kItemGap;
-	}
-
-	float EntityInfoView::renderTextListSlot(const TextListSlot& slot, float yOffset, float xOffset) {
-		float height = 0.0F;
-
-		// Render header
-		if (auto* header = getChild<UI::Text>(listHeaderHandle)) {
-			header->visible = true;
-			header->position = {panelX + kPadding + xOffset, yOffset};
-			header->text = slot.header + ":";
-		}
-		height += kLabelFontSize + 2.0F;
-
-		// Render items
-		// TODO: Replace text dash with small item icon rects once we have item icons
-		for (size_t i = 0; i < slot.items.size() && usedListItems < listItemHandles.size(); ++i) {
-			if (auto* item = getChild<UI::Text>(listItemHandles[usedListItems])) {
-				item->visible = true;
-				item->position = {panelX + kPadding + xOffset + 8.0F, yOffset + height};
-				item->text = "- " + slot.items[i];
+		if (data.backpack.empty()) {
+			gearPack->text = "Backpack: (empty)";
+		} else {
+			std::string lines = "Backpack:";
+			for (const auto& line : data.backpack) {
+				lines += "\n" + line;
 			}
-			++usedListItems;
-			height += kLabelFontSize + 2.0F;
+			gearPack->text = std::move(lines);
 		}
 
-		return height + kItemGap;
+		draftButton->setLabel(data.controlled ? "Release" : "Draft");
+
+		if (structural) {
+			tabBar->setSelected("needs");
+			setActiveTab("needs");
+		}
 	}
 
-	float EntityInfoView::renderSpacerSlot(const SpacerSlot& slot, float /*yOffset*/) {
-		return slot.height;
-	}
+	void EntityInfoView::applyGeneric(const PanelContent& content, bool structural) {
+		selectedColonistId = ecs::EntityID{0};
 
-	float EntityInfoView::renderClickableTextSlot(const ClickableTextSlot& slot, float yOffset, float xOffset) {
-		if (auto* text = getChild<UI::Text>(clickableTextHandle)) {
-			text->visible = true;
-			text->position = {panelX + kPadding + xOffset, yOffset};
-			text->text = slot.label + ": " + slot.value;
+		avatar->visible = false;
+		moodBar->visible = false;
+		taskBar->visible = false;
+		eyeButton->visible = false;
+		tabBar->visible = false;
+		needsBody->visible = false;
+		bioBody->visible = false;
+		gearBody->visible = false;
+		logBody->visible = false;
+		actionRow->visible = false;
+		// Hidden when empty: a visible zero-height container trips the layout lint
+		slotsBody->visible = !content.slots.empty();
 
-			// Store callback and bounds for click handling
-			clickableCallback = slot.onClick;
-			clickableBoundsMin = {panelX + kPadding + xOffset, yOffset};
-			clickableBoundsMax = {panelX + contentWidth, yOffset + kLabelFontSize};
-		}
-		return kLabelFontSize + kItemGap;
-	}
+		subtitleText->text = content.subtitle;
+		subtitleText->visible = !content.subtitle.empty();
 
-	float EntityInfoView::renderRecipeSlot(const RecipeSlot& slot, float yOffset) {
-		if (usedRecipeCards >= recipeCardHandles.size()) {
-			return 0.0F;
-		}
-
-		auto& card = recipeCardHandles[usedRecipeCards];
-		float cardX = panelX + kPadding;
-		float buttonX = panelX + kPadding + contentWidth - kRecipeQueueButtonSize - kRecipeCardPadding;
-		float buttonY = yOffset + (kRecipeCardHeight - kRecipeQueueButtonSize) * 0.5F;
-
-		// Position card background
-		if (auto* bg = getChild<UI::Rectangle>(card.background)) {
-			bg->visible = true;
-			bg->position = {cardX, yOffset};
-			bg->size = {contentWidth, kRecipeCardHeight};
-		}
-
-		// Position recipe name (top-left inside card)
-		if (auto* name = getChild<UI::Text>(card.nameText)) {
-			name->visible = true;
-			name->position = {cardX + kRecipeCardPadding, yOffset + kRecipeCardPadding};
-			name->text = slot.name;
-		}
-
-		// Position ingredients (below name, smaller text)
-		if (auto* ingredients = getChild<UI::Text>(card.ingredientsText)) {
-			ingredients->visible = true;
-			ingredients->position = {cardX + kRecipeCardPadding, yOffset + kRecipeCardPadding + kRecipeNameFontSize + 2.0F};
-			ingredients->text = slot.ingredients;
-		}
-
-		// Position queue button [+] (right side, vertically centered)
-		if (auto* btn = getChild<UI::Rectangle>(card.queueButton)) {
-			btn->visible = true;
-			btn->position = {buttonX, buttonY};
-		}
-
-		// Position button text
-		if (auto* btnText = getChild<UI::Text>(card.queueButtonText)) {
-			btnText->visible = true;
-			btnText->position = {buttonX + kRecipeQueueButtonSize * 0.5F, buttonY + kRecipeQueueButtonSize * 0.5F};
-		}
-
-		// Store callback and bounds for click handling
-		recipeCallbacks[usedRecipeCards] = slot.onQueue;
-		recipeButtonBounds[usedRecipeCards] = Foundation::Rect{buttonX, buttonY, kRecipeQueueButtonSize, kRecipeQueueButtonSize};
-
-		++usedRecipeCards;
-		return kRecipeCardHeight + kRecipeCardSpacing;
-	}
-
-	float EntityInfoView::renderIconSlot(const IconSlot& slot, float yOffset) {
-		// IconSlot is primarily rendered via centeredIconHandle/centeredLabelHandle in
-		// renderSingleColumnLayout. This method returns the height consumed for layout.
-		// The centered icon is already positioned there; this just returns height for
-		// any additional rendering in a slot list context.
-		return slot.size + kLabelFontSize + kSectionGap;
-	}
-
-	float EntityInfoView::renderActionButtonSlot(const ActionButtonSlot& slot, float yOffset, float xOffset, float maxWidth) {
-		if (usedActionButtons >= actionButtonHandles.size()) {
-			return 0.0F;
-		}
-
-		auto& button = actionButtonHandles[usedActionButtons];
-		// Honor the column offset/width so a button placed in the colonist left column sits in that
-		// narrow column instead of spanning the panel (and overlapping the needs bars on the right).
-		// Single-column callers pass maxWidth=0, which keeps the original full-content-width behavior.
-		float buttonX = panelX + kPadding + xOffset;
-		float buttonWidth = (maxWidth > 0.0F) ? maxWidth : contentWidth;
-
-		// Position button background
-		if (auto* bg = getChild<UI::Rectangle>(button.background)) {
-			bg->visible = true;
-			bg->position = {buttonX, yOffset};
-			bg->size = {buttonWidth, kActionButtonHeight};
-		}
-
-		// Position button text (centered)
-		if (auto* text = getChild<UI::Text>(button.text)) {
-			text->visible = true;
-			text->position = {buttonX + buttonWidth * 0.5F, yOffset + kActionButtonHeight * 0.5F};
-			text->text = slot.label;
-		}
-
-		// Store callback and bounds for click handling
-		actionButtonCallbacks[usedActionButtons] = slot.onClick;
-		actionButtonBounds[usedActionButtons] = Foundation::Rect{buttonX, yOffset, buttonWidth, kActionButtonHeight};
-
-		++usedActionButtons;
-		return kActionButtonHeight + kItemGap;
-	}
-
-	Foundation::Vec2 EntityInfoView::getCloseButtonPosition(float panelY) const {
-		return {panelX + panelWidth - kPadding - kCloseButtonSize, panelY + kPadding};
-	}
-
-	Foundation::Vec2 EntityInfoView::getDetailsButtonPosition(float panelY) const {
-		// Position to left of close button with a small gap
-		return {panelX + panelWidth - kPadding - kCloseButtonSize - kButtonGap - kDetailsButtonSize, panelY + kPadding};
-	}
-
-	void EntityInfoView::updateValues(const PanelContent& content) {
-		// Tier 3: Value-only update - same entity, just update dynamic slot values
-		// Updates progress bars, text slots, list items, and header mood bar
-		// Skips all position calculations for significant performance savings
-
-		// Update header mood bar for colonists (NeedBar handles color gradient)
-		if (content.layout == PanelLayout::TwoColumn) {
-			if (auto* moodBar = getChild<NeedBar>(headerMoodBarHandle)) {
-				moodBar->setValue(content.header.moodValue);
-			}
-
-			// Update mood label with pre-allocated string
-			std::string moodText;
-			{
-				auto valueStr = std::to_string(static_cast<int>(content.header.moodValue));
-				moodText.reserve(valueStr.size() + 2U + content.header.moodLabel.size());
-				moodText.append(valueStr);
-				moodText.append("% ");
-				moodText.append(content.header.moodLabel);
-			}
-			if (auto* moodLabel = getChild<UI::Text>(headerMoodLabelHandle)) {
-				moodLabel->text = std::move(moodText);
-			}
-		}
-
-		size_t barIndex = 0;
-		size_t textIndex = 0;
-		size_t listItemIndex = 0;
-		size_t actionButtonIndex = 0;
-
-		// Helper to update slots from a vector
-		auto updateSlots = [&](const std::vector<InfoSlot>& slots) {
-			for (const auto& slot : slots) {
-				if (const auto* barSlot = std::get_if<ProgressBarSlot>(&slot)) {
-					if (barIndex < progressBarHandles.size()) {
-						if (auto* bar = getChild<NeedBar>(progressBarHandles[barIndex])) {
-							bar->setValue(barSlot->value);
-						}
+		// Values updates rewrite rows in place, which can't absorb an item-count
+		// drift inside a TextListSlot (e.g. work orders queued while selected);
+		// rebuild when any list changed size.
+		bool needsRebuild = structural;
+		if (!needsRebuild) {
+			size_t listIdx = 0;
+			for (const auto& slot : content.slots) {
+				if (const auto* list = std::get_if<TextListSlot>(&slot)) {
+					if (listIdx >= slotListSizes.size() || slotListSizes[listIdx] != list->items.size()) {
+						needsRebuild = true;
+						break;
 					}
-					++barIndex;
-				} else if (const auto* textSlot = std::get_if<TextSlot>(&slot)) {
-					// Update text slots (for Task/Action status that changes frequently)
-					if (textIndex < textHandles.size()) {
-						if (auto* text = getChild<UI::Text>(textHandles[textIndex])) {
-							// Pre-reserve to avoid multiple allocations
-							std::string combined;
-							combined.reserve(textSlot->label.size() + 2U + textSlot->value.size());
-							combined.append(textSlot->label);
-							combined.append(": ");
-							combined.append(textSlot->value);
-							text->text = std::move(combined);
-						}
-					}
-					++textIndex;
-				} else if (const auto* listSlot = std::get_if<TextListSlot>(&slot)) {
-					// Update list items (for Gear that changes when carrying items)
-					for (size_t i = 0; i < listSlot->items.size() && listItemIndex < listItemHandles.size(); ++i) {
-						if (auto* text = getChild<UI::Text>(listItemHandles[listItemIndex])) {
-							text->text = listSlot->items[i];
-							text->visible = true;
-						}
-						++listItemIndex;
-					}
-					// Hide unused list item slots
-					for (size_t i = listItemIndex; i < usedListItems && i < listItemHandles.size(); ++i) {
-						if (auto* text = getChild<UI::Text>(listItemHandles[i])) {
-							text->visible = false;
-						}
-					}
-					usedListItems = listItemIndex;
-				} else if (const auto* buttonSlot = std::get_if<ActionButtonSlot>(&slot)) {
-					// Refresh button label + callback in place (the colonist Control/Release button
-					// flips its label without changing the slot count, so it arrives as a Values
-					// update, not a Structure rebuild).
-					if (actionButtonIndex < actionButtonHandles.size()) {
-						if (auto* text = getChild<UI::Text>(actionButtonHandles[actionButtonIndex].text)) {
-							text->text = buttonSlot->label;
-						}
-						actionButtonCallbacks[actionButtonIndex] = buttonSlot->onClick;
-					}
-					++actionButtonIndex;
+					++listIdx;
 				}
 			}
-		};
+		}
 
-		// Update header slots
-		updateSlots(content.slots);
+		if (needsRebuild) {
+			rebuildSlots(content.slots);
+		} else {
+			updateSlots(content.slots);
+		}
+	}
 
-		// Update column slots (for two-column layout)
-		if (content.layout == PanelLayout::TwoColumn) {
-			updateSlots(content.leftColumn);
-			updateSlots(content.rightColumn);
+	void EntityInfoView::rebuildSlots(const std::vector<InfoSlot>& slots) {
+		slotsBody->clearChildren();
+		slotTexts.clear();
+		slotBars.clear();
+		slotButtons.clear();
+		slotListItems.clear();
+		slotListSizes.clear();
+
+		for (const auto& slot : slots) {
+			std::visit(
+				[this](const auto& s) {
+					using T = std::decay_t<decltype(s)>;
+					if constexpr (std::is_same_v<T, TextSlot>) {
+						auto handle = slotsBody->addChild(UI::Text(UI::Text::Args{
+							.width = contentWidth,
+							.text = s.label + ": " + s.value,
+							.style = {.color = UI::text, .fontSize = UI::fs_sm, .wordWrap = true},
+						}));
+						slotTexts.push_back(slotsBody->getChild<UI::Text>(handle));
+					} else if constexpr (std::is_same_v<T, ProgressBarSlot>) {
+						auto bar = NeedBar(NeedBar::Args{.width = contentWidth, .label = s.label});
+						bar.setValue(s.value);
+						auto handle = slotsBody->addChild(std::move(bar));
+						slotBars.push_back(slotsBody->getChild<NeedBar>(handle));
+					} else if constexpr (std::is_same_v<T, TextListSlot>) {
+						slotsBody->addChild(UI::Text(UI::Text::Args{
+							.width = contentWidth,
+							.text = s.header + ":",
+							.style = {.color = UI::text_dim, .fontSize = UI::fs_sm, .wordWrap = true},
+						}));
+						std::vector<UI::Text*> items;
+						items.reserve(s.items.size());
+						for (const auto& item : s.items) {
+							auto handle = slotsBody->addChild(UI::Text(UI::Text::Args{
+								.width = contentWidth,
+								.text = "- " + item,
+								.style = {.color = UI::text, .fontSize = UI::fs_sm, .wordWrap = true},
+							}));
+							items.push_back(slotsBody->getChild<UI::Text>(handle));
+						}
+						slotListItems.push_back(std::move(items));
+						slotListSizes.push_back(s.items.size());
+					} else if constexpr (std::is_same_v<T, ActionButtonSlot>) {
+						auto handle = slotsBody->addChild(UI::Button(UI::Button::Args{
+							.label = s.label,
+							.size = {contentWidth, kSlotButtonHeight},
+							.type = UI::Button::Type::Secondary,
+							.onClick = s.onClick,
+						}));
+						slotButtons.push_back(slotsBody->getChild<UI::Button>(handle));
+					}
+				},
+				slot
+			);
+		}
+	}
+
+	void EntityInfoView::updateSlots(const std::vector<InfoSlot>& slots) {
+		size_t textIdx = 0;
+		size_t barIdx = 0;
+		size_t buttonIdx = 0;
+		size_t listIdx = 0;
+
+		for (const auto& slot : slots) {
+			std::visit(
+				[&](const auto& s) {
+					using T = std::decay_t<decltype(s)>;
+					if constexpr (std::is_same_v<T, TextSlot>) {
+						if (textIdx < slotTexts.size()) {
+							slotTexts[textIdx]->text = s.label + ": " + s.value;
+						}
+						++textIdx;
+					} else if constexpr (std::is_same_v<T, ProgressBarSlot>) {
+						if (barIdx < slotBars.size()) {
+							slotBars[barIdx]->setValue(s.value);
+						}
+						++barIdx;
+					} else if constexpr (std::is_same_v<T, TextListSlot>) {
+						if (listIdx < slotListItems.size()) {
+							auto& items = slotListItems[listIdx];
+							for (size_t i = 0; i < s.items.size() && i < items.size(); ++i) {
+								items[i]->text = "- " + s.items[i];
+							}
+						}
+						++listIdx;
+					} else if constexpr (std::is_same_v<T, ActionButtonSlot>) {
+						if (buttonIdx < slotButtons.size()) {
+							slotButtons[buttonIdx]->setLabel(s.label);
+							slotButtons[buttonIdx]->onClick = s.onClick;
+						}
+						++buttonIdx;
+					}
+				},
+				slot
+			);
+		}
+	}
+
+	void EntityInfoView::setActiveTab(const std::string& tabId) {
+		needsBody->visible = tabId == "needs";
+		bioBody->visible = tabId == "bio";
+		gearBody->visible = tabId == "gear";
+		logBody->visible = tabId == "log";
+		markLayoutDirty();
+		applyAnchor();
+	}
+
+	void EntityInfoView::applyAnchor() {
+		const float height = root->getHeight();
+		position = {panelX, m_viewportHeight - height};
+		size = {panelWidth, height};
+		root->setPosition(position.x, position.y);
+	}
+
+	void EntityInfoView::markLayoutDirty() {
+		// The engine's nested layout() is a final-rect assignment: it adopts the
+		// measured size, freezing a Hug container at its last extent. Reset the
+		// hug axes so visibility/content changes re-measure instead of keeping a
+		// stale height (e.g. an emptied slots body holding its old size).
+		root->setLayoutSize(UI::kSizeKeep, 0.0F);
+		headerRow->setLayoutSize(UI::kSizeKeep, 0.0F);
+		identityCol->setLayoutSize(UI::kSizeKeep, 0.0F);
+		slotsBody->setLayoutSize(UI::kSizeKeep, 0.0F);
+		for (UI::LayoutContainer* container : {buttonCol, needsBody, bioBody, gearBody, logBody, actionRow, beltRow}) {
+			container->setLayoutSize(0.0F, 0.0F);
+		}
+		for (UI::LayoutContainer* container :
+			 {root, headerRow, identityCol, buttonCol, needsBody, bioBody, gearBody, logBody, actionRow, beltRow, slotsBody}) {
+			container->invalidateLayout();
 		}
 	}
 
 	void EntityInfoView::setBottomLeftPosition(float x, float viewportHeight) {
-		if (panelX == x && m_viewportHeight == viewportHeight) {
-			return; // No change
-		}
-
 		panelX = x;
 		m_viewportHeight = viewportHeight;
+		applyAnchor();
+	}
 
-		// Force structure re-render if currently visible
-		// This ensures all child elements get repositioned correctly
-		if (visible && m_model.isVisible()) {
-			renderContent(m_model.content());
+	void EntityInfoView::render() {
+		if (!visible) {
+			return;
 		}
+		UI::Panel(UI::Panel::Args{
+					  .position = position,
+					  .size = size,
+					  .variant = UI::PanelVariant::Panel,
+					  .accent = UI::PanelAccent::Accent,
+		})
+			.render();
+		Component::render();
 	}
 
 	bool EntityInfoView::handleEvent(UI::InputEvent& event) {
@@ -1118,74 +782,15 @@ namespace world_sim {
 			return false;
 		}
 
-		// Only handle mouse up (click) events for interactive elements
-		if (event.type != UI::InputEvent::Type::MouseUp) {
-			return false;
+		if (dispatchEvent(event)) {
+			return true;
 		}
-
-		if (event.button != engine::MouseButton::Left) {
-			return false;
-		}
-
-		auto  pos = event.position;
-		float panelY = m_viewportHeight - panelHeight;
-
-		// Check close button
-		auto closePos = getCloseButtonPosition(panelY);
-		if (pos.x >= closePos.x && pos.x <= closePos.x + kCloseButtonSize && pos.y >= closePos.y &&
-			pos.y <= closePos.y + kCloseButtonSize) {
-			if (onCloseCallback) {
-				onCloseCallback();
-			}
-			event.consume();
+		if (event.isConsumed()) {
 			return true;
 		}
 
-		// Check details button (only visible for colonists)
-		if (m_model.isColonist()) {
-			auto detailsPos = getDetailsButtonPosition(panelY);
-			if (pos.x >= detailsPos.x && pos.x <= detailsPos.x + kDetailsButtonSize && pos.y >= detailsPos.y &&
-				pos.y <= detailsPos.y + kDetailsButtonSize) {
-				if (onDetailsCallback) {
-					onDetailsCallback();
-				}
-				event.consume();
-				return true;
-			}
-		}
-
-		// Check clickable slot
-		if (clickableCallback && pos.x >= clickableBoundsMin.x && pos.x <= clickableBoundsMax.x && pos.y >= clickableBoundsMin.y &&
-			pos.y <= clickableBoundsMax.y) {
-			clickableCallback();
-			event.consume();
-			return true;
-		}
-
-		// Check recipe buttons
-		for (size_t i = 0; i < usedRecipeCards; ++i) {
-			const auto& bounds = recipeButtonBounds[i];
-			if (recipeCallbacks[i] && pos.x >= bounds.x && pos.x <= bounds.x + bounds.width && pos.y >= bounds.y &&
-				pos.y <= bounds.y + bounds.height) {
-				recipeCallbacks[i]();
-				event.consume();
-				return true;
-			}
-		}
-
-		// Check action buttons (Place/Package)
-		for (size_t i = 0; i < usedActionButtons; ++i) {
-			const auto& bounds = actionButtonBounds[i];
-			if (actionButtonCallbacks[i] && pos.x >= bounds.x && pos.x <= bounds.x + bounds.width && pos.y >= bounds.y &&
-				pos.y <= bounds.y + bounds.height) {
-				actionButtonCallbacks[i]();
-				event.consume();
-				return true;
-			}
-		}
-
-		// Check if click is within panel bounds - consume to prevent world click
-		if (pos.x >= panelX && pos.x <= panelX + panelWidth && pos.y >= panelY && pos.y <= panelY + panelHeight) {
+		// Swallow clicks on the panel surface so they don't reach the world
+		if (event.type == UI::InputEvent::Type::MouseUp && event.button == engine::MouseButton::Left && containsPoint(event.position)) {
 			event.consume();
 			return true;
 		}
@@ -1193,60 +798,8 @@ namespace world_sim {
 		return false;
 	}
 
-	void EntityInfoView::updateDetailsIcon(bool visible, const Foundation::Vec2& buttonPos) {
-		// Icon geometry: "open in new window" symbol
-		// Rectangle with missing top-right corner + diagonal arrow pointing out
-		constexpr float iconPad = 3.0F;
-		float			iconSize = kDetailsButtonSize - 2.0F * iconPad;
-		float			ix = buttonPos.x + iconPad;
-		float			iy = buttonPos.y + iconPad;
-
-		// Left side of rectangle (top to bottom)
-		if (auto* line = getChild<UI::Line>(detailsIconLine1Handle)) {
-			line->visible = visible;
-			line->start = {ix, iy};
-			line->end = {ix, iy + iconSize};
-		}
-
-		// Bottom of rectangle (left to right, partial)
-		if (auto* line = getChild<UI::Line>(detailsIconLine2Handle)) {
-			line->visible = visible;
-			line->start = {ix, iy + iconSize};
-			line->end = {ix + iconSize * 0.6F, iy + iconSize};
-		}
-
-		// Top of rectangle (left to middle, partial)
-		if (auto* line = getChild<UI::Line>(detailsIconLine3Handle)) {
-			line->visible = visible;
-			line->start = {ix, iy};
-			line->end = {ix + iconSize * 0.4F, iy};
-		}
-
-		// Diagonal arrow (from center to top-right)
-		float arrowStartX = ix + iconSize * 0.35F;
-		float arrowStartY = iy + iconSize * 0.65F;
-		float arrowEndX = ix + iconSize;
-		float arrowEndY = iy;
-
-		if (auto* line = getChild<UI::Line>(detailsIconLine4Handle)) {
-			line->visible = visible;
-			line->start = {arrowStartX, arrowStartY};
-			line->end = {arrowEndX, arrowEndY};
-		}
-
-		// Arrow head - horizontal part
-		if (auto* line = getChild<UI::Line>(detailsIconLine5Handle)) {
-			line->visible = visible;
-			line->start = {arrowEndX, arrowEndY};
-			line->end = {arrowEndX - iconSize * 0.3F, arrowEndY};
-		}
-
-		// Arrow head - vertical part
-		if (auto* line = getChild<UI::Line>(detailsIconLine6Handle)) {
-			line->visible = visible;
-			line->start = {arrowEndX, arrowEndY};
-			line->end = {arrowEndX, arrowEndY + iconSize * 0.3F};
-		}
+	bool EntityInfoView::containsPoint(Foundation::Vec2 point) const {
+		return point.x >= position.x && point.x <= position.x + size.x && point.y >= position.y && point.y <= position.y + size.y;
 	}
 
 } // namespace world_sim

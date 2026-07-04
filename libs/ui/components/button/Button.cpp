@@ -6,9 +6,12 @@
 #include "theme/Tokens.h"
 #include "theme/Variants.h"
 
+#include <font/FontRenderer.h>
 #include <input/InputManager.h>
 #include <input/InputTypes.h>
 #include <primitives/Primitives.h>
+
+#include <cctype>
 
 namespace UI {
 
@@ -92,11 +95,12 @@ namespace UI {
 			appearance = *args.customAppearance;
 		}
 
-		if (!args.iconPath.empty()) {
+		if (!args.iconGlyph.empty() || !args.iconPath.empty()) {
 			icon = std::make_unique<Icon>(Icon::Args{
 				.position = {0.0F, 0.0F},
 				.size = iconSize,
 				.svgPath = args.iconPath,
+				.glyph = args.iconGlyph,
 				.tint = text_bright,
 			});
 		}
@@ -127,9 +131,24 @@ namespace UI {
 			float centerX = contentPos.x + ((size.x - iconSize) / 2.0F);
 			icon->setPosition(centerX, centerY);
 		} else {
-			// Icon sits just left of the centered label block.
+			// Icon sits just left of the centered label block (measured as
+			// rendered: uppercase, display font, wide tracking).
 			constexpr float kIconLabelGap = 6.0F;
-			float			centerX = contentPos.x + (size.x * 0.5F) - iconSize - kIconLabelGap;
+			float			labelWidth = 0.0F;
+			if (auto* fontRenderer = Renderer::Primitives::getFontRenderer()) {
+				const float fontPx = fontPxFor(size.y);
+				if (fontPx != measuredFontPx || label != measuredLabel) {
+					std::string upper = label;
+					for (char& c : upper) {
+						c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+					}
+					cachedLabelWidth = fontRenderer->MeasureText(upper, textScale(fontPx), fontDisplay, fontPx * ls_wide).x;
+					measuredFontPx = fontPx;
+					measuredLabel = label;
+				}
+				labelWidth = cachedLabelWidth;
+			}
+			float centerX = contentPos.x + (size.x - labelWidth) * 0.5F - iconSize - kIconLabelGap;
 			icon->setPosition(centerX, centerY);
 		}
 	}

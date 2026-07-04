@@ -26,6 +26,7 @@
 #include "scenes/game/ui/models/ResourcesModel.h"
 #include "scenes/game/ui/models/TimeModel.h"
 #include "scenes/game/ui/views/EntityInfoView.h"
+#include "scenes/game/ui/views/RegionMinimapPanel.h"
 #include "scenes/game/ui/views/ZoomControlPanel.h"
 #include "scenes/game/world/selection/SelectionTypes.h"
 #include "scenes/game/ui/views/TaskListView.h"
@@ -115,6 +116,11 @@ class GameUI {
 
 	/// Render all UI elements
 	void render();
+
+	/// One-time landing context for the region minimap: crash-site window
+	/// center, landing coordinates, and the world's pixels-per-meter scale
+	/// (needed to derive the camera's visible rect each update).
+	void setMinimapContext(Foundation::Vec2 crashSite, double latDeg, double lonDeg, float pixelsPerMeter);
 
 	/// Push a notification to the toast stack
 	/// @param title Short title for the notification
@@ -217,6 +223,7 @@ class GameUI {
 	std::unique_ptr<ColonistListView> colonistList;
 	std::unique_ptr<EntityInfoView> infoPanel;
 	std::unique_ptr<TaskListView> taskListPanel;
+	std::unique_ptr<RegionMinimapPanel> minimapPanel;
 	std::unique_ptr<ResourcesPanel> resourcesPanel;
 	std::unique_ptr<GlobalTaskListView> globalTaskList;
 	std::unique_ptr<UI::ToastStack> toastStack;
@@ -236,6 +243,10 @@ class GameUI {
 
 	// Build mode state
 	bool buildMenuVisible = false;
+
+	// World render scale (px/m), pushed with the minimap context; the camera's
+	// visible rect needs it each update
+	float worldPixelsPerMeter = 0.0F;
 
 	// Cached bounds for hit testing
 	Foundation::Rect viewportBounds;

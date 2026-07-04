@@ -42,6 +42,7 @@ class Button : public Component, public FocusableBase<Button> {
 		int					  tabIndex = -1;				 // Tab order (-1 for auto-assign)
 		float				  margin{0.0F};
 		std::string			  iconPath;						 // Optional SVG icon path
+		std::string			  iconGlyph;					 // Optional Salvage glyph name (wins over iconPath)
 		float				  iconSize{16.0F};				 // Icon size (default 16px)
 	};
 
@@ -125,6 +126,12 @@ class Button : public Component, public FocusableBase<Button> {
 	// Optional icon (legacy SVG-path icon)
 	std::unique_ptr<Icon> icon;
 	float				  iconSize{16.0F};
+
+	// updateIconPosition runs per frame; only re-measure the label when it
+	// or the derived font size changes
+	std::string measuredLabel;
+	float		measuredFontPx{0.0F};
+	float		cachedLabelWidth{0.0F};
 
 	void updateIconPosition();
 };

@@ -56,7 +56,7 @@ namespace world_sim {
 					.position = {0.0F, 0.0F},
 					.size = {m_panelWidth, m_panelHeight},
 					.style = {.fill = UI::bg_panel_raised, .border = Foundation::BorderStyle{.color = UI::line_edge, .width = UI::bw, .cornerRadius = UI::r_md, .position = Foundation::BorderPosition::Inside}},
-					.id = (args.id + "_bg").c_str(),
+					.id = "task_list_bg",
 					.zIndex = 0
 				}
 			)
@@ -69,7 +69,7 @@ namespace world_sim {
 					.position = {0.0F, 0.0F},
 					.size = {kCloseButtonSize, kCloseButtonSize},
 					.style = {.fill = UI::bg_inset, .border = Foundation::BorderStyle{.color = UI::line_edge, .width = UI::bw, .cornerRadius = UI::r_sm, .position = Foundation::BorderPosition::Inside}},
-					.id = (args.id + "_close_bg").c_str(),
+					.id = "task_list_close_bg",
 					.zIndex = 2
 				}
 			)
@@ -88,7 +88,7 @@ namespace world_sim {
 							.hAlign = Foundation::HorizontalAlign::Center,
 							.vAlign = Foundation::VerticalAlign::Middle,
 						},
-					.id = (args.id + "_close_text").c_str(),
+					.id = "task_list_close_text",
 					.zIndex = 3
 				}
 			)
@@ -107,7 +107,7 @@ namespace world_sim {
 							.hAlign = Foundation::HorizontalAlign::Left,
 							.vAlign = Foundation::VerticalAlign::Top,
 						},
-					.id = (args.id + "_title").c_str(),
+					.id = "task_list_title",
 					.zIndex = 1
 				}
 			)

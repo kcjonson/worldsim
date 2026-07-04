@@ -9,6 +9,8 @@
 #include <ecs/EntityID.h>
 #include <ecs/World.h>
 
+#include <math/Types.h>
+
 #include <string>
 #include <vector>
 
@@ -19,6 +21,11 @@ struct ColonistData {
 	ecs::EntityID id;
 	std::string name;
 	float mood;  // 0-100, computed from needs
+
+	// World position (meters). Ticks every frame while walking; deliberately
+	// excluded from ColonistListModel's change detection (it feeds the region
+	// minimap, not the roster rebuild).
+	Foundation::Vec2 position{0.0F, 0.0F};
 
 	// Current activity, for the roster tile's task meter. `activity` is a concise verb
 	// ("Harvesting"), empty when idle. `activityProgress` is 0..1 once the action is

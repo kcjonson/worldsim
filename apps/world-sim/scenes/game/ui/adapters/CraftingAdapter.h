@@ -74,15 +74,4 @@ PanelContent adaptCraftingStatus(
 	const std::string& stationDefName
 );
 
-/// Adapt available recipes to panel content
-/// Shows: list of recipes with clickable slots to queue work
-PanelContent adaptCraftingRecipes(
-	const std::string& stationDefName,
-	const engine::assets::RecipeRegistry& registry,
-	QueueRecipeCallback onQueueRecipe
-);
-
-/// Format a recipe for display (label with input summary)
-std::string formatRecipeLabel(const engine::assets::RecipeDef& recipe);
-
 } // namespace world_sim

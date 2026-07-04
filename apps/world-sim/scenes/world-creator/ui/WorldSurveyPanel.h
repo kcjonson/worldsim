@@ -1,0 +1,54 @@
+#pragma once
+
+// WorldSurveyPanel - right-side survey readout for WorldCreatorScene.
+//
+// Fixed 320px wide. Empty state ("survey data resolves...") until a world is
+// set; then a Stat grid, a habitability pip row, climate-distribution meters
+// grouped from the biome histogram, and water/habitability badges. Renders
+// only stats whose WorldField bits the pipeline actually produced.
+
+#include <worldgen/data/GeneratedWorld.h>
+
+#include <graphics/Rect.h>
+
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace world_sim {
+
+class WorldSurveyPanel {
+  public:
+	static constexpr float kWidth = 320.0F;
+
+	// nullptr returns the panel to its empty (pending) state.
+	void setWorld(std::shared_ptr<const worldgen::GeneratedWorld> world);
+
+	void render(const Foundation::Rect& bounds) const;
+
+  private:
+	struct StatEntry {
+		std::string label;
+		std::string value;
+		std::string unit;
+		bool		dataTone{false};
+	};
+	struct MeterEntry {
+		std::string label;
+		float		fraction{0.0F};
+	};
+	struct BadgeEntry {
+		std::string label;
+		int			tone{0}; // 0 ok, 1 warn, 2 crit
+	};
+
+	std::shared_ptr<const worldgen::GeneratedWorld> world;
+
+	// Derived once in setWorld so render stays cheap.
+	std::vector<StatEntry>	stats;
+	std::vector<MeterEntry> climate;
+	std::vector<BadgeEntry> badges;
+	float					habitability{-1.0F}; // <0 = field absent
+};
+
+} // namespace world_sim

@@ -9,6 +9,8 @@ namespace world_sim {
 void SocialTabView::create(const Foundation::Rect& contentBounds) {
 	using namespace tabs;
 
+	size = {contentBounds.width, contentBounds.height};
+
 	auto layout = UI::LayoutContainer(UI::LayoutContainer::Args{
 		.position = {contentBounds.x, contentBounds.y},
 		.size = {contentBounds.width, contentBounds.height},

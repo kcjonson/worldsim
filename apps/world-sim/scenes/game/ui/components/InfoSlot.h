@@ -2,11 +2,14 @@
 
 // InfoSlot - Generic slot types for EntityInfoView
 //
-// Defines the building blocks for displaying entity information.
-// Each slot type represents a different kind of UI element.
-// Adapters convert domain data (colonist, world entity) into slots.
+// Building blocks for entity information display. Adapters convert domain data
+// (stations, storage, construction, world entities) into slot lists; colonists
+// get the richer ColonistPanelData that drives the tabbed layout.
+
+#include <ecs/EntityID.h>
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <variant>
 #include <vector>
@@ -25,96 +28,53 @@ struct ProgressBarSlot {
 	float		value; // 0.0 to 100.0
 };
 
-/// List of text items with header: "Capabilities:" followed by bullet points
+/// List of text items with header: "Work Orders:" followed by bullet points
 struct TextListSlot {
 	std::string				 header;
 	std::vector<std::string> items;
 };
 
-/// Spacing between sections
-struct SpacerSlot {
-	float height;
-};
-
-/// Clickable text with callback: "Tasks: ▸ Show"
-struct ClickableTextSlot {
+/// Action button for entity actions: [Place], [Demolish], [Open Crafting Menu]
+struct ActionButtonSlot {
 	std::string			  label;
-	std::string			  value;
 	std::function<void()> onClick;
 };
 
-/// Recipe card for crafting UI
-/// Displays as a visual card with name, ingredients, and queue button:
-/// ┌────────────────────────────────┐
-/// │ Primitive Axe             [+]  │
-/// │ 2× Stone, 1× Stick             │
-/// └────────────────────────────────┘
-struct RecipeSlot {
-	std::string			  name;		   // Recipe display name (e.g., "Primitive Axe")
-	std::string			  ingredients; // Required inputs (e.g., "2× Stone, 1× Stick")
-	std::function<void()> onQueue;	   // Called when [+] button clicked
-};
-
-/// Centered icon for items/flora/fauna
-/// Displays as centered icon with entity name below:
-/// ┌────────────────────────────────┐
-/// │         [Icon 48×48]           │
-/// │         Berry Bush             │
-/// └────────────────────────────────┘
-struct IconSlot {
-	std::string iconPath;	 // Path to SVG asset (empty = placeholder)
-	float		size{48.0F}; // Icon size (width and height)
-	std::string label;		 // Entity name displayed below icon
-};
-
-/// Action button for entity actions
-/// Displays as a prominent button: [Place] or [Package]
-struct ActionButtonSlot {
-	std::string			  label;   // Button text (e.g., "Place", "Package")
-	std::function<void()> onClick; // Callback when button clicked
-};
-
 /// Union of all slot types - adapters return vectors of these
-using InfoSlot = std::variant<TextSlot, ProgressBarSlot, TextListSlot, SpacerSlot, ClickableTextSlot, RecipeSlot, IconSlot, ActionButtonSlot>;
+using InfoSlot = std::variant<TextSlot, ProgressBarSlot, TextListSlot, ActionButtonSlot>;
 
-/// Panel layout mode
-enum class PanelLayout {
-	SingleColumn, // Items, flora, fauna, crafting stations - simple vertical layout
-	TwoColumn	  // Colonists - left column (task/gear) + right column (needs)
-};
+/// Colonist data for the tabbed panel: header (name/mood/task) + Needs/Bio/Gear
+/// tabs + the Draft/Go-to action row. Produced by adaptColonistStatus.
+struct ColonistPanelData {
+	ecs::EntityID id{0};
+	std::string	  name;
+	float		  moodValue{0.0F}; // 0-100
+	std::string	  moodLabel;	   // "Content", "Happy", ...
+	std::string	  currentTask;	   // header task meter label ("Idle" when none)
+	float		  taskProgress{-1.0F}; // 0..1 while an action runs, <0 otherwise
+	bool		  controlled{false};   // direct player control (drives Draft/Release)
+	std::string	  age{"--"};		   // placeholder until an age system exists
 
-/// Colonist header data (portrait area)
-struct ColonistHeader {
-	std::string name;		  // "Sarah Chen"
-	float		moodValue{0}; // 0-100
-	std::string moodLabel;	  // "Content", "Happy", "Stressed"
+	std::vector<ProgressBarSlot> needs;
+
+	// Gear (from ecs::Inventory)
+	std::string				 hands; // "(empty)" | "L: X  R: Y" | "Axe x2 (both hands)"
+	std::vector<std::string> belt;	// filled belt slots
+	std::vector<std::string> backpack; // "Item xN" lines
+	float					 carriedKg{0.0F};
+	float					 capacityKg{0.0F};
 };
 
 /// Complete panel content description produced by adapters
 struct PanelContent {
-	std::string title; // Used for single-column layout title
-	PanelLayout layout{PanelLayout::SingleColumn};
+	std::string title;
+	std::string subtitle; // dim line under the title (world entities: resource status)
 
-	// For SingleColumn layout: all content in 'slots'
+	// Generic entities: slots rendered top-to-bottom
 	std::vector<InfoSlot> slots;
 
-	// For TwoColumn layout (colonists only):
-	// - header: portrait area with name/age/mood
-	// - leftColumn: Current task, Next task, Gear list
-	// - rightColumn: "Needs:" header + need bars
-	ColonistHeader		  header;
-	std::vector<InfoSlot> leftColumn;
-	std::vector<InfoSlot> rightColumn;
-
-	// Colonist-specific: callback for Details button
-	std::function<void()> onDetails;
-
-	// Furniture-specific: callbacks for Place/Move actions
-	std::function<void()> onPlace;		  // Called when [Place] button clicked (for packaged furniture)
-	std::function<void()> onMoveFurniture; // Called when [Move] button clicked (for placed furniture)
-
-	// Storage-specific: callback for Configure button (opens StorageConfigDialog)
-	std::function<void()> onConfigure;
+	// Colonist selection: tabbed layout data (slots unused)
+	std::optional<ColonistPanelData> colonist;
 };
 
 } // namespace world_sim

@@ -33,14 +33,18 @@ ResourcesPanel::ResourcesPanel(const Args& args)
 		.id = "resources_header"
 	}));
 
-	// Create chevron icon (down arrow when collapsed, up when expanded)
-	chevronHandle = addChild(UI::Icon(UI::Icon::Args{
+	// Create chevron icon (down arrow when collapsed, up when expanded). It sits
+	// on the header button by design; the higher zIndex marks the overlap as
+	// intentional layering for the layout lint.
+	auto chevron = UI::Icon(UI::Icon::Args{
 		.position = {0.0F, 0.0F},  // Will be updated in updateLayout
 		.size = kChevronSize,
 		.svgPath = "assets/ui/icons/chevron_down.svg",
 		.tint = Foundation::Color::white(),
 		.id = "resources_chevron"
-	}));
+	});
+	chevron.zIndex = 1;
+	chevronHandle = addChild(std::move(chevron));
 
 	// Create content background (only visible when expanded)
 	contentBackgroundHandle = addChild(UI::Rectangle(UI::Rectangle::Args{
@@ -88,6 +92,19 @@ ResourcesPanel::ResourcesPanel(const Args& args)
 	});
 	layoutHandle = scrollContainer.addChild(std::move(layout));
 	scrollContainerHandle = addChild(std::move(scrollContainer));
+
+	// Overlapping siblings need distinct z for the layout lint: the chevron
+	// rides on the header button; message and rows ride on the content bg.
+	if (auto* chevron = getChild<UI::Icon>(chevronHandle)) {
+		chevron->zIndex = 1;
+	}
+	if (auto* msg = getChild<UI::Text>(emptyMessageHandle)) {
+		msg->zIndex = 1;
+	}
+	if (auto* scroll = getChild<UI::ScrollContainer>(scrollContainerHandle)) {
+		scroll->zIndex = 1;
+	}
+	markChildrenNeedSorting();
 
 	// Start collapsed - updateLayout sets visibility
 	updateLayout();

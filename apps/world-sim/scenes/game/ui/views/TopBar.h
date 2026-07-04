@@ -2,13 +2,13 @@
 
 // TopBar - the colony command strip across the top of the screen (Salvage look).
 //
-// Left:   colony identity (name + "N survivors / Sol D" sub-line)
+// Left:   colony mark + identity (name + "N survivors / Sol D" sub-line)
 // Center: clock (Day D / season / HH:MM) followed by the speed-control pill
-// Right:  Menu button
+// Right:  alert bell (critical-toast count badge) + Menu button
 //
-// The bar paints its own background, identity text, and clock inline via the
-// Primitives API; the speed buttons and the menu button are child components.
-// Full width, anchored to the top of the viewport.
+// The bar paints its own background, colony mark, identity text, clock, and
+// alert badge inline via the Primitives API; the speed buttons, bell, and menu
+// button are child components. Full width, anchored to the top of the viewport.
 
 #include "scenes/game/ui/components/SpeedButton.h"
 #include "scenes/game/ui/models/TimeModel.h"
@@ -44,6 +44,9 @@ class TopBar : public UI::Component {
 	/// Refresh from the time model and current survivor count (call each frame)
 	void updateData(const TimeModel& timeModel, int survivorCount);
 
+	/// Number of live critical toasts; drives the bell's count badge (0 = hidden)
+	void setAlertCount(size_t count);
+
 	/// Handle input events - delegates to children via dispatchEvent
 	bool handleEvent(UI::InputEvent& event) override;
 
@@ -61,12 +64,15 @@ class TopBar : public UI::Component {
 	static constexpr float kPillPadding = 4.0F;
 	static constexpr float kMenuWidth = 64.0F;
 	static constexpr float kMenuHeight = 28.0F;
+	static constexpr float kBellSize = 28.0F;
+	static constexpr float kMarkHalf = 8.0F;   // colony mark half-diagonal
 
 	// Child handles (interactive controls only)
 	UI::LayerHandle pauseButtonHandle;
 	UI::LayerHandle speed1ButtonHandle;
 	UI::LayerHandle speed2ButtonHandle;
 	UI::LayerHandle speed3ButtonHandle;
+	UI::LayerHandle alertButtonHandle;
 	UI::LayerHandle menuButtonHandle;
 
 	// Callbacks
@@ -81,9 +87,12 @@ class TopBar : public UI::Component {
 	std::string timeStr;		// "09:42"
 	std::string survivorPart;	// "3 survivors"
 	std::string solPart;		// "Sol 14"
+	size_t alertCount = 0;		// live critical toasts (badge hidden at 0)
 
 	// Computed layout (set by positionElements)
 	float rowY = 0.0F;		   // vertical center of the bar
+	float identityX = 0.0F;	   // identity text left edge (right of the colony mark)
+	Foundation::Rect alertRect{}; // bell button rect (badge anchors to its corner)
 	float dayX = 0.0F;
 	float seasonX = 0.0F;
 	float timeX = 0.0F;

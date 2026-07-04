@@ -419,6 +419,8 @@ New-Item -ItemType HardLink -Path "<worktree>\build\apps\world-sim\RelWithDebInf
 
 Caveat: the planet is format-versioned (`kFormatVersion`). Sharing is safe across branches that only change game logic. A branch that changes the worldgen binary format won't load the shared planet (it fails gracefully to a config error, no corruption) and needs its own fresh bake, so junction only when the branch's worldgen format matches main's.
 
+**⚠️ NEVER build the `quickstart-planet` target from a junctioned worktree.** Its custom command declares `planets/quickstart.wsplanet` as OUTPUT with `DEPENDS worldgen-cli`, so a freshly compiled worldgen-cli (always the case in a new worktree) outdates the shared file and ninja re-runs the bake — which truncates the 1.3 GiB shared planet THROUGH the junction, and an interrupted bake deletes it outright (this destroyed the shared planet on 2026-07-03). Stage the per-config copy with the hardlink above instead. Restore recipe: from the main checkout, `cmake --build build --config RelWithDebInfo --target quickstart-planet` (~80 s).
+
 ## Plan File Archival
 
 When a plan file is confirmed complete (has `# COMPLETE` on first line), archive it to the development log:

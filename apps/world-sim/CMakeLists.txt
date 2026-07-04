@@ -13,6 +13,7 @@ add_executable(world-sim
     scenes/game/ui/views/DebugOverlay.cpp
     scenes/game/ui/views/ZoomControlPanel.cpp
     scenes/game/ui/views/TopBar.cpp
+    scenes/game/ui/views/RegionMinimapPanel.cpp
     scenes/game/ui/views/ResourcesPanel.cpp
     scenes/game/ui/views/GlobalTaskListView.cpp
     # Game scene UI - components
@@ -42,7 +43,7 @@ add_executable(world-sim
     scenes/game/ui/dialogs/StorageConfigDialog.cpp
     scenes/game/ui/dialogs/StorageConfigDialogModel.cpp
     scenes/game/ui/dialogs/tabs/BioTabView.cpp
-    scenes/game/ui/dialogs/tabs/HealthTabView.cpp
+    scenes/game/ui/dialogs/tabs/NeedsTabView.cpp
     scenes/game/ui/dialogs/tabs/SkillsTabView.cpp
     scenes/game/ui/dialogs/tabs/SocialTabView.cpp
     scenes/game/ui/dialogs/tabs/GearTabView.cpp
@@ -65,6 +66,7 @@ add_executable(world-sim
     # Scenes
     scenes/shared/GlobeView.cpp
     scenes/shared/DecorativePlanet.cpp
+    scenes/shared/UiStateDrain.cpp
     scenes/splash/SplashScene.cpp
     scenes/menu/MainMenuScene.cpp
     scenes/scenario-select/ScenarioSelectScene.cpp
@@ -72,6 +74,7 @@ add_executable(world-sim
     scenes/world-creator/WorldCreatorScene.cpp
     scenes/world-creator/WorldCreatorModel.cpp
     scenes/world-creator/ui/ParameterPanel.cpp
+    scenes/world-creator/ui/WorldSurveyPanel.cpp
     scenes/landing/LandingSiteDetailsModel.cpp
     scenes/landing/LandingSiteDetailsPanel.cpp
     scenes/loading/GameLoadingScene.cpp

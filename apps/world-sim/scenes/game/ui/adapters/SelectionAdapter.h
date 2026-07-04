@@ -39,17 +39,11 @@ using ResourceQueryCallback = std::function<std::optional<uint32_t>(const std::s
 	const std::function<void()>&				   onDemolishOpening = {}
 );
 
-/// Convert colonist data into two-column panel content
-/// Left column: task info, gear list
-/// Right column: needs bars
-/// @param onDetails Optional callback for opening colonist details modal
-/// @param onToggleControl Optional callback for the Control/Release button (toggles direct player control)
-[[nodiscard]] PanelContent adaptColonistStatus(
-	const ecs::World& world,
-	ecs::EntityID entityId,
-	const std::function<void()>& onDetails = {},
-	const std::function<void(ecs::EntityID)>& onToggleControl = {}
-);
+/// Convert colonist data into tabbed panel content (ColonistPanelData):
+/// header (name/mood/current task), needs bars, gear (hands/belt/backpack/carry),
+/// and the controlled flag for the Draft/Release button.
+/// @note Non-const world: task progress goes through adapters::getColonistActivity.
+[[nodiscard]] PanelContent adaptColonistStatus(ecs::World& world, ecs::EntityID entityId);
 
 /// Convert world entity data into panel content
 /// @param queryResources Optional callback to query remaining resource count

@@ -42,6 +42,9 @@ class NeedBar : public UI::Component {
 	/// Update position (moves the bar)
 	void setPosition(Foundation::Vec2 newPos);
 
+	/// IComponent override so layout containers move the inner bar too
+	void setPosition(float x, float y) override { setPosition(Foundation::Vec2{x, y}); }
+
 	/// Update width (for dynamic resizing in layouts)
 	void setWidth(float newWidth);
 

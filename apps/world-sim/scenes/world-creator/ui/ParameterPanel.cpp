@@ -1,6 +1,8 @@
 #include "ParameterPanel.h"
 
 #include "primitives/Primitives.h"
+#include <components/icon/Icon.h>
+#include <components/panel/Panel.h>
 #include <theme/Tokens.h>
 #include <theme/Variants.h>
 
@@ -10,14 +12,15 @@
 #include <cctype>
 #include <format>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace world_sim {
 
 namespace {
 	// Common slider width inside the panel
-	constexpr float kSliderWidth = 300.0F;
-	constexpr float kSliderX = 10.0F; // offset from panel left
+	constexpr float kSliderWidth = 296.0F;
+	constexpr float kSliderX = 12.0F; // offset from panel left
 }
 
 ParameterPanel::ParameterPanel(Foundation::Vec2 pos, ParameterPanelCallbacks cbs)
@@ -70,28 +73,30 @@ float ParameterPanel::addSlider(
 }
 
 void ParameterPanel::buildWidgets() {
-	nextY = 8.0F;
+	// Content starts below the Panel header band.
+	nextY = 58.0F;
 
-	// Preset selector
+	// Preset grid: 2 columns, active preset carries the data tint.
 	addLabel("Preset");
-	float presetY = position.y + nextY;
-	std::vector<UI::SelectOption> presets{
-		{"Earth-Like",    "earth_like"},
-		{"Desert World",  "desert_world"},
-		{"Ocean World",   "ocean_world"},
-		{"Frozen World",  "frozen_world"},
-		{"Volcanic World","volcanic_world"},
-		{"Ancient Garden","ancient_garden"},
-	};
-	presetSelect = std::make_unique<UI::Select>(UI::Select::Args{
-		.position = {position.x + kSliderX, presetY},
-		.size = {kSliderWidth, 30.0F},
-		.options = presets,
-		.value = "earth_like",
-		.onChange = callbacks.onPresetChanged,
-		.id = "preset_select",
-	});
-	nextY += 30.0F + kSectionSpacing;
+	{
+		const float gridY = position.y + nextY;
+		const float btnW = (kSliderWidth - 8.0F) * 0.5F;
+		constexpr float kBtnH = 28.0F;
+		for (size_t i = 0; i < kPresets.size(); ++i) {
+			const float bx = position.x + kSliderX + (i % 2 == 0 ? 0.0F : btnW + 8.0F);
+			const float by = gridY + static_cast<float>(i / 2) * (kBtnH + 6.0F);
+			const std::string value = kPresets[i].value;
+			presetButtons[i] = std::make_unique<UI::Button>(UI::Button::Args{
+				.label = kPresets[i].label,
+				.position = {bx, by},
+				.size = {btnW, kBtnH},
+				.type = value == activePreset ? UI::Button::Type::Data : UI::Button::Type::Secondary,
+				.onClick = [this, value]() { applyPreset(value); },
+				.id = kPresets[i].value,
+			});
+		}
+		nextY += 3.0F * kBtnH + 2.0F * 6.0F + kSectionSpacing;
+	}
 
 	// Planet Properties
 	addLabel("Planet Properties");
@@ -128,29 +133,41 @@ void ParameterPanel::buildWidgets() {
 		[](double v) { return std::format("{:.2f} atm", v); },
 		callbacks.onAtmosphere);
 
-	nextY += kSectionSpacing;
-
-	// Star / Orbital
-	addLabel("Star & Orbit");
-	addSlider(starTempSlider, 2000.0, 50000.0, 0.0, 5778.0, true,
-		"Star Temp (K)",
-		[](double v) { return std::format("{:.0f}K", v); },
-		callbacks.onStarTemperature);
-
-	addSlider(semiMajorSlider, 0.1, 100.0, 0.0, 1.0, true,
-		"Semi-Major (AU)",
-		[](double v) { return std::format("{:.2f} AU", v); },
-		callbacks.onSemiMajorAxis);
-
-	addSlider(eccentricitySlider, 0.0, 0.95, 0.0, 0.017, false,
-		"Eccentricity",
-		[](double v) { return std::format("{:.3f}", v); },
-		callbacks.onEccentricity);
+	// Prototype-only control: the generator has no mean-temp input yet.
+	addSlider(meanTempSlider, -20.0, 40.0, 1.0, 14.0, false,
+		"Mean Temp",
+		[](double v) { return std::format("{:.0f} C", v); },
+		nullptr);
+	meanTempSlider->setDisabled(true);
 
 	nextY += kSectionSpacing;
 
-	// Generator settings
-	addLabel("Generator");
+	// Seed row
+	float seedY = position.y + nextY;
+	seedInput = std::make_unique<UI::TextInput>(UI::TextInput::Args{
+		.position = {position.x + kSliderX, seedY},
+		.size = {kSliderWidth - 98.0F, 28.0F},
+		.placeholder = "Random seed...",
+		.id = "seed_input",
+		.onChange = [this](const std::string& text) { onSeedTextChanged(text); },
+	});
+
+	randomizeButton = std::make_unique<UI::Button>(UI::Button::Args{
+		.label = "Random",
+		.position = {position.x + kSliderX + kSliderWidth - 90.0F, seedY},
+		.size = {90.0F, 28.0F},
+		.type = UI::Button::Type::Secondary,
+		.onClick = callbacks.onRandomize,
+		.id = "btn_randomize",
+	});
+	nextY += 28.0F + 2.0F;
+	seedErrorY = position.y + nextY;
+	nextY += kLabelHeight + kSectionSpacing - 2.0F;
+
+	// Advanced (collapsed): resolution + star/orbit sliders at the panel bottom.
+	advancedToggleBounds = {position.x + kSliderX, position.y + nextY, kSliderWidth, 20.0F};
+	nextY += 20.0F + kItemSpacing;
+
 	float resY = position.y + nextY;
 	std::vector<UI::SelectOption> resOptions{
 		{"Preview 256",  "256"},
@@ -169,61 +186,51 @@ void ParameterPanel::buildWidgets() {
 	});
 	nextY += 30.0F + kItemSpacing;
 
-	// Seed row
-	float seedY = position.y + nextY;
-	seedInput = std::make_unique<UI::TextInput>(UI::TextInput::Args{
-		.position = {position.x + kSliderX, seedY},
-		.size = {200.0F, 28.0F},
-		.placeholder = "Random seed...",
-		.id = "seed_input",
-		.onChange = [this](const std::string& text) { onSeedTextChanged(text); },
-	});
+	addSlider(starTempSlider, 2000.0, 50000.0, 0.0, 5778.0, true,
+		"Star Temp (K)",
+		[](double v) { return std::format("{:.0f}K", v); },
+		callbacks.onStarTemperature);
 
-	randomizeButton = std::make_unique<UI::Button>(UI::Button::Args{
-		.label = "Random",
-		.position = {position.x + kSliderX + 208.0F, seedY},
-		.size = {90.0F, 28.0F},
-		.type = UI::Button::Type::Secondary,
-		.onClick = callbacks.onRandomize,
-		.id = "btn_randomize",
-	});
-	nextY += 28.0F + 2.0F;
-	seedErrorY = position.y + nextY;
-	nextY += kLabelHeight + kSectionSpacing - 2.0F;
+	addSlider(semiMajorSlider, 0.1, 100.0, 0.0, 1.0, true,
+		"Semi-Major (AU)",
+		[](double v) { return std::format("{:.2f} AU", v); },
+		callbacks.onSemiMajorAxis);
 
-	// Action buttons
-	float btnY = position.y + nextY;
-	generateButton = std::make_unique<UI::Button>(UI::Button::Args{
-		.label = "Generate",
-		.position = {position.x + kSliderX, btnY},
-		.size = {kSliderWidth, 36.0F},
-		.type = UI::Button::Type::Primary,
-		.onClick = callbacks.onGenerate,
-		.id = "btn_generate",
-	});
+	addSlider(eccentricitySlider, 0.0, 0.95, 0.0, 0.017, false,
+		"Eccentricity",
+		[](double v) { return std::format("{:.3f}", v); },
+		callbacks.onEccentricity);
 
-	cancelButton = std::make_unique<UI::Button>(UI::Button::Args{
-		.label = "Cancel",
-		.position = {position.x + kSliderX, btnY},
-		.size = {kSliderWidth, 36.0F},
-		.type = UI::Button::Type::Secondary,
-		.disabled = false,
-		.onClick = callbacks.onCancel,
-		.id = "btn_cancel",
-	});
-	cancelButton->visible = false;
+	setAdvancedOpen(false);
+}
+
+void ParameterPanel::applyPreset(const std::string& value) {
+	activePreset = value;
+	for (size_t i = 0; i < kPresets.size(); ++i) {
+		if (presetButtons[i]) {
+			presetButtons[i]->type =
+				kPresets[i].value == activePreset ? UI::Button::Type::Data : UI::Button::Type::Secondary;
+		}
+	}
+	if (callbacks.onPresetChanged) callbacks.onPresetChanged(value);
+}
+
+void ParameterPanel::setAdvancedOpen(bool open) {
+	advancedOpen = open;
+	if (resolutionSelect)   { resolutionSelect->visible = open; }
+	if (starTempSlider)     { starTempSlider->visible = open; }
+	if (semiMajorSlider)    { semiMajorSlider->visible = open; }
+	if (eccentricitySlider) { eccentricitySlider->visible = open; }
 }
 
 void ParameterPanel::setGenerating(bool gen) {
 	generating = gen;
 
-	// Toggle which button is visible
-	if (generateButton) { generateButton->visible = !gen; applyGenerateEnabled(); }
-	if (cancelButton)   { cancelButton->visible = gen; }
-
 	// Disable all parameter controls during generation
 	bool dis = gen;
-	if (presetSelect)       { presetSelect->setDisabled(dis); }
+	for (auto& preset : presetButtons) {
+		if (preset) { preset->setDisabled(dis); }
+	}
 	if (resolutionSelect)   { resolutionSelect->setDisabled(dis); }
 	if (waterSlider)        { waterSlider->setDisabled(dis); }
 	if (platesSlider)       { platesSlider->setDisabled(dis); }
@@ -299,69 +306,60 @@ void ParameterPanel::onSeedTextChanged(const std::string& text) {
 	// Red border while invalid
 	if (seedInput) {
 		seedInput->style.borderColor = (seedState == SeedState::Invalid)
-			? Foundation::Color{0.85F, 0.3F, 0.3F, 1.0F}
+			? UI::status_crit
 			: UI::TextInputStyle{}.borderColor;
-	}
-	applyGenerateEnabled();
-}
-
-void ParameterPanel::applyGenerateEnabled() {
-	if (generateButton) {
-		generateButton->setDisabled(seedState == SeedState::Invalid);
 	}
 }
 
 void ParameterPanel::update(float dt) {
-	if (presetSelect)       { presetSelect->update(dt); }
+	for (auto& preset : presetButtons) {
+		if (preset) { preset->update(dt); }
+	}
 	if (waterSlider)        { waterSlider->update(dt); }
 	if (platesSlider)       { platesSlider->update(dt); }
 	if (radiusSlider)       { radiusSlider->update(dt); }
 	if (rotationSlider)     { rotationSlider->update(dt); }
 	if (ageSlider)          { ageSlider->update(dt); }
 	if (atmosphereSlider)   { atmosphereSlider->update(dt); }
-	if (starTempSlider)     { starTempSlider->update(dt); }
-	if (semiMajorSlider)    { semiMajorSlider->update(dt); }
-	if (eccentricitySlider) { eccentricitySlider->update(dt); }
-	if (resolutionSelect)   { resolutionSelect->update(dt); }
-	if (seedInput)          { seedInput->update(dt); }
+	if (advancedOpen) {
+		if (starTempSlider)     { starTempSlider->update(dt); }
+		if (semiMajorSlider)    { semiMajorSlider->update(dt); }
+		if (eccentricitySlider) { eccentricitySlider->update(dt); }
+		if (resolutionSelect)   { resolutionSelect->update(dt); }
+	}
+	if (seedInput) { seedInput->update(dt); }
 }
 
-void ParameterPanel::render() {
-	// Panel background
-	Renderer::Primitives::drawRect({
-		.bounds = {position.x, position.y, kPanelWidth, 700.0F},
-		.style = {
-			.fill = UI::bg_panel,
-			.border = Foundation::BorderStyle{
-				.color = UI::line_edge,
-				.width = 1.0F,
-			},
-		},
-		.id = "param_panel_bg",
-	});
+void ParameterPanel::render(float height) {
+	UI::Panel frame({.position = position,
+					 .size = {kPanelWidth, height},
+					 .title = "Parameters",
+					 .kicker = "Survey Config",
+					 .accent = UI::PanelAccent::Data});
+	frame.render();
 
-	// Section labels
 	for (const auto& label : sectionLabels) {
 		Renderer::Primitives::drawText(label);
 	}
 
+	for (auto& preset : presetButtons) {
+		if (preset) { preset->render(); }
+	}
 	if (waterSlider)        { waterSlider->render(); }
 	if (platesSlider)       { platesSlider->render(); }
 	if (radiusSlider)       { radiusSlider->render(); }
 	if (rotationSlider)     { rotationSlider->render(); }
 	if (ageSlider)          { ageSlider->render(); }
 	if (atmosphereSlider)   { atmosphereSlider->render(); }
-	if (starTempSlider)     { starTempSlider->render(); }
-	if (semiMajorSlider)    { semiMajorSlider->render(); }
-	if (eccentricitySlider) { eccentricitySlider->render(); }
+	if (meanTempSlider)     { meanTempSlider->render(); }
 	if (seedInput)          { seedInput->render(); }
 	if (seedState == SeedState::Invalid) {
 		UI::Text seedError(UI::Text::Args{
 			.position = {position.x + kSliderX, seedErrorY},
 			.text = "Seed must be a valid 64-bit number",
 			.style = {
-				.color = Foundation::Color{0.9F, 0.4F, 0.4F, 1.0F},
-				.fontSize = 11.0F,
+				.color = UI::status_crit,
+				.fontSize = UI::fs_xs,
 				.hAlign = Foundation::HorizontalAlign::Left,
 				.vAlign = Foundation::VerticalAlign::Top,
 			},
@@ -369,31 +367,56 @@ void ParameterPanel::render() {
 		seedError.render();
 	}
 	if (randomizeButton)    { randomizeButton->render(); }
-	if (generateButton && generateButton->visible) { generateButton->render(); }
-	if (cancelButton && cancelButton->visible)     { cancelButton->render(); }
+
+	// Advanced toggle row: stencil label + open/close chevron.
+	Renderer::Primitives::drawText({
+		.text = "Advanced",
+		.position = {advancedToggleBounds.x, advancedToggleBounds.y + 3.0F},
+		.scale = UI::fs_2xs / 16.0F,
+		.color = advancedOpen ? UI::text : UI::text_dim,
+		.font = UI::fontMono,
+		.vAlign = Foundation::VerticalAlign::Top,
+		.letterSpacing = UI::fs_2xs * UI::ls_wider,
+		.transform = Foundation::TextTransform::Uppercase,
+	});
+	UI::Icon chevron({.position = {advancedToggleBounds.right() - 16.0F, advancedToggleBounds.y + 2.0F},
+					  .size = 14.0F,
+					  .glyph = advancedOpen ? "chevronUp" : "chevronDown",
+					  .tint = UI::text_dim});
+	chevron.render();
+
+	if (advancedOpen) {
+		if (starTempSlider)     { starTempSlider->render(); }
+		if (semiMajorSlider)    { semiMajorSlider->render(); }
+		if (eccentricitySlider) { eccentricitySlider->render(); }
+	}
 
 	// Dropdowns last: the batch renderer draws in submission order, so open
 	// menus must be painted after the widgets they overlap (mirrors the
 	// reverse hit-test order in handleEvent).
-	if (presetSelect)       { presetSelect->render(); }
-	if (resolutionSelect)   { resolutionSelect->render(); }
+	if (advancedOpen && resolutionSelect) { resolutionSelect->render(); }
 }
 
 bool ParameterPanel::handleEvent(UI::InputEvent& event) {
 	if (generating) {
-		// Only cancel button active while generating
-		if (cancelButton && cancelButton->visible) {
-			if (cancelButton->handleEvent(event)) return true;
-		}
 		return false;
 	}
 
 	// Highest z-order first: dropdowns before sliders
-	if (presetSelect && presetSelect->handleEvent(event)) return true;
-	if (resolutionSelect && resolutionSelect->handleEvent(event)) return true;
+	if (advancedOpen && resolutionSelect && resolutionSelect->handleEvent(event)) return true;
 	if (seedInput && seedInput->handleEvent(event)) return true;
 	if (randomizeButton && randomizeButton->handleEvent(event)) return true;
-	if (generateButton && generateButton->visible && generateButton->handleEvent(event)) return true;
+	for (auto& preset : presetButtons) {
+		if (preset && preset->handleEvent(event)) return true;
+	}
+
+	// Advanced toggle.
+	if (event.type == UI::InputEvent::Type::MouseUp && event.button == engine::MouseButton::Left &&
+	    advancedToggleBounds.contains(event.position)) {
+		setAdvancedOpen(!advancedOpen);
+		event.consume();
+		return true;
+	}
 
 	if (waterSlider && waterSlider->handleEvent(event)) return true;
 	if (platesSlider && platesSlider->handleEvent(event)) return true;
@@ -401,9 +424,11 @@ bool ParameterPanel::handleEvent(UI::InputEvent& event) {
 	if (rotationSlider && rotationSlider->handleEvent(event)) return true;
 	if (ageSlider && ageSlider->handleEvent(event)) return true;
 	if (atmosphereSlider && atmosphereSlider->handleEvent(event)) return true;
-	if (starTempSlider && starTempSlider->handleEvent(event)) return true;
-	if (semiMajorSlider && semiMajorSlider->handleEvent(event)) return true;
-	if (eccentricitySlider && eccentricitySlider->handleEvent(event)) return true;
+	if (advancedOpen) {
+		if (starTempSlider && starTempSlider->handleEvent(event)) return true;
+		if (semiMajorSlider && semiMajorSlider->handleEvent(event)) return true;
+		if (eccentricitySlider && eccentricitySlider->handleEvent(event)) return true;
+	}
 
 	return false;
 }

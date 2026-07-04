@@ -6,6 +6,7 @@
 #include <ecs/components/Needs.h>
 #include <ecs/components/PlayerControlled.h>
 #include <ecs/components/StructureBlueprint.h>
+#include <ecs/components/Transform.h>
 #include <ecs/components/Task.h>
 
 namespace world_sim::adapters {
@@ -68,11 +69,17 @@ namespace world_sim::adapters {
 				mood = ecs::computeMood(*needs);
 			}
 
+			Foundation::Vec2 position{0.0F, 0.0F};
+			if (const auto* pos = world.getComponent<ecs::Position>(entity)) {
+				position = {pos->value.x, pos->value.y};
+			}
+
 			ColonistActivity activity = getColonistActivity(world, entity);
 			result.push_back({
 				.id = entity,
 				.name = colonist.name,
 				.mood = mood,
+				.position = position,
 				.activity = std::move(activity.label),
 				.activityProgress = activity.progress,
 				.playerControlled = world.getComponent<ecs::PlayerControlled>(entity) != nullptr,
