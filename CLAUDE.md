@@ -273,7 +273,8 @@ When you make code changes and need to verify visually:
 3. **Launch new instance**: Use Bash tool with `run_in_background: true`:
    - Command: `cd /Volumes/Code/worldsim/build/apps/ui-sandbox && ./ui-sandbox --scene=<scene>`
    - Do NOT use shell `&` - it blocks waiting for output
-4. **Take screenshot**: `curl -s http://127.0.0.1:8081/api/ui/screenshot > /tmp/screenshot.png`
+4. **Verify layout (after UI changes)**: `curl http://127.0.0.1:8081/api/ui/tree` for element bounds, `curl http://127.0.0.1:8081/api/ui/lint` for invariant violations - expect `"count":0` before screenshotting. Don't verify coordinates by eye.
+5. **Take screenshot**: `curl -s http://127.0.0.1:8081/api/ui/screenshot > /tmp/screenshot.png`
    - The screenshot endpoint implicitly waits for the app to be ready
    - No sleep needed - curl will block until screenshot is captured
 

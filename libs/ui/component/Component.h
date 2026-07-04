@@ -51,6 +51,18 @@ namespace UI {
 		/// The element should render its content at position + margin
 		virtual void setPosition(float x, float y) = 0;
 
+		// ========== Debug Introspection API ==========
+		// Read by the UI-tree snapshot (/api/ui/tree) and layout lint.
+		// getPosition returns the margin-box origin: paired with getWidth/getHeight
+		// (which include margin) it forms the element's reported bounds.
+
+		virtual Foundation::Vec2 getPosition() const { return {0.0F, 0.0F}; }
+
+		virtual const char* debugTypeName() const { return "IComponent"; }
+
+		/// Author-assigned id for debugging, or nullptr when the element has none.
+		virtual const char* debugId() const { return nullptr; }
+
 		// Margin (CSS-like): adds space around the element
 		// - Reported size includes margin (getWidth/getHeight)
 		// - Content renders at position + margin
@@ -186,6 +198,11 @@ namespace UI {
 
 		/// Set position (layout containers call this)
 		void setPosition(float x, float y) override { position = {x, y}; }
+
+		/// Margin-box origin (setPosition stores the margin box, content renders at +margin)
+		Foundation::Vec2 getPosition() const override { return position; }
+
+		const char* debugTypeName() const override { return "Component"; }
 
 		/// Helper: get content position (position + margin) for rendering
 		[[nodiscard]] Foundation::Vec2 getContentPosition() const { return {position.x + margin, position.y + margin}; }
