@@ -30,7 +30,7 @@ GlobalTaskRow::GlobalTaskRow(const Args& args)
 			.color = UI::text,
 			.fontSize = kLine1FontSize
 		},
-		.id = "task_row_line1"
+		.id = nullptr
 	}));
 
 	// Line 2: "Available • Known by: Bob, Alice" or "Blocked • 0/11 materials"
@@ -49,7 +49,7 @@ GlobalTaskRow::GlobalTaskRow(const Args& args)
 			.color = getStatusColor(args.task),
 			.fontSize = kLine2FontSize
 		},
-		.id = "task_row_line2"
+		.id = nullptr
 	}));
 }
 

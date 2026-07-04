@@ -136,12 +136,17 @@ namespace UI {
 			constexpr float kIconLabelGap = 6.0F;
 			float			labelWidth = 0.0F;
 			if (auto* fontRenderer = Renderer::Primitives::getFontRenderer()) {
-				std::string upper = label;
-				for (char& c : upper) {
-					c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-				}
 				const float fontPx = fontPxFor(size.y);
-				labelWidth = fontRenderer->MeasureText(upper, textScale(fontPx), fontDisplay, fontPx * ls_wide).x;
+				if (fontPx != measuredFontPx || label != measuredLabel) {
+					std::string upper = label;
+					for (char& c : upper) {
+						c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+					}
+					cachedLabelWidth = fontRenderer->MeasureText(upper, textScale(fontPx), fontDisplay, fontPx * ls_wide).x;
+					measuredFontPx = fontPx;
+					measuredLabel = label;
+				}
+				labelWidth = cachedLabelWidth;
 			}
 			float centerX = contentPos.x + (size.x - labelWidth) * 0.5F - iconSize - kIconLabelGap;
 			icon->setPosition(centerX, centerY);

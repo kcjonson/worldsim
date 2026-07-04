@@ -127,6 +127,12 @@ class Button : public Component, public FocusableBase<Button> {
 	std::unique_ptr<Icon> icon;
 	float				  iconSize{16.0F};
 
+	// updateIconPosition runs per frame; only re-measure the label when it
+	// or the derived font size changes
+	std::string measuredLabel;
+	float		measuredFontPx{0.0F};
+	float		cachedLabelWidth{0.0F};
+
 	void updateIconPosition();
 };
 
