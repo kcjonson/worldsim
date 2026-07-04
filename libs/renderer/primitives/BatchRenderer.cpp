@@ -3,9 +3,10 @@
 
 #include "primitives/BatchRenderer.h"
 #include "CoordinateSystem/CoordinateSystem.h"
+#include <algorithm>
+#include <cmath>
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
-#include <algorithm>
 
 namespace Renderer {
 
@@ -63,11 +64,8 @@ namespace Renderer {
 		// Debug: verify instancing uniforms are found (only in debug builds)
 #ifndef NDEBUG
 		std::cerr << "[BatchRenderer] Instancing uniforms: "
-				  << "u_instanced=" << instancedLoc
-				  << " u_cameraPosition=" << cameraPositionLoc
-				  << " u_cameraZoom=" << cameraZoomLoc
-				  << " u_pixelsPerMeter=" << pixelsPerMeterLoc
-				  << " u_viewportSize=" << viewportSizeLoc << std::endl;
+				  << "u_instanced=" << instancedLoc << " u_cameraPosition=" << cameraPositionLoc << " u_cameraZoom=" << cameraZoomLoc
+				  << " u_pixelsPerMeter=" << pixelsPerMeterLoc << " u_viewportSize=" << viewportSizeLoc << std::endl;
 #endif
 
 		// Create VAO/VBO/IBO using RAII wrappers
@@ -138,7 +136,7 @@ namespace Renderer {
 		float										zIndex
 	) { // NOLINT(readability-convert-member-functions-to-static)
 		const uint32_t zGroupStart = static_cast<uint32_t>(indices.size());
-		uint32_t baseIndex = static_cast<uint32_t>(vertices.size());
+		uint32_t	   baseIndex = static_cast<uint32_t>(vertices.size());
 
 		// Calculate rect center and half-dimensions for SDF
 		float halfW = bounds.width * 0.5F;
@@ -220,7 +218,11 @@ namespace Renderer {
 
 		// Top-left corner
 		vertices.push_back(
-			{TransformPosition(Foundation::Vec2(centerX - expandedHalfW, centerY - expandedHalfH), currentTransform, transformIsIdentity),
+			{TransformPosition(
+				 Foundation::Vec2(centerX - expandedHalfW, centerY - expandedHalfH),
+				 currentTransform,
+				 transformClass == TransformClass::kIdentity
+			 ),
 			 Foundation::Vec2(-expandedHalfW, -expandedHalfH), // Rect-local: top-left (expanded)
 			 colorTL,
 			 borderData,
@@ -230,7 +232,11 @@ namespace Renderer {
 
 		// Top-right corner
 		vertices.push_back(
-			{TransformPosition(Foundation::Vec2(centerX + expandedHalfW, centerY - expandedHalfH), currentTransform, transformIsIdentity),
+			{TransformPosition(
+				 Foundation::Vec2(centerX + expandedHalfW, centerY - expandedHalfH),
+				 currentTransform,
+				 transformClass == TransformClass::kIdentity
+			 ),
 			 Foundation::Vec2(expandedHalfW, -expandedHalfH), // Rect-local: top-right (expanded)
 			 colorTR,
 			 borderData,
@@ -240,7 +246,11 @@ namespace Renderer {
 
 		// Bottom-right corner
 		vertices.push_back(
-			{TransformPosition(Foundation::Vec2(centerX + expandedHalfW, centerY + expandedHalfH), currentTransform, transformIsIdentity),
+			{TransformPosition(
+				 Foundation::Vec2(centerX + expandedHalfW, centerY + expandedHalfH),
+				 currentTransform,
+				 transformClass == TransformClass::kIdentity
+			 ),
 			 Foundation::Vec2(expandedHalfW, expandedHalfH), // Rect-local: bottom-right (expanded)
 			 colorBR,
 			 borderData,
@@ -250,7 +260,11 @@ namespace Renderer {
 
 		// Bottom-left corner
 		vertices.push_back(
-			{TransformPosition(Foundation::Vec2(centerX - expandedHalfW, centerY + expandedHalfH), currentTransform, transformIsIdentity),
+			{TransformPosition(
+				 Foundation::Vec2(centerX - expandedHalfW, centerY + expandedHalfH),
+				 currentTransform,
+				 transformClass == TransformClass::kIdentity
+			 ),
 			 Foundation::Vec2(-expandedHalfW, expandedHalfH), // Rect-local: bottom-left (expanded)
 			 colorBL,
 			 borderData,
@@ -273,7 +287,8 @@ namespace Renderer {
 		recordGroup(zGroupStart, zIndex);
 	}
 
-	void BatchRenderer::addShadowQuad(const Foundation::Rect& bounds, const Foundation::BoxShadow& shadow, float cornerRadius, float zIndex) {
+	void
+	BatchRenderer::addShadowQuad(const Foundation::Rect& bounds, const Foundation::BoxShadow& shadow, float cornerRadius, float zIndex) {
 		const uint32_t zGroupStart = static_cast<uint32_t>(indices.size());
 		// The shadow's SDF shape is the rect grown by `spread`; the quad is grown a
 		// further `blur` so the shader has room to fade the falloff to zero.
@@ -296,14 +311,38 @@ namespace Renderer {
 
 		// Corners TL, TR, BR, BL. rectLocalPos is the SDF coordinate from the shadow
 		// center: the shape edge sits at +-halfSize, the falloff runs out to +-blur.
-		vertices.push_back({TransformPosition(Foundation::Vec2(cx - qHalfW, cy - qHalfH), currentTransform, transformIsIdentity),
-							Foundation::Vec2(-qHalfW, -qHalfH), colorVec, data1, data2, currentClipBounds});
-		vertices.push_back({TransformPosition(Foundation::Vec2(cx + qHalfW, cy - qHalfH), currentTransform, transformIsIdentity),
-							Foundation::Vec2(qHalfW, -qHalfH), colorVec, data1, data2, currentClipBounds});
-		vertices.push_back({TransformPosition(Foundation::Vec2(cx + qHalfW, cy + qHalfH), currentTransform, transformIsIdentity),
-							Foundation::Vec2(qHalfW, qHalfH), colorVec, data1, data2, currentClipBounds});
-		vertices.push_back({TransformPosition(Foundation::Vec2(cx - qHalfW, cy + qHalfH), currentTransform, transformIsIdentity),
-							Foundation::Vec2(-qHalfW, qHalfH), colorVec, data1, data2, currentClipBounds});
+		vertices.push_back(
+			{TransformPosition(Foundation::Vec2(cx - qHalfW, cy - qHalfH), currentTransform, transformClass == TransformClass::kIdentity),
+			 Foundation::Vec2(-qHalfW, -qHalfH),
+			 colorVec,
+			 data1,
+			 data2,
+			 currentClipBounds}
+		);
+		vertices.push_back(
+			{TransformPosition(Foundation::Vec2(cx + qHalfW, cy - qHalfH), currentTransform, transformClass == TransformClass::kIdentity),
+			 Foundation::Vec2(qHalfW, -qHalfH),
+			 colorVec,
+			 data1,
+			 data2,
+			 currentClipBounds}
+		);
+		vertices.push_back(
+			{TransformPosition(Foundation::Vec2(cx + qHalfW, cy + qHalfH), currentTransform, transformClass == TransformClass::kIdentity),
+			 Foundation::Vec2(qHalfW, qHalfH),
+			 colorVec,
+			 data1,
+			 data2,
+			 currentClipBounds}
+		);
+		vertices.push_back(
+			{TransformPosition(Foundation::Vec2(cx - qHalfW, cy + qHalfH), currentTransform, transformClass == TransformClass::kIdentity),
+			 Foundation::Vec2(-qHalfW, qHalfH),
+			 colorVec,
+			 data1,
+			 data2,
+			 currentClipBounds}
+		);
 
 		indices.push_back(baseIndex + 0);
 		indices.push_back(baseIndex + 1);
@@ -327,7 +366,7 @@ namespace Renderer {
 		float					  zIndex
 	) { // NOLINT(readability-convert-member-functions-to-static)
 		const uint32_t zGroupStart = static_cast<uint32_t>(indices.size());
-		uint32_t baseIndex = static_cast<uint32_t>(vertices.size());
+		uint32_t	   baseIndex = static_cast<uint32_t>(vertices.size());
 
 		Foundation::Vec4 uniformColorVec = color.toVec4();
 
@@ -340,11 +379,10 @@ namespace Renderer {
 		// Add all vertices (positions transformed by currentTransform)
 		for (size_t i = 0; i < vertexCount; ++i) {
 			// Use per-vertex color if provided, otherwise uniform color
-			Foundation::Vec4 colorVec =
-				(inputColors != nullptr) ? inputColors[i].toVec4() : uniformColorVec;
+			Foundation::Vec4 colorVec = (inputColors != nullptr) ? inputColors[i].toVec4() : uniformColorVec;
 
 			vertices.push_back({
-				TransformPosition(inputVertices[i], currentTransform, transformIsIdentity),
+				TransformPosition(inputVertices[i], currentTransform, transformClass == TransformClass::kIdentity),
 				zeroVec2, // texCoord (unused for triangles)
 				colorVec,
 				zeroVec4,		  // data1 (unused)
@@ -370,6 +408,7 @@ namespace Renderer {
 		const Foundation::Vec2&	 uvMin,
 		const Foundation::Vec2&	 uvMax,
 		const Foundation::Color& color,
+		const Foundation::Vec2&	 runOrigin,
 		GLuint					 atlasTexture,
 		float					 zIndex
 	) {
@@ -388,13 +427,46 @@ namespace Renderer {
 		Foundation::Vec4 zeroVec4(0.0F, 0.0F, 0.0F, 0.0F);
 		Foundation::Vec4 textParams(fontPixelRange, 0.0F, 0.0F, kRenderModeText);
 
+		// Under identity/translate-only transforms, snap the RUN origin (not the
+		// glyph) to the device pixel grid: every glyph of a run computes the same
+		// delta from the same runOrigin, so inter-glyph spacing stays exactly as
+		// authored by the atlas metrics while the whole run lands on whole device
+		// pixels (fractional origins otherwise blur the MSDF edge AA). A general
+		// transform (rotation/scale) has no meaningful pixel grid; positions pass
+		// through the matrix unsnapped.
+		const bool		 useMatrix = (transformClass == TransformClass::kGeneral);
+		Foundation::Vec2 snappedPosition = position;
+		if (!useMatrix) {
+			float pixelRatio = 1.0F;
+			if (coordinateSystem != nullptr) {
+				pixelRatio = coordinateSystem->getPixelRatio();
+			}
+			if (pixelRatio != textSnapCache.pixelRatio || transformTranslation != textSnapCache.translation ||
+				runOrigin != textSnapCache.runOrigin) {
+				const Foundation::Vec2 origin = runOrigin + transformTranslation;
+				textSnapCache.pixelRatio = pixelRatio;
+				textSnapCache.translation = transformTranslation;
+				textSnapCache.runOrigin = runOrigin;
+				textSnapCache.delta = Foundation::Vec2(
+					std::round(origin.x * pixelRatio) / pixelRatio - origin.x, std::round(origin.y * pixelRatio) / pixelRatio - origin.y
+				);
+			}
+			snappedPosition = position + transformTranslation + textSnapCache.delta;
+		}
+
+		const auto cornerPosition = [&](float dx, float dy) {
+			if (useMatrix) {
+				return TransformPosition(Foundation::Vec2(position.x + dx, position.y + dy), currentTransform, false);
+			}
+			return Foundation::Vec2(snappedPosition.x + dx, snappedPosition.y + dy);
+		};
+
 		// Add 4 vertices for glyph quad
 		// Note: UV Y coordinates are flipped for OpenGL coordinate system
-		// Positions are transformed by currentTransform to support scrolling/offset
 
 		// Top-left
 		vertices.push_back(
-			{TransformPosition(position, currentTransform, transformIsIdentity),
+			{cornerPosition(0.0F, 0.0F),
 			 Foundation::Vec2(uvMin.x, uvMax.y), // UV flipped
 			 colorVec,
 			 zeroVec4,
@@ -404,7 +476,7 @@ namespace Renderer {
 
 		// Top-right
 		vertices.push_back(
-			{TransformPosition(Foundation::Vec2(position.x + size.x, position.y), currentTransform, transformIsIdentity),
+			{cornerPosition(size.x, 0.0F),
 			 Foundation::Vec2(uvMax.x, uvMax.y), // UV flipped
 			 colorVec,
 			 zeroVec4,
@@ -414,7 +486,7 @@ namespace Renderer {
 
 		// Bottom-right
 		vertices.push_back(
-			{TransformPosition(Foundation::Vec2(position.x + size.x, position.y + size.y), currentTransform, transformIsIdentity),
+			{cornerPosition(size.x, size.y),
 			 Foundation::Vec2(uvMax.x, uvMin.y), // UV flipped
 			 colorVec,
 			 zeroVec4,
@@ -424,7 +496,7 @@ namespace Renderer {
 
 		// Bottom-left
 		vertices.push_back(
-			{TransformPosition(Foundation::Vec2(position.x, position.y + size.y), currentTransform, transformIsIdentity),
+			{cornerPosition(0.0F, size.y),
 			 Foundation::Vec2(uvMin.x, uvMin.y), // UV flipped
 			 colorVec,
 			 zeroVec4,
@@ -466,7 +538,9 @@ namespace Renderer {
 		const std::vector<uint32_t>* emit = &indices;
 		std::vector<uint32_t>		 sortedIndices;
 		if (anyExplicitZ && !drawGroups.empty()) {
-			std::stable_sort(drawGroups.begin(), drawGroups.end(), [](const DrawGroup& a, const DrawGroup& b) { return a.zIndex < b.zIndex; });
+			std::stable_sort(drawGroups.begin(), drawGroups.end(), [](const DrawGroup& a, const DrawGroup& b) {
+				return a.zIndex < b.zIndex;
+			});
 			sortedIndices.reserve(indices.size());
 			for (const DrawGroup& g : drawGroups) {
 				sortedIndices.insert(sortedIndices.end(), indices.begin() + g.indexStart, indices.begin() + g.indexStart + g.indexCount);
@@ -564,10 +638,7 @@ namespace Renderer {
 				// Flush the run accumulated so far with the previously bound atlas.
 				if (tri > runStart) {
 					glDrawElements(
-						GL_TRIANGLES,
-						static_cast<GLsizei>(tri - runStart),
-						GL_UNSIGNED_INT,
-						(const void*)(runStart * sizeof(uint32_t))
+						GL_TRIANGLES, static_cast<GLsizei>(tri - runStart), GL_UNSIGNED_INT, (const void*)(runStart * sizeof(uint32_t))
 					);
 					drawCallCount++;
 				}
@@ -581,10 +652,7 @@ namespace Renderer {
 		// Draw the final run.
 		if (indexCount > runStart) {
 			glDrawElements(
-				GL_TRIANGLES,
-				static_cast<GLsizei>(indexCount - runStart),
-				GL_UNSIGNED_INT,
-				(const void*)(runStart * sizeof(uint32_t))
+				GL_TRIANGLES, static_cast<GLsizei>(indexCount - runStart), GL_UNSIGNED_INT, (const void*)(runStart * sizeof(uint32_t))
 			);
 			drawCallCount++;
 		}
@@ -656,17 +724,22 @@ namespace Renderer {
 
 	void BatchRenderer::setTransform(const Foundation::Mat4& transform) {
 		currentTransform = transform;
-		// Cache identity check (expensive to do per-vertex, cheap once per transform change)
-		// Check all elements for true identity matrix (GLM uses column-major storage)
-		transformIsIdentity =
-			// Diagonal must be 1.0
-			transform[0][0] == 1.0F && transform[1][1] == 1.0F && transform[2][2] == 1.0F && transform[3][3] == 1.0F &&
-			// Translation (column 3) must be 0
-			transform[3][0] == 0.0F && transform[3][1] == 0.0F && transform[3][2] == 0.0F &&
-			// Rotation/shear off-diagonals must be 0
-			transform[0][1] == 0.0F && transform[0][2] == 0.0F && transform[0][3] == 0.0F && transform[1][0] == 0.0F &&
-			transform[1][2] == 0.0F && transform[1][3] == 0.0F && transform[2][0] == 0.0F && transform[2][1] == 0.0F &&
-			transform[2][3] == 0.0F;
+		// Classify once per transform change (expensive to do per-vertex).
+		// GLM uses column-major storage: column 3 is the translation, the rest
+		// is the linear (rotation/scale/shear) part.
+		const bool linearIsIdentity = transform[0][0] == 1.0F && transform[1][1] == 1.0F && transform[2][2] == 1.0F &&
+									  transform[3][3] == 1.0F && transform[0][1] == 0.0F && transform[0][2] == 0.0F &&
+									  transform[0][3] == 0.0F && transform[1][0] == 0.0F && transform[1][2] == 0.0F &&
+									  transform[1][3] == 0.0F && transform[2][0] == 0.0F && transform[2][1] == 0.0F &&
+									  transform[2][3] == 0.0F;
+		transformTranslation = Foundation::Vec2(transform[3][0], transform[3][1]);
+		if (!linearIsIdentity || transform[3][2] != 0.0F) {
+			transformClass = TransformClass::kGeneral;
+		} else if (transform[3][0] == 0.0F && transform[3][1] == 0.0F) {
+			transformClass = TransformClass::kIdentity;
+		} else {
+			transformClass = TransformClass::kTranslateOnly;
+		}
 	}
 
 	// --- GPU Instancing Methods ---
@@ -677,14 +750,11 @@ namespace Renderer {
 	// maxInstances (e.g. 250k blades = 8MB), not this cap.
 	constexpr uint32_t kMaxAllowedInstances = 2000000;
 
-	InstancedMeshHandle BatchRenderer::uploadInstancedMesh(
-		const renderer::TessellatedMesh& mesh,
-		uint32_t						 maxInstances
-	) {
+	InstancedMeshHandle BatchRenderer::uploadInstancedMesh(const renderer::TessellatedMesh& mesh, uint32_t maxInstances) {
 		// Validate maxInstances parameter
 		if (maxInstances == 0 || maxInstances > kMaxAllowedInstances) {
-			std::cerr << "[BatchRenderer] Invalid maxInstances: " << maxInstances
-					  << " (must be 1-" << kMaxAllowedInstances << ")" << std::endl;
+			std::cerr << "[BatchRenderer] Invalid maxInstances: " << maxInstances << " (must be 1-" << kMaxAllowedInstances << ")"
+					  << std::endl;
 			return InstancedMeshHandle{};
 		}
 
@@ -714,25 +784,20 @@ namespace Renderer {
 		handle.meshVBO = GLBuffer::create(GL_ARRAY_BUFFER);
 		glBindBuffer(GL_ARRAY_BUFFER, handle.meshVBO);
 		glBufferData(
-			GL_ARRAY_BUFFER,
-			static_cast<GLsizeiptr>(meshVertices.size() * sizeof(InstancedMeshVertex)),
-			meshVertices.data(),
-			GL_STATIC_DRAW
+			GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(meshVertices.size() * sizeof(InstancedMeshVertex)), meshVertices.data(), GL_STATIC_DRAW
 		);
 
 		// Set up mesh vertex attributes (from meshVBO)
 		// Location 0: position (vec2)
 		glEnableVertexAttribArray(0);
 		glVertexAttribPointer(
-			0, 2, GL_FLOAT, GL_FALSE, sizeof(InstancedMeshVertex),
-			reinterpret_cast<void*>(offsetof(InstancedMeshVertex, position))
+			0, 2, GL_FLOAT, GL_FALSE, sizeof(InstancedMeshVertex), reinterpret_cast<void*>(offsetof(InstancedMeshVertex, position))
 		);
 
 		// Location 2: color (vec4 - Color has r,g,b,a floats)
 		glEnableVertexAttribArray(2);
 		glVertexAttribPointer(
-			2, 4, GL_FLOAT, GL_FALSE, sizeof(InstancedMeshVertex),
-			reinterpret_cast<void*>(offsetof(InstancedMeshVertex, color))
+			2, 4, GL_FLOAT, GL_FALSE, sizeof(InstancedMeshVertex), reinterpret_cast<void*>(offsetof(InstancedMeshVertex, color))
 		);
 
 		// Locations 1, 3, 4, 5 are not enabled - OpenGL provides default vertex attribute values (0,0,0,1)
@@ -742,10 +807,7 @@ namespace Renderer {
 		handle.meshIBO = GLBuffer::create(GL_ELEMENT_ARRAY_BUFFER);
 		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, handle.meshIBO);
 		glBufferData(
-			GL_ELEMENT_ARRAY_BUFFER,
-			static_cast<GLsizeiptr>(mesh.indices.size() * sizeof(uint16_t)),
-			mesh.indices.data(),
-			GL_STATIC_DRAW
+			GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(mesh.indices.size() * sizeof(uint16_t)), mesh.indices.data(), GL_STATIC_DRAW
 		);
 		handle.indexCount = static_cast<uint32_t>(mesh.indices.size());
 		handle.vertexCount = static_cast<uint32_t>(mesh.vertices.size());
@@ -769,10 +831,7 @@ namespace Renderer {
 
 		// Location 7: instanceData2 (colorTint.rgba)
 		glEnableVertexAttribArray(7);
-		glVertexAttribPointer(
-			7, 4, GL_FLOAT, GL_FALSE, sizeof(InstanceData),
-			reinterpret_cast<void*>(offsetof(InstanceData, colorTint))
-		);
+		glVertexAttribPointer(7, 4, GL_FLOAT, GL_FALSE, sizeof(InstanceData), reinterpret_cast<void*>(offsetof(InstanceData, colorTint)));
 		glVertexAttribDivisor(7, 1);
 
 		glBindVertexArray(0);
@@ -819,9 +878,7 @@ namespace Renderer {
 		if (coordinateSystem != nullptr) {
 			projection = coordinateSystem->CreateScreenSpaceProjection();
 		} else {
-			projection = glm::ortho(
-				0.0F, static_cast<float>(viewportWidth), static_cast<float>(viewportHeight), 0.0F, -1.0F, 1.0F
-			);
+			projection = glm::ortho(0.0F, static_cast<float>(viewportWidth), static_cast<float>(viewportHeight), 0.0F, -1.0F, 1.0F);
 		}
 		glUniformMatrix4fv(projectionLoc, 1, GL_FALSE, glm::value_ptr(projection));
 
@@ -858,11 +915,7 @@ namespace Renderer {
 			uint32_t batchSize = std::min(remaining, handle.maxInstances);
 
 			// Upload this batch of instance data to GPU
-			glBufferSubData(
-				GL_ARRAY_BUFFER, 0,
-				static_cast<GLsizeiptr>(batchSize * sizeof(InstanceData)),
-				instances + offset
-			);
+			glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(batchSize * sizeof(InstanceData)), instances + offset);
 
 			// Draw this batch of instances
 			glDrawElementsInstanced(

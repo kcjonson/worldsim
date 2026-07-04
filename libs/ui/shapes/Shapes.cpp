@@ -1,6 +1,6 @@
 #include "shapes/Shapes.h"
-#include "font/FontRenderer.h"
 #include "core/RenderContext.h"
+#include "font/FontRenderer.h"
 #include "primitives/BatchRenderer.h"
 #include "primitives/Primitives.h"
 #include "utils/Log.h"
@@ -24,16 +24,14 @@ namespace UI {
 	}
 
 	void Line::render() {
-		Renderer::Primitives::drawLine(
-			{.start = start, .end = end, .style = style, .id = id, .zIndex = RenderContext::getZIndex()}
-		);
+		Renderer::Primitives::drawLine({.start = start, .end = end, .style = style, .id = id, .zIndex = RenderContext::getZIndex()});
 	}
 
 	// Text layout API implementation
 	void Text::ensureCacheValid() const {
 		// Check if cache is still valid
-		if (cachedWidth.has_value() && cachedText == text && cachedFontSize == style.fontSize &&
-			cachedWrapWidth == width && cachedWordWrap == style.wordWrap) {
+		if (cachedWidth.has_value() && cachedText == text && cachedFontSize == style.fontSize && cachedWrapWidth == width &&
+			cachedWordWrap == style.wordWrap) {
 			return; // Cache is valid
 		}
 
@@ -52,7 +50,7 @@ namespace UI {
 		float scale = style.fontSize / BASE_FONT_SIZE;
 
 		// Determine if wrapping is enabled
-		bool shouldWrap = style.wordWrap && width.has_value();
+		bool  shouldWrap = style.wordWrap && width.has_value();
 		float wrapWidth = shouldWrap ? *width : 0.0F;
 
 		glm::vec2 size = fontRenderer->measureTextWithWrapping(text, scale, wrapWidth);
@@ -104,8 +102,8 @@ namespace UI {
 		const float scale = style.fontSize / BASE_FONT_SIZE;
 
 		// Determine if we should use wrapped text mode
-		bool shouldWrap = style.wordWrap && width.has_value();
-		glm::vec4 glyphColor(style.color.r, style.color.g, style.color.b, style.color.a);
+		bool									 shouldWrap = style.wordWrap && width.has_value();
+		glm::vec4								 glyphColor(style.color.r, style.color.g, style.color.b, style.color.a);
 		std::vector<ui::FontRenderer::GlyphQuad> glyphs;
 
 		if (shouldWrap) {
@@ -132,14 +130,7 @@ namespace UI {
 
 			// Generate quads for all lines with per-line horizontal alignment
 			fontRenderer->generateWrappedGlyphQuads(
-				wrapped.lines,
-				glm::vec2(alignedPos.x, alignedPos.y),
-				scale,
-				glyphColor,
-				wrapped.lineHeight,
-				style.hAlign,
-				*width,
-				glyphs
+				wrapped.lines, glm::vec2(alignedPos.x, alignedPos.y), scale, glyphColor, wrapped.lineHeight, style.hAlign, *width, glyphs
 			);
 		} else {
 			// SINGLE LINE MODE (original behavior)
@@ -221,9 +212,7 @@ namespace UI {
 			}
 
 			// Generate glyph quads using FontRenderer
-			fontRenderer->generateGlyphQuads(
-				text, glm::vec2(alignedPos.x, alignedPos.y), scale, glyphColor, glyphs
-			);
+			fontRenderer->generateGlyphQuads(text, glm::vec2(alignedPos.x, alignedPos.y), scale, glyphColor, glyphs);
 		}
 
 		// Add each glyph to the unified batch renderer
@@ -235,7 +224,8 @@ namespace UI {
 				Foundation::Vec2(glyph.size.x, glyph.size.y),
 				Foundation::Vec2(glyph.uvMin.x, glyph.uvMin.y),
 				Foundation::Vec2(glyph.uvMax.x, glyph.uvMax.y),
-				textColor
+				textColor,
+				Foundation::Vec2(glyph.runOrigin.x, glyph.runOrigin.y)
 			);
 		}
 	}
