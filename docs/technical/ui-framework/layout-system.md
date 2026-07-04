@@ -1,358 +1,105 @@
 # UI Layout System
 
-This document describes the layout system for automatic component positioning.
-
-## Problem Statement
-
-The current UI system requires manual position calculation:
+`LayoutContainer` (libs/ui/layout/) is the auto-layout engine: a flexbox-like
+stack container that positions and sizes its children. One container type, one
+code path; there is no separate VStack/HStack.
 
 ```cpp
-// Current: Manual positioning everywhere
-labelText.position = Foundation::Vec2{
-    position.x + size.x / 2.0F,
-    position.y + size.y / 2.0F
-};
-
-// TabBar: Manual tab layout
-void recomputeLayout() {
-    float currentX = position.x + kTabPadding;
-    for (auto& tab : tabs) {
-        tab.bounds.x = currentX;
-        currentX += tab.bounds.width + kTabSpacing;
-    }
-}
-```
-
-This approach doesn't scale:
-- Every component manually calculates child positions
-- Resizing requires touching many files
-- No automatic flow/wrap behavior
-- Scrollable content requires manual content height tracking
-
-## Design Goals
-
-1. **Declarative layout** - Specify relationships, not coordinates
-2. **Composable** - Layout containers can nest
-3. **Minimal API** - VStack/HStack covers 90% of cases
-4. **Opt-in** - Components can still use manual positioning
-5. **Performance** - Layout computed once per frame, cached
-
-## Layout Primitives
-
-### 1. VStack (Vertical Stack)
-
-Arranges children vertically from top to bottom.
-
-```cpp
-// API
-struct VStack : public Container {
-    struct Args {
-        Foundation::Vec2 position{0, 0};
-        Foundation::Vec2 size{0, 0};      // 0 = auto-size to content
-        float spacing = 8.0f;              // Gap between children
-        HAlign hAlign = HAlign::Left;      // Child horizontal alignment
-    };
-
-    explicit VStack(const Args& args);
-};
-
-// Usage
-auto stack = VStack(VStack::Args{
-    .position = {100, 100},
-    .size = {200, 0},  // Fixed width, auto height
-    .spacing = 12.0f
-});
-
-stack.addChild(Text{...});
-stack.addChild(Button{...});
-stack.addChild(Text{...});
-// Children automatically positioned vertically
-```
-
-### 2. HStack (Horizontal Stack)
-
-Arranges children horizontally from left to right.
-
-```cpp
-// API
-struct HStack : public Container {
-    struct Args {
-        Foundation::Vec2 position{0, 0};
-        Foundation::Vec2 size{0, 0};
-        float spacing = 8.0f;
-        VAlign vAlign = VAlign::Center;    // Child vertical alignment
-    };
-
-    explicit HStack(const Args& args);
-};
-
-// Usage
-auto toolbar = HStack(HStack::Args{
-    .position = {0, 0},
-    .size = {0, 40},  // Auto width, fixed height
-    .spacing = 4.0f
-});
-
-toolbar.addChild(Button{.label = "File"});
-toolbar.addChild(Button{.label = "Edit"});
-toolbar.addChild(Button{.label = "View"});
-```
-
-### 3. Spacer
-
-Flexible space that expands to fill available room.
-
-```cpp
-struct Spacer : public IComponent {
-    float minSize = 0.0f;   // Minimum space
-    float flex = 1.0f;      // Relative flex weight
-};
-
-// Usage: Push button to right edge
-auto header = HStack(HStack::Args{.size = {400, 40}});
-header.addChild(Text{.text = "Title"});
-header.addChild(Spacer{});  // Expands to fill
-header.addChild(Button{.label = "Close"});
-```
-
-### 4. Alignment Enums
-
-```cpp
-enum class HAlign { Left, Center, Right };
-enum class VAlign { Top, Center, Bottom };
-```
-
-## Layout Protocol
-
-### ILayoutable Interface
-
-Components opt into layout by implementing:
-
-```cpp
-struct ILayoutable {
-    // Size this component wants (may be overridden by parent)
-    virtual Foundation::Vec2 preferredSize() const = 0;
-
-    // Minimum size (layout won't shrink below this)
-    virtual Foundation::Vec2 minSize() const { return {0, 0}; }
-
-    // Set position and size (called by parent during layout)
-    virtual void setBounds(const Foundation::Rect& bounds) = 0;
-};
-```
-
-### Layout Phase
-
-Layout runs once per frame, before rendering:
-
-```cpp
-// In Container::layout(const Rect& bounds)
-void VStack::layout(const Rect& bounds) {
-    // 1. Query preferred sizes
-    float totalHeight = 0;
-    for (auto* child : children) {
-        if (auto* layoutable = dynamic_cast<ILayoutable*>(child)) {
-            totalHeight += layoutable->preferredSize().y + m_spacing;
-        }
-    }
-
-    // 2. Compute positions
-    float y = bounds.y;
-    for (auto* child : children) {
-        if (auto* layoutable = dynamic_cast<ILayoutable*>(child)) {
-            auto pref = layoutable->preferredSize();
-            float x = computeXForHAlign(bounds, pref.x, m_hAlign);
-            layoutable->setBounds({x, y, pref.x, pref.y});
-            y += pref.y + m_spacing;
-        }
-    }
-
-    // 3. Update own size if auto-sizing
-    if (m_size.y == 0) {
-        m_computedSize.y = totalHeight;
-    }
-}
-```
-
-## Common Patterns
-
-### Pattern 1: Panel with Header and Content
-
-```cpp
-auto panel = VStack(VStack::Args{
+auto layout = UI::LayoutContainer(UI::LayoutContainer::Args{
     .position = {50, 50},
-    .size = {300, 400}
+    .size = {240, 0},                          // fixed width, hug height
+    .direction = UI::Direction::Vertical,
+    .gap = 8,
+    .padding = UI::Insets{16},
+    .distribution = UI::Distribution::SpaceBetween,
+    .crossAlign = UI::CrossAlign::Stretch,
 });
-
-// Header row
-auto header = HStack(HStack::Args{.size = {0, 32}});
-header.addChild(Text{.text = "Colonist Info"});
-header.addChild(Spacer{});
-header.addChild(Button{.label = "X", .size = {24, 24}});
-panel.addChild(std::move(header));
-
-// Content
-panel.addChild(Text{.text = "Name: Alice"});
-panel.addChild(NeedBar{.label = "Hunger", .value = 0.7f});
-panel.addChild(NeedBar{.label = "Energy", .value = 0.4f});
+layout.addChild(UI::Text(...));
+layout.addChild(UI::Button(...));
 ```
 
-### Pattern 2: Button Row
+## Config
 
-```cpp
-auto buttons = HStack(HStack::Args{
-    .spacing = 8.0f,
-    .vAlign = VAlign::Center
-});
-buttons.addChild(Button{.label = "Cancel"});
-buttons.addChild(Spacer{});  // Push OK to right
-buttons.addChild(Button{.label = "OK", .type = Button::Primary});
-```
+- **Direction** — `Vertical` | `Horizontal`. The stacking axis is the main
+  axis; the other is the cross axis.
+- **gap** — fixed spacing between adjacent children.
+- **padding** — per-side container insets (`Insets{top, right, bottom, left}`,
+  or `Insets{uniform}`).
+- **distribution** — main-axis placement: `Start`, `Center`, `End`,
+  `SpaceBetween`, `SpaceAround`, `SpaceEvenly`. The Space* modes distribute
+  leftover space and stack on top of the fixed gap.
+- **crossAlign** — cross-axis placement: `Start`, `Center`, `End`, `Stretch`.
 
-### Pattern 3: Scrollable List
+## Per-child sizing
 
-```cpp
-auto scrollContainer = ScrollContainer(ScrollContainer::Args{
-    .size = {200, 300}
-});
+Every `IComponent` carries `widthMode`, `heightMode` (`SizeMode`), and
+`fillWeight`:
 
-auto list = VStack(VStack::Args{.spacing = 4.0f});
-for (const auto& item : items) {
-    list.addChild(ListItem{.text = item.name});
-}
+- **Fixed** — the explicit size is authoritative; the engine never resizes it.
+  Default for plain components.
+- **Hug** — sizes to content. `Text` defaults to Hug and measures itself
+  (wrap-aware); a Hug container measures its children. Stretched by
+  `CrossAlign::Stretch`.
+- **Fill** — the parent assigns the size. Main-axis Fill children share the
+  leftover space (after Fixed/Hug children, padding, and gaps) proportionally
+  by `fillWeight`, as exact float shares. A cross-axis Fill child stretches
+  like `Stretch`, regardless of the container's crossAlign.
 
-scrollContainer.setContent(std::move(list));
-// ScrollContainer auto-sizes to VStack's computed height
-```
+A `LayoutContainer` constructed with a zero size axis is Hug on that axis;
+non-zero is Fixed. Set `widthMode`/`heightMode = Fill` on the container itself
+(before adding it to its parent) to make it share leftover space.
 
-### Pattern 4: Two-Column Form
+## Layout passes
 
-```cpp
-auto form = VStack(VStack::Args{.spacing = 8.0f});
+`computeLayout()` runs lazily on render when dirty, in three ordered passes:
 
-auto addRow = [&](const std::string& label, auto&& input) {
-    auto row = HStack(HStack::Args{.spacing = 12.0f});
-    row.addChild(Text{.text = label, .size = {100, 0}});  // Fixed label width
-    row.addChild(std::forward<decltype(input)>(input));
-    form.addChild(std::move(row));
-};
+1. **Cross pass** — content box = size − padding. `Stretch` (for non-Fixed
+   children) and cross-axis Fill children receive
+   `setLayoutSize(contentCross − childMargin*2)` on that axis. For `Text` a
+   parent-assigned width becomes the wrap width, so the next pass measures the
+   wrapped height.
+2. **Main pass** — Fixed/Hug children are measured via getWidth/getHeight;
+   leftover = contentMain − sum − gap×(n−1) goes to Fill children by
+   fillWeight.
+3. **Position pass** — distribution offsets on the main axis, cross alignment
+   on the cross axis, then nested `LayoutContainer` children are re-laid-out
+   via `child->layout(assignedBounds)`. Other ILayer children only get
+   `setPosition`/`setLayoutSize`; their `layout()` is not called (components
+   like ScrollContainer manage their own coordinate space).
 
-addRow("Name:", TextInput{.placeholder = "Enter name..."});
-addRow("Age:", TextInput{.placeholder = "0"});
-addRow("Role:", Dropdown{.options = {"Worker", "Builder", "Hunter"}});
-```
+## Semantics that trip people up
 
-## Integration with Existing System
+- **Reported size is the margin box.** `getWidth()`/`getHeight()` return
+  content + margin×2 for every component, containers included. An explicit
+  container size is the *content* size, so `{100, 50}` with margin 10 reports
+  120×70 to its parent.
+- **`layout(bounds)` is a final-rect assignment.** It adopts position and
+  size (content = bounds − margin×2). The engine passes Fixed children their
+  own measured size back, so Fixed is never overridden by a container parent —
+  but an outside caller of `layout()` does override. Don't call it with loose
+  "available space" rects.
+- **No negative offsets.** On overflow, distribution and alignment degrade to
+  Start and children overflow past the end edge.
+- **Hug main axis has no leftover.** Fill children in a Hug axis are measured
+  at their intrinsic size; distribution is inert.
+- **Zero is a valid resolved size.** A container axis is *definite* once a
+  size is established for it: an explicit constructed size, or any
+  `setLayoutSize()`/`layout()` resolution (zero included). Definite axes
+  report the stored size and never fall back to hug measurement, so a Fill
+  container with no leftover reports 0 and a Hug container stretched into a
+  collapsed content box adopts 0. Only a never-resolved Hug/Fill axis
+  measures from children.
+- **Invalidation is manual after content mutation.** There are no parent
+  back-pointers (v1): after changing a child's text, size, or visibility,
+  call `invalidateLayout()` on the owning container. Adding children and the
+  engine's own assignments invalidate automatically.
 
-### Backward Compatibility
+## Verification
 
-Components without ILayoutable continue to work with manual positioning:
-
-```cpp
-// Old way still works
-auto rect = Rectangle(Rectangle::Args{
-    .position = {100, 100},
-    .size = {50, 50}
-});
-
-// Shapes don't implement ILayoutable, so VStack skips them during layout
-// (or we could add a simple wrapper)
-```
-
-### Gradual Migration
-
-1. New panels use VStack/HStack from the start
-2. Existing panels migrated as they're touched
-3. Mixed mode (manual + layout) supported
-
-### Container Integration
-
-VStack and HStack extend Container, inheriting:
-- Clipping support (`setClip()`)
-- Content offset for scrolling (`setContentOffset()`)
-- Event dispatch (`dispatchEvent()`)
-- Memory arena for children
-
-## Size Computation
-
-### Fixed Size
-```cpp
-VStack(VStack::Args{.size = {200, 400}});  // Exactly 200x400
-```
-
-### Auto Size (One Dimension)
-```cpp
-VStack(VStack::Args{.size = {200, 0}});  // Width 200, height = content
-```
-
-### Full Auto Size
-```cpp
-VStack(VStack::Args{.size = {0, 0}});  // Both dimensions fit content
-```
-
-### Flex Sizing (Future)
-```cpp
-// Not in initial implementation, but the pattern supports it:
-struct FlexItem : public ILayoutable {
-    float flex = 1.0f;  // Relative weight for remaining space
-};
-```
-
-## Implementation Plan
-
-### Phase 1: Core Layout
-1. Create `ILayoutable` interface
-2. Implement `VStack` with basic vertical stacking
-3. Implement `HStack` with basic horizontal stacking
-4. Add `Spacer` component
-
-### Phase 2: Size Computation
-1. Add `preferredSize()` to existing components (Button, Text, etc.)
-2. Implement auto-sizing logic in VStack/HStack
-3. Handle min/max size constraints
-
-### Phase 3: ScrollContainer Integration
-1. VStack computes content height automatically
-2. ScrollContainer reads content size from child
-3. Scrollbar thumb size based on viewport/content ratio
-
-### Phase 4: Demo and Validation
-1. Create LayoutScene in ui-sandbox
-2. Demonstrate common patterns
-3. Performance testing with deep nesting
-
-## Performance Considerations
-
-### Layout Caching
-- Layout recomputed only when:
-  - Children added/removed
-  - Container size changes
-  - Child explicitly marks layout dirty
-
-```cpp
-class VStack : public Container {
-    bool m_layoutDirty = true;
-
-    void addChild(...) {
-        Container::addChild(...);
-        m_layoutDirty = true;
-    }
-
-    void layout(const Rect& bounds) {
-        if (!m_layoutDirty && bounds == m_lastBounds) {
-            return;  // Cache hit
-        }
-        // ... compute layout ...
-        m_layoutDirty = false;
-        m_lastBounds = bounds;
-    }
-};
-```
-
-### Avoiding Deep Recursion
-- Layout is O(n) where n = total components
-- No circular dependencies (parent→child only)
-- Typical game UI has < 200 components, layout takes < 1ms
+The `layout` scene in ui-sandbox exercises every feature and doubles as the
+lint fixture: pull `/api/ui/tree` for resolved bounds and `/api/ui/lint` for
+overlap/containment/viewport checks after layout changes. Unit coverage lives
+in libs/ui/layout/LayoutContainer.test.cpp.
 
 ## Related Documentation
 

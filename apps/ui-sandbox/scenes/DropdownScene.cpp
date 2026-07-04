@@ -105,7 +105,6 @@ namespace {
 				.position = {50.0F, 225.0F},
 				.size = {0.0F, 0.0F}, // Auto-size
 				.direction = Direction::Horizontal,
-				.vAlign = VAlign::Top,
 				.id = "dropdown_layout"
 			});
 
@@ -152,9 +151,6 @@ namespace {
 					.margin = 4.0F,
 				}
 			));
-
-			// Force layout calculation
-			layoutContainer->layout(Rect{50.0F, 225.0F, 400.0F, 100.0F});
 
 			// ================================================================
 			// Demo 4: Controlled Select Components

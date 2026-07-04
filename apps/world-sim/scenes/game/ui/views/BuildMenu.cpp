@@ -48,7 +48,6 @@ namespace world_sim {
 			.position = {m_position.x + kPadding, layoutY},
 			.size = {buttonWidth, 0.0F}, // Height determined by children
 			.direction = UI::Direction::Vertical,
-			.hAlign = UI::HAlign::Left
 		});
 
 		for (const auto& item : m_items) {

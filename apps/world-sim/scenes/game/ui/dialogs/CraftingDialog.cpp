@@ -50,8 +50,6 @@ void CraftingDialog::createColumns() {
 		.position = {0, 0},  // Relative to content area (Dialog applies offset)
 		.size = {bounds.width, bounds.height},
 		.direction = UI::Direction::Horizontal,
-		.hAlign = UI::HAlign::Left,
-		.vAlign = UI::VAlign::Top,
 		.id = "content-layout"
 	});
 
@@ -68,8 +66,6 @@ void CraftingDialog::createColumns() {
 		.position = {0, 0},
 		.size = {centerWidth, bounds.height},
 		.direction = UI::Direction::Vertical,
-		.hAlign = UI::HAlign::Left,
-		.vAlign = UI::VAlign::Top,
 		.id = "recipe-details",
 		.margin = kColumnGap / 2  // Half gap on each side
 	}));
@@ -234,8 +230,6 @@ void CraftingDialog::rebuildRecipeColumn() {
 		.position = {0, 0},
 		.size = {kLeftColumnWidth, 0},  // Height auto-computed from children
 		.direction = UI::Direction::Vertical,
-		.hAlign = UI::HAlign::Left,
-		.vAlign = UI::VAlign::Top
 	});
 
 	listLayout.addChild(UI::Text(UI::Text::Args{
@@ -365,8 +359,7 @@ void CraftingDialog::rebuildCenterColumn() {
 		auto quantityRow = UI::LayoutContainer(UI::LayoutContainer::Args{
 			.size = {0, 32},  // Auto-width from children
 			.direction = UI::Direction::Horizontal,
-			.hAlign = UI::HAlign::Left,
-			.vAlign = UI::VAlign::Center,
+			.crossAlign = UI::CrossAlign::Center,
 			.margin = 8.0F
 		});
 
@@ -390,7 +383,7 @@ void CraftingDialog::rebuildCenterColumn() {
 
 		// Current quantity display
 		quantityRow.addChild(UI::Text(UI::Text::Args{
-			.width = 40,
+			.width = 40.0F,
 			.text = std::to_string(model.quantity()),
 			.style = {.color = UI::text, .fontSize = 16, .hAlign = Foundation::HorizontalAlign::Center},
 			.margin = 4.0F
@@ -443,8 +436,6 @@ void CraftingDialog::rebuildQueueColumn() {
 		.position = {0, 0},
 		.size = {kRightColumnWidth - 16, 0},  // Height auto-computed from children
 		.direction = UI::Direction::Vertical,
-		.hAlign = UI::HAlign::Left,
-		.vAlign = UI::VAlign::Top
 	});
 
 	// Header - auto-sized
