@@ -441,11 +441,17 @@ namespace Renderer {
 			if (coordinateSystem != nullptr) {
 				pixelRatio = coordinateSystem->getPixelRatio();
 			}
-			const Foundation::Vec2 origin = runOrigin + transformTranslation;
-			const Foundation::Vec2 snapDelta(
-				std::round(origin.x * pixelRatio) / pixelRatio - origin.x, std::round(origin.y * pixelRatio) / pixelRatio - origin.y
-			);
-			snappedPosition = position + transformTranslation + snapDelta;
+			if (pixelRatio != textSnapCache.pixelRatio || transformTranslation != textSnapCache.translation ||
+				runOrigin != textSnapCache.runOrigin) {
+				const Foundation::Vec2 origin = runOrigin + transformTranslation;
+				textSnapCache.pixelRatio = pixelRatio;
+				textSnapCache.translation = transformTranslation;
+				textSnapCache.runOrigin = runOrigin;
+				textSnapCache.delta = Foundation::Vec2(
+					std::round(origin.x * pixelRatio) / pixelRatio - origin.x, std::round(origin.y * pixelRatio) / pixelRatio - origin.y
+				);
+			}
+			snappedPosition = position + transformTranslation + textSnapCache.delta;
 		}
 
 		const auto cornerPosition = [&](float dx, float dy) {

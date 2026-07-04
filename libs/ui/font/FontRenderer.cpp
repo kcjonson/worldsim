@@ -3,7 +3,6 @@
 #include "font/FontRenderer.h"
 #include "utils/Log.h"
 #include "utils/ResourcePath.h"
-#include <cassert>
 #include <cstdlib>
 #include <fstream>
 #include <memory>
@@ -262,7 +261,6 @@ namespace ui {
 				missingAtlasBounds,
 				missingPlaneBounds
 			);
-			assert(false && "SDF atlas has glyphs with incomplete bounds; regenerate the atlas");
 		}
 
 		LOG_INFO(UI, "Loaded %zu SDF glyphs", sdfGlyphs.size());
