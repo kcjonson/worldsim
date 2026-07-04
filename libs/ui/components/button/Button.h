@@ -42,6 +42,7 @@ class Button : public Component, public FocusableBase<Button> {
 		int					  tabIndex = -1;				 // Tab order (-1 for auto-assign)
 		float				  margin{0.0F};
 		std::string			  iconPath;						 // Optional SVG icon path
+		std::string			  iconGlyph;					 // Optional Salvage glyph name (wins over iconPath)
 		float				  iconSize{16.0F};				 // Icon size (default 16px)
 	};
 
