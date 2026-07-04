@@ -32,6 +32,10 @@ namespace UI {
 		// Draw the pill background, optional dot, and label.
 		void render() const;
 
+		// Pill width for a label (padding + optional dot + measured text), so
+		// callers can advance a row of badges without duplicating the math.
+		static float MeasureWidth(const std::string& label, bool dot = false);
+
 	  private:
 		Args args;
 	};

@@ -4,6 +4,7 @@
 // click a land tile to inspect it, then Land to drop the colony there).
 
 #include "GameStartConfig.h"
+#include "NewGameSetup.h"
 #include "SceneTypes.h"
 #include "WorldCreatorModel.h"
 #include "scenes/landing/LandingSiteDetailsModel.h"
@@ -123,8 +124,14 @@ class WorldCreatorScene : public engine::IScene {
 	}
 
 	void update(float dt) override {
-		// ESC -> main menu from any state
+		// ESC backs out: Configuring returns to the crew step of the New Game
+		// flow; Generating/Reviewing keep bailing to the main menu.
 		if (engine::InputManager::Get().isKeyPressed(engine::Key::Escape)) {
+			if (model.getState() == world_sim::WorldCreatorState::Configuring) {
+				LOG_INFO(Game, "WorldCreatorScene: returning to party select");
+				sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::PartySelect));
+				return;
+			}
 			if (model.getState() == world_sim::WorldCreatorState::Generating) {
 				model.cancelGeneration();
 			}
@@ -487,6 +494,7 @@ class WorldCreatorScene : public engine::IScene {
 		config->world = result;
 		config->landingLatDeg = selectedSite.latDeg;
 		config->landingLonDeg = selectedSite.lonDeg;
+		config->party = world_sim::NewGameSetup::Get().party;
 		world_sim::GameStartConfig::SetPending(std::move(config));
 		sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::GameLoading));
 	}
@@ -543,9 +551,11 @@ class WorldCreatorScene : public engine::IScene {
 	}
 
 	void renderEscHint() {
+		const bool configuring =
+			model.getState() == world_sim::WorldCreatorState::Configuring;
 		UI::Text hint(UI::Text::Args{
 			.position = {viewportW - 12.0F, 14.0F},
-			.text = "ESC: Back to menu",
+			.text = configuring ? "ESC: Back to crew" : "ESC: Back to menu",
 			.style = {
 				.color = UI::text_dim,
 				.fontSize = 13.0F,

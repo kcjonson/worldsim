@@ -6,6 +6,7 @@
 // vector-drawn, not font glyphs.
 
 #include "GameStartConfig.h"
+#include "NewGameSetup.h"
 #include "SceneTypes.h"
 #include "scenes/shared/Starfield.h"
 #include <GL/glew.h>
@@ -39,7 +40,8 @@ namespace {
 
 			items.clear();
 			items.push_back({"New Game", "Begin a new expedition", [this]() {
-								 sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::WorldCreator));
+								 world_sim::NewGameSetup::Reset();
+								 sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::ScenarioSelect));
 							 }, true});
 
 			// Quick Start needs the prebuilt planet shipped next to the exe; if
