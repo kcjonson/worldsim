@@ -19,10 +19,11 @@
 // Navigation menu (only created when no --scene argument)
 static std::optional<UI::NavigationMenu> g_navigationMenu;
 
-// Serve a pending /api/state, /api/ui/tree, or /api/ui/lint request against the
-// current scene's UI roots. Runs on the main thread once per frame (after the
-// scene rendered, so LayoutContainer positions are fresh); mirrors GameScene's
-// drain in world-sim.
+// Serve a pending ui.tree or ui.lint state query against the current scene's
+// UI roots; any other query is consumed and answered with an error JSON so the
+// HTTP request doesn't hang until its timeout. Runs on the main thread once per
+// frame (after the scene rendered, so LayoutContainer positions are fresh);
+// mirrors GameScene's drain in world-sim.
 static void serveUiStateRequests() {
 	auto* debugServer = engine::AppLauncher::getDebugServer();
 	if (debugServer == nullptr) {
