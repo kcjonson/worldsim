@@ -15,24 +15,25 @@ struct ScenarioDef {
 	int			difficulty; // 1..5
 	int			partyCount;
 	const char* tags;
+	const char* icon; // Salvage glyph name
 };
 
 inline constexpr std::array<ScenarioDef, 5> kScenarios{{
 	{"standard", "Standard Colony",
 	 "A balanced wreck site with workable salvage and a temperate landing band. The recommended way in.",
-	 2, 3, "Balanced / Recommended"},
+	 2, 3, "Balanced / Recommended", "home"},
 	{"harsh", "Harsh World",
 	 "Thin atmosphere, scarce water, a climate that does not negotiate. Salvage is light. For veterans.",
-	 4, 3, "Scarcity / Climate"},
+	 4, 3, "Scarcity / Climate", "temp"},
 	{"rich", "Rich Resources",
 	 "Dense ore, lush flora, intact cargo pods scattered nearby. A forgiving economy to learn the ropes.",
-	 1, 4, "Abundant / Casual"},
+	 1, 4, "Abundant / Casual", "box"},
 	{"lone", "Lone Survivor",
 	 "One escape pod. One person. Everything else burned on re-entry. The hardest story we tell.",
-	 5, 1, "Solo / Brutal"},
+	 5, 1, "Solo / Brutal", "user"},
 	{"expedition", "Large Expedition",
 	 "A full survey crew rode the wreck down. More hands, more mouths, more politics. Sandbox-leaning.",
-	 3, 8, "Sandbox / Management"},
+	 3, 8, "Sandbox / Management", "users"},
 }};
 
 } // namespace world_sim
