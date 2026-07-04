@@ -1329,7 +1329,7 @@ namespace {
 					const auto entity = spawnColonist(pos, m_party[i].name);
 					// Replace the default starting skills with the member's rolled set.
 					if (auto* skills = ecsWorld->getComponent<ecs::Skills>(entity)) {
-						skills->levels.clear();
+						skills->clear();
 						for (const auto& [skillName, level] : m_party[i].skills) {
 							skills->setLevel(skillName, level);
 						}

@@ -70,7 +70,7 @@ namespace {
 				.id = "btn_scenario_back",
 			});
 			confirmButton = std::make_unique<UI::Button>(UI::Button::Args{
-				.label = "Confirm Crew",
+				.label = "Confirm Scenario",
 				.size = {200.0F, 40.0F},
 				.type = UI::Button::Type::Primary,
 				.onClick = [this]() { confirm(); },
@@ -149,6 +149,10 @@ namespace {
 					  .color = UI::text_dim,
 					  .font = UI::fontUi,
 					  .vAlign = Foundation::VerticalAlign::Top});
+
+			// Rows and footer depend on layout(); skip them until the viewport
+			// is ready and the row rects exist.
+			if (needsLayout || rowRects.size() != world_sim::kScenarios.size()) return;
 
 			for (size_t i = 0; i < world_sim::kScenarios.size(); ++i) {
 				renderRow(i);
