@@ -51,6 +51,14 @@ namespace UI {
 		float getWidth() const override { return size.x + margin * 2.0F; }
 		float getHeight() const override { return size.y + margin * 2.0F; }
 		void  setPosition(float x, float y) override { position = {x + margin, y + margin}; }
+		void  setLayoutSize(float w, float h) override {
+			 if (w >= 0.0F) {
+				 size.x = w;
+			 }
+			 if (h >= 0.0F) {
+				 size.y = h;
+			 }
+		}
 
 		// Debug introspection (position stores the content origin, so back out margin)
 		Foundation::Vec2 getPosition() const override { return {position.x - margin, position.y - margin}; }
@@ -182,7 +190,10 @@ namespace UI {
 		Foundation::TextStyle style;
 		const char*			  id = nullptr;
 
-		Text() = default;
+		Text() {
+			widthMode = SizeMode::Hug;
+			heightMode = SizeMode::Hug;
+		}
 		explicit Text(const Args& args)
 			: position(args.position),
 			  width(args.width),
@@ -193,6 +204,8 @@ namespace UI {
 			zIndex = args.zIndex;
 			IComponent::visible = args.visible;
 			IComponent::margin = args.margin;
+			widthMode = args.width.has_value() ? SizeMode::Fixed : SizeMode::Hug;
+			heightMode = args.height.has_value() ? SizeMode::Fixed : SizeMode::Hug;
 		}
 
 		// Layout API
@@ -200,6 +213,19 @@ namespace UI {
 		float getWidth() const override;
 		float getHeight() const override;
 		void  setPosition(float x, float y) override { position = {x + margin, y + margin}; }
+
+		// A parent-assigned width becomes the wrap width: with style.wordWrap
+		// the text reflows and getHeight() reports the wrapped height (via the
+		// FontRenderer measurement cache). Height assignment sets the vAlign
+		// bounding box.
+		void setLayoutSize(float w, float h) override {
+			if (w >= 0.0F) {
+				width = w;
+			}
+			if (h >= 0.0F) {
+				height = h;
+			}
+		}
 
 		// Debug introspection (position stores the content origin, so back out margin)
 		Foundation::Vec2 getPosition() const override { return {position.x - margin, position.y - margin}; }
