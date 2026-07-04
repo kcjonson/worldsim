@@ -560,9 +560,8 @@ namespace {
 				card.setSlot(roster[i]);
 				cardHandles.push_back(rosterList.addChild(std::move(card)));
 			}
-			auto* listPtr = &rosterScroll.container();
 			LayerHandle listHandle = rosterScroll.container().addChild(std::move(rosterList));
-			rosterCol.addChild(std::move(rosterScroll));
+			LayerHandle scrollHandle = rosterCol.addChild(std::move(rosterScroll));
 
 			LayoutContainer actions(LayoutContainer::Args{
 				.direction = Direction::Vertical, .gap = space_2, .crossAlign = CrossAlign::Stretch,
@@ -589,7 +588,7 @@ namespace {
 				.id = "slots_label"}));
 			actions.addChild(std::move(actionsRow));
 			rosterCol.addChild(std::move(actions));
-			main.addChild(std::move(rosterCol));
+			LayerHandle rosterColHandle = main.addChild(std::move(rosterCol));
 
 			LayerHandle dossierHandle = main.addChild(DossierView());
 			LayerHandle mainHandle = root->addChild(std::move(main));
@@ -623,7 +622,9 @@ namespace {
 			// Resolve stable pointers now that everything is arena-placed.
 			auto* mainPtr = root->getChild<LayoutContainer>(mainHandle);
 			dossier = mainPtr->getChild<DossierView>(dossierHandle);
-			auto* list = listPtr->getChild<LayoutContainer>(listHandle);
+			auto* rosterColPtr = mainPtr->getChild<LayoutContainer>(rosterColHandle);
+			auto* scrollPtr = rosterColPtr->getChild<world_sim::ScrollRegion>(scrollHandle);
+			auto* list = scrollPtr->container().getChild<LayoutContainer>(listHandle);
 			cards.clear();
 			for (LayerHandle handle : cardHandles) {
 				cards.push_back(list->getChild<RosterCard>(handle));
