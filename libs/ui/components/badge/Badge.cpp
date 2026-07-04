@@ -28,6 +28,15 @@ namespace UI {
 	Badge::Badge(Args badgeArgs)
 		: args(std::move(badgeArgs)) {}
 
+	float Badge::MeasureWidth(const std::string& label, bool dot) {
+		float labelWidth = 0.0F;
+		if (const ui::FontRenderer* font = Renderer::Primitives::getFontRenderer(); font != nullptr) {
+			labelWidth = font->MeasureText(label, textScale(fs_2xs), fontMono, fs_2xs * ls_wider).x;
+		}
+		const float dotSpace = dot ? (kDotDiameter + kDotGap) : 0.0F;
+		return (space_2 * 2.0F) + dotSpace + labelWidth;
+	}
+
 	void Badge::render() const {
 		using Renderer::Primitives::drawCircle;
 		using Renderer::Primitives::drawRect;
@@ -35,17 +44,7 @@ namespace UI {
 
 		const Foundation::Color toneCol = args.tone == Tone::Default ? text : toneColor(args.tone);
 
-		const float scale = textScale(fs_2xs);
-		const float labelSpacing = fs_2xs * ls_wider;
-		float		labelWidth = 0.0F;
-		if (const ui::FontRenderer* font = Renderer::Primitives::getFontRenderer(); font != nullptr) {
-			labelWidth = font->MeasureText(args.label, scale, fontMono, labelSpacing).x;
-		}
-
-		const float dotSpace = args.dot ? (kDotDiameter + kDotGap) : 0.0F;
-		const float width = (space_2 * 2.0F) + dotSpace + labelWidth;
-
-		const Foundation::Rect bounds{args.position, {width, kHeight}};
+		const Foundation::Rect bounds{args.position, {MeasureWidth(args.label, args.dot), kHeight}};
 
 		// Tinted pill: ~14% tone fill over a ~45% tone border (crit runs a touch
 		// hotter in the prototype, but a single mix keeps this token-driven).
@@ -71,12 +70,12 @@ namespace UI {
 
 		drawText({.text = args.label,
 				  .position = {contentX, bounds.y},
-				  .scale = scale,
+				  .scale = textScale(fs_2xs),
 				  .color = toneCol,
 				  .font = fontMono,
 				  .vAlign = Foundation::VerticalAlign::Middle,
 				  .boxHeight = kHeight,
-				  .letterSpacing = labelSpacing,
+				  .letterSpacing = fs_2xs * ls_wider,
 				  .transform = Foundation::TextTransform::Uppercase,
 				  .id = "ds_badge_label"});
 	}

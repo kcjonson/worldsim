@@ -1,6 +1,7 @@
 // Game Scene - Main gameplay with chunk-based world rendering
 
 #include "GameWorldState.h"
+#include "NewGameSetup.h"
 #include "SceneTypes.h"
 #include "scenes/game/dev/DevCommandHandler.h"
 #include "scenes/game/ui/GameUI.h"
@@ -19,6 +20,7 @@
 
 #include <application/AppLauncher.h>
 #include <debug/DebugServer.h>
+#include <algorithm>
 #include <debug/LayoutLint.h>
 #include <debug/UiTreeSerializer.h>
 #include <chrono>
@@ -133,6 +135,7 @@ namespace {
 				m_planet = std::move(preloadedState->planet);
 				m_landingLatDeg = preloadedState->landingLatDeg;
 				m_landingLonDeg = preloadedState->landingLonDeg;
+				m_party = std::move(preloadedState->party);
 
 				LOG_INFO(Game, "Pre-loaded state: %zu chunks, %zu processed", m_chunkManager->loadedChunkCount(), m_processedChunks.size());
 			} else {
@@ -1309,10 +1312,32 @@ namespace {
 			// the AI holds it as a read of this single store, not an independently computed copy.
 			ecsWorld->getSystem<ecs::AIDecisionSystem>().setColonyOrigin(m_colony.originPosition);
 
-			// Spawn the initial colonist in the middle of the cleared, on-mesh clearing.
-			spawnColonist(m_spawnPosition, "Bob");
+			// Spawn the crew in the cleared, on-mesh clearing: a small ring around
+			// the center so members don't stack. An empty party (Quick Start,
+			// direct scene jumps) spawns the single default colonist.
+			if (m_party.empty()) {
+				spawnColonist(m_spawnPosition, "Bob");
+			} else {
+				constexpr float kPartyRingRadius = 1.5F;
+				constexpr float kTwoPi = 6.2831853F;
+				for (size_t i = 0; i < m_party.size(); ++i) {
+					glm::vec2 pos = m_spawnPosition;
+					if (m_party.size() > 1) {
+						const float angle = kTwoPi * static_cast<float>(i) / static_cast<float>(m_party.size());
+						pos += glm::vec2{std::cos(angle), std::sin(angle)} * kPartyRingRadius;
+					}
+					const auto entity = spawnColonist(pos, m_party[i].name);
+					// Replace the default starting skills with the member's rolled set.
+					if (auto* skills = ecsWorld->getComponent<ecs::Skills>(entity)) {
+						skills->clear();
+						for (const auto& [skillName, level] : m_party[i].skills) {
+							skills->setLevel(skillName, level);
+						}
+					}
+				}
+			}
 
-			LOG_INFO(Game, "ECS initialized with 1 colonist");
+			LOG_INFO(Game, "ECS initialized with %zu colonist(s)", std::max<size_t>(m_party.size(), 1));
 		}
 
 		/// Test whether a world-meter position sits on a water tile, using the SAME
@@ -1911,6 +1936,9 @@ namespace {
 		// origin (the cleared, on-mesh clearing center), set once at landing. Read by the
 		// camera-home sync and pushed to AIDecisionSystem for the off-mesh recovery snap.
 		ecs::Colony										   m_colony;
+		// Crew assembled in PartySelect, forwarded through GameWorldState.
+		// Empty -> single default colonist.
+		std::vector<world_sim::PartyMember>				   m_party;
 		std::unique_ptr<engine::world::ChunkRenderer>	   m_renderer;
 		std::unique_ptr<engine::world::EntityRenderer>	   m_entityRenderer;
 		std::unique_ptr<engine::assets::PlacementExecutor> m_placementExecutor;

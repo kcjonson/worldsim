@@ -16,12 +16,14 @@ struct SceneInfo {
 // ============================================================================
 // clang-format off
 #define WORLD_SIM_SCENES(X) \
-	X(Splash)       \
-	X(MainMenu)     \
-	X(GameLoading)  \
-	X(Game)         \
-	X(Settings)     \
-	X(WorldCreator)
+	X(Splash)         \
+	X(MainMenu)       \
+	X(GameLoading)    \
+	X(Game)           \
+	X(Settings)       \
+	X(WorldCreator)   \
+	X(ScenarioSelect) \
+	X(PartySelect)
 // clang-format on
 
 /// @brief Scene types for world-sim application (auto-generated from SCENE_LIST)

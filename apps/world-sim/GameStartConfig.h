@@ -5,9 +5,12 @@
 // config; GameLoadingScene takes it and builds the gameplay world from it.
 // Mirrors the GameWorldState SetPending()/Take() pattern.
 
+#include "NewGameSetup.h"
+
 #include <worldgen/data/GeneratedWorld.h>
 
 #include <memory>
+#include <vector>
 
 namespace world_sim {
 
@@ -29,6 +32,10 @@ struct GameStartConfig {
 	std::shared_ptr<const worldgen::GeneratedWorld> world;
 	double landingLatDeg{0.0};
 	double landingLonDeg{0.0};
+
+	// Crew to spawn at landing, assembled in PartySelect. Empty (Quick Start,
+	// direct scene jumps) spawns the single default colonist.
+	std::vector<PartyMember> party;
 
 	static void SetPending(std::unique_ptr<GameStartConfig> config);
 	static std::unique_ptr<GameStartConfig> Take();
