@@ -148,8 +148,28 @@ namespace world_sim {
 				m_ctx.ui->pushNotification("Dev", "No " + where + " to give to", UI::ToastSeverity::Warning);
 				return;
 			}
-			const uint32_t added = inventory->addItem(material, n);
-			LOG_INFO(Game, "[DevAPI] give: added %u/%u %s to nearest %s", added, n, material.c_str(), where.c_str());
+
+			// where=colonist takes slot=pack|hands|belt (default pack) so every gear
+			// surface can be filled for testing. hands respects the two-hand mirror.
+			const std::string slot = cmd.param("slot", "pack");
+			uint32_t		  added = 0;
+			if (where == "colonist" && slot == "hands") {
+				const auto& registry = engine::assets::AssetRegistry::Get();
+				if (ecs::itemIsTwoHand(registry, material)) {
+					added = ecs::addArmful(*inventory, registry, material, n);
+				} else {
+					while (added < n && inventory->pickUp(material)) {
+						++added;
+					}
+				}
+			} else if (where == "colonist" && slot == "belt") {
+				while (added < n && inventory->stowToBelt(material)) {
+					++added;
+				}
+			} else {
+				added = inventory->addItem(material, n);
+			}
+			LOG_INFO(Game, "[DevAPI] give: added %u/%u %s to nearest %s (%s)", added, n, material.c_str(), where.c_str(), slot.c_str());
 			m_ctx.ui->pushNotification("Dev", "Gave " + std::to_string(added) + " " + material + " to " + where, UI::ToastSeverity::Info);
 			return;
 		}

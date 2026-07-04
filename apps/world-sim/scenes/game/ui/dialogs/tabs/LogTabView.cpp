@@ -5,6 +5,7 @@ namespace world_sim {
 
 void LogTabView::create(const Foundation::Rect& bounds) {
 	contentBounds = bounds;
+	size = {bounds.width, bounds.height};
 }
 
 void LogTabView::update(const LogData& /*data*/) {}
