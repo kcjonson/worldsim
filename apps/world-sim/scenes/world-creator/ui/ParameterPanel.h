@@ -1,6 +1,5 @@
 #pragma once
 
-#include "component/Container.h"
 #include "components/TextInput/TextInput.h"
 #include "components/button/Button.h"
 #include "components/select/Select.h"
@@ -10,15 +9,21 @@
 #include "primitives/Primitives.h"
 #include "shapes/Shapes.h"
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <string>
 #include <vector>
 
 // ParameterPanel - left-side control panel for WorldCreatorScene.
 //
-// Fixed 320px wide. Shows preset selector, all planet sliders, seed input,
-// Generate and Cancel buttons. Disabled (inputs grayed) while Generating.
+// Fixed 320px wide, framed by a data-accent Panel ("Parameters" / "Survey
+// Config"). A 2-column preset button grid (active preset data-tinted), the
+// planet sliders (plus a disabled prototype-only Mean Temp), the seed row,
+// and a collapsible Advanced section at the bottom holding the resolution
+// select and the star/orbit sliders. Inputs gray out while Generating.
+// Generate/Cancel live in the scene footer, not here.
 
 namespace world_sim {
 
@@ -36,8 +41,6 @@ struct ParameterPanelCallbacks {
 	std::function<void(const std::string&)> onResolutionChanged;
 	std::function<void(const std::string&)> onSeedChanged;
 	std::function<void()> onRandomize;
-	std::function<void()> onGenerate;
-	std::function<void()> onCancel;
 };
 
 class ParameterPanel {
@@ -45,7 +48,7 @@ class ParameterPanel {
 	explicit ParameterPanel(Foundation::Vec2 position, ParameterPanelCallbacks callbacks);
 
 	void update(float deltaTime);
-	void render();
+	void render(float height);
 	bool handleEvent(UI::InputEvent& event);
 
 	void setGenerating(bool generating);
@@ -79,44 +82,64 @@ class ParameterPanel {
 	// WASD/arrow camera panning while the user is typing a seed.
 	bool isSeedFocused() const;
 
+	static constexpr float kPanelWidth = 320.0F;
+
   private:
 	enum class SeedState { Empty, Valid, Invalid };
 
 	Foundation::Vec2 position;
 	ParameterPanelCallbacks callbacks;
 	bool generating{false};
+	bool advancedOpen{false};
 	SeedState seedState{SeedState::Empty};
 	float seedErrorY{0.0F};
 
-	static constexpr float kPanelWidth = 320.0F;
 	static constexpr float kLabelHeight = 16.0F;
 	static constexpr float kSliderHeight = 32.0F;
 	static constexpr float kItemSpacing = 6.0F;
 	static constexpr float kSectionSpacing = 12.0F;
 
+	struct PresetDef {
+		const char* label;
+		const char* value;
+	};
+	static constexpr std::array<PresetDef, 6> kPresets{{
+		{"Earth-Like", "earth_like"},
+		{"Desert World", "desert_world"},
+		{"Ocean World", "ocean_world"},
+		{"Frozen World", "frozen_world"},
+		{"Volcanic World", "volcanic_world"},
+		{"Ancient Garden", "ancient_garden"},
+	}};
+
 	// UI elements (ordered for layout / event dispatch)
-	std::unique_ptr<UI::Select>	   presetSelect;
+	std::array<std::unique_ptr<UI::Button>, 6> presetButtons;
+	std::string								   activePreset{"earth_like"};
+
 	std::unique_ptr<UI::Slider>	   waterSlider;
 	std::unique_ptr<UI::Slider>	   platesSlider;
 	std::unique_ptr<UI::Slider>	   radiusSlider;
 	std::unique_ptr<UI::Slider>	   rotationSlider;
 	std::unique_ptr<UI::Slider>	   ageSlider;
 	std::unique_ptr<UI::Slider>	   atmosphereSlider;
-	std::unique_ptr<UI::Slider>	   starTempSlider;
-	std::unique_ptr<UI::Slider>	   semiMajorSlider;
-	std::unique_ptr<UI::Slider>	   eccentricitySlider;
-	std::unique_ptr<UI::Select>	   resolutionSelect;
+	std::unique_ptr<UI::Slider>	   meanTempSlider; // prototype-only, always disabled
 	std::unique_ptr<UI::TextInput> seedInput;
 	std::unique_ptr<UI::Button>	   randomizeButton;
-	std::unique_ptr<UI::Button>	   generateButton;
-	std::unique_ptr<UI::Button>	   cancelButton;
+
+	// Advanced section (collapsed by default; fully functional when open)
+	std::unique_ptr<UI::Select> resolutionSelect;
+	std::unique_ptr<UI::Slider> starTempSlider;
+	std::unique_ptr<UI::Slider> semiMajorSlider;
+	std::unique_ptr<UI::Slider> eccentricitySlider;
+	Foundation::Rect			advancedToggleBounds{};
 
 	// Section labels
 	std::vector<Renderer::Primitives::TextArgs> sectionLabels;
 
 	void buildWidgets();
+	void applyPreset(const std::string& value);
+	void setAdvancedOpen(bool open);
 	void onSeedTextChanged(const std::string& text);
-	void applyGenerateEnabled();
 	float nextY{0.0F}; // layout cursor
 
 	Renderer::Primitives::TextArgs makeLabel(const std::string& text, float y);
