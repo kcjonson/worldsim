@@ -40,6 +40,14 @@ class GlobeView {
 
 	bool isReady() const;
 
+	// True once at least one full colorizer bake has reached the GPU; before
+	// this the globe renders with empty textures and should stay hidden.
+	bool hasContent() const { return colorizer.hasContent(); }
+
+	// Snap the orbit distance (planet radii). Decorative uses set this so the
+	// whole disc fits inside the render rect with a margin.
+	void setViewDistance(float dist) { camera.setDistance(dist); }
+
 	// True while an orbit drag is in progress. Scenes should route input to
 	// the globe FIRST while dragging so widget hover states don't react to
 	// drag mouse-moves.
@@ -51,8 +59,10 @@ class GlobeView {
 	// zoom gate). For scenes that drive the camera from held keys.
 	void panCamera(float dYaw, float dPitch) { camera.nudge(dYaw, dPitch); }
 
-	// Render the globe into `rect` (logical UI coordinates, top-left origin).
-	void render(const Foundation::Rect& rect, float logicalW, float logicalH);
+	// Render the globe into `rect` (logical UI coordinates, top-left origin;
+	// may extend past the viewport — the framebuffer clips). `alpha` fades the
+	// disc; around it the blit is transparent, so the scene backdrop shows.
+	void render(const Foundation::Rect& rect, float logicalW, float logicalH, float alpha = 1.0F);
 
 	// Orbit drag / scroll zoom / pick within rect. Right-click cycles color
 	// mode when cycleOnRightClick. Returns true when the event was consumed.
