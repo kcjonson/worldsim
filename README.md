@@ -80,6 +80,7 @@ ccache --set-config base_dir=C:/Users/you/Code/worldsim   # your checkout dir
 ccache --set-config hash_dir=false
 ccache --set-config sloppiness=pch_defines,time_macros
 ccache --set-config depend_mode=true
+ccache --set-config namespace=worldsim-1   # retires pre-depend-mode manifests on upgrading machines
 ```
 
 `depend_mode=true` is required for correctness with worktrees, not a tune-up; see

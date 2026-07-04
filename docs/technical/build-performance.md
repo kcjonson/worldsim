@@ -104,6 +104,7 @@ Local before/after timings: see Results below.
   ccache --set-config hash_dir=false
   ccache --set-config sloppiness=pch_defines,time_macros
   ccache --set-config depend_mode=true
+  ccache --set-config namespace=worldsim-1   # retires pre-depend-mode manifests on upgrading machines
   ```
 
   On Windows, `scripts/setup-msvc-env.ps1` applies this block; macOS sets it by hand.

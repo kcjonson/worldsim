@@ -82,6 +82,13 @@ if ($ccacheCmd) {
     # Retires pre-depend-mode manifests, which can still serve poisoned absolute-path
     # hits on machines upgrading from the old config. Bump on future breaking changes.
     ccache --set-config namespace=worldsim-1
+    # set-config exit codes aren't checked above; an older ccache can reject a key
+    # (depend_mode, namespace) without stopping the script. Read the values back.
+    $dependMode = ccache --get-config depend_mode
+    $ns = ccache --get-config namespace
+    if ($dependMode -ne 'true' -or $ns -ne 'worldsim-1') {
+        Write-Error "ccache did not accept the config (depend_mode='$dependMode', namespace='$ns'). Upgrade ccache (winget upgrade Ccache.Ccache) and re-run."
+    }
     Write-Host "ccache configured: base_dir=$repoRoot, depend_mode=true, namespace=worldsim-1"
 } else {
     Write-Warning "ccache not found on PATH; install it (winget install Ccache.Ccache) and re-run."
