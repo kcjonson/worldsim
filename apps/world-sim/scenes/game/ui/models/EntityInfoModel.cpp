@@ -1,5 +1,6 @@
 #include "EntityInfoModel.h"
 
+#include "scenes/game/ui/adapters/CraftingAdapter.h"
 #include "scenes/game/ui/adapters/SelectionAdapter.h"
 
 namespace world_sim {
@@ -213,12 +214,10 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 	// clearing while it stays selected - force a Structure rebuild instead, or the new slots
 	// never render (and stale ones linger).
 	const size_t prevSlotCount = contentData.slots.size();
-	const size_t prevLeftCount = contentData.leftColumn.size();
-	const size_t prevRightCount = contentData.rightColumn.size();
 
 	// Generate content
 	if (isColonist) {
-		contentData = getColonistContent(world, colonistId, callbacks.onDetails, callbacks.onToggleControl);
+		contentData = adaptColonistStatus(world, colonistId);
 	} else if (isStation) {
 		contentData = getCraftingStationContent(world, stationId, stationDefName, callbacks.onOpenCraftingDialog);
 	} else if (isFurniture) {
@@ -254,8 +253,7 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 	}
 
 	// A change in slot composition (not just values) needs a full relayout.
-	if (contentData.slots.size() != prevSlotCount || contentData.leftColumn.size() != prevLeftCount ||
-		contentData.rightColumn.size() != prevRightCount) {
+	if (contentData.slots.size() != prevSlotCount) {
 		needsStructure = true;
 	}
 
@@ -269,16 +267,6 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 	return UpdateType::Values;
 }
 
-PanelContent EntityInfoModel::getColonistContent(
-	const ecs::World& world,
-	ecs::EntityID entityId,
-	const std::function<void()>& onDetails,
-	const std::function<void(ecs::EntityID)>& onToggleControl
-) const {
-	// Generate two-column colonist content with the Details + Control/Release callbacks
-	return adaptColonistStatus(world, entityId, onDetails, onToggleControl);
-}
-
 PanelContent EntityInfoModel::getCraftingStationContent(
 	ecs::World& world,
 	ecs::EntityID entityId,
@@ -289,7 +277,6 @@ PanelContent EntityInfoModel::getCraftingStationContent(
 	PanelContent content = adaptCraftingStatus(world, entityId, stationDefName);
 
 	// Add "Open Crafting Menu" button
-	content.slots.push_back(SpacerSlot{.height = 12.0F});
 	content.slots.push_back(ActionButtonSlot{
 		.label = "Open Crafting Menu",
 		.onClick = [onOpenCraftingDialog, entityId, stationDefName]() {

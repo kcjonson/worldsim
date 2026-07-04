@@ -49,6 +49,9 @@ class SpeedButton : public UI::Component {
 	/// Get height for layout
 	float getHeight() const override { return kButtonSize; }
 
+	// Owned string: stable storage for the debug UI-tree
+	const char* debugId() const override { return id.c_str(); }
+
   private:
 	static constexpr float kButtonSize = 28.0F;
 	static constexpr float kIconSize = 16.0F;
