@@ -1,5 +1,8 @@
-// Layout Scene - Demonstrates LayoutContainer for automatic component positioning
-// Shows vertical/horizontal layouts with alignment and margin-based spacing
+// Layout Scene - live fixture for the LayoutContainer auto-layout engine.
+// Exercises every engine feature: gap, padding, all six Distribution modes,
+// all four CrossAlign modes, Fixed/Hug/Fill mixes (with fillWeight), nested
+// containers, and wrapping Text in a stretched column. Doubles as the lint
+// fixture for /api/ui/lint.
 
 #include <GL/glew.h>
 
@@ -9,10 +12,11 @@
 #include <layout/LayoutContainer.h>
 #include <layout/LayoutTypes.h>
 #include <memory>
-#include <vector>
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
+#include <string>
+#include <vector>
 #include "SceneTypes.h"
 #include <shapes/Shapes.h>
 #include <utils/Log.h>
@@ -30,284 +34,251 @@ class LayoutScene : public engine::IScene {
 		using namespace UI;
 		using namespace Foundation;
 
-		// Create title
-		title = std::make_unique<Text>(Text::Args{
-			.position = {50.0F, 30.0F},
-			.text = "LayoutContainer Demo - Automatic component positioning",
-			.style = {.color = Color::white(), .fontSize = 20.0F},
-			.id = "title"});
+		const Color slate{0.204F, 0.596F, 0.859F};
+		const Color rust{0.906F, 0.298F, 0.235F};
+		const Color moss{0.180F, 0.800F, 0.443F};
+		const Color sand{0.945F, 0.769F, 0.059F};
+
+		addLabel({40.0F, 20.0F}, "LayoutContainer engine fixture - distribution / crossAlign / fill / nesting / wrap", 16.0F,
+				 Color::white(), "title");
 
 		// ================================================================
-		// Demo 1: Vertical Layout with buttons
+		// A: every Distribution mode (vertical, gap 4)
 		// ================================================================
-		verticalLabel = std::make_unique<Text>(Text::Args{
-			.position = {50.0F, 70.0F},
-			.text = "Vertical Layout (margins):",
-			.style = {.color = Color::yellow(), .fontSize = 16.0F},
-			.id = "vertical_label"});
-
-		verticalLayout = std::make_unique<LayoutContainer>(LayoutContainer::Args{
-			.position = {50.0F, 100.0F},
-			.size = {200.0F, 250.0F},
-			.direction = Direction::Vertical,
-			.id = "vertical_layout"});
-
-		// Add buttons with margin for spacing
-		verticalLayout->addChild(Button(Button::Args{
-			.label = "Button One",
-			.size = {180.0F, 40.0F},
-			.type = Button::Type::Primary,
-			.onClick = []() { LOG_INFO(UI, "Button One clicked!"); },
-			.id = "btn_one",
-			.margin = 5.0F}));
-
-		verticalLayout->addChild(Button(Button::Args{
-			.label = "Button Two",
-			.size = {180.0F, 40.0F},
-			.type = Button::Type::Primary,
-			.onClick = []() { LOG_INFO(UI, "Button Two clicked!"); },
-			.id = "btn_two",
-			.margin = 5.0F}));
-
-		verticalLayout->addChild(Button(Button::Args{
-			.label = "Button Three",
-			.size = {180.0F, 40.0F},
-			.type = Button::Type::Secondary,
-			.onClick = []() { LOG_INFO(UI, "Button Three clicked!"); },
-			.id = "btn_three",
-			.margin = 5.0F}));
+		struct DistributionDemo {
+			Distribution mode;
+			const char*	 name;
+		};
+		const DistributionDemo distributions[] = {
+			{Distribution::Start, "start"},
+			{Distribution::Center, "center"},
+			{Distribution::End, "end"},
+			{Distribution::SpaceBetween, "between"},
+			{Distribution::SpaceAround, "around"},
+			{Distribution::SpaceEvenly, "evenly"},
+		};
+		float x = 40.0F;
+		for (const auto& demo : distributions) {
+			addLabel({x, 60.0F}, demo.name, 11.0F, Color::yellow());
+			auto container = std::make_unique<LayoutContainer>(LayoutContainer::Args{
+				.position = {x, 78.0F},
+				.size = {90.0F, 150.0F},
+				.direction = Direction::Vertical,
+				.gap = 4.0F,
+				.distribution = demo.mode,
+				.id = demo.name});
+			container->addChild(Rectangle(Rectangle::Args{.size = {60.0F, 24.0F}, .style = {.fill = slate}}));
+			container->addChild(Rectangle(Rectangle::Args{.size = {60.0F, 24.0F}, .style = {.fill = rust}}));
+			container->addChild(Rectangle(Rectangle::Args{.size = {60.0F, 24.0F}, .style = {.fill = moss}}));
+			containers.push_back(std::move(container));
+			x += 110.0F;
+		}
 
 		// ================================================================
-		// Demo 2: Horizontal Layout
+		// B: every CrossAlign mode (vertical, mixed child widths)
 		// ================================================================
-		horizontalLabel = std::make_unique<Text>(Text::Args{
-			.position = {300.0F, 70.0F},
-			.text = "Horizontal Layout:",
-			.style = {.color = Color::yellow(), .fontSize = 16.0F},
-			.id = "horizontal_label"});
+		struct CrossAlignDemo {
+			CrossAlign	mode;
+			const char* name;
+		};
+		const CrossAlignDemo crossAligns[] = {
+			{CrossAlign::Start, "cross start"},
+			{CrossAlign::Center, "cross center"},
+			{CrossAlign::End, "cross end"},
+			{CrossAlign::Stretch, "cross stretch"},
+		};
+		x = 40.0F;
+		for (const auto& demo : crossAligns) {
+			addLabel({x, 260.0F}, demo.name, 11.0F, Color::yellow());
+			auto container = std::make_unique<LayoutContainer>(LayoutContainer::Args{
+				.position = {x, 278.0F},
+				.size = {110.0F, 120.0F},
+				.direction = Direction::Vertical,
+				.gap = 4.0F,
+				.crossAlign = demo.mode,
+				.id = demo.name});
+			const float widths[] = {40.0F, 70.0F, 55.0F};
+			const Color colors[] = {slate, rust, moss};
+			for (int i = 0; i < 3; i++) {
+				Rectangle rect(Rectangle::Args{.size = {widths[i], 22.0F}, .style = {.fill = colors[i]}});
+				rect.widthMode = SizeMode::Hug; // stretchable under CrossAlign::Stretch
+				container->addChild(rect);
+			}
+			containers.push_back(std::move(container));
+			x += 130.0F;
+		}
 
-		horizontalLayout = std::make_unique<LayoutContainer>(LayoutContainer::Args{
-			.position = {300.0F, 100.0F},
-			.size = {450.0F, 60.0F},
+		// ================================================================
+		// C: Fixed + Button + Fill 1x/2x in a horizontal row
+		// ================================================================
+		addLabel({40.0F, 430.0F}, "fixed rect + button + fill 1x / fill 2x (gap 6, padding 8, cross center)", 11.0F,
+				 Color::yellow());
+		fillRow = std::make_unique<LayoutContainer>(LayoutContainer::Args{
+			.position = {40.0F, 448.0F},
+			.size = {560.0F, 52.0F},
 			.direction = Direction::Horizontal,
+			.gap = 6.0F,
+			.padding = Insets{8.0F},
 			.crossAlign = CrossAlign::Center,
-			.id = "horizontal_layout"});
-
-		horizontalLayout->addChild(Button(Button::Args{
-			.label = "Left",
-			.size = {100.0F, 40.0F},
+			.id = "fill_row"});
+		fillRow->addChild(Rectangle(Rectangle::Args{.size = {90.0F, 30.0F}, .style = {.fill = slate}, .id = "fixed_rect"}));
+		fillRow->addChild(Button(Button::Args{
+			.label = "Button",
+			.size = {100.0F, 32.0F},
 			.type = Button::Type::Primary,
-			.onClick = []() { LOG_INFO(UI, "Left clicked!"); },
-			.id = "btn_left",
-			.margin = 5.0F}));
-
-		horizontalLayout->addChild(Button(Button::Args{
-			.label = "Center",
-			.size = {100.0F, 40.0F},
-			.type = Button::Type::Secondary,
-			.onClick = []() { LOG_INFO(UI, "Center clicked!"); },
-			.id = "btn_center",
-			.margin = 5.0F}));
-
-		horizontalLayout->addChild(Button(Button::Args{
-			.label = "Right",
-			.size = {100.0F, 40.0F},
-			.type = Button::Type::Primary,
-			.onClick = []() { LOG_INFO(UI, "Right clicked!"); },
-			.id = "btn_right",
-			.margin = 5.0F}));
+			.onClick = []() { LOG_INFO(UI, "Fixture button clicked"); },
+			.id = "fixture_btn"}));
+		Rectangle fill1(Rectangle::Args{.size = {0.0F, 30.0F}, .style = {.fill = moss}, .id = "fill_1x"});
+		fill1.widthMode = SizeMode::Fill;
+		fillRow->addChild(fill1);
+		Rectangle fill2(Rectangle::Args{.size = {0.0F, 30.0F}, .style = {.fill = sand}, .id = "fill_2x"});
+		fill2.widthMode = SizeMode::Fill;
+		fill2.fillWeight = 2.0F;
+		fillRow->addChild(fill2);
 
 		// ================================================================
-		// Demo 3: Centered Alignment
+		// D: vertical Fill (header + body that fills the rest)
 		// ================================================================
-		centeredLabel = std::make_unique<Text>(Text::Args{
-			.position = {300.0F, 180.0F},
-			.text = "Center-aligned Vertical Layout:",
-			.style = {.color = Color::yellow(), .fontSize = 16.0F},
-			.id = "centered_label"});
-
-		centeredLayout = std::make_unique<LayoutContainer>(LayoutContainer::Args{
-			.position = {300.0F, 210.0F},
-			.size = {200.0F, 150.0F},
+		addLabel({700.0F, 60.0F}, "vertical fill", 11.0F, Color::yellow());
+		auto verticalFill = std::make_unique<LayoutContainer>(LayoutContainer::Args{
+			.position = {700.0F, 78.0F},
+			.size = {120.0F, 150.0F},
 			.direction = Direction::Vertical,
-			.crossAlign = CrossAlign::Center,
-			.id = "centered_layout"});
-
-		centeredLayout->addChild(Button(Button::Args{
-			.label = "Wide Button",
-			.size = {180.0F, 35.0F},
-			.type = Button::Type::Primary,
-			.onClick = []() { LOG_INFO(UI, "Wide clicked!"); },
-			.id = "btn_wide",
-			.margin = 3.0F}));
-
-		centeredLayout->addChild(Button(Button::Args{
-			.label = "Short",
-			.size = {100.0F, 35.0F},
-			.type = Button::Type::Secondary,
-			.onClick = []() { LOG_INFO(UI, "Short clicked!"); },
-			.id = "btn_short",
-			.margin = 3.0F}));
-
-		centeredLayout->addChild(Button(Button::Args{
-			.label = "Medium Btn",
-			.size = {140.0F, 35.0F},
-			.type = Button::Type::Primary,
-			.onClick = []() { LOG_INFO(UI, "Medium clicked!"); },
-			.id = "btn_medium",
-			.margin = 3.0F}));
+			.gap = 4.0F,
+			.crossAlign = CrossAlign::Stretch,
+			.id = "vertical_fill"});
+		Rectangle header(Rectangle::Args{.size = {0.0F, 24.0F}, .style = {.fill = rust}, .id = "vf_header"});
+		header.widthMode = SizeMode::Hug;
+		verticalFill->addChild(header);
+		Rectangle body(Rectangle::Args{.size = {0.0F, 0.0F}, .style = {.fill = slate}, .id = "vf_body"});
+		body.widthMode = SizeMode::Hug;
+		body.heightMode = SizeMode::Fill;
+		verticalFill->addChild(body);
+		containers.push_back(std::move(verticalFill));
 
 		// ================================================================
-		// Demo 4: Layout with Shapes
+		// E: nested container (stretched, SpaceBetween inside)
 		// ================================================================
-		shapesLabel = std::make_unique<Text>(Text::Args{
-			.position = {550.0F, 180.0F},
-			.text = "Layout with Shapes:",
-			.style = {.color = Color::yellow(), .fontSize = 16.0F},
-			.id = "shapes_label"});
-
-		shapesLayout = std::make_unique<LayoutContainer>(LayoutContainer::Args{
-			.position = {550.0F, 210.0F},
-			.size = {200.0F, 200.0F},
+		addLabel({860.0F, 60.0F}, "nested + between", 11.0F, Color::yellow());
+		auto nested = std::make_unique<LayoutContainer>(LayoutContainer::Args{
+			.position = {860.0F, 78.0F},
+			.size = {220.0F, 150.0F},
 			.direction = Direction::Vertical,
-			.crossAlign = CrossAlign::Center,
-			.id = "shapes_layout"});
+			.gap = 6.0F,
+			.padding = Insets{8.0F},
+			.crossAlign = CrossAlign::Stretch,
+			.id = "nested_outer"});
+		Rectangle nestedHeader(Rectangle::Args{.size = {0.0F, 22.0F}, .style = {.fill = moss}, .id = "nested_header"});
+		nestedHeader.widthMode = SizeMode::Hug;
+		nested->addChild(nestedHeader);
+		LayoutContainer innerRow(LayoutContainer::Args{
+			.size = {0.0F, 0.0F}, // Hug both; the outer stretch resolves the width
+			.direction = Direction::Horizontal,
+			.distribution = Distribution::SpaceBetween,
+			.id = "nested_inner"});
+		innerRow.addChild(Rectangle(Rectangle::Args{.size = {40.0F, 26.0F}, .style = {.fill = slate}}));
+		innerRow.addChild(Rectangle(Rectangle::Args{.size = {40.0F, 26.0F}, .style = {.fill = rust}}));
+		innerRow.addChild(Rectangle(Rectangle::Args{.size = {40.0F, 26.0F}, .style = {.fill = sand}}));
+		nested->addChild(std::move(innerRow));
+		containers.push_back(std::move(nested));
 
-		shapesLayout->addChild(Rectangle(Rectangle::Args{
-			.size = {150.0F, 40.0F},
-			.style = {.fill = Color(0.204F, 0.596F, 0.859F)},  // Blue
-			.id = "rect_blue",
-			.margin = 5.0F}));
-
-		shapesLayout->addChild(Rectangle(Rectangle::Args{
-			.size = {100.0F, 40.0F},
-			.style = {.fill = Color(0.906F, 0.298F, 0.235F)},  // Red
-			.id = "rect_red",
-			.margin = 5.0F}));
-
-		shapesLayout->addChild(Rectangle(Rectangle::Args{
-			.size = {180.0F, 40.0F},
-			.style = {.fill = Color(0.180F, 0.800F, 0.443F)},  // Green
-			.id = "rect_green",
-			.margin = 5.0F}));
+		// ================================================================
+		// F: wrapping Text in a stretched column (Hug height grows with it)
+		// ================================================================
+		addLabel({640.0F, 260.0F}, "wrap text in stretch column (hug height)", 11.0F, Color::yellow());
+		auto wrapColumn = std::make_unique<LayoutContainer>(LayoutContainer::Args{
+			.position = {640.0F, 278.0F},
+			.size = {240.0F, 0.0F}, // Fixed width, Hug height
+			.direction = Direction::Vertical,
+			.gap = 8.0F,
+			.padding = Insets{10.0F},
+			.crossAlign = CrossAlign::Stretch,
+			.id = "wrap_column"});
+		wrapColumn->addChild(Text(Text::Args{
+			.text = "This long paragraph has no explicit width. The stretch pass assigns the column's "
+					"content width as its wrap width, the text reflows to fit, and the column's hug "
+					"height grows to hold every wrapped line.",
+			.style = {.color = Foundation::Color::white(), .fontSize = 13.0F, .wordWrap = true},
+			.id = "wrap_text"}));
+		wrapColumn->addChild(Text(Text::Args{
+			.text = "hug height grew to fit",
+			.style = {.color = sand, .fontSize = 11.0F},
+			.id = "wrap_footer"}));
+		containers.push_back(std::move(wrapColumn));
 
 		LOG_INFO(UI, "Layout scene initialized");
 	}
 
 	void onExit() override {
-		title.reset();
-		verticalLabel.reset();
-		horizontalLabel.reset();
-		centeredLabel.reset();
-		shapesLabel.reset();
-		verticalLayout.reset();
-		horizontalLayout.reset();
-		centeredLayout.reset();
-		shapesLayout.reset();
+		labels.clear();
+		containers.clear();
+		fillRow.reset();
 		LOG_INFO(UI, "Layout scene exited");
 	}
 
 	bool handleInput(UI::InputEvent& event) override {
-		// Dispatch to layouts (they forward to children)
-		if (verticalLayout && verticalLayout->handleEvent(event)) {
+		if (fillRow && fillRow->handleEvent(event)) {
 			return true;
 		}
-		if (horizontalLayout && horizontalLayout->handleEvent(event)) {
-			return true;
-		}
-		if (centeredLayout && centeredLayout->handleEvent(event)) {
-			return true;
-		}
-		if (shapesLayout && shapesLayout->handleEvent(event)) {
-			return true;
+		for (auto& container : containers) {
+			if (container->handleEvent(event)) {
+				return true;
+			}
 		}
 		return false;
 	}
 
 	void update(float deltaTime) override {
-		if (verticalLayout) {
-			verticalLayout->update(deltaTime);
+		if (fillRow) {
+			fillRow->update(deltaTime);
 		}
-		if (horizontalLayout) {
-			horizontalLayout->update(deltaTime);
-		}
-		if (centeredLayout) {
-			centeredLayout->update(deltaTime);
-		}
-		if (shapesLayout) {
-			shapesLayout->update(deltaTime);
+		for (auto& container : containers) {
+			container->update(deltaTime);
 		}
 	}
 
 	void render() override {
-		// Clear background
 		glClearColor(0.12F, 0.12F, 0.15F, 1.0F);
 		glClear(GL_COLOR_BUFFER_BIT);
 
-		// Render labels
-		if (title) {
-			title->render();
+		for (auto& label : labels) {
+			label->render();
 		}
-		if (verticalLabel) {
-			verticalLabel->render();
+		if (fillRow) {
+			fillRow->render();
 		}
-		if (horizontalLabel) {
-			horizontalLabel->render();
-		}
-		if (centeredLabel) {
-			centeredLabel->render();
-		}
-		if (shapesLabel) {
-			shapesLabel->render();
-		}
-
-		// Render layouts (they render their children)
-		if (verticalLayout) {
-			verticalLayout->render();
-		}
-		if (horizontalLayout) {
-			horizontalLayout->render();
-		}
-		if (centeredLayout) {
-			centeredLayout->render();
-		}
-		if (shapesLayout) {
-			shapesLayout->render();
+		for (auto& container : containers) {
+			container->render();
 		}
 	}
 
 	std::vector<const UI::IComponent*> getUiRoots() const override {
 		std::vector<const UI::IComponent*> roots;
-		auto add = [&roots](const UI::IComponent* root) {
-			if (root != nullptr) {
-				roots.push_back(root);
-			}
-		};
-		add(title.get());
-		add(verticalLabel.get());
-		add(horizontalLabel.get());
-		add(centeredLabel.get());
-		add(shapesLabel.get());
-		add(verticalLayout.get());
-		add(horizontalLayout.get());
-		add(centeredLayout.get());
-		add(shapesLayout.get());
+		for (const auto& label : labels) {
+			roots.push_back(label.get());
+		}
+		if (fillRow) {
+			roots.push_back(fillRow.get());
+		}
+		for (const auto& container : containers) {
+			roots.push_back(container.get());
+		}
 		return roots;
 	}
 
   private:
-	// Labels
-	std::unique_ptr<UI::Text> title;
-	std::unique_ptr<UI::Text> verticalLabel;
-	std::unique_ptr<UI::Text> horizontalLabel;
-	std::unique_ptr<UI::Text> centeredLabel;
-	std::unique_ptr<UI::Text> shapesLabel;
+	void addLabel(Foundation::Vec2 position, const char* text, float fontSize, Foundation::Color color,
+				  const char* labelId = nullptr) {
+		labels.push_back(std::make_unique<UI::Text>(UI::Text::Args{
+			.position = position,
+			.text = text,
+			.style = {.color = color, .fontSize = fontSize},
+			.id = labelId}));
+	}
 
-	// Layout containers
-	std::unique_ptr<UI::LayoutContainer> verticalLayout;
-	std::unique_ptr<UI::LayoutContainer> horizontalLayout;
-	std::unique_ptr<UI::LayoutContainer> centeredLayout;
-	std::unique_ptr<UI::LayoutContainer> shapesLayout;
+	std::vector<std::unique_ptr<UI::Text>>			  labels;
+	std::vector<std::unique_ptr<UI::LayoutContainer>> containers;
+	std::unique_ptr<UI::LayoutContainer>			  fillRow;
 };
 
 } // anonymous namespace
