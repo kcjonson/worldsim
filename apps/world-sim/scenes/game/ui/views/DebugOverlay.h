@@ -36,10 +36,6 @@ class DebugOverlay : public UI::Component {
 	/// Update displayed values from camera and chunk manager
 	void updateData(const engine::world::WorldCamera& camera, const engine::world::ChunkManager& chunkManager);
 
-	// Bounds hug the live text lines (they outgrow any fixed guess)
-	[[nodiscard]] float getWidth() const override;
-	[[nodiscard]] float getHeight() const override;
-
 	// render() inherited from Component - auto-renders children
 
   private:
