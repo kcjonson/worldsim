@@ -1,7 +1,8 @@
 // World Creator Scene
-// Three states: Configuring (parameter panel), Generating (progress only -- the
-// globe is hidden so the half-built sphere never shows), Reviewing (final globe;
-// click a land tile to inspect it, then Land to drop the colony there).
+// Three states over a shared starfield: Configuring (parameter panel + a
+// decorative planet backdrop), Generating (progress only -- the half-built
+// sphere never shows), Reviewing (final globe; click a land tile to inspect
+// it, then Land to drop the colony there).
 
 #include "GameStartConfig.h"
 #include "NewGameSetup.h"
@@ -9,7 +10,9 @@
 #include "WorldCreatorModel.h"
 #include "scenes/landing/LandingSiteDetailsModel.h"
 #include "scenes/landing/LandingSiteDetailsPanel.h"
+#include "scenes/shared/DecorativePlanet.h"
 #include "scenes/shared/GlobeView.h"
+#include "scenes/shared/Starfield.h"
 #include "ui/ParameterPanel.h"
 
 #include <GL/glew.h>
@@ -31,6 +34,7 @@
 #include <theme/Variants.h>
 #include <utils/Log.h>
 
+#include <algorithm>
 #include <format>
 #include <memory>
 #include <string>
@@ -141,6 +145,7 @@ class WorldCreatorScene : public engine::IScene {
 		}
 
 		globe.update(dt);
+		decorativePlanet.update(dt);
 
 		auto state = model.getState();
 
@@ -177,6 +182,8 @@ class WorldCreatorScene : public engine::IScene {
 		glClearColor(UI::bg_void.r, UI::bg_void.g, UI::bg_void.b, 1.0F);
 		glClear(GL_COLOR_BUFFER_BIT);
 
+		world_sim::renderStarfield(static_cast<int>(viewportW), static_cast<int>(viewportH), 5U, true);
+
 		// The pane republishes its bounds below only on frames it actually
 		// draws; clear first so input never trusts a stale rect.
 		detailsPaneShown = false;
@@ -185,16 +192,19 @@ class WorldCreatorScene : public engine::IScene {
 		auto state = model.getState();
 
 		// The globe exists on screen only once generation completes; while
-		// configuring or generating we show a placeholder, never the sphere.
+		// configuring a decorative planet fills the main area, and while
+		// generating only the progress strip shows, never the half-built sphere.
 		const bool showGlobe =
 			state == world_sim::WorldCreatorState::Reviewing && globe.isReady();
 
 		// 3D pass first: Primitives batches flush after the scene, so all 2D
-		// UI composites on top of the blitted globe.
+		// UI composites on top of the blitted globe. The explicit flush paints
+		// the starfield beneath the blit.
 		if (showGlobe) {
+			Renderer::Primitives::flush();
 			globe.render(rect, viewportW, viewportH);
-		} else {
-			renderPlaceholder(rect);
+		} else if (state == world_sim::WorldCreatorState::Configuring) {
+			decorativePlanet.render(decorativePlanetRect(rect), viewportW, viewportH);
 		}
 
 		renderTitle();
@@ -239,6 +249,7 @@ class WorldCreatorScene : public engine::IScene {
 	std::unique_ptr<UI::Button>      landButton;
 
 	world_sim::GlobeView globe;
+	world_sim::DecorativePlanet decorativePlanet;
 	std::string errorText;
 
 	// Landing selection (Reviewing only). The site auto-suggests on completion
@@ -260,6 +271,13 @@ class WorldCreatorScene : public engine::IScene {
 	Foundation::Rect mainRect() const {
 		float x = kPanelWidth + 20.0F;
 		return {x, 76.0F, viewportW - x - 20.0F, viewportH - 156.0F};
+	}
+
+	// Largest square centered in the main area, for the Configuring backdrop.
+	static Foundation::Rect decorativePlanetRect(const Foundation::Rect& main) {
+		float size = std::min(main.width, main.height);
+		return {main.x + (main.width - size) * 0.5F,
+		        main.y + (main.height - size) * 0.5F, size, size};
 	}
 
 	void buildUI() {
@@ -497,33 +515,6 @@ class WorldCreatorScene : public engine::IScene {
 		config->party = world_sim::NewGameSetup::Get().party;
 		world_sim::GameStartConfig::SetPending(std::move(config));
 		sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::GameLoading));
-	}
-
-	void renderPlaceholder(const Foundation::Rect& rect) {
-		Renderer::Primitives::drawRect({
-			.bounds = rect,
-			.style = {
-				.fill = UI::bg_panel,
-				.border = Foundation::BorderStyle{
-					.color = UI::line_edge,
-					.width = 1.0F,
-				},
-			},
-			.id = "planet_view_placeholder",
-		});
-
-		bool generating = model.getState() == world_sim::WorldCreatorState::Generating;
-		UI::Text placeholder(UI::Text::Args{
-			.position = {rect.x + rect.width * 0.5F, rect.y + rect.height * 0.5F},
-			.text = generating ? "Generating World..." : "Set parameters and press Generate",
-			.style = {
-				.color = generating ? UI::data : UI::text_faint,
-				.fontSize = 18.0F,
-				.hAlign = Foundation::HorizontalAlign::Center,
-				.vAlign = Foundation::VerticalAlign::Middle,
-			},
-		});
-		placeholder.render();
 	}
 
 	void renderTitle() {

@@ -13,9 +13,11 @@ class OrbitCamera;
 // Owns the offscreen FBO (RGBA8 colour + DEPTH24 renderbuffer), planet shader,
 // and a blit shader for compositing the FBO onto the default framebuffer.
 //
-// Compositing strategy: render() draws the planet into the FBO, then blitToScreen()
-// copies that texture to the backbuffer via a full-screen triangle BEFORE Primitives
-// draws 2D UI — making the planet always the bottom layer.
+// Compositing strategy: render() draws the planet into the FBO over an alpha-0
+// clear, then blitToScreen() alpha-composites that texture onto the backbuffer
+// via a full-screen triangle BEFORE Primitives draws 2D UI — the planet disc
+// lands on whatever the scene painted first (e.g. a starfield) and 2D UI still
+// batches on top.
 //
 // All touched GL state is saved and restored around each pass.
 class PlanetRenderer {
@@ -40,9 +42,11 @@ class PlanetRenderer {
                 uint32_t subdivision,
                 const OrbitCamera& camera, int widthPx, int heightPx);
 
-    // Blit the FBO colour texture to the currently bound default framebuffer.
-    // Call this BEFORE 2D UI rendering so the planet is below the UI.
-    void blitToScreen(int widthPx, int heightPx);
+    // Alpha-composite the FBO colour texture onto the currently bound default
+    // framebuffer. Call this BEFORE 2D UI rendering so the planet is below the
+    // UI. `alpha` scales the whole disc (for fade-in); pixels outside the disc
+    // are transparent and leave the backbuffer untouched.
+    void blitToScreen(int widthPx, int heightPx, float alpha = 1.0F);
 
     // Expose colour texture for custom compositing if needed.
     GLuint colorTexture() const { return colorTex; }
@@ -76,6 +80,7 @@ class PlanetRenderer {
 
     struct BlitUniforms {
         GLint tex{-1};
+        GLint alpha{-1};
     } blitUniforms;
 
     void destroyFbo();

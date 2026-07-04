@@ -8,6 +8,7 @@
 #include "GameStartConfig.h"
 #include "NewGameSetup.h"
 #include "SceneTypes.h"
+#include "scenes/shared/DecorativePlanet.h"
 #include "scenes/shared/Starfield.h"
 #include <GL/glew.h>
 
@@ -21,6 +22,7 @@
 #include <utils/Log.h>
 #include <utils/ResourcePath.h>
 
+#include <algorithm>
 #include <array>
 #include <functional>
 #include <memory>
@@ -85,7 +87,7 @@ namespace {
 			return false;
 		}
 
-		void update(float /*dt*/) override {}
+		void update(float dt) override { planet.update(dt); }
 
 		void render() override {
 			using namespace UI;
@@ -98,6 +100,16 @@ namespace {
 			const float screenW = Renderer::Primitives::PercentWidth(100.0F);
 			const float screenH = Renderer::Primitives::PercentHeight(100.0F);
 			world_sim::renderStarfield(static_cast<int>(screenW), static_cast<int>(screenH), 11U);
+
+			// Decorative planet docked off the right screen edge, behind the
+			// menu content (its scrim keeps the text legible). Sized against
+			// the viewport (mock proportion) with a floor for small windows;
+			// a quarter of it hangs off the edge.
+			const float planetSize = std::max(kPlanetMinSize, screenH * 0.55F);
+			const float overhang = planetSize * 0.25F;
+			planet.render({screenW - (planetSize - overhang), (screenH - planetSize) * 0.5F,
+			               planetSize, planetSize},
+			              screenW, screenH);
 
 			// Identity: diamond glyph + WORLD-SIM + tagline.
 			const float diaR = 11.0F;
@@ -245,7 +257,9 @@ namespace {
 
 		static constexpr float colX = 80.0F;
 		static constexpr float kRowWidth = 380.0F;
+		static constexpr float kPlanetMinSize = 640.0F;
 
+		world_sim::DecorativePlanet	  planet;
 		std::vector<MenuItem>		  items;
 		std::vector<Foundation::Rect> itemRects;
 		int							  hoveredIndex = -1;

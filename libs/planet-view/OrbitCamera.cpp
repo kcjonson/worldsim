@@ -34,6 +34,12 @@ void OrbitCamera::setMinDistance(float newMin) {
     targetDistance = std::clamp(targetDistance, minDist, kMaxDist);
 }
 
+void OrbitCamera::setDistance(float dist) {
+    distance       = std::clamp(dist, minDist, kMaxDist);
+    targetDistance = distance;
+    clampPitch();
+}
+
 void OrbitCamera::beginDrag(float mouseX, float mouseY) {
     dragging = true;
     userInteracted = true;

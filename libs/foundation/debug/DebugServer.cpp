@@ -365,9 +365,15 @@ namespace Foundation {
 		glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
 
 		// Flip image vertically (OpenGL origin is bottom-left, PNG origin is top-left)
+		// and force alpha opaque: the window is opaque on screen, but blended
+		// draws leave residual sub-1 backbuffer alpha that viewers would
+		// composite over their canvas, washing out the capture.
 		std::vector<unsigned char> flipped(width * height * 4);
 		for (int y = 0; y < height; y++) {
 			memcpy(flipped.data() + (height - 1 - y) * width * 4, pixels.data() + y * width * 4, width * 4);
+		}
+		for (size_t i = 3; i < flipped.size(); i += 4) {
+			flipped[i] = 255;
 		}
 
 		// Encode to PNG via the shared encoder (single STB definition site).
