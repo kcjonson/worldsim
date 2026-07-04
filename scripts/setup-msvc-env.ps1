@@ -8,6 +8,7 @@
 #
 # What it persists (User scope): PATH additions for the MSVC compiler, the
 # Windows SDK tools (rc/mt), and the VS-bundled Ninja; INCLUDE; LIB; VCPKG_ROOT.
+# Also applies the per-machine ccache config from docs/technical/build-performance.md.
 
 $ErrorActionPreference = 'Stop'
 
@@ -62,6 +63,35 @@ if (-not [Environment]::GetEnvironmentVariable('VCPKG_ROOT', 'User')) {
     } else {
         Write-Warning "No vcpkg found at '$vcpkgRoot'; VCPKG_ROOT not persisted. Install vcpkg (README step 1) and re-run."
     }
+}
+
+# ccache per-machine config (docs/technical/build-performance.md). depend_mode is
+# load-bearing, not a tweak: classic direct mode stores absolute include paths in its
+# manifests, which base_dir does not rewrite, so a sibling worktree's copy of a header
+# can satisfy the lookup and hand back a stale object. Depend-mode manifests store
+# base_dir-relative paths and verify against the requesting worktree's files.
+$ccacheCmd = Get-Command ccache -ErrorAction SilentlyContinue
+if ($ccacheCmd) {
+    $repoRoot = Split-Path -Parent $PSScriptRoot
+    if ($repoRoot -match '^(.*)\\\.claude\\worktrees\\') { $repoRoot = $Matches[1] }
+    ccache --set-config max_size=30G
+    ccache --set-config "base_dir=$repoRoot"
+    ccache --set-config hash_dir=false
+    ccache --set-config sloppiness=pch_defines,time_macros
+    ccache --set-config depend_mode=true
+    # Retires pre-depend-mode manifests, which can still serve poisoned absolute-path
+    # hits on machines upgrading from the old config. Bump on future breaking changes.
+    ccache --set-config namespace=worldsim-1
+    # set-config exit codes aren't checked above; an older ccache can reject a key
+    # (depend_mode, namespace) without stopping the script. Read the values back.
+    $dependMode = ccache --get-config depend_mode
+    $ns = ccache --get-config namespace
+    if ($dependMode -ne 'true' -or $ns -ne 'worldsim-1') {
+        Write-Error "ccache did not accept the config (depend_mode='$dependMode', namespace='$ns'). Upgrade ccache (winget upgrade Ccache.Ccache) and re-run."
+    }
+    Write-Host "ccache configured: base_dir=$repoRoot, depend_mode=true, namespace=worldsim-1"
+} else {
+    Write-Warning "ccache not found on PATH; install it (winget install Ccache.Ccache) and re-run."
 }
 
 Write-Host "Persisted to User environment:"

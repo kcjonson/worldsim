@@ -79,7 +79,13 @@ ccache --set-config max_size=30G
 ccache --set-config base_dir=C:/Users/you/Code/worldsim   # your checkout dir
 ccache --set-config hash_dir=false
 ccache --set-config sloppiness=pch_defines,time_macros
+ccache --set-config depend_mode=true
+ccache --set-config namespace=worldsim-1   # retires pre-depend-mode manifests on upgrading machines
 ```
+
+`depend_mode=true` is required for correctness with worktrees, not a tune-up; see
+[build-performance.md](docs/technical/build-performance.md) for why. On Windows
+`setup-msvc-env.ps1` applies this block for you.
 
 ### 3. Configure and Build
 
