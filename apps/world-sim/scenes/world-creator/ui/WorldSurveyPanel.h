@@ -26,6 +26,10 @@ class WorldSurveyPanel {
 
 	void render(const Foundation::Rect& bounds) const;
 
+	// Frame height the current content needs at the given width, so the caller
+	// can size the panel to its content and stack another pane beneath it.
+	float contentHeight(float width) const;
+
   private:
 	struct StatEntry {
 		std::string label;

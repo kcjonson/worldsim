@@ -55,6 +55,9 @@ constexpr float kMarginX = 32.0F;
 constexpr float kContentTop = 92.0F;
 constexpr float kColumnGap = 16.0F;
 constexpr float kFooterHeight = 72.0F;
+// Right column holds the World Survey pane and, once a site is picked, the
+// Landing Zone pane below it. Sized to the wider of the two panels.
+constexpr float kRightColW = 360.0F;
 // Keyboard orbit speed (radians/sec) for arrow keys and WASD.
 constexpr float kKeyPanRate = 1.2F;
 // Creator opens at preview resolution for fast iteration; must match the
@@ -74,11 +77,10 @@ class WorldCreatorScene : public engine::IScene {
 	const char* getName() const override { return kSceneName; }
 	std::string exportState() override {
 		return std::format(
-			R"({{"scene":"world_creator","state":{},"globe":{},"site":{},"landing":{},"confirming":{}}})",
+			R"({{"scene":"world_creator","state":{},"globe":{},"site":{},"confirming":{}}})",
 			static_cast<int>(model.getState()),
 			globe.isReady() ? "true" : "false",
 			siteValid ? "true" : "false",
-			landingMode ? "true" : "false",
 			(confirmDialog && confirmDialog->isOpen()) ? "true" : "false");
 	}
 
@@ -90,7 +92,6 @@ class WorldCreatorScene : public engine::IScene {
 		Renderer::Primitives::getLogicalViewport(vpW, vpH);
 		viewportW = static_cast<float>(vpW);
 		viewportH = static_cast<float>(vpH);
-		landingMode = false;
 
 		buildUI();
 
@@ -105,8 +106,6 @@ class WorldCreatorScene : public engine::IScene {
 		LOG_INFO(Game, "WorldCreatorScene - Exiting");
 		panel.reset();
 		surveyFooter.reset();
-		landingFooter.reset();
-		backToSurveyButton.reset();
 		confirmDialog.reset();
 		statusLabel = nullptr;
 		footerActions = nullptr;
@@ -135,10 +134,9 @@ class WorldCreatorScene : public engine::IScene {
 			return true;
 		}
 
-		if (landingMode && backToSurveyButton && backToSurveyButton->handleEvent(event)) return true;
 		if (generateButton && generateButton->visible && generateButton->handleEvent(event)) return true;
 		if (cancelButton && cancelButton->visible && cancelButton->handleEvent(event)) return true;
-		if (!landingMode && panel && panel->handleEvent(event)) return true;
+		if (panel && panel->handleEvent(event)) return true;
 		if (activeFooter() != nullptr && activeFooter()->handleEvent(event)) return true;
 
 		// Outside Reviewing the globe doesn't exist on screen: nothing to orbit
@@ -169,10 +167,6 @@ class WorldCreatorScene : public engine::IScene {
 		if (engine::InputManager::Get().isKeyPressed(engine::Key::Escape)) {
 			if (confirmDialog && confirmDialog->isOpen()) {
 				return; // dialog handles its own escape
-			}
-			if (landingMode) {
-				exitLanding();
-				return;
 			}
 			// ESC backs out: Configuring returns to the crew step of the New
 			// Game flow; Generating/Reviewing keep bailing to the main menu.
@@ -219,11 +213,10 @@ class WorldCreatorScene : public engine::IScene {
 			generateButton->setDisabled(panel && !panel->seedIsValid());
 		}
 
-		if (panel && !landingMode) { panel->update(dt); }
+		if (panel) { panel->update(dt); }
 		if (generateButton) generateButton->update(dt);
 		if (cancelButton) cancelButton->update(dt);
 		if (activeFooter() != nullptr) activeFooter()->update(dt);
-		if (landingMode && backToSurveyButton) backToSurveyButton->update(dt);
 	}
 
 	void render() override {
@@ -260,7 +253,7 @@ class WorldCreatorScene : public engine::IScene {
 		renderHeader();
 
 		const float columnH = footerTop() - kContentTop - kColumnGap;
-		if (!landingMode) {
+		{
 			if (panel) { panel->render(columnH); }
 
 			// Generate / Cancel pinned full-width to the bottom of the sidebar.
@@ -272,8 +265,22 @@ class WorldCreatorScene : public engine::IScene {
 				sideAction->render();
 			}
 
-			surveyPanel.render({viewportW - kMarginX - world_sim::WorldSurveyPanel::kWidth,
-								kContentTop, world_sim::WorldSurveyPanel::kWidth, columnH});
+			// Right column: World Survey on top. Once reviewing a ready world with
+			// a chosen site, the Landing Zone pane stacks directly beneath it.
+			const float rightX = viewportW - kMarginX - kRightColW;
+			const bool	reviewingReady =
+				state == world_sim::WorldCreatorState::Reviewing && globe.isReady();
+			if (reviewingReady) {
+				const float surveyH = surveyPanel.contentHeight(kRightColW);
+				surveyPanel.render({rightX, kContentTop, kRightColW, surveyH});
+				if (siteValid) {
+					const float landingY = kContentTop + surveyH + kColumnGap;
+					detailsPanel.render(details, {rightX, landingY, kRightColW,
+												  kContentTop + columnH - landingY});
+				}
+			} else {
+				surveyPanel.render({rightX, kContentTop, kRightColW, columnH});
+			}
 		}
 
 		if (state == world_sim::WorldCreatorState::Generating) {
@@ -296,7 +303,7 @@ class WorldCreatorScene : public engine::IScene {
 
 		renderFooter();
 
-		if (!landingMode) renderEscHint();
+		renderEscHint();
 
 		if (confirmDialog && confirmDialog->isOpen()) {
 			confirmDialog->render();
@@ -310,7 +317,6 @@ class WorldCreatorScene : public engine::IScene {
 		if (activeFooter() != nullptr) roots.push_back(activeFooter());
 		if (generateButton && generateButton->visible) roots.push_back(generateButton.get());
 		if (cancelButton && cancelButton->visible) roots.push_back(cancelButton.get());
-		if (landingMode && backToSurveyButton) roots.push_back(backToSurveyButton.get());
 		if (confirmDialog && confirmDialog->isOpen()) roots.push_back(confirmDialog.get());
 		return roots;
 	}
@@ -327,14 +333,12 @@ class WorldCreatorScene : public engine::IScene {
 	// Footer bars: survey (Back | status | Generate/Cancel/Regenerate+Accept)
 	// and landing (note | Confirm Landing Site).
 	std::unique_ptr<UI::LayoutContainer> surveyFooter;
-	std::unique_ptr<UI::LayoutContainer> landingFooter;
 	world_sim::Label*					 statusLabel{nullptr};
 	UI::LayoutContainer*				 footerActions{nullptr};
 	std::unique_ptr<UI::Button>			 generateButton; // bottom of the sidebar
 	std::unique_ptr<UI::Button>			 cancelButton;	 // bottom of the sidebar
 	UI::Button*							 regenerateButton{nullptr};
 	UI::Button*							 acceptButton{nullptr};
-	std::unique_ptr<UI::Button>			 backToSurveyButton;
 	std::unique_ptr<UI::Dialog>			 confirmDialog;
 	UI::Text*							 confirmBody{nullptr};
 	UI::Button*							 confirmCancel{nullptr};
@@ -351,32 +355,23 @@ class WorldCreatorScene : public engine::IScene {
 	// and updates on each land-tile click.
 	planetview::LatLon                 selectedSite{};
 	bool                               siteValid{false};
-	bool                               landingMode{false};
 	std::string                        pickHint;
 	world_sim::LandingSiteDetails      details;
 	world_sim::LandingSiteDetailsPanel detailsPanel;
 
 	float footerTop() const { return viewportH - kFooterHeight; }
 
-	// Stage between the side columns (survey) or left of the details column
-	// (landing).
+	// Stage (globe area) between the parameter sidebar and the right column.
 	Foundation::Rect stageRect() const {
 		const float top = kContentTop;
 		const float height = footerTop() - kColumnGap - top;
-		if (landingMode) {
-			const float x = kMarginX;
-			const float width =
-				viewportW - x - world_sim::LandingSiteDetailsPanel::kWidth - kColumnGap - kMarginX;
-			return {x, top, width, height};
-		}
 		const float x = kMarginX + world_sim::ParameterPanel::kPanelWidth + kColumnGap;
-		const float width =
-			viewportW - x - world_sim::WorldSurveyPanel::kWidth - kColumnGap - kMarginX;
+		const float width = viewportW - x - kRightColW - kColumnGap - kMarginX;
 		return {x, top, width, height};
 	}
 
 	UI::LayoutContainer* activeFooter() const {
-		return landingMode ? landingFooter.get() : surveyFooter.get();
+		return surveyFooter.get();
 	}
 
 	void buildUI() {
@@ -451,7 +446,7 @@ class WorldCreatorScene : public engine::IScene {
 		// visible re-lays inside a stable box (a Hug box would ratchet to the
 		// first layout's width and overflow when wider sets appear).
 		LayoutContainer actions(LayoutContainer::Args{
-			.size = {350.0F, 40.0F},
+			.size = {400.0F, 40.0F},
 			.direction = Direction::Horizontal, .gap = space_3,
 			.distribution = Distribution::End, .crossAlign = CrossAlign::Center,
 			.id = "wc_footer_actions"});
@@ -463,12 +458,12 @@ class WorldCreatorScene : public engine::IScene {
 			.id = "btn_wc_regenerate",
 			.iconGlyph = "refresh"}));
 		LayerHandle acceptHandle = actions.addChild(Button(Button::Args{
-			.label = "Accept World",
-			.size = {180.0F, 40.0F},
+			.label = "Confirm Landing Site",
+			.size = {230.0F, 40.0F},
 			.type = Button::Type::Primary,
-			.onClick = [this]() { enterLanding(); },
+			.onClick = [this]() { openConfirmDialog(); },
 			.id = "btn_wc_accept",
-			.iconGlyph = "arrowRight"}));
+			.iconGlyph = "rocket"}));
 		LayerHandle actionsHandle = surveyFooter->addChild(std::move(actions));
 
 		footerActions = surveyFooter->getChild<LayoutContainer>(actionsHandle);
@@ -492,37 +487,6 @@ class WorldCreatorScene : public engine::IScene {
 			.type = Button::Type::Secondary,
 			.onClick = [this]() { model.cancelGeneration(); },
 			.id = "btn_wc_cancel"});
-
-		// Landing footer: note | Confirm Landing Site.
-		landingFooter = std::make_unique<LayoutContainer>(LayoutContainer::Args{
-			.size = {1.0F, 40.0F},
-			.direction = Direction::Horizontal,
-			.gap = space_4,
-			.crossAlign = CrossAlign::Center,
-			.id = "landing_footer"});
-		world_sim::Label note({
-			.text = "You can land anywhere on solid ground. Choose well - there is no second descent.",
-			.fontSize = fs_xs,
-			.color = text_dim,
-			.font = fontUi,
-			.id = "landing_note"});
-		note.widthMode = SizeMode::Fill;
-		landingFooter->addChild(std::move(note));
-		landingFooter->addChild(Button(Button::Args{
-			.label = "Confirm Landing Site",
-			.size = {240.0F, 40.0F},
-			.type = Button::Type::Primary,
-			.onClick = [this]() { openConfirmDialog(); },
-			.id = "btn_confirm_landing",
-			.iconGlyph = "rocket"}));
-
-		backToSurveyButton = std::make_unique<Button>(Button::Args{
-			.label = "Back to Survey",
-			.size = {180.0F, 36.0F},
-			.type = Button::Type::Ghost,
-			.onClick = [this]() { exitLanding(); },
-			.id = "btn_back_to_survey",
-			.iconGlyph = "chevronLeft"});
 
 		// Commit-to-descent confirmation.
 		confirmDialog = std::make_unique<Dialog>(Dialog::Args{
@@ -567,7 +531,10 @@ class WorldCreatorScene : public engine::IScene {
 		}
 		const bool reviewing = state == world_sim::WorldCreatorState::Reviewing;
 		if (regenerateButton != nullptr) regenerateButton->visible = reviewing;
-		if (acceptButton != nullptr) acceptButton->visible = reviewing;
+		if (acceptButton != nullptr) {
+			acceptButton->visible = reviewing;
+			acceptButton->setDisabled(!siteValid); // "Confirm Landing Site" needs a chosen site
+		}
 
 		if (statusLabel != nullptr) {
 			switch (state) {
@@ -622,7 +589,6 @@ class WorldCreatorScene : public engine::IScene {
 
 		errorText.clear();
 		siteValid = false;
-		landingMode = false;
 		pickHint.clear();
 		progressFraction = 0.0F;
 		progressStage = "Starting...";
@@ -652,19 +618,8 @@ class WorldCreatorScene : public engine::IScene {
 		} else if (newState == world_sim::WorldCreatorState::Configuring) {
 			if (panel) panel->setGenerating(false);
 			siteValid = false;
-			landingMode = false;
-		}
+			}
 		refreshFooter();
-	}
-
-	void enterLanding() {
-		if (!siteValid) return;
-		landingMode = true;
-		LOG_INFO(Game, "WorldCreatorScene: entering landing site selection");
-	}
-
-	void exitLanding() {
-		landingMode = false;
 	}
 
 	void openConfirmDialog() {
@@ -793,7 +748,7 @@ class WorldCreatorScene : public engine::IScene {
 		const float kickerY = 20.0F;
 		const float titleY = kickerY + UI::fs_2xs + 6.0F;
 		Renderer::Primitives::drawText({
-			.text = landingMode ? "// EXPEDITION    FINAL APPROACH" : "// NEW GAME    STEP 03 / 03",
+			.text = "// NEW GAME    STEP 03 / 03",
 			.position = {kMarginX, kickerY},
 			.scale = UI::fs_2xs / 16.0F,
 			.color = UI::text_faint,
@@ -802,7 +757,7 @@ class WorldCreatorScene : public engine::IScene {
 			.letterSpacing = UI::fs_2xs * UI::ls_wider,
 		});
 		Renderer::Primitives::drawText({
-			.text = landingMode ? "Select Landing Site" : "Generate Planet",
+			.text = "Generate Planet",
 			.position = {kMarginX, titleY},
 			.scale = UI::fs_3xl / 16.0F,
 			.color = UI::text_bright,
@@ -810,11 +765,6 @@ class WorldCreatorScene : public engine::IScene {
 			.vAlign = Foundation::VerticalAlign::Top,
 			.letterSpacing = UI::fs_3xl * UI::ls_wide,
 		});
-
-		if (landingMode && backToSurveyButton) {
-			backToSurveyButton->setPosition(viewportW - kMarginX - backToSurveyButton->size.x, kickerY);
-			backToSurveyButton->render();
-		}
 	}
 
 	void renderEscHint() {
@@ -940,10 +890,9 @@ class WorldCreatorScene : public engine::IScene {
 
 		if (globe.isReady()) {
 			vizControl(stage).render();
-		}
 
-		if (landingMode) {
-			// Crosshair hint, top-center of the stage.
+			// Crosshair hint, top-center of the stage. The Landing Zone pane
+			// itself is rendered in the right column beneath the World Survey.
 			Renderer::Primitives::drawText({
 				.text = "Click the surface to set your descent vector",
 				.position = {stage.x, stage.y + UI::space_4},
@@ -953,13 +902,6 @@ class WorldCreatorScene : public engine::IScene {
 				.hAlign = Foundation::HorizontalAlign::Center,
 				.vAlign = Foundation::VerticalAlign::Top,
 				.boxWidth = stage.width});
-
-			if (siteValid) {
-				detailsPanel.render(details,
-									{viewportW - kMarginX - world_sim::LandingSiteDetailsPanel::kWidth,
-									 kContentTop, world_sim::LandingSiteDetailsPanel::kWidth,
-									 footerTop() - kContentTop - kColumnGap});
-			}
 		}
 
 		// Pick errors (e.g. clicking water) surface as a short hint at the
@@ -992,7 +934,6 @@ class WorldCreatorScene : public engine::IScene {
 			footerLayoutViewport = want;
 			const Foundation::Rect rect{kMarginX, footerTop() + 16.0F, viewportW - kMarginX * 2.0F, 40.0F};
 			surveyFooter->layout(rect);
-			landingFooter->layout(rect);
 		}
 		footer->render();
 	}
