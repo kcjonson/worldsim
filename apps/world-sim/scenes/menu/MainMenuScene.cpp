@@ -37,7 +37,7 @@ namespace {
 
 	constexpr const char* kSceneName = "main_menu";
 	constexpr float		  kColX = 80.0F;
-	constexpr float		  kRowWidth = 420.0F;
+	constexpr float		  kRowWidth = 500.0F;
 	constexpr float		  kRowHeight = 44.0F;
 
 	float textScale(float px) { return px / 16.0F; }
@@ -105,7 +105,9 @@ namespace {
 			}
 
 			const float insetX = r.x + (hovered ? UI::space_6 : UI::space_4);
-			if (primary || hovered) {
+			// The bracket is the hover cursor, shown only on the hovered row. The
+			// primary row is distinguished by its accent label color, not the bracket.
+			if (hovered) {
 				bracket->setPosition(insetX, r.y + (r.height - 14.0F) * 0.5F);
 				bracket->render();
 			}
@@ -126,16 +128,27 @@ namespace {
 					  .boxHeight = r.height,
 					  .letterSpacing = UI::fs_xl * UI::ls_wide});
 
-			if (hovered) {
-				drawText({.text = hint,
-						  .position = {r.x, r.y},
-						  .scale = textScale(UI::fs_xs),
-						  .color = UI::text_faint,
-						  .font = UI::fontMono,
-						  .hAlign = Foundation::HorizontalAlign::Right,
-						  .vAlign = Foundation::VerticalAlign::Middle,
-						  .boxWidth = r.width - UI::space_4,
-						  .boxHeight = r.height});
+			// Hint: right-aligned to the row's right edge, but its box starts after
+			// the measured label end + a gap so it can never collide with the label.
+			if (hovered && !hint.empty()) {
+				const float labelX = insetX + 18.0F + 26.0F;
+				float		labelW = 0.0F;
+				if (auto* fontRenderer = Renderer::Primitives::getFontRenderer()) {
+					labelW = fontRenderer->MeasureText(label, textScale(UI::fs_xl), UI::fontDisplay, UI::fs_xl * UI::ls_wide).x;
+				}
+				const float hintLeft = labelX + labelW + UI::space_4;
+				const float hintRight = r.x + r.width - UI::space_4;
+				if (hintRight > hintLeft) {
+					drawText({.text = hint,
+							  .position = {hintLeft, r.y},
+							  .scale = textScale(UI::fs_xs),
+							  .color = UI::text_faint,
+							  .font = UI::fontMono,
+							  .hAlign = Foundation::HorizontalAlign::Right,
+							  .vAlign = Foundation::VerticalAlign::Middle,
+							  .boxWidth = hintRight - hintLeft,
+							  .boxHeight = r.height});
+				}
 			}
 		}
 
