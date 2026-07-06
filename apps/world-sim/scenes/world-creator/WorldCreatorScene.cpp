@@ -1,10 +1,11 @@
 // World Creator Scene
-// Three model states over a shared starfield -- Configuring (parameter panel
-// + decorative planet), Generating (progress strip), Reviewing (final globe)
-// -- in a 320 | stage | 320 grid with a survey panel on the right and a
-// Back / status / actions footer bar. Accepting the world enters the landing
-// sub-phase in place: two columns (stage | 360 details), a pulsing crosshair
-// marker, and a Commit to Descent dialog gating the actual landing.
+// Three model states over a shared starfield -- Configuring (empty stage; the
+// globe appears only once generated), Generating (progress strip), Reviewing
+// (final globe) -- in a 360 | stage | 360 grid. The parameter sidebar carries
+// a full-width Generate/Cancel button at its bottom; the right column stacks
+// the World Survey pane and, once a site is picked, the Landing Zone pane.
+// Landing selection lives in Reviewing: pick on the globe, then Confirm
+// Landing Site opens a Commit to Descent dialog gating the actual landing.
 
 #include "GameStartConfig.h"
 #include "NewGameSetup.h"
@@ -211,6 +212,9 @@ class WorldCreatorScene : public engine::IScene {
 
 		if (state == world_sim::WorldCreatorState::Configuring && generateButton) {
 			generateButton->setDisabled(panel && !panel->seedIsValid());
+		}
+		if (state == world_sim::WorldCreatorState::Reviewing && acceptButton != nullptr) {
+			acceptButton->setDisabled(!siteValid); // stays in sync as the player re-picks a site
 		}
 
 		if (panel) { panel->update(dt); }

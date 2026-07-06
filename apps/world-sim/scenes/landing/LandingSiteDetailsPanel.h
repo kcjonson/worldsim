@@ -1,7 +1,7 @@
 #pragma once
 
-// LandingSiteDetailsPanel - the right-column "Landing Zone" panel of the
-// landing sub-phase.
+// LandingSiteDetailsPanel - the "Landing Zone" pane, stacked beneath the World
+// Survey in the world creator's right column during review.
 //
 // Renders a LandingSiteDetails (built by LandingSiteDetailsModel) inside a
 // UI::Panel (title "Landing Zone", kicker "Site Analysis", accent): coords
@@ -18,8 +18,6 @@ namespace world_sim {
 class LandingSiteDetailsPanel {
   public:
 	void render(const LandingSiteDetails& details, const Foundation::Rect& bounds) const;
-
-	static constexpr float kWidth = 360.0F;
 };
 
 } // namespace world_sim
