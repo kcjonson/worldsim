@@ -118,7 +118,6 @@ namespace {
 			m_done = false;
 			m_shownBootLines = 0;
 			m_errorLines.clear();
-			m_phase = "Initializing";
 			m_progress = 0.0F;
 
 			m_bootLog = std::make_unique<UI::LayoutContainer>(UI::LayoutContainer::Args{
@@ -128,18 +127,21 @@ namespace {
 
 			buildIdentity();
 
+			// Always shown; disabled until the asset library loads cleanly. The
+			// boot-log lines are the only progress indicator (no pill bar).
 			m_enterButton = std::make_unique<UI::Button>(UI::Button::Args{
 				.label = "Enter Expedition",
 				.size = {230.0F, 46.0F},
 				.type = UI::Button::Type::Primary,
+				.disabled = true,
 				.onClick = [this]() { sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu)); },
 				.id = "btn_enter_expedition",
 				.iconGlyph = "play"});
-			m_enterButton->visible = false;
 		}
 
 		bool handleInput(UI::InputEvent& event) override {
-			return m_enterButton && m_enterButton->visible && m_enterButton->handleEvent(event);
+			// Button::handleEvent no-ops while disabled, so no guard needed.
+			return m_enterButton && m_enterButton->handleEvent(event);
 		}
 
 		void update(float dt) override {
@@ -153,10 +155,9 @@ namespace {
 			}
 
 			if (!progress.started.load()) {
-				// Assets already loaded synchronously (--scene jump): play the
-				// strip on a short timer, then offer the button.
+				// Assets already loaded synchronously (--scene jump): reveal the boot
+				// log on a short timer, then enable the button.
 				m_progress = std::min(1.0F, m_timer / kMinSplashSeconds);
-				m_phase = "Ready";
 				revealBootLines();
 				if (m_timer > kMinSplashSeconds) {
 					finishLoad();
@@ -164,11 +165,7 @@ namespace {
 				return;
 			}
 
-			const int loaded = progress.defsLoaded.load();
-			if (loaded != m_lastShownCount) {
-				m_lastShownCount = loaded;
-				m_phase = "Mounting salvage manifest";
-			}
+			m_lastShownCount = progress.defsLoaded.load();
 
 			if (!registry.isLoadComplete()) {
 				// Cosmetic fill until the load reports complete, then snap to full.
@@ -185,13 +182,12 @@ namespace {
 				return;
 			}
 
-			LOG_INFO(Game, "SplashScene - assets ready (%d defs, %d warnings)", loaded, report.warningCount());
+			LOG_INFO(Game, "SplashScene - assets ready (%d defs, %d warnings)", m_lastShownCount, report.warningCount());
 			finishLoad();
 		}
 
 		void render() override {
 			using namespace UI;
-			using Renderer::Primitives::drawRect;
 			using Renderer::Primitives::drawText;
 
 			glClearColor(bg_void.r, bg_void.g, bg_void.b, 1.0F);
@@ -210,74 +206,35 @@ namespace {
 				m_identity->render();
 			}
 
-			// Bottom loading strip.
-			const float stripW = std::min(520.0F, screenW * 0.7F);
-			const float stripX = cx - stripW * 0.5F;
-			const float barY = screenH - space_12;
+			// Bottom cluster: boot-log text (the only progress indicator) above an
+			// always-present Enter button that stays disabled until the load lands.
+			const float buttonTop = screenH - space_12 - m_enterButton->size.y;
 
+			// Boot log builds above the button as progress crosses each 1/6. The
+			// block is centered on screen while its lines stay left-justified.
+			if (m_bootLog) {
+				m_bootLog->setPosition(cx - m_bootLog->getWidth() * 0.5F, buttonTop - space_5 - m_bootLog->getHeight());
+				m_bootLog->render();
+			}
+
+			// Validation failure: error lines above the boot log; button stays disabled.
 			if (m_failed) {
-				float ey = barY - 8.0F - 18.0F * static_cast<float>(m_errorLines.size());
+				float ey = buttonTop - space_5 - m_bootLog->getHeight() - space_4 -
+						   18.0F * static_cast<float>(m_errorLines.size());
 				for (const std::string& line : m_errorLines) {
 					drawText(Renderer::Primitives::TextArgs{
 						.text = line,
-						.position = {stripX, ey},
+						.position = {cx - std::min(520.0F, screenW * 0.7F) * 0.5F, ey},
 						.scale = textScale(fs_xs),
 						.color = status_crit,
 						.font = fontMono,
 						.vAlign = Foundation::VerticalAlign::Top});
 					ey += 18.0F;
 				}
-			} else {
-				// Boot log builds above the loader (or the Enter button once done)
-				// as progress crosses each 1/6. The block is centered on screen while
-				// its lines stay left-justified within it.
-				if (m_bootLog) {
-					const float reserve = m_done ? m_enterButton->size.y + 20.0F : 40.0F;
-					m_bootLog->setPosition(cx - m_bootLog->getWidth() * 0.5F, barY - reserve - m_bootLog->getHeight());
-					m_bootLog->render();
-				}
-
-				if (m_done) {
-					m_enterButton->setPosition(cx - m_enterButton->size.x * 0.5F, barY - m_enterButton->size.y);
-					m_enterButton->render();
-				} else {
-					drawText(Renderer::Primitives::TextArgs{
-						.text = m_phase,
-						.position = {stripX, barY - 20.0F},
-						.scale = textScale(fs_xs),
-						.color = text,
-						.font = fontMono,
-						.vAlign = Foundation::VerticalAlign::Top,
-						.letterSpacing = fs_xs * ls_wide,
-						.transform = Foundation::TextTransform::Uppercase});
-					drawText(Renderer::Primitives::TextArgs{
-						.text = std::to_string(static_cast<int>(m_progress * 100.0F)) + "%",
-						.position = {stripX, barY - 20.0F},
-						.scale = textScale(fs_xs),
-						.color = accent_bright,
-						.font = fontMono,
-						.hAlign = Foundation::HorizontalAlign::Right,
-						.vAlign = Foundation::VerticalAlign::Top,
-						.boxWidth = stripW});
-					// Pill track + amber fill.
-					const float radius = std::min(r_pill, 1.5F);
-					drawRect(Renderer::Primitives::RectArgs{
-						.bounds = {stripX, barY, stripW, 3.0F},
-						.style = {.fill = bg_inset,
-								  .border = Foundation::BorderStyle{
-									  .color = bg_inset, .width = 0.0F, .cornerRadius = radius,
-									  .position = Foundation::BorderPosition::Inside}}});
-					const float fillW = stripW * std::clamp(m_progress, 0.0F, 1.0F);
-					if (fillW > 3.0F) {
-						drawRect(Renderer::Primitives::RectArgs{
-							.bounds = {stripX, barY, fillW, 3.0F},
-							.style = {.fill = accent,
-									  .border = Foundation::BorderStyle{
-										  .color = accent, .width = 0.0F, .cornerRadius = radius,
-										  .position = Foundation::BorderPosition::Inside}}});
-					}
-				}
 			}
+
+			m_enterButton->setPosition(cx - m_enterButton->size.x * 0.5F, buttonTop);
+			m_enterButton->render();
 
 			// Version, bottom-right.
 			drawText(Renderer::Primitives::TextArgs{
@@ -313,7 +270,7 @@ namespace {
 			std::vector<const UI::IComponent*> roots;
 			if (m_identity) roots.push_back(m_identity.get());
 			if (m_bootLog && m_shownBootLines > 0) roots.push_back(m_bootLog.get());
-			if (m_enterButton && m_enterButton->visible) roots.push_back(m_enterButton.get());
+			if (m_enterButton) roots.push_back(m_enterButton.get());
 			return roots;
 		}
 
@@ -368,13 +325,11 @@ namespace {
 				++m_shownBootLines;
 			}
 			m_done = true;
-			m_phase = "Ready";
-			m_enterButton->visible = true;
+			m_enterButton->setDisabled(false);
 		}
 
 		void buildErrorText(const engine::assets::ValidationReport& report) {
 			m_errorLines.clear();
-			m_phase = "Asset validation failed: " + std::to_string(report.errorCount()) + " error(s)";
 			constexpr int kMaxLines = 8;
 			int			  shown = 0;
 			for (const auto& issue : report.issues) {
@@ -395,7 +350,6 @@ namespace {
 		bool								 m_done = false;
 		int									 m_shownBootLines = 0;
 		float								 m_progress = 0.0F;
-		std::string							 m_phase;
 		std::vector<std::string>			 m_errorLines;
 		std::unique_ptr<UI::LayoutContainer> m_bootLog;
 		std::unique_ptr<UI::LayoutContainer> m_identity;

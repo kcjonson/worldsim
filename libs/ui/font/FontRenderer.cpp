@@ -368,20 +368,20 @@ namespace ui {
 		// Cache miss or caching disabled - generate quads
 		size_t startIdx = outQuads.size(); // Track where we started adding
 
-		// The MSDF distance field spans distanceRange texels centered on the glyph
-		// outline; planeBounds/atlasBounds are the tight outline, so a quad drawn to
-		// exactly those bounds cuts the anti-aliased falloff at its own (clamped) UV
-		// edge. At large sizes the lost sliver is invisible, but at small sizes the
-		// top row of coverage vanishes whenever the quad edge lands on an unlucky
-		// subpixel (baseline snapping makes cap tops land there), giving hard, flat,
-		// sheared glyph tops and a clipped trailing glyph. Grow every quad by the
-		// full range on all sides, in geometry and matching UV, so the falloff
-		// renders; the atlas gutter between glyphs is far wider than the range, so
-		// this never samples a neighbouring glyph.
+		// atlasBounds/planeBounds are the tight glyph outline, but the MSDF stays
+		// valid for distanceRange/2 texels beyond it, and that half holds the
+		// anti-aliased edge falloff. A quad clipped to the tight bounds cuts that
+		// falloff at its own (clamped) UV edge: invisible at large sizes, but at
+		// small sizes baseline snapping lands a cap top on an unlucky subpixel and
+		// the top AA row vanishes, shearing glyph tops flat and clipping the trailing
+		// glyph. Grow each quad by the valid half-range (not the full range, whose
+		// faint tail shows as edge lines on large text) in geometry and matching UV.
+		// The atlas gutter is far wider than the half-range, so no neighbour bleed.
 		const float glyphSizeTexels = atlas.metadata.glyphSize > 0 ? static_cast<float>(atlas.metadata.glyphSize) : 32.0F;
-		const float padPx = (atlas.metadata.distanceRange / glyphSizeTexels) * fontSize;
-		const float padU = atlas.metadata.atlasWidth > 0 ? atlas.metadata.distanceRange / static_cast<float>(atlas.metadata.atlasWidth) : 0.0F;
-		const float padV = atlas.metadata.atlasHeight > 0 ? atlas.metadata.distanceRange / static_cast<float>(atlas.metadata.atlasHeight) : 0.0F;
+		const float halfRangeTexels = atlas.metadata.distanceRange * 0.5F;
+		const float padPx = (halfRangeTexels / glyphSizeTexels) * fontSize;
+		const float padU = atlas.metadata.atlasWidth > 0 ? halfRangeTexels / static_cast<float>(atlas.metadata.atlasWidth) : 0.0F;
+		const float padV = atlas.metadata.atlasHeight > 0 ? halfRangeTexels / static_cast<float>(atlas.metadata.atlasHeight) : 0.0F;
 
 		ForEachGlyph(sdfGlyphs, text, fontSize, letterSpacing, [&](const SDFGlyph& glyph, float penX) {
 			// Only generate quad if glyph has geometry (not whitespace)
@@ -390,7 +390,7 @@ namespace ui {
 			}
 
 			// Use atlasBounds (actual glyph content) instead of the full atlas cell,
-			// grown by the distance-field range (see note above).
+			// grown by the valid SDF half-range (see note above).
 			// Reference: https://github.com/Chlumsky/msdf-atlas-gen/issues/2
 			GlyphQuad quad{};
 			quad.position = glm::vec2(penX + glyph.planeBoundsMin.x * fontSize - padPx, baselineY - glyph.planeBoundsMax.y * fontSize - padPx);
