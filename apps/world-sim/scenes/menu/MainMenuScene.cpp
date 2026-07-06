@@ -172,6 +172,34 @@ namespace {
 		void onEnter() override {
 			LOG_INFO(Game, "MainMenuScene - Entering");
 
+			// Identity block on the layout engine (diamond + title on one row, the
+			// tagline below) so the title and tagline can never overlap. Left-aligned.
+			identity = std::make_unique<UI::LayoutContainer>(UI::LayoutContainer::Args{
+				.direction = UI::Direction::Vertical,
+				.gap = UI::space_2,
+				.crossAlign = UI::CrossAlign::Start,
+				.id = "main_menu_identity"});
+			UI::LayoutContainer titleRow(UI::LayoutContainer::Args{
+				.direction = UI::Direction::Horizontal,
+				.gap = 16.0F,
+				.crossAlign = UI::CrossAlign::Center,
+				.id = "main_menu_title_row"});
+			titleRow.addChild(world_sim::Diamond(11.0F, 22.0F, "menu_diamond"));
+			titleRow.addChild(world_sim::Label({.text = "WORLD-SIM",
+												.fontSize = UI::fs_4xl,
+												.color = UI::text_bright,
+												.font = UI::fontDisplay,
+												.letterSpacingEm = UI::ls_wider,
+												.id = "menu_title"}));
+			identity->addChild(std::move(titleRow));
+			identity->addChild(world_sim::Label({.text = "Prospecting Expedition 28-B",
+												 .fontSize = UI::fs_sm,
+												 .color = UI::accent,
+												 .font = UI::fontMono,
+												 .letterSpacingEm = UI::ls_wide,
+												 .transform = Foundation::TextTransform::Uppercase,
+												 .id = "menu_tagline"}));
+
 			menu = std::make_unique<UI::LayoutContainer>(UI::LayoutContainer::Args{
 				.size = {kRowWidth, 0.0F},
 				.direction = UI::Direction::Vertical,
@@ -243,6 +271,7 @@ namespace {
 
 		void update(float dt) override {
 			planet.update(dt);
+			if (identity) identity->update(dt);
 			if (menu) menu->update(dt);
 		}
 
@@ -267,34 +296,21 @@ namespace {
 			               planetSize, planetSize},
 			              screenW, screenH);
 
-			// Vertically center the identity + menu block.
-			const float blockH = 92.0F + 16.0F + space_3 + static_cast<float>(itemCount) * (kRowHeight + 2.0F);
+			// Vertically center the identity + kicker + menu block, positioning
+			// each off measured heights so nothing overlaps.
+			const float identityH = identity ? identity->getHeight() : 92.0F;
+			const float kickerH = fs_2xs * 1.3F;
+			const float menuH = static_cast<float>(itemCount) * (kRowHeight + 2.0F);
+			const float blockH = identityH + space_3 + kickerH + space_3 + menuH;
 			const float y = std::max(80.0F, (screenH - blockH) * 0.5F);
-			const float headerY = y;
-			const float kickerY = y + 92.0F;
 
-			// Identity: diamond glyph + WORLD-SIM + tagline.
-			const float diaR = 11.0F;
-			drawDiamond(kColX + diaR, headerY + 17.0F, diaR, accent);
-			drawText(Renderer::Primitives::TextArgs{
-				.text = "WORLD-SIM",
-				.position = {kColX + diaR * 2.0F + 16.0F, headerY},
-				.scale = textScale(fs_4xl),
-				.color = text_bright,
-				.font = fontDisplay,
-				.vAlign = Foundation::VerticalAlign::Top,
-				.letterSpacing = fs_4xl * ls_wider});
-			drawText(Renderer::Primitives::TextArgs{
-				.text = "Prospecting Expedition 28-B",
-				.position = {kColX, headerY + 52.0F},
-				.scale = textScale(fs_sm),
-				.color = accent,
-				.font = fontMono,
-				.vAlign = Foundation::VerticalAlign::Top,
-				.letterSpacing = fs_sm * ls_wide,
-				.transform = Foundation::TextTransform::Uppercase});
+			if (identity) {
+				identity->setPosition(kColX, y);
+				identity->render();
+			}
 
-			// Kicker, then the menu column space_3 below it.
+			// Kicker, then the menu column, each space_3 below the previous block.
+			const float kickerY = y + identityH + space_3;
 			drawText(Renderer::Primitives::TextArgs{
 				.text = "// MAIN MENU",
 				.position = {kColX, kickerY},
@@ -305,7 +321,7 @@ namespace {
 				.letterSpacing = fs_2xs * ls_wider});
 
 			if (menu) {
-				menu->setPosition(kColX, kickerY + 16.0F + space_3);
+				menu->setPosition(kColX, kickerY + kickerH + space_3);
 				menu->render();
 			}
 
@@ -333,6 +349,7 @@ namespace {
 
 		void onExit() override {
 			LOG_INFO(Game, "MainMenuScene - Exiting");
+			identity.reset();
 			menu.reset();
 		}
 
@@ -340,21 +357,17 @@ namespace {
 		const char* getName() const override { return kSceneName; }
 
 		std::vector<const UI::IComponent*> getUiRoots() const override {
-			if (!menu) return {};
-			return {menu.get()};
+			std::vector<const UI::IComponent*> roots;
+			if (identity) roots.push_back(identity.get());
+			if (menu) roots.push_back(menu.get());
+			return roots;
 		}
 
 	  private:
-		static void drawDiamond(float cx, float cy, float r, Foundation::Color color) {
-			const std::array<Foundation::Vec2, 4> v{{{cx, cy - r}, {cx + r, cy}, {cx, cy + r}, {cx - r, cy}}};
-			const std::array<uint16_t, 6>		  idx{0, 1, 2, 0, 2, 3};
-			Renderer::Primitives::drawTriangles(Renderer::Primitives::TrianglesArgs{
-				.vertices = v.data(), .indices = idx.data(), .vertexCount = 4, .indexCount = 6, .color = color});
-		}
-
 		static constexpr float kPlanetMinSize = 640.0F;
 
 		world_sim::DecorativePlanet			 planet;
+		std::unique_ptr<UI::LayoutContainer> identity;
 		std::unique_ptr<UI::LayoutContainer> menu;
 		int									 itemCount = 0;
 	};

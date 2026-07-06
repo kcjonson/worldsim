@@ -40,33 +40,6 @@ namespace {
 
 	float textScale(float px) { return px / 16.0F; }
 
-	void drawDiamond(float cx, float cy, float r, Foundation::Color color) {
-		const std::array<Foundation::Vec2, 4> v{{{cx, cy - r}, {cx + r, cy}, {cx, cy + r}, {cx - r, cy}}};
-		const std::array<uint16_t, 6>		  idx{0, 1, 2, 0, 2, 3};
-		Renderer::Primitives::drawTriangles(Renderer::Primitives::TrianglesArgs{
-			.vertices = v.data(), .indices = idx.data(), .vertexCount = 4, .indexCount = 6, .color = color});
-	}
-
-	// Amber diamond mark, drawn at the top of a fixed-size box so the layout
-	// engine can seat it above the title with a gap baked into the box height.
-	class Diamond : public world_sim::Widget {
-	  public:
-		explicit Diamond(float radius, float boxHeight, const char* id = nullptr) : radius(radius), id(id) {
-			size = {radius * 2.0F, boxHeight};
-		}
-
-		void render() override {
-			drawDiamond(position.x + radius, position.y + radius, radius, UI::accent);
-		}
-
-		const char* debugTypeName() const override { return "Diamond"; }
-		const char* debugId() const override { return id; }
-
-	  private:
-		float		radius;
-		const char* id{nullptr};
-	};
-
 	// One "[ OK ] <text>" boot log line: green stamp, faint body, mono.
 	class BootLine : public world_sim::Widget {
 	  public:
@@ -294,7 +267,7 @@ namespace {
 				.crossAlign = CrossAlign::Center,
 				.id = "splash_identity"});
 
-			m_identity->addChild(Diamond(18.0F, 36.0F + space_5, "splash_diamond"));
+			m_identity->addChild(world_sim::Diamond(18.0F, 36.0F + space_5, "splash_diamond"));
 			m_identity->addChild(world_sim::Label({.text = "WORLD-SIM",
 												   .fontSize = fs_5xl,
 												   .color = text_bright,

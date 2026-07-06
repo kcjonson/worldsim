@@ -17,6 +17,7 @@
 #include <primitives/Primitives.h>
 #include <theme/Variants.h>
 
+#include <array>
 #include <cctype>
 #include <memory>
 #include <string>
@@ -113,6 +114,32 @@ namespace world_sim {
 
 	  private:
 		Args args;
+	};
+
+	// Amber diamond mark inside a fixed-size box so the layout engine can seat it
+	// (above or beside a title) with spacing baked into the box.
+	class Diamond : public Widget {
+	  public:
+		explicit Diamond(float radius, float boxHeight, const char* id = nullptr) : radius(radius), id(id) {
+			size = {radius * 2.0F, boxHeight};
+		}
+
+		void render() override {
+			const float							  cx = position.x + radius;
+			const float							  cy = position.y + radius;
+			const std::array<Foundation::Vec2, 4> v{
+				{{cx, cy - radius}, {cx + radius, cy}, {cx, cy + radius}, {cx - radius, cy}}};
+			const std::array<uint16_t, 6> idx{0, 1, 2, 0, 2, 3};
+			Renderer::Primitives::drawTriangles(Renderer::Primitives::TrianglesArgs{
+				.vertices = v.data(), .indices = idx.data(), .vertexCount = 4, .indexCount = 6, .color = UI::accent});
+		}
+
+		const char* debugTypeName() const override { return "Diamond"; }
+		const char* debugId() const override { return id; }
+
+	  private:
+		float		radius;
+		const char* id{nullptr};
 	};
 
 	// Labeled hairline rule row (UI::Divider) that stretches to the column width.
