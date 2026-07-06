@@ -218,13 +218,22 @@ namespace {
 			}
 
 			// Validation failure: error lines above the boot log; button stays disabled.
+			// Center the block by its widest line (lines stay left-justified), the
+			// same way the boot-log block is centered.
 			if (m_failed) {
-				float ey = buttonTop - space_5 - m_bootLog->getHeight() - space_4 -
+				float	 blockW = 0.0F;
+				if (auto* fontRenderer = Renderer::Primitives::getFontRenderer()) {
+					for (const std::string& line : m_errorLines) {
+						blockW = std::max(blockW, fontRenderer->MeasureText(line, textScale(fs_xs), fontMono).x);
+					}
+				}
+				const float errX = cx - blockW * 0.5F;
+				float		ey = buttonTop - space_5 - m_bootLog->getHeight() - space_4 -
 						   18.0F * static_cast<float>(m_errorLines.size());
 				for (const std::string& line : m_errorLines) {
 					drawText(Renderer::Primitives::TextArgs{
 						.text = line,
-						.position = {cx - std::min(520.0F, screenW * 0.7F) * 0.5F, ey},
+						.position = {errX, ey},
 						.scale = textScale(fs_xs),
 						.color = status_crit,
 						.font = fontMono,

@@ -398,8 +398,9 @@ namespace ui {
 				(glyph.planeBoundsMax.x - glyph.planeBoundsMin.x) * fontSize + 2.0F * padPx,
 				(glyph.planeBoundsMax.y - glyph.planeBoundsMin.y) * fontSize + 2.0F * padPx
 			);
-			quad.uvMin = glm::vec2(glyph.atlasBoundsMin.x - padU, glyph.atlasBoundsMin.y - padV);
-			quad.uvMax = glm::vec2(glyph.atlasBoundsMax.x + padU, glyph.atlasBoundsMax.y + padV);
+			// Clamp to [0,1] so an edge glyph's padded UV can't overshoot the atlas.
+			quad.uvMin = glm::clamp(glm::vec2(glyph.atlasBoundsMin.x - padU, glyph.atlasBoundsMin.y - padV), 0.0F, 1.0F);
+			quad.uvMax = glm::clamp(glm::vec2(glyph.atlasBoundsMax.x + padU, glyph.atlasBoundsMax.y + padV), 0.0F, 1.0F);
 			quad.color = color;
 
 			outQuads.push_back(quad);
