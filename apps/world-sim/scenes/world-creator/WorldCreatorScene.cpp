@@ -12,7 +12,6 @@
 #include "WorldCreatorModel.h"
 #include "scenes/landing/LandingSiteDetailsModel.h"
 #include "scenes/landing/LandingSiteDetailsPanel.h"
-#include "scenes/shared/DecorativePlanet.h"
 #include "scenes/shared/GlobeView.h"
 #include "scenes/shared/Starfield.h"
 #include "scenes/shared/UiStateDrain.h"
@@ -137,6 +136,8 @@ class WorldCreatorScene : public engine::IScene {
 		}
 
 		if (landingMode && backToSurveyButton && backToSurveyButton->handleEvent(event)) return true;
+		if (generateButton && generateButton->visible && generateButton->handleEvent(event)) return true;
+		if (cancelButton && cancelButton->visible && cancelButton->handleEvent(event)) return true;
 		if (!landingMode && panel && panel->handleEvent(event)) return true;
 		if (activeFooter() != nullptr && activeFooter()->handleEvent(event)) return true;
 
@@ -189,7 +190,6 @@ class WorldCreatorScene : public engine::IScene {
 		}
 
 		globe.update(dt);
-		decorativePlanet.update(dt);
 		markerPulse += dt;
 
 		auto state = model.getState();
@@ -215,11 +215,13 @@ class WorldCreatorScene : public engine::IScene {
 			handleCameraKeys(dt);
 		}
 
-		if (state == world_sim::WorldCreatorState::Configuring && generateButton != nullptr) {
+		if (state == world_sim::WorldCreatorState::Configuring && generateButton) {
 			generateButton->setDisabled(panel && !panel->seedIsValid());
 		}
 
 		if (panel && !landingMode) { panel->update(dt); }
+		if (generateButton) generateButton->update(dt);
+		if (cancelButton) cancelButton->update(dt);
 		if (activeFooter() != nullptr) activeFooter()->update(dt);
 		if (landingMode && backToSurveyButton) backToSurveyButton->update(dt);
 	}
@@ -241,9 +243,9 @@ class WorldCreatorScene : public engine::IScene {
 		Foundation::Rect stage = stageRect();
 		auto			 state = model.getState();
 
-		// The globe exists on screen only once generation completes; while
-		// configuring a decorative planet fills the main area, and while
-		// generating only the progress strip shows, never the half-built sphere.
+		// No planet is shown until generation completes: the stage stays empty
+		// while configuring, shows only the progress strip while generating, and
+		// reveals the real globe once it is ready. Never a stand-in world.
 		const bool showGlobe =
 			state == world_sim::WorldCreatorState::Reviewing && globe.isReady();
 
@@ -253,8 +255,6 @@ class WorldCreatorScene : public engine::IScene {
 		if (showGlobe) {
 			Renderer::Primitives::flush();
 			globe.render(stage, viewportW, viewportH);
-		} else if (state == world_sim::WorldCreatorState::Configuring) {
-			decorativePlanet.render(decorativePlanetRect(stage), viewportW, viewportH);
 		}
 
 		renderHeader();
@@ -262,6 +262,16 @@ class WorldCreatorScene : public engine::IScene {
 		const float columnH = footerTop() - kContentTop - kColumnGap;
 		if (!landingMode) {
 			if (panel) { panel->render(columnH); }
+
+			// Generate / Cancel pinned full-width to the bottom of the sidebar.
+			UI::Button* sideAction = generateButton && generateButton->visible ? generateButton.get()
+									 : (cancelButton && cancelButton->visible ? cancelButton.get() : nullptr);
+			if (sideAction != nullptr) {
+				const float bh = 40.0F;
+				sideAction->setPosition(kMarginX + 12.0F, kContentTop + columnH - bh - 12.0F);
+				sideAction->render();
+			}
+
 			surveyPanel.render({viewportW - kMarginX - world_sim::WorldSurveyPanel::kWidth,
 								kContentTop, world_sim::WorldSurveyPanel::kWidth, columnH});
 		}
@@ -298,6 +308,8 @@ class WorldCreatorScene : public engine::IScene {
 	std::vector<const UI::IComponent*> getUiRoots() const override {
 		std::vector<const UI::IComponent*> roots;
 		if (activeFooter() != nullptr) roots.push_back(activeFooter());
+		if (generateButton && generateButton->visible) roots.push_back(generateButton.get());
+		if (cancelButton && cancelButton->visible) roots.push_back(cancelButton.get());
 		if (landingMode && backToSurveyButton) roots.push_back(backToSurveyButton.get());
 		if (confirmDialog && confirmDialog->isOpen()) roots.push_back(confirmDialog.get());
 		return roots;
@@ -318,8 +330,8 @@ class WorldCreatorScene : public engine::IScene {
 	std::unique_ptr<UI::LayoutContainer> landingFooter;
 	world_sim::Label*					 statusLabel{nullptr};
 	UI::LayoutContainer*				 footerActions{nullptr};
-	UI::Button*							 generateButton{nullptr};
-	UI::Button*							 cancelButton{nullptr};
+	std::unique_ptr<UI::Button>			 generateButton; // bottom of the sidebar
+	std::unique_ptr<UI::Button>			 cancelButton;	 // bottom of the sidebar
 	UI::Button*							 regenerateButton{nullptr};
 	UI::Button*							 acceptButton{nullptr};
 	std::unique_ptr<UI::Button>			 backToSurveyButton;
@@ -330,7 +342,6 @@ class WorldCreatorScene : public engine::IScene {
 	Foundation::Vec2					 footerLayoutViewport{0.0F, 0.0F};
 
 	world_sim::GlobeView globe;
-	world_sim::DecorativePlanet decorativePlanet;
 	std::string errorText;
 	float		progressFraction{0.0F};
 	std::string progressStage;
@@ -362,13 +373,6 @@ class WorldCreatorScene : public engine::IScene {
 		const float width =
 			viewportW - x - world_sim::WorldSurveyPanel::kWidth - kColumnGap - kMarginX;
 		return {x, top, width, height};
-	}
-
-	// Largest square centered in the main area, for the Configuring backdrop.
-	static Foundation::Rect decorativePlanetRect(const Foundation::Rect& main) {
-		float size = std::min(main.width, main.height);
-		return {main.x + (main.width - size) * 0.5F,
-		        main.y + (main.height - size) * 0.5F, size, size};
 	}
 
 	UI::LayoutContainer* activeFooter() const {
@@ -465,27 +469,29 @@ class WorldCreatorScene : public engine::IScene {
 			.onClick = [this]() { enterLanding(); },
 			.id = "btn_wc_accept",
 			.iconGlyph = "arrowRight"}));
-		LayerHandle cancelHandle = actions.addChild(Button(Button::Args{
-			.label = "Cancel",
-			.size = {140.0F, 40.0F},
-			.type = Button::Type::Secondary,
-			.onClick = [this]() { model.cancelGeneration(); },
-			.id = "btn_wc_cancel"}));
-		LayerHandle generateHandle = actions.addChild(Button(Button::Args{
-			.label = "Generate",
-			.size = {180.0F, 40.0F},
-			.type = Button::Type::Primary,
-			.onClick = [this]() { startGeneration(); },
-			.id = "btn_wc_generate",
-			.iconGlyph = "globe"}));
 		LayerHandle actionsHandle = surveyFooter->addChild(std::move(actions));
 
 		footerActions = surveyFooter->getChild<LayoutContainer>(actionsHandle);
 		statusLabel = surveyFooter->getChild<world_sim::Label>(statusHandle);
 		regenerateButton = footerActions->getChild<Button>(regenHandle);
 		acceptButton = footerActions->getChild<Button>(acceptHandle);
-		cancelButton = footerActions->getChild<Button>(cancelHandle);
-		generateButton = footerActions->getChild<Button>(generateHandle);
+
+		// Generate / Cancel live at the bottom of the parameter sidebar, not the
+		// footer. Full sidebar width; positioned in render(). The scene owns them.
+		const float sideW = world_sim::ParameterPanel::kPanelWidth - 24.0F;
+		generateButton = std::make_unique<Button>(Button::Args{
+			.label = "Generate",
+			.size = {sideW, 40.0F},
+			.type = Button::Type::Primary,
+			.onClick = [this]() { startGeneration(); },
+			.id = "btn_wc_generate",
+			.iconGlyph = "globe"});
+		cancelButton = std::make_unique<Button>(Button::Args{
+			.label = "Cancel",
+			.size = {sideW, 40.0F},
+			.type = Button::Type::Secondary,
+			.onClick = [this]() { model.cancelGeneration(); },
+			.id = "btn_wc_cancel"});
 
 		// Landing footer: note | Confirm Landing Site.
 		landingFooter = std::make_unique<LayoutContainer>(LayoutContainer::Args{
