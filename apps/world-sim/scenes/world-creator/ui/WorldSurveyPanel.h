@@ -1,11 +1,13 @@
 #pragma once
 
-// WorldSurveyPanel - right-side survey readout for WorldCreatorScene.
+// WorldSurveyPanel - right-column survey readout for WorldCreatorScene.
 //
-// Fixed 320px wide. Empty state ("survey data resolves...") until a world is
-// set; then a Stat grid, a habitability pip row, climate-distribution meters
-// grouped from the biome histogram, and water/habitability badges. Renders
-// only stats whose WorldField bits the pipeline actually produced.
+// Renders into the caller-provided rect (the scene sizes it via contentHeight
+// so the Landing Zone pane can stack beneath). Empty state ("survey data
+// resolves...") until a world is set; then a Stat grid, a habitability pip
+// row, climate-distribution meters grouped from the biome histogram, and
+// water/habitability badges. Renders only stats whose WorldField bits the
+// pipeline actually produced.
 
 #include <worldgen/data/GeneratedWorld.h>
 
@@ -19,12 +21,14 @@ namespace world_sim {
 
 class WorldSurveyPanel {
   public:
-	static constexpr float kWidth = 320.0F;
-
 	// nullptr returns the panel to its empty (pending) state.
 	void setWorld(std::shared_ptr<const worldgen::GeneratedWorld> world);
 
 	void render(const Foundation::Rect& bounds) const;
+
+	// Frame height the current content needs at the given width, so the caller
+	// can size the panel to its content and stack another pane beneath it.
+	float contentHeight(float width) const;
 
   private:
 	struct StatEntry {

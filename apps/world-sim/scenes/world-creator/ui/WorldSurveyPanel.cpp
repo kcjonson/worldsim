@@ -241,4 +241,30 @@ void WorldSurveyPanel::render(const Foundation::Rect& bounds) const {
 	}
 }
 
+float WorldSurveyPanel::contentHeight(float width) const {
+	// Probe the panel chrome (header + body padding are fixed, independent of
+	// height) so the frame can be sized to the content it will draw.
+	UI::Panel probe({.position = {0.0F, 0.0F},
+					 .size = {width, 1000.0F},
+					 .title = "World Survey",
+					 .kicker = world ? "Complete" : "Pending",
+					 .accent = UI::PanelAccent::Accent});
+	const Foundation::Rect body = probe.bodyBounds();
+	const float			   topOffset = body.y;
+	const float			   botPad = 1000.0F - (body.y + body.height);
+
+	if (!world) {
+		return topOffset + 120.0F + botPad; // compact empty/pending frame
+	}
+
+	// Mirror render()'s vertical accumulation from body.y.
+	float extent = UI::space_2;
+	const int rows = (static_cast<int>(stats.size()) + 1) / 2;
+	extent += static_cast<float>(rows) * 46.0F + UI::space_2;
+	if (habitability >= 0.0F) extent += 36.0F + UI::space_4;
+	if (!climate.empty()) extent += 18.0F + static_cast<float>(climate.size()) * 30.0F + UI::space_2;
+	if (!badges.empty()) extent += 26.0F;
+	return topOffset + extent + botPad;
+}
+
 } // namespace world_sim

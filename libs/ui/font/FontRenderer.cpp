@@ -368,22 +368,39 @@ namespace ui {
 		// Cache miss or caching disabled - generate quads
 		size_t startIdx = outQuads.size(); // Track where we started adding
 
+		// atlasBounds/planeBounds are the tight glyph outline, but the MSDF stays
+		// valid for distanceRange/2 texels beyond it, and that half holds the
+		// anti-aliased edge falloff. A quad clipped to the tight bounds cuts that
+		// falloff at its own (clamped) UV edge: invisible at large sizes, but at
+		// small sizes baseline snapping lands a cap top on an unlucky subpixel and
+		// the top AA row vanishes, shearing glyph tops flat and clipping the trailing
+		// glyph. Grow each quad by the valid half-range (not the full range, whose
+		// faint tail shows as edge lines on large text) in geometry and matching UV.
+		// The atlas gutter is far wider than the half-range, so no neighbour bleed.
+		const float glyphSizeTexels = atlas.metadata.glyphSize > 0 ? static_cast<float>(atlas.metadata.glyphSize) : 32.0F;
+		const float halfRangeTexels = atlas.metadata.distanceRange * 0.5F;
+		const float padPx = (halfRangeTexels / glyphSizeTexels) * fontSize;
+		const float padU = atlas.metadata.atlasWidth > 0 ? halfRangeTexels / static_cast<float>(atlas.metadata.atlasWidth) : 0.0F;
+		const float padV = atlas.metadata.atlasHeight > 0 ? halfRangeTexels / static_cast<float>(atlas.metadata.atlasHeight) : 0.0F;
+
 		ForEachGlyph(sdfGlyphs, text, fontSize, letterSpacing, [&](const SDFGlyph& glyph, float penX) {
 			// Only generate quad if glyph has geometry (not whitespace)
 			if (!glyph.hasGeometry) {
 				return;
 			}
 
-			// Use atlasBounds (actual glyph content) instead of the full atlas cell
+			// Use atlasBounds (actual glyph content) instead of the full atlas cell,
+			// grown by the valid SDF half-range (see note above).
 			// Reference: https://github.com/Chlumsky/msdf-atlas-gen/issues/2
-			// This ensures we only sample the actual glyph pixels, not the empty padding
 			GlyphQuad quad{};
-			quad.position = glm::vec2(penX + glyph.planeBoundsMin.x * fontSize, baselineY - glyph.planeBoundsMax.y * fontSize);
+			quad.position = glm::vec2(penX + glyph.planeBoundsMin.x * fontSize - padPx, baselineY - glyph.planeBoundsMax.y * fontSize - padPx);
 			quad.size = glm::vec2(
-				(glyph.planeBoundsMax.x - glyph.planeBoundsMin.x) * fontSize, (glyph.planeBoundsMax.y - glyph.planeBoundsMin.y) * fontSize
+				(glyph.planeBoundsMax.x - glyph.planeBoundsMin.x) * fontSize + 2.0F * padPx,
+				(glyph.planeBoundsMax.y - glyph.planeBoundsMin.y) * fontSize + 2.0F * padPx
 			);
-			quad.uvMin = glyph.atlasBoundsMin;
-			quad.uvMax = glyph.atlasBoundsMax;
+			// Clamp to [0,1] so an edge glyph's padded UV can't overshoot the atlas.
+			quad.uvMin = glm::clamp(glm::vec2(glyph.atlasBoundsMin.x - padU, glyph.atlasBoundsMin.y - padV), 0.0F, 1.0F);
+			quad.uvMax = glm::clamp(glm::vec2(glyph.atlasBoundsMax.x + padU, glyph.atlasBoundsMax.y + padV), 0.0F, 1.0F);
 			quad.color = color;
 
 			outQuads.push_back(quad);

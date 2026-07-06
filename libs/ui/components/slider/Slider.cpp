@@ -18,7 +18,7 @@ namespace {
 	constexpr float  kHandleHitRadius = 12.0F;
 	// Labeled sliders: name label on the left, value text on the right,
 	// track in between. Both reserve fixed-width columns.
-	constexpr float kLabelWidth = 90.0F;
+	constexpr float kLabelWidth = 116.0F;
 	constexpr float kLabelGap = 6.0F;
 	constexpr float kValueWidth = 60.0F;
 	constexpr float kValueGap = 6.0F;
@@ -162,13 +162,18 @@ void Slider::render() {
 
 	const Foundation::Vec2 contentPos = getContentPosition();
 
-	// Header row: label left in text_dim, value right in accent_bright, both mono.
+	// Single row: name label left, value right, track between — all centered
+		// vertically on the track. The label is clipped to its column so a long
+		// name can't run into the track.
 	if (!label.empty()) {
 		drawText({.text = label,
 				  .position = {contentPos.x, contentPos.y},
 				  .scale = headerScale,
 				  .color = disabled ? text_disabled : text_dim,
 				  .font = fontMono,
+				  .vAlign = Foundation::VerticalAlign::Middle,
+				  .boxWidth = kLabelWidth,
+				  .boxHeight = size.y,
 				  .id = id});
 
 		const std::string valStr = valueFormatter ? valueFormatter(value) : "";
@@ -179,7 +184,9 @@ void Slider::render() {
 					  .color = disabled ? text_disabled : accent_bright,
 					  .font = fontMono,
 					  .hAlign = Foundation::HorizontalAlign::Right,
+					  .vAlign = Foundation::VerticalAlign::Middle,
 					  .boxWidth = size.x,
+					  .boxHeight = size.y,
 					  .id = nullptr});
 		}
 	}
@@ -187,6 +194,10 @@ void Slider::render() {
 	const float hx = handleX();
 	const float trackTop = trackY - (kTrackHeight * 0.5F);
 	const float radius = kTrackHeight * 0.5F; // full pill
+
+	// Disabled sliders mute the fill and thumb to grey (no accent, no glow).
+	const Foundation::Color fillColor = disabled ? text_faint : accent;
+	const Foundation::Color thumbColor = disabled ? text_dim : accent_bright;
 
 	// Track: bg_inset fill with a hairline inside border.
 	const Foundation::Rect track{trackLeft, trackTop, trackRight - trackLeft, kTrackHeight};
@@ -200,9 +211,9 @@ void Slider::render() {
 	const float fillWidth = hx - trackLeft;
 	if (fillWidth > 0.0F) {
 		drawRect({.bounds = {track.x, trackTop, fillWidth, kTrackHeight},
-				  .style = {.fill = accent,
+				  .style = {.fill = fillColor,
 							.border = Foundation::BorderStyle{
-								.color = accent, .width = 0.0F, .cornerRadius = radius, .position = Foundation::BorderPosition::Inside}},
+								.color = fillColor, .width = 0.0F, .cornerRadius = radius, .position = Foundation::BorderPosition::Inside}},
 				  .id = nullptr});
 	}
 
@@ -220,10 +231,10 @@ void Slider::render() {
 	const float thumbX = hx - (kThumbSize * 0.5F);
 	const float thumbY = trackY - (kThumbSize * 0.5F);
 	drawRect({.bounds = {thumbX, thumbY, kThumbSize, kThumbSize},
-			  .style = {.fill = accent_bright,
+			  .style = {.fill = thumbColor,
 						.border = Foundation::BorderStyle{
 							.color = bg_void, .width = bw, .cornerRadius = r_sm, .position = Foundation::BorderPosition::Inside},
-						.boxShadow = Foundation::BoxShadow{.color = withAlpha(accent, 0.4F), .blur = 8.0F, .spread = 0.0F, .offset = {0.0F, 0.0F}}},
+						.boxShadow = Foundation::BoxShadow{.color = withAlpha(accent, disabled ? 0.0F : 0.4F), .blur = 8.0F, .spread = 0.0F, .offset = {0.0F, 0.0F}}},
 			  .id = nullptr});
 }
 

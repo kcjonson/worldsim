@@ -82,7 +82,7 @@ class ParameterPanel {
 	// WASD/arrow camera panning while the user is typing a seed.
 	bool isSeedFocused() const;
 
-	static constexpr float kPanelWidth = 320.0F;
+	static constexpr float kPanelWidth = 360.0F;
 
   private:
 	enum class SeedState { Empty, Valid, Invalid };
