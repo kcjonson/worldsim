@@ -18,8 +18,8 @@
 namespace world_sim {
 
 namespace {
-	// Common slider width inside the panel
-	constexpr float kSliderWidth = 296.0F;
+	// Common slider width inside the panel (kPanelWidth minus 2x kSliderX)
+	constexpr float kSliderWidth = 336.0F;
 	constexpr float kSliderX = 12.0F; // offset from panel left
 }
 

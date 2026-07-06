@@ -18,7 +18,7 @@ namespace {
 	constexpr float  kHandleHitRadius = 12.0F;
 	// Labeled sliders: name label on the left, value text on the right,
 	// track in between. Both reserve fixed-width columns.
-	constexpr float kLabelWidth = 90.0F;
+	constexpr float kLabelWidth = 116.0F;
 	constexpr float kLabelGap = 6.0F;
 	constexpr float kValueWidth = 60.0F;
 	constexpr float kValueGap = 6.0F;
@@ -162,13 +162,18 @@ void Slider::render() {
 
 	const Foundation::Vec2 contentPos = getContentPosition();
 
-	// Header row: label left in text_dim, value right in accent_bright, both mono.
+	// Single row: name label left, value right, track between — all centered
+		// vertically on the track. The label is clipped to its column so a long
+		// name can't run into the track.
 	if (!label.empty()) {
 		drawText({.text = label,
 				  .position = {contentPos.x, contentPos.y},
 				  .scale = headerScale,
 				  .color = disabled ? text_disabled : text_dim,
 				  .font = fontMono,
+				  .vAlign = Foundation::VerticalAlign::Middle,
+				  .boxWidth = kLabelWidth,
+				  .boxHeight = size.y,
 				  .id = id});
 
 		const std::string valStr = valueFormatter ? valueFormatter(value) : "";
@@ -179,7 +184,9 @@ void Slider::render() {
 					  .color = disabled ? text_disabled : accent_bright,
 					  .font = fontMono,
 					  .hAlign = Foundation::HorizontalAlign::Right,
+					  .vAlign = Foundation::VerticalAlign::Middle,
 					  .boxWidth = size.x,
+					  .boxHeight = size.y,
 					  .id = nullptr});
 		}
 	}
