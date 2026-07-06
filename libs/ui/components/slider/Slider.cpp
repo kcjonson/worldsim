@@ -195,6 +195,10 @@ void Slider::render() {
 	const float trackTop = trackY - (kTrackHeight * 0.5F);
 	const float radius = kTrackHeight * 0.5F; // full pill
 
+	// Disabled sliders mute the fill and thumb to grey (no accent, no glow).
+	const Foundation::Color fillColor = disabled ? text_faint : accent;
+	const Foundation::Color thumbColor = disabled ? text_dim : accent_bright;
+
 	// Track: bg_inset fill with a hairline inside border.
 	const Foundation::Rect track{trackLeft, trackTop, trackRight - trackLeft, kTrackHeight};
 	drawRect({.bounds = track,
@@ -207,9 +211,9 @@ void Slider::render() {
 	const float fillWidth = hx - trackLeft;
 	if (fillWidth > 0.0F) {
 		drawRect({.bounds = {track.x, trackTop, fillWidth, kTrackHeight},
-				  .style = {.fill = accent,
+				  .style = {.fill = fillColor,
 							.border = Foundation::BorderStyle{
-								.color = accent, .width = 0.0F, .cornerRadius = radius, .position = Foundation::BorderPosition::Inside}},
+								.color = fillColor, .width = 0.0F, .cornerRadius = radius, .position = Foundation::BorderPosition::Inside}},
 				  .id = nullptr});
 	}
 
@@ -227,10 +231,10 @@ void Slider::render() {
 	const float thumbX = hx - (kThumbSize * 0.5F);
 	const float thumbY = trackY - (kThumbSize * 0.5F);
 	drawRect({.bounds = {thumbX, thumbY, kThumbSize, kThumbSize},
-			  .style = {.fill = accent_bright,
+			  .style = {.fill = thumbColor,
 						.border = Foundation::BorderStyle{
 							.color = bg_void, .width = bw, .cornerRadius = r_sm, .position = Foundation::BorderPosition::Inside},
-						.boxShadow = Foundation::BoxShadow{.color = withAlpha(accent, 0.4F), .blur = 8.0F, .spread = 0.0F, .offset = {0.0F, 0.0F}}},
+						.boxShadow = Foundation::BoxShadow{.color = withAlpha(accent, disabled ? 0.0F : 0.4F), .blur = 8.0F, .spread = 0.0F, .offset = {0.0F, 0.0F}}},
 			  .id = nullptr});
 }
 

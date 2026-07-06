@@ -34,7 +34,7 @@ namespace UI {
 	inline constexpr Foundation::Color text{0.7765F, 0.7843F, 0.8078F, 1.0F};
 	inline constexpr Foundation::Color text_dim{0.5412F, 0.5608F, 0.6078F, 1.0F};
 	inline constexpr Foundation::Color text_faint{0.3529F, 0.3725F, 0.4196F, 1.0F};
-	inline constexpr Foundation::Color text_disabled{0.2667F, 0.2824F, 0.3137F, 0.2F};
+	inline constexpr Foundation::Color text_disabled{0.4196F, 0.4392F, 0.4706F, 1.0F};
 	inline constexpr Foundation::Color status_ok{0.3725F, 0.7216F, 0.4784F, 1.0F};
 	inline constexpr Foundation::Color status_warn{0.9098F, 0.6392F, 0.2431F, 1.0F};
 	inline constexpr Foundation::Color status_crit{0.8784F, 0.3255F, 0.2353F, 1.0F};
