@@ -78,6 +78,7 @@ Applications:
 |----------|-------------|
 | [Event System](./ui-framework/event-system.md) | Input event propagation and consumption |
 | [SDF Rendering](./ui-framework/sdf-rendering.md) | GPU-based primitive rendering (planned) |
+| [UI Rendering Spec Alignment](./ui-framework/ui-rendering-spec-alignment.md) | Migration order against the shared layered UI rendering specification (planned) |
 
 ### Networking & Multiplayer
 
