@@ -86,6 +86,10 @@ This directory contains technical documentation for the UI framework in world-si
 - Integration with ScrollContainer
 - Gradual migration from manual positioning
 
+### Specification Alignment
+
+**[ui-rendering-spec-alignment.md](./ui-rendering-spec-alignment.md)** - Migration order against the shared layered UI rendering specification (kept in the dual-deck-builder repository), the decisions recorded for this codebase, and how it relates to the open UI epics
+
 ### Core Architecture
 
 **[architecture.md](./architecture.md)** - **FOUNDATIONAL** - Unified Layer Model
