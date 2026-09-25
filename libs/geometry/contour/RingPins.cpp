@@ -70,17 +70,21 @@ namespace geometry {
 
 	} // namespace
 
-	std::vector<bool>
+	// Output is sized up front and written by index throughout this file: see
+	// contour_detail::dropConsecutiveDuplicates on why hot contour loops avoid
+	// push_back and vector<bool>.
+	std::vector<std::uint8_t>
 	pinAxisLineCrossings(Ring& ring, std::span<const std::int64_t> xLinesMm, std::span<const std::int64_t> yLinesMm) {
 		const std::size_t n = ring.size();
-		Ring			  out;
-		out.reserve(n);
+		auto crossesAny = [&](const Vec2i64& a, const Vec2i64& b) {
+			return std::any_of(xLinesMm.begin(), xLinesMm.end(), [&](std::int64_t x) { return strictlyBetween(x, a.x, b.x); }) ||
+				   std::any_of(yLinesMm.begin(), yLinesMm.end(), [&](std::int64_t y) { return strictlyBetween(y, a.y, b.y); });
+		};
+		// The crossing points of edge a->b ordered along it by exact parameter, a
+		// point where an x and a y line cross each other kept once. Never equal to
+		// a: a crossing is strictly inside the edge on its line's axis.
 		std::vector<EdgeCrossing> crossings;
-		for (std::size_t i = 0; i < n; ++i) {
-			const Vec2i64 a = ring[i];
-			const Vec2i64 b = ring[(i + 1) % n];
-			out.push_back(a);
-
+		auto collect = [&](const Vec2i64& a, const Vec2i64& b) {
 			crossings.clear();
 			for (const std::int64_t lineX : xLinesMm) {
 				if (strictlyBetween(lineX, a.x, b.x)) {
@@ -92,27 +96,46 @@ namespace geometry {
 					crossings.push_back(makeCrossing(pointOnHorizontal(a, b, lineY), lineY - a.y, b.y - a.y));
 				}
 			}
-			// Order along a->b by exact parameter.
 			std::sort(crossings.begin(), crossings.end(), [](const EdgeCrossing& l, const EdgeCrossing& r) {
 				return Int128::product(l.num, r.den) < Int128::product(r.num, l.den);
 			});
-			for (const EdgeCrossing& c : crossings) {
-				// A line pair crossed at their intersection yields one point twice.
-				if (c.point != out.back()) {
-					out.push_back(c.point);
+			crossings.erase(
+				std::unique(crossings.begin(), crossings.end(), [](const EdgeCrossing& l, const EdgeCrossing& r) { return l.point == r.point; }),
+				crossings.end()
+			);
+		};
+
+		// Few edges cross a line, so count them first, then fill by index.
+		std::size_t total = n;
+		for (std::size_t i = 0; i < n; ++i) {
+			if (crossesAny(ring[i], ring[(i + 1) % n])) {
+				collect(ring[i], ring[(i + 1) % n]);
+				total += crossings.size();
+			}
+		}
+		Ring		out(total);
+		std::size_t w = 0;
+		for (std::size_t i = 0; i < n; ++i) {
+			const Vec2i64& a = ring[i];
+			const Vec2i64& b = ring[(i + 1) % n];
+			out[w++]		 = a;
+			if (crossesAny(a, b)) {
+				collect(a, b);
+				for (const EdgeCrossing& c : crossings) {
+					out[w++] = c.point;
 				}
 			}
 		}
 		ring = std::move(out);
 
-		std::vector<bool> pinned(ring.size());
+		std::vector<std::uint8_t> pinned(ring.size());
 		for (std::size_t i = 0; i < ring.size(); ++i) {
-			pinned[i] = onAnyLine(ring[i], xLinesMm, yLinesMm);
+			pinned[i] = onAnyLine(ring[i], xLinesMm, yLinesMm) ? 1 : 0;
 		}
 		return pinned;
 	}
 
-	void resampleRing(Ring& ring, std::int64_t spacingMm, std::vector<bool>& pinned) {
+	void resampleRing(Ring& ring, std::int64_t spacingMm, std::vector<std::uint8_t>& pinned) {
 		assert(pinned.size() == ring.size());
 		assert(spacingMm > 0);
 		const std::size_t n = ring.size();
@@ -122,7 +145,7 @@ namespace geometry {
 
 		std::vector<std::size_t> anchors;
 		for (std::size_t i = 0; i < n; ++i) {
-			if (pinned[i]) {
+			if (pinned[i] != 0) {
 				anchors.push_back(i);
 			}
 		}
@@ -131,39 +154,48 @@ namespace geometry {
 			anchors.push_back(0);
 		}
 
-		Ring			  out;
-		std::vector<bool> outPinned;
+		// Per run: vertices start .. end walking forward (a single anchor runs the
+		// whole ring back to itself), its arc length, and its segment count.
+		struct Run {
+			std::size_t	 start	   = 0;
+			std::size_t	 steps	   = 0;
+			double		 length	   = 0.0;
+			std::int64_t segments = 1;
+		};
+		std::vector<Run> runs(anchors.size());
+		std::size_t		 total = 0;
 		for (std::size_t r = 0; r < anchors.size(); ++r) {
-			const std::size_t start = anchors[r];
-			const std::size_t end	= anchors[(r + 1) % anchors.size()];
-			// Run vertices start .. end walking forward; a single anchor runs the
-			// whole ring back to itself.
-			const std::size_t steps = singleRun ? n : (end + n - start) % n;
-
-			double runLength = 0.0;
-			for (std::size_t k = 0; k < steps; ++k) {
-				runLength += edgeLength(ring[(start + k) % n], ring[(start + k + 1) % n]);
+			Run& run  = runs[r];
+			run.start = anchors[r];
+			run.steps = singleRun ? n : (anchors[(r + 1) % anchors.size()] + n - run.start) % n;
+			for (std::size_t k = 0; k < run.steps; ++k) {
+				run.length += edgeLength(ring[(run.start + k) % n], ring[(run.start + k + 1) % n]);
 			}
-			const std::int64_t rounded	= std::llround(runLength / static_cast<double>(spacingMm));
-			const std::int64_t segments = std::max<std::int64_t>(singleRun ? 3 : 1, rounded);
+			const std::int64_t rounded = std::llround(run.length / static_cast<double>(spacingMm));
+			run.segments			   = std::max<std::int64_t>(singleRun ? 3 : 1, rounded);
+			total += static_cast<std::size_t>(run.segments);
+		}
 
-			out.push_back(ring[start]);
-			outPinned.push_back(pinned[start]);
+		Ring					  out(total);
+		std::vector<std::uint8_t> outPinned(total, 0);
+		std::size_t				  w = 0;
+		for (const Run& run : runs) {
+			outPinned[w] = pinned[run.start];
+			out[w++]	 = ring[run.start];
 
 			// Walk the run once, emitting the interior points at equal arc steps.
 			std::size_t edge	  = 0;
 			double		edgeStart = 0.0;
-			double		edgeLen	  = edgeLength(ring[start], ring[(start + 1) % n]);
-			for (std::int64_t s = 1; s < segments; ++s) {
-				const double target = runLength * static_cast<double>(s) / static_cast<double>(segments);
-				while (edge + 1 < steps && edgeStart + edgeLen < target) {
+			double		edgeLen	  = edgeLength(ring[run.start], ring[(run.start + 1) % n]);
+			for (std::int64_t s = 1; s < run.segments; ++s) {
+				const double target = run.length * static_cast<double>(s) / static_cast<double>(run.segments);
+				while (edge + 1 < run.steps && edgeStart + edgeLen < target) {
 					edgeStart += edgeLen;
 					++edge;
-					edgeLen = edgeLength(ring[(start + edge) % n], ring[(start + edge + 1) % n]);
+					edgeLen = edgeLength(ring[(run.start + edge) % n], ring[(run.start + edge + 1) % n]);
 				}
 				const double t = edgeLen > 0.0 ? std::clamp((target - edgeStart) / edgeLen, 0.0, 1.0) : 0.0;
-				out.push_back(lerpRounded(ring[(start + edge) % n], ring[(start + edge + 1) % n], t));
-				outPinned.push_back(false);
+				out[w++]	   = lerpRounded(ring[(run.start + edge) % n], ring[(run.start + edge + 1) % n], t);
 			}
 		}
 
