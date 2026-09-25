@@ -58,6 +58,7 @@ Applications:
 | [Monorepo Structure](./monorepo-structure.md) | Library organization and dependencies |
 | [Build & Test Performance](./build-performance.md) | Ninja + ccache/sccache, path-gated heavy tests, CI caching |
 | [C++ Coding Standards](./cpp-coding-standards.md) | Style guide and best practices |
+| [C++ to Rust Migration Scope](./rust-migration-scope.md) | Research: port difficulty by library, geometry spike results, tools, AI-driven migration process |
 | [Technical Notes](./technical-notes.md) | Research notes, open questions |
 
 ### Engine Patterns
