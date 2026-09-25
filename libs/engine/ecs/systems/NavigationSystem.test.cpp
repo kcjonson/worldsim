@@ -130,13 +130,8 @@ namespace {
 	class LandSampler : public engine::world::IWorldSampler {
 	  public:
 		[[nodiscard]] engine::world::ChunkSampleResult sampleChunk(engine::world::ChunkCoordinate) const override {
-			engine::world::ChunkSampleResult r;
-			for (auto& cb : r.cornerBiomes) {
-				cb = engine::world::BiomeWeights::single(engine::world::Biome::TemperateGrassland);
-			}
-			r.cornerElevations = {1.0F, 1.0F, 1.0F, 1.0F};
-			r.computeSectorGrid();
-			return r;
+			return engine::world::makeUniformChunkSampleResult(
+				engine::world::BiomeWeights::single(engine::world::Biome::TemperateGrassland), 1.0F);
 		}
 		[[nodiscard]] float	   sampleElevation(engine::world::WorldPosition) const override { return 1.0F; }
 		[[nodiscard]] uint64_t getWorldSeed() const override { return 7u; }
@@ -149,12 +144,8 @@ namespace {
 	class WaterPatchSampler : public engine::world::IWorldSampler {
 	  public:
 		[[nodiscard]] engine::world::ChunkSampleResult sampleChunk(engine::world::ChunkCoordinate coord) const override {
-			engine::world::ChunkSampleResult r;
-			for (auto& cb : r.cornerBiomes) {
-				cb = engine::world::BiomeWeights::single(engine::world::Biome::TemperateGrassland);
-			}
-			r.cornerElevations = {1.0F, 1.0F, 1.0F, 1.0F};
-			r.computeSectorGrid();
+			engine::world::ChunkSampleResult r = engine::world::makeUniformChunkSampleResult(
+				engine::world::BiomeWeights::single(engine::world::Biome::TemperateGrassland), 1.0F);
 			// Only carve the patch in the origin chunk so points near (0,0) stay land.
 			if (coord.x == 0 && coord.y == 0) {
 				const engine::world::BiomeWeights ocean =
@@ -182,13 +173,10 @@ namespace {
 	class LandIslandSampler : public engine::world::IWorldSampler {
 	  public:
 		[[nodiscard]] engine::world::ChunkSampleResult sampleChunk(engine::world::ChunkCoordinate coord) const override {
-			engine::world::ChunkSampleResult r;
-			// Default the whole chunk to water by seeding every corner Ocean.
-			for (auto& cb : r.cornerBiomes) {
-				cb = engine::world::BiomeWeights::single(engine::world::Biome::Ocean);
-			}
-			r.cornerElevations = {1.0F, 1.0F, 1.0F, 1.0F};
-			r.computeSectorGrid();
+			// Default the whole chunk (and neighborhood) to water by seeding every
+			// corner Ocean.
+			engine::world::ChunkSampleResult r = engine::world::makeUniformChunkSampleResult(
+				engine::world::BiomeWeights::single(engine::world::Biome::Ocean), 1.0F);
 			// Carve the single land island only in the origin chunk so the rest stays water.
 			if (coord.x == 0 && coord.y == 0) {
 				const engine::world::BiomeWeights land =
