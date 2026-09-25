@@ -1,7 +1,9 @@
 #include "Polygon.h"
 #include "../core/Vec2i64.h"
 
+#include <cmath>
 #include <cstdint>
+#include <utility>
 #include <vector>
 #include <gtest/gtest.h>
 
@@ -77,6 +79,50 @@ TEST(IsSimple, SpikeFails) {
 	Ring spike = {{0, 0}, {1000, 0}, {1000, 1000}, {500, 1000}, {500, -500}, {0, 1000}};
 	auto r	   = isSimple(spike);
 	EXPECT_FALSE(r.pass);
+}
+
+// isSimple buckets edges on a grid; it must report exactly the pair an all-pairs
+// scan in index order reports, on shoreline-sized rings with long and short edges.
+TEST(IsSimple, MatchesAllPairsScanOnLargeRings) {
+	auto allPairs = [](const Ring& ring) -> std::pair<std::size_t, std::size_t> {
+		const std::size_t n = ring.size();
+		for (std::size_t i = 0; i < n; ++i) {
+			for (std::size_t k = i + 1; k < n; ++k) {
+				if (k == i + 1 || (i == 0 && k == n - 1)) {
+					continue;
+				}
+				if (intersectSegments(ring[i], ring[(i + 1) % n], ring[k], ring[(k + 1) % n]).relation != SegmentRelation::Disjoint) {
+					return {i, k};
+				}
+			}
+		}
+		return {n, n};
+	};
+
+	// Three quarters of a wobbly 600-vertex circle closed by one ~30 m chord, then
+	// copies with a fold spliced in at several places.
+	Ring base;
+	for (int i = 0; i < 600; ++i) {
+		if (i > 0 && i < 150) {
+			continue;
+		}
+		const double a	 = 6.283185307179586 * i / 600.0;
+		const double rad = 20000.0 + 1500.0 * std::sin(7.0 * a) + 600.0 * std::cos(19.0 * a);
+		base.push_back({std::llround(rad * std::cos(a)), std::llround(rad * std::sin(a))});
+	}
+	EXPECT_TRUE(isSimple(base).pass);
+
+	for (const std::size_t at : {std::size_t{1}, std::size_t{5}, std::size_t{250}, std::size_t{449}}) {
+		Ring folded = base;
+		// Two vertices that reach across to the far side of the ring.
+		folded.insert(folded.begin() + static_cast<std::ptrdiff_t>(at), {{-25000, 3000}, {-25000, -3000}});
+		const auto expected = allPairs(folded);
+		ASSERT_LT(expected.first, folded.size());
+		const ConstraintResult r = isSimple(folded);
+		EXPECT_FALSE(r.pass);
+		EXPECT_EQ(r.vertexIndex, expected.first) << "fold at " << at;
+		EXPECT_EQ(r.otherIndex, expected.second) << "fold at " << at;
+	}
 }
 
 TEST(MinInteriorAngle, SquareNinetyDegrees) {

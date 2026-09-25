@@ -180,23 +180,51 @@ TEST(Simplify, KeepsRealCorners) {
 
 TEST(Simplify, PinnedVerticesSurvive) {
 	// (500,0) is collinear and (1500,1) a sliver; pinned, both stay.
-	Ring			  r		 = {{0, 0}, {500, 0}, {1000, 0}, {1500, 1}, {2000, 0}, {2000, 1000}, {0, 1000}};
-	std::vector<bool> pinned = {false, true, false, true, false, false, false};
+	Ring					  r		 = {{0, 0}, {500, 0}, {1000, 0}, {1500, 1}, {2000, 0}, {2000, 1000}, {0, 1000}};
+	std::vector<std::uint8_t> pinned = {0, 1, 0, 1, 0, 0, 0};
 	simplifyRing(r, 10, pinned);
 	const Ring expected = {{0, 0}, {500, 0}, {1500, 1}, {2000, 0}, {2000, 1000}, {0, 1000}};
 	EXPECT_EQ(r, expected);
-	const std::vector<bool> expectedPinned = {false, true, true, false, false, false};
+	const std::vector<std::uint8_t> expectedPinned = {0, 1, 1, 0, 0, 0};
 	EXPECT_EQ(pinned, expectedPinned);
 }
 
 TEST(Simplify, AllUnpinnedMatchesUnpinnedPass) {
-	Ring			  a = {{0, 0}, {300, 40}, {700, -30}, {1000, 0}, {1400, 700}, {1000, 1000}, {500, 1020}, {0, 1000}, {-20, 500}};
-	Ring			  b = a;
-	std::vector<bool> pinned(b.size(), false);
+	Ring a = {{0, 0}, {300, 40}, {700, -30}, {1000, 0}, {1400, 700}, {1000, 1000}, {500, 1020}, {0, 1000}, {-20, 500}};
+	Ring b = a;
+	std::vector<std::uint8_t> pinned(b.size(), 0);
 	simplifyRing(a, 50);
 	simplifyRing(b, 50, pinned);
 	EXPECT_EQ(a, b);
 	EXPECT_EQ(pinned.size(), b.size());
+}
+
+// A 350 m radius shore resampled at 250 mm: removing vertices one at a time
+// against their current neighbors lets the error ratchet up to meters along a
+// gentle curve. Every original vertex must stay within epsilon of the result.
+TEST(Simplify, ErrorStaysWithinEpsilonOnGentleCurves) {
+	constexpr double	   kRadius = 350000.0;
+	constexpr std::int64_t kEps	   = 100;
+	Ring				   circle;
+	const int			   count = static_cast<int>(6.283185307179586 * kRadius / 250.0);
+	for (int i = 0; i < count; ++i) {
+		const double a = 6.283185307179586 * i / count;
+		circle.push_back({std::llround(kRadius * std::cos(a)), std::llround(kRadius * std::sin(a))});
+	}
+	Ring simplified = circle;
+	simplifyRing(simplified, kEps);
+
+	// A chord with a 100 mm sagitta on this radius is ~16.7 m, so the fewest
+	// vertices is ~130; Douglas-Peucker's splits land within about twice that.
+	EXPECT_GT(simplified.size(), 100U);
+	EXPECT_LT(simplified.size(), 300U);
+	for (const Vec2i64& v : circle) {
+		bool near = false;
+		for (std::size_t i = 0; i < simplified.size() && !near; ++i) {
+			near = withinDistanceOfSegment(v, simplified[i], simplified[(i + 1) % simplified.size()], kEps);
+		}
+		EXPECT_TRUE(near) << v.x << ", " << v.y;
+	}
 }
 
 // --- straight continuation (degree-2, 180 deg) -------------------------------

@@ -23,8 +23,9 @@ namespace engine::world {
 
 		// Each of the 8 neighbors' own biome/elevation grid, built once from the
 		// sample data's neighborhood corner lattice (D4) and reused for every apron
-		// tile that neighbor owns. Lazily filled; (0,0) [this chunk] is unused.
-		std::array<ChunkSampleResult, 9> neighborGrids{};
+		// tile that neighbor owns. Lazily filled; (0,0) [this chunk] is unused. On
+		// the heap: nine sample results are ~330 KB, too much for a worker's stack.
+		std::vector<ChunkSampleResult> neighborGrids(9);
 		std::array<bool, 9> built{};
 		auto neighborGrid = [&](int32_t dx, int32_t dy) -> const ChunkSampleResult& {
 			const size_t idx = neighborIndex(dx, dy);

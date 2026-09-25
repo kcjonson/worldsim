@@ -24,13 +24,14 @@ namespace geometry {
 		}
 		for (int pass = 0; pass < iterations; ++pass) {
 			const std::size_t n = ring.size();
-			Ring			  out;
-			out.reserve(n * 2);
+			// Sized up front and written by index: see dropConsecutiveDuplicates on
+			// why hot contour loops avoid push_back.
+			Ring out(n * 2);
 			for (std::size_t i = 0; i < n; ++i) {
 				const Vec2i64& a = ring[i];
 				const Vec2i64& b = ring[(i + 1) % n];
-				out.push_back(quarterPoint(a, b));
-				out.push_back(quarterPoint(b, a));
+				out[2 * i]		 = quarterPoint(a, b);
+				out[2 * i + 1]	 = quarterPoint(b, a);
 			}
 			// Edges under 2 mm can round both cut points onto one integer.
 			contour_detail::dropConsecutiveDuplicates(out);

@@ -17,7 +17,7 @@ namespace {
 	const std::vector<std::int64_t> kNoLines;
 
 	// Rotate so the ring starts at its lexicographically smallest vertex, mask in step.
-	void canonicalize(Ring& ring, std::vector<bool>& mask) {
+	void canonicalize(Ring& ring, std::vector<std::uint8_t>& mask) {
 		const auto first = std::min_element(ring.begin(), ring.end()) - ring.begin();
 		std::rotate(ring.begin(), ring.begin() + first, ring.end());
 		std::rotate(mask.begin(), mask.begin() + first, mask.end());
@@ -40,10 +40,10 @@ TEST(PinAxisLineCrossings, InsertsCrossingWithExactLineCoordinate) {
 	// Edge (0,0)->(3000,1000) crosses x = 1000 at y = 333.33 -> 333.
 	Ring						  r		 = {{0, 0}, {3000, 1000}, {0, 2000}};
 	const std::array<std::int64_t, 1> xLines = {1000};
-	const std::vector<bool>		  mask	 = pinAxisLineCrossings(r, xLines, kNoLines);
+	const std::vector<std::uint8_t>		  mask	 = pinAxisLineCrossings(r, xLines, kNoLines);
 	const Ring					  expected = {{0, 0}, {1000, 333}, {3000, 1000}, {1000, 1667}, {0, 2000}};
 	EXPECT_EQ(r, expected);
-	const std::vector<bool> expectedMask = {false, true, false, true, false};
+	const std::vector<std::uint8_t> expectedMask = {0, 1, 0, 1, 0};
 	EXPECT_EQ(mask, expectedMask);
 }
 
@@ -65,9 +65,9 @@ TEST(PinAxisLineCrossings, RoundingIsSymmetricInEdgeDirection) {
 TEST(PinAxisLineCrossings, FlagsPreexistingOnLineVertices) {
 	Ring							  r		 = {{0, 0}, {1000, 0}, {1000, 1000}, {0, 1000}};
 	const std::array<std::int64_t, 1> xLines = {1000};
-	const std::vector<bool>			  mask	 = pinAxisLineCrossings(r, xLines, kNoLines);
+	const std::vector<std::uint8_t>			  mask	 = pinAxisLineCrossings(r, xLines, kNoLines);
 	EXPECT_EQ(r.size(), 4u); // touching the line is not a proper crossing
-	const std::vector<bool> expectedMask = {false, true, true, false};
+	const std::vector<std::uint8_t> expectedMask = {0, 1, 1, 0};
 	EXPECT_EQ(mask, expectedMask);
 }
 
@@ -76,28 +76,28 @@ TEST(PinAxisLineCrossings, LinePairThroughItsIntersectionGivesOnePoint) {
 	Ring							  r		 = {{0, 0}, {2000, 2000}, {0, 2000}};
 	const std::array<std::int64_t, 1> xLines = {1000};
 	const std::array<std::int64_t, 1> yLines = {1000};
-	const std::vector<bool>			  mask	 = pinAxisLineCrossings(r, xLines, yLines);
+	const std::vector<std::uint8_t>			  mask	 = pinAxisLineCrossings(r, xLines, yLines);
 	EXPECT_EQ(std::count(r.begin(), r.end(), Vec2i64{1000, 1000}), 1);
 	EXPECT_EQ(r.size(), mask.size());
 }
 
 TEST(ResampleRing, UnpinnedRingStartsAtVertexZero) {
 	Ring			  r = {{0, 0}, {4000, 0}, {4000, 4000}, {0, 4000}};
-	std::vector<bool> pinned(r.size(), false);
+	std::vector<std::uint8_t> pinned(r.size(), 0);
 	resampleRing(r, 1000, pinned);
 	ASSERT_EQ(r.size(), 16u);
 	EXPECT_EQ(r[0], (Vec2i64{0, 0}));
 	EXPECT_EQ(r[1], (Vec2i64{1000, 0}));
 	EXPECT_EQ(r[4], (Vec2i64{4000, 0}));
 	EXPECT_EQ(r[15], (Vec2i64{0, 1000}));
-	EXPECT_EQ(std::count(pinned.begin(), pinned.end(), true), 0);
+	EXPECT_EQ(std::count(pinned.begin(), pinned.end(), std::uint8_t{1}), 0);
 }
 
 TEST(ResampleRing, KeepsPinsAndSpacing) {
 	Ring							  r		 = wobblyCircle();
 	const std::array<std::int64_t, 2> xLines = {-5000, 12000};
 	const std::array<std::int64_t, 1> yLines = {3000};
-	std::vector<bool>				  pinned = pinAxisLineCrossings(r, xLines, yLines);
+	std::vector<std::uint8_t>				  pinned = pinAxisLineCrossings(r, xLines, yLines);
 	Ring							  pins;
 	for (std::size_t i = 0; i < r.size(); ++i) {
 		if (pinned[i]) {
@@ -130,7 +130,7 @@ TEST(ResampleRing, PinnedPipelineIsIndependentOfStartVertex) {
 	const std::array<std::int64_t, 2> xLines = {-5000, 12000};
 	const std::array<std::int64_t, 2> yLines = {-9000, 3000};
 	auto run = [&](Ring r) {
-		std::vector<bool> pinned = pinAxisLineCrossings(r, xLines, yLines);
+		std::vector<std::uint8_t> pinned = pinAxisLineCrossings(r, xLines, yLines);
 		resampleRing(r, 250, pinned);
 		simplifyRing(r, 100, pinned);
 		canonicalize(r, pinned);

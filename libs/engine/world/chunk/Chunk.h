@@ -204,9 +204,8 @@ class Chunk {
 	/// GPU caches compare this to detect stale uploads.
 	[[nodiscard]] uint32_t renderDataVersion() const { return m_renderDataVersion.load(std::memory_order_acquire); }
 
-	/// Get the chunk's terrain polygon rings (waterline/channel/pond, D2). Empty
-	/// until TerrainPolygonBuilder (a later task) wires the real build into
-	/// generate(); currently generate() installs an empty set.
+	/// Get the chunk's terrain polygon rings (D2), built by TerrainPolygonBuilder
+	/// in generate(). Waterline rings only so far; channels and ponds come later.
 	[[nodiscard]] const ChunkTerrainPolygons& terrainPolygons() const { return m_terrainPolygons; }
 
   private:
@@ -233,7 +232,7 @@ class Chunk {
 	std::vector<std::pair<uint16_t, uint16_t>> m_shoreTiles;
 
 	/// Terrain polygon rings (waterline/channel/pond, D2). Installed by generate()
-	/// via setTerrainPolygons(); empty until the builder task wires the real build.
+	/// via setTerrainPolygons().
 	ChunkTerrainPolygons m_terrainPolygons;
 
 	/// Compute tile data for a single tile during generation. Thin wrapper around
@@ -263,15 +262,6 @@ class Chunk {
 
 	/// Hash function for deterministic tile generation
 	[[nodiscard]] static uint32_t tileHash(ChunkCoordinate chunk, uint16_t localX, uint16_t localY, uint64_t seed);
-
-	/// Value noise in range [0, 1] for organic patch generation
-	[[nodiscard]] float valueNoise(float x, float y, uint64_t seed) const;
-
-	/// Fractal noise (multiple octaves) for natural-looking variation
-	[[nodiscard]] float fractalNoise(float x, float y, uint64_t seed, int octaves, float persistence) const;
-
-	/// Smoothstep interpolation for noise
-	[[nodiscard]] static float smoothstep(float t);
 };
 
 }  // namespace engine::world

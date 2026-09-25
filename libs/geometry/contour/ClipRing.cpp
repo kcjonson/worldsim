@@ -77,12 +77,12 @@ namespace geometry {
 			const std::array<std::int64_t, 2> yLines = {rect.min.y, rect.max.y};
 			pinAxisLineCrossings(ring, xLines, yLines);
 
-			const std::size_t n = ring.size();
-			std::vector<bool> kept(n);
-			std::size_t		  keptCount = 0;
+			const std::size_t		  n = ring.size();
+			std::vector<std::uint8_t> kept(n); // bytes: see contour_detail::dropConsecutiveDuplicates
+			std::size_t				  keptCount = 0;
 			for (std::size_t i = 0; i < n; ++i) {
-				kept[i] = keepsEdge(ring[i], ring[(i + 1) % n], rect);
-				keptCount += kept[i] ? 1 : 0;
+				kept[i] = keepsEdge(ring[i], ring[(i + 1) % n], rect) ? 1 : 0;
+				keptCount += kept[i];
 			}
 
 			if (keptCount == n) {
@@ -107,12 +107,12 @@ namespace geometry {
 			// the open interior.
 			std::vector<Chain> chains;
 			for (std::size_t i = 0; i < n; ++i) {
-				if (!kept[i] || kept[(i + n - 1) % n]) {
+				if (kept[i] == 0 || kept[(i + n - 1) % n] != 0) {
 					continue;
 				}
 				Chain chain;
 				chain.first = i;
-				while (kept[(i + chain.edges) % n]) {
+				while (kept[(i + chain.edges) % n] != 0) {
 					++chain.edges;
 				}
 				chain.entryParam = boundaryParam(ring[i], rect);

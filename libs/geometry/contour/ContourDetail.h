@@ -42,29 +42,35 @@ namespace geometry::contour_detail {
 	}
 
 	// Collapse runs of equal consecutive vertices (cyclically) to one. With a mask,
-	// a collapsed vertex is flagged if any member of its run was.
-	inline void dropConsecutiveDuplicates(Ring& ring, std::vector<bool>* mask = nullptr) {
+	// a collapsed vertex is flagged if any member of its run was. Compacts in
+	// place: no per-vertex push_back, each of which takes MSVC's process-wide
+	// debug-iterator lock in debug builds and serializes concurrent chunk workers.
+	inline void dropConsecutiveDuplicates(Ring& ring, std::vector<std::uint8_t>* mask = nullptr) {
 		assert(mask == nullptr || mask->size() == ring.size());
-		Ring			  out;
-		std::vector<bool> outMask;
-		out.reserve(ring.size());
+		std::size_t kept = 0;
 		for (std::size_t i = 0; i < ring.size(); ++i) {
-			const bool flag = mask != nullptr && (*mask)[i];
-			if (!out.empty() && out.back() == ring[i]) {
-				outMask.back() = outMask.back() || flag;
+			const std::uint8_t flag = mask != nullptr ? (*mask)[i] : std::uint8_t{0};
+			if (kept > 0 && ring[kept - 1] == ring[i]) {
+				if (mask != nullptr) {
+					(*mask)[kept - 1] = static_cast<std::uint8_t>((*mask)[kept - 1] | flag);
+				}
 				continue;
 			}
-			out.push_back(ring[i]);
-			outMask.push_back(flag);
+			ring[kept] = ring[i];
+			if (mask != nullptr) {
+				(*mask)[kept] = flag;
+			}
+			++kept;
 		}
-		while (out.size() > 1 && out.back() == out.front()) {
-			outMask.front() = outMask.front() || outMask.back();
-			out.pop_back();
-			outMask.pop_back();
+		while (kept > 1 && ring[kept - 1] == ring[0]) {
+			if (mask != nullptr) {
+				(*mask)[0] = static_cast<std::uint8_t>((*mask)[0] | (*mask)[kept - 1]);
+			}
+			--kept;
 		}
-		ring = std::move(out);
+		ring.resize(kept);
 		if (mask != nullptr) {
-			*mask = std::move(outMask);
+			mask->resize(kept);
 		}
 	}
 

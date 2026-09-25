@@ -1,11 +1,12 @@
 #include "Chunk.h"
 
+#include "world/chunk/ApronField.h"
+#include "world/chunk/TerrainPolygonBuilder.h"
 #include "world/chunk/TileAdjacency.h"
 #include "world/chunk/TilePostProcessor.h"
 #include "world/generation/BiomeDispatcher.h"
 
 #include <algorithm>
-#include <cmath>
 
 namespace engine::world {
 
@@ -45,6 +46,17 @@ namespace engine::world {
 			}
 		}
 
+		// Terrain polygon rings from the raw tiles plus the apron (D4, D11 order):
+		// before post-processing, so these tiles match what a neighbor's apron
+		// computes for them. The apron is discarded once the rings are built.
+		{
+			const ApronField	apron = ApronField::build(m_coord, m_biomeData, m_worldSeed);
+			const ExtendedTiles extended(*this, apron);
+			setTerrainPolygons(TerrainPolygonBuilder::build(
+				m_coord, m_worldSeed, [&extended](int32_t ex, int32_t ey) -> const TileData& { return extended.at(ex, ey); }
+			));
+		}
+
 		// Post-process tiles: generate mud near water, compute adjacency
 		TilePostProcessor::process(m_tiles, m_worldSeed);
 
@@ -55,11 +67,6 @@ namespace engine::world {
 		// Pre-compute rendering data (adjacency masks, neighbors) for ChunkRenderer
 		// This avoids per-frame extraction of adjacency data during rendering
 		computeRenderData();
-
-		// TerrainPolygonBuilder (a later task) fills the real rings from the tiles
-		// plus an ApronField; until it's wired in, install an empty set so
-		// terrainPolygons()/version() are always well-defined.
-		setTerrainPolygons({});
 
 		m_renderDataVersion.fetch_add(1, std::memory_order_release);
 
@@ -258,55 +265,6 @@ namespace engine::world {
 	void Chunk::setTerrainPolygons(ChunkTerrainPolygons polygons) {
 		polygons.version = m_terrainPolygons.version + 1;
 		m_terrainPolygons = std::move(polygons);
-	}
-
-	float Chunk::smoothstep(float t) {
-		// Hermite interpolation: 3t² - 2t³
-		return t * t * (3.0F - 2.0F * t);
-	}
-
-	float Chunk::valueNoise(float x, float y, uint64_t seed) const {
-		// Get integer grid coordinates
-		auto	x0 = static_cast<int32_t>(std::floor(x));
-		auto	y0 = static_cast<int32_t>(std::floor(y));
-		int32_t x1 = x0 + 1;
-		int32_t y1 = y0 + 1;
-
-		// Get fractional part
-		float fx = x - static_cast<float>(x0);
-		float fy = y - static_cast<float>(y0);
-
-		// Apply smoothstep for smoother interpolation
-		float sx = smoothstep(fx);
-		float sy = smoothstep(fy);
-
-		// Hash at each corner, normalized to [0, 1]
-		constexpr float kNormalize = 1.0F / static_cast<float>(UINT32_MAX);
-		float			n00 = static_cast<float>(tileHash({x0, y0}, 0, 0, seed)) * kNormalize;
-		float			n10 = static_cast<float>(tileHash({x1, y0}, 0, 0, seed)) * kNormalize;
-		float			n01 = static_cast<float>(tileHash({x0, y1}, 0, 0, seed)) * kNormalize;
-		float			n11 = static_cast<float>(tileHash({x1, y1}, 0, 0, seed)) * kNormalize;
-
-		// Bilinear interpolation
-		float nx0 = n00 * (1.0F - sx) + n10 * sx;
-		float nx1 = n01 * (1.0F - sx) + n11 * sx;
-		return nx0 * (1.0F - sy) + nx1 * sy;
-	}
-
-	float Chunk::fractalNoise(float x, float y, uint64_t seed, int octaves, float persistence) const {
-		float total = 0.0F;
-		float amplitude = 1.0F;
-		float frequency = 1.0F;
-		float maxValue = 0.0F;
-
-		for (int i = 0; i < octaves; ++i) {
-			total += valueNoise(x * frequency, y * frequency, seed + static_cast<uint64_t>(i)) * amplitude;
-			maxValue += amplitude;
-			amplitude *= persistence;
-			frequency *= 2.0F;
-		}
-
-		return total / maxValue; // Normalize to [0, 1]
 	}
 
 	uint32_t Chunk::tileHash(ChunkCoordinate chunk, uint16_t localX, uint16_t localY, uint64_t seed) {

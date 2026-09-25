@@ -196,3 +196,27 @@ TEST(HashNoiseTests, GradientNoise3ContinuityAcrossNegativeInteger) {
     EXPECT_LT(std::abs(at - low), 0.05F) << "discontinuity at negative-integer boundary (low side)";
     EXPECT_LT(std::abs(at - hi),  0.05F) << "discontinuity at negative-integer boundary (high side)";
 }
+
+// fractalNoise2 is fractalNoise3 at z = 0 without the dead z + 1 layer. Callers
+// swap one for the other freely, so the results must match bit for bit, across
+// negative coordinates and lattice-integer inputs.
+TEST(HashNoiseTests, FractalNoise2MatchesFractalNoise3AtZeroZ) {
+    for (int j = -40; j <= 40; ++j) {
+        for (int i = -40; i <= 40; ++i) {
+            const float x = static_cast<float>(i) * 0.37F - 3.0F;
+            const float y = static_cast<float>(j) * 0.29F + 1.0F;
+            for (const int octaves : {1, 2, 4}) {
+                const float a     = fractalNoise3(x, y, 0.0F, 77U, octaves, 2.0F, 0.5F);
+                const float b     = fractalNoise2(x, y, 77U, octaves, 2.0F, 0.5F);
+                uint32_t    bitsA = 0;
+                uint32_t    bitsB = 0;
+                std::memcpy(&bitsA, &a, sizeof(a));
+                std::memcpy(&bitsB, &b, sizeof(b));
+                ASSERT_EQ(bitsA, bitsB) << "x=" << x << " y=" << y << " octaves=" << octaves;
+            }
+            EXPECT_EQ(gradientNoise2(x, y, 9U), gradientNoise3(x, y, 0.0F, 9U));
+        }
+    }
+    // An integer lattice point, where every corner term is exactly zero.
+    EXPECT_EQ(fractalNoise2(4.0F, -7.0F, 3U, 4, 2.0F, 0.5F), fractalNoise3(4.0F, -7.0F, 0.0F, 3U, 4, 2.0F, 0.5F));
+}
