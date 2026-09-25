@@ -144,8 +144,7 @@ Applications:
 
 | Document | Description |
 |----------|-------------|
-| [Renderer Architecture](./renderer-architecture.md) | OpenGL abstraction |
-| [Resource Management](./resource-management.md) | Textures, shaders, fonts |
+| [OpenGL to Vulkan](./rendering/vulkan-migration.md) | Migration scope, audit of GL usage, options, phased plan, spike plan |
 | [World Depth Sorting](./rendering/world-depth-sorting.md) | 2.5D layering: world-Y painter sort of upright occluders + actors |
 | [Entity Selection Silhouette](./rendering/entity-selection-silhouette.md) | Per-asset silhouette driving thick selection outline + precise hole-free hit-testing |
 
