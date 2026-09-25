@@ -59,22 +59,43 @@ per-chunk container:
 ```cpp
 namespace engine::world {
 enum class TerrainRingKind : uint8_t { Waterline, Channel, Pond };
+enum class WaterKind       : uint8_t { Ocean, Lake, Wetland, River, Pond };
 
-struct TerrainRing {
-    geometry::Ring  ring;            // integer mm, world-absolute, simple, CCW outer / CW hole
-    TerrainRingKind kind;
-    bool            blocksMovement;  // false only for fordable channels (D7)
-    bool            holeCapable;     // Waterline: true (even-odd); Channel/Pond: false (solid)
-    float           meanHalfWidthM;  // Channel only, for shading and fordability
+// One per ring vertex. CPU-side truth; the GPU packing is defined in 10.1.
+struct ShoreProfile {
+    uint8_t slope;      // 0 gentle .. 255 steep, elevation gradient across the ring
+    uint8_t exposure;   // 0 sheltered bay .. 255 exposed headland (ring concavity, 20 m window, + fetch for ocean)
+    uint8_t sand;       // substrate weights, sand + mud + grass = 255; rock is a flag
+    uint8_t mud;
+    uint8_t moisture;   // TileData::moisture of the adjacent land tile
+    uint8_t flags;      // bit0 rock, bit1 synthetic edge follows this vertex (D4), bit2 fordable cut (D7)
 };
 
-struct ThalwegPath { std::vector<geometry::Vec2i64> points; std::vector<float> halfWidthM; std::vector<float> widthRatio; };
+struct TerrainRing {
+    geometry::Ring            ring;            // integer mm, world-absolute, simple, CCW outer / CW hole
+    std::vector<ShoreProfile> profiles;        // same length as ring (D15)
+    TerrainRingKind           kind;
+    WaterKind                 water;           // Waterline: Ocean/Lake/Wetland from the biome; else River/Pond
+    bool                      blocksMovement;  // false only for fordable channels (D7)
+    bool                      holeCapable;     // Waterline: true (even-odd); Channel/Pond: false (solid)
+    float                     meanHalfWidthM;  // Channel only
+};
+
+// Per channel, feeds the SDF bake (D10). `points` already carry the lateral offset toward the
+// outer bank (D7 step 3), so this is the thalweg, not the centerline.
+struct ThalwegPath {
+    std::vector<geometry::Vec2i64> points;
+    std::vector<float>             halfWidthM;     // bankfull half-width at each point
+    std::vector<float>             widthRatio;     // w / w_mean over a 5 w window
+    std::vector<float>             curvature;      // signed, 1/m
+};
 
 struct ChunkTerrainPolygons {
-    std::vector<TerrainRing>        rings;
-    std::vector<ShoreProfile>       profiles;      // parallel to every ring's vertices (D15)
-    std::vector<ThalwegPath>        thalwegs;      // one per channel, feeds the SDF bake (D10)
-    std::vector<geometry::Vec2i64>  shorePoints;   // D11
+    std::vector<TerrainRing>        rings;         // extended region (chunk + apron), UNCLIPPED (D4)
+    std::vector<TerrainRing>        navRings;      // the same rings clipped to the chunk square (D4, D9)
+    std::vector<ThalwegPath>        thalwegs;
+    std::vector<geometry::Vec2i64>  shorePoints;   // inside the chunk square only (D11)
+    std::vector<uint64_t>           barTiles;      // 512*512/64 bitset: tiles overridden to Sand as point bars (D12)
     uint32_t                        version;       // bumped with the rings, read like renderDataVersion
 };
 }
@@ -96,8 +117,11 @@ New in `libs/geometry/contour/`:
   interpolated crossings on the dual grid, saddle resolution by cell-center average, loops
   linked by exact edge keys, CCW outer / CW hole orientation. This replaces the marcher in
   `NavInputBuilder.cpp:29-176`, which is deleted in the same change (One Path Rule).
-- `chaikin(Ring&, iterations)`, `resampleRing(Ring&, spacingMm)`.
-- `displaceAlongNormal(Ring&, fn(worldMm) -> mm, curvatureDamp)`.
+- `warpField(const ScalarField& coarse, cellMm, fineCellMm, fn(worldMm) -> Vec2 offsetMm)
+  -> ScalarField`: bilinear resample of a coarse lattice onto a fine one with the sample
+  position domain-warped by a world-space offset function (D6).
+- `chaikin(Ring&, iterations)`, `resampleRing(Ring&, spacingMm)`, `isSimple(const Ring&)`
+  (already in polygon/Polygon.h).
 - `clipRingToRect(const Ring&, rectMm) -> std::vector<Ring>` (Sutherland–Hodgman against a
   convex rectangle, degenerate border runs collapsed by `simplifyRing`).
 - `strokePolyline(centerline, halfWidths, capStyle) -> Ring` (offset both sides, round caps).
@@ -121,25 +145,35 @@ epic, but new code must not add a fourth.
 
 ### D4: Chunk region, apron, and seams
 
-Dual cells sit between tile centers. Each chunk owns the dual cells whose min-corner sample is
-one of its tiles, so a chunk's polygon region is its 512 m square shifted by +0.5 m in x and
-y. Adjacent regions partition the plane exactly.
+The chunk's polygon region is its 512 m square, `[origin, origin + 512 m)`, the same bounds
+`ChunkRenderer` draws and `tile.frag` indexes. Dual cells (between tile centers) that straddle
+a chunk border are computed on both sides from the apron and clipped at the border, so
+adjacent regions partition the plane exactly and nothing is shifted by half a tile.
 
-The builder works on an extended region of the chunk plus a 4-tile apron on every side
-(2 for the blur and Chaikin reach, 2 more for the low-frequency displacement in D6):
+The builder works on an **extended region**: the chunk plus an apron of `kApronTiles = 8` on
+every side. Eight because the SDF (D10) is clamped at `kSdfNearM = 8 m`: a texel on the chunk
+border must see every real shore edge within 8 m, and the synthetic closure edges described
+below must lie at or beyond that distance so they never show.
 
 - Apron samples come from the world sampler, not from neighbor chunks (neighbors may not
   exist yet, and generation runs on a worker). `GeneratedWorldSampler::sampleChunk` gains an
   apron: it already gathers rivers and ponds by AABB, and biome/elevation for any world
   position is available from `PlanetSampler::sampleAt`. The apron ring of tile surfaces is
   computed by the same `computeTile` logic and discarded after the build.
-- Everything the recipe does is a function of world position and world-seeded noise:
-  the same samples, the same blur, the same crossings, the same Chaikin (local, 2 iterations,
-  touches ±2 vertices), the same displacement. Two chunks therefore produce identical
-  geometry across their shared border before clipping. After `quantize` to integer mm, the
-  clipped rings share exact vertices along the border.
-- A ring is clipped to the chunk's region at the very end (D6 step 7). Ribbons and ponds are
-  clipped the same way.
+- Samples outside the extended region are land, as the nav marcher treats out-of-bounds
+  today. A water body that reaches the extended boundary therefore closes along it. Every
+  ring edge that lies on the extended boundary is a **synthetic edge**, flagged in the
+  profile of its start vertex (`flags` bit1). The SDF bake, shore points, mud, and
+  `TerrainPolygonQuery` skip synthetic edges; nav never sees them because the nav clip
+  (below) removes everything outside the chunk square.
+- Everything the recipe does is a function of world position and world-seeded noise: the
+  same samples, the same blur, the same warp, the same crossings, the same Chaikin. Two
+  chunks therefore produce identical geometry across their shared border. After `quantize`
+  to integer mm, clipped rings share exact vertices along the border.
+- Two representations are stored (D2): `rings`, unclipped over the extended region, for the
+  SDF bake, shore points, mud, and queries, so no consumer ever sees a chunk border as a
+  shoreline; and `navRings`, the same rings clipped to the chunk square, for nav (D9), where
+  the border edge is a constrained edge shared bit-identically with the neighbor.
 
 This is the 2D form of Gildea's seam rule (research doc) and removes the need for any
 cross-chunk stitching pass. `refreshAdjacencyAround` stays as it is for tile adjacency; it
@@ -147,46 +181,68 @@ does not touch rings.
 
 ### D5: The waterline field
 
-For biome water tiles only (river and pond tiles are excluded here because D7/D8 stroke
-them at sub-tile precision; a tile marked Water by a river counts as land in this field):
+The field is built from the **biome**, never from `TileData::surface`: `computeTile` sets
+`surface = Water` for river and pond tiles too, and those are stroked at sub-tile precision
+by D7/D8. The predicate is
 
-1. Indicator `I(x,y) = 1` if biome water, else 0, over the extended region.
+```cpp
+bool isBiomeWater(const TileData& t) {
+    return isWater(t.primaryBiome)                       // Ocean, Lake (Biome.h)
+        || t.primaryBiome == Biome::TemperateWetland
+        || t.primaryBiome == Biome::TropicalWetland;
+}
+```
+
+and the ring's `WaterKind` is Ocean, Lake, or Wetland from the same biome (a ring spanning
+two, e.g. a lake with a wetland margin, takes the majority over its vertices).
+
+1. Indicator `I(x,y) = 1` where `isBiomeWater`, else 0, over the extended region; outside it,
+   land (D4).
 2. Soften with a 3x3 binomial kernel (1 2 1 / 2 4 2 / 1 2 1, divided by 16).
 3. Thin-feature guard: a water sample with fewer than two same-type cardinal neighbors is
    floored at `kThinWaterFloor = 0.70`; a land sample in the same situation is capped at
    `kThinLandCeil = 0.30`. This keeps 1-tile pools, 1-wide inlets, and 1-tile islets from
    dropping under the isoline while leaving every larger shape free to round. A lone water
-   tile becomes a pool ~0.7 m across, not a dot and not a perfect circle once D6
-   displacement runs at its own scale.
-4. Marching squares at iso 0.5 with linear interpolation. Straight runs cross at the midpoint
-   between samples (so a straight shore stays where the tiles put it); convex corners cut into
-   the corner tile and concave corners fill out, which is the rounding.
+   tile becomes a pool ~0.7 m across, not a dot and not a perfect circle once the D6 warp
+   runs at its own scale.
+4. Domain warp and fine march (D6): the softened lattice is resampled onto a 0.25 m lattice
+   with the sample position offset by world-space noise, and marching squares runs there at
+   iso 0.5. Straight runs still cross at the midpoint between tile samples, so a straight
+   shore stays where the tiles put it; convex corners cut into the corner tile and concave
+   corners fill out, which is the rounding.
 
 Saddle cells resolve by the average of the four samples, which after the blur is almost
 never exactly 0.5.
 
-### D6: Smoothing, displacement, simplification
+### D6: Warp, smoothing, simplification
 
-Per loop, in this order:
+Displacement is applied to the **field**, not to the rings. Isolines of one continuous field
+can neither self-intersect nor cross each other, so two nearby water bodies can never overlap
+after displacement (which, with even-odd nav classification, would have opened a walkable
+hole), and no per-ring retry loop is needed.
 
-1. Chaikin corner cutting, `kChaikinIterations = 2`. Converges toward a quadratic B-spline,
-   local, never overshoots.
-2. Resample to `kRingSpacingMm = 250`.
-3. Displace each vertex along its normal by the sum of two world-space terms: a fine fBm,
-   `kBankNoiseAmpMm = 250`, 4 octaves, base wavelength 6 m (octaves at 6, 3, 1.5, 0.75 m;
-   the last is what gives a 1-tile pool its lopsidedness), and a low-frequency term,
-   `kShoreLowAmpMm = 1200`, 2 octaves, base wavelength 26 m, which is what makes bays,
-   headlands, and the general unevenness of a shore. Both damped by local turning angle
-   (`damp = max(0.25, 1 - turn / 1.2 rad)`) so tight concavities cannot self-intersect. The
-   low term is why the apron is 4 tiles, not 2 (D4).
-4. `isSimple` check; on failure halve the amplitude for that loop and redo step 3 (bounded to
-   two retries, then skip displacement for the loop and log at debug).
+1. Warp: resample the softened tile-lattice field onto a `kFineCellMm = 250` lattice over the
+   extended region, reading each fine sample at `p + offset(p)` (bilinear on the coarse
+   lattice). `offset` is a world-space vector noise, the sum of a fine term
+   (`kBankNoiseAmpMm = 250`, 4 octaves, base wavelength 6 m; the 0.75 m octave is what gives
+   a 1-tile pool its lopsidedness) and a low-frequency term (`kShoreLowAmpMm = 1200`, 2
+   octaves, base 26 m; bays, headlands, the general unevenness of a shore). Both components
+   of the vector use independent seeds. Because `|offset| <= 1.45 m` and the apron is 8 m,
+   every fine sample reads inside the extended coarse region.
+2. Marching squares on the fine lattice at iso 0.5 (D5 step 4).
+3. Chaikin corner cutting, `kChaikinIterations = 1` (the fine march is already smooth at
+   0.25 m; one pass removes the lattice facets). Local, never overshoots.
+4. Resample to `kRingSpacingMm = 250`.
 5. Quantize to integer mm.
 6. `simplifyRing` at `kRingSimplifyEpsMm = 100`. Not 500: nav and render use the same ring
-   verbatim, and 500 would erase the displacement. The vertex budget this implies is in
-   section 6.
-7. Clip to the chunk region (D4).
+   verbatim, and 500 would erase the bank detail. The vertex budget is in section 6.
+7. Validate: `isSimple`. Quantization and simplification can in principle fold a tight
+   feature; on failure re-simplify at 50 mm, and if still non-simple re-run the loop with the
+   warp amplitude halved (bounded to two retries, logged at debug). Validation runs after the
+   last geometric change, not before.
 8. Drop loops with area under `kMinLoopAreaMm2 = 250 000` (a quarter tile), same as nav today.
+9. Store in `rings`; clip a copy to the chunk square into `navRings` (D4), validating each
+   clipped piece with `isSimple` as well.
 
 ### D7: River ribbons
 
@@ -197,24 +253,36 @@ Per river channel that intersects the extended region:
 2. Half-width: linear along each segment (as `Segment` stores it), no floor. The riffle/pool
    width modulation `RiverNetwork2D` already applies stays; it is the source of the width
    variation the realism rules call for.
-3. Bank asymmetry from curvature κ (turning angle per meter, signed): the outer bank moves
-   out by `min(0.25, 2|κ|·hw)·hw`, the inner bank moves in by the same amount. Thalweg
-   hugs the cut bank; the wetted channel is narrowest at the apex against the outer bank,
-   which matches the field observations (section 2.9, rules R2, R5).
-4. Bank noise: both offset curves displaced by fBm, 3 octaves, base 4 m, amplitude
-   `kChannelBankNoise = 0.15 · hw`, curvature-damped as in D6.
-5. Stroke to a ring: left bank forward, right bank back, round caps of radius hw at the ends.
-6. Fordability: `blocksMovement = (2·hw >= kFordableWidthM = 1.2)`. A channel whose width
-   crosses the threshold is split at the crossing into two rings so the flag is per ring. A
+3. The ring is the **bankfull** outline. Bank asymmetry from curvature κ (turning angle per
+   meter, signed): the outer bank moves out by `a = min(0.25, 2|κ|·hw)·hw` and the inner
+   bank moves out by `0.4·a`, so the bankfull channel is widest at the apex (R5) and the
+   deposit on the inner bank has room. The **wetted** narrowing at the apex is shading, not
+   geometry: the thalweg (`ThalwegPath.points`) is the centerline offset toward the outer
+   bank by `a`, and the shader paints the deep channel around it (10.2), leaving the inner
+   side pale and shallow.
+4. Bank noise: both offset curves displaced along their normals by fBm, 3 octaves, base
+   4 m, amplitude `kChannelBankNoise = 0.15 · hw`, damped by local turning angle
+   (`max(0.25, 1 - turn / 1.2 rad)`) so a tight bend cannot fold; the D6 validation catches
+   the rest.
+5. Fordability: `blocksMovement = (2·hw >= kFordableWidthM = 1.2)`. A channel whose width
+   crosses the threshold is split at the crossing into pieces so the flag is per ring. A
    fordable ring is still drawn, still counts for vision and mud, and is skipped by nav.
-7. Quantize, simplify at 100 mm, clip to region.
+6. Stroke each piece to a ring: left bank forward, right bank back. Round caps of radius hw
+   only at the channel's true ends; at an internal fordable cut both pieces share a straight
+   **butt** edge across the channel (the same two quantized vertices on each side), so
+   neither piece overlaps the other and the nav boundary sits exactly at the 1.2 m crossing.
+   The cut vertices carry `flags` bit2 so the SDF bake treats the cut edge as internal (no
+   shoreline there).
+7. Quantize, simplify at 100 mm, validate `isSimple`, store in `rings`, clip a copy to
+   `navRings`.
 
 **Confluences** (channel meets channel) need no boolean. The two ribbons overlap, the
 renderer fills both with the same water, nav treats Channel rings as solid containment
 (`holeCapable = false`), so an overlap cannot flip even-odd parity into a walkable hole. The
 junction corner bar and scour hole are shading (section 2.9, R7).
 
-**River mouths** (channel meets Waterline or Pond) get a flare and nothing else:
+**River mouths** (channel meets Waterline or Pond; ponds are emitted before channels so
+both kinds exist when the mouth test runs) get a flare and nothing else:
 
 1. Find the first centerline sample inside the receiving ring; call the arc length there
    `s_m`.
@@ -232,9 +300,12 @@ to the flare start.
 
 ### D8: Ponds
 
-`Pond {cx, cy, radius, phaseA, phaseB}` is sampled every 0.3 m of rim, displaced by the D6
-fBm at half amplitude (the sinusoids already give the large-scale shape), quantized,
-simplified, clipped. `kind = Pond`, `holeCapable = false`, `blocksMovement = true`.
+`Pond {cx, cy, radius, phaseA, phaseB}` is sampled every 0.3 m of rim with the rim radius
+perturbed by the D6 fine noise at half amplitude (the sinusoids already give the large-scale
+shape; a radial perturbation of a star-shaped rim cannot self-intersect), quantized,
+simplified, validated, stored in `rings` and clipped into `navRings`. `kind = Pond`,
+`water = WaterKind::Pond`, `holeCapable = false`, `blocksMovement = true`. Ponds are built
+before channels (D7 mouths).
 `pondDepthAt` still drives the tile depth byte for the prefilter; shading reads distance to
 the rim.
 
@@ -243,7 +314,7 @@ the rim.
 `NavInputBuilder::buildInput` replaces its tile marcher with:
 
 1. For each ready chunk whose region intersects the area rect plus the existing 1-tile margin,
-   take `terrainPolygons().rings`.
+   take `terrainPolygons().navRings` (the clipped set, D4).
 2. Skip rings with `blocksMovement == false`.
 3. Emit each as `NavInputPolygon { ring, blocked = true, provenanceId = kProvenanceWater,
    holeCapable = ring.holeCapable }`.
@@ -259,7 +330,7 @@ design risk: the vertices are bit-identical, so the arrangement sees one edge.
 for (const ChunkCoordinate& cc : chunksIntersecting(areaRectMm.expanded(kTileMm))) {
     const Chunk* chunk = chunks.getChunk(cc);
     if (!chunk || !chunk->isReady()) continue;                 // missing chunk reads as land
-    for (const TerrainRing& tr : chunk->terrainPolygons().rings) {
+    for (const TerrainRing& tr : chunk->terrainPolygons().navRings) {
         if (!tr.blocksMovement) continue;                      // fordable creek
         input.polygons.push_back({.ring = tr.ring, .blocked = true,
                                   .provenanceId = kProvenanceWater,
@@ -268,8 +339,9 @@ for (const ChunkCoordinate& cc : chunksIntersecting(areaRectMm.expanded(kTileMm)
 }
 ```
 
-`regionObstaclesChanged` adds the max `terrainPolygons().version` over the area's chunks to
-its signature so a terraform that rebuilds rings triggers a mesh rebuild.
+`regionObstaclesChanged` folds every `(chunk coordinate, terrainPolygons().version)` pair
+over the area's chunks into its signature hash (not the maximum: one chunk already at
+version 2 would mask another moving 1 → 2), so any chunk rebuild triggers a mesh rebuild.
 
 ### D10: The renderer samples a signed-distance field, not band polygons
 
@@ -281,29 +353,33 @@ shore.
 
 #### 10.1 What the bake produces (C++, generation worker)
 
-Two textures per chunk, covering the chunk plus the apron so border samples are valid:
+Three textures per chunk, covering the chunk plus the apron so border samples are valid:
 
 | Texture | Format | Texel | Channels |
 |---|---|---|---|
-| `terrainSdf` | RG16F | 0.25 m near rings, 2 m far (two-level, see 10.4) | R: signed distance to the nearest ring, meters, negative in water, clamped ±8 m. G: distance to the nearest river thalweg divided by that channel's local half-width (0 on the thalweg, 1 at the bank), 2.0 where no channel is within 2 w |
-| `shoreProfile` | RGBA8 | 1 m | R: slope 0..1. G: exposure 0..1. B: substrate weight sand. A: substrate weight mud (grass = 1 − sand − mud; rock is a flag in the tile data) |
-| `channelFrame` | RG16F | 1 m | R: arc length `s` along the nearest thalweg, meters (wraps at 256 m). G: local width ratio `w / w_mean` of that channel (riffle > 1.1, pool < 0.9). Only valid where `terrainSdf.g < 2` |
+| `terrainSdf` | RGBA16F | 0.25 m near rings, 2 m far (two-level, see 10.4) | R: signed distance to the nearest non-synthetic ring edge, meters, negative in water, clamped ±8 m. G: distance to the nearest river thalweg divided by that channel's local half-width (0 on the thalweg, 1 at the bank), 2.0 where no channel is within 2 w. B: `WaterKind` of the nearest ring as a small integer (0 ocean, 1 lake, 2 wetland, 3 river, 4 pond), nearest-filtered. A: unused |
+| `shoreProfile` | RGBA8 | 1 m | R: slope. G: exposure. B: sand weight. A: mud weight. Packed from the CPU `ShoreProfile` of the nearest ring vertex: `{slope, exposure, sand, mud}`; grass = 255 − sand − mud; moisture and flags stay CPU-side |
+| `channelFrame` | RGB16F | 1 m | R: arc length `s` along the nearest thalweg, meters (wraps at 256 m). G: width ratio `w / w_mean` (riffle > 1.1, pool < 0.9). B: signed curvature × hw, dimensionless (bend when |B| > 0.15). Only valid where `terrainSdf.g < 2` |
 
 Substrate is stored as weights, not an enum, so bilinear filtering cross-fades sandy into
-muddy shore over the texel spacing instead of snapping. Slope comes from the elevation
-gradient across the ring; exposure from ring concavity over a 20 m window (bays low,
-headlands high) plus fetch for ocean.
+muddy shore over the texel spacing instead of snapping. `WaterKind` is sampled with nearest
+filtering (it is categorical) and is what lets the shader give ocean, lake, and wetland
+different band sets and foam. Slope comes from the elevation gradient across the ring;
+exposure from ring concavity over a 20 m window (bays low, headlands high) plus fetch for
+ocean.
 
 ```cpp
 // TerrainDistanceField::bake, after TerrainPolygonBuilder::build
 void bake(const ChunkTerrainPolygons& tp, const Chunk& c, DistanceFieldTextures& out) {
     // exact distance within kSdfNearM of any ring edge (edge list in a 4 m bucket grid),
     // chamfer sweep beyond; sign from ring containment (even-odd for Waterline, solid else)
-    for (Texel t : out.sdf.near())  t.r = signedDistanceExact(tp.rings, t.worldPos);
-    for (Texel t : out.sdf.far())   t.r = chamfer(out.sdf.near(), t);
-    for (Texel t : out.sdf.all())   t.g = nearestThalwegDistanceOverHw(tp.thalwegs, t.worldPos);
-    for (Texel t : out.profile.all()) t = nearestVertexProfile(tp, t.worldPos); // slope, exposure, sand, mud
-    for (Texel t : out.frame.all())   t = nearestThalwegFrame(tp.thalwegs, t.worldPos);   // s, w/w_mean
+    // tp.rings is the unclipped set; edges flagged synthetic (D4) or fordable-cut (D7) are skipped
+    for (Texel& t : out.sdf.near())    t.r = signedDistanceExact(tp.rings, t.worldPos);
+    for (Texel& t : out.sdf.far())     t.r = chamfer(out.sdf.near(), t);
+    for (Texel& t : out.sdf.all())   { t.g = nearestThalwegDistanceOverHw(tp.thalwegs, t.worldPos);
+                                       t.b = float(nearestRingWaterKind(tp.rings, t.worldPos)); }
+    for (Texel& t : out.profile.all()) t = packProfile(nearestVertexProfile(tp.rings, t.worldPos));
+    for (Texel& t : out.frame.all())   t = nearestThalwegFrame(tp.thalwegs, t.worldPos);   // s, w/w_mean, k*hw
 }
 ```
 
@@ -317,10 +393,12 @@ Every effect is written against `d` (signed distance, meters), `shore` (decoded 
 look is zoom-independent, and anti-aliasing uses screen-space derivatives of `d`.
 
 ```glsl
-vec2  sdf   = texture(u_terrainSdf,     sdfUv(worldPos)).rg;
+vec4  sdf   = texture(u_terrainSdf,     sdfUv(worldPos));
 vec4  prof  = texture(u_shoreProfile,   profUv(worldPos));
-vec2  frame = texture(u_channelFrame,   profUv(worldPos)).rg;
+vec3  frame = texture(u_channelFrame,   profUv(worldPos)).rgb;
 float d     = sdf.r;
+int   kind  = int(texelFetch(u_terrainSdf, sdfTexel(worldPos), 0).b + 0.5);   // WaterKind, nearest
+float isOcean = kind == 0 ? 1.0 : 0.0, isWetland = kind == 2 ? 1.0 : 0.0;
 float aa    = fwidth(d);                         // one pixel, in meters, at this zoom
 float slope = prof.r, exposure = prof.g, wSand = prof.b, wMud = prof.a, wGrass = 1.0 - wSand - wMud;
 float along = 1.0 + u_alongAmp * fbm2(worldPos / u_alongWavelength);   // ±30-40 %, 4-9 m
@@ -391,13 +469,15 @@ float channel = 1.0 - smoothstep(u_thalwegInner, u_thalwegOuter, sdf.g);   // 0.
 w = mix(w, u_waterDeep, channel * u_thalwegDepth);
 ```
 
-**Riffles at crossovers, pools at bends (R4).** Where the width ratio says riffle, draw
-cross-channel streaks by the channel arc length; where it says pool, darken. Both animate
-along `s` for flow:
+**Riffles at crossovers, pools at bends (R4).** A riffle is a wide, straight reach; a pool
+is a narrow reach in a bend. Width ratio and curvature are both in the frame, so each rule
+uses both. Riffles get cross-channel streaks by arc length; pools darken. Both animate along
+`s` for flow:
 
 ```glsl
-float riffle = smoothstep(1.1, 1.3, frame.g);
-float pool   = 1.0 - smoothstep(0.8, 0.95, frame.g);
+float bend   = smoothstep(0.10, 0.25, abs(frame.b));                 // curvature * hw
+float riffle = smoothstep(1.1, 1.3, frame.g) * (1.0 - bend);
+float pool   = (1.0 - smoothstep(0.8, 0.95, frame.g)) * bend;
 float streak = 0.5 + 0.5 * sin(frame.r * u_riffleFreq - u_time * u_flowSpeed + fbm2(worldPos));
 w = mix(w, u_riffleLight, riffle * streak * u_riffleAmp * (1.0 - channel));
 w = mix(w, u_waterDeep,   pool * u_poolAmp);
@@ -417,10 +497,16 @@ w += u_shimmerAmp * fbm2(worldPos * u_shimmerFreq + u_time * u_shimmerDrift);
 animated noise; none on lakes and sheltered bays:
 
 ```glsl
-float foam = exposure * u_isOceanShore * (1.0 - smoothstep(0.0, u_foamW, -d))
+// water side only: rises from zero at -u_foamW to full at the waterline, zero on land
+float foamBand = water * smoothstep(-u_foamW, 0.0, d);
+float foam = exposure * isOcean * foamBand
            * smoothstep(0.2, 0.6, fbm2(worldPos / u_foamWavelength + u_time * u_foamDrift));
 w = mix(w, u_foam, foam);
 ```
+
+Wetland rings (`isWetland`) take a different band set: no sand bands, the mud band wider,
+reeds everywhere the exposure is low, no foam. Lakes get the sand/mud/grass bands and no
+foam. Ocean gets everything.
 
 **River mouths and confluences look continuous.** Nothing to do: `terrainSdf.r` is the
 minimum over all rings, so bands follow the merged outline, and the thalweg term fades over
@@ -467,9 +553,11 @@ band 0.4 m; LOD band 0.5 m.
 
 ### D11: Vision and mud
 
-**Shore points.** After the rings are built, walk every blocking ring (Waterline and
-non-fordable Channel, plus Pond) at `kShorePointSpacingMm = 1000` and emit a point offset
-`kShoreOffsetMm = 300` toward the land side into `shorePoints`. `VisionSystem` pass 3 iterates
+**Shore points.** After the rings are built, walk every ring in `rings` (Waterline, every
+Channel including fordable ones, Pond), skipping synthetic and fordable-cut edges, at
+`kShorePointSpacingMm = 1000`, and emit a point offset `kShoreOffsetMm = 300` toward the land
+side into `shorePoints`, keeping only points inside the chunk square. A fordable creek is
+still drinkable water, so it is not filtered on `blocksMovement`. `VisionSystem` pass 3 iterates
 `shorePoints` instead of `getShoreTiles()`; the synthetic `Terrain_Shore` def and its
 Drinkable capability are unchanged. `Chunk::computeShoreTiles` and `getShoreTiles` are
 deleted.
@@ -478,8 +566,10 @@ deleted.
 `d = TerrainPolygonQuery::distanceToWaterMm(tileCenter)` over the chunk's rings and the
 neighbor rings reaching into its apron; the tile becomes Mud with probability
 `kMudProb(d) = 0.95` for `d <= 1 m`, `0.80` for `d <= 2 m`, `0.65` for `d <= 3 m`, using the
-same per-tile hash roll as today. Fordable channels count. Because the apron carries neighbor
-water, banks no longer stop at chunk borders. Point bars (D12) are exempt from mud.
+same per-tile hash roll as today. Fordable channels count. Because the unclipped rings
+extend into the apron, banks no longer stop at chunk borders. Tiles set in `barTiles` (point
+bars, D12) are skipped before the roll; that bitset is what carries the exemption, since a
+bar tile's surface is Sand and Sand is otherwise eligible.
 
 **Order in `Chunk::generate()`:** computeTile → build rings (D5–D8) → point bars (D12) →
 mud (D11) → adjacency → shore points → render data → version bumps.
@@ -490,7 +580,8 @@ On the inner side of a bend where `|κ| > kBarCurvature = 0.05 /m` for at least 
 (4 m), build a crescent: the inner bank offset landward by `sin(π·t)·kBarWidth·hw`,
 `kBarWidth = 0.5` (peak ~0.25 w, inside the field range of ~0.4 w for the bankfull bar; the
 wetted-side part of the bar is shading). Tiles whose center falls inside the crescent get
-`Surface::Sand`. The bar is land-on-land, so its edge is handled by the ground shader's field
+`Surface::Sand` and their bit in `barTiles` (D2), which mud reads (D11). The bar is
+land-on-land, so its edge is handled by the ground shader's field
 blend (the separate land-transition task), which is the right resolution for a gentle,
 vegetation-fringed deposit. Bars are walkable.
 
@@ -508,15 +599,8 @@ no along-ring parameter is a constant. Every band width, stroke weight, color, a
 a function of position on the ring and of a per-vertex **shore profile**, which the builder
 computes once and stores alongside the ring:
 
-```cpp
-struct ShoreProfile {      // one per ring vertex, packed to 4 bytes
-    uint8_t slope;         // 0 gentle .. 255 steep, from the elevation gradient across the ring
-    uint8_t substrate;     // Sand / Mud / Grass / Rock, from the adjacent land surface + biome
-    uint8_t exposure;      // 0 sheltered bay .. 255 exposed headland, from ring concavity
-                           //   over a 20 m window (+ fetch across the water body for oceans)
-    uint8_t moisture;      // TileData::moisture of the adjacent land tile
-};
-```
+The struct is `ShoreProfile` in D2 (slope, exposure, sand and mud weights, moisture,
+flags); 10.1 defines how the first four are packed into the `shoreProfile` texture.
 
 What each source drives (renderer task and placement rules consume this):
 
@@ -543,8 +627,8 @@ What each source drives (renderer task and placement rules consume this):
 - **Vegetation** is clustered by a 6 m patch noise times the profile gates, never uniform
   along the bank.
 
-Waterline displacement itself is multi-scale (D6): the 26 m term shapes bays and headlands,
-the 6 m fBm shapes the bank. A single amplitude at a single scale is exactly the stroke look.
+The waterline warp itself is multi-scale (D6): the 26 m term shapes bays and headlands, the
+6 m fBm shapes the bank. A single amplitude at a single scale is exactly the stroke look.
 
 ### D14: Determinism
 
@@ -614,19 +698,20 @@ sources, [I] is our inference. Each rule names its consumer.
 
 ```
 GeneratedWorldSampler::sampleChunk(coord)          main thread
-  biome/elevation for chunk + 2-tile apron
+  biome/elevation for chunk + kApronTiles apron
   riverSegments, pondBlobs for AABB + apron
         │
 Chunk::generate()                                   worker thread
-  computeTile ×(512+4)²        (apron tiles discarded after the build)
-  TerrainPolygonBuilder::build  ← D5 waterline, D7 channels, D8 ponds, clip to region
-  point bars (D12)              → Surface::Sand overrides
-  generateMud (D11)             ← TerrainPolygonQuery::distanceToWaterMm
+  computeTile ×(512 + 2·kApronTiles)²   (apron tiles discarded after the build)
+  TerrainPolygonBuilder::build  ← D5 field, D6 warp+march, D8 ponds, D7 channels; rings + navRings
+  point bars (D12)              → Surface::Sand overrides + barTiles
+  generateMud (D11)             ← TerrainPolygonQuery::distanceToWaterMm, skips barTiles
   adjacency, shorePoints (D11), render data
+  TerrainDistanceField::bake    ← rings, thalwegs → terrainSdf, shoreProfile, channelFrame (10.1)
   m_terrainPolygons.version++, m_renderDataVersion++
         │
-        ├── NavInputBuilder::buildInput      rings → NavInputPolygon (D9)
-        ├── ChunkRenderer / water pass       rings → tessellated fills + band strokes (D10)
+        ├── NavInputBuilder::buildInput      navRings → NavInputPolygon (D9)
+        ├── ChunkRenderer                    uploads the three textures; tile.frag paints (D10)
         ├── VisionSystem pass 3              shorePoints (D11)
         └── PlacementExecutor (later)        distanceToWater, ring side, curvature (R8, R9, L5)
 ```
@@ -634,42 +719,51 @@ Chunk::generate()                                   worker thread
 ```cpp
 // TerrainPolygonBuilder::build, on the generation worker
 ChunkTerrainPolygons build(const Chunk& c, const ChunkSampleResult& sr, const ApronField& apron) {
-    const RectMm region = chunkRegionMm(c.coordinate());                 // chunk square + 0.5 m
+    const RectMm region   = chunkSquareMm(c.coordinate());               // [origin, origin + 512 m)
     const RectMm extended = region.expanded(kApronTiles * kTileMm);
     ChunkTerrainPolygons out;
 
-    // D5/D6: biome water only; river/pond tiles count as land here
-    ScalarField f = indicator(c, apron, [](const TileData& t){ return isBiomeWater(t); });
-    f = binomial3x3(f);
-    applyThinFeatureGuard(f, kThinWaterFloor, kThinLandCeil);
-    for (geometry::Ring loop : geometry::marchingSquares(f, 0.5f, extended.min, kTileMm)) {
+    // D5: biome water only, by primaryBiome; surface==Water from rivers/ponds is NOT water here
+    ScalarField coarse = indicator(c, apron, isBiomeWater);              // outside `extended` = land
+    coarse = binomial3x3(coarse);
+    applyThinFeatureGuard(coarse, kThinWaterFloor, kThinLandCeil);
+
+    // D6: domain-warp onto the fine lattice, then march once
+    ScalarField fine = geometry::warpField(coarse, kTileMm, kFineCellMm, shoreWarpOffset);
+    for (geometry::Ring loop : geometry::marchingSquares(fine, 0.5f, extended.min, kFineCellMm)) {
         geometry::chaikin(loop, kChaikinIterations);
         geometry::resampleRing(loop, kRingSpacingMm);
-        displaceWithRetry(loop, waterlineNoise);                          // fine + low-freq fBm
+        quantizeInPlace(loop);
         geometry::simplifyRing(loop, kRingSimplifyEpsMm);
-        for (geometry::Ring piece : geometry::clipRingToRect(loop, region))
-            if (areaMm2(piece) >= kMinLoopAreaMm2)
-                out.rings.push_back({piece, Waterline, /*blocks*/true, /*holeCapable*/true, 0});
+        if (!validateSimple(loop)) continue;                             // D6 step 7 retries inside
+        if (areaMm2(loop) < kMinLoopAreaMm2) continue;
+        TerrainRing tr{loop, {}, Waterline, waterKindOf(loop, c, apron), true, true, 0};
+        markSyntheticEdges(tr, extended);                                // D4
+        out.rings.push_back(std::move(tr));
     }
+
+    // D8 before D7 so a channel can find a pond as its receiving body
+    for (const Pond& pond : sr.pondBlobs) emitPondRing(out, sampleRim(pond));
 
     // D7: channels from source segments
     for (const ChannelPath& ch : joinSegments(sr.riverSegments)) {        // Catmull-Rom, 0.5 m
-        ChannelPath flared = flareIntoReceivingBody(ch, out.rings);       // D7 mouths
+        ChannelPath flared = flareIntoReceivingBody(ch, out.rings);       // Waterline or Pond
         for (const ChannelPiece& piece : splitAtFordableWidth(flared, kFordableWidthM))
-            emitChannelRing(out, strokeChannel(piece), piece.blocks, region);
-        out.thalwegs.push_back(thalwegOf(flared));                        // for the SDF bake
+            emitChannelRing(out, strokeChannel(piece), piece.blocks);     // butt joins at cuts
+        out.thalwegs.push_back(thalwegOf(flared));                        // offset toward outer bank
     }
-    // D8: ponds
-    for (const Pond& pond : sr.pondBlobs) emitPondRing(out, sampleRim(pond), region);
 
-    computeShoreProfiles(out, c, apron);                                  // D15
-    out.shorePoints = sampleShorePoints(out.rings, kShorePointSpacingMm, kShoreOffsetMm);
+    computeShoreProfiles(out, c, apron);                                  // D15, per ring
+    for (const TerrainRing& tr : out.rings)
+        for (geometry::Ring piece : geometry::clipRingToRect(tr.ring, region))
+            if (validateSimple(piece)) out.navRings.push_back(tr.withRing(std::move(piece)));
+    out.shorePoints = sampleShorePoints(out.rings, region, kShorePointSpacingMm, kShoreOffsetMm);
     return out;
 }
 ```
 
 Terraform (later): a tile edit marks the chunk dirty; the builder reruns for that chunk and
-for any neighbor whose apron contains the edited tile (at most four). Ring version bump
+for any neighbor whose apron contains the edited tile (up to eight, since the apron is 8 m). Ring version bump
 invalidates the render cache and, through the nav signature, the mesh.
 
 ---
@@ -678,11 +772,12 @@ invalidates the render cache and, through the nav signature, the mesh.
 
 | Name | Value | Where |
 |---|---|---|
-| `kApronTiles` | 4 | D4 |
+| `kApronTiles` | 8 | D4 |
+| `kFineCellMm` | 250 | D6 |
 | `kThinWaterFloor` / `kThinLandCeil` | 0.70 / 0.30 | D5 |
-| `kChaikinIterations` | 2 | D6 |
+| `kChaikinIterations` | 1 | D6 |
 | `kRingSpacingMm` | 250 | D6 |
-| `kBankNoiseAmpMm` | 250 (waterline), 0.15·hw (channels), 125 (ponds) | D6, D7, D8 |
+| `kBankNoiseAmpMm` | 250 (waterline warp), 0.15·hw (channel banks), 125 (pond rim) | D6, D7, D8 |
 | `kShoreLowAmpMm` / wavelength | 1200 / 26 m (waterline), 0.35·hw / 14 m (channels) | D6, D7 |
 | noise octaves / base wavelength / gain | 4 / 6 m / 0.5 (waterline); 3 / 4 m / 0.5 (channels) | D6, D7 |
 | `kRingSimplifyEpsMm` | 100 | D6 |
@@ -703,8 +798,11 @@ All of these are candidates for the debug server's tunables so the look can be A
 
 - Same samples on both sides of a border: apron from the sampler, not from neighbors.
 - Same noise: world-space fBm, fixed seeds, `foundation::fractalNoise3`.
-- Same smoothing: Chaikin is local; the 2-tile apron covers its reach and the displacement's.
+- Same warp: a function of world position only, so the fine field is identical on both
+  sides; Chaikin is local; the 8-tile apron covers every reach and the SDF clamp.
 - Same integers: quantize before clipping; clip against an integer rectangle.
+- Synthetic edges never reach a consumer: the bake, shore points, mud, and queries skip them;
+  nav gets `navRings`, which end at the chunk square.
 - Test: build two adjacent chunks independently, assert the multiset of border-edge vertices
   is identical, then build the nav mesh over both and assert no face touches a border gap.
 
@@ -720,12 +818,14 @@ All of these are candidates for the debug server's tunables so the look can be A
   already takes wall bands at that scale. Measure in the perf task against the overhaul table
   (zoom 0.25 is the case that matters) and, if needed, simplify at a larger epsilon for the
   *render* tessellation only (bands hide 0.2 m). Nav keeps the 100 mm ring.
-- Build time. The 516² blur and march are trivial; Chaikin and displacement are linear in
-  ring length; `isSimple` is the only superlinear step and runs per loop. Runs on the
-  generation worker, so the frame never sees it.
-- Apron sampling. Four extra rows/columns of `computeTile` per chunk (≈1.6% more tiles) plus
+- Build time. The 528² blur is trivial; the fine march is 2112² cells (~4.5M), a few tens
+  of ms on the worker, and only cells whose four samples straddle 0.5 emit anything.
+  Chaikin is linear in ring length; `isSimple` is the only superlinear step and runs per
+  loop. Runs on the generation worker, so the frame never sees it.
+- Apron sampling. Eight extra rows/columns of `computeTile` per chunk (≈6% more tiles) plus
   the sampler answering biome/elevation off-chunk. Confirm `PlanetSampler::sampleAt` cost at
-  that count.
+  that count; if it matters, the apron beyond 2 tiles can use biome/elevation only (no river
+  rasterization), since channels are stroked from segments, not from apron tiles.
 - Coincident constraint edges in the CDT (D9). Verify; if the arrangement dedups exact
   duplicates, done; if not, dedup in `buildInput` by sorted edge key.
 - Divergence between drawn and walked water is zero by construction. The residual gameplay
@@ -741,7 +841,10 @@ Maps one-to-one onto the epic's tasks:
 1. This spec (done when merged).
 2. `libs/geometry/contour/` + `TerrainPolygonBuilder` for the waterline (D3–D6), with the
    seam test from section 5. Nav still marches tiles at this point; nothing user-visible yet.
-3. Channel and pond rings (D7, D8), `kRenderMinHalf` deleted, fordable split, mouth flare.
+3. Channel and pond rings (D7, D8), fordable split with butt joins, mouth flare. Includes
+   the worldgen change: `RiverNetwork2D` stops flooring emitted half-widths at
+   `kRenderMinHalf` (RiverNetwork2D.cpp, the emit path and the feeder-mouth width), so
+   sub-1.2 m streams reach the builder at their true width.
 4. `TerrainDistanceField` bake per chunk (10.1, 10.4): `terrainSdf`, `shoreProfile`,
    `channelFrame`, two-level storage, seam test extended to the textures (border texels
    identical on both sides).
