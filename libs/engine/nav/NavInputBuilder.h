@@ -46,11 +46,14 @@ namespace engine::nav {
 
 	// --- Water -------------------------------------------------------------------
 
-	// Marching-squares core, exposed for testing without a real Chunk. `isWater` is
+	// Water outline core, exposed for testing without a real Chunk. `isWater` is
 	// queried over the tile grid [0, width) x [0, height); `originMm` is the world-mm
-	// position of tile (0,0)'s corner. Emits one blocked NavInputPolygon per closed
-	// water boundary loop, in world mm: outer boundaries CCW, holes (land islands)
-	// CW. Loops are simplified (collinear collapse) and sub-tile slivers dropped.
+	// position of tile (0,0)'s corner. The tiles are sampled at their centers and
+	// traced with geometry::marchingSquares, out-of-bounds reading as land: straight
+	// shores follow tile edges and corners become 45 degree chamfers through
+	// tile-edge midpoints. Emits one blocked NavInputPolygon per closed water loop,
+	// in world mm: outer boundaries CCW, holes (land islands) CW. Loops under a
+	// quarter tile are dropped and collinear runs collapsed.
 	[[nodiscard]] std::vector<geometry::nav::NavInputPolygon>
 	extractWaterObstacles(int width, int height, const std::function<bool(int, int)>& isWater, geometry::Vec2i64 originMm);
 
