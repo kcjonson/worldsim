@@ -158,6 +158,36 @@ inline float gradientNoise3(float x, float y, float z, uint32_t seed) {
     return detail::lerp(y0, y1, uz);
 }
 
+// GradientNoise2: gradientNoise3(x, y, 0, seed) without the z + 1 lattice layer,
+// which the 3D call weights by fade(0) = 0. Half the hashing, same value (only the
+// sign of an exact zero result can differ).
+inline float gradientNoise2(float x, float y, uint32_t seed) {
+    int32_t ix = static_cast<int32_t>(x); if (static_cast<float>(ix) > x) --ix;
+    int32_t iy = static_cast<int32_t>(y); if (static_cast<float>(iy) > y) --iy;
+
+    float fx = x - static_cast<float>(ix);
+    float fy = y - static_cast<float>(iy);
+
+    float ux = detail::quintic(fx);
+    float uy = detail::quintic(fy);
+
+    // Same expression as the 3D dot at fz = 0, so each corner term is bit-identical.
+    auto dot = [](uint32_t h, float dx, float dy) -> float {
+        float gx{}, gy{}, gz{};
+        detail::gradient(h, gx, gy, gz);
+        return gx * dx + gy * dy + gz * 0.0F;
+    };
+
+    float g00 = dot(hash3(ix,   iy,   0, seed), fx,       fy      );
+    float g10 = dot(hash3(ix+1, iy,   0, seed), fx-1.0F,  fy      );
+    float g01 = dot(hash3(ix,   iy+1, 0, seed), fx,       fy-1.0F );
+    float g11 = dot(hash3(ix+1, iy+1, 0, seed), fx-1.0F,  fy-1.0F );
+
+    float x0 = detail::lerp(g00, g10, ux);
+    float x1 = detail::lerp(g01, g11, ux);
+    return detail::lerp(x0, x1, uy);
+}
+
 // ============================================================================
 // Fractal / ridged noise
 // ============================================================================
@@ -173,6 +203,25 @@ inline float fractalNoise3(float x, float y, float z, uint32_t seed,
     float maxAmp = 0.0F;
     for (int i = 0; i < octaves; ++i) {
         value += gradientNoise3(x * frequency, y * frequency, z * frequency,
+                                seed + static_cast<uint32_t>(i)) * amplitude;
+        maxAmp += amplitude;
+        amplitude *= gain;
+        frequency *= lacunarity;
+    }
+    return maxAmp > 0.0F ? value / maxAmp : 0.0F;
+}
+
+// FractalNoise2: fractalNoise3(x, y, 0, ...) bit-for-bit over gradientNoise2, for
+// planar callers that sample at z = 0 (an exact-zero octave's sign cannot reach the
+// sum, which starts at +0).
+inline float fractalNoise2(float x, float y, uint32_t seed,
+                           int octaves, float lacunarity, float gain) {
+    float value = 0.0F;
+    float amplitude = 1.0F;
+    float frequency = 1.0F;
+    float maxAmp = 0.0F;
+    for (int i = 0; i < octaves; ++i) {
+        value += gradientNoise2(x * frequency, y * frequency,
                                 seed + static_cast<uint32_t>(i)) * amplitude;
         maxAmp += amplitude;
         amplitude *= gain;
