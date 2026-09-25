@@ -2,7 +2,7 @@
 
 Created: 2026-09-25
 Status: Research / scoping (no implementation, no decision yet)
-Assumes: the codebase moves to Rust eventually, timing unknown, possibly before this lands. See [Rust port](#rust-port).
+Assumes: the whole codebase gets rewritten in Rust by an automated Claude Code (Fable) run, timing unknown. Vulkan lands as part of that rewrite. See [Vulkan in the Rust rewrite](#vulkan-in-the-rust-rewrite).
 Related: [vector-graphics/INDEX.md](../vector-graphics/INDEX.md), [planet-view-rendering.md](../planet-view-rendering.md), [ground-textures.md](../ground-textures.md), [organic-terrain/terrain-polygons-architecture.md](../organic-terrain/terrain-polygons-architecture.md), [library-decisions.md](../library-decisions.md)
 
 ## The question
@@ -17,10 +17,10 @@ graphics, with third-party tools judged case by case.
 
 ## Short answer
 
-The change is medium-sized and well contained. About 5.4k lines of GL-bearing code get
-reworked or rewritten, out of roughly 128k lines of non-test C++ (about 4%). The vector
-pipeline, tessellator, `Primitives` API surface, assets, and every line of game logic
-survive untouched.
+The graphics change is medium-sized and well contained. About 5.4k lines of GL-bearing code
+need redesign, out of roughly 128k lines of non-test C++ (about 4%). The vector pipeline,
+tessellator, `Primitives` API surface, assets, and all game logic carry over as literal
+translations; nothing about them depends on the graphics API.
 
 The hard part isn't API coverage, it's that our renderer leans on things OpenGL does for us
 implicitly: reusing one buffer many times per frame, creating and freeing GPU resources in the
@@ -34,32 +34,32 @@ on GL means staying on a 2010-era feature set on one of three platforms. Vulkan 
 MoltenVK is the only path that gives one modern API everywhere without writing a Metal
 backend.
 
-Recommendation: raw Vulkan 1.3 behind a thin in-house render layer, done in two phases. Phase
-0, in C++ on GL, puts every caller behind a C-ABI-shaped render API with Vulkan-style
-semantics. Phase 1 writes the Vulkan backend **in Rust** (via `ash`) behind that same API,
-making the renderer the first Rust module of the port, and deletes GL. We write the backend
-once, in the language we're heading to, instead of writing it in C++ and porting it later.
-Before committing, run the code spike at the end of this doc, which is also a Rust spike.
+Recommendation: Vulkan 1.3 through `ash`, behind a thin in-house renderer, built as part of the
+Rust rewrite rather than in C++ first. Everything else in the rewrite is a literal
+translation; the renderer is redesigned against the [renderer contract](#renderer-contract) in
+this doc. The only rendering work worth doing in C++ now is a golden image set so the rewrite
+has something to check against. Before committing, run the vertical-slice spike at the end of
+this doc.
 
 ## What this means for the work so far
 
-| Area | Lines | Fate |
+| Area | Lines | In the rewrite |
 |---|---:|---|
-| `libs/renderer/vector/` (sweep tessellator, SVG, Bezier) | 2,954 | Survives as-is. It produces CPU meshes; the API that draws them is irrelevant. |
-| `Primitives` API (drawRect, drawText, drawTriangles, pushClip) | 1,061 | Surface survives. Minor `GLuint`/`GLenum` leakage and a dead command queue come out. |
-| `CoordinateSystem`, `MetricsCollector`, `ResourceManager` | ~790 | Survive. One `glViewport` call moves out; projection gets a depth-range decision. |
-| Asset pipeline, Lua generators, groundcover mesh building, nav, sim, UI layout | most of the codebase | Untouched. |
-| `BatchRenderer` + `InstanceData` | 1,331 | Rewritten. Same batching idea, new buffer/pipeline plumbing. |
+| `libs/renderer/vector/` (sweep tessellator, SVG, Bezier) | 2,954 | Literal translation. It produces CPU meshes; the API that draws them is irrelevant. |
+| `Primitives` API (drawRect, drawText, drawTriangles, pushClip) | 1,061 | Call surface translated as-is; `GLuint`/`GLenum` leakage and a dead command queue don't make the trip. |
+| `CoordinateSystem`, `MetricsCollector`, `ResourceManager` | ~790 | Translated; the projection switches to 0..1 depth and the Y convention is re-derived. |
+| Asset pipeline, Lua generators, groundcover mesh building, nav, sim, UI layout | most of the codebase | Literal translation, unaffected by the graphics API. |
+| `BatchRenderer` + `InstanceData` | 1,331 | Redesigned. Same batching idea, new buffer/pipeline plumbing. |
 | `libs/renderer/gl/` RAII wrappers, `shader/` loader | ~1,000 | Replaced by Vulkan equivalents. |
 | GL resources (RenderToTexture, TileTextureAtlas, atlas baking upload, GPUTimer) | ~600 | Reworked; CPU-side baking (nanosvgrast) survives. |
-| World rendering (`ChunkRenderer`, `BakedChunkRenderer`, `GroundcoverRenderer`, `InstancingUniforms`, `InstancedEntityRenderer`) | ~1,130 | Reworked to go through the render layer instead of raw GL. |
-| `libs/planet-view` (`PlanetRenderer`, `PlanetMesh`, `PlanetColorizer`) | 728 | Reworked; biggest single island of raw GL (about 170 calls). |
+| World rendering (`ChunkRenderer`, `BakedChunkRenderer`, `GroundcoverRenderer`, `InstancingUniforms`, `InstancedEntityRenderer`) | ~1,130 | Redesigned onto the renderer API instead of raw GL. |
+| `libs/planet-view` (`PlanetRenderer`, `PlanetMesh`, `PlanetColorizer`) | 728 | Redesigned; biggest single island of raw GL (about 170 calls). |
 | `FontRenderer` atlas, `AssetRenderer`, `DebugServer` screenshot, `GlobeView` | ~200 GL lines | Small reworks. Atlas goes RGB8 to RGBA8. |
 | 12 GLSL files | 1,029 | Mechanical port to Vulkan GLSL, compiled to SPIR-V. |
-| 39 scene files that only call `glClearColor`/`glClear` | 76 calls | One-line replacement each. |
+| 39 scene files that only call `glClearColor`/`glClear` | 76 calls | The renderer's clear call. |
 
 The investment in vector graphics is safe. It was always CPU-side geometry fed to a thin draw
-layer, and that's the shape Vulkan wants.
+layer, and that's the shape Vulkan wants; it translates to Rust as plain algorithms.
 
 ## Where GL lives today
 
@@ -128,7 +128,7 @@ ordered by how badly they bite if missed.
 |---|---|---|
 | Raw Vulkan 1.3 behind our own thin layer | Full control, one API on all three platforms (MoltenVK on Mac), compute everywhere, best validation tooling | **Recommended** |
 | SDL3 GPU | Clean small API over Vulkan/D3D12/Metal; no bindless, replaces GLFW, per-backend shader blobs via shadercross (pulls DXC + SPIRV-Cross) | Good if we wanted the least work, but it's someone else's abstraction sitting between us and the GPU |
-| WebGPU native (Dawn, wgpu-native) | Nice ergonomics and a browser story; WGSL, no standard push constants or bindless, heavy (Dawn) or Rust-built (wgpu) | No from C++; wgpu gets a second look under the Rust port (see [ash or wgpu](#ash-or-wgpu)) |
+| WebGPU native (Dawn, wgpu-native) | Nice ergonomics and a browser story; WGSL, no standard push constants or bindless, heavy (Dawn) or Rust-built (wgpu) | Dawn no; wgpu is a real contender in Rust (see [ash or wgpu](#ash-or-wgpu)) |
 | bgfx / Diligent / LLGL / NVRHI | Mature abstractions with their own shader dialects or build tools; NVRHI has no Metal | No; conflicts with "tune our own engine" |
 | sokol_gfx | Tiny and pleasant, but deliberately limited and its Vulkan backend is experimental (Dec 2025) | No |
 | Stay on GL, move to 4.6 + AZDO (persistent mapping, multi-draw indirect, SSBOs) | Zero migration and gets most of the CPU win on Windows/Linux | Fails the Mac requirement: Mac stays at 4.1 with no compute |
@@ -197,54 +197,70 @@ For us that means:
 Writing our own SPIR-V compiler isn't a reasonable project. The compiler is a build tool that
 never ships inside the game, the same category as CMake or the MSVC compiler.
 
-## Dependencies, case by case
+## Vulkan in the Rust rewrite
 
-| Need | Common choice | Recommendation |
+The whole codebase will be rewritten in Rust by an automated Claude Code (Fable) run, timing
+unknown, possibly soon. That settles the sequencing: **Vulkan arrives as part of the rewrite,
+not as a C++ change.** Any Vulkan backend written in C++ now would be thrown away, and so
+would a C++ seam refactor. What survives from this doc is the design, the audit, and the
+list of hard parts, which become instructions for the rewrite.
+
+### Translate everything, except the renderer
+
+Most of the codebase should be translated faithfully: same modules, same algorithms, same
+behavior, so the C++ build stays a usable reference. Rendering is the exception. The GL code
+is immediate-mode global state with RAII freeing GPU objects mid-frame, and a literal
+translation fights both Rust's ownership model and Vulkan's explicit lifetimes. So the rewrite
+splits into two kinds of work:
+
+| Kind | What | How |
 |---|---|---|
-| Vulkan headers + loader | Khronos (Apache-2.0) | Required; it's the API. |
-| Function-pointer loading | volk | Roll our own. A table of `vkGetDeviceProcAddr` pointers, a few hundred lines. |
-| Instance / device / swapchain setup | vk-bootstrap | Roll our own. Boring query-and-pick code, ~500-800 lines. Read vk-bootstrap for its list of platform quirks (MoltenVK portability, present modes). |
-| GPU memory allocation | VMA | Roll our own. Our pattern is simple: a few big static buffers, atlases, a 128 MB chunk-texture LRU, and per-frame rings. A block sub-allocator per memory type plus a linear per-frame arena covers it. VMA's own FAQ says writing your own is reasonable for simple apps. We give up defragmentation and budget tracking; revisit if fragmentation shows up. |
-| GLSL to SPIR-V | glslang (Khronos reference compiler) | Adopt as a build-time tool. Slang is the alternative if we ever want a better shading language. |
-| Validation layers | Khronos, via the Vulkan SDK | Adopt for dev builds only. Never shipped. |
-| Mac translation | MoltenVK | Adopt; ships in the Mac build. |
-| Window + input | GLFW (already have) | Keep. GLFW creates Vulkan surfaces (`glfwCreateWindowSurface`). |
-| GL extension loading | GLEW (already have) | Delete. |
+| Translate | Tessellator, SVG loading, `Primitives` call surface, vertex generation, UI, assets, sim, nav, worldgen, all scenes | Literal port. Scene code that only clears the screen gets the renderer's clear call. |
+| Redesign | `libs/renderer` backend (`BatchRenderer`, `gl/`, `shader/`, GL resources), `ChunkRenderer`, `BakedChunkRenderer`, `GroundcoverRenderer`, `InstancingUniforms`, `InstancedEntityRenderer`, `libs/planet-view` rendering, font atlas upload, screenshot and thumbnail readback, window/context bootstrap | Built fresh against the renderer contract below, using the audit in this doc as the map of what each piece does. |
 
-## Rust port
+Keeping the `Primitives` call surface the same shape (drawRect, drawText, drawTriangles,
+pushClip, instanced mesh handles) is what lets the translated callers stay literal.
 
-We're assuming the codebase moves to Rust, timing unknown, possibly before any of this lands.
-That changes where the Vulkan backend gets written, not whether we move to Vulkan. Nothing
-above this section changes: the shaders, the hard parts, the Vulkan baseline, and the
-dependency calls all carry over, because Vulkan and SPIR-V don't care what language the host
-program is in.
+### Renderer contract
 
-### The renderer goes first
+The rules the Rust renderer follows. Each one closes one of the [hard parts](#the-hard-parts).
 
-- **It's being rewritten anyway.** Writing a C++ Vulkan backend and then porting it means writing the hardest, most sync-sensitive code in the project twice.
-- **It sits low in the dependency graph.** It depends on the window, logging, and metrics; everything else calls into it. Low modules port cleanly behind a C boundary while the code above them stays C++ (the strangler pattern).
-- **Phase 0 already builds the boundary.** The seam we need for Vulkan is the same seam we need for a language boundary, as long as we shape it for C from the start.
+- GPU objects (buffers, textures, pipelines, render targets) are owned by the renderer and referenced by typed handles. Nothing outside the renderer touches `ash` types.
+- Transient data (batch vertices, indices, instance data, per-draw constants) is copied into a per-frame ring on submit. Callers never hold GPU memory across calls.
+- Destroying a handle queues it; the renderer frees it once the frame fences say the GPU is done.
+- Uploads (chunk textures, baked meshes, planet rhombi, atlases) are queued and executed in an upload phase before the frame's render pass. Mipmaps come from a blit chain.
+- Every pipeline declares its full vertex layout; the uber shader's int mode switch becomes separate pipelines.
+- Per-draw constants go in push constants, larger blocks (the `tile.frag` rect array) in a ring-allocated uniform slice. Textures are indices into one bindless array.
+- Conventions: Y-down with a negative viewport height, depth 0..1, one place that owns both. `glam`'s default projection functions already use 0..1 depth. Every flip listed in hard part 5 gets re-derived, not translated.
+- Screenshots copy the swapchain image before present.
 
-This assumes an incremental port. A big-bang rewrite would throw away Phase 0's C++ caller
-migration; the design would survive but the code wouldn't (open question 4).
+### Go straight to Vulkan
 
-### The boundary
+The alternative is translating to Rust on OpenGL first (the `glow` crate), then moving to
+Vulkan. That keeps the C++ GL build as a pixel-exact reference during translation, but writes
+the renderer twice and translates exactly the GL patterns we'd have to redesign anyway. Going
+straight to Vulkan is better, and it suits an automated rewrite in particular:
 
-C++ calls the Rust renderer through plain `extern "C"` functions. We don't need a C++/Rust
-bridge generator like `cxx`; the API is small and a C ABI is the most stable thing both
-languages speak.
+- Validation layers, including sync validation, report misuse as specific, machine-readable errors on the call that caused it. GL mostly fails silently or with a bare error code.
+- lavapipe renders Vulkan headless on a CPU, deterministically, so the rewrite's own CI can check pixels. Our GL rendering has never been checked in CI.
+- Offline SPIR-V compilation turns shader mistakes into build errors instead of per-vendor runtime surprises.
 
-- **Opaque handles** (integer ids) for buffers, textures, pipelines, and render targets. No pointers to Rust objects cross the line.
-- **Plain data** (`#[repr(C)]` structs) for vertex formats, draw descriptions, and per-draw constants. The 96-byte uber vertex is already plain data.
-- **Copy on submit.** C++ passes pointer + length; Rust copies into the frame ring before returning. No borrowed memory outlives a call, which is exactly the ring-allocator semantics Vulkan needs anyway.
-- **Coarse calls.** In Phase 1 the line sits at completed batches (vertex/index arrays, draw ranges, constants), not per rectangle. Vertex generation from `Primitives` is backend-agnostic CPU work; it stays C++ for now and ports later with the rest of `Primitives`. That keeps crossings to a few hundred per frame, where a C-ABI call costs about the same as a non-inlined C++ call.
-- **Errors** come back as return codes. Panics never cross the boundary; every export catches them.
-- **Logging and metrics** go through callbacks the C++ side registers at init, so Rust logs still reach the HTTP log server and the dev tools.
-- **Window.** C++ keeps GLFW for now and passes the native window handle (HWND, X11/Wayland, or the Cocoa view); Rust creates the Vulkan surface from it. Windowing and input move to Rust in a later step.
+The cost is that the reference comparison is no longer pixel-exact: GL and Vulkan rasterize
+and anti-alias slightly differently, so golden comparisons need a perceptual tolerance rather
+than an exact match.
 
-For Phase 0 this adds one rule: the public render API contains nothing C can't express. No
-templates, STL containers, `std::function`, exceptions, or classes. The current `Primitives`
-free-function style is already close.
+### A rendering oracle before the rewrite
+
+An automated rewrite is only as good as the checks it runs against, and today nothing checks
+rendering. The most useful rendering work to do in C++ now is a golden image set captured
+from the current GL build:
+
+- Every ui-sandbox scene, the asset-manager browser, and a few fixed game states (quickstart planet, fixed seed, sim paused, camera at set positions), screenshotted through the debug server.
+- Enough determinism to make captures repeatable: pause, fixed time for wind and animation, fixed camera.
+- The screenshot readback moved before swap first, since reading after swap is undefined and the goldens need to be trustworthy.
+
+The rewrite then renders the same scenes and compares within tolerance. Where goldens live
+(repo, LFS, or an artifact store) is open question 5.
 
 ### ash or wgpu
 
@@ -262,67 +278,57 @@ In C++, wgpu is a heavy Rust-built dependency. In Rust it's the standard graphic
 
 Recommendation stays **ash**. The goal is freedom to tune our own engine around vector
 graphics, and wgpu's value (automatic sync, portability layers) is exactly the control we'd
-be handing over. wgpu is the credible fallback if the Vulkan backend's sync work turns into a
-swamp; the spike includes an optional wgpu comparison to settle it with numbers.
+be handing over. With ash, `unsafe` stays confined to one backend module behind a small safe
+API, and the rest of the renderer is ordinary safe Rust.
 
-With ash, `unsafe` stays confined to the backend module behind a small safe internal API, so
-the rest of the renderer crate is ordinary safe Rust.
+One thing tilts toward wgpu in an automated rewrite: GPU data races don't fail tests
+reliably, they show up as intermittent corruption. Sync validation catches most of them,
+but not all. The spike builds the same slice on both to settle this with evidence.
 
 ### Rust-side dependencies, case by case
 
 | Need | Rust choice | Recommendation |
 |---|---|---|
-| Vulkan bindings + loading | ash | Adopt. Thin bindings generated from the Khronos registry, 1:1 with the C API, including function loading (replaces the volk row above). Hand-writing them makes no sense. |
-| Device / swapchain setup | | Roll our own, same as the C++ plan. |
-| GPU memory allocation | gpu-allocator | Roll our own, same reasoning as VMA above; read gpu-allocator for concepts. |
-| GLSL to SPIR-V | glslang, or naga (pure Rust) | Keep glslang as a build tool so the shader toolchain doesn't change with the language. naga's GLSL frontend is less complete. |
-| Building Cargo crates from CMake | Corrosion | Adopt as a build tool; it's the standard bridge and fits the existing Ninja presets. |
-| C header for the boundary | cbindgen | Hand-write it while the API is small; adopt cbindgen if it grows. |
-| Native window handles | raw-window-handle | Adopt. A tiny trait crate that every Rust windowing and graphics library speaks. |
+| Vulkan bindings + loading | ash | Adopt. Thin bindings generated from the Khronos registry, 1:1 with the C API, including function-pointer loading. Hand-writing them makes no sense. |
+| Instance / device / swapchain setup | vk-bootstrap (C++), no dominant crate | Roll our own. Boring query-and-pick code, ~500-800 lines. Read vk-bootstrap for its list of platform quirks (MoltenVK portability, present modes). |
+| GPU memory allocation | gpu-allocator (or VMA in C++) | Roll our own. Our pattern is simple: a few big static buffers, atlases, a 128 MB chunk-texture LRU, and per-frame rings. A block sub-allocator per memory type plus a linear per-frame arena covers it; VMA's own FAQ says writing your own is reasonable for simple apps. We give up defragmentation and budget tracking. |
+| GLSL to SPIR-V | glslang, or naga (pure Rust) | Keep glslang as a build tool, invoked from `build.rs`. naga's GLSL frontend is less complete. Slang is the alternative if we ever want a better shading language. |
+| Validation layers | Khronos, via the Vulkan SDK | Adopt for dev builds and CI only. Never shipped. |
+| Mac translation | MoltenVK | Adopt; ships in the Mac build. |
+| Window + input | winit (replaces GLFW) | Adopt. Cross-platform windowing isn't worth rolling, and winit is what the Rust graphics ecosystem speaks (via `raw-window-handle`). |
+| Math | glam (replaces glm) | Adopt, rewrite-wide. Its projections default to Vulkan's 0..1 depth. |
+| SVG parsing and tile-pattern rasterization | nanosvg / nanosvgrast today | Rewrite-wide question, flagged here because it feeds GPU textures: port our use of nanosvg or pick a Rust equivalent (usvg/resvg, tiny-skia). |
+| MSDF font atlas | msdfgen, offline tool | No runtime impact; the atlas is a pre-generated PNG. The generator tool can stay C++ or be regenerated once. |
 
-### Build and CI
-
-- A pinned Rust toolchain (`rust-toolchain.toml`) on dev machines and CI.
-- Corrosion inside the existing CMake presets; Debug and RelWithDebInfo map to Cargo profiles.
-- Two package managers: vcpkg for C++, Cargo for Rust.
-- CI's sccache already supports `rustc`.
-- Renderer tests run as `cargo test` under lavapipe on Linux CI, so the first Rust code also brings the first real rendering tests.
+GLEW and CMake/vcpkg don't exist in a full Rust rewrite; Cargo builds everything.
 
 ## Size of the change
 
 No time estimates here; this is sized in code.
 
-**Phase 0, the seam, in C++ on GL (lands on main as ordinary refactors).**
-Touches about 65 files, but 39 of those are one-line `glClear` replacements. The real work:
+**In C++, now.** Deliberately small:
 
-- A C-ABI-shaped render API that owns every GPU object by handle (buffers, textures, pipelines, render targets). No `GLuint` outside `libs/renderer`.
-- Port planet-view, the chunk renderers, font atlas, and readbacks onto it. Stop sharing the uber program; per-draw constants become a plain struct.
-- Vulkan semantics at the API: transient data is copied on submit, destruction is deferred to a frame boundary, uploads happen in a phase at frame start, every pipeline declares its vertex layout.
-- Centralize coordinate conventions in `CoordinateSystem` so the Y/depth decision lives in one place.
-- Screenshot readback moves before swap (fixes the undefined-behavior read today).
+- Build the golden image set and the determinism it needs.
+- Move the screenshot readback before swap.
+- Nothing else. No seam refactor, no C++ Vulkan backend; both would be discarded.
 
-Because the GL backend gets deleted in Phase 1, its internals only change as far as needed to
-honor the API. Don't polish GL code (UBO conversions, persistent mapping) that won't survive.
+**In the rewrite.** The redesign list above is about 5.4k lines of GL-bearing C++ today. On
+the Rust side, the Vulkan core (instance/device/swapchain, frame sync, allocator, upload,
+pipelines, bindless descriptors) is estimated at 3-5k lines, anchored on sokol's Vulkan
+backend (~3k lines) and Elias Daler's engine (~6.7k graphics lines, more features than we
+need). The redesigned callers (world rendering, planet view, font atlas) land at roughly
+their current size against a cleaner API. Plus the 1,029-line shader port to Vulkan GLSL.
 
-**Phase 1, Vulkan backend in Rust.** A new renderer crate built through Corrosion, behind the
-Phase 0 API, replacing ~2.9k GL-specific lines in `libs/renderer`. Estimated 3-5k lines
-(instance/device/swapchain, frame sync, allocator, upload, pipelines, bindless descriptors),
-anchored on sokol's Vulkan backend (~3k lines) and Elias Daler's engine (~6.7k graphics lines,
-more features than we need); Rust with ash is about as dense as C++. Plus the 1,029-line
-shader port, glslang build integration, and the Rust toolchain in the build and CI. If Phase 0
-is done well, nothing outside `libs/renderer` changes. GL and GLEW are deleted in the same PR.
-
-**Phase 2, exploit it and keep porting.** Compute passes, async transfer queue for chunk
-streaming, bindless atlases, lavapipe rendering tests in CI. On the Rust side, `Primitives`
-and batching move next, then windowing and input, then upward from there.
+**After the rewrite.** Compute passes, async transfer queue for chunk streaming, bindless
+atlases, and whatever the Living Environment effects need. None of it has to be designed
+now; the contract above leaves room for all of it.
 
 ### The one-path rule
 
-CLAUDE.md forbids parallel old/new paths. Minecraft kept a GL/Vulkan toggle during their
-transition; we shouldn't. Phase 0 is pure refactoring, so it lands on main with one path at
-every step. For Phase 1, the C++ GL backend and the Rust Vulkan backend never coexist on main:
-build on a branch, merge at parity, delete GL in the same PR. A temporary dual backend on main
-is the alternative if the branch gets too long-lived (open question 2).
+The rewrite produces one renderer, Vulkan, with no GL fallback and no backend toggle.
+Minecraft kept a GL/Vulkan toggle during their transition; we shouldn't need to. The C++
+tree stays around as the reference the goldens were captured from, and goes away when the
+Rust build reaches parity.
 
 ## Spike
 
@@ -331,27 +337,28 @@ is the alternative if the branch gets too long-lived (open question 2).
 The audit above is the first half. Findings that change the plan:
 
 - The GL footprint is smaller than the file count suggests: about 548 raw GL calls, and the renderer uses no UBOs, SSBOs, compute, stencil, MSAA, or geometry shaders. There's very little GL feature surface to re-create.
-- The risk is behavioral (implicit sync, mid-frame lifetime), not API coverage. Phase 0 flushes out the caller side of that on GL; the backend side is new code either way.
+- The risk is behavioral (implicit sync, mid-frame lifetime, scattered conventions), not API coverage. The renderer contract exists to close each of those explicitly.
 - This dev machine: RTX 3090, driver 610.88, Vulkan instance and device API 1.4.341. The runtime loader is installed but the **Vulkan SDK is not** (`VULKAN_SDK` unset), so there are no validation layers and no glslang yet. Installed implicit layers include Steam, EOS, and RTSS overlays; expect noise in validation output.
-- CI (ubuntu-latest, windows-latest) has no GPU. Every rendering test skips today. A Vulkan backend can run headless in CI through lavapipe (Mesa's CPU Vulkan), which GL can't do in our current setup.
+- CI (ubuntu-latest, windows-latest) has no GPU. Every rendering test skips today. lavapipe fixes that for the Rust build.
 
-### Code spike (proposed)
+### Code spike (proposed): a vertical-slice rehearsal
 
-A throwaway `spike/vulkan` branch, never merged. It's a Rust spike and a Vulkan spike at once:
-a small Rust crate using ash, built through Corrosion, called from ui-sandbox over a C ABI.
+A throwaway Cargo workspace on a `spike/vulkan` branch, never merged. It rehearses the
+rewrite on one thin slice, which tests the automated-rewrite approach as much as Vulkan.
 
-1. **Build integration.** Corrosion in the Ninja presets, ui-sandbox links the Rust static library, Rust logs route through the C++ logger to the HTTP log server.
-2. **Bring-up.** Native window handle from GLFW, instance/device/swapchain with our own setup code, validation layers on, clear to a color. Resize and vsync toggle via swapchain recreation.
-3. **UI parity.** Port `uber.vert/frag` to Vulkan GLSL, compile with glslang, draw a ui-sandbox scene (rects, MSDF text, clip rects) from C++-generated batches through a per-frame ring. Screenshot via the debug server using copy-before-present, then pixel-diff against the GL screenshot of the same scene.
-4. **Instancing stress.** The groundcover scene (~486k tufts) with instance data in the ring. Compare GPU time against GL's ~1.75 ms, compare CPU frame time, and measure the cost of the boundary crossings.
-5. **Mac smoke test.** Steps 1-3 through MoltenVK on a Mac.
-6. **Headless CI.** Step 3 as a `cargo test` under lavapipe on Linux, producing a screenshot artifact.
-7. **Optional: wgpu comparison.** Step 3 again in wgpu, to compare line count, CPU cost, and how much control we'd give up.
+1. **Translate the slice.** Port the tessellator, `Primitives`, and vertex generation literally, plus one ui-sandbox scene (rects, MSDF text, clip rects, a tessellated SVG).
+2. **Build the backend.** winit window, our own instance/device/swapchain setup, validation layers on, the per-frame ring, deferred destruction, upload phase, and `uber.vert/frag` ported to Vulkan GLSL compiled with glslang in `build.rs`.
+3. **Compare against the golden.** Screenshot the scene and diff it against the C++ GL capture with a perceptual tolerance.
+4. **Instancing stress.** The groundcover scene (~486k tufts) with instance data in the ring. Compare GPU and CPU frame time against GL's ~1.75 ms GPU time.
+5. **Same slice on wgpu.** Steps 2-4 again on wgpu, comparing lines of code, CPU cost, validation findings, and how much control we gave up.
+6. **Mac smoke test.** Steps 1-3 through MoltenVK on a Mac.
+7. **Headless CI.** Step 3 as a `cargo test` under lavapipe on Linux.
 
-Exit criteria: validation-clean frames, pixel parity on the UI scene, a measured perf delta
-and boundary cost, the build working in both presets and CI, Mac viability confirmed or
-ruled out, and a line count for the core layer to check the 3-5k estimate. Prerequisites:
-install the Vulkan SDK from LunarG and a Rust toolchain on the dev machine.
+Exit criteria: validation-clean frames, the UI scene within tolerance of its golden, measured
+performance for both backends, a call on ash vs wgpu, Mac viability confirmed or ruled out,
+and a line count to check the 3-5k estimate. Prerequisites: the Vulkan SDK and a Rust
+toolchain on the dev machine, and at least the one golden from step 3 captured on the C++
+build.
 
 ## Prior art
 
@@ -370,7 +377,6 @@ install the Vulkan SDK from LunarG and a Rust toolchain on the dev machine.
 | zeux, "Writing an efficient Vulkan renderer" | Guidance on submits, command buffers, threading | Stay single-threaded under ~100 draws per pass until profiles say otherwise | https://zeux.io/2020/02/27/writing-an-efficient-vulkan-renderer/ |
 | Khronos, Vulkan 1.4 / Roadmap 2026 | Core feature set, descriptor heap announcement | Basis for the baseline section | https://www.khronos.org/blog/vulkan-introduces-roadmap-2026-and-new-descriptor-heap-extension |
 | LunarG, state of Vulkan on Apple (Jan 2026) | MoltenVK and KosmicKrisp status | MoltenVK nearly conformant 1.4 | https://www.lunarg.com/the-state-of-vulkan-on-apple-jan-2026/ |
-| Corrosion | CMake integration for Cargo crates | Standard way to mix Rust into a CMake build | https://github.com/corrosion-rs/corrosion |
 | ash | Rust Vulkan bindings | Thin, generated, 1:1 with the C API | https://github.com/ash-rs/ash |
 
 The common thread: synchronization and driver variance bite first, and the CPU win only
@@ -379,11 +385,10 @@ shows up where the GL renderer was draw-call bound.
 ## Open questions
 
 1. **Minimum Vulkan version.** 1.3 core (recommended, simplest code) or 1.2 + extensions for older hardware reach, as Mojang did? Depends on our minimum spec, which we haven't set.
-2. **Phase 1 delivery.** Branch until parity and swap in one PR (recommended), or a temporary dual backend on main with a named deletion milestone?
-3. **Mac path.** MoltenVK now (recommended) with a native Metal backend only if MoltenVK limits bite?
-4. **Shape of the Rust port.** Incremental behind C boundaries, renderer first (assumed here), or a rewrite? A rewrite skips Phase 0's C++ caller migration and designs the renderer's Rust API directly.
-5. **ash or wgpu.** ash recommended; the spike's optional wgpu step can settle it with numbers.
-6. **Start Phase 0 now?** It's useful whatever the answers above: it fixes a real undefined-behavior read, removes shared-program uniform pokes, and creates the boundary both Vulkan and Rust need.
+2. **ash or wgpu.** ash recommended; the spike builds the same slice on both.
+3. **Mac path.** MoltenVK (recommended) with a native Metal backend only if MoltenVK limits bite? Moot if the spike picks wgpu.
+4. **SVG rasterization in Rust.** Port our use of nanosvg/nanosvgrast or adopt usvg/resvg? A rewrite-wide call that affects tile-pattern textures.
+5. **Where goldens live.** In the repo, in LFS, or as CI artifacts, and how the tolerance is defined.
 
 ## Incidental findings from the audit
 
@@ -393,5 +398,5 @@ Not part of the migration, but found along the way:
 - `text.vert`/`text.frag` are never loaded.
 - `Primitives.cpp:30-84,150-160` holds a dead `DrawCommand`/`BatchKey` queue.
 - `PushScissor` is a no-op (`Primitives.cpp:640`).
-- `DebugServer` reads the back buffer after swap (undefined in GL).
+- `DebugServer` reads the back buffer after swap (undefined in GL). Worth fixing before capturing goldens.
 - `libs/foundation` links `OpenGL::GL` only for the screenshot readback (`libs/foundation/CMakeLists.txt:36`).

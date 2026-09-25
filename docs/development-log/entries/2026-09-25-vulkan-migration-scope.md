@@ -18,12 +18,14 @@ no decision is made yet.
 
 ## Decisions of note
 
-- Recommended raw Vulkan 1.3 behind a thin in-house layer over SDL3 GPU, WebGPU, bgfx, and staying on GL 4.6.
-- Recommended rolling our own function loader, device setup, and allocator, while adopting glslang as a build-time shader compiler and MoltenVK for Mac.
-- Proposed Phase 0 (build the seam on GL) as worth doing regardless of the Vulkan decision.
-- Assumed an eventual Rust port (timing unknown). The Vulkan backend gets written once, in Rust with `ash`, as the first Rust module behind a C-ABI boundary; Phase 0 shapes the render API so C can express it. wgpu reconsidered as the Rust-native alternative and kept as the fallback.
+- The codebase will be fully rewritten in Rust by an automated Claude Code (Fable) run, timing unknown. Vulkan lands as part of that rewrite; no C++ Vulkan backend and no C++ seam refactor, since both would be discarded.
+- In the rewrite, everything is translated literally except rendering, which is redesigned against a renderer contract (handles, per-frame ring, deferred destruction, upload phase, explicit vertex layouts, push constants + bindless, one owner for Y/depth conventions).
+- Recommended Vulkan 1.3 through `ash` over wgpu, SDL3 GPU, bgfx, and staying on GL, with wgpu as the evidence-based alternative the spike tests side by side.
+- Roll our own device setup and allocator; adopt ash, glslang (build tool), winit, glam, and MoltenVK for Mac.
+- The only C++ rendering work worth doing now: a golden image set captured from the GL build, and moving the screenshot readback before swap so the goldens are trustworthy.
 
 ## Next steps
 
-- Answer the open questions in the spec (minimum Vulkan version, branch-vs-dual-backend delivery, Mac path, Phase 0 now).
-- Install the Vulkan SDK and a Rust toolchain, then run the code spike (Rust + ash via Corrosion, driven from ui-sandbox) on a throwaway branch.
+- Answer the open questions in the spec (minimum Vulkan version, ash vs wgpu, Mac path, SVG rasterization in Rust, where goldens live).
+- Capture the golden image set on the C++ build.
+- Install the Vulkan SDK and a Rust toolchain, then run the vertical-slice spike on a throwaway branch.
