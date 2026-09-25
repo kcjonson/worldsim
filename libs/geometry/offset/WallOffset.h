@@ -122,6 +122,13 @@ namespace geometry {
 	// between its neighbors (sub-mm slivers from rounding). In place.
 	void simplifyRing(Ring& ring, std::int64_t epsilonMm);
 
+	// The same pass with pinned vertices (terrain-polygons D6, border pins): a
+	// vertex whose mask entry is true is never removed, and the mask shrinks in
+	// step with the ring. The scan starts at the first pinned vertex, so the
+	// result of each run between pins is independent of the ring's start vertex.
+	// With no pins it is exactly the unpinned pass.
+	void simplifyRing(Ring& ring, std::int64_t epsilonMm, std::vector<bool>& pinned);
+
 	constexpr double	   kDefaultMiterLimit	 = 4.0;
 	constexpr std::int64_t kDefaultSimplifyEpsMm = 1;
 

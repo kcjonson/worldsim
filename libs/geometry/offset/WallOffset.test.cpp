@@ -178,6 +178,27 @@ TEST(Simplify, KeepsRealCorners) {
 	EXPECT_EQ(r.size(), 4u);
 }
 
+TEST(Simplify, PinnedVerticesSurvive) {
+	// (500,0) is collinear and (1500,1) a sliver; pinned, both stay.
+	Ring			  r		 = {{0, 0}, {500, 0}, {1000, 0}, {1500, 1}, {2000, 0}, {2000, 1000}, {0, 1000}};
+	std::vector<bool> pinned = {false, true, false, true, false, false, false};
+	simplifyRing(r, 10, pinned);
+	const Ring expected = {{0, 0}, {500, 0}, {1500, 1}, {2000, 0}, {2000, 1000}, {0, 1000}};
+	EXPECT_EQ(r, expected);
+	const std::vector<bool> expectedPinned = {false, true, true, false, false, false};
+	EXPECT_EQ(pinned, expectedPinned);
+}
+
+TEST(Simplify, AllUnpinnedMatchesUnpinnedPass) {
+	Ring			  a = {{0, 0}, {300, 40}, {700, -30}, {1000, 0}, {1400, 700}, {1000, 1000}, {500, 1020}, {0, 1000}, {-20, 500}};
+	Ring			  b = a;
+	std::vector<bool> pinned(b.size(), false);
+	simplifyRing(a, 50);
+	simplifyRing(b, 50, pinned);
+	EXPECT_EQ(a, b);
+	EXPECT_EQ(pinned.size(), b.size());
+}
+
 // --- straight continuation (degree-2, 180 deg) -------------------------------
 
 TEST(Junction, StraightContinuationNoPolygonNoTrim) {

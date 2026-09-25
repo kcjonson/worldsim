@@ -3,8 +3,11 @@
 #include "../predicates/Predicates.h"
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
+#include <cstddef>
 #include <map>
+#include <vector>
 
 namespace geometry {
 
@@ -312,13 +315,28 @@ namespace geometry {
 	}
 
 	void simplifyRing(Ring& ring, std::int64_t epsilonMm) {
+		std::vector<bool> pinned(ring.size(), false);
+		simplifyRing(ring, epsilonMm, pinned);
+	}
+
+	void simplifyRing(Ring& ring, std::int64_t epsilonMm, std::vector<bool>& pinned) {
+		assert(pinned.size() == ring.size());
 		if (ring.size() <= 3) {
 			return;
 		}
-		bool changed = true;
+		// Scan from the first pinned vertex so every run between pins is visited in
+		// ring order from its own start; a run's result then depends only on the
+		// run, not on which vertex the ring happens to start at.
+		const auto	firstPin = std::find(pinned.begin(), pinned.end(), true);
+		std::size_t start	 = firstPin == pinned.end() ? 0 : static_cast<std::size_t>(firstPin - pinned.begin());
+		bool		changed	 = true;
 		while (changed && ring.size() > 3) {
 			changed = false;
-			for (std::size_t cur = 0; cur < ring.size(); ++cur) {
+			for (std::size_t k = 0; k < ring.size(); ++k) {
+				const std::size_t cur = (start + k) % ring.size();
+				if (pinned[cur]) {
+					continue;
+				}
 				const std::size_t prev = (cur + ring.size() - 1) % ring.size();
 				const std::size_t next = (cur + 1) % ring.size();
 				const Vec2i64&	  p	   = ring[prev];
@@ -331,6 +349,10 @@ namespace geometry {
 				const bool sliver	 = withinDistanceOfSegment(c, p, q, epsilonMm);
 				if (collinear || sliver) {
 					ring.erase(ring.begin() + static_cast<std::ptrdiff_t>(cur));
+					pinned.erase(pinned.begin() + static_cast<std::ptrdiff_t>(cur));
+					if (cur < start) {
+						--start;
+					}
 					changed = true;
 					break;
 				}
