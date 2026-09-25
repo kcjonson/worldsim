@@ -56,6 +56,11 @@ namespace engine::world {
 		// This avoids per-frame extraction of adjacency data during rendering
 		computeRenderData();
 
+		// TerrainPolygonBuilder (a later task) fills the real rings from the tiles
+		// plus an ApronField; until it's wired in, install an empty set so
+		// terrainPolygons()/version() are always well-defined.
+		setTerrainPolygons({});
+
 		m_renderDataVersion.fetch_add(1, std::memory_order_release);
 
 		// Mark generation complete (release semantics for thread safety)
@@ -149,26 +154,34 @@ namespace engine::world {
 	}
 
 	TileData Chunk::computeTile(uint16_t localX, uint16_t localY) const {
+		return computeTileFrom({
+			.coord = m_coord,
+			.localX = localX,
+			.localY = localY,
+			.biomeWeights = m_biomeData.getTileBiome(localX, localY),
+			.elevationMeters = m_biomeData.getTileElevation(localX, localY),
+			.hydrology = &m_biomeData,
+			.worldSeed = m_worldSeed,
+		});
+	}
+
+	TileData Chunk::computeTileFrom(const TileComputeArgs& args) {
 		TileData tile;
 
-		// Get biome weights from pre-computed sample data
-		BiomeWeights biomeWeights = m_biomeData.getTileBiome(localX, localY);
-
 		// Store primary and secondary biomes with blend weight
-		tile.primaryBiome = biomeWeights.primary();
-		tile.secondaryBiome = biomeWeights.secondary();
+		tile.primaryBiome = args.biomeWeights.primary();
+		tile.secondaryBiome = args.biomeWeights.secondary();
 
 		// Convert float weight (0.0-1.0) to uint8_t (0-255)
-		float primaryWeight = biomeWeights.primaryWeight();
+		float primaryWeight = args.biomeWeights.primaryWeight();
 		tile.biomeBlend = static_cast<uint8_t>(std::min(255.0F, primaryWeight * 255.0F));
 
-		// Get elevation from interpolation (convert meters to centimeters, clamped to uint16_t)
-		float elevMeters = m_biomeData.getTileElevation(localX, localY);
-		float elevCm = elevMeters * 100.0F;
+		// Elevation in meters -> centimeters, clamped to uint16_t
+		float elevCm = args.elevationMeters * 100.0F;
 		tile.elevation = static_cast<uint16_t>(std::clamp(elevCm, 0.0F, 65535.0F));
 
 		// Select surface type based on primary biome (uses spatial clustering)
-		tile.surface = selectSurface(tile.primaryBiome, localX, localY);
+		tile.surface = selectSurfaceFor(args.coord, tile.primaryBiome, args.localX, args.localY, args.elevationMeters, args.worldSeed);
 
 		// Water depth byte (cosmetic; the shader tints water by it). Biome water
 		// (ocean/lake/wetland) reads deep; river channels set depth from their width
@@ -176,15 +189,16 @@ namespace engine::world {
 		uint8_t depth = (tile.surface == Surface::Water) ? kDeepWaterDepth : 0;
 
 		// World position of this tile (meters), shared by the water overrides.
-		const WorldPosition origin = m_coord.origin();
-		const double worldXMeters = static_cast<double>(origin.x) + static_cast<double>(localX) * static_cast<double>(kTileSize);
-		const double worldYMeters = static_cast<double>(origin.y) + static_cast<double>(localY) * static_cast<double>(kTileSize);
+		const WorldPosition origin = args.coord.origin();
+		const double worldXMeters = static_cast<double>(origin.x) + static_cast<double>(args.localX) * static_cast<double>(kTileSize);
+		const double worldYMeters = static_cast<double>(origin.y) + static_cast<double>(args.localY) * static_cast<double>(kTileSize);
 
 		// River channels from the coarse 3D drainage graph override the biome
 		// surface. Continuous across chunk seams: the channel geometry is a
-		// deterministic function of world position, gathered per chunk.
-		if (!m_biomeData.riverSegments.empty()) {
-			const float halfWidth = m_biomeData.riverHalfWidthAt(worldXMeters, worldYMeters);
+		// deterministic function of world position, gathered per chunk (extended by
+		// the apron, so apron tiles see the same channels a neighbor chunk would).
+		if (args.hydrology != nullptr && !args.hydrology->riverSegments.empty()) {
+			const float halfWidth = args.hydrology->riverHalfWidthAt(worldXMeters, worldYMeters);
 			if (halfWidth > 0.0F) {
 				tile.surface = Surface::Water;
 				depth = waterDepthFromWidth(2.0F * halfWidth);
@@ -194,8 +208,8 @@ namespace engine::world {
 		// Sparse hydrology-driven ponds (and desert oases) turn land to water, after
 		// rivers so a channel crossing a pond cell keeps its river; existing water
 		// (river/ocean/lake) is left untouched.
-		if (!m_biomeData.pondBlobs.empty() && tile.surface != Surface::Water) {
-			const uint8_t pondDepth = m_biomeData.pondDepthAt(worldXMeters, worldYMeters);
+		if (args.hydrology != nullptr && !args.hydrology->pondBlobs.empty() && tile.surface != Surface::Water) {
+			const uint8_t pondDepth = args.hydrology->pondDepthAt(worldXMeters, worldYMeters);
 			if (pondDepth > 0) {
 				tile.surface = Surface::Water;
 				depth = pondDepth;
@@ -203,7 +217,7 @@ namespace engine::world {
 		}
 
 		// Generate deterministic moisture from hash
-		uint32_t		hash = tileHash(m_coord, localX, localY, m_worldSeed);
+		uint32_t		hash = tileHash(args.coord, args.localX, args.localY, args.worldSeed);
 		constexpr float kNormalize = 1.0F / static_cast<float>(UINT32_MAX);
 		float			moistureBase = static_cast<float>(hash) * kNormalize;
 
@@ -226,18 +240,24 @@ namespace engine::world {
 		return tile;
 	}
 
-	Surface Chunk::selectSurface(Biome biome, uint16_t localX, uint16_t localY) const {
+	Surface Chunk::selectSurfaceFor(ChunkCoordinate coord, Biome biome, uint16_t localX, uint16_t localY,
+	                                 float elevationMeters, uint64_t worldSeed) {
 		// Delegate to biome-specific generators via dispatcher
 		generation::GenerationContext ctx{
-			.chunkCoord = m_coord,
+			.chunkCoord = coord,
 			.localX = localX,
 			.localY = localY,
-			.worldSeed = m_worldSeed,
+			.worldSeed = worldSeed,
 			.biome = biome,
-			.elevation = m_biomeData.getTileElevation(localX, localY)
+			.elevation = elevationMeters
 		};
 
 		return generation::BiomeDispatcher::generate(ctx).surface;
+	}
+
+	void Chunk::setTerrainPolygons(ChunkTerrainPolygons polygons) {
+		polygons.version = m_terrainPolygons.version + 1;
+		m_terrainPolygons = std::move(polygons);
 	}
 
 	float Chunk::smoothstep(float t) {
