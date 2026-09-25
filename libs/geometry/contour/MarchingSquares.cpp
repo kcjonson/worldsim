@@ -145,8 +145,18 @@ namespace geometry {
 			return static_cast<std::size_t>(y) * static_cast<std::size_t>(cellsX) + static_cast<std::size_t>(x);
 		};
 
+		// Nearly every cell of a terrain field lies wholly on one side of iso; test
+		// its corners straight off the samples before building segments.
+		const float* samples = field.values.data();
+		const auto	 width	 = static_cast<std::size_t>(field.width);
 		for (int y = 0; y < cellsY; ++y) {
+			const float* row0 = samples + static_cast<std::size_t>(y) * width;
+			const float* row1 = row0 + width;
 			for (int x = 0; x < cellsX; ++x) {
+				const bool in00 = row0[x] >= iso;
+				if (in00 == (row0[x + 1] >= iso) && in00 == (row1[x] >= iso) && in00 == (row1[x + 1] >= iso)) {
+					continue;
+				}
 				const CellSegments startCell = cellSegments(field, x, y, iso);
 				for (int s = 0; s < startCell.count; ++s) {
 					if ((visited[cellIndex(x, y)] & (1U << s)) != 0) {
