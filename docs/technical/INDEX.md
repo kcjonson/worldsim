@@ -133,6 +133,7 @@ Applications:
 | [3D to 2D Sampling](./3d-to-2d-sampling.md) | Converting spherical world to tiles (locateHex) |
 | [Flat Tile Storage Refactor](./flat-tile-storage-refactor.md) | Proposed: Replace layered tiles with flat array |
 | [Ground Textures](./ground-textures.md) | SVG tile patterns with GPU rasterization cache |
+| [Organic Terrain Geometry](./organic-terrain-geometry.md) | Research: tile centers as lattice samples, organic shorelines, river ribbons |
 | [Building & Construction Architecture](./building-construction-architecture.md) | Freeform structures: geometry lib, room detection, structure rendering |
 | [Crafting & Material Provisioning](./crafting-provisioning-architecture.md) | Craft-as-construction: station store, metered/no-leftover deposit, pickup-by-source, giveItemToColonist cascade |
 | [Pathfinding Architecture](./pathfinding-architecture.md) | Four-tier navigation: planet hex graph, chunk components, CDT navmesh, physical agents; multi-region sim area, runtime-validity predicate, findValidPositionNear |
