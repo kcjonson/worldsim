@@ -2,6 +2,7 @@
 
 Created: 2026-09-25
 Status: Research / Planning (no implementation yet)
+Design spec: [organic-terrain/terrain-polygons-architecture.md](./organic-terrain/terrain-polygons-architecture.md)
 Related: [ground-textures.md](./ground-textures.md), [visual-style.md](../design/visual-style.md), [tile-transitions.md](../design/features/game-view/tile-transitions.md), [pathfinding-architecture.md](./pathfinding-architecture.md)
 
 ## The question
