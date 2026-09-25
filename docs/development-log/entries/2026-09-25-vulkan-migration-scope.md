@@ -21,8 +21,9 @@ no decision is made yet.
 - Recommended raw Vulkan 1.3 behind a thin in-house layer over SDL3 GPU, WebGPU, bgfx, and staying on GL 4.6.
 - Recommended rolling our own function loader, device setup, and allocator, while adopting glslang as a build-time shader compiler and MoltenVK for Mac.
 - Proposed Phase 0 (build the seam on GL) as worth doing regardless of the Vulkan decision.
+- Assumed an eventual Rust port (timing unknown). The Vulkan backend gets written once, in Rust with `ash`, as the first Rust module behind a C-ABI boundary; Phase 0 shapes the render API so C can express it. wgpu reconsidered as the Rust-native alternative and kept as the fallback.
 
 ## Next steps
 
 - Answer the open questions in the spec (minimum Vulkan version, branch-vs-dual-backend delivery, Mac path, Phase 0 now).
-- Install the Vulkan SDK and run the code spike on a throwaway branch.
+- Install the Vulkan SDK and a Rust toolchain, then run the code spike (Rust + ash via Corrosion, driven from ui-sandbox) on a throwaway branch.
