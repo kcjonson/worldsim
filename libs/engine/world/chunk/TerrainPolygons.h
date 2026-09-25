@@ -31,6 +31,13 @@ struct ShoreProfile {
 	uint8_t mud = 0;
 	uint8_t moisture = 0;  ///< TileData::moisture of the adjacent land tile
 	uint8_t flags = 0;     ///< bit0 rock, bit1 synthetic edge (D4), bit2 fordable cut (D7)
+
+	static constexpr uint8_t kFlagRock = 1U << 0U;
+	/// The edge starting at this vertex is a closure along the extended region's
+	/// boundary, not a real shore; consumers other than nav skip it (D4).
+	static constexpr uint8_t kFlagSynthetic = 1U << 1U;
+
+	bool operator==(const ShoreProfile&) const = default;
 };
 
 /// One waterline/channel/pond ring plus its per-vertex shading data (D2).
