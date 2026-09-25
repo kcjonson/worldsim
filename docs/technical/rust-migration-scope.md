@@ -30,7 +30,7 @@ Numbers from a census of the tree at `ac6558c`.
 | planet-view | 1,585 | 357 | Medium | Small, but 132 raw GL call sites |
 | ui | 13,718 | 5,697 | High | Virtual widget hierarchy mixed with CRTP, parent pointers, 477 capturing lambdas, link cycle with engine |
 | engine (ecs, assets, construction, nav, vision) | 39,053 | 22,927 | High | ECS aliasing (below), raw system back-pointers, sol2 bridge, largest lib |
-| apps (world-sim, ui-sandbox, asset-manager, CLIs) | ~40,800 | ~190 | Med-high | Almost no unit tests of their own; world-sim alone is 29.7k lines |
+| apps (world-sim, ui-sandbox, asset-manager, CLIs) | ~40,800 | ~190 | Med-high | Scenes, game UI, and world rendering; no unit tests of their own (gameplay systems are tested in engine), covered end to end by the four HTTP-driven scenario tests |
 
 Total: roughly 130k lines of non-test C++ and 47k lines of tests (2,028 gtest cases, 50 benchmarks).
 Churn is high: 248 commits and +33.5k / -11.8k C++ lines in the last three months.
@@ -304,10 +304,17 @@ and the ECS aliasing don't split cleanly.
 
 #### 3. Bun-style big bang
 
-Freeze features, fan out agents over the whole tree, fix until tests
-pass. We fail Bun's second precondition: the apps have about 190 lines of tests for 40.8k lines
-of code, and world-sim (29.7k) has none. For the libraries it's plausible; for gameplay it would
-mean trusting manual play-testing as the oracle.
+Freeze features, fan out agents over the whole tree, fix until tests pass. We meet Bun's second
+precondition for most of the tree. Gameplay logic lives in `libs/engine/ecs/systems`, and 11 of
+its 17 systems have gtests (AI decision, actions, crafting, construction, navigation, movement,
+vision, collisions, room detection); `BuildGoalSystem`, `StorageGoalSystem`, `NeedsDecaySystem`,
+`PhysicsSystem`, `TimeSystem`, and `DynamicEntityRenderSystem` don't. The four scenario tests in
+`docs/testing/scenarios/` (craft axe and box, stock box, build foundation, build walls) drive the
+running game over the dev-tools HTTP API, so they run unchanged against a Rust build and are the
+best end-to-end oracle we have; today they're run by hand or by an agent, not in CI. The real
+gap is the app layer: world-sim's 29.7k lines are mostly game UI (14.8k), world rendering
+(5.2k), and scene flow, with no unit tests, so rendering goldens and the scenario suite are its
+only checks.
 
 #### 4. Stay in C++ and take the lessons
 
