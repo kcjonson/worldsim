@@ -617,13 +617,7 @@ namespace {
 
 		[[nodiscard]] ChunkSampleResult sampleChunk(ChunkCoordinate coord) const override {
 			const Biome b = isWaterChunk(coord) ? Biome::Lake : Biome::TemperateGrassland;
-			ChunkSampleResult r;
-			for (auto& cb : r.cornerBiomes) {
-				cb = BiomeWeights::single(b);
-			}
-			r.cornerElevations = {1.0F, 1.0F, 1.0F, 1.0F};
-			r.computeSectorGrid();
-			return r;
+			return engine::world::makeUniformChunkSampleResult(BiomeWeights::single(b), 1.0F);
 		}
 
 		[[nodiscard]] float	   sampleElevation(WorldPosition) const override { return 1.0F; }

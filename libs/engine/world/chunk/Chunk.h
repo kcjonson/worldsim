@@ -7,6 +7,7 @@
 #include "world/Biome.h"
 #include "world/chunk/ChunkCoordinate.h"
 #include "world/chunk/ChunkSampleResult.h"
+#include "world/chunk/TerrainPolygons.h"
 
 #include <graphics/Color.h>
 
@@ -113,6 +114,31 @@ struct TileRenderData {
 /// All systems read from the same definitive tile data.
 class Chunk {
   public:
+	/// Designated-initializer args for the shared tile-compute core (below). Biome
+	/// weight and elevation are passed in already resolved (a sector-grid lookup)
+	/// rather than a sample-data reference, because the caller may be resolving
+	/// them from a neighbor chunk's own grid (ApronField), not this chunk's.
+	/// `hydrology` supplies riverHalfWidthAt/pondDepthAt; it is always the
+	/// generating chunk's own sample data (gathered over the extended AABB, D4),
+	/// since river/pond geometry is world-position-based and doesn't care which
+	/// chunk's sampler gathered it.
+	struct TileComputeArgs {
+		ChunkCoordinate coord;   ///< Tile's owning chunk (tileHash + world position)
+		uint16_t localX = 0;
+		uint16_t localY = 0;
+		BiomeWeights biomeWeights;
+		float elevationMeters = 0.0F;
+		const ChunkSampleResult* hydrology = nullptr;
+		uint64_t worldSeed = 0;
+	};
+
+	/// Compute one tile. The one place tile surface/moisture/water logic is
+	/// spelled out (docs/technical/organic-terrain/terrain-polygons-architecture.md
+	/// D14): both Chunk::generate() (the chunk's own 512x512 tiles) and ApronField
+	/// (the apron ring, evaluated against a neighbor's own corners) call through
+	/// it, so there is exactly one tile-computation code path.
+	[[nodiscard]] static TileData computeTileFrom(const TileComputeArgs& args);
+
 	/// Create a chunk with sampled biome data
 	Chunk(ChunkCoordinate coord, ChunkSampleResult biomeData, uint64_t worldSeed);
 
@@ -178,6 +204,11 @@ class Chunk {
 	/// GPU caches compare this to detect stale uploads.
 	[[nodiscard]] uint32_t renderDataVersion() const { return m_renderDataVersion.load(std::memory_order_acquire); }
 
+	/// Get the chunk's terrain polygon rings (waterline/channel/pond, D2). Empty
+	/// until TerrainPolygonBuilder (a later task) wires the real build into
+	/// generate(); currently generate() installs an empty set.
+	[[nodiscard]] const ChunkTerrainPolygons& terrainPolygons() const { return m_terrainPolygons; }
+
   private:
 	ChunkCoordinate m_coord;
 	ChunkSampleResult m_biomeData;
@@ -201,8 +232,19 @@ class Chunk {
 	/// Computed during generation, used by VisionSystem for fast shore discovery
 	std::vector<std::pair<uint16_t, uint16_t>> m_shoreTiles;
 
-	/// Compute tile data for a single tile during generation
+	/// Terrain polygon rings (waterline/channel/pond, D2). Installed by generate()
+	/// via setTerrainPolygons(); empty until the builder task wires the real build.
+	ChunkTerrainPolygons m_terrainPolygons;
+
+	/// Compute tile data for a single tile during generation. Thin wrapper around
+	/// computeTileFrom() using this chunk's own coordinate and sample data.
 	[[nodiscard]] TileData computeTile(uint16_t localX, uint16_t localY) const;
+
+	/// Install a freshly built polygon set and bump its version (monotonic per
+	/// chunk, like m_renderDataVersion). Called from generate(), before
+	/// m_generationComplete's release store, so any reader gated on isReady()
+	/// sees the version that matches the rings it reads.
+	void setTerrainPolygons(ChunkTerrainPolygons polygons);
 
 	/// Pre-compute shore tiles (land adjacent to water) for VisionSystem
 	void computeShoreTiles();
@@ -210,8 +252,14 @@ class Chunk {
 	/// Pre-compute rendering data (adjacency masks, neighbors) for ChunkRenderer
 	void computeRenderData();
 
-	/// Select surface type based on biome using organic noise-based patches
-	[[nodiscard]] Surface selectSurface(Biome biome, uint16_t localX, uint16_t localY) const;
+	/// Select surface type based on biome using organic noise-based patches, for
+	/// any (coord, biome, local tile, elevation, seed), not just this chunk's own.
+	/// Elevation is passed in (already resolved by the caller) rather than
+	/// re-derived from a sample source, so it works the same for a chunk's own
+	/// tiles (computeTile) and for an apron tile resolved against a neighbor's
+	/// grid (ApronField).
+	[[nodiscard]] static Surface selectSurfaceFor(ChunkCoordinate coord, Biome biome, uint16_t localX,
+	                                               uint16_t localY, float elevationMeters, uint64_t worldSeed);
 
 	/// Hash function for deterministic tile generation
 	[[nodiscard]] static uint32_t tileHash(ChunkCoordinate chunk, uint16_t localX, uint16_t localY, uint64_t seed);

@@ -18,10 +18,53 @@ namespace engine::world {
 
 inline constexpr int32_t kSectorGridSize = 32;
 
+// Corner lattice of the chunk's 3x3 neighborhood: the 4x4 grid of corner points
+// shared by this chunk and its 8 neighbors (each unit cell is one chunk width).
+// Lattice index (li, lj), li/lj in [0, kNeighborhoodLatticeSize), sits at
+// chunk-corner-grid position (coord.x - 1 + li, coord.y - 1 + lj). A neighbor
+// chunk at offset (dx, dy) in [-1, 1] reads its own 4 corners at lattice
+// (dx+1, dy+1) .. (dx+2, dy+2). See neighborCornerBiomes/neighborCornerElevations.
+inline constexpr int32_t kNeighborhoodLatticeSize = 4;
+
 struct ChunkSampleResult {
     std::array<BiomeWeights, 4> cornerBiomes{};
     std::array<float, 4>        cornerElevations{};
     std::array<BiomeWeights, kSectorGridSize * kSectorGridSize> sectorGrid{};
+
+    // Corner biome/elevation samples for the chunk's full 3x3 neighborhood, stored
+    // once as the 4x4 lattice of corners the neighborhood shares (see
+    // kNeighborhoodLatticeSize above). Filled by the world sampler through the same
+    // per-position formula each neighbor chunk uses for its own corners, so a
+    // neighbor's sector grid rebuilt from this lattice is bit-identical to the one
+    // that neighbor computes for itself (terrain-polygons-architecture.md D4/D14).
+    // Used by ApronField to build apron tiles without waiting on neighbor chunks.
+    std::array<BiomeWeights, kNeighborhoodLatticeSize * kNeighborhoodLatticeSize> neighborhoodCornerBiomes{};
+    std::array<float, kNeighborhoodLatticeSize * kNeighborhoodLatticeSize>        neighborhoodCornerElevations{};
+
+    // The 4 corners (NW, NE, SW, SE, matching ChunkCorner's order) of the neighbor
+    // chunk at offset (dx, dy) from this one, dx/dy in [-1, 1], as that neighbor's
+    // own ChunkCoordinate::corner() samples would read.
+    [[nodiscard]] std::array<BiomeWeights, 4> neighborCornerBiomes(int32_t dx, int32_t dy) const {
+        const int32_t li = dx + 1;
+        const int32_t lj = dy + 1;
+        return {
+            neighborhoodCornerBiomes[static_cast<size_t>(lj * kNeighborhoodLatticeSize + li)],
+            neighborhoodCornerBiomes[static_cast<size_t>(lj * kNeighborhoodLatticeSize + li + 1)],
+            neighborhoodCornerBiomes[static_cast<size_t>((lj + 1) * kNeighborhoodLatticeSize + li)],
+            neighborhoodCornerBiomes[static_cast<size_t>((lj + 1) * kNeighborhoodLatticeSize + li + 1)],
+        };
+    }
+
+    [[nodiscard]] std::array<float, 4> neighborCornerElevations(int32_t dx, int32_t dy) const {
+        const int32_t li = dx + 1;
+        const int32_t lj = dy + 1;
+        return {
+            neighborhoodCornerElevations[static_cast<size_t>(lj * kNeighborhoodLatticeSize + li)],
+            neighborhoodCornerElevations[static_cast<size_t>(lj * kNeighborhoodLatticeSize + li + 1)],
+            neighborhoodCornerElevations[static_cast<size_t>((lj + 1) * kNeighborhoodLatticeSize + li)],
+            neighborhoodCornerElevations[static_cast<size_t>((lj + 1) * kNeighborhoodLatticeSize + li + 1)],
+        };
+    }
 
     // River channel segments (2D world meters) whose footprint touches this
     // chunk, synthesized from the coarse 3D drainage graph by RiverNetwork2D.
@@ -139,5 +182,43 @@ struct ChunkSampleResult {
         return result;
     }
 };
+
+// Fill `result`'s neighborhood corner lattice (kNeighborhoodLatticeSize^2 shared
+// corners of the chunk's 3x3 neighborhood) by calling the given per-world-position
+// biome/elevation functions at each lattice point. Both MockWorldSampler and
+// GeneratedWorldSampler have their own private per-position sampling methods, so
+// this stays a template over callables rather than an IWorldSampler method; it is
+// the one place the lattice-index-to-world-position math is spelled out (D14: one
+// path for every sampler).
+template <typename BiomeAtFn, typename ElevAtFn>
+void fillNeighborhoodCorners(ChunkSampleResult& result, ChunkCoordinate coord, BiomeAtFn&& biomeAt, ElevAtFn&& elevAt) {
+    for (int32_t lj = 0; lj < kNeighborhoodLatticeSize; ++lj) {
+        for (int32_t li = 0; li < kNeighborhoodLatticeSize; ++li) {
+            const WorldPosition pos{
+                static_cast<float>(coord.x - 1 + li) * kChunkWorldSize,
+                static_cast<float>(coord.y - 1 + lj) * kChunkWorldSize
+            };
+            const size_t idx = static_cast<size_t>(lj * kNeighborhoodLatticeSize + li);
+            result.neighborhoodCornerBiomes[idx] = biomeAt(pos);
+            result.neighborhoodCornerElevations[idx] = elevAt(pos);
+        }
+    }
+}
+
+// Build a ChunkSampleResult whose own corners and full 3x3 neighborhood are all
+// the same biome/elevation, with the sector grid computed. For callers that
+// hand-build sample data without a real IWorldSampler (tests): without this, the
+// neighborhood corner lattice would stay default-constructed (empty BiomeWeights),
+// which is a safe-but-meaningless fallback for anything built from it, such as an
+// ApronField's apron tiles.
+[[nodiscard]] inline ChunkSampleResult makeUniformChunkSampleResult(const BiomeWeights& biome, float elevationMeters) {
+    ChunkSampleResult result;
+    result.cornerBiomes.fill(biome);
+    result.cornerElevations.fill(elevationMeters);
+    result.neighborhoodCornerBiomes.fill(biome);
+    result.neighborhoodCornerElevations.fill(elevationMeters);
+    result.computeSectorGrid();
+    return result;
+}
 
 } // namespace engine::world
