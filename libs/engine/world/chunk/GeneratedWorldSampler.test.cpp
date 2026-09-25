@@ -155,6 +155,35 @@ TEST(GeneratedWorldSamplerRivers, RiverWaterCarriesDepthFromWidth) {
     EXPECT_GT(maxDepth, 120) << "a wide carved river should render well below the deepest, not at the shallow floor";
 }
 
+// The river source lands at local world (0,0) (GeneratedWorldSampler uses the
+// landing lat/lon as the origin), the shared corner of chunks (0,0), (-1,0),
+// (0,-1), and (-1,-1). Chunk (-1,-1)'s own 512x512 square is x,y in [-512, 0),
+// which excludes (0,0); only its 8 m apron reaches across the corner to it. This
+// is the apron-AABB-expansion this task adds to sampleChunk (terrain-polygons-
+// architecture.md D4): before it, chunk (-1,-1) would gather no segments here.
+TEST(GeneratedWorldSamplerRivers, ApronReachesRiverJustAcrossChunkCorner) {
+    using namespace worldgen;
+    auto world = makeSemiDesertWorld();
+
+    const TileId source = world->grid->fromLatLon(0.0, 0.0);
+    const TileId mouth = world->grid->fromLatLon(0.0, 40.0);
+    carveRiver(*world, source, mouth);
+
+    double lat = 0.0;
+    double lon = 0.0;
+    world->grid->latLonOf(source, lat, lon);
+
+    GeneratedWorldSampler sampler(world, lat, lon);
+
+    ChunkSampleResult originResult = sampler.sampleChunk(ChunkCoordinate(0, 0));
+    ChunkSampleResult farCornerResult = sampler.sampleChunk(ChunkCoordinate(-1, -1));
+
+    EXPECT_FALSE(originResult.riverSegments.empty())
+        << "the chunk touching the river source directly must gather it";
+    EXPECT_FALSE(farCornerResult.riverSegments.empty())
+        << "the diagonal neighbor's 8 m apron must reach the river just across its corner";
+}
+
 TEST(GeneratedWorldSamplerRivers, NoDrainageMeansNoWater) {
     using namespace worldgen;
     auto world = makeSemiDesertWorld();
