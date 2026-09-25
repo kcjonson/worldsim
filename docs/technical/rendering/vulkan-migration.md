@@ -34,7 +34,7 @@ on GL means staying on a 2010-era feature set on one of three platforms. Vulkan 
 MoltenVK is the only path that gives one modern API everywhere without writing a Metal
 backend.
 
-Recommendation: Vulkan 1.3 through `ash`, behind a thin in-house renderer, built as part of the
+Recommendation: Vulkan 1.4 through `ash`, behind a thin in-house renderer, built as part of the
 Rust rewrite rather than in C++ first. Everything else in the rewrite is a literal
 translation; the renderer is redesigned against the [renderer contract](#renderer-contract) in
 this doc. The only rendering work worth doing in C++ now is a golden image set so the rewrite
@@ -126,7 +126,7 @@ ordered by how badly they bite if missed.
 
 | Option | For us | Verdict |
 |---|---|---|
-| Raw Vulkan 1.3 behind our own thin layer | Full control, one API on all three platforms (MoltenVK on Mac), compute everywhere, best validation tooling | **Recommended** |
+| Raw Vulkan 1.4 behind our own thin layer | Full control, one API on all three platforms (MoltenVK on Mac), compute everywhere, best validation tooling | **Recommended** |
 | SDL3 GPU | Clean small API over Vulkan/D3D12/Metal; no bindless, replaces GLFW, per-backend shader blobs via shadercross (pulls DXC + SPIRV-Cross) | Good if we wanted the least work, but it's someone else's abstraction sitting between us and the GPU |
 | WebGPU native (Dawn, wgpu-native) | Nice ergonomics and a browser story; WGSL, no standard push constants or bindless, heavy (Dawn) or Rust-built (wgpu) | Dawn no; wgpu is a real contender in Rust (see [ash or wgpu](#ash-or-wgpu)) |
 | bgfx / Diligent / LLGL / NVRHI | Mature abstractions with their own shader dialects or build tools; NVRHI has no Metal | No; conflicts with "tune our own engine" |
@@ -156,27 +156,40 @@ most of that boilerplate optional. Sascha Willems' 2026 sample does textured, li
 rendering in 688 lines using the modern feature set, against 1,621 lines for the classic
 tutorial at similar scope.
 
-What we'd require (all core in 1.3, all listed as supported by MoltenVK):
+**Target: Vulkan 1.4 core.** The game requires a 1.4 driver and codes against the 1.4 feature
+set directly, with no runtime checks for optional features and no fallbacks (the one-path
+rule). The dev machine's RTX 3090 on driver 610.88 reports 1.4.341.
+
+From 1.3 core, the features the renderer contract is built on:
 
 - **Dynamic rendering**: no `VkRenderPass`/`VkFramebuffer` objects; begin rendering into images directly.
 - **Synchronization2**: saner barrier API.
 - **Descriptor indexing**: one global bindless texture array, indexed by an int in push constants. This maps well onto our atlases and chunk textures.
 - **Buffer device address**: pass GPU pointers to per-frame data instead of juggling descriptor sets.
 - **Extended dynamic state**: fewer pipeline permutations.
-- Push descriptors (core in 1.4) are nice-to-have.
+
+Added by 1.4 core, which we use rather than work around:
+
+- **Push descriptors**: bind per-draw resources without allocating descriptor sets.
+- **Maintenance5/6**: smaller API cleanups, including `vkCmdBindDescriptorSets2` and `vkCmdPushConstants2`.
+- **Scalar block layout**: C-like struct layout in shader buffers, so Rust `#[repr(C)]` structs match GPU memory without std140/std430 padding rules.
+- **Dynamic rendering local read**: read the current attachment in a later pass without ending rendering, useful for the planned trample/ripple accumulation targets.
 
 What we'd skip: `VK_EXT_shader_object` (57% of Windows devices, missing from MoltenVK) and
 `VK_EXT_descriptor_buffer` (DXVK disables it on older NVIDIA and AMD for performance problems,
 and Khronos's new descriptor heap extension is meant to replace it). Revisit descriptor heaps
 once they're KHR and in MoltenVK.
 
-Mojang picked Vulkan 1.2 + dynamic rendering + push descriptors as Minecraft Java's minimum for
-reach. 1.3 cuts off some older hardware; check vulkan.gpuinfo.org against our minimum spec
-before locking it (open question 1).
+The trade is reach. Players whose GPU drivers stop at 1.3 or earlier can't run the game;
+Mojang chose 1.2 + extensions for Minecraft Java for exactly that reason. We accept it: the
+game ships after the rewrite, driver coverage only grows, and one feature set is simpler than
+a floor plus optional extras. Check vulkan.gpuinfo.org coverage again before release.
 
 **macOS**: MoltenVK translates Vulkan to Metal and was "nearly conformant" 1.4 as of January
-2026, on Intel and Apple Silicon. KosmicKrisp (LunarG, in Mesa) is conformant 1.3 but Apple
-Silicon + Metal 4 only and still self-described alpha. Start on MoltenVK. We ship its dylib
+2026, on Intel and Apple Silicon. "Nearly" is the risk at a 1.4 target: the spike's Mac step
+has to confirm the specific 1.4 features we use work there. KosmicKrisp (LunarG, in Mesa) is
+conformant 1.3 only, Apple Silicon + Metal 4 only, and still self-described alpha, so it's
+out at a 1.4 target. MoltenVK it is. We ship its dylib
 with the Mac build and enable the portability enumeration extension at instance creation.
 
 ## Shaders and SPIR-V
@@ -351,7 +364,7 @@ rewrite on one thin slice, which tests the automated-rewrite approach as much as
 3. **Compare against the golden.** Screenshot the scene and diff it against the C++ GL capture with a perceptual tolerance.
 4. **Instancing stress.** The groundcover scene (~486k tufts) with instance data in the ring. Compare GPU and CPU frame time against GL's ~1.75 ms GPU time.
 5. **Same slice on wgpu.** Steps 2-4 again on wgpu, comparing lines of code, CPU cost, validation findings, and how much control we gave up.
-6. **Mac smoke test.** Steps 1-3 through MoltenVK on a Mac.
+6. **Mac smoke test.** Steps 1-3 through MoltenVK on a Mac, confirming each 1.4 feature we use is supported.
 7. **Headless CI.** Step 3 as a `cargo test` under lavapipe on Linux.
 
 Exit criteria: validation-clean frames, the UI scene within tolerance of its golden, measured
@@ -384,11 +397,10 @@ shows up where the GL renderer was draw-call bound.
 
 ## Open questions
 
-1. **Minimum Vulkan version.** 1.3 core (recommended, simplest code) or 1.2 + extensions for older hardware reach, as Mojang did? Depends on our minimum spec, which we haven't set.
-2. **ash or wgpu.** ash recommended; the spike builds the same slice on both.
-3. **Mac path.** MoltenVK (recommended) with a native Metal backend only if MoltenVK limits bite? Moot if the spike picks wgpu.
-4. **SVG rasterization in Rust.** Port our use of nanosvg/nanosvgrast or adopt usvg/resvg? A rewrite-wide call that affects tile-pattern textures.
-5. **Where goldens live.** In the repo, in LFS, or as CI artifacts, and how the tolerance is defined.
+1. **ash or wgpu.** ash recommended; the spike builds the same slice on both.
+2. **Mac path.** MoltenVK (recommended) with a native Metal backend only if MoltenVK's 1.4 gaps bite? Moot if the spike picks wgpu.
+3. **SVG rasterization in Rust.** Port our use of nanosvg/nanosvgrast or adopt usvg/resvg? A rewrite-wide call that affects tile-pattern textures.
+4. **Where goldens live.** In the repo, in LFS, or as CI artifacts, and how the tolerance is defined.
 
 ## Incidental findings from the audit
 
