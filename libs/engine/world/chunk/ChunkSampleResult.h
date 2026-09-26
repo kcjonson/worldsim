@@ -87,28 +87,18 @@ struct ChunkSampleResult {
     // the chunk (rasterHydrology) through riverHalfWidthAt().
     std::vector<worldgen::RiverNetwork2D::Segment> riverSegments;
 
-    // Rasterization floor, tile layer only. RiverNetwork2D emits true channel
-    // half-widths now (no floor), for the future ribbon builder that strokes each
-    // channel at its real width; but a channel rasterized onto the 1 m tile grid
-    // narrower than ~1.6 m breaks into a dotted, non-contiguous line, so this
-    // floor holds every *rasterized* half-width at or above 0.8 m, applied per
-    // segment endpoint before the linear interpolation below (matching where
-    // RiverNetwork2D used to floor at emission, so the covered tile set is
-    // unchanged). Delete this once tiles stop drawing water and the polygon rings
-    // are the only rasterization (the shader/SDF task; see
-    // docs/technical/organic-terrain/terrain-polygons-architecture.md D10).
-    static constexpr float kTileRasterMinHalfM = 0.8f;
-
     // Channel half-width (meters) covering (worldXMeters, worldYMeters), or 0 if
-    // the point is outside every gathered channel. The widest covering channel
-    // wins (so confluences read as the larger river). Width drives both the water
-    // override and its rendered depth. Linear scan with a cheap AABB reject before
-    // the distance/sqrt, so the many short feeder segments stay affordable per tile.
+    // the point is outside every gathered channel, at the channel's true width:
+    // the tile raster is data (prefilter, tile-granular queries, D1), not what
+    // draws the river, so a sub-tile stream may cover few or no tile centers.
+    // The widest covering channel wins (so confluences read as the larger river).
+    // Linear scan with a cheap AABB reject before the distance/sqrt, so the many
+    // short feeder segments stay affordable per tile.
     [[nodiscard]] float riverHalfWidthAt(double worldXMeters, double worldYMeters) const {
         float best = 0.0f;
         for (const auto& s : riverSegments) {
-            const float hw0 = std::max(s.halfWidth0, kTileRasterMinHalfM);
-            const float hw1 = std::max(s.halfWidth1, kTileRasterMinHalfM);
+            const float hw0 = s.halfWidth0;
+            const float hw1 = s.halfWidth1;
             const float hwMax = std::max(hw0, hw1);
             if (worldXMeters < std::min(s.x0, s.x1) - hwMax ||
                 worldXMeters > std::max(s.x0, s.x1) + hwMax ||
@@ -171,7 +161,7 @@ struct ChunkSampleResult {
         const double maxX  = minX + static_cast<double>(kChunkSize) + 2.0 * reach;
         const double maxY  = minY + static_cast<double>(kChunkSize) + 2.0 * reach;
         for (const auto& s : riverSegments) {
-            const double pad = static_cast<double>(std::max({s.halfWidth0, s.halfWidth1, kTileRasterMinHalfM}));
+            const double pad = static_cast<double>(std::max(s.halfWidth0, s.halfWidth1));
             if (std::max(s.x0, s.x1) + pad >= minX && std::min(s.x0, s.x1) - pad <= maxX &&
                 std::max(s.y0, s.y1) + pad >= minY && std::min(s.y0, s.y1) - pad <= maxY) {
                 out.riverSegments.push_back(s);

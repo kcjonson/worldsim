@@ -262,9 +262,9 @@ namespace engine::world::terrain_detail {
 	// Which tiles count as the land side and the water side of a ring vertex.
 	// Waterline rings split on the biome water indicator. Channel and pond
 	// water is not biome water, and the tile raster paints it Surface::Water
-	// (with a 0.8 m half-width floor, so a probe past a narrow bank can still
-	// land on it): their land side is a tile that is neither, their water side
-	// whatever tile the probe falls in.
+	// at its true width (a sub-tile stream may cover no tile center): their
+	// land side is a tile that is neither, their water side whatever tile the
+	// probe falls in.
 	enum class SideRule : uint8_t { BiomeWater, VectorWater };
 
 	// D15 per-vertex profile. Every scale is a named constant on the builder.
