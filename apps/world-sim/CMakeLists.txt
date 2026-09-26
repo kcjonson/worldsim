@@ -62,6 +62,7 @@ add_executable(world-sim
     scenes/game/world/rooms/RoomOverlay.cpp
     scenes/game/world/nav/NavOverlay.cpp
     scenes/game/world/vision/VisionOverlay.cpp
+    scenes/game/world/terrain/TerrainPolygonOverlay.cpp
     scenes/game/ui/views/ConstructionConfigStrip.cpp
     # Scenes
     scenes/shared/GlobeView.cpp
