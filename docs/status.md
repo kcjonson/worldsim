@@ -606,7 +606,7 @@ while (running) {
 - [x] Nav reads rings, tile marcher deleted (WOR-459)
 - [x] Shader: `tile.frag` against the distance field, GPU upload, tile water path deleted, live tunables (WOR-460)
 - [ ] Vision shore points, distance-based mud, point bars
-- [ ] Land-on-land shader field blend
+- [ ] Every land-on-land boundary drawn as a warped field isoline (WOR-462, spec D16)
 - [ ] Perf validation across zoom levels
 
 ### Build & Test Speed Improvements
