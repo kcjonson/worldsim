@@ -2,6 +2,7 @@
 
 #include "world/chunk/ApronField.h"
 #include "world/chunk/TerrainPolygonBuilder.h"
+#include "world/chunk/TerrainPolygonQuery.h"
 #include "world/chunk/TileAdjacency.h"
 #include "world/chunk/TilePostProcessor.h"
 #include "world/generation/BiomeDispatcher.h"
@@ -70,9 +71,10 @@ namespace engine::world {
 			));
 		}
 
-		// Post-process tiles: generate mud near water, compute adjacency. The
-		// shore points came with the polygons.
-		TilePostProcessor::process(m_tiles, m_worldSeed);
+		// Final surfaces, point-bar sand then mud by distance to water (D11, D12),
+		// then adjacency. The shore points came with the polygons.
+		const TerrainPolygonQuery terrain(m_terrainPolygons);
+		TilePostProcessor::process(m_tiles, {.coord = m_coord, .terrain = &terrain, .worldSeed = m_worldSeed});
 
 		// Pre-compute rendering data (adjacency masks, neighbors) for ChunkRenderer
 		// This avoids per-frame extraction of adjacency data during rendering

@@ -84,6 +84,12 @@ namespace engine::world::terrain_detail {
 		return t * t * (3.0 - 2.0 * t);
 	}
 
+	// floor(a / b) for b > 0.
+	inline int64_t floorDiv(int64_t a, int64_t b) {
+		const int64_t q = a / b;
+		return (a % b != 0 && a < 0) ? q - 1 : q;
+	}
+
 	// The chunk square and the extended region (chunk plus apron), world mm.
 	struct Region {
 		Vec2i64 chunkMin;

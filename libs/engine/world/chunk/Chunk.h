@@ -144,6 +144,10 @@ class Chunk {
 	/// it, so there is exactly one tile-computation code path.
 	[[nodiscard]] static TileData computeTileFrom(const TileComputeArgs& args);
 
+	/// Deterministic hash of a tile (its owning chunk and local coordinates) and
+	/// a seed: the world tile, whichever chunk asks.
+	[[nodiscard]] static uint32_t tileHash(ChunkCoordinate chunk, uint16_t localX, uint16_t localY, uint64_t seed);
+
 	/// Create a chunk with sampled biome data
 	Chunk(ChunkCoordinate coord, ChunkSampleResult biomeData, uint64_t worldSeed);
 
@@ -265,9 +269,6 @@ class Chunk {
 	/// grid (ApronField).
 	[[nodiscard]] static Surface selectSurfaceFor(ChunkCoordinate coord, Biome biome, uint16_t localX,
 	                                               uint16_t localY, float elevationMeters, uint64_t worldSeed);
-
-	/// Hash function for deterministic tile generation
-	[[nodiscard]] static uint32_t tileHash(ChunkCoordinate chunk, uint16_t localX, uint16_t localY, uint64_t seed);
 };
 
 }  // namespace engine::world

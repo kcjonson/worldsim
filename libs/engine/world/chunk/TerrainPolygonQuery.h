@@ -1,9 +1,9 @@
 #pragma once
 
 // TerrainPolygonQuery - point queries over one chunk's terrain polygons
-// (docs/technical/organic-terrain/terrain-polygons-architecture.md D1, D3, D11):
-// how far a point is from water, the nearest point on the shore, and whether a
-// point is in water.
+// (docs/technical/organic-terrain/terrain-polygons-architecture.md D1, D3, D11,
+// D12): how far a point is from water, the nearest point on the shore, whether a
+// point is in water, and whether a tile is a point bar.
 //
 // It reads the chunk's unclipped `rings`. They cover the extended region (chunk
 // plus apron), and every ring edge within the lattice cell next to a border is
@@ -54,6 +54,9 @@ class TerrainPolygonQuery {
 
 	/// Whether `point` is in water. Outside the indexed area it is not.
 	[[nodiscard]] bool isInsideWater(const geometry::Vec2i64& point) const;
+
+	/// Whether world tile (tileX, tileY) is a point bar (D12).
+	[[nodiscard]] bool isPointBar(int64_t tileX, int64_t tileY) const { return polygons.barTiles.test(tileX, tileY); }
 
   private:
 	struct ShoreHit {

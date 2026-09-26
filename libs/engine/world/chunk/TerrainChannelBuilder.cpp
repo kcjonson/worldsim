@@ -565,6 +565,7 @@ namespace engine::world::terrain_detail {
 			double kappa		 = 0.0; // signed, 1/m, positive turning left
 			double radiusM		 = std::numeric_limits<double>::infinity();
 			double asymmetryM	 = 0.0; // a: the outer bank's extra offset
+			double bendShare	 = 1.0; // share of the bend's asymmetry and point bar kept, faded out over a mouth flare
 			double leftM		 = 0.0;
 			double rightM		 = 0.0;
 			float  widthRatio	 = 1.0F;
@@ -585,6 +586,7 @@ namespace engine::world::terrain_detail {
 			const double a	   = std::min(Builder::kAsymmetryMaxFrac, Builder::kAsymmetryCurvatureGain * kAbs * hw) * hw * asymmetryShare;
 			p.halfWidthM	   = hw;
 			p.asymmetryM	   = a;
+			p.bendShare		   = asymmetryShare;
 			const double outer = hw + a;
 			const double inner = hw + Builder::kInnerBankAsymmetryShare * a;
 			// Positive curvature turns left: the left bank is on the inside.
@@ -824,6 +826,101 @@ namespace engine::world::terrain_detail {
 			flush();
 		}
 
+		// ---- Point bars (D12) ----
+
+		// The bar's share of kBarWidth at arc s along a bend `length` long.
+		double barEnvelope(double s, double length) {
+			if (length <= Builder::kBarArchMaxM) {
+				return foundation::det_math::sin(std::numbers::pi * s / length);
+			}
+			const double ramp = Builder::kBarArchMaxM / 2.0;
+			return foundation::det_math::sin(0.5 * std::numbers::pi * std::min({1.0, s / ramp, (length - s) / ramp}));
+		}
+
+		// Every tile of the extended region whose center lies in the closed
+		// triangle, Water tiles aside (a bar is a deposit on land).
+		void markTriangle(const Vec2i64& a, const Vec2i64& b, const Vec2i64& c, const ExtendedGrid& grid, ExtendedTileBits& bars) {
+			using geometry::Orientation;
+			const Orientation winding = geometry::orientation(a, b, c);
+			if (winding == Orientation::Collinear) {
+				return;
+			}
+			auto sameSide = [winding](Orientation o) { return o == winding || o == Orientation::Collinear; };
+			// Tile t's center is t tiles plus half a tile.
+			const auto firstTile = [](int64_t lo) { return -floorDiv(Builder::kTileMm / 2 - lo, Builder::kTileMm); };
+			const auto lastTile	 = [](int64_t hi) { return floorDiv(hi - Builder::kTileMm / 2, Builder::kTileMm); };
+			const int64_t tx0	 = std::max(firstTile(std::min({a.x, b.x, c.x})), bars.originX);
+			const int64_t ty0	 = std::max(firstTile(std::min({a.y, b.y, c.y})), bars.originY);
+			const int64_t tx1	 = std::min(lastTile(std::max({a.x, b.x, c.x})), bars.originX + bars.size - 1);
+			const int64_t ty1	 = std::min(lastTile(std::max({a.y, b.y, c.y})), bars.originY + bars.size - 1);
+			for (int64_t ty = ty0; ty <= ty1; ++ty) {
+				for (int64_t tx = tx0; tx <= tx1; ++tx) {
+					const Vec2i64 center{tx * Builder::kTileMm + Builder::kTileMm / 2, ty * Builder::kTileMm + Builder::kTileMm / 2};
+					if (!sameSide(geometry::orientation(a, b, center)) || !sameSide(geometry::orientation(b, c, center)) ||
+						!sameSide(geometry::orientation(c, a, center))) {
+						continue;
+					}
+					const auto ex = static_cast<int32_t>(tx - bars.originX);
+					const auto ey = static_cast<int32_t>(ty - bars.originY);
+					if (grid.tile(ex, ey).surface != Surface::Water) {
+						bars.set(tx, ty);
+					}
+				}
+			}
+		}
+
+		// D12: on every bend turning one way at over kBarCurvature for
+		// kBarMinPoints points, a crescent landward of the inner bank as wide as
+		// barEnvelope says, faded out over a mouth flare like the asymmetry and held
+		// under the local radius like the inner bank (past the center of curvature
+		// the crescent would fold). Bank points are the ones the stroke places.
+		void markPointBars(const std::vector<RibbonPoint>& pts, const ExtendedGrid& grid, ExtendedTileBits& bars) {
+			const size_t	   n = pts.size();
+			std::vector<Vec2d> centerline(n);
+			for (size_t i = 0; i < n; ++i) {
+				centerline[i] = pts[i].position;
+			}
+			auto turning = [](const RibbonPoint& p) {
+				return p.kappa > Builder::kBarCurvature ? 1 : (p.kappa < -Builder::kBarCurvature ? -1 : 0);
+			};
+			std::vector<double>	 arc;
+			std::vector<Vec2i64> inner;
+			std::vector<Vec2i64> outer;
+			for (size_t s = 0; s < n;) {
+				const int side = turning(pts[s]);
+				size_t	  e	   = s;
+				while (side != 0 && e + 1 < n && turning(pts[e + 1]) == side) {
+					++e;
+				}
+				if (side == 0 || e - s + 1 < Builder::kBarMinPoints) {
+					s = e + 1;
+					continue;
+				}
+				arc.assign(1, 0.0);
+				for (size_t k = s + 1; k <= e; ++k) {
+					arc.push_back(arc.back() + geometry::length(pts[k].position - pts[k - 1].position));
+				}
+				inner.clear();
+				outer.clear();
+				for (size_t k = s; k <= e; ++k) {
+					const RibbonPoint& p	  = pts[k];
+					const double	   bankM  = side > 0 ? p.leftM : p.rightM; // positive curvature turns left
+					const double	   widthM = std::min(
+						  barEnvelope(arc[k - s], arc.back()) * Builder::kBarWidth * p.halfWidthM * p.bendShare,
+						  std::max(0.0, Builder::kRadiusClampFrac * p.radiusM - bankM)
+					  );
+					const Vec2d normal = geometry::strokeNormal(centerline, k);
+					inner.push_back(geometry::strokeBankPoint(p.position, normal, side * bankM));
+					outer.push_back(geometry::strokeBankPoint(p.position, normal, side * (bankM + widthM)));
+				}
+				for (size_t k = 0; k + 1 < inner.size(); ++k) {
+					markTriangle(inner[k], inner[k + 1], outer[k + 1], grid, bars);
+					markTriangle(inner[k], outer[k + 1], outer[k], grid, bars);
+				}
+				s = e + 1;
+			}
+		}
+
 	} // namespace
 
 	void buildPonds(std::vector<TerrainRing>& rings, std::span<const Builder::Pond> ponds, const ExtendedGrid& grid,
@@ -871,6 +968,7 @@ namespace engine::world::terrain_detail {
 			for (const Reach& reach : extractReaches(samples, arcs, region, water)) {
 				const std::vector<RibbonPoint> ribbon = ribbonPoints(reach, seeds);
 				appendThalwegs(ribbon, region, out.thalwegs);
+				markPointBars(ribbon, grid, out.barTiles);
 				for (ChannelPiece& piece : strokeReach(reach, ribbon)) {
 					for (Ring& ring : finishVectorRing(piece.ring, piece.cuts, region, coord, "channel ring")) {
 						TerrainRing terrain = vectorTerrainRing(

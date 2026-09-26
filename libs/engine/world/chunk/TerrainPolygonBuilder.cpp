@@ -76,11 +76,6 @@ namespace engine::world::terrain_detail {
 			return coarse;
 		}
 
-		int64_t floorDiv(int64_t a, int64_t b) {
-			const int64_t q = a / b;
-			return (a % b != 0 && a < 0) ? q - 1 : q;
-		}
-
 		// The ring cut into runs, each from a pin up to (not including) the next,
 		// starting at the lexicographically smallest pin so that every simplification
 		// rung of one resampled ring splits into the same runs in the same order. A
@@ -739,6 +734,7 @@ namespace engine::world {
 		}
 		buildPonds(out.rings, ponds, grid, region, worldSeed, coord);
 		const WaterlineField waterline(biomeWater, worldSeed);
+		out.barTiles = {.originX = region.extendedTileOrigin().x, .originY = region.extendedTileOrigin().y, .size = region.extendedSize};
 		buildChannels(out, riverSegments, ponds, waterline, grid, region, worldSeed, coord);
 		buildNavRings(out, region, coord);
 		out.edgeIndex	= TerrainPolygonQuery::buildIndex(out.rings, region.extendedRect());

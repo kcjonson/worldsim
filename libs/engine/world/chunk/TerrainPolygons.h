@@ -111,19 +111,50 @@ struct TerrainEdgeIndex {
 	std::vector<CellWater> cellWater{}; ///< per cell, read only where the cell has no edges
 };
 
+/// One bit per tile of a chunk's extended region (D4), row-major from world
+/// tile (originX, originY), `size` tiles per side. `words` stays empty until a
+/// bit is set.
+struct ExtendedTileBits {
+	int64_t originX = 0;
+	int64_t originY = 0;
+	int32_t size = 0;
+	std::vector<uint64_t> words{};
+
+	[[nodiscard]] bool test(int64_t tileX, int64_t tileY) const {
+		const int64_t x = tileX - originX;
+		const int64_t y = tileY - originY;
+		if (words.empty() || x < 0 || y < 0 || x >= size || y >= size) {
+			return false;
+		}
+		const auto bit = static_cast<size_t>(y * size + x);
+		return ((words[bit / 64] >> (bit % 64)) & 1U) != 0;
+	}
+
+	/// (tileX, tileY) must lie in the region.
+	void set(int64_t tileX, int64_t tileY) {
+		if (words.empty()) {
+			words.assign((static_cast<size_t>(size) * static_cast<size_t>(size) + 63) / 64, 0);
+		}
+		const auto bit = static_cast<size_t>((tileY - originY) * size + (tileX - originX));
+		words[bit / 64] |= uint64_t{1} << (bit % 64);
+	}
+};
+
 /// A chunk's terrain polygon set. `rings` covers the extended region (chunk plus
 /// apron, D4) unclipped, so no consumer of it ever sees a chunk border as a
 /// shoreline; `navRings` is the same rings clipped to the chunk's own 512x512
 /// square (D4, D9). `navRings` carries no per-vertex profiles: nav only reads the
 /// ring and the blocksMovement/holeCapable flags, never shading. `thalwegs` has one
 /// path per stretch of river reach the bake can read (D2, D10). `shorePoints`
-/// are the chunk square's drinkable-water stands (D11).
+/// are the chunk square's drinkable-water stands (D11), `barTiles` the extended
+/// region's point-bar tiles (D12).
 struct ChunkTerrainPolygons {
 	std::vector<TerrainRing> rings;
 	std::vector<TerrainRing> navRings;
 	std::vector<ThalwegPath> thalwegs;
 	TerrainEdgeIndex edgeIndex;
 	std::vector<geometry::Vec2i64> shorePoints;
+	ExtendedTileBits barTiles;
 	uint32_t version = 0; ///< bumped with the rings, read like Chunk::renderDataVersion
 };
 
