@@ -585,7 +585,7 @@ TEST(TerrainPolygonBuilderTest, IdenticalAcrossThreadCountsAndCompletionOrders) 
 // ============================================================================
 
 TEST(TerrainPolygonBuilderTest, RandomizedCornerBiomesStaySimpleAndSeamed) {
-	constexpr std::array<Biome, 6> kPalette = {
+	static constexpr std::array<Biome, 6> kPalette = {
 		Biome::Lake, Biome::Ocean, Biome::TemperateWetland, Biome::TemperateGrassland, Biome::Beach, Biome::TemperateDeciduousForest
 	};
 	int shoresOnBorder = 0;
