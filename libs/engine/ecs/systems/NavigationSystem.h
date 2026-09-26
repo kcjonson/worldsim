@@ -20,7 +20,8 @@
 //
 // Self-gating: nav generation is OFF the render clock. A region rebuilds only when its
 // driver nears the region edge (a margin inside the rect), its obstacle inputs change
-// (construction version or the in-area processed-chunk set), or it is brand new. A
+// (construction version, the in-area chunks' terrain polygon versions, or their
+// processed-placement state), or it is brand new. A
 // slow/stationary colonist with the camera held still keeps every gate shut -> no
 // rebuild. Panning/zooming the camera moves only the viewport region, never a
 // colonist's region.
@@ -237,6 +238,30 @@ class NavigationSystem : public ISystem {
 	// a built wall. Falls back to isOnMesh when the build inputs aren't wired (headless/tests).
 	[[nodiscard]] bool isPointBuildable(glm::vec2 meters) const;
 
+	// `meters` itself when it is walkable on the terrain-only mesh (water and built walls
+	// block, trees and rocks don't), else the nearest point that is, within the cached
+	// terrain area around it. Needs only the chunk manager, so it answers before any sim
+	// region exists: the landing uses it to move a drop point off the water. nullopt when
+	// the chunks aren't wired or the area holds no walkable ground.
+	[[nodiscard]] std::optional<glm::vec2> nearestTerrainWalkablePoint(glm::vec2 meters) const;
+
+	// Where a landing party of `count` stands, judged on the terrain-only mesh like
+	// nearestTerrainWalkablePoint (so it answers before any sim region exists).
+	struct GroupSpawn {
+		glm::vec2			   center; // the group's anchor (clearing center, colony origin)
+		std::vector<glm::vec2> points; // one per member, in order
+	};
+	// The center is the nearest point to `drop` (searched outward in rings) whose whole
+	// member ring -- `count` points spaced evenly on a circle of `ringRadiusMeters`, or the
+	// center alone for one member -- is clear ground, so the ring never straddles a shore.
+	// Clear means walkable at the point and at `clearanceMeters` around it (an agent's disc
+	// fits). Every member then stands on its ring point when that point is clear and at least
+	// `minSeparationMeters` from the members already placed, else on the nearest spot around
+	// it that is; each point is valid on its own. With no chunks wired (headless), the center
+	// is `drop` and the points are the raw ring.
+	[[nodiscard]] GroupSpawn groupSpawnPoints(glm::vec2 drop, std::size_t count, float ringRadiusMeters,
+											  float minSeparationMeters, float clearanceMeters) const;
+
 	// Sampling pitch (mm) for the whole-footprint / whole-centerline walkability checks.
 	// 0.5 m is fine enough to catch a ~1-tile water sliver between two on-land vertices.
 	// Footprints are small, so even a dense interior grid at this pitch is a few hundred
@@ -351,7 +376,7 @@ class NavigationSystem : public ISystem {
 		geometry::nav::NavMesh	 navMesh;		  // current queryable mesh (empty = building)
 		std::future<geometry::nav::NavMesh> future; // in-flight build (valid only while running)
 		std::uint64_t			 builtVersion			 = UINT64_MAX; // ConstructionWorld::version at launch
-		std::uint64_t			 builtAreaChunkSignature = 0;		   // processed-chunk hash at launch
+		std::uint64_t			 builtAreaChunkSignature = 0;		   // areaChunkSignature at launch
 		std::uint64_t			 builtRemovalEpoch		 = UINT64_MAX; // PlacementExecutor::removalEpoch at launch
 		std::uint64_t			 meshGeneration			 = 0;		   // bumped on this region's mesh swap
 
@@ -394,15 +419,16 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] const geometry::nav::NavMesh& terrainMeshCovering(geometry::Vec2i64 minMm, geometry::Vec2i64 maxMm) const;
 
 	// True if `region` must (re)build: never built, world version changed, a driver
-	// nears its edge (handled by the caller before this), or its in-area processed-chunk
-	// set changed.
+	// nears its edge (handled by the caller before this), or areaChunkSignature changed
+	// (an in-area chunk's terrain rings or placement state).
 	[[nodiscard]] bool regionObstaclesChanged(const SimulationRegion& region) const;
 
 	// Clamp a requested half-extent to [min, max] and to the loaded-chunk extent.
 	[[nodiscard]] std::int64_t clampHalfExtent(std::int64_t requested) const;
 
-	// Order-independent hash of the processed chunks overlapping the square AABB centered
-	// at `center` with `halfExtent`. Returns 0 when processedChunks is null.
+	// Hash of what the area's obstacles depend on per chunk (engine::nav::areaChunkRange):
+	// each chunk's terrain polygon version (engine::nav::waterSignature) and whether it
+	// has finished entity placement. Either part is left out when its source isn't wired.
 	[[nodiscard]] std::uint64_t areaChunkSignature(geometry::Vec2i64 center, std::int64_t halfExtent) const;
 
 	// Locate the index of the built region whose rect contains `meters`, or -1. When

@@ -1305,15 +1305,15 @@ namespace {
 			);
 
 			// The drop point picked in GameLoadingScene comes from the 2D river-channel
-			// model, which can disagree with the runtime tile classification the navmesh
-			// reads -- and, untouched, it can sit on a navmesh triangle BOUNDARY EDGE (off
-			// the mesh by a few cm, which locateTriangle rejects) with trees/rocks placed
-			// right on top of it. Either strands the colonist and makes the off-mesh
-			// recovery snap fire at spawn. prepareLandingClearing() fixes it at the source:
-			// snap to a walkable tile CENTER (solidly inside a walkable face, not on an
-			// edge), remove the placed entities in a radius so there is an open clearing,
-			// and return that as the guaranteed-clear, on-mesh spawn point.
-			m_spawnPosition = prepareLandingClearing(m_spawnPosition);
+			// model, which can disagree with the terrain rings the navmesh reads, and it
+			// can have trees/rocks placed right on top of it. Either strands the colonist
+			// and makes the off-mesh recovery snap fire at spawn. prepareLandingClearing()
+			// fixes it at the source: pick where each member stands on walkable terrain,
+			// remove the placed entities around them so there is an open clearing, and
+			// return those points with the clearing center.
+			const size_t							crewSize = std::max<size_t>(m_party.size(), 1);
+			const ecs::NavigationSystem::GroupSpawn landing	 = prepareLandingClearing(m_spawnPosition, crewSize, navSystem);
+			m_spawnPosition = landing.center;
 
 			// The clearing center is the colony's home anchor. Store it once here, in the one
 			// place that owns colony state for the session; every other consumer reads it from
@@ -1336,21 +1336,14 @@ namespace {
 			// the AI holds it as a read of this single store, not an independently computed copy.
 			ecsWorld->getSystem<ecs::AIDecisionSystem>().setColonyOrigin(m_colony.originPosition);
 
-			// Spawn the crew in the cleared, on-mesh clearing: a small ring around
-			// the center so members don't stack. An empty party (Quick Start,
-			// direct scene jumps) spawns the single default colonist.
+			// Spawn the crew on the points the landing picked: each on clear ground of its
+			// own, spread apart so members don't stack. An empty party (Quick Start, direct
+			// scene jumps) spawns the single default colonist.
 			if (m_party.empty()) {
-				spawnColonist(m_spawnPosition, "Bob");
+				spawnColonist(landing.points.front(), "Bob");
 			} else {
-				constexpr float kPartyRingRadius = 1.5F;
-				constexpr float kTwoPi = 6.2831853F;
 				for (size_t i = 0; i < m_party.size(); ++i) {
-					glm::vec2 pos = m_spawnPosition;
-					if (m_party.size() > 1) {
-						const float angle = kTwoPi * static_cast<float>(i) / static_cast<float>(m_party.size());
-						pos += glm::vec2{std::cos(angle), std::sin(angle)} * kPartyRingRadius;
-					}
-					const auto entity = spawnColonist(pos, m_party[i].name);
+					const auto entity = spawnColonist(landing.points[i], m_party[i].name);
 					// Replace the default starting skills with the member's rolled set.
 					if (auto* skills = ecsWorld->getComponent<ecs::Skills>(entity)) {
 						skills->clear();
@@ -1361,96 +1354,45 @@ namespace {
 				}
 			}
 
-			LOG_INFO(Game, "ECS initialized with %zu colonist(s)", std::max<size_t>(m_party.size(), 1));
+			LOG_INFO(Game, "ECS initialized with %zu colonist(s)", crewSize);
 		}
 
-		/// Test whether a world-meter position sits on a water tile, using the SAME
-		/// classification the navmesh reads (NavInputBuilder::extractWaterObstacles):
-		/// a tile is water iff its surface is Water or its primary biome is water.
-		/// An unloaded containing chunk is treated as water so callers keep searching
-		/// for known-good land rather than dropping onto unknown ground.
-		[[nodiscard]] bool isWaterAt(glm::vec2 worldMeters) const {
-			const engine::world::WorldPosition pos{worldMeters.x, worldMeters.y};
-			const engine::world::ChunkCoordinate coord = engine::world::worldToChunk(pos);
-			const engine::world::Chunk*			chunk = m_chunkManager->getChunk(coord);
-			if (chunk == nullptr || !chunk->isReady()) {
-				return true;
-			}
-			const auto [localX, localY] = engine::world::worldToLocalTile(pos);
-			const engine::world::TileData& tile = chunk->getTile(localX, localY);
-			return tile.surface == engine::world::Surface::Water || engine::world::isWater(tile.primaryBiome);
-		}
-
-		/// Return the input position if it is already non-water; otherwise ring-search
-		/// outward in tile-sized steps (up to ~64 m) and return the nearest non-water
-		/// tile center. Falls back to the input unchanged when nothing walkable is
-		/// found in range, so the caller can decide how to degrade.
-		[[nodiscard]] glm::vec2 nearestWalkable(glm::vec2 worldMeters) const {
-			if (!isWaterAt(worldMeters)) {
-				return worldMeters;
-			}
-
-			constexpr float kStep	   = engine::world::kTileSize; // meters per tile
-			constexpr int	kMaxRings  = 64;					  // ~64 m search radius
-			for (int ring = 1; ring <= kMaxRings; ++ring) {
-				glm::vec2 best{0.0F, 0.0F};
-				float	  bestDistSq = std::numeric_limits<float>::max();
-				bool	  found		 = false;
-				for (int dy = -ring; dy <= ring; ++dy) {
-					for (int dx = -ring; dx <= ring; ++dx) {
-						// Only the perimeter of this ring; interior was covered earlier.
-						if (std::abs(dx) != ring && std::abs(dy) != ring) {
-							continue;
-						}
-						const glm::vec2 candidate{worldMeters.x + static_cast<float>(dx) * kStep,
-												  worldMeters.y + static_cast<float>(dy) * kStep};
-						if (isWaterAt(candidate)) {
-							continue;
-						}
-						const float ddx	   = candidate.x - worldMeters.x;
-						const float ddy	   = candidate.y - worldMeters.y;
-						const float distSq = ddx * ddx + ddy * ddy;
-						if (distSq < bestDistSq) {
-							bestDistSq = distSq;
-							best	   = candidate;
-							found	   = true;
-						}
-					}
-				}
-				if (found) {
-					return best;
-				}
-			}
-			return worldMeters;
-		}
-
-		/// Radius (world meters) of the open clearing carved at the colonist's landing spot.
-		/// Generous next to the 0.3 m agent radius so the spawn tile and its immediate
+		/// Radius (world meters) of the open clearing carved around each colonist's landing spot.
+		/// Generous next to the 0.3 m agent radius so the spawn point and its immediate
 		/// neighbourhood are obstacle-free and the navmesh triangulates open walkable ground there.
 		static constexpr float kLandingClearRadius = 2.5F;
+		/// A party stands on a ring this far from the clearing center.
+		static constexpr float kPartyRingRadius = 1.5F;
+		/// Members never land closer than this, center to center (agent radius 0.3 m).
+		static constexpr float kPartyMinSeparation = 0.8F;
+		/// Every spawn point is walkable with this much clear ground around it: an agent's disc.
+		static constexpr float kSpawnClearance = 0.3F;
 
-		/// Turn the raw drop point into a guaranteed-clear, on-mesh spawn:
-		///  1. snap to the nearest WALKABLE (non-water) tile, then to that tile's CENTER -- a tile
-		///     center sits solidly inside a walkable navmesh face, never on the boundary edge that
-		///     locateTriangle rejects (which is what made the off-mesh snap fire at spawn);
-		///  2. clear the placed entities (trees/rocks) within kLandingClearRadius so nothing is
-		///     triangulated as an obstacle on top of the spawn -- an open clearing.
-		/// Returns the clearing center. Runs at ECS init, BEFORE the first navmesh build, so the
-		/// removed obstacles never enter the mesh input and the colonist drops onto open ground.
-		[[nodiscard]] glm::vec2 prepareLandingClearing(glm::vec2 rawSpawn) {
-			// Step 1: nearest walkable land, then its tile center. kTileSize is 1 m, so flooring to
-			// the tile and adding half a tile lands dead-center -- away from every tile/triangle edge.
-			const glm::vec2 walkable = nearestWalkable(rawSpawn);
-			const glm::vec2 center{std::floor(walkable.x) + 0.5F * engine::world::kTileSize,
-								   std::floor(walkable.y) + 0.5F * engine::world::kTileSize};
-			if (center != rawSpawn) {
-				LOG_INFO(Game, "Landing: drop (%.1f, %.1f) -> walkable tile center (%.2f, %.2f)",
-						 rawSpawn.x, rawSpawn.y, center.x, center.y);
+		/// Turn the raw drop point into guaranteed-clear, on-mesh spawns for a crew of `crewSize`:
+		///  1. pick the points on the terrain-only nav mesh (the chunks' water rings, no entities):
+		///     the clearing center is the nearest spot to the drop whose whole party ring stands on
+		///     clear ground, so the ring never straddles a shore, and each member's point is clear
+		///     ground of its own, kPartyMinSeparation from the others;
+		///  2. clear the placed entities (trees/rocks) within kLandingClearRadius of every point so
+		///     nothing is triangulated as an obstacle on top of a colonist.
+		/// Runs at ECS init, BEFORE the first sim-region build, so the removed obstacles never enter
+		/// the mesh input and the crew drops onto open ground.
+		[[nodiscard]] ecs::NavigationSystem::GroupSpawn
+		prepareLandingClearing(glm::vec2 rawSpawn, size_t crewSize, const ecs::NavigationSystem& navSystem) {
+			ecs::NavigationSystem::GroupSpawn landing =
+				navSystem.groupSpawnPoints(rawSpawn, crewSize, kPartyRingRadius, kPartyMinSeparation, kSpawnClearance);
+			if (landing.center != rawSpawn) {
+				LOG_INFO(Game, "Landing: drop (%.1f, %.1f) -> clearing center (%.2f, %.2f)", rawSpawn.x, rawSpawn.y,
+						 landing.center.x, landing.center.y);
 			}
 
-			// Step 2: carve the clearing.
-			clearLandingArea(center, kLandingClearRadius);
-			return center;
+			clearLandingArea(landing.center, kLandingClearRadius);
+			for (const glm::vec2& p : landing.points) {
+				if (glm::length(p - landing.center) > kLandingClearRadius - kSpawnClearance) {
+					clearLandingArea(p, kLandingClearRadius);
+				}
+			}
+			return landing;
 		}
 
 		/// Remove every placed entity (trees, rocks, ...) within `radius` of `center` so the spawn

@@ -15,6 +15,7 @@
 #include <nav/PathQuery.h>
 
 #include <utils/Log.h>
+#include <utils/WorldHash.h>
 
 #include <world/chunk/Chunk.h>
 #include <world/chunk/ChunkManager.h>
@@ -69,15 +70,17 @@ namespace ecs {
 			return {cand, cd2};
 		}
 
-		// Nearest walkable point on a single mesh to `meters`, or nullopt when the mesh
-		// has no walkable floor. Shared by nearestPathablePoint after region dispatch.
-		std::optional<glm::vec2> nearestPathableOnMesh(const gnav::NavMesh& navMesh, glm::vec2 meters) {
+		// Nearest point on a single mesh to `meters` whose face passes `faceOk`, or nullopt when no
+		// face does. Shared by nearestPathableOnMesh (terrain-optimistic: any wall is open) and
+		// nearestTruthWalkableOnMesh (a solid wall face blocks, same as truthTraversable).
+		template <typename FaceOk>
+		std::optional<glm::vec2> nearestFaceOnMesh(const gnav::NavMesh& navMesh, glm::vec2 meters, const FaceOk& faceOk) {
 			bool	  found	 = false;
 			float	  bestD2 = 0.0F;
 			glm::vec2 best{0.0F, 0.0F};
 			for (const gnav::NavTriangle& t : navMesh.triangles) {
-				if (!gnav::terrainTraversable(t)) {
-					continue; // skip common-knowledge blockers (water/tree); snap only onto walkable ground
+				if (!faceOk(t)) {
+					continue;
 				}
 				const glm::vec2 a = engine::nav::toMeters(navMesh.vertices[t.v[0]]);
 				const glm::vec2 b = engine::nav::toMeters(navMesh.vertices[t.v[1]]);
@@ -95,6 +98,21 @@ namespace ecs {
 				}
 			}
 			return found ? std::optional<glm::vec2>(best) : std::nullopt;
+		}
+
+		// Nearest walkable point on a single mesh to `meters`, or nullopt when the mesh has no
+		// walkable floor. Terrain-optimistic (gnav::terrainTraversable): skips common-knowledge
+		// blockers (water/tree) but treats every wall face as open. Shared by nearestPathablePoint
+		// after region dispatch.
+		std::optional<glm::vec2> nearestPathableOnMesh(const gnav::NavMesh& navMesh, glm::vec2 meters) {
+			return nearestFaceOnMesh(navMesh, meters, [](const gnav::NavTriangle& t) { return gnav::terrainTraversable(t); });
+		}
+
+		// Nearest point on a single mesh to `meters` that is walkable in TRUTH (gnav::truthTraversable):
+		// floor, or a wall face a door opening spans; a solid wall face blocks. Used where a snap must
+		// not land inside a built wall's band.
+		std::optional<glm::vec2> nearestTruthWalkableOnMesh(const gnav::NavMesh& navMesh, glm::vec2 meters) {
+			return nearestFaceOnMesh(navMesh, meters, [](const gnav::NavTriangle& t) { return gnav::truthTraversable(t); });
 		}
 
 		// --- Built-wall collision-band clearance (recovery-snap side) ----------------
@@ -342,30 +360,21 @@ namespace ecs {
 	}
 
 	std::uint64_t NavigationSystem::areaChunkSignature(geometry::Vec2i64 center, std::int64_t halfExtent) const {
+		// Water: every chunk's terrain polygon version, so a chunk that becomes ready or
+		// rebuilds its rings under the area rebuilds the mesh.
+		std::uint64_t sig = (chunkManager != nullptr)
+								? engine::nav::waterSignature(center, halfExtent, engine::nav::readyTerrainPolygons(*chunkManager))
+								: 0;
 		if (processedChunks == nullptr) {
-			return 0; // headless / construction-only: this trigger is inert
+			return sig; // headless / construction-only: no flora placement to track
 		}
 
-		const geometry::Vec2i64 minMm{center.x - halfExtent, center.y - halfExtent};
-		const geometry::Vec2i64 maxMm{center.x + halfExtent, center.y + halfExtent};
-		const double	   tileMm	= static_cast<double>(engine::world::kTileSize) * 1000.0;
-		const std::int64_t tileMinX = static_cast<std::int64_t>(std::floor(static_cast<double>(minMm.x) / tileMm)) - 1;
-		const std::int64_t tileMinY = static_cast<std::int64_t>(std::floor(static_cast<double>(minMm.y) / tileMm)) - 1;
-		const std::int64_t tileMaxX = static_cast<std::int64_t>(std::ceil(static_cast<double>(maxMm.x) / tileMm)) + 1;
-		const std::int64_t tileMaxY = static_cast<std::int64_t>(std::ceil(static_cast<double>(maxMm.y) / tileMm)) + 1;
-		const engine::world::ChunkCoordinate cMin =
-			engine::world::worldToChunk({static_cast<float>(tileMinX), static_cast<float>(tileMinY)});
-		const engine::world::ChunkCoordinate cMax =
-			engine::world::worldToChunk({static_cast<float>(tileMaxX), static_cast<float>(tileMaxY)});
-
-		std::uint64_t sig = 0;
-		const std::hash<engine::world::ChunkCoordinate> coordHash;
-		for (std::int32_t cy = cMin.y; cy <= cMax.y; ++cy) {
-			for (std::int32_t cx = cMin.x; cx <= cMax.x; ++cx) {
-				const engine::world::ChunkCoordinate coord{cx, cy};
-				if (processedChunks->find(coord) != processedChunks->end()) {
-					sig ^= static_cast<std::uint64_t>(coordHash(coord));
-				}
+		// Flora: which chunks have finished entity placement.
+		const engine::nav::AreaChunkRange range = engine::nav::areaChunkRange(center, halfExtent);
+		for (std::int32_t cy = range.min.y; cy <= range.max.y; ++cy) {
+			for (std::int32_t cx = range.min.x; cx <= range.max.x; ++cx) {
+				const bool processed = processedChunks->find({cx, cy}) != processedChunks->end();
+				sig					 = foundation::hashCombine(sig, processed ? 1U : 0U);
 			}
 		}
 		return sig;
@@ -804,13 +813,28 @@ namespace ecs {
 
 	namespace {
 
+		// Per-point "is this face on a SPECIFIC mesh walkable" (no region dispatch) under `faceOk`.
+		// Shared by pointOnNavMesh (terrain-optimistic) and pointTruthWalkable (solid walls block).
+		template <typename FaceOk>
+		bool pointOnFace(const gnav::NavMesh& mesh, glm::vec2 meters, const FaceOk& faceOk) {
+			const std::int32_t tri = gnav::locateTriangle(mesh, engine::nav::toMm(meters));
+			return tri >= 0 && faceOk(mesh.triangles[static_cast<std::size_t>(tri)]);
+		}
+
 		// Per-point "on walkable ground" against a SPECIFIC mesh (no region dispatch): the point is
 		// inside a triangle AND that triangle is terrain-traversable. Outdoor ground is not a
 		// kNoBlocker "floor" face (that's constructed indoor floor), so isFloorFace would reject all
-		// open terrain.
+		// open terrain. Terrain-optimistic: treats every wall face as open, same as
+		// gnav::terrainTraversable.
 		bool pointOnNavMesh(const gnav::NavMesh& mesh, glm::vec2 meters) {
-			const std::int32_t tri = gnav::locateTriangle(mesh, engine::nav::toMm(meters));
-			return tri >= 0 && gnav::terrainTraversable(mesh.triangles[static_cast<std::size_t>(tri)]);
+			return pointOnFace(mesh, meters, [](const gnav::NavTriangle& t) { return gnav::terrainTraversable(t); });
+		}
+
+		// Per-point walkable-in-TRUTH against a SPECIFIC mesh (gnav::truthTraversable): floor, or a
+		// wall face a door opening spans; a solid wall face is rejected. Used where a query must not
+		// treat a built wall's interior as walkable ground.
+		bool pointTruthWalkable(const gnav::NavMesh& mesh, glm::vec2 meters) {
+			return pointOnFace(mesh, meters, [](const gnav::NavTriangle& t) { return gnav::truthTraversable(t); });
 		}
 
 		// Whole-segment walkability under a per-point predicate: both endpoints plus every interior
@@ -941,12 +965,15 @@ namespace ecs {
 
 	geometry::nav::NavMesh NavigationSystem::buildTerrainOnlyMesh(geometry::Vec2i64 center, std::int64_t radius) const {
 		// Geography + built structures, no flora entities: buildInput with includeFlora=false. It reads
-		// live ConstructionWorld/placement/tiles, so it runs synchronously on the caller's (main)
-		// thread; the footprint-sized area keeps the build cheap.
-		engine::assets::PlacementExecutor  emptyPlacement(engine::assets::AssetRegistry::Get());
-		engine::assets::PlacementExecutor& exec = (placement != nullptr) ? *placement : emptyPlacement;
+		// live ConstructionWorld/placement/chunk rings, so it runs synchronously on the caller's (main)
+		// thread; the footprint-sized area keeps the build cheap. Before the construction world is
+		// wired (the landing snap at scene start) there are no walls, so an empty world stands in.
+		engine::assets::PlacementExecutor	   emptyPlacement(engine::assets::AssetRegistry::Get());
+		engine::assets::PlacementExecutor&	   exec = (placement != nullptr) ? *placement : emptyPlacement;
+		const engine::construction::ConstructionWorld noWalls;
+		const engine::construction::ConstructionWorld& walls = (constructionWorld != nullptr) ? *constructionWorld : noWalls;
 		gnav::NavMeshInput input = engine::nav::buildInput(center, radius, *chunkManager, exec,
-			engine::assets::AssetRegistry::Get(), *constructionWorld, engine::assets::ConstructionRegistry::Get(),
+			engine::assets::AssetRegistry::Get(), walls, engine::assets::ConstructionRegistry::Get(),
 			/*includeFlora=*/false);
 		return gnav::buildNavMesh(input);
 	}
@@ -954,7 +981,7 @@ namespace ecs {
 	const geometry::nav::NavMesh& NavigationSystem::terrainMeshCovering(geometry::Vec2i64 minMm, geometry::Vec2i64 maxMm) const {
 		// Reuse the cache only when it still covers the query AABB AND none of its inputs changed:
 		// walls (constructionWorld->version(), which bumps on every wall build/remove) and the in-area
-		// terrain -- water tiles that appear as chunks finish streaming, which version() is blind to, so
+		// terrain -- water rings that appear as chunks finish streaming, which version() is blind to, so
 		// key that on areaChunkSignature exactly as regionObstaclesChanged does (else a foundation drawn
 		// over a not-yet-ready chunk could stay "buildable" after water streams in under it). Otherwise
 		// rebuild, centered on the query and sized to cover it -- a footprint wider than the default
@@ -1005,6 +1032,107 @@ namespace ecs {
 		const geometry::Vec2i64 p	 = engine::nav::toMm(meters);
 		const gnav::NavMesh&	mesh = terrainMeshCovering(p, p);
 		return pointOnNavMesh(mesh, meters);
+	}
+
+	std::optional<glm::vec2> NavigationSystem::nearestTerrainWalkablePoint(glm::vec2 meters) const {
+		if (chunkManager == nullptr) {
+			return std::nullopt;
+		}
+		const geometry::Vec2i64 p	 = engine::nav::toMm(meters);
+		const gnav::NavMesh&	mesh = terrainMeshCovering(p, p);
+		if (pointTruthWalkable(mesh, meters)) {
+			return meters;
+		}
+		return nearestTruthWalkableOnMesh(mesh, meters);
+	}
+
+	NavigationSystem::GroupSpawn NavigationSystem::groupSpawnPoints(glm::vec2 drop, std::size_t count, float ringRadiusMeters,
+																	float minSeparationMeters, float clearanceMeters) const {
+		// Candidate search around a seed: the seed, then rings kSearchStepM apart, kSearchAngles
+		// points each, out to kSearchRings -- nearest first, a fixed order so a landing is
+		// deterministic.
+		static constexpr float kSearchStepM	 = 0.5F;
+		static constexpr int   kSearchRings	 = 40; // 20 m
+		static constexpr int   kSearchAngles = 16;
+		static constexpr float kTwoPi		 = 6.2831853F;
+		const float			   reachM		 = kSearchStepM * static_cast<float>(kSearchRings);
+
+		auto ringPoints = [count, ringRadiusMeters](glm::vec2 center) {
+			std::vector<glm::vec2> pts;
+			pts.reserve(count);
+			for (std::size_t i = 0; i < count; ++i) {
+				if (count == 1) {
+					pts.push_back(center);
+					break;
+				}
+				const float angle = kTwoPi * static_cast<float>(i) / static_cast<float>(count);
+				pts.push_back(center + glm::vec2{std::cos(angle), std::sin(angle)} * ringRadiusMeters);
+			}
+			return pts;
+		};
+
+		GroupSpawn out{drop, ringPoints(drop)};
+		if (chunkManager == nullptr || count == 0) {
+			return out;
+		}
+
+		// One terrain mesh covering every point the searches can touch.
+		const float				padM = 2.0F * reachM + ringRadiusMeters + clearanceMeters + 1.0F;
+		const geometry::Vec2i64 minMm = engine::nav::toMm(drop - glm::vec2{padM, padM});
+		const geometry::Vec2i64 maxMm = engine::nav::toMm(drop + glm::vec2{padM, padM});
+		const gnav::NavMesh&	mesh  = terrainMeshCovering(minMm, maxMm);
+
+		auto clear = [&mesh, clearanceMeters](glm::vec2 p) {
+			if (!pointTruthWalkable(mesh, p)) {
+				return false;
+			}
+			for (int k = 0; k < 8; ++k) {
+				const float angle = kTwoPi * static_cast<float>(k) / 8.0F;
+				if (!pointTruthWalkable(mesh, p + glm::vec2{std::cos(angle), std::sin(angle)} * clearanceMeters)) {
+					return false;
+				}
+			}
+			return true;
+		};
+		auto firstAround = [&](glm::vec2 seed, const auto& accept) -> std::optional<glm::vec2> {
+			if (accept(seed)) {
+				return seed;
+			}
+			for (int ring = 1; ring <= kSearchRings; ++ring) {
+				const float r = kSearchStepM * static_cast<float>(ring);
+				for (int a = 0; a < kSearchAngles; ++a) {
+					const float		angle = kTwoPi * static_cast<float>(a) / static_cast<float>(kSearchAngles);
+					const glm::vec2 c	  = seed + glm::vec2{std::cos(angle), std::sin(angle)} * r;
+					if (accept(c)) {
+						return c;
+					}
+				}
+			}
+			return std::nullopt;
+		};
+
+		// Bias the center inland: the nearest spot whose whole ring stands on clear ground.
+		const glm::vec2 snapped		   = nearestTerrainWalkablePoint(drop).value_or(drop);
+		const auto		wholeRingClear = [&](glm::vec2 c) {
+			const std::vector<glm::vec2> pts = ringPoints(c);
+			return std::all_of(pts.begin(), pts.end(), clear);
+		};
+		out.center = firstAround(snapped, wholeRingClear).value_or(snapped);
+
+		const float minSep2 = minSeparationMeters * minSeparationMeters;
+		out.points.clear();
+		for (const glm::vec2& seed : ringPoints(out.center)) {
+			const auto spaced = [&](glm::vec2 p) {
+				for (const glm::vec2& q : out.points) {
+					if (dist2(p, q) < minSep2) {
+						return false;
+					}
+				}
+				return clear(p);
+			};
+			out.points.push_back(firstAround(seed, spaced).value_or(nearestTerrainWalkablePoint(seed).value_or(seed)));
+		}
+		return out;
 	}
 
 	std::optional<glm::vec2> NavigationSystem::nearestPathablePoint(glm::vec2 meters) const {

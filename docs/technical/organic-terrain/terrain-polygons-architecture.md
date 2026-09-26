@@ -367,9 +367,13 @@ the rim.
 4. Not-ready or missing chunks contribute nothing (today they read as land; unchanged).
 
 Clipped rings from two chunks share their border edge exactly (D4). The CDT receives the same
-constrained edge twice, once from each side; `buildNavMesh` must accept coincident constraint
-segments from separate input rings. That is an implementation check for the nav task, not a
-design risk: the vertices are bit-identical, so the arrangement sees one edge.
+constrained edge twice, once from each side; `buildArrangement` merges exact duplicates and
+collinear partial overlaps into one edge, so this needs nothing extra (tested in
+`NavMesh.CoincidentConstraintEdgesFromSeparateRings`).
+
+A navRing spans its whole chunk, so each emitted ring is also clipped to the sim area rect
+(`clipRingToRect`, orientation kept) before it reaches the arrangement: the triangulation cost
+tracks the area, not the chunk, and the clip lands its crossings exactly on the border ring.
 
 ```cpp
 // NavInputBuilder::buildInput, water section (replaces the tile marcher)
@@ -385,7 +389,7 @@ for (const ChunkCoordinate& cc : chunksIntersecting(areaRectMm.expanded(kTileMm)
 }
 ```
 
-`regionObstaclesChanged` folds every `(chunk coordinate, terrainPolygons().version)` pair
+The rebuild signature (`NavigationSystem::areaChunkSignature`, via `nav::waterSignature`) folds every `(chunk coordinate, terrainPolygons().version)` pair
 over the area's chunks into its signature hash (not the maximum: one chunk already at
 version 2 would mask another moving 1 → 2), so any chunk rebuild triggers a mesh rebuild.
 
@@ -885,8 +889,7 @@ All of these are candidates for the debug server's tunables so the look can be A
   the sampler answering biome/elevation off-chunk. Confirm `PlanetSampler::sampleAt` cost at
   that count; if it matters, the apron beyond 2 tiles can use biome/elevation only (no river
   rasterization), since channels are stroked from segments, not from apron tiles.
-- Coincident constraint edges in the CDT (D9). Verify; if the arrangement dedups exact
-  duplicates, done; if not, dedup in `buildInput` by sorted edge key.
+- Coincident constraint edges in the CDT (D9): verified, the arrangement dedups them.
 - Divergence between drawn and walked water is zero by construction. The residual gameplay
   risk is the fordability threshold: a 1.1 m stream walked across while the picture shows
   knee-deep water. Tune with the debug tunables; the threshold is one constant.
