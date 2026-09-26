@@ -46,9 +46,10 @@ namespace engine::world {
 			}
 		}
 
-		// Terrain polygon rings from the raw tiles plus the apron (D4, D11 order):
-		// before post-processing, so these tiles match what a neighbor's apron
-		// computes for them. The apron is discarded once the rings are built.
+		// Terrain polygon rings from the raw tiles plus the apron (D4, D11 order),
+		// then their distance field (D10): before post-processing, so these tiles
+		// match what a neighbor's apron computes for them. The apron is discarded
+		// once the rings are built.
 		{
 			const ApronField	apron = ApronField::build(m_coord, m_biomeData, m_worldSeed);
 			const ExtendedTiles extended(*this, apron);
@@ -269,6 +270,7 @@ namespace engine::world {
 	void Chunk::setTerrainPolygons(ChunkTerrainPolygons polygons) {
 		polygons.version = m_terrainPolygons.version + 1;
 		m_terrainPolygons = std::move(polygons);
+		m_terrainDistanceField = TerrainDistanceField::bake(m_terrainPolygons, m_coord);
 	}
 
 	uint32_t Chunk::tileHash(ChunkCoordinate chunk, uint16_t localX, uint16_t localY, uint64_t seed) {
