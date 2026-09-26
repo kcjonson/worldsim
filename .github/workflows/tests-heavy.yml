@@ -106,7 +106,11 @@ jobs:
     - name: Setup vcpkg
       uses: lukka/run-vcpkg@v11
       with:
-        vcpkgGitCommitId: '8f54ef5453e7e76ff01e15988bf243e7247c5eb5'
+        # Windows builds ports from source when the binary cache is cold, and the
+        # older tool commit's msys2 packages (pkgconf, via vcpkg_fixup_pkgconfig)
+        # are gone from every mirror. Newer tool scripts; ports stay on the
+        # vcpkg.json builtin-baseline.
+        vcpkgGitCommitId: '617ef1c0c422737d117eda00a471ea1be5bad088'
 
     - name: Configure CMake
       shell: bash

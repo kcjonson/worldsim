@@ -19,6 +19,7 @@
 #include <world/chunk/ChunkSampleResult.h>
 #include <world/chunk/IWorldSampler.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -106,9 +107,11 @@ TEST(NavInputBuilder, Water_TenByTenBlock_OneCcwPolygon) {
 	EXPECT_TRUE(polys[0].blocked);
 	EXPECT_EQ(polys[0].provenanceId, kProvenanceWater);
 	EXPECT_TRUE(isCcw(polys[0].ring));
-	// 10x10 tiles = 100 m^2; simplify should collapse the staircase to ~4 corners.
-	EXPECT_NEAR(areaSqMeters(polys[0].ring), 100.0, 1e-6);
-	EXPECT_LE(polys[0].ring.size(), 6u);
+	// Sides on the tile edges (x, y = 5 m and 15 m), each corner cut by a chamfer
+	// from one tile-edge midpoint to the next: 100 m^2 minus four 0.5 x 0.5 / 2 =
+	// 0.125 m^2 triangles. Collinear runs collapse to the 8 octagon corners.
+	EXPECT_NEAR(areaSqMeters(polys[0].ring), 100.0 - 4 * 0.125, 1e-9);
+	EXPECT_EQ(polys[0].ring.size(), 8u);
 }
 
 TEST(NavInputBuilder, Water_WithLandIsland_OuterCcwInnerCw) {
@@ -137,6 +140,12 @@ TEST(NavInputBuilder, Water_WithLandIsland_OuterCcwInnerCw) {
 	}
 	EXPECT_EQ(ccw, 1); // outer water boundary
 	EXPECT_EQ(cw, 1);  // the land island hole
+	// The lone land tile is a diamond through its four edge midpoints: 0.5 m^2.
+	for (const auto& p : polys) {
+		if (isCw(p.ring)) {
+			EXPECT_NEAR(areaSqMeters(p.ring), 0.5, 1e-9);
+		}
+	}
 }
 
 TEST(NavInputBuilder, Water_NoWater_NoPolygons) {
@@ -149,13 +158,14 @@ TEST(NavInputBuilder, Water_OriginOffsetMapsToWorldMm) {
 	const Vec2i64 origin{7000, 3000};
 	std::vector<NavInputPolygon> polys = extractWaterObstacles(8, 8, isWater, origin);
 	ASSERT_EQ(polys.size(), 1u);
-	// Every vertex sits on the origin-shifted tile grid (multiples of 1000 mm + origin).
-	for (const Vec2i64& v : polys[0].ring) {
-		EXPECT_EQ((v.x - origin.x) % 1000, 0);
-		EXPECT_EQ((v.y - origin.y) % 1000, 0);
-		EXPECT_GE(v.x, origin.x);
-		EXPECT_GE(v.y, origin.y);
-	}
+	// The 2x2 block at the grid corner closes against out-of-bounds land on the
+	// tile edges x = 0 and y = 0: an octagon whose vertices sit on tile edges at
+	// tile-center positions, shifted by the origin.
+	Ring actual = polys[0].ring;
+	Ring expected = {{7500, 3000}, {8500, 3000}, {9000, 3500}, {9000, 4500}, {8500, 5000}, {7500, 5000}, {7000, 4500}, {7000, 3500}};
+	std::sort(actual.begin(), actual.end());
+	std::sort(expected.begin(), expected.end());
+	EXPECT_EQ(actual, expected);
 }
 
 // End-to-end repro for the "zero walkable faces" navmesh bug at a RIVER CONFLUENCE
@@ -617,13 +627,7 @@ namespace {
 
 		[[nodiscard]] ChunkSampleResult sampleChunk(ChunkCoordinate coord) const override {
 			const Biome b = isWaterChunk(coord) ? Biome::Lake : Biome::TemperateGrassland;
-			ChunkSampleResult r;
-			for (auto& cb : r.cornerBiomes) {
-				cb = BiomeWeights::single(b);
-			}
-			r.cornerElevations = {1.0F, 1.0F, 1.0F, 1.0F};
-			r.computeSectorGrid();
-			return r;
+			return engine::world::makeUniformChunkSampleResult(BiomeWeights::single(b), 1.0F);
 		}
 
 		[[nodiscard]] float	   sampleElevation(WorldPosition) const override { return 1.0F; }

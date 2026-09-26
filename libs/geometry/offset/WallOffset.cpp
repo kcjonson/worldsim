@@ -3,8 +3,12 @@
 #include "../predicates/Predicates.h"
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
+#include <cstddef>
 #include <map>
+#include <utility>
+#include <vector>
 
 namespace geometry {
 
@@ -312,30 +316,161 @@ namespace geometry {
 	}
 
 	void simplifyRing(Ring& ring, std::int64_t epsilonMm) {
-		if (ring.size() <= 3) {
+		std::vector<std::uint8_t> pinned(ring.size(), 0);
+		simplifyRing(ring, epsilonMm, pinned);
+	}
+
+	namespace {
+
+		// Squared distance from p to segment [a, b], in double: only ranks
+		// candidates, never decides a threshold (withinDistanceOfSegment does that
+		// exactly), so rounding cannot change which vertices survive the tolerance.
+		double rankDistance(const Vec2i64& p, const Vec2i64& a, const Vec2i64& b) {
+			const double abx = static_cast<double>(b.x - a.x);
+			const double aby = static_cast<double>(b.y - a.y);
+			const double apx = static_cast<double>(p.x - a.x);
+			const double apy = static_cast<double>(p.y - a.y);
+			const double len = abx * abx + aby * aby;
+			const double t	 = len > 0.0 ? std::clamp((apx * abx + apy * aby) / len, 0.0, 1.0) : 0.0;
+			const double dx	 = apx - abx * t;
+			const double dy	 = apy - aby * t;
+			return dx * dx + dy * dy;
+		}
+
+	} // namespace
+
+	void simplifyRing(Ring& ring, std::int64_t epsilonMm, std::vector<std::uint8_t>& pinned) {
+		assert(pinned.size() == ring.size());
+		const std::size_t n = ring.size();
+		if (n <= 3) {
 			return;
 		}
-		bool changed = true;
-		while (changed && ring.size() > 3) {
-			changed = false;
-			for (std::size_t cur = 0; cur < ring.size(); ++cur) {
-				const std::size_t prev = (cur + ring.size() - 1) % ring.size();
-				const std::size_t next = (cur + 1) % ring.size();
-				const Vec2i64&	  p	   = ring[prev];
-				const Vec2i64&	  c	   = ring[cur];
-				const Vec2i64&	  q	   = ring[next];
 
-				// Collinear with neighbors, or within epsilon of the prev->next
-				// segment (a sub-mm sliver from offset rounding): drop it.
-				const bool collinear = orientation(p, c, q) == Orientation::Collinear;
-				const bool sliver	 = withinDistanceOfSegment(c, p, q, epsilonMm);
-				if (collinear || sliver) {
-					ring.erase(ring.begin() + static_cast<std::ptrdiff_t>(cur));
-					changed = true;
-					break;
-				}
+		// Runs between consecutive anchors: every pinned vertex, and with fewer than
+		// two pins also the vertex farthest from the first anchor, so every run has
+		// two distinct ends. Each run is simplified on its own, so its result
+		// depends only on the run, never on the ring's start vertex.
+		std::vector<std::size_t> anchors;
+		for (std::size_t i = 0; i < n; ++i) {
+			if (pinned[i] != 0) {
+				anchors.push_back(i);
 			}
 		}
+		if (anchors.size() < 2) {
+			const std::size_t from	   = anchors.empty() ? 0 : anchors.front();
+			std::size_t		  farthest = from;
+			Int128			  best(0);
+			for (std::size_t i = 0; i < n; ++i) {
+				const Vec2i64 d = ring[i] - ring[from];
+				if (dot(d, d) > best) {
+					best	 = dot(d, d);
+					farthest = i;
+				}
+			}
+			if (farthest == from) {
+				return; // every vertex coincides
+			}
+			anchors = {std::min(from, farthest), std::max(from, farthest)};
+		}
+
+		// Douglas-Peucker per run: a span keeps its interior only where some vertex
+		// lies farther than epsilon from the span's chord (exact test), splitting at
+		// the farthest one. Every removed vertex therefore lies within epsilon of
+		// the kept polyline, so the error never accumulates along a gentle curve.
+		std::vector<std::uint8_t>							keep(n, 0);
+		std::vector<std::pair<std::size_t, std::size_t>> spans; // (first vertex, edge count)
+		for (std::size_t r = 0; r < anchors.size(); ++r) {
+			keep[anchors[r]] = 1;
+			spans.emplace_back(anchors[r], (anchors[(r + 1) % anchors.size()] + n - anchors[r]) % n);
+		}
+		while (!spans.empty()) {
+			const auto [first, edges] = spans.back();
+			spans.pop_back();
+			if (edges < 2) {
+				continue;
+			}
+			const Vec2i64& a		= ring[first];
+			const Vec2i64& b		= ring[(first + edges) % n];
+			bool		   within	= true;
+			std::size_t	   split	= 1;
+			double		   farthest = -1.0;
+			for (std::size_t k = 1; k < edges; ++k) {
+				const Vec2i64& v = ring[(first + k) % n];
+				within			 = within && withinDistanceOfSegment(v, a, b, epsilonMm);
+				const double d	 = rankDistance(v, a, b);
+				if (d > farthest) {
+					farthest = d;
+					split	 = k;
+				}
+			}
+			if (within) {
+				continue;
+			}
+			keep[(first + split) % n] = 1;
+			spans.emplace_back(first, split);
+			spans.emplace_back((first + split) % n, edges - split);
+		}
+
+		std::size_t kept = 0;
+		for (const std::uint8_t k : keep) {
+			kept += k;
+		}
+
+		// An anchor added only to split the ring (not pinned) may go too, under the
+		// same tolerance: when every vertex between its kept neighbors lies within
+		// epsilon of their chord.
+		for (const std::size_t c : anchors) {
+			if (pinned[c] != 0 || kept <= 3) {
+				continue;
+			}
+			std::size_t p = (c + n - 1) % n;
+			while (keep[p] == 0) {
+				p = (p + n - 1) % n;
+			}
+			std::size_t q = (c + 1) % n;
+			while (keep[q] == 0) {
+				q = (q + 1) % n;
+			}
+			bool within = true;
+			for (std::size_t i = (p + 1) % n; i != q && within; i = (i + 1) % n) {
+				within = withinDistanceOfSegment(ring[i], ring[p], ring[q], epsilonMm);
+			}
+			if (within) {
+				keep[c] = 0;
+				--kept;
+			}
+		}
+
+		// Never below a triangle: restore the vertex farthest from the first span's
+		// chord until there are three.
+		while (kept < 3) {
+			const Vec2i64& a		= ring[anchors[0]];
+			const Vec2i64& b		= ring[anchors[1]];
+			std::size_t	   restore	= n;
+			double		   farthest = -1.0;
+			for (std::size_t i = 0; i < n; ++i) {
+				const double d = rankDistance(ring[i], a, b);
+				if (keep[i] == 0 && d > farthest) {
+					farthest = d;
+					restore	 = i;
+				}
+			}
+			keep[restore] = 1;
+			++kept;
+		}
+
+		Ring					  out(kept);
+		std::vector<std::uint8_t> outPinned(kept);
+		std::size_t				  w = 0;
+		for (std::size_t i = 0; i < n; ++i) {
+			if (keep[i] != 0) {
+				out[w]		 = ring[i];
+				outPinned[w] = pinned[i];
+				++w;
+			}
+		}
+		ring   = std::move(out);
+		pinned = std::move(outPinned);
 	}
 
 	namespace {

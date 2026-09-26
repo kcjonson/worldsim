@@ -4,6 +4,8 @@
 
 #include "construction/OpeningGeometry.h"
 
+#include <contour/MarchingSquares.h>
+#include <contour/ScalarField.h>
 #include <core/Vec2i64.h>
 #include <offset/WallOffset.h>
 #include <polygon/Polygon.h>
@@ -11,7 +13,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <map>
 #include <optional>
 #include <unordered_map>
 #include <utility>
@@ -23,146 +24,37 @@ namespace engine::nav {
 		namespace gnav = geometry::nav;
 
 		constexpr std::int64_t kTileMm		   = geometry::kMillimetersPerMeter; // 1 tile == 1 m == 1000 mm
-		constexpr std::int64_t kSimplifyEpsMm  = 500;						   // collinear-run collapse tolerance for water loops
+		// Water loops only need collinear runs collapsed. A non-collinear vertex of a
+		// tile-center march sits at least ~316 mm off its neighbors' chord (a 1 m run
+		// meeting a 45 degree chamfer), so 250 never erodes a corner; 500 would shave
+		// half-tile strips off every chamfered side.
+		constexpr std::int64_t kSimplifyEpsMm  = 250;
 		constexpr std::int64_t kMinLoopAreaMm2 = kTileMm * kTileMm / 4;		   // drop sub-tile slivers (< 1/4 tile)
-
-		// --- Marching-squares loop stitching ------------------------------------
-
-		// A directed boundary edge between a water tile and a non-water neighbor,
-		// oriented so the water cell is on its LEFT. Walking these head-to-tail
-		// closes into loops; outer water boundaries come out CCW, holes (land
-		// islands) come out CW, with no extra orientation work.
-		struct DirEdge {
-			geometry::Vec2i64 from;
-			geometry::Vec2i64 to;
-		};
-
-		// Doubled signed area of a tile-space ring (shoelace). int64 is ample at
-		// tile resolution (a 512-wide chunk maxes at ~512*512 per term).
-		std::int64_t signedAreaDoubledTiles(const std::vector<geometry::Vec2i64>& ring) {
-			std::int64_t acc = 0;
-			const std::size_t n = ring.size();
-			for (std::size_t i = 0; i < n; ++i) {
-				const geometry::Vec2i64& a = ring[i];
-				const geometry::Vec2i64& b = ring[(i + 1) % n];
-				acc += a.x * b.y - b.x * a.y;
-			}
-			return acc;
-		}
-
-		// Stitch directed edges into closed loops. Each vertex has exactly one
-		// outgoing edge on a clean water boundary (cells are unit squares, no
-		// shared corners with ambiguity once edges carry direction), so a simple
-		// from->to chain walk recovers every loop deterministically.
-		std::vector<std::vector<geometry::Vec2i64>> stitchLoops(std::vector<DirEdge>& edges) {
-			std::map<geometry::Vec2i64, std::vector<std::size_t>> outgoing; // from -> edge indices
-			for (std::size_t i = 0; i < edges.size(); ++i) {
-				outgoing[edges[i].from].push_back(i);
-			}
-
-			std::vector<bool>							 used(edges.size(), false);
-			std::vector<std::vector<geometry::Vec2i64>>	 loops;
-
-			for (std::size_t start = 0; start < edges.size(); ++start) {
-				if (used[start]) {
-					continue;
-				}
-				std::vector<geometry::Vec2i64> loop;
-				std::size_t					   cur = start;
-				bool						   closed = false;
-				while (!used[cur]) {
-					used[cur] = true;
-					loop.push_back(edges[cur].from);
-					const geometry::Vec2i64 next = edges[cur].to;
-
-					// Find an unused outgoing edge from `next`. The saddle case (two
-					// outgoing edges at a shared corner) is resolved by preferring the
-					// edge that turns to keep water consistently on the left: pick the
-					// one whose direction continues the boundary without crossing into
-					// the diagonal-opposite cell. With unit-square edges that reduces
-					// to "take the first unused", which is deterministic given the
-					// stable edge ordering and never strands an edge.
-					auto it = outgoing.find(next);
-					std::size_t pick = edges.size();
-					if (it != outgoing.end()) {
-						for (std::size_t cand : it->second) {
-							if (!used[cand]) {
-								pick = cand;
-								break;
-							}
-						}
-					}
-					if (pick == edges.size()) {
-						closed = (next == loop.front());
-						break;
-					}
-					cur = pick;
-				}
-				// Keep only loops that closed back to their start. An open chain (a
-				// walk that stranded before returning) is not a valid ring and would
-				// give meaningless area/orientation downstream.
-				if (closed && loop.size() >= 3) {
-					loops.push_back(std::move(loop));
-				}
-			}
-			return loops;
-		}
+		constexpr float		   kWaterIso	   = 0.5F;							   // water samples are 1, land 0
 
 	} // namespace
 
 	std::vector<gnav::NavInputPolygon> extractWaterObstacles(int width, int height, const std::function<bool(int, int)>& isWater,
 															 geometry::Vec2i64 originMm) {
-		auto water = [&](int x, int y) -> bool {
-			if (x < 0 || y < 0 || x >= width || y >= height) {
-				return false; // out of bounds is land: closes loops at the grid edge
-			}
-			return isWater(x, y);
-		};
-
-		// Emit the unit boundary edges of every water tile, oriented water-on-left
-		// (the single-tile CCW boundary). Tile (x,y) covers [x,x+1]x[y,y+1] in tile
-		// space, +y up.
-		std::vector<DirEdge> edges;
+		// One sample per tile center, 1 water / 0 land, plus a land sample on every
+		// side so each loop closes. Crossings sit halfway between samples: on the tile
+		// edge between water and land, so out-of-bounds still reads as land at the
+		// grid edge, and corners cut into 45 degree chamfers through edge midpoints.
+		geometry::ScalarField field({originMm.x - kTileMm / 2, originMm.y - kTileMm / 2}, kTileMm, width + 2, height + 2);
 		for (int y = 0; y < height; ++y) {
 			for (int x = 0; x < width; ++x) {
-				if (!water(x, y)) {
-					continue;
-				}
-				const std::int64_t x0 = x;
-				const std::int64_t y0 = y;
-				const std::int64_t x1 = x + 1;
-				const std::int64_t y1 = y + 1;
-				if (!water(x, y - 1)) {
-					edges.push_back({{x0, y0}, {x1, y0}}); // bottom: ->+x
-				}
-				if (!water(x + 1, y)) {
-					edges.push_back({{x1, y0}, {x1, y1}}); // right: ->+y
-				}
-				if (!water(x, y + 1)) {
-					edges.push_back({{x1, y1}, {x0, y1}}); // top: ->-x
-				}
-				if (!water(x - 1, y)) {
-					edges.push_back({{x0, y1}, {x0, y0}}); // left: ->-y
+				if (isWater(x, y)) {
+					field.at(x + 1, y + 1) = 1.0F;
 				}
 			}
 		}
 
-		std::vector<std::vector<geometry::Vec2i64>> tileLoops = stitchLoops(edges);
-
 		std::vector<gnav::NavInputPolygon> out;
-		for (std::vector<geometry::Vec2i64>& tileLoop : tileLoops) {
-			// Drop sub-tile slivers before mapping to mm.
-			const std::int64_t area2 = std::llabs(signedAreaDoubledTiles(tileLoop)) * (kTileMm * kTileMm);
-			if (area2 / 2 < kMinLoopAreaMm2) {
+		for (geometry::Ring& ring : geometry::marchingSquares(field, kWaterIso)) {
+			const geometry::Int128 area2	= geometry::signedAreaDoubled(ring);
+			const geometry::Int128 absArea2 = area2.sign() < 0 ? -area2 : area2;
+			if (absArea2 < geometry::Int128(2 * kMinLoopAreaMm2)) {
 				continue;
-			}
-
-			// Tile coords -> world mm. The winding established in tile space (CCW
-			// outer, CW hole) is preserved by an axis-aligned positive scale.
-			geometry::Ring ring;
-			ring.reserve(tileLoop.size());
-			for (const geometry::Vec2i64& t : tileLoop) {
-				ring.push_back({originMm.x + t.x * kTileMm, originMm.y + t.y * kTileMm});
 			}
 			geometry::simplifyRing(ring, kSimplifyEpsMm);
 			if (ring.size() < 3) {

@@ -1,11 +1,12 @@
 #include "Chunk.h"
 
+#include "world/chunk/ApronField.h"
+#include "world/chunk/TerrainPolygonBuilder.h"
 #include "world/chunk/TileAdjacency.h"
 #include "world/chunk/TilePostProcessor.h"
 #include "world/generation/BiomeDispatcher.h"
 
 #include <algorithm>
-#include <cmath>
 
 namespace engine::world {
 
@@ -43,6 +44,17 @@ namespace engine::world {
 			for (uint16_t x = 0; x < kChunkSize; ++x) {
 				m_tiles[y * kChunkSize + x] = computeTile(x, y);
 			}
+		}
+
+		// Terrain polygon rings from the raw tiles plus the apron (D4, D11 order):
+		// before post-processing, so these tiles match what a neighbor's apron
+		// computes for them. The apron is discarded once the rings are built.
+		{
+			const ApronField	apron = ApronField::build(m_coord, m_biomeData, m_worldSeed);
+			const ExtendedTiles extended(*this, apron);
+			setTerrainPolygons(TerrainPolygonBuilder::build(
+				m_coord, m_worldSeed, [&extended](int32_t ex, int32_t ey) -> const TileData& { return extended.at(ex, ey); }
+			));
 		}
 
 		// Post-process tiles: generate mud near water, compute adjacency
@@ -149,26 +161,34 @@ namespace engine::world {
 	}
 
 	TileData Chunk::computeTile(uint16_t localX, uint16_t localY) const {
+		return computeTileFrom({
+			.coord = m_coord,
+			.localX = localX,
+			.localY = localY,
+			.biomeWeights = m_biomeData.getTileBiome(localX, localY),
+			.elevationMeters = m_biomeData.getTileElevation(localX, localY),
+			.hydrology = &m_biomeData,
+			.worldSeed = m_worldSeed,
+		});
+	}
+
+	TileData Chunk::computeTileFrom(const TileComputeArgs& args) {
 		TileData tile;
 
-		// Get biome weights from pre-computed sample data
-		BiomeWeights biomeWeights = m_biomeData.getTileBiome(localX, localY);
-
 		// Store primary and secondary biomes with blend weight
-		tile.primaryBiome = biomeWeights.primary();
-		tile.secondaryBiome = biomeWeights.secondary();
+		tile.primaryBiome = args.biomeWeights.primary();
+		tile.secondaryBiome = args.biomeWeights.secondary();
 
 		// Convert float weight (0.0-1.0) to uint8_t (0-255)
-		float primaryWeight = biomeWeights.primaryWeight();
+		float primaryWeight = args.biomeWeights.primaryWeight();
 		tile.biomeBlend = static_cast<uint8_t>(std::min(255.0F, primaryWeight * 255.0F));
 
-		// Get elevation from interpolation (convert meters to centimeters, clamped to uint16_t)
-		float elevMeters = m_biomeData.getTileElevation(localX, localY);
-		float elevCm = elevMeters * 100.0F;
+		// Elevation in meters -> centimeters, clamped to uint16_t
+		float elevCm = args.elevationMeters * 100.0F;
 		tile.elevation = static_cast<uint16_t>(std::clamp(elevCm, 0.0F, 65535.0F));
 
 		// Select surface type based on primary biome (uses spatial clustering)
-		tile.surface = selectSurface(tile.primaryBiome, localX, localY);
+		tile.surface = selectSurfaceFor(args.coord, tile.primaryBiome, args.localX, args.localY, args.elevationMeters, args.worldSeed);
 
 		// Water depth byte (cosmetic; the shader tints water by it). Biome water
 		// (ocean/lake/wetland) reads deep; river channels set depth from their width
@@ -176,15 +196,16 @@ namespace engine::world {
 		uint8_t depth = (tile.surface == Surface::Water) ? kDeepWaterDepth : 0;
 
 		// World position of this tile (meters), shared by the water overrides.
-		const WorldPosition origin = m_coord.origin();
-		const double worldXMeters = static_cast<double>(origin.x) + static_cast<double>(localX) * static_cast<double>(kTileSize);
-		const double worldYMeters = static_cast<double>(origin.y) + static_cast<double>(localY) * static_cast<double>(kTileSize);
+		const WorldPosition origin = args.coord.origin();
+		const double worldXMeters = static_cast<double>(origin.x) + static_cast<double>(args.localX) * static_cast<double>(kTileSize);
+		const double worldYMeters = static_cast<double>(origin.y) + static_cast<double>(args.localY) * static_cast<double>(kTileSize);
 
 		// River channels from the coarse 3D drainage graph override the biome
 		// surface. Continuous across chunk seams: the channel geometry is a
-		// deterministic function of world position, gathered per chunk.
-		if (!m_biomeData.riverSegments.empty()) {
-			const float halfWidth = m_biomeData.riverHalfWidthAt(worldXMeters, worldYMeters);
+		// deterministic function of world position, gathered per chunk (extended by
+		// the apron, so apron tiles see the same channels a neighbor chunk would).
+		if (args.hydrology != nullptr && !args.hydrology->riverSegments.empty()) {
+			const float halfWidth = args.hydrology->riverHalfWidthAt(worldXMeters, worldYMeters);
 			if (halfWidth > 0.0F) {
 				tile.surface = Surface::Water;
 				depth = waterDepthFromWidth(2.0F * halfWidth);
@@ -194,8 +215,8 @@ namespace engine::world {
 		// Sparse hydrology-driven ponds (and desert oases) turn land to water, after
 		// rivers so a channel crossing a pond cell keeps its river; existing water
 		// (river/ocean/lake) is left untouched.
-		if (!m_biomeData.pondBlobs.empty() && tile.surface != Surface::Water) {
-			const uint8_t pondDepth = m_biomeData.pondDepthAt(worldXMeters, worldYMeters);
+		if (args.hydrology != nullptr && !args.hydrology->pondBlobs.empty() && tile.surface != Surface::Water) {
+			const uint8_t pondDepth = args.hydrology->pondDepthAt(worldXMeters, worldYMeters);
 			if (pondDepth > 0) {
 				tile.surface = Surface::Water;
 				depth = pondDepth;
@@ -203,7 +224,7 @@ namespace engine::world {
 		}
 
 		// Generate deterministic moisture from hash
-		uint32_t		hash = tileHash(m_coord, localX, localY, m_worldSeed);
+		uint32_t		hash = tileHash(args.coord, args.localX, args.localY, args.worldSeed);
 		constexpr float kNormalize = 1.0F / static_cast<float>(UINT32_MAX);
 		float			moistureBase = static_cast<float>(hash) * kNormalize;
 
@@ -226,67 +247,24 @@ namespace engine::world {
 		return tile;
 	}
 
-	Surface Chunk::selectSurface(Biome biome, uint16_t localX, uint16_t localY) const {
+	Surface Chunk::selectSurfaceFor(ChunkCoordinate coord, Biome biome, uint16_t localX, uint16_t localY,
+	                                 float elevationMeters, uint64_t worldSeed) {
 		// Delegate to biome-specific generators via dispatcher
 		generation::GenerationContext ctx{
-			.chunkCoord = m_coord,
+			.chunkCoord = coord,
 			.localX = localX,
 			.localY = localY,
-			.worldSeed = m_worldSeed,
+			.worldSeed = worldSeed,
 			.biome = biome,
-			.elevation = m_biomeData.getTileElevation(localX, localY)
+			.elevation = elevationMeters
 		};
 
 		return generation::BiomeDispatcher::generate(ctx).surface;
 	}
 
-	float Chunk::smoothstep(float t) {
-		// Hermite interpolation: 3t² - 2t³
-		return t * t * (3.0F - 2.0F * t);
-	}
-
-	float Chunk::valueNoise(float x, float y, uint64_t seed) const {
-		// Get integer grid coordinates
-		auto	x0 = static_cast<int32_t>(std::floor(x));
-		auto	y0 = static_cast<int32_t>(std::floor(y));
-		int32_t x1 = x0 + 1;
-		int32_t y1 = y0 + 1;
-
-		// Get fractional part
-		float fx = x - static_cast<float>(x0);
-		float fy = y - static_cast<float>(y0);
-
-		// Apply smoothstep for smoother interpolation
-		float sx = smoothstep(fx);
-		float sy = smoothstep(fy);
-
-		// Hash at each corner, normalized to [0, 1]
-		constexpr float kNormalize = 1.0F / static_cast<float>(UINT32_MAX);
-		float			n00 = static_cast<float>(tileHash({x0, y0}, 0, 0, seed)) * kNormalize;
-		float			n10 = static_cast<float>(tileHash({x1, y0}, 0, 0, seed)) * kNormalize;
-		float			n01 = static_cast<float>(tileHash({x0, y1}, 0, 0, seed)) * kNormalize;
-		float			n11 = static_cast<float>(tileHash({x1, y1}, 0, 0, seed)) * kNormalize;
-
-		// Bilinear interpolation
-		float nx0 = n00 * (1.0F - sx) + n10 * sx;
-		float nx1 = n01 * (1.0F - sx) + n11 * sx;
-		return nx0 * (1.0F - sy) + nx1 * sy;
-	}
-
-	float Chunk::fractalNoise(float x, float y, uint64_t seed, int octaves, float persistence) const {
-		float total = 0.0F;
-		float amplitude = 1.0F;
-		float frequency = 1.0F;
-		float maxValue = 0.0F;
-
-		for (int i = 0; i < octaves; ++i) {
-			total += valueNoise(x * frequency, y * frequency, seed + static_cast<uint64_t>(i)) * amplitude;
-			maxValue += amplitude;
-			amplitude *= persistence;
-			frequency *= 2.0F;
-		}
-
-		return total / maxValue; // Normalize to [0, 1]
+	void Chunk::setTerrainPolygons(ChunkTerrainPolygons polygons) {
+		polygons.version = m_terrainPolygons.version + 1;
+		m_terrainPolygons = std::move(polygons);
 	}
 
 	uint32_t Chunk::tileHash(ChunkCoordinate chunk, uint16_t localX, uint16_t localY, uint64_t seed) {

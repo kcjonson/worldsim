@@ -117,10 +117,20 @@ namespace geometry {
 	// sliver drop) per the Clipper2 post-op concept (D2).
 	WallBands resolveWallBands(const std::vector<WallSegment>& segments, double miterLimit);
 
-	// Simplification pass (Clipper2 concept, D2): drop a vertex that is collinear
-	// with its neighbors, and drop a vertex within `epsilonMm` of the segment
-	// between its neighbors (sub-mm slivers from rounding). In place.
+	// Simplification pass (Clipper2 concept, D2): drop collinear vertices and
+	// vertices within `epsilonMm` of the kept outline (sub-mm slivers from
+	// rounding at small epsilon, bank-detail thinning at terrain scale). Every
+	// removed vertex lies within epsilonMm of the kept ring, so the error does not
+	// accumulate along a gentle curve (Douglas-Peucker, never below a triangle).
+	// In place.
 	void simplifyRing(Ring& ring, std::int64_t epsilonMm);
+
+	// The same pass with pinned vertices (terrain-polygons D6, border pins): a
+	// vertex whose mask entry is nonzero is never removed, and the mask shrinks in
+	// step with the ring. Each run between consecutive pins is simplified on its
+	// own, so its result depends only on the run, not on the ring's start vertex.
+	// With no pins it is exactly the unpinned pass.
+	void simplifyRing(Ring& ring, std::int64_t epsilonMm, std::vector<std::uint8_t>& pinned);
 
 	constexpr double	   kDefaultMiterLimit	 = 4.0;
 	constexpr std::int64_t kDefaultSimplifyEpsMm = 1;

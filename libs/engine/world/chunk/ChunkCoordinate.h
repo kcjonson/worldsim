@@ -16,6 +16,16 @@ inline constexpr int32_t kChunkSize = 512;	// Tiles per chunk dimension
 inline constexpr float kTileSize = 1.0F;	// Meters per tile
 inline constexpr float kChunkWorldSize = static_cast<float>(kChunkSize) * kTileSize; // Meters per chunk dimension
 
+/// Apron width in tiles on every side of a chunk's own 512x512 square. The
+/// terrain-polygon builder works over the chunk plus this apron so two adjacent
+/// chunks compute identical geometry across their shared border (see
+/// docs/technical/organic-terrain/terrain-polygons-architecture.md D4). Eight
+/// because the polygon distance field is clamped at 8 m.
+inline constexpr int32_t kApronTiles = 8;
+
+/// The chunk's own tiles plus the apron on every side.
+inline constexpr int32_t kExtendedSize = kChunkSize + 2 * kApronTiles;
+
 /// Corners of a chunk (for biome sampling)
 enum class ChunkCorner : uint8_t {
 	NorthWest = 0,

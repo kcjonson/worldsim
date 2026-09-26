@@ -10,6 +10,7 @@
 #include "scenes/game/world/vision/VisionOverlay.h"
 #include "scenes/game/world/placement/PlacementSystem.h"
 #include "scenes/game/world/rooms/RoomOverlay.h"
+#include "scenes/game/world/terrain/TerrainPolygonOverlay.h"
 #include "scenes/game/world/selection/SelectionSystem.h"
 
 #include <assets/ConstructionRegistry.h>
@@ -566,6 +567,13 @@ namespace {
 				.vision = &ecsWorld->getSystem<ecs::VisionSystem>(),
 			});
 
+			// Terrain polygon debug overlay: draws each loaded chunk's waterline
+			// rings and clipped navRings when toggled on (G). Off by default.
+			m_terrainPolygonOverlay = std::make_unique<world_sim::TerrainPolygonOverlay>(world_sim::TerrainPolygonOverlay::Args{
+				.camera = m_camera.get(),
+				.chunks = m_chunkManager.get(),
+			});
+
 			// Populate the config strip's material cards from construction config.
 			{
 				std::vector<std::pair<std::string, float>> materials;
@@ -718,6 +726,12 @@ namespace {
 			// V toggles the vision debug overlay (visibility polygons + occluders).
 			if (input.isKeyPressed(engine::Key::V)) {
 				setVisionOverlayActive(!m_visionOverlay->isActive());
+			}
+
+			// G toggles the terrain polygon debug overlay (waterline rings +
+			// clipped navRings, per chunk).
+			if (input.isKeyPressed(engine::Key::G)) {
+				setTerrainPolygonOverlayActive(!m_terrainPolygonOverlay->isActive());
 			}
 
 			// T toggles the per-colonist decision inspector panel.
@@ -998,6 +1012,10 @@ namespace {
 			// construction already went out in the ground sub-layer before the
 			// entity pass.
 			m_drawingSystem->renderPreview(w, h);
+
+			// Terrain polygon debug overlay (waterline rings + clipped navRings,
+			// per chunk), sitting just above the tile ground. No-op unless on (G).
+			m_terrainPolygonOverlay->render(w, h);
 
 			// Rooms overlay (tint/outline/label) above committed construction and
 			// entities. No-op unless toggled on (R).
@@ -1738,6 +1756,12 @@ namespace {
 			LOG_INFO(Game, "Vision overlay %s", active ? "ON" : "OFF");
 		}
 
+		/// Set the terrain polygon debug overlay active state. Plain hotkey toggle (G).
+		void setTerrainPolygonOverlayActive(bool active) {
+			m_terrainPolygonOverlay->setActive(active);
+			LOG_INFO(Game, "Terrain polygon overlay %s", active ? "ON" : "OFF");
+		}
+
 		/// Handle Demolish request from a foundation's info panel. Marks the foundation for
 		/// deconstruction; a colonist tears it down over time (work-driven), and the
 		/// deconstructed-completion callback removes the topology.
@@ -1977,6 +2001,7 @@ namespace {
 		std::unique_ptr<world_sim::SelectionSystem> m_selectionSystem;
 		std::unique_ptr<world_sim::DrawingSystem>	m_drawingSystem;
 		std::unique_ptr<world_sim::RoomOverlay>		m_roomOverlay;
+		std::unique_ptr<world_sim::TerrainPolygonOverlay> m_terrainPolygonOverlay;
 		std::unique_ptr<world_sim::NavOverlay>		m_navOverlay;
 		std::unique_ptr<world_sim::VisionOverlay>	m_visionOverlay;
 
