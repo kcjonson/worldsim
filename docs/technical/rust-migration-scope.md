@@ -1,7 +1,7 @@
 # C++ to Rust Migration: Scope and Spike
 
 Created: 2026-09-25
-Status: Research / exploration (no decision, no code change)
+Status: Research (decision made 2026-09-25: full rewrite; see [rust-rewrite-plan.md](./rust-rewrite-plan.md))
 Related: [monorepo-structure.md](./monorepo-structure.md), [library-decisions.md](./library-decisions.md), [cpp-coding-standards.md](./cpp-coding-standards.md), [ecs-patterns.md](./ecs-patterns.md), [build-performance.md](./build-performance.md)
 
 ## The question
@@ -545,15 +545,11 @@ judgment is needed and nowhere else. What that looks like in practice:
 
 ## Recommendation
 
-Don't commit to a full migration on this evidence. The evidence says the easy third ports
-cleanly and cheaply and the hard two thirds is a rewrite of our ECS and UI, which is a design
-decision about the game more than a language decision.
-
-Do option 4's fixes now regardless (they're prerequisites for any path and bugs on their own),
-starting with the triangulator's flip-queue sort. If we want a real answer on Rust, option 1 is a
-bounded experiment with a hard oracle: port the leaves, ship worldgen-cli in Rust, measure the
-per-module cost with the shared harness in place, and decide on the middle of the stack with
-real numbers.
+Written before the decision; kept for the record. The research recommendation was not to commit
+to a full migration on this evidence, since the easy third ports cleanly and the hard two thirds
+is a redesign of the ECS and UI. On 2026-09-25 we decided to do the full rewrite anyway, now,
+while the codebase is small. [rust-rewrite-plan.md](./rust-rewrite-plan.md) is the plan; the
+option 4 fixes above became its Phase 0.
 
 The spike crate and harness were scratch work and are not checked in, per the no-scripts-in-docs
 rule; the numbers above are the record.
