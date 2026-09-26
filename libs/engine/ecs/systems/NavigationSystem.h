@@ -245,6 +245,23 @@ class NavigationSystem : public ISystem {
 	// the chunks aren't wired or the area holds no walkable ground.
 	[[nodiscard]] std::optional<glm::vec2> nearestTerrainWalkablePoint(glm::vec2 meters) const;
 
+	// Where a landing party of `count` stands, judged on the terrain-only mesh like
+	// nearestTerrainWalkablePoint (so it answers before any sim region exists).
+	struct GroupSpawn {
+		glm::vec2			   center; // the group's anchor (clearing center, colony origin)
+		std::vector<glm::vec2> points; // one per member, in order
+	};
+	// The center is the nearest point to `drop` (searched outward in rings) whose whole
+	// member ring -- `count` points spaced evenly on a circle of `ringRadiusMeters`, or the
+	// center alone for one member -- is clear ground, so the ring never straddles a shore.
+	// Clear means walkable at the point and at `clearanceMeters` around it (an agent's disc
+	// fits). Every member then stands on its ring point when that point is clear and at least
+	// `minSeparationMeters` from the members already placed, else on the nearest spot around
+	// it that is; each point is valid on its own. With no chunks wired (headless), the center
+	// is `drop` and the points are the raw ring.
+	[[nodiscard]] GroupSpawn groupSpawnPoints(glm::vec2 drop, std::size_t count, float ringRadiusMeters,
+											  float minSeparationMeters, float clearanceMeters) const;
+
 	// Sampling pitch (mm) for the whole-footprint / whole-centerline walkability checks.
 	// 0.5 m is fine enough to catch a ~1-tile water sliver between two on-land vertices.
 	// Footprints are small, so even a dense interior grid at this pitch is a few hundred

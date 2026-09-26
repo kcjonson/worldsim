@@ -1014,6 +1014,95 @@ namespace ecs {
 		return nearestPathableOnMesh(mesh, meters);
 	}
 
+	NavigationSystem::GroupSpawn NavigationSystem::groupSpawnPoints(glm::vec2 drop, std::size_t count, float ringRadiusMeters,
+																	float minSeparationMeters, float clearanceMeters) const {
+		// Candidate search around a seed: the seed, then rings kSearchStepM apart, kSearchAngles
+		// points each, out to kSearchRings -- nearest first, a fixed order so a landing is
+		// deterministic.
+		static constexpr float kSearchStepM	 = 0.5F;
+		static constexpr int   kSearchRings	 = 40; // 20 m
+		static constexpr int   kSearchAngles = 16;
+		static constexpr float kTwoPi		 = 6.2831853F;
+		const float			   reachM		 = kSearchStepM * static_cast<float>(kSearchRings);
+
+		auto ringPoints = [count, ringRadiusMeters](glm::vec2 center) {
+			std::vector<glm::vec2> pts;
+			pts.reserve(count);
+			for (std::size_t i = 0; i < count; ++i) {
+				if (count == 1) {
+					pts.push_back(center);
+					break;
+				}
+				const float angle = kTwoPi * static_cast<float>(i) / static_cast<float>(count);
+				pts.push_back(center + glm::vec2{std::cos(angle), std::sin(angle)} * ringRadiusMeters);
+			}
+			return pts;
+		};
+
+		GroupSpawn out{drop, ringPoints(drop)};
+		if (chunkManager == nullptr || count == 0) {
+			return out;
+		}
+
+		// One terrain mesh covering every point the searches can touch.
+		const float				padM = 2.0F * reachM + ringRadiusMeters + clearanceMeters + 1.0F;
+		const geometry::Vec2i64 minMm = engine::nav::toMm(drop - glm::vec2{padM, padM});
+		const geometry::Vec2i64 maxMm = engine::nav::toMm(drop + glm::vec2{padM, padM});
+		const gnav::NavMesh&	mesh  = terrainMeshCovering(minMm, maxMm);
+
+		auto clear = [&mesh, clearanceMeters](glm::vec2 p) {
+			if (!pointOnNavMesh(mesh, p)) {
+				return false;
+			}
+			for (int k = 0; k < 8; ++k) {
+				const float angle = kTwoPi * static_cast<float>(k) / 8.0F;
+				if (!pointOnNavMesh(mesh, p + glm::vec2{std::cos(angle), std::sin(angle)} * clearanceMeters)) {
+					return false;
+				}
+			}
+			return true;
+		};
+		auto firstAround = [&](glm::vec2 seed, const auto& accept) -> std::optional<glm::vec2> {
+			if (accept(seed)) {
+				return seed;
+			}
+			for (int ring = 1; ring <= kSearchRings; ++ring) {
+				const float r = kSearchStepM * static_cast<float>(ring);
+				for (int a = 0; a < kSearchAngles; ++a) {
+					const float		angle = kTwoPi * static_cast<float>(a) / static_cast<float>(kSearchAngles);
+					const glm::vec2 c	  = seed + glm::vec2{std::cos(angle), std::sin(angle)} * r;
+					if (accept(c)) {
+						return c;
+					}
+				}
+			}
+			return std::nullopt;
+		};
+
+		// Bias the center inland: the nearest spot whose whole ring stands on clear ground.
+		const glm::vec2 snapped		   = nearestTerrainWalkablePoint(drop).value_or(drop);
+		const auto		wholeRingClear = [&](glm::vec2 c) {
+			const std::vector<glm::vec2> pts = ringPoints(c);
+			return std::all_of(pts.begin(), pts.end(), clear);
+		};
+		out.center = firstAround(snapped, wholeRingClear).value_or(snapped);
+
+		const float minSep2 = minSeparationMeters * minSeparationMeters;
+		out.points.clear();
+		for (const glm::vec2& seed : ringPoints(out.center)) {
+			const auto spaced = [&](glm::vec2 p) {
+				for (const glm::vec2& q : out.points) {
+					if (dist2(p, q) < minSep2) {
+						return false;
+					}
+				}
+				return clear(p);
+			};
+			out.points.push_back(firstAround(seed, spaced).value_or(nearestTerrainWalkablePoint(seed).value_or(seed)));
+		}
+		return out;
+	}
+
 	std::optional<glm::vec2> NavigationSystem::nearestPathablePoint(glm::vec2 meters) const {
 		const int r = regionContaining(meters);
 		if (r < 0) {
