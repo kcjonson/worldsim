@@ -1,6 +1,7 @@
 #include "TerrainPolygonBuilder.h"
 
 #include "world/chunk/TerrainPolygonBuilderDetail.h"
+#include "world/chunk/TerrainPolygonQuery.h"
 
 #include <contour/ClipRing.h>
 #include <contour/MarchingSquares.h>
@@ -684,6 +685,7 @@ namespace engine::world {
 		const WaterlineField waterline(biomeWater, worldSeed);
 		buildChannels(out, riverSegments, ponds, waterline, grid, region, worldSeed, coord);
 		buildNavRings(out, region, coord);
+		out.edgeIndex = TerrainPolygonQuery::buildIndex(out.rings, region.extendedRect());
 		return out;
 	}
 

@@ -6,8 +6,10 @@
 // only defines the types and Chunk's storage for them; TerrainPolygonBuilder is
 // what fills a ChunkTerrainPolygons.
 
+#include <core/Vec2i64.h>
 #include <polygon/Polygon.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -53,6 +55,16 @@ struct TerrainRing {
 	bool blocksMovement = true; ///< false only for fordable channels (D7)
 	bool holeCapable = true;    ///< Waterline: true (even-odd); Channel/Pond: false (solid)
 	float meanHalfWidthM = 0.0F; ///< Channel only: mean bankfull half-width over the piece
+
+	/// Edge i, from vertex i to the next, is shoreline: neither a synthetic
+	/// closure (D4) nor the butt edge of a fordable cut, whose ends are both
+	/// flagged (D7).
+	[[nodiscard]] bool isShoreEdge(size_t i) const {
+		const uint8_t from = profiles[i].flags;
+		const uint8_t to = profiles[(i + 1) % profiles.size()].flags;
+		const bool cut = (from & to & ShoreProfile::kFlagFordableCut) != 0;
+		return (from & ShoreProfile::kFlagSynthetic) == 0 && !cut;
+	}
 };
 
 /// One river reach's thalweg (D2, D7 step 3), for the distance-field bake: the
@@ -72,6 +84,33 @@ struct ThalwegPath {
 	std::vector<double> arcLengthM;
 };
 
+/// `rings` bucketed for TerrainPolygonQuery (D3, section 8): world-aligned cells
+/// of TerrainPolygonQuery::kCellMm, the pin lattice, so every resampled run lies
+/// in one cell. Each cell lists every ring edge whose closed bounding box touches
+/// it; a cell no edge touches is all water or all land, and stores which.
+struct TerrainEdgeIndex {
+	/// The edge from rings[ring].ring[vertex] to the next vertex.
+	struct Edge {
+		uint32_t ring = 0;
+		uint32_t vertex = 0;
+		bool shore = false; ///< TerrainRing::isShoreEdge
+	};
+
+	/// Containment of an edge-free cell, as a ray cast from inside it counts it:
+	/// the even-odd parity over Waterline rings and the number of Channel and
+	/// Pond rings (solid, CCW) holding it.
+	struct CellWater {
+		uint8_t waterlineParity = 0;
+		int16_t solidDepth = 0;
+	};
+
+	geometry::Vec2i64 originMm{}; ///< min corner of cell (0, 0), on the lattice
+	int32_t cellsPerSide = 0;     ///< 0 when there are no rings
+	std::vector<uint32_t> cellStart{}; ///< cellsPerSide^2 + 1 offsets into edges, rows of cells from originMm
+	std::vector<Edge> edges{};
+	std::vector<CellWater> cellWater{}; ///< per cell, read only where the cell has no edges
+};
+
 /// A chunk's terrain polygon set. `rings` covers the extended region (chunk plus
 /// apron, D4) unclipped, so no consumer of it ever sees a chunk border as a
 /// shoreline; `navRings` is the same rings clipped to the chunk's own 512x512
@@ -82,6 +121,7 @@ struct ChunkTerrainPolygons {
 	std::vector<TerrainRing> rings;
 	std::vector<TerrainRing> navRings;
 	std::vector<ThalwegPath> thalwegs;
+	TerrainEdgeIndex edgeIndex;
 	uint32_t version = 0; ///< bumped with the rings, read like Chunk::renderDataVersion
 };
 

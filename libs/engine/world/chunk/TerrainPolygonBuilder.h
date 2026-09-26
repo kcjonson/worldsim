@@ -17,7 +17,7 @@
 // Then one tail for all three: world-lattice pins, resample, simplify, validate.
 // Rings come out over the extended region (`rings`, with per-vertex
 // ShoreProfiles) and clipped to the chunk square (`navRings`); channels also
-// emit thalwegs.
+// emit thalwegs. Last, the rings are indexed for TerrainPolygonQuery.
 //
 // Everything is a pure function of world position, the tiles, the gathered
 // segments and ponds, and the world seed. Pins sit on a world lattice, so every

@@ -2,6 +2,8 @@
 
 #include "../core/Vec2i64.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <optional>
 #include <vector>
@@ -109,5 +111,26 @@ namespace geometry {
 
 	// Float convenience for UI readouts only. Not for exact comparisons.
 	double distanceToSegment(const Vec2i64& p, const Vec2i64& a, const Vec2i64& b);
+
+	struct SegmentPoint {
+		double distanceMm;
+		double t; // position of the closest point along [a, b], 0 at a
+	};
+
+	// Closest point to p on the part [t0, t1] of segment [a, b]. Differences of
+	// integer mm are exact in double, so the result is a pure function of the
+	// inputs (terrain-polygons D14). Inline: the terrain distance bake calls it
+	// millions of times per chunk.
+	inline SegmentPoint closestOnSegment(const Vec2i64& p, const Vec2i64& a, const Vec2i64& b, double t0 = 0.0, double t1 = 1.0) {
+		const double abx  = static_cast<double>(b.x - a.x);
+		const double aby  = static_cast<double>(b.y - a.y);
+		const double apx  = static_cast<double>(p.x - a.x);
+		const double apy  = static_cast<double>(p.y - a.y);
+		const double len2 = abx * abx + aby * aby;
+		const double t	  = len2 > 0.0 ? std::clamp((apx * abx + apy * aby) / len2, t0, t1) : t0;
+		const double dx	  = apx - abx * t;
+		const double dy = apy - aby * t;
+		return {std::sqrt(dx * dx + dy * dy), t};
+	}
 
 } // namespace geometry
