@@ -1,6 +1,8 @@
 #include "debug/Tunables.h"
 
 #include <algorithm>
+#include <cmath>
+#include <cstdlib>
 #include <sstream>
 
 namespace Foundation {
@@ -36,8 +38,38 @@ namespace Foundation {
 		if (e == nullptr || values.size() != e->count) {
 			return false;
 		}
+		if (std::any_of(values.begin(), values.end(), [](float v) { return !std::isfinite(v); })) {
+			return false;
+		}
 		std::copy(values.begin(), values.end(), e->value.begin());
 		return true;
+	}
+
+	bool Tunables::parseValues(std::string_view spec, std::vector<float>& out) {
+		out.clear();
+		if (spec.empty()) {
+			return false;
+		}
+		// strtof needs a null-terminated buffer; spec may point into a non-owning view.
+		const std::string owned(spec);
+		const char*		  p = owned.c_str();
+		while (true) {
+			char*		end = nullptr;
+			const float v = std::strtof(p, &end);
+			if (end == p || (*end != '\0' && *end != ',') || !std::isfinite(v)) {
+				out.clear();
+				return false;
+			}
+			out.push_back(v);
+			if (*end == '\0') {
+				return true;
+			}
+			p = end + 1;
+			if (*p == '\0') {
+				out.clear(); // trailing comma
+				return false;
+			}
+		}
 	}
 
 	size_t Tunables::reset(std::string_view name) {

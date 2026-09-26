@@ -15,6 +15,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace Foundation { // NOLINT(readability-identifier-naming)
 
@@ -39,9 +40,15 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 		/// programming error and returns the existing storage unchanged.
 		const float* add(std::string_view name, std::span<const float> defaults);
 
-		/// Set a registered value. False if the name is unknown or the component
-		/// count doesn't match.
+		/// Set a registered value. False if the name is unknown, the component
+		/// count doesn't match, or any value isn't finite.
 		bool set(std::string_view name, std::span<const float> values);
+
+		/// Parses a dev-command value spec ("1.6", "0.2,0.3,0.4") into `out`.
+		/// Every comma-separated token must be a whole finite number: no empty
+		/// tokens, no leading/trailing garbage after the digits, no trailing
+		/// comma, no nan/inf. False (and `out` cleared) on any malformed token.
+		static bool parseValues(std::string_view spec, std::vector<float>& out);
 
 		/// Restore one value to its default, or every value whose name starts
 		/// with `prefix` when `name` ends in '*' ("terrain/shore/*", "*"). Returns

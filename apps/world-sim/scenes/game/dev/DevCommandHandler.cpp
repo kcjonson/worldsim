@@ -102,18 +102,12 @@ namespace world_sim {
 			return;
 		}
 
-		const std::string name = cmd.param("name");
+		const std::string  name = cmd.param("name");
+		const std::string  spec = cmd.param("value");
 		std::vector<float> values;
-		const std::string spec = cmd.param("value");
-		const char*		   p	= spec.c_str();
-		while (*p != '\0') {
-			char*		end = nullptr;
-			const float v	= std::strtof(p, &end);
-			if (end == p) {
-				break;
-			}
-			values.push_back(v);
-			p = (*end == ',') ? end + 1 : end;
+		if (!Foundation::Tunables::parseValues(spec, values)) {
+			LOG_WARNING(Game, "[DevAPI] tunable '%s' rejected value '%s' (malformed or non-finite)", name.c_str(), spec.c_str());
+			return;
 		}
 		if (!tunables.set(name, values)) {
 			LOG_WARNING(Game, "[DevAPI] tunable '%s' rejected value '%s' (unknown name or wrong component count)", name.c_str(), spec.c_str());

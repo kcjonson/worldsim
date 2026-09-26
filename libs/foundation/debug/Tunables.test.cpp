@@ -3,7 +3,10 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <cmath>
+#include <limits>
 #include <string>
+#include <vector>
 
 using namespace Foundation;
 
@@ -33,6 +36,33 @@ TEST(Tunables, SetChecksNameAndComponentCount) {
 	EXPECT_FALSE(t.set("test/set/color", std::array{1.0F})) << "wrong component count";
 	EXPECT_FALSE(t.set("test/set/missing", std::array{1.0F})) << "unknown name";
 	EXPECT_FLOAT_EQ(color[0], 0.5F);
+}
+
+TEST(Tunables, SetRejectsNonFiniteValues) {
+	Tunables&	 t = Tunables::instance();
+	const float* scalar = t.add("test/set/nonfinite", std::array{1.0F});
+
+	EXPECT_FALSE(t.set("test/set/nonfinite", std::array{std::numeric_limits<float>::quiet_NaN()})) << "nan";
+	EXPECT_FALSE(t.set("test/set/nonfinite", std::array{std::numeric_limits<float>::infinity()})) << "inf";
+	EXPECT_FLOAT_EQ(*scalar, 1.0F) << "a rejected set must not touch the stored value";
+}
+
+TEST(Tunables, ParseValuesAcceptsWellFormedSpecs) {
+	std::vector<float> out;
+	EXPECT_TRUE(Tunables::parseValues("1.6", out));
+	EXPECT_EQ(out, (std::vector<float>{1.6F}));
+
+	EXPECT_TRUE(Tunables::parseValues("0.2,0.3,0.4", out));
+	EXPECT_EQ(out, (std::vector<float>{0.2F, 0.3F, 0.4F}));
+}
+
+TEST(Tunables, ParseValuesRejectsMalformedSpecs) {
+	std::vector<float> out;
+	for (const char* spec : {"1.6junk", "nan", "inf", "1,", ",1", "", "1,,2"}) {
+		out.assign({99.0F}); // must be cleared on failure, not left with stale data
+		EXPECT_FALSE(Tunables::parseValues(spec, out)) << "spec: '" << spec << "'";
+		EXPECT_TRUE(out.empty()) << "spec: '" << spec << "'";
+	}
 }
 
 TEST(Tunables, ResetByNameAndByPrefix) {
