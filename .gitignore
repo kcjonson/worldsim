@@ -10,6 +10,7 @@ cmake_install.cmake
 *.cmake
 !CMakeLists.txt
 !cmake/*.cmake
+!cmake/vcpkg-overlay-ports/**/*.cmake
 
 # Compile commands
 compile_commands.json
