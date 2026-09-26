@@ -3,7 +3,9 @@
 #include "../core/Vec2d.h"
 #include "../polygon/Polygon.h"
 
+#include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 
 // Ribbon stroking for river channels (terrain-polygons D7 step 6). Like
@@ -26,6 +28,12 @@ namespace geometry {
 		StrokeCap				startCap	= StrokeCap::Round;
 		StrokeCap				endCap		= StrokeCap::Round;
 		double					capSpacingM = 0.5; // arc spacing of round-cap vertices, > 0
+		// Unit left normal to offset the first / last point along instead of its
+		// single segment's. Two pieces of one centerline cut at a shared point pass
+		// that point's strokeNormal on the full centerline to both, so their butt
+		// edges land on bit-identical vertices.
+		std::optional<Vec2d> startNormal;
+		std::optional<Vec2d> endNormal;
 	};
 
 	// The ribbon around a centerline as a CCW ring in integer mm (each coordinate
@@ -51,6 +59,16 @@ namespace geometry {
 	// and the centerline itself does not come back within the ribbon's width. The
 	// caller keeps that invariant and validates with isSimple.
 	Ring strokePolyline(const StrokeArgs& args);
+
+	// The unit left normal strokePolyline offsets point i along: the normal of the
+	// bisector of its two adjacent segment directions, from centerline[i - 1],
+	// centerline[i], and centerline[i + 1] only.
+	Vec2d strokeNormal(std::span<const Vec2d> centerline, std::size_t i);
+
+	// The quantized bank point strokePolyline places at `center`, offset along
+	// the unit left normal `normal` by `leftwardM` (negative for the right bank).
+	// A caller that cuts a centerline names the cut's vertices with it, bit for bit.
+	Vec2i64 strokeBankPoint(const Vec2d& center, const Vec2d& normal, double leftwardM);
 
 	// Circumradius of three points in meters: the radius of curvature a polyline
 	// has at `cur`. +infinity for a straight run (collinear, cur between the
