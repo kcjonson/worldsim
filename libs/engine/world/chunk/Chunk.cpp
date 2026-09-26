@@ -40,8 +40,8 @@ namespace engine::world {
 
 	void Chunk::generate() {
 		// Pre-compute all tiles in the chunk. The tile raster (here and in the apron
-		// below) reads only the segments near the chunk; the builder reads the
-		// whole gather.
+		// below) reads only the segments near the chunk via this hydrology-only
+		// result; the builder reads the whole gather off m_biomeData directly.
 		const ChunkSampleResult raster = m_biomeData.rasterHydrology(m_coord);
 		for (uint16_t y = 0; y < kChunkSize; ++y) {
 			for (uint16_t x = 0; x < kChunkSize; ++x) {
@@ -54,7 +54,7 @@ namespace engine::world {
 		// match what a neighbor's apron computes for them. The apron is discarded
 		// once the rings are built.
 		{
-			const ApronField	apron = ApronField::build(m_coord, raster, m_worldSeed);
+			const ApronField	apron = ApronField::build(m_coord, m_biomeData, raster, m_worldSeed);
 			const ExtendedTiles extended(*this, apron);
 			NeighborhoodGrids	neighborhood(m_biomeData);
 			setTerrainPolygons(TerrainPolygonBuilder::build(

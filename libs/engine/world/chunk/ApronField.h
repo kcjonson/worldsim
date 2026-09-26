@@ -6,11 +6,11 @@
 // itself, right up to the chunk border (see
 // docs/technical/organic-terrain/terrain-polygons-architecture.md D4).
 //
-// Built entirely from the generating chunk's own ChunkSampleResult (its
-// neighborhood corner lattice plus its extended-AABB river/pond gather); it never
-// waits on a neighbor Chunk existing. Apron tiles are raw Chunk::computeTileFrom
-// output: no mud post-process, no adjacency (TilePostProcessor never runs on
-// them).
+// Built entirely from the generating chunk's own data (its neighborhood corner
+// lattice, plus a hydrology-only result carrying its extended-AABB river/pond
+// gather); it never waits on a neighbor Chunk existing. Apron tiles are raw
+// Chunk::computeTileFrom output: no mud post-process, no adjacency
+// (TilePostProcessor never runs on them).
 
 #include "world/chunk/Chunk.h"
 #include "world/chunk/ChunkCoordinate.h"
@@ -49,11 +49,16 @@ class NeighborhoodGrids {
 /// extended region minus the chunk's own kChunkSize x kChunkSize square.
 class ApronField {
   public:
-	/// Build the apron for `coord` from `sampleData`, which must already carry the
-	/// neighborhood corner lattice (fillNeighborhoodCorners) and the
-	/// extended-AABB river/pond gather (D4). `sampleData` is normally the
-	/// generating chunk's own ChunkSampleResult.
-	[[nodiscard]] static ApronField build(ChunkCoordinate coord, const ChunkSampleResult& sampleData, uint64_t worldSeed);
+	/// Build the apron for `coord`. `neighborhoodSource` must carry the
+	/// neighborhood corner lattice (fillNeighborhoodCorners); it is normally the
+	/// generating chunk's own ChunkSampleResult (m_biomeData), used only for that
+	/// lattice, never for river/pond queries. `hydrology` supplies
+	/// riverHalfWidthAt/pondDepthAt for every apron tile regardless of which
+	/// neighbor conceptually owns it (river/pond geometry is world-position-based
+	/// and doesn't care); it is normally the generating chunk's rasterHydrology()
+	/// result, gathered over the extended AABB (D4).
+	[[nodiscard]] static ApronField build(ChunkCoordinate coord, const ChunkSampleResult& neighborhoodSource,
+	                                       const ChunkSampleResult& hydrology, uint64_t worldSeed);
 
 	/// Tile at extended-region coordinates (ex, ey), each in [0, kExtendedSize),
 	/// excluding the interior [kApronTiles, kApronTiles + kChunkSize) square (that

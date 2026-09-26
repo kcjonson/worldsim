@@ -114,7 +114,8 @@ namespace {
 		const engine::world::GeneratedWorldSampler			sampler(world.world, world.landingLat, world.landingLon);
 		auto chunk = std::make_unique<Chunk>(coord, sampler.sampleChunk(coord), sampler.getWorldSeed());
 		chunk->generate();
-		const engine::world::ApronField	   apron = engine::world::ApronField::build(coord, chunk->biomeData(), sampler.getWorldSeed());
+		const engine::world::ApronField	   apron = engine::world::ApronField::build(
+			coord, chunk->biomeData(), chunk->biomeData().rasterHydrology(coord), sampler.getWorldSeed());
 		const engine::world::ExtendedTiles extended(*chunk, apron);
 		const TerrainPolygonBuilder::ExtendedTileFn fn = [&extended](int32_t ex, int32_t ey) -> const TileData& {
 			return extended.at(ex, ey);

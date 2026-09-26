@@ -154,14 +154,17 @@ struct ChunkSampleResult {
         return best;
     }
 
-    // This sample with only the river segments whose rasterized footprint can
-    // touch a tile of `coord`'s square grown by kApronTiles, for the tile raster
-    // (Chunk::generate, ApronField). riverHalfWidthAt scans every segment per
-    // tile, and the gather runs hundreds of meters past what the raster reads.
-    // Ponds are few and kept whole.
+    // A hydrology-only result (corner/sector fields left default) carrying just
+    // the river segments whose rasterized footprint can touch a tile of `coord`'s
+    // square grown by kApronTiles, for the tile raster (Chunk::generate,
+    // ApronField) to read via riverHalfWidthAt/pondDepthAt. riverHalfWidthAt
+    // scans every segment per tile, and the gather runs hundreds of meters past
+    // what the raster reads. Ponds are few and kept whole. Deliberately not `*this`
+    // with riverSegments filtered: the raster never reads cornerBiomes/sectorGrid,
+    // so copying them (~1024 BiomeWeights) here would be pure waste.
     [[nodiscard]] ChunkSampleResult rasterHydrology(ChunkCoordinate coord) const {
-        ChunkSampleResult out = *this;
-        out.riverSegments.clear();
+        ChunkSampleResult out;
+        out.pondBlobs = pondBlobs;
         const double reach = static_cast<double>(kApronTiles) + 1.0;
         const double minX  = static_cast<double>(coord.x) * static_cast<double>(kChunkSize) - reach;
         const double minY  = static_cast<double>(coord.y) * static_cast<double>(kChunkSize) - reach;

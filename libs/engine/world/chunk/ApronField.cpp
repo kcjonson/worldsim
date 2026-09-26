@@ -44,7 +44,8 @@ namespace engine::world {
 		return grid(dx, dy).getTileBiome(nx, ny).primary();
 	}
 
-	ApronField ApronField::build(ChunkCoordinate coord, const ChunkSampleResult& sampleData, uint64_t worldSeed) {
+	ApronField ApronField::build(ChunkCoordinate coord, const ChunkSampleResult& neighborhoodSource,
+	                              const ChunkSampleResult& hydrology, uint64_t worldSeed) {
 		ApronField field;
 		field.m_top.resize(static_cast<size_t>(kExtendedSize) * static_cast<size_t>(kApronTiles));
 		field.m_bottom.resize(static_cast<size_t>(kExtendedSize) * static_cast<size_t>(kApronTiles));
@@ -53,12 +54,12 @@ namespace engine::world {
 
 		// Each of the 8 neighbors' own biome/elevation grid, reused for every apron
 		// tile that neighbor owns.
-		NeighborhoodGrids grids(sampleData);
+		NeighborhoodGrids grids(neighborhoodSource);
 
 		// Compute one extended-region tile: find the neighbor chunk that owns it,
 		// resolve biome/elevation from that neighbor's own grid, and run it through
 		// the same tile-compute core the neighbor's own generate() would use.
-		// Hydrology (river/pond) always comes from `sampleData` itself: it is a
+		// Hydrology (river/pond) always comes from `hydrology`: it is a
 		// world-position query already gathered over the extended AABB (D4), so it
 		// covers every apron tile regardless of which neighbor conceptually owns it.
 		auto computeExtended = [&](int32_t ex, int32_t ey) -> TileData {
@@ -78,7 +79,7 @@ namespace engine::world {
 				.localY = ny,
 				.biomeWeights = grid.getTileBiome(nx, ny),
 				.elevationMeters = grid.getTileElevation(nx, ny),
-				.hydrology = &sampleData,
+				.hydrology = &hydrology,
 				.worldSeed = worldSeed,
 			});
 		};

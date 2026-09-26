@@ -65,7 +65,7 @@ namespace geometry {
 				return {floorDiv(std::min(a, b), latticeMm) + 1, floorDiv(std::max(a, b) - 1, latticeMm)};
 			}
 
-			bool onLattice(std::int64_t v) const { return latticeMm > 0 && v == floorDiv(v, latticeMm) * latticeMm; }
+			bool onLattice(std::int64_t v) const { return latticeMm > 0 && v % latticeMm == 0; }
 
 			bool onAny(Vec2i64 v) const {
 				return onLattice(v.x) || onLattice(v.y) || std::find(xLinesMm.begin(), xLinesMm.end(), v.x) != xLinesMm.end() ||
