@@ -43,6 +43,11 @@ class RiverNetwork2D {
         double s0{}, s1{};
     };
 
+    // Upper bound on any emitted half-width, meters: the clamped hydraulic width
+    // at the widest riffle-plus-pool multiplier. Consumers that size a reach by
+    // channel width (the terrain-polygon gather) budget against it.
+    static constexpr double kMaxHalfWidthMeters = 103.5;
+
     struct PointSample {
         bool  isRiver{false};
         float widthMeters{0.0f};

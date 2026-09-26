@@ -52,7 +52,14 @@ namespace {
 		const TerrainPolygonBuilder::ExtendedTileFn fn = [&tiles](int32_t ex, int32_t ey) -> const TileData& {
 			return tiles[static_cast<size_t>(ey) * static_cast<size_t>(kExtendedSize) + static_cast<size_t>(ex)];
 		};
-		return TerrainPolygonBuilder::build(kCoord, kSeed, fn, {}, {});
+		// Channel-free, so only the extended tiles are ever asked.
+		const TerrainPolygonBuilder::BiomeWaterFn waterFn = [&fn](int64_t tx, int64_t ty) {
+			return engine::world::isBiomeWater(fn(
+				static_cast<int32_t>(tx - static_cast<int64_t>(kCoord.x) * engine::world::kChunkSize + engine::world::kApronTiles),
+				static_cast<int32_t>(ty - static_cast<int64_t>(kCoord.y) * engine::world::kChunkSize + engine::world::kApronTiles)
+			));
+		};
+		return TerrainPolygonBuilder::build(kCoord, kSeed, fn, waterFn, {}, {});
 	}
 
 	bool staircaseLake(int32_t ex, int32_t ey) {

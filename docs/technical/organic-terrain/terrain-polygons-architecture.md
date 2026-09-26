@@ -150,10 +150,20 @@ The chunk's polygon region is its 512 m square, `[origin, origin + 512 m)`, the 
 a chunk border are computed on both sides from the apron and clipped at the border, so
 adjacent regions partition the plane exactly and nothing is shifted by half a tile.
 
-The builder works on an **extended region**: the chunk plus an apron of `kApronTiles = 8` on
-every side. Eight because the SDF (D10) is clamped at `kSdfNearM = 8 m`: a texel on the chunk
-border must see every real shore edge within 8 m, and the synthetic closure edges described
-below must lie at or beyond that distance so they never show.
+The builder works on an **extended region**: the chunk plus an apron of `kApronTiles = 20` on
+every side. The SDF (D10) is clamped at `kSdfNearM = 8 m`, so a texel on the chunk border reads
+every ring edge within 8 m, and the bake needs those edges bit-identical in both chunks. Every
+ring is pinned on a world lattice (`kPinLatticeMm = 16 m`, D6), so each of those edges belongs
+to a resampled run that can wander anywhere in the 16 m lattice cell next to the border. That
+whole cell must therefore be free of the extended region's edge effect: the outermost coarse
+sample's blur reads the forced land outside, the bilinear read uses that sample up to 1.5 tiles
+in, the warp reads 1.45 m further, and a ring vertex moves with its marching cell and Chaikin
+neighbor, `kEdgeEffectDepthMm` = 3.45 m at most (about 2.5 m measured). 16 m plus 3.45 m,
+rounded up to a whole tile, is 20; the synthetic closure edges lie beyond the cell, so they
+never reach a border texel either. (A per-chunk pin set, pins on the chunk's own border lines
+only, fails here: a run starting at a border pin ends at some other line in each chunk, and
+equal-arc-length resampling and simplification then place different vertices along the same
+curve.)
 
 - Apron samples come from the world sampler, not from neighbor chunks (neighbors may not
   exist yet, and generation runs on a worker). `GeneratedWorldSampler::sampleChunk` gains an
@@ -227,19 +237,34 @@ hole), and no per-ring retry loop is needed.
    (`kBankNoiseAmpMm = 250`, 4 octaves, base wavelength 6 m; the 0.75 m octave is what gives
    a 1-tile pool its lopsidedness) and a low-frequency term (`kShoreLowAmpMm = 1200`, 2
    octaves, base 26 m; bays, headlands, the general unevenness of a shore). Both components
-   of the vector use independent seeds. Because `|offset| <= 1.45 m` and the apron is 8 m,
-   every fine sample reads inside the extended coarse region.
+   of the vector use independent seeds. Because `|offset| <= 1.45 m`, a fine sample reads the
+   coarse lattice within 2.45 m of itself; the lattice is padded by repeating its edge samples,
+   so the only edge effect is the one D4 sizes the apron for. The same formula evaluates the
+   field at any world point from a biome-water query (`WaterlineField`, one shared core with the
+   lattice fill), which is how channels find their mouths (D7).
 2. Marching squares on the fine lattice at iso 0.5 (D5 step 4).
 3. Chaikin corner cutting, `kChaikinIterations = 1` (the fine march is already smooth at
    0.25 m; one pass removes the lattice facets). Local, never overshoots.
-4. Resample to `kRingSpacingMm = 250`.
+4. Pin every crossing of the world lattice, the lines `x = k·kPinLatticeMm` and
+   `y = k·kPinLatticeMm` (16 m; chunk borders are lattice lines), then resample each run
+   between pins to `kRingSpacingMm = 250`. A run between two lattice crossings stays inside
+   one lattice cell and depends only on the curve there, so two chunks that compute the same
+   curve in a cell compute the same vertices in it, whatever the rest of their rings look like.
+   Costs at most one extra vertex per lattice crossing, about one per 16 m of shore: +4.5%
+   nav vertices on the archipelago benchmark chunk, +19% on the staircase lake (a 16 m
+   staircase crosses a lattice line at nearly every step).
 5. Quantize to integer mm.
-6. `simplifyRing` at `kRingSimplifyEpsMm = 100`. Not 500: nav and render use the same ring
-   verbatim, and 500 would erase the bank detail. The vertex budget is in section 6.
+6. `simplifyRing` at `kRingSimplifyEpsMm = 100`, per run (pins are never removed). Not 500:
+   nav and render use the same ring verbatim, and 500 would erase the bank detail. The vertex
+   budget is in section 6.
 7. Validate: `isSimple`. Quantization and simplification can in principle fold a tight
-   feature; on failure re-simplify at 50 mm, and if still non-simple re-run the loop with the
-   warp amplitude halved (bounded to two retries, logged at debug). Validation runs after the
-   last geometric change, not before.
+   feature; two runs can only cross inside the lattice cell they share, so the retry ladder
+   steps per cell: a cell whose runs fold at 100 mm takes 50 mm, then the unsimplified runs,
+   while every other cell keeps its own rung. A fold far from a border then never changes a
+   run near it, which the neighbor, not seeing that fold, would not change either. The ladder
+   never changes the shape (a per-chunk shape change would break the seam); a ring still
+   folded unsimplified is dropped with a warning. Validation runs after the last geometric
+   change, not before.
 8. Drop loops with area under `kMinLoopAreaMm2 = 250 000` (a quarter tile), same as nav today.
 9. Store in `rings`; clip a copy to the chunk square into `navRings` (D4), validating each
    clipped piece with `isSimple` as well.
@@ -281,14 +306,35 @@ renderer fills both with the same water, nav treats Channel rings as solid conta
 (`holeCapable = false`), so an overlap cannot flip even-odd parity into a walkable hole. The
 junction corner bar and scour hole are shading (section 2.9, R7).
 
-**River mouths** (channel meets Waterline or Pond; ponds are emitted before channels so
-both kinds exist when the mouth test runs) get a flare and nothing else:
+**River mouths** (channel meets Waterline or Pond) get a flare and nothing else:
 
-1. Find the first centerline sample inside the receiving ring; call the arc length there
-   `s_m`.
-2. Over the reach `[s_m - kMouthFlareW · w, s_m]` widen the channel by up to
-   `kMouthFlare = 1.6×` (estuary shape) and fade the bank asymmetry and point-bar deposits to
-   zero. Extend the ribbon `1 w` past `s_m` so the two shapes overlap generously.
+1. Find the first centerline sample inside the receiving body; call the arc length there
+   `s_m`. "Inside" is read from the waterline field at the sample (the D5/D6 formula evaluated
+   at that world point, from a biome-water query over the chunk's 3x3 neighborhood) or the
+   pond rim before clipping (D8), never from the chunk's own rings: those end at the extended
+   region, and a mouth one chunk sees and its neighbor does not would flare the river
+   differently on either side of their border. The field and rims sit within a few cm of the
+   rings built from them.
+2. Over the reach `[s_m - min(kMouthFlareW · w, kMouthFlareMaxM), s_m]` widen the channel by up
+   to `kMouthFlare = 1.6×` (estuary shape) and fade the bank asymmetry and point-bar deposits
+   to zero. Extend the ribbon `min(1 w, kMouthExtendMaxM)` past `s_m` so the two shapes overlap
+   generously. The caps (64 m, 24 m) only bind for rivers wider than 32 m and 24 m: a 100 m
+   wide river flares over its last 64 m instead of 200 m. They bound how far along a river a
+   mouth decision reaches, which bounds how much river each chunk must see (below).
+
+**Channel reach.** A centerline sample is relevant to a chunk when it can shape a ring edge in
+the lattice cell next to the chunk square, a ring edge anywhere in the extended region, or a
+thalweg point a bake texel reads (D10): within `max(16 m, apron) + 2 m + 3.6 hw` of the square
+(3.6 = (2 + 0.25) × 1.6: a texel reads a thalweg point 2 bankfull half-widths out, and the
+thalweg sits up to the asymmetry off the centerline; a bank lies at most 2.8 raw half-widths
+out). Every decision about a sample (flare, extension, the whole-crossing rule) reads the
+ground at most `kChannelDecisionReachM = max(64, 3 × 24) + 2 = 74 m` along the centerline, so a
+chunk keeps every sample within that arc distance of a relevant one. At the widest river
+(`RiverNetwork2D::kMaxHalfWidthMeters = 103.5`: the 110 m clamped width times the 1.88 riffle
+plus pool peak) that is 469 m from the chunk square, inside the 3x3 neighborhood the
+biome-water query covers, and the gather margin (`kRiverGatherMarginM = 490 m`) keeps a 20 m
+trunk step beyond it so every kept sample's Catmull-Rom span is intact. The width-ratio window
+(R4) is capped at 64 m each side for the same reason.
 3. Emit the ribbon as its own Channel ring, overlapping the lake ring. Nav: solid containment,
    fine. Render: the distance field is the minimum over all rings (D10), so the union is
    implicit, the shore bands run continuously around the mouth, and the river's own bank
@@ -304,8 +350,8 @@ to the flare start.
 perturbed by the D6 fine noise at half amplitude (the sinusoids already give the large-scale
 shape; a radial perturbation of a star-shaped rim cannot self-intersect), quantized,
 simplified, validated, stored in `rings` and clipped into `navRings`. `kind = Pond`,
-`water = WaterKind::Pond`, `holeCapable = false`, `blocksMovement = true`. Ponds are built
-before channels (D7 mouths).
+`water = WaterKind::Pond`, `holeCapable = false`, `blocksMovement = true`. The unclipped rim
+is also what the D7 mouth test reads.
 `pondDepthAt` still drives the tile depth byte for the prefilter; shading reads distance to
 the rim.
 
@@ -742,7 +788,7 @@ ChunkTerrainPolygons build(const Chunk& c, const ChunkSampleResult& sr, const Ap
         out.rings.push_back(std::move(tr));
     }
 
-    // D8 before D7 so a channel can find a pond as its receiving body
+    // D8; the D7 mouth test reads the pond rims and the waterline field, not these rings
     for (const Pond& pond : sr.pondBlobs) emitPondRing(out, sampleRim(pond));
 
     // D7: channels from source segments
@@ -763,7 +809,7 @@ ChunkTerrainPolygons build(const Chunk& c, const ChunkSampleResult& sr, const Ap
 ```
 
 Terraform (later): a tile edit marks the chunk dirty; the builder reruns for that chunk and
-for any neighbor whose apron contains the edited tile (up to eight, since the apron is 8 m). Ring version bump
+for any neighbor whose apron contains the edited tile (up to eight, since the apron is 20 m). Ring version bump
 invalidates the render cache and, through the nav signature, the mesh.
 
 ---
@@ -772,7 +818,8 @@ invalidates the render cache and, through the nav signature, the mesh.
 
 | Name | Value | Where |
 |---|---|---|
-| `kApronTiles` | 8 | D4 |
+| `kApronTiles` | 20 | D4 |
+| `kPinLatticeMm` | 16 000 | D4, D6 |
 | `kFineCellMm` | 250 | D6 |
 | `kThinWaterFloor` / `kThinLandCeil` | 0.70 / 0.30 | D5 |
 | `kChaikinIterations` | 1 | D6 |
@@ -783,7 +830,10 @@ invalidates the render cache and, through the nav signature, the mesh.
 | `kRingSimplifyEpsMm` | 100 | D6 |
 | `kMinLoopAreaMm2` | 250 000 | D6 |
 | `kFordableWidthM` | 1.2 | D7 |
-| `kMouthFlare` / `kMouthFlareW` | 1.6× / 2 w | D7 |
+| `kMouthFlare` / `kMouthFlareW` | 1.6× / 2 w, capped at 64 m | D7 |
+| `kMouthExtendW` | 1 w, capped at 24 m | D7 |
+| width-ratio window | 5 w, each half capped at 64 m | D7 |
+| `kRiverGatherMarginM` | 490 m | D7 |
 | `kSdfTexelM` / `kSdfNearM` / far texel | 0.25 m / 8 m / 2 m | D10 |
 | shader `u_*` | see 10.5 | D10 |
 | `kBarCurvature` / `kBarWidth` | 0.05 /m / 0.5 | D12 |
@@ -799,12 +849,21 @@ All of these are candidates for the debug server's tunables so the look can be A
 - Same samples on both sides of a border: apron from the sampler, not from neighbors.
 - Same noise: world-space fBm, fixed seeds, `foundation::fractalNoise3`.
 - Same warp: a function of world position only, so the fine field is identical on both
-  sides; Chaikin is local; the 8-tile apron covers every reach and the SDF clamp.
+  sides; Chaikin is local; the 20-tile apron holds the border lattice cell clear of the edge
+  effect.
+- Same runs: pins on the world lattice, so every resample and simplify run is one lattice
+  cell's worth of curve; the fold-retry ladder steps per cell.
+- Same river decisions: mouths read the waterline field and pond rims at world positions;
+  each chunk keeps every centerline sample a border ring edge or bake-region thalweg point
+  depends on, plus the 74 m of river its decisions read, all inside the gather.
 - Same integers: quantize before clipping; clip against an integer rectangle.
 - Synthetic edges never reach a consumer: the bake, shore points, mud, and queries skip them;
   nav gets `navRings`, which end at the chunk square.
-- Test: build two adjacent chunks independently, assert the multiset of border-edge vertices
-  is identical, then build the nav mesh over both and assert no face touches a border gap.
+- Test (`TerrainPolygonSeamsTest`): build adjacent chunks (horizontal, vertical, diagonal)
+  independently and assert every non-synthetic ring edge within 8.25 m of the shared border and
+  every thalweg point a texel in both bake regions reads are identical, and identical to a
+  48-tile-apron build; `TerrainPolygonBuilderTest` builds the nav mesh over both and asserts
+  no face touches a border gap.
 
 ---
 

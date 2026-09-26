@@ -464,7 +464,7 @@ TEST(TerrainDistanceFieldTest, ThalwegCarriesTheWorldgenArcCoordinate) {
 		rivers.push_back({x, 256.0, x + 20.0, 256.0, 3.0F, 3.0F, x + 5000.0, x + 20.0 + 5000.0});
 	}
 	const ChunkCoordinate	   coord{0, 0};
-	const ChunkTerrainPolygons polys = TerrainPolygonBuilder::build(coord, kWorldSeed, HandTiles(Biome::TemperateGrassland).fn(), rivers, {});
+	const ChunkTerrainPolygons polys = buildHand(HandTiles(coord, Biome::TemperateGrassland), kWorldSeed, rivers);
 	ASSERT_EQ(polys.thalwegs.size(), 1U);
 	const ThalwegPath& path = polys.thalwegs.front();
 	ASSERT_EQ(path.arcLengthM.size(), path.points.size());
@@ -833,7 +833,7 @@ TEST(TerrainDistanceFieldTest, BuilderRingsBakeIdenticallyAcrossABorder) {
 				gathered.push_back(s);
 			}
 		}
-		ChunkTerrainPolygons polys = TerrainPolygonBuilder::build(c, kWorldSeed, HandTiles(c, biome).fn(), gathered, {});
+		ChunkTerrainPolygons polys = buildHand(HandTiles(c, biome), kWorldSeed, gathered);
 		polys.version			   = 1;
 		return polys;
 	};
