@@ -89,13 +89,21 @@ namespace {
 	}
 
 	void runBuild(benchmark::State& state, bool (*isWater)(int32_t, int32_t), Biome water) {
+		const ChunkCoordinate						 coord{3, -2};
 		const std::vector<TileData>					 tiles = makeTiles(isWater, water);
 		const TerrainPolygonBuilder::ExtendedTileFn fn	  = [&tiles](int32_t ex, int32_t ey) -> const TileData& {
 			return tiles[static_cast<size_t>(ey) * static_cast<size_t>(kExtendedSize) + static_cast<size_t>(ex)];
 		};
+		// Channel-free, so only the extended tiles are ever asked.
+		const TerrainPolygonBuilder::BiomeWaterFn waterFn = [&fn, coord](int64_t tx, int64_t ty) {
+			return engine::world::isBiomeWater(fn(
+				static_cast<int32_t>(tx - static_cast<int64_t>(coord.x) * engine::world::kChunkSize + engine::world::kApronTiles),
+				static_cast<int32_t>(ty - static_cast<int64_t>(coord.y) * engine::world::kChunkSize + engine::world::kApronTiles)
+			));
+		};
 		ChunkTerrainPolygons polys;
 		for (auto _ : state) {
-			polys = TerrainPolygonBuilder::build(ChunkCoordinate{3, -2}, kSeed, fn, {}, {});
+			polys = TerrainPolygonBuilder::build(coord, kSeed, fn, waterFn, {}, {});
 			benchmark::DoNotOptimize(polys);
 		}
 		reportCounts(state, polys);
@@ -106,15 +114,20 @@ namespace {
 		const engine::world::GeneratedWorldSampler			sampler(world.world, world.landingLat, world.landingLon);
 		auto chunk = std::make_unique<Chunk>(coord, sampler.sampleChunk(coord), sampler.getWorldSeed());
 		chunk->generate();
-		const engine::world::ApronField	   apron = engine::world::ApronField::build(coord, chunk->biomeData(), sampler.getWorldSeed());
+		const engine::world::ApronField	   apron = engine::world::ApronField::build(
+			coord, chunk->biomeData(), chunk->biomeData().rasterHydrology(coord), sampler.getWorldSeed());
 		const engine::world::ExtendedTiles extended(*chunk, apron);
 		const TerrainPolygonBuilder::ExtendedTileFn fn = [&extended](int32_t ex, int32_t ey) -> const TileData& {
 			return extended.at(ex, ey);
 		};
 		const engine::world::ChunkSampleResult& sample = chunk->biomeData();
-		ChunkTerrainPolygons					polys;
+		engine::world::NeighborhoodGrids		neighborhood(sample);
+		const TerrainPolygonBuilder::BiomeWaterFn waterFn = [&neighborhood, coord](int64_t tx, int64_t ty) {
+			return engine::world::isBiomeWater(neighborhood.primaryBiomeAt(coord, tx, ty));
+		};
+		ChunkTerrainPolygons polys;
 		for (auto _ : state) {
-			polys = TerrainPolygonBuilder::build(coord, sampler.getWorldSeed(), fn, sample.riverSegments, sample.pondBlobs);
+			polys = TerrainPolygonBuilder::build(coord, sampler.getWorldSeed(), fn, waterFn, sample.riverSegments, sample.pondBlobs);
 			benchmark::DoNotOptimize(polys);
 		}
 		reportCounts(state, polys);
@@ -159,6 +172,32 @@ namespace {
 		runGenerate(state, Biome::Ocean);
 	}
 
+	// Sampling (the river and pond gather) plus generation, on the trunk chunk: what
+	// the gather margin costs the tile raster, which scans every gathered segment.
+	void BM_ChunkSampleAndGenerate_RiverTrunk(benchmark::State& state) {
+		const engine::world::river_test::CarvedRiverWorld world = engine::world::river_test::makeCarvedRiverWorld();
+		const engine::world::GeneratedWorldSampler			sampler(world.world, world.landingLat, world.landingLon);
+		size_t												segments = 0;
+		for (auto _ : state) {
+			const ChunkCoordinate kTrunk{0, -1};
+			auto				  chunk = std::make_unique<Chunk>(kTrunk, sampler.sampleChunk(kTrunk), sampler.getWorldSeed());
+			chunk->generate();
+			segments = chunk->biomeData().riverSegments.size();
+			benchmark::DoNotOptimize(chunk->terrainPolygons());
+		}
+		state.counters["segments"] = static_cast<double>(segments);
+	}
+
+	// The sampling (river and pond gather) alone, the part of the above the
+	// gather margin grows directly.
+	void BM_ChunkSample_RiverTrunk(benchmark::State& state) {
+		const engine::world::river_test::CarvedRiverWorld world = engine::world::river_test::makeCarvedRiverWorld();
+		const engine::world::GeneratedWorldSampler			sampler(world.world, world.landingLat, world.landingLon);
+		for (auto _ : state) {
+			benchmark::DoNotOptimize(sampler.sampleChunk(ChunkCoordinate{0, -1}));
+		}
+	}
+
 } // namespace
 
 BENCHMARK(BM_TerrainPolygonBuilder_StaircaseLake)->Unit(benchmark::kMillisecond);
@@ -168,3 +207,5 @@ BENCHMARK(BM_TerrainPolygonBuilder_RiverSource)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_TerrainPolygonBuilder_RiverTrunk)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ChunkGenerate_AllLand)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ChunkGenerate_AllWater)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_ChunkSampleAndGenerate_RiverTrunk)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_ChunkSample_RiverTrunk)->Unit(benchmark::kMillisecond);

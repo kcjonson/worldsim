@@ -10,6 +10,7 @@
 #include <worldgen/sampling/PondNetwork2D.h>
 #include <worldgen/sampling/RiverNetwork2D.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <vector>
@@ -28,13 +29,16 @@ inline constexpr int32_t kNeighborhoodLatticeSize = 4;
 
 // How far beyond the chunk square a world sampler gathers riverSegments and
 // pondBlobs, meters. It covers the kApronTiles apron the terrain-polygon builder
-// and ApronField read (D4) and more: the ribbon builder (D7) joins the gathered
-// sub-segments into chains, and a chain cut by the gather must end two 20 m trunk
-// steps outside the extended region so its cut (and the Catmull-Rom span that
-// cut distorts) never shows. Ponds get the same margin so a channel's mouth can
-// find a receiving pond just past the edge; gatherPonds widens further by each
-// pond's own footprint.
-inline constexpr double kRiverGatherMarginM = 48.0;
+// and ApronField read (D4) and much more: the ribbon builder (D7) keeps every
+// centerline sample that can shape a border ring edge or a bake-region thalweg
+// point, plus the river around it that the mouth decisions read, out to
+// TerrainPolygonBuilder::kChannelKeepReachM (sized for the widest river,
+// RiverNetwork2D::kMaxHalfWidthMeters), and each kept sample's Catmull-Rom span
+// needs the gathered nodes a 20 m trunk step beyond it. TerrainChannelBuilder
+// static_asserts the budget. Ponds get the same margin so a channel's mouth
+// finds a receiving pond anywhere along that reach; gatherPonds widens further by
+// each pond's own footprint.
+inline constexpr double kRiverGatherMarginM = 490.0;
 
 struct ChunkSampleResult {
     std::array<BiomeWeights, 4> cornerBiomes{};
@@ -77,8 +81,10 @@ struct ChunkSampleResult {
     }
 
     // River channel segments (2D world meters) whose footprint touches this
-    // chunk, synthesized from the coarse 3D drainage graph by RiverNetwork2D.
-    // Empty for the vast majority of chunks. Consumed per tile by riverHalfWidthAt().
+    // chunk grown by kRiverGatherMarginM, synthesized from the coarse 3D drainage
+    // graph by RiverNetwork2D. Empty for the vast majority of chunks. The
+    // terrain-polygon builder reads them all; the tile raster reads the few near
+    // the chunk (rasterHydrology) through riverHalfWidthAt().
     std::vector<worldgen::RiverNetwork2D::Segment> riverSegments;
 
     // Rasterization floor, tile layer only. RiverNetwork2D emits true channel
@@ -146,6 +152,32 @@ struct ChunkSampleResult {
             best = std::max(best, worldgen::PondNetwork2D::sampleDepth(p, worldXMeters, worldYMeters));
         }
         return best;
+    }
+
+    // A hydrology-only result (corner/sector fields left default) carrying just
+    // the river segments whose rasterized footprint can touch a tile of `coord`'s
+    // square grown by kApronTiles, for the tile raster (Chunk::generate,
+    // ApronField) to read via riverHalfWidthAt/pondDepthAt. riverHalfWidthAt
+    // scans every segment per tile, and the gather runs hundreds of meters past
+    // what the raster reads. Ponds are few and kept whole. Deliberately not `*this`
+    // with riverSegments filtered: the raster never reads cornerBiomes/sectorGrid,
+    // so copying them (~1024 BiomeWeights) here would be pure waste.
+    [[nodiscard]] ChunkSampleResult rasterHydrology(ChunkCoordinate coord) const {
+        ChunkSampleResult out;
+        out.pondBlobs = pondBlobs;
+        const double reach = static_cast<double>(kApronTiles) + 1.0;
+        const double minX  = static_cast<double>(coord.x) * static_cast<double>(kChunkSize) - reach;
+        const double minY  = static_cast<double>(coord.y) * static_cast<double>(kChunkSize) - reach;
+        const double maxX  = minX + static_cast<double>(kChunkSize) + 2.0 * reach;
+        const double maxY  = minY + static_cast<double>(kChunkSize) + 2.0 * reach;
+        for (const auto& s : riverSegments) {
+            const double pad = static_cast<double>(std::max({s.halfWidth0, s.halfWidth1, kTileRasterMinHalfM}));
+            if (std::max(s.x0, s.x1) + pad >= minX && std::min(s.x0, s.x1) - pad <= maxX &&
+                std::max(s.y0, s.y1) + pad >= minY && std::min(s.y0, s.y1) - pad <= maxY) {
+                out.riverSegments.push_back(s);
+            }
+        }
+        return out;
     }
 
     void computeSectorGrid() {

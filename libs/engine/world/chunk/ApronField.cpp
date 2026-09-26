@@ -14,34 +14,52 @@ namespace engine::world {
 
 	} // namespace
 
-	ApronField ApronField::build(ChunkCoordinate coord, const ChunkSampleResult& sampleData, uint64_t worldSeed) {
+	NeighborhoodGrids::NeighborhoodGrids(const ChunkSampleResult& sampleData)
+		: m_sampleData(sampleData),
+		  m_grids(9) {}
+
+	const ChunkSampleResult& NeighborhoodGrids::grid(int32_t dx, int32_t dy) {
+		assert(dx >= -1 && dx <= 1 && dy >= -1 && dy <= 1);
+		if (dx == 0 && dy == 0) {
+			return m_sampleData;
+		}
+		const size_t idx = neighborIndex(dx, dy);
+		if (!m_built[idx]) {
+			m_grids[idx].cornerBiomes = m_sampleData.neighborCornerBiomes(dx, dy);
+			m_grids[idx].cornerElevations = m_sampleData.neighborCornerElevations(dx, dy);
+			m_grids[idx].computeSectorGrid();
+			m_built[idx] = true;
+		}
+		return m_grids[idx];
+	}
+
+	Biome NeighborhoodGrids::primaryBiomeAt(ChunkCoordinate coord, int64_t tx, int64_t ty) {
+		const int64_t lx = tx - static_cast<int64_t>(coord.x) * kChunkSize;
+		const int64_t ly = ty - static_cast<int64_t>(coord.y) * kChunkSize;
+		const int32_t dx = (lx < 0) ? -1 : ((lx >= kChunkSize) ? 1 : 0);
+		const int32_t dy = (ly < 0) ? -1 : ((ly >= kChunkSize) ? 1 : 0);
+		assert(lx >= -kChunkSize && lx < 2 * kChunkSize && ly >= -kChunkSize && ly < 2 * kChunkSize);
+		const auto nx = static_cast<uint16_t>(lx - dx * kChunkSize);
+		const auto ny = static_cast<uint16_t>(ly - dy * kChunkSize);
+		return grid(dx, dy).getTileBiome(nx, ny).primary();
+	}
+
+	ApronField ApronField::build(ChunkCoordinate coord, const ChunkSampleResult& neighborhoodSource,
+	                              const ChunkSampleResult& hydrology, uint64_t worldSeed) {
 		ApronField field;
 		field.m_top.resize(static_cast<size_t>(kExtendedSize) * static_cast<size_t>(kApronTiles));
 		field.m_bottom.resize(static_cast<size_t>(kExtendedSize) * static_cast<size_t>(kApronTiles));
 		field.m_left.resize(static_cast<size_t>(kApronTiles) * static_cast<size_t>(kChunkSize));
 		field.m_right.resize(static_cast<size_t>(kApronTiles) * static_cast<size_t>(kChunkSize));
 
-		// Each of the 8 neighbors' own biome/elevation grid, built once from the
-		// sample data's neighborhood corner lattice (D4) and reused for every apron
-		// tile that neighbor owns. Lazily filled; (0,0) [this chunk] is unused. On
-		// the heap: nine sample results are ~330 KB, too much for a worker's stack.
-		std::vector<ChunkSampleResult> neighborGrids(9);
-		std::array<bool, 9> built{};
-		auto neighborGrid = [&](int32_t dx, int32_t dy) -> const ChunkSampleResult& {
-			const size_t idx = neighborIndex(dx, dy);
-			if (!built[idx]) {
-				neighborGrids[idx].cornerBiomes = sampleData.neighborCornerBiomes(dx, dy);
-				neighborGrids[idx].cornerElevations = sampleData.neighborCornerElevations(dx, dy);
-				neighborGrids[idx].computeSectorGrid();
-				built[idx] = true;
-			}
-			return neighborGrids[idx];
-		};
+		// Each of the 8 neighbors' own biome/elevation grid, reused for every apron
+		// tile that neighbor owns.
+		NeighborhoodGrids grids(neighborhoodSource);
 
 		// Compute one extended-region tile: find the neighbor chunk that owns it,
 		// resolve biome/elevation from that neighbor's own grid, and run it through
 		// the same tile-compute core the neighbor's own generate() would use.
-		// Hydrology (river/pond) always comes from `sampleData` itself: it is a
+		// Hydrology (river/pond) always comes from `hydrology`: it is a
 		// world-position query already gathered over the extended AABB (D4), so it
 		// covers every apron tile regardless of which neighbor conceptually owns it.
 		auto computeExtended = [&](int32_t ex, int32_t ey) -> TileData {
@@ -53,7 +71,7 @@ namespace engine::world {
 			const auto nx = static_cast<uint16_t>(lx - dx * kChunkSize);
 			const auto ny = static_cast<uint16_t>(ly - dy * kChunkSize);
 			const ChunkCoordinate neighborCoord{coord.x + dx, coord.y + dy};
-			const ChunkSampleResult& grid = neighborGrid(dx, dy);
+			const ChunkSampleResult& grid = grids.grid(dx, dy);
 
 			return Chunk::computeTileFrom({
 				.coord = neighborCoord,
@@ -61,7 +79,7 @@ namespace engine::world {
 				.localY = ny,
 				.biomeWeights = grid.getTileBiome(nx, ny),
 				.elevationMeters = grid.getTileElevation(nx, ny),
-				.hydrology = &sampleData,
+				.hydrology = &hydrology,
 				.worldSeed = worldSeed,
 			});
 		};

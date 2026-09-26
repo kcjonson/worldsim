@@ -134,12 +134,12 @@ namespace {
 
 TEST(TerrainPolygonBuilderTest, OneTilePoolSurvives) {
 	const ChunkCoordinate coord{3, -2};
-	HandTiles			  tiles(Biome::TemperateGrassland);
+	HandTiles			  tiles(coord, Biome::TemperateGrassland);
 	const int32_t		  ex = kApronTiles + 200;
 	const int32_t		  ey = kApronTiles + 311;
 	tiles.at(ex, ey)		 = tileOf(Biome::Lake);
 
-	const ChunkTerrainPolygons polys = TerrainPolygonBuilder::build(coord, kWorldSeed, tiles.fn(), {}, {});
+	const ChunkTerrainPolygons polys = buildHand(tiles, kWorldSeed);
 	ASSERT_EQ(polys.rings.size(), 1U);
 	const Ring& ring = polys.rings[0].ring;
 	EXPECT_EQ(geometry::windingOrder(ring), geometry::Winding::CounterClockwise);
@@ -154,13 +154,13 @@ TEST(TerrainPolygonBuilderTest, OneTilePoolSurvives) {
 
 TEST(TerrainPolygonBuilderTest, OneTileIsletSurvivesAsHole) {
 	const ChunkCoordinate coord{-1, 4};
-	HandTiles			  tiles(Biome::Lake);
+	HandTiles			  tiles(coord, Biome::Lake);
 	const int32_t		  ex = kApronTiles + 57;
 	const int32_t		  ey = kApronTiles + 402;
 	tiles.at(ex, ey)		 = tileOf(Biome::TemperateGrassland);
 	const Vec2i64 center	 = extendedTileCenterMm(coord, ex, ey);
 
-	const ChunkTerrainPolygons polys = TerrainPolygonBuilder::build(coord, kWorldSeed, tiles.fn(), {}, {});
+	const ChunkTerrainPolygons polys = buildHand(tiles, kWorldSeed);
 	expectAllSimple(polys, "islet");
 	int holes = 0;
 	for (const TerrainRing& ring : polys.rings) {
@@ -183,14 +183,14 @@ TEST(TerrainPolygonBuilderTest, OneTileIsletSurvivesAsHole) {
 
 TEST(TerrainPolygonBuilderTest, BoundaryTouchingLakeClosesSyntheticallyOutsideTheChunk) {
 	const ChunkCoordinate coord{0, 0};
-	HandTiles			  tiles(Biome::TemperateGrassland);
+	HandTiles			  tiles(coord, Biome::TemperateGrassland);
 	for (int32_t ey = 0; ey < kExtendedSize; ++ey) {
 		for (int32_t ex = 0; ex < 100; ++ex) {
 			tiles.at(ex, ey) = tileOf(Biome::Lake);
 		}
 	}
 
-	const ChunkTerrainPolygons polys = TerrainPolygonBuilder::build(coord, kWorldSeed, tiles.fn(), {}, {});
+	const ChunkTerrainPolygons polys = buildHand(tiles, kWorldSeed);
 	expectAllSimple(polys, "boundary lake");
 	ASSERT_EQ(polys.rings.size(), 1U);
 
@@ -254,7 +254,7 @@ TEST(TerrainPolygonBuilderTest, BoundaryTouchingLakeClosesSyntheticallyOutsideTh
 // the north: profiles read the land side of each vertex.
 TEST(TerrainPolygonBuilderTest, ShoreProfilesReadTheLandSide) {
 	const ChunkCoordinate coord{0, 0};
-	HandTiles			  tiles(Biome::TemperateGrassland);
+	HandTiles			  tiles(coord, Biome::TemperateGrassland);
 	constexpr int32_t	  kShoreEx = kExtendedSize / 2;
 	for (int32_t ey = 0; ey < kExtendedSize; ++ey) {
 		for (int32_t ex = 0; ex < kExtendedSize; ++ex) {
@@ -268,7 +268,7 @@ TEST(TerrainPolygonBuilderTest, ShoreProfilesReadTheLandSide) {
 		}
 	}
 
-	const ChunkTerrainPolygons polys = TerrainPolygonBuilder::build(coord, kWorldSeed, tiles.fn(), {}, {});
+	const ChunkTerrainPolygons polys = buildHand(tiles, kWorldSeed);
 	ASSERT_EQ(polys.rings.size(), 1U);
 	const TerrainRing& lake = polys.rings[0];
 	EXPECT_EQ(lake.water, WaterKind::Lake);

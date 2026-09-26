@@ -6,30 +6,59 @@
 // itself, right up to the chunk border (see
 // docs/technical/organic-terrain/terrain-polygons-architecture.md D4).
 //
-// Built entirely from the generating chunk's own ChunkSampleResult (its
-// neighborhood corner lattice plus its extended-AABB river/pond gather); it never
-// waits on a neighbor Chunk existing. Apron tiles are raw Chunk::computeTileFrom
-// output: no mud post-process, no adjacency (TilePostProcessor never runs on
-// them).
+// Built entirely from the generating chunk's own data (its neighborhood corner
+// lattice, plus a hydrology-only result carrying its extended-AABB river/pond
+// gather); it never waits on a neighbor Chunk existing. Apron tiles are raw
+// Chunk::computeTileFrom output: no mud post-process, no adjacency
+// (TilePostProcessor never runs on them).
 
 #include "world/chunk/Chunk.h"
 #include "world/chunk/ChunkCoordinate.h"
 #include "world/chunk/ChunkSampleResult.h"
 
+#include <array>
 #include <cstdint>
 #include <vector>
 
 namespace engine::world {
 
+/// The biome/elevation grids of a chunk's 3x3 neighborhood, each rebuilt from the
+/// sample data's neighborhood corner lattice exactly as that neighbor builds its
+/// own (D4), lazily, on first use. The chunk itself (0, 0) reads `sampleData`.
+/// One per generation call: not thread-safe.
+class NeighborhoodGrids {
+  public:
+	/// `sampleData` must carry the neighborhood corner lattice
+	/// (fillNeighborhoodCorners) and outlive this.
+	explicit NeighborhoodGrids(const ChunkSampleResult& sampleData);
+
+	/// Grid of the neighbor at offset (dx, dy), each in [-1, 1].
+	[[nodiscard]] const ChunkSampleResult& grid(int32_t dx, int32_t dy);
+
+	/// Primary biome of world tile (tx, ty), the tile the owning chunk's own
+	/// generate() computes there. (tx, ty) must lie in the neighborhood of `coord`.
+	[[nodiscard]] Biome primaryBiomeAt(ChunkCoordinate coord, int64_t tx, int64_t ty);
+
+  private:
+	const ChunkSampleResult&	   m_sampleData;
+	std::vector<ChunkSampleResult> m_grids; // on the heap: nine are ~330 KB, too much for a worker's stack
+	std::array<bool, 9>			   m_built{};
+};
+
 /// The apron ring of tiles around a chunk: the kExtendedSize x kExtendedSize
 /// extended region minus the chunk's own kChunkSize x kChunkSize square.
 class ApronField {
   public:
-	/// Build the apron for `coord` from `sampleData`, which must already carry the
-	/// neighborhood corner lattice (fillNeighborhoodCorners) and the
-	/// extended-AABB river/pond gather (D4). `sampleData` is normally the
-	/// generating chunk's own ChunkSampleResult.
-	[[nodiscard]] static ApronField build(ChunkCoordinate coord, const ChunkSampleResult& sampleData, uint64_t worldSeed);
+	/// Build the apron for `coord`. `neighborhoodSource` must carry the
+	/// neighborhood corner lattice (fillNeighborhoodCorners); it is normally the
+	/// generating chunk's own ChunkSampleResult (m_biomeData), used only for that
+	/// lattice, never for river/pond queries. `hydrology` supplies
+	/// riverHalfWidthAt/pondDepthAt for every apron tile regardless of which
+	/// neighbor conceptually owns it (river/pond geometry is world-position-based
+	/// and doesn't care); it is normally the generating chunk's rasterHydrology()
+	/// result, gathered over the extended AABB (D4).
+	[[nodiscard]] static ApronField build(ChunkCoordinate coord, const ChunkSampleResult& neighborhoodSource,
+	                                       const ChunkSampleResult& hydrology, uint64_t worldSeed);
 
 	/// Tile at extended-region coordinates (ex, ey), each in [0, kExtendedSize),
 	/// excluding the interior [kApronTiles, kApronTiles + kChunkSize) square (that

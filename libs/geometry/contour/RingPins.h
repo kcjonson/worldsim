@@ -6,24 +6,27 @@
 #include <span>
 #include <vector>
 
-// Border pins (terrain-polygons D4/D6). Two chunks build the same shoreline from
+// Ring pins (terrain-polygons D4/D6). Two chunks build the same shoreline from
 // their own extended regions, so their rings differ in start vertex and far from
-// the shared border. Pinning the vertices where a ring crosses the chunk-border
-// lines, and never moving or removing them afterwards, keeps every later step a
-// function of the run between two pins, which both chunks compute identically.
+// the shared border. Pinning the vertices where a ring crosses a fixed set of
+// world lines, and never moving or removing them afterwards, keeps every later
+// step a function of the run between two pins, which both chunks compute
+// identically wherever they compute that run from the same curve.
 
 namespace geometry {
 
 	// Inserts a vertex wherever an edge properly crosses (endpoints strictly on
 	// either side) one of the vertical lines x = xLinesMm[k] or horizontal lines
-	// y = yLinesMm[k]. The coordinate on the line is exact; the other is rounded
+	// y = yLinesMm[k], or, with latticeMm > 0, any line x = k * latticeMm or
+	// y = k * latticeMm. The coordinate on the line is exact; the other is rounded
 	// to the nearest mm (halves up) from the lexicographically ordered endpoints,
 	// so a->b and b->a give the same point. Returns a mask, same length as the
 	// ring, nonzero for every vertex lying exactly on any of the lines (inserted or
 	// pre-existing). Bytes rather than vector<bool>, whose element access takes a
 	// process-wide lock in MSVC debug builds and serializes concurrent chunk workers.
-	std::vector<std::uint8_t>
-	pinAxisLineCrossings(Ring& ring, std::span<const std::int64_t> xLinesMm, std::span<const std::int64_t> yLinesMm);
+	std::vector<std::uint8_t> pinAxisLineCrossings(
+		Ring& ring, std::span<const std::int64_t> xLinesMm, std::span<const std::int64_t> yLinesMm, std::int64_t latticeMm = 0
+	);
 
 	// Resamples the closed ring to ~spacingMm vertex spacing. Pinned vertices are
 	// kept exactly; each run between consecutive pinned vertices is resampled

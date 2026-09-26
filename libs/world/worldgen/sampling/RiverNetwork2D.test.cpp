@@ -210,7 +210,7 @@ TEST(RiverNetwork2D, OverlappingBoxesAgreeOnGeometry) {
     };
     auto sameSeg = [](const RiverNetwork2D::Segment& p, const RiverNetwork2D::Segment& q) {
         return p.x0 == q.x0 && p.y0 == q.y0 && p.x1 == q.x1 && p.y1 == q.y1 &&
-               p.halfWidth0 == q.halfWidth0 && p.halfWidth1 == q.halfWidth1;
+               p.halfWidth0 == q.halfWidth0 && p.halfWidth1 == q.halfWidth1 && p.s0 == q.s0 && p.s1 == q.s1;
     };
 
     int matched = 0;
@@ -450,6 +450,41 @@ TEST(RiverNetwork2D, FeederGatherIsLocallyConsistent) {
                 << "mismatch at offset (" << dx << ", " << dy << ")";
         }
     }
+}
+
+// The arc coordinate increases downstream along every segment, and where one
+// segment ends at another's start it carries on unchanged, except at a coarse
+// tile joint, where the next tile pair starts over at zero.
+TEST(RiverNetwork2D, ArcCoordinateIncreasesDownstreamAndCarriesAcrossJoins) {
+    auto world = makeLandWorld();
+    auto chain = buildRiver(*world, 0.0, -30.0, 0.0, 30.0, 400.0f, 0.0f); // wide -> feeders too
+    ASSERT_GE(chain.size(), 5u);
+    RiverNetwork2D net(world, 0.0, 0.0);
+    SphericalProjection proj(world->derived.planetRadiusMeters, 0.0, 0.0);
+    // Straddle the joint at chain[2]'s center.
+    const WorldPos2d c = tilePos(*world, proj, chain[2]);
+    std::vector<RiverNetwork2D::Segment> segs;
+    net.gatherSegments(c.x - 1500.0, c.y - 1500.0, c.x + 1500.0, c.y + 1500.0, segs);
+    ASSERT_FALSE(segs.empty());
+
+    int joins = 0;
+    int resets = 0;
+    for (const auto& s : segs) {
+        EXPECT_GT(s.s1, s.s0);
+        EXPECT_GE(s.s0, 0.0);
+        for (const auto& t : segs) {
+            if (t.x0 != s.x1 || t.y0 != s.y1) continue;
+            ++joins;
+            if (t.s0 == 0.0 && s.s1 != 0.0) {
+                ++resets;
+            } else {
+                EXPECT_EQ(t.s0, s.s1);
+            }
+        }
+    }
+    EXPECT_GT(joins, 20);
+    // The joint's two ends need not match to the bit (each pair evaluates its own end).
+    EXPECT_LE(resets, 1) << "one coarse tile joint in the box";
 }
 
 } // namespace worldgen

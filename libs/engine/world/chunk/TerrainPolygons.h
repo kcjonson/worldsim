@@ -56,13 +56,20 @@ struct TerrainRing {
 };
 
 /// One river reach's thalweg (D2, D7 step 3), for the distance-field bake: the
-/// centerline samples offset toward the outer bank by the bend asymmetry, over
-/// the extended region. Parallel arrays, one entry per point.
+/// centerline samples offset toward the outer bank by the bend asymmetry, every
+/// point a texel of the chunk's bake region can read (up to 2 bankfull
+/// half-widths away, TerrainPolygonBuilder::kThalwegReachHalfWidths), which for a
+/// wide river runs far past the extended region. Parallel arrays, one entry per
+/// point.
 struct ThalwegPath {
 	std::vector<geometry::Vec2i64> points; ///< integer mm, world-absolute
 	std::vector<float> halfWidthM;         ///< bankfull half-width at each point
 	std::vector<float> widthRatio;         ///< w / mean w over a 5 w window (riffle > 1, pool < 1)
 	std::vector<float> curvature;          ///< signed, 1/m, positive turning left
+	/// RiverNetwork2D's arc coordinate (m, increasing downstream), linear within
+	/// each centerline span: world-deterministic, so every chunk reads the same
+	/// value at a point, but it resets at coarse tile joints and feeder junctions.
+	std::vector<double> arcLengthM;
 };
 
 /// A chunk's terrain polygon set. `rings` covers the extended region (chunk plus
@@ -70,7 +77,7 @@ struct ThalwegPath {
 /// shoreline; `navRings` is the same rings clipped to the chunk's own 512x512
 /// square (D4, D9). `navRings` carries no per-vertex profiles: nav only reads the
 /// ring and the blocksMovement/holeCapable flags, never shading. `thalwegs` has one
-/// path per river reach over the extended region (D2, D10).
+/// path per stretch of river reach the bake can read (D2, D10).
 struct ChunkTerrainPolygons {
 	std::vector<TerrainRing> rings;
 	std::vector<TerrainRing> navRings;

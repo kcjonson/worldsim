@@ -81,6 +81,62 @@ TEST(PinAxisLineCrossings, LinePairThroughItsIntersectionGivesOnePoint) {
 	EXPECT_EQ(r.size(), mask.size());
 }
 
+TEST(PinAxisLineCrossings, LatticePinsEveryMultipleOnBothAxes) {
+	// (-5000, 1000) -> (37000, 1000) crosses x = 0, 16000, 32000; the vertical
+	// back edges cross y = 16000 once each side; negative coordinates floor.
+	Ring							r	 = {{-5000, 1000}, {37000, 1000}, {37000, 20000}, {-5000, 20000}};
+	const std::vector<std::uint8_t> mask = pinAxisLineCrossings(r, kNoLines, kNoLines, 16000);
+	const Ring expected = {{-5000, 1000},	{0, 1000},	   {16000, 1000},  {32000, 1000}, {37000, 1000}, {37000, 16000},
+						   {37000, 20000}, {32000, 20000}, {16000, 20000}, {0, 20000},	   {-5000, 20000}, {-5000, 16000}};
+	EXPECT_EQ(r, expected);
+	const std::vector<std::uint8_t> expectedMask = {0, 1, 1, 1, 0, 1, 0, 1, 1, 1, 0, 1};
+	EXPECT_EQ(mask, expectedMask);
+}
+
+TEST(PinAxisLineCrossings, LatticeAndExplicitLinesShareACrossingOnce) {
+	// x = 16000 is both an explicit line and a lattice line; x = 20000 only explicit.
+	Ring							   r	  = {{1000, 1000}, {40000, 3000}, {1000, 6000}};
+	const std::array<std::int64_t, 2> xLines = {16000, 20000};
+	const std::vector<std::uint8_t>	   mask	  = pinAxisLineCrossings(r, xLines, kNoLines, 16000);
+	EXPECT_EQ(std::count_if(r.begin(), r.end(), [](const Vec2i64& v) { return v.x == 16000; }), 2);
+	EXPECT_EQ(std::count_if(r.begin(), r.end(), [](const Vec2i64& v) { return v.x == 20000; }), 2);
+	EXPECT_EQ(std::count_if(r.begin(), r.end(), [](const Vec2i64& v) { return v.x == 32000; }), 2);
+	EXPECT_EQ(r.size(), 9u);
+	EXPECT_EQ(std::count(mask.begin(), mask.end(), std::uint8_t{1}), 6);
+}
+
+// The point of lattice pins: a resampled run depends only on the curve between
+// two lattice crossings. Two copies of one shore (vertices on one 97 mm grid),
+// cut at different places far from the lattice cell [0, 16 m], resample
+// identically inside that cell.
+TEST(PinAxisLineCrossings, LatticeRunsResampleIndependentlyOfWhereTheRingIsCut) {
+	auto shore = [](double x) { return 3000.0 + 900.0 * std::sin(x / 2300.0) + 400.0 * std::cos(x / 700.0); };
+	auto build = [&shore](std::int64_t x0, std::int64_t x1) {
+		Ring r;
+		for (std::int64_t x = x0; x <= x1; x += 97) {
+			r.push_back({x, std::llround(shore(static_cast<double>(x)))});
+		}
+		r.push_back({x1, -20000});
+		r.push_back({x0, -20000});
+		return r;
+	};
+	auto cellVertices = [](Ring r) {
+		std::vector<std::uint8_t> pinned = pinAxisLineCrossings(r, kNoLines, kNoLines, 16000);
+		resampleRing(r, 250, pinned);
+		Ring inside;
+		for (const Vec2i64& v : r) {
+			if (v.x >= 0 && v.x <= 16000 && v.y > 0) {
+				inside.push_back(v);
+			}
+		}
+		return inside;
+	};
+	const Ring a = cellVertices(build(-97 * 73, 97 * 258));
+	const Ring b = cellVertices(build(-97 * 134, 97 * 423));
+	ASSERT_GT(a.size(), 50u);
+	EXPECT_EQ(a, b);
+}
+
 TEST(ResampleRing, UnpinnedRingStartsAtVertexZero) {
 	Ring			  r = {{0, 0}, {4000, 0}, {4000, 4000}, {0, 4000}};
 	std::vector<std::uint8_t> pinned(r.size(), 0);

@@ -16,8 +16,10 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cmath>
 #include <cstddef>
+#include <map>
 #include <optional>
 #include <span>
 #include <utility>
@@ -27,28 +29,11 @@ namespace engine::world::terrain_detail {
 
 	namespace {
 
-		constexpr int32_t kFinePerTile	= static_cast<int32_t>(Builder::kTileMm / Builder::kFineCellMm);
+		constexpr int32_t kFinePerTile = static_cast<int32_t>(Builder::kTileMm / Builder::kFineCellMm);
+
 		// Fine samples per axis: the extended region inclusive of its max edge.
-		constexpr int32_t kFineSamples	= kExtendedSize * kFinePerTile + 1;
-
-		struct WarpSeeds {
-			uint32_t bankX;
-			uint32_t bankY;
-			uint32_t lowX;
-			uint32_t lowY;
-		};
-
-		geometry::WarpOffsetMm shoreWarpOffset(Vec2i64 worldMm, const WarpSeeds& seeds) {
-			auto component = [worldMm](uint32_t bankSeed, uint32_t lowSeed) {
-				const double bank = static_cast<double>(
-					worldNoise(worldMm, Builder::kBankNoiseWavelengthM, bankSeed, Builder::kBankNoiseOctaves)
-				);
-				const double low = static_cast<double>(
-					worldNoise(worldMm, Builder::kShoreLowWavelengthM, lowSeed, Builder::kShoreLowOctaves)
-				);
-				return static_cast<double>(Builder::kBankNoiseAmpMm) * bank + static_cast<double>(Builder::kShoreLowAmpMm) * low;
-			};
-			return {component(seeds.bankX, seeds.lowX), component(seeds.bankY, seeds.lowY)};
+		int32_t fineSamples(const Region& region) {
+			return region.extendedSize * kFinePerTile + 1;
 		}
 
 		// Coarse samples added beyond the extended region on every side, repeating its
@@ -66,40 +51,22 @@ namespace engine::world::terrain_detail {
 		// land), thin-feature guard on the indicator's cardinal neighbors; then the
 		// edge padding above.
 		geometry::ScalarField buildCoarseField(const ExtendedGrid& grid, const Region& region) {
-			constexpr int64_t	  kHalfTile = Builder::kTileMm / 2;
-			constexpr int64_t	  kPadMm	= static_cast<int64_t>(kCoarsePad) * Builder::kTileMm;
-			constexpr int32_t	  kSize		= kExtendedSize + 2 * kCoarsePad;
+			constexpr int64_t	  kPadMm = static_cast<int64_t>(kCoarsePad) * Builder::kTileMm;
+			const int32_t		  extent = grid.size();
+			const int32_t		  size	 = extent + 2 * kCoarsePad;
 			geometry::ScalarField coarse(
-				{region.extMin.x + kHalfTile - kPadMm, region.extMin.y + kHalfTile - kPadMm}, Builder::kTileMm, kSize, kSize
+				{region.extMin.x + kCoarsePhaseMm.x - kPadMm, region.extMin.y + kCoarsePhaseMm.y - kPadMm}, Builder::kTileMm, size, size
 			);
-			constexpr std::array<std::array<int, 3>, 3> kBinomial = {{{1, 2, 1}, {2, 4, 2}, {1, 2, 1}}};
-			for (int32_t y = 0; y < kExtendedSize; ++y) {
-				for (int32_t x = 0; x < kExtendedSize; ++x) {
-					int sum = 0;
-					for (int dy = -1; dy <= 1; ++dy) {
-						for (int dx = -1; dx <= 1; ++dx) {
-							if (grid.water(x + dx, y + dy)) {
-								sum += kBinomial[static_cast<size_t>(dy + 1)][static_cast<size_t>(dx + 1)];
-							}
-						}
-					}
-					float value = static_cast<float>(sum) / 16.0F;
-
-					const bool self = grid.water(x, y);
-					int		   same = 0;
-					for (const auto& [dx, dy] : {std::pair{1, 0}, std::pair{-1, 0}, std::pair{0, 1}, std::pair{0, -1}}) {
-						same += grid.water(x + dx, y + dy) == self ? 1 : 0;
-					}
-					if (same < 2) {
-						value = self ? std::max(value, Builder::kThinWaterFloor) : std::min(value, Builder::kThinLandCeil);
-					}
-					coarse.at(x + kCoarsePad, y + kCoarsePad) = value;
+			auto water = [&grid](int64_t x, int64_t y) { return grid.water(static_cast<int32_t>(x), static_cast<int32_t>(y)); };
+			for (int32_t y = 0; y < extent; ++y) {
+				for (int32_t x = 0; x < extent; ++x) {
+					coarse.at(x + kCoarsePad, y + kCoarsePad) = coarseWaterValue(water, x, y);
 				}
 			}
-			for (int32_t y = 0; y < kSize; ++y) {
-				for (int32_t x = 0; x < kSize; ++x) {
-					const int32_t cx = std::clamp(x, kCoarsePad, kCoarsePad + kExtendedSize - 1);
-					const int32_t cy = std::clamp(y, kCoarsePad, kCoarsePad + kExtendedSize - 1);
+			for (int32_t y = 0; y < size; ++y) {
+				for (int32_t x = 0; x < size; ++x) {
+					const int32_t cx = std::clamp(x, kCoarsePad, kCoarsePad + extent - 1);
+					const int32_t cy = std::clamp(y, kCoarsePad, kCoarsePad + extent - 1);
 					if (cx != x || cy != y) {
 						coarse.at(x, y) = coarse.at(cx, cy);
 					}
@@ -108,13 +75,53 @@ namespace engine::world::terrain_detail {
 			return coarse;
 		}
 
-		// D6 steps 3-7 on one marched loop, pinned where it crosses the chunk border.
-		std::optional<Ring> finishLoop(Ring loop, const Region& region, ChunkCoordinate coord) {
+		int64_t floorDiv(int64_t a, int64_t b) {
+			const int64_t q = a / b;
+			return (a % b != 0 && a < 0) ? q - 1 : q;
+		}
+
+		// The ring cut into runs, each from a pin up to (not including) the next,
+		// starting at the lexicographically smallest pin so that every simplification
+		// rung of one resampled ring splits into the same runs in the same order. A
+		// ring without pins is one run.
+		std::vector<std::vector<Vec2i64>> splitAtPins(const Ring& ring, const std::vector<uint8_t>& pinned) {
+			const size_t n	   = ring.size();
+			size_t		 start = n;
+			for (size_t i = 0; i < n; ++i) {
+				if (pinned[i] != 0 && (start == n || ring[i] < ring[start])) {
+					start = i;
+				}
+			}
+			if (start == n) {
+				return {std::vector<Vec2i64>(ring.begin(), ring.end())};
+			}
+			std::vector<std::vector<Vec2i64>> runs;
+			for (size_t k = 0; k < n; ++k) {
+				const size_t i = (start + k) % n;
+				if (pinned[i] != 0) {
+					runs.emplace_back();
+				}
+				runs.back().push_back(ring[i]);
+			}
+			return runs;
+		}
+
+		// The lattice cell a run (plus the pin that ends it) lies in: every vertex is
+		// in the closed cell, so the center of their bounds is inside it.
+		std::pair<int64_t, int64_t> latticeCellOf(const std::vector<Vec2i64>& run, const Vec2i64& end) {
+			Vec2i64 lo = end;
+			Vec2i64 hi = end;
+			for (const Vec2i64& v : run) {
+				lo = {std::min(lo.x, v.x), std::min(lo.y, v.y)};
+				hi = {std::max(hi.x, v.x), std::max(hi.y, v.y)};
+			}
+			return {floorDiv(lo.x + (hi.x - lo.x) / 2, Builder::kPinLatticeMm), floorDiv(lo.y + (hi.y - lo.y) / 2, Builder::kPinLatticeMm)};
+		}
+
+		// D6 steps 3-7 on one marched loop, pinned on the world lattice.
+		std::optional<Ring> finishLoop(Ring loop, ChunkCoordinate coord) {
 			geometry::chaikin(loop, Builder::kChaikinIterations);
-			const std::array<int64_t, 2> xLines = {region.chunkMin.x, region.chunkMax.x};
-			const std::array<int64_t, 2> yLines = {region.chunkMin.y, region.chunkMax.y};
-			std::vector<uint8_t>		 pinned = geometry::pinAxisLineCrossings(loop, xLines, yLines);
-			return resampleSimplifyValidate(std::move(loop), std::move(pinned), coord, "waterline loop");
+			return pinResampleSimplifyValidate(std::move(loop), {}, {}, {}, coord, "waterline loop");
 		}
 
 		// Unit normal toward the water at vertex i. Marched rings keep water on their
@@ -135,7 +142,7 @@ namespace engine::world::terrain_detail {
 		}
 
 		bool sideMatches(const ExtendedGrid& grid, int32_t ex, int32_t ey, SideRule rule, bool wantWater) {
-			if (!ExtendedGrid::contains(ex, ey)) {
+			if (!grid.contains(ex, ey)) {
 				return false;
 			}
 			if (rule == SideRule::BiomeWater) {
@@ -264,7 +271,7 @@ namespace engine::world::terrain_detail {
 			for (int k = 1; k <= Builder::kFetchCapTiles; ++k) {
 				const Vec2d p			= probePoint(v, normal, static_cast<double>(k * Builder::kTileMm));
 				const auto [ex, ey] = grid.tileAt(p.x, p.y);
-				if (!ExtendedGrid::contains(ex, ey)) {
+				if (!grid.contains(ex, ey)) {
 					return 1.0F;
 				}
 				if (!grid.water(ex, ey)) {
@@ -278,33 +285,19 @@ namespace engine::world::terrain_detail {
 
 		void buildWaterlines(std::vector<TerrainRing>& rings, const ExtendedGrid& grid, const Region& region, uint64_t worldSeed,
 							 ChunkCoordinate coord) {
-			const geometry::ScalarField coarse = buildCoarseField(grid, region);
-
-			const WarpSeeds seeds{
-				purposeSeed(worldSeed, kSaltBankX), purposeSeed(worldSeed, kSaltBankY), purposeSeed(worldSeed, kSaltLowX),
-				purposeSeed(worldSeed, kSaltLowY)
-			};
-			geometry::ScalarField fine = geometry::warpField(
-				coarse,
-				region.extMin,
-				Builder::kFineCellMm,
-				kFineSamples,
-				kFineSamples,
-				[&seeds](Vec2i64 worldMm) { return shoreWarpOffset(worldMm, seeds); },
-				0.0F,
-				geometry::WarpSkip{Builder::kWaterlineIso, Builder::kMaxWarpMm}
-			);
+			geometry::ScalarField fine = waterlineFineField(grid, region, worldSeed);
 			// marchingSquares needs an all-outside border so every loop closes; the
 			// closure it makes along the extended boundary is the synthetic edge (D4).
-			for (int32_t k = 0; k < kFineSamples; ++k) {
-				fine.at(k, 0)				 = 0.0F;
-				fine.at(k, kFineSamples - 1) = 0.0F;
-				fine.at(0, k)				 = 0.0F;
-				fine.at(kFineSamples - 1, k) = 0.0F;
+			const int32_t samples = fineSamples(region);
+			for (int32_t k = 0; k < samples; ++k) {
+				fine.at(k, 0)			= 0.0F;
+				fine.at(k, samples - 1) = 0.0F;
+				fine.at(0, k)			= 0.0F;
+				fine.at(samples - 1, k) = 0.0F;
 			}
 
 			for (Ring& marched : geometry::marchingSquares(fine, Builder::kWaterlineIso)) {
-				std::optional<Ring> ring = finishLoop(std::move(marched), region, coord);
+				std::optional<Ring> ring = finishLoop(std::move(marched), coord);
 				if (!ring || areaBelowFloor(*ring)) {
 					continue;
 				}
@@ -346,40 +339,138 @@ namespace engine::world::terrain_detail {
 
 	} // namespace
 
-	Region regionOf(ChunkCoordinate coord) {
+	Region regionOf(ChunkCoordinate coord, int32_t apronTiles) {
 		constexpr int64_t kChunkMm = static_cast<int64_t>(kChunkSize) * Builder::kTileMm;
-		constexpr int64_t kApronMm = static_cast<int64_t>(kApronTiles) * Builder::kTileMm;
-		constexpr int64_t kKeepMm  = kApronMm + static_cast<int64_t>(Builder::kChainKeepMarginM * kMmPerMeter);
+		const int64_t	  apronMm  = static_cast<int64_t>(apronTiles) * Builder::kTileMm;
 		const Vec2i64	  chunkMin{static_cast<int64_t>(coord.x) * kChunkMm, static_cast<int64_t>(coord.y) * kChunkMm};
 		const Vec2i64	  chunkMax{chunkMin.x + kChunkMm, chunkMin.y + kChunkMm};
 		return {
 			chunkMin,
 			chunkMax,
-			{chunkMin.x - kApronMm, chunkMin.y - kApronMm},
-			{chunkMax.x + kApronMm, chunkMax.y + kApronMm},
-			{chunkMin.x - kKeepMm, chunkMin.y - kKeepMm},
-			{chunkMax.x + kKeepMm, chunkMax.y + kKeepMm}
+			{chunkMin.x - apronMm, chunkMin.y - apronMm},
+			{chunkMax.x + apronMm, chunkMax.y + apronMm},
+			apronTiles,
+			kChunkSize + 2 * apronTiles
 		};
 	}
 
-	std::optional<Ring> resampleSimplifyValidate(Ring loop, std::vector<uint8_t> pinned, ChunkCoordinate coord, const char* what) {
-		geometry::resampleRing(loop, Builder::kRingSpacingMm, pinned);
-		for (const int64_t epsMm : {Builder::kRingSimplifyEpsMm, Builder::kRingSimplifyRetryEpsMm}) {
-			Ring				 simplified = loop;
-			std::vector<uint8_t> mask		= pinned;
-			geometry::simplifyRing(simplified, epsMm, mask);
-			if (geometry::isSimple(simplified).pass) {
-				return simplified;
+	WarpSeeds warpSeeds(uint64_t worldSeed) {
+		return {
+			purposeSeed(worldSeed, kSaltBankX), purposeSeed(worldSeed, kSaltBankY), purposeSeed(worldSeed, kSaltLowX),
+			purposeSeed(worldSeed, kSaltLowY)
+		};
+	}
+
+	geometry::WarpOffsetMm shoreWarpOffset(Vec2i64 worldMm, const WarpSeeds& seeds) {
+		auto component = [worldMm](uint32_t bankSeed, uint32_t lowSeed) {
+			const double bank = static_cast<double>(
+				worldNoise(worldMm, Builder::kBankNoiseWavelengthM, bankSeed, Builder::kBankNoiseOctaves)
+			);
+			const double low = static_cast<double>(
+				worldNoise(worldMm, Builder::kShoreLowWavelengthM, lowSeed, Builder::kShoreLowOctaves)
+			);
+			return static_cast<double>(Builder::kBankNoiseAmpMm) * bank + static_cast<double>(Builder::kShoreLowAmpMm) * low;
+		};
+		return {component(seeds.bankX, seeds.lowX), component(seeds.bankY, seeds.lowY)};
+	}
+
+	geometry::ScalarField waterlineFineField(const ExtendedGrid& grid, const Region& region, uint64_t worldSeed) {
+		const geometry::ScalarField coarse = buildCoarseField(grid, region);
+		const WarpSeeds				seeds  = warpSeeds(worldSeed);
+		const int32_t				samples = fineSamples(region);
+		return geometry::warpField(
+			coarse,
+			region.extMin,
+			Builder::kFineCellMm,
+			samples,
+			samples,
+			[&seeds](Vec2i64 worldMm) { return shoreWarpOffset(worldMm, seeds); },
+			0.0F,
+			geometry::WarpSkip{Builder::kWaterlineIso, Builder::kMaxWarpMm}
+		);
+	}
+
+	float WaterlineField::valueAt(Vec2i64 worldMm) const {
+		const geometry::WarpOffsetMm offset = shoreWarpOffset(worldMm, m_seeds);
+		// The indicator over the 4x4 tiles the bilinear read's four blurred samples
+		// cover, read once.
+		const int64_t cx0 =
+			geometry::latticeAxisRead(worldMm.x - kCoarsePhaseMm.x, offset.x, Builder::kTileMm).cell;
+		const int64_t cy0 =
+			geometry::latticeAxisRead(worldMm.y - kCoarsePhaseMm.y, offset.y, Builder::kTileMm).cell;
+		std::array<std::array<bool, 4>, 4> block{};
+		for (int64_t j = 0; j < 4; ++j) {
+			for (int64_t i = 0; i < 4; ++i) {
+				block[static_cast<size_t>(j)][static_cast<size_t>(i)] = m_biomeWater(cx0 - 1 + i, cy0 - 1 + j);
 			}
-			LOG_DEBUG(World, "Chunk (%d, %d): %s folds when simplified at %lld mm, retrying", coord.x, coord.y, what,
-					  static_cast<long long>(epsMm));
 		}
-		if (geometry::isSimple(loop).pass) {
-			LOG_DEBUG(World, "Chunk (%d, %d): keeping a %s unsimplified (%zu vertices)", coord.x, coord.y, what, loop.size());
-			return loop;
+		auto water = [&block, cx0, cy0](int64_t x, int64_t y) {
+			return block[static_cast<size_t>(y - cy0 + 1)][static_cast<size_t>(x - cx0 + 1)];
+		};
+		auto coarse = [&water](int64_t gx, int64_t gy) { return coarseWaterValue(water, gx, gy); };
+		return geometry::warpedBilinear(coarse, kCoarsePhaseMm, Builder::kTileMm, worldMm, offset);
+	}
+
+	std::optional<Ring> pinResampleSimplifyValidate(Ring loop, std::span<const int64_t> xLines, std::span<const int64_t> yLines,
+													std::span<const Vec2i64> extraPins, ChunkCoordinate coord, const char* what) {
+		std::vector<uint8_t> pinned = geometry::pinAxisLineCrossings(loop, xLines, yLines, Builder::kPinLatticeMm);
+		for (size_t i = 0; i < loop.size(); ++i) {
+			if (std::find(extraPins.begin(), extraPins.end(), loop[i]) != extraPins.end()) {
+				pinned[i] = 1;
+			}
 		}
-		LOG_WARNING(World, "Chunk (%d, %d): dropped a non-simple %s (%zu vertices)", coord.x, coord.y, what, loop.size());
-		return std::nullopt;
+		geometry::resampleRing(loop, Builder::kRingSpacingMm, pinned);
+
+		// Every run between two pins lies in one lattice cell, and two runs can only
+		// cross inside the cell they share. So the retry ladder steps per cell: a
+		// cell whose runs fold at one rung takes the next (100 mm, 50 mm,
+		// unsimplified) while every other cell keeps its own. A fold far from the
+		// border then never changes a run near it, which the neighbor, not seeing
+		// that fold, would not change either.
+		constexpr size_t									kRungs = 3;
+		std::array<std::vector<std::vector<Vec2i64>>, kRungs> runs;
+		for (size_t rung = 0; rung < kRungs; ++rung) {
+			Ring				 version = loop;
+			std::vector<uint8_t> mask	 = pinned;
+			if (rung == 0 || rung == 1) {
+				geometry::simplifyRing(version, rung == 0 ? Builder::kRingSimplifyEpsMm : Builder::kRingSimplifyRetryEpsMm, mask);
+			}
+			runs[rung] = splitAtPins(version, mask);
+		}
+		const size_t runCount = runs[0].size();
+		assert(runs[1].size() == runCount && runs[2].size() == runCount);
+
+		std::vector<std::pair<int64_t, int64_t>> runCell(runCount);
+		for (size_t r = 0; r < runCount; ++r) {
+			runCell[r] = latticeCellOf(runs[0][r], runs[0][(r + 1) % runCount].front());
+		}
+		std::map<std::pair<int64_t, int64_t>, size_t> cellRung;
+		while (true) {
+			Ring				assembled;
+			std::vector<size_t> runOfVertex;
+			for (size_t r = 0; r < runCount; ++r) {
+				const std::vector<Vec2i64>& run = runs[cellRung[runCell[r]]][r];
+				assembled.insert(assembled.end(), run.begin(), run.end());
+				runOfVertex.insert(runOfVertex.end(), run.size(), r);
+			}
+			const geometry::ConstraintResult simple = geometry::isSimple(assembled);
+			if (simple.pass) {
+				return assembled;
+			}
+			bool stepped = false;
+			for (const size_t edge : {simple.vertexIndex, simple.otherIndex}) {
+				size_t& rung = cellRung[runCell[runOfVertex[edge % runOfVertex.size()]]];
+				if (rung + 1 < kRungs) {
+					++rung;
+					stepped = true;
+				}
+			}
+			if (!stepped) {
+				LOG_WARNING(World, "Chunk (%d, %d): dropped a non-simple %s (%zu vertices)", coord.x, coord.y, what, loop.size());
+				return std::nullopt;
+			}
+			LOG_DEBUG(World, "Chunk (%d, %d): a %s folds when simplified, retrying finer in its lattice cell", coord.x, coord.y, what);
+		}
 	}
 
 	bool areaBelowFloor(const Ring& ring) {
@@ -469,29 +560,34 @@ namespace engine::world::terrain_detail {
 
 namespace engine::world {
 
+	bool isBiomeWater(Biome primaryBiome) {
+		return isWater(primaryBiome) || primaryBiome == Biome::TemperateWetland || primaryBiome == Biome::TropicalWetland;
+	}
+
 	bool isBiomeWater(const TileData& tile) {
-		return isWater(tile.primaryBiome) || tile.primaryBiome == Biome::TemperateWetland ||
-			   tile.primaryBiome == Biome::TropicalWetland;
+		return isBiomeWater(tile.primaryBiome);
 	}
 
 	ChunkTerrainPolygons TerrainPolygonBuilder::build(
 		ChunkCoordinate				  coord,
 		uint64_t					  worldSeed,
 		const ExtendedTileFn&		  tiles,
+		const BiomeWaterFn&			  biomeWater,
 		std::span<const RiverSegment> riverSegments,
-		std::span<const Pond>		  ponds
+		std::span<const Pond>		  ponds,
+		int32_t						  apronTiles
 	) {
 		using namespace terrain_detail;
 		ChunkTerrainPolygons out;
-		const Region		 region = regionOf(coord);
-		const ExtendedGrid	 grid(tiles, region);
+		const Region		 region = regionOf(coord, apronTiles);
+		const ExtendedGrid	 grid(tiles, biomeWater, region);
 		// An all-land field marches to nothing; skip the fine lattice outright.
 		if (grid.anyWater()) {
 			buildWaterlines(out.rings, grid, region, worldSeed, coord);
 		}
-		// Ponds before channels, so a channel's mouth can find a receiving pond (D7).
 		buildPonds(out.rings, ponds, grid, region, worldSeed, coord);
-		buildChannels(out, riverSegments, grid, region, worldSeed, coord);
+		const WaterlineField waterline(biomeWater, worldSeed);
+		buildChannels(out, riverSegments, ponds, waterline, grid, region, worldSeed, coord);
 		buildNavRings(out, region, coord);
 		return out;
 	}

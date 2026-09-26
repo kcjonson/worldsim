@@ -32,11 +32,21 @@ class RiverNetwork2D {
     // is always the upstream end, (x1,y1) the downstream end, so a chain of
     // segments joined end-to-end has one consistent flow direction. Trunk segments
     // run source tile -> its downstream tile; feeders run spring -> the confluence
-    // with their parent channel.
+    // with their parent channel. s0/s1 are arc coordinates (meters) at each end,
+    // increasing downstream: the along-axis parameter within the coarse tile-pair
+    // segment for trunk pieces, distance along the feeder for feeders. They reset
+    // at every coarse tile joint and feeder junction; consumers that texture along
+    // the river take those steps (km apart) as given.
     struct Segment {
         double x0{}, y0{}, x1{}, y1{};
         float  halfWidth0{}, halfWidth1{};
+        double s0{}, s1{};
     };
+
+    // Upper bound on any emitted half-width, meters: the clamped hydraulic width
+    // at the widest riffle-plus-pool multiplier. Consumers that size a reach by
+    // channel width (the terrain-polygon gather) budget against it.
+    static constexpr double kMaxHalfWidthMeters = 103.5;
 
     struct PointSample {
         bool  isRiver{false};

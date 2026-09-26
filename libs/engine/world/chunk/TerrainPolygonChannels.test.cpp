@@ -80,11 +80,13 @@ namespace {
 		std::vector<Pond>	 ponds;
 	};
 
-	Gathered gatherFor(ChunkCoordinate coord, const std::vector<Segment>& segments, const std::vector<Pond>& ponds) {
-		const double minX = static_cast<double>(coord.x) * static_cast<double>(kChunkSize) - kRiverGatherMarginM;
-		const double minY = static_cast<double>(coord.y) * static_cast<double>(kChunkSize) - kRiverGatherMarginM;
-		const double maxX = minX + static_cast<double>(kChunkSize) + 2.0 * kRiverGatherMarginM;
-		const double maxY = minY + static_cast<double>(kChunkSize) + 2.0 * kRiverGatherMarginM;
+	Gathered gatherFor(
+		ChunkCoordinate coord, const std::vector<Segment>& segments, const std::vector<Pond>& ponds, double marginM = kRiverGatherMarginM
+	) {
+		const double minX = static_cast<double>(coord.x) * static_cast<double>(kChunkSize) - marginM;
+		const double minY = static_cast<double>(coord.y) * static_cast<double>(kChunkSize) - marginM;
+		const double maxX = minX + static_cast<double>(kChunkSize) + 2.0 * marginM;
+		const double maxY = minY + static_cast<double>(kChunkSize) + 2.0 * marginM;
 		Gathered	 out;
 		for (const Segment& s : segments) {
 			const double pad = static_cast<double>(std::max(s.halfWidth0, s.halfWidth1));
@@ -106,7 +108,7 @@ namespace {
 		ChunkCoordinate coord, const HandTiles& tiles, const std::vector<Segment>& segments, const std::vector<Pond>& ponds = {}
 	) {
 		const Gathered g = gatherFor(coord, segments, ponds);
-		return TerrainPolygonBuilder::build(coord, kWorldSeed, tiles.fn(), g.segments, g.ponds);
+		return buildHand(tiles, kWorldSeed, g.segments, g.ponds);
 	}
 
 	std::vector<const TerrainRing*> ringsOfKind(const ChunkTerrainPolygons& polys, TerrainRingKind kind) {
@@ -184,11 +186,11 @@ namespace {
 
 	// ---- The two-chunk world the seam and determinism tests share ----
 	//
-	// Chunks (0,0) and (1,0), border x = 512 m. A lake 20 m east of the border.
-	// River A meanders west to east across the border and ends in the lake (its
-	// mouth and flare lie in chunk 1, near the border but not across it). Rivers
-	// B and C taper through the fordable width 6 m and 14 m west of the border,
-	// so the cut is inside both extended regions (B) or only chunk 0's (C).
+	// Chunks (0,0) and (1,0), border x = 512 m. A lake 20 m east of the border,
+	// just past chunk 0's extended region. River A meanders west to east across
+	// the border and ends in the lake (its mouth and flare lie in chunk 1, near
+	// the border but not across it). Rivers B and C taper through the fordable
+	// width 6 m and 14 m west of the border, inside both extended regions.
 
 	Biome seamWorldBiome(int64_t tx, int64_t ty) {
 		return (tx >= 532 && tx < 600 && ty >= 200 && ty < 320) ? Biome::Lake : Biome::TemperateGrassland;
@@ -279,7 +281,8 @@ TEST(TerrainPolygonChannelsTest, ChannelsSeamAcrossABorder) {
 	EXPECT_EQ(westCuts, cutsNear(east, 506.0));
 
 	// River A's mouth: chunk 1 flares it into the lake and the ribbon overlaps the
-	// lake ring; chunk 0 never sees the lake.
+	// lake ring; chunk 0 has no lake ring (it reads the mouth from the waterline
+	// field instead, TerrainPolygonSeamsTest).
 	const std::vector<const TerrainRing*> lakes = ringsOfKind(east, TerrainRingKind::Waterline);
 	ASSERT_EQ(lakes.size(), 1U);
 	bool overlaps = false;
@@ -293,20 +296,30 @@ TEST(TerrainPolygonChannelsTest, ChannelsSeamAcrossABorder) {
 }
 
 TEST(TerrainPolygonChannelsTest, PondStraddlingABorderSeams) {
-	const std::vector<Pond> ponds = {{512.4, 300.2, 14.0F, 0.9F, 2.3F, 200}};
+	// The largest pond PondNetwork2D makes (radius 22 m, rim up to 1.34 x that).
+	const std::vector<Pond> ponds = {{512.4, 300.2, 22.0F, 0.9F, 2.3F, 200}};
 	const ChunkCoordinate	westCoord{0, 0};
 	const ChunkCoordinate	eastCoord{1, 0};
-	const HandTiles			grass(Biome::TemperateGrassland);
-	const ChunkTerrainPolygons west = buildChunk(westCoord, grass, {}, ponds);
-	const ChunkTerrainPolygons east = buildChunk(eastCoord, grass, {}, ponds);
+	const ChunkTerrainPolygons west = buildChunk(westCoord, HandTiles(westCoord, Biome::TemperateGrassland), {}, ponds);
+	const ChunkTerrainPolygons east = buildChunk(eastCoord, HandTiles(eastCoord, Biome::TemperateGrassland), {}, ponds);
 	expectAllSimple(west, "west");
 	expectAllSimple(east, "east");
 	// Each chunk's rim reaches past its extended boundary, so each is closed
-	// there with a synthetic edge.
+	// there along the boundary line: a synthetic run, split where lattice lines
+	// cross it, and nothing else flagged.
 	ASSERT_EQ(west.rings.size(), 1U);
 	ASSERT_EQ(east.rings.size(), 1U);
-	for (const ChunkTerrainPolygons* polys : {&west, &east}) {
-		EXPECT_EQ(flaggedVertices(polys->rings[0], ShoreProfile::kFlagSynthetic).size(), 1U);
+	for (const auto& [polys, lineMm] : {std::pair{&west, kChunkMm + kApronMm}, std::pair{&east, kChunkMm - kApronMm}}) {
+		const TerrainRing& ring		 = polys->rings[0];
+		size_t			   synthetic = 0;
+		for (size_t i = 0; i < ring.ring.size(); ++i) {
+			if ((ring.profiles[i].flags & ShoreProfile::kFlagSynthetic) != 0) {
+				++synthetic;
+				EXPECT_EQ(ring.ring[i].x, lineMm);
+				EXPECT_EQ(ring.ring[(i + 1) % ring.ring.size()].x, lineMm);
+			}
+		}
+		EXPECT_GE(synthetic, 1U);
 	}
 
 	const SeamSide a = seamSide(westCoord, west);
@@ -326,7 +339,7 @@ TEST(TerrainPolygonChannelsTest, FordableSplitSharesItsCutVertices) {
 	const std::vector<Segment> river = riverAlong(
 		100.0, 400.0, 15.0, [](double x) { return 256.0 + 0.02 * (x - 100.0); }, [](double x) { return 1.0 - 0.7 * (x - 100.0) / 300.0; }
 	);
-	const ChunkTerrainPolygons polys = buildChunk(coord, HandTiles(Biome::TemperateGrassland), river);
+	const ChunkTerrainPolygons polys = buildChunk(coord, HandTiles(coord, Biome::TemperateGrassland), river);
 	expectAllSimple(polys, "split");
 
 	const std::vector<const TerrainRing*> channels = ringsOfKind(polys, TerrainRingKind::Channel);
@@ -380,11 +393,11 @@ TEST(TerrainPolygonChannelsTest, RoundCapsAtTrueEndsAndNoCapAtACut) {
 	// D: both ends inside the chunk. E: runs out of the gather box on both sides.
 	std::vector<Segment> rivers = riverAlong(100.0, 300.0, 15.0, [](double) { return 256.0; }, [](double) { return 2.0; });
 	for (const Segment& s : riverAlong(
-			 -200.0, 800.0, 15.0, [](double x) { return 400.0 + 15.0 * std::sin(kTwoPi * x / 120.0); }, [](double) { return 2.5; }
+			 -800.0, 1400.0, 15.0, [](double x) { return 400.0 + 15.0 * std::sin(kTwoPi * x / 120.0); }, [](double) { return 2.5; }
 		 )) {
 		rivers.push_back(s);
 	}
-	const ChunkTerrainPolygons polys = buildChunk(coord, HandTiles(Biome::TemperateGrassland), rivers);
+	const ChunkTerrainPolygons polys = buildChunk(coord, HandTiles(coord, Biome::TemperateGrassland), rivers);
 	expectAllSimple(polys, "caps");
 	const std::vector<const TerrainRing*> channels = ringsOfKind(polys, TerrainRingKind::Channel);
 	ASSERT_EQ(channels.size(), 2U);
@@ -463,7 +476,7 @@ TEST(TerrainPolygonChannelsTest, TightBendInnerBankStaysUnderTheRadius) {
 		x += kStepM * std::cos(heading);
 		y += kStepM * std::sin(heading);
 	}
-	const ChunkTerrainPolygons polys = buildChunk({0, 0}, HandTiles(Biome::TemperateGrassland), segmentsOf(pts));
+	const ChunkTerrainPolygons polys = buildChunk({0, 0}, HandTiles({0, 0}, Biome::TemperateGrassland), segmentsOf(pts));
 	expectAllSimple(polys, "bend");
 	const std::vector<const TerrainRing*> channels = ringsOfKind(polys, TerrainRingKind::Channel);
 	ASSERT_EQ(channels.size(), 1U);
@@ -528,7 +541,7 @@ TEST(TerrainPolygonChannelsTest, RiverFlaresIntoALake) {
 	const std::vector<Segment> river = straightRiver(330.0);
 	const ChunkTerrainPolygons withLake =
 		buildChunk(coord, HandTiles(coord, [](int64_t tx, int64_t) { return tx >= 300 ? Biome::Lake : Biome::TemperateGrassland; }), river);
-	const ChunkTerrainPolygons control = buildChunk(coord, HandTiles(Biome::TemperateGrassland), river);
+	const ChunkTerrainPolygons control = buildChunk(coord, HandTiles(coord, Biome::TemperateGrassland), river);
 	expectAllSimple(withLake, "lake");
 
 	MouthPair pair;
@@ -547,8 +560,8 @@ TEST(TerrainPolygonChannelsTest, RiverFlaresIntoAPond) {
 	const ChunkCoordinate	   coord{0, 0};
 	const std::vector<Segment> river = straightRiver(335.0);
 	const std::vector<Pond>	   ponds = {{330.0, 256.0, 12.0F, 0.4F, 1.7F, 180}};
-	const ChunkTerrainPolygons withPond = buildChunk(coord, HandTiles(Biome::TemperateGrassland), river, ponds);
-	const ChunkTerrainPolygons control	= buildChunk(coord, HandTiles(Biome::TemperateGrassland), river);
+	const ChunkTerrainPolygons withPond = buildChunk(coord, HandTiles(coord, Biome::TemperateGrassland), river, ponds);
+	const ChunkTerrainPolygons control	= buildChunk(coord, HandTiles(coord, Biome::TemperateGrassland), river);
 	expectAllSimple(withPond, "pond");
 
 	MouthPair pair;
@@ -568,7 +581,7 @@ TEST(TerrainPolygonChannelsTest, RiverFlaresIntoAPond) {
 
 TEST(TerrainPolygonChannelsTest, PondRingMatchesItsRim) {
 	const Pond				   pond{200.3, 310.7, 9.5F, 0.7F, 2.1F, 150};
-	const ChunkTerrainPolygons polys = buildChunk({0, 0}, HandTiles(Biome::TemperateGrassland), {}, {pond});
+	const ChunkTerrainPolygons polys = buildChunk({0, 0}, HandTiles({0, 0}, Biome::TemperateGrassland), {}, {pond});
 	expectAllSimple(polys, "pond");
 	ASSERT_EQ(polys.rings.size(), 1U);
 	const TerrainRing& ring = polys.rings[0];
@@ -611,7 +624,7 @@ TEST(TerrainPolygonChannelsTest, ThalwegHugsTheOuterBankOfABend) {
 		const double a = static_cast<double>(deg) * std::numbers::pi / 180.0;
 		pts.push_back({256.0 + kRadiusM * std::cos(a), 150.0 + kRadiusM * std::sin(a), 4.0F});
 	}
-	const ChunkTerrainPolygons polys = buildChunk({0, 0}, HandTiles(Biome::TemperateGrassland), segmentsOf(pts));
+	const ChunkTerrainPolygons polys = buildChunk({0, 0}, HandTiles({0, 0}, Biome::TemperateGrassland), segmentsOf(pts));
 	expectAllSimple(polys, "thalweg");
 	ASSERT_EQ(polys.thalwegs.size(), 1U);
 	const ThalwegPath& path = polys.thalwegs[0];

@@ -602,7 +602,7 @@ while (running) {
 - [x] Spec (PR #269, merged)
 - [x] Waterline contour extractor: `libs/geometry/contour/`, sampler apron, `TerrainPolygonBuilder` waterline rings on `Chunk` (WOR-457)
 - [x] Channel and pond rings, fordable split, mouth flare (WOR-458)
-- [ ] `TerrainDistanceField` bake
+- [x] `TerrainDistanceField` bake, CPU side (WOR-465; GPU upload moves to the shader task)
 - [ ] Nav reads rings, tile marcher deleted
 - [ ] Shader: `tile.frag` against the distance field
 - [ ] Vision shore points, distance-based mud, point bars

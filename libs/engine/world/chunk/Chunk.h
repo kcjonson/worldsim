@@ -7,6 +7,7 @@
 #include "world/Biome.h"
 #include "world/chunk/ChunkCoordinate.h"
 #include "world/chunk/ChunkSampleResult.h"
+#include "world/chunk/TerrainDistanceField.h"
 #include "world/chunk/TerrainPolygons.h"
 
 #include <graphics/Color.h>
@@ -204,9 +205,13 @@ class Chunk {
 	/// GPU caches compare this to detect stale uploads.
 	[[nodiscard]] uint32_t renderDataVersion() const { return m_renderDataVersion.load(std::memory_order_acquire); }
 
-	/// Get the chunk's terrain polygon rings (D2), built by TerrainPolygonBuilder
-	/// in generate(). Waterline rings only so far; channels and ponds come later.
+	/// Get the chunk's terrain polygon rings (D2): waterline, channel, and pond,
+	/// built by TerrainPolygonBuilder in generate().
 	[[nodiscard]] const ChunkTerrainPolygons& terrainPolygons() const { return m_terrainPolygons; }
+
+	/// The distance-field textures baked from terrainPolygons() (D10), carrying
+	/// the same version.
+	[[nodiscard]] const TerrainDistanceField& terrainDistanceField() const { return m_terrainDistanceField; }
 
   private:
 	ChunkCoordinate m_coord;
@@ -231,18 +236,21 @@ class Chunk {
 	/// Computed during generation, used by VisionSystem for fast shore discovery
 	std::vector<std::pair<uint16_t, uint16_t>> m_shoreTiles;
 
-	/// Terrain polygon rings (waterline/channel/pond, D2). Installed by generate()
-	/// via setTerrainPolygons().
+	/// Terrain polygon rings (waterline/channel/pond, D2) and their distance
+	/// field (D10). Installed together by generate() via setTerrainPolygons().
 	ChunkTerrainPolygons m_terrainPolygons;
+	TerrainDistanceField m_terrainDistanceField;
 
 	/// Compute tile data for a single tile during generation. Thin wrapper around
-	/// computeTileFrom() using this chunk's own coordinate and sample data.
-	[[nodiscard]] TileData computeTile(uint16_t localX, uint16_t localY) const;
+	/// computeTileFrom() using this chunk's own coordinate and sample data, with
+	/// rivers and ponds from `hydrology` (m_biomeData's rasterHydrology).
+	[[nodiscard]] TileData computeTile(uint16_t localX, uint16_t localY, const ChunkSampleResult& hydrology) const;
 
-	/// Install a freshly built polygon set and bump its version (monotonic per
-	/// chunk, like m_renderDataVersion). Called from generate(), before
-	/// m_generationComplete's release store, so any reader gated on isReady()
-	/// sees the version that matches the rings it reads.
+	/// Install a freshly built polygon set, bump its version (monotonic per
+	/// chunk, like m_renderDataVersion), and bake its distance field at that
+	/// version. Called from generate(), before m_generationComplete's release
+	/// store, so any reader gated on isReady() sees the version that matches the
+	/// rings and textures it reads.
 	void setTerrainPolygons(ChunkTerrainPolygons polygons);
 
 	/// Pre-compute shore tiles (land adjacent to water) for VisionSystem

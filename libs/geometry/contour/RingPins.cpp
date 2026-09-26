@@ -12,6 +12,8 @@ namespace geometry {
 
 	namespace {
 
+		using contour_detail::floorDiv;
+
 		// A crossing inserted into edge a->b at parameter num / den (den > 0).
 		struct EdgeCrossing {
 			Vec2i64		 point;
@@ -50,10 +52,38 @@ namespace geometry {
 
 		bool strictlyBetween(std::int64_t v, std::int64_t a, std::int64_t b) { return std::min(a, b) < v && v < std::max(a, b); }
 
-		bool onAnyLine(Vec2i64 v, std::span<const std::int64_t> xLinesMm, std::span<const std::int64_t> yLinesMm) {
-			return std::find(xLinesMm.begin(), xLinesMm.end(), v.x) != xLinesMm.end() ||
-				   std::find(yLinesMm.begin(), yLinesMm.end(), v.y) != yLinesMm.end();
-		}
+		// The pin lines: two explicit lists plus, with latticeMm > 0, every multiple
+		// of latticeMm on both axes.
+		struct PinLines {
+			std::span<const std::int64_t> xLinesMm;
+			std::span<const std::int64_t> yLinesMm;
+			std::int64_t				  latticeMm = 0;
+
+			// Indices of the lattice lines strictly between a and b, first..last
+			// (empty when first > last).
+			std::pair<std::int64_t, std::int64_t> latticeBetween(std::int64_t a, std::int64_t b) const {
+				return {floorDiv(std::min(a, b), latticeMm) + 1, floorDiv(std::max(a, b) - 1, latticeMm)};
+			}
+
+			bool onLattice(std::int64_t v) const { return latticeMm > 0 && v % latticeMm == 0; }
+
+			bool onAny(Vec2i64 v) const {
+				return onLattice(v.x) || onLattice(v.y) || std::find(xLinesMm.begin(), xLinesMm.end(), v.x) != xLinesMm.end() ||
+					   std::find(yLinesMm.begin(), yLinesMm.end(), v.y) != yLinesMm.end();
+			}
+
+			bool crosses(Vec2i64 a, Vec2i64 b) const {
+				if (latticeMm > 0) {
+					const auto [x0, x1] = latticeBetween(a.x, b.x);
+					const auto [y0, y1] = latticeBetween(a.y, b.y);
+					if (x0 <= x1 || y0 <= y1) {
+						return true;
+					}
+				}
+				return std::any_of(xLinesMm.begin(), xLinesMm.end(), [&](std::int64_t x) { return strictlyBetween(x, a.x, b.x); }) ||
+					   std::any_of(yLinesMm.begin(), yLinesMm.end(), [&](std::int64_t y) { return strictlyBetween(y, a.y, b.y); });
+			}
+		};
 
 		double edgeLength(Vec2i64 a, Vec2i64 b) {
 			const double dx = static_cast<double>(b.x - a.x);
@@ -73,27 +103,43 @@ namespace geometry {
 	// Output is sized up front and written by index throughout this file: see
 	// contour_detail::dropConsecutiveDuplicates on why hot contour loops avoid
 	// push_back and vector<bool>.
-	std::vector<std::uint8_t>
-	pinAxisLineCrossings(Ring& ring, std::span<const std::int64_t> xLinesMm, std::span<const std::int64_t> yLinesMm) {
+	std::vector<std::uint8_t> pinAxisLineCrossings(
+		Ring& ring, std::span<const std::int64_t> xLinesMm, std::span<const std::int64_t> yLinesMm, std::int64_t latticeMm
+	) {
+		assert(latticeMm >= 0);
 		const std::size_t n = ring.size();
-		auto crossesAny = [&](const Vec2i64& a, const Vec2i64& b) {
-			return std::any_of(xLinesMm.begin(), xLinesMm.end(), [&](std::int64_t x) { return strictlyBetween(x, a.x, b.x); }) ||
-				   std::any_of(yLinesMm.begin(), yLinesMm.end(), [&](std::int64_t y) { return strictlyBetween(y, a.y, b.y); });
-		};
+		const PinLines	  lines{xLinesMm, yLinesMm, latticeMm};
 		// The crossing points of edge a->b ordered along it by exact parameter, a
-		// point where an x and a y line cross each other kept once. Never equal to
-		// a: a crossing is strictly inside the edge on its line's axis.
+		// point where an x and a y line cross each other (or an explicit line lies
+		// on the lattice) kept once. Never equal to a: a crossing is strictly inside
+		// the edge on its line's axis.
 		std::vector<EdgeCrossing> crossings;
+		auto addVertical = [&](const Vec2i64& a, const Vec2i64& b, std::int64_t lineX) {
+			crossings.push_back(makeCrossing(pointOnVertical(a, b, lineX), lineX - a.x, b.x - a.x));
+		};
+		auto addHorizontal = [&](const Vec2i64& a, const Vec2i64& b, std::int64_t lineY) {
+			crossings.push_back(makeCrossing(pointOnHorizontal(a, b, lineY), lineY - a.y, b.y - a.y));
+		};
 		auto collect = [&](const Vec2i64& a, const Vec2i64& b) {
 			crossings.clear();
 			for (const std::int64_t lineX : xLinesMm) {
 				if (strictlyBetween(lineX, a.x, b.x)) {
-					crossings.push_back(makeCrossing(pointOnVertical(a, b, lineX), lineX - a.x, b.x - a.x));
+					addVertical(a, b, lineX);
 				}
 			}
 			for (const std::int64_t lineY : yLinesMm) {
 				if (strictlyBetween(lineY, a.y, b.y)) {
-					crossings.push_back(makeCrossing(pointOnHorizontal(a, b, lineY), lineY - a.y, b.y - a.y));
+					addHorizontal(a, b, lineY);
+				}
+			}
+			if (latticeMm > 0) {
+				const auto [x0, x1] = lines.latticeBetween(a.x, b.x);
+				for (std::int64_t k = x0; k <= x1; ++k) {
+					addVertical(a, b, k * latticeMm);
+				}
+				const auto [y0, y1] = lines.latticeBetween(a.y, b.y);
+				for (std::int64_t k = y0; k <= y1; ++k) {
+					addHorizontal(a, b, k * latticeMm);
 				}
 			}
 			std::sort(crossings.begin(), crossings.end(), [](const EdgeCrossing& l, const EdgeCrossing& r) {
@@ -108,7 +154,7 @@ namespace geometry {
 		// Few edges cross a line, so count them first, then fill by index.
 		std::size_t total = n;
 		for (std::size_t i = 0; i < n; ++i) {
-			if (crossesAny(ring[i], ring[(i + 1) % n])) {
+			if (lines.crosses(ring[i], ring[(i + 1) % n])) {
 				collect(ring[i], ring[(i + 1) % n]);
 				total += crossings.size();
 			}
@@ -119,7 +165,7 @@ namespace geometry {
 			const Vec2i64& a = ring[i];
 			const Vec2i64& b = ring[(i + 1) % n];
 			out[w++]		 = a;
-			if (crossesAny(a, b)) {
+			if (lines.crosses(a, b)) {
 				collect(a, b);
 				for (const EdgeCrossing& c : crossings) {
 					out[w++] = c.point;
@@ -130,7 +176,7 @@ namespace geometry {
 
 		std::vector<std::uint8_t> pinned(ring.size());
 		for (std::size_t i = 0; i < ring.size(); ++i) {
-			pinned[i] = onAnyLine(ring[i], xLinesMm, yLinesMm) ? 1 : 0;
+			pinned[i] = lines.onAny(ring[i]) ? 1 : 0;
 		}
 		return pinned;
 	}
