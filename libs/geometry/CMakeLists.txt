@@ -5,10 +5,12 @@ add_library(geometry
     arrangement/HalfEdge.cpp
     offset/WallOffset.cpp
     boolean/RingBoolean.cpp
+    contour/CatmullRom.cpp
     contour/ClipRing.cpp
     contour/MarchingSquares.cpp
     contour/RingPins.cpp
     contour/Smoothing.cpp
+    contour/Stroke.cpp
     contour/WarpField.cpp
     silhouette/Silhouette.cpp
     triangulation/Triangulation.cpp
