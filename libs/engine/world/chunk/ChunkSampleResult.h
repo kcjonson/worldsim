@@ -26,6 +26,16 @@ inline constexpr int32_t kSectorGridSize = 32;
 // (dx+1, dy+1) .. (dx+2, dy+2). See neighborCornerBiomes/neighborCornerElevations.
 inline constexpr int32_t kNeighborhoodLatticeSize = 4;
 
+// How far beyond the chunk square a world sampler gathers riverSegments and
+// pondBlobs, meters. It covers the kApronTiles apron the terrain-polygon builder
+// and ApronField read (D4) and more: the ribbon builder (D7) joins the gathered
+// sub-segments into chains, and a chain cut by the gather must end two 20 m trunk
+// steps outside the extended region so its cut (and the Catmull-Rom span that
+// cut distorts) never shows. Ponds get the same margin so a channel's mouth can
+// find a receiving pond just past the edge; gatherPonds widens further by each
+// pond's own footprint.
+inline constexpr double kRiverGatherMarginM = 48.0;
+
 struct ChunkSampleResult {
     std::array<BiomeWeights, 4> cornerBiomes{};
     std::array<float, 4>        cornerElevations{};

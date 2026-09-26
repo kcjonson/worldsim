@@ -48,22 +48,15 @@ namespace engine::world {
 		                         [this](WorldPosition p) { return sampleElevation(p); });
 
 		// Gather any river channels and ponds touching this chunk, padded by
-		// kRiverChainMarginM beyond the chunk square. The margin covers the
-		// kApronTiles apron the terrain-polygon builder and ApronField read (D4)
-		// and more: the ribbon builder (D7) joins the gathered sub-segments into
-		// chains and needs each chain's cut ends two 20 m trunk steps outside the
-		// extended region, so a cut never shows. Ponds get the same margin so a
-		// channel's mouth flare can find a receiving pond just past the edge;
-		// gatherPonds widens further by each pond's own footprint.
+		// kRiverGatherMarginM beyond the chunk square (see its comment).
 		if (riverNetwork || pondNetwork) {
-			constexpr double kRiverChainMarginM = 48.0;
 			const WorldPosition origin = coord.origin();
-			const double minX = static_cast<double>(origin.x) - kRiverChainMarginM;
-			const double minY = static_cast<double>(origin.y) - kRiverChainMarginM;
+			const double minX = static_cast<double>(origin.x) - kRiverGatherMarginM;
+			const double minY = static_cast<double>(origin.y) - kRiverGatherMarginM;
 			const double maxX = static_cast<double>(origin.x) +
-			                    static_cast<double>(kChunkSize) * static_cast<double>(kTileSize) + kRiverChainMarginM;
+			                    static_cast<double>(kChunkSize) * static_cast<double>(kTileSize) + kRiverGatherMarginM;
 			const double maxY = static_cast<double>(origin.y) +
-			                    static_cast<double>(kChunkSize) * static_cast<double>(kTileSize) + kRiverChainMarginM;
+			                    static_cast<double>(kChunkSize) * static_cast<double>(kTileSize) + kRiverGatherMarginM;
 			if (riverNetwork) riverNetwork->gatherSegments(minX, minY, maxX, maxY, result.riverSegments);
 			if (pondNetwork) pondNetwork->gatherPonds(minX, minY, maxX, maxY, result.pondBlobs);
 		}

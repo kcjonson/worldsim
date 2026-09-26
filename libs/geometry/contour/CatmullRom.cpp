@@ -76,7 +76,9 @@ namespace geometry {
 			out[k++]			= {p1, halfWidthsM[i], i, 0.0};
 			for (std::size_t s = 1; s < n; ++s) {
 				const double f = static_cast<double>(s) / static_cast<double>(n);
-				out[k++]	   = {span.at(f), std::lerp(halfWidthsM[i], halfWidthsM[i + 1], f), i, f};
+				// Spelled out rather than std::lerp, whose rounding is left to each
+				// standard library (D14).
+				out[k++] = {span.at(f), halfWidthsM[i] + (halfWidthsM[i + 1] - halfWidthsM[i]) * f, i, f};
 			}
 		}
 		out[k] = {points[last], halfWidthsM[last], last - 1, 1.0};

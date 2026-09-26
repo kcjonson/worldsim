@@ -241,6 +241,50 @@ TEST(StrokePolyline, SampledRibbonsMatchAcrossACut) {
 	EXPECT_GT(compared, 900u);
 }
 
+TEST(StrokePolyline, ButtCutsShareVerticesUnderASharedNormal) {
+	// A centerline cut at a bend: each piece alone would offset the cut point
+	// along its own single segment. Passing both the full centerline's normal
+	// there makes the two butt edges one edge, vertex for vertex.
+	const std::vector<Vec2d>  c		 = {{0.0, 0.0}, {5.0, 0.0}, {9.0, 3.0}, {12.0, 7.0}};
+	const std::vector<double> left	 = {1.0, 1.2, 1.4, 1.6};
+	const std::vector<double> right	 = {0.8, 0.9, 1.0, 1.1};
+	const std::size_t		  cut	 = 1;
+	const Vec2d				  normal = strokeNormal(c, cut);
+	EXPECT_NEAR(length(normal), 1.0, 1e-12);
+
+	auto piece = [&](std::size_t from, std::size_t to, bool shared) {
+		StrokeArgs args{
+			std::span(c).subspan(from, to - from + 1),
+			std::span(left).subspan(from, to - from + 1),
+			std::span(right).subspan(from, to - from + 1),
+			from == cut ? StrokeCap::Butt : StrokeCap::Round,
+			to == cut ? StrokeCap::Butt : StrokeCap::Round,
+			0.5
+		};
+		if (shared) {
+			(from == cut ? args.startNormal : args.endNormal) = normal;
+		}
+		return strokePolyline(args);
+	};
+
+	const Vec2i64 rightCut	 = strokeBankPoint(c[cut], normal, -right[cut]);
+	const Vec2i64 leftCut	 = strokeBankPoint(c[cut], normal, left[cut]);
+	const Ring	  upstream	 = piece(0, cut, true);
+	const Ring	  downstream = piece(cut, c.size() - 1, true);
+	for (const Ring* r : {&upstream, &downstream}) {
+		EXPECT_TRUE(contains(*r, rightCut));
+		EXPECT_TRUE(contains(*r, leftCut));
+		EXPECT_TRUE(isSimple(*r).pass);
+	}
+	// The downstream piece starts on the cut: ring[0] is its right bank point.
+	EXPECT_EQ(downstream.front(), rightCut);
+	EXPECT_EQ(downstream.back(), leftCut);
+
+	// Without the shared normal the two pieces disagree at the bend.
+	EXPECT_FALSE(contains(piece(0, cut, false), rightCut));
+	EXPECT_FALSE(contains(piece(cut, c.size() - 1, false), rightCut));
+}
+
 TEST(LocalRadiusOfCurvature, Values) {
 	EXPECT_NEAR(localRadiusOfCurvatureM({5.0, 0.0}, {0.0, 5.0}, {-5.0, 0.0}), 5.0, 1e-12);
 	EXPECT_NEAR(localRadiusOfCurvatureM({0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}), std::sqrt(0.5), 1e-12);

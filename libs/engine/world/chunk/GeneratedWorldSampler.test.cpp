@@ -9,9 +9,8 @@
 #include "GeneratedWorldSampler.h"
 
 #include "world/chunk/Chunk.h"
+#include "world/chunk/RiverTestWorld.h"
 
-#include <worldgen/data/PlanetParams.h>
-#include <worldgen/data/WorldData.h>
 #include <worldgen/grid/SphereGrid.h>
 
 #include <gtest/gtest.h>
@@ -19,69 +18,14 @@
 #include <algorithm>
 #include <array>
 #include <memory>
-#include <unordered_set>
 #include <vector>
 
 using namespace engine::world;
 
 namespace {
 
-constexpr uint32_t kSubdivision = 24;  // ~300 km tiles
-constexpr float kLand = 500.0f;
-
-double dot(const worldgen::Vec3d& a, const worldgen::Vec3d& b) {
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-std::shared_ptr<worldgen::GeneratedWorld> makeSemiDesertWorld() {
-    using namespace worldgen;
-    auto world = std::make_shared<GeneratedWorld>();
-    world->params.gridSubdivision = kSubdivision;
-    world->params.seed = 0xDEADBEEFULL;
-    world->derived = derive(world->params);
-    world->grid = std::make_shared<SphereGrid>(kSubdivision);
-    world->data.allocate(world->grid->tileCount());
-    world->seaLevelMeters = 0.0f;
-    world->validFields = static_cast<uint32_t>(WorldField::Elevation) |
-                         static_cast<uint32_t>(WorldField::Biome) |
-                         static_cast<uint32_t>(WorldField::Flags) |
-                         static_cast<uint32_t>(WorldField::FlowAccum) |
-                         static_cast<uint32_t>(WorldField::Downhill);
-    for (TileId t = 0; t < world->grid->tileCount(); ++t) {
-        world->data.elevation[t] = kLand;
-        world->data.biome[t] = static_cast<uint8_t>(Biome::SemiDesert);
-    }
-    return world;
-}
-
-// Flag a river chain from `source` toward `mouth`, returning the source tile.
-worldgen::TileId carveRiver(worldgen::GeneratedWorld& world, worldgen::TileId source,
-                            worldgen::TileId mouth) {
-    using namespace worldgen;
-    const SphereGrid& grid = *world.grid;
-    const Vec3d target = grid.tileCenter(mouth);
-    std::unordered_set<TileId> visited;
-    TileId cur = source;
-    float flow = 80.0f;  // wide enough channel to clearly rasterize
-    for (int guard = 0; guard < 1000; ++guard) {
-        if (cur == mouth || !visited.insert(cur).second) break;
-        std::array<TileId, 6> nbrs{};
-        const uint32_t count = grid.neighbors(cur, nbrs);
-        int bestIdx = -1;
-        double bestDot = -2.0;
-        for (uint32_t i = 0; i < count; ++i) {
-            const double d = dot(grid.tileCenter(nbrs[i]), target);
-            if (d > bestDot) { bestDot = d; bestIdx = static_cast<int>(i); }
-        }
-        if (bestIdx < 0) break;
-        world.data.flags[cur] |= kFlagRiver;
-        world.data.flowAccum[cur] = flow;
-        world.data.downhill[cur] = static_cast<uint8_t>(bestIdx);
-        flow += 20.0f;
-        cur = nbrs[static_cast<uint32_t>(bestIdx)];
-    }
-    return source;
-}
+using river_test::carveRiver;
+using river_test::makeSemiDesertWorld;
 
 uint32_t countWater(const Chunk& chunk) {
     uint32_t water = 0;

@@ -2,6 +2,8 @@
 
 #include "ContourDetail.h"
 
+#include <math/DeterministicMath.h>
+
 #include <algorithm>
 #include <cassert>
 #include <cmath>
@@ -16,23 +18,6 @@ namespace geometry {
 		Vec2d unit(const Vec2d& v) { return v * (1.0 / length(v)); }
 
 		Vec2d leftNormal(const Vec2d& v) { return {-v.y, v.x}; }
-
-		// Left unit normal of the centerline at point i, from p[i-1], p[i], p[i+1] only.
-		Vec2d offsetNormal(std::span<const Vec2d> c, std::size_t i) {
-			if (i == 0) {
-				return leftNormal(unit(c[1] - c[0]));
-			}
-			const Vec2d incoming = unit(c[i] - c[i - 1]);
-			if (i + 1 == c.size()) {
-				return leftNormal(incoming);
-			}
-			const Vec2d	 bisector = incoming + unit(c[i + 1] - c[i]);
-			const double len	  = length(bisector);
-			if (len < 1e-12) {
-				return leftNormal(incoming);
-			}
-			return leftNormal(bisector * (1.0 / len));
-		}
 
 		Vec2i64 quantizeMeters(const Vec2d& p) {
 			constexpr auto kMm = static_cast<double>(kMillimetersPerMeter);
@@ -66,13 +51,43 @@ namespace geometry {
 		) {
 			for (std::size_t s = 1; s < steps; ++s) {
 				const double angle = std::numbers::pi * static_cast<double>(s) / static_cast<double>(steps);
-				const double side  = std::cos(angle);
+				const double side  = foundation::det_math::cos(angle);
 				const double sideR = side >= 0.0 ? fromOffset : toOffset;
-				out[k++]		   = quantizeMeters(center + fromSide * (side * sideR) + forward * (std::sin(angle) * reach));
+				out[k++] = quantizeMeters(center + fromSide * (side * sideR) + forward * (foundation::det_math::sin(angle) * reach));
 			}
 		}
 
+		Vec2d offsetNormal(const StrokeArgs& args, std::size_t i) {
+			if (i == 0 && args.startNormal) {
+				return *args.startNormal;
+			}
+			if (i + 1 == args.centerline.size() && args.endNormal) {
+				return *args.endNormal;
+			}
+			return strokeNormal(args.centerline, i);
+		}
+
 	} // namespace
+
+	Vec2d strokeNormal(std::span<const Vec2d> c, std::size_t i) {
+		if (i == 0) {
+			return leftNormal(unit(c[1] - c[0]));
+		}
+		const Vec2d incoming = unit(c[i] - c[i - 1]);
+		if (i + 1 == c.size()) {
+			return leftNormal(incoming);
+		}
+		const Vec2d	 bisector = incoming + unit(c[i + 1] - c[i]);
+		const double len	  = length(bisector);
+		if (len < 1e-12) {
+			return leftNormal(incoming);
+		}
+		return leftNormal(bisector * (1.0 / len));
+	}
+
+	Vec2i64 strokeBankPoint(const Vec2d& center, const Vec2d& normal, double leftwardM) {
+		return quantizeMeters(center + normal * leftwardM);
+	}
 
 	Ring strokePolyline(const StrokeArgs& args) {
 		const std::span<const Vec2d> c = args.centerline;
@@ -91,20 +106,20 @@ namespace geometry {
 		Ring		out(2 * n + startCapN + endCapN);
 		std::size_t k = 0;
 		for (std::size_t i = 0; i < n; ++i) {
-			out[k++] = quantizeMeters(c[i] - offsetNormal(c, i) * args.rightOffsetM[i]);
+			out[k++] = strokeBankPoint(c[i], offsetNormal(args, i), -args.rightOffsetM[i]);
 		}
 		if (endSteps > 0) {
-			const Vec2d normal = offsetNormal(c, last);
+			const Vec2d normal = offsetNormal(args, last);
 			const Vec2d forward{normal.y, -normal.x};
 			writeRoundCap(
 				out, k, endSteps, c[last], forward, -normal, args.rightOffsetM[last], args.leftOffsetM[last], meanOffset(args, last)
 			);
 		}
 		for (std::size_t i = n; i-- > 0;) {
-			out[k++] = quantizeMeters(c[i] + offsetNormal(c, i) * args.leftOffsetM[i]);
+			out[k++] = strokeBankPoint(c[i], offsetNormal(args, i), args.leftOffsetM[i]);
 		}
 		if (startSteps > 0) {
-			const Vec2d normal = offsetNormal(c, 0);
+			const Vec2d normal = offsetNormal(args, 0);
 			const Vec2d backward{-normal.y, normal.x};
 			writeRoundCap(out, k, startSteps, c[0], backward, normal, args.leftOffsetM[0], args.rightOffsetM[0], meanOffset(args, 0));
 		}
