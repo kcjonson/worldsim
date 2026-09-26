@@ -31,6 +31,7 @@
 #include <world/chunk/IWorldSampler.h>
 
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -1099,13 +1100,46 @@ TEST_F(NavigationSystemTest, IsValidPositionTrueOnWalkableFaceFalseOnWaterAndOff
 	// A point inside the water patch is off-mesh (water face): INVALID, but still in-region.
 	const glm::vec2 water{40.0F, 40.0F};
 	ASSERT_TRUE(sys.inSimArea(water)) << "the water point must be inside the region";
-	EXPECT_FALSE(sys.isOnMesh(water)) << "the water tile must not be a walkable face";
+	EXPECT_FALSE(sys.isOnMesh(water)) << "the water ring must not be a walkable face";
 	EXPECT_FALSE(sys.isValidPosition(water)) << "a water face must be an invalid position";
 
 	// A point no region covers is invalid: you cannot place outside an active mesh yet.
 	const glm::vec2 offMesh{500.0F, 500.0F};
 	ASSERT_FALSE(sys.inSimArea(offMesh)) << "the far point must be outside every region";
 	EXPECT_FALSE(sys.isValidPosition(offMesh)) << "a point off every region must be invalid";
+}
+
+// The landing snap: before any sim region or construction world exists, a drop point in
+// the water moves to the nearest walkable terrain beside it, and a land point stays put.
+TEST_F(NavigationSystemTest, NearestTerrainWalkablePointLeavesWaterBeforeAnyRegion) {
+	auto chunks = std::make_unique<engine::world::ChunkManager>(std::make_unique<WaterPatchSampler>());
+	chunks->setLoadRadius(2);
+	chunks->setUnloadRadius(4);
+	chunks->update({0.0F, 0.0F});
+	chunks->finishPendingGeneration();
+
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	EXPECT_FALSE(sys.nearestTerrainWalkablePoint({40.0F, 40.0F}).has_value()) << "no chunks wired";
+	sys.setChunkManager(chunks.get());
+	ASSERT_FALSE(sys.hasMesh());
+
+	const glm::vec2				   land{2.0F, 2.0F};
+	const std::optional<glm::vec2> stay = sys.nearestTerrainWalkablePoint(land);
+	ASSERT_TRUE(stay.has_value());
+	EXPECT_EQ(*stay, land);
+
+	// The patch is a 16 m square at [32, 48): its middle is ~8 m from any shore.
+	const std::optional<glm::vec2> moved = sys.nearestTerrainWalkablePoint({40.0F, 40.0F});
+	ASSERT_TRUE(moved.has_value());
+	const float dx = moved->x - 40.0F;
+	const float dy = moved->y - 40.0F;
+	const float d  = std::sqrt(dx * dx + dy * dy);
+	EXPECT_GT(d, 6.0F) << "the snap must leave the water";
+	EXPECT_LT(d, 11.0F) << "the snap must land on the nearest shore, not somewhere far";
+	const std::optional<glm::vec2> again = sys.nearestTerrainWalkablePoint(*moved);
+	ASSERT_TRUE(again.has_value());
+	EXPECT_EQ(*again, *moved) << "the snapped point is itself walkable terrain";
 }
 
 // --- Whole-footprint walkability: isAreaWalkable / isSegmentWalkable -------------
