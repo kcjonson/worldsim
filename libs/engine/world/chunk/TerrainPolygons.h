@@ -25,7 +25,7 @@ enum class WaterKind : uint8_t { Ocean, Lake, Wetland, River, Pond };
 /// needs to vary bands, foam, and vegetation along the ring instead of drawing a
 /// uniform stroke. CPU-side truth; the GPU packing is a later renderer task.
 struct ShoreProfile {
-	uint8_t slope = 0;     ///< 0 gentle .. 255 steep, elevation gradient across the ring
+	uint8_t slope = 0;     ///< 0 gentle .. 255 steep; a heuristic by water kind, bank side, land rise, and noise
 	uint8_t exposure = 0;  ///< 0 sheltered bay .. 255 exposed headland
 	uint8_t sand = 0;      ///< substrate weights, sand + mud + grass = 255; rock is a flag
 	uint8_t mud = 0;

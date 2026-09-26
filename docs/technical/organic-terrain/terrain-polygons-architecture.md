@@ -639,6 +639,7 @@ vegetation-fringed deposit. Bars are walkable.
 
 Unchanged: Mud < Sand < Dirt < GrassShort < Grass < GrassMeadow < GrassTall < Rock < Snow,
 higher paints over lower. Water is no longer in the stack; it is a polygon drawn on top.
+How the boundaries between these surfaces are drawn is D16.
 
 ### D15: Variance, or why a shore must never read as a stroke
 
@@ -686,6 +687,45 @@ Every step is a pure function of (tile data, sample result, world position, fixe
 No dependence on generation order, thread count, or which neighbors are loaded. Hash-seeded
 choices (mud rolls) use the existing per-tile hash. This is required for multiplayer later
 and for D4's seam guarantee now.
+
+### D16: Every land boundary gets the waterline treatment
+
+Water was the loudest staircase, not the only one. Grass against dirt, sand against grass,
+rock outcrops, snow lines, and the mud band all still read as 1 m tiles, and next to a smooth
+waterline the contrast is worse than before. The rule: no surface boundary is drawn on the
+tile grid. Every one is the isoline of a softened, domain-warped field, the same recipe as
+D5/D6, so a grass/dirt edge and a shoreline are of a piece.
+
+Land boundaries are look-only (nothing walkable, D1), so they stay in the shader instead of
+becoming rings:
+
+1. **Field per surface, on the dual grid.** For the pixel's surface stack, each surface's
+   indicator is sampled at the surrounding tile centers (a 4x4 neighborhood for the blur plus
+   the bilinear footprint), softened with the D5 3x3 binomial, and the thin-feature guard keeps
+   1-tile patches and 1-wide paths representable (same floor and ceiling as the waterline).
+2. **Same warp.** The sample position is offset by the D6 world-space vector noise, fine and
+   low-frequency terms, with per-surface-pair amplitudes as tunables (a grass/dirt edge wants
+   the bank-scale wobble; a rock outcrop may want a harder, lower-amplitude edge). World-space
+   seeds, so the pattern is continuous across chunks.
+3. **Priority paint.** Surfaces paint low to high per D13, each where its field is above 0.5,
+   anti-aliased over one pixel from the known pixel size (as the water pass does), with an
+   optional fringe band per pair (for example sparse grass on dirt) whose width varies along
+   the edge by the D15 along-shore noise, so no transition reads as a stroke.
+4. **Mud** (D11 makes it distance-to-water) and **point-bar sand** (D12) are ordinary surfaces
+   in the stack once they are tiles, so they get the same edge.
+5. **Seams.** The field reads tiles across chunk borders: the tile data texture carries a
+   3-tile apron (warp reach plus the blur and bilinear footprint), filled from the same
+   `ApronField` path so apron tiles equal the neighbor's real tiles. Border pixels then match
+   bit for bit on both sides.
+6. **Agreement with placement.** Groundcover and flora placement read surfaces; a tuft on
+   painted dirt looks wrong. The per-point field evaluation exists once in C++ (a pure
+   function shared with the shader by construction and checked by golden-value tests against
+   the GLSL), and placement asks it instead of the raw tile surface.
+7. **Cost.** An interior-tile early-out when the whole neighborhood is one surface keeps the
+   common case at today's cost; the perf task (phase 9) budgets the taps.
+
+Biome water edges themselves are still quantized to 16 m sectors upstream of all this
+(WOR-467); D16 smooths what the tiles give it, it does not add large-scale variety.
 
 ---
 
@@ -915,7 +955,9 @@ Maps one-to-one onto the epic's tasks:
 6. Shader: `tile.frag` implements 10.2 against the three textures, all `u_*` as tunables;
    delete the tile water branch and the water bleed.
 7. Vision shore points and distance-based mud, point bars (D11, D12).
-8. Land-on-land shader field blend (separate task).
+8. Every land-on-land boundary drawn as a warped field isoline (D16): tile-data apron,
+   per-surface field with the D5/D6 recipe, priority paint, fringe bands, placement reading
+   the same field. Replaces the neighbor bleed in `tile.glsl`.
 9. Perf validation across zoom levels.
 
 ---

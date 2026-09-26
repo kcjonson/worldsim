@@ -17,6 +17,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -44,21 +46,19 @@ std::unique_ptr<Chunk> generateChunk(ChunkCoordinate coord, ChunkSampleResult re
     return chunk;
 }
 
-// Reference re-implementation of the old rule: RiverNetwork2D used to floor
-// every emitted half-width at 0.8 m (kRenderMinHalf) before this chunk layer
-// ever saw it. Now RiverNetwork2D emits true widths and the floor lives in
-// ChunkSampleResult::riverHalfWidthAt instead, applied per segment endpoint
-// before interpolation. This recomputes the *old* rule directly against
-// today's (unfloored) segments, independently of riverHalfWidthAt's own code,
-// so TileWaterMatchesOldFlooredInterpolationRule below is a real regression
-// check rather than the production function checked against itself.
-float referenceFlooredHalfWidthAt(const std::vector<worldgen::RiverNetwork2D::Segment>& segs,
-                                  double x, double y) {
-    constexpr float kOldRenderFloor = 0.8f; // mirrors the removed RiverNetwork2D::kRenderMinHalf
+// Reference channel half-width at (x, y): the widest segment whose linearly
+// interpolated half-width covers the point, with `floor` applied per endpoint
+// first. floor = 0 is the rule tiles follow now (true width); floor = 0.8 is the
+// old tile-raster floor (kTileRasterMinHalfM, and before it RiverNetwork2D's
+// kRenderMinHalf) that kept sub-tile streams contiguous on the grid back when
+// tiles drew the river. Recomputed here independently of riverHalfWidthAt so the
+// tile check below is not the production function checked against itself.
+float referenceHalfWidthAt(const std::vector<worldgen::RiverNetwork2D::Segment>& segs,
+                           double x, double y, float floor) {
     float best = 0.0f;
     for (const auto& s : segs) {
-        const float hw0 = std::max(s.halfWidth0, kOldRenderFloor);
-        const float hw1 = std::max(s.halfWidth1, kOldRenderFloor);
+        const float hw0 = std::max(s.halfWidth0, floor);
+        const float hw1 = std::max(s.halfWidth1, floor);
         const double dx = s.x1 - s.x0;
         const double dy = s.y1 - s.y0;
         const double len2 = dx * dx + dy * dy;
@@ -129,8 +129,8 @@ TEST(GeneratedWorldSamplerRivers, RiverWaterCarriesDepthFromWidth) {
     ChunkSampleResult result = sampler.sampleChunk(ChunkCoordinate(0, 0));
     auto chunk = generateChunk(ChunkCoordinate(0, 0), std::move(result), sampler.getWorldSeed());
 
-    // The carved river is wide (flow >= 80), so its water tiles must render deeper
-    // than the shallow-stream floor, and the render copy must match the tile field.
+    // The carved river is wide (flow >= 80), so its water tiles must carry a
+    // deeper cosmetic depth than the shallow-stream floor.
     uint8_t maxDepth = 0;
     bool anyWater = false;
     for (uint16_t y = 0; y < kChunkSize; ++y) {
@@ -138,8 +138,6 @@ TEST(GeneratedWorldSamplerRivers, RiverWaterCarriesDepthFromWidth) {
             const auto& tile = chunk->getTile(x, y);
             if (tile.surface != Surface::Water) continue;
             anyWater = true;
-            EXPECT_EQ(chunk->getTileRenderData(x, y).waterDepth, tile.waterDepth)
-                << "render depth must mirror the tile depth";
             maxDepth = std::max(maxDepth, tile.waterDepth);
         }
     }
@@ -194,14 +192,15 @@ TEST(GeneratedWorldSamplerRivers, NoDrainageMeansNoWater) {
     EXPECT_EQ(countWater(*chunk), 0u) << "a SemiDesert world with no drainage must have no water";
 }
 
-// The headline invariance test for moving the render floor: RiverNetwork2D now
-// emits true (unfloored) half-widths, including sub-tile trickles at feeder
-// spring ends, but every tile's Surface and waterDepth must come out exactly as
-// the old floor-at-emission rule would have produced. Checked honestly by
-// recomputing the old rule independently in this test file (see
-// referenceFlooredHalfWidthAt / referenceDepthFromWidth above) rather than by
-// calling the same production code the change touched.
-TEST(GeneratedWorldSamplerRivers, TileWaterMatchesOldFlooredInterpolationRule) {
+// Tiles rasterize every channel at its true width. The tile grid used to hold
+// each rasterized half-width at 0.8 m or more so a sub-tile stream drew as a
+// contiguous 1-tile line; the river is drawn from the terrain distance field now
+// (D10) and Surface::Water is data (D1: prefilter and tile-granular queries), so
+// the floor is gone and a tile is water exactly when the true channel covers its
+// center. The chunks below include headwater feeders narrower than the old floor,
+// and the test requires at least one tile the floored rule would have made water
+// and the true rule doesn't, so it proves the floor is really gone.
+TEST(GeneratedWorldSamplerRivers, TileWaterMatchesTrueWidthRule) {
     using namespace worldgen;
     auto world = makeSemiDesertWorld();
 
@@ -225,6 +224,7 @@ TEST(GeneratedWorldSamplerRivers, TileWaterMatchesOldFlooredInterpolationRule) {
 
     bool sawSubFloorSegment = false;
     bool sawWaterTile = false;
+    bool sawTileOnlyTheFloorCovered = false;
     for (size_t ci = 0; ci < coords.size(); ++ci) {
         const ChunkCoordinate coord = coords[ci];
         ChunkSampleResult result = sampler.sampleChunk(coord);
@@ -235,6 +235,27 @@ TEST(GeneratedWorldSamplerRivers, TileWaterMatchesOldFlooredInterpolationRule) {
         auto chunk = generateChunk(coord, result, sampler.getWorldSeed());
 
         const WorldPosition origin = coord.origin();
+
+        // Around each sub-floor segment's midpoint in this chunk, look for a tile
+        // the old floor would have made water that is land at true width.
+        for (const auto& s : result.riverSegments) {
+            if (std::max(s.halfWidth0, s.halfWidth1) >= 0.8f) continue;
+            const int64_t mx = static_cast<int64_t>(std::floor(0.5 * (s.x0 + s.x1) - origin.x));
+            const int64_t my = static_cast<int64_t>(std::floor(0.5 * (s.y0 + s.y1) - origin.y));
+            for (int64_t y = my - 2; y <= my + 2; ++y) {
+                for (int64_t x = mx - 2; x <= mx + 2; ++x) {
+                    if (x < 0 || y < 0 || x >= kChunkSize || y >= kChunkSize) continue;
+                    const double wx = static_cast<double>(origin.x) + static_cast<double>(x);
+                    const double wy = static_cast<double>(origin.y) + static_cast<double>(y);
+                    if (referenceHalfWidthAt(result.riverSegments, wx, wy, 0.0f) == 0.0f &&
+                        referenceHalfWidthAt(result.riverSegments, wx, wy, 0.8f) > 0.0f &&
+                        chunk->getTile(static_cast<uint16_t>(x), static_cast<uint16_t>(y)).surface != Surface::Water) {
+                        sawTileOnlyTheFloorCovered = true;
+                    }
+                }
+            }
+        }
+
         // Full per-tile check on the chunk holding the headwater source; a coarse
         // stride elsewhere keeps the test fast while still covering the trunk and
         // any feeder reach into those chunks.
@@ -245,7 +266,7 @@ TEST(GeneratedWorldSamplerRivers, TileWaterMatchesOldFlooredInterpolationRule) {
                     static_cast<double>(origin.x) + static_cast<double>(x) * static_cast<double>(kTileSize);
                 const double wy =
                     static_cast<double>(origin.y) + static_cast<double>(y) * static_cast<double>(kTileSize);
-                const float refHalf = referenceFlooredHalfWidthAt(result.riverSegments, wx, wy);
+                const float refHalf = referenceHalfWidthAt(result.riverSegments, wx, wy, 0.0f);
                 const bool refIsWater = refHalf > 0.0f;
 
                 const TileData& tile = chunk->getTile(x, y);
@@ -262,5 +283,7 @@ TEST(GeneratedWorldSamplerRivers, TileWaterMatchesOldFlooredInterpolationRule) {
     }
     EXPECT_TRUE(sawSubFloorSegment)
         << "test should exercise river geometry under the old 0.8 m render floor";
+    EXPECT_TRUE(sawTileOnlyTheFloorCovered)
+        << "some tile the old floor would have made water must be land at true width";
     EXPECT_TRUE(sawWaterTile);
 }
