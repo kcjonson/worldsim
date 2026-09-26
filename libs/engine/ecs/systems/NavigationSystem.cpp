@@ -1012,8 +1012,9 @@ namespace ecs {
 		}
 		// Clearable entities (trees, rocks) must NOT block placement -- ConstructionSystem turns them
 		// into clear tasks -- so validate the footprint against a terrain-only mesh (no flora) rather
-		// than the runtime mesh, which carries them as holes. Water and built walls stay in that mesh
-		// and still block. Fall back to the runtime-mesh check when the build inputs aren't wired.
+		// than the runtime mesh, which carries them as holes. Every wall face reads as open there too;
+		// only water and off-mesh gaps block (wall conflicts are ConstructionValidator's job). Fall
+		// back to the runtime-mesh check when the build inputs aren't wired.
 		if (chunkManager == nullptr || constructionWorld == nullptr) {
 			return isAreaWalkable(polygonMeters);
 		}
