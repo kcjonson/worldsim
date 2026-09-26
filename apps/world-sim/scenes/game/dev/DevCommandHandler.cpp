@@ -253,16 +253,16 @@ namespace world_sim {
 
 	bool DevCommandHandler::requireBuildableArea(const std::vector<Foundation::Vec2>& pts, const char* verb) {
 		// The WHOLE footprint must be BUILDABLE, matching the foundation build tool (DrawingSystem):
-		// geography (water) and built walls block, but clearable entities (trees/rocks) do not -- they
-		// become clear tasks. Without a nav system wired (headless/test), validity is owned elsewhere;
-		// mirror requireValidPosition's permissive fallback.
+		// water and off-mesh gaps block, but clearable entities (trees/rocks) do not -- they
+		// become clear tasks. Wall conflicts are the validator's job. Without a nav system wired
+		// (headless/test), validity is owned elsewhere; mirror requireValidPosition's permissive fallback.
 		if (m_ctx.navigation == nullptr) {
 			return true;
 		}
 		if (m_ctx.navigation->isAreaBuildable(Foundation::toGlmVec2(pts))) {
 			return true;
 		}
-		LOG_WARNING(Game, "[DevAPI] %s: error: footprint not on buildable ground (water/wall), refused", verb);
+		LOG_WARNING(Game, "[DevAPI] %s: error: footprint not on buildable ground (water or off-mesh), refused", verb);
 		m_ctx.ui->pushNotification("Dev", "Refused: footprint not on buildable ground", UI::ToastSeverity::Warning);
 		return false;
 	}

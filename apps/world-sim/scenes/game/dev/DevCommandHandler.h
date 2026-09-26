@@ -107,10 +107,10 @@ namespace world_sim {
 
 		// True when the WHOLE foundation footprint (the closed polygon `pts`: vertices, edges, AND
 		// interior) is BUILDABLE -- NavigationSystem::isAreaBuildable, the same terrain-only predicate the
-		// UI foundation tool uses: geography (water) and built walls block, clearable entities (trees/
-		// rocks) do not. A footprint that spans a river or clips a water hole is refused so no
-		// partial-on-water structure is stamped. On rejection logs+toasts and returns false; the caller
-		// creates NOTHING.
+		// UI foundation tool uses: water and off-mesh gaps block, clearable entities (trees/rocks) do not.
+		// Wall conflicts are the validator's job. A footprint that spans a river or clips a water hole is
+		// refused so no partial-on-water structure is stamped. On rejection logs+toasts and returns false;
+		// the caller creates NOTHING.
 		bool requireBuildableArea(const std::vector<Foundation::Vec2>& pts, const char* verb);
 
 		// True when the WHOLE wall chain `pts` lies on walkable nav mesh -- every consecutive

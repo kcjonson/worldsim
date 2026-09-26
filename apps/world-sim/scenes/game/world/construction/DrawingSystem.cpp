@@ -115,9 +115,10 @@ namespace world_sim {
 	bool DrawingSystem::requirePlaceable(const std::vector<Foundation::Vec2>& pts, const char* what) {
 		// Placement gate (the SAME check the /api/dev verbs use). A FOUNDATION may sit over clearable
 		// entities (trees/rocks) -- placing over them spawns clear tasks and the build waits for the
-		// footprint to clear -- so it validates against BUILDABILITY (terrain + built walls, no flora).
-		// Walls have no footprint-clearing yet, so they still require clear on-mesh ground along the
-		// chain centerline. One blocked part refuses the whole placement (commit nothing).
+		// footprint to clear -- so it validates against BUILDABILITY (terrain + geometry, no flora).
+		// Wall conflicts are the validator's job. Walls have no footprint-clearing yet, so they still
+		// require clear on-mesh ground along the chain centerline. One blocked part refuses the whole
+		// placement (commit nothing).
 		if (navigation_ == nullptr) {
 			return true;
 		}
@@ -277,7 +278,7 @@ namespace world_sim {
 			return true; // consumed: the click was a deliberate (rejected) action
 		}
 
-		// Nav gate: refuse a vertex that lands on genuinely unbuildable ground (water, a built wall).
+		// Nav gate: refuse a vertex that lands on genuinely unbuildable ground (water or off-mesh).
 		// A vertex over a clearable entity (tree/rock) is allowed -- pointOnMesh routes foundations
 		// through the terrain-only buildability check. The whole-footprint re-check on commit
 		// (requirePlaceable) still catches an edge or interior that crosses water between two vertices.
