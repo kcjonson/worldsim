@@ -111,6 +111,169 @@ Changed in kind: the ECS and UI framework designs. Whatever we build there in Ru
 design informed by the old one, which means the docs for those areas get rewritten, not just
 their code.
 
+## Code style in Rust
+
+Checked against [cpp-coding-standards.md](./cpp-coding-standards.md) and the naming history
+(the camelCase conversion in `f9d0494`, the `m_` removal in `87fc8c8`). Decided 2026-09-25:
+follow Rust's naming conventions (snake_case) even though we prefer camelCase, and accept
+mandatory `self.`. The rest of the TypeScript-like structure carries over or improves.
+
+### Member access: `self.` everywhere
+
+Rust has no implicit receiver. Our C++ uses bare member names (3 `this->` left in the tree,
+about 2,400 legacy `m_` in `GameScene.cpp` and a few others); Rust spells every field access
+`self.field`, the way TypeScript spells `this.field`. From `Button::handleEvent`:
+
+```cpp
+if (mouseDown && event.button == engine::MouseButton::Left) {
+    if (containsPoint(event.position)) {
+        if (onClick) { onClick(); }
+        state = State::Hover;
+    }
+    mouseDown = false;
+}
+```
+
+```rust
+if self.mouse_down && event.button == MouseButton::Left {
+    if self.contains_point(event.position) {
+        if let Some(msg) = self.on_click { out.push(msg); }
+        self.state = State::Hover;
+    }
+    self.mouse_down = false;
+}
+```
+
+It also removes the parameter-shadowing bug the C++ standards warn about, so setters drop the
+`newX` parameter naming: `fn set_label(&mut self, label: &str) { self.label = label.to_owned(); }`.
+
+### Naming
+
+`rustc` warns on non-snake-case functions, variables, and modules, and on non-uppercase
+constants. We follow it rather than `#![allow]` it, since std and every crate are snake_case
+and mixed styles would meet in every expression.
+
+| C++ | Rust |
+|---|---|
+| `Button`, `ButtonType::Primary` | unchanged |
+| `handleEvent`, `mouseDown`, `iconSize` | `handle_event`, `mouse_down`, `icon_size` |
+| `kButtonSize` | `BUTTON_SIZE` |
+| `Button.h` + `Button.cpp` + `Button.test.cpp` | `button.rs` with a `#[cfg(test)]` module, or a sibling test file |
+| `getCenter()`, `isFocused()` | `center()`, `is_focused()` (Rust API guidelines drop `get_`) |
+| a field named `type` | `kind` (`type` is a keyword) |
+
+### Args structs: keep them
+
+Rust has no default arguments and no overloading, so the designated-initializer Args pattern
+is the idiomatic Rust answer, not a translation artifact. From `ZoomControl.cpp`:
+
+```cpp
+addChild(UI::Button(UI::Button::Args{
+    .size = {kButtonSize, kButtonSize},
+    .type = UI::Button::Type::Primary,
+    .onClick = args.onZoomIn,
+    .id = "btn_zoom_in",
+    .iconPath = "assets/ui/icons/zoom_in.svg",
+    .iconSize = kIconSize}));
+```
+
+```rust
+self.add_child(Button::new(ButtonArgs {
+    size: vec2(BUTTON_SIZE, BUTTON_SIZE),
+    kind: ButtonKind::Primary,
+    on_click: Some(ZoomMsg::ZoomIn),
+    id: Some("btn_zoom_in"),
+    icon_path: Some("assets/ui/icons/zoom_in.svg".into()),
+    icon_size: ICON_SIZE,
+    ..Default::default()
+}));
+```
+
+Field order is free (C++20 requires declaration order). Defaults move from inline `= value` to
+an `impl Default`. Nested literals name their type (`style: RectStyle { .. }`). Sentinels
+become `Option`: `tabIndex = -1` is `Option<u32>`, `id = nullptr` is `Option<&str>`.
+
+### Inherited data becomes composition
+
+`class Button : public Component, public FocusableBase<Button>` inherits `position`, `size`,
+and `visible`. Traits carry behavior, not fields, so shared data becomes a field of its own and
+inherited members read as `self.base.visible`:
+
+```rust
+pub struct Button {
+    base: ComponentBase,   // position, size, visible, children
+    focus: FocusState,     // replaces FocusableBase<Button>
+    pub label: String,
+    pub state: State,
+    pub disabled: bool,
+    on_click: Option<Msg>,
+}
+
+impl Component for Button {
+    fn base(&self) -> &ComponentBase { &self.base }
+    fn base_mut(&mut self) -> &mut ComponentBase { &mut self.base }
+    fn handle_event(&mut self, event: &mut InputEvent, out: &mut Vec<Msg>) -> bool { /* ... */ }
+}
+```
+
+Public fields stay public; `button.label = ...` through a handle still works.
+
+### `[this]` callbacks become messages
+
+The largest style change. From `CraftingDialog.cpp`:
+
+```cpp
+.onClick = [this]() { handleQuantityChange(-10); },
+```
+
+The dialog owns the button and the closure points back at the dialog, an ownership cycle Rust
+rejects. `Rc<RefCell<..>>` compiles but moves the check to a runtime panic. The idiomatic
+shape is dispatch-and-reduce, the same unidirectional flow as our controlled components with
+`onChange`, and the model the `iced` UI library uses:
+
+```rust
+enum CraftingMsg { QuantityDelta(i32), Craft, Close }
+
+on_click: Some(CraftingMsg::QuantityDelta(-10)),
+
+fn update(&mut self, msg: CraftingMsg) {
+    match msg {
+        CraftingMsg::QuantityDelta(d) => self.handle_quantity_change(d),
+        CraftingMsg::Craft => self.start_craft(),
+        CraftingMsg::Close => self.close(),
+    }
+}
+```
+
+All 477 `[this]`/`[&]` capture sites convert to this pattern.
+
+### Systems take the world as a parameter
+
+The stored `World* world` back-pointer becomes an argument. `NeedsDecaySystem::update` then
+translates nearly line for line, because it already reads the time scale into a local before
+iterating:
+
+```rust
+fn update(&mut self, world: &mut World, dt: f32) {
+    let game_minutes = dt * world.system::<TimeSystem>().effective_time_scale();
+    if game_minutes <= 0.0 { return; }
+    for (_entity, needs) in world.view_mut::<NeedsComponent>() {
+        for need in &mut needs.needs { need.decay(game_minutes); }
+    }
+}
+```
+
+Systems that add or remove components mid-iteration (`ActionSystem` and its action handlers)
+need a command buffer applied after the loop; that's the ECS redesign above.
+
+### What carries over as is
+
+Move-only RAII is Rust's default. Generation-counted handles (`EntityID`, `LayerHandle`) are the
+standard Rust substitute for pointers. `std::variant` components become enums. "const
+liberally" inverts into immutable-by-default with `mut` as the marker. Tests beside code match
+`#[cfg(test)]`. The exceptions policy, still TBD in the C++ standards, is decided for us:
+`Result`.
+
 ## Spike: geometry core, predicates, and triangulation
 
 To get real numbers instead of opinions, an agent ported `libs/geometry/core`,
