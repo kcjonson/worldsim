@@ -99,6 +99,7 @@ namespace world_sim {
 		void devOpening(const Foundation::DevCommand& cmd);
 		void devCraft(const Foundation::DevCommand& cmd);
 		void devStorage(const Foundation::DevCommand& cmd);
+		void devTunable(const Foundation::DevCommand& cmd);
 
 		// --- world-position validity (single gate for every placing/moving verb) ---
 		// True when `at` is on an active walkable nav face. On false, logs+toasts the
