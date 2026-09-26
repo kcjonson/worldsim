@@ -40,39 +40,20 @@ namespace geometry {
 			std::int64_t cellX(std::int64_t wx) const { return floorDiv(wx - phaseX, field.cellMm); }
 			std::int64_t cellY(std::int64_t wy) const { return floorDiv(wy - phaseY, field.cellMm); }
 
-			// One axis of a bilinear read: the global cell and the fraction across it.
-			struct AxisRead {
-				std::int64_t cell = 0;
-				double		 frac = 0.0;
-			};
-
 			// Along x (or y), the read at world coordinate w displaced by offset.
-			AxisRead readX(std::int64_t wx, double offset) const { return axisRead(wx - phaseX, offset); }
-			AxisRead readY(std::int64_t wy, double offset) const { return axisRead(wy - phaseY, offset); }
+			LatticeAxisRead readX(std::int64_t wx, double offset) const { return latticeAxisRead(wx - phaseX, offset, field.cellMm); }
+			LatticeAxisRead readY(std::int64_t wy, double offset) const { return latticeAxisRead(wy - phaseY, offset, field.cellMm); }
 
-			// Bilinear read at world w + offset. The lerps stay within the range of
-			// their four samples in floating point, which the skip relies on.
+			// Bilinear read at world w + offset.
 			float bilinear(Vec2i64 w, WarpOffsetMm offset) const {
-				return bilinear(readX(w.x, offset.x), readY(w.y, offset.y));
+				return warpedBilinear(*this, {phaseX, phaseY}, field.cellMm, w, offset);
 			}
 
-			float bilinear(AxisRead x, AxisRead y) const {
-				const double v00	= static_cast<double>(sample(x.cell, y.cell));
-				const double v10	= static_cast<double>(sample(x.cell + 1, y.cell));
-				const double v01	= static_cast<double>(sample(x.cell, y.cell + 1));
-				const double v11	= static_cast<double>(sample(x.cell + 1, y.cell + 1));
-				const double bottom = v00 + (v10 - v00) * x.frac;
-				const double top	= v01 + (v11 - v01) * x.frac;
-				return static_cast<float>(bottom + (top - bottom) * y.frac);
-			}
+			float bilinear(LatticeAxisRead x, LatticeAxisRead y) const { return latticeBilinear(*this, x, y); }
+
+			float operator()(std::int64_t gx, std::int64_t gy) const { return sample(gx, gy); }
 
 		  private:
-			AxisRead axisRead(std::int64_t fromPhaseMm, double offset) const {
-				const double u = (static_cast<double>(fromPhaseMm) + offset) / static_cast<double>(field.cellMm);
-				const double k = std::floor(u);
-				return {static_cast<std::int64_t>(k), u - k};
-			}
-
 			const ScalarField& field;
 			float			   outside;
 			std::int64_t	   phaseX;
@@ -186,7 +167,7 @@ namespace geometry {
 		// Per fine column and per fine row: the skip test's cell and the unwarped
 		// read, each a function of that one coordinate, so the skipped samples (all
 		// but a band around the isoline) cost a lookup and a lerp.
-		using AxisRead = GlobalLattice::AxisRead;
+		using AxisRead = LatticeAxisRead;
 		std::vector<std::int64_t> colCell(static_cast<std::size_t>(fineWidth));
 		std::vector<std::int64_t> rowCell(static_cast<std::size_t>(fineHeight));
 		std::vector<AxisRead>	  colRead(static_cast<std::size_t>(fineWidth));
