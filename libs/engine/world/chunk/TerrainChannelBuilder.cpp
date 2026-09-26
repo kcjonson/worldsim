@@ -35,18 +35,28 @@ namespace engine::world::terrain_detail {
 	namespace {
 
 		// The longest river sub-segment the gather emits (RiverNetwork2D's trunk
-		// step). The kept region must stop a full step short of the gather margin,
-		// so the chain-end Catmull-Rom span, which uses a phantom point, is trimmed.
+		// step). A centerline sample's Catmull-Rom span reads the nodes one step
+		// either side of it, so every sample that matters must lie a full step
+		// inside the gather: the kept samples, and the samples a relevant one's
+		// widthRatio window reads, which reach kThalwegHalfWindowMaxM past it.
 		constexpr double kGatherStepM = 20.0;
 		static_assert(
-			static_cast<double>(kApronTiles) + Builder::kChainKeepMarginM + kGatherStepM <= kRiverGatherMarginM,
-			"trimmed chains must end before the span the gather cut distorts"
+			Builder::kChannelKeepReachM + kGatherStepM <= kRiverGatherMarginM &&
+				Builder::kChannelKeepReachM - Builder::kChannelDecisionReachM + Builder::kThalwegHalfWindowMaxM + kGatherStepM <=
+					kRiverGatherMarginM,
+			"every kept centerline sample and every widthRatio window must lie a gather step inside the gather"
 		);
 
-		// Clip a pond or channel ring to the extended region, pin it on the chunk
-		// border and extended boundary lines (and at `extraPins`, the fordable cut
-		// vertices), then the shared tail. The extended boundary is pinned too so
-		// resampling cannot chamfer the corner where a bank meets its closure,
+		// The channel reach base (Builder, "Channel reach"), grown to the apron of a
+		// build with a wider one.
+		double channelReachBaseM(const Region& region) {
+			return std::max(Builder::kChannelReachBaseM, static_cast<double>(region.apronTiles) + 2.0 * Builder::kChannelReachSlackM);
+		}
+
+		// Clip a pond or channel ring to the extended region, then the shared tail:
+		// pinned on the world lattice, on the extended boundary lines, and at
+		// `extraPins` (the fordable cut vertices). The extended boundary is pinned
+		// so resampling cannot chamfer the corner where a bank meets its closure,
 		// leaving an unflagged sliver of closure inside the region.
 		std::vector<Ring> finishVectorRing(const Ring& ring, std::span<const Vec2i64> extraPins, const Region& region,
 										   ChunkCoordinate coord, const char* what) {
@@ -59,16 +69,10 @@ namespace engine::world::terrain_detail {
 				LOG_WARNING(World, "Chunk (%d, %d): dropped a self-overlapping %s (%zu vertices)", coord.x, coord.y, what, ring.size());
 				return out;
 			}
-			const std::array<int64_t, 4> xLines = {region.extMin.x, region.chunkMin.x, region.chunkMax.x, region.extMax.x};
-			const std::array<int64_t, 4> yLines = {region.extMin.y, region.chunkMin.y, region.chunkMax.y, region.extMax.y};
+			const std::array<int64_t, 2> xLines = {region.extMin.x, region.extMax.x};
+			const std::array<int64_t, 2> yLines = {region.extMin.y, region.extMax.y};
 			for (Ring& piece : geometry::clipRingToRect(ring, region.extendedRect())) {
-				std::vector<uint8_t> pinned = geometry::pinAxisLineCrossings(piece, xLines, yLines);
-				for (size_t i = 0; i < piece.size(); ++i) {
-					if (std::find(extraPins.begin(), extraPins.end(), piece[i]) != extraPins.end()) {
-						pinned[i] = 1;
-					}
-				}
-				std::optional<Ring> finished = resampleSimplifyValidate(std::move(piece), std::move(pinned), coord, what);
+				std::optional<Ring> finished = pinResampleSimplifyValidate(std::move(piece), xLines, yLines, extraPins, coord, what);
 				if (finished && !areaBelowFloor(*finished)) {
 					out.push_back(std::move(*finished));
 				}
@@ -96,28 +100,32 @@ namespace engine::world::terrain_detail {
 			return terrain;
 		}
 
-		// D8: the rim at kPondRimSpacingM arc spacing from theta 0, each vertex's
-		// radius perturbed by world-space noise read at the unperturbed rim point. A
-		// radial perturbation of a star-shaped rim stays simple.
-		Ring pondRim(const Builder::Pond& pond, uint32_t seed) {
-			constexpr double kTwoPi		   = 2.0 * std::numbers::pi;
-			const double	 circumference = kTwoPi * static_cast<double>(pond.radius);
-			const auto		 count		   = std::max<size_t>(8, static_cast<size_t>(std::ceil(circumference / Builder::kPondRimSpacingM)));
-			const double	 noiseAmpM	   = static_cast<double>(Builder::kPondRimNoiseAmpMm) / kMmPerMeter;
-			Ring			 ring(count);
-			for (size_t k = 0; k < count; ++k) {
-				const double theta	= kTwoPi * static_cast<double>(k) / static_cast<double>(count);
-				const double radius = worldgen::PondNetwork2D::rimRadiusAt(pond, theta);
-				const double c		= foundation::det_math::cos(theta);
-				const double s		= foundation::det_math::sin(theta);
-				const Vec2d	 rim{pond.cx + radius * c, pond.cy + radius * s};
-				const double noise = noiseAmpM * static_cast<double>(worldNoise(
-													 toMm(rim), Builder::kBankNoiseWavelengthM, seed, Builder::kBankNoiseOctaves
-												 ));
-				ring[k] = toMm({pond.cx + (radius + noise) * c, pond.cy + (radius + noise) * s});
-			}
-			return ring;
+	} // namespace
+
+	// Each vertex's radius is perturbed by world-space noise read at the
+	// unperturbed rim point. A radial perturbation of a star-shaped rim stays simple.
+	Ring pondRim(const Builder::Pond& pond, uint64_t worldSeed) {
+		const uint32_t	 seed		   = purposeSeed(worldSeed, kSaltPondRim);
+		constexpr double kTwoPi		   = 2.0 * std::numbers::pi;
+		const double	 circumference = kTwoPi * static_cast<double>(pond.radius);
+		const auto		 count		   = std::max<size_t>(8, static_cast<size_t>(std::ceil(circumference / Builder::kPondRimSpacingM)));
+		const double	 noiseAmpM	   = static_cast<double>(Builder::kPondRimNoiseAmpMm) / kMmPerMeter;
+		Ring			 ring(count);
+		for (size_t k = 0; k < count; ++k) {
+			const double theta	= kTwoPi * static_cast<double>(k) / static_cast<double>(count);
+			const double radius = worldgen::PondNetwork2D::rimRadiusAt(pond, theta);
+			const double c		= foundation::det_math::cos(theta);
+			const double s		= foundation::det_math::sin(theta);
+			const Vec2d	 rim{pond.cx + radius * c, pond.cy + radius * s};
+			const double noise = noiseAmpM * static_cast<double>(worldNoise(
+												 toMm(rim), Builder::kBankNoiseWavelengthM, seed, Builder::kBankNoiseOctaves
+											 ));
+			ring[k] = toMm({pond.cx + (radius + noise) * c, pond.cy + (radius + noise) * s});
 		}
+		return ring;
+	}
+
+	namespace {
 
 		// ---- Chains: gathered segments joined end to end (D7 step 1) ----
 
@@ -242,48 +250,45 @@ namespace engine::world::terrain_detail {
 
 		// ---- Reaches: the stretches of a chain's centerline that become ribbons ----
 
-		enum class Ground : uint8_t { Unknown, Land, Water };
+		enum class Ground : uint8_t { Land, Water };
 
-		// Waterline and pond rings, for the mouth test. Waterline rings count by
-		// even-odd parity (islands are CW holes), ponds as solid.
-		class WaterBodies {
+		// The receiving bodies for the mouth test, as functions of world position
+		// alone so every chunk classifies a centerline sample alike however far
+		// from it the sample lies: the waterline field (D5, D6) and the unclipped
+		// pond rims (D8). Both sit within a few cm of the rings built from them.
+		class ReceivingWater {
 		  public:
-			explicit WaterBodies(const std::vector<TerrainRing>& rings) {
-				for (const TerrainRing& ring : rings) {
-					Entry entry{&ring.ring, ring.ring.front(), ring.ring.front(), ring.holeCapable};
-					for (const Vec2i64& v : ring.ring) {
-						entry.lo = {std::min(entry.lo.x, v.x), std::min(entry.lo.y, v.y)};
-						entry.hi = {std::max(entry.hi.x, v.x), std::max(entry.hi.y, v.y)};
+			ReceivingWater(const WaterlineField& waterline, std::span<const Builder::Pond> ponds, uint64_t worldSeed)
+				: m_waterline(waterline) {
+				for (const Builder::Pond& pond : ponds) {
+					Rim rim{pondRim(pond, worldSeed), {}, {}};
+					rim.lo = rim.hi = rim.ring.front();
+					for (const Vec2i64& v : rim.ring) {
+						rim.lo = {std::min(rim.lo.x, v.x), std::min(rim.lo.y, v.y)};
+						rim.hi = {std::max(rim.hi.x, v.x), std::max(rim.hi.y, v.y)};
 					}
-					m_entries.push_back(entry);
+					m_rims.push_back(std::move(rim));
 				}
 			}
 
-			[[nodiscard]] bool contains(const Vec2i64& p) const {
-				bool parity = false;
-				for (const Entry& e : m_entries) {
-					if (p.x < e.lo.x || p.x > e.hi.x || p.y < e.lo.y || p.y > e.hi.y) {
-						continue;
+			[[nodiscard]] Ground at(const Vec2i64& p) const {
+				for (const Rim& rim : m_rims) {
+					if (p.x >= rim.lo.x && p.x <= rim.hi.x && p.y >= rim.lo.y && p.y <= rim.hi.y &&
+						geometry::pointInPolygon(p, rim.ring) != geometry::PointInPolygon::Outside) {
+						return Ground::Water;
 					}
-					if (geometry::pointInPolygon(p, *e.ring) == geometry::PointInPolygon::Outside) {
-						continue;
-					}
-					if (!e.evenOdd) {
-						return true;
-					}
-					parity = !parity;
 				}
-				return parity;
+				return m_waterline.waterAt(p) ? Ground::Water : Ground::Land;
 			}
 
 		  private:
-			struct Entry {
-				const Ring* ring;
-				Vec2i64		lo;
-				Vec2i64		hi;
-				bool		evenOdd;
+			struct Rim {
+				Ring	ring;
+				Vec2i64 lo;
+				Vec2i64 hi;
 			};
-			std::vector<Entry> m_entries;
+			const WaterlineField& m_waterline;
+			std::vector<Rim>	  m_rims;
 		};
 
 		struct ReachPoint {
@@ -296,21 +301,23 @@ namespace engine::world::terrain_detail {
 
 		struct Reach {
 			std::vector<ReachPoint> points;
-			// Ends where the chain was trimmed to the kept region: a butt cap, well
-			// outside the extended region, never seen.
+			// Ends where the chain was trimmed to the kept samples: a butt cap outside
+			// the extended region, never seen.
 			bool trimmedStart = false;
 			bool trimmedEnd	  = false;
 		};
 
 		// hw / mean hw over the samples within half a window each way (arc length,
-		// summed outward from the sample so it never depends on the chain's start).
-		// Raw segment widths: the riffle/pool modulation is the signal (R4); a mouth
+		// summed outward from the sample so it never depends on the chain's start;
+		// each half capped at kThalwegHalfWindowMaxM so the gather covers it). Raw
+		// segment widths: the riffle/pool modulation is the signal (R4); a mouth
 		// flare is not a riffle.
 		std::vector<float> widthRatios(const std::vector<geometry::CenterlineSample>& samples) {
 			const size_t	   n = samples.size();
 			std::vector<float> out(n, 1.0F);
 			for (size_t i = 0; i < n; ++i) {
-				const double half  = 0.5 * Builder::kThalwegWindowW * 2.0 * samples[i].halfWidthM;
+				const double half =
+					std::min(0.5 * Builder::kThalwegWindowW * 2.0 * samples[i].halfWidthM, Builder::kThalwegHalfWindowMaxM);
 				double		 sum   = samples[i].halfWidthM;
 				int			 count = 1;
 				double		 d	   = 0.0;
@@ -337,16 +344,26 @@ namespace engine::world::terrain_detail {
 			return out;
 		}
 
+		// The flare and extension lengths at a mouth whose channel is w wide (D7),
+		// capped so a mouth's reach along the river stays bounded.
+		double flareLengthM(double w) {
+			return std::min(Builder::kMouthFlareW * w, Builder::kMouthFlareMaxM);
+		}
+
+		double extendLengthM(double w) {
+			return std::min(Builder::kMouthExtendW * w, Builder::kMouthExtendMaxM);
+		}
+
 		// One run of kept samples [first, last] of a chain into reaches, handling
-		// river mouths (D7). Samples are Land or Water inside the extended region
-		// and Unknown outside it. Where the centerline passes from Land into Water
-		// (an inflow mouth at s_m), the channel flares over [s_m - 2 w, s_m] and
-		// runs on 1 w into the water body, then stops; where it passes from Water
-		// onto Land (a lake outlet), it starts 1 w inside the water. Water with no
-		// Land transition in view is dropped: it lies inside the receiving body.
-		// Every decision is a function of samples near the transition and of the
-		// receiving rings, never of where the chain starts or ends, so neighbors
-		// agree wherever they see the same transition.
+		// river mouths (D7). Where the centerline passes from Land into Water (an
+		// inflow mouth at s_m), the channel flares over [s_m - 2 w, s_m] and runs on
+		// 1 w into the water body, then stops (both lengths capped); where it passes
+		// from Water onto Land (a lake outlet), it starts 1 w inside the water. Water
+		// with no Land transition in view is dropped: it lies inside the receiving
+		// body. Every decision is a function of the ground within
+		// kChannelDecisionReachM of a sample, and the ground is a function of world
+		// position, so every chunk that keeps that much river around a sample
+		// decides alike for it.
 		void splitRun(const std::vector<geometry::CenterlineSample>& samples, const std::vector<float>& ratios,
 					  const std::vector<Ground>& ground, size_t first, size_t last, std::vector<Reach>& out) {
 			const size_t		 count = last - first + 1;
@@ -377,7 +394,7 @@ namespace engine::world::terrain_detail {
 				size_t	   outFrom = b;
 				if (inflow) {
 					const double w		 = 2.0 * hw(a);
-					const double extendM = Builder::kMouthExtendW * w;
+					const double extendM = extendLengthM(w);
 					double		 d		 = 0.0;
 					include[a - first]	 = 1;
 					while (inEnd < b) {
@@ -396,7 +413,7 @@ namespace engine::world::terrain_detail {
 						flare[k - first]	 = Builder::kMouthFlare;
 						asymmetry[k - first] = 0.0;
 					}
-					const double flareM = Builder::kMouthFlareW * w;
+					const double flareM = flareLengthM(w);
 					double		 up		= 0.0;
 					for (size_t k = a; k > first; --k) {
 						up += geometry::length(pos(k) - pos(k - 1));
@@ -410,7 +427,7 @@ namespace engine::world::terrain_detail {
 					}
 				}
 				if (outflow) {
-					const double extendM = Builder::kMouthExtendW * 2.0 * hw(b);
+					const double extendM = extendLengthM(2.0 * hw(b));
 					double		 d		 = 0.0;
 					include[b - first]	 = 1;
 					while (outFrom > a) {
@@ -462,15 +479,48 @@ namespace engine::world::terrain_detail {
 			}
 		}
 
-		std::vector<Reach> extractReaches(const std::vector<geometry::CenterlineSample>& samples, const Region& region,
-										  const WaterBodies& water) {
+		// The samples a chunk keeps (Builder, "Channel reach"): every relevant sample
+		// and every sample within kChannelDecisionReachM of one along the
+		// centerline, one pass each way.
+		std::vector<uint8_t> keptSamples(const std::vector<geometry::CenterlineSample>& samples, const Region& region) {
 			const size_t		 n = samples.size();
-			std::vector<uint8_t> kept(n);
-			std::vector<Ground>	 ground(n);
+			const double		 base = channelReachBaseM(region);
+			std::vector<uint8_t> kept(n, 0);
+			std::vector<uint8_t> relevant(n, 0);
 			for (size_t i = 0; i < n; ++i) {
-				const Vec2i64 mm = toMm(samples[i].position);
-				kept[i]			 = region.inKept(mm) ? 1 : 0;
-				ground[i]		 = !region.inExtended(mm) ? Ground::Unknown : (water.contains(mm) ? Ground::Water : Ground::Land);
+				const double outsideM = static_cast<double>(region.outsideChunkMm(toMm(samples[i].position))) / kMmPerMeter;
+				relevant[i]			  = outsideM <= base + Builder::kChannelReachHalfWidths * samples[i].halfWidthM ? 1 : 0;
+			}
+			auto sweep = [&](bool forward) {
+				std::optional<double> since; // arc length back to the last relevant sample
+				for (size_t k = 0; k < n; ++k) {
+					const size_t i = forward ? k : n - 1 - k;
+					if (since && k > 0) {
+						const size_t prev = forward ? i - 1 : i + 1;
+						*since += geometry::length(samples[i].position - samples[prev].position);
+					}
+					if (relevant[i] != 0) {
+						since = 0.0;
+					}
+					if (since && *since <= Builder::kChannelDecisionReachM) {
+						kept[i] = 1;
+					}
+				}
+			};
+			sweep(true);
+			sweep(false);
+			return kept;
+		}
+
+		std::vector<Reach> extractReaches(const std::vector<geometry::CenterlineSample>& samples, const Region& region,
+										  const ReceivingWater& water) {
+			const size_t			   n	= samples.size();
+			const std::vector<uint8_t> kept = keptSamples(samples, region);
+			std::vector<Ground>		   ground(n, Ground::Land);
+			for (size_t i = 0; i < n; ++i) {
+				if (kept[i] != 0) {
+					ground[i] = water.at(toMm(samples[i].position));
+				}
 			}
 			const std::vector<float> ratios = widthRatios(samples);
 			std::vector<Reach>		 reaches;
@@ -723,7 +773,14 @@ namespace engine::world::terrain_detail {
 		}
 
 		// D2 thalweg: the centerline offset toward the outer bank by the asymmetry,
-		// one path per stretch inside the extended region.
+		// one path per stretch a bake texel can read. A texel reads a point up to
+		// kThalwegReachHalfWidths bankfull half-widths from it, and the point lies up
+		// to the asymmetry off its centerline sample: at most kChannelReachHalfWidths
+		// raw half-widths from the sample, which is kept when that plus the slack
+		// (which keeps a point's neighbors too, however its flare ramps, so every
+		// segment near a texel is whole) reaches the bake region. Every such sample
+		// is relevant, so a texel inside two chunks' bake regions reads the same
+		// points from both.
 		void appendThalwegs(const std::vector<RibbonPoint>& pts, const Region& region, std::vector<ThalwegPath>& out) {
 			std::vector<Vec2d> centerline(pts.size());
 			for (size_t i = 0; i < pts.size(); ++i) {
@@ -740,7 +797,9 @@ namespace engine::world::terrain_detail {
 				const RibbonPoint& p	   = pts[i];
 				const double	   towards = p.kappa > 0.0 ? -p.asymmetryM : (p.kappa < 0.0 ? p.asymmetryM : 0.0);
 				const Vec2i64	   mm	   = toMm(p.position + geometry::strokeNormal(centerline, i) * towards);
-				if (!region.inExtended(toMm(p.position))) {
+				const double	   reachM =
+					Builder::kBakeMarginM + Builder::kChannelReachHalfWidths * p.rawHalfWidthM + Builder::kChannelReachSlackM;
+				if (static_cast<double>(region.outsideChunkMm(toMm(p.position))) / kMmPerMeter > reachM) {
 					flush();
 					continue;
 				}
@@ -756,15 +815,15 @@ namespace engine::world::terrain_detail {
 
 	void buildPonds(std::vector<TerrainRing>& rings, std::span<const Builder::Pond> ponds, const ExtendedGrid& grid,
 					const Region& region, uint64_t worldSeed, ChunkCoordinate coord) {
-		const uint32_t seed = purposeSeed(worldSeed, kSaltPondRim);
 		for (const Builder::Pond& pond : ponds) {
-			for (Ring& ring : finishVectorRing(pondRim(pond, seed), {}, region, coord, "pond ring")) {
+			for (Ring& ring : finishVectorRing(pondRim(pond, worldSeed), {}, region, coord, "pond ring")) {
 				rings.push_back(vectorTerrainRing(std::move(ring), TerrainRingKind::Pond, WaterKind::Pond, {}, grid, region));
 			}
 		}
 	}
 
-	void buildChannels(ChunkTerrainPolygons& out, std::span<const Builder::RiverSegment> segments, const ExtendedGrid& grid,
+	void buildChannels(ChunkTerrainPolygons& out, std::span<const Builder::RiverSegment> segments,
+					   std::span<const Builder::Pond> ponds, const WaterlineField& waterline, const ExtendedGrid& grid,
 					   const Region& region, uint64_t worldSeed, ChunkCoordinate coord) {
 		if (segments.empty()) {
 			return;
@@ -773,7 +832,7 @@ namespace engine::world::terrain_detail {
 			purposeSeed(worldSeed, kSaltLeftBankFine), purposeSeed(worldSeed, kSaltLeftBankLow),
 			purposeSeed(worldSeed, kSaltRightBankFine), purposeSeed(worldSeed, kSaltRightBankLow)
 		};
-		const WaterBodies		 water(out.rings);
+		const ReceivingWater	 water(waterline, ponds, worldSeed);
 		std::vector<TerrainRing> channels;
 
 		for (Chain& chain : joinChains(segments)) {

@@ -16,10 +16,34 @@
 #include "world/chunk/ChunkCoordinate.h"
 #include "world/chunk/ChunkSampleResult.h"
 
+#include <array>
 #include <cstdint>
 #include <vector>
 
 namespace engine::world {
+
+/// The biome/elevation grids of a chunk's 3x3 neighborhood, each rebuilt from the
+/// sample data's neighborhood corner lattice exactly as that neighbor builds its
+/// own (D4), lazily, on first use. The chunk itself (0, 0) reads `sampleData`.
+/// One per generation call: not thread-safe.
+class NeighborhoodGrids {
+  public:
+	/// `sampleData` must carry the neighborhood corner lattice
+	/// (fillNeighborhoodCorners) and outlive this.
+	explicit NeighborhoodGrids(const ChunkSampleResult& sampleData);
+
+	/// Grid of the neighbor at offset (dx, dy), each in [-1, 1].
+	[[nodiscard]] const ChunkSampleResult& grid(int32_t dx, int32_t dy);
+
+	/// Primary biome of world tile (tx, ty), the tile the owning chunk's own
+	/// generate() computes there. (tx, ty) must lie in the neighborhood of `coord`.
+	[[nodiscard]] Biome primaryBiomeAt(ChunkCoordinate coord, int64_t tx, int64_t ty);
+
+  private:
+	const ChunkSampleResult&	   m_sampleData;
+	std::vector<ChunkSampleResult> m_grids; // on the heap: nine are ~330 KB, too much for a worker's stack
+	std::array<bool, 9>			   m_built{};
+};
 
 /// The apron ring of tiles around a chunk: the kExtendedSize x kExtendedSize
 /// extended region minus the chunk's own kChunkSize x kChunkSize square.

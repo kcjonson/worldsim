@@ -82,6 +82,10 @@ constexpr double kFeederStepMeters     = 11.0;  // fine enough to resolve the ti
 constexpr double kFeederBankInset      = 0.6;   // start inside the bank so the mouth meets parent water
 constexpr double kFeederMeanderFeature = 60.0;  // bend spacing -> windy but smooth
 constexpr double kFeederMeanderAmp     = 14.0;  // lateral wander (meters)
+static_assert(RiverNetwork2D::kMaxHalfWidthMeters >=
+                  0.5 * static_cast<double>(kMaxWidth) * (1.0 + kWidthVariation + kPoolStrength) &&
+              RiverNetwork2D::kMaxHalfWidthMeters >= kFeederMouthMaxHalf * (1.0 + kWidthVariation + kPoolStrength),
+              "kMaxHalfWidthMeters must bound every trunk and feeder half-width");
 constexpr int    kHeadwaterFeederCount = 2;     // a source is fed by two trickles, one per bank
 constexpr double kHeadwaterFanDeg      = 55.0;  // springs spread +/- this around upstream so they diverge
 

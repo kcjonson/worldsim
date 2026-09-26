@@ -236,8 +236,9 @@ class Chunk {
 	ChunkTerrainPolygons m_terrainPolygons;
 
 	/// Compute tile data for a single tile during generation. Thin wrapper around
-	/// computeTileFrom() using this chunk's own coordinate and sample data.
-	[[nodiscard]] TileData computeTile(uint16_t localX, uint16_t localY) const;
+	/// computeTileFrom() using this chunk's own coordinate and sample data, with
+	/// rivers and ponds from `hydrology` (m_biomeData's rasterHydrology).
+	[[nodiscard]] TileData computeTile(uint16_t localX, uint16_t localY, const ChunkSampleResult& hydrology) const;
 
 	/// Install a freshly built polygon set and bump its version (monotonic per
 	/// chunk, like m_renderDataVersion). Called from generate(), before

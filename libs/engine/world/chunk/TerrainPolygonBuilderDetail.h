@@ -10,6 +10,7 @@
 #include "world/chunk/TerrainPolygons.h"
 
 #include <contour/ClipRing.h>
+#include <contour/WarpField.h>
 #include <core/Vec2d.h>
 #include <core/Vec2i64.h>
 #include <polygon/Polygon.h>
@@ -82,15 +83,14 @@ namespace engine::world::terrain_detail {
 		return t * t * (3.0 - 2.0 * t);
 	}
 
-	// The chunk square and the extended region (chunk plus apron), world mm, plus
-	// the wider box river centerlines are kept in.
+	// The chunk square and the extended region (chunk plus apron), world mm.
 	struct Region {
 		Vec2i64 chunkMin;
 		Vec2i64 chunkMax;
 		Vec2i64 extMin;
 		Vec2i64 extMax;
-		Vec2i64 keepMin;
-		Vec2i64 keepMax;
+		int32_t apronTiles	 = 0;
+		int32_t extendedSize = 0; // tiles per axis
 
 		[[nodiscard]] geometry::RectMm chunkRect() const { return {chunkMin, chunkMax}; }
 		[[nodiscard]] geometry::RectMm extendedRect() const { return {extMin, extMax}; }
@@ -98,33 +98,41 @@ namespace engine::world::terrain_detail {
 		[[nodiscard]] bool inExtended(const Vec2i64& p) const {
 			return p.x >= extMin.x && p.x <= extMax.x && p.y >= extMin.y && p.y <= extMax.y;
 		}
-		[[nodiscard]] bool inKept(const Vec2i64& p) const {
-			return p.x >= keepMin.x && p.x <= keepMax.x && p.y >= keepMin.y && p.y <= keepMax.y;
+
+		// Chebyshev distance from the chunk square, 0 inside it.
+		[[nodiscard]] int64_t outsideChunkMm(const Vec2i64& p) const {
+			return std::max({chunkMin.x - p.x, p.x - chunkMax.x, chunkMin.y - p.y, p.y - chunkMax.y, int64_t{0}});
 		}
+
+		// World tile index of extended tile (0, 0), per axis.
+		[[nodiscard]] Vec2i64 extendedTileOrigin() const { return {extMin.x / Builder::kTileMm, extMin.y / Builder::kTileMm}; }
 	};
 
-	Region regionOf(ChunkCoordinate coord);
+	Region regionOf(ChunkCoordinate coord, int32_t apronTiles);
 
-	// Extended-region tiles plus the biome water indicator, read once.
+	// Extended-region tiles plus the biome water indicator, read once. The
+	// indicator comes from the biome water query, the one source every waterline
+	// read uses (the fine lattice here, the point field along river centerlines).
 	class ExtendedGrid {
 	  public:
-		ExtendedGrid(const Builder::ExtendedTileFn& tiles, const Region& region)
+		ExtendedGrid(const Builder::ExtendedTileFn& tiles, const Builder::BiomeWaterFn& biomeWater, const Region& region)
 			: m_tiles(tiles),
 			  m_extMin(region.extMin),
-			  m_water(static_cast<size_t>(kExtendedSize) * static_cast<size_t>(kExtendedSize)) {
-			for (int32_t ey = 0; ey < kExtendedSize; ++ey) {
-				for (int32_t ex = 0; ex < kExtendedSize; ++ex) {
-					m_water[index(ex, ey)] = isBiomeWater(tiles(ex, ey)) ? 1 : 0;
+			  m_size(region.extendedSize),
+			  m_water(static_cast<size_t>(m_size) * static_cast<size_t>(m_size)) {
+			const Vec2i64 origin = region.extendedTileOrigin();
+			for (int32_t ey = 0; ey < m_size; ++ey) {
+				for (int32_t ex = 0; ex < m_size; ++ex) {
+					m_water[index(ex, ey)] = biomeWater(origin.x + ex, origin.y + ey) ? 1 : 0;
 					m_anyWater			   = m_anyWater || m_water[index(ex, ey)] != 0;
 				}
 			}
 		}
 
 		[[nodiscard]] bool anyWater() const { return m_anyWater; }
+		[[nodiscard]] int32_t size() const { return m_size; }
 
-		[[nodiscard]] static bool contains(int32_t ex, int32_t ey) {
-			return ex >= 0 && ey >= 0 && ex < kExtendedSize && ey < kExtendedSize;
-		}
+		[[nodiscard]] bool contains(int32_t ex, int32_t ey) const { return ex >= 0 && ey >= 0 && ex < m_size && ey < m_size; }
 
 		// Outside the extended region is land (D4).
 		[[nodiscard]] bool water(int32_t ex, int32_t ey) const { return contains(ex, ey) && m_water[index(ex, ey)] != 0; }
@@ -149,22 +157,96 @@ namespace engine::world::terrain_detail {
 		}
 
 	  private:
-		static size_t index(int32_t ex, int32_t ey) {
-			return static_cast<size_t>(ey) * static_cast<size_t>(kExtendedSize) + static_cast<size_t>(ex);
+		[[nodiscard]] size_t index(int32_t ex, int32_t ey) const {
+			return static_cast<size_t>(ey) * static_cast<size_t>(m_size) + static_cast<size_t>(ex);
 		}
 
 		const Builder::ExtendedTileFn& m_tiles;
 		Vec2i64						   m_extMin;
+		int32_t						   m_size;
 		std::vector<uint8_t>		   m_water;
 		bool						   m_anyWater = false;
 	};
 
-	// The shared tail of every ring (D6 steps 4-7): resample between the pins,
-	// then simplify, validating after the last change. The retry ladder only
-	// loosens the simplification, never the shape: a per-chunk shape change
+	// ============ The waterline field (D5 steps 1-3, D6 step 1) ============
+
+	// D5 steps 1-3 at one tile: the biome water indicator blurred with the 3x3
+	// binomial kernel, then the thin-feature guard on the indicator's cardinal
+	// neighbors. `water(x, y)` is the indicator at tile (x, y). The one formula
+	// for the fine lattice (over the extended grid) and for point queries (over
+	// the biome water query).
+	template <typename Water> float coarseWaterValue(const Water& water, int64_t x, int64_t y) {
+		static constexpr int kBinomial[3][3] = {{1, 2, 1}, {2, 4, 2}, {1, 2, 1}};
+		int					 sum			 = 0;
+		for (int dy = -1; dy <= 1; ++dy) {
+			for (int dx = -1; dx <= 1; ++dx) {
+				if (water(x + dx, y + dy)) {
+					sum += kBinomial[dy + 1][dx + 1];
+				}
+			}
+		}
+		const float value = static_cast<float>(sum) / 16.0F;
+		const bool	self  = water(x, y);
+		const int	same  = (water(x + 1, y) == self ? 1 : 0) + (water(x - 1, y) == self ? 1 : 0) +
+						  (water(x, y + 1) == self ? 1 : 0) + (water(x, y - 1) == self ? 1 : 0);
+		if (same >= 2) {
+			return value;
+		}
+		return self ? std::max(value, Builder::kThinWaterFloor) : std::min(value, Builder::kThinLandCeil);
+	}
+
+	struct WarpSeeds {
+		uint32_t bankX;
+		uint32_t bankY;
+		uint32_t lowX;
+		uint32_t lowY;
+	};
+
+	WarpSeeds warpSeeds(uint64_t worldSeed);
+
+	// D6 step 1: the world-space warp offset at a point, both components clamped
+	// to kMaxWarpMm.
+	geometry::WarpOffsetMm shoreWarpOffset(Vec2i64 worldMm, const WarpSeeds& seeds);
+
+	// The coarse lattice sits on tile centers: global index k at world k tiles
+	// plus half a tile, so index k is tile k.
+	inline constexpr Vec2i64 kCoarsePhaseMm{Builder::kTileMm / 2, Builder::kTileMm / 2};
+
+	// The waterline field at any world point, from the biome water query: the
+	// value the fine lattice holds there when it warps, bit for bit, wherever the
+	// lattice's coarse samples are free of the extended region's edge (D5, D6).
+	// A function of world position alone, so every chunk reads the same ground
+	// along a river (D7 mouths).
+	class WaterlineField {
+	  public:
+		WaterlineField(const Builder::BiomeWaterFn& biomeWater, uint64_t worldSeed)
+			: m_biomeWater(biomeWater),
+			  m_seeds(warpSeeds(worldSeed)) {}
+
+		[[nodiscard]] float valueAt(Vec2i64 worldMm) const;
+		[[nodiscard]] bool	waterAt(Vec2i64 worldMm) const { return valueAt(worldMm) >= Builder::kWaterlineIso; }
+
+	  private:
+		const Builder::BiomeWaterFn& m_biomeWater;
+		WarpSeeds					 m_seeds;
+	};
+
+	// D6 step 1 over the extended region: the warped fine lattice the waterline is
+	// marched on, before its border is forced to land. Its coarse samples read
+	// outside the extended grid as land (the edge effect the apron absorbs).
+	geometry::ScalarField waterlineFineField(const ExtendedGrid& grid, const Region& region, uint64_t worldSeed);
+
+	// ============ The shared tail ============
+
+	// The shared tail of every ring (D6 steps 4-7): pin every crossing of the
+	// world lattice (kPinLatticeMm) and of the extra lines, resample between the
+	// pins, then simplify, validating after the last change. `extraPinned` marks
+	// vertices pinned besides the lines (fordable cut vertices). The retry ladder
+	// only loosens the simplification, never the shape: a per-chunk shape change
 	// would break the seam, since the neighbor would not make the same choice.
 	// Returns nullopt when every rung folds.
-	std::optional<Ring> resampleSimplifyValidate(Ring loop, std::vector<uint8_t> pinned, ChunkCoordinate coord, const char* what);
+	std::optional<Ring> pinResampleSimplifyValidate(Ring loop, std::span<const int64_t> xLines, std::span<const int64_t> yLines,
+													std::span<const Vec2i64> extraPins, ChunkCoordinate coord, const char* what);
 
 	// Loops under kMinLoopAreaMm2 are dropped (D6 step 8).
 	bool areaBelowFloor(const Ring& ring);
@@ -190,14 +272,18 @@ namespace engine::world::terrain_detail {
 	// are found differently per ring kind).
 	std::vector<ShoreProfile> shoreProfiles(const Ring& ring, WaterKind water, const ExtendedGrid& grid, SideRule rule);
 
-	// D8: every gathered pond's rim, clipped to the extended region. Built before
-	// the channels, so a channel's mouth can find a receiving pond (D7).
+	// D8: the rim of a pond, unclipped: kPondRimSpacingM arc spacing from theta
+	// 0, each radius perturbed by world-space noise.
+	Ring pondRim(const Builder::Pond& pond, uint64_t worldSeed);
+
+	// D8: every gathered pond's rim, clipped to the extended region.
 	void buildPonds(std::vector<TerrainRing>& rings, std::span<const Builder::Pond> ponds, const ExtendedGrid& grid,
 					const Region& region, uint64_t worldSeed, ChunkCoordinate coord);
 
-	// D7: the gathered segments as channel rings and thalwegs, flaring into the
-	// waterline and pond rings already in `out`.
-	void buildChannels(ChunkTerrainPolygons& out, std::span<const Builder::RiverSegment> segments, const ExtendedGrid& grid,
+	// D7: the gathered segments as channel rings and thalwegs, flaring where a
+	// centerline enters the waterline field or a pond rim.
+	void buildChannels(ChunkTerrainPolygons& out, std::span<const Builder::RiverSegment> segments,
+					   std::span<const Builder::Pond> ponds, const WaterlineField& waterline, const ExtendedGrid& grid,
 					   const Region& region, uint64_t worldSeed, ChunkCoordinate coord);
 
 } // namespace engine::world::terrain_detail

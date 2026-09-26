@@ -14,14 +14,20 @@
 //    clamp), mouth flares into lakes and ponds, split where the width crosses
 //    the fordable threshold, stroked into ribbons.
 //
-// Then one tail for all three: border pins, resample, simplify, validate. Rings
-// come out over the extended region (`rings`, with per-vertex ShoreProfiles) and
-// clipped to the chunk square (`navRings`); channels also emit thalwegs.
+// Then one tail for all three: world-lattice pins, resample, simplify, validate.
+// Rings come out over the extended region (`rings`, with per-vertex
+// ShoreProfiles) and clipped to the chunk square (`navRings`); channels also
+// emit thalwegs.
 //
 // Everything is a pure function of world position, the tiles, the gathered
-// segments and ponds, and the world seed, so two chunks built independently
-// produce bit-identical vertices where their clipped rings meet on the shared
-// border (D4, D14).
+// segments and ponds, and the world seed. Pins sit on a world lattice, so every
+// resampled run depends only on the curve between two lattice crossings, and the
+// apron and channel reaches are sized so that curve is free of edge effects
+// wherever a border texel of the distance-field bake can see it. Two chunks built
+// independently therefore produce bit-identical ring edges within the bake's
+// reach of their shared border, bit-identical thalweg points within reach of
+// their bake regions, and bit-identical vertices where their clipped rings meet
+// on the border (D4, D10, D14).
 
 #include "world/chunk/Chunk.h"
 #include "world/chunk/ChunkCoordinate.h"
@@ -30,6 +36,7 @@
 #include <worldgen/sampling/PondNetwork2D.h>
 #include <worldgen/sampling/RiverNetwork2D.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <span>
@@ -38,33 +45,58 @@ namespace engine::world {
 
 /// Biome water per D5: ocean, lake, and both wetlands. Never TileData::surface,
 /// which is also Water for river and pond tiles (stroked separately, D7/D8).
+[[nodiscard]] bool isBiomeWater(Biome primaryBiome);
 [[nodiscard]] bool isBiomeWater(const TileData& tile);
 
 class TerrainPolygonBuilder {
   public:
-	/// Tile at extended-region coordinates (ex, ey), each in [0, kExtendedSize);
-	/// (kApronTiles, kApronTiles) is the chunk's own tile (0, 0).
+	/// Tile at extended-region coordinates (ex, ey), each in [0, kChunkSize + 2
+	/// apronTiles); (apronTiles, apronTiles) is the chunk's own tile (0, 0).
 	using ExtendedTileFn = std::function<const TileData&(int32_t ex, int32_t ey)>;
+
+	/// isBiomeWater of world tile (tx, ty), the tile covering [tx, tx + 1) m x
+	/// [ty, ty + 1) m. Must agree with ExtendedTileFn over the extended region and
+	/// answer for every tile within kBiomeWaterReachM of the chunk square: river
+	/// mouths are found by evaluating the waterline field along the centerline
+	/// out there (D7). Chunk::generate answers from its 3x3 neighborhood's biome
+	/// grids (NeighborhoodGrids), which is what each neighbor's own tiles read.
+	using BiomeWaterFn = std::function<bool(int64_t tx, int64_t ty)>;
 
 	using RiverSegment = worldgen::RiverNetwork2D::Segment;
 	using Pond = worldgen::PondNetwork2D::Pond;
 
-	/// Build the chunk's rings from its extended-region tiles and the river
-	/// segments and ponds gathered for it (ChunkSampleResult, gathered over the
-	/// chunk square plus kRiverGatherMarginM). Chunk::generate passes
-	/// ExtendedTiles over its own tiles plus an ApronField; tests can pass
-	/// hand-built tiles and segment lists.
+	/// Build the chunk's rings from its extended-region tiles, the biome water
+	/// around it, and the river segments and ponds gathered for it
+	/// (ChunkSampleResult, gathered over the chunk square plus
+	/// kRiverGatherMarginM). Chunk::generate passes ExtendedTiles over its own
+	/// tiles plus an ApronField; tests can pass hand-built tiles and segment
+	/// lists, and build a reference with a wider apron to measure edge effects.
 	[[nodiscard]] static ChunkTerrainPolygons build(
 		ChunkCoordinate coord,
 		uint64_t worldSeed,
 		const ExtendedTileFn& tiles,
+		const BiomeWaterFn& biomeWater,
 		std::span<const RiverSegment> riverSegments,
-		std::span<const Pond> ponds
+		std::span<const Pond> ponds,
+		int32_t apronTiles = kApronTiles
 	);
 
 	// ============ Recipe parameters (spec section 4) ============
 
 	static constexpr int64_t kTileMm = 1000;
+	/// Every ring is pinned where it crosses a line x = k * kPinLatticeMm or
+	/// y = k * kPinLatticeMm (D4, D6). Chunk borders are lattice lines, so the
+	/// nav clip meets its pins there. A resample and simplify run then spans one
+	/// lattice cell at most.
+	static constexpr int64_t kPinLatticeMm = 16000;
+	static_assert((static_cast<int64_t>(kChunkSize) * kTileMm) % kPinLatticeMm == 0, "chunk borders must be lattice lines");
+	/// The distance-field bake (D10): exact distance clamped at kSdfNearM, and
+	/// texels over the chunk square grown by kBakeMarginM, where the thalweg
+	/// channels (G, channelFrame) are read out to kThalwegReachHalfWidths bankfull
+	/// half-widths from a thalweg.
+	static constexpr double kSdfNearM = 8.0;
+	static constexpr double kBakeMarginM = 16.0;
+	static constexpr double kThalwegReachHalfWidths = 2.0;
 	/// Fine lattice spacing the warped field is marched on (D6).
 	static constexpr int64_t kFineCellMm = 250;
 	static constexpr float kWaterlineIso = 0.5F;
@@ -90,6 +122,19 @@ class TerrainPolygonBuilder {
 	/// [-1, 1], so this is exact, which warpField's skip relies on.
 	static constexpr int64_t kMaxWarpMm = kBankNoiseAmpMm + kShoreLowAmpMm;
 
+	/// How far in from the extended boundary the waterline can differ from a
+	/// build with a wider apron: the outermost coarse sample's blur reads forced
+	/// land, the bilinear read uses that sample out to 1.5 tiles in, the warp reads
+	/// kMaxWarpMm further, and a ring vertex moves with its marching cell and
+	/// Chaikin's neighbor (two fine cells). TerrainPolygonSeamsTest measures ~2 m
+	/// of field on a lake-strewn world. The apron holds the pin-lattice cell next
+	/// to the border (every run a border texel reads) clear of it.
+	static constexpr int64_t kEdgeEffectDepthMm = 3 * kTileMm / 2 + kMaxWarpMm + 2 * kFineCellMm;
+	static_assert(
+		static_cast<int64_t>(kApronTiles) * kTileMm >= kPinLatticeMm + kEdgeEffectDepthMm,
+		"the apron must keep the border lattice cell clear of the edge effect"
+	);
+
 	static constexpr int kChaikinIterations = 1;
 	static constexpr int64_t kRingSpacingMm = 250;
 	static constexpr int64_t kRingSimplifyEpsMm = 100;
@@ -106,10 +151,6 @@ class TerrainPolygonBuilder {
 	/// sampling: the gather leaves sub-centimeter steps at coarse-tile joints,
 	/// and a step that short has no usable direction once quantized to the mm.
 	static constexpr double kMinChainSpanM = 0.25;
-	/// Centerline samples farther than this outside the extended region are
-	/// trimmed. The gather cut and the Catmull-Rom span it distorts lie beyond
-	/// it, so every kept sample is identical in every chunk that keeps it.
-	static constexpr double kChainKeepMarginM = 16.0;
 	/// A channel at least this wide blocks movement (D7 step 5).
 	static constexpr double kFordableWidthM = 1.2;
 	/// Bend asymmetry (D7 step 3): a = min(kAsymmetryMaxFrac, gain |k| hw) hw;
@@ -133,14 +174,65 @@ class TerrainPolygonBuilder {
 	/// a neighbor chunk would not repeat).
 	static constexpr double kRadiusClampFrac = 0.9;
 	static constexpr double kCapSpacingM = 0.5;
-	/// River mouths (D7): over kMouthFlareW widths above the mouth the half-width
-	/// ramps up to kMouthFlare x, and the ribbon runs kMouthExtendW widths into
-	/// the receiving body.
+	/// River mouths (D7): over kMouthFlareW widths above the mouth (at most
+	/// kMouthFlareMaxM) the half-width ramps up to kMouthFlare x, and the ribbon
+	/// runs kMouthExtendW widths (at most kMouthExtendMaxM) into the receiving
+	/// body. The caps keep a mouth's reach, and so the distance a chunk must see
+	/// along a river to agree with its neighbors, bounded for the widest rivers.
 	static constexpr double kMouthFlare = 1.6;
 	static constexpr double kMouthFlareW = 2.0;
+	static constexpr double kMouthFlareMaxM = 64.0;
 	static constexpr double kMouthExtendW = 1.0;
-	/// ThalwegPath::widthRatio window, in local widths.
+	static constexpr double kMouthExtendMaxM = 24.0;
+	/// ThalwegPath::widthRatio window, in local widths, each half at most
+	/// kThalwegHalfWindowMaxM of arc.
 	static constexpr double kThalwegWindowW = 5.0;
+	static constexpr double kThalwegHalfWindowMaxM = 64.0;
+
+	// ============ Channel reach (D4, D10, D14) ============
+	//
+	// A centerline sample is relevant when it can shape a ring edge in the lattice
+	// cell next to the chunk square (the run a border texel reads), a thalweg
+	// point a bake texel reads, or a ring edge anywhere in the extended region:
+	// within the reach base plus kChannelReachHalfWidths of its own raw
+	// half-width of the chunk square (Chebyshev). Every decision about a relevant
+	// sample (mouth flare, mouth extension, the whole-crossing rule) looks at most
+	// kChannelDecisionReachM along the centerline, so samples that far from a
+	// relevant one are kept too and read ground from the waterline field, which is
+	// a function of world position alone. A kept run therefore ends where its
+	// butt cap lies outside the extended region. The gather and the biome water
+	// query cover all of it.
+
+	/// Sample spacing (one parameter step can run ~10% over kCenterlineSpacingM),
+	/// quantization, and a thalweg's neighbor point.
+	static constexpr double kChannelReachSlackM = 1.0;
+	/// The reach base at the game's apron; a build with a wider apron (a test
+	/// reference) grows it to that apron. Two slacks: the thalweg keeps its points
+	/// out to one past the bake region, and the samples either side of such a
+	/// point must be relevant themselves.
+	static constexpr double kChannelReachBaseM =
+		std::max({static_cast<double>(kPinLatticeMm) / 1000.0, kBakeMarginM, static_cast<double>(kApronTiles)}) + 2.0 * kChannelReachSlackM;
+	/// A thalweg point lies up to the asymmetry off its centerline sample and a
+	/// texel reads it kThalwegReachHalfWidths out, both in flared half-widths; a
+	/// bank lies at most (1 + asymmetry + both noise terms) flared half-widths out.
+	static constexpr double kChannelReachHalfWidths = (kThalwegReachHalfWidths + kAsymmetryMaxFrac) * kMouthFlare;
+	static_assert(
+		(1.0 + kAsymmetryMaxFrac + kChannelBankNoiseFrac + kChannelLowNoiseFrac) * kMouthFlare <= kChannelReachHalfWidths,
+		"a bank must lie within the channel reach of its centerline sample"
+	);
+	/// A flare looks kMouthFlareMaxM downstream; a water sample is kept by a
+	/// transition up to kMouthExtendMaxM away, and the whole-crossing rule needs
+	/// both ends of a crossing up to two extensions long, so three extensions.
+	static constexpr double kChannelDecisionReachM = std::max(kMouthFlareMaxM, 3.0 * kMouthExtendMaxM) + 2.0 * kChannelReachSlackM;
+	/// Farthest a kept centerline sample lies from the chunk square.
+	static constexpr double kChannelKeepReachM =
+		kChannelReachBaseM + kChannelReachHalfWidths * worldgen::RiverNetwork2D::kMaxHalfWidthMeters + kChannelDecisionReachM;
+	/// The waterline field at a point reads biome water up to the warp, one
+	/// bilinear cell, and the blur (plus the half tile to a tile's center) beyond it.
+	static constexpr double kBiomeWaterReachM = kChannelKeepReachM + static_cast<double>(kMaxWarpMm + 5 * kTileMm / 2) / 1000.0;
+	static_assert(
+		kBiomeWaterReachM <= static_cast<double>(kChunkSize), "the biome water query must stay inside the 3x3 chunk neighborhood"
+	);
 
 	// ============ Ponds (D8) ============
 

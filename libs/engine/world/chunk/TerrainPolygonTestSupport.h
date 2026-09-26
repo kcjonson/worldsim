@@ -22,7 +22,9 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace engine::world::terrain_test {
@@ -41,37 +43,70 @@ inline TileData tileOf(Biome biome) {
 	return tile;
 }
 
+using BiomeAt = std::function<Biome(int64_t tx, int64_t ty)>;
+
 // A hand-built extended region (chunk plus apron), for features smaller than
-// the 16-tile biome sectors a sampler can place.
+// the 16-tile biome sectors a sampler can place, plus the world around it for
+// the builder's biome water query: the stored tiles where they reach, `beyond`
+// elsewhere.
 struct HandTiles {
+	ChunkCoordinate		  coord;
+	int32_t				  apronTiles;
+	int32_t				  size;
+	BiomeAt				  beyond;
 	std::vector<TileData> tiles;
 
-	explicit HandTiles(Biome fill)
-		: tiles(static_cast<size_t>(kExtendedSize) * static_cast<size_t>(kExtendedSize), tileOf(fill)) {}
+	// Every tile `fill`; edit the stored ones with at().
+	HandTiles(ChunkCoordinate newCoord, Biome fill, int32_t newApronTiles = kApronTiles)
+		: HandTiles(newCoord, [fill](int64_t, int64_t) { return fill; }, newApronTiles) {}
 
-	// The extended region of `coord` with each tile's biome a function of its
-	// world tile coordinate, so neighboring chunks see the same world.
-	HandTiles(ChunkCoordinate coord, const std::function<Biome(int64_t tx, int64_t ty)>& biomeAt)
-		: HandTiles(Biome::TemperateGrassland) {
-		for (int32_t ey = 0; ey < kExtendedSize; ++ey) {
-			for (int32_t ex = 0; ex < kExtendedSize; ++ex) {
-				const int64_t tx = static_cast<int64_t>(coord.x) * kChunkSize - kApronTiles + ex;
-				const int64_t ty = static_cast<int64_t>(coord.y) * kChunkSize - kApronTiles + ey;
-				at(ex, ey) = tileOf(biomeAt(tx, ty));
+	// Each tile's biome a function of its world tile coordinate, so neighboring
+	// chunks see the same world.
+	HandTiles(ChunkCoordinate newCoord, BiomeAt biomeAt, int32_t newApronTiles = kApronTiles)
+		: coord(newCoord),
+		  apronTiles(newApronTiles),
+		  size(kChunkSize + 2 * newApronTiles),
+		  beyond(std::move(biomeAt)),
+		  tiles(static_cast<size_t>(size) * static_cast<size_t>(size)) {
+		for (int32_t ey = 0; ey < size; ++ey) {
+			for (int32_t ex = 0; ex < size; ++ex) {
+				at(ex, ey) = tileOf(beyond(originX() + ex, originY() + ey));
 			}
 		}
 	}
 
-	TileData& at(int32_t ex, int32_t ey) {
-		return tiles[static_cast<size_t>(ey) * static_cast<size_t>(kExtendedSize) + static_cast<size_t>(ex)];
+	[[nodiscard]] int64_t originX() const { return static_cast<int64_t>(coord.x) * kChunkSize - apronTiles; }
+	[[nodiscard]] int64_t originY() const { return static_cast<int64_t>(coord.y) * kChunkSize - apronTiles; }
+
+	TileData& at(int32_t ex, int32_t ey) { return tiles[static_cast<size_t>(ey) * static_cast<size_t>(size) + static_cast<size_t>(ex)]; }
+	[[nodiscard]] const TileData& at(int32_t ex, int32_t ey) const {
+		return tiles[static_cast<size_t>(ey) * static_cast<size_t>(size) + static_cast<size_t>(ex)];
 	}
 
 	[[nodiscard]] TerrainPolygonBuilder::ExtendedTileFn fn() const {
-		return [this](int32_t ex, int32_t ey) -> const TileData& {
-			return tiles[static_cast<size_t>(ey) * static_cast<size_t>(kExtendedSize) + static_cast<size_t>(ex)];
+		return [this](int32_t ex, int32_t ey) -> const TileData& { return at(ex, ey); };
+	}
+
+	[[nodiscard]] TerrainPolygonBuilder::BiomeWaterFn waterFn() const {
+		return [this](int64_t tx, int64_t ty) {
+			const int64_t ex = tx - originX();
+			const int64_t ey = ty - originY();
+			if (ex >= 0 && ey >= 0 && ex < size && ey < size) {
+				return isBiomeWater(at(static_cast<int32_t>(ex), static_cast<int32_t>(ey)));
+			}
+			return isBiomeWater(beyond(tx, ty));
 		};
 	}
 };
+
+inline ChunkTerrainPolygons buildHand(
+	const HandTiles&									  tiles,
+	uint64_t											  worldSeed,
+	std::span<const TerrainPolygonBuilder::RiverSegment> segments = {},
+	std::span<const TerrainPolygonBuilder::Pond>		  ponds	   = {}
+) {
+	return TerrainPolygonBuilder::build(tiles.coord, worldSeed, tiles.fn(), tiles.waterFn(), segments, ponds, tiles.apronTiles);
+}
 
 inline int64_t absArea2(const Ring& ring) {
 	const geometry::Int128 a = geometry::signedAreaDoubled(ring);
