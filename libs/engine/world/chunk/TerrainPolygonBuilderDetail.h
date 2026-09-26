@@ -46,6 +46,7 @@ namespace engine::world::terrain_detail {
 	inline constexpr uint32_t kSaltRightBankFine = 0x5A17B007U;
 	inline constexpr uint32_t kSaltRightBankLow = 0x5A17B008U;
 	inline constexpr uint32_t kSaltPondRim = 0x5A17B009U;
+	inline constexpr uint32_t kSaltShoreSlope = 0x5A17B00AU;
 
 	inline uint32_t purposeSeed(uint64_t worldSeed, uint32_t salt) {
 		return foundation::hash3(static_cast<int32_t>(salt), static_cast<int32_t>(worldSeed >> 32U), 0,
@@ -269,8 +270,9 @@ namespace engine::world::terrain_detail {
 
 	// D15 per-vertex profile. Every scale is a named constant on the builder.
 	// Flags other than rock are the caller's (synthetic and fordable-cut edges
-	// are found differently per ring kind).
-	std::vector<ShoreProfile> shoreProfiles(const Ring& ring, WaterKind water, const ExtendedGrid& grid, SideRule rule);
+	// are found differently per ring kind). Slope reads world-position noise, so
+	// it takes the world seed.
+	std::vector<ShoreProfile> shoreProfiles(const Ring& ring, WaterKind water, const ExtendedGrid& grid, SideRule rule, uint64_t worldSeed);
 
 	// D8: the rim of a pond, unclipped: kPondRimSpacingM arc spacing from theta
 	// 0, each radius perturbed by world-space noise.

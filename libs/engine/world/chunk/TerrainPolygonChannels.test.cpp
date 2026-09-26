@@ -642,6 +642,47 @@ TEST(TerrainPolygonChannelsTest, ThalwegHugsTheOuterBankOfABend) {
 	EXPECT_NEAR(path.widthRatio[mid], 1.0F, 1e-4F);
 }
 
+TEST(TerrainPolygonChannelsTest, OuterBankOfABendIsSteeperThanTheInner) {
+	// A bend of radius 2 w (R2, R3): the outer bank is a cut bank, the inner a
+	// point bar. Mean over the middle of the arc, so along-shore noise averages.
+	constexpr double		kRadiusM = 16.0;
+	constexpr double		kCenterX = 256.0;
+	constexpr double		kCenterY = 150.0;
+	std::vector<RiverPoint> pts;
+	for (int deg = -150; deg <= 60; deg += 6) {
+		const double a = static_cast<double>(deg) * std::numbers::pi / 180.0;
+		pts.push_back({kCenterX + kRadiusM * std::cos(a), kCenterY + kRadiusM * std::sin(a), 4.0F});
+	}
+	const ChunkTerrainPolygons polys = buildChunk({0, 0}, HandTiles({0, 0}, Biome::TemperateGrassland), segmentsOf(pts));
+	expectAllSimple(polys, "bend");
+
+	double outerSum = 0.0;
+	double innerSum = 0.0;
+	int	   outer	= 0;
+	int	   inner	= 0;
+	for (const TerrainRing& ring : polys.rings) {
+		for (size_t i = 0; i < ring.ring.size(); ++i) {
+			const double dx	   = static_cast<double>(ring.ring[i].x) / 1000.0 - kCenterX;
+			const double dy	   = static_cast<double>(ring.ring[i].y) / 1000.0 - kCenterY;
+			const double angle = std::atan2(dy, dx) * 180.0 / std::numbers::pi;
+			if (angle < -90.0 || angle > 0.0) {
+				continue;
+			}
+			const double r = std::hypot(dx, dy);
+			if (r > kRadiusM + 2.0) {
+				outerSum += ring.profiles[i].slope;
+				++outer;
+			} else if (r < kRadiusM - 2.0) {
+				innerSum += ring.profiles[i].slope;
+				++inner;
+			}
+		}
+	}
+	ASSERT_GT(outer, 8);
+	ASSERT_GT(inner, 8);
+	EXPECT_GT(outerSum / outer, innerSum / inner + 40.0) << outer << " outer, " << inner << " inner";
+}
+
 // ============================================================================
 // Determinism (D14)
 // ============================================================================
