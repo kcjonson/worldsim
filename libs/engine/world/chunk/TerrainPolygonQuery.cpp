@@ -63,6 +63,7 @@ namespace engine::world {
 		// the other at or below) counts each crossing once, as pointInPolygon does.
 		TerrainEdgeIndex::CellWater castRay(const TerrainEdgeIndex& index, const std::vector<TerrainRing>& rings, const Vec2i64& point,
 											int64_t startX, int64_t row) {
+			const int64_t				pointY = point.y - index.originMm.y;
 			TerrainEdgeIndex::CellWater water;
 			for (int64_t x = std::max<int64_t>(startX, 0); x < index.cellsPerSide; ++x) {
 				const size_t cell = cellIndex(index, x, row);
@@ -74,13 +75,13 @@ namespace engine::world {
 					return water;
 				}
 				for (const Edge* edge = first; edge != last; ++edge) {
-					const auto [a, b] = endsOf(rings, *edge);
-					if ((a.y > point.y) == (b.y > point.y)) {
+					if (pointY < edge->minY || pointY >= edge->maxY) {
 						continue;
 					}
-					if (x > std::max<int64_t>(startX, floorDiv(std::min(a.x, b.x) - index.originMm.x, kCellMm))) {
+					if (x > std::max<int64_t>(startX, floorDiv(edge->minX, kCellMm))) {
 						continue; // counted in an earlier cell of the walk
 					}
+					const auto [a, b] = endsOf(rings, *edge);
 					const geometry::Orientation side = geometry::orientation(a, b, point);
 					const bool up = b.y > a.y;
 					const bool rightOfPoint =
@@ -96,6 +97,77 @@ namespace engine::world {
 				}
 			}
 			return water;
+		}
+
+		struct ShoreHit {
+			double		distanceMm = 0.0;
+			const Edge* edge	   = nullptr;
+			double		t		   = 0.0;
+		};
+
+		// The nearest shore edge within `reach` of `point`. Every such edge lies in
+		// a cell the square of half-side `reach` around the point touches. Ties go
+		// to the lexicographically smaller edge, whatever order the rings are in.
+		std::optional<ShoreHit> nearestWithin(const ChunkTerrainPolygons& polygons, const Vec2i64& point, double reach) {
+			const TerrainEdgeIndex& index	= polygons.edgeIndex;
+			const Vec2i64			local	= point - index.originMm;
+			const auto				reachMm = static_cast<int64_t>(std::ceil(reach));
+			const auto [x0, y0]				= cellOf(index, {point.x - reachMm, point.y - reachMm});
+			const auto [x1, y1]				= cellOf(index, {point.x + reachMm, point.y + reachMm});
+			std::optional<ShoreHit> best;
+			double					bound = reach;
+			for (int64_t y = std::max<int64_t>(y0, 0); y <= std::min<int64_t>(y1, index.cellsPerSide - 1); ++y) {
+				for (int64_t x = std::max<int64_t>(x0, 0); x <= std::min<int64_t>(x1, index.cellsPerSide - 1); ++x) {
+					const auto [first, last] = cellEdges(index, cellIndex(index, x, y));
+					for (const Edge* edge = first; edge != last; ++edge) {
+						if (!edge->shore) {
+							continue;
+						}
+						const auto	 ox	   = static_cast<double>(outside(local.x, edge->minX, edge->maxX));
+						const auto	 oy	   = static_cast<double>(outside(local.y, edge->minY, edge->maxY));
+						const double prune = bound + kPruneSlackMm;
+						if (ox * ox + oy * oy > prune * prune) {
+							continue;
+						}
+						const auto [a, b]					 = endsOf(polygons.rings, *edge);
+						const geometry::SegmentPoint closest = geometry::closestOnSegment(point, a, b);
+						if (closest.distanceMm > bound) {
+							continue;
+						}
+						if (best && closest.distanceMm == best->distanceMm) {
+							const auto [bestA, bestB] = endsOf(polygons.rings, *best->edge);
+							if (!(std::tie(std::min(a, b), std::max(a, b)) < std::tie(std::min(bestA, bestB), std::max(bestA, bestB)))) {
+								continue;
+							}
+						}
+						best  = ShoreHit{closest.distanceMm, edge, closest.t};
+						bound = closest.distanceMm;
+					}
+				}
+			}
+			return best;
+		}
+
+		// The nearest shore edge within `searchMm`, the square widened until it
+		// finds one or holds the whole grid: a hit inside the square is the
+		// nearest anywhere.
+		std::optional<ShoreHit> nearestShore(const ChunkTerrainPolygons& polygons, const Vec2i64& point, double searchMm) {
+			const TerrainEdgeIndex& index = polygons.edgeIndex;
+			if (index.cellsPerSide == 0) {
+				return std::nullopt;
+			}
+			const auto	 gridMm = static_cast<double>(static_cast<int64_t>(index.cellsPerSide) * kCellMm);
+			const double left	= static_cast<double>(point.x - index.originMm.x);
+			const double bottom = static_cast<double>(point.y - index.originMm.y);
+			double		 reach	= std::min(searchMm, static_cast<double>(kCellMm));
+			while (true) {
+				std::optional<ShoreHit> best	  = nearestWithin(polygons, point, reach);
+				const bool				wholeGrid = reach >= left && reach >= bottom && reach >= gridMm - left && reach >= gridMm - bottom;
+				if (best || reach >= searchMm || wholeGrid) {
+					return best;
+				}
+				reach = std::min(searchMm, 2.0 * reach);
+			}
 		}
 
 	} // namespace
@@ -118,10 +190,21 @@ namespace engine::world {
 			const TerrainRing& ring = rings[r];
 			const size_t	   n	= ring.ring.size();
 			for (uint32_t i = 0; i < n; ++i) {
-				const Edge	   edge{r, i, ring.isShoreEdge(i)};
-				const auto [a, b] = endsOf(rings, edge);
-				const auto [x0, y0] = cellOf(index, {std::min(a.x, b.x), std::min(a.y, b.y)});
-				const auto [x1, y1] = cellOf(index, {std::max(a.x, b.x), std::max(a.y, b.y)});
+				const Vec2i64& a = ring.ring[i];
+				const Vec2i64& b = ring.ring[(i + 1) % n];
+				const Vec2i64  lo{std::min(a.x, b.x), std::min(a.y, b.y)};
+				const Vec2i64  hi{std::max(a.x, b.x), std::max(a.y, b.y)};
+				const Edge	   edge{
+					  static_cast<int32_t>(lo.x - index.originMm.x),
+					  static_cast<int32_t>(lo.y - index.originMm.y),
+					  static_cast<int32_t>(hi.x - index.originMm.x),
+					  static_cast<int32_t>(hi.y - index.originMm.y),
+					  r,
+					  i,
+					  ring.isShoreEdge(i)
+				  };
+				const auto [x0, y0] = cellOf(index, lo);
+				const auto [x1, y1] = cellOf(index, hi);
 				for (int64_t y = std::max<int64_t>(y0, 0); y <= std::min<int64_t>(y1, span - 1); ++y) {
 					for (int64_t x = std::max<int64_t>(x0, 0); x <= std::min<int64_t>(x1, span - 1); ++x) {
 						pairs.emplace_back(static_cast<uint32_t>(cellIndex(index, x, y)), edge);
@@ -138,8 +221,19 @@ namespace engine::world {
 		}
 		index.edges.resize(pairs.size());
 		std::vector<uint32_t> cursor(index.cellStart.begin(), index.cellStart.end() - 1);
+		index.shoreNearby.assign(cells, 0);
 		for (const auto& [cell, edge] : pairs) {
 			index.edges[cursor[cell]++] = edge;
+			if (!edge.shore) {
+				continue;
+			}
+			const auto x = static_cast<int64_t>(cell % static_cast<uint32_t>(span));
+			const auto y = static_cast<int64_t>(cell / static_cast<uint32_t>(span));
+			for (int64_t ny = std::max<int64_t>(y - 1, 0); ny <= std::min<int64_t>(y + 1, span - 1); ++ny) {
+				for (int64_t nx = std::max<int64_t>(x - 1, 0); nx <= std::min<int64_t>(x + 1, span - 1); ++nx) {
+					index.shoreNearby[cellIndex(index, nx, ny)] = 1;
+				}
+			}
 		}
 
 		// Edge-free cells right to left along each row, so the ray from a cell's
@@ -157,84 +251,21 @@ namespace engine::world {
 		return index;
 	}
 
-	std::optional<TerrainPolygonQuery::ShoreHit> TerrainPolygonQuery::nearestShore(const Vec2i64& point, double searchMm) const {
-		const TerrainEdgeIndex& index = polygons.edgeIndex;
-		if (index.cellsPerSide == 0) {
-			return std::nullopt;
-		}
-		const Vec2i64 gridMax{
-			index.originMm.x + static_cast<int64_t>(index.cellsPerSide) * kCellMm, index.originMm.y + static_cast<int64_t>(index.cellsPerSide) * kCellMm
-		};
-
-		// Every shore edge within `reach` of the point lies in a cell the square of
-		// half-side `reach` around it touches; the nearest of them within `reach`.
-		auto searchSquare = [&](double reach) {
-			std::optional<ShoreHit> best;
-			double					bound = reach;
-			auto					tryEdge = [&](const Edge& edge) {
-				   const auto [a, b] = endsOf(polygons.rings, edge);
-				   const auto	ox	  = static_cast<double>(outside(point.x, std::min(a.x, b.x), std::max(a.x, b.x)));
-				   const auto	oy	  = static_cast<double>(outside(point.y, std::min(a.y, b.y), std::max(a.y, b.y)));
-				   const double prune = bound + kPruneSlackMm;
-				   if (ox * ox + oy * oy > prune * prune) {
-					   return;
-				   }
-				   const geometry::SegmentPoint closest = geometry::closestOnSegment(point, a, b);
-				   if (closest.distanceMm > bound) {
-					   return;
-				   }
-				   if (best && closest.distanceMm == best->distanceMm) {
-					   // Ties go to the lexicographically smaller edge, whatever order the rings are in.
-					   const auto [bestA, bestB] = endsOf(polygons.rings, *best->edge);
-					   if (!(std::tie(std::min(a, b), std::max(a, b)) < std::tie(std::min(bestA, bestB), std::max(bestA, bestB)))) {
-						   return;
-					   }
-				   }
-				   best	 = ShoreHit{closest.distanceMm, &edge, closest.t};
-				   bound = closest.distanceMm;
-			};
-			const auto reachMm = static_cast<int64_t>(std::ceil(reach));
-			const auto [x0, y0] = cellOf(index, {point.x - reachMm, point.y - reachMm});
-			const auto [x1, y1]	  = cellOf(index, {point.x + reachMm, point.y + reachMm});
-			for (int64_t y = std::max<int64_t>(y0, 0); y <= std::min<int64_t>(y1, index.cellsPerSide - 1); ++y) {
-				for (int64_t x = std::max<int64_t>(x0, 0); x <= std::min<int64_t>(x1, index.cellsPerSide - 1); ++x) {
-					const auto [first, last] = cellEdges(index, cellIndex(index, x, y));
-					for (const Edge* edge = first; edge != last; ++edge) {
-						if (edge->shore) {
-							tryEdge(*edge);
-						}
-					}
-				}
-			}
-			return best;
-		};
-
-		// Widen the square until it finds the shore or holds the whole grid: a hit
-		// within the square is the nearest anywhere.
-		double reach = std::min(searchMm, static_cast<double>(kCellMm));
-		while (true) {
-			std::optional<ShoreHit> best = searchSquare(reach);
-			const bool				wholeGrid = static_cast<double>(point.x) - reach <= static_cast<double>(index.originMm.x) &&
-								static_cast<double>(point.y) - reach <= static_cast<double>(index.originMm.y) &&
-								static_cast<double>(point.x) + reach >= static_cast<double>(gridMax.x) &&
-								static_cast<double>(point.y) + reach >= static_cast<double>(gridMax.y);
-			if (best || reach >= searchMm || wholeGrid) {
-				return best;
-			}
-			reach = std::min(searchMm, 2.0 * reach);
-		}
-	}
-
 	double TerrainPolygonQuery::distanceToWaterMm(const Vec2i64& point, double searchMm) const {
 		if (isInsideWater(point)) {
 			return 0.0;
 		}
-		const std::optional<ShoreHit> hit = nearestShore(point, searchMm);
+		const TerrainEdgeIndex& index = polygons.edgeIndex;
+		const auto [x, y]			  = cellOf(index, point);
+		if (searchMm <= static_cast<double>(kCellMm) && inGrid(index, x, y) && index.shoreNearby[cellIndex(index, x, y)] == 0) {
+			return kUnbounded;
+		}
+		const std::optional<ShoreHit> hit = nearestShore(polygons, point, searchMm);
 		return hit ? hit->distanceMm : kUnbounded;
 	}
 
 	std::optional<Vec2i64> TerrainPolygonQuery::nearestShorePoint(const Vec2i64& point) const {
-		const std::optional<ShoreHit> hit = nearestShore(point, kUnbounded);
+		const std::optional<ShoreHit> hit = nearestShore(polygons, point, kUnbounded);
 		if (!hit) {
 			return std::nullopt;
 		}

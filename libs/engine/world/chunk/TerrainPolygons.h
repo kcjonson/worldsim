@@ -89,8 +89,14 @@ struct ThalwegPath {
 /// in one cell. Each cell lists every ring edge whose closed bounding box touches
 /// it; a cell no edge touches is all water or all land, and stores which.
 struct TerrainEdgeIndex {
-	/// The edge from rings[ring].ring[vertex] to the next vertex.
+	/// The edge from rings[ring].ring[vertex] to the next vertex, with its
+	/// bounding box in mm from originMm, so a scan tests boxes without reading
+	/// the rings.
 	struct Edge {
+		int32_t minX = 0;
+		int32_t minY = 0;
+		int32_t maxX = 0;
+		int32_t maxY = 0;
 		uint32_t ring = 0;
 		uint32_t vertex = 0;
 		bool shore = false; ///< TerrainRing::isShoreEdge
@@ -109,6 +115,9 @@ struct TerrainEdgeIndex {
 	std::vector<uint32_t> cellStart{}; ///< cellsPerSide^2 + 1 offsets into edges, rows of cells from originMm
 	std::vector<Edge> edges{};
 	std::vector<CellWater> cellWater{}; ///< per cell, read only where the cell has no edges
+	/// Per cell, nonzero when a shore edge touches it or one of its eight
+	/// neighbors; elsewhere no shore lies within a cell of any point in it.
+	std::vector<uint8_t> shoreNearby{};
 };
 
 /// One bit per tile of a chunk's extended region (D4), row-major from world

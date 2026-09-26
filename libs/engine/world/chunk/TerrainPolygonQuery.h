@@ -59,14 +59,6 @@ class TerrainPolygonQuery {
 	[[nodiscard]] bool isPointBar(int64_t tileX, int64_t tileY) const { return polygons.barTiles.test(tileX, tileY); }
 
   private:
-	struct ShoreHit {
-		double distanceMm = 0.0;
-		const TerrainEdgeIndex::Edge* edge = nullptr;
-		double t = 0.0;
-	};
-
-	[[nodiscard]] std::optional<ShoreHit> nearestShore(const geometry::Vec2i64& point, double searchMm) const;
-
 	const ChunkTerrainPolygons& polygons;
 };
 
