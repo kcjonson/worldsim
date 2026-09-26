@@ -7,11 +7,22 @@
 //    lakes and islands; the shore-heaviest chunk a real planet would make.
 //  - AllOcean: every tile water, so the only ring is the synthetic closure.
 //
+// Two river chunks from the carved-river test world (RiverNetwork2D geometry
+// through GeneratedWorldSampler, the tiles from a generated chunk plus its
+// apron), timing the build alone with its channel rings (D7):
+//
+//  - RiverSource: the headwater, where the trunk starts and its springs and
+//    feeders fan out.
+//  - RiverTrunk: ~520 m of the ~10 m wide meandering trunk.
+//
 // Plus Chunk::generate end to end for an all-land and an all-water chunk, to show
 // the builder against the rest of generation. Counters report ring vertex counts.
 
+#include "world/chunk/ApronField.h"
 #include "world/chunk/Chunk.h"
 #include "world/chunk/ChunkSampleResult.h"
+#include "world/chunk/GeneratedWorldSampler.h"
+#include "world/chunk/RiverTestWorld.h"
 #include "world/chunk/TerrainPolygonBuilder.h"
 
 #include <random/HashNoise.h>
@@ -62,16 +73,7 @@ namespace {
 		return true;
 	}
 
-	void runBuild(benchmark::State& state, bool (*isWater)(int32_t, int32_t), Biome water) {
-		const std::vector<TileData>					 tiles = makeTiles(isWater, water);
-		const TerrainPolygonBuilder::ExtendedTileFn fn	  = [&tiles](int32_t ex, int32_t ey) -> const TileData& {
-			return tiles[static_cast<size_t>(ey) * static_cast<size_t>(kExtendedSize) + static_cast<size_t>(ex)];
-		};
-		ChunkTerrainPolygons polys;
-		for (auto _ : state) {
-			polys = TerrainPolygonBuilder::build(ChunkCoordinate{3, -2}, kSeed, fn);
-			benchmark::DoNotOptimize(polys);
-		}
+	void reportCounts(benchmark::State& state, const ChunkTerrainPolygons& polys) {
 		size_t ringVerts = 0;
 		size_t navVerts	 = 0;
 		for (const auto& r : polys.rings) {
@@ -86,6 +88,39 @@ namespace {
 		state.counters["navVerts"]	= static_cast<double>(navVerts);
 	}
 
+	void runBuild(benchmark::State& state, bool (*isWater)(int32_t, int32_t), Biome water) {
+		const std::vector<TileData>					 tiles = makeTiles(isWater, water);
+		const TerrainPolygonBuilder::ExtendedTileFn fn	  = [&tiles](int32_t ex, int32_t ey) -> const TileData& {
+			return tiles[static_cast<size_t>(ey) * static_cast<size_t>(kExtendedSize) + static_cast<size_t>(ex)];
+		};
+		ChunkTerrainPolygons polys;
+		for (auto _ : state) {
+			polys = TerrainPolygonBuilder::build(ChunkCoordinate{3, -2}, kSeed, fn, {}, {});
+			benchmark::DoNotOptimize(polys);
+		}
+		reportCounts(state, polys);
+	}
+
+	void runRiverBuild(benchmark::State& state, ChunkCoordinate coord) {
+		const engine::world::river_test::CarvedRiverWorld world = engine::world::river_test::makeCarvedRiverWorld();
+		const engine::world::GeneratedWorldSampler			sampler(world.world, world.landingLat, world.landingLon);
+		auto chunk = std::make_unique<Chunk>(coord, sampler.sampleChunk(coord), sampler.getWorldSeed());
+		chunk->generate();
+		const engine::world::ApronField	   apron = engine::world::ApronField::build(coord, chunk->biomeData(), sampler.getWorldSeed());
+		const engine::world::ExtendedTiles extended(*chunk, apron);
+		const TerrainPolygonBuilder::ExtendedTileFn fn = [&extended](int32_t ex, int32_t ey) -> const TileData& {
+			return extended.at(ex, ey);
+		};
+		const engine::world::ChunkSampleResult& sample = chunk->biomeData();
+		ChunkTerrainPolygons					polys;
+		for (auto _ : state) {
+			polys = TerrainPolygonBuilder::build(coord, sampler.getWorldSeed(), fn, sample.riverSegments, sample.pondBlobs);
+			benchmark::DoNotOptimize(polys);
+		}
+		reportCounts(state, polys);
+		state.counters["segments"] = static_cast<double>(sample.riverSegments.size());
+	}
+
 	void BM_TerrainPolygonBuilder_StaircaseLake(benchmark::State& state) {
 		runBuild(state, staircaseLake, Biome::Lake);
 	}
@@ -96,6 +131,14 @@ namespace {
 
 	void BM_TerrainPolygonBuilder_AllOcean(benchmark::State& state) {
 		runBuild(state, allWater, Biome::Ocean);
+	}
+
+	void BM_TerrainPolygonBuilder_RiverSource(benchmark::State& state) {
+		runRiverBuild(state, ChunkCoordinate{0, 0});
+	}
+
+	void BM_TerrainPolygonBuilder_RiverTrunk(benchmark::State& state) {
+		runRiverBuild(state, ChunkCoordinate{0, -1});
 	}
 
 	void runGenerate(benchmark::State& state, Biome biome) {
@@ -121,5 +164,7 @@ namespace {
 BENCHMARK(BM_TerrainPolygonBuilder_StaircaseLake)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_TerrainPolygonBuilder_Archipelago)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_TerrainPolygonBuilder_AllOcean)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_TerrainPolygonBuilder_RiverSource)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_TerrainPolygonBuilder_RiverTrunk)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ChunkGenerate_AllLand)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ChunkGenerate_AllWater)->Unit(benchmark::kMillisecond);

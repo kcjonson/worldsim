@@ -3,8 +3,8 @@
 // TerrainPolygons - the per-chunk ring set that is the terrain-polygons epic's
 // runtime truth for water (D1/D2 in
 // docs/technical/organic-terrain/terrain-polygons-architecture.md). This header
-// only defines the types and Chunk's storage for them; TerrainPolygonBuilder (a
-// later task) is what actually fills a ChunkTerrainPolygons.
+// only defines the types and Chunk's storage for them; TerrainPolygonBuilder is
+// what fills a ChunkTerrainPolygons.
 
 #include <polygon/Polygon.h>
 
@@ -36,6 +36,10 @@ struct ShoreProfile {
 	/// The edge starting at this vertex is a closure along the extended region's
 	/// boundary, not a real shore; consumers other than nav skip it (D4).
 	static constexpr uint8_t kFlagSynthetic = 1U << 1U;
+	/// This vertex is one end of a fordability cut (D7 step 6): the straight butt
+	/// edge two channel pieces share where the width crosses kFordableWidthM. The
+	/// edge between two flagged vertices is internal to the river, not a bank.
+	static constexpr uint8_t kFlagFordableCut = 1U << 2U;
 
 	bool operator==(const ShoreProfile&) const = default;
 };
@@ -48,16 +52,29 @@ struct TerrainRing {
 	WaterKind water = WaterKind::Lake;
 	bool blocksMovement = true; ///< false only for fordable channels (D7)
 	bool holeCapable = true;    ///< Waterline: true (even-odd); Channel/Pond: false (solid)
+	float meanHalfWidthM = 0.0F; ///< Channel only: mean bankfull half-width over the piece
+};
+
+/// One river reach's thalweg (D2, D7 step 3), for the distance-field bake: the
+/// centerline samples offset toward the outer bank by the bend asymmetry, over
+/// the extended region. Parallel arrays, one entry per point.
+struct ThalwegPath {
+	std::vector<geometry::Vec2i64> points; ///< integer mm, world-absolute
+	std::vector<float> halfWidthM;         ///< bankfull half-width at each point
+	std::vector<float> widthRatio;         ///< w / mean w over a 5 w window (riffle > 1, pool < 1)
+	std::vector<float> curvature;          ///< signed, 1/m, positive turning left
 };
 
 /// A chunk's terrain polygon set. `rings` covers the extended region (chunk plus
 /// apron, D4) unclipped, so no consumer of it ever sees a chunk border as a
 /// shoreline; `navRings` is the same rings clipped to the chunk's own 512x512
 /// square (D4, D9). `navRings` carries no per-vertex profiles: nav only reads the
-/// ring and the blocksMovement/holeCapable flags, never shading.
+/// ring and the blocksMovement/holeCapable flags, never shading. `thalwegs` has one
+/// path per river reach over the extended region (D2, D10).
 struct ChunkTerrainPolygons {
 	std::vector<TerrainRing> rings;
 	std::vector<TerrainRing> navRings;
+	std::vector<ThalwegPath> thalwegs;
 	uint32_t version = 0; ///< bumped with the rings, read like Chunk::renderDataVersion
 };
 
