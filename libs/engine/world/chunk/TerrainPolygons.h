@@ -66,6 +66,10 @@ struct ThalwegPath {
 	std::vector<float> halfWidthM;         ///< bankfull half-width at each point
 	std::vector<float> widthRatio;         ///< w / mean w over a 5 w window (riffle > 1, pool < 1)
 	std::vector<float> curvature;          ///< signed, 1/m, positive turning left
+	/// RiverNetwork2D's arc coordinate (m, increasing downstream), linear within
+	/// each centerline span: world-deterministic, so every chunk reads the same
+	/// value at a point, but it resets at coarse tile joints and feeder junctions.
+	std::vector<double> arcLengthM;
 };
 
 /// A chunk's terrain polygon set. `rings` covers the extended region (chunk plus

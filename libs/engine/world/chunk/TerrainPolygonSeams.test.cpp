@@ -121,12 +121,15 @@ namespace {
 		float	halfWidthM = 0.0F;
 		float	widthRatio = 0.0F;
 		float	curvature  = 0.0F;
+		double	arcLengthM = 0.0;
 
 		bool operator<(const ThalwegPoint& o) const {
-			return std::tie(p, halfWidthM, widthRatio, curvature) < std::tie(o.p, o.halfWidthM, o.widthRatio, o.curvature);
+			return std::tie(p, halfWidthM, widthRatio, curvature, arcLengthM) <
+				   std::tie(o.p, o.halfWidthM, o.widthRatio, o.curvature, o.arcLengthM);
 		}
 		bool operator==(const ThalwegPoint& o) const {
-			return p == o.p && halfWidthM == o.halfWidthM && widthRatio == o.widthRatio && curvature == o.curvature;
+			return p == o.p && halfWidthM == o.halfWidthM && widthRatio == o.widthRatio && curvature == o.curvature &&
+				   arcLengthM == o.arcLengthM;
 		}
 	};
 
@@ -138,7 +141,7 @@ namespace {
 			for (size_t i = 0; i < path.points.size(); ++i) {
 				const double reachMm = Builder::kThalwegReachHalfWidths * static_cast<double>(path.halfWidthM[i]) * 1000.0;
 				if (static_cast<double>(texels.outsideMm(path.points[i])) <= reachMm) {
-					out.push_back({path.points[i], path.halfWidthM[i], path.widthRatio[i], path.curvature[i]});
+					out.push_back({path.points[i], path.halfWidthM[i], path.widthRatio[i], path.curvature[i], path.arcLengthM[i]});
 				}
 			}
 		}
@@ -211,10 +214,15 @@ namespace {
 		float  hw;
 	};
 
+	// Consecutive points cut into segments, the arc coordinate the chord length
+	// summed from the first point.
 	std::vector<Segment> segmentsOf(const std::vector<RiverPoint>& pts) {
 		std::vector<Segment> out;
+		double				 s = 0.0;
 		for (size_t i = 0; i + 1 < pts.size(); ++i) {
-			out.push_back({pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y, pts[i].hw, pts[i + 1].hw});
+			const double next = s + std::hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y);
+			out.push_back({pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y, pts[i].hw, pts[i + 1].hw, s, next});
+			s = next;
 		}
 		return out;
 	}
