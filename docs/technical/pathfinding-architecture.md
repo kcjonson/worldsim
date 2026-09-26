@@ -69,7 +69,7 @@ Built lazily for loaded chunks; invalidated locally by construction edits (the s
 
 The vector-native core, proven in production by StarCraft 2 (CDT navmesh + funnel + steering, units not in the mesh) and documented end-to-end by the jdxdev RTS series:
 
-- **Inputs are exact vector geometry:** wall band polygons from the construction contract, water/terrain feature contours (extracted once per chunk from tile data via marching squares, then simplified), large static entity footprints (config-flagged). No rasterization anywhere.
+- **Inputs are exact vector geometry:** wall band polygons from the construction contract, water/terrain feature contours (each chunk's terrain polygon `navRings`, built once per chunk and clipped to its square, see [terrain-polygons-architecture.md](organic-terrain/terrain-polygons-architecture.md) D9), large static entity footprints (config-flagged). No rasterization anywhere.
 - **Tiled per chunk** with chunk borders as constrained edges, so meshes stitch like Recast/UE5 streamed tiles and regenerate independently.
 - **Local dynamic updates:** construction changes retriangulate only the affected triangles (insert: retriangulate intersected set; remove: regenerate around freed constraints). This is the jdxdev design, ~50-100x faster than full rebuilds for single obstacles.
 - **Query pipeline:** triangle A* (guided by the Tier 1 heuristic) with **corridor-width filtering** (Demyen & Buro: each triangle pair knows its max passable width, so one mesh serves all agent radii) → funnel with per-query portal shrinking by agent radius → line-of-sight waypoint skipping.
