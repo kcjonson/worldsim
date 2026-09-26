@@ -70,12 +70,9 @@ namespace engine::world {
 			));
 		}
 
-		// Post-process tiles: generate mud near water, compute adjacency
+		// Post-process tiles: generate mud near water, compute adjacency. The
+		// shore points came with the polygons.
 		TilePostProcessor::process(m_tiles, m_worldSeed);
-
-		// Cache shore tiles (land tiles adjacent to water) for VisionSystem
-		// This avoids iterating all tiles every frame during vision updates
-		computeShoreTiles();
 
 		// Pre-compute rendering data (adjacency masks, neighbors) for ChunkRenderer
 		// This avoids per-frame extraction of adjacency data during rendering
@@ -85,33 +82,6 @@ namespace engine::world {
 
 		// Mark generation complete (release semantics for thread safety)
 		m_generationComplete.store(true, std::memory_order_release);
-	}
-
-	void Chunk::computeShoreTiles() {
-		m_shoreTiles.clear();
-
-		constexpr uint8_t kWaterSurfaceId = static_cast<uint8_t>(Surface::Water);
-
-		for (uint16_t y = 0; y < kChunkSize; ++y) {
-			for (uint16_t x = 0; x < kChunkSize; ++x) {
-				const auto& tile = m_tiles[y * kChunkSize + x];
-
-				// Skip water tiles - we want land tiles adjacent to water
-				if (tile.surface == Surface::Water) {
-					continue;
-				}
-
-				// Check if this land tile has water in any cardinal direction
-				if (TileAdjacency::hasAdjacentSurface(tile.adjacency, kWaterSurfaceId)) {
-					m_shoreTiles.emplace_back(x, y);
-				}
-			}
-		}
-
-		// Shrink to fit to minimize memory usage. Note: this is a non-binding request
-		// but in practice chunks typically have 50-200 shore tiles (~400-1600 bytes),
-		// so the potential excess capacity per chunk is small and bounded.
-		m_shoreTiles.shrink_to_fit();
 	}
 
 	void Chunk::computeRenderData() {

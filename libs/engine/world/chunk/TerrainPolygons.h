@@ -116,12 +116,14 @@ struct TerrainEdgeIndex {
 /// shoreline; `navRings` is the same rings clipped to the chunk's own 512x512
 /// square (D4, D9). `navRings` carries no per-vertex profiles: nav only reads the
 /// ring and the blocksMovement/holeCapable flags, never shading. `thalwegs` has one
-/// path per stretch of river reach the bake can read (D2, D10).
+/// path per stretch of river reach the bake can read (D2, D10). `shorePoints`
+/// are the chunk square's drinkable-water stands (D11).
 struct ChunkTerrainPolygons {
 	std::vector<TerrainRing> rings;
 	std::vector<TerrainRing> navRings;
 	std::vector<ThalwegPath> thalwegs;
 	TerrainEdgeIndex edgeIndex;
+	std::vector<geometry::Vec2i64> shorePoints;
 	uint32_t version = 0; ///< bumped with the rings, read like Chunk::renderDataVersion
 };
 

@@ -17,7 +17,6 @@
 #include <chrono>
 #include <cstdint>
 #include <string>
-#include <vector>
 
 namespace engine::world {
 
@@ -191,11 +190,6 @@ class Chunk {
 	/// Get last accessed time
 	[[nodiscard]] auto lastAccessed() const { return m_lastAccessed; }
 
-	/// Get cached shore tile positions (land tiles adjacent to water)
-	/// Positions are local chunk coordinates (0-511)
-	/// Pre-computed during generation for O(1) lookup by VisionSystem
-	[[nodiscard]] const std::vector<std::pair<uint16_t, uint16_t>>& getShoreTiles() const { return m_shoreTiles; }
-
 	/// Get pre-computed tile rendering data for fast rendering
 	/// Use instead of extracting adjacency data per-frame
 	[[nodiscard]] const TileRenderData& getTileRenderData(uint16_t localX, uint16_t localY) const {
@@ -237,10 +231,6 @@ class Chunk {
 	/// Bumped whenever m_renderData changes (generation, adjacency updates)
 	std::atomic<uint32_t> m_renderDataVersion{0};
 
-	/// Cached shore tile positions (land tiles adjacent to water)
-	/// Computed during generation, used by VisionSystem for fast shore discovery
-	std::vector<std::pair<uint16_t, uint16_t>> m_shoreTiles;
-
 	/// Terrain polygon rings (waterline/channel/pond, D2) and their distance
 	/// field (D10). Installed together by generate() via setTerrainPolygons().
 	ChunkTerrainPolygons m_terrainPolygons;
@@ -257,9 +247,6 @@ class Chunk {
 	/// store, so any reader gated on isReady() sees the version that matches the
 	/// rings and textures it reads.
 	void setTerrainPolygons(ChunkTerrainPolygons polygons);
-
-	/// Pre-compute shore tiles (land adjacent to water) for VisionSystem
-	void computeShoreTiles();
 
 	/// Pre-compute rendering data (adjacency masks, neighbors) for ChunkRenderer
 	void computeRenderData();

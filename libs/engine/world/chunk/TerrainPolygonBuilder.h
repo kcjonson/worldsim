@@ -17,7 +17,8 @@
 // Then one tail for all three: world-lattice pins, resample, simplify, validate.
 // Rings come out over the extended region (`rings`, with per-vertex
 // ShoreProfiles) and clipped to the chunk square (`navRings`); channels also
-// emit thalwegs. Last, the rings are indexed for TerrainPolygonQuery.
+// emit thalwegs. Last, the rings are indexed for TerrainPolygonQuery and walked
+// for shore points (D11).
 //
 // Everything is a pure function of world position, the tiles, the gathered
 // segments and ponds, and the world seed. Pins sit on a world lattice, so every
@@ -233,6 +234,13 @@ class TerrainPolygonBuilder {
 	static_assert(
 		kBiomeWaterReachM <= static_cast<double>(kChunkSize), "the biome water query must stay inside the 3x3 chunk neighborhood"
 	);
+
+	// ============ Shore points (D11) ============
+
+	/// Vision's drinkable-water stands: one every kShorePointSpacingMm along each
+	/// ring's shore, kShoreOffsetMm onto the land.
+	static constexpr int64_t kShorePointSpacingMm = 1000;
+	static constexpr int64_t kShoreOffsetMm = 300;
 
 	// ============ Ponds (D8) ============
 

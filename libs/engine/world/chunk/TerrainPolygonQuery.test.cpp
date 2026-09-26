@@ -1,6 +1,7 @@
-// TerrainPolygonQuery (terrain-polygons-architecture.md D3): distance, nearest
-// shore point, and containment against brute force over every ring, and the
-// edges that are not shore (synthetic closures, fordable cuts).
+// TerrainPolygonQuery and the shore points it filters
+// (terrain-polygons-architecture.md D3, D11): distance, nearest shore point, and
+// containment against brute force over every ring, the edges that are not
+// shore (synthetic closures, fordable cuts), and where shore points stand.
 
 #include "world/chunk/TerrainPolygonQuery.h"
 
@@ -209,3 +210,53 @@ TEST(TerrainPolygonQueryTest, FordableCutsAreNotShoreAndFordableWaterIsWater) {
 	EXPECT_TRUE(query.isInsideWater({375000, static_cast<int64_t>(std::llround((420.0 + 3.0 * std::sin(0.3 * 25.0)) * 1000.0))}));
 }
 
+// Shore points (D11): in the chunk square, on land, kShoreOffsetMm off the
+// shore, about kShorePointSpacingMm apart along it, and along every kind of
+// shore including the fordable creek.
+TEST(TerrainPolygonQueryTest, ShorePointsStandOnLandBesideTheShore) {
+	const ChunkTerrainPolygons& polys = queryBuild().polys;
+	const TerrainPolygonQuery	query(polys);
+	ASSERT_GT(polys.shorePoints.size(), 800U);
+
+	int creek	 = 0;
+	int atOffset = 0;
+	for (const Vec2i64& p : polys.shorePoints) {
+		EXPECT_TRUE(p.x >= 0 && p.x < kChunkMm && p.y >= 0 && p.y < kChunkMm) << p.x << ", " << p.y;
+		EXPECT_FALSE(query.isInsideWater(p)) << p.x << ", " << p.y;
+		const double d = query.distanceToWaterMm(p);
+		EXPECT_LE(d, static_cast<double>(Builder::kShoreOffsetMm) + 1.0) << p.x << ", " << p.y;
+		atOffset += d >= static_cast<double>(Builder::kShoreOffsetMm) - 10.0 ? 1 : 0;
+		creek += p.x > 260000 && p.x < 390000 && std::abs(p.y - 420000) < 5000 ? 1 : 0;
+	}
+	EXPECT_GT(atOffset, static_cast<int>(polys.shorePoints.size()) * 9 / 10) << "off a straight or convex shore, exactly the offset";
+	EXPECT_GT(creek, 200) << "both banks of the creek, fordable piece included";
+
+	// Consecutive points along one run of shore: a meter apart, a lattice anchor
+	// between them making it anywhere from half a meter to a meter and a half.
+	// Where one ring's points end and the next ring's start is anything, so the
+	// tails are percentiles.
+	std::vector<double> gaps;
+	for (size_t i = 1; i < polys.shorePoints.size(); ++i) {
+		const double gap = length(polys.shorePoints[i], polys.shorePoints[i - 1]);
+		if (gap < 3000.0) {
+			gaps.push_back(gap);
+		}
+	}
+	ASSERT_GT(gaps.size(), 700U);
+	std::sort(gaps.begin(), gaps.end());
+	EXPECT_NEAR(gaps[gaps.size() / 2], static_cast<double>(Builder::kShorePointSpacingMm), 30.0);
+	EXPECT_GE(gaps[gaps.size() / 20], 400.0);
+	EXPECT_LE(gaps[gaps.size() * 19 / 20], 1600.0);
+}
+
+// The river's run into the ocean: its banks past the coast are submerged, so no
+// shore point stands in the ocean, while the coast itself carries them.
+TEST(TerrainPolygonQueryTest, NoShorePointOnABankSubmergedInTheSea) {
+	const ChunkTerrainPolygons& polys = queryBuild().polys;
+	int							coast = 0;
+	for (const Vec2i64& p : polys.shorePoints) {
+		EXPECT_LT(p.x, 482000) << "no shore point out in the ocean";
+		coast += p.x > 476000 ? 1 : 0;
+	}
+	EXPECT_GT(coast, 400);
+}

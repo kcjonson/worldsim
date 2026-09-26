@@ -379,6 +379,62 @@ namespace engine::world::terrain_detail {
 			}
 		}
 
+		// D11: a point every kShorePointSpacingMm along each ring's shore edges,
+		// kShoreOffsetMm onto the land (every ring keeps water on its left), kept
+		// when it lies in the chunk square and on land: a bank submerged in the
+		// water it runs into (a channel's run into a lake) stands in water. The
+		// spacing restarts at every vertex on the pin lattice, starting from the
+		// lexicographically smallest, so a border run spaces its points as the
+		// neighbor's copy does.
+		std::vector<Vec2i64> shorePoints(const ChunkTerrainPolygons& polygons, const Region& region) {
+			static constexpr double kSpacingMm = static_cast<double>(Builder::kShorePointSpacingMm);
+			static constexpr double kOffsetMm  = static_cast<double>(Builder::kShoreOffsetMm);
+			auto onLattice = [](const Vec2i64& v) { return v.x % Builder::kPinLatticeMm == 0 || v.y % Builder::kPinLatticeMm == 0; };
+			const TerrainPolygonQuery water(polygons);
+			std::vector<Vec2i64>	  out;
+			for (const TerrainRing& terrain : polygons.rings) {
+				const Ring&	 ring  = terrain.ring;
+				const size_t n	   = ring.size();
+				size_t		 start = n;
+				for (size_t i = 0; i < n; ++i) {
+					if (onLattice(ring[i]) && (start == n || ring[i] < ring[start])) {
+						start = i;
+					}
+				}
+				if (start == n) {
+					start = static_cast<size_t>(std::min_element(ring.begin(), ring.end()) - ring.begin());
+				}
+				double walked = 0.0;			 // arc from the last lattice vertex
+				double next	  = kSpacingMm / 2.0; // arc of the next point from it
+				for (size_t k = 0; k < n; ++k) {
+					const size_t   i = (start + k) % n;
+					const Vec2i64& a = ring[i];
+					const Vec2i64& b = ring[(i + 1) % n];
+					if (onLattice(a)) {
+						walked = 0.0;
+						next   = kSpacingMm / 2.0;
+					}
+					const double dx	 = static_cast<double>(b.x - a.x);
+					const double dy	 = static_cast<double>(b.y - a.y);
+					const double len = std::sqrt(dx * dx + dy * dy);
+					for (; len > 0.0 && next <= walked + len; next += kSpacingMm) {
+						if (!terrain.isShoreEdge(i)) {
+							continue;
+						}
+						const double  t = (next - walked) / len;
+						const Vec2i64 p{a.x + std::llround(dx * t + dy / len * kOffsetMm), a.y + std::llround(dy * t - dx / len * kOffsetMm)};
+						const bool	  inChunk = p.x >= region.chunkMin.x && p.x < region.chunkMax.x && p.y >= region.chunkMin.y &&
+											 p.y < region.chunkMax.y;
+						if (inChunk && !water.isInsideWater(p)) {
+							out.push_back(p);
+						}
+					}
+					walked += len;
+				}
+			}
+			return out;
+		}
+
 		void buildNavRings(ChunkTerrainPolygons& out, const Region& region, ChunkCoordinate coord) {
 			for (const TerrainRing& terrain : out.rings) {
 				for (Ring& piece : geometry::clipRingToRect(terrain.ring, region.chunkRect())) {
@@ -685,7 +741,8 @@ namespace engine::world {
 		const WaterlineField waterline(biomeWater, worldSeed);
 		buildChannels(out, riverSegments, ponds, waterline, grid, region, worldSeed, coord);
 		buildNavRings(out, region, coord);
-		out.edgeIndex = TerrainPolygonQuery::buildIndex(out.rings, region.extendedRect());
+		out.edgeIndex	= TerrainPolygonQuery::buildIndex(out.rings, region.extendedRect());
+		out.shorePoints = shorePoints(out, region);
 		return out;
 	}
 
