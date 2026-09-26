@@ -108,15 +108,6 @@ jobs:
     - name: Setup sccache
       uses: mozilla-actions/sccache-action@v0.0.10
 
-    # windows-latest (windows-2025-vs2026) ships a CMake that rejects the
-    # -Werror=old-style-cast argument vcpkg's benchmark port passes at our
-    # baseline ("warning category not known"). Pin CMake until the baseline moves.
-    # After msvc-dev-cmd so this CMake is first on PATH, ahead of VS's bundled one.
-    - name: Pin CMake
-      uses: lukka/get-cmake@latest
-      with:
-        cmakeVersion: "~3.31.0"
-
     - name: Setup vcpkg
       uses: lukka/run-vcpkg@v11
       with:
