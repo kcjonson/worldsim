@@ -31,6 +31,7 @@
 #include <world/chunk/IWorldSampler.h>
 
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -1099,13 +1100,105 @@ TEST_F(NavigationSystemTest, IsValidPositionTrueOnWalkableFaceFalseOnWaterAndOff
 	// A point inside the water patch is off-mesh (water face): INVALID, but still in-region.
 	const glm::vec2 water{40.0F, 40.0F};
 	ASSERT_TRUE(sys.inSimArea(water)) << "the water point must be inside the region";
-	EXPECT_FALSE(sys.isOnMesh(water)) << "the water tile must not be a walkable face";
+	EXPECT_FALSE(sys.isOnMesh(water)) << "the water ring must not be a walkable face";
 	EXPECT_FALSE(sys.isValidPosition(water)) << "a water face must be an invalid position";
 
 	// A point no region covers is invalid: you cannot place outside an active mesh yet.
 	const glm::vec2 offMesh{500.0F, 500.0F};
 	ASSERT_FALSE(sys.inSimArea(offMesh)) << "the far point must be outside every region";
 	EXPECT_FALSE(sys.isValidPosition(offMesh)) << "a point off every region must be invalid";
+}
+
+// The landing snap: before any sim region or construction world exists, a drop point in
+// the water moves to the nearest walkable terrain beside it, and a land point stays put.
+TEST_F(NavigationSystemTest, NearestTerrainWalkablePointLeavesWaterBeforeAnyRegion) {
+	auto chunks = std::make_unique<engine::world::ChunkManager>(std::make_unique<WaterPatchSampler>());
+	chunks->setLoadRadius(2);
+	chunks->setUnloadRadius(4);
+	chunks->update({0.0F, 0.0F});
+	chunks->finishPendingGeneration();
+
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	EXPECT_FALSE(sys.nearestTerrainWalkablePoint({40.0F, 40.0F}).has_value()) << "no chunks wired";
+	sys.setChunkManager(chunks.get());
+	ASSERT_FALSE(sys.hasMesh());
+
+	const glm::vec2				   land{2.0F, 2.0F};
+	const std::optional<glm::vec2> stay = sys.nearestTerrainWalkablePoint(land);
+	ASSERT_TRUE(stay.has_value());
+	EXPECT_EQ(*stay, land);
+
+	// The patch is a 16 m square at [32, 48): its middle is ~8 m from any shore.
+	const std::optional<glm::vec2> moved = sys.nearestTerrainWalkablePoint({40.0F, 40.0F});
+	ASSERT_TRUE(moved.has_value());
+	const float dx = moved->x - 40.0F;
+	const float dy = moved->y - 40.0F;
+	const float d  = std::sqrt(dx * dx + dy * dy);
+	EXPECT_GT(d, 6.0F) << "the snap must leave the water";
+	EXPECT_LT(d, 11.0F) << "the snap must land on the nearest shore, not somewhere far";
+	const std::optional<glm::vec2> again = sys.nearestTerrainWalkablePoint(*moved);
+	ASSERT_TRUE(again.has_value());
+	EXPECT_EQ(*again, *moved) << "the snapped point is itself walkable terrain";
+}
+
+// A party landing whose drop is in the water beside a shore: every member must spawn on
+// walkable ground of its own (the 1.5 m ring must not straddle the shore), apart from the
+// others, and near the drop. Checked against the runtime mesh built afterwards, the same
+// isValidPosition the recovery snap would otherwise have to fix.
+TEST_F(NavigationSystemTest, GroupSpawnPointsFromWaterDropAllLandOnWalkableGround) {
+	auto chunks = std::make_unique<engine::world::ChunkManager>(std::make_unique<WaterPatchSampler>());
+	chunks->setLoadRadius(2);
+	chunks->setUnloadRadius(4);
+	chunks->update({0.0F, 0.0F});
+	chunks->finishPendingGeneration();
+
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(chunks.get());
+
+	// The patch is water on [32, 48); (34, 40) is ~2 m in from its west shore.
+	const glm::vec2	 drop{34.0F, 40.0F};
+	constexpr size_t kCrew		 = 6;
+	constexpr float	 kRing		 = 1.5F;
+	constexpr float	 kSeparation = 0.8F;
+	constexpr float	 kClearance	 = 0.3F;
+	ASSERT_NE(sys.nearestTerrainWalkablePoint(drop), std::optional<glm::vec2>(drop)) << "the drop must be in the water";
+	const NavigationSystem::GroupSpawn spawn = sys.groupSpawnPoints(drop, kCrew, kRing, kSeparation, kClearance);
+	ASSERT_EQ(spawn.points.size(), kCrew);
+
+	ConstructionWorld cw;
+	sys.setConstructionWorld(&cw);
+	pushArea(sys, {40000, 40000}, 40000);
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+
+	EXPECT_TRUE(sys.isValidPosition(spawn.center)) << "the clearing center is on land";
+	for (std::size_t i = 0; i < spawn.points.size(); ++i) {
+		const glm::vec2 p = spawn.points[i];
+		EXPECT_TRUE(sys.isValidPosition(p)) << "member " << i << " at (" << p.x << ", " << p.y << ") is not walkable";
+		for (int k = 0; k < 8; ++k) {
+			const float angle = 6.2831853F * static_cast<float>(k) / 8.0F;
+			EXPECT_TRUE(sys.isValidPosition(p + glm::vec2{std::cos(angle), std::sin(angle)} * kClearance))
+				<< "member " << i << "'s disc reaches the water";
+		}
+		for (std::size_t j = 0; j < i; ++j) {
+			const glm::vec2 d = p - spawn.points[j];
+			EXPECT_GE(std::sqrt(d.x * d.x + d.y * d.y), kSeparation - 1e-4F) << "members " << j << " and " << i << " stack";
+		}
+		const glm::vec2 fromDrop = p - drop;
+		EXPECT_LT(std::sqrt(fromDrop.x * fromDrop.x + fromDrop.y * fromDrop.y), 8.0F) << "member " << i << " landed far away";
+	}
+
+	// A larger crew than fits evenly on the ring still spreads out.
+	const NavigationSystem::GroupSpawn crowd = sys.groupSpawnPoints(drop, 12, kRing, kSeparation, kClearance);
+	ASSERT_EQ(crowd.points.size(), 12U);
+	for (std::size_t i = 0; i < crowd.points.size(); ++i) {
+		EXPECT_TRUE(sys.isValidPosition(crowd.points[i]));
+		for (std::size_t j = 0; j < i; ++j) {
+			const glm::vec2 d = crowd.points[i] - crowd.points[j];
+			EXPECT_GE(std::sqrt(d.x * d.x + d.y * d.y), kSeparation - 1e-4F);
+		}
+	}
 }
 
 // --- Whole-footprint walkability: isAreaWalkable / isSegmentWalkable -------------
