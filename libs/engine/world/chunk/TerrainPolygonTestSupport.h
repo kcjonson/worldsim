@@ -123,7 +123,7 @@ inline bool sameThalwegs(const std::vector<ThalwegPath>& a, const std::vector<Th
 	}
 	for (size_t i = 0; i < a.size(); ++i) {
 		if (a[i].points != b[i].points || a[i].halfWidthM != b[i].halfWidthM || a[i].widthRatio != b[i].widthRatio ||
-			a[i].curvature != b[i].curvature) {
+			a[i].curvature != b[i].curvature || a[i].arcLengthM != b[i].arcLengthM) {
 			return false;
 		}
 	}

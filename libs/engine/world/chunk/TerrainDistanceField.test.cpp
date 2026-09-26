@@ -1,8 +1,9 @@
 // TerrainDistanceField tests (terrain-polygons-architecture.md D10 10.1/10.4,
-// D14, section 5): analytic distances, thalweg ratio and frame, arc-length
-// anchoring, containment (holes, overlaps, synthetic and cut edges), near-tile
-// allocation and gutters, bit-identical texels across a chunk border for
-// hand-built and builder-built rings, and determinism across threads.
+// D14, section 5): analytic distances, the union shoreline at a river mouth,
+// thalweg ratio and frame, the worldgen arc coordinate, containment (holes,
+// synthetic and cut edges), near-tile allocation and gutters, bit-identical
+// gutter texels across a chunk border for hand-built and builder-built rings,
+// and determinism across threads.
 
 #include "world/chunk/TerrainDistanceField.h"
 
@@ -38,8 +39,9 @@ namespace {
 	using Field	  = TerrainDistanceField;
 	using Segment = TerrainPolygonBuilder::RiverSegment;
 
-	constexpr uint64_t kWorldSeed = 0xD157F1E1DULL;
-	constexpr double   kTwoPi	  = 2.0 * std::numbers::pi;
+	constexpr uint64_t kWorldSeed	= 0xD157F1E1DULL;
+	constexpr double   kTwoPi		= 2.0 * std::numbers::pi;
+	constexpr int32_t  kNearLattice = Field::kTilesPerSide * Field::kNearTileTexels;
 
 	int64_t mm(double meters) {
 		return std::llround(meters * 1000.0);
@@ -106,13 +108,14 @@ namespace {
 	}
 
 	// A thalweg through the points (meters), sampled every stepM, with per-point
-	// data from functions of arc length.
+	// data from functions of arc length; its arc coordinate starts at arcStartM.
 	ThalwegPath thalwegThrough(
 		const std::vector<std::pair<double, double>>& corners,
 		double										   stepM,
 		const std::function<float(double)>&			   hw,
 		const std::function<float(double)>&			   ratio	 = [](double) { return 1.0F; },
-		const std::function<float(double)>&			   curvature = [](double) { return 0.0F; }
+		const std::function<float(double)>&			   curvature = [](double) { return 0.0F; },
+		double										   arcStartM = 0.0
 	) {
 		ThalwegPath path;
 		double		s = 0.0;
@@ -128,6 +131,7 @@ namespace {
 				path.halfWidthM.push_back(hw(at));
 				path.widthRatio.push_back(ratio(at));
 				path.curvature.push_back(curvature(at));
+				path.arcLengthM.push_back(arcStartM + at);
 			}
 			s += len;
 		}
@@ -136,35 +140,44 @@ namespace {
 
 	// ---- Lattice access ----
 
+	double centerM(const Field& f, int64_t texelMm, int32_t i, bool x) {
+		return static_cast<double>((x ? f.originMm.x : f.originMm.y) + static_cast<int64_t>(i) * texelMm + texelMm / 2) / 1000.0;
+	}
+
 	double nearCenterM(const Field& f, int32_t i, bool x) {
-		return static_cast<double>((x ? f.originMm.x : f.originMm.y) + static_cast<int64_t>(i) * Field::kNearTexelMm + Field::kNearTexelMm / 2) /
-			   1000.0;
+		return centerM(f, Field::kSdfNearTexelMm, i, x);
 	}
 
 	double farCenterM(const Field& f, int32_t i, bool x) {
-		return static_cast<double>((x ? f.originMm.x : f.originMm.y) + static_cast<int64_t>(i) * Field::kFarTexelMm + Field::kFarTexelMm / 2) /
-			   1000.0;
+		return centerM(f, Field::kFarTexelMm, i, x);
 	}
 
 	double detailCenterM(const Field& f, int32_t i, bool x) {
-		return static_cast<double>(
-				   (x ? f.originMm.x : f.originMm.y) + static_cast<int64_t>(i) * Field::kDetailTexelMm + Field::kDetailTexelMm / 2
-			   ) /
-			   1000.0;
+		return centerM(f, Field::kDetailTexelMm, i, x);
 	}
 
-	// Near lattice texel (i, j), from the tile that owns it (not a gutter copy).
+	// Near lattice texel (i, j), each in [-1, kNearLattice], from the first tile
+	// that stores it (its owner or a neighbor's gutter).
 	std::optional<HalfTexel> nearAt(const Field& f, int32_t i, int32_t j) {
-		if (i < 0 || j < 0 || i >= Field::kTilesPerSide * Field::kNearTileTexels || j >= Field::kTilesPerSide * Field::kNearTileTexels) {
-			return std::nullopt;
+		for (int32_t ty = std::max(0, (j - 1) / Field::kNearTileTexels - 1); ty <= std::min(Field::kTilesPerSide - 1, (j + 1) / Field::kNearTileTexels + 1);
+			 ++ty) {
+			const int32_t v = j - ty * Field::kNearTileTexels + 1;
+			if (v < 0 || v >= Field::kNearTileStride) {
+				continue;
+			}
+			for (int32_t tx = std::max(0, (i - 1) / Field::kNearTileTexels - 1);
+				 tx <= std::min(Field::kTilesPerSide - 1, (i + 1) / Field::kNearTileTexels + 1); ++tx) {
+				const int32_t u = i - tx * Field::kNearTileTexels + 1;
+				if (u < 0 || u >= Field::kNearTileStride) {
+					continue;
+				}
+				const uint16_t tile = f.nearTileAt(tx, ty);
+				if (tile != Field::kNoNearTile) {
+					return f.nearTexel(tile, u, v);
+				}
+			}
 		}
-		const int32_t  tx	= i / Field::kNearTileTexels;
-		const int32_t  ty	= j / Field::kNearTileTexels;
-		const uint16_t tile = f.nearTileAt(tx, ty);
-		if (tile == Field::kNoNearTile) {
-			return std::nullopt;
-		}
-		return f.nearTexel(tile, i - tx * Field::kNearTileTexels + 1, j - ty * Field::kNearTileTexels + 1);
+		return std::nullopt;
 	}
 
 	// Signed distance (m) to the boundary of the axis-aligned rectangle, negative inside.
@@ -179,6 +192,14 @@ namespace {
 
 	double clampSdf(double d) {
 		return std::clamp(d, -Field::kSdfNearM, Field::kSdfNearM);
+	}
+
+	double segmentDistance(double px, double py, double ax, double ay, double bx, double by) {
+		const double abx = bx - ax;
+		const double aby = by - ay;
+		const double len = abx * abx + aby * aby;
+		const double t	 = len > 0.0 ? std::clamp(((px - ax) * abx + (py - ay) * aby) / len, 0.0, 1.0) : 0.0;
+		return std::hypot(px - ax - abx * t, py - ay - aby * t);
 	}
 
 	// Distance (m) from the axis-aligned segment [(ax, ay), (bx, by)] to the box.
@@ -196,10 +217,11 @@ namespace {
 		return p;
 	}
 
-	// Checks every far and near texel against a rectangle lake's analytic field.
+	// Checks every far and near texel (gutters included) and the tile allocation
+	// against a rectangle lake's analytic field.
 	void expectRectLake(const Field& f, double x0, double y0, double x1, double y1, uint8_t kind) {
-		for (int32_t j = 0; j < Field::kFarSize; ++j) {
-			for (int32_t i = 0; i < Field::kFarSize; ++i) {
+		for (int32_t j = -1; j <= Field::kFarTexels; ++j) {
+			for (int32_t i = -1; i <= Field::kFarTexels; ++i) {
 				const double	x = farCenterM(f, i, true);
 				const double	y = farCenterM(f, j, false);
 				const double	d = rectSignedDistance(x, y, x0, y0, x1, y1);
@@ -207,7 +229,6 @@ namespace {
 				expectHalfNear(t.r, clampSdf(d), "far R");
 				EXPECT_EQ(decode(t.g), 2.0F);
 				EXPECT_EQ(decode(t.b), static_cast<float>(std::abs(d) <= Field::kSdfNearM || d < 0.0 ? kind : 0)) << x << ", " << y;
-				EXPECT_EQ(t.a, 0);
 				if (::testing::Test::HasFailure()) {
 					return;
 				}
@@ -215,45 +236,46 @@ namespace {
 		}
 		for (int32_t ty = 0; ty < Field::kTilesPerSide; ++ty) {
 			for (int32_t tx = 0; tx < Field::kTilesPerSide; ++tx) {
-				const double bx0 = static_cast<double>(f.originMm.x + tx * Field::kNearTileMm) / 1000.0;
-				const double by0 = static_cast<double>(f.originMm.y + ty * Field::kNearTileMm) / 1000.0;
-				const double bx1 = bx0 + 16.0;
-				const double by1 = by0 + 16.0;
+				const double bx0  = static_cast<double>(f.originMm.x + tx * Field::kNearTileMm) / 1000.0;
+				const double by0  = static_cast<double>(f.originMm.y + ty * Field::kNearTileMm) / 1000.0;
+				const double bx1  = bx0 + 16.0;
+				const double by1  = by0 + 16.0;
 				const double dist = std::min(
 					{axisSegmentBoxDistance(x0, y0, x1, y0, bx0, by0, bx1, by1), axisSegmentBoxDistance(x1, y0, x1, y1, bx0, by0, bx1, by1),
 					 axisSegmentBoxDistance(x0, y1, x1, y1, bx0, by0, bx1, by1), axisSegmentBoxDistance(x0, y0, x0, y1, bx0, by0, bx1, by1)}
 				);
-				EXPECT_EQ(f.nearTileAt(tx, ty) != Field::kNoNearTile, dist <= 8.25) << "tile " << tx << ", " << ty << " at " << dist << " m";
+				EXPECT_EQ(f.nearTileAt(tx, ty) != Field::kNoNearTile, dist <= 8.5) << "tile " << tx << ", " << ty << " at " << dist << " m";
 			}
 		}
-		for (uint16_t tile = 0; tile < f.nearTileCount(); ++tile) {
-			const auto	  it = std::find(f.tileMap.begin(), f.tileMap.end(), tile);
-			const auto	  at = static_cast<int32_t>(it - f.tileMap.begin());
-			const int32_t tx = at % Field::kTilesPerSide;
-			const int32_t ty = at / Field::kTilesPerSide;
-			for (int32_t v = 0; v < Field::kNearTileStride; ++v) {
-				for (int32_t u = 0; u < Field::kNearTileStride; ++u) {
-					const double x = nearCenterM(f, tx * Field::kNearTileTexels + u - 1, true);
-					const double y = nearCenterM(f, ty * Field::kNearTileTexels + v - 1, false);
-					expectHalfNear(f.nearTexel(tile, u, v).r, clampSdf(rectSignedDistance(x, y, x0, y0, x1, y1)), "near R");
-					if (::testing::Test::HasFailure()) {
-						return;
+		for (int32_t ty = 0; ty < Field::kTilesPerSide; ++ty) {
+			for (int32_t tx = 0; tx < Field::kTilesPerSide; ++tx) {
+				const uint16_t tile = f.nearTileAt(tx, ty);
+				if (tile == Field::kNoNearTile) {
+					continue;
+				}
+				for (int32_t v = 0; v < Field::kNearTileStride; ++v) {
+					for (int32_t u = 0; u < Field::kNearTileStride; ++u) {
+						const double x = nearCenterM(f, tx * Field::kNearTileTexels + u - 1, true);
+						const double y = nearCenterM(f, ty * Field::kNearTileTexels + v - 1, false);
+						expectHalfNear(f.nearTexel(tile, u, v).r, clampSdf(rectSignedDistance(x, y, x0, y0, x1, y1)), "near R");
+						if (::testing::Test::HasFailure()) {
+							return;
+						}
 					}
 				}
 			}
 		}
 	}
 
-	// ---- Seam comparison over the strip two east-west neighbors both bake ----
+	// ---- Seam comparison over the gutter overlap of two east-west neighbors ----
 
 	struct SeamDiff {
 		size_t compared		 = 0;
 		size_t different	 = 0;	// texels whose bits differ, any texture
-		size_t tileMismatch	 = 0;	// near texels one chunk has a tile for and the other not
-		double sdf			 = 0.0; // max |decoded difference| over R, G, B where both have the texel
+		double sdf			 = 0.0; // max |decoded difference| over R, G, B
 		int	   profile		 = 0;	// max byte difference
-		double frame		 = 0.0; // max |difference|, arc length compared on the circle
-		size_t inReach		 = 0;	// sdf texels whose nearest shore is within both chunks' reach
+		double frame		 = 0.0; // max |difference|, arc coordinate compared on the circle
+		size_t inReach		 = 0;	// sdf texels whose nearest shore is within both chunks' rings
 		size_t inReachDiffer = 0;
 		double inReachSdf	 = 0.0;
 		size_t waterSdf		 = 0; // compared sdf texels that are not the land default
@@ -269,11 +291,10 @@ namespace {
 		diff.different += a == b ? 0 : 1;
 		diff.waterSdf += a == Field::kLandSdfTexel ? 0 : 1;
 		const double dr = std::abs(static_cast<double>(decode(a.r) - decode(b.r)));
-		const double d	= std::max(
-			 {dr, std::abs(static_cast<double>(decode(a.g) - decode(b.g))), std::abs(static_cast<double>(decode(a.b) - decode(b.b)))}
-		 );
-		diff.sdf			= std::max(diff.sdf, d);
-		const double reach	= static_cast<double>(kApronTiles) - std::abs(offsetM);
+		diff.sdf		= std::max(
+			   {diff.sdf, dr, std::abs(static_cast<double>(decode(a.g) - decode(b.g))), std::abs(static_cast<double>(decode(a.b) - decode(b.b)))}
+		   );
+		const double reach = static_cast<double>(kApronTiles) - std::abs(offsetM);
 		if (std::abs(decode(a.r)) < reach && std::abs(decode(b.r)) < reach) {
 			++diff.inReach;
 			diff.inReachDiffer += a.r == b.r && a.b == b.b ? 0 : 1;
@@ -281,60 +302,41 @@ namespace {
 		}
 	}
 
-	// Texels of the west chunk's bake and the east chunk's at the same world
-	// position, within `bandM` of the shared border (the whole shared strip when
-	// bandM >= the margin).
-	SeamDiff compareSeam(const Field& west, const Field& east, double bandM) {
+	// Every texel both chunks store at the same world position: the west chunk's
+	// last column and gutter against the east chunk's gutter and first column,
+	// on each lattice (near only where both have a tile storing it).
+	SeamDiff compareSeam(const Field& west, const Field& east) {
 		SeamDiff	  diff;
-		const int64_t border = east.originMm.x + Field::kMarginMm;
-		auto		  offset = [border](int64_t centerMm) { return static_cast<double>(centerMm - border) / 1000.0; };
+		const int64_t border = east.originMm.x;
+		auto		  offset = [border](double centerM) { return centerM - static_cast<double>(border) / 1000.0; };
 
-		const int32_t farShift = static_cast<int32_t>((east.originMm.x - west.originMm.x) / Field::kFarTexelMm);
-		for (int32_t j = 0; j < Field::kFarSize; ++j) {
-			for (int32_t i = farShift; i < Field::kFarSize; ++i) {
-				const double at = offset(west.originMm.x + i * Field::kFarTexelMm + Field::kFarTexelMm / 2);
-				if (std::abs(at) <= bandM) {
-					noteHalf(diff, west.farTexel(i, j), east.farTexel(i - farShift, j), at);
+		for (int32_t k = 0; k < 2; ++k) {
+			const int32_t wi = Field::kFarTexels - 1 + k;
+			for (int32_t j = -1; j <= Field::kFarTexels; ++j) {
+				noteHalf(diff, west.farTexel(wi, j), east.farTexel(k - 1, j), offset(farCenterM(west, wi, true)));
+			}
+			const int32_t ni = kNearLattice - 1 + k;
+			for (int32_t j = -1; j <= kNearLattice; ++j) {
+				const auto a = nearAt(west, ni, j);
+				const auto b = nearAt(east, k - 1, j);
+				if (a && b) {
+					noteHalf(diff, *a, *b, offset(nearCenterM(west, ni, true)));
 				}
 			}
-		}
-		const int32_t nearShift = static_cast<int32_t>((east.originMm.x - west.originMm.x) / Field::kNearTexelMm);
-		const int32_t nearSize	= Field::kTilesPerSide * Field::kNearTileTexels;
-		for (int32_t j = 0; j < nearSize; ++j) {
-			for (int32_t i = nearShift; i < nearSize; ++i) {
-				const double at = offset(west.originMm.x + i * Field::kNearTexelMm + Field::kNearTexelMm / 2);
-				if (std::abs(at) > bandM) {
-					continue;
-				}
-				const auto a = nearAt(west, i, j);
-				const auto b = nearAt(east, i - nearShift, j);
-				if (a.has_value() != b.has_value()) {
-					++diff.compared;
-					++diff.different;
-					++diff.tileMismatch;
-				} else if (a) {
-					noteHalf(diff, *a, *b, at);
-				}
-			}
-		}
-		const int32_t detailShift = static_cast<int32_t>((east.originMm.x - west.originMm.x) / Field::kDetailTexelMm);
-		for (int32_t j = 0; j < Field::kDetailSize; ++j) {
-			for (int32_t i = detailShift; i < Field::kDetailSize; ++i) {
-				if (std::abs(offset(west.originMm.x + i * Field::kDetailTexelMm + Field::kDetailTexelMm / 2)) > bandM) {
-					continue;
-				}
-				const ByteTexel pa = west.shoreProfileTexel(i, j);
-				const ByteTexel pb = east.shoreProfileTexel(i - detailShift, j);
+			const int32_t di = Field::kDetailTexels - 1 + k;
+			for (int32_t j = -1; j <= Field::kDetailTexels; ++j) {
+				const ByteTexel pa = west.shoreProfileTexel(di, j);
+				const ByteTexel pb = east.shoreProfileTexel(k - 1, j);
 				diff.compared += 2;
 				diff.profiles += pa == ByteTexel{} ? 0 : 1;
 				diff.different += pa == pb ? 0 : 1;
 				diff.profile = std::max({diff.profile, std::abs(pa.r - pb.r), std::abs(pa.g - pb.g), std::abs(pa.b - pb.b), std::abs(pa.a - pb.a)});
-				const HalfTexel fa = west.channelFrameTexel(i, j);
-				const HalfTexel fb = east.channelFrameTexel(i - detailShift, j);
+				const HalfTexel fa = west.channelFrameTexel(di, j);
+				const HalfTexel fb = east.channelFrameTexel(k - 1, j);
 				diff.frames += fa == HalfTexel{} ? 0 : 1;
 				diff.different += fa == fb ? 0 : 1;
-				double ds = std::abs(static_cast<double>(decode(fa.r) - decode(fb.r)));
-				ds		  = std::min(ds, Field::kArcWrapM - ds);
+				double ds  = std::abs(static_cast<double>(decode(fa.r) - decode(fb.r)));
+				ds		   = std::min(ds, Field::kArcWrapM - ds);
 				diff.frame = std::max({diff.frame, ds, std::abs(static_cast<double>(decode(fa.g) - decode(fb.g))),
 									   std::abs(static_cast<double>(decode(fa.b) - decode(fb.b)))});
 			}
@@ -343,11 +345,11 @@ namespace {
 	}
 
 	std::string describe(const SeamDiff& d) {
-		return std::to_string(d.compared) + " texels compared, " + std::to_string(d.different) + " differ (" +
-			   std::to_string(d.tileMismatch) + " near-tile allocation); max sdf " + std::to_string(d.sdf) + ", profile " +
-			   std::to_string(d.profile) + ", frame " + std::to_string(d.frame) + "; in reach of both: " + std::to_string(d.inReachDiffer) +
-			   " of " + std::to_string(d.inReach) + " differ, max R " + std::to_string(d.inReachSdf) + " (" + std::to_string(d.waterSdf) +
-			   " water sdf, " + std::to_string(d.profiles) + " profile, " + std::to_string(d.frames) + " frame texels)";
+		return std::to_string(d.compared) + " texels compared, " + std::to_string(d.different) + " differ; max sdf " + std::to_string(d.sdf) +
+			   ", profile " + std::to_string(d.profile) + ", frame " + std::to_string(d.frame) + "; in reach of both: " +
+			   std::to_string(d.inReachDiffer) + " of " + std::to_string(d.inReach) + " differ, max R " + std::to_string(d.inReachSdf) + " (" +
+			   std::to_string(d.waterSdf) + " water sdf, " + std::to_string(d.profiles) + " profile, " + std::to_string(d.frames) +
+			   " frame texels)";
 	}
 
 	bool sameField(const Field& a, const Field& b) {
@@ -361,13 +363,15 @@ namespace {
 // Analytic fields
 // ============================================================================
 
-TEST(TerrainDistanceFieldTest, LandDefaultMatchesHalfEncoding) {
+TEST(TerrainDistanceFieldTest, LayoutAndLandDefault) {
 	EXPECT_EQ(Field::kLandSdfTexel.r, glm::packHalf1x16(8.0F));
 	EXPECT_EQ(Field::kLandSdfTexel.g, glm::packHalf1x16(2.0F));
 	EXPECT_EQ(Field::kLandSdfTexel.b, 0);
-	EXPECT_EQ(Field::kTilesPerSide, 34);
-	EXPECT_EQ(Field::kFarSize, 272);
-	EXPECT_EQ(Field::kDetailSize, 544);
+	EXPECT_EQ(sizeof(HalfTexel), 6U);
+	EXPECT_EQ(Field::kTilesPerSide, 32);
+	EXPECT_EQ(Field::kNearTileStride, 34);
+	EXPECT_EQ(Field::kFarStride, 258);
+	EXPECT_EQ(Field::kDetailStride, 514);
 }
 
 TEST(TerrainDistanceFieldTest, SquareLakeIsTheExactSignedDistance) {
@@ -375,7 +379,7 @@ TEST(TerrainDistanceFieldTest, SquareLakeIsTheExactSignedDistance) {
 		polygonsOf({makeRing(densify(rectRing(100.0, 200.0, 160.0, 260.0), 1.0), TerrainRingKind::Waterline, WaterKind::Lake)}), {0, 0}
 	);
 	EXPECT_EQ(f.version, 7U);
-	EXPECT_EQ(f.originMm, (Vec2i64{-16000, -16000}));
+	EXPECT_EQ(f.originMm, (Vec2i64{0, 0}));
 	expectRectLake(f, 100.0, 200.0, 160.0, 260.0, static_cast<uint8_t>(WaterKind::Lake));
 	EXPECT_GT(f.nearTileCount(), 0U);
 	EXPECT_TRUE(f.channelFrame.empty());
@@ -383,18 +387,20 @@ TEST(TerrainDistanceFieldTest, SquareLakeIsTheExactSignedDistance) {
 }
 
 TEST(TerrainDistanceFieldTest, StraightChannelThalwegRatioFrameAndProfile) {
-	// A 4 m channel from x = 60 to 440 m along y = 300.5, its thalweg down the middle.
-	const double x0 = 60.0;
-	const double x1 = 440.0;
-	const double yc = 300.5;
+	// A 4 m channel from x = 60 to 440 m along y = 300.5, its thalweg down the
+	// middle, its arc coordinate starting at 1000 m.
+	const double x0		 = 60.0;
+	const double x1		 = 440.0;
+	const double yc		 = 300.5;
+	const double arc0	 = 1000.0;
 	TerrainRing	 channel = makeRing(densify(rectRing(x0, yc - 2.0, x1, yc + 2.0), 1.0), TerrainRingKind::Channel, WaterKind::River, true);
 	const ThalwegPath thalweg = thalwegThrough(
-		{{x0, yc}, {x1, yc}}, 0.5, [](double) { return 2.0F; }, [](double) { return 1.2F; }, [](double) { return 0.05F; }
+		{{x0, yc}, {x1, yc}}, 0.5, [](double) { return 2.0F; }, [](double) { return 1.2F; }, [](double) { return 0.05F; }, arc0
 	);
 	const Field f = Field::bake(polygonsOf({channel}, {thalweg}), {0, 0});
 
-	for (int32_t j = 0; j < Field::kFarSize; ++j) {
-		for (int32_t i = 0; i < Field::kFarSize; ++i) {
+	for (int32_t j = -1; j <= Field::kFarTexels; ++j) {
+		for (int32_t i = -1; i <= Field::kFarTexels; ++i) {
 			const double	x  = farCenterM(f, i, true);
 			const double	y  = farCenterM(f, j, false);
 			const double	d  = rectSignedDistance(x, y, x0, yc - 2.0, x1, yc + 2.0);
@@ -406,11 +412,9 @@ TEST(TerrainDistanceFieldTest, StraightChannelThalwegRatioFrameAndProfile) {
 		}
 	}
 
-	// Frame: no chunk border crossing, so arc length runs from the path start,
-	// which reads the anchor value like a crossing would.
 	int framed = 0;
-	for (int32_t j = 0; j < Field::kDetailSize; ++j) {
-		for (int32_t i = 0; i < Field::kDetailSize; ++i) {
+	for (int32_t j = -1; j <= Field::kDetailTexels; ++j) {
+		for (int32_t i = -1; i <= Field::kDetailTexels; ++i) {
 			const double	x  = detailCenterM(f, i, true);
 			const double	y  = detailCenterM(f, j, false);
 			const double	dt = std::hypot(std::max({x0 - x, 0.0, x - x1}), y - yc);
@@ -420,18 +424,19 @@ TEST(TerrainDistanceFieldTest, StraightChannelThalwegRatioFrameAndProfile) {
 				continue;
 			}
 			++framed;
-			expectHalfNear(t.r, std::fmod(Field::kArcAnchorValueM + std::clamp(x, x0, x1) - x0, 256.0), "frame s");
+			double s = std::fmod(arc0 + std::clamp(x, x0, x1) - x0, Field::kArcWrapM);
+			double e = std::abs(static_cast<double>(decode(t.r)) - s);
+			EXPECT_LE(std::min(e, Field::kArcWrapM - e), 0.035) << "frame s at x = " << x;
 			expectHalfNear(t.g, 1.2, "frame width ratio");
 			expectHalfNear(t.b, 0.05 * 2.0, "frame curvature x hw");
-			EXPECT_EQ(t.a, 0);
 		}
 	}
 	EXPECT_GT(framed, 2500); // 7 rows within 4 m of the thalweg, 381 m long
 
-	// Profile: every vertex 1 m apart, so within 7.5 m of the ring a vertex is in
+	// Profile: every vertex 1 m apart, so within 7 m of the ring a vertex is in
 	// reach; past 8 m of every vertex, zero.
-	for (int32_t j = 0; j < Field::kDetailSize; ++j) {
-		for (int32_t i = 0; i < Field::kDetailSize; ++i) {
+	for (int32_t j = -1; j <= Field::kDetailTexels; ++j) {
+		for (int32_t i = -1; i <= Field::kDetailTexels; ++i) {
 			const double	x = detailCenterM(f, i, true);
 			const double	y = detailCenterM(f, j, false);
 			const double	d = std::abs(rectSignedDistance(x, y, x0, yc - 2.0, x1, yc + 2.0));
@@ -444,69 +449,40 @@ TEST(TerrainDistanceFieldTest, StraightChannelThalwegRatioFrameAndProfile) {
 		}
 	}
 	// The texel just north of the bank at x = 200.5 m reads the vertex (200, 302.5) or (201, 302.5).
-	const ByteTexel bank = f.shoreProfileTexel(216, 319);
-	const ShoreProfile a = profileFromPosition({mm(200.0), mm(302.5)});
-	const ShoreProfile b = profileFromPosition({mm(201.0), mm(302.5)});
+	const ByteTexel	   bank = f.shoreProfileTexel(200, 303);
+	const ShoreProfile a	= profileFromPosition({mm(200.0), mm(302.5)});
+	const ShoreProfile b	= profileFromPosition({mm(201.0), mm(302.5)});
 	EXPECT_TRUE((bank == ByteTexel{a.slope, a.exposure, a.sand, a.mud}) || (bank == ByteTexel{b.slope, b.exposure, b.sand, b.mud}));
 }
 
-TEST(TerrainDistanceFieldTest, ArcLengthIsAnchoredAtChunkBorders) {
-	// Straight across chunk (0, 0) and beyond both borders: the reach between the
-	// x = 0 and x = 512 m crossings is exactly two wraps, so s = (x + 128) mod 256 everywhere.
-	const double	  y		  = 300.5;
-	const ThalwegPath through = thalwegThrough({{-100.0, y}, {700.0, y}}, 0.5, [](double) { return 2.0F; });
-	const Field		  f		  = Field::bake(polygonsOf({}, {through}), {0, 0});
-	const int32_t	  row	  = static_cast<int32_t>(std::lround(y - 0.5 + 16.0));
-	for (int32_t i = 0; i < Field::kDetailSize; ++i) {
-		const double x		  = detailCenterM(f, i, true);
-		double		 expected = std::fmod(x + Field::kArcAnchorValueM, 256.0);
-		expected			  = expected < 0.0 ? expected + 256.0 : expected;
-		double diff			  = std::abs(static_cast<double>(decode(f.channelFrameTexel(i, row).r)) - expected);
-		diff				  = std::min(diff, 256.0 - diff);
-		EXPECT_LE(diff, 0.07) << "x = " << x;
+// The builder carries RiverNetwork2D's arc coordinate onto the thalweg, linear
+// within each centerline span, and the frame reads it mod kArcWrapM.
+TEST(TerrainDistanceFieldTest, ThalwegCarriesTheWorldgenArcCoordinate) {
+	// A straight river along y = 256 m, 20 m segments, s = x + 5000 m.
+	std::vector<Segment> rivers;
+	for (double x = -60.0; x < 600.0; x += 20.0) {
+		rivers.push_back({x, 256.0, x + 20.0, 256.0, 3.0F, 3.0F, x + 5000.0, x + 20.0 + 5000.0});
+	}
+	const ChunkCoordinate	   coord{0, 0};
+	const ChunkTerrainPolygons polys = TerrainPolygonBuilder::build(coord, kWorldSeed, HandTiles(Biome::TemperateGrassland).fn(), rivers, {});
+	ASSERT_EQ(polys.thalwegs.size(), 1U);
+	const ThalwegPath& path = polys.thalwegs.front();
+	ASSERT_EQ(path.arcLengthM.size(), path.points.size());
+	for (size_t i = 0; i < path.points.size(); ++i) {
+		EXPECT_NEAR(path.arcLengthM[i], static_cast<double>(path.points[i].x) / 1000.0 + 5000.0, 1.0e-3) << i;
 	}
 
-	// A bend: west-east from x = -100 to 250.5 m, then north across y = 512 m. The
-	// reach between the crossings is 250.5 + 211.5 = 462 m, stretched to 512 m in
-	// its middle; within kArcAnchorHoldM of either crossing it is exact.
-	const double	  xc   = 250.5;
-	const ThalwegPath bend = thalwegThrough({{-100.0, y}, {xc, y}, {xc, 700.0}}, 0.5, [](double) { return 2.0F; });
-	const Field		  g	   = Field::bake(polygonsOf({}, {bend}), {0, 0});
-	const int32_t	  col  = static_cast<int32_t>(std::lround(xc - 0.5 + 16.0));
-	auto			  sAt  = [&g](int32_t i, int32_t j) { return static_cast<double>(decode(g.channelFrameTexel(i, j).r)); };
-	auto			  circ = [](double a, double b) {
-		 double d = std::fmod(b - a, 256.0);
-		 d		  = d < -128.0 ? d + 256.0 : (d > 128.0 ? d - 256.0 : d);
-		 return d;
-	};
-	for (int32_t i = 16; i < 16 + 24; ++i) { // x in [0.5, 23.5]: exact from the x = 0 crossing
-		EXPECT_NEAR(sAt(i, row), Field::kArcAnchorValueM + detailCenterM(g, i, true), 0.07);
-	}
-	for (int32_t j = 16 + 489; j < 16 + 512; ++j) { // y in [489.5, 511.5]: exact to the y = 512 crossing
-		EXPECT_NEAR(sAt(col, j), Field::kArcAnchorValueM - (512.0 - detailCenterM(g, j, false)), 0.07);
-	}
-	for (int32_t j = 16 + 512; j < Field::kDetailSize; ++j) { // past the crossing: arc from it
-		EXPECT_NEAR(circ(sAt(col, j), Field::kArcAnchorValueM + detailCenterM(g, j, false) - 512.0), 0.0, 0.07);
-	}
-	// Continuous and increasing along the whole bend, each 1 m step stretched by
-	// at most 1 + 50 / 414.
-	double prev = sAt(0, row);
-	for (int32_t i = 1; i <= col; ++i) {
-		const double s = sAt(i, row);
-		EXPECT_GE(circ(prev, s), 0.8) << "x = " << detailCenterM(g, i, true);
-		EXPECT_LE(circ(prev, s), 1.3) << "x = " << detailCenterM(g, i, true);
-		prev = s;
-	}
-	for (int32_t j = row + 1; j < Field::kDetailSize; ++j) {
-		const double s = sAt(col, j);
-		EXPECT_GE(circ(prev, s), 0.8) << "y = " << detailCenterM(g, j, false);
-		EXPECT_LE(circ(prev, s), 1.3) << "y = " << detailCenterM(g, j, false);
-		prev = s;
+	const Field f = Field::bake(polys, coord);
+	for (int32_t i = -1; i <= Field::kDetailTexels; ++i) {
+		const HalfTexel t = f.channelFrameTexel(i, 255); // y = 255.5, on the thalweg
+		const double	s = std::fmod(detailCenterM(f, i, true) + 5000.0, Field::kArcWrapM);
+		double			e = std::abs(static_cast<double>(decode(t.r)) - s);
+		EXPECT_LE(std::min(e, Field::kArcWrapM - e), 0.035) << "x = " << detailCenterM(f, i, true);
 	}
 }
 
 // ============================================================================
-// Containment
+// Containment and the union shoreline
 // ============================================================================
 
 TEST(TerrainDistanceFieldTest, IslandInALakeReadsLandAndSignMatchesPointInPolygon) {
@@ -524,17 +500,16 @@ TEST(TerrainDistanceFieldTest, IslandInALakeReadsLandAndSignMatchesPointInPolygo
 	};
 	const Field f = Field::bake(polygonsOf(rings), {0, 0});
 
-	// Island center: 9 m from the island's shore, land.
-	const HalfTexel island = f.farTexel(82, 82); // (149, 149)
+	const HalfTexel island = f.farTexel(74, 74); // (149, 149): island center, 9 m from its shore
 	EXPECT_EQ(decode(island.r), 8.0F);
 	EXPECT_EQ(decode(island.b), 0.0F);
-	const HalfTexel islandShore = f.farTexel(79, 82); // (143, 149): 3 m inland
+	const HalfTexel islandShore = f.farTexel(71, 74); // (143, 149): 3 m inland
 	EXPECT_NEAR(decode(islandShore.r), 3.0F, 1.0e-3F);
 	EXPECT_EQ(decode(islandShore.b), 1.0F);
-	const HalfTexel openLake = f.farTexel(68, 82); // (121, 149): 19 m from the island, 21 m from the shore
+	const HalfTexel openLake = f.farTexel(60, 74); // (121, 149): 19 m from the island, 21 m from the shore
 	EXPECT_EQ(decode(openLake.r), -8.0F);
 	EXPECT_EQ(decode(openLake.b), 1.0F);
-	const HalfTexel pondMiddle = f.farTexel(198, 203); // (381, 391)
+	const HalfTexel pondMiddle = f.farTexel(190, 195); // (381, 391)
 	EXPECT_EQ(decode(pondMiddle.r), -8.0F);
 	EXPECT_EQ(decode(pondMiddle.b), 4.0F);
 
@@ -556,29 +531,27 @@ TEST(TerrainDistanceFieldTest, IslandInALakeReadsLandAndSignMatchesPointInPolygo
 			}
 		}
 		if (!onBoundary) {
-			const bool water = solid || parity % 2 == 1;
-			EXPECT_EQ(decode(t.r) < 0.0F, water) << p.x << ", " << p.y;
+			EXPECT_EQ(decode(t.r) < 0.0F, solid || parity % 2 == 1) << p.x << ", " << p.y;
 		}
 	};
-	for (int32_t j = 0; j < Field::kFarSize; ++j) {
-		for (int32_t i = 0; i < Field::kFarSize; ++i) {
+	for (int32_t j = -1; j <= Field::kFarTexels; ++j) {
+		for (int32_t i = -1; i <= Field::kFarTexels; ++i) {
 			check(f.farTexel(i, j), {mm(farCenterM(f, i, true)), mm(farCenterM(f, j, false))});
 		}
 	}
-	const int32_t nearSize = Field::kTilesPerSide * Field::kNearTileTexels;
-	for (int32_t j = 0; j < nearSize; j += 3) {
-		for (int32_t i = 0; i < nearSize; i += 3) {
+	for (int32_t j = -1; j <= kNearLattice; j += 3) {
+		for (int32_t i = -1; i <= kNearLattice; i += 3) {
 			if (const auto t = nearAt(f, i, j)) {
-				check(*t, {f.originMm.x + i * Field::kNearTexelMm + 125, f.originMm.y + j * Field::kNearTexelMm + 125});
+				check(*t, {mm(nearCenterM(f, i, true)), mm(nearCenterM(f, j, false))});
 			}
 		}
 	}
 }
 
-// A river mouth: the channel ribbon runs 30 m into the lake. Overlapping water
-// is water, and R there is the distance to the nearest ring edge, which inside
-// the lake includes the submerged channel banks: still negative, but shallow.
-TEST(TerrainDistanceFieldTest, ChannelLakeOverlapIsWaterAndMeasuresToTheNearestEdge) {
+// A river mouth: the channel ribbon runs 30 m into the lake. The shoreline is
+// the boundary of the union, so the submerged channel banks are not shore, and
+// the shore runs continuously around the junction corners.
+TEST(TerrainDistanceFieldTest, MouthShorelineIsTheUnionBoundary) {
 	const Field f = Field::bake(
 		polygonsOf(
 			{makeRing(rectRing(200.0, 200.0, 300.0, 300.0), TerrainRingKind::Waterline, WaterKind::Lake),
@@ -586,48 +559,81 @@ TEST(TerrainDistanceFieldTest, ChannelLakeOverlapIsWaterAndMeasuresToTheNearestE
 		),
 		{0, 0}
 	);
-	const HalfTexel overlap = f.farTexel(120, 133); // (225, 251): in both, 1 m from the channel's north bank
-	EXPECT_EQ(decode(overlap.r), -1.0F);
-	EXPECT_EQ(decode(overlap.b), 3.0F);
-	const HalfTexel beside = f.farTexel(115, 135); // (215, 255): lake only, 3 m from the submerged bank
-	EXPECT_EQ(decode(beside.r), -3.0F);
-	EXPECT_EQ(decode(beside.b), 3.0F);
-	const HalfTexel upstream = f.farTexel(75, 133); // (135, 251): channel only
+	const HalfTexel beside = f.farTexel(107, 127); // (215, 255): 3 m from the submerged bank, 15 m from the real shore
+	EXPECT_EQ(decode(beside.r), -8.0F);
+	EXPECT_EQ(decode(beside.b), 1.0F);
+	const HalfTexel overlap = f.farTexel(112, 125); // (225, 251): in both, 25 m from the real shore
+	EXPECT_EQ(decode(overlap.r), -8.0F);
+	const HalfTexel upstream = f.farTexel(67, 125); // (135, 251): channel only, 1 m from its bank
 	EXPECT_EQ(decode(upstream.r), -1.0F);
-	const HalfTexel open = f.farTexel(133, 108); // (251, 201)... lake interior 1 m off the south shore
-	EXPECT_EQ(decode(open.r), -1.0F);
-	EXPECT_EQ(decode(open.b), 1.0F);
+	EXPECT_EQ(decode(upstream.b), 3.0F);
+
+	// Everywhere: |R| is the distance to the union polygon's boundary.
+	const std::vector<std::pair<double, double>> uni = {{100.0, 248.0}, {200.0, 248.0}, {200.0, 200.0}, {300.0, 200.0},
+														 {300.0, 300.0}, {200.0, 300.0}, {200.0, 252.0}, {100.0, 252.0}};
+	auto unionSigned = [&uni](double x, double y) {
+		double d = std::numeric_limits<double>::max();
+		for (size_t k = 0; k < uni.size(); ++k) {
+			const auto [ax, ay] = uni[k];
+			const auto [bx, by] = uni[(k + 1) % uni.size()];
+			d					= std::min(d, segmentDistance(x, y, ax, ay, bx, by));
+		}
+		const bool inside = (x > 200.0 && x < 300.0 && y > 200.0 && y < 300.0) || (x > 100.0 && x < 230.0 && y > 248.0 && y < 252.0);
+		return inside ? -d : d;
+	};
+	for (int32_t j = -1; j <= Field::kFarTexels; ++j) {
+		for (int32_t i = -1; i <= Field::kFarTexels; ++i) {
+			const double x = farCenterM(f, i, true);
+			const double y = farCenterM(f, j, false);
+			expectHalfNear(f.farTexel(i, j).r, clampSdf(unionSigned(x, y)), "far union R");
+		}
+	}
+	int near = 0;
+	for (int32_t j = -1; j <= kNearLattice; ++j) {
+		for (int32_t i = -1; i <= kNearLattice; ++i) {
+			if (const auto t = nearAt(f, i, j)) {
+				const double x = nearCenterM(f, i, true);
+				const double y = nearCenterM(f, j, false);
+				expectHalfNear(t->r, clampSdf(unionSigned(x, y)), "near union R at " + std::to_string(x) + ", " + std::to_string(y));
+				++near;
+				if (::testing::Test::HasFailure()) {
+					return;
+				}
+			}
+		}
+	}
+	EXPECT_GT(near, 10000);
 }
 
 TEST(TerrainDistanceFieldTest, SyntheticAndCutEdgesCloseRingsButAreNotShore) {
-	// A lake closed along the extended boundary x = 520 m (synthetic), and a
-	// fordable channel piece whose east end is a cut.
-	TerrainRing lake = makeRing(rectRing(400.0, 100.0, 520.0, 200.0), TerrainRingKind::Waterline, WaterKind::Lake);
-	lake.profiles[1].flags |= ShoreProfile::kFlagSynthetic; // (520, 100) -> (520, 200)
+	// A lake closed along x = 500 m by a synthetic edge, and a fordable channel
+	// piece whose east end is a cut.
+	TerrainRing lake = makeRing(rectRing(400.0, 100.0, 500.0, 200.0), TerrainRingKind::Waterline, WaterKind::Lake);
+	lake.profiles[1].flags |= ShoreProfile::kFlagSynthetic; // (500, 100) -> (500, 200)
 	TerrainRing channel = makeRing(rectRing(100.0, 300.0, 200.0, 304.0), TerrainRingKind::Channel, WaterKind::River);
 	channel.profiles[1].flags |= ShoreProfile::kFlagFordableCut; // (200, 300) -> (200, 304)
 	channel.profiles[2].flags |= ShoreProfile::kFlagFordableCut;
 	const Field f = Field::bake(polygonsOf({lake, channel}), {0, 0});
 
-	const HalfTexel inside = f.farTexel(266, 83); // (517, 151): 3 m from the synthetic edge, 49 m from real shore
+	const HalfTexel inside = f.farTexel(248, 75); // (497, 151): 3 m from the synthetic edge, 49 m from real shore
 	EXPECT_EQ(decode(inside.r), -8.0F);
 	EXPECT_EQ(decode(inside.b), 1.0F);
-	const HalfTexel beyond = f.farTexel(269, 83); // (523, 151): outside the closure
+	const HalfTexel beyond = f.farTexel(251, 75); // (503, 151): outside the closure
 	EXPECT_EQ(decode(beyond.r), 8.0F);
 	EXPECT_EQ(decode(beyond.b), 0.0F);
-	EXPECT_EQ(f.nearTileAt(33, 10), Field::kNoNearTile); // only the synthetic edge is near it
+	EXPECT_EQ(f.nearTileAt(31, 9), Field::kNoNearTile); // only the synthetic edge is near it
 
-	// Near texels either side of the cut at y = 302.125 m.
-	const auto inCut = nearAt(f, 863, 1272); // (199.875, 302.125)
+	// Near texels either side of the cut at y = 302.25 m.
+	const auto inCut = nearAt(f, 399, 604); // (199.75, 302.25)
 	ASSERT_TRUE(inCut.has_value());
-	expectHalfNear(inCut->r, -1.875, "inside the cut");
-	const auto pastCut = nearAt(f, 865, 1272); // (200.375, 302.125)
+	expectHalfNear(inCut->r, -1.75, "inside the cut");
+	const auto pastCut = nearAt(f, 400, 604); // (200.25, 302.25)
 	ASSERT_TRUE(pastCut.has_value());
-	expectHalfNear(pastCut->r, std::hypot(0.375, 1.875), "past the cut");
+	expectHalfNear(pastCut->r, std::hypot(0.25, 1.75), "past the cut");
 }
 
-// The bake prunes its edge and thalweg searches by bounds; on irregular rings and
-// crossing thalwegs of very different widths it must still find what an
+// The bake prunes its shore and thalweg searches by bounds; on irregular rings
+// and crossing thalwegs of very different widths it must still find what an
 // exhaustive search finds.
 TEST(TerrainDistanceFieldTest, PrunedSearchesMatchBruteForce) {
 	std::vector<TerrainRing> rings;
@@ -647,54 +653,51 @@ TEST(TerrainDistanceFieldTest, PrunedSearchesMatchBruteForce) {
 	};
 	const Field f = Field::bake(polygonsOf(rings, thalwegs), {0, 0});
 
-	auto segmentDistance = [](const Vec2i64& p, const Vec2i64& a, const Vec2i64& b, double& t) {
-		const double abx = static_cast<double>(b.x - a.x);
-		const double aby = static_cast<double>(b.y - a.y);
-		const double apx = static_cast<double>(p.x - a.x);
-		const double apy = static_cast<double>(p.y - a.y);
-		const double len = abx * abx + aby * aby;
-		t				 = len > 0.0 ? std::clamp((apx * abx + apy * aby) / len, 0.0, 1.0) : 0.0;
-		return std::hypot(apx - abx * t, apy - aby * t);
-	};
 	int checked = 0;
-	for (int32_t j = 0; j < Field::kFarSize; j += 3) {
-		for (int32_t i = 0; i < Field::kFarSize; i += 3) {
-			const Vec2i64 p{mm(farCenterM(f, i, true)), mm(farCenterM(f, j, false))};
-			double		  edge = std::numeric_limits<double>::max();
+	for (int32_t j = -1; j <= Field::kFarTexels; j += 3) {
+		for (int32_t i = -1; i <= Field::kFarTexels; i += 3) {
+			const double x	  = farCenterM(f, i, true);
+			const double y	  = farCenterM(f, j, false);
+			double		 edge = std::numeric_limits<double>::max();
 			for (const TerrainRing& r : rings) {
 				for (size_t k = 0; k < r.ring.size(); ++k) {
-					double t = 0.0;
-					edge	 = std::min(edge, segmentDistance(p, std::min(r.ring[k], r.ring[(k + 1) % r.ring.size()]),
-															  std::max(r.ring[k], r.ring[(k + 1) % r.ring.size()]), t));
+					const Vec2i64& a = r.ring[k];
+					const Vec2i64& b = r.ring[(k + 1) % r.ring.size()];
+					edge = std::min(edge, segmentDistance(x, y, a.x / 1000.0, a.y / 1000.0, b.x / 1000.0, b.y / 1000.0));
 				}
 			}
 			double ratio = 2.0;
 			for (const ThalwegPath& path : thalwegs) {
 				for (size_t k = 0; k + 1 < path.points.size(); ++k) {
-					double		 t	= 0.0;
-					const double d	= segmentDistance(p, path.points[k], path.points[k + 1], t);
-					const double hw = (path.halfWidthM[k] + (path.halfWidthM[k + 1] - path.halfWidthM[k]) * t) * 1000.0;
-					ratio			= std::min(ratio, d / hw);
+					const double ax	 = path.points[k].x / 1000.0;
+					const double ay	 = path.points[k].y / 1000.0;
+					const double bx	 = path.points[k + 1].x / 1000.0;
+					const double by	 = path.points[k + 1].y / 1000.0;
+					const double len = (bx - ax) * (bx - ax) + (by - ay) * (by - ay);
+					const double t	 = len > 0.0 ? std::clamp(((x - ax) * (bx - ax) + (y - ay) * (by - ay)) / len, 0.0, 1.0) : 0.0;
+					const double hw	 = path.halfWidthM[k] + (path.halfWidthM[k + 1] - path.halfWidthM[k]) * t;
+					ratio			 = std::min(ratio, segmentDistance(x, y, ax, ay, bx, by) / hw);
 				}
 			}
 			const HalfTexel texel = f.farTexel(i, j);
-			EXPECT_NEAR(std::abs(decode(texel.r)), std::min(edge / 1000.0, 8.0), 5.0e-3) << p.x << ", " << p.y;
-			EXPECT_NEAR(decode(texel.g), ratio, 2.0e-3) << p.x << ", " << p.y;
-			checked += ratio < 2.0 && edge < 8000.0 ? 1 : 0;
+			EXPECT_NEAR(std::abs(decode(texel.r)), std::min(edge, 8.0), 5.0e-3) << x << ", " << y;
+			EXPECT_NEAR(decode(texel.g), ratio, 2.0e-3) << x << ", " << y;
+			checked += ratio < 2.0 && edge < 8.0 ? 1 : 0;
 		}
 	}
 	EXPECT_GT(checked, 20); // texels near both a shore and a thalweg
 }
 
 // ============================================================================
-// Near tiles
+// Near tiles and gutters
 // ============================================================================
 
 TEST(TerrainDistanceFieldTest, GuttersHoldTheNeighboringSamples) {
-	// Chunk (-1, 2) bakes x in [-528, 16] m, y in [1008, 1552] m.
-	const double x0 = -300.3;
+	// Chunk (-1, 2) is x in [-512, 0] m, y in [1024, 1536] m; the lake crosses its
+	// west border, so gutters past the square hold real water too.
+	const double x0 = -515.3;
 	const double y0 = 1100.6;
-	const double x1 = -228.1;
+	const double x1 = -440.1;
 	const double y1 = 1153.2;
 	const Field	 f	= Field::bake(polygonsOf({makeRing(rectRing(x0, y0, x1, y1), TerrainRingKind::Waterline, WaterKind::Lake)}), {-1, 2});
 	ASSERT_GT(f.nearTileCount(), 8U);
@@ -714,8 +717,15 @@ TEST(TerrainDistanceFieldTest, GuttersHoldTheNeighboringSamples) {
 					const int32_t	i	   = tx * Field::kNearTileTexels + u - 1;
 					const int32_t	j	   = ty * Field::kNearTileTexels + v - 1;
 					const HalfTexel gutter = f.nearTexel(tile, u, v);
-					if (const auto owner = nearAt(f, i, j)) {
-						EXPECT_EQ(gutter, *owner) << "tile " << tx << ", " << ty << " gutter " << u << ", " << v;
+					const int32_t	otx	   = i < 0 ? -1 : i / Field::kNearTileTexels;
+					const int32_t	oty	   = j < 0 ? -1 : j / Field::kNearTileTexels;
+					const bool		owned  = otx >= 0 && oty >= 0 && otx < Field::kTilesPerSide && oty < Field::kTilesPerSide &&
+										f.nearTileAt(otx, oty) != Field::kNoNearTile;
+					if (owned) {
+						const HalfTexel owner = f.nearTexel(
+							f.nearTileAt(otx, oty), i - otx * Field::kNearTileTexels + 1, j - oty * Field::kNearTileTexels + 1
+						);
+						EXPECT_EQ(gutter, owner) << "tile " << tx << ", " << ty << " gutter " << u << ", " << v;
 						++fromNeighbor;
 					} else {
 						const double x = nearCenterM(f, i, true);
@@ -729,6 +739,10 @@ TEST(TerrainDistanceFieldTest, GuttersHoldTheNeighboringSamples) {
 	}
 	EXPECT_GT(fromNeighbor, 0);
 	EXPECT_GT(analytic, 0);
+	// The far level's west gutter column, outside the square, holds the lake too.
+	const HalfTexel farGutter = f.farTexel(-1, 38); // (-513, 1101)
+	expectHalfNear(farGutter.r, clampSdf(rectSignedDistance(-513.0, 1101.0, x0, y0, x1, y1)), "far gutter");
+	EXPECT_LT(decode(farGutter.r), 0.0F);
 }
 
 // ============================================================================
@@ -737,7 +751,7 @@ TEST(TerrainDistanceFieldTest, GuttersHoldTheNeighboringSamples) {
 
 // Two chunks given the same world near their border (rings whole, in a
 // different order, each with an unrelated ring the other never sees; one
-// thalweg cut differently per chunk, one whole): every texel both bake is
+// thalweg cut differently per chunk, one whole): every texel both store is
 // bit-identical.
 TEST(TerrainDistanceFieldTest, HandBuiltRingsBakeIdenticallyAcrossABorder) {
 	Ring pond;
@@ -752,59 +766,58 @@ TEST(TerrainDistanceFieldTest, HandBuiltRingsBakeIdenticallyAcrossABorder) {
 	const TerrainRing channel =
 		makeRing(densify(rectRing(300.0, 400.0, 700.0, 406.0), 1.3), TerrainRingKind::Channel, WaterKind::River, true);
 	const TerrainRing pondRing = makeRing(pond, TerrainRingKind::Pond, WaterKind::Pond, true);
+	// A second channel crossing the border into the lake: its submerged banks are
+	// split and dropped the same way in both chunks.
+	const TerrainRing mouth =
+		makeRing(densify(rectRing(470.0, 238.0, 520.0, 243.0), 0.9), TerrainRingKind::Channel, WaterKind::River, true);
 	const TerrainRing westOnly = makeRing(rectRing(50.0, 50.0, 80.0, 80.0), TerrainRingKind::Waterline, WaterKind::Ocean, true);
 	const TerrainRing eastOnly = makeRing(rectRing(900.0, 50.0, 950.0, 80.0), TerrainRingKind::Waterline, WaterKind::Wetland, true);
 
 	auto hw	   = [](double s) { return static_cast<float>(3.0 + 0.5 * std::sin(s / 20.0)); };
 	auto ratio = [](double s) { return static_cast<float>(1.0 + 0.2 * std::sin(s / 13.0)); };
 	auto curv  = [](double s) { return static_cast<float>(0.04 * std::sin(s / 31.0)); };
-	// The channel's thalweg, each chunk's copy cut at a different place past the
-	// shared strip plus two half-widths.
-	const ThalwegPath westThalweg = thalwegThrough({{300.0, 403.0}, {540.0, 403.0}}, 0.5, hw, ratio, curv);
-	ThalwegPath		  eastThalweg = thalwegThrough({{300.0, 403.0}, {700.0, 403.0}}, 0.5, hw, ratio, curv);
+	// The channel's thalweg, each chunk's copy cut at a different place.
+	const ThalwegPath westThalweg = thalwegThrough({{300.0, 403.0}, {540.0, 403.0}}, 0.5, hw, ratio, curv, 777.0);
+	ThalwegPath		  eastThalweg = thalwegThrough({{300.0, 403.0}, {700.0, 403.0}}, 0.5, hw, ratio, curv, 777.0);
 	{
-		const auto first = static_cast<size_t>(std::find_if(eastThalweg.points.begin(), eastThalweg.points.end(),
-															 [](const Vec2i64& p) { return p.x >= 480000; }) -
-											   eastThalweg.points.begin());
-		eastThalweg.points.erase(eastThalweg.points.begin(), eastThalweg.points.begin() + static_cast<std::ptrdiff_t>(first));
-		eastThalweg.halfWidthM.erase(eastThalweg.halfWidthM.begin(), eastThalweg.halfWidthM.begin() + static_cast<std::ptrdiff_t>(first));
-		eastThalweg.widthRatio.erase(eastThalweg.widthRatio.begin(), eastThalweg.widthRatio.begin() + static_cast<std::ptrdiff_t>(first));
-		eastThalweg.curvature.erase(eastThalweg.curvature.begin(), eastThalweg.curvature.begin() + static_cast<std::ptrdiff_t>(first));
+		const auto first = static_cast<std::ptrdiff_t>(
+			std::find_if(eastThalweg.points.begin(), eastThalweg.points.end(), [](const Vec2i64& p) { return p.x >= 480000; }) -
+			eastThalweg.points.begin()
+		);
+		eastThalweg.points.erase(eastThalweg.points.begin(), eastThalweg.points.begin() + first);
+		eastThalweg.halfWidthM.erase(eastThalweg.halfWidthM.begin(), eastThalweg.halfWidthM.begin() + first);
+		eastThalweg.widthRatio.erase(eastThalweg.widthRatio.begin(), eastThalweg.widthRatio.begin() + first);
+		eastThalweg.curvature.erase(eastThalweg.curvature.begin(), eastThalweg.curvature.begin() + first);
+		eastThalweg.arcLengthM.erase(eastThalweg.arcLengthM.begin(), eastThalweg.arcLengthM.begin() + first);
 	}
 	// A wide river crossing the border diagonally, whole in both.
 	const ThalwegPath wide = thalwegThrough(
-		{{380.0, 300.0}, {640.0, 360.0}}, 0.5, [](double s) { return static_cast<float>(14.0 + 4.0 * std::sin(s / 40.0)); }, ratio, curv
+		{{380.0, 300.0}, {640.0, 360.0}}, 0.5, [](double s) { return static_cast<float>(14.0 + 4.0 * std::sin(s / 40.0)); }, ratio, curv, 31.0
 	);
 
-	const Field west = Field::bake(polygonsOf({westOnly, lake, island, channel, pondRing}, {westThalweg, wide}), {0, 0});
-	const Field east = Field::bake(polygonsOf({pondRing, channel, island, lake, eastOnly}, {wide, eastThalweg}), {1, 0});
+	const Field west = Field::bake(polygonsOf({westOnly, lake, island, channel, mouth, pondRing}, {westThalweg, wide}), {0, 0});
+	const Field east = Field::bake(polygonsOf({pondRing, mouth, channel, island, lake, eastOnly}, {wide, eastThalweg}), {1, 0});
 
-	const SeamDiff diff = compareSeam(west, east, 16.0);
+	const SeamDiff diff = compareSeam(west, east);
 	std::cout << "[ hand seam ] " << describe(diff) << "\n";
 	EXPECT_EQ(diff.different, 0U) << describe(diff);
-	EXPECT_GT(diff.waterSdf, 1000U);
-	EXPECT_GT(diff.profiles, 100U);
-	EXPECT_GT(diff.frames, 100U);
-	for (int32_t ty = 0; ty < Field::kTilesPerSide; ++ty) {
-		for (int32_t k = 0; k < 2; ++k) {
-			EXPECT_EQ(west.nearTileAt(32 + k, ty) == Field::kNoNearTile, east.nearTileAt(k, ty) == Field::kNoNearTile) << ty;
-		}
-	}
+	EXPECT_GT(diff.waterSdf, 300U);
+	EXPECT_GT(diff.profiles, 20U);
+	EXPECT_GT(diff.frames, 20U);
 }
 
 // The same check on rings the builder makes, each chunk from its own extended
 // tiles and gathered segments: a lake across the border, a meandering river
-// crossing it into the lake, and a narrow creek crossing it. Compared in the
-// band the shader samples across the border (the texels within 2 m of it) and,
-// for the report, over the whole shared strip.
+// crossing it into the lake, and a narrow creek crossing it. Fails until the
+// unclipped rings are seam-exact near the border and reach far enough past it.
 TEST(TerrainDistanceFieldTest, BuilderRingsBakeIdenticallyAcrossABorder) {
 	auto biome = [](int64_t tx, int64_t ty) {
 		return (tx >= 490 && tx < 560 && ty >= 200 && ty < 290) ? Biome::Lake : Biome::TemperateGrassland;
 	};
 	std::vector<Segment> rivers;
-	auto				 riverAlong = [&rivers](double x0, double x1, const std::function<double(double)>& y, const std::function<double(double)>& hw) {
+	auto riverAlong = [&rivers](double x0, double x1, const std::function<double(double)>& y, const std::function<double(double)>& hw) {
 		for (double x = x0; x < x1; x += 15.0) {
-			rivers.push_back({x, y(x), x + 15.0, y(x + 15.0), static_cast<float>(hw(x)), static_cast<float>(hw(x + 15.0))});
+			rivers.push_back({x, y(x), x + 15.0, y(x + 15.0), static_cast<float>(hw(x)), static_cast<float>(hw(x + 15.0)), x, x + 15.0});
 		}
 	};
 	riverAlong(200.0, 530.0, [](double x) { return 330.0 + 20.0 * std::sin(kTwoPi * x / 130.0); }, [](double) { return 4.0; });
@@ -831,13 +844,11 @@ TEST(TerrainDistanceFieldTest, BuilderRingsBakeIdenticallyAcrossABorder) {
 	const Field west = Field::bake(westPolys, {0, 0});
 	const Field east = Field::bake(eastPolys, {1, 0});
 
-	const SeamDiff band	 = compareSeam(west, east, 2.0);
-	const SeamDiff strip = compareSeam(west, east, 16.0);
-	std::cout << "[ builder seam, 2 m band ] " << describe(band) << "\n";
-	std::cout << "[ builder seam, 16 m strip ] " << describe(strip) << "\n";
-	EXPECT_GT(band.waterSdf, 100U);
-	EXPECT_GT(band.frames, 10U);
-	EXPECT_EQ(band.different, 0U) << describe(band);
+	const SeamDiff diff = compareSeam(west, east);
+	std::cout << "[ builder seam ] " << describe(diff) << "\n";
+	EXPECT_GT(diff.waterSdf, 100U);
+	EXPECT_GT(diff.frames, 5U);
+	EXPECT_EQ(diff.different, 0U) << describe(diff);
 }
 
 // ============================================================================
@@ -852,7 +863,7 @@ TEST(TerrainDistanceFieldTest, AllLandChunkStoresNothing) {
 	const Field& f = chunk->terrainDistanceField();
 	EXPECT_EQ(f.version, chunk->terrainPolygons().version);
 	EXPECT_EQ(f.version, 1U);
-	EXPECT_EQ(f.originMm, (Vec2i64{3 * 512000 - 16000, -2 * 512000 - 16000}));
+	EXPECT_EQ(f.originMm, (Vec2i64{3 * 512000, -2 * 512000}));
 	EXPECT_EQ(f.nearTileCount(), 0U);
 	EXPECT_TRUE(f.farTexels.empty());
 	EXPECT_TRUE(f.shoreProfile.empty());
@@ -865,11 +876,11 @@ TEST(TerrainDistanceFieldTest, IdenticalAcrossThreadCounts) {
 	std::vector<Segment> rivers;
 	for (double x = -40.0; x < 1060.0; x += 15.0) {
 		auto y = [](double v) { return 250.0 + 30.0 * std::sin(kTwoPi * v / 150.0); };
-		rivers.push_back({x, y(x), x + 15.0, y(x + 15.0), 3.5F, 3.5F});
+		rivers.push_back({x, y(x), x + 15.0, y(x + 15.0), 3.5F, 3.5F, x + 40.0, x + 55.0});
 	}
-	const std::vector<TerrainPolygonBuilder::Pond> ponds = {{512.4, 400.2, 14.0F, 0.9F, 2.3F, 200}};
+	const std::vector<TerrainPolygonBuilder::Pond> ponds  = {{512.4, 400.2, 14.0F, 0.9F, 2.3F, 200}};
 	const std::vector<ChunkCoordinate>			   coords = {{0, 0}, {1, 0}, {0, 1}, {1, 1}};
-	auto generate = [&rivers, &ponds](ChunkCoordinate c) {
+	auto										   generate = [&rivers, &ponds](ChunkCoordinate c) {
 		ChunkSampleResult sample = makeUniformChunkSampleResult(BiomeWeights::single(Biome::TemperateGrassland), 10.0F);
 		sample.riverSegments	 = rivers;
 		sample.pondBlobs		 = ponds;

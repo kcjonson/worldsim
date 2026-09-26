@@ -134,6 +134,7 @@ namespace {
 			thalweg.halfWidthM.push_back(static_cast<float>(kHalfWidthM));
 			thalweg.widthRatio.push_back(1.0F);
 			thalweg.curvature.push_back(0.0F);
+			thalweg.arcLengthM.push_back(x - x0);
 		}
 		polys.thalwegs.push_back(std::move(thalweg));
 		runBake(state, polys, kCoord);

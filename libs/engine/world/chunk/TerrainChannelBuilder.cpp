@@ -121,9 +121,13 @@ namespace engine::world::terrain_detail {
 
 		// ---- Chains: gathered segments joined end to end (D7 step 1) ----
 
+		// sIn/sOut: the arc coordinate of the segment arriving at and leaving the
+		// node (they differ where a coarse tile joint resets it).
 		struct ChainNode {
 			Vec2i64 mm;
 			double	halfWidthM = 0.0;
+			double	sIn		   = 0.0;
+			double	sOut	   = 0.0;
 		};
 		using Chain = std::vector<ChainNode>;
 
@@ -140,6 +144,8 @@ namespace engine::world::terrain_detail {
 				Vec2i64 b;
 				double	hw0 = 0.0;
 				double	hw1 = 0.0;
+				double	s0	= 0.0;
+				double	s1	= 0.0;
 			};
 			std::vector<Edge> edges;
 			edges.reserve(segments.size());
@@ -147,11 +153,11 @@ namespace engine::world::terrain_detail {
 				const Vec2i64 a = toMm({s.x0, s.y0});
 				const Vec2i64 b = toMm({s.x1, s.y1});
 				if (a != b) {
-					edges.push_back({a, b, static_cast<double>(s.halfWidth0), static_cast<double>(s.halfWidth1)});
+					edges.push_back({a, b, static_cast<double>(s.halfWidth0), static_cast<double>(s.halfWidth1), s.s0, s.s1});
 				}
 			}
 			std::sort(edges.begin(), edges.end(), [](const Edge& l, const Edge& r) {
-				return std::tie(l.a, l.b, l.hw0, l.hw1) < std::tie(r.a, r.b, r.hw0, r.hw1);
+				return std::tie(l.a, l.b, l.hw0, l.hw1, l.s0, l.s1) < std::tie(r.a, r.b, r.hw0, r.hw1, r.s0, r.s1);
 			});
 			edges.erase(
 				std::unique(edges.begin(), edges.end(), [](const Edge& l, const Edge& r) { return l.a == r.a && l.b == r.b; }),
@@ -178,11 +184,12 @@ namespace engine::world::terrain_detail {
 			std::vector<Chain>	 chains;
 			std::vector<uint8_t> used(edges.size(), 0);
 			auto				 walk = [&](size_t first) {
-				Chain  chain{{edges[first].a, edges[first].hw0}};
+				Chain  chain{{edges[first].a, edges[first].hw0, edges[first].s0, edges[first].s0}};
 				size_t e = first;
 				while (true) {
-					used[e] = 1;
-					chain.push_back({edges[e].b, edges[e].hw1});
+					used[e]			  = 1;
+					chain.back().sOut = edges[e].s0;
+					chain.push_back({edges[e].b, edges[e].hw1, edges[e].s1, edges[e].s1});
 					if (!through(edges[e].b)) {
 						break;
 					}
@@ -292,6 +299,7 @@ namespace engine::world::terrain_detail {
 			double flare		 = 1.0;	  // mouth widening, a factor on the half-width
 			double asymmetry	 = 1.0;	  // share of the bend asymmetry kept, faded out over a flare
 			float  widthRatio	 = 1.0F;  // ThalwegPath::widthRatio
+			double arcLengthM	 = 0.0;	  // ThalwegPath::arcLengthM
 		};
 
 		struct Reach {
@@ -348,7 +356,8 @@ namespace engine::world::terrain_detail {
 		// receiving rings, never of where the chain starts or ends, so neighbors
 		// agree wherever they see the same transition.
 		void splitRun(const std::vector<geometry::CenterlineSample>& samples, const std::vector<float>& ratios,
-					  const std::vector<Ground>& ground, size_t first, size_t last, std::vector<Reach>& out) {
+					  const std::vector<double>& arcs, const std::vector<Ground>& ground, size_t first, size_t last,
+					  std::vector<Reach>& out) {
 			const size_t		 count = last - first + 1;
 			std::vector<uint8_t> include(count, 1);
 			std::vector<double>	 flare(count, 1.0);
@@ -441,7 +450,7 @@ namespace engine::world::terrain_detail {
 				reach.trimmedStart = i == first && first > 0;
 				size_t j		   = i;
 				while (j <= last && include[j - first] != 0) {
-					reach.points.push_back({pos(j), hw(j), flare[j - first], asymmetry[j - first], ratios[j]});
+					reach.points.push_back({pos(j), hw(j), flare[j - first], asymmetry[j - first], ratios[j], arcs[j]});
 					++j;
 				}
 				const size_t end = j - 1;
@@ -452,7 +461,7 @@ namespace engine::world::terrain_detail {
 					const auto	 steps = std::max<size_t>(1, static_cast<size_t>(std::ceil(*extensionM / Builder::kCenterlineSpacingM)));
 					for (size_t q = 1; q <= steps; ++q) {
 						const double along = *extensionM * static_cast<double>(q) / static_cast<double>(steps);
-						reach.points.push_back({pos(end) + dir * along, hw(end), Builder::kMouthFlare, 0.0, 1.0F});
+						reach.points.push_back({pos(end) + dir * along, hw(end), Builder::kMouthFlare, 0.0, 1.0F, arcs[end] + along});
 					}
 				}
 				if (reach.points.size() >= 2) {
@@ -462,8 +471,8 @@ namespace engine::world::terrain_detail {
 			}
 		}
 
-		std::vector<Reach> extractReaches(const std::vector<geometry::CenterlineSample>& samples, const Region& region,
-										  const WaterBodies& water) {
+		std::vector<Reach> extractReaches(const std::vector<geometry::CenterlineSample>& samples, const std::vector<double>& arcs,
+										  const Region& region, const WaterBodies& water) {
 			const size_t		 n = samples.size();
 			std::vector<uint8_t> kept(n);
 			std::vector<Ground>	 ground(n);
@@ -483,7 +492,7 @@ namespace engine::world::terrain_detail {
 				while (j + 1 < n && kept[j + 1] != 0) {
 					++j;
 				}
-				splitRun(samples, ratios, ground, i, j, reaches);
+				splitRun(samples, ratios, arcs, ground, i, j, reaches);
 				i = j + 1;
 			}
 			return reaches;
@@ -509,6 +518,7 @@ namespace engine::world::terrain_detail {
 			double leftM		 = 0.0;
 			double rightM		 = 0.0;
 			float  widthRatio	 = 1.0F;
+			double arcLengthM	 = 0.0;
 			bool   cut			 = false; // a fordability cut, shared by the pieces either side
 		};
 
@@ -586,6 +596,7 @@ namespace engine::world::terrain_detail {
 				p.kappa			= kappa[k];
 				p.radiusM		= radius[k];
 				p.widthRatio	= pts[k].widthRatio;
+				p.arcLengthM	= pts[k].arcLengthM;
 				bankOffsets(p, pts[k].flare, pts[k].asymmetry, seeds);
 				out.push_back(p);
 			};
@@ -622,6 +633,7 @@ namespace engine::world::terrain_detail {
 				p.kappa			= lerp(kappa[k], kappa[k + 1], u);
 				p.radiusM		= p.kappa != 0.0 ? 1.0 / std::abs(p.kappa) : std::numeric_limits<double>::infinity();
 				p.widthRatio	= static_cast<float>(lerp(pts[k].widthRatio, pts[k + 1].widthRatio, u));
+				p.arcLengthM	= lerp(pts[k].arcLengthM, pts[k + 1].arcLengthM, u);
 				p.cut			= true;
 				bankOffsets(p, lerp(pts[k].flare, pts[k + 1].flare, u), lerp(pts[k].asymmetry, pts[k + 1].asymmetry, u), seeds);
 				out.push_back(p);
@@ -748,6 +760,7 @@ namespace engine::world::terrain_detail {
 				path.halfWidthM.push_back(static_cast<float>(p.halfWidthM));
 				path.widthRatio.push_back(p.widthRatio);
 				path.curvature.push_back(static_cast<float>(p.kappa));
+				path.arcLengthM.push_back(p.arcLengthM);
 			}
 			flush();
 		}
@@ -788,8 +801,15 @@ namespace engine::world::terrain_detail {
 			}
 			const std::vector<geometry::CenterlineSample> samples =
 				geometry::sampleCatmullRom(points, halfWidths, Builder::kCenterlineSpacingM);
+			// Arc coordinate linear within each span, from the segment leaving its
+			// first node to the one arriving at its last.
+			std::vector<double> arcs(samples.size());
+			for (size_t i = 0; i < samples.size(); ++i) {
+				const geometry::CenterlineSample& s = samples[i];
+				arcs[i] = lerp(chain[s.segment].sOut, chain[s.segment + 1].sIn, s.t);
+			}
 
-			for (const Reach& reach : extractReaches(samples, region, water)) {
+			for (const Reach& reach : extractReaches(samples, arcs, region, water)) {
 				const std::vector<RibbonPoint> ribbon = ribbonPoints(reach, seeds);
 				appendThalwegs(ribbon, region, out.thalwegs);
 				for (ChannelPiece& piece : strokeReach(reach, ribbon)) {

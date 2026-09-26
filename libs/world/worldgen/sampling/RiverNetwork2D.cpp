@@ -337,6 +337,7 @@ void RiverNetwork2D::emitSegment(TileId tile, double minX, double minY, double m
         double prevX = 0.0;
         double prevY = 0.0;
         float  prevHW = 0.0f;
+        double prevS = 0.0;
         bool   havePrev = false;
         for (long k = kFirst; k <= kLast; ++k) {
             const double s = std::clamp(static_cast<double>(k) * kStepMeters, 0.0, length);
@@ -348,12 +349,13 @@ void RiverNetwork2D::emitSegment(TileId tile, double minX, double minY, double m
                 const double pad = static_cast<double>(std::max(prevHW, hw));
                 if (std::max(prevX, cx) + pad >= minX && std::min(prevX, cx) - pad <= maxX &&
                     std::max(prevY, cy) + pad >= minY && std::min(prevY, cy) - pad <= maxY) {
-                    out.push_back({prevX, prevY, cx, cy, prevHW, hw});
+                    out.push_back({prevX, prevY, cx, cy, prevHW, hw, prevS, s});
                 }
             }
             prevX = cx;
             prevY = cy;
             prevHW = hw;
+            prevS = s;
             havePrev = true;
         }
     }
@@ -391,6 +393,7 @@ void RiverNetwork2D::emitSegment(TileId tile, double minX, double minY, double m
         double pfx = sx;
         double pfy = sy;
         float  pfh = static_cast<float>(mouthHalf);
+        double pAlong = 0.0;
         for (int i = 1; i <= fSteps; ++i) {
             const double f = static_cast<double>(i) / static_cast<double>(fSteps);
             const double along = len * f;
@@ -410,11 +413,12 @@ void RiverNetwork2D::emitSegment(TileId tile, double minX, double minY, double m
                 // toward the spring), (x1,y1) the previous one (a step closer to the
                 // confluence with the parent), matching the trunk's upstream ->
                 // downstream orientation (Segment's contract, RiverNetwork2D.h).
-                out.push_back({fx, fy, pfx, pfy, fhw, pfh});
+                out.push_back({fx, fy, pfx, pfy, fhw, pfh, len - along, len - pAlong});
             }
             pfx = fx;
             pfy = fy;
             pfh = fhw;
+            pAlong = along;
         }
     };
 
