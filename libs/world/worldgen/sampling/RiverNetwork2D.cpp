@@ -42,13 +42,6 @@ constexpr double kWidthVariation = 0.28; // +/- riffle fraction of the hydraulic
 constexpr double kPoolWavelen    = 560.0;
 constexpr double kPoolStrength   = 0.60; // extra width at a pool crest
 
-// Render contiguity floor. Tiles are 1 m, so a channel rasterized narrower than
-// ~1.5 m breaks into a dotted, non-contiguous line on the grid. Hold every
-// emitted half-width at or above this; a stream's thinness is shown by its
-// (shallow) depth -- derived downstream from width -- not by a sub-tile channel.
-// 0.8 m half-width guarantees a 4-connected ribbon at any orientation.
-constexpr float kRenderMinHalf = 0.8f;
-
 // Polyline density near the query box: ~20 m straight pieces resolve the wander.
 // Sampled on a GLOBAL arc-length grid (multiples of kStepMeters from the segment
 // source) so adjacent chunks emit identical points where they overlap -> seamless.
@@ -61,6 +54,14 @@ constexpr double kStepMeters = 20.0;
 constexpr float kWidthCoef = 1.1f;
 constexpr float kMinWidth  = 0.6f;
 constexpr float kMaxWidth  = 110.0f;
+
+// True half-width a feeder tapers to at its spring end: half the hydraulic-
+// geometry minimum width, so a spring reads as vanishing to a trickle rather
+// than snapping to some render-driven floor. Emitted widths carry no floor at
+// all now -- the ribbon builder strokes the channel at its real width, and the
+// 1 m tile grid's own contiguity floor lives with the tile rasterizer
+// (ChunkSampleResult::riverHalfWidthAt), not here.
+constexpr float kTrickleHalf = kMinWidth / 2.0f;
 
 // Procedural short feeders (springs/streams) branching off rendered river
 // channels. SHORT relative to the ~50 km coarse-tile span (the coarse 3D graph
@@ -310,7 +311,7 @@ void RiverNetwork2D::emitSegment(TileId tile, double minX, double minY, double m
         // base width -- no width step at the seam. Flow (hence baseHalf) already
         // matches there because both segments read the shared tile's flowAccum.
         const double wv = 1.0 + env * (widthVariation(s, phaseW, phaseP) - 1.0);
-        ohw = std::max(kRenderMinHalf, static_cast<float>(baseHalf * wv));
+        ohw = static_cast<float>(baseHalf * wv);
     };
 
     // Restrict to the stretch of the segment near the query box: project the box
@@ -379,11 +380,11 @@ void RiverNetwork2D::emitSegment(TileId tile, double minX, double minY, double m
         // Mouth width grows with length (a longer stream drains more): stubs stay a
         // trickle, the longest run wide -- but never wider than the parent it joins.
         const double lenFrac = std::clamp((len - kFeederLenMin) / (kFeederLenMax - kFeederLenMin), 0.0, 1.0);
-        const double widthTarget = static_cast<double>(kRenderMinHalf) +
+        const double widthTarget = static_cast<double>(kTrickleHalf) +
                                    foundation::det_math::sqrt(lenFrac) *
-                                       (kFeederMouthMaxHalf - static_cast<double>(kRenderMinHalf));
+                                       (kFeederMouthMaxHalf - static_cast<double>(kTrickleHalf));
         const double mouthHalf = std::clamp(std::min(widthTarget, parentHalfHere * 0.8),
-                                            static_cast<double>(kRenderMinHalf), kFeederMouthMaxHalf);
+                                            static_cast<double>(kTrickleHalf), kFeederMouthMaxHalf);
         const double phaseFP = 2.0 * kPi * hashUnit(foundation::hashCombine(fh, 0x9));
         const int fSteps = std::clamp(static_cast<int>(std::lround(len / kFeederStepMeters)), 3, 100);
 
@@ -399,14 +400,17 @@ void RiverNetwork2D::emitSegment(TileId tile, double minX, double minY, double m
             const double moff = kFeederMeanderAmp * env * meanderNoise(along / kFeederMeanderFeature, fh);
             const double fx = sx + dux * along + fpx * moff;
             const double fy = sy + duy * along + fpy * moff;
-            // Taper mouth -> trickle (render floor), with riffle/pool play.
-            const double taper = mouthHalf + (static_cast<double>(kRenderMinHalf) - mouthHalf) * f;
-            const float fhw = std::max(kRenderMinHalf,
-                                       static_cast<float>(taper * widthVariation(along, phaseFP, phaseFP * 1.7)));
+            // Taper mouth -> true trickle, with riffle/pool play.
+            const double taper = mouthHalf + (static_cast<double>(kTrickleHalf) - mouthHalf) * f;
+            const float fhw = static_cast<float>(taper * widthVariation(along, phaseFP, phaseFP * 1.7));
             const double pad = static_cast<double>(std::max(pfh, fhw));
             if (std::max(pfx, fx) + pad >= minX && std::min(pfx, fx) - pad <= maxX &&
                 std::max(pfy, fy) + pad >= minY && std::min(pfy, fy) - pad <= maxY) {
-                out.push_back({pfx, pfy, fx, fy, pfh, fhw});
+                // Spring -> mouth: (x0,y0) is this step's point (farther upstream,
+                // toward the spring), (x1,y1) the previous one (a step closer to the
+                // confluence with the parent), matching the trunk's upstream ->
+                // downstream orientation (Segment's contract, RiverNetwork2D.h).
+                out.push_back({fx, fy, pfx, pfy, fhw, pfh});
             }
             pfx = fx;
             pfy = fy;

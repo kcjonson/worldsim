@@ -43,13 +43,26 @@ namespace engine::world {
 
 		result.computeSectorGrid();
 
-		// Gather any river channels and ponds touching this chunk.
+		// Gather any river channels and ponds touching this chunk, padded by
+		// kRiverChainMarginM beyond the chunk square. A river is gathered as many
+		// short sub-segments; the ribbon builder (terrain-polygons-architecture.md
+		// D7) joins them into chains and needs each chain's cut ends well outside
+		// what this chunk will ever draw, or the cut itself would show. 48 m is two
+		// of RiverNetwork2D's 20 m trunk steps plus the 8 m apron the builder reads
+		// its samples through (D4) -- this chunk layer has no apron of its own yet,
+		// so the margin is applied directly to the plain chunk square. Ponds get
+		// the same margin so a channel's mouth flare can find a receiving pond just
+		// past the edge; gatherPonds already widens further by each pond's own
+		// footprint on top of this.
 		if (riverNetwork || pondNetwork) {
+			constexpr double kRiverChainMarginM = 48.0;
 			const WorldPosition origin = coord.origin();
-			const double minX = static_cast<double>(origin.x);
-			const double minY = static_cast<double>(origin.y);
-			const double maxX = minX + static_cast<double>(kChunkSize) * static_cast<double>(kTileSize);
-			const double maxY = minY + static_cast<double>(kChunkSize) * static_cast<double>(kTileSize);
+			const double minX = static_cast<double>(origin.x) - kRiverChainMarginM;
+			const double minY = static_cast<double>(origin.y) - kRiverChainMarginM;
+			const double maxX = static_cast<double>(origin.x) +
+			                    static_cast<double>(kChunkSize) * static_cast<double>(kTileSize) + kRiverChainMarginM;
+			const double maxY = static_cast<double>(origin.y) +
+			                    static_cast<double>(kChunkSize) * static_cast<double>(kTileSize) + kRiverChainMarginM;
 			if (riverNetwork) riverNetwork->gatherSegments(minX, minY, maxX, maxY, result.riverSegments);
 			if (pondNetwork) pondNetwork->gatherPonds(minX, minY, maxX, maxY, result.pondBlobs);
 		}
