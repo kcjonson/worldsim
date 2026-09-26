@@ -3,6 +3,8 @@
 #include "MemoryQueries.h"
 #include "Transform.h"
 
+#include "../systems/NavigationSystem.h"
+
 #include "assets/AssetRegistry.h"
 #include "world/chunk/ChunkCoordinate.h"
 #include "world/chunk/ChunkManager.h"
@@ -56,12 +58,19 @@ constexpr float kFoodAvoidanceRadius = 15.0F;   // Distance to avoid from food
 	return positions;
 }
 
-/// Check if a tile at the given world position is valid for toilet use
-[[nodiscard]] bool isValidToiletTile(
+/// Check if the given world position is valid for toilet use
+[[nodiscard]] bool isValidToiletSpot(
 	const glm::vec2& pos,
-	const engine::world::ChunkManager& chunkManager
+	const engine::world::ChunkManager& chunkManager,
+	const NavigationSystem& navigation
 ) {
 	using namespace engine::world;
+
+	// Rule 1: somewhere a colonist can stand. Water (the terrain rings) and anything
+	// else off the nav mesh is out.
+	if (!navigation.isValidPosition(pos)) {
+		return false;
+	}
 
 	// Convert to chunk coordinate and local tile
 	WorldPosition worldPos{pos.x, pos.y};
@@ -77,12 +86,9 @@ constexpr float kFoodAvoidanceRadius = 15.0F;   // Distance to avoid from food
 	// Get tile data
 	const TileData& tile = chunk->getTile(localX, localY);
 
-	// Rule 1: Must NOT be water
-	if (tile.surface == Surface::Water) {
-		return false;
-	}
-
-	// Rule 2: Must NOT be adjacent to water (shore tiles rejected)
+	// Rule 2: Must NOT be adjacent to water (shore tiles rejected). Still the tile
+	// adjacency: distance to the water rings arrives with the shore query (terrain
+	// polygons D11).
 	if (TileAdjacency::hasAdjacentSurface(tile.adjacency, kWaterSurfaceId)) {
 		return false;
 	}
@@ -129,6 +135,7 @@ constexpr float kFoodAvoidanceRadius = 15.0F;   // Distance to avoid from food
 std::optional<glm::vec2> findToiletLocation(
 	const glm::vec2& colonistPos,
 	const engine::world::ChunkManager& chunkManager,
+	const NavigationSystem& navigation,
 	World& /*ecsWorld*/,
 	const Memory& memory,
 	const engine::assets::AssetRegistry& registry,
@@ -158,8 +165,8 @@ std::optional<glm::vec2> findToiletLocation(
 				continue;
 			}
 
-			// Validate tile (not water, not shore)
-			if (!isValidToiletTile(candidate, chunkManager)) {
+			// Validate spot (walkable, not shore)
+			if (!isValidToiletSpot(candidate, chunkManager, navigation)) {
 				continue;
 			}
 

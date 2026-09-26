@@ -5,7 +5,7 @@
 // See /docs/design/game-systems/colonists/needs.md for spec (lines 66-71).
 //
 // Hard-coded rules:
-// 1. Must be outdoors (not water tile)
+// 1. Must be walkable ground (nav mesh; water rings block)
 // 2. NOT adjacent to water (shore tiles rejected)
 // 3. PREFER near existing waste (clustering bonus)
 // 4. AVOID proximity to food sources (penalty)
@@ -25,17 +25,19 @@ namespace engine::assets {
 
 namespace ecs {
 
+	class NavigationSystem;
 	class World;
 
 	/// Find a suitable toilet location near the given position.
-	/// Searches for a valid tile that:
-	/// - Is not water
+	/// Searches for a valid spot that:
+	/// - Is on walkable nav mesh (not water, not inside an obstacle)
 	/// - Is not adjacent to water (shore)
 	/// - Prefers clustering near existing BioPiles (from memory)
 	/// - Avoids proximity to food sources (from memory)
 	///
 	/// @param colonistPos Current colonist world position
-	/// @param chunkManager For terrain tile queries (surface, adjacency)
+	/// @param chunkManager For the shore rule (tile adjacency)
+	/// @param navigation Walkability authority (NavigationSystem::isValidPosition)
 	/// @param ecsWorld Reserved for future use (currently unused)
 	/// @param memory Colonist memory for querying known bio piles and food sources
 	/// @param registry Asset registry for capability lookups
@@ -44,6 +46,7 @@ namespace ecs {
 	[[nodiscard]] std::optional<glm::vec2> findToiletLocation(
 		const glm::vec2&						 colonistPos,
 		const engine::world::ChunkManager&		 chunkManager,
+		const NavigationSystem&					 navigation,
 		World&									 ecsWorld,
 		const Memory&							 memory,
 		const engine::assets::AssetRegistry&	 registry,
