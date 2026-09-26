@@ -15,6 +15,8 @@ namespace world_sim {
 	namespace {
 		constexpr Foundation::Color kRingEdge{0.2F, 0.9F, 0.95F, 0.85F};	  // cyan
 		constexpr Foundation::Color kSyntheticEdge{0.95F, 0.2F, 0.9F, 0.85F}; // magenta: apron closure, not a real shore (D4)
+		constexpr Foundation::Color kFordableCutEdge{1.0F, 0.55F, 0.1F, 0.9F}; // orange: butt edge between channel pieces (D7)
+		constexpr float				kFordableAlphaScale = 0.4F;				   // a fordable ring nav skips, drawn dimmer
 		constexpr Foundation::Color kNavRingEdge{1.0F, 0.9F, 0.15F, 0.8F};	  // yellow
 		constexpr Foundation::Color kChunkOutline{1.0F, 1.0F, 1.0F, 0.18F};	  // faint white
 
@@ -67,15 +69,16 @@ namespace world_sim {
 
 		// Draw one ring set (rings or navRings): every edge, colored by kind, with
 		// small vertex dots once zoomed in enough to make them useful rather than
-		// clutter. Synthetic apron-closure edges (D4) get their own color so they
-		// are never mistaken for real shore.
+		// clutter. Synthetic apron-closure edges (D4) and fordable cuts between
+		// channel pieces (D7) get their own colors so they are never mistaken for
+		// real shore; fordable rings, which nav skips, are dimmer.
 		auto drawRings = [&](const std::vector<engine::world::TerrainRing>& rings,
 							 const std::string&								idBase,
 							 const char*									tag,
 							 Foundation::Color								edgeColor,
 							 float											lineWidth,
 							 int											zIndex,
-							 bool											flagSynthetic) {
+							 bool											readProfileFlags) {
 			for (std::size_t ri = 0; ri < rings.size(); ++ri) {
 				const engine::world::TerrainRing& terrainRing = rings[ri];
 				const geometry::Ring&			  ring = terrainRing.ring;
@@ -92,8 +95,17 @@ namespace world_sim {
 					const Foundation::Vec2 start = camera->worldToScreen(startWorld.x, startWorld.y, viewportW, viewportH, kPixelsPerMeter);
 					const Foundation::Vec2 end = camera->worldToScreen(endWorld.x, endWorld.y, viewportW, viewportH, kPixelsPerMeter);
 
-					const bool synthetic = flagSynthetic && i < terrainRing.profiles.size() &&
-										   (terrainRing.profiles[i].flags & engine::world::ShoreProfile::kFlagSynthetic) != 0;
+					const bool hasProfiles = readProfileFlags && terrainRing.profiles.size() == n;
+					auto	   flagged = [&](std::size_t v, uint8_t flag) {
+						  return hasProfiles && (terrainRing.profiles[v].flags & flag) != 0;
+					};
+					const bool synthetic = flagged(i, engine::world::ShoreProfile::kFlagSynthetic);
+					const bool fordableCut = flagged(i, engine::world::ShoreProfile::kFlagFordableCut) &&
+											 flagged(next, engine::world::ShoreProfile::kFlagFordableCut);
+					Foundation::Color color = synthetic ? kSyntheticEdge : (fordableCut ? kFordableCutEdge : edgeColor);
+					if (!terrainRing.blocksMovement) {
+						color.a *= kFordableAlphaScale;
+					}
 
 					const std::string edgeId = ringIdBase + "_e" + std::to_string(i);
 					Renderer::Primitives::drawLine(
@@ -102,7 +114,7 @@ namespace world_sim {
 							.end = end,
 							.style =
 								Foundation::LineStyle{
-									.color = synthetic ? kSyntheticEdge : edgeColor,
+									.color = color,
 									.width = lineWidth,
 								},
 							.id = edgeId.c_str(),
@@ -167,8 +179,8 @@ namespace world_sim {
 			}
 
 			const engine::world::ChunkTerrainPolygons& polys = chunk->terrainPolygons();
-			drawRings(polys.rings, idBase, "ring", kRingEdge, 1.5F, kZRingEdge, /*flagSynthetic=*/true);
-			drawRings(polys.navRings, idBase, "nav", kNavRingEdge, 1.0F, kZNavRingEdge, /*flagSynthetic=*/false);
+			drawRings(polys.rings, idBase, "ring", kRingEdge, 1.5F, kZRingEdge, /*readProfileFlags=*/true);
+			drawRings(polys.navRings, idBase, "nav", kNavRingEdge, 1.0F, kZNavRingEdge, /*readProfileFlags=*/false);
 		}
 	}
 
