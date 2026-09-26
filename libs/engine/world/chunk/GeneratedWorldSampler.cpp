@@ -47,16 +47,16 @@ namespace engine::world {
 		                         [this](WorldPosition p) { return sampleBiomeAt(p); },
 		                         [this](WorldPosition p) { return sampleElevation(p); });
 
-		// Gather any river channels and ponds touching this chunk, expanded by the
-		// apron so the terrain-polygon builder's apron tiles (up to kApronTiles from
-		// the border) see every channel/pond a neighbor chunk would (D4 seam rule).
+		// Gather any river channels and ponds touching this chunk, padded by
+		// kRiverGatherMarginM beyond the chunk square (see its comment).
 		if (riverNetwork || pondNetwork) {
 			const WorldPosition origin = coord.origin();
-			const double apronMeters = static_cast<double>(kApronTiles) * static_cast<double>(kTileSize);
-			const double minX = static_cast<double>(origin.x) - apronMeters;
-			const double minY = static_cast<double>(origin.y) - apronMeters;
-			const double maxX = minX + static_cast<double>(kChunkSize) * static_cast<double>(kTileSize) + 2.0 * apronMeters;
-			const double maxY = minY + static_cast<double>(kChunkSize) * static_cast<double>(kTileSize) + 2.0 * apronMeters;
+			const double minX = static_cast<double>(origin.x) - kRiverGatherMarginM;
+			const double minY = static_cast<double>(origin.y) - kRiverGatherMarginM;
+			const double maxX = static_cast<double>(origin.x) +
+			                    static_cast<double>(kChunkSize) * static_cast<double>(kTileSize) + kRiverGatherMarginM;
+			const double maxY = static_cast<double>(origin.y) +
+			                    static_cast<double>(kChunkSize) * static_cast<double>(kTileSize) + kRiverGatherMarginM;
 			if (riverNetwork) riverNetwork->gatherSegments(minX, minY, maxX, maxY, result.riverSegments);
 			if (pondNetwork) pondNetwork->gatherPonds(minX, minY, maxX, maxY, result.pondBlobs);
 		}

@@ -163,6 +163,32 @@ TEST(PondNetwork2D, SeamStraddlingPondIsConsistent) {
     EXPECT_GT(matched, 0) << "expected shared ponds in the overlap region";
 }
 
+// rimRadiusAt is the shared rim-shape function the future ribbon builder will
+// walk to draw a pond's ring; it must agree exactly with the inside/outside
+// call sampleDepth makes at the same angle, on every ray around a pond.
+TEST(PondNetwork2D, RimRadiusAtAgreesWithSampleDepth) {
+    auto world = makeWorld(Biome::TemperateWetland, 1600, false);
+    PondNetwork2D net(world, 0.0, 0.0);
+    std::vector<PondNetwork2D::Pond> ponds;
+    net.gatherPonds(-3000.0, -3000.0, 3000.0, 3000.0, ponds);
+    ASSERT_FALSE(ponds.empty());
+    const PondNetwork2D::Pond& p = ponds.front();
+
+    for (int i = 0; i < 360; ++i) {
+        const double theta = static_cast<double>(i) * (3.14159265358979323846 / 180.0);
+        const double rim = PondNetwork2D::rimRadiusAt(p, theta);
+        // A hair inside vs outside the rim along this exact ray.
+        const double xIn = p.cx + (rim - 0.05) * std::cos(theta);
+        const double yIn = p.cy + (rim - 0.05) * std::sin(theta);
+        const double xOut = p.cx + (rim + 0.05) * std::cos(theta);
+        const double yOut = p.cy + (rim + 0.05) * std::sin(theta);
+        EXPECT_GT(PondNetwork2D::sampleDepth(p, xIn, yIn), 0)
+            << "just inside the rim at theta=" << theta << " should read as water";
+        EXPECT_EQ(PondNetwork2D::sampleDepth(p, xOut, yOut), 0)
+            << "just outside the rim at theta=" << theta << " should read as dry";
+    }
+}
+
 TEST(PondNetwork2D, DepthInsidePondAndDryElsewhere) {
     auto world = makeWorld(Biome::TemperateWetland, 1600, false);
     PondNetwork2D net(world, 0.0, 0.0);

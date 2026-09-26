@@ -53,7 +53,11 @@ namespace engine::world {
 			const ApronField	apron = ApronField::build(m_coord, m_biomeData, m_worldSeed);
 			const ExtendedTiles extended(*this, apron);
 			setTerrainPolygons(TerrainPolygonBuilder::build(
-				m_coord, m_worldSeed, [&extended](int32_t ex, int32_t ey) -> const TileData& { return extended.at(ex, ey); }
+				m_coord,
+				m_worldSeed,
+				[&extended](int32_t ex, int32_t ey) -> const TileData& { return extended.at(ex, ey); },
+				m_biomeData.riverSegments,
+				m_biomeData.pondBlobs
 			));
 		}
 

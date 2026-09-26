@@ -10,11 +10,10 @@
 #include "world/chunk/ChunkCoordinate.h"
 #include "world/chunk/ChunkSampleResult.h"
 #include "world/chunk/IWorldSampler.h"
+#include "world/chunk/TerrainPolygonTestSupport.h"
 
 #include <nav/NavMesh.h>
-#include <nav/PathQuery.h>
 #include <polygon/Polygon.h>
-#include <predicates/Predicates.h>
 #include <random/HashNoise.h>
 
 #include <gtest/gtest.h>
@@ -29,41 +28,11 @@
 #include <vector>
 
 using namespace engine::world;
-using geometry::Ring;
-using geometry::Vec2i64;
+using namespace engine::world::terrain_test;
 
 namespace {
 
-	constexpr int64_t kChunkMm = static_cast<int64_t>(kChunkSize) * TerrainPolygonBuilder::kTileMm;
-	constexpr int64_t kApronMm = static_cast<int64_t>(kApronTiles) * TerrainPolygonBuilder::kTileMm;
 	constexpr uint64_t kWorldSeed = 0x5EA11E55ULL;
-
-	TileData tileOf(Biome biome) {
-		TileData tile;
-		tile.primaryBiome	= biome;
-		tile.secondaryBiome = biome;
-		tile.surface		= (isWater(biome) || biome == Biome::TemperateWetland) ? Surface::Water : Surface::Grass;
-		return tile;
-	}
-
-	// A hand-built extended region (chunk plus apron), for features smaller than
-	// the 16-tile biome sectors a sampler can place.
-	struct HandTiles {
-		std::vector<TileData> tiles;
-
-		explicit HandTiles(Biome fill)
-			: tiles(static_cast<size_t>(kExtendedSize) * static_cast<size_t>(kExtendedSize), tileOf(fill)) {}
-
-		TileData& at(int32_t ex, int32_t ey) {
-			return tiles[static_cast<size_t>(ey) * static_cast<size_t>(kExtendedSize) + static_cast<size_t>(ex)];
-		}
-
-		[[nodiscard]] TerrainPolygonBuilder::ExtendedTileFn fn() const {
-			return [this](int32_t ex, int32_t ey) -> const TileData& {
-				return tiles[static_cast<size_t>(ey) * static_cast<size_t>(kExtendedSize) + static_cast<size_t>(ex)];
-			};
-		}
-	};
 
 	// World mm of the center of extended tile (ex, ey) of chunk `coord`.
 	Vec2i64 extendedTileCenterMm(ChunkCoordinate coord, int32_t ex, int32_t ey) {
@@ -81,22 +50,6 @@ namespace {
 		for (const Vec2i64& v : ring) {
 			EXPECT_LE(std::abs(v.x - tileCenter.x), kReach) << v.x << ", " << v.y;
 			EXPECT_LE(std::abs(v.y - tileCenter.y), kReach) << v.x << ", " << v.y;
-		}
-	}
-
-	int64_t absArea2(const Ring& ring) {
-		const geometry::Int128 a = geometry::signedAreaDoubled(ring);
-		return static_cast<int64_t>(std::llround(std::abs(a.toDouble())));
-	}
-
-	// Every published ring, clipped or not, must be simple.
-	void expectAllSimple(const ChunkTerrainPolygons& polys, const std::string& label) {
-		for (size_t i = 0; i < polys.rings.size(); ++i) {
-			EXPECT_TRUE(geometry::isSimple(polys.rings[i].ring).pass) << label << " rings[" << i << "]";
-			EXPECT_EQ(polys.rings[i].profiles.size(), polys.rings[i].ring.size()) << label << " rings[" << i << "]";
-		}
-		for (size_t i = 0; i < polys.navRings.size(); ++i) {
-			EXPECT_TRUE(geometry::isSimple(polys.navRings[i].ring).pass) << label << " navRings[" << i << "]";
 		}
 	}
 
@@ -173,135 +126,6 @@ namespace {
 		return chunk;
 	}
 
-	// navRings vertices on the line x = line (vertical) or y = line, sorted.
-	std::vector<Vec2i64> navVerticesOnLine(const ChunkTerrainPolygons& polys, bool vertical, int64_t line) {
-		std::vector<Vec2i64> out;
-		for (const TerrainRing& ring : polys.navRings) {
-			for (const Vec2i64& v : ring.ring) {
-				if ((vertical ? v.x : v.y) == line) {
-					out.push_back(v);
-				}
-			}
-		}
-		std::sort(out.begin(), out.end());
-		return out;
-	}
-
-	bool evenOddWater(const std::vector<TerrainRing>& rings, Vec2i64 p, bool& onBoundary) {
-		int inside = 0;
-		for (const TerrainRing& ring : rings) {
-			const geometry::PointInPolygon where = geometry::pointInPolygon(p, ring.ring);
-			onBoundary							 = onBoundary || where == geometry::PointInPolygon::OnBoundary;
-			inside += where == geometry::PointInPolygon::Inside ? 1 : 0;
-		}
-		return (inside % 2) == 1;
-	}
-
-	struct SeamChunk {
-		const Chunk* chunk;
-		Vec2i64		 min;
-		Vec2i64		 max;
-	};
-
-	SeamChunk seamChunk(const Chunk& chunk) {
-		const ChunkCoordinate c = chunk.coordinate();
-		const Vec2i64		  min{static_cast<int64_t>(c.x) * kChunkMm, static_cast<int64_t>(c.y) * kChunkMm};
-		return {&chunk, min, {min.x + kChunkMm, min.y + kChunkMm}};
-	}
-
-	// The nav mesh NavInputBuilder would build over these chunks: one unblocked
-	// border over their bounding rectangle, then every navRing as a blocked,
-	// hole-capable water polygon.
-	geometry::nav::NavMesh buildSeamMesh(const std::vector<SeamChunk>& chunks) {
-		Vec2i64 lo = chunks.front().min;
-		Vec2i64 hi = chunks.front().max;
-		for (const SeamChunk& c : chunks) {
-			lo = {std::min(lo.x, c.min.x), std::min(lo.y, c.min.y)};
-			hi = {std::max(hi.x, c.max.x), std::max(hi.y, c.max.y)};
-		}
-		geometry::nav::NavMeshInput input;
-		input.polygons.push_back({{lo, {hi.x, lo.y}, hi, {lo.x, hi.y}}, false, -3});
-		for (const SeamChunk& c : chunks) {
-			for (const TerrainRing& ring : c.chunk->terrainPolygons().navRings) {
-				input.polygons.push_back({ring.ring, true, -1, geometry::nav::kNoOpening, true});
-			}
-		}
-		return geometry::nav::buildNavMesh(input);
-	}
-
-	// Along the border between `a` (low side) and `b`, sample 1 mm either side.
-	// Everywhere: the mesh has a triangle (no gap) and classifies the point the way
-	// the owning chunk's unclipped rings do. Away from the border vertices (where
-	// a crossing shoreline legitimately flips within a mm): both sides agree, so
-	// there is no walkable sliver or blocked strip along the border.
-	void expectSeamClassificationAgrees(const geometry::nav::NavMesh& mesh, const SeamChunk& a, const SeamChunk& b, bool vertical) {
-		constexpr int64_t kStepMm			 = 50;
-		constexpr int64_t kCrossingClearance = 20;
-		const int64_t	  line				 = vertical ? a.max.x : a.max.y;
-		const int64_t	  from				 = vertical ? a.min.y : a.min.x;
-		const int64_t	  to				 = vertical ? a.max.y : a.max.x;
-
-		std::vector<int64_t> crossings;
-		for (const SeamChunk* side : {&a, &b}) {
-			for (const Vec2i64& v : navVerticesOnLine(side->chunk->terrainPolygons(), vertical, line)) {
-				crossings.push_back(vertical ? v.y : v.x);
-			}
-		}
-
-		int checked = 0;
-		int agreed	= 0;
-		for (int64_t s = from + kStepMm / 2; s < to; s += kStepMm) {
-			const Vec2i64 pa = vertical ? Vec2i64{line - 1, s} : Vec2i64{s, line - 1};
-			const Vec2i64 pb = vertical ? Vec2i64{line + 1, s} : Vec2i64{s, line + 1};
-
-			bool water[2] = {false, false};
-			for (int k = 0; k < 2; ++k) {
-				const Vec2i64&	   p	 = k == 0 ? pa : pb;
-				const SeamChunk&   owner = k == 0 ? a : b;
-				const std::int32_t tri	 = geometry::nav::locateTriangle(mesh, p);
-				ASSERT_GE(tri, 0) << "nav mesh gap at (" << p.x << ", " << p.y << ")";
-				water[k]				 = !geometry::nav::isFloorFace(mesh.triangles[static_cast<size_t>(tri)]);
-				bool	   onBoundary	 = false;
-				const bool truth		 = evenOddWater(owner.chunk->terrainPolygons().rings, p, onBoundary);
-				if (!onBoundary) {
-					EXPECT_EQ(water[k], truth) << "nav disagrees with rings at (" << p.x << ", " << p.y << ")";
-				}
-			}
-
-			const bool nearCrossing = std::any_of(crossings.begin(), crossings.end(), [s](int64_t c) {
-				return std::abs(c - s) <= kCrossingClearance;
-			});
-			if (!nearCrossing) {
-				++checked;
-				agreed += water[0] == water[1] ? 1 : 0;
-				EXPECT_EQ(water[0], water[1]) << "seam sliver at " << (vertical ? "y=" : "x=") << s;
-			}
-		}
-		EXPECT_GT(checked, 0);
-		EXPECT_EQ(agreed, checked);
-	}
-
-	void expectBorderVerticesMatch(const Chunk& a, const Chunk& b, bool vertical) {
-		const int64_t line = vertical ? static_cast<int64_t>(b.coordinate().x) * kChunkMm : static_cast<int64_t>(b.coordinate().y) * kChunkMm;
-		const std::vector<Vec2i64> va = navVerticesOnLine(a.terrainPolygons(), vertical, line);
-		const std::vector<Vec2i64> vb = navVerticesOnLine(b.terrainPolygons(), vertical, line);
-		EXPECT_FALSE(va.empty());
-		EXPECT_EQ(va, vb);
-	}
-
-	bool sameRings(const std::vector<TerrainRing>& a, const std::vector<TerrainRing>& b) {
-		if (a.size() != b.size()) {
-			return false;
-		}
-		for (size_t i = 0; i < a.size(); ++i) {
-			if (a[i].ring != b[i].ring || a[i].profiles != b[i].profiles || a[i].kind != b[i].kind || a[i].water != b[i].water ||
-				a[i].blocksMovement != b[i].blocksMovement || a[i].holeCapable != b[i].holeCapable) {
-				return false;
-			}
-		}
-		return true;
-	}
-
 } // namespace
 
 // ============================================================================
@@ -315,7 +139,7 @@ TEST(TerrainPolygonBuilderTest, OneTilePoolSurvives) {
 	const int32_t		  ey = kApronTiles + 311;
 	tiles.at(ex, ey)		 = tileOf(Biome::Lake);
 
-	const ChunkTerrainPolygons polys = TerrainPolygonBuilder::build(coord, kWorldSeed, tiles.fn());
+	const ChunkTerrainPolygons polys = TerrainPolygonBuilder::build(coord, kWorldSeed, tiles.fn(), {}, {});
 	ASSERT_EQ(polys.rings.size(), 1U);
 	const Ring& ring = polys.rings[0].ring;
 	EXPECT_EQ(geometry::windingOrder(ring), geometry::Winding::CounterClockwise);
@@ -336,7 +160,7 @@ TEST(TerrainPolygonBuilderTest, OneTileIsletSurvivesAsHole) {
 	tiles.at(ex, ey)		 = tileOf(Biome::TemperateGrassland);
 	const Vec2i64 center	 = extendedTileCenterMm(coord, ex, ey);
 
-	const ChunkTerrainPolygons polys = TerrainPolygonBuilder::build(coord, kWorldSeed, tiles.fn());
+	const ChunkTerrainPolygons polys = TerrainPolygonBuilder::build(coord, kWorldSeed, tiles.fn(), {}, {});
 	expectAllSimple(polys, "islet");
 	int holes = 0;
 	for (const TerrainRing& ring : polys.rings) {
@@ -366,7 +190,7 @@ TEST(TerrainPolygonBuilderTest, BoundaryTouchingLakeClosesSyntheticallyOutsideTh
 		}
 	}
 
-	const ChunkTerrainPolygons polys = TerrainPolygonBuilder::build(coord, kWorldSeed, tiles.fn());
+	const ChunkTerrainPolygons polys = TerrainPolygonBuilder::build(coord, kWorldSeed, tiles.fn(), {}, {});
 	expectAllSimple(polys, "boundary lake");
 	ASSERT_EQ(polys.rings.size(), 1U);
 
@@ -444,7 +268,7 @@ TEST(TerrainPolygonBuilderTest, ShoreProfilesReadTheLandSide) {
 		}
 	}
 
-	const ChunkTerrainPolygons polys = TerrainPolygonBuilder::build(coord, kWorldSeed, tiles.fn());
+	const ChunkTerrainPolygons polys = TerrainPolygonBuilder::build(coord, kWorldSeed, tiles.fn(), {}, {});
 	ASSERT_EQ(polys.rings.size(), 1U);
 	const TerrainRing& lake = polys.rings[0];
 	EXPECT_EQ(lake.water, WaterKind::Lake);
@@ -494,8 +318,8 @@ TEST(TerrainPolygonBuilderTest, HorizontalNeighborsMeetAtIdenticalBorderVertices
 
 	expectBorderVerticesMatch(*west, *east, true);
 
-	const SeamChunk				 a	  = seamChunk(*west);
-	const SeamChunk				 b	  = seamChunk(*east);
+	const SeamSide				 a	  = seamChunk(*west);
+	const SeamSide				 b	  = seamChunk(*east);
 	const geometry::nav::NavMesh mesh = buildSeamMesh({a, b});
 	ASSERT_FALSE(mesh.triangles.empty());
 	expectSeamClassificationAgrees(mesh, a, b, true);
@@ -510,8 +334,8 @@ TEST(TerrainPolygonBuilderTest, VerticalNeighborsMeetAtIdenticalBorderVertices) 
 
 	expectBorderVerticesMatch(*south, *north, false);
 
-	const SeamChunk				 a	  = seamChunk(*south);
-	const SeamChunk				 b	  = seamChunk(*north);
+	const SeamSide				 a	  = seamChunk(*south);
+	const SeamSide				 b	  = seamChunk(*north);
 	const geometry::nav::NavMesh mesh = buildSeamMesh({a, b});
 	ASSERT_FALSE(mesh.triangles.empty());
 	expectSeamClassificationAgrees(mesh, a, b, false);
@@ -537,7 +361,7 @@ TEST(TerrainPolygonBuilderTest, FourChunksMeetingAtACornerAgreeOnEveryBorder) {
 		EXPECT_NE(std::find(onLine.begin(), onLine.end(), corner), onLine.end());
 	}
 
-	const std::vector<SeamChunk> all  = {seamChunk(*c00), seamChunk(*c10), seamChunk(*c01), seamChunk(*c11)};
+	const std::vector<SeamSide> all  = {seamChunk(*c00), seamChunk(*c10), seamChunk(*c01), seamChunk(*c11)};
 	const geometry::nav::NavMesh mesh = buildSeamMesh(all);
 	ASSERT_FALSE(mesh.triangles.empty());
 	expectSeamClassificationAgrees(mesh, all[0], all[1], true);
@@ -609,8 +433,8 @@ TEST(TerrainPolygonBuilderTest, RandomizedCornerBiomesStaySimpleAndSeamed) {
 		});
 		if (crossed) {
 			++shoresOnBorder;
-			const SeamChunk				 a	  = seamChunk(*west);
-			const SeamChunk				 b	  = seamChunk(*east);
+			const SeamSide				 a	  = seamChunk(*west);
+			const SeamSide				 b	  = seamChunk(*east);
 			const geometry::nav::NavMesh mesh = buildSeamMesh({a, b});
 			ASSERT_FALSE(mesh.triangles.empty());
 			expectSeamClassificationAgrees(mesh, a, b, true);

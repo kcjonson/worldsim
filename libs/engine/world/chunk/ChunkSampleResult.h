@@ -26,6 +26,16 @@ inline constexpr int32_t kSectorGridSize = 32;
 // (dx+1, dy+1) .. (dx+2, dy+2). See neighborCornerBiomes/neighborCornerElevations.
 inline constexpr int32_t kNeighborhoodLatticeSize = 4;
 
+// How far beyond the chunk square a world sampler gathers riverSegments and
+// pondBlobs, meters. It covers the kApronTiles apron the terrain-polygon builder
+// and ApronField read (D4) and more: the ribbon builder (D7) joins the gathered
+// sub-segments into chains, and a chain cut by the gather must end two 20 m trunk
+// steps outside the extended region so its cut (and the Catmull-Rom span that
+// cut distorts) never shows. Ponds get the same margin so a channel's mouth can
+// find a receiving pond just past the edge; gatherPonds widens further by each
+// pond's own footprint.
+inline constexpr double kRiverGatherMarginM = 48.0;
+
 struct ChunkSampleResult {
     std::array<BiomeWeights, 4> cornerBiomes{};
     std::array<float, 4>        cornerElevations{};
@@ -71,6 +81,18 @@ struct ChunkSampleResult {
     // Empty for the vast majority of chunks. Consumed per tile by riverHalfWidthAt().
     std::vector<worldgen::RiverNetwork2D::Segment> riverSegments;
 
+    // Rasterization floor, tile layer only. RiverNetwork2D emits true channel
+    // half-widths now (no floor), for the future ribbon builder that strokes each
+    // channel at its real width; but a channel rasterized onto the 1 m tile grid
+    // narrower than ~1.6 m breaks into a dotted, non-contiguous line, so this
+    // floor holds every *rasterized* half-width at or above 0.8 m, applied per
+    // segment endpoint before the linear interpolation below (matching where
+    // RiverNetwork2D used to floor at emission, so the covered tile set is
+    // unchanged). Delete this once tiles stop drawing water and the polygon rings
+    // are the only rasterization (the shader/SDF task; see
+    // docs/technical/organic-terrain/terrain-polygons-architecture.md D10).
+    static constexpr float kTileRasterMinHalfM = 0.8f;
+
     // Channel half-width (meters) covering (worldXMeters, worldYMeters), or 0 if
     // the point is outside every gathered channel. The widest covering channel
     // wins (so confluences read as the larger river). Width drives both the water
@@ -79,7 +101,9 @@ struct ChunkSampleResult {
     [[nodiscard]] float riverHalfWidthAt(double worldXMeters, double worldYMeters) const {
         float best = 0.0f;
         for (const auto& s : riverSegments) {
-            const float hwMax = std::max(s.halfWidth0, s.halfWidth1);
+            const float hw0 = std::max(s.halfWidth0, kTileRasterMinHalfM);
+            const float hw1 = std::max(s.halfWidth1, kTileRasterMinHalfM);
+            const float hwMax = std::max(hw0, hw1);
             if (worldXMeters < std::min(s.x0, s.x1) - hwMax ||
                 worldXMeters > std::max(s.x0, s.x1) + hwMax ||
                 worldYMeters < std::min(s.y0, s.y1) - hwMax ||
@@ -99,8 +123,8 @@ struct ChunkSampleResult {
             const double ex = worldXMeters - cx;
             const double ey = worldYMeters - cy;
             const float halfWidth =
-                static_cast<float>(static_cast<double>(s.halfWidth0) +
-                                   (static_cast<double>(s.halfWidth1) - static_cast<double>(s.halfWidth0)) * t);
+                static_cast<float>(static_cast<double>(hw0) +
+                                   (static_cast<double>(hw1) - static_cast<double>(hw0)) * t);
             if (ex * ex + ey * ey <= static_cast<double>(halfWidth) * static_cast<double>(halfWidth) &&
                 halfWidth > best) {
                 best = halfWidth;

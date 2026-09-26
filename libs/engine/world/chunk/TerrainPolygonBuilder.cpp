@@ -1,15 +1,17 @@
 #include "TerrainPolygonBuilder.h"
 
+#include "world/chunk/TerrainPolygonBuilderDetail.h"
+
 #include <contour/ClipRing.h>
 #include <contour/MarchingSquares.h>
 #include <contour/RingPins.h>
 #include <contour/ScalarField.h>
 #include <contour/Smoothing.h>
 #include <contour/WarpField.h>
+#include <core/Vec2d.h>
 #include <core/Vec2i64.h>
 #include <offset/WallOffset.h>
 #include <polygon/Polygon.h>
-#include <random/HashNoise.h>
 #include <utils/Log.h>
 
 #include <algorithm>
@@ -17,38 +19,17 @@
 #include <cmath>
 #include <cstddef>
 #include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
-namespace engine::world {
-
-	bool isBiomeWater(const TileData& tile) {
-		return isWater(tile.primaryBiome) || tile.primaryBiome == Biome::TemperateWetland ||
-			   tile.primaryBiome == Biome::TropicalWetland;
-	}
+namespace engine::world::terrain_detail {
 
 	namespace {
-
-		using geometry::Ring;
-		using geometry::Vec2i64;
-		using Builder = TerrainPolygonBuilder;
 
 		constexpr int32_t kFinePerTile	= static_cast<int32_t>(Builder::kTileMm / Builder::kFineCellMm);
 		// Fine samples per axis: the extended region inclusive of its max edge.
 		constexpr int32_t kFineSamples	= kExtendedSize * kFinePerTile + 1;
-		constexpr double  kMmPerMeter	= static_cast<double>(geometry::kMillimetersPerMeter);
-
-		// Per-purpose salts mixed with the world seed, so each noise term has its own
-		// stream and no other system that hashes the world seed lines up with them.
-		constexpr uint32_t kSaltBankX = 0x5A17B001U;
-		constexpr uint32_t kSaltBankY = 0x5A17B002U;
-		constexpr uint32_t kSaltLowX  = 0x5A17B003U;
-		constexpr uint32_t kSaltLowY  = 0x5A17B004U;
-
-		uint32_t purposeSeed(uint64_t worldSeed, uint32_t salt) {
-			return foundation::hash3(static_cast<int32_t>(salt), static_cast<int32_t>(worldSeed >> 32U), 0,
-									 static_cast<uint32_t>(worldSeed));
-		}
 
 		struct WarpSeeds {
 			uint32_t bankX;
@@ -56,18 +37,6 @@ namespace engine::world {
 			uint32_t lowX;
 			uint32_t lowY;
 		};
-
-		// fBm at a world position, clamped to [-1, 1] (gradient noise can overshoot
-		// slightly, and kMaxWarpMm must be a true bound). The input is formed from the
-		// exact integer mm alone, never a chunk-relative value, so every chunk feeds
-		// the noise bit-identical inputs for the same world point. fractalNoise2 is
-		// fractalNoise3 at z = 0 bit for bit, at half the hashing.
-		float worldNoise(Vec2i64 worldMm, double wavelengthM, uint32_t seed, int octaves) {
-			const auto	x = static_cast<float>(static_cast<double>(worldMm.x) / kMmPerMeter / wavelengthM);
-			const auto	y = static_cast<float>(static_cast<double>(worldMm.y) / kMmPerMeter / wavelengthM);
-			const float n = foundation::fractalNoise2(x, y, seed, octaves, Builder::kNoiseLacunarity, Builder::kNoiseGain);
-			return std::clamp(n, -1.0F, 1.0F);
-		}
 
 		geometry::WarpOffsetMm shoreWarpOffset(Vec2i64 worldMm, const WarpSeeds& seeds) {
 			auto component = [worldMm](uint32_t bankSeed, uint32_t lowSeed) {
@@ -81,76 +50,6 @@ namespace engine::world {
 			};
 			return {component(seeds.bankX, seeds.lowX), component(seeds.bankY, seeds.lowY)};
 		}
-
-		// The chunk square and the extended region (chunk plus apron), world mm.
-		struct Region {
-			Vec2i64 chunkMin;
-			Vec2i64 chunkMax;
-			Vec2i64 extMin;
-			Vec2i64 extMax;
-		};
-
-		Region regionOf(ChunkCoordinate coord) {
-			constexpr int64_t kChunkMm = static_cast<int64_t>(kChunkSize) * Builder::kTileMm;
-			constexpr int64_t kApronMm = static_cast<int64_t>(kApronTiles) * Builder::kTileMm;
-			const Vec2i64	  chunkMin{static_cast<int64_t>(coord.x) * kChunkMm, static_cast<int64_t>(coord.y) * kChunkMm};
-			const Vec2i64	  chunkMax{chunkMin.x + kChunkMm, chunkMin.y + kChunkMm};
-			return {chunkMin, chunkMax, {chunkMin.x - kApronMm, chunkMin.y - kApronMm}, {chunkMax.x + kApronMm, chunkMax.y + kApronMm}};
-		}
-
-		// Extended-region tiles plus the biome water indicator, read once.
-		class ExtendedGrid {
-		  public:
-			ExtendedGrid(const Builder::ExtendedTileFn& tiles, const Region& region)
-				: m_tiles(tiles),
-				  m_extMin(region.extMin),
-				  m_water(static_cast<size_t>(kExtendedSize) * static_cast<size_t>(kExtendedSize)) {
-				for (int32_t ey = 0; ey < kExtendedSize; ++ey) {
-					for (int32_t ex = 0; ex < kExtendedSize; ++ex) {
-						m_water[index(ex, ey)] = isBiomeWater(tiles(ex, ey)) ? 1 : 0;
-						m_anyWater			   = m_anyWater || m_water[index(ex, ey)] != 0;
-					}
-				}
-			}
-
-			[[nodiscard]] bool anyWater() const { return m_anyWater; }
-
-			[[nodiscard]] static bool contains(int32_t ex, int32_t ey) {
-				return ex >= 0 && ey >= 0 && ex < kExtendedSize && ey < kExtendedSize;
-			}
-
-			// Outside the extended region is land (D4).
-			[[nodiscard]] bool water(int32_t ex, int32_t ey) const { return contains(ex, ey) && m_water[index(ex, ey)] != 0; }
-
-			[[nodiscard]] const TileData& tile(int32_t ex, int32_t ey) const { return m_tiles(ex, ey); }
-
-			// Extended tile containing world point (mm, fractional allowed).
-			[[nodiscard]] std::pair<int32_t, int32_t> tileAt(double xMm, double yMm) const {
-				const double tile = static_cast<double>(Builder::kTileMm);
-				return {
-					static_cast<int32_t>(std::floor((xMm - static_cast<double>(m_extMin.x)) / tile)),
-					static_cast<int32_t>(std::floor((yMm - static_cast<double>(m_extMin.y)) / tile))
-				};
-			}
-
-			[[nodiscard]] std::pair<double, double> tileCenterMm(int32_t ex, int32_t ey) const {
-				const double half = static_cast<double>(Builder::kTileMm) / 2.0;
-				return {
-					static_cast<double>(m_extMin.x + static_cast<int64_t>(ex) * Builder::kTileMm) + half,
-					static_cast<double>(m_extMin.y + static_cast<int64_t>(ey) * Builder::kTileMm) + half
-				};
-			}
-
-		  private:
-			static size_t index(int32_t ex, int32_t ey) {
-				return static_cast<size_t>(ey) * static_cast<size_t>(kExtendedSize) + static_cast<size_t>(ex);
-			}
-
-			const Builder::ExtendedTileFn& m_tiles;
-			Vec2i64						   m_extMin;
-			std::vector<uint8_t>		   m_water;
-			bool						   m_anyWater = false;
-		};
 
 		// Coarse samples added beyond the extended region on every side, repeating its
 		// edge samples. They cover every read warpField and its skip test make from
@@ -209,72 +108,19 @@ namespace engine::world {
 			return coarse;
 		}
 
-		// D6 steps 3-7 on one marched loop. Returns nullopt when every retry folds.
-		// The retry ladder never touches the field: a per-chunk field change would
-		// break the seam, since the neighbor would not make the same choice.
+		// D6 steps 3-7 on one marched loop, pinned where it crosses the chunk border.
 		std::optional<Ring> finishLoop(Ring loop, const Region& region, ChunkCoordinate coord) {
 			geometry::chaikin(loop, Builder::kChaikinIterations);
 			const std::array<int64_t, 2> xLines = {region.chunkMin.x, region.chunkMax.x};
 			const std::array<int64_t, 2> yLines = {region.chunkMin.y, region.chunkMax.y};
 			std::vector<uint8_t>		 pinned = geometry::pinAxisLineCrossings(loop, xLines, yLines);
-			geometry::resampleRing(loop, Builder::kRingSpacingMm, pinned);
-
-			for (const int64_t epsMm : {Builder::kRingSimplifyEpsMm, Builder::kRingSimplifyRetryEpsMm}) {
-				Ring				 simplified = loop;
-				std::vector<uint8_t> mask		= pinned;
-				geometry::simplifyRing(simplified, epsMm, mask);
-				if (geometry::isSimple(simplified).pass) {
-					return simplified;
-				}
-				LOG_DEBUG(World, "Chunk (%d, %d): waterline loop folds when simplified at %lld mm, retrying", coord.x, coord.y,
-						  static_cast<long long>(epsMm));
-			}
-			if (geometry::isSimple(loop).pass) {
-				LOG_DEBUG(World, "Chunk (%d, %d): keeping a waterline loop unsimplified (%zu vertices)", coord.x, coord.y, loop.size());
-				return loop;
-			}
-			LOG_WARNING(World, "Chunk (%d, %d): dropped a non-simple waterline loop (%zu vertices)", coord.x, coord.y, loop.size());
-			return std::nullopt;
+			return resampleSimplifyValidate(std::move(loop), std::move(pinned), coord, "waterline loop");
 		}
-
-		bool areaBelowFloor(const Ring& ring) {
-			const geometry::Int128 area2 = geometry::signedAreaDoubled(ring);
-			const geometry::Int128 abs2	 = area2.sign() < 0 ? -area2 : area2;
-			return abs2 < geometry::Int128(2 * Builder::kMinLoopAreaMm2);
-		}
-
-		// D4: an edge whose endpoints both lie within one fine cell of the same side
-		// of the extended rectangle is the closure the forced-land boundary makes.
-		bool isSyntheticEdge(const Vec2i64& a, const Vec2i64& b, const Region& region) {
-			constexpr int64_t kBand = Builder::kFineCellMm;
-			auto			  near	= [&region](const Vec2i64& v, int side) {
-				   switch (side) {
-					   case 0:
-						   return v.x - region.extMin.x <= kBand;
-					   case 1:
-						   return region.extMax.x - v.x <= kBand;
-					   case 2:
-						   return v.y - region.extMin.y <= kBand;
-					   default:
-						   return region.extMax.y - v.y <= kBand;
-				   }
-			};
-			for (int side = 0; side < 4; ++side) {
-				if (near(a, side) && near(b, side)) {
-					return true;
-				}
-			}
-			return false;
-		}
-
-		struct Vec2d {
-			double x = 0.0;
-			double y = 0.0;
-		};
 
 		// Unit normal toward the water at vertex i. Marched rings keep water on their
-		// left whatever their orientation (CCW outer, CW hole), so it is the left
-		// normal of the tangent through the two neighbors.
+		// left whatever their orientation (CCW outer, CW hole), and channel and pond
+		// rings are CCW with water inside, so it is the left normal of the tangent
+		// through the two neighbors.
 		Vec2d waterNormal(const Ring& ring, size_t i) {
 			const size_t	n	 = ring.size();
 			const Vec2i64& prev = ring[(i + n - 1) % n];
@@ -288,13 +134,23 @@ namespace engine::world {
 			return {-ty / len, tx / len};
 		}
 
+		bool sideMatches(const ExtendedGrid& grid, int32_t ex, int32_t ey, SideRule rule, bool wantWater) {
+			if (!ExtendedGrid::contains(ex, ey)) {
+				return false;
+			}
+			if (rule == SideRule::BiomeWater) {
+				return grid.water(ex, ey) == wantWater;
+			}
+			return wantWater || (!grid.water(ex, ey) && grid.tile(ex, ey).surface != Surface::Water);
+		}
+
 		// The tile on the wanted side of a vertex: the tile under the probe point if
 		// it is on that side, else the nearest such tile center in the probe's 3x3
 		// neighborhood (ties in scan order). Nullopt if none (a degenerate normal on
 		// a sub-tile feature).
-		std::optional<std::pair<int32_t, int32_t>> sideTile(const ExtendedGrid& grid, Vec2d probe, bool wantWater) {
+		std::optional<std::pair<int32_t, int32_t>> sideTile(const ExtendedGrid& grid, Vec2d probe, SideRule rule, bool wantWater) {
 			const auto [px, py] = grid.tileAt(probe.x, probe.y);
-			if (ExtendedGrid::contains(px, py) && grid.water(px, py) == wantWater) {
+			if (sideMatches(grid, px, py, rule, wantWater)) {
 				return std::pair{px, py};
 			}
 			std::optional<std::pair<int32_t, int32_t>> best;
@@ -303,7 +159,7 @@ namespace engine::world {
 				for (int32_t dx = -1; dx <= 1; ++dx) {
 					const int32_t tx = px + dx;
 					const int32_t ty = py + dy;
-					if (!ExtendedGrid::contains(tx, ty) || grid.water(tx, ty) != wantWater) {
+					if (!sideMatches(grid, tx, ty, rule, wantWater)) {
 						continue;
 					}
 					const auto [cx, cy] = grid.tileCenterMm(tx, ty);
@@ -328,7 +184,7 @@ namespace engine::world {
 			std::array<size_t, 3> votes{};
 			for (size_t i = 0; i < ring.size(); ++i) {
 				const Vec2d probe = probePoint(ring[i], waterNormal(ring, i), static_cast<double>(Builder::kProfileProbeMm));
-				const auto	water = sideTile(grid, probe, true);
+				const auto	water = sideTile(grid, probe, SideRule::BiomeWater, true);
 				if (!water) {
 					continue;
 				}
@@ -418,126 +274,225 @@ namespace engine::world {
 			return 1.0F;
 		}
 
-		// D15 per-vertex profile. Every scale is a named constant on the builder.
-		std::vector<ShoreProfile> shoreProfiles(const Ring& ring, WaterKind water, const ExtendedGrid& grid, const Region& region) {
-			const std::vector<float>  concavity = concavityExposure(ring);
-			std::vector<ShoreProfile> profiles(ring.size());
-			const double			  probeMm = static_cast<double>(Builder::kProfileProbeMm);
-			for (size_t i = 0; i < ring.size(); ++i) {
-				const Vec2i64& v	  = ring[i];
-				const Vec2d	   normal = waterNormal(ring, i);
-				ShoreProfile&  p	  = profiles[i];
+		// ============ Waterline (D5, D6) ============
 
-				float exposure = concavity[i];
-				if (water == WaterKind::Ocean) {
-					exposure = (1.0F - Builder::kFetchWeight) * exposure + Builder::kFetchWeight * fetchExposure(v, normal, grid);
+		void buildWaterlines(std::vector<TerrainRing>& rings, const ExtendedGrid& grid, const Region& region, uint64_t worldSeed,
+							 ChunkCoordinate coord) {
+			const geometry::ScalarField coarse = buildCoarseField(grid, region);
+
+			const WarpSeeds seeds{
+				purposeSeed(worldSeed, kSaltBankX), purposeSeed(worldSeed, kSaltBankY), purposeSeed(worldSeed, kSaltLowX),
+				purposeSeed(worldSeed, kSaltLowY)
+			};
+			geometry::ScalarField fine = geometry::warpField(
+				coarse,
+				region.extMin,
+				Builder::kFineCellMm,
+				kFineSamples,
+				kFineSamples,
+				[&seeds](Vec2i64 worldMm) { return shoreWarpOffset(worldMm, seeds); },
+				0.0F,
+				geometry::WarpSkip{Builder::kWaterlineIso, Builder::kMaxWarpMm}
+			);
+			// marchingSquares needs an all-outside border so every loop closes; the
+			// closure it makes along the extended boundary is the synthetic edge (D4).
+			for (int32_t k = 0; k < kFineSamples; ++k) {
+				fine.at(k, 0)				 = 0.0F;
+				fine.at(k, kFineSamples - 1) = 0.0F;
+				fine.at(0, k)				 = 0.0F;
+				fine.at(kFineSamples - 1, k) = 0.0F;
+			}
+
+			for (Ring& marched : geometry::marchingSquares(fine, Builder::kWaterlineIso)) {
+				std::optional<Ring> ring = finishLoop(std::move(marched), region, coord);
+				if (!ring || areaBelowFloor(*ring)) {
+					continue;
 				}
-				exposure   = std::clamp(exposure, 0.0F, 1.0F);
-				p.exposure = toByte(exposure);
-
-				const auto landIdx	= sideTile(grid, probePoint(v, normal, -probeMm), false);
-				const auto waterIdx = sideTile(grid, probePoint(v, normal, probeMm), true);
-				if (landIdx) {
-					const TileData& land = grid.tile(landIdx->first, landIdx->second);
-					p.moisture			 = land.moisture;
-
-					if (waterIdx) {
-						const TileData& wet	  = grid.tile(waterIdx->first, waterIdx->second);
-						const auto [lx, ly] = grid.tileCenterMm(landIdx->first, landIdx->second);
-						const auto [wx, wy] = grid.tileCenterMm(waterIdx->first, waterIdx->second);
-						const double runCm	= std::sqrt((lx - wx) * (lx - wx) + (ly - wy) * (ly - wy)) / 10.0;
-						const double riseCm = std::abs(static_cast<double>(land.elevation) - static_cast<double>(wet.elevation));
-						p.slope				= toByte(static_cast<float>(riseCm / runCm) / Builder::kSlopeFullScale);
-					}
-
-					const bool rocky = land.surface == Surface::Rock;
-					const bool sandy = land.primaryBiome == Biome::Beach || land.surface == Surface::Sand;
-					const bool muddy = land.surface == Surface::Mud || land.surface == Surface::Dirt;
-					if (rocky) {
-						p.flags |= ShoreProfile::kFlagRock;
-					} else if (sandy || muddy) {
-						const float base  = sandy ? Builder::kDominantSubstrateShare : 1.0F - Builder::kDominantSubstrateShare;
-						const float share = std::clamp(base + Builder::kExposureSubstrateBias * (2.0F * exposure - 1.0F), 0.0F, 1.0F);
-						p.sand			  = toByte(share);
-						p.mud			  = static_cast<uint8_t>(255 - p.sand);
+				TerrainRing terrain;
+				terrain.water	 = waterKindOf(*ring, grid);
+				terrain.profiles = shoreProfiles(*ring, terrain.water, grid, SideRule::BiomeWater);
+				for (size_t i = 0; i < ring->size(); ++i) {
+					if (isSyntheticEdge((*ring)[i], (*ring)[(i + 1) % ring->size()], region)) {
+						terrain.profiles[i].flags |= ShoreProfile::kFlagSynthetic;
 					}
 				}
+				terrain.ring		   = std::move(*ring);
+				terrain.kind		   = TerrainRingKind::Waterline;
+				terrain.blocksMovement = true;
+				terrain.holeCapable	   = true;
+				rings.push_back(std::move(terrain));
+			}
+		}
 
-				if (isSyntheticEdge(v, ring[(i + 1) % ring.size()], region)) {
-					p.flags |= ShoreProfile::kFlagSynthetic;
+		void buildNavRings(ChunkTerrainPolygons& out, const Region& region, ChunkCoordinate coord) {
+			for (const TerrainRing& terrain : out.rings) {
+				for (Ring& piece : geometry::clipRingToRect(terrain.ring, region.chunkRect())) {
+					if (!geometry::isSimple(piece).pass) {
+						LOG_WARNING(World, "Chunk (%d, %d): dropped a non-simple clipped ring piece (%zu vertices)", coord.x, coord.y,
+									piece.size());
+						continue;
+					}
+					TerrainRing navRing;
+					navRing.ring		   = std::move(piece);
+					navRing.kind		   = terrain.kind;
+					navRing.water		   = terrain.water;
+					navRing.blocksMovement = terrain.blocksMovement;
+					navRing.holeCapable	   = terrain.holeCapable;
+					navRing.meanHalfWidthM = terrain.meanHalfWidthM;
+					out.navRings.push_back(std::move(navRing));
 				}
 			}
-			return profiles;
 		}
 
 	} // namespace
 
-	ChunkTerrainPolygons TerrainPolygonBuilder::build(ChunkCoordinate coord, uint64_t worldSeed, const ExtendedTileFn& tiles) {
+	Region regionOf(ChunkCoordinate coord) {
+		constexpr int64_t kChunkMm = static_cast<int64_t>(kChunkSize) * Builder::kTileMm;
+		constexpr int64_t kApronMm = static_cast<int64_t>(kApronTiles) * Builder::kTileMm;
+		constexpr int64_t kKeepMm  = kApronMm + static_cast<int64_t>(Builder::kChainKeepMarginM * kMmPerMeter);
+		const Vec2i64	  chunkMin{static_cast<int64_t>(coord.x) * kChunkMm, static_cast<int64_t>(coord.y) * kChunkMm};
+		const Vec2i64	  chunkMax{chunkMin.x + kChunkMm, chunkMin.y + kChunkMm};
+		return {
+			chunkMin,
+			chunkMax,
+			{chunkMin.x - kApronMm, chunkMin.y - kApronMm},
+			{chunkMax.x + kApronMm, chunkMax.y + kApronMm},
+			{chunkMin.x - kKeepMm, chunkMin.y - kKeepMm},
+			{chunkMax.x + kKeepMm, chunkMax.y + kKeepMm}
+		};
+	}
+
+	std::optional<Ring> resampleSimplifyValidate(Ring loop, std::vector<uint8_t> pinned, ChunkCoordinate coord, const char* what) {
+		geometry::resampleRing(loop, Builder::kRingSpacingMm, pinned);
+		for (const int64_t epsMm : {Builder::kRingSimplifyEpsMm, Builder::kRingSimplifyRetryEpsMm}) {
+			Ring				 simplified = loop;
+			std::vector<uint8_t> mask		= pinned;
+			geometry::simplifyRing(simplified, epsMm, mask);
+			if (geometry::isSimple(simplified).pass) {
+				return simplified;
+			}
+			LOG_DEBUG(World, "Chunk (%d, %d): %s folds when simplified at %lld mm, retrying", coord.x, coord.y, what,
+					  static_cast<long long>(epsMm));
+		}
+		if (geometry::isSimple(loop).pass) {
+			LOG_DEBUG(World, "Chunk (%d, %d): keeping a %s unsimplified (%zu vertices)", coord.x, coord.y, what, loop.size());
+			return loop;
+		}
+		LOG_WARNING(World, "Chunk (%d, %d): dropped a non-simple %s (%zu vertices)", coord.x, coord.y, what, loop.size());
+		return std::nullopt;
+	}
+
+	bool areaBelowFloor(const Ring& ring) {
+		const geometry::Int128 area2 = geometry::signedAreaDoubled(ring);
+		const geometry::Int128 abs2	 = area2.sign() < 0 ? -area2 : area2;
+		return abs2 < geometry::Int128(2 * Builder::kMinLoopAreaMm2);
+	}
+
+	bool isSyntheticEdge(const Vec2i64& a, const Vec2i64& b, const Region& region) {
+		constexpr int64_t kBand = Builder::kFineCellMm;
+		auto			  near	= [&region](const Vec2i64& v, int side) {
+			   switch (side) {
+				   case 0:
+					   return v.x - region.extMin.x <= kBand;
+				   case 1:
+					   return region.extMax.x - v.x <= kBand;
+				   case 2:
+					   return v.y - region.extMin.y <= kBand;
+				   default:
+					   return region.extMax.y - v.y <= kBand;
+			   }
+		};
+		for (int side = 0; side < 4; ++side) {
+			if (near(a, side) && near(b, side)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	bool isOnExtendedSide(const Vec2i64& a, const Vec2i64& b, const Region& region) {
+		return (a.x == region.extMin.x && b.x == region.extMin.x) || (a.x == region.extMax.x && b.x == region.extMax.x) ||
+			   (a.y == region.extMin.y && b.y == region.extMin.y) || (a.y == region.extMax.y && b.y == region.extMax.y);
+	}
+
+	std::vector<ShoreProfile> shoreProfiles(const Ring& ring, WaterKind water, const ExtendedGrid& grid, SideRule rule) {
+		const std::vector<float>  concavity = concavityExposure(ring);
+		std::vector<ShoreProfile> profiles(ring.size());
+		const double			  probeMm = static_cast<double>(Builder::kProfileProbeMm);
+		for (size_t i = 0; i < ring.size(); ++i) {
+			const Vec2i64& v	  = ring[i];
+			const Vec2d	   normal = waterNormal(ring, i);
+			ShoreProfile&  p	  = profiles[i];
+
+			float exposure = concavity[i];
+			if (water == WaterKind::Ocean) {
+				exposure = (1.0F - Builder::kFetchWeight) * exposure + Builder::kFetchWeight * fetchExposure(v, normal, grid);
+			}
+			exposure   = std::clamp(exposure, 0.0F, 1.0F);
+			p.exposure = toByte(exposure);
+
+			const auto landIdx	= sideTile(grid, probePoint(v, normal, -probeMm), rule, false);
+			const auto waterIdx = sideTile(grid, probePoint(v, normal, probeMm), rule, true);
+			if (landIdx) {
+				const TileData& land = grid.tile(landIdx->first, landIdx->second);
+				p.moisture			 = land.moisture;
+
+				if (waterIdx) {
+					const TileData& wet	  = grid.tile(waterIdx->first, waterIdx->second);
+					const auto [lx, ly] = grid.tileCenterMm(landIdx->first, landIdx->second);
+					const auto [wx, wy] = grid.tileCenterMm(waterIdx->first, waterIdx->second);
+					const double runCm	= std::sqrt((lx - wx) * (lx - wx) + (ly - wy) * (ly - wy)) / 10.0;
+					const double riseCm = std::abs(static_cast<double>(land.elevation) - static_cast<double>(wet.elevation));
+					// A probe pair in one tile (a narrow channel) has no run to measure over.
+					if (runCm > 0.0) {
+						p.slope = toByte(static_cast<float>(riseCm / runCm) / Builder::kSlopeFullScale);
+					}
+				}
+
+				const bool rocky = land.surface == Surface::Rock;
+				const bool sandy = land.primaryBiome == Biome::Beach || land.surface == Surface::Sand;
+				const bool muddy = land.surface == Surface::Mud || land.surface == Surface::Dirt;
+				if (rocky) {
+					p.flags |= ShoreProfile::kFlagRock;
+				} else if (sandy || muddy) {
+					const float base  = sandy ? Builder::kDominantSubstrateShare : 1.0F - Builder::kDominantSubstrateShare;
+					const float share = std::clamp(base + Builder::kExposureSubstrateBias * (2.0F * exposure - 1.0F), 0.0F, 1.0F);
+					p.sand			  = toByte(share);
+					p.mud			  = static_cast<uint8_t>(255 - p.sand);
+				}
+			}
+		}
+		return profiles;
+	}
+
+} // namespace engine::world::terrain_detail
+
+namespace engine::world {
+
+	bool isBiomeWater(const TileData& tile) {
+		return isWater(tile.primaryBiome) || tile.primaryBiome == Biome::TemperateWetland ||
+			   tile.primaryBiome == Biome::TropicalWetland;
+	}
+
+	ChunkTerrainPolygons TerrainPolygonBuilder::build(
+		ChunkCoordinate				  coord,
+		uint64_t					  worldSeed,
+		const ExtendedTileFn&		  tiles,
+		std::span<const RiverSegment> riverSegments,
+		std::span<const Pond>		  ponds
+	) {
+		using namespace terrain_detail;
 		ChunkTerrainPolygons out;
 		const Region		 region = regionOf(coord);
 		const ExtendedGrid	 grid(tiles, region);
 		// An all-land field marches to nothing; skip the fine lattice outright.
-		if (!grid.anyWater()) {
-			return out;
+		if (grid.anyWater()) {
+			buildWaterlines(out.rings, grid, region, worldSeed, coord);
 		}
-
-		const geometry::ScalarField coarse = buildCoarseField(grid, region);
-
-		const WarpSeeds seeds{
-			purposeSeed(worldSeed, kSaltBankX), purposeSeed(worldSeed, kSaltBankY), purposeSeed(worldSeed, kSaltLowX),
-			purposeSeed(worldSeed, kSaltLowY)
-		};
-		geometry::ScalarField fine = geometry::warpField(
-			coarse,
-			region.extMin,
-			kFineCellMm,
-			kFineSamples,
-			kFineSamples,
-			[&seeds](Vec2i64 worldMm) { return shoreWarpOffset(worldMm, seeds); },
-			0.0F,
-			geometry::WarpSkip{kWaterlineIso, kMaxWarpMm}
-		);
-		// marchingSquares needs an all-outside border so every loop closes; the
-		// closure it makes along the extended boundary is the synthetic edge (D4).
-		for (int32_t k = 0; k < kFineSamples; ++k) {
-			fine.at(k, 0)				 = 0.0F;
-			fine.at(k, kFineSamples - 1) = 0.0F;
-			fine.at(0, k)				 = 0.0F;
-			fine.at(kFineSamples - 1, k) = 0.0F;
-		}
-
-		for (Ring& marched : geometry::marchingSquares(fine, kWaterlineIso)) {
-			std::optional<Ring> ring = finishLoop(std::move(marched), region, coord);
-			if (!ring || areaBelowFloor(*ring)) {
-				continue;
-			}
-			TerrainRing terrain;
-			terrain.water		   = waterKindOf(*ring, grid);
-			terrain.profiles	   = shoreProfiles(*ring, terrain.water, grid, region);
-			terrain.ring		   = std::move(*ring);
-			terrain.kind		   = TerrainRingKind::Waterline;
-			terrain.blocksMovement = true;
-			terrain.holeCapable	   = true;
-			out.rings.push_back(std::move(terrain));
-		}
-
-		const geometry::RectMm chunkSquare{region.chunkMin, region.chunkMax};
-		for (const TerrainRing& terrain : out.rings) {
-			for (Ring& piece : geometry::clipRingToRect(terrain.ring, chunkSquare)) {
-				if (!geometry::isSimple(piece).pass) {
-					LOG_WARNING(World, "Chunk (%d, %d): dropped a non-simple clipped waterline piece (%zu vertices)", coord.x,
-								coord.y, piece.size());
-					continue;
-				}
-				TerrainRing navRing;
-				navRing.ring		   = std::move(piece);
-				navRing.kind		   = terrain.kind;
-				navRing.water		   = terrain.water;
-				navRing.blocksMovement = terrain.blocksMovement;
-				navRing.holeCapable	   = terrain.holeCapable;
-				out.navRings.push_back(std::move(navRing));
-			}
-		}
+		// Ponds before channels, so a channel's mouth can find a receiving pond (D7).
+		buildPonds(out.rings, ponds, grid, region, worldSeed, coord);
+		buildChannels(out, riverSegments, grid, region, worldSeed, coord);
+		buildNavRings(out, region, coord);
 		return out;
 	}
 
