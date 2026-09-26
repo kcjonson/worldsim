@@ -65,11 +65,12 @@ namespace geometry::nav {
 		bool				 blocked	  = false;
 		std::int64_t		 provenanceId = kNoProvenance;
 		std::int64_t		 openingId	  = kNoOpening;
-		// A water body is emitted as separate marching-squares loops (a CCW outer
-		// boundary plus CW land-island holes), all blocked. holeCapable marks those
-		// rings so face classification uses even-odd containment parity (a point
-		// inside an even number of nested water rings is land = floor; odd = water).
-		// Flora, walls, and the border leave this false and use solid containment.
+		// A waterline body arrives as separate rings (a CCW outer boundary plus CW
+		// land-island holes), all blocked. holeCapable marks those rings so face
+		// classification uses even-odd containment parity among them (a point inside
+		// an even number of nested hole-capable rings is land = floor; odd = water).
+		// Everything else (river channels, ponds, flora, walls, the border) leaves this
+		// false: solid containment, and any solid ring blocks whatever the parity.
 		bool				 holeCapable  = false;
 	};
 
