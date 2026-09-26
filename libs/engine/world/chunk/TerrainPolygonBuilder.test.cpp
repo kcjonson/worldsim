@@ -302,6 +302,41 @@ TEST(TerrainPolygonBuilderTest, ShoreProfilesReadTheLandSide) {
 	EXPECT_GT(rocky, 10);
 }
 
+// Slope is a heuristic (tile elevation carries no local relief): never a
+// degenerate 0 or 255, and never uniform along a shore (D15).
+TEST(TerrainPolygonBuilderTest, ShoreSlopeIsBoundedAndVariesAlongTheShore) {
+	const ChunkCoordinate coord{0, 0};
+	HandTiles			  tiles(coord, Biome::TemperateGrassland);
+	for (int32_t ey = 0; ey < kExtendedSize; ++ey) {
+		for (int32_t ex = 0; ex < kExtendedSize / 2; ++ex) {
+			tiles.at(ex, ey) = tileOf(Biome::Lake);
+		}
+	}
+
+	const ChunkTerrainPolygons polys = buildHand(tiles, kWorldSeed);
+	ASSERT_EQ(polys.rings.size(), 1U);
+	const TerrainRing& lake = polys.rings[0];
+
+	const auto minByte = static_cast<int>(std::lround(TerrainPolygonBuilder::kSlopeMin * 255.0F));
+	const auto maxByte = static_cast<int>(std::lround(TerrainPolygonBuilder::kSlopeMax * 255.0F));
+	int		   lo	   = 255;
+	int		   hi	   = 0;
+	size_t	   real	   = 0;
+	for (size_t i = 0; i < lake.ring.size(); ++i) {
+		if ((lake.profiles[i].flags & ShoreProfile::kFlagSynthetic) != 0) {
+			continue;
+		}
+		const int s = lake.profiles[i].slope;
+		EXPECT_GE(s, minByte);
+		EXPECT_LE(s, maxByte);
+		lo = std::min(lo, s);
+		hi = std::max(hi, s);
+		++real;
+	}
+	ASSERT_GT(real, 40U);
+	EXPECT_GT(hi - lo, 40) << "a straight shore still varies along its length";
+}
+
 // ============================================================================
 // Seams (D4, section 5)
 // ============================================================================

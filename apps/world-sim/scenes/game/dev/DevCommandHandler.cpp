@@ -15,6 +15,7 @@
 #include <construction/SnapEngine.h>
 
 #include <debug/DebugServer.h> // Foundation::DevCommand
+#include <debug/Tunables.h>
 
 #include <ecs/InventoryMass.h>
 #include <ecs/World.h>
@@ -83,9 +84,42 @@ namespace world_sim {
 			devCraft(cmd);
 		} else if (cmd.verb == "storage") {
 			devStorage(cmd);
+		} else if (cmd.verb == "tunable") {
+			devTunable(cmd);
 		} else {
 			LOG_WARNING(Game, "[DevAPI] Unknown dev command verb '%s'", cmd.verb.c_str());
 		}
+	}
+
+	void DevCommandHandler::devTunable(const Foundation::DevCommand& cmd) {
+		// tunable?name=terrain/shore/drySandW&value=1.6 (a color is value=r,g,b), or
+		// tunable?reset=terrain/shore/* (a trailing '*' resets the whole group).
+		Foundation::Tunables& tunables = Foundation::Tunables::instance();
+		if (cmd.hasParam("reset")) {
+			const std::string name	= cmd.param("reset");
+			const size_t	  count = tunables.reset(name);
+			LOG_INFO(Game, "[DevAPI] tunable reset '%s': %zu value(s)", name.c_str(), count);
+			return;
+		}
+
+		const std::string name = cmd.param("name");
+		std::vector<float> values;
+		const std::string spec = cmd.param("value");
+		const char*		   p	= spec.c_str();
+		while (*p != '\0') {
+			char*		end = nullptr;
+			const float v	= std::strtof(p, &end);
+			if (end == p) {
+				break;
+			}
+			values.push_back(v);
+			p = (*end == ',') ? end + 1 : end;
+		}
+		if (!tunables.set(name, values)) {
+			LOG_WARNING(Game, "[DevAPI] tunable '%s' rejected value '%s' (unknown name or wrong component count)", name.c_str(), spec.c_str());
+			return;
+		}
+		LOG_INFO(Game, "[DevAPI] tunable '%s' = %s", name.c_str(), spec.c_str());
 	}
 
 	void DevCommandHandler::devFreeBuild(const Foundation::DevCommand& cmd) {
@@ -841,6 +875,8 @@ namespace world_sim {
 			serializeTime(out);
 		} else if (what == "landing") {
 			serializeLanding(out);
+		} else if (what == "tunables") {
+			out << Foundation::Tunables::instance().toJson();
 		} else {
 			serializeSummary(out);
 		}
