@@ -70,15 +70,17 @@ namespace ecs {
 			return {cand, cd2};
 		}
 
-		// Nearest walkable point on a single mesh to `meters`, or nullopt when the mesh
-		// has no walkable floor. Shared by nearestPathablePoint after region dispatch.
-		std::optional<glm::vec2> nearestPathableOnMesh(const gnav::NavMesh& navMesh, glm::vec2 meters) {
+		// Nearest point on a single mesh to `meters` whose face passes `faceOk`, or nullopt when no
+		// face does. Shared by nearestPathableOnMesh (terrain-optimistic: any wall is open) and
+		// nearestTruthWalkableOnMesh (a solid wall face blocks, same as truthTraversable).
+		template <typename FaceOk>
+		std::optional<glm::vec2> nearestFaceOnMesh(const gnav::NavMesh& navMesh, glm::vec2 meters, const FaceOk& faceOk) {
 			bool	  found	 = false;
 			float	  bestD2 = 0.0F;
 			glm::vec2 best{0.0F, 0.0F};
 			for (const gnav::NavTriangle& t : navMesh.triangles) {
-				if (!gnav::terrainTraversable(t)) {
-					continue; // skip common-knowledge blockers (water/tree); snap only onto walkable ground
+				if (!faceOk(t)) {
+					continue;
 				}
 				const glm::vec2 a = engine::nav::toMeters(navMesh.vertices[t.v[0]]);
 				const glm::vec2 b = engine::nav::toMeters(navMesh.vertices[t.v[1]]);
@@ -96,6 +98,21 @@ namespace ecs {
 				}
 			}
 			return found ? std::optional<glm::vec2>(best) : std::nullopt;
+		}
+
+		// Nearest walkable point on a single mesh to `meters`, or nullopt when the mesh has no
+		// walkable floor. Terrain-optimistic (gnav::terrainTraversable): skips common-knowledge
+		// blockers (water/tree) but treats every wall face as open. Shared by nearestPathablePoint
+		// after region dispatch.
+		std::optional<glm::vec2> nearestPathableOnMesh(const gnav::NavMesh& navMesh, glm::vec2 meters) {
+			return nearestFaceOnMesh(navMesh, meters, [](const gnav::NavTriangle& t) { return gnav::terrainTraversable(t); });
+		}
+
+		// Nearest point on a single mesh to `meters` that is walkable in TRUTH (gnav::truthTraversable):
+		// floor, or a wall face a door opening spans; a solid wall face blocks. Used where a snap must
+		// not land inside a built wall's band.
+		std::optional<glm::vec2> nearestTruthWalkableOnMesh(const gnav::NavMesh& navMesh, glm::vec2 meters) {
+			return nearestFaceOnMesh(navMesh, meters, [](const gnav::NavTriangle& t) { return gnav::truthTraversable(t); });
 		}
 
 		// --- Built-wall collision-band clearance (recovery-snap side) ----------------
@@ -796,13 +813,28 @@ namespace ecs {
 
 	namespace {
 
+		// Per-point "is this face on a SPECIFIC mesh walkable" (no region dispatch) under `faceOk`.
+		// Shared by pointOnNavMesh (terrain-optimistic) and pointTruthWalkable (solid walls block).
+		template <typename FaceOk>
+		bool pointOnFace(const gnav::NavMesh& mesh, glm::vec2 meters, const FaceOk& faceOk) {
+			const std::int32_t tri = gnav::locateTriangle(mesh, engine::nav::toMm(meters));
+			return tri >= 0 && faceOk(mesh.triangles[static_cast<std::size_t>(tri)]);
+		}
+
 		// Per-point "on walkable ground" against a SPECIFIC mesh (no region dispatch): the point is
 		// inside a triangle AND that triangle is terrain-traversable. Outdoor ground is not a
 		// kNoBlocker "floor" face (that's constructed indoor floor), so isFloorFace would reject all
-		// open terrain.
+		// open terrain. Terrain-optimistic: treats every wall face as open, same as
+		// gnav::terrainTraversable.
 		bool pointOnNavMesh(const gnav::NavMesh& mesh, glm::vec2 meters) {
-			const std::int32_t tri = gnav::locateTriangle(mesh, engine::nav::toMm(meters));
-			return tri >= 0 && gnav::terrainTraversable(mesh.triangles[static_cast<std::size_t>(tri)]);
+			return pointOnFace(mesh, meters, [](const gnav::NavTriangle& t) { return gnav::terrainTraversable(t); });
+		}
+
+		// Per-point walkable-in-TRUTH against a SPECIFIC mesh (gnav::truthTraversable): floor, or a
+		// wall face a door opening spans; a solid wall face is rejected. Used where a query must not
+		// treat a built wall's interior as walkable ground.
+		bool pointTruthWalkable(const gnav::NavMesh& mesh, glm::vec2 meters) {
+			return pointOnFace(mesh, meters, [](const gnav::NavTriangle& t) { return gnav::truthTraversable(t); });
 		}
 
 		// Whole-segment walkability under a per-point predicate: both endpoints plus every interior
@@ -1008,10 +1040,10 @@ namespace ecs {
 		}
 		const geometry::Vec2i64 p	 = engine::nav::toMm(meters);
 		const gnav::NavMesh&	mesh = terrainMeshCovering(p, p);
-		if (pointOnNavMesh(mesh, meters)) {
+		if (pointTruthWalkable(mesh, meters)) {
 			return meters;
 		}
-		return nearestPathableOnMesh(mesh, meters);
+		return nearestTruthWalkableOnMesh(mesh, meters);
 	}
 
 	NavigationSystem::GroupSpawn NavigationSystem::groupSpawnPoints(glm::vec2 drop, std::size_t count, float ringRadiusMeters,
@@ -1051,12 +1083,12 @@ namespace ecs {
 		const gnav::NavMesh&	mesh  = terrainMeshCovering(minMm, maxMm);
 
 		auto clear = [&mesh, clearanceMeters](glm::vec2 p) {
-			if (!pointOnNavMesh(mesh, p)) {
+			if (!pointTruthWalkable(mesh, p)) {
 				return false;
 			}
 			for (int k = 0; k < 8; ++k) {
 				const float angle = kTwoPi * static_cast<float>(k) / 8.0F;
-				if (!pointOnNavMesh(mesh, p + glm::vec2{std::cos(angle), std::sin(angle)} * clearanceMeters)) {
+				if (!pointTruthWalkable(mesh, p + glm::vec2{std::cos(angle), std::sin(angle)} * clearanceMeters)) {
 					return false;
 				}
 			}

@@ -1201,6 +1201,73 @@ TEST_F(NavigationSystemTest, GroupSpawnPointsFromWaterDropAllLandOnWalkableGroun
 	}
 }
 
+// nearestTerrainWalkablePoint must not report a point INSIDE a built wall's band as
+// walkable: the terrain-only mesh treats a solid wall face as belief-gated (open under the
+// most-optimistic terrain predicate), so the query needs the truth predicate instead. A point
+// dead-center on a solid span is pushed out past the wall's half-thickness; a point centered on
+// a pathable door opening is left alone.
+TEST_F(NavigationSystemTest, NearestTerrainWalkablePointStepsOutOfBuiltWallBand) {
+	constexpr float kWallHalfThickness = 0.10F; // Wood/Standard, from materials.xml
+
+	ConstructionWorld cw;
+	SegmentId		  wall = buildWall(cw, {0, 0}, {6000, 0});
+	OpeningId		  door = cw.addOpening(wall, 0.5F, "Door", "Wood"); // t=0.5 -> x=3.0 m
+	ASSERT_NE(door, kInvalidOpening);
+	ASSERT_TRUE(cw.setOpeningState(door, FoundationState::Built));
+
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(m_chunks.get());
+	sys.setConstructionWorld(&cw);
+
+	// A solid span of the wall: the query point sits dead-center in the band.
+	const glm::vec2				solid = {1.0F, 0.0F};
+	const std::optional<glm::vec2> moved = sys.nearestTerrainWalkablePoint(solid);
+	ASSERT_TRUE(moved.has_value());
+	EXPECT_GE(std::abs(moved->y - solid.y), kWallHalfThickness)
+		<< "the snap must clear the solid wall's band, not report a point inside it as walkable";
+
+	// The door's opening: a point there is genuinely walkable in truth, so it must stay put.
+	const glm::vec2				  atDoor  = {3.0F, 0.0F};
+	const std::optional<glm::vec2> throughDoor = sys.nearestTerrainWalkablePoint(atDoor);
+	ASSERT_TRUE(throughDoor.has_value());
+	EXPECT_EQ(*throughDoor, atDoor) << "a pathable door opening must stay walkable";
+}
+
+// groupSpawnPoints must never place a landing-party member (or its clearance disc) inside a
+// built wall's band, even when the drop is centered on the wall.
+TEST_F(NavigationSystemTest, GroupSpawnPointsNeverLandsInsideBuiltWallBand) {
+	constexpr float kWallHalfThickness = 0.10F; // Wood/Standard, from materials.xml
+
+	ConstructionWorld cw;
+	buildWall(cw, {5000, -8000}, {5000, 8000}); // a long solid wall along x = 5 m, no opening
+
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(m_chunks.get());
+	sys.setConstructionWorld(&cw);
+
+	const glm::vec2	 drop{5.0F, 0.0F}; // dead-center on the wall
+	constexpr size_t kCrew		 = 8;
+	constexpr float	 kRing		 = 1.0F;
+	constexpr float	 kSeparation = 0.4F;
+	constexpr float	 kClearance	 = 0.3F;
+	const NavigationSystem::GroupSpawn spawn = sys.groupSpawnPoints(drop, kCrew, kRing, kSeparation, kClearance);
+	ASSERT_EQ(spawn.points.size(), kCrew);
+
+	auto insideBand = [&](glm::vec2 p) { return std::abs(p.x - 5.0F) < kWallHalfThickness; };
+	EXPECT_FALSE(insideBand(spawn.center)) << "the clearing center must not sit inside the wall";
+	for (std::size_t i = 0; i < spawn.points.size(); ++i) {
+		const glm::vec2 p = spawn.points[i];
+		EXPECT_FALSE(insideBand(p)) << "member " << i << " at (" << p.x << ", " << p.y << ") landed inside the wall";
+		for (int k = 0; k < 8; ++k) {
+			const float		angle = 6.2831853F * static_cast<float>(k) / 8.0F;
+			const glm::vec2 disc  = p + glm::vec2{std::cos(angle), std::sin(angle)} * kClearance;
+			EXPECT_FALSE(insideBand(disc)) << "member " << i << "'s clearance disc reaches into the wall";
+		}
+	}
+}
+
 // --- Whole-footprint walkability: isAreaWalkable / isSegmentWalkable -------------
 //
 // Vertex-only validity is insufficient: a footprint can have every corner on land yet
