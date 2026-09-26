@@ -130,15 +130,15 @@ namespace geometry {
 			};
 
 			std::vector<Ring> pieces;
-			std::vector<bool> used(chains.size(), false);
+			std::vector<std::uint8_t> used(chains.size(), 0);
 			for (std::size_t c0 = 0; c0 < chains.size(); ++c0) {
-				if (used[c0]) {
+				if (used[c0] != 0) {
 					continue;
 				}
 				Ring		piece;
 				std::size_t c = c0;
-				while (!used[c]) {
-					used[c]			   = true;
+				while (used[c] == 0) {
+					used[c]			   = 1;
 					const Chain& chain = chains[c];
 					for (std::size_t k = 0; k <= chain.edges; ++k) {
 						piece.push_back(ring[(chain.first + k) % n]);
@@ -167,7 +167,7 @@ namespace geometry {
 					for (std::size_t k = 0; k < passedCount; ++k) {
 						piece.push_back(corners[passed[k].second]);
 					}
-					assert((next == c0 || !used[next]) && "clipRingToRect: boundary walk reached a used chain");
+					assert((next == c0 || used[next] == 0) && "clipRingToRect: boundary walk reached a used chain");
 					c = next;
 				}
 
