@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <memory>
 #include <unordered_set>
 #include <vector>
@@ -278,9 +279,10 @@ TEST(RiverNetwork2D, WideRiverGrowsFeeders) {
         << "a wide river should sprout many feeder segments a thin one does not";
 }
 
-// Feeders taper from the parent width at the confluence to a thin trickle, but
-// never below the render contiguity floor (so thin water is not broken on the
-// 1 m tile grid). The wide trunk stays wide.
+// Feeders taper from the parent width at the confluence to a true trickle --
+// RiverNetwork2D no longer floors any emitted half-width (the render-grid floor
+// now lives with the tile rasterizer, ChunkSampleResult::riverHalfWidthAt). The
+// wide trunk stays wide.
 TEST(RiverNetwork2D, FeedersTaperToTrickle) {
     auto world = makeLandWorld();
     auto chain = buildRiver(*world, 0.0, -30.0, 0.0, 30.0, 400.0f, 0.0f);
@@ -300,8 +302,9 @@ TEST(RiverNetwork2D, FeedersTaperToTrickle) {
         minHalf = std::min({minHalf, s.halfWidth0, s.halfWidth1});
         maxHalf = std::max({maxHalf, s.halfWidth0, s.halfWidth1});
     }
-    EXPECT_GE(minHalf, 0.75f) << "no emitted channel may drop below the contiguity floor (~0.8 m half)";
-    EXPECT_LE(minHalf, 1.2f) << "feeder spring ends should still taper to a thin trickle";
+    EXPECT_GT(minHalf, 0.0f) << "a trickle is still a channel, never zero or negative width";
+    EXPECT_LT(minHalf, 0.4f)
+        << "feeder spring ends should taper to a true trickle, well under the old 0.8 m render floor";
     EXPECT_GE(maxHalf, 5.0f) << "the wide trunk should remain wide";
 }
 
@@ -349,6 +352,66 @@ TEST(RiverNetwork2D, HeadwaterSproutsConvergingSprings) {
     }
     EXPECT_TRUE(leftBank && rightBank)
         << "a headwater should be fed by springs from both banks, upstream of the source";
+}
+
+// Every feeder segment carries the same orientation contract as a trunk segment
+// (RiverNetwork2D.h): (x0,y0) upstream (toward the spring), (x1,y1) downstream
+// (toward the confluence with the parent channel). Isolate feeder segments the
+// same way HeadwaterSproutsConvergingSprings does -- the spring-ward endpoint
+// strictly upstream of the source, a place only a feeder can reach -- and check
+// the width trend and the confluence location against that orientation. Only
+// x0 is required upstream: the mouth-ward endpoint (x1) of the segment nearest
+// the confluence sits right at the anchor point near the source itself, so
+// requiring it upstream too would exclude exactly the segment that proves the
+// mouth end lands at the parent.
+TEST(RiverNetwork2D, FeederSegmentsOrientedSpringToMouth) {
+    auto world = makeLandWorld();
+    auto chain = buildRiver(*world, 0.0, -30.0, 0.0, 30.0);
+    ASSERT_GE(chain.size(), 5u);
+    RiverNetwork2D net(world, 0.0, 0.0);
+    SphericalProjection proj(world->derived.planetRadiusMeters, 0.0, 0.0);
+
+    const WorldPos2d src = tilePos(*world, proj, chain.front());
+    const WorldPos2d nxt = tilePos(*world, proj, chain[1]);
+    double ux = nxt.x - src.x;
+    double uy = nxt.y - src.y;
+    const double ulen = std::sqrt(ux * ux + uy * uy);
+    ASSERT_GT(ulen, 0.0);
+    ux /= ulen;
+    uy /= ulen;
+
+    auto alongOf = [&](double x, double y) { return (x - src.x) * (-ux) + (y - src.y) * (-uy); };
+
+    const double r = 1500.0;
+    std::vector<RiverNetwork2D::Segment> segs;
+    net.gatherSegments(src.x - r, src.y - r, src.x + r, src.y + r, segs);
+    ASSERT_FALSE(segs.empty());
+
+    double sumHw0 = 0.0;
+    double sumHw1 = 0.0;
+    int    count = 0;
+    double minMouthDistToSrc = std::numeric_limits<double>::max();
+    for (const auto& s : segs) {
+        if (alongOf(s.x0, s.y0) <= 8.0) continue; // trunk, not a feeder: x0 never reaches upstream of the source
+        sumHw0 += s.halfWidth0;
+        sumHw1 += s.halfWidth1;
+        ++count;
+        const double dx = s.x1 - src.x;
+        const double dy = s.y1 - src.y;
+        minMouthDistToSrc = std::min(minMouthDistToSrc, std::sqrt(dx * dx + dy * dy));
+    }
+    ASSERT_GT(count, 0) << "expected feeder segments upstream of the headwater source";
+    EXPECT_GE(sumHw1 / count, sumHw0 / count)
+        << "half-width should not decrease, on average, toward (x1,y1): x1 is the mouth end";
+    // Generous on purpose: the along>8 filter itself discards a step or two near
+    // the boundary (a feeder can leave at a steep angle to the trunk, so one
+    // ~11 m step is only a few meters of upstream projection), which pushes the
+    // nearest *surviving* segment's mouth-ward point out from the true anchor.
+    // What this proves is orientation, not the exact confluence offset (already
+    // covered by HeadwaterSproutsConvergingSprings): the mouth end sits close to
+    // the source, nowhere near the spring end tens to hundreds of meters out.
+    EXPECT_LT(minMouthDistToSrc, 30.0)
+        << "the feeder segment nearest the source should end (x1,y1) right at the confluence";
 }
 
 // The local per-point query (which gathers only a small box, as a chunk does)

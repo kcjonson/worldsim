@@ -47,16 +47,23 @@ namespace engine::world {
 		                         [this](WorldPosition p) { return sampleBiomeAt(p); },
 		                         [this](WorldPosition p) { return sampleElevation(p); });
 
-		// Gather any river channels and ponds touching this chunk, expanded by the
-		// apron so the terrain-polygon builder's apron tiles (up to kApronTiles from
-		// the border) see every channel/pond a neighbor chunk would (D4 seam rule).
+		// Gather any river channels and ponds touching this chunk, padded by
+		// kRiverChainMarginM beyond the chunk square. The margin covers the
+		// kApronTiles apron the terrain-polygon builder and ApronField read (D4)
+		// and more: the ribbon builder (D7) joins the gathered sub-segments into
+		// chains and needs each chain's cut ends two 20 m trunk steps outside the
+		// extended region, so a cut never shows. Ponds get the same margin so a
+		// channel's mouth flare can find a receiving pond just past the edge;
+		// gatherPonds widens further by each pond's own footprint.
 		if (riverNetwork || pondNetwork) {
+			constexpr double kRiverChainMarginM = 48.0;
 			const WorldPosition origin = coord.origin();
-			const double apronMeters = static_cast<double>(kApronTiles) * static_cast<double>(kTileSize);
-			const double minX = static_cast<double>(origin.x) - apronMeters;
-			const double minY = static_cast<double>(origin.y) - apronMeters;
-			const double maxX = minX + static_cast<double>(kChunkSize) * static_cast<double>(kTileSize) + 2.0 * apronMeters;
-			const double maxY = minY + static_cast<double>(kChunkSize) * static_cast<double>(kTileSize) + 2.0 * apronMeters;
+			const double minX = static_cast<double>(origin.x) - kRiverChainMarginM;
+			const double minY = static_cast<double>(origin.y) - kRiverChainMarginM;
+			const double maxX = static_cast<double>(origin.x) +
+			                    static_cast<double>(kChunkSize) * static_cast<double>(kTileSize) + kRiverChainMarginM;
+			const double maxY = static_cast<double>(origin.y) +
+			                    static_cast<double>(kChunkSize) * static_cast<double>(kTileSize) + kRiverChainMarginM;
 			if (riverNetwork) riverNetwork->gatherSegments(minX, minY, maxX, maxY, result.riverSegments);
 			if (pondNetwork) pondNetwork->gatherPonds(minX, minY, maxX, maxY, result.pondBlobs);
 		}

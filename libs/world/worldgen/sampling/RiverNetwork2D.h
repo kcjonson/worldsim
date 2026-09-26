@@ -28,7 +28,11 @@ namespace worldgen {
 class RiverNetwork2D {
   public:
     // A flattened channel segment in 2D world meters. Half-width varies linearly
-    // from end 0 to end 1 (rivers widen downstream).
+    // from end 0 to end 1. Orientation is a contract every emitter honors: (x0,y0)
+    // is always the upstream end, (x1,y1) the downstream end, so a chain of
+    // segments joined end-to-end has one consistent flow direction. Trunk segments
+    // run source tile -> its downstream tile; feeders run spring -> the confluence
+    // with their parent channel.
     struct Segment {
         double x0{}, y0{}, x1{}, y1{};
         float  halfWidth0{}, halfWidth1{};
