@@ -227,15 +227,17 @@ class NavigationSystem : public ISystem {
 
 	// Whole-FOOTPRINT BUILDABILITY for an area structure. Like isAreaWalkable, but validated against
 	// a TERRAIN-ONLY mesh (geography + built walls, no tree/rock entity obstacles) built on demand
-	// over the footprint's local area. So a footprint over clearable entities reads as buildable
-	// (ConstructionSystem turns those into clear tasks), while water and walls still block. This is
-	// the placement gate for the build tool; isAreaWalkable stays the pure on-mesh predicate. Falls
-	// back to isAreaWalkable when the nav build inputs aren't wired (headless/tests).
+	// over the footprint's local area. Clearable entities (trees/rocks) read as buildable here
+	// (ConstructionSystem turns them into clear tasks) and so does every wall face; only water and
+	// off-mesh gaps block. This is the placement gate for the build tool -- wall conflicts are
+	// ConstructionValidator's job, not this predicate. isAreaWalkable stays the pure on-mesh
+	// predicate; falls back to it when the nav build inputs aren't wired (headless/tests).
 	[[nodiscard]] bool isAreaBuildable(const std::vector<glm::vec2>& polygonMeters) const;
 
 	// Single-point buildability: the per-vertex / live-cursor counterpart of isAreaBuildable, against
-	// the same cached terrain-only mesh. True over clearable entities (trees/rocks), false on water or
-	// a built wall. Falls back to isOnMesh when the build inputs aren't wired (headless/tests).
+	// the same cached terrain-only mesh. True over clearable entities (trees/rocks) and over a built
+	// wall face; false only on water or an off-mesh gap. Falls back to isOnMesh when the build inputs
+	// aren't wired (headless/tests).
 	[[nodiscard]] bool isPointBuildable(glm::vec2 meters) const;
 
 	// `meters` itself when it is walkable on the terrain-only mesh (water and built walls
