@@ -198,12 +198,13 @@ float computeTileEdgeDarkening(
 
 /// Get the visual stack order for a surface type.
 /// Higher values = rendered on top. Higher surfaces bleed onto lower surfaces.
-/// Stack order: Water(0) < Mud(1) < Sand(2) < Dirt(3) < GrassShort(4) < Grass(5) < GrassMeadow(6) < GrassTall(7) < Rock(8) < Snow(9)
+/// Stack order: Mud(1) < Sand(2) < Dirt(3) < GrassShort(4) < Grass(5) < GrassMeadow(6) < GrassTall(7) < Rock(8) < Snow(9)
 /// Grass variants have distinct sub-levels to enable soft blending between them.
+/// Land only: water is painted from the distance field (water.glsl), and a Water
+/// tile's render data carries its bed surface, so no tile here is ever water.
 int getSurfaceStackOrder(uint surfaceId) {
-    // Surface IDs: Grass=0, Dirt=1, Sand=2, Rock=3, Water=4, Snow=5, Mud=6, GrassTall=7, GrassShort=8, GrassMeadow=9
-    if (surfaceId == 4u) return 0;  // Water - lowest
-    if (surfaceId == 6u) return 1;  // Mud
+    // Surface IDs: Grass=0, Dirt=1, Sand=2, Rock=3, Snow=5, Mud=6, GrassTall=7, GrassShort=8, GrassMeadow=9
+    if (surfaceId == 6u) return 1;  // Mud - lowest
     if (surfaceId == 2u) return 2;  // Sand
     if (surfaceId == 1u) return 3;  // Dirt
     if (surfaceId == 8u) return 4;  // GrassShort - driest grass

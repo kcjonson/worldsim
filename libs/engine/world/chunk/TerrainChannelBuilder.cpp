@@ -81,9 +81,9 @@ namespace engine::world::terrain_detail {
 		}
 
 		TerrainRing vectorTerrainRing(Ring ring, TerrainRingKind kind, WaterKind water, std::span<const Vec2i64> cutVertices,
-									  const ExtendedGrid& grid, const Region& region) {
+									  const ExtendedGrid& grid, const Region& region, uint64_t worldSeed) {
 			TerrainRing terrain;
-			terrain.profiles = shoreProfiles(ring, water, grid, SideRule::VectorWater);
+			terrain.profiles = shoreProfiles(ring, water, grid, SideRule::VectorWater, worldSeed);
 			for (size_t i = 0; i < ring.size(); ++i) {
 				if (isOnExtendedSide(ring[i], ring[(i + 1) % ring.size()], region)) {
 					terrain.profiles[i].flags |= ShoreProfile::kFlagSynthetic;
@@ -830,7 +830,7 @@ namespace engine::world::terrain_detail {
 					const Region& region, uint64_t worldSeed, ChunkCoordinate coord) {
 		for (const Builder::Pond& pond : ponds) {
 			for (Ring& ring : finishVectorRing(pondRim(pond, worldSeed), {}, region, coord, "pond ring")) {
-				rings.push_back(vectorTerrainRing(std::move(ring), TerrainRingKind::Pond, WaterKind::Pond, {}, grid, region));
+				rings.push_back(vectorTerrainRing(std::move(ring), TerrainRingKind::Pond, WaterKind::Pond, {}, grid, region, worldSeed));
 			}
 		}
 	}
@@ -874,7 +874,7 @@ namespace engine::world::terrain_detail {
 				for (ChannelPiece& piece : strokeReach(reach, ribbon)) {
 					for (Ring& ring : finishVectorRing(piece.ring, piece.cuts, region, coord, "channel ring")) {
 						TerrainRing terrain = vectorTerrainRing(
-							std::move(ring), TerrainRingKind::Channel, WaterKind::River, piece.cuts, grid, region
+							std::move(ring), TerrainRingKind::Channel, WaterKind::River, piece.cuts, grid, region, worldSeed
 						);
 						terrain.blocksMovement = piece.blocksMovement;
 						terrain.meanHalfWidthM = piece.meanHalfWidthM;

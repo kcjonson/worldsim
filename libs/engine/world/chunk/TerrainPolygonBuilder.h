@@ -245,8 +245,37 @@ class TerrainPolygonBuilder {
 	/// How far off a ring vertex, along its normal, the land-side and water-side
 	/// tiles are probed.
 	static constexpr int64_t kProfileProbeMm = 600;
-	/// Grade (rise over run) that maps to slope 255.
-	static constexpr float kSlopeFullScale = 0.25F;
+	/// Slope (L2, R2, R3) is a shading heuristic, not a measurement: tile
+	/// elevation is bilinear from chunk corners 512 m apart and carries almost no
+	/// local relief. It is a baseline by water kind (channels by bank side), plus
+	/// a land-rise term, plus along-shore noise, held to [kSlopeMin, kSlopeMax].
+	static constexpr float kSlopeOcean = 0.40F;
+	static constexpr float kSlopeLake = 0.35F;
+	static constexpr float kSlopeWetland = 0.15F;
+	static constexpr float kSlopePond = 0.28F;
+	/// Channel banks: a straight reach, moved by a full bend toward a steep outer
+	/// (cut) bank or a gentle inner (point-bar) bank. The bend is the bank's bulge
+	/// off its chord over a window short enough to see a small stream's meanders.
+	static constexpr float kSlopeChannelStraight = 0.45F;
+	static constexpr float kSlopeChannelBendGain = 0.35F;
+	static constexpr int64_t kChannelBendWindowMm = 10000;
+	static constexpr float kChannelBendBulgeFullScaleMm = 1500.0F;
+	/// Land rise above the water level kSlopeRunMm landward of the ring, as a
+	/// grade, adding up to kSlopeRiseWeight: half of it at kSlopeRiseHalfGrade,
+	/// so real coastal relief moves slope without saturating it. The run stays
+	/// inside the apron for every vertex a neighbor's bake can read.
+	static constexpr int64_t kSlopeRunMm = 8000;
+	static constexpr float kSlopeRiseWeight = 0.3F;
+	static constexpr float kSlopeRiseHalfGrade = 0.25F;
+	/// A vertex whose probes don't resolve takes its rise from the nearest
+	/// resolved vertices within this much arc length either side (D15: no zeros).
+	static constexpr double kSlopeInheritReachMm = 4000.0;
+	/// World-space fBm at the vertex, so no stretch of shore is uniform (D15).
+	static constexpr double kSlopeNoiseWavelengthM = 20.0;
+	static constexpr int kSlopeNoiseOctaves = 3;
+	static constexpr float kSlopeNoiseAmp = 0.2F;
+	static constexpr float kSlopeMin = 0.06F;
+	static constexpr float kSlopeMax = 0.94F;
 	/// Arc-length window the concavity term of exposure is measured over.
 	static constexpr int64_t kExposureWindowMm = 20000;
 	/// Bulge of a vertex off its window chord that maps to fully exposed

@@ -7,17 +7,20 @@
 #include "world/generation/BiomeDispatcher.h"
 
 #include <algorithm>
+#include <array>
+#include <utility>
+#include <vector>
 
 namespace engine::world {
 
 	namespace {
-		// Rendered water depth (cosmetic) packed into TileData::attributes and read
-		// by the tile shader. 255 = deepest.
+		// Cosmetic water depth kept as tile data (D1); the renderer paints depth from
+		// the distance field instead. 255 = deepest.
 		constexpr uint8_t kDeepWaterDepth = 255;
 
-		// Map a channel's full width (meters) to a depth byte: narrow streams read
-		// shallow (light), wide rivers deep. A floor keeps even the thinnest stream
-		// visually distinct from a shallow lake edge.
+		// Map a channel's full width (meters) to a depth byte: narrow streams
+		// shallow, wide rivers deep. A floor keeps even the thinnest stream
+		// distinct from a shallow lake edge.
 		uint8_t waterDepthFromWidth(float fullWidthMeters) {
 			constexpr float kShallowAt = 1.5F;   // <= this is fully shallow (a trickle)
 			constexpr float kDeepAt = 14.0F;     // >= this reads fully deep; keeps stream-vs-river contrast
@@ -112,32 +115,98 @@ namespace engine::world {
 	}
 
 	void Chunk::computeRenderData() {
-		for (uint16_t y = 0; y < kChunkSize; ++y) {
-			for (uint16_t x = 0; x < kChunkSize; ++x) {
-				size_t		idx = y * kChunkSize + x;
-				const auto& tile = m_tiles[idx];
-				auto&		render = m_renderData[idx];
-
-				uint8_t surfaceId = static_cast<uint8_t>(tile.surface);
-				render.surfaceId = surfaceId;
-				render.waterDepth = tile.waterDepth; // cosmetic depth for the water shader
-
-				// Pre-compute edge and corner masks
-				render.edgeMask = TileAdjacency::getEdgeMaskByStack(tile.adjacency, surfaceId);
-				render.cornerMask = TileAdjacency::getCornerMaskByStack(tile.adjacency, surfaceId);
-				render.hardEdgeMask = TileAdjacency::getHardEdgeMaskByFamily(tile.adjacency, surfaceId);
-
-				// Pre-extract all neighbor surface IDs
-				render.neighborN = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::N);
-				render.neighborE = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::E);
-				render.neighborS = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::S);
-				render.neighborW = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::W);
-				render.neighborNW = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::NW);
-				render.neighborNE = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::NE);
-				render.neighborSE = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::SE);
-				render.neighborSW = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::SW);
+		// Paint surfaces first: land paints as itself, a Water tile as its bed, the
+		// surface of the nearest land tile in the chunk (multi-source BFS in scan
+		// order, 8-connected so a bed follows a diagonal shore). Only the bed within
+		// a tile or two of the shore is ever seen, where the smoothed waterline puts
+		// land over a Water tile; beyond that the shader's water covers it.
+		constexpr uint8_t kWater	 = static_cast<uint8_t>(Surface::Water);
+		constexpr uint8_t kNoBed	 = 0xFF;
+		constexpr size_t  kSide		 = static_cast<size_t>(kChunkSize);
+		constexpr size_t  kTileCount = kSide * kSide;
+		std::vector<uint32_t> frontier;
+		for (size_t idx = 0; idx < kTileCount; ++idx) {
+			const uint8_t surface		 = static_cast<uint8_t>(m_tiles[idx].surface);
+			m_renderData[idx].surfaceId = surface == kWater ? kNoBed : surface;
+			if (surface != kWater) {
+				frontier.push_back(static_cast<uint32_t>(idx));
 			}
 		}
+		for (size_t head = 0; head < frontier.size(); ++head) {
+			const uint32_t idx	   = frontier[head];
+			const int32_t  x	   = static_cast<int32_t>(idx % kSide);
+			const int32_t  y	   = static_cast<int32_t>(idx / kSide);
+			const uint8_t  surface = m_renderData[idx].surfaceId;
+			for (int32_t dy = -1; dy <= 1; ++dy) {
+				for (int32_t dx = -1; dx <= 1; ++dx) {
+					const int32_t nx = x + dx;
+					const int32_t ny = y + dy;
+					if (nx < 0 || ny < 0 || nx >= kChunkSize || ny >= kChunkSize) {
+						continue;
+					}
+					const size_t n = static_cast<size_t>(ny) * kSide + static_cast<size_t>(nx);
+					if (m_renderData[n].surfaceId == kNoBed) {
+						m_renderData[n].surfaceId = surface;
+						frontier.push_back(static_cast<uint32_t>(n));
+					}
+				}
+			}
+		}
+		// A chunk with no land at all: its bed is never seen, sand is as good as any.
+		for (size_t idx = 0; idx < kTileCount; ++idx) {
+			if (m_renderData[idx].surfaceId == kNoBed) {
+				m_renderData[idx].surfaceId = static_cast<uint8_t>(Surface::Sand);
+			}
+		}
+
+		for (uint16_t y = 0; y < kChunkSize; ++y) {
+			for (uint16_t x = 0; x < kChunkSize; ++x) {
+				setRenderAdjacency(x, y, m_tiles[static_cast<size_t>(y) * kSide + x].adjacency);
+			}
+		}
+	}
+
+	void Chunk::setRenderAdjacency(uint16_t localX, uint16_t localY, uint64_t adjacency) {
+		constexpr uint8_t kWater = static_cast<uint8_t>(Surface::Water);
+		static constexpr std::array<std::pair<int32_t, int32_t>, TileAdjacency::kDirectionCount> kOffsets{{
+			{-1, -1}, // NW
+			{-1, 0},  // W
+			{-1, 1},  // SW
+			{0, 1},	  // S
+			{1, 1},	  // SE
+			{1, 0},	  // E
+			{1, -1},  // NE
+			{0, -1},  // N
+		}};
+
+		constexpr size_t  kSide	 = static_cast<size_t>(kChunkSize);
+		auto&		  render	= m_renderData[static_cast<size_t>(localY) * kSide + localX];
+		const uint8_t surfaceId = render.surfaceId;
+		uint64_t	  paint		= 0;
+		for (int dir = 0; dir < TileAdjacency::kDirectionCount; ++dir) {
+			const auto	  d	 = static_cast<TileAdjacency::Direction>(dir);
+			const int32_t nx = static_cast<int32_t>(localX) + kOffsets[static_cast<size_t>(dir)].first;
+			const int32_t ny = static_cast<int32_t>(localY) + kOffsets[static_cast<size_t>(dir)].second;
+			uint8_t		  neighbor = TileAdjacency::getNeighbor(adjacency, d);
+			if (nx >= 0 && ny >= 0 && nx < kChunkSize && ny < kChunkSize) {
+				neighbor = m_renderData[static_cast<size_t>(ny) * kSide + static_cast<size_t>(nx)].surfaceId;
+			} else if (neighbor == kWater) {
+				neighbor = surfaceId;
+			}
+			TileAdjacency::setNeighbor(paint, d, neighbor);
+		}
+
+		render.edgeMask		= TileAdjacency::getEdgeMaskByStack(paint, surfaceId);
+		render.cornerMask	= TileAdjacency::getCornerMaskByStack(paint, surfaceId);
+		render.hardEdgeMask = TileAdjacency::getHardEdgeMaskByFamily(paint, surfaceId);
+		render.neighborN	= TileAdjacency::getNeighbor(paint, TileAdjacency::N);
+		render.neighborE	= TileAdjacency::getNeighbor(paint, TileAdjacency::E);
+		render.neighborS	= TileAdjacency::getNeighbor(paint, TileAdjacency::S);
+		render.neighborW	= TileAdjacency::getNeighbor(paint, TileAdjacency::W);
+		render.neighborNW	= TileAdjacency::getNeighbor(paint, TileAdjacency::NW);
+		render.neighborNE	= TileAdjacency::getNeighbor(paint, TileAdjacency::NE);
+		render.neighborSE	= TileAdjacency::getNeighbor(paint, TileAdjacency::SE);
+		render.neighborSW	= TileAdjacency::getNeighbor(paint, TileAdjacency::SW);
 	}
 
 	const TileData& Chunk::getTile(uint16_t localX, uint16_t localY) const {
@@ -145,28 +214,8 @@ namespace engine::world {
 	}
 
 	void Chunk::setAdjacency(uint16_t localX, uint16_t localY, uint64_t adjacency) {
-		size_t idx = localY * kChunkSize + localX;
-		m_tiles[idx].adjacency = adjacency;
-
-		// Update pre-computed render data to match new adjacency
-		const auto& tile = m_tiles[idx];
-		auto&		render = m_renderData[idx];
-		uint8_t		surfaceId = static_cast<uint8_t>(tile.surface);
-
-		render.surfaceId = surfaceId;
-		render.waterDepth = tile.waterDepth; // keep cosmetic depth in sync
-		render.edgeMask = TileAdjacency::getEdgeMaskByStack(adjacency, surfaceId);
-		render.cornerMask = TileAdjacency::getCornerMaskByStack(adjacency, surfaceId);
-		render.hardEdgeMask = TileAdjacency::getHardEdgeMaskByFamily(adjacency, surfaceId);
-		render.neighborN = TileAdjacency::getNeighbor(adjacency, TileAdjacency::N);
-		render.neighborE = TileAdjacency::getNeighbor(adjacency, TileAdjacency::E);
-		render.neighborS = TileAdjacency::getNeighbor(adjacency, TileAdjacency::S);
-		render.neighborW = TileAdjacency::getNeighbor(adjacency, TileAdjacency::W);
-		render.neighborNW = TileAdjacency::getNeighbor(adjacency, TileAdjacency::NW);
-		render.neighborNE = TileAdjacency::getNeighbor(adjacency, TileAdjacency::NE);
-		render.neighborSE = TileAdjacency::getNeighbor(adjacency, TileAdjacency::SE);
-		render.neighborSW = TileAdjacency::getNeighbor(adjacency, TileAdjacency::SW);
-
+		m_tiles[localY * kChunkSize + localX].adjacency = adjacency;
+		setRenderAdjacency(localX, localY, adjacency);
 		m_renderDataVersion.fetch_add(1, std::memory_order_release);
 	}
 
@@ -200,7 +249,7 @@ namespace engine::world {
 		// Select surface type based on primary biome (uses spatial clustering)
 		tile.surface = selectSurfaceFor(args.coord, tile.primaryBiome, args.localX, args.localY, args.elevationMeters, args.worldSeed);
 
-		// Water depth byte (cosmetic; the shader tints water by it). Biome water
+		// Water depth byte (cosmetic tile data, not drawn). Biome water
 		// (ocean/lake/wetland) reads deep; river channels set depth from their width
 		// below so streams render shallow and trunks deep.
 		uint8_t depth = (tile.surface == Surface::Water) ? kDeepWaterDepth : 0;
@@ -347,9 +396,6 @@ namespace engine::world {
 
 			case Surface::Rock:
 				return Foundation::Color(0.42F, 0.42F, 0.42F, 1.0F);
-
-			case Surface::Water:
-				return Foundation::Color(0.10F, 0.30F, 0.48F, 1.0F);
 
 			case Surface::Snow:
 				return Foundation::Color(0.95F, 0.97F, 1.0F, 1.0F);

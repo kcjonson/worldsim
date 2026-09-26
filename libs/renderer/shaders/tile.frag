@@ -1,12 +1,16 @@
 #version 330 core
 
 // Tile pass fragment shader - shades ground tiles from a per-chunk tile-data
-// texture (one RGBA32UI texel per tile, mirroring engine TileRenderData).
-// Replaces the per-tile quad path that rebuilt CPU geometry every frame.
+// texture (one RGBA32UI texel per tile, mirroring engine TileRenderData), then
+// paints water and shore on top from the chunk's terrain distance field
+// (water.glsl). The ground pass is land only: a Water tile carries its bed
+// surface, so under and around the waterline it reads as the adjacent land.
 
 #include "includes/tile.glsl"
+#include "includes/water.glsl"
 
 in vec2 v_worldPos;
+in vec2 v_localPos;
 
 out vec4 FragColor;
 
@@ -14,9 +18,8 @@ out vec4 FragColor;
 //   r: surfaceId | edgeMask<<8 | cornerMask<<16 | hardEdgeMask<<24
 //   g: neighborN | neighborE<<8 | neighborS<<16 | neighborW<<24
 //   b: neighborNW | neighborNE<<8 | neighborSE<<16 | neighborSW<<24
-//   a: waterDepth | (padding<<8)
+//   a: padding
 uniform usampler2D u_tileData;
-uniform vec2 u_chunkOrigin;      // chunk origin in world meters
 uniform ivec2 u_chunkTileOrigin; // chunk origin in world tile coordinates
 
 // Tile atlas. Rects specify uvMin.xy, uvMax.xy per surface id.
@@ -36,21 +39,9 @@ vec4 sampleTileColor(vec2 uv, uint surfaceId) {
 	return vec4(1.0);
 }
 
-/// Tint water by its rendered depth byte: shallow streams pale, deep rivers and
-/// lakes dark. A little procedural shimmer keeps large bodies from reading flat.
-vec3 waterColorByDepth(uint depthByte, vec2 worldPos) {
-	float d = float(depthByte) / 255.0;
-	vec3 shallow = vec3(0.40, 0.62, 0.66); // pale teal
-	vec3 deep    = vec3(0.07, 0.24, 0.42); // deep blue
-	vec3 c = mix(shallow, deep, d);
-	float ripple = tileNoise2D(worldPos * 0.6);
-	return c * (0.92 + 0.12 * ripple);
-}
-
-void main() {
-	// World position -> tile within this chunk. Tiles are 1m, so the intra-tile
-	// UV is just the fractional part (y=0 at the tile's north edge).
-	vec2 local = v_worldPos - u_chunkOrigin;
+/// The land pass: tile surface, higher-bleeds-onto-lower blending, and edge darkening.
+vec4 groundColor(vec2 local) {
+	// Tiles are 1m, so the intra-tile UV is just the fractional part (y=0 at the tile's north edge).
 	ivec2 tileCoord = clamp(ivec2(floor(local)), ivec2(0), textureSize(u_tileData, 0) - 1);
 	vec2 uv = clamp(local - vec2(tileCoord), 0.0, 1.0);
 
@@ -67,7 +58,8 @@ void main() {
 	uint neighborNE   = (data.b >> 8u)  & 0xFFu;
 	uint neighborSE   = (data.b >> 16u) & 0xFFu;
 	uint neighborSW   = (data.b >> 24u) & 0xFFu;
-	uint waterDepth   =  data.a         & 0xFFu;
+
+	vec4 color = sampleTileColor(uv, surfaceId);
 
 	// PERF: Early-out for INTERIOR TILES (no edge transitions at all).
 	// A tile is truly interior only if ALL 8 neighbors have the same surface.
@@ -77,20 +69,7 @@ void main() {
 		neighborNW == surfaceId && neighborNE == surfaceId &&
 		neighborSE == surfaceId && neighborSW == surfaceId);
 	if (isInteriorTile) {
-		vec4 interiorColor = sampleTileColor(uv, surfaceId);
-		if (surfaceId == 4u) {
-			interiorColor.rgb = waterColorByDepth(waterDepth, v_worldPos);
-		}
-		FragColor = interiorColor;
-		return;
-	}
-
-	int tileX = u_chunkTileOrigin.x + tileCoord.x;
-	int tileY = u_chunkTileOrigin.y + tileCoord.y;
-
-	vec4 color = sampleTileColor(uv, surfaceId);
-	if (surfaceId == 4u) {
-		color.rgb = waterColorByDepth(waterDepth, v_worldPos);
+		return color;
 	}
 
 	// PERF: Early-out for interior pixels (~31% of tile area).
@@ -98,42 +77,54 @@ void main() {
 	const float kEdgeMargin = 0.22; // Slightly beyond max blend/edge width
 	bool isInterior = uv.x > kEdgeMargin && uv.x < (1.0 - kEdgeMargin) &&
 	                  uv.y > kEdgeMargin && uv.y < (1.0 - kEdgeMargin);
-
-	if (!isInterior) {
-		// ========== SOFT EDGE BLENDING - "Higher Bleeds Onto Lower" ==========
-		if (u_tileAtlasRectCount > 0) {
-			vec4 blendWeights = computeHigherBleedWeights(uv, tileX, tileY, surfaceId, neighborN, neighborE, neighborS, neighborW, hardEdgeMask);
-
-			#define SAMPLE_NEIGHBOR(neighborId, weight) \
-				if (weight > 0.001 && int(neighborId) < u_tileAtlasRectCount) { \
-					vec4 nRect = u_tileAtlasRects[int(neighborId)]; \
-					vec2 nAtlasUV = nRect.xy + uv * (nRect.zw - nRect.xy); \
-					vec4 nColor = texture(u_tileAtlas, nAtlasUV); \
-					color = mix(color, nColor, weight); \
-				}
-
-			SAMPLE_NEIGHBOR(neighborN, blendWeights.x)
-			SAMPLE_NEIGHBOR(neighborE, blendWeights.y)
-			SAMPLE_NEIGHBOR(neighborS, blendWeights.z)
-			SAMPLE_NEIGHBOR(neighborW, blendWeights.w)
-
-			// Diagonal corner blending
-			vec4 diagWeights = computeDiagonalCornerWeights(uv, surfaceId,
-				neighborN, neighborE, neighborS, neighborW,
-				neighborNW, neighborNE, neighborSE, neighborSW);
-
-			SAMPLE_NEIGHBOR(neighborNW, diagWeights.x)
-			SAMPLE_NEIGHBOR(neighborNE, diagWeights.y)
-			SAMPLE_NEIGHBOR(neighborSE, diagWeights.z)
-			SAMPLE_NEIGHBOR(neighborSW, diagWeights.w)
-
-			#undef SAMPLE_NEIGHBOR
-		}
-
-		// Apply procedural edge/corner darkening
-		float darkenFactor = computeTileEdgeDarkening(uv, tileX, tileY, edgeMask, cornerMask, hardEdgeMask);
-		color.rgb *= darkenFactor;
+	if (isInterior) {
+		return color;
 	}
 
-	FragColor = color;
+	int tileX = u_chunkTileOrigin.x + tileCoord.x;
+	int tileY = u_chunkTileOrigin.y + tileCoord.y;
+
+	// ========== SOFT EDGE BLENDING - "Higher Bleeds Onto Lower" ==========
+	if (u_tileAtlasRectCount > 0) {
+		vec4 blendWeights = computeHigherBleedWeights(uv, tileX, tileY, surfaceId, neighborN, neighborE, neighborS, neighborW, hardEdgeMask);
+
+		#define SAMPLE_NEIGHBOR(neighborId, weight) \
+			if (weight > 0.001 && int(neighborId) < u_tileAtlasRectCount) { \
+				vec4 nRect = u_tileAtlasRects[int(neighborId)]; \
+				vec2 nAtlasUV = nRect.xy + uv * (nRect.zw - nRect.xy); \
+				vec4 nColor = texture(u_tileAtlas, nAtlasUV); \
+				color = mix(color, nColor, weight); \
+			}
+
+		SAMPLE_NEIGHBOR(neighborN, blendWeights.x)
+		SAMPLE_NEIGHBOR(neighborE, blendWeights.y)
+		SAMPLE_NEIGHBOR(neighborS, blendWeights.z)
+		SAMPLE_NEIGHBOR(neighborW, blendWeights.w)
+
+		// Diagonal corner blending
+		vec4 diagWeights = computeDiagonalCornerWeights(uv, surfaceId,
+			neighborN, neighborE, neighborS, neighborW,
+			neighborNW, neighborNE, neighborSE, neighborSW);
+
+		SAMPLE_NEIGHBOR(neighborNW, diagWeights.x)
+		SAMPLE_NEIGHBOR(neighborNE, diagWeights.y)
+		SAMPLE_NEIGHBOR(neighborSE, diagWeights.z)
+		SAMPLE_NEIGHBOR(neighborSW, diagWeights.w)
+
+		#undef SAMPLE_NEIGHBOR
+	}
+
+	// Apply procedural edge/corner darkening
+	float darkenFactor = computeTileEdgeDarkening(uv, tileX, tileY, edgeMask, cornerMask, hardEdgeMask);
+	color.rgb *= darkenFactor;
+	return color;
+}
+
+void main() {
+	vec4 ground = groundColor(v_localPos);
+	if (!u_hasWater) {
+		FragColor = ground;
+		return;
+	}
+	FragColor = vec4(shadeWater(ground.rgb, v_localPos, v_worldPos), ground.a);
 }

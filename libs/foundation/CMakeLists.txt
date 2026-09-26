@@ -2,6 +2,7 @@ add_library(foundation
     metrics/PerformanceMetrics.cpp
     metrics/SystemResources.cpp
     debug/DebugServer.cpp
+    debug/Tunables.cpp
     graphics/PngEncoder.cpp
     utils/Log.cpp
     utils/ResourcePath.cpp

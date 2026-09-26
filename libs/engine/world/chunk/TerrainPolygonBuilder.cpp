@@ -206,11 +206,11 @@ namespace engine::world::terrain_detail {
 			return static_cast<uint8_t>(std::lround(std::clamp(unit, 0.0F, 1.0F) * 255.0F));
 		}
 
-		// Concavity over the arc-length window: the vertex's offset from the chord
+		// Concavity over an arc-length window: the vertex's offset from the chord
 		// joining the ring points half a window behind and ahead of it, positive on
-		// the water side. A headland bulges into the water (exposed), a bay away
-		// from it (sheltered). Maps to [0, 1], 0.5 on a straight shore.
-		std::vector<float> concavityExposure(const Ring& ring) {
+		// the water side. A headland bulges into the water, a bay away from it.
+		// `fullScaleMm` of bulge maps to 0 or 1; 0.5 on a straight shore.
+		std::vector<float> concavity(const Ring& ring, int64_t windowMm, float fullScaleMm) {
 			const size_t		n = ring.size();
 			std::vector<double> edgeLen(n);
 			double				total = 0.0;
@@ -222,7 +222,7 @@ namespace engine::world::terrain_detail {
 				edgeLen[i]		   = std::sqrt(dx * dx + dy * dy);
 				total += edgeLen[i];
 			}
-			const double half = std::min(static_cast<double>(Builder::kExposureWindowMm) / 2.0, total / 4.0);
+			const double half = std::min(static_cast<double>(windowMm) / 2.0, total / 4.0);
 
 			// Point at arc distance `half` from vertex i, walking forward (+1) or back.
 			// half <= total / 4, so the walk never laps the ring.
@@ -259,9 +259,70 @@ namespace engine::world::terrain_detail {
 				const double vx	   = static_cast<double>(ring[i].x) - a.x;
 				const double vy	   = static_cast<double>(ring[i].y) - a.y;
 				const double bulge = (cx * vy - cy * vx) / chord; // + = water side of the chord
-				out[i] = static_cast<float>(0.5 + bulge / (2.0 * static_cast<double>(Builder::kExposureBulgeFullScaleMm)));
+				out[i] = static_cast<float>(0.5 + bulge / (2.0 * static_cast<double>(fullScaleMm)));
 			}
 			return out;
+		}
+
+		// Per-vertex edge lengths (edge i runs from vertex i to i + 1).
+		std::vector<double> edgeLengths(const Ring& ring) {
+			const size_t		n = ring.size();
+			std::vector<double> out(n);
+			for (size_t i = 0; i < n; ++i) {
+				const double dx = static_cast<double>(ring[(i + 1) % n].x - ring[i].x);
+				const double dy = static_cast<double>(ring[(i + 1) % n].y - ring[i].y);
+				out[i]			= std::sqrt(dx * dx + dy * dy);
+			}
+			return out;
+		}
+
+		// Fill every unresolved value from the nearest resolved vertices within
+		// kSlopeInheritReachMm of arc either side, weighted by arc distance (the
+		// nearer counts more). Nothing in reach leaves the value at zero.
+		void inheritAlongRing(std::vector<float>& values, const std::vector<uint8_t>& resolved, const std::vector<double>& edgeLen) {
+			const size_t	   n	  = values.size();
+			const double	   reach  = Builder::kSlopeInheritReachMm;
+			std::vector<float> filled = values;
+			for (size_t i = 0; i < n; ++i) {
+				if (resolved[i] != 0) {
+					continue;
+				}
+				double back = 0.0;
+				double fwd	= 0.0;
+				std::optional<std::pair<float, double>> behind;
+				std::optional<std::pair<float, double>> ahead;
+				for (size_t k = 1; k < n && !behind; ++k) {
+					const size_t j = (i + n - k) % n;
+					back += edgeLen[j];
+					if (back > reach) {
+						break;
+					}
+					if (resolved[j] != 0) {
+						behind = std::pair{values[j], back};
+					}
+				}
+				for (size_t k = 1; k < n && !ahead; ++k) {
+					fwd += edgeLen[(i + k - 1) % n];
+					if (fwd > reach) {
+						break;
+					}
+					const size_t j = (i + k) % n;
+					if (resolved[j] != 0) {
+						ahead = std::pair{values[j], fwd};
+					}
+				}
+				if (behind && ahead) {
+					const double total = behind->second + ahead->second;
+					filled[i] = static_cast<float>(
+						(static_cast<double>(behind->first) * ahead->second + static_cast<double>(ahead->first) * behind->second) / total
+					);
+				} else if (behind) {
+					filled[i] = behind->first;
+				} else if (ahead) {
+					filled[i] = ahead->first;
+				}
+			}
+			values = std::move(filled);
 		}
 
 		// Ocean fetch: open biome water along the water-side normal, in tiles, capped.
@@ -303,7 +364,7 @@ namespace engine::world::terrain_detail {
 				}
 				TerrainRing terrain;
 				terrain.water	 = waterKindOf(*ring, grid);
-				terrain.profiles = shoreProfiles(*ring, terrain.water, grid, SideRule::BiomeWater);
+				terrain.profiles = shoreProfiles(*ring, terrain.water, grid, SideRule::BiomeWater, worldSeed);
 				for (size_t i = 0; i < ring->size(); ++i) {
 					if (isSyntheticEdge((*ring)[i], (*ring)[(i + 1) % ring->size()], region)) {
 						terrain.profiles[i].flags |= ShoreProfile::kFlagSynthetic;
@@ -506,16 +567,23 @@ namespace engine::world::terrain_detail {
 			   (a.y == region.extMin.y && b.y == region.extMin.y) || (a.y == region.extMax.y && b.y == region.extMax.y);
 	}
 
-	std::vector<ShoreProfile> shoreProfiles(const Ring& ring, WaterKind water, const ExtendedGrid& grid, SideRule rule) {
-		const std::vector<float>  concavity = concavityExposure(ring);
-		std::vector<ShoreProfile> profiles(ring.size());
+	std::vector<ShoreProfile> shoreProfiles(const Ring& ring, WaterKind water, const ExtendedGrid& grid, SideRule rule, uint64_t worldSeed) {
+		const size_t			  n			  = ring.size();
+		const std::vector<float>  exposureCon = concavity(ring, Builder::kExposureWindowMm, Builder::kExposureBulgeFullScaleMm);
+		const std::vector<float>  bend		  = water == WaterKind::River
+													? concavity(ring, Builder::kChannelBendWindowMm, Builder::kChannelBendBulgeFullScaleMm)
+													: std::vector<float>{};
+		const uint32_t			  slopeSeed	  = purposeSeed(worldSeed, kSaltShoreSlope);
+		std::vector<ShoreProfile> profiles(n);
+		std::vector<float>		  rise(n, 0.0F);
+		std::vector<uint8_t>	  riseResolved(n, 0);
 		const double			  probeMm = static_cast<double>(Builder::kProfileProbeMm);
-		for (size_t i = 0; i < ring.size(); ++i) {
+		for (size_t i = 0; i < n; ++i) {
 			const Vec2i64& v	  = ring[i];
 			const Vec2d	   normal = waterNormal(ring, i);
 			ShoreProfile&  p	  = profiles[i];
 
-			float exposure = concavity[i];
+			float exposure = exposureCon[i];
 			if (water == WaterKind::Ocean) {
 				exposure = (1.0F - Builder::kFetchWeight) * exposure + Builder::kFetchWeight * fetchExposure(v, normal, grid);
 			}
@@ -528,16 +596,17 @@ namespace engine::world::terrain_detail {
 				const TileData& land = grid.tile(landIdx->first, landIdx->second);
 				p.moisture			 = land.moisture;
 
-				if (waterIdx) {
-					const TileData& wet	  = grid.tile(waterIdx->first, waterIdx->second);
-					const auto [lx, ly] = grid.tileCenterMm(landIdx->first, landIdx->second);
-					const auto [wx, wy] = grid.tileCenterMm(waterIdx->first, waterIdx->second);
-					const double runCm	= std::sqrt((lx - wx) * (lx - wx) + (ly - wy) * (ly - wy)) / 10.0;
-					const double riseCm = std::abs(static_cast<double>(land.elevation) - static_cast<double>(wet.elevation));
-					// A probe pair in one tile (a narrow channel) has no run to measure over.
-					if (runCm > 0.0) {
-						p.slope = toByte(static_cast<float>(riseCm / runCm) / Builder::kSlopeFullScale);
-					}
+				// Rise of the land kSlopeRunMm inland over the water level beside the vertex.
+				const Vec2d run	   = probePoint(v, normal, -static_cast<double>(Builder::kSlopeRunMm));
+				const auto [rx, ry] = grid.tileAt(run.x, run.y);
+				if (waterIdx && sideMatches(grid, rx, ry, rule, false)) {
+					const double levelCm = static_cast<double>(grid.tile(waterIdx->first, waterIdx->second).elevation);
+					const double riseCm	 = std::max(0.0, static_cast<double>(grid.tile(rx, ry).elevation) - levelCm);
+					const double grade	 = riseCm / (static_cast<double>(Builder::kSlopeRunMm) / 10.0);
+					rise[i]				 = static_cast<float>(
+						 static_cast<double>(Builder::kSlopeRiseWeight) * grade / (grade + static_cast<double>(Builder::kSlopeRiseHalfGrade))
+					 );
+					riseResolved[i] = 1;
 				}
 
 				const bool rocky = land.surface == Surface::Rock;
@@ -552,6 +621,32 @@ namespace engine::world::terrain_detail {
 					p.mud			  = static_cast<uint8_t>(255 - p.sand);
 				}
 			}
+		}
+
+		inheritAlongRing(rise, riseResolved, edgeLengths(ring));
+		for (size_t i = 0; i < n; ++i) {
+			float base = 0.0F;
+			switch (water) {
+				case WaterKind::Ocean:
+					base = Builder::kSlopeOcean;
+					break;
+				case WaterKind::Lake:
+					base = Builder::kSlopeLake;
+					break;
+				case WaterKind::Wetland:
+					base = Builder::kSlopeWetland;
+					break;
+				case WaterKind::Pond:
+					base = Builder::kSlopePond;
+					break;
+				case WaterKind::River:
+					// bend > 0.5: the land bulges into the water, an inner bank.
+					base = Builder::kSlopeChannelStraight - Builder::kSlopeChannelBendGain * (2.0F * bend[i] - 1.0F);
+					break;
+			}
+			const float noise =
+				Builder::kSlopeNoiseAmp * worldNoise(ring[i], Builder::kSlopeNoiseWavelengthM, slopeSeed, Builder::kSlopeNoiseOctaves);
+			profiles[i].slope = toByte(std::clamp(base + rise[i] + noise, Builder::kSlopeMin, Builder::kSlopeMax));
 		}
 		return profiles;
 	}

@@ -16,14 +16,13 @@
 
 namespace engine::world::TileAdjacency {
 
-	/// Surface family classification for hard-edge detection
-	enum class SurfaceFamily : uint8_t { Ground, Water, Rock };
+	/// Surface family classification for hard-edge detection. Water is not a
+	/// family: it is drawn from the terrain distance field, not the tile stack.
+	enum class SurfaceFamily : uint8_t { Ground, Rock };
 
 	/// Map surface id to family. Defaults to Ground for unknown ids.
 	[[nodiscard]] inline SurfaceFamily getSurfaceFamily(uint8_t surfaceId) {
 		switch (surfaceId) {
-			case 4: // Surface::Water
-				return SurfaceFamily::Water;
 			case 3: // Surface::Rock
 				return SurfaceFamily::Rock;
 			default:
@@ -129,12 +128,11 @@ namespace engine::world::TileAdjacency {
 	/// When a tile is adjacent to a lower-stacked surface, it draws an edge on that side.
 	/// Grass variants have distinct sub-levels to enable soft blending between them:
 	/// GrassShort (dry) < Grass (standard) < GrassMeadow (fertile) < GrassTall (wet)
+	/// Land only (D13): render data never carries Water, a Water tile paints as its bed.
 	[[nodiscard]] inline int getSurfaceStackOrder(uint8_t surfaceId) {
 		// Stack order from bottom to top (by visual priority):
-		// Water < Mud < Sand < Dirt < GrassShort < Grass < GrassMeadow < GrassTall < Rock < Snow
+		// Mud < Sand < Dirt < GrassShort < Grass < GrassMeadow < GrassTall < Rock < Snow
 		switch (surfaceId) {
-			case 4:
-				return 0; // Water - lowest
 			case 6:
 				return 1; // Mud
 			case 2:
@@ -224,7 +222,7 @@ namespace engine::world::TileAdjacency {
 	/// Get a mask indicating which neighbors belong to a different surface family.
 	/// Bits match Direction order (0=NW,1=W,2=SW,3=S,4=SE,5=E,6=NE,7=N).
 	///
-	/// Hard edges are drawn when families differ (e.g., Water vs Ground, Rock vs Ground).
+	/// Hard edges are drawn when families differ (Rock vs Ground).
 	/// Only one tile draws the edge (preventing double-stroking): the tile with the
 	/// different-family neighbor draws on that side. Both tiles see the family difference,
 	/// but each side only renders its own edges based on its adjacency data.

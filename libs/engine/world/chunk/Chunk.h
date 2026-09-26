@@ -22,7 +22,8 @@
 namespace engine::world {
 
 /// Surface types for terrain rendering
-/// Ground family surfaces use soft blending; Water/Rock use hard edges.
+/// Ground family surfaces use soft blending; Rock uses hard edges. Water is
+/// tile data only: the renderer draws it from the terrain distance field (D10).
 enum class Surface : uint8_t {
 	Grass,       // 0 - Regular grassland (standard temperate grass)
 	Dirt,        // 1 - Exposed dirt/mud
@@ -74,7 +75,7 @@ struct TileData {
 	uint8_t biomeBlend = 255;           ///< 1 byte - weight of primary (255 = 100% primary)
 	uint16_t elevation = 0;             ///< 2 bytes - centimeters above sea level
 	uint8_t moisture = 128;             ///< 1 byte - normalized 0-255
-	uint8_t waterDepth = 0;             ///< 1 byte - cosmetic water depth (0=land/shallowest, 255=deepest); shader tints water by this
+	uint8_t waterDepth = 0;             ///< 1 byte - cosmetic water depth (0=land/shallowest, 255=deepest); data only, the renderer paints depth from the distance field
 	uint64_t adjacency = 0;             ///< 8 bytes - neighbor surface types (8 dirs × 6 bits)
 
 	/// Get biome weights as BiomeWeights (for compatibility during migration)
@@ -93,21 +94,25 @@ struct TileData {
 /// Pre-computed tile rendering data - 16 bytes per tile.
 /// Cached during chunk generation to avoid per-frame adjacency extraction.
 /// Used by ChunkRenderer for fast tile rendering.
+///
+/// Surface ids here are paint surfaces, not TileData::surface: water is drawn
+/// from the terrain distance field on top of the ground pass (D10, D13), so a
+/// Water tile paints as its bed (the nearest land surface) and never appears in
+/// the land priority stack.
 struct TileRenderData {
-	uint8_t surfaceId;     ///< Surface type (0-255)
+	uint8_t surfaceId;     ///< Paint surface (never Water)
 	uint8_t edgeMask;      ///< Edge shadow mask (N,E,S,W bits)
 	uint8_t cornerMask;    ///< Corner shadow mask (NW,NE,SE,SW bits)
 	uint8_t hardEdgeMask;  ///< Family-based hard edges (8 directions)
-	uint8_t neighborN;     ///< North neighbor surface ID
-	uint8_t neighborE;     ///< East neighbor surface ID
-	uint8_t neighborS;     ///< South neighbor surface ID
-	uint8_t neighborW;     ///< West neighbor surface ID
-	uint8_t neighborNW;    ///< Northwest neighbor surface ID
-	uint8_t neighborNE;    ///< Northeast neighbor surface ID
-	uint8_t neighborSE;    ///< Southeast neighbor surface ID
-	uint8_t neighborSW;    ///< Southwest neighbor surface ID
-	uint8_t waterDepth;    ///< 0=land/shallowest, 255=deepest; shader tints water by this (texel 'a' low byte)
-	uint8_t padding[3];    ///< Pad to 16 bytes for cache alignment
+	uint8_t neighborN;     ///< North neighbor paint surface
+	uint8_t neighborE;     ///< East neighbor paint surface
+	uint8_t neighborS;     ///< South neighbor paint surface
+	uint8_t neighborW;     ///< West neighbor paint surface
+	uint8_t neighborNW;    ///< Northwest neighbor paint surface
+	uint8_t neighborNE;    ///< Northeast neighbor paint surface
+	uint8_t neighborSE;    ///< Southeast neighbor paint surface
+	uint8_t neighborSW;    ///< Southwest neighbor paint surface
+	uint8_t padding[4];    ///< Pad to 16 bytes (one RGBA32UI texel)
 };
 
 /// A 512×512 region of the world.
@@ -258,6 +263,12 @@ class Chunk {
 
 	/// Pre-compute rendering data (adjacency masks, neighbors) for ChunkRenderer
 	void computeRenderData();
+
+	/// Fill one tile's neighbor ids and masks from `adjacency` in paint surfaces:
+	/// an in-chunk neighbor reads its own render entry (so a Water neighbor is
+	/// its bed), an out-of-chunk Water neighbor reads as this tile's paint
+	/// surface (no edge toward water; the shader draws the shore).
+	void setRenderAdjacency(uint16_t localX, uint16_t localY, uint64_t adjacency);
 
 	/// Select surface type based on biome using organic noise-based patches, for
 	/// any (coord, biome, local tile, elevation, seed), not just this chunk's own.
