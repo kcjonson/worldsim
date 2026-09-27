@@ -1,6 +1,7 @@
 #include "TerrainDistanceField.h"
 
 #include <core/Int128.h>
+#include <core/IntegerDivision.h>
 #include <polygon/Polygon.h>
 #include <predicates/Predicates.h>
 
@@ -36,14 +37,8 @@ namespace engine::world {
 		// never drops a candidate that could win or tie.
 		constexpr double kPruneSlackMm = 1.0;
 
-		int64_t floorDiv(int64_t a, int64_t b) {
-			const int64_t q = a / b;
-			return (a % b != 0 && a < 0) ? q - 1 : q;
-		}
-
-		int64_t ceilDiv(int64_t a, int64_t b) {
-			return -floorDiv(-a, b);
-		}
+		using geometry::ceilDiv;
+		using geometry::floorDiv;
 
 		// How far v lies outside [lo, hi]; zero inside.
 		int64_t outside(int64_t v, int64_t lo, int64_t hi) {

@@ -1,5 +1,6 @@
 #include "TerrainPolygonQuery.h"
 
+#include <core/IntegerDivision.h>
 #include <predicates/Predicates.h>
 
 #include <algorithm>
@@ -19,10 +20,7 @@ namespace engine::world {
 		// drops an edge that could win or tie.
 		constexpr double kPruneSlackMm = 1.0;
 
-		int64_t floorDiv(int64_t a, int64_t b) {
-			const int64_t q = a / b;
-			return (a % b != 0 && a < 0) ? q - 1 : q;
-		}
+		using geometry::floorDiv;
 
 		// How far v lies outside [lo, hi]; zero inside.
 		int64_t outside(int64_t v, int64_t lo, int64_t hi) {

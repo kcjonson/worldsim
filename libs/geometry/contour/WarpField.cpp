@@ -1,6 +1,7 @@
 #include "WarpField.h"
 
 #include "ContourDetail.h"
+#include "../core/IntegerDivision.h"
 
 #include <algorithm>
 #include <cassert>
@@ -11,8 +12,6 @@
 namespace geometry {
 
 	namespace {
-
-		using contour_detail::floorDiv;
 
 		// `coarse` addressed by global lattice index: index k sits at world
 		// phase + k * cellMm, where phase = originMm mod cellMm. Every field on the

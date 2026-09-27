@@ -11,6 +11,7 @@
 
 #include <contour/ClipRing.h>
 #include <contour/WarpField.h>
+#include <core/IntegerDivision.h>
 #include <core/Vec2d.h>
 #include <core/Vec2i64.h>
 #include <polygon/Polygon.h>
@@ -27,6 +28,7 @@
 
 namespace engine::world::terrain_detail {
 
+	using geometry::floorDiv;
 	using geometry::Ring;
 	using geometry::Vec2d;
 	using geometry::Vec2i64;
@@ -82,12 +84,6 @@ namespace engine::world::terrain_detail {
 	inline double smoothstep(double x) {
 		const double t = std::clamp(x, 0.0, 1.0);
 		return t * t * (3.0 - 2.0 * t);
-	}
-
-	// floor(a / b) for b > 0.
-	inline int64_t floorDiv(int64_t a, int64_t b) {
-		const int64_t q = a / b;
-		return (a % b != 0 && a < 0) ? q - 1 : q;
 	}
 
 	// The chunk square and the extended region (chunk plus apron), world mm.

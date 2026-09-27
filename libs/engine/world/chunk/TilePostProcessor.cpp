@@ -1,21 +1,14 @@
 #include "TilePostProcessor.h"
 
 #include "world/chunk/Chunk.h"
+#include "world/chunk/TerrainPolygonBuilder.h"
 #include "world/chunk/TerrainPolygonQuery.h"
 #include "world/chunk/TileAdjacency.h"
 
+#include <core/IntegerDivision.h>
 #include <core/Vec2i64.h>
 
 namespace engine::world {
-
-namespace {
-
-	int64_t floorDiv(int64_t a, int64_t b) {
-		const int64_t q = a / b;
-		return (a % b != 0 && a < 0) ? q - 1 : q;
-	}
-
-} // namespace
 
 Surface TilePostProcessor::finalSurface(const FinalSurfaceArgs& args) {
 	if (args.terrain->isPointBar(args.tileX, args.tileY)) {
@@ -29,8 +22,10 @@ Surface TilePostProcessor::finalSurface(const FinalSurfaceArgs& args) {
 		raw != Surface::GrassShort && raw != Surface::GrassMeadow) {
 		return raw;
 	}
-	constexpr int64_t kTileMm = 1000;
-	const geometry::Vec2i64 center{args.tileX * kTileMm + kTileMm / 2, args.tileY * kTileMm + kTileMm / 2};
+	const geometry::Vec2i64 center{
+		args.tileX * TerrainPolygonBuilder::kTileMm + TerrainPolygonBuilder::kTileMm / 2,
+		args.tileY * TerrainPolygonBuilder::kTileMm + TerrainPolygonBuilder::kTileMm / 2
+	};
 	const double distanceMm = args.terrain->distanceToWaterMm(center, kMudBands.back().reachMm);
 	for (const MudBand& band : kMudBands) {
 		if (distanceMm > band.reachMm) {
@@ -38,7 +33,9 @@ Surface TilePostProcessor::finalSurface(const FinalSurfaceArgs& args) {
 		}
 		// Keyed by the world tile (its owning chunk and local coordinates), so any
 		// chunk that evaluates the tile rolls the same number.
-		const ChunkCoordinate owner{static_cast<int32_t>(floorDiv(args.tileX, kChunkSize)), static_cast<int32_t>(floorDiv(args.tileY, kChunkSize))};
+		const ChunkCoordinate owner{
+			static_cast<int32_t>(geometry::floorDiv(args.tileX, kChunkSize)), static_cast<int32_t>(geometry::floorDiv(args.tileY, kChunkSize))
+		};
 		const auto localX = static_cast<uint16_t>(args.tileX - static_cast<int64_t>(owner.x) * kChunkSize);
 		const auto localY = static_cast<uint16_t>(args.tileY - static_cast<int64_t>(owner.y) * kChunkSize);
 		const uint32_t hash = Chunk::tileHash(owner, localX, localY, args.worldSeed ^ kMudSalt);
