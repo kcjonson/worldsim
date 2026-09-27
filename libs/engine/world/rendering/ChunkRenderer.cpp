@@ -3,6 +3,7 @@
 #include <debug/Tunables.h>
 #include <primitives/BatchRenderer.h>
 #include <primitives/Primitives.h>
+#include <random/HashNoise.h>
 #include <utils/Log.h>
 
 #include <GL/glew.h>
@@ -13,14 +14,14 @@
 #include <array>
 #include <cmath>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace engine::world {
 
 	namespace {
-		// The tile-data texture is uploaded as raw TileRenderData; the fragment
-		// shader unpacks bytes from uint texels assuming this exact layout.
-		static_assert(sizeof(TileRenderData) == 16, "tile.frag texel layout must match TileRenderData");
+		// The tile-data texture is uploaded as raw TileRenderData, one RG8UI texel each.
+		static_assert(sizeof(TileRenderData) == 2, "land.glsl reads TileRenderData as one RG8UI texel");
 		static_assert(sizeof(HalfTexel) == 6, "RGB16F upload expects packed half texels");
 		static_assert(sizeof(ByteTexel) == 4, "RGBA8 upload expects packed byte texels");
 
@@ -42,77 +43,111 @@ namespace engine::world {
 		constexpr double kTimeWrapSeconds = 3600.0;
 
 		/// A debug-server tunable (10.5) and the shader uniform it drives.
-		struct WaterTunable {
+		struct ShaderTunable {
 			const char*			 name;
 			const char*			 uniform;
 			std::array<float, 3> value;
 			size_t				 count;
 		};
 
-		// Starting values from terrain-polygons-architecture.md 10.5; the ones 10.5
-		// leaves open (colors, patch thresholds, shimmer, foam motion, flow speed,
-		// wetland mud gain) are this task's first pass. Widths are meters.
-		constexpr std::array kWaterTunables = {
-			WaterTunable{"terrain/shore/wobbleAmp", "u_wobbleAmp", {0.12F}, 1},
-			WaterTunable{"terrain/shore/wobbleWavelength", "u_wobbleWavelength", {1.6F}, 1},
-			WaterTunable{"terrain/shore/alongAmp", "u_alongAmp", {0.35F}, 1},
-			WaterTunable{"terrain/shore/alongWavelength", "u_alongWavelength", {6.0F}, 1},
-			WaterTunable{"terrain/shore/drySandW", "u_drySandW", {1.6F}, 1},
-			WaterTunable{"terrain/shore/wetSandW", "u_wetSandW", {0.9F}, 1},
-			WaterTunable{"terrain/shore/mudW", "u_mudW", {1.1F}, 1},
-			WaterTunable{"terrain/shore/bandTail", "u_bandTail", {0.65F}, 1},
-			WaterTunable{"terrain/shore/wetlandMudGain", "u_wetlandMudGain", {1.8F}, 1},
-			WaterTunable{"terrain/shore/edgeW", "u_edgeW", {0.12F}, 1},
-			WaterTunable{"terrain/shore/edgeSlopeGain", "u_edgeSlopeGain", {2.5F}, 1},
-			WaterTunable{"terrain/shore/edgeMin", "u_edgeMin", {0.15F}, 1},
-			WaterTunable{"terrain/shore/edgeMax", "u_edgeMax", {0.85F}, 1},
+		// Water: starting values from terrain-polygons-architecture.md 10.5; the ones
+		// 10.5 leaves open (colors, patch thresholds, shimmer, foam motion, flow speed,
+		// wetland mud gain) are WOR-460's first pass. Land look (D16 step 3): the
+		// fringe's opacity and along-edge variation (D15's +-35%), the rim's width.
+		// Widths are meters.
+		constexpr std::array kShaderTunables = {
+			ShaderTunable{"terrain/land/fringeOpacity", "u_landFringeOpacity", {0.55F}, 1},
+			ShaderTunable{"terrain/land/fringeAlongAmp", "u_landFringeAlongAmp", {0.35F}, 1},
+			ShaderTunable{"terrain/land/rimW", "u_landRimW", {0.12F}, 1},
+
+			ShaderTunable{"terrain/shore/wobbleAmp", "u_wobbleAmp", {0.12F}, 1},
+			ShaderTunable{"terrain/shore/wobbleWavelength", "u_wobbleWavelength", {1.6F}, 1},
+			ShaderTunable{"terrain/shore/alongAmp", "u_alongAmp", {0.35F}, 1},
+			ShaderTunable{"terrain/shore/alongWavelength", "u_alongWavelength", {6.0F}, 1},
+			ShaderTunable{"terrain/shore/drySandW", "u_drySandW", {1.6F}, 1},
+			ShaderTunable{"terrain/shore/wetSandW", "u_wetSandW", {0.9F}, 1},
+			ShaderTunable{"terrain/shore/mudW", "u_mudW", {1.1F}, 1},
+			ShaderTunable{"terrain/shore/bandTail", "u_bandTail", {0.65F}, 1},
+			ShaderTunable{"terrain/shore/wetlandMudGain", "u_wetlandMudGain", {1.8F}, 1},
+			ShaderTunable{"terrain/shore/edgeW", "u_edgeW", {0.12F}, 1},
+			ShaderTunable{"terrain/shore/edgeSlopeGain", "u_edgeSlopeGain", {2.5F}, 1},
+			ShaderTunable{"terrain/shore/edgeMin", "u_edgeMin", {0.15F}, 1},
+			ShaderTunable{"terrain/shore/edgeMax", "u_edgeMax", {0.85F}, 1},
 			// 10.5 says 0.5, which leaves zoom 0.25 (exactly 0.5 m a pixel) on the fine
 			// path; 10.2 means 2 px/m to take the far one, where patches only speckle.
-			WaterTunable{"terrain/shore/lodBandM", "u_lodBandM", {0.4F}, 1},
+			ShaderTunable{"terrain/shore/lodBandM", "u_lodBandM", {0.4F}, 1},
 
-			WaterTunable{"terrain/water/shallowsK", "u_shallowsK", {0.9F}, 1},
-			WaterTunable{"terrain/water/shallowsMin", "u_shallowsMin", {0.5F}, 1},
-			WaterTunable{"terrain/water/shallowsMax", "u_shallowsMax", {6.0F}, 1},
-			WaterTunable{"terrain/water/slopeMin", "u_slopeMin", {0.15F}, 1},
-			WaterTunable{"terrain/water/midAt", "u_midAt", {0.45F}, 1},
-			WaterTunable{"terrain/water/bedOpacity", "u_bedOpacity", {0.5F}, 1},
-			WaterTunable{"terrain/water/bedFade", "u_bedFade", {0.35F}, 1},
-			WaterTunable{"terrain/water/patchWavelength", "u_patchWavelength", {7.0F}, 1},
+			ShaderTunable{"terrain/water/shallowsK", "u_shallowsK", {0.9F}, 1},
+			ShaderTunable{"terrain/water/shallowsMin", "u_shallowsMin", {0.5F}, 1},
+			ShaderTunable{"terrain/water/shallowsMax", "u_shallowsMax", {6.0F}, 1},
+			ShaderTunable{"terrain/water/slopeMin", "u_slopeMin", {0.15F}, 1},
+			ShaderTunable{"terrain/water/midAt", "u_midAt", {0.45F}, 1},
+			ShaderTunable{"terrain/water/bedOpacity", "u_bedOpacity", {0.5F}, 1},
+			ShaderTunable{"terrain/water/bedFade", "u_bedFade", {0.35F}, 1},
+			ShaderTunable{"terrain/water/patchWavelength", "u_patchWavelength", {7.0F}, 1},
 			// 10.5 says 0.45; at that amplitude open water read as camouflage, not a bottom.
-			WaterTunable{"terrain/water/patchAmp", "u_patchAmp", {0.2F}, 1},
-			WaterTunable{"terrain/water/barT0", "u_barT0", {0.3F}, 1},
-			WaterTunable{"terrain/water/barT1", "u_barT1", {0.6F}, 1},
-			WaterTunable{"terrain/water/weedT0", "u_weedT0", {0.3F}, 1},
-			WaterTunable{"terrain/water/weedT1", "u_weedT1", {0.6F}, 1},
-			WaterTunable{"terrain/water/shimmerAmp", "u_shimmerAmp", {0.025F}, 1},
-			WaterTunable{"terrain/water/shimmerFreq", "u_shimmerFreq", {0.9F}, 1},
-			WaterTunable{"terrain/water/shimmerDrift", "u_shimmerDrift", {0.25F}, 1},
-			WaterTunable{"terrain/water/foamW", "u_foamW", {0.4F}, 1},
-			WaterTunable{"terrain/water/foamWavelength", "u_foamWavelength", {1.2F}, 1},
-			WaterTunable{"terrain/water/foamDrift", "u_foamDrift", {0.3F}, 1},
+			ShaderTunable{"terrain/water/patchAmp", "u_patchAmp", {0.2F}, 1},
+			ShaderTunable{"terrain/water/barT0", "u_barT0", {0.3F}, 1},
+			ShaderTunable{"terrain/water/barT1", "u_barT1", {0.6F}, 1},
+			ShaderTunable{"terrain/water/weedT0", "u_weedT0", {0.3F}, 1},
+			ShaderTunable{"terrain/water/weedT1", "u_weedT1", {0.6F}, 1},
+			ShaderTunable{"terrain/water/shimmerAmp", "u_shimmerAmp", {0.025F}, 1},
+			ShaderTunable{"terrain/water/shimmerFreq", "u_shimmerFreq", {0.9F}, 1},
+			ShaderTunable{"terrain/water/shimmerDrift", "u_shimmerDrift", {0.25F}, 1},
+			ShaderTunable{"terrain/water/foamW", "u_foamW", {0.4F}, 1},
+			ShaderTunable{"terrain/water/foamWavelength", "u_foamWavelength", {1.2F}, 1},
+			ShaderTunable{"terrain/water/foamDrift", "u_foamDrift", {0.3F}, 1},
 
-			WaterTunable{"terrain/river/thalwegInner", "u_thalwegInner", {0.6F}, 1},
-			WaterTunable{"terrain/river/thalwegOuter", "u_thalwegOuter", {1.1F}, 1},
-			WaterTunable{"terrain/river/thalwegDepth", "u_thalwegDepth", {0.9F}, 1},
+			ShaderTunable{"terrain/river/thalwegInner", "u_thalwegInner", {0.6F}, 1},
+			ShaderTunable{"terrain/river/thalwegOuter", "u_thalwegOuter", {1.1F}, 1},
+			ShaderTunable{"terrain/river/thalwegDepth", "u_thalwegDepth", {0.9F}, 1},
 			// 10.5 gives the riffle frequency as 2 pi / 1.5 m; the shader snaps the wavelength to tile the 64 m arc wrap.
-			WaterTunable{"terrain/river/riffleWavelength", "u_riffleWavelength", {1.5F}, 1},
-			WaterTunable{"terrain/river/riffleAmp", "u_riffleAmp", {0.3F}, 1},
-			WaterTunable{"terrain/river/poolAmp", "u_poolAmp", {0.35F}, 1},
-			WaterTunable{"terrain/river/flowSpeed", "u_flowSpeed", {0.6F}, 1},
+			ShaderTunable{"terrain/river/riffleWavelength", "u_riffleWavelength", {1.5F}, 1},
+			ShaderTunable{"terrain/river/riffleAmp", "u_riffleAmp", {0.3F}, 1},
+			ShaderTunable{"terrain/river/poolAmp", "u_poolAmp", {0.35F}, 1},
+			ShaderTunable{"terrain/river/flowSpeed", "u_flowSpeed", {0.6F}, 1},
 
-			WaterTunable{"terrain/color/drySand", "u_drySand", {0.84F, 0.75F, 0.53F}, 3},
-			WaterTunable{"terrain/color/wetSand", "u_wetSand", {0.62F, 0.53F, 0.37F}, 3},
-			WaterTunable{"terrain/color/mudBank", "u_mudBank", {0.36F, 0.28F, 0.18F}, 3},
-			WaterTunable{"terrain/color/bedGrass", "u_bedGrass", {0.30F, 0.38F, 0.24F}, 3},
-			WaterTunable{"terrain/color/edge", "u_edgeColor", {0.16F, 0.13F, 0.09F}, 3},
-			WaterTunable{"terrain/color/waterShallow", "u_waterShallow", {0.42F, 0.64F, 0.64F}, 3},
-			WaterTunable{"terrain/color/waterMid", "u_waterMid", {0.16F, 0.44F, 0.55F}, 3},
-			WaterTunable{"terrain/color/waterDeep", "u_waterDeep", {0.07F, 0.24F, 0.42F}, 3},
-			WaterTunable{"terrain/color/riffleLight", "u_riffleLight", {0.70F, 0.84F, 0.86F}, 3},
-			WaterTunable{"terrain/color/bar", "u_barColor", {0.62F, 0.66F, 0.52F}, 3},
-			WaterTunable{"terrain/color/weed", "u_weedColor", {0.20F, 0.36F, 0.26F}, 3},
-			WaterTunable{"terrain/color/foam", "u_foam", {0.92F, 0.95F, 0.95F}, 3},
+			ShaderTunable{"terrain/color/drySand", "u_drySand", {0.84F, 0.75F, 0.53F}, 3},
+			ShaderTunable{"terrain/color/wetSand", "u_wetSand", {0.62F, 0.53F, 0.37F}, 3},
+			ShaderTunable{"terrain/color/mudBank", "u_mudBank", {0.36F, 0.28F, 0.18F}, 3},
+			ShaderTunable{"terrain/color/bedGrass", "u_bedGrass", {0.30F, 0.38F, 0.24F}, 3},
+			ShaderTunable{"terrain/color/edge", "u_edgeColor", {0.16F, 0.13F, 0.09F}, 3},
+			ShaderTunable{"terrain/color/waterShallow", "u_waterShallow", {0.42F, 0.64F, 0.64F}, 3},
+			ShaderTunable{"terrain/color/waterMid", "u_waterMid", {0.16F, 0.44F, 0.55F}, 3},
+			ShaderTunable{"terrain/color/waterDeep", "u_waterDeep", {0.07F, 0.24F, 0.42F}, 3},
+			ShaderTunable{"terrain/color/riffleLight", "u_riffleLight", {0.70F, 0.84F, 0.86F}, 3},
+			ShaderTunable{"terrain/color/bar", "u_barColor", {0.62F, 0.66F, 0.52F}, 3},
+			ShaderTunable{"terrain/color/weed", "u_weedColor", {0.20F, 0.36F, 0.26F}, 3},
+			ShaderTunable{"terrain/color/foam", "u_foam", {0.92F, 0.95F, 0.95F}, 3},
 		};
+
+		/// The land look per surface id (D16 step 3), for the edges where the surface
+		/// is the upper one: the width of the sparse fringe it lays on the lower
+		/// surface (meters), and how much it darkens just inside its edge. Grass sheds
+		/// a fringe onto soil; rock keeps a hard, dark rim.
+		struct LandLookDefaults {
+			float fringeM;
+			float rimDark;
+		};
+		constexpr std::array<LandLookDefaults, kSurfaceCount> kLandLookDefaults = {{
+			{0.35F, 0.0F}, // Grass
+			{0.2F, 0.0F},  // Dirt
+			{0.25F, 0.0F}, // Sand
+			{0.0F, 0.3F},  // Rock
+			{0.0F, 0.0F},  // Water, never painted
+			{0.3F, 0.0F},  // Snow
+			{0.2F, 0.0F},  // Mud
+			{0.35F, 0.0F}, // GrassTall
+			{0.35F, 0.0F}, // GrassShort
+			{0.35F, 0.0F}, // GrassMeadow
+		}};
+		constexpr float	   kNoLook					= 0.0F;
+		constexpr float	   kLandBreakupWavelengthM	= 1.0F;
+		constexpr uint32_t kSaltLandBreakup			= 0x1A4D0005U;
+
+		uint32_t landBreakupSeed(uint64_t worldSeed) {
+			return foundation::hash3(static_cast<int32_t>(kSaltLandBreakup), static_cast<int32_t>(worldSeed >> 32U), 0, static_cast<uint32_t>(worldSeed));
+		}
 
 		Renderer::GLTexture makeTexture(int width, int height, GLenum internalFormat, GLenum format, GLenum type, const void* data, GLint filter) {
 			Renderer::GLTexture texture(width, height, internalFormat, format, type, data);
@@ -163,11 +198,39 @@ namespace engine::world {
 		loc.channelFrame = glGetUniformLocation(program, "u_channelFrame");
 		loc.time = glGetUniformLocation(program, "u_time");
 		loc.metersPerPixel = glGetUniformLocation(program, "u_metersPerPixel");
+		loc.landWarpFine = glGetUniformLocation(program, "u_landWarpFine");
+		loc.landWarpLow = glGetUniformLocation(program, "u_landWarpLow");
+		loc.landWarpWavelength = glGetUniformLocation(program, "u_landWarpWavelength");
+		loc.landWarpInvWavelength = glGetUniformLocation(program, "u_landWarpInvWavelength");
+		loc.landWarpFineGain = glGetUniformLocation(program, "u_landWarpFineGain");
+		loc.landWarpSeeds = glGetUniformLocation(program, "u_landWarpSeeds");
+		loc.landThinFloor = glGetUniformLocation(program, "u_landThinFloor");
+		loc.landThinCeil = glGetUniformLocation(program, "u_landThinCeil");
+		loc.landFringeW = glGetUniformLocation(program, "u_landFringeW");
+		loc.landRimDark = glGetUniformLocation(program, "u_landRimDark");
+		loc.landBreakupWavelength = glGetUniformLocation(program, "u_landBreakupWavelength");
+		loc.landBreakupInvWavelength = glGetUniformLocation(program, "u_landBreakupInvWavelength");
+		loc.landBreakupSeed = glGetUniformLocation(program, "u_landBreakupSeed");
 
 		Foundation::Tunables& tunables = Foundation::Tunables::instance();
+		SurfaceFieldTunables::get();
+		auto addLook = [&tunables](const std::string& name, const float& value) {
+			return tunables.add(name, std::span<const float>(&value, 1));
+		};
+		for (size_t id = 0; id < kSurfaceCount; ++id) {
+			if (id == static_cast<size_t>(Surface::Water)) {
+				landLook.fringeW[id] = &kNoLook;
+				landLook.rimDark[id] = &kNoLook;
+				continue;
+			}
+			const std::string surface = surfaceToString(static_cast<Surface>(id));
+			landLook.fringeW[id] = addLook("terrain/land/fringe/" + surface, kLandLookDefaults[id].fringeM);
+			landLook.rimDark[id] = addLook("terrain/land/rimDark/" + surface, kLandLookDefaults[id].rimDark);
+		}
+		landLook.breakupWavelength = addLook("terrain/land/fringeBreakupWavelength", kLandBreakupWavelengthM);
 		tunableUniforms.clear();
-		tunableUniforms.reserve(kWaterTunables.size());
-		for (const WaterTunable& t : kWaterTunables) {
+		tunableUniforms.reserve(kShaderTunables.size());
+		for (const ShaderTunable& t : kShaderTunables) {
 			const float* values = tunables.add(t.name, std::span<const float>(t.value.data(), t.count));
 			const int	 location = glGetUniformLocation(program, t.uniform);
 			if (location < 0) {
@@ -287,12 +350,14 @@ namespace engine::world {
 
 		glActiveTexture(static_cast<GLenum>(GL_TEXTURE0 + kUnitTileData));
 		const uint32_t tileVersion = chunk.renderDataVersion();
+		// Rows are 2 * 518 = 1036 bytes, so the default 4-byte unpack alignment holds.
 		if (!entry.tileData.isValid()) {
-			entry.tileData = makeTexture(kChunkSize, kChunkSize, GL_RGBA32UI, GL_RGBA_INTEGER, GL_UNSIGNED_INT, chunk.renderData(), GL_NEAREST);
+			entry.tileData =
+				makeTexture(kRenderTilesSide, kRenderTilesSide, GL_RG8UI, GL_RG_INTEGER, GL_UNSIGNED_BYTE, chunk.renderData(), GL_NEAREST);
 			entry.tileVersion = tileVersion;
 		} else if (entry.tileVersion != tileVersion && takeStaleBudget(kTileDataBytes)) {
 			entry.tileData.bind();
-			glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kChunkSize, kChunkSize, GL_RGBA_INTEGER, GL_UNSIGNED_INT, chunk.renderData());
+			glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kRenderTilesSide, kRenderTilesSide, GL_RG_INTEGER, GL_UNSIGNED_BYTE, chunk.renderData());
 			entry.tileVersion = tileVersion;
 		}
 
@@ -389,6 +454,35 @@ namespace engine::world {
 		}
 	}
 
+	void ChunkRenderer::applyLandUniforms(uint64_t worldSeed) const {
+		// The reciprocals are fractalNoise2SplitPair's own 1.0F / wavelength, so the
+		// shader scales by the same floats the CPU evaluation does.
+		auto inverse = [](int32_t wavelength) { return 1.0F / static_cast<float>(wavelength); };
+
+		const SurfaceFieldParams field = SurfaceFieldTunables::get().params(worldSeed);
+		glUniform1fv(loc.landWarpFine, static_cast<GLsizei>(kSurfaceCount), field.warpFineM.data());
+		glUniform1fv(loc.landWarpLow, static_cast<GLsizei>(kSurfaceCount), field.warpLowM.data());
+		glUniform2i(loc.landWarpWavelength, field.warpFineWavelengthM, field.warpLowWavelengthM);
+		glUniform2f(loc.landWarpInvWavelength, inverse(field.warpFineWavelengthM), inverse(field.warpLowWavelengthM));
+		glUniform1f(loc.landWarpFineGain, field.warpFineGain);
+		glUniform2ui(loc.landWarpSeeds, field.seeds.fine, field.seeds.low);
+		glUniform1f(loc.landThinFloor, field.thinFloor);
+		glUniform1f(loc.landThinCeil, field.thinCeil);
+
+		std::array<float, kSurfaceCount> fringe{};
+		std::array<float, kSurfaceCount> rim{};
+		for (size_t id = 0; id < kSurfaceCount; ++id) {
+			fringe[id] = *landLook.fringeW[id];
+			rim[id]	   = *landLook.rimDark[id];
+		}
+		glUniform1fv(loc.landFringeW, static_cast<GLsizei>(kSurfaceCount), fringe.data());
+		glUniform1fv(loc.landRimDark, static_cast<GLsizei>(kSurfaceCount), rim.data());
+		const int32_t breakup = landWavelength(*landLook.breakupWavelength);
+		glUniform1i(loc.landBreakupWavelength, breakup);
+		glUniform1f(loc.landBreakupInvWavelength, inverse(breakup));
+		glUniform1ui(loc.landBreakupSeed, landBreakupSeed(worldSeed));
+	}
+
 	void ChunkRenderer::render(const ChunkManager& chunkManager, const WorldCamera& camera, int viewportWidth, int viewportHeight) {
 		lastTiles = 0;
 		lastChunks = 0;
@@ -434,6 +528,7 @@ namespace engine::world {
 		const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - startTime).count();
 		glUniform1f(loc.time, static_cast<float>(std::fmod(seconds, kTimeWrapSeconds)));
 		applyTunables();
+		applyLandUniforms(visibleChunks.front()->worldSeed());
 
 		const auto& atlasRects = Renderer::Primitives::getTileAtlasRects();
 		bindUnit(kUnitTileAtlas, Renderer::Primitives::getTileAtlasTexture());

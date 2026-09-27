@@ -1,14 +1,14 @@
 #pragma once
 
-// TilePostProcessor - a chunk's final tile surfaces and adjacency.
+// TilePostProcessor - a chunk's final tile surfaces.
 //
 // Runs in Chunk::generate() once the terrain polygons are built. A tile's final
 // surface (finalSurface) is its raw surface with point bars turned to Sand (D12)
 // and ground near water to Mud (D11), a function of the raw surface, the world
-// tile, the terrain polygons, and the world seed alone. So a tile within three
-// tiles of a border, which the neighbor's render apron holds (D16), comes out the
-// same from the neighbor's polygons as from its own chunk's (D14; see
-// docs/technical/organic-terrain/terrain-polygons-architecture.md D11).
+// tile, the terrain polygons, and the world seed alone. So a tile within
+// kRenderSurfaceReachTiles of a border, which the neighbor's render tiles read
+// (D16), comes out the same from the neighbor's polygons as from its own chunk's
+// (D14; see docs/technical/organic-terrain/terrain-polygons-architecture.md D11).
 
 #include "world/chunk/ChunkCoordinate.h"
 
@@ -44,7 +44,7 @@ class TilePostProcessor {
 		uint64_t worldSeed = 0;
 	};
 
-	/// Every tile of the chunk to its finalSurface, then adjacency.
+	/// Every tile of the chunk to its finalSurface.
 	static void process(std::array<TileData, kChunkSize * kChunkSize>& tiles, const ProcessArgs& args);
 
 	/// Mud by distance to water (D11): a tile whose center is within reachMm of
@@ -58,11 +58,6 @@ class TilePostProcessor {
 	/// Mixed into the world seed for the mud roll, so it is not the tile's
 	/// moisture hash.
 	static constexpr uint64_t kMudSalt = 0x4D55445F524F4C4CULL;
-
-  private:
-	/// Compute adjacency for all tiles.
-	/// Sets the adjacency field based on neighbor surface types.
-	static void computeAdjacency(std::array<TileData, kChunkSize * kChunkSize>& tiles);
 };
 
 } // namespace engine::world

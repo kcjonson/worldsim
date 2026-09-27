@@ -48,10 +48,9 @@ OwningNeighbor owningNeighbor(int32_t ex, int32_t ey) {
 	return {dx, dy, static_cast<uint16_t>(lx - dx * kChunkSize), static_cast<uint16_t>(ly - dy * kChunkSize)};
 }
 
-// Compare an apron tile against the real generated neighbor's tile: everything
-// but adjacency (apron tiles never get adjacency, D2), and surface only where the
-// neighbor's post-process left it. TilePostProcessor::finalSurface is the only
-// thing besides adjacency that a post-generate() tile can differ from its raw
+// Compare an apron tile against the real generated neighbor's tile: every field,
+// surface only where the neighbor's post-process left it. TilePostProcessor::
+// finalSurface is the only thing a post-generate() tile can differ from its raw
 // computeTileFrom() output in, and it only ever makes Mud or point-bar Sand, so
 // skipping the surface check exactly there is exact, not an approximation.
 void expectApronTileMatchesNeighbor(const TileData& apronTile, const Chunk& neighbor, const OwningNeighbor& owner) {
@@ -152,7 +151,7 @@ TEST(ApronFieldTest, ExtendedTilesCoversInteriorAndApronWithNoGap) {
 	                                      sampler.getWorldSeed());
 	ExtendedTiles extended(*chunk, apron);
 
-	// Interior: must read the chunk's own (post-mud, post-adjacency) tile.
+	// Interior: must read the chunk's own (post-processed) tile.
 	EXPECT_EQ(&extended.at(kApronTiles, kApronTiles), &chunk->getTile(0, 0));
 	EXPECT_EQ(&extended.at(kApronTiles + kChunkSize - 1, kApronTiles + kChunkSize - 1),
 	          &chunk->getTile(kChunkSize - 1, kChunkSize - 1));

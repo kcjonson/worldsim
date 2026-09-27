@@ -12,48 +12,55 @@
 
 #include <assets/AssetRegistry.h>
 
+#include <core/Vec2i64.h>
 #include <utils/Log.h>
 #include <world/chunk/Chunk.h>
 #include <world/chunk/ChunkCoordinate.h>
+#include <world/chunk/RenderTiles.h>
+#include <world/chunk/SurfaceField.h>
+#include <world/chunk/TerrainPolygonQuery.h>
 #include <world/rendering/BakedEntityMesh.h>
 
 #include <chrono>
 #include <future>
+#include <memory>
 #include <unordered_set>
 #include <utility>
 #include <vector>
 
 namespace engine::assets {
 
-	/// Snapshot of chunk tile data for thread-safe async processing.
-	/// Captures biome/surface data so async tasks don't access Chunk directly.
-	/// Surfaces stay as enums; the string conversion placement rules expect
-	/// happens lazily on the worker (a per-tile string here cost ~10ms of main
-	/// thread per chunk launch).
+	/// Snapshot of chunk data for thread-safe async processing, so async tasks
+	/// don't access the Chunk (it may unload first): biomes by tile; the render
+	/// tiles and parameters the land field reads (SurfaceField, D16), the
+	/// parameters as the game thread's tunables hold them; the terrain polygons
+	/// that say where water is (D1), shared rather than copied.
 	struct ChunkDataSnapshot {
-		world::ChunkCoordinate		coord;
-		std::vector<world::Biome>	biomes;
-		std::vector<world::Surface> surfaces;
+		world::ChunkCoordinate							   coord;
+		std::vector<world::Biome>						   biomes;
+		std::vector<world::TileRenderData>				   renderTiles;
+		world::SurfaceFieldParams						   landParams;
+		std::shared_ptr<const world::ChunkTerrainPolygons> terrainPolygons;
 	};
 
-	/// Capture chunk tile data for thread-safe async processing.
-	/// Creates a snapshot to avoid concurrent access to Chunk objects.
+	/// Capture chunk data for thread-safe async processing (game thread).
 	inline ChunkDataSnapshot captureChunkData(const world::Chunk* chunk) {
 		ChunkDataSnapshot snapshot;
 		snapshot.coord = chunk->coordinate();
 
 		const size_t tileCount = world::kChunkSize * world::kChunkSize;
 		snapshot.biomes.reserve(tileCount);
-		snapshot.surfaces.reserve(tileCount);
 
 		for (uint16_t y = 0; y < world::kChunkSize; ++y) {
 			for (uint16_t x = 0; x < world::kChunkSize; ++x) {
-				const auto& tile = chunk->getTile(x, y);
-				snapshot.biomes.push_back(tile.primaryBiome);
-				snapshot.surfaces.push_back(tile.surface);
+				snapshot.biomes.push_back(chunk->getTile(x, y).primaryBiome);
 			}
 		}
 
+		const world::TileRenderData* renderTiles = chunk->renderData();
+		snapshot.renderTiles.assign(renderTiles, renderTiles + static_cast<size_t>(world::kRenderTilesSide) * world::kRenderTilesSide);
+		snapshot.landParams = world::SurfaceFieldTunables::get().params(chunk->worldSeed());
+		snapshot.terrainPolygons = chunk->sharedTerrainPolygons();
 		return snapshot;
 	}
 
@@ -104,14 +111,18 @@ namespace engine::assets {
 			uint64_t seed = m_worldSeed;
 
 			auto future = std::async(std::launch::async, [executor, seed, chunkData = std::move(chunkData)]() {
+				const world::TerrainPolygonQuery water(*chunkData.terrainPolygons);
+				const world::RenderTileView		 land = world::chunkRenderTiles(chunkData.coord, chunkData.renderTiles);
+
 				ChunkPlacementContext ctx;
 				ctx.coord = chunkData.coord;
 				ctx.worldSeed = seed;
 				ctx.getBiome = [&chunkData](uint16_t x, uint16_t y) {
 					return chunkData.biomes[y * world::kChunkSize + x];
 				};
-				ctx.getSurface = [&chunkData](uint16_t x, uint16_t y) {
-					return world::surfaceToString(chunkData.surfaces[y * world::kChunkSize + x]);
+				ctx.isWater = [&water](glm::vec2 pos) { return water.isInsideWater(geometry::quantize(pos)); };
+				ctx.landSurface = [&land, &chunkData](glm::vec2 pos) {
+					return world::evaluateSurfaceField(land, world::tilePointOf(pos.x, pos.y), chunkData.landParams).surface;
 				};
 
 				ChunkTaskResult result;

@@ -3,6 +3,7 @@
 #include "assets/AssetRegistry.h"
 
 #include <utils/Log.h>
+#include <world/chunk/Chunk.h>  // Surface, surfaceToString
 #include <world/chunk/ChunkCoordinate.h>
 #include <world/rendering/BakedEntityMesh.h>  // isGroundcoverDef (short/tall split source of truth)
 #include <world/rendering/WorldDepthSort.h>   // meshYExtent, computeStaticDepthAttribs
@@ -231,6 +232,15 @@ namespace engine::assets {
 		// Get chunk origin for world position calculation
 		world::WorldPosition origin = context.coord.origin();
 
+		// An instance belongs to this chunk only inside its square (beyond it, to the
+		// neighbor), and never stands in water.
+		auto isPlaceable = [&context, &origin](glm::vec2 position) {
+			const float localX = position.x - origin.x;
+			const float localY = position.y - origin.y;
+			const auto	size   = static_cast<float>(world::kChunkSize);
+			return localX >= 0.0F && localY >= 0.0F && localX < size && localY < size && !context.isWater(position);
+		};
+
 		// RNG distributions
 		std::uniform_real_distribution<float> chanceDist(0.0F, 1.0F);
 		std::uniform_real_distribution<float> offsetDist(0.0F, 1.0F); // Position within tile
@@ -264,12 +274,13 @@ namespace engine::assets {
 				world::Biome biome = context.getBiome(localX, localY);
 				std::string	 biomeName = world::biomeToString(biome);
 
+				// Calculate tile world position (corner)
+				float tileWorldX = origin.x + static_cast<float>(localX);
+				float tileWorldY = origin.y + static_cast<float>(localY);
+
 				// Skip water tiles - entities should not spawn in water
-				if (context.getSurface) {
-					std::string surface = context.getSurface(localX, localY);
-					if (surface == "Water") {
-						continue;
-					}
+				if (context.isWater({tileWorldX + 0.5F, tileWorldY + 0.5F})) {
+					continue;
 				}
 
 				// Find placement config for this biome
@@ -278,8 +289,9 @@ namespace engine::assets {
 					continue; // This entity doesn't spawn in this biome
 				}
 
-				// Check tile-type proximity ("near Water" etc)
-				if (!bp->nearTileType.empty() && context.getSurface) {
+				// Surface proximity ("near Mud" etc): the surface drawn at the tile centers
+				// around this one, water where the polygons hold it, else the painted land.
+				if (!bp->nearTileType.empty()) {
 					bool foundNearby = false;
 					int	 searchRadius = static_cast<int>(bp->nearDistance);
 					if (searchRadius < 1) {
@@ -292,9 +304,9 @@ namespace engine::assets {
 							int checkY = static_cast<int>(localY) + dy;
 
 							if (checkX >= 0 && checkX < world::kChunkSize && checkY >= 0 && checkY < world::kChunkSize) {
-								std::string surface =
-									context.getSurface(static_cast<uint16_t>(checkX), static_cast<uint16_t>(checkY));
-								if (surface == bp->nearTileType) {
+								const glm::vec2		 center{origin.x + static_cast<float>(checkX) + 0.5F, origin.y + static_cast<float>(checkY) + 0.5F};
+								const world::Surface surface = context.isWater(center) ? world::Surface::Water : context.landSurface(center);
+								if (world::surfaceToString(surface) == bp->nearTileType) {
 									foundNearby = true;
 								}
 							}
@@ -305,10 +317,6 @@ namespace engine::assets {
 						continue;
 					}
 				}
-
-				// Calculate tile world position (corner)
-				float tileWorldX = origin.x + static_cast<float>(localX);
-				float tileWorldY = origin.y + static_cast<float>(localY);
 
 				// Roll for spawn. Spaced flora (trees) sample the grove field: its low tail
 				// thins out into open glades here (via spawn chance); its high tail tightens
@@ -343,31 +351,8 @@ namespace engine::assets {
 							// Random offset within clump radius
 							std::uniform_real_distribution<float> clumpOffsetDist(-clumpRadius, clumpRadius);
 							glm::vec2 position{clumpCenter.x + clumpOffsetDist(rng), clumpCenter.y + clumpOffsetDist(rng)};
-
-							// Skip entities that would be placed on water
-							// Convert world position back to local tile coordinates
-							if (context.getSurface) {
-								int entityLocalX = static_cast<int>(std::floor(position.x - origin.x));
-								int entityLocalY = static_cast<int>(std::floor(position.y - origin.y));
-
-								// Skip if outside chunk bounds - entity would be in adjacent chunk
-								if (entityLocalX < 0 || entityLocalX >= world::kChunkSize ||
-									entityLocalY < 0 || entityLocalY >= world::kChunkSize) {
-									// Entity outside chunk bounds, skip it
-									continue;
-								}
-
-								// Check for water at entity position
-								std::string surface = context.getSurface(
-									static_cast<uint16_t>(entityLocalX),
-									static_cast<uint16_t>(entityLocalY)
-								);
-								if (surface == "Water") {
-									LOG_DEBUG(Engine, "[Placement] Skipping clumped entity at (%d,%d) - Water surface", entityLocalX, entityLocalY);
-									continue;
-								}
-							} else {
-								LOG_WARNING(Engine, "[Placement] getSurface is NULL in clumped check!");
+							if (!isPlaceable(position)) {
+								continue;
 							}
 
 							// Check relationship modifiers for this position
@@ -398,20 +383,8 @@ namespace engine::assets {
 						// minDistance. (Previously this fell through to Uniform, so
 						// minDistance did nothing and "spaced" forests placed randomly.)
 						glm::vec2 position{tileWorldX + offsetDist(rng), tileWorldY + offsetDist(rng)};
-
-						// Skip water / out-of-chunk, same as Uniform.
-						if (context.getSurface) {
-							int entityLocalX = static_cast<int>(std::floor(position.x - origin.x));
-							int entityLocalY = static_cast<int>(std::floor(position.y - origin.y));
-							if (entityLocalX < 0 || entityLocalX >= world::kChunkSize ||
-								entityLocalY < 0 || entityLocalY >= world::kChunkSize) {
-								break;
-							}
-							std::string surface = context.getSurface(
-								static_cast<uint16_t>(entityLocalX), static_cast<uint16_t>(entityLocalY));
-							if (surface == "Water") {
-								break;
-							}
+						if (!isPlaceable(position)) {
+							break;
 						}
 
 						// Enforce minimum spacing against already-placed instances of this
@@ -451,27 +424,8 @@ namespace engine::assets {
 					default: {
 						// Single entity at random position within tile
 						glm::vec2 position{tileWorldX + offsetDist(rng), tileWorldY + offsetDist(rng)};
-
-						// Skip entities that would be placed on water
-						// Convert world position back to local tile coordinates
-						if (context.getSurface) {
-							int entityLocalX = static_cast<int>(std::floor(position.x - origin.x));
-							int entityLocalY = static_cast<int>(std::floor(position.y - origin.y));
-
-							// Skip if outside chunk bounds - entity would be in adjacent chunk
-							if (entityLocalX < 0 || entityLocalX >= world::kChunkSize ||
-								entityLocalY < 0 || entityLocalY >= world::kChunkSize) {
-								break;
-							}
-
-							// Check for water at entity position
-							std::string surface = context.getSurface(
-								static_cast<uint16_t>(entityLocalX),
-								static_cast<uint16_t>(entityLocalY)
-							);
-							if (surface == "Water") {
-								break;
-							}
+						if (!isPlaceable(position)) {
+							break;
 						}
 
 						// Check relationship modifiers

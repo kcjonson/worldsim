@@ -188,6 +188,42 @@ inline float gradientNoise2(float x, float y, uint32_t seed) {
     return detail::lerp(x0, x1, uy);
 }
 
+// Two values of 2D gradient noise at one point, e.g. a domain warp's x and y.
+struct NoisePair {
+    float first = 0.0F;
+    float second = 0.0F;
+};
+
+// GradientNoise2PairCell: two gradient noise fields in lattice cell (ix, iy) at
+// offset (fx, fy) inside it, each in [0, 1], sharing each corner's hash: `first`
+// draws its corner gradients from the hash's bits 0-3, which makes it gradientNoise2
+// bit for bit, and `second` from bits 4-7, an independent field of the same kind.
+// One hash and one pair of fades per corner instead of two.
+inline NoisePair gradientNoise2PairCell(int32_t ix, int32_t iy, float fx, float fy, uint32_t seed) {
+    const float ux = detail::quintic(fx);
+    const float uy = detail::quintic(fy);
+
+    auto dots = [](uint32_t h, float dx, float dy) -> NoisePair {
+        float gx{}, gy{}, gz{};
+        detail::gradient(h, gx, gy, gz);
+        const float first = gx * dx + gy * dy + gz * 0.0F;
+        detail::gradient(h >> 4U, gx, gy, gz);
+        return {first, gx * dx + gy * dy + gz * 0.0F};
+    };
+
+    const NoisePair g00 = dots(hash3(ix,   iy,   0, seed), fx,       fy      );
+    const NoisePair g10 = dots(hash3(ix+1, iy,   0, seed), fx-1.0F,  fy      );
+    const NoisePair g01 = dots(hash3(ix,   iy+1, 0, seed), fx,       fy-1.0F );
+    const NoisePair g11 = dots(hash3(ix+1, iy+1, 0, seed), fx-1.0F,  fy-1.0F );
+
+    auto blend = [ux, uy](float v00, float v10, float v01, float v11) {
+        const float x0 = detail::lerp(v00, v10, ux);
+        const float x1 = detail::lerp(v01, v11, ux);
+        return detail::lerp(x0, x1, uy);
+    };
+    return {blend(g00.first, g10.first, g01.first, g11.first), blend(g00.second, g10.second, g01.second, g11.second)};
+}
+
 // ============================================================================
 // Fractal / ridged noise
 // ============================================================================
@@ -228,6 +264,51 @@ inline float fractalNoise2(float x, float y, uint32_t seed,
         frequency *= lacunarity;
     }
     return maxAmp > 0.0F ? value / maxAmp : 0.0F;
+}
+
+// FractalNoise2SplitPair: two fBm fields over gradientNoise2PairCell, at
+// ((wholeX + fracX) / wavelength, (wholeY + fracY) / wavelength) with lacunarity 2,
+// from the whole and fractional parts of the position kept apart, so the precision
+// does not depend on how far the position is from the origin. A float world
+// coordinate of 70 km already quantizes a 0.75 m octave to 1% of its cell; here each
+// octave's cell index is found in integers (the position splits into whole
+// wavelengths plus a remainder under one wavelength) and only that remainder is a
+// float. `wavelength` >= 1, in the units of the whole part; frac in [0, 1). `first`
+// is fractalNoise2 bit for bit whenever the position divided by the wavelength is
+// exact in float at every octave; `second` is an independent field.
+inline NoisePair fractalNoise2SplitPair(int64_t wholeX, int64_t wholeY, float fracX, float fracY, int32_t wavelength,
+                                        uint32_t seed, int octaves, float gain) {
+    // geometry::floorDiv's rule; foundation sits below geometry and can't include it.
+    auto floorDiv = [](int64_t a, int64_t b) {
+        const int64_t q = a / b;
+        return (a % b != 0 && a < 0) ? q - 1 : q;
+    };
+    const int64_t qx = floorDiv(wholeX, wavelength);
+    const int64_t qy = floorDiv(wholeY, wavelength);
+    // In [0, wavelength): the remainder is a small integer, so the sum is exact.
+    const float baseX = static_cast<float>(wholeX - qx * wavelength) + fracX;
+    const float baseY = static_cast<float>(wholeY - qy * wavelength) + fracY;
+    const float inverse = 1.0F / static_cast<float>(wavelength);
+
+    NoisePair value;
+    float amplitude = 1.0F;
+    float maxAmp = 0.0F;
+    for (int i = 0; i < octaves; ++i) {
+        const int64_t octaveCells = int64_t{1} << i;
+        const float scale = inverse * static_cast<float>(octaveCells); // a power of two times 1/wavelength: exact
+        const float u = baseX * scale;                                 // [0, 2^i), so truncation is floor
+        const float v = baseY * scale;
+        const auto cu = static_cast<int32_t>(u);
+        const auto cv = static_cast<int32_t>(v);
+        const NoisePair n = gradientNoise2PairCell(
+            static_cast<int32_t>(qx * octaveCells + cu), static_cast<int32_t>(qy * octaveCells + cv),
+            u - static_cast<float>(cu), v - static_cast<float>(cv), seed + static_cast<uint32_t>(i));
+        value.first += n.first * amplitude;
+        value.second += n.second * amplitude;
+        maxAmp += amplitude;
+        amplitude *= gain;
+    }
+    return maxAmp > 0.0F ? NoisePair{value.first / maxAmp, value.second / maxAmp} : NoisePair{};
 }
 
 // RidgedNoise3: ridged multifractal — (1 - |noise|) per octave, sharpened at crests.

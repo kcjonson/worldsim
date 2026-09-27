@@ -1,14 +1,13 @@
 #include "Chunk.h"
 
 #include "world/chunk/ApronField.h"
+#include "world/chunk/SurfaceField.h"
 #include "world/chunk/TerrainPolygonBuilder.h"
 #include "world/chunk/TerrainPolygonQuery.h"
-#include "world/chunk/TileAdjacency.h"
 #include "world/chunk/TilePostProcessor.h"
 #include "world/generation/BiomeDispatcher.h"
 
 #include <algorithm>
-#include <array>
 #include <utility>
 #include <vector>
 
@@ -55,12 +54,12 @@ namespace engine::world {
 
 		// Terrain polygon rings from the raw tiles plus the apron (D4, D11 order),
 		// then their distance field (D10): before post-processing, so these tiles
-		// match what a neighbor's apron computes for them. The apron is discarded
-		// once the rings are built.
+		// match what a neighbor's apron computes for them. The apron lives on to
+		// fill the render tiles' apron below.
+		const ApronField	apron = ApronField::build(m_coord, m_biomeData, raster, m_worldSeed);
+		const ExtendedTiles extended(*this, apron);
 		{
-			const ApronField	apron = ApronField::build(m_coord, m_biomeData, raster, m_worldSeed);
-			const ExtendedTiles extended(*this, apron);
-			NeighborhoodGrids	neighborhood(m_biomeData);
+			NeighborhoodGrids neighborhood(m_biomeData);
 			setTerrainPolygons(TerrainPolygonBuilder::build(
 				m_coord,
 				m_worldSeed,
@@ -71,14 +70,12 @@ namespace engine::world {
 			));
 		}
 
-		// Final surfaces, point-bar sand then mud by distance to water (D11, D12),
-		// then adjacency. The shore points came with the polygons.
-		const TerrainPolygonQuery terrain(m_terrainPolygons);
+		// Final surfaces, point-bar sand then mud by distance to water (D11, D12).
+		// The shore points came with the polygons.
+		const TerrainPolygonQuery terrain(*m_terrainPolygons);
 		TilePostProcessor::process(m_tiles, {.coord = m_coord, .terrain = &terrain, .worldSeed = m_worldSeed});
 
-		// Pre-compute rendering data (adjacency masks, neighbors) for ChunkRenderer
-		// This avoids per-frame extraction of adjacency data during rendering
-		computeRenderData();
+		computeRenderData(extended, terrain);
 
 		m_renderDataVersion.fetch_add(1, std::memory_order_release);
 
@@ -86,109 +83,41 @@ namespace engine::world {
 		m_generationComplete.store(true, std::memory_order_release);
 	}
 
-	void Chunk::computeRenderData() {
-		// Paint surfaces first: land paints as itself, a Water tile as its bed, the
-		// surface of the nearest land tile in the chunk (multi-source BFS in scan
-		// order, 8-connected so a bed follows a diagonal shore). Only the bed within
-		// a tile or two of the shore is ever seen, where the smoothed waterline puts
-		// land over a Water tile; beyond that the shader's water covers it.
-		constexpr uint8_t kWater	 = static_cast<uint8_t>(Surface::Water);
-		constexpr uint8_t kNoBed	 = 0xFF;
-		constexpr size_t  kSide		 = static_cast<size_t>(kChunkSize);
-		constexpr size_t  kTileCount = kSide * kSide;
-		std::vector<uint32_t> frontier;
-		for (size_t idx = 0; idx < kTileCount; ++idx) {
-			const uint8_t surface		 = static_cast<uint8_t>(m_tiles[idx].surface);
-			m_renderData[idx].surfaceId = surface == kWater ? kNoBed : surface;
-			if (surface != kWater) {
-				frontier.push_back(static_cast<uint32_t>(idx));
-			}
-		}
-		for (size_t head = 0; head < frontier.size(); ++head) {
-			const uint32_t idx	   = frontier[head];
-			const int32_t  x	   = static_cast<int32_t>(idx % kSide);
-			const int32_t  y	   = static_cast<int32_t>(idx / kSide);
-			const uint8_t  surface = m_renderData[idx].surfaceId;
-			for (int32_t dy = -1; dy <= 1; ++dy) {
-				for (int32_t dx = -1; dx <= 1; ++dx) {
-					const int32_t nx = x + dx;
-					const int32_t ny = y + dy;
-					if (nx < 0 || ny < 0 || nx >= kChunkSize || ny >= kChunkSize) {
-						continue;
-					}
-					const size_t n = static_cast<size_t>(ny) * kSide + static_cast<size_t>(nx);
-					if (m_renderData[n].surfaceId == kNoBed) {
-						m_renderData[n].surfaceId = surface;
-						frontier.push_back(static_cast<uint32_t>(n));
-					}
-				}
-			}
-		}
-		// A chunk with no land at all: its bed is never seen, sand is as good as any.
-		for (size_t idx = 0; idx < kTileCount; ++idx) {
-			if (m_renderData[idx].surfaceId == kNoBed) {
-				m_renderData[idx].surfaceId = static_cast<uint8_t>(Surface::Sand);
-			}
-		}
+	void Chunk::computeRenderData(const ExtendedTiles& extended, const TerrainPolygonQuery& terrain) {
+		// buildRenderTiles reads paint surfaces over the render window grown by the
+		// interior reach, and paintSurfaces reads tiles one bed reach further; all of
+		// it lies in the apron. The apron's raw tiles get the final surface their own
+		// chunk gives them (D11), so they are the neighbors' own tiles.
+		constexpr int32_t kPaintMargin	 = kRenderApronTiles + kInteriorReachTiles;
+		constexpr int32_t kSurfaceMargin = kRenderSurfaceReachTiles;
+		static_assert(kSurfaceMargin <= kApronTiles, "the render tiles must be built from the apron");
+		constexpr int32_t kPaintSide   = kChunkSize + 2 * kPaintMargin;
+		constexpr int32_t kSurfaceSide = kChunkSize + 2 * kSurfaceMargin;
 
-		for (uint16_t y = 0; y < kChunkSize; ++y) {
-			for (uint16_t x = 0; x < kChunkSize; ++x) {
-				setRenderAdjacency(x, y, m_tiles[static_cast<size_t>(y) * kSide + x].adjacency);
+		const int64_t		 originX = static_cast<int64_t>(m_coord.x) * kChunkSize - kSurfaceMargin;
+		const int64_t		 originY = static_cast<int64_t>(m_coord.y) * kChunkSize - kSurfaceMargin;
+		std::vector<uint8_t> surfaces(static_cast<size_t>(kSurfaceSide) * kSurfaceSide);
+		for (int32_t y = 0; y < kSurfaceSide; ++y) {
+			for (int32_t x = 0; x < kSurfaceSide; ++x) {
+				const int32_t	ex	 = kApronTiles - kSurfaceMargin + x;
+				const int32_t	ey	 = kApronTiles - kSurfaceMargin + y;
+				const TileData& tile = extended.at(ex, ey);
+				const bool		own	 = ex >= kApronTiles && ey >= kApronTiles && ex < kApronTiles + kChunkSize && ey < kApronTiles + kChunkSize;
+				const Surface	surface =
+					own ? tile.surface
+						: TilePostProcessor::finalSurface(
+							  {.raw = tile.surface, .tileX = originX + x, .tileY = originY + y, .terrain = &terrain, .worldSeed = m_worldSeed}
+						  );
+				surfaces[static_cast<size_t>(y) * kSurfaceSide + static_cast<size_t>(x)] = static_cast<uint8_t>(surface);
 			}
 		}
-	}
-
-	void Chunk::setRenderAdjacency(uint16_t localX, uint16_t localY, uint64_t adjacency) {
-		constexpr uint8_t kWater = static_cast<uint8_t>(Surface::Water);
-		static constexpr std::array<std::pair<int32_t, int32_t>, TileAdjacency::kDirectionCount> kOffsets{{
-			{-1, -1}, // NW
-			{-1, 0},  // W
-			{-1, 1},  // SW
-			{0, 1},	  // S
-			{1, 1},	  // SE
-			{1, 0},	  // E
-			{1, -1},  // NE
-			{0, -1},  // N
-		}};
-
-		constexpr size_t  kSide	 = static_cast<size_t>(kChunkSize);
-		auto&		  render	= m_renderData[static_cast<size_t>(localY) * kSide + localX];
-		const uint8_t surfaceId = render.surfaceId;
-		uint64_t	  paint		= 0;
-		for (int dir = 0; dir < TileAdjacency::kDirectionCount; ++dir) {
-			const auto	  d	 = static_cast<TileAdjacency::Direction>(dir);
-			const int32_t nx = static_cast<int32_t>(localX) + kOffsets[static_cast<size_t>(dir)].first;
-			const int32_t ny = static_cast<int32_t>(localY) + kOffsets[static_cast<size_t>(dir)].second;
-			uint8_t		  neighbor = TileAdjacency::getNeighbor(adjacency, d);
-			if (nx >= 0 && ny >= 0 && nx < kChunkSize && ny < kChunkSize) {
-				neighbor = m_renderData[static_cast<size_t>(ny) * kSide + static_cast<size_t>(nx)].surfaceId;
-			} else if (neighbor == kWater) {
-				neighbor = surfaceId;
-			}
-			TileAdjacency::setNeighbor(paint, d, neighbor);
-		}
-
-		render.edgeMask		= TileAdjacency::getEdgeMaskByStack(paint, surfaceId);
-		render.cornerMask	= TileAdjacency::getCornerMaskByStack(paint, surfaceId);
-		render.hardEdgeMask = TileAdjacency::getHardEdgeMaskByFamily(paint, surfaceId);
-		render.neighborN	= TileAdjacency::getNeighbor(paint, TileAdjacency::N);
-		render.neighborE	= TileAdjacency::getNeighbor(paint, TileAdjacency::E);
-		render.neighborS	= TileAdjacency::getNeighbor(paint, TileAdjacency::S);
-		render.neighborW	= TileAdjacency::getNeighbor(paint, TileAdjacency::W);
-		render.neighborNW	= TileAdjacency::getNeighbor(paint, TileAdjacency::NW);
-		render.neighborNE	= TileAdjacency::getNeighbor(paint, TileAdjacency::NE);
-		render.neighborSE	= TileAdjacency::getNeighbor(paint, TileAdjacency::SE);
-		render.neighborSW	= TileAdjacency::getNeighbor(paint, TileAdjacency::SW);
+		const std::vector<uint8_t>		  paint = paintSurfaces(surfaces, kPaintSide, kPaintSide);
+		const std::vector<TileRenderData> tiles = buildRenderTiles(paint, kRenderTilesSide, kRenderTilesSide);
+		std::copy(tiles.begin(), tiles.end(), m_renderData.begin());
 	}
 
 	const TileData& Chunk::getTile(uint16_t localX, uint16_t localY) const {
 		return m_tiles[localY * kChunkSize + localX];
-	}
-
-	void Chunk::setAdjacency(uint16_t localX, uint16_t localY, uint64_t adjacency) {
-		m_tiles[localY * kChunkSize + localX].adjacency = adjacency;
-		setRenderAdjacency(localX, localY, adjacency);
-		m_renderDataVersion.fetch_add(1, std::memory_order_release);
 	}
 
 	TileData Chunk::computeTile(uint16_t localX, uint16_t localY, const ChunkSampleResult& hydrology) const {
@@ -273,7 +202,6 @@ namespace engine::world {
 		tile.moisture = static_cast<uint8_t>(std::min(255.0F, moistureBase * 255.0F));
 
 		tile.waterDepth = depth;
-		tile.adjacency = 0;	 // Computed by TilePostProcessor after all tiles generated
 
 		return tile;
 	}
@@ -294,9 +222,9 @@ namespace engine::world {
 	}
 
 	void Chunk::setTerrainPolygons(ChunkTerrainPolygons polygons) {
-		polygons.version = m_terrainPolygons.version + 1;
-		m_terrainPolygons = std::move(polygons);
-		m_terrainDistanceField = TerrainDistanceField::bake(m_terrainPolygons, m_coord);
+		polygons.version = m_terrainPolygons->version + 1;
+		m_terrainPolygons = std::make_shared<const ChunkTerrainPolygons>(std::move(polygons));
+		m_terrainDistanceField = TerrainDistanceField::bake(*m_terrainPolygons, m_coord);
 	}
 
 	uint32_t Chunk::tileHash(ChunkCoordinate chunk, uint16_t localX, uint16_t localY, uint64_t seed) {

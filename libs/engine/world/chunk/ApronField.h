@@ -9,8 +9,8 @@
 // Built entirely from the generating chunk's own data (its neighborhood corner
 // lattice, plus a hydrology-only result carrying its extended-AABB river/pond
 // gather); it never waits on a neighbor Chunk existing. Apron tiles are raw
-// Chunk::computeTileFrom output: no mud post-process, no adjacency
-// (TilePostProcessor never runs on them).
+// Chunk::computeTileFrom output; a reader that needs their final surface (the
+// render tiles, D16) runs TilePostProcessor::finalSurface on them.
 
 #include "world/chunk/Chunk.h"
 #include "world/chunk/ChunkCoordinate.h"

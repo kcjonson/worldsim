@@ -3,7 +3,6 @@
 #include "world/chunk/Chunk.h"
 #include "world/chunk/TerrainPolygonBuilder.h"
 #include "world/chunk/TerrainPolygonQuery.h"
-#include "world/chunk/TileAdjacency.h"
 
 #include <core/IntegerDivision.h>
 #include <core/Vec2i64.h>
@@ -58,44 +57,6 @@ void TilePostProcessor::process(std::array<TileData, kChunkSize * kChunkSize>& t
 				.terrain = args.terrain,
 				.worldSeed = args.worldSeed,
 			});
-		}
-	}
-	computeAdjacency(tiles);
-}
-
-void TilePostProcessor::computeAdjacency(std::array<TileData, kChunkSize * kChunkSize>& tiles) {
-	// For each tile, sample neighbors in all 8 directions
-	// Note: Tiles at chunk boundaries will have 0 for out-of-bounds neighbors
-
-	for (uint16_t y = 0; y < kChunkSize; ++y) {
-		for (uint16_t x = 0; x < kChunkSize; ++x) {
-			size_t	 idx = y * kChunkSize + x;
-			uint64_t adj = 0;
-
-			// Helper to get surface at offset, or 0 if out of bounds
-			auto getSurfaceAt = [&](int dx, int dy) -> uint8_t {
-				int nx = static_cast<int>(x) + dx;
-				int ny = static_cast<int>(y) + dy;
-
-				if (nx < 0 || nx >= kChunkSize || ny < 0 || ny >= kChunkSize) {
-					return 0;  // Out of bounds - return 0 (will be treated as unknown)
-				}
-
-				return static_cast<uint8_t>(tiles[ny * kChunkSize + nx].surface);
-			};
-
-			// Set each direction
-			// Direction order: NW=0, W=1, SW=2, S=3, SE=4, E=5, NE=6, N=7
-			TileAdjacency::setNeighbor(adj, TileAdjacency::NW, getSurfaceAt(-1, -1));
-			TileAdjacency::setNeighbor(adj, TileAdjacency::W, getSurfaceAt(-1, 0));
-			TileAdjacency::setNeighbor(adj, TileAdjacency::SW, getSurfaceAt(-1, 1));
-			TileAdjacency::setNeighbor(adj, TileAdjacency::S, getSurfaceAt(0, 1));
-			TileAdjacency::setNeighbor(adj, TileAdjacency::SE, getSurfaceAt(1, 1));
-			TileAdjacency::setNeighbor(adj, TileAdjacency::E, getSurfaceAt(1, 0));
-			TileAdjacency::setNeighbor(adj, TileAdjacency::NE, getSurfaceAt(1, -1));
-			TileAdjacency::setNeighbor(adj, TileAdjacency::N, getSurfaceAt(0, -1));
-
-			tiles[idx].adjacency = adj;
 		}
 	}
 }

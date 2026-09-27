@@ -5,6 +5,10 @@
 // along-channel feeders) through GeneratedWorldSampler. SemiDesert everywhere:
 // DesertGenerator never produces water, so any water comes from the river.
 
+#include "world/chunk/Chunk.h"
+#include "world/chunk/ChunkCoordinate.h"
+#include "world/chunk/GeneratedWorldSampler.h"
+
 #include <worldgen/data/GeneratedWorld.h>
 #include <worldgen/data/PlanetParams.h>
 #include <worldgen/data/WorldData.h>
@@ -12,8 +16,10 @@
 
 #include <array>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <unordered_set>
+#include <utility>
 
 namespace engine::world::river_test {
 
@@ -92,6 +98,32 @@ inline CarvedRiverWorld makeCarvedRiverWorld() {
 	carveRiver(*out.world, source, mouth);
 	out.world->grid->latLonOf(source, out.landingLat, out.landingLon);
 	return out;
+}
+
+struct RealRiverWorld {
+	uint64_t worldSeed = 0;
+	std::map<std::pair<int32_t, int32_t>, std::unique_ptr<Chunk>> chunks;
+};
+
+// Chunks (-1..1, -1..0) of the carved-river world, the source and ~1 km of
+// trunk, through Chunk::generate. Built once per test process for the tests
+// that read them.
+inline const RealRiverWorld& realRiverWorld() {
+	static const RealRiverWorld built = [] {
+		const CarvedRiverWorld world = makeCarvedRiverWorld();
+		const GeneratedWorldSampler sampler(world.world, world.landingLat, world.landingLon);
+		RealRiverWorld out;
+		out.worldSeed = sampler.getWorldSeed();
+		for (int32_t y = -1; y <= 0; ++y) {
+			for (int32_t x = -1; x <= 1; ++x) {
+				auto chunk = std::make_unique<Chunk>(ChunkCoordinate{x, y}, sampler.sampleChunk({x, y}), sampler.getWorldSeed());
+				chunk->generate();
+				out.chunks[{x, y}] = std::move(chunk);
+			}
+		}
+		return out;
+	}();
+	return built;
 }
 
 } // namespace engine::world::river_test
