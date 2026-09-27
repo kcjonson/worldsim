@@ -8,6 +8,7 @@
 #include "world/chunk/ChunkCoordinate.h"
 #include "world/chunk/TerrainPolygonBuilder.h"
 #include "world/chunk/TerrainPolygons.h"
+#include "world/chunk/ThinFeatureGuard.h"
 
 #include <contour/ClipRing.h>
 #include <contour/WarpField.h>
@@ -173,29 +174,11 @@ namespace engine::world::terrain_detail {
 
 	// ============ The waterline field (D5 steps 1-3, D6 step 1) ============
 
-	// D5 steps 1-3 at one tile: the biome water indicator blurred with the 3x3
-	// binomial kernel, then the thin-feature guard on the indicator's cardinal
-	// neighbors. `water(x, y)` is the indicator at tile (x, y). The one formula
-	// for the fine lattice (over the extended grid) and for point queries (over
-	// the biome water query).
+	// D5 steps 1-3 at one tile: the biome water indicator `water(x, y)`, blurred and
+	// guarded. The one formula for the fine lattice (over the extended grid) and for
+	// point queries (over the biome water query).
 	template <typename Water> float coarseWaterValue(const Water& water, int64_t x, int64_t y) {
-		static constexpr int kBinomial[3][3] = {{1, 2, 1}, {2, 4, 2}, {1, 2, 1}};
-		int					 sum			 = 0;
-		for (int dy = -1; dy <= 1; ++dy) {
-			for (int dx = -1; dx <= 1; ++dx) {
-				if (water(x + dx, y + dy)) {
-					sum += kBinomial[dy + 1][dx + 1];
-				}
-			}
-		}
-		const float value = static_cast<float>(sum) / 16.0F;
-		const bool	self  = water(x, y);
-		const int	same  = (water(x + 1, y) == self ? 1 : 0) + (water(x - 1, y) == self ? 1 : 0) +
-						  (water(x, y + 1) == self ? 1 : 0) + (water(x, y - 1) == self ? 1 : 0);
-		if (same >= 2) {
-			return value;
-		}
-		return self ? std::max(value, Builder::kThinWaterFloor) : std::min(value, Builder::kThinLandCeil);
+		return guardedBlur(water, x, y, kThinFeatureFloor, kThinFeatureCeil);
 	}
 
 	struct WarpSeeds {

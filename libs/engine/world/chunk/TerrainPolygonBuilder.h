@@ -101,13 +101,6 @@ class TerrainPolygonBuilder {
 	/// Fine lattice spacing the warped field is marched on (D6).
 	static constexpr int64_t kFineCellMm = 250;
 	static constexpr float kWaterlineIso = 0.5F;
-	/// Thin-feature guard (D5): a water sample with fewer than two water cardinal
-	/// neighbors is floored here, a land sample with fewer than two land cardinal
-	/// neighbors capped here, so 1-tile pools, inlets, and islets survive. The
-	/// spec's 0.70/0.30 march a lone tile to ~0.2 m^2, under kMinLoopAreaMm2 even
-	/// before simplification; 0.85/0.15 gives ~0.35-0.47 m^2 (~0.7 m across).
-	static constexpr float kThinWaterFloor = 0.85F;
-	static constexpr float kThinLandCeil = 0.15F;
 
 	/// Domain warp (D6): fine bank term plus a low-frequency shore term, per
 	/// vector component, each an fBm normalized to [-1, 1] and scaled here.

@@ -17,6 +17,7 @@
 
 #include "world/chunk/Chunk.h"
 #include "world/chunk/RenderTiles.h"
+#include "world/chunk/ThinFeatureGuard.h"
 
 #include <array>
 #include <cstddef>
@@ -87,8 +88,8 @@ struct SurfaceFieldParams {
 	/// octaves are strong enough to make a lone tile lopsided.
 	float warpFineGain = 0.6F;
 	/// Thin-feature guard (D16 step 1).
-	float			  thinFloor = 0.85F;
-	float			  thinCeil	= 0.15F;
+	float			  thinFloor = kThinFeatureFloor;
+	float			  thinCeil	= kThinFeatureCeil;
 	SurfaceFieldSeeds seeds{};
 };
 
