@@ -224,12 +224,24 @@ two, e.g. a lake with a wetland margin, takes the majority over its vertices).
 1. Indicator `I(x,y) = 1` where `isBiomeWater`, else 0, over the extended region; outside it,
    land (D4).
 2. Soften with a 3x3 binomial kernel (1 2 1 / 2 4 2 / 1 2 1, divided by 16).
-3. Thin-feature guard: a water sample with fewer than two same-type cardinal neighbors is
-   floored at `kThinWaterFloor = 0.70`; a land sample in the same situation is capped at
-   `kThinLandCeil = 0.30`. This keeps 1-tile pools, 1-wide inlets, and 1-tile islets from
-   dropping under the isoline while leaving every larger shape free to round. A lone water
-   tile becomes a pool ~0.7 m across, not a dot and not a perfect circle once the D6 warp
-   runs at its own scale.
+3. Thin-feature guard: a sample is thin when both of its neighbors along either axis sit on
+   the other side of the indicator. That is every sample with fewer than two same-side
+   cardinal neighbors, plus the samples of a straight 1-wide run, which have exactly two,
+   opposite each other. A thin water sample is floored at `kThinFeatureFloor = 0.85`, a thin
+   land sample capped at `kThinFeatureCeil = 0.15`. This keeps 1-tile pools, 1-wide inlets
+   and isthmuses, and 1-tile islets from dropping under the isoline while leaving every
+   larger shape free to round; an L-corner's two same-side neighbors are adjacent, so it
+   rounds too. "Fewer than two" alone misses the straight run, whose blur is exactly
+   8/16 = 0.5 along its whole centerline, on the isoline, so the warp flickers an inlet in
+   and out and floods an isthmus over. Guarded, the run is a band 1.17 m wide before the
+   warp (0.85 on the run, 0.25 beside it), and the warp moves that width by up to about a
+   fifth. The values are 0.85 / 0.15, not 0.70 / 0.30. At 0.70 a lone tile's loop falls
+   under `kMinLoopAreaMm2` and is dropped; at 0.85 it is a pool ~0.7 m across (0.37 to
+   0.49 m^2), not a dot and not a perfect circle once the D6 warp runs at its own scale. And
+   a diagonal 1-wide run, which has no same-side cardinal neighbor and so is always thin,
+   joins its tiles through bilinear saddles worth (2 x 0.70 + 2 x 0.25) / 4 = 0.475 at 0.70
+   and breaks into beads; at 0.85 the saddle is 0.55. The guard is one implementation,
+   `ThinFeatureGuard.h`, shared with the land field (D16 step 1).
 4. Domain warp and fine march (D6): the softened lattice is resampled onto a 0.25 m lattice
    with the sample position offset by world-space noise, and marching squares runs there at
    iso 0.5. Straight runs still cross at the midpoint between tile samples, so a straight
@@ -789,19 +801,13 @@ evaluation; `shaders/includes/land.glsl` is the same steps in the same order, an
 
 1. **Field per surface, on the dual grid.** For every surface in the point's 4x4 tile
    neighborhood (the blur's reach plus the bilinear footprint), the indicator is sampled at tile
-   centers, softened with the D5 3x3 binomial, guarded, and read bilinearly. The guard is not
-   D5's as written. A sample is thin when both of its neighbors along either axis sit on the
-   other side of the indicator: every sample with fewer than two same-side cardinal neighbors
-   (D5's rule) plus the tiles of a straight 1-wide run, which have exactly two, opposite. Under
-   D5's rule such a path's blur is exactly 8/16 = 0.5 along its whole centerline, never above
-   the isoline, so it vanishes or flickers with the warp. Floor and ceiling are 0.85 / 0.15,
-   the waterline builder's values, not section 4's 0.70 / 0.30: a diagonal 1-wide path joins its
-   tiles through bilinear saddles worth the mean of two path samples and two 0.25 samples,
-   (2 x 0.70 + 2 x 0.25) / 4 = 0.475 at 0.70, so the path breaks into beads; at 0.85 the saddle
-   is 0.55 and the path is 0.58 m wide at its narrowest. A lone tile or 1-tile hole becomes a
-   rounded blob 0.97 m across on the axes and 0.78 m on the diagonals, a straight 1-wide path a
-   band 1.17 m wide. Floor plus ceiling is 1, so where only two surfaces meet their fields still
-   sum to 1 and the guard never opens a gap between them.
+   centers, softened with the D5 3x3 binomial, guarded by D5's thin-feature guard, and read
+   bilinearly. The blur and guard are the waterline's own code (`ThinFeatureGuard.h`); floor
+   and ceiling are live tunables here, defaulting to D5's 0.85 / 0.15. Unwarped, a lone tile or
+   1-tile hole becomes a rounded blob 0.97 m across on the axes and 0.78 m on the diagonals, a
+   straight 1-wide path a band 1.17 m wide, and a diagonal 1-wide path is 0.58 m wide at its
+   narrowest saddle. Floor plus ceiling is 1, so where only two surfaces meet their fields
+   still sum to 1 and the guard never opens a gap between them.
 2. **One warp per point.** Every surface's field is read at the same warped point
    `q = p + W(p)`, so isolines of different surfaces cannot drift apart into gaps or overlaps.
    `W` is the D6 world-space vector noise: a fine term (4 octaves, gain 0.6, base wavelength
@@ -974,7 +980,7 @@ ChunkTerrainPolygons build(const Chunk& c, const ChunkSampleResult& sr, const Ap
     // D5: biome water only, by primaryBiome; surface==Water from rivers/ponds is NOT water here
     ScalarField coarse = indicator(c, apron, isBiomeWater);              // outside `extended` = land
     coarse = binomial3x3(coarse);
-    applyThinFeatureGuard(coarse, kThinWaterFloor, kThinLandCeil);
+    applyThinFeatureGuard(coarse, kThinFeatureFloor, kThinFeatureCeil);
 
     // D6: domain-warp onto the fine lattice, then march once
     ScalarField fine = geometry::warpField(coarse, kTileMm, kFineCellMm, shoreWarpOffset);
@@ -1025,7 +1031,7 @@ invalidates the render cache and, through the nav signature, the mesh.
 | `kApronTiles` | 20 | D4 |
 | `kPinLatticeMm` | 16 000 | D4, D6 |
 | `kFineCellMm` | 250 | D6 |
-| `kThinWaterFloor` / `kThinLandCeil` | 0.70 / 0.30 | D5 |
+| `kThinFeatureFloor` / `kThinFeatureCeil` | 0.85 / 0.15, axis rule; the land field's tunables default to them | D5, D16 |
 | `kChaikinIterations` | 1 | D6 |
 | `kRingSpacingMm` | 250 | D6 |
 | `kBankNoiseAmpMm` | 250 (waterline warp), 0.15·hw (channel banks), 125 (pond rim) | D6, D7, D8 |
@@ -1046,7 +1052,6 @@ invalidates the render cache and, through the nav signature, the mesh.
 | `kMudProb(d)` | 0.95 / 0.80 / 0.65 at ≤1 / ≤2 / ≤3 m (`TilePostProcessor::kMudBands`) | D11 |
 | `TerrainPolygonQuery::kCellMm` | 16 000 (the pin lattice) | D3 |
 | `kRenderApronTiles` / `kRenderSurfaceReachTiles` | 3 / 9 | D16 |
-| land thin-feature guard | 0.85 / 0.15, axis rule | D16 |
 | land warp, fine / low | 4 octaves, gain 0.6, base 4 m / 2 octaves, gain 0.5, base 26 m; clamp 1.5 m a component; read 0.375 m off the tile grid | D16 |
 | land warp amplitude by upper surface, fine / low | grass variants, dirt, sand, mud 0.55 / 0.7 m; snow 0.45 / 0.7; rock 0.2 / 0.4 | D16 |
 | edge surface / interior / bed reach | 2 / 3 / 3 tiles | D16 |
@@ -1230,17 +1235,20 @@ Maps one-to-one onto the epic's tasks:
   times half-width peaks at 0.27, and of its seven apexes past 0.15 only these two stay past it
   for `kBarMinPoints` (4 m of arc); the rest cross it for 0.5 to 2.5 m. More bars there
   would mean a lower threshold or a shorter minimum, a look decision for the tuning pass.
+- Resolved (WOR-489): the waterline's guard was "fewer than two same-type cardinal
+  neighbors", which left a straight 1-wide inlet of biome water, or a straight 1-wide land
+  isthmus between two water bodies, blurred to exactly 0.5 along its centerline (the inlet
+  vanished, the isthmus flooded over). It now takes the axis rule, one implementation with the
+  land field's (`ThinFeatureGuard.h`, D5 step 3), and its point evaluator `WaterlineField`
+  still shares the lattice fill's core. No quickstart ring changed: biome water follows 16 m
+  sectors (WOR-467), so none of it runs 1 tile wide, and the ring vertices of every chunk
+  loaded at the landing (0, 20) and the coast (70030, 0) hash the same before and after.
 - Ocean vs lake distinction for L2/L4: the biome tells us, but wetland water needs its own
   band set (no beach, reeds everywhere). Decide when the renderer task starts.
 - Whether the fine SDF band (±8 m) is enough for the widest shallows on very gentle ocean
   shores (L2 says up to 6 m); if not, widen the band for ocean chunks only.
 - Whether the meander constants in `RiverNetwork2D` (feature length 9× width, amplitude
   0.3× feature) should move toward the field ratios in R1. Worldgen change, out of scope here.
-- The waterline guard (D5, "fewer than two same-type cardinal neighbors") has the knife edge
-  D16's axis rule removes: a straight 1-wide inlet of biome water, or a straight 1-wide land
-  isthmus between two water bodies, blurs to exactly 0.5 along its centerline and marches to
-  nothing (the inlet vanishes, the isthmus floods over). Adopting the axis rule there changes
-  rings and nav, so it is left for a waterline task.
 
 ---
 

@@ -10,6 +10,7 @@
 #include "world/chunk/ChunkCoordinate.h"
 #include "world/chunk/ChunkSampleResult.h"
 #include "world/chunk/IWorldSampler.h"
+#include "world/chunk/TerrainPolygonBuilderDetail.h"
 #include "world/chunk/TerrainPolygonTestSupport.h"
 
 #include <nav/NavMesh.h>
@@ -21,10 +22,14 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <functional>
 #include <future>
+#include <iostream>
+#include <limits>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace engine::world;
@@ -51,6 +56,123 @@ namespace {
 			EXPECT_LE(std::abs(v.x - tileCenter.x), kReach) << v.x << ", " << v.y;
 			EXPECT_LE(std::abs(v.y - tileCenter.y), kReach) << v.x << ", " << v.y;
 		}
+	}
+
+	// A straight 1-wide run's sides lie within two tiles of its center line, which
+	// the warp moves by up to kMaxWarpMm.
+	constexpr int64_t kRunWindowMm = TerrainPolygonBuilder::kMaxWarpMm + 2 * TerrainPolygonBuilder::kTileMm;
+
+	struct Span {
+		double fromMm;
+		double toMm;
+	};
+
+	// Where the line across a straight run at `stationMm` along it is water (or
+	// land), within kRunWindowMm of the run's center line `centerMm`: a run along x
+	// is crossed by x = stationMm, one along y by y = stationMm. The rings are
+	// waterlines (even-odd) and the line starts on the land outside them.
+	std::vector<Span> spansAcrossRun(const std::vector<TerrainRing>& rings, bool alongX, int64_t stationMm, int64_t centerMm, bool water) {
+		std::vector<double> crossings;
+		for (const TerrainRing& ring : rings) {
+			for (size_t i = 0; i < ring.ring.size(); ++i) {
+				const Vec2i64& a	  = ring.ring[i];
+				const Vec2i64& b	  = ring.ring[(i + 1) % ring.ring.size()];
+				const int64_t  alongA = alongX ? a.x : a.y;
+				const int64_t  alongB = alongX ? b.x : b.y;
+				if ((alongA <= stationMm) == (alongB <= stationMm)) {
+					continue;
+				}
+				const double t		 = static_cast<double>(stationMm - alongA) / static_cast<double>(alongB - alongA);
+				const double acrossA = static_cast<double>(alongX ? a.y : a.x);
+				const double acrossB = static_cast<double>(alongX ? b.y : b.x);
+				crossings.push_back(acrossA + t * (acrossB - acrossA));
+			}
+		}
+		std::sort(crossings.begin(), crossings.end());
+		const double	  lo = static_cast<double>(centerMm - kRunWindowMm);
+		const double	  hi = static_cast<double>(centerMm + kRunWindowMm);
+		std::vector<Span> spans;
+		// Between crossings k and k + 1 the line is in water when k is even.
+		for (size_t k = 0; k + 1 < crossings.size(); ++k) {
+			if (((k % 2) == 0) == water && crossings[k + 1] > lo && crossings[k] < hi) {
+				spans.push_back({crossings[k], crossings[k + 1]});
+			}
+		}
+		return spans;
+	}
+
+	// Unwarped, a guarded 1-wide run is a band 1.17 m wide (0.85 on the run, 0.25
+	// beside it, so 0.5 falls 0.583 m either side of its center); the warp moves its
+	// width by up to about a fifth.
+	constexpr double kRunMinWidthMm = 900.0;
+
+	// A straight 1-wide run on extended row `run` (along x) or column `run` (along
+	// y), of water or of land, checked from extended tile `from` to `to` along it.
+	struct StraightRun {
+		ChunkCoordinate coord;
+		bool			alongX;
+		int32_t			run;
+		int32_t			from;
+		int32_t			to;
+		bool			water;
+	};
+
+	// Every 100 mm along the run, the line across it meets one span of the run's
+	// side, closed off by the other side within the window and never under
+	// kRunMinWidthMm wide.
+	void expectRunHolds(const ChunkTerrainPolygons& polys, const StraightRun& r) {
+		const Vec2i64 first	 = r.alongX ? extendedTileCenterMm(r.coord, r.from, r.run) : extendedTileCenterMm(r.coord, r.run, r.from);
+		const Vec2i64 last	 = r.alongX ? extendedTileCenterMm(r.coord, r.to, r.run) : extendedTileCenterMm(r.coord, r.run, r.to);
+		const int64_t center = r.alongX ? first.y : first.x;
+		double		  narrowest = std::numeric_limits<double>::max();
+		double		  widest	= 0.0;
+		for (int64_t s = r.alongX ? first.x : first.y; s <= (r.alongX ? last.x : last.y); s += 100) {
+			const std::vector<Span> spans = spansAcrossRun(polys.rings, r.alongX, s, center, r.water);
+			ASSERT_EQ(spans.size(), 1U) << (r.water ? "water" : "land") << " spans across the run at " << s;
+			EXPECT_GT(spans[0].fromMm, static_cast<double>(center - kRunWindowMm)) << s;
+			EXPECT_LT(spans[0].toMm, static_cast<double>(center + kRunWindowMm)) << s;
+			narrowest = std::min(narrowest, spans[0].toMm - spans[0].fromMm);
+			widest	  = std::max(widest, spans[0].toMm - spans[0].fromMm);
+		}
+		std::cout << "[ run width ] " << (r.water ? "water" : "land") << " run " << r.run << (r.alongX ? " along x" : " along y")
+				  << ": " << narrowest << " to " << widest << " mm\n";
+		EXPECT_GE(narrowest, kRunMinWidthMm);
+	}
+
+	// Two pairs of 50 m blocks of `biome`, each pair joined corner to corner by a
+	// 40-tile diagonal 1-wide run: rising from blocks (150..199)^2 to (240..289)^2,
+	// falling from x 300..349, y 240..289 to x 390..439, y 150..199 (extended tiles).
+	// Each pair spans 140 m on both axes; one broken at a saddle leaves pieces of
+	// 90 m at most.
+	void paintDiagonalPairs(HandTiles& tiles, Biome biome) {
+		auto block = [&tiles, biome](int32_t x0, int32_t y0) {
+			for (int32_t ey = y0; ey < y0 + 50; ++ey) {
+				for (int32_t ex = x0; ex < x0 + 50; ++ex) {
+					tiles.at(ex, ey) = tileOf(biome);
+				}
+			}
+		};
+		block(150, 150);
+		block(240, 240);
+		block(300, 240);
+		block(390, 150);
+		for (int32_t i = 0; i < 40; ++i) {
+			tiles.at(200 + i, 200 + i) = tileOf(biome);
+			tiles.at(350 + i, 239 - i) = tileOf(biome);
+		}
+	}
+
+	constexpr int64_t kDiagonalPairSpanMm = 130 * TerrainPolygonBuilder::kTileMm;
+
+	// The width and height of a ring's bounding box.
+	Vec2i64 extentOf(const Ring& ring) {
+		Vec2i64 lo = ring.front();
+		Vec2i64 hi = ring.front();
+		for (const Vec2i64& v : ring) {
+			lo = {std::min(lo.x, v.x), std::min(lo.y, v.y)};
+			hi = {std::max(hi.x, v.x), std::max(hi.y, v.y)};
+		}
+		return {hi.x - lo.x, hi.y - lo.y};
 	}
 
 	// A sampler that places biomes by chunk-corner lattice point, so a lake can be
@@ -175,6 +297,151 @@ TEST(TerrainPolygonBuilderTest, OneTileIsletSurvivesAsHole) {
 	EXPECT_EQ(holes, 1);
 	// The water around it: one CCW ring closed along the extended boundary.
 	EXPECT_EQ(polys.rings.size(), 2U);
+}
+
+// The guard sample by sample: a straight 1-wide run of either side has two
+// same-side neighbors, opposite, and a blur of exactly 0.5, so it is thin; an
+// L-corner (two, adjacent) and a 2-wide run keep their plain blur and round freely.
+TEST(TerrainPolygonBuilderTest, GuardFiresOnStraightOneWideRunsNotOnCornersOrTwoWideRuns) {
+	using Water = std::function<bool(int64_t, int64_t)>;
+	auto blur = [](const Water& water, int64_t x, int64_t y) {
+		int sum = 0;
+		for (int64_t dy = -1; dy <= 1; ++dy) {
+			for (int64_t dx = -1; dx <= 1; ++dx) {
+				sum += water(x + dx, y + dy) ? static_cast<int>((2 - std::abs(dx)) * (2 - std::abs(dy))) : 0;
+			}
+		}
+		return static_cast<float>(sum) / 16.0F;
+	};
+	auto value = [](const Water& water, int64_t x, int64_t y) { return terrain_detail::coarseWaterValue(water, x, y); };
+
+	const Water inletAlongX = [](int64_t, int64_t y) { return y == 0; };
+	const Water inletAlongY = [](int64_t x, int64_t) { return x == 0; };
+	const Water wallAlongX	= [](int64_t, int64_t y) { return y != 0; };
+	const Water wallAlongY	= [](int64_t x, int64_t) { return x != 0; };
+	EXPECT_EQ(blur(inletAlongX, 5, 0), 0.5F);
+	EXPECT_EQ(blur(wallAlongY, 0, 5), 0.5F);
+	EXPECT_EQ(value(inletAlongX, 5, 0), kThinFeatureFloor);
+	EXPECT_EQ(value(inletAlongY, 0, 5), kThinFeatureFloor);
+	EXPECT_EQ(value(wallAlongX, 5, 0), kThinFeatureCeil);
+	EXPECT_EQ(value(wallAlongY, 0, 5), kThinFeatureCeil);
+	EXPECT_EQ(value(inletAlongX, 5, 1), 0.25F) << "beside the run, three same-side neighbors";
+	EXPECT_EQ(value(wallAlongX, 5, 1), 0.75F);
+
+	// A lake's convex and concave corners, and 2-wide runs of water and of land.
+	const std::vector<Water> unguarded = {
+		[](int64_t x, int64_t y) { return x >= 0 && y >= 0; },
+		[](int64_t x, int64_t y) { return x >= 0 || y >= 0; },
+		[](int64_t, int64_t y) { return y == 0 || y == 1; },
+		[](int64_t x, int64_t) { return x != 0 && x != 1; },
+	};
+	for (size_t i = 0; i < unguarded.size(); ++i) {
+		for (int64_t y = -3; y <= 3; ++y) {
+			for (int64_t x = -3; x <= 3; ++x) {
+				EXPECT_EQ(value(unguarded[i], x, y), blur(unguarded[i], x, y)) << "layout " << i << " at " << x << ", " << y;
+			}
+		}
+	}
+
+	// A 1-wide L: its arms are guarded, its corner (arms on adjacent sides) is not.
+	const Water lPath = [](int64_t x, int64_t y) { return (y == 0 && x >= 0) || (x == 0 && y >= 0); };
+	EXPECT_EQ(value(lPath, 0, 0), blur(lPath, 0, 0));
+	EXPECT_EQ(value(lPath, 5, 0), kThinFeatureFloor);
+	EXPECT_EQ(value(lPath, 0, 5), kThinFeatureFloor);
+}
+
+// A straight 1-wide inlet blurs to exactly 0.5 along its centerline, so the warp
+// flickered it in and out. Floored, it is a band the warp bends but never pinches
+// shut: a lake with an inlet along each axis is one ring.
+TEST(TerrainPolygonBuilderTest, StraightOneWideInletStaysOpen) {
+	const ChunkCoordinate coord{5, 2};
+	HandTiles			  tiles(coord, Biome::TemperateGrassland);
+	for (int32_t ey = 200; ey < 240; ++ey) {
+		for (int32_t ex = 200; ex < 240; ++ex) {
+			tiles.at(ex, ey) = tileOf(Biome::Lake);
+		}
+	}
+	for (int32_t k = 240; k < 280; ++k) {
+		tiles.at(k, 220) = tileOf(Biome::Lake);
+		tiles.at(220, k) = tileOf(Biome::Lake);
+	}
+
+	const ChunkTerrainPolygons polys = buildHand(tiles, kWorldSeed);
+	expectAllSimple(polys, "inlets");
+	ASSERT_EQ(polys.rings.size(), 1U) << "the lake and its inlets are one ring";
+	// Clear of the lake's corners at the mouth and of the rounded tip.
+	expectRunHolds(polys, {.coord = coord, .alongX = true, .run = 220, .from = 244, .to = 276, .water = true});
+	expectRunHolds(polys, {.coord = coord, .alongX = false, .run = 220, .from = 244, .to = 276, .water = true});
+}
+
+// The same run on land: a 1-wide wall between two lakes blurs to 0.5, and the lakes
+// flooded over it. Capped, the wall holds a land band its whole length, so four
+// lakes parted by a cross of walls stay four rings.
+TEST(TerrainPolygonBuilderTest, StraightOneWideIsthmusKeepsTheWaterApart) {
+	const ChunkCoordinate coord{-2, 3};
+	HandTiles			  tiles(coord, Biome::TemperateGrassland);
+	for (int32_t ey = 300; ey < 360; ++ey) {
+		for (int32_t ex = 300; ex < 360; ++ex) {
+			if (ex != 330 && ey != 330) {
+				tiles.at(ex, ey) = tileOf(Biome::Lake);
+			}
+		}
+	}
+
+	const ChunkTerrainPolygons polys = buildHand(tiles, kWorldSeed);
+	expectAllSimple(polys, "isthmus");
+	ASSERT_EQ(polys.rings.size(), 4U) << "one lake per quadrant, none joined across a wall";
+	for (const TerrainRing& ring : polys.rings) {
+		EXPECT_EQ(geometry::windingOrder(ring.ring), geometry::Winding::CounterClockwise);
+	}
+	// Each arm of the cross, clear of its ends and of the junction.
+	for (const auto& [from, to] : {std::pair{304, 326}, std::pair{334, 356}}) {
+		expectRunHolds(polys, {.coord = coord, .alongX = true, .run = 330, .from = from, .to = to, .water = false});
+		expectRunHolds(polys, {.coord = coord, .alongX = false, .run = 330, .from = from, .to = to, .water = false});
+	}
+}
+
+// A diagonal 1-wide run has no same-side cardinal neighbor, so it was guarded
+// before the axis rule too: its tiles join through bilinear saddles worth
+// (2 x 0.85 + 2 x 0.25) / 4 = 0.55, and 0.525 where it meets a lake's corner. Two
+// lakes joined corner to corner by a diagonal channel, rising or falling, are one ring.
+TEST(TerrainPolygonBuilderTest, DiagonalOneWideChannelStaysConnected) {
+	const ChunkCoordinate coord{1, -3};
+	HandTiles			  tiles(coord, Biome::TemperateGrassland);
+	paintDiagonalPairs(tiles, Biome::Lake);
+
+	const ChunkTerrainPolygons polys = buildHand(tiles, kWorldSeed);
+	expectAllSimple(polys, "diagonal channels");
+	ASSERT_EQ(polys.rings.size(), 2U) << "one ring per pair of lakes";
+	for (const TerrainRing& ring : polys.rings) {
+		const Vec2i64 extent = extentOf(ring.ring);
+		EXPECT_GE(extent.x, kDiagonalPairSpanMm);
+		EXPECT_GE(extent.y, kDiagonalPairSpanMm);
+	}
+}
+
+// The same on land: two islands in a lake joined corner to corner by a diagonal
+// 1-wide isthmus, rising or falling. Its saddles are 0.45, and 0.475 at the
+// islands' corners, so each pair of islands is one hole.
+TEST(TerrainPolygonBuilderTest, DiagonalOneWideIsthmusStaysConnected) {
+	const ChunkCoordinate coord{-4, -1};
+	HandTiles			  tiles(coord, Biome::Lake);
+	paintDiagonalPairs(tiles, Biome::TemperateGrassland);
+
+	const ChunkTerrainPolygons polys = buildHand(tiles, kWorldSeed);
+	expectAllSimple(polys, "diagonal isthmus");
+	ASSERT_EQ(polys.rings.size(), 3U) << "the lake and one hole per pair of islands";
+	int holes = 0;
+	for (const TerrainRing& ring : polys.rings) {
+		if (geometry::windingOrder(ring.ring) != geometry::Winding::Clockwise) {
+			continue;
+		}
+		++holes;
+		const Vec2i64 extent = extentOf(ring.ring);
+		EXPECT_GE(extent.x, kDiagonalPairSpanMm);
+		EXPECT_GE(extent.y, kDiagonalPairSpanMm);
+	}
+	EXPECT_EQ(holes, 2);
 }
 
 // ============================================================================

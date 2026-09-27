@@ -97,40 +97,12 @@ namespace engine::world {
 			return block;
 		}
 
-		// D16 step 1 at block tile (i, j), each 1 or 2: the indicator of `s` blurred
-		// with the 3x3 binomial, then the thin-feature guard. A tile is thin when both
-		// its neighbors along either axis are on the other side of the indicator, which
-		// covers every tile with fewer than two same-side cardinal neighbors and the
-		// tiles of a straight 1-wide run (two, opposite), whose blur is exactly 0.5.
-		float guardedBlur(const Block& block, uint8_t s, int i, int j, float thinFloor, float thinCeil) {
-			static constexpr int kBinomial[3][3] = {{1, 2, 1}, {2, 4, 2}, {1, 2, 1}};
-			auto is = [&block, s](int x, int y) { return block[static_cast<size_t>(y * 4 + x)] == s; };
-			int	 sum = 0;
-			for (int dy = -1; dy <= 1; ++dy) {
-				for (int dx = -1; dx <= 1; ++dx) {
-					if (is(i + dx, j + dy)) {
-						sum += kBinomial[dy + 1][dx + 1];
-					}
-				}
-			}
-			const float blur = static_cast<float>(sum) * 0.0625F;
-			const bool	in	 = is(i, j);
-			const bool	thin = (is(i - 1, j) != in && is(i + 1, j) != in) || (is(i, j - 1) != in && is(i, j + 1) != in);
-			if (!thin) {
-				return blur;
-			}
-			return in ? std::max(blur, thinFloor) : std::min(blur, thinCeil);
-		}
-
+		// D16 step 1: the indicator of `s` blurred and guarded at the block's four
+		// inner tiles, bilinear between them.
 		float blockField(const Block& block, uint8_t s, float tx, float ty, float thinFloor, float thinCeil) {
-			return bilinear(
-				guardedBlur(block, s, 1, 1, thinFloor, thinCeil),
-				guardedBlur(block, s, 2, 1, thinFloor, thinCeil),
-				guardedBlur(block, s, 1, 2, thinFloor, thinCeil),
-				guardedBlur(block, s, 2, 2, thinFloor, thinCeil),
-				tx,
-				ty
-			);
+			auto is		 = [&block, s](int64_t x, int64_t y) { return block[static_cast<size_t>(y * 4 + x)] == s; };
+			auto guarded = [&is, thinFloor, thinCeil](int64_t i, int64_t j) { return guardedBlur(is, i, j, thinFloor, thinCeil); };
+			return bilinear(guarded(1, 1), guarded(2, 1), guarded(1, 2), guarded(2, 2), tx, ty);
 		}
 
 	} // namespace
