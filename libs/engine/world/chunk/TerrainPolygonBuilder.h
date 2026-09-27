@@ -237,9 +237,12 @@ class TerrainPolygonBuilder {
 
 	// ============ Point bars (D12) ============
 
-	/// A bend holds a point bar where its centerline turns one way at over
-	/// kBarCurvature (1/m) for at least kBarMinPoints samples (4 m).
-	static constexpr double kBarCurvature = 0.05;
+	/// A bend holds a point bar where its centerline turns one way with
+	/// |curvature| x bankfull half-width over kBarBend for at least
+	/// kBarMinPoints samples (4 m). Relative to width, so a meander of 2-3
+	/// widths radius (R1) is a bend at any size, and the same test the channel
+	/// frame's curvature x half-width channel draws pools by (D10, 10.1).
+	static constexpr double kBarBend = 0.15;
 	static constexpr size_t kBarMinPoints = 8;
 	/// The bar reaches landward of the inner bank by sin(pi t) kBarWidth
 	/// half-widths, t running from 0 to 1 along the bend.

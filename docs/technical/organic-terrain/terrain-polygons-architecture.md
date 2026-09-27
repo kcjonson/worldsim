@@ -661,8 +661,8 @@ D5–D8, point-bar tiles D12, the edge index, shore points D11) → distance-fie
 
 ### D12: Point bars as tile overrides
 
-On the inner side of a bend where `|κ| > kBarCurvature = 0.05 /m` for at least 8 samples
-(4 m), build a crescent: the inner bank offset landward by `sin(π·t)·kBarWidth·hw`,
+On the inner side of a bend where `|κ|·hw > kBarBend = 0.15` for at least 8 samples (4 m),
+build a crescent: the inner bank offset landward by `sin(π·t)·kBarWidth·hw`,
 `kBarWidth = 0.5` (peak ~0.25 w, inside the field range of ~0.4 w for the bankfull bar; the
 wetted-side part of the bar is shading). Tiles whose center falls inside the crescent get
 `Surface::Sand` and their bit in `barTiles` (D2), which mud reads (D11). The bar is
@@ -670,9 +670,15 @@ land-on-land, so its edge is handled by the ground shader's field
 blend (the separate land-transition task), which is the right resolution for a gentle,
 vegetation-fringed deposit. Bars are walkable.
 
+The bend test is relative to width, hw the bankfull half-width: the same `|κ|·hw` the channel
+frame stores and the shader draws pools by (10.1, `smoothstep(0.10, 0.25, |B|)`), so bars and
+pools agree on what a bend is. R1 puts ordinary meander radii at 2–3 w, `|κ|·hw` of about
+0.17–0.25, and R3 wants a bar on every inner bend. An absolute threshold such as 0.05 /m fires
+only under a 20 m radius, so real rivers would never grow one.
+
 As built (TerrainChannelBuilder, per reach, from the ribbon points the stroke uses):
 
-- A bend is a run of ribbon points turning one way at over `kBarCurvature`, at least
+- A bend is a run of ribbon points turning one way with `|κ|·hw` over `kBarBend`, at least
   `kBarMinPoints = 8` long; t is arc length along it over its length.
 - A bend longer than `kBarArchMaxM = 64 m` ramps up and down over half that at each end
   (`sin(π/2 · min(1, s/32, (L − s)/32))`) instead of spanning the sine. So the bar at a sample
@@ -797,8 +803,8 @@ sources, [I] is our inference. Each rule names its consumer.
   already meanders; the constants should be checked against these ratios (worldgen, later).
 - R2 [S] Outer bend is a cut bank: crisp, darker edge, deepest water against it, undercut
   just downstream of the apex. Renderer: a thin dark stroke along the outer bank where
-  `|κ| > 0.05`, offset 0–0.3 m downstream of the apex; pool shading (darker) hugging that
-  bank. Geometry: D7 step 3.
+  `|κ|·hw > 0.15` (the channel frame's bend, the one the point bars use), offset 0–0.3 m
+  downstream of the apex; pool shading (darker) hugging that bank. Geometry: D7 step 3.
 - R3 [S] Inner bend is a point bar: light sand/gravel crescent from the apex tapering
   downstream, grading into the water with no hard edge, ~0.4 w wide. D12 for the land part;
   renderer shades the wetted part as pale shallows.
@@ -941,7 +947,7 @@ invalidates the render cache and, through the nav signature, the mesh.
 | `kRiverGatherMarginM` | 490 m | D7 |
 | `kSdfTexelM` / `kSdfNearM` / far texel | 0.25 m / 8 m / 2 m | D10 |
 | shader `u_*` | see 10.5 | D10 |
-| `kBarCurvature` / `kBarWidth` | 0.05 /m / 0.5 | D12 |
+| `kBarBend` / `kBarWidth` | 0.15 (`|κ|·hw`, dimensionless) / 0.5 | D12 |
 | `kBarMinPoints` / `kBarArchMaxM` | 8 samples / 64 m | D12 |
 | `kShorePointSpacingMm` / `kShoreOffsetMm` | 1000 / 300 | D11 |
 | `kMudProb(d)` | 0.95 / 0.80 / 0.65 at ≤1 / ≤2 / ≤3 m (`TilePostProcessor::kMudBands`) | D11 |
@@ -1041,11 +1047,14 @@ Maps one-to-one onto the epic's tasks:
   index 0.04 ms median (0.15 max), bars under 0.03 ms, shore points under 0.21 ms, the
   per-tile bar and mud pass 7.7 ms median (1.1 to 12.5), against 69 ms median for
   generation through that pass.
-- `kBarCurvature` is absolute (1/m). The quickstart landing river's bends all have radii
-  over 20 m, so none grows a bar; only the 0.66 m feeder bends tighter (to 0.10 /m over
-  6.5 m), and its crescent (at most 0.16 m wide) covers no tile center. A width-relative
-  test such as `|κ|·hw > 0.15` (the bend test of the channel frame, 10.1) would put bars on
-  ordinary meanders of any width. Decide when tuning the look.
+- Resolved (WOR-461): the point-bar bend test is width-relative, `|κ|·hw > kBarBend = 0.15`,
+  the channel frame's bend (D12), replacing an absolute 0.05 /m that only fired under a 20 m
+  radius, so the quickstart landing river grew no bar at all. With it, the landing
+  neighborhood (chunks -1..1 around the landing) grows two: 10 tiles at (23, -31) m and 20
+  tiles at (-348, 361) m, both on inner banks. That river's bends are gentle: its curvature
+  times half-width peaks at 0.27, and of its seven apexes past 0.15 only these two stay past it
+  for `kBarMinPoints` (4 m of arc); the rest cross it for 0.5 to 2.5 m. More bars there
+  would mean a lower threshold or a shorter minimum, a look decision for the tuning pass.
 - Ocean vs lake distinction for L2/L4: the biome tells us, but wetland water needs its own
   band set (no beach, reeds everywhere). Decide when the renderer task starts.
 - Whether the fine SDF band (±8 m) is enough for the widest shallows on very gentle ocean

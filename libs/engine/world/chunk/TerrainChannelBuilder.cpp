@@ -869,11 +869,13 @@ namespace engine::world::terrain_detail {
 			}
 		}
 
-		// D12: on every bend turning one way at over kBarCurvature for
-		// kBarMinPoints points, a crescent landward of the inner bank as wide as
-		// barEnvelope says, faded out over a mouth flare like the asymmetry and held
-		// under the local radius like the inner bank (past the center of curvature
-		// the crescent would fold). Bank points are the ones the stroke places.
+		// D12: on every bend turning one way with |curvature| x half-width over
+		// kBarBend for kBarMinPoints points, a crescent landward of the inner bank as
+		// wide as barEnvelope says, faded out over a mouth flare like the asymmetry
+		// and held under the local radius like the inner bank (past the center of
+		// curvature the crescent would fold). Bank points are the ones the stroke
+		// places. The half-width is the bankfull one the thalweg carries, so this is
+		// the channel frame's bend (10.1).
 		void markPointBars(const std::vector<RibbonPoint>& pts, const ExtendedGrid& grid, ExtendedTileBits& bars) {
 			const size_t	   n = pts.size();
 			std::vector<Vec2d> centerline(n);
@@ -881,7 +883,8 @@ namespace engine::world::terrain_detail {
 				centerline[i] = pts[i].position;
 			}
 			auto turning = [](const RibbonPoint& p) {
-				return p.kappa > Builder::kBarCurvature ? 1 : (p.kappa < -Builder::kBarCurvature ? -1 : 0);
+				const double bend = p.kappa * p.halfWidthM;
+				return bend > Builder::kBarBend ? 1 : (bend < -Builder::kBarBend ? -1 : 0);
 			};
 			std::vector<double>	 arc;
 			std::vector<Vec2i64> inner;
