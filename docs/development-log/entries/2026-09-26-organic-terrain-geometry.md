@@ -54,9 +54,8 @@ These were found during the epic and aren't started:
 - **Deferred in the epic:** WOR-467 (large-scale coastline variety at the tile layer: biome water still follows 16 m sectors) and WOR-489 (the waterline's thin guard leaves 1-wide inlets on the iso knife edge).
 - **Bugs:**
   - WOR-488: a colonist stalls on "Waiting for the area to settle" after the camera pans far away and back.
-  - Tree positions differed between two runs at the same spot, possibly placement non-determinism.
+  - WOR-492: tree positions differed between two runs at the same spot, possibly placement non-determinism.
 - **Performance outside this epic's shaders:**
-  - The far-zoom entity pass.
-  - Main-thread placement store and unload (10 to 14 ms and about 50 ms).
-  - Coast warp noise (about 60 ms per chunk).
-  - The one-chunk load radius, which leaves a blank strip at zoom 0.25.
+  - WOR-490: the far-zoom entity pass.
+  - WOR-491: main-thread placement store and unload (10 to 14 ms and about 50 ms), and the one-chunk load radius, which leaves a blank strip at zoom 0.25.
+  - Coast warp noise (about 60 ms per chunk). Caching noise-cell hashes along a lattice row would cut it without changing a value.
