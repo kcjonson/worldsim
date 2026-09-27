@@ -18,7 +18,9 @@ namespace geometry {
 
 	// ceil(a / b) for b > 0.
 	inline std::int64_t ceilDiv(std::int64_t a, std::int64_t b) {
-		return -floorDiv(-a, b);
+		assert(b > 0);
+		const std::int64_t q = a / b;
+		return (a % b != 0 && a > 0) ? q + 1 : q;
 	}
 
 } // namespace geometry
