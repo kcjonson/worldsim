@@ -47,6 +47,10 @@
 //   children are measured at their intrinsic size.
 // - Alignment and distribution never produce negative offsets: on overflow
 //   every mode degrades to Start and children overflow past the end edge.
+// - A Hug axis frozen by setLayoutSize()/layout() (even at zero) stays
+//   resolved until resetHugAxes() clears it back to unresolved; plain
+//   invalidateLayout() re-runs layout but does not by itself make a resolved
+//   axis hug again (see ResolvedZeroBeatsHugMeasurement).
 // - No parent back-pointers (v1): after mutating a child's content (text,
 //   size, visibility), call invalidateLayout() on the owning container.
 // - Non-resizable leaves (Circle, Line) inherit the no-op setLayoutSize and
@@ -132,6 +136,22 @@ class LayoutContainer : public Container {
 	void invalidateLayout() {
 		layoutDirty = true;
 		childSizesDirty = true;
+	}
+
+	// Undo a prior freeze on this container's Hug axes (from setLayoutSize()
+	// or a parent's nested layout() call) so the next getWidth()/getHeight()
+	// measures fresh from current children instead of returning the frozen
+	// value. Fixed and Fill axes are untouched: their definite-ness is owned
+	// by construction or the parent, not this container. Call
+	// invalidateLayout() too so this container's own place in its parent's
+	// stack is recomputed from the fresh size.
+	void resetHugAxes() {
+		if (widthMode == SizeMode::Hug) {
+			widthDefinite = false;
+		}
+		if (heightMode == SizeMode::Hug) {
+			heightDefinite = false;
+		}
 	}
 
 	// Setters for layout properties
