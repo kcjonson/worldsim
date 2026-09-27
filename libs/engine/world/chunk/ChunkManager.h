@@ -37,11 +37,11 @@ class ChunkManager {
 	/// Update loaded chunks based on camera position.
 	/// Loads new chunks within load radius, unloads chunks outside unload radius.
 	/// Tile generation runs on worker threads; chunks become isReady() over the
-	/// next few updates and at most one is border-stitched per call.
+	/// next few updates.
 	/// @param cameraCenter World position of camera center
 	void update(WorldPosition cameraCenter);
 
-	/// Block until all in-flight generation completes and integrate the results.
+	/// Block until all in-flight generation completes.
 	/// For tests and loading flows; gameplay uses incremental polling in update().
 	void finishPendingGeneration();
 
@@ -89,7 +89,7 @@ class ChunkManager {
 	/// Load a single chunk (tile generation runs on a worker thread)
 	void loadChunk(ChunkCoordinate coord);
 
-	/// Integrate finished generation tasks (boundary adjacency refresh)
+	/// Retire finished generation tasks
 	void pollGeneratedChunks();
 
 	/// Whether a chunk's generation task is still in flight
@@ -97,12 +97,6 @@ class ChunkManager {
 
 	/// Unload chunks outside the unload radius
 	void unloadDistantChunks(ChunkCoordinate center);
-
-	/// Recompute boundary adjacency for a chunk using any loaded neighbor chunks
-	void refreshAdjacencyForChunkBoundary(ChunkCoordinate coord);
-
-	/// Refresh adjacency for the chunk and its immediate neighbors (3x3 area)
-	void refreshAdjacencyAround(ChunkCoordinate coord);
 };
 
 }  // namespace engine::world

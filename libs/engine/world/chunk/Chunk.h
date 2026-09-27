@@ -67,7 +67,7 @@ enum class Surface : uint8_t {
 	}
 }
 
-/// Tile data - 16 bytes, stored in flat array per chunk.
+/// Tile data - 8 bytes, stored in flat array per chunk.
 /// Designed for single source of truth: computed once, read by all systems.
 struct TileData {
 	Surface surface = Surface::Grass;   ///< 1 byte - THE definitive terrain type
@@ -77,7 +77,6 @@ struct TileData {
 	uint16_t elevation = 0;             ///< 2 bytes - centimeters above sea level
 	uint8_t moisture = 128;             ///< 1 byte - normalized 0-255
 	uint8_t waterDepth = 0;             ///< 1 byte - cosmetic water depth (0=land/shallowest, 255=deepest); data only, the renderer paints depth from the distance field
-	uint64_t adjacency = 0;             ///< 8 bytes - neighbor surface types (8 dirs × 6 bits)
 
 	/// Get biome weights as BiomeWeights (for compatibility during migration)
 	[[nodiscard]] BiomeWeights biome() const {
@@ -149,9 +148,6 @@ class Chunk {
 	/// Returns pre-computed tile from flat array (requires isReady() == true)
 	[[nodiscard]] const TileData& getTile(uint16_t localX, uint16_t localY) const;
 
-	/// Update adjacency for a single tile (used when neighbor chunks arrive)
-	void setAdjacency(uint16_t localX, uint16_t localY, uint64_t adjacency);
-
 	[[nodiscard]] uint64_t worldSeed() const { return m_worldSeed; }
 
 	/// Get the biome data for this chunk (used during generation)
@@ -208,7 +204,7 @@ class Chunk {
 	uint64_t m_worldSeed;
 	mutable std::chrono::steady_clock::time_point m_lastAccessed;
 
-	/// Flat array of pre-computed tiles (512×512 = 262,144 tiles × 16 bytes = 4.0 MB)
+	/// Flat array of pre-computed tiles (512×512 = 262,144 tiles × 8 bytes = 2.0 MB)
 	std::array<TileData, kChunkSize * kChunkSize> m_tiles;
 
 	/// Render tiles over the chunk square plus its render apron (518 x 518 x 2 bytes)

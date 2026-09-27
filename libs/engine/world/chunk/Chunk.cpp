@@ -4,7 +4,6 @@
 #include "world/chunk/SurfaceField.h"
 #include "world/chunk/TerrainPolygonBuilder.h"
 #include "world/chunk/TerrainPolygonQuery.h"
-#include "world/chunk/TileAdjacency.h"
 #include "world/chunk/TilePostProcessor.h"
 #include "world/generation/BiomeDispatcher.h"
 
@@ -71,8 +70,8 @@ namespace engine::world {
 			));
 		}
 
-		// Final surfaces, point-bar sand then mud by distance to water (D11, D12),
-		// then adjacency. The shore points came with the polygons.
+		// Final surfaces, point-bar sand then mud by distance to water (D11, D12).
+		// The shore points came with the polygons.
 		const TerrainPolygonQuery terrain(*m_terrainPolygons);
 		TilePostProcessor::process(m_tiles, {.coord = m_coord, .terrain = &terrain, .worldSeed = m_worldSeed});
 
@@ -119,10 +118,6 @@ namespace engine::world {
 
 	const TileData& Chunk::getTile(uint16_t localX, uint16_t localY) const {
 		return m_tiles[localY * kChunkSize + localX];
-	}
-
-	void Chunk::setAdjacency(uint16_t localX, uint16_t localY, uint64_t adjacency) {
-		m_tiles[localY * kChunkSize + localX].adjacency = adjacency;
 	}
 
 	TileData Chunk::computeTile(uint16_t localX, uint16_t localY, const ChunkSampleResult& hydrology) const {
@@ -207,7 +202,6 @@ namespace engine::world {
 		tile.moisture = static_cast<uint8_t>(std::min(255.0F, moistureBase * 255.0F));
 
 		tile.waterDepth = depth;
-		tile.adjacency = 0;	 // Computed by TilePostProcessor after all tiles generated
 
 		return tile;
 	}
