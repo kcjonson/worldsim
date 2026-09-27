@@ -741,18 +741,15 @@ namespace world_sim {
 
 	void EntityInfoView::markLayoutDirty() {
 		// The engine's nested layout() is a final-rect assignment: it adopts the
-		// measured size, freezing a Hug container at its last extent. Reset the
-		// hug axes so visibility/content changes re-measure instead of keeping a
-		// stale height (e.g. an emptied slots body holding its old size).
-		root->setLayoutSize(UI::kSizeKeep, 0.0F);
-		headerRow->setLayoutSize(UI::kSizeKeep, 0.0F);
-		identityCol->setLayoutSize(UI::kSizeKeep, 0.0F);
-		slotsBody->setLayoutSize(UI::kSizeKeep, 0.0F);
-		for (UI::LayoutContainer* container : {buttonCol, needsBody, bioBody, gearBody, logBody, actionRow, beltRow}) {
-			container->setLayoutSize(0.0F, 0.0F);
-		}
+		// measured size, freezing a Hug container at its last extent, and that
+		// freeze beats hug measurement forever after -- invalidateLayout() alone
+		// re-runs layout but does not undo it. resetHugAxes() clears the freeze so
+		// visibility/content changes re-measure instead of keeping a stale height
+		// (e.g. an emptied slots body holding its old size, or the panel root
+		// itself never shrinking back down to the viewport).
 		for (UI::LayoutContainer* container :
 			 {root, headerRow, identityCol, buttonCol, needsBody, bioBody, gearBody, logBody, actionRow, beltRow, slotsBody}) {
+			container->resetHugAxes();
 			container->invalidateLayout();
 		}
 	}
