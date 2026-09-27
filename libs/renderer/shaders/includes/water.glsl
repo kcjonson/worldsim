@@ -341,13 +341,14 @@ vec3 shadeWater(vec3 ground, vec2 local, vec2 world) {
 		w += u_shimmerAmp * waterFbm(world * u_shimmerFreq + u_time * u_shimmerDrift * vec2(1.0, 0.6), 2, kSeedShimmer);
 	}
 
-	// Foam only on exposed ocean shore, in a thin band on the water side. The
-	// 0.2..0.6 gate reads the noise in [0, 1].
-	float foamDraw	= max(u_foamW, aa);
-	float foamBand	= smoothstep(-foamDraw, 0.0, d) * (u_foamW / foamDraw);
-	float foamNoise = 0.5 + 0.5 * waterFbm(world / u_foamWavelength + u_time * u_foamDrift, 2, kSeedFoam);
-	float foam = exposure * isOcean * foamBand * smoothstep(0.2, 0.6, foamNoise);
-	w = mix(w, u_foam, foam);
+	// Foam only on exposed ocean shore, in a thin band on the water side; the noise
+	// runs only there. The 0.2..0.6 gate reads the noise in [0, 1].
+	float foamDraw = max(u_foamW, aa);
+	float foamBand = exposure * isOcean * smoothstep(-foamDraw, 0.0, d) * (u_foamW / foamDraw);
+	if (foamBand > 0.0) {
+		float foamNoise = 0.5 + 0.5 * waterFbm(world / u_foamWavelength + u_time * u_foamDrift, 2, kSeedFoam);
+		w				= mix(w, u_foam, foamBand * smoothstep(0.2, 0.6, foamNoise));
+	}
 
 	w = mix(w, u_edgeColor, edge);
 	return mix(land, w, water);
