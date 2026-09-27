@@ -697,32 +697,73 @@ tile grid. Every one is the isoline of a softened, domain-warped field, the same
 D5/D6, so a grass/dirt edge and a shoreline are of a piece.
 
 Land boundaries are look-only (nothing walkable, D1), so they stay in the shader instead of
-becoming rings:
+becoming rings. `engine::world::evaluateSurfaceField` (`SurfaceField.cpp`) is the one
+evaluation; `shaders/includes/land.glsl` is the same steps in the same order, and
+`SurfaceFieldGolden.test.cpp` renders it and compares.
 
-1. **Field per surface, on the dual grid.** For the pixel's surface stack, each surface's
-   indicator is sampled at the surrounding tile centers (a 4x4 neighborhood for the blur plus
-   the bilinear footprint), softened with the D5 3x3 binomial, and the thin-feature guard keeps
-   1-tile patches and 1-wide paths representable (same floor and ceiling as the waterline).
-2. **Same warp.** The sample position is offset by the D6 world-space vector noise, fine and
-   low-frequency terms, with per-surface-pair amplitudes as tunables (a grass/dirt edge wants
-   the bank-scale wobble; a rock outcrop may want a harder, lower-amplitude edge). World-space
-   seeds, so the pattern is continuous across chunks.
-3. **Priority paint.** Surfaces paint low to high per D13, each where its field is above 0.5,
-   anti-aliased over one pixel from the known pixel size (as the water pass does), with an
-   optional fringe band per pair (for example sparse grass on dirt) whose width varies along
-   the edge by the D15 along-shore noise, so no transition reads as a stroke.
+1. **Field per surface, on the dual grid.** For every surface in the point's 4x4 tile
+   neighborhood (the blur's reach plus the bilinear footprint), the indicator is sampled at tile
+   centers, softened with the D5 3x3 binomial, guarded, and read bilinearly. The guard is not
+   D5's as written. A sample is thin when both of its neighbors along either axis sit on the
+   other side of the indicator: every sample with fewer than two same-side cardinal neighbors
+   (D5's rule) plus the tiles of a straight 1-wide run, which have exactly two, opposite. Under
+   D5's rule such a path's blur is exactly 8/16 = 0.5 along its whole centerline, never above
+   the isoline, so it vanishes or flickers with the warp. Floor and ceiling are 0.85 / 0.15,
+   the waterline builder's values, not section 4's 0.70 / 0.30: a diagonal 1-wide path joins its
+   tiles through bilinear saddles worth the mean of two path samples and two 0.25 samples,
+   (2 x 0.70 + 2 x 0.25) / 4 = 0.475 at 0.70, so the path breaks into beads; at 0.85 the saddle
+   is 0.55 and the path is 0.58 m wide at its narrowest. A lone tile or 1-tile hole becomes a
+   rounded blob 0.97 m across on the axes and 0.78 m on the diagonals, a straight 1-wide path a
+   band 1.17 m wide. Floor plus ceiling is 1, so where only two surfaces meet their fields still
+   sum to 1 and the guard never opens a gap between them.
+2. **One warp per point.** Every surface's field is read at the same warped point
+   `q = p + W(p)`, so isolines of different surfaces cannot drift apart into gaps or overlaps.
+   `W` is the D6 world-space vector noise: a fine term (4 octaves, gain 0.6, base wavelength
+   4 m) plus a low term (2 octaves, gain 0.5, base 26 m), each an fBm pair
+   (`foundation::fractalNoise2SplitPair`, two fields sharing each lattice corner's hash) giving
+   x and y, each component clamped to +-1.5 m. The noise is read 0.375 m off the tile grid:
+   gradient noise is zero at its lattice points, which at whole-meter wavelengths sit on tile
+   corners, the finer octaves' on every corner, and tile corners are where unwarped edges run.
+   Amplitudes are per surface, not per pair: at a point they blend bilinearly between tile
+   centers, each tile taking its edge surface's, the highest surface within 2 tiles, so an edge
+   takes the character of its upper surface. Per pair was impractical: the warp has to be one
+   per point (above), a point near a junction sees several pairs, and 45 pairs x 2 amplitudes is
+   not a set anyone can tune. Defaults: grass variants, dirt, sand, and mud 0.55 m fine / 0.7 m
+   low; snow 0.45 / 0.7; rock 0.2 / 0.4, a harder edge. The waterline's 0.25 m at 6 m barely
+   bends the 2 to 4 tile straight runs of a small land patch. Positions are a whole world tile
+   plus the offset inside it and every noise input is formed from the two
+   (`fractalNoise2SplitPair`), so the field's precision does not depend on the distance from the
+   origin, in C++ and GLSL alike.
+3. **Priority paint.** Low to high per D13: the highest surface whose field passes 0.5 paints.
+   Where none passes (three or more surfaces meeting) the largest field paints, ties to the
+   higher surface. Anti-aliased over one pixel (`u_metersPerPixel`, as the water pass does)
+   against the nearest boundary of the painted region, its distance `(F - 0.5) / |grad F|` from
+   the bilinear gradient. The edge look is a function of that distance only: a sparse fringe of
+   the upper surface on the lower side (0.35 m for grass, 0.25 sand, 0.2 dirt and mud, none for
+   rock) whose width follows the fine warp noise +-35 % along the edge (D15) and is broken up by
+   a 1 m noise, and a rim darkening just inside the upper surface (rock only, 30 % over
+   0.12 m). No term reads a tile edge.
 4. **Mud** (D11 makes it distance-to-water) and **point-bar sand** (D12) are ordinary surfaces
    in the stack once they are tiles, so they get the same edge.
-5. **Seams.** The field reads tiles across chunk borders: the tile data texture carries a
-   3-tile apron (warp reach plus the blur and bilinear footprint), filled from the same
-   `ApronField` path so apron tiles equal the neighbor's real tiles. Border pixels then match
-   bit for bit on both sides.
+5. **Seams and render tiles.** The shader reads RG8UI render tiles over the chunk square plus
+   `kRenderApronTiles` = 3 on every side (518 x 518, 524 KB a chunk; the RGBA32UI tile data it
+   replaces, with edge, corner, and family masks and eight neighbor ids, was 4 MB). R is the paint
+   surface, G the edge surface (low nibble) and an interior bit (0x80). A point reads its field
+   at most 3 tiles out (1.5 m warp, the bilinear footprint, the blur), exactly the apron, which
+   the chunk fills from its `ApronField`, so apron tiles equal the neighbor's own tiles and
+   border pixels on both sides evaluate one world function. A Water tile paints as its bed: the
+   surface of the nearest non-Water tile within 3 tiles, least squared distance first, then
+   least world y, then least world x, and Sand when there is none. A function of the tiles
+   around it and nothing else, so every chunk that holds the tile agrees on it.
 6. **Agreement with placement.** Groundcover and flora placement read surfaces; a tuft on
    painted dirt looks wrong. The per-point field evaluation exists once in C++ (a pure
    function shared with the shader by construction and checked by golden-value tests against
    the GLSL), and placement asks it instead of the raw tile surface.
-7. **Cost.** An interior-tile early-out when the whole neighborhood is one surface keeps the
-   common case at today's cost; the perf task (phase 9) budgets the taps.
+7. **Cost.** A tile is interior when every tile within 3 of it is one surface; its pixels cost
+   one fetch and one atlas sample, as before. Elsewhere a pixel costs 21 texel fetches, six
+   pair-noise octaves, and the per-surface blur and guard of the surfaces present. The shader
+   holds no arrays: a const array indexed at run time is copied to local memory in every
+   fragment on NVIDIA. The perf task (phase 9) budgets the rest.
 
 Biome water edges themselves are still quantized to 16 m sectors upstream of all this
 (WOR-467); D16 smooths what the tiles give it, it does not add large-scale variety.
@@ -883,6 +924,12 @@ invalidates the render cache and, through the nav signature, the mesh.
 | `kBarCurvature` / `kBarWidth` | 0.05 /m / 0.5 | D12 |
 | `kShorePointSpacingMm` / `kShoreOffsetMm` | 1000 / 300 | D11 |
 | `kMudProb(d)` | 0.95 / 0.80 / 0.65 at ≤1 / ≤2 / ≤3 m | D11 |
+| `kRenderApronTiles` | 3 | D16 |
+| land thin-feature guard | 0.85 / 0.15, axis rule | D16 |
+| land warp, fine / low | 4 octaves, gain 0.6, base 4 m / 2 octaves, gain 0.5, base 26 m; clamp 1.5 m a component; read 0.375 m off the tile grid | D16 |
+| land warp amplitude by upper surface, fine / low | grass variants, dirt, sand, mud 0.55 / 0.7 m; snow 0.45 / 0.7; rock 0.2 / 0.4 | D16 |
+| edge surface / interior / bed reach | 2 / 3 / 3 tiles | D16 |
+| land fringe width / rim | grass 0.35, sand 0.25, dirt and mud 0.2, rock 0 m; opacity 0.55, +-35 % along the edge, 1 m breakup / rock 30 % over 0.12 m | D16 |
 
 All of these are candidates for the debug server's tunables so the look can be A/B'd live.
 
@@ -973,6 +1020,11 @@ Maps one-to-one onto the epic's tasks:
   shores (L2 says up to 6 m); if not, widen the band for ocean chunks only.
 - Whether the meander constants in `RiverNetwork2D` (feature length 9× width, amplitude
   0.3× feature) should move toward the field ratios in R1. Worldgen change, out of scope here.
+- The waterline guard (D5, "fewer than two same-type cardinal neighbors") has the knife edge
+  D16's axis rule removes: a straight 1-wide inlet of biome water, or a straight 1-wide land
+  isthmus between two water bodies, blurs to exactly 0.5 along its centerline and marches to
+  nothing (the inlet vanishes, the isthmus floods over). Adopting the axis rule there changes
+  rings and nav, so it is left for a waterline task.
 
 ---
 
