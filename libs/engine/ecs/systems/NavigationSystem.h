@@ -395,8 +395,9 @@ class NavigationSystem : public ISystem {
 	// Diff desired regions against current ones: a desired region whose drivers all sit
 	// comfortably (>= kEdgeMarginMm) inside an overlapping existing region keeps that
 	// region untouched (self-gate -- no rebuild unless its obstacles changed); otherwise
-	// recenter/resize the best-overlapping region and rebuild, or spawn a new one. Regions
-	// no longer wanted are dropped. Launches/relaunches async builds where needed.
+	// recenter/resize the best-overlapping region and rebuild, or spawn a new one. A
+	// region whose build is still running recenters once it lands. Regions no longer
+	// wanted are dropped. Launches/relaunches async builds where needed.
 	void reconcileRegions(const std::vector<DesiredRegion>& desired);
 
 	// Drain any finished region builds (swap meshes in, bump generations, clear that
@@ -452,6 +453,10 @@ class NavigationSystem : public ISystem {
 
 	std::vector<SimulationRegion> regions;
 	std::int32_t				  nextRegionId = 0;
+
+	// Builds of dropped regions still running. A std::async future blocks in its
+	// destructor, so they are kept here until they finish instead of stalling the frame.
+	std::vector<std::future<geometry::nav::NavMesh>> retiringBuilds;
 
 	// Viewport rect pushed by the scene (world meters). haveViewport is false until the
 	// first setViewportRect call (headless tests run colonist-only).
