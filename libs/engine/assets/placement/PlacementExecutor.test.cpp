@@ -2,6 +2,8 @@
 
 #include "assets/AssetRegistry.h"
 
+#include <world/chunk/Chunk.h>
+
 #include <gtest/gtest.h>
 
 using namespace engine::assets;
@@ -39,9 +41,8 @@ ChunkPlacementContext createTestContext(engine::world::ChunkCoordinate coord,
 	ctx.getBiome = [defaultBiome](uint16_t /*localX*/, uint16_t /*localY*/) {
 		return defaultBiome;
 	};
-	ctx.getSurface = [](uint16_t /*localX*/, uint16_t /*localY*/) {
-		return std::string("Grass");
-	};
+	ctx.isWater = [](glm::vec2 /*pos*/) { return false; };
+	ctx.landSurface = [](glm::vec2 /*pos*/) { return engine::world::Surface::Grass; };
 	return ctx;
 }
 
@@ -331,28 +332,6 @@ TEST(PlacementExecutorTests, NegativeChunkCoordinates) {
 }
 
 // ============================================================================
-// Surface Function Tests
-// ============================================================================
-
-TEST(PlacementExecutorTests, NullSurfaceFunction) {
-	auto& registry = AssetRegistry::Get();
-	registry.clear();
-
-	PlacementExecutor executor(registry);
-	executor.initialize();
-
-	ChunkPlacementContext ctx;
-	ctx.coord = {0, 0};
-	ctx.worldSeed = 12345;
-	ctx.getBiome = [](uint16_t, uint16_t) { return engine::world::Biome::TemperateGrassland; };
-	ctx.getSurface = nullptr; // Explicitly null
-
-	// Should not crash
-	auto result = executor.processChunk(ctx);
-	EXPECT_EQ(result.coord.x, 0);
-}
-
-// ============================================================================
 // Entity Cooldown Tests
 // ============================================================================
 
@@ -575,8 +554,9 @@ TEST(PlacementExecutorTests, SpacedRespectsMinDistance) {
 }
 
 // Riparian flora (near="Water") must actually cluster at a waterline. Diagnoses the
-// "waterside plants don't appear" report: a Water stripe with land around it should
-// grow near-water flora, all within near.distance (+ clump spread) of the stripe.
+// "waterside plants don't appear" report: a water stripe with land around it should
+// grow near-water flora, all within near.distance (+ clump spread) of the stripe, and
+// none in it.
 TEST(PlacementExecutorTests, RiparianFloraSpawnsNearWater) {
 	auto& registry = AssetRegistry::Get();
 	registry.clear();
@@ -590,17 +570,47 @@ TEST(PlacementExecutorTests, RiparianFloraSpawnsNearWater) {
 	ctx.coord = {0, 0};
 	ctx.worldSeed = 999;
 	ctx.getBiome = [](uint16_t, uint16_t) { return engine::world::Biome::BorealForest; };
-	// A vertical Water stripe at localX in [250,252]; land (Grass) elsewhere.
-	ctx.getSurface = [](uint16_t x, uint16_t /*y*/) {
-		return std::string((x >= 250 && x <= 252) ? "Water" : "Grass");
-	};
+	// A vertical water stripe over x in [250, 253); land (Grass) elsewhere.
+	ctx.isWater = [](glm::vec2 pos) { return pos.x >= 250.0F && pos.x < 253.0F; };
+	ctx.landSurface = [](glm::vec2 /*pos*/) { return engine::world::Surface::Grass; };
 
 	auto result = executor.processChunk(ctx);
 	ASSERT_GT(result.entities.size(), 0u) << "near-water flora should appear at the waterline";
 	for (const auto& e : result.entities) {
 		const float lx = e.position.x; // chunk origin is (0,0), so world == local
-		const float dist = lx < 250.0F ? (250.0F - lx) : (lx > 252.0F ? lx - 252.0F : 0.0F);
+		const float dist = lx < 250.0F ? (250.0F - lx) : (lx >= 253.0F ? lx - 253.0F : 0.0F);
 		EXPECT_LE(dist, 8.0F) << "near-water flora spawned far from the water (x=" << lx << ")";
+		EXPECT_GT(dist, 0.0F) << "near-water flora spawned in the water (x=" << lx << ")";
+	}
+}
+
+// A land surface rule (near="Mud", as the reeds have) reads the painted land: a
+// painted mud band grows the flora beside it and nowhere else.
+TEST(PlacementExecutorTests, NearSurfaceReadsThePaintedLand) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+	registry.registerTestDefinition(makeFloraDef("Flora_TestBankReed", engine::world::Biome::BorealForest,
+												 Distribution::Uniform, 0.6F, 0.0F, "Mud", 1.0F));
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	ChunkPlacementContext ctx;
+	ctx.coord = {0, 0};
+	ctx.worldSeed = 4242;
+	ctx.getBiome = [](uint16_t, uint16_t) { return engine::world::Biome::BorealForest; };
+	ctx.isWater = [](glm::vec2 /*pos*/) { return false; };
+	// Mud painted over y in [100, 102.5), off the tile grid; grass elsewhere.
+	ctx.landSurface = [](glm::vec2 pos) {
+		return pos.y >= 100.0F && pos.y < 102.5F ? engine::world::Surface::Mud : engine::world::Surface::Grass;
+	};
+
+	auto result = executor.processChunk(ctx);
+	ASSERT_GT(result.entities.size(), 0u) << "flora near painted mud should grow beside it";
+	for (const auto& e : result.entities) {
+		// Tile centers within one tile of the sampled tile's: tiles 99 to 102.
+		EXPECT_GE(e.position.y, 99.0F);
+		EXPECT_LT(e.position.y, 103.0F);
 	}
 }
 

@@ -73,7 +73,7 @@ namespace engine::world {
 
 		// Final surfaces, point-bar sand then mud by distance to water (D11, D12),
 		// then adjacency. The shore points came with the polygons.
-		const TerrainPolygonQuery terrain(m_terrainPolygons);
+		const TerrainPolygonQuery terrain(*m_terrainPolygons);
 		TilePostProcessor::process(m_tiles, {.coord = m_coord, .terrain = &terrain, .worldSeed = m_worldSeed});
 
 		computeRenderData(extended, terrain);
@@ -228,9 +228,9 @@ namespace engine::world {
 	}
 
 	void Chunk::setTerrainPolygons(ChunkTerrainPolygons polygons) {
-		polygons.version = m_terrainPolygons.version + 1;
-		m_terrainPolygons = std::move(polygons);
-		m_terrainDistanceField = TerrainDistanceField::bake(m_terrainPolygons, m_coord);
+		polygons.version = m_terrainPolygons->version + 1;
+		m_terrainPolygons = std::make_shared<const ChunkTerrainPolygons>(std::move(polygons));
+		m_terrainDistanceField = TerrainDistanceField::bake(*m_terrainPolygons, m_coord);
 	}
 
 	uint32_t Chunk::tileHash(ChunkCoordinate chunk, uint16_t localX, uint16_t localY, uint64_t seed) {

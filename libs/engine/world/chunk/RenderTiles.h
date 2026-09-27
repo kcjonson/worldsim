@@ -63,4 +63,16 @@ class RenderTileView {
 	int64_t							originY;
 };
 
+/// Chunk `coord`'s render tiles, kRenderTilesSide^2 row-major from the corner of its
+/// render apron, by world tile.
+[[nodiscard]] inline RenderTileView chunkRenderTiles(ChunkCoordinate coord, std::span<const TileRenderData> tiles) {
+	return {
+		tiles,
+		kRenderTilesSide,
+		kRenderTilesSide,
+		static_cast<int64_t>(coord.x) * kChunkSize - kRenderApronTiles,
+		static_cast<int64_t>(coord.y) * kChunkSize - kRenderApronTiles
+	};
+}
+
 } // namespace engine::world

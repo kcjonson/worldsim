@@ -17,6 +17,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <memory>
 #include <string>
 
 namespace engine::world {
@@ -180,15 +181,7 @@ class Chunk {
 	/// chunk square plus kRenderApronTiles on every side, by world tile. The apron holds
 	/// the neighbors' own tiles, so a point of the square reads the same field from this
 	/// chunk as from any other.
-	[[nodiscard]] RenderTileView renderTiles() const {
-		return {
-			m_renderData,
-			kRenderTilesSide,
-			kRenderTilesSide,
-			static_cast<int64_t>(m_coord.x) * kChunkSize - kRenderApronTiles,
-			static_cast<int64_t>(m_coord.y) * kChunkSize - kRenderApronTiles
-		};
-	}
+	[[nodiscard]] RenderTileView renderTiles() const { return chunkRenderTiles(m_coord, m_renderData); }
 
 	/// The render tiles as a raw kRenderTilesSide^2 array, row-major, uploaded as the
 	/// chunk's tile-data texture by ChunkRenderer.
@@ -200,7 +193,10 @@ class Chunk {
 
 	/// Get the chunk's terrain polygon rings (D2): waterline, channel, and pond,
 	/// built by TerrainPolygonBuilder in generate().
-	[[nodiscard]] const ChunkTerrainPolygons& terrainPolygons() const { return m_terrainPolygons; }
+	[[nodiscard]] const ChunkTerrainPolygons& terrainPolygons() const { return *m_terrainPolygons; }
+
+	/// The same rings, held for a reader that may outlive the chunk (a placement task).
+	[[nodiscard]] std::shared_ptr<const ChunkTerrainPolygons> sharedTerrainPolygons() const { return m_terrainPolygons; }
 
 	/// The distance-field textures baked from terrainPolygons() (D10), carrying
 	/// the same version.
@@ -226,8 +222,8 @@ class Chunk {
 
 	/// Terrain polygon rings (waterline/channel/pond, D2) and their distance
 	/// field (D10). Installed together by generate() via setTerrainPolygons().
-	ChunkTerrainPolygons m_terrainPolygons;
-	TerrainDistanceField m_terrainDistanceField;
+	std::shared_ptr<const ChunkTerrainPolygons> m_terrainPolygons = std::make_shared<const ChunkTerrainPolygons>();
+	TerrainDistanceField						m_terrainDistanceField;
 
 	/// Compute tile data for a single tile during generation. Thin wrapper around
 	/// computeTileFrom() using this chunk's own coordinate and sample data, with
