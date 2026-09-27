@@ -18,7 +18,6 @@
 #include <chrono>
 #include <cstdint>
 #include <string>
-#include <vector>
 
 namespace engine::world {
 
@@ -124,6 +123,10 @@ class Chunk {
 	/// it, so there is exactly one tile-computation code path.
 	[[nodiscard]] static TileData computeTileFrom(const TileComputeArgs& args);
 
+	/// Deterministic hash of a tile (its owning chunk and local coordinates) and
+	/// a seed: the world tile, whichever chunk asks.
+	[[nodiscard]] static uint32_t tileHash(ChunkCoordinate chunk, uint16_t localX, uint16_t localY, uint64_t seed);
+
 	/// Create a chunk with sampled biome data
 	Chunk(ChunkCoordinate coord, ChunkSampleResult biomeData, uint64_t worldSeed);
 
@@ -171,11 +174,6 @@ class Chunk {
 
 	/// Get last accessed time
 	[[nodiscard]] auto lastAccessed() const { return m_lastAccessed; }
-
-	/// Get cached shore tile positions (land tiles adjacent to water)
-	/// Positions are local chunk coordinates (0-511)
-	/// Pre-computed during generation for O(1) lookup by VisionSystem
-	[[nodiscard]] const std::vector<std::pair<uint16_t, uint16_t>>& getShoreTiles() const { return m_shoreTiles; }
 
 	/// The render tiles the land pass paints from (RenderTiles.h, SurfaceField.h): the
 	/// chunk square plus kRenderApronTiles on every side, by world tile. The apron holds
@@ -225,10 +223,6 @@ class Chunk {
 	/// Bumped whenever m_renderData changes (generation)
 	std::atomic<uint32_t> m_renderDataVersion{0};
 
-	/// Cached shore tile positions (land tiles adjacent to water)
-	/// Computed during generation, used by VisionSystem for fast shore discovery
-	std::vector<std::pair<uint16_t, uint16_t>> m_shoreTiles;
-
 	/// Terrain polygon rings (waterline/channel/pond, D2) and their distance
 	/// field (D10). Installed together by generate() via setTerrainPolygons().
 	ChunkTerrainPolygons m_terrainPolygons;
@@ -246,9 +240,6 @@ class Chunk {
 	/// rings and textures it reads.
 	void setTerrainPolygons(ChunkTerrainPolygons polygons);
 
-	/// Pre-compute shore tiles (land adjacent to water) for VisionSystem
-	void computeShoreTiles();
-
 	/// Fill the render tiles from the chunk's post-processed tiles plus the apron.
 	void computeRenderData(const ExtendedTiles& extended);
 
@@ -260,9 +251,6 @@ class Chunk {
 	/// grid (ApronField).
 	[[nodiscard]] static Surface selectSurfaceFor(ChunkCoordinate coord, Biome biome, uint16_t localX,
 	                                               uint16_t localY, float elevationMeters, uint64_t worldSeed);
-
-	/// Hash function for deterministic tile generation
-	[[nodiscard]] static uint32_t tileHash(ChunkCoordinate chunk, uint16_t localX, uint16_t localY, uint64_t seed);
 };
 
 }  // namespace engine::world

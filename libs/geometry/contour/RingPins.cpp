@@ -1,6 +1,7 @@
 #include "RingPins.h"
 
 #include "ContourDetail.h"
+#include "../core/IntegerDivision.h"
 
 #include <algorithm>
 #include <cassert>
@@ -11,8 +12,6 @@
 namespace geometry {
 
 	namespace {
-
-		using contour_detail::floorDiv;
 
 		// A crossing inserted into edge a->b at parameter num / den (den > 0).
 		struct EdgeCrossing {

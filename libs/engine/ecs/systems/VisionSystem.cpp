@@ -24,9 +24,9 @@
 namespace ecs {
 
 	namespace {
-		// Synthetic definition name for shore tiles (land adjacent to water)
-		// Shore tiles are where colonists stand to drink from water
-		constexpr const char* kShoreTileDefName = "Terrain_Shore";
+		// Synthetic definition name for shore points, the land beside water where
+		// colonists stand to drink
+		constexpr const char* kShoreDefName = "Terrain_Shore";
 
 		/// Check if learning a new defNameId unlocks any recipes
 		/// @param knowledge The colonist's knowledge (after learning)
@@ -81,10 +81,10 @@ namespace ecs {
 		auto& registry = engine::assets::AssetRegistry::Get();
 
 		// Create capability mask for shore (Drinkable - colonists drink AT the shore)
-		m_shoreTileCapabilityMask = static_cast<uint16_t>(1U << static_cast<size_t>(engine::assets::CapabilityType::Drinkable));
+		m_shoreCapabilityMask = static_cast<uint16_t>(1U << static_cast<size_t>(engine::assets::CapabilityType::Drinkable));
 
-		// Register synthetic shore tile definition
-		m_shoreTileDefNameId = registry.registerSyntheticDefinition(kShoreTileDefName, m_shoreTileCapabilityMask);
+		// Register synthetic shore definition
+		m_shoreDefNameId = registry.registerSyntheticDefinition(kShoreDefName, m_shoreCapabilityMask);
 
 		m_terrainDefsRegistered = true;
 	}
@@ -252,7 +252,7 @@ namespace ecs {
 			// notice a bush is gone through a wall. The index check distinguishes
 			// destructive harvest/pickup (removeEntity drops it from the index ->
 			// forget) from a regrowth cooldown (entity stays in the index, only a
-			// separate cooldown map flips -> keep). Shore-tile entries are synthetic
+			// separate cooldown map flips -> keep). Shore entries are synthetic
 			// terrain, not placement entities; they never disappear, so skip them.
 			//
 			// Collect-then-forget: mutating knownWorldEntities while iterating it would
@@ -268,8 +268,8 @@ namespace ecs {
 			if (m_placementExecutor != nullptr && m_processedChunks != nullptr) {
 				std::vector<std::pair<glm::vec2, uint32_t>> stale;
 				for (const auto& [key, known] : memory.knownWorldEntities) {
-					// Shore tiles are terrain, not placement entities -- never reconcile.
-					if (known.defNameId == m_shoreTileDefNameId) {
+					// Shore points are terrain, not placement entities -- never reconcile.
+					if (known.defNameId == m_shoreDefNameId) {
 						continue;
 					}
 
@@ -400,10 +400,9 @@ namespace ecs {
 				}
 			}
 
-			// Pass 3: shore tiles using pre-cached shore tile positions.
-			// Shore tiles are pre-computed during chunk generation for O(N) lookup
-			// instead of iterating all ~3600 tiles in vision range every frame.
-			if (m_chunkManager != nullptr && m_shoreTileDefNameId != 0) {
+			// Pass 3: shore points, sampled along each chunk's water rings when the
+			// chunk was generated (terrain polygons D11).
+			if (m_chunkManager != nullptr && m_shoreDefNameId != 0) {
 				for (int32_t cy = chunkMinY; cy <= chunkMaxY; ++cy) {
 					for (int32_t cx = chunkMinX; cx <= chunkMaxX; ++cx) {
 						engine::world::ChunkCoordinate coord{cx, cy};
@@ -413,13 +412,9 @@ namespace ecs {
 							continue;
 						}
 
-						auto origin = chunk->worldOrigin();
-
-						// Use cached shore tiles instead of iterating all tiles
-						for (const auto& [localX, localY] : chunk->getShoreTiles()) {
-							glm::vec2 shoreWorldPos{
-								origin.x + static_cast<float>(localX) + 0.5F, origin.y + static_cast<float>(localY) + 0.5F
-							};
+						for (const geometry::Vec2i64& shorePoint : chunk->terrainPolygons().shorePoints) {
+							const Foundation::Vec2 meters = geometry::dequantize(shorePoint);
+							const glm::vec2		   shoreWorldPos{meters.x, meters.y};
 
 							// Check if within sight radius
 							float dx = shoreWorldPos.x - pos.value.x;
@@ -430,12 +425,12 @@ namespace ecs {
 									continue;
 								}
 
-								memory.rememberWorldEntity(shoreWorldPos, m_shoreTileDefNameId, m_shoreTileCapabilityMask);
+								memory.rememberWorldEntity(shoreWorldPos, m_shoreDefNameId, m_shoreCapabilityMask);
 
-								// Update permanent knowledge for shore tiles
-								if (knowledge != nullptr && knowledge->learn(m_shoreTileDefNameId)) {
-									// New discovery - check for recipe unlocks (unlikely for shore tiles, but consistent)
-									std::string unlockedRecipe = checkForRecipeUnlock(*knowledge, m_shoreTileDefNameId, registry, recipeRegistry);
+								// Update permanent knowledge for the shore
+								if (knowledge != nullptr && knowledge->learn(m_shoreDefNameId)) {
+									// New discovery - check for recipe unlocks (unlikely for the shore, but consistent)
+									std::string unlockedRecipe = checkForRecipeUnlock(*knowledge, m_shoreDefNameId, registry, recipeRegistry);
 									if (!unlockedRecipe.empty() && m_onRecipeDiscovery) {
 										m_onRecipeDiscovery(unlockedRecipe);
 									}

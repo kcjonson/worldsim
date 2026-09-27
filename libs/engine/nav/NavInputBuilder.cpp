@@ -6,6 +6,7 @@
 #include "world/chunk/Chunk.h"
 
 #include <contour/ClipRing.h>
+#include <core/IntegerDivision.h>
 #include <core/Vec2i64.h>
 #include <offset/WallOffset.h>
 #include <polygon/Polygon.h>
@@ -28,8 +29,7 @@ namespace engine::nav {
 		constexpr std::int64_t kChunkMm = static_cast<std::int64_t>(world::kChunkSize) * kTileMm;
 
 		std::int32_t floorDivChunk(std::int64_t mm) {
-			const std::int64_t q = mm / kChunkMm;
-			return static_cast<std::int32_t>((mm % kChunkMm != 0 && mm < 0) ? q - 1 : q);
+			return static_cast<std::int32_t>(geometry::floorDiv(mm, kChunkMm));
 		}
 
 		// The part of `ring` inside `area`. Most rings of a 512 m chunk miss a sim

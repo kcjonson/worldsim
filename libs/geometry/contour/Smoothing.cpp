@@ -1,6 +1,7 @@
 #include "Smoothing.h"
 
 #include "ContourDetail.h"
+#include "../core/IntegerDivision.h"
 
 #include <cstddef>
 #include <utility>
@@ -8,8 +9,6 @@
 namespace geometry {
 
 	namespace {
-
-		using contour_detail::floorDiv;
 
 		// (3a + b) / 4, nearest mm, halves up.
 		Vec2i64 quarterPoint(const Vec2i64& a, const Vec2i64& b) {

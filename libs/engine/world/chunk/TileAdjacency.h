@@ -50,14 +50,4 @@ namespace engine::world::TileAdjacency {
 		adj |= (static_cast<uint64_t>(surfaceType) & kDirectionMask) << shift;
 	}
 
-	/// Check if any cardinal direction (N/E/S/W) has the specified surface type.
-	/// Used for shore detection - a tile is a shore if it has water in any cardinal direction.
-	/// @param adj The adjacency field from TileData
-	/// @param surfaceId The surface type to check for (e.g., Surface::Water)
-	/// @return true if any cardinal neighbor matches
-	[[nodiscard]] inline bool hasAdjacentSurface(uint64_t adj, uint8_t surfaceId) {
-		return getNeighbor(adj, N) == surfaceId || getNeighbor(adj, E) == surfaceId || getNeighbor(adj, S) == surfaceId ||
-			   getNeighbor(adj, W) == surfaceId;
-	}
-
 } // namespace engine::world::TileAdjacency

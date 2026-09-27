@@ -25,7 +25,7 @@ and the other consumers read, the realism rules for banks and shores, and the tu
 | Water edge, rendered | `tile.glsl` already does real edge work: higher-priority neighbors bleed 20% into water tiles with radial corners, diagonal corner weights, noise-perturbed edge darkening with hard cross-family edges, depth tint by `waterDepth`, plus a 3-tile mud band from `generateMud`. See 1.1. What remains is the 1 m staircase (visible at zoom 1 and above, because the bleed only sees the 8 neighbors) and the uniformity: the mud band and the bleed are the same width everywhere | Waterline ring from a softened field on the dual grid, Chaikin + multi-scale fBm, one polygon; every band width varies along the ring (D15) |
 | Nav water | `NavInputBuilder::extractWaterObstacles` marches `TileData::surface` per area on every build | Reads chunk rings; the tile marcher is deleted |
 | Vision shore | `Chunk::getShoreTiles()` = land tiles with a cardinal water neighbor | `shorePoints` sampled along the rings |
-| Mud banks | `TilePostProcessor::generateMud`, cardinal waves out to 3 tiles, chunk-local | Distance-to-ring band, sees neighbor chunks through the apron |
+| Mud banks | `TilePostProcessor::generateMud`, cardinal waves out to 3 tiles, chunk-local | Distance-to-ring band over the chunk's own unclipped rings, which reach through its apron to the neighbors' shores |
 | Point bars, cut banks, riffles, pools | none | Derived from ribbon curvature and width (sections 2.7, 2.9) |
 
 ### 1.1 Today, observed in the game (2026-09-25, quickstart landing)
@@ -94,12 +94,16 @@ struct ChunkTerrainPolygons {
     std::vector<TerrainRing>        rings;         // extended region (chunk + apron), UNCLIPPED (D4)
     std::vector<TerrainRing>        navRings;      // the same rings clipped to the chunk square (D4, D9)
     std::vector<ThalwegPath>        thalwegs;
+    TerrainEdgeIndex                edgeIndex;     // `rings` in 16 m lattice cells, for TerrainPolygonQuery (D3)
     std::vector<geometry::Vec2i64>  shorePoints;   // inside the chunk square only (D11)
-    std::vector<uint64_t>           barTiles;      // 512*512/64 bitset: tiles overridden to Sand as point bars (D12)
+    ExtendedTileBits                barTiles;      // one bit per tile of the EXTENDED region: point-bar Sand (D12)
     uint32_t                        version;       // bumped with the rings, read like renderDataVersion
 };
 }
 ```
+
+`barTiles` covers the extended region, not just the chunk square, so a neighbor filling its
+render apron (D16) reads the same bars the owning chunk paints (D11's border rule).
 
 `Chunk` owns one `ChunkTerrainPolygons`, built in `Chunk::generate()` on the worker thread
 (D4), exposed as `terrainPolygons()`, versioned like `m_renderDataVersion`.
@@ -134,9 +138,20 @@ New in `libs/engine/world/chunk/`:
 
 - `TerrainPolygonBuilder` (`build(const Chunk&, const ChunkSampleResult&, const ApronField&)
   -> ChunkTerrainPolygons`), the only place the recipe below is spelled out.
-- `TerrainPolygonQuery`: `distanceToWaterMm(point)`, `nearestShorePoint(point)`,
-  `isInsideWater(point)`, over one chunk's ring set plus the neighbor rings that reach into
-  the apron. Used by mud (D11), vision, and any later gameplay query.
+- `TerrainPolygonQuery`: `distanceToWaterMm(point)` (0 in water, else to the nearest shore
+  edge; an optional search radius bounds the work), `nearestShorePoint(point)`,
+  `isInsideWater(point)`, and `isPointBar(tile)`, over one chunk's unclipped `rings` alone.
+  Those rings already cover the extended region, and every ring edge in the lattice cell
+  next to a border is identical in both chunks (D4, the seam test), so a chunk's own set
+  answers every query in the chunk and several meters past it without touching a neighbor
+  chunk (neighbors may not exist yet). The shore skips synthetic and fordable-cut edges;
+  water is D9's classification with fordable channels in. The 16 m edge-bucket index is
+  built once by the builder and stored with the polygons (`edgeIndex`, section 8): each
+  entry keeps its edge's box, a cell no edge touches stores its containment, and each cell
+  records whether shore lies within a cell of it, so most points cost one lookup. Used by mud
+  (D11), shore points, the toilet spot rule, and any later gameplay query. From a point in
+  water, `nearestShorePoint` can land on a bank submerged in another body (a channel's run
+  into a lake), which the bake's union shoreline (10.1) leaves out.
 
 Noise: `foundation::fractalNoise3` (HashNoise.h) already exists and is deterministic; the
 builder uses it with z = 0 and a fixed seed per purpose. The three private noise copies
@@ -327,9 +342,10 @@ the lattice cell next to the chunk square, a ring edge anywhere in the extended 
 thalweg point a bake texel reads (D10): within `max(16 m, apron) + 2 m + 3.6 hw` of the square
 (3.6 = (2 + 0.25) × 1.6: a texel reads a thalweg point 2 bankfull half-widths out, and the
 thalweg sits up to the asymmetry off the centerline; a bank lies at most 2.8 raw half-widths
-out). Every decision about a sample (flare, extension, the whole-crossing rule) reads the
-ground at most `kChannelDecisionReachM = max(64, 3 × 24) + 2 = 74 m` along the centerline, so a
-chunk keeps every sample within that arc distance of a relevant one. At the widest river
+out). Every decision about a sample (flare, extension, the whole-crossing rule, the bend a
+point bar spans, D12) reads the river at most `kChannelDecisionReachM = max(64, 3 × 24) + 2 =
+74 m` along the centerline, so a chunk keeps every sample within that arc distance of a
+relevant one. At the widest river
 (`RiverNetwork2D::kMaxHalfWidthMeters = 103.5`: the 110 m clamped width times the 1.88 riffle
 plus pool peak) that is 469 m from the chunk square, inside the 3x3 neighborhood the
 biome-water query covers, and the gather margin (`kRiverGatherMarginM = 490 m`) keeps a 20 m
@@ -603,37 +619,81 @@ band 0.4 m; LOD band 0.5 m.
 
 ### D11: Vision and mud
 
-**Shore points.** After the rings are built, walk every ring in `rings` (Waterline, every
-Channel including fordable ones, Pond), skipping synthetic and fordable-cut edges, at
-`kShorePointSpacingMm = 1000`, and emit a point offset `kShoreOffsetMm = 300` toward the land
-side into `shorePoints`, keeping only points inside the chunk square. A fordable creek is
+**Shore points.** The builder, once the rings are built and indexed, walks every ring in
+`rings` (Waterline, every Channel including fordable ones, Pond), skipping synthetic and
+fordable-cut edges, at `kShorePointSpacingMm = 1000`, and emits a point offset
+`kShoreOffsetMm = 300` toward the land side (every ring keeps water on its left) into
+`shorePoints`, keeping only points inside the chunk square and not in water: a bank
+submerged in the body it runs into (a channel's run into a lake, a tributary's bank inside
+the trunk) would stand in water. The spacing restarts at every ring vertex on the pin
+lattice, so a border run spaces its points as the neighbor's copy does. A fordable creek is
 still drinkable water, so it is not filtered on `blocksMovement`. `VisionSystem` pass 3 iterates
 `shorePoints` instead of `getShoreTiles()`; the synthetic `Terrain_Shore` def and its
 Drinkable capability are unchanged. `Chunk::computeShoreTiles` and `getShoreTiles` are
 deleted.
 
-**Mud.** `generateMud` becomes: for each eligible tile (Grass variants, Dirt, Sand), take
-`d = TerrainPolygonQuery::distanceToWaterMm(tileCenter)` over the chunk's rings and the
-neighbor rings reaching into its apron; the tile becomes Mud with probability
-`kMudProb(d) = 0.95` for `d <= 1 m`, `0.80` for `d <= 2 m`, `0.65` for `d <= 3 m`, using the
-same per-tile hash roll as today. Fordable channels count. Because the unclipped rings
-extend into the apron, banks no longer stop at chunk borders. Tiles set in `barTiles` (point
-bars, D12) are skipped before the roll; that bitset is what carries the exemption, since a
-bar tile's surface is Sand and Sand is otherwise eligible.
+**Mud.** `generateMud` is replaced by one per-tile function,
+`TilePostProcessor::finalSurface(raw surface, world tile, TerrainPolygonQuery, world seed)`:
+a point-bar tile (D12) is Sand; else an eligible tile (Grass variants, Dirt, Sand) takes
+`d = TerrainPolygonQuery::distanceToWaterMm(tileCenter)` over the chunk's own rings (0 in
+water) and becomes Mud with probability `kMudProb(d) = 0.95` for `d <= 1 m`, `0.80` for
+`d <= 2 m`, `0.65` for `d <= 3 m`. Fordable channels count. The roll is
+`Chunk::tileHash(owning chunk, local tile, seed ^ kMudSalt)`, keyed by the world tile. The old
+roll hashed chunk-local coordinates, which a neighbor reading the tile into its apron could
+not reproduce, so "the same per-tile hash as today" could not stand. Because the unclipped
+rings extend into the apron, banks no longer stop at chunk borders. The bar check comes
+first; `barTiles` is what carries the exemption, since a bar tile's surface is Sand and Sand
+is otherwise eligible.
 
-**Order in `Chunk::generate()`:** computeTile → build rings (D5–D8) → point bars (D12) →
-mud (D11) → adjacency → shore points → render data → version bumps.
+`finalSurface` is a pure function of its arguments, so it answers for any tile of the
+extended region: `Chunk::generate` runs it over its own tiles, and the D16 render apron runs
+it over the neighbor's raw tiles from `ApronField` with the chunk's own query. A tile within
+three tiles of a border (the render apron) comes out the same from either chunk: its 3 m
+disc reads only ring edges in the lattice cells next to the border, identical in both
+(D4), and its bar comes from centerline samples both chunks keep with the whole bend
+decision (D12). `TerrainPolygonSeamsTest.BorderTilesPostProcessTheSameFromEitherChunk`
+and `RealRiverBorderTilesPostProcessTheSameFromEitherChunk` hold it for every tile within
+three of a horizontal, vertical, and diagonal border.
+
+**Order in `Chunk::generate()`:** computeTile → `TerrainPolygonBuilder::build` (rings
+D5–D8, point-bar tiles D12, the edge index, shore points D11) → distance-field bake →
+`finalSurface` per tile (bar Sand, then mud) → adjacency → render data → version bumps.
 
 ### D12: Point bars as tile overrides
 
-On the inner side of a bend where `|κ| > kBarCurvature = 0.05 /m` for at least 8 samples
-(4 m), build a crescent: the inner bank offset landward by `sin(π·t)·kBarWidth·hw`,
+On the inner side of a bend where `|κ|·hw > kBarBend = 0.15` for at least 8 samples (4 m),
+build a crescent: the inner bank offset landward by `sin(π·t)·kBarWidth·hw`,
 `kBarWidth = 0.5` (peak ~0.25 w, inside the field range of ~0.4 w for the bankfull bar; the
 wetted-side part of the bar is shading). Tiles whose center falls inside the crescent get
 `Surface::Sand` and their bit in `barTiles` (D2), which mud reads (D11). The bar is
 land-on-land, so its edge is handled by the ground shader's field
 blend (the separate land-transition task), which is the right resolution for a gentle,
 vegetation-fringed deposit. Bars are walkable.
+
+The bend test is relative to width, hw the bankfull half-width: the same `|κ|·hw` the channel
+frame stores and the shader draws pools by (10.1, `smoothstep(0.10, 0.25, |B|)`), so bars and
+pools agree on what a bend is. R1 puts ordinary meander radii at 2–3 w, `|κ|·hw` of about
+0.17–0.25, and R3 wants a bar on every inner bend. An absolute threshold such as 0.05 /m fires
+only under a 20 m radius, so real rivers would never grow one.
+
+As built (TerrainChannelBuilder, per reach, from the ribbon points the stroke uses):
+
+- A bend is a run of ribbon points turning one way with `|κ|·hw` over `kBarBend`, at least
+  `kBarMinPoints = 8` long; t is arc length along it over its length.
+- A bend longer than `kBarArchMaxM = 64 m` ramps up and down over half that at each end
+  (`sin(π/2 · min(1, s/32, (L − s)/32))`) instead of spanning the sine. So the bar at a sample
+  reads the river at most 64 m along, a decision like a mouth's, inside the 74 m every chunk
+  keeps around a relevant sample (D7 channel reach): two chunks draw the same bar near their
+  border, whichever ends of the bend each sees.
+- The width fades out over a mouth flare with the bend asymmetry's share (D7 mouths), so a
+  mouth's extension into the lake grows none.
+- The crescent is held under the local radius of curvature, as the inner bank is: past the
+  center of curvature it would fold.
+- Its inner edge is the stroke's own inner bank point; the crescent is the union of the
+  quads between consecutive samples, tested per tile center with exact orientation
+  predicates.
+- A tile that is `Water` in the raw tiles is never a bar, and the bits cover the whole
+  extended region (D2).
 
 ### D13: Land-on-land priority order
 
@@ -685,8 +745,10 @@ The waterline warp itself is multi-scale (D6): the 26 m term shapes bays and hea
 
 Every step is a pure function of (tile data, sample result, world position, fixed seeds).
 No dependence on generation order, thread count, or which neighbors are loaded. Hash-seeded
-choices (mud rolls) use the existing per-tile hash. This is required for multiplayer later
-and for D4's seam guarantee now.
+choices (mud rolls) use `Chunk::tileHash` keyed by the world tile (its owning chunk and local
+coordinates) with a per-purpose salt, never chunk-local coordinates alone, so a neighbor
+evaluating the tile rolls the same. This is required for multiplayer later and for D4's seam
+guarantee now.
 
 ### D16: Every land boundary gets the waterline treatment
 
@@ -749,12 +811,14 @@ evaluation; `shaders/includes/land.glsl` is the same steps in the same order, an
    `kRenderApronTiles` = 3 on every side (518 x 518, 524 KB a chunk; the RGBA32UI tile data it
    replaces, with edge, corner, and family masks and eight neighbor ids, was 4 MB). R is the paint
    surface, G the edge surface (low nibble) and an interior bit (0x80). A point reads its field
-   at most 3 tiles out (1.5 m warp, the bilinear footprint, the blur), exactly the apron, which
-   the chunk fills from its `ApronField`, so apron tiles equal the neighbor's own tiles and
-   border pixels on both sides evaluate one world function. A Water tile paints as its bed: the
-   surface of the nearest non-Water tile within 3 tiles, least squared distance first, then
-   least world y, then least world x, and Sand when there is none. A function of the tiles
-   around it and nothing else, so every chunk that holds the tile agrees on it.
+   at most 3 tiles out (1.5 m warp, the bilinear footprint, the blur), exactly the apron. The
+   chunk fills it from its `ApronField`, each tile post-processed with
+   `TilePostProcessor::finalSurface` over the chunk's own `TerrainPolygonQuery` (D11), so apron
+   tiles equal the neighbor's own final tiles and border pixels on both sides evaluate one world
+   function. A Water tile paints as its bed: the surface of the nearest non-Water tile within 3
+   tiles, least squared distance first, then least world y, then least world x, and Sand when
+   there is none. A function of the tiles around it and nothing else, so every chunk that holds
+   the tile agrees on it.
 6. **Agreement with placement.** Groundcover and flora placement read surfaces; a tuft on
    painted dirt looks wrong. The per-point field evaluation exists once in C++ (a pure
    function shared with the shader by construction and checked by golden-value tests against
@@ -781,8 +845,8 @@ sources, [I] is our inference. Each rule names its consumer.
   already meanders; the constants should be checked against these ratios (worldgen, later).
 - R2 [S] Outer bend is a cut bank: crisp, darker edge, deepest water against it, undercut
   just downstream of the apex. Renderer: a thin dark stroke along the outer bank where
-  `|κ| > 0.05`, offset 0–0.3 m downstream of the apex; pool shading (darker) hugging that
-  bank. Geometry: D7 step 3.
+  `|κ|·hw > 0.15` (the channel frame's bend, the one the point bars use), offset 0–0.3 m
+  downstream of the apex; pool shading (darker) hugging that bank. Geometry: D7 step 3.
 - R3 [S] Inner bend is a point bar: light sand/gravel crescent from the apex tapering
   downstream, grading into the water with no hard edge, ~0.4 w wide. D12 for the land part;
   renderer shades the wetted part as pale shallows.
@@ -834,16 +898,18 @@ GeneratedWorldSampler::sampleChunk(coord)          main thread
         │
 Chunk::generate()                                   worker thread
   computeTile ×(512 + 2·kApronTiles)²   (apron tiles discarded after the build)
-  TerrainPolygonBuilder::build  ← D5 field, D6 warp+march, D8 ponds, D7 channels; rings + navRings
-  point bars (D12)              → Surface::Sand overrides + barTiles
-  generateMud (D11)             ← TerrainPolygonQuery::distanceToWaterMm, skips barTiles
-  adjacency, shorePoints (D11), render data
+  TerrainPolygonBuilder::build  ← D5 field, D6 warp+march, D8 ponds, D7 channels; rings + navRings,
+                                  barTiles (D12), edgeIndex, shorePoints (D11)
   TerrainDistanceField::bake    ← rings, thalwegs → terrainSdf, shoreProfile, channelFrame (10.1)
+  TilePostProcessor::process    ← finalSurface per tile: bar Sand, then mud by
+                                  TerrainPolygonQuery::distanceToWaterMm (D11); adjacency
+  render data
   m_terrainPolygons.version++, m_renderDataVersion++
         │
         ├── NavInputBuilder::buildInput      navRings → NavInputPolygon (D9)
         ├── ChunkRenderer                    uploads the three textures; tile.frag paints (D10)
         ├── VisionSystem pass 3              shorePoints (D11)
+        ├── ToiletLocationFinder             distanceToWaterMm (not on the shore)
         └── PlacementExecutor (later)        distanceToWater, ring side, curvature (R8, R9, L5)
 ```
 
@@ -882,13 +948,15 @@ ChunkTerrainPolygons build(const Chunk& c, const ChunkSampleResult& sr, const Ap
         for (const ChannelPiece& piece : splitAtFordableWidth(flared, kFordableWidthM))
             emitChannelRing(out, strokeChannel(piece), piece.blocks);     // butt joins at cuts
         out.thalwegs.push_back(thalwegOf(flared));                        // offset toward outer bank
+        markPointBars(flared, apron, out.barTiles);                       // D12, extended region
     }
 
     computeShoreProfiles(out, c, apron);                                  // D15, per ring
     for (const TerrainRing& tr : out.rings)
         for (geometry::Ring piece : geometry::clipRingToRect(tr.ring, region))
             if (validateSimple(piece)) out.navRings.push_back(tr.withRing(std::move(piece)));
-    out.shorePoints = sampleShorePoints(out.rings, region, kShorePointSpacingMm, kShoreOffsetMm);
+    out.edgeIndex   = TerrainPolygonQuery::buildIndex(out.rings, extended);
+    out.shorePoints = sampleShorePoints(out, region, kShorePointSpacingMm, kShoreOffsetMm);  // on land only
     return out;
 }
 ```
@@ -921,9 +989,11 @@ invalidates the render cache and, through the nav signature, the mesh.
 | `kRiverGatherMarginM` | 490 m | D7 |
 | `kSdfTexelM` / `kSdfNearM` / far texel | 0.25 m / 8 m / 2 m | D10 |
 | shader `u_*` | see 10.5 | D10 |
-| `kBarCurvature` / `kBarWidth` | 0.05 /m / 0.5 | D12 |
+| `kBarBend` / `kBarWidth` | 0.15 (`|κ|·hw`, dimensionless) / 0.5 | D12 |
+| `kBarMinPoints` / `kBarArchMaxM` | 8 samples / 64 m | D12 |
 | `kShorePointSpacingMm` / `kShoreOffsetMm` | 1000 / 300 | D11 |
-| `kMudProb(d)` | 0.95 / 0.80 / 0.65 at ≤1 / ≤2 / ≤3 m | D11 |
+| `kMudProb(d)` | 0.95 / 0.80 / 0.65 at ≤1 / ≤2 / ≤3 m (`TilePostProcessor::kMudBands`) | D11 |
+| `TerrainPolygonQuery::kCellMm` | 16 000 (the pin lattice) | D3 |
 | `kRenderApronTiles` | 3 | D16 |
 | land thin-feature guard | 0.85 / 0.15, axis rule | D16 |
 | land warp, fine / low | 4 octaves, gain 0.6, base 4 m / 2 octaves, gain 0.5, base 26 m; clamp 1.5 m a component; read 0.375 m off the tile grid | D16 |
@@ -950,11 +1020,18 @@ All of these are candidates for the debug server's tunables so the look can be A
 - Same integers: quantize before clipping; clip against an integer rectangle.
 - Synthetic edges never reach a consumer: the bake, shore points, mud, and queries skip them;
   nav gets `navRings`, which end at the chunk square.
+- Same surfaces: mud rolls hash the world tile, a point bar reads at most 64 m of river
+  (inside what every chunk keeps), and a tile's distance to water within 3 m reads only the
+  border lattice cells, so `finalSurface` gives a border tile the same surface from either
+  chunk (D11).
 - Test (`TerrainPolygonSeamsTest`): build adjacent chunks (horizontal, vertical, diagonal)
   independently and assert every non-synthetic ring edge within 8.25 m of the shared border and
   every thalweg point a texel in both bake regions reads are identical, and identical to a
   48-tile-apron build; `TerrainPolygonBuilderTest` builds the nav mesh over both and asserts
-  no face touches a border gap.
+  no face touches a border gap. The surface tests evaluate every tile within three tiles of
+  each border from both chunks (own tile, apron tile) on a hand-built world with lakes,
+  wetland pools, and tight meanders on the borders, and on the carved-river world through
+  `Chunk::generate`, and assert the same bar bit, distance to water, and final surface.
 
 ---
 
@@ -1011,9 +1088,21 @@ Maps one-to-one onto the epic's tasks:
 
 ## 8. Open questions
 
-- Whether `TerrainPolygonQuery` should build a small per-chunk spatial index (a 16 m grid of
-  ring-edge buckets) up front or lazily; mud calls it 262k times per chunk, vision far less.
-  Lean: build it in the builder, it's cheap and deterministic.
+- Resolved (WOR-461): `TerrainPolygonQuery`'s 16 m edge-bucket index is built up front in
+  the builder and stored with the polygons (`edgeIndex`), with each edge-free cell's
+  containment, so the 262k mud queries per chunk mostly cost one cell lookup. Measured in
+  RelWithDebInfo over 27 chunk generations (quickstart landing, coast at x = 70 km):
+  index 0.04 ms median (0.15 max), bars under 0.03 ms, shore points under 0.21 ms, the
+  per-tile bar and mud pass 7.7 ms median (1.1 to 12.5), against 69 ms median for
+  generation through that pass.
+- Resolved (WOR-461): the point-bar bend test is width-relative, `|κ|·hw > kBarBend = 0.15`,
+  the channel frame's bend (D12), replacing an absolute 0.05 /m that only fired under a 20 m
+  radius, so the quickstart landing river grew no bar at all. With it, the landing
+  neighborhood (chunks -1..1 around the landing) grows two: 10 tiles at (23, -31) m and 20
+  tiles at (-348, 361) m, both on inner banks. That river's bends are gentle: its curvature
+  times half-width peaks at 0.27, and of its seven apexes past 0.15 only these two stay past it
+  for `kBarMinPoints` (4 m of arc); the rest cross it for 0.5 to 2.5 m. More bars there
+  would mean a lower threshold or a shorter minimum, a look decision for the tuning pass.
 - Ocean vs lake distinction for L2/L4: the biome tells us, but wetland water needs its own
   band set (no beach, reeds everywhere). Decide when the renderer task starts.
 - Whether the fine SDF band (±8 m) is enough for the widest shallows on very gentle ocean
