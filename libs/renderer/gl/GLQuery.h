@@ -2,7 +2,7 @@
 
 // GLQuery - RAII wrapper for OpenGL query objects.
 // Automatically handles glGenQueries/glDeleteQueries lifecycle.
-// Used for GPU timing queries (GL_TIME_ELAPSED), occlusion queries, etc.
+// Used for GPU timestamps (GPUTimer).
 
 #include <GL/glew.h>
 #include <utility>
@@ -57,14 +57,9 @@ class GLQuery {
 	/// Implicit conversion to GLuint for convenience with GL calls
 	operator GLuint() const { return queryHandle; } // NOLINT(google-explicit-constructor)
 
-	/// Begin a query (e.g., GL_TIME_ELAPSED)
-	void begin(GLenum target) const {
-		glBeginQuery(target, queryHandle);
-	}
-
-	/// End a query
-	static void end(GLenum target) {
-		glEndQuery(target);
+	/// Record the GPU time at which every command issued before this one has completed
+	void recordTimestamp() const {
+		glQueryCounter(queryHandle, GL_TIMESTAMP);
 	}
 
 	/// Check if result is available

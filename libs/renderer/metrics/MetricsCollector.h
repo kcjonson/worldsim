@@ -33,8 +33,8 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		// Set ECS system timings (called by game scene after ECS update)
 		void setEcsSystemTimings(const std::vector<Foundation::EcsSystemTiming>& timings);
 
-		// Set GPU render time (called by game scene after reading GPU timer)
-		void setGpuRenderTime(float gpuMs);
+		// Set GPU times (called by game scene after reading its GPU timers)
+		void setGpuTimes(float renderMs, float tilePassMs);
 
 		// Set main loop timing breakdown (called by Application after each frame)
 		void setMainLoopTimings(float pollEventsMs, float inputHandleMs, float sceneUpdateMs,
@@ -70,6 +70,7 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 
 		// GPU timing
 		float gpuRenderMs{};
+		float tileGpuMs{};
 
 		// Main loop timing breakdown
 		float m_pollEventsMs{};

@@ -586,9 +586,6 @@ namespace {
 			// Populate the config strip's wall thickness-preset cards for the active
 			// material (Wood). Refreshed in onConstructionMaterialSelected too.
 			refreshThicknessPresets(m_drawingSystem->activeMaterial());
-
-			// Enable GPU timing for performance monitoring
-			m_gpuTimer.setEnabled(true);
 		}
 
 		/// Handle UI input events dispatched from Application.
@@ -974,7 +971,6 @@ namespace {
 			glClearColor(0.05F, 0.08F, 0.12F, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
 
-			// Begin GPU timing (measures from here to end(), result from previous frame)
 			m_gpuTimer.begin();
 
 			int w = 0;
@@ -985,7 +981,9 @@ namespace {
 
 			// Time tile rendering
 			auto tileStart = Clock::now();
+			m_tileGpuTimer.begin();
 			m_renderer->render(*m_chunkManager, *m_camera, w, h);
+			m_tileGpuTimer.end();
 			float tileMs = elapsedMs(tileStart, Clock::now());
 
 			// Committed construction (foundations, walls, openings) is the flat
@@ -1060,7 +1058,6 @@ namespace {
 			// Render unified game UI (overlay + info panel)
 			gameUI->render();
 
-			// End GPU timing (query result will be available next frame)
 			m_gpuTimer.end();
 
 			// Report timing breakdown to metrics system
@@ -1084,8 +1081,7 @@ namespace {
 				}
 				metrics->setEcsSystemTimings(m_ecsTimingsCache);
 
-				// GPU timing (from previous frame due to async query)
-				metrics->setGpuRenderTime(m_gpuTimer.getTimeMs());
+				metrics->setGpuTimes(m_gpuTimer.getTimeMs(), m_tileGpuTimer.getTimeMs());
 			}
 		}
 
@@ -1927,7 +1923,8 @@ namespace {
 
 		// Timing for metrics (persistent vectors to avoid per-frame heap allocation)
 		float									 m_lastUpdateMs = 0.0F;
-		Renderer::GPUTimer						 m_gpuTimer;		// GPU timing via OpenGL queries
+		Renderer::GPUTimer						 m_gpuTimer;		// the whole scene render
+		Renderer::GPUTimer						 m_tileGpuTimer;	// the chunk ground and water pass
 		std::vector<Foundation::EcsSystemTiming> m_ecsTimingsCache; // Reused each frame
 
 		// Scroll accumulator for smooth zoom on high-precision input devices (Magic Mouse, trackpad)

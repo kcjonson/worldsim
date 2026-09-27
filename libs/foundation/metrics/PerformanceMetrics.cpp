@@ -48,6 +48,7 @@ namespace Foundation {
 		json << "],";
 		// GPU timing
 		json << "\"gpuRenderMs\":" << gpuRenderMs << ",";
+		json << "\"tileGpuMs\":" << tileGpuMs << ",";
 		// System resources
 		json << "\"memoryUsedBytes\":" << memoryUsedBytes << ",";
 		json << "\"memoryPeakBytes\":" << memoryPeakBytes << ",";

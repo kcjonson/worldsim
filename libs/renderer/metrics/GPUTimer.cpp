@@ -1,57 +1,43 @@
-// GPUTimer implementation using OpenGL timer queries.
-
 #include "metrics/GPUTimer.h"
+
 #include <GL/glew.h>
-#include "utils/Log.h"
 
 namespace Renderer {
 
-	GPUTimer::GPUTimer() {
-		// Check if timer queries are supported
-		if (GLEW_ARB_timer_query || GLEW_VERSION_3_3) {
-			supported = true;
-			// Create query objects using RAII wrappers
-			for (auto& query : queries) {
-				query = GLQuery::create();
-			}
-			LOG_INFO(Renderer, "GPUTimer: timer queries supported (ARB=%d, GL3.3=%d)",
-					 GLEW_ARB_timer_query ? 1 : 0, GLEW_VERSION_3_3 ? 1 : 0);
-		} else {
-			LOG_WARNING(Renderer, "GPUTimer: timer queries NOT supported");
-		}
-	}
-
 	void GPUTimer::begin() {
-		if (!supported || !enabled || inQuery) {
+		if (open) {
 			return;
 		}
-
-		// If we have a completed query from 2 frames ago, read its result
-		if (hasResult) {
-			int previousQuery = (currentQuery + 1) % kQueryCount;
-
-			if (queries[previousQuery].isResultAvailable()) {
-				GLuint64 timeNs = queries[previousQuery].getResult();
-				lastTimeMs = static_cast<float>(timeNs) / 1000000.0F; // ns to ms
+		if (!created) {
+			for (Span& span : spans) {
+				span.start = GLQuery::create();
+				span.stop  = GLQuery::create();
 			}
+			created = true;
 		}
 
-		// Begin new query using RAII wrapper
-		queries[currentQuery].begin(GL_TIME_ELAPSED);
-		inQuery = true;
+		// The span about to be reused was issued kFrames spans ago. A result still
+		// pending after that long is dropped rather than waited for.
+		Span& span = spans[current];
+		if (span.pending && span.stop.isResultAvailable()) {
+			const GLuint64 startNs = span.start.getResult();
+			const GLuint64 stopNs  = span.stop.getResult();
+			lastTimeMs			   = static_cast<float>(static_cast<double>(stopNs - startNs) / 1.0e6);
+		}
+		span.pending = false;
+		span.start.recordTimestamp();
+		open = true;
 	}
 
 	void GPUTimer::end() {
-		if (!supported || !enabled || !inQuery) {
+		if (!open) {
 			return;
 		}
-
-		GLQuery::end(GL_TIME_ELAPSED);
-		inQuery = false;
-		hasResult = true;
-
-		// Advance to next query slot
-		currentQuery = (currentQuery + 1) % kQueryCount;
+		Span& span = spans[current];
+		span.stop.recordTimestamp();
+		span.pending = true;
+		open		 = false;
+		current		 = (current + 1) % kFrames;
 	}
 
 } // namespace Renderer

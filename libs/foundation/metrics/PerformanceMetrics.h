@@ -48,8 +48,9 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 		// ECS system timings (for per-system profiling)
 		std::vector<EcsSystemTiming> ecsSystems;
 
-		// GPU timing
-		float gpuRenderMs{}; // Time GPU spent rendering (from previous frame)
+		// GPU timing, a few frames old (the queries are read once the GPU is done with them)
+		float gpuRenderMs{}; // Time GPU spent on the scene's render
+		float tileGpuMs{};	 // Of that, the ground and water pass (ChunkRenderer)
 
 		// System resources
 		uint64_t memoryUsedBytes{};	   // Process resident memory (RSS)
