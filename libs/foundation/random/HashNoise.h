@@ -278,7 +278,11 @@ inline float fractalNoise2(float x, float y, uint32_t seed,
 // exact in float at every octave; `second` is an independent field.
 inline NoisePair fractalNoise2SplitPair(int64_t wholeX, int64_t wholeY, float fracX, float fracY, int32_t wavelength,
                                         uint32_t seed, int octaves, float gain) {
-    auto floorDiv = [](int64_t a, int64_t b) { return a >= 0 ? a / b : -((-a + b - 1) / b); };
+    // geometry::floorDiv's rule; foundation sits below geometry and can't include it.
+    auto floorDiv = [](int64_t a, int64_t b) {
+        const int64_t q = a / b;
+        return (a % b != 0 && a < 0) ? q - 1 : q;
+    };
     const int64_t qx = floorDiv(wholeX, wavelength);
     const int64_t qy = floorDiv(wholeY, wavelength);
     // In [0, wavelength): the remainder is a small integer, so the sum is exact.

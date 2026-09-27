@@ -38,6 +38,9 @@ inline constexpr int32_t kEdgeReachTiles = 2;
 inline constexpr int32_t kInteriorReachTiles = 3;
 /// A Water tile's bed is the nearest land tile at most this far away.
 inline constexpr int32_t kBedReachTiles = 3;
+/// A chunk's render tiles are a function of the final tile surfaces this far past
+/// its square: the render apron, the interior reach around it, and a bed reach more.
+inline constexpr int32_t kRenderSurfaceReachTiles = kRenderApronTiles + kInteriorReachTiles + kBedReachTiles;
 /// Each warp component is clamped here. With the bilinear footprint and the blur
 /// that is exactly kRenderApronTiles of reach from a point's own tile.
 inline constexpr float kMaxLandWarpM = 1.5F;

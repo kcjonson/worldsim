@@ -24,8 +24,8 @@
 #include "world/chunk/Chunk.h"
 #include "world/chunk/ChunkCoordinate.h"
 #include "world/chunk/ChunkSampleResult.h"
-#include "world/chunk/GeneratedWorldSampler.h"
 #include "world/chunk/RiverTestWorld.h"
+#include "world/chunk/SurfaceField.h"
 #include "world/chunk/TerrainPolygonBuilder.h"
 #include "world/chunk/TerrainPolygonBuilderDetail.h"
 #include "world/chunk/TerrainPolygonQuery.h"
@@ -568,30 +568,8 @@ namespace {
 		return tiles;
 	}
 
-	struct RealRiverWorld {
-		uint64_t													  worldSeed = 0;
-		std::map<std::pair<int32_t, int32_t>, std::unique_ptr<Chunk>> chunks;
-	};
-
-	// Chunks (-1..1, -1..0) of the carved-river world, the source and ~1 km of
-	// trunk, through Chunk::generate. Built once for the tests that read them.
-	const RealRiverWorld& realRiverWorld() {
-		static const RealRiverWorld built = [] {
-			const river_test::CarvedRiverWorld world = river_test::makeCarvedRiverWorld();
-			const GeneratedWorldSampler		   sampler(world.world, world.landingLat, world.landingLon);
-			RealRiverWorld					   out;
-			out.worldSeed = sampler.getWorldSeed();
-			for (int32_t y = -1; y <= 0; ++y) {
-				for (int32_t x = -1; x <= 1; ++x) {
-					auto chunk = std::make_unique<Chunk>(ChunkCoordinate{x, y}, sampler.sampleChunk({x, y}), sampler.getWorldSeed());
-					chunk->generate();
-					out.chunks[{x, y}] = std::move(chunk);
-				}
-			}
-			return out;
-		}();
-		return built;
-	}
+	using river_test::RealRiverWorld;
+	using river_test::realRiverWorld;
 
 } // namespace
 
@@ -640,17 +618,13 @@ TEST(TerrainPolygonSeamsTest, RealRiverBordersReadTheSameGeometry) {
 // Post-processed surfaces across a border (D11, D12, D14, D16)
 // ============================================================================
 //
-// A tile within kRenderApronTiles of a border lies in the neighbor's render
-// apron, which must hold the tile's real post-processed surface (D16). So its
-// final surface has to come out the same from its own chunk and from the
-// neighbor that reads it into its apron, each answering from its own rings:
-// the same point bars, the same distance to water, the same mud roll.
+// A tile within kRenderSurfaceReachTiles of a border is one the neighbor's render
+// tiles are built from (D16), which must be the tile's real post-processed
+// surface. So its final surface has to come out the same from its own chunk and
+// from the neighbor that reads it from its apron, each answering from its own
+// rings: the same point bars, the same distance to water, the same mud roll.
 
 namespace {
-
-	// The land-boundary pass's apron (D16): warp reach plus the blur and the
-	// bilinear footprint.
-	constexpr int64_t kRenderApronTiles = 3;
 
 	// Chunks (0,0), (1,0), (0,1), (1,1), borders x = 512 m and y = 512 m: a lake
 	// straddling each border and wetland pools along both for mud; for point bars,
@@ -704,8 +678,8 @@ namespace {
 		return {std::move(tiles), std::move(polys)};
 	}
 
-	// World tiles of `owner`'s square within kRenderApronTiles of `reader`'s
-	// square (Chebyshev): the tiles `reader`'s render apron holds.
+	// World tiles of `owner`'s square within kRenderSurfaceReachTiles of `reader`'s
+	// square (Chebyshev): the tiles `reader`'s render tiles are built from.
 	std::vector<std::pair<int64_t, int64_t>> tilesInApronOf(ChunkCoordinate owner, ChunkCoordinate reader) {
 		auto outside = [](int64_t t, int64_t lo) { return std::max({lo - t, t - (lo + kChunkSize - 1), int64_t{0}}); };
 		const int64_t rx = static_cast<int64_t>(reader.x) * kChunkSize;
@@ -713,7 +687,7 @@ namespace {
 		std::vector<std::pair<int64_t, int64_t>> out;
 		for (int64_t ty = static_cast<int64_t>(owner.y) * kChunkSize; ty < static_cast<int64_t>(owner.y + 1) * kChunkSize; ++ty) {
 			for (int64_t tx = static_cast<int64_t>(owner.x) * kChunkSize; tx < static_cast<int64_t>(owner.x + 1) * kChunkSize; ++tx) {
-				if (std::max(outside(tx, rx), outside(ty, ry)) <= kRenderApronTiles) {
+				if (std::max(outside(tx, rx), outside(ty, ry)) <= kRenderSurfaceReachTiles) {
 					out.emplace_back(tx, ty);
 				}
 			}
@@ -774,8 +748,9 @@ TEST(TerrainPolygonSeamsTest, BorderTilesPostProcessTheSameFromEitherChunk) {
 	}
 	std::cout << "[ surface seams ] " << straight.tiles << " border tiles (" << straight.mud << " mud, " << straight.bars
 			  << " bar), " << diagonal.tiles << " corner tiles (" << diagonal.mud << " mud, " << diagonal.bars << " bar)\n";
-	EXPECT_EQ(straight.tiles, 4U * 2U * 3U * 512U);
-	EXPECT_EQ(diagonal.tiles, 2U * 2U * 9U);
+	constexpr size_t kReach = kRenderSurfaceReachTiles;
+	EXPECT_EQ(straight.tiles, 4U * 2U * kReach * 512U);
+	EXPECT_EQ(diagonal.tiles, 2U * 2U * kReach * kReach);
 	// Worth something only if the borders carry both.
 	EXPECT_GT(straight.mud, 200U);
 	EXPECT_GT(straight.bars, 10U);
@@ -784,7 +759,7 @@ TEST(TerrainPolygonSeamsTest, BorderTilesPostProcessTheSameFromEitherChunk) {
 
 // The same through Chunk::generate: each chunk's own post-processed tiles
 // against the final surface its neighbor computes for them from its apron
-// (ApronField, as the render apron will read them) and its own rings.
+// (ApronField, as its render tiles read them) and its own rings.
 TEST(TerrainPolygonSeamsTest, RealRiverBorderTilesPostProcessTheSameFromEitherChunk) {
 	const RealRiverWorld&							  real = realRiverWorld();
 	std::map<std::pair<int32_t, int32_t>, ApronField> aprons;

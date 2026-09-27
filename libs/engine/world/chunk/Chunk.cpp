@@ -76,7 +76,7 @@ namespace engine::world {
 		const TerrainPolygonQuery terrain(m_terrainPolygons);
 		TilePostProcessor::process(m_tiles, {.coord = m_coord, .terrain = &terrain, .worldSeed = m_worldSeed});
 
-		computeRenderData(extended);
+		computeRenderData(extended, terrain);
 
 		m_renderDataVersion.fetch_add(1, std::memory_order_release);
 
@@ -84,21 +84,32 @@ namespace engine::world {
 		m_generationComplete.store(true, std::memory_order_release);
 	}
 
-	void Chunk::computeRenderData(const ExtendedTiles& extended) {
+	void Chunk::computeRenderData(const ExtendedTiles& extended, const TerrainPolygonQuery& terrain) {
 		// buildRenderTiles reads paint surfaces over the render window grown by the
 		// interior reach, and paintSurfaces reads tiles one bed reach further; all of
-		// it lies in the apron, which holds the neighbors' own tiles.
+		// it lies in the apron. The apron's raw tiles get the final surface their own
+		// chunk gives them (D11), so they are the neighbors' own tiles.
 		constexpr int32_t kPaintMargin	 = kRenderApronTiles + kInteriorReachTiles;
-		constexpr int32_t kSurfaceMargin = kPaintMargin + kBedReachTiles;
+		constexpr int32_t kSurfaceMargin = kRenderSurfaceReachTiles;
 		static_assert(kSurfaceMargin <= kApronTiles, "the render tiles must be built from the apron");
 		constexpr int32_t kPaintSide   = kChunkSize + 2 * kPaintMargin;
 		constexpr int32_t kSurfaceSide = kChunkSize + 2 * kSurfaceMargin;
 
+		const int64_t		 originX = static_cast<int64_t>(m_coord.x) * kChunkSize - kSurfaceMargin;
+		const int64_t		 originY = static_cast<int64_t>(m_coord.y) * kChunkSize - kSurfaceMargin;
 		std::vector<uint8_t> surfaces(static_cast<size_t>(kSurfaceSide) * kSurfaceSide);
 		for (int32_t y = 0; y < kSurfaceSide; ++y) {
 			for (int32_t x = 0; x < kSurfaceSide; ++x) {
-				const TileData& tile = extended.at(kApronTiles - kSurfaceMargin + x, kApronTiles - kSurfaceMargin + y);
-				surfaces[static_cast<size_t>(y) * kSurfaceSide + static_cast<size_t>(x)] = static_cast<uint8_t>(tile.surface);
+				const int32_t	ex	 = kApronTiles - kSurfaceMargin + x;
+				const int32_t	ey	 = kApronTiles - kSurfaceMargin + y;
+				const TileData& tile = extended.at(ex, ey);
+				const bool		own	 = ex >= kApronTiles && ey >= kApronTiles && ex < kApronTiles + kChunkSize && ey < kApronTiles + kChunkSize;
+				const Surface	surface =
+					own ? tile.surface
+						: TilePostProcessor::finalSurface(
+							  {.raw = tile.surface, .tileX = originX + x, .tileY = originY + y, .terrain = &terrain, .worldSeed = m_worldSeed}
+						  );
+				surfaces[static_cast<size_t>(y) * kSurfaceSide + static_cast<size_t>(x)] = static_cast<uint8_t>(surface);
 			}
 		}
 		const std::vector<uint8_t>		  paint = paintSurfaces(surfaces, kPaintSide, kPaintSide);

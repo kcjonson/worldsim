@@ -11,6 +11,7 @@
 
 #include "world/chunk/SurfaceField.h"
 
+#include <core/IntegerDivision.h>
 #include <random/HashNoise.h>
 #include <shader/ShaderPreprocessor.h>
 
@@ -43,10 +44,6 @@ namespace {
 	/// (ten times the largest field difference seen on a desktop GPU, ~1.4e-6).
 	constexpr float kIdMargin = 1e-5F;
 
-	int64_t floorDiv(int64_t a, int64_t b) {
-		return a >= 0 ? a / b : -((-a + b - 1) / b);
-	}
-
 	// A world with every land surface, open water (for beds), blocks, lone tiles,
 	// and 1-wide straight and diagonal paths, broken by plain 24 m squares where
 	// tiles are interior.
@@ -58,20 +55,20 @@ namespace {
 		const auto hash = [](int64_t x, int64_t y, uint32_t salt) {
 			return foundation::hash3(static_cast<int32_t>(x), static_cast<int32_t>(y), 0, salt);
 		};
-		const uint32_t plain = hash(floorDiv(tx, 24), floorDiv(ty, 24), 5U);
+		const uint32_t plain = hash(geometry::floorDiv(tx, 24), geometry::floorDiv(ty, 24), 5U);
 		if (plain % 4U == 0U) {
 			return static_cast<uint8_t>(kLand[(plain / 4U) % kLand.size()]);
 		}
 		if ((tx + ty) % 23 == 0) {
 			return static_cast<uint8_t>(Surface::Dirt);
 		}
-		if (floorDiv(ty, 17) * 17 + 5 == ty) {
+		if (geometry::floorDiv(ty, 17) * 17 + 5 == ty) {
 			return static_cast<uint8_t>(Surface::Sand);
 		}
 		if (hash(tx, ty, 7U) % 31U == 0U) {
 			return static_cast<uint8_t>(kLand[hash(tx, ty, 8U) % kLand.size()]);
 		}
-		const uint32_t block = hash(floorDiv(tx, 6), floorDiv(ty, 5), 99U);
+		const uint32_t block = hash(geometry::floorDiv(tx, 6), geometry::floorDiv(ty, 5), 99U);
 		if (block % 13U == 0U) {
 			return static_cast<uint8_t>(Surface::Water);
 		}
@@ -81,7 +78,7 @@ namespace {
 	/// The chunk's render tiles, built the way Chunk::computeRenderData builds them.
 	std::vector<TileRenderData> syntheticRenderTiles() {
 		constexpr int32_t kPaintMargin	 = kRenderApronTiles + kInteriorReachTiles;
-		constexpr int32_t kSurfaceMargin = kPaintMargin + kBedReachTiles;
+		constexpr int32_t kSurfaceMargin = kRenderSurfaceReachTiles;
 		constexpr int32_t kPaintSide	 = kChunkSize + 2 * kPaintMargin;
 		constexpr int32_t kSurfaceSide	 = kChunkSize + 2 * kSurfaceMargin;
 		const int64_t	  originX		 = static_cast<int64_t>(kChunk.x) * kChunkSize - kSurfaceMargin;

@@ -92,6 +92,7 @@ struct TileData {
 };
 
 class ExtendedTiles;
+class TerrainPolygonQuery;
 
 /// A 512×512 region of the world.
 /// Tiles are pre-computed during generate() and stored in a flat array.
@@ -240,8 +241,9 @@ class Chunk {
 	/// rings and textures it reads.
 	void setTerrainPolygons(ChunkTerrainPolygons polygons);
 
-	/// Fill the render tiles from the chunk's post-processed tiles plus the apron.
-	void computeRenderData(const ExtendedTiles& extended);
+	/// Fill the render tiles from the chunk's post-processed tiles plus the apron,
+	/// whose tiles `terrain` (the chunk's own polygons) post-processes.
+	void computeRenderData(const ExtendedTiles& extended, const TerrainPolygonQuery& terrain);
 
 	/// Select surface type based on biome using organic noise-based patches, for
 	/// any (coord, biome, local tile, elevation, seed), not just this chunk's own.
