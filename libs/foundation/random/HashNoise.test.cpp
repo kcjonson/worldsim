@@ -220,3 +220,76 @@ TEST(HashNoiseTests, FractalNoise2MatchesFractalNoise3AtZeroZ) {
     // An integer lattice point, where every corner term is exactly zero.
     EXPECT_EQ(fractalNoise2(4.0F, -7.0F, 3U, 4, 2.0F, 0.5F), fractalNoise3(4.0F, -7.0F, 0.0F, 3U, 4, 2.0F, 0.5F));
 }
+
+
+// Where (whole + frac) / wavelength is exact in float at every octave, the split
+// form reads the same cells at the same offsets as fractalNoise2, so its first field
+// agrees with it bit for bit, negative positions included.
+TEST(HashNoiseTests, FractalNoise2SplitPairFirstMatchesFractalNoise2WhenExact) {
+    for (const int32_t wavelength : {1, 4, 8}) {
+        for (int64_t whole = -37; whole <= 37; ++whole) {
+            for (const float frac : {0.0F, 0.125F, 0.25F, 0.5F, 0.875F}) {
+                const float x = (static_cast<float>(whole) + frac) / static_cast<float>(wavelength);
+                const float y = (static_cast<float>(-whole * 3) + frac) / static_cast<float>(wavelength);
+                const float a = fractalNoise2(x, y, 11U, 4, 2.0F, 0.5F);
+                const float b = fractalNoise2SplitPair(whole, -whole * 3, frac, frac, wavelength, 11U, 4, 0.5F).first;
+                uint32_t bitsA = 0;
+                uint32_t bitsB = 0;
+                std::memcpy(&bitsA, &a, sizeof(a));
+                std::memcpy(&bitsB, &b, sizeof(b));
+                ASSERT_EQ(bitsA, bitsB) << "whole=" << whole << " frac=" << frac << " wavelength=" << wavelength;
+            }
+        }
+    }
+}
+
+// The second field is another of the same kind, uncorrelated with the first.
+TEST(HashNoiseTests, FractalNoise2SplitPairSecondIsIndependent) {
+    double sumAB = 0.0;
+    double sumAA = 0.0;
+    double sumBB = 0.0;
+    int count = 0;
+    for (int64_t y = -40; y < 40; ++y) {
+        for (int64_t x = -40; x < 40; ++x) {
+            const float fx = static_cast<float>(((x * 7 + 3) % 16 + 16) % 16) / 16.0F;
+            const float fy = static_cast<float>(((y * 5 + 1) % 16 + 16) % 16) / 16.0F;
+            const NoisePair pair = fractalNoise2SplitPair(x * 3, y * 2, fx, fy, 6, 91U, 4, 0.6F);
+            EXPECT_LE(std::abs(pair.second), 1.5F);
+            sumAB += static_cast<double>(pair.first) * static_cast<double>(pair.second);
+            sumAA += static_cast<double>(pair.first) * static_cast<double>(pair.first);
+            sumBB += static_cast<double>(pair.second) * static_cast<double>(pair.second);
+            ++count;
+        }
+    }
+    EXPECT_GT(sumBB / count, 0.005) << "the second field must not be flat";
+    EXPECT_LT(std::abs(sumAB / std::sqrt(sumAA * sumBB)), 0.2) << "the two fields must be uncorrelated";
+}
+
+// Both fields are continuous across whole-unit and whole-wavelength boundaries, on
+// both sides of zero.
+TEST(HashNoiseTests, FractalNoise2SplitPairContinuousAcrossWholeSteps) {
+    constexpr float kJustBelowOne = 1.0F - 1.0F / 1048576.0F;
+    for (const int64_t whole : {-13LL, -7LL, -1LL, 0LL, 5LL, 11LL, 70031LL, 699999LL}) {
+        const NoisePair below = fractalNoise2SplitPair(whole, 3, kJustBelowOne, 0.3F, 6, 5U, 4, 0.5F);
+        const NoisePair above = fractalNoise2SplitPair(whole + 1, 3, 0.0F, 0.3F, 6, 5U, 4, 0.5F);
+        EXPECT_NEAR(below.first, above.first, 1e-4F) << "whole=" << whole;
+        EXPECT_NEAR(below.second, above.second, 1e-4F) << "whole=" << whole;
+    }
+}
+
+// 700 km out a float coordinate over a 6 m wavelength steps by 1/128 of a cell;
+// the split form still resolves millimeters, smoothly.
+TEST(HashNoiseTests, FractalNoise2SplitPairKeepsPrecisionFarFromOrigin) {
+    constexpr int kSteps = 1024;
+    int changed = 0;
+    NoisePair previous = fractalNoise2SplitPair(700003, -400001, 0.0F, 0.5F, 6, 21U, 4, 0.5F);
+    for (int k = 1; k < kSteps; ++k) {
+        const float frac = static_cast<float>(k) / static_cast<float>(kSteps);
+        const NoisePair value = fractalNoise2SplitPair(700003, -400001, frac, 0.5F, 6, 21U, 4, 0.5F);
+        EXPECT_LT(std::abs(value.first - previous.first), 0.01F) << "k=" << k;
+        EXPECT_LT(std::abs(value.second - previous.second), 0.01F) << "k=" << k;
+        changed += value.first != previous.first ? 1 : 0;
+        previous = value;
+    }
+    EXPECT_GT(changed, kSteps * 9 / 10);
+}
