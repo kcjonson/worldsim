@@ -81,8 +81,9 @@ class TerrainDistanceField {
 
 	static constexpr int64_t kChunkMm = static_cast<int64_t>(kChunkSize) * 1000;
 
-	/// The near level's texel. One constant: the perf task can revisit it.
-	static constexpr int64_t kSdfNearTexelMm = 500;
+	/// The near level's texel (10.4). At 0.5 m a channel under a meter wide is two
+	/// texels across and beads along its length at the default zoom.
+	static constexpr int64_t kSdfNearTexelMm = 250;
 	static constexpr int64_t kNearTileMm = 16000;
 	static constexpr int32_t kTilesPerSide = static_cast<int32_t>(kChunkMm / kNearTileMm);
 	static constexpr int32_t kNearTileTexels = static_cast<int32_t>(kNearTileMm / kSdfNearTexelMm);

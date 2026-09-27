@@ -13,7 +13,7 @@
 
 uniform bool u_hasWater;            // false: the chunk has no water in reach, skip everything
 uniform usampler2D u_sdfTileMap;    // 32x32 R16UI: atlas cell of each 16 m tile's near tile, or 0xFFFF
-uniform sampler2D u_sdfNear;        // near tiles (34x34 RGB16F each) in an atlas, u_sdfNearColumns per row
+uniform sampler2D u_sdfNear;        // near tiles (66x66 RGB16F each) in an atlas, u_sdfNearColumns per row
 uniform int u_sdfNearColumns;
 uniform sampler2D u_sdfFar;         // 258x258 RGB16F, 2 m
 uniform sampler2D u_shoreProfile;   // 514x514 RGBA8, 1 m: slope, exposure, sand, mud
@@ -86,10 +86,10 @@ uniform vec3 u_foam;
 // LATTICES (TerrainDistanceField)
 // ============================================================================
 
-const float kNearTexelM     = 0.5;
+const float kNearTexelM     = 0.25;
 const float kNearTileM      = 16.0;
-const int   kNearTileTexels = 32;
-const int   kNearTileStride = 34;
+const int   kNearTileTexels = 64;
+const int   kNearTileStride = 66;
 const uint  kNoNearTile     = 0xFFFFu;
 const float kFarTexelM      = 2.0;
 const float kDetailTexelM   = 1.0;

@@ -27,7 +27,7 @@ namespace engine::world {
 
 		using Field = TerrainDistanceField;
 
-		// Near tiles per atlas row: the atlas is at most 32 * 34 = 1088 texels wide.
+		// Near tiles per atlas row: the atlas is at most 32 * 66 = 2112 texels wide.
 		constexpr int kNearAtlasMaxColumns = Field::kTilesPerSide;
 
 		// Texture units: atlas 0, tile data 1, then the distance field.

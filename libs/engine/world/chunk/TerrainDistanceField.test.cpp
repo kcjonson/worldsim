@@ -369,7 +369,7 @@ TEST(TerrainDistanceFieldTest, LayoutAndLandDefault) {
 	EXPECT_EQ(Field::kLandSdfTexel.b, 0);
 	EXPECT_EQ(sizeof(HalfTexel), 6U);
 	EXPECT_EQ(Field::kTilesPerSide, 32);
-	EXPECT_EQ(Field::kNearTileStride, 34);
+	EXPECT_EQ(Field::kNearTileStride, 66);
 	EXPECT_EQ(Field::kFarStride, 258);
 	EXPECT_EQ(Field::kDetailStride, 514);
 }
@@ -623,13 +623,19 @@ TEST(TerrainDistanceFieldTest, SyntheticAndCutEdgesCloseRingsButAreNotShore) {
 	EXPECT_EQ(decode(beyond.b), 0.0F);
 	EXPECT_EQ(f.nearTileAt(31, 9), Field::kNoNearTile); // only the synthetic edge is near it
 
-	// Near texels either side of the cut at y = 302.25 m.
-	const auto inCut = nearAt(f, 399, 604); // (199.75, 302.25)
+	// Near texels either side of the cut at x = 200 m, in the row holding y = 302.25 m:
+	// inside, the nearer bank; past it, that bank's end (the cut is not shore).
+	constexpr double kTexelM = static_cast<double>(Field::kSdfNearTexelMm) / 1000.0;
+	const auto		 row	 = static_cast<int32_t>(std::floor(302.25 / kTexelM));
+	const auto		 cutCol	 = static_cast<int32_t>(std::lround(200.0 / kTexelM));
+	const double	 y		 = (static_cast<double>(row) + 0.5) * kTexelM;
+	const double	 bank	 = std::min(y - 300.0, 304.0 - y);
+	const auto		 inCut	 = nearAt(f, cutCol - 1, row);
 	ASSERT_TRUE(inCut.has_value());
-	expectHalfNear(inCut->r, -1.75, "inside the cut");
-	const auto pastCut = nearAt(f, 400, 604); // (200.25, 302.25)
+	expectHalfNear(inCut->r, -bank, "inside the cut");
+	const auto pastCut = nearAt(f, cutCol, row);
 	ASSERT_TRUE(pastCut.has_value());
-	expectHalfNear(pastCut->r, std::hypot(0.25, 1.75), "past the cut");
+	expectHalfNear(pastCut->r, std::hypot(kTexelM / 2.0, bank), "past the cut");
 }
 
 // The bake prunes its shore and thalweg searches by bounds; on irregular rings
