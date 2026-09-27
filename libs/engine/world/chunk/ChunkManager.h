@@ -8,11 +8,11 @@
 #include "world/chunk/ChunkCoordinate.h"
 #include "world/chunk/IWorldSampler.h"
 
+#include <chrono>
 #include <cstdint>
 #include <future>
 #include <memory>
 #include <unordered_map>
-#include <utility>
 #include <vector>
 
 namespace engine::world {
@@ -81,10 +81,17 @@ class ChunkManager {
 	// Default: 4 chunks = gives some hysteresis to prevent thrashing
 	int32_t m_unloadRadius = 4;
 
+	/// An in-flight tile generation task.
+	struct Generation {
+		ChunkCoordinate						  coord;
+		std::future<void>					  task;
+		std::chrono::steady_clock::time_point requested;
+	};
+
 	/// In-flight tile generation tasks. Chunks are inserted into m_chunks
 	/// immediately but stay !isReady() until their worker finishes; consumers
 	/// gate on isReady(). Chunks in this list must not be unloaded.
-	std::vector<std::pair<ChunkCoordinate, std::future<void>>> m_generating;
+	std::vector<Generation> m_generating;
 
 	/// Load a single chunk (tile generation runs on a worker thread)
 	void loadChunk(ChunkCoordinate coord);

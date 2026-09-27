@@ -7,7 +7,10 @@
 #include "world/chunk/TilePostProcessor.h"
 #include "world/generation/BiomeDispatcher.h"
 
+#include <utils/Log.h>
+
 #include <algorithm>
+#include <chrono>
 #include <utility>
 #include <vector>
 
@@ -42,6 +45,16 @@ namespace engine::world {
 	}
 
 	void Chunk::generate() {
+		using Clock			= std::chrono::steady_clock;
+		const auto start	= Clock::now();
+		auto	   stageEnd = start;
+		auto	   stageMs	= [&stageEnd]() {
+			  const auto now = Clock::now();
+			  const auto ms	 = std::chrono::duration<double, std::milli>(now - stageEnd).count();
+			  stageEnd		 = now;
+			  return ms;
+		};
+
 		// Pre-compute all tiles in the chunk. The tile raster (here and in the apron
 		// below) reads only the segments near the chunk via this hydrology-only
 		// result; the builder reads the whole gather off m_biomeData directly.
@@ -51,6 +64,7 @@ namespace engine::world {
 				m_tiles[y * kChunkSize + x] = computeTile(x, y, raster);
 			}
 		}
+		const double tilesMs = stageMs();
 
 		// Terrain polygon rings from the raw tiles plus the apron (D4, D11 order),
 		// then their distance field (D10): before post-processing, so these tiles
@@ -58,24 +72,45 @@ namespace engine::world {
 		// fill the render tiles' apron below.
 		const ApronField	apron = ApronField::build(m_coord, m_biomeData, raster, m_worldSeed);
 		const ExtendedTiles extended(*this, apron);
+		const double		apronMs = stageMs();
+		double				polygonsMs = 0.0;
 		{
-			NeighborhoodGrids neighborhood(m_biomeData);
-			setTerrainPolygons(TerrainPolygonBuilder::build(
+			NeighborhoodGrids	 neighborhood(m_biomeData);
+			ChunkTerrainPolygons polygons = TerrainPolygonBuilder::build(
 				m_coord,
 				m_worldSeed,
 				[&extended](int32_t ex, int32_t ey) -> const TileData& { return extended.at(ex, ey); },
 				[this, &neighborhood](int64_t tx, int64_t ty) { return isBiomeWater(neighborhood.primaryBiomeAt(m_coord, tx, ty)); },
 				m_biomeData.riverSegments,
 				m_biomeData.pondBlobs
-			));
+			);
+			polygonsMs = stageMs();
+			setTerrainPolygons(std::move(polygons));
 		}
+		const double bakeMs = stageMs();
 
 		// Final surfaces, point-bar sand then mud by distance to water (D11, D12).
 		// The shore points came with the polygons.
 		const TerrainPolygonQuery terrain(*m_terrainPolygons);
 		TilePostProcessor::process(m_tiles, {.coord = m_coord, .terrain = &terrain, .worldSeed = m_worldSeed});
+		const double surfacesMs = stageMs();
 
 		computeRenderData(extended, terrain);
+		const double renderMs = stageMs();
+		// Permanent worker-thread generation cost by stage. DEBUG: dev-tools log server.
+		LOG_DEBUG(
+			World,
+			"[ChunkGen] (%d, %d) %.1f ms: tiles %.1f, apron %.1f, polygons %.1f, bake %.1f, surfaces %.1f, render tiles %.1f",
+			m_coord.x,
+			m_coord.y,
+			std::chrono::duration<double, std::milli>(stageEnd - start).count(),
+			tilesMs,
+			apronMs,
+			polygonsMs,
+			bakeMs,
+			surfacesMs,
+			renderMs
+		);
 
 		m_renderDataVersion.fetch_add(1, std::memory_order_release);
 
