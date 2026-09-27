@@ -404,6 +404,13 @@ class NavigationSystem : public ISystem {
 	// region's RRA caches).
 	void drainFinishedBuilds();
 
+	// Move a dropped region's in-flight build into retiringBuilds. First erases any
+	// already-finished entries; if the list is still at kMaxRetiringBuilds, waits on the
+	// oldest and removes it before appending. Bounds retiringBuilds without blocking the
+	// common case -- regions are few, so the cap only bites under pathological camera
+	// churn (drop a region, spawn a new one, repeat, every frame).
+	void retireBuild(std::future<geometry::nav::NavMesh> build);
+
 	// Launch (or relaunch) the async build for `region` over its current center/extent.
 	// Snapshots input on the main thread; the worker owns it by value.
 	void launchBuild(SimulationRegion& region);
@@ -454,8 +461,15 @@ class NavigationSystem : public ISystem {
 	std::vector<SimulationRegion> regions;
 	std::int32_t				  nextRegionId = 0;
 
+	// Cap on retiringBuilds. Regions are few, so this only fills under pathological
+	// camera churn (drop a region, spawn a new one, repeat, every frame); 2 is enough
+	// headroom for normal play to never hit it.
+	static constexpr std::size_t kMaxRetiringBuilds = 2;
+
 	// Builds of dropped regions still running. A std::async future blocks in its
 	// destructor, so they are kept here until they finish instead of stalling the frame.
+	// Bounded to kMaxRetiringBuilds by retireBuild(), which waits on the oldest once the
+	// cap is hit rather than letting the list grow without limit.
 	std::vector<std::future<geometry::nav::NavMesh>> retiringBuilds;
 
 	// Viewport rect pushed by the scene (world meters). haveViewport is false until the

@@ -554,6 +554,17 @@ namespace ecs {
 		}
 	}
 
+	void NavigationSystem::retireBuild(std::future<geometry::nav::NavMesh> build) {
+		std::erase_if(retiringBuilds, [](const std::future<geometry::nav::NavMesh>& b) {
+			return b.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready;
+		});
+		if (retiringBuilds.size() >= kMaxRetiringBuilds) {
+			retiringBuilds.front().wait();
+			retiringBuilds.erase(retiringBuilds.begin());
+		}
+		retiringBuilds.push_back(std::move(build));
+	}
+
 	void NavigationSystem::reconcileRegions(const std::vector<DesiredRegion>& desired) {
 		std::vector<bool> regionMatched(regions.size(), false);
 		std::vector<bool> desiredHandled(desired.size(), false);
@@ -668,13 +679,14 @@ namespace ecs {
 		}
 
 		// Drop regions no longer wanted, retiring any in-flight build (its worker owns its
-		// input by value) rather than waiting on it. Also purge their RRA caches.
+		// input by value) rather than waiting on it, unless retiringBuilds is already at
+		// its cap. Also purge their RRA caches.
 		for (std::size_t r = regions.size(); r-- > 0;) {
 			if (regionMatched[r]) {
 				continue;
 			}
 			if (regions[r].future.valid()) {
-				retiringBuilds.push_back(std::move(regions[r].future));
+				retireBuild(std::move(regions[r].future));
 			}
 			const std::int32_t goneId = regions[r].id;
 			for (auto it = rraCaches.begin(); it != rraCaches.end();) {
