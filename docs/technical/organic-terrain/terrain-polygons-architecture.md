@@ -201,8 +201,8 @@ curve.)
   the border edge is a constrained edge shared bit-identically with the neighbor.
 
 This is the 2D form of Gildea's seam rule (research doc) and removes the need for any
-cross-chunk stitching pass. `refreshAdjacencyAround` stays as it is for tile adjacency; it
-does not touch rings.
+cross-chunk stitching pass. The tile adjacency stitching (`refreshAdjacencyAround`) is gone
+too: the D16 render apron replaced its last reader.
 
 ### D5: The waterline field
 
@@ -646,18 +646,21 @@ first; `barTiles` is what carries the exemption, since a bar tile's surface is S
 is otherwise eligible.
 
 `finalSurface` is a pure function of its arguments, so it answers for any tile of the
-extended region: `Chunk::generate` runs it over its own tiles, and the D16 render apron runs
-it over the neighbor's raw tiles from `ApronField` with the chunk's own query. A tile within
-three tiles of a border (the render apron) comes out the same from either chunk: its 3 m
-disc reads only ring edges in the lattice cells next to the border, identical in both
-(D4), and its bar comes from centerline samples both chunks keep with the whole bend
-decision (D12). `TerrainPolygonSeamsTest.BorderTilesPostProcessTheSameFromEitherChunk`
+extended region: `Chunk::generate` runs it over its own tiles, and the D16 render tiles run
+it over the neighbor's raw tiles from `ApronField` with the chunk's own query. The render
+tiles are a function of the final surfaces `kRenderSurfaceReachTiles` = 9 tiles past the
+square (the 3-tile render apron, the interior reach around it, a bed reach beyond), and a
+tile that close to a border comes out the same from either chunk: its 3 m disc ends at most
+12.5 m past the border, so it reads only ring edges in the lattice cells next to the border,
+identical in both (D4), and its bar comes from centerline samples both chunks keep with the
+whole bend decision (D12). `TerrainPolygonSeamsTest.BorderTilesPostProcessTheSameFromEitherChunk`
 and `RealRiverBorderTilesPostProcessTheSameFromEitherChunk` hold it for every tile within
-three of a horizontal, vertical, and diagonal border.
+nine of a horizontal, vertical, and diagonal border.
 
 **Order in `Chunk::generate()`:** computeTile → `TerrainPolygonBuilder::build` (rings
 D5–D8, point-bar tiles D12, the edge index, shore points D11) → distance-field bake →
-`finalSurface` per tile (bar Sand, then mud) → adjacency → render data → version bumps.
+`finalSurface` per tile (bar Sand, then mud) → render data (the apron's tiles through
+`finalSurface` too, D16) → version bumps.
 
 ### D12: Point bars as tile overrides
 
@@ -815,14 +818,29 @@ evaluation; `shaders/includes/land.glsl` is the same steps in the same order, an
    chunk fills it from its `ApronField`, each tile post-processed with
    `TilePostProcessor::finalSurface` over the chunk's own `TerrainPolygonQuery` (D11), so apron
    tiles equal the neighbor's own final tiles and border pixels on both sides evaluate one world
-   function. A Water tile paints as its bed: the surface of the nearest non-Water tile within 3
-   tiles, least squared distance first, then least world y, then least world x, and Sand when
-   there is none. A function of the tiles around it and nothing else, so every chunk that holds
-   the tile agrees on it.
+   function. Building them reads final surfaces 9 tiles past the square
+   (`kRenderSurfaceReachTiles`: the edge surface and interior bit of an apron tile read 3
+   further, a Water tile's bed 3 more), which D11 holds that far. A Water tile paints as its bed:
+   the surface of the nearest non-Water tile within 3 tiles, least squared distance first, then
+   least world y, then least world x, and Sand when there is none. A function of the tiles
+   around it and nothing else, so every chunk that holds the tile agrees on it.
+   `RenderTileSeamsTest` generates a dry grassland and the carved-river world, whose river runs
+   along a chunk border, and asserts every apron render tile equals its owner's own and the
+   field is bit-identical from the owner's tiles and the world's at 0.25 m steps within 2 m of
+   every border and corner (26 800 points on the river world, a fifth of them painted mud).
 6. **Agreement with placement.** Groundcover and flora placement read surfaces; a tuft on
    painted dirt looks wrong. The per-point field evaluation exists once in C++ (a pure
    function shared with the shader by construction and checked by golden-value tests against
    the GLSL), and placement asks it instead of the raw tile surface.
+   `ChunkPlacementContext` answers two questions of a world position: `isWater`, the chunk's
+   `TerrainPolygonQuery::isInsideWater` (D1), and `landSurface`, `evaluateSurfaceField` over a
+   snapshot of the chunk's render tiles with the land tunables as the game thread holds them.
+   Every water test is `isWater` at the instance, or at the center of the sampled tile before
+   any roll; a near rule (`near="Mud"`) reads the surface drawn at the tile centers within its
+   distance, water where the rings hold it, else the painted land. The snapshot shares the
+   chunk's polygons (`Chunk::sharedTerrainPolygons`) because a placement task can outlive the
+   chunk. Cost, measured in game: about 40 ms of a chunk's 140 to 180 ms of placement on the
+   quickstart landing, about 80 of 550 ms in dense grassland (150 000 instances).
 7. **Cost.** A tile is interior when every tile within 3 of it is one surface; its pixels cost
    one fetch and one atlas sample, as before. Elsewhere a pixel costs 21 texel fetches, six
    pair-noise octaves, and the per-surface blur and guard of the surfaces present. The shader
@@ -902,15 +920,16 @@ Chunk::generate()                                   worker thread
                                   barTiles (D12), edgeIndex, shorePoints (D11)
   TerrainDistanceField::bake    ← rings, thalwegs → terrainSdf, shoreProfile, channelFrame (10.1)
   TilePostProcessor::process    ← finalSurface per tile: bar Sand, then mud by
-                                  TerrainPolygonQuery::distanceToWaterMm (D11); adjacency
-  render data
+                                  TerrainPolygonQuery::distanceToWaterMm (D11)
+  render data                   ← render tiles, the apron's tiles through finalSurface (D16)
   m_terrainPolygons.version++, m_renderDataVersion++
         │
         ├── NavInputBuilder::buildInput      navRings → NavInputPolygon (D9)
-        ├── ChunkRenderer                    uploads the three textures; tile.frag paints (D10)
+        ├── ChunkRenderer                    uploads the textures; tile.frag paints (D10, D16)
         ├── VisionSystem pass 3              shorePoints (D11)
         ├── ToiletLocationFinder             distanceToWaterMm (not on the shore)
-        └── PlacementExecutor (later)        distanceToWater, ring side, curvature (R8, R9, L5)
+        └── PlacementExecutor                isInsideWater, the land field (D16); later
+                                             distanceToWater, ring side, curvature (R8, R9, L5)
 ```
 
 ```cpp
@@ -994,7 +1013,7 @@ invalidates the render cache and, through the nav signature, the mesh.
 | `kShorePointSpacingMm` / `kShoreOffsetMm` | 1000 / 300 | D11 |
 | `kMudProb(d)` | 0.95 / 0.80 / 0.65 at ≤1 / ≤2 / ≤3 m (`TilePostProcessor::kMudBands`) | D11 |
 | `TerrainPolygonQuery::kCellMm` | 16 000 (the pin lattice) | D3 |
-| `kRenderApronTiles` | 3 | D16 |
+| `kRenderApronTiles` / `kRenderSurfaceReachTiles` | 3 / 9 | D16 |
 | land thin-feature guard | 0.85 / 0.15, axis rule | D16 |
 | land warp, fine / low | 4 octaves, gain 0.6, base 4 m / 2 octaves, gain 0.5, base 26 m; clamp 1.5 m a component; read 0.375 m off the tile grid | D16 |
 | land warp amplitude by upper surface, fine / low | grass variants, dirt, sand, mud 0.55 / 0.7 m; snow 0.45 / 0.7; rock 0.2 / 0.4 | D16 |
@@ -1028,10 +1047,12 @@ All of these are candidates for the debug server's tunables so the look can be A
   independently and assert every non-synthetic ring edge within 8.25 m of the shared border and
   every thalweg point a texel in both bake regions reads are identical, and identical to a
   48-tile-apron build; `TerrainPolygonBuilderTest` builds the nav mesh over both and asserts
-  no face touches a border gap. The surface tests evaluate every tile within three tiles of
-  each border from both chunks (own tile, apron tile) on a hand-built world with lakes,
-  wetland pools, and tight meanders on the borders, and on the carved-river world through
-  `Chunk::generate`, and assert the same bar bit, distance to water, and final surface.
+  no face touches a border gap. The surface tests evaluate every tile within nine tiles
+  (`kRenderSurfaceReachTiles`) of each border from both chunks (own tile, apron tile) on a
+  hand-built world with lakes, wetland pools, and tight meanders on the borders, and on the
+  carved-river world through `Chunk::generate`, and assert the same bar bit, distance to
+  water, and final surface. `RenderTileSeamsTest` then checks the render tiles and the land
+  field built from them (D16 step 5).
 
 ---
 
