@@ -423,7 +423,7 @@ Three textures per chunk, covering the chunk plus the apron so border samples ar
 
 | Texture | Format | Texel | Channels |
 |---|---|---|---|
-| `terrainSdf` | RGBA16F | 0.25 m near rings, 2 m far (two-level, see 10.4) | R: signed distance to the nearest non-synthetic ring edge, meters, negative in water, clamped ±8 m. G: distance to the nearest river thalweg divided by that channel's local half-width (0 on the thalweg, 1 at the bank), 2.0 where no channel is within 2 w. B: `WaterKind` of the nearest ring as a small integer (0 ocean, 1 lake, 2 wetland, 3 river, 4 pond), nearest-filtered. A: unused |
+| `terrainSdf` | RGB16F | 0.25 m near rings, 2 m far (two-level, see 10.4) | R: signed distance to the nearest non-synthetic ring edge, meters, negative in water, clamped ±8 m. G: distance to the nearest river thalweg divided by that channel's local half-width (0 on the thalweg, 1 at the bank), 2.0 where no channel is within 2 w. B: `WaterKind` of the nearest ring as a small integer (0 ocean, 1 lake, 2 wetland, 3 river, 4 pond), nearest-filtered |
 | `shoreProfile` | RGBA8 | 1 m | R: slope. G: exposure. B: sand weight. A: mud weight. Packed from the CPU `ShoreProfile` of the nearest ring vertex: `{slope, exposure, sand, mud}`; grass = 255 − sand − mud; moisture and flags stay CPU-side |
 | `channelFrame` | RGB16F | 1 m | R: arc length `s` along the nearest thalweg, meters (wraps at 256 m). G: width ratio `w / w_mean` (riffle > 1.1, pool < 0.9). B: signed curvature × hw, dimensionless (bend when |B| > 0.15). Only valid where `terrainSdf.g < 2` |
 
@@ -600,12 +600,33 @@ are the things that need to occlude or be walked around; everything else is pain
 
 #### 10.4 Memory and resolution
 
-`terrainSdf` at 0.25 m over a whole chunk is 2048² × 4 B = 16 MB, too much for 32 cached
-chunks. Store it two-level: 0.25 m texels only inside the union of ring bounding boxes
-dilated by `kSdfNearM = 8 m` (sparse tiles of 64² texels), 2 m texels elsewhere; the shader
-picks the level by a tile map. A typical chunk is a few MB. `shoreProfile` and
-`channelFrame` at 1 m are 512² × 4 B = 1 MB each. The perf task measures bake time and
-memory against the overhaul table.
+`terrainSdf` at 0.25 m over a whole chunk would be 2048² texels, 25 MB of RGB16F, so it is
+two-level: 0.25 m texels only in the 16 m tiles within `kSdfNearM` (8 m) plus a texel of the
+shoreline, each 64² texels plus a gutter (66² × 6 B = 26 KB), and 2 m texels over the whole
+square (258² × 6 B = 399 KB, left out when it is all land); the shader picks the level by a
+32² tile map. `shoreProfile` (RGBA8, 514² × 4 B = 1.06 MB) and `channelFrame` (RGB16F, 514² ×
+6 B = 1.59 MB) are dense, stored whenever the chunk has a shore vertex or a thalweg in reach.
+The render tiles beside them are 518² × 2 B = 537 KB (D16 step 5).
+
+Measured per chunk (WOR-463, the quickstart landing and coast): a dry chunk 0.54 MB (render
+tiles only), open ocean 0.94 MB (plus the far level), a chunk with a pond or a short creek
+2.1 to 2.4 MB, the coast chunk with a pond 4.5 MB, the landing's river chunks 6.9 to 7.8 MB.
+The dense detail textures are the whole water cost of a small-water chunk and 2.6 MB of a
+river chunk's 7.2; they are the lever if memory ever matters (sparse tiles like the near
+level). The texture LRU holds 32 chunks, more than the 25 the chunk manager keeps loaded, so
+nothing loaded is ever evicted; at zoom 0.25 after a 12-chunk scroll it held 57 MB (18 MB of
+render tiles, 39 MB of distance field). Its ceiling, 32 river chunks, is about 250 MB. The
+count stays right; a byte budget would be the change if a smaller GPU needs one.
+
+**The near texel is 0.25 m.** WOR-465 shipped 0.5 m to save memory. At 0.5 m a channel under
+a meter wide is two texels across, and the bilinear read of its distance valley beads it along
+its length at the default zoom (zoom 3, 24 px/m): the landing's fordable feeder drew as a chain
+of blobs. At 0.25 m it is a continuous ribbon of even width. River banks, ponds, and the coast
+are the same at either size, and so is the tile pass's GPU time. The cost, measured in game:
+the near level takes 3.7 times the memory (the landing's river chunks 0.85 to 0.96 MB of near
+tiles become 3.2 to 3.6 MB, the coast chunk 0.5 to 1.9 MB) and about three times the bake
+(those river chunks' 48 to 70 ms become 170 to 225 ms on the worker, the coast chunks' 9 to 13
+ms become 21 to 27), all off the frame.
 
 #### 10.5 Tunables
 
@@ -845,7 +866,18 @@ evaluation; `shaders/includes/land.glsl` is the same steps in the same order, an
    one fetch and one atlas sample, as before. Elsewhere a pixel costs 21 texel fetches, six
    pair-noise octaves, and the per-surface blur and guard of the surfaces present. The shader
    holds no arrays: a const array indexed at run time is copied to local memory in every
-   fragment on NVIDIA. The perf task (phase 9) budgets the rest.
+   fragment on NVIDIA. Measured at 3072x1728 on an RTX 3090 (section 6), the land pass is 0.3
+   to 0.9 ms on the landing's river view, where most tiles are interior, and 0.6 to 1.3 ms on
+   the busier coast and desert views; the six warp octaves are 0.3 to 0.5 ms of that, the
+   fringe path 0.05 to 0.1 ms. At far zoom the shader drops a fine warp octave whose
+   wavelength is under `kLandLodMinWavelengthPx` = 4 pixels (`landWarpFineOctaves`): zoom
+   0.25 sums the 4 m and 2 m octaves, 0.5 and 0.75 three, zoom 1 and in all four. The kept
+   octaves weigh what they do in the full sum, so an edge moves by at most the dropped
+   octaves' share of the widest fine amplitude, 0.146 m at 0.5 m a pixel (0.099 m measured):
+   under a third of a pixel, detail the pixel cannot show. Placement always evaluates the
+   full field; `SurfaceFieldGolden.test.cpp` holds the shader to it on the full-detail path
+   and holds the LOD to that bound, and `SurfaceFieldTest.FarZoomDropsFineOctavesUnderFourPixels`
+   pins where it kicks in. It saves about 0.1 ms at zoom 0.25.
 
 Biome water edges themselves are still quantized to 16 m sectors upstream of all this
 (WOR-467); D16 smooths what the tiles give it, it does not add large-scale variety.
@@ -1006,7 +1038,7 @@ invalidates the render cache and, through the nav signature, the mesh.
 | `kMouthExtendW` | 1 w, capped at 24 m | D7 |
 | width-ratio window | 5 w, each half capped at 64 m | D7 |
 | `kRiverGatherMarginM` | 490 m | D7 |
-| `kSdfTexelM` / `kSdfNearM` / far texel | 0.25 m / 8 m / 2 m | D10 |
+| `kSdfNearTexelMm` / `kSdfNearM` / far texel | 250 (0.25 m, why in 10.4) / 8 m / 2 m | D10, 10.4 |
 | shader `u_*` | see 10.5 | D10 |
 | `kBarBend` / `kBarWidth` | 0.15 (`|κ|·hw`, dimensionless) / 0.5 | D12 |
 | `kBarMinPoints` / `kBarArchMaxM` | 8 samples / 64 m | D12 |
@@ -1019,6 +1051,7 @@ invalidates the render cache and, through the nav signature, the mesh.
 | land warp amplitude by upper surface, fine / low | grass variants, dirt, sand, mud 0.55 / 0.7 m; snow 0.45 / 0.7; rock 0.2 / 0.4 | D16 |
 | edge surface / interior / bed reach | 2 / 3 / 3 tiles | D16 |
 | land fringe width / rim | grass 0.35, sand 0.25, dirt and mud 0.2, rock 0 m; opacity 0.55, +-35 % along the edge, 1 m breakup / rock 30 % over 0.12 m | D16 |
+| `kLandLodMinWavelengthPx` | 4 px: the shader drops a finer fine-warp octave | D16 step 7 |
 
 All of these are candidates for the debug server's tunables so the look can be A/B'd live.
 
@@ -1058,23 +1091,96 @@ All of these are candidates for the debug server's tunables so the look can be A
 
 ## 6. Performance budget and risks
 
-- Distance-field memory and bake time (10.4): 0.25 m texels over a full chunk is 16 MB per
-  chunk; the two-level scheme (fine within 8 m of a ring, 2 m elsewhere) is the budget. Bake
-  is an exact-distance pass over bucketed ring edges plus a chamfer sweep, on the worker.
-- Vertex count. A lake with 300 m of shoreline at 0.25 m spacing, simplified at 100 mm, lands
-  around 600–900 vertices; a 512 m chunk of coastline with a river might reach 5k. The CDT
-  already takes wall bands at that scale. Measure in the perf task against the overhaul table
-  (zoom 0.25 is the case that matters) and, if needed, simplify at a larger epsilon for the
-  *render* tessellation only (bands hide 0.2 m). Nav keeps the 100 mm ring.
-- Build time. The 528² blur is trivial; the fine march is 2112² cells (~4.5M), a few tens
-  of ms on the worker, and only cells whose four samples straddle 0.5 emit anything.
-  Chaikin is linear in ring length; `isSimple` is the only superlinear step and runs per
-  loop. Runs on the generation worker, so the frame never sees it.
-- Apron sampling. Eight extra rows/columns of `computeTile` per chunk (≈6% more tiles) plus
-  the sampler answering biome/elevation off-chunk. Confirm `PlanetSampler::sampleAt` cost at
-  that count; if it matters, the apron beyond 2 tiles can use biome/elevation only (no river
-  rasterization), since channels are stroked from segments, not from apron tiles.
-- Coincident constraint edges in the CDT (D9): verified, the arrangement dedups them.
+Measured in WOR-463 (2026-09-26): RelWithDebInfo, an RTX 3090, a 3072x1728 window, the
+quickstart planet, vsync off. Three views: the landing river and its fordable feeder at
+(0, 20), the ocean coast along a chunk border at (70030, 0), and a desert edge at
+(540, 131480). Each figure is the median of nine samples once the view has settled. The frame
+pacer caps the game at 120 fps (8.33 ms) and has no switch, so GPU cost comes from timestamp
+queries: `/api/metrics` reports `gpuRenderMs` (the scene) and `tileGpuMs` (the ground and
+water pass), and `scripts/perf-capture.ps1` records both. The before/after capture pair is in
+`perf-results/capture-2026-09-26-wor463-*.json`; "before" is main at 9153fc44, the last
+commit before the shader work (WOR-460), with the same GPU timers. That pair predates the
+script's default bump to nine and was taken with 7 idle samples per scenario (25 for the
+scroll scenarios, unchanged); the Idle rows in the frame table below come from it, not from a
+nine-sample run.
+
+**The tile pass (land and water), GPU ms.** Budget: under 1.5 ms at every zoom. It holds.
+
+| Zoom | River | Coast | Desert |
+|---|---|---|---|
+| 20 | 0.94 | 1.09 | 1.22 |
+| 8 | 0.93 | 1.12 | 1.22 |
+| 3 | 0.83 | 0.67 | 0.65 |
+| 1.5 | 0.58 | 1.43 | 1.23 |
+| 0.75 | 0.46 | 1.20 | 1.03 |
+| 0.5 | 0.44 | 1.00 | 0.89 |
+| 0.25 | 0.36 | 1.06 | 0.87 |
+
+Water is 0.05 to 0.19 ms of it (the pass with the water half cut out of the shader); the land
+field is the rest (D16 step 7). The pass it replaced cost 0.04 to 0.51 ms.
+
+**The frame, river view** (the heaviest), frame p50 / p99 max and scene GPU, ms:
+
+| Scenario | Before | After | GPU before | GPU after |
+|---|---|---|---|---|
+| Idle, zoom 20 | 8.32 / 8.78 | 8.32 / 8.89 | 1.22 | 1.63 |
+| Idle, zoom 3 | 8.32 / 8.42 | 8.32 / 8.43 | 2.65 | 2.79 |
+| Idle, zoom 1.5 | 8.32 / 8.60 | 8.32 / 8.75 | 4.98 | 5.15 |
+| Idle, zoom 0.75 | 17.2 / 20.5 | 18.7 / 21.3 | 18.0 | 17.9 |
+| Idle, zoom 0.5 | 37.2 / 39.9 | 37.4 / 41.6 | 37.3 | 37.9 |
+| Idle, zoom 0.25 | 115.6 / 124.5 | 117.7 / 124.8 | 115.7 | 118.8 |
+| Scroll, zoom 3 | 8.32 / 167.8 | 8.32 / 16.6 | 2.18 | 2.40 |
+| Scroll, zoom 0.75 | 262.4 / 920.3 | 15.6 / 25.2 | 16.8 | 16.2 |
+
+The ground pass adds 0.3 to 1 ms of GPU and leaves the frame where it was. From zoom 0.75 out
+the frame belongs to the entity pass, before and after: over the landing forest the tree pass
+is GPU-bound (24k draw calls, 4.6M triangles at zoom 0.25), and on the coast and desert views,
+which hold 120 fps down to zoom 0.5, the entity pass costs 16 to 17 ms of CPU at zoom 0.25
+(frames of 17 to 19 ms either way). The 2026-06-10 overhaul table's 120 fps at zoom 0.25 was
+measured on an earlier world without that forest. Scrolling used to stall the main thread on
+nav: a region recentering waited on its running build (a std::async future blocks in its
+destructor), up to 1.2 s. A region now recenters once its build lands
+(`NavigationSystem::reconcileRegions`); a 15 s pan at zoom 0.5 across the landing tops out at
+53 ms a frame (1183 before), at zoom 0.25 at 148 (1271).
+
+**Chunk generation, worker ms** (192 generations, `[ChunkGen]` in the dev-tools log): median
+56, p90 126, max 314. By kind, medians:
+
+| Chunk | Total | Tiles | Apron | Polygons | Bake | Surfaces | Render tiles |
+|---|---|---|---|---|---|---|---|
+| Land (110) | 52 | 26 | 5 | 6 | 0 | 7 | 9 |
+| A pond or creek (56) | 62 | 28 | 5 | 6 | 8 | 7 | 9 |
+| Open ocean (3) | 70 | 10 | 3 | 43 | 2 | 1 | 10 |
+| Coast (3) | 146 | 30 | 5 | 60 | 30 | 7 | 10 |
+| Landing river (10) | 285 | 49 | 10 | 14 | 196 | 10 | 9 |
+
+The tile raster doubles on river chunks (every tile scans the nearby segments). An ocean or
+coast chunk's polygons are the waterline's fine lattice: the warp noise along the shore (12
+noise octaves a warped sample) and, before WOR-463, a 40 ms walk over the one-sided rest, now
+filled in spans (ocean 88 to 96 ms became 43, coast 87 to 120 became 60). A river chunk's
+time is the 0.25 m bake (10.4). Chunks are ready a median 91 ms after their request (p90
+173, max 343). At zoom 0.25's fastest pan, 800 m/s, a new chunk column is due every 0.64 s and
+the workers keep up; the far edge of a zoom 0.25 view is still blank, because it is 1536 m
+wide and the chunk manager keeps one chunk around the camera's (1536 m), and flora appears
+when placement lands (140 to 550 ms a chunk).
+
+**Nav.** Rebuilding the landing region (128 m square, 643 blocking rings, most of them trees):
+763 ms on the worker for 5434 triangles, against 499 ms for 3082 with the tile marcher
+(39f35c45); the input extraction on the main thread is 0.5 ms (1.4 with the marcher). The
+coast region builds in 0.7 to 1.4 ms, the desert in 0.4 to 0.6. Region rebuilds while
+scrolling take 190 to 550 ms, now off the main thread entirely.
+
+**Memory.** Per chunk, 0.54 MB dry to 7.8 MB on the landing river; the texture LRU held 57 MB
+at zoom 0.25 (10.4).
+
+Risks left:
+
+- The far-zoom entity pass above, which this epic does not touch: trees are one draw call per
+  depth-sorted run, and short flora's cutoff does not reach them.
+- Placement on the main thread while streaming: storing a chunk's placement costs 10 to 14 ms,
+  unloading a column about 50 ms.
+- Coast chunks: the warp noise along the shore (about 60 ms). Caching each noise cell's corner
+  hashes along a lattice row would cut it without changing a value.
 - Divergence between drawn and walked water is zero by construction. The residual gameplay
   risk is the fordability threshold: a 1.1 m stream walked across while the picture shows
   knee-deep water. Tune with the debug tunables; the threshold is one constant.

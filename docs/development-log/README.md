@@ -62,8 +62,22 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 ### 2026
 
+#### September 2026
+
+- [2026-09-26 - Organic terrain geometry: water as terrain rings, every land boundary a warped field isoline](./entries/2026-09-26-organic-terrain-geometry.md)
+
+#### July 2026
+
+- [2026-07-03 - Game UI to Prototype Polish](./entries/2026-07-03-game-ui-prototype-polish.md)
+- [2026-07-03 - Second-colonist spawn crash: Memory LRU dangled across ECS pool relocation](./entries/2026-07-03-second-colonist-spawn-crash.md)
+- [2026-07-03 - Construction layering (Story B): ground sub-layer + world/UI flush split](./entries/2026-07-03-construction-layering-story-b.md)
+- [2026-07-03 - Committed construction render: version-keyed geometry cache + viewport culling](./entries/2026-07-03-committed-construction-render-cache.md)
+- [2026-07-03 - Build & Test Speed Improvements (PRs #252, #253)](./entries/2026-07-03-build-test-speed.md)
+
 #### June 2026
 
+- [2026-06-30 - Colonist follow-ups: furniture placement, drops, and storage priority](./entries/2026-06-30-colonist-placement-and-storage-priority-followups.md)
+- [2026-06-29 - Belt stow-to-free-hands (combined craft→chop→carry blocker)](./entries/2026-06-29-belt-stow-to-free-hands.md)
 - [2026-06-29 - Colonist task arbitration: (tier,score) key, 7-tier ladder, job lifecycle](./entries/2026-06-29-colonist-task-arbitration.md)
 - [2026-06-29 - Colonist gameplay stabilization: craft, harvest, construction loop](./entries/2026-06-29-colonist-gameplay-stabilization.md)
 - [2026-06-28 - Navmesh zero-walkable fix, multi-region nav, and reliable craft provisioning](./entries/2026-06-28-navmesh-crafting-reliability.md)

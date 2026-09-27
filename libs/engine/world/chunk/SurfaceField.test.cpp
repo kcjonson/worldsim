@@ -319,3 +319,21 @@ TEST(SurfaceFieldTest, RenderTilesCarryEdgeSurfaceAndInteriorBit) {
 		}
 	}
 }
+
+// Far-zoom LOD (D16 step 7): at the game's 8 px/m, the shader draws all four fine
+// octaves (4, 2, 1, 0.5 m) from zoom 1 in, drops the 0.5 m one at zoom 0.75 and
+// 0.5, and the 1 m one too at zoom 0.25, each under 4 px there.
+TEST(SurfaceFieldTest, FarZoomDropsFineOctavesUnderFourPixels) {
+	auto octavesAtZoom = [](float zoom, int32_t wavelengthM) { return landWarpFineOctaves(1.0F / (8.0F * zoom), wavelengthM); };
+	const int32_t wavelength = defaultSurfaceFieldParams(kSeed).warpFineWavelengthM;
+	for (const float zoom : {20.0F, 3.0F, 1.5F, 1.0F}) {
+		EXPECT_EQ(octavesAtZoom(zoom, wavelength), kWarpFineOctaves) << "zoom " << zoom;
+	}
+	EXPECT_EQ(octavesAtZoom(0.75F, wavelength), 3);
+	EXPECT_EQ(octavesAtZoom(0.5F, wavelength), 3);
+	EXPECT_EQ(octavesAtZoom(0.25F, wavelength), 2);
+
+	// A longer base wavelength keeps its octaves further out.
+	EXPECT_EQ(octavesAtZoom(0.5F, 2 * wavelength), 4);
+	EXPECT_EQ(octavesAtZoom(0.25F, 2 * wavelength), 3);
+}

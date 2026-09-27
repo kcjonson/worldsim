@@ -346,6 +346,9 @@ namespace ecs {
 				r.future.wait();
 			}
 		}
+		for (std::future<geometry::nav::NavMesh>& build : retiringBuilds) {
+			build.wait();
+		}
 	}
 
 	std::int64_t NavigationSystem::clampHalfExtent(std::int64_t requested) const {
@@ -508,6 +511,9 @@ namespace ecs {
 	}
 
 	void NavigationSystem::drainFinishedBuilds() {
+		std::erase_if(retiringBuilds, [](const std::future<geometry::nav::NavMesh>& build) {
+			return build.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready;
+		});
 		for (SimulationRegion& region : regions) {
 			if (!region.future.valid()) {
 				continue;
@@ -546,6 +552,17 @@ namespace ecs {
 				}
 			}
 		}
+	}
+
+	void NavigationSystem::retireBuild(std::future<geometry::nav::NavMesh> build) {
+		std::erase_if(retiringBuilds, [](const std::future<geometry::nav::NavMesh>& b) {
+			return b.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready;
+		});
+		if (retiringBuilds.size() >= kMaxRetiringBuilds) {
+			retiringBuilds.front().wait();
+			retiringBuilds.erase(retiringBuilds.begin());
+		}
+		retiringBuilds.push_back(std::move(build));
 	}
 
 	void NavigationSystem::reconcileRegions(const std::vector<DesiredRegion>& desired) {
@@ -631,9 +648,16 @@ namespace ecs {
 
 			if (best >= 0) {
 				SimulationRegion& region = regions[static_cast<std::size_t>(best)];
-				region.center			 = wantCenter;
-				region.halfExtent		 = wantHalf;
 				regionMatched[static_cast<std::size_t>(best)] = true;
+				// Relaunching now would block on the running build (a std::async future
+				// waits in its destructor), a whole build's time on the main thread while
+				// the camera scrolls. The region keeps serving its mesh and recenters on
+				// the update after that build lands.
+				if (region.future.valid()) {
+					continue;
+				}
+				region.center	  = wantCenter;
+				region.halfExtent = wantHalf;
 				launchBuild(region);
 				// Permanent region-lifecycle diagnostic (recenter onto a moved driver/viewport).
 				LOG_DEBUG(Engine, "[NavBuild] region %d recenter -> (%lld, %lld) half=%lld", region.id,
@@ -654,14 +678,15 @@ namespace ecs {
 			}
 		}
 
-		// Drop regions no longer wanted. Block on any in-flight build first so its worker
-		// can't write into a future we're about to destroy. Also purge their RRA caches.
+		// Drop regions no longer wanted, retiring any in-flight build (its worker owns its
+		// input by value) rather than waiting on it, unless retiringBuilds is already at
+		// its cap. Also purge their RRA caches.
 		for (std::size_t r = regions.size(); r-- > 0;) {
 			if (regionMatched[r]) {
 				continue;
 			}
 			if (regions[r].future.valid()) {
-				regions[r].future.wait();
+				retireBuild(std::move(regions[r].future));
 			}
 			const std::int32_t goneId = regions[r].id;
 			for (auto it = rraCaches.begin(); it != rraCaches.end();) {

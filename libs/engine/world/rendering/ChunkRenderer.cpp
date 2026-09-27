@@ -27,7 +27,7 @@ namespace engine::world {
 
 		using Field = TerrainDistanceField;
 
-		// Near tiles per atlas row: the atlas is at most 32 * 34 = 1088 texels wide.
+		// Near tiles per atlas row: the atlas is at most 32 * 66 = 2112 texels wide.
 		constexpr int kNearAtlasMaxColumns = Field::kTilesPerSide;
 
 		// Texture units: atlas 0, tile data 1, then the distance field.
@@ -206,6 +206,7 @@ namespace engine::world {
 		loc.landWarpSeeds = glGetUniformLocation(program, "u_landWarpSeeds");
 		loc.landThinFloor = glGetUniformLocation(program, "u_landThinFloor");
 		loc.landThinCeil = glGetUniformLocation(program, "u_landThinCeil");
+		loc.landWarpFineOctaves = glGetUniformLocation(program, "u_landWarpFineOctaves");
 		loc.landFringeW = glGetUniformLocation(program, "u_landFringeW");
 		loc.landRimDark = glGetUniformLocation(program, "u_landRimDark");
 		loc.landBreakupWavelength = glGetUniformLocation(program, "u_landBreakupWavelength");
@@ -454,7 +455,7 @@ namespace engine::world {
 		}
 	}
 
-	void ChunkRenderer::applyLandUniforms(uint64_t worldSeed) const {
+	void ChunkRenderer::applyLandUniforms(uint64_t worldSeed, float metersPerPixel) const {
 		// The reciprocals are fractalNoise2SplitPair's own 1.0F / wavelength, so the
 		// shader scales by the same floats the CPU evaluation does.
 		auto inverse = [](int32_t wavelength) { return 1.0F / static_cast<float>(wavelength); };
@@ -468,6 +469,7 @@ namespace engine::world {
 		glUniform2ui(loc.landWarpSeeds, field.seeds.fine, field.seeds.low);
 		glUniform1f(loc.landThinFloor, field.thinFloor);
 		glUniform1f(loc.landThinCeil, field.thinCeil);
+		glUniform1i(loc.landWarpFineOctaves, landWarpFineOctaves(metersPerPixel, field.warpFineWavelengthM));
 
 		std::array<float, kSurfaceCount> fringe{};
 		std::array<float, kSurfaceCount> rim{};
@@ -524,11 +526,12 @@ namespace engine::world {
 		glUniform1f(loc.cameraZoom, camera.zoom());
 		glUniform1f(loc.pixelsPerMeter, pixelsPerMeterValue);
 		glUniform2f(loc.viewportSize, static_cast<float>(viewportWidth), static_cast<float>(viewportHeight));
-		glUniform1f(loc.metersPerPixel, 1.0F / (pixelsPerMeterValue * camera.zoom()));
+		const float metersPerPixel = 1.0F / (pixelsPerMeterValue * camera.zoom());
+		glUniform1f(loc.metersPerPixel, metersPerPixel);
 		const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - startTime).count();
 		glUniform1f(loc.time, static_cast<float>(std::fmod(seconds, kTimeWrapSeconds)));
 		applyTunables();
-		applyLandUniforms(visibleChunks.front()->worldSeed());
+		applyLandUniforms(visibleChunks.front()->worldSeed(), metersPerPixel);
 
 		const auto& atlasRects = Renderer::Primitives::getTileAtlasRects();
 		bindUnit(kUnitTileAtlas, Renderer::Primitives::getTileAtlasTexture());

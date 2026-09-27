@@ -3,6 +3,7 @@
 #include <utils/Log.h>
 
 #include <chrono>
+#include <utility>
 
 namespace engine::world {
 
@@ -103,17 +104,24 @@ namespace engine::world {
 		// task once the worker finishes.
 		Chunk* rawChunk = chunk.get();
 		m_chunks[coord] = std::move(chunk);
-		m_generating.emplace_back(coord, std::async(std::launch::async, [rawChunk]() { rawChunk->generate(); }));
+		m_generating.push_back(
+			{coord, std::async(std::launch::async, [rawChunk]() { rawChunk->generate(); }), std::chrono::steady_clock::now()}
+		);
 
 		LOG_DEBUG(Engine, "Loading chunk (%d, %d)", coord.x, coord.y);
 	}
 
 	void ChunkManager::pollGeneratedChunks() {
 		for (auto it = m_generating.begin(); it != m_generating.end();) {
-			auto& [coord, future] = *it;
-			if (future.valid() && future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
-				future.get();
-				LOG_DEBUG(Engine, "Loaded chunk (%d, %d)", coord.x, coord.y);
+			if (it->task.valid() && it->task.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+				it->task.get();
+				LOG_DEBUG(
+					Engine,
+					"Loaded chunk (%d, %d) %.1f ms after its request",
+					it->coord.x,
+					it->coord.y,
+					std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - it->requested).count()
+				);
 				it = m_generating.erase(it);
 			} else {
 				++it;
@@ -122,17 +130,17 @@ namespace engine::world {
 	}
 
 	void ChunkManager::finishPendingGeneration() {
-		for (auto& [coord, future] : m_generating) {
-			if (future.valid()) {
-				future.get();
+		for (Generation& generation : m_generating) {
+			if (generation.task.valid()) {
+				generation.task.get();
 			}
 		}
 		m_generating.clear();
 	}
 
 	bool ChunkManager::isGenerating(ChunkCoordinate coord) const {
-		for (const auto& [generatingCoord, future] : m_generating) {
-			if (generatingCoord == coord) {
+		for (const Generation& generation : m_generating) {
+			if (generation.coord == coord) {
 				return true;
 			}
 		}

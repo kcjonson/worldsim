@@ -152,13 +152,44 @@ namespace engine::world {
 				pairs = {};
 			}
 
-			[[nodiscard]] std::span<const uint32_t> at(const Vec2i64& p) const {
+			// Orders each cell's items by a lower bound on their distance from any point
+			// of the cell, bound(item, cellLo, cellHi), kept alongside: a nearest query
+			// walks them in that order and stops at the first bound past its best.
+			template <typename Bound> void orderByBound(const Bound& bound) {
+				bounds.resize(items.size());
+				std::vector<std::pair<double, uint32_t>> order;
+				for (size_t c = 0; c + 1 < start.size(); ++c) {
+					const Vec2i64 lo{
+						origin.x + static_cast<int64_t>(c % static_cast<size_t>(width)) * kCellMm,
+						origin.y + static_cast<int64_t>(c / static_cast<size_t>(width)) * kCellMm
+					};
+					const Vec2i64 hi{lo.x + kCellMm, lo.y + kCellMm};
+					order.clear();
+					for (uint32_t k = start[c]; k < start[c + 1]; ++k) {
+						order.emplace_back(bound(items[k], lo, hi), items[k]);
+					}
+					std::sort(order.begin(), order.end());
+					for (size_t k = 0; k < order.size(); ++k) {
+						bounds[start[c] + k] = order[k].first;
+						items[start[c] + k]	 = order[k].second;
+					}
+				}
+			}
+
+			struct Ordered {
+				std::span<const uint32_t> items;
+				std::span<const double>	  bounds;
+			};
+
+			// The cell holding p, its items in orderByBound's order with their bounds.
+			[[nodiscard]] Ordered orderedAt(const Vec2i64& p) const {
 				const int64_t x = floorDiv(p.x - origin.x, kCellMm);
 				const int64_t y = floorDiv(p.y - origin.y, kCellMm);
 				if (start.empty() || x < 0 || y < 0 || x >= width || y >= height) {
 					return {};
 				}
-				return cell(static_cast<size_t>(y * width + x));
+				const auto c = static_cast<size_t>(y * width + x);
+				return {cell(c), {bounds.data() + start[c], bounds.data() + start[c + 1]}};
 			}
 
 			// Every item in the cells the box touches, sorted and unique.
@@ -193,7 +224,15 @@ namespace engine::world {
 			std::vector<std::pair<uint32_t, uint32_t>> pairs{};
 			std::vector<uint32_t>						 start{};
 			std::vector<uint32_t>						 items{};
+			std::vector<double>							 bounds{};
 		};
+
+		// Distance between two closed boxes (0 when they meet), in mm.
+		double boxDistanceMm(Vec2i64 aLo, Vec2i64 aHi, Vec2i64 bLo, Vec2i64 bHi) {
+			const auto dx = static_cast<double>(std::max<int64_t>({aLo.x - bHi.x, bLo.x - aHi.x, 0}));
+			const auto dy = static_cast<double>(std::max<int64_t>({aLo.y - bHi.y, bLo.y - aHi.y, 0}));
+			return std::hypot(dx, dy);
+		}
 
 		bool isSyntheticEdge(const TerrainRing& ring, size_t i) {
 			return (ring.profiles[i].flags & ShoreProfile::kFlagSynthetic) != 0;
@@ -303,7 +342,8 @@ namespace engine::world {
 			// Nearest shoreline piece within kSdfNearM of p; ties go to the lower
 			// WaterKind. `hint` is the previous texel's nearest piece: trying it first
 			// tightens the bound the rest are pruned against (by their box, exact in
-			// integers), without changing the answer.
+			// integers, and by the cell's order, which stops at the first piece whose
+			// box is farther from the cell than the best), without changing the answer.
 			[[nodiscard]] std::optional<Nearest> nearestShore(const Vec2i64& p, uint32_t& hint) const {
 				std::optional<Nearest> best;
 				double				   bound	 = static_cast<double>(kSdfNearMm);
@@ -329,9 +369,10 @@ namespace engine::world {
 				if (hint < pieces.size()) {
 					tryPiece(hint);
 				}
-				for (const uint32_t index : pieceGrid.at(p)) {
-					if (index != hint) {
-						tryPiece(index);
+				const BucketGrid::Ordered cell = pieceGrid.orderedAt(p);
+				for (size_t k = 0; k < cell.items.size() && cell.bounds[k] <= bound + kPruneSlackMm; ++k) {
+					if (cell.items[k] != hint) {
+						tryPiece(cell.items[k]);
 					}
 				}
 				hint = bestIndex;
@@ -339,7 +380,8 @@ namespace engine::world {
 			}
 
 			// Profile of the nearest shoreline vertex within kSdfNearM of p, exact in
-			// integer mm^2; ties by position, then profile bytes.
+			// integer mm^2; ties by position, then profile bytes. The cell's order stops
+			// the walk at the first vertex farther from the cell than the best.
 			[[nodiscard]] ByteTexel nearestProfile(const Vec2i64& p) const {
 				constexpr int64_t  kReach2 = kSdfNearMm * kSdfNearMm;
 				const ShoreVertex* best	   = nullptr;
@@ -347,8 +389,10 @@ namespace engine::world {
 				auto			   key	   = [](const ShoreVertex& v) {
 					   return std::tuple(v.p, v.profile.r, v.profile.g, v.profile.b, v.profile.a);
 				};
-				for (const uint32_t index : vertexGrid.at(p)) {
-					const ShoreVertex& v  = vertices[index];
+				double					  reach = static_cast<double>(kSdfNearMm) + kPruneSlackMm;
+				const BucketGrid::Ordered cell	= vertexGrid.orderedAt(p);
+				for (size_t k = 0; k < cell.items.size() && cell.bounds[k] <= reach; ++k) {
+					const ShoreVertex& v  = vertices[cell.items[k]];
 					const int64_t	   dx = v.p.x - p.x;
 					const int64_t	   dy = v.p.y - p.y;
 					const int64_t	   d2 = dx * dx + dy * dy;
@@ -358,6 +402,7 @@ namespace engine::world {
 					if (best == nullptr || d2 < bestD2 || (d2 == bestD2 && key(v) < key(*best))) {
 						best   = &v;
 						bestD2 = d2;
+						reach  = std::sqrt(static_cast<double>(bestD2)) + kPruneSlackMm;
 					}
 				}
 				return best == nullptr ? ByteTexel{} : best->profile;
@@ -529,6 +574,12 @@ namespace engine::world {
 				}
 				pieceGrid.finish();
 				vertexGrid.finish();
+				pieceGrid.orderByBound([this](uint32_t item, Vec2i64 lo, Vec2i64 hi) {
+					return boxDistanceMm(pieces[item].lo, pieces[item].hi, lo, hi);
+				});
+				vertexGrid.orderByBound([this](uint32_t item, Vec2i64 lo, Vec2i64 hi) {
+					return boxDistanceMm(vertices[item].p, vertices[item].p, lo, hi);
+				});
 			}
 
 			// Where `other` crosses or touches the interior of `e`, as e's parameter.
@@ -671,6 +722,12 @@ namespace engine::world {
 					}
 				}
 				grid.finish();
+				// In the ratio nearest() compares: every point of the cell is at least this
+				// many of the run's widest half-widths from it.
+				grid.orderByBound([this](uint32_t item, Vec2i64 lo, Vec2i64 hi) {
+					const Run& run = runs[item];
+					return std::max(boxDistanceMm(run.lo, run.hi, lo, hi) - kPruneSlackMm, 0.0) / run.hwMaxMm;
+				});
 			}
 
 			[[nodiscard]] bool empty() const { return runs.empty(); }
@@ -678,8 +735,8 @@ namespace engine::world {
 			// Min over thalweg segments of distance / half-width at the closest point,
 			// among those under kNoThalweg; ties go to the lexicographically smaller
 			// segment. `hint` is the run that won the previous texel: trying it first
-			// tightens the bound the rest are pruned against, without changing the
-			// answer.
+			// tightens the bound the rest are pruned against (and the cell's order stops
+			// at the first run that cannot reach it), without changing the answer.
 			[[nodiscard]] std::optional<ThalwegHit> nearest(const Vec2i64& p, uint32_t& hint) const {
 				std::optional<ThalwegHit> best;
 				double					  bestRatio = Field::kNoThalweg;
@@ -729,9 +786,10 @@ namespace engine::world {
 				if (hint < runs.size()) {
 					tryRun(hint);
 				}
-				for (const uint32_t runIndex : grid.at(p)) {
-					if (runIndex != hint) {
-						tryRun(runIndex);
+				const BucketGrid::Ordered cell = grid.orderedAt(p);
+				for (size_t k = 0; k < cell.items.size() && cell.bounds[k] <= bestRatio; ++k) {
+					if (cell.items[k] != hint) {
+						tryRun(cell.items[k]);
 					}
 				}
 				hint = bestRun;

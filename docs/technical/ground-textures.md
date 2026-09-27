@@ -79,7 +79,7 @@ All are live through the debug server: set one with `/api/dev/tunable?name=<name
 
 - Atlas: 16 MB, built once at startup.
 - Render tiles: 524 KB a chunk, on the GPU and in the chunk.
-- Land pass at 3072x1728 on an RTX 3090: 0.47 to 0.85 ms, depending on how much of the view is interior tiles; the tile-edge blend it replaced cost 0.12 to 0.23 ms. The perf task (phase 9 of the spec) budgets it.
+- Land pass at 3072x1728 on an RTX 3090, in game: 0.3 to 0.9 ms on a view of mostly interior tiles, 0.6 to 1.3 ms on busy ones; with the water on top the pass stays under 1.5 ms at every zoom, and at far zoom the shader drops the warp octaves a pixel cannot show. Measured tables in the spec, section 6 and D16 step 7.
 
 ## Open questions
 

@@ -1,9 +1,10 @@
 // land.glsl - the land pass: every land-on-land boundary is the isoline of a
 // softened, domain-warped per-surface field
 // (docs/technical/organic-terrain/terrain-polygons-architecture.md D16), never a
-// tile edge. evaluateLand() is engine::world::evaluateSurfaceField
-// (SurfaceField.cpp) step for step, in the same order and the same expressions;
-// SurfaceFieldGolden.test.cpp renders it and compares the two.
+// tile edge. evaluateLand() with every fine warp octave is
+// engine::world::evaluateSurfaceField (SurfaceField.cpp) step for step, in the same
+// order and the same expressions; SurfaceFieldGolden.test.cpp renders it and
+// compares the two. The picture sums only the octaves a pixel can show (D16 step 7).
 //
 // Positions are a whole tile plus the offset inside it: the noise and every lattice
 // read are formed from those two parts, never from a large float world coordinate.
@@ -34,6 +35,9 @@ uniform float u_landWarpFineGain;
 uniform uvec2 u_landWarpSeeds;		   // fine, low
 uniform float u_landThinFloor;
 uniform float u_landThinCeil;
+// Fine warp octaves drawn at this zoom (landWarpFineOctaves, D16 step 7): the finer
+// ones would move an edge by a fraction of a pixel.
+uniform int u_landWarpFineOctaves;
 
 // The look, all tunables (ChunkRenderer.cpp): a sparse fringe of the upper surface
 // on the lower side of each edge, its width varying along the edge (D15) with the
@@ -172,7 +176,9 @@ struct LandEval {
 	float along;	// the fine warp noise's x in [-1, 1], which the fringe width follows
 };
 
-LandEval evaluateLand(ivec2 tile, vec2 frac) {
+/// The field at a point, its fine warp summed over `fineOctaves` of
+/// kWarpFineOctaves (all of them for the exact field placement evaluates).
+LandEval evaluateLand(ivec2 tile, vec2 frac, int fineOctaves) {
 	LandEval e;
 	uvec2	 own = renderTile(tile);
 	if ((own.g & kRenderInteriorBit) != 0u) {
@@ -205,12 +211,18 @@ LandEval evaluateLand(ivec2 tile, vec2 frac) {
 	noisePoint(u_chunkTileOrigin + tile, frac, whole, offset);
 	// Each term's noise pair is the offset's x and y.
 	vec2 fineNoise = clamp(
-		fractalNoise2SplitPair(whole, offset, u_landWarpWavelength.x, u_landWarpInvWavelength.x, u_landWarpSeeds.x, kWarpFineOctaves, u_landWarpFineGain),
+		fractalNoise2SplitPair(
+			whole, offset, u_landWarpWavelength.x, u_landWarpInvWavelength.x, u_landWarpSeeds.x, kWarpFineOctaves, u_landWarpFineGain,
+			fineOctaves
+		),
 		-1.0,
 		1.0
 	);
 	vec2 lowNoise = clamp(
-		fractalNoise2SplitPair(whole, offset, u_landWarpWavelength.y, u_landWarpInvWavelength.y, u_landWarpSeeds.y, kWarpLowOctaves, kWarpLowGain),
+		fractalNoise2SplitPair(
+			whole, offset, u_landWarpWavelength.y, u_landWarpInvWavelength.y, u_landWarpSeeds.y, kWarpLowOctaves, kWarpLowGain,
+			kWarpLowOctaves
+		),
 		-1.0,
 		1.0
 	);
@@ -347,7 +359,7 @@ vec3 atlasColor(uint surfaceId, vec2 uv) {
 vec3 landColor(vec2 local, float metersPerPixel) {
 	ivec2	 tile	 = clamp(ivec2(floor(local)), ivec2(0), ivec2(511));
 	vec2	 frac	 = local - vec2(tile);
-	LandEval e		 = evaluateLand(tile, frac);
+	LandEval e		 = evaluateLand(tile, frac, u_landWarpFineOctaves);
 	vec3	 painted = atlasColor(e.painted, frac);
 	if (e.across == e.painted) {
 		return painted;
@@ -367,7 +379,11 @@ vec3 landColor(vec2 local, float metersPerPixel) {
 	ivec2 whole;
 	vec2  offset;
 	noisePoint(u_chunkTileOrigin + tile, frac, whole, offset);
-	float breakup = smoothstep(-0.25, 0.35, fractalNoise2SplitPair(whole, offset, u_landBreakupWavelength, u_landBreakupInvWavelength, u_landBreakupSeed, 2, 0.5).x);
+	float breakup = smoothstep(
+		-0.25,
+		0.35,
+		fractalNoise2SplitPair(whole, offset, u_landBreakupWavelength, u_landBreakupInvWavelength, u_landBreakupSeed, 2, 0.5, 2).x
+	);
 	float fringeW = u_landFringeW[int(upper)] * (1.0 + u_landFringeAlongAmp * e.along);
 	float fringe  = fringeW > 0.0 ? u_landFringeOpacity * breakup * (1.0 - smoothstep(0.0, fringeW, max(-sigma, 0.0))) : 0.0;
 	float rim	  = u_landRimDark[int(upper)] * (1.0 - smoothstep(0.0, u_landRimW, max(sigma, 0.0)));

@@ -7,6 +7,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <vector>
 
 namespace geometry {
@@ -63,7 +64,8 @@ namespace geometry {
 
 		// Per global coarse cell in [cellMin, cellMax], whether every coarse sample
 		// within `reach` cells of it (indices k - reach .. k + 1 + reach) lies on one
-		// side of iso. Separable dilated min/max.
+		// side of iso, counted over a summed-area table of which side each sample is
+		// on, and its value where its own four samples are equal.
 		class UniformCells {
 		  public:
 			UniformCells(const GlobalLattice& lattice, Vec2i64 cellMin, Vec2i64 cellMax, std::int64_t reach, float iso)
@@ -71,49 +73,53 @@ namespace geometry {
 				  minY(cellMin.y),
 				  countX(static_cast<std::size_t>(cellMax.x - cellMin.x + 1)),
 				  countY(static_cast<std::size_t>(cellMax.y - cellMin.y + 1)),
-				  uniform(countX * countY, 0) {
-				const std::int64_t window = 2 * reach + 2;
-				const std::int64_t rowLo  = cellMin.y - reach;
-				const std::size_t  rows	  = countY + static_cast<std::size_t>(window - 1);
-
-				// Row pass: for each sample row, min/max over the x window of each cell.
-				std::vector<float> rowMin(rows * countX);
-				std::vector<float> rowMax(rows * countX);
-				for (std::size_t r = 0; r < rows; ++r) {
-					const std::int64_t gy = rowLo + static_cast<std::int64_t>(r);
-					for (std::size_t c = 0; c < countX; ++c) {
-						const std::int64_t gx0 = cellMin.x + static_cast<std::int64_t>(c) - reach;
-						float			   lo  = lattice.sample(gx0, gy);
-						float			   hi  = lo;
-						for (std::int64_t i = 1; i < window; ++i) {
-							const float v = lattice.sample(gx0 + i, gy);
-							lo			  = std::min(lo, v);
-							hi			  = std::max(hi, v);
-						}
-						rowMin[r * countX + c] = lo;
-						rowMax[r * countX + c] = hi;
+				  uniform(countX * countY, 0),
+				  flat(countX * countY, std::numeric_limits<float>::quiet_NaN()) {
+				const auto		  window = static_cast<std::size_t>(2 * reach + 2);
+				const std::size_t sideX	 = countX + window - 1;
+				const std::size_t sideY	 = countY + window - 1;
+				const std::size_t stride = sideX + 1;
+				// above[y * stride + x]: samples at or above iso in the first y rows and
+				// x columns of the window area, which starts `reach` before cellMin.
+				std::vector<std::uint32_t> above(stride * (sideY + 1), 0);
+				for (std::size_t y = 0; y < sideY; ++y) {
+					const std::int64_t gy	  = cellMin.y - reach + static_cast<std::int64_t>(y);
+					std::uint32_t	   rowSum = 0;
+					for (std::size_t x = 0; x < sideX; ++x) {
+						rowSum += lattice.sample(cellMin.x - reach + static_cast<std::int64_t>(x), gy) >= iso ? 1U : 0U;
+						above[(y + 1) * stride + x + 1] = above[y * stride + x + 1] + rowSum;
 					}
 				}
 
-				// Column pass over the row results.
+				const auto area = static_cast<std::uint32_t>(window * window);
 				for (std::size_t cy = 0; cy < countY; ++cy) {
+					const std::int64_t gy = cellMin.y + static_cast<std::int64_t>(cy);
 					for (std::size_t c = 0; c < countX; ++c) {
-						float lo = rowMin[cy * countX + c];
-						float hi = rowMax[cy * countX + c];
-						for (std::size_t j = 1; j < static_cast<std::size_t>(window); ++j) {
-							lo = std::min(lo, rowMin[(cy + j) * countX + c]);
-							hi = std::max(hi, rowMax[(cy + j) * countX + c]);
+						const std::uint32_t count = above[(cy + window) * stride + c + window] - above[cy * stride + c + window] -
+													above[(cy + window) * stride + c] + above[cy * stride + c];
+						uniform[cy * countX + c]  = (count == 0 || count == area) ? 1 : 0;
+
+						const std::int64_t gx = cellMin.x + static_cast<std::int64_t>(c);
+						const float		   v  = lattice.sample(gx, gy);
+						if (lattice.sample(gx + 1, gy) == v && lattice.sample(gx, gy + 1) == v &&
+							lattice.sample(gx + 1, gy + 1) == v) {
+							flat[cy * countX + c] = v;
 						}
-						uniform[cy * countX + c] = (lo >= iso || hi < iso) ? 1 : 0;
 					}
 				}
 			}
 
-			bool isUniform(std::int64_t gx, std::int64_t gy) const {
-				return uniform[static_cast<std::size_t>(gy - minY) * countX + static_cast<std::size_t>(gx - minX)] != 0;
-			}
+			bool isUniform(std::int64_t gx, std::int64_t gy) const { return uniform[index(gx, gy)] != 0; }
+
+			// A bilinear read anywhere in a cell whose four samples are equal returns
+			// exactly that value; NaN when they differ.
+			float flatValue(std::int64_t gx, std::int64_t gy) const { return flat[index(gx, gy)]; }
 
 		  private:
+			std::size_t index(std::int64_t gx, std::int64_t gy) const {
+				return static_cast<std::size_t>(gy - minY) * countX + static_cast<std::size_t>(gx - minX);
+			}
+
 			std::int64_t			  minX;
 			std::int64_t			  minY;
 			std::size_t				  countX;
@@ -122,6 +128,7 @@ namespace geometry {
 			// iterator, which in MSVC debug builds takes a process-wide lock, and
 			// concurrent chunk workers read this millions of times each.
 			std::vector<std::uint8_t> uniform;
+			std::vector<float>		  flat;
 		};
 
 	} // namespace
@@ -182,21 +189,63 @@ namespace geometry {
 			rowRead[static_cast<std::size_t>(j)] = lattice.readY(wy, 0.0);
 		}
 
+		// Runs of fine columns in one coarse cell.
+		std::vector<int> runEnds;
+		for (int i = 1; i <= fineWidth; ++i) {
+			if (i == fineWidth || colCell[static_cast<std::size_t>(i)] != colCell[static_cast<std::size_t>(i - 1)]) {
+				runEnds.push_back(i);
+			}
+		}
+
+		// A row's spans: its runs, each warped, read unwarped, or filled with its
+		// cell's flat value, neighbors of one kind (and one flat value) merged. Every
+		// fine row in a coarse row has the same ones.
+		struct Span {
+			int	  start;
+			int	  end;
+			bool  warp;
+			float flat; // NaN: read unwarped
+		};
+		std::vector<Span> spans;
+		std::int64_t	  spansCellRow = 0;
 		for (int j = 0; j < fineHeight; ++j) {
-			const auto row = static_cast<std::size_t>(j);
-			for (int i = 0; i < fineWidth; ++i) {
-				const auto col = static_cast<std::size_t>(i);
-				if (uniformCells && uniformCells->isUniform(colCell[col], rowCell[row])) {
-					fine.at(i, j) = lattice.bilinear(colRead[col], rowRead[row]);
+			const auto		   row	   = static_cast<std::size_t>(j);
+			const std::int64_t cellRow = rowCell[row];
+			if (j == 0 || cellRow != spansCellRow) {
+				spans.clear();
+				int start = 0;
+				for (const int end : runEnds) {
+					const std::int64_t cell = colCell[static_cast<std::size_t>(start)];
+					const bool		   warp = !uniformCells || !uniformCells->isUniform(cell, cellRow);
+					const float		   flat = warp ? std::numeric_limits<float>::quiet_NaN() : uniformCells->flatValue(cell, cellRow);
+					const bool		   same = !spans.empty() && spans.back().warp == warp && (warp || spans.back().flat == flat);
+					if (same) {
+						spans.back().end = end;
+					} else {
+						spans.push_back({start, end, warp, flat});
+					}
+					start = end;
+				}
+				spansCellRow = cellRow;
+			}
+			for (const Span& span : spans) {
+				if (!span.warp && !std::isnan(span.flat)) {
+					std::fill(&fine.at(span.start, j), &fine.at(span.start, j) + (span.end - span.start), span.flat);
 					continue;
 				}
-				const Vec2i64 w = fine.samplePositionMm(i, j);
-				const WarpOffsetMm offset = offsetMm(w);
-				assert(
-					!skip || (std::abs(offset.x) <= static_cast<double>(skip->maxOffsetMm) &&
-							  std::abs(offset.y) <= static_cast<double>(skip->maxOffsetMm))
-				);
-				fine.at(i, j) = lattice.bilinear(w, offset);
+				for (int i = span.start; i < span.end; ++i) {
+					if (!span.warp) {
+						fine.at(i, j) = lattice.bilinear(colRead[static_cast<std::size_t>(i)], rowRead[row]);
+						continue;
+					}
+					const Vec2i64	   w	  = fine.samplePositionMm(i, j);
+					const WarpOffsetMm offset = offsetMm(w);
+					assert(
+						!skip || (std::abs(offset.x) <= static_cast<double>(skip->maxOffsetMm) &&
+								  std::abs(offset.y) <= static_cast<double>(skip->maxOffsetMm))
+					);
+					fine.at(i, j) = lattice.bilinear(w, offset);
+				}
 			}
 		}
 		return fine;

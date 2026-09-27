@@ -71,6 +71,7 @@ namespace Renderer {
 
 		// GPU timing
 		metrics.gpuRenderMs = gpuRenderMs;
+		metrics.tileGpuMs = tileGpuMs;
 
 		// System resources (sample every 10th call to reduce overhead)
 		static int sampleCounter = 0;
@@ -119,8 +120,9 @@ namespace Renderer {
 		ecsSystemTimings = timings;
 	}
 
-	void MetricsCollector::setGpuRenderTime(float gpuMs) {
-		gpuRenderMs = gpuMs;
+	void MetricsCollector::setGpuTimes(float renderMs, float tilePassMs) {
+		gpuRenderMs = renderMs;
+		tileGpuMs = tilePassMs;
 	}
 
 	void MetricsCollector::setMainLoopTimings(float pollEventsMs, float inputHandleMs, float sceneUpdateMs,
