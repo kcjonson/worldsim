@@ -4,6 +4,9 @@
 
 #include "AIDecisionSystem.h"
 #include "ActionSystem.h"
+#include "MovementSystem.h"
+#include "NavigationSystem.h"
+#include "PhysicsSystem.h"
 
 #include "../GoalTaskRegistry.h"
 #include "../InventoryMass.h"
@@ -14,6 +17,7 @@
 #include "../components/Inventory.h"
 #include "../components/Memory.h"
 #include "../components/Movement.h"
+#include "../components/NavPath.h"
 #include "../components/Needs.h"
 #include "../components/PlayerControlled.h"
 #include "../components/Skills.h"
@@ -28,13 +32,24 @@
 #include "assets/PriorityConfig.h"
 #include "assets/RecipeRegistry.h"
 
+#include <construction/ConstructionWorld.h>
+
+#include <world/Biome.h>
+#include <world/BiomeWeights.h>
+#include <world/chunk/ChunkManager.h>
+#include <world/chunk/ChunkSampleResult.h>
+#include <world/chunk/IWorldSampler.h>
+
 #include <gtest/gtest.h>
 
+#include <glm/geometric.hpp>
 #include <glm/vec2.hpp>
 
 #include <chrono>
 #include <cmath>
+#include <memory>
 #include <optional>
+#include <thread>
 
 namespace ecs::test {
 
@@ -3114,6 +3129,183 @@ namespace ecs::test {
 		task = getTask(colonist);
 		ASSERT_NE(task, nullptr);
 		EXPECT_FALSE(task->isActive());
+	}
+
+	// =============================================================================
+	// Nav holds that must end
+	// =============================================================================
+
+	// A Wander that nav stopped (no believed route to its point: CantFindWayTo, movement off) takes
+	// the next re-eval's fresh point instead of staying pinned to the unreachable one.
+	TEST_F(AIDecisionSystemTest, StoppedWanderRepicksFreshTarget) {
+		const auto colonist = createColonist({0.0F, 0.0F});
+		satisfyAllNeeds(*getNeeds(colonist));
+
+		world->update(0.016F);
+		auto* task = getTask(colonist);
+		ASSERT_NE(task, nullptr);
+		ASSERT_EQ(task->type, TaskType::Wander);
+		const glm::vec2 unreachable = task->targetPosition;
+
+		// What requestNavPath's Blocked outcome leaves on the task and its movement.
+		task->navState = NavState::CantFindWayTo;
+		getMovementTarget(colonist)->active = false;
+
+		world->update(0.016F); // a stopped colonist re-decides at once, not on the periodic interval
+		EXPECT_EQ(task->type, TaskType::Wander);
+		EXPECT_NE(task->targetPosition, unreachable) << "re-picked a fresh wander point";
+		EXPECT_TRUE(getMovementTarget(colonist)->active);
+		EXPECT_EQ(task->navState, NavState::Traveling);
+	}
+
+	namespace {
+		// Every tile grassland, so the region around the origin is open walkable ground.
+		class OpenLandSampler : public engine::world::IWorldSampler {
+		  public:
+			[[nodiscard]] engine::world::ChunkSampleResult sampleChunk(engine::world::ChunkCoordinate) const override {
+				return engine::world::makeUniformChunkSampleResult(
+					engine::world::BiomeWeights::single(engine::world::Biome::TemperateGrassland), 1.0F);
+			}
+			[[nodiscard]] float	   sampleElevation(engine::world::WorldPosition) const override { return 1.0F; }
+			[[nodiscard]] uint64_t getWorldSeed() const override { return 7U; }
+		};
+	} // namespace
+
+	// The running game's first decision happens before the async region build has produced a mesh.
+	// This wires a real NavigationSystem (all-land chunks, a viewport region at the origin, an empty
+	// construction world) plus MovementSystem and PhysicsSystem, so a test can let the AI decide with
+	// no mesh, tick until the build lands, and then check the colonist walks a route.
+	class AIDecisionFirstMeshTest : public AIDecisionSystemTest {
+	  protected:
+		void SetUp() override {
+			AIDecisionSystemTest::SetUp();
+
+			chunks = std::make_unique<engine::world::ChunkManager>(std::make_unique<OpenLandSampler>());
+			chunks->setLoadRadius(2);
+			chunks->setUnloadRadius(4);
+			chunks->update({0.0F, 0.0F});
+			chunks->finishPendingGeneration();
+
+			nav = &world->registerSystem<NavigationSystem>();
+			nav->setChunkManager(chunks.get());
+			nav->setConstructionWorld(&construction);
+			nav->setViewportRect({0.0F, 0.0F}, {60.0F, 60.0F});
+			world->getSystem<AIDecisionSystem>().setNavigationSystem(nav);
+			world->registerSystem<MovementSystem>();
+			world->registerSystem<PhysicsSystem>();
+		}
+
+		void TearDown() override {
+			// The base resets the world first, and its NavigationSystem waits out any in-flight build
+			// before the chunks and construction world go away.
+			AIDecisionSystemTest::TearDown();
+			chunks.reset();
+		}
+
+		// Tick the whole world until the async region build lands. NavigationSystem drains finished
+		// builds at the top of its update, ahead of the AI, so the AI sees the mesh on that same tick.
+		// Bounded so a hung build fails instead of spinning.
+		[[nodiscard]] bool tickUntilMesh() {
+			for (int i = 0; i < 500; ++i) {
+				world->update(kTick);
+				if (nav->hasMesh()) {
+					return true;
+				}
+				std::this_thread::sleep_for(std::chrono::milliseconds(2));
+			}
+			return false;
+		}
+
+		[[nodiscard]] bool followingRoute(EntityID colonist) {
+			const auto* navPath = world->getComponent<NavPath>(colonist);
+			return getMovementTarget(colonist)->active && navPath != nullptr && navPath->valid;
+		}
+
+		static constexpr float kTick = 0.1F;
+		static constexpr int   kTicksAfterMesh = 20; // 2 s, four kReEvalInterval (0.5 s) periods
+
+		std::unique_ptr<engine::world::ChunkManager> chunks;
+		engine::construction::ConstructionWorld		 construction;
+		NavigationSystem*							 nav = nullptr;
+	};
+
+	// With no mesh an idle colonist (needs met, no known sources) has nothing it can navigate to, so
+	// selectTaskFromTrace parks the no-option hold: a Wander with movement off. Once the mesh lands the
+	// re-eval offers a real, reachable Wander, and the parked one has to give way to it.
+	TEST_F(AIDecisionFirstMeshTest, IdleHoldTakesLiveWanderOnceMeshLands) {
+		const auto colonist = createColonist({0.0F, 0.0F});
+		satisfyAllNeeds(*getNeeds(colonist));
+
+		world->update(kTick); // launches the region build; NavigationSystem drained before launching
+		ASSERT_FALSE(nav->hasMesh()) << "the first decision must run before any mesh exists";
+		const Task* task = getTask(colonist);
+		ASSERT_NE(task, nullptr);
+		ASSERT_EQ(task->type, TaskType::Wander);
+		ASSERT_FALSE(getMovementTarget(colonist)->active) << "nothing moves without a mesh";
+
+		// The hold keeps the periodic throttle: a tick later the trace hasn't been rebuilt.
+		const float firstEvaluation = getTrace(colonist)->lastEvaluationTime;
+		world->update(kTick);
+		EXPECT_FLOAT_EQ(getTrace(colonist)->lastEvaluationTime, firstEvaluation)
+			<< "a parked colonist must not re-decide every frame";
+
+		ASSERT_TRUE(tickUntilMesh()) << "navmesh never built";
+
+		bool walking = false;
+		for (int i = 0; i < kTicksAfterMesh && !walking; ++i) {
+			world->update(kTick);
+			walking = task->type == TaskType::Wander && followingRoute(colonist);
+		}
+		EXPECT_TRUE(walking) << "still parked " << kTicksAfterMesh << " ticks after the mesh landed (\"" << task->reason
+							 << "\")";
+	}
+
+	// A colonist that knows an edible harvestable picks the gather-food option on its first decision,
+	// before any mesh exists, and requestNavPath holds that route. When the mesh lands the re-eval
+	// re-selects the same option and keeps the task as it is, so the held route has to be requested
+	// again or the colonist never moves.
+	TEST_F(AIDecisionFirstMeshTest, HeldGatherFoodRouteRequestedOnceMeshLands) {
+		auto& registry = engine::assets::AssetRegistry::Get();
+		engine::assets::AssetDefinition berryBush;
+		berryBush.defName = "Flora_BerryBush";
+		berryBush.label = "Berry Bush";
+		berryBush.capabilities.harvestable = engine::assets::HarvestableCapability{};
+		berryBush.capabilities.harvestable->yieldDefName = "Berry";
+		registry.registerTestDefinition(std::move(berryBush));
+
+		const glm::vec2 start{0.0F, 0.0F};
+		const glm::vec2 bush{6.0F, 2.0F};
+		const auto colonist = createColonist(start);
+		satisfyAllNeeds(*getNeeds(colonist)); // idle with an empty inventory: gathering food is the pick
+		addKnownEntity(colonist, bush, registry.getDefNameId("Flora_BerryBush"), engine::assets::CapabilityType::Harvestable);
+
+		world->update(kTick);
+		ASSERT_FALSE(nav->hasMesh()) << "the first decision must run before any mesh exists";
+		const Task* task = getTask(colonist);
+		ASSERT_NE(task, nullptr);
+		ASSERT_EQ(task->reason, "Gathering food (inventory empty)");
+		ASSERT_EQ(task->state, TaskState::Moving);
+		ASSERT_FALSE(getMovementTarget(colonist)->active) << "the route is held until a mesh exists";
+
+		ASSERT_TRUE(tickUntilMesh()) << "navmesh never built";
+
+		bool routed = false;
+		for (int i = 0; i < kTicksAfterMesh && !routed; ++i) {
+			world->update(kTick);
+			routed = followingRoute(colonist);
+		}
+		EXPECT_TRUE(routed) << "no route " << kTicksAfterMesh << " ticks after the mesh landed";
+		EXPECT_EQ(task->reason, "Gathering food (inventory empty)") << "the same task, now routed";
+		const auto* navPath = world->getComponent<NavPath>(colonist);
+		ASSERT_NE(navPath, nullptr) << "no route was ever attached";
+		ASSERT_FALSE(navPath->waypoints.empty());
+		EXPECT_LT(glm::distance(navPath->waypoints.back(), bush), 0.5F) << "the route ends at the bush";
+
+		for (int i = 0; i < 5; ++i) {
+			world->update(kTick);
+		}
+		const glm::vec2 now = world->getComponent<Position>(colonist)->value;
+		EXPECT_LT(glm::distance(now, bush), glm::distance(start, bush) - 0.5F) << "the colonist walks toward the bush";
 	}
 
 } // namespace ecs::test
