@@ -19,8 +19,8 @@
 uniform usampler2D u_tileData;
 uniform ivec2	   u_chunkTileOrigin; // world tile of the chunk's tile (0, 0)
 
-// Tile atlas: uvMin.xy, uvMax.xy per surface id. The array size must match
-// kMaxTileAtlasRects in Primitives.cpp.
+// Tile atlas (TileAtlasBuilder): uvMin.xy, uvMax.xy per surface id, the first
+// u_tileAtlasRectCount set. 64 leaves room past Surface::Count.
 uniform sampler2D u_tileAtlas;
 uniform int		  u_tileAtlasRectCount;
 uniform vec4	  u_tileAtlasRects[64];
