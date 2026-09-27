@@ -11,6 +11,7 @@
 #include "world/chunk/TerrainPolygonBuilder.h"
 #include "world/chunk/TerrainPolygons.h"
 
+#include <core/Vec2d.h>
 #include <nav/NavMesh.h>
 #include <nav/PathQuery.h>
 #include <polygon/Polygon.h>
@@ -22,6 +23,7 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <numbers>
 #include <span>
 #include <string>
 #include <utility>
@@ -98,6 +100,41 @@ struct HandTiles {
 		};
 	}
 };
+
+// A river through `points` (world meters, upstream first) at half-width `hw`,
+// cut into segments point to point, the arc coordinate the chord length summed
+// from the first point.
+inline std::vector<TerrainPolygonBuilder::RiverSegment> riverSegmentsThrough(const std::vector<geometry::Vec2d>& points, float hw) {
+	std::vector<TerrainPolygonBuilder::RiverSegment> out;
+	double s = 0.0;
+	for (size_t i = 0; i + 1 < points.size(); ++i) {
+		const double next = s + geometry::length(points[i + 1] - points[i]);
+		out.push_back({points[i].x, points[i].y, points[i + 1].x, points[i + 1].y, hw, hw, s, next});
+		s = next;
+	}
+	return out;
+}
+
+// A U-bend around (cx, cy): east along y = cy - radius for `leadM`, half a
+// circle of `radius` counterclockwise through the east, then west along
+// y = cy + radius for `leadM`. Points every ~stepM. Its inner bank faces
+// (cx, cy).
+inline std::vector<geometry::Vec2d> uBend(double cx, double cy, double radius, double leadM, double stepM) {
+	std::vector<geometry::Vec2d> out;
+	const auto lead = static_cast<int>(std::ceil(leadM / stepM));
+	for (int i = lead; i > 0; --i) {
+		out.push_back({cx - leadM * static_cast<double>(i) / static_cast<double>(lead), cy - radius});
+	}
+	const auto arc = static_cast<int>(std::ceil(std::numbers::pi * radius / stepM));
+	for (int i = 0; i <= arc; ++i) {
+		const double theta = std::numbers::pi * (static_cast<double>(i) / static_cast<double>(arc) - 0.5);
+		out.push_back({cx + radius * std::cos(theta), cy + radius * std::sin(theta)});
+	}
+	for (int i = 1; i <= lead; ++i) {
+		out.push_back({cx - leadM * static_cast<double>(i) / static_cast<double>(lead), cy + radius});
+	}
+	return out;
+}
 
 inline ChunkTerrainPolygons buildHand(
 	const HandTiles&									  tiles,

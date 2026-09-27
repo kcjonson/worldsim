@@ -15,6 +15,10 @@
 // Chunk::generate. Plus the pieces the invariant rests on: the pointwise
 // waterline field is the fine lattice's own formula, and the apron covers the
 // lattice cell next to the border plus the measured edge-effect depth.
+//
+// Then the post-processed surfaces (D11, D12, D16): a tile near a border comes
+// out the same Mud, point-bar Sand, or raw surface from its own chunk and from
+// the neighbor that reads it into its apron.
 
 #include "world/chunk/ApronField.h"
 #include "world/chunk/Chunk.h"
@@ -24,7 +28,9 @@
 #include "world/chunk/RiverTestWorld.h"
 #include "world/chunk/TerrainPolygonBuilder.h"
 #include "world/chunk/TerrainPolygonBuilderDetail.h"
+#include "world/chunk/TerrainPolygonQuery.h"
 #include "world/chunk/TerrainPolygonTestSupport.h"
+#include "world/chunk/TilePostProcessor.h"
 
 #include <random/HashNoise.h>
 
@@ -562,21 +568,37 @@ namespace {
 		return tiles;
 	}
 
+	struct RealRiverWorld {
+		uint64_t													  worldSeed = 0;
+		std::map<std::pair<int32_t, int32_t>, std::unique_ptr<Chunk>> chunks;
+	};
+
+	// Chunks (-1..1, -1..0) of the carved-river world, the source and ~1 km of
+	// trunk, through Chunk::generate. Built once for the tests that read them.
+	const RealRiverWorld& realRiverWorld() {
+		static const RealRiverWorld built = [] {
+			const river_test::CarvedRiverWorld world = river_test::makeCarvedRiverWorld();
+			const GeneratedWorldSampler		   sampler(world.world, world.landingLat, world.landingLon);
+			RealRiverWorld					   out;
+			out.worldSeed = sampler.getWorldSeed();
+			for (int32_t y = -1; y <= 0; ++y) {
+				for (int32_t x = -1; x <= 1; ++x) {
+					auto chunk = std::make_unique<Chunk>(ChunkCoordinate{x, y}, sampler.sampleChunk({x, y}), sampler.getWorldSeed());
+					chunk->generate();
+					out.chunks[{x, y}] = std::move(chunk);
+				}
+			}
+			return out;
+		}();
+		return built;
+	}
+
 } // namespace
 
 TEST(TerrainPolygonSeamsTest, RealRiverBordersReadTheSameGeometry) {
-	const river_test::CarvedRiverWorld world = river_test::makeCarvedRiverWorld();
-	const GeneratedWorldSampler		   sampler(world.world, world.landingLat, world.landingLon);
-
-	std::map<std::pair<int32_t, int32_t>, std::unique_ptr<Chunk>> chunks;
-	for (int32_t y = -1; y <= 0; ++y) {
-		for (int32_t x = -1; x <= 1; ++x) {
-			auto chunk = std::make_unique<Chunk>(ChunkCoordinate{x, y}, sampler.sampleChunk({x, y}), sampler.getWorldSeed());
-			chunk->generate();
-			chunks[{x, y}] = std::move(chunk);
-		}
-	}
-	size_t edges  = 0;
+	const RealRiverWorld& real	 = realRiverWorld();
+	const auto&			  chunks = real.chunks;
+	size_t				  edges	 = 0;
 	size_t points = 0;
 	for (const auto& [key, chunk] : chunks) {
 		for (const auto& [dx, dy] : {std::pair{1, 0}, std::pair{0, 1}, std::pair{1, 1}, std::pair{-1, 1}}) {
@@ -601,15 +623,202 @@ TEST(TerrainPolygonSeamsTest, RealRiverBordersReadTheSameGeometry) {
 	for (const auto& key : {std::pair{0, 0}, std::pair{0, -1}}) {
 		const Chunk&			 chunk	= *chunks.at(key);
 		const ChunkSampleResult& sample = chunk.biomeData();
-		const ChunkTerrainPolygons same = buildHand(realTiles(chunk, kApronTiles, sampler.getWorldSeed()), sampler.getWorldSeed(),
+		const ChunkTerrainPolygons same = buildHand(realTiles(chunk, kApronTiles, real.worldSeed), real.worldSeed,
 													sample.riverSegments, sample.pondBlobs);
 		EXPECT_TRUE(sameRings(same.rings, chunk.terrainPolygons().rings)) << name(chunk.coordinate());
 		EXPECT_TRUE(sameThalwegs(same.thalwegs, chunk.terrainPolygons().thalwegs)) << name(chunk.coordinate());
-		const ChunkTerrainPolygons reference = buildHand(realTiles(chunk, kReferenceApron, sampler.getWorldSeed()),
-														 sampler.getWorldSeed(), sample.riverSegments, sample.pondBlobs);
+		const ChunkTerrainPolygons reference = buildHand(realTiles(chunk, kReferenceApron, real.worldSeed),
+														 real.worldSeed, sample.riverSegments, sample.pondBlobs);
 		const auto [e, p] =
 			expectMatchesReference(chunk.coordinate(), chunk.terrainPolygons(), reference, "real reference " + name(chunk.coordinate()));
 		EXPECT_GT(e, 100U);
 		EXPECT_GT(p, 100U);
 	}
+}
+
+// ============================================================================
+// Post-processed surfaces across a border (D11, D12, D14, D16)
+// ============================================================================
+//
+// A tile within kRenderApronTiles of a border lies in the neighbor's render
+// apron, which must hold the tile's real post-processed surface (D16). So its
+// final surface has to come out the same from its own chunk and from the
+// neighbor that reads it into its apron, each answering from its own rings:
+// the same point bars, the same distance to water, the same mud roll.
+
+namespace {
+
+	// The land-boundary pass's apron (D16): warp reach plus the blur and the
+	// bilinear footprint.
+	constexpr int64_t kRenderApronTiles = 3;
+
+	// Chunks (0,0), (1,0), (0,1), (1,1), borders x = 512 m and y = 512 m: a lake
+	// straddling each border and wetland pools along both for mud; for point bars,
+	// rivers meandering tightly (bends of radius ~12 m, half-width 2.5 m) across
+	// x = 512, across y = 512, and along y = 512 through the corner, a bend apex
+	// on each border.
+	Biome surfaceWorldBiome(int64_t tx, int64_t ty) {
+		const auto inRect = [tx, ty](int64_t x0, int64_t x1, int64_t y0, int64_t y1) { return tx >= x0 && tx < x1 && ty >= y0 && ty < y1; };
+		if (inRect(500, 525, 150, 190) || inRect(300, 340, 498, 530)) {
+			return Biome::Lake;
+		}
+		const bool nearBorder = inRect(470, 560, 220, 280) || inRect(180, 280, 480, 545);
+		if (nearBorder && foundation::valueNoise3(static_cast<float>(tx) / 13.0F, static_cast<float>(ty) / 13.0F, 0.0F, 5U) > 0.6F) {
+			return Biome::TemperateWetland;
+		}
+		return Biome::TemperateGrassland;
+	}
+
+	std::vector<Segment> surfaceWorldRivers() {
+		auto meander = [](double along) {
+			static constexpr double kAmplitudeM	 = 7.6;
+			static constexpr double kWavelengthM = 60.0;
+			return kAmplitudeM * std::cos(kTwoPi * (along - 512.0) / kWavelengthM);
+		};
+		auto				 halfWidth = [](double) { return 2.5; };
+		std::vector<Segment> all;
+		append(all, riverThrough(135, [&meander](double t) {
+				   const double x = 380.0 + 270.0 * t;
+				   return std::pair{x, 300.0 + meander(x)};
+			   }, halfWidth));
+		append(all, riverThrough(135, [&meander](double t) {
+				   const double y = 380.0 + 270.0 * t;
+				   return std::pair{120.0 + meander(y), y};
+			   }, halfWidth));
+		append(all, riverThrough(135, [&meander](double t) {
+				   const double x = 380.0 + 270.0 * t;
+				   return std::pair{x, 508.4 + meander(x)};
+			   }, halfWidth));
+		return all;
+	}
+
+	struct SurfaceChunk {
+		HandTiles			 tiles;
+		ChunkTerrainPolygons polys;
+	};
+
+	SurfaceChunk buildSurfaceChunk(ChunkCoordinate coord) {
+		HandTiles			 tiles(coord, surfaceWorldBiome);
+		const Gathered		 g	   = gatherFor(coord, surfaceWorldRivers(), {}, kRiverGatherMarginM);
+		ChunkTerrainPolygons polys = buildHand(tiles, kWorldSeed, g.segments, g.ponds);
+		return {std::move(tiles), std::move(polys)};
+	}
+
+	// World tiles of `owner`'s square within kRenderApronTiles of `reader`'s
+	// square (Chebyshev): the tiles `reader`'s render apron holds.
+	std::vector<std::pair<int64_t, int64_t>> tilesInApronOf(ChunkCoordinate owner, ChunkCoordinate reader) {
+		auto outside = [](int64_t t, int64_t lo) { return std::max({lo - t, t - (lo + kChunkSize - 1), int64_t{0}}); };
+		const int64_t rx = static_cast<int64_t>(reader.x) * kChunkSize;
+		const int64_t ry = static_cast<int64_t>(reader.y) * kChunkSize;
+		std::vector<std::pair<int64_t, int64_t>> out;
+		for (int64_t ty = static_cast<int64_t>(owner.y) * kChunkSize; ty < static_cast<int64_t>(owner.y + 1) * kChunkSize; ++ty) {
+			for (int64_t tx = static_cast<int64_t>(owner.x) * kChunkSize; tx < static_cast<int64_t>(owner.x + 1) * kChunkSize; ++tx) {
+				if (std::max(outside(tx, rx), outside(ty, ry)) <= kRenderApronTiles) {
+					out.emplace_back(tx, ty);
+				}
+			}
+		}
+		return out;
+	}
+
+	Vec2i64 tileCenterMm(int64_t tx, int64_t ty) {
+		return {tx * 1000 + 500, ty * 1000 + 500};
+	}
+
+	struct SurfaceTally {
+		size_t tiles = 0;
+		size_t mud	 = 0;
+		size_t bars	 = 0;
+	};
+
+	// One tile read from two chunks: the same bar bit, the same distance to water
+	// within the mud's reach, the same final surface.
+	void expectSameSurface(int64_t tx, int64_t ty, Surface fromOwner, const TerrainPolygonQuery& owner, Surface fromReader,
+						   const TerrainPolygonQuery& reader, const std::string& label, SurfaceTally& tally) {
+		const double reach = TilePostProcessor::kMudBands.back().reachMm;
+		EXPECT_EQ(owner.isPointBar(tx, ty), reader.isPointBar(tx, ty)) << label << " tile " << tx << ", " << ty;
+		EXPECT_EQ(owner.distanceToWaterMm(tileCenterMm(tx, ty), reach), reader.distanceToWaterMm(tileCenterMm(tx, ty), reach))
+			<< label << " tile " << tx << ", " << ty;
+		EXPECT_EQ(fromOwner, fromReader) << label << " tile " << tx << ", " << ty;
+		++tally.tiles;
+		tally.mud += fromOwner == Surface::Mud ? 1 : 0;
+		tally.bars += owner.isPointBar(tx, ty) ? 1 : 0;
+	}
+
+	Surface finalFrom(const HandTiles& tiles, const TerrainPolygonQuery& terrain, int64_t tx, int64_t ty) {
+		const Surface raw = tiles.at(static_cast<int32_t>(tx - tiles.originX()), static_cast<int32_t>(ty - tiles.originY())).surface;
+		return TilePostProcessor::finalSurface({.raw = raw, .tileX = tx, .tileY = ty, .terrain = &terrain, .worldSeed = kWorldSeed});
+	}
+
+} // namespace
+
+TEST(TerrainPolygonSeamsTest, BorderTilesPostProcessTheSameFromEitherChunk) {
+	std::map<std::pair<int32_t, int32_t>, SurfaceChunk> built;
+	for (const ChunkCoordinate& c : {ChunkCoordinate{0, 0}, ChunkCoordinate{1, 0}, ChunkCoordinate{0, 1}, ChunkCoordinate{1, 1}}) {
+		built.emplace(std::pair{c.x, c.y}, buildSurfaceChunk(c));
+	}
+	SurfaceTally straight;
+	SurfaceTally diagonal;
+	for (const auto& [ca, cb] : kCornerPairs) {
+		for (const auto& [owner, reader] : {std::pair{ca, cb}, std::pair{cb, ca}}) {
+			const SurfaceChunk&		  o = built.at({owner.x, owner.y});
+			const SurfaceChunk&		  r = built.at({reader.x, reader.y});
+			const TerrainPolygonQuery ownerQuery(o.polys);
+			const TerrainPolygonQuery readerQuery(r.polys);
+			SurfaceTally&			  tally = owner.x != reader.x && owner.y != reader.y ? diagonal : straight;
+			for (const auto& [tx, ty] : tilesInApronOf(owner, reader)) {
+				expectSameSurface(tx, ty, finalFrom(o.tiles, ownerQuery, tx, ty), ownerQuery, finalFrom(r.tiles, readerQuery, tx, ty),
+								  readerQuery, name(owner) + " read by " + name(reader), tally);
+			}
+		}
+	}
+	std::cout << "[ surface seams ] " << straight.tiles << " border tiles (" << straight.mud << " mud, " << straight.bars
+			  << " bar), " << diagonal.tiles << " corner tiles (" << diagonal.mud << " mud, " << diagonal.bars << " bar)\n";
+	EXPECT_EQ(straight.tiles, 4U * 2U * 3U * 512U);
+	EXPECT_EQ(diagonal.tiles, 2U * 2U * 9U);
+	// Worth something only if the borders carry both.
+	EXPECT_GT(straight.mud, 200U);
+	EXPECT_GT(straight.bars, 10U);
+	EXPECT_GT(diagonal.mud + diagonal.bars, 0U);
+}
+
+// The same through Chunk::generate: each chunk's own post-processed tiles
+// against the final surface its neighbor computes for them from its apron
+// (ApronField, as the render apron will read them) and its own rings.
+TEST(TerrainPolygonSeamsTest, RealRiverBorderTilesPostProcessTheSameFromEitherChunk) {
+	const RealRiverWorld&							  real = realRiverWorld();
+	std::map<std::pair<int32_t, int32_t>, ApronField> aprons;
+	for (const auto& [key, chunk] : real.chunks) {
+		const ChunkCoordinate coord = chunk->coordinate();
+		aprons.emplace(key, ApronField::build(coord, chunk->biomeData(), chunk->biomeData().rasterHydrology(coord), real.worldSeed));
+	}
+	SurfaceTally tally;
+	for (const auto& [key, chunk] : real.chunks) {
+		for (const auto& [dx, dy] : {std::pair{1, 0}, std::pair{0, 1}, std::pair{1, 1}, std::pair{-1, 1}}) {
+			const auto next = real.chunks.find({key.first + dx, key.second + dy});
+			if (next == real.chunks.end()) {
+				continue;
+			}
+			for (const auto& [owner, reader] : {std::pair{chunk.get(), next->second.get()}, std::pair{next->second.get(), chunk.get()}}) {
+				const ChunkCoordinate	  oc = owner->coordinate();
+				const ChunkCoordinate	  rc = reader->coordinate();
+				const TerrainPolygonQuery ownerQuery(owner->terrainPolygons());
+				const TerrainPolygonQuery readerQuery(reader->terrainPolygons());
+				const ApronField&		  apron = aprons.at({rc.x, rc.y});
+				for (const auto& [tx, ty] : tilesInApronOf(oc, rc)) {
+					const auto	  lx		= static_cast<uint16_t>(tx - static_cast<int64_t>(oc.x) * kChunkSize);
+					const auto	  ly		= static_cast<uint16_t>(ty - static_cast<int64_t>(oc.y) * kChunkSize);
+					const auto	  ex		= static_cast<int32_t>(tx - (static_cast<int64_t>(rc.x) * kChunkSize - kApronTiles));
+					const auto	  ey		= static_cast<int32_t>(ty - (static_cast<int64_t>(rc.y) * kChunkSize - kApronTiles));
+					const Surface fromApron = TilePostProcessor::finalSurface(
+						{.raw = apron.tileAt(ex, ey).surface, .tileX = tx, .tileY = ty, .terrain = &readerQuery, .worldSeed = real.worldSeed}
+					);
+					expectSameSurface(tx, ty, owner->getTile(lx, ly).surface, ownerQuery, fromApron, readerQuery,
+									  "real " + name(oc) + " read by " + name(rc), tally);
+				}
+			}
+		}
+	}
+	std::cout << "[ real surface seams ] " << tally.tiles << " border tiles (" << tally.mud << " mud, " << tally.bars << " bar)\n";
+	EXPECT_GT(tally.mud, 20U) << "the river crosses the borders with mud on its banks";
 }

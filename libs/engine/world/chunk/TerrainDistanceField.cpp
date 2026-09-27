@@ -1,7 +1,9 @@
 #include "TerrainDistanceField.h"
 
 #include <core/Int128.h>
+#include <core/IntegerDivision.h>
 #include <polygon/Polygon.h>
+#include <predicates/Predicates.h>
 
 #include <glm/gtc/packing.hpp>
 
@@ -35,14 +37,8 @@ namespace engine::world {
 		// never drops a candidate that could win or tie.
 		constexpr double kPruneSlackMm = 1.0;
 
-		int64_t floorDiv(int64_t a, int64_t b) {
-			const int64_t q = a / b;
-			return (a % b != 0 && a < 0) ? q - 1 : q;
-		}
-
-		int64_t ceilDiv(int64_t a, int64_t b) {
-			return -floorDiv(-a, b);
-		}
+		using geometry::ceilDiv;
+		using geometry::floorDiv;
 
 		// How far v lies outside [lo, hi]; zero inside.
 		int64_t outside(int64_t v, int64_t lo, int64_t hi) {
@@ -72,24 +68,8 @@ namespace engine::world {
 			return {static_cast<double>(a.x) + static_cast<double>(b.x - a.x) * t, static_cast<double>(a.y) + static_cast<double>(b.y - a.y) * t};
 		}
 
-		struct SegmentPoint {
-			double distanceMm;
-			double t;
-		};
-
-		// Closest point to p on the part [t0, t1] of segment [a, b]. Differences of
-		// integer mm are exact in double, so the result depends only on the inputs.
-		SegmentPoint closestOnSegment(const Vec2i64& p, const Vec2i64& a, const Vec2i64& b, double t0 = 0.0, double t1 = 1.0) {
-			const double abx  = static_cast<double>(b.x - a.x);
-			const double aby  = static_cast<double>(b.y - a.y);
-			const double apx  = static_cast<double>(p.x - a.x);
-			const double apy  = static_cast<double>(p.y - a.y);
-			const double len2 = abx * abx + aby * aby;
-			const double t	  = len2 > 0.0 ? std::clamp((apx * abx + apy * aby) / len2, t0, t1) : t0;
-			const double dx	  = apx - abx * t;
-			const double dy	  = apy - aby * t;
-			return {std::sqrt(dx * dx + dy * dy), t};
-		}
+		using geometry::closestOnSegment;
+		using geometry::SegmentPoint;
 
 		double pointSegmentDistance(DPoint p, DPoint a, DPoint b) {
 			const double abx  = b.x - a.x;
@@ -215,18 +195,8 @@ namespace engine::world {
 			std::vector<uint32_t>						 items{};
 		};
 
-		bool flagged(const TerrainRing& ring, size_t i, uint8_t flag) {
-			return (ring.profiles[i].flags & flag) != 0;
-		}
-
 		bool isSyntheticEdge(const TerrainRing& ring, size_t i) {
-			return flagged(ring, i, ShoreProfile::kFlagSynthetic);
-		}
-
-		// D7 step 6: the butt edge between the two cut vertices is inside the river.
-		bool isCutEdge(const TerrainRing& ring, size_t i) {
-			return flagged(ring, i, ShoreProfile::kFlagFordableCut) &&
-				   flagged(ring, (i + 1) % ring.ring.size(), ShoreProfile::kFlagFordableCut);
+			return (ring.profiles[i].flags & ShoreProfile::kFlagSynthetic) != 0;
 		}
 
 		// ============ Rings: shoreline pieces, vertices, containment ============
@@ -504,7 +474,7 @@ namespace engine::world {
 					std::vector<uint8_t> endKept(n, 0);	  // a kept piece ends at vertex i + 1 (t1 = 1 on edge i)
 					for (size_t i = 0; i < n; ++i, ++edgeIndex) {
 						const RingEdge& e = edges[edgeIndex];
-						if (isSyntheticEdge(ring, i) || isCutEdge(ring, i)) {
+						if (!ring.isShoreEdge(i)) {
 							continue;
 						}
 						const Vec2i64 lo{std::min(e.a.x, e.b.x), std::min(e.a.y, e.b.y)};

@@ -6,7 +6,7 @@
 //
 // Hard-coded rules:
 // 1. Must be walkable ground (nav mesh; water rings block)
-// 2. NOT adjacent to water (shore tiles rejected)
+// 2. NOT on the shore (within 1.5 m of water)
 // 3. PREFER near existing waste (clustering bonus)
 // 4. AVOID proximity to food sources (penalty)
 
@@ -31,12 +31,12 @@ namespace ecs {
 	/// Find a suitable toilet location near the given position.
 	/// Searches for a valid spot that:
 	/// - Is on walkable nav mesh (not water, not inside an obstacle)
-	/// - Is not adjacent to water (shore)
+	/// - Is not on the shore (within 1.5 m of water)
 	/// - Prefers clustering near existing BioPiles (from memory)
 	/// - Avoids proximity to food sources (from memory)
 	///
 	/// @param colonistPos Current colonist world position
-	/// @param chunkManager For the shore rule (tile adjacency)
+	/// @param chunkManager For the shore rule (the chunk's water rings)
 	/// @param navigation Walkability authority (NavigationSystem::isValidPosition)
 	/// @param ecsWorld Reserved for future use (currently unused)
 	/// @param memory Colonist memory for querying known bio piles and food sources

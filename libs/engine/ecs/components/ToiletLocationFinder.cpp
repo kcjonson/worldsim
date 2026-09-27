@@ -8,8 +8,9 @@
 #include "assets/AssetRegistry.h"
 #include "world/chunk/ChunkCoordinate.h"
 #include "world/chunk/ChunkManager.h"
-#include "world/chunk/TileAdjacency.h"
+#include "world/chunk/TerrainPolygonQuery.h"
 
+#include <core/Vec2i64.h>
 #include <utils/Log.h>
 
 #include <cmath>
@@ -23,8 +24,8 @@ namespace {
 /// Grid spacing for candidate sampling (meters)
 constexpr float kSampleSpacing = 3.0F;
 
-/// Surface ID for water (must match Surface::Water enum value)
-constexpr uint8_t kWaterSurfaceId = 4;
+/// Relief stays this far from water, off the shore colonists drink from (the old tile rule's reach).
+constexpr double kMinWaterDistanceMm = 1500.0;
 
 /// Scoring weights
 constexpr float kBioPileClusterBonus = 10.0F;   // Bonus per nearby BioPile
@@ -72,28 +73,14 @@ constexpr float kFoodAvoidanceRadius = 15.0F;   // Distance to avoid from food
 		return false;
 	}
 
-	// Convert to chunk coordinate and local tile
-	WorldPosition worldPos{pos.x, pos.y};
-	ChunkCoordinate chunkCoord = worldToChunk(worldPos);
-	auto [localX, localY] = worldToLocalTile(worldPos);
-
-	// Get the chunk
-	const Chunk* chunk = chunkManager.getChunk(chunkCoord);
+	const Chunk* chunk = chunkManager.getChunk(worldToChunk(WorldPosition{pos.x, pos.y}));
 	if (chunk == nullptr || !chunk->isReady()) {
 		return false;  // Chunk not loaded or not ready
 	}
 
-	// Get tile data
-	const TileData& tile = chunk->getTile(localX, localY);
-
-	// Rule 2: Must NOT be adjacent to water (shore tiles rejected). Still the tile
-	// adjacency: distance to the water rings arrives with the shore query (terrain
-	// polygons D11).
-	if (TileAdjacency::hasAdjacentSurface(tile.adjacency, kWaterSurfaceId)) {
-		return false;
-	}
-
-	return true;
+	// Rule 2: not beside the water colonists drink from.
+	const TerrainPolygonQuery water(chunk->terrainPolygons());
+	return water.distanceToWaterMm(geometry::quantize(pos), kMinWaterDistanceMm) > kMinWaterDistanceMm;
 }
 
 /// Calculate score for a candidate position

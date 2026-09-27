@@ -14,6 +14,7 @@ add_library(engine
     world/chunk/TerrainChannelBuilder.cpp
     world/chunk/TerrainDistanceField.cpp
     world/chunk/TerrainPolygonBuilder.cpp
+    world/chunk/TerrainPolygonQuery.cpp
     world/rendering/BakedEntityMesh.cpp
     world/rendering/ChunkRenderer.cpp
     world/rendering/EntityRenderer.cpp

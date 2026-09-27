@@ -17,7 +17,8 @@
 // Then one tail for all three: world-lattice pins, resample, simplify, validate.
 // Rings come out over the extended region (`rings`, with per-vertex
 // ShoreProfiles) and clipped to the chunk square (`navRings`); channels also
-// emit thalwegs.
+// emit thalwegs and mark point-bar tiles (D12). Last, the rings are indexed for
+// TerrainPolygonQuery and walked for shore points (D11).
 //
 // Everything is a pure function of world position, the tiles, the gathered
 // segments and ponds, and the world seed. Pins sit on a world lattice, so every
@@ -193,15 +194,15 @@ class TerrainPolygonBuilder {
 	//
 	// A centerline sample is relevant when it can shape a ring edge in the lattice
 	// cell next to the chunk square (the run a border texel reads), a thalweg
-	// point a bake texel reads, or a ring edge anywhere in the extended region:
-	// within the reach base plus kChannelReachHalfWidths of its own raw
-	// half-width of the chunk square (Chebyshev). Every decision about a relevant
-	// sample (mouth flare, mouth extension, the whole-crossing rule) looks at most
-	// kChannelDecisionReachM along the centerline, so samples that far from a
-	// relevant one are kept too and read ground from the waterline field, which is
-	// a function of world position alone. A kept run therefore ends where its
-	// butt cap lies outside the extended region. The gather and the biome water
-	// query cover all of it.
+	// point a bake texel reads, or a ring edge or point bar anywhere in the
+	// extended region: within the reach base plus kChannelReachHalfWidths of its
+	// own raw half-width of the chunk square (Chebyshev). Every decision about a
+	// relevant sample (mouth flare, mouth extension, the whole-crossing rule, the
+	// bend a point bar spans) looks at most kChannelDecisionReachM along the
+	// centerline, so samples that far from a relevant one are kept too and read
+	// ground from the waterline field, which is a function of world position
+	// alone. A kept run therefore ends where its butt cap lies outside the
+	// extended region. The gather and the biome water query cover all of it.
 
 	/// Sample spacing (one parameter step can run ~10% over kCenterlineSpacingM),
 	/// quantization, and a thalweg's neighbor point.
@@ -233,6 +234,33 @@ class TerrainPolygonBuilder {
 	static_assert(
 		kBiomeWaterReachM <= static_cast<double>(kChunkSize), "the biome water query must stay inside the 3x3 chunk neighborhood"
 	);
+
+	// ============ Point bars (D12) ============
+
+	/// A bend holds a point bar where its centerline turns one way with
+	/// |curvature| x bankfull half-width over kBarBend for at least
+	/// kBarMinPoints samples (4 m). Relative to width, so a meander of 2-3
+	/// widths radius (R1) is a bend at any size, and the same test the channel
+	/// frame's curvature x half-width channel draws pools by (D10, 10.1).
+	static constexpr double kBarBend = 0.15;
+	static constexpr size_t kBarMinPoints = 8;
+	/// The bar reaches landward of the inner bank by sin(pi t) kBarWidth
+	/// half-widths, t running from 0 to 1 along the bend.
+	static constexpr double kBarWidth = 0.5;
+	/// The longest bend the sine spans. A longer one ramps up and down over half
+	/// this at each end, so the bar at a sample reads the river at most this far
+	/// along, a decision like a mouth's.
+	static constexpr double kBarArchMaxM = 64.0;
+	static_assert(
+		kBarArchMaxM + 2.0 * kChannelReachSlackM <= kChannelDecisionReachM, "a point bar must decide within the kept river"
+	);
+
+	// ============ Shore points (D11) ============
+
+	/// Vision's drinkable-water stands: one every kShorePointSpacingMm along each
+	/// ring's shore, kShoreOffsetMm onto the land.
+	static constexpr int64_t kShorePointSpacingMm = 1000;
+	static constexpr int64_t kShoreOffsetMm = 300;
 
 	// ============ Ponds (D8) ============
 

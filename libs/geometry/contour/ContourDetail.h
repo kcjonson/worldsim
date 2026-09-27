@@ -16,13 +16,6 @@
 
 namespace geometry::contour_detail {
 
-	// floor(a / b) for b > 0.
-	inline std::int64_t floorDiv(std::int64_t a, std::int64_t b) {
-		assert(b > 0);
-		const std::int64_t q = a / b;
-		return (a % b != 0 && a < 0) ? q - 1 : q;
-	}
-
 	// num / den rounded to the nearest integer, halves toward +infinity:
 	// floor((2 * num + den) / (2 * den)), den > 0. Exact for any 128-bit numerator
 	// whose quotient fits int64: a double estimate is corrected with exact

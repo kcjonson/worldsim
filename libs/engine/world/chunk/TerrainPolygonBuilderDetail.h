@@ -11,6 +11,7 @@
 
 #include <contour/ClipRing.h>
 #include <contour/WarpField.h>
+#include <core/IntegerDivision.h>
 #include <core/Vec2d.h>
 #include <core/Vec2i64.h>
 #include <polygon/Polygon.h>
@@ -27,6 +28,7 @@
 
 namespace engine::world::terrain_detail {
 
+	using geometry::floorDiv;
 	using geometry::Ring;
 	using geometry::Vec2d;
 	using geometry::Vec2i64;
