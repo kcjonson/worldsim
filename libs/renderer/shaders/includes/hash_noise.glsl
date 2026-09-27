@@ -67,19 +67,25 @@ int noiseFloorDiv(int a, int b) {
 	return a >= 0 ? a / b : -((-a + b - 1) / b);
 }
 
-// fractalNoise2SplitPair with lacunarity 2. `invWavelength` must be the CPU's
-// 1.0F / float(wavelength), passed in so both sides scale by the same float.
-vec2 fractalNoise2SplitPair(ivec2 whole, vec2 frac, int wavelength, float invWavelength, uint seed, int octaves, float gain) {
+// fractalNoise2SplitPair with lacunarity 2, summing only the first `summed` of its
+// `octaves` (a far-zoom LOD drops the finer ones) but normalizing over all of them,
+// so each kept octave weighs what it does in the full sum. `invWavelength` must be
+// the CPU's 1.0F / float(wavelength), passed in so both sides scale by the same float.
+vec2 fractalNoise2SplitPair(
+	ivec2 whole, vec2 frac, int wavelength, float invWavelength, uint seed, int octaves, float gain, int summed
+) {
 	ivec2 q		= ivec2(noiseFloorDiv(whole.x, wavelength), noiseFloorDiv(whole.y, wavelength));
 	vec2  base	= vec2(whole - q * wavelength) + frac;
 	vec2  value = vec2(0.0);
 	float amp	= 1.0;
 	float norm	= 0.0;
 	for (int i = 0; i < octaves; ++i) {
-		int	  cells = 1 << i;
-		vec2  u		= base * (invWavelength * float(cells));
-		ivec2 c		= ivec2(u); // u >= 0: truncation is floor
-		value += gradientNoise2PairCell(q * cells + c, u - vec2(c), seed + uint(i)) * amp;
+		if (i < summed) {
+			int	  cells = 1 << i;
+			vec2  u		= base * (invWavelength * float(cells));
+			ivec2 c		= ivec2(u); // u >= 0: truncation is floor
+			value += gradientNoise2PairCell(q * cells + c, u - vec2(c), seed + uint(i)) * amp;
+		}
 		norm += amp;
 		amp *= gain;
 	}

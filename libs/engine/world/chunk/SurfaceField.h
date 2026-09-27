@@ -95,6 +95,16 @@ struct SurfaceFieldParams {
 /// A tunable wavelength (meters) as the whole meters the noise uses, at least 1.
 [[nodiscard]] int32_t landWavelength(float meters);
 
+/// The shader drops a fine warp octave whose wavelength is under this many pixels
+/// (D16 step 7): it would wiggle an edge by a fraction of a pixel at a period of a
+/// few pixels, which reads as anti-aliasing noise, not shape.
+inline constexpr float kLandLodMinWavelengthPx = 4.0F;
+
+/// How many of the kWarpFineOctaves the shader sums at this pixel size, finest
+/// dropped first (the kept ones weigh what they do in the full sum). Only the
+/// picture uses it: evaluateSurfaceField always sums all of them.
+[[nodiscard]] int landWarpFineOctaves(float metersPerPixel, int32_t fineWavelengthM);
+
 /// The field's live tunables (terrain/land/*), registered with their defaults on
 /// first use. Game thread only, like Foundation::Tunables.
 struct SurfaceFieldTunables {

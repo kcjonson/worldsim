@@ -168,6 +168,17 @@ namespace engine::world {
 		return static_cast<int32_t>(std::clamp(std::lround(meters), 1L, static_cast<long>(kMaxWavelengthM)));
 	}
 
+	int landWarpFineOctaves(float metersPerPixel, int32_t fineWavelengthM) {
+		const float shortest   = kLandLodMinWavelengthPx * metersPerPixel;
+		float		wavelength = static_cast<float>(fineWavelengthM);
+		int			octaves	   = 0;
+		while (octaves < kWarpFineOctaves && wavelength >= shortest) {
+			++octaves;
+			wavelength *= 0.5F;
+		}
+		return octaves;
+	}
+
 	const SurfaceFieldTunables& SurfaceFieldTunables::get() {
 		static const SurfaceFieldTunables tunables = [] {
 			static constexpr float kNoWarp	= 0.0F;

@@ -119,8 +119,9 @@ class ChunkRenderer {
 
 	/// Set the land field's and the land look's uniforms (once per frame): the
 	/// field's tunables through SurfaceFieldParams, so the shader gets the exact
-	/// values an evaluation on the CPU uses, seeded from the world.
-	void applyLandUniforms(uint64_t worldSeed) const;
+	/// values an evaluation on the CPU uses, seeded from the world, and the fine
+	/// warp octaves worth drawing at this pixel size.
+	void applyLandUniforms(uint64_t worldSeed, float metersPerPixel) const;
 
 	float pixelsPerMeterValue = 16.0F;
 	uint32_t lastTiles = 0;
@@ -172,6 +173,7 @@ class ChunkRenderer {
 		int landWarpSeeds = -1;
 		int landThinFloor = -1;
 		int landThinCeil = -1;
+		int landWarpFineOctaves = -1;
 		int landFringeW = -1;
 		int landRimDark = -1;
 		int landBreakupWavelength = -1;
