@@ -23,6 +23,7 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <numbers>
 #include <span>
 #include <string>
 #include <utility>
@@ -124,9 +125,9 @@ inline std::vector<geometry::Vec2d> uBend(double cx, double cy, double radius, d
 	for (int i = lead; i > 0; --i) {
 		out.push_back({cx - leadM * static_cast<double>(i) / static_cast<double>(lead), cy - radius});
 	}
-	const auto arc = static_cast<int>(std::ceil(3.141592653589793 * radius / stepM));
+	const auto arc = static_cast<int>(std::ceil(std::numbers::pi * radius / stepM));
 	for (int i = 0; i <= arc; ++i) {
-		const double theta = -1.5707963267948966 + 3.141592653589793 * static_cast<double>(i) / static_cast<double>(arc);
+		const double theta = std::numbers::pi * (static_cast<double>(i) / static_cast<double>(arc) - 0.5);
 		out.push_back({cx + radius * std::cos(theta), cy + radius * std::sin(theta)});
 	}
 	for (int i = 1; i <= lead; ++i) {

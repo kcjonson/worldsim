@@ -5,10 +5,10 @@
 // Runs in Chunk::generate() once the terrain polygons are built. A tile's final
 // surface (finalSurface) is its raw surface with point bars turned to Sand (D12)
 // and ground near water to Mud (D11), a function of the raw surface, the world
-// tile, the terrain polygons, and the world seed alone: a chunk's own tile and a
-// neighbor's apron copy of it come out the same (D14), whichever chunk's
-// polygons answer, as long as the tile lies within a few tiles of that chunk
-// (see docs/technical/organic-terrain/terrain-polygons-architecture.md D11).
+// tile, the terrain polygons, and the world seed alone. So a tile within three
+// tiles of a border, which the neighbor's render apron holds (D16), comes out the
+// same from the neighbor's polygons as from its own chunk's (D14; see
+// docs/technical/organic-terrain/terrain-polygons-architecture.md D11).
 
 #include "world/chunk/ChunkCoordinate.h"
 
