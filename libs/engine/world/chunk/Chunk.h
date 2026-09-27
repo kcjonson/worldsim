@@ -7,6 +7,7 @@
 #include "world/Biome.h"
 #include "world/chunk/ChunkCoordinate.h"
 #include "world/chunk/ChunkSampleResult.h"
+#include "world/chunk/RenderTiles.h"
 #include "world/chunk/TerrainDistanceField.h"
 #include "world/chunk/TerrainPolygons.h"
 
@@ -21,9 +22,9 @@
 
 namespace engine::world {
 
-/// Surface types for terrain rendering
-/// Ground family surfaces use soft blending; Rock uses hard edges. Water is
-/// tile data only: the renderer draws it from the terrain distance field (D10).
+/// Surface types for terrain rendering. Land surfaces are painted as isolines of
+/// per-surface fields (SurfaceField, D16). Water is tile data only: the renderer
+/// draws it from the terrain distance field (D10).
 enum class Surface : uint8_t {
 	Grass,       // 0 - Regular grassland (standard temperate grass)
 	Dirt,        // 1 - Exposed dirt/mud
@@ -91,29 +92,7 @@ struct TileData {
 	}
 };
 
-/// Pre-computed tile rendering data - 16 bytes per tile.
-/// Cached during chunk generation to avoid per-frame adjacency extraction.
-/// Used by ChunkRenderer for fast tile rendering.
-///
-/// Surface ids here are paint surfaces, not TileData::surface: water is drawn
-/// from the terrain distance field on top of the ground pass (D10, D13), so a
-/// Water tile paints as its bed (the nearest land surface) and never appears in
-/// the land priority stack.
-struct TileRenderData {
-	uint8_t surfaceId;     ///< Paint surface (never Water)
-	uint8_t edgeMask;      ///< Edge shadow mask (N,E,S,W bits)
-	uint8_t cornerMask;    ///< Corner shadow mask (NW,NE,SE,SW bits)
-	uint8_t hardEdgeMask;  ///< Family-based hard edges (8 directions)
-	uint8_t neighborN;     ///< North neighbor paint surface
-	uint8_t neighborE;     ///< East neighbor paint surface
-	uint8_t neighborS;     ///< South neighbor paint surface
-	uint8_t neighborW;     ///< West neighbor paint surface
-	uint8_t neighborNW;    ///< Northwest neighbor paint surface
-	uint8_t neighborNE;    ///< Northeast neighbor paint surface
-	uint8_t neighborSE;    ///< Southeast neighbor paint surface
-	uint8_t neighborSW;    ///< Southwest neighbor paint surface
-	uint8_t padding[4];    ///< Pad to 16 bytes (one RGBA32UI texel)
-};
+class ExtendedTiles;
 
 /// A 512×512 region of the world.
 /// Tiles are pre-computed during generate() and stored in a flat array.
@@ -168,6 +147,8 @@ class Chunk {
 	/// Update adjacency for a single tile (used when neighbor chunks arrive)
 	void setAdjacency(uint16_t localX, uint16_t localY, uint64_t adjacency);
 
+	[[nodiscard]] uint64_t worldSeed() const { return m_worldSeed; }
+
 	/// Get the biome data for this chunk (used during generation)
 	[[nodiscard]] const ChunkSampleResult& biomeData() const { return m_biomeData; }
 
@@ -196,18 +177,26 @@ class Chunk {
 	/// Pre-computed during generation for O(1) lookup by VisionSystem
 	[[nodiscard]] const std::vector<std::pair<uint16_t, uint16_t>>& getShoreTiles() const { return m_shoreTiles; }
 
-	/// Get pre-computed tile rendering data for fast rendering
-	/// Use instead of extracting adjacency data per-frame
-	[[nodiscard]] const TileRenderData& getTileRenderData(uint16_t localX, uint16_t localY) const {
-		return m_renderData[localY * kChunkSize + localX];
+	/// The render tiles the land pass paints from (RenderTiles.h, SurfaceField.h): the
+	/// chunk square plus kRenderApronTiles on every side, by world tile. The apron holds
+	/// the neighbors' own tiles, so a point of the square reads the same field from this
+	/// chunk as from any other.
+	[[nodiscard]] RenderTileView renderTiles() const {
+		return {
+			m_renderData,
+			kRenderTilesSide,
+			kRenderTilesSide,
+			static_cast<int64_t>(m_coord.x) * kChunkSize - kRenderApronTiles,
+			static_cast<int64_t>(m_coord.y) * kChunkSize - kRenderApronTiles
+		};
 	}
 
-	/// Raw render data array (kChunkSize * kChunkSize entries, row-major).
-	/// Uploaded directly as a GPU tile-data texture by ChunkRenderer.
+	/// The render tiles as a raw kRenderTilesSide^2 array, row-major, uploaded as the
+	/// chunk's tile-data texture by ChunkRenderer.
 	[[nodiscard]] const TileRenderData* renderData() const { return m_renderData.data(); }
 
-	/// Version counter for render data; bumped by generate() and setAdjacency().
-	/// GPU caches compare this to detect stale uploads.
+	/// Version counter for render data, bumped by generate(). GPU caches compare it
+	/// to detect stale uploads.
 	[[nodiscard]] uint32_t renderDataVersion() const { return m_renderDataVersion.load(std::memory_order_acquire); }
 
 	/// Get the chunk's terrain polygon rings (D2): waterline, channel, and pond,
@@ -227,14 +216,13 @@ class Chunk {
 	/// Flat array of pre-computed tiles (512×512 = 262,144 tiles × 16 bytes = 4.0 MB)
 	std::array<TileData, kChunkSize * kChunkSize> m_tiles;
 
-	/// Pre-computed rendering data (512×512 = 262,144 tiles × 16 bytes = 4.0 MB)
-	/// Caches adjacency extraction for ChunkRenderer to avoid per-frame computation
-	std::array<TileRenderData, kChunkSize * kChunkSize> m_renderData;
+	/// Render tiles over the chunk square plus its render apron (518 x 518 x 2 bytes)
+	std::array<TileRenderData, static_cast<size_t>(kRenderTilesSide) * kRenderTilesSide> m_renderData;
 
 	/// Thread-safe flag indicating generation is complete
 	std::atomic<bool> m_generationComplete{false};
 
-	/// Bumped whenever m_renderData changes (generation, adjacency updates)
+	/// Bumped whenever m_renderData changes (generation)
 	std::atomic<uint32_t> m_renderDataVersion{0};
 
 	/// Cached shore tile positions (land tiles adjacent to water)
@@ -261,14 +249,8 @@ class Chunk {
 	/// Pre-compute shore tiles (land adjacent to water) for VisionSystem
 	void computeShoreTiles();
 
-	/// Pre-compute rendering data (adjacency masks, neighbors) for ChunkRenderer
-	void computeRenderData();
-
-	/// Fill one tile's neighbor ids and masks from `adjacency` in paint surfaces:
-	/// an in-chunk neighbor reads its own render entry (so a Water neighbor is
-	/// its bed), an out-of-chunk Water neighbor reads as this tile's paint
-	/// surface (no edge toward water; the shader draws the shore).
-	void setRenderAdjacency(uint16_t localX, uint16_t localY, uint64_t adjacency);
+	/// Fill the render tiles from the chunk's post-processed tiles plus the apron.
+	void computeRenderData(const ExtendedTiles& extended);
 
 	/// Select surface type based on biome using organic noise-based patches, for
 	/// any (coord, biome, local tile, elevation, seed), not just this chunk's own.

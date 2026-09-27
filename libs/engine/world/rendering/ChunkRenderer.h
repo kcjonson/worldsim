@@ -1,14 +1,16 @@
 #pragma once
 
 // ChunkRenderer - Renders ground tiles and water from per-chunk textures.
-// Each visible chunk is a single quad; the fragment shader fetches per-tile
-// data (surface, masks, neighbors) from an RGBA32UI texture that mirrors the
-// chunk's TileRenderData array, then paints water and shore from the chunk's
-// terrain distance field (terrain-polygons-architecture.md D10). Tile geometry
-// never touches the CPU per frame.
+// Each visible chunk is a single quad; the fragment shader paints the ground from
+// an RG8UI texture of the chunk's render tiles (paint surface and edge byte, the
+// square plus its render apron), every surface boundary the isoline of a warped
+// field (terrain-polygons-architecture.md D16), then paints water and shore from
+// the chunk's terrain distance field (D10). Tile geometry never touches the CPU
+// per frame.
 
 #include "world/chunk/Chunk.h"
 #include "world/chunk/ChunkManager.h"
+#include "world/chunk/SurfaceField.h"
 #include "world/camera/WorldCamera.h"
 
 #include <gl/GLBuffer.h>
@@ -16,6 +18,7 @@
 #include <gl/GLVertexArray.h>
 #include <shader/Shader.h>
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -81,17 +84,17 @@ class ChunkRenderer {
 		uint64_t lastAccessFrame = 0;
 	};
 
-	// LRU cache: 512x512 RGBA32UI = 4 MB tile data per chunk, plus the distance
-	// field (0 for a dry chunk, a few MB on a shore)
+	// LRU cache: 518x518 RG8UI = 524 KB of render tiles per chunk, plus the
+	// distance field (0 for a dry chunk, a few MB on a shore)
 	static constexpr size_t kMaxCachedTextures = 32;
 	static constexpr size_t kEvictionBatchSize = 8;
-	static constexpr size_t kTileDataBytes = static_cast<size_t>(kChunkSize) * kChunkSize * sizeof(TileRenderData);
+	static constexpr size_t kTileDataBytes = static_cast<size_t>(kRenderTilesSide) * kRenderTilesSide * sizeof(TileRenderData);
 
-	// Stale re-uploads (adjacency stitching, a rebuilt ring set) can dirty several
+	// Stale re-uploads (a regenerated chunk, a rebuilt ring set) can dirty several
 	// visible chunks in the same update. The first stale re-upload each frame
 	// always runs; more run only while the frame stays under this many bytes.
 	// A frame of stale data is invisible.
-	static constexpr size_t kStaleReuploadBudgetBytes = kTileDataBytes;
+	static constexpr size_t kStaleReuploadBudgetBytes = 4U << 20U;
 
 	/// Lazily create shader, unit quad, and default textures (requires GL context)
 	bool initGL();
@@ -113,6 +116,11 @@ class ChunkRenderer {
 
 	/// Set every tunable uniform from the Tunables registry (once per frame).
 	void applyTunables() const;
+
+	/// Set the land field's and the land look's uniforms (once per frame): the
+	/// field's tunables through SurfaceFieldParams, so the shader gets the exact
+	/// values an evaluation on the CPU uses, seeded from the world.
+	void applyLandUniforms(uint64_t worldSeed) const;
 
 	float pixelsPerMeterValue = 16.0F;
 	uint32_t lastTiles = 0;
@@ -156,8 +164,30 @@ class ChunkRenderer {
 		int channelFrame = -1;
 		int time = -1;
 		int metersPerPixel = -1;
+		int landWarpFine = -1;
+		int landWarpLow = -1;
+		int landWarpWavelength = -1;
+		int landWarpInvWavelength = -1;
+		int landWarpFineGain = -1;
+		int landWarpSeeds = -1;
+		int landThinFloor = -1;
+		int landThinCeil = -1;
+		int landFringeW = -1;
+		int landRimDark = -1;
+		int landBreakupWavelength = -1;
+		int landBreakupInvWavelength = -1;
+		int landBreakupSeed = -1;
 	};
 	UniformLocations loc;
+
+	/// The land look's per-surface tunables (terrain/land/fringe/*, rimDark/*), set
+	/// as uniform arrays; its scalars ride tunableUniforms.
+	struct LandLookTunables {
+		std::array<const float*, kSurfaceCount> fringeW{};
+		std::array<const float*, kSurfaceCount> rimDark{};
+		const float* breakupWavelength = nullptr;
+	};
+	LandLookTunables landLook;
 
 	/// A tunable's uniform: its location and the registry storage it reads.
 	struct TunableUniform {
