@@ -879,7 +879,7 @@ TEST_F(NavFloraTest, Area_BorderEqualsAreaBounds) {
 // includeFlora=false omits tree/rock entity obstacles (the terrain-only placement mesh): the same
 // area that emits flora rings by default emits none when flora is excluded, while the walkable border
 // ring is still produced. This is the seam NavigationSystem::isAreaBuildable builds on so a footprint
-// over clearable entities reads as buildable while geography and walls still block.
+// over clearable entities reads as buildable while water and off-mesh gaps block.
 TEST_F(NavFloraTest, Area_ExcludesFloraWhenNotRequested) {
 	AssetRegistry&	reg = AssetRegistry::Get();
 	AssetDefinition tree;
