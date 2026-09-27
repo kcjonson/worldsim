@@ -1099,7 +1099,10 @@ pacer caps the game at 120 fps (8.33 ms) and has no switch, so GPU cost comes fr
 queries: `/api/metrics` reports `gpuRenderMs` (the scene) and `tileGpuMs` (the ground and
 water pass), and `scripts/perf-capture.ps1` records both. The before/after capture pair is in
 `perf-results/capture-2026-09-26-wor463-*.json`; "before" is main at 9153fc44, the last
-commit before the shader work (WOR-460), with the same GPU timers.
+commit before the shader work (WOR-460), with the same GPU timers. That pair predates the
+script's default bump to nine and was taken with 7 idle samples per scenario (25 for the
+scroll scenarios, unchanged); the Idle rows in the frame table below come from it, not from a
+nine-sample run.
 
 **The tile pass (land and water), GPU ms.** Budget: under 1.5 ms at every zoom. It holds.
 

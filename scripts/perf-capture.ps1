@@ -30,7 +30,7 @@ function Get-Median {
 }
 
 function Sample-Scenario {
-    param([string]$Name, [int]$Samples = 7, [int]$IntervalMs = 600)
+    param([string]$Name, [int]$Samples = 9, [int]$IntervalMs = 600)
     $rows = @()
     foreach ($i in 1..$Samples) {
         Start-Sleep -Milliseconds $IntervalMs
