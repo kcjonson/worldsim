@@ -31,12 +31,14 @@
 namespace engine::assets {
 
 	/// Snapshot of chunk data for thread-safe async processing, so async tasks
-	/// don't access the Chunk (it may unload first): biomes by tile; the render
+	/// don't access the Chunk (it may unload first): the seed of the world the
+	/// chunk belongs to, which placement is rolled from; biomes by tile; the render
 	/// tiles and parameters the land field reads (SurfaceField, D16), the
 	/// parameters as the game thread's tunables hold them; the terrain polygons
 	/// that say where water is (D1), shared rather than copied.
 	struct ChunkDataSnapshot {
 		world::ChunkCoordinate							   coord;
+		uint64_t										   worldSeed = 0;
 		std::vector<world::Biome>						   biomes;
 		std::vector<world::TileRenderData>				   renderTiles;
 		world::SurfaceFieldParams						   landParams;
@@ -47,6 +49,7 @@ namespace engine::assets {
 	inline ChunkDataSnapshot captureChunkData(const world::Chunk* chunk) {
 		ChunkDataSnapshot snapshot;
 		snapshot.coord = chunk->coordinate();
+		snapshot.worldSeed = chunk->worldSeed();
 
 		const size_t tileCount = world::kChunkSize * world::kChunkSize;
 		snapshot.biomes.reserve(tileCount);
@@ -59,7 +62,7 @@ namespace engine::assets {
 
 		const world::TileRenderData* renderTiles = chunk->renderData();
 		snapshot.renderTiles.assign(renderTiles, renderTiles + static_cast<size_t>(world::kRenderTilesSide) * world::kRenderTilesSide);
-		snapshot.landParams = world::SurfaceFieldTunables::get().params(chunk->worldSeed());
+		snapshot.landParams = world::SurfaceFieldTunables::get().params(snapshot.worldSeed);
 		snapshot.terrainPolygons = chunk->sharedTerrainPolygons();
 		return snapshot;
 	}
@@ -74,13 +77,13 @@ namespace engine::assets {
 	/// Handles launching, polling, and integrating async computation results.
 	class AsyncChunkProcessor {
 	  public:
-		/// Create processor with references to placement system
+		/// Create processor with references to placement system. Placement is rolled
+		/// from each chunk's own world seed (Chunk::worldSeed), so a chunk is laid out
+		/// the same whichever scene, and whichever load, places it.
 		/// @param executor PlacementExecutor for entity computation
-		/// @param worldSeed World seed for deterministic placement
 		/// @param processedChunks Set to track which chunks have been processed
-		AsyncChunkProcessor(PlacementExecutor& executor, uint64_t worldSeed, std::unordered_set<world::ChunkCoordinate>& processedChunks)
+		AsyncChunkProcessor(PlacementExecutor& executor, std::unordered_set<world::ChunkCoordinate>& processedChunks)
 			: m_executor(executor),
-			  m_worldSeed(worldSeed),
 			  m_processedChunks(processedChunks) {}
 
 		/// Launch an async task for a single chunk
@@ -107,16 +110,15 @@ namespace engine::assets {
 			auto chunkData = captureChunkData(chunk);
 
 			// Capture by value for the async lambda
-			auto*	 executor = &m_executor;
-			uint64_t seed = m_worldSeed;
+			auto* executor = &m_executor;
 
-			auto future = std::async(std::launch::async, [executor, seed, chunkData = std::move(chunkData)]() {
+			auto future = std::async(std::launch::async, [executor, chunkData = std::move(chunkData)]() {
 				const world::TerrainPolygonQuery water(*chunkData.terrainPolygons);
 				const world::RenderTileView		 land = world::chunkRenderTiles(chunkData.coord, chunkData.renderTiles);
 
 				ChunkPlacementContext ctx;
 				ctx.coord = chunkData.coord;
-				ctx.worldSeed = seed;
+				ctx.worldSeed = chunkData.worldSeed;
 				ctx.getBiome = [&chunkData](uint16_t x, uint16_t y) {
 					return chunkData.biomes[y * world::kChunkSize + x];
 				};
@@ -233,7 +235,6 @@ namespace engine::assets {
 
 	  private:
 		PlacementExecutor&							m_executor;
-		uint64_t									m_worldSeed;
 		std::unordered_set<world::ChunkCoordinate>& m_processedChunks;
 
 		// Async state

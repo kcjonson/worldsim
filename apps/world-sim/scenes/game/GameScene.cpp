@@ -167,8 +167,7 @@ namespace {
 			}
 
 			// Create async processor for runtime chunk streaming
-			m_asyncProcessor =
-				std::make_unique<engine::assets::AsyncChunkProcessor>(*m_placementExecutor, kDefaultWorldSeed, m_processedChunks);
+			m_asyncProcessor = std::make_unique<engine::assets::AsyncChunkProcessor>(*m_placementExecutor, m_processedChunks);
 
 			// Create unified game UI (contains overlay and info panel)
 			// Note: Callbacks for placement/selection are set up after systems are created below

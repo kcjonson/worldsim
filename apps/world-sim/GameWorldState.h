@@ -35,8 +35,6 @@ namespace world_sim {
 		/// Tracks which chunks have completed entity placement
 		std::unordered_set<engine::world::ChunkCoordinate> processedChunks;
 
-		uint64_t worldSeed = 0;
-
 		/// The generated planet for this session. Forwarded from GameStartConfig so
 		/// GameScene can pass it to DevCommandHandler for /api/state?what=landing.
 		/// Null when GameScene falls back to mock-world mode (no planet available).
