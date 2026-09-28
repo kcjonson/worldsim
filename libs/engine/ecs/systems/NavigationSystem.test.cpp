@@ -30,6 +30,7 @@
 #include <world/chunk/ChunkSampleResult.h>
 #include <world/chunk/IWorldSampler.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -184,6 +185,24 @@ namespace {
 					engine::world::BiomeWeights::single(engine::world::Biome::TemperateGrassland);
 				// Tiles [32,48) -> sector (2,2): one 16 m square of walkable land at ~(40,40).
 				r.sectorGrid[static_cast<size_t>(2 * engine::world::kSectorGridSize + 2)] = land;
+			}
+			return r;
+		}
+		[[nodiscard]] float	   sampleElevation(engine::world::WorldPosition) const override { return 1.0F; }
+		[[nodiscard]] uint64_t getWorldSeed() const override { return 7u; }
+	};
+
+	// All land but one pond centred on the chunk corner (0, 0), so it spans the four
+	// chunks around it. Each chunk clips its navRing piece to its own square, and the
+	// pieces meet at the corner: with only the diagonal chunks (0,0) and (-1,-1)
+	// generated, the region's water is two pieces touching at one point.
+	class CornerPondSampler : public engine::world::IWorldSampler {
+	  public:
+		[[nodiscard]] engine::world::ChunkSampleResult sampleChunk(engine::world::ChunkCoordinate coord) const override {
+			engine::world::ChunkSampleResult r = engine::world::makeUniformChunkSampleResult(
+				engine::world::BiomeWeights::single(engine::world::Biome::TemperateGrassland), 1.0F);
+			if (coord.x >= -1 && coord.x <= 0 && coord.y >= -1 && coord.y <= 0) {
+				r.pondBlobs.push_back({.cx = 0.0, .cy = 0.0, .radius = 10.0F, .phaseA = 0.7F, .phaseB = 2.1F, .depth = 120});
 			}
 			return r;
 		}
@@ -1107,6 +1126,53 @@ TEST_F(NavigationSystemTest, IsValidPositionTrueOnWalkableFaceFalseOnWaterAndOff
 	const glm::vec2 offMesh{500.0F, 500.0F};
 	ASSERT_FALSE(sys.inSimArea(offMesh)) << "the far point must be outside every region";
 	EXPECT_FALSE(sys.isValidPosition(offMesh)) << "a point off every region must be invalid";
+}
+
+// Chunks stream in one at a time, so a region can build while only the diagonal chunks
+// around a corner are ready. Water crossing that corner then arrives as two clipped
+// pieces touching at the corner alone, and the land around them has a pinched boundary.
+// That land must still be walkable (WOR-493: the whole region read unwalkable).
+TEST_F(NavigationSystemTest, LandAroundWaterPinchedAtAChunkCornerIsValid) {
+	auto chunks = std::make_unique<engine::world::ChunkManager>(std::make_unique<CornerPondSampler>());
+	chunks->setLoadRadius(0);
+	chunks->setUnloadRadius(8);
+	chunks->update({100.0F, 100.0F});	// chunk (0, 0)
+	chunks->update({-100.0F, -100.0F}); // chunk (-1, -1)
+	chunks->finishPendingGeneration();
+	// The sim region's size is capped by the load radius; nothing calls update() again,
+	// so raising it loads no more chunks.
+	chunks->setLoadRadius(2);
+	ASSERT_EQ(chunks->getChunk({0, -1}), nullptr);
+	ASSERT_EQ(chunks->getChunk({-1, 0}), nullptr);
+
+	// The premise: each diagonal chunk's pond piece ends at the shared corner.
+	for (const ChunkCoordinate coord : {ChunkCoordinate{0, 0}, ChunkCoordinate{-1, -1}}) {
+		const engine::world::Chunk* chunk = chunks->getChunk(coord);
+		ASSERT_NE(chunk, nullptr);
+		ASSERT_TRUE(chunk->isReady());
+		bool touchesCorner = false;
+		for (const engine::world::TerrainRing& ring : chunk->terrainPolygons().navRings) {
+			touchesCorner = touchesCorner || (ring.blocksMovement &&
+											  std::find(ring.ring.begin(), ring.ring.end(), Vec2i64{0, 0}) != ring.ring.end());
+		}
+		ASSERT_TRUE(touchesCorner) << "chunk (" << coord.x << ", " << coord.y << ") has no water piece ending at (0, 0)";
+	}
+
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(chunks.get());
+	pushArea(sys, {5330, 4200}, 64000);
+	sys.setConstructionWorld(&cw);
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+
+	for (const glm::vec2 land : {glm::vec2{15.0F, 15.0F}, glm::vec2{-15.0F, -15.0F}, glm::vec2{3.0F, -3.0F}, glm::vec2{-3.0F, 3.0F},
+								 glm::vec2{40.0F, 30.0F}, glm::vec2{-30.0F, -20.0F}}) {
+		EXPECT_TRUE(sys.isValidPosition(land)) << "land at (" << land.x << ", " << land.y << ") must be a valid position";
+	}
+	for (const glm::vec2 water : {glm::vec2{3.0F, 3.0F}, glm::vec2{-3.0F, -3.0F}}) {
+		EXPECT_FALSE(sys.isValidPosition(water)) << "the pond at (" << water.x << ", " << water.y << ") must not be";
+	}
 }
 
 // The landing snap: before any sim region or construction world exists, a drop point in
