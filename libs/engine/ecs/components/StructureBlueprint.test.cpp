@@ -190,3 +190,46 @@ TEST(StructureBlueprintTests, DefaultDemolishingIsFalse) {
 	StructureBlueprint bp;
 	EXPECT_FALSE(bp.demolishing);
 }
+
+// ============================================================================
+// shapeEditable
+// ============================================================================
+
+TEST(StructureBlueprintTests, ShapeEditableWhenNothingDeliveredOrWorked) {
+	StructureBlueprint bp;
+	bp.required = {{"Wood", 10}};
+	EXPECT_TRUE(bp.shapeEditable());
+	bp.phase = StructureBlueprint::BuildPhase::AwaitingMaterials;
+	EXPECT_TRUE(bp.shapeEditable());
+}
+
+TEST(StructureBlueprintTests, ShapeEditableZeroDeliveryEntryStillEditable) {
+	StructureBlueprint bp;
+	bp.required = {{"Wood", 10}};
+	bp.delivered = {{"Wood", 0}};
+	EXPECT_TRUE(bp.shapeEditable());
+}
+
+TEST(StructureBlueprintTests, ShapeNotEditableOnceMaterialDelivered) {
+	StructureBlueprint bp;
+	bp.required = {{"Wood", 10}};
+	bp.delivered = {{"Wood", 1}};
+	EXPECT_FALSE(bp.shapeEditable());
+}
+
+TEST(StructureBlueprintTests, ShapeNotEditableOnceWorked) {
+	StructureBlueprint bp;
+	bp.workTotal = 100.0F;
+	bp.workDone = 0.5F;
+	EXPECT_FALSE(bp.shapeEditable());
+}
+
+TEST(StructureBlueprintTests, ShapeNotEditableWhileDemolishingOrComplete) {
+	StructureBlueprint demolishing;
+	demolishing.demolishing = true;
+	EXPECT_FALSE(demolishing.shapeEditable());
+
+	StructureBlueprint complete;
+	complete.phase = StructureBlueprint::BuildPhase::Complete;
+	EXPECT_FALSE(complete.shapeEditable());
+}

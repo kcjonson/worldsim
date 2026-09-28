@@ -240,8 +240,9 @@ namespace ecs {
 		void dumpDeliveredToGround(EntityID blueprintEntity, StructureBlueprint& blueprint);
 
 		/// Cascade gate: true once a demolishing structure's dependents are gone, so its
-		/// Deconstruct goal may go Available. A foundation waits until no wall is hosted on it; a
-		/// wall waits until no opening sits on it; an opening has no dependents (always cleared).
+		/// Deconstruct goal may go Available. A foundation waits until no wall is hosted on it and
+		/// no extension waits to merge into it; a wall waits until no opening sits on it; an
+		/// opening has no dependents (always cleared).
 		/// True (ungated) when there is no ConstructionWorld wired (headless contexts).
 		[[nodiscard]] bool deconstructDependentsCleared(const Structure& structure) const;
 

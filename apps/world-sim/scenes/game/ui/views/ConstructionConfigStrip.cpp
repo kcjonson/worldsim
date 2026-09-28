@@ -24,11 +24,12 @@ namespace world_sim {
 	}
 
 	void ConstructionConfigStrip::setStatus(const DrawingStatus& status) {
-		const bool wallChanged = status_.wall != status.wall;
+		const bool modeChanged = status_.wall != status.wall || status_.foundationEdit != status.foundationEdit;
 		status_ = status;
 		visible = status.active;
-		// Preset cards only exist in wall mode; reposition when the mode flips.
-		if (wallChanged) {
+		// Preset cards only exist in wall mode and material cards drop out while
+		// editing a foundation; reposition when the mode flips.
+		if (modeChanged) {
 			positionCards();
 		}
 	}
@@ -52,7 +53,10 @@ namespace world_sim {
 		presetRects_.clear();
 		float		x = stripBounds_.x + kPadding;
 		const float y = stripBounds_.y + (kStripHeight - kCardHeight) * 0.5F;
-		for (std::size_t i = 0; i < materials_.size(); ++i) {
+		// Add / Subtract uses the edited foundation's material (Add requires the same
+		// material), so there is nothing to pick.
+		const std::size_t materialCards = status_.foundationEdit ? 0 : materials_.size();
+		for (std::size_t i = 0; i < materialCards; ++i) {
 			cardRects_.push_back({x, y, kCardWidth, kCardHeight});
 			x += kCardWidth + kCardSpacing;
 		}
@@ -180,12 +184,37 @@ namespace world_sim {
 		}
 
 		// Readouts, to the right of whichever set of cards is last.
-		float readoutX = stripBounds_.x + kPadding + static_cast<float>(materials_.size()) * (kCardWidth + kCardSpacing) + 8.0F;
+		float readoutX = stripBounds_.x + kPadding + static_cast<float>(cardRects_.size()) * (kCardWidth + kCardSpacing) + 8.0F;
 		if (status_.wall && !presetRects_.empty()) {
 			readoutX = presetRects_.back().x + kPresetCardWidth + 16.0F;
 		}
+		float messageOffset = 180.0F;
 
-		if (status_.opening) {
+		if (status_.foundationEdit) {
+			// The mode and the locked material, then the outline the edit would leave
+			// and how much it changes the foundation by.
+			Renderer::Primitives::drawText({
+				.text = status_.editLabel + " (" + status_.material + ")",
+				.position = {readoutX, stripBounds_.y + 8.0F},
+				.scale = 0.8F,
+				.color = UI::text_bright,
+			});
+			char areaBuf[64];
+			std::snprintf(
+				areaBuf,
+				sizeof(areaBuf),
+				"Area: %.1f m\xC2\xB2 (%+.1f)",
+				static_cast<double>(status_.areaSquareMeters),
+				static_cast<double>(status_.areaDeltaSquareMeters)
+			);
+			Renderer::Primitives::drawText({
+				.text = areaBuf,
+				.position = {readoutX, stripBounds_.y + 26.0F},
+				.scale = 0.8F,
+				.color = UI::text,
+			});
+			messageOffset = 280.0F;
+		} else if (status_.opening) {
 			// Opening mode: the type (Door/Window) is chosen from the Build menu (no
 			// in-strip selector in v1), so the strip just displays it plus the clear
 			// width. The validity line below carries the snap / placement feedback.
@@ -278,6 +307,9 @@ namespace world_sim {
 				message = status_.message;
 			}
 		} else {
+			if (status_.foundationEdit && status_.pointCount == 0) {
+				message = "Draw a region across the foundation edge";
+			}
 			if (status_.pointCount > 0 && status_.pointCount < 3) {
 				msgColor = UI::status_warn;
 				message = "Keep placing points";
@@ -293,7 +325,7 @@ namespace world_sim {
 
 		Renderer::Primitives::drawText({
 			.text = message,
-			.position = {readoutX + 180.0F, stripBounds_.y + 18.0F},
+			.position = {readoutX + messageOffset, stripBounds_.y + 18.0F},
 			.scale = 0.85F,
 			.color = msgColor,
 		});

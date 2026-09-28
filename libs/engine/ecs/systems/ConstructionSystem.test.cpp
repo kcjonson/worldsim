@@ -837,3 +837,29 @@ TEST_F(OpeningHostGateTest, DemolishingWallGatedWhileOpeningStands) {
 	ASSERT_NE(goal2, nullptr);
 	EXPECT_EQ(goal2->status, GoalStatus::Available) << "no openings left -> wall Deconstruct Available";
 }
+
+TEST_F(OpeningHostGateTest, DemolishingFoundationGatedWhileExtensionPending) {
+	geometry::Ring	 ring{{0, 0}, {4000, 0}, {4000, 4000}, {0, 4000}};
+	cw::CommitResult target = topology.commitFoundation(std::move(ring), "wood");
+	ASSERT_TRUE(target.ok());
+	ASSERT_TRUE(topology.setState(target.id, cw::FoundationState::Built));
+	cw::CommitResult extension = topology.commitExtension(target.id, {{4000, 0}, {7000, 0}, {7000, 4000}, {4000, 4000}});
+	ASSERT_TRUE(extension.ok());
+
+	auto  targetBp = createBuiltDemolishing(StructureKind::Foundation, target.id);
+	auto& registry = GoalTaskRegistry::Get();
+
+	refresh();
+
+	const auto* goal = registry.getGoalByDestination(targetBp);
+	ASSERT_NE(goal, nullptr);
+	EXPECT_EQ(goal->type, TaskType::Deconstruct);
+	EXPECT_EQ(goal->status, GoalStatus::Blocked) << "target must wait for its pending extension";
+
+	topology.removeFoundation(extension.id);
+	refresh();
+
+	const auto* goal2 = registry.getGoalByDestination(targetBp);
+	ASSERT_NE(goal2, nullptr);
+	EXPECT_EQ(goal2->status, GoalStatus::Available) << "extension gone -> target Deconstruct Available";
+}

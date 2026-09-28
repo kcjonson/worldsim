@@ -68,7 +68,7 @@ namespace engine::construction {
 
 	} // namespace
 
-	CommitStatus ConstructionWorld::validateStructure(geometry::Ring& ring, FoundationId ignoreId) const {
+	CommitStatus ConstructionWorld::validateStructure(geometry::Ring& ring, FoundationId ignoreA, FoundationId ignoreB) const {
 		if (ring.size() < 3) {
 			return CommitStatus::TooFewVertices;
 		}
@@ -83,7 +83,7 @@ namespace engine::construction {
 		geometry::ensureCounterClockwise(ring);
 
 		for (const Foundation& other : foundations_) {
-			if (other.id == ignoreId) {
+			if (other.id == ignoreA || other.id == ignoreB) {
 				continue;
 			}
 			if (geometry::ringsInteriorOverlap(ring, other.ring)) {
@@ -166,12 +166,105 @@ namespace engine::construction {
 		return CommitStatus::Ok;
 	}
 
+	CommitResult ConstructionWorld::commitExtension(FoundationId target, geometry::Ring ring) {
+		const Foundation* host = find(target);
+		if (host == nullptr) {
+			return {CommitStatus::UnknownFoundation, kInvalidFoundation};
+		}
+		if (host->state != FoundationState::Built) {
+			return {CommitStatus::TargetNotBuilt, kInvalidFoundation};
+		}
+		if (pendingExtensionOf(target) != kInvalidFoundation) {
+			return {CommitStatus::ExtensionPending, kInvalidFoundation};
+		}
+
+		const CommitStatus status = validateStructure(ring, target);
+		if (status != CommitStatus::Ok) {
+			return {status, kInvalidFoundation};
+		}
+		geometry::BooleanResult merged = geometry::unionRings(host->ring, ring);
+		if (!merged.ok()) {
+			return {translateBooleanStatus(merged.status), kInvalidFoundation};
+		}
+
+		Foundation extension;
+		extension.id = nextFoundationId_++;
+		extension.ring = std::move(ring);
+		extension.material = host->material;
+		extension.state = FoundationState::Blueprint;
+		extension.mergeTarget = target;
+
+		const FoundationId id = extension.id;
+		foundations_.push_back(std::move(extension));
+		++version_;
+		return {CommitStatus::Ok, id};
+	}
+
+	CommitStatus ConstructionWorld::mergeExtension(FoundationId extensionId) {
+		const Foundation* extension = find(extensionId);
+		if (extension == nullptr) {
+			return CommitStatus::UnknownFoundation;
+		}
+		if (extension->mergeTarget == kInvalidFoundation) {
+			return CommitStatus::NotAnExtension;
+		}
+		if (extension->state != FoundationState::Built) {
+			return CommitStatus::ExtensionNotBuilt;
+		}
+		Foundation* target = find(extension->mergeTarget);
+		if (target == nullptr) {
+			return CommitStatus::UnknownFoundation;
+		}
+		if (target->state != FoundationState::Built) {
+			return CommitStatus::TargetNotBuilt;
+		}
+
+		geometry::BooleanResult merged = geometry::unionRings(target->ring, extension->ring);
+		if (!merged.ok()) {
+			return translateBooleanStatus(merged.status);
+		}
+		const CommitStatus status = validateStructure(merged.ring, target->id, extensionId);
+		if (status != CommitStatus::Ok) {
+			return status;
+		}
+
+		const FoundationId targetId = target->id;
+		target->ring = std::move(merged.ring);
+		for (WallSegment& segment : segments_) {
+			if (segment.hostFoundation == extensionId) {
+				segment.hostFoundation = targetId;
+			}
+		}
+		foundations_.erase(
+			std::find_if(foundations_.begin(), foundations_.end(), [extensionId](const Foundation& f) { return f.id == extensionId; })
+		);
+		++version_;
+		return CommitStatus::Ok;
+	}
+
+	FoundationId ConstructionWorld::pendingExtensionOf(FoundationId target) const {
+		if (target == kInvalidFoundation) {
+			return kInvalidFoundation;
+		}
+		for (const Foundation& f : foundations_) {
+			if (f.mergeTarget == target) {
+				return f.id;
+			}
+		}
+		return kInvalidFoundation;
+	}
+
 	bool ConstructionWorld::removeFoundation(FoundationId id) {
 		const auto it = std::find_if(foundations_.begin(), foundations_.end(), [id](const Foundation& f) { return f.id == id; });
 		if (it == foundations_.end()) {
 			return false;
 		}
 		foundations_.erase(it);
+		for (Foundation& f : foundations_) {
+			if (f.mergeTarget == id) {
+				f.mergeTarget = kInvalidFoundation;
+			}
+		}
 		++version_;
 		return true;
 	}

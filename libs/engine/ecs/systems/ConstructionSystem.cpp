@@ -569,10 +569,12 @@ namespace ecs {
 		}
 		switch (structure.kind) {
 			case StructureKind::Foundation:
-				// A foundation may not deconstruct while any wall still stands on it.
-				// foundationHasWalls is the allocation-free early-exit query (this runs
-				// every tick for each demolishing foundation).
-				return !m_constructionWorld->foundationHasWalls(structure.graphId);
+				// A foundation may not deconstruct while any wall still stands on it, nor
+				// while an extension waits to merge into it (the extension goes first, so
+				// it never outlives its target). foundationHasWalls is the allocation-free
+				// early-exit query (this runs every tick for each demolishing foundation).
+				return !m_constructionWorld->foundationHasWalls(structure.graphId) &&
+					   m_constructionWorld->pendingExtensionOf(structure.graphId) == engine::construction::kInvalidFoundation;
 			case StructureKind::Wall: {
 				// A wall may not deconstruct while any opening sits on it.
 				for (const auto& opening : m_constructionWorld->openings()) {

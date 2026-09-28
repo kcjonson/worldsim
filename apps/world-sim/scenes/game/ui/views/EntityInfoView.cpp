@@ -182,6 +182,8 @@ namespace world_sim {
 		  queryResourcesCallback(args.queryResources),
 		  onDemolishFoundationCallback(args.onDemolishFoundation),
 		  onDemolishBuildingCallback(args.onDemolishBuilding),
+		  onAddToFoundationCallback(args.onAddToFoundation),
+		  onSubtractFromFoundationCallback(args.onSubtractFromFoundation),
 		  onDemolishWallSegmentCallback(args.onDemolishWallSegment),
 		  onDemolishOpeningCallback(args.onDemolishOpening),
 		  m_id(args.id),
@@ -474,6 +476,8 @@ namespace world_sim {
 			.queryResources = queryResourcesCallback,
 			.onDemolishFoundation = onDemolishFoundationCallback,
 			.onDemolishBuilding = onDemolishBuildingCallback,
+			.onAddToFoundation = onAddToFoundationCallback,
+			.onSubtractFromFoundation = onSubtractFromFoundationCallback,
 			.onDemolishWallSegment = onDemolishWallSegmentCallback,
 			.onDemolishOpening = onDemolishOpeningCallback,
 		};

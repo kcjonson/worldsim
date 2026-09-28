@@ -44,6 +44,17 @@ TEST(TessellatorSweep, ConcaveLShape) {
 	EXPECT_NEAR(meshArea(mesh), 6400.0, 1.0); // 100*40 + 40*60
 }
 
+// A merged foundation outline in world meters: a 6x6 square with a 3x4 tab added
+// on one side (foundation Add). A vertex-0 fan paints outside it; the tessellation
+// must cover exactly its 48 m^2.
+TEST(TessellatorSweep, FoundationTabInWorldMeters) {
+	Tessellator		t;
+	VectorPath		path = makePath({{12, 0}, {18, 0}, {18, 1}, {21, 1}, {21, 5}, {18, 5}, {18, 6}, {12, 6}});
+	TessellatedMesh mesh;
+	ASSERT_TRUE(t.Tessellate(path, mesh));
+	EXPECT_NEAR(meshArea(mesh), 48.0, 1e-3);
+}
+
 // Concave 5-point star (non-self-intersecting). Area equals the polygon's shoelace area.
 TEST(TessellatorSweep, ConcaveStar) {
 	Tessellator			   t;

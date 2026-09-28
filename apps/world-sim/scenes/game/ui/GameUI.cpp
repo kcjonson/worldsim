@@ -93,6 +93,8 @@ namespace world_sim {
 			.queryResources = args.queryResources,
 			.onDemolishFoundation = args.onDemolishFoundation,
 			.onDemolishBuilding = args.onDemolishBuilding,
+			.onAddToFoundation = args.onAddToFoundation,
+			.onSubtractFromFoundation = args.onSubtractFromFoundation,
 			.onDemolishWallSegment = args.onDemolishWallSegment,
 			.onDemolishOpening = args.onDemolishOpening
 		});

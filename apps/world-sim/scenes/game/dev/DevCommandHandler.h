@@ -76,8 +76,11 @@ namespace world_sim {
 	  public:
 		explicit DevCommandHandler(DevCommandContext context) : m_ctx(std::move(context)) {}
 
-		/// Interpret one queued DevCommand. Unknown verbs are logged and ignored.
-		void handle(const Foundation::DevCommand& cmd);
+		/// Interpret one queued DevCommand and return its JSON result (the /api/dev
+		/// response body). Most verbs answer {"status":"ok","verb":...}; verbs with an
+		/// outcome to report (foundation-edit) answer with it. Unknown verbs are logged
+		/// and answered with status "error".
+		std::string handle(const Foundation::DevCommand& cmd);
 
 		/// Produce the JSON for /api/state?what=. Unknown views fall back to the summary.
 		std::string serializeState(const std::string& what);
@@ -95,7 +98,11 @@ namespace world_sim {
 		void devKill(const Foundation::DevCommand& cmd);
 		void devComplete(const Foundation::DevCommand& cmd);
 		void devFoundation(const Foundation::DevCommand& cmd);
-		void devWalls(const Foundation::DevCommand& cmd);
+		// foundation-edit?id=<foundationId>&mode=add|subtract&pts=x0,y0;x1,y1;... runs the
+		// Add / Subtract tool's own validate + apply path; answers status ok|rejected,
+		// reason, target, extension (0 unless an Add onto a built foundation), entity, area.
+		std::string devFoundationEdit(const Foundation::DevCommand& cmd);
+		void		devWalls(const Foundation::DevCommand& cmd);
 		void devOpening(const Foundation::DevCommand& cmd);
 		void devCraft(const Foundation::DevCommand& cmd);
 		void devStorage(const Foundation::DevCommand& cmd);
@@ -120,14 +127,11 @@ namespace world_sim {
 		// is refused. On rejection logs+toasts and returns false; the caller creates NOTHING.
 		bool requireWalkableChain(const std::vector<Foundation::Vec2>& pts, const char* verb);
 
-		// --- entity lookup / spawn helpers ---
+		// --- entity lookup helpers ---
 		ecs::EntityID	nearestColonist(Foundation::Vec2 at);
 		ecs::Inventory* nearestColonistInventory(Foundation::Vec2 at);
 		ecs::Inventory* nearestStorageInventory(Foundation::Vec2 at);
 		ecs::EntityID	nearestStorageEntity(Foundation::Vec2 at);
-		ecs::EntityID	spawnFoundationBlueprintEntity(
-			  engine::construction::FoundationId id, const std::vector<Foundation::Vec2>& pts, const std::string& material
-		  );
 
 		// --- state serialization ---
 		void serializeColonists(std::ostringstream& out);

@@ -19,7 +19,8 @@ The developer client is an external TypeScript/Vite web application that connect
 - **Performance** / **Logs** — read-only, fed by the SSE streams below.
 - **Dev Tools** — the only tab that *sends* rather than streams. It drives the running game with
   one-shot `fetch()` calls: the dev verbs (`GET /api/dev/<verb>` — spawn, colonist, give, need,
-  time, teleport, select, kill, complete, freebuild, foundation, walls, opening, and `craft`) and
+  time, teleport, select, kill, complete, freebuild, foundation, foundation-edit, walls, opening, and
+  `craft`; each answers with its JSON result once the game thread ran it) and
   the synchronous world-state readback (`GET /api/state?what=summary|colonists|construction|stations|time`).
   `craft?recipe=<def>&n=<count>&at=<x,y>` validates the recipe against the RecipeRegistry and queues
   N jobs at the nearest crafting station (entity with a WorkQueue) to `at` — the on-demand way to

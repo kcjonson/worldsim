@@ -14,6 +14,7 @@
 #include <primitives/Primitives.h>
 #include <theme/Tokens.h>
 #include <utils/Log.h>
+#include <vector/Tessellator.h>
 
 #include <algorithm>
 #include <array>
@@ -91,6 +92,86 @@ namespace world_sim {
 			return {static_cast<float>(cx / (6.0 * a)), static_cast<float>(cy / (6.0 * a))};
 		}
 
+		std::vector<Foundation::Vec2> dequantizeRing(const geometry::Ring& ring) {
+			std::vector<Foundation::Vec2> pts;
+			pts.reserve(ring.size());
+			for (const auto& v : ring) {
+				pts.push_back(geometry::dequantize(v));
+			}
+			return pts;
+		}
+
+		Foundation::Vec2 ringCentroid(const geometry::Ring& ring) {
+			return polygonCentroid(dequantizeRing(ring));
+		}
+
+		geometry::Ring toRingMm(const std::vector<Foundation::Vec2>& pts) {
+			geometry::Ring ring;
+			ring.reserve(pts.size());
+			for (const auto& p : pts) {
+				ring.push_back(geometry::quantize(p));
+			}
+			return ring;
+		}
+
+		// Area-driven foundation sizing, the one formula for spawn and in-place
+		// resize. Invariant: the manifest defName IS the material name; construction
+		// config keys materials by name and the haul chain resolves items by that
+		// same name, so the two stay aligned by design.
+		struct FoundationSizing {
+			uint32_t requiredQty = 0;
+			float	 workTotal = 0.0F;
+			float	 maxHp = 0.0F;
+		};
+
+		FoundationSizing sizeFoundation(float areaSquareMeters, const std::string& materialName) {
+			FoundationSizing sizing;
+			const auto*		 material = ConstructionRegistry::Get().getMaterial(materialName);
+			if (material == nullptr) {
+				return sizing;
+			}
+			sizing.requiredQty =
+				static_cast<uint32_t>(std::ceil(static_cast<double>(areaSquareMeters) * static_cast<double>(material->costRatePerSquareMeter)));
+			sizing.workTotal = areaSquareMeters * material->workRatePerSquareMeter;
+			sizing.maxHp = areaSquareMeters * material->hp;
+			return sizing;
+		}
+
+		// Fill a screen-space polygon of any simple shape (concave included) through
+		// the renderer tessellator, the same triangulation the committed foundation
+		// cache and the rooms overlay use.
+		void fillPolygon(std::span<const Foundation::Vec2> screen, Foundation::Color color, const char* id, int zIndex) {
+			// Scratch mesh reused across calls (several per visible ring per frame);
+			// drawTriangles copies before returning.
+			static thread_local renderer::TessellatedMesh mesh;
+			renderer::Tessellator						   tessellator;
+			if (!tessellator.Tessellate(renderer::VectorPath{std::vector<Foundation::Vec2>(screen.begin(), screen.end()), true}, mesh) ||
+				mesh.indices.size() < 3) {
+				return;
+			}
+			Renderer::Primitives::drawTriangles({
+				.vertices = mesh.vertices.data(),
+				.indices = mesh.indices.data(),
+				.vertexCount = mesh.vertices.size(),
+				.indexCount = mesh.indices.size(),
+				.color = color,
+				.id = id,
+				.zIndex = zIndex,
+			});
+		}
+
+		// Add `from`'s quantities into `into`, per defName.
+		void addManifest(std::vector<std::pair<std::string, uint32_t>>& into, const std::vector<std::pair<std::string, uint32_t>>& from) {
+			for (const auto& [defName, qty] : from) {
+				auto it = std::find_if(into.begin(), into.end(), [&defName](const auto& entry) { return entry.first == defName; });
+				if (it != into.end()) {
+					it->second += qty;
+				} else {
+					into.emplace_back(defName, qty);
+				}
+			}
+		}
+
 	} // namespace
 
 	DrawingSystem::DrawingSystem(const Args& args)
@@ -108,22 +189,35 @@ namespace world_sim {
 		if (navigation_ == nullptr) {
 			return true;
 		}
-		return (activeTool_ == ToolKind::Foundation) ? navigation_->isPointBuildable({p.x, p.y})
-													 : navigation_->isValidPosition({p.x, p.y});
+		// A Subtract region is a cutter: it may reach over water, it never builds there.
+		// An Add vertex on or inside the target builds nothing new, matching the
+		// commit gate, which checks only the ground the Add adds (buildsOn).
+		if (activeTool_ == ToolKind::FoundationEdit) {
+			if (editMode_ == ec::FoundationEditMode::Subtract) {
+				return true;
+			}
+			const auto* target = constructionWorld_.get(editTarget_);
+			if (target != nullptr && geometry::pointInPolygon(geometry::quantize(p), target->ring) != geometry::PointInPolygon::Outside) {
+				return true;
+			}
+		}
+		return (activeTool_ == ToolKind::Foundation || activeTool_ == ToolKind::FoundationEdit) ? navigation_->isPointBuildable({p.x, p.y})
+																								: navigation_->isValidPosition({p.x, p.y});
+	}
+
+	bool DrawingSystem::footprintBuildable(const std::vector<Foundation::Vec2>& pts) const {
+		return navigation_ == nullptr || navigation_->isAreaBuildable(Foundation::toGlmVec2(pts));
 	}
 
 	bool DrawingSystem::requirePlaceable(const std::vector<Foundation::Vec2>& pts, const char* what) {
-		// Placement gate (the SAME check the /api/dev verbs use). A FOUNDATION may sit over clearable
-		// entities (trees/rocks) -- placing over them spawns clear tasks and the build waits for the
-		// footprint to clear -- so it validates against BUILDABILITY (terrain + geometry, no flora).
-		// Wall conflicts are the validator's job. Walls have no footprint-clearing yet, so they still
-		// require clear on-mesh ground along the chain centerline. One blocked part refuses the whole
-		// placement (commit nothing).
+		// Placement gate (the SAME check the /api/dev verbs use). A FOUNDATION validates against
+		// BUILDABILITY (terrain + geometry, no flora). Walls have no footprint-clearing yet, so they
+		// still require clear on-mesh ground along the chain centerline. One blocked part refuses the
+		// whole placement (commit nothing).
 		if (navigation_ == nullptr) {
 			return true;
 		}
-		const std::vector<glm::vec2> world = Foundation::toGlmVec2(pts);
-		const bool ok = (activeTool_ == ToolKind::Foundation) ? navigation_->isAreaBuildable(world) : navigation_->isPolylineWalkable(world);
+		const bool ok = (activeTool_ == ToolKind::Wall) ? navigation_->isPolylineWalkable(Foundation::toGlmVec2(pts)) : footprintBuildable(pts);
 		if (ok) {
 			return true;
 		}
@@ -181,6 +275,33 @@ namespace world_sim {
 		LOG_INFO(Game, "Opening tool activated (type=%s)", activeOpeningType_.c_str());
 	}
 
+	void DrawingSystem::activateFoundationEditTool(ec::FoundationId target, ec::FoundationEditMode mode) {
+		if (constructionWorld_.get(target) == nullptr) {
+			return;
+		}
+		state_ = DrawingState::Drawing;
+		activeTool_ = ToolKind::FoundationEdit;
+		editTarget_ = target;
+		editMode_ = mode;
+		editPreview_ = {};
+		editPreviewActive_ = false;
+		points_.clear();
+		lastSnap_ = {};
+		lastValidation_ = {};
+		willClose_ = false;
+		cursorOffMesh_ = false;
+		wallHost_ = ec::kInvalidFoundation;
+		if (callbacks_.onToolActive) {
+			callbacks_.onToolActive(true);
+		}
+		LOG_INFO(
+			Game,
+			"Foundation %s tool activated on #%llu",
+			mode == ec::FoundationEditMode::Add ? "Add" : "Subtract",
+			static_cast<unsigned long long>(target)
+		);
+	}
+
 	void DrawingSystem::deactivate() {
 		state_ = DrawingState::Idle;
 		points_.clear();
@@ -191,6 +312,9 @@ namespace world_sim {
 		wallHost_ = ec::kInvalidFoundation;
 		openingSnap_ = {};
 		openingValidation_ = {};
+		editTarget_ = ec::kInvalidFoundation;
+		editPreview_ = {};
+		editPreviewActive_ = false;
 		if (callbacks_.onToolActive) {
 			callbacks_.onToolActive(false);
 		}
@@ -214,6 +338,11 @@ namespace world_sim {
 			handleOpeningMove({world.x, world.y});
 			return;
 		}
+		const bool editing = activeTool_ == ToolKind::FoundationEdit;
+		if (editing && constructionWorld_.get(editTarget_) == nullptr) {
+			deactivate(); // the target was demolished or merged away under the tool
+			return;
+		}
 
 		auto&		   registry = ConstructionRegistry::Get();
 		ec::SnapEngine snap(registry.snapping(), constructionWorld_);
@@ -222,7 +351,7 @@ namespace world_sim {
 		cursor_ = lastSnap_.point;
 
 		ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
-		lastValidation_ = validator.validatePoint(points_, cursor_);
+		lastValidation_ = editing ? validator.validateEditPoint(points_, cursor_) : validator.validatePoint(points_, cursor_);
 
 		// Live nav feedback: is the snapped cursor itself off the walkable mesh? Drives the
 		// red preview (see render). The commit gate re-checks the whole footprint regardless.
@@ -236,10 +365,13 @@ namespace world_sim {
 		if (points_.size() >= 3) {
 			if (lastSnap_.closesShape()) {
 				willClose_ = true;
-			} else if (!lastValidation_.ok() && nearStartVertex(cursor_, closeRescueRadiusMeters()) &&
-					   validator.validateRing(points_).ok()) {
+			} else if (!lastValidation_.ok() && nearStartVertex(cursor_, closeRescueRadiusMeters()) && validateClosed(points_).ok()) {
 				willClose_ = true;
 			}
+		}
+
+		if (editing) {
+			refreshEditPreview();
 		}
 	}
 
@@ -266,7 +398,11 @@ namespace world_sim {
 		// handleMouseMove (called above) and already requires a valid closed ring for the
 		// rescue case, so this never closes into an invalid foundation.
 		if (points_.size() >= 3 && willClose_) {
-			commitShape();
+			if (activeTool_ == ToolKind::FoundationEdit) {
+				commitFoundationEdit();
+			} else {
+				commitShape();
+			}
 			return true;
 		}
 
@@ -329,6 +465,7 @@ namespace world_sim {
 			// the tool (matches the design: a second Esc, now empty, exits).
 			points_.clear();
 			lastValidation_ = {};
+			editPreviewActive_ = false;
 			return true;
 		}
 		// Nothing in progress: exit the tool.
@@ -359,6 +496,7 @@ namespace world_sim {
 		lastValidation_ = {};
 		willClose_ = false;	   // recomputed on the next move; don't leave a stale closing halo
 		cursorOffMesh_ = false; // recomputed on the next move
+		editPreviewActive_ = false;
 		if (points_.empty()) {
 			// The chain's host is determined by its first point; once empty, the next
 			// first click re-picks it.
@@ -442,66 +580,241 @@ namespace world_sim {
 
 	ecs::EntityID DrawingSystem::spawnBlueprintEntity(ec::FoundationId id) {
 		if (ecsWorld_ == nullptr) {
-			return ecs::EntityID{0};
+			return ecs::kInvalidEntity;
 		}
 
 		const auto* foundation = constructionWorld_.get(id);
 		if (foundation == nullptr) {
-			return ecs::EntityID{0};
+			return ecs::kInvalidEntity;
 		}
 
-		const float area = constructionWorld_.areaSquareMeters(id);
-
-		// Material-driven manifest, work, and HP. Invariant: the manifest defName IS
-		// the material name; construction config keys materials by name and the haul
-		// chain resolves items by that same name, so the two stay aligned by design.
-		const auto& registry = ConstructionRegistry::Get();
-		const auto* material = registry.getMaterial(activeMaterial_);
-		float		costRate = 0.0F;
-		float		workRate = 0.0F;
-		float		hpRate = 0.0F;
-		if (material != nullptr) {
-			costRate = material->costRatePerSquareMeter;
-			workRate = material->workRatePerSquareMeter;
-			hpRate = material->hp;
-		}
+		const float			   area = constructionWorld_.areaSquareMeters(id);
+		const FoundationSizing sizing = sizeFoundation(area, foundation->material);
 
 		auto entity = ecsWorld_->createEntity();
 
 		// Position at the polygon centroid (world meters). Centroid keeps the
 		// entity's transform inside its own footprint for concave shapes too.
-		const Foundation::Vec2 centroid = polygonCentroid(points_);
+		const Foundation::Vec2 centroid = ringCentroid(foundation->ring);
 		ecsWorld_->addComponent<ecs::Position>(entity, ecs::Position{{centroid.x, centroid.y}});
 
 		ecsWorld_->addComponent<ecs::Structure>(entity, ecs::Structure{ecs::StructureKind::Foundation, id});
 
 		ecs::StructureBlueprint blueprint;
 		blueprint.phase = ecs::StructureBlueprint::BuildPhase::Clearing;
-		const auto requiredQty = static_cast<uint32_t>(std::ceil(static_cast<double>(area) * static_cast<double>(costRate)));
-		if (requiredQty > 0) {
-			blueprint.required.emplace_back(activeMaterial_, requiredQty);
+		if (sizing.requiredQty > 0) {
+			blueprint.required.emplace_back(foundation->material, sizing.requiredQty);
 		}
-		blueprint.workTotal = area * workRate;
+		blueprint.workTotal = sizing.workTotal;
 		ecsWorld_->addComponent<ecs::StructureBlueprint>(entity, std::move(blueprint));
 
 		// HP scales with area; full HP is only meaningful once built but the
 		// component exists from creation (architecture: avoid a later migration).
-		const float maxHp = area * hpRate;
-		ecsWorld_->addComponent<ecs::StructureHealth>(entity, ecs::StructureHealth{maxHp, maxHp});
-
-		constructionWorld_.setEntity(id, entity);
+		ecsWorld_->addComponent<ecs::StructureHealth>(entity, ecs::StructureHealth{sizing.maxHp, sizing.maxHp});
 
 		LOG_INFO(
 			Game,
 			"Foundation #%llu spawned: %.1f m^2, %s, %u materials, %.0f work, entity %u",
 			static_cast<unsigned long long>(id),
 			static_cast<double>(area),
-			activeMaterial_.c_str(),
-			requiredQty,
-			static_cast<double>(blueprint.workTotal),
+			foundation->material.c_str(),
+			sizing.requiredQty,
+			static_cast<double>(sizing.workTotal),
 			static_cast<uint32_t>(entity)
 		);
+		constructionWorld_.setEntity(id, entity);
 		return entity;
+	}
+
+	void DrawingSystem::resizeBlueprintEntity(ec::FoundationId id) {
+		const auto* foundation = constructionWorld_.get(id);
+		if (ecsWorld_ == nullptr || foundation == nullptr || !ecsWorld_->isAlive(foundation->entity)) {
+			return;
+		}
+		auto* blueprint = ecsWorld_->getComponent<ecs::StructureBlueprint>(foundation->entity);
+		if (blueprint == nullptr) {
+			return;
+		}
+
+		const FoundationSizing sizing = sizeFoundation(constructionWorld_.areaSquareMeters(id), foundation->material);
+		blueprint->required.clear();
+		if (sizing.requiredQty > 0) {
+			blueprint->required.emplace_back(foundation->material, sizing.requiredQty);
+		}
+		blueprint->workTotal = sizing.workTotal;
+		blueprint->phase = ecs::StructureBlueprint::BuildPhase::Clearing;
+
+		if (auto* health = ecsWorld_->getComponent<ecs::StructureHealth>(foundation->entity)) {
+			*health = ecs::StructureHealth{sizing.maxHp, sizing.maxHp};
+		}
+		if (auto* position = ecsWorld_->getComponent<ecs::Position>(foundation->entity)) {
+			const Foundation::Vec2 centroid = ringCentroid(foundation->ring);
+			position->value = {centroid.x, centroid.y};
+		}
+	}
+
+	bool DrawingSystem::foundationEditable(ec::FoundationId id) const {
+		const auto* foundation = constructionWorld_.get(id);
+		if (ecsWorld_ == nullptr || foundation == nullptr || foundation->state != ec::FoundationState::Blueprint ||
+			!ecsWorld_->isAlive(foundation->entity)) {
+			return false;
+		}
+		const auto* blueprint = ecsWorld_->getComponent<ecs::StructureBlueprint>(foundation->entity);
+		return blueprint != nullptr && blueprint->shapeEditable();
+	}
+
+	DrawingSystem::FoundationEditOutcome
+	DrawingSystem::applyFoundationEdit(ec::FoundationId target, const std::vector<Foundation::Vec2>& drawn, ec::FoundationEditMode mode) {
+		FoundationEditOutcome outcome;
+		outcome.target = target;
+
+		auto&					  registry = ConstructionRegistry::Get();
+		ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
+		const ec::FoundationEditResult result = validator.validateFoundationEdit(target, drawn, mode, foundationEditable(target));
+		if (!result.ok()) {
+			outcome.reason = ec::validationReason(result.validation.code);
+			return outcome;
+		}
+		if (mode == ec::FoundationEditMode::Add && !footprintBuildable(dequantizeRing(result.buildsOn))) {
+			outcome.reason = "not on buildable ground";
+			return outcome;
+		}
+
+		if (!result.extension.empty()) {
+			const ec::CommitResult extension = constructionWorld_.commitExtension(target, result.extension);
+			if (!extension.ok()) {
+				outcome.reason = "extension rejected";
+				return outcome;
+			}
+			outcome.extension = extension.id;
+			outcome.entity = spawnBlueprintEntity(extension.id);
+		} else {
+			geometry::Ring cutter = toRingMm(drawn);
+			geometry::ensureCounterClockwise(cutter);
+			const ec::CommitStatus status = mode == ec::FoundationEditMode::Add ? constructionWorld_.addToFoundation(target, cutter)
+																				 : constructionWorld_.subtractFromFoundation(target, cutter);
+			if (status != ec::CommitStatus::Ok) {
+				outcome.reason = "edit rejected";
+				return outcome;
+			}
+			resizeBlueprintEntity(target);
+			outcome.entity = constructionWorld_.get(target)->entity;
+		}
+
+		outcome.ok = true;
+		outcome.areaSquareMeters = static_cast<float>(std::abs(geometry::signedAreaSquareMeters(result.outline)));
+		LOG_INFO(
+			Game,
+			"Foundation #%llu %s: outline %.1f m^2%s",
+			static_cast<unsigned long long>(target),
+			mode == ec::FoundationEditMode::Add ? "add" : "subtract",
+			static_cast<double>(outcome.areaSquareMeters),
+			outcome.extension != ec::kInvalidFoundation ? " (extension blueprint)" : ""
+		);
+		return outcome;
+	}
+
+	ecs::EntityID DrawingSystem::mergeExtension(ec::FoundationId extensionId) {
+		const auto* extension = constructionWorld_.get(extensionId);
+		if (extension == nullptr) {
+			return ecs::kInvalidEntity;
+		}
+		const ec::FoundationId targetId = extension->mergeTarget;
+		const ecs::EntityID	   extensionEntity = extension->entity;
+		const auto*			   target = constructionWorld_.get(targetId);
+		if (target == nullptr) {
+			return ecs::kInvalidEntity;
+		}
+		const ecs::EntityID targetEntity = target->entity;
+
+		const ec::CommitStatus status = constructionWorld_.mergeExtension(extensionId);
+		if (status != ec::CommitStatus::Ok) {
+			LOG_ERROR(
+				Game,
+				"Extension #%llu failed to merge into #%llu (status %d)",
+				static_cast<unsigned long long>(extensionId),
+				static_cast<unsigned long long>(targetId),
+				static_cast<int>(status)
+			);
+			return ecs::kInvalidEntity;
+		}
+
+		// The merged foundation owns what both halves cost and did, so demolishing it
+		// refunds and un-builds the whole thing.
+		if (ecsWorld_ != nullptr && ecsWorld_->isAlive(targetEntity) && ecsWorld_->isAlive(extensionEntity)) {
+			auto*		targetBp = ecsWorld_->getComponent<ecs::StructureBlueprint>(targetEntity);
+			const auto* extensionBp = ecsWorld_->getComponent<ecs::StructureBlueprint>(extensionEntity);
+			if (targetBp != nullptr && extensionBp != nullptr) {
+				addManifest(targetBp->required, extensionBp->required);
+				addManifest(targetBp->delivered, extensionBp->delivered);
+				targetBp->workTotal += extensionBp->workTotal;
+				targetBp->workDone += extensionBp->workDone;
+			}
+			auto*		targetHp = ecsWorld_->getComponent<ecs::StructureHealth>(targetEntity);
+			const auto* extensionHp = ecsWorld_->getComponent<ecs::StructureHealth>(extensionEntity);
+			if (targetHp != nullptr && extensionHp != nullptr) {
+				targetHp->hp += extensionHp->hp;
+				targetHp->maxHp += extensionHp->maxHp;
+			}
+			if (auto* position = ecsWorld_->getComponent<ecs::Position>(targetEntity)) {
+				const Foundation::Vec2 centroid = ringCentroid(constructionWorld_.get(targetId)->ring);
+				position->value = {centroid.x, centroid.y};
+			}
+		}
+
+		LOG_INFO(
+			Game,
+			"Extension #%llu merged into foundation #%llu: %.1f m^2",
+			static_cast<unsigned long long>(extensionId),
+			static_cast<unsigned long long>(targetId),
+			static_cast<double>(constructionWorld_.areaSquareMeters(targetId))
+		);
+		return extensionEntity;
+	}
+
+	ec::ValidationResult DrawingSystem::validateClosed(const std::vector<Foundation::Vec2>& ring) const {
+		ec::ConstructionValidator validator(ConstructionRegistry::Get().constraints(), constructionWorld_);
+		if (activeTool_ == ToolKind::FoundationEdit) {
+			return validator.validateFoundationEdit(editTarget_, ring, editMode_, foundationEditable(editTarget_)).validation;
+		}
+		return validator.validateRing(ring);
+	}
+
+	void DrawingSystem::refreshEditPreview() {
+		std::vector<Foundation::Vec2> drawn = points_;
+		if (!willClose_) {
+			drawn.push_back(cursor_);
+		}
+		editPreviewActive_ = drawn.size() >= 3;
+		if (!editPreviewActive_) {
+			editPreview_ = {};
+			return;
+		}
+		ec::ConstructionValidator validator(ConstructionRegistry::Get().constraints(), constructionWorld_);
+		editPreview_ = validator.validateFoundationEdit(editTarget_, drawn, editMode_, foundationEditable(editTarget_));
+	}
+
+	void DrawingSystem::commitFoundationEdit() {
+		const FoundationEditOutcome outcome = applyFoundationEdit(editTarget_, points_, editMode_);
+		if (!outcome.ok) {
+			if (callbacks_.onToast) {
+				callbacks_.onToast("Can't edit foundation", outcome.reason);
+			}
+			return;
+		}
+		if (callbacks_.onToast) {
+			if (outcome.extension != ec::kInvalidFoundation) {
+				callbacks_.onToast("Extension placed", "merges into the foundation once built");
+			} else {
+				callbacks_.onToast("Foundation reshaped", editMode_ == ec::FoundationEditMode::Add ? "area added" : "area removed");
+			}
+		}
+
+		// Stay in the tool, ready for the next region (zone-style).
+		points_.clear();
+		lastValidation_ = {};
+		willClose_ = false;
+		editPreviewActive_ = false;
 	}
 
 	// =========================================================================
@@ -1178,6 +1491,28 @@ namespace world_sim {
 			return s;
 		}
 
+		if (activeTool_ == ToolKind::FoundationEdit) {
+			// Material is locked to the target's (Add requires the same material).
+			// Readouts track the outline the edit would produce once there is a polygon.
+			s.foundationEdit = true;
+			s.editLabel = editMode_ == ec::FoundationEditMode::Add ? "Add to foundation" : "Subtract from foundation";
+			if (const auto* target = constructionWorld_.get(editTarget_)) {
+				s.material = target->material;
+			}
+			const float current = constructionWorld_.areaSquareMeters(editTarget_);
+			s.areaSquareMeters = current;
+			// A point the next click would refuse outranks the outline it would produce.
+			const bool					pointRefused = !lastValidation_.ok() && !willClose_;
+			const ec::ValidationResult& judged = (editPreviewActive_ && !pointRefused) ? editPreview_.validation : lastValidation_;
+			if (editPreviewActive_ && editPreview_.ok()) {
+				s.areaSquareMeters = static_cast<float>(std::abs(geometry::signedAreaSquareMeters(editPreview_.outline)));
+				s.areaDeltaSquareMeters = s.areaSquareMeters - current;
+			}
+			s.valid = judged.ok() && !cursorOffMesh_;
+			s.message = cursorOffMesh_ ? "not on buildable ground" : ec::validationReason(judged.code);
+			return s;
+		}
+
 		// Foundation: area preview only meaningful once a closeable shape exists. The live
 		// off-mesh cursor flag folds into validity (same cheap signal the red preview uses);
 		// the authoritative whole-footprint walkability check runs at commit.
@@ -1188,12 +1523,7 @@ namespace world_sim {
 			s.valid = ring.ok() && !cursorOffMesh_;
 			s.message = cursorOffMesh_ ? "not on buildable ground" : ec::validationReason(ring.code);
 			// Recompute area regardless of validity so the readout tracks the shape.
-			geometry::Ring quantized;
-			quantized.reserve(points_.size());
-			for (const auto& p : points_) {
-				quantized.push_back(geometry::quantize(p));
-			}
-			s.areaSquareMeters = static_cast<float>(std::abs(geometry::signedAreaSquareMeters(quantized)));
+			s.areaSquareMeters = static_cast<float>(std::abs(geometry::signedAreaSquareMeters(toRingMm(points_))));
 		} else {
 			s.valid = lastValidation_.ok() && !cursorOffMesh_;
 			s.message = cursorOffMesh_ ? "not on buildable ground" : ec::validationReason(lastValidation_.code);
@@ -1253,6 +1583,7 @@ namespace world_sim {
 		// ramp is the slice's progress viz; the baked element-emitter index-prefix (a
 		// deterministic per-element reveal) is the later optimization noted in D8.
 		std::vector<Foundation::Vec2> screen;
+		std::vector<Foundation::Vec2> fill;
 		for (const auto& g : committedCache_.foundations()) {
 			if (!g.aabb.intersects(visibleWorld)) {
 				continue;
@@ -1264,13 +1595,18 @@ namespace world_sim {
 			for (const auto& v : g.ring) {
 				screen.push_back(toScreen(v));
 			}
+			fill.clear();
+			fill.reserve(g.fillVertices.size());
+			for (const auto& v : g.fillVertices) {
+				fill.push_back(toScreen(v));
+			}
 
 			// Layer 1: faint blueprint base (always present, reads as the planned footprint).
 			Renderer::Primitives::drawTriangles({
-				.vertices = screen.data(),
-				.indices = g.fan.data(),
-				.vertexCount = screen.size(),
-				.indexCount = g.fan.size(),
+				.vertices = fill.data(),
+				.indices = g.fillIndices.data(),
+				.vertexCount = fill.size(),
+				.indexCount = g.fillIndices.size(),
 				.color = toColor(fs.blueprintFill),
 				.id = "committed_foundation_base",
 				.zIndex = 50,
@@ -1282,10 +1618,10 @@ namespace world_sim {
 				const float fillAlpha =
 					g.built ? fs.progressAlphaMax : (fs.progressAlphaMin + (fs.progressAlphaMax - fs.progressAlphaMin) * progress);
 				Renderer::Primitives::drawTriangles({
-					.vertices = screen.data(),
-					.indices = g.fan.data(),
-					.vertexCount = screen.size(),
-					.indexCount = g.fan.size(),
+					.vertices = fill.data(),
+					.indices = g.fillIndices.data(),
+					.vertexCount = fill.size(),
+					.indexCount = g.fillIndices.size(),
 					.color = {g.matColor.r, g.matColor.g, g.matColor.b, fillAlpha},
 					.id = "committed_foundation_progress",
 					.zIndex = 51,
@@ -1340,10 +1676,17 @@ namespace world_sim {
 			return;
 		}
 
+		// Add / Subtract: the resulting outline under the drawn polygon's preview.
+		if (activeTool_ == ToolKind::FoundationEdit) {
+			renderEditOutlinePreview(viewportW, viewportH);
+		}
+
 		// Off-mesh cursor (on water) reads as invalid just like a geometry violation, so the
 		// rubber-band + fill turn red before the player commits. The closing case keeps its
-		// own (willClose_) green halo treatment below.
-		const bool				valid = lastValidation_.ok() && !cursorOffMesh_;
+		// own (willClose_) green halo treatment below. An edit also reads red while the
+		// outline it would produce is invalid.
+		const bool editRejected = activeTool_ == ToolKind::FoundationEdit && editPreviewActive_ && !editPreview_.ok();
+		const bool valid = lastValidation_.ok() && !cursorOffMesh_ && !editRejected;
 		const Foundation::Color okColor = UI::status_ok;	 // green
 		const Foundation::Color badColor = UI::status_crit; // red
 		const Foundation::Color lineColor = valid ? okColor : badColor;
@@ -1356,24 +1699,9 @@ namespace world_sim {
 
 		// Faint fill once >= 3 points (the implied closed polygon).
 		if (points_.size() >= 3) {
-			std::vector<Foundation::Vec2> fillPts = screen;
-			std::vector<uint16_t>		  indices;
-			for (std::size_t i = 1; i + 1 < fillPts.size(); ++i) {
-				indices.push_back(0);
-				indices.push_back(static_cast<uint16_t>(i));
-				indices.push_back(static_cast<uint16_t>(i + 1));
-			}
-			Foundation::Color fillColor = valid ? Foundation::Color{okColor.r, okColor.g, okColor.b, ps.fillPreviewAlpha}
-												: Foundation::Color{badColor.r, badColor.g, badColor.b, ps.fillPreviewAlpha};
-			Renderer::Primitives::drawTriangles({
-				.vertices = fillPts.data(),
-				.indices = indices.data(),
-				.vertexCount = fillPts.size(),
-				.indexCount = indices.size(),
-				.color = fillColor,
-				.id = "drawing_fill_preview",
-				.zIndex = 900,
-			});
+			const Foundation::Color fillColor = valid ? Foundation::Color{okColor.r, okColor.g, okColor.b, ps.fillPreviewAlpha}
+													  : Foundation::Color{badColor.r, badColor.g, badColor.b, ps.fillPreviewAlpha};
+			fillPolygon(screen, fillColor, "drawing_fill_preview", 900);
 		}
 
 		// Committed edges between placed points.
@@ -1489,8 +1817,8 @@ namespace world_sim {
 
 	namespace {
 
-		// Triangulate a CCW ring (fan from vertex 0) and emit a filled polygon plus an
-		// outline via Primitives. Screen-space points. Shared by band + junction draws.
+		// Filled polygon plus an outline via Primitives. Screen-space points. Shared
+		// by band, junction, and opening draws.
 		void fillRing(
 			std::span<const Foundation::Vec2> screen,
 			Foundation::Color				  fill,
@@ -1502,30 +1830,10 @@ namespace world_sim {
 			int								  zEdge
 		) {
 			const std::size_t n = screen.size();
-			// Upper bound is the uint16_t fan-index range (mirrors the foundation
-			// fan guard in CommittedGeometryCache).
-			if (n < 3 || n > std::numeric_limits<uint16_t>::max()) {
+			if (n < 3) {
 				return;
 			}
-			// Scratch fan-index buffer reused across calls (several calls per
-			// visible ring per frame); drawTriangles copies before returning.
-			static thread_local std::vector<uint16_t> indices;
-			indices.clear();
-			indices.reserve((n - 2) * 3);
-			for (std::size_t i = 1; i + 1 < n; ++i) {
-				indices.push_back(0);
-				indices.push_back(static_cast<uint16_t>(i));
-				indices.push_back(static_cast<uint16_t>(i + 1));
-			}
-			Renderer::Primitives::drawTriangles({
-				.vertices = screen.data(),
-				.indices = indices.data(),
-				.vertexCount = screen.size(),
-				.indexCount = indices.size(),
-				.color = fill,
-				.id = fillId,
-				.zIndex = zFill,
-			});
+			fillPolygon(screen, fill, fillId, zFill);
 			for (std::size_t i = 0; i < n; ++i) {
 				Renderer::Primitives::drawLine({
 					.start = screen[i],
@@ -1823,6 +2131,44 @@ namespace world_sim {
 		const bool	window = !type->pathable;
 		const auto& os = ConstructionRegistry::Get().rendering().opening;
 		drawOpeningFill(screen, tint, window, footprintWidthMeters(footprint), os.ghostAlpha, os.outlineWidthBuilt);
+	}
+
+	void DrawingSystem::renderEditOutlinePreview(int viewportW, int viewportH) {
+		if (!editPreviewActive_) {
+			return;
+		}
+		const auto& ps = ConstructionRegistry::Get().rendering().preview;
+
+		auto toScreen = [&](Foundation::Vec2 w) -> Foundation::Vec2 {
+			return camera_->worldToScreen(w.x, w.y, viewportW, viewportH, kPixelsPerMeter);
+		};
+
+		// Outline only: the committed foundation already shows under it, and the drawn
+		// region's own fill sits on top.
+		if (editPreview_.ok()) {
+			const geometry::Ring& outline = editPreview_.outline;
+			for (std::size_t i = 0; i < outline.size(); ++i) {
+				Renderer::Primitives::drawLine({
+					.start = toScreen(geometry::dequantize(outline[i])),
+					.end = toScreen(geometry::dequantize(outline[(i + 1) % outline.size()])),
+					.style = {.color = UI::status_ok, .width = ps.lineWidth * 1.5F},
+					.id = "drawing_edit_outline",
+					.zIndex = 898,
+				});
+			}
+			return;
+		}
+
+		Renderer::Primitives::drawText({
+			.text = ec::validationReason(editPreview_.validation.code),
+			.position = toScreen(cursor_) + Foundation::Vec2{14.0F, -22.0F},
+			.scale = 0.8F,
+			.color = UI::status_crit,
+			.shadowColor = {0.0F, 0.0F, 0.0F, 0.8F},
+			.shadowOffset = {1.0F, 1.0F},
+			.id = "drawing_edit_reason",
+			.zIndex = 906.0F,
+		});
 	}
 
 	void DrawingSystem::renderWallChainPreview(int viewportW, int viewportH) {

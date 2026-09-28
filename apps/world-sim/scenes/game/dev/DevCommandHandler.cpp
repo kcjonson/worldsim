@@ -53,7 +53,10 @@
 
 namespace world_sim {
 
-	void DevCommandHandler::handle(const Foundation::DevCommand& cmd) {
+	std::string DevCommandHandler::handle(const Foundation::DevCommand& cmd) {
+		if (cmd.verb == "foundation-edit") {
+			return devFoundationEdit(cmd);
+		}
 		if (cmd.verb == "freebuild" || cmd.verb == "construction") {
 			devFreeBuild(cmd);
 		} else if (cmd.verb == "give") {
@@ -88,7 +91,9 @@ namespace world_sim {
 			devTunable(cmd);
 		} else {
 			LOG_WARNING(Game, "[DevAPI] Unknown dev command verb '%s'", cmd.verb.c_str());
+			return "{\"status\":\"error\",\"verb\":\"" + jsonEscape(cmd.verb) + "\",\"reason\":\"unknown verb\"}";
 		}
+		return "{\"status\":\"ok\",\"verb\":\"" + jsonEscape(cmd.verb) + "\"}";
 	}
 
 	void DevCommandHandler::devTunable(const Foundation::DevCommand& cmd) {
@@ -529,7 +534,7 @@ namespace world_sim {
 			return;
 		}
 
-		const ecs::EntityID entity = spawnFoundationBlueprintEntity(commit.id, pts, material);
+		const ecs::EntityID entity = m_ctx.drawing->spawnBlueprintEntity(commit.id);
 		if (entity == ecs::kInvalidEntity) {
 			LOG_WARNING(Game, "[DevAPI] foundation: spawn failed for #%llu", static_cast<unsigned long long>(commit.id));
 			return;
@@ -551,6 +556,49 @@ namespace world_sim {
 			static_cast<uint32_t>(entity)
 		);
 		m_ctx.ui->pushNotification("Dev", built ? "Built foundation placed" : "Foundation blueprint placed", UI::ToastSeverity::Info);
+	}
+
+	std::string DevCommandHandler::devFoundationEdit(const Foundation::DevCommand& cmd) {
+		namespace ec = engine::construction;
+		const auto		  target = static_cast<ec::FoundationId>(std::strtoull(cmd.param("id", "0").c_str(), nullptr, 10));
+		const std::string modeName = cmd.param("mode", "add");
+		const std::vector<Foundation::Vec2> pts = parsePointList(cmd.param("pts"));
+
+		DrawingSystem::FoundationEditOutcome outcome;
+		outcome.target = target;
+		if (modeName != "add" && modeName != "subtract") {
+			outcome.reason = "mode must be add or subtract";
+		} else {
+			// The SAME validate + apply path the Add / Subtract tool's close takes.
+			const auto mode = modeName == "add" ? ec::FoundationEditMode::Add : ec::FoundationEditMode::Subtract;
+			outcome = m_ctx.drawing->applyFoundationEdit(target, pts, mode);
+		}
+
+		if (outcome.ok) {
+			LOG_INFO(
+				Game,
+				"[DevAPI] foundation-edit: #%llu %s ok (extension %llu, %.1f m^2)",
+				static_cast<unsigned long long>(target),
+				modeName.c_str(),
+				static_cast<unsigned long long>(outcome.extension),
+				static_cast<double>(outcome.areaSquareMeters)
+			);
+		} else {
+			LOG_WARNING(
+				Game,
+				"[DevAPI] foundation-edit: #%llu %s rejected: %s",
+				static_cast<unsigned long long>(target),
+				modeName.c_str(),
+				outcome.reason.c_str()
+			);
+		}
+
+		std::ostringstream json;
+		json << "{\"status\":\"" << (outcome.ok ? "ok" : "rejected") << "\",\"verb\":\"foundation-edit\",\"mode\":\""
+			 << jsonEscape(modeName) << "\",\"reason\":\"" << jsonEscape(outcome.reason) << "\",\"target\":" << outcome.target
+			 << ",\"extension\":" << outcome.extension << ",\"entity\":" << outcome.entity
+			 << ",\"area\":" << outcome.areaSquareMeters << "}";
+		return json.str();
 	}
 
 	void DevCommandHandler::devWalls(const Foundation::DevCommand& cmd) {
@@ -802,55 +850,6 @@ namespace world_sim {
 			pts.emplace_back(x, y);
 		}
 		return pts;
-	}
-
-	ecs::EntityID DevCommandHandler::spawnFoundationBlueprintEntity(
-		engine::construction::FoundationId id, const std::vector<Foundation::Vec2>& pts, const std::string& material
-	) {
-		auto& constructionWorld = m_ctx.drawing->world();
-		if (constructionWorld.get(id) == nullptr) {
-			return ecs::kInvalidEntity;
-		}
-
-		const float area = constructionWorld.areaSquareMeters(id);
-
-		const auto& registry = engine::assets::ConstructionRegistry::Get();
-		const auto* mat = registry.getMaterial(material);
-		float		costRate = 0.0F;
-		float		workRate = 0.0F;
-		float		hpRate = 0.0F;
-		if (mat != nullptr) {
-			costRate = mat->costRatePerSquareMeter;
-			workRate = mat->workRatePerSquareMeter;
-			hpRate = mat->hp;
-		}
-
-		auto entity = m_ctx.world->createEntity();
-
-		// Centroid (average of vertices) keeps the transform inside the footprint.
-		Foundation::Vec2 centroid{0.0F, 0.0F};
-		for (const auto& p : pts) {
-			centroid += p;
-		}
-		centroid /= static_cast<float>(pts.size());
-		m_ctx.world->addComponent<ecs::Position>(entity, ecs::Position{{centroid.x, centroid.y}});
-
-		m_ctx.world->addComponent<ecs::Structure>(entity, ecs::Structure{ecs::StructureKind::Foundation, id});
-
-		ecs::StructureBlueprint blueprint;
-		blueprint.phase = ecs::StructureBlueprint::BuildPhase::Clearing;
-		const auto requiredQty = static_cast<uint32_t>(std::ceil(static_cast<double>(area) * static_cast<double>(costRate)));
-		if (requiredQty > 0) {
-			blueprint.required.emplace_back(material, requiredQty);
-		}
-		blueprint.workTotal = area * workRate;
-		m_ctx.world->addComponent<ecs::StructureBlueprint>(entity, std::move(blueprint));
-
-		const float maxHp = area * hpRate;
-		m_ctx.world->addComponent<ecs::StructureHealth>(entity, ecs::StructureHealth{maxHp, maxHp});
-
-		constructionWorld.setEntity(id, entity);
-		return entity;
 	}
 
 	// ===================================================================== STATE READBACK

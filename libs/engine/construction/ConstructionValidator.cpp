@@ -103,6 +103,113 @@ namespace engine::construction {
 			return false;
 		}
 
+		// A snapped edge on a diagonal lands up to ~1 mm off the exact line after
+		// quantization; that still counts as touching (the zero-gap case).
+		constexpr std::int64_t kFoundationTouchToleranceMm = 2;
+
+		// Two foundations with disjoint interiors must, everywhere, either touch
+		// (snapped edge-to-edge) or keep at least `clearanceMm` apart; anything in
+		// between is a sliver no colonist can path through. Their boundaries don't
+		// cross (interiors are disjoint), so each gap narrows to a vertex of one
+		// ring and is probed there, vertex-to-edge, both ways.
+		bool foundationsTooClose(const geometry::Ring& a, const geometry::Ring& b, std::int64_t clearanceMm) {
+			// Judged per vertex, so touching in one place never excuses a sliver in
+			// another: a vertex closer than clearance to the other ring is a violation
+			// unless that vertex itself touches it. Where a shared run ends and one
+			// edge angles away, the vertex at the end of the run is the touching one.
+			auto sliverFrom = [clearanceMm](const geometry::Ring& points, const geometry::Ring& edges) {
+				const std::size_t n = edges.size();
+				for (const auto& p : points) {
+					bool touching = false;
+					bool close = false;
+					for (std::size_t i = 0; i < n && !touching; ++i) {
+						const auto& e0 = edges[i];
+						const auto& e1 = edges[(i + 1) % n];
+						touching = geometry::withinDistanceOfSegment(p, e0, e1, kFoundationTouchToleranceMm);
+						close = close || geometry::closerThanToSegment(p, e0, e1, clearanceMm);
+					}
+					if (close && !touching) {
+						return true;
+					}
+				}
+				return false;
+			};
+			return sliverFrom(a, b) || sliverFrom(b, a);
+		}
+
+		// Is the full-thickness band of centerline a->b entirely inside `ring`? A
+		// zero half-thickness degenerates the band to the centerline. A band corner
+		// inside-or-on the ring plus no band edge crossing a ring edge means the
+		// convex band lies within the (possibly non-convex) ring: corners alone miss
+		// a band bulging over a concave notch, the edge-cross check catches it.
+		bool bandContainedInRing(const geometry::Vec2i64& a, const geometry::Vec2i64& b, std::int64_t halfThickMm, const geometry::Ring& ring) {
+			const geometry::Ring band = halfThickMm > 0 ? geometry::band(a, b, halfThickMm) : geometry::Ring{a, b};
+			for (const auto& c : band) {
+				if (geometry::pointInPolygon(c, ring) == geometry::PointInPolygon::Outside) {
+					return false;
+				}
+			}
+			const std::size_t nb = band.size();
+			const std::size_t nr = ring.size();
+			for (std::size_t i = 0; i < nb; ++i) {
+				const auto& a0 = band[i];
+				const auto& a1 = band[(i + 1) % nb];
+				for (std::size_t k = 0; k < nr; ++k) {
+					if (geometry::intersectSegments(a0, a1, ring[k], ring[(k + 1) % nr]).relation ==
+						geometry::SegmentRelation::ProperCrossing) {
+						return false;
+					}
+				}
+			}
+			return true;
+		}
+
+		ValidationCode editFailureCode(geometry::BooleanStatus status, FoundationEditMode mode) {
+			const bool add = mode == FoundationEditMode::Add;
+			switch (status) {
+				case geometry::BooleanStatus::Ok:
+					return ValidationCode::Ok;
+				case geometry::BooleanStatus::InvalidInput:
+					return ValidationCode::SelfIntersects;
+				case geometry::BooleanStatus::Disjoint:
+					return ValidationCode::EditDisjoint;
+				case geometry::BooleanStatus::PinchVertex:
+					return ValidationCode::EditPinch;
+				case geometry::BooleanStatus::ResultHasHole:
+					return add ? ValidationCode::EditEnclosesHole : ValidationCode::EditCutsHole;
+				case geometry::BooleanStatus::ResultSplits:
+					return ValidationCode::EditSplits;
+				case geometry::BooleanStatus::ConsumesInput:
+					return ValidationCode::EditConsumes;
+				case geometry::BooleanStatus::NoEffect:
+					return add ? ValidationCode::EditNothingToAdd : ValidationCode::EditNothingToRemove;
+			}
+			return ValidationCode::SelfIntersects;
+		}
+
+		// Failures of (drawn minus target), the region a built Add turns into an
+		// extension blueprint.
+		ValidationCode extensionFailureCode(geometry::BooleanStatus status) {
+			switch (status) {
+				case geometry::BooleanStatus::ResultHasHole:
+					return ValidationCode::ExtensionWrapsAround;
+				case geometry::BooleanStatus::ResultSplits:
+					return ValidationCode::ExtensionSplits;
+				case geometry::BooleanStatus::ConsumesInput:
+				case geometry::BooleanStatus::NoEffect:
+					return ValidationCode::EditNothingToAdd;
+				case geometry::BooleanStatus::PinchVertex:
+					return ValidationCode::EditPinch;
+				case geometry::BooleanStatus::Disjoint:
+					return ValidationCode::EditDisjoint;
+				case geometry::BooleanStatus::Ok:
+					return ValidationCode::Ok;
+				case geometry::BooleanStatus::InvalidInput:
+					return ValidationCode::SelfIntersects;
+			}
+			return ValidationCode::SelfIntersects;
+		}
+
 	} // namespace
 
 	std::string validationReason(ValidationCode code) {
@@ -151,15 +258,63 @@ namespace engine::construction {
 				return "wall too short for opening";
 			case ValidationCode::OpeningOverlap:
 				return "openings overlap";
+			case ValidationCode::TooCloseToFoundation:
+				return "too close to another foundation";
+			case ValidationCode::FoundationNotFound:
+				return "no foundation";
+			case ValidationCode::EditMaterialsDelivered:
+				return "materials already delivered";
+			case ValidationCode::BuiltNeverShrinks:
+				return "built foundations never shrink";
+			case ValidationCode::ExtensionPending:
+				return "finish the pending extension first";
+			case ValidationCode::ExtensionNotEditable:
+				return "cancel the extension to reshape it";
+			case ValidationCode::EditDisjoint:
+				return "must touch the foundation";
+			case ValidationCode::EditPinch:
+				return "shapes meet at a single point";
+			case ValidationCode::EditEnclosesHole:
+				return "would enclose a hole";
+			case ValidationCode::EditCutsHole:
+				return "can't cut a hole";
+			case ValidationCode::EditSplits:
+				return "would split the foundation";
+			case ValidationCode::EditConsumes:
+				return "would remove the whole foundation";
+			case ValidationCode::EditNothingToAdd:
+				return "nothing to add";
+			case ValidationCode::EditNothingToRemove:
+				return "nothing to remove";
+			case ValidationCode::ExtensionSplits:
+				return "addition must be one piece";
+			case ValidationCode::ExtensionWrapsAround:
+				return "addition can't wrap around";
+			case ValidationCode::EditUnderWall:
+				return "would cut under a wall";
 		}
 		return {};
 	}
 
 	ValidationResult ConstructionValidator::checkShape(const std::vector<geometry::Vec2i64>& ring, bool closed) const {
+		ValidationResult result = checkSpacing(ring, closed);
+		if (result.ok()) {
+			result = checkAngles(ring, closed);
+		}
+		if (result.ok()) {
+			result = checkSimple(ring, closed);
+		}
+		if (result.ok()) {
+			result = checkEdgeClearance(ring, closed);
+		}
+		return result;
+	}
+
+	ValidationResult ConstructionValidator::checkSpacing(const std::vector<geometry::Vec2i64>& ring, bool closed) const {
 		const auto&		  c = *constraints_;
 		const std::size_t n = ring.size();
 
-		// Vertex spacing: consecutive vertices, plus the closing pair when closed.
+		// Consecutive vertices, plus the closing pair when closed.
 		const std::size_t spacingPairs = closed ? n : (n - 1);
 		for (std::size_t i = 0; i < spacingPairs; ++i) {
 			const std::size_t j = (i + 1) % n;
@@ -170,9 +325,15 @@ namespace engine::construction {
 				return {ValidationCode::VerticesTooClose, i, j, mm / static_cast<double>(geometry::kMillimetersPerMeter)};
 			}
 		}
+		return {};
+	}
 
-		// Corner angles: every interior vertex; when open, the endpoints have no
-		// corner so skip them. When closed, wrap around.
+	ValidationResult ConstructionValidator::checkAngles(const std::vector<geometry::Vec2i64>& ring, bool closed) const {
+		const auto&		  c = *constraints_;
+		const std::size_t n = ring.size();
+
+		// Every interior vertex; when open, the endpoints have no corner so skip
+		// them. When closed, wrap around.
 		if (n >= 3) {
 			const std::size_t first = closed ? 0 : 1;
 			const std::size_t last = closed ? n : (n - 1);
@@ -186,9 +347,14 @@ namespace engine::construction {
 				}
 			}
 		}
+		return {};
+	}
 
-		// Self-intersection: any pair of non-adjacent edges that crosses. For the
-		// open chain the closing edge is excluded; for the closed ring it is in.
+	ValidationResult ConstructionValidator::checkSimple(const std::vector<geometry::Vec2i64>& ring, bool closed) const {
+		const std::size_t n = ring.size();
+
+		// Any pair of non-adjacent edges that crosses. For the open chain the
+		// closing edge is excluded; for the closed ring it is in.
 		const std::size_t edgeCount = closed ? n : (n - 1);
 		for (std::size_t i = 0; i < edgeCount; ++i) {
 			const auto& a0 = ring[i];
@@ -206,11 +372,18 @@ namespace engine::construction {
 				}
 			}
 		}
+		return {};
+	}
 
-		// Edge clearance: non-adjacent edges must stay at least segmentClearance
-		// apart. Only meaningful once the shape has at least 4 edges to have a
-		// non-adjacent pair (closed: 4 vertices; open: 5 vertices, since the
-		// open chain has edgeCount = n - 1 edges).
+	ValidationResult ConstructionValidator::checkEdgeClearance(const std::vector<geometry::Vec2i64>& ring, bool closed) const {
+		const auto&		  c = *constraints_;
+		const std::size_t n = ring.size();
+		const std::size_t edgeCount = closed ? n : (n - 1);
+
+		// Non-adjacent edges must stay at least segmentClearance apart. Only
+		// meaningful once the shape has at least 4 edges to have a non-adjacent
+		// pair (closed: 4 vertices; open: 5 vertices, since the open chain has
+		// edgeCount = n - 1 edges).
 		if (edgeCount >= 4) {
 			for (std::size_t i = 0; i < edgeCount; ++i) {
 				const auto& a0 = ring[i];
@@ -264,12 +437,14 @@ namespace engine::construction {
 			return {ValidationCode::TooFewPoints, 0, 0, static_cast<double>(ringMeters.size())};
 		}
 
-		const auto& c = *constraints_;
-		if (static_cast<int>(ringMeters.size()) > c.maxPoints) {
-			return {ValidationCode::TooManyPoints, ringMeters.size() - 1, 0, static_cast<double>(ringMeters.size())};
-		}
+		return checkOutline(quantizeRing(ringMeters), kInvalidFoundation);
+	}
 
-		geometry::Ring ring = quantizeRing(ringMeters);
+	ValidationResult ConstructionValidator::checkOutline(geometry::Ring ring, FoundationId ignore) const {
+		const auto& c = *constraints_;
+		if (static_cast<int>(ring.size()) > c.maxPoints) {
+			return {ValidationCode::TooManyPoints, ring.size() - 1, 0, static_cast<double>(ring.size())};
+		}
 
 		const ValidationResult shape = checkShape(ring, /*closed=*/true);
 		if (!shape.ok()) {
@@ -286,17 +461,157 @@ namespace engine::construction {
 			return {ValidationCode::AreaTooLarge, 0, 0, area};
 		}
 
-		// Overlap against committed foundations. The world's commit path re-checks
-		// this with CCW-normalized winding; doing it here gives the same reject at
-		// draw time so the user never gets a click that the commit then refuses.
+		// Overlap and clearance against committed foundations. The world's commit
+		// path re-checks overlap with CCW-normalized winding; doing it here gives the
+		// same reject at draw time so the user never gets a click the commit refuses.
 		geometry::ensureCounterClockwise(ring);
 		for (const Foundation& other : world_->foundations()) {
+			if (other.id == ignore) {
+				continue;
+			}
 			if (geometry::ringsInteriorOverlap(ring, other.ring)) {
 				return {ValidationCode::OverlapsExisting, 0, 0, 0.0};
+			}
+			if (foundationsTooClose(ring, other.ring, c.pathingClearanceMm)) {
+				return {ValidationCode::TooCloseToFoundation, 0, 0, 0.0};
 			}
 		}
 
 		return {};
+	}
+
+	// --- Foundation Add / Subtract -------------------------------------------
+
+	ValidationResult
+	ConstructionValidator::validateEditPoint(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 candidate) const {
+		if (points.empty()) {
+			return {};
+		}
+
+		std::vector<::Foundation::Vec2> chain = points;
+		chain.push_back(candidate);
+		if (static_cast<int>(chain.size()) > constraints_->maxPoints) {
+			return {ValidationCode::TooManyPoints, chain.size() - 1, 0, static_cast<double>(chain.size())};
+		}
+
+		const geometry::Ring   ring = quantizeRing(chain);
+		const ValidationResult spacing = checkSpacing(ring, /*closed=*/false);
+		return spacing.ok() ? checkSimple(ring, /*closed=*/false) : spacing;
+	}
+
+	FoundationEditResult ConstructionValidator::validateFoundationEdit(
+		FoundationId						   targetId,
+		const std::vector<::Foundation::Vec2>& drawn,
+		FoundationEditMode					   mode,
+		bool								   blueprintEditable
+	) const {
+		auto reject = [](ValidationResult validation) {
+			FoundationEditResult result;
+			result.validation = validation;
+			return result;
+		};
+		auto rejectCode = [&reject](ValidationCode code) { return reject({code, 0, 0, 0.0}); };
+
+		const Foundation* target = world_->get(targetId);
+		if (target == nullptr) {
+			return rejectCode(ValidationCode::FoundationNotFound);
+		}
+		if (target->mergeTarget != kInvalidFoundation) {
+			return rejectCode(ValidationCode::ExtensionNotEditable);
+		}
+		const bool built = target->state == FoundationState::Built;
+		if (built) {
+			if (mode == FoundationEditMode::Subtract) {
+				return rejectCode(ValidationCode::BuiltNeverShrinks);
+			}
+			if (world_->pendingExtensionOf(targetId) != kInvalidFoundation) {
+				return rejectCode(ValidationCode::ExtensionPending);
+			}
+		} else if (!blueprintEditable) {
+			return rejectCode(ValidationCode::EditMaterialsDelivered);
+		}
+
+		// The drawn polygon only has to be a usable cutter; the outline carries the
+		// foundation rules.
+		if (drawn.size() < 3) {
+			return reject({ValidationCode::TooFewPoints, 0, 0, static_cast<double>(drawn.size())});
+		}
+		if (static_cast<int>(drawn.size()) > constraints_->maxPoints) {
+			return reject({ValidationCode::TooManyPoints, drawn.size() - 1, 0, static_cast<double>(drawn.size())});
+		}
+		geometry::Ring		   cutter = quantizeRing(drawn);
+		const ValidationResult spacing = checkSpacing(cutter, /*closed=*/true);
+		if (!spacing.ok()) {
+			return reject(spacing);
+		}
+		const ValidationResult simple = checkSimple(cutter, /*closed=*/true);
+		if (!simple.ok()) {
+			return reject(simple);
+		}
+		geometry::ensureCounterClockwise(cutter);
+
+		FoundationEditResult result;
+		if (mode == FoundationEditMode::Add) {
+			geometry::BooleanResult merged = geometry::unionRings(target->ring, cutter);
+			if (!merged.ok()) {
+				return rejectCode(editFailureCode(merged.status, mode));
+			}
+			if (geometry::signedAreaDoubled(merged.ring) <= geometry::signedAreaDoubled(target->ring)) {
+				return rejectCode(ValidationCode::EditNothingToAdd);
+			}
+			if (built) {
+				// The extension is only what the drawing adds; judge the outline its
+				// merge will actually produce, so validation and merge agree exactly.
+				geometry::BooleanResult added = geometry::subtractRings(cutter, target->ring);
+				if (added.status == geometry::BooleanStatus::NoEffect) {
+					added = {geometry::BooleanStatus::Ok, cutter}; // shares only an edge: all of it is new
+				}
+				if (!added.ok()) {
+					return rejectCode(extensionFailureCode(added.status));
+				}
+				merged = geometry::unionRings(target->ring, added.ring);
+				if (!merged.ok()) {
+					return rejectCode(editFailureCode(merged.status, mode));
+				}
+				result.extension = std::move(added.ring);
+				result.buildsOn = result.extension;
+			} else {
+				result.buildsOn = cutter;
+			}
+			result.outline = std::move(merged.ring);
+		} else {
+			geometry::BooleanResult remainder = geometry::subtractRings(target->ring, cutter);
+			if (!remainder.ok()) {
+				return rejectCode(editFailureCode(remainder.status, mode));
+			}
+			result.outline = std::move(remainder.ring);
+		}
+
+		result.validation = checkOutline(result.outline, targetId);
+		if (!result.validation.ok()) {
+			return reject(result.validation);
+		}
+
+		if (mode == FoundationEditMode::Subtract) {
+			const auto& registry = engine::assets::ConstructionRegistry::Get();
+			for (const WallSegment& s : world_->segments()) {
+				if (s.hostFoundation != targetId) {
+					continue;
+				}
+				const Vertex* v0 = world_->getVertex(s.v0);
+				const Vertex* v1 = world_->getVertex(s.v1);
+				if (v0 == nullptr || v1 == nullptr) {
+					continue;
+				}
+				const auto*		   preset = registry.getThicknessPreset(s.material, s.thicknessPreset);
+				const std::int64_t half = preset != nullptr ? preset->halfThicknessMm : 0;
+				if (!bandContainedInRing(v0->pos, v1->pos, half, result.outline)) {
+					return rejectCode(ValidationCode::EditUnderWall);
+				}
+			}
+		}
+
+		return result;
 	}
 
 	// --- Walls --------------------------------------------------------------
@@ -311,40 +626,7 @@ namespace engine::construction {
 			return true; // no host to contain the wall (freestanding, future tool)
 		}
 		const Foundation* f = world_->get(host);
-		if (f == nullptr) {
-			return false;
-		}
-		// The full-thickness footprint is the band; a zero-thickness preset
-		// degenerates the band to the centerline, so probe the two endpoints in that
-		// case. A band corner inside-or-on the ring plus no band edge crossing a ring
-		// edge means the convex band lies entirely within the (possibly non-convex)
-		// host: corners alone miss a band bulging over a concave notch, the
-		// edge-cross check catches it.
-		geometry::Ring band;
-		if (halfThickMm > 0) {
-			band = geometry::band(a, b, halfThickMm);
-		} else {
-			band = {a, b};
-		}
-		for (const auto& c : band) {
-			if (geometry::pointInPolygon(c, f->ring) == geometry::PointInPolygon::Outside) {
-				return false;
-			}
-		}
-		const std::size_t nb = band.size();
-		const std::size_t nf = f->ring.size();
-		for (std::size_t i = 0; i < nb; ++i) {
-			const auto& a0 = band[i];
-			const auto& a1 = band[(i + 1) % nb];
-			for (std::size_t k = 0; k < nf; ++k) {
-				const auto& b0 = f->ring[k];
-				const auto& b1 = f->ring[(k + 1) % nf];
-				if (geometry::intersectSegments(a0, a1, b0, b1).relation == geometry::SegmentRelation::ProperCrossing) {
-					return false;
-				}
-			}
-		}
-		return true;
+		return f != nullptr && bandContainedInRing(a, b, halfThickMm, f->ring);
 	}
 
 	ValidationResult ConstructionValidator::validateWallPoint(

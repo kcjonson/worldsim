@@ -56,13 +56,16 @@ namespace engine::construction {
 	// POD record, serialization-friendly (D4). `ring` is CCW integer mm and
 	// kept simple/non-degenerate by ConstructionWorld's invariants. `entity` is
 	// the ECS mirror handle, set by the caller via setEntity once the gameplay
-	// entity is spawned; kInvalidEntity until then.
+	// entity is spawned; kInvalidEntity until then. `mergeTarget` marks a pending
+	// extension (an Add drawn onto a Built foundation): the built foundation it
+	// merges into once it is itself Built. kInvalidFoundation for an ordinary one.
 	struct Foundation {
 		FoundationId	id = kInvalidFoundation;
 		geometry::Ring	ring;
 		std::string		material;
 		FoundationState state = FoundationState::Blueprint;
 		ecs::EntityID	entity = ecs::kInvalidEntity;
+		FoundationId	mergeTarget = kInvalidFoundation;
 	};
 
 	// Outcome of a commit or edit. Mirrors geometry's reject-don't-repair model:
@@ -76,6 +79,10 @@ namespace engine::construction {
 		DegenerateArea,	   // zero signed area
 		OverlapsExisting,  // interior overlaps an already-committed foundation
 		UnknownFoundation, // edit referenced an id not in the store
+		TargetNotBuilt,	   // extension: the target is still a blueprint (edit it in place instead)
+		ExtensionPending,  // extension: the target already has an unmerged extension
+		NotAnExtension,	   // merge: the id is not a pending extension
+		ExtensionNotBuilt, // merge: the extension is still a blueprint
 		// Boolean-edit failures, forwarded from geometry::BooleanStatus:
 		BooleanInvalidInput,
 		BooleanDisjoint,
@@ -211,8 +218,32 @@ namespace engine::construction {
 		// (geometry::subtractRings). Same success/failure contract as add.
 		CommitStatus subtractFromFoundation(FoundationId id, const geometry::Ring& subtrahend);
 
+		// Foundation Add onto a BUILT foundation. Built foundations never change in
+		// place, so the added region becomes its own blueprint foundation (an
+		// extension) that merges into `target` once built. `ring` is the added region
+		// only (the drawn polygon minus the target) and takes the target's material.
+		// Rejects an unknown or unbuilt target, a target that already has a pending
+		// extension (one at a time, so merges never depend on order), a ring that
+		// fails the structural invariants or overlaps another foundation, and a ring
+		// whose union with the target is not one simple hole-free outline, so the
+		// later merge cannot fail. The extension is exempt from the overlap check
+		// against its own target: they share edges, and the booleans round to 1 mm.
+		CommitResult commitExtension(FoundationId target, geometry::Ring ring);
+
+		// Merge a Built extension into its Built target: the target's ring becomes
+		// their union, walls hosted on the extension re-host onto the target, and the
+		// extension record is removed. Walls on the old shared edge stay where they
+		// are (they become interior). The caller despawns the extension's entity.
+		CommitStatus mergeExtension(FoundationId extension);
+
+		// The unmerged extension attached to `target`, or kInvalidFoundation.
+		FoundationId pendingExtensionOf(FoundationId target) const;
+
 		// Whole-foundation demolish (the only removal the design spec allows).
-		// Returns false if the id is unknown.
+		// Returns false if the id is unknown. An extension still attached to the
+		// removed foundation keeps its record as an ordinary foundation (mergeTarget
+		// cleared) so no id dangles; gameplay never gets here, since the demolish
+		// cascade tears a pending extension down before its target.
 		bool removeFoundation(FoundationId id);
 
 		// --- Queries --------------------------------------------------------
@@ -359,9 +390,10 @@ namespace engine::construction {
 		const Foundation* find(FoundationId id) const;
 
 		// Structural invariant gate shared by commit and the edit paths.
-		// `ignoreId` excludes a foundation from the overlap check (the one being
-		// edited in place). On success `ring` is left CCW-normalized.
-		CommitStatus validateStructure(geometry::Ring& ring, FoundationId ignoreId) const;
+		// `ignoreA`/`ignoreB` exclude foundations from the overlap check (the one
+		// edited in place, or an extension and its target). On success `ring` is
+		// left CCW-normalized.
+		CommitStatus validateStructure(geometry::Ring& ring, FoundationId ignoreA, FoundationId ignoreB = kInvalidFoundation) const;
 
 		// Wall topology helpers.
 		WallSegment* findSegment(SegmentId id);

@@ -246,6 +246,8 @@ namespace {
 				.onMoveFurniture = [this]() { handleMoveFurniture(); },
 				.onDemolishFoundation = [this]() { handleDemolishFoundation(); },
 				.onDemolishBuilding = [this]() { handleDemolishBuilding(); },
+				.onAddToFoundation = [this]() { handleEditFoundation(engine::construction::FoundationEditMode::Add); },
+				.onSubtractFromFoundation = [this]() { handleEditFoundation(engine::construction::FoundationEditMode::Subtract); },
 				.onDemolishWallSegment = [this]() { handleDemolishWallSegment(); },
 				.onDemolishOpening = [this]() { handleDemolishOpening(); },
 				.queryResources = [this](const std::string& defName, Foundation::Vec2 position) -> std::optional<uint32_t> {
@@ -401,8 +403,20 @@ namespace {
 						return;
 					}
 					m_drawingSystem->world().setState(structure->graphId, engine::construction::FoundationState::Built);
-					gameUI->pushNotification("Construction complete", "Foundation built", UI::ToastSeverity::Info);
 					LOG_INFO(Game, "Foundation #%llu built (entity %u)", static_cast<unsigned long long>(structure->graphId), static_cast<uint32_t>(blueprintEntity));
+
+					// A finished extension merges into its target; its own entity goes on the
+					// deferred-destroy queue (this fires inside a live system iteration).
+					const auto* built = m_drawingSystem->world().get(structure->graphId);
+					if (built != nullptr && built->mergeTarget != engine::construction::kInvalidFoundation) {
+						const ecs::EntityID extensionEntity = m_drawingSystem->mergeExtension(structure->graphId);
+						if (extensionEntity != ecs::kInvalidEntity) {
+							m_pendingEntityRemoval.push_back(extensionEntity);
+							gameUI->pushNotification("Construction complete", "Foundation extended", UI::ToastSeverity::Info);
+							return;
+						}
+					}
+					gameUI->pushNotification("Construction complete", "Foundation built", UI::ToastSeverity::Info);
 				};
 				actionSys.setStructureCompletedCallback(structureCompleted);
 				constructionSystem.setStructureCompletedCallback(structureCompleted);
@@ -799,7 +813,7 @@ namespace {
 				std::vector<Foundation::DevCommand> devCommands;
 				if (debugServer->consumeDevCommands(devCommands)) {
 					for (const auto& devCmd : devCommands) {
-						m_devHandler->handle(devCmd);
+						debugServer->deliverDevResult(devCmd.id, m_devHandler->handle(devCmd));
 					}
 				}
 
@@ -1670,6 +1684,29 @@ namespace {
 			return true;
 		}
 
+		/// `id` plus its pending extension, if any: what demolishing that foundation takes down.
+		std::vector<engine::construction::FoundationId> foundationWithExtension(engine::construction::FoundationId id) const {
+			std::vector<engine::construction::FoundationId> group{id};
+			const auto extension = m_drawingSystem->world().pendingExtensionOf(id);
+			if (extension != engine::construction::kInvalidFoundation) {
+				group.push_back(extension);
+			}
+			return group;
+		}
+
+		/// Handle Add / Subtract from a foundation's info panel: switch world input to the
+		/// edit tool on the selected foundation. The selection stays, so the panel keeps
+		/// showing the foundation while its outline changes.
+		void handleEditFoundation(engine::construction::FoundationEditMode mode) {
+			const auto* foundationSel = std::get_if<world_sim::FoundationSelection>(&m_selectionSystem->current());
+			if (foundationSel == nullptr) {
+				LOG_WARNING(Game, "Cannot edit: no foundation selected");
+				return;
+			}
+			m_placementSystem->cancel();
+			m_drawingSystem->activateFoundationEditTool(foundationSel->id, mode);
+		}
+
 		/// Set the rooms-overlay active state and reflect it on the GameplayBar toggle
 		/// button. The single entry point for the R hotkey and the button, so the two
 		/// can never drift out of sync.
@@ -1722,17 +1759,27 @@ namespace {
 			// Walls block plain foundation demolition: removing the foundation alone would
 			// orphan a hosted wall. The panel hides this button while walls stand and offers
 			// Demolish building instead; this is the defensive guard for any other caller.
-			if (constructionWorld.foundationHasWalls(foundationSel->id)) {
-				LOG_WARNING(
-					Game, "Cannot demolish foundation #%llu: walls still stand", static_cast<unsigned long long>(foundationSel->id)
-				);
-				gameUI->pushNotification("Walls still stand", "Use Demolish building", UI::ToastSeverity::Warning);
-				return;
+			// A pending extension is part of the foundation here: its walls count, and it is
+			// cancelled with it (the cascade gate holds the target until it is gone).
+			const auto group = foundationWithExtension(foundationSel->id);
+			for (const engine::construction::FoundationId id : group) {
+				if (constructionWorld.foundationHasWalls(id)) {
+					LOG_WARNING(
+						Game, "Cannot demolish foundation #%llu: walls still stand", static_cast<unsigned long long>(foundationSel->id)
+					);
+					gameUI->pushNotification("Walls still stand", "Use Demolish building", UI::ToastSeverity::Warning);
+					return;
+				}
 			}
 
 			if (!markForDemolition(foundation->entity)) {
 				LOG_WARNING(Game, "Cannot demolish foundation #%llu: no blueprint", static_cast<unsigned long long>(foundationSel->id));
 				return;
+			}
+			for (const engine::construction::FoundationId id : group) {
+				if (id != foundationSel->id && !markForDemolition(constructionWorld.get(id)->entity)) {
+					LOG_WARNING(Game, "Demolish foundation: extension #%llu has no blueprint", static_cast<unsigned long long>(id));
+				}
 			}
 
 			LOG_INFO(Game, "Marked foundation #%llu for demolition", static_cast<unsigned long long>(foundationSel->id));
@@ -1764,11 +1811,17 @@ namespace {
 				return;
 			}
 
-			// Mark every opening on every wall, then every wall, then the foundation. Marking
-			// order is immaterial (the cascade gate orders the teardown). Build the set of hosted
-			// wall ids first, then walk the global openings list ONCE marking any opening whose
-			// host segment is in that set: O(walls + openings), not O(walls * openings).
-			const std::vector<engine::construction::SegmentId> segIds = constructionWorld.segmentsOnFoundation(foundationSel->id);
+			// Mark every opening on every wall, then every wall, then the foundation (and its
+			// pending extension, part of the same building). Marking order is immaterial (the
+			// cascade gate orders the teardown). Build the set of hosted wall ids first, then walk
+			// the global openings list ONCE marking any opening whose host segment is in that set:
+			// O(walls + openings), not O(walls * openings).
+			const auto group = foundationWithExtension(foundationSel->id);
+			std::vector<engine::construction::SegmentId> segIds;
+			for (const engine::construction::FoundationId id : group) {
+				const auto hosted = constructionWorld.segmentsOnFoundation(id);
+				segIds.insert(segIds.end(), hosted.begin(), hosted.end());
+			}
 			std::unordered_set<engine::construction::SegmentId> wallIds(segIds.begin(), segIds.end());
 
 			for (const engine::construction::SegmentId segId : segIds) {
@@ -1794,10 +1847,10 @@ namespace {
 				}
 			}
 
-			if (!markForDemolition(foundation->entity)) {
-				LOG_WARNING(
-					Game, "Demolish building: foundation #%llu has no blueprint", static_cast<unsigned long long>(foundationSel->id)
-				);
+			for (const engine::construction::FoundationId id : group) {
+				if (!markForDemolition(constructionWorld.get(id)->entity)) {
+					LOG_WARNING(Game, "Demolish building: foundation #%llu has no blueprint", static_cast<unsigned long long>(id));
+				}
 			}
 
 			LOG_INFO(

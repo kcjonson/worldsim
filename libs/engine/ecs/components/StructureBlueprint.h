@@ -132,6 +132,16 @@ namespace ecs {
 			return recorded;
 		}
 
+		/// True while the footprint may still be reshaped (foundation Add / Subtract in
+		/// place): nothing delivered, no work done, not being torn down. Design: a
+		/// blueprint is editable until the first material is delivered.
+		[[nodiscard]] bool shapeEditable() const {
+			if (demolishing || phase == BuildPhase::Complete || workDone > 0.0F) {
+				return false;
+			}
+			return std::none_of(delivered.begin(), delivered.end(), [](const auto& entry) { return entry.second > 0; });
+		}
+
 		/// Build progress in [0, 1]. Returns 0 when workTotal == 0 (blueprint
 		/// freshly created; total has not been computed yet).
 		[[nodiscard]] float progress() const {

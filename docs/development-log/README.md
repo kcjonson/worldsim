@@ -64,6 +64,7 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 #### September 2026
 
+- [2026-09-28 - Foundation Add / Subtract (construction G3)](./entries/2026-09-28-foundation-add-subtract.md)
 - [2026-09-27 - Frozen colonist and unplaceable stations after the organic terrain merges](./entries/2026-09-27-frozen-colonist-unplaceable-stations.md)
 - [2026-09-26 - Organic terrain geometry: water as terrain rings, every land boundary a warped field isoline](./entries/2026-09-26-organic-terrain-geometry.md)
 
