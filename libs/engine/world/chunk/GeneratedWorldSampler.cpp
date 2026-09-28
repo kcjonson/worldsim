@@ -43,13 +43,20 @@ namespace engine::world {
 
 		result.computeSectorGrid();
 
-		// Gather any river channels and ponds touching this chunk.
+		fillNeighborhoodCorners(result, coord,
+		                         [this](WorldPosition p) { return sampleBiomeAt(p); },
+		                         [this](WorldPosition p) { return sampleElevation(p); });
+
+		// Gather any river channels and ponds touching this chunk, padded by
+		// kRiverGatherMarginM beyond the chunk square (see its comment).
 		if (riverNetwork || pondNetwork) {
 			const WorldPosition origin = coord.origin();
-			const double minX = static_cast<double>(origin.x);
-			const double minY = static_cast<double>(origin.y);
-			const double maxX = minX + static_cast<double>(kChunkSize) * static_cast<double>(kTileSize);
-			const double maxY = minY + static_cast<double>(kChunkSize) * static_cast<double>(kTileSize);
+			const double minX = static_cast<double>(origin.x) - kRiverGatherMarginM;
+			const double minY = static_cast<double>(origin.y) - kRiverGatherMarginM;
+			const double maxX = static_cast<double>(origin.x) +
+			                    static_cast<double>(kChunkSize) * static_cast<double>(kTileSize) + kRiverGatherMarginM;
+			const double maxY = static_cast<double>(origin.y) +
+			                    static_cast<double>(kChunkSize) * static_cast<double>(kTileSize) + kRiverGatherMarginM;
 			if (riverNetwork) riverNetwork->gatherSegments(minX, minY, maxX, maxY, result.riverSegments);
 			if (pondNetwork) pondNetwork->gatherPonds(minX, minY, maxX, maxY, result.pondBlobs);
 		}

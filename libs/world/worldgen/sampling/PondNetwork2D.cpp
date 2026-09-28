@@ -249,6 +249,12 @@ void PondNetwork2D::gatherPonds(double minX, double minY, double maxX, double ma
     }
 }
 
+double PondNetwork2D::rimRadiusAt(const Pond& p, double thetaRad) {
+    const double wobble = 0.6 * foundation::det_math::sin(3.0 * thetaRad + static_cast<double>(p.phaseA)) +
+                          0.4 * foundation::det_math::sin(5.0 * thetaRad + static_cast<double>(p.phaseB));
+    return static_cast<double>(p.radius) * (1.0 + kRimAmp * wobble);
+}
+
 uint8_t PondNetwork2D::sampleDepth(const Pond& p, double x, double y) {
     const double dx = x - p.cx;
     const double dy = y - p.cy;
@@ -258,10 +264,7 @@ uint8_t PondNetwork2D::sampleDepth(const Pond& p, double x, double y) {
     const double innerR = static_cast<double>(p.radius) * (1.0 - kRimAmp);
     if (d2 <= innerR * innerR) return p.depth;   // well inside, skip the trig
     if (d2 > maxR * maxR) return 0;              // well outside
-    const double theta = foundation::det_math::atan2(dy, dx);
-    const double wobble = 0.6 * foundation::det_math::sin(3.0 * theta + static_cast<double>(p.phaseA)) +
-                          0.4 * foundation::det_math::sin(5.0 * theta + static_cast<double>(p.phaseB));
-    const double edge = static_cast<double>(p.radius) * (1.0 + kRimAmp * wobble);
+    const double edge = rimRadiusAt(p, foundation::det_math::atan2(dy, dx));
     return (d2 <= edge * edge) ? p.depth : 0;
 }
 

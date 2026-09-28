@@ -734,7 +734,7 @@ TEST(NavMesh, WalkableBorderWithInteriorWaterHasFloor) {
 }
 
 // The real "land island surrounded by water" topology that buildInput hands to
-// buildNavMesh. extractWaterObstacles emits a water body as SEPARATE rings: a CCW
+// buildNavMesh. A Waterline body arrives as SEPARATE rings: a CCW
 // OUTER water boundary plus a CW land-island HOLE, both pushed as independent
 // BLOCKED, holeCapable water rings (it never pairs outer+hole into one polygon-
 // with-hole). With even-odd containment parity, a point inside an even number of
@@ -910,10 +910,93 @@ TEST(NavMesh, SolidObstacleOverWaterStaysBlocked) {
 	EXPECT_GT(inTree, 0) << "the solid obstacle interior must be triangulated and tagged";
 }
 
-// RIVER EXITS THE AREA: the topology buildInput hands to buildNavMesh when water
-// touches the marching grid on every side (a river/confluence flowing OUT of the
-// simulation area). extractWaterObstacles then emits a water OUTER ring that
-// SURROUNDS the whole border (its boundary is the grid perimeter, beyond the area),
+// COINCIDENT CONSTRAINT EDGES: two chunks' clipped water rings meet along a shared
+// border line, the same edge arriving from two input rings. Here the two rings also
+// split that line at different vertices (x = 10000: one ring at y = 5000, the other
+// at y = 6500), so the arrangement sees exact duplicates and collinear partial
+// overlaps. It must merge them into one constraint: no floor along the seam, and the
+// triangles tile the border exactly (no gap, no overlap).
+TEST(NavMesh, CoincidentConstraintEdgesFromSeparateRings) {
+	constexpr std::int64_t kProvenanceWater	 = -1;
+	constexpr std::int64_t kProvenanceBorder = -3;
+
+	NavMeshInput in;
+	in.polygons.push_back(NavInputPolygon{{{0, 0}, {20000, 0}, {20000, 10000}, {0, 10000}}, false, kProvenanceBorder});
+	in.polygons.push_back(NavInputPolygon{
+		{{2000, 2000}, {10000, 2000}, {10000, 5000}, {10000, 8000}, {2000, 8000}}, true, kProvenanceWater, kNoOpening, true});
+	in.polygons.push_back(NavInputPolygon{
+		{{10000, 2000}, {18000, 2000}, {18000, 8000}, {10000, 8000}, {10000, 6500}}, true, kProvenanceWater, kNoOpening, true});
+
+	NavMesh m = buildNavMesh(in);
+	ASSERT_FALSE(m.triangles.empty());
+	EXPECT_TRUE(isEdgeManifold(m));
+	EXPECT_TRUE(neighborsConsistent(m));
+	EXPECT_TRUE(totalArea2(m) == Int128::product(2 * 20000, 10000)) << "triangles must tile the border exactly";
+
+	const std::vector<Vec2i64> lake = {{2000, 2000}, {18000, 2000}, {18000, 8000}, {2000, 8000}};
+	int						   water = 0;
+	for (const NavTriangle& t : m.triangles) {
+		if (pointInPolygon(centroid(m.vertices, t.v), lake) == PointInPolygon::Inside) {
+			EXPECT_FALSE(isFloorFace(t)) << "floor inside the water where two rings meet";
+			++water;
+		}
+	}
+	EXPECT_GT(water, 0);
+	const std::vector<Vec2i64> shore = {{0, 8000}, {20000, 8000}, {20000, 10000}, {0, 10000}};
+	EXPECT_GE(findFloorTriangleInside(m, shore), 0);
+}
+
+// OVERLAPPING SOLID WATER: river channels and ponds are solid (holeCapable false)
+// and overlap each other (a confluence) and the hole-capable waterline rings (a
+// mouth into a lake, a channel crossing a lake island). A point inside ANY solid
+// blocked ring blocks; even-odd parity counts only the hole-capable rings, so no
+// overlap can ever open a walkable hole.
+TEST(NavMesh, OverlappingSolidRingsNeverOpenAHole) {
+	constexpr std::int64_t kProvenanceWater	 = -1;
+	constexpr std::int64_t kProvenanceBorder = -3;
+
+	const std::vector<Vec2i64> lake	  = {{2000, 2000}, {18000, 2000}, {18000, 18000}, {2000, 18000}};
+	const std::vector<Vec2i64> island = {{6000, 6000}, {14000, 6000}, {14000, 14000}, {6000, 14000}};
+	const std::vector<Vec2i64> trunk  = {{9000, 500}, {11000, 500}, {11000, 16000}, {9000, 16000}};
+	const std::vector<Vec2i64> feeder = {{4000, 9000}, {16000, 9000}, {16000, 11000}, {4000, 11000}};
+	const std::vector<Vec2i64> pond	  = {{16000, 16000}, {19500, 16000}, {19500, 19500}, {16000, 19500}};
+
+	NavMeshInput in;
+	in.polygons.push_back(NavInputPolygon{{{0, 0}, {20000, 0}, {20000, 20000}, {0, 20000}}, false, kProvenanceBorder});
+	in.polygons.push_back(NavInputPolygon{lake, true, kProvenanceWater, kNoOpening, true});
+	in.polygons.push_back(
+		NavInputPolygon{{{6000, 6000}, {6000, 14000}, {14000, 14000}, {14000, 6000}}, true, kProvenanceWater, kNoOpening, true});
+	in.polygons.push_back(NavInputPolygon{trunk, true, kProvenanceWater});
+	in.polygons.push_back(NavInputPolygon{feeder, true, kProvenanceWater});
+	in.polygons.push_back(NavInputPolygon{pond, true, kProvenanceWater});
+
+	NavMesh m = buildNavMesh(in);
+	ASSERT_FALSE(m.triangles.empty());
+
+	int islandFloor = 0;
+	int outsideFloor = 0;
+	for (const NavTriangle& t : m.triangles) {
+		const Vec2i64 c		  = centroid(m.vertices, t.v);
+		auto		  inside  = [&c](const std::vector<Vec2i64>& r) { return pointInPolygon(c, r) == PointInPolygon::Inside; };
+		const bool	  inSolid = inside(trunk) || inside(feeder) || inside(pond);
+		if (inSolid || (inside(lake) && !inside(island))) {
+			EXPECT_FALSE(isFloorFace(t)) << "walkable hole at (" << c.x << ", " << c.y << ")";
+			EXPECT_TRUE(isCommonKnowledgeTerrainFace(t));
+		} else if (isFloorFace(t)) {
+			if (inside(island)) {
+				++islandFloor;
+			} else {
+				++outsideFloor;
+			}
+		}
+	}
+	EXPECT_GT(islandFloor, 0) << "island land between the channels stays walkable";
+	EXPECT_GT(outsideFloor, 0) << "the shore outside the lake stays walkable";
+}
+
+// RIVER EXITS THE AREA: the topology buildNavMesh sees when water touches the area
+// on every side (a river/confluence flowing OUT of the simulation area): a water
+// OUTER ring that SURROUNDS the whole border (here beyond the area),
 // plus the dry land the colonist stands on as a CW hole ring strictly inside the
 // border. Both are holeCapable water rings.
 //
@@ -975,7 +1058,7 @@ TEST(NavMesh, RiverExitsArea_OuterWaterSurroundsBorder_LandHasFloor) {
 
 // THE REAL IN-GAME GEOMETRY. The quickstart area is a Y-shaped river confluence:
 // three branches meet in the middle and each exits the 128 m area at a different
-// edge. extractWaterObstacles emits the whole water region as ONE CCW holeCapable
+// edge. The old tile marcher emitted the whole water region as ONE CCW holeCapable
 // ring (a thin, highly non-convex loop occupying ~6% of the area); the open grass
 // the colonist stands on, including the spawn at (1000, 4000), is the ~94% OUTSIDE
 // that ring. The border is the area rectangle. Captured from the in-game dump (see

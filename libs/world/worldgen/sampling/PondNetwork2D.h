@@ -59,6 +59,12 @@ class PondNetwork2D {
     // chunk rasterizer (ChunkSampleResult) and depthAt so they always agree.
     [[nodiscard]] static uint8_t sampleDepth(const Pond& pond, double xMeters, double yMeters);
 
+    // Rim radius (meters) of `pond` at angle `thetaRad` (standard atan2 convention,
+    // measured from the pond center): the base radius wobbled by the same rim
+    // sinusoids sampleDepth uses, so any consumer that walks the rim (the ribbon
+    // builder's future pond ring, sampleDepth itself) agrees on its shape.
+    [[nodiscard]] static double rimRadiusAt(const Pond& pond, double thetaRad);
+
   private:
     [[nodiscard]] TileId tileAt(double xMeters, double yMeters) const;
     [[nodiscard]] bool   isWaterTile(TileId t) const;

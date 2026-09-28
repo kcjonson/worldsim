@@ -19,6 +19,11 @@ namespace engine::world {
 		result.cornerElevations[3] = sampleElevation(coord.corner(ChunkCorner::SouthEast));
 
 		result.computeSectorGrid();
+
+		fillNeighborhoodCorners(result, coord,
+		                         [this](WorldPosition p) { return sampleBiomeAt(p); },
+		                         [this](WorldPosition p) { return sampleElevation(p); });
+
 		return result;
 	}
 

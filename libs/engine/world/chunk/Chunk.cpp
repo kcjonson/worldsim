@@ -1,22 +1,29 @@
 #include "Chunk.h"
 
-#include "world/chunk/TileAdjacency.h"
+#include "world/chunk/ApronField.h"
+#include "world/chunk/SurfaceField.h"
+#include "world/chunk/TerrainPolygonBuilder.h"
+#include "world/chunk/TerrainPolygonQuery.h"
 #include "world/chunk/TilePostProcessor.h"
 #include "world/generation/BiomeDispatcher.h"
 
+#include <utils/Log.h>
+
 #include <algorithm>
-#include <cmath>
+#include <chrono>
+#include <utility>
+#include <vector>
 
 namespace engine::world {
 
 	namespace {
-		// Rendered water depth (cosmetic) packed into TileData::attributes and read
-		// by the tile shader. 255 = deepest.
+		// Cosmetic water depth kept as tile data (D1); the renderer paints depth from
+		// the distance field instead. 255 = deepest.
 		constexpr uint8_t kDeepWaterDepth = 255;
 
-		// Map a channel's full width (meters) to a depth byte: narrow streams read
-		// shallow (light), wide rivers deep. A floor keeps even the thinnest stream
-		// visually distinct from a shallow lake edge.
+		// Map a channel's full width (meters) to a depth byte: narrow streams
+		// shallow, wide rivers deep. A floor keeps even the thinnest stream
+		// distinct from a shallow lake edge.
 		uint8_t waterDepthFromWidth(float fullWidthMeters) {
 			constexpr float kShallowAt = 1.5F;   // <= this is fully shallow (a trickle)
 			constexpr float kDeepAt = 14.0F;     // >= this reads fully deep; keeps stream-vs-river contrast
@@ -38,23 +45,72 @@ namespace engine::world {
 	}
 
 	void Chunk::generate() {
-		// Pre-compute all tiles in the chunk
+		using Clock			= std::chrono::steady_clock;
+		const auto start	= Clock::now();
+		auto	   stageEnd = start;
+		auto	   stageMs	= [&stageEnd]() {
+			  const auto now = Clock::now();
+			  const auto ms	 = std::chrono::duration<double, std::milli>(now - stageEnd).count();
+			  stageEnd		 = now;
+			  return ms;
+		};
+
+		// Pre-compute all tiles in the chunk. The tile raster (here and in the apron
+		// below) reads only the segments near the chunk via this hydrology-only
+		// result; the builder reads the whole gather off m_biomeData directly.
+		const ChunkSampleResult raster = m_biomeData.rasterHydrology(m_coord);
 		for (uint16_t y = 0; y < kChunkSize; ++y) {
 			for (uint16_t x = 0; x < kChunkSize; ++x) {
-				m_tiles[y * kChunkSize + x] = computeTile(x, y);
+				m_tiles[y * kChunkSize + x] = computeTile(x, y, raster);
 			}
 		}
+		const double tilesMs = stageMs();
 
-		// Post-process tiles: generate mud near water, compute adjacency
-		TilePostProcessor::process(m_tiles, m_worldSeed);
+		// Terrain polygon rings from the raw tiles plus the apron (D4, D11 order),
+		// then their distance field (D10): before post-processing, so these tiles
+		// match what a neighbor's apron computes for them. The apron lives on to
+		// fill the render tiles' apron below.
+		const ApronField	apron = ApronField::build(m_coord, m_biomeData, raster, m_worldSeed);
+		const ExtendedTiles extended(*this, apron);
+		const double		apronMs = stageMs();
+		double				polygonsMs = 0.0;
+		{
+			NeighborhoodGrids	 neighborhood(m_biomeData);
+			ChunkTerrainPolygons polygons = TerrainPolygonBuilder::build(
+				m_coord,
+				m_worldSeed,
+				[&extended](int32_t ex, int32_t ey) -> const TileData& { return extended.at(ex, ey); },
+				[this, &neighborhood](int64_t tx, int64_t ty) { return isBiomeWater(neighborhood.primaryBiomeAt(m_coord, tx, ty)); },
+				m_biomeData.riverSegments,
+				m_biomeData.pondBlobs
+			);
+			polygonsMs = stageMs();
+			setTerrainPolygons(std::move(polygons));
+		}
+		const double bakeMs = stageMs();
 
-		// Cache shore tiles (land tiles adjacent to water) for VisionSystem
-		// This avoids iterating all tiles every frame during vision updates
-		computeShoreTiles();
+		// Final surfaces, point-bar sand then mud by distance to water (D11, D12).
+		// The shore points came with the polygons.
+		const TerrainPolygonQuery terrain(*m_terrainPolygons);
+		TilePostProcessor::process(m_tiles, {.coord = m_coord, .terrain = &terrain, .worldSeed = m_worldSeed});
+		const double surfacesMs = stageMs();
 
-		// Pre-compute rendering data (adjacency masks, neighbors) for ChunkRenderer
-		// This avoids per-frame extraction of adjacency data during rendering
-		computeRenderData();
+		computeRenderData(extended, terrain);
+		const double renderMs = stageMs();
+		// Permanent worker-thread generation cost by stage. DEBUG: dev-tools log server.
+		LOG_DEBUG(
+			World,
+			"[ChunkGen] (%d, %d) %.1f ms: tiles %.1f, apron %.1f, polygons %.1f, bake %.1f, surfaces %.1f, render tiles %.1f",
+			m_coord.x,
+			m_coord.y,
+			std::chrono::duration<double, std::milli>(stageEnd - start).count(),
+			tilesMs,
+			apronMs,
+			polygonsMs,
+			bakeMs,
+			surfacesMs,
+			renderMs
+		);
 
 		m_renderDataVersion.fetch_add(1, std::memory_order_release);
 
@@ -62,129 +118,89 @@ namespace engine::world {
 		m_generationComplete.store(true, std::memory_order_release);
 	}
 
-	void Chunk::computeShoreTiles() {
-		m_shoreTiles.clear();
+	void Chunk::computeRenderData(const ExtendedTiles& extended, const TerrainPolygonQuery& terrain) {
+		// buildRenderTiles reads paint surfaces over the render window grown by the
+		// interior reach, and paintSurfaces reads tiles one bed reach further; all of
+		// it lies in the apron. The apron's raw tiles get the final surface their own
+		// chunk gives them (D11), so they are the neighbors' own tiles.
+		constexpr int32_t kPaintMargin	 = kRenderApronTiles + kInteriorReachTiles;
+		constexpr int32_t kSurfaceMargin = kRenderSurfaceReachTiles;
+		static_assert(kSurfaceMargin <= kApronTiles, "the render tiles must be built from the apron");
+		constexpr int32_t kPaintSide   = kChunkSize + 2 * kPaintMargin;
+		constexpr int32_t kSurfaceSide = kChunkSize + 2 * kSurfaceMargin;
 
-		constexpr uint8_t kWaterSurfaceId = static_cast<uint8_t>(Surface::Water);
-
-		for (uint16_t y = 0; y < kChunkSize; ++y) {
-			for (uint16_t x = 0; x < kChunkSize; ++x) {
-				const auto& tile = m_tiles[y * kChunkSize + x];
-
-				// Skip water tiles - we want land tiles adjacent to water
-				if (tile.surface == Surface::Water) {
-					continue;
-				}
-
-				// Check if this land tile has water in any cardinal direction
-				if (TileAdjacency::hasAdjacentSurface(tile.adjacency, kWaterSurfaceId)) {
-					m_shoreTiles.emplace_back(x, y);
-				}
+		const int64_t		 originX = static_cast<int64_t>(m_coord.x) * kChunkSize - kSurfaceMargin;
+		const int64_t		 originY = static_cast<int64_t>(m_coord.y) * kChunkSize - kSurfaceMargin;
+		std::vector<uint8_t> surfaces(static_cast<size_t>(kSurfaceSide) * kSurfaceSide);
+		for (int32_t y = 0; y < kSurfaceSide; ++y) {
+			for (int32_t x = 0; x < kSurfaceSide; ++x) {
+				const int32_t	ex	 = kApronTiles - kSurfaceMargin + x;
+				const int32_t	ey	 = kApronTiles - kSurfaceMargin + y;
+				const TileData& tile = extended.at(ex, ey);
+				const bool		own	 = ex >= kApronTiles && ey >= kApronTiles && ex < kApronTiles + kChunkSize && ey < kApronTiles + kChunkSize;
+				const Surface	surface =
+					own ? tile.surface
+						: TilePostProcessor::finalSurface(
+							  {.raw = tile.surface, .tileX = originX + x, .tileY = originY + y, .terrain = &terrain, .worldSeed = m_worldSeed}
+						  );
+				surfaces[static_cast<size_t>(y) * kSurfaceSide + static_cast<size_t>(x)] = static_cast<uint8_t>(surface);
 			}
 		}
-
-		// Shrink to fit to minimize memory usage. Note: this is a non-binding request
-		// but in practice chunks typically have 50-200 shore tiles (~400-1600 bytes),
-		// so the potential excess capacity per chunk is small and bounded.
-		m_shoreTiles.shrink_to_fit();
-	}
-
-	void Chunk::computeRenderData() {
-		for (uint16_t y = 0; y < kChunkSize; ++y) {
-			for (uint16_t x = 0; x < kChunkSize; ++x) {
-				size_t		idx = y * kChunkSize + x;
-				const auto& tile = m_tiles[idx];
-				auto&		render = m_renderData[idx];
-
-				uint8_t surfaceId = static_cast<uint8_t>(tile.surface);
-				render.surfaceId = surfaceId;
-				render.waterDepth = tile.waterDepth; // cosmetic depth for the water shader
-
-				// Pre-compute edge and corner masks
-				render.edgeMask = TileAdjacency::getEdgeMaskByStack(tile.adjacency, surfaceId);
-				render.cornerMask = TileAdjacency::getCornerMaskByStack(tile.adjacency, surfaceId);
-				render.hardEdgeMask = TileAdjacency::getHardEdgeMaskByFamily(tile.adjacency, surfaceId);
-
-				// Pre-extract all neighbor surface IDs
-				render.neighborN = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::N);
-				render.neighborE = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::E);
-				render.neighborS = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::S);
-				render.neighborW = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::W);
-				render.neighborNW = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::NW);
-				render.neighborNE = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::NE);
-				render.neighborSE = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::SE);
-				render.neighborSW = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::SW);
-			}
-		}
+		const std::vector<uint8_t>		  paint = paintSurfaces(surfaces, kPaintSide, kPaintSide);
+		const std::vector<TileRenderData> tiles = buildRenderTiles(paint, kRenderTilesSide, kRenderTilesSide);
+		std::copy(tiles.begin(), tiles.end(), m_renderData.begin());
 	}
 
 	const TileData& Chunk::getTile(uint16_t localX, uint16_t localY) const {
 		return m_tiles[localY * kChunkSize + localX];
 	}
 
-	void Chunk::setAdjacency(uint16_t localX, uint16_t localY, uint64_t adjacency) {
-		size_t idx = localY * kChunkSize + localX;
-		m_tiles[idx].adjacency = adjacency;
-
-		// Update pre-computed render data to match new adjacency
-		const auto& tile = m_tiles[idx];
-		auto&		render = m_renderData[idx];
-		uint8_t		surfaceId = static_cast<uint8_t>(tile.surface);
-
-		render.surfaceId = surfaceId;
-		render.waterDepth = tile.waterDepth; // keep cosmetic depth in sync
-		render.edgeMask = TileAdjacency::getEdgeMaskByStack(adjacency, surfaceId);
-		render.cornerMask = TileAdjacency::getCornerMaskByStack(adjacency, surfaceId);
-		render.hardEdgeMask = TileAdjacency::getHardEdgeMaskByFamily(adjacency, surfaceId);
-		render.neighborN = TileAdjacency::getNeighbor(adjacency, TileAdjacency::N);
-		render.neighborE = TileAdjacency::getNeighbor(adjacency, TileAdjacency::E);
-		render.neighborS = TileAdjacency::getNeighbor(adjacency, TileAdjacency::S);
-		render.neighborW = TileAdjacency::getNeighbor(adjacency, TileAdjacency::W);
-		render.neighborNW = TileAdjacency::getNeighbor(adjacency, TileAdjacency::NW);
-		render.neighborNE = TileAdjacency::getNeighbor(adjacency, TileAdjacency::NE);
-		render.neighborSE = TileAdjacency::getNeighbor(adjacency, TileAdjacency::SE);
-		render.neighborSW = TileAdjacency::getNeighbor(adjacency, TileAdjacency::SW);
-
-		m_renderDataVersion.fetch_add(1, std::memory_order_release);
+	TileData Chunk::computeTile(uint16_t localX, uint16_t localY, const ChunkSampleResult& hydrology) const {
+		return computeTileFrom({
+			.coord = m_coord,
+			.localX = localX,
+			.localY = localY,
+			.biomeWeights = m_biomeData.getTileBiome(localX, localY),
+			.elevationMeters = m_biomeData.getTileElevation(localX, localY),
+			.hydrology = &hydrology,
+			.worldSeed = m_worldSeed,
+		});
 	}
 
-	TileData Chunk::computeTile(uint16_t localX, uint16_t localY) const {
+	TileData Chunk::computeTileFrom(const TileComputeArgs& args) {
 		TileData tile;
 
-		// Get biome weights from pre-computed sample data
-		BiomeWeights biomeWeights = m_biomeData.getTileBiome(localX, localY);
-
 		// Store primary and secondary biomes with blend weight
-		tile.primaryBiome = biomeWeights.primary();
-		tile.secondaryBiome = biomeWeights.secondary();
+		tile.primaryBiome = args.biomeWeights.primary();
+		tile.secondaryBiome = args.biomeWeights.secondary();
 
 		// Convert float weight (0.0-1.0) to uint8_t (0-255)
-		float primaryWeight = biomeWeights.primaryWeight();
+		float primaryWeight = args.biomeWeights.primaryWeight();
 		tile.biomeBlend = static_cast<uint8_t>(std::min(255.0F, primaryWeight * 255.0F));
 
-		// Get elevation from interpolation (convert meters to centimeters, clamped to uint16_t)
-		float elevMeters = m_biomeData.getTileElevation(localX, localY);
-		float elevCm = elevMeters * 100.0F;
+		// Elevation in meters -> centimeters, clamped to uint16_t
+		float elevCm = args.elevationMeters * 100.0F;
 		tile.elevation = static_cast<uint16_t>(std::clamp(elevCm, 0.0F, 65535.0F));
 
 		// Select surface type based on primary biome (uses spatial clustering)
-		tile.surface = selectSurface(tile.primaryBiome, localX, localY);
+		tile.surface = selectSurfaceFor(args.coord, tile.primaryBiome, args.localX, args.localY, args.elevationMeters, args.worldSeed);
 
-		// Water depth byte (cosmetic; the shader tints water by it). Biome water
+		// Water depth byte (cosmetic tile data, not drawn). Biome water
 		// (ocean/lake/wetland) reads deep; river channels set depth from their width
 		// below so streams render shallow and trunks deep.
 		uint8_t depth = (tile.surface == Surface::Water) ? kDeepWaterDepth : 0;
 
 		// World position of this tile (meters), shared by the water overrides.
-		const WorldPosition origin = m_coord.origin();
-		const double worldXMeters = static_cast<double>(origin.x) + static_cast<double>(localX) * static_cast<double>(kTileSize);
-		const double worldYMeters = static_cast<double>(origin.y) + static_cast<double>(localY) * static_cast<double>(kTileSize);
+		const WorldPosition origin = args.coord.origin();
+		const double worldXMeters = static_cast<double>(origin.x) + static_cast<double>(args.localX) * static_cast<double>(kTileSize);
+		const double worldYMeters = static_cast<double>(origin.y) + static_cast<double>(args.localY) * static_cast<double>(kTileSize);
 
 		// River channels from the coarse 3D drainage graph override the biome
 		// surface. Continuous across chunk seams: the channel geometry is a
-		// deterministic function of world position, gathered per chunk.
-		if (!m_biomeData.riverSegments.empty()) {
-			const float halfWidth = m_biomeData.riverHalfWidthAt(worldXMeters, worldYMeters);
+		// deterministic function of world position, gathered per chunk (extended by
+		// the apron, so apron tiles see the same channels a neighbor chunk would).
+		if (args.hydrology != nullptr && !args.hydrology->riverSegments.empty()) {
+			const float halfWidth = args.hydrology->riverHalfWidthAt(worldXMeters, worldYMeters);
 			if (halfWidth > 0.0F) {
 				tile.surface = Surface::Water;
 				depth = waterDepthFromWidth(2.0F * halfWidth);
@@ -194,8 +210,8 @@ namespace engine::world {
 		// Sparse hydrology-driven ponds (and desert oases) turn land to water, after
 		// rivers so a channel crossing a pond cell keeps its river; existing water
 		// (river/ocean/lake) is left untouched.
-		if (!m_biomeData.pondBlobs.empty() && tile.surface != Surface::Water) {
-			const uint8_t pondDepth = m_biomeData.pondDepthAt(worldXMeters, worldYMeters);
+		if (args.hydrology != nullptr && !args.hydrology->pondBlobs.empty() && tile.surface != Surface::Water) {
+			const uint8_t pondDepth = args.hydrology->pondDepthAt(worldXMeters, worldYMeters);
 			if (pondDepth > 0) {
 				tile.surface = Surface::Water;
 				depth = pondDepth;
@@ -203,7 +219,7 @@ namespace engine::world {
 		}
 
 		// Generate deterministic moisture from hash
-		uint32_t		hash = tileHash(m_coord, localX, localY, m_worldSeed);
+		uint32_t		hash = tileHash(args.coord, args.localX, args.localY, args.worldSeed);
 		constexpr float kNormalize = 1.0F / static_cast<float>(UINT32_MAX);
 		float			moistureBase = static_cast<float>(hash) * kNormalize;
 
@@ -221,72 +237,29 @@ namespace engine::world {
 		tile.moisture = static_cast<uint8_t>(std::min(255.0F, moistureBase * 255.0F));
 
 		tile.waterDepth = depth;
-		tile.adjacency = 0;	 // Computed by TilePostProcessor after all tiles generated
 
 		return tile;
 	}
 
-	Surface Chunk::selectSurface(Biome biome, uint16_t localX, uint16_t localY) const {
+	Surface Chunk::selectSurfaceFor(ChunkCoordinate coord, Biome biome, uint16_t localX, uint16_t localY,
+	                                 float elevationMeters, uint64_t worldSeed) {
 		// Delegate to biome-specific generators via dispatcher
 		generation::GenerationContext ctx{
-			.chunkCoord = m_coord,
+			.chunkCoord = coord,
 			.localX = localX,
 			.localY = localY,
-			.worldSeed = m_worldSeed,
+			.worldSeed = worldSeed,
 			.biome = biome,
-			.elevation = m_biomeData.getTileElevation(localX, localY)
+			.elevation = elevationMeters
 		};
 
 		return generation::BiomeDispatcher::generate(ctx).surface;
 	}
 
-	float Chunk::smoothstep(float t) {
-		// Hermite interpolation: 3t² - 2t³
-		return t * t * (3.0F - 2.0F * t);
-	}
-
-	float Chunk::valueNoise(float x, float y, uint64_t seed) const {
-		// Get integer grid coordinates
-		auto	x0 = static_cast<int32_t>(std::floor(x));
-		auto	y0 = static_cast<int32_t>(std::floor(y));
-		int32_t x1 = x0 + 1;
-		int32_t y1 = y0 + 1;
-
-		// Get fractional part
-		float fx = x - static_cast<float>(x0);
-		float fy = y - static_cast<float>(y0);
-
-		// Apply smoothstep for smoother interpolation
-		float sx = smoothstep(fx);
-		float sy = smoothstep(fy);
-
-		// Hash at each corner, normalized to [0, 1]
-		constexpr float kNormalize = 1.0F / static_cast<float>(UINT32_MAX);
-		float			n00 = static_cast<float>(tileHash({x0, y0}, 0, 0, seed)) * kNormalize;
-		float			n10 = static_cast<float>(tileHash({x1, y0}, 0, 0, seed)) * kNormalize;
-		float			n01 = static_cast<float>(tileHash({x0, y1}, 0, 0, seed)) * kNormalize;
-		float			n11 = static_cast<float>(tileHash({x1, y1}, 0, 0, seed)) * kNormalize;
-
-		// Bilinear interpolation
-		float nx0 = n00 * (1.0F - sx) + n10 * sx;
-		float nx1 = n01 * (1.0F - sx) + n11 * sx;
-		return nx0 * (1.0F - sy) + nx1 * sy;
-	}
-
-	float Chunk::fractalNoise(float x, float y, uint64_t seed, int octaves, float persistence) const {
-		float total = 0.0F;
-		float amplitude = 1.0F;
-		float frequency = 1.0F;
-		float maxValue = 0.0F;
-
-		for (int i = 0; i < octaves; ++i) {
-			total += valueNoise(x * frequency, y * frequency, seed + static_cast<uint64_t>(i)) * amplitude;
-			maxValue += amplitude;
-			amplitude *= persistence;
-			frequency *= 2.0F;
-		}
-
-		return total / maxValue; // Normalize to [0, 1]
+	void Chunk::setTerrainPolygons(ChunkTerrainPolygons polygons) {
+		polygons.version = m_terrainPolygons->version + 1;
+		m_terrainPolygons = std::make_shared<const ChunkTerrainPolygons>(std::move(polygons));
+		m_terrainDistanceField = TerrainDistanceField::bake(*m_terrainPolygons, m_coord);
 	}
 
 	uint32_t Chunk::tileHash(ChunkCoordinate chunk, uint16_t localX, uint16_t localY, uint64_t seed) {
@@ -358,9 +331,6 @@ namespace engine::world {
 
 			case Surface::Rock:
 				return Foundation::Color(0.42F, 0.42F, 0.42F, 1.0F);
-
-			case Surface::Water:
-				return Foundation::Color(0.10F, 0.30F, 0.48F, 1.0F);
 
 			case Surface::Snow:
 				return Foundation::Color(0.95F, 0.97F, 1.0F, 1.0F);

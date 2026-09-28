@@ -251,11 +251,11 @@ namespace world_sim {
 		[[nodiscard]] bool pointOnMesh(Foundation::Vec2 p) const;
 
 		/// True when the WHOLE footprint of `pts` may be placed. A FOUNDATION validates its polygon
-		/// area against NavigationSystem::isAreaBuildable -- a terrain-only mesh, so geography (water)
-		/// and built walls block but clearable entities (trees/rocks) do NOT: placing over them spawns
-		/// clear tasks and the build waits for the footprint to clear. A WALL validates its chain
-		/// centerline against isPolylineWalkable (no wall footprint-clearing yet, so it still needs
-		/// clear ground). The SAME shared predicates the /api/dev verbs use. On failure toasts
+		/// area against NavigationSystem::isAreaBuildable -- a terrain-only mesh, so water and off-mesh
+		/// gaps block but clearable entities (trees/rocks) do NOT: placing over them spawns clear tasks
+		/// and the build waits for the footprint to clear. Wall conflicts are the validator's job. A WALL
+		/// validates its chain centerline against isPolylineWalkable (no wall footprint-clearing yet, so it
+		/// still needs clear ground). The SAME shared predicates the /api/dev verbs use. On failure toasts
 		/// "Can't build here" and returns false so the caller commits NOTHING -- no partial structure.
 		[[nodiscard]] bool requirePlaceable(const std::vector<Foundation::Vec2>& pts, const char* what);
 
@@ -373,9 +373,9 @@ namespace world_sim {
 		bool willClose_ = false;
 
 		// True when the snapped cursor is at a NON-PLACEABLE point for the active tool (foundation:
-		// unbuildable -- water/wall; wall: off the walkable mesh; or no active mesh). Recomputed every
-		// move for the foundation + wall tools; drives the red invalid preview so the player sees they
-		// can't place there BEFORE committing. The commit gate re-checks every vertex regardless, so
+		// unbuildable -- water or off-mesh; wall: off the walkable mesh; or no active mesh). Recomputed
+		// every move for the foundation + wall tools; drives the red invalid preview so the player sees
+		// they can't place there BEFORE committing. The commit gate re-checks every vertex regardless, so
 		// this is feedback only.
 		bool cursorOffMesh_ = false;
 

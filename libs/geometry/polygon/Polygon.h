@@ -47,7 +47,9 @@ namespace geometry {
 	};
 
 	// No two non-adjacent edges intersect; adjacent edges share only their common
-	// vertex. O(n^2), fine for editor-scale rings.
+	// vertex. On failure reports the first offending pair in index order.
+	// Candidate pairs come from a grid over edge bounds, so shoreline-scale rings
+	// (thousands of vertices) cost about O(n log n).
 	ConstraintResult isSimple(const Ring& ring);
 
 	// Smallest interior angle (degrees) is at least the threshold. Float angle

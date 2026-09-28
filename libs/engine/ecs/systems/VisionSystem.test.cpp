@@ -12,7 +12,14 @@
 #include <assets/placement/SpatialIndex.h>
 #include <construction/ConstructionWorld.h>
 #include <world/chunk/ChunkCoordinate.h>
+#include <world/chunk/ChunkManager.h>
+#include <world/chunk/ChunkSampleResult.h>
+#include <world/chunk/IWorldSampler.h>
+#include <world/chunk/TerrainPolygonQuery.h>
 
+#include <glm/geometric.hpp>
+
+#include <memory>
 #include <unordered_set>
 
 #include <glm/vec2.hpp>
@@ -149,6 +156,28 @@ namespace {
 		sys.setUpdateInterval(1);
 		sys.update(0.0F);
 	}
+
+	// Grassland with a 32 m square lake at [32, 64) m on both axes in chunk (0, 0)
+	// (biome sectors 2 and 3 of 16 m).
+	class LakeSampler : public engine::world::IWorldSampler {
+	  public:
+		[[nodiscard]] engine::world::ChunkSampleResult sampleChunk(ChunkCoordinate coord) const override {
+			engine::world::ChunkSampleResult r = engine::world::makeUniformChunkSampleResult(
+				engine::world::BiomeWeights::single(engine::world::Biome::TemperateGrassland), 1.0F
+			);
+			if (coord.x == 0 && coord.y == 0) {
+				for (int sy = 2; sy < 4; ++sy) {
+					for (int sx = 2; sx < 4; ++sx) {
+						r.sectorGrid[static_cast<size_t>(sy * engine::world::kSectorGridSize + sx)] =
+							engine::world::BiomeWeights::single(engine::world::Biome::Lake);
+					}
+				}
+			}
+			return r;
+		}
+		[[nodiscard]] float	   sampleElevation(engine::world::WorldPosition) const override { return 1.0F; }
+		[[nodiscard]] uint64_t getWorldSeed() const override { return 11u; }
+	};
 
 } // namespace
 
@@ -554,15 +583,15 @@ TEST_F(VisionSystemTest, RemovedButOutOfRadiusEntityIsKept) {
 	EXPECT_TRUE(remembers(world, observer, targetPos)) << "out of sight radius -> must not forget";
 }
 
-// Shore-tile memory entries are synthetic terrain, never reconciled away: even with
+// Shore memory entries are synthetic terrain, never reconciled away: even with
 // placement data wired and the spot in view, the shore entry survives.
-TEST_F(VisionSystemTest, ShoreTileNeverReconciled) {
+TEST_F(VisionSystemTest, ShoreNeverReconciled) {
 	AssetRegistry&						reg = AssetRegistry::Get();
 	PlacementExecutor					executor(reg);
 	std::unordered_set<ChunkCoordinate> processed;
 	// Store an EMPTY placement index for chunk (0,0) so reconciliation's index path is
 	// genuinely live (getChunkIndex returns non-null). A placement entity here would
-	// be forgotten; the shore entry must survive via the shore-tile exemption, not
+	// be forgotten; the shore entry must survive via the shore exemption, not
 	// merely because no index exists.
 	{
 		engine::assets::AsyncChunkPlacementResult emptyChunk;
@@ -589,5 +618,45 @@ TEST_F(VisionSystemTest, ShoreTileNeverReconciled) {
 	ASSERT_TRUE(mem->knowsWorldEntity(shorePos, shoreId));
 
 	tick(sys);
-	EXPECT_TRUE(mem->knowsWorldEntity(shorePos, shoreId)) << "shore tiles are terrain, never reconciled away";
+	EXPECT_TRUE(mem->knowsWorldEntity(shorePos, shoreId)) << "the shore is terrain, never reconciled away";
+}
+
+// Pass 3 (terrain polygons D11): every shore point of a loaded chunk within sight
+// is remembered as the drinkable Terrain_Shore, and none beyond it; each stands
+// on land at the water's edge.
+TEST_F(VisionSystemTest, ShorePointsInSightAreRemembered) {
+	engine::world::ChunkManager chunks(std::make_unique<LakeSampler>());
+	chunks.setLoadRadius(0);
+	chunks.update({48.0F, 48.0F});
+	chunks.finishPendingGeneration();
+	const engine::world::Chunk* chunk = chunks.getChunk({0, 0});
+	ASSERT_TRUE(chunk != nullptr && chunk->isReady());
+	const std::vector<Vec2i64>& shore = chunk->terrainPolygons().shorePoints;
+	ASSERT_GT(shore.size(), 100U) << "the lake's shore, a point a meter";
+
+	World			world;
+	VisionSystem&	sys = world.registerSystem<VisionSystem>();
+	sys.setChunkManager(&chunks);
+	const glm::vec2 eye{48.0F, 20.0F}; // 12 m south of the lake
+	const EntityID	observer = spawnObserver(world, eye);
+	tick(sys);
+
+	const uint32_t shoreId = AssetRegistry::Get().getDefNameId("Terrain_Shore");
+	ASSERT_NE(shoreId, 0u);
+	const Memory* mem = world.getComponent<Memory>(observer);
+	ASSERT_NE(mem, nullptr);
+	const engine::world::TerrainPolygonQuery water(chunk->terrainPolygons());
+	int										 inSight = 0;
+	for (const Vec2i64& p : shore) {
+		const Foundation::Vec2 meters = geometry::dequantize(p);
+		const glm::vec2		   at{meters.x, meters.y};
+		const float			   dx	= at.x - eye.x;
+		const float			   dy	= at.y - eye.y;
+		const bool			   seen = dx * dx + dy * dy <= mem->sightRadius * mem->sightRadius;
+		inSight += seen ? 1 : 0;
+		EXPECT_EQ(mem->knowsWorldEntity(at, shoreId), seen) << at.x << ", " << at.y;
+		EXPECT_FALSE(water.isInsideWater(p)) << at.x << ", " << at.y;
+		EXPECT_LE(water.distanceToWaterMm(p), 301.0) << at.x << ", " << at.y;
+	}
+	EXPECT_GT(inSight, 20);
 }

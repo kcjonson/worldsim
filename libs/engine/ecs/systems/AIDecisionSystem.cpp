@@ -1575,9 +1575,10 @@ namespace ecs {
 					option.targetPosition = currentTask.targetPosition;
 					option.distanceToTarget = glm::distance(position.value, currentTask.targetPosition);
 					option.status = OptionStatus::Available;
-				} else if ((needType == NeedType::Bladder || needType == NeedType::Digestion) && m_chunkManager != nullptr) {
+				} else if ((needType == NeedType::Bladder || needType == NeedType::Digestion) && m_chunkManager != nullptr &&
+						   m_navSystem != nullptr) {
 					// For toilet needs, try smart location finder
-					auto location = findToiletLocation(position.value, *m_chunkManager, *world, memory, m_registry);
+					auto location = findToiletLocation(position.value, *m_chunkManager, *m_navSystem, *world, memory, m_registry);
 					if (location.has_value()) {
 						option.targetPosition = *location;
 						option.distanceToTarget = glm::distance(position.value, *location);

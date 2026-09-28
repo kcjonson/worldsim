@@ -1,0 +1,170 @@
+#pragma once
+
+// TerrainPolygons - the per-chunk ring set that is the terrain-polygons epic's
+// runtime truth for water (D1/D2 in
+// docs/technical/organic-terrain/terrain-polygons-architecture.md). This header
+// only defines the types and Chunk's storage for them; TerrainPolygonBuilder is
+// what fills a ChunkTerrainPolygons.
+
+#include <core/Vec2i64.h>
+#include <polygon/Polygon.h>
+
+#include <cstddef>
+#include <cstdint>
+#include <vector>
+
+namespace engine::world {
+
+/// What kind of ring this is: the softened biome waterline, a stroked river
+/// channel, or a pond rim (D2).
+enum class TerrainRingKind : uint8_t { Waterline, Channel, Pond };
+
+/// What body of water a ring belongs to. Waterline rings take Ocean/Lake/Wetland
+/// from the sampled biome; Channel/Pond rings are always River/Pond (D2, D5).
+enum class WaterKind : uint8_t { Ocean, Lake, Wetland, River, Pond };
+
+/// Per-ring-vertex shading data (D2, D15): what a renderer or placement rule
+/// needs to vary bands, foam, and vegetation along the ring instead of drawing a
+/// uniform stroke. CPU-side truth; the GPU packing is a later renderer task.
+struct ShoreProfile {
+	uint8_t slope = 0;     ///< 0 gentle .. 255 steep; a heuristic by water kind, bank side, land rise, and noise
+	uint8_t exposure = 0;  ///< 0 sheltered bay .. 255 exposed headland
+	uint8_t sand = 0;      ///< substrate weights, sand + mud + grass = 255; rock is a flag
+	uint8_t mud = 0;
+	uint8_t moisture = 0;  ///< TileData::moisture of the adjacent land tile
+	uint8_t flags = 0;     ///< bit0 rock, bit1 synthetic edge (D4), bit2 fordable cut (D7)
+
+	static constexpr uint8_t kFlagRock = 1U << 0U;
+	/// The edge starting at this vertex is a closure along the extended region's
+	/// boundary, not a real shore; consumers other than nav skip it (D4).
+	static constexpr uint8_t kFlagSynthetic = 1U << 1U;
+	/// This vertex is one end of a fordability cut (D7 step 6): the straight butt
+	/// edge two channel pieces share where the width crosses kFordableWidthM. The
+	/// edge between two flagged vertices is internal to the river, not a bank.
+	static constexpr uint8_t kFlagFordableCut = 1U << 2U;
+
+	bool operator==(const ShoreProfile&) const = default;
+};
+
+/// One waterline/channel/pond ring plus its per-vertex shading data (D2).
+struct TerrainRing {
+	geometry::Ring ring;                ///< integer mm, world-absolute, simple, CCW outer / CW hole
+	std::vector<ShoreProfile> profiles; ///< same length as ring.size() (D15)
+	TerrainRingKind kind = TerrainRingKind::Waterline;
+	WaterKind water = WaterKind::Lake;
+	bool blocksMovement = true; ///< false only for fordable channels (D7)
+	bool holeCapable = true;    ///< Waterline: true (even-odd); Channel/Pond: false (solid)
+	float meanHalfWidthM = 0.0F; ///< Channel only: mean bankfull half-width over the piece
+
+	/// Edge i, from vertex i to the next, is shoreline: neither a synthetic
+	/// closure (D4) nor the butt edge of a fordable cut, whose ends are both
+	/// flagged (D7).
+	[[nodiscard]] bool isShoreEdge(size_t i) const {
+		const uint8_t from = profiles[i].flags;
+		const uint8_t to = profiles[(i + 1) % profiles.size()].flags;
+		const bool cut = (from & to & ShoreProfile::kFlagFordableCut) != 0;
+		return (from & ShoreProfile::kFlagSynthetic) == 0 && !cut;
+	}
+};
+
+/// One river reach's thalweg (D2, D7 step 3), for the distance-field bake: the
+/// centerline samples offset toward the outer bank by the bend asymmetry, every
+/// point a texel of the chunk's bake region can read (up to 2 bankfull
+/// half-widths away, TerrainPolygonBuilder::kThalwegReachHalfWidths), which for a
+/// wide river runs far past the extended region. Parallel arrays, one entry per
+/// point.
+struct ThalwegPath {
+	std::vector<geometry::Vec2i64> points; ///< integer mm, world-absolute
+	std::vector<float> halfWidthM;         ///< bankfull half-width at each point
+	std::vector<float> widthRatio;         ///< w / mean w over a 5 w window (riffle > 1, pool < 1)
+	std::vector<float> curvature;          ///< signed, 1/m, positive turning left
+	/// RiverNetwork2D's arc coordinate (m, increasing downstream), linear within
+	/// each centerline span: world-deterministic, so every chunk reads the same
+	/// value at a point, but it resets at coarse tile joints and feeder junctions.
+	std::vector<double> arcLengthM;
+};
+
+/// `rings` bucketed for TerrainPolygonQuery (D3, section 8): world-aligned cells
+/// of TerrainPolygonQuery::kCellMm, the pin lattice, so every resampled run lies
+/// in one cell. Each cell lists every ring edge whose closed bounding box touches
+/// it; a cell no edge touches is all water or all land, and stores which.
+struct TerrainEdgeIndex {
+	/// The edge from rings[ring].ring[vertex] to the next vertex, with its
+	/// bounding box in mm from originMm, so a scan tests boxes without reading
+	/// the rings.
+	struct Edge {
+		int32_t minX = 0;
+		int32_t minY = 0;
+		int32_t maxX = 0;
+		int32_t maxY = 0;
+		uint32_t ring = 0;
+		uint32_t vertex = 0;
+		bool shore = false; ///< TerrainRing::isShoreEdge
+	};
+
+	/// Containment of an edge-free cell, as a ray cast from inside it counts it:
+	/// the even-odd parity over Waterline rings and the number of Channel and
+	/// Pond rings (solid, CCW) holding it.
+	struct CellWater {
+		uint8_t waterlineParity = 0;
+		int16_t solidDepth = 0;
+	};
+
+	geometry::Vec2i64 originMm{}; ///< min corner of cell (0, 0), on the lattice
+	int32_t cellsPerSide = 0;     ///< 0 when there are no rings
+	std::vector<uint32_t> cellStart{}; ///< cellsPerSide^2 + 1 offsets into edges, rows of cells from originMm
+	std::vector<Edge> edges{};
+	std::vector<CellWater> cellWater{}; ///< per cell, read only where the cell has no edges
+	/// Per cell, nonzero when a shore edge touches it or one of its eight
+	/// neighbors; elsewhere no shore lies within a cell of any point in it.
+	std::vector<uint8_t> shoreNearby{};
+};
+
+/// One bit per tile of a chunk's extended region (D4), row-major from world
+/// tile (originX, originY), `size` tiles per side. `words` stays empty until a
+/// bit is set.
+struct ExtendedTileBits {
+	int64_t originX = 0;
+	int64_t originY = 0;
+	int32_t size = 0;
+	std::vector<uint64_t> words{};
+
+	[[nodiscard]] bool test(int64_t tileX, int64_t tileY) const {
+		const int64_t x = tileX - originX;
+		const int64_t y = tileY - originY;
+		if (words.empty() || x < 0 || y < 0 || x >= size || y >= size) {
+			return false;
+		}
+		const auto bit = static_cast<size_t>(y * size + x);
+		return ((words[bit / 64] >> (bit % 64)) & 1U) != 0;
+	}
+
+	/// (tileX, tileY) must lie in the region.
+	void set(int64_t tileX, int64_t tileY) {
+		if (words.empty()) {
+			words.assign((static_cast<size_t>(size) * static_cast<size_t>(size) + 63) / 64, 0);
+		}
+		const auto bit = static_cast<size_t>((tileY - originY) * size + (tileX - originX));
+		words[bit / 64] |= uint64_t{1} << (bit % 64);
+	}
+};
+
+/// A chunk's terrain polygon set. `rings` covers the extended region (chunk plus
+/// apron, D4) unclipped, so no consumer of it ever sees a chunk border as a
+/// shoreline; `navRings` is the same rings clipped to the chunk's own 512x512
+/// square (D4, D9). `navRings` carries no per-vertex profiles: nav only reads the
+/// ring and the blocksMovement/holeCapable flags, never shading. `thalwegs` has one
+/// path per stretch of river reach the bake can read (D2, D10). `shorePoints`
+/// are the chunk square's drinkable-water stands (D11), `barTiles` the extended
+/// region's point-bar tiles (D12).
+struct ChunkTerrainPolygons {
+	std::vector<TerrainRing> rings;
+	std::vector<TerrainRing> navRings;
+	std::vector<ThalwegPath> thalwegs;
+	TerrainEdgeIndex edgeIndex;
+	std::vector<geometry::Vec2i64> shorePoints;
+	ExtendedTileBits barTiles;
+	uint32_t version = 0; ///< bumped with the rings, read like Chunk::renderDataVersion
+};
+
+} // namespace engine::world

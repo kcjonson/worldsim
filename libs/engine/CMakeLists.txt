@@ -10,6 +10,12 @@ add_library(engine
     world/chunk/TilePostProcessor.cpp
     world/chunk/MockWorldSampler.cpp
     world/chunk/GeneratedWorldSampler.cpp
+    world/chunk/ApronField.cpp
+    world/chunk/SurfaceField.cpp
+    world/chunk/TerrainChannelBuilder.cpp
+    world/chunk/TerrainDistanceField.cpp
+    world/chunk/TerrainPolygonBuilder.cpp
+    world/chunk/TerrainPolygonQuery.cpp
     world/rendering/BakedEntityMesh.cpp
     world/rendering/ChunkRenderer.cpp
     world/rendering/EntityRenderer.cpp

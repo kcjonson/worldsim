@@ -8,11 +8,11 @@
 #include "world/chunk/ChunkCoordinate.h"
 #include "world/chunk/IWorldSampler.h"
 
+#include <chrono>
 #include <cstdint>
 #include <future>
 #include <memory>
 #include <unordered_map>
-#include <utility>
 #include <vector>
 
 namespace engine::world {
@@ -37,11 +37,11 @@ class ChunkManager {
 	/// Update loaded chunks based on camera position.
 	/// Loads new chunks within load radius, unloads chunks outside unload radius.
 	/// Tile generation runs on worker threads; chunks become isReady() over the
-	/// next few updates and at most one is border-stitched per call.
+	/// next few updates.
 	/// @param cameraCenter World position of camera center
 	void update(WorldPosition cameraCenter);
 
-	/// Block until all in-flight generation completes and integrate the results.
+	/// Block until all in-flight generation completes.
 	/// For tests and loading flows; gameplay uses incremental polling in update().
 	void finishPendingGeneration();
 
@@ -81,15 +81,22 @@ class ChunkManager {
 	// Default: 4 chunks = gives some hysteresis to prevent thrashing
 	int32_t m_unloadRadius = 4;
 
+	/// An in-flight tile generation task.
+	struct Generation {
+		ChunkCoordinate						  coord;
+		std::future<void>					  task;
+		std::chrono::steady_clock::time_point requested;
+	};
+
 	/// In-flight tile generation tasks. Chunks are inserted into m_chunks
 	/// immediately but stay !isReady() until their worker finishes; consumers
 	/// gate on isReady(). Chunks in this list must not be unloaded.
-	std::vector<std::pair<ChunkCoordinate, std::future<void>>> m_generating;
+	std::vector<Generation> m_generating;
 
 	/// Load a single chunk (tile generation runs on a worker thread)
 	void loadChunk(ChunkCoordinate coord);
 
-	/// Integrate finished generation tasks (boundary adjacency refresh)
+	/// Retire finished generation tasks
 	void pollGeneratedChunks();
 
 	/// Whether a chunk's generation task is still in flight
@@ -97,12 +104,6 @@ class ChunkManager {
 
 	/// Unload chunks outside the unload radius
 	void unloadDistantChunks(ChunkCoordinate center);
-
-	/// Recompute boundary adjacency for a chunk using any loaded neighbor chunks
-	void refreshAdjacencyForChunkBoundary(ChunkCoordinate coord);
-
-	/// Refresh adjacency for the chunk and its immediate neighbors (3x3 area)
-	void refreshAdjacencyAround(ChunkCoordinate coord);
 };
 
 }  // namespace engine::world

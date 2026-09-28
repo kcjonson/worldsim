@@ -2,10 +2,8 @@
 
 #include <utils/Log.h>
 
-#include <algorithm>
 #include <chrono>
-
-#include "world/chunk/TileAdjacency.h"
+#include <utility>
 
 namespace engine::world {
 
@@ -102,45 +100,47 @@ namespace engine::world {
 
 		// Generate the 262k tiles on a worker thread: this takes tens of ms per
 		// chunk and used to hitch the frame when scrolling crossed a chunk row.
-		// Consumers gate on chunk->isReady(); adjacency refresh happens in
-		// pollGeneratedChunks() once the worker finishes.
+		// Consumers gate on chunk->isReady(); pollGeneratedChunks() retires the
+		// task once the worker finishes.
 		Chunk* rawChunk = chunk.get();
 		m_chunks[coord] = std::move(chunk);
-		m_generating.emplace_back(coord, std::async(std::launch::async, [rawChunk]() { rawChunk->generate(); }));
+		m_generating.push_back(
+			{coord, std::async(std::launch::async, [rawChunk]() { rawChunk->generate(); }), std::chrono::steady_clock::now()}
+		);
 
 		LOG_DEBUG(Engine, "Loading chunk (%d, %d)", coord.x, coord.y);
 	}
 
 	void ChunkManager::pollGeneratedChunks() {
-		// Integrate at most one chunk per update: border stitching costs a few
-		// ms per chunk, and several workers finishing at once (crossing a chunk
-		// row loads five) would otherwise spike a single frame
-		for (auto it = m_generating.begin(); it != m_generating.end(); ++it) {
-			auto& [coord, future] = *it;
-			if (future.valid() && future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
-				future.get();
-				// Stitch borders with any ready neighbors (and theirs with this chunk)
-				refreshAdjacencyAround(coord);
-				LOG_DEBUG(Engine, "Loaded chunk (%d, %d)", coord.x, coord.y);
-				m_generating.erase(it);
-				return;
+		for (auto it = m_generating.begin(); it != m_generating.end();) {
+			if (it->task.valid() && it->task.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+				it->task.get();
+				LOG_DEBUG(
+					Engine,
+					"Loaded chunk (%d, %d) %.1f ms after its request",
+					it->coord.x,
+					it->coord.y,
+					std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - it->requested).count()
+				);
+				it = m_generating.erase(it);
+			} else {
+				++it;
 			}
 		}
 	}
 
 	void ChunkManager::finishPendingGeneration() {
-		for (auto& [coord, future] : m_generating) {
-			if (future.valid()) {
-				future.get();
-				refreshAdjacencyAround(coord);
+		for (Generation& generation : m_generating) {
+			if (generation.task.valid()) {
+				generation.task.get();
 			}
 		}
 		m_generating.clear();
 	}
 
 	bool ChunkManager::isGenerating(ChunkCoordinate coord) const {
-		for (const auto& [generatingCoord, future] : m_generating) {
-			if (generatingCoord == coord) {
+		for (const Generation& generation : m_generating) {
+			if (generation.coord == coord) {
 				return true;
 			}
 		}
@@ -162,98 +162,6 @@ namespace engine::world {
 		for (const auto& coord : toUnload) {
 			LOG_DEBUG(Engine, "Unloaded chunk (%d, %d)", coord.x, coord.y);
 			m_chunks.erase(coord);
-		}
-	}
-
-	void ChunkManager::refreshAdjacencyForChunkBoundary(ChunkCoordinate coord) {
-		Chunk* chunk = getChunk(coord);
-		if (chunk == nullptr || !chunk->isReady()) {
-			return;
-		}
-
-		// Cache the 3x3 neighborhood once: sampleSurface runs 8 times per border
-		// tile (~16k calls per refresh) and per-call getChunk map lookups dominated
-		std::array<const Chunk*, 9> neighborhood{};
-		for (int dy = -1; dy <= 1; ++dy) {
-			for (int dx = -1; dx <= 1; ++dx) {
-				const Chunk* candidate = getChunk({coord.x + dx, coord.y + dy});
-				if (candidate != nullptr && candidate->isReady()) {
-					neighborhood[(dy + 1) * 3 + (dx + 1)] = candidate;
-				}
-			}
-		}
-
-		auto sampleSurface = [&](int localX, int localY) -> uint8_t {
-			int cx = 1;
-			int cy = 1;
-			int tx = localX;
-			int ty = localY;
-
-			if (tx < 0) {
-				cx = 0;
-				tx += kChunkSize;
-			} else if (tx >= kChunkSize) {
-				cx = 2;
-				tx -= kChunkSize;
-			}
-
-			if (ty < 0) {
-				cy = 0;
-				ty += kChunkSize;
-			} else if (ty >= kChunkSize) {
-				cy = 2;
-				ty -= kChunkSize;
-			}
-
-			const Chunk* neighbor = neighborhood[cy * 3 + cx];
-			if (neighbor == nullptr) {
-				// Fallback: use the current chunk's edge tile to avoid fake edge strokes
-				tx = std::clamp(localX, 0, kChunkSize - 1);
-				ty = std::clamp(localY, 0, kChunkSize - 1);
-				return static_cast<uint8_t>(chunk->getTile(static_cast<uint16_t>(tx), static_cast<uint16_t>(ty)).surface);
-			}
-
-			return static_cast<uint8_t>(neighbor->getTile(static_cast<uint16_t>(tx), static_cast<uint16_t>(ty)).surface);
-		};
-
-		auto recomputeTileAdjacency = [&](int x, int y) {
-			uint64_t adj = 0;
-			TileAdjacency::setNeighbor(adj, TileAdjacency::NW, sampleSurface(x - 1, y - 1));
-			TileAdjacency::setNeighbor(adj, TileAdjacency::W, sampleSurface(x - 1, y));
-			TileAdjacency::setNeighbor(adj, TileAdjacency::SW, sampleSurface(x - 1, y + 1));
-			TileAdjacency::setNeighbor(adj, TileAdjacency::S, sampleSurface(x, y + 1));
-			TileAdjacency::setNeighbor(adj, TileAdjacency::SE, sampleSurface(x + 1, y + 1));
-			TileAdjacency::setNeighbor(adj, TileAdjacency::E, sampleSurface(x + 1, y));
-			TileAdjacency::setNeighbor(adj, TileAdjacency::NE, sampleSurface(x + 1, y - 1));
-			TileAdjacency::setNeighbor(adj, TileAdjacency::N, sampleSurface(x, y - 1));
-
-			chunk->setAdjacency(static_cast<uint16_t>(x), static_cast<uint16_t>(y), adj);
-		};
-
-		// Iterate only boundary tiles directly (more efficient than checking every tile)
-		// Top row (y=0)
-		for (int x = 0; x < kChunkSize; ++x) {
-			recomputeTileAdjacency(x, 0);
-		}
-		// Bottom row (y=kChunkSize-1)
-		for (int x = 0; x < kChunkSize; ++x) {
-			recomputeTileAdjacency(x, kChunkSize - 1);
-		}
-		// Left column (excluding corners already handled)
-		for (int y = 1; y < kChunkSize - 1; ++y) {
-			recomputeTileAdjacency(0, y);
-		}
-		// Right column (excluding corners already handled)
-		for (int y = 1; y < kChunkSize - 1; ++y) {
-			recomputeTileAdjacency(kChunkSize - 1, y);
-		}
-	}
-
-	void ChunkManager::refreshAdjacencyAround(ChunkCoordinate coord) {
-		for (int dy = -1; dy <= 1; ++dy) {
-			for (int dx = -1; dx <= 1; ++dx) {
-				refreshAdjacencyForChunkBoundary({coord.x + dx, coord.y + dy});
-			}
 		}
 	}
 

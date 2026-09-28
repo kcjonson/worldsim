@@ -1,0 +1,19 @@
+{
+  "$comment": "Overlay of the builtin-baseline 1.9.4 port minus the -Werror=old-style-cast configure option, which CMake 4 rejects as an unknown warning category (fixed upstream in 1.9.5). Delete when the baseline moves past it.",
+  "name": "benchmark",
+  "version-semver": "1.9.4",
+  "description": "A library to benchmark code snippets, similar to unit tests.",
+  "homepage": "https://github.com/google/benchmark",
+  "license": "Apache-2.0",
+  "supports": "!uwp",
+  "dependencies": [
+    {
+      "name": "vcpkg-cmake",
+      "host": true
+    },
+    {
+      "name": "vcpkg-cmake-config",
+      "host": true
+    }
+  ]
+}

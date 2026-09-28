@@ -14,11 +14,14 @@ uniform float u_cameraZoom;
 uniform float u_pixelsPerMeter;
 uniform vec2 u_viewportSize;    // logical pixels
 
-out vec2 v_worldPos;
+out vec2 v_worldPos; // world meters, for world-space noise (continuous across chunks)
+out vec2 v_localPos; // chunk-local meters, for texture lookups (full precision far from the origin)
 
 void main() {
-	vec2 world = u_chunkOrigin + a_corner * u_chunkWorldSize;
+	vec2 local = a_corner * u_chunkWorldSize;
+	vec2 world = u_chunkOrigin + local;
 	v_worldPos = world;
+	v_localPos = local;
 	vec2 screen = (world - u_cameraPos) * (u_pixelsPerMeter * u_cameraZoom) + u_viewportSize * 0.5;
 	gl_Position = u_projection * vec4(screen, 0.0, 1.0);
 }

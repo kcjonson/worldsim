@@ -3,11 +3,14 @@
 #include "MemoryQueries.h"
 #include "Transform.h"
 
+#include "../systems/NavigationSystem.h"
+
 #include "assets/AssetRegistry.h"
 #include "world/chunk/ChunkCoordinate.h"
 #include "world/chunk/ChunkManager.h"
-#include "world/chunk/TileAdjacency.h"
+#include "world/chunk/TerrainPolygonQuery.h"
 
+#include <core/Vec2i64.h>
 #include <utils/Log.h>
 
 #include <cmath>
@@ -21,8 +24,8 @@ namespace {
 /// Grid spacing for candidate sampling (meters)
 constexpr float kSampleSpacing = 3.0F;
 
-/// Surface ID for water (must match Surface::Water enum value)
-constexpr uint8_t kWaterSurfaceId = 4;
+/// Relief stays this far from water, off the shore colonists drink from (the old tile rule's reach).
+constexpr double kMinWaterDistanceMm = 1500.0;
 
 /// Scoring weights
 constexpr float kBioPileClusterBonus = 10.0F;   // Bonus per nearby BioPile
@@ -56,38 +59,28 @@ constexpr float kFoodAvoidanceRadius = 15.0F;   // Distance to avoid from food
 	return positions;
 }
 
-/// Check if a tile at the given world position is valid for toilet use
-[[nodiscard]] bool isValidToiletTile(
+/// Check if the given world position is valid for toilet use
+[[nodiscard]] bool isValidToiletSpot(
 	const glm::vec2& pos,
-	const engine::world::ChunkManager& chunkManager
+	const engine::world::ChunkManager& chunkManager,
+	const NavigationSystem& navigation
 ) {
 	using namespace engine::world;
 
-	// Convert to chunk coordinate and local tile
-	WorldPosition worldPos{pos.x, pos.y};
-	ChunkCoordinate chunkCoord = worldToChunk(worldPos);
-	auto [localX, localY] = worldToLocalTile(worldPos);
+	// Rule 1: somewhere a colonist can stand. Water (the terrain rings) and anything
+	// else off the nav mesh is out.
+	if (!navigation.isValidPosition(pos)) {
+		return false;
+	}
 
-	// Get the chunk
-	const Chunk* chunk = chunkManager.getChunk(chunkCoord);
+	const Chunk* chunk = chunkManager.getChunk(worldToChunk(WorldPosition{pos.x, pos.y}));
 	if (chunk == nullptr || !chunk->isReady()) {
 		return false;  // Chunk not loaded or not ready
 	}
 
-	// Get tile data
-	const TileData& tile = chunk->getTile(localX, localY);
-
-	// Rule 1: Must NOT be water
-	if (tile.surface == Surface::Water) {
-		return false;
-	}
-
-	// Rule 2: Must NOT be adjacent to water (shore tiles rejected)
-	if (TileAdjacency::hasAdjacentSurface(tile.adjacency, kWaterSurfaceId)) {
-		return false;
-	}
-
-	return true;
+	// Rule 2: not beside the water colonists drink from.
+	const TerrainPolygonQuery water(chunk->terrainPolygons());
+	return water.distanceToWaterMm(geometry::quantize(pos), kMinWaterDistanceMm) > kMinWaterDistanceMm;
 }
 
 /// Calculate score for a candidate position
@@ -129,6 +122,7 @@ constexpr float kFoodAvoidanceRadius = 15.0F;   // Distance to avoid from food
 std::optional<glm::vec2> findToiletLocation(
 	const glm::vec2& colonistPos,
 	const engine::world::ChunkManager& chunkManager,
+	const NavigationSystem& navigation,
 	World& /*ecsWorld*/,
 	const Memory& memory,
 	const engine::assets::AssetRegistry& registry,
@@ -158,8 +152,8 @@ std::optional<glm::vec2> findToiletLocation(
 				continue;
 			}
 
-			// Validate tile (not water, not shore)
-			if (!isValidToiletTile(candidate, chunkManager)) {
+			// Validate spot (walkable, not shore)
+			if (!isValidToiletSpot(candidate, chunkManager, navigation)) {
 				continue;
 			}
 

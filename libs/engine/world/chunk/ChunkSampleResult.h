@@ -10,6 +10,7 @@
 #include <worldgen/sampling/PondNetwork2D.h>
 #include <worldgen/sampling/RiverNetwork2D.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <vector>
@@ -18,25 +19,87 @@ namespace engine::world {
 
 inline constexpr int32_t kSectorGridSize = 32;
 
+// Corner lattice of the chunk's 3x3 neighborhood: the 4x4 grid of corner points
+// shared by this chunk and its 8 neighbors (each unit cell is one chunk width).
+// Lattice index (li, lj), li/lj in [0, kNeighborhoodLatticeSize), sits at
+// chunk-corner-grid position (coord.x - 1 + li, coord.y - 1 + lj). A neighbor
+// chunk at offset (dx, dy) in [-1, 1] reads its own 4 corners at lattice
+// (dx+1, dy+1) .. (dx+2, dy+2). See neighborCornerBiomes/neighborCornerElevations.
+inline constexpr int32_t kNeighborhoodLatticeSize = 4;
+
+// How far beyond the chunk square a world sampler gathers riverSegments and
+// pondBlobs, meters. It covers the kApronTiles apron the terrain-polygon builder
+// and ApronField read (D4) and much more: the ribbon builder (D7) keeps every
+// centerline sample that can shape a border ring edge or a bake-region thalweg
+// point, plus the river around it that the mouth decisions read, out to
+// TerrainPolygonBuilder::kChannelKeepReachM (sized for the widest river,
+// RiverNetwork2D::kMaxHalfWidthMeters), and each kept sample's Catmull-Rom span
+// needs the gathered nodes a 20 m trunk step beyond it. TerrainChannelBuilder
+// static_asserts the budget. Ponds get the same margin so a channel's mouth
+// finds a receiving pond anywhere along that reach; gatherPonds widens further by
+// each pond's own footprint.
+inline constexpr double kRiverGatherMarginM = 490.0;
+
 struct ChunkSampleResult {
     std::array<BiomeWeights, 4> cornerBiomes{};
     std::array<float, 4>        cornerElevations{};
     std::array<BiomeWeights, kSectorGridSize * kSectorGridSize> sectorGrid{};
 
+    // Corner biome/elevation samples for the chunk's full 3x3 neighborhood, stored
+    // once as the 4x4 lattice of corners the neighborhood shares (see
+    // kNeighborhoodLatticeSize above). Filled by the world sampler through the same
+    // per-position formula each neighbor chunk uses for its own corners, so a
+    // neighbor's sector grid rebuilt from this lattice is bit-identical to the one
+    // that neighbor computes for itself (terrain-polygons-architecture.md D4/D14).
+    // Used by ApronField to build apron tiles without waiting on neighbor chunks.
+    std::array<BiomeWeights, kNeighborhoodLatticeSize * kNeighborhoodLatticeSize> neighborhoodCornerBiomes{};
+    std::array<float, kNeighborhoodLatticeSize * kNeighborhoodLatticeSize>        neighborhoodCornerElevations{};
+
+    // The 4 corners (NW, NE, SW, SE, matching ChunkCorner's order) of the neighbor
+    // chunk at offset (dx, dy) from this one, dx/dy in [-1, 1], as that neighbor's
+    // own ChunkCoordinate::corner() samples would read.
+    [[nodiscard]] std::array<BiomeWeights, 4> neighborCornerBiomes(int32_t dx, int32_t dy) const {
+        const int32_t li = dx + 1;
+        const int32_t lj = dy + 1;
+        return {
+            neighborhoodCornerBiomes[static_cast<size_t>(lj * kNeighborhoodLatticeSize + li)],
+            neighborhoodCornerBiomes[static_cast<size_t>(lj * kNeighborhoodLatticeSize + li + 1)],
+            neighborhoodCornerBiomes[static_cast<size_t>((lj + 1) * kNeighborhoodLatticeSize + li)],
+            neighborhoodCornerBiomes[static_cast<size_t>((lj + 1) * kNeighborhoodLatticeSize + li + 1)],
+        };
+    }
+
+    [[nodiscard]] std::array<float, 4> neighborCornerElevations(int32_t dx, int32_t dy) const {
+        const int32_t li = dx + 1;
+        const int32_t lj = dy + 1;
+        return {
+            neighborhoodCornerElevations[static_cast<size_t>(lj * kNeighborhoodLatticeSize + li)],
+            neighborhoodCornerElevations[static_cast<size_t>(lj * kNeighborhoodLatticeSize + li + 1)],
+            neighborhoodCornerElevations[static_cast<size_t>((lj + 1) * kNeighborhoodLatticeSize + li)],
+            neighborhoodCornerElevations[static_cast<size_t>((lj + 1) * kNeighborhoodLatticeSize + li + 1)],
+        };
+    }
+
     // River channel segments (2D world meters) whose footprint touches this
-    // chunk, synthesized from the coarse 3D drainage graph by RiverNetwork2D.
-    // Empty for the vast majority of chunks. Consumed per tile by riverHalfWidthAt().
+    // chunk grown by kRiverGatherMarginM, synthesized from the coarse 3D drainage
+    // graph by RiverNetwork2D. Empty for the vast majority of chunks. The
+    // terrain-polygon builder reads them all; the tile raster reads the few near
+    // the chunk (rasterHydrology) through riverHalfWidthAt().
     std::vector<worldgen::RiverNetwork2D::Segment> riverSegments;
 
     // Channel half-width (meters) covering (worldXMeters, worldYMeters), or 0 if
-    // the point is outside every gathered channel. The widest covering channel
-    // wins (so confluences read as the larger river). Width drives both the water
-    // override and its rendered depth. Linear scan with a cheap AABB reject before
-    // the distance/sqrt, so the many short feeder segments stay affordable per tile.
+    // the point is outside every gathered channel, at the channel's true width:
+    // the tile raster is data (prefilter, tile-granular queries, D1), not what
+    // draws the river, so a sub-tile stream may cover few or no tile centers.
+    // The widest covering channel wins (so confluences read as the larger river).
+    // Linear scan with a cheap AABB reject before the distance/sqrt, so the many
+    // short feeder segments stay affordable per tile.
     [[nodiscard]] float riverHalfWidthAt(double worldXMeters, double worldYMeters) const {
         float best = 0.0f;
         for (const auto& s : riverSegments) {
-            const float hwMax = std::max(s.halfWidth0, s.halfWidth1);
+            const float hw0 = s.halfWidth0;
+            const float hw1 = s.halfWidth1;
+            const float hwMax = std::max(hw0, hw1);
             if (worldXMeters < std::min(s.x0, s.x1) - hwMax ||
                 worldXMeters > std::max(s.x0, s.x1) + hwMax ||
                 worldYMeters < std::min(s.y0, s.y1) - hwMax ||
@@ -56,8 +119,8 @@ struct ChunkSampleResult {
             const double ex = worldXMeters - cx;
             const double ey = worldYMeters - cy;
             const float halfWidth =
-                static_cast<float>(static_cast<double>(s.halfWidth0) +
-                                   (static_cast<double>(s.halfWidth1) - static_cast<double>(s.halfWidth0)) * t);
+                static_cast<float>(static_cast<double>(hw0) +
+                                   (static_cast<double>(hw1) - static_cast<double>(hw0)) * t);
             if (ex * ex + ey * ey <= static_cast<double>(halfWidth) * static_cast<double>(halfWidth) &&
                 halfWidth > best) {
                 best = halfWidth;
@@ -79,6 +142,32 @@ struct ChunkSampleResult {
             best = std::max(best, worldgen::PondNetwork2D::sampleDepth(p, worldXMeters, worldYMeters));
         }
         return best;
+    }
+
+    // A hydrology-only result (corner/sector fields left default) carrying just
+    // the river segments whose rasterized footprint can touch a tile of `coord`'s
+    // square grown by kApronTiles, for the tile raster (Chunk::generate,
+    // ApronField) to read via riverHalfWidthAt/pondDepthAt. riverHalfWidthAt
+    // scans every segment per tile, and the gather runs hundreds of meters past
+    // what the raster reads. Ponds are few and kept whole. Deliberately not `*this`
+    // with riverSegments filtered: the raster never reads cornerBiomes/sectorGrid,
+    // so copying them (~1024 BiomeWeights) here would be pure waste.
+    [[nodiscard]] ChunkSampleResult rasterHydrology(ChunkCoordinate coord) const {
+        ChunkSampleResult out;
+        out.pondBlobs = pondBlobs;
+        const double reach = static_cast<double>(kApronTiles) + 1.0;
+        const double minX  = static_cast<double>(coord.x) * static_cast<double>(kChunkSize) - reach;
+        const double minY  = static_cast<double>(coord.y) * static_cast<double>(kChunkSize) - reach;
+        const double maxX  = minX + static_cast<double>(kChunkSize) + 2.0 * reach;
+        const double maxY  = minY + static_cast<double>(kChunkSize) + 2.0 * reach;
+        for (const auto& s : riverSegments) {
+            const double pad = static_cast<double>(std::max(s.halfWidth0, s.halfWidth1));
+            if (std::max(s.x0, s.x1) + pad >= minX && std::min(s.x0, s.x1) - pad <= maxX &&
+                std::max(s.y0, s.y1) + pad >= minY && std::min(s.y0, s.y1) - pad <= maxY) {
+                out.riverSegments.push_back(s);
+            }
+        }
+        return out;
     }
 
     void computeSectorGrid() {
@@ -139,5 +228,43 @@ struct ChunkSampleResult {
         return result;
     }
 };
+
+// Fill `result`'s neighborhood corner lattice (kNeighborhoodLatticeSize^2 shared
+// corners of the chunk's 3x3 neighborhood) by calling the given per-world-position
+// biome/elevation functions at each lattice point. Both MockWorldSampler and
+// GeneratedWorldSampler have their own private per-position sampling methods, so
+// this stays a template over callables rather than an IWorldSampler method; it is
+// the one place the lattice-index-to-world-position math is spelled out (D14: one
+// path for every sampler).
+template <typename BiomeAtFn, typename ElevAtFn>
+void fillNeighborhoodCorners(ChunkSampleResult& result, ChunkCoordinate coord, BiomeAtFn&& biomeAt, ElevAtFn&& elevAt) {
+    for (int32_t lj = 0; lj < kNeighborhoodLatticeSize; ++lj) {
+        for (int32_t li = 0; li < kNeighborhoodLatticeSize; ++li) {
+            const WorldPosition pos{
+                static_cast<float>(coord.x - 1 + li) * kChunkWorldSize,
+                static_cast<float>(coord.y - 1 + lj) * kChunkWorldSize
+            };
+            const size_t idx = static_cast<size_t>(lj * kNeighborhoodLatticeSize + li);
+            result.neighborhoodCornerBiomes[idx] = biomeAt(pos);
+            result.neighborhoodCornerElevations[idx] = elevAt(pos);
+        }
+    }
+}
+
+// Build a ChunkSampleResult whose own corners and full 3x3 neighborhood are all
+// the same biome/elevation, with the sector grid computed. For callers that
+// hand-build sample data without a real IWorldSampler (tests): without this, the
+// neighborhood corner lattice would stay default-constructed (empty BiomeWeights),
+// which is a safe-but-meaningless fallback for anything built from it, such as an
+// ApronField's apron tiles.
+[[nodiscard]] inline ChunkSampleResult makeUniformChunkSampleResult(const BiomeWeights& biome, float elevationMeters) {
+    ChunkSampleResult result;
+    result.cornerBiomes.fill(biome);
+    result.cornerElevations.fill(elevationMeters);
+    result.neighborhoodCornerBiomes.fill(biome);
+    result.neighborhoodCornerElevations.fill(elevationMeters);
+    result.computeSectorGrid();
+    return result;
+}
 
 } // namespace engine::world

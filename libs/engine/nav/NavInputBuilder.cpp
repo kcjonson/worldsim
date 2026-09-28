@@ -3,15 +3,18 @@
 #include "NavCoords.h"
 
 #include "construction/OpeningGeometry.h"
+#include "world/chunk/Chunk.h"
 
+#include <contour/ClipRing.h>
+#include <core/IntegerDivision.h>
 #include <core/Vec2i64.h>
 #include <offset/WallOffset.h>
 #include <polygon/Polygon.h>
+#include <utils/WorldHash.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <map>
 #include <optional>
 #include <unordered_map>
 #include <utility>
@@ -22,167 +25,90 @@ namespace engine::nav {
 
 		namespace gnav = geometry::nav;
 
-		constexpr std::int64_t kTileMm		   = geometry::kMillimetersPerMeter; // 1 tile == 1 m == 1000 mm
-		constexpr std::int64_t kSimplifyEpsMm  = 500;						   // collinear-run collapse tolerance for water loops
-		constexpr std::int64_t kMinLoopAreaMm2 = kTileMm * kTileMm / 4;		   // drop sub-tile slivers (< 1/4 tile)
+		constexpr std::int64_t kTileMm	= geometry::kMillimetersPerMeter; // 1 tile == 1 m == 1000 mm
+		constexpr std::int64_t kChunkMm = static_cast<std::int64_t>(world::kChunkSize) * kTileMm;
 
-		// --- Marching-squares loop stitching ------------------------------------
-
-		// A directed boundary edge between a water tile and a non-water neighbor,
-		// oriented so the water cell is on its LEFT. Walking these head-to-tail
-		// closes into loops; outer water boundaries come out CCW, holes (land
-		// islands) come out CW, with no extra orientation work.
-		struct DirEdge {
-			geometry::Vec2i64 from;
-			geometry::Vec2i64 to;
-		};
-
-		// Doubled signed area of a tile-space ring (shoelace). int64 is ample at
-		// tile resolution (a 512-wide chunk maxes at ~512*512 per term).
-		std::int64_t signedAreaDoubledTiles(const std::vector<geometry::Vec2i64>& ring) {
-			std::int64_t acc = 0;
-			const std::size_t n = ring.size();
-			for (std::size_t i = 0; i < n; ++i) {
-				const geometry::Vec2i64& a = ring[i];
-				const geometry::Vec2i64& b = ring[(i + 1) % n];
-				acc += a.x * b.y - b.x * a.y;
-			}
-			return acc;
+		std::int32_t floorDivChunk(std::int64_t mm) {
+			return static_cast<std::int32_t>(geometry::floorDiv(mm, kChunkMm));
 		}
 
-		// Stitch directed edges into closed loops. Each vertex has exactly one
-		// outgoing edge on a clean water boundary (cells are unit squares, no
-		// shared corners with ambiguity once edges carry direction), so a simple
-		// from->to chain walk recovers every loop deterministically.
-		std::vector<std::vector<geometry::Vec2i64>> stitchLoops(std::vector<DirEdge>& edges) {
-			std::map<geometry::Vec2i64, std::vector<std::size_t>> outgoing; // from -> edge indices
-			for (std::size_t i = 0; i < edges.size(); ++i) {
-				outgoing[edges[i].from].push_back(i);
+		// The part of `ring` inside `area`. Most rings of a 512 m chunk miss a sim
+		// area entirely or sit wholly inside it, so the bounding box settles those
+		// without walking the clip.
+		std::vector<geometry::Ring> clipToArea(const geometry::Ring& ring, const geometry::RectMm& area) {
+			geometry::Vec2i64 lo = ring.front();
+			geometry::Vec2i64 hi = ring.front();
+			for (const geometry::Vec2i64& p : ring) {
+				lo = {std::min(lo.x, p.x), std::min(lo.y, p.y)};
+				hi = {std::max(hi.x, p.x), std::max(hi.y, p.y)};
 			}
-
-			std::vector<bool>							 used(edges.size(), false);
-			std::vector<std::vector<geometry::Vec2i64>>	 loops;
-
-			for (std::size_t start = 0; start < edges.size(); ++start) {
-				if (used[start]) {
-					continue;
-				}
-				std::vector<geometry::Vec2i64> loop;
-				std::size_t					   cur = start;
-				bool						   closed = false;
-				while (!used[cur]) {
-					used[cur] = true;
-					loop.push_back(edges[cur].from);
-					const geometry::Vec2i64 next = edges[cur].to;
-
-					// Find an unused outgoing edge from `next`. The saddle case (two
-					// outgoing edges at a shared corner) is resolved by preferring the
-					// edge that turns to keep water consistently on the left: pick the
-					// one whose direction continues the boundary without crossing into
-					// the diagonal-opposite cell. With unit-square edges that reduces
-					// to "take the first unused", which is deterministic given the
-					// stable edge ordering and never strands an edge.
-					auto it = outgoing.find(next);
-					std::size_t pick = edges.size();
-					if (it != outgoing.end()) {
-						for (std::size_t cand : it->second) {
-							if (!used[cand]) {
-								pick = cand;
-								break;
-							}
-						}
-					}
-					if (pick == edges.size()) {
-						closed = (next == loop.front());
-						break;
-					}
-					cur = pick;
-				}
-				// Keep only loops that closed back to their start. An open chain (a
-				// walk that stranded before returning) is not a valid ring and would
-				// give meaningless area/orientation downstream.
-				if (closed && loop.size() >= 3) {
-					loops.push_back(std::move(loop));
-				}
+			if (hi.x <= area.min.x || lo.x >= area.max.x || hi.y <= area.min.y || lo.y >= area.max.y) {
+				return {};
 			}
-			return loops;
+			if (lo.x >= area.min.x && hi.x <= area.max.x && lo.y >= area.min.y && hi.y <= area.max.y) {
+				return {ring};
+			}
+			return geometry::clipRingToRect(ring, area);
 		}
 
 	} // namespace
 
-	std::vector<gnav::NavInputPolygon> extractWaterObstacles(int width, int height, const std::function<bool(int, int)>& isWater,
-															 geometry::Vec2i64 originMm) {
-		auto water = [&](int x, int y) -> bool {
-			if (x < 0 || y < 0 || x >= width || y >= height) {
-				return false; // out of bounds is land: closes loops at the grid edge
-			}
-			return isWater(x, y);
+	AreaChunkRange areaChunkRange(geometry::Vec2i64 areaCenterMm, std::int64_t areaRadiusMm) {
+		return {
+			{floorDivChunk(areaCenterMm.x - areaRadiusMm - kTileMm), floorDivChunk(areaCenterMm.y - areaRadiusMm - kTileMm)},
+			{floorDivChunk(areaCenterMm.x + areaRadiusMm + kTileMm), floorDivChunk(areaCenterMm.y + areaRadiusMm + kTileMm)},
 		};
-
-		// Emit the unit boundary edges of every water tile, oriented water-on-left
-		// (the single-tile CCW boundary). Tile (x,y) covers [x,x+1]x[y,y+1] in tile
-		// space, +y up.
-		std::vector<DirEdge> edges;
-		for (int y = 0; y < height; ++y) {
-			for (int x = 0; x < width; ++x) {
-				if (!water(x, y)) {
-					continue;
-				}
-				const std::int64_t x0 = x;
-				const std::int64_t y0 = y;
-				const std::int64_t x1 = x + 1;
-				const std::int64_t y1 = y + 1;
-				if (!water(x, y - 1)) {
-					edges.push_back({{x0, y0}, {x1, y0}}); // bottom: ->+x
-				}
-				if (!water(x + 1, y)) {
-					edges.push_back({{x1, y0}, {x1, y1}}); // right: ->+y
-				}
-				if (!water(x, y + 1)) {
-					edges.push_back({{x1, y1}, {x0, y1}}); // top: ->-x
-				}
-				if (!water(x - 1, y)) {
-					edges.push_back({{x0, y1}, {x0, y0}}); // left: ->-y
-				}
-			}
-		}
-
-		std::vector<std::vector<geometry::Vec2i64>> tileLoops = stitchLoops(edges);
-
-		std::vector<gnav::NavInputPolygon> out;
-		for (std::vector<geometry::Vec2i64>& tileLoop : tileLoops) {
-			// Drop sub-tile slivers before mapping to mm.
-			const std::int64_t area2 = std::llabs(signedAreaDoubledTiles(tileLoop)) * (kTileMm * kTileMm);
-			if (area2 / 2 < kMinLoopAreaMm2) {
-				continue;
-			}
-
-			// Tile coords -> world mm. The winding established in tile space (CCW
-			// outer, CW hole) is preserved by an axis-aligned positive scale.
-			geometry::Ring ring;
-			ring.reserve(tileLoop.size());
-			for (const geometry::Vec2i64& t : tileLoop) {
-				ring.push_back({originMm.x + t.x * kTileMm, originMm.y + t.y * kTileMm});
-			}
-			geometry::simplifyRing(ring, kSimplifyEpsMm);
-			if (ring.size() < 3) {
-				continue;
-			}
-			// holeCapable: water bodies emit a CCW outer boundary plus CW land-island
-			// holes as separate blocked rings; face classification uses even-odd
-			// containment parity so a land island inside water stays walkable floor.
-			out.push_back({std::move(ring), true, kProvenanceWater, gnav::kNoOpening, true});
-		}
-		return out;
 	}
 
-	std::vector<gnav::NavInputPolygon> extractWaterObstacles(const world::Chunk& chunk) {
-		const geometry::Vec2i64 originMm = chunkOriginMm(chunk.coordinate());
-		auto					isWater	 = [&chunk](int x, int y) -> bool {
-			   const world::TileData& tile = chunk.getTile(static_cast<std::uint16_t>(x), static_cast<std::uint16_t>(y));
-			   return tile.surface == world::Surface::Water || world::isWater(tile.primaryBiome);
+	TerrainPolygonsLookup readyTerrainPolygons(const world::ChunkManager& chunks) {
+		return [&chunks](world::ChunkCoordinate coord) -> const world::ChunkTerrainPolygons* {
+			const world::Chunk* chunk = chunks.getChunk(coord);
+			return (chunk != nullptr && chunk->isReady()) ? &chunk->terrainPolygons() : nullptr;
 		};
-		return extractWaterObstacles(world::kChunkSize, world::kChunkSize, isWater, originMm);
+	}
+
+	void appendWaterObstacles(geometry::Vec2i64 areaCenterMm, std::int64_t areaRadiusMm, const TerrainPolygonsLookup& polygonsOf,
+							  std::vector<gnav::NavInputPolygon>& out) {
+		if (areaRadiusMm <= 0) {
+			return;
+		}
+		// navRings end at their chunk square, so a ring can reach far past the area.
+		// Clipping to the area keeps the arrangement's input proportional to the
+		// area; the clip lands its crossings exactly on the border ring's edges.
+		const geometry::RectMm area{{areaCenterMm.x - areaRadiusMm, areaCenterMm.y - areaRadiusMm},
+									{areaCenterMm.x + areaRadiusMm, areaCenterMm.y + areaRadiusMm}};
+		const AreaChunkRange   range = areaChunkRange(areaCenterMm, areaRadiusMm);
+		for (std::int32_t cy = range.min.y; cy <= range.max.y; ++cy) {
+			for (std::int32_t cx = range.min.x; cx <= range.max.x; ++cx) {
+				const world::ChunkTerrainPolygons* polygons = polygonsOf({cx, cy});
+				if (polygons == nullptr) {
+					continue;
+				}
+				for (const world::TerrainRing& terrain : polygons->navRings) {
+					if (!terrain.blocksMovement || terrain.ring.size() < 3) {
+						continue;
+					}
+					for (geometry::Ring& piece : clipToArea(terrain.ring, area)) {
+						out.push_back({std::move(piece), true, kProvenanceWater, gnav::kNoOpening, terrain.holeCapable});
+					}
+				}
+			}
+		}
+	}
+
+	std::uint64_t waterSignature(geometry::Vec2i64 areaCenterMm, std::int64_t areaRadiusMm, const TerrainPolygonsLookup& polygonsOf) {
+		const AreaChunkRange range = areaChunkRange(areaCenterMm, areaRadiusMm);
+		std::uint64_t		 sig   = foundation::kFnvOffset;
+		for (std::int32_t cy = range.min.y; cy <= range.max.y; ++cy) {
+			for (std::int32_t cx = range.min.x; cx <= range.max.x; ++cx) {
+				const world::ChunkTerrainPolygons* polygons = polygonsOf({cx, cy});
+				const std::uint64_t				   coord	= (static_cast<std::uint64_t>(static_cast<std::uint32_t>(cx)) << 32U) |
+												  static_cast<std::uint64_t>(static_cast<std::uint32_t>(cy));
+				sig = foundation::hashCombine(sig, coord);
+				sig = foundation::hashCombine(sig, polygons != nullptr ? polygons->version : 0U);
+			}
+		}
+		return sig;
 	}
 
 	std::optional<gnav::NavInputPolygon> floraRingFor(const assets::PlacedEntity& e, const assets::AssetRegistry& registry) {
@@ -495,40 +421,8 @@ namespace engine::nav {
 		// 1) Border: the one unblocked rectangle covering the whole area.
 		input.polygons.push_back(borderRing(minMm, maxMm));
 
-		// Area tile span (mm -> tiles, floor min / ceil max). The marching-squares pass
-		// runs over [tileMin-1, tileMax+1) so water touching the area edge still closes
-		// its loop against the land just outside (out-of-grid reads as land).
-		const std::int64_t tileMinX = static_cast<std::int64_t>(std::floor(static_cast<double>(minMm.x) / static_cast<double>(kTileMm))) - 1;
-		const std::int64_t tileMinY = static_cast<std::int64_t>(std::floor(static_cast<double>(minMm.y) / static_cast<double>(kTileMm))) - 1;
-		const std::int64_t tileMaxX = static_cast<std::int64_t>(std::ceil(static_cast<double>(maxMm.x) / static_cast<double>(kTileMm))) + 1;
-		const std::int64_t tileMaxY = static_cast<std::int64_t>(std::ceil(static_cast<double>(maxMm.y) / static_cast<double>(kTileMm))) + 1;
-		const int width	 = static_cast<int>(tileMaxX - tileMinX);
-		const int height = static_cast<int>(tileMaxY - tileMinY);
-
-		// 2) Water: drive the area-generic marching-squares extractor over the tile
-		// span. The predicate maps a local (x,y) into a GLOBAL tile, finds its chunk via
-		// worldToChunk, and reads the tile; a missing or not-ready chunk reads as land so
-		// the loop still closes (no obstacle invented over unloaded terrain).
-		if (width > 0 && height > 0) {
-			auto isWater = [&](int x, int y) -> bool {
-				const std::int64_t gx = tileMinX + static_cast<std::int64_t>(x);
-				const std::int64_t gy = tileMinY + static_cast<std::int64_t>(y);
-				const engine::world::WorldPosition wp{static_cast<float>(gx), static_cast<float>(gy)};
-				const engine::world::ChunkCoordinate coord = engine::world::worldToChunk(wp);
-				const engine::world::Chunk*			 chunk = chunks.getChunk(coord);
-				if (chunk == nullptr || !chunk->isReady()) {
-					return false;
-				}
-				const auto [lx, ly] = engine::world::worldToLocalTile(wp);
-				const engine::world::TileData& tile = chunk->getTile(lx, ly);
-				return tile.surface == engine::world::Surface::Water || engine::world::isWater(tile.primaryBiome);
-			};
-			const geometry::Vec2i64 originMm{tileMinX * kTileMm, tileMinY * kTileMm};
-			std::vector<gnav::NavInputPolygon> waterPolys = extractWaterObstacles(width, height, isWater, originMm);
-			for (gnav::NavInputPolygon& p : waterPolys) {
-				input.polygons.push_back(std::move(p));
-			}
-		}
+		// 2) Water: the ready chunks' blocking terrain rings, clipped to the area.
+		appendWaterObstacles(areaCenterMm, areaRadiusMm, readyTerrainPolygons(chunks), input.polygons);
 
 		// 3) Flora (entities): the clearable tree/rock obstacles. Skipped when includeFlora is
 		// false (the terrain-only placement mesh) so they don't read as off-mesh holes there.
@@ -537,16 +431,13 @@ namespace engine::nav {
 		// in (x,y) order and the per-chunk entities sorted by (position, defName) so the emission
 		// order is stable regardless of queryRect's layout.
 		if (includeFlora) {
-			const engine::world::ChunkCoordinate cMin =
-				engine::world::worldToChunk({static_cast<float>(tileMinX), static_cast<float>(tileMinY)});
-			const engine::world::ChunkCoordinate cMax =
-				engine::world::worldToChunk({static_cast<float>(tileMaxX), static_cast<float>(tileMaxY)});
-			const float areaTileMinX = static_cast<float>(minMm.x) / static_cast<float>(kTileMm);
-			const float areaTileMinY = static_cast<float>(minMm.y) / static_cast<float>(kTileMm);
-			const float areaTileMaxX = static_cast<float>(maxMm.x) / static_cast<float>(kTileMm);
-			const float areaTileMaxY = static_cast<float>(maxMm.y) / static_cast<float>(kTileMm);
-			for (std::int32_t cy = cMin.y; cy <= cMax.y; ++cy) {
-				for (std::int32_t cx = cMin.x; cx <= cMax.x; ++cx) {
+			const AreaChunkRange range		  = areaChunkRange(areaCenterMm, areaRadiusMm);
+			const float			 areaTileMinX = static_cast<float>(minMm.x) / static_cast<float>(kTileMm);
+			const float			 areaTileMinY = static_cast<float>(minMm.y) / static_cast<float>(kTileMm);
+			const float			 areaTileMaxX = static_cast<float>(maxMm.x) / static_cast<float>(kTileMm);
+			const float			 areaTileMaxY = static_cast<float>(maxMm.y) / static_cast<float>(kTileMm);
+			for (std::int32_t cy = range.min.y; cy <= range.max.y; ++cy) {
+				for (std::int32_t cx = range.min.x; cx <= range.max.x; ++cx) {
 					const assets::SpatialIndex* index = placement.getChunkIndex({cx, cy});
 					if (index == nullptr) {
 						continue;

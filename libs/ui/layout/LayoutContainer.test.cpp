@@ -1043,6 +1043,40 @@ TEST(LayoutContainerEngine, FixedContainerReportsExplicitSize) {
 	EXPECT_FLOAT_EQ(layout.getHeight(), 50.0F);
 }
 
+// resetHugAxes() is the escape hatch from ResolvedZeroBeatsHugMeasurement: a
+// Hug axis frozen at zero (e.g. content that just emptied out) goes back to
+// measuring live once the axis is reset, instead of staying stuck at zero
+// forever the way a bare invalidateLayout() would leave it.
+TEST(LayoutContainerEngine, ResetHugAxesRemeasuresAfterResolvedZero) {
+	LayoutContainer layout(LayoutContainer::Args{.direction = Direction::Vertical});
+	auto handle = layout.addChild(MockComponent(50.0F, 30.0F));
+
+	EXPECT_FLOAT_EQ(layout.getHeight(), 30.0F); // unresolved: hugs
+
+	layout.setLayoutSize(0.0F, 0.0F); // simulate a parent's nested-layout freeze
+	EXPECT_FLOAT_EQ(layout.getHeight(), 0.0F);
+
+	layout.resetHugAxes();
+	layout.getChild<MockComponent>(handle)->size = {50.0F, 90.0F}; // content grew back
+
+	EXPECT_FLOAT_EQ(layout.getHeight(), 90.0F); // hugs again, not stuck at 0
+}
+
+// resetHugAxes() only clears axes still in their original Hug mode; a Fixed
+// axis keeps its explicit size and a Fill axis keeps its parent-assigned size.
+TEST(LayoutContainerEngine, ResetHugAxesLeavesFixedAndFillAlone) {
+	LayoutContainer fixed(LayoutContainer::Args{.size = {100.0F, 50.0F}});
+	fixed.resetHugAxes();
+	EXPECT_FLOAT_EQ(fixed.getWidth(), 100.0F);
+	EXPECT_FLOAT_EQ(fixed.getHeight(), 50.0F);
+
+	LayoutContainer fill(LayoutContainer::Args{});
+	fill.widthMode = SizeMode::Fill;
+	fill.setLayoutSize(75.0F, kSizeKeep); // parent-assigned width
+	fill.resetHugAxes();
+	EXPECT_FLOAT_EQ(fill.getWidth(), 75.0F);
+}
+
 // ============================================================================
 // Engine Tests - wrap-aware sizing (the "text fits" fix)
 // ============================================================================

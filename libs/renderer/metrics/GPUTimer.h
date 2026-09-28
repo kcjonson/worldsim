@@ -1,57 +1,49 @@
 #pragma once
 
-// GPUTimer - OpenGL GPU timing via GL_TIME_ELAPSED queries.
-// Uses double-buffering since GPU results are only available after the frame completes.
-// Uses RAII for automatic GPU resource cleanup.
+// GPUTimer - GPU time of a span of GL commands, measured with a pair of
+// GL_TIMESTAMP queries. Timestamps nest and overlap freely (only one
+// GL_TIME_ELAPSED query can be active at a time), so a pass can be timed inside
+// the frame's own span. Each span's result is read kFrames spans later, long
+// after the GPU finished it, so reading never stalls the CPU.
 
 #include "gl/GLQuery.h"
 #include <array>
 
 namespace Renderer {
 
-/// GPU timer using OpenGL timer queries.
-/// Results are double-buffered - you get the previous frame's time.
-/// Uses RAII wrappers for automatic cleanup.
 class GPUTimer {
   public:
-	GPUTimer();
+	GPUTimer() = default;
 	~GPUTimer() = default;
 
-	// Non-copyable (RAII wrappers are non-copyable)
 	GPUTimer(const GPUTimer&) = delete;
 	GPUTimer& operator=(const GPUTimer&) = delete;
-
-	// Movable
 	GPUTimer(GPUTimer&&) noexcept = default;
 	GPUTimer& operator=(GPUTimer&&) noexcept = default;
 
-	/// Enable/disable GPU timing (disabled by default to avoid driver overhead)
-	void setEnabled(bool value) { enabled = value; }
-	[[nodiscard]] bool isEnabled() const { return enabled; }
-
-	/// Begin timing (call before rendering) - no-op if disabled or unsupported
+	/// Start a span. Needs a current GL context; the queries are created on first use.
 	void begin();
 
-	/// End timing (call after rendering) - no-op if disabled or unsupported
+	/// End the span begun last.
 	void end();
 
-	/// Get the GPU time in milliseconds (from previous frame)
-	/// Returns 0.0 until at least one frame has completed
+	/// GPU milliseconds of the latest span whose result has arrived, 0 until one has.
 	[[nodiscard]] float getTimeMs() const { return lastTimeMs; }
 
-	/// Check if GPU timer queries are supported on this platform
-	[[nodiscard]] bool isSupported() const { return supported; }
-
   private:
-	static constexpr int kQueryCount = 2; // Double-buffered
+	static constexpr int kFrames = 4;
 
-	std::array<GLQuery, kQueryCount> queries;	// RAII query wrappers
-	int currentQuery{0};
-	float lastTimeMs{0.0F};
-	bool supported{false};
-	bool enabled{false}; // Disabled by default to avoid driver overhead
-	bool inQuery{false};
-	bool hasResult{false};
+	struct Span {
+		GLQuery start;
+		GLQuery stop;
+		bool	pending = false;
+	};
+
+	std::array<Span, kFrames> spans;
+	int						  current = 0;
+	bool					  created = false;
+	bool					  open	  = false;
+	float					  lastTimeMs = 0.0F;
 };
 
 } // namespace Renderer

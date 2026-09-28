@@ -53,7 +53,8 @@ namespace geometry::nav::testdata {
 		return ring;
 	}
 
-	// The single water ring marching-squares emitted for the Y confluence, CCW
+	// The single water ring the earlier tile-edge marcher emitted for the Y
+	// confluence (a staircase along tile boundaries; recorded input), CCW
 	// (positive signed area), holeCapable. n = 564. A thin, highly
 	// non-convex loop occupying ~6% of the area; the open grass the colonist stands
 	// on is the ~94% OUTSIDE it.
