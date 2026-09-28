@@ -73,6 +73,13 @@ namespace engine {
 		// one frame, then holds Down until the matching up. Not for gameplay code.
 		void injectKey(Key key, bool down);
 
+		// Synthetic cursor move (debug/test, e.g. the /api/input endpoint). The injected
+		// position becomes the cursor position, so getMousePosition() (and the main loop's
+		// per-frame hover MouseMove built from it) reports it until the host cursor moves
+		// over the window or a host button/scroll event reclaims the pointer. Not for
+		// gameplay code.
+		void injectMousePosition(glm::vec2 position);
+
 		// Parse a key name (single letter/digit, or a named key like "Escape", "Enter",
 		// "Space", "F5") to a Key. Case-insensitive. Nullopt if unrecognized.
 		[[nodiscard]] static std::optional<Key> keyFromName(const std::string& name);
@@ -123,6 +130,7 @@ namespace engine {
 
 		// Mouse state
 		glm::vec2 mousePosition{0.0f};
+		glm::vec2 hostMousePosition{0.0f}; // last GLFW-reported position; differs from mousePosition only after an injection
 		glm::vec2 lastMousePosition{0.0f};
 		glm::vec2 mouseDelta{0.0f};
 		glm::vec2 windowSize{800.0f, 600.0f};

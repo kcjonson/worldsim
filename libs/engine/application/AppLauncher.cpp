@@ -51,6 +51,15 @@ namespace engine {
 
 			auto send = [](UI::InputEvent event) { SceneManager::Get().handleInput(event); };
 
+			// Pointer commands also park InputManager's cursor at their position. The main
+			// loop re-sends getMousePosition() as a hover MouseMove every frame, so otherwise
+			// the host cursor overwrites the injected position one frame later.
+			const bool isKeyCommand =
+				cmd.type == Foundation::InputCommand::Type::KeyDown || cmd.type == Foundation::InputCommand::Type::KeyUp;
+			if (!isKeyCommand) {
+				InputManager::Get().injectMousePosition({cmd.x, cmd.y});
+			}
+
 			switch (cmd.type) {
 				case Foundation::InputCommand::Type::Move:
 					// Injected input carries no modifier state; 0 matches the live path's default.

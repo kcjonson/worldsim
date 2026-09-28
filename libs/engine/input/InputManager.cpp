@@ -248,7 +248,8 @@ namespace engine {
 		// Get initial mouse position
 		double x, y;
 		glfwGetCursorPos(window, &x, &y);
-		mousePosition = glm::vec2(static_cast<float>(x), static_cast<float>(y));
+		hostMousePosition = glm::vec2(static_cast<float>(x), static_cast<float>(y));
+		mousePosition = hostMousePosition;
 		lastMousePosition = mousePosition;
 
 		// Save existing callbacks before overwriting them (for callback chaining)
@@ -371,6 +372,11 @@ namespace engine {
 		// Funnel through the exact path GLFW key events take, so the press/release edge
 		// state machine (and isKeyPressed/isKeyDown/isKeyReleased) behaves identically.
 		handleKeyInput(ToGLFW(key), down ? GLFW_PRESS : GLFW_RELEASE);
+	}
+
+	void InputManager::injectMousePosition(glm::vec2 position) {
+		// hostMousePosition is left alone so the next host button/scroll can snap back to it.
+		mousePosition = position;
 	}
 
 	std::optional<Key> InputManager::keyFromName(const std::string& name) {
@@ -578,6 +584,9 @@ namespace engine {
 	}
 
 	void InputManager::handleMouseButton(int button, int action) {
+		// A host button event lands under the host cursor, reclaiming the pointer from
+		// any injected position (a no-op when nothing was injected).
+		mousePosition = hostMousePosition;
 		if (action == GLFW_PRESS) {
 			mouseButtonStates[button] = ButtonState::Pressed;
 			LOG_DEBUG(Engine, "Mouse button pressed: %d at (%.0f, %.0f)", button, mousePosition.x, mousePosition.y);
@@ -599,10 +608,12 @@ namespace engine {
 	}
 
 	void InputManager::handleMouseMove(double x, double y) {
-		mousePosition = glm::vec2(static_cast<float>(x), static_cast<float>(y));
+		hostMousePosition = glm::vec2(static_cast<float>(x), static_cast<float>(y));
+		mousePosition = hostMousePosition;
 	}
 
 	void InputManager::handleScroll(double xoffset, double yoffset) {
+		mousePosition = hostMousePosition; // reclaims the pointer, as in handleMouseButton
 		scrollDelta = static_cast<float>(yoffset);
 		if (scrollDelta != 0.0f) {
 			LOG_DEBUG(Engine, "Scroll event: %.1f", scrollDelta);
