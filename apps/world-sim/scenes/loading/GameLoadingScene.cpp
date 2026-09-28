@@ -290,7 +290,6 @@ namespace {
 			// the landing site maps to the 2D world origin
 			auto sampler = std::make_unique<engine::world::GeneratedWorldSampler>(
 				startConfig->world, startConfig->landingLatDeg, startConfig->landingLonDeg);
-			worldState->worldSeed = sampler->getWorldSeed();
 			worldState->planet = startConfig->world;
 			worldState->landingLatDeg = startConfig->landingLatDeg;
 			worldState->landingLonDeg = startConfig->landingLonDeg;
@@ -352,9 +351,8 @@ namespace {
 				LOG_INFO(Game, "GameLoadingScene - %d chunks loaded", chunksLoaded);
 
 				// Create async processor for entity placement
-				asyncProcessor = std::make_unique<engine::assets::AsyncChunkProcessor>(
-					*worldState->placementExecutor, worldState->worldSeed, worldState->processedChunks
-				);
+				asyncProcessor =
+					std::make_unique<engine::assets::AsyncChunkProcessor>(*worldState->placementExecutor, worldState->processedChunks);
 
 				// Launch all async tasks at once
 				for (auto* chunk : worldState->chunkManager->getLoadedChunks()) {

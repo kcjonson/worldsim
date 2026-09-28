@@ -31,9 +31,6 @@ namespace {
 	constexpr uint64_t kQuickstartSeed = 424242;
 	constexpr uint64_t kOtherWorldSeed = 987654321;
 
-	// What GameScene hard-codes for its processor, and so what streamed chunks were placed with.
-	constexpr uint64_t kGameSceneSeed = 12345;
-
 	constexpr auto kTaskTimeout = std::chrono::seconds(60);
 
 	// Every tile is grassland, so what a chunk grows is decided by the world seed alone.
@@ -187,13 +184,13 @@ namespace {
 
 } // namespace
 
-// A chunk is placed from the seed its own world carries, whatever the processor was told.
+// A chunk is placed from the seed its own world carries.
 TEST_F(AsyncChunkProcessorTests, PlacesWithTheChunksOwnSeed) {
 	const engine::world::Chunk* chunk = quickstartChunk();
 	ASSERT_NE(chunk, nullptr);
 	ASSERT_EQ(chunk->worldSeed(), kQuickstartSeed);
 
-	AsyncChunkProcessor processor(*executor, kGameSceneSeed, processedChunks);
+	AsyncChunkProcessor processor(*executor, processedChunks);
 	ASSERT_TRUE(placeAndWait(processor, *chunk));
 
 	const std::vector<Placement> expected = placeDirectly(*executor, *chunk, kQuickstartSeed);
@@ -211,7 +208,7 @@ TEST_F(AsyncChunkProcessorTests, EachChunkKeepsItsOwnWorldsLayout) {
 	ASSERT_NE(other, nullptr);
 	ASSERT_EQ(quickstart->coordinate(), other->coordinate());
 
-	AsyncChunkProcessor processor(*executor, kGameSceneSeed, processedChunks);
+	AsyncChunkProcessor processor(*executor, processedChunks);
 
 	ASSERT_TRUE(placeAndWait(processor, *quickstart));
 	const std::vector<Placement> quickstartLayout = storedLayout(*quickstart);
@@ -231,13 +228,13 @@ TEST_F(AsyncChunkProcessorTests, ReloadedChunkKeepsItsLayout) {
 	const engine::world::Chunk* chunk = quickstartChunk();
 	ASSERT_NE(chunk, nullptr);
 
-	AsyncChunkProcessor loading(*executor, kQuickstartSeed, processedChunks);
+	AsyncChunkProcessor loading(*executor, processedChunks);
 	ASSERT_TRUE(placeAndWait(loading, *chunk));
 	const std::vector<Placement> atLoad = storedLayout(*chunk);
 	ASSERT_FALSE(atLoad.empty());
 	evict(*chunk);
 
-	AsyncChunkProcessor streaming(*executor, kGameSceneSeed, processedChunks);
+	AsyncChunkProcessor streaming(*executor, processedChunks);
 	ASSERT_TRUE(placeAndWait(streaming, *chunk));
 	EXPECT_TRUE(sameLayout(storedLayout(*chunk), atLoad));
 }
