@@ -9,9 +9,11 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <map>
 #include <queue>
+#include <random>
 #include <set>
 #include <string>
 #include <utility>
@@ -1462,4 +1464,44 @@ TEST(NavMesh, CollinearHoleGrid) {
 		}
 	}
 	expectWholeBorderTriangulated(in, buildNavMesh(in), 100);
+}
+
+// Random scenes: rotated tree and water rectangles overlapping each other and the
+// border (crossings the arrangement snap-rounds), solid and hole-capable water, and
+// lattice squares that meet at corners and share edges. Some scenes sit 70 km out.
+TEST(NavMesh, RandomObstacleScenesMatchOracle) {
+	std::mt19937								 rng(0x493);
+	std::uniform_int_distribution<int>			 die(0, 9);
+	std::uniform_int_distribution<std::int64_t> pos(-1000, 21000);
+	std::uniform_int_distribution<std::int64_t> half(50, 1500);
+	std::uniform_int_distribution<std::int64_t> cell(0, 9);
+	std::uniform_real_distribution<double>		 turn(0.0, 6.2831853);
+	for (int scene = 0; scene < 12; ++scene) {
+		const Vec2i64 off = scene % 3 == 0 ? Vec2i64{70000000, -3000000} : Vec2i64{0, 0};
+		NavMeshInput  in;
+		in.polygons.push_back(border({off, off + Vec2i64{20000, 0}, off + Vec2i64{20000, 20000}, off + Vec2i64{0, 20000}}));
+		const int rects = 20 + die(rng) * 6;
+		for (int r = 0; r < rects; ++r) {
+			const Vec2i64 c{pos(rng), pos(rng)};
+			const double  a	 = die(rng) < 5 ? 0.0 : turn(rng);
+			const double  hx = static_cast<double>(half(rng));
+			const double  hy = static_cast<double>(half(rng));
+			std::vector<Vec2i64> ring;
+			for (int k = 0; k < 4; ++k) {
+				const double lx = (k == 0 || k == 3) ? -hx : hx;
+				const double ly = k < 2 ? -hy : hy;
+				ring.push_back(off + Vec2i64{c.x + std::llround(lx * std::cos(a) - ly * std::sin(a)),
+											 c.y + std::llround(lx * std::sin(a) + ly * std::cos(a))});
+			}
+			const int kind = die(rng);
+			in.polygons.push_back(NavInputPolygon{ring, true, kind < 2 ? -1 : -2, kNoOpening, kind == 0});
+		}
+		const int squares = die(rng);
+		for (int s = 0; s < squares; ++s) {
+			const Vec2i64 corner = off + Vec2i64{cell(rng) * 2000, cell(rng) * 2000};
+			in.polygons.push_back(NavInputPolygon{square(corner.x, corner.y, 2000), true, -1, kNoOpening, die(rng) < 3});
+		}
+		SCOPED_TRACE("scene " + std::to_string(scene));
+		expectWholeBorderTriangulated(in, buildNavMesh(in), 500);
+	}
 }
