@@ -13,7 +13,7 @@ add_library(geometry
     contour/Stroke.cpp
     contour/WarpField.cpp
     silhouette/Silhouette.cpp
-    triangulation/Triangulation.cpp
+    triangulation/ConstrainedDelaunay.cpp
     visibility/Visibility.cpp
     nav/NavMesh.cpp
     nav/PathQuery.cpp

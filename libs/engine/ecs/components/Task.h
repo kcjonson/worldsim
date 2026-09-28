@@ -43,7 +43,8 @@ enum class NavState : uint8_t {
 	Rerouting,      // Replanning because a new wall/opening was discovered
 	SearchingLKP,   // (reserved) searching last-known position
 	LookingForWayIn, // (reserved) searching for an entrance to a building
-	CantFindWayTo   // Believed route denied; colonist is stopped
+	CantFindWayTo,  // Believed route denied; colonist is stopped
+	AwaitingMesh    // No built mesh covers the route yet; held until the nav generation moves
 };
 
 /// Task component - tracks a colonist's current activity
@@ -55,6 +56,9 @@ struct Task {
 	// "Re-routing" beat before the panel reverts to "Going to". Decremented each update tick;
 	// zero means the Rerouting display window has elapsed (revert to Traveling).
 	std::uint8_t navStateHold = 0;
+	// NavigationSystem::generation() when the route was deferred (navState AwaitingMesh). The route
+	// is requested again once generation() moves off this value, i.e. a mesh build has landed.
+	std::uint64_t deferredNavGeneration = 0;
 
 	/// Target position to move to
 	glm::vec2 targetPosition{0.0F, 0.0F};
@@ -129,6 +133,7 @@ struct Task {
 		state = TaskState::Pending;
 		navState = NavState::Traveling;
 		navStateHold = 0;
+		deferredNavGeneration = 0;
 		targetPosition = glm::vec2{0.0F, 0.0F};
 		needToFulfill = NeedType::Count;
 		harvestTargetEntityId = 0;

@@ -174,11 +174,27 @@ reuses locate plus the adjacency graph plus closest-point-on-triangle. Direction
 per-consumer parameter: a deterministic seed so drops fan out, plus optional aim (overflow
 spreads; craft output toward the colonist).
 
-A navmesh zero-walkable bug was also fixed here (2026-06-28): `Triangulation.cpp`'s `mergeHoles`
-Eberly +x-ray hole-bridge fouled once a few hundred holes (tree colliders) merged, so the land
-face triangulated to zero triangles and every face read blocked. Fix: validate each bridge and
-fall back to the nearest reachable loop vertex. See dev log
-`entries/2026-06-28-navmesh-crafting-reliability.md`.
+**How the mesh is triangulated (2026-09-27).** `buildNavMesh` arranges every input ring edge
+(`buildArrangement` splits at every crossing and touch and merges overlaps, so the edges form a
+planar straight-line graph), then builds one constrained Delaunay triangulation of the whole
+arrangement with every arrangement edge a constraint (`geometry::buildConstrainedDelaunay`: exact
+incremental insertion in vertex order, cavity retriangulation to recover each constraint, a last
+Lawson pass). A face is a flood fill across unconstrained edges. Each face is classified once,
+from its largest triangle's centroid taken exactly in 3x-scaled integer space, against the input
+rings: it must lie inside some walkable bound, the smallest solid ring containing it tags it, and
+otherwise even-odd parity over the hole-capable water rings decides water or floor. Faces outside
+every walkable bound are dropped.
+
+This replaced triangulating each face on its own (half-edge face extraction, CW cycles nested as
+holes, Eberly hole bridges, ear clipping), which silently dropped any face it couldn't
+triangulate. Two routine inputs defeated it. Water clipped to chunk squares meets at a chunk
+corner, and while the other two chunks are still generating only the diagonal pieces exist, so
+the land face's hole boundary pinches at that corner and the simplicity check rejected the face.
+And a land face with a few hundred tree holes made hole bridging find no visible bridge; that code
+was patched once (2026-06-28) and still failed on real layouts. Either way the land around the
+colonist vanished and most of the region read unwalkable. In a CDT of the arrangement a weakly
+simple face or a face with any number of holes is just more constraints, and no face can drop
+out. The real inputs are regression fixtures in `libs/geometry/nav/NavMeshDumpRings.test.h`.
 
 ### Tier handoffs
 

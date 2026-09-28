@@ -45,7 +45,7 @@ navmesh + colonist-navigation + craft-provisioning work. The nav rework's design
 in the approved plan `~/.claude/plans/ok-some-bugs-related-resilient-treasure.md`.
 
 ## Fixed this session (on #240)
-- [x] **Navmesh zero walkable faces** — `mergeHoles` Eberly +x-ray hole-bridge fouled on multi-hole merges, so the land face triangulated to nothing. Validate each bridge + fall back to the nearest reachable loop vertex. (`Triangulation.cpp`)
+- [x] **Navmesh zero walkable faces** — `mergeHoles` Eberly +x-ray hole-bridge fouled on multi-hole merges, so the land face triangulated to nothing. Validate each bridge + fall back to the nearest reachable loop vertex. (`Triangulation.cpp`) Superseded 2026-09-27 (WOR-493): the navmesh is one constrained Delaunay triangulation of the whole arrangement and `Triangulation.cpp` is deleted.
 - [x] **Off-mesh recovery freeze** — recovery snap was suppressed by a "fresh route" gate; a colonist spawning 3 cm off-mesh froze forever. Recover whenever off-mesh. (`AIDecisionSystem.cpp`)
 - [x] **Loose-ground fetch haul thrash** (3 coupled defects) — deposit-leg movement never re-armed, craft-station credit double-counted, multi-unit fetch deadlocked.
 - [x] **Beeline movement removed** — every move is a navmesh A* path or an explicit error-snap to valid ground; the path graph already excludes blocked faces.
@@ -74,7 +74,7 @@ in the approved plan `~/.claude/plans/ok-some-bugs-related-resilient-treasure.md
 - [ ] **Phase 2 nav** (approved plan): static **coarse geography mesh** — big impassables only (rivers as polylines, NO assets), built once per chunk, never recalculated — for **long-range routing** across unsimulated space; plus **skip-nav-for-stationary** agents.
 - [x] **AI arbitration / "reliably do the queued job"** — CONSOLIDATED into spec + epic (see "AI-arbitration" section below). Spec: `docs/technical/colonist-task-arbitration.md`.
 - [ ] **Discovery-gating UX** — a queued craft + dropped materials doesn't reliably start a colonist until he *discovers* the materials via vision; no feedback when nothing happens. The original "colonist does nothing" theme.
-- [ ] **Navmesh build perf** — `buildNavMesh` is O(n²) (~8–12 s for the full area). Phase 1's smaller per-colonist regions reduce the cost, but the algorithm itself is still O(n²).
+- [ ] **Navmesh build perf** — `buildNavMesh` is O(n²) (~8–12 s for the full area). Phase 1's smaller per-colonist regions reduce the cost, but the algorithm itself is still O(n²). As of 2026-09-27 (WOR-493): 218 ms RelWithDebInfo for a 644-ring 128 m region, 204 ms of it `buildArrangement`'s all-pairs split passes; an x-sweep prefilter there is the next win.
 - [ ] **Slow world-load placement** — grassland on the high-res planet places a lot of grass; loading takes minutes (not a hang).
 - [ ] **Session save/load** — there is no gameplay/colony session save (only the procedural planet is persisted). The colony origin and colony state don't survive save/load. Future epic; the origin is now in the right place to be persisted.
 - [ ] **Materials-in-station vs hauler's pack** — resolved (now deposits into the station). Watch for multi-colonist edge cases (one colonist staging, another crafting).
@@ -96,8 +96,8 @@ Water-predicate duplication / boundary leak:
 - [ ] **Extract one `engine::nav::tileIsNavWater(const TileData&)`** (adj. medium) — duplicated literal `tile.surface == Surface::Water || isWater(tile.primaryBiome)` at `NavInputBuilder.cpp:183`, `:524`, and `GameScene::isWaterAt` (~1140); the GameScene copy re-introduces a runtime terrain-source read that `NavigationSystem.h:200` forbids. Call the one helper from all three sites and narrow the header comment to carve out the documented pre-mesh bootstrap exception (the timing justification is real; don't do the heavy synchronous-mesh refactor).
 
 Navmesh build perf:
-- [ ] **Hole-nesting per-pair allocation** (adj. high) — `NavMesh.cpp:708-740` — `ringPoints` heap-allocates the outer ring on every (cw-cycle, walkable-face) pair, no AABB prefilter; O(faces×cycles), the likely ~10s-build culprit. Precompute each face's outer ring once before the loop, add an AABB reject.
-- [ ] **Face classification step 4b** (adj. low) — `NavMesh.cpp:762-797` — O(faces×blockedRings) point-in-polygon with no spatial pruning; cache each `BlockedRing`'s AABB.
+- [x] **Hole-nesting per-pair allocation** (adj. high) — `NavMesh.cpp:708-740` — `ringPoints` heap-allocates the outer ring on every (cw-cycle, walkable-face) pair, no AABB prefilter; O(faces×cycles), the likely ~10s-build culprit. Precompute each face's outer ring once before the loop, add an AABB reject. Gone (WOR-493): hole nesting went with per-face triangulation.
+- [x] **Face classification step 4b** (adj. low) — `NavMesh.cpp:762-797` — O(faces×blockedRings) point-in-polygon with no spatial pruning; cache each `BlockedRing`'s AABB. Done (WOR-493): one sample per face, each ring rejected by its bounding box first.
 
 AI hot-path scans:
 - [ ] **Craft-fetch scans full 10k memory map** (adj. medium) — `AIDecisionSystem.cpp:374-380` — use the existing `getEntitiesWithCapability(Carryable)` index instead of walking `knownWorldEntities`; same pattern in `evaluateHarvestOptions` (~568).
@@ -112,7 +112,7 @@ Concurrency:
 - [ ] **Pass-2 recenter blocks main thread on in-flight future** (adj. medium) — `NavigationSystem.cpp:401` — move-assign over a live `std::async` future blocks in its destructor; guard with `if (!region.future.valid()) launchBuild(region)` like Pass 1.
 
 Test coverage:
-- [ ] **Triangulation hole-bridge fix lacks a focused test** (adj. low) — `Triangulation.cpp:281-345` — `bridgeIsClear`/`bridgeHitsHole`/brute-force fallback; gap is narrow since `RotatedConvexHolesInSquare` stress test already covers the geometry.
+- [x] **Triangulation hole-bridge fix lacks a focused test** (adj. low) — `Triangulation.cpp:281-345` — `bridgeIsClear`/`bridgeHitsHole`/brute-force fallback; gap is narrow since `RotatedConvexHolesInSquare` stress test already covers the geometry. Moot (WOR-493): the hole-bridge code is deleted.
 - [ ] **Off-mesh recovery tier 2 tested via re-implemented lambda** (adj. low) — `AIDecisionSystem.test.cpp:1934-1968` / colony-origin fallback path — add an end-to-end `update()` test (also covers the teleport-loop nit below).
 
 ### Nits
@@ -127,8 +127,8 @@ Test coverage:
 - [ ] **`RealYConfluence_Bisect_*` investigation scaffolding** — `NavMesh.test.cpp:1049-1168` — six "run on the buggy baseline" tests asserting only `floor > 0` on subsets of the main test; collapse or remove.
 - [ ] **Tests assert re-implemented lambdas / single tick** — `DevSpawnGuard` (`NavigationSystem.test.cpp:991-1024`), `OverweightColonist*` (`AIDecisionSystem.test.cpp:1757-1900`, one tick not loop-stability).
 - [ ] **Dumped fixture not regenerable** — `NavMeshRealRings.test.h:1-755` — no capture script, no load-time size invariant (637 tree rings / 564-vtx water ring).
-- [ ] **`representativeOutsideHoles` allocs for hole-free faces** — `NavMesh.cpp:94-104` — add `if (holes.empty()) return fallback;` first.
-- [ ] **`representativeOutsideHoles` can return a point inside a hole** — `NavMesh.cpp:108-126` — silent water/floor parity mis-tag on rare degenerate geometry; assert/log on fallback.
+- [x] **`representativeOutsideHoles` allocs for hole-free faces** — `NavMesh.cpp:94-104` — add `if (holes.empty()) return fallback;` first. Moot (WOR-493): deleted; each face is sampled at its largest triangle's exact centroid.
+- [x] **`representativeOutsideHoles` can return a point inside a hole** — `NavMesh.cpp:108-126` — silent water/floor parity mis-tag on rare degenerate geometry; assert/log on fallback. Moot (WOR-493): deleted; the centroid sample is strictly inside its face.
 - [ ] **NavOverlay per-edge string allocs every frame** — `NavOverlay.cpp:53-77` — debug-only overlay; ~4 allocs/triangle (finder's `ri`/`builtRegions()` evidence was partly hallucinated).
 - [ ] **DevCommandHandler null-nav refuses everything with misleading message** — `DevCommandHandler.cpp:201-211` — effectively dead branch today; distinguish "navigation not wired" from "off-mesh".
 - [ ] **`LockFreeRingBuffer::peekAt` torn-read race** — `LockFreeRingBuffer.h:55-64` — dev-only debug SSE path, worst case a garbled log line; add seqlock re-validation or document the caller contract. (Same race surfaced under correctness/memory-safety/concurrency; worker-thread-logging variant is temporary `[NavBuild]` instrumentation already slated for stripping.)

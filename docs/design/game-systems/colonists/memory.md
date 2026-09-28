@@ -139,6 +139,7 @@ The info panel's current-task line surfaces *how* the colonist is moving, not ju
 |------------------|---------|-------|
 | Traveling | "Going to [target]" | active (green) |
 | Re-routing (momentary) | "Re-routing" | neutral, brief |
+| Route deferred (no built mesh covers it yet) | "Waiting for the area to settle" | neutral |
 | LKP search | "Searching for [target]" | mild warning (yellow) |
 | Door discovery | "Looking for a way into [building]" | mild warning (yellow) |
 | No believed route | "Can't find a way to [target]" | blocked (red) |

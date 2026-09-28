@@ -1,10 +1,9 @@
 #include "NavMesh.h"
 
 #include "../arrangement/Arrangement.h"
-#include "../arrangement/HalfEdge.h"
 #include "../core/Int128.h"
 #include "../predicates/Predicates.h"
-#include "../triangulation/Triangulation.h"
+#include "../triangulation/ConstrainedDelaunay.h"
 
 #include <algorithm>
 #include <array>
@@ -29,107 +28,6 @@ namespace geometry::nav {
 			return (static_cast<std::uint64_t>(a) << 32) | static_cast<std::uint64_t>(b);
 		}
 
-		// A bounded face awaiting triangulation: its CCW outer ring (vertex indices
-		// into mesh.vertices) plus the CW hole rings nested inside it. `blocker` and
-		// `opening` carry the per-face belief tags onto every triangle the face emits:
-		// floor faces get kNoBlocker/kNoOpening, faces inside a blocked ring get that
-		// ring's provenanceId/openingId. Wall interiors are kept (not discarded) so a
-		// belief query can optimistically path through an unseen wall.
-		struct WalkableFace {
-			std::vector<std::uint32_t>				outer;
-			std::vector<std::vector<std::uint32_t>> holes;
-			Int128									areaDoubled; // positive (CCW); innermost-container key
-			Vec2i64									repPoint;	 // interior point used to classify the face
-			std::int64_t							blocker = kNoBlocker;
-			std::int64_t							opening = kNoOpening;
-		};
-
-		std::vector<std::uint32_t> faceRingIndices(const HalfEdgeMesh& mesh, const Face& f) {
-			std::vector<std::uint32_t> ring;
-			ring.reserve(f.halfEdges.size());
-			for (std::size_t he : f.halfEdges) {
-				ring.push_back(static_cast<std::uint32_t>(mesh.halfEdges[he].origin));
-			}
-			return ring;
-		}
-
-		std::vector<Vec2i64> ringPoints(const HalfEdgeMesh& mesh, const std::vector<std::uint32_t>& ring) {
-			std::vector<Vec2i64> pts;
-			pts.reserve(ring.size());
-			for (std::uint32_t idx : ring) {
-				pts.push_back(mesh.vertices[idx]);
-			}
-			return pts;
-		}
-
-		// True when `p` lies inside the outer ring and strictly outside every hole, i.e.
-		// in the face's actual (annular) interior.
-		bool inFaceInterior(const Vec2i64& p, const std::vector<Vec2i64>& outerPts,
-							const std::vector<std::vector<Vec2i64>>& holePts) {
-			if (pointInPolygon(p, outerPts) != PointInPolygon::Inside) {
-				return false;
-			}
-			for (const std::vector<Vec2i64>& h : holePts) {
-				if (pointInPolygon(p, h) != PointInPolygon::Outside) {
-					return false; // inside or on the boundary of a hole
-				}
-			}
-			return true;
-		}
-
-		// A representative point in the face's TRUE interior (inside `outer`, strictly
-		// outside every hole). The face-extraction rep point only considers the outer
-		// cycle, so for a face with holes it can land in a hole; classifying from there
-		// reads the hole region's depth, not the face's. We keep that point when it is
-		// already hole-free, else search for one that clears all holes.
-		//
-		// The search samples points near the OUTER boundary, where the annular interior
-		// is always present (the holes are strict sub-regions, so the band just inside
-		// the outer cycle is hole-free). For each outer vertex we step a short way toward
-		// the outer centroid at a few fractions; a point hugging the boundary lands in
-		// the annulus even when the outer-cycle ear centroids all cluster inside a
-		// central hole (e.g. a square area whose dry land is a centered island). Falls
-		// back to the original rep point if no integer sample lands clear, leaving prior
-		// behavior unchanged.
-		Vec2i64 representativeOutsideHoles(const HalfEdgeMesh& mesh, const std::vector<std::uint32_t>& outer,
-										   const std::vector<std::vector<std::uint32_t>>& holes, const Vec2i64& fallback) {
-			const std::vector<Vec2i64> outerPts = ringPoints(mesh, outer);
-			std::vector<std::vector<Vec2i64>> holePts;
-			holePts.reserve(holes.size());
-			for (const std::vector<std::uint32_t>& h : holes) {
-				holePts.push_back(ringPoints(mesh, h));
-			}
-			if (holePts.empty() || inFaceInterior(fallback, outerPts, holePts)) {
-				return fallback;
-			}
-
-			const std::size_t n = outerPts.size();
-			if (n == 0) {
-				return fallback;
-			}
-			Vec2i64 c{0, 0};
-			for (const Vec2i64& p : outerPts) {
-				c.x += p.x;
-				c.y += p.y;
-			}
-			c.x /= static_cast<std::int64_t>(n);
-			c.y /= static_cast<std::int64_t>(n);
-
-			// Step each outer vertex toward the centroid by num/den; small fractions hug
-			// the boundary (hole-free band), larger ones reach a centered interior if the
-			// boundary band is itself blocked. Numerators chosen low-to-high.
-			constexpr std::int64_t den = 16;
-			for (std::int64_t num : {1, 2, 3, 4, 6, 8}) {
-				for (const Vec2i64& v : outerPts) {
-					const Vec2i64 sample{v.x + (c.x - v.x) * num / den, v.y + (c.y - v.y) * num / den};
-					if (inFaceInterior(sample, outerPts, holePts)) {
-						return sample;
-					}
-				}
-			}
-			return fallback;
-		}
-
 		// |2*area| of a polygon ring (shoelace), exact in 128-bit. Used only to rank
 		// containing blocked rings by size (smallest-containing wins); sign irrelevant.
 		Int128 signedAreaDoubledAbs(const std::vector<Vec2i64>& ring) {
@@ -140,6 +38,55 @@ namespace geometry::nav {
 			}
 			return acc.sign() < 0 ? Int128(0) - acc : acc;
 		}
+
+		// An input ring as face classification reads it: scaled by 3, the space in
+		// which a triangle's centroid (a+b+c)/3 is the exact integer point a+b+c.
+		struct SampleRing {
+			std::vector<Vec2i64> ring3;
+			Vec2i64				 lo3;
+			Vec2i64				 hi3;
+			std::int64_t		 provenance		= kNoProvenance;
+			std::int64_t		 opening		= kNoOpening;
+			bool				 holeCapable	= false;	 // water: even-odd containment parity
+			Int128				 areaDoubledAbs = Int128(0); // smallest-containing ranking (unscaled)
+		};
+
+		SampleRing sampleRing(const NavInputPolygon& poly) {
+			SampleRing r;
+			r.ring3.reserve(poly.ring.size());
+			for (const Vec2i64& p : poly.ring) {
+				r.ring3.push_back(p * 3);
+			}
+			r.lo3 = r.ring3.front();
+			r.hi3 = r.ring3.front();
+			for (const Vec2i64& p : r.ring3) {
+				r.lo3 = {std::min(r.lo3.x, p.x), std::min(r.lo3.y, p.y)};
+				r.hi3 = {std::max(r.hi3.x, p.x), std::max(r.hi3.y, p.y)};
+			}
+			r.provenance	 = poly.provenanceId;
+			r.opening		 = poly.openingId;
+			r.holeCapable	 = poly.holeCapable;
+			r.areaDoubledAbs = signedAreaDoubledAbs(poly.ring);
+			return r;
+		}
+
+		bool contains(const SampleRing& r, const Vec2i64& p3) {
+			return p3.x >= r.lo3.x && p3.x <= r.hi3.x && p3.y >= r.lo3.y && p3.y <= r.hi3.y &&
+				   pointInPolygon(p3, r.ring3) == PointInPolygon::Inside;
+		}
+
+		// A face of the arrangement: the triangles one flood fill reaches without
+		// crossing a constraint. Its largest triangle supplies the classification
+		// sample, well inside the face even when snap rounding moved an arrangement
+		// edge a fraction of a millimetre off its input ring.
+		struct MeshFace {
+			std::int32_t sampleTri	 = -1;
+			Int128		 sampleArea2 = Int128(0);
+			bool		 touchesFrame = false; // unbounded: outside every ring
+			bool		 inBounds	  = false;
+			std::int64_t blocker	  = kNoBlocker;
+			std::int64_t opening	  = kNoOpening;
+		};
 
 		// --- Demyen-Buro corridor width (exact integer) ------------------------------
 		// Grounded in Demyen 2006, "Efficient Triangulation-Based Pathfinding", sec. 4.1
@@ -620,34 +567,22 @@ namespace geometry::nav {
 		// supported: a face is in-bounds iff it lies inside ANY unblocked bound. Each
 		// blocked ring carries its belief tags (provenanceId/openingId) so a face
 		// landing inside it inherits them.
-		struct BlockedRing {
-			const std::vector<Vec2i64>* ring		  = nullptr;
-			std::int64_t				provenance	  = kNoProvenance;
-			std::int64_t				opening		  = kNoOpening;
-			bool						holeCapable	  = false;	  // water: even-odd containment parity
-			Int128						areaDoubledAbs = Int128(0); // |2*area|, cached for smallest-containing ranking
-		};
-		std::vector<const std::vector<Vec2i64>*> borderRings;
-		std::vector<BlockedRing>				 blockedRings;
+		std::vector<SampleRing> borderRings;
+		std::vector<SampleRing> blockedRings;
 		for (const NavInputPolygon& poly : input.polygons) {
 			if (poly.ring.size() < 3) {
 				continue;
 			}
-			if (poly.blocked) {
-				// Cache the ring's |2*area| now (static input) so the per-face
-				// smallest-containing-ring search below is a compare, not a reshoelace.
-				blockedRings.push_back(
-					{&poly.ring, poly.provenanceId, poly.openingId, poly.holeCapable, signedAreaDoubledAbs(poly.ring)});
-			} else {
-				borderRings.push_back(&poly.ring);
-			}
+			(poly.blocked ? blockedRings : borderRings).push_back(sampleRing(poly));
 		}
 		if (borderRings.empty()) {
 			return result; // no walkable bounds -> empty mesh
 		}
 
 		// 1. Arrange every ring edge, tagging each segment with its source polygon's
-		// provenanceId so extracted edges carry it back.
+		// provenanceId so extracted edges carry it back. The arrangement splits edges
+		// at every crossing and touch and merges overlaps, so its edges form a planar
+		// straight-line graph.
 		std::vector<InputSegment> segments;
 		for (const NavInputPolygon& poly : input.polygons) {
 			const std::size_t n = poly.ring.size();
@@ -658,96 +593,65 @@ namespace geometry::nav {
 				segments.push_back({poly.ring[i], poly.ring[(i + 1) % n], poly.provenanceId});
 			}
 		}
+		const Arrangement arrangement = buildArrangement(segments);
+		result.vertices				  = arrangement.vertices;
 
-		const Arrangement	arrangement = buildArrangement(segments);
-		const HalfEdgeMesh	mesh		= extractFaces(arrangement);
-		result.vertices					= mesh.vertices;
-
-		// 2. Collect bounded CCW faces that are IN-BOUNDS (rep point inside ANY
-		// unblocked border ring); faces outside every border (exterior) are discarded.
-		// In-bounds faces are KEPT whether or not they sit inside a blocked ring -- the
-		// whole region is triangulated, wall interiors included, so a belief query can
-		// optimistically path through an unseen wall. Classification (which blocked ring
-		// tags the face) is DEFERRED to step 4b, after holes are attached: a face that
-		// has holes spans more than one even-odd water-depth region, and its outer-cycle
-		// representative point can fall inside a hole, so we must classify from a point
-		// that lies in the face's actual interior (outer minus holes).
-		std::vector<WalkableFace>	walkable;
-		for (std::size_t fi = 0; fi < mesh.faces.size(); ++fi) {
-			const Face& f = mesh.faces[fi];
-			if (f.signedAreaDoubled.sign() <= 0 || !f.representativePoint.has_value()) {
-				continue; // CW cycle or degenerate bounded face
-			}
-			const Vec2i64& rep = *f.representativePoint;
-			bool insideBorder = false;
-			for (const std::vector<Vec2i64>* ring : borderRings) {
-				if (pointInPolygon(rep, *ring) == PointInPolygon::Inside) {
-					insideBorder = true;
-					break;
-				}
-			}
-			if (!insideBorder) {
-				continue; // outside every walkable bound
-			}
-
-			WalkableFace wf;
-			wf.outer	   = faceRingIndices(mesh, f);
-			wf.areaDoubled = f.signedAreaDoubled;
-			wf.repPoint	   = rep; // outer-cycle rep; replaced by a hole-aware point in 4b
-			walkable.push_back(std::move(wf));
+		// 2. Triangulate the whole arrangement at once: a constrained Delaunay
+		// triangulation of its vertices with every arrangement edge as a constraint.
+		// Faces are never triangulated one at a time, so a weakly simple face (a pinch
+		// vertex, holes touching each other or the border at one point) or a face with
+		// hundreds of holes needs nothing special, and no face can fail and drop out.
+		std::vector<std::array<std::uint32_t, 2>> constraints;
+		constraints.reserve(arrangement.edges.size());
+		for (const ArrangementEdge& ae : arrangement.edges) {
+			constraints.push_back({static_cast<std::uint32_t>(ae.from), static_cast<std::uint32_t>(ae.to)});
 		}
+		const ConstrainedDelaunay cdt = buildConstrainedDelaunay(arrangement.vertices, constraints);
 
-		// 4. Nesting. Every CW cycle (signedAreaDoubled < 0) is either a hole
-		// boundary as seen from the walkable region around it, or the unbounded
-		// outer cycle of a connected component. Attach each CW cycle as a hole of
-		// the smallest-area walkable face that strictly contains ALL of its
-		// vertices. A hole is strictly interior to its container, so the all-
-		// vertices-Inside test is exact and unambiguous; the unbounded outer cycle
-		// shares its ring with a walkable face (same vertices, on the boundary,
-		// never strictly Inside), so it matches no container and is ignored.
-		for (std::size_t fi = 0; fi < mesh.faces.size(); ++fi) {
-			const Face& f = mesh.faces[fi];
-			if (f.signedAreaDoubled.sign() >= 0) {
-				continue; // bounded CCW face or zero-area; handled above
+		// 3. Faces. Flood fill across unconstrained edges: each fill is one face of the
+		// arrangement. The fill that reaches the frame is the unbounded face, outside
+		// every ring.
+		const std::int32_t		  cdtCount = static_cast<std::int32_t>(cdt.triangles.size());
+		std::vector<std::int32_t> faceOf(static_cast<std::size_t>(cdtCount), -1);
+		std::vector<MeshFace>	  faces;
+		std::vector<std::int32_t> fill;
+		for (std::int32_t seed = 0; seed < cdtCount; ++seed) {
+			if (faceOf[static_cast<std::size_t>(seed)] >= 0) {
+				continue;
 			}
-			const std::vector<std::uint32_t> cwRing	   = faceRingIndices(mesh, f);
-			const std::vector<Vec2i64>		 cwPoints  = ringPoints(mesh, cwRing);
-
-			std::size_t	best	  = walkable.size();
-			Int128		bestArea(0);
-			for (std::size_t w = 0; w < walkable.size(); ++w) {
-				const std::vector<Vec2i64> outerPts = ringPoints(mesh, walkable[w].outer);
-				bool allInside = true;
-				for (const Vec2i64& p : cwPoints) {
-					if (pointInPolygon(p, outerPts) != PointInPolygon::Inside) {
-						allInside = false;
-						break;
+			const std::int32_t f = static_cast<std::int32_t>(faces.size());
+			MeshFace		   face;
+			faceOf[static_cast<std::size_t>(seed)] = f;
+			fill.push_back(seed);
+			while (!fill.empty()) {
+				const std::int32_t t = fill.back();
+				fill.pop_back();
+				const CdtTriangle& tri	 = cdt.triangles[static_cast<std::size_t>(t)];
+				const Int128	   area2 = cross(cdt.vertices[tri.v[1]] - cdt.vertices[tri.v[0]],
+												 cdt.vertices[tri.v[2]] - cdt.vertices[tri.v[0]]);
+				if (face.sampleTri < 0 || face.sampleArea2 < area2 || (area2 == face.sampleArea2 && t < face.sampleTri)) {
+					face.sampleTri	 = t;
+					face.sampleArea2 = area2;
+				}
+				for (int e = 0; e < 3; ++e) {
+					face.touchesFrame = face.touchesFrame || tri.v[e] >= cdt.frameStart;
+					const std::int32_t nb = tri.neighbor[e];
+					if (nb >= 0 && tri.constraint[e] < 0 && faceOf[static_cast<std::size_t>(nb)] < 0) {
+						faceOf[static_cast<std::size_t>(nb)] = f;
+						fill.push_back(nb);
 					}
 				}
-				if (!allInside) {
-					continue;
-				}
-				if (best == walkable.size() || walkable[w].areaDoubled < bestArea) {
-					best	 = w;
-					bestArea = walkable[w].areaDoubled;
-				}
 			}
-			if (best != walkable.size()) {
-				// The CW cycle is already CW (negative area), matching the hole
-				// contract of triangulateWithHoles directly.
-				walkable[best].holes.push_back(cwRing);
-			}
+			faces.push_back(face);
 		}
 
-		// 4b. Classify each in-bounds face against the blocked rings, using a
-		// representative point in the face's TRUE interior (inside its outer cycle and
-		// OUTSIDE all of its holes). The outer-cycle rep point from face extraction can
-		// land inside a hole -- e.g. a water body whose outer boundary surrounds the
-		// whole area (a river exiting on every side) leaves the dry land as a CW hole
-		// ring, and the surrounding water face's outer-cycle centroid falls in that
-		// land hole. Classifying from the hole-unaware point then reads the hole's
-		// even-odd depth (land) for the whole water face, mistagging the water as floor.
-		// A hole-aware point gets the annular region's own depth.
+		// 4. Classify each face from one exact interior sample: its sample triangle's
+		// centroid in 3x space. The sample is strictly inside the triangle, so strictly
+		// inside the face and off every arrangement edge; containment reads Inside or
+		// Outside, never boundary. Faces outside every walkable bound are discarded.
+		// In-bounds faces are KEPT whether or not they sit inside a blocked ring: the
+		// whole region is triangulated, wall interiors included, so a belief query can
+		// optimistically path through an unseen wall.
 		//
 		// Splits SOLID rings (flora, walls: solid containment) from HOLE-CAPABLE rings
 		// (water: even-odd containment parity):
@@ -759,22 +663,35 @@ namespace geometry::nav {
 		//   number is genuine water (open water = 1, a pond on the island = 3). Disjoint
 		//   water bodies never nest, so only one body's rings ever contain a given point.
 		//   A solid obstacle always blocks, even sitting over water.
-		for (WalkableFace& wf : walkable) {
-			const Vec2i64 rep = representativeOutsideHoles(mesh, wf.outer, wf.holes, wf.repPoint);
+		for (MeshFace& face : faces) {
+			if (face.touchesFrame) {
+				continue;
+			}
+			const CdtTriangle& s	   = cdt.triangles[static_cast<std::size_t>(face.sampleTri)];
+			const Vec2i64	   sample3 = cdt.vertices[s.v[0]] + cdt.vertices[s.v[1]] + cdt.vertices[s.v[2]];
+			for (const SampleRing& border : borderRings) {
+				if (contains(border, sample3)) {
+					face.inBounds = true;
+					break;
+				}
+			}
+			if (!face.inBounds) {
+				continue;
+			}
 
-			Int128 bestSolidArea(0);
-			bool   solidTagged = false;
+			Int128		 bestSolidArea(0);
+			bool		 solidTagged  = false;
 			std::int64_t solidBlocker = kNoBlocker;
 			std::int64_t solidOpening = kNoOpening;
 
-			Int128 bestWaterArea(0);
-			bool   waterTagged = false;
-			int	   waterDepth  = 0;
+			Int128		 bestWaterArea(0);
+			bool		 waterTagged  = false;
+			int			 waterDepth	  = 0;
 			std::int64_t waterBlocker = kNoBlocker;
 			std::int64_t waterOpening = kNoOpening;
 
-			for (const BlockedRing& br : blockedRings) {
-				if (pointInPolygon(rep, *br.ring) != PointInPolygon::Inside) {
+			for (const SampleRing& br : blockedRings) {
+				if (!contains(br, sample3)) {
 					continue;
 				}
 				const Int128& area = br.areaDoubledAbs;
@@ -797,89 +714,64 @@ namespace geometry::nav {
 			}
 
 			if (solidTagged) {
-				wf.blocker = solidBlocker; // a real obstacle always blocks, even over water
-				wf.opening = solidOpening;
+				face.blocker = solidBlocker; // a real obstacle always blocks, even over water
+				face.opening = solidOpening;
 			} else if (waterDepth % 2 == 1) {
-				wf.blocker = waterBlocker; // odd depth: genuine water
-				wf.opening = waterOpening;
+				face.blocker = waterBlocker; // odd depth: genuine water
+				face.opening = waterOpening;
 			}
 			// else even depth (incl. 0): floor -- leave kNoBlocker/kNoOpening.
 		}
 
-		// 5. Triangulate each face (floor AND wall interiors) with its holes, copying
-		// the face's belief tags onto every triangle. A degenerate result for one face
-		// is skipped (its triangles omitted) rather than aborting the whole mesh -- a
-		// single bad region yields a partial mesh.
-		for (const WalkableFace& wf : walkable) {
-			std::vector<std::array<std::uint32_t, 3>> tris =
-				triangulateWithHoles(mesh.vertices, wf.outer, wf.holes);
-			for (const std::array<std::uint32_t, 3>& t : tris) {
-				NavTriangle nt;
-				nt.v			 = t;
-				nt.neighbor		 = {-1, -1, -1};
-				nt.edgeProvenance = {kNoProvenance, kNoProvenance, kNoProvenance};
-				nt.edgeOpening	 = {kNoOpening, kNoOpening, kNoOpening};
-				nt.faceBlocker	 = wf.blocker;
-				nt.faceOpening	 = wf.opening;
-				// triangulateWithHoles guarantees CCW; assert the invariant cheaply
-				// by reorienting any stray triangle so downstream queries can rely on
-				// it unconditionally.
-				if (orientation(mesh.vertices[t[0]], mesh.vertices[t[1]], mesh.vertices[t[2]]) ==
-					Orientation::Clockwise) {
-					std::swap(nt.v[1], nt.v[2]);
-				}
-				result.triangles.push_back(nt);
-			}
-		}
-
-		// 6. Adjacency. Hash every triangle's three edges; an undirected edge shared
-		// by two triangles links them as neighbors. Because wall interiors are now
-		// triangulated too, floor and wall faces share their band edges and so get
-		// linked here -- that link is what lets a belief query traverse INTO an unseen
-		// wall. Truth/belief gating then happens in the path query, not the topology:
-		// the mesh is one connected graph, the filter decides which edges to cross.
-		std::unordered_map<EdgeKey, std::pair<std::int32_t, int>> firstOwner;
-		firstOwner.reserve(result.triangles.size() * 3);
-		for (std::size_t ti = 0; ti < result.triangles.size(); ++ti) {
-			NavTriangle& tri = result.triangles[ti];
-			for (int e = 0; e < 3; ++e) {
-				const EdgeKey key = makeEdgeKey(tri.v[e], tri.v[(e + 1) % 3]);
-				auto		  it  = firstOwner.find(key);
-				if (it == firstOwner.end()) {
-					firstOwner.emplace(key, std::make_pair(static_cast<std::int32_t>(ti), e));
-				} else {
-					const std::int32_t otherTri  = it->second.first;
-					const int		   otherEdge = it->second.second;
-					tri.neighbor[e]						   = otherTri;
-					result.triangles[otherTri].neighbor[otherEdge] = static_cast<std::int32_t>(ti);
-				}
-			}
-		}
-
-		// 7a. Edge provenance. Map each arrangement edge's canonical vertex pair to
-		// its provenance (a single id per nav input ring; we take the first, since
-		// nav rings do not overlap coincidentally the way wall centerlines can).
-		std::unordered_map<EdgeKey, std::int64_t> edgeProvenance;
-		edgeProvenance.reserve(arrangement.edges.size());
-		for (const ArrangementEdge& ae : arrangement.edges) {
-			if (ae.provenance.empty()) {
+		// 5. Keep the in-bounds faces' triangles (floor AND wall interiors), copying each
+		// face's belief tags onto its triangles. The CDT emits CCW triangles, and none
+		// kept touches a frame corner, so every vertex index is an arrangement vertex.
+		std::vector<std::int32_t> keptIndex(static_cast<std::size_t>(cdtCount), -1);
+		for (std::int32_t t = 0; t < cdtCount; ++t) {
+			const MeshFace& face = faces[static_cast<std::size_t>(faceOf[static_cast<std::size_t>(t)])];
+			if (!face.inBounds) {
 				continue;
 			}
-			const EdgeKey key =
-				makeEdgeKey(static_cast<std::uint32_t>(ae.from), static_cast<std::uint32_t>(ae.to));
-			edgeProvenance.emplace(key, ae.provenance.front());
+			keptIndex[static_cast<std::size_t>(t)] = static_cast<std::int32_t>(result.triangles.size());
+			NavTriangle nt;
+			nt.v			  = cdt.triangles[static_cast<std::size_t>(t)].v;
+			nt.neighbor		  = {-1, -1, -1};
+			nt.edgeProvenance = {kNoProvenance, kNoProvenance, kNoProvenance};
+			nt.edgeOpening	  = {kNoOpening, kNoOpening, kNoOpening};
+			nt.faceBlocker	  = face.blocker;
+			nt.faceOpening	  = face.opening;
+			result.triangles.push_back(nt);
 		}
-		for (NavTriangle& tri : result.triangles) {
+
+		// 6. Adjacency and edge provenance, straight from the CDT. A neighbor in a
+		// discarded face becomes a mesh boundary. Floor and wall faces share their band
+		// edges and so stay linked -- that link is what lets a belief query traverse INTO
+		// an unseen wall. Truth/belief gating then happens in the path query, not the
+		// topology: the mesh is one connected graph, the filter decides which edges to
+		// cross. A constrained edge carries its arrangement edge's provenance (a single
+		// id per nav input ring; we take the first, since nav rings do not overlap
+		// coincidentally the way wall centerlines can).
+		for (std::int32_t t = 0; t < cdtCount; ++t) {
+			const std::int32_t kept = keptIndex[static_cast<std::size_t>(t)];
+			if (kept < 0) {
+				continue;
+			}
+			const CdtTriangle& tri = cdt.triangles[static_cast<std::size_t>(t)];
+			NavTriangle&	   nt  = result.triangles[static_cast<std::size_t>(kept)];
 			for (int e = 0; e < 3; ++e) {
-				const EdgeKey key = makeEdgeKey(tri.v[e], tri.v[(e + 1) % 3]);
-				auto		  it  = edgeProvenance.find(key);
-				if (it != edgeProvenance.end()) {
-					tri.edgeProvenance[e] = it->second;
+				if (tri.neighbor[e] >= 0) {
+					nt.neighbor[e] = keptIndex[static_cast<std::size_t>(tri.neighbor[e])];
+				}
+				if (tri.constraint[e] >= 0) {
+					const std::vector<std::int64_t>& prov = arrangement.edges[static_cast<std::size_t>(tri.constraint[e])].provenance;
+					if (!prov.empty()) {
+						nt.edgeProvenance[e] = prov.front();
+					}
 				}
 			}
 		}
 
-		// 7b. Door tagging. Each portal's (a, b) endpoints are exact mesh vertices;
+		// 7. Door tagging. Each portal's (a, b) endpoints are exact mesh vertices;
 		// map a position to its vertex index, then tag the triangle edge(s) whose
 		// canonical vertex pair matches. Both triangles sharing an interior portal
 		// edge get the tag (openingId and clearWidthMm: the width filter gates a door
@@ -887,8 +779,8 @@ namespace geometry::nav {
 		// knowledge obstacle, so the Demyen widths below never see the door gap).
 		if (!input.doors.empty()) {
 			std::map<Vec2i64, std::uint32_t> vertexIndex;
-			for (std::size_t i = 0; i < mesh.vertices.size(); ++i) {
-				vertexIndex.emplace(mesh.vertices[i], static_cast<std::uint32_t>(i));
+			for (std::size_t i = 0; i < result.vertices.size(); ++i) {
+				vertexIndex.emplace(result.vertices[i], static_cast<std::uint32_t>(i));
 			}
 			struct PortalTag {
 				std::int64_t openingId	  = kNoOpening;

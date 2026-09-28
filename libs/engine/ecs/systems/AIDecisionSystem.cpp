@@ -1166,6 +1166,7 @@ namespace ecs {
 					// denial) invalidates it and clears movementTarget.active to stop the
 					// colonist instead of beelining through the believed wall.
 					const NavRequestOutcome outcome = requestNavPath(entity, task.targetPosition, position, memory, movementTarget);
+					applyNavOutcome(task, outcome);
 					if (outcome == NavRequestOutcome::Routed) {
 						// Show "Re-routing" for ~30 ticks so the player sees the colonist react
 						// to a newly-discovered wall before the panel reverts to "Going to".
@@ -1173,14 +1174,25 @@ namespace ecs {
 						// while it's >0, then Traveling once it hits zero.
 						task.navState = NavState::Rerouting;
 						task.navStateHold = 30;
-					} else if (outcome == NavRequestOutcome::Blocked) {
-						task.navState = NavState::CantFindWayTo;
-						task.navStateHold = 0;
-					} else {
-						task.navState = NavState::Traveling; // beelining (no mesh) -- not stuck
-						task.navStateHold = 0;
 					}
 				}
+			}
+
+			// Deferred-route retry. requestNavPath holds a route it can't plan yet (no mesh built,
+			// or an endpoint outside every built region) and applyNavOutcome parks the task in
+			// AwaitingMesh with the nav generation it was deferred at. Nothing else would request
+			// it again: replan-on-discovery needs a live route, the chain-leg repath below needs an
+			// active target, and a re-eval that re-selects the same option keeps the task
+			// (isSameTask) without routing it. So once a mesh build lands, re-request the SAME
+			// goal. Keyed on the generation, so a goal still out of reach costs one request per
+			// build, not one per frame.
+			if (task.state == TaskState::Moving && task.navState == NavState::AwaitingMesh && m_navSystem != nullptr &&
+				m_navSystem->generation() != task.deferredNavGeneration) {
+				// The hold switched movement off; re-arm it for the request, which switches it off
+				// again if the route still can't be planned.
+				movementTarget.active = true;
+				const NavRequestOutcome outcome = requestNavPath(entity, task.targetPosition, position, memory, movementTarget);
+				applyNavOutcome(task, outcome);
 			}
 
 			// Chain-leg repath: a multi-phase task (Haul Pickup->Deposit, PlacePackaged
@@ -1197,8 +1209,7 @@ namespace ecs {
 			if (auto* navPath = world->getComponent<NavPath>(entity); task.state == TaskState::Moving &&
 				movementTarget.active && (navPath == nullptr || !navPath->valid)) {
 				const NavRequestOutcome outcome = requestNavPath(entity, task.targetPosition, position, memory, movementTarget);
-				task.navState = (outcome == NavRequestOutcome::Blocked) ? NavState::CantFindWayTo : NavState::Traveling;
-				task.navStateHold = 0;
+				applyNavOutcome(task, outcome);
 			}
 
 			// Drain the Rerouting hold counter so "Re-routing" is a brief visible beat.
@@ -1212,10 +1223,11 @@ namespace ecs {
 			}
 
 			// Direct player control: skip autonomous task selection entirely. The player drives this
-			// colonist via issuePlayerMoveOrder, which sets a Moving task that the repath-on-discovery
-			// and chain-leg repath blocks above carry exactly like an AI route; the colonist otherwise
-			// stands and waits. Only buildDecisionTrace/selectTaskFromTrace are suppressed -- off-mesh
-			// recovery and repath still run, and VisionSystem is independent, so discovery keeps working.
+			// colonist via issuePlayerMoveOrder, which sets a Moving task that the repath-on-discovery,
+			// deferred-route retry, and chain-leg repath blocks above carry exactly like an AI route;
+			// the colonist otherwise stands and waits. Only buildDecisionTrace/selectTaskFromTrace are
+			// suppressed -- off-mesh recovery and repath still run, and VisionSystem is independent, so
+			// discovery keeps working.
 			if (world->getComponent<PlayerControlled>(entity) != nullptr) {
 				task.timeSinceEvaluation = 0.0F;
 				continue;
@@ -1253,12 +1265,12 @@ namespace ecs {
 					// Compare task type
 					bool sameType = (task.type == selected->taskType);
 
-					// For wander tasks, same type is enough - don't interrupt just because target
-					// changed. EXCEPT when nav has stopped this wander (no believed route to its
-					// point): it MUST then be free to pick a fresh, reachable target, or it stays
-					// pinned to the unreachable one forever -- a permanent freeze.
-					if (sameType && task.type == TaskType::Wander && task.navState != NavState::CantFindWayTo) {
-						isSameTask = true;
+					// A wander that is walking stays the same task whatever point the re-eval rolled:
+					// don't interrupt it just because the random target changed. One whose movement
+					// is off is going nowhere (the no-option hold, a route nav denied or deferred), so
+					// it MUST be free to take the fresh option, or it stays parked forever.
+					if (sameType && task.type == TaskType::Wander) {
+						isSameTask = movementTarget.active;
 					} else {
 						bool sameTarget = false;
 						if (selected->targetPosition.has_value()) {
@@ -1866,8 +1878,9 @@ namespace ecs {
 			// Nothing to navigate to right now -- typically all needs are met and the navmesh isn't
 			// built yet, so the idle wander was withheld on purpose (can't navigate). Hold: stand in
 			// place, movement off, velocity zeroed. state=Moving (not Arrived) keeps shouldReEvaluate
-			// from re-deciding every frame; the periodic re-eval still fires, so the colonist picks
-			// up a real wander within a tick of the mesh landing.
+			// from re-deciding every frame; the periodic re-eval still fires, and a Wander with
+			// movement off never counts as the same task, so the colonist takes the first real
+			// option that re-eval offers once the mesh lands.
 			task.type			  = TaskType::Wander;
 			task.state			  = TaskState::Moving;
 			task.navState		  = NavState::Traveling;
@@ -1972,10 +1985,7 @@ namespace ecs {
 			const Memory* memory = world->getComponent<Memory>(entity);
 			if (memory != nullptr) {
 				const NavRequestOutcome outcome = requestNavPath(entity, task.targetPosition, position, *memory, movementTarget);
-				// Only a belief denial (mesh present, no route) is "can't find a way". Waiting
-				// (mesh not built / off-area) and Unmeshed (headless) are ordinary travel states.
-				task.navState = (outcome == NavRequestOutcome::Blocked) ? NavState::CantFindWayTo : NavState::Traveling;
-				task.navStateHold = 0;
+				applyNavOutcome(task, outcome);
 			}
 		}
 	}
@@ -1999,7 +2009,9 @@ namespace ecs {
 		// window while chunks stream in. NOTHING moves without a navmesh: dead-reckoning toward a
 		// goal with no idea what's walkable is exactly what stranded and stalled colonists. HOLD
 		// here -- deactivate movement and zero velocity -- instead of beelining blind. The task
-		// stays; the periodic re-evaluation picks it back up the moment the mesh lands.
+		// stays, deferred (applyNavOutcome): update()'s deferred-route retry requests the same
+		// goal again once the first mesh lands. The periodic re-eval does NOT pick it back up; it
+		// re-selects the same option and keeps the task as it stands.
 		if (!m_navSystem->hasMesh()) {
 			if (auto* navPath = world->getComponent<NavPath>(entity)) {
 				navPath->valid = false;
@@ -2017,8 +2029,8 @@ namespace ecs {
 		// answer the query (the off-area leg is beyond LOD0, and there is no coarse far-field graph
 		// yet). A colonist may NOT slide blind toward an off-area goal -- that is the beeline this
 		// architecture forbids. HOLD instead, exactly like the no-mesh case: deactivate movement,
-		// zero velocity, invalidate any stale route. The periodic re-eval re-offers the task once
-		// the camera-tracked sim area covers both endpoints (or the goal is rejected as unreachable).
+		// zero velocity, invalidate any stale route. The deferred-route retry requests it again
+		// after each region build lands, so it routes once a build covers both endpoints.
 		//
 		// FUTURE LOD1: path to the area edge via LOD0, hand off to a coarse regional graph for the
 		// long-haul leg, re-enter LOD0 near the goal. Until that lands, off-area goals are held.
@@ -2090,6 +2102,25 @@ namespace ecs {
 		LOG_DEBUG(Engine, "[Nav] Entity %llu: path to (%.2f, %.2f), %zu waypoints",
 			static_cast<unsigned long long>(entity), goal.x, goal.y, count);
 		return NavRequestOutcome::Routed;
+	}
+
+	void AIDecisionSystem::applyNavOutcome(Task& task, NavRequestOutcome outcome) const {
+		task.navStateHold = 0;
+		switch (outcome) {
+			case NavRequestOutcome::Routed:
+			case NavRequestOutcome::Unmeshed:
+				task.navState = NavState::Traveling;
+				return;
+			case NavRequestOutcome::Waiting:
+				// Only requestNavPath's hold branches return Waiting, and both run with a
+				// NavigationSystem wired.
+				task.navState = NavState::AwaitingMesh;
+				task.deferredNavGeneration = m_navSystem->generation();
+				return;
+			case NavRequestOutcome::Blocked:
+				task.navState = NavState::CantFindWayTo;
+				return;
+		}
 	}
 
 	std::string AIDecisionSystem::formatOptionReason(const EvaluatedOption& option, const char* needName) {
@@ -2287,14 +2318,12 @@ namespace ecs {
 		movementTarget->active = true;
 
 		if (const Memory* memory = world->getComponent<Memory>(entity)) {
+			// A Blocked order shows "can't get there" and waits for the player to re-click (the
+			// control gate skips re-eval). A Waiting one is deferred like any AI route: the
+			// deferred-route retry runs ahead of the control gate, so the order resumes on its own
+			// once a mesh build covers it.
 			const NavRequestOutcome outcome = requestNavPath(entity, goal, *position, *memory, *movementTarget);
-			// Routed (and the headless Unmeshed beeline) = traveling. Blocked and Waiting both leave
-			// movementTarget inactive inside requestNavPath, and a controlled colonist can't retry on
-			// its own (the control gate skips re-eval), so surface "can't get there" rather than a
-			// "going to" that stands still -- the player re-clicks to try again.
-			task->navState = (outcome == NavRequestOutcome::Routed || outcome == NavRequestOutcome::Unmeshed)
-								  ? NavState::Traveling
-								  : NavState::CantFindWayTo;
+			applyNavOutcome(*task, outcome);
 		}
 		return goal;
 	}
