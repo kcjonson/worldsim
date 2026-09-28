@@ -10,11 +10,12 @@
 // plus blocked obstacles, with door portals) into a triangle navmesh with
 // adjacency, ready for path queries.
 //
-// The pipeline is arrangement -> half-edge face extraction -> per-walkable-face
-// constrained triangulation -> global edge-hash adjacency. Walkable faces are
-// separated by blocked bands (no shared triangle edges between distinct faces),
-// so the adjacency graph links only intra-face neighbors and across door gaps
-// (a door gap is interior to a single walkable face).
+// The pipeline is arrangement -> one constrained Delaunay triangulation of the
+// whole arrangement, every arrangement edge a constraint -> faces by flood fill
+// across unconstrained edges -> one exact sample per face, classified against the
+// input rings. Every in-bounds face is kept, wall and water interiors included,
+// and adjacency comes straight from the triangulation, so a floor face and the
+// blocked face beside it share edges.
 //
 // This library is pure: no ECS, no engine dependencies. Coordinates are the
 // region-local integer millimeter frame shared by the rest of geometry/.
@@ -227,9 +228,8 @@ namespace geometry::nav {
 		ReachabilityForest terrainForest;
 	};
 
-	// Build the navmesh from tagged input. A walkable face whose triangulation
-	// degenerates is skipped (its triangles are omitted) rather than aborting the
-	// whole mesh, so a single bad region yields a partial mesh, not an empty one.
+	// Build the navmesh from tagged input. The triangles tile the walkable bounds:
+	// no face is dropped, however its rings touch, pinch, or nest.
 	NavMesh buildNavMesh(const NavMeshInput& input);
 
 	// Are triangles triA and triB in the same component of `forest` (connected

@@ -381,3 +381,49 @@ TEST(Arrangement, AdversarialDeterminismManyShuffles) {
 		ASSERT_EQ(canonical(buildArrangement(shuffled)), ref) << "trial " << trial;
 	}
 }
+
+namespace {
+
+	void appendRing(std::vector<InputSegment>& segs, const std::vector<Vec2i64>& ring, std::int64_t id) {
+		for (std::size_t i = 0; i < ring.size(); ++i) {
+			segs.push_back({ring[i], ring[(i + 1) % ring.size()], id});
+		}
+	}
+
+} // namespace
+
+// The navmesh triangulates the arrangement's edges as constraints, so ring input
+// must come out as a planar straight-line graph. A ring vertex resting on another
+// ring's edge (a T-junction) splits that edge there.
+TEST(Arrangement, RingVertexOnAnotherRingsEdgeYieldsPslg) {
+	std::vector<InputSegment> segs;
+	appendRing(segs, {{0, 0}, {1000, 0}, {1000, 1000}, {0, 1000}}, 1);
+	appendRing(segs, {{400, 1000}, {700, 1400}, {100, 1400}}, 2); // apex touches the top edge
+	appendRing(segs, {{1000, 300}, {1300, 200}, {1300, 500}}, 3); // apex touches the right edge
+	const Arrangement arr = buildArrangement(segs);
+	EXPECT_TRUE(noVertexInteriorToAnyEdge(arr)) << canonical(arr);
+	EXPECT_TRUE(edgesCleanlyDisjoint(arr)) << canonical(arr);
+	EXPECT_TRUE(hasEdge(arr, {0, 1000}, {400, 1000}));
+	EXPECT_TRUE(hasEdge(arr, {400, 1000}, {1000, 1000}));
+	EXPECT_TRUE(hasEdge(arr, {1000, 0}, {1000, 300}));
+	EXPECT_TRUE(hasEdge(arr, {1000, 300}, {1000, 1000}));
+}
+
+// Two rings sharing part of a collinear edge (clipped chunk rings meeting along a
+// border, split at different vertices) merge into one edge per sub-segment.
+TEST(Arrangement, RingsSharingCollinearSubEdgeYieldPslg) {
+	std::vector<InputSegment> segs;
+	appendRing(segs, {{0, 0}, {1000, 0}, {1000, 500}, {1000, 800}, {0, 800}}, 1);
+	appendRing(segs, {{1000, 200}, {2000, 200}, {2000, 1200}, {1000, 1200}}, 2);
+	const Arrangement arr = buildArrangement(segs);
+	EXPECT_TRUE(noVertexInteriorToAnyEdge(arr)) << canonical(arr);
+	EXPECT_TRUE(edgesCleanlyDisjoint(arr)) << canonical(arr);
+	const std::size_t shared = findEdge(arr, {1000, 200}, {1000, 500});
+	ASSERT_NE(shared, SIZE_MAX);
+	EXPECT_EQ(arr.edges[shared].provenance, (std::vector<std::int64_t>{1, 2}));
+	const std::size_t sharedUpper = findEdge(arr, {1000, 500}, {1000, 800});
+	ASSERT_NE(sharedUpper, SIZE_MAX);
+	EXPECT_EQ(arr.edges[sharedUpper].provenance, (std::vector<std::int64_t>{1, 2}));
+	EXPECT_TRUE(hasEdge(arr, {1000, 0}, {1000, 200}));
+	EXPECT_TRUE(hasEdge(arr, {1000, 800}, {1000, 1200}));
+}

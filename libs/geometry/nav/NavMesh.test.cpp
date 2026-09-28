@@ -1,14 +1,21 @@
 #include "NavMesh.h"
+#include "../arrangement/Arrangement.h"
 #include "../core/Int128.h"
 #include "../core/Vec2i64.h"
 #include "../predicates/Predicates.h"
+#include "NavMeshDumpRings.test.h"
 #include "NavMeshRealRings.test.h"
+#include "PathQuery.h"
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <map>
 #include <queue>
+#include <random>
 #include <set>
+#include <string>
 #include <utility>
 #include <vector>
 #include <gtest/gtest.h>
@@ -605,13 +612,14 @@ TEST(NavMesh, CorridorWidthObtuseSqueeze) {
 	NavMesh m = buildNavMesh(in);
 	ASSERT_FALSE(m.triangles.empty());
 
-	// The floor triangle [(4000,1500),(0,1500),(1900,1100)] spans from the top band to
-	// the nub's top-left corner; its apex at (1900,1100) measures the 400 mm gap to the
-	// top band (Case 2). Find it and check that apex width is 400.
+	// The input is mirror-symmetric about x = 2000, and the top band's ends and the
+	// nub's top corners are cocircular, so both diagonals of that quad are Delaunay;
+	// accept the construction on either side. One floor triangle spans the top band
+	// to a nub top corner, whose apex measures the 400 mm gap to the top band (Case 2).
 	bool found400 = false;
-	// And the obtuse case: triangle [(4000,1500),(1900,1100),(2100,1100)] has an apex at
-	// (4000,1500) whose nearest in-wedge obstacle is the nub corner (2100,1100): an
-	// obtuse squeeze = floor(sqrt(1900^2 + 400^2)) = 1941 mm (Case 1).
+	// And the obtuse case: the triangle between a top-band end and both nub top
+	// corners has, at the top-band end, the far nub corner as its nearest in-wedge
+	// obstacle: an obtuse squeeze = floor(sqrt(1900^2 + 400^2)) = 1941 mm (Case 1).
 	bool found1941 = false;
 	for (const NavTriangle& t : m.triangles) {
 		if (t.faceBlocker != kNoBlocker) {
@@ -619,10 +627,10 @@ TEST(NavMesh, CorridorWidthObtuseSqueeze) {
 		}
 		for (int a = 0; a < 3; ++a) {
 			Vec2i64 apex = m.vertices[t.v[a]];
-			if (apex == Vec2i64{1900, 1100} && t.edgePairWidthMm[a] == 400) {
+			if ((apex == Vec2i64{1900, 1100} || apex == Vec2i64{2100, 1100}) && t.edgePairWidthMm[a] == 400) {
 				found400 = true;
 			}
-			if (apex == Vec2i64{4000, 1500} && t.edgePairWidthMm[a] == 1941) {
+			if ((apex == Vec2i64{4000, 1500} || apex == Vec2i64{0, 1500}) && t.edgePairWidthMm[a] == 1941) {
 				found1941 = true;
 			}
 		}
@@ -1129,4 +1137,371 @@ TEST(NavMesh, RealYConfluence_OpenGrassIsFloor) {
 		}
 	}
 	EXPECT_TRUE(grassOnFloor) << "no floor triangle covers the open grass at (1500, 4500)";
+}
+
+// ---------------------------------------------------------------------------
+// Every in-bounds face is triangulated (WOR-493), weakly simple ones included: a
+// pinch vertex, holes touching each other or the border at one point, hundreds of
+// holes in one face. So every point inside the border lands on a triangle, and
+// the triangle's tag agrees with a brute-force read of the input rings.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+	NavMeshInput dumpInput(const std::vector<testdata::DumpRing>& rings) {
+		NavMeshInput in;
+		for (const testdata::DumpRing& r : rings) {
+			in.polygons.push_back(NavInputPolygon{r.ring, r.blocked, r.provenanceId, kNoOpening, r.holeCapable});
+		}
+		return in;
+	}
+
+	Int128 ringArea2Abs(const std::vector<Vec2i64>& ring) {
+		Int128 acc(0);
+		for (std::size_t i = 0; i < ring.size(); ++i) {
+			acc = acc + cross(ring[i], ring[(i + 1) % ring.size()]);
+		}
+		return acc.sign() < 0 ? Int128(0) - acc : acc;
+	}
+
+	// The documented classification, read straight off the input rings: inside any
+	// solid blocked ring is blocked; otherwise an odd number of hole-capable rings
+	// containing the point makes it water. Bounding boxes keep the dump sweeps cheap
+	// in the unoptimized test build.
+	class RingOracle {
+	  public:
+		explicit RingOracle(const NavMeshInput& in) {
+			for (const NavInputPolygon& poly : in.polygons) {
+				if (poly.ring.size() < 3) {
+					continue;
+				}
+				Ring r{&poly, poly.ring.front(), poly.ring.front()};
+				for (const Vec2i64& v : poly.ring) {
+					r.lo = {std::min(r.lo.x, v.x), std::min(r.lo.y, v.y)};
+					r.hi = {std::max(r.hi.x, v.x), std::max(r.hi.y, v.y)};
+				}
+				rings.push_back(r);
+			}
+		}
+
+		bool insideBorder(const Vec2i64& p) const {
+			for (const Ring& r : rings) {
+				if (!r.poly->blocked && inBox(r, p, 0) && pointInPolygon(p, r.poly->ring) == PointInPolygon::Inside) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		bool blocked(const Vec2i64& p) const {
+			int waterDepth = 0;
+			for (const Ring& r : rings) {
+				if (!r.poly->blocked || !inBox(r, p, 0) || pointInPolygon(p, r.poly->ring) != PointInPolygon::Inside) {
+					continue;
+				}
+				if (!r.poly->holeCapable) {
+					return true;
+				}
+				++waterDepth;
+			}
+			return waterDepth % 2 == 1;
+		}
+
+		// Within `mm` of any ring edge, where the arrangement may have snapped a crossing
+		// off its input edges (by at most half a millimetre).
+		bool nearEdge(const Vec2i64& p, std::int64_t mm) const {
+			for (const Ring& r : rings) {
+				if (!inBox(r, p, mm)) {
+					continue;
+				}
+				const std::vector<Vec2i64>& ring = r.poly->ring;
+				for (std::size_t i = 0; i < ring.size(); ++i) {
+					if (withinDistanceOfSegment(p, ring[i], ring[(i + 1) % ring.size()], mm)) {
+						return true;
+					}
+				}
+			}
+			return false;
+		}
+
+	  private:
+		struct Ring {
+			const NavInputPolygon* poly = nullptr;
+			Vec2i64				   lo;
+			Vec2i64				   hi;
+		};
+
+		static bool inBox(const Ring& r, const Vec2i64& p, std::int64_t pad) {
+			return p.x >= r.lo.x - pad && p.x <= r.hi.x + pad && p.y >= r.lo.y - pad && p.y <= r.hi.y + pad;
+		}
+
+		std::vector<Ring> rings;
+	};
+
+	struct OracleSweep {
+		int			checked	   = 0;
+		int			uncovered  = 0;
+		int			mismatched = 0;
+		std::string examples;
+	};
+
+	// Samples a lattice over the borders' bounding box at `stepMm`, offset off the
+	// chunk and pin lines, keeping points strictly inside a border and clear of every
+	// ring edge. Each must land on a triangle whose terrain tag matches the oracle.
+	OracleSweep sweepAgainstOracle(const NavMeshInput& in, const NavMesh& m, std::int64_t stepMm) {
+		static constexpr std::int64_t kClearMm = 2;
+		const RingOracle			  oracle(in);
+		Vec2i64						  lo{INT64_MAX, INT64_MAX};
+		Vec2i64						  hi{INT64_MIN, INT64_MIN};
+		for (const NavInputPolygon& poly : in.polygons) {
+			if (poly.blocked) {
+				continue;
+			}
+			for (const Vec2i64& v : poly.ring) {
+				lo = {std::min(lo.x, v.x), std::min(lo.y, v.y)};
+				hi = {std::max(hi.x, v.x), std::max(hi.y, v.y)};
+			}
+		}
+		OracleSweep s;
+		int			reported = 0;
+		auto		note	 = [&](const Vec2i64& p, const char* what) {
+			   if (reported++ < 8) {
+				   s.examples += std::string(what) + " (" + std::to_string(p.x) + ", " + std::to_string(p.y) + ") ";
+			   }
+		};
+		for (std::int64_t y = lo.y + stepMm / 2 + 3; y < hi.y; y += stepMm) {
+			for (std::int64_t x = lo.x + stepMm / 2 + 7; x < hi.x; x += stepMm) {
+				const Vec2i64 p{x, y};
+				if (!oracle.insideBorder(p) || oracle.nearEdge(p, kClearMm)) {
+					continue;
+				}
+				++s.checked;
+				const std::int32_t t = locateTriangle(m, p);
+				if (t < 0) {
+					++s.uncovered;
+					note(p, "uncovered");
+				} else if (terrainTraversable(m.triangles[static_cast<std::size_t>(t)]) == oracle.blocked(p)) {
+					++s.mismatched;
+					note(p, oracle.blocked(p) ? "walkable-but-blocked" : "blocked-but-walkable");
+				}
+			}
+		}
+		return s;
+	}
+
+	// The whole border (and nothing outside it) is triangulated into a consistent CCW
+	// manifold, and a lattice sweep finds no uncovered or mistagged point.
+	void expectWholeBorderTriangulated(const NavMeshInput& in, const NavMesh& m, std::int64_t stepMm) {
+		ASSERT_FALSE(m.triangles.empty());
+		EXPECT_TRUE(allCcw(m));
+		EXPECT_TRUE(isEdgeManifold(m));
+		EXPECT_TRUE(neighborsConsistent(m));
+		Int128 borderArea2(0);
+		for (const NavInputPolygon& poly : in.polygons) {
+			if (!poly.blocked) {
+				borderArea2 = borderArea2 + ringArea2Abs(poly.ring);
+			}
+		}
+		EXPECT_TRUE(totalArea2(m) == borderArea2) << "the triangles must tile the border exactly, nothing dropped";
+
+		const OracleSweep s = sweepAgainstOracle(in, m, stepMm);
+		EXPECT_GT(s.checked, 0);
+		EXPECT_EQ(s.uncovered, 0) << s.uncovered << " of " << s.checked << " points on no triangle: " << s.examples;
+		EXPECT_EQ(s.mismatched, 0) << s.mismatched << " of " << s.checked << " points mistagged: " << s.examples;
+	}
+
+	// Probe points around the colonist's spawn: covered, and walkable unless the
+	// oracle says a tree or the river covers them.
+	void expectProbePointsMatchOracle(const NavMeshInput& in, const NavMesh& m) {
+		const RingOracle oracle(in);
+		const Vec2i64	 probes[] = {{10000, 10000}, {20000, 0},	   {0, 20000},		 {5330, 4200},
+									 {11900, -500},	 {-10000, -10000}, {-30000, -20000}, {40000, 30000}};
+		for (const Vec2i64& p : probes) {
+			const std::int32_t t = locateTriangle(m, p);
+			ASSERT_GE(t, 0) << "(" << p.x << ", " << p.y << ") is on no triangle";
+			if (oracle.nearEdge(p, 2)) {
+				continue; // on a ring edge: either side's tag is right
+			}
+			EXPECT_EQ(terrainTraversable(m.triangles[static_cast<std::size_t>(t)]), !oracle.blocked(p))
+				<< "(" << p.x << ", " << p.y << ") oracle says " << (oracle.blocked(p) ? "blocked" : "walkable");
+		}
+	}
+
+	NavInputPolygon waterRing(std::vector<Vec2i64> ring) {
+		return {std::move(ring), true, -1};
+	}
+
+	NavInputPolygon treeRing(std::vector<Vec2i64> ring) {
+		return {std::move(ring), true, -2};
+	}
+
+	std::vector<Vec2i64> square(std::int64_t x0, std::int64_t y0, std::int64_t side) {
+		return {{x0, y0}, {x0 + side, y0}, {x0 + side, y0 + side}, {x0, y0 + side}};
+	}
+
+} // namespace
+
+// Chunks (0,-1) and (-1,0) still generating: the two diagonal river pieces meet only
+// at the chunk corner (0,0), so the land face's hole boundary pinches there.
+TEST(NavMesh, RealStreamingPinch_WholeRegionTriangulatedAndTagged) {
+	ASSERT_EQ(testdata::streamingPinchDump().size(), 3u) << "fixture corrupted";
+	const NavMeshInput in = dumpInput(testdata::streamingPinchDump());
+	const NavMesh	   m  = buildNavMesh(in);
+	expectWholeBorderTriangulated(in, m, 1000);
+	expectProbePointsMatchOracle(in, m);
+}
+
+// 305 tree holes in one land face, the layout Eberly hole bridging failed on.
+TEST(NavMesh, RealManyTreeHoles_WholeRegionTriangulatedAndTagged) {
+	ASSERT_EQ(testdata::manyTreesDump().size(), 517u) << "fixture corrupted";
+	const NavMeshInput in = dumpInput(testdata::manyTreesDump());
+	const NavMesh	   m  = buildNavMesh(in);
+	expectWholeBorderTriangulated(in, m, 1000);
+	expectProbePointsMatchOracle(in, m);
+}
+
+TEST(NavMesh, RealControl_WholeRegionTriangulatedAndTagged) {
+	ASSERT_EQ(testdata::controlDump().size(), 644u) << "fixture corrupted";
+	const NavMeshInput in = dumpInput(testdata::controlDump());
+	expectWholeBorderTriangulated(in, buildNavMesh(in), 1000);
+}
+
+// A region 70 km from the origin: exactness must not depend on small absolute
+// coordinates.
+TEST(NavMesh, RealFarRegion_WholeRegionTriangulatedAndTagged) {
+	ASSERT_EQ(testdata::farRegionDump().size(), 13u) << "fixture corrupted";
+	const NavMeshInput in = dumpInput(testdata::farRegionDump());
+	expectWholeBorderTriangulated(in, buildNavMesh(in), 1000);
+}
+
+// The arrangement's edges are the triangulation's constraints, so they must form a
+// planar straight-line graph on real input: no crossings, no vertex inside an edge.
+TEST(NavMesh, RealDumps_ArrangementIsPlanarStraightLineGraph) {
+	for (const std::vector<testdata::DumpRing>* dump :
+		 {&testdata::streamingPinchDump(), &testdata::manyTreesDump(), &testdata::farRegionDump()}) {
+		std::vector<InputSegment> segments;
+		for (const testdata::DumpRing& r : *dump) {
+			for (std::size_t i = 0; i < r.ring.size(); ++i) {
+				segments.push_back({r.ring[i], r.ring[(i + 1) % r.ring.size()], r.provenanceId});
+			}
+		}
+		const Arrangement arr = buildArrangement(segments);
+
+		// Sweep in x so only edges whose x-extents overlap are compared.
+		struct Span {
+			std::int64_t lo;
+			std::int64_t hi;
+			std::size_t	 edge;
+		};
+		std::vector<Span> spans;
+		for (std::size_t e = 0; e < arr.edges.size(); ++e) {
+			const Vec2i64& a = arr.vertices[arr.edges[e].from];
+			const Vec2i64& b = arr.vertices[arr.edges[e].to];
+			spans.push_back({std::min(a.x, b.x), std::max(a.x, b.x), e});
+		}
+		std::sort(spans.begin(), spans.end(), [](const Span& s, const Span& t) { return s.lo < t.lo; });
+		int bad = 0;
+		for (std::size_t i = 0; i < spans.size(); ++i) {
+			const ArrangementEdge& ei = arr.edges[spans[i].edge];
+			for (std::size_t k = i + 1; k < spans.size() && spans[k].lo <= spans[i].hi; ++k) {
+				const ArrangementEdge& ek = arr.edges[spans[k].edge];
+				const SegmentIntersection r =
+					intersectSegments(arr.vertices[ei.from], arr.vertices[ei.to], arr.vertices[ek.from], arr.vertices[ek.to]);
+				if (r.relation == SegmentRelation::Disjoint) {
+					continue;
+				}
+				const bool sharedEndpoint = r.relation == SegmentRelation::EndpointTouch &&
+											(ei.from == ek.from || ei.from == ek.to || ei.to == ek.from || ei.to == ek.to);
+				if (!sharedEndpoint) {
+					++bad;
+				}
+			}
+		}
+		EXPECT_EQ(bad, 0) << "edges meeting other than at a shared endpoint";
+	}
+}
+
+// Two water squares touching at exactly one vertex: the land around them has a hole
+// boundary that visits (5000, 5000) twice.
+TEST(NavMesh, BlockedSquaresTouchingAtOneVertex) {
+	NavMeshInput in;
+	in.polygons.push_back(border(square(0, 0, 10000)));
+	in.polygons.push_back(waterRing(square(2000, 2000, 3000)));
+	in.polygons.push_back(waterRing(square(5000, 5000, 3000)));
+	expectWholeBorderTriangulated(in, buildNavMesh(in), 250);
+}
+
+// A diamond whose vertex sits in the interior of the border's bottom edge, and a
+// quad sharing the border's top-right corner: the land face's outer boundary
+// touches itself at each point.
+TEST(NavMesh, BlockedRingsTouchingBorderAtOneVertex) {
+	NavMeshInput in;
+	in.polygons.push_back(border(square(0, 0, 10000)));
+	in.polygons.push_back(waterRing({{5000, 0}, {7000, 2000}, {5000, 4000}, {3000, 2000}}));
+	in.polygons.push_back(treeRing({{10000, 10000}, {8000, 9500}, {7000, 7000}, {9500, 8000}}));
+	expectWholeBorderTriangulated(in, buildNavMesh(in), 250);
+}
+
+// Tree colliders in a diagonal chain, each touching the next at one corner.
+TEST(NavMesh, TreeSquaresTouchingAtCorners) {
+	NavMeshInput in;
+	in.polygons.push_back(border(square(0, 0, 6000)));
+	in.polygons.push_back(treeRing(square(1000, 1000, 1000)));
+	in.polygons.push_back(treeRing(square(2000, 2000, 1000)));
+	in.polygons.push_back(treeRing(square(3000, 3000, 1000)));
+	in.polygons.push_back(treeRing(square(3000, 1000, 1000))); // touches the middle one's other corner
+	expectWholeBorderTriangulated(in, buildNavMesh(in), 100);
+}
+
+// A 10 x 10 grid of axis-aligned holes sharing their x and y coordinates: every
+// row and column of corners is collinear and every cell's corners are cocircular.
+TEST(NavMesh, CollinearHoleGrid) {
+	NavMeshInput in;
+	in.polygons.push_back(border(square(0, 0, 11000)));
+	for (std::int64_t row = 0; row < 10; ++row) {
+		for (std::int64_t col = 0; col < 10; ++col) {
+			in.polygons.push_back(treeRing(square(1000 + col * 1000, 1000 + row * 1000, 300)));
+		}
+	}
+	expectWholeBorderTriangulated(in, buildNavMesh(in), 100);
+}
+
+// Random scenes: rotated tree and water rectangles overlapping each other and the
+// border (crossings the arrangement snap-rounds), solid and hole-capable water, and
+// lattice squares that meet at corners and share edges. Some scenes sit 70 km out.
+TEST(NavMesh, RandomObstacleScenesMatchOracle) {
+	std::mt19937								 rng(0x493);
+	std::uniform_int_distribution<int>			 die(0, 9);
+	std::uniform_int_distribution<std::int64_t> pos(-1000, 21000);
+	std::uniform_int_distribution<std::int64_t> half(50, 1500);
+	std::uniform_int_distribution<std::int64_t> cell(0, 9);
+	std::uniform_real_distribution<double>		 turn(0.0, 6.2831853);
+	for (int scene = 0; scene < 12; ++scene) {
+		const Vec2i64 off = scene % 3 == 0 ? Vec2i64{70000000, -3000000} : Vec2i64{0, 0};
+		NavMeshInput  in;
+		in.polygons.push_back(border({off, off + Vec2i64{20000, 0}, off + Vec2i64{20000, 20000}, off + Vec2i64{0, 20000}}));
+		const int rects = 20 + die(rng) * 6;
+		for (int r = 0; r < rects; ++r) {
+			const Vec2i64 c{pos(rng), pos(rng)};
+			const double  a	 = die(rng) < 5 ? 0.0 : turn(rng);
+			const double  hx = static_cast<double>(half(rng));
+			const double  hy = static_cast<double>(half(rng));
+			std::vector<Vec2i64> ring;
+			for (int k = 0; k < 4; ++k) {
+				const double lx = (k == 0 || k == 3) ? -hx : hx;
+				const double ly = k < 2 ? -hy : hy;
+				ring.push_back(off + Vec2i64{c.x + std::llround(lx * std::cos(a) - ly * std::sin(a)),
+											 c.y + std::llround(lx * std::sin(a) + ly * std::cos(a))});
+			}
+			const int kind = die(rng);
+			in.polygons.push_back(NavInputPolygon{ring, true, kind < 2 ? -1 : -2, kNoOpening, kind == 0});
+		}
+		const int squares = die(rng);
+		for (int s = 0; s < squares; ++s) {
+			const Vec2i64 corner = off + Vec2i64{cell(rng) * 2000, cell(rng) * 2000};
+			in.polygons.push_back(NavInputPolygon{square(corner.x, corner.y, 2000), true, -1, kNoOpening, die(rng) < 3});
+		}
+		SCOPED_TRACE("scene " + std::to_string(scene));
+		expectWholeBorderTriangulated(in, buildNavMesh(in), 500);
+	}
 }
