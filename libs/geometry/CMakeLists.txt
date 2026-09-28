@@ -14,7 +14,6 @@ add_library(geometry
     contour/WarpField.cpp
     silhouette/Silhouette.cpp
     triangulation/ConstrainedDelaunay.cpp
-    triangulation/Triangulation.cpp
     visibility/Visibility.cpp
     nav/NavMesh.cpp
     nav/PathQuery.cpp

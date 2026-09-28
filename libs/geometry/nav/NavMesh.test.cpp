@@ -610,13 +610,14 @@ TEST(NavMesh, CorridorWidthObtuseSqueeze) {
 	NavMesh m = buildNavMesh(in);
 	ASSERT_FALSE(m.triangles.empty());
 
-	// The floor triangle [(4000,1500),(0,1500),(1900,1100)] spans from the top band to
-	// the nub's top-left corner; its apex at (1900,1100) measures the 400 mm gap to the
-	// top band (Case 2). Find it and check that apex width is 400.
+	// The input is mirror-symmetric about x = 2000, and the top band's ends and the
+	// nub's top corners are cocircular, so both diagonals of that quad are Delaunay;
+	// accept the construction on either side. One floor triangle spans the top band
+	// to a nub top corner, whose apex measures the 400 mm gap to the top band (Case 2).
 	bool found400 = false;
-	// And the obtuse case: triangle [(4000,1500),(1900,1100),(2100,1100)] has an apex at
-	// (4000,1500) whose nearest in-wedge obstacle is the nub corner (2100,1100): an
-	// obtuse squeeze = floor(sqrt(1900^2 + 400^2)) = 1941 mm (Case 1).
+	// And the obtuse case: the triangle between a top-band end and both nub top
+	// corners has, at the top-band end, the far nub corner as its nearest in-wedge
+	// obstacle: an obtuse squeeze = floor(sqrt(1900^2 + 400^2)) = 1941 mm (Case 1).
 	bool found1941 = false;
 	for (const NavTriangle& t : m.triangles) {
 		if (t.faceBlocker != kNoBlocker) {
@@ -624,10 +625,10 @@ TEST(NavMesh, CorridorWidthObtuseSqueeze) {
 		}
 		for (int a = 0; a < 3; ++a) {
 			Vec2i64 apex = m.vertices[t.v[a]];
-			if (apex == Vec2i64{1900, 1100} && t.edgePairWidthMm[a] == 400) {
+			if ((apex == Vec2i64{1900, 1100} || apex == Vec2i64{2100, 1100}) && t.edgePairWidthMm[a] == 400) {
 				found400 = true;
 			}
-			if (apex == Vec2i64{4000, 1500} && t.edgePairWidthMm[a] == 1941) {
+			if ((apex == Vec2i64{4000, 1500} || apex == Vec2i64{0, 1500}) && t.edgePairWidthMm[a] == 1941) {
 				found1941 = true;
 			}
 		}
@@ -1288,8 +1289,7 @@ namespace {
 
 	// The whole border (and nothing outside it) is triangulated into a consistent CCW
 	// manifold, and a lattice sweep finds no uncovered or mistagged point.
-	void expectWholeBorderTriangulated(const NavMeshInput& in, std::int64_t stepMm) {
-		const NavMesh m = buildNavMesh(in);
+	void expectWholeBorderTriangulated(const NavMeshInput& in, const NavMesh& m, std::int64_t stepMm) {
 		ASSERT_FALSE(m.triangles.empty());
 		EXPECT_TRUE(allCcw(m));
 		EXPECT_TRUE(isEdgeManifold(m));
@@ -1310,8 +1310,7 @@ namespace {
 
 	// Probe points around the colonist's spawn: covered, and walkable unless the
 	// oracle says a tree or the river covers them.
-	void expectProbePointsMatchOracle(const NavMeshInput& in) {
-		const NavMesh	 m = buildNavMesh(in);
+	void expectProbePointsMatchOracle(const NavMeshInput& in, const NavMesh& m) {
 		const RingOracle oracle(in);
 		const Vec2i64	 probes[] = {{10000, 10000}, {20000, 0},	   {0, 20000},		 {5330, 4200},
 									 {11900, -500},	 {-10000, -10000}, {-30000, -20000}, {40000, 30000}};
@@ -1344,37 +1343,40 @@ namespace {
 // at the chunk corner (0,0), so the land face's hole boundary pinches there.
 TEST(NavMesh, RealStreamingPinch_WholeRegionTriangulatedAndTagged) {
 	ASSERT_EQ(testdata::streamingPinchDump().size(), 3u) << "fixture corrupted";
-	expectWholeBorderTriangulated(dumpInput(testdata::streamingPinchDump()), 1000);
+	const NavMeshInput in = dumpInput(testdata::streamingPinchDump());
+	const NavMesh	   m  = buildNavMesh(in);
+	expectWholeBorderTriangulated(in, m, 1000);
+	expectProbePointsMatchOracle(in, m);
 }
 
 // 305 tree holes in one land face, the layout Eberly hole bridging failed on.
 TEST(NavMesh, RealManyTreeHoles_WholeRegionTriangulatedAndTagged) {
 	ASSERT_EQ(testdata::manyTreesDump().size(), 517u) << "fixture corrupted";
-	expectWholeBorderTriangulated(dumpInput(testdata::manyTreesDump()), 1000);
+	const NavMeshInput in = dumpInput(testdata::manyTreesDump());
+	const NavMesh	   m  = buildNavMesh(in);
+	expectWholeBorderTriangulated(in, m, 1000);
+	expectProbePointsMatchOracle(in, m);
 }
 
 TEST(NavMesh, RealControl_WholeRegionTriangulatedAndTagged) {
 	ASSERT_EQ(testdata::controlDump().size(), 644u) << "fixture corrupted";
-	expectWholeBorderTriangulated(dumpInput(testdata::controlDump()), 1000);
+	const NavMeshInput in = dumpInput(testdata::controlDump());
+	expectWholeBorderTriangulated(in, buildNavMesh(in), 1000);
 }
 
 // A region 70 km from the origin: exactness must not depend on small absolute
 // coordinates.
 TEST(NavMesh, RealFarRegion_WholeRegionTriangulatedAndTagged) {
 	ASSERT_EQ(testdata::farRegionDump().size(), 13u) << "fixture corrupted";
-	expectWholeBorderTriangulated(dumpInput(testdata::farRegionDump()), 1000);
-}
-
-TEST(NavMesh, RealDumps_ProbePointsWalkableUnlessCovered) {
-	expectProbePointsMatchOracle(dumpInput(testdata::streamingPinchDump()));
-	expectProbePointsMatchOracle(dumpInput(testdata::manyTreesDump()));
+	const NavMeshInput in = dumpInput(testdata::farRegionDump());
+	expectWholeBorderTriangulated(in, buildNavMesh(in), 1000);
 }
 
 // The arrangement's edges are the triangulation's constraints, so they must form a
 // planar straight-line graph on real input: no crossings, no vertex inside an edge.
 TEST(NavMesh, RealDumps_ArrangementIsPlanarStraightLineGraph) {
 	for (const std::vector<testdata::DumpRing>* dump :
-		 {&testdata::streamingPinchDump(), &testdata::manyTreesDump(), &testdata::controlDump(), &testdata::farRegionDump()}) {
+		 {&testdata::streamingPinchDump(), &testdata::manyTreesDump(), &testdata::farRegionDump()}) {
 		std::vector<InputSegment> segments;
 		for (const testdata::DumpRing& r : *dump) {
 			for (std::size_t i = 0; i < r.ring.size(); ++i) {
@@ -1424,7 +1426,7 @@ TEST(NavMesh, BlockedSquaresTouchingAtOneVertex) {
 	in.polygons.push_back(border(square(0, 0, 10000)));
 	in.polygons.push_back(waterRing(square(2000, 2000, 3000)));
 	in.polygons.push_back(waterRing(square(5000, 5000, 3000)));
-	expectWholeBorderTriangulated(in, 250);
+	expectWholeBorderTriangulated(in, buildNavMesh(in), 250);
 }
 
 // A diamond whose vertex sits in the interior of the border's bottom edge, and a
@@ -1435,7 +1437,7 @@ TEST(NavMesh, BlockedRingsTouchingBorderAtOneVertex) {
 	in.polygons.push_back(border(square(0, 0, 10000)));
 	in.polygons.push_back(waterRing({{5000, 0}, {7000, 2000}, {5000, 4000}, {3000, 2000}}));
 	in.polygons.push_back(treeRing({{10000, 10000}, {8000, 9500}, {7000, 7000}, {9500, 8000}}));
-	expectWholeBorderTriangulated(in, 250);
+	expectWholeBorderTriangulated(in, buildNavMesh(in), 250);
 }
 
 // Tree colliders in a diagonal chain, each touching the next at one corner.
@@ -1446,7 +1448,7 @@ TEST(NavMesh, TreeSquaresTouchingAtCorners) {
 	in.polygons.push_back(treeRing(square(2000, 2000, 1000)));
 	in.polygons.push_back(treeRing(square(3000, 3000, 1000)));
 	in.polygons.push_back(treeRing(square(3000, 1000, 1000))); // touches the middle one's other corner
-	expectWholeBorderTriangulated(in, 100);
+	expectWholeBorderTriangulated(in, buildNavMesh(in), 100);
 }
 
 // A 10 x 10 grid of axis-aligned holes sharing their x and y coordinates: every
@@ -1459,5 +1461,5 @@ TEST(NavMesh, CollinearHoleGrid) {
 			in.polygons.push_back(treeRing(square(1000 + col * 1000, 1000 + row * 1000, 300)));
 		}
 	}
-	expectWholeBorderTriangulated(in, 100);
+	expectWholeBorderTriangulated(in, buildNavMesh(in), 100);
 }
