@@ -1280,9 +1280,13 @@ namespace {
 				if (t < 0) {
 					++s.uncovered;
 					note(p, "uncovered");
-				} else if (terrainTraversable(m.triangles[static_cast<std::size_t>(t)]) == oracle.blocked(p)) {
-					++s.mismatched;
-					note(p, oracle.blocked(p) ? "walkable-but-blocked" : "blocked-but-walkable");
+				} else {
+					const bool meshWalkable	  = terrainTraversable(m.triangles[static_cast<std::size_t>(t)]);
+					const bool oracleWalkable = !oracle.blocked(p);
+					if (meshWalkable != oracleWalkable) {
+						++s.mismatched;
+						note(p, meshWalkable ? "walkable-but-blocked" : "blocked-but-walkable");
+					}
 				}
 			}
 		}

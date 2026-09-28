@@ -46,7 +46,8 @@ namespace geometry {
 	// out. The frame sits the input's extent beyond its bounding box, so pairwise
 	// coordinate differences reach three times that extent and must stay within the
 	// ~2^30 mm inCircle is exact for (inputs up to ~350 km across). Absolute
-	// coordinates may be large.
+	// coordinates may be large, within +/-2^61 mm, which keeps the extent and the frame's
+	// corners inside int64; world coordinates sit many orders of magnitude inside that.
 	ConstrainedDelaunay buildConstrainedDelaunay(
 		const std::vector<Vec2i64>& vertices, const std::vector<std::array<std::uint32_t, 2>>& constraints);
 

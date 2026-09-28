@@ -13,6 +13,11 @@ namespace geometry {
 
 		constexpr std::int32_t kNone = -1;
 
+		// Input bounds (see the header): the frame puts coordinate differences at three
+		// times the input's extent, and inCircle is exact to ~2^30 mm of difference.
+		[[maybe_unused]] constexpr std::int64_t kMaxAbsCoordinate = std::int64_t{1} << 61;
+		[[maybe_unused]] constexpr std::int64_t kMaxExtent		   = (std::int64_t{1} << 30) / 3;
+
 		int next3(int i) {
 			return i == 2 ? 0 : i + 1;
 		}
@@ -31,7 +36,12 @@ namespace geometry {
 					lo = {std::min(lo.x, p.x), std::min(lo.y, p.y)};
 					hi = {std::max(hi.x, p.x), std::max(hi.y, p.y)};
 				}
+				// The header's bounds: |coordinate| <= 2^61 keeps the extent and the frame's
+				// corners inside int64, and an extent within kMaxExtent keeps inCircle exact.
+				assert(lo.x >= -kMaxAbsCoordinate && lo.y >= -kMaxAbsCoordinate && hi.x <= kMaxAbsCoordinate &&
+					   hi.y <= kMaxAbsCoordinate && "buildConstrainedDelaunay: coordinate outside +/-2^61");
 				const std::int64_t margin = std::max({hi.x - lo.x, hi.y - lo.y, std::int64_t{1}});
+				assert(margin <= kMaxExtent && "buildConstrainedDelaunay: input too wide for exact inCircle");
 				vertices.push_back({lo.x - margin, lo.y - margin});
 				vertices.push_back({hi.x + margin, lo.y - margin});
 				vertices.push_back({hi.x + margin, hi.y + margin});
