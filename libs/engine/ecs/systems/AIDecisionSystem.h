@@ -139,13 +139,13 @@ private:
 	/// MOVEMENT INVARIANT: a colonist moves ONLY by following a NavPath. There is no straight-line
 	/// "beeline" toward a goal without a route. When a path can't be produced, this STOPS the
 	/// colonist (clears movementTarget.active, zeros velocity) rather than sliding it blind:
-	///   - no mesh yet (startup window): hold, the re-eval picks the task back up once it lands;
-	///   - endpoint outside the built sim area (beyond LOD0): hold, can't plan that leg yet;
+	///   - no mesh yet (startup window): hold, deferred until a mesh build lands;
+	///   - endpoint outside the built sim area (beyond LOD0): hold, deferred the same way;
 	///   - mesh present but belief admits no route (a believed wall): stop, re-decide.
 	/// The ONE non-path exception is the off-mesh recovery snap at the top of update() (teleport to
 	/// nearest valid ground), which runs BEFORE any path request. The Unmeshed outcome exists only
 	/// for headless tests with no NavigationSystem wired; it never occurs in the running game.
-	/// Outcome -> nav state: only Blocked is "can't find a way"; Waiting/Unmeshed are not stuck.
+	/// Every caller records the outcome on its task through applyNavOutcome.
 	enum class NavRequestOutcome {
 		Routed,	  // a believed route was found and attached
 		Unmeshed, // no NavigationSystem wired at all (headless/tests only): direct move, not stuck
@@ -154,6 +154,11 @@ private:
 	};
 	NavRequestOutcome requestNavPath(EntityID entity, const glm::vec2& goal, const struct Position& position,
 									 const struct Memory& memory, struct MovementTarget& movementTarget);
+
+	/// Record a route request's outcome as the task's nav state. Only Blocked is "can't find a way".
+	/// Waiting defers the route (AwaitingMesh) and stamps the current nav generation, so update()
+	/// requests it again once the generation moves; Routed and Unmeshed are ordinary travel.
+	void applyNavOutcome(struct Task& task, NavRequestOutcome outcome) const;
 
 	/// Format a human-readable reason for an option
 	[[nodiscard]] static std::string formatOptionReason(

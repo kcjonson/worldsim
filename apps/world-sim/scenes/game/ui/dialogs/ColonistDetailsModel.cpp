@@ -161,6 +161,10 @@ void ColonistDetailsModel::extractBioData(const ecs::World& world, ecs::EntityID
 					bioData.currentTask = "Can't find a way to target";
 					bioData.currentTaskColor = UI::status_crit;
 					break;
+				case ecs::NavState::AwaitingMesh:
+					bioData.currentTask = "Waiting for the area to settle";
+					bioData.currentTaskColor = UI::text;
+					break;
 				case ecs::NavState::SearchingLKP:
 					bioData.currentTask = "Searching for target";
 					bioData.currentTaskColor = UI::status_warn;

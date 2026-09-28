@@ -3286,6 +3286,7 @@ namespace ecs::test {
 		ASSERT_EQ(task->reason, "Gathering food (inventory empty)");
 		ASSERT_EQ(task->state, TaskState::Moving);
 		ASSERT_FALSE(getMovementTarget(colonist)->active) << "the route is held until a mesh exists";
+		EXPECT_EQ(task->navState, NavState::AwaitingMesh) << "the held route shows as waiting, not traveling";
 
 		ASSERT_TRUE(tickUntilMesh()) << "navmesh never built";
 
@@ -3296,6 +3297,7 @@ namespace ecs::test {
 		}
 		EXPECT_TRUE(routed) << "no route " << kTicksAfterMesh << " ticks after the mesh landed";
 		EXPECT_EQ(task->reason, "Gathering food (inventory empty)") << "the same task, now routed";
+		EXPECT_EQ(task->navState, NavState::Traveling);
 		const auto* navPath = world->getComponent<NavPath>(colonist);
 		ASSERT_NE(navPath, nullptr) << "no route was ever attached";
 		ASSERT_FALSE(navPath->waypoints.empty());
