@@ -8,6 +8,7 @@
 #include <ecs/components/StructureBlueprint.h>
 #include <ecs/components/StructureHealth.h>
 #include <ecs/components/Transform.h>
+#include <ecs/systems/ConstructionSystem.h>
 #include <ecs/systems/NavigationSystem.h>
 #include <offset/WallOffset.h>
 #include <predicates/Predicates.h>
@@ -63,35 +64,6 @@ namespace world_sim {
 			return p.x >= std::min(a.x, b.x) && p.x <= std::max(a.x, b.x) && p.y >= std::min(a.y, b.y) && p.y <= std::max(a.y, b.y);
 		}
 
-		// Centroid of a polygon (world meters). Falls back to the vertex average
-		// for a degenerate ring so the spawned entity always has a sane Position.
-		Foundation::Vec2 polygonCentroid(const std::vector<Foundation::Vec2>& pts) {
-			double			  cx = 0.0;
-			double			  cy = 0.0;
-			double			  a = 0.0;
-			const std::size_t n = pts.size();
-			for (std::size_t i = 0, j = n - 1; i < n; j = i++) {
-				const double cross = static_cast<double>(pts[j].x) * pts[i].y - static_cast<double>(pts[i].x) * pts[j].y;
-				a += cross;
-				cx += (pts[j].x + pts[i].x) * cross;
-				cy += (pts[j].y + pts[i].y) * cross;
-			}
-			if (std::abs(a) < 1e-9) {
-				Foundation::Vec2 avg{0.0F, 0.0F};
-				for (const auto& p : pts) {
-					avg.x += p.x;
-					avg.y += p.y;
-				}
-				if (n > 0) {
-					avg.x /= static_cast<float>(n);
-					avg.y /= static_cast<float>(n);
-				}
-				return avg;
-			}
-			a *= 0.5;
-			return {static_cast<float>(cx / (6.0 * a)), static_cast<float>(cy / (6.0 * a))};
-		}
-
 		std::vector<Foundation::Vec2> dequantizeRing(const geometry::Ring& ring) {
 			std::vector<Foundation::Vec2> pts;
 			pts.reserve(ring.size());
@@ -101,8 +73,13 @@ namespace world_sim {
 			return pts;
 		}
 
-		Foundation::Vec2 ringCentroid(const geometry::Ring& ring) {
-			return polygonCentroid(dequantizeRing(ring));
+		// A foundation entity's Position (world meters): the build, haul, and
+		// deconstruct goals all target it, so it must lie on the footprint, which the
+		// area centroid of a concave outline (a U's notch) does not.
+		Foundation::Vec2 sitePosition(const geometry::Ring& ring) {
+			const geometry::Vec2d mm = geometry::interiorPoint(ring);
+			const double		  mmPerM = static_cast<double>(geometry::kMillimetersPerMeter);
+			return {static_cast<float>(mm.x / mmPerM), static_cast<float>(mm.y / mmPerM)};
 		}
 
 		geometry::Ring toRingMm(const std::vector<Foundation::Vec2>& pts) {
@@ -593,10 +570,8 @@ namespace world_sim {
 
 		auto entity = ecsWorld_->createEntity();
 
-		// Position at the polygon centroid (world meters). Centroid keeps the
-		// entity's transform inside its own footprint for concave shapes too.
-		const Foundation::Vec2 centroid = ringCentroid(foundation->ring);
-		ecsWorld_->addComponent<ecs::Position>(entity, ecs::Position{{centroid.x, centroid.y}});
+		const Foundation::Vec2 site = sitePosition(foundation->ring);
+		ecsWorld_->addComponent<ecs::Position>(entity, ecs::Position{{site.x, site.y}});
 
 		ecsWorld_->addComponent<ecs::Structure>(entity, ecs::Structure{ecs::StructureKind::Foundation, id});
 
@@ -648,19 +623,22 @@ namespace world_sim {
 			*health = ecs::StructureHealth{sizing.maxHp, sizing.maxHp};
 		}
 		if (auto* position = ecsWorld_->getComponent<ecs::Position>(foundation->entity)) {
-			const Foundation::Vec2 centroid = ringCentroid(foundation->ring);
-			position->value = {centroid.x, centroid.y};
+			const Foundation::Vec2 site = sitePosition(foundation->ring);
+			position->value = {site.x, site.y};
 		}
+
+		// The goal tree was sized and placed for the old footprint (and a clear goal
+		// already in it would keep a new one from emitting); the next construction
+		// tick rebuilds it from the new one.
+		ecsWorld_->getSystem<ecs::ConstructionSystem>().resetBlueprintGoals(foundation->entity);
 	}
 
-	bool DrawingSystem::foundationEditable(ec::FoundationId id) const {
+	const ecs::StructureBlueprint* DrawingSystem::foundationBlueprint(ec::FoundationId id) const {
 		const auto* foundation = constructionWorld_.get(id);
-		if (ecsWorld_ == nullptr || foundation == nullptr || foundation->state != ec::FoundationState::Blueprint ||
-			!ecsWorld_->isAlive(foundation->entity)) {
-			return false;
+		if (ecsWorld_ == nullptr || foundation == nullptr || !ecsWorld_->isAlive(foundation->entity)) {
+			return nullptr;
 		}
-		const auto* blueprint = ecsWorld_->getComponent<ecs::StructureBlueprint>(foundation->entity);
-		return blueprint != nullptr && blueprint->shapeEditable();
+		return ecsWorld_->getComponent<ecs::StructureBlueprint>(foundation->entity);
 	}
 
 	DrawingSystem::FoundationEditOutcome
@@ -670,7 +648,7 @@ namespace world_sim {
 
 		auto&					  registry = ConstructionRegistry::Get();
 		ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
-		const ec::FoundationEditResult result = validator.validateFoundationEdit(target, drawn, mode, foundationEditable(target));
+		const ec::FoundationEditResult result = validator.validateFoundationEdit(target, drawn, mode, foundationBlueprint(target));
 		if (!result.ok()) {
 			outcome.reason = ec::validationReason(result.validation.code);
 			return outcome;
@@ -757,8 +735,8 @@ namespace world_sim {
 				targetHp->maxHp += extensionHp->maxHp;
 			}
 			if (auto* position = ecsWorld_->getComponent<ecs::Position>(targetEntity)) {
-				const Foundation::Vec2 centroid = ringCentroid(constructionWorld_.get(targetId)->ring);
-				position->value = {centroid.x, centroid.y};
+				const Foundation::Vec2 site = sitePosition(constructionWorld_.get(targetId)->ring);
+				position->value = {site.x, site.y};
 			}
 		}
 
@@ -775,7 +753,7 @@ namespace world_sim {
 	ec::ValidationResult DrawingSystem::validateClosed(const std::vector<Foundation::Vec2>& ring) const {
 		ec::ConstructionValidator validator(ConstructionRegistry::Get().constraints(), constructionWorld_);
 		if (activeTool_ == ToolKind::FoundationEdit) {
-			return validator.validateFoundationEdit(editTarget_, ring, editMode_, foundationEditable(editTarget_)).validation;
+			return validator.validateFoundationEdit(editTarget_, ring, editMode_, foundationBlueprint(editTarget_)).validation;
 		}
 		return validator.validateRing(ring);
 	}
@@ -791,7 +769,7 @@ namespace world_sim {
 			return;
 		}
 		ec::ConstructionValidator validator(ConstructionRegistry::Get().constraints(), constructionWorld_);
-		editPreview_ = validator.validateFoundationEdit(editTarget_, drawn, editMode_, foundationEditable(editTarget_));
+		editPreview_ = validator.validateFoundationEdit(editTarget_, drawn, editMode_, foundationBlueprint(editTarget_));
 	}
 
 	void DrawingSystem::commitFoundationEdit() {

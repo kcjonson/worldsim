@@ -55,6 +55,7 @@ namespace engine::assets {
 
 namespace ecs {
 	class NavigationSystem;
+	struct StructureBlueprint;
 }
 
 namespace world_sim {
@@ -292,9 +293,9 @@ namespace world_sim {
 		/// caller to despawn (deferred), or kInvalidEntity when the merge is refused.
 		ecs::EntityID mergeExtension(engine::construction::FoundationId extension);
 
-		/// Whether foundation `id` may still be reshaped in place: a blueprint whose
-		/// mirror entity has nothing delivered, no work done, and no demolish order.
-		[[nodiscard]] bool foundationEditable(engine::construction::FoundationId id) const;
+		/// Foundation `id`'s ECS mirror blueprint (deliveries, work, demolish order),
+		/// or nullptr when it has no live entity. The edit validator's ECS input.
+		[[nodiscard]] const ecs::StructureBlueprint* foundationBlueprint(engine::construction::FoundationId id) const;
 
 	  private:
 		// --- Nav-mesh placement validity (shared by foundation + wall + opening) ---
@@ -359,8 +360,9 @@ namespace world_sim {
 		void commitFoundationEdit();
 
 		/// Re-size an in-place-edited blueprint's mirror entity to its new ring:
-		/// manifest, work, HP, and position, and send it back to Clearing (the new
-		/// footprint may cover blockers the old one didn't).
+		/// manifest, work, HP, and position, back to Clearing (the new footprint may
+		/// cover blockers the old one didn't), with its goal tree dropped for the next
+		/// construction tick to rebuild from the new footprint.
 		void resizeBlueprintEntity(engine::construction::FoundationId id);
 
 		// --- Wall tool ---

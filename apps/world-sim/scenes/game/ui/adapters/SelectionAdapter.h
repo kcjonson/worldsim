@@ -80,7 +80,7 @@ struct FoundationActions {
 /// the ECS StructureBlueprint on the foundation's mirror entity. Buttons are
 /// conditional (ActionButtonSlot has no disabled flag, so a button that doesn't
 /// apply is left out or swapped): Add while the foundation is an editable
-/// blueprint or Built with no pending extension, Subtract only on an editable
+/// blueprint or Built with no pending extension and no demolish order, Subtract only on an editable
 /// blueprint, and "Demolish building" (the cascade) in place of "Demolish" while
 /// walls stand on it or its pending extension. An extension blueprint names the
 /// foundation it merges into.

@@ -420,9 +420,11 @@ namespace world_sim {
 		// Add / Subtract. Like Demolish below, a button that doesn't apply is left out
 		// (ActionButtonSlot has no disabled flag). An editable blueprint takes both; a
 		// built foundation only grows, one pending extension at a time; a pending
-		// extension itself is cancel-and-redraw.
+		// extension itself is cancel-and-redraw; nothing marked for demolition is edited.
+		const bool demolishing = blueprint != nullptr && blueprint->demolishing;
 		const bool editableBlueprint = !built && !isExtension && blueprint != nullptr && blueprint->shapeEditable();
-		const bool canAdd = editableBlueprint || (built && pendingExtension == engine::construction::kInvalidFoundation);
+		const bool canAdd =
+			editableBlueprint || (built && !demolishing && pendingExtension == engine::construction::kInvalidFoundation);
 		if (canAdd && actions.onAdd) {
 			content.slots.push_back(ActionButtonSlot{.label = "Add", .onClick = actions.onAdd});
 		}

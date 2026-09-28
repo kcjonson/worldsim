@@ -2,6 +2,8 @@
 
 #include "ConstructionWorld.h"
 
+#include "../ecs/components/StructureBlueprint.h"
+
 #include <assets/ConstructionRegistry.h>
 
 #include <boolean/RingBoolean.h>
@@ -292,6 +294,8 @@ namespace engine::construction {
 				return "addition can't wrap around";
 			case ValidationCode::EditUnderWall:
 				return "would cut under a wall";
+			case ValidationCode::BeingDemolished:
+				return "being demolished";
 		}
 		return {};
 	}
@@ -503,7 +507,7 @@ namespace engine::construction {
 		FoundationId						   targetId,
 		const std::vector<::Foundation::Vec2>& drawn,
 		FoundationEditMode					   mode,
-		bool								   blueprintEditable
+		const ecs::StructureBlueprint*		   targetBlueprint
 	) const {
 		auto reject = [](ValidationResult validation) {
 			FoundationEditResult result;
@@ -519,6 +523,9 @@ namespace engine::construction {
 		if (target->mergeTarget != kInvalidFoundation) {
 			return rejectCode(ValidationCode::ExtensionNotEditable);
 		}
+		if (targetBlueprint != nullptr && targetBlueprint->demolishing) {
+			return rejectCode(ValidationCode::BeingDemolished);
+		}
 		const bool built = target->state == FoundationState::Built;
 		if (built) {
 			if (mode == FoundationEditMode::Subtract) {
@@ -527,7 +534,7 @@ namespace engine::construction {
 			if (world_->pendingExtensionOf(targetId) != kInvalidFoundation) {
 				return rejectCode(ValidationCode::ExtensionPending);
 			}
-		} else if (!blueprintEditable) {
+		} else if (targetBlueprint == nullptr || !targetBlueprint->shapeEditable()) {
 			return rejectCode(ValidationCode::EditMaterialsDelivered);
 		}
 

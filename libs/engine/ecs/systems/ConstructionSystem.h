@@ -182,6 +182,11 @@ namespace ecs {
 		using DropResourceCallback = std::function<void(const std::string&, float, float, uint32_t)>;
 		void setDropResourceCallback(DropResourceCallback callback) { m_onDropResource = std::move(callback); }
 
+		/// Drop every construction goal a blueprint owns (the umbrella and its phase
+		/// children). The next tick rebuilds the tree from the blueprint's current
+		/// footprint, manifest, and position; used when a foundation is reshaped in place.
+		void resetBlueprintGoals(EntityID blueprintEntity);
+
 		/// DEV/TEST ONLY. Credit `amount` of `defName` onto the delivered[] manifests of all
 		/// active (non-Complete) build sites, capped at each site's outstanding need so no
 		/// site is over-filled, and stops once `amount` is exhausted. Returns the total

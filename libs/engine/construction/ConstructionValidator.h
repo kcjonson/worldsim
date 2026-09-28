@@ -45,6 +45,10 @@ namespace engine::assets {
 	struct ThicknessPreset;
 } // namespace engine::assets
 
+namespace ecs {
+	struct StructureBlueprint;
+}
+
 namespace engine::construction {
 
 	// Which constraint a candidate violated. Ordered roughly by the sequence the
@@ -99,6 +103,7 @@ namespace engine::construction {
 		ExtensionSplits,		// built add: the added region would be two separate pieces
 		ExtensionWrapsAround,	// built add: the added region would ring the foundation
 		EditUnderWall,			// subtract: a hosted wall's footprint would leave the remainder
+		BeingDemolished,		// the target is marked for demolition
 	};
 
 	// Result of a check. `code` drives both the red colorizing and the reason
@@ -172,10 +177,13 @@ namespace engine::construction {
 		[[nodiscard]] ValidationResult validateEditPoint(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 candidate) const;
 
 		// Validate editing foundation `target` with the closed drawn polygon `drawn`
-		// (world meters). `blueprintEditable` is the ECS side of editability
-		// (StructureBlueprint::shapeEditable); topology alone can't see deliveries.
+		// (world meters). `targetBlueprint` is the target's ECS mirror (null when it
+		// has none): topology alone can't see deliveries, work, or a demolish order.
 		// Rules (design "Editing After Build: Add / Subtract"):
-		//   - Blueprint + editable: Add unions in place, Subtract carves in place.
+		//   - Marked for demolition (either state): both rejected. An extension made
+		//     now would hold the teardown open without being part of it.
+		//   - Blueprint + editable (StructureBlueprint::shapeEditable): Add unions in
+		//     place, Subtract carves in place.
 		//   - Blueprint + materials delivered or worked: both rejected.
 		//   - Built: Subtract rejected (built foundations never shrink); Add yields an
 		//     extension (drawn minus target) whose merge is the outline, rejected
@@ -189,7 +197,7 @@ namespace engine::construction {
 			FoundationId						   target,
 			const std::vector<::Foundation::Vec2>& drawn,
 			FoundationEditMode					   mode,
-			bool								   blueprintEditable
+			const ecs::StructureBlueprint*		   targetBlueprint
 		) const;
 
 		// --- Walls ----------------------------------------------------------

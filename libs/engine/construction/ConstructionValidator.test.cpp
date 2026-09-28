@@ -3,6 +3,8 @@
 #include "ConstructionWorld.h"
 #include "SnapEngine.h"
 
+#include "../ecs/components/StructureBlueprint.h"
+
 #include <assets/ConstructionRegistry.h>
 #include <core/Vec2i64.h>
 
@@ -790,13 +792,14 @@ class FoundationEditValidation : public ::testing::Test {
 	}
 	void TearDown() override { ConstructionRegistry::Get().clear(); }
 
-	FoundationEditResult edit(const std::vector<Vec2>& drawn, FoundationEditMode mode, bool editable = true) const {
-		return ConstructionValidator(cfg, world).validateFoundationEdit(target, drawn, mode, editable);
+	FoundationEditResult edit(const std::vector<Vec2>& drawn, FoundationEditMode mode) const {
+		return ConstructionValidator(cfg, world).validateFoundationEdit(target, drawn, mode, &blueprint);
 	}
 
-	ConstraintConfig  cfg = defaults();
-	ConstructionWorld world;
-	FoundationId	  target = kInvalidFoundation;
+	ConstraintConfig		cfg = defaults();
+	ConstructionWorld		world;
+	FoundationId			target = kInvalidFoundation;
+	ecs::StructureBlueprint blueprint; // the target's mirror: fresh, so editable
 };
 
 TEST_F(FoundationEditValidation, BlueprintAddUnionsInPlace) {
@@ -815,10 +818,21 @@ TEST_F(FoundationEditValidation, BlueprintSubtractCarvesNotch) {
 }
 
 TEST_F(FoundationEditValidation, DeliveredBlueprintRejected) {
-	EXPECT_EQ(edit(rect(8.0F, 2.0F, 14.0F, 8.0F), FoundationEditMode::Add, false).validation.code, ValidationCode::EditMaterialsDelivered);
-	EXPECT_EQ(
-		edit(rect(7.0F, -2.0F, 12.0F, 4.0F), FoundationEditMode::Subtract, false).validation.code, ValidationCode::EditMaterialsDelivered
-	);
+	blueprint.delivered = {{"Wood", 1}};
+	EXPECT_EQ(edit(rect(8.0F, 2.0F, 14.0F, 8.0F), FoundationEditMode::Add).validation.code, ValidationCode::EditMaterialsDelivered);
+	EXPECT_EQ(edit(rect(7.0F, -2.0F, 12.0F, 4.0F), FoundationEditMode::Subtract).validation.code, ValidationCode::EditMaterialsDelivered);
+}
+
+TEST_F(FoundationEditValidation, FoundationMarkedForDemolitionRejected) {
+	blueprint.demolishing = true;
+	EXPECT_EQ(edit(rect(7.0F, -2.0F, 12.0F, 4.0F), FoundationEditMode::Subtract).validation.code, ValidationCode::BeingDemolished);
+
+	// A built one too: an extension made now would hold the teardown open.
+	world.setState(target, FoundationState::Built);
+	blueprint.phase = ecs::StructureBlueprint::BuildPhase::Complete;
+	EXPECT_EQ(edit(rect(8.0F, 2.0F, 14.0F, 8.0F), FoundationEditMode::Add).validation.code, ValidationCode::BeingDemolished);
+	blueprint.demolishing = false;
+	EXPECT_TRUE(edit(rect(8.0F, 2.0F, 14.0F, 8.0F), FoundationEditMode::Add).ok());
 }
 
 TEST_F(FoundationEditValidation, BuiltSubtractRejected) {
@@ -854,7 +868,7 @@ TEST_F(FoundationEditValidation, SecondAddWhileExtensionPendingRejected) {
 
 	EXPECT_EQ(edit(rect(2.0F, 8.0F, 8.0F, 14.0F), FoundationEditMode::Add).validation.code, ValidationCode::ExtensionPending);
 	const auto onExtension =
-		ConstructionValidator(cfg, world).validateFoundationEdit(ext.id, rect(12.0F, 2.0F, 16.0F, 8.0F), FoundationEditMode::Add, true);
+		ConstructionValidator(cfg, world).validateFoundationEdit(ext.id, rect(12.0F, 2.0F, 16.0F, 8.0F), FoundationEditMode::Add, &blueprint);
 	EXPECT_EQ(onExtension.validation.code, ValidationCode::ExtensionNotEditable);
 }
 
