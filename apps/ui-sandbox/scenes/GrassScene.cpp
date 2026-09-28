@@ -45,7 +45,8 @@ namespace {
 	constexpr float kFieldHeightM = 120.0F;
 	constexpr float kPixelsPerMeter = 16.0F;
 	constexpr float kCameraZoom = 8.0F;       // zoomed in so patches read (game is more top-down)
-	constexpr float kGrassReach = 0.55F;      // max local vertex distance from a tuft base (m)
+	constexpr float kGroundcoverOpenness = 1.0F; // resting tuft scale; 1.0 = full (reveal parked)
+	constexpr float kGroundcoverReach = 0.55F; // max local vertex distance from a tuft base (m)
 	constexpr float kCursorRadiusM = 4.0F;    // interaction radius (world m)
 	constexpr float kCursorStrengthM = 0.6F;  // tip push at the cursor (world m)
 	constexpr const char* kTuneBiome = "TemperateGrassland"; // which placement config to drive the field
@@ -193,7 +194,9 @@ namespace {
 			GLuint prog = br->getShaderProgram();
 			glUseProgram(prog);
 			glUniform1f(glGetUniformLocation(prog, "u_bakedAlpha"), 1.0F);
-			glUniform1f(glGetUniformLocation(prog, "u_grassReach"), kGrassReach);
+			glUniform1i(glGetUniformLocation(prog, "u_groundcoverMode"), 1);
+			glUniform1f(glGetUniformLocation(prog, "u_groundcoverOpenness"), kGroundcoverOpenness);
+			glUniform1f(glGetUniformLocation(prog, "u_groundcoverReach"), kGroundcoverReach);
 			glUniform2f(glGetUniformLocation(prog, "u_cursorWorld"), cursorWorld.x, cursorWorld.y);
 			glUniform1f(glGetUniformLocation(prog, "u_cursorRadius"), kCursorRadiusM);
 			glUniform1f(glGetUniformLocation(prog, "u_cursorStrength"), kCursorStrengthM);
@@ -205,6 +208,9 @@ namespace {
 				}
 				br->drawInstanced(m_handles[v], inst.data(), static_cast<uint32_t>(inst.size()), cameraPos, kCameraZoom, kPixelsPerMeter);
 			}
+
+			glUseProgram(prog);
+			glUniform1i(glGetUniformLocation(prog, "u_groundcoverMode"), 0);
 
 			if (m_haveMouse) {
 				Renderer::Primitives::drawCircle(
