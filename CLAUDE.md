@@ -250,7 +250,7 @@ If tests fail, fix the new code—don't revert to keeping both versions.
 - Start: `cd build/apps/ui-sandbox && ./ui-sandbox`
 - Control: `curl "http://127.0.0.1:8090/api/control?action={action}"`
 - Actions: `exit`, `scene&scene=name`, `pause`, `resume`, `reload`
-- Input injection: `curl "http://127.0.0.1:8090/api/input?ev=click,x,y"` — synthetic UI input in logical pixels (same space as screenshots); event types `move`/`down`/`up`/`click`/`scroll,x,y,delta` with optional button `left|right|middle`; repeat `ev=` to batch a sequence in one request. A pointer event parks the app's cursor at `x,y` until the real cursor moves over the window, so hover state holds for a later request (`ev=move,x,y` then a separate screenshot works)
+- Input injection: `curl "http://127.0.0.1:8090/api/input?ev=click,x,y"` — synthetic UI input in logical pixels (same space as screenshots); event types `move`/`down`/`up`/`click`/`scroll,x,y,delta` with optional button `left|right|middle`; repeat `ev=` to batch a sequence in one request. A pointer event parks the app's cursor at `x,y` until the real cursor moves over the window or a real mouse button or scroll event reclaims it, so hover state holds for a later request (`ev=move,x,y` then a separate screenshot works)
 - Screenshot: `curl http://127.0.0.1:8090/api/ui/screenshot > screenshot.png`
 - **IMPORTANT: Each app has its own DEFAULT port: ui-sandbox 8090, world-sim 8081, asset-manager 8070 - do NOT specify --http-port unless using a non-standard port**
 - **IMPORTANT: Only ONE instance can run at a time** - the app has built-in port conflict detection. Do not assume multiple instances exist.
