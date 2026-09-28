@@ -248,13 +248,13 @@ If tests fail, fix the new code—don't revert to keeping both versions.
 
 **Sandbox Control:**
 - Start: `cd build/apps/ui-sandbox && ./ui-sandbox`
-- Control: `curl "http://127.0.0.1:8081/api/control?action={action}"`
+- Control: `curl "http://127.0.0.1:8090/api/control?action={action}"`
 - Actions: `exit`, `scene&scene=name`, `pause`, `resume`, `reload`
-- Input injection: `curl "http://127.0.0.1:8081/api/input?ev=click,x,y"` — synthetic UI input in logical pixels (same space as screenshots); event types `move`/`down`/`up`/`click`/`scroll,x,y,delta` with optional button `left|right|middle`; repeat `ev=` to batch a sequence in one request
-- Screenshot: `curl http://127.0.0.1:8081/api/ui/screenshot > screenshot.png`
-- **IMPORTANT: Port 8081 is the DEFAULT - do NOT specify --http-port unless using a non-standard port**
+- Input injection: `curl "http://127.0.0.1:8090/api/input?ev=click,x,y"` — synthetic UI input in logical pixels (same space as screenshots); event types `move`/`down`/`up`/`click`/`scroll,x,y,delta` with optional button `left|right|middle`; repeat `ev=` to batch a sequence in one request. A pointer event parks the app's cursor at `x,y` until the real cursor moves over the window or a real mouse button or scroll event reclaims it, so hover state holds for a later request (`ev=move,x,y` then a separate screenshot works)
+- Screenshot: `curl http://127.0.0.1:8090/api/ui/screenshot > screenshot.png`
+- **IMPORTANT: Each app has its own DEFAULT port: ui-sandbox 8090, world-sim 8081, asset-manager 8070 - do NOT specify --http-port unless using a non-standard port**
 - **IMPORTANT: Only ONE instance can run at a time** - the app has built-in port conflict detection. Do not assume multiple instances exist.
-- **IMPORTANT: Close the game as soon as your task is done** - this is a native game rendering every frame, not a web app; an idle instance burns GPU/CPU continuously. When you finish verifying, immediately shut it down: `curl "http://127.0.0.1:8081/api/control?action=exit"`. Only leave it running if the user asked to test it themselves.
+- **IMPORTANT: Close the game as soon as your task is done** - this is a native game rendering every frame, not a web app; an idle instance burns GPU/CPU continuously. When you finish verifying, immediately shut it down: `curl "http://127.0.0.1:8090/api/control?action=exit"` (8081 for world-sim). Only leave it running if the user asked to test it themselves.
 
 **Asset Manager (use this to test/preview world assets):**
 - A designer GUI (`apps/asset-manager`) that renders every asset through the game's real pipeline. Use it to verify new/edited flora, rocks, and other assets instead of dev-spawning them in world-sim.
@@ -264,7 +264,7 @@ If tests fail, fix the new code—don't revert to keeping both versions.
 
 **CRITICAL: Testing Visual Changes**
 When you make code changes and need to verify visually:
-1. **Kill old instance** (if running): `curl "http://127.0.0.1:8081/api/control?action=exit"`
+1. **Kill old instance** (if running): `curl "http://127.0.0.1:8090/api/control?action=exit"`
    - This is a **blocking call** - it returns only after shutdown is complete and the port is free
    - Response: `{"status":"ok","action":"exit","shutdown":"complete"}`
    - When you receive the OK response, proceed immediately (NO sleep needed)
@@ -273,8 +273,8 @@ When you make code changes and need to verify visually:
 3. **Launch new instance**: Use Bash tool with `run_in_background: true`:
    - Command: `cd /Volumes/Code/worldsim/build/apps/ui-sandbox && ./ui-sandbox --scene=<scene>`
    - Do NOT use shell `&` - it blocks waiting for output
-4. **Verify layout (after UI changes)**: `curl http://127.0.0.1:8081/api/ui/tree` for element bounds, `curl http://127.0.0.1:8081/api/ui/lint` for invariant violations - expect `"count":0` before screenshotting. Don't verify coordinates by eye.
-5. **Take screenshot**: `curl -s http://127.0.0.1:8081/api/ui/screenshot > /tmp/screenshot.png`
+4. **Verify layout (after UI changes)**: `curl http://127.0.0.1:8090/api/ui/tree` for element bounds, `curl http://127.0.0.1:8090/api/ui/lint` for invariant violations - expect `"count":0` before screenshotting. Don't verify coordinates by eye.
+5. **Take screenshot**: `curl -s http://127.0.0.1:8090/api/ui/screenshot > /tmp/screenshot.png`
    - The screenshot endpoint implicitly waits for the app to be ready
    - No sleep needed - curl will block until screenshot is captured
 

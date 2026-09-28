@@ -127,7 +127,7 @@ Synchronous JSON.
 | `GET /api/ui/screenshot` | Returns a PNG screenshot. |
 | `GET /api/control?action=exit` | Shuts down the instance (blocking). |
 | `GET /api/control?action=camera&x=&y=&zoom=` | Moves the camera. |
-| `GET /api/input?ev=click,x,y` | Synthetic UI input (logical pixels). Event types: `move`/`down`/`up`/`click`/`scroll,x,y,delta`. |
+| `GET /api/input?ev=click,x,y` | Synthetic UI input (logical pixels). Event types: `move`/`down`/`up`/`click`/`scroll,x,y,delta`. The injected pointer position holds (hover persists) until the real cursor moves over the window or a real mouse button or scroll event reclaims it. |
 
 ---
 

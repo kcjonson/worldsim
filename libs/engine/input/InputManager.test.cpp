@@ -47,3 +47,43 @@ TEST(InputManagerKeyFromName, UnknownReturnsNullopt) {
 	EXPECT_FALSE(InputManager::keyFromName("NotAKey").has_value());
 	EXPECT_FALSE(InputManager::keyFromName("RR").has_value()); // multi-char non-named
 }
+
+// Injected cursor (/api/input pointer commands). A window-less manager is driven
+// through the static GLFW callbacks, the same entry points real host input uses.
+class InputManagerInjectedCursor : public ::testing::Test {
+  protected:
+	void SetUp() override {
+		InputManager::setInstance(&input);
+		InputManager::CursorPosCallback(nullptr, 10.0, 20.0); // host cursor
+	}
+	void TearDown() override { InputManager::setInstance(nullptr); }
+
+	InputManager input{nullptr};
+};
+
+TEST_F(InputManagerInjectedCursor, HoldsAcrossFrames) {
+	input.injectMousePosition({300.0F, 400.0F});
+	for (int frame = 0; frame < 3; ++frame) {
+		input.update(1.0F / 60.0F);
+		EXPECT_EQ(input.getMousePosition(), glm::vec2(300.0F, 400.0F));
+	}
+}
+
+TEST_F(InputManagerInjectedCursor, HostMoveTakesOver) {
+	input.injectMousePosition({300.0F, 400.0F});
+	InputManager::CursorPosCallback(nullptr, 50.0, 60.0);
+	EXPECT_EQ(input.getMousePosition(), glm::vec2(50.0F, 60.0F));
+}
+
+TEST_F(InputManagerInjectedCursor, HostButtonReclaimsHostPosition) {
+	input.injectMousePosition({300.0F, 400.0F});
+	InputManager::MouseButtonCallback(nullptr, GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+	EXPECT_EQ(input.getMousePosition(), glm::vec2(10.0F, 20.0F));
+	EXPECT_EQ(input.getDragStartPosition(), glm::vec2(10.0F, 20.0F));
+}
+
+TEST_F(InputManagerInjectedCursor, HostScrollReclaimsHostPosition) {
+	input.injectMousePosition({300.0F, 400.0F});
+	InputManager::ScrollCallback(nullptr, 0.0, 1.0);
+	EXPECT_EQ(input.getMousePosition(), glm::vec2(10.0F, 20.0F));
+}

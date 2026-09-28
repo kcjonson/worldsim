@@ -605,6 +605,9 @@ namespace Foundation {
 		//   down,x,y[,button]   up,x,y[,button]
 		//   scroll,x,y,delta
 		//   keydown,<key>   keyup,<key>   (key name, e.g. R or Escape; no coords)
+		// Pointer events also park the app's cursor at x,y, so hover state holds for
+		// later requests (e.g. a screenshot) until the real cursor moves over the window
+		// or a real mouse button or scroll event lands, either of which reclaims it.
 		// Send key events in SEPARATE requests: a keydown registers on the next frame
 		// and fires the press edge (isKeyPressed) once; a later keyup releases. A
 		// keydown and keyup batched in ONE request land in the same frame and collapse
