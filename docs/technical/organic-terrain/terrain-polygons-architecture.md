@@ -399,6 +399,14 @@ constrained edge twice, once from each side; `buildArrangement` merges exact dup
 collinear partial overlaps into one edge, so this needs nothing extra (tested in
 `NavMesh.CoincidentConstraintEdgesFromSeparateRings`).
 
+A chunk corner can also be the only point two clipped rings share. Water crossing a corner is cut
+into up to four pieces, and while chunks stream in, the two diagonal pieces can be the only ones
+ready, touching at the corner alone. That is ordinary input: the navmesh is one CDT of the whole
+arrangement (pathfinding-architecture.md, Tier 2), so land whose boundary pinches at the corner
+triangulates like any other face (tested in
+`NavMesh.RealStreamingPinch_WholeRegionTriangulatedAndTagged` and
+`NavigationSystemTest.LandAroundWaterPinchedAtAChunkCornerIsValid`).
+
 A navRing spans its whole chunk, so each emitted ring is also clipped to the sim area rect
 (`clipRingToRect`, orientation kept) before it reaches the arrangement: the triangulation cost
 tracks the area, not the chunk, and the clip lands its crossings exactly on the border ring.
