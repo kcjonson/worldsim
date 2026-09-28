@@ -524,7 +524,7 @@ namespace ecs {
 			region.navMesh = region.future.get(); // swap the new mesh in; old mesh is dropped
 			region.future	= {};
 			++region.meshGeneration;
-			meshGeneration = std::max(meshGeneration, region.meshGeneration);
+			++meshGeneration;
 
 			std::size_t walkable = 0;
 			std::size_t floor	 = 0;

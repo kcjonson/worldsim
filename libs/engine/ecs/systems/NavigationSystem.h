@@ -308,11 +308,11 @@ class NavigationSystem : public ISystem {
 	// still in flight does not count until it lands.)
 	[[nodiscard]] bool hasMesh() const;
 
-	// Monotonic counter, the MAX over all regions' per-region generations. A stored
-	// NavPath stamps this at plan time so the replan loop can detect "the world rebuilt
-	// under me". Stays 0 until the first mesh lands. (A per-region bump moves the max, so
-	// any region rebuild is observed; the stamp is conservative across regions, which only
-	// costs an occasional redundant replan, never a missed one.)
+	// Monotonic count of mesh swaps across all regions. A stored NavPath stamps this at plan
+	// time so the replan loop can detect "the world rebuilt under me", and a deferred route
+	// waits on it to move. Stays 0 until the first mesh lands. Every region's swap bumps it,
+	// so no rebuild goes unseen; the stamp is conservative across regions, which only costs
+	// an occasional redundant replan.
 	[[nodiscard]] std::uint64_t generation() const { return meshGeneration; }
 
 	// Number of regions currently tracked (building or built). For tests/overlay.
@@ -478,7 +478,7 @@ class NavigationSystem : public ISystem {
 	glm::vec2 viewportHalfM{0.0F, 0.0F};
 	bool	  haveViewport = false;
 
-	// Max over all regions' meshGeneration; see generation().
+	// Bumped on every region's mesh swap; see generation().
 	std::uint64_t meshGeneration = 0;
 
 	// Cached terrain-only mesh for placement buildability (isAreaBuildable / isPointBuildable). Built

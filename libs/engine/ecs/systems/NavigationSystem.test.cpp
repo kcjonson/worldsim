@@ -531,6 +531,47 @@ TEST_F(NavigationSystemTest, GenerationBumpsOnMeshSwap) {
 	EXPECT_GT(sys.generation(), afterFirst) << "rebuild swap should bump generation again";
 }
 
+// Every region's mesh swap moves generation(), including one whose own swap count lags another
+// region's. A stamped NavPath and a route deferred until a mesh covers it both key on it, so a swap
+// that leaves it unchanged is a rebuild they never see.
+TEST_F(NavigationSystemTest, GenerationMovesWhenALaggingRegionSwaps) {
+	ConstructionWorld cw;
+
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(m_chunks.get());
+	sys.setConstructionWorld(&cw);
+
+	// Colonist A's region builds, then rebuilds on two wall edits, so its swap count runs ahead.
+	EntityID a = world.createEntity();
+	world.addComponent<Position>(a, Position{glm::vec2{0.0F, 0.0F}});
+	world.addComponent<Colonist>(a, Colonist{"A"});
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "region A never built";
+	for (std::int64_t edit = 0; edit < 2; ++edit) {
+		const std::uint64_t before = sys.generation();
+		buildWall(cw, {10000 + edit * 2000, 10000}, {11000 + edit * 2000, 10000});
+		for (int i = 0; i < 500 && sys.generation() == before; ++i) {
+			sys.update(0.0F);
+			std::this_thread::sleep_for(std::chrono::milliseconds(2));
+		}
+		ASSERT_NE(sys.generation(), before) << "wall edit " << edit << " never rebuilt region A";
+	}
+
+	// Colonist B, 100 m away, gets a disjoint region whose first swap lands behind A's count.
+	const std::uint64_t beforeB = sys.generation();
+	EntityID b = world.createEntity();
+	world.addComponent<Position>(b, Position{glm::vec2{100.0F, 0.0F}});
+	world.addComponent<Colonist>(b, Colonist{"B"});
+	bool bBuilt = false;
+	for (int i = 0; i < 500 && !bBuilt; ++i) {
+		sys.update(0.0F);
+		bBuilt = sys.builtRegions().size() == 2U;
+		std::this_thread::sleep_for(std::chrono::milliseconds(2));
+	}
+	ASSERT_TRUE(bBuilt) << "region B never built";
+	EXPECT_NE(sys.generation(), beforeB) << "region B's first mesh swap left generation() unchanged";
+}
+
 // --- RRA* heuristic wiring + instrumentation (P3.5) --------------------------
 //
 // NavigationSystem owns the resumable RRA* caches (keyed by goal triangle) and
