@@ -34,8 +34,11 @@ namespace world_sim {
 	[[nodiscard]] float footprintWidthMeters(const geometry::Ring& footprint);
 
 	struct FoundationGeom {
-		std::vector<Foundation::Vec2> ring; // world meters, CCW
-		std::vector<uint16_t>		  fan;	// fan triangulation of `ring`
+		std::vector<Foundation::Vec2> ring; // world meters, CCW (the outline)
+		// Tessellation of `ring` (world meters; may add vertices). Merges and notches
+		// make concave foundations the normal case, so a vertex fan won't do.
+		std::vector<Foundation::Vec2> fillVertices;
+		std::vector<uint16_t>		  fillIndices;
 		Foundation::Rect			  aabb; // world meters
 		Foundation::Color			  matColor;
 		bool						  built = false;

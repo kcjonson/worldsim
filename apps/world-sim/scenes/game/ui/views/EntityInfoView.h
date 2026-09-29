@@ -60,6 +60,8 @@ class EntityInfoView : public UI::Component {
 		ResourceQueryCallback	   queryResources;
 		std::function<void()>	   onDemolishFoundation;
 		std::function<void()>	   onDemolishBuilding;
+		std::function<void()>	   onAddToFoundation;
+		std::function<void()>	   onSubtractFromFoundation;
 		std::function<void()>	   onDemolishWallSegment;
 		std::function<void()>	   onDemolishOpening;
 	};
@@ -134,6 +136,8 @@ class EntityInfoView : public UI::Component {
 	ResourceQueryCallback			   queryResourcesCallback;
 	std::function<void()>			   onDemolishFoundationCallback;
 	std::function<void()>			   onDemolishBuildingCallback;
+	std::function<void()>			   onAddToFoundationCallback;
+	std::function<void()>			   onSubtractFromFoundationCallback;
 	std::function<void()>			   onDemolishWallSegmentCallback;
 	std::function<void()>			   onDemolishOpeningCallback;
 

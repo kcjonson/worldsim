@@ -195,6 +195,30 @@ TEST(MinEdgeClearance, BoundaryAtThreshold) {
 	EXPECT_FALSE(minEdgeClearance(squareCcw(), 1001).pass);
 }
 
+namespace {
+
+	Vec2i64 roundMm(Vec2d p) {
+		return {std::llround(p.x), std::llround(p.y)};
+	}
+
+} // namespace
+
+TEST(InteriorPoint, InsideAUWhoseCentroidIsInTheNotch) {
+	// 9x9 m U open at the top: 3 m base, two 3 m arms, 3 m wide notch.
+	const Ring u = {{0, 0}, {9000, 0}, {9000, 9000}, {6000, 9000}, {6000, 3000}, {3000, 3000}, {3000, 9000}, {0, 9000}};
+	// Area centroid (4.5 m, ~4.07 m) sits in the notch.
+	EXPECT_EQ(pointInPolygon(Vec2i64{4500, 4071}, u), PointInPolygon::Outside);
+	const Vec2d p = interiorPoint(u);
+	EXPECT_EQ(pointInPolygon(roundMm(p), u), PointInPolygon::Inside);
+}
+
+TEST(InteriorPoint, InsideConvexRingsOfEitherWinding) {
+	EXPECT_EQ(pointInPolygon(roundMm(interiorPoint(squareCcw())), squareCcw()), PointInPolygon::Inside);
+	EXPECT_EQ(pointInPolygon(roundMm(interiorPoint(squareCw())), squareCw()), PointInPolygon::Inside);
+	const Ring thin = {{0, 0}, {5000, 0}, {5000, 4}, {0, 4}};
+	EXPECT_EQ(pointInPolygon(roundMm(interiorPoint(thin)), thin), PointInPolygon::Inside);
+}
+
 TEST(PointInPolygonForward, Works) {
 	EXPECT_EQ(pointInPolygon(Vec2i64{500, 500}, squareCcw()), PointInPolygon::Inside);
 	EXPECT_EQ(pointInPolygon(Vec2i64{2000, 500}, squareCcw()), PointInPolygon::Outside);

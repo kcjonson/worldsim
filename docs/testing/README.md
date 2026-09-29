@@ -86,8 +86,10 @@ shown as `curl.exe` (Windows); drop `.exe` on Linux/macOS.
 
 ### Write verbs — `GET /api/dev/<verb>?<params>`
 
-Async, queued; only drained in the game scene. Place things on **valid land** away from water;
-on-water placements are refused.
+Queued and run on the game thread; the request waits for the verb to run and answers with its JSON
+result (`{"status":"ok","verb":...}` for most verbs). Only the game scene drains them: elsewhere
+the request gives up after 2 s and answers `{"status":"ok","verb":...,"queued":1}`. Place things on
+**valid land** away from water; on-water placements are refused.
 
 | Verb | Key params | Notes |
 |------|-----------|-------|
@@ -103,6 +105,7 @@ on-water placements are refused.
 | `craft` | `recipe=<Recipe_*>&n=1&at=x,y` | Queues a recipe at the nearest crafting station. |
 | `storage` | `at=x,y&item=<defName\|*>&category=RawMaterial\|Food\|Tool\|Furniture&priority=Low\|Medium\|High\|Critical&min=0&max=0` | Adds a StorageRule to the nearest container. |
 | `foundation` | `pts=x0,y0;x1,y1;...&material=Wood&built=0\|1` | `built=0` = blueprint the colonist builds. Refuses if any part of the footprint is off the nav mesh or over water. |
+| `foundation-edit` | `id=<foundationId>&mode=add\|subtract&pts=x0,y0;x1,y1;...` | Foundation Add / Subtract through the tool's own validate + apply path. Answers `{status:"ok"\|"rejected", reason, target, extension, entity, area}`: an editable blueprint is reshaped in place (`extension` 0), an Add onto a built foundation returns the extension blueprint's id (it merges once built, e.g. with `freebuild?on=1`). |
 | `walls` | `pts=...&material=Wood&thickness=Standard&host=<foundationId>&built=0\|1&close=1` | `built` **defaults to 1** — pass `built=0` for a blueprint. Same off-mesh/water refusal. |
 | `opening` | `seg=<id>\|pt=x,y&type=Door\|Window&t=0.5&built=1` | Adds a door or window to a wall segment. |
 

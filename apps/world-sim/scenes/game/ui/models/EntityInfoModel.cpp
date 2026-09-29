@@ -240,8 +240,15 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 		contentData = adaptOpening(world, *constructionWorld, openingSel, callbacks.onDemolishOpening);
 	} else if (isFoundation && constructionWorld != nullptr) {
 		const auto& foundationSel = std::get<FoundationSelection>(selection);
-		contentData =
-			adaptFoundation(world, *constructionWorld, foundationSel, callbacks.onDemolishFoundation, callbacks.onDemolishBuilding);
+		contentData = adaptFoundation(
+			world,
+			*constructionWorld,
+			foundationSel,
+			{.onDemolish = callbacks.onDemolishFoundation,
+			 .onDemolishBuilding = callbacks.onDemolishBuilding,
+			 .onAdd = callbacks.onAddToFoundation,
+			 .onSubtract = callbacks.onSubtractFromFoundation}
+		);
 	} else if (isRoom && roomRecord != nullptr) {
 		contentData = adaptRoom(world, *roomRecord);
 	} else {

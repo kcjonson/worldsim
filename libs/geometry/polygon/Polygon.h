@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../core/Int128.h"
+#include "../core/Vec2d.h"
 #include "../core/Vec2i64.h"
 #include "../predicates/Predicates.h"
 
@@ -64,6 +65,13 @@ namespace geometry {
 	// Minimum distance between any pair of non-adjacent edges is at least
 	// thresholdMm: the anti-sliver clearance constraint. Exact comparison path.
 	ConstraintResult minEdgeClearance(const Ring& ring, std::int64_t thresholdMm);
+
+	// A point strictly inside a simple ring with non-zero area, in mm (double).
+	// Unlike the area centroid it cannot fall outside a concave ring (a U's
+	// notch): the horizontal line half a millimeter off the centroid's y never
+	// passes through a vertex, and the midpoint of its widest inside span is
+	// returned.
+	Vec2d interiorPoint(const Ring& ring);
 
 	// Point-in-polygon is provided by Predicates.h (pointInPolygon), which takes
 	// the same std::vector<Vec2i64> a Ring aliases; included above.

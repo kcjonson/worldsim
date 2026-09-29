@@ -99,7 +99,7 @@ namespace world_sim {
 					if (constructionWorld == nullptr || constructionWorld->get(sel.id) == nullptr) {
 						return std::nullopt;
 					}
-					return adaptFoundation(world, *constructionWorld, sel, onDemolish);
+					return adaptFoundation(world, *constructionWorld, sel, {.onDemolish = onDemolish});
 				} else if constexpr (std::is_same_v<T, WallSegmentSelection>) {
 					if (constructionWorld == nullptr || constructionWorld->getSegment(sel.id) == nullptr) {
 						return std::nullopt;
@@ -378,16 +378,23 @@ namespace world_sim {
 		const ecs::World&							   world,
 		const engine::construction::ConstructionWorld& constructionWorld,
 		const FoundationSelection&					   selection,
-		const std::function<void()>&				   onDemolish,
-		const std::function<void()>&				   onDemolishBuilding
+		const FoundationActions&					   actions
 	) {
 		PanelContent content;
 
 		const auto* foundation = constructionWorld.get(selection.id);
 		const std::string material = (foundation != nullptr) ? foundation->material : std::string{"Foundation"};
-		content.title = material + " Foundation";
+		const bool		  isExtension = foundation != nullptr && foundation->mergeTarget != engine::construction::kInvalidFoundation;
+		content.title = material + (isExtension ? " Foundation Extension" : " Foundation");
 
 		content.slots.push_back(TextSlot{"Material", material});
+		if (isExtension) {
+			content.slots.push_back(TextSlot{"Extends", "Foundation #" + std::to_string(foundation->mergeTarget) + " (merges when built)"});
+		}
+		const engine::construction::FoundationId pendingExtension = constructionWorld.pendingExtensionOf(selection.id);
+		if (pendingExtension != engine::construction::kInvalidFoundation) {
+			content.slots.push_back(TextSlot{"Extension", "#" + std::to_string(pendingExtension) + " under construction"});
+		}
 
 		std::ostringstream areaText;
 		// "m\xC2\xB2" is UTF-8 for "m²" (matches ConstructionConfigStrip's readout).
@@ -410,27 +417,42 @@ namespace world_sim {
 			content.slots.push_back(ProgressBarSlot{.label = "Work", .value = blueprint->displayProgress(blueprint->demolishing) * 100.0F});
 		}
 
-		// Demolish action. A foundation that still hosts walls can't be removed on
-		// its own (the walls would be orphaned), so offer the cascade instead;
-		// ActionButtonSlot has no disabled flag, so swap the button rather than
-		// graying it out. A clear or blueprint foundation gets the plain Demolish.
-		// Offer "Demolish building" (cascade) only when there are walls AND a cascade
-		// callback is wired; otherwise the plain Demolish. The adaptSelection fallback
-		// path passes no onDemolishBuilding, so guard against a dead (null-callback)
-		// button there by falling back to plain Demolish.
-		const bool hasWalls = constructionWorld.foundationHasWalls(selection.id);
-		if (hasWalls && onDemolishBuilding) {
+		// Add / Subtract. Like Demolish below, a button that doesn't apply is left out
+		// (ActionButtonSlot has no disabled flag). An editable blueprint takes both; a
+		// built foundation only grows, one pending extension at a time; a pending
+		// extension itself is cancel-and-redraw; nothing marked for demolition is edited.
+		const bool demolishing = blueprint != nullptr && blueprint->demolishing;
+		const bool editableBlueprint = !built && !isExtension && blueprint != nullptr && blueprint->shapeEditable();
+		const bool canAdd =
+			editableBlueprint || (built && !demolishing && pendingExtension == engine::construction::kInvalidFoundation);
+		if (canAdd && actions.onAdd) {
+			content.slots.push_back(ActionButtonSlot{.label = "Add", .onClick = actions.onAdd});
+		}
+		if (editableBlueprint && actions.onSubtract) {
+			content.slots.push_back(ActionButtonSlot{.label = "Subtract", .onClick = actions.onSubtract});
+		}
+
+		// Demolish action. A foundation that still hosts walls (its own or its pending
+		// extension's) can't be removed on its own (the walls would be orphaned), so
+		// offer the cascade instead; swap the button rather than graying it out. A
+		// clear or blueprint foundation gets the plain Demolish. Offer "Demolish
+		// building" (cascade) only when there are walls AND a cascade callback is
+		// wired; otherwise the plain Demolish. The adaptSelection fallback path passes
+		// no onDemolishBuilding, so guard against a dead (null-callback) button there
+		// by falling back to plain Demolish.
+		const bool hasWalls = constructionWorld.foundationHasWalls(selection.id) || constructionWorld.foundationHasWalls(pendingExtension);
+		if (hasWalls && actions.onDemolishBuilding) {
 			content.slots.push_back(
 				ActionButtonSlot{
 					.label = "Demolish building",
-					.onClick = onDemolishBuilding,
+					.onClick = actions.onDemolishBuilding,
 				}
 			);
 		} else {
 			content.slots.push_back(
 				ActionButtonSlot{
 					.label = "Demolish",
-					.onClick = onDemolish,
+					.onClick = actions.onDemolish,
 				}
 			);
 		}

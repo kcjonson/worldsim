@@ -4,10 +4,10 @@
 #include <construction/OpeningGeometry.h>
 #include <offset/WallOffset.h>
 #include <utils/Log.h>
+#include <vector/Tessellator.h>
 
 #include <algorithm>
 #include <cmath>
-#include <limits>
 
 namespace world_sim {
 
@@ -162,25 +162,25 @@ namespace world_sim {
 
 		const auto& style = ConstructionRegistry::Get().rendering();
 
-		// --- Foundations: dequantized ring + fan triangulation --------------
+		// --- Foundations: dequantized ring + tessellated fill ----------------
+		renderer::Tessellator	  tessellator;
+		renderer::TessellatedMesh mesh;
 		for (const auto& f : world.foundations()) {
 			if (f.ring.size() < 3) {
 				continue;
 			}
-			// The fan indexes with uint16_t; a ring past that is pathological
-			// (repeated dev-verb unions), but skip it rather than wrap silently.
-			if (f.ring.size() > std::numeric_limits<uint16_t>::max()) {
-				LOG_WARNING(Game, "Foundation #%llu ring has %zu vertices (> 65535), not rendered", static_cast<unsigned long long>(f.id), f.ring.size());
-				continue;
-			}
 			FoundationGeom g;
 			g.ring = dequantizeRing(f.ring);
-			g.fan.reserve((g.ring.size() - 2) * 3);
-			for (std::size_t i = 1; i + 1 < g.ring.size(); ++i) {
-				g.fan.push_back(0);
-				g.fan.push_back(static_cast<uint16_t>(i));
-				g.fan.push_back(static_cast<uint16_t>(i + 1));
+			// Triangulated in world space: the camera transform is affine, so the
+			// triangles stay valid once the vertices are projected each frame. A ring
+			// the tessellator refuses (past its 16-bit index range) is skipped, not
+			// drawn wrong.
+			if (!tessellator.Tessellate(renderer::VectorPath{g.ring, true}, mesh) || mesh.indices.size() < 3) {
+				LOG_WARNING(Game, "Foundation #%llu (%zu vertices) failed to tessellate, not rendered", static_cast<unsigned long long>(f.id), f.ring.size());
+				continue;
 			}
+			g.fillVertices = std::move(mesh.vertices);
+			g.fillIndices = std::move(mesh.indices);
 			g.aabb = boundsOf(g.ring);
 			g.matColor = materialColor(f.material, style.foundation.fallbackColor);
 			g.built = (f.state == ec::FoundationState::Built);

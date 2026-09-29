@@ -191,11 +191,16 @@ namespace ecs {
 		// Any construction-owned goals left over belong to blueprints that disappeared
 		// (demolished, completed and removed). Drop them and their children.
 		for (EntityID stale : entitiesWithGoals) {
-			const auto* goal = registry.getGoalByDestination(stale);
-			while (goal != nullptr) {
-				registry.removeGoalWithChildren(goal->id);
-				goal = registry.getGoalByDestination(stale);
-			}
+			resetBlueprintGoals(stale);
+		}
+	}
+
+	void ConstructionSystem::resetBlueprintGoals(EntityID blueprintEntity) {
+		auto&		registry = GoalTaskRegistry::Get();
+		const auto* goal = registry.getGoalByDestination(blueprintEntity);
+		while (goal != nullptr) {
+			registry.removeGoalWithChildren(goal->id);
+			goal = registry.getGoalByDestination(blueprintEntity);
 		}
 	}
 
@@ -569,10 +574,12 @@ namespace ecs {
 		}
 		switch (structure.kind) {
 			case StructureKind::Foundation:
-				// A foundation may not deconstruct while any wall still stands on it.
-				// foundationHasWalls is the allocation-free early-exit query (this runs
-				// every tick for each demolishing foundation).
-				return !m_constructionWorld->foundationHasWalls(structure.graphId);
+				// A foundation may not deconstruct while any wall still stands on it, nor
+				// while an extension waits to merge into it (the extension goes first, so
+				// it never outlives its target). foundationHasWalls is the allocation-free
+				// early-exit query (this runs every tick for each demolishing foundation).
+				return !m_constructionWorld->foundationHasWalls(structure.graphId) &&
+					   m_constructionWorld->pendingExtensionOf(structure.graphId) == engine::construction::kInvalidFoundation;
 			case StructureKind::Wall: {
 				// A wall may not deconstruct while any opening sits on it.
 				for (const auto& opening : m_constructionWorld->openings()) {
@@ -624,11 +631,7 @@ namespace ecs {
 		// when the tear-down work completes (the deconstructed-completion callback in GameScene).
 		if (blueprint.workDone <= 0.0F) {
 			dumpDeliveredToGround(blueprintEntity, blueprint);
-			const auto* goal = registry.getGoalByDestination(blueprintEntity);
-			while (goal != nullptr) {
-				registry.removeGoalWithChildren(goal->id);
-				goal = registry.getGoalByDestination(blueprintEntity);
-			}
+			resetBlueprintGoals(blueprintEntity);
 			if (m_onStructureDeconstructed) {
 				m_onStructureDeconstructed(blueprintEntity);
 			} else if (m_warnedNoDeconstructCallback.insert(blueprintEntity).second) {
@@ -702,12 +705,7 @@ namespace ecs {
 		blueprint.phase = StructureBlueprint::BuildPhase::Complete;
 
 		// Retire every goal this blueprint owns (umbrella + children) so no Build goal lingers.
-		auto&		registry = GoalTaskRegistry::Get();
-		const auto* goal = registry.getGoalByDestination(entity);
-		while (goal != nullptr) {
-			registry.removeGoalWithChildren(goal->id);
-			goal = registry.getGoalByDestination(entity);
-		}
+		resetBlueprintGoals(entity);
 
 		// Fire the SAME completion callback a real build uses (GameScene wires it to the same
 		// lambda it gives ActionSystem), flipping ConstructionWorld state to Built and toasting.

@@ -933,3 +933,94 @@ TEST(ConstructionWorldWallTests, FoundationAndWallIdSpacesAreIndependent) {
 	EXPECT_EQ(seg.id, 1u);
 	EXPECT_EQ(host, 1u);
 }
+
+// ============================================================================
+// Extensions: Add onto a built foundation (G3)
+// ============================================================================
+
+namespace {
+
+	cw::FoundationId builtBox(ConstructionWorld& world, std::int64_t x0, std::int64_t y0, std::int64_t x1, std::int64_t y1) {
+		const CommitResult r = world.commitFoundation(box(x0, y0, x1, y1), "Stone");
+		EXPECT_TRUE(r.ok());
+		world.setState(r.id, FoundationState::Built);
+		return r.id;
+	}
+
+} // namespace
+
+TEST(ConstructionWorldExtensionTests, CommitExtensionTakesTargetMaterialAndLinks) {
+	ConstructionWorld	   world;
+	const cw::FoundationId target = builtBox(world, 0, 0, 4000, 4000);
+
+	const CommitResult ext = world.commitExtension(target, box(4000, 0, 7000, 4000));
+	ASSERT_TRUE(ext.ok());
+	const FoundationRecord* record = world.get(ext.id);
+	ASSERT_NE(record, nullptr);
+	EXPECT_EQ(record->material, "Stone");
+	EXPECT_EQ(record->state, FoundationState::Blueprint);
+	EXPECT_EQ(record->mergeTarget, target);
+	EXPECT_EQ(world.pendingExtensionOf(target), ext.id);
+	EXPECT_EQ(world.pendingExtensionOf(ext.id), kInvalidFoundation);
+}
+
+TEST(ConstructionWorldExtensionTests, CommitExtensionRejectsBlueprintUnknownAndSecondPending) {
+	ConstructionWorld  world;
+	const CommitResult blueprint = world.commitFoundation(box(0, 0, 4000, 4000), "Wood");
+	ASSERT_TRUE(blueprint.ok());
+	EXPECT_EQ(world.commitExtension(blueprint.id, box(4000, 0, 7000, 4000)).status, CommitStatus::TargetNotBuilt);
+	EXPECT_EQ(world.commitExtension(999, box(4000, 0, 7000, 4000)).status, CommitStatus::UnknownFoundation);
+
+	const cw::FoundationId target = builtBox(world, 20000, 0, 24000, 4000);
+	ASSERT_TRUE(world.commitExtension(target, box(24000, 0, 27000, 4000)).ok());
+	EXPECT_EQ(world.commitExtension(target, box(20000, 4000, 24000, 7000)).status, CommitStatus::ExtensionPending);
+}
+
+TEST(ConstructionWorldExtensionTests, CommitExtensionRejectsDisjointAndOverlapWithOthers) {
+	ConstructionWorld	   world;
+	const cw::FoundationId target = builtBox(world, 0, 0, 4000, 4000);
+	EXPECT_EQ(world.commitExtension(target, box(6000, 0, 9000, 4000)).status, CommitStatus::BooleanDisjoint);
+
+	ASSERT_TRUE(world.commitFoundation(box(0, 6000, 4000, 9000), "Wood").ok());
+	EXPECT_EQ(world.commitExtension(target, box(0, 4000, 4000, 7000)).status, CommitStatus::OverlapsExisting);
+	EXPECT_EQ(world.pendingExtensionOf(target), kInvalidFoundation);
+}
+
+TEST(ConstructionWorldExtensionTests, MergeUnionsRingRehostsWallsAndRemovesExtension) {
+	ConstructionWorld	   world;
+	const cw::FoundationId target = builtBox(world, 0, 0, 4000, 4000);
+	const CommitResult	   ext = world.commitExtension(target, box(4000, 0, 7000, 4000));
+	ASSERT_TRUE(ext.ok());
+	const SegmentCommitResult wall = world.commitSegment({4500, 1000}, {6500, 1000}, "Stone", "Standard", ext.id);
+	ASSERT_TRUE(wall.ok());
+
+	EXPECT_EQ(world.mergeExtension(ext.id), CommitStatus::ExtensionNotBuilt);
+	world.setState(ext.id, FoundationState::Built);
+
+	const std::uint64_t before = world.version();
+	ASSERT_EQ(world.mergeExtension(ext.id), CommitStatus::Ok);
+	EXPECT_GT(world.version(), before);
+	EXPECT_EQ(world.get(ext.id), nullptr);
+	EXPECT_EQ(world.foundations().size(), 1U);
+	EXPECT_FLOAT_EQ(world.areaSquareMeters(target), 28.0F);
+	EXPECT_EQ(world.getSegment(wall.id)->hostFoundation, target);
+	EXPECT_EQ(world.pendingExtensionOf(target), kInvalidFoundation);
+}
+
+TEST(ConstructionWorldExtensionTests, MergeRejectsOrdinaryFoundation) {
+	ConstructionWorld	   world;
+	const cw::FoundationId plain = builtBox(world, 0, 0, 4000, 4000);
+	EXPECT_EQ(world.mergeExtension(plain), CommitStatus::NotAnExtension);
+	EXPECT_EQ(world.mergeExtension(999), CommitStatus::UnknownFoundation);
+}
+
+TEST(ConstructionWorldExtensionTests, RemovingTargetDetachesExtension) {
+	ConstructionWorld	   world;
+	const cw::FoundationId target = builtBox(world, 0, 0, 4000, 4000);
+	const CommitResult	   ext = world.commitExtension(target, box(4000, 0, 7000, 4000));
+	ASSERT_TRUE(ext.ok());
+
+	ASSERT_TRUE(world.removeFoundation(target));
+	ASSERT_NE(world.get(ext.id), nullptr);
+	EXPECT_EQ(world.get(ext.id)->mergeTarget, kInvalidFoundation);
+}

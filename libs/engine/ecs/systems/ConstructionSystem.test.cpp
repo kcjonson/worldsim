@@ -328,6 +328,36 @@ TEST_F(ConstructionGoalEmissionTest, TwoMaterialsEmitUmbrellaPlusAllChildrenAndS
 	EXPECT_EQ(registry.goalCount(GoalOwner::ConstructionGoalSystem), 5U);
 }
 
+// A foundation reshaped in place drops its goal tree; the next tick rebuilds it at the
+// entity's new position and against its new manifest.
+TEST_F(ConstructionGoalEmissionTest, ResetBlueprintGoalsRebuildsTheTreeFromTheNewFootprint) {
+	auto  foundation = createTwoMaterialFoundation();
+	auto  other = createLargeWoodFoundation(10, {40.0F, 40.0F});
+	auto& registry = GoalTaskRegistry::Get();
+	refresh();
+	ASSERT_NE(registry.getGoalByDestination(foundation), nullptr);
+	const std::size_t otherGoals = registry.getChildGoals(registry.getGoalByDestination(other)->id).size() + 1;
+
+	construction->resetBlueprintGoals(foundation);
+	EXPECT_EQ(registry.getGoalByDestination(foundation), nullptr);
+	EXPECT_EQ(registry.goalCount(GoalOwner::ConstructionGoalSystem), otherGoals) << "only the reset blueprint's goals go";
+
+	// The resize moved the site and dropped Stone from the manifest.
+	world->getComponent<Position>(foundation)->value = {12.0F, 3.0F};
+	world->getComponent<StructureBlueprint>(foundation)->required = {{"Wood", 12}};
+	refresh();
+
+	const auto* umbrella = registry.getGoalByDestination(foundation);
+	ASSERT_NE(umbrella, nullptr);
+	EXPECT_EQ(umbrella->destinationPosition, glm::vec2(12.0F, 3.0F));
+	auto children = registry.getChildGoals(umbrella->id);
+	EXPECT_EQ(countOfType(children, TaskType::Harvest), 1U);
+	EXPECT_EQ(countOfType(children, TaskType::Haul), 1U);
+	for (const auto* child : children) {
+		EXPECT_EQ(child->destinationPosition, glm::vec2(12.0F, 3.0F));
+	}
+}
+
 // ============================================================================
 // Deconstruct (work-driven demolish): a demolishing blueprint emits a top-level
 // Deconstruct goal instead of nothing. With no ConstructionWorld wired the cascade
@@ -836,4 +866,30 @@ TEST_F(OpeningHostGateTest, DemolishingWallGatedWhileOpeningStands) {
 	const auto* goal2 = registry.getGoalByDestination(wallBp);
 	ASSERT_NE(goal2, nullptr);
 	EXPECT_EQ(goal2->status, GoalStatus::Available) << "no openings left -> wall Deconstruct Available";
+}
+
+TEST_F(OpeningHostGateTest, DemolishingFoundationGatedWhileExtensionPending) {
+	geometry::Ring	 ring{{0, 0}, {4000, 0}, {4000, 4000}, {0, 4000}};
+	cw::CommitResult target = topology.commitFoundation(std::move(ring), "wood");
+	ASSERT_TRUE(target.ok());
+	ASSERT_TRUE(topology.setState(target.id, cw::FoundationState::Built));
+	cw::CommitResult extension = topology.commitExtension(target.id, {{4000, 0}, {7000, 0}, {7000, 4000}, {4000, 4000}});
+	ASSERT_TRUE(extension.ok());
+
+	auto  targetBp = createBuiltDemolishing(StructureKind::Foundation, target.id);
+	auto& registry = GoalTaskRegistry::Get();
+
+	refresh();
+
+	const auto* goal = registry.getGoalByDestination(targetBp);
+	ASSERT_NE(goal, nullptr);
+	EXPECT_EQ(goal->type, TaskType::Deconstruct);
+	EXPECT_EQ(goal->status, GoalStatus::Blocked) << "target must wait for its pending extension";
+
+	topology.removeFoundation(extension.id);
+	refresh();
+
+	const auto* goal2 = registry.getGoalByDestination(targetBp);
+	ASSERT_NE(goal2, nullptr);
+	EXPECT_EQ(goal2->status, GoalStatus::Available) << "extension gone -> target Deconstruct Available";
 }

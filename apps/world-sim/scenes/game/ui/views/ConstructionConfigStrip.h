@@ -12,6 +12,10 @@
 // Wall mode (DrawingStatus.wall): the strip additionally shows thickness-preset
 // cards (Light/Standard/Heavy for the active material) and wall readouts
 // (segment length, total length, cost, work) instead of the foundation area.
+//
+// Foundation edit mode (DrawingStatus.foundationEdit): no material cards (the
+// edited foundation's material is locked); the Add / Subtract label, the area of
+// the outline the edit would leave, and its change from the current area.
 
 #include "scenes/game/world/construction/DrawingSystem.h"
 

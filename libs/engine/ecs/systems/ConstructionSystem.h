@@ -182,6 +182,11 @@ namespace ecs {
 		using DropResourceCallback = std::function<void(const std::string&, float, float, uint32_t)>;
 		void setDropResourceCallback(DropResourceCallback callback) { m_onDropResource = std::move(callback); }
 
+		/// Drop every construction goal a blueprint owns (the umbrella and its phase
+		/// children). The next tick rebuilds the tree from the blueprint's current
+		/// footprint, manifest, and position; used when a foundation is reshaped in place.
+		void resetBlueprintGoals(EntityID blueprintEntity);
+
 		/// DEV/TEST ONLY. Credit `amount` of `defName` onto the delivered[] manifests of all
 		/// active (non-Complete) build sites, capped at each site's outstanding need so no
 		/// site is over-filled, and stops once `amount` is exhausted. Returns the total
@@ -240,8 +245,9 @@ namespace ecs {
 		void dumpDeliveredToGround(EntityID blueprintEntity, StructureBlueprint& blueprint);
 
 		/// Cascade gate: true once a demolishing structure's dependents are gone, so its
-		/// Deconstruct goal may go Available. A foundation waits until no wall is hosted on it; a
-		/// wall waits until no opening sits on it; an opening has no dependents (always cleared).
+		/// Deconstruct goal may go Available. A foundation waits until no wall is hosted on it and
+		/// no extension waits to merge into it; a wall waits until no opening sits on it; an
+		/// opening has no dependents (always cleared).
 		/// True (ungated) when there is no ConstructionWorld wired (headless contexts).
 		[[nodiscard]] bool deconstructDependentsCleared(const Structure& structure) const;
 

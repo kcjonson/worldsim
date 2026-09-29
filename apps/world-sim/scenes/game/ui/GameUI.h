@@ -81,6 +81,8 @@ class GameUI {
 		std::function<void()> onMoveFurniture;						 ///< Called when Move button clicked for an installed box (re-packages + relocates)
 		std::function<void()> onDemolishFoundation; ///< Called when Demolish foundation clicked (clear foundation only)
 		std::function<void()> onDemolishBuilding;	///< Called when Demolish building clicked (cascade: walls + openings + foundation)
+		std::function<void()> onAddToFoundation;	   ///< Called when a foundation panel's Add clicked (activates the Add tool)
+		std::function<void()> onSubtractFromFoundation; ///< Called when a foundation panel's Subtract clicked (activates the Subtract tool)
 		std::function<void()> onDemolishWallSegment;				 ///< Called when Demolish button clicked for a wall segment
 		std::function<void()>					onDemolishOpening; ///< Called when Demolish button clicked for an opening
 		ResourceQueryCallback queryResources;							 ///< Query remaining resource count for harvestable entities

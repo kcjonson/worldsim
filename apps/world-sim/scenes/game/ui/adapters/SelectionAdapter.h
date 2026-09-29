@@ -67,25 +67,32 @@ using ResourceQueryCallback = std::function<std::optional<uint32_t>(const std::s
 	const std::function<void()>& onConfigure = {}
 );
 
+/// Foundation panel action callbacks, each nullable.
+struct FoundationActions {
+	std::function<void()> onDemolish;		  ///< Plain Demolish
+	std::function<void()> onDemolishBuilding; ///< Cascade Demolish building
+	std::function<void()> onAdd;			  ///< Activate the Add tool
+	std::function<void()> onSubtract;		  ///< Activate the Subtract tool
+};
+
 /// Convert a selected construction foundation into panel content.
 /// Pulls material/area/state from the ConstructionWorld and build progress from
-/// the ECS StructureBlueprint on the foundation's mirror entity. The demolish
-/// button is conditional: a built foundation that still hosts walls offers
-/// "Demolish building" (the cascade) since the plain foundation removal would
-/// orphan those walls; a clear (or blueprint) foundation offers "Demolish".
-/// (ActionButtonSlot has no disabled flag, so this swaps the button rather than
-/// disabling it.)
+/// the ECS StructureBlueprint on the foundation's mirror entity. Buttons are
+/// conditional (ActionButtonSlot has no disabled flag, so a button that doesn't
+/// apply is left out or swapped): Add while the foundation is an editable
+/// blueprint or Built with no pending extension and no demolish order, Subtract only on an editable
+/// blueprint, and "Demolish building" (the cascade) in place of "Demolish" while
+/// walls stand on it or its pending extension. An extension blueprint names the
+/// foundation it merges into.
 /// @param world ECS world (for the blueprint component).
 /// @param constructionWorld Topology store (geometry, material, state, hosted walls).
 /// @param selection The selected foundation.
-/// @param onDemolish Callback for the plain Demolish button (nullable).
-/// @param onDemolishBuilding Callback for the cascade Demolish-building button (nullable).
+/// @param actions Button callbacks (null callbacks drop their button).
 [[nodiscard]] PanelContent adaptFoundation(
 	const ecs::World&							   world,
 	const engine::construction::ConstructionWorld& constructionWorld,
 	const FoundationSelection&					   selection,
-	const std::function<void()>&				   onDemolish = {},
-	const std::function<void()>&				   onDemolishBuilding = {}
+	const FoundationActions&					   actions
 );
 
 /// Convert a selected wall segment into panel content.

@@ -8,9 +8,12 @@
 // click polygon drawing in world meters; on close it quantizes the ring,
 // commits to ConstructionWorld, and spawns the ECS blueprint entity.
 //
-// Two tools share the one state machine, selected by activeTool_:
+// The tools share the one state machine, selected by activeTool_:
 //   Foundation: a CLOSED polygon. snap() / validatePoint / validateRing /
 //     commitFoundation. Origin-close commits.
+//   FoundationEdit: Add / Subtract on one existing foundation (Epic G3). The
+//     same closed-polygon flow; validateEditPoint per point, and the close runs
+//     applyFoundationEdit (validateFoundationEdit on the resulting outline).
 //   Wall:       an OPEN polyline chain on a single host foundation
 //     (building-construction Walls). snapWall() / validateWallPoint /
 //     validateWallSegment / commitSegment per consecutive pair. No origin-close;
@@ -52,6 +55,7 @@ namespace engine::assets {
 
 namespace ecs {
 	class NavigationSystem;
+	struct StructureBlueprint;
 }
 
 namespace world_sim {
@@ -67,6 +71,7 @@ namespace world_sim {
 	/// Which structure tool is active while Drawing.
 	enum class ToolKind {
 		Foundation,
+		FoundationEdit, // Add / Subtract on an existing foundation (Epic G3)
 		Wall,
 		Opening,
 	};
@@ -76,8 +81,11 @@ namespace world_sim {
 		bool		active = false;	 // tool is on (config strip visible)
 		bool		wall = false;	 // true while the wall tool is active (config strip shows presets)
 		bool		opening = false; // true while the opening tool is active (config strip shows the opening type)
+		bool		foundationEdit = false; // true while Add / Subtract is active (material locked to the target's)
+		std::string editLabel;				// "Add to foundation" / "Subtract from foundation"
 		int			pointCount = 0;
-		float		areaSquareMeters = 0.0F; // closed-polygon area preview (0 until >= 3 pts)
+		float		areaSquareMeters = 0.0F;	  // closed-polygon area preview (0 until >= 3 pts); edit: resulting outline
+		float		areaDeltaSquareMeters = 0.0F; // edit: resulting area minus the target's current area
 		bool		valid = true;			 // current cursor placement / shape validity
 		std::string message;				 // validity reason (empty when valid)
 		std::string material;				 // active material name
@@ -103,6 +111,19 @@ namespace world_sim {
 			std::function<void(const std::string&, const std::string&)> onToast;
 		};
 
+		/// Result of a foundation Add / Subtract, from the tool or the dev verb.
+		/// `extension` is the new extension blueprint's id for an Add onto a Built
+		/// foundation (0 otherwise); `entity` is the blueprint entity that now carries
+		/// the work (the resized target, or the extension).
+		struct FoundationEditOutcome {
+			bool							   ok = false;
+			std::string						   reason; // empty when ok
+			engine::construction::FoundationId target = engine::construction::kInvalidFoundation;
+			engine::construction::FoundationId extension = engine::construction::kInvalidFoundation;
+			ecs::EntityID					   entity = ecs::kInvalidEntity;
+			float							   areaSquareMeters = 0.0F; // the target's outline once the edit lands
+		};
+
 		struct Args {
 			ecs::World*					world;
 			engine::world::WorldCamera* camera;
@@ -125,6 +146,11 @@ namespace world_sim {
 		/// name ("Door"/"Window"); enters Drawing in opening mode. The material is the
 		/// type's own material (v1: no separate material selector for openings).
 		void activateOpeningTool(const std::string& openingType);
+
+		/// Activate foundation Add / Subtract on `target` (from its info panel). The
+		/// same click-by-click polygon flow as the foundation tool; closing the drawn
+		/// polygon applies the edit and the tool stays on for the next one.
+		void activateFoundationEditTool(engine::construction::FoundationId target, engine::construction::FoundationEditMode mode);
 
 		/// Deactivate and discard any in-progress shape.
 		void deactivate();
@@ -201,6 +227,11 @@ namespace world_sim {
 		/// snap guides, and validity colorize. INTERIM.
 		void renderWallChainPreview(int viewportW, int viewportH);
 
+		/// Foundation Add / Subtract: the outline the edit would produce (merged or
+		/// remainder), colorized for validity, with the reason next to the cursor.
+		/// Drawn under the regular polygon preview. INTERIM.
+		void renderEditOutlinePreview(int viewportW, int viewportH);
+
 	  public:
 		// --- Status for the config strip ---
 
@@ -239,6 +270,33 @@ namespace world_sim {
 		engine::construction::OpeningId
 		devCommitOpening(engine::construction::SegmentId segment, float t, const std::string& openingType, bool built);
 
+		// --- Foundation lifecycle (shared with GameScene and the dev verbs) ---
+
+		/// Spawn the ECS blueprint entity for committed foundation `id`, sized from its
+		/// own ring and material (manifest, work, HP). kInvalidEntity for an unknown id.
+		ecs::EntityID spawnBlueprintEntity(engine::construction::FoundationId id);
+
+		/// Validate and apply an Add / Subtract of the closed polygon `drawn` (world
+		/// meters) to `target`. The one edit path: the tool's close and
+		/// /api/dev/foundation-edit both land here. An editable blueprint is edited in
+		/// place (manifest + work resized, back to Clearing); an Add onto a Built
+		/// foundation commits an extension blueprint that merges once built.
+		FoundationEditOutcome applyFoundationEdit(
+			engine::construction::FoundationId		 target,
+			const std::vector<Foundation::Vec2>&	 drawn,
+			engine::construction::FoundationEditMode mode
+		);
+
+		/// Merge a just-Built extension into its target: the topology union, and the
+		/// target entity takes over the extension's manifest, work, and HP and
+		/// re-centers on the merged outline. Returns the extension's entity for the
+		/// caller to despawn (deferred), or kInvalidEntity when the merge is refused.
+		ecs::EntityID mergeExtension(engine::construction::FoundationId extension);
+
+		/// Foundation `id`'s ECS mirror blueprint (deliveries, work, demolish order),
+		/// or nullptr when it has no live entity. The edit validator's ECS input.
+		[[nodiscard]] const ecs::StructureBlueprint* foundationBlueprint(engine::construction::FoundationId id) const;
+
 	  private:
 		// --- Nav-mesh placement validity (shared by foundation + wall + opening) ---
 
@@ -251,13 +309,17 @@ namespace world_sim {
 		[[nodiscard]] bool pointOnMesh(Foundation::Vec2 p) const;
 
 		/// True when the WHOLE footprint of `pts` may be placed. A FOUNDATION validates its polygon
-		/// area against NavigationSystem::isAreaBuildable -- a terrain-only mesh, so water and off-mesh
-		/// gaps block but clearable entities (trees/rocks) do NOT: placing over them spawns clear tasks
-		/// and the build waits for the footprint to clear. Wall conflicts are the validator's job. A WALL
-		/// validates its chain centerline against isPolylineWalkable (no wall footprint-clearing yet, so it
-		/// still needs clear ground). The SAME shared predicates the /api/dev verbs use. On failure toasts
-		/// "Can't build here" and returns false so the caller commits NOTHING -- no partial structure.
+		/// area against footprintBuildable. A WALL validates its chain centerline against
+		/// isPolylineWalkable (no wall footprint-clearing yet, so it still needs clear ground). The SAME
+		/// shared predicates the /api/dev verbs use. On failure toasts "Can't build here" and returns
+		/// false so the caller commits NOTHING -- no partial structure.
 		[[nodiscard]] bool requirePlaceable(const std::vector<Foundation::Vec2>& pts, const char* what);
+
+		/// NavigationSystem::isAreaBuildable over the polygon `pts`: a terrain-only mesh, so water and
+		/// off-mesh gaps block but clearable entities (trees/rocks) do NOT (placing over them spawns
+		/// clear tasks and the build waits for the footprint to clear). Wall conflicts are the
+		/// validator's job. True when no nav system is wired (headless/test).
+		[[nodiscard]] bool footprintBuildable(const std::vector<Foundation::Vec2>& pts) const;
 
 		// --- Foundation tool ---
 
@@ -283,8 +345,25 @@ namespace world_sim {
 		/// False when no points are placed.
 		[[nodiscard]] bool nearStartVertex(Foundation::Vec2 p, float radiusMeters) const;
 
-		/// Build the ECS blueprint entity for a committed foundation.
-		ecs::EntityID spawnBlueprintEntity(engine::construction::FoundationId id);
+		// --- Foundation Add / Subtract tool ---
+
+		/// Validity of the closed shape the tool would commit: validateRing for a new
+		/// foundation, validateFoundationEdit (the resulting outline) for an edit.
+		[[nodiscard]] engine::construction::ValidationResult validateClosed(const std::vector<Foundation::Vec2>& ring) const;
+
+		/// Refresh editPreview_ from the drawn polygon the next click would produce
+		/// (placed points, plus the cursor unless the click closes).
+		void refreshEditPreview();
+
+		/// Apply the edit for the closed polygon points_, toast the outcome, and clear
+		/// the points (the tool stays on).
+		void commitFoundationEdit();
+
+		/// Re-size an in-place-edited blueprint's mirror entity to its new ring:
+		/// manifest, work, HP, and position, back to Clearing (the new footprint may
+		/// cover blockers the old one didn't), with its goal tree dropped for the next
+		/// construction tick to rebuild from the new footprint.
+		void resizeBlueprintEntity(engine::construction::FoundationId id);
 
 		// --- Wall tool ---
 
@@ -388,6 +467,14 @@ namespace world_sim {
 		std::string							   activeOpeningType_ = "Door";
 		engine::construction::OpeningSnap	   openingSnap_;
 		engine::construction::ValidationResult openingValidation_;
+
+		// Foundation Add / Subtract: the foundation being edited, the mode, and the
+		// live result for the drawn polygon (outline preview + validity), refreshed
+		// on every move once the drawing closes into a polygon.
+		engine::construction::FoundationId		 editTarget_ = engine::construction::kInvalidFoundation;
+		engine::construction::FoundationEditMode editMode_ = engine::construction::FoundationEditMode::Add;
+		engine::construction::FoundationEditResult editPreview_;
+		bool									   editPreviewActive_ = false; // >= 3 drawn points to judge
 
 		std::string activeMaterial_ = "Wood";
 		std::string activeThicknessPreset_ = "Standard";

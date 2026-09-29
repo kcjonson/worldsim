@@ -20,8 +20,10 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -69,7 +71,10 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 	// "freebuild" or "spawn" mean: it just parses the verb plus the query
 	// params into this bag and hands it to the app, which interprets it (the
 	// construction context lives in GameScene). Mirrors InputCommand's queue.
+	// The HTTP request waits for the app to post the command's JSON result
+	// (deliverDevResult with this `id`) and answers with it.
 	struct DevCommand {
+		std::uint64_t									 id = 0; // result handle for deliverDevResult
 		std::string										 verb;	 // path tail after /api/dev/, e.g. "freebuild"
 		std::vector<std::pair<std::string, std::string>> params; // raw query key/value pairs
 
@@ -188,6 +193,11 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 		// interprets each DevCommand's verb (DebugServer stays domain-agnostic).
 		bool consumeDevCommands(std::vector<DevCommand>& out);
 
+		// Game thread: post the JSON result of a consumed DevCommand, waking the HTTP
+		// request that queued it. A result nobody waits for any more (the request timed
+		// out and answered with the queued ack) is dropped.
+		void deliverDevResult(std::uint64_t id, const std::string& json);
+
 		// Synchronous world-state readback (/api/state). The HTTP thread parks in
 		// requestState while the game thread serializes the requested view; DebugServer
 		// stays domain-agnostic (it carries the `what` query and the JSON result, but the
@@ -249,6 +259,13 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 		std::vector<DevCommand> devCommands;
 		std::atomic<bool>		devCommandsPending{false};
 		mutable std::mutex		devCommandsMutex; // Protects devCommands
+
+		// Dev command results (game thread writes, the waiting HTTP request reads). A
+		// request registers its id before queueing; an empty slot means still running.
+		std::atomic<std::uint64_t>							   nextDevCommandId{1};
+		std::unordered_map<std::uint64_t, std::optional<std::string>> devResults;
+		std::mutex											   devResultsMutex;
+		std::condition_variable								   devResultsCV;
 
 		// World-state readback channel (/api/state). HTTP thread writes the query and
 		// parks; game thread reads the query, serializes, posts the result. Mirrors the

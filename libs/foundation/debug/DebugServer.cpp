@@ -435,6 +435,18 @@ namespace Foundation {
 		return true;
 	}
 
+	void DebugServer::deliverDevResult(std::uint64_t id, const std::string& json) {
+		{
+			std::lock_guard<std::mutex> lock(devResultsMutex);
+			const auto					slot = devResults.find(id);
+			if (slot == devResults.end()) {
+				return;
+			}
+			slot->second = json;
+		}
+		devResultsCV.notify_all();
+	}
+
 	void DebugServer::setCurrentSceneName(const std::string& name) {
 		std::lock_guard<std::mutex> lock(sceneNameMutex);
 		currentSceneName = name;
@@ -656,9 +668,12 @@ namespace Foundation {
 		// tail) plus every query param into a bag and queues it; the app (GameScene)
 		// knows what "freebuild"/"spawn"/"foundation" mean. Dev-only, gated by the
 		// debug server (which only runs in dev builds), mirrors /api/input's queue.
+		// The request then parks until the game thread posts the command's JSON
+		// result (deliverDevResult) and answers with it; when nothing drains dev
+		// commands (no game scene) it gives up and answers with a queued ack.
 		//   /api/dev/freebuild?on=1
 		//   /api/dev/give?material=Wood&n=100&where=site|loose|colonist|storage
-			//   /api/dev/spawn?def=<assetName>&at=x,y&n=5&scatter=3
+		//   /api/dev/spawn?def=<assetName>&at=x,y&n=5&scatter=3
 		//   /api/dev/foundation?pts=x0,y0;x1,y1;...&material=Wood&built=1
 		server->Get(R"(/api/dev/[A-Za-z0-9_-]+)", [this](const httplib::Request& req, httplib::Response& res) {
 			res.set_header("Access-Control-Allow-Origin", "*");
@@ -675,13 +690,30 @@ namespace Foundation {
 				cmd.params.emplace_back(key, value);
 			}
 
-			std::string verb = cmd.verb;
+			const std::string	verb = cmd.verb;
+			const std::uint64_t id = nextDevCommandId.fetch_add(1);
+			cmd.id = id;
+			{
+				std::lock_guard<std::mutex> lock(devResultsMutex);
+				devResults.emplace(id, std::nullopt);
+			}
 			{
 				std::lock_guard<std::mutex> lock(devCommandsMutex);
 				devCommands.push_back(std::move(cmd));
 				devCommandsPending.store(true);
 			}
 
+			std::optional<std::string> result;
+			{
+				std::unique_lock<std::mutex> lock(devResultsMutex);
+				devResultsCV.wait_for(lock, std::chrono::milliseconds(2000), [this, id] { return devResults.at(id).has_value(); });
+				result = std::move(devResults.at(id));
+				devResults.erase(id);
+			}
+			if (result.has_value()) {
+				res.set_content(*result, "application/json");
+				return;
+			}
 			std::ostringstream json;
 			json << "{\"status\":\"ok\",\"verb\":\"" << escapeJsonString(verb) << "\",\"queued\":1}";
 			res.set_content(json.str(), "application/json");

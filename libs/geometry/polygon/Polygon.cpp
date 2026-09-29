@@ -29,6 +29,51 @@ namespace geometry {
 		return areaMm2 / (mmPerM * mmPerM);
 	}
 
+	Vec2d interiorPoint(const Ring& ring) {
+		const std::size_t n = ring.size();
+
+		// Area centroid's y, from the shoelace terms.
+		double area2 = 0.0;
+		double cy = 0.0;
+		double minY = static_cast<double>(ring.front().y);
+		double maxY = minY;
+		for (std::size_t i = 0; i < n; ++i) {
+			const Vec2i64& a = ring[i];
+			const Vec2i64& b = ring[(i + 1) % n];
+			const double   cross = static_cast<double>(a.x) * static_cast<double>(b.y) - static_cast<double>(b.x) * static_cast<double>(a.y);
+			area2 += cross;
+			cy += (static_cast<double>(a.y) + static_cast<double>(b.y)) * cross;
+			minY = std::min(minY, static_cast<double>(a.y));
+			maxY = std::max(maxY, static_cast<double>(a.y));
+		}
+		cy /= 3.0 * area2;
+
+		// Vertices sit on whole millimeters, so a half-millimeter line misses them all
+		// and every crossing is a clean edge crossing.
+		const double y = std::clamp(std::floor(cy) + 0.5, minY + 0.5, maxY - 0.5);
+		std::vector<double> crossings;
+		for (std::size_t i = 0; i < n; ++i) {
+			const Vec2i64& a = ring[i];
+			const Vec2i64& b = ring[(i + 1) % n];
+			const double   ay = static_cast<double>(a.y);
+			const double   by = static_cast<double>(b.y);
+			if ((ay < y) != (by < y)) {
+				const double t = (y - ay) / (by - ay);
+				crossings.push_back(static_cast<double>(a.x) + t * static_cast<double>(b.x - a.x));
+			}
+		}
+		std::sort(crossings.begin(), crossings.end());
+
+		// Crossings alternate entering and leaving; take the widest inside span.
+		std::size_t best = 0;
+		for (std::size_t i = 2; i + 1 < crossings.size(); i += 2) {
+			if (crossings[i + 1] - crossings[i] > crossings[best + 1] - crossings[best]) {
+				best = i;
+			}
+		}
+		return {(crossings[best] + crossings[best + 1]) * 0.5, y};
+	}
+
 	Winding windingOrder(const Ring& ring) {
 		const int s = signedAreaDoubled(ring).sign();
 		if (s > 0) {

@@ -3,6 +3,8 @@
 #include "ConstructionWorld.h"
 #include "SnapEngine.h"
 
+#include "../ecs/components/StructureBlueprint.h"
+
 #include <assets/ConstructionRegistry.h>
 #include <core/Vec2i64.h>
 
@@ -711,4 +713,213 @@ TEST(ConstructionValidator, FoundationValidationUnchangedWithWalls) {
 	// And a good in-progress foundation point still passes.
 	std::vector<Vec2> chain = {{20.0F, 20.0F}, {25.0F, 20.0F}};
 	EXPECT_TRUE(validator.validatePoint(chain, {25.0F, 25.0F}).ok());
+}
+
+// --- Foundation clearance -------------------------------------------------
+
+TEST(ConstructionValidator, FoundationTooCloseToAnotherRejected) {
+	ConstraintConfig  cfg = defaults(); // pathingClearance 0.7 m
+	ConstructionWorld world;
+	ASSERT_TRUE(world.commitFoundation(squareRing(), "Wood").ok());
+
+	ConstructionValidator validator(cfg, world);
+	std::vector<Vec2>	  sliver = {{5.3F, 0.0F}, {10.0F, 0.0F}, {10.0F, 5.0F}, {5.3F, 5.0F}};
+	EXPECT_EQ(validator.validateRing(sliver).code, ValidationCode::TooCloseToFoundation);
+}
+
+TEST(ConstructionValidator, FoundationSnappedEdgeToEdgeOk) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	ASSERT_TRUE(world.commitFoundation(squareRing(), "Wood").ok());
+
+	ConstructionValidator validator(cfg, world);
+	std::vector<Vec2>	  adjacent = {{5.0F, 0.0F}, {10.0F, 0.0F}, {10.0F, 5.0F}, {5.0F, 5.0F}};
+	EXPECT_TRUE(validator.validateRing(adjacent).ok());
+	std::vector<Vec2> clear = {{5.7F, 0.0F}, {10.0F, 0.0F}, {10.0F, 5.0F}, {5.7F, 5.0F}};
+	EXPECT_TRUE(validator.validateRing(clear).ok());
+}
+
+TEST(ConstructionValidator, TouchingOneLegDoesNotExcuseASliverAtTheOther) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	// An L: its notch is the square x 4..10, y 4..10.
+	std::vector<Vec2> ell = {{0.0F, 0.0F}, {10.0F, 0.0F}, {10.0F, 4.0F}, {4.0F, 4.0F}, {4.0F, 10.0F}, {0.0F, 10.0F}};
+	ASSERT_TRUE(world.commitFoundation(ell, "Wood").ok());
+
+	ConstructionValidator validator(cfg, world);
+	// Flush against the notch's vertical leg, 0.3 m off its horizontal one.
+	std::vector<Vec2> inNotch = {{4.0F, 4.3F}, {9.0F, 4.3F}, {9.0F, 9.0F}, {4.0F, 9.0F}};
+	EXPECT_EQ(validator.validateRing(inNotch).code, ValidationCode::TooCloseToFoundation);
+	// Flush against both legs is fine.
+	std::vector<Vec2> fitted = {{4.0F, 4.0F}, {9.0F, 4.0F}, {9.0F, 9.0F}, {4.0F, 9.0F}};
+	EXPECT_TRUE(validator.validateRing(fitted).ok());
+}
+
+TEST(ConstructionValidator, SharedEdgeThatAnglesAwayOk) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	ASSERT_TRUE(world.commitFoundation(squareRing(), "Wood").ok());
+
+	ConstructionValidator validator(cfg, world);
+	// Shares x = 5 from y 0 to 3 with the 5x5 square, then leaves it at an angle.
+	// The vertex at the end of the shared run touches; nothing else comes close.
+	std::vector<Vec2> angled = {{5.0F, 0.0F}, {10.0F, 0.0F}, {10.0F, 6.0F}, {7.0F, 6.0F}, {5.0F, 3.0F}};
+	EXPECT_TRUE(validator.validateRing(angled).ok());
+}
+
+// --- Foundation Add / Subtract (G3) ---------------------------------------
+
+namespace {
+
+	std::vector<Vec2> rect(float x0, float y0, float x1, float y1) {
+		return {{x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}};
+	}
+
+	double areaOf(const geometry::Ring& ring) {
+		return std::abs(geometry::signedAreaSquareMeters(ring));
+	}
+
+} // namespace
+
+class FoundationEditValidation : public ::testing::Test {
+  protected:
+	void SetUp() override {
+		ConstructionRegistry::Get().clear();
+		ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder().string()));
+		const auto committed = world.commitFoundation(rect(0.0F, 0.0F, 10.0F, 10.0F), "Wood");
+		ASSERT_TRUE(committed.ok());
+		target = committed.id;
+	}
+	void TearDown() override { ConstructionRegistry::Get().clear(); }
+
+	FoundationEditResult edit(const std::vector<Vec2>& drawn, FoundationEditMode mode) const {
+		return ConstructionValidator(cfg, world).validateFoundationEdit(target, drawn, mode, &blueprint);
+	}
+
+	ConstraintConfig		cfg = defaults();
+	ConstructionWorld		world;
+	FoundationId			target = kInvalidFoundation;
+	ecs::StructureBlueprint blueprint; // the target's mirror: fresh, so editable
+};
+
+TEST_F(FoundationEditValidation, BlueprintAddUnionsInPlace) {
+	const auto r = edit(rect(8.0F, 2.0F, 14.0F, 8.0F), FoundationEditMode::Add);
+	ASSERT_TRUE(r.ok()) << validationReason(r.validation.code);
+	EXPECT_NEAR(areaOf(r.outline), 124.0, 1e-6);
+	EXPECT_TRUE(r.extension.empty());
+	// A blueprint Add checks the whole drawing (the added part may be several pieces).
+	EXPECT_NEAR(areaOf(r.buildsOn), 36.0, 1e-6);
+}
+
+TEST_F(FoundationEditValidation, BlueprintSubtractCarvesNotch) {
+	const auto r = edit(rect(7.0F, -2.0F, 12.0F, 4.0F), FoundationEditMode::Subtract);
+	ASSERT_TRUE(r.ok()) << validationReason(r.validation.code);
+	EXPECT_NEAR(areaOf(r.outline), 88.0, 1e-6);
+}
+
+TEST_F(FoundationEditValidation, DeliveredBlueprintRejected) {
+	blueprint.delivered = {{"Wood", 1}};
+	EXPECT_EQ(edit(rect(8.0F, 2.0F, 14.0F, 8.0F), FoundationEditMode::Add).validation.code, ValidationCode::EditMaterialsDelivered);
+	EXPECT_EQ(edit(rect(7.0F, -2.0F, 12.0F, 4.0F), FoundationEditMode::Subtract).validation.code, ValidationCode::EditMaterialsDelivered);
+}
+
+TEST_F(FoundationEditValidation, FoundationMarkedForDemolitionRejected) {
+	blueprint.demolishing = true;
+	EXPECT_EQ(edit(rect(7.0F, -2.0F, 12.0F, 4.0F), FoundationEditMode::Subtract).validation.code, ValidationCode::BeingDemolished);
+
+	// A built one too: an extension made now would hold the teardown open.
+	world.setState(target, FoundationState::Built);
+	blueprint.phase = ecs::StructureBlueprint::BuildPhase::Complete;
+	EXPECT_EQ(edit(rect(8.0F, 2.0F, 14.0F, 8.0F), FoundationEditMode::Add).validation.code, ValidationCode::BeingDemolished);
+	blueprint.demolishing = false;
+	EXPECT_TRUE(edit(rect(8.0F, 2.0F, 14.0F, 8.0F), FoundationEditMode::Add).ok());
+}
+
+TEST_F(FoundationEditValidation, BuiltSubtractRejected) {
+	world.setState(target, FoundationState::Built);
+	EXPECT_EQ(edit(rect(7.0F, -2.0F, 12.0F, 4.0F), FoundationEditMode::Subtract).validation.code, ValidationCode::BuiltNeverShrinks);
+}
+
+TEST_F(FoundationEditValidation, BuiltAddYieldsExtensionOfTheAddedRegionOnly) {
+	world.setState(target, FoundationState::Built);
+	const auto r = edit(rect(8.0F, 2.0F, 14.0F, 8.0F), FoundationEditMode::Add);
+	ASSERT_TRUE(r.ok()) << validationReason(r.validation.code);
+	EXPECT_NEAR(areaOf(r.extension), 24.0, 1e-6);
+	EXPECT_NEAR(areaOf(r.outline), 124.0, 1e-6);
+	// Only the extension is new ground; the built footprint is not re-checked.
+	EXPECT_EQ(r.buildsOn, r.extension);
+	EXPECT_TRUE(world.commitExtension(target, r.extension).ok());
+}
+
+TEST_F(FoundationEditValidation, BuiltAddSharingAnEdgeExtendsByTheWholeDrawing) {
+	world.setState(target, FoundationState::Built);
+	const auto r = edit(rect(10.0F, 0.0F, 14.0F, 10.0F), FoundationEditMode::Add);
+	ASSERT_TRUE(r.ok()) << validationReason(r.validation.code);
+	EXPECT_NEAR(areaOf(r.extension), 40.0, 1e-6);
+	EXPECT_NEAR(areaOf(r.outline), 140.0, 1e-6);
+}
+
+TEST_F(FoundationEditValidation, SecondAddWhileExtensionPendingRejected) {
+	world.setState(target, FoundationState::Built);
+	const auto first = edit(rect(8.0F, 2.0F, 14.0F, 8.0F), FoundationEditMode::Add);
+	ASSERT_TRUE(first.ok());
+	const auto ext = world.commitExtension(target, first.extension);
+	ASSERT_TRUE(ext.ok());
+
+	EXPECT_EQ(edit(rect(2.0F, 8.0F, 8.0F, 14.0F), FoundationEditMode::Add).validation.code, ValidationCode::ExtensionPending);
+	const auto onExtension =
+		ConstructionValidator(cfg, world).validateFoundationEdit(ext.id, rect(12.0F, 2.0F, 16.0F, 8.0F), FoundationEditMode::Add, &blueprint);
+	EXPECT_EQ(onExtension.validation.code, ValidationCode::ExtensionNotEditable);
+}
+
+TEST_F(FoundationEditValidation, BooleanFailuresMapToReasons) {
+	EXPECT_EQ(edit(rect(20.0F, 20.0F, 25.0F, 25.0F), FoundationEditMode::Add).validation.code, ValidationCode::EditDisjoint);
+	EXPECT_EQ(edit(rect(2.0F, 2.0F, 5.0F, 5.0F), FoundationEditMode::Add).validation.code, ValidationCode::EditNothingToAdd);
+	EXPECT_EQ(edit(rect(3.0F, 3.0F, 6.0F, 6.0F), FoundationEditMode::Subtract).validation.code, ValidationCode::EditCutsHole);
+	EXPECT_EQ(edit(rect(4.0F, -2.0F, 6.0F, 12.0F), FoundationEditMode::Subtract).validation.code, ValidationCode::EditSplits);
+	EXPECT_EQ(edit(rect(-1.0F, -1.0F, 11.0F, 11.0F), FoundationEditMode::Subtract).validation.code, ValidationCode::EditConsumes);
+	EXPECT_EQ(edit(rect(20.0F, 20.0F, 25.0F, 25.0F), FoundationEditMode::Subtract).validation.code, ValidationCode::EditNothingToRemove);
+	EXPECT_EQ(edit(rect(10.0F, 10.0F, 14.0F, 14.0F), FoundationEditMode::Add).validation.code, ValidationCode::EditPinch);
+}
+
+TEST_F(FoundationEditValidation, BuiltAddRegionMustBeOnePiece) {
+	world.setState(target, FoundationState::Built);
+	EXPECT_EQ(edit(rect(-2.0F, -2.0F, 12.0F, 12.0F), FoundationEditMode::Add).validation.code, ValidationCode::ExtensionWrapsAround);
+	EXPECT_EQ(edit(rect(-3.0F, 4.0F, 13.0F, 6.0F), FoundationEditMode::Add).validation.code, ValidationCode::ExtensionSplits);
+}
+
+TEST_F(FoundationEditValidation, OutlineChecksIgnoreTargetButNotOthers) {
+	ASSERT_TRUE(world.commitFoundation(rect(12.0F, 0.0F, 16.0F, 10.0F), "Wood").ok());
+	EXPECT_EQ(edit(rect(8.0F, 2.0F, 14.0F, 8.0F), FoundationEditMode::Add).validation.code, ValidationCode::OverlapsExisting);
+	EXPECT_EQ(edit(rect(8.0F, 2.0F, 11.5F, 8.0F), FoundationEditMode::Add).validation.code, ValidationCode::TooCloseToFoundation);
+	EXPECT_TRUE(edit(rect(8.0F, 2.0F, 12.0F, 8.0F), FoundationEditMode::Add).ok());
+}
+
+TEST_F(FoundationEditValidation, OutlineMustKeepShapeConstraints) {
+	// A 0.6 m tongue: its two long edges sit closer than the 1 m edge clearance.
+	EXPECT_EQ(edit(rect(8.0F, 4.0F, 14.0F, 4.6F), FoundationEditMode::Add).validation.code, ValidationCode::EdgeClearanceTooSmall);
+}
+
+TEST_F(FoundationEditValidation, SubtractMayNotCutUnderAWall) {
+	// Standard Wood is 0.2 m thick: the centerline sits 5 cm above the notch, but
+	// the lower face of the band dips into it.
+	const auto wall = world.commitSegment(mm(7.5F, 6.05F), mm(9.5F, 6.05F), "Wood", "Standard", target);
+	ASSERT_TRUE(wall.ok());
+	EXPECT_EQ(edit(rect(7.0F, -2.0F, 12.0F, 6.0F), FoundationEditMode::Subtract).validation.code, ValidationCode::EditUnderWall);
+	EXPECT_TRUE(edit(rect(7.0F, -2.0F, 12.0F, 5.0F), FoundationEditMode::Subtract).ok());
+}
+
+TEST(ConstructionValidator, EditPointJudgesOnlyTheCutter) {
+	ConstraintConfig	  cfg = defaults();
+	ConstructionWorld	  world;
+	ConstructionValidator validator(cfg, world);
+	// A 10 degree corner is fine for a cutter (validatePoint would reject it)...
+	const std::vector<Vec2> chain = {{0.0F, 0.0F}, {10.0F, 0.0F}};
+	const Vec2				sharp{0.15F, 1.7F};
+	EXPECT_EQ(validator.validatePoint(chain, sharp).code, ValidationCode::AngleTooSharp);
+	EXPECT_TRUE(validator.validateEditPoint(chain, sharp).ok());
+	// ...but it must stay a simple polygon with spaced vertices.
+	const std::vector<Vec2> zig = {{0.0F, 0.0F}, {10.0F, 0.0F}, {10.0F, 5.0F}};
+	EXPECT_EQ(validator.validateEditPoint(zig, {5.0F, -3.0F}).code, ValidationCode::SelfIntersects);
+	EXPECT_EQ(validator.validateEditPoint(zig, {10.2F, 5.1F}).code, ValidationCode::VerticesTooClose);
 }
