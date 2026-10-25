@@ -88,8 +88,8 @@ namespace {
 			}
 
 			// Generate glyph quads
-			glm::vec4								 glyphColor(color.r, color.g, color.b, color.a);
-			std::vector<ui::FontRenderer::GlyphQuad> glyphs;
+			glm::vec4									   glyphColor(color.r, color.g, color.b, color.a);
+			std::vector<Renderer::FontRenderer::GlyphQuad> glyphs;
 			fontRenderer->generateGlyphQuads(text, position, scale, glyphColor, glyphs);
 
 			// Add each glyph to the unified batch renderer
@@ -105,7 +105,7 @@ namespace {
 			}
 		}
 
-		ui::FontRenderer*		 fontRenderer = nullptr;
+		Renderer::FontRenderer*	 fontRenderer = nullptr;
 		Renderer::BatchRenderer* batchRenderer = nullptr;
 	};
 

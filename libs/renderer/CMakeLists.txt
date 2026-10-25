@@ -3,6 +3,8 @@ find_package(NanoSVG CONFIG REQUIRED)
 add_library(renderer
     primitives/Primitives.cpp
     primitives/BatchRenderer.cpp
+    font/FontRenderer.cpp
+    stb_image.cpp
     metrics/MetricsCollector.cpp
     metrics/GPUTimer.cpp
     vector/Tessellator.cpp
@@ -29,10 +31,6 @@ target_include_directories(renderer
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
         $<INSTALL_INTERFACE:include>
-    PRIVATE
-        # Include ui headers for FontRenderer (used in Primitives::drawText)
-        # This is include-only, not a link dependency, to avoid circular deps
-        ${CMAKE_CURRENT_SOURCE_DIR}/../ui
 )
 
 target_compile_features(renderer PUBLIC cxx_std_20)
@@ -49,6 +47,8 @@ target_link_libraries(renderer
         # NanoSVG is used only for internal SVG parsing in SVGLoader.cpp.
         # No NanoSVG types are exposed in public headers, so PRIVATE linkage is correct.
         NanoSVG::nanosvg
+        # FontRenderer.cpp parses the font atlas JSON; no JSON types in public headers.
+        nlohmann_json::nlohmann_json
 )
 
 # Copy shaders to build and runtime directories whenever shader sources change.

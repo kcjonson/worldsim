@@ -1,8 +1,6 @@
 add_library(ui
     core/Placeholder.cpp
     core/RenderContext.cpp
-    stb_image.cpp
-    font/FontRenderer.cpp
     shapes/Shapes.cpp
     components/button/Button.cpp
     components/tabbar/TabBar.cpp

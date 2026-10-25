@@ -31,7 +31,7 @@ namespace UI {
 		constexpr float kLabelSpacing = fs_2xs * ls_wider;
 
 		float measureWidth(const std::string& text, float scale) {
-			if (const ui::FontRenderer* font = Renderer::Primitives::getFontRenderer(); font != nullptr) {
+			if (const Renderer::FontRenderer* font = Renderer::Primitives::getFontRenderer(); font != nullptr) {
 				return font->MeasureText(text, scale, fontMono, kLabelSpacing).x;
 			}
 			return 0.0F;

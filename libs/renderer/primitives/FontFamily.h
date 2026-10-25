@@ -4,8 +4,8 @@
 // the FontRenderer at startup. Roboto is the default everywhere so existing
 // callers that don't specify a family render exactly as before.
 //
-// Lives in the renderer layer (not ui) so both TextArgs here and FontRenderer
-// in libs/ui can share the type without ui->renderer->ui dependency cycles.
+// Lives in primitives/ rather than font/ so TextArgs can name a family without
+// including FontRenderer.h.
 
 namespace Renderer { // NOLINT(readability-identifier-naming)
 

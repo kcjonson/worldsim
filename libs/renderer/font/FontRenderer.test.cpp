@@ -21,7 +21,7 @@
 #include <string>
 #include <vector>
 
-namespace ui {
+namespace Renderer {
 
 	class FontRendererTest : public ::testing::Test {
 	  protected:
@@ -59,9 +59,7 @@ namespace ui {
 
 		std::vector<FontRenderer::GlyphQuad> quadsFor(const std::string& text, float scale, float letterSpacing) const {
 			std::vector<FontRenderer::GlyphQuad> quads;
-			fontRenderer->generateGlyphQuads(
-				text, glm::vec2(0.0F, 0.0F), scale, glm::vec4(1.0F), quads, Renderer::FontFamily::Roboto, letterSpacing
-			);
+			fontRenderer->generateGlyphQuads(text, glm::vec2(0.0F, 0.0F), scale, glm::vec4(1.0F), quads, FontFamily::Roboto, letterSpacing);
 			return quads;
 		}
 
@@ -80,7 +78,7 @@ namespace ui {
 		for (const std::string& text : testStrings) {
 			for (float letterSpacing : letterSpacings) {
 				for (float scale : scales) {
-					const float measured = fontRenderer->MeasureText(text, scale, Renderer::FontFamily::Roboto, letterSpacing).x;
+					const float measured = fontRenderer->MeasureText(text, scale, FontFamily::Roboto, letterSpacing).x;
 
 					const auto quadsSingle = quadsFor(text, scale, letterSpacing);
 					const auto quadsDoubled = quadsFor(text + text, scale, letterSpacing);
@@ -125,7 +123,7 @@ namespace ui {
 		const std::string text = "spacing";
 		const float		  letterSpacing = 3.0F;
 		const float		  base = fontRenderer->MeasureText(text, 1.0F).x;
-		const float		  spaced = fontRenderer->MeasureText(text, 1.0F, Renderer::FontFamily::Roboto, letterSpacing).x;
+		const float		  spaced = fontRenderer->MeasureText(text, 1.0F, FontFamily::Roboto, letterSpacing).x;
 		EXPECT_NEAR(spaced - base, letterSpacing * static_cast<float>(text.size() - 1), 1e-3F);
 
 		EXPECT_FLOAT_EQ(fontRenderer->MeasureText("", 1.0F).x, 0.0F);
@@ -155,4 +153,4 @@ namespace ui {
 		}
 	}
 
-} // namespace ui
+} // namespace Renderer

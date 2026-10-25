@@ -36,7 +36,7 @@ namespace UI {
 		}
 
 		// Get FontRenderer
-		ui::FontRenderer* fontRenderer = Renderer::Primitives::getFontRenderer();
+		Renderer::FontRenderer* fontRenderer = Renderer::Primitives::getFontRenderer();
 		if (fontRenderer == nullptr || text.empty()) {
 			cachedWidth = 0.0F;
 			cachedHeight = 0.0F;
@@ -93,7 +93,7 @@ namespace UI {
 		}
 
 		// Get font renderer for glyph generation and alignment calculations
-		ui::FontRenderer* fontRenderer = Renderer::Primitives::getFontRenderer();
+		Renderer::FontRenderer* fontRenderer = Renderer::Primitives::getFontRenderer();
 		if (fontRenderer == nullptr) {
 			return; // No font renderer available for measurements
 		}
@@ -102,13 +102,13 @@ namespace UI {
 		const float scale = style.fontSize / BASE_FONT_SIZE;
 
 		// Determine if we should use wrapped text mode
-		bool									 shouldWrap = style.wordWrap && width.has_value();
-		glm::vec4								 glyphColor(style.color.r, style.color.g, style.color.b, style.color.a);
-		std::vector<ui::FontRenderer::GlyphQuad> glyphs;
+		bool										   shouldWrap = style.wordWrap && width.has_value();
+		glm::vec4									   glyphColor(style.color.r, style.color.g, style.color.b, style.color.a);
+		std::vector<Renderer::FontRenderer::GlyphQuad> glyphs;
 
 		if (shouldWrap) {
 			// WRAPPED TEXT MODE
-			const ui::FontRenderer::WrappedTextResult& wrapped = fontRenderer->wrapText(text, scale, *width);
+			const Renderer::FontRenderer::WrappedTextResult& wrapped = fontRenderer->wrapText(text, scale, *width);
 
 			// Calculate vertical alignment offset for the text block
 			Foundation::Vec2 alignedPos = position;

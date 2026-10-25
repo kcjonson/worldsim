@@ -82,7 +82,7 @@ add_subdirectory(tools/generate_sdf_atlas)
 # source font changes; the JSON metadata regenerates deterministically.
 #
 # Each entry is "AtlasBaseName:SourceTTF". The atlas base names must match
-# FontFamily / kAtlasBaseNames in libs/renderer + libs/ui.
+# FontFamily / kAtlasBaseNames in libs/renderer.
 set(SDF_FONT_ATLASES
     "Roboto-SDF:Roboto-Regular.ttf"
     "ChakraPetch-SDF:ChakraPetch-SemiBold.ttf"

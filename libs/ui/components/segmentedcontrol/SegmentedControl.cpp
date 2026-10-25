@@ -61,7 +61,7 @@ namespace UI {
 		}
 
 		float measureWidth(const std::string& text, float scale, float letterSpacing) {
-			if (const ui::FontRenderer* font = Renderer::Primitives::getFontRenderer(); font != nullptr) {
+			if (const Renderer::FontRenderer* font = Renderer::Primitives::getFontRenderer(); font != nullptr) {
 				return font->MeasureText(text, scale, fontDisplay, letterSpacing).x;
 			}
 			return 0.0F;

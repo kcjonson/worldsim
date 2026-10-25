@@ -29,7 +29,7 @@ namespace UI {
 		constexpr float kSegmentGap = 2.0F;
 
 		float measureWidth(const std::string& text, float scale) {
-			if (const ui::FontRenderer* font = Renderer::Primitives::getFontRenderer(); font != nullptr) {
+			if (const Renderer::FontRenderer* font = Renderer::Primitives::getFontRenderer(); font != nullptr) {
 				return font->MeasureText(text, scale).x;
 			}
 			return 0.0F;

@@ -34,7 +34,7 @@ namespace engine {
 
 		// Global systems (accessed by GLFW callbacks)
 		Renderer::CoordinateSystem*					g_coordinateSystem = nullptr;
-		std::unique_ptr<ui::FontRenderer>			g_fontRenderer = nullptr;
+		std::unique_ptr<Renderer::FontRenderer>		g_fontRenderer = nullptr;
 		std::unique_ptr<Renderer::TileAtlasBuilder> g_tileAtlasBuilder = nullptr;
 		std::function<void()>						g_windowResizeCallback; // App-specific resize handler
 
@@ -192,7 +192,7 @@ namespace engine {
 
 			// Initialize font renderer
 			LOG_INFO(UI, "Initializing font renderer");
-			g_fontRenderer = std::make_unique<ui::FontRenderer>();
+			g_fontRenderer = std::make_unique<Renderer::FontRenderer>();
 			if (!g_fontRenderer->Initialize()) {
 				LOG_ERROR(UI, "Failed to initialize FontRenderer!");
 			} else {

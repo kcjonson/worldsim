@@ -144,7 +144,7 @@ void TopBar::positionElements() {
 	// Identity text sits right of the colony mark.
 	identityX = bounds.x + kPadH + kMarkHalf * 2.0F + UI::space_3;
 
-	const ui::FontRenderer* fr = Renderer::Primitives::getFontRenderer();
+	const Renderer::FontRenderer* fr = Renderer::Primitives::getFontRenderer();
 	auto measure = [&](const std::string& s, float px, Renderer::FontFamily fam, float ls = 0.0F) -> float {
 		if (fr != nullptr) {
 			return fr->MeasureText(s, textScale(px), fam, ls).x;

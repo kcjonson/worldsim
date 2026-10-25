@@ -9,12 +9,12 @@
 #include <nlohmann/json.hpp>
 #include <stb_image.h>
 
-namespace ui {
+namespace Renderer {
 
 	namespace {
 		// Atlas file basenames per FontFamily, indexed by static_cast<int>(family).
-		// Order must match the FontFamily enum in libs/renderer.
-		constexpr const char* kAtlasBaseNames[Renderer::kFontFamilyCount] = {
+		// Order must match the FontFamily enum in primitives/FontFamily.h.
+		constexpr const char* kAtlasBaseNames[kFontFamilyCount] = {
 			"Roboto-SDF",		// FontFamily::Roboto
 			"ChakraPetch-SDF",	// FontFamily::ChakraPetch
 			"Barlow-SDF",		// FontFamily::Barlow
@@ -64,7 +64,7 @@ namespace ui {
 		// Load every font family's atlas. Roboto (index 0) is the default used by
 		// all existing callers, so a missing/broken Roboto atlas is fatal. The
 		// other families are best-effort: warn and continue so Roboto still works.
-		for (int i = 0; i < Renderer::kFontFamilyCount; ++i) {
+		for (int i = 0; i < kFontFamilyCount; ++i) {
 			const std::string pngName = std::string("fonts/") + kAtlasBaseNames[i] + ".png";
 			const std::string jsonName = std::string("fonts/") + kAtlasBaseNames[i] + ".json";
 
@@ -72,7 +72,7 @@ namespace ui {
 			std::string pngPath = Foundation::findResourceString(pngName);
 			std::string jsonPath = Foundation::findResourceString(jsonName);
 
-			const bool isDefault = (i == static_cast<int>(Renderer::FontFamily::Roboto));
+			const bool isDefault = (i == static_cast<int>(FontFamily::Roboto));
 
 			if (pngPath.empty() || jsonPath.empty()) {
 				if (isDefault) {
@@ -97,17 +97,17 @@ namespace ui {
 		return true;
 	}
 
-	const FontRenderer::Atlas& FontRenderer::atlasFor(Renderer::FontFamily family) const {
+	const FontRenderer::Atlas& FontRenderer::atlasFor(FontFamily family) const {
 		const Atlas& requested = atlases[static_cast<int>(family)];
 		if (requested.loaded) {
 			return requested;
 		}
 		// Requested family failed to load; fall back to Roboto, which is guaranteed
 		// loaded (Initialize exits otherwise).
-		return atlases[static_cast<int>(Renderer::FontFamily::Roboto)];
+		return atlases[static_cast<int>(FontFamily::Roboto)];
 	}
 
-	glm::vec2 FontRenderer::MeasureText(const std::string& text, float scale, Renderer::FontFamily family, float letterSpacing) const {
+	glm::vec2 FontRenderer::MeasureText(const std::string& text, float scale, FontFamily family, float letterSpacing) const {
 		if (text.empty()) {
 			return glm::vec2(0.0F, 0.0F);
 		}
@@ -125,11 +125,11 @@ namespace ui {
 		return glm::vec2(totalWidth, textHeight);
 	}
 
-	float FontRenderer::getMaxGlyphHeight(float scale, Renderer::FontFamily family) const {
+	float FontRenderer::getMaxGlyphHeight(float scale, FontFamily family) const {
 		return atlasFor(family).maxGlyphHeightUnscaled * scale;
 	}
 
-	float FontRenderer::getAscent(float scale, Renderer::FontFamily family) const {
+	float FontRenderer::getAscent(float scale, FontFamily family) const {
 		return atlasFor(family).scaledAscender * scale;
 	}
 
@@ -317,7 +317,7 @@ namespace ui {
 		float					scale,
 		const glm::vec4&		color,
 		std::vector<GlyphQuad>& outQuads,
-		Renderer::FontFamily	family,
+		FontFamily				family,
 		float					letterSpacing
 	) const {
 		const Atlas&					atlas = atlasFor(family);
@@ -393,7 +393,8 @@ namespace ui {
 			// grown by the valid SDF half-range (see note above).
 			// Reference: https://github.com/Chlumsky/msdf-atlas-gen/issues/2
 			GlyphQuad quad{};
-			quad.position = glm::vec2(penX + glyph.planeBoundsMin.x * fontSize - padPx, baselineY - glyph.planeBoundsMax.y * fontSize - padPx);
+			quad.position =
+				glm::vec2(penX + glyph.planeBoundsMin.x * fontSize - padPx, baselineY - glyph.planeBoundsMax.y * fontSize - padPx);
 			quad.size = glm::vec2(
 				(glyph.planeBoundsMax.x - glyph.planeBoundsMin.x) * fontSize + 2.0F * padPx,
 				(glyph.planeBoundsMax.y - glyph.planeBoundsMin.y) * fontSize + 2.0F * padPx
@@ -446,7 +447,7 @@ namespace ui {
 	}
 
 	const FontRenderer::WrappedTextResult&
-	FontRenderer::wrapText(const std::string& text, float scale, float maxWidth, Renderer::FontFamily family) const {
+	FontRenderer::wrapText(const std::string& text, float scale, float maxWidth, FontFamily family) const {
 		// Check cache first
 		WrapCacheKey key{family, text, scale, maxWidth};
 		auto		 cacheIt = wrappedTextCache.find(key);
@@ -575,8 +576,7 @@ namespace ui {
 		return wrappedTextCache[key].result;
 	}
 
-	glm::vec2
-	FontRenderer::measureTextWithWrapping(const std::string& text, float scale, float maxWidth, Renderer::FontFamily family) const {
+	glm::vec2 FontRenderer::measureTextWithWrapping(const std::string& text, float scale, float maxWidth, FontFamily family) const {
 		if (maxWidth <= 0.0F) {
 			// No wrapping - use simple measurement
 			return MeasureText(text, scale, family);
@@ -595,7 +595,7 @@ namespace ui {
 		Foundation::HorizontalAlign		hAlign,
 		float							containerWidth,
 		std::vector<GlyphQuad>&			outQuads,
-		Renderer::FontFamily			family
+		FontFamily						family
 	) const {
 		float currentY = position.y;
 
@@ -629,7 +629,7 @@ namespace ui {
 		}
 	}
 
-	GLuint FontRenderer::getAtlasTexture(Renderer::FontFamily family) const {
+	GLuint FontRenderer::getAtlasTexture(FontFamily family) const {
 		return atlasFor(family).texture;
 	}
 
@@ -647,4 +647,4 @@ namespace ui {
 		return glyphQuadCache.size();
 	}
 
-} // namespace ui
+} // namespace Renderer

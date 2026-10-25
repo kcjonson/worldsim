@@ -558,7 +558,7 @@ namespace UI {
 		}
 
 		// Get font renderer for metrics and glyph generation
-		ui::FontRenderer* fontRenderer = Renderer::Primitives::getFontRenderer();
+		Renderer::FontRenderer* fontRenderer = Renderer::Primitives::getFontRenderer();
 		if (fontRenderer == nullptr) {
 			return;
 		}
@@ -575,8 +575,8 @@ namespace UI {
 		float baselineY = position.y + (size.y - ascent) * 0.5F;
 
 		// Generate glyph quads using FontRenderer
-		glm::vec4								 glyphColor(style.textColor.r, style.textColor.g, style.textColor.b, style.textColor.a);
-		std::vector<ui::FontRenderer::GlyphQuad> glyphs;
+		glm::vec4 glyphColor(style.textColor.r, style.textColor.g, style.textColor.b, style.textColor.a);
+		std::vector<Renderer::FontRenderer::GlyphQuad> glyphs;
 		fontRenderer->generateGlyphQuads(text, glm::vec2(textX, baselineY), scale, glyphColor, glyphs, fontUi);
 
 		// Add each glyph to the unified batch renderer
@@ -636,7 +636,7 @@ namespace UI {
 		size_t end = selection->getMax();
 
 		// Get FontRenderer for text measurement
-		ui::FontRenderer* fontRenderer = Renderer::Primitives::getFontRenderer();
+		Renderer::FontRenderer* fontRenderer = Renderer::Primitives::getFontRenderer();
 		if (fontRenderer == nullptr) {
 			return;
 		}
@@ -683,7 +683,7 @@ namespace UI {
 		}
 
 		// Get font renderer for metrics and glyph generation
-		ui::FontRenderer* fontRenderer = Renderer::Primitives::getFontRenderer();
+		Renderer::FontRenderer* fontRenderer = Renderer::Primitives::getFontRenderer();
 		if (fontRenderer == nullptr) {
 			return;
 		}
@@ -701,7 +701,7 @@ namespace UI {
 
 		// Generate glyph quads using FontRenderer
 		glm::vec4 glyphColor(style.placeholderColor.r, style.placeholderColor.g, style.placeholderColor.b, style.placeholderColor.a);
-		std::vector<ui::FontRenderer::GlyphQuad> glyphs;
+		std::vector<Renderer::FontRenderer::GlyphQuad> glyphs;
 		fontRenderer->generateGlyphQuads(placeholder, glm::vec2(textX, baselineY), scale, glyphColor, glyphs, fontUi);
 
 		// Add each glyph to the unified batch renderer
@@ -732,8 +732,8 @@ namespace UI {
 		// Convert fontSize to scale (kBaseFontSize = 1.0 scale)
 		float scale = style.fontSize / kBaseFontSize;
 
-		ui::FontRenderer* fontRenderer = Renderer::Primitives::getFontRenderer();
-		float			  width = fontRenderer ? fontRenderer->MeasureText(textBeforeCursor, scale, fontUi).x : 0.0F;
+		Renderer::FontRenderer* fontRenderer = Renderer::Primitives::getFontRenderer();
+		float					width = fontRenderer ? fontRenderer->MeasureText(textBeforeCursor, scale, fontUi).x : 0.0F;
 
 		// Account for padding and scroll
 		return position.x + style.paddingLeft + width - horizontalScroll;
@@ -750,7 +750,7 @@ namespace UI {
 		float scale = style.fontSize / kBaseFontSize;
 
 		// Check each character boundary
-		ui::FontRenderer* fontRenderer = Renderer::Primitives::getFontRenderer();
+		Renderer::FontRenderer* fontRenderer = Renderer::Primitives::getFontRenderer();
 		for (size_t i = 0; i <= text.size();) {
 			std::string textUpToPos = text.substr(0, i);
 			float		width = fontRenderer ? fontRenderer->MeasureText(textUpToPos, scale, fontUi).x : 0.0F;
@@ -790,8 +790,8 @@ namespace UI {
 		// Convert fontSize to scale (kBaseFontSize = 1.0 scale)
 		float scale = style.fontSize / kBaseFontSize;
 
-		ui::FontRenderer* fontRenderer = Renderer::Primitives::getFontRenderer();
-		float			  textWidth = fontRenderer ? fontRenderer->MeasureText(text, scale, fontUi).x : 0.0F;
+		Renderer::FontRenderer* fontRenderer = Renderer::Primitives::getFontRenderer();
+		float					textWidth = fontRenderer ? fontRenderer->MeasureText(text, scale, fontUi).x : 0.0F;
 		if (textWidth < visibleWidth) {
 			horizontalScroll = 0.0F; // No scroll needed
 		} else {
