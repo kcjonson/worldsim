@@ -48,7 +48,6 @@ target_link_libraries(ui
         foundation
         renderer
         engine
-        httplib::httplib
         nlohmann_json::nlohmann_json
 )
 
