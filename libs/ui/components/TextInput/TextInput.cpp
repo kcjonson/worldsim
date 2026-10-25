@@ -734,7 +734,7 @@ namespace UI {
 		float scale = style.fontSize / kBaseFontSize;
 
 		Renderer::FontRenderer* fontRenderer = Renderer::Primitives::getFontRenderer();
-		float			  width = fontRenderer ? fontRenderer->MeasureText(textBeforeCursor, scale, fontUi).x : 0.0F;
+		float					width = fontRenderer ? fontRenderer->MeasureText(textBeforeCursor, scale, fontUi).x : 0.0F;
 
 		// Account for padding and scroll
 		return position.x + style.paddingLeft + width - horizontalScroll;
@@ -792,7 +792,7 @@ namespace UI {
 		float scale = style.fontSize / kBaseFontSize;
 
 		Renderer::FontRenderer* fontRenderer = Renderer::Primitives::getFontRenderer();
-		float			  textWidth = fontRenderer ? fontRenderer->MeasureText(text, scale, fontUi).x : 0.0F;
+		float					textWidth = fontRenderer ? fontRenderer->MeasureText(text, scale, fontUi).x : 0.0F;
 		if (textWidth < visibleWidth) {
 			horizontalScroll = 0.0F; // No scroll needed
 		} else {

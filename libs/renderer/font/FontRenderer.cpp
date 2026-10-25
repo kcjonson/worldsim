@@ -13,7 +13,7 @@ namespace Renderer {
 
 	namespace {
 		// Atlas file basenames per FontFamily, indexed by static_cast<int>(family).
-		// Order must match the FontFamily enum in libs/renderer.
+		// Order must match the FontFamily enum in primitives/FontFamily.h.
 		constexpr const char* kAtlasBaseNames[kFontFamilyCount] = {
 			"Roboto-SDF",		// FontFamily::Roboto
 			"ChakraPetch-SDF",	// FontFamily::ChakraPetch

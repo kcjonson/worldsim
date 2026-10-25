@@ -24,7 +24,7 @@ This violates the principle that **all rendering should go through the batched P
 
 ## Current Architecture
 
-### FontRenderer (libs/ui/font/)
+### FontRenderer (libs/renderer/font/)
 - Uses FreeType to load font glyphs
 - Stores glyphs in a texture atlas
 - Renders text using immediate OpenGL calls:
@@ -55,7 +55,7 @@ This violates the principle that **all rendering should go through the batched P
 ### Text Component (libs/ui/shapes/shapes.cpp)
 ```cpp
 void Text::Render() const {
-    ui::FontRenderer* fontRenderer = Renderer::Primitives::GetFontRenderer();
+    Renderer::FontRenderer* fontRenderer = Renderer::Primitives::GetFontRenderer();
     fontRenderer->RenderText(text, position, scale, color);  // ← Immediate rendering!
 }
 ```
@@ -111,7 +111,7 @@ namespace Renderer::Primitives {
 
     namespace {
         std::vector<DrawCommand> g_commandQueue;
-        ui::FontRenderer* g_fontRenderer = nullptr;
+        Renderer::FontRenderer* g_fontRenderer = nullptr;
     }
 }
 ```
@@ -522,6 +522,6 @@ void Text::Render() const {
 ## Related Documents
 
 - [Primitives API](/libs/renderer/primitives/primitives.h) - Current batching implementation
-- [FontRenderer](/libs/ui/font/font_renderer.h) - Current text rendering
+- [FontRenderer](/libs/renderer/font/FontRenderer.h) - Current text rendering
 - [Text Component](/libs/ui/shapes/shapes.h) - Text shape definition
 - [UI Framework Architecture](./architecture.md) - Overall UI design

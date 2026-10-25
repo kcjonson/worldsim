@@ -3,13 +3,13 @@
 
 #include "primitives/Primitives.h"
 #include "CoordinateSystem/CoordinateSystem.h"
+#include "font/FontRenderer.h"
 #include "graphics/ClipTypes.h"
 #include "primitives/BatchRenderer.h"
 #include <GL/glew.h>
 #include <algorithm>
 #include <cctype>
 #include <cmath>
-#include <font/FontRenderer.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <memory>
 #include <numbers>
