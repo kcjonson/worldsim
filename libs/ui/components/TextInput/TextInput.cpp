@@ -1,4 +1,5 @@
 #include "components/TextInput/TextInput.h"
+#include "clipboard/IClipboard.h"
 #include "core/RenderContext.h"
 #include "focus/FocusManager.h"
 #include "font/FontRenderer.h"
@@ -6,11 +7,8 @@
 #include "theme/Variants.h"
 #include "utils/Utf8.h"
 #include <algorithm>
-#include <clipboard/ClipboardManager.h>
 #include <primitives/BatchRenderer.h>
 #include <primitives/Primitives.h>
-
-// Note: FocusManager.h is still included for FocusManager::Get().setFocus(this) in handleEvent
 
 namespace {
 	// Base font size for scale calculations (matches SDF atlas generation)
@@ -456,7 +454,7 @@ namespace UI {
 			return;
 		}
 
-		engine::ClipboardManager::Get().setText(selectedText);
+		IClipboard::Get().setText(selectedText);
 	}
 
 	void TextInput::cut() {
@@ -466,7 +464,7 @@ namespace UI {
 		}
 
 		// Copy to clipboard
-		engine::ClipboardManager::Get().setText(selectedText);
+		IClipboard::Get().setText(selectedText);
 
 		// Delete selection
 		deleteSelection();
@@ -474,7 +472,7 @@ namespace UI {
 
 	void TextInput::paste() {
 		// Get clipboard text
-		std::string pasteText = engine::ClipboardManager::Get().getText();
+		std::string pasteText = IClipboard::Get().getText();
 		if (pasteText.empty()) {
 			return;
 		}

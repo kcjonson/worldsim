@@ -21,6 +21,7 @@ add_library(ui
     components/contextmenu/ContextMenu.cpp
     debug/UiTreeSerializer.cpp
     debug/LayoutLint.cpp
+    clipboard/IClipboard.cpp
     focus/FocusManager.cpp
     input/InputEvent.cpp
     layout/LayoutContainer.cpp
