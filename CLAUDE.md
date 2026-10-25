@@ -220,6 +220,9 @@ If tests fail, fix the new code—don't revert to keeping both versions.
 - Headers (.h) and implementation (.cpp) side-by-side in same directory
 - Use `#pragma once` for header guards
 
+**Scripts and tooling:**
+- New scripts and tooling are Node (ESM, `.mjs`, no dependencies unless there is a `package.json` for them). No Python.
+
 **Naming:**
 - Classes/Structs/Enums: PascalCase (`Shader`, `TextureManager`)
 - Functions/Methods: camelCase (`loadTexture()`, `isValid()`)
