@@ -78,7 +78,6 @@ target_link_libraries(engine
         ui
         assets
         world
-        nlohmann_json::nlohmann_json
         glfw
 )
 
