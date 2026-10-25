@@ -7,7 +7,6 @@
 #include "theme/Variants.h"
 
 #include <font/FontRenderer.h>
-#include <input/InputManager.h>
 #include <input/InputTypes.h>
 #include <primitives/Primitives.h>
 
