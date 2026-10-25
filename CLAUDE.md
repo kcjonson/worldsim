@@ -221,8 +221,9 @@ If tests fail, fix the new code—don't revert to keeping both versions.
 - Use `#pragma once` for header guards
 
 **Naming:**
-- Classes/Functions: PascalCase (`Shader`, `LoadTexture`)
-- Variables: camelCase (`frameCount`, `deltaTime`)
+- Classes/Structs/Enums: PascalCase (`Shader`, `TextureManager`)
+- Functions/Methods: camelCase (`loadTexture()`, `isValid()`)
+- Variables/Members: camelCase, no prefix (`frameCount`, `deltaTime`)
 - Constants: `k` prefix (`kMaxTextures`)
 
 **Terminology:**
