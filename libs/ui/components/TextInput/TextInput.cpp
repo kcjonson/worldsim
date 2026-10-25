@@ -10,8 +10,6 @@
 #include <primitives/BatchRenderer.h>
 #include <primitives/Primitives.h>
 
-// Note: FocusManager.h is still included for FocusManager::Get().setFocus(this) in handleEvent
-
 namespace {
 	// Base font size for scale calculations (matches SDF atlas generation)
 	constexpr float kBaseFontSize = 16.0F;

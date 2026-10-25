@@ -55,6 +55,7 @@ namespace UI {
 		TextInput input(TextInput::Args{.text = "hello"});
 		input.onFocusGained();
 
+		ASSERT_FALSE(input.selection.has_value());
 		press(input, engine::Key::C);
 
 		EXPECT_EQ(clipboard.setCount, 0);
