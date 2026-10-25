@@ -645,6 +645,7 @@ while (running) {
 - [x] De-hand-roll the dialog lists: new `ListRow` primitive; CraftingDialog recipe list (#187) and StorageConfigDialog item/category list (#188) rebuilt on it. No hand-rolled selectable lists or hardcoded washes remain; the colonist dossier + tabs were already composed.
 - [x] Optional polish: full prototype-fidelity pass on the dialogs (tabbed dossier treatment, footers) — done in the Game UI to Prototype Polish epic
 - [x] Re-wire or delete the orphaned per-colonist `TaskListView` — resolved 2026-06-29: it is the task-arbitration decision inspector, opened via the `T` hotkey (not orphaned)
+- [ ] Untangle ui from engine and move FontRenderer into renderer, ahead of the salal extraction (PRs #292/#293/#294 open; tracked in Specboard)
 
 ### Fluvial Erosion (worldgen)
 **Spec/Documentation:** `.claude/plans/erosion.md`, `/docs/development-log/entries/2026-06-15-worldgen-fluvial-erosion.md`
