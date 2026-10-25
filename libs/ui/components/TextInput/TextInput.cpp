@@ -7,7 +7,6 @@
 #include "utils/Utf8.h"
 #include <algorithm>
 #include <clipboard/ClipboardManager.h>
-#include <input/InputManager.h>
 #include <primitives/BatchRenderer.h>
 #include <primitives/Primitives.h>
 
