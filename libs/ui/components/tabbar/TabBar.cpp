@@ -331,8 +331,8 @@ namespace UI {
 
 		// Per-tab width: measured label (display font, fs_sm scale, ls_wide spacing)
 		// plus space_3 of padding on each side.
-		const float			scale = textScale(kLabelPx);
-		ui::FontRenderer*	fontRenderer = Renderer::Primitives::getFontRenderer();
+		const float				scale = textScale(kLabelPx);
+		Renderer::FontRenderer* fontRenderer = Renderer::Primitives::getFontRenderer();
 
 		float currentOffset = 0.0F;
 		for (const Tab& tab : m_tabs) {

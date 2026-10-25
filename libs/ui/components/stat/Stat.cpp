@@ -30,7 +30,7 @@ namespace UI {
 		}
 
 		float measureWidth(const std::string& text, float scale, Renderer::FontFamily family) {
-			if (const ui::FontRenderer* font = Renderer::Primitives::getFontRenderer(); font != nullptr) {
+			if (const Renderer::FontRenderer* font = Renderer::Primitives::getFontRenderer(); font != nullptr) {
 				return font->MeasureText(text, scale, family).x;
 			}
 			return 0.0F;

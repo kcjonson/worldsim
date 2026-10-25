@@ -20,7 +20,7 @@ namespace UI {
 		float textScale(float sizePx) { return sizePx / kTextBasePx; }
 
 		float measureWidth(const std::string& text, float scale, float letterSpacing) {
-			if (const ui::FontRenderer* font = Renderer::Primitives::getFontRenderer(); font != nullptr) {
+			if (const Renderer::FontRenderer* font = Renderer::Primitives::getFontRenderer(); font != nullptr) {
 				return font->MeasureText(text, scale, fontMono, letterSpacing).x;
 			}
 			return 0.0F;

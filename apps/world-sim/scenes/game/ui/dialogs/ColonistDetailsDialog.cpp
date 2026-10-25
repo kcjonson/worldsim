@@ -20,7 +20,7 @@ namespace world_sim {
 		constexpr float kBtnGap	   = 8.0F;
 
 		float textWidth(const std::string& text, float fontPx, Renderer::FontFamily font) {
-			if (const ui::FontRenderer* fonts = Renderer::Primitives::getFontRenderer(); fonts != nullptr) {
+			if (const Renderer::FontRenderer* fonts = Renderer::Primitives::getFontRenderer(); fonts != nullptr) {
 				return fonts->MeasureText(text, fontPx / 16.0F, font, fontPx * UI::ls_wide).x;
 			}
 			return static_cast<float>(text.size()) * fontPx * 0.6F;

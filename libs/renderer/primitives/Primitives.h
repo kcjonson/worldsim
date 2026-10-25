@@ -28,15 +28,8 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 	class Renderer;
 	class CoordinateSystem;
 	class BatchRenderer;
-
-} // namespace Renderer
-
-// Forward declaration from ui namespace
-namespace ui {
 	class FontRenderer;
-}
 
-namespace Renderer {
 	namespace Primitives { // NOLINT(readability-identifier-naming)
 
 		// --- Initialization ---
@@ -60,17 +53,16 @@ namespace Renderer {
 		// Set the font renderer for text rendering.
 		//
 		// This function stores a FontRenderer instance that Text shapes can retrieve
-		// and use for rendering. This dependency injection pattern avoids circular
-		// dependencies between the renderer and ui libraries.
+		// and use for rendering. The application owns the instance and its lifetime.
 		//
 		// Should be called during application initialization if text rendering is needed.
 		// Pass nullptr to disable text rendering.
 		//
 		// Example:
-		//   auto fontRenderer = std::make_unique<ui::FontRenderer>();
+		//   auto fontRenderer = std::make_unique<Renderer::FontRenderer>();
 		//   fontRenderer->Initialize();
 		//   Renderer::Primitives::setFontRenderer(fontRenderer.get());
-		void setFontRenderer(ui::FontRenderer* fontRenderer);
+		void setFontRenderer(FontRenderer* fontRenderer);
 
 		// Get the current font renderer instance.
 		//
@@ -79,7 +71,7 @@ namespace Renderer {
 		// to access font rendering capabilities.
 		//
 		// Returns: Pointer to FontRenderer, or nullptr if not set
-		ui::FontRenderer* getFontRenderer();
+		FontRenderer* getFontRenderer();
 
 		// Set the font atlas texture for text rendering.
 		//
@@ -110,8 +102,8 @@ namespace Renderer {
 
 		// Set a callback to update frame counter for FontRenderer cache LRU tracking.
 		//
-		// This allows the ui library to register FontRenderer::updateFrame() without
-		// creating a circular dependency (renderer → ui → renderer).
+		// The application registers FontRenderer::updateFrame() here when it creates
+		// the font renderer.
 		//
 		// The callback will be invoked by BeginFrame() before rendering.
 		using FrameUpdateCallback = void (*)();

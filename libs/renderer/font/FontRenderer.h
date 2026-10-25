@@ -14,7 +14,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace ui {
+namespace Renderer { // NOLINT(readability-identifier-naming)
 
 	/**
 	 * Configuration constants for FontRenderer performance tuning
@@ -56,12 +56,8 @@ namespace ui {
 		 * @param letterSpacing Extra px between glyphs (CSS letter-spacing); 0 = none
 		 * @return Width and height of the text in pixels
 		 */
-		glm::vec2 MeasureText(
-			const std::string&	 text,
-			float				 scale = 1.0F,
-			Renderer::FontFamily family = Renderer::FontFamily::Roboto,
-			float				 letterSpacing = 0.0F
-		) const;
+		glm::vec2
+		MeasureText(const std::string& text, float scale = 1.0F, FontFamily family = FontFamily::Roboto, float letterSpacing = 0.0F) const;
 
 		/**
 		 * Get the maximum glyph height scaled by the given factor
@@ -69,7 +65,7 @@ namespace ui {
 		 * @param family Font family to query (default Roboto)
 		 * @return Height of the tallest glyph in the font at the given scale
 		 */
-		float getMaxGlyphHeight(float scale = 1.0F, Renderer::FontFamily family = Renderer::FontFamily::Roboto) const;
+		float getMaxGlyphHeight(float scale = 1.0F, FontFamily family = FontFamily::Roboto) const;
 
 		/**
 		 * Get the font's ascent (distance from baseline to top) scaled by the given factor
@@ -77,7 +73,7 @@ namespace ui {
 		 * @param family Font family to query (default Roboto)
 		 * @return Font ascent at the given scale
 		 */
-		float getAscent(float scale = 1.0F, Renderer::FontFamily family = Renderer::FontFamily::Roboto) const;
+		float getAscent(float scale = 1.0F, FontFamily family = FontFamily::Roboto) const;
 
 		/**
 		 * Glyph quad data for batched text rendering
@@ -117,7 +113,7 @@ namespace ui {
 			float					scale,
 			const glm::vec4&		color,
 			std::vector<GlyphQuad>& outQuads,
-			Renderer::FontFamily	family = Renderer::FontFamily::Roboto,
+			FontFamily				family = FontFamily::Roboto,
 			float					letterSpacing = 0.0F
 		) const;
 
@@ -132,7 +128,7 @@ namespace ui {
 		 * @return Cached reference to wrapped result (lines, dimensions)
 		 */
 		const WrappedTextResult&
-		wrapText(const std::string& text, float scale, float maxWidth, Renderer::FontFamily family = Renderer::FontFamily::Roboto) const;
+		wrapText(const std::string& text, float scale, float maxWidth, FontFamily family = FontFamily::Roboto) const;
 
 		/**
 		 * Measure text with optional wrapping
@@ -142,12 +138,8 @@ namespace ui {
 		 * @param family Font family used for glyph metrics (default Roboto)
 		 * @return Width and height of the text block in pixels
 		 */
-		glm::vec2 measureTextWithWrapping(
-			const std::string&	 text,
-			float				 scale,
-			float				 maxWidth,
-			Renderer::FontFamily family = Renderer::FontFamily::Roboto
-		) const;
+		glm::vec2
+		measureTextWithWrapping(const std::string& text, float scale, float maxWidth, FontFamily family = FontFamily::Roboto) const;
 
 		/**
 		 * Generate glyph quads for wrapped/multi-line text
@@ -169,7 +161,7 @@ namespace ui {
 			Foundation::HorizontalAlign		hAlign,
 			float							containerWidth,
 			std::vector<GlyphQuad>&			outQuads,
-			Renderer::FontFamily			family = Renderer::FontFamily::Roboto
+			FontFamily						family = FontFamily::Roboto
 		) const;
 
 		/**
@@ -177,7 +169,7 @@ namespace ui {
 		 * @param family Font family whose atlas texture to return (default Roboto)
 		 * @return OpenGL texture ID
 		 */
-		GLuint getAtlasTexture(Renderer::FontFamily family = Renderer::FontFamily::Roboto) const;
+		GLuint getAtlasTexture(FontFamily family = FontFamily::Roboto) const;
 
 		/**
 		 * Update the internal frame counter for cache LRU tracking
@@ -249,16 +241,16 @@ namespace ui {
 		 * Resolve a family to its atlas, falling back to Roboto if the requested
 		 * family failed to load. Roboto is always present (fatal if it isn't).
 		 */
-		const Atlas& atlasFor(Renderer::FontFamily family) const;
+		const Atlas& atlasFor(FontFamily family) const;
 
 		/**
 		 * Cache key for glyph quad caching (family + text + scale + letterSpacing)
 		 */
 		struct CacheKey {
-			Renderer::FontFamily family;
-			std::string			 text;
-			float				 scale;
-			float				 letterSpacing;
+			FontFamily	family;
+			std::string text;
+			float		scale;
+			float		letterSpacing;
 
 			bool operator==(const CacheKey& other) const {
 				return family == other.family && text == other.text && std::abs(scale - other.scale) < 0.001F &&
@@ -288,7 +280,7 @@ namespace ui {
 		};
 
 		// One atlas per FontFamily, indexed by static_cast<int>(family).
-		std::array<Atlas, Renderer::kFontFamilyCount> atlases;
+		std::array<Atlas, kFontFamilyCount> atlases;
 
 		// Glyph quad cache (mutable for const GenerateGlyphQuads)
 		mutable std::unordered_map<CacheKey, CacheEntry, CacheKeyHash> glyphQuadCache;
@@ -298,10 +290,10 @@ namespace ui {
 		 * Cache key for text wrapping (text + scale + wrap width)
 		 */
 		struct WrapCacheKey {
-			Renderer::FontFamily family;
-			std::string			 text;
-			float				 scale;
-			float				 wrapWidth;
+			FontFamily	family;
+			std::string text;
+			float		scale;
+			float		wrapWidth;
 
 			bool operator==(const WrapCacheKey& other) const {
 				return family == other.family && text == other.text && std::abs(scale - other.scale) < 0.001F &&
@@ -340,4 +332,4 @@ namespace ui {
 		mutable std::unordered_map<WrapCacheKey, WrapCacheEntry, WrapCacheKeyHash> wrappedTextCache;
 	};
 
-} // namespace ui
+} // namespace Renderer

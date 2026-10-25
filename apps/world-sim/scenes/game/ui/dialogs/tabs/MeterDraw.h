@@ -27,7 +27,7 @@ inline void drawText(const std::string& text, Foundation::Vec2 pos, float fontSi
 
 // Measure text width in pixels (0 if no font renderer is available).
 inline float measureText(const std::string& text, float fontSize, Renderer::FontFamily font = UI::fontUi, float letterSpacing = 0.0F) {
-	if (const ui::FontRenderer* fonts = Renderer::Primitives::getFontRenderer(); fonts != nullptr) {
+	if (const Renderer::FontRenderer* fonts = Renderer::Primitives::getFontRenderer(); fonts != nullptr) {
 		return fonts->MeasureText(text, fontSize / 16.0F, font, letterSpacing).x;
 	}
 	return 0.0F;
@@ -40,7 +40,7 @@ inline constexpr float kWrapLineGap		 = 4.0F; // added to fontSize for line heig
 
 // Number of lines `text` wraps into at maxWidth (always >= 1).
 inline int wrappedLineCount(const std::string& text, float fontSize, float maxWidth, Renderer::FontFamily font = UI::fontUi) {
-	const ui::FontRenderer* fonts = Renderer::Primitives::getFontRenderer();
+	const Renderer::FontRenderer* fonts = Renderer::Primitives::getFontRenderer();
 	if (fonts == nullptr || text.empty()) return 1;
 	int			lines = 0;
 	std::string line;
@@ -65,7 +65,7 @@ inline int wrappedLineCount(const std::string& text, float fontSize, float maxWi
 // Word-wrap text to maxWidth, drawing each line; returns the y past the last line.
 inline float drawWrapped(const std::string& text, Foundation::Vec2 pos, float fontSize, float maxWidth, const Foundation::Color& color, Renderer::FontFamily font = UI::fontUi) {
 	const float lineH = fontSize + kWrapLineGap;
-	const ui::FontRenderer* fonts = Renderer::Primitives::getFontRenderer();
+	const Renderer::FontRenderer* fonts = Renderer::Primitives::getFontRenderer();
 	if (fonts == nullptr || text.empty()) {
 		drawText(text, pos, fontSize, color, font);
 		return pos.y + lineH;

@@ -25,7 +25,7 @@ namespace Renderer::Primitives {
 	// Internal state
 	static std::unique_ptr<BatchRenderer> g_batchRenderer = nullptr;
 	static CoordinateSystem*			  g_coordinateSystem = nullptr;
-	static ui::FontRenderer*			  g_fontRenderer = nullptr;
+	static FontRenderer*				  g_fontRenderer = nullptr;
 	static FrameUpdateCallback			  g_frameUpdateCallback = nullptr;
 	static unsigned int					  g_tileAtlasTexture = 0;
 	static std::vector<glm::vec4>		  g_tileAtlasRects;
@@ -68,11 +68,11 @@ namespace Renderer::Primitives {
 		}
 	}
 
-	void setFontRenderer(ui::FontRenderer* fontRenderer) {
+	void setFontRenderer(FontRenderer* fontRenderer) {
 		g_fontRenderer = fontRenderer;
 	}
 
-	ui::FontRenderer* getFontRenderer() {
+	FontRenderer* getFontRenderer() {
 		return g_fontRenderer;
 	}
 
@@ -379,7 +379,7 @@ namespace Renderer::Primitives {
 		// and the main text so text-shadow is a single inline property, not a
 		// caller-side double draw).
 		const auto emit = [&](Foundation::Vec2 pos, const Foundation::Color& col) {
-			std::vector<ui::FontRenderer::GlyphQuad> quads;
+			std::vector<FontRenderer::GlyphQuad> quads;
 			g_fontRenderer->generateGlyphQuads(
 				effective, glm::vec2(pos.x, pos.y), args.scale, glm::vec4(col.r, col.g, col.b, col.a), quads, args.font, args.letterSpacing
 			);

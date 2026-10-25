@@ -218,7 +218,7 @@ void RegionMinimapPanel::renderCoordLabel(const Foundation::Rect& body) const {
 	using Renderer::Primitives::drawCircle;
 	using Renderer::Primitives::drawText;
 
-	const ui::FontRenderer* fr = Renderer::Primitives::getFontRenderer();
+	const Renderer::FontRenderer* fr = Renderer::Primitives::getFontRenderer();
 	auto measure = [&](const std::string& s) -> float {
 		if (fr != nullptr) {
 			return fr->MeasureText(s, textScale(UI::fs_2xs), UI::fontMono, 0.0F).x;

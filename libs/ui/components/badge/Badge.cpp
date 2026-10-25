@@ -30,7 +30,7 @@ namespace UI {
 
 	float Badge::MeasureWidth(const std::string& label, bool dot) {
 		float labelWidth = 0.0F;
-		if (const ui::FontRenderer* font = Renderer::Primitives::getFontRenderer(); font != nullptr) {
+		if (const Renderer::FontRenderer* font = Renderer::Primitives::getFontRenderer(); font != nullptr) {
 			labelWidth = font->MeasureText(label, textScale(fs_2xs), fontMono, fs_2xs * ls_wider).x;
 		}
 		const float dotSpace = dot ? (kDotDiameter + kDotGap) : 0.0F;
