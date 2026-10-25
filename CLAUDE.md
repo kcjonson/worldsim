@@ -17,7 +17,7 @@ Project management lives in **Specboard** (board: Worldsim), over the Specboard 
 
 The outcome of a planning session is an **epic with an attached requirements doc** (linked via the epic's spec doc path), not code. Plan, write the spec, create and link the epic, then implement in a later pass.
 
-File bugs and chores directly as you hit them. Full workflow: `~/.claude/commands/whats-next.md`.
+File bugs and chores directly as you hit them. Full workflow: the `specboard:whats-next` plugin skill; personal preferences in the claude-config repo's `specboard.md`.
 
 **Transition:** `/docs/status.md` is still the live checklist and is maintained in parallel until the Specboard ingest is verified. Don't drop it yet — Specboard is becoming the source of truth, but both run for now.
 
