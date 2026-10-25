@@ -59,7 +59,7 @@ Applications:
 | [Build & Test Performance](./build-performance.md) | Ninja + ccache/sccache, path-gated heavy tests, CI caching |
 | [C++ Coding Standards](./cpp-coding-standards.md) | Style guide and best practices |
 | [Technical Notes](./technical-notes.md) | Research notes, open questions |
-| [Include Graph](./include-graph.md) | Per-library #include matrix, layering violations, and the `tools/resolve_includes.py` resolver |
+| [Include Graph](./include-graph.md) | Per-library #include matrix, layering violations, and the `tools/resolve-includes.mjs` resolver |
 
 ### Engine Patterns
 

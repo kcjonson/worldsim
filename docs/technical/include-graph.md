@@ -1,6 +1,6 @@
 # Include graph
 
-`tools/resolve_includes.py` resolves every `#include` under `libs/` and prints a per-library matrix of include counts. It exists to measure layering drift without building anything.
+`tools/resolve-includes.mjs` resolves every `#include` under `libs/` and prints a per-library matrix of include counts. It exists to measure layering drift without building anything.
 
 ## What it measures
 
@@ -13,8 +13,8 @@ The layering it enforces is foundation at the bottom; geometry and renderer abov
 ## Running it
 
 ```
-python -I tools/resolve_includes.py
-python -I tools/resolve_includes.py --root path/to/another/checkout
+node tools/resolve-includes.mjs
+node tools/resolve-includes.mjs --root path/to/another/checkout
 ```
 
 `--root` defaults to the repo the script lives in.
