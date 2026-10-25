@@ -41,7 +41,7 @@ namespace engine {
 
 		// Create and initialize ClipboardManager
 		clipboardManager = std::make_unique<ClipboardManager>(window);
-		ClipboardManager::setInstance(clipboardManager.get());
+		UI::IClipboard::setInstance(clipboardManager.get());
 		LOG_INFO(Engine, "Application initialized with ClipboardManager");
 
 		// Create and initialize FocusManager

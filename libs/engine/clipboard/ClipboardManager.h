@@ -1,46 +1,33 @@
 #pragma once
 
+#include <clipboard/IClipboard.h>
+
 #include <GLFW/glfw3.h>
+
 #include <string>
 
 namespace engine {
 
-/**
- * ClipboardManager
- *
- * Centralized clipboard handling system that abstracts platform clipboard access.
- * Uses singleton pattern for global access (like InputManager).
- *
- * Responsibilities:
- * - Provide platform-agnostic clipboard get/set API
- * - Abstract GLFW clipboard calls
- */
-class ClipboardManager {
-  public:
-	// Singleton access
-	static ClipboardManager& Get();
-	static void setInstance(ClipboardManager* instance);
+	/**
+	 * ClipboardManager
+	 *
+	 * GLFW-backed UI::IClipboard. Owned by Application, which registers it via
+	 * UI::IClipboard::setInstance().
+	 */
+	class ClipboardManager final : public UI::IClipboard {
+	  public:
+		explicit ClipboardManager(GLFWwindow* window);
 
-	explicit ClipboardManager(GLFWwindow* window);
-	~ClipboardManager();
+		ClipboardManager(const ClipboardManager&) = delete;
+		ClipboardManager& operator=(const ClipboardManager&) = delete;
+		ClipboardManager(ClipboardManager&&) = delete;
+		ClipboardManager& operator=(ClipboardManager&&) = delete;
 
-	// Disable copy/move
-	ClipboardManager(const ClipboardManager&) = delete;
-	ClipboardManager& operator=(const ClipboardManager&) = delete;
-	ClipboardManager(ClipboardManager&&) = delete;
-	ClipboardManager& operator=(ClipboardManager&&) = delete;
+		std::string getText() const override;
+		void		setText(const std::string& text) override;
 
-	// Clipboard API
-	std::string getText() const;
-	void setText(const std::string& text);
-	bool hasText() const;
-
-  private:
-	// Singleton instance pointer
-	static ClipboardManager* s_instance;
-
-	// GLFW window reference for clipboard access
-	GLFWwindow* window;
-};
+	  private:
+		GLFWwindow* window;
+	};
 
 } // namespace engine
