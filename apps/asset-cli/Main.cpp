@@ -9,6 +9,7 @@
 #include "assets/AssetRenderer.h"
 #include "assets/AssetValidator.h"
 
+#include "backend/gl/GLBackend.h"
 #include "graphics/Color.h"
 #include "primitives/Primitives.h"
 #include "utils/Log.h"
@@ -145,13 +146,6 @@ namespace {
 			return false;
 		}
 		glfwMakeContextCurrent(g_window);
-		glewExperimental = GL_TRUE;
-		if (glewInit() != GLEW_OK) {
-			glfwDestroyWindow(g_window);
-			glfwTerminate();
-			g_window = nullptr;
-			return false;
-		}
 		// Fail loudly if the uber shader isn't reachable, rather than letting the
 		// render silently produce a blank (shader-less) image.
 		if (Foundation::findResourceString("shaders/uber.vert").empty()) {
@@ -161,7 +155,15 @@ namespace {
 			g_window = nullptr;
 			return false;
 		}
-		Renderer::Primitives::init(nullptr);
+		// The renderer's GL backend initialises GLEW on this context
+		std::unique_ptr<Renderer::backend::gl::GLBackend> backend = Renderer::backend::gl::GLBackend::create();
+		if (backend == nullptr) {
+			glfwDestroyWindow(g_window);
+			glfwTerminate();
+			g_window = nullptr;
+			return false;
+		}
+		Renderer::Primitives::init(std::move(backend));
 		return true;
 	}
 

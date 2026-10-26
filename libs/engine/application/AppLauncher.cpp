@@ -5,6 +5,7 @@
 #include "Application.h"
 
 #include <CoordinateSystem/CoordinateSystem.h>
+#include <backend/gl/GLBackend.h>
 #include <debug/DebugServer.h>
 #include <font/FontRenderer.h>
 #include <input/InputEvent.h>
@@ -145,15 +146,6 @@ namespace engine {
 			glfwSetFramebufferSizeCallback(window, framebufferSizeCallback);
 			glfwSwapInterval(1);
 
-			glewExperimental = GL_TRUE;
-			GLenum err = glewInit();
-			if (err != GLEW_OK) {
-				LOG_ERROR(Engine, "Failed to initialize GLEW: %s", glewGetErrorString(err));
-				glfwDestroyWindow(window);
-				glfwTerminate();
-				return nullptr;
-			}
-
 			LOG_INFO(Renderer, "OpenGL Version: %s", glGetString(GL_VERSION));
 			LOG_INFO(Renderer, "GLSL Version: %s", glGetString(GL_SHADING_LANGUAGE_VERSION));
 
@@ -176,9 +168,14 @@ namespace engine {
 			g_coordinateSystem = &coordinateSystem;
 			coordinateSystem.setViewport({windowWidth, windowHeight, framebufferWidth, framebufferHeight});
 
-			// Initialize primitive rendering
+			// Initialize primitive rendering on the renderer's GL backend, which initialises GLEW
 			LOG_INFO(Renderer, "Initializing primitive rendering system");
-			Renderer::Primitives::init(nullptr);
+			std::unique_ptr<Renderer::backend::gl::GLBackend> backend = Renderer::backend::gl::GLBackend::create();
+			if (backend == nullptr) {
+				LOG_ERROR(Engine, "Failed to start the renderer's GL backend");
+				return false;
+			}
+			Renderer::Primitives::init(std::move(backend));
 			Renderer::Primitives::setCoordinateSystem(&coordinateSystem);
 			Renderer::Primitives::setViewport(framebufferWidth, framebufferHeight);
 

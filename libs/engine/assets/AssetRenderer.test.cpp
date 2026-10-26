@@ -4,6 +4,7 @@
 #include "assets/AssetRenderer.h"
 #include "assets/AssetRegistry.h"
 
+#include "backend/gl/GLBackend.h"
 #include "primitives/Primitives.h"
 
 #include <GL/glew.h>
@@ -77,18 +78,19 @@ namespace {
 				return;
 			}
 			glfwMakeContextCurrent(window);
-			glewExperimental = GL_TRUE;
-			if (glewInit() != GLEW_OK) {
-				glfwDestroyWindow(window);
-				glfwTerminate();
-				return;
-			}
 			if (!ensureShadersResolvable()) {
 				glfwDestroyWindow(window);
 				glfwTerminate();
 				return;
 			}
-			Renderer::Primitives::init(nullptr);
+			// The renderer's GL backend initialises GLEW on this context
+			std::unique_ptr<Renderer::backend::gl::GLBackend> backend = Renderer::backend::gl::GLBackend::create();
+			if (backend == nullptr) {
+				glfwDestroyWindow(window);
+				glfwTerminate();
+				return;
+			}
+			Renderer::Primitives::init(std::move(backend));
 			ok = true;
 		}
 
