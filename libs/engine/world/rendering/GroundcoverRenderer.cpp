@@ -5,28 +5,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <primitives/Primitives.h>
 #include <utility>
 #include <vector>
-#include <primitives/BatchRenderer.h>
-#include <primitives/Primitives.h>
 
 namespace engine::world {
 
 // --- Groundcover (grass) GPU-instanced path ---
-
-GroundcoverRenderer::~GroundcoverRenderer() {
-	auto* batchRenderer = Renderer::Primitives::getBatchRenderer();
-	if (batchRenderer != nullptr) {
-		for (auto& [defName, handles] : m_groundcoverHandles) {
-			for (auto& handle : handles) {
-				if (handle.isValid()) {
-					batchRenderer->releaseInstancedMesh(handle);
-				}
-			}
-		}
-	}
-	m_groundcoverHandles.clear();
-}
 
 void GroundcoverRenderer::evictLRU(const std::unordered_set<ChunkCoordinate>& processedChunks) {
 	if (m_groundcoverChunkCache.size() <= kMaxCachedChunks) {
@@ -63,16 +48,15 @@ const std::vector<Renderer::InstancedMeshHandle>& GroundcoverRenderer::ensureGro
 	// Generate the asset's variant tufts via the asset system (one buildMesh per seed) so the
 	// look lives entirely in the asset (grass.lua + params), not here.
 	std::vector<Renderer::InstancedMeshHandle> handles;
-	auto*									   batchRenderer = Renderer::Primitives::getBatchRenderer();
 	auto&									   registry = assets::AssetRegistry::Get();
 	const auto*								   def = registry.getDefinition(defName);
-	if (batchRenderer != nullptr && def != nullptr) {
+	if (def != nullptr) {
 		const uint32_t variantCount = std::max<uint32_t>(1, def->variantCount);
 		handles.reserve(variantCount);
 		for (uint32_t seed = 0; seed < variantCount; ++seed) {
 			renderer::TessellatedMesh mesh;
 			if (registry.buildMesh(defName, seed, mesh) && !mesh.vertices.empty()) {
-				handles.push_back(batchRenderer->uploadInstancedMesh(mesh, kGroundcoverMaxInstancesPerVariant));
+				handles.push_back(Renderer::Primitives::uploadInstancedMesh(mesh, kGroundcoverMaxInstancesPerVariant));
 			} else {
 				handles.emplace_back(); // invalid placeholder keeps variant indices aligned
 			}
@@ -121,12 +105,7 @@ void GroundcoverRenderer::buildGroundcoverChunk(
 	}
 }
 
-void GroundcoverRenderer::render(const RenderContext& ctx, InstancingUniforms& uniforms, RenderStats& stats) {
-	auto* batchRenderer = Renderer::Primitives::getBatchRenderer();
-	if (batchRenderer == nullptr) {
-		return;
-	}
-
+void GroundcoverRenderer::render(const RenderContext& ctx, RenderStats& stats) {
 	const float zoom = ctx.camera.zoom();
 	const float ppm = ctx.pixelsPerMeter;
 
@@ -142,26 +121,11 @@ void GroundcoverRenderer::render(const RenderContext& ctx, InstancingUniforms& u
 	const float			camY = ctx.camera.position().y;
 	const VisibleBounds vis = computeVisibleBounds(ctx.camera, ctx.viewportWidth, ctx.viewportHeight, ppm);
 
-	GLuint shaderProgram = batchRenderer->getShaderProgram();
-	glUseProgram(shaderProgram);
-	uniforms.init(shaderProgram);
-	if (uniforms.groundcoverMode >= 0) {
-		glUniform1i(uniforms.groundcoverMode, 1);
-	}
-	if (uniforms.groundcoverOpenness >= 0) {
-		glUniform1f(uniforms.groundcoverOpenness, 1.0F);
-	}
-	if (uniforms.groundcoverReach >= 0) {
-		glUniform1f(uniforms.groundcoverReach, kGroundcoverReachM);
-	}
-	if (uniforms.cursorRadius >= 0) {
-		glUniform1f(uniforms.cursorRadius, 0.0F); // no interaction deform yet
-	}
-	if (uniforms.bakedAlpha >= 0) {
-		glUniform1f(uniforms.bakedAlpha, lodAlpha);
-	}
+	// Full-size clumps at rest, no interaction deform yet (cursor radius 0)
+	Renderer::Primitives::setGroundcover({.enabled = true, .openness = 1.0F, .reach = kGroundcoverReachM, .cursorRadius = 0.0F});
+	Renderer::Primitives::setBakedAlpha(lodAlpha);
 
-	const Foundation::Vec2 cameraPos(camX, camY);
+	const Renderer::Primitives::WorldCamera camera{.position = {camX, camY}, .zoom = zoom, .pixelsPerMeter = ppm};
 	for (const auto& coord : ctx.processedChunks) {
 		auto& cache = m_groundcoverChunkCache[coord];
 		cache.lastAccessFrame = ctx.frameCounter;
@@ -179,21 +143,15 @@ void GroundcoverRenderer::render(const RenderContext& ctx, InstancingUniforms& u
 				if (inst.empty() || !handles[v].isValid()) {
 					continue;
 				}
-				batchRenderer->drawInstanced(
-					handles[v], inst.data(), static_cast<uint32_t>(inst.size()), cameraPos, zoom, ppm
-				);
+				Renderer::Primitives::drawInstanced(handles[v], inst.data(), static_cast<uint32_t>(inst.size()), camera);
 				stats.entities += static_cast<uint32_t>(inst.size());
 			}
 		}
 	}
 
 	// Restore normal (non-grass) instancing state for the rest of the frame.
-	if (uniforms.groundcoverMode >= 0) {
-		glUniform1i(uniforms.groundcoverMode, 0);
-	}
-	if (uniforms.bakedAlpha >= 0) {
-		glUniform1f(uniforms.bakedAlpha, 1.0F);
-	}
+	Renderer::Primitives::setGroundcover({});
+	Renderer::Primitives::setBakedAlpha(1.0F);
 }
 
 } // namespace engine::world

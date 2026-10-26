@@ -7,7 +7,6 @@
 #include "theme/Variants.h"
 #include "utils/Utf8.h"
 #include <algorithm>
-#include <primitives/BatchRenderer.h>
 #include <primitives/Primitives.h>
 
 namespace {
@@ -549,12 +548,6 @@ namespace UI {
 			return;
 		}
 
-		// Get unified batch renderer
-		Renderer::BatchRenderer* batchRenderer = Renderer::Primitives::getBatchRenderer();
-		if (batchRenderer == nullptr) {
-			return;
-		}
-
 		// Get font renderer for metrics and glyph generation
 		Renderer::FontRenderer* fontRenderer = Renderer::Primitives::getFontRenderer();
 		if (fontRenderer == nullptr) {
@@ -577,18 +570,8 @@ namespace UI {
 		std::vector<Renderer::FontRenderer::GlyphQuad> glyphs;
 		fontRenderer->generateGlyphQuads(text, glm::vec2(textX, baselineY), scale, glyphColor, glyphs, fontUi);
 
-		// Add each glyph to the unified batch renderer
-		Foundation::Color textColor(style.textColor.r, style.textColor.g, style.textColor.b, style.textColor.a);
-		for (const auto& glyph : glyphs) {
-			batchRenderer->addTextQuad(
-				Foundation::Vec2(glyph.position.x, glyph.position.y),
-				Foundation::Vec2(glyph.size.x, glyph.size.y),
-				Foundation::Vec2(glyph.uvMin.x, glyph.uvMin.y),
-				Foundation::Vec2(glyph.uvMax.x, glyph.uvMax.y),
-				textColor,
-				Foundation::Vec2(glyph.runOrigin.x, glyph.runOrigin.y)
-			);
-		}
+		// Shaped with fontUi but drawn with the default atlas, as before (a separate fix).
+		Renderer::Primitives::drawGlyphs(glyphs.data(), glyphs.size());
 	}
 
 	void TextInput::renderCursor() const {
@@ -674,12 +657,6 @@ namespace UI {
 			return;
 		}
 
-		// Get unified batch renderer
-		Renderer::BatchRenderer* batchRenderer = Renderer::Primitives::getBatchRenderer();
-		if (batchRenderer == nullptr) {
-			return;
-		}
-
 		// Get font renderer for metrics and glyph generation
 		Renderer::FontRenderer* fontRenderer = Renderer::Primitives::getFontRenderer();
 		if (fontRenderer == nullptr) {
@@ -702,20 +679,7 @@ namespace UI {
 		std::vector<Renderer::FontRenderer::GlyphQuad> glyphs;
 		fontRenderer->generateGlyphQuads(placeholder, glm::vec2(textX, baselineY), scale, glyphColor, glyphs, fontUi);
 
-		// Add each glyph to the unified batch renderer
-		Foundation::Color placeholderColor(
-			style.placeholderColor.r, style.placeholderColor.g, style.placeholderColor.b, style.placeholderColor.a
-		);
-		for (const auto& glyph : glyphs) {
-			batchRenderer->addTextQuad(
-				Foundation::Vec2(glyph.position.x, glyph.position.y),
-				Foundation::Vec2(glyph.size.x, glyph.size.y),
-				Foundation::Vec2(glyph.uvMin.x, glyph.uvMin.y),
-				Foundation::Vec2(glyph.uvMax.x, glyph.uvMax.y),
-				placeholderColor,
-				Foundation::Vec2(glyph.runOrigin.x, glyph.runOrigin.y)
-			);
-		}
+		Renderer::Primitives::drawGlyphs(glyphs.data(), glyphs.size());
 	}
 
 	// ============================================================================

@@ -19,7 +19,7 @@ namespace engine::world {
 		} else {
 			RenderStats	  stats;
 			RenderContext ctx{executor, processedChunks, nullptr, camera, viewportWidth, viewportHeight, m_pixelsPerMeter, frameCounter};
-			batched.render(ctx, m_uniforms, stats);
+			batched.render(ctx, stats);
 			m_lastEntityCount = stats.entities;
 			m_lastDrawCallCount = stats.drawCalls;
 			m_lastTriangleCount = stats.triangles;
@@ -41,7 +41,7 @@ namespace engine::world {
 			RenderContext ctx{
 				executor, processedChunks, &dynamicEntities, camera, viewportWidth, viewportHeight, m_pixelsPerMeter, frameCounter
 			};
-			batched.render(ctx, m_uniforms, stats);
+			batched.render(ctx, stats);
 			m_lastEntityCount = stats.entities;
 			m_lastDrawCallCount = stats.drawCalls;
 			m_lastTriangleCount = stats.triangles;
@@ -81,12 +81,12 @@ namespace engine::world {
 
 		// Background: baked SHORT flora only (tall occluders are gathered live
 		// below). Single glDrawElements per chunk sub-region, no instancing overhead.
-		baked.renderBakedChunks(ctx, m_uniforms, stats);
+		baked.renderBakedChunks(ctx, stats);
 
 		// Groundcover (grass) via GPU instancing. Skipped by the baked path and
 		// drawn here as instanced variant tufts, with a zoom LOD that fades to the
 		// grass tile texture when zoomed out.
-		groundcover.render(ctx, m_uniforms, stats);
+		groundcover.render(ctx, stats);
 
 		// Y-sorted upright stream: visible tall static occluders merged with the
 		// dynamic ECS entities, stable-sorted ascending by ground-contact anchorY,

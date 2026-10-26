@@ -9,8 +9,8 @@
 // 2. CPU Batching (fallback): All entities in one draw call, transforms on CPU
 //
 // This class is a thin orchestrator: it owns shared state (pixelsPerMeter, the
-// frame counter, the cached uniform locations, and the per-frame metrics) and
-// delegates each render path to a dedicated sub-renderer.
+// frame counter, and the per-frame metrics) and delegates each render path to a
+// dedicated sub-renderer.
 
 #include "assets/placement/PlacementExecutor.h"
 #include "world/camera/WorldCamera.h"
@@ -20,8 +20,8 @@
 #include "world/rendering/BatchedEntityRenderer.h"
 #include "world/rendering/GroundcoverRenderer.h"
 #include "world/rendering/InstancedEntityRenderer.h"
-#include "world/rendering/InstancingUniforms.h"
 #include "world/rendering/RenderContext.h"
+#include "world/rendering/RenderStats.h"
 #include "world/rendering/SelectionOutline.h"
 #include "world/rendering/WorldDepthSort.h"
 
@@ -116,9 +116,6 @@ class EntityRenderer {
 
 	// --- Instancing Mode ---
 	bool m_useInstancing = true;
-
-	/// Shared cached uniform locations for the baked + groundcover paths.
-	InstancingUniforms m_uniforms;
 
 	// --- Path sub-renderers (owned by value) ---
 	BakedChunkRenderer		 baked;
