@@ -51,7 +51,7 @@ The visibility polygon is cached per observer and recomputed only when: the obse
 
 ### D5: Fog of war and overlays are the same polygons, rendered
 
-Player-facing fog (three states: unknown/hidden, explored-but-not-visible (dimmed), currently visible) renders from the union of the player faction's visibility polygons: triangulate each (they're star-shaped from the observer — a fan), rasterize additively into a mask texture (`RenderToTexture` exists), sample the mask in the terrain/entity passes. Explored-ever state accumulates into a persistent coarse mask. The per-colonist **memory debug overlay** (memory design doc) is the same render path scoped to one observer.
+Player-facing fog (three states: unknown/hidden, explored-but-not-visible (dimmed), currently visible) renders from the union of the player faction's visibility polygons: triangulate each (they're star-shaped from the observer — a fan), rasterize additively into a mask texture (`RenderTarget` exists), sample the mask in the terrain/entity passes. Explored-ever state accumulates into a persistent coarse mask. The per-colonist **memory debug overlay** (memory design doc) is the same render path scoped to one observer.
 
 Simulation stays CPU-side and analytic; rendering consumes the polygon set. Fog UX (what dimming looks like, whether structures stay visible once seen, minimap interaction) needs its own design pass when player-facing fog is scheduled — this doc only establishes that the data comes for free.
 
