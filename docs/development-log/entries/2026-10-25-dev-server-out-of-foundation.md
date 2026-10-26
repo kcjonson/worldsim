@@ -23,7 +23,7 @@ DebugServer's duplicate `Foundation::LogLevel` and `LogCategory` enums and their
 
 PerformanceMetrics went to renderer, not engine as the ticket said. renderer's `MetricsCollector.h` includes it and returns `PerformanceMetrics` from its public API, and renderer may not depend on engine, so it sits beside MetricsCollector and GPUTimer in `libs/renderer/metrics/`.
 
-CMake: foundation links only `glm::glm` (PUBLIC). engine compiles `debug/DebugServer.cpp` and `graphics/PngEncoder.cpp` and links `httplib::httplib` PRIVATE (plus CoreFoundation on macOS); OpenGL and GLEW already reach engine PUBLIC through renderer. renderer compiles `metrics/PerformanceMetrics.cpp`. worldgen-cli and the foundation, geometry, world, and game-systems test executables stop pulling httplib and OpenGL into their link lines; nothing in them used either.
+CMake: foundation links only `glm::glm` (PUBLIC). engine compiles `debug/DebugServer.cpp` and `graphics/PngEncoder.cpp` and links `httplib::httplib` PRIVATE (plus CoreFoundation on macOS); OpenGL and GLEW already reach engine PUBLIC through renderer. renderer compiles `metrics/PerformanceMetrics.cpp`. worldgen-cli and the foundation, geometry, and world test executables stop pulling httplib and OpenGL into their link lines; nothing in them used either. game-systems-tests only drops httplib: game-systems links renderer PUBLIC, so OpenGL and GLEW still reach it.
 
 Namespaces were kept: every moved type is still in `Foundation::`, so the diff is a verifiable pure move. Renaming them into `engine::` and `Renderer::` is tracked as WOR-518.
 

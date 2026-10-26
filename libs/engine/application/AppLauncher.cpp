@@ -203,6 +203,15 @@ namespace engine {
 			return true;
 		}
 
+		// Clear the sink before the server stops: a thread mid-log still calls into a live DebugServer
+		void stopDebugServer() {
+			if (g_debugServer) {
+				foundation::Logger::setSink(nullptr, nullptr);
+				g_debugServer->signalShutdownComplete();
+				g_debugServer->stop();
+			}
+		}
+
 		void cleanup(GLFWwindow* window) {
 			LOG_INFO(Engine, "Shutting down...");
 
@@ -289,12 +298,14 @@ namespace engine {
 		// Initialize window
 		GLFWwindow* window = initializeWindow(config.windowTitle, config.windowSizePercent);
 		if (window == nullptr) {
+			stopDebugServer();
 			foundation::Logger::shutdown();
 			return {};
 		}
 
 		// Initialize rendering systems
 		if (!initializeRenderingSystems(window)) {
+			stopDebugServer();
 			glfwDestroyWindow(window);
 			glfwTerminate();
 			foundation::Logger::shutdown();
@@ -473,12 +484,7 @@ namespace engine {
 			return 1;
 		}
 
-		// Cleanup debug server
-		if (g_debugServer) {
-			foundation::Logger::setSink(nullptr, nullptr);
-			g_debugServer->signalShutdownComplete();
-			g_debugServer->stop();
-		}
+		stopDebugServer();
 
 		cleanup(ctx.window);
 

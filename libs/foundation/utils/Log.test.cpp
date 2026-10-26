@@ -236,11 +236,6 @@ TEST(LoggerTests, NullSinkDoesNotCrash) {
 
 #ifdef DEVELOPMENT_BUILD
 TEST(LoggerTests, SinkReceivesEveryMessageBeforeConsoleFilter) {
-	// An ASSERT failure returns early; never leave the sink pointing at this frame's locals
-	struct SinkReset {
-		~SinkReset() { Logger::setSink(nullptr, nullptr); }
-	} reset;
-
 	Logger::initialize();
 	Logger::setLevel(LogCategory::Foundation, LogLevel::Error);
 
@@ -251,6 +246,14 @@ TEST(LoggerTests, SinkReceivesEveryMessageBeforeConsoleFilter) {
 		const char*				 lastFile = nullptr;
 		int						 lastLine = 0;
 	} captured;
+	// An ASSERT failure returns early. Declared after captured so it runs first: it clears the sink
+	// before captured dies and shuts the logger down so later tests do not inherit Foundation at Error
+	struct SinkReset {
+		~SinkReset() {
+			Logger::setSink(nullptr, nullptr);
+			Logger::shutdown();
+		}
+	} reset;
 	Logger::setSink(
 		[](void* context, const LogRecord& record) {
 			auto* c = static_cast<Captured*>(context);

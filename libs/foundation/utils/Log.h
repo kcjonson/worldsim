@@ -62,7 +62,7 @@ namespace foundation {
 
 #ifdef DEVELOPMENT_BUILD
 		static std::atomic<LogSinkFn> s_sinkFn;		 // NOLINT(readability-identifier-naming)
-		static void*				  s_sinkContext; // NOLINT(readability-identifier-naming)
+		static std::atomic<void*>	  s_sinkContext; // NOLINT(readability-identifier-naming)
 #endif
 	};
 
