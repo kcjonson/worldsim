@@ -30,12 +30,17 @@ namespace Renderer {
 				GTEST_SKIP() << "GLFW initialization failed (no display available)";
 			}
 			glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+			glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+			glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+			glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+			glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 			window = glfwCreateWindow(32, 32, "font-test", nullptr, nullptr);
 			if (window == nullptr) {
 				glfwTerminate();
 				GTEST_SKIP() << "Could not create GLFW window (no OpenGL context available)";
 			}
 			glfwMakeContextCurrent(window);
+			glewExperimental = GL_TRUE;
 			if (glewInit() != GLEW_OK) {
 				glfwDestroyWindow(window);
 				window = nullptr;

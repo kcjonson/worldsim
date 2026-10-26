@@ -52,7 +52,8 @@ target_link_libraries(renderer
         nlohmann_json::nlohmann_json
 )
 
-# Copy shaders to build and runtime directories whenever shader sources change.
+# Copy shaders to the shared build shaders/ directory whenever shader sources
+# change; each app copies that directory beside its executable POST_BUILD.
 file(GLOB_RECURSE RENDERER_SHADER_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*"
 )
@@ -62,16 +63,12 @@ set(RENDERER_SHADERS_STAMP "${CMAKE_BINARY_DIR}/shaders/.renderer_shaders_copied
 add_custom_command(
     OUTPUT ${RENDERER_SHADERS_STAMP}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/shaders
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/apps/world-sim/shaders
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders
         ${CMAKE_BINARY_DIR}/shaders
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_CURRENT_SOURCE_DIR}/shaders
-        ${CMAKE_BINARY_DIR}/apps/world-sim/shaders
     COMMAND ${CMAKE_COMMAND} -E touch ${RENDERER_SHADERS_STAMP}
     DEPENDS ${RENDERER_SHADER_SOURCES}
-    COMMENT "Syncing renderer shaders to build and runtime directories"
+    COMMENT "Syncing renderer shaders to build shaders directory"
     VERBATIM
 )
 

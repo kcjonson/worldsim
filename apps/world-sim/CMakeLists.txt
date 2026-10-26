@@ -135,4 +135,4 @@ add_custom_target(world-sim-assets ALL
 )
 
 # Make world-sim depend on shader and asset sync so they are copied before running
-add_dependencies(world-sim world-sim-assets renderer-shaders)
+add_dependencies(world-sim world-sim-assets renderer-shaders engine-shaders)
