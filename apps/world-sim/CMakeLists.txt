@@ -4,6 +4,7 @@ add_executable(world-sim
     GameWorldState.cpp
     GameStartConfig.cpp
     NewGameSetup.cpp
+    GameBootstrap.cpp
     # Game scene UI - views
     scenes/game/ui/views/ColonistListView.cpp
     scenes/game/ui/views/EntityInfoView.cpp

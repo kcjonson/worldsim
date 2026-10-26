@@ -15,10 +15,9 @@
 namespace Renderer {
 
 // Builds a tile texture atlas by loading SVG patterns or generating fallbacks.
-// Extracts atlas building logic from AppLauncher into a reusable class.
 //
 // Design: Uses callbacks for surface info to avoid renderer depending on engine.
-// The caller (AppLauncher) provides surface names and colors.
+// The caller provides surface names and colors.
 class TileAtlasBuilder {
   public:
 	struct Config {

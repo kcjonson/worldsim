@@ -1,6 +1,7 @@
 // World-Sim - Main Game Application
 // Uses shared AppLauncher for all bootstrap boilerplate
 
+#include "GameBootstrap.h"
 #include "SceneTypes.h"
 #include <application/AppLauncher.h>
 
@@ -21,8 +22,8 @@ int main(int argc, char* argv[]) {
 				}
 				return std::string{}; // No remapping
 			},
-		// Uses default assetsRootPath = "assets/world"
-		.loadAssetsAsync = true,
+		.initializeResources = world_sim::initializeResources,
+		.shutdownResources = world_sim::shutdownResources,
 	};
 
 	return engine::AppLauncher::launch(argc, argv, config);

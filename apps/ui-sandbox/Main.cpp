@@ -5,6 +5,7 @@
 #include "SceneTypes.h"
 #include <application/AppLauncher.h>
 #include <application/Application.h>
+#include <assets/AssetBootstrap.h>
 #include <debug/DebugServer.h>
 #include <debug/LayoutLint.h>
 #include <debug/UiTreeSerializer.h>
@@ -59,11 +60,9 @@ int main(int argc, char* argv[]) {
 		.debugServerPort = 8090,
 		.enableMetrics = true,
 		.initializeScenes = ui_sandbox::initializeSceneManager,
-		.getDefaultSceneKey =
-			[]() {
-				return ui_sandbox::toKey(ui_sandbox::SceneType::Svg);
-			}
-		// Uses default assetsRootPath = "assets/world"
+		.getDefaultSceneKey = []() { return ui_sandbox::toKey(ui_sandbox::SceneType::Svg); },
+		// GrassScene reads the registry in onEnter (also via --scene=grass), so load synchronously.
+		.initializeResources = [](bool /*hasSceneArg*/) { engine::assets::initializeAssetSystem(false); },
 	};
 
 	auto ctx = engine::AppLauncher::initialize(argc, argv, config);

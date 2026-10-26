@@ -4,6 +4,7 @@
 
 #include "SceneTypes.h"
 #include <application/AppLauncher.h>
+#include <assets/AssetBootstrap.h>
 
 int main(int argc, char* argv[]) {
 	engine::AppConfig config{
@@ -13,7 +14,8 @@ int main(int argc, char* argv[]) {
 		.debugServerPort = 8070,
 		.initializeScenes = asset_manager::initializeSceneManager,
 		.getDefaultSceneKey = []() { return asset_manager::toKey(asset_manager::SceneType::Browser); },
-		// Synchronous asset load (default): the browser reads the registry on entry.
+		// BrowserScene reads the registry on entry, so load synchronously.
+		.initializeResources = [](bool /*hasSceneArg*/) { engine::assets::initializeAssetSystem(false); },
 	};
 
 	return engine::AppLauncher::launch(argc, argv, config);

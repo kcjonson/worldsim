@@ -98,7 +98,7 @@ The pieces all exist and this is assembly:
 
 The CLI creates a hidden window (`glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE)`) plus GLEW, exactly as the `RenderToTexture` test does, then initializes only what the render path needs: the renderer's shader/primitive setup and the asset registry (including `setSharedScriptsPath`, or every `@shared/` Lua def fails to resolve). It does not create scenes, a debug server, or fonts.
 
-`AppLauncher::initializeRenderingSystems` and `initializeAssetSystem` currently bundle this init with a full app. Factor the rendering-primitive init and the asset-system init into reusable functions the CLI can call without `AppLauncher`. This is a refactor of existing code, not new behavior.
+`AppLauncher::initializeRenderingSystems` still bundles the rendering-primitive init with a full app; the asset half is already `engine::assets::initializeAssetSystem`, which the CLI can call without `AppLauncher`. Factor the rendering-primitive init into a reusable function the CLI can call the same way. This is a refactor of existing code, not new behavior.
 
 Because the CLI is a short-lived, server-less process with its own context, N invocations run in parallel up to GPU and CPU limits. The one cross-process constraint to respect: do not bind the fixed debug port from the CLI.
 
@@ -162,7 +162,7 @@ CLI `validate` exits non-zero on any error so CI can gate on it; warnings do not
 
 ## Async loading and the splash refactor
 
-The product spec wants validation surfaced at launch. Today that is impossible without a startup change: the splash is a fixed 1.5-second timer (`SplashScene.cpp:94`), and asset loading runs fully synchronously before the first frame is ever drawn (`AppLauncher::initialize` calls `initializeAssetSystem` before the main loop). By the time the splash appears, loading is already done, and nothing surfaces load results to the player; the loader logs and continues.
+The product spec wants validation surfaced at launch. Before the async splash landed, that was impossible without a startup change: the splash was a fixed 1.5-second timer (`SplashScene.cpp:94`), and asset loading ran fully synchronously before the first frame was ever drawn (the launcher loaded the registry before the main loop; today that is the `initializeResources` hook calling `engine::assets::initializeAssetSystem`). By the time the splash appeared, loading was already done, and nothing surfaced load results to the player; the loader logged and continued.
 
 The chosen approach is to make loading asynchronous so the splash can show real progress and a summary.
 

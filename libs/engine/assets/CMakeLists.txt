@@ -1,5 +1,6 @@
 add_library(assets
     ActionTypeRegistry.cpp
+    AssetBootstrap.cpp
     AssetRegistry.cpp
     AssetRenderer.cpp
     SvgPathNodes.cpp
