@@ -138,9 +138,10 @@ Local before/after timings: see Results below.
 - **Removed hardcoded `/Zi`** from the 8 `<lib>-tests` targets (`/Od /Zi` → `/Od`). An
   explicit `/Zi` overrides the embedded format and silently disables ccache for every test TU.
   Don't reintroduce it.
-- **foundation links httplib and OpenGL PRIVATE** (were PUBLIC, propagating their include dirs
-  to every TU in the repo; `DebugServer.h` forward-declares, only the .cpp includes httplib).
-  glm stays PUBLIC deliberately: public headers expose glm types.
+- **engine links httplib PRIVATE; foundation links nothing but glm.** httplib was PUBLIC on
+  foundation once, propagating its include dir to every TU in the repo; it went PRIVATE
+  (`DebugServer.h` forward-declares, only the .cpp includes httplib), then moved to engine
+  with the dev server. glm stays PUBLIC deliberately: public headers expose glm types.
 - **Local test invocation:** `ctest --test-dir build -C Debug -LE heavy -E benchmarks -j 13
   --output-on-failure` (omit `-C Debug` on single-config macOS/Linux). Don't use `-L fast`:
   only world-tests carries labels, so it would silently run one exe.

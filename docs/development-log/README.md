@@ -62,6 +62,10 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 ### 2026
 
+#### October 2026
+
+- [2026-10-25 - Dev server out of foundation; the logger takes a sink (SAL-30)](./entries/2026-10-25-dev-server-out-of-foundation.md)
+
 #### September 2026
 
 - [2026-09-28 - Foundation Add / Subtract (construction G3)](./entries/2026-09-28-foundation-add-subtract.md)

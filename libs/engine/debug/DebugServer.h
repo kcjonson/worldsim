@@ -68,7 +68,7 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 	};
 
 	// Generic dev/test command queued via /api/dev/<verb>?k=v&k2=v2. DebugServer
-	// lives in foundation and must stay domain-agnostic, so it does NOT know what
+	// lives in engine and must stay domain-agnostic, so it does NOT know what
 	// "freebuild" or "spawn" mean: it just parses the verb plus the query
 	// params into this bag and hands it to the app, which interprets it (the
 	// construction context lives in GameScene). Mirrors InputCommand's queue.

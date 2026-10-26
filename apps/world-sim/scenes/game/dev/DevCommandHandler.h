@@ -4,7 +4,7 @@
 // state (/api/state) against the live game. Dev-only. Split out of GameScene so the scene
 // class stays focused on the frame loop, not the (large) cheat + inspection surface.
 //
-// The debug server (libs/foundation) stays domain-agnostic and hands the app generic
+// The debug server (libs/engine) stays domain-agnostic and hands the app generic
 // DevCommands; this is where the game context (ECS world, construction, placement, selection,
 // UI) interprets them. GameScene constructs one of these after its systems exist and delegates
 // the per-frame DevCommand drain and the /api/state readback to it.
