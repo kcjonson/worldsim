@@ -75,8 +75,8 @@ target_compile_features(engine PUBLIC cxx_std_20)
 # (DebugServer.h forward-declares httplib::Server): PRIVATE keeps its include dir off
 # downstream TUs while static-lib link requirements still propagate to executables.
 # OpenGL, GLEW and glfw are PUBLIC: the renderer keeps them private behind its
-# headers, and the game's own GL (the chunk and planet passes, the scenes' clear
-# pairs, the GLFW window here) reaches them through engine.
+# headers, and the game's own GL (the chunk pass, the scenes' clear pairs, the
+# GLFW window here) reaches them through engine.
 target_link_libraries(engine
     PUBLIC
         salal::foundation

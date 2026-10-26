@@ -505,7 +505,7 @@ namespace engine::world {
 		// Flush any pending batched geometry so draw order stays correct
 		Renderer::Primitives::flush();
 
-		// Save GL state before modifying (mirrors EntityRenderer's baked pass)
+		// Save GL state before modifying
 		GLboolean blendEnabled = glIsEnabled(GL_BLEND);
 		GLboolean depthTestEnabled = glIsEnabled(GL_DEPTH_TEST);
 		GLboolean cullFaceEnabled = glIsEnabled(GL_CULL_FACE);

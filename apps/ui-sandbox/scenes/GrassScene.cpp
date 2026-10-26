@@ -161,11 +161,6 @@ namespace {
 			glClearColor(kGround.r, kGround.g, kGround.b, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
 
-			int viewW = 0;
-			int viewH = 0;
-			Renderer::Primitives::getViewport(viewW, viewH);
-			Renderer::Primitives::setViewport(viewW, viewH);
-
 			int logW = 0;
 			int logH = 0;
 			Renderer::Primitives::getLogicalViewport(logW, logH);
