@@ -15,7 +15,7 @@ int main(int argc, char* argv[]) {
 		.initializeScenes = asset_manager::initializeSceneManager,
 		.getDefaultSceneKey = []() { return asset_manager::toKey(asset_manager::SceneType::Browser); },
 		// BrowserScene reads the registry on entry, so load synchronously.
-		.initializeResources = [](bool) { engine::assets::initializeAssetSystem(false); },
+		.initializeResources = [](bool /*hasSceneArg*/) { engine::assets::initializeAssetSystem(false); },
 	};
 
 	return engine::AppLauncher::launch(argc, argv, config);

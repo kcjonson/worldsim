@@ -59,7 +59,8 @@ struct AppContext {
 ///       // Set up app-specific callbacks
 ///       ctx.app->setOverlayRenderer([&]() { myOverlay.render(); });
 ///
-///       return engine::AppLauncher::run(ctx);
+///       engine::AppLauncher::run(ctx);
+///       return engine::AppLauncher::shutdown(ctx);
 ///   }
 class AppLauncher {
   public:

@@ -162,7 +162,7 @@ CLI `validate` exits non-zero on any error so CI can gate on it; warnings do not
 
 ## Async loading and the splash refactor
 
-The product spec wants validation surfaced at launch. Before the async splash landed, that was impossible without a startup change: the splash was a fixed 1.5-second timer (`SplashScene.cpp:94`), and asset loading ran fully synchronously before the first frame was ever drawn (`AppLauncher::initialize` ran the `initializeResources` hook, which called `engine::assets::initializeAssetSystem`, before the main loop). By the time the splash appeared, loading was already done, and nothing surfaced load results to the player; the loader logged and continued.
+The product spec wants validation surfaced at launch. Before the async splash landed, that was impossible without a startup change: the splash was a fixed 1.5-second timer (`SplashScene.cpp:94`), and asset loading ran fully synchronously before the first frame was ever drawn (the launcher loaded the registry before the main loop; today that is the `initializeResources` hook calling `engine::assets::initializeAssetSystem`). By the time the splash appeared, loading was already done, and nothing surfaced load results to the player; the loader logged and continued.
 
 The chosen approach is to make loading asynchronous so the splash can show real progress and a summary.
 

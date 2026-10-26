@@ -62,7 +62,7 @@ int main(int argc, char* argv[]) {
 		.initializeScenes = ui_sandbox::initializeSceneManager,
 		.getDefaultSceneKey = []() { return ui_sandbox::toKey(ui_sandbox::SceneType::Svg); },
 		// GrassScene reads the registry in onEnter (also via --scene=grass), so load synchronously.
-		.initializeResources = [](bool) { engine::assets::initializeAssetSystem(false); },
+		.initializeResources = [](bool /*hasSceneArg*/) { engine::assets::initializeAssetSystem(false); },
 	};
 
 	auto ctx = engine::AppLauncher::initialize(argc, argv, config);
