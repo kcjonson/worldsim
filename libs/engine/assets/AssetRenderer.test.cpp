@@ -196,3 +196,35 @@ TEST(AssetRendererTest, RendersVisibleGeometry) {
 	}
 	EXPECT_GT(nonBackground, 100) << "expected the asset (" << simple << ") to draw visible geometry";
 }
+
+TEST(AssetRendererTest, TranslucentBackgroundComesBackStraight) {
+	GlFixture gl;
+	if (!gl.ok) {
+		GTEST_SKIP() << "No GL context / shaders unavailable (headless CI)";
+	}
+	loadAssets();
+
+	const std::string simple = firstOfType(AssetType::Simple);
+	if (simple.empty()) {
+		GTEST_SKIP() << "No simple asset in the library";
+	}
+
+	// The target holds the half-grey background premultiplied, about (64, 64, 64, 128);
+	// the pixels come back straight. Geometry only adds alpha, so alpha near 128 is
+	// background. Half of 255 may round either way, and the colour with it.
+	const Foundation::Color bg(0.5F, 0.5F, 0.5F, 0.5F);
+	const auto				px = renderToPixels(simple, 64, 64, bg, 0);
+	ASSERT_FALSE(px.empty());
+
+	int background = 0;
+	for (size_t i = 0; i + 3 < px.size(); i += 4) {
+		if (px[i + 3] < 127 || px[i + 3] > 129) {
+			continue;
+		}
+		++background;
+		for (size_t c = 0; c < 3; ++c) {
+			ASSERT_NEAR(px[i + c], 128, 1) << "pixel " << i / 4 << " channel " << c;
+		}
+	}
+	EXPECT_GT(background, 0) << "expected some background around the asset (" << simple << ")";
+}

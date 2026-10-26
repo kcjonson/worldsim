@@ -8,6 +8,7 @@
 #include "vector/MeshBounds.h"
 
 #include <algorithm>
+#include <cstdint>
 
 namespace engine::assets {
 
@@ -75,6 +76,17 @@ namespace engine::assets {
 		target.readPixels(pixels);
 
 		target.end();
+
+		// The target holds premultiplied colour; images and callers take straight alpha.
+		for (size_t i = 0; i + 3 < pixels.size(); i += 4) {
+			const uint32_t alpha = pixels[i + 3];
+			if (alpha == 0 || alpha == 255) {
+				continue;
+			}
+			for (size_t c = 0; c < 3; ++c) {
+				pixels[i + c] = static_cast<uint8_t>(std::min<uint32_t>(255U, ((pixels[i + c] * 255U) + (alpha / 2U)) / alpha));
+			}
+		}
 
 		// readPixels gives rows bottom-up; flip to top-left for image output.
 		return Foundation::flipRowsRGBA(pixels.data(), width, height);

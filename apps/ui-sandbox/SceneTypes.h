@@ -42,7 +42,11 @@ namespace ui_sandbox {
 	X(TextWrap) \
 	X(Planet)  \
 	X(Salvage) \
-	X(SalvageDialog)
+	X(SalvageDialog) \
+	X(Polygon) \
+	X(Arc) \
+	X(Polyline) \
+	X(Blend)
 	// clang-format on
 
 	/// @brief Scene types for ui-sandbox application (auto-generated from SCENE_LIST)

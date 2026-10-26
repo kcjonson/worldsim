@@ -29,6 +29,10 @@ add_executable(ui-sandbox
     scenes/PlanetScene.cpp
     scenes/SalvageScene.cpp
     scenes/SalvageDialogScene.cpp
+    scenes/PolygonScene.cpp
+    scenes/ArcScene.cpp
+    scenes/PolylineScene.cpp
+    scenes/BlendScene.cpp
 )
 
 target_include_directories(ui-sandbox
