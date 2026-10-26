@@ -168,7 +168,7 @@ namespace engine {
 			g_coordinateSystem = &coordinateSystem;
 			coordinateSystem.setViewport({windowWidth, windowHeight, framebufferWidth, framebufferHeight});
 
-			// Initialize primitive rendering on the renderer's GL backend, which initialises GLEW
+			// Initialize primitive rendering on the renderer's GL backend, which initializes GLEW
 			LOG_INFO(Renderer, "Initializing primitive rendering system");
 			std::unique_ptr<Renderer::backend::gl::GLBackend> backend = Renderer::backend::gl::GLBackend::create();
 			if (backend == nullptr) {

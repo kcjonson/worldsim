@@ -155,7 +155,7 @@ namespace {
 			g_window = nullptr;
 			return false;
 		}
-		// The renderer's GL backend initialises GLEW on this context
+		// The renderer's GL backend initializes GLEW on this context
 		std::unique_ptr<Renderer::backend::gl::GLBackend> backend = Renderer::backend::gl::GLBackend::create();
 		if (backend == nullptr) {
 			glfwDestroyWindow(g_window);

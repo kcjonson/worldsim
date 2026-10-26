@@ -80,13 +80,15 @@ namespace {
 			glfwMakeContextCurrent(window);
 			if (!ensureShadersResolvable()) {
 				glfwDestroyWindow(window);
+				window = nullptr;
 				glfwTerminate();
 				return;
 			}
-			// The renderer's GL backend initialises GLEW on this context
+			// The renderer's GL backend initializes GLEW on this context
 			std::unique_ptr<Renderer::backend::gl::GLBackend> backend = Renderer::backend::gl::GLBackend::create();
 			if (backend == nullptr) {
 				glfwDestroyWindow(window);
+				window = nullptr;
 				glfwTerminate();
 				return;
 			}
