@@ -40,7 +40,7 @@ The shader stretches a pattern over each 1 m tile (the atlas UV is the point's o
 
 ## Atlas
 
-world-sim's `GameBootstrap` builds it once at startup (the `AppConfig::initializeResources` hook) through `Renderer::TileAtlasBuilder`. Each surface's SVG is rasterized on the CPU by NanoSVG's rasterizer (`bakeSvgToRgba` in `TilePatternBaker.cpp`) to 512x512 RGBA8 and shelf-packed into a 2048x2048 `TileTextureAtlas`: 16 slots, 10 used, 16 MB. The texture is linear-filtered and clamped, with no mipmaps; `land.glsl` samples level 0. The texture and each surface's UV rect reach the tile pass through `Renderer::Primitives::setTileAtlas`, as `u_tileAtlas` and `u_tileAtlasRects`. The atlas doesn't go through `RenderToTexture`, the FBO wrapper the asset renderer draws with.
+world-sim's `GameBootstrap` builds it once at startup (the `AppConfig::initializeResources` hook) through `Renderer::TileAtlasBuilder`. Each surface's SVG is rasterized on the CPU by NanoSVG's rasterizer (`bakeSvgToRgba` in `TilePatternBaker.cpp`) to 512x512 RGBA8 and shelf-packed into a 2048x2048 `TileTextureAtlas`: 16 slots, 10 used, 16 MB. The texture is linear-filtered and clamped, with no mipmaps; `land.glsl` samples level 0. The texture and each surface's UV rect reach the tile pass through `Renderer::Primitives::setTileAtlas`, as `u_tileAtlas` and `u_tileAtlasRects`. The atlas doesn't go through `RenderTarget`, which the asset renderer draws with and reads through.
 
 ## Render tiles
 

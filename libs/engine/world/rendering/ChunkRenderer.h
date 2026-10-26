@@ -13,10 +13,10 @@
 #include "world/chunk/SurfaceField.h"
 #include "world/camera/WorldCamera.h"
 
-#include <gl/GLBuffer.h>
-#include <gl/GLTexture.h>
-#include <gl/GLVertexArray.h>
-#include <shader/Shader.h>
+#include <backend/gl/GLBuffer.h>
+#include <backend/gl/GLTexture.h>
+#include <backend/gl/GLVertexArray.h>
+#include <backend/gl/Shader.h>
 
 #include <array>
 #include <chrono>

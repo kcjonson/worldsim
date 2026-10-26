@@ -12,9 +12,9 @@
 
 #include "world/chunk/SurfaceField.h"
 
+#include <backend/gl/ShaderPreprocessor.h>
 #include <core/IntegerDivision.h>
 #include <random/HashNoise.h>
-#include <shader/ShaderPreprocessor.h>
 
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>

@@ -22,18 +22,18 @@ node tools/resolve-includes.mjs --root path/to/another/checkout
 
 ## Baseline
 
-Production files only (test and bench files excluded), main @ 4a68085f plus the move to salal's GL-free renderer surface (2026-10-26), with foundation and renderer read from salal v0.2.0. Against the previous baseline (main @ 2cc7e40a plus the move to salal, read from v0.1.0, whose cells matched the pre-move tree exactly) ui -> renderer fell from 44 to 42 and engine -> renderer from 26 to 23: `BatchRenderer.h` left `ui` and the engine renderers, and `InstancingUniforms.h` went. The renderer row grew with its new `Handle.h` and `backend/gl/GLNames.h`. Rows are the including library, columns the library the include lands in.
+Production files only (test and bench files excluded), main @ d5a5a5e3 plus the move to salal's `RenderTarget` and `backend/gl/` include paths (2026-10-26), with foundation and renderer read from salal v0.3.0. Against the previous baseline (main @ 4a68085f plus the move to salal's GL-free renderer surface) engine -> renderer rose from 23 to 24 (`DebugServer.cpp` reads the screenshot through `primitives/Primitives.h`), engine -> external fell from 519 to 518 and engine(assets) -> external from 157 to 156 (`DebugServer.cpp` and `AssetRenderer.cpp` dropped `GL/glew.h`), and the renderer row grew from 30 and 76 to 32 and 82 with its new `Texture.h`, the texture table and target stack in `backend/gl/`, and the GL wrappers and shader classes moved there. Rows are the including library, columns the library the include lands in.
 
 | src \ dst | foundation | geometry | renderer | ui | world | planet-view | game-systems | engine | engine(assets) | external |
 |---|---|---|---|---|---|---|---|---|---|---|
 | foundation | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 70 |
 | geometry | 2 | 86 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 158 |
-| renderer | 30 | 0 | 76 | 0 | 0 | 0 | 0 | 0 | 0 | 145 |
+| renderer | 32 | 0 | 82 | 0 | 0 | 0 | 0 | 0 | 0 | 145 |
 | ui | 97 | 0 | 42 | 157 | 0 | 0 | 0 | 0 | 0 | 116 |
 | world | 34 | 0 | 0 | 0 | 118 | 0 | 0 | 0 | 0 | 149 |
 | planet-view | 2 | 0 | 1 | 0 | 6 | 11 | 0 | 0 | 0 | 38 |
-| engine | 48 | 81 | 23 | 5 | 9 | 0 | 0 | 462 | 68 | 519 |
-| engine(assets) | 23 | 3 | 9 | 0 | 0 | 0 | 0 | 13 | 54 | 157 |
+| engine | 48 | 81 | 24 | 5 | 9 | 0 | 0 | 462 | 68 | 518 |
+| engine(assets) | 23 | 3 | 9 | 0 | 0 | 0 | 0 | 13 | 54 | 156 |
 
 Nothing is ambiguous. Foundation includes nothing internal outside itself. There are no layering violations: ui -> engine and renderer -> ui are both 0. engine -> ui (5 lines) is allowed.
 

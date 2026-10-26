@@ -7,8 +7,8 @@
 // CPU bake types/constants live in BakedEntityMesh.h.
 
 #include "assets/placement/PlacementExecutor.h"
-#include "gl/GLBuffer.h"
-#include "gl/GLVertexArray.h"
+#include "backend/gl/GLBuffer.h"
+#include "backend/gl/GLVertexArray.h"
 #include "world/chunk/ChunkCoordinate.h"
 #include "world/rendering/BakedEntityMesh.h"
 #include "world/rendering/RenderContext.h"

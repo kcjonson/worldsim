@@ -4,7 +4,7 @@
 #include "PlanetColorizer.h"
 #include "PlanetMesh.h"
 
-#include <shader/ShaderLoader.h>
+#include <backend/gl/ShaderLoader.h>
 #include <utils/Log.h>
 
 #include <glm/glm.hpp>
