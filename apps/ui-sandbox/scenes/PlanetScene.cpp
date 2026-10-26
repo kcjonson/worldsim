@@ -167,7 +167,7 @@ class PlanetScene : public engine::IScene {
         }
 
         if (event.type == UI::InputEvent::Type::MouseDown &&
-            event.button == engine::MouseButton::Left) {
+            event.button == foundation::MouseButton::Left) {
 
             if (meshBuilt && lastSnapshot) {
                 int vpW = 0, vpH = 0;
@@ -203,7 +203,7 @@ class PlanetScene : public engine::IScene {
         }
 
         if (event.type == UI::InputEvent::Type::MouseUp &&
-            event.button == engine::MouseButton::Left) {
+            event.button == foundation::MouseButton::Left) {
             camera.endDrag();
             draggingLeft = false;
         }
@@ -216,7 +216,7 @@ class PlanetScene : public engine::IScene {
 
         // Right-click cycles color mode (key events not available in this input system).
         if (event.type == UI::InputEvent::Type::MouseDown &&
-            event.button == engine::MouseButton::Right) {
+            event.button == foundation::MouseButton::Right) {
             switchMode((colorModeIdx + 1) % static_cast<int>(planetview::ColorMode::Count));
             event.consume();
             return true;

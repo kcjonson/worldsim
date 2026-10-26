@@ -47,7 +47,6 @@ target_link_libraries(ui
     PUBLIC
         foundation
         renderer
-        engine
         nlohmann_json::nlohmann_json
 )
 

@@ -41,7 +41,7 @@ namespace {
 				hoverAlign = inRect(event.position, alignRect);
 				return false;
 			}
-			if (event.type == InputEvent::Type::MouseUp && event.button == engine::MouseButton::Left) {
+			if (event.type == InputEvent::Type::MouseUp && event.button == foundation::MouseButton::Left) {
 				if (inRect(event.position, alignRect)) {
 					auto& settings = world_sim::UserSettings::Get();
 					settings.alignSnapToExistingFoundations = !settings.alignSnapToExistingFoundations;
@@ -55,7 +55,7 @@ namespace {
 		}
 
 		void update(float /*dt*/) override {
-			if (engine::InputManager::Get().isKeyPressed(engine::Key::Escape)) {
+			if (engine::InputManager::Get().isKeyPressed(foundation::Key::Escape)) {
 				sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu));
 			}
 		}

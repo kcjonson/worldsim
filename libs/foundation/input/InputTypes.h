@@ -1,10 +1,10 @@
 #pragma once
 
 // Input abstraction types
-// Provides platform-independent input constants that isolate GLFW from higher-level code.
-// This allows libs/ui and other modules to handle input without depending on GLFW directly.
+// Platform-independent key and mouse button codes. They keep GLFW out of libs/ui and
+// libs/foundation; engine's InputManager is the only place that maps them to GLFW constants.
 
-namespace engine {
+namespace foundation {
 
 	// Keyboard key codes (platform-independent)
 	enum class Key {
@@ -130,4 +130,4 @@ namespace engine {
 		Button8 = 7
 	};
 
-} // namespace engine
+} // namespace foundation

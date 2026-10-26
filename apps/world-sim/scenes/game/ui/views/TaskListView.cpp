@@ -146,7 +146,7 @@ namespace world_sim {
 			return false;
 		}
 
-		if (event.button != engine::MouseButton::Left) {
+		if (event.button != foundation::MouseButton::Left) {
 			return false;
 		}
 

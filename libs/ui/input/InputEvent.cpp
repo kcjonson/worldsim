@@ -2,7 +2,7 @@
 
 namespace UI {
 
-InputEvent InputEvent::mouseDown(Foundation::Vec2 pos, engine::MouseButton btn, int mods) {
+InputEvent InputEvent::mouseDown(Foundation::Vec2 pos, foundation::MouseButton btn, int mods) {
 	return InputEvent{
 		.type = Type::MouseDown,
 		.position = pos,
@@ -11,7 +11,7 @@ InputEvent InputEvent::mouseDown(Foundation::Vec2 pos, engine::MouseButton btn, 
 	};
 }
 
-InputEvent InputEvent::mouseUp(Foundation::Vec2 pos, engine::MouseButton btn, int mods) {
+InputEvent InputEvent::mouseUp(Foundation::Vec2 pos, foundation::MouseButton btn, int mods) {
 	return InputEvent{
 		.type = Type::MouseUp,
 		.position = pos,

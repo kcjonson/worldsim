@@ -198,12 +198,12 @@ namespace UI {
 		}
 	}
 
-	void ContextMenu::handleKeyInput(engine::Key key, bool /*shift*/, bool /*ctrl*/, bool /*alt*/) {
+	void ContextMenu::handleKeyInput(foundation::Key key, bool /*shift*/, bool /*ctrl*/, bool /*alt*/) {
 		if (state != State::Open) {
 			return;
 		}
 
-		if (key == engine::Key::Escape) {
+		if (key == foundation::Key::Escape) {
 			close();
 			return;
 		}
@@ -213,7 +213,7 @@ namespace UI {
 			return;
 		}
 
-		if (key == engine::Key::Up) {
+		if (key == foundation::Key::Up) {
 			// Move selection up
 			if (hoveredIndex <= 0) {
 				hoveredIndex = static_cast<int>(items.size()) - 1;
@@ -236,7 +236,7 @@ namespace UI {
 			return;
 		}
 
-		if (key == engine::Key::Down) {
+		if (key == foundation::Key::Down) {
 			// Move selection down
 			if (hoveredIndex < 0 || static_cast<size_t>(hoveredIndex) >= items.size() - 1) {
 				hoveredIndex = 0;
@@ -259,7 +259,7 @@ namespace UI {
 			return;
 		}
 
-		if (key == engine::Key::Enter) {
+		if (key == foundation::Key::Enter) {
 			if (hoveredIndex >= 0 && static_cast<size_t>(hoveredIndex) < items.size()) {
 				selectItem(static_cast<size_t>(hoveredIndex));
 			}

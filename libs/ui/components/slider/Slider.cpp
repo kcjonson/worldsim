@@ -252,7 +252,7 @@ bool Slider::handleEvent(InputEvent& event) {
 
 	switch (event.type) {
 		case InputEvent::Type::MouseDown:
-			if (event.button == engine::MouseButton::Left && containsPoint(event.position)) {
+			if (event.button == foundation::MouseButton::Left && containsPoint(event.position)) {
 				float distToHandle = std::abs(event.position.x - hx);
 				if (distToHandle <= kHandleHitRadius) {
 					dragging = true;
@@ -267,7 +267,7 @@ bool Slider::handleEvent(InputEvent& event) {
 			break;
 
 		case InputEvent::Type::MouseUp:
-			if (dragging && event.button == engine::MouseButton::Left) {
+			if (dragging && event.button == foundation::MouseButton::Left) {
 				dragging = false;
 				event.consume();
 				return true;
@@ -300,28 +300,28 @@ void Slider::onFocusLost() {
 	focused = false;
 }
 
-void Slider::handleKeyInput(engine::Key key, bool /*shift*/, bool /*ctrl*/, bool /*alt*/) {
+void Slider::handleKeyInput(foundation::Key key, bool /*shift*/, bool /*ctrl*/, bool /*alt*/) {
 	if (disabled) {
 		return;
 	}
 
 	switch (key) {
-		case engine::Key::Left:
-		case engine::Key::Down: {
+		case foundation::Key::Left:
+		case foundation::Key::Down: {
 			double fineStep = (step > 0.0) ? step : (max - min) * kFineStep;
 			setValue(value - fineStep);
 			break;
 		}
-		case engine::Key::Right:
-		case engine::Key::Up: {
+		case foundation::Key::Right:
+		case foundation::Key::Up: {
 			double fineStep = (step > 0.0) ? step : (max - min) * kFineStep;
 			setValue(value + fineStep);
 			break;
 		}
-		case engine::Key::Home:
+		case foundation::Key::Home:
 			setValue(min);
 			break;
-		case engine::Key::End:
+		case foundation::Key::End:
 			setValue(max);
 			break;
 		default:

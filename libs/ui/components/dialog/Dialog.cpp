@@ -390,8 +390,8 @@ namespace UI {
 		// User must explicitly close via [X], Escape, or click outside
 	}
 
-	void Dialog::handleKeyInput(engine::Key key, bool /*shift*/, bool /*ctrl*/, bool /*alt*/) {
-		if (key == engine::Key::Escape && state == State::Open) {
+	void Dialog::handleKeyInput(foundation::Key key, bool /*shift*/, bool /*ctrl*/, bool /*alt*/) {
+		if (key == foundation::Key::Escape && state == State::Open) {
 			close();
 		}
 	}

@@ -74,7 +74,7 @@ namespace {
 				hovered = enabled && containsPoint(event.position);
 				return false;
 			}
-			if (event.type == InputEvent::Type::MouseUp && event.button == engine::MouseButton::Left &&
+			if (event.type == InputEvent::Type::MouseUp && event.button == foundation::MouseButton::Left &&
 			    containsPoint(event.position)) {
 				if (enabled && action) {
 					action();

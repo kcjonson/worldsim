@@ -269,7 +269,7 @@ TEST_F(DialogTest, EscapeClosesDialogViaKeyInput) {
 	}
 
 	// Escape is handled via IFocusable::handleKeyInput, not InputEvent
-	dialog.handleKeyInput(engine::Key::Escape, false, false, false);
+	dialog.handleKeyInput(foundation::Key::Escape, false, false, false);
 
 	EXPECT_TRUE(dialog.isAnimating()); // Should be closing
 }

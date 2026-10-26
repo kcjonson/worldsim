@@ -40,9 +40,9 @@ namespace engine {
 		// expands to move+down+up so single-shot interactions are one request.
 		void dispatchInjectedInput(const Foundation::InputCommand& cmd) {
 			Foundation::Vec2 pos{cmd.x, cmd.y};
-			MouseButton button = MouseButton::Left;
-			if (cmd.button == 1) button = MouseButton::Right;
-			else if (cmd.button == 2) button = MouseButton::Middle;
+			foundation::MouseButton button = foundation::MouseButton::Left;
+			if (cmd.button == 1) button = foundation::MouseButton::Right;
+			else if (cmd.button == 2) button = foundation::MouseButton::Middle;
 
 			auto send = [](UI::InputEvent event) { SceneManager::Get().handleInput(event); };
 

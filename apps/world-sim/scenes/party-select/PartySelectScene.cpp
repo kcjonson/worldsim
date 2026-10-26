@@ -133,7 +133,7 @@ namespace {
 				hovered = containsPoint(event.position);
 				return false;
 			}
-			if (event.type == InputEvent::Type::MouseUp && event.button == engine::MouseButton::Left &&
+			if (event.type == InputEvent::Type::MouseUp && event.button == foundation::MouseButton::Left &&
 			    containsPoint(event.position)) {
 				onSelect(index);
 				event.consume();
@@ -461,7 +461,7 @@ namespace {
 		}
 
 		void update(float dt) override {
-			if (engine::InputManager::Get().isKeyPressed(engine::Key::Escape)) {
+			if (engine::InputManager::Get().isKeyPressed(foundation::Key::Escape)) {
 				goBack();
 				return;
 			}

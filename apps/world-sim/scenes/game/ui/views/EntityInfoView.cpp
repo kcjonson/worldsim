@@ -94,7 +94,7 @@ namespace world_sim {
 				hovered = containsPoint(event.position);
 				return false;
 			}
-			if (event.type == UI::InputEvent::Type::MouseUp && event.button == engine::MouseButton::Left &&
+			if (event.type == UI::InputEvent::Type::MouseUp && event.button == foundation::MouseButton::Left &&
 				containsPoint(event.position)) {
 				if (onClick) {
 					onClick();
@@ -791,7 +791,7 @@ namespace world_sim {
 		}
 
 		// Swallow clicks on the panel surface so they don't reach the world
-		if (event.type == UI::InputEvent::Type::MouseUp && event.button == engine::MouseButton::Left && containsPoint(event.position)) {
+		if (event.type == UI::InputEvent::Type::MouseUp && event.button == foundation::MouseButton::Left && containsPoint(event.position)) {
 			event.consume();
 			return true;
 		}

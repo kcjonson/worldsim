@@ -36,15 +36,15 @@ namespace UI {
 			FocusManager::setInstance(nullptr);
 		}
 
-		static void press(TextInput& input, engine::Key key) { input.handleKeyInput(key, false, true, false); }
+		static void press(TextInput& input, foundation::Key key) { input.handleKeyInput(key, false, true, false); }
 	};
 
 	TEST_F(TextInputClipboardTest, CopyPutsSelectionOnClipboardAndKeepsText) {
 		TextInput input(TextInput::Args{.text = "hello"});
 		input.onFocusGained();
 
-		press(input, engine::Key::A);
-		press(input, engine::Key::C);
+		press(input, foundation::Key::A);
+		press(input, foundation::Key::C);
 
 		EXPECT_EQ(clipboard.contents, "hello");
 		EXPECT_EQ(clipboard.setCount, 1);
@@ -56,7 +56,7 @@ namespace UI {
 		input.onFocusGained();
 
 		ASSERT_FALSE(input.selection.has_value());
-		press(input, engine::Key::C);
+		press(input, foundation::Key::C);
 
 		EXPECT_EQ(clipboard.setCount, 0);
 		EXPECT_TRUE(clipboard.contents.empty());
@@ -67,8 +67,8 @@ namespace UI {
 		TextInput	input(TextInput::Args{.text = "hello", .onChange = [&](const std::string& value) { changed = value; }});
 		input.onFocusGained();
 
-		press(input, engine::Key::A);
-		press(input, engine::Key::X);
+		press(input, foundation::Key::A);
+		press(input, foundation::Key::X);
 
 		EXPECT_EQ(clipboard.contents, "hello");
 		EXPECT_EQ(input.text, "");
@@ -81,7 +81,7 @@ namespace UI {
 		input.onFocusGained();
 		clipboard.contents = "cd";
 
-		press(input, engine::Key::V);
+		press(input, foundation::Key::V);
 
 		EXPECT_EQ(input.text, "abcd");
 		EXPECT_EQ(input.cursorPosition, 4U);
@@ -92,8 +92,8 @@ namespace UI {
 		input.onFocusGained();
 		clipboard.contents = "x";
 
-		press(input, engine::Key::A);
-		press(input, engine::Key::V);
+		press(input, foundation::Key::A);
+		press(input, foundation::Key::V);
 
 		EXPECT_EQ(input.text, "x");
 		EXPECT_EQ(input.cursorPosition, 1U);
@@ -105,7 +105,7 @@ namespace UI {
 		input.onFocusGained();
 		clipboard.contents = "a\nb\r\nc";
 
-		press(input, engine::Key::V);
+		press(input, foundation::Key::V);
 
 		EXPECT_EQ(input.text, "abc");
 	}

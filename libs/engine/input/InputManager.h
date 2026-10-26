@@ -47,16 +47,16 @@ namespace engine {
 		// Query API for scenes to read current input state
 		glm::vec2 getMousePosition() const { return mousePosition; }
 		glm::vec2 getMouseDelta() const { return mouseDelta; }
-		bool	  isMouseButtonDown(MouseButton button) const;
-		bool	  isMouseButtonPressed(MouseButton button) const;  // True only on frame button was pressed
-		bool	  isMouseButtonReleased(MouseButton button) const; // True only on frame button was released
+		bool	  isMouseButtonDown(foundation::MouseButton button) const;
+		bool	  isMouseButtonPressed(foundation::MouseButton button) const;  // True only on frame button was pressed
+		bool	  isMouseButtonReleased(foundation::MouseButton button) const; // True only on frame button was released
 		bool	  isDragging() const { return dragging; }
 		glm::vec2 getDragStartPosition() const { return dragStartPos; }
 		glm::vec2 getDragDelta() const { return mousePosition - dragStartPos; }
 
-		bool isKeyDown(Key key) const;
-		bool isKeyPressed(Key key) const;  // True only on frame key was pressed
-		bool isKeyReleased(Key key) const; // True only on frame key was released
+		bool isKeyDown(foundation::Key key) const;
+		bool isKeyPressed(foundation::Key key) const;  // True only on frame key was pressed
+		bool isKeyReleased(foundation::Key key) const; // True only on frame key was released
 
 		float getScrollDelta() const { return scrollDelta; }
 		float consumeScrollDelta() {
@@ -71,7 +71,7 @@ namespace engine {
 		// through the same state machine as a real GLFW key event, so isKeyPressed/
 		// isKeyDown/isKeyReleased behave identically: a down fires the press edge for
 		// one frame, then holds Down until the matching up. Not for gameplay code.
-		void injectKey(Key key, bool down);
+		void injectKey(foundation::Key key, bool down);
 
 		// Synthetic cursor move (debug/test, e.g. the /api/input endpoint). The injected
 		// position becomes the cursor position, so getMousePosition() (and the main loop's
@@ -82,14 +82,14 @@ namespace engine {
 
 		// Parse a key name (single letter/digit, or a named key like "Escape", "Enter",
 		// "Space", "F5") to a Key. Case-insensitive. Nullopt if unrecognized.
-		[[nodiscard]] static std::optional<Key> keyFromName(const std::string& name);
+		[[nodiscard]] static std::optional<foundation::Key> keyFromName(const std::string& name);
 
 		// Callbacks for external systems (e.g., FocusManager for keyboard, UI event system for mouse)
-		using KeyInputCallback = std::function<bool(Key key, int action, int mods)>;
+		using KeyInputCallback = std::function<bool(foundation::Key key, int action, int mods)>;
 		using CharInputCallback = std::function<bool(char32_t codepoint)>;
 
 		// Mouse event callbacks - return true to consume the event
-		using MouseButtonInputCallback = std::function<bool(MouseButton button, int action, glm::vec2 position, int mods)>;
+		using MouseButtonInputCallback = std::function<bool(foundation::MouseButton button, int action, glm::vec2 position, int mods)>;
 		using MouseMoveInputCallback = std::function<bool(glm::vec2 position)>;
 		using ScrollInputCallback = std::function<bool(float delta, glm::vec2 position)>;
 

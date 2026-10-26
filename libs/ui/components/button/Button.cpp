@@ -240,7 +240,7 @@ namespace UI {
 
 		switch (event.type) {
 			case InputEvent::Type::MouseDown:
-				if (containsPoint(event.position) && event.button == engine::MouseButton::Left) {
+				if (containsPoint(event.position) && event.button == foundation::MouseButton::Left) {
 					state = State::Pressed;
 					mouseDown = true;
 					event.consume();
@@ -249,7 +249,7 @@ namespace UI {
 				break;
 
 			case InputEvent::Type::MouseUp:
-				if (mouseDown && event.button == engine::MouseButton::Left) {
+				if (mouseDown && event.button == foundation::MouseButton::Left) {
 					if (containsPoint(event.position)) {
 						if (onClick) {
 							onClick();
@@ -283,11 +283,11 @@ namespace UI {
 
 	void Button::onFocusLost() { focused = false; }
 
-	void Button::handleKeyInput(engine::Key key, bool /*shift*/, bool /*ctrl*/, bool /*alt*/) {
+	void Button::handleKeyInput(foundation::Key key, bool /*shift*/, bool /*ctrl*/, bool /*alt*/) {
 		if (disabled) {
 			return;
 		}
-		if (key == engine::Key::Enter || key == engine::Key::Space) {
+		if (key == foundation::Key::Enter || key == foundation::Key::Space) {
 			if (onClick) {
 				onClick();
 			}

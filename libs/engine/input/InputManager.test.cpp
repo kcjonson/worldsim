@@ -7,7 +7,7 @@
 // function-key paths plus the unknown fallback.
 
 using engine::InputManager;
-using engine::Key;
+using foundation::Key;
 
 TEST(InputManagerKeyFromName, SingleLetterIsCaseInsensitive) {
 	auto upper = InputManager::keyFromName("R");

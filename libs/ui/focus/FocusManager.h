@@ -126,12 +126,12 @@ class FocusManager {
 	/**
 	 * Route keyboard input to focused component (called by InputManager).
 	 *
-	 * @param key - Key pressed (from engine::Key enum)
+	 * @param key - Key pressed (from foundation::Key enum)
 	 * @param shift - True if Shift modifier is pressed
 	 * @param ctrl - True if Ctrl/Cmd modifier is pressed
 	 * @param alt - True if Alt/Option modifier is pressed
 	 */
-	void routeKeyInput(engine::Key key, bool shift, bool ctrl, bool alt);
+	void routeKeyInput(foundation::Key key, bool shift, bool ctrl, bool alt);
 
 	/**
 	 * Route character input to focused component (called by InputManager).

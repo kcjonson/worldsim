@@ -24,7 +24,7 @@ struct InputEvent {
 
 	Type type{Type::MouseMove};
 	Foundation::Vec2 position{0.0F, 0.0F};	  // Screen coordinates
-	engine::MouseButton button{};			  // For MouseDown/MouseUp
+	foundation::MouseButton button{};			  // For MouseDown/MouseUp
 	float scrollDelta{0.0F};				  // For Scroll (positive = up)
 	int modifiers{0};						  // GLFW modifier flags (shift, ctrl, alt)
 
@@ -38,8 +38,8 @@ struct InputEvent {
 	[[nodiscard]] bool isConsumed() const { return consumed; }
 
 	// Factory methods for clearer construction
-	static InputEvent mouseDown(Foundation::Vec2 pos, engine::MouseButton btn, int mods = 0);
-	static InputEvent mouseUp(Foundation::Vec2 pos, engine::MouseButton btn, int mods = 0);
+	static InputEvent mouseDown(Foundation::Vec2 pos, foundation::MouseButton btn, int mods = 0);
+	static InputEvent mouseUp(Foundation::Vec2 pos, foundation::MouseButton btn, int mods = 0);
 	static InputEvent mouseMove(Foundation::Vec2 pos, int mods = 0);
 	static InputEvent scroll(Foundation::Vec2 pos, float delta);
 };

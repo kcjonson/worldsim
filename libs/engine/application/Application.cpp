@@ -50,14 +50,14 @@ namespace engine {
 		LOG_INFO(Engine, "Application initialized with FocusManager");
 
 		// Wire InputManager callbacks to FocusManager
-		inputManager->setKeyInputCallback([this](Key key, int action, int mods) -> bool {
+		inputManager->setKeyInputCallback([this](foundation::Key key, int action, int mods) -> bool {
 			// Only handle key press and repeat events (not release)
 			if (action != GLFW_PRESS && action != GLFW_REPEAT) {
 				return false; // Don't consume
 			}
 
 			// Handle Tab key for focus navigation
-			if (key == Key::Tab) {
+			if (key == foundation::Key::Tab) {
 				if (mods & GLFW_MOD_SHIFT) {
 					focusManager->focusPrevious();
 				} else {
@@ -148,13 +148,13 @@ namespace engine {
 
 				// Build modifier flags from current key state (GLFW modifier bit values)
 				int mods = 0;
-				if (inputManager->isKeyDown(engine::Key::LeftShift) || inputManager->isKeyDown(engine::Key::RightShift)) {
+				if (inputManager->isKeyDown(foundation::Key::LeftShift) || inputManager->isKeyDown(foundation::Key::RightShift)) {
 					mods |= kModShift;
 				}
-				if (inputManager->isKeyDown(engine::Key::LeftControl) || inputManager->isKeyDown(engine::Key::RightControl)) {
+				if (inputManager->isKeyDown(foundation::Key::LeftControl) || inputManager->isKeyDown(foundation::Key::RightControl)) {
 					mods |= kModControl;
 				}
-				if (inputManager->isKeyDown(engine::Key::LeftAlt) || inputManager->isKeyDown(engine::Key::RightAlt)) {
+				if (inputManager->isKeyDown(foundation::Key::LeftAlt) || inputManager->isKeyDown(foundation::Key::RightAlt)) {
 					mods |= kModAlt;
 				}
 
@@ -164,26 +164,26 @@ namespace engine {
 				SceneManager::Get().handleInput(moveEvent);
 
 				// MouseDown on press (left button)
-				if (inputManager->isMouseButtonPressed(engine::MouseButton::Left)) {
-					UI::InputEvent downEvent = UI::InputEvent::mouseDown(pos, engine::MouseButton::Left, mods);
+				if (inputManager->isMouseButtonPressed(foundation::MouseButton::Left)) {
+					UI::InputEvent downEvent = UI::InputEvent::mouseDown(pos, foundation::MouseButton::Left, mods);
 					SceneManager::Get().handleInput(downEvent);
 				}
 
 				// MouseDown on press (right button)
-				if (inputManager->isMouseButtonPressed(engine::MouseButton::Right)) {
-					UI::InputEvent downEvent = UI::InputEvent::mouseDown(pos, engine::MouseButton::Right, mods);
+				if (inputManager->isMouseButtonPressed(foundation::MouseButton::Right)) {
+					UI::InputEvent downEvent = UI::InputEvent::mouseDown(pos, foundation::MouseButton::Right, mods);
 					SceneManager::Get().handleInput(downEvent);
 				}
 
 				// MouseUp on release (left button)
-				if (inputManager->isMouseButtonReleased(engine::MouseButton::Left)) {
-					UI::InputEvent upEvent = UI::InputEvent::mouseUp(pos, engine::MouseButton::Left, mods);
+				if (inputManager->isMouseButtonReleased(foundation::MouseButton::Left)) {
+					UI::InputEvent upEvent = UI::InputEvent::mouseUp(pos, foundation::MouseButton::Left, mods);
 					SceneManager::Get().handleInput(upEvent);
 				}
 
 				// MouseUp on release (right button)
-				if (inputManager->isMouseButtonReleased(engine::MouseButton::Right)) {
-					UI::InputEvent upEvent = UI::InputEvent::mouseUp(pos, engine::MouseButton::Right, mods);
+				if (inputManager->isMouseButtonReleased(foundation::MouseButton::Right)) {
+					UI::InputEvent upEvent = UI::InputEvent::mouseUp(pos, foundation::MouseButton::Right, mods);
 					SceneManager::Get().handleInput(upEvent);
 				}
 
