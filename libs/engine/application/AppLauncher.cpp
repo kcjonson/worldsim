@@ -17,6 +17,7 @@
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <span>
@@ -27,13 +28,13 @@ namespace engine {
 	namespace {
 
 		// Global systems (accessed by GLFW callbacks)
-		Renderer::CoordinateSystem*					g_coordinateSystem = nullptr;
-		std::unique_ptr<Renderer::FontRenderer>		g_fontRenderer = nullptr;
-		std::function<void()>						g_windowResizeCallback; // App-specific resize handler
-		std::function<void()>						g_shutdownResources;	// AppConfig::shutdownResources, run from cleanup()
+		Renderer::CoordinateSystem*				g_coordinateSystem = nullptr;
+		std::unique_ptr<Renderer::FontRenderer> g_fontRenderer = nullptr;
+		std::function<void()>					g_windowResizeCallback; // App-specific resize handler
+		std::function<void()>					g_shutdownResources;	// AppConfig::shutdownResources, run from cleanup()
 
 		// Owned resources that persist between initialize() and run()
-		std::unique_ptr<Foundation::DebugServer>	g_debugServer;
+		std::unique_ptr<Foundation::DebugServer> g_debugServer;
 
 		// Route one /api/input command through the scene input path. Click
 		// expands to move+down+up so single-shot interactions are one request.

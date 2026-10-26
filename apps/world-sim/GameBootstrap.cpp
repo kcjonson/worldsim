@@ -11,21 +11,21 @@
 namespace world_sim {
 
 	namespace {
-		std::unique_ptr<Renderer::TileAtlasBuilder> tileAtlasBuilder;
+		std::unique_ptr<Renderer::TileAtlasBuilder> g_tileAtlasBuilder;
 
 		// Bootstrap a default tile atlas (solid colors per surface) to exercise tile mode.
 		void initializeTileAtlas() {
 			constexpr int kSurfaceCount = static_cast<int>(engine::world::Surface::Count);
 
-			tileAtlasBuilder = std::make_unique<Renderer::TileAtlasBuilder>();
-			auto rects = tileAtlasBuilder->buildForSurfaces(
+			g_tileAtlasBuilder = std::make_unique<Renderer::TileAtlasBuilder>();
+			auto rects = g_tileAtlasBuilder->buildForSurfaces(
 				kSurfaceCount,
 				[](int surfaceId) { return engine::world::surfaceToString(static_cast<engine::world::Surface>(surfaceId)); },
 				[](int surfaceId) { return engine::world::Chunk::getSurfaceColor(static_cast<engine::world::Surface>(surfaceId)); }
 			);
 
 			if (!rects.empty()) {
-				Renderer::Primitives::setTileAtlas(tileAtlasBuilder->texture(), rects);
+				Renderer::Primitives::setTileAtlas(g_tileAtlasBuilder->texture(), rects);
 				LOG_INFO(Renderer, "Initialized default tile atlas with %zu entries", rects.size());
 			} else {
 				LOG_WARNING(Renderer, "Tile atlas not initialized (no rects)");
@@ -41,7 +41,7 @@ namespace world_sim {
 	}
 
 	void shutdownResources() {
-		tileAtlasBuilder.reset();
+		g_tileAtlasBuilder.reset();
 	}
 
 } // namespace world_sim
