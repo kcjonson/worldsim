@@ -11,8 +11,8 @@
 #include "assets/placement/PlacementExecutor.h"
 #include "primitives/InstanceData.h"
 #include "world/chunk/ChunkCoordinate.h"
-#include "world/rendering/InstancingUniforms.h"
 #include "world/rendering/RenderContext.h"
+#include "world/rendering/RenderStats.h"
 
 #include <cstdint>
 #include <string>
@@ -25,10 +25,7 @@ namespace engine::world {
 /// Draws groundcover (grass) for the visible chunks via GPU instancing, with the zoom LOD.
 class GroundcoverRenderer {
   public:
-	void render(const RenderContext& ctx, InstancingUniforms& uniforms, RenderStats& stats);
-
-	/// Release uploaded variant meshes on teardown.
-	~GroundcoverRenderer();
+	void render(const RenderContext& ctx, RenderStats& stats);
 
 	/// Evict cached chunk instance buckets not recently visible (mirrors the baked LRU) so the
 	/// per-chunk InstanceData cache does not grow unbounded over a long pan/play session.
@@ -51,6 +48,7 @@ class GroundcoverRenderer {
 
 	/// Per-defName uploaded variant mesh handles, generated lazily from the asset
 	/// (AssetRegistry::buildMesh per seed) so all look/feel stays in the asset, not engine C++.
+	/// Each handle releases its buffers when the map is destroyed.
 	std::unordered_map<std::string, std::vector<Renderer::InstancedMeshHandle>> m_groundcoverHandles;
 
 	/// Generate (once, lazily) and return a groundcover asset's variant mesh handles.

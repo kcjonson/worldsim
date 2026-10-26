@@ -53,7 +53,7 @@ namespace engine::world {
 		vertexIndex += static_cast<uint32_t>(mesh->vertices.size());
 	}
 
-	void BatchedEntityRenderer::render(const RenderContext& ctx, InstancingUniforms& /*uniforms*/, RenderStats& stats) {
+	void BatchedEntityRenderer::render(const RenderContext& ctx, RenderStats& stats) {
 		stats.entities = 0;
 		stats.drawCalls = 0;
 		stats.triangles = 0;

@@ -1,7 +1,7 @@
 #include "ChunkRenderer.h"
 
+#include <backend/gl/GLNames.h>
 #include <debug/Tunables.h>
-#include <primitives/BatchRenderer.h>
 #include <primitives/Primitives.h>
 #include <random/HashNoise.h>
 #include <utils/Log.h>
@@ -503,10 +503,7 @@ namespace engine::world {
 		}
 
 		// Flush any pending batched geometry so draw order stays correct
-		auto* batchRenderer = Renderer::Primitives::getBatchRenderer();
-		if (batchRenderer != nullptr) {
-			batchRenderer->flush();
-		}
+		Renderer::Primitives::flush();
 
 		// Save GL state before modifying (mirrors EntityRenderer's baked pass)
 		GLboolean blendEnabled = glIsEnabled(GL_BLEND);
@@ -534,7 +531,7 @@ namespace engine::world {
 		applyLandUniforms(visibleChunks.front()->worldSeed(), metersPerPixel);
 
 		const auto& atlasRects = Renderer::Primitives::getTileAtlasRects();
-		bindUnit(kUnitTileAtlas, Renderer::Primitives::getTileAtlasTexture());
+		bindUnit(kUnitTileAtlas, Renderer::backend::gl::name(Renderer::Primitives::getTileAtlasTexture()));
 		glUniform1i(loc.tileAtlas, kUnitTileAtlas);
 		glUniform1i(loc.tileAtlasRectCount, static_cast<GLint>(atlasRects.size()));
 		if (!atlasRects.empty()) {

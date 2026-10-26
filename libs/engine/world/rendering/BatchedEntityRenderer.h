@@ -6,8 +6,8 @@
 
 #include "assets/placement/PlacementExecutor.h"
 #include "world/chunk/ChunkCoordinate.h"
-#include "world/rendering/InstancingUniforms.h"
 #include "world/rendering/RenderContext.h"
+#include "world/rendering/RenderStats.h"
 #include "world/rendering/TemplateMeshCache.h"
 #include "world/rendering/WorldDepthSort.h"
 
@@ -27,10 +27,7 @@ namespace engine::world {
 /// ordering as the instanced path, and emits one draw call.
 class BatchedEntityRenderer {
   public:
-	// uniforms is unused here (CPU batching needs no shader uniforms) but kept in
-	// the signature so all render paths share one shape; the orchestrator can call
-	// them uniformly.
-	void render(const RenderContext& ctx, InstancingUniforms& uniforms, RenderStats& stats);
+	void render(const RenderContext& ctx, RenderStats& stats);
 
   private:
 	/// Transform one entity's mesh into screen-space triangles appended to the

@@ -1,7 +1,6 @@
 #include "shapes/Shapes.h"
 #include "core/RenderContext.h"
 #include "font/FontRenderer.h"
-#include "primitives/BatchRenderer.h"
 #include "primitives/Primitives.h"
 #include "utils/Log.h"
 #include <glm/glm.hpp>
@@ -86,10 +85,8 @@ namespace UI {
 	}
 
 	void Text::render() {
-		// Get batch renderer for unified shape + text rendering
-		Renderer::BatchRenderer* batchRenderer = Renderer::Primitives::getBatchRenderer();
-		if (batchRenderer == nullptr || text.empty()) {
-			return; // No batch renderer available or nothing to render
+		if (text.empty()) {
+			return;
 		}
 
 		// Get font renderer for glyph generation and alignment calculations
@@ -215,19 +212,8 @@ namespace UI {
 			fontRenderer->generateGlyphQuads(text, glm::vec2(alignedPos.x, alignedPos.y), scale, glyphColor, glyphs);
 		}
 
-		// Add each glyph to the unified batch renderer
 		// Text is interleaved with shapes in submission order, preserving correct z-ordering
-		Foundation::Color textColor(style.color.r, style.color.g, style.color.b, style.color.a);
-		for (const auto& glyph : glyphs) {
-			batchRenderer->addTextQuad(
-				Foundation::Vec2(glyph.position.x, glyph.position.y),
-				Foundation::Vec2(glyph.size.x, glyph.size.y),
-				Foundation::Vec2(glyph.uvMin.x, glyph.uvMin.y),
-				Foundation::Vec2(glyph.uvMax.x, glyph.uvMax.y),
-				textColor,
-				Foundation::Vec2(glyph.runOrigin.x, glyph.runOrigin.y)
-			);
-		}
+		Renderer::Primitives::drawGlyphs(glyphs.data(), glyphs.size());
 	}
 
 } // namespace UI

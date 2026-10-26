@@ -13,7 +13,6 @@
 #include <assets/AssetDefinition.h>
 #include <assets/AssetRegistry.h>
 #include <input/InputEvent.h>
-#include <primitives/BatchRenderer.h>
 #include <primitives/InstanceData.h>
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
@@ -119,11 +118,6 @@ namespace {
 	  public:
 		void onEnter() override {
 			LOG_INFO(UI, "Grass Scene - placement-driven hair clumps");
-			auto* br = Renderer::Primitives::getBatchRenderer();
-			if (br == nullptr) {
-				LOG_ERROR(UI, "No batch renderer available");
-				return;
-			}
 
 			std::mt19937						   meshRng(1234);
 			std::vector<renderer::TessellatedMesh> meshes;
@@ -148,7 +142,7 @@ namespace {
 			for (int v = 0; v < kVariantCount; ++v) {
 				m_totalTufts += static_cast<uint32_t>(m_instancesByVariant[v].size());
 				auto maxInst = static_cast<uint32_t>(std::max<size_t>(1, m_instancesByVariant[v].size()));
-				m_handles[v] = br->uploadInstancedMesh(meshes[v], maxInst);
+				m_handles[v] = Renderer::Primitives::uploadInstancedMesh(meshes[v], maxInst);
 				if (!m_instancesByVariant[v].empty()) {
 					m_drawCalls++;
 					m_totalTris += m_variantTris[v] * m_instancesByVariant[v].size();
@@ -167,15 +161,10 @@ namespace {
 			glClearColor(kGround.r, kGround.g, kGround.b, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
 
-			auto* br = Renderer::Primitives::getBatchRenderer();
-			if (br == nullptr) {
-				return;
-			}
-
 			int viewW = 0;
 			int viewH = 0;
 			Renderer::Primitives::getViewport(viewW, viewH);
-			br->setViewport(viewW, viewH);
+			Renderer::Primitives::setViewport(viewW, viewH);
 
 			int logW = 0;
 			int logH = 0;
@@ -191,26 +180,26 @@ namespace {
 				(cursorScreen.y - static_cast<float>(logH) * 0.5F) / viewScale + cameraPos.y
 			);
 
-			GLuint prog = br->getShaderProgram();
-			glUseProgram(prog);
-			glUniform1f(glGetUniformLocation(prog, "u_bakedAlpha"), 1.0F);
-			glUniform1i(glGetUniformLocation(prog, "u_groundcoverMode"), 1);
-			glUniform1f(glGetUniformLocation(prog, "u_groundcoverOpenness"), kGroundcoverOpenness);
-			glUniform1f(glGetUniformLocation(prog, "u_groundcoverReach"), kGroundcoverReach);
-			glUniform2f(glGetUniformLocation(prog, "u_cursorWorld"), cursorWorld.x, cursorWorld.y);
-			glUniform1f(glGetUniformLocation(prog, "u_cursorRadius"), kCursorRadiusM);
-			glUniform1f(glGetUniformLocation(prog, "u_cursorStrength"), kCursorStrengthM);
+			Renderer::Primitives::setBakedAlpha(1.0F);
+			Renderer::Primitives::setGroundcover(
+				{.enabled = true,
+				 .openness = kGroundcoverOpenness,
+				 .reach = kGroundcoverReach,
+				 .cursorWorld = cursorWorld,
+				 .cursorRadius = kCursorRadiusM,
+				 .cursorStrength = kCursorStrengthM}
+			);
 
+			const Renderer::Primitives::WorldCamera camera{.position = cameraPos, .zoom = kCameraZoom, .pixelsPerMeter = kPixelsPerMeter};
 			for (int v = 0; v < kVariantCount; ++v) {
 				auto& inst = m_instancesByVariant[v];
 				if (inst.empty() || !m_handles[v].isValid()) {
 					continue;
 				}
-				br->drawInstanced(m_handles[v], inst.data(), static_cast<uint32_t>(inst.size()), cameraPos, kCameraZoom, kPixelsPerMeter);
+				Renderer::Primitives::drawInstanced(m_handles[v], inst.data(), static_cast<uint32_t>(inst.size()), camera);
 			}
 
-			glUseProgram(prog);
-			glUniform1i(glGetUniformLocation(prog, "u_groundcoverMode"), 0);
+			Renderer::Primitives::setGroundcover({});
 
 			if (m_haveMouse) {
 				Renderer::Primitives::drawCircle(

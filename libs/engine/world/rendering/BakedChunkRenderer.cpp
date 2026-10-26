@@ -5,9 +5,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
-#include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtc/type_ptr.hpp>
-#include <primitives/BatchRenderer.h>
 #include <primitives/Primitives.h>
 
 namespace engine::world {
@@ -149,17 +146,12 @@ namespace engine::world {
 		m_bakedChunkCache.erase(coord);
 	}
 
-	void BakedChunkRenderer::renderBakedChunks(const RenderContext& ctx, InstancingUniforms& uniforms, RenderStats& stats) {
-		auto* batchRenderer = Renderer::Primitives::getBatchRenderer();
-		if (batchRenderer == nullptr) {
-			return;
-		}
-
+	void BakedChunkRenderer::renderBakedChunks(const RenderContext& ctx, RenderStats& stats) {
 		// Flush any pending batched geometry before drawing baked entities
-		batchRenderer->flush();
+		Renderer::Primitives::flush();
 
-		// Set viewport on BatchRenderer
-		batchRenderer->setViewport(ctx.viewportWidth, ctx.viewportHeight);
+		// The baked pass projects from the Primitives viewport
+		Renderer::Primitives::setViewport(ctx.viewportWidth, ctx.viewportHeight);
 
 		// Calculate visible world bounds for sub-chunk culling
 		float zoom = ctx.camera.zoom();
@@ -167,48 +159,14 @@ namespace engine::world {
 		float camY = ctx.camera.position().y;
 		VisibleBounds vis = computeVisibleBounds(ctx.camera, ctx.viewportWidth, ctx.viewportHeight, ctx.pixelsPerMeter);
 
-		// Save GL state before modifying
-		GLboolean blendEnabled = glIsEnabled(GL_BLEND);
-		GLboolean depthTestEnabled = glIsEnabled(GL_DEPTH_TEST);
-		GLboolean cullFaceEnabled = glIsEnabled(GL_CULL_FACE);
-
-		// Enable blending for transparency
-		glEnable(GL_BLEND);
-		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-		glDisable(GL_DEPTH_TEST);
-		glDisable(GL_CULL_FACE);
-
-		// Use the shader
-		GLuint shaderProgram = batchRenderer->getShaderProgram();
-		glUseProgram(shaderProgram);
-
-		// Initialize cached uniform locations on first use
-		uniforms.init(shaderProgram);
-
-		// Set up projection matrix
-		Foundation::Mat4 projection =
-			glm::ortho(0.0F, static_cast<float>(ctx.viewportWidth), static_cast<float>(ctx.viewportHeight), 0.0F, -1.0F, 1.0F);
-		glUniformMatrix4fv(uniforms.projection, 1, GL_FALSE, glm::value_ptr(projection));
-
-		// Identity transform
-		Foundation::Mat4 identity(1.0F);
-		glUniformMatrix4fv(uniforms.transform, 1, GL_FALSE, glm::value_ptr(identity));
-
-		// Set baked world-space mode (u_instanced = 2)
-		glUniform1i(uniforms.instanced, 2);
-		glUniform2f(uniforms.cameraPosition, camX, camY);
-		glUniform1f(uniforms.cameraZoom, zoom);
-		glUniform1f(uniforms.pixelsPerMeter, ctx.pixelsPerMeter);
-		glUniform2f(uniforms.viewportSize, static_cast<float>(ctx.viewportWidth), static_cast<float>(ctx.viewportHeight));
+		// Uber program in baked world-space mode, blending on; the VAO draws below are ours
+		Renderer::Primitives::beginBakedPass({.position = {camX, camY}, .zoom = zoom, .pixelsPerMeter = ctx.pixelsPerMeter});
 
 		// Far-zoom impostor handoff: pixels of on-screen height per meter of
 		// entity height; short flora fades out below kImpostorCutoffPx because
 		// the grass tile texture carries the appearance at that distance
 		float pixelsPerWorldMeter = ctx.pixelsPerMeter * zoom;
 		float currentAlpha = 1.0F;
-		if (uniforms.bakedAlpha >= 0) {
-			glUniform1f(uniforms.bakedAlpha, currentAlpha);
-		}
 
 		// Draw visible sub-chunks from each cached chunk
 		for (const auto& coord : ctx.processedChunks) {
@@ -239,8 +197,8 @@ namespace engine::world {
 				if (alpha <= 0.0F) {
 					continue;
 				}
-				if (alpha != currentAlpha && uniforms.bakedAlpha >= 0) {
-					glUniform1f(uniforms.bakedAlpha, alpha);
+				if (alpha != currentAlpha) {
+					Renderer::Primitives::setBakedAlpha(alpha);
 					currentAlpha = alpha;
 				}
 
@@ -252,29 +210,9 @@ namespace engine::world {
 			}
 		}
 
-		// Reset alpha so the dynamic instanced path (same shader branch) is unaffected
-		if (uniforms.bakedAlpha >= 0 && currentAlpha != 1.0F) {
-			glUniform1f(uniforms.bakedAlpha, 1.0F);
-		}
-
-		Renderer::GLVertexArray::unbind();
-
-		// Restore GL state
-		if (blendEnabled == GL_TRUE) {
-			glEnable(GL_BLEND);
-		} else {
-			glDisable(GL_BLEND);
-		}
-		if (depthTestEnabled == GL_TRUE) {
-			glEnable(GL_DEPTH_TEST);
-		} else {
-			glDisable(GL_DEPTH_TEST);
-		}
-		if (cullFaceEnabled == GL_TRUE) {
-			glEnable(GL_CULL_FACE);
-		} else {
-			glDisable(GL_CULL_FACE);
-		}
+		// Alpha back to 1 for the dynamic instanced path (same shader branch), VAO
+		// unbound, blending off: the state every batch draw leaves behind
+		Renderer::Primitives::endBakedPass();
 	}
 
 	void BakedChunkRenderer::evictLRU(const std::unordered_set<ChunkCoordinate>& processedChunks) {

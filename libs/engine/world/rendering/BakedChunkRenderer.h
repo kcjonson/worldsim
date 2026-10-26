@@ -11,8 +11,8 @@
 #include "gl/GLVertexArray.h"
 #include "world/chunk/ChunkCoordinate.h"
 #include "world/rendering/BakedEntityMesh.h"
-#include "world/rendering/InstancingUniforms.h"
 #include "world/rendering/RenderContext.h"
+#include "world/rendering/RenderStats.h"
 #include "world/rendering/TemplateMeshCache.h"
 
 #include <array>
@@ -57,7 +57,7 @@ class BakedChunkRenderer {
 	}
 
 	/// Render static entities using baked per-chunk meshes (glDrawElements, no instancing).
-	void renderBakedChunks(const RenderContext& ctx, InstancingUniforms& uniforms, RenderStats& stats);
+	void renderBakedChunks(const RenderContext& ctx, RenderStats& stats);
 
 	/// LRU cache eviction. Keep recently-used chunks cached even when not visible,
 	/// to avoid re-uploading when panning back and forth. Only evict oldest when

@@ -7,8 +7,8 @@
 
 #include "assets/placement/PlacementExecutor.h"
 #include "primitives/InstanceData.h"
-#include "world/rendering/InstancingUniforms.h"
 #include "world/rendering/RenderContext.h"
+#include "world/rendering/RenderStats.h"
 #include "world/rendering/SelectionOutline.h"
 #include "world/rendering/TemplateMeshCache.h"
 #include "world/rendering/WorldDepthSort.h"
@@ -34,8 +34,6 @@ namespace engine::world {
 /// flush at their sorted position on the CPU triangle path.
 class InstancedEntityRenderer {
   public:
-	~InstancedEntityRenderer();
-
 	/// Emit the pre-sorted upright stream in order (ascending anchorY).
 	void emitSorted(const std::vector<DepthSortItem>& items, const RenderContext& ctx, RenderStats& stats);
 
@@ -49,7 +47,8 @@ class InstancedEntityRenderer {
 	static constexpr uint32_t kMaxInstancesPerMesh = 50000;
 
 	// Cache for GPU mesh handles (keyed by defName)
-	// These hold the SHARED mesh geometry (VBO/IBO) that all chunks reference
+	// These hold the SHARED mesh geometry (VBO/IBO) that all chunks reference;
+	// each handle releases its buffers when the map is destroyed
 	std::unordered_map<std::string, Renderer::InstancedMeshHandle> m_meshHandles;
 
 	// Current run of consecutive same-defName non-animated entities, drawn as one

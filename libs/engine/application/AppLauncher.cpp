@@ -102,7 +102,7 @@ namespace engine {
 			int windowHeight = 0;
 			glfwGetWindowSize(window, &windowWidth, &windowHeight);
 			if (g_coordinateSystem != nullptr) {
-				g_coordinateSystem->updateWindowSize(windowWidth, windowHeight);
+				g_coordinateSystem->setViewport({windowWidth, windowHeight, width, height});
 			}
 
 			Renderer::Primitives::setViewport(width, height);
@@ -161,15 +161,6 @@ namespace engine {
 		}
 
 		bool initializeRenderingSystems(GLFWwindow* window) {
-			// Initialize coordinate system
-			LOG_INFO(Renderer, "Initializing coordinate system");
-			static Renderer::CoordinateSystem coordinateSystem;
-			g_coordinateSystem = &coordinateSystem;
-			if (!coordinateSystem.Initialize(window)) {
-				LOG_ERROR(Renderer, "Failed to initialize coordinate system");
-				return false;
-			}
-
 			// Get window and framebuffer sizes
 			int windowWidth = 0;
 			int windowHeight = 0;
@@ -178,6 +169,12 @@ namespace engine {
 			int framebufferWidth = 0;
 			int framebufferHeight = 0;
 			glfwGetFramebufferSize(window, &framebufferWidth, &framebufferHeight);
+
+			// Initialize coordinate system; framebufferSizeCallback keeps it current
+			LOG_INFO(Renderer, "Initializing coordinate system");
+			static Renderer::CoordinateSystem coordinateSystem;
+			g_coordinateSystem = &coordinateSystem;
+			coordinateSystem.setViewport({windowWidth, windowHeight, framebufferWidth, framebufferHeight});
 
 			// Initialize primitive rendering
 			LOG_INFO(Renderer, "Initializing primitive rendering system");

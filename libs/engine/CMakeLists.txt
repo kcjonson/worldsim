@@ -74,7 +74,9 @@ target_compile_features(engine PUBLIC cxx_std_20)
 # Link dependencies. cpp-httplib is an implementation detail of debug/DebugServer.cpp
 # (DebugServer.h forward-declares httplib::Server): PRIVATE keeps its include dir off
 # downstream TUs while static-lib link requirements still propagate to executables.
-# OpenGL and GLEW arrive PUBLIC via renderer.
+# OpenGL, GLEW and glfw are PUBLIC: the renderer keeps them private behind its
+# headers, and the game's own GL (the chunk and planet passes, the scenes' clear
+# pairs, the GLFW window here) reaches them through engine.
 target_link_libraries(engine
     PUBLIC
         salal::foundation
@@ -83,6 +85,8 @@ target_link_libraries(engine
         ui
         assets
         world
+        OpenGL::GL
+        GLEW::GLEW
         glfw
     PRIVATE
         httplib::httplib

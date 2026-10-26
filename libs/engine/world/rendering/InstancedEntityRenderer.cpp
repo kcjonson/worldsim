@@ -1,23 +1,11 @@
 #include "InstancedEntityRenderer.h"
 
-#include <primitives/BatchRenderer.h>
 #include <primitives/Primitives.h>
 #include <vector/Types.h>
 
 #include <algorithm>
 
 namespace engine::world {
-
-	InstancedEntityRenderer::~InstancedEntityRenderer() {
-		// Release all shared GPU mesh handles (these use BatchRenderer's management)
-		auto* batchRenderer = Renderer::Primitives::getBatchRenderer();
-		if (batchRenderer != nullptr) {
-			for (auto& [defName, handle] : m_meshHandles) {
-				batchRenderer->releaseInstancedMesh(handle);
-			}
-		}
-		m_meshHandles.clear();
-	}
 
 	Renderer::InstancedMeshHandle&
 	InstancedEntityRenderer::getOrCreateMeshHandle(const std::string& defName, const renderer::TessellatedMesh* mesh) {
@@ -26,16 +14,13 @@ namespace engine::world {
 			return it->second;
 		}
 
-		// Upload mesh to GPU
-		auto* batchRenderer = Renderer::Primitives::getBatchRenderer();
-		if (batchRenderer != nullptr && mesh != nullptr) {
-			auto handle = batchRenderer->uploadInstancedMesh(*mesh, kMaxInstancesPerMesh);
-			auto [insertedIt, _] = m_meshHandles.emplace(defName, std::move(handle));
-			return insertedIt->second;
+		// Upload mesh to GPU; a missing mesh leaves an invalid handle in the map so
+		// the lookup is not retried every frame
+		Renderer::InstancedMeshHandle handle;
+		if (mesh != nullptr) {
+			handle = Renderer::Primitives::uploadInstancedMesh(*mesh, kMaxInstancesPerMesh);
 		}
-
-		// Insert an invalid handle to avoid repeated lookup failures
-		auto [insertedIt, _] = m_meshHandles.emplace(defName, Renderer::InstancedMeshHandle{});
+		auto [insertedIt, _] = m_meshHandles.emplace(defName, std::move(handle));
 		return insertedIt->second;
 	}
 
@@ -81,12 +66,8 @@ namespace engine::world {
 	}
 
 	void InstancedEntityRenderer::emitSorted(const std::vector<DepthSortItem>& items, const RenderContext& ctx, RenderStats& stats) {
-		// GL state note: BatchRenderer::drawInstanced() sets up its own GL state internally,
+		// GL state note: Primitives::drawInstanced() sets up its own GL state internally,
 		// so we don't need to carry state from the baked path here.
-		auto* batchRenderer = Renderer::Primitives::getBatchRenderer();
-		if (batchRenderer == nullptr) {
-			return;
-		}
 		// NOTE: do NOT early-out on items.empty(). A selectable static below the tall-occluder
 		// height (small rock/bush) is drawn by the baked path, so `items` can be empty while a
 		// selection outline still needs stroking; the loop no-ops and the trailing drawOutline runs.
@@ -97,7 +78,7 @@ namespace engine::world {
 		const float			   scale = ctx.pixelsPerMeter * zoom;
 		const float			   halfViewW = static_cast<float>(ctx.viewportWidth) * 0.5F;
 		const float			   halfViewH = static_cast<float>(ctx.viewportHeight) * 0.5F;
-		const Foundation::Vec2 cameraPos(camX, camY);
+		const Renderer::Primitives::WorldCamera camera{.position = {camX, camY}, .zoom = zoom, .pixelsPerMeter = ctx.pixelsPerMeter};
 
 		m_runInstances.clear();
 		m_runDefName.clear();
@@ -118,8 +99,8 @@ namespace engine::world {
 			}
 			auto it = m_meshHandles.find(m_runDefName);
 			if (it != m_meshHandles.end() && it->second.isValid()) {
-				batchRenderer->drawInstanced(
-					it->second, m_runInstances.data(), static_cast<uint32_t>(m_runInstances.size()), cameraPos, zoom, ctx.pixelsPerMeter
+				Renderer::Primitives::drawInstanced(
+					it->second, m_runInstances.data(), static_cast<uint32_t>(m_runInstances.size()), camera
 				);
 			}
 			m_runInstances.clear();
@@ -136,7 +117,7 @@ namespace engine::world {
 				.indexCount = m_animIndices.size(),
 				.colors = m_animColors.data()
 			});
-			batchRenderer->flush(); // draw now, at this sorted position
+			Renderer::Primitives::flush(); // draw now, at this sorted position
 			m_animVertices.clear();
 			m_animColors.clear();
 			m_animIndices.clear();
@@ -171,7 +152,7 @@ namespace engine::world {
 					});
 				}
 			}
-			batchRenderer->flush(); // draw at this sorted position
+			Renderer::Primitives::flush(); // draw at this sorted position
 		};
 
 		bool outlineInjected = false;

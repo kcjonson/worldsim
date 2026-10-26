@@ -4,7 +4,6 @@
 #include "SceneTypes.h"
 #include <font/FontRenderer.h>
 #include <graphics/Color.h>
-#include <primitives/BatchRenderer.h>
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
@@ -29,13 +28,6 @@ namespace {
 			fontRenderer = Renderer::Primitives::getFontRenderer();
 			if (fontRenderer == nullptr) {
 				LOG_ERROR(UI, "FontRenderer not available from Primitives API");
-				return;
-			}
-
-			// Get batch renderer from Primitives API
-			batchRenderer = Renderer::Primitives::getBatchRenderer();
-			if (batchRenderer == nullptr) {
-				LOG_ERROR(UI, "BatchRenderer not available from Primitives API");
 				return;
 			}
 
@@ -69,9 +61,8 @@ namespace {
 		}
 
 		void onExit() override {
-			// Font and batch renderers are owned by Primitives API, not this scene
+			// The font renderer is owned by the Primitives API, not this scene
 			fontRenderer = nullptr;
-			batchRenderer = nullptr;
 		}
 
 		std::string exportState() override {
@@ -81,9 +72,9 @@ namespace {
 		const char* getName() const override { return kSceneName; }
 
 	  private:
-		// Helper to render a line of text using the unified batch renderer
+		// Helper to render a line of text through the unified batch
 		void renderTextLine(const std::string& text, const glm::vec2& position, float scale, const Foundation::Color& color) {
-			if (fontRenderer == nullptr || batchRenderer == nullptr) {
+			if (fontRenderer == nullptr) {
 				return;
 			}
 
@@ -92,21 +83,10 @@ namespace {
 			std::vector<Renderer::FontRenderer::GlyphQuad> glyphs;
 			fontRenderer->generateGlyphQuads(text, position, scale, glyphColor, glyphs);
 
-			// Add each glyph to the unified batch renderer
-			for (const auto& glyph : glyphs) {
-				batchRenderer->addTextQuad(
-					Foundation::Vec2(glyph.position.x, glyph.position.y),
-					Foundation::Vec2(glyph.size.x, glyph.size.y),
-					Foundation::Vec2(glyph.uvMin.x, glyph.uvMin.y),
-					Foundation::Vec2(glyph.uvMax.x, glyph.uvMax.y),
-					color,
-					Foundation::Vec2(glyph.runOrigin.x, glyph.runOrigin.y)
-				);
-			}
+			Renderer::Primitives::drawGlyphs(glyphs.data(), glyphs.size());
 		}
 
-		Renderer::FontRenderer*	 fontRenderer = nullptr;
-		Renderer::BatchRenderer* batchRenderer = nullptr;
+		Renderer::FontRenderer* fontRenderer = nullptr;
 	};
 
 } // anonymous namespace
