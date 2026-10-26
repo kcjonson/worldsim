@@ -204,6 +204,15 @@ namespace engine {
 			return true;
 		}
 
+		// Clear the sink before the server stops: a thread mid-log still calls into a live DebugServer
+		void stopDebugServer() {
+			if (g_debugServer) {
+				foundation::Logger::setSink(nullptr, nullptr);
+				g_debugServer->signalShutdownComplete();
+				g_debugServer->stop();
+			}
+		}
+
 		void cleanup(GLFWwindow* window) {
 			LOG_INFO(Engine, "Shutting down...");
 
@@ -269,7 +278,14 @@ namespace engine {
 		// Start debug server if enabled
 		if (httpPort > 0) {
 			g_debugServer = std::make_unique<Foundation::DebugServer>();
-			foundation::Logger::setDebugServer(g_debugServer.get());
+			foundation::Logger::setSink(
+				[](void* context, const foundation::LogRecord& record) {
+					static_cast<Foundation::DebugServer*>(context)->updateLog(
+						record.level, record.category, record.message, record.file, record.line
+					);
+				},
+				g_debugServer.get()
+			);
 			g_debugServer->start(httpPort);
 			LOG_INFO(Foundation, "Debug server: http://localhost:%d", httpPort);
 		}
@@ -283,12 +299,14 @@ namespace engine {
 		// Initialize window
 		GLFWwindow* window = initializeWindow(config.windowTitle, config.windowSizePercent);
 		if (window == nullptr) {
+			stopDebugServer();
 			foundation::Logger::shutdown();
 			return {};
 		}
 
 		// Initialize rendering systems
 		if (!initializeRenderingSystems(window)) {
+			stopDebugServer();
 			glfwDestroyWindow(window);
 			glfwTerminate();
 			foundation::Logger::shutdown();
@@ -467,12 +485,7 @@ namespace engine {
 			return 1;
 		}
 
-		// Cleanup debug server
-		if (g_debugServer) {
-			foundation::Logger::setDebugServer(nullptr);
-			g_debugServer->signalShutdownComplete();
-			g_debugServer->stop();
-		}
+		stopDebugServer();
 
 		cleanup(ctx.window);
 

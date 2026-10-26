@@ -1,6 +1,6 @@
 #include "Log.h"
-#include "debug/DebugServer.h"
 
+#include <atomic>
 #include <cstdio>
 #include <ctime>
 
@@ -11,51 +11,9 @@ namespace foundation {
 	bool	 Logger::s_initialized = false;
 
 #ifdef DEVELOPMENT_BUILD
-	Foundation::DebugServer* Logger::s_debugServer = nullptr;
+	std::atomic<Logger::LogSinkFn> Logger::s_sinkFn{nullptr};
+	std::atomic<void*>			   Logger::s_sinkContext{nullptr};
 #endif
-
-	// Helper: Convert foundation::LogLevel to Foundation::LogLevel
-	static Foundation::LogLevel convertLogLevel(LogLevel level) {
-		switch (level) {
-			case LogLevel::Debug:
-				return Foundation::LogLevel::Debug;
-			case LogLevel::Info:
-				return Foundation::LogLevel::Info;
-			case LogLevel::Warning:
-				return Foundation::LogLevel::Warning;
-			case LogLevel::Error:
-				return Foundation::LogLevel::Error;
-			default:
-				return Foundation::LogLevel::Info;
-		}
-	}
-
-	// Helper: Convert foundation::LogCategory to Foundation::LogCategory
-	static Foundation::LogCategory convertLogCategory(LogCategory category) {
-		switch (category) {
-			case LogCategory::Renderer:
-				return Foundation::LogCategory::Renderer;
-			case LogCategory::Physics:
-				return Foundation::LogCategory::Physics;
-			case LogCategory::Audio:
-				return Foundation::LogCategory::Audio;
-			case LogCategory::Network:
-				return Foundation::LogCategory::Network;
-			case LogCategory::Game:
-				return Foundation::LogCategory::Game;
-			case LogCategory::World:
-				return Foundation::LogCategory::World;
-			case LogCategory::UI:
-				return Foundation::LogCategory::UI;
-			case LogCategory::Engine:
-				return Foundation::LogCategory::Engine;
-			case LogCategory::Foundation: // NOLINT(bugprone-branch-clone)
-			case LogCategory::Count:	  // NOLINT(clang-diagnostic-switch)
-				return Foundation::LogCategory::Foundation;
-			default: // NOLINT(bugprone-branch-clone)
-				return Foundation::LogCategory::Foundation;
-		}
-	}
 
 	void Logger::initialize() {
 		if (s_initialized) {
@@ -86,15 +44,23 @@ namespace foundation {
 	}
 
 	void Logger::shutdown() {
-#ifdef DEVELOPMENT_BUILD
-		s_debugServer = nullptr;
-#endif
+		setSink(nullptr, nullptr);
 		s_initialized = false;
 	}
 
-	void Logger::setDebugServer(Foundation::DebugServer* debugServer) {
+	void Logger::setSink(LogSinkFn fn, void* context) {
 #ifdef DEVELOPMENT_BUILD
-		s_debugServer = debugServer;
+		if (fn == nullptr) {
+			// Leave the context alone: a thread that already loaded the old fn may still be using it
+			s_sinkFn.store(nullptr, std::memory_order_release);
+			return;
+		}
+		// The release store of fn publishes the context stored before it (log() pairs it with an acquire)
+		s_sinkContext.store(context, std::memory_order_relaxed);
+		s_sinkFn.store(fn, std::memory_order_release);
+#else
+		(void)fn;
+		(void)context;
 #endif
 	}
 
@@ -107,7 +73,7 @@ namespace foundation {
 	}
 
 	void Logger::log(LogCategory category, LogLevel level, const char* file, int line, const char* format, ...) {
-		// Format message first (needed for both console and debug server)
+		// Format message first (needed for both console and sink)
 		char	message[256];
 		va_list args;
 		va_start(args, format);
@@ -115,11 +81,10 @@ namespace foundation {
 		va_end(args);
 
 #ifdef DEVELOPMENT_BUILD
-		// ALWAYS send to debug server (regardless of console filter)
-		// Lock-free write, never blocks (~10-20 nanoseconds)
-		// Developer client has its own filtering UI
-		if (s_debugServer != nullptr) { // NOLINT(readability-implicit-bool-conversion)
-			s_debugServer->updateLog(convertLogLevel(level), convertLogCategory(category), message, file, line);
+		// Sink sees every message regardless of the console filter (dev client filters itself).
+		// Call the loaded value, never re-read the atomic: a concurrent clear must not split the check from the call.
+		if (LogSinkFn fn = s_sinkFn.load(std::memory_order_acquire); fn != nullptr) {
+			fn(s_sinkContext.load(std::memory_order_relaxed), LogRecord{category, level, message, file, line});
 		}
 #endif
 

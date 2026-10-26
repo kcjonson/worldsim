@@ -6,6 +6,7 @@ add_library(renderer
     font/FontRenderer.cpp
     stb_image.cpp
     metrics/MetricsCollector.cpp
+    metrics/PerformanceMetrics.cpp
     metrics/GPUTimer.cpp
     vector/Tessellator.cpp
     vector/Bezier.cpp

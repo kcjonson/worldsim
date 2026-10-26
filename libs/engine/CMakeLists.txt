@@ -1,6 +1,8 @@
 add_library(engine
     application/Application.cpp
     application/AppLauncher.cpp
+    debug/DebugServer.cpp
+    graphics/PngEncoder.cpp
     scene/SceneManager.cpp
     input/InputManager.cpp
     clipboard/ClipboardManager.cpp
@@ -69,7 +71,10 @@ target_include_directories(engine
 
 target_compile_features(engine PUBLIC cxx_std_20)
 
-# Link dependencies
+# Link dependencies. cpp-httplib is an implementation detail of debug/DebugServer.cpp
+# (DebugServer.h forward-declares httplib::Server): PRIVATE keeps its include dir off
+# downstream TUs while static-lib link requirements still propagate to executables.
+# OpenGL and GLEW arrive PUBLIC via renderer.
 target_link_libraries(engine
     PUBLIC
         foundation
@@ -79,7 +84,14 @@ target_link_libraries(engine
         assets
         world
         glfw
+    PRIVATE
+        httplib::httplib
 )
+
+# Link CoreFoundation on macOS (required by httplib for DNS resolution)
+if(APPLE)
+    target_link_libraries(engine PRIVATE "-framework CoreFoundation")
+endif()
 
 # timeBeginPeriod/timeEndPeriod for frame-pacing timer resolution
 if(WIN32)

@@ -1,9 +1,6 @@
 add_library(foundation
-    metrics/PerformanceMetrics.cpp
     metrics/SystemResources.cpp
-    debug/DebugServer.cpp
     debug/Tunables.cpp
-    graphics/PngEncoder.cpp
     utils/Log.cpp
     utils/ResourcePath.cpp
     utils/Utf8.cpp
@@ -25,22 +22,13 @@ target_compile_features(foundation PUBLIC cxx_std_20)
 # logging out of every Windows build.
 target_compile_definitions(foundation PUBLIC $<$<CONFIG:Debug,RelWithDebInfo>:DEVELOPMENT_BUILD>)
 
-# Link dependencies. glm is PUBLIC (public headers expose glm types); httplib
-# and OpenGL are implementation details of DebugServer.cpp — PRIVATE keeps their
-# include dirs off every downstream TU (DebugServer.h forward-declares), while
-# static-lib link requirements still propagate to final executables.
+# glm is PUBLIC: public headers (math/Types.h) expose glm types. Nothing else
+# is linked: foundation stays GL-free and socket-free so it can be extracted
+# as a headless library (the dev server lives in libs/engine/debug).
 target_link_libraries(foundation
     PUBLIC
         glm::glm
-    PRIVATE
-        httplib::httplib
-        OpenGL::GL  # DebugServer uses glReadPixels and glGetIntegerv
 )
-
-# Link CoreFoundation on macOS (required by httplib for DNS resolution)
-if(APPLE)
-    target_link_libraries(foundation PRIVATE "-framework CoreFoundation")
-endif()
 
 # Tests
 if(BUILD_TESTING)

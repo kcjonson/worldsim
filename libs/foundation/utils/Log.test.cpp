@@ -1,5 +1,7 @@
 #include "Log.h"
 #include <gtest/gtest.h>
+#include <string>
+#include <vector>
 
 using namespace foundation;
 
@@ -220,17 +222,66 @@ TEST(LoggerTests, IndependentCategoryLevels) {
 }
 
 // ============================================================================
-// DebugServer Integration Tests (Compile-time checks)
+// Sink Tests
 // ============================================================================
 
-TEST(LoggerTests, SetDebugServerDoesNotCrash) {
+TEST(LoggerTests, NullSinkDoesNotCrash) {
 	Logger::initialize();
 
-	// Setting null debug server should not crash
-	Logger::setDebugServer(nullptr);
-
-	// Logging after setting null debug server should not crash
-	LOG_INFO(Foundation, "Test message with null debug server");
+	Logger::setSink(nullptr, nullptr);
+	LOG_INFO(Foundation, "Test message with no sink installed");
 
 	Logger::shutdown();
 }
+
+#ifdef DEVELOPMENT_BUILD
+TEST(LoggerTests, SinkReceivesEveryMessageBeforeConsoleFilter) {
+	Logger::initialize();
+	Logger::setLevel(LogCategory::Foundation, LogLevel::Error);
+
+	struct Captured {
+		std::vector<std::string> messages;
+		LogLevel				 lastLevel = LogLevel::Error;
+		LogCategory				 lastCategory = LogCategory::Count;
+		const char*				 lastFile = nullptr;
+		int						 lastLine = 0;
+	} captured;
+	// An ASSERT failure returns early. Declared after captured so it runs first: it clears the sink
+	// before captured dies and shuts the logger down so later tests do not inherit Foundation at Error
+	struct SinkReset {
+		~SinkReset() {
+			Logger::setSink(nullptr, nullptr);
+			Logger::shutdown();
+		}
+	} reset;
+	Logger::setSink(
+		[](void* context, const LogRecord& record) {
+			auto* c = static_cast<Captured*>(context);
+			c->messages.emplace_back(record.message);
+			c->lastLevel = record.level;
+			c->lastCategory = record.category;
+			c->lastFile = record.file;
+			c->lastLine = record.line;
+		},
+		&captured
+	);
+
+	// Below the console level for Foundation (Error), so only the sink sees it
+	const int expectedLine = __LINE__;
+	LOG_DEBUG(Foundation, "sink %d", 7);
+
+	ASSERT_EQ(captured.messages.size(), 1U);
+	EXPECT_EQ(captured.messages[0], "sink 7");
+	EXPECT_EQ(captured.lastLevel, LogLevel::Debug);
+	EXPECT_EQ(captured.lastCategory, LogCategory::Foundation);
+	EXPECT_NE(captured.lastFile, nullptr);
+	EXPECT_EQ(captured.lastLine, expectedLine + 1);
+
+	// A cleared sink receives nothing
+	Logger::setSink(nullptr, nullptr);
+	LOG_INFO(Foundation, "not delivered");
+	EXPECT_EQ(captured.messages.size(), 1U);
+
+	Logger::shutdown();
+}
+#endif

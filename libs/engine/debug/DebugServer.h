@@ -15,6 +15,7 @@
 
 #include "debug/LockFreeRingBuffer.h"
 #include "metrics/PerformanceMetrics.h"
+#include "utils/Log.h"
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -67,7 +68,7 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 	};
 
 	// Generic dev/test command queued via /api/dev/<verb>?k=v&k2=v2. DebugServer
-	// lives in foundation and must stay domain-agnostic, so it does NOT know what
+	// lives in engine and must stay domain-agnostic, so it does NOT know what
 	// "freebuild" or "spawn" mean: it just parses the verb plus the query
 	// params into this bag and hands it to the app, which interprets it (the
 	// construction context lives in GameScene). Mirrors InputCommand's queue.
@@ -104,30 +105,14 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 	// path doesn't sit under /api/dev/ or carries no verb. Pure; unit-tested.
 	[[nodiscard]] std::string parseDevVerb(const std::string& path);
 
-	// Log levels (must match foundation::LogLevel enum)
-	enum class LogLevel : std::uint8_t { Debug, Info, Warning, Error }; // NOLINT(performance-enum-size)
-
-	// Log categories (must match foundation::LogCategory enum)
-	enum class LogCategory : std::uint8_t { // NOLINT(performance-enum-size)
-		Renderer,
-		Physics,
-		Audio,
-		Network,
-		Game,
-		World,
-		UI,
-		Engine,
-		Foundation
-	}; // NOLINT(performance-enum-size)
-
 	// Log entry for HTTP streaming
 	struct LogEntry { // NOLINT(cppcoreguidelines-pro-type-member-init)
-		LogLevel	level{};
-		LogCategory category{};
-		char		message[256]{};
-		uint64_t	timestamp{}; // Unix timestamp in milliseconds
-		const char* file{};		 // Pointer to static string (filename)
-		int			line{};
+		foundation::LogLevel	level{};
+		foundation::LogCategory category{};
+		char					message[256]{};
+		uint64_t				timestamp{}; // Unix timestamp in milliseconds
+		const char*				file{};		 // Pointer to static string (filename)
+		int						line{};
 
 		// Serialize to JSON
 		const char* toJSON() const;
@@ -157,7 +142,7 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 
 		// Update logs (called from game thread) - NEVER BLOCKS
 		// If buffer is full, oldest logs are dropped silently
-		void updateLog(LogLevel level, LogCategory category, const char* message, const char* file, int line);
+		void updateLog(foundation::LogLevel level, foundation::LogCategory category, const char* message, const char* file, int line);
 
 		// Check if server is running
 		bool isRunning() const { return running.load(); }
