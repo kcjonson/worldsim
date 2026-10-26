@@ -1,8 +1,8 @@
 #include "Log.h"
-#include "debug/DebugServer.h"
 
 #include <cstdio>
 #include <ctime>
+#include <utility>
 
 namespace foundation {
 
@@ -11,51 +11,8 @@ namespace foundation {
 	bool	 Logger::s_initialized = false;
 
 #ifdef DEVELOPMENT_BUILD
-	Foundation::DebugServer* Logger::s_debugServer = nullptr;
+	LogSink Logger::s_sink;
 #endif
-
-	// Helper: Convert foundation::LogLevel to Foundation::LogLevel
-	static Foundation::LogLevel convertLogLevel(LogLevel level) {
-		switch (level) {
-			case LogLevel::Debug:
-				return Foundation::LogLevel::Debug;
-			case LogLevel::Info:
-				return Foundation::LogLevel::Info;
-			case LogLevel::Warning:
-				return Foundation::LogLevel::Warning;
-			case LogLevel::Error:
-				return Foundation::LogLevel::Error;
-			default:
-				return Foundation::LogLevel::Info;
-		}
-	}
-
-	// Helper: Convert foundation::LogCategory to Foundation::LogCategory
-	static Foundation::LogCategory convertLogCategory(LogCategory category) {
-		switch (category) {
-			case LogCategory::Renderer:
-				return Foundation::LogCategory::Renderer;
-			case LogCategory::Physics:
-				return Foundation::LogCategory::Physics;
-			case LogCategory::Audio:
-				return Foundation::LogCategory::Audio;
-			case LogCategory::Network:
-				return Foundation::LogCategory::Network;
-			case LogCategory::Game:
-				return Foundation::LogCategory::Game;
-			case LogCategory::World:
-				return Foundation::LogCategory::World;
-			case LogCategory::UI:
-				return Foundation::LogCategory::UI;
-			case LogCategory::Engine:
-				return Foundation::LogCategory::Engine;
-			case LogCategory::Foundation: // NOLINT(bugprone-branch-clone)
-			case LogCategory::Count:	  // NOLINT(clang-diagnostic-switch)
-				return Foundation::LogCategory::Foundation;
-			default: // NOLINT(bugprone-branch-clone)
-				return Foundation::LogCategory::Foundation;
-		}
-	}
 
 	void Logger::initialize() {
 		if (s_initialized) {
@@ -87,14 +44,14 @@ namespace foundation {
 
 	void Logger::shutdown() {
 #ifdef DEVELOPMENT_BUILD
-		s_debugServer = nullptr;
+		s_sink = nullptr;
 #endif
 		s_initialized = false;
 	}
 
-	void Logger::setDebugServer(Foundation::DebugServer* debugServer) {
+	void Logger::setSink(LogSink sink) {
 #ifdef DEVELOPMENT_BUILD
-		s_debugServer = debugServer;
+		s_sink = std::move(sink);
 #endif
 	}
 
@@ -107,7 +64,7 @@ namespace foundation {
 	}
 
 	void Logger::log(LogCategory category, LogLevel level, const char* file, int line, const char* format, ...) {
-		// Format message first (needed for both console and debug server)
+		// Format message first (needed for both console and sink)
 		char	message[256];
 		va_list args;
 		va_start(args, format);
@@ -115,11 +72,9 @@ namespace foundation {
 		va_end(args);
 
 #ifdef DEVELOPMENT_BUILD
-		// ALWAYS send to debug server (regardless of console filter)
-		// Lock-free write, never blocks (~10-20 nanoseconds)
-		// Developer client has its own filtering UI
-		if (s_debugServer != nullptr) { // NOLINT(readability-implicit-bool-conversion)
-			s_debugServer->updateLog(convertLogLevel(level), convertLogCategory(category), message, file, line);
+		// Sink sees every message regardless of the console filter (dev client filters itself)
+		if (s_sink) {
+			s_sink(LogRecord{category, level, message, file, line});
 		}
 #endif
 

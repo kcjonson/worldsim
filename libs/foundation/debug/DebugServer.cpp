@@ -162,47 +162,6 @@ namespace Foundation {
 		return escaped;
 	}
 
-	// Helper functions for LogEntry
-	static const char* logLevelToString(LogLevel level) {
-		switch (level) {
-			case LogLevel::Debug:
-				return "DEBUG";
-			case LogLevel::Info:
-				return "INFO";
-			case LogLevel::Warning:
-				return "WARN";
-			case LogLevel::Error:
-				return "ERROR";
-			default:
-				return "UNKNOWN";
-		}
-	}
-
-	static const char* logCategoryToString(LogCategory category) {
-		switch (category) {
-			case LogCategory::Renderer:
-				return "Renderer";
-			case LogCategory::Physics:
-				return "Physics";
-			case LogCategory::Audio:
-				return "Audio";
-			case LogCategory::Network:
-				return "Network";
-			case LogCategory::Game:
-				return "Game";
-			case LogCategory::World:
-				return "World";
-			case LogCategory::UI:
-				return "UI";
-			case LogCategory::Engine:
-				return "Engine";
-			case LogCategory::Foundation:
-				return "Foundation";
-			default:
-				return "Unknown";
-		}
-	}
-
 	const char* LogEntry::toJSON() const { // NOLINT(readability-convert-member-functions-to-static)
 		// message and file must be JSON-escaped. file comes from __FILE__, and on
 		// Windows its backslash path (C:\Users\...) is a string of invalid JSON
@@ -210,9 +169,9 @@ namespace Foundation {
 		// log view silently shows nothing.
 		static thread_local std::string json;
 		json = R"({"level":")";
-		json += logLevelToString(level);
+		json += foundation::levelToString(level);
 		json += R"(","category":")";
-		json += logCategoryToString(category);
+		json += foundation::categoryToString(category);
 		json += R"(","message":")";
 		json += escapeJsonString(message);
 		json += R"(","timestamp":)";
@@ -302,8 +261,8 @@ namespace Foundation {
 	}
 
 	void DebugServer::updateLog( // NOLINT(readability-convert-member-functions-to-static)
-		LogLevel	level,
-		LogCategory category,
+		foundation::LogLevel	level,
+		foundation::LogCategory category,
 		const char* message,
 		const char* file,
 		int			line

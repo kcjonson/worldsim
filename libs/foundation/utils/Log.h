@@ -2,11 +2,7 @@
 
 #include <cstdarg>
 #include <cstdint>
-
-// Forward declare DebugServer to avoid circular dependency
-namespace Foundation { // NOLINT(readability-identifier-naming)
-	class DebugServer;
-}
+#include <functional>
 
 namespace foundation {
 
@@ -30,6 +26,18 @@ namespace foundation {
 		Count
 	};
 
+	// One formatted log call. Handed to the sink BEFORE the console level filter
+	// (the sink sees every message and filters itself). message is null-terminated,
+	// at most 255 chars, and valid only for the duration of the call.
+	struct LogRecord {
+		LogCategory category;
+		LogLevel	level;
+		const char* message;
+		const char* file; // __FILE__ of the call site (static storage)
+		int			line;
+	};
+	using LogSink = std::function<void(const LogRecord&)>;
+
 	class Logger {
 	  public:
 		static void initialize();
@@ -40,16 +48,16 @@ namespace foundation {
 
 		static void log(LogCategory category, LogLevel level, const char* file, int line, const char* format, ...);
 
-		// Set debug server for HTTP streaming (Development builds only)
-		// IMPORTANT: DebugServer must outlive Logger, or call setDebugServer(nullptr) before destroying it
-		static void setDebugServer(Foundation::DebugServer* debugServer);
+		// Development builds only. Install before other threads start logging and
+		// clear (setSink({})) after they stop and before the sink's target is destroyed.
+		static void setSink(LogSink sink);
 
 	  private:
 		static LogLevel s_levels[static_cast<int>(LogCategory::Count)]; // NOLINT(readability-identifier-naming)
 		static bool		s_initialized;									// NOLINT(readability-identifier-naming)
 
 #ifdef DEVELOPMENT_BUILD
-		static Foundation::DebugServer* s_debugServer; // NOLINT(readability-identifier-naming)
+		static LogSink s_sink; // NOLINT(readability-identifier-naming)
 #endif
 	};
 

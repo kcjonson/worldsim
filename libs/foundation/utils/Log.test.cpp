@@ -1,5 +1,7 @@
 #include "Log.h"
 #include <gtest/gtest.h>
+#include <string>
+#include <vector>
 
 using namespace foundation;
 
@@ -220,17 +222,52 @@ TEST(LoggerTests, IndependentCategoryLevels) {
 }
 
 // ============================================================================
-// DebugServer Integration Tests (Compile-time checks)
+// Sink Tests
 // ============================================================================
 
-TEST(LoggerTests, SetDebugServerDoesNotCrash) {
+TEST(LoggerTests, NullSinkDoesNotCrash) {
 	Logger::initialize();
 
-	// Setting null debug server should not crash
-	Logger::setDebugServer(nullptr);
-
-	// Logging after setting null debug server should not crash
-	LOG_INFO(Foundation, "Test message with null debug server");
+	Logger::setSink({});
+	LOG_INFO(Foundation, "Test message with no sink installed");
 
 	Logger::shutdown();
 }
+
+#ifdef DEVELOPMENT_BUILD
+TEST(LoggerTests, SinkReceivesEveryMessageBeforeConsoleFilter) {
+	Logger::initialize();
+	Logger::setLevel(LogCategory::Foundation, LogLevel::Error);
+
+	std::vector<std::string> messages;
+	LogLevel				 lastLevel = LogLevel::Error;
+	LogCategory				 lastCategory = LogCategory::Count;
+	const char*				 lastFile = nullptr;
+	int						 lastLine = 0;
+	Logger::setSink([&](const LogRecord& record) {
+		messages.emplace_back(record.message);
+		lastLevel = record.level;
+		lastCategory = record.category;
+		lastFile = record.file;
+		lastLine = record.line;
+	});
+
+	// Below the console level for Foundation (Error), so only the sink sees it
+	const int expectedLine = __LINE__;
+	LOG_DEBUG(Foundation, "sink %d", 7);
+
+	ASSERT_EQ(messages.size(), 1U);
+	EXPECT_EQ(messages[0], "sink 7");
+	EXPECT_EQ(lastLevel, LogLevel::Debug);
+	EXPECT_EQ(lastCategory, LogCategory::Foundation);
+	EXPECT_NE(lastFile, nullptr);
+	EXPECT_EQ(lastLine, expectedLine + 1);
+
+	// A cleared sink receives nothing
+	Logger::setSink({});
+	LOG_INFO(Foundation, "not delivered");
+	EXPECT_EQ(messages.size(), 1U);
+
+	Logger::shutdown();
+}
+#endif
