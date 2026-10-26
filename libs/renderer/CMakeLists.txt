@@ -53,7 +53,7 @@ target_link_libraries(renderer
 )
 
 # Copy shaders to the shared build shaders/ directory whenever shader sources
-# change; each app copies that directory beside its executable POST_BUILD.
+# change; each app's <app>-shaders target mirrors that directory beside its executable.
 file(GLOB_RECURSE RENDERER_SHADER_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*"
 )

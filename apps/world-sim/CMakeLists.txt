@@ -105,13 +105,19 @@ target_link_libraries(world-sim
         planet-view
 )
 
-# Copy shaders after build as well (kept for redundancy during full rebuilds)
-add_custom_command(TARGET world-sim POST_BUILD
+# Shaders are staged into ${CMAKE_BINARY_DIR}/shaders by renderer-shaders, engine-shaders
+# and planet-view-shaders. findResource reads the exe directory first, so mirror them beside
+# the exe on every build; a POST_BUILD step only runs on relink and goes stale on shader edits.
+# The mirror snapshots the whole staging directory, so it has to wait for every target that
+# writes into it: a staging copy running concurrently fails on Windows file locks.
+add_custom_target(world-sim-shaders ALL
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-    ${CMAKE_BINARY_DIR}/shaders
-    $<TARGET_FILE_DIR:world-sim>/shaders
-    COMMENT "Copying shaders to world-sim directory"
+        ${CMAKE_BINARY_DIR}/shaders
+        $<TARGET_FILE_DIR:world-sim>/shaders
+    COMMENT "Mirroring shaders beside world-sim"
+    VERBATIM
 )
+add_dependencies(world-sim-shaders renderer-shaders engine-shaders planet-view-shaders)
 
 # Copy fonts to executable directory
 add_custom_command(TARGET world-sim POST_BUILD
@@ -134,5 +140,5 @@ add_custom_target(world-sim-assets ALL
     COMMENT "Mirroring assets to world-sim directory"
 )
 
-# Make world-sim depend on shader and asset sync so they are copied before running
-add_dependencies(world-sim world-sim-assets renderer-shaders engine-shaders)
+# Make world-sim depend on the shader and asset mirrors so they are in place before running
+add_dependencies(world-sim world-sim-assets world-sim-shaders)

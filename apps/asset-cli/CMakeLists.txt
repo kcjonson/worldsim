@@ -19,14 +19,18 @@ target_link_libraries(asset-cli
         nlohmann_json::nlohmann_json
 )
 
-# The render command needs the uber shader next to the exe.
-add_dependencies(asset-cli renderer-shaders)
-add_custom_command(TARGET asset-cli POST_BUILD
+# The render command needs the uber shader next to the exe; mirror the staged
+# shaders on every build. The mirror reads the whole staging directory, so it
+# waits for every staging target, not just renderer-shaders (see apps/world-sim/CMakeLists.txt).
+add_custom_target(asset-cli-shaders ALL
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-    ${CMAKE_BINARY_DIR}/shaders
-    $<TARGET_FILE_DIR:asset-cli>/shaders
-    COMMENT "Copying shaders to asset-cli directory"
+        ${CMAKE_BINARY_DIR}/shaders
+        $<TARGET_FILE_DIR:asset-cli>/shaders
+    COMMENT "Mirroring shaders beside asset-cli"
+    VERBATIM
 )
+add_dependencies(asset-cli-shaders renderer-shaders engine-shaders planet-view-shaders)
+add_dependencies(asset-cli asset-cli-shaders)
 
 # Asset definitions, SVGs, and Lua scripts next to the exe.
 add_custom_command(TARGET asset-cli POST_BUILD

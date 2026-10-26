@@ -50,13 +50,16 @@ target_link_libraries(ui-sandbox
         world
 )
 
-# Copy shaders to executable directory
-add_custom_command(TARGET ui-sandbox POST_BUILD
+# Mirror the staged shaders beside the exe on every build (see apps/world-sim/CMakeLists.txt).
+add_custom_target(ui-sandbox-shaders ALL
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-    ${CMAKE_BINARY_DIR}/shaders
-    $<TARGET_FILE_DIR:ui-sandbox>/shaders
-    COMMENT "Copying shaders to ui-sandbox directory"
+        ${CMAKE_BINARY_DIR}/shaders
+        $<TARGET_FILE_DIR:ui-sandbox>/shaders
+    COMMENT "Mirroring shaders beside ui-sandbox"
+    VERBATIM
 )
+add_dependencies(ui-sandbox-shaders renderer-shaders engine-shaders planet-view-shaders)
+add_dependencies(ui-sandbox ui-sandbox-shaders)
 
 # Copy fonts to executable directory
 add_custom_command(TARGET ui-sandbox POST_BUILD
