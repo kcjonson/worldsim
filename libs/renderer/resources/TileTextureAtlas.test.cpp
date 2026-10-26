@@ -1,5 +1,10 @@
 #include "resources/TileTextureAtlas.h"
+
+#include <GL/glew.h>
+#include <GLFW/glfw3.h>
 #include <gtest/gtest.h>
+
+#include <vector>
 
 using namespace Renderer;
 
@@ -18,29 +23,54 @@ TEST(AtlasRegionTest, DefaultConstructor) {
 
 // ============================================================================
 // TileTextureAtlas Tests
-// Note: Tests requiring OpenGL context may be skipped in CI environments
+// The atlas owns a GL texture, so these run against a hidden GL 3.3 core
+// context and skip where none can be created (headless CI).
 // ============================================================================
 
 class TileTextureAtlasTest : public ::testing::Test {
   protected:
-	static bool hasGLContext() {
-		// Simple heuristic: check if we can create an atlas without crash
-		// In headless CI, the constructor will fail gracefully
-		return false; // Conservative - always skip GL tests in unit tests
+	void SetUp() override {
+		if (glfwInit() != GLFW_TRUE) {
+			GTEST_SKIP() << "GLFW initialization failed (no display available)";
+		}
+		glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+		glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+		glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+		window = glfwCreateWindow(32, 32, "tile-atlas-test", nullptr, nullptr);
+		if (window == nullptr) {
+			glfwTerminate();
+			GTEST_SKIP() << "Could not create GLFW window (no OpenGL context available)";
+		}
+		glfwMakeContextCurrent(window);
+		glewExperimental = GL_TRUE;
+		if (glewInit() != GLEW_OK) {
+			glfwDestroyWindow(window);
+			window = nullptr;
+			glfwTerminate();
+			GTEST_SKIP() << "GLEW initialization failed";
+		}
 	}
+
+	void TearDown() override {
+		if (window != nullptr) {
+			glfwDestroyWindow(window);
+			glfwTerminate();
+		}
+	}
+
+	GLFWwindow* window = nullptr;
 };
 
 TEST_F(TileTextureAtlasTest, ConstructorDefaultSize) {
-	// This test verifies the atlas can be constructed.
-	// Actual GL texture creation is tested in integration tests.
 	TileTextureAtlas atlas(1024);
 	EXPECT_EQ(atlas.size(), 1024);
-	// texture() may be 0 in headless environments
+	EXPECT_NE(atlas.texture(), 0U);
 }
 
 TEST_F(TileTextureAtlasTest, AllocationLogic) {
-	// Test the allocation algorithm without GL context
-	// The allocate() function uses shelf-packing algorithm
+	// allocate() shelf-packs: left to right, then a new row
 	TileTextureAtlas atlas(256);
 
 	// First allocation should succeed (top-left corner)

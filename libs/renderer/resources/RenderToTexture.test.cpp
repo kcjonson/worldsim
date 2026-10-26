@@ -15,6 +15,10 @@ TEST(RenderToTextureTest, ClearsToColor) {
 	}
 
 	glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+	glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 	GLFWwindow* window = glfwCreateWindow(32, 32, "offscreen", nullptr, nullptr);
 	if (window == nullptr) {
 		glfwTerminate();
@@ -22,6 +26,7 @@ TEST(RenderToTextureTest, ClearsToColor) {
 	}
 
 	glfwMakeContextCurrent(window);
+	glewExperimental = GL_TRUE;
 	if (glewInit() != GLEW_OK) {
 		glfwDestroyWindow(window);
 		glfwTerminate();

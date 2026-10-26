@@ -98,6 +98,30 @@ if(WIN32)
     target_link_libraries(engine PRIVATE winmm)
 endif()
 
+# The ground pass (tile.vert, tile.frag, includes/) is the engine's, not the
+# renderer's. Stage it into the shared build shaders/ directory the way the
+# renderer and planet-view stage theirs, so the runtime layout is unchanged.
+file(GLOB_RECURSE ENGINE_SHADER_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/world/rendering/shaders/*"
+)
+
+set(ENGINE_SHADERS_STAMP "${CMAKE_BINARY_DIR}/shaders/.engine_shaders_copied")
+
+add_custom_command(
+    OUTPUT ${ENGINE_SHADERS_STAMP}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/shaders
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/world/rendering/shaders
+        ${CMAKE_BINARY_DIR}/shaders
+    COMMAND ${CMAKE_COMMAND} -E touch ${ENGINE_SHADERS_STAMP}
+    DEPENDS ${ENGINE_SHADER_SOURCES}
+    COMMENT "Syncing engine shaders to build shaders directory"
+    VERBATIM
+)
+
+add_custom_target(engine-shaders ALL DEPENDS ${ENGINE_SHADERS_STAMP})
+add_dependencies(engine engine-shaders)
+
 # Tests
 if(BUILD_TESTING)
     # Discover test files using naming pattern

@@ -23,13 +23,17 @@ target_link_libraries(asset-manager
         assets
 )
 
-# Stage shaders, fonts, and assets next to the executable.
-add_custom_command(TARGET asset-manager POST_BUILD
+# Stage shaders, fonts, and assets next to the executable. Shaders are mirrored
+# on every build (see apps/world-sim/CMakeLists.txt); fonts stay POST_BUILD.
+add_custom_target(asset-manager-shaders ALL
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-    ${CMAKE_BINARY_DIR}/shaders
-    $<TARGET_FILE_DIR:asset-manager>/shaders
-    COMMENT "Copying shaders to asset-manager directory"
+        ${CMAKE_BINARY_DIR}/shaders
+        $<TARGET_FILE_DIR:asset-manager>/shaders
+    COMMENT "Mirroring shaders beside asset-manager"
+    VERBATIM
 )
+add_dependencies(asset-manager-shaders renderer-shaders engine-shaders planet-view-shaders)
+add_dependencies(asset-manager asset-manager-shaders)
 
 add_custom_command(TARGET asset-manager POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory

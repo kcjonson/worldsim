@@ -94,13 +94,8 @@ namespace {
 	}
 
 	std::filesystem::path landInclude() {
-		const std::filesystem::path source = std::filesystem::path(__FILE__)
-												 .parent_path() // libs/engine/world/rendering
-												 .parent_path() // libs/engine/world
-												 .parent_path() // libs/engine
-												 .parent_path() // libs
-											 / "renderer" / "shaders" / "includes" / "land.glsl";
-		std::error_code ec;
+		const std::filesystem::path source = std::filesystem::path(__FILE__).parent_path() / "shaders" / "includes" / "land.glsl";
+		std::error_code				ec;
 		if (std::filesystem::exists(source, ec)) {
 			return source;
 		}
