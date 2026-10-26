@@ -1,6 +1,6 @@
 #include "ChunkRenderer.h"
 
-#include <backend/gl/GLNames.h>
+#include <backend/gl/GLTextures.h>
 #include <debug/Tunables.h>
 #include <primitives/Primitives.h>
 #include <random/HashNoise.h>

@@ -3,11 +3,9 @@
 #include "assets/AssetRegistry.h"
 #include "graphics/PngEncoder.h"
 #include "primitives/Primitives.h"
-#include "resources/RenderToTexture.h"
+#include "resources/RenderTarget.h"
 #include "utils/Log.h"
 #include "vector/MeshBounds.h"
-
-#include <GL/glew.h>
 
 #include <algorithm>
 
@@ -45,16 +43,20 @@ namespace engine::assets {
 		const Foundation::Rect frame{0.0F, 0.0F, static_cast<float>(width), static_cast<float>(height)};
 		PreparedAsset		   prepared = prepareAsset(defName, frame, seed);
 
+		Renderer::RenderTarget target = Renderer::RenderTarget::create(width, height);
+		if (!target.isValid()) {
+			LOG_ERROR(Engine, "renderToPixels: could not create a %dx%d render target", width, height);
+			return {};
+		}
+		target.begin();
+
 		// Force the screen-space ortho fallback (no window/DPI coordinate system) so
-		// the projection matches the FBO size exactly.
+		// the projection matches the target size exactly. After begin(), so the size
+		// is the target's and not remembered as the backbuffer's.
 		Renderer::Primitives::setCoordinateSystem(nullptr);
 		Renderer::Primitives::setViewport(width, height);
 
-		Renderer::RenderToTexture rtt(width, height);
-		rtt.begin();
-
-		glClearColor(background.r, background.g, background.b, background.a);
-		glClear(GL_COLOR_BUFFER_BIT);
+		Renderer::Primitives::clear(background);
 
 		Renderer::Primitives::beginFrame();
 		if (prepared.hasOutput && !prepared.mesh.indices.empty()) {
@@ -70,11 +72,11 @@ namespace engine::assets {
 		Renderer::Primitives::endFrame();
 
 		std::vector<uint8_t> pixels(static_cast<size_t>(width) * static_cast<size_t>(height) * 4);
-		glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+		target.readPixels(pixels);
 
-		rtt.end();
+		target.end();
 
-		// GL origin is bottom-left; flip to top-left for image output.
+		// readPixels gives rows bottom-up; flip to top-left for image output.
 		return Foundation::flipRowsRGBA(pixels.data(), width, height);
 	}
 

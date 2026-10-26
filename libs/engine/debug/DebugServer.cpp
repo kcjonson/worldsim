@@ -16,11 +16,9 @@
 #include <string_view>
 #include <thread>
 
-// OpenGL for framebuffer capture
-#include <GL/glew.h>
-
 // PNG encoding is centralized in Foundation::PngEncoder (single STB definition site).
 #include "graphics/PngEncoder.h"
+#include "primitives/Primitives.h"
 
 namespace Foundation {
 
@@ -303,11 +301,10 @@ namespace Foundation {
 
 		LOG_INFO(Foundation, "Screenshot requested, beginning capture...");
 
-		// Get current framebuffer size
-		GLint viewport[4];
-		glGetIntegerv(GL_VIEWPORT, viewport);
-		int width = viewport[2];
-		int height = viewport[3];
+		// The backbuffer size the renderer was last told (AppLauncher feeds it the framebuffer size)
+		int width = 0;
+		int height = 0;
+		Renderer::Primitives::readBackbuffer({}, width, height);
 
 		if (width <= 0 || height <= 0) {
 			LOG_ERROR(Foundation, "Invalid viewport size for screenshot: %dx%d", width, height);
@@ -320,8 +317,8 @@ namespace Foundation {
 		// Allocate buffer for pixel data (RGBA, 4 bytes per pixel - more efficient than RGB on most hardware)
 		std::vector<unsigned char> pixels(width * height * 4);
 
-		// Read pixels from framebuffer
-		glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+		// Read pixels from the backbuffer
+		Renderer::Primitives::readBackbuffer(pixels, width, height);
 
 		// Flip image vertically (OpenGL origin is bottom-left, PNG origin is top-left)
 		// and force alpha opaque: the window is opaque on screen, but blended
