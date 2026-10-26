@@ -28,9 +28,9 @@ namespace engine::assets {
 	// Prepare `count` procedural forms from seeds baseSeed .. baseSeed + count - 1.
 	std::vector<PreparedAsset> prepareSamples(const std::string& defName, const Foundation::Rect& target, int count, uint32_t baseSeed);
 
-	// Offscreen render of an asset to RGBA8 pixels (top-left origin) through the
-	// game's pipeline. Requires a current GL context with Renderer::Primitives
-	// initialized. Returns an empty vector on failure.
+	// Offscreen render of an asset to RGBA8 pixels (top-left origin, straight alpha)
+	// through the game's pipeline. Requires a current GL context with
+	// Renderer::Primitives initialized. Returns an empty vector on failure.
 	std::vector<uint8_t> renderToPixels(const std::string& defName, int width, int height, Foundation::Color background, uint32_t seed);
 
 	// Render an asset to a PNG file. Returns false on failure.
