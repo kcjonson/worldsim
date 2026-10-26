@@ -285,9 +285,9 @@ endif()
 include(CTest)
 enable_testing()
 
-# Add subdirectories in dependency order
-add_subdirectory(libs/foundation)
-add_subdirectory(libs/renderer)
+# salal (foundation, renderer) via FetchContent, then subdirectories in dependency order
+FetchContent_MakeAvailable(salal)
+add_subdirectory(libs/geometry)
 # ... other libraries
 ```
 

@@ -39,8 +39,8 @@ find_path(SOL2_INCLUDE_DIRS "sol/sol.hpp")
 # Note: engine dependency is for world/TileGrid.h access
 target_link_libraries(assets
     PUBLIC
-        foundation
-        renderer
+        salal::foundation
+        salal::renderer
         engine
         pugixml::pugixml
     PRIVATE

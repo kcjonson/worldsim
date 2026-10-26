@@ -4,7 +4,7 @@
 
 ## What it measures
 
-Each include is resolved against the including file's directory (quoted includes only) and then every library's include root, which approximates the build's lookup with every library's root visible to every file. The roots are hardcoded and match CMake as of 2026-10-25; `libs/` itself is a root too, because planet-view exports it. A directory under `libs/` the script doesn't know makes it exit 2, so a new library can't be silently left out. The first hit decides the destination library; an include that resolves nowhere counts as external (system and vcpkg headers). `engine/assets/` is tallied as its own row, `engine(assets)`. game-systems has no row because it has no includes (one placeholder source).
+Each include is resolved against the including file's directory (quoted includes only) and then every library's include root, which approximates the build's lookup with every library's root visible to every file. The roots are hardcoded and match CMake as of 2026-10-25; `libs/` itself is a root too, because planet-view exports it. foundation and renderer are not in this repo (they come from [salal](https://github.com/kcjonson/salal) through FetchContent), so their two roots, and their two rows, are read from a salal checkout given with `--salal`; their paths print with a `salal/` prefix. A directory under `libs/` the script doesn't know makes it exit 2, so a new library can't be silently left out, and so does a missing salal checkout or a stray `libs/foundation` or `libs/renderer`. The first hit decides the destination library; an include that resolves nowhere counts as external (system and vcpkg headers). `engine/assets/` is tallied as its own row, `engine(assets)`. game-systems has no row because it has no includes (one placeholder source).
 
 Cells are counts of `#include` lines, with self-includes on the diagonal. The script prints an all-files matrix and a production-only matrix; a file counts as test or bench when its name contains `.test.` or `.bench.` or ends in `TestWorld.h` or `TestSupport.h` (engine's two test-support headers). After the matrices it lists ambiguous resolutions (a header name present in more than one library), includes that cross the layering, the engine -> ui coupling surface, and what engine's generic slice (`application/`, `scene/`, `input/`, `clipboard/`, the part the [salal](https://github.com/kcjonson/salal) extraction carves out as its app library) includes from `libs/`.
 
@@ -14,14 +14,15 @@ The layering it reports against follows the per-library "Depends on" lists in [m
 
 ```
 node tools/resolve-includes.mjs
+node tools/resolve-includes.mjs --salal path/to/salal
 node tools/resolve-includes.mjs --root path/to/another/checkout
 ```
 
-`--root` defaults to the repo the script lives in. Output order is fixed (directories walked by name, rows sorted by file and line), so two runs on the same tree diff clean.
+`--root` defaults to the repo the script lives in. `--salal` defaults to `build/_deps/salal-src`, which a configure against the pinned tag populates; a build configured with `-DFETCHCONTENT_SOURCE_DIR_SALAL` has nothing there, so pass that checkout. Output order is fixed (directories walked by name, rows sorted by file and line), so two runs on the same tree diff clean.
 
 ## Baseline
 
-Production files only (test and bench files excluded), main @ 42885471 plus SAL-26 (2026-10-25). Rows are the including library, columns the library the include lands in.
+Production files only (test and bench files excluded), main @ 2cc7e40a plus SAL-39 (2026-10-25), with foundation and renderer read from salal v0.1.0. Every cell is the same as before the move: salal's copies differ from the deleted directories only in formatting. Rows are the including library, columns the library the include lands in.
 
 | src \ dst | foundation | geometry | renderer | ui | world | planet-view | game-systems | engine | engine(assets) | external |
 |---|---|---|---|---|---|---|---|---|---|---|

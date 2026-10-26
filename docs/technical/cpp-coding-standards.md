@@ -75,11 +75,10 @@ Some clang-tidy checks are disabled in `.clang-tidy` due to false positives or c
 Headers (.h) and implementation (.cpp) files live together in the same directory:
 
 ```
-libs/renderer/gl/
-├── shader.h
-├── shader.cpp
-├── texture.h
-└── texture.cpp
+libs/engine/input/
+├── InputManager.h
+├── InputManager.cpp
+└── InputManager.test.cpp
 ```
 
 **NOT** separated into `include/` and `src/` directories.
@@ -290,19 +289,19 @@ Folder naming depends on the folder's purpose:
 
 **PascalCase** - when folder contains a single primary class of the same name:
 ```
-libs/renderer/CoordinateSystem/
-├── CoordinateSystem.h
-├── CoordinateSystem.cpp
-└── CoordinateSystem.test.cpp
+libs/ui/components/TextInput/
+├── TextInput.h
+├── TextInput.cpp
+└── TextInput.test.cpp
 ```
 
 **camelCase** - when folder is a category containing multiple related items:
 ```
-libs/renderer/shader/
-├── Shader.h
-├── Shader.cpp
-├── ShaderLoader.h
-└── ShaderLoader.cpp
+libs/engine/scene/
+├── Scene.h
+├── SceneManager.h
+├── SceneManager.cpp
+└── Overlay.h
 
 libs/ui/components/
 ├── Button.h

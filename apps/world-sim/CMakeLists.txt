@@ -99,13 +99,13 @@ target_link_libraries(world-sim
         game-systems
         world
         ui
-        renderer
-        foundation
+        salal::renderer
+        salal::foundation
         assets
         planet-view
 )
 
-# Shaders are staged into ${CMAKE_BINARY_DIR}/shaders by renderer-shaders, engine-shaders
+# Shaders are staged into ${CMAKE_BINARY_DIR}/shaders by salal_renderer_shaders, engine-shaders
 # and planet-view-shaders. findResource reads the exe directory first, so mirror them beside
 # the exe on every build; a POST_BUILD step only runs on relink and goes stale on shader edits.
 # The mirror snapshots the whole staging directory, so it has to wait for every target that
@@ -117,7 +117,7 @@ add_custom_target(world-sim-shaders ALL
     COMMENT "Mirroring shaders beside world-sim"
     VERBATIM
 )
-add_dependencies(world-sim-shaders renderer-shaders engine-shaders planet-view-shaders)
+add_dependencies(world-sim-shaders salal_renderer_shaders engine-shaders planet-view-shaders)
 
 # Copy fonts to executable directory
 add_custom_command(TARGET world-sim POST_BUILD

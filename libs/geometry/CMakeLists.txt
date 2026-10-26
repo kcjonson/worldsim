@@ -29,7 +29,7 @@ target_compile_features(geometry PUBLIC cxx_std_20)
 
 target_link_libraries(geometry
     PUBLIC
-        foundation
+        salal::foundation
 )
 
 # Tests

@@ -7,10 +7,14 @@
  * the build's lookup with every library's root visible to every file. The
  * roots are the library directories under libs/, plus libs/ itself for
  * planet-view, which exports it; they are hardcoded here and match CMake as of
- * 2026-10-25. A directory under libs/ that LIBS does not list stops the script
- * with exit 2, so a new library cannot be silently ignored. The first hit
- * decides which library the include lands in; an include that resolves nowhere
- * is counted as external.
+ * 2026-10-25. foundation and renderer are not in this repo any more: they come
+ * from salal (github.com/kcjonson/salal) through FetchContent, so their two
+ * roots, and their two rows, are read from a salal checkout, --salal DIR,
+ * which defaults to the one FetchContent populates at build/_deps/salal-src.
+ * A directory under libs/ that LIBS does not list stops the script with exit 2,
+ * so a new library cannot be silently ignored. The first hit decides which
+ * library the include lands in; an include that resolves nowhere is counted as
+ * external.
  *
  * Output, in order: an all-files matrix, a production-only matrix (test and
  * bench files excluded, see isTestFile), ambiguous resolutions, includes that
@@ -24,13 +28,14 @@
  * that doc predates it. Violations are reported, not enforced: the exit code
  * is 0 either way.
  *
- * Usage: node tools/resolve-includes.mjs [--root ROOT]
+ * Usage: node tools/resolve-includes.mjs [--root ROOT] [--salal DIR]
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const LIBS = ["foundation", "geometry", "renderer", "ui", "world", "planet-view", "game-systems", "engine"];
+const SALAL_LIBS = new Set(["foundation", "renderer"]);
 const LIBS_ORDER = [...LIBS, "engine(assets)", "external"];
 const SOURCE_EXTS = [".h", ".hpp", ".cpp", ".cc", ".inl"];
 const INC = /^\s*#\s*include\s*([<"])([^>"]+)[>"]/;
@@ -46,24 +51,32 @@ const ALLOWED = {
 	"game-systems": new Set(["game-systems", "world", "renderer", "foundation", "external"]),
 };
 
-const USAGE = "usage: node tools/resolve-includes.mjs [-h] [--root ROOT]";
+const USAGE = "usage: node tools/resolve-includes.mjs [-h] [--root ROOT] [--salal DIR]";
 
 function defaultRoot() {
 	return dirname(dirname(fileURLToPath(import.meta.url)));
 }
 
-function includeRoots(root) {
-	const libs = join(root, "libs");
+function defaultSalal(root) {
+	return join(root, "build", "_deps", "salal-src");
+}
+
+// Where each library's sources live: the salal checkout for foundation and renderer, libs/ for the rest.
+function libDirs(root, salal) {
+	return new Map(LIBS.map((lib) => [lib, SALAL_LIBS.has(lib) ? join(salal, "libs", lib) : join(root, "libs", lib)]));
+}
+
+function includeRoots(dirs, root) {
 	return [
-		join(libs, "foundation"),
-		join(libs, "geometry"),
-		join(libs, "renderer"),
-		join(libs, "ui"),
-		join(libs, "world"),
-		join(libs, "planet-view"),
-		libs, // planet-view exports libs/ so "planet-view/X.h" works
-		join(libs, "game-systems"),
-		join(libs, "engine"), // also covers "assets/X.h" -> libs/engine/assets/X.h
+		dirs.get("foundation"),
+		dirs.get("geometry"),
+		dirs.get("renderer"),
+		dirs.get("ui"),
+		dirs.get("world"),
+		dirs.get("planet-view"),
+		join(root, "libs"), // planet-view exports libs/ so "planet-view/X.h" works
+		dirs.get("game-systems"),
+		dirs.get("engine"), // also covers "assets/X.h" -> libs/engine/assets/X.h
 	];
 }
 
@@ -91,11 +104,23 @@ function byName(a, b) {
 	return a < b ? -1 : a > b ? 1 : 0;
 }
 
-function libOf(root, p) {
-	const rel = slashes(relative(join(root, "libs"), p));
-	const top = rel.split("/")[0];
-	if (top === "engine" && rel.startsWith("engine/assets/")) return "engine(assets)";
-	return top;
+function isUnder(dir, p) {
+	const rel = relative(dir, p);
+	return rel !== "" && !rel.startsWith("..") && !rel.includes(":");
+}
+
+function libOf(dirs, p) {
+	for (const [lib, dir] of dirs) {
+		if (!isUnder(dir, p)) continue;
+		if (lib === "engine" && isUnder(join(dir, "assets"), p)) return "engine(assets)";
+		return lib;
+	}
+	return "external";
+}
+
+// Paths in the report: salal/-prefixed for salal's libraries (wherever that checkout is), repo-relative otherwise.
+function displayPath(root, salal, p) {
+	return isUnder(salal, p) ? "salal/" + slashes(relative(salal, p)) : slashes(relative(root, p));
 }
 
 // Test and bench sources (*.test.cpp, *.test.h, *.bench.cpp) plus the two engine test-support headers.
@@ -134,28 +159,45 @@ function* walk(dir) {
 	for (const d of dirs) yield* walk(join(dir, d));
 }
 
-// A libs/ directory this script does not know would otherwise be silently left out of every matrix.
+// A libs/ directory this script does not know would otherwise be silently left out of every matrix,
+// and a copy of a salal library under libs/ would be silently passed over in favour of salal's.
 function checkLibs(root) {
 	const known = new Set(LIBS);
-	const unknown = readdirSync(join(root, "libs"), { withFileTypes: true })
-		.filter((e) => e.isDirectory() && !known.has(e.name))
+	const dirs = readdirSync(join(root, "libs"), { withFileTypes: true })
+		.filter((e) => e.isDirectory())
 		.map((e) => e.name)
 		.sort(byName);
+	const unknown = dirs.filter((d) => !known.has(d));
 	if (unknown.length) {
 		console.error(`resolve-includes.mjs: error: unknown directories under libs/: ${unknown.join(", ")}`);
 		console.error("add each to LIBS, includeRoots and ALLOWED, then re-run");
 		process.exit(2);
 	}
+	const stale = dirs.filter((d) => SALAL_LIBS.has(d));
+	if (stale.length) {
+		console.error(`resolve-includes.mjs: error: libs/${stale.join(", libs/")} would be ignored: those libraries are read from the salal checkout (--salal)`);
+		process.exit(2);
+	}
 }
 
-function collectRows(root) {
-	const roots = includeRoots(root);
+function checkSalal(salal) {
+	const missing = [...SALAL_LIBS].filter((lib) => !isDir(join(salal, "libs", lib)));
+	if (missing.length) {
+		console.error(`resolve-includes.mjs: error: no salal checkout at ${salal} (missing libs/${missing.join(", libs/")})`);
+		console.error("configure the build so FetchContent populates build/_deps/salal-src, or pass --salal DIR pointing at a salal checkout");
+		process.exit(2);
+	}
+}
+
+function collectRows(root, salal) {
+	const dirs = libDirs(root, salal);
+	const roots = includeRoots(dirs, root);
 	const rows = [];
 	for (const lib of LIBS) {
-		for (const full of walk(join(root, "libs", lib))) {
+		for (const full of walk(dirs.get(lib))) {
 			if (!SOURCE_EXTS.some((ext) => full.endsWith(ext))) continue;
-			const rel = slashes(relative(root, full));
-			const srclib = libOf(root, full);
+			const rel = displayPath(root, salal, full);
+			const srclib = libOf(dirs, full);
 			const test = isTestFile(full);
 			let lines;
 			try {
@@ -173,9 +215,9 @@ function collectRows(root) {
 				let resolved = "";
 				let ambiguous = false;
 				if (cands.length) {
-					dst = libOf(root, cands[0]);
-					resolved = slashes(relative(root, cands[0]));
-					ambiguous = new Set(cands.map((c) => libOf(root, c))).size > 1;
+					dst = libOf(dirs, cands[0]);
+					resolved = displayPath(root, salal, cands[0]);
+					ambiguous = new Set(cands.map((c) => libOf(dirs, c))).size > 1;
 				}
 				rows.push({ srclib, rel, line: i + 1, form, target, dst, resolved, ambiguous, test });
 			}
@@ -226,31 +268,40 @@ function fail(msg) {
 
 function parseArgs(argv) {
 	let root = defaultRoot();
+	let salal;
 	for (let i = 0; i < argv.length; i++) {
 		const a = argv[i];
 		if (a === "-h" || a === "--help") {
 			console.log(USAGE);
 			console.log("\nResolve every #include under libs/ and print a per-library include matrix.");
-			console.log("\n  --root ROOT  repo root containing libs/ (default: the repo this script lives in)");
+			console.log("\n  --root ROOT   repo root containing libs/ (default: the repo this script lives in)");
+			console.log("  --salal DIR   salal checkout holding libs/foundation and libs/renderer (default: ROOT/build/_deps/salal-src)");
 			process.exit(0);
 		} else if (a === "--root") {
 			if (i + 1 >= argv.length) fail("argument --root: expected one argument");
 			root = argv[++i];
 		} else if (a.startsWith("--root=")) {
 			root = a.slice("--root=".length);
+		} else if (a === "--salal") {
+			if (i + 1 >= argv.length) fail("argument --salal: expected one argument");
+			salal = argv[++i];
+		} else if (a.startsWith("--salal=")) {
+			salal = a.slice("--salal=".length);
 		} else {
 			fail(`unrecognized arguments: ${a}`);
 		}
 	}
-	return root;
+	root = resolve(root);
+	return { root, salal: resolve(salal ?? defaultSalal(root)) };
 }
 
 function main() {
-	const root = resolve(parseArgs(process.argv.slice(2)));
+	const { root, salal } = parseArgs(process.argv.slice(2));
 	if (!isDir(join(root, "libs"))) fail(`no libs/ directory under ${root}`);
 	checkLibs(root);
+	checkSalal(salal);
 
-	const rows = collectRows(root);
+	const rows = collectRows(root, salal);
 	const out = [];
 
 	const all = new Map();

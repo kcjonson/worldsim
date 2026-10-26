@@ -144,8 +144,6 @@ This hook automatically formats staged C++ files before each commit.
 ```
 world-sim/
 ├── libs/              # Modular libraries (dependency layers)
-│   ├── foundation/    # Math, platform, utilities (base)
-│   ├── renderer/      # OpenGL rendering (2D/3D) + SVG loading
 │   ├── ui/            # UI framework with inspector/testability
 │   ├── world/         # World generation (pluggable generators)
 │   ├── game-systems/  # Chunks, tiles, camera (game-specific)
@@ -167,6 +165,7 @@ world-sim/
 - Each layer depends only on layers below it
 - No circular dependencies
 - `engine` → `game-systems/ui/world` → `renderer` → `foundation`
+- `foundation` and `renderer` live in [salal](https://github.com/kcjonson/salal) and arrive via CMake FetchContent, pinned by `GIT_TAG` in the root `CMakeLists.txt` (see `CLAUDE.md` for building against a local checkout)
 
 For full details, see [docs/technical/monorepo-structure.md](docs/technical/monorepo-structure.md).
 

@@ -77,9 +77,9 @@ target_compile_features(engine PUBLIC cxx_std_20)
 # OpenGL and GLEW arrive PUBLIC via renderer.
 target_link_libraries(engine
     PUBLIC
-        foundation
+        salal::foundation
         geometry
-        renderer
+        salal::renderer
         ui
         assets
         world

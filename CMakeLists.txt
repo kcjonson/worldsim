@@ -45,15 +45,25 @@ find_package(httplib CONFIG REQUIRED)
 include(CTest)
 enable_testing()
 
-# Add subdirectories in dependency order
-# Foundation layer
-add_subdirectory(libs/foundation)
+# Engine libraries from salal, pinned to a tag. Its vcpkg.json is ignored here
+# (manifest mode reads only the top-level manifest); this one provides every port
+# its libraries need. To build against a local checkout instead of the tag:
+#   cmake -S . -B build -DFETCHCONTENT_SOURCE_DIR_SALAL=C:/Users/kevin/Code/salal
+include(FetchContent)
+FetchContent_Declare(salal
+    GIT_REPOSITORY https://github.com/kcjonson/salal.git
+    GIT_TAG        v0.1.0
+    GIT_SHALLOW    TRUE
+)
+set(SALAL_BUILD_UI OFF)
+set(SALAL_BUILD_APP OFF)
+set(SALAL_BUILD_SANDBOX OFF)
+set(SALAL_BUILD_TESTS OFF)
+FetchContent_MakeAvailable(salal)
 
+# Add subdirectories in dependency order
 # Geometry layer (pure math, depends only on foundation)
 add_subdirectory(libs/geometry)
-
-# Graphics layer
-add_subdirectory(libs/renderer)
 
 # Feature layers
 add_subdirectory(libs/ui)
@@ -82,7 +92,8 @@ add_subdirectory(tools/generate_sdf_atlas)
 # source font changes; the JSON metadata regenerates deterministically.
 #
 # Each entry is "AtlasBaseName:SourceTTF". The atlas base names must match
-# FontFamily / kAtlasBaseNames in libs/renderer.
+# FontFamily / kAtlasBaseNames in salal's renderer (libs/renderer/font/FontRenderer.cpp
+# there); salal ships no fonts, so this repo supplies the atlases beside each exe.
 set(SDF_FONT_ATLASES
     "Roboto-SDF:Roboto-Regular.ttf"
     "ChakraPetch-SDF:ChakraPetch-SemiBold.ttf"

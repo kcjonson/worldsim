@@ -13,8 +13,8 @@ target_compile_features(game-systems PUBLIC cxx_std_20)
 # Link dependencies
 target_link_libraries(game-systems
     PUBLIC
-        foundation
-        renderer
+        salal::foundation
+        salal::renderer
         world
 )
 

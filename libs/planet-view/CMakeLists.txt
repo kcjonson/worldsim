@@ -17,8 +17,8 @@ target_compile_features(planet-view PUBLIC cxx_std_20)
 
 target_link_libraries(planet-view
     PUBLIC
-        foundation
-        renderer
+        salal::foundation
+        salal::renderer
         world
         OpenGL::GL
         GLEW::GLEW
