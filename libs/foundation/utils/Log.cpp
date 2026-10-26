@@ -1,8 +1,8 @@
 #include "Log.h"
 
+#include <atomic>
 #include <cstdio>
 #include <ctime>
-#include <utility>
 
 namespace foundation {
 
@@ -11,7 +11,8 @@ namespace foundation {
 	bool	 Logger::s_initialized = false;
 
 #ifdef DEVELOPMENT_BUILD
-	LogSink Logger::s_sink;
+	std::atomic<Logger::LogSinkFn> Logger::s_sinkFn{nullptr};
+	void*						   Logger::s_sinkContext = nullptr;
 #endif
 
 	void Logger::initialize() {
@@ -44,14 +45,25 @@ namespace foundation {
 
 	void Logger::shutdown() {
 #ifdef DEVELOPMENT_BUILD
-		s_sink = nullptr;
+		s_sinkFn.store(nullptr, std::memory_order_release);
+		s_sinkContext = nullptr;
 #endif
 		s_initialized = false;
 	}
 
-	void Logger::setSink(LogSink sink) {
+	void Logger::setSink(LogSinkFn fn, void* context) {
 #ifdef DEVELOPMENT_BUILD
-		s_sink = std::move(sink);
+		if (fn == nullptr) {
+			// Leave the context alone: a thread that already loaded the old fn may still be using it
+			s_sinkFn.store(nullptr, std::memory_order_release);
+			return;
+		}
+		// Context must be visible before the fn that reads it
+		s_sinkContext = context;
+		s_sinkFn.store(fn, std::memory_order_release);
+#else
+		(void)fn;
+		(void)context;
 #endif
 	}
 
@@ -72,9 +84,10 @@ namespace foundation {
 		va_end(args);
 
 #ifdef DEVELOPMENT_BUILD
-		// Sink sees every message regardless of the console filter (dev client filters itself)
-		if (s_sink) {
-			s_sink(LogRecord{category, level, message, file, line});
+		// Sink sees every message regardless of the console filter (dev client filters itself).
+		// Call the loaded value, never re-read the atomic: a concurrent clear must not split the check from the call.
+		if (LogSinkFn fn = s_sinkFn.load(std::memory_order_acquire); fn != nullptr) {
+			fn(s_sinkContext, LogRecord{category, level, message, file, line});
 		}
 #endif
 

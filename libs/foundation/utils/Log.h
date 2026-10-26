@@ -1,8 +1,8 @@
 #pragma once
 
+#include <atomic>
 #include <cstdarg>
 #include <cstdint>
-#include <functional>
 
 namespace foundation {
 
@@ -36,7 +36,6 @@ namespace foundation {
 		const char* file; // __FILE__ of the call site (static storage)
 		int			line;
 	};
-	using LogSink = std::function<void(const LogRecord&)>;
 
 	class Logger {
 	  public:
@@ -48,16 +47,22 @@ namespace foundation {
 
 		static void log(LogCategory category, LogLevel level, const char* file, int line, const char* format, ...);
 
-		// Development builds only. Install before other threads start logging and
-		// clear (setSink({})) after they stop and before the sink's target is destroyed.
-		static void setSink(LogSink sink);
+		// Called for every formatted message BEFORE the console level filter, from whichever
+		// thread logged. Development builds only.
+		using LogSinkFn = void (*)(void* context, const LogRecord& record);
+
+		// Install (fn non-null) before worker threads exist. Clear (fn null) is safe while they
+		// still log: a thread that already loaded the function pointer calls it with the
+		// context, which must outlive the clear (AppLauncher clears before it stops the server).
+		static void setSink(LogSinkFn fn, void* context);
 
 	  private:
 		static LogLevel s_levels[static_cast<int>(LogCategory::Count)]; // NOLINT(readability-identifier-naming)
 		static bool		s_initialized;									// NOLINT(readability-identifier-naming)
 
 #ifdef DEVELOPMENT_BUILD
-		static LogSink s_sink; // NOLINT(readability-identifier-naming)
+		static std::atomic<LogSinkFn> s_sinkFn;		 // NOLINT(readability-identifier-naming)
+		static void*				  s_sinkContext; // NOLINT(readability-identifier-naming)
 #endif
 	};
 

@@ -268,9 +268,14 @@ namespace engine {
 		// Start debug server if enabled
 		if (httpPort > 0) {
 			g_debugServer = std::make_unique<Foundation::DebugServer>();
-			foundation::Logger::setSink([server = g_debugServer.get()](const foundation::LogRecord& r) {
-				server->updateLog(r.level, r.category, r.message, r.file, r.line);
-			});
+			foundation::Logger::setSink(
+				[](void* context, const foundation::LogRecord& record) {
+					static_cast<Foundation::DebugServer*>(context)->updateLog(
+						record.level, record.category, record.message, record.file, record.line
+					);
+				},
+				g_debugServer.get()
+			);
 			g_debugServer->start(httpPort);
 			LOG_INFO(Foundation, "Debug server: http://localhost:%d", httpPort);
 		}
@@ -470,7 +475,7 @@ namespace engine {
 
 		// Cleanup debug server
 		if (g_debugServer) {
-			foundation::Logger::setSink({});
+			foundation::Logger::setSink(nullptr, nullptr);
 			g_debugServer->signalShutdownComplete();
 			g_debugServer->stop();
 		}

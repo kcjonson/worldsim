@@ -4,6 +4,8 @@ Created: 2025-10-12
 Last Updated: 2025-10-24
 Status: Active
 
+Note (2026-10-25): the implementation now lives in `libs/engine/debug` (`DebugServer.{h,cpp}`), and foundation no longer links httplib; the CMake and header snippets below predate that move.
+
 ## Overview
 
 The developer server is an embedded HTTP server that runs within application processes (Development builds only) and streams real-time metrics, logs, and debug information to an external [developer client](./developer-client.md) web application. This design eliminates the performance overhead of in-game debug overlays.
