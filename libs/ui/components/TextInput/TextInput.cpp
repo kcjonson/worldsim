@@ -54,7 +54,7 @@ namespace UI {
 
 		switch (event.type) {
 			case InputEvent::Type::MouseDown:
-				if (containsPoint(event.position) && event.button == engine::MouseButton::Left) {
+				if (containsPoint(event.position) && event.button == foundation::MouseButton::Left) {
 					// Grab focus
 					FocusManager::Get().setFocus(this);
 
@@ -88,7 +88,7 @@ namespace UI {
 				break;
 
 			case InputEvent::Type::MouseUp:
-				if (mouseDown && event.button == engine::MouseButton::Left) {
+				if (mouseDown && event.button == foundation::MouseButton::Left) {
 					mouseDown = false;
 					event.consume();
 					return true;
@@ -164,7 +164,7 @@ namespace UI {
 		clearSelection();
 	}
 
-	void TextInput::handleKeyInput(engine::Key key, bool shift, bool ctrl, bool /*alt*/) {
+	void TextInput::handleKeyInput(foundation::Key key, bool shift, bool ctrl, bool /*alt*/) {
 		if (!enabled || !focused) {
 			return;
 		}
@@ -172,16 +172,16 @@ namespace UI {
 		// Clipboard operations (Ctrl+C, Ctrl+X, Ctrl+V, Ctrl+A)
 		if (ctrl) {
 			switch (key) {
-				case engine::Key::C:
+				case foundation::Key::C:
 					copy();
 					return;
-				case engine::Key::X:
+				case foundation::Key::X:
 					cut();
 					return;
-				case engine::Key::V:
+				case foundation::Key::V:
 					paste();
 					return;
-				case engine::Key::A:
+				case foundation::Key::A:
 					selectAll();
 					return;
 				default:
@@ -191,7 +191,7 @@ namespace UI {
 
 		// Navigation and editing
 		switch (key) {
-			case engine::Key::Left:
+			case foundation::Key::Left:
 				if (shift) {
 					extendSelectionLeft();
 				} else {
@@ -199,7 +199,7 @@ namespace UI {
 					moveCursorLeft();
 				}
 				break;
-			case engine::Key::Right:
+			case foundation::Key::Right:
 				if (shift) {
 					extendSelectionRight();
 				} else {
@@ -207,18 +207,18 @@ namespace UI {
 					moveCursorRight();
 				}
 				break;
-			case engine::Key::Home:
+			case foundation::Key::Home:
 				clearSelection();
 				moveCursorHome();
 				break;
-			case engine::Key::End:
+			case foundation::Key::End:
 				clearSelection();
 				moveCursorEnd();
 				break;
-			case engine::Key::Delete:
+			case foundation::Key::Delete:
 				deleteCharAtCursor();
 				break;
-			case engine::Key::Backspace:
+			case foundation::Key::Backspace:
 				deleteCharBeforeCursor();
 				break;
 			default:

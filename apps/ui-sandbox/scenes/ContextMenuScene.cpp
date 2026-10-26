@@ -177,8 +177,8 @@ namespace {
 				// Check for right-click OR Ctrl+Click (Mac alternative)
 				// GLFW_MOD_CONTROL = 0x0002
 				constexpr int kCtrlModifier = 0x0002;
-				bool		  isRightClick = (event.button == engine::MouseButton::Right);
-				bool		  isCtrlClick = (event.button == engine::MouseButton::Left) && ((event.modifiers & kCtrlModifier) != 0);
+				bool		  isRightClick = (event.button == foundation::MouseButton::Right);
+				bool		  isCtrlClick = (event.button == foundation::MouseButton::Left) && ((event.modifiers & kCtrlModifier) != 0);
 
 				if (isRightClick || isCtrlClick) {
 					openMenuAt(event.position);

@@ -98,7 +98,7 @@ public:
     virtual ~IFocusable() = default;
     virtual void OnFocusGained() = 0;
     virtual void OnFocusLost() = 0;
-    virtual void HandleKeyInput(engine::Key key, bool shift, bool ctrl, bool alt) = 0;
+    virtual void HandleKeyInput(foundation::Key key, bool shift, bool ctrl, bool alt) = 0;
     virtual void HandleCharInput(char32_t codepoint) = 0;
     virtual bool CanReceiveFocus() const = 0;
 };

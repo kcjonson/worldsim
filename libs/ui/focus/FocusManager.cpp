@@ -204,7 +204,7 @@ void FocusManager::popFocusScope() {
 	}
 }
 
-void FocusManager::routeKeyInput(engine::Key key, bool shift, bool ctrl, bool alt) {
+void FocusManager::routeKeyInput(foundation::Key key, bool shift, bool ctrl, bool alt) {
 	if (currentFocus != nullptr) {
 		currentFocus->handleKeyInput(key, shift, ctrl, alt);
 	}

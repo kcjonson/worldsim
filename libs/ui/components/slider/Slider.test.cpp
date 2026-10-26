@@ -188,20 +188,20 @@ TEST_F(SliderTest, KeyboardArrowsAdjustValue) {
 
 	slider.onFocusGained();
 	double before = slider.getValue();
-	slider.handleKeyInput(engine::Key::Right, false, false, false);
+	slider.handleKeyInput(foundation::Key::Right, false, false, false);
 	EXPECT_GT(slider.getValue(), before);
 
-	slider.handleKeyInput(engine::Key::Left, false, false, false);
+	slider.handleKeyInput(foundation::Key::Left, false, false, false);
 	EXPECT_NEAR(slider.getValue(), before, 1e-9);
 }
 
 TEST_F(SliderTest, HomeAndEndKeys) {
 	Slider slider(Slider::Args{.min = 10.0, .max = 90.0, .value = 50.0});
 
-	slider.handleKeyInput(engine::Key::Home, false, false, false);
+	slider.handleKeyInput(foundation::Key::Home, false, false, false);
 	EXPECT_DOUBLE_EQ(slider.getValue(), 10.0);
 
-	slider.handleKeyInput(engine::Key::End, false, false, false);
+	slider.handleKeyInput(foundation::Key::End, false, false, false);
 	EXPECT_DOUBLE_EQ(slider.getValue(), 90.0);
 }
 
@@ -210,7 +210,7 @@ TEST_F(SliderTest, DisabledSliderIgnoresKeyInput) {
 		.min = 0.0, .max = 100.0, .value = 50.0, .disabled = true,
 	});
 
-	slider.handleKeyInput(engine::Key::Home, false, false, false);
+	slider.handleKeyInput(foundation::Key::Home, false, false, false);
 	EXPECT_DOUBLE_EQ(slider.getValue(), 50.0); // Unchanged
 }
 

@@ -82,7 +82,7 @@ namespace UI {
 		}
 
 		// Handle mouse down - start tracking
-		if (event.type == InputEvent::Type::MouseDown && event.button == engine::MouseButton::Left) {
+		if (event.type == InputEvent::Type::MouseDown && event.button == foundation::MouseButton::Left) {
 			int tabIndex = getTabIndexAtPosition(event.position);
 			if (tabIndex >= 0) {
 				m_mouseDown = true;
@@ -93,7 +93,7 @@ namespace UI {
 		}
 
 		// Handle mouse up - select tab if still over it
-		if (event.type == InputEvent::Type::MouseUp && event.button == engine::MouseButton::Left) {
+		if (event.type == InputEvent::Type::MouseUp && event.button == foundation::MouseButton::Left) {
 			if (m_mouseDown) {
 				int tabIndex = getTabIndexAtPosition(event.position);
 				if (tabIndex >= 0) {
@@ -180,12 +180,12 @@ namespace UI {
 		m_focused = false;
 	}
 
-	void TabBar::handleKeyInput(engine::Key key, bool /*shift*/, bool /*ctrl*/, bool /*alt*/) {
+	void TabBar::handleKeyInput(foundation::Key key, bool /*shift*/, bool /*ctrl*/, bool /*alt*/) {
 		if (m_tabs.empty()) {
 			return;
 		}
 
-		if (key == engine::Key::Left) {
+		if (key == foundation::Key::Left) {
 			// Move to previous non-disabled tab
 			int newIndex = m_selectedIndex;
 			for (int i = 0; i < static_cast<int>(m_tabs.size()); ++i) {
@@ -195,7 +195,7 @@ namespace UI {
 					break;
 				}
 			}
-		} else if (key == engine::Key::Right) {
+		} else if (key == foundation::Key::Right) {
 			// Move to next non-disabled tab
 			int newIndex = m_selectedIndex;
 			for (int i = 0; i < static_cast<int>(m_tabs.size()); ++i) {
@@ -205,7 +205,7 @@ namespace UI {
 					break;
 				}
 			}
-		} else if (key == engine::Key::Enter || key == engine::Key::Space) {
+		} else if (key == foundation::Key::Enter || key == foundation::Key::Space) {
 			// Confirm current selection - fires callback if valid tab selected
 			// Uses selectTabByIndex for consistency, but note that it won't fire
 			// if the tab is already selected (same behavior as arrow keys)

@@ -129,7 +129,7 @@ bool ColonistListItem::handleEvent(UI::InputEvent& event) {
 	if (event.type != UI::InputEvent::Type::MouseUp) {
 		return false;
 	}
-	if (event.button != engine::MouseButton::Left) {
+	if (event.button != foundation::MouseButton::Left) {
 		return false;
 	}
 	if (!containsPoint(event.position)) {

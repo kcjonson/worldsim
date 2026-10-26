@@ -411,7 +411,7 @@ bool ParameterPanel::handleEvent(UI::InputEvent& event) {
 	}
 
 	// Advanced toggle.
-	if (event.type == UI::InputEvent::Type::MouseUp && event.button == engine::MouseButton::Left &&
+	if (event.type == UI::InputEvent::Type::MouseUp && event.button == foundation::MouseButton::Left &&
 	    advancedToggleBounds.contains(event.position)) {
 		setAdvancedOpen(!advancedOpen);
 		event.consume();

@@ -44,7 +44,7 @@ struct InputEvent {
 
     Type type;
     Foundation::Vec2 position;     // Screen coordinates
-    engine::MouseButton button;    // For MouseDown/MouseUp
+    foundation::MouseButton button;    // For MouseDown/MouseUp
     float scrollDelta;             // For Scroll
     int modifiers;                 // GLFW modifier flags
 

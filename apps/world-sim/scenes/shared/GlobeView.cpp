@@ -105,13 +105,13 @@ bool GlobeView::handleInput(UI::InputEvent& event, const Foundation::Rect& rect,
 	switch (event.type) {
 		case UI::InputEvent::Type::MouseDown:
 			if (!contains(rect, event.position)) break;
-			if (event.button == engine::MouseButton::Left) {
+			if (event.button == foundation::MouseButton::Left) {
 				camera.beginDrag(event.position.x, event.position.y);
 				dragging = true;
 				event.consume();
 				return true;
 			}
-			if (event.button == engine::MouseButton::Right && cycleOnRightClick) {
+			if (event.button == foundation::MouseButton::Right && cycleOnRightClick) {
 				camera.markInteracted(); // a globe interaction: stop the reveal spin
 				cycleColorMode();
 				event.consume();
@@ -127,7 +127,7 @@ bool GlobeView::handleInput(UI::InputEvent& event, const Foundation::Rect& rect,
 			break;
 
 		case UI::InputEvent::Type::MouseUp:
-			if (dragging && event.button == engine::MouseButton::Left) {
+			if (dragging && event.button == foundation::MouseButton::Left) {
 				camera.endDrag();
 				dragging = false;
 				event.consume();

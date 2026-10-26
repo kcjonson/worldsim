@@ -89,7 +89,7 @@ namespace {
 		void update(float /*dt*/) override {
 			// Check for ESC to cancel loading or return from error
 			auto& input = engine::InputManager::Get();
-			if (input.isKeyPressed(engine::Key::Escape)) {
+			if (input.isKeyPressed(foundation::Key::Escape)) {
 				if (phase == LoadingPhase::ConfigError) {
 					// Config error - return to menu immediately
 					LOG_INFO(Game, "GameLoadingScene - Returning to menu from config error");

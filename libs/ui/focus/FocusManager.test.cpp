@@ -23,7 +23,7 @@ class MockFocusable : public IFocusable {
 		focusLostCount++;
 	}
 
-	void handleKeyInput(engine::Key key, bool shift, bool ctrl, bool alt) override {
+	void handleKeyInput(foundation::Key key, bool shift, bool ctrl, bool alt) override {
 		lastKey = key;
 		lastShift = shift;
 		lastCtrl = ctrl;
@@ -45,7 +45,7 @@ class MockFocusable : public IFocusable {
 		focusLostCount = 0;
 		keyInputCount = 0;
 		charInputCount = 0;
-		lastKey = static_cast<engine::Key>(0);
+		lastKey = static_cast<foundation::Key>(0);
 		lastChar = 0;
 		lastShift = false;
 		lastCtrl = false;
@@ -60,7 +60,7 @@ class MockFocusable : public IFocusable {
 	int			 focusLostCount{0};
 	int			 keyInputCount{0};
 	int			 charInputCount{0};
-	engine::Key	 lastKey{};
+	foundation::Key	 lastKey{};
 	char32_t	 lastChar{0};
 	bool		 lastShift{false};
 	bool		 lastCtrl{false};
@@ -615,10 +615,10 @@ TEST(FocusManagerTest, RouteKeyInputToFocused) {
 	manager.setFocus(&component);
 
 	// Route key input
-	manager.routeKeyInput(engine::Key::Enter, false, false, false);
+	manager.routeKeyInput(foundation::Key::Enter, false, false, false);
 
 	EXPECT_EQ(component.keyInputCount, 1);
-	EXPECT_EQ(component.lastKey, engine::Key::Enter);
+	EXPECT_EQ(component.lastKey, foundation::Key::Enter);
 	EXPECT_FALSE(component.lastShift);
 	EXPECT_FALSE(component.lastCtrl);
 	EXPECT_FALSE(component.lastAlt);
@@ -632,10 +632,10 @@ TEST(FocusManagerTest, RouteKeyInputWithModifiers) {
 	manager.setFocus(&component);
 
 	// Route key input with modifiers
-	manager.routeKeyInput(engine::Key::C, true, true, false);
+	manager.routeKeyInput(foundation::Key::C, true, true, false);
 
 	EXPECT_EQ(component.keyInputCount, 1);
-	EXPECT_EQ(component.lastKey, engine::Key::C);
+	EXPECT_EQ(component.lastKey, foundation::Key::C);
 	EXPECT_TRUE(component.lastShift);
 	EXPECT_TRUE(component.lastCtrl);
 	EXPECT_FALSE(component.lastAlt);
@@ -649,7 +649,7 @@ TEST(FocusManagerTest, RouteKeyInputNoFocus) {
 	// No focus set
 
 	// Should not crash
-	EXPECT_NO_THROW(manager.routeKeyInput(engine::Key::Enter, false, false, false));
+	EXPECT_NO_THROW(manager.routeKeyInput(foundation::Key::Enter, false, false, false));
 
 	// Component should not receive input
 	EXPECT_EQ(component.keyInputCount, 0);

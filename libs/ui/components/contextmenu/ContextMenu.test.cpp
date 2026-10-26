@@ -176,7 +176,7 @@ TEST_F(ContextMenuTest, KeyboardEscapeCloses) {
 
 	menu.openAt({100.0F, 100.0F}, 800.0F, 600.0F);
 
-	menu.handleKeyInput(engine::Key::Escape, false, false, false);
+	menu.handleKeyInput(foundation::Key::Escape, false, false, false);
 
 	EXPECT_TRUE(closeCalled);
 	EXPECT_FALSE(menu.isOpen());
@@ -193,17 +193,17 @@ TEST_F(ContextMenuTest, KeyboardNavigationArrowDown) {
 
 	EXPECT_EQ(menu.getHoveredIndex(), -1);
 
-	menu.handleKeyInput(engine::Key::Down, false, false, false);
+	menu.handleKeyInput(foundation::Key::Down, false, false, false);
 	EXPECT_EQ(menu.getHoveredIndex(), 0);
 
-	menu.handleKeyInput(engine::Key::Down, false, false, false);
+	menu.handleKeyInput(foundation::Key::Down, false, false, false);
 	EXPECT_EQ(menu.getHoveredIndex(), 1);
 
-	menu.handleKeyInput(engine::Key::Down, false, false, false);
+	menu.handleKeyInput(foundation::Key::Down, false, false, false);
 	EXPECT_EQ(menu.getHoveredIndex(), 2);
 
 	// Wrap around
-	menu.handleKeyInput(engine::Key::Down, false, false, false);
+	menu.handleKeyInput(foundation::Key::Down, false, false, false);
 	EXPECT_EQ(menu.getHoveredIndex(), 0);
 }
 
@@ -216,10 +216,10 @@ TEST_F(ContextMenuTest, KeyboardNavigationArrowUp) {
 
 	menu.openAt({100.0F, 100.0F}, 800.0F, 600.0F);
 
-	menu.handleKeyInput(engine::Key::Up, false, false, false);
+	menu.handleKeyInput(foundation::Key::Up, false, false, false);
 	EXPECT_EQ(menu.getHoveredIndex(), 2); // Wraps to end
 
-	menu.handleKeyInput(engine::Key::Up, false, false, false);
+	menu.handleKeyInput(foundation::Key::Up, false, false, false);
 	EXPECT_EQ(menu.getHoveredIndex(), 1);
 }
 
@@ -233,10 +233,10 @@ TEST_F(ContextMenuTest, KeyboardEnterSelectsItem) {
 	menu.openAt({100.0F, 100.0F}, 800.0F, 600.0F);
 
 	// Navigate to first item
-	menu.handleKeyInput(engine::Key::Down, false, false, false);
+	menu.handleKeyInput(foundation::Key::Down, false, false, false);
 
 	// Press Enter
-	menu.handleKeyInput(engine::Key::Enter, false, false, false);
+	menu.handleKeyInput(foundation::Key::Enter, false, false, false);
 
 	EXPECT_TRUE(itemSelected);
 	EXPECT_FALSE(menu.isOpen());
@@ -251,10 +251,10 @@ TEST_F(ContextMenuTest, KeyboardSkipsDisabledItems) {
 
 	menu.openAt({100.0F, 100.0F}, 800.0F, 600.0F);
 
-	menu.handleKeyInput(engine::Key::Down, false, false, false);
+	menu.handleKeyInput(foundation::Key::Down, false, false, false);
 	EXPECT_EQ(menu.getHoveredIndex(), 0);
 
-	menu.handleKeyInput(engine::Key::Down, false, false, false);
+	menu.handleKeyInput(foundation::Key::Down, false, false, false);
 	EXPECT_EQ(menu.getHoveredIndex(), 2); // Skips index 1 (disabled)
 }
 

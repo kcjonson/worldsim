@@ -71,9 +71,9 @@ constexpr const char* kSceneName = "input_test";
 			yPos += lineHeight;
 
 			// Mouse Buttons
-			bool leftDown = input.isMouseButtonDown(engine::MouseButton::Left);
-			bool rightDown = input.isMouseButtonDown(engine::MouseButton::Right);
-			bool middleDown = input.isMouseButtonDown(engine::MouseButton::Middle);
+			bool leftDown = input.isMouseButtonDown(foundation::MouseButton::Left);
+			bool rightDown = input.isMouseButtonDown(foundation::MouseButton::Right);
+			bool middleDown = input.isMouseButtonDown(foundation::MouseButton::Middle);
 
 			oss.str("");
 			oss << "Mouse Buttons: L:" << (leftDown ? "DOWN" : "UP") << "  R:" << (rightDown ? "DOWN" : "UP")
@@ -115,22 +115,22 @@ constexpr const char* kSceneName = "input_test";
 
 			// Test common keys
 			struct KeyTest {
-				engine::Key	key;
+				foundation::Key key;
 				const char* name;
 			};
 
 			KeyTest keys[] = {
-				{engine::Key::W, "W"},
-				{engine::Key::A, "A"},
-				{engine::Key::S, "S"},
-				{engine::Key::D, "D"},
-				{engine::Key::Space, "SPACE"},
-				{engine::Key::Enter, "ENTER"},
-				{engine::Key::Escape, "ESC"},
-				{engine::Key::Up, "UP"},
-				{engine::Key::Down, "DOWN"},
-				{engine::Key::Left, "LEFT"},
-				{engine::Key::Right, "RIGHT"}
+				{foundation::Key::W, "W"},
+				{foundation::Key::A, "A"},
+				{foundation::Key::S, "S"},
+				{foundation::Key::D, "D"},
+				{foundation::Key::Space, "SPACE"},
+				{foundation::Key::Enter, "ENTER"},
+				{foundation::Key::Escape, "ESC"},
+				{foundation::Key::Up, "UP"},
+				{foundation::Key::Down, "DOWN"},
+				{foundation::Key::Left, "LEFT"},
+				{foundation::Key::Right, "RIGHT"}
 			};
 
 			for (const auto& keyTest : keys) {

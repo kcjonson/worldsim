@@ -146,7 +146,7 @@ class WorldCreatorScene : public engine::IScene {
 
 		// Viz dock: a click on a segment switches the globe's color mode.
 		if (event.type == UI::InputEvent::Type::MouseUp &&
-		    event.button == engine::MouseButton::Left && handleVizClick(event.position)) {
+		    event.button == foundation::MouseButton::Left && handleVizClick(event.position)) {
 			event.consume();
 			return true;
 		}
@@ -154,7 +154,7 @@ class WorldCreatorScene : public engine::IScene {
 		// Pick before orbit-drag so a left click selects the tile under the
 		// cursor; the same click then begins an orbit drag.
 		if (event.type == UI::InputEvent::Type::MouseDown &&
-		    event.button == engine::MouseButton::Left) {
+		    event.button == foundation::MouseButton::Left) {
 			if (auto picked = globe.pick(event.position, stageRect())) {
 				trySelectSite(*picked);
 			}
@@ -165,7 +165,7 @@ class WorldCreatorScene : public engine::IScene {
 	void update(float dt) override {
 		if (confirmDialog) confirmDialog->update(dt);
 
-		if (engine::InputManager::Get().isKeyPressed(engine::Key::Escape)) {
+		if (engine::InputManager::Get().isKeyPressed(foundation::Key::Escape)) {
 			if (confirmDialog && confirmDialog->isOpen()) {
 				return; // dialog handles its own escape
 			}
@@ -660,10 +660,10 @@ class WorldCreatorScene : public engine::IScene {
 		const float step = kKeyPanRate * dt;
 		float dYaw = 0.0F;
 		float dPitch = 0.0F;
-		if (im.isKeyDown(engine::Key::Left)  || im.isKeyDown(engine::Key::A)) dYaw   += step;
-		if (im.isKeyDown(engine::Key::Right) || im.isKeyDown(engine::Key::D)) dYaw   -= step;
-		if (im.isKeyDown(engine::Key::Up)    || im.isKeyDown(engine::Key::W)) dPitch += step;
-		if (im.isKeyDown(engine::Key::Down)  || im.isKeyDown(engine::Key::S)) dPitch -= step;
+		if (im.isKeyDown(foundation::Key::Left)  || im.isKeyDown(foundation::Key::A)) dYaw   += step;
+		if (im.isKeyDown(foundation::Key::Right) || im.isKeyDown(foundation::Key::D)) dYaw   -= step;
+		if (im.isKeyDown(foundation::Key::Up)    || im.isKeyDown(foundation::Key::W)) dPitch += step;
+		if (im.isKeyDown(foundation::Key::Down)  || im.isKeyDown(foundation::Key::S)) dPitch -= step;
 		if (dYaw != 0.0F || dPitch != 0.0F) globe.panCamera(dYaw, dPitch);
 	}
 

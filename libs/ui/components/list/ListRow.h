@@ -111,7 +111,7 @@ class ListRow : public Component {
 				break;
 
 			case InputEvent::Type::MouseDown:
-				if (event.button == engine::MouseButton::Left && containsPoint(event.position)) {
+				if (event.button == foundation::MouseButton::Left && containsPoint(event.position)) {
 					pressed = true;
 					event.consume();
 					return true;
@@ -119,7 +119,7 @@ class ListRow : public Component {
 				break;
 
 			case InputEvent::Type::MouseUp:
-				if (pressed && event.button == engine::MouseButton::Left) {
+				if (pressed && event.button == foundation::MouseButton::Left) {
 					pressed = false;
 					if (containsPoint(event.position) && onClick) {
 						onClick();

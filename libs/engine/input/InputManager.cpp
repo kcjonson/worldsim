@@ -9,205 +9,205 @@ namespace engine {
 	// Internal conversion functions: Our enums ↔ GLFW constants
 	namespace {
 		// Convert our Key enum to GLFW key code
-		int ToGLFW(Key key) {
+		int ToGLFW(foundation::Key key) {
 			switch (key) {
-				case Key::Space: return GLFW_KEY_SPACE;
-				case Key::Apostrophe: return GLFW_KEY_APOSTROPHE;
-				case Key::Comma: return GLFW_KEY_COMMA;
-				case Key::Minus: return GLFW_KEY_MINUS;
-				case Key::Period: return GLFW_KEY_PERIOD;
-				case Key::Slash: return GLFW_KEY_SLASH;
-				case Key::Num0: return GLFW_KEY_0;
-				case Key::Num1: return GLFW_KEY_1;
-				case Key::Num2: return GLFW_KEY_2;
-				case Key::Num3: return GLFW_KEY_3;
-				case Key::Num4: return GLFW_KEY_4;
-				case Key::Num5: return GLFW_KEY_5;
-				case Key::Num6: return GLFW_KEY_6;
-				case Key::Num7: return GLFW_KEY_7;
-				case Key::Num8: return GLFW_KEY_8;
-				case Key::Num9: return GLFW_KEY_9;
-				case Key::A: return GLFW_KEY_A;
-				case Key::B: return GLFW_KEY_B;
-				case Key::C: return GLFW_KEY_C;
-				case Key::D: return GLFW_KEY_D;
-				case Key::E: return GLFW_KEY_E;
-				case Key::F: return GLFW_KEY_F;
-				case Key::G: return GLFW_KEY_G;
-				case Key::H: return GLFW_KEY_H;
-				case Key::I: return GLFW_KEY_I;
-				case Key::J: return GLFW_KEY_J;
-				case Key::K: return GLFW_KEY_K;
-				case Key::L: return GLFW_KEY_L;
-				case Key::M: return GLFW_KEY_M;
-				case Key::N: return GLFW_KEY_N;
-				case Key::O: return GLFW_KEY_O;
-				case Key::P: return GLFW_KEY_P;
-				case Key::Q: return GLFW_KEY_Q;
-				case Key::R: return GLFW_KEY_R;
-				case Key::S: return GLFW_KEY_S;
-				case Key::T: return GLFW_KEY_T;
-				case Key::U: return GLFW_KEY_U;
-				case Key::V: return GLFW_KEY_V;
-				case Key::W: return GLFW_KEY_W;
-				case Key::X: return GLFW_KEY_X;
-				case Key::Y: return GLFW_KEY_Y;
-				case Key::Z: return GLFW_KEY_Z;
-				case Key::Escape: return GLFW_KEY_ESCAPE;
-				case Key::Enter: return GLFW_KEY_ENTER;
-				case Key::Tab: return GLFW_KEY_TAB;
-				case Key::Backspace: return GLFW_KEY_BACKSPACE;
-				case Key::Insert: return GLFW_KEY_INSERT;
-				case Key::Delete: return GLFW_KEY_DELETE;
-				case Key::Home: return GLFW_KEY_HOME;
-				case Key::End: return GLFW_KEY_END;
-				case Key::PageUp: return GLFW_KEY_PAGE_UP;
-				case Key::PageDown: return GLFW_KEY_PAGE_DOWN;
-				case Key::Right: return GLFW_KEY_RIGHT;
-				case Key::Left: return GLFW_KEY_LEFT;
-				case Key::Down: return GLFW_KEY_DOWN;
-				case Key::Up: return GLFW_KEY_UP;
-				case Key::F1: return GLFW_KEY_F1;
-				case Key::F2: return GLFW_KEY_F2;
-				case Key::F3: return GLFW_KEY_F3;
-				case Key::F4: return GLFW_KEY_F4;
-				case Key::F5: return GLFW_KEY_F5;
-				case Key::F6: return GLFW_KEY_F6;
-				case Key::F7: return GLFW_KEY_F7;
-				case Key::F8: return GLFW_KEY_F8;
-				case Key::F9: return GLFW_KEY_F9;
-				case Key::F10: return GLFW_KEY_F10;
-				case Key::F11: return GLFW_KEY_F11;
-				case Key::F12: return GLFW_KEY_F12;
-				case Key::LeftShift: return GLFW_KEY_LEFT_SHIFT;
-				case Key::LeftControl: return GLFW_KEY_LEFT_CONTROL;
-				case Key::LeftAlt: return GLFW_KEY_LEFT_ALT;
-				case Key::LeftSuper: return GLFW_KEY_LEFT_SUPER;
-				case Key::RightShift: return GLFW_KEY_RIGHT_SHIFT;
-				case Key::RightControl: return GLFW_KEY_RIGHT_CONTROL;
-				case Key::RightAlt: return GLFW_KEY_RIGHT_ALT;
-				case Key::RightSuper: return GLFW_KEY_RIGHT_SUPER;
-				case Key::Kp0: return GLFW_KEY_KP_0;
-				case Key::Kp1: return GLFW_KEY_KP_1;
-				case Key::Kp2: return GLFW_KEY_KP_2;
-				case Key::Kp3: return GLFW_KEY_KP_3;
-				case Key::Kp4: return GLFW_KEY_KP_4;
-				case Key::Kp5: return GLFW_KEY_KP_5;
-				case Key::Kp6: return GLFW_KEY_KP_6;
-				case Key::Kp7: return GLFW_KEY_KP_7;
-				case Key::Kp8: return GLFW_KEY_KP_8;
-				case Key::Kp9: return GLFW_KEY_KP_9;
-				case Key::KpDecimal: return GLFW_KEY_KP_DECIMAL;
-				case Key::KpDivide: return GLFW_KEY_KP_DIVIDE;
-				case Key::KpMultiply: return GLFW_KEY_KP_MULTIPLY;
-				case Key::KpSubtract: return GLFW_KEY_KP_SUBTRACT;
-				case Key::KpAdd: return GLFW_KEY_KP_ADD;
-				case Key::KpEnter: return GLFW_KEY_KP_ENTER;
-				case Key::KpEqual: return GLFW_KEY_KP_EQUAL;
+				case foundation::Key::Space: return GLFW_KEY_SPACE;
+				case foundation::Key::Apostrophe: return GLFW_KEY_APOSTROPHE;
+				case foundation::Key::Comma: return GLFW_KEY_COMMA;
+				case foundation::Key::Minus: return GLFW_KEY_MINUS;
+				case foundation::Key::Period: return GLFW_KEY_PERIOD;
+				case foundation::Key::Slash: return GLFW_KEY_SLASH;
+				case foundation::Key::Num0: return GLFW_KEY_0;
+				case foundation::Key::Num1: return GLFW_KEY_1;
+				case foundation::Key::Num2: return GLFW_KEY_2;
+				case foundation::Key::Num3: return GLFW_KEY_3;
+				case foundation::Key::Num4: return GLFW_KEY_4;
+				case foundation::Key::Num5: return GLFW_KEY_5;
+				case foundation::Key::Num6: return GLFW_KEY_6;
+				case foundation::Key::Num7: return GLFW_KEY_7;
+				case foundation::Key::Num8: return GLFW_KEY_8;
+				case foundation::Key::Num9: return GLFW_KEY_9;
+				case foundation::Key::A: return GLFW_KEY_A;
+				case foundation::Key::B: return GLFW_KEY_B;
+				case foundation::Key::C: return GLFW_KEY_C;
+				case foundation::Key::D: return GLFW_KEY_D;
+				case foundation::Key::E: return GLFW_KEY_E;
+				case foundation::Key::F: return GLFW_KEY_F;
+				case foundation::Key::G: return GLFW_KEY_G;
+				case foundation::Key::H: return GLFW_KEY_H;
+				case foundation::Key::I: return GLFW_KEY_I;
+				case foundation::Key::J: return GLFW_KEY_J;
+				case foundation::Key::K: return GLFW_KEY_K;
+				case foundation::Key::L: return GLFW_KEY_L;
+				case foundation::Key::M: return GLFW_KEY_M;
+				case foundation::Key::N: return GLFW_KEY_N;
+				case foundation::Key::O: return GLFW_KEY_O;
+				case foundation::Key::P: return GLFW_KEY_P;
+				case foundation::Key::Q: return GLFW_KEY_Q;
+				case foundation::Key::R: return GLFW_KEY_R;
+				case foundation::Key::S: return GLFW_KEY_S;
+				case foundation::Key::T: return GLFW_KEY_T;
+				case foundation::Key::U: return GLFW_KEY_U;
+				case foundation::Key::V: return GLFW_KEY_V;
+				case foundation::Key::W: return GLFW_KEY_W;
+				case foundation::Key::X: return GLFW_KEY_X;
+				case foundation::Key::Y: return GLFW_KEY_Y;
+				case foundation::Key::Z: return GLFW_KEY_Z;
+				case foundation::Key::Escape: return GLFW_KEY_ESCAPE;
+				case foundation::Key::Enter: return GLFW_KEY_ENTER;
+				case foundation::Key::Tab: return GLFW_KEY_TAB;
+				case foundation::Key::Backspace: return GLFW_KEY_BACKSPACE;
+				case foundation::Key::Insert: return GLFW_KEY_INSERT;
+				case foundation::Key::Delete: return GLFW_KEY_DELETE;
+				case foundation::Key::Home: return GLFW_KEY_HOME;
+				case foundation::Key::End: return GLFW_KEY_END;
+				case foundation::Key::PageUp: return GLFW_KEY_PAGE_UP;
+				case foundation::Key::PageDown: return GLFW_KEY_PAGE_DOWN;
+				case foundation::Key::Right: return GLFW_KEY_RIGHT;
+				case foundation::Key::Left: return GLFW_KEY_LEFT;
+				case foundation::Key::Down: return GLFW_KEY_DOWN;
+				case foundation::Key::Up: return GLFW_KEY_UP;
+				case foundation::Key::F1: return GLFW_KEY_F1;
+				case foundation::Key::F2: return GLFW_KEY_F2;
+				case foundation::Key::F3: return GLFW_KEY_F3;
+				case foundation::Key::F4: return GLFW_KEY_F4;
+				case foundation::Key::F5: return GLFW_KEY_F5;
+				case foundation::Key::F6: return GLFW_KEY_F6;
+				case foundation::Key::F7: return GLFW_KEY_F7;
+				case foundation::Key::F8: return GLFW_KEY_F8;
+				case foundation::Key::F9: return GLFW_KEY_F9;
+				case foundation::Key::F10: return GLFW_KEY_F10;
+				case foundation::Key::F11: return GLFW_KEY_F11;
+				case foundation::Key::F12: return GLFW_KEY_F12;
+				case foundation::Key::LeftShift: return GLFW_KEY_LEFT_SHIFT;
+				case foundation::Key::LeftControl: return GLFW_KEY_LEFT_CONTROL;
+				case foundation::Key::LeftAlt: return GLFW_KEY_LEFT_ALT;
+				case foundation::Key::LeftSuper: return GLFW_KEY_LEFT_SUPER;
+				case foundation::Key::RightShift: return GLFW_KEY_RIGHT_SHIFT;
+				case foundation::Key::RightControl: return GLFW_KEY_RIGHT_CONTROL;
+				case foundation::Key::RightAlt: return GLFW_KEY_RIGHT_ALT;
+				case foundation::Key::RightSuper: return GLFW_KEY_RIGHT_SUPER;
+				case foundation::Key::Kp0: return GLFW_KEY_KP_0;
+				case foundation::Key::Kp1: return GLFW_KEY_KP_1;
+				case foundation::Key::Kp2: return GLFW_KEY_KP_2;
+				case foundation::Key::Kp3: return GLFW_KEY_KP_3;
+				case foundation::Key::Kp4: return GLFW_KEY_KP_4;
+				case foundation::Key::Kp5: return GLFW_KEY_KP_5;
+				case foundation::Key::Kp6: return GLFW_KEY_KP_6;
+				case foundation::Key::Kp7: return GLFW_KEY_KP_7;
+				case foundation::Key::Kp8: return GLFW_KEY_KP_8;
+				case foundation::Key::Kp9: return GLFW_KEY_KP_9;
+				case foundation::Key::KpDecimal: return GLFW_KEY_KP_DECIMAL;
+				case foundation::Key::KpDivide: return GLFW_KEY_KP_DIVIDE;
+				case foundation::Key::KpMultiply: return GLFW_KEY_KP_MULTIPLY;
+				case foundation::Key::KpSubtract: return GLFW_KEY_KP_SUBTRACT;
+				case foundation::Key::KpAdd: return GLFW_KEY_KP_ADD;
+				case foundation::Key::KpEnter: return GLFW_KEY_KP_ENTER;
+				case foundation::Key::KpEqual: return GLFW_KEY_KP_EQUAL;
 				default: return GLFW_KEY_UNKNOWN;
 			}
 		}
 
-		int ToGLFW(MouseButton button) {
+		int ToGLFW(foundation::MouseButton button) {
 			return static_cast<int>(button); // MouseButton enum values match GLFW
 		}
 
 		// Convert GLFW key code to our Key enum
-		std::optional<Key> FromGLFW(int glfwKey) {
+		std::optional<foundation::Key> FromGLFW(int glfwKey) {
 			switch (glfwKey) {
-				case GLFW_KEY_SPACE: return Key::Space;
-				case GLFW_KEY_APOSTROPHE: return Key::Apostrophe;
-				case GLFW_KEY_COMMA: return Key::Comma;
-				case GLFW_KEY_MINUS: return Key::Minus;
-				case GLFW_KEY_PERIOD: return Key::Period;
-				case GLFW_KEY_SLASH: return Key::Slash;
-				case GLFW_KEY_0: return Key::Num0;
-				case GLFW_KEY_1: return Key::Num1;
-				case GLFW_KEY_2: return Key::Num2;
-				case GLFW_KEY_3: return Key::Num3;
-				case GLFW_KEY_4: return Key::Num4;
-				case GLFW_KEY_5: return Key::Num5;
-				case GLFW_KEY_6: return Key::Num6;
-				case GLFW_KEY_7: return Key::Num7;
-				case GLFW_KEY_8: return Key::Num8;
-				case GLFW_KEY_9: return Key::Num9;
-				case GLFW_KEY_A: return Key::A;
-				case GLFW_KEY_B: return Key::B;
-				case GLFW_KEY_C: return Key::C;
-				case GLFW_KEY_D: return Key::D;
-				case GLFW_KEY_E: return Key::E;
-				case GLFW_KEY_F: return Key::F;
-				case GLFW_KEY_G: return Key::G;
-				case GLFW_KEY_H: return Key::H;
-				case GLFW_KEY_I: return Key::I;
-				case GLFW_KEY_J: return Key::J;
-				case GLFW_KEY_K: return Key::K;
-				case GLFW_KEY_L: return Key::L;
-				case GLFW_KEY_M: return Key::M;
-				case GLFW_KEY_N: return Key::N;
-				case GLFW_KEY_O: return Key::O;
-				case GLFW_KEY_P: return Key::P;
-				case GLFW_KEY_Q: return Key::Q;
-				case GLFW_KEY_R: return Key::R;
-				case GLFW_KEY_S: return Key::S;
-				case GLFW_KEY_T: return Key::T;
-				case GLFW_KEY_U: return Key::U;
-				case GLFW_KEY_V: return Key::V;
-				case GLFW_KEY_W: return Key::W;
-				case GLFW_KEY_X: return Key::X;
-				case GLFW_KEY_Y: return Key::Y;
-				case GLFW_KEY_Z: return Key::Z;
-				case GLFW_KEY_ESCAPE: return Key::Escape;
-				case GLFW_KEY_ENTER: return Key::Enter;
-				case GLFW_KEY_TAB: return Key::Tab;
-				case GLFW_KEY_BACKSPACE: return Key::Backspace;
-				case GLFW_KEY_INSERT: return Key::Insert;
-				case GLFW_KEY_DELETE: return Key::Delete;
-				case GLFW_KEY_HOME: return Key::Home;
-				case GLFW_KEY_END: return Key::End;
-				case GLFW_KEY_PAGE_UP: return Key::PageUp;
-				case GLFW_KEY_PAGE_DOWN: return Key::PageDown;
-				case GLFW_KEY_RIGHT: return Key::Right;
-				case GLFW_KEY_LEFT: return Key::Left;
-				case GLFW_KEY_DOWN: return Key::Down;
-				case GLFW_KEY_UP: return Key::Up;
-				case GLFW_KEY_F1: return Key::F1;
-				case GLFW_KEY_F2: return Key::F2;
-				case GLFW_KEY_F3: return Key::F3;
-				case GLFW_KEY_F4: return Key::F4;
-				case GLFW_KEY_F5: return Key::F5;
-				case GLFW_KEY_F6: return Key::F6;
-				case GLFW_KEY_F7: return Key::F7;
-				case GLFW_KEY_F8: return Key::F8;
-				case GLFW_KEY_F9: return Key::F9;
-				case GLFW_KEY_F10: return Key::F10;
-				case GLFW_KEY_F11: return Key::F11;
-				case GLFW_KEY_F12: return Key::F12;
-				case GLFW_KEY_LEFT_SHIFT: return Key::LeftShift;
-				case GLFW_KEY_LEFT_CONTROL: return Key::LeftControl;
-				case GLFW_KEY_LEFT_ALT: return Key::LeftAlt;
-				case GLFW_KEY_LEFT_SUPER: return Key::LeftSuper;
-				case GLFW_KEY_RIGHT_SHIFT: return Key::RightShift;
-				case GLFW_KEY_RIGHT_CONTROL: return Key::RightControl;
-				case GLFW_KEY_RIGHT_ALT: return Key::RightAlt;
-				case GLFW_KEY_RIGHT_SUPER: return Key::RightSuper;
-				case GLFW_KEY_KP_0: return Key::Kp0;
-				case GLFW_KEY_KP_1: return Key::Kp1;
-				case GLFW_KEY_KP_2: return Key::Kp2;
-				case GLFW_KEY_KP_3: return Key::Kp3;
-				case GLFW_KEY_KP_4: return Key::Kp4;
-				case GLFW_KEY_KP_5: return Key::Kp5;
-				case GLFW_KEY_KP_6: return Key::Kp6;
-				case GLFW_KEY_KP_7: return Key::Kp7;
-				case GLFW_KEY_KP_8: return Key::Kp8;
-				case GLFW_KEY_KP_9: return Key::Kp9;
-				case GLFW_KEY_KP_DECIMAL: return Key::KpDecimal;
-				case GLFW_KEY_KP_DIVIDE: return Key::KpDivide;
-				case GLFW_KEY_KP_MULTIPLY: return Key::KpMultiply;
-				case GLFW_KEY_KP_SUBTRACT: return Key::KpSubtract;
-				case GLFW_KEY_KP_ADD: return Key::KpAdd;
-				case GLFW_KEY_KP_ENTER: return Key::KpEnter;
-				case GLFW_KEY_KP_EQUAL: return Key::KpEqual;
+				case GLFW_KEY_SPACE: return foundation::Key::Space;
+				case GLFW_KEY_APOSTROPHE: return foundation::Key::Apostrophe;
+				case GLFW_KEY_COMMA: return foundation::Key::Comma;
+				case GLFW_KEY_MINUS: return foundation::Key::Minus;
+				case GLFW_KEY_PERIOD: return foundation::Key::Period;
+				case GLFW_KEY_SLASH: return foundation::Key::Slash;
+				case GLFW_KEY_0: return foundation::Key::Num0;
+				case GLFW_KEY_1: return foundation::Key::Num1;
+				case GLFW_KEY_2: return foundation::Key::Num2;
+				case GLFW_KEY_3: return foundation::Key::Num3;
+				case GLFW_KEY_4: return foundation::Key::Num4;
+				case GLFW_KEY_5: return foundation::Key::Num5;
+				case GLFW_KEY_6: return foundation::Key::Num6;
+				case GLFW_KEY_7: return foundation::Key::Num7;
+				case GLFW_KEY_8: return foundation::Key::Num8;
+				case GLFW_KEY_9: return foundation::Key::Num9;
+				case GLFW_KEY_A: return foundation::Key::A;
+				case GLFW_KEY_B: return foundation::Key::B;
+				case GLFW_KEY_C: return foundation::Key::C;
+				case GLFW_KEY_D: return foundation::Key::D;
+				case GLFW_KEY_E: return foundation::Key::E;
+				case GLFW_KEY_F: return foundation::Key::F;
+				case GLFW_KEY_G: return foundation::Key::G;
+				case GLFW_KEY_H: return foundation::Key::H;
+				case GLFW_KEY_I: return foundation::Key::I;
+				case GLFW_KEY_J: return foundation::Key::J;
+				case GLFW_KEY_K: return foundation::Key::K;
+				case GLFW_KEY_L: return foundation::Key::L;
+				case GLFW_KEY_M: return foundation::Key::M;
+				case GLFW_KEY_N: return foundation::Key::N;
+				case GLFW_KEY_O: return foundation::Key::O;
+				case GLFW_KEY_P: return foundation::Key::P;
+				case GLFW_KEY_Q: return foundation::Key::Q;
+				case GLFW_KEY_R: return foundation::Key::R;
+				case GLFW_KEY_S: return foundation::Key::S;
+				case GLFW_KEY_T: return foundation::Key::T;
+				case GLFW_KEY_U: return foundation::Key::U;
+				case GLFW_KEY_V: return foundation::Key::V;
+				case GLFW_KEY_W: return foundation::Key::W;
+				case GLFW_KEY_X: return foundation::Key::X;
+				case GLFW_KEY_Y: return foundation::Key::Y;
+				case GLFW_KEY_Z: return foundation::Key::Z;
+				case GLFW_KEY_ESCAPE: return foundation::Key::Escape;
+				case GLFW_KEY_ENTER: return foundation::Key::Enter;
+				case GLFW_KEY_TAB: return foundation::Key::Tab;
+				case GLFW_KEY_BACKSPACE: return foundation::Key::Backspace;
+				case GLFW_KEY_INSERT: return foundation::Key::Insert;
+				case GLFW_KEY_DELETE: return foundation::Key::Delete;
+				case GLFW_KEY_HOME: return foundation::Key::Home;
+				case GLFW_KEY_END: return foundation::Key::End;
+				case GLFW_KEY_PAGE_UP: return foundation::Key::PageUp;
+				case GLFW_KEY_PAGE_DOWN: return foundation::Key::PageDown;
+				case GLFW_KEY_RIGHT: return foundation::Key::Right;
+				case GLFW_KEY_LEFT: return foundation::Key::Left;
+				case GLFW_KEY_DOWN: return foundation::Key::Down;
+				case GLFW_KEY_UP: return foundation::Key::Up;
+				case GLFW_KEY_F1: return foundation::Key::F1;
+				case GLFW_KEY_F2: return foundation::Key::F2;
+				case GLFW_KEY_F3: return foundation::Key::F3;
+				case GLFW_KEY_F4: return foundation::Key::F4;
+				case GLFW_KEY_F5: return foundation::Key::F5;
+				case GLFW_KEY_F6: return foundation::Key::F6;
+				case GLFW_KEY_F7: return foundation::Key::F7;
+				case GLFW_KEY_F8: return foundation::Key::F8;
+				case GLFW_KEY_F9: return foundation::Key::F9;
+				case GLFW_KEY_F10: return foundation::Key::F10;
+				case GLFW_KEY_F11: return foundation::Key::F11;
+				case GLFW_KEY_F12: return foundation::Key::F12;
+				case GLFW_KEY_LEFT_SHIFT: return foundation::Key::LeftShift;
+				case GLFW_KEY_LEFT_CONTROL: return foundation::Key::LeftControl;
+				case GLFW_KEY_LEFT_ALT: return foundation::Key::LeftAlt;
+				case GLFW_KEY_LEFT_SUPER: return foundation::Key::LeftSuper;
+				case GLFW_KEY_RIGHT_SHIFT: return foundation::Key::RightShift;
+				case GLFW_KEY_RIGHT_CONTROL: return foundation::Key::RightControl;
+				case GLFW_KEY_RIGHT_ALT: return foundation::Key::RightAlt;
+				case GLFW_KEY_RIGHT_SUPER: return foundation::Key::RightSuper;
+				case GLFW_KEY_KP_0: return foundation::Key::Kp0;
+				case GLFW_KEY_KP_1: return foundation::Key::Kp1;
+				case GLFW_KEY_KP_2: return foundation::Key::Kp2;
+				case GLFW_KEY_KP_3: return foundation::Key::Kp3;
+				case GLFW_KEY_KP_4: return foundation::Key::Kp4;
+				case GLFW_KEY_KP_5: return foundation::Key::Kp5;
+				case GLFW_KEY_KP_6: return foundation::Key::Kp6;
+				case GLFW_KEY_KP_7: return foundation::Key::Kp7;
+				case GLFW_KEY_KP_8: return foundation::Key::Kp8;
+				case GLFW_KEY_KP_9: return foundation::Key::Kp9;
+				case GLFW_KEY_KP_DECIMAL: return foundation::Key::KpDecimal;
+				case GLFW_KEY_KP_DIVIDE: return foundation::Key::KpDivide;
+				case GLFW_KEY_KP_MULTIPLY: return foundation::Key::KpMultiply;
+				case GLFW_KEY_KP_SUBTRACT: return foundation::Key::KpSubtract;
+				case GLFW_KEY_KP_ADD: return foundation::Key::KpAdd;
+				case GLFW_KEY_KP_ENTER: return foundation::Key::KpEnter;
+				case GLFW_KEY_KP_EQUAL: return foundation::Key::KpEqual;
 				default: return std::nullopt;
 			}
 		}
@@ -312,7 +312,7 @@ namespace engine {
 	}
 
 	// Query API implementations
-	bool InputManager::isMouseButtonDown(MouseButton button) const {
+	bool InputManager::isMouseButtonDown(foundation::MouseButton button) const {
 		int glfwButton = ToGLFW(button);
 		auto it = mouseButtonStates.find(glfwButton);
 		if (it == mouseButtonStates.end())
@@ -320,7 +320,7 @@ namespace engine {
 		return it->second == ButtonState::Down || it->second == ButtonState::Pressed;
 	}
 
-	bool InputManager::isMouseButtonPressed(MouseButton button) const {
+	bool InputManager::isMouseButtonPressed(foundation::MouseButton button) const {
 		int glfwButton = ToGLFW(button);
 		// Check previous state because updateButtonStates() transitions Pressed→Down
 		// before handleInput() is called. The previous state captures the one-frame event.
@@ -330,7 +330,7 @@ namespace engine {
 		return it->second == ButtonState::Pressed;
 	}
 
-	bool InputManager::isMouseButtonReleased(MouseButton button) const {
+	bool InputManager::isMouseButtonReleased(foundation::MouseButton button) const {
 		int glfwButton = ToGLFW(button);
 		// Check previous state because updateButtonStates() transitions Released→Up
 		// before handleInput() is called. The previous state captures the one-frame event.
@@ -340,7 +340,7 @@ namespace engine {
 		return it->second == ButtonState::Released;
 	}
 
-	bool InputManager::isKeyDown(Key key) const {
+	bool InputManager::isKeyDown(foundation::Key key) const {
 		int glfwKey = ToGLFW(key);
 		auto it = keyStates.find(glfwKey);
 		if (it == keyStates.end())
@@ -348,7 +348,7 @@ namespace engine {
 		return it->second == ButtonState::Down || it->second == ButtonState::Pressed;
 	}
 
-	bool InputManager::isKeyPressed(Key key) const {
+	bool InputManager::isKeyPressed(foundation::Key key) const {
 		int glfwKey = ToGLFW(key);
 		// Check previous state because updateButtonStates() transitions Pressed→Down
 		// before handleInput() is called. The previous state captures the one-frame event.
@@ -358,7 +358,7 @@ namespace engine {
 		return it->second == ButtonState::Pressed;
 	}
 
-	bool InputManager::isKeyReleased(Key key) const {
+	bool InputManager::isKeyReleased(foundation::Key key) const {
 		int glfwKey = ToGLFW(key);
 		// Check previous state because updateButtonStates() transitions Released→Up
 		// before handleInput() is called. The previous state captures the one-frame event.
@@ -368,7 +368,7 @@ namespace engine {
 		return it->second == ButtonState::Released;
 	}
 
-	void InputManager::injectKey(Key key, bool down) {
+	void InputManager::injectKey(foundation::Key key, bool down) {
 		// Funnel through the exact path GLFW key events take, so the press/release edge
 		// state machine (and isKeyPressed/isKeyDown/isKeyReleased) behaves identically.
 		handleKeyInput(ToGLFW(key), down ? GLFW_PRESS : GLFW_RELEASE);
@@ -379,12 +379,16 @@ namespace engine {
 		mousePosition = position;
 	}
 
-	std::optional<Key> InputManager::keyFromName(const std::string& name) {
+	std::optional<foundation::Key> InputManager::keyFromName(const std::string& name) {
 		// keyFromName relies on the Key enum's letters, digits, and function keys being
 		// contiguous (see InputTypes.h); these guard against a future reordering.
-		static_assert(static_cast<int>(Key::Z) - static_cast<int>(Key::A) == 25, "Key A-Z must be contiguous");
-		static_assert(static_cast<int>(Key::Num9) - static_cast<int>(Key::Num0) == 9, "Key Num0-9 must be contiguous");
-		static_assert(static_cast<int>(Key::F12) - static_cast<int>(Key::F1) == 11, "Key F1-F12 must be contiguous");
+		static_assert(static_cast<int>(foundation::Key::Z) - static_cast<int>(foundation::Key::A) == 25, "Key A-Z must be contiguous");
+		static_assert(
+			static_cast<int>(foundation::Key::Num9) - static_cast<int>(foundation::Key::Num0) == 9, "Key Num0-9 must be contiguous"
+		);
+		static_assert(
+			static_cast<int>(foundation::Key::F12) - static_cast<int>(foundation::Key::F1) == 11, "Key F1-F12 must be contiguous"
+		);
 
 		if (name.empty()) {
 			return std::nullopt;
@@ -392,13 +396,13 @@ namespace engine {
 		if (name.size() == 1) {
 			const char c = name[0];
 			if (c >= 'a' && c <= 'z') {
-				return static_cast<Key>(static_cast<int>(Key::A) + (c - 'a'));
+				return static_cast<foundation::Key>(static_cast<int>(foundation::Key::A) + (c - 'a'));
 			}
 			if (c >= 'A' && c <= 'Z') {
-				return static_cast<Key>(static_cast<int>(Key::A) + (c - 'A'));
+				return static_cast<foundation::Key>(static_cast<int>(foundation::Key::A) + (c - 'A'));
 			}
 			if (c >= '0' && c <= '9') {
-				return static_cast<Key>(static_cast<int>(Key::Num0) + (c - '0'));
+				return static_cast<foundation::Key>(static_cast<int>(foundation::Key::Num0) + (c - '0'));
 			}
 		}
 
@@ -409,42 +413,42 @@ namespace engine {
 		}
 
 		if (lower == "space")
-			return Key::Space;
+			return foundation::Key::Space;
 		if (lower == "escape" || lower == "esc")
-			return Key::Escape;
+			return foundation::Key::Escape;
 		if (lower == "enter" || lower == "return")
-			return Key::Enter;
+			return foundation::Key::Enter;
 		if (lower == "tab")
-			return Key::Tab;
+			return foundation::Key::Tab;
 		if (lower == "backspace")
-			return Key::Backspace;
+			return foundation::Key::Backspace;
 		if (lower == "delete" || lower == "del")
-			return Key::Delete;
+			return foundation::Key::Delete;
 		if (lower == "insert")
-			return Key::Insert;
+			return foundation::Key::Insert;
 		if (lower == "home")
-			return Key::Home;
+			return foundation::Key::Home;
 		if (lower == "end")
-			return Key::End;
+			return foundation::Key::End;
 		if (lower == "pageup")
-			return Key::PageUp;
+			return foundation::Key::PageUp;
 		if (lower == "pagedown")
-			return Key::PageDown;
+			return foundation::Key::PageDown;
 		if (lower == "up")
-			return Key::Up;
+			return foundation::Key::Up;
 		if (lower == "down")
-			return Key::Down;
+			return foundation::Key::Down;
 		if (lower == "left")
-			return Key::Left;
+			return foundation::Key::Left;
 		if (lower == "right")
-			return Key::Right;
+			return foundation::Key::Right;
 
 		// Function keys F1..F12.
 		if (lower.size() >= 2 && lower[0] == 'f') {
 			try {
 				const int n = std::stoi(lower.substr(1));
 				if (n >= 1 && n <= 12) {
-					return static_cast<Key>(static_cast<int>(Key::F1) + (n - 1));
+					return static_cast<foundation::Key>(static_cast<int>(foundation::Key::F1) + (n - 1));
 				}
 			} catch (...) {
 				return std::nullopt;
@@ -499,7 +503,7 @@ namespace engine {
 
 			// Call external callback (e.g., UI event system) - can consume event
 			if (s_instance->mouseButtonInputCallback) {
-				auto btn = static_cast<MouseButton>(button);
+				auto btn = static_cast<foundation::MouseButton>(button);
 				bool consumed = s_instance->mouseButtonInputCallback(btn, action, s_instance->mousePosition, mods);
 				if (consumed) {
 					return;	 // Event consumed, don't chain

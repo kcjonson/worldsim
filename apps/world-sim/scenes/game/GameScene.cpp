@@ -625,12 +625,12 @@ namespace {
 					// tracks the snapped cursor under the panel to a spot you can't click.
 					m_drawingSystem->handleMouseMove(event.position.x, event.position.y, logicalW, logicalH, freeform);
 				} else if (!consumed && event.type == UI::InputEvent::Type::MouseUp) {
-					if (event.button == engine::MouseButton::Right) {
+					if (event.button == foundation::MouseButton::Right) {
 						// Foundation: cancel the shape. Wall: end (commit) the chain.
 						m_drawingSystem->cancel();
 						return true;
 					}
-					if (event.button == engine::MouseButton::Left) {
+					if (event.button == foundation::MouseButton::Left) {
 						m_drawingSystem->handleClick(event.position.x, event.position.y, logicalW, logicalH, freeform, ctrl);
 						return true;
 					}
@@ -655,7 +655,7 @@ namespace {
 				// Right-click while a controlled colonist is selected: walk it to the clicked point
 				// (snapped to the nearest walkable spot inside issuePlayerMoveOrder). Return before the
 				// selection dispatch so right-click never changes the selection or falls through.
-				if (event.button == engine::MouseButton::Right && m_controlledColonist != 0) {
+				if (event.button == foundation::MouseButton::Right && m_controlledColonist != 0) {
 					const auto worldPt = m_camera->screenToWorld(event.position.x, event.position.y, logicalW, logicalH, kPixelsPerMeter);
 					auto& ai = ecsWorld->getSystem<ecs::AIDecisionSystem>();
 					if (const auto goal = ai.issuePlayerMoveOrder(m_controlledColonist, glm::vec2{worldPt.x, worldPt.y})) {
@@ -669,7 +669,7 @@ namespace {
 				// RoomSelection, miss -> deselect. It never falls through to structure
 				// selection (rooms aren't in the SelectionSystem ladder). Routed through
 				// setSelection so the result flows through the same sink (current()).
-				if (m_roomOverlay->isActive() && event.button == engine::MouseButton::Left) {
+				if (m_roomOverlay->isActive() && event.button == foundation::MouseButton::Left) {
 					if (auto roomId = m_roomOverlay->handleClick(event.position.x, event.position.y, logicalW, logicalH)) {
 						m_selectionSystem->setSelection(world_sim::RoomSelection{*roomId});
 					} else {
@@ -692,7 +692,7 @@ namespace {
 			}
 
 			// Handle Escape - cancel the drawing tool / placement first, then exit
-			if (input.isKeyPressed(engine::Key::Escape)) {
+			if (input.isKeyPressed(foundation::Key::Escape)) {
 				if (m_drawingSystem->isActive()) {
 					m_drawingSystem->cancel();
 				} else if (m_placementSystem->isActive()) {
@@ -704,68 +704,68 @@ namespace {
 			}
 
 			// Backspace removes the last placed point while drawing.
-			if (input.isKeyPressed(engine::Key::Backspace) && m_drawingSystem->isActive()) {
+			if (input.isKeyPressed(foundation::Key::Backspace) && m_drawingSystem->isActive()) {
 				m_drawingSystem->removeLastPoint();
 			}
 
 			// Enter finishes (commits) a wall chain; the foundation tool ignores it
 			// (it closes on origin-click instead).
-			if (input.isKeyPressed(engine::Key::Enter) && m_drawingSystem->isActive()) {
+			if (input.isKeyPressed(foundation::Key::Enter) && m_drawingSystem->isActive()) {
 				m_drawingSystem->finishChain();
 			}
 
 			// Handle B key - toggle build mode. Gated while the foundation tool owns
 			// world input so the two tools can't be live at once (see tool-exclusivity
 			// wiring in the placement/drawing activation callbacks).
-			if (input.isKeyPressed(engine::Key::B) && !m_drawingSystem->isActive()) {
+			if (input.isKeyPressed(foundation::Key::B) && !m_drawingSystem->isActive()) {
 				m_placementSystem->toggleBuildMenu();
 			}
 
 			// R toggles the rooms overlay (tint/outline/label of detected rooms). Same
 			// state the GameplayBar Rooms button flips, through the same method, so the
 			// two never drift.
-			if (input.isKeyPressed(engine::Key::R)) {
+			if (input.isKeyPressed(foundation::Key::R)) {
 				setRoomOverlayActive(!m_roomOverlay->isActive());
 			}
 
 			// N toggles the nav debug overlay (navmesh wireframe + agent routes).
-			if (input.isKeyPressed(engine::Key::N)) {
+			if (input.isKeyPressed(foundation::Key::N)) {
 				setNavOverlayActive(!m_navOverlay->isActive());
 			}
 
 			// V toggles the vision debug overlay (visibility polygons + occluders).
-			if (input.isKeyPressed(engine::Key::V)) {
+			if (input.isKeyPressed(foundation::Key::V)) {
 				setVisionOverlayActive(!m_visionOverlay->isActive());
 			}
 
 			// G toggles the terrain polygon debug overlay (waterline rings +
 			// clipped navRings, per chunk).
-			if (input.isKeyPressed(engine::Key::G)) {
+			if (input.isKeyPressed(foundation::Key::G)) {
 				setTerrainPolygonOverlayActive(!m_terrainPolygonOverlay->isActive());
 			}
 
 			// T toggles the per-colonist decision inspector panel.
-			if (input.isKeyPressed(engine::Key::T)) {
+			if (input.isKeyPressed(foundation::Key::T)) {
 				gameUI->toggleDecisionInspector();
 			}
 
 			// Handle time controls
 			auto& timeSystem = ecsWorld->getSystem<ecs::TimeSystem>();
-			if (input.isKeyPressed(engine::Key::Space)) {
+			if (input.isKeyPressed(foundation::Key::Space)) {
 				timeSystem.togglePause();
 			}
-			if (input.isKeyPressed(engine::Key::Num1)) {
+			if (input.isKeyPressed(foundation::Key::Num1)) {
 				timeSystem.setSpeed(ecs::GameSpeed::Normal);
 			}
-			if (input.isKeyPressed(engine::Key::Num2)) {
+			if (input.isKeyPressed(foundation::Key::Num2)) {
 				timeSystem.setSpeed(ecs::GameSpeed::Fast);
 			}
-			if (input.isKeyPressed(engine::Key::Num3)) {
+			if (input.isKeyPressed(foundation::Key::Num3)) {
 				timeSystem.setSpeed(ecs::GameSpeed::VeryFast);
 			}
 
 			// Zoom reset
-			if (input.isKeyPressed(engine::Key::Home)) {
+			if (input.isKeyPressed(foundation::Key::Home)) {
 				m_camera->setZoomIndex(engine::world::kDefaultZoomIndex);
 			}
 
@@ -773,16 +773,16 @@ namespace {
 			float dx = 0.0F;
 			float dy = 0.0F;
 
-			if (input.isKeyDown(engine::Key::W) || input.isKeyDown(engine::Key::Up)) {
+			if (input.isKeyDown(foundation::Key::W) || input.isKeyDown(foundation::Key::Up)) {
 				dy -= 1.0F;
 			}
-			if (input.isKeyDown(engine::Key::S) || input.isKeyDown(engine::Key::Down)) {
+			if (input.isKeyDown(foundation::Key::S) || input.isKeyDown(foundation::Key::Down)) {
 				dy += 1.0F;
 			}
-			if (input.isKeyDown(engine::Key::A) || input.isKeyDown(engine::Key::Left)) {
+			if (input.isKeyDown(foundation::Key::A) || input.isKeyDown(foundation::Key::Left)) {
 				dx -= 1.0F;
 			}
-			if (input.isKeyDown(engine::Key::D) || input.isKeyDown(engine::Key::Right)) {
+			if (input.isKeyDown(foundation::Key::D) || input.isKeyDown(foundation::Key::Right)) {
 				dx += 1.0F;
 			}
 

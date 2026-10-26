@@ -43,12 +43,12 @@ class IFocusable {
 	/**
 	 * Handle keyboard input when focused.
 	 *
-	 * @param key - Key pressed (from engine::Key enum)
+	 * @param key - Key pressed (from foundation::Key enum)
 	 * @param shift - True if Shift modifier is pressed
 	 * @param ctrl - True if Ctrl/Cmd modifier is pressed
 	 * @param alt - True if Alt/Option modifier is pressed
 	 */
-	virtual void handleKeyInput(engine::Key key, bool shift, bool ctrl, bool alt) = 0;
+	virtual void handleKeyInput(foundation::Key key, bool shift, bool ctrl, bool alt) = 0;
 
 	/**
 	 * Handle character input when focused.

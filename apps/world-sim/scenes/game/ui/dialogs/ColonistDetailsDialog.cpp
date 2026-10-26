@@ -336,7 +336,7 @@ namespace world_sim {
 			return false;
 
 		// Footer Close button: replicate the X-button close on left click only.
-		if ((event.type == UI::InputEvent::Type::MouseDown || event.type == UI::InputEvent::Type::MouseUp) && event.button == engine::MouseButton::Left) {
+		if ((event.type == UI::InputEvent::Type::MouseDown || event.type == UI::InputEvent::Type::MouseUp) && event.button == foundation::MouseButton::Left) {
 			const Foundation::Rect cb = closeButtonBounds();
 			if (cb.width > 0.0F && event.position.x >= cb.x && event.position.x < cb.x + cb.width && event.position.y >= cb.y && event.position.y < cb.y + cb.height) {
 				if (event.type == UI::InputEvent::Type::MouseUp) {

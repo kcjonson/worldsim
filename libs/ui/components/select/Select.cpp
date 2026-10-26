@@ -383,22 +383,22 @@ void Select::onFocusLost() {
 	closeMenu();
 }
 
-void Select::handleKeyInput(engine::Key key, bool /*shift*/, bool /*ctrl*/, bool /*alt*/) {
+void Select::handleKeyInput(foundation::Key key, bool /*shift*/, bool /*ctrl*/, bool /*alt*/) {
 	if (disabled) {
 		return;
 	}
 
 	auto* menu = getChild<Menu>(menuHandle);
 
-	if (key == engine::Key::Enter || key == engine::Key::Space) {
+	if (key == foundation::Key::Enter || key == foundation::Key::Space) {
 		if (open && hoveredItemIndex >= 0) {
 			selectOption(static_cast<size_t>(hoveredItemIndex));
 		} else {
 			toggle();
 		}
-	} else if (key == engine::Key::Escape) {
+	} else if (key == foundation::Key::Escape) {
 		closeMenu();
-	} else if (key == engine::Key::Down) {
+	} else if (key == foundation::Key::Down) {
 		if (!open) {
 			openMenu();
 		} else if (hoveredItemIndex < static_cast<int>(options.size()) - 1) {
@@ -407,7 +407,7 @@ void Select::handleKeyInput(engine::Key key, bool /*shift*/, bool /*ctrl*/, bool
 				menu->setHoveredIndex(hoveredItemIndex);
 			}
 		}
-	} else if (key == engine::Key::Up) {
+	} else if (key == foundation::Key::Up) {
 		if (open && hoveredItemIndex > 0) {
 			hoveredItemIndex--;
 			if (menu) {
