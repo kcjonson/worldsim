@@ -5,23 +5,17 @@
 #include "Application.h"
 
 #include <CoordinateSystem/CoordinateSystem.h>
-#include <assets/AssetRegistry.h>
-#include <assets/RecipeRegistry.h>
 #include <debug/DebugServer.h>
 #include <font/FontRenderer.h>
 #include <input/InputEvent.h>
 #include <input/InputManager.h>
 #include <metrics/MetricsCollector.h>
 #include <primitives/Primitives.h>
-#include <resources/TileAtlasBuilder.h>
 #include <scene/SceneManager.h>
 #include <utils/Log.h>
-#include <utils/ResourcePath.h>
 
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
-
-#include "world/chunk/Chunk.h"
 
 #include <cstring>
 #include <memory>
@@ -35,8 +29,8 @@ namespace engine {
 		// Global systems (accessed by GLFW callbacks)
 		Renderer::CoordinateSystem*					g_coordinateSystem = nullptr;
 		std::unique_ptr<Renderer::FontRenderer>		g_fontRenderer = nullptr;
-		std::unique_ptr<Renderer::TileAtlasBuilder> g_tileAtlasBuilder = nullptr;
 		std::function<void()>						g_windowResizeCallback; // App-specific resize handler
+		std::function<void()>						g_shutdownResources;	// AppConfig::shutdownResources, run from cleanup()
 
 		// Owned resources that persist between initialize() and run()
 		std::unique_ptr<Foundation::DebugServer>	g_debugServer;
@@ -206,61 +200,7 @@ namespace engine {
 				LOG_INFO(UI, "Font renderer initialized");
 			}
 
-			// Bootstrap a default tile atlas (solid colors per surface) to exercise tile mode.
-			{
-				constexpr int kSurfaceCount = static_cast<int>(engine::world::Surface::Count);
-
-				g_tileAtlasBuilder = std::make_unique<Renderer::TileAtlasBuilder>();
-				auto rects = g_tileAtlasBuilder->buildForSurfaces(
-					kSurfaceCount,
-					[](int surfaceId) { return engine::world::surfaceToString(static_cast<engine::world::Surface>(surfaceId)); },
-					[](int surfaceId) { return engine::world::Chunk::getSurfaceColor(static_cast<engine::world::Surface>(surfaceId)); }
-				);
-
-				if (!rects.empty()) {
-					Renderer::Primitives::setTileAtlas(g_tileAtlasBuilder->texture(), rects);
-					LOG_INFO(Renderer, "Initialized default tile atlas with %zu entries", rects.size());
-				} else {
-					LOG_WARNING(Renderer, "Tile atlas not initialized (no rects)");
-				}
-			}
-
 			return true;
-		}
-
-		void initializeAssetSystem(const std::string& assetsRootPath, bool async) {
-			LOG_INFO(Engine, "Initializing asset system from %s", assetsRootPath.c_str());
-
-			// Find the assets root folder
-			std::string fullPath = Foundation::findResourceString(assetsRootPath);
-			if (fullPath.empty()) {
-				LOG_WARNING(Engine, "Assets root not found: %s", assetsRootPath.c_str());
-				return;
-			}
-
-			// Set shared scripts path (for @shared/ prefix resolution)
-			std::string sharedPath = Foundation::findResourceString("assets/shared/scripts");
-			if (!sharedPath.empty()) {
-				engine::assets::AssetRegistry::Get().setSharedScriptsPath(sharedPath);
-				LOG_INFO(Engine, "Set shared scripts path: %s", sharedPath.c_str());
-			}
-
-			// Load all asset definitions from the root folder.
-			// Item properties are now part of unified entity definitions (itemProperties section).
-			if (async) {
-				engine::assets::AssetRegistry::Get().beginLoadAsync(fullPath);
-				LOG_INFO(Engine, "Asset loading started asynchronously from %s", fullPath.c_str());
-			} else {
-				size_t loaded = engine::assets::AssetRegistry::Get().loadDefinitionsFromFolder(fullPath);
-				LOG_INFO(Engine, "Loaded %zu asset definitions from %s", loaded, fullPath.c_str());
-			}
-
-			// Load recipes from the recipes folder
-			std::string recipesPath = Foundation::findResourceString("assets/recipes");
-			if (!recipesPath.empty()) {
-				size_t recipesLoaded = engine::assets::RecipeRegistry::Get().loadRecipesFromFolder(recipesPath);
-				LOG_INFO(Engine, "Loaded %zu recipes from %s", recipesLoaded, recipesPath.c_str());
-			}
 		}
 
 		void cleanup(GLFWwindow* window) {
@@ -278,7 +218,10 @@ namespace engine {
 
 			Renderer::Primitives::setFontRenderer(nullptr);
 			g_fontRenderer.reset();
-			g_tileAtlasBuilder.reset();
+			if (g_shutdownResources) {
+				g_shutdownResources();
+			}
+			g_shutdownResources = nullptr;
 			g_coordinateSystem = nullptr;
 
 			Renderer::Primitives::shutdown();
@@ -351,11 +294,13 @@ namespace engine {
 			return {};
 		}
 
-		// Initialize asset system. Load asynchronously only on the normal splash
-		// path; a --scene override loads synchronously so the jumped-to scene has
-		// assets ready before it runs.
-		const bool asyncAssets = config.loadAssetsAsync && !hasSceneArg;
-		initializeAssetSystem(config.assetsRootPath, asyncAssets);
+		// Game resource bootstrap (asset registry, tile atlas, ...). Runs after the GL context
+		// and renderer exist, and before Application, scene registration, and the initial
+		// scene's onEnter, which may read the registry immediately.
+		g_shutdownResources = config.shutdownResources;
+		if (config.initializeResources) {
+			config.initializeResources(hasSceneArg);
+		}
 
 		// Create application
 		LOG_INFO(Engine, "Creating application");

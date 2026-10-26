@@ -35,17 +35,18 @@ struct AppConfig {
 	/// Example: [](const std::string& name) { return name == "game" ? "gameloading" : ""; }
 	std::function<std::string(const std::string&)> remapSceneName;
 
-	// ========== Asset System (optional) ==========
+	// ========== Resource Bootstrap (optional) ==========
 
-	/// Root folder for asset discovery (relative to executable)
-	/// Asset definitions are loaded from all FolderName/FolderName.xml files recursively.
-	/// Example: "assets/world" scans for assets/world/flora/GrassBlade/GrassBlade.xml etc.
-	std::string assetsRootPath = "assets/world";
+	/// Called once after the window, GL context, and renderer systems exist and before
+	/// Application is constructed, scenes are registered, or the initial scene's onEnter
+	/// runs. Load game resources here (asset registry, tile atlas). `hasSceneArg` is true
+	/// when --scene= was passed: the jumped-to scene reads resources in onEnter, so load
+	/// anything it needs synchronously in that case.
+	std::function<void(bool hasSceneArg)> initializeResources;
 
-	/// Load assets on a background thread so a splash can show progress instead of
-	/// freezing. Only takes effect on the default launch path; a --scene override
-	/// loads synchronously so a jumped-to scene has assets ready.
-	bool loadAssetsAsync = false;
+	/// Called once during shutdown, after scenes and the Application are gone and while the
+	/// GL context is still alive. Release anything initializeResources created.
+	std::function<void()> shutdownResources;
 };
 
 } // namespace engine

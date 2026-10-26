@@ -42,7 +42,6 @@ struct AppContext {
 /// - CoordinateSystem setup
 /// - Primitives rendering system
 /// - FontRenderer
-/// - Asset system
 /// - Debug server (optional)
 ///
 /// Usage (simple, no custom setup):
