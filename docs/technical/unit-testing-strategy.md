@@ -540,7 +540,7 @@ cmake -B build -S . \
   -DBUILD_TESTING=ON
 
 # Build all test targets
-cmake --build build --target foundation-tests foundation-benchmarks
+cmake --build build --target geometry-tests world-benchmarks
 
 # Build all tests at once
 cmake --build build -j8
@@ -553,7 +553,7 @@ cmake --build build -j8
 ctest --test-dir build --output-on-failure
 
 # Run specific library tests
-ctest --test-dir build -R foundation-tests --output-on-failure
+ctest --test-dir build -R geometry-tests --output-on-failure
 
 # Run only unit tests (exclude benchmarks)
 ctest --test-dir build -R ".*-tests$" --output-on-failure
@@ -577,18 +577,18 @@ ctest --test-dir build --output-junit test-results.xml
 
 ```bash
 # Run specific benchmark executable
-./build/libs/foundation/tests/foundation-benchmarks
+./build/libs/world/world-benchmarks
 
 # With JSON output
-./build/libs/foundation/tests/foundation-benchmarks \
+./build/libs/world/world-benchmarks \
   --benchmark_format=json \
   --benchmark_out=results.json
 
 # Filter benchmarks
-./build/libs/foundation/tests/foundation-benchmarks --benchmark_filter=Arena.*
+./build/libs/world/world-benchmarks --benchmark_filter=BM_TileCenter.*
 
 # Run for specific time
-./build/libs/foundation/tests/foundation-benchmarks --benchmark_min_time=2.0
+./build/libs/world/world-benchmarks --benchmark_min_time=2.0
 ```
 
 ---
@@ -713,8 +713,10 @@ ctest --test-dir build --output-on-failure
 
 ### Run Specific Tests
 ```bash
-ctest --test-dir build -R foundation-tests --output-on-failure
+ctest --test-dir build -R geometry-tests --output-on-failure
 ```
+
+Foundation and renderer tests run in the salal repo (`github.com/kcjonson/salal`), not here.
 
 ### Run Benchmarks
 ```bash
