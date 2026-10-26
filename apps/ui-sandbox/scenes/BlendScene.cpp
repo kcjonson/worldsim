@@ -3,6 +3,7 @@
 // premultiplied sprite through drawImage, and shapes drawn into a RenderTarget
 // and composited back with drawImage, next to the same shapes drawn directly.
 
+#include "DesignCanvas.h"
 #include "SceneTypes.h"
 #include <graphics/Color.h>
 #include <primitives/Primitives.h>
@@ -25,9 +26,14 @@ namespace {
 	constexpr const char* kSceneName = "blend";
 	constexpr float		  kPi = std::numbers::pi_v<float>;
 	constexpr int		  kSpriteSize = 128;
+	constexpr float		  kCanvasWidth = 3072.0F;
+	constexpr float		  kCanvasHeight = 1728.0F;
+	constexpr float		  kHalf = kCanvasWidth * 0.5F;
 
 	const Foundation::Color kDark(0.06F, 0.06F, 0.09F, 1.0F);
 	const Foundation::Color kLight(0.9F, 0.9F, 0.87F, 1.0F);
+	const Foundation::Color kInkOnDark(0.8F, 0.8F, 0.85F, 1.0F);
+	const Foundation::Color kInkOnLight(0.2F, 0.2F, 0.25F, 1.0F);
 
 	using Renderer::Primitives::BlendMode;
 
@@ -58,28 +64,23 @@ namespace {
 		void render() override {
 			namespace P = Renderer::Primitives;
 
-			int width = 0;
-			int height = 0;
-			P::getLogicalViewport(width, height);
-			const float w = static_cast<float>(width);
-			const float h = static_cast<float>(height);
-			const float half = std::floor(w * 0.5F);
-
 			P::clear(kDark);
-			P::drawRect({.bounds = {half, 0.0F, w - half, h}, .style = {.fill = kLight}});
+			const Foundation::Mat4 canvas = ui_sandbox::designCanvas(kCanvasWidth, kCanvasHeight);
+			P::PushTransform(canvas);
+			// The light half runs from the canvas's middle past the window's edges, whatever its aspect.
+			P::drawRect({.bounds = {kHalf, -kCanvasHeight, kCanvasWidth * 2.0F, kCanvasHeight * 3.0F}, .style = {.fill = kLight}});
 			P::drawText(
-				{.text = "Alpha and Additive over dark and light; Additive adds colour times alpha and keeps the destination alpha",
+				{.text = "Alpha and Additive over dark and light",
 				 .position = {80.0F, 40.0F},
-				 .scale = 1.75F,
+				 .scale = 2.5F,
 				 .color = {0.6F, 0.6F, 0.65F, 1.0F}}
 			);
 
 			for (int side = 0; side < 2; ++side) {
-				const float				x0 = side == 0 ? 0.0F : half;
-				const Foundation::Color ink =
-					side == 0 ? Foundation::Color(0.8F, 0.8F, 0.85F, 1.0F) : Foundation::Color(0.2F, 0.2F, 0.25F, 1.0F);
-				const auto label = [&](const std::string& text, float x, float y) {
-					P::drawText({.text = text, .position = {x0 + x, y}, .scale = 1.25F, .color = ink});
+				const float				 x0 = static_cast<float>(side) * kHalf;
+				const Foundation::Color& ink = inkFor(side);
+				const auto				 label = [&](const std::string& text, float x, float y) {
+					  P::drawText({.text = text, .position = {x0 + x, y}, .scale = 2.0F, .color = ink});
 				};
 
 				// Row 1: overlapping primaries.
@@ -100,7 +101,7 @@ namespace {
 							 .blend = blend}
 						);
 					}
-					label(mode == 0 ? "alpha" : "additive", cx - x0 - 40.0F, 450.0F);
+					label(mode == 0 ? "alpha" : "additive", cx - x0 - 60.0F, 445.0F);
 				}
 
 				// Row 2: glow, text, ring and stroke, alpha then additive.
@@ -141,7 +142,7 @@ namespace {
 						{.points = stroke, .width = 18.0F, .color = {0.4F, 1.0F, 0.4F, 0.8F}, .cap = P::LineCap::Round, .blend = blend}
 					);
 				}
-				label("box-shadow glow, text, arc and polyline: alpha (left), additive (right)", 80.0F, 880.0F);
+				label("glow, text, arc, polyline: alpha left, additive right", 80.0F, 875.0F);
 
 				// Row 3: a premultiplied sprite through drawImage, alpha then additive, three overlapping.
 				for (int mode = 0; mode < 2; ++mode) {
@@ -155,33 +156,42 @@ namespace {
 						);
 					}
 				}
-				label("drawImage, premultiplied sprite: alpha, additive", 80.0F, 1230.0F);
+				label("drawImage, premultiplied sprite: alpha, additive", 80.0F, 1225.0F);
 			}
 
 			// Row 4: the same shapes drawn directly (left of each half) and drawn into a
 			// RenderTarget over transparent, then composited with drawImage (right).
-			drawTargetShapes(0.0F, half);
+			drawTargetShapes(0.0F);
+			P::PopTransform();
 			P::flush();
-			ensureTarget();
-			if (target.isValid()) {
+			if (ensureTarget()) {
 				target.begin();
 				P::clear(Foundation::Color::transparent());
-				drawTargetShapes(420.0F, half);
+				P::PushTransform(canvas);
+				drawTargetShapes(420.0F);
+				P::PopTransform();
 				P::flush();
 				target.end();
-				P::drawImage({.texture = target.texture(), .bounds = {0.0F, 0.0F, w, h}, .uvMin = {0.0F, 1.0F}, .uvMax = {1.0F, 0.0F}});
-			}
-			for (int side = 0; side < 2; ++side) {
-				const float				x0 = side == 0 ? 0.0F : half;
-				const Foundation::Color ink =
-					side == 0 ? Foundation::Color(0.8F, 0.8F, 0.85F, 1.0F) : Foundation::Color(0.2F, 0.2F, 0.25F, 1.0F);
-				P::drawText(
-					{.text = "direct, then the same through a RenderTarget and drawImage",
-					 .position = {x0 + 80.0F, 1640.0F},
-					 .scale = 1.25F,
-					 .color = ink}
+				int width = 0;
+				int height = 0;
+				P::getLogicalViewport(width, height);
+				P::drawImage(
+					{.texture = target.texture(),
+					 .bounds = {0.0F, 0.0F, static_cast<float>(width), static_cast<float>(height)},
+					 .uvMin = {0.0F, 1.0F},
+					 .uvMax = {1.0F, 0.0F}}
 				);
 			}
+			P::PushTransform(canvas);
+			for (int side = 0; side < 2; ++side) {
+				P::drawText(
+					{.text = "direct, then through a RenderTarget and drawImage",
+					 .position = {(static_cast<float>(side) * kHalf) + 80.0F, 1630.0F},
+					 .scale = 2.0F,
+					 .color = inkFor(side)}
+				);
+			}
+			P::PopTransform();
 		}
 
 		void onExit() override {
@@ -197,11 +207,14 @@ namespace {
 		const char* getName() const override { return kSceneName; }
 
 	  private:
-		// A soft translucent glow, a translucent ring and text, on both halves, `dx` across.
-		static void drawTargetShapes(float dx, float half) {
+		// Label ink on the dark half (side 0) and the light half (side 1).
+		static const Foundation::Color& inkFor(int side) { return side == 0 ? kInkOnDark : kInkOnLight; }
+
+		// A soft translucent glow, a translucent ring and text on both halves, `dx` across.
+		static void drawTargetShapes(float dx) {
 			namespace P = Renderer::Primitives;
 			for (int side = 0; side < 2; ++side) {
-				const float x = (side == 0 ? 0.0F : half) + 120.0F + dx;
+				const float x = (static_cast<float>(side) * kHalf) + 120.0F + dx;
 				P::drawRect(
 					{.bounds = {x + 40.0F, 1360.0F, 220.0F, 110.0F},
 					 .style = {
@@ -217,15 +230,19 @@ namespace {
 			}
 		}
 
-		// A target the size of the window's framebuffer, so the logical projection
-		// covers it exactly as it covers the window.
-		void ensureTarget() {
+		// A target the size of the window's backbuffer, so the logical projection covers it
+		// exactly as it covers the window. False while there is no backbuffer (minimised).
+		bool ensureTarget() {
 			int width = 0;
 			int height = 0;
-			Renderer::Primitives::getViewport(width, height);
+			Renderer::Primitives::readBackbuffer({}, width, height);
+			if (width <= 0 || height <= 0) {
+				return false;
+			}
 			if (!target.isValid() || target.width() != width || target.height() != height) {
 				target = Renderer::RenderTarget::create(width, height);
 			}
+			return target.isValid();
 		}
 
 		Renderer::TextureHandle sprite;

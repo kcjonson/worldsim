@@ -2,6 +2,7 @@
 // joins, closed outlines, hairlines, a dense curve, and translucent and additive
 // strokes (whose overlapping joints show).
 
+#include "DesignCanvas.h"
 #include "SceneTypes.h"
 #include <graphics/Color.h>
 #include <primitives/Primitives.h>
@@ -20,13 +21,23 @@ namespace {
 
 	constexpr const char* kSceneName = "polyline";
 	constexpr float		  kPi = std::numbers::pi_v<float>;
+	constexpr float		  kCanvasWidth = 3000.0F;
+	constexpr float		  kCanvasHeight = 1460.0F;
 
 	const Foundation::Color kBackground(0.08F, 0.08F, 0.11F, 1.0F);
 	const Foundation::Color kLabel(0.75F, 0.75F, 0.8F, 1.0F);
 	const Foundation::Color kGuide(1.0F, 0.3F, 0.3F, 1.0F);
 
-	void label(const std::string& text, float x, float y) {
-		Renderer::Primitives::drawText({.text = text, .position = {x, y}, .scale = 1.25F, .color = kLabel});
+	// A label centred on `centreX`, its top at `top`.
+	void label(const std::string& text, float centreX, float top) {
+		Renderer::Primitives::drawText(
+			{.text = text,
+			 .position = {centreX - 300.0F, top},
+			 .scale = 2.0F,
+			 .color = kLabel,
+			 .hAlign = Foundation::HorizontalAlign::Center,
+			 .boxWidth = 600.0F}
+		);
 	}
 
 	// A zigzag of `count` points from (x, y), `step` apart, alternating `rise` up.
@@ -51,11 +62,10 @@ namespace {
 	class PolylineScene : public engine::IScene {
 	  public:
 		void onEnter() override {
-			using Renderer::Primitives::LineCap;
-			using Renderer::Primitives::LineJoin;
 			for (int i = 0; i < 3; ++i) {
 				capLines[static_cast<size_t>(i)] = zigzag(150.0F + (static_cast<float>(i) * 600.0F), 380.0F, 5, 110.0F, 160.0F);
 			}
+			// Turns of 67 degrees: under a right angle, where a miter stays sharp.
 			for (int i = 0; i < 2; ++i) {
 				joinLines[static_cast<size_t>(i)] = zigzag(1950.0F + (static_cast<float>(i) * 520.0F), 360.0F, 4, 150.0F, 100.0F);
 			}
@@ -77,7 +87,7 @@ namespace {
 				hairlines[static_cast<size_t>(w)] = std::move(line);
 			}
 			translucent = zigzag(1050.0F, 1330.0F, 6, 110.0F, 180.0F);
-			additive = zigzag(1800.0F, 1330.0F, 6, 110.0F, 180.0F);
+			additive = zigzag(1850.0F, 1330.0F, 5, 150.0F, 100.0F);
 			LOG_INFO(UI, "Polyline scene");
 		}
 
@@ -89,54 +99,54 @@ namespace {
 			using P::LineJoin;
 
 			P::clear(kBackground);
+			P::PushTransform(ui_sandbox::designCanvas(kCanvasWidth, kCanvasHeight));
 			P::drawText(
-				{.text = "drawPolyline: SDF quads per segment, joint and round cap",
-				 .position = {80.0F, 50.0F},
-				 .scale = 2.0F,
+				{.text = "drawPolyline: an SDF quad per segment, joint and round cap",
+				 .position = {80.0F, 40.0F},
+				 .scale = 2.75F,
 				 .color = Foundation::Color::white()}
 			);
 
-			// Row 1: caps (round joins), then joins (butt caps) at turns under a right angle, where
-			// a miter stays sharp. A thin guide shows the points.
+			// Row 1: caps (round joins), then joins (butt caps). A thin guide shows the points.
 			constexpr std::array<LineCap, 3>	 kCaps = {LineCap::Butt, LineCap::Round, LineCap::Square};
 			constexpr std::array<const char*, 3> kCapNames = {"butt cap", "round cap", "square cap"};
 			for (size_t i = 0; i < kCaps.size(); ++i) {
 				P::drawPolyline({.points = capLines[i], .width = 36.0F, .color = {0.3F, 0.6F, 0.95F, 1.0F}, .cap = kCaps[i]});
 				P::drawPolyline({.points = capLines[i], .width = 2.0F, .color = kGuide});
-				label(kCapNames[i], capLines[i].front().x + 150.0F, 470.0F);
+				label(kCapNames[i], capLines[i].front().x + 220.0F, 440.0F);
 			}
 			constexpr std::array<LineJoin, 2>	 kJoins = {LineJoin::Round, LineJoin::Miter};
 			constexpr std::array<const char*, 2> kJoinNames = {"round join", "miter join"};
 			for (size_t i = 0; i < kJoins.size(); ++i) {
 				P::drawPolyline({.points = joinLines[i], .width = 36.0F, .color = {0.95F, 0.7F, 0.25F, 1.0F}, .join = kJoins[i]});
 				P::drawPolyline({.points = joinLines[i], .width = 2.0F, .color = kGuide});
-				label(kJoinNames[i], joinLines[i].front().x + 100.0F, 470.0F);
+				label(kJoinNames[i], joinLines[i].front().x + 225.0F, 440.0F);
 			}
 
 			// Row 2: closed outlines and a dense curve.
 			P::drawPolyline(
 				{.points = hexagon, .width = 16.0F, .color = {0.4F, 0.9F, 0.5F, 1.0F}, .join = LineJoin::Miter, .closed = true}
 			);
-			label("closed, miter (60-degree turns)", 110.0F, 980.0F);
+			label("closed, miter", 250.0F, 980.0F);
 			P::drawPolyline(
 				{.points = star, .width = 10.0F, .color = {0.95F, 0.45F, 0.45F, 1.0F}, .join = LineJoin::Miter, .closed = true}
 			);
-			label("star: tips past 90 degrees round", 520.0F, 980.0F);
+			label("star, tips round", 650.0F, 980.0F);
 			P::drawPolyline(
 				{.points = triangle, .width = 14.0F, .color = {0.8F, 0.6F, 1.0F, 1.0F}, .join = LineJoin::Round, .closed = true}
 			);
-			label("closed, round", 990.0F, 980.0F);
+			label("closed, round", 1050.0F, 980.0F);
 			P::drawPolyline({.points = wave, .width = 6.0F, .color = {0.3F, 0.85F, 0.95F, 1.0F}, .cap = LineCap::Round});
-			label("201 points, width 6, round caps", 1900.0F, 980.0F);
+			label("201 points, width 6", 2100.0F, 980.0F);
 
 			// Row 3: hairlines, translucent and additive strokes.
 			constexpr std::array<float, 3> kHairlines = {1.0F, 2.0F, 3.0F};
 			for (size_t i = 0; i < kHairlines.size(); ++i) {
 				P::drawPolyline({.points = hairlines[i], .width = kHairlines[i], .color = Foundation::Color::white()});
 			}
-			label("widths 1, 2 and 3", 360.0F, 1360.0F);
+			label("widths 1, 2 and 3", 500.0F, 1380.0F);
 			P::drawPolyline({.points = translucent, .width = 40.0F, .color = {0.3F, 0.6F, 0.95F, 0.5F}, .cap = LineCap::Round});
-			label("alpha 0.5: joints overlap", 1150.0F, 1560.0F);
+			label("alpha 0.5: joints overlap", 1325.0F, 1380.0F);
 			P::drawPolyline(
 				{.points = additive,
 				 .width = 40.0F,
@@ -145,7 +155,8 @@ namespace {
 				 .join = LineJoin::Miter,
 				 .blend = P::BlendMode::Additive}
 			);
-			label("additive, miter", 1950.0F, 1560.0F);
+			label("additive, miter", 2150.0F, 1380.0F);
+			P::PopTransform();
 		}
 
 		void onExit() override {}

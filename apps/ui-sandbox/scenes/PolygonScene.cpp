@@ -2,6 +2,7 @@
 // borders that sit outside the outline, one silhouette under several transforms
 // (tessellated once, then cached), and additive fills.
 
+#include "DesignCanvas.h"
 #include "SceneTypes.h"
 #include <graphics/Color.h>
 #include <primitives/Primitives.h>
@@ -21,6 +22,8 @@ namespace {
 
 	constexpr const char* kSceneName = "polygon";
 	constexpr float		  kPi = std::numbers::pi_v<float>;
+	constexpr float		  kCanvasWidth = 3000.0F;
+	constexpr float		  kCanvasHeight = 1580.0F;
 
 	const Foundation::Color kBackground(0.08F, 0.08F, 0.11F, 1.0F);
 	const Foundation::Color kLabel(0.75F, 0.75F, 0.8F, 1.0F);
@@ -60,14 +63,29 @@ namespace {
 		return out;
 	}
 
+	// A block with a 30-degree notch cut into its top, for the border's notch corner.
+	std::vector<Foundation::Vec2> notched() {
+		return {
+			{-130.0F, -110.0F}, {-35.0F, -110.0F}, {0.0F, 20.0F}, {35.0F, -110.0F}, {130.0F, -110.0F}, {130.0F, 110.0F}, {-130.0F, 110.0F}
+		};
+	}
+
 	Foundation::Mat4 placed(float x, float y, float radians = 0.0F, float scale = 1.0F) {
 		Foundation::Mat4 m = glm::translate(Foundation::Mat4(1.0F), Foundation::Vec3(x, y, 0.0F));
 		m = glm::rotate(m, radians, Foundation::Vec3(0.0F, 0.0F, 1.0F));
 		return glm::scale(m, Foundation::Vec3(scale, scale, 1.0F));
 	}
 
-	void label(const std::string& text, float x, float y) {
-		Renderer::Primitives::drawText({.text = text, .position = {x, y}, .scale = 1.25F, .color = kLabel});
+	// A label centred on `centreX`, its top at `top`.
+	void label(const std::string& text, float centreX, float top) {
+		Renderer::Primitives::drawText(
+			{.text = text,
+			 .position = {centreX - 300.0F, top},
+			 .scale = 2.0F,
+			 .color = kLabel,
+			 .hAlign = Foundation::HorizontalAlign::Center,
+			 .boxWidth = 600.0F}
+		);
 	}
 
 	class PolygonScene : public engine::IScene {
@@ -79,6 +97,7 @@ namespace {
 			rock = asteroid(130.0F);
 			square = ring(4, 110.0F, 110.0F);
 			triangle = ring(3, 120.0F, 120.0F);
+			notch = notched();
 			LOG_INFO(UI, "Polygon scene");
 		}
 
@@ -89,41 +108,48 @@ namespace {
 			namespace P = Renderer::Primitives;
 
 			P::clear(kBackground);
+			P::PushTransform(ui_sandbox::designCanvas(kCanvasWidth, kCanvasHeight));
 			P::drawText(
-				{.text = "drawPolygon: tessellated once per outline, border outside the fill",
-				 .position = {80.0F, 50.0F},
-				 .scale = 2.0F,
+				{.text = "drawPolygon: one tessellation per outline, border outside the fill",
+				 .position = {80.0F, 40.0F},
+				 .scale = 2.75F,
 				 .color = Foundation::Color::white()}
 			);
 
 			// Row 1: the fill rule and the border.
-			draw(hexagon, {.fill = {0.25F, 0.55F, 0.85F, 1.0F}}, placed(300.0F, 330.0F));
-			label("convex", 250.0F, 490.0F);
-			draw(star, {.fill = {0.95F, 0.75F, 0.2F, 1.0F}}, placed(700.0F, 330.0F));
-			label("concave star", 620.0F, 490.0F);
-			draw(crossing, {.fill = {0.85F, 0.35F, 0.35F, 1.0F}}, placed(1100.0F, 330.0F));
-			label("self-crossing, nonzero", 990.0F, 490.0F);
-			draw(rock, {.fill = kRock, .border = Foundation::LineStyle{.color = kRim, .width = 4.0F}}, placed(1500.0F, 330.0F));
-			label("silhouette + rim border", 1390.0F, 490.0F);
+			draw(hexagon, {.fill = {0.25F, 0.55F, 0.85F, 1.0F}}, placed(220.0F, 330.0F));
+			label("convex", 220.0F, 495.0F);
+			draw(star, {.fill = {0.95F, 0.75F, 0.2F, 1.0F}}, placed(590.0F, 330.0F));
+			label("concave star", 590.0F, 495.0F);
+			draw(crossing, {.fill = {0.85F, 0.35F, 0.35F, 1.0F}}, placed(960.0F, 330.0F));
+			label("self-crossing", 960.0F, 495.0F);
+			draw(rock, {.fill = kRock, .border = Foundation::LineStyle{.color = kRim, .width = 4.0F}}, placed(1330.0F, 330.0F));
+			label("rim border", 1330.0F, 495.0F);
+			draw(
+				notch,
+				{.fill = kRock, .border = Foundation::LineStyle{.color = {1.0F, 0.85F, 0.3F, 1.0F}, .width = 10.0F}},
+				placed(1700.0F, 340.0F)
+			);
+			label("30-degree notch", 1700.0F, 495.0F);
 			draw(
 				square,
 				{.fill = Foundation::Color::transparent(),
 				 .border = Foundation::LineStyle{.color = {0.4F, 0.9F, 0.5F, 1.0F}, .width = 14.0F}},
-				placed(1900.0F, 330.0F, kPi / 12.0F)
+				placed(2070.0F, 330.0F, kPi / 12.0F)
 			);
-			label("border only, mitered", 1800.0F, 490.0F);
+			label("border only", 2070.0F, 495.0F);
 			draw(
 				star,
 				{.fill = {0.2F, 0.2F, 0.25F, 1.0F}, .border = Foundation::LineStyle{.color = {1.0F, 0.55F, 0.2F, 1.0F}, .width = 8.0F}},
-				placed(2300.0F, 330.0F)
+				placed(2430.0F, 330.0F)
 			);
-			label("star, sharp points rounded", 2170.0F, 490.0F);
+			label("tips rounded", 2430.0F, 495.0F);
 			draw(
 				hexagon,
 				{.fill = {0.55F, 0.35F, 0.75F, 0.5F}, .border = Foundation::LineStyle{.color = {0.9F, 0.8F, 1.0F, 0.6F}, .width = 6.0F}},
-				placed(2700.0F, 330.0F)
+				placed(2790.0F, 330.0F)
 			);
-			label("translucent fill and border", 2580.0F, 490.0F);
+			label("translucent", 2790.0F, 495.0F);
 
 			// Row 2: one outline, five transforms, one tessellation.
 			for (int i = 0; i < 5; ++i) {
@@ -131,10 +157,10 @@ namespace {
 				draw(
 					rock,
 					{.fill = kRock, .border = Foundation::LineStyle{.color = kRim, .width = 3.0F}},
-					placed(300.0F + (t * 380.0F), 800.0F, t * 0.6F, 0.6F + (t * 0.2F))
+					placed(300.0F + (t * 400.0F), 820.0F, t * 0.6F, 0.6F + (t * 0.2F))
 				);
 			}
-			label("one silhouette under five PushTransforms (rotation and scale)", 200.0F, 1010.0F);
+			label("one silhouette, five PushTransforms", 1100.0F, 1040.0F);
 
 			// Row 3: alpha and additive fills overlapping.
 			const std::array<Foundation::Color, 3> primaries = {
@@ -149,15 +175,16 @@ namespace {
 				draw(triangle, {.fill = primaries[static_cast<size_t>(i)]}, placed(500.0F + dx, 1330.0F + dy), BlendMode::Alpha);
 				draw(triangle, {.fill = primaries[static_cast<size_t>(i)]}, placed(1100.0F + dx, 1330.0F + dy), BlendMode::Additive);
 			}
-			label("alpha", 470.0F, 1530.0F);
-			label("additive", 1050.0F, 1530.0F);
+			label("alpha", 500.0F, 1500.0F);
+			label("additive", 1100.0F, 1500.0F);
 			draw(
 				rock,
 				{.fill = {0.25F, 0.45F, 0.9F, 0.7F}, .border = Foundation::LineStyle{.color = {0.5F, 0.8F, 1.0F, 1.0F}, .width = 6.0F}},
 				placed(1700.0F, 1330.0F, 0.3F),
 				BlendMode::Additive
 			);
-			label("additive fill and border", 1590.0F, 1530.0F);
+			label("additive fill and border", 1700.0F, 1500.0F);
+			P::PopTransform();
 		}
 
 		void onExit() override {}
@@ -186,6 +213,7 @@ namespace {
 		std::vector<Foundation::Vec2> rock;
 		std::vector<Foundation::Vec2> square;
 		std::vector<Foundation::Vec2> triangle;
+		std::vector<Foundation::Vec2> notch;
 	};
 
 } // anonymous namespace
