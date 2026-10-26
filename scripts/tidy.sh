@@ -92,7 +92,7 @@ elif [ "$MODE" = "staged" ]; then
   echo "Checking staged files:"
 elif [ "$MODE" = "changed" ]; then
   # Get changed .cpp files vs main branch
-  FILES=$(git diff --name-only origin/main...HEAD | grep -E '\.cpp$' || true)
+  FILES=$(git diff --name-only --diff-filter=ACMR origin/main...HEAD | grep -E '\.cpp$' || true)
 
   if [ -z "$FILES" ]; then
     echo "No C++ implementation files changed vs main, skipping clang-tidy"

@@ -35,7 +35,8 @@ Local before/after timings: see Results below.
    "build only what changed" true at the object level, including in fresh worktrees.
 3. **Path-gated heavy tests.** Worldgen changes at a different cadence than game code, so the
    heavy worldgen bucket runs only when worldgen inputs changed (`libs/world/**`,
-   `libs/foundation/**`, `vcpkg.json`, root `CMakeLists.txt`), plus a nightly backstop run.
+   `vcpkg.json`, root `CMakeLists.txt`, which also pins the salal tag that supplies
+   foundation), plus a nightly backstop run.
 4. **Parallel and sharded ctest.** `ctest -j` across the per-lib test exes; the heavy bucket
    split into 4 gtest shards (`GTEST_TOTAL_SHARDS`/`GTEST_SHARD_INDEX`) so one slow exe stops
    serializing the run.

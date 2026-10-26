@@ -37,7 +37,7 @@ target_compile_features(world PUBLIC cxx_std_20)
 # Link dependencies
 target_link_libraries(world
     PUBLIC
-        foundation
+        salal::foundation
 )
 
 # Tests

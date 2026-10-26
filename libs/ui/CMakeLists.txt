@@ -45,8 +45,8 @@ target_compile_features(ui PUBLIC cxx_std_20)
 # Link dependencies
 target_link_libraries(ui
     PUBLIC
-        foundation
-        renderer
+        salal::foundation
+        salal::renderer
         nlohmann_json::nlohmann_json
 )
 

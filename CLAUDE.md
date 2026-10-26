@@ -223,6 +223,8 @@ If tests fail, fix the new code—don't revert to keeping both versions.
 **Scripts and tooling:**
 - New scripts and tooling are Node (ESM, `.mjs`, no dependencies unless there is a `package.json` for them). No Python.
 
+**Engine libraries (salal):** `foundation` and `renderer` come from github.com/kcjonson/salal via FetchContent, pinned by `GIT_TAG` in the root CMakeLists.txt. To build against the sibling checkout instead of the tag: `cmake -S . -B build -DFETCHCONTENT_SOURCE_DIR_SALAL=C:/Users/kevin/Code/salal`. It is cached in `build/` until `-UFETCHCONTENT_SOURCE_DIR_SALAL`. Whatever branch that checkout has is what builds, so a worldsim PR must work against a tagged salal before it is marked ready. On GCC and Clang, `-ffp-contract=off` is inherited from `salal::foundation` (PUBLIC, the deterministic math needs it); don't add it again here.
+
 **Naming:**
 - Classes/Structs/Enums: PascalCase (`Shader`, `TextureManager`)
 - Functions/Methods: camelCase (`loadTexture()`, `isValid()`)

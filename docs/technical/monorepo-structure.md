@@ -1,7 +1,7 @@
 # Monorepo Structure
 
 Created: 2025-10-12
-Last Updated: 2025-10-12
+Last Updated: 2026-10-25
 Status: Active
 
 ## Context
@@ -14,14 +14,21 @@ The monorepo is organized by dependency layers, from foundation to high-level:
 
 ```
 libs/
-├── foundation/          # Base layer - math, platform, utilities
 ├── geometry/            # Exact integer-mm 2D geometry (predicates, arrangement, booleans, offsetting)
-├── renderer/            # Graphics layer - OpenGL, 2D/3D rendering
 ├── ui/                  # UI framework - components, layout, inspector
 ├── world/               # World generation and 3D-to-2D sampling
 ├── game-systems/        # Game-specific: chunks, tiles, camera
 └── engine/              # Top layer - scenes, config, app lifecycle
+
+salal (external, build/_deps/salal-src/ after a configure)
+└── libs/
+    ├── foundation/      # Base layer - math, platform, utilities
+    └── renderer/        # Graphics layer - OpenGL, 2D/3D rendering
 ```
+
+### Engine libraries from salal
+
+`foundation` and `renderer` were extracted to [salal](https://github.com/kcjonson/salal) and come back in through CMake FetchContent, pinned to a tag by `GIT_TAG` in the root `CMakeLists.txt`; targets link them as `salal::foundation` and `salal::renderer`, and the include spellings (`<utils/Log.h>`, `<primitives/Primitives.h>`) are unchanged. The layering below still holds, its bottom two layers just live in another repo. Building against a local salal checkout instead of the tag is covered in `CLAUDE.md`.
 
 ### Dependency Rules
 
@@ -32,9 +39,9 @@ engine
   ↓
 game-systems, ui, world
   ↓
-renderer, geometry
+renderer (salal), geometry
   ↓
-foundation
+foundation (salal)
 ```
 
 **No circular dependencies allowed.** For example:
@@ -45,7 +52,7 @@ foundation
 
 ### Library Descriptions
 
-**foundation/**
+**foundation/** (salal)
 - Math utilities (vectors, matrices, noise functions like Perlin)
 - Platform abstraction (window creation, OS interfaces)
 - Common utilities (logging, string helpers, etc.)
@@ -57,7 +64,7 @@ foundation
 - Ring booleans, wall band offsetting with junction trimming
 - Depends on: `foundation`
 
-**renderer/**
+**renderer/** (salal)
 - OpenGL wrapper/abstraction
 - 3D rendering utilities
 - 2D rendering (sprites, shapes, text)

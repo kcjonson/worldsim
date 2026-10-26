@@ -18,8 +18,8 @@ target_link_libraries(asset-manager
     PRIVATE
         engine
         ui
-        renderer
-        foundation
+        salal::renderer
+        salal::foundation
         assets
 )
 
@@ -32,7 +32,7 @@ add_custom_target(asset-manager-shaders ALL
     COMMENT "Mirroring shaders beside asset-manager"
     VERBATIM
 )
-add_dependencies(asset-manager-shaders renderer-shaders engine-shaders planet-view-shaders)
+add_dependencies(asset-manager-shaders salal_renderer_shaders engine-shaders planet-view-shaders)
 add_dependencies(asset-manager asset-manager-shaders)
 
 add_custom_command(TARGET asset-manager POST_BUILD

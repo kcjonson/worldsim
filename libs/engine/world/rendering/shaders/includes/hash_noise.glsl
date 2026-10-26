@@ -1,5 +1,5 @@
 // hash_noise.glsl - foundation::hash3, gradientNoise2PairCell and
-// fractalNoise2SplitPair (libs/foundation/random/HashNoise.h) in GLSL. The hash is
+// fractalNoise2SplitPair (salal's foundation, random/HashNoise.h) in GLSL. The hash is
 // integer math and matches the C++ bit for bit; the float steps are the same
 // expressions, so a value agrees with the C++ to within rounding (a GPU compiler may
 // fuse a multiply-add). SurfaceFieldGolden.test.cpp holds the two together through

@@ -23,9 +23,9 @@ concurrency:
   group: tests-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-# Heavy worldgen tests live in tests-heavy.yml, path-gated to worldgen changes
-# (libs/world, libs/foundation, vcpkg.json, root CMakeLists) with a nightly
-# backstop run. This workflow is the always-on fast gate.
+# Heavy worldgen tests live in tests-heavy.yml, path-gated to
+# worldgen changes (libs/world, vcpkg.json, root CMakeLists) with
+# a nightly backstop run. This workflow is the always-on fast gate.
 jobs:
   test:
     # Skip while the PR is a draft; re-runs when marked ready for review.
