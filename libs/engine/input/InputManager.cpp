@@ -383,8 +383,12 @@ namespace engine {
 		// keyFromName relies on the Key enum's letters, digits, and function keys being
 		// contiguous (see InputTypes.h); these guard against a future reordering.
 		static_assert(static_cast<int>(foundation::Key::Z) - static_cast<int>(foundation::Key::A) == 25, "Key A-Z must be contiguous");
-		static_assert(static_cast<int>(foundation::Key::Num9) - static_cast<int>(foundation::Key::Num0) == 9, "Key Num0-9 must be contiguous");
-		static_assert(static_cast<int>(foundation::Key::F12) - static_cast<int>(foundation::Key::F1) == 11, "Key F1-F12 must be contiguous");
+		static_assert(
+			static_cast<int>(foundation::Key::Num9) - static_cast<int>(foundation::Key::Num0) == 9, "Key Num0-9 must be contiguous"
+		);
+		static_assert(
+			static_cast<int>(foundation::Key::F12) - static_cast<int>(foundation::Key::F1) == 11, "Key F1-F12 must be contiguous"
+		);
 
 		if (name.empty()) {
 			return std::nullopt;

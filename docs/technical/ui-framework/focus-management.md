@@ -289,7 +289,7 @@ public:
     // IFocusable methods still required (differ per component):
     void onFocusGained() override { focused = true; }
     void onFocusLost() override { focused = false; }
-    void handleKeyInput(engine::Key key, bool shift, bool ctrl, bool alt) override;
+    void handleKeyInput(foundation::Key key, bool shift, bool ctrl, bool alt) override;
     void handleCharInput(char32_t codepoint) override;
     bool canReceiveFocus() const override { return !disabled; }
 };
