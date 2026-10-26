@@ -22,17 +22,17 @@ node tools/resolve-includes.mjs --root path/to/another/checkout
 
 ## Baseline
 
-Production files only (test and bench files excluded), main @ 2cc7e40a plus SAL-39 (2026-10-25), with foundation and renderer read from salal v0.1.0. Every cell is the same as before the move: salal's copies differ from the deleted directories only in formatting. Rows are the including library, columns the library the include lands in.
+Production files only (test and bench files excluded), main @ 4a68085f plus the move to salal's GL-free renderer surface (2026-10-26), with foundation and renderer read from salal v0.2.0. Against the previous baseline (main @ 2cc7e40a plus the move to salal, read from v0.1.0, whose cells matched the pre-move tree exactly) ui -> renderer fell from 44 to 42 and engine -> renderer from 26 to 23: `BatchRenderer.h` left `ui` and the engine renderers, and `InstancingUniforms.h` went. The renderer row grew with its new `Handle.h` and `backend/gl/GLNames.h`. Rows are the including library, columns the library the include lands in.
 
 | src \ dst | foundation | geometry | renderer | ui | world | planet-view | game-systems | engine | engine(assets) | external |
 |---|---|---|---|---|---|---|---|---|---|---|
 | foundation | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 70 |
 | geometry | 2 | 86 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 158 |
-| renderer | 29 | 0 | 64 | 0 | 0 | 0 | 0 | 0 | 0 | 138 |
-| ui | 97 | 0 | 44 | 157 | 0 | 0 | 0 | 0 | 0 | 116 |
+| renderer | 30 | 0 | 76 | 0 | 0 | 0 | 0 | 0 | 0 | 145 |
+| ui | 97 | 0 | 42 | 157 | 0 | 0 | 0 | 0 | 0 | 116 |
 | world | 34 | 0 | 0 | 0 | 118 | 0 | 0 | 0 | 0 | 149 |
 | planet-view | 2 | 0 | 1 | 0 | 6 | 11 | 0 | 0 | 0 | 38 |
-| engine | 48 | 81 | 26 | 5 | 9 | 0 | 0 | 462 | 68 | 522 |
+| engine | 48 | 81 | 23 | 5 | 9 | 0 | 0 | 462 | 68 | 519 |
 | engine(assets) | 23 | 3 | 9 | 0 | 0 | 0 | 0 | 13 | 54 | 157 |
 
 Nothing is ambiguous. Foundation includes nothing internal outside itself. There are no layering violations: ui -> engine and renderer -> ui are both 0. engine -> ui (5 lines) is allowed.
