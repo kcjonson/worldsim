@@ -56,6 +56,8 @@ struct AtlasConfig {
 
 namespace {
 
+	constexpr double kSide = 1e-9; // em either side of an edge, to tell which side the fill is on
+
 	// Under the nonzero rule, which is how TrueType outlines fill.
 	bool isFilled(const msdfgen::Shape& shape, msdfgen::Point2 point) {
 		int winding = 0;
@@ -72,6 +74,49 @@ namespace {
 		return winding != 0;
 	}
 
+	// Which side of the edge at t the fill lies on: 1 left, -1 right, 0 both or neither.
+	int fillSide(const msdfgen::Shape& shape, const msdfgen::EdgeSegment& edge, double t) {
+		const msdfgen::Point2  point = edge.point(t);
+		const msdfgen::Vector2 normal = edge.direction(t).getOrthonormal();
+		return static_cast<int>(isFilled(shape, point + kSide * normal)) - static_cast<int>(isFilled(shape, point - kSide * normal));
+	}
+
+	// Where a horizontal line at y enters and leaves the fill, left to right. Two contours that
+	// abut leave a gap of no width between them, which is no edge at all.
+	std::vector<double> fillEdges(const msdfgen::Shape& shape, double y) {
+		struct Crossing {
+			double x;
+			int	   dy;
+		};
+		std::vector<Crossing> crossings;
+		for (const msdfgen::Contour& contour : shape.contours) {
+			for (const msdfgen::EdgeHolder& edge : contour.edges) {
+				double	  x[3];
+				int		  dy[3];
+				const int count = edge->scanlineIntersections(x, dy, y);
+				for (int i = 0; i < count; ++i) {
+					crossings.push_back({x[i], dy[i]});
+				}
+			}
+		}
+		std::sort(crossings.begin(), crossings.end(), [](const Crossing& a, const Crossing& b) { return a.x < b.x; });
+		std::vector<double> edges;
+		int					winding = 0;
+		for (const Crossing& crossing : crossings) {
+			const bool wasFilled = winding != 0;
+			winding += crossing.dy;
+			if (wasFilled == (winding != 0)) {
+				continue;
+			}
+			if (!edges.empty() && crossing.x - edges.back() < kSide) {
+				edges.pop_back();
+			} else {
+				edges.push_back(crossing.x);
+			}
+		}
+		return edges;
+	}
+
 	struct BoundedEdge {
 		const msdfgen::EdgeSegment* segment;
 		double						left;
@@ -83,13 +128,11 @@ namespace {
 	// Whether edges[index] at t is outline: fill on one side of it only, and, where edges run along
 	// one another (two strokes of Roboto's 'A' share the apex's top), the first of them.
 	bool isOnOutline(const msdfgen::Shape& shape, const std::vector<BoundedEdge>& edges, size_t index, double t) {
-		constexpr double			kSide = 1e-9; // em
 		const msdfgen::EdgeSegment& edge = *edges[index].segment;
-		const msdfgen::Point2		point = edge.point(t);
-		const msdfgen::Vector2		normal = edge.direction(t).getOrthonormal();
-		if (isFilled(shape, point + kSide * normal) == isFilled(shape, point - kSide * normal)) {
+		if (fillSide(shape, edge, t) == 0) {
 			return false;
 		}
+		const msdfgen::Point2 point = edge.point(t);
 		for (size_t other = 0; other < index; ++other) {
 			const BoundedEdge& e = edges[other];
 			if (point.x < e.left - kSide || point.x > e.right + kSide || point.y < e.bottom - kSide || point.y > e.top + kSide) {
@@ -136,12 +179,14 @@ namespace {
 	// edge where it enters or leaves the fill, drops the parts inside, and chains the rest into
 	// closed contours: the outline the fill has. Each part keeps its direction, so the fill stays
 	// on the side msdfgen expects. Returns false, the shape untouched, when no edge runs inside
-	// the fill, and false with an error when the outline it built does not fill what the contours
-	// did.
+	// the fill for more than a cusp's width, and false with an error, the shape untouched too, when
+	// the outline it built does not fill what the contours did or runs the wrong way round.
 	bool resolveOverlaps(msdfgen::Shape& shape, std::string& error) {
-		constexpr double		 kStep = 0.001; // em between samples along an edge
-		constexpr double		 kEnd = 1e-6;	// em short of a vertex, for the samples at an edge's ends
-		constexpr double		 kJoin = 1e-6;	// em: cut points from two edges meeting at one crossing
+		constexpr double		 kStep = 0.001;	  // em between samples along an edge
+		constexpr double		 kEnd = 1e-6;	  // em short of a vertex, for the samples at an edge's ends
+		constexpr double		 kSliver = 1e-6;  // em: a part this short has no direction to speak of
+		constexpr double		 kOverlap = 1e-4; // em a dropped part has to run to be an overlap; a cusp drops less
+		constexpr double		 kJoin = 1e-4;	  // em: the widest gap the chain bridges, as a tangent contact leaves
 		std::vector<BoundedEdge> edges;
 		for (const msdfgen::Contour& contour : shape.contours) {
 			for (const msdfgen::EdgeHolder& edge : contour.edges) {
@@ -157,17 +202,20 @@ namespace {
 		std::vector<msdfgen::EdgeHolder> parts;
 		bool							 overlaps = false;
 		for (size_t index = 0; index < edges.size(); ++index) {
-			const BoundedEdge& edge = edges[index];
-			const double	   extent = std::hypot(edge.right - edge.left, edge.top - edge.bottom);
-			const int		   steps = std::max(8, static_cast<int>(std::ceil(extent / kStep)));
-			// Step centres, and each end just short of its vertex, where a contour often starts
+			const BoundedEdge&			edge = edges[index];
+			const msdfgen::EdgeSegment& segment = *edge.segment;
+			const double				extent = std::hypot(edge.right - edge.left, edge.top - edge.bottom);
+			const int					steps = std::max(8, static_cast<int>(std::ceil(extent / kStep)));
+			// Step centres, and each end short of its vertex by kEnd along the edge times its degree
+			// (msdfgen's direction is the derivative over the degree), where a contour often starts
 			// inside another.
-			const double		nearEnd = std::min(kEnd / extent, 0.25 / steps);
-			std::vector<double> ts{nearEnd};
+			const double		startT = std::min(kEnd / segment.direction(0).length(), 0.25 / steps);
+			const double		endT = std::min(kEnd / segment.direction(1).length(), 0.25 / steps);
+			std::vector<double> ts{startT};
 			for (int i = 0; i < steps; ++i) {
 				ts.push_back((i + 0.5) / steps);
 			}
-			ts.push_back(1.0 - nearEnd);
+			ts.push_back(1.0 - endT);
 			std::vector<char> outline(ts.size());
 			for (size_t i = 0; i < ts.size(); ++i) {
 				outline[i] = isOnOutline(shape, edges, index, ts[i]);
@@ -189,14 +237,14 @@ namespace {
 			bool keep = outline[0] != 0;
 			for (size_t j = 0; j + 1 < cuts.size(); ++j, keep = !keep) {
 				if (!keep) {
-					overlaps = true;
+					overlaps = overlaps || (segment.point(cuts[j + 1]) - segment.point(cuts[j])).length() >= kOverlap;
 				} else if (cuts.size() == 2) {
-					parts.emplace_back(edge.segment->clone());
+					parts.emplace_back(segment.clone());
 				} else {
-					msdfgen::EdgeHolder part(subEdge(*edge.segment, cuts[j], cuts[j + 1]));
+					msdfgen::EdgeHolder part(subEdge(segment, cuts[j], cuts[j + 1]));
 					// A sliver left by a crossing at a vertex would have no direction; the chain
 					// below steps over the gap it leaves.
-					if ((part->point(1) - part->point(0)).length() >= kJoin) {
+					if ((part->point(1) - part->point(0)).length() >= kSliver) {
 						parts.push_back(std::move(part));
 					}
 				}
@@ -218,37 +266,54 @@ namespace {
 			for (;;) {
 				used[current] = 1;
 				contour.addEdge(std::move(parts[current]));
+				// On to the nearest free start, or round to this contour's own if that is nearer.
 				const msdfgen::Point2 tip = contour.edges.back()->point(1);
-				if ((tip - contour.edges.front()->point(0)).length() < kJoin) {
-					contour.edges.front()->moveStartPoint(tip);
-					break;
-				}
-				size_t next = parts.size();
-				for (size_t k = 0; k < parts.size() && next == parts.size(); ++k) {
-					if (!used[k] && (parts[k]->point(0) - tip).length() < kJoin) {
+				size_t				  next = parts.size();
+				double				  gap = contour.edges.size() > 1 ? (tip - contour.edges.front()->point(0)).length() : kJoin;
+				for (size_t k = 0; k < parts.size(); ++k) {
+					if (!used[k] && (parts[k]->point(0) - tip).length() < gap) {
 						next = k;
+						gap = (parts[k]->point(0) - tip).length();
 					}
 				}
-				if (next == parts.size()) {
+				if (gap >= kJoin) {
 					error = "an outline part ends where no other starts";
 					return false;
+				}
+				if (next == parts.size()) {
+					contour.edges.front()->moveStartPoint(tip);
+					break;
 				}
 				parts[next]->moveStartPoint(tip);
 				current = next;
 			}
 		}
 
-		// The outline has to fill what the contours did, here checked on a grid over the glyph.
+		// The outline has to fill what the contours did, row by row across the glyph, and keep the
+		// fill on the side of each contour that the font's edges have it.
 		const msdfgen::Shape::Bounds bounds = shape.getBounds();
-		constexpr int				 kChecks = 64;
-		for (int iy = 0; iy < kChecks; ++iy) {
-			for (int ix = 0; ix < kChecks; ++ix) {
-				const double		  x = bounds.l + (bounds.r - bounds.l) * (ix + 0.37) / kChecks;
-				const msdfgen::Point2 point(x, bounds.b + (bounds.t - bounds.b) * (iy + 0.61) / kChecks);
-				if (isFilled(outlined, point) != isFilled(shape, point)) {
-					error = "the outline does not fill what the contours did";
-					return false;
-				}
+		constexpr int				 kRows = 256;
+		for (int row = 0; row < kRows; ++row) {
+			const double			  y = bounds.b + (bounds.t - bounds.b) * (row + 0.37) / kRows;
+			const std::vector<double> before = fillEdges(shape, y);
+			const std::vector<double> after = fillEdges(outlined, y);
+			bool					  same = before.size() == after.size();
+			for (size_t k = 0; same && k < before.size(); ++k) {
+				same = std::abs(before[k] - after[k]) <= kJoin;
+			}
+			if (!same) {
+				error = "the outline does not fill what the contours did";
+				return false;
+			}
+		}
+		int side = 0;
+		for (const BoundedEdge& edge : edges) {
+			side += fillSide(shape, *edge.segment, 0.5);
+		}
+		for (const msdfgen::Contour& contour : outlined.contours) {
+			if (fillSide(outlined, *contour.edges.front(), 0.5) * side <= 0) {
+				error = "an outline contour runs the wrong way round";
+				return false;
 			}
 		}
 		shape = std::move(outlined);
@@ -363,14 +428,13 @@ int main(int argc, char** argv) {
 				continue;
 			}
 
+			// A glyph that does not resolve keeps the font's contours, and its specks with them.
 			std::string error;
 			if (resolveOverlaps(glyph.shape, error)) {
 				resolvedGlyphs += c;
 			} else if (!error.empty()) {
-				std::cerr << "ERROR: Could not resolve the overlapping contours of '" << c << "': " << error << "\n";
-				msdfgen::destroyFont(font);
-				msdfgen::deinitializeFreetype(ft);
-				return 1;
+				std::cerr << "WARNING: " << config.fontPath << ": could not resolve the overlapping contours of '" << c << "' (" << error
+						  << "), so it keeps the font's\n";
 			}
 
 			// Apply edge coloring for MSDF
@@ -397,11 +461,13 @@ int main(int argc, char** argv) {
 	const double uniformScale = static_cast<double>(config.glyphSize) / metrics.emSize;
 
 	// Glyphs sit centred in glyphSize cells, in charset order. The renderer reads a glyph's field
-	// out to half the distance range past its bounds, plus half a texel of bilinear footprint, and
-	// that has to lie in the glyph's own cell: one without the room (parentheses, brackets, '|',
-	// '$', 'j') picked up the cells above and below it, or was cut off at its own edge. Such a
-	// glyph gets a cell grown by whole texels on each side, which keeps it where it was on the
-	// texel grid, on shelves below the grid; its grid cell stays empty, so no other glyph moves.
+	// out to half the distance range past its bounds, plus half a texel of bilinear footprint
+	// (salal's FontRenderer::generateGlyphQuads pads each quad by the half range), and that has to
+	// lie in the glyph's own cell: one without the room (parentheses, brackets, '|', '$', 'j')
+	// picked up the cells either side of it, or was cut off at its own edge. Such a glyph gets a
+	// cell grown by whole texels on each side, which keeps it where it was on the texel grid, on
+	// shelves after the grid's rows (above them in the PNG, the bitmap being y-up); its grid cell
+	// stays empty, so no other glyph moves.
 	const double reach = config.pixelRange / 2.0 + 0.5;
 
 	const auto cellFor = [&](const GlyphData& glyph) {
