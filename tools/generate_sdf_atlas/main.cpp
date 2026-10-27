@@ -174,35 +174,70 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
-	// Pack glyphs into atlas using simple grid layout
-	int glyphsPerRow = config.atlasWidth / config.glyphSize;
+	// Atlas texels per em, the same for every glyph (see the distance field loop below)
+	const double uniformScale = static_cast<double>(config.glyphSize) / metrics.emSize;
+
+	// Glyphs sit centred in glyphSize cells, in charset order. The renderer reads a glyph's field
+	// out to half the distance range past its bounds, plus half a texel of bilinear footprint, and
+	// that has to lie in the glyph's own cell: one without the room (parentheses, brackets, '|',
+	// '$', 'j') picked up the cells above and below it, or was cut off at its own edge. Such a
+	// glyph gets a cell grown by whole texels on each side, which keeps it where it was on the
+	// texel grid, on shelves below the grid; its grid cell stays empty, so no other glyph moves.
+	const double reach = config.pixelRange / 2.0 + 0.5;
+
+	const auto cellFor = [&](const GlyphData& glyph) {
+		const double extent = std::max(glyph.planeRight - glyph.planeLeft, glyph.planeTop - glyph.planeBottom) * uniformScale;
+		const double shortfall = std::max(0.0, extent + 2.0 * reach - config.glyphSize);
+		return config.glyphSize + 2 * static_cast<int>(std::ceil(shortfall / 2.0));
+	};
+
 	int currentX = 0;
 	int currentY = 0;
-
+	std::vector<GlyphData*> tallGlyphs;
 	for (auto& glyph : glyphs) {
 		if (glyph.shape.contours.empty()) {
 			// Whitespace - no atlas space needed
 			continue;
 		}
-
+		if (currentX + config.glyphSize > config.atlasWidth) {
+			currentX = 0;
+			currentY += config.glyphSize;
+		}
 		glyph.atlasX = currentX;
 		glyph.atlasY = currentY;
 		glyph.atlasWidth = config.glyphSize;
 		glyph.atlasHeight = config.glyphSize;
-
 		currentX += config.glyphSize;
-		if (currentX + config.glyphSize > config.atlasWidth) {
-			currentX = 0;
-			currentY += config.glyphSize;
-
-			if (currentY + config.glyphSize > config.atlasHeight) {
-				std::cerr << "WARNING: Atlas too small for all glyphs\n";
-				break;
-			}
+		if (cellFor(glyph) > config.glyphSize) {
+			tallGlyphs.push_back(&glyph);
 		}
 	}
 
-	std::cout << "Glyphs packed into atlas\n";
+	currentX = 0;
+	currentY += config.glyphSize;
+	int shelfHeight = 0;
+	for (GlyphData* glyph : tallGlyphs) {
+		const int cell = cellFor(*glyph);
+		if (currentX + cell > config.atlasWidth) {
+			currentX = 0;
+			currentY += shelfHeight;
+			shelfHeight = 0;
+		}
+		glyph->atlasX = currentX;
+		glyph->atlasY = currentY;
+		glyph->atlasWidth = cell;
+		glyph->atlasHeight = cell;
+		currentX += cell;
+		shelfHeight = std::max(shelfHeight, cell);
+	}
+	if (currentY + shelfHeight > config.atlasHeight) {
+		std::cerr << "ERROR: Atlas too small for all glyphs\n";
+		msdfgen::destroyFont(font);
+		msdfgen::deinitializeFreetype(ft);
+		return 1;
+	}
+
+	std::cout << "Glyphs packed into atlas (" << tallGlyphs.size() << " in larger cells)\n";
 
 	// Create atlas bitmap
 	msdfgen::Bitmap<float, 3> atlas(config.atlasWidth, config.atlasHeight);
@@ -230,7 +265,6 @@ int main(int argc, char** argv) {
 	// For glyphSize=32 and emSize=1.0: scale = 32.0
 	// This means: 1 EM = 32 pixels in atlas
 	// Example: A glyph 0.6 EM wide occupies 0.6 * 32 = 19.2 pixels in atlas
-	double uniformScale = static_cast<double>(config.glyphSize) / metrics.emSize;
 
 	int processedCount = 0;
 	for (auto& glyph : glyphs) {
