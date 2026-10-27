@@ -22,11 +22,11 @@ node tools/resolve-includes.mjs --root path/to/another/checkout
 
 ## Baseline
 
-Production files only (test and bench files excluded), main @ c3a22afa plus the groundcover deform as an engine hook on salal's base shader (2026-10-26), with foundation and renderer read from salal v0.6.0. Against the previous baseline (main @ b08d0468 plus the call sites that hand `Primitives::init` a `GLBackend`, read from v0.5.0) the renderer row grew from 93 and 168 to 95 and 196, nearly all of it the base shader's build-time assembler (`assembler/BaseShaderAssembler.{h,cpp}` and `Main.cpp`, a host tool: two includes of its own header and 23 standard headers), the rest five standard headers in the backend and `Primitives.h`. The engine row rose by one to foundation, renderer and engine and by six to external with `GroundcoverUniforms.h` (`math/Types.h`, `primitives/Primitives.h`, the generated `BaseShader.h` and four standard headers, included by `GroundcoverRenderer.cpp`) and `AppLauncher.cpp`'s `BaseShader.h`; the generated header sits in the build tree, under no library root, so it counts as external. Rows are the including library, columns the library the include lands in.
+Production files only (test and bench files excluded), main @ 50f03f02 (2026-10-27), with foundation and renderer read from salal v0.7.0. Against the previous baseline (main @ c3a22afa plus the groundcover deform as an engine hook on salal's base shader, read from v0.6.0) only foundation -> external moved, from 70 to 84, with salal's game PRNG: `random/Rng.h` (twelve standard headers) and `random/FreshSeed.h` (two). Nothing in worldsim includes either yet. Rows are the including library, columns the library the include lands in.
 
 | src \ dst | foundation | geometry | renderer | ui | world | planet-view | game-systems | engine | engine(assets) | external |
 |---|---|---|---|---|---|---|---|---|---|---|
-| foundation | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 70 |
+| foundation | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 84 |
 | geometry | 2 | 86 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 158 |
 | renderer | 34 | 0 | 95 | 0 | 0 | 0 | 0 | 0 | 0 | 196 |
 | ui | 97 | 0 | 42 | 157 | 0 | 0 | 0 | 0 | 0 | 116 |
