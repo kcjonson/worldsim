@@ -14,7 +14,9 @@
 #include <metrics/MetricsCollector.h>
 #include <primitives/Primitives.h>
 #include <scene/SceneManager.h>
+#include <theme/Variants.h>
 #include <utils/Log.h>
+#include <utils/ResourcePath.h>
 
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
@@ -24,6 +26,8 @@
 #include <memory>
 #include <span>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 namespace engine {
 
@@ -37,6 +41,28 @@ namespace engine {
 
 		// Owned resources that persist between initialize() and run()
 		std::unique_ptr<Foundation::DebugServer> g_debugServer;
+
+		// The game's font atlases, made in fonts/ by the font-atlas target and staged beside
+		// each exe (the root CMakeLists.txt). Roboto is the default: without it there is no
+		// text, and startup fails.
+		struct FontAtlasFile {
+			Renderer::FontFamily family;
+			const char*			 name;
+		};
+		constexpr FontAtlasFile kFontAtlases[] = {
+			{UI::fontDefault, "Roboto-SDF"},
+			{UI::fontDisplay, "ChakraPetch-SDF"},
+			{UI::fontUi, "Barlow-SDF"},
+			{UI::fontMono, "JetBrainsMono-SDF"},
+		};
+
+		// fonts/<file> wherever findResource finds it, the exe's directory first; as given
+		// when it finds nothing, so the renderer's error names the file.
+		std::string fontPath(const std::string& file) {
+			const std::string relative = "fonts/" + file;
+			const std::string found = Foundation::findResourceString(relative);
+			return found.empty() ? relative : found;
+		}
 
 		// Route one /api/input command through the scene input path. Click
 		// expands to move+down+up so single-shot interactions are one request.
@@ -182,19 +208,26 @@ namespace engine {
 
 			// Initialize font renderer
 			LOG_INFO(UI, "Initializing font renderer");
-			g_fontRenderer = std::make_unique<Renderer::FontRenderer>();
-			if (!g_fontRenderer->Initialize()) {
-				LOG_ERROR(UI, "Failed to initialize FontRenderer!");
-			} else {
-				Renderer::Primitives::setFontRenderer(g_fontRenderer.get());
-				Renderer::Primitives::setFontAtlas(g_fontRenderer->getAtlasTexture(), 4.0F);
-				Renderer::Primitives::setFrameUpdateCallback([]() {
-					if (g_fontRenderer) {
-						g_fontRenderer->updateFrame();
-					}
-				});
-				LOG_INFO(UI, "Font renderer initialized");
+			std::vector<Renderer::FontAtlasSource> fontAtlases;
+			for (const FontAtlasFile& atlas : kFontAtlases) {
+				const std::string name = atlas.name;
+				fontAtlases.push_back({.family = atlas.family, .pngPath = fontPath(name + ".png"), .jsonPath = fontPath(name + ".json")});
 			}
+			g_fontRenderer = std::make_unique<Renderer::FontRenderer>();
+			if (!g_fontRenderer->Initialize(fontAtlases, UI::fontDefault)) {
+				LOG_ERROR(UI, "The default font did not load, so there is no text; stopping");
+				g_fontRenderer.reset();
+				Renderer::Primitives::shutdown();
+				return false;
+			}
+			Renderer::Primitives::setFontRenderer(g_fontRenderer.get());
+			Renderer::Primitives::setFontAtlas(g_fontRenderer->getAtlasTexture(), 4.0F);
+			Renderer::Primitives::setFrameUpdateCallback([]() {
+				if (g_fontRenderer) {
+					g_fontRenderer->updateFrame();
+				}
+			});
+			LOG_INFO(UI, "Font renderer initialized");
 
 			return true;
 		}

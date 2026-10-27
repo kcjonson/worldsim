@@ -15,11 +15,14 @@ namespace UI {
 	enum class Tone { Accent, Data, Ok, Warn, Crit, Auto, Default };
 	enum class Size { Sm, Md, Lg };
 
-	// Salvage typeface roles. Display = titles/values/labels, UI = body/units,
-	// Mono = kickers/numeric meters/badges/keycaps/dividers/eyebrows.
-	inline constexpr Renderer::FontFamily fontDisplay = Renderer::FontFamily::ChakraPetch;
-	inline constexpr Renderer::FontFamily fontUi      = Renderer::FontFamily::Barlow;
-	inline constexpr Renderer::FontFamily fontMono    = Renderer::FontFamily::JetBrainsMono;
+	// The font families this game loads (AppLauncher hands their atlases to the
+	// FontRenderer). fontDefault is Roboto, what text that names no family is drawn
+	// and measured with. The Salvage typeface roles: Display = titles/values/labels,
+	// UI = body/units, Mono = kickers/numeric meters/badges/keycaps/dividers/eyebrows.
+	inline constexpr Renderer::FontFamily fontDefault{0};
+	inline constexpr Renderer::FontFamily fontDisplay{1};
+	inline constexpr Renderer::FontFamily fontUi{2};
+	inline constexpr Renderer::FontFamily fontMono{3};
 
 	// Resolve a tone to its token color. For Auto, value (0..1) picks the band:
 	// <0.25 crit, <0.50 warn, else ok (matches Meter.tsx).
