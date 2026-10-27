@@ -7,7 +7,7 @@
 // patches form with bare gaps between. Tuning Grass.xml here is exactly what ships.
 //
 // A gated cursor deform (reveal + bend) is the engine's groundcover hook
-// (world/rendering/shaders/hooks/groundcover.vert.glsl); it's wired but parked (cursor
+// (world/rendering/hooks/groundcover.vert.glsl); it's wired but parked (cursor
 // off-screen) while we dial in the resting look.
 
 #include "SceneTypes.h"

@@ -145,22 +145,29 @@ glDrawElementsInstanced(GL_TRIANGLES, indexCount, GL_UNSIGNED_SHORT,
 ```
 
 #### 2.2 Vertex Shader Animation
-Wind animation computed entirely on GPU.
+Wind animation computed entirely on GPU, as a hook in salal's base shader (salal's
+`docs/shader-hooks.md`): a file beside the groundcover deform, its uniforms in its own
+std140 block, filled from C++ with `Primitives::setHookUniforms`. A hook sees its
+arguments and its block, not the instance attributes, so the phase comes from the
+instance's position.
 
 ```glsl
-// base.vert additions
-uniform float u_time;
-in vec4 a_instanceData;   // position.xy, rotation, phase
-in vec4 a_instanceData2;  // scale, color.rgb
+// libs/engine/world/rendering/hooks/wind.vert.glsl
+layout(std140) uniform WindUniforms {
+    float time;
+    float strength;
+    float bladeHeight;
+    int   enabled;
+} wind;
 
-void main() {
-    // Apply wind deformation
-    float windOffset = sin(u_time * 2.0 + a_instanceData.w) * 0.3;
-    vec2 deformed = a_position.xy;
-    deformed.x += windOffset * (1.0 - a_position.y / bladeHeight);
-
-    // Apply instance transform
-    // ...
+vec2 wind_instanceLocal(vec2 position, vec2 instancePosition) {
+    if (wind.enabled != 1) {
+        return position;
+    }
+    float phase = dot(instancePosition, vec2(0.37, 0.71));
+    float windOffset = sin(wind.time * 2.0 + phase) * wind.strength;
+    position.x += windOffset * (1.0 - position.y / wind.bladeHeight);
+    return position;
 }
 ```
 
@@ -246,7 +253,7 @@ void renderFlora(const std::vector<FloraInstance>& instances) {
 | File | Changes |
 |------|---------|
 | `libs/renderer/primitives/BatchRenderer.h/cpp` | Instanced rendering |
-| `libs/renderer/shaders/base.vert` | Instance attributes, wind animation |
+| `libs/engine/world/rendering/hooks/wind.vert.glsl` | Wind animation, a base shader hook with a std140 block |
 | `apps/ui-sandbox/scenes/GrassInstancedScene.cpp` | New demo |
 
 ### Phase 3 (Tiered System)
