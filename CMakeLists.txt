@@ -52,7 +52,7 @@ enable_testing()
 include(FetchContent)
 FetchContent_Declare(salal
     GIT_REPOSITORY https://github.com/kcjonson/salal.git
-    GIT_TAG        v0.7.0
+    GIT_TAG        v0.8.0
     GIT_SHALLOW    TRUE
 )
 set(SALAL_BUILD_UI OFF)
@@ -92,8 +92,9 @@ add_subdirectory(tools/generate_sdf_atlas)
 # source font changes; the JSON metadata regenerates deterministically.
 #
 # Each entry is "AtlasBaseName:SourceTTF". The atlas base names must match
-# FontFamily / kAtlasBaseNames in salal's renderer (libs/renderer/font/FontRenderer.cpp
-# there); salal ships no fonts, so this repo supplies the atlases beside each exe.
+# kFontAtlases in libs/ui/theme/Fonts.h, which each app hands to salal's FontRenderer
+# through AppConfig; salal ships no fonts, so this repo makes them here and each app's
+# CMakeLists.txt copies fonts/ beside its exe.
 set(SDF_FONT_ATLASES
     "Roboto-SDF:Roboto-Regular.ttf"
     "ChakraPetch-SDF:ChakraPetch-SemiBold.ttf"

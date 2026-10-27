@@ -4,11 +4,14 @@
 #include "GameBootstrap.h"
 #include "SceneTypes.h"
 #include <application/AppLauncher.h>
+#include <theme/Fonts.h>
 
 int main(int argc, char* argv[]) {
 	engine::AppConfig config{
 		.windowTitle = "World-Sim",
 		.windowSizePercent = 0.8F,
+		.fontAtlases = UI::kFontAtlases,
+		.defaultFont = UI::fontDefault,
 		.enableDebugServer = true,
 		.debugServerPort = 8081,
 		.enableMetrics = true,

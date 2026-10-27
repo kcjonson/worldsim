@@ -22,17 +22,17 @@ node tools/resolve-includes.mjs --root path/to/another/checkout
 
 ## Baseline
 
-Production files only (test and bench files excluded), main @ 50f03f02 (2026-10-27), with foundation and renderer read from salal v0.7.0. Against the previous baseline (main @ c3a22afa plus the groundcover deform as an engine hook on salal's base shader, read from v0.6.0) only foundation -> external moved, from 70 to 84, with salal's game PRNG: `random/Rng.h` (twelve standard headers) and `random/FreshSeed.h` (two). Nothing in worldsim includes either yet. Rows are the including library, columns the library the include lands in.
+Production files only (test and bench files excluded), main @ cd98559c plus the game's font table handed to salal's FontRenderer through AppConfig (2026-10-27), with foundation and renderer read from salal v0.8.0. Against the previous baseline (main @ 50f03f02, read from v0.7.0) renderer -> foundation went from 34 to 33 and renderer -> external from 196 to 198: `FontRenderer.cpp` dropped `utils/ResourcePath.h` and `<cstdlib>` for `<algorithm>` and `<array>`, `FontRenderer.h` traded `<array>` for `<span>`, and `FontFamily.h` added `<cstdint>`. ui -> renderer rose from 42 to 43, ui -> ui from 157 to 158 and ui -> external from 116 to 117 with `theme/Fonts.h` (the family ids and their atlases: `font/FontRenderer.h`, `primitives/FontFamily.h` and `<array>`), which `Variants.h` includes in place of `primitives/FontFamily.h`. engine -> foundation rose from 49 to 50 with `AppLauncher.cpp`'s `utils/ResourcePath.h`, and engine -> renderer from 26 to 28 and engine -> external from 524 to 527 with `AppConfig.h`'s `font/FontRenderer.h`, `primitives/FontFamily.h` and `<span>` and `AppLauncher.cpp`'s `<string>` and `<vector>`. Rows are the including library, columns the library the include lands in.
 
 | src \ dst | foundation | geometry | renderer | ui | world | planet-view | game-systems | engine | engine(assets) | external |
 |---|---|---|---|---|---|---|---|---|---|---|
 | foundation | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 84 |
 | geometry | 2 | 86 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 158 |
-| renderer | 34 | 0 | 95 | 0 | 0 | 0 | 0 | 0 | 0 | 196 |
-| ui | 97 | 0 | 42 | 157 | 0 | 0 | 0 | 0 | 0 | 116 |
+| renderer | 33 | 0 | 95 | 0 | 0 | 0 | 0 | 0 | 0 | 198 |
+| ui | 97 | 0 | 43 | 158 | 0 | 0 | 0 | 0 | 0 | 117 |
 | world | 34 | 0 | 0 | 0 | 118 | 0 | 0 | 0 | 0 | 149 |
 | planet-view | 2 | 0 | 1 | 0 | 6 | 11 | 0 | 0 | 0 | 38 |
-| engine | 49 | 81 | 26 | 5 | 9 | 0 | 0 | 463 | 68 | 524 |
+| engine | 50 | 81 | 28 | 5 | 9 | 0 | 0 | 463 | 68 | 527 |
 | engine(assets) | 23 | 3 | 9 | 0 | 0 | 0 | 0 | 13 | 54 | 157 |
 
 Nothing is ambiguous. Foundation includes nothing internal outside itself. There are no layering violations: ui -> engine and renderer -> ui are both 0. engine -> ui (5 lines) is allowed.

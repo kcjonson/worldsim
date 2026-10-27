@@ -6,20 +6,14 @@
 // share the same notion of "warn" or "small"). toneColor resolves a tone to a
 // UI token; Auto picks by value using the prototype's thresholds.
 
-#include "theme/Tokens.h"
 #include "graphics/Color.h"
-#include "primitives/FontFamily.h"
+#include "theme/Fonts.h"
+#include "theme/Tokens.h"
 
 namespace UI {
 
 	enum class Tone { Accent, Data, Ok, Warn, Crit, Auto, Default };
 	enum class Size { Sm, Md, Lg };
-
-	// Salvage typeface roles. Display = titles/values/labels, UI = body/units,
-	// Mono = kickers/numeric meters/badges/keycaps/dividers/eyebrows.
-	inline constexpr Renderer::FontFamily fontDisplay = Renderer::FontFamily::ChakraPetch;
-	inline constexpr Renderer::FontFamily fontUi      = Renderer::FontFamily::Barlow;
-	inline constexpr Renderer::FontFamily fontMono    = Renderer::FontFamily::JetBrainsMono;
 
 	// Resolve a tone to its token color. For Auto, value (0..1) picks the band:
 	// <0.25 crit, <0.50 warn, else ok (matches Meter.tsx).

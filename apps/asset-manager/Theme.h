@@ -7,8 +7,9 @@
 // the older palette and would restyle the whole game if changed.
 //
 // Fonts (Chakra Petch / Barlow / JetBrains Mono) and letter-spacing aren't
-// reproduced - the app only ships the Roboto SDF atlas - so hierarchy leans on
-// color, size, surfaces, and uppercasing.
+// reproduced in the app's own text: it's UI::Text, which names no family and
+// draws in Roboto (only the shared Button and TextInput pick a face). So
+// hierarchy leans on color, size, surfaces, and uppercasing.
 
 #include "graphics/Color.h"
 
