@@ -570,8 +570,7 @@ namespace UI {
 		std::vector<Renderer::FontRenderer::GlyphQuad> glyphs;
 		fontRenderer->generateGlyphQuads(text, glm::vec2(textX, baselineY), scale, glyphColor, glyphs, fontUi);
 
-		// Shaped with fontUi but drawn with the default atlas, as before (a separate fix).
-		Renderer::Primitives::drawGlyphs(glyphs.data(), glyphs.size());
+		Renderer::Primitives::drawGlyphs(glyphs.data(), glyphs.size(), fontUi);
 	}
 
 	void TextInput::renderCursor() const {
@@ -679,7 +678,7 @@ namespace UI {
 		std::vector<Renderer::FontRenderer::GlyphQuad> glyphs;
 		fontRenderer->generateGlyphQuads(placeholder, glm::vec2(textX, baselineY), scale, glyphColor, glyphs, fontUi);
 
-		Renderer::Primitives::drawGlyphs(glyphs.data(), glyphs.size());
+		Renderer::Primitives::drawGlyphs(glyphs.data(), glyphs.size(), fontUi);
 	}
 
 	// ============================================================================

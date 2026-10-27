@@ -224,8 +224,8 @@
       "advance": 0.263
     },
     "j": {
-      "atlas": {"x": 0.1875, "y": 0.125, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.210062, "bottom": 0.127469, "right": 0.227438, "top": 0.185031},
+      "atlas": {"x": 0, "y": 0.375, "width": 0.0703125, "height": 0.0703125},
+      "atlasBounds": {"left": 0.0264687, "bottom": 0.381375, "right": 0.0438438, "top": 0.438937},
       "plane": {"left": -0.06, "bottom": -0.218, "right": 0.218, "top": 0.703},
       "advance": 0.278
     },
@@ -410,8 +410,8 @@
       "advance": 0.707
     },
     "$": {
-      "atlas": {"x": 0.0625, "y": 0.25, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.077375, "bottom": 0.2525, "right": 0.110125, "top": 0.31},
+      "atlas": {"x": 0.0703125, "y": 0.375, "width": 0.0703125, "height": 0.0703125},
+      "atlasBounds": {"left": 0.0890937, "bottom": 0.381406, "right": 0.121844, "top": 0.438906},
       "plane": {"left": 0.055, "bottom": -0.11, "right": 0.579, "top": 0.81},
       "advance": 0.629
     },
@@ -440,14 +440,14 @@
       "advance": 0.346
     },
     "(": {
-      "atlas": {"x": 0.375, "y": 0.25, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.398531, "bottom": 0.252094, "right": 0.413969, "top": 0.310406},
+      "atlas": {"x": 0.140625, "y": 0.375, "width": 0.0703125, "height": 0.0703125},
+      "atlasBounds": {"left": 0.168063, "bottom": 0.381, "right": 0.1835, "top": 0.439312},
       "plane": {"left": 0.07, "bottom": -0.117, "right": 0.317, "top": 0.816},
       "advance": 0.335
     },
     ")": {
-      "atlas": {"x": 0.4375, "y": 0.25, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.461031, "bottom": 0.252094, "right": 0.476469, "top": 0.310406},
+      "atlas": {"x": 0.210938, "y": 0.375, "width": 0.0703125, "height": 0.0703125},
+      "atlasBounds": {"left": 0.238375, "bottom": 0.381, "right": 0.253812, "top": 0.439312},
       "plane": {"left": 0.018, "bottom": -0.117, "right": 0.265, "top": 0.816},
       "advance": 0.335
     },
@@ -476,32 +476,32 @@
       "advance": 0.556
     },
     "[": {
-      "atlas": {"x": 0.75, "y": 0.25, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.773625, "bottom": 0.252094, "right": 0.788875, "top": 0.310406},
+      "atlas": {"x": 0.28125, "y": 0.375, "width": 0.0703125, "height": 0.0703125},
+      "atlasBounds": {"left": 0.308781, "bottom": 0.381, "right": 0.324031, "top": 0.439312},
       "plane": {"left": 0.07, "bottom": -0.117, "right": 0.314, "top": 0.816},
       "advance": 0.332
     },
     "]": {
-      "atlas": {"x": 0.8125, "y": 0.25, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.836125, "bottom": 0.252094, "right": 0.851375, "top": 0.310406},
+      "atlas": {"x": 0.351562, "y": 0.375, "width": 0.0703125, "height": 0.0703125},
+      "atlasBounds": {"left": 0.379094, "bottom": 0.381, "right": 0.394344, "top": 0.439312},
       "plane": {"left": 0.018, "bottom": -0.117, "right": 0.262, "top": 0.816},
       "advance": 0.332
     },
     "{": {
-      "atlas": {"x": 0.875, "y": 0.25, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.896469, "bottom": 0.252094, "right": 0.916031, "top": 0.310406},
+      "atlas": {"x": 0.421875, "y": 0.375, "width": 0.0703125, "height": 0.0703125},
+      "atlasBounds": {"left": 0.44725, "bottom": 0.381, "right": 0.466813, "top": 0.439312},
       "plane": {"left": 0.035, "bottom": -0.117, "right": 0.348, "top": 0.816},
       "advance": 0.366
     },
     "}": {
-      "atlas": {"x": 0.9375, "y": 0.25, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.958969, "bottom": 0.252094, "right": 0.978531, "top": 0.310406},
+      "atlas": {"x": 0.492188, "y": 0.375, "width": 0.0703125, "height": 0.0703125},
+      "atlasBounds": {"left": 0.517563, "bottom": 0.381, "right": 0.537125, "top": 0.439312},
       "plane": {"left": 0.018, "bottom": -0.117, "right": 0.331, "top": 0.816},
       "advance": 0.366
     },
     "|": {
-      "atlas": {"x": 0, "y": 0.3125, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.0276875, "bottom": 0.310937, "right": 0.0348125, "top": 0.376563},
+      "atlas": {"x": 0.5625, "y": 0.375, "width": 0.078125, "height": 0.078125},
+      "atlasBounds": {"left": 0.598, "bottom": 0.38125, "right": 0.605125, "top": 0.446875},
       "plane": {"left": 0.07, "bottom": -0.204, "right": 0.184, "top": 0.846},
       "advance": 0.254
     },
