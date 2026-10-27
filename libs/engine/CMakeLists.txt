@@ -92,6 +92,12 @@ target_link_libraries(engine
         httplib::httplib
 )
 
+# salal's base shader with the engine's hooks, assembled at build time and compiled in
+# (salal's docs/shader-hooks.md). Declared here once for every executable that starts the
+# renderer: AppLauncher, asset-cli and the GL test fixtures hand base_shader::source() to
+# Primitives::init, and the groundcover renderer and the grass scene fill the hook's block.
+salal_base_shader(engine HOOKS world/rendering/shaders/hooks)
+
 # Link CoreFoundation on macOS (required by httplib for DNS resolution)
 if(APPLE)
     target_link_libraries(engine PRIVATE "-framework CoreFoundation")

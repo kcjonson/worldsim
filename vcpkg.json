@@ -19,7 +19,12 @@
     "benchmark",
     "pugixml",
     "lua",
-    "sol2"
+    "sol2",
+    {
+      "name": "glslang",
+      "host": true,
+      "features": ["tools"]
+    }
   ],
   "builtin-baseline": "bfc6984dcbe4a165741aa95411cb5e77d9c88068",
   "overrides": [

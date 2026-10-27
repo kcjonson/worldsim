@@ -96,7 +96,7 @@ The pieces all exist and this is assembly:
 
 ### Headless context and minimal init
 
-The CLI creates a hidden window (`glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE)`) and hands `Primitives::init` a `GLBackend::create()` on its context (the backend initializes GLEW), then initializes only what the render path needs: the renderer's shader/primitive setup and the asset registry (including `setSharedScriptsPath`, or every `@shared/` Lua def fails to resolve). It does not create scenes, a debug server, or fonts.
+The CLI creates a hidden window (`glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE)`) and hands `Primitives::init` a `GLBackend::create()` on its context (the backend initializes GLEW), then initializes only what the render path needs: the renderer's primitive setup, with the base shader `engine` compiles in (`base_shader::source()`), and the asset registry (including `setSharedScriptsPath`, or every `@shared/` Lua def fails to resolve). It does not create scenes, a debug server, or fonts.
 
 `AppLauncher::initializeRenderingSystems` still bundles the rendering-primitive init with a full app; the asset half is already `engine::assets::initializeAssetSystem`, which the CLI can call without `AppLauncher`. Factor the rendering-primitive init into a reusable function the CLI can call the same way. This is a refactor of existing code, not new behavior.
 
@@ -233,8 +233,8 @@ The `render` and `validate --render-smoke` commands need the hidden GL context a
 
 ## Build integration
 
-- `apps/asset-manager/CMakeLists.txt` modeled on `ui-sandbox`: `add_executable`, link `engine ui renderer foundation assets planet-view world`, the POST_BUILD copies for `shaders/`, `fonts/`, and `assets/`, and `add_dependencies(asset-manager font-atlas)`.
-- `apps/asset-cli/CMakeLists.txt` minimal: link `assets renderer foundation` plus GLFW/GLEW/OpenGL and `nlohmann_json::nlohmann_json`, copy `shaders/` and `assets/` (it needs the base shader and the asset tree; it does not need fonts).
+- `apps/asset-manager/CMakeLists.txt` modeled on `ui-sandbox`: `add_executable`, link `engine ui renderer foundation assets planet-view world`, the POST_BUILD copies for `fonts/` and `assets/` (the base shader is compiled into `engine`), and `add_dependencies(asset-manager font-atlas)`.
+- `apps/asset-cli/CMakeLists.txt` minimal: link `assets renderer foundation` plus GLFW/GLEW/OpenGL and `nlohmann_json::nlohmann_json`, copy `assets/` (it needs the asset tree, the base shader is compiled in, and it needs no fonts).
 - Register both with `add_subdirectory` in the top-level `CMakeLists.txt` after the libs.
 
 ## Testing and CI

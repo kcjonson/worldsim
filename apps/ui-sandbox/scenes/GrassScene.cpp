@@ -6,8 +6,9 @@
 // clumpSize, clumpRadius): each 1m tile may seed a clump of tufts within a radius, so dense
 // patches form with bare gaps between. Tuning Grass.xml here is exactly what ships.
 //
-// A gated cursor deform (reveal + bend) lives in instancing.glsl; it's wired but parked
-// (cursor off-screen) while we dial in the resting look.
+// A gated cursor deform (reveal + bend) is the engine's groundcover hook
+// (world/rendering/shaders/hooks/groundcover.vert.glsl); it's wired but parked (cursor
+// off-screen) while we dial in the resting look.
 
 #include "SceneTypes.h"
 #include <assets/AssetDefinition.h>
@@ -18,6 +19,7 @@
 #include <scene/Scene.h>
 #include <utils/Log.h>
 #include <vector/Types.h>
+#include <world/rendering/GroundcoverUniforms.h>
 
 #include <GL/glew.h>
 #include <algorithm>
@@ -176,11 +178,11 @@ namespace {
 			);
 
 			Renderer::Primitives::setBakedAlpha(1.0F);
-			Renderer::Primitives::setGroundcover(
-				{.enabled = true,
+			engine::world::setGroundcoverUniforms(
+				{.cursorWorld = cursorWorld,
+				 .enabled = 1,
 				 .openness = kGroundcoverOpenness,
 				 .reach = kGroundcoverReach,
-				 .cursorWorld = cursorWorld,
 				 .cursorRadius = kCursorRadiusM,
 				 .cursorStrength = kCursorStrengthM}
 			);
@@ -194,7 +196,7 @@ namespace {
 				Renderer::Primitives::drawInstanced(m_handles[v], inst.data(), static_cast<uint32_t>(inst.size()), camera);
 			}
 
-			Renderer::Primitives::setGroundcover({});
+			engine::world::setGroundcoverUniforms({});
 
 			if (m_haveMouse) {
 				Renderer::Primitives::drawCircle(

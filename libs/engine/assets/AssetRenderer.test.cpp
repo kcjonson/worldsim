@@ -4,6 +4,7 @@
 #include "assets/AssetRenderer.h"
 #include "assets/AssetRegistry.h"
 
+#include "BaseShader.h"
 #include "backend/gl/GLBackend.h"
 #include "primitives/Primitives.h"
 
@@ -33,37 +34,13 @@ namespace {
 			.parent_path(); // project root
 	}
 
-	// Make "shaders/base.vert" resolvable from the working directory so
-	// Primitives::init can load the base shader. Returns false if not found.
-	bool ensureShadersResolvable() {
-		namespace fs = std::filesystem;
-		const std::vector<fs::path> candidates = {
-			fs::current_path(),
-			projectRoot() / "build",
-			projectRoot() / "libs" / "renderer",
-		};
-		for (const auto& c : candidates) {
-			std::error_code ec;
-			if (fs::exists(c / "shaders" / "base.vert", ec)) {
-				fs::current_path(c, ec);
-				return !ec;
-			}
-		}
-		return false;
-	}
-
 	// Brings up a hidden GL context + the renderer primitives for the duration of
-	// a test. `ok` is false when no context/shaders are available (headless CI).
+	// a test. `ok` is false when no context is available (headless CI).
 	struct GlFixture {
-		GLFWwindow*			  window = nullptr;
-		bool				  ok = false;
-		std::filesystem::path originalCwd;
+		GLFWwindow* window = nullptr;
+		bool		ok = false;
 
 		GlFixture() {
-			// Captured before ensureShadersResolvable() may change cwd; restored in the dtor.
-			std::error_code cwdEc;
-			originalCwd = std::filesystem::current_path(cwdEc);
-
 			if (glfwInit() != GLFW_TRUE) {
 				return;
 			}
@@ -78,12 +55,6 @@ namespace {
 				return;
 			}
 			glfwMakeContextCurrent(window);
-			if (!ensureShadersResolvable()) {
-				glfwDestroyWindow(window);
-				window = nullptr;
-				glfwTerminate();
-				return;
-			}
 			// The renderer's GL backend initializes GLEW on this context
 			std::unique_ptr<Renderer::backend::gl::GLBackend> backend = Renderer::backend::gl::GLBackend::create();
 			if (backend == nullptr) {
@@ -92,7 +63,7 @@ namespace {
 				glfwTerminate();
 				return;
 			}
-			Renderer::Primitives::init(std::move(backend));
+			Renderer::Primitives::init(std::move(backend), base_shader::source());
 			ok = true;
 		}
 
@@ -103,12 +74,6 @@ namespace {
 			if (window != nullptr) {
 				glfwDestroyWindow(window);
 				glfwTerminate();
-			}
-			// ensureShadersResolvable() may have changed the working directory;
-			// restore it so test execution order can't leak between tests.
-			if (!originalCwd.empty()) {
-				std::error_code ec;
-				std::filesystem::current_path(originalCwd, ec);
 			}
 		}
 
@@ -141,7 +106,7 @@ namespace {
 TEST(AssetRendererTest, ProceduralRenderIsDeterministic) {
 	GlFixture gl;
 	if (!gl.ok) {
-		GTEST_SKIP() << "No GL context / shaders unavailable (headless CI)";
+		GTEST_SKIP() << "No GL context (headless CI)";
 	}
 	loadAssets();
 
@@ -177,7 +142,7 @@ TEST(AssetRendererTest, ProceduralRenderIsDeterministic) {
 TEST(AssetRendererTest, RendersVisibleGeometry) {
 	GlFixture gl;
 	if (!gl.ok) {
-		GTEST_SKIP() << "No GL context / shaders unavailable (headless CI)";
+		GTEST_SKIP() << "No GL context (headless CI)";
 	}
 	loadAssets();
 
@@ -204,7 +169,7 @@ TEST(AssetRendererTest, RendersVisibleGeometry) {
 TEST(AssetRendererTest, TranslucentBackgroundComesBackStraight) {
 	GlFixture gl;
 	if (!gl.ok) {
-		GTEST_SKIP() << "No GL context / shaders unavailable (headless CI)";
+		GTEST_SKIP() << "No GL context (headless CI)";
 	}
 	loadAssets();
 
