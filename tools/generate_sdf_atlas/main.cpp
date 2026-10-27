@@ -467,7 +467,9 @@ int main(int argc, char** argv) {
 	// picked up the cells either side of it, or was cut off at its own edge. Such a glyph gets a
 	// cell grown by whole texels on each side, which keeps it where it was on the texel grid, on
 	// shelves after the grid's rows (above them in the PNG, the bitmap being y-up); its grid cell
-	// stays empty, so no other glyph moves.
+	// stays empty, so no other glyph moves. salal's FontRenderer::crampedGlyphs checks the same
+	// reach when it loads the atlas: a glyph left short of it is a warning naming the glyphs, and
+	// fails engine-tests' FontAtlases.test.cpp.
 	const double reach = config.pixelRange / 2.0 + 0.5;
 
 	const auto cellFor = [&](const GlyphData& glyph) {
