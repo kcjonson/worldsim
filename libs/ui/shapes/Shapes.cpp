@@ -127,7 +127,7 @@ namespace UI {
 
 			// Generate quads for all lines with per-line horizontal alignment
 			fontRenderer->generateWrappedGlyphQuads(
-				wrapped.lines, glm::vec2(alignedPos.x, alignedPos.y), scale, glyphColor, wrapped.lineHeight, style.hAlign, *width, glyphs
+				wrapped, glm::vec2(alignedPos.x, alignedPos.y), scale, glyphColor, style.hAlign, *width, glyphs
 			);
 		} else {
 			// SINGLE LINE MODE (original behavior)
