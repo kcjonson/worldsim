@@ -79,6 +79,15 @@ Build dirs configured with the old Visual Studio generator error on reconfigure 
 change: delete `build/` once and re-run `cmake --preset windows`. With a warm ccache the rebuild
 is fast (~30 s on the reference machine). Check hit rates anytime with `ccache -s`.
 
+### A build dir that can't find vcpkg packages
+
+The `windows` preset used to set `CMAKE_CXX_COMPILER=cl`, which could make a reconfigure delete
+the cache; the rerun lost the vcpkg toolchain, and `find_package` has failed in that dir since
+(httplib, GTest). The current preset picks `cl` through `CC`/`CXX` and doesn't wipe the cache,
+but CMake loads the toolchain and reads `CC`/`CXX` only on a fresh configure, so it can't repair
+such a dir, or one first configured with the wrong compiler or vcpkg. Run
+`cmake --fresh --preset windows` once, or delete `build/`.
+
 ### Font atlas
 
 The build generates the SDF font atlas (`fonts/Roboto-SDF.png`) from `Roboto-Regular.ttf` via the
@@ -113,3 +122,6 @@ stricter:
 
 VS Code with CMake Tools, the C/C++ extension, and clangd. CMake Tools reads `VCPKG_ROOT` from the
 environment via `.vscode/settings.json`. Format manually (`Shift+Alt+F`); format-on-save is off.
+On Windows it needs `cl` on PATH from the setup script: by default CMake Tools adds the VS
+developer environment only for presets that name the compiler in a cache variable, and the
+`windows` preset names it in its environment.
