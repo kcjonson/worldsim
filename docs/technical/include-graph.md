@@ -22,13 +22,13 @@ node tools/resolve-includes.mjs --root path/to/another/checkout
 
 ## Baseline
 
-Production files only (test and bench files excluded), main @ 5e2e4525 (2026-10-27), with foundation and renderer read from salal v0.8.1. Against the previous baseline (main @ cd98559c plus the game's font table handed to salal's FontRenderer through AppConfig, read from v0.8.0) no cell moved: v0.8.1 hands drawCircle's zIndex and id to its border and adds a test, whose `<algorithm>` shows only in the all-files matrix (renderer -> external, 320 to 321). Rows are the including library, columns the library the include lands in.
+Production files only (test and bench files excluded), main @ db604e68 with the callers of salal v0.9.0's font API and the font-atlas engine test (2026-10-27), with foundation and renderer read from salal v0.9.0. Against the previous baseline (main @ 5e2e4525, read from v0.8.1) one cell moved: renderer -> external, 198 to 199, with `FontRenderer.cpp`'s `<filesystem>` (its cramped-glyph warning names the atlas file). In the all-files matrix renderer -> foundation went from 37 to 38 and renderer -> external from 321 to 327 with `FontRenderer.test.cpp`'s `utils/Log.h`, `<cstdint>`, `<cstring>`, `<map>`, `<span>` and `<utility>`, and engine -> renderer from 31 to 34, engine -> ui from 5 to 6 and engine -> external from 775 to 780 with `FontAtlases.test.cpp`. Rows are the including library, columns the library the include lands in.
 
 | src \ dst | foundation | geometry | renderer | ui | world | planet-view | game-systems | engine | engine(assets) | external |
 |---|---|---|---|---|---|---|---|---|---|---|
 | foundation | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 84 |
 | geometry | 2 | 86 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 158 |
-| renderer | 33 | 0 | 95 | 0 | 0 | 0 | 0 | 0 | 0 | 198 |
+| renderer | 33 | 0 | 95 | 0 | 0 | 0 | 0 | 0 | 0 | 199 |
 | ui | 97 | 0 | 43 | 158 | 0 | 0 | 0 | 0 | 0 | 117 |
 | world | 34 | 0 | 0 | 0 | 118 | 0 | 0 | 0 | 0 | 149 |
 | planet-view | 2 | 0 | 1 | 0 | 6 | 11 | 0 | 0 | 0 | 38 |
