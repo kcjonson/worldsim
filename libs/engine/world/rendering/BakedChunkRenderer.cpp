@@ -159,7 +159,7 @@ namespace engine::world {
 		float camY = ctx.camera.position().y;
 		VisibleBounds vis = computeVisibleBounds(ctx.camera, ctx.viewportWidth, ctx.viewportHeight, ctx.pixelsPerMeter);
 
-		// Uber program in baked world-space mode, blending on; the VAO draws below are ours
+		// The base shader in baked world-space mode, blending on; the VAO draws below are ours
 		Renderer::Primitives::beginBakedPass({.position = {camX, camY}, .zoom = zoom, .pixelsPerMeter = ctx.pixelsPerMeter});
 
 		// Far-zoom impostor handoff: pixels of on-screen height per meter of

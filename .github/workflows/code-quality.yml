@@ -69,5 +69,10 @@ jobs:
         CC: clang
         CXX: clang++
 
+    # salal_base_shader() generates the engine's BaseShader.h at build time, and the
+    # files that start the renderer or fill a hook block include it.
+    - name: Generate the base shader
+      run: cmake --build build --target engine_base_shader
+
     - name: Run clang-tidy on changed files
       run: ./scripts/tidy.sh --changed

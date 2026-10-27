@@ -62,7 +62,7 @@ add_custom_target(ui-sandbox-shaders ALL
     COMMENT "Mirroring shaders beside ui-sandbox"
     VERBATIM
 )
-add_dependencies(ui-sandbox-shaders salal_renderer_shaders engine-shaders planet-view-shaders)
+add_dependencies(ui-sandbox-shaders engine-shaders planet-view-shaders)
 add_dependencies(ui-sandbox ui-sandbox-shaders)
 
 # Copy fonts to executable directory

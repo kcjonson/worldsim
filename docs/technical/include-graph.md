@@ -22,17 +22,17 @@ node tools/resolve-includes.mjs --root path/to/another/checkout
 
 ## Baseline
 
-Production files only (test and bench files excluded), main @ b08d0468 plus the call sites that hand `Primitives::init` a `GLBackend` (2026-10-26), with foundation and renderer read from salal v0.5.0. Against the previous baseline (main @ c1ee4949 plus the primitive sandbox scenes and `AssetRenderer`'s un-premultiplied readback, read from v0.4.0) the renderer row grew from 33, 87 and 156 to 34, 93 and 168 with the backend interface (`backend/Backend.h`, `SlotTable.h`, `NullBackend.{h,cpp}`, and `gl/GLBackend.{h,cpp}` in place of `GLTextures` and `GLTargets`) and the standard headers it takes, and engine -> renderer rose from 24 to 25 (`AppLauncher.cpp` takes `backend/gl/GLBackend.h` to create the backend). Rows are the including library, columns the library the include lands in.
+Production files only (test and bench files excluded), main @ c3a22afa plus the groundcover deform as an engine hook on salal's base shader (2026-10-26), with foundation and renderer read from salal v0.6.0. Against the previous baseline (main @ b08d0468 plus the call sites that hand `Primitives::init` a `GLBackend`, read from v0.5.0) the renderer row grew from 93 and 168 to 95 and 196, nearly all of it the base shader's build-time assembler (`assembler/BaseShaderAssembler.{h,cpp}` and `Main.cpp`, a host tool: two includes of its own header and 23 standard headers), the rest five standard headers in the backend and `Primitives.h`. The engine row rose by one to foundation, renderer and engine and by six to external with `GroundcoverUniforms.h` (`math/Types.h`, `primitives/Primitives.h`, the generated `BaseShader.h` and four standard headers, included by `GroundcoverRenderer.cpp`) and `AppLauncher.cpp`'s `BaseShader.h`; the generated header sits in the build tree, under no library root, so it counts as external. Rows are the including library, columns the library the include lands in.
 
 | src \ dst | foundation | geometry | renderer | ui | world | planet-view | game-systems | engine | engine(assets) | external |
 |---|---|---|---|---|---|---|---|---|---|---|
 | foundation | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 70 |
 | geometry | 2 | 86 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 158 |
-| renderer | 34 | 0 | 93 | 0 | 0 | 0 | 0 | 0 | 0 | 168 |
+| renderer | 34 | 0 | 95 | 0 | 0 | 0 | 0 | 0 | 0 | 196 |
 | ui | 97 | 0 | 42 | 157 | 0 | 0 | 0 | 0 | 0 | 116 |
 | world | 34 | 0 | 0 | 0 | 118 | 0 | 0 | 0 | 0 | 149 |
 | planet-view | 2 | 0 | 1 | 0 | 6 | 11 | 0 | 0 | 0 | 38 |
-| engine | 48 | 81 | 25 | 5 | 9 | 0 | 0 | 462 | 68 | 518 |
+| engine | 49 | 81 | 26 | 5 | 9 | 0 | 0 | 463 | 68 | 524 |
 | engine(assets) | 23 | 3 | 9 | 0 | 0 | 0 | 0 | 13 | 54 | 157 |
 
 Nothing is ambiguous. Foundation includes nothing internal outside itself. There are no layering violations: ui -> engine and renderer -> ui are both 0. engine -> ui (5 lines) is allowed.

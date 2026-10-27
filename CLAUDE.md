@@ -223,7 +223,7 @@ If tests fail, fix the new code—don't revert to keeping both versions.
 **Scripts and tooling:**
 - New scripts and tooling are Node (ESM, `.mjs`, no dependencies unless there is a `package.json` for them). No Python.
 
-**Engine libraries (salal):** `foundation` and `renderer` come from github.com/kcjonson/salal via FetchContent, pinned by `GIT_TAG` in the root CMakeLists.txt. To build against the sibling checkout instead of the tag: `cmake -S . -B build -DFETCHCONTENT_SOURCE_DIR_SALAL=C:/Users/kevin/Code/salal`. It is cached in `build/` until `-UFETCHCONTENT_SOURCE_DIR_SALAL`. Whatever branch that checkout has is what builds, so a worldsim PR must work against a tagged salal before it is marked ready. On GCC and Clang, `-ffp-contract=off` is inherited from `salal::foundation` (PUBLIC, the deterministic math needs it); don't add it again here.
+**Engine libraries (salal):** `foundation` and `renderer` come from github.com/kcjonson/salal via FetchContent, pinned by `GIT_TAG` in the root CMakeLists.txt. To build against the sibling checkout instead of the tag: `cmake -S . -B build -DFETCHCONTENT_SOURCE_DIR_SALAL=C:/Users/kevin/Code/salal`. It is cached in `build/` until `-UFETCHCONTENT_SOURCE_DIR_SALAL`. Whatever branch that checkout has is what builds, so a worldsim PR must work against a tagged salal before it is marked ready. On GCC and Clang, `-ffp-contract=off` is inherited from `salal::foundation` (PUBLIC, the deterministic math needs it); don't add it again here. salal's base shader is assembled into `engine` at build time with the engine's hooks (`libs/engine/world/rendering/hooks/`, one so far: the groundcover deform), checked by `glslangValidator` from the vcpkg `glslang[tools]` host dependency, and compiled in; salal's `docs/shader-hooks.md` is the contract. `base_shader::source()` is what `Primitives::init` takes.
 
 **Naming:**
 - Classes/Structs/Enums: PascalCase (`Shader`, `TextureManager`)
@@ -433,7 +433,7 @@ When a plan file is confirmed complete (has `# COMPLETE` on first line), archive
 
 1. **Move the file** from `.claude/plans/` (or `~/.claude/plans/` for global plans) to `/docs/development-log/plans/`
 2. **Rename with date prefix**: `YYYY-MM-DD-{original-name}.md`
-   - Example: `uber-shader.md` → `2025-12-18-uber-shader.md`
+   - Example: `clipping-system.md` → `2025-12-18-clipping-system.md`
 3. **Create the plans directory** if it doesn't exist: `/docs/development-log/plans/`
 
 This keeps completed plans discoverable alongside the development log while cleaning up the active plans folder.

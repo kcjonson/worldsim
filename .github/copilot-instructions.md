@@ -65,8 +65,8 @@ void setText(const std::string& newText) { text = newText; }  // CORRECT
 - Prefer in-class member initializers: `GLFWwindow* window{nullptr};`
 - Forward declarations in headers, full includes in .cpp
 
-**Shaders** (UberShader pattern):
-- Use single UberShader uploaded once to GPU (not multiple shader programs)
+**Shaders** (one-program pattern):
+- Draw through salal's base shader, one program uploaded once (not multiple shader programs)
 - Organizationally OK to split shader code across multiple files for structure
 - Shader code should be well-structured and maintainable
 - Combine files before uploading to GPU as one shader program

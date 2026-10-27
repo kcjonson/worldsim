@@ -1,5 +1,5 @@
 // Minimal SDF Test Scene - Single line of text to verify SDF rendering works
-// Uses the unified uber shader for combined shape + text rendering
+// Uses salal's base shader for combined shape + text rendering
 
 #include "SceneTypes.h"
 #include <font/FontRenderer.h>
@@ -22,7 +22,7 @@ namespace {
 	class SDFMinimalScene : public engine::IScene {
 	  public:
 		void onEnter() override {
-			LOG_INFO(UI, "=== SDF Minimal Test Scene (Uber Shader) ===");
+			LOG_INFO(UI, "=== SDF Minimal Test Scene (Base Shader) ===");
 
 			// Get font renderer from Primitives API (initialized in main.cpp)
 			fontRenderer = Renderer::Primitives::getFontRenderer();
@@ -31,7 +31,7 @@ namespace {
 				return;
 			}
 
-			LOG_INFO(UI, "SDF Minimal Scene initialized with uber shader");
+			LOG_INFO(UI, "SDF Minimal Scene initialized with the base shader");
 		}
 
 		void update(float /*dt*/) override {}
@@ -66,7 +66,7 @@ namespace {
 		}
 
 		std::string exportState() override {
-			return R"({"scene": "sdf_minimal", "description": "Minimal SDF rendering test with uber shader"})";
+			return R"({"scene": "sdf_minimal", "description": "Minimal SDF rendering test with the base shader"})";
 		}
 
 		const char* getName() const override { return kSceneName; }

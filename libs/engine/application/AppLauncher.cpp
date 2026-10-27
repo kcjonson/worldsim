@@ -3,6 +3,7 @@
 
 #include "AppLauncher.h"
 #include "Application.h"
+#include "BaseShader.h"
 
 #include <CoordinateSystem/CoordinateSystem.h>
 #include <backend/gl/GLBackend.h>
@@ -175,7 +176,7 @@ namespace engine {
 				LOG_ERROR(Engine, "Failed to start the renderer's GL backend");
 				return false;
 			}
-			Renderer::Primitives::init(std::move(backend));
+			Renderer::Primitives::init(std::move(backend), base_shader::source());
 			Renderer::Primitives::setCoordinateSystem(&coordinateSystem);
 			Renderer::Primitives::setViewport(framebufferWidth, framebufferHeight);
 

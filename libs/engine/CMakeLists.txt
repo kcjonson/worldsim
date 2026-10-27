@@ -92,6 +92,12 @@ target_link_libraries(engine
         httplib::httplib
 )
 
+# salal's base shader with the engine's hooks, assembled at build time and compiled in
+# (salal's docs/shader-hooks.md). Declared here once for every executable that starts the
+# renderer: AppLauncher, asset-cli and the GL test fixtures hand base_shader::source() to
+# Primitives::init, and the groundcover renderer and the grass scene fill the hook's block.
+salal_base_shader(engine HOOKS world/rendering/hooks)
+
 # Link CoreFoundation on macOS (required by httplib for DNS resolution)
 if(APPLE)
     target_link_libraries(engine PRIVATE "-framework CoreFoundation")
@@ -102,9 +108,10 @@ if(WIN32)
     target_link_libraries(engine PRIVATE winmm)
 endif()
 
-# The ground pass (tile.vert, tile.frag, includes/) is the engine's, not the
-# renderer's. Stage it into the shared build shaders/ directory the way the
-# renderer and planet-view stage theirs, so the runtime layout is unchanged.
+# The ground pass (tile.vert, tile.frag, includes/) is the engine's own GL, loaded
+# at run time. Stage it into the shared build shaders/ directory, as planet-view
+# stages its own. salal's base shader and the engine's hooks (world/rendering/hooks/,
+# outside this folder) are compiled in, so nothing of theirs is staged.
 file(GLOB_RECURSE ENGINE_SHADER_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/world/rendering/shaders/*"
 )

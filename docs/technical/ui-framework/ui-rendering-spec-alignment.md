@@ -45,7 +45,7 @@ From specification 16.4, each step one pull request unless noted.
 
 - UI Improvements Phase 2: its engine tasks (tree snapshot, lint, LayoutContainer characterisation and auto-layout, unit suite) landed in kcjonson/worldsim#259 and kcjonson/worldsim#263 and read as still open on the board; the polish tasks remain and sit on top of step 1.
 - UI Architecture: Animation System: the animator of R8.28; unaffected by this epic, but should be built to that rule when picked up.
-- GPU-Based SDF Rendering for UI Primitives: its design document predates the shipped uber shader; step 3 holds the SDF corrections that are still open.
+- GPU-Based SDF Rendering for UI Primitives: its design document predates salal's base shader; step 3 holds the SDF corrections that are still open.
 
 ## Verification per step
 

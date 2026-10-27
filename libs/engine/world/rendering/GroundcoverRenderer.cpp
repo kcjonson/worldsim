@@ -2,6 +2,7 @@
 
 #include "assets/AssetRegistry.h"
 #include "world/chunk/ChunkCoordinate.h"
+#include "world/rendering/GroundcoverUniforms.h"
 
 #include <algorithm>
 #include <cmath>
@@ -122,7 +123,7 @@ void GroundcoverRenderer::render(const RenderContext& ctx, RenderStats& stats) {
 	const VisibleBounds vis = computeVisibleBounds(ctx.camera, ctx.viewportWidth, ctx.viewportHeight, ppm);
 
 	// Full-size clumps at rest, no interaction deform yet (cursor radius 0)
-	Renderer::Primitives::setGroundcover({.enabled = true, .openness = 1.0F, .reach = kGroundcoverReachM, .cursorRadius = 0.0F});
+	setGroundcoverUniforms({.enabled = 1, .openness = 1.0F, .reach = kGroundcoverReachM, .cursorRadius = 0.0F});
 	Renderer::Primitives::setBakedAlpha(lodAlpha);
 
 	const Renderer::Primitives::WorldCamera camera{.position = {camX, camY}, .zoom = zoom, .pixelsPerMeter = ppm};
@@ -150,7 +151,7 @@ void GroundcoverRenderer::render(const RenderContext& ctx, RenderStats& stats) {
 	}
 
 	// Restore normal (non-grass) instancing state for the rest of the frame.
-	Renderer::Primitives::setGroundcover({});
+	setGroundcoverUniforms({});
 	Renderer::Primitives::setBakedAlpha(1.0F);
 }
 
