@@ -570,7 +570,7 @@ namespace UI {
 		std::vector<Renderer::FontRenderer::GlyphQuad> glyphs;
 		fontRenderer->generateGlyphQuads(text, glm::vec2(textX, baselineY), scale, glyphColor, glyphs, fontUi);
 
-		Renderer::Primitives::drawGlyphs(glyphs.data(), glyphs.size(), fontUi);
+		Renderer::Primitives::drawGlyphs(glyphs.data(), glyphs.size());
 	}
 
 	void TextInput::renderCursor() const {
@@ -678,7 +678,7 @@ namespace UI {
 		std::vector<Renderer::FontRenderer::GlyphQuad> glyphs;
 		fontRenderer->generateGlyphQuads(placeholder, glm::vec2(textX, baselineY), scale, glyphColor, glyphs, fontUi);
 
-		Renderer::Primitives::drawGlyphs(glyphs.data(), glyphs.size(), fontUi);
+		Renderer::Primitives::drawGlyphs(glyphs.data(), glyphs.size());
 	}
 
 	// ============================================================================
