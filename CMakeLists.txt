@@ -129,6 +129,10 @@ add_custom_target(font-atlas DEPENDS ${SDF_ATLAS_OUTPUTS})
 add_dependencies(world-sim font-atlas)
 add_dependencies(ui-sandbox font-atlas)
 add_dependencies(asset-manager font-atlas)
+# FontAtlases.test.cpp loads the atlases from fonts/: the PNGs aren't tracked, and the JSON is the current tool's
+if(TARGET engine-tests)
+    add_dependencies(engine-tests font-atlas)
+endif()
 
 # Quickstart planet — the prebuilt planet that ships with the game. Players never
 # generate it; the main menu disables Quick Start when it is absent. This is an
