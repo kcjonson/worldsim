@@ -14,7 +14,6 @@
 #include <metrics/MetricsCollector.h>
 #include <primitives/Primitives.h>
 #include <scene/SceneManager.h>
-#include <theme/Variants.h>
 #include <utils/Log.h>
 #include <utils/ResourcePath.h>
 
@@ -42,26 +41,11 @@ namespace engine {
 		// Owned resources that persist between initialize() and run()
 		std::unique_ptr<Foundation::DebugServer> g_debugServer;
 
-		// The game's font atlases, made in fonts/ by the font-atlas target and staged beside
-		// each exe (the root CMakeLists.txt). Roboto is the default: without it there is no
-		// text, and startup fails.
-		struct FontAtlasFile {
-			Renderer::FontFamily family;
-			const char*			 name;
-		};
-		constexpr FontAtlasFile kFontAtlases[] = {
-			{UI::fontDefault, "Roboto-SDF"},
-			{UI::fontDisplay, "ChakraPetch-SDF"},
-			{UI::fontUi, "Barlow-SDF"},
-			{UI::fontMono, "JetBrainsMono-SDF"},
-		};
-
-		// fonts/<file> wherever findResource finds it, the exe's directory first; as given
+		// A resource path wherever findResource finds it, the exe's directory first; as given
 		// when it finds nothing, so the renderer's error names the file.
-		std::string fontPath(const std::string& file) {
-			const std::string relative = "fonts/" + file;
-			const std::string found = Foundation::findResourceString(relative);
-			return found.empty() ? relative : found;
+		std::string resourcePath(const std::string& path) {
+			const std::string found = Foundation::findResourceString(path);
+			return found.empty() ? path : found;
 		}
 
 		// Route one /api/input command through the scene input path. Click
@@ -179,7 +163,7 @@ namespace engine {
 			return window;
 		}
 
-		bool initializeRenderingSystems(GLFWwindow* window) {
+		bool initializeRenderingSystems(GLFWwindow* window, const AppConfig& config) {
 			// Get window and framebuffer sizes
 			int windowWidth = 0;
 			int windowHeight = 0;
@@ -206,16 +190,19 @@ namespace engine {
 			Renderer::Primitives::setCoordinateSystem(&coordinateSystem);
 			Renderer::Primitives::setViewport(framebufferWidth, framebufferHeight);
 
-			// Initialize font renderer
+			// Initialize font renderer with the game's atlases; without its default there is no
+			// text, and startup fails
 			LOG_INFO(UI, "Initializing font renderer");
 			std::vector<Renderer::FontAtlasSource> fontAtlases;
-			for (const FontAtlasFile& atlas : kFontAtlases) {
-				const std::string name = atlas.name;
-				fontAtlases.push_back({.family = atlas.family, .pngPath = fontPath(name + ".png"), .jsonPath = fontPath(name + ".json")});
+			fontAtlases.reserve(config.fontAtlases.size());
+			for (const Renderer::FontAtlasSource& atlas : config.fontAtlases) {
+				fontAtlases.push_back(
+					{.family = atlas.family, .pngPath = resourcePath(atlas.pngPath), .jsonPath = resourcePath(atlas.jsonPath)}
+				);
 			}
 			g_fontRenderer = std::make_unique<Renderer::FontRenderer>();
-			if (!g_fontRenderer->Initialize(fontAtlases, UI::fontDefault)) {
-				LOG_ERROR(UI, "The default font did not load, so there is no text; stopping");
+			if (!g_fontRenderer->Initialize(fontAtlases, config.defaultFont)) {
+				LOG_ERROR(UI, "No default font, so no text; stopping");
 				g_fontRenderer.reset();
 				Renderer::Primitives::shutdown();
 				return false;
@@ -333,7 +320,7 @@ namespace engine {
 		}
 
 		// Initialize rendering systems
-		if (!initializeRenderingSystems(window)) {
+		if (!initializeRenderingSystems(window, config)) {
 			stopDebugServer();
 			glfwDestroyWindow(window);
 			glfwTerminate();

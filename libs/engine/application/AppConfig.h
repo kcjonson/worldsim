@@ -1,6 +1,10 @@
 #pragma once
 
+#include <font/FontRenderer.h>
+#include <primitives/FontFamily.h>
+
 #include <functional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -12,6 +16,17 @@ struct AppConfig {
 	// ========== Window Settings ==========
 	const char* windowTitle = "WorldSim Application";
 	float windowSizePercent = 0.8F; // Percent of screen size
+
+	// ========== Fonts (required) ==========
+
+	/// The game's font atlases, each a family with its PNG and JSON as paths relative to
+	/// the exe, which AppLauncher finds through findResource. A static table (worldsim's is
+	/// UI::kFontAtlases); only the span is kept.
+	std::span<const Renderer::FontAtlasSource> fontAtlases;
+
+	/// The family text that names none draws with; one of fontAtlases. Without it there is
+	/// no text, so startup fails, as it does when fontAtlases is empty.
+	Renderer::FontFamily defaultFont = Renderer::FontFamily::Default;
 
 	// ========== Debug Server (optional) ==========
 	bool enableDebugServer = false;

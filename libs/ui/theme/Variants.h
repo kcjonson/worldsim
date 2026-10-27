@@ -6,23 +6,14 @@
 // share the same notion of "warn" or "small"). toneColor resolves a tone to a
 // UI token; Auto picks by value using the prototype's thresholds.
 
-#include "theme/Tokens.h"
 #include "graphics/Color.h"
-#include "primitives/FontFamily.h"
+#include "theme/Fonts.h"
+#include "theme/Tokens.h"
 
 namespace UI {
 
 	enum class Tone { Accent, Data, Ok, Warn, Crit, Auto, Default };
 	enum class Size { Sm, Md, Lg };
-
-	// The font families this game loads (AppLauncher hands their atlases to the
-	// FontRenderer). fontDefault is Roboto, what text that names no family is drawn
-	// and measured with. The Salvage typeface roles: Display = titles/values/labels,
-	// UI = body/units, Mono = kickers/numeric meters/badges/keycaps/dividers/eyebrows.
-	inline constexpr Renderer::FontFamily fontDefault{0};
-	inline constexpr Renderer::FontFamily fontDisplay{1};
-	inline constexpr Renderer::FontFamily fontUi{2};
-	inline constexpr Renderer::FontFamily fontMono{3};
 
 	// Resolve a tone to its token color. For Auto, value (0..1) picks the band:
 	// <0.25 crit, <0.50 warn, else ok (matches Meter.tsx).

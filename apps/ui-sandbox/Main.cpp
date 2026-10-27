@@ -11,6 +11,7 @@
 #include <debug/UiTreeSerializer.h>
 #include <primitives/Primitives.h>
 #include <scene/SceneManager.h>
+#include <theme/Fonts.h>
 #include <utils/Log.h>
 
 #include <optional>
@@ -56,6 +57,8 @@ int main(int argc, char* argv[]) {
 	engine::AppConfig config{
 		.windowTitle = "UI Sandbox",
 		.windowSizePercent = 0.8F,
+		.fontAtlases = UI::kFontAtlases,
+		.defaultFont = UI::fontDefault,
 		.enableDebugServer = true,
 		.debugServerPort = 8090,
 		.enableMetrics = true,

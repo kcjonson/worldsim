@@ -92,8 +92,9 @@ add_subdirectory(tools/generate_sdf_atlas)
 # source font changes; the JSON metadata regenerates deterministically.
 #
 # Each entry is "AtlasBaseName:SourceTTF". The atlas base names must match
-# kFontAtlases in libs/engine/application/AppLauncher.cpp, which hands the atlases to
-# salal's FontRenderer; salal ships no fonts, so this repo supplies them beside each exe.
+# kFontAtlases in libs/ui/theme/Fonts.h, which each app hands to salal's FontRenderer
+# through AppConfig; salal ships no fonts, so this repo makes them here and each app's
+# CMakeLists.txt copies fonts/ beside its exe.
 set(SDF_FONT_ATLASES
     "Roboto-SDF:Roboto-Regular.ttf"
     "ChakraPetch-SDF:ChakraPetch-SemiBold.ttf"
