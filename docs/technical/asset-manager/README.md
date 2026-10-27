@@ -96,7 +96,7 @@ The pieces all exist and this is assembly:
 
 ### Headless context and minimal init
 
-The CLI creates a hidden window (`glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE)`) plus GLEW, exactly as the `RenderToTexture` test does, then initializes only what the render path needs: the renderer's shader/primitive setup and the asset registry (including `setSharedScriptsPath`, or every `@shared/` Lua def fails to resolve). It does not create scenes, a debug server, or fonts.
+The CLI creates a hidden window (`glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE)`) and hands `Primitives::init` a `GLBackend::create()` on its context (the backend initializes GLEW), then initializes only what the render path needs: the renderer's shader/primitive setup and the asset registry (including `setSharedScriptsPath`, or every `@shared/` Lua def fails to resolve). It does not create scenes, a debug server, or fonts.
 
 `AppLauncher::initializeRenderingSystems` still bundles the rendering-primitive init with a full app; the asset half is already `engine::assets::initializeAssetSystem`, which the CLI can call without `AppLauncher`. Factor the rendering-primitive init into a reusable function the CLI can call the same way. This is a refactor of existing code, not new behavior.
 
