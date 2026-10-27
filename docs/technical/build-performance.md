@@ -91,8 +91,10 @@ Local before/after timings: see Results below.
 
 ### Local (Windows and macOS)
 
-- **Presets:** `windows` = Ninja Multi-Config, MSVC (`cl` pinned), ccache launcher, embedded
-  debug info for Debug/RelWithDebInfo. `default` (macOS/Linux) = Ninja, ccache launcher.
+- **Presets:** `windows` = Ninja Multi-Config, MSVC (`CC`/`CXX=cl` in the preset's environment,
+  which CMake reads only on a fresh build dir, so reconfiguring keeps the cache), ccache
+  launcher, embedded debug info for Debug/RelWithDebInfo. `default` (macOS/Linux) = Ninja,
+  ccache launcher.
   Previously the default preset had no generator at all, so macOS used serial Makefiles.
   `binaryDir` stays `build/`; all documented commands and per-config output paths are
   unchanged.
