@@ -355,7 +355,7 @@ Use this template for all work items:
   - [x] getSurfaceFamily() and getHardEdgeMaskByFamily()
   - [x] getSurfaceStackOrder() for blend direction
 - [x] Shader Integration
-  - [x] uber.frag tile render mode (kRenderModeTile = -3.0)
+  - [x] base.frag tile render mode (kRenderModeTile = -3.0)
   - [x] tile.glsl with blend weight functions
   - [x] Early-out optimizations for interior tiles/pixels
 - [x] ChunkRenderer Integration

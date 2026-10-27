@@ -148,7 +148,7 @@ glDrawElementsInstanced(GL_TRIANGLES, indexCount, GL_UNSIGNED_SHORT,
 Wind animation computed entirely on GPU.
 
 ```glsl
-// uber.vert additions
+// base.vert additions
 uniform float u_time;
 in vec4 a_instanceData;   // position.xy, rotation, phase
 in vec4 a_instanceData2;  // scale, color.rgb
@@ -246,7 +246,7 @@ void renderFlora(const std::vector<FloraInstance>& instances) {
 | File | Changes |
 |------|---------|
 | `libs/renderer/primitives/BatchRenderer.h/cpp` | Instanced rendering |
-| `libs/renderer/shaders/uber.vert` | Instance attributes, wind animation |
+| `libs/renderer/shaders/base.vert` | Instance attributes, wind animation |
 | `apps/ui-sandbox/scenes/GrassInstancedScene.cpp` | New demo |
 
 ### Phase 3 (Tiered System)

@@ -433,7 +433,7 @@ When a plan file is confirmed complete (has `# COMPLETE` on first line), archive
 
 1. **Move the file** from `.claude/plans/` (or `~/.claude/plans/` for global plans) to `/docs/development-log/plans/`
 2. **Rename with date prefix**: `YYYY-MM-DD-{original-name}.md`
-   - Example: `uber-shader.md` → `2025-12-18-uber-shader.md`
+   - Example: `clipping-system.md` → `2025-12-18-clipping-system.md`
 3. **Create the plans directory** if it doesn't exist: `/docs/development-log/plans/`
 
 This keeps completed plans discoverable alongside the development log while cleaning up the active plans folder.

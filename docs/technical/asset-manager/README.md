@@ -234,7 +234,7 @@ The `render` and `validate --render-smoke` commands need the hidden GL context a
 ## Build integration
 
 - `apps/asset-manager/CMakeLists.txt` modeled on `ui-sandbox`: `add_executable`, link `engine ui renderer foundation assets planet-view world`, the POST_BUILD copies for `shaders/`, `fonts/`, and `assets/`, and `add_dependencies(asset-manager font-atlas)`.
-- `apps/asset-cli/CMakeLists.txt` minimal: link `assets renderer foundation` plus GLFW/GLEW/OpenGL and `nlohmann_json::nlohmann_json`, copy `shaders/` and `assets/` (it needs the uber shader and the asset tree; it does not need fonts).
+- `apps/asset-cli/CMakeLists.txt` minimal: link `assets renderer foundation` plus GLFW/GLEW/OpenGL and `nlohmann_json::nlohmann_json`, copy `shaders/` and `assets/` (it needs the base shader and the asset tree; it does not need fonts).
 - Register both with `add_subdirectory` in the top-level `CMakeLists.txt` after the libs.
 
 ## Testing and CI

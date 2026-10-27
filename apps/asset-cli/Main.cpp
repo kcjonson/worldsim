@@ -146,9 +146,9 @@ namespace {
 			return false;
 		}
 		glfwMakeContextCurrent(g_window);
-		// Fail loudly if the uber shader isn't reachable, rather than letting the
+		// Fail loudly if the base shader isn't reachable, rather than letting the
 		// render silently produce a blank (shader-less) image.
-		if (Foundation::findResourceString("shaders/uber.vert").empty()) {
+		if (Foundation::findResourceString("shaders/base.vert").empty()) {
 			std::cerr << "error: could not find shaders/ next to the executable; cannot render\n";
 			glfwDestroyWindow(g_window);
 			glfwTerminate();

@@ -300,7 +300,7 @@ class FrameTimeGraph {
 
 1. **Better Batching**: Reduce material variety
 2. **Texture Atlasing**: Pack more textures
-3. **Uber Shader**: Single shader for all materials
+3. **Single shader**: One program for all materials
 
 ### If GPU Rendering is Bottleneck (>6ms):
 

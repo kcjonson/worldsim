@@ -19,7 +19,7 @@ target_link_libraries(asset-cli
         nlohmann_json::nlohmann_json
 )
 
-# The render command needs the uber shader next to the exe; mirror the staged
+# The render command needs the base shader next to the exe; mirror the staged
 # shaders on every build. The mirror reads the whole staging directory, so it
 # waits for every staging target, not just salal_renderer_shaders (see apps/world-sim/CMakeLists.txt).
 add_custom_target(asset-cli-shaders ALL

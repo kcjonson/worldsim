@@ -491,7 +491,7 @@ class TessellationArena {
 1. **Batching**: Group by material/texture
 2. **Texture Atlases**: Reduce texture switches
 3. **Instancing**: Identical objects (limited use case)
-4. **Uber Shaders**: Minimize shader switches
+4. **One shader program**: Minimize shader switches
 
 **Memory Optimization**:
 1. **Memory Arenas**: Eliminate per-frame allocations

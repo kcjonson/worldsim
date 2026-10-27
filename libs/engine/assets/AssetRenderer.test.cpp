@@ -33,8 +33,8 @@ namespace {
 			.parent_path(); // project root
 	}
 
-	// Make "shaders/uber.vert" resolvable from the working directory so
-	// Primitives::init can load the uber shader. Returns false if not found.
+	// Make "shaders/base.vert" resolvable from the working directory so
+	// Primitives::init can load the base shader. Returns false if not found.
 	bool ensureShadersResolvable() {
 		namespace fs = std::filesystem;
 		const std::vector<fs::path> candidates = {
@@ -44,7 +44,7 @@ namespace {
 		};
 		for (const auto& c : candidates) {
 			std::error_code ec;
-			if (fs::exists(c / "shaders" / "uber.vert", ec)) {
+			if (fs::exists(c / "shaders" / "base.vert", ec)) {
 				fs::current_path(c, ec);
 				return !ec;
 			}
