@@ -189,8 +189,8 @@ void handleConfigError() {
     LOG_ERROR(Game, "Config errors:\n%s", errorMsg.c_str());
 
     // ESC returns to menu
-    if (InputManager::Get().isKeyPressed(Key::Escape)) {
-        sceneManager->switchTo(SceneType::MainMenu);
+    if (engine::key(frame.input, foundation::Key::Escape).pressed()) {
+        owner->scenes().switchTo(world_sim::scenes::MainMenu.name);
     }
 }
 ```

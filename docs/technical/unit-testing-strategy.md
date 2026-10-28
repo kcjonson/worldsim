@@ -453,68 +453,23 @@ BM_ArenaVsMalloc/1/128     12.5 ns         12.5 ns     56000000   Arena
 #### 2.3 Engine Library - Functional Tests
 
 **Priority tests:**
-- Application lifecycle (with mocked GLFW)
-- Scene management (creation, switching, destruction)
+- The ui bridge onto salal's app (the frame, the scene stack and the window are salal's, tested there)
 - ECS basics (entity creation, component storage)
 
 **Mocking Strategy:**
-- GLFW: Create `MockWindow` interface
-- OpenGL: Use function pointers for testing
+- Window and GL: salal's `app::HeadlessPlatform` (no window, `NullBackend`, a `ManualClock`)
 - File I/O: Inject file system interface
 
-**Example:** `libs/engine/scene/scene_manager.test.cpp`
+**Example:** `libs/engine/app/UiBridge.test.cpp` runs a real `app::App` on the headless platform,
+pushes input events, ticks one frame and checks what reached a recording scene:
 
 ```cpp
-#include <gtest/gtest.h>
-#include "engine/scene/scene.h"
-
-class TestScene : public IScene {
-public:
-    bool initCalled = false;
-    bool updateCalled = false;
-    bool renderCalled = false;
-    float lastDeltaTime = 0.0f;
-
-    void Init() override {
-        initCalled = true;
-    }
-
-    void HandleInput(GLFWwindow* window) override {
-        // No-op for test
-    }
-
-    void Update(float deltaTime) override {
-        updateCalled = true;
-        lastDeltaTime = deltaTime;
-    }
-
-    void Render() override {
-        renderCalled = true;
-    }
-};
-
-TEST(SceneTests, Lifecycle) {
-    TestScene scene;
-
-    scene.Init();
-    EXPECT_TRUE(scene.initCalled);
-
-    scene.Update(0.016f);
-    EXPECT_TRUE(scene.updateCalled);
-    EXPECT_FLOAT_EQ(scene.lastDeltaTime, 0.016f);
-
-    scene.Render();
-    EXPECT_TRUE(scene.renderCalled);
-}
-
-TEST(SceneTests, MultipleUpdates) {
-    TestScene scene;
-    scene.Init();
-
-    scene.Update(0.016f);
-    scene.Update(0.033f);
-
-    EXPECT_FLOAT_EQ(scene.lastDeltaTime, 0.033f);
+TEST_F(UiBridgeTest, ADragInOneFrameKeepsItsPath) {
+    push(pointer(Type::PointerDown, 100, 100));
+    push(pointer(Type::PointerMove, 300, 300));
+    push(pointer(Type::PointerUp, 300, 300));
+    frame();
+    EXPECT_EQ(log, (Log{"move 100,100", "down L 100,100", "move 300,300", "up L 300,300", "move 300,300"}));
 }
 ```
 

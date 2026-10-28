@@ -506,7 +506,7 @@ Every library uses logging for diagnostics:
 - `libs/ui/` - UI events and rendering
 - `libs/world/` - World generation
 - `libs/game-systems/` - Chunk loading, tile processing
-- `libs/engine/` - Scene management, ECS
+- `libs/engine/` - ECS, world, assets, the ui bridge onto salal's app
 
 ### Configuration
 **Location**: `assets/config/logging.json`

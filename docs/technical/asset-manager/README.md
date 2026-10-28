@@ -35,7 +35,7 @@ libs/ui                       (extended)
   - GridContainer                new: wrapping, virtualized grid
 apps/asset-manager            (new, GUI)   links: engine ui renderer foundation assets planet-view world
 apps/asset-cli                (new, CLI)   links: assets renderer foundation glfw glew opengl nlohmann_json
-libs/engine/application       (refactor)
+apps/*/Main.cpp              (refactor; was libs/engine/application, now on salal's app)
   - async asset load + splash progress + load report
 ```
 
@@ -92,13 +92,13 @@ The pieces all exist and this is assembly:
 - **Offscreen target:** `renderer::RenderToTexture` (an RGBA8 texture + framebuffer with `begin()`/`end()`). It exists and is tested but is wired into nothing in production; the Asset Manager is its first real consumer. It has no readback or PNG helper, so we add those.
 - **Submission:** the same `BatchRenderer` path the game and the GUI use, pointed at the bound FBO.
 - **Projection caveat (must handle):** `BatchRenderer::flush()` builds its projection from either a `CoordinateSystem` (window and DPI based) or fallback `viewportWidth/viewportHeight` members (BatchRenderer.cpp:384-389). Window-based projection is wrong for an off-size FBO. The headless path must drive the projection to the FBO dimensions: either set the batcher's viewport members to `w,h` with no coordinate system, or configure a coordinate system describing the FBO. Geometry prep already places vertices in target-rect pixel space, so the projection is a plain `ortho(0, w, h, 0)`.
-- **Readback + encode:** `glReadPixels`/`glGetTexImage`, vertical flip (GL origin is bottom-left, PNG is top-left), then `stb_image_write`. The flip-and-encode logic already exists in `DebugServer::captureScreenshotIfRequested` and should be factored into a small shared helper rather than copied.
+- **Readback + encode:** `glReadPixels`/`glGetTexImage`, vertical flip (GL origin is bottom-left, PNG is top-left), then `stb_image_write`. The flip-and-encode logic is salal's `Renderer::flipRowsRGBA` and `writePngToFile` (`<PngEncoder.h>`), shared with the dev server's screenshot.
 
 ### Headless context and minimal init
 
 The CLI creates a hidden window (`glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE)`) and hands `Primitives::init` a `GLBackend::create()` on its context (the backend initializes GLEW), then initializes only what the render path needs: the renderer's primitive setup, with the base shader `engine` compiles in (`base_shader::source()`), and the asset registry (including `setSharedScriptsPath`, or every `@shared/` Lua def fails to resolve). It does not create scenes, a debug server, or fonts.
 
-`AppLauncher::initializeRenderingSystems` still bundles the rendering-primitive init with a full app; the asset half is already `engine::assets::initializeAssetSystem`, which the CLI can call without `AppLauncher`. Factor the rendering-primitive init into a reusable function the CLI can call the same way. This is a refactor of existing code, not new behavior.
+The GUI apps get their rendering-primitive init from salal's `App::create`; the asset half is `engine::assets::initializeAssetSystem`, which the CLI calls without an App. The CLI does the primitive init itself, on its hidden window. This is a refactor of existing code, not new behavior.
 
 Because the CLI is a short-lived, server-less process with its own context, N invocations run in parallel up to GPU and CPU limits. The one cross-process constraint to respect: do not bind the fixed debug port from the CLI.
 
@@ -266,7 +266,7 @@ Named explicitly because each is an easy wrong turn.
 
 Phased so each piece lands behind its own tests. The first three phases are independent of the GUI and unblock agents and CI early.
 
-1. **Shared render path.** `computeBounds`/`fitToRect` in `renderer`; geometry prep (`prepareAsset`/`prepareSamples`) in `assets`; `AssetRenderer` (`renderToPixels`/`renderToPng`) over `RenderToTexture` with the FBO projection override and the factored flip-and-encode helper; the minimal headless init factored out of `AppLauncher`.
+1. **Shared render path.** `computeBounds`/`fitToRect` in `renderer`; geometry prep (`prepareAsset`/`prepareSamples`) in `assets`; `AssetRenderer` (`renderToPixels`/`renderToPng`) over `RenderToTexture` with the FBO projection override and the factored flip-and-encode helper; the minimal headless init the CLI does without an App.
 2. **Validation in the loader.** `AssetValidator` and `ValidationReport`; harden the loader to record coercions, ignored fields, duplicate defNames, name/folder mismatches, unresolved references, and orphans during the load; the render smoke test as a separate pass.
 3. **CLI.** `apps/asset-cli` with list, search, inspect, validate, render; JSON output; exit codes; build integration.
 4. **Async loading and splash.** The startup refactor: async load on a worker thread, `LoadProgress`, splash progress UI, load-complete and error-gate transitions, and the load-report scene.

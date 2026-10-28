@@ -409,11 +409,11 @@ struct Button : IFocusable {
 
     Button() {
         // Register with auto tab index
-        Application::GetFocusManager().RegisterFocusable(this, -1);
+        FocusManager::Get().registerFocusable(this, -1);
     }
 
     ~Button() {
-        Application::GetFocusManager().UnregisterFocusable(this);
+        FocusManager::Get().unregisterFocusable(this);
     }
 
     void OnFocusGained() override {
@@ -459,15 +459,15 @@ struct ConfirmDialog {
             &cancelButton,
             &okButton
         };
-        Application::GetFocusManager().PushFocusScope(modalComponents);
+        FocusManager::Get().pushFocusScope(modalComponents);
 
         // Focus first button
-        Application::GetFocusManager().SetFocus(&okButton);
+        FocusManager::Get().setFocus(&okButton);
     }
 
     void Close() {
         // Pop scope (restores focus to previous element)
-        Application::GetFocusManager().PopFocusScope();
+        FocusManager::Get().popFocusScope();
     }
 };
 ```
@@ -476,14 +476,14 @@ struct ConfirmDialog {
 
 ```cpp
 // Scene with specific tab order
-struct FormScene : IScene {
+struct FormScene : engine::UiScene {
     Button submitButton;
     TextInput nameInput;
     TextInput emailInput;
     Button cancelButton;
 
     void Init() override {
-        auto& fm = Application::GetFocusManager();
+        auto& fm = FocusManager::Get();
 
         // Explicit tab order: name -> email -> submit -> cancel
         fm.RegisterFocusable(&nameInput, 0);

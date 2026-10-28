@@ -105,18 +105,20 @@ class UiScene : public app::Scene {
 ### The Bridge Creates Events
 
 `engine::UiBridge` (`libs/engine/app/UiBridge.cpp`) is the App's dispatch, so it runs once a
-frame, after the frame's input is read and before scene changes and update. Unless the App is
-paused it builds the events from `app.input().frame()` and sends each through the overlays,
-last added first, then the top scene, stopping at the first that consumes it:
+frame, after the frame's input is read and before scene changes and update. It walks the frame's
+events (`app.input().events()`) in order, and unless the App is paused it sends each of these
+through the overlays, last added first, then the top scene, stopping at the first that consumes it:
 
-- a `MouseMove` at the frame's pointer every frame, so hover holds under a still cursor;
-- `MouseDown` for a Left or Right press since the last frame, then `MouseUp` for a release;
-- a `Scroll` with the last wheel delta, sent every frame until something consumes it. GameScene
-  zooms the camera with what's left (`UiBridge::consumeScroll`), so a scroll a list takes doesn't
-  zoom too.
+- for a Left or Right press or release, a `MouseMove` at the event's position, then the
+  `MouseDown` or `MouseUp` there, so a drag or two clicks inside one frame keep their path;
+- for a wheel event, a `Scroll` with its delta at its position. One nothing consumes is sent
+  again every frame until something does; GameScene zooms the camera with what's left
+  (`UiBridge::consumeScroll`), so a scroll a list takes doesn't zoom too.
 
-Modifiers come from the Shift, Control and Alt keys held. Keys and characters don't become
-InputEvents: they go to the `FocusManager`, paused or not (see focus-management.md).
+After the events, a `MouseMove` at the frame's pointer, every frame, so hover holds under a still
+cursor; none until some event has carried a pointer position. Modifiers come from the Shift,
+Control and Alt keys held. Keys and characters don't become InputEvents: they go to the
+`FocusManager` in their place among the events, paused or not (see focus-management.md).
 
 ### Scene Dispatches to Components
 

@@ -188,11 +188,11 @@ Scenes run on salal's scene stack (`app::Scene`) through worldsim's `engine::UiS
    } // namespace
 
    namespace ui_sandbox::scenes {
-   	extern const ui_sandbox::SceneInfo NewScene = {kSceneName, []() { return std::make_unique<::NewScene>(); }};
+   	extern const ui_sandbox::SceneInfo New = {kSceneName, []() { return std::make_unique<NewScene>(); }};
    }
    ```
 
-2. **Add it to the scene list**: `X(NewScene)` in `UI_SANDBOX_SCENES` (`apps/ui-sandbox/SceneTypes.h`).
+2. **Add it to the scene list**: `X(New)` in `UI_SANDBOX_SCENES` (`apps/ui-sandbox/SceneTypes.h`).
    It's added to the stack under its name, shows in the navigation menu, and
    `--scene=new_scene` or `/api/control?action=scene&scene=new_scene` starts in it.
 
@@ -230,8 +230,8 @@ Full protocol: `/docs/technical/debugging-strategy.md`
 
 ### Using the Developer Client
 
-1. **Start application** (ui-sandbox or world-sim)
-2. **Open browser** to `http://localhost:8080` (or 8081/8082)
+1. **Start application** (world-sim, ui-sandbox or asset-manager; a Debug or RelWithDebInfo build, which has the dev server)
+2. **Open** the client's static page, `build/developer-client/index.html` (see `apps/developer-client/README.md`); it connects to world-sim on 8081 by default (ui-sandbox is 8090, asset-manager 8070)
 3. **View real-time metrics:**
    - Frame time graph
    - Memory usage

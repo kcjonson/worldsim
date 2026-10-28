@@ -51,10 +51,11 @@ The observability system provides real-time monitoring and inspection capabiliti
 - Multiple stream endpoints (metrics, logs, UI, events)
 - Compile-time exclusion in Release builds
 
-**Ports:**
-- 8080: Game server
-- 8081: ui-sandbox
-- 8082: Main game client
+**Ports** (each app's dev server, salal's `app::DevServer`, in Debug and RelWithDebInfo builds):
+- 8081: world-sim
+- 8090: ui-sandbox
+- 8070: asset-manager
+- 8080, 8082: planned for the game server and the networked client
 
 ### [Developer Client](./developer-client.md)
 **External TypeScript/Vite web application**
@@ -135,8 +136,8 @@ cmake --build build
 # Run application (developer server auto-starts)
 ./build/apps/ui-sandbox/ui-sandbox
 
-# Open developer client in browser
-open http://localhost:8081
+# Open the developer client (a static page) and point it at port 8090
+open build/developer-client/index.html
 
 # Enable UI hover inspection (F3 in application)
 # See hover data in developer client
@@ -145,17 +146,16 @@ open http://localhost:8081
 ### Viewing Different Applications
 
 ```bash
-# Game server (port 8080)
-./build/apps/game-server/world-sim-server
-open http://localhost:8080
-
-# ui-sandbox (port 8081)
-./build/apps/ui-sandbox/ui-sandbox
-open http://localhost:8081
-
-# Main game client (port 8082)
+# world-sim (port 8081)
 ./build/apps/world-sim/world-sim
-open http://localhost:8082
+
+# ui-sandbox (port 8090)
+./build/apps/ui-sandbox/ui-sandbox
+
+# asset-manager (port 8070)
+./build/apps/asset-manager/asset-manager
+
+# Each answers on its port; the developer client (build/developer-client/index.html) connects to one
 ```
 
 ## Design Principles

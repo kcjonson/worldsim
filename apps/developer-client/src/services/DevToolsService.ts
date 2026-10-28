@@ -1,10 +1,11 @@
-// DevToolsService - sends dev/test commands and reads world state from the debug server.
+// DevToolsService - sends dev/test commands and reads world state from the game's dev server.
 //
 // Unlike ServerConnection (which holds SSE streams), this issues one-shot fetch() requests:
-// the dev verbs queue actions (/api/dev/<verb>) and the state endpoint reads back a JSON
-// snapshot (/api/state). The debug server sets CORS '*', so this works from the static
-// file:// page (this is a static build, not a served app). Dev-build only -- the debug
-// server that serves these is dev-only.
+// the dev verbs (/api/dev/<verb>) run at the start of the game's next frame and answer with
+// their result, and the state endpoint reads back a JSON snapshot after it renders
+// (/api/state). Both are the game scene's: elsewhere they answer 404. The dev server sets
+// CORS '*', so this works from the static file:// page (this is a static build, not a served
+// app). Debug and RelWithDebInfo builds only: a Release build has no dev server.
 
 export interface DevResult {
   ok: boolean;

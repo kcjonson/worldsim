@@ -198,7 +198,7 @@ ctest --test-dir build --output-on-failure
 
 # Run UI sandbox
 ./build/apps/ui-sandbox/ui-sandbox --help
-./build/apps/ui-sandbox/ui-sandbox --component button --http-port 8080
+./build/apps/ui-sandbox/ui-sandbox --scene=button   # dev server on 8090
 ```
 
 ## Code Quality
