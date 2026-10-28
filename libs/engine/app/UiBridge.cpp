@@ -9,8 +9,7 @@
 
 #include <application/App.h>
 
-#include <array>
-#include <cstddef>
+#include <ranges>
 
 namespace engine {
 
@@ -18,8 +17,7 @@ namespace engine {
 
 		using foundation::Key;
 		using foundation::MouseButton;
-
-		constexpr std::array kButtons{MouseButton::Left, MouseButton::Right};
+		using EventType = foundation::InputEvent::Type;
 
 		// UI::InputEvent's modifier bits (GLFW's), from the keys held now.
 		int heldModifiers(const foundation::InputSnapshot& input) {
@@ -37,24 +35,6 @@ namespace engine {
 				mods |= foundation::ModAlt;
 			}
 			return mods;
-		}
-
-		// A button's edges since the last frame, at most two: an odd count of transitions gives the one
-		// edge to where it is now, an even count the edge away and the one back.
-		struct Edges {
-			bool down = false;
-			bool up = false;
-			bool upFirst = false; // released and pressed again
-		};
-
-		Edges edgesOf(const foundation::ButtonState& button) {
-			if (button.transitions == 0) {
-				return {};
-			}
-			if (button.transitions % 2 == 1) {
-				return {.down = button.down, .up = !button.down};
-			}
-			return {.down = true, .up = true, .upFirst = button.down};
 		}
 
 	} // namespace
@@ -89,23 +69,49 @@ namespace engine {
 	}
 
 	void UiBridge::dispatch() {
+		const bool paused = owner.paused();
+		const int  mods = heldModifiers(owner.input().frame());
+		bool	   scrolled = false;
 		for (const foundation::InputEvent& event : owner.input().events()) {
 			switch (event.type) {
-				case foundation::InputEvent::Type::KeyDown:
+				case EventType::KeyDown:
 					routeKey(event);
 					break;
-				case foundation::InputEvent::Type::Char:
+				case EventType::Char:
 					focus.routeCharInput(event.codepoint);
 					break;
-				case foundation::InputEvent::Type::Scroll:
+				case EventType::PointerMove:
+					pointerSeen = true;
+					break;
+				case EventType::PointerDown:
+				case EventType::PointerUp:
+					pointerSeen = true;
+					if (!paused) {
+						sendButton(event, mods);
+					}
+					break;
+				case EventType::Scroll:
+					pointerSeen = true;
 					scrollDelta = event.scroll.y;
+					if (!paused && scrollDelta != 0.0F) {
+						scrolled = true;
+						if (sendScroll(event.position)) {
+							scrollDelta = 0.0F;
+						}
+					}
 					break;
 				default:
 					break;
 			}
 		}
-		if (!owner.paused()) {
-			dispatchPointer(owner.input().frame());
+		if (paused || !pointerSeen) {
+			return;
+		}
+		const Foundation::Vec2 pointer = owner.input().frame().pointer;
+		UI::InputEvent		   move = UI::InputEvent::mouseMove(pointer, mods);
+		send(move);
+		if (!scrolled && scrollDelta != 0.0F && sendScroll(pointer)) {
+			scrollDelta = 0.0F;
 		}
 	}
 
@@ -129,54 +135,42 @@ namespace engine {
 		focus.routeKeyInput(event.key, shift, ctrl, alt);
 	}
 
-	void UiBridge::dispatchPointer(const foundation::InputSnapshot& input) {
-		const Foundation::Vec2 position = input.pointer;
-		const int			   mods = heldModifiers(input);
-
-		UI::InputEvent move = UI::InputEvent::mouseMove(position, mods);
+	// A Left or Right press or release at its own position, with a move there first.
+	void UiBridge::sendButton(const foundation::InputEvent& event, int mods) {
+		if (event.mouseButton != MouseButton::Left && event.mouseButton != MouseButton::Right) {
+			return;
+		}
+		UI::InputEvent move = UI::InputEvent::mouseMove(event.position, mods);
 		send(move);
+		UI::InputEvent edge = event.type == EventType::PointerDown ? UI::InputEvent::mouseDown(event.position, event.mouseButton, mods)
+																   : UI::InputEvent::mouseUp(event.position, event.mouseButton, mods);
+		send(edge);
+	}
 
-		// Presses, then releases.
-		for (const MouseButton button : kButtons) {
-			const Edges edges = edgesOf(input.mouse[static_cast<std::size_t>(button)]);
-			if (!edges.down) {
-				continue;
-			}
-			if (edges.upFirst) {
-				UI::InputEvent up = UI::InputEvent::mouseUp(position, button, mods);
-				send(up);
-			}
-			UI::InputEvent down = UI::InputEvent::mouseDown(position, button, mods);
-			send(down);
-		}
-		for (const MouseButton button : kButtons) {
-			const Edges edges = edgesOf(input.mouse[static_cast<std::size_t>(button)]);
-			if (edges.up && !edges.upFirst) {
-				UI::InputEvent up = UI::InputEvent::mouseUp(position, button, mods);
-				send(up);
-			}
-		}
-
-		if (scrollDelta != 0.0F) {
-			UI::InputEvent scroll = UI::InputEvent::scroll(position, scrollDelta);
-			if (send(scroll) || scroll.isConsumed()) {
-				scrollDelta = 0.0F;
-			}
-		}
+	// The pending scroll at `position`; true when something consumed it.
+	bool UiBridge::sendScroll(Foundation::Vec2 position) {
+		UI::InputEvent scroll = UI::InputEvent::scroll(position, scrollDelta);
+		return send(scroll) || scroll.isConsumed();
 	}
 
 	bool UiBridge::send(UI::InputEvent& event) {
-		for (auto it = overlays.rbegin(); it != overlays.rend(); ++it) {
-			if ((*it)->handleInput(event)) {
+		for (UiOverlay* overlay : std::views::reverse(overlays)) {
+			if (overlay->handleInput(event)) {
 				return true;
 			}
 		}
-		auto* scene = static_cast<UiScene*>(owner.scenes().top());
+		UiScene* scene = topScene();
 		return scene != nullptr && scene->handleInput(event);
 	}
 
+	// Every scene a worldsim app adds to the stack is a UiScene: the scene lists add UiSceneFactory
+	// factories only (UiScene.h).
+	UiScene* UiBridge::topScene() const {
+		return static_cast<UiScene*>(owner.scenes().top()); // NOLINT(cppcoreguidelines-pro-type-static-cast-downcast)
+	}
+
 	std::vector<const UI::IComponent*> UiBridge::uiRoots() const {
-		const auto* scene = static_cast<const UiScene*>(owner.scenes().top());
+		const UiScene* scene = topScene();
 		return scene != nullptr ? scene->getUiRoots() : std::vector<const UI::IComponent*>{};
 	}
 

@@ -1,17 +1,18 @@
 #pragma once
 
 // worldsim's ui on salal's App, until salal's ui brings its own dispatch. The bridge is the App's
-// dispatch (App::setDispatch), and each frame it turns app.input() into what the ui takes: the
-// frame's keys and characters go to the focus manager, paused or not; then, unless paused, the
-// overlays (last added first) and then the top scene get UI::InputEvents: a pointer move from the
-// frame's pointer, every frame, so hover holds under a still cursor; the Left and Right presses and
-// releases; and the last scroll, sent every frame until something consumes it. Their modifiers come
-// from the Shift, Control and Alt keys held, with no Super bit.
+// dispatch (App::setDispatch). Each frame it walks app.input().events() in order: keys and characters
+// go to the focus manager, paused or not, and unless paused each Left or Right press and release goes
+// to the overlays (last added first) and then the top scene as a UI::InputEvent at its own position,
+// with a move there first, and each wheel event as a scroll, which is sent again every frame until
+// something consumes it. Then, unless paused, a move at the frame's pointer, every frame, so hover
+// holds under a still cursor; there's none until an event has carried a pointer position. Modifiers
+// come from the Shift, Control and Alt keys held at the end of the frame, with no Super bit.
 //
 // It also gives the ui the App's clipboard and answers /api/ui/tree and /api/ui/lint from the top
 // scene's component roots at the logical viewport. Make one after App::create, before the first
 // frame, and destroy it after App::shutdown: components unregister from its focus manager as the
-// scenes and overlays go.
+// scenes and overlays go, and its focus manager and clipboard clear the ui's singletons as they go.
 
 #include "app/UiClipboard.h"
 #include "app/UiOverlay.h"
@@ -19,6 +20,7 @@
 #include <DevServer/DevServer.h>
 #include <focus/FocusManager.h>
 #include <input/InputTypes.h>
+#include <math/Types.h>
 
 #include <vector>
 
@@ -32,6 +34,8 @@ namespace UI {
 } // namespace UI
 
 namespace engine {
+
+	class UiScene;
 
 	class UiBridge {
 	  public:
@@ -53,9 +57,11 @@ namespace engine {
 	  private:
 		void dispatch();
 		void routeKey(const foundation::InputEvent& event);
-		void dispatchPointer(const foundation::InputSnapshot& input);
+		void sendButton(const foundation::InputEvent& event, int mods);
+		bool sendScroll(Foundation::Vec2 position);
 		bool send(UI::InputEvent& event);
 
+		UiScene*						   topScene() const;
 		std::vector<const UI::IComponent*> uiRoots() const;
 
 		app::App&					 owner;
@@ -63,6 +69,7 @@ namespace engine {
 		UiClipboard					 clipboard;
 		std::vector<UiOverlay*>		 overlays;
 		float						 scrollDelta = 0.0F; // the last wheel event's, until something consumes it
+		bool						 pointerSeen = false;
 		app::DevServer::Registration uiTree;
 		app::DevServer::Registration uiLint;
 	};

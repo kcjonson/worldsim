@@ -9,7 +9,7 @@
 namespace engine {
 
 	inline const foundation::ButtonState& key(const foundation::InputSnapshot& input, foundation::Key which) {
-		return input.keys[static_cast<std::size_t>(which)];
+		return input.keys.at(static_cast<std::size_t>(which));
 	}
 
 } // namespace engine
