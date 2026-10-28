@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <initializer_list>
 #include <map>
 #include <memory>
 #include <set>
@@ -221,6 +222,18 @@ class BrowserScene : public engine::UiScene {
 
 	std::string exportState() const override { return R"({"scene": "browser", "selected": ")" + m_selected + "\"}"; }
 	const char* name() const override { return kSceneName; }
+
+	// The top bar and the tree; the detail pane draws its own and isn't a component tree.
+	std::vector<const UI::IComponent*> getUiRoots() const override {
+		std::vector<const UI::IComponent*> roots;
+		for (const UI::IComponent* component :
+			 std::initializer_list<const UI::IComponent*>{m_search.get(), m_reload.get(), m_summary.get(), m_treeScroll.get()}) {
+			if (component != nullptr) {
+				roots.push_back(component);
+			}
+		}
+		return roots;
+	}
 
   private:
 	void refreshNames() {
