@@ -79,6 +79,7 @@ add_executable(world-sim
     scenes/landing/LandingSiteDetailsModel.cpp
     scenes/landing/LandingSiteDetailsPanel.cpp
     scenes/loading/GameLoadingScene.cpp
+    scenes/game/dev/CameraCommand.cpp
     scenes/game/dev/DevCommandHandler.cpp
     scenes/game/GameScene.cpp
     scenes/settings/SettingsScene.cpp
@@ -142,3 +143,25 @@ add_custom_target(world-sim-assets ALL
 
 # Make world-sim depend on the shader and asset mirrors so they are in place before running
 add_dependencies(world-sim world-sim-assets world-sim-shaders)
+
+# world-sim's own pure code, which no library's test target reaches
+if(BUILD_TESTING)
+    find_package(GTest CONFIG REQUIRED)
+    add_executable(world-sim-tests
+        scenes/game/dev/CameraCommand.cpp
+        scenes/game/dev/CameraCommand.test.cpp
+    )
+    target_include_directories(world-sim-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_features(world-sim-tests PRIVATE cxx_std_20)
+    target_link_libraries(world-sim-tests
+        PRIVATE
+            GTest::gtest
+            GTest::gtest_main
+    )
+    if(MSVC)
+        target_compile_options(world-sim-tests PRIVATE /Od)
+    else()
+        target_compile_options(world-sim-tests PRIVATE -O0 -g)
+    endif()
+    add_test(NAME world-sim-tests COMMAND world-sim-tests)
+endif()

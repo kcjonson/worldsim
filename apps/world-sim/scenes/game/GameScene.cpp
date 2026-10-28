@@ -3,15 +3,16 @@
 #include "GameWorldState.h"
 #include "NewGameSetup.h"
 #include "SceneTypes.h"
+#include "scenes/game/dev/CameraCommand.h"
 #include "scenes/game/dev/DevCommandHandler.h"
 #include "scenes/game/ui/GameUI.h"
 #include "scenes/game/world/construction/DrawingSystem.h"
 #include "scenes/game/world/nav/NavOverlay.h"
-#include "scenes/game/world/vision/VisionOverlay.h"
 #include "scenes/game/world/placement/PlacementSystem.h"
 #include "scenes/game/world/rooms/RoomOverlay.h"
-#include "scenes/game/world/terrain/TerrainPolygonOverlay.h"
 #include "scenes/game/world/selection/SelectionSystem.h"
+#include "scenes/game/world/terrain/TerrainPolygonOverlay.h"
+#include "scenes/game/world/vision/VisionOverlay.h"
 
 #include <assets/ConstructionRegistry.h>
 
@@ -557,8 +558,7 @@ namespace {
 			// Remote camera control (/api/control?action=camera), applied in update like held keys
 			m_devRegistrations.push_back(owner->devServer().control("camera", [this](const app::DevRequest& request) {
 				const char*									  error = nullptr;
-				const std::optional<world_sim::CameraCommand> command =
-					world_sim::DevCommandHandler::parseCameraCommand(request.params, error);
+				const std::optional<world_sim::CameraCommand> command = world_sim::parseCameraCommand(request.params, error);
 				if (!command) {
 					return app::DevResponse{.status = 400, .body = std::string(R"({"error":")") + error + "\"}"};
 				}
