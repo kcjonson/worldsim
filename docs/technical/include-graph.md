@@ -22,18 +22,18 @@ node tools/resolve-includes.mjs --root path/to/another/checkout
 
 ## Baseline
 
-Production files only (test and bench files excluded), main @ db604e68 with the callers of salal v0.9.0's font API and the font-atlas engine test (2026-10-27), with foundation and renderer read from salal v0.9.0. Against the previous baseline (main @ 5e2e4525, read from v0.8.1) one cell moved: renderer -> external, 198 to 199, with `FontRenderer.cpp`'s `<filesystem>` (its cramped-glyph warning names the atlas file). In the all-files matrix renderer -> foundation went from 37 to 38 and renderer -> external from 321 to 327 with `FontRenderer.test.cpp`'s `utils/Log.h`, `<cstdint>`, `<cstring>`, `<map>`, `<span>` and `<utility>`, and engine -> renderer from 31 to 34, engine -> ui from 5 to 6 and engine -> external from 775 to 780 with `FontAtlases.test.cpp`. Rows are the including library, columns the library the include lands in.
+Production files only (test and bench files excluded), main @ 6cac2af2 with the pin at salal v0.15.0 and its callers (2026-10-28), with foundation and renderer read from salal v0.15.0. Against the previous baseline (main @ db604e68 with the callers of salal v0.9.0's font API and the font-atlas engine test, read from v0.9.0) foundation -> foundation went from 12 to 16 and foundation -> external from 84 to 110 with salal's new `input/ActionMap.{h,cpp}` and `input/InputAccumulator.{h,cpp}` (each `.cpp` includes its header, each header includes `input/InputTypes.h`, and between them they add 17 standard headers), `InputTypes.h`'s `<array>`, `<cstddef>`, `<cstdint>` and `<glm/vec2.hpp>`, `Log.cpp`'s `<thread>`, and `ResourcePath.{h,cpp}`'s `<mutex>`, `<system_error>`, `<utility>` and `<vector>`. renderer -> renderer rose from 95 to 96 and renderer -> external from 199 to 204 with salal's `PngEncoder.{h,cpp}` (the `.cpp`'s include of its header, `<stb_image_write.h>`, `<cstddef>` and `<cstring>`, and the header's `<string>` and `<vector>`). Deleting engine's own `graphics/PngEncoder.{h,cpp}` took engine -> engine from 463 to 461 and engine -> external from 527 to 522, and `DebugServer.cpp` and `AssetRenderer.cpp` include salal's `PngEncoder.h` now, which moved one line each into the renderer column (engine -> renderer 28 to 29, engine(assets) -> renderer 9 to 10, engine(assets) -> engine 13 to 12). In the all-files matrix foundation -> foundation went from 29 to 38 and foundation -> external from 139 to 185 with the foundation tests (`ActionMap.test.cpp`, `InputAccumulator.test.cpp`, `InputTypes.test.cpp`, `Log.test.cpp`, `ResourcePath.test.cpp`), and renderer -> foundation from 38 to 41, renderer -> renderer from 148 to 155 and renderer -> external from 327 to 354 with `PngEncoder.test.cpp`, `DrawText.test.cpp` and `TileAtlasBuilder.test.cpp`; the engine cells there move as in the production matrix. Rows are the including library, columns the library the include lands in.
 
 | src \ dst | foundation | geometry | renderer | ui | world | planet-view | game-systems | engine | engine(assets) | external |
 |---|---|---|---|---|---|---|---|---|---|---|
-| foundation | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 84 |
+| foundation | 16 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 110 |
 | geometry | 2 | 86 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 158 |
-| renderer | 33 | 0 | 95 | 0 | 0 | 0 | 0 | 0 | 0 | 199 |
+| renderer | 33 | 0 | 96 | 0 | 0 | 0 | 0 | 0 | 0 | 204 |
 | ui | 97 | 0 | 43 | 158 | 0 | 0 | 0 | 0 | 0 | 117 |
 | world | 34 | 0 | 0 | 0 | 118 | 0 | 0 | 0 | 0 | 149 |
 | planet-view | 2 | 0 | 1 | 0 | 6 | 11 | 0 | 0 | 0 | 38 |
-| engine | 50 | 81 | 28 | 5 | 9 | 0 | 0 | 463 | 68 | 527 |
-| engine(assets) | 23 | 3 | 9 | 0 | 0 | 0 | 0 | 13 | 54 | 157 |
+| engine | 50 | 81 | 29 | 5 | 9 | 0 | 0 | 461 | 68 | 522 |
+| engine(assets) | 23 | 3 | 10 | 0 | 0 | 0 | 0 | 12 | 54 | 157 |
 
 Nothing is ambiguous. Foundation includes nothing internal outside itself. There are no layering violations: ui -> engine and renderer -> ui are both 0. engine -> ui (5 lines) is allowed.
 
