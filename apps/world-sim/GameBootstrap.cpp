@@ -7,11 +7,28 @@
 #include <world/chunk/Chunk.h>
 
 #include <memory>
+#include <string>
 
 namespace world_sim {
 
 	namespace {
 		std::unique_ptr<Renderer::TileAtlasBuilder> g_tileAtlasBuilder;
+
+		// Resource path of the surface's SVG pattern. Sand, Rock, Water, Snow and Mud ship none (see
+		// docs/technical/ground-textures.md) and get "", which the builder takes as no pattern; for any
+		// other surface it warns when the file is missing.
+		std::string surfacePatternPath(engine::world::Surface surface) {
+			switch (surface) {
+				case engine::world::Surface::Sand:
+				case engine::world::Surface::Rock:
+				case engine::world::Surface::Water:
+				case engine::world::Surface::Snow:
+				case engine::world::Surface::Mud:
+					return {};
+				default:
+					return "assets/tiles/surfaces/" + engine::world::surfaceToString(surface) + "/pattern.svg";
+			}
+		}
 
 		// Bootstrap a default tile atlas (solid colors per surface) to exercise tile mode.
 		void initializeTileAtlas() {
@@ -20,7 +37,7 @@ namespace world_sim {
 			g_tileAtlasBuilder = std::make_unique<Renderer::TileAtlasBuilder>();
 			auto rects = g_tileAtlasBuilder->buildForSurfaces(
 				kSurfaceCount,
-				[](int surfaceId) { return engine::world::surfaceToString(static_cast<engine::world::Surface>(surfaceId)); },
+				[](int surfaceId) { return surfacePatternPath(static_cast<engine::world::Surface>(surfaceId)); },
 				[](int surfaceId) { return engine::world::Chunk::getSurfaceColor(static_cast<engine::world::Surface>(surfaceId)); }
 			);
 
