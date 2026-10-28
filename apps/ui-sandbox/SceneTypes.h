@@ -27,8 +27,6 @@ namespace ui_sandbox {
 	X(Clip)        \
 	X(Layer)       \
 	X(TextShapes)  \
-	X(SdfMinimal)  \
-	X(InputTest)   \
 	X(Tree)        \
 	X(Layout)      \
 	X(Scroll)      \
@@ -42,11 +40,7 @@ namespace ui_sandbox {
 	X(TextWrap) \
 	X(Planet)  \
 	X(Salvage) \
-	X(SalvageDialog) \
-	X(Polygon) \
-	X(Arc) \
-	X(Polyline) \
-	X(Blend)
+	X(SalvageDialog)
 	// clang-format on
 
 	/// @brief Scene types for ui-sandbox application (auto-generated from SCENE_LIST)
