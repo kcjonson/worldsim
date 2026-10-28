@@ -268,6 +268,7 @@ If tests fail, fix the new code—don't revert to keeping both versions.
 - A designer GUI (`apps/asset-manager`) that renders every asset through the game's real pipeline. Use it to verify new/edited flora, rocks, and other assets instead of dev-spawning them in world-sim.
 - Build: `cmake --build build --config Debug --target asset-manager`. Run: `build/apps/asset-manager/Debug/asset-manager.exe` (dev server on port **8070**, same `/api/ui/screenshot`, `/api/ui/tree`, `/api/ui/lint`, `/api/input`, `/api/control` as the game).
 - Shows a searchable category tree of asset thumbnails, a header with total count + validation error/warning counts, a per-asset detail pane (large preview + full XML + that asset's validation issues), and a **Reload** button to hot-reload after editing assets (no restart).
+- Its `/api/ui/lint` isn't `"count":0`: the browser tree's rows (`AssetRow`, `GroupHeaderRow`) don't report their laid-out positions, so they read as stacked at (0,0), and the tree's content is taller than its scroll viewport. Read the tree's top-bar entries; don't gate on the count.
 - Surfaces SVG tessellation/validation problems and lets you eyeball art far faster than spawning + cropping screenshots. Close it when done (`curl "http://127.0.0.1:8070/api/control?action=exit"`).
 
 **CRITICAL: Testing Visual Changes**
