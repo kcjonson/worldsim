@@ -10,7 +10,7 @@ namespace ui_sandbox {
 
 	/// @brief Scene registration info - each scene exports one of these
 	struct SceneInfo {
-		const char*			 name;
+		const char*			   name;
 		engine::UiSceneFactory factory;
 	};
 

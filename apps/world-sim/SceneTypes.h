@@ -8,11 +8,11 @@ namespace app {
 
 namespace world_sim {
 
-/// @brief Scene registration info - each scene exports one of these
-struct SceneInfo {
-	const char* name;
-	engine::UiSceneFactory factory;
-};
+	/// @brief Scene registration info - each scene exports one of these
+	struct SceneInfo {
+		const char*			   name;
+		engine::UiSceneFactory factory;
+	};
 
 // ============================================================================
 // SCENE LIST - Add new scenes here (the ONLY place you need to edit)
@@ -27,15 +27,15 @@ struct SceneInfo {
 	X(WorldCreator)   \
 	X(ScenarioSelect) \
 	X(PartySelect)
-// clang-format on
+	// clang-format on
 
-namespace scenes {
+	namespace scenes {
 #define SCENE_EXTERN(scene) extern const SceneInfo scene;
-	WORLD_SIM_SCENES(SCENE_EXTERN)
+		WORLD_SIM_SCENES(SCENE_EXTERN)
 #undef SCENE_EXTERN
-} // namespace scenes
+	} // namespace scenes
 
-/// @brief Add every scene above to the stack under its name
-void addScenes(app::SceneStack& stack);
+	/// @brief Add every scene above to the stack under its name
+	void addScenes(app::SceneStack& stack);
 
 } // namespace world_sim

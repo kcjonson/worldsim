@@ -32,7 +32,7 @@
 namespace {
 
 	constexpr const char* kSceneName = "planet";
-	// 256 tiles/edge gives 655k tiles — full Earth-like detail with the stub pipeline.
+	// 256 tiles/edge gives 655k tiles: full Earth-like detail with the stub pipeline.
 	constexpr uint32_t kSubdivision = 256;
 
 	class PlanetScene : public engine::UiScene {
