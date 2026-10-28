@@ -1,14 +1,17 @@
 #pragma once
 
-#include <scene/SceneManager.h>
-#include <cstddef>
+#include <app/UiScene.h>
+
+namespace app {
+	class SceneStack;
+} // namespace app
 
 namespace world_sim {
 
 /// @brief Scene registration info - each scene exports one of these
 struct SceneInfo {
 	const char* name;
-	engine::SceneFactory factory;
+	engine::UiSceneFactory factory;
 };
 
 // ============================================================================
@@ -26,20 +29,13 @@ struct SceneInfo {
 	X(PartySelect)
 // clang-format on
 
-/// @brief Scene types for world-sim application (auto-generated from SCENE_LIST)
-enum class SceneType : std::size_t {
-#define SCENE_ENUM(name) name,
-	WORLD_SIM_SCENES(SCENE_ENUM)
-#undef SCENE_ENUM
-	Count // Must be last
-};
+namespace scenes {
+#define SCENE_EXTERN(scene) extern const SceneInfo scene;
+	WORLD_SIM_SCENES(SCENE_EXTERN)
+#undef SCENE_EXTERN
+} // namespace scenes
 
-/// @brief Convert app-specific SceneType to engine::SceneKey
-inline engine::SceneKey toKey(SceneType type) {
-	return static_cast<engine::SceneKey>(type);
-}
-
-/// @brief Initialize SceneManager with all world-sim scenes
-void initializeSceneManager();
+/// @brief Add every scene above to the stack under its name
+void addScenes(app::SceneStack& stack);
 
 } // namespace world_sim

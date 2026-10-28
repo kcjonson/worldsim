@@ -14,7 +14,6 @@
 #include <construction/ConstructionWorld.h>
 #include <construction/SnapEngine.h>
 
-#include <debug/DebugServer.h> // Foundation::DevCommand
 #include <debug/Tunables.h>
 
 #include <ecs/InventoryMass.h>
@@ -46,6 +45,7 @@
 #include <worldgen/data/GeneratedWorld.h>
 #include <worldgen/sampling/LandingSite.h>
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -53,62 +53,127 @@
 
 namespace world_sim {
 
-	std::string DevCommandHandler::handle(const Foundation::DevCommand& cmd) {
-		if (cmd.verb == "foundation-edit") {
-			return devFoundationEdit(cmd);
-		}
-		if (cmd.verb == "freebuild" || cmd.verb == "construction") {
-			devFreeBuild(cmd);
-		} else if (cmd.verb == "give") {
-			devGive(cmd);
-		} else if (cmd.verb == "spawn") {
-			devSpawn(cmd);
-		} else if (cmd.verb == "colonist") {
-			devColonist(cmd);
-		} else if (cmd.verb == "need") {
-			devNeed(cmd);
-		} else if (cmd.verb == "time") {
-			devTime(cmd);
-		} else if (cmd.verb == "teleport") {
-			devTeleport(cmd);
-		} else if (cmd.verb == "select") {
-			devSelect(cmd);
-		} else if (cmd.verb == "kill") {
-			devKill(cmd);
-		} else if (cmd.verb == "complete") {
-			devComplete(cmd);
-		} else if (cmd.verb == "foundation") {
-			devFoundation(cmd);
-		} else if (cmd.verb == "walls") {
-			devWalls(cmd);
-		} else if (cmd.verb == "opening") {
-			devOpening(cmd);
-		} else if (cmd.verb == "craft") {
-			devCraft(cmd);
-		} else if (cmd.verb == "storage") {
-			devStorage(cmd);
-		} else if (cmd.verb == "tunable") {
-			devTunable(cmd);
-		} else {
-			LOG_WARNING(Game, "[DevAPI] Unknown dev command verb '%s'", cmd.verb.c_str());
-			return "{\"status\":\"error\",\"verb\":\"" + jsonEscape(cmd.verb) + "\",\"reason\":\"unknown verb\"}";
-		}
-		return "{\"status\":\"ok\",\"verb\":\"" + jsonEscape(cmd.verb) + "\"}";
+	std::vector<app::DevServer::Registration> DevCommandHandler::registerWith(app::DevServer& server) {
+		std::vector<app::DevServer::Registration> registrations;
+		const auto								  verb = [&](const char* name, void (DevCommandHandler::*run)(const app::DevRequest&)) {
+			   registrations.push_back(server.route(name, [this, run](const app::DevRequest& cmd) {
+				   (this->*run)(cmd);
+				   return app::DevResponse{.body = "{\"status\":\"ok\",\"verb\":\"" + jsonEscape(cmd.name) + "\"}"};
+			   }));
+		};
+		verb("freebuild", &DevCommandHandler::devFreeBuild);
+		verb("construction", &DevCommandHandler::devFreeBuild);
+		verb("give", &DevCommandHandler::devGive);
+		verb("spawn", &DevCommandHandler::devSpawn);
+		verb("colonist", &DevCommandHandler::devColonist);
+		verb("need", &DevCommandHandler::devNeed);
+		verb("time", &DevCommandHandler::devTime);
+		verb("teleport", &DevCommandHandler::devTeleport);
+		verb("select", &DevCommandHandler::devSelect);
+		verb("kill", &DevCommandHandler::devKill);
+		verb("complete", &DevCommandHandler::devComplete);
+		verb("foundation", &DevCommandHandler::devFoundation);
+		verb("walls", &DevCommandHandler::devWalls);
+		verb("opening", &DevCommandHandler::devOpening);
+		verb("craft", &DevCommandHandler::devCraft);
+		verb("storage", &DevCommandHandler::devStorage);
+		verb("tunable", &DevCommandHandler::devTunable);
+		registrations.push_back(server.route("foundation-edit", [this](const app::DevRequest& cmd) {
+			return app::DevResponse{.body = devFoundationEdit(cmd)};
+		}));
+
+		const auto view = [&](const char* what, void (DevCommandHandler::*serialize)(std::ostringstream&)) {
+			registrations.push_back(server.stateProvider(what, [this, serialize] {
+				std::ostringstream out;
+				(this->*serialize)(out);
+				return out.str();
+			}));
+		};
+		view("colonists", &DevCommandHandler::serializeColonists);
+		view("construction", &DevCommandHandler::serializeConstruction);
+		view("stations", &DevCommandHandler::serializeStations);
+		view("storage", &DevCommandHandler::serializeStorage);
+		view("time", &DevCommandHandler::serializeTime);
+		view("landing", &DevCommandHandler::serializeLanding);
+		view("summary", &DevCommandHandler::serializeSummary);
+		registrations.push_back(server.stateProvider("tunables", [] { return Foundation::Tunables::instance().toJson(); }));
+		return registrations;
 	}
 
-	void DevCommandHandler::devTunable(const Foundation::DevCommand& cmd) {
+	std::optional<CameraCommand>
+	DevCommandHandler::parseCameraCommand(const std::map<std::string, std::string>& params, const char*& error) {
+		const auto has = [&params](const char* name) {
+			return params.contains(name);
+		};
+		const auto parseFloat = [&params](const char* name, float& out) -> bool {
+			const auto it = params.find(name);
+			if (it == params.end()) {
+				return false;
+			}
+			const std::string& value = it->second;
+			char*			   end = nullptr;
+			const float		   parsed = std::strtof(value.c_str(), &end);
+			if (end == value.c_str() || *end != '\0' || !std::isfinite(parsed)) {
+				return false;
+			}
+			out = parsed;
+			return true;
+		};
+
+		CameraCommand cmd;
+		bool		  malformed = false;
+		if (has("x") || has("y")) {
+			cmd.hasPosition = parseFloat("x", cmd.x) && parseFloat("y", cmd.y);
+			malformed |= !cmd.hasPosition;
+		}
+		if (has("zoom")) {
+			cmd.hasZoom = parseFloat("zoom", cmd.zoom);
+			malformed |= !cmd.hasZoom;
+		}
+		if (has("panx") || has("pany")) {
+			cmd.hasPan = true;
+			if (has("panx") && !parseFloat("panx", cmd.panX)) {
+				malformed = true;
+			}
+			if (has("pany") && !parseFloat("pany", cmd.panY)) {
+				malformed = true;
+			}
+			cmd.panX = std::clamp(cmd.panX, -1.0F, 1.0F);
+			cmd.panY = std::clamp(cmd.panY, -1.0F, 1.0F);
+		}
+		if (malformed) {
+			error = "Camera parameters must be finite numbers (x+y together, zoom, panx, pany)";
+			return std::nullopt;
+		}
+		if (!cmd.hasPosition && !cmd.hasZoom && !cmd.hasPan) {
+			error = "Camera action requires x+y, zoom, panx, or pany parameters";
+			return std::nullopt;
+		}
+		return cmd;
+	}
+
+	std::string DevCommandHandler::param(const app::DevRequest& cmd, const std::string& key, const std::string& fallback) {
+		const auto it = cmd.params.find(key);
+		return it != cmd.params.end() ? it->second : fallback;
+	}
+
+	bool DevCommandHandler::hasParam(const app::DevRequest& cmd, const std::string& key) {
+		return cmd.params.contains(key);
+	}
+
+	void DevCommandHandler::devTunable(const app::DevRequest& cmd) {
 		// tunable?name=terrain/shore/drySandW&value=1.6 (a color is value=r,g,b), or
 		// tunable?reset=terrain/shore/* (a trailing '*' resets the whole group).
 		Foundation::Tunables& tunables = Foundation::Tunables::instance();
-		if (cmd.hasParam("reset")) {
-			const std::string name	= cmd.param("reset");
+		if (hasParam(cmd, "reset")) {
+			const std::string name = param(cmd, "reset");
 			const size_t	  count = tunables.reset(name);
 			LOG_INFO(Game, "[DevAPI] tunable reset '%s': %zu value(s)", name.c_str(), count);
 			return;
 		}
 
-		const std::string  name = cmd.param("name");
-		const std::string  spec = cmd.param("value");
+		const std::string  name = param(cmd, "name");
+		const std::string  spec = param(cmd, "value");
 		std::vector<float> values;
 		if (!Foundation::Tunables::parseValues(spec, values)) {
 			LOG_WARNING(Game, "[DevAPI] tunable '%s' rejected value '%s' (malformed or non-finite)", name.c_str(), spec.c_str());
@@ -121,24 +186,24 @@ namespace world_sim {
 		LOG_INFO(Game, "[DevAPI] tunable '%s' = %s", name.c_str(), spec.c_str());
 	}
 
-	void DevCommandHandler::devFreeBuild(const Foundation::DevCommand& cmd) {
+	void DevCommandHandler::devFreeBuild(const app::DevRequest& cmd) {
 		// Accept on= (freebuild verb) or freebuild= (construction verb); truthy on 1/on/true/yes.
-		std::string value = cmd.hasParam("on") ? cmd.param("on") : cmd.param("freebuild", "1");
+		std::string value = hasParam(cmd, "on") ? param(cmd, "on") : param(cmd, "freebuild", "1");
 		const bool	on = (value == "1" || value == "on" || value == "true" || value == "yes");
 		m_ctx.world->getSystem<ecs::ConstructionSystem>().setFreeBuild(on);
 		LOG_INFO(Game, "[DevAPI] free-build %s", on ? "ON" : "OFF");
 		m_ctx.ui->pushNotification("Dev", on ? "Free-build ON" : "Free-build OFF", UI::ToastSeverity::Info);
 	}
 
-	void DevCommandHandler::devGive(const Foundation::DevCommand& cmd) {
-		const std::string material = cmd.param("material", "Wood");
-		const long		  nRaw = std::strtol(cmd.param("n", "100").c_str(), nullptr, 10);
+	void DevCommandHandler::devGive(const app::DevRequest& cmd) {
+		const std::string material = param(cmd, "material", "Wood");
+		const long		  nRaw = std::strtol(param(cmd, "n", "100").c_str(), nullptr, 10);
 		if (nRaw <= 0) {
 			LOG_WARNING(Game, "[DevAPI] give: n must be > 0");
 			return;
 		}
 		const auto		  n = static_cast<uint32_t>(nRaw);
-		const std::string where = cmd.param("where", "site");
+		const std::string where = param(cmd, "where", "site");
 
 		if (where == "site") {
 			const uint32_t credited = m_ctx.world->getSystem<ecs::ConstructionSystem>().creditMaterialToSites(material, n);
@@ -153,7 +218,7 @@ namespace world_sim {
 				m_ctx.ui->pushNotification("Dev", "Unknown asset: " + material, UI::ToastSeverity::Warning);
 				return;
 			}
-			const Foundation::Vec2 at = parsePoint(cmd.param("at"));
+			const Foundation::Vec2 at = parsePoint(param(cmd, "at"));
 			if (!requireValidPosition(at, "give loose")) {
 				return;
 			}
@@ -174,7 +239,7 @@ namespace world_sim {
 		}
 
 		if (where == "colonist" || where == "storage") {
-			const Foundation::Vec2 at = parsePoint(cmd.param("at"));
+			const Foundation::Vec2 at = parsePoint(param(cmd, "at"));
 			ecs::Inventory*		   inventory = (where == "colonist") ? nearestColonistInventory(at) : nearestStorageInventory(at);
 			if (inventory == nullptr) {
 				LOG_WARNING(Game, "[DevAPI] give %s: no target found", where.c_str());
@@ -184,7 +249,7 @@ namespace world_sim {
 
 			// where=colonist takes slot=pack|hands|belt (default pack) so every gear
 			// surface can be filled for testing. hands respects the two-hand mirror.
-			const std::string slot = cmd.param("slot", "pack");
+			const std::string slot = param(cmd, "slot", "pack");
 			uint32_t		  added = 0;
 			if (where == "colonist" && slot == "hands") {
 				const auto& registry = engine::assets::AssetRegistry::Get();
@@ -211,8 +276,8 @@ namespace world_sim {
 		m_ctx.ui->pushNotification("Dev", "Unknown where: " + where, UI::ToastSeverity::Warning);
 	}
 
-	void DevCommandHandler::devSpawn(const Foundation::DevCommand& cmd) {
-		const std::string def = cmd.param("def");
+	void DevCommandHandler::devSpawn(const app::DevRequest& cmd) {
+		const std::string def = param(cmd, "def");
 		if (def.empty()) {
 			LOG_WARNING(Game, "[DevAPI] spawn: missing def=<assetName>");
 			m_ctx.ui->pushNotification("Dev", "spawn needs def=", UI::ToastSeverity::Warning);
@@ -223,13 +288,13 @@ namespace world_sim {
 			m_ctx.ui->pushNotification("Dev", "Unknown asset: " + def, UI::ToastSeverity::Warning);
 			return;
 		}
-		const Foundation::Vec2 at = parsePoint(cmd.param("at"));
+		const Foundation::Vec2 at = parsePoint(param(cmd, "at"));
 		if (!requireValidPosition(at, "spawn")) {
 			return;
 		}
-		const long			   nRaw = std::strtol(cmd.param("n", "1").c_str(), nullptr, 10);
+		const long			   nRaw = std::strtol(param(cmd, "n", "1").c_str(), nullptr, 10);
 		const long			   n = nRaw < 1 ? 1 : nRaw;
-		const float			   scatter = std::strtof(cmd.param("scatter", "0").c_str(), nullptr);
+		const float			   scatter = std::strtof(param(cmd, "scatter", "0").c_str(), nullptr);
 
 		// requireValidPosition gated the CENTER, but each scattered offset is its own point that
 		// can land off-mesh (in a river). Snap every scattered position onto walkable ground with
@@ -252,14 +317,14 @@ namespace world_sim {
 		m_ctx.ui->pushNotification("Dev", "Spawned " + std::to_string(spawned) + " " + def, UI::ToastSeverity::Info);
 	}
 
-	void DevCommandHandler::devColonist(const Foundation::DevCommand& cmd) {
-		const Foundation::Vec2 at = parsePoint(cmd.param("at"));
+	void DevCommandHandler::devColonist(const app::DevRequest& cmd) {
+		const Foundation::Vec2 at = parsePoint(param(cmd, "at"));
 		if (!requireValidPosition(at, "colonist")) {
 			return;
 		}
-		const long			   nRaw = std::strtol(cmd.param("n", "1").c_str(), nullptr, 10);
+		const long			   nRaw = std::strtol(param(cmd, "n", "1").c_str(), nullptr, 10);
 		const long			   n = nRaw < 1 ? 1 : nRaw;
-		const std::string	   baseName = cmd.param("name", "Dev");
+		const std::string	   baseName = param(cmd, "name", "Dev");
 
 		for (long i = 0; i < n; ++i) {
 			const Foundation::Vec2 off = spreadOffset(i, n, n > 1 ? 1.0F : 0.0F);
@@ -395,8 +460,8 @@ namespace world_sim {
 		return v;
 	}
 
-	void DevCommandHandler::devNeed(const Foundation::DevCommand& cmd) {
-		const ecs::EntityID id = parseEntity(cmd.param("colonist"));
+	void DevCommandHandler::devNeed(const app::DevRequest& cmd) {
+		const ecs::EntityID id = parseEntity(param(cmd, "colonist"));
 		auto*				needs = m_ctx.world->getComponent<ecs::NeedsComponent>(id);
 		if (needs == nullptr) {
 			LOG_WARNING(Game, "[DevAPI] need: no colonist #%llu", static_cast<unsigned long long>(id));
@@ -404,24 +469,24 @@ namespace world_sim {
 			return;
 		}
 		ecs::NeedType type{};
-		if (!parseNeedType(cmd.param("need"), type)) {
-			LOG_WARNING(Game, "[DevAPI] need: unknown need '%s'", cmd.param("need").c_str());
+		if (!parseNeedType(param(cmd, "need"), type)) {
+			LOG_WARNING(Game, "[DevAPI] need: unknown need '%s'", param(cmd, "need").c_str());
 			m_ctx.ui->pushNotification("Dev", "Unknown need", UI::ToastSeverity::Warning);
 			return;
 		}
-		float value = std::strtof(cmd.param("value", "100").c_str(), nullptr);
+		float value = std::strtof(param(cmd, "value", "100").c_str(), nullptr);
 		value = value < 0.0F ? 0.0F : (value > 100.0F ? 100.0F : value);
 		needs->get(type).value = value;
 		LOG_INFO(Game, "[DevAPI] need: %s=%.1f on #%llu", ecs::needLabel(type), static_cast<double>(value), static_cast<unsigned long long>(id));
 		m_ctx.ui->pushNotification("Dev", std::string(ecs::needLabel(type)) + " set", UI::ToastSeverity::Info);
 	}
 
-	void DevCommandHandler::devTime(const Foundation::DevCommand& cmd) {
+	void DevCommandHandler::devTime(const app::DevRequest& cmd) {
 		auto& timeSystem = m_ctx.world->getSystem<ecs::TimeSystem>();
 		bool  acted = false;
 
-		if (cmd.hasParam("speed")) {
-			const long s = std::strtol(cmd.param("speed").c_str(), nullptr, 10);
+		if (hasParam(cmd, "speed")) {
+			const long s = std::strtol(param(cmd, "speed").c_str(), nullptr, 10);
 			if (s >= 0 && s <= 3) {
 				timeSystem.setSpeed(static_cast<ecs::GameSpeed>(s));
 				acted = true;
@@ -429,12 +494,12 @@ namespace world_sim {
 				LOG_WARNING(Game, "[DevAPI] time: speed must be 0..3");
 			}
 		}
-		if (cmd.hasParam("set")) {
-			timeSystem.setTimeOfDay(parseClock(cmd.param("set")));
+		if (hasParam(cmd, "set")) {
+			timeSystem.setTimeOfDay(parseClock(param(cmd, "set")));
 			acted = true;
 		}
-		if (cmd.hasParam("skip")) {
-			timeSystem.skipTime(parseDuration(cmd.param("skip")));
+		if (hasParam(cmd, "skip")) {
+			timeSystem.skipTime(parseDuration(param(cmd, "skip")));
 			acted = true;
 		}
 
@@ -443,15 +508,15 @@ namespace world_sim {
 		m_ctx.ui->pushNotification("Dev", acted ? "Time updated" : "time: speed|set|skip", acted ? UI::ToastSeverity::Info : UI::ToastSeverity::Warning);
 	}
 
-	void DevCommandHandler::devTeleport(const Foundation::DevCommand& cmd) {
-		const ecs::EntityID id = parseEntity(cmd.param("colonist"));
+	void DevCommandHandler::devTeleport(const app::DevRequest& cmd) {
+		const ecs::EntityID id = parseEntity(param(cmd, "colonist"));
 		auto*				pos = m_ctx.world->getComponent<ecs::Position>(id);
 		if (pos == nullptr) {
 			LOG_WARNING(Game, "[DevAPI] teleport: no entity #%llu", static_cast<unsigned long long>(id));
 			m_ctx.ui->pushNotification("Dev", "No such entity", UI::ToastSeverity::Warning);
 			return;
 		}
-		const Foundation::Vec2 to = parsePoint(cmd.param("to"));
+		const Foundation::Vec2 to = parsePoint(param(cmd, "to"));
 		if (!requireValidPosition(to, "teleport")) {
 			return;
 		}
@@ -466,12 +531,12 @@ namespace world_sim {
 		m_ctx.ui->pushNotification("Dev", "Teleported", UI::ToastSeverity::Info);
 	}
 
-	void DevCommandHandler::devSelect(const Foundation::DevCommand& cmd) {
+	void DevCommandHandler::devSelect(const app::DevRequest& cmd) {
 		ecs::EntityID id = ecs::kInvalidEntity;
-		if (cmd.hasParam("colonist")) {
-			id = parseEntity(cmd.param("colonist"));
-		} else if (cmd.hasParam("at")) {
-			id = nearestColonist(parsePoint(cmd.param("at")));
+		if (hasParam(cmd, "colonist")) {
+			id = parseEntity(param(cmd, "colonist"));
+		} else if (hasParam(cmd, "at")) {
+			id = nearestColonist(parsePoint(param(cmd, "at")));
 		} else {
 			LOG_WARNING(Game, "[DevAPI] select: needs colonist=<id> or at=x,y");
 			return;
@@ -485,8 +550,8 @@ namespace world_sim {
 		LOG_INFO(Game, "[DevAPI] select: colonist #%llu", static_cast<unsigned long long>(id));
 	}
 
-	void DevCommandHandler::devKill(const Foundation::DevCommand& cmd) {
-		const ecs::EntityID id = parseEntity(cmd.param("colonist"));
+	void DevCommandHandler::devKill(const app::DevRequest& cmd) {
+		const ecs::EntityID id = parseEntity(param(cmd, "colonist"));
 		if (!m_ctx.world->isAlive(id)) {
 			LOG_WARNING(Game, "[DevAPI] kill: no entity #%llu", static_cast<unsigned long long>(id));
 			m_ctx.ui->pushNotification("Dev", "No such entity", UI::ToastSeverity::Warning);
@@ -501,8 +566,8 @@ namespace world_sim {
 		m_ctx.ui->pushNotification("Dev", "Colonist removed", UI::ToastSeverity::Info);
 	}
 
-	void DevCommandHandler::devComplete(const Foundation::DevCommand& cmd) {
-		const ecs::EntityID id = parseEntity(cmd.param("id"));
+	void DevCommandHandler::devComplete(const app::DevRequest& cmd) {
+		const ecs::EntityID id = parseEntity(param(cmd, "id"));
 		if (m_ctx.world->getSystem<ecs::ConstructionSystem>().forceCompleteBlueprint(id)) {
 			LOG_INFO(Game, "[DevAPI] complete: built blueprint #%llu", static_cast<unsigned long long>(id));
 			m_ctx.ui->pushNotification("Dev", "Blueprint built", UI::ToastSeverity::Info);
@@ -512,8 +577,8 @@ namespace world_sim {
 		}
 	}
 
-	void DevCommandHandler::devFoundation(const Foundation::DevCommand& cmd) {
-		std::vector<Foundation::Vec2> pts = parsePointList(cmd.param("pts"));
+	void DevCommandHandler::devFoundation(const app::DevRequest& cmd) {
+		std::vector<Foundation::Vec2> pts = parsePointList(param(cmd, "pts"));
 		if (pts.size() < 3) {
 			LOG_WARNING(Game, "[DevAPI] foundation: pts needs >= 3 'x,y' pairs (got %zu)", pts.size());
 			return;
@@ -524,7 +589,7 @@ namespace world_sim {
 		if (!requireBuildableArea(pts, "foundation")) {
 			return;
 		}
-		const std::string material = cmd.param("material", "Wood");
+		const std::string material = param(cmd, "material", "Wood");
 
 		auto&	   constructionWorld = m_ctx.drawing->world();
 		const auto commit = constructionWorld.commitFoundation(pts, material);
@@ -540,7 +605,7 @@ namespace world_sim {
 			return;
 		}
 
-		const std::string builtStr = cmd.param("built", "0");
+		const std::string builtStr = param(cmd, "built", "0");
 		const bool		  built = (builtStr == "1" || builtStr == "on" || builtStr == "true" || builtStr == "yes");
 		if (built) {
 			// Route through the SAME instant-completion path free-build uses.
@@ -558,11 +623,11 @@ namespace world_sim {
 		m_ctx.ui->pushNotification("Dev", built ? "Built foundation placed" : "Foundation blueprint placed", UI::ToastSeverity::Info);
 	}
 
-	std::string DevCommandHandler::devFoundationEdit(const Foundation::DevCommand& cmd) {
+	std::string DevCommandHandler::devFoundationEdit(const app::DevRequest& cmd) {
 		namespace ec = engine::construction;
-		const auto		  target = static_cast<ec::FoundationId>(std::strtoull(cmd.param("id", "0").c_str(), nullptr, 10));
-		const std::string modeName = cmd.param("mode", "add");
-		const std::vector<Foundation::Vec2> pts = parsePointList(cmd.param("pts"));
+		const auto		  target = static_cast<ec::FoundationId>(std::strtoull(param(cmd, "id", "0").c_str(), nullptr, 10));
+		const std::string modeName = param(cmd, "mode", "add");
+		const std::vector<Foundation::Vec2> pts = parsePointList(param(cmd, "pts"));
 
 		DrawingSystem::FoundationEditOutcome outcome;
 		outcome.target = target;
@@ -601,20 +666,20 @@ namespace world_sim {
 		return json.str();
 	}
 
-	void DevCommandHandler::devWalls(const Foundation::DevCommand& cmd) {
-		std::vector<Foundation::Vec2> pts = parsePointList(cmd.param("pts"));
+	void DevCommandHandler::devWalls(const app::DevRequest& cmd) {
+		std::vector<Foundation::Vec2> pts = parsePointList(param(cmd, "pts"));
 		if (pts.size() < 2) {
 			LOG_WARNING(Game, "[DevAPI] walls: pts needs >= 2 'x,y' pairs (got %zu)", pts.size());
 			return;
 		}
-		const std::string material = cmd.param("material", "Wood");
-		const std::string thickness = cmd.param("thickness", "Standard");
+		const std::string material = param(cmd, "material", "Wood");
+		const std::string thickness = param(cmd, "thickness", "Standard");
 		// strtoull, not strtoul: FoundationId is 64-bit, and unsigned long is only 32-bit on Windows.
-		const auto host = static_cast<engine::construction::FoundationId>(std::strtoull(cmd.param("host", "0").c_str(), nullptr, 10));
+		const auto host = static_cast<engine::construction::FoundationId>(std::strtoull(param(cmd, "host", "0").c_str(), nullptr, 10));
 
-		const std::string builtStr = cmd.param("built", "1");
+		const std::string builtStr = param(cmd, "built", "1");
 		const bool		  built = (builtStr == "1" || builtStr == "on" || builtStr == "true" || builtStr == "yes");
-		const std::string closeStr = cmd.param("close", "1");
+		const std::string closeStr = param(cmd, "close", "1");
 		const bool		  close = (closeStr == "1" || closeStr == "on" || closeStr == "true" || closeStr == "yes");
 		if (close && pts.size() >= 3) {
 			pts.push_back(pts.front()); // close the loop so the chain encloses
@@ -641,8 +706,8 @@ namespace world_sim {
 		m_ctx.ui->pushNotification("Dev", std::to_string(n) + (built ? " built wall(s)" : " wall blueprint(s)"), UI::ToastSeverity::Info);
 	}
 
-	void DevCommandHandler::devOpening(const Foundation::DevCommand& cmd) {
-		const std::string type = cmd.param("type", "Door");
+	void DevCommandHandler::devOpening(const app::DevRequest& cmd) {
+		const std::string type = param(cmd, "type", "Door");
 		const auto*		  typeDef = engine::assets::ConstructionRegistry::Get().getOpeningType(type);
 		if (typeDef == nullptr) {
 			LOG_WARNING(Game, "[DevAPI] opening: unknown type '%s'", type.c_str());
@@ -656,10 +721,10 @@ namespace world_sim {
 		// center), pt= snaps to the nearest built wall (t from the snap).
 		engine::construction::SegmentId segment = engine::construction::kInvalidSegment;
 		float							t = 0.5F;
-		if (cmd.hasParam("seg")) {
-			segment = static_cast<engine::construction::SegmentId>(std::strtoull(cmd.param("seg").c_str(), nullptr, 10));
-		} else if (cmd.hasParam("pt")) {
-			const std::vector<Foundation::Vec2> pts = parsePointList(cmd.param("pt"));
+		if (hasParam(cmd, "seg")) {
+			segment = static_cast<engine::construction::SegmentId>(std::strtoull(param(cmd, "seg").c_str(), nullptr, 10));
+		} else if (hasParam(cmd, "pt")) {
+			const std::vector<Foundation::Vec2> pts = parsePointList(param(cmd, "pt"));
 			if (pts.empty()) {
 				LOG_WARNING(Game, "[DevAPI] opening: pt must be 'x,y' world meters");
 				return;
@@ -680,11 +745,11 @@ namespace world_sim {
 		}
 
 		// Explicit t= overrides the resolved parameter (addOpening clamps to [0,1]).
-		if (cmd.hasParam("t")) {
-			t = std::strtof(cmd.param("t").c_str(), nullptr);
+		if (hasParam(cmd, "t")) {
+			t = std::strtof(param(cmd, "t").c_str(), nullptr);
 		}
 
-		const std::string builtStr = cmd.param("built", "1");
+		const std::string builtStr = param(cmd, "built", "1");
 		const bool		  built = (builtStr == "1" || builtStr == "on" || builtStr == "true" || builtStr == "yes");
 
 		const engine::construction::OpeningId id = m_ctx.drawing->devCommitOpening(segment, t, type, built);
@@ -711,9 +776,9 @@ namespace world_sim {
 		m_ctx.ui->pushNotification("Dev", built ? "Built opening placed" : "Opening blueprint placed", UI::ToastSeverity::Info);
 	}
 
-	void DevCommandHandler::devCraft(const Foundation::DevCommand& cmd) {
-		const std::string recipe = cmd.param("recipe", "Recipe_AxePrimitive");
-		const long		  qtyRaw = std::strtol(cmd.param("n", "1").c_str(), nullptr, 10);
+	void DevCommandHandler::devCraft(const app::DevRequest& cmd) {
+		const std::string recipe = param(cmd, "recipe", "Recipe_AxePrimitive");
+		const long		  qtyRaw = std::strtol(param(cmd, "n", "1").c_str(), nullptr, 10);
 		const auto		  qty = static_cast<uint32_t>(qtyRaw < 1 ? 1 : qtyRaw);
 
 		if (engine::assets::RecipeRegistry::Get().getRecipe(recipe) == nullptr) {
@@ -723,7 +788,7 @@ namespace world_sim {
 		}
 
 		// Queue the job at the nearest crafting station (entity with a WorkQueue) to `at`.
-		const Foundation::Vec2 at = parsePoint(cmd.param("at"));
+		const Foundation::Vec2 at = parsePoint(param(cmd, "at"));
 		ecs::WorkQueue*		   best = nullptr;
 		float				   bestDistSq = 0.0F;
 		ecs::EntityID		   bestEntity = ecs::kInvalidEntity;
@@ -750,8 +815,8 @@ namespace world_sim {
 		m_ctx.ui->pushNotification("Dev", "Queued " + std::to_string(qty) + " " + recipe, UI::ToastSeverity::Info);
 	}
 
-	void DevCommandHandler::devStorage(const Foundation::DevCommand& cmd) {
-		const Foundation::Vec2 at = parsePoint(cmd.param("at"));
+	void DevCommandHandler::devStorage(const app::DevRequest& cmd) {
+		const Foundation::Vec2 at = parsePoint(param(cmd, "at"));
 		const ecs::EntityID	   id = nearestStorageEntity(at);
 		if (id == ecs::kInvalidEntity) {
 			LOG_WARNING(Game, "[DevAPI] storage: no storage entity found near (%.1f, %.1f)", at.x, at.y);
@@ -766,7 +831,7 @@ namespace world_sim {
 		}
 
 		engine::assets::ItemCategory category = engine::assets::ItemCategory::RawMaterial;
-		const std::string			  categoryStr = cmd.param("category", "RawMaterial");
+		const std::string			 categoryStr = param(cmd, "category", "RawMaterial");
 		if (equalsIgnoreCase(categoryStr, "Food")) {
 			category = engine::assets::ItemCategory::Food;
 		} else if (equalsIgnoreCase(categoryStr, "Tool")) {
@@ -778,7 +843,7 @@ namespace world_sim {
 		}
 
 		ecs::StoragePriority priority = ecs::StoragePriority::Medium;
-		const std::string	 priorityStr = cmd.param("priority", "Medium");
+		const std::string	 priorityStr = param(cmd, "priority", "Medium");
 		if (equalsIgnoreCase(priorityStr, "Low")) {
 			priority = ecs::StoragePriority::Low;
 		} else if (equalsIgnoreCase(priorityStr, "High")) {
@@ -787,9 +852,9 @@ namespace world_sim {
 			priority = ecs::StoragePriority::Critical;
 		}
 
-		const std::string defName = cmd.param("item", "*");
-		const auto		  minAmount = static_cast<uint32_t>(std::strtol(cmd.param("min", "0").c_str(), nullptr, 10));
-		const auto		  maxAmount = static_cast<uint32_t>(std::strtol(cmd.param("max", "0").c_str(), nullptr, 10));
+		const std::string defName = param(cmd, "item", "*");
+		const auto		  minAmount = static_cast<uint32_t>(std::strtol(param(cmd, "min", "0").c_str(), nullptr, 10));
+		const auto		  maxAmount = static_cast<uint32_t>(std::strtol(param(cmd, "max", "0").c_str(), nullptr, 10));
 
 		ecs::StorageRule rule;
 		rule.defName = defName;
@@ -853,28 +918,6 @@ namespace world_sim {
 	}
 
 	// ===================================================================== STATE READBACK
-
-	std::string DevCommandHandler::serializeState(const std::string& what) {
-		std::ostringstream out;
-		if (what == "colonists") {
-			serializeColonists(out);
-		} else if (what == "construction") {
-			serializeConstruction(out);
-		} else if (what == "stations") {
-			serializeStations(out);
-		} else if (what == "storage") {
-			serializeStorage(out);
-		} else if (what == "time") {
-			serializeTime(out);
-		} else if (what == "landing") {
-			serializeLanding(out);
-		} else if (what == "tunables") {
-			out << Foundation::Tunables::instance().toJson();
-		} else {
-			serializeSummary(out);
-		}
-		return out.str();
-	}
 
 	void DevCommandHandler::serializeColonists(std::ostringstream& out) {
 		out << "{\"colonists\":[";

@@ -7,7 +7,7 @@
 // manager handles the delay and display.
 //
 // Usage:
-//   // In Application.cpp update loop:
+//   // Once a frame, in the scene's update and render:
 //   TooltipManager::Get().update(deltaTime);
 //   TooltipManager::Get().render();
 //

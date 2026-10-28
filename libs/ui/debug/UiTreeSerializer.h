@@ -11,8 +11,8 @@
 
 // UI-tree snapshot for /api/ui/tree.
 //
-// Walks live IComponent roots on the main thread (the app-side state drain
-// calls this while the HTTP thread parks in DebugServer::requestState) and
+// Walks live IComponent roots on the main thread (the dev server's ui.tree
+// provider calls this while the HTTP thread parks waiting for the frame) and
 // emits one JSON node per element: id, type, bounds, margin, zIndex, visible,
 // children. Bounds are the margin box (getPosition + getWidth/getHeight,
 // which bake margin in); margin is emitted separately so consumers can derive

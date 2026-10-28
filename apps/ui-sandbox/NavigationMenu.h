@@ -1,11 +1,13 @@
 #pragma once
 
-#include "components/button/Button.h"
 #include "CoordinateSystem/CoordinateSystem.h"
+#include "components/button/Button.h"
 #include "input/InputEvent.h"
 #include "math/Types.h"
-#include "scene/Overlay.h"
 #include "shapes/Shapes.h"
+
+#include <app/UiOverlay.h>
+
 #include <functional>
 #include <optional>
 #include <string>
@@ -17,14 +19,14 @@
 // Displays as a small toggle button in the bottom-right corner.
 // Expands upward to show a list of available scenes when clicked.
 //
-// Implements IOverlay for SceneManager integration:
-// - Receives input events before scenes
+// An overlay the App owns (engine::UiOverlay):
+// - Receives the bridge's input events before scenes
 // - Persists across scene transitions
 // - Renders on top of scenes
 
 namespace UI {
 
-	struct NavigationMenu : public engine::IOverlay {
+	struct NavigationMenu : public engine::UiOverlay {
 		// Constructor arguments struct (C++20 designated initializers)
 		struct Args {
 			std::vector<std::string>			  sceneNames;
@@ -35,21 +37,18 @@ namespace UI {
 		// --- Public Methods ---
 
 		explicit NavigationMenu(const Args& args);
-		~NavigationMenu();
+		~NavigationMenu() override;
 
-		// Disable copy
+		// The buttons' callbacks hold this, so it stays where it was made
 		NavigationMenu(const NavigationMenu&) = delete;
 		NavigationMenu& operator=(const NavigationMenu&) = delete;
+		NavigationMenu(NavigationMenu&&) = delete;
+		NavigationMenu& operator=(NavigationMenu&&) = delete;
 
-		// Allow move
-		NavigationMenu(NavigationMenu&& other) noexcept;
-		NavigationMenu& operator=(NavigationMenu&& other) noexcept;
-
-		// IOverlay interface
-		bool handleEvent(InputEvent& event) override;
-		void update(float dt) override;
+		bool handleInput(InputEvent& event) override;
+		void update(const app::FrameContext& frame) override;
 		void render() override;
-		void onWindowResize() override;
+		void onResize(const Renderer::Viewport& viewport) override;
 
 	  private:
 		// Layout constants

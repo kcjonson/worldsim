@@ -9,12 +9,12 @@
 #include "UserSettings.h"
 #include <GL/glew.h>
 
+#include <app/Keys.h>
+#include <app/UiScene.h>
+#include <application/App.h>
 #include <graphics/PrimitiveStyles.h>
 #include <input/InputEvent.h>
-#include <input/InputManager.h>
 #include <primitives/Primitives.h>
-#include <scene/Scene.h>
-#include <scene/SceneManager.h>
 #include <theme/Tokens.h>
 #include <theme/Variants.h>
 #include <utils/Log.h>
@@ -28,9 +28,10 @@ namespace {
 
 	float textScale(float px) { return px / 16.0F; }
 
-	class SettingsScene : public engine::IScene {
+	class SettingsScene : public engine::UiScene {
 	  public:
-		void onEnter() override {
+		void onEnter(app::App& app) override {
+			owner = &app;
 			LOG_INFO(Game, "SettingsScene - Entering");
 			layout();
 		}
@@ -54,13 +55,13 @@ namespace {
 			return false;
 		}
 
-		void update(float /*dt*/) override {
-			if (engine::InputManager::Get().isKeyPressed(foundation::Key::Escape)) {
-				sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu));
+		void update(const app::FrameContext& frame) override {
+			if (engine::key(frame.input, foundation::Key::Escape).pressed()) {
+				owner->scenes().switchTo(world_sim::scenes::MainMenu.name);
 			}
 		}
 
-		void render() override {
+		void render(float /*alpha*/) override {
 			using namespace UI;
 			using Renderer::Primitives::drawRect;
 			using Renderer::Primitives::drawText;
@@ -123,10 +124,12 @@ namespace {
 
 		void onExit() override { LOG_INFO(Game, "SettingsScene - Exiting"); }
 
-		std::string exportState() override { return R"({"scene": "settings"})"; }
-		const char* getName() const override { return kSceneName; }
+		std::string exportState() const override { return R"({"scene": "settings"})"; }
+		const char* name() const override { return kSceneName; }
 
 	  private:
+		app::App* owner = nullptr;
+
 		void layout() {
 			const float screenH = Renderer::Primitives::PercentHeight(100.0F);
 			headerY = (screenH - 200.0F) * 0.5F;

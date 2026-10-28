@@ -8,10 +8,10 @@
 #include <theme/Tokens.h>
 #include <theme/Variants.h>
 
+#include "SceneTypes.h"
+#include <app/UiScene.h>
 #include <graphics/Color.h>
 #include <primitives/Primitives.h>
-#include <scene/Scene.h>
-#include "SceneTypes.h"
 
 #include <GL/glew.h>
 
@@ -22,9 +22,9 @@ namespace {
 
 constexpr const char* kSceneName = "salvagedialog";
 
-class SalvageDialogScene : public engine::IScene {
+class SalvageDialogScene : public engine::UiScene {
   public:
-	void onEnter() override {
+	void onEnter(app::App& /*app*/) override {
 		dialog = std::make_unique<UI::Dialog>(UI::Dialog::Args{.title = "MARA VANCE", .size = {760.0F, 420.0F}, .modal = true});
 
 		// Demo a column of selectable ListRows inside the dialog content.
@@ -39,7 +39,8 @@ class SalvageDialogScene : public engine::IScene {
 		dialog->addChild(std::move(list));
 	}
 
-	void update(float dt) override {
+	void update(const app::FrameContext& frame) override {
+		const auto dt = static_cast<float>(frame.dt);
 		// Open once the viewport is known, then drive the fade.
 		if (dialog && !opened) {
 			int vw = 0;
@@ -55,15 +56,13 @@ class SalvageDialogScene : public engine::IScene {
 		}
 	}
 
-	void onExit() override {}
-
-	std::string exportState() override { // NOLINT(readability-convert-member-functions-to-static)
+	std::string exportState() const override { // NOLINT(readability-convert-member-functions-to-static)
 		return R"({"scene": "salvagedialog"})";
 	}
 
-	const char* getName() const override { return kSceneName; }
+	const char* name() const override { return kSceneName; }
 
-	void render() override {
+	void render(float /*alpha*/) override {
 		using namespace UI;
 
 		glClearColor(bg_void.r, bg_void.g, bg_void.b, bg_void.a);

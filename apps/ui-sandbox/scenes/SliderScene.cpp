@@ -4,11 +4,10 @@
 #include <GL/glew.h>
 
 #include "SceneTypes.h"
+#include <app/UiScene.h>
 #include <components/slider/Slider.h>
 #include <input/InputEvent.h>
 #include <primitives/Primitives.h>
-#include <scene/Scene.h>
-#include <scene/SceneManager.h>
 #include <shapes/Shapes.h>
 
 #include <format>
@@ -20,12 +19,12 @@ namespace {
 
 constexpr const char* kSceneName = "slider";
 
-class SliderScene : public engine::IScene {
+class SliderScene : public engine::UiScene {
   public:
-	const char* getName() const override { return kSceneName; }
-	std::string exportState() override { return R"({"scene":"slider"})"; }
+	const char* name() const override { return kSceneName; }
+	std::string exportState() const override { return R"({"scene":"slider"})"; }
 
-	void onEnter() override {
+	void onEnter(app::App& /*app*/) override {
 		using namespace UI;
 
 		constexpr float kX = 80.0F;
@@ -113,13 +112,14 @@ class SliderScene : public engine::IScene {
 		return false;
 	}
 
-	void update(float dt) override {
+	void update(const app::FrameContext& frame) override {
+		const auto dt = static_cast<float>(frame.dt);
 		for (auto& slider : sliders) {
 			slider->update(dt);
 		}
 	}
 
-	void render() override {
+	void render(float /*alpha*/) override {
 		glClearColor(0.10F, 0.10F, 0.13F, 1.0F);
 		glClear(GL_COLOR_BUFFER_BIT);
 

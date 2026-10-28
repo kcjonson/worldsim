@@ -11,12 +11,12 @@
 // off-screen) while we dial in the resting look.
 
 #include "SceneTypes.h"
+#include <app/UiScene.h>
 #include <assets/AssetDefinition.h>
 #include <assets/AssetRegistry.h>
 #include <input/InputEvent.h>
 #include <primitives/InstanceData.h>
 #include <primitives/Primitives.h>
-#include <scene/Scene.h>
 #include <utils/Log.h>
 #include <vector/Types.h>
 #include <world/rendering/GroundcoverUniforms.h>
@@ -116,9 +116,9 @@ namespace {
 		return m;
 	}
 
-	class GrassScene : public engine::IScene {
+	class GrassScene : public engine::UiScene {
 	  public:
-		void onEnter() override {
+		void onEnter(app::App& /*app*/) override {
 			LOG_INFO(UI, "Grass Scene - placement-driven hair clumps");
 
 			std::mt19937						   meshRng(1234);
@@ -154,12 +154,13 @@ namespace {
 					 m_totalTufts, bp->spawnChance, kVariantCount, m_totalTris, m_drawCalls);
 		}
 
-		void update(float dt) override {
+		void update(const app::FrameContext& frame) override {
+			const auto dt = static_cast<float>(frame.dt);
 			float ms = dt * 1000.0F;
 			m_frameMs = (m_frameMs <= 0.0F) ? ms : (m_frameMs * 0.9F + ms * 0.1F);
 		}
 
-		void render() override {
+		void render(float /*alpha*/) override {
 			glClearColor(kGround.r, kGround.g, kGround.b, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
 
@@ -219,16 +220,14 @@ namespace {
 			);
 		}
 
-		void onExit() override {}
-
-		std::string exportState() override {
+		std::string exportState() const override {
 			char buf[256];
 			std::snprintf(buf, sizeof(buf), R"({"tufts": %u, "variants": %d, "drawCalls": %u, "triangles": %zu, "frameMs": %.3f})",
 						  m_totalTufts, kVariantCount, m_drawCalls, m_totalTris, m_frameMs);
 			return {buf};
 		}
 
-		const char* getName() const override { return kSceneName; }
+		const char* name() const override { return kSceneName; }
 
 		bool handleInput(UI::InputEvent& event) override {
 			if (event.type == UI::InputEvent::Type::MouseMove) {

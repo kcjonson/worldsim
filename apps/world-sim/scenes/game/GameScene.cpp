@@ -19,23 +19,20 @@
 
 #include <GL/glew.h>
 
-#include <application/AppLauncher.h>
-#include <debug/DebugServer.h>
 #include <algorithm>
-#include <debug/LayoutLint.h>
-#include <debug/UiTreeSerializer.h>
+#include <app/Keys.h>
+#include <app/UiBridge.h>
+#include <app/UiScene.h>
+#include <application/App.h>
 #include <chrono>
 #include <cmath>
-#include <limits>
 #include <graphics/Rect.h>
 #include <input/InputEvent.h>
-#include <input/InputManager.h>
+#include <limits>
 #include <metrics/GPUTimer.h>
 #include <metrics/MetricsCollector.h>
 #include <metrics/PerformanceMetrics.h>
 #include <primitives/Primitives.h>
-#include <scene/Scene.h>
-#include <scene/SceneManager.h>
 #include <utils/Log.h>
 #include <world/camera/WorldCamera.h>
 #include <world/chunk/Chunk.h>
@@ -96,6 +93,7 @@
 
 #include <cstdlib>
 #include <memory>
+#include <optional>
 #include <random>
 #include <sstream>
 #include <string>
@@ -115,9 +113,10 @@ namespace {
 	constexpr uint64_t	  kDefaultWorldSeed = 12345;
 	constexpr float		  kPixelsPerMeter = 8.0F;
 
-	class GameScene : public engine::IScene {
+	class GameScene : public engine::UiScene {
 	  public:
-		void onEnter() override {
+		void onEnter(app::App& app) override {
+			owner = &app;
 			LOG_INFO(Game, "GameScene - Entering");
 
 			// Check for pre-loaded state from GameLoadingScene
@@ -240,7 +239,7 @@ namespace {
 						auto& timeSystem = ecsWorld->getSystem<ecs::TimeSystem>();
 						timeSystem.setSpeed(speed);
 					},
-				.onMenuClick = [this]() { sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu)); },
+				.onMenuClick = [this]() { owner->scenes().switchTo(world_sim::scenes::MainMenu.name); },
 				.onPlaceFurniture = [this]() { handlePlaceFurniture(); },
 				.onMoveFurniture = [this]() { handleMoveFurniture(); },
 				.onDemolishFoundation = [this]() { handleDemolishFoundation(); },
@@ -553,6 +552,19 @@ namespace {
 				.landingLonDeg = m_landingLonDeg,
 				.spawnColonist = [this](glm::vec2 pos, const std::string& name) { return spawnColonist(pos, name); },
 			});
+			m_devRegistrations = m_devHandler->registerWith(owner->devServer());
+
+			// Remote camera control (/api/control?action=camera), applied in update like held keys
+			m_devRegistrations.push_back(owner->devServer().control("camera", [this](const app::DevRequest& request) {
+				const char*									  error = nullptr;
+				const std::optional<world_sim::CameraCommand> command =
+					world_sim::DevCommandHandler::parseCameraCommand(request.params, error);
+				if (!command) {
+					return app::DevResponse{.status = 400, .body = std::string(R"({"error":")") + error + "\"}"};
+				}
+				m_pendingCamera = *command;
+				return app::DevResponse{.body = R"({"status":"ok","action":"camera"})"};
+			}));
 
 			// Rooms overlay: scene-owned world-space layer that tints/outlines/labels
 			// detected rooms when toggled on (R). Reads the same RoomDetectionSystem
@@ -601,7 +613,7 @@ namespace {
 			refreshThicknessPresets(m_drawingSystem->activeMaterial());
 		}
 
-		/// Handle UI input events dispatched from Application.
+		/// Handle UI input events dispatched by the ui bridge (engine::UiBridge).
 		/// Forwards to gameUI and handles game-specific interactions (placement, selection).
 		bool handleInput(UI::InputEvent& event) override {
 			// Forward event to UI first
@@ -683,8 +695,14 @@ namespace {
 			return consumed;
 		}
 
-		void update(float dt) override {
-			auto& input = engine::InputManager::Get();
+		void update(const app::FrameContext& frame) override {
+			const auto dt = static_cast<float>(frame.dt);
+			const auto pressed = [&frame](foundation::Key key) {
+				return engine::key(frame.input, key).pressed();
+			};
+			const auto down = [&frame](foundation::Key key) {
+				return engine::key(frame.input, key).down;
+			};
 
 			// Fade out the player move-order marker.
 			if (m_moveMarkerTtl > 0.0F) {
@@ -692,80 +710,80 @@ namespace {
 			}
 
 			// Handle Escape - cancel the drawing tool / placement first, then exit
-			if (input.isKeyPressed(foundation::Key::Escape)) {
+			if (pressed(foundation::Key::Escape)) {
 				if (m_drawingSystem->isActive()) {
 					m_drawingSystem->cancel();
 				} else if (m_placementSystem->isActive()) {
 					m_placementSystem->cancel();
 				} else {
-					sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu));
+					owner->scenes().switchTo(world_sim::scenes::MainMenu.name);
 					return; // Don't process rest of update when switching scenes
 				}
 			}
 
 			// Backspace removes the last placed point while drawing.
-			if (input.isKeyPressed(foundation::Key::Backspace) && m_drawingSystem->isActive()) {
+			if (pressed(foundation::Key::Backspace) && m_drawingSystem->isActive()) {
 				m_drawingSystem->removeLastPoint();
 			}
 
 			// Enter finishes (commits) a wall chain; the foundation tool ignores it
 			// (it closes on origin-click instead).
-			if (input.isKeyPressed(foundation::Key::Enter) && m_drawingSystem->isActive()) {
+			if (pressed(foundation::Key::Enter) && m_drawingSystem->isActive()) {
 				m_drawingSystem->finishChain();
 			}
 
 			// Handle B key - toggle build mode. Gated while the foundation tool owns
 			// world input so the two tools can't be live at once (see tool-exclusivity
 			// wiring in the placement/drawing activation callbacks).
-			if (input.isKeyPressed(foundation::Key::B) && !m_drawingSystem->isActive()) {
+			if (pressed(foundation::Key::B) && !m_drawingSystem->isActive()) {
 				m_placementSystem->toggleBuildMenu();
 			}
 
 			// R toggles the rooms overlay (tint/outline/label of detected rooms). Same
 			// state the GameplayBar Rooms button flips, through the same method, so the
 			// two never drift.
-			if (input.isKeyPressed(foundation::Key::R)) {
+			if (pressed(foundation::Key::R)) {
 				setRoomOverlayActive(!m_roomOverlay->isActive());
 			}
 
 			// N toggles the nav debug overlay (navmesh wireframe + agent routes).
-			if (input.isKeyPressed(foundation::Key::N)) {
+			if (pressed(foundation::Key::N)) {
 				setNavOverlayActive(!m_navOverlay->isActive());
 			}
 
 			// V toggles the vision debug overlay (visibility polygons + occluders).
-			if (input.isKeyPressed(foundation::Key::V)) {
+			if (pressed(foundation::Key::V)) {
 				setVisionOverlayActive(!m_visionOverlay->isActive());
 			}
 
 			// G toggles the terrain polygon debug overlay (waterline rings +
 			// clipped navRings, per chunk).
-			if (input.isKeyPressed(foundation::Key::G)) {
+			if (pressed(foundation::Key::G)) {
 				setTerrainPolygonOverlayActive(!m_terrainPolygonOverlay->isActive());
 			}
 
 			// T toggles the per-colonist decision inspector panel.
-			if (input.isKeyPressed(foundation::Key::T)) {
+			if (pressed(foundation::Key::T)) {
 				gameUI->toggleDecisionInspector();
 			}
 
 			// Handle time controls
 			auto& timeSystem = ecsWorld->getSystem<ecs::TimeSystem>();
-			if (input.isKeyPressed(foundation::Key::Space)) {
+			if (pressed(foundation::Key::Space)) {
 				timeSystem.togglePause();
 			}
-			if (input.isKeyPressed(foundation::Key::Num1)) {
+			if (pressed(foundation::Key::Num1)) {
 				timeSystem.setSpeed(ecs::GameSpeed::Normal);
 			}
-			if (input.isKeyPressed(foundation::Key::Num2)) {
+			if (pressed(foundation::Key::Num2)) {
 				timeSystem.setSpeed(ecs::GameSpeed::Fast);
 			}
-			if (input.isKeyPressed(foundation::Key::Num3)) {
+			if (pressed(foundation::Key::Num3)) {
 				timeSystem.setSpeed(ecs::GameSpeed::VeryFast);
 			}
 
 			// Zoom reset
-			if (input.isKeyPressed(foundation::Key::Home)) {
+			if (pressed(foundation::Key::Home)) {
 				m_camera->setZoomIndex(engine::world::kDefaultZoomIndex);
 			}
 
@@ -773,68 +791,36 @@ namespace {
 			float dx = 0.0F;
 			float dy = 0.0F;
 
-			if (input.isKeyDown(foundation::Key::W) || input.isKeyDown(foundation::Key::Up)) {
+			if (down(foundation::Key::W) || down(foundation::Key::Up)) {
 				dy -= 1.0F;
 			}
-			if (input.isKeyDown(foundation::Key::S) || input.isKeyDown(foundation::Key::Down)) {
+			if (down(foundation::Key::S) || down(foundation::Key::Down)) {
 				dy += 1.0F;
 			}
-			if (input.isKeyDown(foundation::Key::A) || input.isKeyDown(foundation::Key::Left)) {
+			if (down(foundation::Key::A) || down(foundation::Key::Left)) {
 				dx -= 1.0F;
 			}
-			if (input.isKeyDown(foundation::Key::D) || input.isKeyDown(foundation::Key::Right)) {
+			if (down(foundation::Key::D) || down(foundation::Key::Right)) {
 				dx += 1.0F;
 			}
 
-			// Remote camera control from the debug server (position/zoom set once,
+			// Remote camera control from the dev server (position/zoom set once,
 			// pan persists like held movement keys until cleared)
-			if (auto* debugServer = engine::AppLauncher::getDebugServer()) {
-				Foundation::CameraCommand cmd;
-				if (debugServer->consumeCameraCommand(cmd)) {
-					if (cmd.hasPosition) {
-						m_camera->setPosition({cmd.x, cmd.y});
-					}
-					if (cmd.hasZoom) {
-						m_camera->setZoom(cmd.zoom);
-					}
-					if (cmd.hasPan) {
-						m_debugPanX = cmd.panX;
-						m_debugPanY = cmd.panY;
-					}
+			if (m_pendingCamera) {
+				const world_sim::CameraCommand& cmd = *m_pendingCamera;
+				if (cmd.hasPosition) {
+					m_camera->setPosition({cmd.x, cmd.y});
 				}
-
-				// Drain DEV/TEST commands (/api/dev/...) and serve a pending /api/state
-				// readback. DebugServer is domain-agnostic and only queues generic
-				// DevCommands / state requests; DevCommandHandler owns the game context and
-				// interprets them. Both run on the game thread (the HTTP thread must never
-				// touch the ECS) and BEFORE ecsWorld->update() so a command takes effect the
-				// same frame. Dev builds only (the debug server is dev-only).
-				std::vector<Foundation::DevCommand> devCommands;
-				if (debugServer->consumeDevCommands(devCommands)) {
-					for (const auto& devCmd : devCommands) {
-						debugServer->deliverDevResult(devCmd.id, m_devHandler->handle(devCmd));
-					}
+				if (cmd.hasZoom) {
+					m_camera->setZoom(cmd.zoom);
 				}
-
-				std::string stateQuery;
-				if (debugServer->consumeStateRequest(stateQuery)) {
-					// "ui.tree"/"ui.lint" (/api/ui/tree, /api/ui/lint) read the live UI
-					// hierarchy; everything else is DevCommandHandler world state.
-					if (stateQuery == "ui.tree" || stateQuery == "ui.lint") {
-						int viewportW = 0;
-						int viewportH = 0;
-						Renderer::Primitives::getLogicalViewport(viewportW, viewportH);
-						const Foundation::Vec2 viewport{static_cast<float>(viewportW), static_cast<float>(viewportH)};
-						const auto			   roots = gameUI->getUiRoots();
-						debugServer->deliverState(
-							stateQuery == "ui.tree" ? UI::serializeUiTreeJson(roots, viewport)
-													: UI::lintUiTreeJson(roots, viewport)
-						);
-					} else {
-						debugServer->deliverState(m_devHandler->serializeState(stateQuery));
-					}
+				if (cmd.hasPan) {
+					m_debugPanX = cmd.panX;
+					m_debugPanY = cmd.panY;
 				}
+				m_pendingCamera.reset();
 			}
+
 			dx += m_debugPanX;
 			dy += m_debugPanY;
 
@@ -853,7 +839,7 @@ namespace {
 				// Accumulate scroll deltas to handle high-precision input devices (Magic Mouse, trackpad)
 				// These devices generate many small fractional scroll events per gesture
 				constexpr float kScrollThreshold = 1.0F; // Trigger zoom after ~1 "notch" of scrolling
-				float			scrollDelta = input.consumeScrollDelta();
+				float			scrollDelta = owner->context<engine::UiBridge>().consumeScroll();
 				m_scrollAccumulator += scrollDelta;
 
 				// Trigger zoom steps when accumulated scroll crosses threshold
@@ -980,7 +966,7 @@ namespace {
 			m_lastUpdateMs = elapsedMs(updateStart, Clock::now());
 		}
 
-		void render() override {
+		void render(float /*alpha*/) override {
 			glClearColor(0.05F, 0.08F, 0.12F, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
 
@@ -1074,7 +1060,7 @@ namespace {
 			m_gpuTimer.end();
 
 			// Report timing breakdown to metrics system
-			auto* metrics = engine::AppLauncher::getMetrics();
+			auto* metrics = owner->metrics();
 			if (metrics != nullptr) {
 				metrics->setTimingBreakdown(
 					tileMs,
@@ -1101,6 +1087,10 @@ namespace {
 		void onExit() override {
 			LOG_INFO(Game, "GameScene - Exiting");
 
+			// The dev routes and the camera control point into the systems below
+			m_devRegistrations.clear();
+			m_pendingCamera.reset();
+
 			// Wait for all pending async tasks to complete before destroying executor
 			if (m_asyncProcessor) {
 				m_asyncProcessor->clear();
@@ -1121,13 +1111,17 @@ namespace {
 			m_renderer.reset();
 		}
 
-		std::string exportState() override {
+		std::string exportState() const override {
 			std::ostringstream oss;
 			oss << R"({"scene":"game","chunks":)" << m_chunkManager->loadedChunkCount() << "}";
 			return oss.str();
 		}
 
-		const char* getName() const override { return kSceneName; }
+		const char* name() const override { return kSceneName; }
+
+		std::vector<const UI::IComponent*> getUiRoots() const override {
+			return gameUI ? gameUI->getUiRoots() : std::vector<const UI::IComponent*>{};
+		}
 
 	  private:
 		/// Initialize ECS world with systems and spawn initial entities.
@@ -1983,9 +1977,14 @@ namespace {
 		// Accumulates fractional scroll deltas and triggers zoom only when threshold is crossed
 		float m_scrollAccumulator = 0.0F;
 
-		// Persistent pan direction from debug server camera commands (held-key style)
-		float m_debugPanX = 0.0F;
-		float m_debugPanY = 0.0F;
+		// The App this scene is on, from onEnter
+		app::App* owner = nullptr;
+
+		// The camera control's last request, until update applies it, and the persistent pan
+		// direction it set (held-key style)
+		std::optional<world_sim::CameraCommand> m_pendingCamera;
+		float									m_debugPanX = 0.0F;
+		float									m_debugPanY = 0.0F;
 
 		// World interaction subsystems (extracted from GameScene)
 		std::unique_ptr<world_sim::PlacementSystem> m_placementSystem;
@@ -1996,9 +1995,11 @@ namespace {
 		std::unique_ptr<world_sim::NavOverlay>		m_navOverlay;
 		std::unique_ptr<world_sim::VisionOverlay>	m_visionOverlay;
 
-		// Dev/test command + state-readback surface (/api/dev, /api/state). Dev-only;
-		// constructed after the systems above exist.
+		// Dev/test command + state-readback surface (/api/dev, /api/state) and the camera
+		// control. Dev-only; constructed after the systems above exist, registered while
+		// the scene is on the stack.
 		std::unique_ptr<world_sim::DevCommandHandler> m_devHandler;
+		std::vector<app::DevServer::Registration>	  m_devRegistrations;
 
 		// Entities queued for destruction, drained after ecsWorld->update() so we
 		// never destroyEntity mid-view-iteration (deconstruct callback, demolish).

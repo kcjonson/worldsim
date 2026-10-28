@@ -2,18 +2,17 @@
 // Phase 1 validation: Prove real-time tessellation at scale
 // Press 'C' to toggle clipping for performance comparison
 
+#include "SceneTypes.h"
+#include <app/Keys.h>
+#include <app/UiScene.h>
 #include <graphics/ClipTypes.h>
 #include <graphics/Color.h>
 #include <primitives/Primitives.h>
-#include <scene/Scene.h>
-#include <scene/SceneManager.h>
-#include "SceneTypes.h"
 #include <utils/Log.h>
 #include <vector/Tessellator.h>
 #include <vector/Types.h>
 
 #include <GL/glew.h>
-#include <GLFW/glfw3.h>
 #include <chrono>
 #include <cmath>
 #include <numbers>
@@ -33,9 +32,9 @@ constexpr const char* kSceneName = "vector-perf";
 		renderer::TessellatedMesh mesh;
 	};
 
-	class VectorPerfScene : public engine::IScene {
+	class VectorPerfScene : public engine::UiScene {
 	  public:
-		void onEnter() override {
+		void onEnter(app::App& /*app*/) override {
 			LOG_INFO(UI, "Vector Performance Scene - 10,000 Stars Stress Test");
 
 			// Generate 10,000 stars
@@ -46,17 +45,13 @@ constexpr const char* kSceneName = "vector-perf";
 			LOG_INFO(UI, "Total vertices: %zu", CalculateTotalVertices());
 		}
 
-		void update(float dt) override {
+		void update(const app::FrameContext& frame) override {
+			const auto dt = static_cast<float>(frame.dt);
 			// Toggle clipping with 'C' key
-			static bool lastKeyState = false;
-			bool		currentKeyState = glfwGetKey(glfwGetCurrentContext(), GLFW_KEY_C) == GLFW_PRESS;
-
-			// Detect key press (transition from not-pressed to pressed)
-			if (currentKeyState && !lastKeyState) {
+			if (engine::key(frame.input, foundation::Key::C).pressed()) {
 				clippingEnabled = !clippingEnabled;
 				LOG_INFO(UI, "Clipping %s", clippingEnabled ? "ENABLED" : "DISABLED");
 			}
-			lastKeyState = currentKeyState;
 
 			// Update FPS counter
 			frameCount++;
@@ -69,7 +64,7 @@ constexpr const char* kSceneName = "vector-perf";
 			}
 		}
 
-		void render() override {
+		void render(float /*alpha*/) override {
 			using namespace Foundation;
 
 			// Clear background
@@ -157,13 +152,13 @@ constexpr const char* kSceneName = "vector-perf";
 			LOG_INFO(UI, "Final stats: %zu stars, %.1F FPS, %.2fms render time", stars.size(), fps, lastRenderTime);
 		}
 
-		std::string exportState() override {
+		std::string exportState() const override {
 			char buf[256];
 			snprintf(buf, sizeof(buf), R"({"stars": %zu, "fps": %.1F, "renderMs": %.2F})", stars.size(), fps, lastRenderTime);
 			return {buf};
 		}
 
-		const char* getName() const override { return kSceneName; }
+		const char* name() const override { return kSceneName; }
 
 	  private:
 		void generateStars(size_t count) { // NOLINT(readability-convert-member-functions-to-static)

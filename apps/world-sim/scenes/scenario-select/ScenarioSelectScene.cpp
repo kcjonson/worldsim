@@ -9,20 +9,19 @@
 #include "SceneTypes.h"
 #include "scenes/scenario-select/Scenarios.h"
 #include "scenes/shared/Starfield.h"
-#include "scenes/shared/UiStateDrain.h"
 #include "scenes/shared/Widgets.h"
 #include <GL/glew.h>
 
+#include <app/Keys.h>
+#include <app/UiScene.h>
+#include <application/App.h>
 #include <components/badge/Badge.h>
 #include <components/button/Button.h>
 #include <components/icon/Icon.h>
 #include <graphics/PrimitiveStyles.h>
 #include <input/InputEvent.h>
-#include <input/InputManager.h>
 #include <layout/LayoutContainer.h>
 #include <primitives/Primitives.h>
-#include <scene/Scene.h>
-#include <scene/SceneManager.h>
 #include <shapes/Shapes.h>
 #include <theme/Tokens.h>
 #include <theme/Variants.h>
@@ -205,9 +204,10 @@ namespace {
 		bool						  hovered{false};
 	};
 
-	class ScenarioSelectScene : public engine::IScene {
+	class ScenarioSelectScene : public engine::UiScene {
 	  public:
-		void onEnter() override {
+		void onEnter(app::App& app) override {
+			owner = &app;
 			LOG_INFO(Game, "ScenarioSelectScene - Entering");
 
 			// Coming back from a later step restores the previous choice.
@@ -234,15 +234,16 @@ namespace {
 			return root && root->handleEvent(event);
 		}
 
-		void update(float dt) override {
-			if (engine::InputManager::Get().isKeyPressed(foundation::Key::Escape)) {
+		void update(const app::FrameContext& frame) override {
+			const auto dt = static_cast<float>(frame.dt);
+			if (engine::key(frame.input, foundation::Key::Escape).pressed()) {
 				goBack();
 				return;
 			}
 			if (root) root->update(dt);
 		}
 
-		void render() override {
+		void render(float /*alpha*/) override {
 			glClearColor(UI::bg_void.r, UI::bg_void.g, UI::bg_void.b, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
 
@@ -254,16 +255,15 @@ namespace {
 				lastViewport = {screenW, screenH};
 				root->layout({0.0F, 0.0F, screenW, screenH});
 			}
-			if (root) root->render();
-
-			world_sim::serveUiStateRequests(*this);
+			if (root)
+				root->render();
 		}
 
-		std::string exportState() override {
+		std::string exportState() const override {
 			return std::format(R"({{"scene":"scenario_select","selected":"{}"}})",
 							   world_sim::kScenarios[static_cast<size_t>(selectedIndex)].id);
 		}
-		const char* getName() const override { return kSceneName; }
+		const char* name() const override { return kSceneName; }
 
 		std::vector<const UI::IComponent*> getUiRoots() const override {
 			if (!root) return {};
@@ -271,6 +271,8 @@ namespace {
 		}
 
 	  private:
+		app::App* owner = nullptr;
+
 		void buildUI() {
 			using namespace UI;
 
@@ -359,14 +361,12 @@ namespace {
 			}
 		}
 
-		void goBack() {
-			sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu));
-		}
+		void goBack() { owner->scenes().switchTo(world_sim::scenes::MainMenu.name); }
 
 		void confirm() {
 			world_sim::NewGameSetup::Get().scenarioId =
 				world_sim::kScenarios[static_cast<size_t>(selectedIndex)].id;
-			sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::PartySelect));
+			owner->scenes().switchTo(world_sim::scenes::PartySelect.name);
 		}
 
 		std::unique_ptr<UI::LayoutContainer> root;

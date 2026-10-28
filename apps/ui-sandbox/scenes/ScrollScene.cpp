@@ -4,6 +4,7 @@
 #include <GL/glew.h>
 
 #include "SceneTypes.h"
+#include <app/UiScene.h>
 #include <cmath>
 #include <components/button/Button.h>
 #include <components/progress/ProgressBar.h>
@@ -14,8 +15,6 @@
 #include <layout/LayoutTypes.h>
 #include <memory>
 #include <primitives/Primitives.h>
-#include <scene/Scene.h>
-#include <scene/SceneManager.h>
 #include <shapes/Shapes.h>
 #include <utils/Log.h>
 
@@ -23,12 +22,12 @@ namespace {
 
 	constexpr const char* kSceneName = "scroll";
 
-	class ScrollScene : public engine::IScene {
+	class ScrollScene : public engine::UiScene {
 	  public:
-		const char* getName() const override { return kSceneName; }
-		std::string exportState() override { return "{}"; }
+		const char* name() const override { return kSceneName; }
+		std::string exportState() const override { return "{}"; }
 
-		void onEnter() override {
+		void onEnter(app::App& /*app*/) override {
 			using namespace UI;
 			using namespace Foundation;
 
@@ -221,7 +220,8 @@ namespace {
 			return false;
 		}
 
-		void update(float deltaTime) override {
+		void update(const app::FrameContext& frame) override {
+			const auto deltaTime = static_cast<float>(frame.dt);
 			if (scrollContainer1) {
 				scrollContainer1->update(deltaTime);
 			}
@@ -236,7 +236,7 @@ namespace {
 			}
 		}
 
-		void render() override {
+		void render(float /*alpha*/) override {
 			// Clear background
 			glClearColor(0.10F, 0.10F, 0.13F, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);

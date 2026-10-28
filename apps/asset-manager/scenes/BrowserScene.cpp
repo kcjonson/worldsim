@@ -4,6 +4,7 @@
 #include "SceneTypes.h"
 #include "Theme.h"
 
+#include <app/UiScene.h>
 #include <assets/AssetDefinition.h>
 #include <assets/AssetRegistry.h>
 #include <components/TextInput/TextInput.h>
@@ -12,7 +13,6 @@
 #include <graphics/Color.h>
 #include <layout/LayoutContainer.h>
 #include <primitives/Primitives.h>
-#include <scene/Scene.h>
 #include <shapes/Shapes.h>
 #include <utils/Log.h>
 #include <utils/ResourcePath.h>
@@ -78,9 +78,9 @@ std::filesystem::path findSourceAssetsRoot() {
 	return {};
 }
 
-class BrowserScene : public engine::IScene {
+class BrowserScene : public engine::UiScene {
   public:
-	void onEnter() override {
+	void onEnter(app::App& /*app*/) override {
 		LOG_INFO(Engine, "AssetManager BrowserScene - Entering");
 
 		// Prefer the SOURCE assets/ -- this is a live authoring tool, so Reload should
@@ -152,7 +152,8 @@ class BrowserScene : public engine::IScene {
 		return m_detail.handleInput(event);
 	}
 
-	void update(float dt) override {
+	void update(const app::FrameContext& frame) override {
+		const auto dt = static_cast<float>(frame.dt);
 		// Window is resizable; re-layout when the viewport changes so scroll/detail bounds
 		// don't desync from the panels (which read the live viewport each frame).
 		int viewportW = 0;
@@ -177,7 +178,7 @@ class BrowserScene : public engine::IScene {
 		m_detail.update(dt);
 	}
 
-	void render() override {
+	void render(float /*alpha*/) override {
 		glClearColor(theme::bgVoid.r, theme::bgVoid.g, theme::bgVoid.b, 1.0F);
 		glClear(GL_COLOR_BUFFER_BIT);
 
@@ -218,8 +219,8 @@ class BrowserScene : public engine::IScene {
 		m_treeScroll.reset();
 	}
 
-	std::string exportState() override { return R"({"scene": "browser", "selected": ")" + m_selected + "\"}"; }
-	const char* getName() const override { return kSceneName; }
+	std::string exportState() const override { return R"({"scene": "browser", "selected": ")" + m_selected + "\"}"; }
+	const char* name() const override { return kSceneName; }
 
   private:
 	void refreshNames() {

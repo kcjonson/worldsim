@@ -7,12 +7,9 @@
 #include "components/TextInput/TextInput.h"
 #include "components/button/Button.h"
 #include "input/InputEvent.h"
-#include "input/InputManager.h"
 #include "primitives/Primitives.h"
 #include "shapes/Shapes.h"
-#include <application/Application.h>
-#include <scene/Scene.h>
-#include <scene/SceneManager.h>
+#include <app/UiScene.h>
 #include <sstream>
 #include <utils/Log.h>
 #include <vector>
@@ -21,9 +18,9 @@ namespace {
 
 	constexpr const char* kSceneName = "text_input";
 
-	class TextInputScene : public engine::IScene {
+	class TextInputScene : public engine::UiScene {
 	  public:
-		void onEnter() override {
+		void onEnter(app::App& /*app*/) override {
 
 			// Get actual viewport dimensions
 			int viewportWidth = 0;
@@ -159,7 +156,8 @@ namespace {
 			return false;
 		}
 
-		void update(float dt) override {
+		void update(const app::FrameContext& frame) override {
+			const auto dt = static_cast<float>(frame.dt);
 			// Update all text inputs
 			for (auto& input : inputs) {
 				input->update(dt);
@@ -171,7 +169,7 @@ namespace {
 			}
 		}
 
-		void render() override {
+		void render(float /*alpha*/) override {
 			// Clear background to dark gray
 			glClearColor(0.12F, 0.12F, 0.12F, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
@@ -234,14 +232,14 @@ namespace {
 			button.reset();
 		}
 
-		std::string exportState() override {
+		std::string exportState() const override {
 			return R"({
 			"scene": "text_input",
 			"description": "TextInput component testing and demonstration"
 		})";
 		}
 
-		const char* getName() const override { return kSceneName; }
+		const char* name() const override { return kSceneName; }
 
 	  private:
 		std::vector<std::unique_ptr<UI::TextInput>> inputs;

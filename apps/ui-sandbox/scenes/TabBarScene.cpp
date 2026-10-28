@@ -4,16 +4,14 @@
 #include <GL/glew.h>
 
 #include "SceneTypes.h"
+#include <app/UiScene.h>
 #include <cctype>
 #include <components/tabbar/TabBar.h>
 #include <graphics/Color.h>
 #include <input/InputEvent.h>
-#include <input/InputManager.h>
 #include <input/InputTypes.h>
 #include <memory>
 #include <primitives/Primitives.h>
-#include <scene/Scene.h>
-#include <scene/SceneManager.h>
 #include <shapes/Shapes.h>
 #include <utils/Log.h>
 #include <vector>
@@ -22,12 +20,12 @@ namespace {
 
 	constexpr const char* kSceneName = "tabbar";
 
-	class TabBarScene : public engine::IScene {
+	class TabBarScene : public engine::UiScene {
 	  public:
-		const char* getName() const override { return kSceneName; }
-		std::string exportState() override { return "{}"; }
+		const char* name() const override { return kSceneName; }
+		std::string exportState() const override { return "{}"; }
 
-		void onEnter() override {
+		void onEnter(app::App& /*app*/) override {
 			using namespace UI;
 			using namespace Foundation;
 
@@ -204,7 +202,8 @@ namespace {
 			return false;
 		}
 
-		void update(float deltaTime) override {
+		void update(const app::FrameContext& frame) override {
+			const auto deltaTime = static_cast<float>(frame.dt);
 			if (tabBar1) {
 				tabBar1->update(deltaTime);
 			}
@@ -230,7 +229,7 @@ namespace {
 			}
 		}
 
-		void render() override {
+		void render(float /*alpha*/) override {
 			// Clear background
 			glClearColor(0.12F, 0.12F, 0.15F, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);

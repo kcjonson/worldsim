@@ -1,14 +1,14 @@
 #pragma once
 
-// DevCommandHandler - interprets dev/test commands (/api/dev/<verb>) and serializes world
-// state (/api/state) against the live game. Dev-only. Split out of GameScene so the scene
+// DevCommandHandler - the dev/test verbs (/api/dev/<verb>) and world-state views
+// (/api/state?what=) against the live game. Dev-only. Split out of GameScene so the scene
 // class stays focused on the frame loop, not the (large) cheat + inspection surface.
 //
-// The debug server (libs/engine) stays domain-agnostic and hands the app generic
-// DevCommands; this is where the game context (ECS world, construction, placement, selection,
-// UI) interprets them. GameScene constructs one of these after its systems exist and delegates
-// the per-frame DevCommand drain and the /api/state readback to it.
+// The dev server (salal's app) stays domain-agnostic: GameScene constructs one of these after
+// its systems exist and registers its routes and providers (registerWith), which the server
+// answers on the game thread, before the frame's update and after its render respectively.
 
+#include <DevServer/DevServer.h>
 #include <ecs/EntityID.h>
 #include <math/Types.h> // Foundation::Vec2
 
@@ -16,15 +16,14 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
 
-namespace Foundation {
-	struct DevCommand;
-}
 namespace ecs {
 	class World;
 	class NavigationSystem;
@@ -70,43 +69,58 @@ namespace world_sim {
 		std::function<ecs::EntityID(glm::vec2, const std::string&)> spawnColonist;
 	};
 
-	/// Interprets queued DevCommands and serializes world-state views. Read+write surface for
-	/// /api/dev/<verb> and /api/state. Dev builds only.
+	/// /api/control?action=camera, which GameScene applies in its next update. Only what the
+	/// request names applies: x and y together (world position), zoom (factor), and panx, pany
+	/// (-1..1, a direction held like the movement keys until set back to 0).
+	struct CameraCommand {
+		bool  hasPosition = false;
+		float x = 0.0F;
+		float y = 0.0F;
+		bool  hasZoom = false;
+		float zoom = 0.0F;
+		bool  hasPan = false;
+		float panX = 0.0F;
+		float panY = 0.0F;
+	};
+
+	/// The dev verbs and world-state views. Read+write surface for /api/dev/<verb> and
+	/// /api/state. Dev builds only.
 	class DevCommandHandler {
 	  public:
 		explicit DevCommandHandler(DevCommandContext context) : m_ctx(std::move(context)) {}
 
-		/// Interpret one queued DevCommand and return its JSON result (the /api/dev
-		/// response body). Most verbs answer {"status":"ok","verb":...}; verbs with an
-		/// outcome to report (foundation-edit) answer with it. Unknown verbs are logged
-		/// and answered with status "error".
-		std::string handle(const Foundation::DevCommand& cmd);
+		/// Registers every verb as a route and every view as a state provider, for as long as the
+		/// returned registrations live. Most verbs answer {"status":"ok","verb":...}; verbs with an
+		/// outcome to report (foundation-edit) answer with it. The views are colonists,
+		/// construction, stations, storage, time, landing, tunables and summary.
+		std::vector<app::DevServer::Registration> registerWith(app::DevServer& server);
 
-		/// Produce the JSON for /api/state?what=. Unknown views fall back to the summary.
-		std::string serializeState(const std::string& what);
+		/// The camera control's parameters; nullopt, with the 400's message in error, when one
+		/// isn't a finite number, x or y comes alone, or none is given.
+		static std::optional<CameraCommand> parseCameraCommand(const std::map<std::string, std::string>& params, const char*& error);
 
 	  private:
 		// --- write verbs ---
-		void devFreeBuild(const Foundation::DevCommand& cmd);
-		void devGive(const Foundation::DevCommand& cmd);
-		void devSpawn(const Foundation::DevCommand& cmd);
-		void devColonist(const Foundation::DevCommand& cmd);
-		void devNeed(const Foundation::DevCommand& cmd);
-		void devTime(const Foundation::DevCommand& cmd);
-		void devTeleport(const Foundation::DevCommand& cmd);
-		void devSelect(const Foundation::DevCommand& cmd);
-		void devKill(const Foundation::DevCommand& cmd);
-		void devComplete(const Foundation::DevCommand& cmd);
-		void devFoundation(const Foundation::DevCommand& cmd);
+		void devFreeBuild(const app::DevRequest& cmd);
+		void devGive(const app::DevRequest& cmd);
+		void devSpawn(const app::DevRequest& cmd);
+		void devColonist(const app::DevRequest& cmd);
+		void devNeed(const app::DevRequest& cmd);
+		void devTime(const app::DevRequest& cmd);
+		void devTeleport(const app::DevRequest& cmd);
+		void devSelect(const app::DevRequest& cmd);
+		void devKill(const app::DevRequest& cmd);
+		void devComplete(const app::DevRequest& cmd);
+		void devFoundation(const app::DevRequest& cmd);
 		// foundation-edit?id=<foundationId>&mode=add|subtract&pts=x0,y0;x1,y1;... runs the
 		// Add / Subtract tool's own validate + apply path; answers status ok|rejected,
 		// reason, target, extension (0 unless an Add onto a built foundation), entity, area.
-		std::string devFoundationEdit(const Foundation::DevCommand& cmd);
-		void		devWalls(const Foundation::DevCommand& cmd);
-		void devOpening(const Foundation::DevCommand& cmd);
-		void devCraft(const Foundation::DevCommand& cmd);
-		void devStorage(const Foundation::DevCommand& cmd);
-		void devTunable(const Foundation::DevCommand& cmd);
+		std::string devFoundationEdit(const app::DevRequest& cmd);
+		void		devWalls(const app::DevRequest& cmd);
+		void		devOpening(const app::DevRequest& cmd);
+		void		devCraft(const app::DevRequest& cmd);
+		void		devStorage(const app::DevRequest& cmd);
+		void		devTunable(const app::DevRequest& cmd);
 
 		// --- world-position validity (single gate for every placing/moving verb) ---
 		// True when `at` is on an active walkable nav face. On false, logs+toasts the
@@ -143,6 +157,8 @@ namespace world_sim {
 		void serializeSummary(std::ostringstream& out);
 
 		// --- pure parsing helpers ---
+		static std::string					 param(const app::DevRequest& cmd, const std::string& key, const std::string& fallback = "");
+		static bool							 hasParam(const app::DevRequest& cmd, const std::string& key);
 		static ecs::EntityID				 parseEntity(const std::string& spec);
 		static bool							 parseNeedType(const std::string& name, ecs::NeedType& out);
 		static bool							 equalsIgnoreCase(const std::string& a, const char* b);

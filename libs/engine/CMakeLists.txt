@@ -1,10 +1,5 @@
 add_library(engine
-    application/Application.cpp
-    application/AppLauncher.cpp
-    debug/DebugServer.cpp
-    scene/SceneManager.cpp
-    input/InputManager.cpp
-    clipboard/ClipboardManager.cpp
+    app/UiBridge.cpp
     world/TileGrid.cpp
     world/chunk/Chunk.cpp
     world/chunk/ChunkManager.cpp
@@ -70,42 +65,31 @@ target_include_directories(engine
 
 target_compile_features(engine PUBLIC cxx_std_20)
 
-# Link dependencies. cpp-httplib is an implementation detail of debug/DebugServer.cpp
-# (DebugServer.h forward-declares httplib::Server): PRIVATE keeps its include dir off
-# downstream TUs while static-lib link requirements still propagate to executables.
-# OpenGL, GLEW and glfw are PUBLIC: the renderer keeps them private behind its
-# headers, and the game's own GL (the chunk pass, the scenes' clear pairs, the
-# GLFW window here) reaches them through engine.
+# OpenGL, GLEW and glfw are PUBLIC: the renderer and salal's app keep them private
+# behind their headers, and the game's own GL (the chunk pass, the scenes' clear
+# pairs, asset-cli's hidden window and the GL test fixtures) reaches them through
+# engine. salal::app is the window, the frame, the scene stack and the dev server
+# every GUI app runs on; app/ bridges worldsim's ui onto it.
 target_link_libraries(engine
     PUBLIC
         salal::foundation
         geometry
         salal::renderer
+        salal::app
         ui
         assets
         world
         OpenGL::GL
         GLEW::GLEW
         glfw
-    PRIVATE
-        httplib::httplib
 )
 
 # salal's base shader with the engine's hooks, assembled at build time and compiled in
 # (salal's docs/shader-hooks.md). Declared here once for every executable that starts the
-# renderer: AppLauncher, asset-cli and the GL test fixtures hand base_shader::source() to
-# Primitives::init, and the groundcover renderer and the grass scene fill the hook's block.
+# renderer: each GUI app's AppConfig, asset-cli and the GL test fixtures hand
+# base_shader::source() to the renderer, and the groundcover renderer and the grass scene
+# fill the hook's block.
 salal_base_shader(engine HOOKS world/rendering/hooks)
-
-# Link CoreFoundation on macOS (required by httplib for DNS resolution)
-if(APPLE)
-    target_link_libraries(engine PRIVATE "-framework CoreFoundation")
-endif()
-
-# timeBeginPeriod/timeEndPeriod for frame-pacing timer resolution
-if(WIN32)
-    target_link_libraries(engine PRIVATE winmm)
-endif()
 
 # The ground pass (tile.vert, tile.frag, includes/) is the engine's own GL, loaded
 # at run time. Stage it into the shared build shaders/ directory, as planet-view

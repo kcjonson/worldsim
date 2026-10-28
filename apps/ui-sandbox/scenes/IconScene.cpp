@@ -4,6 +4,7 @@
 #include <GL/glew.h>
 
 #include "SceneTypes.h"
+#include <app/UiScene.h>
 #include <components/icon/Icon.h>
 #include <graphics/Color.h>
 #include <input/InputEvent.h>
@@ -11,8 +12,6 @@
 #include <layout/LayoutTypes.h>
 #include <memory>
 #include <primitives/Primitives.h>
-#include <scene/Scene.h>
-#include <scene/SceneManager.h>
 #include <shapes/Shapes.h>
 #include <utils/Log.h>
 
@@ -27,12 +26,12 @@ namespace {
 	constexpr const char* kStonePath = "../../../assets/world/misc/SmallStone/small_stone.svg";
 	constexpr const char* kStickPath = "../../../assets/world/misc/Stick/stick.svg";
 
-	class IconScene : public engine::IScene {
+	class IconScene : public engine::UiScene {
 	  public:
-		const char* getName() const override { return kSceneName; }
-		std::string exportState() override { return "{}"; }
+		const char* name() const override { return kSceneName; }
+		std::string exportState() const override { return "{}"; }
 
-		void onEnter() override {
+		void onEnter(app::App& /*app*/) override {
 			using namespace UI;
 			using namespace Foundation;
 
@@ -224,11 +223,7 @@ namespace {
 			return false;
 		}
 
-		void update(float /*deltaTime*/) override {
-			// No animation for now
-		}
-
-		void render() override {
+		void render(float /*alpha*/) override {
 			// Clear background
 			glClearColor(0.10F, 0.10F, 0.13F, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);

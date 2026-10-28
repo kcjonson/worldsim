@@ -122,9 +122,9 @@ class FocusManager {
 	 */
 	bool hasFocus(IFocusable* component) const { return currentFocus == component; }
 
-	// Input routing (called by InputManager)
+	// Input routing (called by engine::UiBridge)
 	/**
-	 * Route keyboard input to focused component (called by InputManager).
+	 * Route keyboard input to focused component.
 	 *
 	 * @param key - Key pressed (from foundation::Key enum)
 	 * @param shift - True if Shift modifier is pressed
@@ -134,7 +134,7 @@ class FocusManager {
 	void routeKeyInput(foundation::Key key, bool shift, bool ctrl, bool alt);
 
 	/**
-	 * Route character input to focused component (called by InputManager).
+	 * Route character input to focused component.
 	 *
 	 * @param codepoint - Unicode codepoint of character typed
 	 */

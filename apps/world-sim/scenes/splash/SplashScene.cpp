@@ -5,15 +5,14 @@
 
 #include "SceneTypes.h"
 #include "scenes/shared/Starfield.h"
-#include "scenes/shared/UiStateDrain.h"
 #include "scenes/shared/Widgets.h"
+#include <app/UiScene.h>
+#include <application/App.h>
 #include <assets/AssetRegistry.h>
 #include <components/button/Button.h>
 #include <graphics/PrimitiveStyles.h>
 #include <layout/LayoutContainer.h>
 #include <primitives/Primitives.h>
-#include <scene/Scene.h>
-#include <scene/SceneManager.h>
 #include <theme/Tokens.h>
 #include <theme/Variants.h>
 #include <utils/Log.h>
@@ -81,9 +80,10 @@ namespace {
 		std::string			   text;
 	};
 
-	class SplashScene : public engine::IScene {
+	class SplashScene : public engine::UiScene {
 	  public:
-		void onEnter() override {
+		void onEnter(app::App& app) override {
+			owner = &app;
 			LOG_INFO(Game, "SplashScene - Entering");
 			m_timer = 0.0F;
 			m_lastShownCount = -1;
@@ -107,9 +107,10 @@ namespace {
 				.size = {230.0F, 46.0F},
 				.type = UI::Button::Type::Primary,
 				.disabled = true,
-				.onClick = [this]() { sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu)); },
+				.onClick = [this]() { owner->scenes().switchTo(world_sim::scenes::MainMenu.name); },
 				.id = "btn_enter_expedition",
-				.iconGlyph = "play"});
+				.iconGlyph = "play"
+			});
 		}
 
 		bool handleInput(UI::InputEvent& event) override {
@@ -117,7 +118,8 @@ namespace {
 			return m_enterButton && m_enterButton->handleEvent(event);
 		}
 
-		void update(float dt) override {
+		void update(const app::FrameContext& frame) override {
+			const auto	dt = static_cast<float>(frame.dt);
 			auto&		registry = engine::assets::AssetRegistry::Get();
 			const auto& progress = registry.loadProgress();
 			m_timer += dt;
@@ -159,7 +161,7 @@ namespace {
 			finishLoad();
 		}
 
-		void render() override {
+		void render(float /*alpha*/) override {
 			using namespace UI;
 			using Renderer::Primitives::drawText;
 
@@ -219,17 +221,18 @@ namespace {
 			m_enterButton->render();
 
 			// Version, bottom-right.
-			drawText(Renderer::Primitives::TextArgs{
-				.text = "v0.1.0-proto",
-				.position = {0.0F, screenH - 28.0F},
-				.scale = textScale(fs_2xs),
-				.color = text_faint,
-				.font = fontMono,
-				.hAlign = Foundation::HorizontalAlign::Right,
-				.vAlign = Foundation::VerticalAlign::Top,
-				.boxWidth = screenW - 24.0F});
-
-			world_sim::serveUiStateRequests(*this);
+			drawText(
+				Renderer::Primitives::TextArgs{
+					.text = "v0.1.0-proto",
+					.position = {0.0F, screenH - 28.0F},
+					.scale = textScale(fs_2xs),
+					.color = text_faint,
+					.font = fontMono,
+					.hAlign = Foundation::HorizontalAlign::Right,
+					.vAlign = Foundation::VerticalAlign::Top,
+					.boxWidth = screenW - 24.0F
+				}
+			);
 		}
 
 		void onExit() override {
@@ -240,13 +243,13 @@ namespace {
 			m_identity.reset();
 		}
 
-		std::string exportState() override {
+		std::string exportState() const override {
 			return R"({"scene": "splash", "loaded": )" + std::to_string(m_lastShownCount) +
 				   R"(, "failed": )" + (m_failed ? "true" : "false") +
 				   R"(, "done": )" + (m_done ? "true" : "false") + "}";
 		}
 
-		const char* getName() const override { return kSceneName; }
+		const char* name() const override { return kSceneName; }
 
 		std::vector<const UI::IComponent*> getUiRoots() const override {
 			std::vector<const UI::IComponent*> roots;
@@ -257,6 +260,8 @@ namespace {
 		}
 
 	  private:
+		app::App* owner = nullptr;
+
 		static constexpr float kMinSplashSeconds = 1.0F;
 
 		void buildIdentity() {

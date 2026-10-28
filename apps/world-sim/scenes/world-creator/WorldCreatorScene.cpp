@@ -15,7 +15,6 @@
 #include "scenes/landing/LandingSiteDetailsPanel.h"
 #include "scenes/shared/GlobeView.h"
 #include "scenes/shared/Starfield.h"
-#include "scenes/shared/UiStateDrain.h"
 #include "scenes/shared/Widgets.h"
 #include "ui/ParameterPanel.h"
 #include "ui/WorldSurveyPanel.h"
@@ -26,16 +25,16 @@
 #include <worldgen/io/PlanetIO.h>
 #include <worldgen/sampling/LandingSite.h>
 
+#include <app/Keys.h>
+#include <app/UiScene.h>
+#include <application/App.h>
 #include <components/button/Button.h>
 #include <components/dialog/Dialog.h>
 #include <components/segmentedcontrol/SegmentedControl.h>
 #include <graphics/Color.h>
 #include <input/InputEvent.h>
-#include <input/InputManager.h>
 #include <layout/LayoutContainer.h>
 #include <primitives/Primitives.h>
-#include <scene/Scene.h>
-#include <scene/SceneManager.h>
 #include <shapes/Shapes.h>
 #include <theme/Tokens.h>
 #include <theme/Variants.h>
@@ -73,10 +72,10 @@ constexpr std::array<planetview::ColorMode, 4> kVizModes{
 	planetview::ColorMode::Temperature, planetview::ColorMode::Precipitation};
 const std::vector<std::string> kVizLabels{"Terrain", "Biomes", "Temp", "Rain"};
 
-class WorldCreatorScene : public engine::IScene {
+class WorldCreatorScene : public engine::UiScene {
   public:
-	const char* getName() const override { return kSceneName; }
-	std::string exportState() override {
+	const char* name() const override { return kSceneName; }
+	std::string exportState() const override {
 		return std::format(
 			R"({{"scene":"world_creator","state":{},"globe":{},"site":{},"confirming":{}}})",
 			static_cast<int>(model.getState()),
@@ -85,7 +84,8 @@ class WorldCreatorScene : public engine::IScene {
 			(confirmDialog && confirmDialog->isOpen()) ? "true" : "false");
 	}
 
-	void onEnter() override {
+	void onEnter(app::App& app) override {
+		owner = &app;
 		LOG_INFO(Game, "WorldCreatorScene - Entering");
 
 		int vpW = 0;
@@ -162,10 +162,11 @@ class WorldCreatorScene : public engine::IScene {
 		return globe.handleInput(event, stageRect(), true);
 	}
 
-	void update(float dt) override {
+	void update(const app::FrameContext& frame) override {
+		const auto dt = static_cast<float>(frame.dt);
 		if (confirmDialog) confirmDialog->update(dt);
 
-		if (engine::InputManager::Get().isKeyPressed(foundation::Key::Escape)) {
+		if (engine::key(frame.input, foundation::Key::Escape).pressed()) {
 			if (confirmDialog && confirmDialog->isOpen()) {
 				return; // dialog handles its own escape
 			}
@@ -173,14 +174,14 @@ class WorldCreatorScene : public engine::IScene {
 			// Game flow; Generating/Reviewing keep bailing to the main menu.
 			if (model.getState() == world_sim::WorldCreatorState::Configuring) {
 				LOG_INFO(Game, "WorldCreatorScene: returning to party select");
-				sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::PartySelect));
+				owner->scenes().switchTo(world_sim::scenes::PartySelect.name);
 				return;
 			}
 			if (model.getState() == world_sim::WorldCreatorState::Generating) {
 				model.cancelGeneration();
 			}
 			LOG_INFO(Game, "WorldCreatorScene: returning to main menu");
-			sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu));
+			owner->scenes().switchTo(world_sim::scenes::MainMenu.name);
 			return;
 		}
 
@@ -207,7 +208,7 @@ class WorldCreatorScene : public engine::IScene {
 				onStateChanged(newState);
 			}
 		} else if (state == world_sim::WorldCreatorState::Reviewing) {
-			handleCameraKeys(dt);
+			handleCameraKeys(frame.input, dt);
 		}
 
 		if (state == world_sim::WorldCreatorState::Configuring && generateButton) {
@@ -223,7 +224,7 @@ class WorldCreatorScene : public engine::IScene {
 		if (activeFooter() != nullptr) activeFooter()->update(dt);
 	}
 
-	void render() override {
+	void render(float /*alpha*/) override {
 		glClearColor(UI::bg_void.r, UI::bg_void.g, UI::bg_void.b, 1.0F);
 		glClear(GL_COLOR_BUFFER_BIT);
 
@@ -312,8 +313,6 @@ class WorldCreatorScene : public engine::IScene {
 		if (confirmDialog && confirmDialog->isOpen()) {
 			confirmDialog->render();
 		}
-
-		world_sim::serveUiStateRequests(*this);
 	}
 
 	std::vector<const UI::IComponent*> getUiRoots() const override {
@@ -326,6 +325,8 @@ class WorldCreatorScene : public engine::IScene {
 	}
 
   private:
+	app::App* owner = nullptr;
+
 	world_sim::WorldCreatorModel model;
 
 	float viewportW{1280.0F};
@@ -651,19 +652,25 @@ class WorldCreatorScene : public engine::IScene {
 		}
 	}
 
-	void handleCameraKeys(float dt) {
+	void handleCameraKeys(const foundation::InputSnapshot& input, float dt) {
 		// While the seed field is focused, keys belong to it (text editing,
 		// cursor arrows), not the camera.
 		if (panel && panel->isSeedFocused()) return;
 
-		auto& im = engine::InputManager::Get();
+		const auto down = [&input](foundation::Key key) {
+			return engine::key(input, key).down;
+		};
 		const float step = kKeyPanRate * dt;
 		float dYaw = 0.0F;
 		float dPitch = 0.0F;
-		if (im.isKeyDown(foundation::Key::Left)  || im.isKeyDown(foundation::Key::A)) dYaw   += step;
-		if (im.isKeyDown(foundation::Key::Right) || im.isKeyDown(foundation::Key::D)) dYaw   -= step;
-		if (im.isKeyDown(foundation::Key::Up)    || im.isKeyDown(foundation::Key::W)) dPitch += step;
-		if (im.isKeyDown(foundation::Key::Down)  || im.isKeyDown(foundation::Key::S)) dPitch -= step;
+		if (down(foundation::Key::Left) || down(foundation::Key::A))
+			dYaw += step;
+		if (down(foundation::Key::Right) || down(foundation::Key::D))
+			dYaw -= step;
+		if (down(foundation::Key::Up) || down(foundation::Key::W))
+			dPitch += step;
+		if (down(foundation::Key::Down) || down(foundation::Key::S))
+			dPitch -= step;
 		if (dYaw != 0.0F || dPitch != 0.0F) globe.panCamera(dYaw, dPitch);
 	}
 
@@ -738,14 +745,14 @@ class WorldCreatorScene : public engine::IScene {
 		config->landingLonDeg = selectedSite.lonDeg;
 		config->party = world_sim::NewGameSetup::Get().party;
 		world_sim::GameStartConfig::SetPending(std::move(config));
-		sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::GameLoading));
+		owner->scenes().switchTo(world_sim::scenes::GameLoading.name);
 	}
 
 	void goBackToParty() {
 		if (model.getState() == world_sim::WorldCreatorState::Generating) {
 			model.cancelGeneration();
 		}
-		sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::PartySelect));
+		owner->scenes().switchTo(world_sim::scenes::PartySelect.name);
 	}
 
 	void renderHeader() {

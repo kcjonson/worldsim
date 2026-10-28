@@ -1,116 +1,103 @@
 // UI Sandbox - Component Testing & Demo Environment
-// Uses shared AppLauncher with app-specific navigation menu overlay
+// Runs on salal's App, with the scene navigation menu as an overlay
 
+#include "BaseShader.h"
 #include "NavigationMenu.h"
 #include "SceneTypes.h"
-#include <application/AppLauncher.h>
-#include <application/Application.h>
+
+#include <app/UiBridge.h>
+#include <application/App.h>
+#include <application/CommandLine.h>
 #include <assets/AssetBootstrap.h>
-#include <debug/DebugServer.h>
-#include <debug/LayoutLint.h>
-#include <debug/UiTreeSerializer.h>
-#include <primitives/Primitives.h>
-#include <scene/SceneManager.h>
+#include <platform/Platform.h>
 #include <theme/Fonts.h>
 #include <utils/Log.h>
 
-#include <optional>
+#include <algorithm>
+#include <cstddef>
+#include <cstdio>
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
-// Navigation menu (only created when no --scene argument)
-static std::optional<UI::NavigationMenu> g_navigationMenu;
+namespace {
 
-// Serve a pending ui.tree or ui.lint state query against the current scene's
-// UI roots; any other query is consumed and answered with an error JSON so the
-// HTTP request doesn't hang until its timeout. Runs on the main thread once per
-// frame (after the scene rendered, so LayoutContainer positions are fresh);
-// mirrors GameScene's drain in world-sim.
-static void serveUiStateRequests() {
-	auto* debugServer = engine::AppLauncher::getDebugServer();
-	if (debugServer == nullptr) {
-		return;
-	}
-	std::string what;
-	if (!debugServer->consumeStateRequest(what)) {
-		return;
-	}
-	if (what != "ui.tree" && what != "ui.lint") {
-		debugServer->deliverState("{\"error\":\"unknown state query (ui-sandbox serves ui.tree and ui.lint)\"}");
-		return;
-	}
-	engine::IScene* scene = engine::SceneManager::Get().getCurrentScene();
-	std::vector<const UI::IComponent*> roots;
-	if (scene != nullptr) {
-		roots = scene->getUiRoots();
-	}
-	int viewportW = 0;
-	int viewportH = 0;
-	Renderer::Primitives::getLogicalViewport(viewportW, viewportH);
-	const Foundation::Vec2 viewport{static_cast<float>(viewportW), static_cast<float>(viewportH)};
-	debugServer->deliverState(
-		what == "ui.tree" ? UI::serializeUiTreeJson(roots, viewport) : UI::lintUiTreeJson(roots, viewport)
-	);
-}
+	constexpr const char* kTitle = "UI Sandbox";
+	constexpr int		  kDevServerPort = 8090;
+
+} // namespace
 
 int main(int argc, char* argv[]) {
-	engine::AppConfig config{
-		.windowTitle = "UI Sandbox",
-		.windowSizePercent = 0.8F,
-		.fontAtlases = UI::kFontAtlases,
-		.defaultFont = UI::fontDefault,
-		.enableDebugServer = true,
-		.debugServerPort = 8090,
-		.enableMetrics = true,
-		.initializeScenes = ui_sandbox::initializeSceneManager,
-		.getDefaultSceneKey = []() { return ui_sandbox::toKey(ui_sandbox::SceneType::Svg); },
-		// GrassScene reads the registry in onEnter (also via --scene=grass), so load synchronously.
-		.initializeResources = [](bool /*hasSceneArg*/) { engine::assets::initializeAssetSystem(false); },
-	};
-
-	auto ctx = engine::AppLauncher::initialize(argc, argv, config);
-	if (!ctx) {
+	const app::CommandLine commandLine = app::parseCommandLine(argc, argv);
+	if (commandLine.help) {
+		std::printf("Usage: %s [options]\n", kTitle);
+		std::printf("Options:\n");
+		std::printf("  --scene=<name>       Load specific scene\n");
+		std::printf("  --http-port <port>   Enable HTTP debug server on port\n");
+		std::printf("  --help               Show this help message\n");
+	}
+	if (commandLine.help || !commandLine.valid) {
 		return 1;
 	}
 
-	// Set up navigation menu overlay (only when no --scene argument)
-	if (!ctx.hasSceneArg) {
-		auto sceneNames = engine::SceneManager::Get().getAllSceneNames();
-		g_navigationMenu.emplace(
-			UI::NavigationMenu::Args{
-				.sceneNames = sceneNames,
-				.onSceneSelected =
-					[](const std::string& sceneName) {
-						engine::SceneKey key = engine::SceneManager::Get().getKeyForName(sceneName);
-						if (key != SIZE_MAX) {
-							engine::SceneManager::Get().switchTo(key);
-							LOG_INFO(UI, "Switched to scene: %s", sceneName.c_str());
-						}
-					},
-				.coordinateSystem = ctx.coordinateSystem
-			}
-		);
-
-		// Register with SceneManager - it handles input/update/render lifecycle
-		engine::SceneManager::Get().pushOverlay(&(*g_navigationMenu));
-		LOG_INFO(UI, "Navigation menu overlay registered (%zu scenes available)", sceneNames.size());
+	std::unique_ptr<app::Platform> platform = app::createGlfwPlatform({.title = kTitle});
+	if (platform == nullptr) {
+		return 1;
+	}
+	std::unique_ptr<app::App> app = app::App::create(
+		{.applicationName = "ui-sandbox",
+		 .frame = {.frameCapHz = 120},
+		 .baseShader = base_shader::source(),
+		 .fontAtlases = UI::kFontAtlases,
+		 .defaultFont = UI::fontDefault,
+		 .clearColor = {0.1F, 0.1F, 0.15F, 1.0F},
+		 // On wherever the server is compiled in, so a Release build, which has none, logs nothing
+		 .devServer =
+			 {.enabled = app::kDevServerCompiledIn || commandLine.httpPort.has_value(),
+			  .port = commandLine.httpPort.value_or(kDevServerPort)},
+		 .metrics = true},
+		std::move(platform)
+	);
+	if (app == nullptr) {
+		return 1;
 	}
 
-	// Overlay renderer: flush primitives, then serve any pending UI-tree/lint
-	// readback (post-render, so the snapshot sees this frame's layout)
-	ctx.app->setOverlayRenderer([]() {
-		Renderer::Primitives::endFrame();
-		serveUiStateRequests();
-	});
+	// GrassScene reads the registry in onEnter (also via --scene=grass), so load synchronously.
+	engine::assets::initializeAssetSystem(false);
 
-	// Window resize notifies SceneManager which forwards to overlays
-	engine::AppLauncher::setWindowResizeCallback([]() { engine::SceneManager::Get().onWindowResize(); });
+	engine::UiBridge bridge(*app);
+	ui_sandbox::addScenes(app->scenes());
+	if (!commandLine.scene || !app->scenes().switchTo(*commandLine.scene)) {
+		app->scenes().switchTo(ui_sandbox::scenes::Svg.name);
+	}
 
-	engine::AppLauncher::run(ctx);
+	// Navigation menu overlay (only when no --scene argument)
+	if (!commandLine.scene) {
+		std::vector<std::string> sceneNames{
+#define SCENE_NAME(scene) ui_sandbox::scenes::scene.name,
+			UI_SANDBOX_SCENES(SCENE_NAME)
+#undef SCENE_NAME
+		};
+		std::ranges::sort(sceneNames);
+		const std::size_t		 sceneCount = sceneNames.size();
+		UI::NavigationMenu::Args menuArgs{
+			.sceneNames = std::move(sceneNames),
+			.onSceneSelected =
+				[&stack = app->scenes()](const std::string& sceneName) {
+					if (stack.switchTo(sceneName)) {
+						LOG_INFO(UI, "Switched to scene: %s", sceneName.c_str());
+					}
+				},
+			.coordinateSystem = &app->coordinateSystem(),
+		};
+		auto menu = std::make_unique<UI::NavigationMenu>(menuArgs);
+		bridge.addOverlay(*menu);
+		app->addOverlay(std::move(menu));
+		LOG_INFO(UI, "Navigation menu overlay registered (%zu scenes available)", sceneCount);
+	}
 
-	// Clear overlays before destroying navigation menu (avoid dangling pointers)
-	engine::SceneManager::Get().clearOverlays();
-	g_navigationMenu.reset();
-
-	return engine::AppLauncher::shutdown(ctx);
+	app->run();
+	app->shutdown();
+	return 0;
 }

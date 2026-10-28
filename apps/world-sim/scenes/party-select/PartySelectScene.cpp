@@ -11,10 +11,12 @@
 #include "scenes/party-select/MockCrew.h"
 #include "scenes/scenario-select/Scenarios.h"
 #include "scenes/shared/Starfield.h"
-#include "scenes/shared/UiStateDrain.h"
 #include "scenes/shared/Widgets.h"
 #include <GL/glew.h>
 
+#include <app/Keys.h>
+#include <app/UiScene.h>
+#include <application/App.h>
 #include <components/avatar/Avatar.h>
 #include <components/badge/Badge.h>
 #include <components/button/Button.h>
@@ -23,11 +25,8 @@
 #include <components/stat/Stat.h>
 #include <graphics/PrimitiveStyles.h>
 #include <input/InputEvent.h>
-#include <input/InputManager.h>
 #include <layout/LayoutContainer.h>
 #include <primitives/Primitives.h>
-#include <scene/Scene.h>
-#include <scene/SceneManager.h>
 #include <shapes/Shapes.h>
 #include <theme/Tokens.h>
 #include <theme/Variants.h>
@@ -427,9 +426,10 @@ namespace {
 		std::unique_ptr<UI::ScrollContainer> scroll;
 	};
 
-	class PartySelectScene : public engine::IScene {
+	class PartySelectScene : public engine::UiScene {
 	  public:
-		void onEnter() override {
+		void onEnter(app::App& app) override {
+			owner = &app;
 			LOG_INFO(Game, "PartySelectScene - Entering");
 
 			const auto& setup = world_sim::NewGameSetup::Get();
@@ -460,15 +460,16 @@ namespace {
 			return root && root->handleEvent(event);
 		}
 
-		void update(float dt) override {
-			if (engine::InputManager::Get().isKeyPressed(foundation::Key::Escape)) {
+		void update(const app::FrameContext& frame) override {
+			const auto dt = static_cast<float>(frame.dt);
+			if (engine::key(frame.input, foundation::Key::Escape).pressed()) {
 				goBack();
 				return;
 			}
 			if (root) root->update(dt);
 		}
 
-		void render() override {
+		void render(float /*alpha*/) override {
 			glClearColor(UI::bg_void.r, UI::bg_void.g, UI::bg_void.b, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
 
@@ -480,12 +481,11 @@ namespace {
 				lastViewport = {screenW, screenH};
 				root->layout({0.0F, 0.0F, screenW, screenH});
 			}
-			if (root) root->render();
-
-			world_sim::serveUiStateRequests(*this);
+			if (root)
+				root->render();
 		}
 
-		std::string exportState() override {
+		std::string exportState() const override {
 			std::string names;
 			for (size_t i = 0; i < roster.size(); ++i) {
 				names += std::format("{}\"{}\"", i > 0 ? "," : "", roster[i].name);
@@ -493,7 +493,7 @@ namespace {
 			return std::format(R"({{"scene":"party_select","selected":"{}","roster":[{}]}})",
 							   roster[static_cast<size_t>(selectedIndex)].name, names);
 		}
-		const char* getName() const override { return kSceneName; }
+		const char* name() const override { return kSceneName; }
 
 		std::vector<const UI::IComponent*> getUiRoots() const override {
 			if (!root) return {};
@@ -501,6 +501,8 @@ namespace {
 		}
 
 	  private:
+		app::App* owner = nullptr;
+
 		void buildUI() {
 			using namespace UI;
 
@@ -734,13 +736,9 @@ namespace {
 			return party;
 		}
 
-		void goBack() {
-			sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::ScenarioSelect));
-		}
+		void goBack() { owner->scenes().switchTo(world_sim::scenes::ScenarioSelect.name); }
 
-		void confirm() {
-			sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::WorldCreator));
-		}
+		void confirm() { owner->scenes().switchTo(world_sim::scenes::WorldCreator.name); }
 
 		std::vector<RosterSlot>				 roster;
 		std::unique_ptr<UI::LayoutContainer> root;
