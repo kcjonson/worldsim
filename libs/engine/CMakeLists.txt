@@ -2,7 +2,6 @@ add_library(engine
     application/Application.cpp
     application/AppLauncher.cpp
     debug/DebugServer.cpp
-    graphics/PngEncoder.cpp
     scene/SceneManager.cpp
     input/InputManager.cpp
     clipboard/ClipboardManager.cpp

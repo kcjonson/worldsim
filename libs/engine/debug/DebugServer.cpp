@@ -16,9 +16,9 @@
 #include <string_view>
 #include <thread>
 
-// PNG encoding is centralized in Foundation::PngEncoder (single STB definition site).
-#include "graphics/PngEncoder.h"
 #include "primitives/Primitives.h"
+
+#include <PngEncoder.h>
 
 namespace Foundation {
 
@@ -332,12 +332,12 @@ namespace Foundation {
 			flipped[i] = 255;
 		}
 
-		// Encode to PNG via the shared encoder (single STB definition site).
+		// Encode to PNG via the renderer's encoder.
 		LOG_DEBUG(Foundation, "Encoding screenshot to PNG...");
 		bool encodeFailed = false;
 		{
 			std::lock_guard<std::mutex> lock(screenshotMutex);
-			screenshotData = encodePngToMemory(flipped.data(), width, height);
+			screenshotData = Renderer::encodePngToMemory(flipped.data(), width, height);
 			encodeFailed = screenshotData.empty();
 		}
 
