@@ -30,6 +30,11 @@ export VCPKG_ROOT=/path/to/vcpkg   # PowerShell: $env:VCPKG_ROOT = "C:\vcpkg"
 Set `VCPKG_ROOT` persistently (shell profile, or Windows user environment variables). The
 `.vscode` and CI configs both rely on it.
 
+> **Visual Studio developer shells.** `vcvars64.bat` and `VsDevCmd` repoint `VCPKG_ROOT` at the
+> vcpkg bundled with Visual Studio (no binary cache, every port built from source). Configure now
+> refuses that toolchain before installing anything. Set `VCPKG_ROOT` back to your own checkout,
+> then configure with `--fresh` or delete `build/`; the first configure binds the toolchain.
+
 > **The baseline trap.** vcpkg resolves the pinned versions from the version database in your
 > local vcpkg checkout. If that checkout is older than `builtin-baseline`, configure fails with
 > `no version database entry for <pkg> at <version>`. The fix is to advance vcpkg to at least the

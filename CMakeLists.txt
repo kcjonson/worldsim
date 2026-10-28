@@ -1,6 +1,27 @@
 # 3.25 for CMAKE_MSVC_DEBUG_INFORMATION_FORMAT (CMP0141): the Windows preset
 # selects /Z7 embedded debug info, which ccache requires to cache MSVC objects.
 cmake_minimum_required(VERSION 3.25)
+
+# Refuse Visual Studio's bundled vcpkg. A developer shell (vcvars64, VsDevCmd) sets
+# VCPKG_ROOT to it, over your own checkout, and the preset's toolchain follows: no
+# binary cache, every port built from source. vcpkg installs the manifest's ports
+# inside project(), so the check sits before it (PROJECT_IS_TOP_LEVEL isn't set yet,
+# hence the source dir comparison). The same check is in salal's CMakeLists.txt,
+# which skips it when pulled in below this one.
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND CMAKE_TOOLCHAIN_FILE)
+    block(SCOPE_FOR VARIABLES)
+        string(REPLACE "\\" "/" toolchain "${CMAKE_TOOLCHAIN_FILE}")
+        string(TOLOWER "${toolchain}" toolchain_lower)
+        if(toolchain_lower MATCHES "^(.*/microsoft visual studio/.+/vc/vcpkg)(/|$)")
+            string(LENGTH "${CMAKE_MATCH_1}" bundled_length)
+            string(SUBSTRING "${toolchain}" 0 ${bundled_length} bundled)
+            message(FATAL_ERROR
+                "CMAKE_TOOLCHAIN_FILE is in Visual Studio's bundled vcpkg (${bundled}); a developer shell sets VCPKG_ROOT to it.\n"
+                "Set VCPKG_ROOT to your own vcpkg checkout, then configure with --fresh or delete the build directory.")
+        endif()
+    endblock()
+endif()
+
 project(world-sim VERSION 0.1.0 LANGUAGES CXX)
 
 # Set C++20 standard
