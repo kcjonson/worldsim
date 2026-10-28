@@ -63,7 +63,7 @@ TemperateDeciduousForest near a river, with no axe.
 
 ### Confirm ready
 
-Poll until the response is valid JSON (not `{"error":"...unavailable..."}`):
+Poll until it answers 200 with JSON; before the game scene registers its views it's a 404 (`{"error":"no state provider for 'colonists'"}`):
 
 ```
 GET /api/state?what=colonists
@@ -75,7 +75,7 @@ GET /api/state?what=colonists
 GET /api/control?action=exit
 ```
 
-This call blocks and returns only after shutdown is complete; no sleep needed after it.
+This call blocks and returns `{"status":"ok","action":"exit","shutdown":"complete"}` only after the scenes have exited, GL is torn down and the port is free; no sleep needed after it.
 
 ---
 
@@ -86,9 +86,9 @@ shown as `curl.exe` (Windows); drop `.exe` on Linux/macOS.
 
 ### Write verbs — `GET /api/dev/<verb>?<params>`
 
-Queued and run on the game thread; the request waits for the verb to run and answers with its JSON
-result (`{"status":"ok","verb":...}` for most verbs). Only the game scene drains them: elsewhere
-the request gives up after 2 s and answers `{"status":"ok","verb":...,"queued":1}`. Place things on
+Run on the game thread at the start of the next frame, paused or not; the request waits for the
+verb to run and answers with its JSON result (`{"status":"ok","verb":...}` for most verbs). Only the
+game scene registers them: elsewhere, or for a verb it doesn't have, the request is a 404 at once. Place things on
 **valid land** away from water; on-water placements are refused.
 
 | Verb | Key params | Notes |
@@ -111,7 +111,7 @@ the request gives up after 2 s and answers `{"status":"ok","verb":...,"queued":1
 
 ### Readback — `GET /api/state?what=<x>`
 
-Synchronous JSON.
+Synchronous JSON, read after the frame renders. The game scene registers these views; any other `what` is a 404. `what` defaults to `summary`. `what=scene` is every app's: `{"scenes":[{"name":"game","state":{"scene":"game","chunks":N}}]}`, top first.
 
 | `what=` | Returns |
 |---------|---------|
@@ -122,6 +122,7 @@ Synchronous JSON.
 | `construction` | `{foundations:[{id, material, state, entity, area, required{}, delivered{}, progress, phase}], walls:[{id, material, state, entity, x0, y0, x1, y1, required{}, delivered{}, progress}]}` |
 | `landing` | `{landingLatDeg, landingLonDeg, biome, waterClass, riverInTile}` |
 | `time` | `{...}` |
+| `tunables` | every registered tunable and its value |
 
 ### Other endpoints
 
@@ -129,8 +130,8 @@ Synchronous JSON.
 |----------|---------|
 | `GET /api/ui/screenshot` | Returns a PNG screenshot. |
 | `GET /api/control?action=exit` | Shuts down the instance (blocking). |
-| `GET /api/control?action=camera&x=&y=&zoom=` | Moves the camera. |
-| `GET /api/input?ev=click,x,y` | Synthetic UI input (logical pixels). Event types: `move`/`down`/`up`/`click`/`scroll,x,y,delta`. The injected pointer position holds (hover persists) until the real cursor moves over the window or a real mouse button or scroll event reclaims it. |
+| `GET /api/control?action=camera&x=&y=&zoom=&panx=&pany=` | Moves the camera (the game scene's control; applied at its next update, so not while paused). `x` and `y` together; `panx`/`pany` -1..1 hold until set to 0. A bad or missing parameter is a 400. |
+| `GET /api/input?ev=click,x,y` | Synthetic input (logical pixels). Event types: `move`/`down`/`up`/`click`/`scroll,x,y,delta`, `keydown,<key>`/`keyup,<key>`, `char,<codepoint>`. It goes the way real input does: keys reach the focused ui component, a scroll the ui doesn't take zooms the camera, and while paused it waits for resume. A malformed event is a 400. The injected pointer position holds (hover persists) until the real cursor moves over the window or a real mouse button or scroll event lands. |
 
 ---
 

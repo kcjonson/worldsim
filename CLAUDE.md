@@ -253,25 +253,27 @@ If tests fail, fix the new code—don't revert to keeping both versions.
 - See `/docs/workflows.md` → "Verifying Visual Output"
 
 **Sandbox Control:**
+- The dev server is salal's (`app::DevServer`), in Debug and RelWithDebInfo builds only; a Release build has none unless configured with `-DSALAL_DEV_SERVER_IN_RELEASE=ON` (for profiling). Each app registers what it adds: the ui tree and lint (`libs/engine/app/UiBridge`), and in world-sim's game scene the `/api/dev/<verb>` routes, the `/api/state` views and the `camera` control.
 - Start: `cd build/apps/ui-sandbox && ./ui-sandbox`
 - Control: `curl "http://127.0.0.1:8090/api/control?action={action}"`
-- Actions: `exit`, `scene&scene=name`, `pause`, `resume`, `reload`
-- Input injection: `curl "http://127.0.0.1:8090/api/input?ev=click,x,y"` — synthetic UI input in logical pixels (same space as screenshots); event types `move`/`down`/`up`/`click`/`scroll,x,y,delta` with optional button `left|right|middle`; repeat `ev=` to batch a sequence in one request. A pointer event parks the app's cursor at `x,y` until the real cursor moves over the window or a real mouse button or scroll event reclaims it, so hover state holds for a later request (`ev=move,x,y` then a separate screenshot works)
+- Actions: `exit`, `scene&scene=name`, `pause`, `resume`, `reload`, `vsync&value=0|1`, `step&ticks=n` (while paused); world-sim's game scene adds `camera`. A control answers once it has run, at the next frame; `scene` and `reload` answer before their switch applies later that frame. An unknown action, or a scene nothing was added as, is a 404
+- Input injection: `curl "http://127.0.0.1:8090/api/input?ev=click,x,y"`: synthetic input in logical pixels (same space as screenshots); event types `move`/`down`/`up`/`click`/`scroll,x,y,delta` with optional button `left|right|middle`, `keydown,<key>`/`keyup,<key>`, and `char,<codepoint>`; repeat `ev=` to batch a sequence in one request. Injected events go the way real input does: keys and characters reach the focused ui component (`keydown,tab` moves focus), a scroll is resent until something takes it (in the game, one the ui doesn't take zooms the camera), and while the app is paused it all waits for resume. A malformed event is a 400 and queues nothing. A pointer event moves the app's pointer to `x,y` until the real cursor moves over the window or a real mouse button or scroll event lands, so hover state holds for a later request (`ev=move,x,y` then a separate screenshot works)
+- Scene state: `curl "http://127.0.0.1:8090/api/state?what=scene"` is `{"scenes":[{"name":...,"state":...}]}`, top first; read `scenes[0].state`. Any other `what` is a view the running scene registered (404 otherwise)
 - Screenshot: `curl http://127.0.0.1:8090/api/ui/screenshot > screenshot.png`
 - **IMPORTANT: Each app has its own DEFAULT port: ui-sandbox 8090, world-sim 8081, asset-manager 8070 - do NOT specify --http-port unless using a non-standard port**
-- **IMPORTANT: Only ONE instance can run at a time** - the app has built-in port conflict detection. Do not assume multiple instances exist.
+- **IMPORTANT: Only ONE instance can run at a time** - a second one finds its port busy and exits at startup (logged). Do not assume multiple instances exist.
 - **IMPORTANT: Close the game as soon as your task is done** - this is a native game rendering every frame, not a web app; an idle instance burns GPU/CPU continuously. When you finish verifying, immediately shut it down: `curl "http://127.0.0.1:8090/api/control?action=exit"` (8081 for world-sim). Only leave it running if the user asked to test it themselves.
 
 **Asset Manager (use this to test/preview world assets):**
 - A designer GUI (`apps/asset-manager`) that renders every asset through the game's real pipeline. Use it to verify new/edited flora, rocks, and other assets instead of dev-spawning them in world-sim.
-- Build: `cmake --build build --config Debug --target asset-manager`. Run: `build/apps/asset-manager/Debug/asset-manager.exe` (debug server on port **8070**, same `/api/ui/screenshot`, `/api/input`, `/api/control` as the game).
+- Build: `cmake --build build --config Debug --target asset-manager`. Run: `build/apps/asset-manager/Debug/asset-manager.exe` (dev server on port **8070**, same `/api/ui/screenshot`, `/api/ui/tree`, `/api/ui/lint`, `/api/input`, `/api/control` as the game).
 - Shows a searchable category tree of asset thumbnails, a header with total count + validation error/warning counts, a per-asset detail pane (large preview + full XML + that asset's validation issues), and a **Reload** button to hot-reload after editing assets (no restart).
 - Surfaces SVG tessellation/validation problems and lets you eyeball art far faster than spawning + cropping screenshots. Close it when done (`curl "http://127.0.0.1:8070/api/control?action=exit"`).
 
 **CRITICAL: Testing Visual Changes**
 When you make code changes and need to verify visually:
 1. **Kill old instance** (if running): `curl "http://127.0.0.1:8090/api/control?action=exit"`
-   - This is a **blocking call** - it returns only after shutdown is complete and the port is free
+   - This is a **blocking call** - it returns only after the scenes have exited, GL is torn down and the port is free
    - Response: `{"status":"ok","action":"exit","shutdown":"complete"}`
    - When you receive the OK response, proceed immediately (NO sleep needed)
    - If no instance is running, curl will fail with connection refused - that's fine, proceed

@@ -147,7 +147,7 @@ world-sim/
 │   ├── ui/            # UI framework with inspector/testability
 │   ├── world/         # World generation (pluggable generators)
 │   ├── game-systems/  # Chunks, tiles, camera (game-specific)
-│   └── engine/        # App lifecycle, scenes, ECS, config
+│   └── engine/        # ECS, world, assets, ui bridge onto salal's app
 ├── apps/
 │   ├── world-sim/     # Main game application
 │   │   ├── scenes/   # Splash, menu, world creator, game

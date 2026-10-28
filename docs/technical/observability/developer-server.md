@@ -4,7 +4,7 @@ Created: 2025-10-12
 Last Updated: 2025-10-24
 Status: Active
 
-Note (2026-10-25): the implementation now lives in `libs/engine/debug` (`DebugServer.{h,cpp}`), and foundation no longer links httplib; the CMake and header snippets below predate that move.
+Note (2026-10-28): the server is salal's now, `app::DevServer` in salal's `libs/app/DevServer`, compiled into Debug and RelWithDebInfo builds only, and each app registers its own routes, controls and state views (worldsim's: the ui tree and lint in `libs/engine/app/UiBridge`, GameScene's dev verbs, views and `camera`). Salal's `docs/app-api.md` ("Dev server") is the current reference; the CMake, header and route snippets below predate the move.
 
 ## Overview
 

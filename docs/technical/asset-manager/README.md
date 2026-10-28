@@ -193,7 +193,7 @@ This refactor is its own workstream layered under the tool work, and it touches 
 
 ## GUI (`apps/asset-manager`)
 
-A standalone app, sibling to `ui-sandbox`, reusing the scene system, the `SceneManager`, and the X-macro scene-registration pattern verbatim. Bootstrap is an `AppConfig` with the two scene callbacks, the same as the other apps.
+A standalone app, sibling to `ui-sandbox`, reusing the scene system and the X-macro scene-registration pattern verbatim. It runs on salal's `App` like the other apps: its `main` makes the platform and the App and adds its one scene by name.
 
 ### Layout
 
