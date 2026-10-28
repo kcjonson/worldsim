@@ -147,7 +147,7 @@ world-sim/
 │   ├── ui/            # UI framework with inspector/testability
 │   ├── world/         # World generation (pluggable generators)
 │   ├── game-systems/  # Chunks, tiles, camera (game-specific)
-│   └── engine/        # App lifecycle, scenes, ECS, config
+│   └── engine/        # ECS, world, assets, ui bridge onto salal's app
 ├── apps/
 │   ├── world-sim/     # Main game application
 │   │   ├── scenes/   # Splash, menu, world creator, game
@@ -198,7 +198,7 @@ ctest --test-dir build --output-on-failure
 
 # Run UI sandbox
 ./build/apps/ui-sandbox/ui-sandbox --help
-./build/apps/ui-sandbox/ui-sandbox --component button --http-port 8080
+./build/apps/ui-sandbox/ui-sandbox --scene=button   # dev server on 8090
 ```
 
 ## Code Quality

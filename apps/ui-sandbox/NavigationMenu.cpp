@@ -14,40 +14,6 @@ namespace UI {
 
 	NavigationMenu::~NavigationMenu() = default;
 
-	NavigationMenu::NavigationMenu(NavigationMenu&& other) noexcept
-		: expanded(other.expanded),
-		  sceneNames(std::move(other.sceneNames)),
-		  onSceneSelected(std::move(other.onSceneSelected)),
-		  coordinateSystem(other.coordinateSystem),
-		  toggleButton(std::move(other.toggleButton)),
-		  menuButtons(std::move(other.menuButtons)),
-		  buttonIds(std::move(other.buttonIds)),
-		  headerText(std::move(other.headerText)),
-		  menuX(other.menuX),
-		  menuY(other.menuY),
-		  menuHeight(other.menuHeight) {
-		other.coordinateSystem = nullptr;
-	}
-
-	NavigationMenu& NavigationMenu::operator=(NavigationMenu&& other) noexcept {
-		if (this != &other) {
-			expanded = other.expanded;
-			sceneNames = std::move(other.sceneNames);
-			onSceneSelected = std::move(other.onSceneSelected);
-			coordinateSystem = other.coordinateSystem;
-			toggleButton = std::move(other.toggleButton);
-			menuButtons = std::move(other.menuButtons);
-			buttonIds = std::move(other.buttonIds);
-			headerText = std::move(other.headerText);
-			menuX = other.menuX;
-			menuY = other.menuY;
-			menuHeight = other.menuHeight;
-
-			other.coordinateSystem = nullptr;
-		}
-		return *this;
-	}
-
 	void NavigationMenu::initializeComponents() {
 		using namespace Foundation;
 
@@ -122,11 +88,11 @@ namespace UI {
 		}
 	}
 
-	void NavigationMenu::onWindowResize() {
+	void NavigationMenu::onResize(const Renderer::Viewport& /*viewport*/) {
 		initializeComponents();
 	}
 
-	bool NavigationMenu::handleEvent(InputEvent& event) {
+	bool NavigationMenu::handleInput(InputEvent& event) {
 		if (toggleButton && toggleButton->handleEvent(event)) {
 			return true;
 		}
@@ -140,7 +106,9 @@ namespace UI {
 		return false;
 	}
 
-	void NavigationMenu::update(float dt) {
+	void NavigationMenu::update(const app::FrameContext& frame) {
+		const auto dt = static_cast<float>(frame.dt);
+
 		// Update toggle button
 		if (toggleButton) {
 			toggleButton->update(dt);

@@ -1,4 +1,4 @@
-// The shipped font atlases, loaded as the apps load them but on the null backend, so no GL. Every
+// The shipped font atlases, loaded as the apps' App::create loads them but on the null backend, so no GL. Every
 // family has to load its own atlas (one that fails draws with the default, silently), and no glyph
 // may sit closer to its cell's edge than its quad reads, or it draws slivers of its neighbours:
 // salal's FontRenderer::crampedGlyphs, the check tools/generate_sdf_atlas leaves room for. The
@@ -18,7 +18,7 @@
 
 namespace {
 
-	// This file lives at <root>/libs/engine/application/; kFontAtlases' paths are relative to <root>.
+	// This file lives at <root>/libs/engine/app/; kFontAtlases' paths are relative to <root>.
 	std::filesystem::path projectRoot() {
 		return std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path();
 	}

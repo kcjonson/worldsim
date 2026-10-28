@@ -1,11 +1,10 @@
 // Handle Scene - Resource Handle System Tests
 // Demonstrates resource handle safety and validation
 
+#include "SceneTypes.h"
+#include <app/UiScene.h>
 #include <resources/ResourceHandle.h>
 #include <resources/ResourceManager.h>
-#include <scene/Scene.h>
-#include <scene/SceneManager.h>
-#include "SceneTypes.h"
 #include <utils/Log.h>
 
 #include <GL/glew.h>
@@ -31,9 +30,9 @@ constexpr const char* kSceneName = "handles";
 	static void testHandleValidation();
 	static void testCapacityLimit();
 
-	class HandleScene : public engine::IScene {
+	class HandleScene : public engine::UiScene {
 	  public:
-		void onEnter() override {
+		void onEnter(app::App& /*app*/) override {
 			LOG_INFO(UI, "");
 			LOG_INFO(UI, "Handle Scene - Resource Handle System Tests");
 			LOG_INFO(UI, "================================================");
@@ -50,11 +49,7 @@ constexpr const char* kSceneName = "handles";
 			LOG_INFO(UI, "");
 		}
 
-		void update(float /*dt*/) override {
-			// No update logic needed - tests run on enter
-		}
-
-		void render() override {
+		void render(float /*alpha*/) override {
 			// Clear background
 			glClearColor(0.1F, 0.1F, 0.15F, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
@@ -62,11 +57,7 @@ constexpr const char* kSceneName = "handles";
 			// No rendering needed for this scene - all output is to console/logs
 		}
 
-		void onExit() override {
-			// No cleanup needed
-		}
-
-		[[nodiscard]] std::string exportState() override { // NOLINT(readability-convert-member-functions-to-static)
+		[[nodiscard]] std::string exportState() const override { // NOLINT(readability-convert-member-functions-to-static)
 			return R"({
 			"scene": "handles",
 			"description": "Resource handle system tests",
@@ -75,7 +66,7 @@ constexpr const char* kSceneName = "handles";
 		})";
 		}
 
-		const char* getName() const override { return kSceneName; }
+		const char* name() const override { return kSceneName; }
 	};
 
 // ============================================================================

@@ -139,7 +139,7 @@ libs/engine/ecs/systems/
 After extraction, GameScene becomes a thin coordinator:
 
 ```cpp
-class GameScene : public engine::IScene {
+class GameScene : public engine::UiScene {
     // Core systems
     std::unique_ptr<ecs::World> ecsWorld;
     std::unique_ptr<world_sim::GameUI> gameUI;

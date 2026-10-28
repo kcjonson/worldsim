@@ -1,5 +1,7 @@
-# Perf capture: drives the camera via the debug server and records /api/metrics.
-# Requires a running world-sim instance in the game scene (default port 8081).
+# Perf capture: drives the camera through the dev server and records /api/metrics.
+# Requires a running world-sim instance in the game scene (default port 8081), which registers the
+# camera control. The dev server is in Debug and RelWithDebInfo builds; a Release build has none
+# unless configured with -DSALAL_DEV_SERVER_IN_RELEASE=ON.
 # X/Y pick the view (world meters); the scroll scenarios start from it.
 #
 # Usage: pwsh scripts/perf-capture.ps1 [-Port 8081] [-X 256 -Y 256] [-SettleMs 1500] [-OutFile perf-results/capture.json]

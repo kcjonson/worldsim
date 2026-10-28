@@ -3,34 +3,28 @@
 // Scene registry for the Asset Manager app. The X-macro is the single source of
 // truth for the scene list (mirrors the ui-sandbox pattern).
 
-#include <scene/SceneManager.h>
+#include <app/UiScene.h>
 
-#include <cstddef>
-#include <string>
-#include <unordered_map>
-#include <utility>
+namespace app {
+	class SceneStack;
+} // namespace app
 
 namespace asset_manager {
 
 	struct SceneInfo {
-		const char*			 name;
-		engine::SceneFactory factory;
+		const char*			   name;
+		engine::UiSceneFactory factory;
 	};
 
-#define ASSET_MANAGER_SCENES(X) \
-	X(Browser)
+#define ASSET_MANAGER_SCENES(X) X(Browser)
 
-	enum class SceneType : std::size_t {
-#define SCENE_ENUM(name) name,
-		ASSET_MANAGER_SCENES(SCENE_ENUM)
-#undef SCENE_ENUM
-			Count
-	};
+	namespace scenes {
+#define SCENE_EXTERN(scene) extern const SceneInfo scene;
+		ASSET_MANAGER_SCENES(SCENE_EXTERN)
+#undef SCENE_EXTERN
+	} // namespace scenes
 
-	inline engine::SceneKey toKey(SceneType type) {
-		return static_cast<engine::SceneKey>(type);
-	}
-
-	void initializeSceneManager();
+	/// @brief Add every asset-manager scene to the stack under its name
+	void addScenes(app::SceneStack& stack);
 
 } // namespace asset_manager

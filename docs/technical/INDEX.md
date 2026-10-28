@@ -43,9 +43,11 @@ Applications:
 | Port | Service | Protocol | Purpose |
 |------|---------|----------|---------|
 | 9000 | Game Server ↔ Client | WebSocket | Gameplay sync (60 Hz) |
-| 8080 | Game Server Developer Server | HTTP/SSE | Observability |
-| 8081 | UI-Sandbox Developer Server | HTTP/SSE | Observability |
-| 8082 | Game Client Developer Server | HTTP/SSE | Observability |
+| 8080 | Game Server Developer Server (planned) | HTTP/SSE | Observability |
+| 8081 | world-sim Dev Server | HTTP/SSE | Observability |
+| 8082 | Game Client Developer Server (planned) | HTTP/SSE | Observability |
+| 8090 | ui-sandbox Dev Server | HTTP/SSE | Observability |
+| 8070 | asset-manager Dev Server | HTTP/SSE | Observability |
 
 ---
 

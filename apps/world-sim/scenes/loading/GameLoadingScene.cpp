@@ -10,12 +10,14 @@
 #include "GameWorldState.h"
 #include "SceneTypes.h"
 #include "scenes/shared/Starfield.h"
-#include "scenes/shared/UiStateDrain.h"
 
 #include <GL/glew.h>
 #include <theme/Tokens.h>
 #include <theme/Variants.h>
 
+#include <app/Keys.h>
+#include <app/UiScene.h>
+#include <application/App.h>
 #include <assets/ActionTypeRegistry.h>
 #include <assets/AssetRegistry.h>
 #include <assets/ConfigValidator.h>
@@ -27,10 +29,7 @@
 #include <assets/placement/PlacementExecutor.h>
 #include <ecs/GoalTaskRegistry.h>
 #include <graphics/Color.h>
-#include <input/InputManager.h>
 #include <primitives/Primitives.h>
-#include <scene/Scene.h>
-#include <scene/SceneManager.h>
 #include <shapes/Shapes.h>
 #include <utils/Log.h>
 #include <utils/ResourcePath.h>
@@ -61,9 +60,10 @@ namespace {
 	/// Loading phases
 	enum class LoadingPhase { PreparingPlanet, Initializing, ConfigError, LoadingChunks, PlacingEntities, Complete, Cancelling };
 
-	class GameLoadingScene : public engine::IScene {
+	class GameLoadingScene : public engine::UiScene {
 	  public:
-		void onEnter() override {
+		void onEnter(app::App& app) override {
+			owner = &app;
 			LOG_INFO(Game, "GameLoadingScene - Entering");
 
 			phase = LoadingPhase::PreparingPlanet;
@@ -86,14 +86,13 @@ namespace {
 			statusMessage = "Initializing...";
 		}
 
-		void update(float /*dt*/) override {
+		void update(const app::FrameContext& frame) override {
 			// Check for ESC to cancel loading or return from error
-			auto& input = engine::InputManager::Get();
-			if (input.isKeyPressed(foundation::Key::Escape)) {
+			if (engine::key(frame.input, foundation::Key::Escape).pressed()) {
 				if (phase == LoadingPhase::ConfigError) {
 					// Config error - return to menu immediately
 					LOG_INFO(Game, "GameLoadingScene - Returning to menu from config error");
-					sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu));
+					owner->scenes().switchTo(world_sim::scenes::MainMenu.name);
 					return;
 				}
 				if (phase != LoadingPhase::Cancelling && phase != LoadingPhase::Complete) {
@@ -134,7 +133,7 @@ namespace {
 			}
 		}
 
-		void render() override {
+		void render(float /*alpha*/) override {
 			using namespace UI;
 			using Renderer::Primitives::drawRect;
 			using Renderer::Primitives::drawText;
@@ -205,8 +204,6 @@ namespace {
 											.position = Foundation::BorderPosition::Inside}}});
 				}
 			}
-
-			world_sim::serveUiStateRequests(*this);
 		}
 
 		void onExit() override {
@@ -215,15 +212,17 @@ namespace {
 			// Note: worldState is moved to GameWorldState::SetPending() before exit
 		}
 
-		std::string exportState() override {
+		std::string exportState() const override {
 			std::ostringstream oss;
 			oss << R"({"scene":"gameloading","progress":)" << progress << "}";
 			return oss.str();
 		}
 
-		const char* getName() const override { return kSceneName; }
+		const char* name() const override { return kSceneName; }
 
 	  private:
+		app::App* owner = nullptr;
+
 		/// Phase 0: ensure we have a planet to land on.
 		/// Creator flow already provides one; Quick Start loads the prebuilt
 		/// planet shipped with the game. It is never generated at runtime — the
@@ -408,7 +407,7 @@ namespace {
 			world_sim::GameWorldState::SetPending(std::move(worldState));
 
 			// Switch to game scene
-			sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::Game));
+			owner->scenes().switchTo(world_sim::scenes::Game.name);
 		}
 
 		/// Cancel loading - waits for async tasks to complete with UI feedback
@@ -425,7 +424,7 @@ namespace {
 
 			// All tasks done, safe to transition
 			LOG_INFO(Game, "GameLoadingScene - Cancelled, returning to main menu");
-			sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu));
+			owner->scenes().switchTo(world_sim::scenes::MainMenu.name);
 		}
 
 		void updateStatusText(const std::string& text) { statusMessage = text; }

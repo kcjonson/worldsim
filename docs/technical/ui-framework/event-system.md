@@ -19,11 +19,11 @@ while (running) {
 ### Event Flow
 
 ```
-Application::run()
+app::App::tick(), step 5: the dispatch engine::UiBridge installs
     ↓
-Create InputEvents from InputManager (MouseMove, MouseDown, MouseUp)
+Create InputEvents from the frame's input (MouseMove, MouseDown, MouseUp, Scroll)
     ↓
-scene->handleInput(event)
+overlay->handleInput(event), then scene->handleInput(event)
     ↓
 Scene dispatches to UI components via handleEvent()
     ↓
@@ -84,16 +84,17 @@ struct IComponent {
 };
 ```
 
-### IScene Interface
+### UiScene Interface
 
-Located in `libs/engine/scene/Scene.h`:
+Located in `libs/engine/app/UiScene.h`, over salal's `app::Scene`:
 
 ```cpp
-class IScene {
-    // ... lifecycle methods ...
+class UiScene : public app::Scene {
+    // ... app::Scene's lifecycle: onEnter(App&), update(const FrameContext&), render(float), ...
 
-    // Input event handling - receives events from Application
+    // Input event handling - receives events from the bridge
     virtual bool handleInput(UI::InputEvent& event) { return false; }
+    virtual std::vector<const UI::IComponent*> getUiRoots() const { return {}; }
 };
 ```
 
@@ -101,35 +102,23 @@ class IScene {
 
 ## Dispatch Model
 
-### Application Creates Events
+### The Bridge Creates Events
 
-In `Application::run()`, after `InputManager::update()`:
+`engine::UiBridge` (`libs/engine/app/UiBridge.cpp`) is the App's dispatch, so it runs once a
+frame, after the frame's input is read and before scene changes and update. It walks the frame's
+events (`app.input().events()`) in order, and unless the App is paused it sends each of these
+through the overlays, last added first, then the top scene, stopping at the first that consumes it:
 
-```cpp
-if (!paused && inputManager) {
-    auto mousePos = inputManager->getMousePosition();
-    auto pos = Foundation::Vec2{mousePos.x, mousePos.y};
-    auto* scene = SceneManager::Get().getCurrentScene();
+- for a Left or Right press or release, a `MouseMove` at the event's position, then the
+  `MouseDown` or `MouseUp` there, so a drag or two clicks inside one frame keep their path;
+- for a wheel event, a `Scroll` with its delta at its position. One nothing consumes is sent
+  again every frame until something does; GameScene zooms the camera with what's left
+  (`UiBridge::consumeScroll`), so a scroll a list takes doesn't zoom too.
 
-    if (scene) {
-        // MouseMove for hover states
-        UI::InputEvent moveEvent = UI::InputEvent::mouseMove(pos);
-        scene->handleInput(moveEvent);
-
-        // MouseDown on press
-        if (inputManager->isMouseButtonPressed(MouseButton::Left)) {
-            UI::InputEvent downEvent = UI::InputEvent::mouseDown(pos, MouseButton::Left);
-            scene->handleInput(downEvent);
-        }
-
-        // MouseUp on release
-        if (inputManager->isMouseButtonReleased(MouseButton::Left)) {
-            UI::InputEvent upEvent = UI::InputEvent::mouseUp(pos, MouseButton::Left);
-            scene->handleInput(upEvent);
-        }
-    }
-}
-```
+After the events, a `MouseMove` at the frame's pointer, every frame, so hover holds under a still
+cursor; none until some event has carried a pointer position. Modifiers come from the Shift,
+Control and Alt keys held. Keys and characters don't become InputEvents: they go to the
+`FocusManager` in their place among the events, paused or not (see focus-management.md).
 
 ### Scene Dispatches to Components
 
@@ -212,14 +201,14 @@ bool Button::handleEvent(InputEvent& event) {
 Input events are discrete - something happened or it didn't. No time component needed.
 
 - `handleInput(InputEvent&)` - "mouse clicked at position X"
-- `update(float dt)` - "advance world by dt seconds"
+- `update(const app::FrameContext&)` - "advance world by frame.dt seconds"
 
-For continuous game input (WASD camera movement), poll InputManager in `update(float dt)`:
+For continuous game input (WASD camera movement), read the frame's snapshot in `update`:
 
 ```cpp
-void GameScene::update(float dt) {
-    if (InputManager::Get().isKeyHeld(Key::W)) {
-        camera.move(speed * dt);  // Delta time belongs here
+void GameScene::update(const app::FrameContext& frame) {
+    if (engine::key(frame.input, foundation::Key::W).down) {
+        camera.move(speed * static_cast<float>(frame.dt));  // Delta time belongs here
     }
 }
 ```
@@ -227,10 +216,10 @@ void GameScene::update(float dt) {
 ### Why Scenes Have handleInput() Not handleEvent()
 
 Consistency. Everything that processes input calls it `handleInput`:
-- `IScene::handleInput(InputEvent&)` - scene receives input
+- `UiScene::handleInput(InputEvent&)` - scene receives input
 - `IComponent::handleEvent(InputEvent&)` - component handles event
 
-The distinction: scenes *receive* input from Application, components *handle* events dispatched by scenes.
+The distinction: scenes *receive* input from the bridge, components *handle* events dispatched by scenes.
 
 ### Why Single Top-Down Pass (No Bubbling)
 

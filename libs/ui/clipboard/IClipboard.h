@@ -9,7 +9,7 @@ namespace UI {
 	 *
 	 * Text clipboard service used by UI components (TextInput). ui defines the
 	 * contract; the app layer supplies the platform implementation and registers
-	 * it at startup (engine::Application registers engine::ClipboardManager).
+	 * it at startup (engine::UiBridge registers engine::UiClipboard, over the App's).
 	 * Singleton access mirrors FocusManager.
 	 */
 	class IClipboard {

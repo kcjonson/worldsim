@@ -1,11 +1,10 @@
 // Arena Scene - Memory Arena Performance Tests
 // Demonstrates memory arena performance and correctness
 
+#include "SceneTypes.h"
+#include <app/UiScene.h>
 #include <math/Types.h>
 #include <memory/Arena.h>
-#include <scene/Scene.h>
-#include <scene/SceneManager.h>
-#include "SceneTypes.h"
 #include <utils/Log.h>
 
 #include <GL/glew.h>
@@ -24,9 +23,9 @@ static void testPerformance();
 	static void testCapacity();
 	static void testScoped();
 
-	class ArenaScene : public engine::IScene {
+	class ArenaScene : public engine::UiScene {
 	  public:
-		void onEnter() override {
+		void onEnter(app::App& /*app*/) override {
 			LOG_INFO(UI, "");
 			LOG_INFO(UI, "Arena Scene - Memory Arena Performance Tests");
 			LOG_INFO(UI, "================================================");
@@ -42,11 +41,7 @@ static void testPerformance();
 			LOG_INFO(UI, "");
 		}
 
-		void update(float /*dt*/) override {
-			// No update logic needed - tests run on enter
-		}
-
-		void render() override {
+		void render(float /*alpha*/) override {
 			// Clear background
 			glClearColor(0.1F, 0.1F, 0.15F, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
@@ -54,11 +49,7 @@ static void testPerformance();
 			// No rendering needed for this scene - all output is to console/logs
 		}
 
-		void onExit() override {
-			// No cleanup needed
-		}
-
-		std::string exportState() override { // NOLINT(readability-convert-member-functions-to-static)
+		std::string exportState() const override { // NOLINT(readability-convert-member-functions-to-static)
 			return R"({
 			"scene": "arena",
 			"description": "Memory arena performance tests",
@@ -67,7 +58,7 @@ static void testPerformance();
 		})";
 		}
 
-		const char* getName() const override { return kSceneName; }
+		const char* name() const override { return kSceneName; }
 	};
 
 // ============================================================================

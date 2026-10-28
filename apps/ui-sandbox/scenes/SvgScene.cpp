@@ -4,12 +4,11 @@
 // render pipeline, plus a few Primitives drawRect examples for fills and borders. Consolidates
 // the former "shapes" and "vector-star" scenes.
 
+#include "SceneTypes.h"
+#include <app/UiScene.h>
 #include <graphics/Color.h>
 #include <graphics/Rect.h>
 #include <primitives/Primitives.h>
-#include <scene/Scene.h>
-#include <scene/SceneManager.h>
-#include "SceneTypes.h"
 #include <utils/Log.h>
 #include <utils/ResourcePath.h>
 #include <vector/SVGLoader.h>
@@ -21,18 +20,14 @@ namespace {
 
 	constexpr const char* kSceneName = "svg";
 
-	class SvgScene : public engine::IScene {
+	class SvgScene : public engine::UiScene {
 	  public:
-		void onEnter() override {
+		void onEnter(app::App& /*app*/) override {
 			LOG_INFO(UI, "SVG Scene - vector/SVG capability showcase");
 			loadAndTessellate();
 		}
 
-		void update(float /*dt*/) override {
-			// Static display
-		}
-
-		void render() override {
+		void render(float /*alpha*/) override {
 			using namespace Foundation;
 
 			glClearColor(0.15F, 0.15F, 0.2F, 1.0F);
@@ -72,11 +67,11 @@ namespace {
 
 		void onExit() override { LOG_INFO(UI, "Exiting SVG Scene"); }
 
-		std::string exportState() override { // NOLINT(readability-convert-member-functions-to-static)
+		std::string exportState() const override { // NOLINT(readability-convert-member-functions-to-static)
 			return "{}";
 		}
 
-		const char* getName() const override { return kSceneName; }
+		const char* name() const override { return kSceneName; }
 
 	  private:
 		// The showcase SVG is authored centered on the origin, so origin maps to (kCenterX, kCenterY).

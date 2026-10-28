@@ -1,14 +1,13 @@
 // Layer Scene - UI Component Hierarchy Showcase
 // Demonstrates Component hierarchy with AddChild and automatic z-ordering
 
+#include "SceneTypes.h"
+#include <app/UiScene.h>
 #include <component/Component.h>
 #include <component/Container.h>
 #include <core/RenderContext.h>
 #include <graphics/Color.h>
 #include <primitives/Primitives.h>
-#include <scene/Scene.h>
-#include <scene/SceneManager.h>
-#include "SceneTypes.h"
 #include <shapes/Shapes.h>
 #include <utils/Log.h>
 
@@ -16,11 +15,11 @@
 
 namespace {
 
-constexpr const char* kSceneName = "layer";
+	constexpr const char* kSceneName = "layer";
 
-class LayerScene : public engine::IScene {
+	class LayerScene : public engine::UiScene {
 	  public:
-		void onEnter() override {
+		void onEnter(app::App& /*app*/) override {
 			using namespace UI;
 			using namespace Foundation;
 
@@ -124,13 +123,13 @@ class LayerScene : public engine::IScene {
 			LOG_INFO(UI, "Layer scene initialized with Component hierarchy");
 		}
 
-		void update(float /*dt*/) override {
+		void update(const app::FrameContext& /*frame*/) override {
 			if (root) {
 				root->update(0.0F);
 			}
 		}
 
-		void render() override {
+		void render(float /*alpha*/) override {
 			glClearColor(0.1F, 0.1F, 0.15F, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
 
@@ -141,9 +140,9 @@ class LayerScene : public engine::IScene {
 
 		void onExit() override { root.reset(); }
 
-		std::string exportState() override { return "{\"scene\": \"layer\", \"description\": \"Component hierarchy demo\"}"; }
+		std::string exportState() const override { return "{\"scene\": \"layer\", \"description\": \"Component hierarchy demo\"}"; }
 
-		const char* getName() const override { return kSceneName; }
+		const char* name() const override { return kSceneName; }
 
 	  private:
 		std::unique_ptr<UI::Container> root;
@@ -154,4 +153,4 @@ class LayerScene : public engine::IScene {
 // Export scene info for registry
 namespace ui_sandbox::scenes {
 	extern const ui_sandbox::SceneInfo Layer = {kSceneName, []() { return std::make_unique<LayerScene>(); }};
-}
+} // namespace ui_sandbox::scenes

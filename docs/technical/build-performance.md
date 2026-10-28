@@ -141,10 +141,11 @@ Local before/after timings: see Results below.
 - **Removed hardcoded `/Zi`** from the 8 `<lib>-tests` targets (`/Od /Zi` → `/Od`). An
   explicit `/Zi` overrides the embedded format and silently disables ccache for every test TU.
   Don't reintroduce it.
-- **engine links httplib PRIVATE; foundation links nothing but glm.** httplib was PUBLIC on
+- **Nothing in worldsim links httplib; foundation links nothing but glm.** httplib was PUBLIC on
   foundation once, propagating its include dir to every TU in the repo; it went PRIVATE
   (`DebugServer.h` forward-declares, only the .cpp includes httplib), then moved to engine
-  with the dev server. glm stays PUBLIC deliberately: public headers expose glm types.
+  with the dev server, and left with it for salal's `app`, which links it privately and only
+  where the server is compiled in. glm stays PUBLIC deliberately: public headers expose glm types.
 - **Local test invocation:** `ctest --test-dir build -C Debug -LE heavy -E benchmarks -j 13
   --output-on-failure` (omit `-C Debug` on single-config macOS/Linux). Don't use `-L fast`:
   only world-tests carries labels, so it would silently run one exe.

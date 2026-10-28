@@ -2,18 +2,17 @@
 // Demonstrates clipping system features: rect clipping, nested clips, scrolling
 // See /docs/technical/ui-framework/clipping.md for design documentation.
 
+#include "SceneTypes.h"
+#include <app/Keys.h>
+#include <app/UiScene.h>
 #include <component/Container.h>
 #include <graphics/ClipTypes.h>
 #include <graphics/Color.h>
 #include <primitives/Primitives.h>
-#include <scene/Scene.h>
-#include <scene/SceneManager.h>
-#include "SceneTypes.h"
 #include <shapes/Shapes.h>
 #include <utils/Log.h>
 
 #include <GL/glew.h>
-#include <GLFW/glfw3.h>
 #include <cmath>
 #include <memory>
 #include <vector>
@@ -27,9 +26,9 @@ constexpr const char* kSceneName = "clip";
 	constexpr float kContainerItemHeight = 35.0F;
 	constexpr float kContainerViewportHeight = 100.0F;
 
-	class ClipScene : public engine::IScene {
+	class ClipScene : public engine::UiScene {
 	  public:
-		void onEnter() override {
+		void onEnter(app::App& /*app*/) override {
 			LOG_INFO(UI, "Clip Scene - Clipping and Scrolling Demo");
 			LOG_INFO(UI, "Press 'C' to toggle clipping on/off");
 			LOG_INFO(UI, "UP/DOWN arrows scroll Section 4 Container");
@@ -81,25 +80,21 @@ constexpr const char* kSceneName = "clip";
 			m_containerMaxScroll = std::max(0.0F, m_containerContentHeight - kContainerViewportHeight);
 		}
 
-		void update(float dt) override {
-			GLFWwindow* window = glfwGetCurrentContext();
+		void update(const app::FrameContext& frame) override {
+			const auto dt = static_cast<float>(frame.dt);
 
 			// Toggle clipping with 'C' key
-			static bool lastKeyState = false;
-			bool		currentKeyState = glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS;
-
-			if (currentKeyState && !lastKeyState) {
+			if (engine::key(frame.input, foundation::Key::C).pressed()) {
 				clippingEnabled = !clippingEnabled;
 				LOG_INFO(UI, "Clipping %s", clippingEnabled ? "ENABLED" : "DISABLED");
 			}
-			lastKeyState = currentKeyState;
 
 			// Scroll container with UP/DOWN arrows
 			constexpr float kScrollSpeed = 5.0F;
-			if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS) {
+			if (engine::key(frame.input, foundation::Key::Up).down) {
 				m_containerScrollY = std::max(0.0F, m_containerScrollY - kScrollSpeed);
 			}
-			if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS) {
+			if (engine::key(frame.input, foundation::Key::Down).down) {
 				m_containerScrollY = std::min(m_containerMaxScroll, m_containerScrollY + kScrollSpeed);
 			}
 
@@ -116,7 +111,7 @@ constexpr const char* kSceneName = "clip";
 			}
 		}
 
-		void render() override {
+		void render(float /*alpha*/) override {
 			using namespace Foundation;
 			using namespace Renderer;
 
@@ -298,13 +293,13 @@ constexpr const char* kSceneName = "clip";
 			m_scrollContainer.reset();
 		}
 
-		std::string exportState() override {
+		std::string exportState() const override {
 			char buf[128];
 			snprintf(buf, sizeof(buf), R"({"clipping": %s, "scrollY": %.1F})", clippingEnabled ? "true" : "false", scrollY);
 			return {buf};
 		}
 
-		const char* getName() const override { return kSceneName; }
+		const char* name() const override { return kSceneName; }
 
 	  private:
 		bool  clippingEnabled = true; // Start with clipping enabled to show it working

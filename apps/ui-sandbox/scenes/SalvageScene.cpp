@@ -19,11 +19,11 @@
 #include <theme/Tokens.h>
 #include <theme/Variants.h>
 
+#include "SceneTypes.h"
+#include <app/UiScene.h>
 #include <graphics/Color.h>
 #include <graphics/Rect.h>
 #include <primitives/Primitives.h>
-#include <scene/Scene.h>
-#include "SceneTypes.h"
 
 #include <GL/glew.h>
 
@@ -34,19 +34,17 @@ namespace {
 
 constexpr const char* kSceneName = "salvage";
 
-class SalvageScene : public engine::IScene {
+class SalvageScene : public engine::UiScene {
   public:
-	void onEnter() override {}
-	void update(float /*dt*/) override {}
-	void onExit() override {}
+	void onEnter(app::App& /*app*/) override {}
 
-	std::string exportState() override { // NOLINT(readability-convert-member-functions-to-static)
+	std::string exportState() const override { // NOLINT(readability-convert-member-functions-to-static)
 		return R"({"scene": "salvage", "description": "Salvage component gallery"})";
 	}
 
-	const char* getName() const override { return kSceneName; }
+	const char* name() const override { return kSceneName; }
 
-	void render() override {
+	void render(float /*alpha*/) override {
 		using namespace UI;
 		using Renderer::Primitives::drawText;
 

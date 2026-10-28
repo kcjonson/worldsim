@@ -32,11 +32,11 @@ The Focus Management System provides centralized keyboard focus tracking and nav
 
 ```
 ┌──────────────────────────────────────────────────┐
-│                  Application                      │
+│                  app::App                         │
 │  ┌────────────────────────────────────────────┐  │
-│  │           InputManager                     │  │
-│  │  - Detects Tab/Shift+Tab key presses      │  │
-│  │  - Routes keyboard events                 │  │
+│  │           engine::UiBridge                 │  │
+│  │  - Reads the frame's key and char events  │  │
+│  │  - Moves focus on Tab/Shift+Tab           │  │
 │  └─────────────┬──────────────────────────────┘  │
 │                │                                  │
 │                ▼                                  │
@@ -211,53 +211,37 @@ focusManager.PopFocusScope();  // Restores focus to element that opened modal
 
 ---
 
-## Integration with InputManager
+## Integration with the App's input
 
-The InputManager detects keyboard events and routes them to FocusManager:
+`engine::UiBridge` (`libs/engine/app/UiBridge.cpp`) reads each frame's events from
+`app.input().events()`, in order, and routes them to the FocusManager, whether the App is paused
+or not:
 
 ```cpp
-// In InputManager::KeyCallback (GLFW callback)
-if (key == GLFW_KEY_TAB && action == GLFW_PRESS) {
-    if (mods & GLFW_MOD_SHIFT) {
-        Application::GetFocusManager().FocusPrevious();
-    } else {
-        Application::GetFocusManager().FocusNext();
-    }
-    return;  // Tab consumed, don't propagate
+// A key press or repeat
+if (event.key == foundation::Key::Tab) {
+    (event.mods & foundation::ModShift) ? focus.focusPrevious() : focus.focusNext();
+} else {
+    focus.routeKeyInput(event.key, shift, ctrl, alt); // ctrl includes Cmd on macOS
 }
 
-// Route other keys to focused component
-IFocusable* focused = Application::GetFocusManager().GetFocused();
-if (focused) {
-    bool shift = mods & GLFW_MOD_SHIFT;
-    bool ctrl  = mods & GLFW_MOD_CONTROL;
-    bool alt   = mods & GLFW_MOD_ALT;
-
-    Application::GetFocusManager().RouteKeyInput(
-        ConvertGLFWKey(key), shift, ctrl, alt
-    );
-}
-
-// In InputManager::CharCallback
-IFocusable* focused = Application::GetFocusManager().GetFocused();
-if (focused) {
-    Application::GetFocusManager().RouteCharInput(codepoint);
-}
+// A character
+focus.routeCharInput(event.codepoint);
 ```
 
 **Key Points:**
 - Tab key is intercepted and handled by FocusManager (doesn't reach components)
 - All other key events routed to focused component via `HandleKeyInput()`
 - Character input routed via `HandleCharInput()` for text editing
-- InputManager converts GLFW key codes to worldsim `Engine::Key` enum
+- Keys arrive as salal's `foundation::Key`, from GLFW or the dev server's `/api/input` alike
 
 ---
 
 ## Ownership and Lifetime
 
 **FocusManager Ownership:**
-- Single `FocusManager` instance owned by `Application` class
-- Accessible via `Application::GetFocusManager()`
+- Single `FocusManager` instance owned by `engine::UiBridge`, which each app's `main` makes after `App::create`
+- Accessible via `FocusManager::Get()`
 - Lives for entire application lifetime
 
 **Component Registration:**
@@ -392,7 +376,7 @@ Check if specific component has focus.
 - True if component currently has focus
 
 #### `void RouteKeyInput(Engine::Key key, bool shift, bool ctrl, bool alt)`
-Route keyboard input to focused component (called by InputManager).
+Route keyboard input to focused component (called by the bridge).
 
 **Parameters:**
 - `key` - Key pressed (from Engine::Key enum)
@@ -403,7 +387,7 @@ Route keyboard input to focused component (called by InputManager).
 - If no component has focus, does nothing
 
 #### `void RouteCharInput(char32_t codepoint)`
-Route character input to focused component (called by InputManager).
+Route character input to focused component (called by the bridge).
 
 **Parameters:**
 - `codepoint` - Unicode codepoint of character typed
@@ -425,11 +409,11 @@ struct Button : IFocusable {
 
     Button() {
         // Register with auto tab index
-        Application::GetFocusManager().RegisterFocusable(this, -1);
+        FocusManager::Get().registerFocusable(this, -1);
     }
 
     ~Button() {
-        Application::GetFocusManager().UnregisterFocusable(this);
+        FocusManager::Get().unregisterFocusable(this);
     }
 
     void OnFocusGained() override {
@@ -475,15 +459,15 @@ struct ConfirmDialog {
             &cancelButton,
             &okButton
         };
-        Application::GetFocusManager().PushFocusScope(modalComponents);
+        FocusManager::Get().pushFocusScope(modalComponents);
 
         // Focus first button
-        Application::GetFocusManager().SetFocus(&okButton);
+        FocusManager::Get().setFocus(&okButton);
     }
 
     void Close() {
         // Pop scope (restores focus to previous element)
-        Application::GetFocusManager().PopFocusScope();
+        FocusManager::Get().popFocusScope();
     }
 };
 ```
@@ -492,14 +476,14 @@ struct ConfirmDialog {
 
 ```cpp
 // Scene with specific tab order
-struct FormScene : IScene {
+struct FormScene : engine::UiScene {
     Button submitButton;
     TextInput nameInput;
     TextInput emailInput;
     Button cancelButton;
 
     void Init() override {
-        auto& fm = Application::GetFocusManager();
+        auto& fm = FocusManager::Get();
 
         // Explicit tab order: name -> email -> submit -> cancel
         fm.RegisterFocusable(&nameInput, 0);

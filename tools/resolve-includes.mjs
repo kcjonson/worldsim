@@ -7,9 +7,9 @@
  * the build's lookup with every library's root visible to every file. The
  * roots are the library directories under libs/, plus libs/ itself for
  * planet-view, which exports it; they are hardcoded here and match CMake as of
- * 2026-10-25. foundation and renderer are not in this repo any more: they come
- * from salal (github.com/kcjonson/salal) through FetchContent, so their two
- * roots, and their two rows, are read from a salal checkout, --salal DIR,
+ * 2026-10-28. foundation, renderer and app are not in this repo: they come
+ * from salal (github.com/kcjonson/salal) through FetchContent, so their three
+ * roots, and their three rows, are read from a salal checkout, --salal DIR,
  * which defaults to the one FetchContent populates at build/_deps/salal-src.
  * A directory under libs/ that LIBS does not list stops the script with exit 2,
  * so a new library cannot be silently ignored. The first hit decides which
@@ -19,8 +19,8 @@
  * Output, in order: an all-files matrix, a production-only matrix (test and
  * bench files excluded, see isTestFile), ambiguous resolutions, includes that
  * cross the documented layering, the engine -> ui coupling surface, and what
- * engine's generic slice (application/, scene/, input/, clipboard/, the part
- * the salal extraction carves out as app) includes from libs/.
+ * engine's app/ (the bridge between worldsim's ui and salal's app, until salal
+ * has a ui of its own) includes from libs/.
  * Cells are counts of #include lines; self-includes sit on the diagonal.
  *
  * The allowed edges follow the per-library "Depends on" lists in
@@ -34,8 +34,8 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const LIBS = ["foundation", "geometry", "renderer", "ui", "world", "planet-view", "game-systems", "engine"];
-const SALAL_LIBS = new Set(["foundation", "renderer"]);
+const LIBS = ["foundation", "geometry", "renderer", "ui", "world", "planet-view", "game-systems", "app", "engine"];
+const SALAL_LIBS = new Set(["foundation", "renderer", "app"]);
 const LIBS_ORDER = [...LIBS, "engine(assets)", "external"];
 const SOURCE_EXTS = [".h", ".hpp", ".cpp", ".cc", ".inl"];
 const INC = /^\s*#\s*include\s*([<"])([^>"]+)[>"]/;
@@ -49,6 +49,7 @@ const ALLOWED = {
 	world: new Set(["world", "renderer", "foundation", "external"]),
 	"planet-view": new Set(["planet-view", "world", "renderer", "foundation", "external"]),
 	"game-systems": new Set(["game-systems", "world", "renderer", "foundation", "external"]),
+	app: new Set(["app", "renderer", "foundation", "external"]),
 };
 
 const USAGE = "usage: node tools/resolve-includes.mjs [-h] [--root ROOT] [--salal DIR]";
@@ -61,7 +62,7 @@ function defaultSalal(root) {
 	return join(root, "build", "_deps", "salal-src");
 }
 
-// Where each library's sources live: the salal checkout for foundation and renderer, libs/ for the rest.
+// Where each library's sources live: the salal checkout for foundation, renderer and app, libs/ for the rest.
 function libDirs(root, salal) {
 	return new Map(LIBS.map((lib) => [lib, SALAL_LIBS.has(lib) ? join(salal, "libs", lib) : join(root, "libs", lib)]));
 }
@@ -76,6 +77,7 @@ function includeRoots(dirs, root) {
 		dirs.get("planet-view"),
 		join(root, "libs"), // planet-view exports libs/ so "planet-view/X.h" works
 		dirs.get("game-systems"),
+		dirs.get("app"),
 		dirs.get("engine"), // also covers "assets/X.h" -> libs/engine/assets/X.h
 	];
 }
@@ -275,7 +277,7 @@ function parseArgs(argv) {
 			console.log(USAGE);
 			console.log("\nResolve every #include under libs/ and print a per-library include matrix.");
 			console.log("\n  --root ROOT   repo root containing libs/ (default: the repo this script lives in)");
-			console.log("  --salal DIR   salal checkout holding libs/foundation and libs/renderer (default: ROOT/build/_deps/salal-src)");
+			console.log("  --salal DIR   salal checkout holding libs/foundation, libs/renderer and libs/app (default: ROOT/build/_deps/salal-src)");
 			process.exit(0);
 		} else if (a === "--root") {
 			if (i + 1 >= argv.length) fail("argument --root: expected one argument");
@@ -341,10 +343,9 @@ function main() {
 	out.push("", "engine files that include ui (file:line -> header):");
 	for (const r of [...eu].sort(byFileLine)) out.push(`  ${r.rel}:${r.line} -> ${r.resolved}`);
 
-	out.push("", "=== ENGINE generic slice (application/, scene/, input/, clipboard/): includes that land in libs/ ===");
-	const generic = new Set(["application", "scene", "input", "clipboard"]);
+	out.push("", "=== ENGINE app/ (the ui bridge onto salal's app): includes that land in libs/ ===");
 	for (const r of [...rows].sort(byFileLine)) {
-		if (r.srclib === "engine" && generic.has(r.rel.split("/")[2]) && r.dst !== "external") {
+		if (r.srclib === "engine" && r.rel.split("/")[2] === "app" && r.dst !== "external") {
 			out.push(`  ${r.rel}:${r.line} -> ${r.resolved} [${r.dst}]`);
 		}
 	}

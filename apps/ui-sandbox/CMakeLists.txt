@@ -11,8 +11,6 @@ add_executable(ui-sandbox
     scenes/LayerScene.cpp
     scenes/ButtonScene.cpp
     scenes/TabBarScene.cpp
-    scenes/InputTestScene.cpp
-    scenes/SdfMinimalScene.cpp
     scenes/TextInputScene.cpp
     scenes/ClipScene.cpp
     scenes/SvgScene.cpp
@@ -29,10 +27,6 @@ add_executable(ui-sandbox
     scenes/PlanetScene.cpp
     scenes/SalvageScene.cpp
     scenes/SalvageDialogScene.cpp
-    scenes/PolygonScene.cpp
-    scenes/ArcScene.cpp
-    scenes/PolylineScene.cpp
-    scenes/BlendScene.cpp
 )
 
 target_include_directories(ui-sandbox

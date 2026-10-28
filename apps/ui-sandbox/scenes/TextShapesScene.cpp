@@ -1,11 +1,10 @@
 // Text Shapes Scene - Text Shape API Demonstration
 // Demonstrates UI::Text shapes with various styles, sizes, and alignments
 
+#include "SceneTypes.h"
+#include <app/UiScene.h>
 #include <graphics/Color.h>
 #include <primitives/Primitives.h>
-#include <scene/Scene.h>
-#include <scene/SceneManager.h>
-#include "SceneTypes.h"
 #include <shapes/Shapes.h>
 #include <utils/Log.h>
 
@@ -16,84 +15,93 @@
 
 namespace {
 
-constexpr const char* kSceneName = "text_shapes";
+	constexpr const char* kSceneName = "text_shapes";
 
-class TextShapesScene : public engine::IScene {
+	class TextShapesScene : public engine::UiScene {
 	  public:
-		void onEnter() override {
+		void onEnter(app::App& /*app*/) override {
 			using namespace UI;
 			using namespace Foundation;
 
 			// Title
-			shapes.push_back(std::make_unique<Text>(Text::Args{
-				.position = {50.0F, 50.0F},
-				.text = "Text Shape Demonstration",
-				.style = {.color = Color::white(), .fontSize = 32.0F},
-				.id = "title"
-			}));
+			shapes.push_back(
+				std::make_unique<Text>(Text::Args{
+					.position = {50.0F, 50.0F},
+					.text = "Text Shape Demonstration",
+					.style = {.color = Color::white(), .fontSize = 32.0F},
+					.id = "title"
+				})
+			);
 
 			// Font Size Examples
-			shapes.push_back(std::make_unique<Text>(Text::Args{
-				.position = {50.0F, 120.0F},
-				.text = "Font Sizes:",
-				.style = {.color = Color(0.7F, 0.7F, 0.7F, 1.0F), .fontSize = 20.0F},
-				.id = "size_label"
-			}));
+			shapes.push_back(
+				std::make_unique<Text>(Text::Args{
+					.position = {50.0F, 120.0F},
+					.text = "Font Sizes:",
+					.style = {.color = Color(0.7F, 0.7F, 0.7F, 1.0F), .fontSize = 20.0F},
+					.id = "size_label"
+				})
+			);
 
 			float		yOffset = 160.0F;
 			const float sizes[] = {12.0F, 16.0F, 20.0F, 24.0F, 32.0F};
 			for (float size : sizes) {
-				shapes.push_back(std::make_unique<Text>(Text::Args{
-					.position = {50.0F, yOffset},
-					.text = "Text at " + std::to_string(static_cast<int>(size)) + "px",
-					.style = {.color = Color::white(), .fontSize = size}
-				}));
+				shapes.push_back(
+					std::make_unique<Text>(Text::Args{
+						.position = {50.0F, yOffset},
+						.text = "Text at " + std::to_string(static_cast<int>(size)) + "px",
+						.style = {.color = Color::white(), .fontSize = size}
+					})
+				);
 				yOffset += size + 10.0F;
 			}
 
 			// Color Examples
-			shapes.push_back(std::make_unique<Text>(Text::Args{
-				.position = {400.0F, 120.0F},
-				.text = "Colors:",
-				.style = {.color = Color(0.7F, 0.7F, 0.7F, 1.0F), .fontSize = 20.0F},
-				.id = "color_label"
-			}));
+			shapes.push_back(
+				std::make_unique<Text>(Text::Args{
+					.position = {400.0F, 120.0F},
+					.text = "Colors:",
+					.style = {.color = Color(0.7F, 0.7F, 0.7F, 1.0F), .fontSize = 20.0F},
+					.id = "color_label"
+				})
+			);
 
-			shapes.push_back(std::make_unique<Text>(Text::Args{
-				.position = {400.0F, 160.0F},
-				.text = "Red Text",
-				.style = {.color = Color::red(), .fontSize = 18.0F},
-				.id = "red"
-			}));
+			shapes.push_back(
+				std::make_unique<Text>(Text::Args{
+					.position = {400.0F, 160.0F}, .text = "Red Text", .style = {.color = Color::red(), .fontSize = 18.0F}, .id = "red"
+				})
+			);
 
-			shapes.push_back(std::make_unique<Text>(Text::Args{
-				.position = {400.0F, 190.0F},
-				.text = "Green Text",
-				.style = {.color = Color::green(), .fontSize = 18.0F},
-				.id = "green"
-			}));
+			shapes.push_back(
+				std::make_unique<Text>(Text::Args{
+					.position = {400.0F, 190.0F}, .text = "Green Text", .style = {.color = Color::green(), .fontSize = 18.0F}, .id = "green"
+				})
+			);
 
-			shapes.push_back(std::make_unique<Text>(Text::Args{
-				.position = {400.0F, 220.0F},
-				.text = "Blue Text",
-				.style = {.color = Color::blue(), .fontSize = 18.0F},
-				.id = "blue"
-			}));
+			shapes.push_back(
+				std::make_unique<Text>(Text::Args{
+					.position = {400.0F, 220.0F}, .text = "Blue Text", .style = {.color = Color::blue(), .fontSize = 18.0F}, .id = "blue"
+				})
+			);
 
-			shapes.push_back(std::make_unique<Text>(Text::Args{
-				.position = {400.0F, 250.0F},
-				.text = "Yellow Text",
-				.style = {.color = Color::yellow(), .fontSize = 18.0F},
-				.id = "yellow"
-			}));
+			shapes.push_back(
+				std::make_unique<Text>(Text::Args{
+					.position = {400.0F, 250.0F},
+					.text = "Yellow Text",
+					.style = {.color = Color::yellow(), .fontSize = 18.0F},
+					.id = "yellow"
+				})
+			);
 
 			// Bounding Box Alignment - 3x3 Grid
-			shapes.push_back(std::make_unique<Text>(Text::Args{
-				.position = {700.0F, 50.0F},
-				.text = "Bounding Box Alignment (3x3 Grid):",
-				.style = {.color = Color(0.7F, 0.7F, 0.7F, 1.0F), .fontSize = 20.0F},
-				.id = "align_grid_label"
-			}));
+			shapes.push_back(
+				std::make_unique<Text>(Text::Args{
+					.position = {700.0F, 50.0F},
+					.text = "Bounding Box Alignment (3x3 Grid):",
+					.style = {.color = Color(0.7F, 0.7F, 0.7F, 1.0F), .fontSize = 20.0F},
+					.id = "align_grid_label"
+				})
+			);
 
 			// Grid configuration
 			constexpr float		  boxWidth = 180.0F;
@@ -111,33 +119,39 @@ class TextShapesScene : public engine::IScene {
 					float yPos = startY + static_cast<float>(row) * (boxHeight + gap);
 
 					// Draw bounding box border
-					shapes.push_back(std::make_unique<Rectangle>(Rectangle::Args{
-						.position = {xPos, yPos},
-						.size = {boxWidth, boxHeight},
-						.style = {
-							.fill = Color(0.2F, 0.2F, 0.25F, 1.0F),
-							.border = BorderStyle{.color = Color(0.5F, 0.5F, 0.5F, 1.0F), .width = 2.0F}
-						}
-					}));
+					shapes.push_back(
+						std::make_unique<Rectangle>(Rectangle::Args{
+							.position = {xPos, yPos},
+							.size = {boxWidth, boxHeight},
+							.style = {
+								.fill = Color(0.2F, 0.2F, 0.25F, 1.0F),
+								.border = BorderStyle{.color = Color(0.5F, 0.5F, 0.5F, 1.0F), .width = 2.0F}
+							}
+						})
+					);
 
 					// Create text with bounding box alignment
-					shapes.push_back(std::make_unique<Text>(Text::Args{
-						.position = {xPos, yPos},
-						.width = boxWidth,
-						.height = boxHeight,
-						.text = "TEXT",
-						.style = {.color = Color::white(), .fontSize = 24.0F, .hAlign = hAligns[col], .vAlign = vAligns[row]}
-					}));
+					shapes.push_back(
+						std::make_unique<Text>(Text::Args{
+							.position = {xPos, yPos},
+							.width = boxWidth,
+							.height = boxHeight,
+							.text = "TEXT",
+							.style = {.color = Color::white(), .fontSize = 24.0F, .hAlign = hAligns[col], .vAlign = vAligns[row]}
+						})
+					);
 				}
 			}
 
 			// Point-Based Alignment - 3x3 Grid (no width/height)
-			shapes.push_back(std::make_unique<Text>(Text::Args{
-				.position = {50.0F, 380.0F},
-				.text = "Point-Based Alignment (3x3 Grid):",
-				.style = {.color = Color(0.7F, 0.7F, 0.7F, 1.0F), .fontSize = 20.0F},
-				.id = "align_point_label"
-			}));
+			shapes.push_back(
+				std::make_unique<Text>(Text::Args{
+					.position = {50.0F, 380.0F},
+					.text = "Point-Based Alignment (3x3 Grid):",
+					.style = {.color = Color(0.7F, 0.7F, 0.7F, 1.0F), .fontSize = 20.0F},
+					.id = "align_point_label"
+				})
+			);
 
 			// Grid configuration for point-based alignment
 			const float spacing = 100.0F;
@@ -151,29 +165,25 @@ class TextShapesScene : public engine::IScene {
 					float yPos = pointStartY + static_cast<float>(row) * spacing;
 
 					// Draw small red circle at the origin point
-					shapes.push_back(std::make_unique<Circle>(Circle::Args{
-						.center = {xPos, yPos},
-						.radius = 4.0F,
-						.style = {.fill = Color::red()}
-					}));
+					shapes.push_back(
+						std::make_unique<Circle>(Circle::Args{.center = {xPos, yPos}, .radius = 4.0F, .style = {.fill = Color::red()}})
+					);
 
 					// Create text with point-based alignment (NO width/height)
-					shapes.push_back(std::make_unique<Text>(Text::Args{
-						.position = {xPos, yPos},
-						.text = "TEXT",
-						.style = {.color = Color::white(), .fontSize = 24.0F, .hAlign = hAligns[col], .vAlign = vAligns[row]}
-					}));
+					shapes.push_back(
+						std::make_unique<Text>(Text::Args{
+							.position = {xPos, yPos},
+							.text = "TEXT",
+							.style = {.color = Color::white(), .fontSize = 24.0F, .hAlign = hAligns[col], .vAlign = vAligns[row]}
+						})
+					);
 				}
 			}
 
 			LOG_INFO(UI, "Text shapes scene initialized with {} shapes", shapes.size());
 		}
 
-		void update(float /*dt*/) override {
-			// Static scene - no updates needed
-		}
-
-		void render() override {
+		void render(float /*alpha*/) override {
 			// Clear background
 			glClearColor(0.1F, 0.1F, 0.12F, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
@@ -184,15 +194,11 @@ class TextShapesScene : public engine::IScene {
 			}
 		}
 
-		void onExit() override {
-			shapes.clear();
-		}
+		void onExit() override { shapes.clear(); }
 
-		std::string exportState() override {
-			return R"({"scene": "text_shapes", "description": "Text shape API demonstration"})";
-		}
+		std::string exportState() const override { return R"({"scene": "text_shapes", "description": "Text shape API demonstration"})"; }
 
-		const char* getName() const override { return kSceneName; }
+		const char* name() const override { return kSceneName; }
 
 	  private:
 		std::vector<std::unique_ptr<UI::IComponent>> shapes;
@@ -203,4 +209,4 @@ class TextShapesScene : public engine::IScene {
 // Export scene info for registry
 namespace ui_sandbox::scenes {
 	extern const ui_sandbox::SceneInfo TextShapes = {kSceneName, []() { return std::make_unique<TextShapesScene>(); }};
-}
+} // namespace ui_sandbox::scenes

@@ -18,17 +18,18 @@ libs/
 ├── ui/                  # UI framework - components, layout, inspector
 ├── world/               # World generation and 3D-to-2D sampling
 ├── game-systems/        # Game-specific: chunks, tiles, camera
-└── engine/              # Top layer - scenes, config, app lifecycle
+└── engine/              # Top layer - ECS, world, assets, the ui bridge onto salal's app
 
 salal (external, build/_deps/salal-src/ after a configure)
 └── libs/
     ├── foundation/      # Base layer - math, platform, utilities
-    └── renderer/        # Graphics layer - OpenGL, 2D/3D rendering
+    ├── renderer/        # Graphics layer - OpenGL, 2D/3D rendering
+    └── app/             # The window, the frame, input, the scene stack, the dev server
 ```
 
 ### Engine libraries from salal
 
-`foundation` and `renderer` were extracted to [salal](https://github.com/kcjonson/salal) and come back in through CMake FetchContent, pinned to a tag by `GIT_TAG` in the root `CMakeLists.txt`; targets link them as `salal::foundation` and `salal::renderer`, and the include spellings (`<utils/Log.h>`, `<primitives/Primitives.h>`) are unchanged. The layering below still holds, its bottom two layers just live in another repo. Building against a local salal checkout instead of the tag is covered in `CLAUDE.md`.
+`foundation` and `renderer` were extracted to [salal](https://github.com/kcjonson/salal) and come back in through CMake FetchContent, pinned to a tag by `GIT_TAG` in the root `CMakeLists.txt`; targets link them as `salal::foundation` and `salal::renderer`, and the include spellings (`<utils/Log.h>`, `<primitives/Primitives.h>`) are unchanged. salal's `app` (`salal::app`, `<application/App.h>`, `<scene/Scene.h>`) is what every GUI app runs on: the window, the frame, input, the scene stack and the dev server, which `engine` links and bridges worldsim's ui onto (`libs/engine/app/`). The layering below still holds, three of its layers just live in another repo. Building against a local salal checkout instead of the tag is covered in `CLAUDE.md`.
 
 ### Dependency Rules
 
@@ -37,7 +38,7 @@ Each layer can only depend on layers below it:
 ```
 engine
   ↓
-game-systems, ui, world
+game-systems, ui, world, app (salal)
   ↓
 renderer (salal), geometry
   ↓
@@ -91,11 +92,14 @@ foundation (salal)
 - Game-specific logic
 - Depends on: `world`, `renderer`, `foundation`
 
+**app/** (salal)
+- The window, the frame and its pacing, device input, the scene stack and overlays, the clipboard, settings and saves, the dev server
+- Depends on: `renderer`, `foundation`
+
 **engine/**
-- Application lifecycle (init, main loop, shutdown)
-- Scene management (loading, switching, transitions)
+- The bridge between worldsim's ui and salal's app (`app/`: `UiScene`, `UiOverlay`, `UiBridge`), until salal has a ui of its own
+- ECS, world streaming and rendering, construction, navigation, assets
 - Configuration system (JSON loading)
-- Input management layer
 - Depends on: All layers below
 
 ## Applications

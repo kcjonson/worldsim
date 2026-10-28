@@ -10,17 +10,16 @@
 #include "SceneTypes.h"
 #include "scenes/shared/DecorativePlanet.h"
 #include "scenes/shared/Starfield.h"
-#include "scenes/shared/UiStateDrain.h"
 #include "scenes/shared/Widgets.h"
 #include <GL/glew.h>
 
+#include <app/UiScene.h>
+#include <application/App.h>
 #include <components/icon/Icon.h>
 #include <graphics/PrimitiveStyles.h>
 #include <input/InputEvent.h>
 #include <layout/LayoutContainer.h>
 #include <primitives/Primitives.h>
-#include <scene/Scene.h>
-#include <scene/SceneManager.h>
 #include <theme/Tokens.h>
 #include <theme/Variants.h>
 #include <utils/Log.h>
@@ -167,9 +166,10 @@ namespace {
 		bool					  hovered{false};
 	};
 
-	class MainMenuScene : public engine::IScene {
+	class MainMenuScene : public engine::UiScene {
 	  public:
-		void onEnter() override {
+		void onEnter(app::App& app) override {
+			owner = &app;
 			LOG_INFO(Game, "MainMenuScene - Entering");
 
 			// Identity block on the layout engine (diamond + title on one row, the
@@ -212,7 +212,7 @@ namespace {
 										.glyph = "play",
 										.action = [this]() {
 											world_sim::NewGameSetup::Reset();
-											sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::ScenarioSelect));
+											owner->scenes().switchTo(world_sim::scenes::ScenarioSelect.name);
 										},
 										.primary = true,
 										.id = "menu_new_game"}));
@@ -241,27 +241,29 @@ namespace {
 											auto config = std::make_unique<world_sim::GameStartConfig>();
 											config->source = world_sim::GameStartConfig::Source::QuickStart;
 											world_sim::GameStartConfig::SetPending(std::move(config));
-											sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::GameLoading));
+											owner->scenes().switchTo(world_sim::scenes::GameLoading.name);
 										},
 										.enabled = quickstartReady,
 										.id = "menu_quick_start"}));
-			menu->addChild(MenuItemRow({.label = "Settings",
-										.hint = "Graphics, audio, controls",
-										.glyph = "gear",
-										.action = [this]() {
-											sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::Settings));
-										},
-										.id = "menu_settings"}));
+			menu->addChild(MenuItemRow(
+				{.label = "Settings",
+				 .hint = "Graphics, audio, controls",
+				 .glyph = "gear",
+				 .action = [this]() { owner->scenes().switchTo(world_sim::scenes::Settings.name); },
+				 .id = "menu_settings"}
+			));
 			menu->addChild(MenuItemRow({.label = "Credits",
 										.hint = "The crew behind the crew",
 										.glyph = "users",
 										.enabled = false,
 										.id = "menu_credits"}));
-			menu->addChild(MenuItemRow({.label = "Exit",
-										.hint = "Quit to desktop",
-										.glyph = "close",
-										.action = [this]() { sceneManager->requestExit(); },
-										.id = "menu_exit"}));
+			menu->addChild(MenuItemRow(
+				{.label = "Exit",
+				 .hint = "Quit to desktop",
+				 .glyph = "close",
+				 .action = [this]() { owner->requestExit(); },
+				 .id = "menu_exit"}
+			));
 			itemCount = 7;
 		}
 
@@ -269,13 +271,14 @@ namespace {
 			return menu && menu->handleEvent(event);
 		}
 
-		void update(float dt) override {
+		void update(const app::FrameContext& frame) override {
+			const auto dt = static_cast<float>(frame.dt);
 			planet.update(dt);
 			if (identity) identity->update(dt);
 			if (menu) menu->update(dt);
 		}
 
-		void render() override {
+		void render(float /*alpha*/) override {
 			using namespace UI;
 			using Renderer::Primitives::drawText;
 
@@ -334,17 +337,18 @@ namespace {
 				.color = text_faint,
 				.font = fontMono,
 				.vAlign = Foundation::VerticalAlign::Top});
-			drawText(Renderer::Primitives::TextArgs{
-				.text = "Star system: Maed - Sector 28-B",
-				.position = {kColX, footerY},
-				.scale = textScale(fs_2xs),
-				.color = text_faint,
-				.font = fontMono,
-				.hAlign = Foundation::HorizontalAlign::Right,
-				.vAlign = Foundation::VerticalAlign::Top,
-				.boxWidth = screenW - kColX * 2.0F});
-
-			world_sim::serveUiStateRequests(*this);
+			drawText(
+				Renderer::Primitives::TextArgs{
+					.text = "Star system: Maed - Sector 28-B",
+					.position = {kColX, footerY},
+					.scale = textScale(fs_2xs),
+					.color = text_faint,
+					.font = fontMono,
+					.hAlign = Foundation::HorizontalAlign::Right,
+					.vAlign = Foundation::VerticalAlign::Top,
+					.boxWidth = screenW - kColX * 2.0F
+				}
+			);
 		}
 
 		void onExit() override {
@@ -353,8 +357,8 @@ namespace {
 			menu.reset();
 		}
 
-		std::string exportState() override { return R"({"scene": "main_menu"})"; }
-		const char* getName() const override { return kSceneName; }
+		std::string exportState() const override { return R"({"scene": "main_menu"})"; }
+		const char* name() const override { return kSceneName; }
 
 		std::vector<const UI::IComponent*> getUiRoots() const override {
 			std::vector<const UI::IComponent*> roots;
@@ -364,6 +368,8 @@ namespace {
 		}
 
 	  private:
+		app::App* owner = nullptr;
+
 		static constexpr float kPlanetMinSize = 640.0F;
 
 		world_sim::DecorativePlanet			 planet;

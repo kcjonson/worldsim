@@ -3,169 +3,198 @@
 
 #include <GL/glew.h>
 
+#include "SceneTypes.h"
+#include <app/UiScene.h>
 #include <components/button/Button.h>
 #include <graphics/Color.h>
 #include <input/InputEvent.h>
-#include <input/InputManager.h>
 #include <input/InputTypes.h>
 #include <memory>
 #include <primitives/Primitives.h>
-#include <scene/Scene.h>
-#include <scene/SceneManager.h>
-#include "SceneTypes.h"
 #include <shapes/Shapes.h>
 #include <utils/Log.h>
 #include <vector>
 
 namespace {
 
-constexpr const char* kSceneName = "button";
+	constexpr const char* kSceneName = "button";
 
-class ButtonScene : public engine::IScene {
+	class ButtonScene : public engine::UiScene {
 	  public:
-		const char* getName() const override { return kSceneName; }
-		std::string exportState() override { return "{}"; }
+		const char* name() const override { return kSceneName; }
+		std::string exportState() const override { return "{}"; }
 
-		void onEnter() override {
+		void onEnter(app::App& /*app*/) override {
 			using namespace UI;
 			using namespace Foundation;
 
 			// Create title text
-			labels.push_back(std::make_unique<Text>(Text::Args{
-				.position = {50.0F, 30.0F},
-				.text = "Button Component Demo - Click, Hover, Tab to Focus, Enter to Activate",
-				.style = {.color = Color::white(), .fontSize = 20.0F},
-				.id = "title"
-			}));
+			labels.push_back(
+				std::make_unique<Text>(Text::Args{
+					.position = {50.0F, 30.0F},
+					.text = "Button Component Demo - Click, Hover, Tab to Focus, Enter to Activate",
+					.style = {.color = Color::white(), .fontSize = 20.0F},
+					.id = "title"
+				})
+			);
 
 			// Row 1: Primary Buttons
-			labels.push_back(std::make_unique<Text>(Text::Args{
-				.position = {50.0F, 80.0F},
-				.text = "Primary Buttons:",
-				.style = {.color = Color::yellow(), .fontSize = 16.0F},
-				.id = "primary_label"
-			}));
+			labels.push_back(
+				std::make_unique<Text>(Text::Args{
+					.position = {50.0F, 80.0F},
+					.text = "Primary Buttons:",
+					.style = {.color = Color::yellow(), .fontSize = 16.0F},
+					.id = "primary_label"
+				})
+			);
 
 			// Normal clickable button
-			buttons.push_back(std::make_unique<Button>(Button::Args{
-				.label = "Click Me!",
-				.position = {50.0F, 110.0F},
-				.size = {150.0F, 40.0F},
-				.type = Button::Type::Primary,
-				.onClick = [this]() {
-					clickCount++;
-					LOG_INFO(UI, "Button clicked! Count: {}", clickCount);
-				},
-				.id = "primary_button_1"
-			}));
+			buttons.push_back(
+				std::make_unique<Button>(Button::Args{
+					.label = "Click Me!",
+					.position = {50.0F, 110.0F},
+					.size = {150.0F, 40.0F},
+					.type = Button::Type::Primary,
+					.onClick =
+						[this]() {
+							clickCount++;
+							LOG_INFO(UI, "Button clicked! Count: {}", clickCount);
+						},
+					.id = "primary_button_1"
+				})
+			);
 
 			// Another clickable button
-			buttons.push_back(std::make_unique<Button>(Button::Args{
-				.label = "Another Button",
-				.position = {220.0F, 110.0F},
-				.size = {170.0F, 40.0F},
-				.type = Button::Type::Primary,
-				.onClick = []() { LOG_INFO(UI, "Second button clicked!"); },
-				.id = "primary_button_2"
-			}));
+			buttons.push_back(
+				std::make_unique<Button>(Button::Args{
+					.label = "Another Button",
+					.position = {220.0F, 110.0F},
+					.size = {170.0F, 40.0F},
+					.type = Button::Type::Primary,
+					.onClick = []() { LOG_INFO(UI, "Second button clicked!"); },
+					.id = "primary_button_2"
+				})
+			);
 
 			// Disabled button
-			buttons.push_back(std::make_unique<Button>(Button::Args{
-				.label = "Disabled",
-				.position = {410.0F, 110.0F},
-				.size = {150.0F, 40.0F},
-				.type = Button::Type::Primary,
-				.disabled = true,
-				.onClick = []() { LOG_WARNING(UI, "This should never fire!"); },
-				.id = "primary_button_disabled"
-			}));
+			buttons.push_back(
+				std::make_unique<Button>(Button::Args{
+					.label = "Disabled",
+					.position = {410.0F, 110.0F},
+					.size = {150.0F, 40.0F},
+					.type = Button::Type::Primary,
+					.disabled = true,
+					.onClick = []() { LOG_WARNING(UI, "This should never fire!"); },
+					.id = "primary_button_disabled"
+				})
+			);
 
 			// Row 2: Secondary Buttons
-			labels.push_back(std::make_unique<Text>(Text::Args{
-				.position = {50.0F, 180.0F},
-				.text = "Secondary Buttons:",
-				.style = {.color = Color::yellow(), .fontSize = 16.0F},
-				.id = "secondary_label"
-			}));
+			labels.push_back(
+				std::make_unique<Text>(Text::Args{
+					.position = {50.0F, 180.0F},
+					.text = "Secondary Buttons:",
+					.style = {.color = Color::yellow(), .fontSize = 16.0F},
+					.id = "secondary_label"
+				})
+			);
 
-			buttons.push_back(std::make_unique<Button>(Button::Args{
-				.label = "Secondary",
-				.position = {50.0F, 210.0F},
-				.size = {150.0F, 40.0F},
-				.type = Button::Type::Secondary,
-				.onClick = []() { LOG_INFO(UI, "Secondary button clicked!"); },
-				.id = "secondary_button_1"
-			}));
+			buttons.push_back(
+				std::make_unique<Button>(Button::Args{
+					.label = "Secondary",
+					.position = {50.0F, 210.0F},
+					.size = {150.0F, 40.0F},
+					.type = Button::Type::Secondary,
+					.onClick = []() { LOG_INFO(UI, "Secondary button clicked!"); },
+					.id = "secondary_button_1"
+				})
+			);
 
-			buttons.push_back(std::make_unique<Button>(Button::Args{
-				.label = "Another Secondary",
-				.position = {220.0F, 210.0F},
-				.size = {200.0F, 40.0F},
-				.type = Button::Type::Secondary,
-				.onClick = []() { LOG_INFO(UI, "Second secondary button clicked!"); },
-				.id = "secondary_button_2"
-			}));
+			buttons.push_back(
+				std::make_unique<Button>(Button::Args{
+					.label = "Another Secondary",
+					.position = {220.0F, 210.0F},
+					.size = {200.0F, 40.0F},
+					.type = Button::Type::Secondary,
+					.onClick = []() { LOG_INFO(UI, "Second secondary button clicked!"); },
+					.id = "secondary_button_2"
+				})
+			);
 
 			// Row 3: Different sizes
-			labels.push_back(std::make_unique<Text>(Text::Args{
-				.position = {50.0F, 280.0F},
-				.text = "Different Sizes:",
-				.style = {.color = Color::yellow(), .fontSize = 16.0F},
-				.id = "size_label"
-			}));
+			labels.push_back(
+				std::make_unique<Text>(Text::Args{
+					.position = {50.0F, 280.0F},
+					.text = "Different Sizes:",
+					.style = {.color = Color::yellow(), .fontSize = 16.0F},
+					.id = "size_label"
+				})
+			);
 
-			buttons.push_back(std::make_unique<Button>(Button::Args{
-				.label = "Small",
-				.position = {50.0F, 310.0F},
-				.size = {100.0F, 30.0F},
-				.type = Button::Type::Primary,
-				.onClick = []() { LOG_INFO(UI, "Small button clicked!"); },
-				.id = "small_button"
-			}));
+			buttons.push_back(
+				std::make_unique<Button>(Button::Args{
+					.label = "Small",
+					.position = {50.0F, 310.0F},
+					.size = {100.0F, 30.0F},
+					.type = Button::Type::Primary,
+					.onClick = []() { LOG_INFO(UI, "Small button clicked!"); },
+					.id = "small_button"
+				})
+			);
 
-			buttons.push_back(std::make_unique<Button>(Button::Args{
-				.label = "Large Button",
-				.position = {170.0F, 310.0F},
-				.size = {250.0F, 50.0F},
-				.type = Button::Type::Secondary,
-				.onClick = []() { LOG_INFO(UI, "Large button clicked!"); },
-				.id = "large_button"
-			}));
+			buttons.push_back(
+				std::make_unique<Button>(Button::Args{
+					.label = "Large Button",
+					.position = {170.0F, 310.0F},
+					.size = {250.0F, 50.0F},
+					.type = Button::Type::Secondary,
+					.onClick = []() { LOG_INFO(UI, "Large button clicked!"); },
+					.id = "large_button"
+				})
+			);
 
 			// Row 4: Focus demonstration
-			labels.push_back(std::make_unique<Text>(Text::Args{
-				.position = {50.0F, 390.0F},
-				.text = "Focus (Press Tab to cycle, Enter to activate):",
-				.style = {.color = Color::yellow(), .fontSize = 16.0F},
-				.id = "focus_label"
-			}));
+			labels.push_back(
+				std::make_unique<Text>(Text::Args{
+					.position = {50.0F, 390.0F},
+					.text = "Focus (Press Tab to cycle, Enter to activate):",
+					.style = {.color = Color::yellow(), .fontSize = 16.0F},
+					.id = "focus_label"
+				})
+			);
 
-			buttons.push_back(std::make_unique<Button>(Button::Args{
-				.label = "Focusable 1",
-				.position = {50.0F, 420.0F},
-				.size = {150.0F, 40.0F},
-				.type = Button::Type::Primary,
-				.onClick = []() { LOG_INFO(UI, "Focusable 1 activated!"); },
-				.id = "focusable_1"
-			}));
+			buttons.push_back(
+				std::make_unique<Button>(Button::Args{
+					.label = "Focusable 1",
+					.position = {50.0F, 420.0F},
+					.size = {150.0F, 40.0F},
+					.type = Button::Type::Primary,
+					.onClick = []() { LOG_INFO(UI, "Focusable 1 activated!"); },
+					.id = "focusable_1"
+				})
+			);
 
-			buttons.push_back(std::make_unique<Button>(Button::Args{
-				.label = "Focusable 2",
-				.position = {220.0F, 420.0F},
-				.size = {150.0F, 40.0F},
-				.type = Button::Type::Primary,
-				.onClick = []() { LOG_INFO(UI, "Focusable 2 activated!"); },
-				.id = "focusable_2"
-			}));
+			buttons.push_back(
+				std::make_unique<Button>(Button::Args{
+					.label = "Focusable 2",
+					.position = {220.0F, 420.0F},
+					.size = {150.0F, 40.0F},
+					.type = Button::Type::Primary,
+					.onClick = []() { LOG_INFO(UI, "Focusable 2 activated!"); },
+					.id = "focusable_2"
+				})
+			);
 
-			buttons.push_back(std::make_unique<Button>(Button::Args{
-				.label = "Focusable 3",
-				.position = {390.0F, 420.0F},
-				.size = {150.0F, 40.0F},
-				.type = Button::Type::Primary,
-				.onClick = []() { LOG_INFO(UI, "Focusable 3 activated!"); },
-				.id = "focusable_3"
-			}));
+			buttons.push_back(
+				std::make_unique<Button>(Button::Args{
+					.label = "Focusable 3",
+					.position = {390.0F, 420.0F},
+					.size = {150.0F, 40.0F},
+					.type = Button::Type::Primary,
+					.onClick = []() { LOG_INFO(UI, "Focusable 3 activated!"); },
+					.id = "focusable_3"
+				})
+			);
 
 			// Click counter display
 			clickCounterText = std::make_unique<Text>(Text::Args{
@@ -195,7 +224,8 @@ class ButtonScene : public engine::IScene {
 			return false;
 		}
 
-		void update(float deltaTime) override {
+		void update(const app::FrameContext& frame) override {
+			const auto deltaTime = static_cast<float>(frame.dt);
 			// Update all buttons
 			for (auto& button : buttons) {
 				button->update(deltaTime);
@@ -208,7 +238,7 @@ class ButtonScene : public engine::IScene {
 			}
 		}
 
-		void render() override {
+		void render(float /*alpha*/) override {
 			// Clear background
 			glClearColor(0.12F, 0.12F, 0.15F, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
@@ -246,8 +276,8 @@ class ButtonScene : public engine::IScene {
 	  private:
 		// UI Components
 		std::vector<std::unique_ptr<UI::Button>> buttons;
-		std::vector<std::unique_ptr<UI::Text>> labels;
-		std::unique_ptr<UI::Text> clickCounterText;
+		std::vector<std::unique_ptr<UI::Text>>	 labels;
+		std::unique_ptr<UI::Text>				 clickCounterText;
 
 		// Click tracking
 		int clickCount{0};
@@ -259,4 +289,4 @@ class ButtonScene : public engine::IScene {
 // Export scene info for registry
 namespace ui_sandbox::scenes {
 	extern const ui_sandbox::SceneInfo Button = {kSceneName, []() { return std::make_unique<ButtonScene>(); }};
-}
+} // namespace ui_sandbox::scenes

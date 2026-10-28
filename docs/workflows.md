@@ -164,23 +164,41 @@ it and silently disables caching for that target.
 
 ### Creating Scenes (in ui-sandbox)
 
-1. **Create scene class:**
+Scenes run on salal's scene stack (`app::Scene`) through worldsim's `engine::UiScene`
+(`libs/engine/app/UiScene.h`), which adds the ui hooks the bridge drives.
+
+1. **Create the scene** in `apps/ui-sandbox/scenes/NewScene.cpp`, and add it to the
+   executable in `apps/ui-sandbox/CMakeLists.txt`:
    ```cpp
-   class NewScene : public IScene {
-   public:
-       void OnEnter() override;
-       void OnExit() override;
-       void Update(float dt) override;
-       void Render() override;
-   };
+   #include "SceneTypes.h"
+   #include <app/UiScene.h>
+
+   namespace {
+   	constexpr const char* kSceneName = "new_scene";
+
+   	class NewScene : public engine::UiScene {
+   	  public:
+   		const char* name() const override { return kSceneName; }
+   		void		onEnter(app::App& app) override;		  // keep the App to switch scenes
+   		void		update(const app::FrameContext& frame) override; // frame.dt, frame.input
+   		void		render(float alpha) override;
+   		bool		handleInput(UI::InputEvent& event) override; // pointer events from the bridge
+   		std::vector<const UI::IComponent*> getUiRoots() const override; // /api/ui/tree and /api/ui/lint
+   	};
+   } // namespace
+
+   namespace ui_sandbox::scenes {
+   	extern const ui_sandbox::SceneInfo New = {kSceneName, []() { return std::make_unique<NewScene>(); }};
+   }
    ```
 
-2. **Register in SceneManager:**
-   ```cpp
-   sceneManager.RegisterScene("NewScene", std::make_unique<NewScene>());
-   ```
+2. **Add it to the scene list**: `X(New)` in `UI_SANDBOX_SCENES` (`apps/ui-sandbox/SceneTypes.h`).
+   It's added to the stack under its name, shows in the navigation menu, and
+   `--scene=new_scene` or `/api/control?action=scene&scene=new_scene` starts in it.
 
-3. **Add keyboard shortcut** (if desired) in main loop
+3. **Switch scenes** with `app.scenes().switchTo(name)`, a `SceneInfo`'s `name` (world-sim's
+   are `world_sim::scenes::MainMenu.name` and so on); keys are `engine::key(frame.input, foundation::Key::Escape)`
+   (`libs/engine/app/Keys.h`), `.pressed()` for this frame's press and `.down` for held.
 
 ---
 
@@ -212,8 +230,8 @@ Full protocol: `/docs/technical/debugging-strategy.md`
 
 ### Using the Developer Client
 
-1. **Start application** (ui-sandbox or world-sim)
-2. **Open browser** to `http://localhost:8080` (or 8081/8082)
+1. **Start application** (world-sim, ui-sandbox or asset-manager; a Debug or RelWithDebInfo build, which has the dev server)
+2. **Open** the client's static page, `build/developer-client/index.html` (see `apps/developer-client/README.md`); it connects to world-sim on 8081 by default (ui-sandbox is 8090, asset-manager 8070)
 3. **View real-time metrics:**
    - Frame time graph
    - Memory usage

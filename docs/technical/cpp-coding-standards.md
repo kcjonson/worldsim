@@ -75,10 +75,10 @@ Some clang-tidy checks are disabled in `.clang-tidy` due to false positives or c
 Headers (.h) and implementation (.cpp) files live together in the same directory:
 
 ```
-libs/engine/input/
-├── InputManager.h
-├── InputManager.cpp
-└── InputManager.test.cpp
+libs/engine/app/
+├── UiBridge.h
+├── UiBridge.cpp
+└── FontAtlases.test.cpp
 ```
 
 **NOT** separated into `include/` and `src/` directories.
@@ -297,11 +297,11 @@ libs/ui/components/TextInput/
 
 **camelCase** - when folder is a category containing multiple related items:
 ```
-libs/engine/scene/
-├── Scene.h
-├── SceneManager.h
-├── SceneManager.cpp
-└── Overlay.h
+libs/engine/app/
+├── UiScene.h
+├── UiOverlay.h
+├── UiBridge.h
+└── UiBridge.cpp
 
 libs/ui/components/
 ├── Button.h

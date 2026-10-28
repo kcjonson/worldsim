@@ -60,7 +60,6 @@ find_package(glfw3 CONFIG REQUIRED)
 find_package(GLEW REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
-find_package(httplib CONFIG REQUIRED)
 
 # Enable testing (must be before subdirectories)
 include(CTest)
@@ -77,7 +76,7 @@ FetchContent_Declare(salal
     GIT_SHALLOW    TRUE
 )
 set(SALAL_BUILD_UI OFF)
-set(SALAL_BUILD_APP OFF)
+set(SALAL_BUILD_APP ON)
 set(SALAL_BUILD_SANDBOX OFF)
 set(SALAL_BUILD_TESTS OFF)
 FetchContent_MakeAvailable(salal)

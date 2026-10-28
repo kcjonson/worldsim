@@ -3,15 +3,14 @@
 
 #include <GL/glew.h>
 
+#include "SceneTypes.h"
+#include <app/UiScene.h>
 #include <graphics/Color.h>
 #include <input/InputEvent.h>
 #include <layout/LayoutContainer.h>
 #include <layout/LayoutTypes.h>
 #include <memory>
 #include <primitives/Primitives.h>
-#include <scene/Scene.h>
-#include <scene/SceneManager.h>
-#include "SceneTypes.h"
 #include <shapes/Shapes.h>
 #include <utils/Log.h>
 
@@ -19,12 +18,12 @@ namespace {
 
 constexpr const char* kSceneName = "textwrap";
 
-class TextWrapScene : public engine::IScene {
+class TextWrapScene : public engine::UiScene {
   public:
-	const char* getName() const override { return kSceneName; }
-	std::string exportState() override { return "{}"; }
+	const char* name() const override { return kSceneName; }
+	std::string exportState() const override { return "{}"; }
 
-	void onEnter() override {
+	void onEnter(app::App& /*app*/) override {
 		using namespace UI;
 		using namespace Foundation;
 
@@ -176,13 +175,14 @@ class TextWrapScene : public engine::IScene {
 		return false;
 	}
 
-	void update(float deltaTime) override {
+	void update(const app::FrameContext& frame) override {
+		const auto deltaTime = static_cast<float>(frame.dt);
 		if (autoSizeLayout) {
 			autoSizeLayout->update(deltaTime);
 		}
 	}
 
-	void render() override {
+	void render(float /*alpha*/) override {
 		// Clear background
 		glClearColor(0.12F, 0.12F, 0.15F, 1.0F);
 		glClear(GL_COLOR_BUFFER_BIT);
