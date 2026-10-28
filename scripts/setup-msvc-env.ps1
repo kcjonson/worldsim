@@ -58,6 +58,11 @@ $newPath = ($userPath + $wanted) -join ';'
 # hold a vcpkg — a wrong User-scope value would shadow a working profile one.
 if (-not [Environment]::GetEnvironmentVariable('VCPKG_ROOT', 'User')) {
     $vcpkgRoot = if ($env:VCPKG_ROOT) { $env:VCPKG_ROOT } else { 'C:\vcpkg' }
+    # A VS developer shell points VCPKG_ROOT at the vcpkg bundled with Visual Studio; never persist that.
+    if (($vcpkgRoot -replace '\\', '/') -match '/Microsoft Visual Studio/.+/VC/vcpkg(/|$)') {
+        Write-Warning "VCPKG_ROOT is Visual Studio's bundled vcpkg ('$vcpkgRoot'); using C:\vcpkg instead."
+        $vcpkgRoot = 'C:\vcpkg'
+    }
     if (Test-Path (Join-Path $vcpkgRoot '.vcpkg-root')) {
         [Environment]::SetEnvironmentVariable('VCPKG_ROOT', $vcpkgRoot, 'User')
     } else {
