@@ -1,11 +1,12 @@
 #include "assets/AssetRenderer.h"
 
 #include "assets/AssetRegistry.h"
-#include "graphics/PngEncoder.h"
 #include "primitives/Primitives.h"
 #include "resources/RenderTarget.h"
 #include "utils/Log.h"
 #include "vector/MeshBounds.h"
+
+#include <PngEncoder.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -89,7 +90,7 @@ namespace engine::assets {
 		}
 
 		// readPixels gives rows bottom-up; flip to top-left for image output.
-		return Foundation::flipRowsRGBA(pixels.data(), width, height);
+		return Renderer::flipRowsRGBA(pixels.data(), width, height);
 	}
 
 	bool renderToPng(const std::string& defName, const std::string& outPath, int width, int height, Foundation::Color background, uint32_t seed) {
@@ -97,7 +98,7 @@ namespace engine::assets {
 		if (pixels.empty()) {
 			return false;
 		}
-		return Foundation::writePngToFile(pixels.data(), width, height, outPath);
+		return Renderer::writePngToFile(pixels.data(), width, height, outPath);
 	}
 
 } // namespace engine::assets
