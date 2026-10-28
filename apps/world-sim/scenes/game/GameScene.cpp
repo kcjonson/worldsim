@@ -1,5 +1,6 @@
 // Game Scene - Main gameplay with chunk-based world rendering
 
+#include "AppContext.h"
 #include "GameWorldState.h"
 #include "NewGameSetup.h"
 #include "SceneTypes.h"
@@ -839,7 +840,7 @@ namespace {
 				// Accumulate scroll deltas to handle high-precision input devices (Magic Mouse, trackpad)
 				// These devices generate many small fractional scroll events per gesture
 				constexpr float kScrollThreshold = 1.0F; // Trigger zoom after ~1 "notch" of scrolling
-				float			scrollDelta = owner->context<engine::UiBridge>().consumeScroll();
+				float			scrollDelta = owner->context<world_sim::AppContext>().ui.consumeScroll();
 				m_scrollAccumulator += scrollDelta;
 
 				// Trigger zoom steps when accumulated scroll crosses threshold

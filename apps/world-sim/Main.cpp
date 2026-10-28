@@ -1,6 +1,7 @@
 // World-Sim - Main Game Application
 // Runs on salal's App: the window, the frame, the scene stack and the dev server
 
+#include "AppContext.h"
 #include "BaseShader.h"
 #include "GameBootstrap.h"
 #include "SceneTypes.h"
@@ -61,9 +62,9 @@ int main(int argc, char* argv[]) {
 
 	world_sim::initializeResources(commandLine.scene.has_value());
 
-	// GameScene zooms the camera with the scroll the bridge's ui didn't consume
-	engine::UiBridge bridge(*app);
-	app->setContext(bridge);
+	engine::UiBridge	  bridge(*app);
+	world_sim::AppContext context{.ui = bridge};
+	app->setContext(context);
 	world_sim::addScenes(app->scenes());
 
 	// "game" starts at "gameloading", so loading always runs first
