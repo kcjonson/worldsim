@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -36,6 +37,73 @@ std::shared_ptr<const GeneratedWorld> runToCompletion(const PlanetParams& params
     return gen.takeResult();
 }
 
+uint64_t plateIdHash(const GeneratedWorld& world) {
+	uint64_t h = 0;
+	for (uint8_t v : world.data.plateId) {
+		h = h * 2654435761ULL + v;
+	}
+	return h;
+}
+
+// One n=16 run watched from start to finish, shared by every test that only reads
+// its progress, an intermediate snapshot, or its result: a pipeline run costs
+// seconds in a Debug build, and the fast bucket's ctest budget covers them all.
+struct ObservedRun {
+	std::shared_ptr<const GeneratedWorld> world;
+
+	bool	 progressWentBackwards = false;
+	float	 maxTotalFraction = 0.0f;
+	int		 maxStageIndex = -1;
+	bool	 snapshotCaptured = false;
+	uint64_t snapshotPlateIdHash = 0;
+	uint64_t snapshotPlateIdHashAtEnd = 0;
+};
+
+const ObservedRun& observedRun() {
+	static const ObservedRun run = [] {
+		PlanetParams params = PlanetParams::preset(Preset::EarthLike);
+		params.gridSubdivision = 16;
+		params.seed = 0xDEADBEEF12345678ULL;
+
+		ObservedRun		r;
+		PlanetGenerator gen;
+		gen.start(params);
+
+		std::shared_ptr<const GeneratedWorld> snap;
+
+		auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+		while (std::chrono::steady_clock::now() < deadline) {
+			auto prog = gen.progress();
+			if (prog.totalFraction < r.maxTotalFraction)
+				r.progressWentBackwards = true;
+			r.maxTotalFraction = std::max(r.maxTotalFraction, prog.totalFraction);
+			r.maxStageIndex = std::max(r.maxStageIndex, prog.stageIndex);
+
+			// plateId is written by CrustStage (stage 1) and never touched by a later
+			// stage; stageIndex >= 2 means CrustStage has published its snapshot.
+			if (!snap && prog.stageIndex >= 2) {
+				auto s = gen.snapshot();
+				if (s && (s->validFields & static_cast<uint32_t>(WorldField::PlateId))) {
+					snap = s;
+					r.snapshotPlateIdHash = plateIdHash(*snap);
+				}
+			}
+
+			if (prog.state != GenerationProgress::State::Running)
+				break;
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+		}
+
+		if (snap) {
+			r.snapshotCaptured = true;
+			r.snapshotPlateIdHashAtEnd = plateIdHash(*snap);
+		}
+		r.world = gen.takeResult();
+		return r;
+	}();
+	return run;
+}
+
 } // namespace
 
 // ============================================================================
@@ -43,28 +111,9 @@ std::shared_ptr<const GeneratedWorld> runToCompletion(const PlanetParams& params
 // ============================================================================
 
 TEST(PlanetGenerator, ProgressMonotone) {
-    PlanetParams params = PlanetParams::preset(Preset::EarthLike);
-    params.gridSubdivision = 16; // small for fast test
-
-    PlanetGenerator gen;
-    gen.start(params);
-
-    float lastTotal = 0.0f;
-    bool seenFail = false;
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-
-    while (std::chrono::steady_clock::now() < deadline) {
-        auto prog = gen.progress();
-        if (prog.totalFraction < lastTotal) {
-            seenFail = true;
-        }
-        if (prog.totalFraction > lastTotal) lastTotal = prog.totalFraction;
-        if (prog.state == GenerationProgress::State::Complete) break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-
-    EXPECT_FALSE(seenFail) << "Progress went backwards";
-    EXPECT_NEAR(lastTotal, 1.0f, 0.01f) << "Progress didn't reach 1.0";
+	const ObservedRun& run = observedRun();
+	EXPECT_FALSE(run.progressWentBackwards) << "Progress went backwards";
+	EXPECT_NEAR(run.maxTotalFraction, 1.0f, 0.01f) << "Progress didn't reach 1.0";
 }
 
 // ============================================================================
@@ -72,22 +121,7 @@ TEST(PlanetGenerator, ProgressMonotone) {
 // ============================================================================
 
 TEST(PlanetGenerator, AllStagesReported) {
-    PlanetParams params = PlanetParams::preset(Preset::EarthLike);
-    params.gridSubdivision = 16;
-
-    PlanetGenerator gen;
-    gen.start(params);
-
-    int maxStageIndex = -1;
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-    while (std::chrono::steady_clock::now() < deadline) {
-        auto prog = gen.progress();
-        if (prog.stageIndex > maxStageIndex) maxStageIndex = prog.stageIndex;
-        if (prog.state == GenerationProgress::State::Complete) break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-
-    EXPECT_EQ(maxStageIndex, 9) << "Expected 10 stages (indices 0..9)";
+	EXPECT_EQ(observedRun().maxStageIndex, 9) << "Expected 10 stages (indices 0..9)";
 }
 
 // ============================================================================
@@ -95,53 +129,25 @@ TEST(PlanetGenerator, AllStagesReported) {
 // ============================================================================
 
 TEST(PlanetGenerator, AllFieldsValid) {
-    PlanetParams params = PlanetParams::preset(Preset::EarthLike);
-    params.gridSubdivision = 16;
-
-    auto world = runToCompletion(params);
-    ASSERT_NE(world, nullptr);
-    EXPECT_EQ(world->validFields & kAllWorldFields, kAllWorldFields)
-        << "Not all WorldField bits set after completion. Missing: "
-        << std::hex << (~world->validFields & kAllWorldFields);
+	const auto& world = observedRun().world;
+	ASSERT_NE(world, nullptr);
+	EXPECT_EQ(world->validFields & kAllWorldFields, kAllWorldFields)
+		<< "Not all WorldField bits set after completion. Missing: " << std::hex << (~world->validFields & kAllWorldFields);
 }
 
 // ============================================================================
-// worldHash nonzero and deterministic
+// worldHash nonzero and deterministic. A different seed giving a different hash
+// is covered by RerunPublishesFreshWorld.
 // ============================================================================
 
 TEST(PlanetGenerator, WorldHashDeterministic) {
-    PlanetParams params = PlanetParams::preset(Preset::EarthLike);
-    params.gridSubdivision = 16;
-    params.seed = 0xDEADBEEF12345678ULL;
+	const auto& world1 = observedRun().world;
+	ASSERT_NE(world1, nullptr);
+	auto world2 = runToCompletion(world1->params);
+	ASSERT_NE(world2, nullptr);
 
-    auto world1 = runToCompletion(params);
-    auto world2 = runToCompletion(params);
-
-    ASSERT_NE(world1, nullptr);
-    ASSERT_NE(world2, nullptr);
-    EXPECT_NE(world1->worldHash, 0u) << "worldHash should be nonzero";
-    EXPECT_EQ(world1->worldHash, world2->worldHash)
-        << "Same seed must produce same hash";
-}
-
-// ============================================================================
-// Different seed -> different hash
-// ============================================================================
-
-TEST(PlanetGenerator, DifferentSeedDifferentHash) {
-    PlanetParams params = PlanetParams::preset(Preset::EarthLike);
-    params.gridSubdivision = 16;
-
-    params.seed = 0xAAAAAAAAAAAAAAAAULL;
-    auto world1 = runToCompletion(params);
-
-    params.seed = 0xBBBBBBBBBBBBBBBBULL;
-    auto world2 = runToCompletion(params);
-
-    ASSERT_NE(world1, nullptr);
-    ASSERT_NE(world2, nullptr);
-    EXPECT_NE(world1->worldHash, world2->worldHash)
-        << "Different seeds should produce different hashes";
+	EXPECT_NE(world1->worldHash, 0u) << "worldHash should be nonzero";
+	EXPECT_EQ(world1->worldHash, world2->worldHash) << "Same seed must produce same hash";
 }
 
 // ============================================================================
@@ -198,53 +204,12 @@ TEST(PlanetGeneratorHeavy, CancelStopsGeneration) {
 // ============================================================================
 
 TEST(PlanetGenerator, SnapshotImmutability) {
-    PlanetParams params = PlanetParams::preset(Preset::EarthLike);
-    params.gridSubdivision = 16;
+	const ObservedRun& run = observedRun();
+	if (!run.snapshotCaptured) {
+		GTEST_SKIP() << "Could not get intermediate snapshot";
+	}
 
-    PlanetGenerator gen;
-    gen.start(params);
-
-    // Wait until stage 2 (TerrainStage) has started and we have a snapshot with plateId.
-    // plateId is written by CrustStage (stage 1) and never touched by any later stage,
-    // so it is the correct field to test snapshot immutability on.
-    // We wait for stageIndex >= 2 (TerrainStage starting), which means CrustStage
-    // has completed and publishSnapshot was called for it.
-    std::shared_ptr<const GeneratedWorld> snap;
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-    while (std::chrono::steady_clock::now() < deadline) {
-        auto prog = gen.progress();
-        if (prog.stageIndex >= 2) {
-            snap = gen.snapshot();
-            if (snap && (snap->validFields & static_cast<uint32_t>(WorldField::PlateId))) break;
-        }
-        if (prog.state == GenerationProgress::State::Complete) break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-
-    if (!snap) { GTEST_SKIP() << "Could not get intermediate snapshot"; }
-
-    // Record checksum of snapshot's plateId array — written by CrustStage and
-    // never modified by any subsequent stage, so must remain identical after completion.
-    uint64_t h1 = 0;
-    for (uint8_t v : snap->data.plateId) {
-        h1 = h1 * 2654435761ULL + v;
-    }
-
-    // Run to completion
-    deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-    while (std::chrono::steady_clock::now() < deadline) {
-        auto prog = gen.progress();
-        if (prog.state == GenerationProgress::State::Complete) break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    }
-
-    // Re-check same snapshot's plateId — must be unchanged since no stage touches it after CrustStage
-    uint64_t h2 = 0;
-    for (uint8_t v : snap->data.plateId) {
-        h2 = h2 * 2654435761ULL + v;
-    }
-
-    EXPECT_EQ(h1, h2) << "Snapshot plateId array was modified after publication";
+	EXPECT_EQ(run.snapshotPlateIdHash, run.snapshotPlateIdHashAtEnd) << "Snapshot plateId array was modified after publication";
 }
 
 // ============================================================================
@@ -252,24 +217,25 @@ TEST(PlanetGenerator, SnapshotImmutability) {
 // ============================================================================
 
 TEST(PlanetGenerator, RestartClearsSnapshot) {
-    PlanetParams params = PlanetParams::preset(Preset::EarthLike);
-    params.gridSubdivision = 16;
+	PlanetParams params = PlanetParams::preset(Preset::EarthLike);
+	params.gridSubdivision = 16;
 
-    // Run once to completion so latestSnapshot is populated.
-    PlanetGenerator gen;
-    gen.start(params);
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
-    while (std::chrono::steady_clock::now() < deadline) {
-        if (gen.progress().state == GenerationProgress::State::Complete) break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    ASSERT_EQ(gen.progress().state, GenerationProgress::State::Complete);
-    gen.takeResult(); // consume result
+	// Run until the first stage publishes a snapshot. Waiting for completion would
+	// need takeResult() to leave the snapshot in place, and it doesn't: it moves it.
+	PlanetGenerator gen;
+	gen.start(params);
+	auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+	while (std::chrono::steady_clock::now() < deadline) {
+		if (gen.snapshot() != nullptr)
+			break;
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+	ASSERT_NE(gen.snapshot(), nullptr);
 
-    // Restart immediately and assert snapshot is cleared before any stage completes.
-    gen.start(params);
-    EXPECT_EQ(gen.snapshot(), nullptr)
-        << "snapshot() should be nullptr immediately after restart";
+	// Restart (which cancels the run in flight) and assert the snapshot is cleared
+	// before any stage of the new run completes.
+	gen.start(params);
+	EXPECT_EQ(gen.snapshot(), nullptr) << "snapshot() should be nullptr immediately after restart";
 }
 
 // ============================================================================
@@ -319,37 +285,34 @@ TEST(PlanetGenerator, RerunPublishesFreshWorld) {
 // ============================================================================
 
 TEST(DebugImageExporter, WritesValidBmp) {
-    PlanetParams params = PlanetParams::preset(Preset::EarthLike);
-    params.gridSubdivision = 32;
-    params.seed = 0x1234567890ABCDEFULL;
+	const auto& world = observedRun().world;
+	ASSERT_NE(world, nullptr);
 
-    auto world = runToCompletion(params);
-    ASSERT_NE(world, nullptr);
+	const char* elevPath = "test_debug_elevation.bmp";
+	const char* biomePath = "test_debug_biome.bmp";
 
-    const char* elevPath = "test_debug_elevation.bmp";
-    const char* biomePath = "test_debug_biome.bmp";
+	EXPECT_TRUE(exportEquirectangularBmp(*world, WorldFieldOrMode::Elevation, elevPath, 512));
+	EXPECT_TRUE(exportEquirectangularBmp(*world, WorldFieldOrMode::Biome, biomePath, 512));
 
-    EXPECT_TRUE(exportEquirectangularBmp(*world, WorldFieldOrMode::Elevation,
-                                         elevPath, 512));
-    EXPECT_TRUE(exportEquirectangularBmp(*world, WorldFieldOrMode::Biome,
-                                         biomePath, 512));
+	// Verify BMP header
+	auto checkBmp = [](const char* path, int expectedWidth) {
+		std::FILE* fp = std::fopen(path, "rb");
+		if (!fp)
+			return false;
+		uint8_t header[54]{};
+		size_t	nread = std::fread(header, 1, 54, fp);
+		std::fclose(fp);
+		if (nread < 54)
+			return false;
+		if (header[0] != 'B' || header[1] != 'M')
+			return false;
+		int w = header[18] | (header[19] << 8) | (header[20] << 16) | (header[21] << 24);
+		int h = header[22] | (header[23] << 8) | (header[24] << 16) | (header[25] << 24);
+		return w == expectedWidth && h == expectedWidth / 2;
+	};
 
-    // Verify BMP header
-    auto checkBmp = [](const char* path, int expectedWidth) {
-        std::FILE* fp = std::fopen(path, "rb");
-        if (!fp) return false;
-        uint8_t header[54]{};
-        size_t nread = std::fread(header, 1, 54, fp);
-        std::fclose(fp);
-        if (nread < 54) return false;
-        if (header[0] != 'B' || header[1] != 'M') return false;
-        int w = header[18] | (header[19]<<8) | (header[20]<<16) | (header[21]<<24);
-        int h = header[22] | (header[23]<<8) | (header[24]<<16) | (header[25]<<24);
-        return w == expectedWidth && h == expectedWidth / 2;
-    };
-
-    EXPECT_TRUE(checkBmp(elevPath, 512));
-    EXPECT_TRUE(checkBmp(biomePath, 512));
+	EXPECT_TRUE(checkBmp(elevPath, 512));
+	EXPECT_TRUE(checkBmp(biomePath, 512));
 }
 
 // ============================================================================
@@ -432,17 +395,13 @@ float oceanFraction(const GeneratedWorld& w) {
 // n=16: degenerate grid where coarseN is clamped to fullN (16 < kCoarseN=128).
 // Must not crash or assert and must hit ocean fraction.
 TEST(PlanetGenerator, SmallGridN16Completes) {
-    PlanetParams params = PlanetParams::preset(Preset::EarthLike);
-    params.gridSubdivision = 16;
-    params.seed = 0x1601160116011601ULL;
+	const auto& world = observedRun().world;
+	ASSERT_NE(world, nullptr) << "n=16 pipeline failed";
+	EXPECT_EQ(world->worldHash != 0u, true) << "worldHash zero on n=16";
 
-    auto world = runEdge(params);
-    ASSERT_NE(world, nullptr) << "n=16 pipeline failed";
-    EXPECT_EQ(world->worldHash != 0u, true) << "worldHash zero on n=16";
-
-    float of = oceanFraction(*world);
-    EXPECT_NEAR(of, static_cast<float>(params.waterAmount), 0.05f)
-        << "ocean fraction " << of << " far from waterAmount " << params.waterAmount;
+	float of = oceanFraction(*world);
+	EXPECT_NEAR(of, static_cast<float>(world->params.waterAmount), 0.05f)
+		<< "ocean fraction " << of << " far from waterAmount " << world->params.waterAmount;
 }
 
 // n=64: coarseN clamp still active (64 < 128); upsample is actually downsampling.

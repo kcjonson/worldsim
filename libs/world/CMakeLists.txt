@@ -78,12 +78,15 @@ if(BUILD_TESTING)
         # suite at the resolutions used (coarseN ~32-256); cheap tests (tiny n,
         # single-stage, or pure-logic) stay in the fast bucket.
         #
-        # Fast-bucket TIMEOUT calibration (2026-06-14):
-        #   RelWithDebInfo wall time: ~7s
-        #   Debug-CI multiplier: ~9x -> ~63s on CI
-        #   Formula: max(300, ceil(7 * 12)) = max(300, 84) = 300
-        #   300s gives >4x margin over the worst-case Debug-CI estimate.
-        # If the fast wall time grows, rerun and set TIMEOUT = max(300, ceil(newWall * 12)).
+        # Fast-bucket TIMEOUT calibration (2026-10-30, Debug):
+        #   local wall time: ~20-25s
+        #   Linux CI has run it at 3.6-4.5x local -> ~70-115s on CI
+        #   300s gives >2.5x margin over a slow runner.
+        # It crept past 300s on Linux CI when each fast test generated its own planet.
+        # A fast test that needs a generated world reads its file's shared run
+        # (observedRun, sharedStats) instead of running the pipeline itself.
+        # If the fast wall time grows, remeasure and keep TIMEOUT at least 2.5x the
+        # slow-runner estimate (local * 4.5).
         add_test(NAME world-tests COMMAND world-tests --gtest_filter=-*Heavy.*)
         # PROCESSORS: even fast-bucket tests run PlanetGenerator pipelines whose
         # internal pool is hardware_concurrency - 1; declaring the footprint keeps

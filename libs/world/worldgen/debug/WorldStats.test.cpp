@@ -12,6 +12,7 @@
 #include <array>
 #include <chrono>
 #include <numeric>
+#include <optional>
 #include <thread>
 
 namespace worldgen {
@@ -36,231 +37,170 @@ std::shared_ptr<const GeneratedWorld> runPipeline(const PlanetParams& params,
     return gen.takeResult();
 }
 
-} // namespace
-
-TEST(WorldStats, OceanFractionInRange) {
-    PlanetParams p = PlanetParams::preset(Preset::EarthLike);
-    p.gridSubdivision = 16;
-    p.seed = 0xABCDEF01u;
-
-    auto world = runPipeline(p);
-    ASSERT_NE(world, nullptr);
-
-    WorldStats stats = computeWorldStats(*world);
-
-    EXPECT_GE(stats.oceanFraction, 0.0f);
-    EXPECT_LE(stats.oceanFraction, 1.0f);
+// The range checks below share one world and its stats: a pipeline run costs
+// seconds in a Debug build, and none of the checks depends on the seed. n=32 so
+// mountain belts form for the aspect-ratio checks (n=16 may have none).
+const WorldStats* sharedStats() {
+	static const std::optional<WorldStats> stats = []() -> std::optional<WorldStats> {
+		PlanetParams p = PlanetParams::preset(Preset::EarthLike);
+		p.gridSubdivision = 32;
+		p.seed = 0xBEEF1234u;
+		auto world = runPipeline(p, 180);
+		if (!world)
+			return std::nullopt;
+		return computeWorldStats(*world);
+	}();
+	return stats ? &*stats : nullptr;
 }
 
+} // namespace
+
 TEST(WorldStats, HistogramSumsToN) {
-    PlanetParams p = PlanetParams::preset(Preset::EarthLike);
-    p.gridSubdivision = 16;
-    p.seed = 0xDEADC0DEu;
+	ASSERT_NE(sharedStats(), nullptr);
+	const WorldStats& stats = *sharedStats();
 
-    auto world = runPipeline(p);
-    ASSERT_NE(world, nullptr);
+	EXPECT_EQ(stats.hypsoHist.size(), 256u);
 
-    WorldStats stats = computeWorldStats(*world);
-
-    EXPECT_EQ(stats.hypsoHist.size(), 256u);
-
-    uint64_t total = 0;
-    for (uint32_t c : stats.hypsoHist) total += c;
-    EXPECT_EQ(total, static_cast<uint64_t>(stats.tileCount));
+	uint64_t total = 0;
+	for (uint32_t c : stats.hypsoHist)
+		total += c;
+	EXPECT_EQ(total, static_cast<uint64_t>(stats.tileCount));
 }
 
 TEST(WorldStats, ComponentsFound) {
-    PlanetParams p = PlanetParams::preset(Preset::EarthLike);
-    p.gridSubdivision = 16;
-    p.seed = 0x12345678u;
+	ASSERT_NE(sharedStats(), nullptr);
+	const WorldStats& stats = *sharedStats();
 
-    auto world = runPipeline(p);
-    ASSERT_NE(world, nullptr);
-
-    WorldStats stats = computeWorldStats(*world);
-
-    // At n=16 there are only 2562 tiles, so we may not hit the 0.5% threshold
-    // for multiple continents, but the computed fractions should be in range.
-    EXPECT_GE(stats.oceanFraction, 0.0f);
-    EXPECT_LE(stats.oceanFraction, 1.0f);
-    for (const auto& cont : stats.continents) {
-        EXPECT_GT(cont.isoperimetricRatio, 0.0f);
-    }
+	// At n=32 there are only 10242 tiles, so we may not hit the 0.5% threshold
+	// for multiple continents, but the computed fractions should be in range.
+	EXPECT_GE(stats.oceanFraction, 0.0f);
+	EXPECT_LE(stats.oceanFraction, 1.0f);
+	for (const auto& cont : stats.continents) {
+		EXPECT_GT(cont.isoperimetricRatio, 0.0f);
+	}
 }
 
 // Geodesic aspect ratio: per-belt fields are non-negative and medians are consistent.
 TEST(WorldStats, GeodesicAspectRatioFieldsValid) {
-    PlanetParams p = PlanetParams::preset(Preset::EarthLike);
-    p.gridSubdivision = 32;
-    p.seed = 0xBEEF1234u;
+	ASSERT_NE(sharedStats(), nullptr);
+	const WorldStats& stats = *sharedStats();
 
-    auto world = runPipeline(p, 180);
-    ASSERT_NE(world, nullptr);
+	EXPECT_GE(stats.medianAspectRatio, 0.0f);
+	EXPECT_GE(stats.tileWeightedMedianAspectRatio, 0.0f);
 
-    WorldStats stats = computeWorldStats(*world);
+	for (const auto& b : stats.belts) {
+		EXPECT_GE(b.lengthKm, 0.0f);
+		EXPECT_GE(b.geoWidthKm, 0.0f);
+		EXPECT_GE(b.aspectRatio, 1.0f); // length >= width by construction
+		// A belt >= 32 tiles can't have zero hops unless it's a single tile (impossible).
+		if (b.tileCount >= 32) {
+			EXPECT_GT(b.lengthKm, 0.0f);
+		}
+	}
 
-    EXPECT_GE(stats.medianAspectRatio, 0.0f);
-    EXPECT_GE(stats.tileWeightedMedianAspectRatio, 0.0f);
-
-    for (const auto& b : stats.belts) {
-        EXPECT_GE(b.lengthKm, 0.0f);
-        EXPECT_GE(b.geoWidthKm, 0.0f);
-        EXPECT_GE(b.aspectRatio, 1.0f); // length >= width by construction
-        // A belt >= 32 tiles can't have zero hops unless it's a single tile (impossible).
-        if (b.tileCount >= 32) {
-            EXPECT_GT(b.lengthKm, 0.0f);
-        }
-    }
-
-    // Tile-weighted median should be >= plain median when large belts are more elongated,
-    // or at worst equal — either way both must be >= 1.
-    if (!stats.belts.empty()) {
-        EXPECT_GE(stats.tileWeightedMedianAspectRatio, 1.0f);
-        EXPECT_GE(stats.medianAspectRatio, 1.0f);
-    }
-}
-
-// Hand-built synthetic BeltStats: verify the tile-weighted median picks the
-// large-belt value over many small blobs.
-TEST(WorldStats, TileWeightedMedianFavorsLargeBelt) {
-    // Simulate belt list: one large thin belt (high aspect) plus many small blobs (low aspect).
-    // We test by calling computeWorldStats on a tiny real world and inspecting the math,
-    // not by calling the internal helper directly.  Instead verify the property holds:
-    // if most tiles live in a high-aspect belt, tile-weighted median >= plain median.
-    //
-    // At n=16 there may not be any belts, so we just assert correctness of the
-    // published medians being non-negative when the belt list is empty.
-    PlanetParams p = PlanetParams::preset(Preset::EarthLike);
-    p.gridSubdivision = 16;
-    p.seed = 0xCAFEBABEu;
-
-    auto world = runPipeline(p);
-    ASSERT_NE(world, nullptr);
-
-    WorldStats stats = computeWorldStats(*world);
-
-    EXPECT_GE(stats.medianAspectRatio, 0.0f);
-    EXPECT_GE(stats.tileWeightedMedianAspectRatio, 0.0f);
-
-    // For any belt present: aspect ratio = lengthKm / max(geoWidthKm, tileKm) >= 1.
-    for (const auto& b : stats.belts) {
-        EXPECT_GE(b.aspectRatio, 1.0f);
-    }
+	// Tile-weighted median should be >= plain median when large belts are more elongated,
+	// or at worst equal — either way both must be >= 1.
+	if (!stats.belts.empty()) {
+		EXPECT_GE(stats.tileWeightedMedianAspectRatio, 1.0f);
+		EXPECT_GE(stats.medianAspectRatio, 1.0f);
+	}
 }
 
 // Water stats: sanity-check all new drainage fields are in range.
 TEST(WorldStats, WaterStatsInRange) {
-    PlanetParams p = PlanetParams::preset(Preset::EarthLike);
-    p.gridSubdivision = 16;
-    p.seed = 0xA917E001u;
+	ASSERT_NE(sharedStats(), nullptr);
+	const WorldStats& stats = *sharedStats();
 
-    auto world = runPipeline(p);
-    ASSERT_NE(world, nullptr);
+	// Fractions must be in [0, 1].
+	EXPECT_GE(stats.riverTileFraction, 0.0f);
+	EXPECT_LE(stats.riverTileFraction, 1.0f);
+	EXPECT_GE(stats.endorheicSinkFraction, 0.0f);
+	EXPECT_LE(stats.endorheicSinkFraction, 1.0f);
+	EXPECT_GE(stats.lakeTileFraction, 0.0f);
+	EXPECT_LE(stats.lakeTileFraction, 1.0f);
+	EXPECT_GE(stats.landWithWaterNearbyFraction, 0.0f);
+	EXPECT_LE(stats.landWithWaterNearbyFraction, 1.0f);
 
-    WorldStats stats = computeWorldStats(*world);
+	// W-1: depression routing sets kFlagLake on ponded basin tiles, so lakes may
+	// now form. The fraction stays small (lakes are a few % of the surface at
+	// most); at n=32 (10242 tiles) a given Earth-like world may have zero or a
+	// handful, so only the [0,1] range is asserted here. The heavy drainage test
+	// (WorldStatsHeavy.DrainageRoutesToOcean) checks that lakes actually form on
+	// a higher-resolution world.
+	EXPECT_GE(stats.lakeTileFraction, 0.0f);
+	EXPECT_LE(stats.lakeTileFraction, 0.20f) << "lakes should never cover a large fraction of the surface";
 
-    // Fractions must be in [0, 1].
-    EXPECT_GE(stats.riverTileFraction,            0.0f);
-    EXPECT_LE(stats.riverTileFraction,            1.0f);
-    EXPECT_GE(stats.endorheicSinkFraction,        0.0f);
-    EXPECT_LE(stats.endorheicSinkFraction,        1.0f);
-    EXPECT_GE(stats.lakeTileFraction,             0.0f);
-    EXPECT_LE(stats.lakeTileFraction,             1.0f);
-    EXPECT_GE(stats.landWithWaterNearbyFraction,  0.0f);
-    EXPECT_LE(stats.landWithWaterNearbyFraction,  1.0f);
+	// Sinks cannot exceed land tile count.
+	const uint32_t landCount = static_cast<uint32_t>(stats.landTileCount);
+	EXPECT_LE(stats.sinkTileCount, landCount);
 
-    // W-1: depression routing sets kFlagLake on ponded basin tiles, so lakes may
-    // now form. The fraction stays small (lakes are a few % of the surface at
-    // most); at n=16 (2562 tiles) a given Earth-like world may have zero or a
-    // handful, so only the [0,1] range is asserted here. The heavy drainage test
-    // (WorldStatsHeavy.DrainageRoutesToOcean) checks that lakes actually form on
-    // a higher-resolution world.
-    EXPECT_GE(stats.lakeTileFraction, 0.0f);
-    EXPECT_LE(stats.lakeTileFraction, 0.20f)
-        << "lakes should never cover a large fraction of the surface";
-
-    // Sinks cannot exceed land tile count.
-    const uint32_t landCount = static_cast<uint32_t>(stats.landTileCount);
-    EXPECT_LE(stats.sinkTileCount, landCount);
-
-    // Flow stats: non-negative.
-    EXPECT_GE(stats.maxFlowAccum,      0.0f);
-    EXPECT_GE(stats.meanFlowAccumLand, 0.0f);
-    // Mean can't exceed max.
-    EXPECT_LE(stats.meanFlowAccumLand, stats.maxFlowAccum + 1e-3f);
+	// Flow stats: non-negative.
+	EXPECT_GE(stats.maxFlowAccum, 0.0f);
+	EXPECT_GE(stats.meanFlowAccumLand, 0.0f);
+	// Mean can't exceed max.
+	EXPECT_LE(stats.meanFlowAccumLand, stats.maxFlowAccum + 1e-3f);
 }
 
 // Terrain dissection metrics: all five must be finite and in sensible ranges on a
-// tiny n=16 world (computed on the fully-generated world).
+// small n=32 world (computed on the fully-generated world).
 TEST(WorldStats, DissectionMetricsInRange) {
-    PlanetParams p = PlanetParams::preset(Preset::EarthLike);
-    p.gridSubdivision = 16;
-    p.seed = 0xD155EC710u;
+	ASSERT_NE(sharedStats(), nullptr);
+	const WorldStats& stats = *sharedStats();
 
-    auto world = runPipeline(p);
-    ASSERT_NE(world, nullptr);
+	// Hypsometric integral: defined on [0, 1].
+	EXPECT_GE(stats.hypsometricIntegral, 0.0f);
+	EXPECT_LE(stats.hypsometricIntegral, 1.0f);
 
-    WorldStats stats = computeWorldStats(*world);
+	// Mean local relief: non-negative; bounded by the world's total elevation range.
+	EXPECT_GE(stats.meanLocalReliefM, 0.0f);
+	EXPECT_LE(stats.meanLocalReliefM, 20000.0f); // no plausible planet exceeds this
 
-    // Hypsometric integral: defined on [0, 1].
-    EXPECT_GE(stats.hypsometricIntegral, 0.0f);
-    EXPECT_LE(stats.hypsometricIntegral, 1.0f);
+	// Drainage density: non-negative.
+	EXPECT_GE(stats.drainageDensity, 0.0f);
 
-    // Mean local relief: non-negative; bounded by the world's total elevation range.
-    EXPECT_GE(stats.meanLocalReliefM, 0.0f);
-    EXPECT_LE(stats.meanLocalReliefM, 20000.0f); // no plausible planet exceeds this
+	// landWithinChannelDistFraction: [0, 1].
+	EXPECT_GE(stats.landWithinChannelDistFraction, 0.0f);
+	EXPECT_LE(stats.landWithinChannelDistFraction, 1.0f);
 
-    // Drainage density: non-negative.
-    EXPECT_GE(stats.drainageDensity, 0.0f);
+	// Mean belt crest elevation: non-negative (0 when there are no belts is fine).
+	EXPECT_GE(stats.meanBeltCrestElevM, 0.0f);
 
-    // landWithinChannelDistFraction: [0, 1].
-    EXPECT_GE(stats.landWithinChannelDistFraction, 0.0f);
-    EXPECT_LE(stats.landWithinChannelDistFraction, 1.0f);
+	// Consistency: if there are rivers, drainage density must be > 0.
+	if (stats.riverTileFraction > 0.0f) {
+		EXPECT_GT(stats.drainageDensity, 0.0f);
+	}
 
-    // Mean belt crest elevation: non-negative (0 when no belts at n=16 is fine).
-    EXPECT_GE(stats.meanBeltCrestElevM, 0.0f);
-
-    // Consistency: if there are rivers, drainage density must be > 0.
-    if (stats.riverTileFraction > 0.0f) {
-        EXPECT_GT(stats.drainageDensity, 0.0f);
-    }
-
-    // Consistency: landWithinChannelDistFraction >= riverTileFraction
-    // (rivers are a subset of within-dist-2 tiles).
-    EXPECT_GE(stats.landWithinChannelDistFraction, stats.riverTileFraction - 1e-5f);
+	// Consistency: landWithinChannelDistFraction >= riverTileFraction
+	// (rivers are a subset of within-dist-2 tiles).
+	EXPECT_GE(stats.landWithinChannelDistFraction, stats.riverTileFraction - 1e-5f);
 }
 
 // Biome fractions: sum over land biomes is ~1.0, all values in [0,1].
 TEST(WorldStats, BiomeFractionsSumToOne) {
-    PlanetParams p = PlanetParams::preset(Preset::EarthLike);
-    p.gridSubdivision = 16;
-    p.seed = 0xB10BE5EED0u;
+	ASSERT_NE(sharedStats(), nullptr);
+	const WorldStats& stats = *sharedStats();
 
-    auto world = runPipeline(p);
-    ASSERT_NE(world, nullptr);
+	// Every fraction must be in [0,1].
+	for (size_t i = 0; i < stats.biomeFraction.size(); ++i) {
+		EXPECT_GE(stats.biomeFraction[i], 0.0f) << "biome " << i;
+		EXPECT_LE(stats.biomeFraction[i], 1.0f) << "biome " << i;
+	}
 
-    WorldStats stats = computeWorldStats(*world);
+	// Fractions over non-water biomes must sum to ~1 when there is land.
+	if (stats.landTileCount > 0.0f) {
+		float sum = 0.0f;
+		for (size_t i = 0; i < stats.biomeFraction.size(); ++i) {
+			auto b = static_cast<Biome>(i);
+			if (b == Biome::Ocean || b == Biome::Lake)
+				continue;
+			sum += stats.biomeFraction[i];
+		}
+		EXPECT_NEAR(sum, 1.0f, 0.01f) << "land biome fractions must sum to 1";
+	}
 
-    // Every fraction must be in [0,1].
-    for (size_t i = 0; i < stats.biomeFraction.size(); ++i) {
-        EXPECT_GE(stats.biomeFraction[i], 0.0f) << "biome " << i;
-        EXPECT_LE(stats.biomeFraction[i], 1.0f) << "biome " << i;
-    }
-
-    // Fractions over non-water biomes must sum to ~1 when there is land.
-    if (stats.landTileCount > 0.0f) {
-        float sum = 0.0f;
-        for (size_t i = 0; i < stats.biomeFraction.size(); ++i) {
-            auto b = static_cast<Biome>(i);
-            if (b == Biome::Ocean || b == Biome::Lake) continue;
-            sum += stats.biomeFraction[i];
-        }
-        EXPECT_NEAR(sum, 1.0f, 0.01f) << "land biome fractions must sum to 1";
-    }
-
-    // Shelf fraction must be in [0,1].
-    EXPECT_GE(stats.shelfSubmergedFraction, 0.0f);
-    EXPECT_LE(stats.shelfSubmergedFraction, 1.0f);
+	// Shelf fraction must be in [0,1].
+	EXPECT_GE(stats.shelfSubmergedFraction, 0.0f);
+	EXPECT_LE(stats.shelfSubmergedFraction, 1.0f);
 }
 
 // ============================================================================
