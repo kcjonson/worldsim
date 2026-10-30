@@ -1,6 +1,7 @@
 #pragma once
 
 #include "component/Component.h"
+#include "core/ScreenClip.h"
 #include "graphics/Rect.h"
 #include "math/Types.h"
 #include "primitives/Primitives.h"
@@ -23,7 +24,7 @@ namespace UI {
 //
 // Usage:
 //   auto container = Container{};
-//   container.setClip(viewport);  // A screen-space rect
+//   container.setClip(viewport);  // In the container's parent's space
 //   container.setContentOffset({0, -scrollY});  // Negative = scrolled down
 //   container.addChild(Rectangle{...});
 //   container.addChild(Button{...});
@@ -54,9 +55,10 @@ class Container : public Component {
 		return handled;
 	}
 
-	// Set clip region for this container, in screen space (the content offset
-	// doesn't move it). All children will be visually masked to this region.
-	// Pass std::nullopt to disable clipping.
+	// Set clip region for this container, in the space its position is in (its
+	// parent's), so the content offset doesn't move it. render() takes it to screen
+	// space through the transform current then. All children will be visually masked
+	// to this region. Pass std::nullopt to disable clipping.
 	void setClip(std::optional<Foundation::Rect> clipBounds) { m_clip = clipBounds; }
 
 	// Set content offset (for scrolling).
@@ -70,8 +72,11 @@ class Container : public Component {
 	const char* debugTypeName() const override { return "Container"; }
 
 	// Override render to apply clipping and content offset.
-	// Order: Push transform → Push clip → Render children → Pop clip → Pop transform
+	// Order: map the clip, push the transform, push the clip, render children, pop the clip, pop the transform
 	void render() override {
+		// The clip goes to screen space before the content offset is pushed, which must not move it.
+		const std::optional<Foundation::Rect> clip = m_clip.has_value() ? std::optional(screenClip(*m_clip)) : std::nullopt;
+
 		// Apply content offset as translation (moves content within fixed clip region)
 		bool hasOffset = (m_contentOffset.x != 0.0F || m_contentOffset.y != 0.0F);
 		if (hasOffset) {
@@ -83,16 +88,15 @@ class Container : public Component {
 			Renderer::Primitives::PushTransform(translation);
 		}
 
-		// Apply clipping (after transform, so clip region stays fixed)
-		if (m_clip.has_value()) {
-			Renderer::Primitives::pushClip(m_clip.value());
+		if (clip.has_value()) {
+			Renderer::Primitives::pushClip(*clip);
 		}
 
 		// Render children (base class handles sorting and iteration)
 		Component::render();
 
 		// Pop in reverse order
-		if (m_clip.has_value()) {
+		if (clip.has_value()) {
 			Renderer::Primitives::popClip();
 		}
 
