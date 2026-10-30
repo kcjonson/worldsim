@@ -3,9 +3,18 @@
 #include "clipboard/IClipboard.h"
 #include "focus/FocusManager.h"
 
+#include <backend/NullBackend.h>
+#include <glm/gtc/matrix_transform.hpp>
 #include <gtest/gtest.h>
+#include <primitives/Primitives.h>
 
+#include <algorithm>
+#include <cstring>
+#include <memory>
+#include <span>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace UI {
 
@@ -108,6 +117,68 @@ namespace UI {
 		press(input, foundation::Key::V);
 
 		EXPECT_EQ(input.text, "abc");
+	}
+
+	// Primitives on the null backend, so what a component draws can be read back.
+	class TextInputRenderTest : public ::testing::Test {
+	  protected:
+		void SetUp() override {
+			auto owned = std::make_unique<Renderer::backend::NullBackend>();
+			gpu = owned.get();
+			Renderer::Primitives::init(std::move(owned), {});
+			Renderer::Primitives::setViewport(800, 600);
+			FocusManager::setInstance(&focusManager);
+		}
+		void TearDown() override {
+			FocusManager::setInstance(nullptr);
+			Renderer::Primitives::shutdown();
+		}
+
+		// The last flush's vertices, as uploaded.
+		std::vector<Renderer::BatchVertex> uploaded() const {
+			const std::span<const uint8_t>	   bytes = gpu->bufferContents(gpu->geometry(gpu->draws().back().call.geometry)->vertices);
+			std::vector<Renderer::BatchVertex> vertices(bytes.size() / sizeof(Renderer::BatchVertex));
+			std::memcpy(vertices.data(), bytes.data(), vertices.size() * sizeof(Renderer::BatchVertex));
+			return vertices;
+		}
+
+		Renderer::backend::NullBackend* gpu = nullptr;
+		FocusManager					focusManager;
+	};
+
+	// Under a container's offset the text clip moves with the input; the caret, at cursor 0
+	// on the text area's left edge, draws outside it.
+	TEST_F(TextInputRenderTest, TheTextClipFollowsTheOffsetAndTheCaretDrawsOutsideIt) {
+		TextInput input(TextInput::Args{.position = {10.0F, 20.0F}, .size = {200.0F, 40.0F}});
+		input.onFocusGained(); // so the caret draws
+
+		Renderer::Primitives::beginFrame();
+		Renderer::Primitives::PushTransform(glm::translate(Foundation::Mat4(1.0F), Foundation::Vec3(100.0F, 50.0F, 0.0F)));
+		const Foundation::Rect clip = input.textAreaClip();
+		input.render();
+		Renderer::Primitives::PopTransform();
+		Renderer::Primitives::endFrame();
+
+		// Across, the text area inside the padding; down, the border's inner edge.
+		const TextInputStyle style;
+		EXPECT_FLOAT_EQ(clip.x, 110.0F + style.paddingLeft);
+		EXPECT_FLOAT_EQ(clip.y, 70.0F + (style.borderWidth * 0.5F));
+		EXPECT_FLOAT_EQ(clip.width, 200.0F - style.paddingLeft - style.paddingRight);
+		EXPECT_FLOAT_EQ(clip.height, 40.0F - style.borderWidth);
+
+		// The caret is the last thing drawn: whole, across the clip's left edge, under no clip.
+		ASSERT_FALSE(gpu->draws().empty());
+		const std::vector<Renderer::BatchVertex> vertices = uploaded();
+		ASSERT_GE(vertices.size(), 4U);
+		float left = vertices.back().position.x;
+		float right = left;
+		for (size_t i = vertices.size() - 4; i < vertices.size(); ++i) {
+			left = std::min(left, vertices[i].position.x);
+			right = std::max(right, vertices[i].position.x);
+			EXPECT_EQ(vertices[i].clipBounds, Foundation::Vec4(0.0F));
+		}
+		EXPECT_LT(left, clip.x);
+		EXPECT_GT(right, clip.x);
 	}
 
 } // namespace UI

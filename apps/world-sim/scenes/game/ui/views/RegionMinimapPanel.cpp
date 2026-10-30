@@ -2,8 +2,8 @@
 
 #include <components/panel/Panel.h>
 #include <font/FontRenderer.h>
-#include <graphics/ClipTypes.h>
 #include <graphics/PrimitiveStyles.h>
+#include <graphics/Rect.h>
 #include <primitives/Primitives.h>
 #include <theme/Tokens.h>
 #include <theme/Variants.h>
@@ -132,7 +132,7 @@ void RegionMinimapPanel::render() {
 	renderGrid(body);
 
 	// Clip the world-projected marks to the map surface.
-	Renderer::Primitives::pushClip(Foundation::ClipSettings{.shape = Foundation::ClipRect{.bounds = body}});
+	Renderer::Primitives::pushClip(body);
 	renderViewportRect();
 	renderCrashMarker();
 	renderColonists();

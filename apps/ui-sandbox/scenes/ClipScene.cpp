@@ -1,13 +1,12 @@
 // Clip Scene - Clipping and Scrolling Demo
 // Demonstrates clipping system features: rect clipping, nested clips, scrolling
-// See /docs/technical/ui-framework/clipping.md for design documentation.
 
 #include "SceneTypes.h"
 #include <app/Keys.h>
 #include <app/UiScene.h>
 #include <component/Container.h>
-#include <graphics/ClipTypes.h>
 #include <graphics/Color.h>
+#include <graphics/Rect.h>
 #include <primitives/Primitives.h>
 #include <shapes/Shapes.h>
 #include <utils/Log.h>
@@ -70,10 +69,7 @@ constexpr const char* kSceneName = "clip";
 			}
 
 			// Set up clipping for the container viewport
-			Foundation::ClipSettings clipSettings;
-			clipSettings.shape = Foundation::ClipRect{.bounds = Foundation::Rect{400.0F, 410.0F, 280.0F, 100.0F}};
-			clipSettings.mode = Foundation::ClipMode::Inside;
-			m_scrollContainer->setClip(clipSettings);
+			m_scrollContainer->setClip(Foundation::Rect{400.0F, 410.0F, 280.0F, 100.0F});
 
 			// Calculate scroll bounds
 			m_containerContentHeight = static_cast<float>(kContainerItemCount) * kContainerItemHeight + 5.0F;
@@ -149,10 +145,7 @@ constexpr const char* kSceneName = "clip";
 
 			// Apply clipping for the content
 			if (clippingEnabled) {
-				ClipSettings clipSettings;
-				clipSettings.shape = ClipRect{.bounds = Rect{50.0F, 160.0F, 300.0F, 80.0F}};
-				clipSettings.mode = ClipMode::Inside;
-				Primitives::pushClip(clipSettings);
+				Primitives::pushClip(Rect{50.0F, 160.0F, 300.0F, 80.0F});
 			}
 
 			// Content that overflows the clip boundary - rectangles with text
@@ -188,9 +181,7 @@ constexpr const char* kSceneName = "clip";
 
 			// Apply clipping for scroll container
 			if (clippingEnabled) {
-				ClipSettings clipSettings;
-				clipSettings.shape = ClipRect{.bounds = Rect{50.0F, 310.0F, 300.0F, 120.0F}};
-				Primitives::pushClip(clipSettings);
+				Primitives::pushClip(Rect{50.0F, 310.0F, 300.0F, 120.0F});
 			}
 
 			// Draw list items with text (more than can fit, offset by scroll position)
@@ -232,9 +223,7 @@ constexpr const char* kSceneName = "clip";
 
 			// Apply outer clip
 			if (clippingEnabled) {
-				ClipSettings outerClip;
-				outerClip.shape = ClipRect{.bounds = Rect{400.0F, 160.0F, 250.0F, 180.0F}};
-				Primitives::pushClip(outerClip);
+				Primitives::pushClip(Rect{400.0F, 160.0F, 250.0F, 180.0F});
 			}
 
 			// Inner clip boundary (green) - inside outer
@@ -245,9 +234,7 @@ constexpr const char* kSceneName = "clip";
 
 			// Apply inner clip (nested - should intersect with outer)
 			if (clippingEnabled) {
-				ClipSettings innerClip;
-				innerClip.shape = ClipRect{.bounds = Rect{430.0F, 190.0F, 190.0F, 120.0F}};
-				Primitives::pushClip(innerClip);
+				Primitives::pushClip(Rect{430.0F, 190.0F, 190.0F, 120.0F});
 			}
 
 			// Content that crosses both boundaries (purple rectangle)

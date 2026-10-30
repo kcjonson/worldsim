@@ -1,7 +1,17 @@
 #include "Dialog.h"
 
+#include "components/scroll/ScrollContainer.h"
 #include "focus/FocusManager.h"
+#include "shapes/Shapes.h"
+#include <backend/NullBackend.h>
 #include <gtest/gtest.h>
+#include <primitives/Primitives.h>
+
+#include <cstring>
+#include <memory>
+#include <span>
+#include <utility>
+#include <vector>
 
 namespace UI {
 
@@ -272,6 +282,62 @@ TEST_F(DialogTest, EscapeClosesDialogViaKeyInput) {
 	dialog.handleKeyInput(foundation::Key::Escape, false, false, false);
 
 	EXPECT_TRUE(dialog.isAnimating()); // Should be closing
+}
+
+// === Rendering, on the null backend ===
+
+class DialogRenderTest : public DialogTest {
+  protected:
+	void SetUp() override {
+		DialogTest::SetUp();
+		auto owned = std::make_unique<Renderer::backend::NullBackend>();
+		gpu = owned.get();
+		Renderer::Primitives::init(std::move(owned), {});
+		Renderer::Primitives::setViewport(1280, 720);
+	}
+	void TearDown() override {
+		Renderer::Primitives::shutdown();
+		DialogTest::TearDown();
+	}
+
+	// The last flush's vertices, as uploaded.
+	std::vector<Renderer::BatchVertex> uploaded() const {
+		const std::span<const uint8_t>	   bytes = gpu->bufferContents(gpu->geometry(gpu->draws().back().call.geometry)->vertices);
+		std::vector<Renderer::BatchVertex> vertices(bytes.size() / sizeof(Renderer::BatchVertex));
+		std::memcpy(vertices.data(), bytes.data(), vertices.size() * sizeof(Renderer::BatchVertex));
+		return vertices;
+	}
+
+	Renderer::backend::NullBackend* gpu = nullptr;
+};
+
+// A list in a dialog's content sits at the content's local origin, and so does its clip, which
+// goes through the dialog's offset with it: the list draws where it is, not nowhere.
+TEST_F(DialogRenderTest, AScrollListInADialogDrawsClippedToItsViewportOnScreen) {
+	const Foundation::Color listColor(0.9F, 0.1F, 0.2F, 1.0F);
+	Dialog					dialog(Dialog::Args{.title = "Crafting", .size = {600.0F, 400.0F}});
+	ScrollContainer			list(ScrollContainer::Args{.position = {0.0F, 0.0F}, .size = {150.0F, 100.0F}});
+	list.addChild(Rectangle(Rectangle::Args{.position = {0.0F, 0.0F}, .size = {140.0F, 300.0F}, .style = {.fill = listColor}}));
+	dialog.addChild(std::move(list));
+	dialog.open(1280.0F, 720.0F);
+	dialog.update(1.0F); // past the fade in
+
+	Renderer::Primitives::beginFrame();
+	dialog.render();
+	Renderer::Primitives::endFrame();
+
+	ASSERT_FALSE(gpu->draws().empty());
+	const Foundation::Rect content = dialog.getContentBounds();
+	int					   listVertices = 0;
+	for (const Renderer::BatchVertex& vertex : uploaded()) {
+		if (vertex.color != listColor.toVec4()) {
+			continue;
+		}
+		++listVertices;
+		// The viewport less its 8px scrollbar, inside the dialog's content clip
+		EXPECT_EQ(vertex.clipBounds, Foundation::Vec4(content.x, content.y, content.x + 142.0F, content.y + 100.0F));
+	}
+	EXPECT_EQ(listVertices, 4);
 }
 
 } // namespace UI

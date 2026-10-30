@@ -685,20 +685,10 @@ void RmlUIBackend::ReleaseTexture(Rml::TextureHandle texture) {
 void RmlUIBackend::EnableScissorRegion(bool enable) {
     m_scissorEnabled = enable;
 
-    if (m_primitives) {
-        // If using Primitive API
-        if (enable) {
-            // Scissor will be set in SetScissorRegion
-        } else {
-            m_primitives->PopScissor();
-        }
+    if (enable) {
+        glEnable(GL_SCISSOR_TEST);
     } else {
-        // Direct OpenGL
-        if (enable) {
-            glEnable(GL_SCISSOR_TEST);
-        } else {
-            glDisable(GL_SCISSOR_TEST);
-        }
+        glDisable(GL_SCISSOR_TEST);
     }
 }
 
@@ -719,19 +709,7 @@ void RmlUIBackend::SetScissorRegion(Rml::Rectanglei region) {
     width = std::min(width, m_viewportWidth - x);
     height = std::min(height, m_viewportHeight - y);
 
-    if (m_primitives) {
-        // If using Primitive API
-        Renderer::Rect scissorRect{
-            static_cast<float>(x),
-            static_cast<float>(y),
-            static_cast<float>(width),
-            static_cast<float>(height)
-        };
-        m_primitives->PushScissor(scissorRect);
-    } else {
-        // Direct OpenGL
-        glScissor(x, y, width, height);
-    }
+    glScissor(x, y, width, height);
 }
 ```
 
@@ -814,8 +792,8 @@ public:
                         const TextStyle& style, const Color& color);
 
     // State management
-    static void PushScissor(const Rect& clipRect);
-    static void PopScissor();
+    static void pushClip(const Rect& bounds);  // Screen space, top-left origin
+    static void popClip();
     static void PushTransform(const glm::mat4& transform);
     static void PopTransform();
 

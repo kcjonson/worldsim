@@ -638,7 +638,7 @@ std::string TextInput::GetSelectedText() const {
 Rendering order (back to front):
 1. Background rectangle with border
 2. Selection highlight (if any)
-3. Text (visible portion, clipped by scissor test)
+3. Text (visible portion, clipped to the text area)
 4. Cursor (if focused and no selection)
 5. Placeholder text (if text empty and not focused)
 
@@ -646,13 +646,10 @@ Rendering order (back to front):
 void TextInput::Render() const {
     RenderBackground();
 
-    // Scissor test to clip overflowing text
-    Primitives::PushScissor(
-        position.x + style.paddingLeft,
-        position.y + style.paddingTop,
-        size.x - style.paddingLeft - style.paddingRight,
-        size.y - style.paddingTop - style.paddingBottom
-    );
+    // Clip overflowing text to the text area: the rect inside the padding, its
+    // corners taken through Primitives::getCurrentTransform(), since a clip is
+    // screen-space and the area is in the component's space
+    Primitives::pushClip(textAreaOnScreen);
 
     if (text.empty() && !focused) {
         RenderPlaceholder();
@@ -662,7 +659,7 @@ void TextInput::Render() const {
         RenderCursor();
     }
 
-    Primitives::PopScissor();
+    Primitives::popClip();
 }
 
 void TextInput::RenderBackground() const {

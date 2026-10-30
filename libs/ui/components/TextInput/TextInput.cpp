@@ -1,12 +1,14 @@
 #include "components/TextInput/TextInput.h"
 #include "clipboard/IClipboard.h"
 #include "core/RenderContext.h"
+#include "core/ScreenClip.h"
 #include "focus/FocusManager.h"
 #include "font/FontRenderer.h"
 #include "theme/Tokens.h"
 #include "theme/Variants.h"
 #include "utils/Utf8.h"
 #include <algorithm>
+#include <cmath>
 #include <primitives/Primitives.h>
 
 namespace {
@@ -116,23 +118,28 @@ namespace UI {
 
 		renderBackground();
 
-		// Scissor test to clip overflowing text
-		float textAreaX = position.x + style.paddingLeft;
-		float textAreaY = position.y + style.paddingTop;
-		float textAreaWidth = size.x - style.paddingLeft - style.paddingRight;
-		float textAreaHeight = size.y - style.paddingTop - style.paddingBottom;
-
-		Renderer::Primitives::PushScissor(Foundation::Rect{textAreaX, textAreaY, textAreaWidth, textAreaHeight});
-
+		Renderer::Primitives::pushClip(textAreaClip());
 		if (text.empty() && !focused) {
 			renderPlaceholder();
 		} else {
 			renderSelection();
 			renderText();
-			renderCursor();
 		}
+		Renderer::Primitives::popClip();
 
-		Renderer::Primitives::PopScissor();
+		// Outside the clip: at cursor 0 the caret straddles the text area's left edge.
+		renderCursor();
+	}
+
+	Foundation::Rect TextInput::textAreaClip() const {
+		// The border is centred on the background's edge, which is at the content position.
+		const float borderInner = style.borderWidth * 0.5F;
+		return screenClip(
+			{position.x + style.paddingLeft,
+			 getContentPosition().y + borderInner,
+			 size.x - style.paddingLeft - style.paddingRight,
+			 size.y - style.borderWidth}
+		);
 	}
 
 	// ============================================================================

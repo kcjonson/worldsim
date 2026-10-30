@@ -406,12 +406,12 @@ void RmlUIBackend::RenderGeometry(
 
 void RmlUIBackend::EnableScissorRegion(bool enable) {
     if (!enable) {
-        Renderer::PopScissor();
+        Renderer::Primitives::popClip();
     }
 }
 
 void RmlUIBackend::SetScissorRegion(int x, int y, int width, int height) {
-    Renderer::PushScissor({
+    Renderer::Primitives::pushClip({
         static_cast<float>(x),
         static_cast<float>(y),
         static_cast<float>(width),
