@@ -18,7 +18,6 @@
 // will auto-detect from the first child's getHeight() during render.
 
 #include "component/Container.h"
-#include "graphics/ClipTypes.h"
 #include "graphics/Color.h"
 #include "input/InputEvent.h"
 #include "math/Types.h"

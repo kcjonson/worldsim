@@ -212,17 +212,14 @@ void ScrollContainer::updateClipAndOffset() {
 	Foundation::Vec2 contentPos = getContentPosition();
 
 	// Set clip region to viewport bounds
-	Foundation::ClipSettings clipSettings;
-	clipSettings.shape = Foundation::ClipRect{
-		.bounds = Foundation::Rect{
+	setClip(
+		Foundation::Rect{
 			contentPos.x,
 			contentPos.y,
 			viewportSize.x - kScrollbarWidth, // Leave room for scrollbar
 			viewportSize.y
 		}
-	};
-	clipSettings.mode = Foundation::ClipMode::Inside;
-	setClip(clipSettings);
+	);
 
 	// Content offset: position + scroll offset
 	// Subtracting scrollY moves content up (scroll down = see content further down)

@@ -7,6 +7,7 @@
 #include "theme/Variants.h"
 #include "utils/Utf8.h"
 #include <algorithm>
+#include <cmath>
 #include <primitives/Primitives.h>
 
 namespace {
@@ -116,13 +117,24 @@ namespace UI {
 
 		renderBackground();
 
-		// Scissor test to clip overflowing text
-		float textAreaX = position.x + style.paddingLeft;
-		float textAreaY = position.y + style.paddingTop;
-		float textAreaWidth = size.x - style.paddingLeft - style.paddingRight;
-		float textAreaHeight = size.y - style.paddingTop - style.paddingBottom;
-
-		Renderer::Primitives::PushScissor(Foundation::Rect{textAreaX, textAreaY, textAreaWidth, textAreaHeight});
+		// Clip overflowing text to the text area. A clip is in screen space and the
+		// area is in this component's, under whatever offset its containers pushed.
+		float				   textAreaX = position.x + style.paddingLeft;
+		float				   textAreaY = position.y + style.paddingTop;
+		float				   textAreaWidth = size.x - style.paddingLeft - style.paddingRight;
+		float				   textAreaHeight = size.y - style.paddingTop - style.paddingBottom;
+		const Foundation::Mat4 transform = Renderer::Primitives::getCurrentTransform();
+		const Foundation::Vec4 topLeft = transform * Foundation::Vec4(textAreaX, textAreaY, 0.0F, 1.0F);
+		const Foundation::Vec4 bottomRight =
+			transform * Foundation::Vec4(textAreaX + textAreaWidth, textAreaY + textAreaHeight, 0.0F, 1.0F);
+		Renderer::Primitives::pushClip(
+			Foundation::Rect{
+				std::min(topLeft.x, bottomRight.x),
+				std::min(topLeft.y, bottomRight.y),
+				std::abs(bottomRight.x - topLeft.x),
+				std::abs(bottomRight.y - topLeft.y)
+			}
+		);
 
 		if (text.empty() && !focused) {
 			renderPlaceholder();
@@ -132,7 +144,7 @@ namespace UI {
 			renderCursor();
 		}
 
-		Renderer::Primitives::PopScissor();
+		Renderer::Primitives::popClip();
 	}
 
 	// ============================================================================

@@ -408,9 +408,7 @@ namespace UI {
 		auto bounds = getContentBounds();
 
 		// Clip children to content area
-		setClip(Foundation::ClipSettings{
-			.shape = Foundation::ClipRect{.bounds = bounds}
-		});
+		setClip(bounds);
 
 		// Offset children so (0,0) is top-left of content area
 		setContentOffset({bounds.x, bounds.y});

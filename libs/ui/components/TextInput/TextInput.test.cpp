@@ -3,9 +3,17 @@
 #include "clipboard/IClipboard.h"
 #include "focus/FocusManager.h"
 
+#include <backend/NullBackend.h>
+#include <glm/gtc/matrix_transform.hpp>
 #include <gtest/gtest.h>
+#include <primitives/Primitives.h>
 
+#include <cstring>
+#include <memory>
+#include <span>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace UI {
 
@@ -108,6 +116,56 @@ namespace UI {
 		press(input, foundation::Key::V);
 
 		EXPECT_EQ(input.text, "abc");
+	}
+
+	// Primitives on the null backend, so what a component draws can be read back.
+	class TextInputRenderTest : public ::testing::Test {
+	  protected:
+		void SetUp() override {
+			auto owned = std::make_unique<Renderer::backend::NullBackend>();
+			gpu = owned.get();
+			Renderer::Primitives::init(std::move(owned), {});
+			Renderer::Primitives::setViewport(800, 600);
+			FocusManager::setInstance(&focusManager);
+		}
+		void TearDown() override {
+			FocusManager::setInstance(nullptr);
+			Renderer::Primitives::shutdown();
+		}
+
+		// The last flush's vertices, as uploaded.
+		std::vector<Renderer::BatchVertex> uploaded() const {
+			const std::span<const uint8_t>	   bytes = gpu->bufferContents(gpu->geometry(gpu->draws().back().call.geometry)->vertices);
+			std::vector<Renderer::BatchVertex> vertices(bytes.size() / sizeof(Renderer::BatchVertex));
+			std::memcpy(vertices.data(), bytes.data(), vertices.size() * sizeof(Renderer::BatchVertex));
+			return vertices;
+		}
+
+		Renderer::backend::NullBackend* gpu = nullptr;
+		FocusManager					focusManager;
+	};
+
+	// The text area's clip is in screen space, so under a container's offset it moves with the input.
+	TEST_F(TextInputRenderTest, TheTextAreaClipFollowsTheOffsetTheInputIsDrawnUnder) {
+		TextInput input(TextInput::Args{.position = {10.0F, 20.0F}, .size = {200.0F, 40.0F}});
+		input.onFocusGained(); // so the cursor draws, under the clip
+
+		Renderer::Primitives::beginFrame();
+		Renderer::Primitives::PushTransform(glm::translate(Foundation::Mat4(1.0F), Foundation::Vec3(100.0F, 50.0F, 0.0F)));
+		input.render();
+		Renderer::Primitives::PopTransform();
+		Renderer::Primitives::endFrame();
+
+		ASSERT_FALSE(gpu->draws().empty());
+		const std::vector<Renderer::BatchVertex> vertices = uploaded();
+		ASSERT_FALSE(vertices.empty());
+		const TextInputStyle style;
+		EXPECT_EQ(
+			vertices.back().clipBounds,
+			Foundation::Vec4(
+				110.0F + style.paddingLeft, 70.0F + style.paddingTop, 310.0F - style.paddingRight, 110.0F - style.paddingBottom
+			)
+		);
 	}
 
 } // namespace UI

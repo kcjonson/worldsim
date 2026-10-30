@@ -1,7 +1,9 @@
 # Clipping and Scrolling
 
 Created: 2025-11-27
-Status: In Progress (Phase 1-2)
+Status: Rect clipping only (Phases 2 and 6); the rest is not implemented
+
+What exists is salal's `Renderer::Primitives::pushClip(const Foundation::Rect&)` and `popClip()`: screen-space rects, nested by intersection, carried per vertex and tested in the fragment shader (Phase 2), and `UI::Container::setClip(std::optional<Foundation::Rect>)` (Phase 6). Clips that miss each other, or a rect with no area, leave the empty clip, under which nothing draws until it is popped. The shape and mode types below (`ClipShape`, `ClipSettings`, `ClipMode`) and the rounded, circle and path clips were removed in salal v0.19.0: they were never more than bounding-box approximations, and Phases 3 and 5 never landed. The rest of this document is the original design.
 
 ## Overview
 

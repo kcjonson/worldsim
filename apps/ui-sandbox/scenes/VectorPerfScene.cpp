@@ -5,8 +5,8 @@
 #include "SceneTypes.h"
 #include <app/Keys.h>
 #include <app/UiScene.h>
-#include <graphics/ClipTypes.h>
 #include <graphics/Color.h>
+#include <graphics/Rect.h>
 #include <primitives/Primitives.h>
 #include <utils/Log.h>
 #include <vector/Tessellator.h>
@@ -85,10 +85,7 @@ constexpr const char* kSceneName = "vector-perf";
 
 			// Apply clipping if enabled
 			if (clippingEnabled) {
-				ClipSettings clipSettings;
-				clipSettings.shape = ClipRect{.bounds = Rect{margin, margin, clipWidth, clipHeight}};
-				clipSettings.mode = ClipMode::Inside;
-				Renderer::Primitives::pushClip(clipSettings);
+				Renderer::Primitives::pushClip(Rect{margin, margin, clipWidth, clipHeight});
 			}
 
 			// Draw all 10,000 stars

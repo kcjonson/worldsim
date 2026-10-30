@@ -1,7 +1,7 @@
 #pragma once
 
 #include "component/Component.h"
-#include "graphics/ClipTypes.h"
+#include "graphics/Rect.h"
 #include "math/Types.h"
 #include "primitives/Primitives.h"
 
@@ -23,7 +23,7 @@ namespace UI {
 //
 // Usage:
 //   auto container = Container{};
-//   container.setClip(ClipSettings{.shape = ClipRect{.bounds = viewport}});
+//   container.setClip(viewport);  // A screen-space rect
 //   container.setContentOffset({0, -scrollY});  // Negative = scrolled down
 //   container.addChild(Rectangle{...});
 //   container.addChild(Button{...});
@@ -54,13 +54,10 @@ class Container : public Component {
 		return handled;
 	}
 
-	// Set clip region for this container.
-	// All children will be visually masked to this region.
+	// Set clip region for this container, in screen space (the content offset
+	// doesn't move it). All children will be visually masked to this region.
 	// Pass std::nullopt to disable clipping.
-	void setClip(std::optional<Foundation::ClipSettings> clipSettings) { m_clip = clipSettings; }
-
-	// Get current clip settings.
-	[[nodiscard]] const std::optional<Foundation::ClipSettings>& getClip() const { return m_clip; }
+	void setClip(std::optional<Foundation::Rect> clipBounds) { m_clip = clipBounds; }
 
 	// Set content offset (for scrolling).
 	// Children are translated by this amount BEFORE clipping.
@@ -105,8 +102,8 @@ class Container : public Component {
 	}
 
   private:
-	std::optional<Foundation::ClipSettings> m_clip;
-	Foundation::Vec2						m_contentOffset{0.0F, 0.0F};
+	std::optional<Foundation::Rect> m_clip;
+	Foundation::Vec2				m_contentOffset{0.0F, 0.0F};
 };
 
 } // namespace UI

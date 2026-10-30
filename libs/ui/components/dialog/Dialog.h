@@ -15,8 +15,8 @@
 #include "component/Container.h"
 #include "focus/FocusableBase.h"
 #include "focus/FocusManager.h"
-#include "graphics/ClipTypes.h"
 #include "graphics/Color.h"
+#include "graphics/Rect.h"
 
 #include <functional>
 #include <string>
