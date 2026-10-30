@@ -246,10 +246,17 @@ If tests fail, fix the new code—don't revert to keeping both versions.
 - Debug logs compile out in release builds
 - **CRITICAL: LOG_DEBUG WORKS FINE. NEVER switch LOG_DEBUG to LOG_INFO "to see logs". Debug logs are visible in dev tools via the HTTP log server. Do not change log levels.**
 
+**Testing:** `/docs/testing/README.md` is the strategy. Look for actual regressions, never pixel
+changes: no golden images or screenshot diffs. Before committing, run the relevant happy-path
+scenarios (`/docs/testing/scenarios/`) as a manual regression pass with the cheapest subagent
+fleet that can, and add steps when a feature lands. Rendering or sim-heavy changes also run the
+perf capture against `main`; performance is strict. Keep unit tests bounded: check for duplicates
+before adding.
+
 **Visual Verification:**
 - When user reports visual issues ("X doesn't appear", "layout is wrong")
 - Capture screenshot via HTTP endpoint to see actual output
-- IMPORTANT: Only capture a screenshot when requested by the user, avoid them where possible
+- Outside a regression pass, capture screenshots only when they answer a question; don't take them by reflex
 - See `/docs/workflows.md` → "Verifying Visual Output"
 
 **Sandbox Control:**

@@ -9,6 +9,36 @@ for the fixed-bug repro checklist.
 
 ---
 
+## Strategy
+
+We test for actual regressions. The art is prototype and changes all the time, so nothing is
+protected pixel for pixel: no golden images, no screenshot diffs, in CI or locally. Decided
+2026-10-30, the same strategy as salal's (`salal/docs/testing/README.md`).
+
+| Layer | Where | When |
+|---|---|---|
+| Unit tests | `*.test.cpp` (`engine-tests`) | CI, every push |
+| Happy-path scenarios | [scenarios/](./scenarios/) and [regressions.md](./regressions.md) | before every commit that touches what they cover |
+| Gameplay perf | `scripts/perf-capture.ps1` (to port to `.mjs`) | before committing rendering or sim-heavy changes, and after every salal bump |
+
+- **Scenarios are the happy-path scripts.** Before committing, the relevant ones are run as a
+  manual regression pass by the cheapest subagent fleet that can (Haiku-class), one agent per
+  scenario, driving the game through the dev API with judgement and fuzzy matching the way a
+  human tester would, and reporting pass or fail with a screenshot of what failed. A feature that
+  lands adds steps or a scenario. New scenarios are as short as they can be: a numbered list,
+  one line a step, the action and what you should see.
+- **Performance is strict.** Rendering performance dropping in gameplay is the regression this
+  project has hit most. Run the perf capture against `main` on the same machine and compare. When
+  a drop follows a salal bump, run salal's perf suite at the old and new engine tags on the same
+  machine: if the engine's numbers moved, file it in salal; if not, it's worldsim.
+- **Unit tests are bounded.** Before adding one, look for a test covering the same path, and
+  merge duplicates when touching a suite.
+- **Lint and tree are helpers, not tests.** While building or checking UI, call `/api/ui/lint`
+  (expect `"count":0` before screenshotting) and read element bounds from `/api/ui/tree` rather
+  than judging coordinates by eye. On demand only; never in CI.
+
+---
+
 ## Scenarios
 
 | # | Name | File |
