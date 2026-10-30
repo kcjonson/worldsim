@@ -8,6 +8,7 @@
 #include <gtest/gtest.h>
 #include <primitives/Primitives.h>
 
+#include <algorithm>
 #include <cstring>
 #include <memory>
 #include <span>
@@ -145,27 +146,39 @@ namespace UI {
 		FocusManager					focusManager;
 	};
 
-	// The text area's clip is in screen space, so under a container's offset it moves with the input.
-	TEST_F(TextInputRenderTest, TheTextAreaClipFollowsTheOffsetTheInputIsDrawnUnder) {
+	// Under a container's offset the text clip moves with the input; the caret, at cursor 0
+	// on the text area's left edge, draws outside it.
+	TEST_F(TextInputRenderTest, TheTextClipFollowsTheOffsetAndTheCaretDrawsOutsideIt) {
 		TextInput input(TextInput::Args{.position = {10.0F, 20.0F}, .size = {200.0F, 40.0F}});
-		input.onFocusGained(); // so the cursor draws, under the clip
+		input.onFocusGained(); // so the caret draws
 
 		Renderer::Primitives::beginFrame();
 		Renderer::Primitives::PushTransform(glm::translate(Foundation::Mat4(1.0F), Foundation::Vec3(100.0F, 50.0F, 0.0F)));
+		const Foundation::Rect clip = input.textAreaClip();
 		input.render();
 		Renderer::Primitives::PopTransform();
 		Renderer::Primitives::endFrame();
 
+		// Across, the text area inside the padding; down, the border's inner edge.
+		const TextInputStyle style;
+		EXPECT_FLOAT_EQ(clip.x, 110.0F + style.paddingLeft);
+		EXPECT_FLOAT_EQ(clip.y, 70.0F + (style.borderWidth * 0.5F));
+		EXPECT_FLOAT_EQ(clip.width, 200.0F - style.paddingLeft - style.paddingRight);
+		EXPECT_FLOAT_EQ(clip.height, 40.0F - style.borderWidth);
+
+		// The caret is the last thing drawn: whole, across the clip's left edge, under no clip.
 		ASSERT_FALSE(gpu->draws().empty());
 		const std::vector<Renderer::BatchVertex> vertices = uploaded();
-		ASSERT_FALSE(vertices.empty());
-		const TextInputStyle style;
-		EXPECT_EQ(
-			vertices.back().clipBounds,
-			Foundation::Vec4(
-				110.0F + style.paddingLeft, 70.0F + style.paddingTop, 310.0F - style.paddingRight, 110.0F - style.paddingBottom
-			)
-		);
+		ASSERT_GE(vertices.size(), 4U);
+		float left = vertices.back().position.x;
+		float right = left;
+		for (size_t i = vertices.size() - 4; i < vertices.size(); ++i) {
+			left = std::min(left, vertices[i].position.x);
+			right = std::max(right, vertices[i].position.x);
+			EXPECT_EQ(vertices[i].clipBounds, Foundation::Vec4(0.0F));
+		}
+		EXPECT_LT(left, clip.x);
+		EXPECT_GT(right, clip.x);
 	}
 
 } // namespace UI

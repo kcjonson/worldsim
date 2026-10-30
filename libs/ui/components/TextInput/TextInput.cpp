@@ -1,6 +1,7 @@
 #include "components/TextInput/TextInput.h"
 #include "clipboard/IClipboard.h"
 #include "core/RenderContext.h"
+#include "core/ScreenClip.h"
 #include "focus/FocusManager.h"
 #include "font/FontRenderer.h"
 #include "theme/Tokens.h"
@@ -117,34 +118,28 @@ namespace UI {
 
 		renderBackground();
 
-		// Clip overflowing text to the text area. A clip is in screen space and the
-		// area is in this component's, under whatever offset its containers pushed.
-		float				   textAreaX = position.x + style.paddingLeft;
-		float				   textAreaY = position.y + style.paddingTop;
-		float				   textAreaWidth = size.x - style.paddingLeft - style.paddingRight;
-		float				   textAreaHeight = size.y - style.paddingTop - style.paddingBottom;
-		const Foundation::Mat4 transform = Renderer::Primitives::getCurrentTransform();
-		const Foundation::Vec4 topLeft = transform * Foundation::Vec4(textAreaX, textAreaY, 0.0F, 1.0F);
-		const Foundation::Vec4 bottomRight =
-			transform * Foundation::Vec4(textAreaX + textAreaWidth, textAreaY + textAreaHeight, 0.0F, 1.0F);
-		Renderer::Primitives::pushClip(
-			Foundation::Rect{
-				std::min(topLeft.x, bottomRight.x),
-				std::min(topLeft.y, bottomRight.y),
-				std::abs(bottomRight.x - topLeft.x),
-				std::abs(bottomRight.y - topLeft.y)
-			}
-		);
-
+		Renderer::Primitives::pushClip(textAreaClip());
 		if (text.empty() && !focused) {
 			renderPlaceholder();
 		} else {
 			renderSelection();
 			renderText();
-			renderCursor();
 		}
-
 		Renderer::Primitives::popClip();
+
+		// Outside the clip: at cursor 0 the caret straddles the text area's left edge.
+		renderCursor();
+	}
+
+	Foundation::Rect TextInput::textAreaClip() const {
+		// The border is centred on the background's edge, which is at the content position.
+		const float borderInner = style.borderWidth * 0.5F;
+		return screenClip(
+			{position.x + style.paddingLeft,
+			 getContentPosition().y + borderInner,
+			 size.x - style.paddingLeft - style.paddingRight,
+			 size.y - style.borderWidth}
+		);
 	}
 
 	// ============================================================================
