@@ -149,10 +149,9 @@ void DrawCircleBorder(const Vec2& center, float radius,
                      const Color& color, float borderWidth,
                      int segments = 32);
 
-// Clipping
-void PushScissor(const Rect& clipRect);
-void PopScissor();
-Rect GetCurrentScissor();
+// Clipping (screen-space rects, intersected as they nest)
+void pushClip(const Rect& bounds);
+void popClip();
 
 // Transform (for world-space rendering)
 void PushTransform(const Mat4& transform);
@@ -227,7 +226,7 @@ public:
 1. Same texture → Same batch
 2. Same blend mode → Same batch
 3. Different texture/blend → Flush and start new batch
-4. Scissor change → Flush and start new batch
+4. Clip change: nothing, the clip rides on each vertex
 
 **Performance target:**
 - 10,000 rectangles: <100 draw calls
@@ -262,49 +261,21 @@ void DrawText(const std::string& text, const Vec2& position,
 - Both benefit from SDF font atlas
 - Consistent text rendering across UI and game
 
-### Scissor/Clipping Stack
+### Clipping stack
 
-**For scrollable containers:**
-
-```cpp
-class ClipStack {
-    std::stack<Rect> m_scissors;
-    Rect m_currentScissor;
-
-public:
-    void Push(const Rect& scissor) {
-        // Intersect with current scissor (nested clipping)
-        Rect newScissor = Intersect(m_currentScissor, scissor);
-
-        m_scissors.push(m_currentScissor);
-        m_currentScissor = newScissor;
-
-        // Apply to OpenGL
-        glScissor(newScissor.x, newScissor.y,
-                 newScissor.width, newScissor.height);
-    }
-
-    void Pop() {
-        m_currentScissor = m_scissors.top();
-        m_scissors.pop();
-
-        glScissor(m_currentScissor.x, m_currentScissor.y,
-                 m_currentScissor.width, m_currentScissor.height);
-    }
-};
-```
+**For scrollable containers:** salal's `Primitives::pushClip` and `popClip` keep a stack of screen-space rects, each the intersection of those under it. The current rect rides on every vertex and the fragment shader discards outside it, so a clip costs no draw call and no GL state. See [clipping.md](./clipping.md).
 
 **Usage for scrollable panel:**
 ```cpp
 void RenderScrollPanel() {
-    Renderer::PushScissor(panelBounds);  // Clip to panel
+    Renderer::pushClip(panelBounds);  // Clip to panel
 
     // Draw content (anything outside is clipped)
     for (auto& item : items) {
         Renderer::DrawRect(item.bounds, item.color);
     }
 
-    Renderer::PopScissor();
+    Renderer::popClip();
 }
 ```
 
@@ -420,7 +391,7 @@ void RenderMinimap(const Rect& minimapBounds) {
     Renderer::DrawRectBorder(minimapBounds, Color::White, 2.0f);
 
     // Clip to minimap bounds
-    Renderer::PushScissor(minimapBounds);
+    Renderer::pushClip(minimapBounds);
 
     // Draw world tiles (scaled down)
     for (auto& tile : visibleTiles) {
@@ -437,7 +408,7 @@ void RenderMinimap(const Rect& minimapBounds) {
         Renderer::DrawCircle(minimapPos, 1.5f, Color::Yellow);
     }
 
-    Renderer::PopScissor();
+    Renderer::popClip();
 }
 ```
 
@@ -508,12 +479,12 @@ class RmlUIBackend : public Rml::RenderInterface {
 
     void EnableScissorRegion(bool enable) override {
         if (!enable) {
-            Renderer::PopScissor();
+            Renderer::popClip();
         }
     }
 
     void SetScissorRegion(int x, int y, int width, int height) override {
-        Renderer::PushScissor({(float)x, (float)y, (float)width, (float)height});
+        Renderer::pushClip({(float)x, (float)y, (float)width, (float)height});
     }
 };
 ```
