@@ -73,7 +73,7 @@ namespace world_sim {
 									.width = 1.0F,
 								},
 							.id = edgeId.c_str(),
-							.zIndex = kZMeshEdge,
+							.key = kZMeshEdge,
 						}
 					);
 				}
@@ -110,7 +110,7 @@ namespace world_sim {
 								.width = 2.0F,
 							},
 						.id = segId.c_str(),
-						.zIndex = kZPathLine,
+						.key = kZPathLine,
 					}
 				);
 			}
@@ -124,7 +124,7 @@ namespace world_sim {
 						.radius = 4.0F,
 						.style = Foundation::CircleStyle{.fill = kWaypointMarker},
 						.id = markerId.c_str(),
-						.zIndex = kZMarker,
+						.key = kZMarker,
 					}
 				);
 			}

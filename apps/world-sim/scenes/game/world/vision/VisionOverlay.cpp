@@ -61,7 +61,7 @@ namespace world_sim {
 						.end = Foundation::Vec2{sb.x, sb.y},
 						.style = Foundation::LineStyle{.color = kOccluder, .width = 1.5F},
 						.id = occId.c_str(),
-						.zIndex = kZOccluder,
+						.key = kZOccluder,
 					}
 				);
 			}
@@ -120,7 +120,7 @@ namespace world_sim {
 						.indexCount = idx.size(),
 						.color = kPolyFill,
 						.id = fanId.c_str(),
-						.zIndex = kZPolyFill,
+						.key = kZPolyFill,
 					}
 				);
 			}
@@ -134,7 +134,7 @@ namespace world_sim {
 						.end = screenRing[(i + 1) % n],
 						.style = Foundation::LineStyle{.color = kPolyOutline, .width = 1.0F},
 						.id = edgeId.c_str(),
-						.zIndex = kZPolyOutline,
+						.key = kZPolyOutline,
 					}
 				);
 			}

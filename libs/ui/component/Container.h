@@ -1,7 +1,6 @@
 #pragma once
 
 #include "component/Component.h"
-#include "core/ScreenClip.h"
 #include "graphics/Rect.h"
 #include "math/Types.h"
 #include "primitives/Primitives.h"
@@ -56,9 +55,9 @@ class Container : public Component {
 	}
 
 	// Set clip region for this container, in the space its position is in (its
-	// parent's), so the content offset doesn't move it. render() takes it to screen
-	// space through the transform current then. All children will be visually masked
-	// to this region. Pass std::nullopt to disable clipping.
+	// parent's), so the content offset doesn't move it: render() pushes it before
+	// the offset. All children will be visually masked to this region. Pass
+	// std::nullopt to disable clipping.
 	void setClip(std::optional<Foundation::Rect> clipBounds) { m_clip = clipBounds; }
 
 	// Set content offset (for scrolling).
@@ -72,10 +71,13 @@ class Container : public Component {
 	const char* debugTypeName() const override { return "Container"; }
 
 	// Override render to apply clipping and content offset.
-	// Order: map the clip, push the transform, push the clip, render children, pop the clip, pop the transform
+	// Order: push the clip, push the transform, render children, pop the transform, pop the clip
 	void render() override {
-		// The clip goes to screen space before the content offset is pushed, which must not move it.
-		const std::optional<Foundation::Rect> clip = m_clip.has_value() ? std::optional(screenClip(*m_clip)) : std::nullopt;
+		// The renderer maps a clip through the transform current when it is pushed, so it goes
+		// before the content offset, which must not move it.
+		if (m_clip.has_value()) {
+			Renderer::Primitives::pushClip(*m_clip);
+		}
 
 		// Apply content offset as translation (moves content within fixed clip region)
 		bool hasOffset = (m_contentOffset.x != 0.0F || m_contentOffset.y != 0.0F);
@@ -88,20 +90,16 @@ class Container : public Component {
 			Renderer::Primitives::PushTransform(translation);
 		}
 
-		if (clip.has_value()) {
-			Renderer::Primitives::pushClip(*clip);
-		}
-
 		// Render children (base class handles sorting and iteration)
 		Component::render();
 
 		// Pop in reverse order
-		if (clip.has_value()) {
-			Renderer::Primitives::popClip();
-		}
-
 		if (hasOffset) {
 			Renderer::Primitives::PopTransform();
+		}
+
+		if (m_clip.has_value()) {
+			Renderer::Primitives::popClip();
 		}
 	}
 

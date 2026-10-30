@@ -41,7 +41,7 @@ namespace UI {
 												 .indexCount = idx.size(),
 												 .color = color,
 												 .id = id,
-												 .zIndex = zIndex});
+												 .key = zIndex});
 		}
 
 	} // namespace
@@ -129,7 +129,7 @@ namespace UI {
 														   .width = bw,
 														   .cornerRadius = r_sm,
 														   .position = Foundation::BorderPosition::Inside}},
-				.zIndex = zIndex,
+				.key = zIndex,
 			}
 		);
 
@@ -154,7 +154,7 @@ namespace UI {
 				.scale = textScale(kTitleFontSize),
 				.color = fade(text_bright, opacity),
 				.font = fontUi,
-				.zIndex = static_cast<float>(zIndex) + 0.1F,
+				.key = zIndex,
 			}
 		);
 		textY += kTitleFontSize;
@@ -169,7 +169,7 @@ namespace UI {
 					.scale = textScale(kDescFontSize),
 					.color = fade(text, opacity),
 					.font = fontUi,
-					.zIndex = static_cast<float>(zIndex) + 0.1F,
+					.key = zIndex,
 				}
 			);
 			textY += kDescFontSize;
@@ -185,7 +185,7 @@ namespace UI {
 					.scale = textScale(kHotkeyFontSize),
 					.color = fade(text_dim, opacity),
 					.font = fontMono,
-					.zIndex = static_cast<float>(zIndex) + 0.1F,
+					.key = zIndex,
 				}
 			);
 		}

@@ -1040,7 +1040,7 @@ namespace {
 						.radius = 7.0F,
 						.style = Foundation::CircleStyle{.fill = Foundation::Color(1.0F, 0.85F, 0.0F, 0.85F)}, // Gold, matches selection
 						.id = "colonist-move-marker",
-						.zIndex = 100,
+						.key = 100,
 					}
 				);
 			}

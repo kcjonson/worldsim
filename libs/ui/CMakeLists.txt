@@ -1,7 +1,6 @@
 add_library(ui
     core/Placeholder.cpp
     core/RenderContext.cpp
-    core/ScreenClip.cpp
     shapes/Shapes.cpp
     components/button/Button.cpp
     components/tabbar/TabBar.cpp

@@ -118,7 +118,7 @@ namespace world_sim {
 									.width = lineWidth,
 								},
 							.id = edgeId.c_str(),
-							.zIndex = zIndex,
+							.key = zIndex,
 						}
 					);
 
@@ -130,7 +130,7 @@ namespace world_sim {
 								.radius = 2.5F,
 								.style = Foundation::CircleStyle{.fill = edgeColor},
 								.id = dotId.c_str(),
-								.zIndex = kZVertexDot,
+								.key = kZVertexDot,
 							}
 						);
 					}
@@ -173,7 +173,7 @@ namespace world_sim {
 								.width = 1.0F,
 							},
 						.id = edgeId.c_str(),
-						.zIndex = kZChunkOutline,
+						.key = kZChunkOutline,
 					}
 				);
 			}

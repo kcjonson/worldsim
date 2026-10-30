@@ -123,9 +123,9 @@ class TextInput : public Component, public FocusableBase<TextInput> {
 	void update(float deltaTime) override; // Update cursor blink, etc.
 	void render() override;			  // Draw text input
 
-	// The screen-space rect render() clips the text to, through the current transform:
-	// across, the text area inside the padding; down, to the border's inner edge, so
-	// descenders aren't cut. The caret draws outside it.
+	// The rect render() clips the text to, in the input's own space: across, the text
+	// area inside the padding; down, to the border's inner edge, so descenders aren't
+	// cut. The caret draws outside it.
 	[[nodiscard]] Foundation::Rect textAreaClip() const;
 
 	// IComponent event handling

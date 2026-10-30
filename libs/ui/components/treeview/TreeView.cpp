@@ -172,7 +172,7 @@ void TreeView::render() {
 	constexpr float kChevronStroke = bw_thick; // stroke width
 
 	const float rowTextPx = fs_sm;
-	const float labelZ = static_cast<float>(zIndex) + 0.1F;
+	const float labelZ = zIndex;
 
 	// Render each visible row
 	for (size_t i = 0; i < flattenedRows.size(); ++i) {
@@ -192,13 +192,13 @@ void TreeView::render() {
 		// Hairline separator below each row, drawn first so washes sit on top.
 		drawRect({.bounds = {contentPos.x, rowY + rowHeight - bw_hair, size.x, bw_hair},
 				  .style = {.fill = line_hairline},
-				  .zIndex = zIndex});
+				  .key = zIndex});
 
 		// Hover wash spanning the full row width.
 		if (hovered) {
 			drawRect({.bounds = {contentPos.x, rowY, size.x, rowHeight},
 					  .style = {.fill = bg_hover},
-					  .zIndex = zIndex});
+					  .key = zIndex});
 		}
 
 		// Expand/collapse marker: a chevron built from two short legs. Points down
@@ -214,7 +214,7 @@ void TreeView::render() {
 			const float cx = rowX + (kMarkerBox * 0.5F);
 			const float cy = rowY + (rowHeight * 0.5F);
 			const auto	stroke = [&](Foundation::Vec2 a, Foundation::Vec2 b) {
-				drawLine({.start = a, .end = b, .style = {.color = markerColor, .width = kChevronStroke}, .zIndex = zIndex + 1});
+				drawLine({.start = a, .end = b, .style = {.color = markerColor, .width = kChevronStroke}, .key = zIndex + 1});
 			};
 
 			if (expanded) {
@@ -237,7 +237,7 @@ void TreeView::render() {
 				  .font = fontUi,
 				  .vAlign = Foundation::VerticalAlign::Middle,
 				  .boxHeight = rowHeight,
-				  .zIndex = labelZ});
+				  .key = zIndex});
 
 		// Count badge, right-aligned in mono and dimmed.
 		if (row.node->count.has_value()) {
@@ -250,7 +250,7 @@ void TreeView::render() {
 					  .vAlign = Foundation::VerticalAlign::Middle,
 					  .boxWidth = size.x - space_2,
 					  .boxHeight = rowHeight,
-					  .zIndex = labelZ});
+					  .key = zIndex});
 		}
 	}
 }

@@ -199,7 +199,7 @@ namespace UI {
 							   .vertexCount = verts.size(),
 							   .indexCount = glyphMeshIndices.size(),
 							   .color = tint,
-							   .zIndex = zIndex});
+							   .key = zIndex});
 				return;
 			}
 
@@ -241,7 +241,7 @@ namespace UI {
 				.vertexCount = translatedVerts.size(),
 				.indexCount = indices.size(),
 				.color = tint,
-				.zIndex = zIndex,
+				.key = zIndex,
 			}
 		);
 	}

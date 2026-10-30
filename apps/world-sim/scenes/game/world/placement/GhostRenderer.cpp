@@ -105,7 +105,7 @@ void GhostRenderer::render(const std::string& defName,
 		.indexCount = mesh->indices.size(),
 		.colors = m_ghostColors.data(),
 		.id = "placement_ghost",
-		.zIndex = 1000  // Draw above entities
+		.key = 1000  // Draw above entities
 	});
 }
 

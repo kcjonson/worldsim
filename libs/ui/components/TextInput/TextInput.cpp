@@ -1,7 +1,6 @@
 #include "components/TextInput/TextInput.h"
 #include "clipboard/IClipboard.h"
 #include "core/RenderContext.h"
-#include "core/ScreenClip.h"
 #include "focus/FocusManager.h"
 #include "font/FontRenderer.h"
 #include "theme/Tokens.h"
@@ -134,12 +133,12 @@ namespace UI {
 	Foundation::Rect TextInput::textAreaClip() const {
 		// The border is centred on the background's edge, which is at the content position.
 		const float borderInner = style.borderWidth * 0.5F;
-		return screenClip(
-			{position.x + style.paddingLeft,
-			 getContentPosition().y + borderInner,
-			 size.x - style.paddingLeft - style.paddingRight,
-			 size.y - style.borderWidth}
-		);
+		return {
+			position.x + style.paddingLeft,
+			getContentPosition().y + borderInner,
+			size.x - style.paddingLeft - style.paddingRight,
+			size.y - style.borderWidth
+		};
 	}
 
 	// ============================================================================
@@ -546,7 +545,7 @@ namespace UI {
 		Foundation::Vec2 contentPos = getContentPosition();
 		short			 zIndex = RenderContext::getZIndex();
 		Renderer::Primitives::drawRect(
-			{.bounds = {contentPos.x, contentPos.y, size.x, size.y}, .style = rectStyle, .id = id, .zIndex = zIndex}
+			{.bounds = {contentPos.x, contentPos.y, size.x, size.y}, .style = rectStyle, .id = id, .key = zIndex}
 		);
 	}
 
@@ -610,7 +609,7 @@ namespace UI {
 			 .end = {cursorX, cursorEndY},
 			 .style = Foundation::LineStyle{.color = style.cursorColor, .width = style.cursorWidth},
 			 .id = id,
-			 .zIndex = zIndex + 3} // On top of everything
+			 .key = zIndex + 3} // On top of everything
 		);
 	}
 
@@ -654,7 +653,7 @@ namespace UI {
 			.bounds = {selectionX, selectionY, selectionWidth, selectionHeight},
 			.style = selectionStyle,
 			.id = id,
-			.zIndex = zIndex + 1 // Above background, below text (+2)
+			.key = zIndex + 1 // Above background, below text (+2)
 		});
 	}
 
