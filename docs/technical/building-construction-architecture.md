@@ -14,10 +14,10 @@ What the codebase gives us today, from exploration of the relevant systems:
 
 | Area | State | Relevance |
 |------|-------|-----------|
-| World units | 1 tile = 1 m (`kTileSize = 1.0F`, `libs/engine/world/chunk/ChunkCoordinate.h`); entities use continuous `Vec2` meters | Design spec's meters map 1:1 to world units, no conversion layer |
+| World units | 1 tile = 1 m (`kTileSize = 1.0F`, `libs/world/world/chunk/ChunkCoordinate.h`); entities use continuous `Vec2` meters | Design spec's meters map 1:1 to world units, no conversion layer |
 | Geometry utilities | Tessellator (monotone decomposition) in `libs/renderer/vector/`; **no** point-in-polygon, segment intersection, polygon offset, or boolean ops anywhere | Must be built; new dependencies needed |
 | Pathfinding | **None.** `MovementSystem` beelines to `MovementTarget`; `PhysicsSystem` is Euler integration; no collision, no obstacle queries; colonists walk through everything including water | Construction development proceeds without it; nav must land before walls ship as gameplay (see D5) |
-| Spatial indexing | `SpatialIndex` (grid hash) in `libs/engine/assets/placement/`, used for entity discovery/placement, not movement | Reusable for footprint-clearing queries |
+| Spatial indexing | `SpatialIndex` (grid hash) in `libs/assets/assets/placement/`, used for entity discovery/placement, not movement | Reusable for footprint-clearing queries |
 | Task system | `GlobalTaskRegistry` + reservations + chain infra; work tiers config-driven; `Build` action and Construction tier 5 already defined in `assets/config/` XML | Construction plugs in as a goal source; aligns with the planned Goal-Driven Task Generation refactor |
 | Rendering | Three base-shader paths (batched / instanced / baked world-space); EntityRenderer baked path = precedent for cached static world geometry with sub-chunk culling; `GhostRenderer` for previews; `RenderTarget` available | Foundations/walls fit a new baked pass between terrain and entities |
 | Asset system | Folder-per-asset XML + SVG, Lua procedural generators with static params, template caching in AssetRegistry; **no per-instance parameterization** | Doors/windows need a parameter mechanism (thickness, material) |

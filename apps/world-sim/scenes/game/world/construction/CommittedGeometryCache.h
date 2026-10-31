@@ -74,7 +74,7 @@ namespace world_sim {
 	/// See file header. refresh() is a no-op while the world's version is unchanged.
 	class CommittedGeometryCache {
 	  public:
-		void refresh(const engine::construction::ConstructionWorld& world);
+		void refresh(const construction::ConstructionWorld& world);
 
 		[[nodiscard]] const std::vector<FoundationGeom>& foundations() const { return foundations_; }
 		[[nodiscard]] const std::vector<WallBandGeom>&	 walls() const { return walls_; }
@@ -89,7 +89,7 @@ namespace world_sim {
 		}
 
 	  private:
-		void rebuild(const engine::construction::ConstructionWorld& world);
+		void rebuild(const construction::ConstructionWorld& world);
 
 		std::vector<FoundationGeom>					 foundations_;
 		std::vector<WallBandGeom>					 walls_;

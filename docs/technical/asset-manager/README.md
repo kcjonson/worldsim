@@ -25,7 +25,7 @@ Four architectural questions were settled before writing this; they shape everyt
 One shared core, two frontends, plus a startup change in the engine.
 
 ```
-libs/engine/assets            (shared core, extended)
+libs/assets/assets            (shared core, extended)
   - loader + registry            existing: getDefinition(s), getTemplate, generateAsset, groups
   - AssetValidator + report      new: load-time validation, single source of truth
   - AssetRenderer                new: defName(+seed) -> RGBA pixels via offscreen FBO
@@ -52,7 +52,7 @@ Today there is no "render this asset" function. Scenes assemble the pieces by ha
 A function in `assets` that takes a def name, an optional seed, and a target rectangle, and returns draw-ready geometry fit to that rectangle:
 
 ```cpp
-// libs/engine/assets/AssetRenderer.h
+// libs/assets/assets/AssetRenderer.h
 struct PreparedAsset {
     renderer::TessellatedMesh mesh;   // vertices in target-rect pixel space
     bool hasOutput = true;            // false if the generator produced no paths
@@ -96,7 +96,7 @@ The pieces all exist and this is assembly:
 
 The CLI creates a hidden window (`glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE)`) and hands `Primitives::init` a `GLBackend::create()` on its context (the backend initializes GLEW), then initializes only what the render path needs: the renderer's primitive setup, with the base shader `engine` compiles in (`base_shader::source()`), and the asset registry (including `setSharedScriptsPath`, or every `@shared/` Lua def fails to resolve). It does not create scenes, a debug server, or fonts.
 
-The GUI apps get their rendering-primitive init from salal's `App::create`; the asset half is `engine::assets::initializeAssetSystem`, which the CLI calls without an App. The CLI does the primitive init itself, on its hidden window. This is a refactor of existing code, not new behavior.
+The GUI apps get their rendering-primitive init from salal's `App::create`; the asset half is `assets::initializeAssetSystem`, which the CLI calls without an App. The CLI does the primitive init itself, on its hidden window. This is a refactor of existing code, not new behavior.
 
 Because the CLI is a short-lived, server-less process with its own context, N invocations run in parallel up to GPU and CPU limits. The one cross-process constraint to respect: do not bind the fixed debug port from the CLI.
 
@@ -123,7 +123,7 @@ Most of the interesting checks concern what the loader hides. Today it silently 
 Mirror the existing `ConfigValidator` conventions (`ValidationError{source, message, context}` plus a static accumulator), but this is new code; `ConfigValidator` validates work and construction configs, not visual asset defs, so there is nothing to extend directly.
 
 ```cpp
-// libs/engine/assets/AssetValidator.h
+// libs/assets/assets/AssetValidator.h
 enum class Severity { Warning, Error };
 struct ValidationIssue {
     Severity severity;
@@ -160,7 +160,7 @@ CLI `validate` exits non-zero on any error so CI can gate on it; warnings do not
 
 ## Async loading and the splash refactor
 
-The product spec wants validation surfaced at launch. Before the async splash landed, that was impossible without a startup change: the splash was a fixed 1.5-second timer (`SplashScene.cpp:94`), and asset loading ran fully synchronously before the first frame was ever drawn (the launcher loaded the registry before the main loop; today that is the `initializeResources` hook calling `engine::assets::initializeAssetSystem`). By the time the splash appeared, loading was already done, and nothing surfaced load results to the player; the loader logged and continued.
+The product spec wants validation surfaced at launch. Before the async splash landed, that was impossible without a startup change: the splash was a fixed 1.5-second timer (`SplashScene.cpp:94`), and asset loading ran fully synchronously before the first frame was ever drawn (the launcher loaded the registry before the main loop; today that is the `initializeResources` hook calling `assets::initializeAssetSystem`). By the time the splash appeared, loading was already done, and nothing surfaced load results to the player; the loader logged and continued.
 
 The chosen approach is to make loading asynchronous so the splash can show real progress and a summary.
 

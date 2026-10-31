@@ -10,9 +10,9 @@
 #include "scenes/shared/SalalUi.h"
 #include <theme/Theme.h>
 
-#include <app/Keys.h>
 #include <application/App.h>
 #include <primitives/Primitives.h>
+#include <theme/Keys.h>
 #include <ui/components/Button.h>
 #include <ui/components/Toggle.h>
 #include <ui/shapes/Text.h>
@@ -39,7 +39,7 @@ namespace {
 		}
 
 		void update(const app::FrameContext& frame) override {
-			if (engine::key(frame.input, foundation::Key::Escape).pressed()) {
+			if (theme::key(frame.input, foundation::Key::Escape).pressed()) {
 				back();
 			}
 		}

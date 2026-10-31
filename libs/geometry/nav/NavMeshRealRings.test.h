@@ -8,14 +8,14 @@
 // walkable=0 / floor=0 / blocked=1848 in the [NavBuild] verdict, so the navmesh
 // tests reproduce the real failure without the engine.
 //
-// All coordinates are region-local millimetres. provenance ids match engine::nav:
+// All coordinates are region-local millimetres. provenance ids match nav:
 // water=-1, tree=-2, border=-3. Expected sizes (asserted in NavMesh.test.cpp's
 // RealYConfluence_OpenGrassIsFloor so a truncated fixture fails loudly): border = 4
 // verts, water = 564 verts, trees = 637 rings.
 //
 // REGENERATING THIS FIXTURE
 // -------------------------
-// 1. Drop a one-shot dump at the end of engine::nav::buildInput() (NavInputBuilder.cpp),
+// 1. Drop a one-shot dump at the end of nav::buildInput() (NavInputBuilder.cpp),
 //    right before it returns the assembled NavMeshInput `input`:
 //
 //      #include <cstdio>

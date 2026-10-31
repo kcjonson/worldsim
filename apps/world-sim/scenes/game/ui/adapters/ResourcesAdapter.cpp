@@ -13,7 +13,7 @@ namespace world_sim::adapters {
 
 namespace {
 
-std::string displayNameFor(const std::string& defName, const engine::assets::AssetRegistry& registry) {
+std::string displayNameFor(const std::string& defName, const assets::AssetRegistry& registry) {
 	const auto* def = registry.getDefinition(defName);
 	if (def != nullptr && !def->label.empty()) {
 		return def->label;
@@ -23,7 +23,7 @@ std::string displayNameFor(const std::string& defName, const engine::assets::Ass
 
 } // namespace
 
-StorageResourcesData getStorageResources(ecs::World& world, const engine::assets::AssetRegistry& registry) {
+StorageResourcesData getStorageResources(ecs::World& world, const assets::AssetRegistry& registry) {
 	StorageResourcesData data;
 
 	std::unordered_map<std::string, uint32_t> totals;

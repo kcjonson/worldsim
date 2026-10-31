@@ -71,7 +71,7 @@ grid is a true Goldberg polyhedron: 20 icosahedron faces paired into 10 rhombi,
 each an n×n chart with tile centers at lattice vertices (i/n, j/n). Total tiles
 = 10n²+2; exactly 12 pentagon tiles at the icosahedron vertices (including both
 poles); all others are hexagons. See `docs/technical/world-generation-implementation.md`
-and `libs/world/worldgen/grid/SphereGrid.h` for the authoritative description.
+and `libs/worldgen/worldgen/grid/SphereGrid.h` for the authoritative description.
 
 ### Resources
 

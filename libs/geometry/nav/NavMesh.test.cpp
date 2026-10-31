@@ -695,7 +695,7 @@ TEST(NavMesh, DoorClearWidthThreadedOntoPortalEdge) {
 // -- both NEGATIVE provenance. If buildNavMesh tags the in-bounds floor faces as
 // common-knowledge blockers (faceBlocker < 0 && != kNoBlocker), the mesh has no
 // walkable face and pathing dies. The provenance values here match
-// engine::nav::kProvenanceBorder / kProvenanceWater exactly.
+// nav::kProvenanceBorder / kProvenanceWater exactly.
 TEST(NavMesh, WalkableBorderWithInteriorWaterHasFloor) {
 	constexpr std::int64_t kProvenanceWater	 = -1;
 	constexpr std::int64_t kProvenanceBorder = -3;

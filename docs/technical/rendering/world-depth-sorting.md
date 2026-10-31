@@ -6,7 +6,7 @@
 
 ## Context & Problem
 
-The world camera is a slightly-off-axis 2.5D view. The tilt is faked entirely in the art: an asset draws its canopy/top up at -Y and its ground contact (trunk base, feet) down at +Y. The camera itself is a pure scaled top-down orthographic projection with no tilt, rotation, or Z axis (`WorldCamera::worldToScreen`, `libs/engine/world/camera/WorldCamera.h:145` computes `normalizedY = (worldY - rect.y) / rect.height` then scales to the viewport). So screen-Y is already a linear function of world-Y, and a larger world-Y draws lower on screen, toward the viewer.
+The world camera is a slightly-off-axis 2.5D view. The tilt is faked entirely in the art: an asset draws its canopy/top up at -Y and its ground contact (trunk base, feet) down at +Y. The camera itself is a pure scaled top-down orthographic projection with no tilt, rotation, or Z axis (`WorldCamera::worldToScreen`, `libs/world/world/camera/WorldCamera.h:145` computes `normalizedY = (worldY - rect.y) / rect.height` then scales to the viewport). So screen-Y is already a linear function of world-Y, and a larger world-Y draws lower on screen, toward the viewer.
 
 Today entities are not depth-ordered by position, so occlusion is wrong. The canonical failure: a colonist standing north of a tree's base (behind it) still paints over the tree's canopy instead of being hidden by it. Desired behavior: for any two upright renderables, the one whose ground-contact point is further south (larger world-Y, nearer the viewer) draws in front. A colonist walks behind a tree when its feet are north of the trunk base, and in front when south of it.
 
@@ -18,10 +18,10 @@ Draw order is decided purely by a fixed pass sequence, not by any per-entity key
 
 Per frame, `GameScene::render()` (`apps/world-sim/scenes/game/GameScene.cpp:888`) runs, in order: terrain tiles (`ChunkRenderer`, :903), one monolithic `EntityRenderer` pass (:910), then committed foundations + in-progress construction preview (`m_drawingSystem->render`, :916), room/nav/vision overlays, selection indicator, placement ghost, and finally `gameUI->render()` (:936).
 
-Inside `EntityRenderer::renderInstanced` (`libs/engine/world/rendering/EntityRenderer.cpp:84-92`) the entity sub-passes are hardcoded: baked static flora/rocks via one `glDrawElements` per chunk, then GPU-instanced groundcover grass, then dynamic ECS entities. Because dynamic entities are a strictly later pass than static flora, a colonist always paints over any tree regardless of north/south position. That is the root defect.
+Inside `EntityRenderer::renderInstanced` (`libs/world-view/world/rendering/EntityRenderer.cpp:84-92`) the entity sub-passes are hardcoded: baked static flora/rocks via one `glDrawElements` per chunk, then GPU-instanced groundcover grass, then dynamic ECS entities. Because dynamic entities are a strictly later pass than static flora, a colonist always paints over any tree regardless of north/south position. That is the root defect.
 
 Supporting facts:
-- `assets::PlacedEntity` (`libs/engine/assets/placement/SpatialIndex.h`) carries only `defName`, `position`, `rotation`, `scale`, `colorTint`, and an optional `partTransforms` pointer. No depth/anchor field.
+- `assets::PlacedEntity` (`libs/assets/assets/placement/SpatialIndex.h`) carries only `defName`, `position`, `rotation`, `scale`, `colorTint`, and an optional `partTransforms` pointer. No depth/anchor field.
 - Static entities bake once per chunk in spatial-index insertion order, split into two height buckets (short <1m, tall >=1m) purely to drive a far-zoom impostor fade, not ordering (`BakedEntityMesh.cpp`).
 - `DynamicEntityRenderSystem` builds the per-frame render vector in raw ECS-view order; animated colonists accumulate into a CPU triangle batch flushed dead-last (`InstancedEntityRenderer.cpp`) "so limbs sit on top."
 - Anchor semantics are inconsistent: static/baked entities use `position` as the mesh origin (trunk base near origin), while `DynamicEntityRenderSystem` re-centers colonists to their mesh bbox center and treats packaged items as a bottom baseline.
@@ -143,11 +143,11 @@ Benchmark methodology: capture frame time, draw calls, and entity/triangle count
 ## Key files
 
 - `apps/world-sim/scenes/game/GameScene.cpp` — per-frame pass order; the construction/foundation draw to relocate.
-- `libs/engine/world/rendering/EntityRenderer.cpp` — the choke point where the sorted gather/emit lives.
-- `libs/engine/world/rendering/InstancedEntityRenderer.cpp` — extract an "emit one entity" helper; fold animated colonists in at sorted position.
-- `libs/engine/world/rendering/BakedEntityMesh.cpp` / `BakedChunkRenderer.cpp` — expose template maxY, exclude tall occluders from the baked draw.
-- `libs/engine/ecs/systems/DynamicEntityRenderSystem.cpp` — dynamic `anchorY`.
-- `libs/engine/assets/placement/SpatialIndex.h` — `PlacedEntity.anchorY`, `queryRect`.
-- `libs/engine/world/rendering/BatchedEntityRenderer.cpp` — fallback parity.
+- `libs/world-view/world/rendering/EntityRenderer.cpp` — the choke point where the sorted gather/emit lives.
+- `libs/world-view/world/rendering/InstancedEntityRenderer.cpp` — extract an "emit one entity" helper; fold animated colonists in at sorted position.
+- `libs/assets/assets/placement/BakedEntityMesh.cpp` / `BakedChunkRenderer.cpp` — expose template maxY, exclude tall occluders from the baked draw.
+- `libs/world-view/world/rendering/DynamicEntityRenderSystem.cpp` — dynamic `anchorY`.
+- `libs/assets/assets/placement/SpatialIndex.h` — `PlacedEntity.anchorY`, `queryRect`.
+- `libs/world-view/world/rendering/BatchedEntityRenderer.cpp` — fallback parity.
 - `scenes/game/world/construction/DrawingSystem.*`, `ConstructionWorld`, `ecs/systems/ConstructionSystem`, `NavigationSystem`, `WallCollisionSystem` — walls/foundations as entities while keeping topology as nav/collision truth.
 - `libs/renderer/primitives/ZSort.bench.cpp` — benchmark reference.

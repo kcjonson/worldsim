@@ -1,0 +1,665 @@
+#include "PlacementExecutor.h"
+
+#include "assets/AssetRegistry.h"
+
+#include <world/chunk/Chunk.h>
+
+#include <gtest/gtest.h>
+
+using namespace assets;
+
+// ============================================================================
+// Test Fixtures and Helpers
+// ============================================================================
+
+/// Mock adjacent chunk provider for cross-chunk tests
+class MockAdjacentProvider : public IAdjacentChunkProvider {
+  public:
+	void setChunkIndex(world::ChunkCoordinate coord, const SpatialIndex* index) {
+		m_indices[coord] = index;
+	}
+
+	const SpatialIndex* getChunkIndex(world::ChunkCoordinate coord) const override {
+		auto it = m_indices.find(coord);
+		if (it != m_indices.end()) {
+			return it->second;
+		}
+		return nullptr;
+	}
+
+  private:
+	std::unordered_map<world::ChunkCoordinate, const SpatialIndex*> m_indices;
+};
+
+/// Create a simple chunk placement context for testing
+ChunkPlacementContext createTestContext(world::ChunkCoordinate coord,
+										uint64_t seed,
+										world::Biome defaultBiome = world::Biome::TemperateGrassland) {
+	ChunkPlacementContext ctx;
+	ctx.coord = coord;
+	ctx.worldSeed = seed;
+	ctx.getBiome = [defaultBiome](uint16_t /*localX*/, uint16_t /*localY*/) {
+		return defaultBiome;
+	};
+	ctx.isWater = [](glm::vec2 /*pos*/) { return false; };
+	ctx.landSurface = [](glm::vec2 /*pos*/) { return world::Surface::Grass; };
+	return ctx;
+}
+
+// ============================================================================
+// Basic Initialization Tests
+// ============================================================================
+
+TEST(PlacementExecutorTests, ConstructorDoesNotInitialize) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	EXPECT_FALSE(executor.isInitialized());
+}
+
+TEST(PlacementExecutorTests, InitializeWithEmptyRegistry) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	EXPECT_TRUE(executor.isInitialized());
+	EXPECT_TRUE(executor.getSpawnOrder().empty());
+}
+
+TEST(PlacementExecutorTests, ClearResetsState) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	executor.clear();
+
+	EXPECT_FALSE(executor.isInitialized());
+	EXPECT_TRUE(executor.getSpawnOrder().empty());
+}
+
+// ============================================================================
+// Chunk Processing Tests
+// ============================================================================
+
+TEST(PlacementExecutorTests, ProcessChunkReturnsEmptyForUninitializedExecutor) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	// Don't initialize
+
+	auto ctx = createTestContext({0, 0}, 12345);
+	auto result = executor.processChunk(ctx);
+
+	EXPECT_EQ(result.entitiesPlaced, 0);
+	EXPECT_TRUE(result.entities.empty());
+}
+
+TEST(PlacementExecutorTests, ProcessChunkWithNoDefinitions) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	auto ctx = createTestContext({0, 0}, 12345);
+	auto result = executor.processChunk(ctx);
+
+	EXPECT_EQ(result.entitiesPlaced, 0);
+	EXPECT_EQ(result.coord.x, 0);
+	EXPECT_EQ(result.coord.y, 0);
+}
+
+TEST(PlacementExecutorTests, ProcessChunkIsDeterministic) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor1(registry);
+	executor1.initialize();
+
+	PlacementExecutor executor2(registry);
+	executor2.initialize();
+
+	auto ctx = createTestContext({5, 10}, 42);
+	auto result1 = executor1.processChunk(ctx);
+	auto result2 = executor2.processChunk(ctx);
+
+	// Same context should produce same results
+	EXPECT_EQ(result1.entitiesPlaced, result2.entitiesPlaced);
+}
+
+TEST(PlacementExecutorTests, DifferentChunksProduceDifferentResults) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	auto ctx1 = createTestContext({0, 0}, 12345);
+	auto ctx2 = createTestContext({1, 0}, 12345);
+
+	auto result1 = executor.processChunk(ctx1);
+	auto result2 = executor.processChunk(ctx2);
+
+	// Different chunks should have different coordinates in result
+	EXPECT_EQ(result1.coord.x, 0);
+	EXPECT_EQ(result2.coord.x, 1);
+}
+
+// ============================================================================
+// Chunk Index Management Tests
+// ============================================================================
+
+TEST(PlacementExecutorTests, GetChunkIndexReturnsNullForUnprocessedChunk) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	const SpatialIndex* index = executor.getChunkIndex({0, 0});
+	EXPECT_EQ(index, nullptr);
+}
+
+TEST(PlacementExecutorTests, GetChunkIndexReturnsIndexForProcessedChunk) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	auto ctx = createTestContext({5, 5}, 12345);
+	executor.processChunk(ctx);
+
+	const SpatialIndex* index = executor.getChunkIndex({5, 5});
+	EXPECT_NE(index, nullptr);
+}
+
+TEST(PlacementExecutorTests, UnloadChunkRemovesIndex) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	auto ctx = createTestContext({5, 5}, 12345);
+	executor.processChunk(ctx);
+
+	EXPECT_NE(executor.getChunkIndex({5, 5}), nullptr);
+
+	executor.unloadChunk({5, 5});
+
+	EXPECT_EQ(executor.getChunkIndex({5, 5}), nullptr);
+}
+
+// ============================================================================
+// Adjacent Chunk Provider Tests
+// ============================================================================
+
+TEST(PlacementExecutorTests, ProcessChunkWithAdjacentProvider) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	// Set up adjacent chunk index
+	SpatialIndex adjacentIndex;
+	adjacentIndex.insert({"TestEntity", {-10.0F, 10.0F}});
+
+	MockAdjacentProvider provider;
+	provider.setChunkIndex({-1, 0}, &adjacentIndex);
+
+	auto ctx = createTestContext({0, 0}, 12345);
+	auto result = executor.processChunk(ctx, &provider);
+
+	// Should not crash and return valid result
+	EXPECT_EQ(result.coord.x, 0);
+	EXPECT_EQ(result.coord.y, 0);
+}
+
+// ============================================================================
+// Context Function Tests
+// ============================================================================
+
+TEST(PlacementExecutorTests, BiomeFunctionIsCalled) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	int callCount = 0;
+	ChunkPlacementContext ctx;
+	ctx.coord = {0, 0};
+	ctx.worldSeed = 12345;
+	ctx.getBiome = [&callCount](uint16_t /*localX*/, uint16_t /*localY*/) {
+		++callCount;
+		return world::Biome::TemperateGrassland;
+	};
+
+	executor.processChunk(ctx);
+
+	// With no definitions, biome function won't be called
+	// This test verifies the context is properly used
+	EXPECT_GE(callCount, 0);
+}
+
+// ============================================================================
+// Coordinate System Tests
+// ============================================================================
+
+TEST(PlacementExecutorTests, ChunkCoordinateOriginCalculation) {
+	// Verify that chunk coordinate origins are calculated correctly
+	world::ChunkCoordinate coord0{0, 0};
+	world::ChunkCoordinate coord1{1, 0};
+	world::ChunkCoordinate coordNeg{-1, -1};
+
+	auto origin0 = coord0.origin();
+	auto origin1 = coord1.origin();
+	auto originNeg = coordNeg.origin();
+
+	EXPECT_EQ(origin0.x, 0.0F);
+	EXPECT_EQ(origin0.y, 0.0F);
+	EXPECT_EQ(origin1.x, static_cast<float>(world::kChunkSize));
+	EXPECT_EQ(origin1.y, 0.0F);
+	EXPECT_EQ(originNeg.x, -static_cast<float>(world::kChunkSize));
+	EXPECT_EQ(originNeg.y, -static_cast<float>(world::kChunkSize));
+}
+
+// ============================================================================
+// Edge Cases
+// ============================================================================
+
+TEST(PlacementExecutorTests, ProcessSameChunkTwice) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	auto ctx = createTestContext({0, 0}, 12345);
+	auto result1 = executor.processChunk(ctx);
+	auto result2 = executor.processChunk(ctx);
+
+	// Both should succeed and produce same results (deterministic)
+	EXPECT_EQ(result1.entitiesPlaced, result2.entitiesPlaced);
+}
+
+TEST(PlacementExecutorTests, ProcessMultipleChunks) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	// Process a grid of chunks
+	for (int x = -2; x <= 2; ++x) {
+		for (int y = -2; y <= 2; ++y) {
+			auto ctx = createTestContext({x, y}, 12345);
+			auto result = executor.processChunk(ctx);
+			EXPECT_EQ(result.coord.x, x);
+			EXPECT_EQ(result.coord.y, y);
+		}
+	}
+
+	// All chunk indices should be accessible
+	for (int x = -2; x <= 2; ++x) {
+		for (int y = -2; y <= 2; ++y) {
+			EXPECT_NE(executor.getChunkIndex({x, y}), nullptr);
+		}
+	}
+}
+
+TEST(PlacementExecutorTests, NegativeChunkCoordinates) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	auto ctx = createTestContext({-100, -50}, 12345);
+	auto result = executor.processChunk(ctx);
+
+	EXPECT_EQ(result.coord.x, -100);
+	EXPECT_EQ(result.coord.y, -50);
+	EXPECT_NE(executor.getChunkIndex({-100, -50}), nullptr);
+}
+
+// ============================================================================
+// Entity Cooldown Tests
+// ============================================================================
+
+TEST(PlacementExecutorTests, IsEntityOnCooldownReturnsFalseInitially) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	// Entity not on cooldown initially
+	EXPECT_FALSE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+}
+
+TEST(PlacementExecutorTests, SetEntityCooldownMakesEntityOnCooldown) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 60.0F);
+
+	EXPECT_TRUE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+}
+
+TEST(PlacementExecutorTests, DifferentPositionsAreIndependentCooldowns) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 60.0F);
+
+	// Same chunk, different position
+	EXPECT_FALSE(executor.isEntityOnCooldown({0, 0}, {15.0F, 25.0F}, "BerryBush"));
+}
+
+TEST(PlacementExecutorTests, DifferentDefNamesAreIndependentCooldowns) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 60.0F);
+
+	// Same position, different defName
+	EXPECT_FALSE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "WoodyBush"));
+}
+
+TEST(PlacementExecutorTests, DifferentChunksAreIndependentCooldowns) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 60.0F);
+
+	// Same position and defName, different chunk
+	EXPECT_FALSE(executor.isEntityOnCooldown({1, 0}, {10.0F, 20.0F}, "BerryBush"));
+}
+
+TEST(PlacementExecutorTests, UpdateCooldownsDecrementsCooldownTime) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 5.0F);
+	EXPECT_TRUE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+
+	// Update with 2 seconds
+	executor.updateCooldowns(2.0F);
+
+	// Still on cooldown (5 - 2 = 3 seconds remaining)
+	EXPECT_TRUE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+}
+
+TEST(PlacementExecutorTests, UpdateCooldownsRemovesExpiredCooldowns) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 5.0F);
+	EXPECT_TRUE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+
+	// Update with 6 seconds (cooldown expires)
+	executor.updateCooldowns(6.0F);
+
+	// No longer on cooldown
+	EXPECT_FALSE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+}
+
+TEST(PlacementExecutorTests, UpdateCooldownsExactExpiration) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 5.0F);
+
+	// Update with exactly 5 seconds
+	executor.updateCooldowns(5.0F);
+
+	// Should be expired at exactly 0 or slightly negative
+	EXPECT_FALSE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+}
+
+TEST(PlacementExecutorTests, MultipleCooldownsUpdateIndependently) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 3.0F);
+	executor.setEntityCooldown({0, 0}, {30.0F, 40.0F}, "BerryBush", 10.0F);
+
+	// Update with 5 seconds
+	executor.updateCooldowns(5.0F);
+
+	// First cooldown expired, second still active
+	EXPECT_FALSE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+	EXPECT_TRUE(executor.isEntityOnCooldown({0, 0}, {30.0F, 40.0F}, "BerryBush"));
+}
+
+TEST(PlacementExecutorTests, ResetCooldownOverwritesExisting) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 5.0F);
+
+	// Reset cooldown to longer time
+	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 100.0F);
+
+	// Update with 10 seconds (would have expired with original 5s cooldown)
+	executor.updateCooldowns(10.0F);
+
+	// Still on cooldown due to reset
+	EXPECT_TRUE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+}
+
+TEST(PlacementExecutorTests, ZeroCooldownExpiresOnFirstUpdate) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	// Set zero cooldown - still registered as on cooldown initially
+	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 0.0F);
+
+	// Zero cooldown expires immediately on first update
+	executor.updateCooldowns(0.001F);
+
+	// Now it should be expired
+	EXPECT_FALSE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+}
+
+// ============================================================================
+// Distribution::Spaced + riparian placement (forests-and-ponds PR)
+// ============================================================================
+
+namespace {
+	AssetDefinition makeFloraDef(const std::string& name, world::Biome biome,
+								 Distribution dist, float spawnChance, float minDist,
+								 const std::string& nearType = "", float nearDist = 0.0F) {
+		AssetDefinition d;
+		d.defName = name;
+		d.assetType = AssetType::Procedural;
+		BiomePlacement bp;
+		bp.biomeName = world::biomeToString(biome);
+		bp.spawnChance = spawnChance;
+		bp.distribution = dist;
+		bp.spacing.minDistance = minDist;
+		bp.nearTileType = nearType;
+		bp.nearDistance = nearDist;
+		d.placement.biomes.push_back(bp);
+		return d;
+	}
+} // namespace
+
+// Spaced placement must honor minDistance: no two placed instances closer than it.
+// (Before this PR, Spaced fell through to Uniform and minDistance did nothing.)
+TEST(PlacementExecutorTests, SpacedRespectsMinDistance) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+	constexpr float kMinDist = 20.0F;
+	registry.registerTestDefinition(makeFloraDef("Flora_TestSpaced", world::Biome::TemperateGrassland,
+												 Distribution::Spaced, 0.4F, kMinDist));
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+	auto ctx = createTestContext({0, 0}, 777, world::Biome::TemperateGrassland); // getSurface = Grass
+	auto result = executor.processChunk(ctx);
+
+	ASSERT_GT(result.entities.size(), 1u) << "spaced stand should place many instances";
+	// Spaced enforces minDistance, except thicket cores (grove-field high tail) tighten
+	// it; the hard floor is (1 - kThicketTighten) * minDistance = 0.55 * minDistance.
+	// Assert no pair beats that floor (proving spacing is enforced, unlike Uniform).
+	const float floorDist = 0.55F * kMinDist;
+	for (size_t i = 0; i < result.entities.size(); ++i) {
+		for (size_t j = i + 1; j < result.entities.size(); ++j) {
+			const float dx = result.entities[i].position.x - result.entities[j].position.x;
+			const float dy = result.entities[i].position.y - result.entities[j].position.y;
+			EXPECT_GE(dx * dx + dy * dy, floorDist * floorDist - 0.01F)
+				<< "two spaced instances closer than the thicket spacing floor";
+		}
+	}
+}
+
+// Riparian flora (near="Water") must actually cluster at a waterline. Diagnoses the
+// "waterside plants don't appear" report: a water stripe with land around it should
+// grow near-water flora, all within near.distance (+ clump spread) of the stripe, and
+// none in it.
+TEST(PlacementExecutorTests, RiparianFloraSpawnsNearWater) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+	registry.registerTestDefinition(makeFloraDef("Flora_TestReed", world::Biome::BorealForest,
+												 Distribution::Clumped, 0.6F, 0.0F, "Water", 3.0F));
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	ChunkPlacementContext ctx;
+	ctx.coord = {0, 0};
+	ctx.worldSeed = 999;
+	ctx.getBiome = [](uint16_t, uint16_t) { return world::Biome::BorealForest; };
+	// A vertical water stripe over x in [250, 253); land (Grass) elsewhere.
+	ctx.isWater = [](glm::vec2 pos) { return pos.x >= 250.0F && pos.x < 253.0F; };
+	ctx.landSurface = [](glm::vec2 /*pos*/) { return world::Surface::Grass; };
+
+	auto result = executor.processChunk(ctx);
+	ASSERT_GT(result.entities.size(), 0u) << "near-water flora should appear at the waterline";
+	for (const auto& e : result.entities) {
+		const float lx = e.position.x; // chunk origin is (0,0), so world == local
+		const float dist = lx < 250.0F ? (250.0F - lx) : (lx >= 253.0F ? lx - 253.0F : 0.0F);
+		EXPECT_LE(dist, 8.0F) << "near-water flora spawned far from the water (x=" << lx << ")";
+		EXPECT_GT(dist, 0.0F) << "near-water flora spawned in the water (x=" << lx << ")";
+	}
+}
+
+// A land surface rule (near="Mud", as the reeds have) reads the painted land: a
+// painted mud band grows the flora beside it and nowhere else.
+TEST(PlacementExecutorTests, NearSurfaceReadsThePaintedLand) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+	registry.registerTestDefinition(makeFloraDef("Flora_TestBankReed", world::Biome::BorealForest,
+												 Distribution::Uniform, 0.6F, 0.0F, "Mud", 1.0F));
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	ChunkPlacementContext ctx;
+	ctx.coord = {0, 0};
+	ctx.worldSeed = 4242;
+	ctx.getBiome = [](uint16_t, uint16_t) { return world::Biome::BorealForest; };
+	ctx.isWater = [](glm::vec2 /*pos*/) { return false; };
+	// Mud painted over y in [100, 102.5), off the tile grid; grass elsewhere.
+	ctx.landSurface = [](glm::vec2 pos) {
+		return pos.y >= 100.0F && pos.y < 102.5F ? world::Surface::Mud : world::Surface::Grass;
+	};
+
+	auto result = executor.processChunk(ctx);
+	ASSERT_GT(result.entities.size(), 0u) << "flora near painted mud should grow beside it";
+	for (const auto& e : result.entities) {
+		// Tile centers within one tile of the sampled tile's: tiles 99 to 102.
+		EXPECT_GE(e.position.y, 99.0F);
+		EXPECT_LT(e.position.y, 103.0F);
+	}
+}
+
+TEST(PlacementExecutorTests, NegativeChunkCooldowns) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	executor.setEntityCooldown({-5, -10}, {10.0F, 20.0F}, "BerryBush", 60.0F);
+
+	EXPECT_TRUE(executor.isEntityOnCooldown({-5, -10}, {10.0F, 20.0F}, "BerryBush"));
+	EXPECT_FALSE(executor.isEntityOnCooldown({5, 10}, {10.0F, 20.0F}, "BerryBush"));
+}
+
+TEST(PlacementExecutorTests, ClearRemovesCooldowns) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 60.0F);
+	EXPECT_TRUE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+
+	executor.clear();
+
+	// After clear, cooldown should be gone
+	EXPECT_FALSE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+}
+
+TEST(PlacementExecutorTests, CooldownPositionQuantization) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	// Set cooldown at position 10.3, 20.7
+	executor.setEntityCooldown({0, 0}, {10.3F, 20.7F}, "BerryBush", 60.0F);
+
+	// Query with slightly different position that quantizes to same tile
+	// Position is quantized to integer tile coordinates (floor)
+	EXPECT_TRUE(executor.isEntityOnCooldown({0, 0}, {10.1F, 20.9F}, "BerryBush"));
+	EXPECT_TRUE(executor.isEntityOnCooldown({0, 0}, {10.9F, 20.0F}, "BerryBush"));
+
+	// Different tile should not be on cooldown
+	EXPECT_FALSE(executor.isEntityOnCooldown({0, 0}, {11.0F, 20.0F}, "BerryBush"));
+	EXPECT_FALSE(executor.isEntityOnCooldown({0, 0}, {10.0F, 21.0F}, "BerryBush"));
+}
+

@@ -14,7 +14,7 @@ class ResourcesModel {
   public:
 	/// Refresh data from the ECS world (throttled to 2Hz)
 	/// @return true if data changed since last refresh
-	bool refresh(ecs::World& world, const engine::assets::AssetRegistry& registry, float deltaTime);
+	bool refresh(ecs::World& world, const assets::AssetRegistry& registry, float deltaTime);
 
 	/// Aggregated rows, sorted by count descending
 	[[nodiscard]] const std::vector<adapters::ResourceRowData>& rows() const { return data.rows; }

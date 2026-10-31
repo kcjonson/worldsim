@@ -10,7 +10,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     branches: [ "**" ]
     paths:
-      - 'libs/world/**'
+      - 'libs/worldgen/**'
       - 'vcpkg.json'
       - 'CMakeLists.txt'
       - '.github/workflows/tests-heavy.yml'
@@ -62,13 +62,13 @@ jobs:
         CXX: clang++
 
     # Only the heavy bucket's executable, not the whole tree.
-    - name: Build world-tests
-      run: cmake --build build --target world-tests -j$(nproc)
+    - name: Build worldgen-tests
+      run: cmake --build build --target worldgen-tests -j$(nproc)
 
     - name: sccache stats
       run: sccache --show-stats
 
-    # 4 gtest shards registered in libs/world/CMakeLists.txt; -j4 runs them
+    # 4 gtest shards registered in libs/worldgen/CMakeLists.txt; -j4 runs them
     # concurrently on the 4-core runner.
     - name: Run heavy worldgen tests
       run: |
@@ -126,9 +126,9 @@ jobs:
           -DBUILD_DEVELOPER_CLIENT=OFF \
           -DBUILD_TESTING=ON
 
-    - name: Build world-tests
+    - name: Build worldgen-tests
       shell: bash
-      run: cmake --build build --target world-tests
+      run: cmake --build build --target worldgen-tests
 
     - name: sccache stats
       shell: bash

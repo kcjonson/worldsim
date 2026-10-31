@@ -132,8 +132,8 @@ namespace {
 			}
 
 			// Distribution from the asset's own placement controls (same as the game).
-			const auto* def = engine::assets::AssetRegistry::Get().getDefinition("Groundcover_Grass");
-			const engine::assets::BiomePlacement* bp = def != nullptr ? def->placement.findBiome(kTuneBiome) : nullptr;
+			const auto* def = assets::AssetRegistry::Get().getDefinition("Groundcover_Grass");
+			const assets::BiomePlacement* bp = def != nullptr ? def->placement.findBiome(kTuneBiome) : nullptr;
 			if (bp == nullptr) {
 				LOG_ERROR(UI, "Groundcover_Grass %s placement config not found", kTuneBiome);
 				return;
@@ -179,7 +179,7 @@ namespace {
 			);
 
 			Renderer::Primitives::setBakedAlpha(1.0F);
-			engine::world::setGroundcoverUniforms(
+			worldview::setGroundcoverUniforms(
 				{.cursorWorld = cursorWorld,
 				 .enabled = 1,
 				 .openness = kGroundcoverOpenness,
@@ -197,7 +197,7 @@ namespace {
 				Renderer::Primitives::drawInstanced(m_handles[v], inst.data(), static_cast<uint32_t>(inst.size()), camera);
 			}
 
-			engine::world::setGroundcoverUniforms({});
+			worldview::setGroundcoverUniforms({});
 
 			if (m_haveMouse) {
 				Renderer::Primitives::drawCircle(
@@ -241,7 +241,7 @@ namespace {
 		// Replicates PlacementExecutor's Clumped distribution: per 1m tile, roll spawnChance;
 		// on success seed a clump of clumpSize tufts scattered within clumpRadius. Dense patches,
 		// bare gaps — all from the asset's controls.
-		void generateInstances(const engine::assets::BiomePlacement& bp) {
+		void generateInstances(const assets::BiomePlacement& bp) {
 			m_instancesByVariant.assign(kVariantCount, {});
 			std::mt19937						  rng(99);
 			std::uniform_real_distribution<float> chanceDist(0.0F, 1.0F);

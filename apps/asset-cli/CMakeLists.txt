@@ -9,16 +9,19 @@ target_include_directories(asset-cli
 
 target_compile_features(asset-cli PRIVATE cxx_std_20)
 
-# assets pulls in renderer + foundation (and GLFW/GLEW/OpenGL) transitively;
-# engine holds the assembled base shader (BaseShader.h, base_shader::source()) this
-# hands Primitives::init. nlohmann_json is for machine-readable output. No UI lib,
+# assets pulls in renderer + foundation transitively; world-view holds the assembled
+# base shader (BaseShader.h, base_shader::source()) this hands Primitives::init, on the
+# hidden GLFW window it opens. nlohmann_json is for machine-readable output. No UI lib,
 # no debug server.
 target_link_libraries(asset-cli
     PRIVATE
         assets
-        engine
+        world-view
         salal::renderer
         salal::foundation
+        OpenGL::GL
+        GLEW::GLEW
+        glfw
         nlohmann_json::nlohmann_json
 )
 

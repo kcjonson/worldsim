@@ -10,7 +10,7 @@ single trunk rect to collide with.
 
 ## The shape
 
-`AssetDefinition::collision` is a `CollisionShape` (`libs/engine/assets/AssetDefinition.h`):
+`AssetDefinition::collision` is a `CollisionShape` (`libs/assets/assets/AssetDefinition.h`):
 
 ```cpp
 enum class CollisionShapeType { None, Rect, Polygon };
@@ -41,7 +41,7 @@ world-AABB fast path.
 
 1. **Procedural (Lua) assets emit it from the generator.** A generator script
    calls `asset:setCollisionRect(halfWidthMeters, halfHeightMeters, centerXMeters,
-   centerYMeters)` (`libs/engine/assets/lua/LuaEngine.cpp`). The trees emit a
+   centerYMeters)` (`libs/assets/assets/lua/LuaEngine.cpp`). The trees emit a
    trunk rect from `trunkWidth`: `asset:setCollisionRect(trunkWidth/2,
    trunkWidth/2, 0, 0)` in the shared `deciduous.lua` / `conifer.lua` /
    `palm.lua`. Coordinates are in the script's `(0,0)`-centered meter frame (see
@@ -72,7 +72,7 @@ world-AABB fast path.
 
 ## Consumers (the collider feeds two systems at the same clearance)
 
-- **Navigation.** `NavInputBuilder` (`libs/engine/nav/`) carves the rect into the
+- **Navigation.** `NavInputBuilder` (`libs/sim/nav/`) carves the rect into the
   viewport-anchored simulation-area navmesh as an obstacle ring, inflated outward
   by the flora pad `kFloraColliderPadMm` (0.05 m) so a routed agent clears the
   trunk. Polygon and rect both transform through the same scale/rotate/translate.

@@ -57,7 +57,7 @@ int main(int argc, char* argv[]) {
 	}
 
 	// BrowserScene reads the registry on entry, so load synchronously.
-	engine::assets::initializeAssetSystem(false);
+	assets::initializeAssetSystem(false);
 
 	asset_manager::addScenes(app->scenes());
 	if (!commandLine.scene || !app->scenes().switchTo(*commandLine.scene)) {

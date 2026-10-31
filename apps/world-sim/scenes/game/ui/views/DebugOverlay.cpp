@@ -28,7 +28,7 @@ namespace world_sim {
 		biome = addChild<ui::Text>({.id = "debug_biome", .style = line, .text = "Biome: Unknown"});
 	}
 
-	void DebugOverlay::updateData(const engine::world::WorldCamera& camera, const engine::world::ChunkManager& chunkManager) {
+	void DebugOverlay::updateData(const world::WorldCamera& camera, const world::ChunkManager& chunkManager) {
 		if (chunks.get() == nullptr) {
 			return;
 		}
@@ -45,7 +45,7 @@ namespace world_sim {
 		);
 		const auto* current = chunkManager.getChunk(chunk);
 		biome.get()->setText(
-			current != nullptr ? "Biome: " + std::string(engine::world::biomeToString(current->primaryBiome())) : "Biome: Loading..."
+			current != nullptr ? "Biome: " + std::string(world::biomeToString(current->primaryBiome())) : "Biome: Loading..."
 		);
 	}
 

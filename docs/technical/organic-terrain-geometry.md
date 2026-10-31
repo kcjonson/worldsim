@@ -27,7 +27,7 @@ Two findings from the code survey shape the whole plan.
 
 ### Rivers already have vector geometry; we throw it away
 
-`RiverNetwork2D` (libs/world/worldgen/sampling/RiverNetwork2D.h) walks the 3D drainage graph
+`RiverNetwork2D` (libs/worldgen/worldgen/sampling/RiverNetwork2D.h) walks the 3D drainage graph
 and emits meandered `Segment { x0,y0,x1,y1, halfWidth0, halfWidth1 }` polylines in world meters,
 with width growing downstream (`w = k * sqrt(flowAccum)`, clamped 0.6 m to 110 m). Those segments
 are gathered per chunk into `ChunkSampleResult::riverSegments` and retained on the chunk via
@@ -62,7 +62,7 @@ immediate neighbors only, so a boundary can never curve with a radius bigger tha
 
 The Tier 2 navmesh is a constrained Delaunay triangulation over vector obstacle polygons
 (pathfinding-architecture.md: "no rasterization anywhere", "vector, not tile/grid").
-`extractWaterObstacles` (libs/engine/nav/NavInputBuilder.cpp) runs marching squares over
+`extractWaterObstacles` (libs/sim/nav/NavInputBuilder.cpp) runs marching squares over
 `TileData::surface`, simplifies each loop with a 0.5 m epsilon, drops loops under a quarter
 tile, and hands the polygons to the CDT as not-walkable. Water is never collided against; it is
 simply not a face. `isValidPosition` is `isOnMesh`, the funnel shrinks by agent radius, Tier 3
@@ -347,7 +347,7 @@ data spawns chunk data, the nav mesh answers runtime validity, and now the polyg
 single thing both the mesh and the picture derive from.
 
 Consequence for the module layout: the contour/ribbon extraction must live somewhere both
-`libs/engine/world/chunk` (post-processing, vision inputs) and `libs/engine/nav` can depend on
+`libs/world/world/chunk` (post-processing, vision inputs) and `libs/sim/nav` can depend on
 without a cycle, and the renderer reads its output from the chunk rather than recomputing.
 The polygon set is chunk state, versioned like `m_renderDataVersion`, rebuilt when tiles or
 river segments change.
@@ -363,7 +363,7 @@ biome blend).
 ## Open questions to settle before implementation
 
 - **Module placement.** Decided that polygons are the truth (above). Still open: where the
-  extractor lives (libs/geometry has the ring simplifier; libs/engine/world/chunk has the tile
+  extractor lives (libs/geometry has the ring simplifier; libs/world/world/chunk has the tile
   data and river segments; nav must consume without a dependency cycle), and how the biome
   water polygon and the river ribbon polygon union where a river meets a lake (a polygon
   boolean in libs/geometry, or the ribbon end cap simply drawn and meshed under the lake).

@@ -370,7 +370,7 @@ Not code — engine touch-points are named so the work is concrete.
 ### 1. (tier, score) key and comparison
 
 - Add `tier: int` and `score: float` fields to `EvaluatedOption` (in
-  `libs/engine/ecs/components/DecisionTrace.h`), replacing the single `calculatePriority()`
+  `libs/sim/ecs/components/DecisionTrace.h`), replacing the single `calculatePriority()`
   float return with a comparable key type.
 - Replace the `std::sort` comparator in `AIDecisionSystem::buildDecisionTrace` with the
   lexicographic (tier asc, score desc, tiebreakId asc) comparison.

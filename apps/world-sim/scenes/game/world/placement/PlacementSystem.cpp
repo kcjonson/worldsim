@@ -71,7 +71,7 @@ namespace world_sim {
 				}
 
 				// Get innate recipes for the build menu
-				auto& recipeRegistry = engine::assets::RecipeRegistry::Get();
+				auto& recipeRegistry = assets::RecipeRegistry::Get();
 				auto  innateRecipes = recipeRegistry.getInnateRecipes();
 
 				std::vector<BuildMenuItem> items;
@@ -203,7 +203,7 @@ namespace world_sim {
 		ecsWorld->addComponent<ecs::Appearance>(entity, ecs::Appearance{defName, 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
 
 		// Check if this is a crafting station or storage container
-		auto&		assetRegistry = engine::assets::AssetRegistry::Get();
+		auto&		assetRegistry = assets::AssetRegistry::Get();
 		const auto* assetDef = assetRegistry.getDefinition(defName);
 
 		if (assetDef != nullptr && assetDef->capabilities.craftable.has_value()) {
@@ -259,7 +259,7 @@ namespace world_sim {
 				std::mt19937   rng(seed);
 				std::uniform_int_distribution<uint32_t> dist(harv.totalResourceMin, harv.totalResourceMax);
 				const uint32_t initialCount = dist(rng);
-				const auto	   coord = engine::world::worldToChunk({worldPos.x, worldPos.y});
+				const auto	   coord = world::worldToChunk({worldPos.x, worldPos.y});
 				placementExecutor->initResourceCount(coord, {worldPos.x, worldPos.y}, defName, initialCount);
 			}
 		}

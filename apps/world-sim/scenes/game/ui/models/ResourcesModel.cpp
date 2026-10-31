@@ -2,7 +2,7 @@
 
 namespace world_sim {
 
-bool ResourcesModel::refresh(ecs::World& world, const engine::assets::AssetRegistry& registry, float deltaTime) {
+bool ResourcesModel::refresh(ecs::World& world, const assets::AssetRegistry& registry, float deltaTime) {
 	timeSinceRefresh += deltaTime;
 	if (!isFirstRefresh && timeSinceRefresh < kRefreshInterval) {
 		return false;

@@ -2,8 +2,8 @@
 
 #include "PlanetTileColor.h"
 
-#include <world/worldgen/data/GeneratedWorld.h>
-#include <world/worldgen/grid/SphereGrid.h>
+#include <worldgen/data/GeneratedWorld.h>
+#include <worldgen/grid/SphereGrid.h>
 
 #include <threading/TaskPool.h>
 

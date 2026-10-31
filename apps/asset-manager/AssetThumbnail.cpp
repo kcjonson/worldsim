@@ -95,7 +95,7 @@ namespace asset_manager {
 		auto& cache = meshCache();
 		auto  it = cache.find(key);
 		if (it == cache.end()) {
-			engine::assets::PreparedAsset prepared = engine::assets::prepareAsset(defName, targetRect, seed);
+			assets::PreparedAsset		  prepared = assets::prepareAsset(defName, targetRect, seed);
 			CachedMesh					  entry;
 			entry.mesh = std::move(prepared.mesh);
 			entry.sourceBounds = prepared.sourceBounds;
@@ -144,15 +144,15 @@ namespace asset_manager {
 			// Animate: if this asset declares a motion, sweep its first clip's phase over time and
 			// deform the part vertex ranges in the fitted preview space, so the preview shows the
 			// walk cycle in motion. Assets without a motion (the vast majority) skip this entirely.
-			const auto* motion = animated && !mesh->parts.empty() ? engine::assets::AssetRegistry::Get().getMotion(defName) : nullptr;
+			const auto*				motion = animated && !mesh->parts.empty() ? assets::AssetRegistry::Get().getMotion(defName) : nullptr;
 			const Foundation::Rect& src = sourceBounds;
 			const Foundation::Rect& dst = targetRect;
 			if (motion != nullptr && src.width > 0.0F && src.height > 0.0F) {
-				const engine::assets::MotionClip* walk = motion->findClip("walk");
-				const engine::assets::MotionClip* clip = (walk != nullptr) ? walk : &motion->clips.front();
+				const assets::MotionClip* walk = motion->findClip("walk");
+				const assets::MotionClip* clip = (walk != nullptr) ? walk : &motion->clips.front();
 				if (!clip->drivers.empty()) {
-					std::unordered_map<std::string, engine::assets::PartTransform> xforms;
-					engine::assets::evaluateClip(*clip, sweepPhase(), xforms);
+					std::unordered_map<std::string, assets::PartTransform> xforms;
+					assets::evaluateClip(*clip, sweepPhase(), xforms);
 					const float		s = std::min(dst.width / src.width, dst.height / src.height);
 					const glm::vec2 srcC{src.x + (src.width * 0.5F), src.y + (src.height * 0.5F)};
 					const glm::vec2 dstC{dst.x + (dst.width * 0.5F), dst.y + (dst.height * 0.5F)};
@@ -166,7 +166,7 @@ namespace asset_manager {
 						}
 						// Convert pivot + translate from meter space into the fitted preview space
 						// (rotation and scale are scale-invariant).
-						engine::assets::PartTransform pt = it->second;
+						assets::PartTransform pt = it->second;
 						pt.pivot = {dstC.x + ((pt.pivot.x - srcC.x) * s), dstC.y + ((pt.pivot.y - srcC.y) * s)};
 						pt.translate = {pt.translate.x * s, pt.translate.y * s};
 						const uint32_t end = std::min<uint32_t>(part.vertexStart + part.vertexCount, static_cast<uint32_t>(verts.size()));
@@ -206,7 +206,7 @@ namespace asset_manager {
 	// The asset's collision shape over the art, re-resolved from the name each frame, since a reload
 	// clears the registry and a stored definition would dangle.
 	void AssetThumbnail::drawCollider() {
-		const engine::assets::AssetDefinition* def = engine::assets::AssetRegistry::Get().getDefinition(defName);
+		const assets::AssetDefinition* def = assets::AssetRegistry::Get().getDefinition(defName);
 		if (def == nullptr) {
 			return;
 		}
@@ -230,7 +230,7 @@ namespace asset_manager {
 		// in SVG <metadata>, converted to the bbox-centred frame (relative to the entity origin);
 		// procedural colliders are in the generator's mesh-coord frame.
 		std::vector<glm::vec2> points;
-		if (def->collision.type == engine::assets::CollisionShapeType::Rect) {
+		if (def->collision.type == assets::CollisionShapeType::Rect) {
 			const std::array<glm::vec2, 4> corners = def->collision.rectCornersLocal();
 			points.assign(corners.begin(), corners.end());
 		} else {
@@ -239,7 +239,7 @@ namespace asset_manager {
 		if (points.size() < 2) {
 			return;
 		}
-		const bool				centered = def->assetType == engine::assets::AssetType::Simple;
+		const bool				centered = def->assetType == assets::AssetType::Simple;
 		const Foundation::Color outline{0.0F, 1.0F, 1.0F, opacity()}; // bright cyan, high contrast on art
 		for (std::size_t i = 0; i < points.size(); ++i) {
 			const glm::vec2& a = points[i];

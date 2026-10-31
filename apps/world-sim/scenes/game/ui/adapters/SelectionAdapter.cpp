@@ -75,9 +75,9 @@ namespace world_sim {
 	std::optional<PanelContent> adaptSelection(
 		const Selection&							   selection,
 		const ecs::World&							   world,
-		const engine::assets::AssetRegistry&		   registry,
+		const assets::AssetRegistry&		   registry,
 		const ResourceQueryCallback&				   queryResources,
-		const engine::construction::ConstructionWorld* constructionWorld,
+		const construction::ConstructionWorld* constructionWorld,
 		const std::function<void()>&				   onDemolish,
 		const std::function<void()>&				   onDemolishWallSegment,
 		const std::function<void()>&				   onDemolishOpening
@@ -217,7 +217,7 @@ namespace world_sim {
 				data.backpack.push_back(std::move(line));
 			}
 
-			data.carriedKg = ecs::carriedCargoMassKg(*inventory, engine::assets::AssetRegistry::Get());
+			data.carriedKg = ecs::carriedCargoMassKg(*inventory, assets::AssetRegistry::Get());
 			data.capacityKg = inventory->carryCapacityKg;
 		} else {
 			data.hands = "(empty)";
@@ -228,7 +228,7 @@ namespace world_sim {
 	}
 
 	PanelContent adaptWorldEntity(
-		const engine::assets::AssetRegistry& registry,
+		const assets::AssetRegistry& registry,
 		const WorldEntitySelection&			 selection,
 		const ResourceQueryCallback&		 queryResources
 	) {
@@ -274,7 +274,7 @@ namespace world_sim {
 	}
 
 	PanelContent adaptFurniture(
-		const engine::assets::AssetRegistry& registry,
+		const assets::AssetRegistry& registry,
 		const FurnitureSelection&			 selection,
 		const std::function<void()>&		 onPlace,
 		const std::function<void()>&		 onMoveFurniture,
@@ -376,7 +376,7 @@ namespace world_sim {
 
 	PanelContent adaptFoundation(
 		const ecs::World&							   world,
-		const engine::construction::ConstructionWorld& constructionWorld,
+		const construction::ConstructionWorld& constructionWorld,
 		const FoundationSelection&					   selection,
 		const FoundationActions&					   actions
 	) {
@@ -384,15 +384,15 @@ namespace world_sim {
 
 		const auto* foundation = constructionWorld.get(selection.id);
 		const std::string material = (foundation != nullptr) ? foundation->material : std::string{"Foundation"};
-		const bool		  isExtension = foundation != nullptr && foundation->mergeTarget != engine::construction::kInvalidFoundation;
+		const bool		  isExtension = foundation != nullptr && foundation->mergeTarget != construction::kInvalidFoundation;
 		content.title = material + (isExtension ? " Foundation Extension" : " Foundation");
 
 		content.slots.push_back(TextSlot{"Material", material});
 		if (isExtension) {
 			content.slots.push_back(TextSlot{"Extends", "Foundation #" + std::to_string(foundation->mergeTarget) + " (merges when built)"});
 		}
-		const engine::construction::FoundationId pendingExtension = constructionWorld.pendingExtensionOf(selection.id);
-		if (pendingExtension != engine::construction::kInvalidFoundation) {
+		const construction::FoundationId pendingExtension = constructionWorld.pendingExtensionOf(selection.id);
+		if (pendingExtension != construction::kInvalidFoundation) {
 			content.slots.push_back(TextSlot{"Extension", "#" + std::to_string(pendingExtension) + " under construction"});
 		}
 
@@ -402,7 +402,7 @@ namespace world_sim {
 		content.slots.push_back(TextSlot{"Area", areaText.str()});
 
 		const bool built =
-			(foundation != nullptr && foundation->state == engine::construction::FoundationState::Built);
+			(foundation != nullptr && foundation->state == construction::FoundationState::Built);
 
 		// Build state + progress (phase, delivered/required materials, work bar) come
 		// from the ECS mirror's blueprint and are only meaningful WHILE BUILDING. A
@@ -424,7 +424,7 @@ namespace world_sim {
 		const bool demolishing = blueprint != nullptr && blueprint->demolishing;
 		const bool editableBlueprint = !built && !isExtension && blueprint != nullptr && blueprint->shapeEditable();
 		const bool canAdd =
-			editableBlueprint || (built && !demolishing && pendingExtension == engine::construction::kInvalidFoundation);
+			editableBlueprint || (built && !demolishing && pendingExtension == construction::kInvalidFoundation);
 		if (canAdd && actions.onAdd) {
 			content.slots.push_back(ActionButtonSlot{.label = "Add", .onClick = actions.onAdd});
 		}
@@ -462,7 +462,7 @@ namespace world_sim {
 
 	PanelContent adaptWallSegment(
 		const ecs::World&								world,
-		const engine::construction::ConstructionWorld& constructionWorld,
+		const construction::ConstructionWorld& constructionWorld,
 		const WallSegmentSelection&						selection,
 		const std::function<void()>&					onDemolish
 	) {
@@ -478,7 +478,7 @@ namespace world_sim {
 		// through the registry (same lookup the band render and hit-test use).
 		if (segment != nullptr) {
 			const auto* preset =
-				engine::assets::ConstructionRegistry::Get().getThicknessPreset(segment->material, segment->thicknessPreset);
+				assets::ConstructionRegistry::Get().getThicknessPreset(segment->material, segment->thicknessPreset);
 			std::ostringstream thicknessText;
 			thicknessText << segment->thicknessPreset;
 			if (preset != nullptr) {
@@ -488,8 +488,8 @@ namespace world_sim {
 		}
 
 		// Length from the segment's two vertices (integer mm -> meters).
-		const engine::construction::Vertex* v0 = (segment != nullptr) ? constructionWorld.getVertex(segment->v0) : nullptr;
-		const engine::construction::Vertex* v1 = (segment != nullptr) ? constructionWorld.getVertex(segment->v1) : nullptr;
+		const construction::Vertex* v0 = (segment != nullptr) ? constructionWorld.getVertex(segment->v0) : nullptr;
+		const construction::Vertex* v1 = (segment != nullptr) ? constructionWorld.getVertex(segment->v1) : nullptr;
 		if (v0 != nullptr && v1 != nullptr) {
 			const double dx = static_cast<double>(v1->pos.x - v0->pos.x);
 			const double dy = static_cast<double>(v1->pos.y - v0->pos.y);
@@ -500,7 +500,7 @@ namespace world_sim {
 		}
 
 		const bool built =
-			(segment != nullptr && segment->state == engine::construction::FoundationState::Built);
+			(segment != nullptr && segment->state == construction::FoundationState::Built);
 
 		// Build state + progress (phase, materials, work bar) are only meaningful WHILE
 		// BUILDING; a finished wall shows none of them (its material, thickness, and
@@ -529,7 +529,7 @@ namespace world_sim {
 
 	PanelContent adaptOpening(
 		const ecs::World&							   world,
-		const engine::construction::ConstructionWorld& constructionWorld,
+		const construction::ConstructionWorld& constructionWorld,
 		const OpeningSelection&						   selection,
 		const std::function<void()>&				   onDemolish
 	) {
@@ -543,14 +543,14 @@ namespace world_sim {
 
 		// Material and pathability come from the type def (the topology stores the
 		// type NAME; resolve the rest through the registry, same as the renderer).
-		const auto*		  type = (opening != nullptr) ? engine::assets::ConstructionRegistry::Get().getOpeningType(opening->type) : nullptr;
+		const auto*		  type = (opening != nullptr) ? assets::ConstructionRegistry::Get().getOpeningType(opening->type) : nullptr;
 		const std::string material = (type != nullptr) ? type->material : (opening != nullptr ? opening->material : std::string{"--"});
 		content.slots.push_back(TextSlot{"Material", material});
 		if (type != nullptr) {
 			content.slots.push_back(TextSlot{"Pathable", type->pathable ? "Yes" : "No"});
 		}
 
-		const bool built = (opening != nullptr && opening->state == engine::construction::FoundationState::Built);
+		const bool built = (opening != nullptr && opening->state == construction::FoundationState::Built);
 
 		// Build state + progress come from the ECS mirror's blueprint, exactly like a
 		// wall: a built opening has no blueprint progress; a blueprint shows phase, a

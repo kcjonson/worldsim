@@ -13,10 +13,10 @@
 #include "scenes/shared/Starfield.h"
 #include <theme/Theme.h>
 
-#include <app/Keys.h>
 #include <application/App.h>
 #include <primitives/Primitives.h>
 #include <theme/Avatar.h>
+#include <theme/Keys.h>
 #include <theme/Panel.h>
 #include <ui/components/Badge.h>
 #include <ui/components/Button.h>
@@ -221,7 +221,7 @@ namespace {
 		}
 
 		void update(const app::FrameContext& frame) override {
-			if (engine::key(frame.input, foundation::Key::Escape).pressed()) {
+			if (theme::key(frame.input, foundation::Key::Escape).pressed()) {
 				goBack();
 			}
 		}

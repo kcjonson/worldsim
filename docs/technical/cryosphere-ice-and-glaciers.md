@@ -35,7 +35,7 @@ here is the permanent baseline.
 
 ---
 
-## Data model (`libs/world/worldgen/data/WorldData.h`)
+## Data model (`libs/worldgen/worldgen/data/WorldData.h`)
 
 Per-tile SoA fields added for the cryosphere (IO format v4, `PlanetIO.cpp`):
 
@@ -219,10 +219,10 @@ sea-ice / snow / ice-sheet-thickness rows.
 
 ## Code
 
-- `libs/world/worldgen/stages/SnowStage.cpp` — permanent snow + sea ice
-- `libs/world/worldgen/stages/GlacierStage.cpp` — PDD mass balance + perfect-plastic
-- `libs/world/worldgen/stages/AtmosphereStage.cpp` — lapse/albedo feedback + land/ocean contrast
-- `libs/world/worldgen/pipeline/PlanetGenerator.cpp` — two-pass runner
+- `libs/worldgen/worldgen/stages/SnowStage.cpp` — permanent snow + sea ice
+- `libs/worldgen/worldgen/stages/GlacierStage.cpp` — PDD mass balance + perfect-plastic
+- `libs/worldgen/worldgen/stages/AtmosphereStage.cpp` — lapse/albedo feedback + land/ocean contrast
+- `libs/worldgen/worldgen/pipeline/PlanetGenerator.cpp` — two-pass runner
 - `libs/planet-view/PlanetTileColor.cpp` — ice/snow rendering + Ice mode
 - See also `docs/technical/planet-view-rendering.md` (globe renderer).
 

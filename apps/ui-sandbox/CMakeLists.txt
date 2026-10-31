@@ -23,13 +23,16 @@ target_compile_features(ui-sandbox PRIVATE cxx_std_20)
 # Link required libraries
 target_link_libraries(ui-sandbox
     PRIVATE
-        engine
+        world-view
         theme
+        salal::app
         salal::renderer
         salal::foundation
         assets
         planet-view
-        world
+        worldgen
+        OpenGL::GL
+        GLEW::GLEW
 )
 
 # Mirror the staged shaders beside the exe on every build (see apps/world-sim/CMakeLists.txt).
@@ -40,7 +43,7 @@ add_custom_target(ui-sandbox-shaders ALL
     COMMENT "Mirroring shaders beside ui-sandbox"
     VERBATIM
 )
-add_dependencies(ui-sandbox-shaders engine-shaders planet-view-shaders)
+add_dependencies(ui-sandbox-shaders world-view-shaders planet-view-shaders)
 add_dependencies(ui-sandbox ui-sandbox-shaders)
 
 # Copy fonts to executable directory

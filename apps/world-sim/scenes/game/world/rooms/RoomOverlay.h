@@ -30,7 +30,7 @@ namespace world_sim {
 	  public:
 		struct Args {
 			ecs::World*					world;
-			engine::world::WorldCamera* camera;
+			world::WorldCamera*			camera;
 			ecs::RoomDetectionSystem*	roomDetection;
 		};
 
@@ -55,7 +55,7 @@ namespace world_sim {
 
 	  private:
 		ecs::World*					ecsWorld = nullptr;
-		engine::world::WorldCamera* camera = nullptr;
+		world::WorldCamera*			camera = nullptr;
 		ecs::RoomDetectionSystem*	roomDetection = nullptr;
 
 		bool		  active = false;

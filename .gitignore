@@ -53,7 +53,7 @@ tests/diffs/
 docs/development-log/plans/
 build-asan/
 
-# Test artifacts (DebugImageExporter output from world-tests)
+# Test artifacts (DebugImageExporter output from worldgen-tests)
 test_debug_*.bmp
 
 # worldgen-cli baseline outputs (untracked build artifacts)

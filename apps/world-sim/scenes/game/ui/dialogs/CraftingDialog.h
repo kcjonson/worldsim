@@ -46,7 +46,7 @@ namespace world_sim {
 		[[nodiscard]] ecs::EntityID getStationId() const { return model.stationId(); }
 
 		// Each frame while open.
-		void update(ecs::World& world, const engine::assets::RecipeRegistry& registry);
+		void update(ecs::World& world, const assets::RecipeRegistry& registry);
 
 	  private:
 		void build(ui::Dialog& shown);

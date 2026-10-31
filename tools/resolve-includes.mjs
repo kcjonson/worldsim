@@ -21,8 +21,8 @@
  * external.
  *
  * Output, in order: an all-files matrix, a production-only matrix (test and
- * bench files excluded, see isTestFile), ambiguous resolutions, includes that
- * cross the documented layering, and the engine -> ui coupling surface.
+ * bench files excluded, see isTestFile), ambiguous resolutions, and includes
+ * that cross the documented layering.
  * Cells are counts of #include lines; self-includes sit on the diagonal.
  *
  * The allowed edges follow the per-library "Depends on" lists in
@@ -36,7 +36,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const LIBS = ["foundation", "geometry", "renderer", "ui", "theme", "world", "planet-view", "game-systems", "app", "engine"];
+const LIBS = ["foundation", "geometry", "renderer", "ui", "theme", "worldgen", "planet-view", "app", "world", "assets", "sim", "world-view"];
 // salal's libraries: the name each goes by here, and its directory under the checkout's libs/.
 const SALAL_LIBS = new Map([
 	["foundation", "foundation"],
@@ -44,21 +44,24 @@ const SALAL_LIBS = new Map([
 	["ui", "ui"],
 	["app", "app"],
 ]);
-const LIBS_ORDER = [...LIBS, "engine(assets)", "external"];
+const LIBS_ORDER = [...LIBS, "external"];
 const SOURCE_EXTS = [".h", ".hpp", ".cpp", ".cc", ".inl"];
 const INC = /^\s*#\s*include\s*([<"])([^>"]+)[>"]/;
 
-// What each library may include. engine and engine(assets) have no entry: they may include anything.
+// What each library may include. world and sim are the simulation side: neither may include renderer or ui.
 const ALLOWED = {
 	foundation: new Set(["foundation", "external"]),
 	geometry: new Set(["geometry", "foundation", "external"]),
 	renderer: new Set(["renderer", "foundation", "external"]),
 	ui: new Set(["ui", "renderer", "foundation", "external"]),
 	theme: new Set(["theme", "ui", "renderer", "foundation", "external"]),
-	world: new Set(["world", "renderer", "foundation", "external"]),
-	"planet-view": new Set(["planet-view", "world", "renderer", "foundation", "external"]),
-	"game-systems": new Set(["game-systems", "world", "renderer", "foundation", "external"]),
+	worldgen: new Set(["worldgen", "foundation", "external"]),
+	"planet-view": new Set(["planet-view", "worldgen", "renderer", "foundation", "external"]),
 	app: new Set(["app", "ui", "renderer", "foundation", "external"]),
+	world: new Set(["world", "worldgen", "geometry", "foundation", "external"]),
+	assets: new Set(["assets", "world", "worldgen", "geometry", "renderer", "foundation", "external"]),
+	sim: new Set(["sim", "assets", "world", "worldgen", "geometry", "foundation", "external"]),
+	"world-view": new Set(["world-view", "sim", "assets", "world", "worldgen", "geometry", "renderer", "foundation", "external"]),
 };
 
 const USAGE = "usage: node tools/resolve-includes.mjs [-h] [--root ROOT] [--salal DIR]";
@@ -83,12 +86,14 @@ function includeRoots(dirs, root) {
 		dirs.get("renderer"),
 		dirs.get("ui"),
 		dirs.get("theme"),
-		dirs.get("world"),
+		dirs.get("worldgen"),
 		dirs.get("planet-view"),
 		join(root, "libs"), // planet-view exports libs/ so "planet-view/X.h" works
-		dirs.get("game-systems"),
 		dirs.get("app"),
-		dirs.get("engine"), // also covers "assets/X.h" -> libs/engine/assets/X.h
+		dirs.get("world"),
+		dirs.get("assets"),
+		dirs.get("sim"),
+		dirs.get("world-view"),
 	];
 }
 
@@ -123,9 +128,7 @@ function isUnder(dir, p) {
 
 function libOf(dirs, p) {
 	for (const [lib, dir] of dirs) {
-		if (!isUnder(dir, p)) continue;
-		if (lib === "engine" && isUnder(join(dir, "assets"), p)) return "engine(assets)";
-		return lib;
+		if (isUnder(dir, p)) return lib;
 	}
 	return "external";
 }
@@ -135,7 +138,7 @@ function displayPath(root, salal, p) {
 	return isUnder(salal, p) ? "salal/" + slashes(relative(salal, p)) : slashes(relative(root, p));
 }
 
-// Test and bench sources (*.test.cpp, *.test.h, *.bench.cpp) plus the two engine test-support headers.
+// Test and bench sources (*.test.cpp, *.test.h, *.bench.cpp) plus world's two test-support headers.
 function isTestFile(p) {
 	const name = basename(p);
 	return name.includes(".test.") || name.includes(".bench.") || name.endsWith("TestWorld.h") || name.endsWith("TestSupport.h");
@@ -256,7 +259,7 @@ const COL = Math.max(...LIBS_ORDER.map((c) => c.length)) + 1;
 function printMatrix(out, m, title) {
 	out.push("", `=== ${title} ===`);
 	out.push("src\\dst".padEnd(16) + LIBS_ORDER.map((c) => c.padStart(COL)).join(""));
-	for (const s of [...LIBS, "engine(assets)"]) {
+	for (const s of LIBS) {
 		const row = m.get(s);
 		if (!row) continue;
 		out.push(s.padEnd(16) + LIBS_ORDER.map((c) => String(row.get(c) ?? 0).padStart(COL)).join(""));
@@ -269,10 +272,6 @@ function spelled(r) {
 
 function byFileLine(a, b) {
 	return byName(a.rel, b.rel) || a.line - b.line;
-}
-
-function byCountDesc(a, b) {
-	return b[1] - a[1] || byName(a[0], b[0]);
 }
 
 function fail(msg) {
@@ -339,22 +338,6 @@ function main() {
 		out.push("", `-- ${s}: ${v.length} violating include(s)`);
 		for (const r of v) out.push(`  ${r.rel}:${r.line}  ${spelled(r)}  -> ${r.resolved} [${r.dst}]`);
 	}
-
-	out.push("", "=== ENGINE -> UI includes (allowed; coupling surface) ===");
-	const eu = rows.filter((r) => (r.srclib === "engine" || r.srclib === "engine(assets)") && r.dst === "ui");
-	const byHdr = new Map();
-	const byDir = new Map();
-	for (const r of eu) {
-		tally(byHdr, r.resolved);
-		tally(byDir, r.rel.split("/").slice(0, 3).join("/"));
-	}
-	out.push(`total engine->ui include lines: ${eu.length} across ${new Set(eu.map((r) => r.rel)).size} engine files`);
-	out.push("", "by engine subdir:");
-	for (const [d, c] of [...byDir].sort(byCountDesc)) out.push(`  ${d.padEnd(45)} ${c}`);
-	out.push("", "by ui header (which ui headers engine pulls in):");
-	for (const [h, c] of [...byHdr].sort(byCountDesc)) out.push(`  ${h.padEnd(50)} ${c}`);
-	out.push("", "engine files that include ui (file:line -> header):");
-	for (const r of [...eu].sort(byFileLine)) out.push(`  ${r.rel}:${r.line} -> ${r.resolved}`);
 
 	process.stdout.write(out.join("\n") + "\n");
 }

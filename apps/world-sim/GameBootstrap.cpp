@@ -17,28 +17,28 @@ namespace world_sim {
 		// Resource path of the surface's SVG pattern. Sand, Rock, Water, Snow and Mud ship none (see
 		// docs/technical/ground-textures.md) and get "", which the builder takes as no pattern; for any
 		// other surface it warns when the file is missing.
-		std::string surfacePatternPath(engine::world::Surface surface) {
+		std::string surfacePatternPath(world::Surface surface) {
 			switch (surface) {
-				case engine::world::Surface::Sand:
-				case engine::world::Surface::Rock:
-				case engine::world::Surface::Water:
-				case engine::world::Surface::Snow:
-				case engine::world::Surface::Mud:
+				case world::Surface::Sand:
+				case world::Surface::Rock:
+				case world::Surface::Water:
+				case world::Surface::Snow:
+				case world::Surface::Mud:
 					return {};
 				default:
-					return "assets/tiles/surfaces/" + engine::world::surfaceToString(surface) + "/pattern.svg";
+					return "assets/tiles/surfaces/" + world::surfaceToString(surface) + "/pattern.svg";
 			}
 		}
 
 		// Bootstrap a default tile atlas (solid colors per surface) to exercise tile mode.
 		void initializeTileAtlas() {
-			constexpr int kSurfaceCount = static_cast<int>(engine::world::Surface::Count);
+			constexpr int kSurfaceCount = static_cast<int>(world::Surface::Count);
 
 			g_tileAtlasBuilder = std::make_unique<Renderer::TileAtlasBuilder>();
 			auto rects = g_tileAtlasBuilder->buildForSurfaces(
 				kSurfaceCount,
-				[](int surfaceId) { return surfacePatternPath(static_cast<engine::world::Surface>(surfaceId)); },
-				[](int surfaceId) { return engine::world::Chunk::getSurfaceColor(static_cast<engine::world::Surface>(surfaceId)); }
+				[](int surfaceId) { return surfacePatternPath(static_cast<world::Surface>(surfaceId)); },
+				[](int surfaceId) { return world::Chunk::getSurfaceColor(static_cast<world::Surface>(surfaceId)); }
 			);
 
 			if (!rects.empty()) {
@@ -54,7 +54,7 @@ namespace world_sim {
 		initializeTileAtlas();
 		// Async only on the normal splash path; a --scene override loads synchronously so
 		// the jumped-to scene has assets ready before its onEnter.
-		engine::assets::initializeAssetSystem(!hasSceneArg);
+		assets::initializeAssetSystem(!hasSceneArg);
 	}
 
 	void shutdownResources() {

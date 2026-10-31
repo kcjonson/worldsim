@@ -3,11 +3,11 @@
 // Press 'C' to toggle clipping for performance comparison
 
 #include "SceneTypes.h"
-#include <app/Keys.h>
 #include <graphics/Color.h>
 #include <graphics/Rect.h>
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
+#include <theme/Keys.h>
 #include <utils/Log.h>
 #include <vector/Tessellator.h>
 #include <vector/Types.h>
@@ -48,7 +48,7 @@ constexpr const char* kSceneName = "vector-perf";
 		void update(const app::FrameContext& frame) override {
 			const auto dt = static_cast<float>(frame.dt);
 			// Toggle clipping with 'C' key
-			if (engine::key(frame.input, foundation::Key::C).pressed()) {
+			if (theme::key(frame.input, foundation::Key::C).pressed()) {
 				clippingEnabled = !clippingEnabled;
 				LOG_INFO(UI, "Clipping %s", clippingEnabled ? "ENABLED" : "DISABLED");
 			}

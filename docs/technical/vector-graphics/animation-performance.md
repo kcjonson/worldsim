@@ -152,7 +152,7 @@ arguments and its block, not the instance attributes, so the phase comes from th
 instance's position.
 
 ```glsl
-// libs/engine/world/rendering/hooks/wind.vert.glsl
+// libs/world-view/world/rendering/hooks/wind.vert.glsl
 layout(std140) uniform WindUniforms {
     float time;
     float strength;
@@ -253,7 +253,7 @@ void renderFlora(const std::vector<FloraInstance>& instances) {
 | File | Changes |
 |------|---------|
 | `libs/renderer/primitives/BatchRenderer.h/cpp` | Instanced rendering |
-| `libs/engine/world/rendering/hooks/wind.vert.glsl` | Wind animation, a base shader hook with a std140 block |
+| `libs/world-view/world/rendering/hooks/wind.vert.glsl` | Wind animation, a base shader hook with a std140 block |
 | `apps/ui-sandbox/scenes/GrassInstancedScene.cpp` | New demo |
 
 ### Phase 3 (Tiered System)

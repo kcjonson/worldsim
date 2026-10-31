@@ -122,7 +122,7 @@ Designed in the React prototype (`docs/ui-prototype`), in-game HUD:
 
 ## Relationship to current code
 
-Implemented today (`libs/engine`):
+Implemented today (`libs/sim`, `libs/assets`):
 - `handsRequired` on item assets (1 or 2; the pocket = 0 tier is documented in
   [Entity Capabilities](../world/entity-capabilities.md) but not yet used).
 - `Inventory` with left hand, right hand, and a backpack map; two-hand items can't

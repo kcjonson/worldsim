@@ -31,9 +31,9 @@ using ResourceQueryCallback = std::function<std::optional<uint32_t>(const std::s
 [[nodiscard]] std::optional<PanelContent> adaptSelection(
 	const Selection&							   selection,
 	const ecs::World&							   world,
-	const engine::assets::AssetRegistry&		   registry,
+	const assets::AssetRegistry&		   registry,
 	const ResourceQueryCallback&				   queryResources = {},
-	const engine::construction::ConstructionWorld* constructionWorld = nullptr,
+	const construction::ConstructionWorld* constructionWorld = nullptr,
 	const std::function<void()>&				   onDemolish = {},
 	const std::function<void()>&				   onDemolishWallSegment = {},
 	const std::function<void()>&				   onDemolishOpening = {}
@@ -48,7 +48,7 @@ using ResourceQueryCallback = std::function<std::optional<uint32_t>(const std::s
 /// Convert world entity data into panel content
 /// @param queryResources Optional callback to query remaining resource count
 [[nodiscard]] PanelContent adaptWorldEntity(
-	const engine::assets::AssetRegistry& registry,
+	const assets::AssetRegistry& registry,
 	const WorldEntitySelection& selection,
 	const ResourceQueryCallback& queryResources = {}
 );
@@ -60,7 +60,7 @@ using ResourceQueryCallback = std::function<std::optional<uint32_t>(const std::s
 /// @param onMoveFurniture Callback for moving (re-packaging + relocating) placed furniture
 /// @param onConfigure Callback for opening storage configuration dialog
 [[nodiscard]] PanelContent adaptFurniture(
-	const engine::assets::AssetRegistry& registry,
+	const assets::AssetRegistry& registry,
 	const FurnitureSelection& selection,
 	const std::function<void()>& onPlace = {},
 	const std::function<void()>& onMoveFurniture = {},
@@ -90,7 +90,7 @@ struct FoundationActions {
 /// @param actions Button callbacks (null callbacks drop their button).
 [[nodiscard]] PanelContent adaptFoundation(
 	const ecs::World&							   world,
-	const engine::construction::ConstructionWorld& constructionWorld,
+	const construction::ConstructionWorld& constructionWorld,
 	const FoundationSelection&					   selection,
 	const FoundationActions&					   actions
 );
@@ -107,7 +107,7 @@ struct FoundationActions {
 /// @param onDemolish Callback for the Demolish button (nullable).
 [[nodiscard]] PanelContent adaptWallSegment(
 	const ecs::World& world,
-	const engine::construction::ConstructionWorld& constructionWorld,
+	const construction::ConstructionWorld& constructionWorld,
 	const WallSegmentSelection& selection,
 	const std::function<void()>& onDemolish = {}
 );
@@ -123,7 +123,7 @@ struct FoundationActions {
 /// @param onDemolish Callback for the Demolish button (nullable).
 [[nodiscard]] PanelContent adaptOpening(
 	const ecs::World&							   world,
-	const engine::construction::ConstructionWorld& constructionWorld,
+	const construction::ConstructionWorld& constructionWorld,
 	const OpeningSelection&						   selection,
 	const std::function<void()>&				   onDemolish = {}
 );

@@ -16,7 +16,7 @@ namespace world_sim {
 namespace {
 	// Display label for a material defName (asset label, else the raw defName).
 	std::string materialLabel(const std::string& defName) {
-		const auto* def = engine::assets::AssetRegistry::Get().getDefinition(defName);
+		const auto* def = assets::AssetRegistry::Get().getDefinition(defName);
 		if (def != nullptr && !def->label.empty()) {
 			return def->label;
 		}
@@ -25,7 +25,7 @@ namespace {
 } // namespace
 
 std::unordered_set<uint32_t> collectMemorySources(ecs::World& world) {
-	auto&						 registry = engine::assets::AssetRegistry::Get();
+	auto&						 registry = assets::AssetRegistry::Get();
 	std::unordered_set<uint32_t> obtainable;
 
 	// Known sources in any colonist's Memory: a discovered loose carryable of a type, or a
@@ -34,13 +34,13 @@ std::unordered_set<uint32_t> collectMemorySources(ecs::World& world) {
 	// across all colonists is what the colony "knows".
 	for (auto [entity, memory] : world.view<ecs::Memory>()) {
 		(void)entity;
-		for (uint64_t key : memory.getEntitiesWithCapability(engine::assets::CapabilityType::Carryable)) {
+		for (uint64_t key : memory.getEntitiesWithCapability(assets::CapabilityType::Carryable)) {
 			auto it = memory.knownWorldEntities.find(key);
 			if (it != memory.knownWorldEntities.end()) {
 				obtainable.insert(it->second.defNameId);
 			}
 		}
-		for (uint64_t key : memory.getEntitiesWithCapability(engine::assets::CapabilityType::Harvestable)) {
+		for (uint64_t key : memory.getEntitiesWithCapability(assets::CapabilityType::Harvestable)) {
 			auto it = memory.knownWorldEntities.find(key);
 			if (it == memory.knownWorldEntities.end()) {
 				continue;
@@ -62,7 +62,7 @@ std::unordered_set<uint32_t> collectMemorySources(ecs::World& world) {
 std::unordered_set<uint32_t> collectInventorySources(
 	ecs::World& world, const std::function<bool(ecs::EntityID, const ecs::Inventory&)>& accept
 ) {
-	auto&						 registry = engine::assets::AssetRegistry::Get();
+	auto&						 registry = assets::AssetRegistry::Get();
 	std::unordered_set<uint32_t> obtainable;
 
 	// Already-held stock: items in any inventory (storage or colonist backpack), plus items
@@ -105,7 +105,7 @@ std::unordered_set<uint32_t> collectObtainableMaterials(ecs::World& world) {
 }
 
 bool isStorageSourceKnown(ecs::World& world, ecs::EntityID destBox, const std::string& itemDefName) {
-	auto&		   registry = engine::assets::AssetRegistry::Get();
+	auto&		   registry = assets::AssetRegistry::Get();
 	const uint32_t itemId = registry.getDefNameId(itemDefName);
 	if (itemId == 0) {
 		return false;
@@ -124,7 +124,7 @@ bool isStorageSourceKnown(ecs::World& world, ecs::EntityID destBox, const std::s
 	if (itemDef == nullptr) {
 		return false;
 	}
-	const engine::assets::ItemCategory category = itemDef->category;
+	const assets::ItemCategory category = itemDef->category;
 
 	const auto* destConfig = world.getComponent<ecs::StorageConfiguration>(destBox);
 	if (destConfig == nullptr) {
@@ -161,12 +161,12 @@ bool isStorageSourceKnown(ecs::World& world, ecs::EntityID destBox, const std::s
 }
 
 bool isMaterialObtainable(const std::unordered_set<uint32_t>& obtainable, const std::string& itemDefName) {
-	const uint32_t id = engine::assets::AssetRegistry::Get().getDefNameId(itemDefName);
+	const uint32_t id = assets::AssetRegistry::Get().getDefNameId(itemDefName);
 	return id != 0 && obtainable.count(id) > 0;
 }
 
 std::vector<std::string> unobtainableInputs(
-	const std::unordered_set<uint32_t>& obtainable, const engine::assets::RecipeDef& recipe
+	const std::unordered_set<uint32_t>& obtainable, const assets::RecipeDef& recipe
 ) {
 	std::vector<std::string> missing;
 	for (const auto& input : recipe.inputs) {
@@ -243,7 +243,7 @@ PanelContent adaptCraftingStatus(ecs::World& world, ecs::EntityID entityId, cons
 	// Without this the order silently sits at 0/N while colonists wander, since they only act
 	// on materials they've discovered.
 	if (const auto* currentJob = workQueue->getNextJob(); currentJob != nullptr) {
-		const auto* recipe = engine::assets::RecipeRegistry::Get().getRecipe(currentJob->recipeDefName);
+		const auto* recipe = assets::RecipeRegistry::Get().getRecipe(currentJob->recipeDefName);
 		if (recipe != nullptr) {
 			const auto missing = unobtainableInputs(collectObtainableMaterials(world), *recipe);
 			if (!missing.empty()) {

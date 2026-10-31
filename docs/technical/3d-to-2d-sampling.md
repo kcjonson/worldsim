@@ -837,7 +837,7 @@ void ProfileChunkSampling() {
 ## Historical addendum: implemented spherical lookup (2026-06-12)
 
 The `SphericalTileIndex` / `FindClosestNeighbor` / quadtree design above was an
-early sketch. What shipped in `libs/world/worldgen/sampling/PlanetSampler.cpp` is:
+early sketch. What shipped in `libs/worldgen/worldgen/sampling/PlanetSampler.cpp` is:
 
 ```
 SphereGrid::HexSample s = grid.locateHex(latDeg, lonDeg);

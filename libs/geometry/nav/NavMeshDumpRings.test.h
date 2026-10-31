@@ -4,7 +4,7 @@
 // Each function returns one NavMeshInput's polygons exactly as
 // NavInputBuilder::buildInput handed them to buildNavMesh, in the same order:
 // the region border, then water, then tree colliders. World millimetres;
-// provenance ids match engine::nav: water=-1, tree=-2, border=-3.
+// provenance ids match nav: water=-1, tree=-2, border=-3.
 //
 //   streamingPinchDump  navinput_5_r0, the region centred at (5330, 4200) mm with a
 //                       64 m half-extent, built while chunks (0,-1) and (-1,0) were

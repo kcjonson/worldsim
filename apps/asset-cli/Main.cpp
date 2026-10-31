@@ -31,11 +31,11 @@
 #include <string>
 #include <vector>
 
-using engine::assets::AssetDefinition;
-using engine::assets::AssetRegistry;
-using engine::assets::AssetType;
-using engine::assets::Severity;
-using engine::assets::ValidationReport;
+using assets::AssetDefinition;
+using assets::AssetRegistry;
+using assets::AssetType;
+using assets::Severity;
+using assets::ValidationReport;
 using json = nlohmann::json;
 
 namespace {
@@ -431,14 +431,14 @@ namespace {
 
 		bool ok = true;
 		if (samples <= 1) {
-			ok = engine::assets::renderToPng(*defName, *out, w, h, bg, seed);
+			ok = assets::renderToPng(*defName, *out, w, h, bg, seed);
 			if (ok) {
 				std::cout << "wrote " << *out << "\n";
 			}
 		} else {
 			for (int i = 0; i < samples; ++i) {
 				const std::string path = insertSuffix(*out, i);
-				if (engine::assets::renderToPng(*defName, path, w, h, bg, seed + static_cast<uint32_t>(i))) {
+				if (assets::renderToPng(*defName, path, w, h, bg, seed + static_cast<uint32_t>(i))) {
 					std::cout << "wrote " << path << "\n";
 				} else {
 					ok = false;

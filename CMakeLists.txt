@@ -86,15 +86,15 @@ add_subdirectory(libs/geometry)
 
 # Feature layers
 add_subdirectory(libs/theme)
-add_subdirectory(libs/world)
+add_subdirectory(libs/worldgen)
 add_subdirectory(libs/planet-view)
-add_subdirectory(libs/game-systems)
 
-# Engine layer
-add_subdirectory(libs/engine)
-
-# Asset system (depends on foundation, renderer)
-add_subdirectory(libs/engine/assets)
+# The game: the world, its assets, the simulation over them, and the world's rendering.
+# sim and world link neither renderer nor ui; world-view is the side that draws.
+add_subdirectory(libs/world)
+add_subdirectory(libs/assets)
+add_subdirectory(libs/sim)
+add_subdirectory(libs/world-view)
 
 # Applications
 add_subdirectory(apps/world-sim)
@@ -149,8 +149,8 @@ add_dependencies(world-sim font-atlas)
 add_dependencies(ui-sandbox font-atlas)
 add_dependencies(asset-manager font-atlas)
 # FontAtlases.test.cpp loads the atlases from fonts/: the PNGs aren't tracked, and the JSON is the current tool's
-if(TARGET engine-tests)
-    add_dependencies(engine-tests font-atlas)
+if(TARGET theme-tests)
+    add_dependencies(theme-tests font-atlas)
 endif()
 
 # Quickstart planet — the prebuilt planet that ships with the game. Players never

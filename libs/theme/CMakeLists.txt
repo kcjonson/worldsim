@@ -37,6 +37,9 @@ if(BUILD_TESTING)
                 GTest::gtest
                 GTest::gtest_main
         )
+        # FontAtlases.test.cpp starts the renderer on the null backend, which takes a base
+        # shader; the hooks don't matter there, so it gets salal's plain one.
+        salal_base_shader(theme-tests)
         add_test(NAME theme-tests COMMAND theme-tests)
     endif()
 endif()

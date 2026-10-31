@@ -73,7 +73,7 @@ same option, and loops — the "stuck harvesting beside a tree" and "infinite ha
 ## 4. The `giveItemToColonist` cascade
 
 Crafted output (and, by intent, every item handed to a colonist) routes through a canonical
-`giveItemToColonist` in `libs/engine/ecs/InventoryMass.h`: empty hand, then belt slot, then
+`giveItemToColonist` in `libs/sim/ecs/InventoryMass.h`: empty hand, then belt slot, then
 backpack, then ground drop, weight-respecting at every step. Overflow drops a loose pile at the
 colonist. This replaced a path that force-added output to the backpack, skipping hands and belt and
 ignoring carry weight. The ground-drop leg is the natural consumer of `findValidPositionNear` (see

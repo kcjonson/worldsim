@@ -196,7 +196,7 @@ void HandleEvent(EventType type, void* data) {
 - Helper macros
 
 ### ECS System
-**Location**: `libs/engine/ecs/`
+**Location**: `libs/sim/ecs/`
 - Component type identification
 - System registration by name
 - Entity queries by component name

@@ -62,7 +62,7 @@ using QueueRecipeCallback = std::function<void(const std::string& recipeDefName,
 
 /// Recipe input defNames not present in the obtainable set (empty = all sourced).
 [[nodiscard]] std::vector<std::string> unobtainableInputs(
-	const std::unordered_set<uint32_t>& obtainable, const engine::assets::RecipeDef& recipe
+	const std::unordered_set<uint32_t>& obtainable, const assets::RecipeDef& recipe
 );
 
 /// Adapt crafting station status to panel content

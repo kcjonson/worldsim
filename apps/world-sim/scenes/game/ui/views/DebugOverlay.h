@@ -16,7 +16,7 @@ namespace world_sim {
 			UI_COMMON_ARGS
 		};
 
-		void updateData(const engine::world::WorldCamera& camera, const engine::world::ChunkManager& chunkManager);
+		void updateData(const world::WorldCamera& camera, const world::ChunkManager& chunkManager);
 
 		[[nodiscard]] const char* typeName() const override { return "DebugOverlay"; }
 

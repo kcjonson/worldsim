@@ -13,7 +13,6 @@
 #include "scenes/shared/Starfield.h"
 #include <theme/Theme.h>
 
-#include <app/Keys.h>
 #include <application/App.h>
 #include <assets/ActionTypeRegistry.h>
 #include <assets/AssetRegistry.h>
@@ -27,6 +26,7 @@
 #include <ecs/GoalTaskRegistry.h>
 #include <graphics/Color.h>
 #include <primitives/Primitives.h>
+#include <theme/Keys.h>
 #include <utils/Log.h>
 #include <utils/ResourcePath.h>
 #include <world/camera/WorldCamera.h>
@@ -92,7 +92,7 @@ namespace {
 
 		void update(const app::FrameContext& frame) override {
 			// Check for ESC to cancel loading or return from error
-			if (engine::key(frame.input, foundation::Key::Escape).pressed()) {
+			if (theme::key(frame.input, foundation::Key::Escape).pressed()) {
 				if (phase == LoadingPhase::ConfigError) {
 					// Config error - return to menu immediately
 					LOG_INFO(Game, "GameLoadingScene - Returning to menu from config error");
@@ -309,14 +309,13 @@ namespace {
 
 			// Create world sampler and chunk manager from the generated planet;
 			// the landing site maps to the 2D world origin
-			auto sampler = std::make_unique<engine::world::GeneratedWorldSampler>(
-				startConfig->world, startConfig->landingLatDeg, startConfig->landingLonDeg
-			);
+			auto sampler =
+				std::make_unique<world::GeneratedWorldSampler>(startConfig->world, startConfig->landingLatDeg, startConfig->landingLonDeg);
 			worldState->planet = startConfig->world;
 			worldState->landingLatDeg = startConfig->landingLatDeg;
 			worldState->landingLonDeg = startConfig->landingLonDeg;
 			worldState->party = std::move(startConfig->party);
-			worldState->chunkManager = std::make_unique<engine::world::ChunkManager>(std::move(sampler));
+			worldState->chunkManager = std::make_unique<world::ChunkManager>(std::move(sampler));
 
 			// Only load 3×3 grid (center + 8 adjacent) - chunks are large!
 			worldState->chunkManager->setLoadRadius(1);
@@ -337,17 +336,17 @@ namespace {
 			);
 
 			// Create camera centered on the spawn point
-			worldState->camera = std::make_unique<engine::world::WorldCamera>();
+			worldState->camera = std::make_unique<world::WorldCamera>();
 			worldState->camera->setPanSpeed(200.0F);
 			worldState->camera->setPosition({worldState->spawnPosition.x, worldState->spawnPosition.y});
 
 			// Create renderers
-			worldState->renderer = std::make_unique<engine::world::ChunkRenderer>(kPixelsPerMeter);
-			worldState->entityRenderer = std::make_unique<engine::world::EntityRenderer>(kPixelsPerMeter);
+			worldState->renderer = std::make_unique<worldview::ChunkRenderer>(kPixelsPerMeter);
+			worldState->entityRenderer = std::make_unique<worldview::EntityRenderer>(kPixelsPerMeter);
 
 			// Initialize placement executor
-			auto& assetRegistry = engine::assets::AssetRegistry::Get();
-			worldState->placementExecutor = std::make_unique<engine::assets::PlacementExecutor>(assetRegistry);
+			auto& assetRegistry = assets::AssetRegistry::Get();
+			worldState->placementExecutor = std::make_unique<assets::PlacementExecutor>(assetRegistry);
 			worldState->placementExecutor->initialize();
 
 			LOG_INFO(Game, "PlacementExecutor initialized with %zu entity types", worldState->placementExecutor->getSpawnOrder().size());
@@ -378,8 +377,7 @@ namespace {
 				LOG_INFO(Game, "GameLoadingScene - %d chunks loaded", chunksLoaded);
 
 				// Create async processor for entity placement
-				asyncProcessor =
-					std::make_unique<engine::assets::AsyncChunkProcessor>(*worldState->placementExecutor, worldState->processedChunks);
+				asyncProcessor = std::make_unique<assets::AsyncChunkProcessor>(*worldState->placementExecutor, worldState->processedChunks);
 
 				// Launch all async tasks at once
 				for (auto* chunk : worldState->chunkManager->getLoadedChunks()) {
@@ -459,7 +457,7 @@ namespace {
 		/// Load work configuration files (actions, chains, work types, priority tuning)
 		/// Returns false if any config fails to load or validate
 		bool loadWorkConfigs() {
-			using namespace engine::assets;
+			using namespace assets;
 
 			// Clear any previous state (supports menu → new game cycle)
 			ActionTypeRegistry::Get().clear();
@@ -544,7 +542,7 @@ namespace {
 		bool		 configErrorLogged = false;
 
 		// Async chunk processor (shared implementation)
-		std::unique_ptr<engine::assets::AsyncChunkProcessor> asyncProcessor;
+		std::unique_ptr<assets::AsyncChunkProcessor> asyncProcessor;
 
 		// World state being built (transferred to GameScene when complete)
 		std::unique_ptr<world_sim::GameWorldState> worldState;

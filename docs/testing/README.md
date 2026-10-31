@@ -17,7 +17,7 @@ protected pixel for pixel: no golden images, no screenshot diffs, in CI or local
 
 | Layer | Where | When |
 |---|---|---|
-| Unit tests | `*.test.cpp` (`engine-tests`) | CI, every push |
+| Unit tests | `*.test.cpp` (one `<lib>-tests` per library: `sim-tests`, `world-tests`, `assets-tests` and so on) | CI, every push |
 | Happy-path scenarios | [scenarios/](./scenarios/) and [regressions.md](./regressions.md) | before every commit that touches what they cover |
 | Gameplay perf | `scripts/perf-capture.ps1` (to port to `.mjs`) | before committing rendering or sim-heavy changes, and after every salal bump |
 
@@ -70,9 +70,9 @@ cmake --build build --config RelWithDebInfo --target world-sim -j8
 Unit tests (independent of the scenario suite):
 
 ```powershell
-cmake --build build --config Debug --target engine-tests
-build\libs\engine\Debug\engine-tests.exe
-# currently 879 green
+cmake --build build --config Debug --target sim-tests
+build\libs\sim\Debug\sim-tests.exe
+# every library's tests: ctest --test-dir build -C Debug -LE heavy -E benchmarks
 ```
 
 ### Pre-generated world

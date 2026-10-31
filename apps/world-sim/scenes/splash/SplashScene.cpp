@@ -52,7 +52,7 @@ namespace {
 
 		void update(const app::FrameContext& frame) override {
 			const auto	dt = static_cast<float>(frame.dt);
-			auto&		registry = engine::assets::AssetRegistry::Get();
+			auto&		registry = assets::AssetRegistry::Get();
 			const auto& progress = registry.loadProgress();
 			m_timer += dt;
 
@@ -80,7 +80,7 @@ namespace {
 				return;
 			}
 
-			const engine::assets::ValidationReport& report = registry.getValidationReport();
+			const assets::ValidationReport& report = registry.getValidationReport();
 			if (report.hasErrors()) {
 				m_failed = true;
 				showErrors(report);
@@ -245,7 +245,7 @@ namespace {
 		}
 
 		// Up to eight error lines over the boot log; the button stays disabled.
-		void showErrors(const engine::assets::ValidationReport& report) {
+		void showErrors(const assets::ValidationReport& report) {
 			ui::Component* errors = m_errors.get();
 			if (errors == nullptr) {
 				return;
@@ -253,7 +253,7 @@ namespace {
 			constexpr int kMaxLines = 8;
 			int			  shown = 0;
 			for (const auto& issue : report.issues) {
-				if (issue.severity != engine::assets::Severity::Error) {
+				if (issue.severity != assets::Severity::Error) {
 					continue;
 				}
 				if (shown >= kMaxLines) {

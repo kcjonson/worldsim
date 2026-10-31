@@ -9,11 +9,11 @@
 
 #include "PlanetColorizer.h"
 
-#include <world/worldgen/data/GeneratedWorld.h>
-#include <world/worldgen/data/PlanetParams.h>
-#include <world/worldgen/data/WorldData.h>
-#include <world/worldgen/grid/SphereGrid.h>
-#include <world/worldgen/pipeline/PlanetGenerator.h>
+#include <worldgen/data/GeneratedWorld.h>
+#include <worldgen/data/PlanetParams.h>
+#include <worldgen/data/WorldData.h>
+#include <worldgen/grid/SphereGrid.h>
+#include <worldgen/pipeline/PlanetGenerator.h>
 
 #include <gtest/gtest.h>
 

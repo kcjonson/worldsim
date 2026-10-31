@@ -79,7 +79,7 @@ namespace world_sim::adapters {
 
 		/// Get display label for an asset from its defNameId
 		std::string getAssetLabel(uint32_t defNameId) {
-			auto&			   registry = engine::assets::AssetRegistry::Get();
+			auto&			   registry = assets::AssetRegistry::Get();
 			const std::string& defName = registry.getDefName(defNameId);
 			if (defName.empty()) {
 				return "Unknown";
@@ -118,20 +118,20 @@ namespace world_sim::adapters {
 					// Specific item types (e.g., "Haul Wood")
 					return prefix + " " + getAssetLabel(goal.acceptedDefNameIds[0]) + context;
 				}
-				if (goal.acceptedCategory != engine::assets::ItemCategory::None) {
+				if (goal.acceptedCategory != assets::ItemCategory::None) {
 					// Category-based storage
 					std::string catName;
 					switch (goal.acceptedCategory) {
-						case engine::assets::ItemCategory::Food:
+						case assets::ItemCategory::Food:
 							catName = "Food";
 							break;
-						case engine::assets::ItemCategory::RawMaterial:
+						case assets::ItemCategory::RawMaterial:
 							catName = "Materials";
 							break;
-						case engine::assets::ItemCategory::Tool:
+						case assets::ItemCategory::Tool:
 							catName = "Tools";
 							break;
-						case engine::assets::ItemCategory::Furniture:
+						case assets::ItemCategory::Furniture:
 							catName = "Furniture";
 							break;
 						default:

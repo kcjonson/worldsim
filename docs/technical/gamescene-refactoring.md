@@ -116,7 +116,7 @@ The AI/colonist logic will grow significantly. Current organization:
 
 **Future organization:**
 ```
-libs/engine/ecs/systems/
+libs/sim/ecs/systems/
 ├── ai/
 │   ├── AICoordinator.h/cpp      # Orchestrates AI subsystems
 │   ├── DecisionSystem.h/cpp     # What to do next (utility AI)
@@ -139,16 +139,16 @@ libs/engine/ecs/systems/
 After extraction, GameScene becomes a thin coordinator:
 
 ```cpp
-class GameScene : public engine::UiScene {
+class GameScene : public app::Scene {
     // Core systems
     std::unique_ptr<ecs::World> ecsWorld;
     std::unique_ptr<world_sim::GameUI> gameUI;
 
     // World rendering
-    std::unique_ptr<engine::world::ChunkManager> m_chunkManager;
-    std::unique_ptr<engine::world::WorldCamera> m_camera;
-    std::unique_ptr<engine::world::ChunkRenderer> m_renderer;
-    std::unique_ptr<engine::world::EntityRenderer> m_entityRenderer;
+    std::unique_ptr<world::ChunkManager> m_chunkManager;
+    std::unique_ptr<world::WorldCamera> m_camera;
+    std::unique_ptr<worldview::ChunkRenderer> m_renderer;
+    std::unique_ptr<worldview::EntityRenderer> m_entityRenderer;
 
     // Game subsystems (extracted)
     std::unique_ptr<world_sim::PlacementSystem> placementSystem;

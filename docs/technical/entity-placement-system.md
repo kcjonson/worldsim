@@ -259,7 +259,7 @@ Any asset can then reference this group in relationships:
 ## C++ Data Structures
 
 ```cpp
-// libs/engine/assets/AssetDefinition.h (existing, with additions)
+// libs/assets/assets/AssetDefinition.h (existing, with additions)
 
 /// Distribution pattern for asset placement
 enum class Distribution { Uniform, Clumped, Spaced };
@@ -291,7 +291,7 @@ struct BiomePlacement {
 ```
 
 ```cpp
-// libs/engine/assets/placement/PlacementTypes.h (NEW)
+// libs/assets/assets/placement/PlacementTypes.h (NEW)
 
 /// How to reference an entity in relationships
 struct EntityRef {
@@ -313,7 +313,7 @@ struct PlacementRelationship {
 ```
 
 ```cpp
-// libs/engine/assets/AssetDefinition.h (extended PlacementParams)
+// libs/assets/assets/AssetDefinition.h (extended PlacementParams)
 
 struct PlacementParams {
     std::vector<BiomePlacement> biomes;              // Existing
@@ -331,7 +331,7 @@ struct PlacementParams {
 ## File Structure
 
 ```
-libs/engine/assets/
+libs/assets/assets/
 ├── placement/                    # NEW directory
 │   ├── PlacementTypes.h          # Enums, structs (above)
 │   ├── DependencyGraph.h/.cpp    # Topological sort

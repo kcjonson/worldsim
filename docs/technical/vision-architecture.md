@@ -20,7 +20,7 @@ How agents see: wall occlusion, windows, discovery, witnessing, and the fog of w
 
 ## 2. Current State
 
-`VisionSystem` (priority 45, every 5 frames) does an AABB query of `memory.sightRadius` (default 30 m, `libs/engine/ecs/components/Memory.h`) against PlacementExecutor's spatial index, plus a shore-tile scan, and writes results into Memory. No occlusion of any kind: colonists see through walls, terrain, and each other. No line-of-sight code exists anywhere in the engine. msdfgen is fonts only.
+`VisionSystem` (priority 45, every 5 frames) does an AABB query of `memory.sightRadius` (default 30 m, `libs/sim/ecs/components/Memory.h`) against PlacementExecutor's spatial index, plus a shore-tile scan, and writes results into Memory. No occlusion of any kind: colonists see through walls, terrain, and each other. No line-of-sight code exists anywhere in the engine. msdfgen is fonts only.
 
 ## 3. Architecture Decisions
 
