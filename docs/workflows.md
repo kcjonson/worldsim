@@ -148,11 +148,11 @@ cmake --build build --config Debug
 
 # Run the fast suite in parallel (-j collapses wall time to the largest exe).
 # On Windows (multi-config) -C Debug is required; omit it on macOS/Linux.
-# Don't use "-L fast" — only world-tests carries labels, it would run one exe.
+# Don't use "-L fast" — only worldgen-tests carries labels, it would run one exe.
 ctest --test-dir build -C Debug -LE heavy -E benchmarks -j 13 --output-on-failure
 
 # One library's tests
-ctest --test-dir build -C Debug -R engine-tests --output-on-failure
+ctest --test-dir build -C Debug -R sim-tests --output-on-failure
 
 # Heavy worldgen bucket (slow; CI runs it only when worldgen paths change)
 ctest --test-dir build -C Debug -L heavy -j 4 --output-on-failure
@@ -164,26 +164,24 @@ it and silently disables caching for that target.
 
 ### Creating Scenes (in ui-sandbox)
 
-Scenes run on salal's scene stack (`app::Scene`) through worldsim's `engine::UiScene`
-(`libs/engine/app/UiScene.h`), which adds the ui hooks the bridge drives.
+Scenes run on salal's scene stack and derive from its `app::Scene` (`<scene/Scene.h>`).
 
 1. **Create the scene** in `apps/ui-sandbox/scenes/NewScene.cpp`, and add it to the
    executable in `apps/ui-sandbox/CMakeLists.txt`:
    ```cpp
    #include "SceneTypes.h"
-   #include <app/UiScene.h>
+   #include <scene/Scene.h>
 
    namespace {
    	constexpr const char* kSceneName = "new_scene";
 
-   	class NewScene : public engine::UiScene {
+   	class NewScene : public app::Scene {
    	  public:
    		const char* name() const override { return kSceneName; }
    		void		onEnter(app::App& app) override;		  // keep the App to switch scenes
    		void		update(const app::FrameContext& frame) override; // frame.dt, frame.input
    		void		render(float alpha) override;
-   		bool		handleInput(UI::InputEvent& event) override; // pointer events from the bridge
-   		std::vector<const UI::IComponent*> getUiRoots() const override; // /api/ui/tree and /api/ui/lint
+   		bool		handleEvent(const foundation::InputEvent& event) override; // input events, in order
    	};
    } // namespace
 
@@ -197,8 +195,8 @@ Scenes run on salal's scene stack (`app::Scene`) through worldsim's `engine::UiS
    `--scene=new_scene` or `/api/control?action=scene&scene=new_scene` starts in it.
 
 3. **Switch scenes** with `app.scenes().switchTo(name)`, a `SceneInfo`'s `name` (world-sim's
-   are `world_sim::scenes::MainMenu.name` and so on); keys are `engine::key(frame.input, foundation::Key::Escape)`
-   (`libs/engine/app/Keys.h`), `.pressed()` for this frame's press and `.down` for held.
+   are `world_sim::scenes::MainMenu.name` and so on); keys are `theme::key(frame.input, foundation::Key::Escape)`
+   (`libs/theme/theme/Keys.h`), `.pressed()` for this frame's press and `.down` for held.
 
 ---
 

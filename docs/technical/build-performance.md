@@ -56,10 +56,10 @@ Local before/after timings: see Results below.
 - **Heavy bucket sharded, not suite-split:** 4 ctest entries per platform running gtest shards.
   Shards balance automatically by test index; a per-suite list would be dominated by
   PlateSimHeavy + TerrainStageHeavy and need maintenance. Shard count is one number in
-  `libs/world/CMakeLists.txt`. Note the speedup is sublinear: pipeline-based heavy tests
+  `libs/worldgen/CMakeLists.txt`. Note the speedup is sublinear: pipeline-based heavy tests
   already use an internal thread pool.
 - **Heavy tests moved to `.github/workflows/tests-heavy.yml`**, triggered by worldgen paths,
-  nightly schedule, and manual dispatch. The job builds only the `world-tests` target. The
+  nightly schedule, and manual dispatch. The job builds only the `worldgen-tests` target. The
   nightly run on main is the safety net for regressions that slip past the path filter
   (toolchain drift, indirect breakage of the golden-hash tests).
 - **build.yml artifact upload deleted.** It uploaded the entire multi-GB build tree with 1-day
@@ -73,7 +73,7 @@ Local before/after timings: see Results below.
   PR run can only restore caches created on the same PR or on main. Without a main run, every
   new PR would start cold; the post-merge run is what seeds the warm start. (Public repo,
   minutes are free.)
-- **Pool-spawning test exes declare `PROCESSORS`.** world-tests and planet-view-tests run
+- **Pool-spawning test exes declare `PROCESSORS`.** worldgen-tests and planet-view-tests run
   PlanetGenerator pipelines whose internal pool is `hardware_concurrency - 1`; under
   `ctest -j4` on a 4-core runner they starved each other (planet-view's generate() blew its
   deadline and baked the gray sheet its own tests guard against). `PROCESSORS 3` keeps ctest
@@ -148,7 +148,7 @@ Local before/after timings: see Results below.
   where the server is compiled in. glm stays PUBLIC deliberately: public headers expose glm types.
 - **Local test invocation:** `ctest --test-dir build -C Debug -LE heavy -E benchmarks -j 13
   --output-on-failure` (omit `-C Debug` on single-config macOS/Linux). Don't use `-L fast`:
-  only world-tests carries labels, so it would silently run one exe.
+  only worldgen-tests carries labels, so it would silently run one exe.
 
 ## Considered and rejected
 
@@ -193,8 +193,9 @@ made them uncacheable in the measurement); it improves further once the /Zi remo
 presets PR are both in.
 
 Warm-gate breakdown: the fast-test phase (~5 min) is now the biggest CI chunk — engine-tests
-plus the PROCESSORS-serialized world-tests/planet-view-tests dominate it. If it grows,
-sharding engine-tests the same way the heavy bucket is sharded is the next lever
+(since split into sim-tests, world-tests, assets-tests and world-view-tests, which ctest runs
+side by side) plus the PROCESSORS-serialized worldgen-tests/planet-view-tests dominate it. If it
+grows, sharding the largest test exe the same way the heavy bucket is sharded is the next lever
 (measurement-week item).
 
 ## Related

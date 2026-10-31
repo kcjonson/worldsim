@@ -501,7 +501,7 @@ tilePool.Release(tile);
 
 ### Custom Implementation
 
-We implement our own ECS system in `libs/engine/ecs/`. Key concepts:
+We implement our own ECS system in `libs/sim/ecs/`. Key concepts:
 
 **Entities** are lightweight IDs:
 ```cpp

@@ -6,7 +6,9 @@
 
 **Monorepo Structure** - Strict dependency layers (each depends only on layers below):
 ```
-foundation → renderer → (ui | world | game-systems) → engine
+foundation → worldgen → world → assets → sim → world-view
+foundation → renderer → (ui → theme | assets | planet-view | world-view)
+world and sim link neither renderer nor ui
 ```
 **Critical**: No circular dependencies. No upward dependencies.
 

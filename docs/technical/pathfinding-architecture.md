@@ -24,13 +24,13 @@ From the game, not from the literature:
 
 | Area | Fact | Source |
 |------|------|--------|
-| Movement | Straight-line beeline to `MovementTarget`; no obstacles, no collision; a colonist will happily walk into an unloaded chunk and keep going | `libs/engine/ecs/systems/MovementSystem.cpp`, `PhysicsSystem.cpp` |
+| Movement | Straight-line beeline to `MovementTarget`; no obstacles, no collision; a colonist will happily walk into an unloaded chunk and keep going | `libs/sim/ecs/systems/MovementSystem.cpp`, `PhysicsSystem.cpp` |
 | Agent geometry | No radius/footprint component exists anywhere | ECS components |
-| Chunk streaming | 512 m chunks, load radius 2 (5×5 around camera), unload radius 4, async generation, ~4 MB tile data per chunk; **camera-anchored only**, nothing keeps chunks loaded around colonists | `libs/engine/world/chunk/ChunkManager.{h,cpp}` |
-| Terrain data | Per-tile `Surface` (Grass/Dirt/Water/Rock/...) in flat arrays per chunk; no passability or move-cost concept yet | `libs/engine/world/chunk/Chunk.h` |
-| Planet graph | **The whole generated planet is resident in RAM.** `SphereGrid::neighbors(TileId)` gives hex adjacency; `PlanetSampler::sampleAt(x,y)` gives biome/elevation/water/containing-hex for any world position, loaded or not. Hex width ~4.3 km at n=256 (≈100 chunks per hex) | `libs/world/worldgen/grid/SphereGrid.h`, `sampling/PlanetSampler.h` |
+| Chunk streaming | 512 m chunks, load radius 2 (5×5 around camera), unload radius 4, async generation, ~4 MB tile data per chunk; **camera-anchored only**, nothing keeps chunks loaded around colonists | `libs/world/world/chunk/ChunkManager.{h,cpp}` |
+| Terrain data | Per-tile `Surface` (Grass/Dirt/Water/Rock/...) in flat arrays per chunk; no passability or move-cost concept yet | `libs/world/world/chunk/Chunk.h` |
+| Planet graph | **The whole generated planet is resident in RAM.** `SphereGrid::neighbors(TileId)` gives hex adjacency; `PlanetSampler::sampleAt(x,y)` gives biome/elevation/water/containing-hex for any world position, loaded or not. Hex width ~4.3 km at n=256 (≈100 chunks per hex) | `libs/worldgen/worldgen/grid/SphereGrid.h`, `sampling/PlanetSampler.h` |
 | Simulation LOD | None. Every system updates every entity every frame regardless of distance | ECS systems |
-| Spatial index | Grid hash for **placed** entities only (trees etc.), per chunk; dynamic entities have no spatial index | `libs/engine/assets/placement/SpatialIndex.h` |
+| Spatial index | Grid hash for **placed** entities only (trees etc.), per chunk; dynamic entities have no spatial index | `libs/assets/assets/placement/SpatialIndex.h` |
 | Async | `TaskPool` (deterministic ParallelFor) + per-chunk async generation precedent | `libs/foundation/threading/TaskPool.h` |
 | SDF/raycast | msdfgen is fonts only; no LOS code anywhere (vision is radius-based) | `VisionSystem.cpp` |
 

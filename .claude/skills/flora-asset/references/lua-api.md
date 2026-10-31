@@ -1,6 +1,6 @@
 # Lua generator API
 
-Verified against `libs/engine/assets/lua/LuaEngine.cpp`. If the engine changes, re-read that file (especially `registerBindings` and `executeGenerator`).
+Verified against `libs/assets/assets/lua/LuaEngine.cpp`. If the engine changes, re-read that file (especially `registerBindings` and `executeGenerator`).
 
 ## Execution model
 

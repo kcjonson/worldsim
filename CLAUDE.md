@@ -8,7 +8,7 @@ World-sim is a C++20 game with 3D procedural world generation, 2D tile-based gam
 
 **Critical Architectural Decisions:**
 - Vector assets (SVG) with procedural variation → `/docs/technical/vector-graphics/INDEX.md`
-- Custom ECS in engine → `/docs/technical/cpp-coding-standards.md#ecs`
+- Custom ECS in sim (`libs/sim/ecs/`) → `/docs/technical/cpp-coding-standards.md#ecs`
 - Roll our own core systems where appropriate
 
 ## Project Management: Specboard
@@ -223,7 +223,9 @@ If tests fail, fix the new code—don't revert to keeping both versions.
 **Scripts and tooling:**
 - New scripts and tooling are Node (ESM, `.mjs`, no dependencies unless there is a `package.json` for them). No Python.
 
-**Engine libraries (salal):** `foundation` and `renderer` come from github.com/kcjonson/salal via FetchContent, pinned by `GIT_TAG` in the root CMakeLists.txt. To build against the sibling checkout instead of the tag: `cmake -S . -B build -DFETCHCONTENT_SOURCE_DIR_SALAL=C:/Users/kevin/Code/salal`. It is cached in `build/` until `-UFETCHCONTENT_SOURCE_DIR_SALAL`. Whatever branch that checkout has is what builds, so a worldsim PR must work against a tagged salal before it is marked ready. On GCC and Clang, `-ffp-contract=off` is inherited from `salal::foundation` (PUBLIC, the deterministic math needs it); don't add it again here. salal's base shader is assembled into `engine` at build time with the engine's hooks (`libs/engine/world/rendering/hooks/`, one so far: the groundcover deform), checked by `glslangValidator` from the vcpkg `glslang[tools]` host dependency, and compiled in; salal's `docs/shader-hooks.md` is the contract. `base_shader::source()` is what `Primitives::init` takes.
+**Engine libraries (salal):** `foundation` and `renderer` come from github.com/kcjonson/salal via FetchContent, pinned by `GIT_TAG` in the root CMakeLists.txt. To build against the sibling checkout instead of the tag: `cmake -S . -B build -DFETCHCONTENT_SOURCE_DIR_SALAL=C:/Users/kevin/Code/salal`. It is cached in `build/` until `-UFETCHCONTENT_SOURCE_DIR_SALAL`. Whatever branch that checkout has is what builds, so a worldsim PR must work against a tagged salal before it is marked ready. On GCC and Clang, `-ffp-contract=off` is inherited from `salal::foundation` (PUBLIC, the deterministic math needs it); don't add it again here. salal's base shader is assembled into `world-view` at build time with the game's hooks (`libs/world-view/world/rendering/hooks/`, one so far: the groundcover deform), checked by `glslangValidator` from the vcpkg `glslang[tools]` host dependency, and compiled in; salal's `docs/shader-hooks.md` is the contract. `base_shader::source()` is what `Primitives::init` takes.
+
+**Game libraries:** `worldgen` (the planet pipeline), `world` (chunks, tiles, terrain and the world camera), `assets` (definitions, registries, Lua and placement), `sim` (the ECS and its systems, nav, vision and construction) and `world-view` (the world's rendering, which draws what the rest hold). Each folder is one CMake target, with its include root at the folder (`libs/sim/ecs/...` is `<ecs/...>`). `world` and `sim` link neither salal's renderer nor its ui; `assets` links renderer for SVG tessellation and asset thumbnails, so sim still reaches it through assets.
 
 **Naming:**
 - Classes/Structs/Enums: PascalCase (`Shader`, `TextureManager`)

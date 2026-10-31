@@ -270,5 +270,5 @@ NeedEffect effect{
 - [C++ Coding Standards](./cpp-coding-standards.md) - Basic ECS overview
 - [AI Behavior](../design/game-systems/colonists/ai-behavior.md) - How colonists decide to act
 - [Entity Capabilities](../design/game-systems/world/entity-capabilities.md) - How entities fulfill needs
-- Source: `libs/engine/ecs/components/Action.h`
-- Source: `libs/engine/ecs/systems/ActionSystem.cpp`
+- Source: `libs/sim/ecs/components/Action.h`
+- Source: `libs/sim/ecs/systems/ActionSystem.cpp`

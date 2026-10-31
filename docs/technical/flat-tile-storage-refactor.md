@@ -397,24 +397,24 @@ This enables:
 ## Files to Modify
 
 ### Rename (Phase 0)
-- `libs/engine/world/GroundCover.h` → `libs/engine/world/Surface.h`
+- `libs/world/world/GroundCover.h` → `libs/world/world/Surface.h`
 - All files referencing `GroundCover`
 
 ### Core Changes (Phase 1)
-- `libs/engine/world/chunk/Chunk.h` — Add `tiles` array, `generate()`, `isReady()`, remove stored biomeData
-- `libs/engine/world/chunk/Chunk.cpp` — Implement generation
-- `libs/engine/world/chunk/TileData.h` — New/updated struct
-- `libs/engine/world/BiomeWeights.h` — Add `secondary()` method
+- `libs/world/world/chunk/Chunk.h` — Add `tiles` array, `generate()`, `isReady()`, remove stored biomeData
+- `libs/world/world/chunk/Chunk.cpp` — Implement generation
+- `libs/world/world/chunk/TileData.h` — New/updated struct
+- `libs/world/world/BiomeWeights.h` — Add `secondary()` method
 
 ### System Updates (Phase 2)
-- `libs/engine/world/chunk/ChunkManager.cpp` — Pass sampleResult to generate()
-- `libs/engine/world/rendering/ChunkRenderer.cpp` — Thread safety, read from array
-- `libs/engine/assets/placement/PlacementExecutor.cpp` — Query tiles, fix flora-on-water
-- `libs/engine/ecs/systems/VisionSystem.cpp` — Query tiles
-- `libs/engine/ecs/systems/AIDecisionSystem.cpp` — Query tiles
+- `libs/world/world/chunk/ChunkManager.cpp` — Pass sampleResult to generate()
+- `libs/world-view/world/rendering/ChunkRenderer.cpp` — Thread safety, read from array
+- `libs/assets/assets/placement/PlacementExecutor.cpp` — Query tiles, fix flora-on-water
+- `libs/sim/ecs/systems/VisionSystem.cpp` — Query tiles
+- `libs/sim/ecs/systems/AIDecisionSystem.cpp` — Query tiles
 
 ### Simplified (not removed)
-- `libs/engine/world/chunk/ChunkSampleResult.h` — Remove `isPure`, keep as temporary data structure
+- `libs/world/world/chunk/ChunkSampleResult.h` — Remove `isPure`, keep as temporary data structure
 
 ## Risks and Mitigations
 

@@ -495,7 +495,7 @@ cmake -B build -S . \
   -DBUILD_TESTING=ON
 
 # Build all test targets
-cmake --build build --target geometry-tests world-benchmarks
+cmake --build build --target geometry-tests worldgen-benchmarks
 
 # Build all tests at once
 cmake --build build -j8
@@ -532,18 +532,18 @@ ctest --test-dir build --output-junit test-results.xml
 
 ```bash
 # Run specific benchmark executable
-./build/libs/world/world-benchmarks
+./build/libs/worldgen/worldgen-benchmarks
 
 # With JSON output
-./build/libs/world/world-benchmarks \
+./build/libs/worldgen/worldgen-benchmarks \
   --benchmark_format=json \
   --benchmark_out=results.json
 
 # Filter benchmarks
-./build/libs/world/world-benchmarks --benchmark_filter=BM_TileCenter.*
+./build/libs/worldgen/worldgen-benchmarks --benchmark_filter=BM_TileCenter.*
 
 # Run for specific time
-./build/libs/world/world-benchmarks --benchmark_min_time=2.0
+./build/libs/worldgen/worldgen-benchmarks --benchmark_min_time=2.0
 ```
 
 ---

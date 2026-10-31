@@ -12,9 +12,9 @@ The art target is the game's own established look: cel-shaded, limited muted-ear
 ## Source of truth
 
 The parser wins over docs (docs have drifted). Before relying on any convention, confirm against:
-- Lua API: `libs/engine/assets/lua/LuaEngine.cpp` (`registerBindings`)
+- Lua API: `libs/assets/assets/lua/LuaEngine.cpp` (`registerBindings`)
 - Canonical generators: `assets/shared/scripts/deciduous.lua`, `conifer.lua`, `palm.lua`
-- Asset def parsing: `libs/engine/assets/AssetRegistry.cpp`
+- Asset def parsing: `libs/assets/assets/AssetRegistry.cpp`
 - Real examples: `assets/world/flora/OakTree/` (procedural), `assets/world/flora/GrassBlade/` (simple SVG)
 
 Read the relevant `references/*.md` in this skill for the distilled, verified spec.

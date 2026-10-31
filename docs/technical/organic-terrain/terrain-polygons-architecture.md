@@ -57,7 +57,7 @@ reconstructed from it (D5, D6). Rivers and ponds already have vector sources
 per-chunk container:
 
 ```cpp
-namespace engine::world {
+namespace world {
 enum class TerrainRingKind : uint8_t { Waterline, Channel, Pond };
 enum class WaterKind       : uint8_t { Ocean, Lake, Wetland, River, Pond };
 
@@ -110,8 +110,10 @@ render apron (D16) reads the same bars the owning chunk paints (D11's border rul
 
 ### D3: Module placement
 
-`engine` is one CMake target; chunk, nav, vision, the chunk renderer, and the tile
-post-processor are all inside it, so the builder lives there with no cycle risk. The pure
+`engine` was one CMake target when this was decided; chunk, nav, vision, the chunk renderer,
+and the tile post-processor were all inside it, so the builder lives there with no cycle risk.
+Since the split the builder sits with the chunk in `world`, below nav and vision in `sim` and
+the chunk renderer in `world-view`, so that still holds. The pure
 math goes one layer down into `libs/geometry`, which links only `foundation` and already
 owns `Ring`, `Vec2i64`, `simplifyRing`, the exact predicates, and the CDT.
 
@@ -130,11 +132,11 @@ New in `libs/geometry/contour/`:
   convex rectangle, degenerate border runs collapsed by `simplifyRing`).
 - `strokePolyline(centerline, halfWidths, capStyle) -> Ring` (offset both sides, round caps).
 
-Also in `libs/engine/world/chunk/`: `TerrainDistanceField`, the per-chunk signed-distance
+Also in `libs/world/world/chunk/`: `TerrainDistanceField`, the per-chunk signed-distance
 bake the renderer samples (D10). No polygon boolean is needed anywhere: rendering merges
 shapes with `min(distance)`, and nav takes overlapping rings as solid containment.
 
-New in `libs/engine/world/chunk/`:
+New in `libs/world/world/chunk/`:
 
 - `TerrainPolygonBuilder` (`build(const Chunk&, const ChunkSampleResult&, const ApronField&)
   -> ChunkTerrainPolygons`), the only place the recipe below is spelled out.
@@ -803,7 +805,7 @@ tile grid. Every one is the isoline of a softened, domain-warped field, the same
 D5/D6, so a grass/dirt edge and a shoreline are of a piece.
 
 Land boundaries are look-only (nothing walkable, D1), so they stay in the shader instead of
-becoming rings. `engine::world::evaluateSurfaceField` (`SurfaceField.cpp`) is the one
+becoming rings. `world::evaluateSurfaceField` (`SurfaceField.cpp`) is the one
 evaluation; `shaders/includes/land.glsl` is the same steps in the same order, and
 `SurfaceFieldGolden.test.cpp` renders it and compares.
 

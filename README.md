@@ -144,10 +144,14 @@ This hook automatically formats staged C++ files before each commit.
 ```
 world-sim/
 ├── libs/              # Modular libraries (dependency layers)
-│   ├── ui/            # UI framework with inspector/testability
-│   ├── world/         # World generation (pluggable generators)
-│   ├── game-systems/  # Chunks, tiles, camera (game-specific)
-│   └── engine/        # ECS, world, assets, ui bridge onto salal's app
+│   ├── geometry/      # Exact integer-mm 2D geometry
+│   ├── theme/         # Worldsim's design system on salal's ui
+│   ├── worldgen/      # Planet generation (the worldgen pipeline)
+│   ├── planet-view/   # The planet globe's rendering
+│   ├── world/         # Chunks, tiles, terrain, the world camera
+│   ├── assets/        # Asset definitions, registries, Lua, placement
+│   ├── sim/           # ECS and systems, navigation, vision, construction
+│   └── world-view/    # The world's rendering
 ├── apps/
 │   ├── world-sim/     # Main game application
 │   │   ├── scenes/   # Splash, menu, world creator, game
@@ -164,7 +168,7 @@ world-sim/
 **Dependency Rules:**
 - Each layer depends only on layers below it
 - No circular dependencies
-- `engine` → `game-systems/ui/world` → `renderer` → `foundation`
+- `world-view` → `sim` → `assets` → `world` → `worldgen` → `foundation`; `world` and `sim` link neither `renderer` nor `ui`
 - `foundation` and `renderer` live in [salal](https://github.com/kcjonson/salal) and arrive via CMake FetchContent, pinned by `GIT_TAG` in the root `CMakeLists.txt` (see `CLAUDE.md` for building against a local checkout)
 
 For full details, see [docs/technical/monorepo-structure.md](docs/technical/monorepo-structure.md).
