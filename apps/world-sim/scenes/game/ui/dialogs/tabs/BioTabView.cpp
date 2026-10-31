@@ -18,10 +18,14 @@ namespace world_sim {
 		column.flexDirection = ui::FlexDirection::Column;
 		column.gap = kRowGap;
 		setLayout(column);
-		background = addChild<ui::Text>({.style = look::text(theme, look::t::color::text, look::t::fontSize::fsMd), .wrap = true});
+		background = addChild<ui::Text>(
+			{.style = world_sim::text(theme, {.size = tokens::fontSize::fsMd, .color = tokens::color::text}), .wrap = true}
+		);
 		addChild<tabs::KickerDivider>({.label = "Traits"});
-		traits = addChild<ui::Text>({.style = look::text(theme, look::t::color::textDim, look::t::fontSize::fsSm), .wrap = true});
-		currently = addChild<ui::Text>({.style = look::text(theme, look::t::color::accent, look::t::fontSize::fsSm)});
+		traits = addChild<ui::Text>(
+			{.style = world_sim::text(theme, {.size = tokens::fontSize::fsSm, .color = tokens::color::textDim}), .wrap = true}
+		);
+		currently = addChild<ui::Text>({.style = world_sim::text(theme, {.size = tokens::fontSize::fsSm, .color = tokens::color::accent})});
 		update({});
 	}
 

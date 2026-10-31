@@ -91,28 +91,32 @@ namespace world_sim {
 			ui::Layout column = getLayout();
 			column.display = ui::Display::Flex;
 			column.flexDirection = ui::FlexDirection::Column;
-			column.gap = theme.get(look::t::spacing::space1);
-			column.padding = {5.0F, theme.get(look::t::spacing::space2)};
+			column.gap = theme.get(tokens::spacing::space1);
+			column.padding = {5.0F, theme.get(tokens::spacing::space2)};
 			setLayout(column);
-			addChild<ui::Text>({.style = tabs::kickerText(theme, look::t::color::textFaint), .text = label});
+			addChild<ui::Text>({.style = tabs::kickerText(theme, tokens::color::textFaint), .text = label});
 			ui::Ref<ui::Component> row = addChild<ui::Component>({
-				.layout = {.display = ui::Display::Flex, .gap = theme.get(look::t::spacing::space15), .alignItems = ui::AlignItems::Center},
+				.layout = {.display = ui::Display::Flex, .gap = theme.get(tokens::spacing::space15), .alignItems = ui::AlignItems::Center},
 			});
-			empty =
-				row.addChild<ui::Text>({.style = look::text(theme, look::t::color::textFaint, look::t::fontSize::fsXs), .text = "+ Empty"});
-			name = clippedText(*row.get(), look::text(theme, look::t::color::textBright, look::t::fontSize::fsSm));
+			empty = row.addChild<ui::Text>(
+				{.style = world_sim::text(theme, {.size = tokens::fontSize::fsXs, .color = tokens::color::textFaint}), .text = "+ Empty"}
+			);
+			name = clippedText(*row.get(), world_sim::text(theme, {.size = tokens::fontSize::fsSm, .color = tokens::color::textBright}));
 			nameBox = name.get()->parent();
 			chip = row.addChild<ui::Rectangle>({
-				.layout = {.display = ui::Display::Flex, .padding = {1.0F, theme.get(look::t::spacing::space1)}},
+				.layout = {.display = ui::Display::Flex, .padding = {1.0F, theme.get(tokens::spacing::space1)}},
 				.style = {
-					.backgroundColor = faded(theme.get(look::t::color::accent), 0.15F),
-					.borderColor = faded(theme.get(look::t::color::accent), 0.5F),
-					.borderWidth = theme.get(look::t::border::bw),
-					.borderRadius = theme.get(look::t::radius::rSm),
+					.backgroundColor = faded(theme.get(tokens::color::accent), 0.15F),
+					.borderColor = faded(theme.get(tokens::color::accent), 0.5F),
+					.borderWidth = theme.get(tokens::border::bw),
+					.borderRadius = theme.get(tokens::radius::rSm),
 				},
 			});
-			chipLabel =
-				chip.addChild<ui::Text>({.style = look::text(theme, look::t::color::accent, look::t::fontSize::fs2xs, look::Font::Mono)});
+			chipLabel = chip.addChild<ui::Text>(
+				{.style = world_sim::text(
+					 theme, {.family = ui::tokens::font::family::mono, .size = tokens::fontSize::fs2xs, .color = tokens::color::accent}
+				 )}
+			);
 			show();
 		}
 
@@ -122,12 +126,12 @@ namespace world_sim {
 				return;
 			}
 			const ui::Theme&		theme = getContext()->getTheme();
-			const Foundation::Color fill = theme.get(look::t::color::bgInset);
+			const Foundation::Color fill = theme.get(tokens::color::bgInset);
 			setStyle({
 				.backgroundColor = filled ? fill : faded(fill, kEmptyWash),
-				.borderColor = theme.get(filled ? look::t::color::accent : look::t::color::lineHairline),
-				.borderWidth = theme.get(look::t::border::bw),
-				.borderRadius = theme.get(look::t::radius::rSm),
+				.borderColor = theme.get(filled ? tokens::color::accent : tokens::color::lineHairline),
+				.borderWidth = theme.get(tokens::border::bw),
+				.borderRadius = theme.get(tokens::radius::rSm),
 			});
 			empty.get()->setVisible(!filled);
 			nameBox.get()->setVisible(filled);
@@ -171,11 +175,13 @@ namespace world_sim {
 			const ui::Theme& theme = getContext()->getTheme();
 			ui::Layout		 row = getLayout();
 			row.display = ui::Display::Flex;
-			row.gap = theme.get(look::t::spacing::space2);
+			row.gap = theme.get(tokens::spacing::space2);
 			row.alignItems = ui::AlignItems::Center;
 			setLayout(row);
 			leftText = addChild<ui::Text>({.layout = {.flexGrow = 1.0F}, .style = leftStyle, .text = left});
-			ui::Style value = look::text(theme, look::t::color::accent, look::t::fontSize::fsSm, look::Font::Mono);
+			ui::Style value = world_sim::text(
+				theme, {.family = ui::tokens::font::family::mono, .size = tokens::fontSize::fsSm, .color = tokens::color::accent}
+			);
 			value.fontSize = leftStyle.fontSize;
 			rightText = addChild<ui::Text>({.style = value, .text = right});
 		}
@@ -211,15 +217,23 @@ namespace world_sim {
 			row.display = ui::Display::Flex;
 			row.alignItems = ui::AlignItems::Center;
 			setLayout(row);
-			name = clippedText(*this, look::text(theme, look::t::color::text, look::t::fontSize::fsSm));
+			name = clippedText(*this, world_sim::text(theme, {.size = tokens::fontSize::fsSm, .color = tokens::color::text}));
 			const ui::Style right{.textAlign = Foundation::HorizontalAlign::Right};
 			quantity = addChild<ui::Text>({
 				.size = {kQtyColumn, ui::kAuto},
-				.style = look::text(theme, look::t::color::textDim, look::t::fontSize::fs2xs, look::Font::Mono).extend(right),
+				.style =
+					world_sim::text(
+						theme, {.family = ui::tokens::font::family::mono, .size = tokens::fontSize::fs2xs, .color = tokens::color::textDim}
+					)
+						.extend(right),
 			});
 			mass = addChild<ui::Text>({
 				.size = {kKgColumn, ui::kAuto},
-				.style = look::text(theme, look::t::color::dataBright, look::t::fontSize::fs2xs, look::Font::Mono).extend(right),
+				.style = world_sim::text(
+							 theme,
+							 {.family = ui::tokens::font::family::mono, .size = tokens::fontSize::fs2xs, .color = tokens::color::dataBright}
+				)
+							 .extend(right),
 			});
 		}
 
@@ -253,10 +267,10 @@ namespace world_sim {
 			centre.justifyContent = ui::JustifyContent::Center;
 			setLayout(centre);
 			tool = addChild<ui::Icon>(
-				{.size = {kToolIcon, kToolIcon}, .style = {.color = theme.get(look::t::color::accent)}, .name = "hammer"}
+				{.size = {kToolIcon, kToolIcon}, .style = {.color = theme.get(tokens::color::accent)}, .name = "hammer"}
 			);
 			plus = addChild<ui::Icon>(
-				{.size = {kPlusIcon, kPlusIcon}, .style = {.color = theme.get(look::t::color::textDim)}, .name = "plusBold"}
+				{.size = {kPlusIcon, kPlusIcon}, .style = {.color = theme.get(tokens::color::textDim)}, .name = "plusBold"}
 			);
 			show();
 		}
@@ -267,12 +281,12 @@ namespace world_sim {
 				return;
 			}
 			const ui::Theme&		theme = getContext()->getTheme();
-			const Foundation::Color fill = theme.get(look::t::color::bgInset);
+			const Foundation::Color fill = theme.get(tokens::color::bgInset);
 			setStyle({
 				.backgroundColor = filled ? fill : faded(fill, kEmptyWash),
-				.borderColor = theme.get(filled ? look::t::color::lineEdge : look::t::color::lineHairline),
-				.borderWidth = theme.get(look::t::border::bw),
-				.borderRadius = theme.get(look::t::radius::rSm),
+				.borderColor = theme.get(filled ? tokens::color::lineEdge : tokens::color::lineHairline),
+				.borderWidth = theme.get(tokens::border::bw),
+				.borderRadius = theme.get(tokens::radius::rSm),
 			});
 			tool.get()->setVisible(filled);
 			plus.get()->setVisible(!filled);
@@ -301,7 +315,7 @@ namespace world_sim {
 			void render() override {
 				const float				scale = size.y / 150.0F;
 				const Foundation::Vec2	origin{(size.x - 64.0F * scale) * 0.5F, 0.0F};
-				const Foundation::Color fill = faded(getContext()->getTheme().get(look::t::color::textFaint), opacity());
+				const Foundation::Color fill = faded(getContext()->getTheme().get(tokens::color::textFaint), opacity());
 
 				Renderer::Primitives::drawCircle(
 					{.center = origin + Foundation::Vec2{32.0F, 18.0F} * scale,
@@ -368,22 +382,25 @@ namespace world_sim {
 
 	void GearTabView::onMount() {
 		const ui::Theme& theme = getContext()->getTheme();
-		const float		 sectionGap = theme.get(look::t::spacing::space4);
-		const float		 slotGap = theme.get(look::t::spacing::space15);
-		const float		 rowGap = theme.get(look::t::spacing::space1);
+		const float		 sectionGap = theme.get(tokens::spacing::space4);
+		const float		 slotGap = theme.get(tokens::spacing::space15);
+		const float		 rowGap = theme.get(tokens::spacing::space1);
 		ui::Layout		 layout = getLayout();
 		layout.display = ui::Display::Flex;
 		layout.flexDirection = ui::FlexDirection::Column;
 		layout.gap = sectionGap;
 		setLayout(layout);
 
-		const float		heading = theme.get(look::t::fontSize::fsSm);
-		const ui::Style headingStyle = look::text(theme, look::t::color::textBright, look::t::fontSize::fsSm, look::Font::Display)
-										   .extend({
-											   .letterSpacing = heading * theme.get(look::t::letterSpacing::lsWide),
-											   .textTransform = Foundation::TextTransform::Uppercase,
-										   });
-		const ui::Style captionStyle = look::text(theme, look::t::color::textFaint, look::t::fontSize::fs2xs);
+		const float		heading = theme.get(tokens::fontSize::fsSm);
+		const ui::Style headingStyle =
+			world_sim::text(
+				theme, {.family = ui::tokens::font::family::display, .size = tokens::fontSize::fsSm, .color = tokens::color::textBright}
+			)
+				.extend({
+					.letterSpacing = heading * theme.get(tokens::letterSpacing::lsWide),
+					.textTransform = Foundation::TextTransform::Uppercase,
+				});
+		const ui::Style captionStyle = world_sim::text(theme, {.size = tokens::fontSize::fs2xs, .color = tokens::color::textFaint});
 
 		// The paperdoll: worn stubs, the figure, back and belt and the hands.
 		ui::Ref<ui::Component> paperdoll = addChild<ui::Component>({.layout = {.display = ui::Display::Flex, .gap = sectionGap}});
@@ -415,13 +432,14 @@ namespace world_sim {
 		packHeader = pack.addChild<GearTextRow>({.left = "Field Pack", .leftStyle = headingStyle});
 		packMeter = pack.addChild<ui::ProgressBar>({.value = 0.0F, .tone = ui::Tone::Info, .controlSize = ui::ControlSize::Sm});
 		pack.addChild<GearTextRow>({.left = "Weight-based - cargo in hands & pack - tools ride free", .leftStyle = captionStyle});
-		ui::Ref<ui::Component> stacks = column(*pack.get(), theme.get(look::t::spacing::space05));
+		ui::Ref<ui::Component> stacks = column(*pack.get(), theme.get(tokens::spacing::space05));
 		for (ui::Ref<GearStackRow>& row : packRows) {
 			row = stacks.addChild<GearStackRow>({.visible = false});
 		}
 		packMoreRow = stacks.addChild<GearTextRow>({.visible = false, .leftStyle = captionStyle});
 		packEmptyRow = stacks.addChild<GearTextRow>(
-			{.left = "Nothing carried", .leftStyle = look::text(theme, look::t::color::textFaint, look::t::fontSize::fsXs)}
+			{.left = "Nothing carried",
+			 .leftStyle = world_sim::text(theme, {.size = tokens::fontSize::fsXs, .color = tokens::color::textFaint})}
 		);
 
 		// The Tool Belt: two quick-draw slots.
@@ -429,7 +447,7 @@ namespace world_sim {
 		beltHeader = belt.addChild<GearTextRow>({.left = "Tool Belt", .leftStyle = headingStyle});
 		belt.addChild<GearTextRow>({.left = "Quick-draw slots - one-hand tools only", .leftStyle = captionStyle});
 		ui::Ref<ui::Component> cells =
-			belt.addChild<ui::Component>({.layout = {.display = ui::Display::Flex, .gap = theme.get(look::t::spacing::space2)}});
+			belt.addChild<ui::Component>({.layout = {.display = ui::Display::Flex, .gap = theme.get(tokens::spacing::space2)}});
 		for (ui::Ref<GearBeltCell>& cell : beltCells) {
 			cell = cells.addChild<GearBeltCell>({});
 		}

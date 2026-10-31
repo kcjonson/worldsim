@@ -10,7 +10,7 @@ namespace world_sim {
 		  color(args.color) {}
 
 	void SectionHeader::onMount() {
-		setStyle(look::text(getContext()->getTheme(), color, fontSize).extend(getDeclaredStyle()));
+		setStyle(world_sim::text(getContext()->getTheme(), {.size = fontSize, .color = color}).extend(getDeclaredStyle()));
 	}
 
 } // namespace world_sim

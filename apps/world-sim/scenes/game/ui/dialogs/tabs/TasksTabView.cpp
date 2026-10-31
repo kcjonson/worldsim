@@ -64,7 +64,7 @@ namespace world_sim {
 				const ui::Theme& theme = getContext()->getTheme();
 				ui::Layout		 row = getLayout();
 				row.display = ui::Display::Flex;
-				row.gap = theme.get(look::t::spacing::space2);
+				row.gap = theme.get(tokens::spacing::space2);
 				row.alignItems = ui::AlignItems::Start;
 				setLayout(row);
 				setMinSize({ui::kAuto, kRowHeight});
@@ -72,10 +72,17 @@ namespace world_sim {
 					.size = {0.0F, ui::kAuto},
 					.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = 1.0F, .flexGrow = 1.0F},
 				});
-				description = text.addChild<ui::Text>({.style = look::text(theme, look::t::color::text, look::t::fontSize::fsSm)});
-				detail = text.addChild<ui::Text>({.style = look::text(theme, look::t::color::textFaint, look::t::fontSize::fs2xs)});
+				description = text.addChild<ui::Text>(
+					{.style = world_sim::text(theme, {.size = tokens::fontSize::fsSm, .color = tokens::color::text})}
+				);
+				detail = text.addChild<ui::Text>(
+					{.style = world_sim::text(theme, {.size = tokens::fontSize::fs2xs, .color = tokens::color::textFaint})}
+				);
 				distance = addChild<ui::Text>(
-					{.style = look::text(theme, look::t::color::dataBright, look::t::fontSize::fs2xs, look::Font::Mono)}
+					{.style = world_sim::text(
+						 theme,
+						 {.family = ui::tokens::font::family::mono, .size = tokens::fontSize::fs2xs, .color = tokens::color::dataBright}
+					 )}
 				);
 				badge = addChild<ui::Badge>({});
 			}
@@ -94,38 +101,41 @@ namespace world_sim {
 		ui::Layout		 layout = getLayout();
 		layout.display = ui::Display::Flex;
 		layout.flexDirection = ui::FlexDirection::Column;
-		layout.gap = theme.get(look::t::spacing::space2);
+		layout.gap = theme.get(tokens::spacing::space2);
 		setLayout(layout);
 
-		Foundation::Color wash = theme.get(look::t::color::accent);
+		Foundation::Color wash = theme.get(tokens::color::accent);
 		wash.a *= kCurrentWash;
-		const float			   pad = theme.get(look::t::spacing::space3);
+		const float			   pad = theme.get(tokens::spacing::space3);
 		ui::Ref<ui::Rectangle> panel = addChild<ui::Rectangle>({
 			.minSize = {ui::kAuto, kCurrentHeight},
-			.margin = {0.0F, 0.0F, theme.get(look::t::spacing::space2), 0.0F},
+			.margin = {0.0F, 0.0F, theme.get(tokens::spacing::space2), 0.0F},
 			.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = 6.0F, .padding = {pad, pad}},
 			.style = {
 				.backgroundColor = wash,
-				.borderColor = theme.get(look::t::color::lineEdge),
-				.borderWidth = theme.get(look::t::border::bw),
-				.borderRadius = theme.get(look::t::radius::rMd),
+				.borderColor = theme.get(tokens::color::lineEdge),
+				.borderWidth = theme.get(tokens::border::bw),
+				.borderRadius = theme.get(tokens::radius::rMd),
 			},
 		});
 		panel.addChild<ui::Rectangle>({
 			.size = {kEdge, ui::kAuto},
 			.layout = {.position = ui::Position::Absolute, .inset = {.top = 0.0F, .bottom = 0.0F, .left = 0.0F}},
-			.style = {.backgroundColor = theme.get(look::t::color::accent)},
+			.style = {.backgroundColor = theme.get(tokens::color::accent)},
 		});
-		panel.addChild<ui::Text>({.style = tabs::kickerText(theme, look::t::color::accent), .text = "Currently"});
-		current = panel.addChild<ui::Text>({.style = look::text(theme, look::t::color::textBright, look::t::fontSize::fsMd)});
+		panel.addChild<ui::Text>({.style = tabs::kickerText(theme, tokens::color::accent), .text = "Currently"});
+		current = panel.addChild<ui::Text>(
+			{.style = world_sim::text(theme, {.size = tokens::fontSize::fsMd, .color = tokens::color::textBright})}
+		);
 		progress = panel.addChild<ui::ProgressBar>({.tone = ui::Tone::Accent, .valueText = " ", .controlSize = ui::ControlSize::Sm});
 
 		addChild<tabs::KickerDivider>({.label = "Known work"});
 		noWork = addChild<ui::Text>(
-			{.style = look::text(theme, look::t::color::textFaint, look::t::fontSize::fsXs), .text = "No known work nearby."}
+			{.style = world_sim::text(theme, {.size = tokens::fontSize::fsXs, .color = tokens::color::textFaint}),
+			 .text = "No known work nearby."}
 		);
 		taskList = addChild<ui::Component>({.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column}});
-		more = addChild<ui::Text>({.style = look::text(theme, look::t::color::textFaint, look::t::fontSize::fs2xs)});
+		more = addChild<ui::Text>({.style = world_sim::text(theme, {.size = tokens::fontSize::fs2xs, .color = tokens::color::textFaint})});
 		update({});
 	}
 

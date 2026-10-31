@@ -1,6 +1,6 @@
 #include "GameplayBar.h"
 
-#include "scenes/game/ui/Look.h"
+#include "scenes/shared/SalalUi.h"
 
 #include <ui/Context.h>
 
@@ -45,10 +45,10 @@ namespace world_sim {
 		setLayout(row);
 		setStyle(
 			ui::Style{
-				.backgroundColor = theme.get(look::t::color::bgPanel),
-				.borderColor = theme.get(look::t::color::lineEdge),
-				.borderWidth = theme.get(look::t::border::bw),
-				.borderRadius = theme.get(look::t::radius::rMd),
+				.backgroundColor = theme.get(tokens::color::bgPanel),
+				.borderColor = theme.get(tokens::color::lineEdge),
+				.borderWidth = theme.get(tokens::border::bw),
+				.borderRadius = theme.get(tokens::radius::rMd),
 			}
 				.extend(getDeclaredStyle())
 		);
@@ -138,8 +138,8 @@ namespace world_sim {
 		}
 		const ui::Theme& theme = getContext()->getTheme();
 		button->setStyle({
-			.backgroundColor = theme.get(roomsActive ? look::t::color::accent : look::t::color::bgInset),
-			.color = theme.get(roomsActive ? look::t::color::accentContrast : look::t::color::text),
+			.backgroundColor = theme.get(roomsActive ? tokens::color::accent : tokens::color::bgInset),
+			.color = theme.get(roomsActive ? tokens::color::accentContrast : tokens::color::text),
 		});
 	}
 

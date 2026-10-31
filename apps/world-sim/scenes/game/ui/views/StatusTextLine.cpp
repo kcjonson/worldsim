@@ -23,17 +23,17 @@ namespace world_sim {
 		ui::ColorToken colorOf(LineStatus status) {
 			switch (status) {
 				case LineStatus::Active:
-					return look::t::color::statusOk;
+					return tokens::color::statusOk;
 				case LineStatus::Pending:
-					return look::t::color::statusWarn;
+					return tokens::color::statusWarn;
 				case LineStatus::Idle:
-					return look::t::color::textDim;
+					return tokens::color::textDim;
 				case LineStatus::Blocked:
-					return look::t::color::statusCrit;
+					return tokens::color::statusCrit;
 				case LineStatus::Available:
 					break;
 			}
-			return look::t::color::text;
+			return tokens::color::text;
 		}
 
 	} // namespace
@@ -58,7 +58,7 @@ namespace world_sim {
 
 	void StatusTextLine::tint() {
 		if (getContext() != nullptr) {
-			setStyle(look::text(getContext()->getTheme(), colorOf(status), fontSize).extend(given));
+			setStyle(world_sim::text(getContext()->getTheme(), {.size = fontSize, .color = colorOf(status)}).extend(given));
 		}
 	}
 

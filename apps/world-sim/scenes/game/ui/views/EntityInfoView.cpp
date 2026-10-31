@@ -1,7 +1,7 @@
 #include "EntityInfoView.h"
 
-#include "scenes/game/ui/Look.h"
 #include "scenes/game/ui/dialogs/tabs/MeterDraw.h"
+#include "scenes/shared/SalalUi.h"
 
 #include <ecs/components/Needs.h>
 
@@ -99,10 +99,10 @@ namespace world_sim {
 		setVisible(false);
 
 		const ui::Theme& theme = getContext()->getTheme();
-		const float		 gap = theme.get(look::t::spacing::space2);
-		const float		 tight = theme.get(look::t::spacing::space1);
-		const ui::Style	 bodyText = look::text(theme, look::t::color::text, look::t::fontSize::fsSm);
-		const ui::Style	 dimText = look::text(theme, look::t::color::textDim, look::t::fontSize::fsSm);
+		const float		 gap = theme.get(tokens::spacing::space2);
+		const float		 tight = theme.get(tokens::spacing::space1);
+		const ui::Style	 bodyText = world_sim::text(theme, {.size = tokens::fontSize::fsSm, .color = tokens::color::text});
+		const ui::Style	 dimText = world_sim::text(theme, {.size = tokens::fontSize::fsSm, .color = tokens::color::textDim});
 
 		const auto column = [](float spacing) {
 			return ui::Layout{.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = spacing};
@@ -115,7 +115,7 @@ namespace world_sim {
 				.display = ui::Display::Flex,
 				.flexDirection = ui::FlexDirection::Column,
 				.gap = gap,
-				.padding = theme.get(look::t::spacing::space3)
+				.padding = theme.get(tokens::spacing::space3)
 			},
 		});
 
@@ -130,12 +130,14 @@ namespace world_sim {
 		ui::Ref<ui::Component> identity =
 			header.addChild<ui::Component>({.id = "entity_info_identity", .size = {0.0F, ui::kAuto}, .layout = identityLayout});
 		nameText = identity.addChild<ui::Text>(
-			{.id = "entity_info_name", .style = look::text(theme, look::t::color::textBright, look::t::fontSize::fsMd), .wrap = true}
+			{.id = "entity_info_name",
+			 .style = world_sim::text(theme, {.size = tokens::fontSize::fsMd, .color = tokens::color::textBright}),
+			 .wrap = true}
 		);
 		subtitleText = identity.addChild<ui::Text>({
 			.id = "entity_info_subtitle",
 			.visible = false,
-			.style = look::text(theme, look::t::color::textDim, look::t::fontSize::fsXs),
+			.style = world_sim::text(theme, {.size = tokens::fontSize::fsXs, .color = tokens::color::textDim}),
 			.wrap = true,
 		});
 		moodBar = identity.addChild<ui::ProgressBar>({
@@ -161,11 +163,11 @@ namespace world_sim {
 
 		// Small inset squares; the state layers give them their hover.
 		const ui::Style glyph{
-			.backgroundColor = theme.get(look::t::color::bgInset),
-			.borderColor = theme.get(look::t::color::lineEdge),
-			.borderWidth = theme.get(look::t::border::bw),
-			.borderRadius = theme.get(look::t::radius::rSm),
-			.color = theme.get(look::t::color::textDim),
+			.backgroundColor = theme.get(tokens::color::bgInset),
+			.borderColor = theme.get(tokens::color::lineEdge),
+			.borderWidth = theme.get(tokens::border::bw),
+			.borderRadius = theme.get(tokens::radius::rSm),
+			.color = theme.get(tokens::color::textDim),
 		};
 		const auto glyphButton = [&](const char* id, const char* icon, std::function<void()> press) {
 			return buttons.addChild<ui::Button>({
@@ -215,7 +217,7 @@ namespace world_sim {
 
 		// Gear: what's in hand, the belt's tools, the carry meter, the backpack.
 		gearBody = root.addChild<ui::Component>(
-			{.id = "entity_info_gear", .visible = false, .layout = column(theme.get(look::t::spacing::space15))}
+			{.id = "entity_info_gear", .visible = false, .layout = column(theme.get(tokens::spacing::space15))}
 		);
 		gearHands =
 			gearBody.addChild<ui::Text>({.id = "entity_info_gear_hands", .style = bodyText, .text = "Armed: (empty)", .wrap = true});
@@ -438,14 +440,18 @@ namespace world_sim {
 						});
 					case SlotRow::Kind::ListHeader:
 						return column->addChild<ui::Text>(
-							{.style = look::text(theme, look::t::color::textDim, look::t::fontSize::fsSm), .text = row.text, .wrap = true}
+							{.style = world_sim::text(theme, {.size = tokens::fontSize::fsSm, .color = tokens::color::textDim}),
+							 .text = row.text,
+							 .wrap = true}
 						);
 					case SlotRow::Kind::Text:
 					case SlotRow::Kind::ListItem:
 						break;
 				}
 				return column->addChild<ui::Text>(
-					{.style = look::text(theme, look::t::color::text, look::t::fontSize::fsSm), .text = row.text, .wrap = true}
+					{.style = world_sim::text(theme, {.size = tokens::fontSize::fsSm, .color = tokens::color::text}),
+					 .text = row.text,
+					 .wrap = true}
 				);
 			},
 			[](ui::Component& shown, const SlotRow& row) {

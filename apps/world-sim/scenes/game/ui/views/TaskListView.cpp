@@ -1,8 +1,8 @@
 #include "TaskListView.h"
 
-#include "scenes/game/ui/Look.h"
 #include "scenes/game/ui/views/SectionHeader.h"
 #include "scenes/game/ui/views/StatusTextLine.h"
+#include "scenes/shared/SalalUi.h"
 
 #include <ecs/components/Action.h>
 #include <ecs/components/Colonist.h>
@@ -34,7 +34,7 @@ namespace world_sim {
 			std::string		   key;
 			std::string		   text;
 			LineStatus		   status = LineStatus::Available;
-			ui::DimensionToken fontSize = look::t::fontSize::fsXs;
+			ui::DimensionToken fontSize = tokens::fontSize::fsXs;
 			float			   margin = kLineSpacing * 0.5F;
 			bool			   header = false;
 		};
@@ -79,7 +79,7 @@ namespace world_sim {
 			return {
 				.key = std::move(key),
 				.text = std::move(text),
-				.fontSize = look::t::fontSize::fsSm,
+				.fontSize = tokens::fontSize::fsSm,
 				.margin = kSectionSpacing * 0.5F,
 				.header = true
 			};
@@ -146,7 +146,7 @@ namespace world_sim {
 							option.hysteresisBonus
 						),
 						.status = LineStatus::Idle,
-						.fontSize = look::t::fontSize::fs2xs,
+						.fontSize = tokens::fontSize::fs2xs,
 						.margin = kLineSpacing * 0.25F,
 					});
 				}
@@ -176,10 +176,10 @@ namespace world_sim {
 		setLayout(column);
 		setStyle(
 			ui::Style{
-				.backgroundColor = theme.get(look::t::color::bgPanelRaised),
-				.borderColor = theme.get(look::t::color::lineEdge),
-				.borderWidth = theme.get(look::t::border::bw),
-				.borderRadius = theme.get(look::t::radius::rMd),
+				.backgroundColor = theme.get(tokens::color::bgPanelRaised),
+				.borderColor = theme.get(tokens::color::lineEdge),
+				.borderWidth = theme.get(tokens::border::bw),
+				.borderRadius = theme.get(tokens::radius::rMd),
 			}
 				.extend(getDeclaredStyle())
 		);
@@ -187,18 +187,18 @@ namespace world_sim {
 		ui::Ref<ui::Component> top = addChild<ui::Component>({
 			.layout = {.display = ui::Display::Flex, .gap = kPadding, .alignItems = ui::AlignItems::Center, .flexShrink = 0.0F},
 		});
-		ui::Style			   titleStyle = look::text(theme, look::t::color::textBright, look::t::fontSize::fsSm);
+		ui::Style			   titleStyle = world_sim::text(theme, {.size = tokens::fontSize::fsSm, .color = tokens::color::textBright});
 		titleStyle.fontSize = kTitleFontSize;
 		title = top.addChild<ui::Text>({.id = "task_list_title", .layout = {.flexGrow = 1.0F}, .style = titleStyle, .text = "Task Queue"});
 		top.addChild<ui::Button>({
 			.id = "task_list_close",
 			.size = {kCloseButtonSize, kCloseButtonSize},
 			.style =
-				{.backgroundColor = theme.get(look::t::color::bgInset),
-				 .borderColor = theme.get(look::t::color::lineEdge),
-				 .borderWidth = theme.get(look::t::border::bw),
-				 .borderRadius = theme.get(look::t::radius::rSm),
-				 .color = theme.get(look::t::color::textDim)},
+				{.backgroundColor = theme.get(tokens::color::bgInset),
+				 .borderColor = theme.get(tokens::color::lineEdge),
+				 .borderWidth = theme.get(tokens::border::bw),
+				 .borderRadius = theme.get(tokens::radius::rSm),
+				 .color = theme.get(tokens::color::textDim)},
 			.icon = "close",
 			.controlSize = ui::ControlSize::Sm,
 			.onPress = [this]() {

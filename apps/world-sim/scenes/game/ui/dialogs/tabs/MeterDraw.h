@@ -32,14 +32,14 @@ namespace world_sim::tabs {
 			const ui::Theme& theme = getContext()->getTheme();
 			ui::Layout		 row = getLayout();
 			row.display = ui::Display::Flex;
-			row.gap = theme.get(look::t::spacing::space2);
+			row.gap = theme.get(tokens::spacing::space2);
 			row.alignItems = ui::AlignItems::Center;
 			setLayout(row);
-			addChild<ui::Text>({.style = kickerText(theme, look::t::color::textFaint), .text = label});
+			addChild<ui::Text>({.style = kickerText(theme, tokens::color::textFaint), .text = label});
 			addChild<ui::Rectangle>({
-				.size = {ui::kAuto, theme.get(look::t::border::bw)},
+				.size = {ui::kAuto, theme.get(tokens::border::bw)},
 				.layout = {.flexGrow = 1.0F},
-				.style = {.backgroundColor = theme.get(look::t::color::lineHairline)},
+				.style = {.backgroundColor = theme.get(tokens::color::lineHairline)},
 			});
 		}
 
@@ -64,23 +64,27 @@ namespace world_sim::tabs {
 	  protected:
 		void onMount() override {
 			const ui::Theme&  theme = getContext()->getTheme();
-			Foundation::Color fill = theme.get(look::t::color::bgInset);
+			Foundation::Color fill = theme.get(tokens::color::bgInset);
 			fill.a *= 0.5F;
 			setStyle({
 				.backgroundColor = fill,
-				.borderColor = theme.get(look::t::color::lineHairline),
-				.borderWidth = theme.get(look::t::border::bw),
-				.borderRadius = theme.get(look::t::radius::rMd),
+				.borderColor = theme.get(tokens::color::lineHairline),
+				.borderWidth = theme.get(tokens::border::bw),
+				.borderRadius = theme.get(tokens::radius::rMd),
 			});
 			ui::Layout column = getLayout();
 			column.display = ui::Display::Flex;
 			column.flexDirection = ui::FlexDirection::Column;
-			column.gap = theme.get(look::t::spacing::space1);
-			column.padding = theme.get(look::t::spacing::space3);
+			column.gap = theme.get(tokens::spacing::space1);
+			column.padding = theme.get(tokens::spacing::space3);
 			setLayout(column);
-			addChild<ui::Text>({.style = look::text(theme, look::t::color::text, look::t::fontSize::fsSm), .text = title});
 			addChild<ui::Text>(
-				{.style = look::text(theme, look::t::color::textFaint, look::t::fontSize::fsXs), .text = subtitle, .wrap = true}
+				{.style = world_sim::text(theme, {.size = tokens::fontSize::fsSm, .color = tokens::color::text}), .text = title}
+			);
+			addChild<ui::Text>(
+				{.style = world_sim::text(theme, {.size = tokens::fontSize::fsXs, .color = tokens::color::textFaint}),
+				 .text = subtitle,
+				 .wrap = true}
 			);
 		}
 

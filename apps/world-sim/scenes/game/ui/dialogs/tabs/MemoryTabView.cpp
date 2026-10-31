@@ -72,11 +72,14 @@ namespace world_sim {
 					.layout = {.display = ui::Display::Flex, .alignItems = ui::AlignItems::Center},
 				});
 				name = head.addChild<ui::Text>(
-					{.layout = {.flexGrow = 1.0F}, .style = look::text(theme, look::t::color::textBright, look::t::fontSize::fsSm)}
+					{.layout = {.flexGrow = 1.0F},
+					 .style = world_sim::text(theme, {.size = tokens::fontSize::fsSm, .color = tokens::color::textBright})}
 				);
 				badge = head.addChild<ui::Badge>({});
-				const ui::Style entityStyle = look::text(theme, look::t::color::text, look::t::fontSize::fsXs);
-				const ui::Style positionStyle = look::text(theme, look::t::color::dataBright, look::t::fontSize::fs2xs, look::Font::Mono);
+				const ui::Style entityStyle = world_sim::text(theme, {.size = tokens::fontSize::fsXs, .color = tokens::color::text});
+				const ui::Style positionStyle = world_sim::text(
+					theme, {.family = ui::tokens::font::family::mono, .size = tokens::fontSize::fs2xs, .color = tokens::color::dataBright}
+				);
 				for (std::size_t i = 0; i < kMaxRowsPerCategory; ++i) {
 					rows[i] = addChild<ui::Component>({
 						.size = {ui::kAuto, kRowHeight},
@@ -85,10 +88,11 @@ namespace world_sim {
 					entityNames[i] = rows[i].addChild<ui::Text>({.layout = {.flexGrow = 1.0F}, .style = entityStyle});
 					entityPositions[i] = rows[i].addChild<ui::Text>({.style = positionStyle});
 				}
-				const ui::Style faint = look::text(theme, look::t::color::textFaint, look::t::fontSize::fs2xs);
+				const ui::Style faint = world_sim::text(theme, {.size = tokens::fontSize::fs2xs, .color = tokens::color::textFaint});
 				more = addChild<ui::Text>({.size = {ui::kAuto, kRowHeight}, .style = faint});
 				none = addChild<ui::Text>(
-					{.style = look::text(theme, look::t::color::textFaint, look::t::fontSize::fsXs), .text = "None sighted"}
+					{.style = world_sim::text(theme, {.size = tokens::fontSize::fsXs, .color = tokens::color::textFaint}),
+					 .text = "None sighted"}
 				);
 			}
 
@@ -108,9 +112,14 @@ namespace world_sim {
 				.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = 2.0F},
 			});
 			ui::Ref<ui::Text>	   value = metric.addChild<ui::Text>(
-				 {.style = look::text(theme, look::t::color::textBright, look::t::fontSize::fsXl, look::Font::Display)}
+				 {.style = world_sim::text(
+					  theme,
+					  {.family = ui::tokens::font::family::display, .size = tokens::fontSize::fsXl, .color = tokens::color::textBright}
+				  )}
 			 );
-			metric.addChild<ui::Text>({.style = look::text(theme, look::t::color::textDim, look::t::fontSize::fs2xs), .text = label});
+			metric.addChild<ui::Text>(
+				{.style = world_sim::text(theme, {.size = tokens::fontSize::fs2xs, .color = tokens::color::textDim}), .text = label}
+			);
 			return value;
 		}
 

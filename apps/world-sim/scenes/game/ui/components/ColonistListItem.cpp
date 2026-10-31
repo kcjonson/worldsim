@@ -1,6 +1,6 @@
 #include "ColonistListItem.h"
 
-#include "scenes/game/ui/Look.h"
+#include "scenes/shared/SalalUi.h"
 
 #include <ui/Context.h>
 #include <ui/theme/Variants.h>
@@ -37,11 +37,11 @@ namespace world_sim {
 		setSize({spec.width.isAuto() ? ui::Length(kWidth) : spec.width, spec.height.isAuto() ? ui::Length(kHeight) : spec.height});
 		setLayout({
 			.display = ui::Display::Flex,
-			.gap = theme.get(look::t::spacing::space2),
+			.gap = theme.get(tokens::spacing::space2),
 			.padding = {0.0F, kPad},
 			.alignItems = ui::AlignItems::Center,
 		});
-		const ui::Style edge{.backgroundColor = theme.get(look::t::color::accent)};
+		const ui::Style edge{.backgroundColor = theme.get(tokens::color::accent)};
 		selectedEdge = addChild<ui::Rectangle>({
 			.size = {kEdge, ui::kAuto},
 			.layout = {.position = ui::Position::Absolute, .inset = {.top = kEdge, .bottom = kEdge, .left = 0.0F}},
@@ -50,7 +50,7 @@ namespace world_sim {
 		controlledEdge = addChild<ui::Rectangle>({
 			.size = {kEdge, ui::kAuto},
 			.layout = {.position = ui::Position::Absolute, .inset = {.top = kEdge, .right = 0.0F, .bottom = kEdge}},
-			.style = {.backgroundColor = theme.get(look::t::color::data)},
+			.style = {.backgroundColor = theme.get(tokens::color::data)},
 		});
 		avatar = addChild<theme::Avatar>({.size = {kAvatar, kAvatar}, .seed = data.name});
 		ui::Ref<ui::Component> info = addChild<ui::Component>({
@@ -66,9 +66,15 @@ namespace world_sim {
 			info.addChild<ui::Component>({.layout = {.display = ui::Display::Flex, .alignItems = ui::AlignItems::Start}});
 		name = top.addChild<ui::Text>(
 			{.layout = {.flexGrow = 1.0F},
-			 .style = look::text(theme, look::t::color::textBright, look::t::fontSize::fsSm, look::Font::Display)}
+			 .style = world_sim::text(
+				 theme, {.family = ui::tokens::font::family::display, .size = tokens::fontSize::fsSm, .color = tokens::color::textBright}
+			 )}
 		);
-		mood = top.addChild<ui::Text>({.style = look::text(theme, look::t::color::text, look::t::fontSize::fs2xs, look::Font::Mono)});
+		mood = top.addChild<ui::Text>(
+			{.style = world_sim::text(
+				 theme, {.family = ui::tokens::font::family::mono, .size = tokens::fontSize::fs2xs, .color = tokens::color::text}
+			 )}
+		);
 		activity = info.addChild<ui::ProgressBar>({.controlSize = ui::ControlSize::Sm, .inlineLabel = true});
 		show();
 	}
@@ -100,10 +106,10 @@ namespace world_sim {
 		const bool		 controlled = data.playerControlled;
 		const float		 moodRatio = std::clamp(data.mood / 100.0F, 0.0F, 1.0F);
 		setStyle({
-			.backgroundColor = theme.get((selected || controlled) ? look::t::color::bgPanelRaised : look::t::color::bgPanel),
-			.borderColor = theme.get(controlled ? look::t::color::data : look::t::color::lineHairline),
-			.borderWidth = theme.get(look::t::border::bw),
-			.borderRadius = theme.get(look::t::radius::rMd),
+			.backgroundColor = theme.get((selected || controlled) ? tokens::color::bgPanelRaised : tokens::color::bgPanel),
+			.borderColor = theme.get(controlled ? tokens::color::data : tokens::color::lineHairline),
+			.borderWidth = theme.get(tokens::border::bw),
+			.borderRadius = theme.get(tokens::radius::rMd),
 		});
 		selectedEdge.get()->setVisible(selected);
 		controlledEdge.get()->setVisible(controlled);

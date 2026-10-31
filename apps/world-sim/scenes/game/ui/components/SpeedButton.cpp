@@ -1,6 +1,6 @@
 #include "SpeedButton.h"
 
-#include "scenes/game/ui/Look.h"
+#include "scenes/shared/SalalUi.h"
 
 #include <ui/Context.h>
 
@@ -42,13 +42,13 @@ namespace world_sim {
 		}
 		const ui::Theme& theme = getContext()->getTheme();
 		setStyle({
-			.backgroundColor = theme.get(current ? look::t::color::accent : look::t::color::bgInset),
-			.borderColor = theme.get(current ? look::t::color::accent : look::t::color::lineEdge),
-			.borderWidth = theme.get(look::t::border::bw),
-			.borderRadius = theme.get(look::t::radius::rMd),
+			.backgroundColor = theme.get(current ? tokens::color::accent : tokens::color::bgInset),
+			.borderColor = theme.get(current ? tokens::color::accent : tokens::color::lineEdge),
+			.borderWidth = theme.get(tokens::border::bw),
+			.borderRadius = theme.get(tokens::radius::rMd),
 		});
 		if (ui::Icon* shown = icon.get()) {
-			shown->setStyle({.color = theme.get(current ? look::t::color::accentContrast : look::t::color::textDim)});
+			shown->setStyle({.color = theme.get(current ? tokens::color::accentContrast : tokens::color::textDim)});
 		}
 	}
 

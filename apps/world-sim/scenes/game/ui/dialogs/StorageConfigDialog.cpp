@@ -1,6 +1,6 @@
 #include "StorageConfigDialog.h"
 
-#include "scenes/game/ui/Look.h"
+#include "scenes/shared/SalalUi.h"
 
 #include <ui/Context.h>
 #include <ui/components/Button.h>
@@ -27,15 +27,15 @@ namespace world_sim {
 		constexpr float kSectionGap = 6.0F;
 
 		ui::Style heading(const ui::Theme& theme) {
-			return look::text(theme, look::t::color::textDim, look::t::fontSize::fsXs);
+			return world_sim::text(theme, {.size = tokens::fontSize::fsXs, .color = tokens::color::textDim});
 		}
 
-		ui::Style body(const ui::Theme& theme, ui::ColorToken color = look::t::color::text) {
-			return look::text(theme, color, look::t::fontSize::fsSm);
+		ui::Style body(const ui::Theme& theme, ui::ColorToken color = tokens::color::text) {
+			return world_sim::text(theme, {.size = tokens::fontSize::fsSm, .color = color});
 		}
 
 		ui::Style smallPrint(const ui::Theme& theme, ui::ColorToken color) {
-			return look::text(theme, color, look::t::fontSize::fs2xs);
+			return world_sim::text(theme, {.size = tokens::fontSize::fs2xs, .color = color});
 		}
 
 		std::string priorityValue(ecs::StoragePriority priority) {
@@ -108,7 +108,7 @@ namespace world_sim {
 				if (!rule.isWildcard && known != rule.knownSource) {
 					known = rule.knownSource;
 					source.get()->setText(known ? "Source known [OK]" : "No known source [X]");
-					source.get()->setStyle(smallPrint(theme, known ? look::t::color::statusOk : look::t::color::statusCrit));
+					source.get()->setStyle(smallPrint(theme, known ? tokens::color::statusOk : tokens::color::statusCrit));
 				}
 				remove.get()->setOnPress(std::move(onRemove));
 			}
@@ -126,8 +126,8 @@ namespace world_sim {
 					.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = 1.0F, .flexGrow = 1.0F},
 				});
 				summary = text.addChild<ui::Text>({.style = body(theme), .wrap = true});
-				details = text.addChild<ui::Text>({.style = smallPrint(theme, look::t::color::textDim), .wrap = true});
-				source = text.addChild<ui::Text>({.style = smallPrint(theme, look::t::color::statusCrit), .text = "No known source [X]"});
+				details = text.addChild<ui::Text>({.style = smallPrint(theme, tokens::color::textDim), .wrap = true});
+				source = text.addChild<ui::Text>({.style = smallPrint(theme, tokens::color::statusCrit), .text = "No known source [X]"});
 				remove = addChild<ui::Button>({.size = {kDeleteSize, kDeleteSize}, .icon = "close", .controlSize = ui::ControlSize::Sm});
 			}
 
@@ -224,12 +224,13 @@ namespace world_sim {
 		bulk.addChild<ui::Button>({.label = "None", .controlSize = ui::ControlSize::Sm, .onPress = [this] { selectNone(); }});
 		noSelection = centre.addChild<ui::Text>(
 			{.margin = {kSectionGap, 0.0F, 0.0F, 0.0F},
-			 .style = look::text(theme, look::t::color::textDim, look::t::fontSize::fsBase),
+			 .style = world_sim::text(theme, {.size = tokens::fontSize::fsBase, .color = tokens::color::textDim}),
 			 .text = "Select an item to configure"}
 		);
 		form = centre.addChild<ui::Component>({.visible = false, .layout = stack});
 		itemName = form.addChild<ui::Text>(
-			{.margin = {kSectionGap, 0.0F, 0.0F, 0.0F}, .style = look::text(theme, look::t::color::textBright, look::t::fontSize::fsMd)}
+			{.margin = {kSectionGap, 0.0F, 0.0F, 0.0F},
+			 .style = world_sim::text(theme, {.size = tokens::fontSize::fsMd, .color = tokens::color::textBright})}
 		);
 		form.addChild<ui::Text>({.margin = {kSectionGap, 0.0F, 0.0F, 0.0F}, .style = heading(theme), .text = "ADD RULE"});
 		priority = fieldRow(form, theme, "Priority:")
@@ -272,7 +273,7 @@ namespace world_sim {
 		// Quality isn't simulated yet, so each offers only Any.
 		for (const char* label : {"Min Quality:", "Max Quality:"}) {
 			form.addChild<ui::Text>(
-				{.margin = {kSectionGap, 0.0F, 0.0F, 0.0F}, .style = body(theme, look::t::color::textDim), .text = label}
+				{.margin = {kSectionGap, 0.0F, 0.0F, 0.0F}, .style = body(theme, tokens::color::textDim), .text = label}
 			);
 			form.addChild<ui::Select>({
 				.size = {kSelectWidth, ui::kAuto},
@@ -292,7 +293,7 @@ namespace world_sim {
 		const ui::Ref<ui::Component> right =
 			columns.addChild<ui::Component>({.size = {kRightColumnWidth, ui::kAuto}, .layout = stack, .overflow = ui::Overflow::Scroll});
 		rulesHeader = right.addChild<ui::Text>({.style = heading(theme), .text = "RULES"});
-		rulesStatus = right.addChild<ui::Text>({.style = body(theme, look::t::color::textDim), .text = "Select an item"});
+		rulesStatus = right.addChild<ui::Text>({.style = body(theme, tokens::color::textDim), .text = "Select an item"});
 		ruleList = right.addChild<ui::Component>(
 			{.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = 2.0F}}
 		);

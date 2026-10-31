@@ -3,7 +3,7 @@
 // SectionHeader - a section's title in a column of content: one line of text, dim and left aligned, in
 // a size and colour from the theme's tokens. Its style's set fields win over both.
 
-#include "scenes/game/ui/Look.h"
+#include "scenes/shared/SalalUi.h"
 
 #include <ui/shapes/Text.h>
 
@@ -16,8 +16,8 @@ namespace world_sim {
 		struct Args {
 			UI_COMMON_ARGS
 			std::string		   text;
-			ui::DimensionToken fontSize = look::t::fontSize::fsSm;
-			ui::ColorToken	   color = look::t::color::textDim;
+			ui::DimensionToken fontSize = tokens::fontSize::fsSm;
+			ui::ColorToken	   color = tokens::color::textDim;
 		};
 
 		explicit SectionHeader(const Args& args);

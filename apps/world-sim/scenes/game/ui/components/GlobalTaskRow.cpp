@@ -1,6 +1,6 @@
 #include "GlobalTaskRow.h"
 
-#include "scenes/game/ui/Look.h"
+#include "scenes/shared/SalalUi.h"
 
 #include <ui/Context.h>
 
@@ -17,15 +17,15 @@ namespace world_sim {
 
 		ui::ColorToken statusColor(const adapters::GlobalTaskDisplayData& task) {
 			if (task.isMine) {
-				return look::t::color::data;
+				return tokens::color::data;
 			}
 			if (task.isBlocked || task.status == "Far" || task.status == "Waiting for harvest") {
-				return look::t::color::textDim;
+				return tokens::color::textDim;
 			}
 			if (task.isReserved) {
-				return look::t::color::statusWarn;
+				return tokens::color::statusWarn;
 			}
-			return look::t::color::statusOk;
+			return tokens::color::statusOk;
 		}
 
 	} // namespace
@@ -38,7 +38,7 @@ namespace world_sim {
 		const ui::Theme& theme = getContext()->getTheme();
 		setLayout({.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = 2.0F, .padding = kPadding});
 		setMargin(2.0F);
-		line1 = addChild<ui::Text>({.style = {.color = theme.get(look::t::color::text), .fontSize = kLine1Size}});
+		line1 = addChild<ui::Text>({.style = {.color = theme.get(tokens::color::text), .fontSize = kLine1Size}});
 		line2 = addChild<ui::Text>({.style = {.fontSize = kLine2Size}});
 		show();
 	}

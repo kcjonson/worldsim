@@ -1,7 +1,7 @@
 #include "GlobalTaskListView.h"
 
-#include "scenes/game/ui/Look.h"
 #include "scenes/game/ui/components/GlobalTaskRow.h"
+#include "scenes/shared/SalalUi.h"
 
 #include <ui/Context.h>
 
@@ -42,7 +42,7 @@ namespace world_sim {
 			.layout =
 				{.position = ui::Position::Absolute,
 				 .inset = {.top = (kHeaderHeight - kChevronSize) * 0.5F, .right = kChevronRightPadding}},
-			.style = {.color = theme.get(look::t::color::textBright)},
+			.style = {.color = theme.get(tokens::color::textBright)},
 			.name = "chevron_down",
 		});
 
@@ -53,10 +53,10 @@ namespace world_sim {
 			.size = {ui::percent(100.0F), kExpandedHeight - kHeaderHeight},
 			.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .padding = kPadding},
 			.style = {
-				.backgroundColor = theme.get(look::t::color::bgPanel),
-				.borderColor = theme.get(look::t::color::lineEdge),
-				.borderWidth = theme.get(look::t::border::bw),
-				.borderRadius = theme.get(look::t::radius::rMd)
+				.backgroundColor = theme.get(tokens::color::bgPanel),
+				.borderColor = theme.get(tokens::color::lineEdge),
+				.borderWidth = theme.get(tokens::border::bw),
+				.borderRadius = theme.get(tokens::radius::rMd)
 			},
 		});
 		list = content.addChild<ui::Component>({

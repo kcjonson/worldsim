@@ -1,6 +1,6 @@
 #include "ConstructionConfigStrip.h"
 
-#include "scenes/game/ui/Look.h"
+#include "scenes/shared/SalalUi.h"
 
 #include <ui/Context.h>
 #include <ui/components/Control.h>
@@ -71,12 +71,15 @@ namespace world_sim {
 				ui::Layout		 column = getLayout();
 				column.display = ui::Display::Flex;
 				column.flexDirection = ui::FlexDirection::Column;
-				column.gap = theme.get(look::t::spacing::space05);
+				column.gap = theme.get(tokens::spacing::space05);
 				column.padding = {5.0F, 8.0F};
 				setLayout(column);
-				addChild<ui::Text>({.style = look::text(theme, look::t::color::textBright, look::t::fontSize::fsBase), .text = name});
-				detailLine =
-					addChild<ui::Text>({.style = look::text(theme, look::t::color::textDim, look::t::fontSize::fsXs), .text = detail});
+				addChild<ui::Text>(
+					{.style = world_sim::text(theme, {.size = tokens::fontSize::fsBase, .color = tokens::color::textBright}), .text = name}
+				);
+				detailLine = addChild<ui::Text>(
+					{.style = world_sim::text(theme, {.size = tokens::fontSize::fsXs, .color = tokens::color::textDim}), .text = detail}
+				);
 				tint();
 			}
 
@@ -90,9 +93,9 @@ namespace world_sim {
 			void tint() {
 				const ui::Theme& theme = getContext()->getTheme();
 				setStyle({
-					.backgroundColor = theme.get(picked ? look::t::color::bgActive : look::t::color::bgInset),
-					.borderColor = theme.get(picked ? look::t::color::accent : look::t::color::lineEdge),
-					.borderWidth = theme.get(picked ? look::t::border::bwThick : look::t::border::bw),
+					.backgroundColor = theme.get(picked ? tokens::color::bgActive : tokens::color::bgInset),
+					.borderColor = theme.get(picked ? tokens::color::accent : tokens::color::lineEdge),
+					.borderWidth = theme.get(picked ? tokens::border::bwThick : tokens::border::bw),
 				});
 			}
 
@@ -122,9 +125,9 @@ namespace world_sim {
 		setLayout(row);
 		setStyle(
 			ui::Style{
-				.backgroundColor = theme.get(look::t::color::bgPanel),
-				.borderColor = theme.get(look::t::color::lineEdge),
-				.borderWidth = theme.get(look::t::border::bw),
+				.backgroundColor = theme.get(tokens::color::bgPanel),
+				.borderColor = theme.get(tokens::color::lineEdge),
+				.borderWidth = theme.get(tokens::border::bw),
 			}
 				.extend(getDeclaredStyle())
 		);
@@ -140,16 +143,18 @@ namespace world_sim {
 			.layout = {
 				.display = ui::Display::Flex,
 				.flexDirection = ui::FlexDirection::Column,
-				.gap = theme.get(look::t::spacing::space05),
+				.gap = theme.get(tokens::spacing::space05),
 				.alignItems = ui::AlignItems::Start
 			},
 		});
-		const ui::Style readout = look::text(theme, look::t::color::text, look::t::fontSize::fsSm);
+		const ui::Style readout = world_sim::text(theme, {.size = tokens::fontSize::fsSm, .color = tokens::color::text});
 		readoutTop = readouts.addChild<ui::Text>({.id = "config_strip_readout_top", .style = readout});
 		readoutBottom = readouts.addChild<ui::Text>({.id = "config_strip_readout_bottom", .style = readout});
-		messageColor = look::t::color::statusOk;
+		messageColor = tokens::color::statusOk;
 		message = addChild<ui::Text>(
-			{.id = "config_strip_message", .style = look::text(theme, messageColor, look::t::fontSize::fsBase), .text = "Ready"}
+			{.id = "config_strip_message",
+			 .style = world_sim::text(theme, {.size = tokens::fontSize::fsBase, .color = messageColor}),
+			 .text = "Ready"}
 		);
 		showCards();
 		showReadouts();
@@ -234,7 +239,7 @@ namespace world_sim {
 		if (readouts.get()->getSizeSpec().width.resolve(0.0F) != offset - kCardSpacing) {
 			readouts.get()->setSize({offset - kCardSpacing, ui::kAuto});
 			ui::Style topStyle = top->getDeclaredStyle();
-			topStyle.color = theme.get(status.foundationEdit ? look::t::color::textBright : look::t::color::text);
+			topStyle.color = theme.get(status.foundationEdit ? tokens::color::textBright : tokens::color::text);
 			top->setStyle(topStyle);
 		}
 
@@ -255,7 +260,7 @@ namespace world_sim {
 			bottom->setText(std::format("Points: {}", status.pointCount));
 		}
 
-		ui::ColorToken color = look::t::color::statusOk;
+		ui::ColorToken color = tokens::color::statusOk;
 		std::string	   text = "Ready";
 		if (status.opening) {
 			if (status.valid) {
@@ -264,18 +269,18 @@ namespace world_sim {
 				// No wall in range is pending (move onto a built wall); a wall in range that fails the
 				// placement gate is blocked.
 				const bool blocked = !status.message.empty() && status.message != "no wall in range";
-				color = blocked ? look::t::color::statusCrit : look::t::color::statusWarn;
+				color = blocked ? tokens::color::statusCrit : tokens::color::statusWarn;
 				text = status.message.empty() ? "Hover a built wall" : status.message;
 			}
 		} else if (status.wall) {
 			if (status.pointCount == 0) {
-				color = look::t::color::statusWarn;
+				color = tokens::color::statusWarn;
 				text = "Click a foundation to start";
 			} else {
 				text = "Right-click / Enter to finish";
 			}
 			if (!status.valid && !status.message.empty()) {
-				color = look::t::color::statusCrit;
+				color = tokens::color::statusCrit;
 				text = status.message;
 			}
 		} else {
@@ -283,14 +288,14 @@ namespace world_sim {
 				text = "Draw a region across the foundation edge";
 			}
 			if (status.pointCount > 0 && status.pointCount < 3) {
-				color = look::t::color::statusWarn;
+				color = tokens::color::statusWarn;
 				text = "Keep placing points";
 			}
 			if (!status.valid && !status.message.empty()) {
-				color = look::t::color::statusCrit;
+				color = tokens::color::statusCrit;
 				text = status.message;
 			} else if (status.valid && status.pointCount >= 3) {
-				color = look::t::color::statusOk;
+				color = tokens::color::statusOk;
 				text = "Click origin to close";
 			}
 		}

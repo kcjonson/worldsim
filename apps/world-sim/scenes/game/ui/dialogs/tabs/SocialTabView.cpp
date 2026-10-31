@@ -11,7 +11,7 @@ namespace world_sim {
 		ui::Layout		 column = getLayout();
 		column.display = ui::Display::Flex;
 		column.flexDirection = ui::FlexDirection::Column;
-		column.gap = theme.get(look::t::spacing::space2);
+		column.gap = theme.get(tokens::spacing::space2);
 		setLayout(column);
 		addChild<ui::Text>({.style = tabs::labelText(theme), .text = "Relationships"});
 		addChild<ui::Text>({.style = tabs::mutedText(theme), .text = "Not yet tracked"});

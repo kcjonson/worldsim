@@ -2,7 +2,7 @@
 
 // BuildMenu - the popup of items the player can place (a crafting spot, say), titled "Build": a raised
 // column of one button per item, kWidth wide, hugging its items. Choosing one calls onSelect with its
-// defName; the player's cancel (Escape, a pad's B) while it holds focus calls onClose.
+// defName; the player's cancel (Escape) while it holds focus calls onClose.
 
 #include "scenes/game/world/placement/PlacementTypes.h"
 

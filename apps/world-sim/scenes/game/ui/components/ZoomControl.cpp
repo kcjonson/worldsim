@@ -1,6 +1,6 @@
 #include "ZoomControl.h"
 
-#include "scenes/game/ui/Look.h"
+#include "scenes/shared/SalalUi.h"
 
 #include <ui/Context.h>
 #include <ui/components/Button.h>
@@ -34,7 +34,10 @@ namespace world_sim {
 		zoomButton("btn_zoom_in", "zoom_in", onZoomIn);
 		zoomButton("btn_zoom_reset", "zoom_reset", onZoomReset);
 		zoomButton("btn_zoom_out", "zoom_out", onZoomOut);
-		ui::Style label = look::text(getContext()->getTheme(), look::t::color::textDim, look::t::fontSize::fsXs, look::Font::Mono);
+		ui::Style label = world_sim::text(
+			getContext()->getTheme(),
+			{.family = ui::tokens::font::family::mono, .size = tokens::fontSize::fsXs, .color = tokens::color::textDim}
+		);
 		label.textAlign = Foundation::HorizontalAlign::Center;
 		readout = addChild<ui::Text>({.id = "zoom_percent", .size = {kButtonSize, ui::kAuto}, .style = label, .text = "100%"});
 		setZoomPercent(zoomPercent);

@@ -1,6 +1,6 @@
 #include "TopBar.h"
 
-#include "scenes/game/ui/Look.h"
+#include "scenes/shared/SalalUi.h"
 
 #include <primitives/Primitives.h>
 #include <ui/Context.h>
@@ -41,12 +41,12 @@ namespace world_sim {
 		row.alignItems = ui::AlignItems::Center;
 		row.padding = {0.0F, kPadH};
 		setLayout(row);
-		setStyle(ui::Style{.backgroundColor = theme.get(look::t::color::bgBase)}.extend(getDeclaredStyle()));
+		setStyle(ui::Style{.backgroundColor = theme.get(tokens::color::bgBase)}.extend(getDeclaredStyle()));
 
 		addChild<ui::Rectangle>({
-			.size = {ui::kAuto, theme.get(look::t::border::bw)},
+			.size = {ui::kAuto, theme.get(tokens::border::bw)},
 			.layout = {.position = ui::Position::Absolute, .inset = {.right = 0.0F, .bottom = 0.0F, .left = 0.0F}},
-			.style = {.backgroundColor = theme.get(look::t::color::lineHairline)},
+			.style = {.backgroundColor = theme.get(tokens::color::lineHairline)},
 		});
 
 		// The two sides start from nothing and grow alike, so the clock sits at the bar's centre.
@@ -54,7 +54,7 @@ namespace world_sim {
 			.size = {0.0F, ui::kAuto},
 			.layout = {
 				.display = ui::Display::Flex,
-				.gap = theme.get(look::t::spacing::space3),
+				.gap = theme.get(tokens::spacing::space3),
 				.alignItems = ui::AlignItems::Center,
 				.flexGrow = 1.0F
 			},
@@ -76,58 +76,70 @@ namespace world_sim {
 			});
 			insideSide = side;
 		};
-		diamond(kMarkHalf, look::t::color::accent, true);
-		diamond(kMarkHalf - 3.0F, look::t::color::bgBase, false);
-		diamond(kMarkHalf - 5.5F, look::t::color::accent, false);
+		diamond(kMarkHalf, tokens::color::accent, true);
+		diamond(kMarkHalf - 3.0F, tokens::color::bgBase, false);
+		diamond(kMarkHalf - 5.5F, tokens::color::accent, false);
 
 		ui::Ref<ui::Component> identity = left.addChild<ui::Component>({
 			.layout = {
 				.display = ui::Display::Flex,
 				.flexDirection = ui::FlexDirection::Column,
-				.gap = theme.get(look::t::spacing::space05),
+				.gap = theme.get(tokens::spacing::space05),
 				.alignItems = ui::AlignItems::Start
 			},
 		});
 		identity.addChild<ui::Text>(
 			{.id = "top_bar_colony",
-			 .style = look::text(theme, look::t::color::textBright, look::t::fontSize::fsMd, look::Font::Display),
+			 .style = world_sim::text(
+				 theme, {.family = ui::tokens::font::family::display, .size = tokens::fontSize::fsMd, .color = tokens::color::textBright}
+			 ),
 			 .text = colonyName}
 		);
 		ui::Ref<ui::Component> sub = identity.addChild<ui::Component>({
 			.layout = {
 				.display = ui::Display::Flex,
-				.gap = theme.get(look::t::spacing::space15) - (kSubDot * 0.5F),
+				.gap = theme.get(tokens::spacing::space15) - (kSubDot * 0.5F),
 				.alignItems = ui::AlignItems::Center
 			},
 		});
-		const ui::Style		   subStyle = look::text(theme, look::t::color::textFaint, look::t::fontSize::fs2xs, look::Font::Mono);
+		const ui::Style		   subStyle = world_sim::text(
+			   theme, {.family = ui::tokens::font::family::mono, .size = tokens::fontSize::fs2xs, .color = tokens::color::textFaint}
+		   );
 		survivors = sub.addChild<ui::Text>({.id = "top_bar_survivors", .style = subStyle});
 		// A drawn middot: the font's symbols aren't the theme's iconography.
-		sub.addChild<ui::Circle>({.size = {kSubDot, kSubDot}, .style = {.backgroundColor = theme.get(look::t::color::textFaint)}});
+		sub.addChild<ui::Circle>({.size = {kSubDot, kSubDot}, .style = {.backgroundColor = theme.get(tokens::color::textFaint)}});
 		sol = sub.addChild<ui::Text>({.id = "top_bar_sol", .style = subStyle});
 
 		ui::Ref<ui::Component> centre = addChild<ui::Component>({
-			.layout = {.display = ui::Display::Flex, .gap = theme.get(look::t::spacing::space2), .alignItems = ui::AlignItems::Center},
+			.layout = {.display = ui::Display::Flex, .gap = theme.get(tokens::spacing::space2), .alignItems = ui::AlignItems::Center},
 		});
 		day = centre.addChild<ui::Text>(
-			{.id = "top_bar_day", .style = look::text(theme, look::t::color::textBright, look::t::fontSize::fsMd, look::Font::Display)}
+			{.id = "top_bar_day",
+			 .style = world_sim::text(
+				 theme, {.family = ui::tokens::font::family::display, .size = tokens::fontSize::fsMd, .color = tokens::color::textBright}
+			 )}
 		);
-		ui::Style seasonStyle = look::text(theme, look::t::color::data, look::t::fontSize::fsXs, look::Font::Mono);
-		seasonStyle.letterSpacing = theme.get(look::t::fontSize::fsXs) * theme.get(look::t::letterSpacing::lsWide);
+		ui::Style seasonStyle = world_sim::text(
+			theme, {.family = ui::tokens::font::family::mono, .size = tokens::fontSize::fsXs, .color = tokens::color::data}
+		);
+		seasonStyle.letterSpacing = theme.get(tokens::fontSize::fsXs) * theme.get(tokens::letterSpacing::lsWide);
 		seasonStyle.textTransform = Foundation::TextTransform::Uppercase;
 		season = centre.addChild<ui::Text>({.id = "top_bar_season", .style = seasonStyle});
 		clock = centre.addChild<ui::Text>(
-			{.id = "top_bar_time", .style = look::text(theme, look::t::color::dataBright, look::t::fontSize::fsMd, look::Font::Mono)}
+			{.id = "top_bar_time",
+			 .style = world_sim::text(
+				 theme, {.family = ui::tokens::font::family::mono, .size = tokens::fontSize::fsMd, .color = tokens::color::dataBright}
+			 )}
 		);
 		ui::Ref<ui::Rectangle> pill = centre.addChild<ui::Rectangle>({
 			.id = "top_bar_speed",
-			.margin = {0.0F, 0.0F, 0.0F, theme.get(look::t::spacing::space3) - theme.get(look::t::spacing::space2)},
+			.margin = {0.0F, 0.0F, 0.0F, theme.get(tokens::spacing::space3) - theme.get(tokens::spacing::space2)},
 			.layout = {.display = ui::Display::Flex, .gap = kSpeedSpacing, .padding = kPillPadding, .alignItems = ui::AlignItems::Center},
 			.style = {
-				.backgroundColor = theme.get(look::t::color::bgInset),
-				.borderColor = theme.get(look::t::color::lineEdge),
-				.borderWidth = theme.get(look::t::border::bw),
-				.borderRadius = theme.get(look::t::radius::rMd)
+				.backgroundColor = theme.get(tokens::color::bgInset),
+				.borderColor = theme.get(tokens::color::lineEdge),
+				.borderWidth = theme.get(tokens::border::bw),
+				.borderRadius = theme.get(tokens::radius::rMd)
 			},
 		});
 		const auto			   speedButton = [&](const char* id, const char* icon, ecs::GameSpeed speed) {
@@ -138,12 +150,12 @@ namespace world_sim {
 		fastButton = speedButton("top_bar_speed2", "fast_forward", ecs::GameSpeed::Fast);
 		veryFastButton = speedButton("top_bar_speed3", "very_fast", ecs::GameSpeed::VeryFast);
 
-		const float			   overhang = theme.get(look::t::spacing::space1); // the badge past the bell's right edge
+		const float			   overhang = theme.get(tokens::spacing::space1); // the badge past the bell's right edge
 		ui::Ref<ui::Component> right = addChild<ui::Component>({
 			.size = {0.0F, ui::kAuto},
 			.layout = {
 				.display = ui::Display::Flex,
-				.gap = theme.get(look::t::spacing::space3) - overhang,
+				.gap = theme.get(tokens::spacing::space3) - overhang,
 				.alignItems = ui::AlignItems::Center,
 				.justifyContent = ui::JustifyContent::End,
 				.flexGrow = 1.0F
@@ -151,14 +163,14 @@ namespace world_sim {
 		});
 		// The bell, with room above and right for its badge over its top-right corner. No alert history
 		// exists yet, so a press on it does nothing.
-		const float			   rise = theme.get(look::t::spacing::space2);
+		const float			   rise = theme.get(tokens::spacing::space2);
 		ui::Ref<ui::Component> bell =
 			right.addChild<ui::Component>({.size = {kBellSize + overhang, kBellSize + (rise * 2.0F)}, .isolation = true});
 		bell.addChild<ui::Button>({
 			.id = "top_bar_alerts",
 			.position = {0.0F, rise},
 			.size = {kBellSize, kBellSize},
-			.style = {.borderRadius = theme.get(look::t::radius::rSm), .color = theme.get(look::t::color::statusWarn)},
+			.style = {.borderRadius = theme.get(tokens::radius::rSm), .color = theme.get(tokens::color::statusWarn)},
 			.icon = "alert",
 			.variant = ui::ButtonVariant::Ghost,
 		});

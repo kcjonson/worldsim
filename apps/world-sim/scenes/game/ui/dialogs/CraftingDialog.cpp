@@ -1,6 +1,6 @@
 #include "CraftingDialog.h"
 
-#include "scenes/game/ui/Look.h"
+#include "scenes/shared/SalalUi.h"
 
 #include <ui/Context.h>
 #include <ui/components/ListRow.h>
@@ -25,11 +25,11 @@ namespace world_sim {
 		constexpr float kPickerGap = 8.0F;
 
 		ui::Style heading(const ui::Theme& theme) {
-			return look::text(theme, look::t::color::textDim, look::t::fontSize::fsXs);
+			return world_sim::text(theme, {.size = tokens::fontSize::fsXs, .color = tokens::color::textDim});
 		}
 
-		ui::Style body(const ui::Theme& theme, ui::ColorToken color = look::t::color::text) {
-			return look::text(theme, color, look::t::fontSize::fsSm);
+		ui::Style body(const ui::Theme& theme, ui::ColorToken color = tokens::color::text) {
+			return world_sim::text(theme, {.size = tokens::fontSize::fsSm, .color = color});
 		}
 
 		ui::Ref<ui::Component> column(const ui::Ref<ui::Component>& parent, float gap, ui::Edges margin = {}) {
@@ -179,11 +179,13 @@ namespace world_sim {
 		const ui::Ref<ui::Component> centre =
 			columns.addChild<ui::Component>({.size = {0.0F, ui::kAuto}, .layout = centreLayout, .overflow = ui::Overflow::Scroll});
 		noSelection = centre.addChild<ui::Text>(
-			{.style = look::text(theme, look::t::color::textDim, look::t::fontSize::fsBase), .text = "Select a recipe"}
+			{.style = world_sim::text(theme, {.size = tokens::fontSize::fsBase, .color = tokens::color::textDim}),
+			 .text = "Select a recipe"}
 		);
 		details = column(centre, 2.0F);
-		recipeName =
-			details.addChild<ui::Text>({.style = look::text(theme, look::t::color::textBright, look::t::fontSize::fsMd), .wrap = true});
+		recipeName = details.addChild<ui::Text>(
+			{.style = world_sim::text(theme, {.size = tokens::fontSize::fsMd, .color = tokens::color::textBright}), .wrap = true}
+		);
 		description = details.addChild<ui::Text>({.style = body(theme), .wrap = true});
 		requiresSection = column(details, 1.0F, {kSectionGap, 0.0F, 0.0F, 0.0F});
 		requiresSection.addChild<ui::Text>({.style = heading(theme), .text = "REQUIRES"});
@@ -207,8 +209,8 @@ namespace world_sim {
 		minusOne = step("-1", -1);
 		quantity = picker.addChild<ui::Text>({
 			.size = {kQuantityWidth, ui::kAuto},
-			.style =
-				look::text(theme, look::t::color::text, look::t::fontSize::fsMd).extend({.textAlign = Foundation::HorizontalAlign::Center}),
+			.style = world_sim::text(theme, {.size = tokens::fontSize::fsMd, .color = tokens::color::text})
+						 .extend({.textAlign = Foundation::HorizontalAlign::Center}),
 		});
 		step("+1", 1);
 		step("+10", 10);
@@ -224,7 +226,7 @@ namespace world_sim {
 			{.size = {kRightColumnWidth, ui::kAuto}, .layout = scrolling, .overflow = ui::Overflow::Scroll}
 		);
 		right.addChild<ui::Text>({.style = heading(theme), .text = "QUEUE"});
-		emptyQueue = right.addChild<ui::Text>({.style = body(theme, look::t::color::textDim), .text = "No items queued"});
+		emptyQueue = right.addChild<ui::Text>({.style = body(theme, tokens::color::textDim), .text = "No items queued"});
 		queueList = column(right, 2.0F);
 
 		details.get()->setVisible(false);
@@ -299,7 +301,7 @@ namespace world_sim {
 		ui::Component& materialList = *materials.get();
 		const auto	   material = [&](const MaterialRequirement& need) {
 			const std::string line = std::to_string(need.required) + "x " + need.label + (need.hasEnough ? " [OK]" : " [X]");
-			return std::pair{line, body(theme, need.hasEnough ? look::t::color::statusOk : look::t::color::statusCrit)};
+			return std::pair{line, body(theme, need.hasEnough ? tokens::color::statusOk : tokens::color::statusCrit)};
 		};
 		materialList.reconcileChildren(
 			recipe.materials,
@@ -372,7 +374,8 @@ namespace world_sim {
 			[&](const QueueLine& line) -> ui::Ref<ui::Component> {
 				if (line.job == nullptr) {
 					return list->addChild<ui::Text>(
-						{.style = look::text(theme, look::t::color::textDim, look::t::fontSize::fs2xs), .text = line.heading}
+						{.style = world_sim::text(theme, {.size = tokens::fontSize::fs2xs, .color = tokens::color::textDim}),
+						 .text = line.heading}
 					);
 				}
 				return list->addChild<QueueEntry>({

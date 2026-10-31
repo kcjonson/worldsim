@@ -1,6 +1,6 @@
 #include "BuildMenu.h"
 
-#include "scenes/game/ui/Look.h"
+#include "scenes/shared/SalalUi.h"
 
 #include <ui/Context.h>
 #include <ui/components/Button.h>
@@ -32,10 +32,10 @@ namespace world_sim {
 		setLayout(column);
 		setStyle(
 			ui::Style{
-				.backgroundColor = theme.get(look::t::color::bgPanelRaised),
-				.borderColor = theme.get(look::t::color::lineEdge),
-				.borderWidth = theme.get(look::t::border::bw),
-				.borderRadius = theme.get(look::t::radius::rMd),
+				.backgroundColor = theme.get(tokens::color::bgPanelRaised),
+				.borderColor = theme.get(tokens::color::lineEdge),
+				.borderWidth = theme.get(tokens::border::bw),
+				.borderRadius = theme.get(tokens::radius::rMd),
 			}
 				.extend(getDeclaredStyle())
 		);
@@ -46,7 +46,7 @@ namespace world_sim {
 			}
 		});
 
-		ui::Style title = look::text(theme, look::t::color::textBright, look::t::fontSize::fsMd);
+		ui::Style title = world_sim::text(theme, {.size = tokens::fontSize::fsMd, .color = tokens::color::textBright});
 		title.textAlign = Foundation::HorizontalAlign::Center;
 		title.verticalAlign = Foundation::VerticalAlign::Middle;
 		addChild<ui::Text>({.id = "build_menu_title", .size = {ui::percent(100.0F), kTitleHeight}, .style = title, .text = "Build"});

@@ -1,6 +1,6 @@
 #include "GameUI.h"
 
-#include "scenes/game/ui/Look.h"
+#include "scenes/shared/SalalUi.h"
 
 #include <ui/Context.h>
 
@@ -60,7 +60,7 @@ namespace world_sim {
 		ui::Ref<ui::Component> dock = root.addChild<ui::Component>({
 			.id = "bottom_dock",
 			.layout =
-				stack({.right = 0.0F, .bottom = kDockBottom, .left = 0.0F}, ui::AlignItems::Center, theme.get(look::t::spacing::space1)),
+				stack({.right = 0.0F, .bottom = kDockBottom, .left = 0.0F}, ui::AlignItems::Center, theme.get(tokens::spacing::space1)),
 		});
 		configStrip = dock.addChild<ConstructionConfigStrip>({
 			.id = "construction_config_strip",
@@ -126,9 +126,9 @@ namespace world_sim {
 		ui::Ref<ui::Component> right = root.addChild<ui::Component>({
 			.id = "right_stack",
 			.layout = stack(
-				{.top = kRightStackTop, .right = theme.get(look::t::spacing::space3)},
+				{.top = kRightStackTop, .right = theme.get(tokens::spacing::space3)},
 				ui::AlignItems::End,
-				theme.get(look::t::spacing::space2)
+				theme.get(tokens::spacing::space2)
 			),
 		});
 		minimapPanel = right.addChild<RegionMinimapPanel>({.id = "region_minimap"});

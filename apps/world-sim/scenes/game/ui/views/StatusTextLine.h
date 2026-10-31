@@ -5,7 +5,7 @@
 // so the text lines up. With `wrap` it breaks to its width. Its style's set fields win over the status
 // colour.
 
-#include "scenes/game/ui/Look.h"
+#include "scenes/shared/SalalUi.h"
 
 #include <ui/shapes/Text.h>
 
@@ -28,7 +28,7 @@ namespace world_sim {
 			UI_COMMON_ARGS
 			std::string		   text;
 			LineStatus		   status = LineStatus::Available;
-			ui::DimensionToken fontSize = look::t::fontSize::fsXs;
+			ui::DimensionToken fontSize = tokens::fontSize::fsXs;
 			bool			   wrap = false;
 		};
 

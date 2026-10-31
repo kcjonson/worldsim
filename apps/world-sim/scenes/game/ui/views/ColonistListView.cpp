@@ -1,6 +1,6 @@
 #include "ColonistListView.h"
 
-#include "scenes/game/ui/Look.h"
+#include "scenes/shared/SalalUi.h"
 
 #include <ui/Context.h>
 
@@ -20,7 +20,7 @@ namespace world_sim {
 		ui::Layout column = getLayout();
 		column.display = ui::Display::Flex;
 		column.flexDirection = ui::FlexDirection::Column;
-		column.gap = getContext()->getTheme().get(look::t::spacing::space2);
+		column.gap = getContext()->getTheme().get(tokens::spacing::space2);
 		setLayout(column);
 		setPointerEvents(ui::PointerEvents::Auto);
 	}

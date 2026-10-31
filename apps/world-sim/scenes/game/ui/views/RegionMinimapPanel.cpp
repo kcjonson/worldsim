@@ -1,6 +1,6 @@
 #include "RegionMinimapPanel.h"
 
-#include "scenes/game/ui/Look.h"
+#include "scenes/shared/SalalUi.h"
 
 #include <primitives/Primitives.h>
 #include <ui/Context.h>
@@ -72,7 +72,7 @@ namespace world_sim {
 	  protected:
 		void onMount() override {
 			const ui::Theme& theme = getContext()->getTheme();
-			setStyle(ui::Style{.backgroundColor = theme.get(look::t::color::bgInset)}.extend(getDeclaredStyle()));
+			setStyle(ui::Style{.backgroundColor = theme.get(tokens::color::bgInset)}.extend(getDeclaredStyle()));
 			// "14.2°N · 9.8°W", the rings and the middot drawn: the font's symbols aren't the theme's
 			// iconography.
 			coords = addChild<ui::Component>({
@@ -85,8 +85,10 @@ namespace world_sim {
 					.inset = {.bottom = kCoordPad - 2.0F, .left = kCoordPad}
 				},
 			});
-			const ui::Style			run = look::text(theme, look::t::color::dataBright, look::t::fontSize::fs2xs, look::Font::Mono);
-			const Foundation::Color ink = theme.get(look::t::color::dataBright);
+			const ui::Style run = world_sim::text(
+				theme, {.family = ui::tokens::font::family::mono, .size = tokens::fontSize::fs2xs, .color = tokens::color::dataBright}
+			);
+			const Foundation::Color ink = theme.get(tokens::color::dataBright);
 			const auto				ring = [&]() {
 				 coords.addChild<ui::Circle>({
 								 .size = {kDegree, kDegree},
@@ -97,7 +99,7 @@ namespace world_sim {
 			lat = coords.addChild<ui::Text>({.style = run});
 			ring();
 			latHemi = coords.addChild<ui::Text>({.style = run});
-			const float apart = theme.get(look::t::spacing::space15) - (kMiddot * 0.5F);
+			const float apart = theme.get(tokens::spacing::space15) - (kMiddot * 0.5F);
 			coords.addChild<ui::Circle>({
 				.size = {kMiddot, kMiddot},
 				.margin = {0.0F, apart},
@@ -120,7 +122,7 @@ namespace world_sim {
 			const Foundation::Rect window = windowRect();
 			const float			   scale = size.x / window.width;
 
-			const Foundation::Color hairline = faded(theme.get(look::t::color::lineHairline), alpha);
+			const Foundation::Color hairline = faded(theme.get(tokens::color::lineHairline), alpha);
 			const float				step = kGridStepMeters * scale;
 			for (float x = step; x < size.x - 0.5F; x += step) {
 				Renderer::Primitives::drawLine(
@@ -135,7 +137,7 @@ namespace world_sim {
 
 			// The world-projected marks stop at the map's edge.
 			Renderer::Primitives::pushClip({0.0F, 0.0F, size.x, size.y});
-			const Foundation::Color accent = faded(theme.get(look::t::color::accent), alpha);
+			const Foundation::Color accent = faded(theme.get(tokens::color::accent), alpha);
 			const Foundation::Vec2	topLeft = toMap({viewRect.x, viewRect.y});
 			const Foundation::Vec2	bottomRight = toMap({viewRect.x + viewRect.width, viewRect.y + viewRect.height});
 			if (bottomRight.x > topLeft.x && bottomRight.y > topLeft.y) {
@@ -145,7 +147,7 @@ namespace world_sim {
 						{.fill = Foundation::Color::transparent(),
 						 .border =
 							 Foundation::BorderStyle{
-								 .color = accent, .width = theme.get(look::t::border::bw), .position = Foundation::BorderPosition::Inside
+								 .color = accent, .width = theme.get(tokens::border::bw), .position = Foundation::BorderPosition::Inside
 							 }},
 					.id = "minimap_viewport",
 					.key = key,
@@ -168,7 +170,7 @@ namespace world_sim {
 				.id = "minimap_crash_marker",
 				.key = key,
 			});
-			const Foundation::Color dot = faded(theme.get(look::t::color::textBright), alpha);
+			const Foundation::Color dot = faded(theme.get(tokens::color::textBright), alpha);
 			for (const Foundation::Vec2& colonist : dots) {
 				if (inWindow(window, colonist)) {
 					Renderer::Primitives::drawCircle(
@@ -179,7 +181,7 @@ namespace world_sim {
 			Renderer::Primitives::popClip();
 
 			// A colonist outside the window: a chevron on the inset perimeter along its bearing.
-			const Foundation::Color bright = faded(theme.get(look::t::color::accentBright), alpha);
+			const Foundation::Color bright = faded(theme.get(tokens::color::accentBright), alpha);
 			for (const Foundation::Vec2& colonist : dots) {
 				if (!inWindow(window, colonist)) {
 					drawBearing(colonist, bright, key);

@@ -1,6 +1,6 @@
 #include "DebugOverlay.h"
 
-#include "scenes/game/ui/Look.h"
+#include "scenes/shared/SalalUi.h"
 
 #include <ui/Context.h>
 #include <world/Biome.h>
@@ -18,11 +18,11 @@ namespace world_sim {
 		ui::Layout		 column = getLayout();
 		column.display = ui::Display::Flex;
 		column.flexDirection = ui::FlexDirection::Column;
-		column.gap = theme.get(look::t::spacing::space05);
+		column.gap = theme.get(tokens::spacing::space05);
 		column.padding = kPadding;
 		column.alignItems = ui::AlignItems::Start;
 		setLayout(column);
-		const ui::Style line = look::text(theme, look::t::color::textBright, look::t::fontSize::fsMd);
+		const ui::Style line = world_sim::text(theme, {.size = tokens::fontSize::fsMd, .color = tokens::color::textBright});
 		chunks = addChild<ui::Text>({.id = "debug_chunks", .style = line, .text = "Chunks: 0"});
 		cameraLine = addChild<ui::Text>({.id = "debug_position", .style = line, .text = "Position: (0, 0)"});
 		biome = addChild<ui::Text>({.id = "debug_biome", .style = line, .text = "Biome: Unknown"});

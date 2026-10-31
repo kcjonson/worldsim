@@ -39,13 +39,13 @@ namespace world_sim {
 		ui::Layout		 layout = getLayout();
 		layout.display = ui::Display::Flex;
 		layout.flexDirection = ui::FlexDirection::Column;
-		layout.gap = theme.get(look::t::spacing::space2);
+		layout.gap = theme.get(tokens::spacing::space2);
 		setLayout(layout);
 
 		moodMeter = addChild<ui::ProgressBar>({.label = "Mood", .controlSize = ui::ControlSize::Sm});
 		addChild<ui::Text>({
-			.margin = {0.0F, 0.0F, theme.get(look::t::spacing::space1), 0.0F},
-			.style = look::text(theme, look::t::color::textFaint, look::t::fontSize::fsXs),
+			.margin = {0.0F, 0.0F, theme.get(tokens::spacing::space1), 0.0F},
+			.style = world_sim::text(theme, {.size = tokens::fontSize::fsXs, .color = tokens::color::textFaint}),
 			.text = "Mood is computed from the needs below; it sinks as they go unmet.",
 			.wrap = true,
 		});
@@ -65,12 +65,12 @@ namespace world_sim {
 			});
 		}
 		left.addChild<ui::Text>({
-			.style = look::text(theme, look::t::color::textFaint, look::t::fontSize::fs2xs),
+			.style = world_sim::text(theme, {.size = tokens::fontSize::fs2xs, .color = tokens::color::textFaint}),
 			.text = "Comfort needs are tracked, but colonists don't act on them yet.",
 			.wrap = true,
 		});
 
-		ui::Ref<ui::Component> right = column(*columns.get(), theme.get(look::t::spacing::space2));
+		ui::Ref<ui::Component> right = column(*columns.get(), theme.get(tokens::spacing::space2));
 		right.addChild<tabs::KickerDivider>({.label = "Body & ailments"});
 		right.addChild<tabs::EmptyState>({
 			.minSize = {ui::kAuto, kAilmentsHeight},

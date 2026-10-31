@@ -25,7 +25,6 @@ add_executable(world-sim
     scenes/game/ui/components/NeedBar.cpp
     scenes/game/ui/components/ZoomControl.cpp
     scenes/game/ui/components/SpeedButton.cpp
-    scenes/game/ui/Look.cpp
     # Game scene UI - adapters
     scenes/game/ui/adapters/ColonistAdapter.cpp
     scenes/game/ui/adapters/CraftingAdapter.cpp

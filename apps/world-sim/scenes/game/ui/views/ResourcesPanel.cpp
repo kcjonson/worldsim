@@ -1,6 +1,6 @@
 #include "ResourcesPanel.h"
 
-#include "scenes/game/ui/Look.h"
+#include "scenes/shared/SalalUi.h"
 
 #include <ui/Context.h>
 #include <ui/components/Button.h>
@@ -24,7 +24,7 @@ namespace world_sim {
 
 	void ResourcesPanel::onMount() {
 		const ui::Theme& theme = getContext()->getTheme();
-		const float		 inset = theme.get(look::t::spacing::space2);
+		const float		 inset = theme.get(tokens::spacing::space2);
 		if (getSizeSpec().width.isAuto()) {
 			setSize({kWidth, getSizeSpec().height});
 		}
@@ -46,7 +46,7 @@ namespace world_sim {
 			.layout =
 				{.position = ui::Position::Absolute,
 				 .inset = {.top = (kHeaderHeight - kChevronSize) * 0.5F, .right = kChevronRightPadding}},
-			.style = {.color = theme.get(look::t::color::textBright)},
+			.style = {.color = theme.get(tokens::color::textBright)},
 			.name = "chevron_down",
 		});
 
@@ -55,16 +55,16 @@ namespace world_sim {
 			.visible = false,
 			.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .padding = inset},
 			.style = {
-				.backgroundColor = theme.get(look::t::color::bgPanel),
-				.borderColor = theme.get(look::t::color::lineEdge),
-				.borderWidth = theme.get(look::t::border::bw),
-				.borderRadius = theme.get(look::t::radius::rMd)
+				.backgroundColor = theme.get(tokens::color::bgPanel),
+				.borderColor = theme.get(tokens::color::lineEdge),
+				.borderWidth = theme.get(tokens::border::bw),
+				.borderRadius = theme.get(tokens::radius::rMd)
 			},
 		});
 		emptyMessage = content.addChild<ui::Text>({
 			.id = "resources_empty_msg",
 			.size = {ui::percent(100.0F), ui::kAuto},
-			.style = look::text(theme, look::t::color::textDim, look::t::fontSize::fsSm),
+			.style = world_sim::text(theme, {.size = tokens::fontSize::fsSm, .color = tokens::color::textDim}),
 			.text = "No stockpiles built. Create one to track colony resources.",
 			.wrap = true,
 		});
