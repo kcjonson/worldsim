@@ -11,6 +11,7 @@
 #include "scenes/game/world/placement/PlacementSystem.h"
 #include "scenes/game/world/rooms/RoomOverlay.h"
 #include "scenes/game/world/selection/SelectionSystem.h"
+#include "scenes/shared/SalalUi.h"
 #include "scenes/game/world/terrain/TerrainPolygonOverlay.h"
 #include "scenes/game/world/vision/VisionOverlay.h"
 
@@ -117,8 +118,7 @@ namespace {
 		void onEnter(app::App& app) override {
 			owner = &app;
 			LOG_INFO(Game, "GameScene - Entering");
-			// Still on worldsim's ui, so the bridge carries its input; the pre-game scenes, on salal's ui, took it off.
-			app.context<world_sim::AppContext>().ui.install();
+			world_sim::enterSalalUi(app, ui());
 
 			// Check for pre-loaded state from GameLoadingScene
 			auto preloadedState = world_sim::GameWorldState::Take();
@@ -172,6 +172,7 @@ namespace {
 			// Create unified game UI (contains overlay and info panel)
 			// Note: Callbacks for placement/selection are set up after systems are created below
 			gameUI = std::make_unique<world_sim::GameUI>(world_sim::GameUI::Args{
+				.root = root(),
 				.onZoomIn = [this]() { m_camera->zoomIn(); },
 				.onZoomOut = [this]() { m_camera->zoomOut(); },
 				.onZoomReset = [this]() { m_camera->setZoomIndex(engine::world::kDefaultZoomIndex); },
@@ -199,14 +200,6 @@ namespace {
 							ai.enterControl(entityId);
 							m_controlledColonist = entityId;
 						}
-					},
-				.onBuildToggle =
-					[this]() {
-						// One tool owns world input: drop the foundation tool first.
-						if (m_drawingSystem) {
-							m_drawingSystem->deactivate();
-						}
-						m_placementSystem->toggleBuildMenu();
 					},
 				.onBuildItemSelected =
 					[this](const std::string& defName) {
@@ -309,12 +302,6 @@ namespace {
 				gameUI->setProductionItems(productionItems);
 			}
 
-			// Initial layout pass with consistent DPI scaling
-			int viewportW = 0;
-			int viewportH = 0;
-			Renderer::Primitives::getLogicalViewport(viewportW, viewportH);
-			gameUI->layout(Foundation::Rect{0, 0, static_cast<float>(viewportW), static_cast<float>(viewportH)});
-
 			// Initialize ECS World
 			initializeECS();
 
@@ -325,7 +312,6 @@ namespace {
 				.placementExecutor = m_placementExecutor.get(),
 				.navigation = &ecsWorld->getSystem<ecs::NavigationSystem>(),
 				.callbacks = {
-					.onBuildMenuVisibility = [this](bool active) { gameUI->setBuildModeActive(active); },
 					.onShowBuildMenu = [this](const std::vector<world_sim::BuildMenuItem>& items) { gameUI->showBuildMenu(items); },
 					.onHideBuildMenu = [this]() { gameUI->hideBuildMenu(); },
 					.onSelectionCleared = [this]() { m_selectionSystem->clearSelection(); }

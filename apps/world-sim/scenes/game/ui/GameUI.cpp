@@ -1,91 +1,114 @@
 #include "GameUI.h"
 
-#include <primitives/Primitives.h>
-#include <theme/CssTokens.h>
+#include "scenes/game/ui/Look.h"
+
+#include <ui/Context.h>
+
+#include <algorithm>
 
 namespace world_sim {
 
 	namespace {
-		// Layout constants
-		constexpr float kPanelWidth = 320.0F;	 // Prototype .infoPanel { width: 320px }
-		constexpr float kTaskListWidth = 360.0F; // 2x info panel
-		constexpr float kPanelPadding = 10.0F;
-		constexpr float kPanelHeight = 148.0F;
-		constexpr float kTaskListMaxHeight = 400.0F;
 
-		// Build menu dimensions
-		constexpr float kBuildMenuWidth = 180.0F;
+		constexpr float kEdge = 12.0F;			  // the HUD's distance from the viewport's edges
+		constexpr float kRightStackTop = 60.0F;	  // just below the top bar
+		constexpr float kDockBottom = 12.0F;	  // the gameplay bar's distance from the bottom
+		constexpr float kBuildMenuBottom = 70.0F; // above the gameplay bar
+		constexpr float kTaskListRoom = 100.0F;	  // the viewport height the task list leaves free
+		// Toasts stack up from the bottom right, above the zoom column, which owns the corner.
+		constexpr float kToastBottom = 130.0F;
+
+		ui::Layout absolute(ui::Inset inset) {
+			return {.position = ui::Position::Absolute, .inset = inset};
+		}
+
+		ui::Layout stack(ui::Inset inset, ui::AlignItems align, float gap) {
+			return {
+				.display = ui::Display::Flex,
+				.flexDirection = ui::FlexDirection::Column,
+				.gap = gap,
+				.alignItems = align,
+				.position = ui::Position::Absolute,
+				.inset = inset,
+			};
+		}
+
 	} // namespace
 
 	GameUI::GameUI(const Args& args)
-		: onSelectionCleared(args.onSelectionCleared) {
+		: root(args.root),
+		  onSelectionCleared(args.onSelectionCleared) {
+		const ui::Theme& theme = root.get()->getContext()->getTheme();
 
-		// Create top bar (date/time and speed controls)
-		topBar = std::make_unique<TopBar>(
-			TopBar::Args{.onPause = args.onPause, .onSpeedChange = args.onSpeedChange, .onMenuClick = args.onMenuClick, .id = "top_bar"}
-		);
-
-		// Create debug overlay (below top bar)
-		debugOverlay = std::make_unique<DebugOverlay>(DebugOverlay::Args{});
-
-		// Create zoom control panel (floating on right side)
-		zoomControlPanel = std::make_unique<ZoomControlPanel>(ZoomControlPanel::Args{
+		topBar = root.addChild<TopBar>({
+			.id = "top_bar",
+			.layout = absolute({.top = 0.0F, .left = 0.0F}),
+			.onPause = args.onPause,
+			.onSpeedChange = args.onSpeedChange,
+			.onMenuClick = args.onMenuClick,
+		});
+		debugOverlay = root.addChild<DebugOverlay>({.id = "debug_overlay", .layout = absolute({.bottom = 20.0F, .left = 0.0F})});
+		zoomControlPanel = root.addChild<ZoomControlPanel>({
+			.id = "zoom_control",
+			.layout = absolute({.right = kEdge, .bottom = kEdge}),
 			.onZoomIn = args.onZoomIn,
 			.onZoomOut = args.onZoomOut,
 			.onZoomReset = args.onZoomReset,
 		});
 
-		// Create gameplay bar (replaces build toolbar)
-		gameplayBar = std::make_unique<GameplayBar>(GameplayBar::Args{
-			.onBuildClick = args.onBuildToggle,
+		// The bottom middle: the construction strip, while a structure tool is active, over the gameplay bar.
+		ui::Ref<ui::Component> dock = root.addChild<ui::Component>({
+			.id = "bottom_dock",
+			.layout =
+				stack({.right = 0.0F, .bottom = kDockBottom, .left = 0.0F}, ui::AlignItems::Center, theme.get(look::t::spacing::space1)),
+		});
+		configStrip = dock.addChild<ConstructionConfigStrip>({
+			.id = "construction_config_strip",
+			.onMaterialSelected = args.onConstructionMaterialSelected,
+			.onThicknessSelected = args.onConstructionThicknessSelected,
+		});
+		gameplayBar = dock.addChild<GameplayBar>({
+			.id = "gameplay_bar",
 			.onProductionSelected = args.onProductionSelected,
 			.onStructureSelected = args.onStructureSelected,
 			.onRoomsToggle = args.onRoomsToggle,
-			.id = "gameplay_bar"
 		});
-
-		// Create construction config strip (hidden until a structure tool is active)
-		configStrip = std::make_unique<ConstructionConfigStrip>(ConstructionConfigStrip::Args{
-			.onMaterialSelected = args.onConstructionMaterialSelected,
-			.onThicknessSelected = args.onConstructionThicknessSelected,
-			.id = "construction_config_strip"});
-
-		// Create build menu (position set in layout())
-		buildMenu = std::make_unique<BuildMenu>(BuildMenu::Args{
-			.position = {0.0F, 0.0F}, // Will be positioned in layout()
+		buildMenu = root.addChild<BuildMenu>({
+			.id = "build_menu",
+			.visible = false,
+			.layout = absolute({.bottom = kBuildMenuBottom, .left = 0.0F}),
 			.onSelect = args.onBuildItemSelected,
-			.onClose = [this]() { hideBuildMenu(); },
-			.id = "build_menu"
+			.onClose = [this] { hideBuildMenu(); },
 		});
 
-		// Create colonist list view (left side)
-		colonistList = std::make_unique<ColonistListView>(ColonistListView::Args{
-			.width = 208.0F,
-			.itemHeight = 54.0F,
+		colonistList = root.addChild<ColonistListView>({
+			.id = "colonist_list",
+			.layout = absolute({.top = TopBar::kHeight + kEdge, .left = kEdge}),
 			.onColonistSelected = args.onColonistSelected,
 			.onColonistFollowed = args.onColonistFollowed,
-			.id = "colonist_list"
 		});
 
-		// Create info view (position set in layout())
-		infoPanel = std::make_unique<EntityInfoView>(EntityInfoView::Args{
-			.width = kPanelWidth,
+		// The bottom left: the task list, while it's open, on the selected entity's panel.
+		ui::Ref<ui::Component> bottomLeft = root.addChild<ui::Component>(
+			{.id = "bottom_left", .layout = stack({.bottom = 0.0F, .left = kEdge}, ui::AlignItems::Start, 0.0F)}
+		);
+		taskListPanel = bottomLeft.addChild<TaskListView>({.id = "task_list", .visible = false, .onClose = [this] { toggleTaskList(); }});
+		infoPanel = bottomLeft.addChild<EntityInfoView>({
 			.id = "entity_panel",
 			.onClose =
-				[this]() {
+				[this] {
 					if (onSelectionCleared) {
 						onSelectionCleared();
 					}
 				},
 			.onDetails =
-				[this]() {
-					// Open colonist details dialog for currently selected colonist
+				[this] {
 					if (selectedColonistId != 0) {
 						showColonistDetails(selectedColonistId);
 					}
 				},
 			.onToggleControl = args.onColonistControlToggle,
-			.onGoTo = args.onColonistFollowed, // same camera-follow path as roster double-click
+			.onGoTo = args.onColonistFollowed, // the roster's double-click follow
 			.onOpenCraftingDialog = args.onOpenCraftingDialog,
 			.onPlace = args.onPlaceFurniture,
 			.onMoveFurniture = args.onMoveFurniture,
@@ -96,342 +119,67 @@ namespace world_sim {
 			.onAddToFoundation = args.onAddToFoundation,
 			.onSubtractFromFoundation = args.onSubtractFromFoundation,
 			.onDemolishWallSegment = args.onDemolishWallSegment,
-			.onDemolishOpening = args.onDemolishOpening
+			.onDemolishOpening = args.onDemolishOpening,
 		});
 
-		// Create colonist details dialog
+		// The right: the minimap, the resources and the global task list, restacking as they grow.
+		ui::Ref<ui::Component> right = root.addChild<ui::Component>({
+			.id = "right_stack",
+			.layout = stack(
+				{.top = kRightStackTop, .right = theme.get(look::t::spacing::space3)},
+				ui::AlignItems::End,
+				theme.get(look::t::spacing::space2)
+			),
+		});
+		minimapPanel = right.addChild<RegionMinimapPanel>({.id = "region_minimap"});
+		resourcesPanel = right.addChild<ResourcesPanel>({.id = "resources_panel"});
+		globalTaskList = right.addChild<GlobalTaskListView>({.id = "global_task_list"});
+
+		toastStack = ui::ToastStack::open(
+			*root.get(),
+			{.id = "toast_stack",
+			 .anchor = ui::ToastAnchor::BottomRight,
+			 .spacing = 8.0F,
+			 .inset = {16.0F, 20.0F, kToastBottom, 16.0F},
+			 .maxToasts = 5,
+			 .toastWidth = 300.0F}
+		);
+
 		colonistDetailsDialog =
-			std::make_unique<ColonistDetailsDialog>(ColonistDetailsDialog::Args{.onClose = [this]() { hideColonistDetails(); }});
-
-		// Create crafting dialog
+			std::make_unique<ColonistDetailsDialog>(ColonistDetailsDialog::Args{.onClose = [this] { hideColonistDetails(); }});
 		craftingDialog = std::make_unique<CraftingDialog>(CraftingDialog::Args{
-			.onClose = [this]() { hideCraftingDialog(); },
-			.onQueueRecipe = args.onQueueRecipe,
-			.onCancelJob = args.onCancelJob
+			.onClose = [this] { hideCraftingDialog(); }, .onQueueRecipe = args.onQueueRecipe, .onCancelJob = args.onCancelJob
 		});
-
-		// Create storage config dialog
 		storageConfigDialog = std::make_unique<StorageConfigDialog>(StorageConfigDialog::Args{
-			.onClose = [this]() { hideStorageConfigDialog(); },
-			.onNotify = [this](const std::string& title, const std::string& message) {
-				pushNotification(title, message, UI::ToastSeverity::Warning);
-			}
+			.onClose = [this] { hideStorageConfigDialog(); },
+			.onNotify = [this](
+							const std::string& title, const std::string& message
+						) { pushNotification(title, message, ui::ToastSeverity::Warning); },
 		});
 
-		// Dialogs are top-level roots that overlap the HUD; a modal zIndex keeps
-		// render order honest and exempts the overlap in the layout lint.
-		colonistDetailsDialog->zIndex = static_cast<short>(UI::z_modal);
-		craftingDialog->zIndex = static_cast<short>(UI::z_modal);
-		storageConfigDialog->zIndex = static_cast<short>(UI::z_modal);
-
-		// Create task list view (position set in layout())
-		taskListPanel = std::make_unique<TaskListView>(TaskListView::Args{
-			.width = kTaskListWidth, .maxHeight = kTaskListMaxHeight, .onClose = [this]() { toggleTaskList(); }, .id = "task_list"
-		});
-
-		// Create region minimap (first item in the top-right stack)
-		minimapPanel = std::make_unique<RegionMinimapPanel>(RegionMinimapPanel::Args{
-			.width = 232.0F, .id = "region_minimap"
-		});
-
-		// Create resources panel (top-right, below the minimap)
-		resourcesPanel = std::make_unique<ResourcesPanel>(ResourcesPanel::Args{
-			.width = 232.0F, .id = "resources_panel", .onToggle = [this]() { positionRightStack(); }
-		});
-
-		// Create global task list panel (top-right, below resources panel)
-		globalTaskList = std::make_unique<GlobalTaskListView>(GlobalTaskListView::Args{.width = 232.0F});
-
-		// Create toast stack for notifications (bottom-right)
-		toastStack = std::make_unique<UI::ToastStack>(UI::ToastStack::Args{
-			.position = {0.0F, 0.0F}, // Will be positioned in layout()
-			.anchor = UI::ToastAnchor::BottomRight,
-			.spacing = 8.0F,
-			.maxToasts = 5,
-			.toastWidth = 300.0F,
-			.id = "toast_stack"
-		});
-		toastStack->zIndex = 2000; // Above other UI
+		fitViewport(root.get()->getContext()->getViewport());
 	}
 
-	void GameUI::layout(const Foundation::Rect& newBounds) {
-		viewportBounds = newBounds;
-
-		// Layout top bar (full width at top)
-		float topBarHeight = 0.0F;
-		if (topBar) {
-			topBar->layout(newBounds);
-			topBarHeight = topBar->getHeight();
-		}
-
-		// Create bounds for content below top bar
-		Foundation::Rect contentBounds{newBounds.x, newBounds.y + topBarHeight, newBounds.width, newBounds.height - topBarHeight};
-
-		// Layout debug overlay at bottom-left (below colonist list)
-		// Per spec: Debug info appears in bottom-left corner
-		if (debugOverlay) {
-			// Position above the gameplay bar, leaving room for colonist list
-			float			 debugY = newBounds.height - 100.0F; // Above bottom
-			Foundation::Rect debugBounds{
-				newBounds.x,
-				debugY,
-				320.0F, // Wide enough for the longest biome line
-				80.0F	// Height for 3 lines of text
-			};
-			debugOverlay->layout(debugBounds);
-		}
-
-		// Layout zoom control panel (floating right side)
-		if (zoomControlPanel) {
-			zoomControlPanel->layout(newBounds);
-		}
-
-		// Layout gameplay bar at bottom center
-		if (gameplayBar) {
-			gameplayBar->layout(newBounds);
-		}
-
-		// Layout config strip (docks itself just above the gameplay bar)
-		if (configStrip) {
-			configStrip->layout(newBounds);
-		}
-
-		// Position build menu above the gameplay bar, centered
-		if (buildMenu) {
-			float menuX = (newBounds.width - kBuildMenuWidth) * 0.5F;
-			float menuY = newBounds.height - gameplayBar->getHeight() - 12.0F - 10.0F - 150.0F; // Above bar
-			buildMenu->setPosition({menuX, menuY});
-		}
-
-		// Position colonist roster on the left, just below the top bar
-		if (colonistList) {
-			colonistList->setPosition(12.0F, topBarHeight + 12.0F);
-		}
-
-		// Position info panel in bottom-left corner (12px from edges per prototype)
-		float panelX = 12.0F;
-
-		// Update panel position with bottom-left alignment (panel computes Y from viewport height)
-		if (infoPanel) {
-			infoPanel->setBottomLeftPosition(panelX, newBounds.height);
-
-			// Cache panel bounds for hit testing using actual dynamic height
-			float actualHeight = infoPanel->getHeight();
-			float panelY = newBounds.height - actualHeight;
-			infoPanelBounds = Foundation::Rect{panelX, panelY, kPanelWidth, actualHeight};
-		}
-
-		// Position task list panel above info panel
-		if (taskListPanel) {
-			// Calculate available height (viewport height minus top UI area)
-			float availableHeight = newBounds.height - 100.0F; // Leave 100px for top-left overlay
-			float taskListHeight = std::min(kTaskListMaxHeight, availableHeight);
-
-			// Position at same X as info panel, bottom edge at info panel top
-			float taskListBottomY = infoPanelBounds.y;
-			float taskListY = taskListBottomY - taskListHeight;
-
-			taskListPanelBounds = Foundation::Rect{panelX, taskListY, kTaskListWidth, taskListHeight};
-			taskListPanel->setPosition(panelX, taskListBottomY);
-		}
-
-		// Position toast stack in bottom-right corner
-		// Per design spec: Notifications appear bottom-right, stacking upward
-		if (toastStack) {
-			float rightMargin = 20.0F;
-			// Above the zoom column (which owns the corner) rather than the old
-			// fixed 60px: toasts must never sit on the zoom buttons.
-			float bottomMargin = ZoomControl::kTotalHeight + 12.0F + 8.0F;
-			toastStack->setPosition(newBounds.width - rightMargin, newBounds.height - bottomMargin);
-		}
-
-		// Position the top-right stack (minimap + resources panel + global task list)
-		positionRightStack();
+	GameUI::~GameUI() {
+		colonistDetailsDialog->close();
+		craftingDialog->close();
+		storageConfigDialog->close();
 	}
 
-	void GameUI::positionRightStack() {
-		if (viewportBounds.width <= 0.0F) {
+	void GameUI::fitViewport(Foundation::Vec2 viewport) {
+		if (viewport == fittedViewport) {
 			return;
 		}
-		const float rightMargin = UI::space_3; // Match prototype --space-3
-		const float topMargin = 60.0F;		   // Right stack top per prototype (just below the 52px top bar)
-		const float anchorX = viewportBounds.width - rightMargin;
-		float stackY = topMargin;
-		if (minimapPanel) {
-			minimapPanel->setAnchorPosition(anchorX, stackY);
-			stackY = minimapPanel->getBounds().y + minimapPanel->getBounds().height + UI::space_2;
-		}
-		if (resourcesPanel) {
-			resourcesPanel->setAnchorPosition(anchorX, stackY);
-			stackY = resourcesPanel->getBounds().y + resourcesPanel->getBounds().height + UI::space_2;
-		}
-		if (globalTaskList) {
-			globalTaskList->setAnchorPosition(anchorX, stackY);
-		}
+		fittedViewport = viewport;
+		taskListPanel.get()->setMaxSize({ui::kAuto, std::min(TaskListView::kMaxHeight, viewport.y - kTaskListRoom)});
+		ui::Layout menu = buildMenu.get()->getLayout();
+		menu.inset.left = (viewport.x - BuildMenu::kWidth) * 0.5F;
+		buildMenu.get()->setLayout(menu);
 	}
 
 	void GameUI::setMinimapContext(Foundation::Vec2 crashSite, double latDeg, double lonDeg, float pixelsPerMeter) {
 		worldPixelsPerMeter = pixelsPerMeter;
-		if (minimapPanel) {
-			minimapPanel->setContext(crashSite, latDeg, lonDeg);
-		}
-	}
-
-	bool GameUI::dispatchEvent(UI::InputEvent& event) {
-		// Dispatch to UI children in z-order (highest first)
-		// Panels that can overlap get priority
-
-		// Storage config dialog (highest z-order - modal overlay)
-		if (storageConfigDialog && storageConfigDialog->isOpen()) {
-			if (storageConfigDialog->handleEvent(event)) {
-				return true;
-			}
-			if (event.isConsumed()) {
-				return true;
-			}
-		}
-
-		// Crafting dialog (highest z-order - modal overlay)
-		if (craftingDialog && craftingDialog->isOpen()) {
-			if (craftingDialog->handleEvent(event)) {
-				return true;
-			}
-			if (event.isConsumed()) {
-				return true;
-			}
-		}
-
-		// Colonist details dialog (highest z-order - modal overlay)
-		if (colonistDetailsDialog && colonistDetailsDialog->isOpen()) {
-			if (colonistDetailsDialog->handleEvent(event)) {
-				return true;
-			}
-			if (event.isConsumed()) {
-				return true;
-			}
-		}
-
-		// Toast stack (highest z-order - notifications)
-		if (toastStack) {
-			if (toastStack->handleEvent(event)) {
-				return true;
-			}
-			if (event.isConsumed()) {
-				return true;
-			}
-		}
-
-		// Region minimap (top of the right stack)
-		if (minimapPanel) {
-			if (minimapPanel->handleEvent(event)) {
-				return true;
-			}
-			if (event.isConsumed()) {
-				return true;
-			}
-		}
-
-		// Resources panel (top-right)
-		if (resourcesPanel) {
-			if (resourcesPanel->handleEvent(event)) {
-				return true;
-			}
-			if (event.isConsumed()) {
-				return true;
-			}
-		}
-
-		// Global task list (top-right, below resources panel)
-		if (globalTaskList) {
-			if (globalTaskList->handleEvent(event)) {
-				return true;
-			}
-			if (event.isConsumed()) {
-				return true;
-			}
-		}
-
-		// Top bar (highest z-order at top of screen)
-		if (topBar) {
-			if (topBar->handleEvent(event)) {
-				return true;
-			}
-			if (event.isConsumed()) {
-				return true;
-			}
-		}
-
-		// Task list panel (high z-order - appears on top of info panel)
-		if (taskListExpanded && taskListPanel && taskListPanel->visible) {
-			if (taskListPanel->handleEvent(event)) {
-				return true;
-			}
-			if (event.isConsumed()) {
-				return true;
-			}
-		}
-
-		// Build menu (high z-order - popup over other UI)
-		if (buildMenuVisible && buildMenu) {
-			if (buildMenu->handleEvent(event)) {
-				return true;
-			}
-			if (event.isConsumed()) {
-				return true;
-			}
-		}
-
-		// Info panel
-		if (infoPanel && infoPanel->isVisible()) {
-			if (infoPanel->handleEvent(event)) {
-				return true;
-			}
-			if (event.isConsumed()) {
-				return true;
-			}
-		}
-
-		// Colonist list panel
-		if (colonistList) {
-			if (colonistList->handleEvent(event)) {
-				return true;
-			}
-			if (event.isConsumed()) {
-				return true;
-			}
-		}
-
-		// Construction config strip (docked above the gameplay bar; only handles
-		// events while visible)
-		if (configStrip && configStrip->visible) {
-			if (configStrip->handleEvent(event)) {
-				return true;
-			}
-			if (event.isConsumed()) {
-				return true;
-			}
-		}
-
-		// Gameplay bar
-		if (gameplayBar) {
-			if (gameplayBar->handleEvent(event)) {
-				return true;
-			}
-			if (event.isConsumed()) {
-				return true;
-			}
-		}
-
-		// Zoom control panel (floating controls)
-		if (zoomControlPanel) {
-			if (zoomControlPanel->handleEvent(event)) {
-				return true;
-			}
-		}
-
-		// Debug overlay doesn't handle events (text only)
-
-		return event.isConsumed();
+		minimapPanel.get()->setContext(crashSite, latDeg, lonDeg);
 	}
 
 	void GameUI::update(
@@ -445,363 +193,165 @@ namespace world_sim {
 		const engine::construction::ConstructionWorld* constructionWorld,
 		const ecs::RoomDetectionSystem*				   roomDetection
 	) {
-		// Update time model and top bar
-		if (topBar) {
-			timeModel.refresh(ecsWorld);
-			topBar->updateData(timeModel, static_cast<int>(colonistListModel.colonists().size()));
-			if (toastStack) {
-				topBar->setAlertCount(toastStack->getActiveCountBySeverity(UI::ToastSeverity::Critical));
-			}
-		}
+		const Foundation::Vec2 viewport = root.get()->getContext()->getViewport();
+		fitViewport(viewport);
 
-		// Update debug overlay display values
-		if (debugOverlay) {
-			debugOverlay->updateData(camera, chunkManager);
-		}
+		timeModel.refresh(ecsWorld);
+		topBar.get()->updateData(timeModel, static_cast<int>(colonistListModel.colonists().size()));
+		topBar.get()->setAlertCount(criticalToastCount());
+		debugOverlay.get()->updateData(camera, chunkManager);
+		zoomControlPanel.get()->setZoomPercent(camera.zoomPercent());
 
-		// Update zoom control panel
-		if (zoomControlPanel) {
-			zoomControlPanel->setZoomPercent(camera.zoomPercent());
+		ecs::EntityID selectedColonist{0};
+		if (const auto* colonistSel = std::get_if<ColonistSelection>(&selection)) {
+			selectedColonist = colonistSel->entityId;
 		}
+		colonistListModel.setSelectedId(selectedColonist);
+		colonistList.get()->update(colonistListModel, ecsWorld);
 
-		// Update colonist list with model-based change detection
-		if (colonistList) {
-			ecs::EntityID currentlySelected{0};
-			if (auto* colonistSel = std::get_if<ColonistSelection>(&selection)) {
-				currentlySelected = colonistSel->entityId;
-			}
-			colonistListModel.setSelectedId(currentlySelected);
-			colonistList->update(colonistListModel, ecsWorld);
-		}
-
-		// Update region minimap (camera viewport rect + colonist dots)
-		if (minimapPanel && worldPixelsPerMeter > 0.0F) {
-			minimapPanel->updateData(
-				camera.getVisibleRect(
-					static_cast<int>(viewportBounds.width), static_cast<int>(viewportBounds.height), worldPixelsPerMeter
-				),
+		if (worldPixelsPerMeter > 0.0F) {
+			minimapPanel.get()->updateData(
+				camera.getVisibleRect(static_cast<int>(viewport.x), static_cast<int>(viewport.y), worldPixelsPerMeter),
 				colonistListModel.colonists()
 			);
 		}
 
-		// Update resources panel (throttled 2Hz refresh)
-		if (resourcesPanel) {
-			resourcesPanel->update(deltaTime);
-			if (resourcesModel.refresh(ecsWorld, assetRegistry, deltaTime)) {
-				resourcesPanel->setResources(resourcesModel.rows(), resourcesModel.containerCount());
-				positionRightStack();
-			}
+		// Throttled: the resources at 2 Hz, the global tasks at 5 Hz.
+		if (resourcesModel.refresh(ecsWorld, assetRegistry, deltaTime)) {
+			resourcesPanel.get()->setResources(resourcesModel.rows(), resourcesModel.containerCount());
 		}
-
-		// Update global task list (throttled 5Hz refresh)
-		if (globalTaskList) {
-			globalTaskList->update(deltaTime);
-			glm::vec2 cameraCenter{camera.position().x, camera.position().y};
-			if (globalTaskListModel.refresh(ecsWorld, cameraCenter, deltaTime)) {
-				globalTaskList->setTasks(globalTaskListModel.tasks());
-			}
-			globalTaskList->setTaskCount(globalTaskListModel.taskCount());
+		const glm::vec2 cameraCenter{camera.position().x, camera.position().y};
+		if (globalTaskListModel.refresh(ecsWorld, cameraCenter, deltaTime)) {
+			globalTaskList.get()->setTasks(globalTaskListModel.tasks());
 		}
+		globalTaskList.get()->setTaskCount(globalTaskListModel.taskCount());
 
-		// Track selected colonist for task list panel
-		ecs::EntityID newColonistId{0};
-		if (auto* colonistSel = std::get_if<ColonistSelection>(&selection)) {
-			newColonistId = colonistSel->entityId;
-		}
-
-		// Close task list if selection changed or not a colonist
-		if (newColonistId != selectedColonistId) {
-			selectedColonistId = newColonistId;
+		// The task list closes when the selection moves off its colonist.
+		if (selectedColonist != selectedColonistId) {
+			selectedColonistId = selectedColonist;
 			if (taskListExpanded) {
-				taskListExpanded = false;
-				if (taskListPanel) {
-					taskListPanel->visible = false;
-				}
+				toggleTaskList();
 			}
 		}
-
-		// Update info panel with selection
-		if (infoPanel) {
-			infoPanel->update(ecsWorld, assetRegistry, recipeRegistry, selection, constructionWorld, roomDetection);
+		infoPanel.get()->update(ecsWorld, assetRegistry, recipeRegistry, selection, constructionWorld, roomDetection);
+		if (taskListExpanded && selectedColonistId != 0) {
+			taskListPanel.get()->update(ecsWorld, selectedColonistId);
 		}
 
-		// Update task list panel if expanded
-		if (taskListExpanded && taskListPanel && selectedColonistId != 0) {
-			taskListPanel->update(ecsWorld, selectedColonistId);
+		if (colonistDetailsDialog->isOpen()) {
+			colonistDetailsDialog->update(ecsWorld);
 		}
-
-		// Update toast stack animations
-		if (toastStack) {
-			toastStack->update(deltaTime);
+		if (craftingDialog->isOpen()) {
+			craftingDialog->update(ecsWorld, recipeRegistry);
 		}
-
-		// Update colonist details dialog if open
-		if (colonistDetailsDialog && colonistDetailsDialog->isOpen()) {
-			colonistDetailsDialog->update(ecsWorld, deltaTime);
-		}
-
-		// Update crafting dialog if open
-		if (craftingDialog && craftingDialog->isOpen()) {
-			craftingDialog->update(ecsWorld, recipeRegistry, deltaTime);
-		}
-
-		// Update storage config dialog if open
-		if (storageConfigDialog && storageConfigDialog->isOpen()) {
-			storageConfigDialog->update(ecsWorld, assetRegistry, deltaTime);
+		if (storageConfigDialog->isOpen()) {
+			storageConfigDialog->update(ecsWorld, assetRegistry);
 		}
 	}
 
-	void GameUI::render() {
-		// Render top bar (date/time and speed controls)
-		if (topBar) {
-			topBar->render();
-		}
-
-		// Render debug overlay (below top bar)
-		if (debugOverlay) {
-			debugOverlay->render();
-		}
-
-		// Render zoom control panel
-		if (zoomControlPanel) {
-			zoomControlPanel->render();
-		}
-
-		// Render gameplay bar
-		if (gameplayBar) {
-			gameplayBar->render();
-		}
-
-		// Render construction config strip (self-hides when inactive)
-		if (configStrip) {
-			configStrip->render();
-		}
-
-		// Render build menu if visible
-		if (buildMenuVisible && buildMenu) {
-			buildMenu->render();
-		}
-
-		// Render colonist list
-		if (colonistList) {
-			colonistList->render();
-		}
-
-		// Render info panel if visible
-		if (infoPanel && infoPanel->isVisible()) {
-			infoPanel->render();
-		}
-
-		// Render task list panel if expanded
-		if (taskListExpanded && taskListPanel && taskListPanel->visible) {
-			taskListPanel->render();
-		}
-
-		// Render region minimap (top of the right stack)
-		if (minimapPanel) {
-			minimapPanel->render();
-		}
-
-		// Render resources panel (top-right)
-		if (resourcesPanel) {
-			resourcesPanel->render();
-		}
-
-		// Render global task list (top-right, below resources panel)
-		if (globalTaskList) {
-			globalTaskList->render();
-		}
-
-		// Render toast notifications (highest z-order)
-		if (toastStack) {
-			toastStack->render();
-		}
-
-		// Render colonist details dialog (highest z-order - modal overlay)
-		if (colonistDetailsDialog && colonistDetailsDialog->isOpen()) {
-			colonistDetailsDialog->render();
-		}
-
-		// Render crafting dialog (highest z-order - modal overlay)
-		if (craftingDialog && craftingDialog->isOpen()) {
-			craftingDialog->render();
-		}
-
-		// Render storage config dialog (highest z-order - modal overlay)
-		if (storageConfigDialog && storageConfigDialog->isOpen()) {
-			storageConfigDialog->render();
-		}
-	}
-
-	std::vector<const UI::IComponent*> GameUI::getUiRoots() const {
-		std::vector<const UI::IComponent*> roots;
-		auto add = [&roots](const UI::IComponent* component) {
-			if (component != nullptr) {
-				roots.push_back(component);
-			}
-		};
-		add(topBar.get());
-		add(debugOverlay.get());
-		add(zoomControlPanel.get());
-		add(gameplayBar.get());
-		add(configStrip.get());
-		if (infoPanel && infoPanel->isVisible()) {
-			add(infoPanel.get());
-		}
-		if (taskListExpanded && taskListPanel && taskListPanel->visible) {
-			add(taskListPanel.get());
-		}
-		add(minimapPanel.get());
-		add(resourcesPanel.get());
-		add(globalTaskList.get());
-		add(toastStack.get());
-		if (colonistDetailsDialog && colonistDetailsDialog->isOpen()) {
-			add(colonistDetailsDialog.get());
-		}
-		if (craftingDialog && craftingDialog->isOpen()) {
-			add(craftingDialog.get());
-		}
-		if (storageConfigDialog && storageConfigDialog->isOpen()) {
-			add(storageConfigDialog.get());
-		}
-		return roots;
+	int GameUI::criticalToastCount() const {
+		const std::vector<ui::Ref<ui::Toast>> shown = toastStack.get()->toasts();
+		return static_cast<int>(std::ranges::count_if(shown, [](const ui::Ref<ui::Toast>& toast) {
+			return toast.get() != nullptr && toast.get()->getSeverity() == ui::ToastSeverity::Critical;
+		}));
 	}
 
 	void GameUI::pushNotification(
 		const std::string&	  title,
 		const std::string&	  message,
-		UI::ToastSeverity	  severity,
+		ui::ToastSeverity	  severity,
 		float				  autoDismissTime,
 		std::function<void()> onClick
 	) {
-		if (toastStack) {
-			if (onClick) {
-				toastStack->addToast(title, message, severity, autoDismissTime, std::move(onClick));
-			} else {
-				toastStack->addToast(title, message, severity, autoDismissTime);
-			}
-		}
+		toastStack.get()->add({
+			.title = title,
+			.message = message,
+			.severity = severity,
+			.autoDismissMs = static_cast<double>(autoDismissTime) * 1000.0,
+			.onPress = std::move(onClick),
+		});
 	}
 
 	void GameUI::toggleTaskList() {
 		taskListExpanded = !taskListExpanded;
-		if (taskListPanel) {
-			taskListPanel->visible = taskListExpanded;
-		}
+		taskListPanel.get()->setVisible(taskListExpanded);
 	}
 
 	void GameUI::toggleDecisionInspector() {
 		toggleTaskList();
 	}
 
-	// --- Build Mode API ---
-
-	void GameUI::setBuildModeActive(bool /*active*/) {
-		// GameplayBar doesn't track active state - build menu visibility is enough
-	}
-
 	void GameUI::showBuildMenu(const std::vector<BuildMenuItem>& items) {
-		if (buildMenu) {
-			buildMenu->setItems(items);
-			buildMenuVisible = true;
-			buildMenuBounds = buildMenu->bounds();
-		}
+		buildMenu.get()->setItems(items);
+		buildMenu.get()->setVisible(true);
 	}
 
 	void GameUI::hideBuildMenu() {
-		buildMenuVisible = false;
+		buildMenu.get()->setVisible(false);
 	}
 
 	bool GameUI::isBuildMenuVisible() const {
-		return buildMenuVisible;
+		return buildMenu.get()->isVisible();
 	}
 
 	void GameUI::setProductionItems(const std::vector<std::pair<std::string, std::string>>& items) {
-		if (gameplayBar) {
-			gameplayBar->setProductionItems(items);
-		}
+		gameplayBar.get()->setProductionItems(items);
 	}
 
 	void GameUI::setConstructionMaterials(const std::vector<std::pair<std::string, float>>& materials) {
-		if (configStrip) {
-			configStrip->setMaterials(materials);
-		}
+		configStrip.get()->setMaterials(materials);
 	}
 
 	void GameUI::setConstructionThicknessPresets(const std::vector<ConstructionConfigStrip::ThicknessPresetInfo>& presets) {
-		if (configStrip) {
-			configStrip->setThicknessPresets(presets);
-		}
+		configStrip.get()->setThicknessPresets(presets);
 	}
 
 	void GameUI::setConstructionStatus(const DrawingStatus& status) {
-		if (configStrip) {
-			configStrip->setStatus(status);
-		}
+		configStrip.get()->setStatus(status);
 	}
 
 	void GameUI::setRoomsOverlayActive(bool active) {
-		if (gameplayBar) {
-			gameplayBar->setRoomsActive(active);
-		}
+		gameplayBar.get()->setRoomsActive(active);
 	}
 
-	// --- Colonist Details Dialog API ---
-
 	void GameUI::showColonistDetails(ecs::EntityID colonistId) {
-		if (colonistDetailsDialog) {
-			colonistDetailsDialog->open(colonistId, viewportBounds.width, viewportBounds.height);
-		}
+		colonistDetailsDialog->open(*root.get(), colonistId);
 	}
 
 	void GameUI::hideColonistDetails() {
-		if (colonistDetailsDialog) {
-			colonistDetailsDialog->close();
-		}
+		colonistDetailsDialog->close();
 	}
 
 	bool GameUI::isColonistDetailsVisible() const {
-		return colonistDetailsDialog && colonistDetailsDialog->isOpen();
+		return colonistDetailsDialog->isOpen();
 	}
 
-	// --- Crafting Dialog API ---
-
 	void GameUI::showCraftingDialog(ecs::EntityID stationId, const std::string& stationDefName) {
-		if (craftingDialog) {
-			craftingDialog->open(stationId, stationDefName, viewportBounds.width, viewportBounds.height);
-		}
+		craftingDialog->open(*root.get(), stationId, stationDefName);
 	}
 
 	void GameUI::hideCraftingDialog() {
-		if (craftingDialog) {
-			craftingDialog->close();
-		}
+		craftingDialog->close();
 	}
 
 	bool GameUI::isCraftingDialogVisible() const {
-		return craftingDialog && craftingDialog->isOpen();
+		return craftingDialog->isOpen();
 	}
 
-	// --- Storage Config Dialog API ---
-
 	void GameUI::showStorageConfigDialog(ecs::EntityID containerId, const std::string& containerDefName) {
-		if (storageConfigDialog) {
-			storageConfigDialog->open(containerId, containerDefName, viewportBounds.width, viewportBounds.height);
-		}
+		storageConfigDialog->open(*root.get(), containerId, containerDefName);
 	}
 
 	void GameUI::hideStorageConfigDialog() {
-		if (storageConfigDialog) {
-			storageConfigDialog->close();
-		}
+		storageConfigDialog->close();
 	}
 
 	bool GameUI::isStorageConfigVisible() const {
-		return storageConfigDialog && storageConfigDialog->isOpen();
+		return storageConfigDialog->isOpen();
 	}
 
 	bool GameUI::isGlobalTaskListExpanded() const {
-		return globalTaskList && globalTaskList->isExpanded();
+		return globalTaskList.get()->isExpanded();
 	}
 
 } // namespace world_sim

@@ -3,7 +3,7 @@
 // The game ui's text on worldsim's tokens: a colour, a size and one of the theme's three families, the
 // fields each of its Texts sets.
 
-#include <theme/DesignTokens.h>
+#include <theme/Tokens.h>
 
 #include <ui/Style.h>
 #include <ui/theme/Theme.h>
