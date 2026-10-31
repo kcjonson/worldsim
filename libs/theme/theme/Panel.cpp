@@ -86,7 +86,9 @@ namespace theme {
 				);
 			}
 			addChild<ui::Rectangle>(
-				{.size = {ui::percent(100.0F), theme.get(t::border::bw)}, .style = {.backgroundColor = theme.get(t::color::lineHairline)}}
+				{.size = {ui::percent(100.0F), theme.get(t::border::bw)},
+				 .style = {.backgroundColor = theme.get(t::color::lineHairline)},
+				 .pointerEvents = ui::PointerEvents::None}
 			);
 		}
 
