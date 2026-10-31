@@ -1,9 +1,9 @@
 // Main Menu Scene - the title screen.
 //
 // A left-aligned column, centred top to bottom: the identity (diamond glyph,
-// WORLD-SIM and the tagline), a kicker, and the menu's rows, each an icon,
-// a label and a hint. A footer under it. The decorative planet docks off the
-// right screen edge behind a scrim.
+// WORLD-SIM and the tagline), a kicker, and the menu's rows, each an icon and
+// a label. A footer under it. The decorative planet docks off the right screen
+// edge behind a scrim.
 
 #include "GameStartConfig.h"
 #include "NewGameSetup.h"
@@ -15,8 +15,10 @@
 
 #include <application/App.h>
 #include <primitives/Primitives.h>
-#include <ui/components/ListRow.h>
+#include <ui/components/Control.h>
+#include <ui/shapes/Icon.h>
 #include <ui/shapes/Text.h>
+#include <ui/theme/Tokens.h>
 #include <utils/Log.h>
 #include <utils/ResourcePath.h>
 
@@ -33,6 +35,110 @@ namespace {
 
 	namespace tokens = world_sim::tokens;
 	namespace family = ui::tokens::font::family;
+
+	// The title screen's row: the display face, a disabled row at 40%, the primary row's label in
+	// the bright accent. Under the pointer or a player's visible focus it lights: the accent bar,
+	// the chevron, the icon in the accent and the label stepped right.
+	class MenuRow : public ui::Control {
+	  public:
+		struct Args {
+			UI_COMMON_ARGS
+			std::string			  label;
+			std::string			  icon;
+			bool				  primary = false;
+			std::function<void()> onPress;
+		};
+
+		explicit MenuRow(const Args& args)
+			: label(args.label),
+			  iconName(args.icon),
+			  primary(args.primary),
+			  onPress(args.onPress) {}
+
+		[[nodiscard]] const char* typeName() const override { return "MenuRow"; }
+		[[nodiscard]] ui::StyleId themeStyle() const override { return ui::styles::listRow.theme; }
+
+	  protected:
+		void onMount() override {
+			Control::onMount();
+			const ui::Theme& theme = getContext()->getTheme();
+			bar = addChild<ui::Rectangle>({
+				.size = {2.0F, ui::kAuto},
+				.layout = {.position = ui::Position::Absolute, .inset = {.top = 0.0F, .bottom = 0.0F, .left = 0.0F}},
+				.style = {.backgroundColor = theme.get(tokens::color::accent)},
+				.pointerEvents = ui::PointerEvents::None,
+			});
+			bracket = addChild<ui::Icon>({.size = {14.0F, 14.0F}, .pointerEvents = ui::PointerEvents::None, .name = "chevronRight"});
+			icon = addChild<ui::Icon>(
+				{.size = {18.0F, 18.0F}, .margin = {0.0F, 0.0F, 0.0F, 4.0F}, .pointerEvents = ui::PointerEvents::None, .name = iconName}
+			);
+			text = addChild<ui::Text>({.margin = {0.0F, 0.0F, 0.0F, 8.0F}, .pointerEvents = ui::PointerEvents::None, .text = label});
+			setOnFocus([this](ui::Component& /*self*/) { refresh(); });
+			setOnBlur([this](ui::Component& /*self*/) { refresh(); });
+			refresh();
+		}
+
+		void handlePointer(ui::PointerEvent& event) override {
+			Control::handlePointer(event);
+			if (event.type == ui::PointerEvent::Type::Enter || event.type == ui::PointerEvent::Type::Leave) {
+				pointerInside = event.type == ui::PointerEvent::Type::Enter;
+				refresh();
+			}
+		}
+
+		void activate() override {
+			if (onPress) {
+				onPress();
+			}
+		}
+
+	  private:
+		void refresh() {
+			const ui::Theme& theme = getContext()->getTheme();
+			const bool		 lit = isEnabled() && (pointerInside || isFocusVisible());
+			const float		 alpha = isEnabled() ? 1.0F : 0.4F;
+			const auto		 dim = [alpha](Foundation::Color color) {
+				  color.a *= alpha;
+				  return color;
+			};
+
+			ui::Layout row = getLayout();
+			row.display = ui::Display::Flex;
+			row.flexDirection = ui::FlexDirection::Row;
+			row.alignItems = ui::AlignItems::Center;
+			row.padding = {0.0F, 0.0F, 0.0F, theme.get(lit ? tokens::spacing::space6 : tokens::spacing::space4)};
+			setLayout(row);
+
+			bar.get()->setVisible(lit);
+			Foundation::Color chevron = theme.get(tokens::color::accent);
+			chevron.a = lit ? chevron.a : 0.0F;
+			bracket.get()->setStyle({.color = chevron});
+			icon.get()->setStyle({.color = dim(theme.get(lit ? tokens::color::accent : tokens::color::textFaint))});
+
+			ui::ColorToken labelColor = tokens::color::textDim;
+			if (isEnabled() && primary) {
+				labelColor = tokens::color::accentBright;
+			} else if (lit) {
+				labelColor = tokens::color::textBright;
+			}
+			ui::Style labelStyle = world_sim::text(
+				theme,
+				{.family = family::display, .size = tokens::fontSize::fsXl, .color = labelColor, .tracking = tokens::letterSpacing::lsWide}
+			);
+			labelStyle.color = dim(*labelStyle.color);
+			text.get()->setStyle(labelStyle);
+		}
+
+		std::string			   label;
+		std::string			   iconName;
+		bool				   primary;
+		std::function<void()>  onPress;
+		bool				   pointerInside = false;
+		ui::Ref<ui::Rectangle> bar;
+		ui::Ref<ui::Icon>	   bracket;
+		ui::Ref<ui::Icon>	   icon;
+		ui::Ref<ui::Text>	   text;
+	};
 
 	class MainMenuScene : public app::Scene {
 	  public:
@@ -141,34 +247,32 @@ namespace {
 				.size = {kRowWidth, ui::kAuto},
 				.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = 2.0F},
 			});
-			item("menu_new_game", "New Game", "Begin a new expedition", "play", true, [this] {
-				world_sim::NewGameSetup::Reset();
-				owner->scenes().switchTo(world_sim::scenes::ScenarioSelect.name);
-			});
-			item("menu_continue", "Continue", "Resume your last colony", "refresh", false, nullptr);
-			item("menu_load_game", "Load Game", "Restore a saved expedition", "save", false, nullptr);
+			item({.id = "menu_new_game", .label = "New Game", .icon = "play", .primary = true, .onPress = [this] {
+					  world_sim::NewGameSetup::Reset();
+					  owner->scenes().switchTo(world_sim::scenes::ScenarioSelect.name);
+				  }});
+			item({.id = "menu_continue", .enabled = false, .label = "Continue", .icon = "refresh"});
+			item({.id = "menu_load_game", .enabled = false, .label = "Load Game", .icon = "save"});
 			// Quick Start needs the prebuilt planet shipped next to the exe; if the build step that bakes
 			// it hasn't run, the entry is disabled rather than dropping the player into a dead loading
 			// screen.
-			const bool quickstartReady = Foundation::findResource(world_sim::kQuickstartPlanetResource).has_value();
-			item(
-				"menu_quick_start",
-				"Quick Start",
-				quickstartReady ? "Jump in on the prebuilt planet" : "Unavailable - run the quickstart-planet build target",
-				"bolt",
-				quickstartReady,
-				[this] {
+			item({
+				.id = "menu_quick_start",
+				.enabled = Foundation::findResource(world_sim::kQuickstartPlanetResource).has_value(),
+				.label = "Quick Start",
+				.icon = "bolt",
+				.onPress = [this] {
 					auto config = std::make_unique<world_sim::GameStartConfig>();
 					config->source = world_sim::GameStartConfig::Source::QuickStart;
 					world_sim::GameStartConfig::SetPending(std::move(config));
 					owner->scenes().switchTo(world_sim::scenes::GameLoading.name);
-				}
-			);
-			item("menu_settings", "Settings", "Graphics, audio, controls", "gear", true, [this] {
-				owner->scenes().switchTo(world_sim::scenes::Settings.name);
+				},
 			});
-			item("menu_credits", "Credits", "The crew behind the crew", "users", false, nullptr);
-			item("menu_exit", "Exit", "Quit to desktop", "close", true, [this] { owner->requestExit(); });
+			item({.id = "menu_settings", .label = "Settings", .icon = "gear", .onPress = [this] {
+					  owner->scenes().switchTo(world_sim::scenes::Settings.name);
+				  }});
+			item({.id = "menu_credits", .enabled = false, .label = "Credits", .icon = "users"});
+			item({.id = "menu_exit", .label = "Exit", .icon = "close", .onPress = [this] { owner->requestExit(); }});
 			const ui::Style footer =
 				world_sim::text(theme, {.family = family::mono, .size = tokens::fontSize::fs2xs, .color = tokens::color::textFaint});
 			root().addChild<ui::Text>({
@@ -187,17 +291,9 @@ namespace {
 			});
 		}
 
-		ui::Ref<ui::ListRow>
-		item(const char* id, const char* label, const std::string& hint, const char* icon, bool enabled, std::function<void()> action) {
-			return menu.addChild<ui::ListRow>({
-				.id = id,
-				.enabled = enabled,
-				.size = {ui::percent(100.0F), kRowHeight},
-				.label = label,
-				.trailing = hint,
-				.icon = icon,
-				.onPress = std::move(action),
-			});
+		void item(MenuRow::Args args) {
+			args.size = {ui::percent(100.0F), kRowHeight};
+			menu.addChild<MenuRow>(args);
 		}
 
 		app::App*					owner = nullptr;
