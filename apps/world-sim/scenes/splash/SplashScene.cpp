@@ -202,6 +202,7 @@ namespace {
 				.label = "Enter Expedition",
 				.icon = "play",
 				.variant = ui::ButtonVariant::Primary,
+				.controlSize = ui::ControlSize::Lg,
 				.onPress = [this] { owner->scenes().switchTo(world_sim::scenes::MainMenu.name); },
 			});
 

@@ -1,4 +1,5 @@
 #include <theme/Icons.h>
+#include <theme/Theme.h>
 #include <theme/Tokens.h>
 
 #include <gtest/gtest.h>
@@ -10,9 +11,11 @@
 
 namespace {
 
-	// Worldsim's theme loads over ui's with nothing wrong or missing, and ui's roles read as worldsim's values.
+	// Worldsim's theme loads over ui's, under the game's font families, with nothing wrong or missing, and ui's
+	// roles read as worldsim's values.
 	TEST(Theme, LoadsOverUisTokens) {
-		const ui::ThemeLoad load = ui::Theme::load({.tokens = &theme::tokenTable(), .strict = true});
+		const ui::ThemeLoad load =
+			ui::Theme::load({.tokens = &theme::tokenTable(), .fontFamilies = theme::fontFamilyNames(), .strict = true});
 		for (const ui::dtcg::Diagnostic& diagnostic : load.diagnostics) {
 			ADD_FAILURE() << diagnostic.path << ": " << diagnostic.message;
 		}

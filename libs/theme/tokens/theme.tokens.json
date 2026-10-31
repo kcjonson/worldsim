@@ -1,5 +1,5 @@
 {
-  "$description": "GENERATED from docs/ui-prototype/src/design-system/tokens.css via tokens.json by docs/ui-prototype/scripts/gen-cpp-theme.mjs. Do not edit by hand. Worldsim's theme over salal ui's default tokens: its own names under theme, and ui's semantic tokens aliased to them.",
+  "$description": "GENERATED from docs/ui-prototype/src/design-system/tokens.css via tokens.json by docs/ui-prototype/scripts/gen-cpp-theme.mjs. Do not edit by hand. Worldsim's theme over salal ui's default tokens: its own names under theme, ui's semantic tokens aliased to them, and ui's component styles in worldsim's looks.",
   "theme": {
     "spacing": {
       "space-0": {
@@ -1042,8 +1042,133 @@
       }
     },
     "button": {
+      "backgroundColor": {
+        "$value": "{base.color.clear}"
+      },
       "borderRadius": {
         "$value": "{theme.radius.radius-ui}"
+      },
+      "fontFamily": {
+        "$value": "{font.family.display}"
+      },
+      "letterSpacing": {
+        "$type": "dimension",
+        "$value": {
+          "value": 0.96,
+          "unit": "px"
+        }
+      }
+    },
+    "label": {
+      "fontSize": {
+        "$value": "{theme.fontSize.fs-2xs}"
+      },
+      "letterSpacing": {
+        "$type": "dimension",
+        "$value": {
+          "value": 1.6,
+          "unit": "px"
+        }
+      }
+    },
+    "menuItem": {
+      "borderRadius": {
+        "$value": "{theme.radius.r-0}"
+      }
+    },
+    "overlay": {
+      "borderColor": {
+        "$value": "{theme.color.line-edge}"
+      },
+      "borderRadius": {
+        "$value": "{theme.radius.radius-panel}"
+      }
+    },
+    "segment": {
+      "fontFamily": {
+        "$value": "{font.family.display}"
+      }
+    },
+    "select": {
+      "backgroundColor": {
+        "$value": "{theme.color.bg-inset}"
+      },
+      "borderColor": {
+        "$value": "{theme.color.line-hairline}"
+      },
+      "borderRadius": {
+        "$value": "{theme.radius.radius-ui}"
+      },
+      "color": {
+        "$value": "{theme.color.text-bright}"
+      }
+    },
+    "statValue": {
+      "color": {
+        "$value": "{theme.color.text-bright}"
+      }
+    },
+    "tab": {
+      "fontFamily": {
+        "$value": "{font.family.display}"
+      },
+      "fontSize": {
+        "$value": "{theme.fontSize.fs-sm}"
+      }
+    },
+    "textInput": {
+      "borderColor": {
+        "$value": "{theme.color.line-hairline}"
+      },
+      "color": {
+        "$value": "{theme.color.text-bright}"
+      },
+      "fontSize": {
+        "$value": "{theme.fontSize.fs-base}"
+      }
+    },
+    "toast": {
+      "borderColor": {
+        "$value": "{theme.color.line-edge}"
+      },
+      "borderRadius": {
+        "$value": "{theme.radius.radius-panel}"
+      }
+    },
+    "tooltip": {
+      "borderColor": {
+        "$value": "{theme.color.line-edge}"
+      },
+      "boxShadow": {
+        "$type": "shadow",
+        "$value": {
+          "color": {
+            "colorSpace": "srgb",
+            "components": [
+              0,
+              0,
+              0
+            ],
+            "alpha": 0,
+            "hex": "#000000"
+          },
+          "offsetX": {
+            "value": 0,
+            "unit": "px"
+          },
+          "offsetY": {
+            "value": 0,
+            "unit": "px"
+          },
+          "blur": {
+            "value": 0,
+            "unit": "px"
+          },
+          "spread": {
+            "value": 0,
+            "unit": "px"
+          }
+        }
       }
     }
   }
