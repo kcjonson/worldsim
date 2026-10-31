@@ -126,7 +126,7 @@ namespace {
 				.text = def->blurb,
 				.wrap = true,
 			});
-			addChild<ui::Component>({.layout = {.flexGrow = 1.0F}});
+			addChild<ui::Component>({.size = {ui::percent(100.0F), ui::kAuto}, .layout = {.flexGrow = 1.0F}});
 
 			// Difficulty pips at the left, the party at the right.
 			ui::Ref<ui::Component> meta = addChild<ui::Component>({

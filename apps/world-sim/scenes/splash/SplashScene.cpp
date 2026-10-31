@@ -117,7 +117,8 @@ namespace {
 		}
 
 		// The identity block centred in the viewport; the error lines, the boot log and the button in a
-		// column centred at the foot; the version at the bottom right.
+		// column centred at the foot; the version at the bottom right. The centre and the version take no
+		// pointer, so the foot's button sits over the full-screen centre on purpose.
 		void build() {
 			const ui::Theme&	   theme = ui().getTheme();
 			ui::Ref<ui::Component> top = root();
@@ -126,9 +127,9 @@ namespace {
 			ui::Ref<ui::Component> centre = top.addChild<ui::Component>({
 				.id = "splash_centre",
 				.size = {ui::percent(100.0F), ui::percent(100.0F)},
-				.layout = {
-					.display = ui::Display::Flex, .alignItems = ui::AlignItems::Center, .justifyContent = ui::JustifyContent::Center
-				},
+				.layout =
+					{.display = ui::Display::Flex, .alignItems = ui::AlignItems::Center, .justifyContent = ui::JustifyContent::Center},
+				.pointerEvents = ui::PointerEvents::None,
 			});
 			ui::Ref<ui::Component> identity = centre.addChild<ui::Component>({
 				.id = "splash_identity",
@@ -208,6 +209,7 @@ namespace {
 				.id = "splash_version",
 				.layout = {.position = ui::Position::Absolute, .inset = {.right = 24.0F, .bottom = 16.0F}},
 				.style = mono(tokens::fontSize::fs2xs, tokens::color::textFaint),
+				.pointerEvents = ui::PointerEvents::None,
 				.text = "v0.1.0-proto",
 			});
 		}
