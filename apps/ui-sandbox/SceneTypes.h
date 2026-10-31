@@ -23,20 +23,13 @@ namespace ui_sandbox {
 	X(Grass)       \
 	X(VectorPerf)  \
 	X(Svg)         \
-	X(Clip)        \
-	X(Layer)       \
-	X(TextShapes)  \
 	X(Tree)        \
-	X(Layout)      \
-	X(Scroll)      \
-	X(Icon)        \
 	X(TreeView_)   \
 	X(Dropdown)    \
 	X(Toast_)      \
 	X(Dialog_)     \
 	X(Tooltip_)    \
 	X(ContextMenu_) \
-	X(TextWrap) \
 	X(Planet)  \
 	X(Salvage) \
 	X(SalvageDialog)

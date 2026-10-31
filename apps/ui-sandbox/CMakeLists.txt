@@ -7,23 +7,16 @@ add_executable(ui-sandbox
     scenes/VectorPerfScene.cpp
     scenes/GrassScene.cpp
     scenes/TreeScene.cpp
-    scenes/TextShapesScene.cpp
-    scenes/LayerScene.cpp
     scenes/ButtonScene.cpp
     scenes/TabBarScene.cpp
     scenes/TextInputScene.cpp
-    scenes/ClipScene.cpp
     scenes/SvgScene.cpp
-    scenes/LayoutScene.cpp
-    scenes/ScrollScene.cpp
-    scenes/IconScene.cpp
     scenes/TreeViewScene.cpp
     scenes/DropdownScene.cpp
     scenes/ToastScene.cpp
     scenes/DialogScene.cpp
     scenes/TooltipScene.cpp
     scenes/ContextMenuScene.cpp
-    scenes/TextWrapScene.cpp
     scenes/PlanetScene.cpp
     scenes/SalvageScene.cpp
     scenes/SalvageDialogScene.cpp
