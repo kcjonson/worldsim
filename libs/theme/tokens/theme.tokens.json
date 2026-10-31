@@ -1057,6 +1057,11 @@
           "value": 0.96,
           "unit": "px"
         }
+      },
+      "$extensions": {
+        "salal": {
+          "textTransform": "uppercase"
+        }
       }
     },
     "label": {
@@ -1087,6 +1092,18 @@
     "segment": {
       "fontFamily": {
         "$value": "{font.family.display}"
+      },
+      "letterSpacing": {
+        "$type": "dimension",
+        "$value": {
+          "value": 0.96,
+          "unit": "px"
+        }
+      },
+      "$extensions": {
+        "salal": {
+          "textTransform": "uppercase"
+        }
       }
     },
     "select": {
@@ -1114,6 +1131,18 @@
       },
       "fontSize": {
         "$value": "{theme.fontSize.fs-sm}"
+      },
+      "letterSpacing": {
+        "$type": "dimension",
+        "$value": {
+          "value": 0.96,
+          "unit": "px"
+        }
+      },
+      "$extensions": {
+        "salal": {
+          "textTransform": "uppercase"
+        }
       }
     },
     "textInput": {

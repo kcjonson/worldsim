@@ -156,6 +156,7 @@ const styleFields = [
 	["overlay.borderColor", "line-edge"],
 	["overlay.borderRadius", "radius-panel"],
 	["segment.fontFamily", { ui: "font.family.display" }],
+	["segment.letterSpacing", { em: ["ls-wide", "fs-sm"] }],
 	["select.backgroundColor", "bg-inset"],
 	["select.borderColor", "line-hairline"],
 	["select.borderRadius", "radius-ui"],
@@ -163,6 +164,7 @@ const styleFields = [
 	["statValue.color", "text-bright"],
 	["tab.fontFamily", { ui: "font.family.display" }],
 	["tab.fontSize", "fs-sm"],
+	["tab.letterSpacing", { em: ["ls-wide", "fs-sm"] }],
 	["textInput.borderColor", "line-hairline"],
 	["textInput.color", "text-bright"],
 	["textInput.fontSize", "fs-base"],
@@ -170,6 +172,13 @@ const styleFields = [
 	["toast.borderRadius", "radius-panel"],
 	["tooltip.borderColor", "line-edge"],
 	["tooltip.boxShadow", { shadow: "none" }],
+];
+
+// Text transforms, which salal reads from its extension on a style's group.
+const styleTransforms = [
+	["button", "uppercase"],
+	["segment", "uppercase"],
+	["tab", "uppercase"],
 ];
 
 function styleField(field, value) {
@@ -207,7 +216,10 @@ for (const [uiPath, name] of mapping) {
 	place(uiPath, { $type: resolved[1], $value: `{${resolved[0]}}` });
 }
 for (const [field, value] of styleFields) place(`styles.${field}`, styleField(field, value));
+for (const [style, transform] of styleTransforms) place(`styles.${style}.$extensions`, { salal: { textTransform: transform } });
 
 mkdirSync(dirname(dtcgPath), { recursive: true });
 writeFileSync(dtcgPath, JSON.stringify(dtcg, null, 2) + "\n");
-console.log(`Wrote ${paths.size} tokens, ${mapping.length} of ui's and ${styleFields.length} style fields to ${dtcgPath}`);
+console.log(
+	`Wrote ${paths.size} tokens, ${mapping.length} of ui's, ${styleFields.length} style fields and ${styleTransforms.length} transforms to ${dtcgPath}`,
+);
