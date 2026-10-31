@@ -85,6 +85,20 @@ regression.
 
 ---
 
+### Walking down shows the back of the head
+
+- [ ] Watch Bob while he walks toward the bottom of the screen (poll `?what=colonists` until `y`
+  is rising faster than `x` changes, center the camera on him with
+  `control?action=camera&x=<x>&y=<y>&zoom=14`, then screenshot):
+  - Bob's face shows (eyes, skin), not the all-hair back of the head.
+  - Walking toward the top of the screen shows the back of the head.
+
+**Why this matters:** world +Y draws lower on screen, and the movement-to-facing quantization
+(MovementSystem, FacingDirection) once mapped +Y to `Up`, so colonists walked toward the viewer
+showing their backs.
+
+---
+
 ## Adding a new regression
 
 When a bug is fixed, add a minimal repro here before closing the ticket:

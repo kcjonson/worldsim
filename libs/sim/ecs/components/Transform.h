@@ -11,7 +11,7 @@ struct Position {
 
 /// Facing direction of an entity
 struct Rotation {
-    float radians = 0.0f;  // 0 = facing right (+X), PI/2 = facing up (+Y)
+    float radians = 0.0f;  // 0 = facing right (+X), PI/2 = facing screen-down (+Y)
 };
 
 }  // namespace ecs
