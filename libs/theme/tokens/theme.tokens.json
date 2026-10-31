@@ -1065,20 +1065,12 @@
       }
     },
     "label": {
-      "fontSize": {
-        "$value": "{theme.fontSize.fs-2xs}"
-      },
       "letterSpacing": {
         "$type": "dimension",
         "$value": {
-          "value": 1.6,
+          "value": 1.76,
           "unit": "px"
         }
-      }
-    },
-    "menuItem": {
-      "borderRadius": {
-        "$value": "{theme.radius.r-0}"
       }
     },
     "overlay": {
@@ -1151,9 +1143,6 @@
       },
       "color": {
         "$value": "{theme.color.text-bright}"
-      },
-      "fontSize": {
-        "$value": "{theme.fontSize.fs-base}"
       }
     },
     "toast": {
