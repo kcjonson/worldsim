@@ -4,13 +4,17 @@
  *
  * Each #include is resolved against the including file's directory (quoted
  * includes only) and then every library's include root, which approximates
- * the build's lookup with every library's root visible to every file. The
+ * the build's lookup with every library's root visible to every file. A salal
+ * file sees only salal's roots, as salal's own build does, so a header salal
+ * generates (ui/theme/Tokens.h) counts as external. The
  * roots are the library directories under libs/, plus libs/ itself for
  * planet-view, which exports it; they are hardcoded here and match CMake as of
- * 2026-10-28. foundation, renderer and app are not in this repo: they come
- * from salal (github.com/kcjonson/salal) through FetchContent, so their three
- * roots, and their three rows, are read from a salal checkout, --salal DIR,
- * which defaults to the one FetchContent populates at build/_deps/salal-src.
+ * 2026-10-31. foundation, renderer, app and salal's ui are not in this repo:
+ * they come from salal (github.com/kcjonson/salal) through FetchContent, so
+ * their four roots, and their four rows, are read from a salal checkout,
+ * --salal DIR, which defaults to the one FetchContent populates at
+ * build/_deps/salal-src. Salal's ui goes by salal-ui, since worldsim's own ui
+ * is still libs/ui; its headers sit under ui/, a path libs/ answers too.
  * A directory under libs/ that LIBS does not list stops the script with exit 2,
  * so a new library cannot be silently ignored. The first hit decides which
  * library the include lands in; an include that resolves nowhere is counted as
@@ -19,8 +23,8 @@
  * Output, in order: an all-files matrix, a production-only matrix (test and
  * bench files excluded, see isTestFile), ambiguous resolutions, includes that
  * cross the documented layering, the engine -> ui coupling surface, and what
- * engine's app/ (the bridge between worldsim's ui and salal's app, until salal
- * has a ui of its own) includes from libs/.
+ * engine's app/ (the bridge between worldsim's ui and salal's app, until
+ * worldsim moves onto salal's ui) includes from libs/.
  * Cells are counts of #include lines; self-includes sit on the diagonal.
  *
  * The allowed edges follow the per-library "Depends on" lists in
@@ -34,8 +38,14 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const LIBS = ["foundation", "geometry", "renderer", "ui", "world", "planet-view", "game-systems", "app", "engine"];
-const SALAL_LIBS = new Set(["foundation", "renderer", "app"]);
+const LIBS = ["foundation", "geometry", "renderer", "salal-ui", "ui", "world", "planet-view", "game-systems", "app", "engine"];
+// salal's libraries: the name each goes by here, and its directory under the checkout's libs/.
+const SALAL_LIBS = new Map([
+	["foundation", "foundation"],
+	["renderer", "renderer"],
+	["salal-ui", "ui"],
+	["app", "app"],
+]);
 const LIBS_ORDER = [...LIBS, "engine(assets)", "external"];
 const SOURCE_EXTS = [".h", ".hpp", ".cpp", ".cc", ".inl"];
 const INC = /^\s*#\s*include\s*([<"])([^>"]+)[>"]/;
@@ -45,11 +55,12 @@ const ALLOWED = {
 	foundation: new Set(["foundation", "external"]),
 	geometry: new Set(["geometry", "foundation", "external"]),
 	renderer: new Set(["renderer", "foundation", "external"]),
+	"salal-ui": new Set(["salal-ui", "renderer", "foundation", "external"]),
 	ui: new Set(["ui", "renderer", "foundation", "external"]),
 	world: new Set(["world", "renderer", "foundation", "external"]),
 	"planet-view": new Set(["planet-view", "world", "renderer", "foundation", "external"]),
 	"game-systems": new Set(["game-systems", "world", "renderer", "foundation", "external"]),
-	app: new Set(["app", "renderer", "foundation", "external"]),
+	app: new Set(["app", "salal-ui", "renderer", "foundation", "external"]),
 };
 
 const USAGE = "usage: node tools/resolve-includes.mjs [-h] [--root ROOT] [--salal DIR]";
@@ -62,9 +73,9 @@ function defaultSalal(root) {
 	return join(root, "build", "_deps", "salal-src");
 }
 
-// Where each library's sources live: the salal checkout for foundation, renderer and app, libs/ for the rest.
+// Where each library's sources live: the salal checkout for salal's four, libs/ for the rest.
 function libDirs(root, salal) {
-	return new Map(LIBS.map((lib) => [lib, SALAL_LIBS.has(lib) ? join(salal, "libs", lib) : join(root, "libs", lib)]));
+	return new Map(LIBS.map((lib) => [lib, SALAL_LIBS.has(lib) ? join(salal, "libs", SALAL_LIBS.get(lib)) : join(root, "libs", lib)]));
 }
 
 function includeRoots(dirs, root) {
@@ -72,6 +83,7 @@ function includeRoots(dirs, root) {
 		dirs.get("foundation"),
 		dirs.get("geometry"),
 		dirs.get("renderer"),
+		dirs.get("salal-ui"), // before libs/, which answers ui/X.h with worldsim's ui
 		dirs.get("ui"),
 		dirs.get("world"),
 		dirs.get("planet-view"),
@@ -183,7 +195,7 @@ function checkLibs(root) {
 }
 
 function checkSalal(salal) {
-	const missing = [...SALAL_LIBS].filter((lib) => !isDir(join(salal, "libs", lib)));
+	const missing = [...SALAL_LIBS.values()].filter((dir) => !isDir(join(salal, "libs", dir)));
 	if (missing.length) {
 		console.error(`resolve-includes.mjs: error: no salal checkout at ${salal} (missing libs/${missing.join(", libs/")})`);
 		console.error("configure the build so FetchContent populates build/_deps/salal-src, or pass --salal DIR pointing at a salal checkout");
@@ -194,6 +206,7 @@ function checkSalal(salal) {
 function collectRows(root, salal) {
 	const dirs = libDirs(root, salal);
 	const roots = includeRoots(dirs, root);
+	const salalRoots = [...SALAL_LIBS.keys()].map((lib) => dirs.get(lib));
 	const rows = [];
 	for (const lib of LIBS) {
 		for (const full of walk(dirs.get(lib))) {
@@ -212,7 +225,7 @@ function collectRows(root, salal) {
 				const m = INC.exec(lines[i]);
 				if (!m) continue;
 				const [, form, target] = m;
-				const cands = resolveInclude(roots, full, form, target);
+				const cands = resolveInclude(SALAL_LIBS.has(lib) ? salalRoots : roots, full, form, target);
 				let dst = "external";
 				let resolved = "";
 				let ambiguous = false;
@@ -277,7 +290,7 @@ function parseArgs(argv) {
 			console.log(USAGE);
 			console.log("\nResolve every #include under libs/ and print a per-library include matrix.");
 			console.log("\n  --root ROOT   repo root containing libs/ (default: the repo this script lives in)");
-			console.log("  --salal DIR   salal checkout holding libs/foundation, libs/renderer and libs/app (default: ROOT/build/_deps/salal-src)");
+			console.log("  --salal DIR   salal checkout holding libs/foundation, libs/renderer, libs/ui and libs/app (default: ROOT/build/_deps/salal-src)");
 			process.exit(0);
 		} else if (a === "--root") {
 			if (i + 1 >= argv.length) fail("argument --root: expected one argument");
