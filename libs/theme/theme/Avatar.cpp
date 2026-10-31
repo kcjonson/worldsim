@@ -101,12 +101,14 @@ namespace theme {
 		const float		 side = box.width.unit == ui::Length::Unit::Px ? box.width.value : kDefaultSide;
 		setSize({side, side});
 
+		// Every layer is decoration over the frame, which takes the pointer itself.
 		const float hue = static_cast<float>(hash(seed) % 360U);
 		const float radius = side * kDiscShare;
 		addChild<ui::Circle>(
 			{.position = {(side * 0.5F) - radius, (side * 0.5F) - radius},
 			 .size = {radius * 2.0F, radius * 2.0F},
-			 .style = {.backgroundColor = hsl(hue, 0.45F, 0.24F)}}
+			 .style = {.backgroundColor = hsl(hue, 0.45F, 0.24F)},
+			 .pointerEvents = ui::PointerEvents::None}
 		);
 
 		const std::string letters = initials(seed);
@@ -121,28 +123,44 @@ namespace theme {
 				{.position = {1.0F, 1.0F},
 				 .size = {side, side},
 				 .style = text.extend({.color = theme.get(t::color::bgVoid)}),
+				 .pointerEvents = ui::PointerEvents::None,
 				 .text = letters}
 			);
-			addChild<ui::Text>({.size = {side, side}, .style = text.extend({.color = hsl(hue, 0.55F, 0.82F)}), .text = letters});
+			addChild<ui::Text>(
+				{.size = {side, side},
+				 .style = text.extend({.color = hsl(hue, 0.55F, 0.82F)}),
+				 .pointerEvents = ui::PointerEvents::None,
+				 .text = letters}
+			);
 		}
 
 		// The dossier tick, top right.
 		const float		thin = theme.get(t::border::bw);
 		const ui::Style faint{.backgroundColor = theme.get(t::color::textFaint)};
-		addChild<ui::Rectangle>({.position = {side - kTickInset - kTickLeg, kTickInset}, .size = {kTickLeg, thin}, .style = faint});
-		addChild<ui::Rectangle>({.position = {side - kTickInset - thin, kTickInset}, .size = {thin, kTickLeg}, .style = faint});
+		addChild<ui::Rectangle>(
+			{.position = {side - kTickInset - kTickLeg, kTickInset},
+			 .size = {kTickLeg, thin},
+			 .style = faint,
+			 .pointerEvents = ui::PointerEvents::None}
+		);
+		addChild<ui::Rectangle>(
+			{.position = {side - kTickInset - thin, kTickInset},
+			 .size = {thin, kTickLeg},
+			 .style = faint,
+			 .pointerEvents = ui::PointerEvents::None}
+		);
 
 		// Selected: an accent outline a pixel outside the frame.
 		outline = addChild<ui::Rectangle>(
 			{.visible = selected,
 			 .position = {-2.0F * thin, -2.0F * thin},
 			 .size = {side + (4.0F * thin), side + (4.0F * thin)},
-			 .style = {
-				 .backgroundColor = Foundation::Color(0.0F, 0.0F, 0.0F, 0.0F),
-				 .borderColor = theme.get(t::color::accent),
-				 .borderWidth = thin,
-				 .borderRadius = theme.get(t::radius::rSm)
-			 }}
+			 .style =
+				 {.backgroundColor = Foundation::Color(0.0F, 0.0F, 0.0F, 0.0F),
+				  .borderColor = theme.get(t::color::accent),
+				  .borderWidth = thin,
+				  .borderRadius = theme.get(t::radius::rSm)},
+			 .pointerEvents = ui::PointerEvents::None}
 		);
 		tint();
 	}

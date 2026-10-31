@@ -102,17 +102,23 @@ namespace theme {
 			},
 		});
 
-		// Two legs a corner, over the border and the body.
+		// Two legs a corner, over the border and the body: decoration, which the pointer passes through.
 		if (corners) {
 			const float		leg = theme.get(t::spacing::space3);
 			const float		thick = theme.get(t::border::bwThick);
 			const ui::Style tick{.backgroundColor = highlight};
 			const auto		corner = [&](ui::Inset inset) {
 				 addChild<ui::Rectangle>(
-					 {.size = {leg, thick}, .layout = {.position = ui::Position::Absolute, .inset = inset}, .style = tick}
+					 {.size = {leg, thick},
+						  .layout = {.position = ui::Position::Absolute, .inset = inset},
+						  .style = tick,
+						  .pointerEvents = ui::PointerEvents::None}
 				 );
 				 addChild<ui::Rectangle>(
-					 {.size = {thick, leg}, .layout = {.position = ui::Position::Absolute, .inset = inset}, .style = tick}
+					 {.size = {thick, leg},
+						  .layout = {.position = ui::Position::Absolute, .inset = inset},
+						  .style = tick,
+						  .pointerEvents = ui::PointerEvents::None}
 				 );
 			};
 			corner({.top = 0.0F, .left = 0.0F});
