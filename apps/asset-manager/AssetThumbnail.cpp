@@ -178,13 +178,24 @@ namespace asset_manager {
 				}
 			}
 
+			const float									fade = opacity();
+			const Foundation::Color*					colors = mesh->hasColors() ? mesh->colors.data() : nullptr;
+			thread_local std::vector<Foundation::Color> faded;
+			if (colors != nullptr && fade < 1.0F) {
+				faded.assign(mesh->colors.begin(), mesh->colors.end());
+				for (Foundation::Color& color : faded) {
+					color.a *= fade;
+				}
+				colors = faded.data();
+			}
 			Renderer::Primitives::drawTriangles({
 				.vertices = verts.data(),
 				.indices = mesh->indices.data(),
 				.vertexCount = verts.size(),
 				.indexCount = mesh->indices.size(),
-				.color = Foundation::Color(0.7F, 0.7F, 0.7F, 1.0F),
-				.colors = mesh->hasColors() ? mesh->colors.data() : nullptr,
+				.color = Foundation::Color(0.7F, 0.7F, 0.7F, fade),
+				.colors = colors,
+				.key = drawKey(),
 			});
 		}
 		if (collider) {
@@ -200,12 +211,15 @@ namespace asset_manager {
 			return;
 		}
 		if (!def->collision.blocks()) {
+			Foundation::Color faint = getContext()->getTheme().get(theme::tokens::theme::color::textFaint);
+			faint.a *= opacity();
 			Renderer::Primitives::drawText({
 				.text = "no collider",
 				.position = {8.0F, 8.0F},
 				.scale = 12.0F / 16.0F,
-				.color = getContext()->getTheme().get(theme::tokens::theme::color::textFaint),
+				.color = faint,
 				.id = "am_no_collider",
+				.key = drawKey(),
 			});
 			return;
 		}
@@ -226,7 +240,7 @@ namespace asset_manager {
 			return;
 		}
 		const bool				centered = def->assetType == engine::assets::AssetType::Simple;
-		const Foundation::Color outline{0.0F, 1.0F, 1.0F, 1.0F}; // bright cyan, high contrast on art
+		const Foundation::Color outline{0.0F, 1.0F, 1.0F, opacity()}; // bright cyan, high contrast on art
 		for (std::size_t i = 0; i < points.size(); ++i) {
 			const glm::vec2& a = points[i];
 			const glm::vec2& b = points[(i + 1) % points.size()];
@@ -235,6 +249,7 @@ namespace asset_manager {
 				.end = centered ? centeredToLocal(b) : meshToLocal(b),
 				.style = {.color = outline, .width = 2.0F},
 				.id = "am_collision_edge",
+				.key = drawKey(),
 			});
 		}
 	}
