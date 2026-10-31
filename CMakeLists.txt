@@ -86,6 +86,7 @@ add_subdirectory(libs/geometry)
 
 # Feature layers
 add_subdirectory(libs/ui)
+add_subdirectory(libs/salvage)
 add_subdirectory(libs/world)
 add_subdirectory(libs/planet-view)
 add_subdirectory(libs/game-systems)

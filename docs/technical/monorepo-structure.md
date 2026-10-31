@@ -16,6 +16,7 @@ The monorepo is organized by dependency layers, from foundation to high-level:
 libs/
 ├── geometry/            # Exact integer-mm 2D geometry (predicates, arrangement, booleans, offsetting)
 ├── ui/                  # UI framework - components, layout, inspector
+├── salvage/             # Worldsim's design system on salal's ui: the theme's tokens, the icon set
 ├── world/               # World generation and 3D-to-2D sampling
 ├── game-systems/        # Game-specific: chunks, tiles, camera
 └── engine/              # Top layer - ECS, world, assets, the ui bridge onto salal's app
@@ -24,6 +25,7 @@ salal (external, build/_deps/salal-src/ after a configure)
 └── libs/
     ├── foundation/      # Base layer - math, platform, utilities
     ├── renderer/        # Graphics layer - OpenGL, 2D/3D rendering
+    ├── ui/              # salal's ui: components, layout, theme, icons, which app hosts
     └── app/             # The window, the frame, input, the scene stack, the dev server
 ```
 
@@ -38,7 +40,9 @@ Each layer can only depend on layers below it:
 ```
 engine
   ↓
-game-systems, ui, world, app (salal)
+game-systems, ui, world, salvage, app (salal)
+  ↓
+ui (salal)
   ↓
 renderer (salal), geometry
   ↓
@@ -79,6 +83,11 @@ foundation (salal)
 - UI inspector for testability (JSON export, debug tools)
 - Depends on: `renderer`, `foundation`
 
+**salvage/**
+- Worldsim's design system on salal's ui: the Salvage theme as a Design Tokens file and the icon set as filled SVGs, both compiled in by salal's `salal_tokens()` and `salal_icons()` (`<salvage/Tokens.h>`, `<salvage/Icons.h>`)
+- Both are written by the scripts in `docs/ui-prototype/scripts/`, from the prototype's tokens and icons
+- Depends on: `ui` (salal)
+
 **world/**
 - World generation interface and implementations
 - 3D-to-2D sampling (converting spherical world to flat tiles)
@@ -92,12 +101,16 @@ foundation (salal)
 - Game-specific logic
 - Depends on: `world`, `renderer`, `foundation`
 
-**app/** (salal)
-- The window, the frame and its pacing, device input, the scene stack and overlays, the clipboard, settings and saves, the dev server
+**ui/** (salal)
+- Components, layout, the theme loaded from Design Tokens, icons from an MSDF atlas, each scene's ui context
 - Depends on: `renderer`, `foundation`
 
+**app/** (salal)
+- The window, the frame and its pacing, device input, the scene stack and overlays, the clipboard, settings and saves, the dev server
+- Depends on: `ui` (salal), `renderer`, `foundation`
+
 **engine/**
-- The bridge between worldsim's ui and salal's app (`app/`: `UiScene`, `UiOverlay`, `UiBridge`), until salal has a ui of its own
+- The bridge between worldsim's ui and salal's app (`app/`: `UiScene`, `UiOverlay`, `UiBridge`), until worldsim moves onto salal's ui
 - ECS, world streaming and rendering, construction, navigation, assets
 - Configuration system (JSON loading)
 - Depends on: All layers below
