@@ -10,7 +10,7 @@
 // Component so it slots into layouts and child pools.
 
 #include "component/Component.h"
-#include "theme/Variants.h"
+#include "theme/Tones.h"
 
 #include <string>
 

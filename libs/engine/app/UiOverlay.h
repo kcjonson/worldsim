@@ -1,6 +1,6 @@
 #pragma once
 
-// An overlay above every scene (an app::DebugLayer, owned by the App) that the bridge (UiBridge.h) gives
+// An overlay above every scene (app::DebugLayer, owned by the App) that the bridge (UiBridge.h) gives
 // pointer input to as UI::InputEvents before the top scene.
 
 #include <scene/DebugLayer.h>

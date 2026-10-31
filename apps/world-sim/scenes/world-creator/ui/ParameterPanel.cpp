@@ -1,248 +1,281 @@
 #include "ParameterPanel.h"
 
-#include "primitives/Primitives.h"
-#include <components/icon/Icon.h>
-#include <components/panel/Panel.h>
-#include <theme/Tokens.h>
-#include <theme/Variants.h>
+#include "scenes/shared/SalalUi.h"
 
-#include <focus/FocusManager.h>
+#include <ui/components/Button.h>
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <format>
+#include <optional>
 #include <string>
 #include <utility>
-#include <vector>
 
 namespace world_sim {
 
 namespace {
-	// Common slider width inside the panel (kPanelWidth minus 2x kSliderX)
-	constexpr float kSliderWidth = 336.0F;
-	constexpr float kSliderX = 12.0F; // offset from panel left
+	namespace family = ui::tokens::font::family;
+
+	constexpr float kRowHeight = 28.0F;
+	constexpr float kItemSpacing = 6.0F;
+	constexpr float kSectionGap = 6.0F; // on top of kItemSpacing, before a section
 }
 
-ParameterPanel::ParameterPanel(Foundation::Vec2 pos, ParameterPanelCallbacks cbs)
-	: position(pos), callbacks(std::move(cbs)) {
-	buildWidgets();
+void ParameterPanel::ScaledSlider::set(double value) const {
+	if (ui::Slider* slider = ref.get()) {
+		slider->setValue(static_cast<float>(log ? std::log10(value) : value));
+	}
 }
 
-Renderer::Primitives::TextArgs ParameterPanel::makeLabel(const std::string& text, float y) {
-	return Renderer::Primitives::TextArgs{
+ParameterPanel::ParameterPanel(ParameterPanelCallbacks cbs)
+	: callbacks(std::move(cbs)) {}
+
+void ParameterPanel::addLabel(ui::Ref<ui::Component> parent, const std::string& text) const {
+	parent.addChild<ui::Text>({
+		.margin = {kSectionGap, 0.0F, 0.0F, 0.0F},
+		.style = world_sim::text(
+			*theme,
+			{.family = family::mono,
+			 .size = tokens::fontSize::fs2xs,
+			 .color = tokens::color::textDim,
+			 .tracking = tokens::letterSpacing::lsWider,
+			 .transform = Foundation::TextTransform::Uppercase}
+		),
 		.text = text,
-		.position = {position.x + kSliderX, y},
-		.scale = UI::fs_2xs / 16.0F,
-		.color = UI::text_dim,
-		.font = UI::fontMono,
-		.vAlign = Foundation::VerticalAlign::Top,
-		.letterSpacing = UI::fs_2xs * UI::ls_wider,
-		.transform = Foundation::TextTransform::Uppercase,
-	};
-}
-
-float ParameterPanel::addLabel(const std::string& text) {
-	float y = position.y + nextY;
-	sectionLabels.push_back(makeLabel(text, y));
-	nextY += kLabelHeight + 2.0F;
-	return y;
-}
-
-float ParameterPanel::addSlider(
-	std::unique_ptr<UI::Slider>& out,
-	double min, double max, double step, double value,
-	bool logScale, const std::string& label,
-	std::function<std::string(double)> formatter,
-	std::function<void(double)> onChange)
-{
-	float y = position.y + nextY;
-	out = std::make_unique<UI::Slider>(UI::Slider::Args{
-		.position = {position.x + kSliderX, y},
-		.size = {kSliderWidth, kSliderHeight},
-		.min = min,
-		.max = max,
-		.step = step,
-		.value = value,
-		.logScale = logScale,
-		.label = label,
-		.valueFormatter = std::move(formatter),
-		.onChanged = std::move(onChange),
 	});
-	nextY += kSliderHeight + kItemSpacing;
-	return y;
 }
 
-void ParameterPanel::buildWidgets() {
-	// Content starts below the Panel header band.
-	nextY = 58.0F;
+ParameterPanel::ScaledSlider ParameterPanel::addSlider(
+	ui::Ref<ui::Component>			   parent,
+	double							   min,
+	double							   max,
+	double							   step,
+	double							   value,
+	bool							   logScale,
+	const std::string&				   label,
+	std::function<std::string(double)> formatter,
+	std::function<void(double)>		   onChange
+) const {
+	const auto toTrack = [logScale](double v) {
+		return static_cast<float>(logScale ? std::log10(v) : v);
+	};
+	const auto fromTrack = [logScale](float t) {
+		return logScale ? std::pow(10.0, static_cast<double>(t)) : static_cast<double>(t);
+	};
+	ScaledSlider out{.log = logScale};
+	out.ref = parent.addChild<ui::Slider>({
+		.size = {ui::percent(100.0F), ui::kAuto},
+		.min = toTrack(min),
+		.max = toTrack(max),
+		.step = static_cast<float>(step),
+		.value = toTrack(value),
+		.label = label,
+		.showValue = true,
+		.format = [formatter = std::move(formatter), fromTrack](float t) { return formatter(fromTrack(t)); },
+		.onChange =
+			[onChange = std::move(onChange), fromTrack](float t) {
+				if (onChange) {
+					onChange(fromTrack(t));
+				}
+			},
+	});
+	return out;
+}
 
-	// Preset grid: 2 columns, active preset carries the data tint.
-	addLabel("Preset");
-	{
-		const float gridY = position.y + nextY;
-		const float btnW = (kSliderWidth - 8.0F) * 0.5F;
-		constexpr float kBtnH = 28.0F;
-		for (size_t i = 0; i < kPresets.size(); ++i) {
-			const float bx = position.x + kSliderX + (i % 2 == 0 ? 0.0F : btnW + 8.0F);
-			const float by = gridY + static_cast<float>(i / 2) * (kBtnH + 6.0F);
-			const std::string value = kPresets[i].value;
-			presetButtons[i] = std::make_unique<UI::Button>(UI::Button::Args{
-				.label = kPresets[i].label,
-				.position = {bx, by},
-				.size = {btnW, kBtnH},
-				.type = value == activePreset ? UI::Button::Type::Data : UI::Button::Type::Secondary,
-				.onClick = [this, value]() { applyPreset(value); },
-				.id = kPresets[i].value,
+void ParameterPanel::build(ui::Ref<ui::Component> body, const ui::Theme& themeRef) {
+	theme = &themeRef;
+	column = body.addChild<ui::Component>({
+		.id = "parameters",
+		.size = {ui::percent(100.0F), 0.0F},
+		.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = kItemSpacing, .flexGrow = 1.0F},
+		.overflow = ui::Overflow::Scroll,
+	});
+
+	// Preset grid: 2 columns, the active preset selected.
+	addLabel(column, "Preset");
+	ui::Ref<ui::Component> row;
+	for (size_t i = 0; i < kPresets.size(); ++i) {
+		if (i % 2 == 0) {
+			row = column.addChild<ui::Component>({
+				.size = {ui::percent(100.0F), kRowHeight},
+				.layout = {.display = ui::Display::Flex, .gap = 8.0F},
 			});
 		}
-		nextY += 3.0F * kBtnH + 2.0F * 6.0F + kSectionSpacing;
+		const std::string value = kPresets[i].value;
+		presetRows[i] = row.addChild<ui::ListRow>({
+			.id = value,
+			.size = {0.0F, ui::percent(100.0F)},
+			.layout = {.flexGrow = 1.0F},
+			.label = kPresets[i].label,
+			.selected = value == activePreset,
+			.onPress = [this, value] { applyPreset(value); },
+		});
 	}
 
-	// Planet Properties
-	addLabel("Planet Properties");
-	addSlider(waterSlider, 0.0, 100.0, 1.0, 70.0, false,
-		"Water %",
-		[](double v) { return std::format("{:.0f}%", v); },
-		callbacks.onWaterAmount);
-
-	addSlider(platesSlider, 2.0, 30.0, 1.0, 12.0, false,
+	addLabel(column, "Planet Properties");
+	waterSlider = addSlider(
+		column, 0.0, 100.0, 1.0, 70.0, false, "Water %", [](double v) { return std::format("{:.0f}%", v); }, callbacks.onWaterAmount
+	);
+	platesSlider = addSlider(
+		column,
+		2.0,
+		30.0,
+		1.0,
+		12.0,
+		false,
 		"Tectonic Plates",
 		[](double v) { return std::format("{:.0f}", v); },
-		[this](double v) { if (callbacks.onTectonicPlates) callbacks.onTectonicPlates(v); });
-
-	addSlider(radiusSlider, 0.1, 10.0, 0.0, 1.0, true,
-		"Radius (Re)",
-		[](double v) { return std::format("{:.2f}", v); },
-		callbacks.onPlanetRadius);
-
-	addSlider(rotationSlider, 0.1, 100.0, 0.0, 1.0, true,
-		"Rotation (d)",
-		[](double v) { return std::format("{:.2f}", v); },
-		callbacks.onRotationRate);
-
-	addSlider(ageSlider, 1.0e7, 1.0e10, 0.0, 4.5e9, true,
+		callbacks.onTectonicPlates
+	);
+	radiusSlider = addSlider(
+		column, 0.1, 10.0, 0.0, 1.0, true, "Radius (Re)", [](double v) { return std::format("{:.2f}", v); }, callbacks.onPlanetRadius
+	);
+	rotationSlider = addSlider(
+		column, 0.1, 100.0, 0.0, 1.0, true, "Rotation (d)", [](double v) { return std::format("{:.2f}", v); }, callbacks.onRotationRate
+	);
+	ageSlider = addSlider(
+		column,
+		1.0e7,
+		1.0e10,
+		0.0,
+		4.5e9,
+		true,
 		"Planet Age (yr)",
 		[](double v) {
-			if (v >= 1.0e9) return std::format("{:.1f}B yr", v / 1.0e9);
+			if (v >= 1.0e9)
+				return std::format("{:.1f}B yr", v / 1.0e9);
 			return std::format("{:.0f}M yr", v / 1.0e6);
 		},
-		callbacks.onPlanetAge);
-
-	addSlider(atmosphereSlider, 0.1, 10.0, 0.0, 1.0, true,
-		"Atmosphere",
-		[](double v) { return std::format("{:.2f} atm", v); },
-		callbacks.onAtmosphere);
-
+		callbacks.onPlanetAge
+	);
+	atmosphereSlider = addSlider(
+		column, 0.1, 10.0, 0.0, 1.0, true, "Atmosphere", [](double v) { return std::format("{:.2f} atm", v); }, callbacks.onAtmosphere
+	);
 	// Prototype-only control: the generator has no mean-temp input yet.
-	addSlider(meanTempSlider, -20.0, 40.0, 1.0, 14.0, false,
-		"Mean Temp",
-		[](double v) { return std::format("{:.0f} C", v); },
-		nullptr);
-	meanTempSlider->setDisabled(true);
-
-	nextY += kSectionSpacing;
+	const ScaledSlider meanTemp =
+		addSlider(column, -20.0, 40.0, 1.0, 14.0, false, "Mean Temp", [](double v) { return std::format("{:.0f} C", v); }, nullptr);
+	if (ui::Slider* slider = meanTemp.ref.get()) {
+		slider->setEnabled(false);
+	}
 
 	// Seed row
-	float seedY = position.y + nextY;
-	seedInput = std::make_unique<UI::TextInput>(UI::TextInput::Args{
-		.position = {position.x + kSliderX, seedY},
-		.size = {kSliderWidth - 98.0F, 28.0F},
-		.placeholder = "Random seed...",
+	ui::Ref<ui::Component> seedRow = column.addChild<ui::Component>({
+		.size = {ui::percent(100.0F), kRowHeight},
+		.margin = {kSectionGap, 0.0F, 0.0F, 0.0F},
+		.layout = {.display = ui::Display::Flex, .gap = 8.0F},
+	});
+	seedInput = seedRow.addChild<ui::TextInput>({
 		.id = "seed_input",
+		.size = {0.0F, ui::percent(100.0F)},
+		.layout = {.flexGrow = 1.0F},
+		.placeholder = "Random seed...",
 		.onChange = [this](const std::string& text) { onSeedTextChanged(text); },
 	});
-
-	randomizeButton = std::make_unique<UI::Button>(UI::Button::Args{
-		.label = "Random",
-		.position = {position.x + kSliderX + kSliderWidth - 90.0F, seedY},
-		.size = {90.0F, 28.0F},
-		.type = UI::Button::Type::Secondary,
-		.onClick = callbacks.onRandomize,
+	seedRow.addChild<ui::Button>({
 		.id = "btn_randomize",
+		.size = {90.0F, ui::percent(100.0F)},
+		.label = "Random",
+		.controlSize = ui::ControlSize::Sm,
+		.onPress = [this] {
+			if (callbacks.onRandomize) {
+				callbacks.onRandomize();
+			}
+		},
 	});
-	nextY += 28.0F + 2.0F;
-	seedErrorY = position.y + nextY;
-	nextY += kLabelHeight + kSectionSpacing - 2.0F;
+	seedError = column.addChild<ui::Text>({
+		.id = "seed_error",
+		.visible = false,
+		.style = world_sim::text(*theme, {.size = tokens::fontSize::fsXs, .color = tokens::color::statusCrit}),
+		.text = "Seed must be a valid 64-bit number",
+	});
 
-	// Advanced (collapsed): resolution + star/orbit sliders at the panel bottom.
-	advancedToggleBounds = {position.x + kSliderX, position.y + nextY, kSliderWidth, 20.0F};
-	nextY += 20.0F + kItemSpacing;
-
-	float resY = position.y + nextY;
-	std::vector<UI::SelectOption> resOptions{
-		{"Preview 256",  "256"},
-		{"Low 512",      "512"},
-		{"Default 1024", "1024"},
-		{"High 1449",    "1449"},
-		{"Ultra 2048",   "2048"},
-	};
-	resolutionSelect = std::make_unique<UI::Select>(UI::Select::Args{
-		.position = {position.x + kSliderX, resY},
-		.size = {kSliderWidth, 30.0F},
-		.options = resOptions,
-		.value = "256",
-		.onChange = callbacks.onResolutionChanged,
+	// Advanced (collapsed): resolution + star/orbit sliders.
+	advancedToggle = column.addChild<ui::ListRow>({
+		.id = "advanced_toggle",
+		.size = {ui::percent(100.0F), kRowHeight},
+		.margin = {kSectionGap, 0.0F, 0.0F, 0.0F},
+		.label = "Advanced",
+		.trailing = "Show",
+		.dim = true,
+		.onPress = [this] { toggleAdvanced(); },
+	});
+	advanced = column.addChild<ui::Component>({
+		.id = "advanced",
+		.visible = false,
+		.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = kItemSpacing},
+	});
+	resolutionSelect = advanced.addChild<ui::Select>({
 		.id = "resolution_select",
+		.size = {ui::percent(100.0F), ui::kAuto},
+		.options =
+			{
+				{"Preview 256", "256"},
+				{"Low 512", "512"},
+				{"Default 1024", "1024"},
+				{"High 1449", "1449"},
+				{"Ultra 2048", "2048"},
+			},
+		.value = "256",
+		.onChange = [this](const std::string& value) {
+			if (callbacks.onResolutionChanged) {
+				callbacks.onResolutionChanged(value);
+			}
+		},
 	});
-	nextY += 30.0F + kItemSpacing;
-
-	addSlider(starTempSlider, 2000.0, 50000.0, 0.0, 5778.0, true,
+	starTempSlider = addSlider(
+		advanced,
+		2000.0,
+		50000.0,
+		0.0,
+		5778.0,
+		true,
 		"Star Temp (K)",
 		[](double v) { return std::format("{:.0f}K", v); },
-		callbacks.onStarTemperature);
-
-	addSlider(semiMajorSlider, 0.1, 100.0, 0.0, 1.0, true,
+		callbacks.onStarTemperature
+	);
+	semiMajorSlider = addSlider(
+		advanced,
+		0.1,
+		100.0,
+		0.0,
+		1.0,
+		true,
 		"Semi-Major (AU)",
 		[](double v) { return std::format("{:.2f} AU", v); },
-		callbacks.onSemiMajorAxis);
-
-	addSlider(eccentricitySlider, 0.0, 0.95, 0.0, 0.017, false,
-		"Eccentricity",
-		[](double v) { return std::format("{:.3f}", v); },
-		callbacks.onEccentricity);
-
-	setAdvancedOpen(false);
+		callbacks.onSemiMajorAxis
+	);
+	eccentricitySlider = addSlider(
+		advanced, 0.0, 0.95, 0.0, 0.017, false, "Eccentricity", [](double v) { return std::format("{:.3f}", v); }, callbacks.onEccentricity
+	);
 }
 
 void ParameterPanel::applyPreset(const std::string& value) {
 	activePreset = value;
 	for (size_t i = 0; i < kPresets.size(); ++i) {
-		if (presetButtons[i]) {
-			presetButtons[i]->type =
-				kPresets[i].value == activePreset ? UI::Button::Type::Data : UI::Button::Type::Secondary;
+		if (ui::ListRow* shown = presetRows[i].get()) {
+			shown->setSelected(kPresets[i].value == activePreset);
 		}
 	}
 	if (callbacks.onPresetChanged) callbacks.onPresetChanged(value);
 }
 
-void ParameterPanel::setAdvancedOpen(bool open) {
-	advancedOpen = open;
-	if (resolutionSelect)   { resolutionSelect->visible = open; }
-	if (starTempSlider)     { starTempSlider->visible = open; }
-	if (semiMajorSlider)    { semiMajorSlider->visible = open; }
-	if (eccentricitySlider) { eccentricitySlider->visible = open; }
+void ParameterPanel::toggleAdvanced() {
+	ui::Component* section = advanced.get();
+	if (section == nullptr) {
+		return;
+	}
+	const bool open = !section->isVisible();
+	section->setVisible(open);
+	if (ui::ListRow* toggle = advancedToggle.get()) {
+		toggle->setTrailing(open ? "Hide" : "Show");
+	}
 }
 
 void ParameterPanel::setGenerating(bool gen) {
-	generating = gen;
-
-	// Disable all parameter controls during generation
-	bool dis = gen;
-	for (auto& preset : presetButtons) {
-		if (preset) { preset->setDisabled(dis); }
+	if (ui::Component* shown = column.get()) {
+		shown->setEnabled(!gen);
 	}
-	if (resolutionSelect)   { resolutionSelect->setDisabled(dis); }
-	if (waterSlider)        { waterSlider->setDisabled(dis); }
-	if (platesSlider)       { platesSlider->setDisabled(dis); }
-	if (radiusSlider)       { radiusSlider->setDisabled(dis); }
-	if (rotationSlider)     { rotationSlider->setDisabled(dis); }
-	if (ageSlider)          { ageSlider->setDisabled(dis); }
-	if (atmosphereSlider)   { atmosphereSlider->setDisabled(dis); }
-	if (starTempSlider)     { starTempSlider->setDisabled(dis); }
-	if (semiMajorSlider)    { semiMajorSlider->setDisabled(dis); }
-	if (eccentricitySlider) { eccentricitySlider->setDisabled(dis); }
-	if (randomizeButton)    { randomizeButton->setDisabled(dis); }
-	if (seedInput)          { seedInput->setEnabled(!dis); }
 }
 
 void ParameterPanel::syncValues(
@@ -257,21 +290,26 @@ void ParameterPanel::syncValues(
 	double   eccentricity,
 	uint64_t seed)
 {
-	if (waterSlider)        { waterSlider->setValue(waterPercent); }
-	if (platesSlider)       { platesSlider->setValue(static_cast<double>(tectonicPlates)); }
-	if (radiusSlider)       { radiusSlider->setValue(planetRadius); }
-	if (rotationSlider)     { rotationSlider->setValue(rotationRate); }
-	if (ageSlider)          { ageSlider->setValue(planetAge); }
-	if (atmosphereSlider)   { atmosphereSlider->setValue(atmosphere); }
-	if (starTempSlider)     { starTempSlider->setValue(starTemperature); }
-	if (semiMajorSlider)    { semiMajorSlider->setValue(semiMajorAxis); }
-	if (eccentricitySlider) { eccentricitySlider->setValue(eccentricity); }
-	if (seedInput)          { seedInput->setText(std::to_string(seed)); }
+	waterSlider.set(waterPercent);
+	platesSlider.set(static_cast<double>(tectonicPlates));
+	radiusSlider.set(planetRadius);
+	rotationSlider.set(rotationRate);
+	ageSlider.set(planetAge);
+	atmosphereSlider.set(atmosphere);
+	starTempSlider.set(starTemperature);
+	semiMajorSlider.set(semiMajorAxis);
+	eccentricitySlider.set(eccentricity);
+	// setText doesn't call onChange, so the seed's state follows by hand.
+	const std::string text = std::to_string(seed);
+	if (ui::TextInput* input = seedInput.get()) {
+		input->setText(text);
+	}
+	onSeedTextChanged(text);
 }
 
 void ParameterPanel::setResolutionValue(const std::string& value) {
-	if (resolutionSelect) {
-		resolutionSelect->setValue(value);
+	if (ui::Select* select = resolutionSelect.get()) {
+		select->setValue(value);
 	}
 }
 
@@ -280,10 +318,12 @@ bool ParameterPanel::seedIsEmpty() const {
 }
 
 bool ParameterPanel::isSeedFocused() const {
-	return seedInput && UI::FocusManager::Get().hasFocus(seedInput.get());
+	const ui::TextInput* input = seedInput.get();
+	return input != nullptr && input->isFocused();
 }
 
 void ParameterPanel::onSeedTextChanged(const std::string& text) {
+	const bool wasInvalid = seedState == SeedState::Invalid;
 	if (text.empty()) {
 		seedState = SeedState::Empty;
 	} else {
@@ -302,135 +342,20 @@ void ParameterPanel::onSeedTextChanged(const std::string& text) {
 			callbacks.onSeedChanged(std::to_string(parsed));
 		}
 	}
-
-	// Red border while invalid
-	if (seedInput) {
-		seedInput->style.borderColor = (seedState == SeedState::Invalid)
-			? UI::status_crit
-			: UI::TextInputStyle{}.borderColor;
-	}
-}
-
-void ParameterPanel::update(float dt) {
-	for (auto& preset : presetButtons) {
-		if (preset) { preset->update(dt); }
-	}
-	if (waterSlider)        { waterSlider->update(dt); }
-	if (platesSlider)       { platesSlider->update(dt); }
-	if (radiusSlider)       { radiusSlider->update(dt); }
-	if (rotationSlider)     { rotationSlider->update(dt); }
-	if (ageSlider)          { ageSlider->update(dt); }
-	if (atmosphereSlider)   { atmosphereSlider->update(dt); }
-	if (advancedOpen) {
-		if (starTempSlider)     { starTempSlider->update(dt); }
-		if (semiMajorSlider)    { semiMajorSlider->update(dt); }
-		if (eccentricitySlider) { eccentricitySlider->update(dt); }
-		if (resolutionSelect)   { resolutionSelect->update(dt); }
-	}
-	if (seedInput) { seedInput->update(dt); }
-}
-
-void ParameterPanel::render(float height) {
-	UI::Panel frame({.position = position,
-					 .size = {kPanelWidth, height},
-					 .title = "Parameters",
-					 .kicker = "Survey Config",
-					 .accent = UI::PanelAccent::Data});
-	frame.render();
-
-	for (const auto& label : sectionLabels) {
-		Renderer::Primitives::drawText(label);
+	const bool invalid = seedState == SeedState::Invalid;
+	if (invalid == wasInvalid) {
+		return;
 	}
 
-	for (auto& preset : presetButtons) {
-		if (preset) { preset->render(); }
+	// Red border and the error line while invalid
+	if (ui::TextInput* input = seedInput.get()) {
+		ui::Style style = input->getDeclaredStyle();
+		style.borderColor = invalid ? std::optional(theme->get(tokens::color::statusCrit)) : std::nullopt;
+		input->setStyle(style);
 	}
-	if (waterSlider)        { waterSlider->render(); }
-	if (platesSlider)       { platesSlider->render(); }
-	if (radiusSlider)       { radiusSlider->render(); }
-	if (rotationSlider)     { rotationSlider->render(); }
-	if (ageSlider)          { ageSlider->render(); }
-	if (atmosphereSlider)   { atmosphereSlider->render(); }
-	if (meanTempSlider)     { meanTempSlider->render(); }
-	if (seedInput)          { seedInput->render(); }
-	if (seedState == SeedState::Invalid) {
-		UI::Text seedError(UI::Text::Args{
-			.position = {position.x + kSliderX, seedErrorY},
-			.text = "Seed must be a valid 64-bit number",
-			.style = {
-				.color = UI::status_crit,
-				.fontSize = UI::fs_xs,
-				.hAlign = Foundation::HorizontalAlign::Left,
-				.vAlign = Foundation::VerticalAlign::Top,
-			},
-		});
-		seedError.render();
+	if (ui::Text* error = seedError.get()) {
+		error->setVisible(invalid);
 	}
-	if (randomizeButton)    { randomizeButton->render(); }
-
-	// Advanced toggle row: stencil label + open/close chevron.
-	Renderer::Primitives::drawText({
-		.text = "Advanced",
-		.position = {advancedToggleBounds.x, advancedToggleBounds.y + 3.0F},
-		.scale = UI::fs_2xs / 16.0F,
-		.color = advancedOpen ? UI::text : UI::text_dim,
-		.font = UI::fontMono,
-		.vAlign = Foundation::VerticalAlign::Top,
-		.letterSpacing = UI::fs_2xs * UI::ls_wider,
-		.transform = Foundation::TextTransform::Uppercase,
-	});
-	UI::Icon chevron({.position = {advancedToggleBounds.right() - 16.0F, advancedToggleBounds.y + 2.0F},
-					  .size = 14.0F,
-					  .glyph = advancedOpen ? "chevronUp" : "chevronDown",
-					  .tint = UI::text_dim});
-	chevron.render();
-
-	if (advancedOpen) {
-		if (starTempSlider)     { starTempSlider->render(); }
-		if (semiMajorSlider)    { semiMajorSlider->render(); }
-		if (eccentricitySlider) { eccentricitySlider->render(); }
-	}
-
-	// Dropdowns last: the batch renderer draws in submission order, so open
-	// menus must be painted after the widgets they overlap (mirrors the
-	// reverse hit-test order in handleEvent).
-	if (advancedOpen && resolutionSelect) { resolutionSelect->render(); }
-}
-
-bool ParameterPanel::handleEvent(UI::InputEvent& event) {
-	if (generating) {
-		return false;
-	}
-
-	// Highest z-order first: dropdowns before sliders
-	if (advancedOpen && resolutionSelect && resolutionSelect->handleEvent(event)) return true;
-	if (seedInput && seedInput->handleEvent(event)) return true;
-	if (randomizeButton && randomizeButton->handleEvent(event)) return true;
-	for (auto& preset : presetButtons) {
-		if (preset && preset->handleEvent(event)) return true;
-	}
-
-	// Advanced toggle.
-	if (event.type == UI::InputEvent::Type::MouseUp && event.button == foundation::MouseButton::Left &&
-	    advancedToggleBounds.contains(event.position)) {
-		setAdvancedOpen(!advancedOpen);
-		event.consume();
-		return true;
-	}
-
-	if (waterSlider && waterSlider->handleEvent(event)) return true;
-	if (platesSlider && platesSlider->handleEvent(event)) return true;
-	if (radiusSlider && radiusSlider->handleEvent(event)) return true;
-	if (rotationSlider && rotationSlider->handleEvent(event)) return true;
-	if (ageSlider && ageSlider->handleEvent(event)) return true;
-	if (atmosphereSlider && atmosphereSlider->handleEvent(event)) return true;
-	if (advancedOpen) {
-		if (starTempSlider && starTempSlider->handleEvent(event)) return true;
-		if (semiMajorSlider && semiMajorSlider->handleEvent(event)) return true;
-		if (eccentricitySlider && eccentricitySlider->handleEvent(event)) return true;
-	}
-
-	return false;
 }
 
 } // namespace world_sim

@@ -1,145 +1,148 @@
 #include "scenes/landing/LandingSiteDetailsPanel.h"
 
-#include <components/badge/Badge.h>
-#include <components/divider/Divider.h>
-#include <components/icon/Icon.h>
-#include <components/panel/Panel.h>
-#include <components/stat/Stat.h>
-#include <primitives/Primitives.h>
-#include <shapes/Shapes.h>
-#include <theme/Tokens.h>
-#include <theme/Variants.h>
+#include "scenes/shared/SalalUi.h"
+
+#include <theme/Panel.h>
+#include <ui/components/Badge.h>
+#include <ui/components/Divider.h>
+#include <ui/components/Stat.h>
+#include <ui/shapes/Icon.h>
+#include <ui/shapes/Rectangle.h>
+#include <ui/shapes/Text.h>
 
 namespace world_sim {
 
-void LandingSiteDetailsPanel::render(
-		const LandingSiteDetails& details, const Foundation::Rect& bounds) const {
-	using Renderer::Primitives::drawRect;
-	using Renderer::Primitives::drawText;
-
-	UI::Panel panel({.position = bounds.position(),
-					 .size = {bounds.width, bounds.height},
-					 .title = "Landing Zone",
-					 .kicker = "Site Analysis",
-					 .accent = UI::PanelAccent::Accent});
-	panel.render();
-	const Foundation::Rect body = panel.bodyBounds();
-	float				   y = body.y;
-
-	// Coordinates: crosshair + teal mono readout.
-	UI::Icon({.position = {body.x, y}, .size = 14.0F, .glyph = "crosshair", .tint = UI::data_bright}).render();
-	drawText({.text = details.coords,
-			  .position = {body.x + 20.0F, y},
-			  .scale = UI::fs_sm / 16.0F,
-			  .color = UI::data_bright,
-			  .font = UI::fontMono,
-			  .vAlign = Foundation::VerticalAlign::Top});
-	y += 24.0F;
-
-	// Biome-name header.
-	if (!details.biomeName.empty()) {
-		drawText({.text = details.biomeName,
-				  .position = {body.x, y},
-				  .scale = UI::fs_xl / 16.0F,
-				  .color = UI::text_bright,
-				  .font = UI::fontDisplay,
-				  .vAlign = Foundation::VerticalAlign::Top});
-		y += 30.0F;
+	namespace {
+		namespace family = ui::tokens::font::family;
 	}
 
-	if (details.recommended) {
-		UI::Badge({.position = {body.x, y}, .label = "Recommended", .tone = UI::Tone::Ok, .dot = true}).render();
-		y += 26.0F;
-	}
-	y += UI::space_1;
-
-	// Stat row: temp range / rainfall.
-	if (!details.tempRange.empty() || !details.rainfall.empty()) {
-		if (!details.tempRange.empty()) {
-			UI::Stat({.position = {body.x, y}, .label = "Temp Range", .value = details.tempRange, .size = UI::Size::Sm})
-				.render();
-		}
-		if (!details.rainfall.empty()) {
-			UI::Stat({.position = {body.x + body.width * 0.55F, y},
-					  .label = "Rainfall",
-					  .value = details.rainfall,
-					  .tone = UI::Tone::Data,
-					  .size = UI::Size::Sm})
-				.render();
-		}
-		y += 46.0F;
-	}
-
-	// Difficulty inset with skull pips.
-	if (details.difficulty > 0) {
-		const Foundation::Rect row{body.x, y, body.width, 36.0F};
-		drawRect({.bounds = row,
-				  .style = {.fill = UI::bg_inset,
-							.border = Foundation::BorderStyle{
-								.color = UI::line_hairline, .width = UI::bw, .cornerRadius = UI::r_sm,
-								.position = Foundation::BorderPosition::Inside}}});
-		drawText({.text = "DIFFICULTY",
-				  .position = {row.x + UI::space_3, row.y},
-				  .scale = UI::fs_2xs / 16.0F,
-				  .color = UI::text_dim,
-				  .font = UI::fontMono,
-				  .vAlign = Foundation::VerticalAlign::Middle,
-				  .boxHeight = row.height,
-				  .letterSpacing = UI::fs_2xs * UI::ls_wider});
-		for (int i = 0; i < 5; ++i) {
-			UI::Icon skull({.position = {row.x + row.width - UI::space_3 - (5.0F - static_cast<float>(i)) * 18.0F,
-										 row.y + (row.height - 15.0F) * 0.5F},
-							.size = 15.0F,
-							.glyph = "skull",
-							.tint = i < details.difficulty ? UI::status_warn : UI::text_faint});
-			skull.render();
-		}
-		y += 36.0F + UI::space_3;
-	}
-
-	// Field report: the water verdict headline plus the survey sections.
-	UI::Divider({.position = {body.x, y + 6.0F}, .width = body.width, .label = "Field Report"}).render();
-	y += 20.0F;
-	{
-		UI::Text verdict(UI::Text::Args{
-			.position = {body.x, y},
-			.width = body.width,
-			.text = details.verdict,
-			.style = {.color = details.verdictColor, .fontSize = UI::fs_sm, .wordWrap = true},
+	void LandingSiteDetailsPanel::mount(ui::Ref<ui::Component> host, const ui::Theme& themeRef) {
+		theme = &themeRef;
+		ui::Ref<::theme::Panel> frame = host.addChild<::theme::Panel>({
+			.id = "landing_zone",
+			.size = {ui::percent(100.0F), 0.0F},
+			.layout = {.flexGrow = 1.0F},
+			.title = "Landing Zone",
+			.kicker = "Site Analysis",
 		});
-		verdict.render();
-		y += verdict.getHeight() + UI::space_2;
+		if (const ::theme::Panel* shown = frame.get()) {
+			body = shown->body();
+		}
 	}
 
-	for (const auto& section : details.sections) {
-		drawText({.text = section.header,
-				  .position = {body.x, y},
-				  .scale = UI::fs_2xs / 16.0F,
-				  .color = UI::text_dim,
-				  .font = UI::fontMono,
-				  .vAlign = Foundation::VerticalAlign::Top,
-				  .letterSpacing = UI::fs_2xs * UI::ls_wider,
-				  .transform = Foundation::TextTransform::Uppercase});
-		y += 18.0F;
-		for (const auto& row : section.rows) {
-			drawText({.text = row.label,
-					  .position = {body.x, y},
-					  .scale = UI::fs_sm / 16.0F,
-					  .color = UI::text_dim,
-					  .font = UI::fontUi,
-					  .vAlign = Foundation::VerticalAlign::Top});
-			drawText({.text = row.value,
-					  .position = {body.x, y},
-					  .scale = UI::fs_sm / 16.0F,
-					  .color = row.accent,
-					  .font = UI::fontMono,
-					  .hAlign = Foundation::HorizontalAlign::Right,
-					  .vAlign = Foundation::VerticalAlign::Top,
-					  .boxWidth = body.width});
-			y += 19.0F;
+	void LandingSiteDetailsPanel::show(const LandingSiteDetails& details) {
+		ui::Component* shownBody = body.get();
+		if (shownBody == nullptr) {
+			return;
 		}
-		y += UI::space_2;
+		if (content.get() != nullptr) {
+			shownBody->removeChild(content);
+		}
+		const float space2 = theme->get(tokens::spacing::space2);
+		content = body.addChild<ui::Component>({
+			.id = "landing_details",
+			.size = {ui::percent(100.0F), 0.0F},
+			.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = space2, .flexGrow = 1.0F},
+			.overflow = ui::Overflow::Scroll,
+		});
+		const ui::Style label = world_sim::text(
+			*theme,
+			{.family = family::mono,
+			 .size = tokens::fontSize::fs2xs,
+			 .color = tokens::color::textDim,
+			 .tracking = tokens::letterSpacing::lsWider,
+			 .transform = Foundation::TextTransform::Uppercase}
+		);
+
+		// Coordinates: crosshair + teal mono readout.
+		ui::Ref<ui::Component> coords =
+			content.addChild<ui::Component>({.layout = {.display = ui::Display::Flex, .gap = 6.0F, .alignItems = ui::AlignItems::Center}});
+		coords.addChild<ui::Icon>({.size = {14.0F, 14.0F}, .style = {.color = theme->get(tokens::color::dataBright)}, .name = "crosshair"});
+		coords.addChild<ui::Text>({
+			.style = world_sim::text(*theme, {.family = family::mono, .size = tokens::fontSize::fsSm, .color = tokens::color::dataBright}),
+			.text = details.coords,
+		});
+
+		// Biome-name header.
+		if (!details.biomeName.empty()) {
+			content.addChild<ui::Text>({
+				.style = world_sim::text(
+					*theme, {.family = family::display, .size = tokens::fontSize::fsXl, .color = tokens::color::textBright}
+				),
+				.text = details.biomeName,
+			});
+		}
+
+		if (details.recommended) {
+			content.addChild<ui::Badge>({.label = "Recommended", .tone = ui::Tone::Positive, .dot = true});
+		}
+
+		// Stat row: temp range / rainfall.
+		if (!details.tempRange.empty() || !details.rainfall.empty()) {
+			ui::Ref<ui::Component> row =
+				content.addChild<ui::Component>({.size = {ui::percent(100.0F), ui::kAuto}, .layout = {.display = ui::Display::Flex}});
+			if (!details.tempRange.empty()) {
+				row.addChild<ui::Stat>(
+					{.size = {ui::percent(55.0F), ui::kAuto},
+					 .label = "Temp Range",
+					 .value = details.tempRange,
+					 .controlSize = ui::ControlSize::Sm}
+				);
+			}
+			if (!details.rainfall.empty()) {
+				row.addChild<ui::Stat>(
+					{.label = "Rainfall", .value = details.rainfall, .tone = ui::Tone::Info, .controlSize = ui::ControlSize::Sm}
+				);
+			}
+		}
+
+		// Difficulty inset with skull pips.
+		if (details.difficulty > 0) {
+			ui::Ref<ui::Rectangle> row = content.addChild<ui::Rectangle>({
+				.size = {ui::percent(100.0F), 36.0F},
+				.layout =
+					{.display = ui::Display::Flex,
+					 .padding = {0.0F, theme->get(tokens::spacing::space3), 0.0F, theme->get(tokens::spacing::space3)},
+					 .alignItems = ui::AlignItems::Center,
+					 .justifyContent = ui::JustifyContent::SpaceBetween},
+				.style = {
+					.backgroundColor = theme->get(tokens::color::bgInset),
+					.borderColor = theme->get(tokens::color::lineHairline),
+					.borderWidth = theme->get(tokens::border::bw),
+					.borderRadius = theme->get(tokens::radius::rSm)
+				},
+			});
+			row.addChild<ui::Text>({.style = label, .text = "Difficulty"});
+			ui::Ref<ui::Component> pips = row.addChild<ui::Component>({.layout = {.display = ui::Display::Flex, .gap = 3.0F}});
+			for (int i = 0; i < 5; ++i) {
+				pips.addChild<ui::Icon>({
+					.size = {15.0F, 15.0F},
+					.style = {.color = theme->get(i < details.difficulty ? tokens::color::statusWarn : tokens::color::textFaint)},
+					.name = "skull",
+				});
+			}
+		}
+
+		// Field report: the water verdict headline plus the survey sections.
+		content.addChild<ui::Divider>({.size = {ui::percent(100.0F), ui::kAuto}, .label = "Field Report"});
+		ui::Style verdict = world_sim::text(*theme, {.size = tokens::fontSize::fsSm});
+		verdict.color = details.verdictColor;
+		content.addChild<ui::Text>({.size = {ui::percent(100.0F), ui::kAuto}, .style = verdict, .text = details.verdict, .wrap = true});
+
+		const ui::Style rowLabel = world_sim::text(*theme, {.size = tokens::fontSize::fsSm, .color = tokens::color::textDim});
+		for (const auto& section : details.sections) {
+			content.addChild<ui::Text>({.margin = {space2, 0.0F, 0.0F, 0.0F}, .style = label, .text = section.header});
+			for (const auto& row : section.rows) {
+				ui::Ref<ui::Component> line = content.addChild<ui::Component>({
+					.size = {ui::percent(100.0F), ui::kAuto},
+					.layout = {.display = ui::Display::Flex, .justifyContent = ui::JustifyContent::SpaceBetween},
+				});
+				line.addChild<ui::Text>({.style = rowLabel, .text = row.label});
+				ui::Style value = world_sim::text(*theme, {.family = family::mono, .size = tokens::fontSize::fsSm});
+				value.color = row.accent;
+				line.addChild<ui::Text>({.style = value, .text = row.value});
+			}
+		}
 	}
-}
 
 } // namespace world_sim

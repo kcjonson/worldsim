@@ -21,8 +21,8 @@
 #include "component/Component.h"
 #include "focus/FocusableBase.h"
 #include "input/InputTypes.h"
-#include "theme/Tokens.h"
-#include "theme/Variants.h"
+#include "theme/CssTokens.h"
+#include "theme/Tones.h"
 
 #include <functional>
 #include <string>

@@ -3,7 +3,7 @@
 #include "theme/Avatar.h"
 #include "theme/Panel.h"
 
-#include <theme/DesignTokens.h>
+#include <theme/Tokens.h>
 
 #include <gtest/gtest.h>
 #include <ui/Context.h>

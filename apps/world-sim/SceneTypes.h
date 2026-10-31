@@ -13,7 +13,7 @@ namespace world_sim {
 
 	/// @brief Scene registration info - each scene exports one of these
 	struct SceneInfo {
-		const char*			   name;
+		const char*									 name;
 		std::function<std::unique_ptr<app::Scene>()> factory;
 	};
 

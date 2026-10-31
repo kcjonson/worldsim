@@ -7,7 +7,7 @@
  * the build's lookup with every library's root visible to every file. A salal
  * file sees only salal's roots, as salal's own build does, and a theme file
  * only those and its own, since theme links nothing else; so a header salal
- * generates (ui/theme/Tokens.h, theme/DesignTokens.h) counts as external. The
+ * generates (ui/theme/Tokens.h, theme/Tokens.h) counts as external. The
  * roots are the library directories under libs/, plus libs/ itself for
  * planet-view, which exports it; they are hardcoded here and match CMake as of
  * 2026-10-31. foundation, renderer, app and salal's ui are not in this repo:

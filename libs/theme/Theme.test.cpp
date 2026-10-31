@@ -1,5 +1,5 @@
-#include <theme/DesignTokens.h>
 #include <theme/Icons.h>
+#include <theme/Tokens.h>
 
 #include <gtest/gtest.h>
 #include <ui/theme/Theme.h>

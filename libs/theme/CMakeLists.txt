@@ -19,7 +19,7 @@ target_link_libraries(theme
         salal::ui
 )
 
-salal_tokens(theme tokens NAMESPACE theme HEADER theme/DesignTokens.h)
+salal_tokens(theme tokens NAMESPACE theme HEADER theme/Tokens.h)
 salal_icons(theme icons NAMESPACE theme HEADER theme/Icons.h)
 
 if(BUILD_TESTING)

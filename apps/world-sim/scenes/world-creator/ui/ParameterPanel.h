@@ -1,29 +1,24 @@
 #pragma once
 
-#include "components/TextInput/TextInput.h"
-#include "components/button/Button.h"
-#include "components/select/Select.h"
-#include "components/slider/Slider.h"
-#include "input/InputEvent.h"
-#include "math/Types.h"
-#include "primitives/Primitives.h"
-#include "shapes/Shapes.h"
+#include <ui/Component.h>
+#include <ui/components/ListRow.h>
+#include <ui/components/Select.h>
+#include <ui/components/Slider.h>
+#include <ui/components/TextInput.h>
+#include <ui/shapes/Text.h>
+#include <ui/theme/Theme.h>
 
 #include <array>
 #include <cstdint>
 #include <functional>
-#include <memory>
 #include <string>
-#include <vector>
 
-// ParameterPanel - left-side control panel for WorldCreatorScene.
+// ParameterPanel - the world creator's parameter sidebar, built into a panel's body.
 //
-// Fixed 320px wide, framed by a data-accent Panel ("Parameters" / "Survey
-// Config"). A 2-column preset button grid (active preset data-tinted), the
-// planet sliders (plus a disabled prototype-only Mean Temp), the seed row,
-// and a collapsible Advanced section at the bottom holding the resolution
-// select and the star/orbit sliders. Inputs gray out while Generating.
-// Generate/Cancel live in the scene footer, not here.
+// A 2-column preset grid (the active preset selected), the planet sliders (plus a disabled
+// prototype-only Mean Temp), the seed row, and a collapsible Advanced section holding the resolution
+// select and the star/orbit sliders, all in one scrolling column. The scene adds Generate and Cancel
+// under it. Inputs disable while Generating.
 
 namespace world_sim {
 
@@ -45,11 +40,10 @@ struct ParameterPanelCallbacks {
 
 class ParameterPanel {
   public:
-	explicit ParameterPanel(Foundation::Vec2 position, ParameterPanelCallbacks callbacks);
+	explicit ParameterPanel(ParameterPanelCallbacks callbacks);
 
-	void update(float deltaTime);
-	void render(float height);
-	bool handleEvent(UI::InputEvent& event);
+	// Fills `body`, a flex column, with the scrolling parameter column.
+	void build(ui::Ref<ui::Component> body, const ui::Theme& theme);
 
 	void setGenerating(bool generating);
 
@@ -87,17 +81,12 @@ class ParameterPanel {
   private:
 	enum class SeedState { Empty, Valid, Invalid };
 
-	Foundation::Vec2 position;
-	ParameterPanelCallbacks callbacks;
-	bool generating{false};
-	bool advancedOpen{false};
-	SeedState seedState{SeedState::Empty};
-	float seedErrorY{0.0F};
-
-	static constexpr float kLabelHeight = 16.0F;
-	static constexpr float kSliderHeight = 32.0F;
-	static constexpr float kItemSpacing = 6.0F;
-	static constexpr float kSectionSpacing = 12.0F;
+	// A slider over log10 of its range when `log`, so the track reads as the old log-scale sliders did.
+	struct ScaledSlider {
+		ui::Ref<ui::Slider> ref;
+		bool				log = false;
+		void				set(double value) const;
+	};
 
 	struct PresetDef {
 		const char* label;
@@ -112,43 +101,43 @@ class ParameterPanel {
 		{"Ancient Garden", "ancient_garden"},
 	}};
 
-	// UI elements (ordered for layout / event dispatch)
-	std::array<std::unique_ptr<UI::Button>, 6> presetButtons;
-	std::string								   activePreset{"earth_like"};
+	ParameterPanelCallbacks callbacks;
+	const ui::Theme*		theme = nullptr;
+	SeedState				seedState{SeedState::Empty};
+	std::string				activePreset{"earth_like"};
 
-	std::unique_ptr<UI::Slider>	   waterSlider;
-	std::unique_ptr<UI::Slider>	   platesSlider;
-	std::unique_ptr<UI::Slider>	   radiusSlider;
-	std::unique_ptr<UI::Slider>	   rotationSlider;
-	std::unique_ptr<UI::Slider>	   ageSlider;
-	std::unique_ptr<UI::Slider>	   atmosphereSlider;
-	std::unique_ptr<UI::Slider>	   meanTempSlider; // prototype-only, always disabled
-	std::unique_ptr<UI::TextInput> seedInput;
-	std::unique_ptr<UI::Button>	   randomizeButton;
+	ui::Ref<ui::Component>				column;
+	std::array<ui::Ref<ui::ListRow>, 6> presetRows;
+	ScaledSlider						waterSlider;
+	ScaledSlider						platesSlider;
+	ScaledSlider						radiusSlider;
+	ScaledSlider						rotationSlider;
+	ScaledSlider						ageSlider;
+	ScaledSlider						atmosphereSlider;
+	ui::Ref<ui::TextInput>				seedInput;
+	ui::Ref<ui::Text>					seedError;
+	ui::Ref<ui::ListRow>				advancedToggle;
+	ui::Ref<ui::Component>				advanced;
+	ui::Ref<ui::Select>					resolutionSelect;
+	ScaledSlider						starTempSlider;
+	ScaledSlider						semiMajorSlider;
+	ScaledSlider						eccentricitySlider;
 
-	// Advanced section (collapsed by default; fully functional when open)
-	std::unique_ptr<UI::Select> resolutionSelect;
-	std::unique_ptr<UI::Slider> starTempSlider;
-	std::unique_ptr<UI::Slider> semiMajorSlider;
-	std::unique_ptr<UI::Slider> eccentricitySlider;
-	Foundation::Rect			advancedToggleBounds{};
-
-	// Section labels
-	std::vector<Renderer::Primitives::TextArgs> sectionLabels;
-
-	void buildWidgets();
-	void applyPreset(const std::string& value);
-	void setAdvancedOpen(bool open);
-	void onSeedTextChanged(const std::string& text);
-	float nextY{0.0F}; // layout cursor
-
-	Renderer::Primitives::TextArgs makeLabel(const std::string& text, float y);
-	float addLabel(const std::string& text);
-	float addSlider(std::unique_ptr<UI::Slider>& out,
-	                double min, double max, double step, double value,
-	                bool logScale, const std::string& label,
-	                std::function<std::string(double)> formatter,
-	                std::function<void(double)> onChange);
+	void		 applyPreset(const std::string& value);
+	void		 toggleAdvanced();
+	void		 onSeedTextChanged(const std::string& text);
+	void		 addLabel(ui::Ref<ui::Component> parent, const std::string& text) const;
+	ScaledSlider addSlider(
+		ui::Ref<ui::Component>			   parent,
+		double							   min,
+		double							   max,
+		double							   step,
+		double							   value,
+		bool							   logScale,
+		const std::string&				   label,
+		std::function<std::string(double)> formatter,
+		std::function<void(double)>		   onChange
+	) const;
 };
 
 } // namespace world_sim

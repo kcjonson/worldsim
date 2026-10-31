@@ -5,8 +5,8 @@
 #include <components/list/ListRow.h>
 #include <components/panel/Panel.h>
 #include <layout/LayoutContainer.h>
-#include <theme/Tokens.h>
-#include <theme/Variants.h>
+#include <theme/CssTokens.h>
+#include <theme/Tones.h>
 
 #include "SceneTypes.h"
 #include <app/UiScene.h>

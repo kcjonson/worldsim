@@ -15,7 +15,7 @@ struct ScenarioDef {
 	int			difficulty; // 1..5
 	int			partyCount;
 	const char* tags;
-	const char* icon; // Salvage glyph name
+	const char* icon; // an icon in the theme's atlas
 };
 
 inline constexpr std::array<ScenarioDef, 5> kScenarios{{

@@ -7,11 +7,13 @@
 // vignette, matching docs/ui-prototype/src/scene/Starfield.tsx. Star layout is
 // deterministic per seed, so a given screen always shows the same sky.
 //
-// Call once as the first draw after the GL clear, before any other UI.
+// Call once as the first draw after the clear, before any other UI; the colours are the scene's
+// theme's.
+
+#include "scenes/shared/SalalUi.h"
 
 #include "graphics/Color.h"
 #include "primitives/Primitives.h"
-#include "theme/Tokens.h"
 
 #include <cmath>
 #include <cstdint>
@@ -23,9 +25,9 @@ namespace world_sim {
 		// Radial-gradient stand-in: a triangle fan whose center carries the
 		// tint at peakAlpha and whose rim is fully transparent.
 		inline void drawNebulaGlow(float cx, float cy, float radius, Foundation::Color tint, float peakAlpha) {
-			constexpr int	 kSegments = 48;
-			Foundation::Vec2 v[kSegments + 1];
-			uint16_t		 idx[kSegments * 3];
+			constexpr int	  kSegments = 48;
+			Foundation::Vec2  v[kSegments + 1];
+			uint16_t		  idx[kSegments * 3];
 			Foundation::Color colors[kSegments + 1];
 			v[0] = {cx, cy};
 			colors[0] = Foundation::Color{tint.r, tint.g, tint.b, peakAlpha};
@@ -37,26 +39,30 @@ namespace world_sim {
 				idx[i * 3 + 1] = static_cast<uint16_t>(i + 1);
 				idx[i * 3 + 2] = static_cast<uint16_t>(1 + (i + 1) % kSegments);
 			}
-			Renderer::Primitives::drawTriangles(Renderer::Primitives::TrianglesArgs{
-				.vertices = v, .indices = idx, .vertexCount = kSegments + 1, .indexCount = kSegments * 3, .colors = colors});
+			Renderer::Primitives::drawTriangles(
+				Renderer::Primitives::TrianglesArgs{
+					.vertices = v, .indices = idx, .vertexCount = kSegments + 1, .indexCount = kSegments * 3, .colors = colors
+				}
+			);
 		}
 
 		// One border of the vignette: a quad fading from `alpha` black at the
 		// screen edge (outerA->outerB) to transparent inward (innerB->innerA).
-		inline void drawEdgeFade(Foundation::Vec2 outerA, Foundation::Vec2 outerB,
-								 Foundation::Vec2 innerB, Foundation::Vec2 innerA, float alpha) {
+		inline void
+		drawEdgeFade(Foundation::Vec2 outerA, Foundation::Vec2 outerB, Foundation::Vec2 innerB, Foundation::Vec2 innerA, float alpha) {
 			const Foundation::Vec2	v[4] = {outerA, outerB, innerB, innerA};
 			const uint16_t			idx[6] = {0, 1, 2, 0, 2, 3};
 			const Foundation::Color edge{0.0F, 0.0F, 0.0F, alpha};
 			const Foundation::Color inner{0.0F, 0.0F, 0.0F, 0.0F};
 			const Foundation::Color colors[4] = {edge, edge, inner, inner};
-			Renderer::Primitives::drawTriangles(Renderer::Primitives::TrianglesArgs{
-				.vertices = v, .indices = idx, .vertexCount = 4, .indexCount = 6, .colors = colors});
+			Renderer::Primitives::drawTriangles(
+				Renderer::Primitives::TrianglesArgs{.vertices = v, .indices = idx, .vertexCount = 4, .indexCount = 6, .colors = colors}
+			);
 		}
 
 	} // namespace starfield_detail
 
-	inline void renderStarfield(int viewportW, int viewportH, uint32_t seed, bool dim = false) {
+	inline void renderStarfield(const ui::Theme& theme, int viewportW, int viewportH, uint32_t seed, bool dim = false) {
 		const float w = static_cast<float>(viewportW);
 		const float h = static_cast<float>(viewportH);
 
@@ -64,12 +70,12 @@ namespace world_sim {
 		// stable and reproducible per seed.
 		uint32_t state = seed != 0U ? seed : 1U;
 		auto	 next = [&state]() -> float {
-			 state += 0x6D2B79F5U;
-			 uint32_t z = state;
-			 z = (z ^ (z >> 15)) * (z | 1U);
-			 z ^= z + (z ^ (z >> 7)) * (z | 61U);
-			 z = z ^ (z >> 14);
-			 return static_cast<float>(z & 0x00FFFFFFU) / 16777216.0F;
+			state += 0x6D2B79F5U;
+			uint32_t z = state;
+			z = (z ^ (z >> 15)) * (z | 1U);
+			z ^= z + (z ^ (z >> 7)) * (z | 61U);
+			z = z ^ (z >> 14);
+			return static_cast<float>(z & 0x00FFFFFFU) / 16777216.0F;
 		};
 
 		const float brightness = dim ? 0.6F : 1.0F;
@@ -78,10 +84,12 @@ namespace world_sim {
 		// warm accent bloom top-center, a cool data glow low-right, and the two
 		// blurred nebula patches.
 		using starfield_detail::drawNebulaGlow;
-		drawNebulaGlow(0.5F * w, -0.1F * h, 0.65F * w, UI::accent, 0.05F * brightness);
-		drawNebulaGlow(0.8F * w, 1.1F * h, 0.7F * w, UI::data, 0.06F * brightness);
-		drawNebulaGlow(0.24F * w, 0.3F * h, 0.4F * w, UI::data, 0.07F * brightness);
-		drawNebulaGlow(0.76F * w, 0.66F * h, 0.45F * w, UI::accent, 0.055F * brightness);
+		const Foundation::Color accent = theme.get(tokens::color::accent);
+		const Foundation::Color data = theme.get(tokens::color::data);
+		drawNebulaGlow(0.5F * w, -0.1F * h, 0.65F * w, accent, 0.05F * brightness);
+		drawNebulaGlow(0.8F * w, 1.1F * h, 0.7F * w, data, 0.06F * brightness);
+		drawNebulaGlow(0.24F * w, 0.3F * h, 0.4F * w, data, 0.07F * brightness);
+		drawNebulaGlow(0.76F * w, 0.66F * h, 0.45F * w, accent, 0.055F * brightness);
 
 		// Far layer: ~220 small, faint, bluish-white dots (#cdd6e6).
 		for (int i = 0; i < 220; ++i) {
@@ -104,7 +112,7 @@ namespace world_sim {
 		// Vignette over the stars: the prototype's radial edge darkening,
 		// squared off as four border fades (corners overlap and deepen).
 		using starfield_detail::drawEdgeFade;
-		const float edgeAlpha = UI::vignette_opacity * 0.6F;
+		const float edgeAlpha = theme.get(tokens::texture::vignetteOpacity) * 0.6F;
 		const float fadeX = w * 0.2F;
 		const float fadeY = h * 0.24F;
 		drawEdgeFade({0.0F, 0.0F}, {w, 0.0F}, {w, fadeY}, {0.0F, fadeY}, edgeAlpha);

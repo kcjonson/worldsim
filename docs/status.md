@@ -627,7 +627,7 @@ while (running) {
 ### Salvage UI Cutover (one unified UI library)
 **Spec/Documentation:** `/docs/design/ui/`
 **Dependencies:** UI Design System (Salvage) — extraction
-**Status:** core complete — every view/screen/widget styles off `theme/Tokens.h`; legacy `Theme.h` + `PanelStyle.h` deleted (PRs #164/#167/#171/#174/#175/#176/#177/#178/#180/#181, see dev log 2026-06-18-salvage-ui-cutover.md). Remaining: full dialog redesign (deferred).
+**Status:** core complete — every view/screen/widget styles off `theme/CssTokens.h`; legacy `Theme.h` + `PanelStyle.h` deleted (PRs #164/#167/#171/#174/#175/#176/#177/#178/#180/#181, see dev log 2026-06-18-salvage-ui-cutover.md). Remaining: full dialog redesign (deferred).
 
 **Goal:** One Salvage-styled UI library. Re-style the existing `libs/ui` widgets to the approved look via design tokens, fold the render-only design-system widgets into it, delete the duplicates, then rebuild the HUD, dialogs, and world creator to the prototype designs.
 

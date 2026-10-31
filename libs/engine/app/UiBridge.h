@@ -16,6 +16,10 @@
 // scene's component roots at the logical viewport. Make one after App::create, before the first
 // frame, and destroy it after App::shutdown: components unregister from its focus manager as the
 // scenes and overlays go, and its focus manager and clipboard clear the ui's singletons as they go.
+//
+// While scenes are moving onto salal's ui, the bridge is installed per scene: a scene on salal's ui
+// uninstalls it as it enters, so App's own dispatch and tree and lint providers reach its ui, and a
+// UiScene installs it again. It starts installed.
 
 #include "app/UiClipboard.h"
 #include "app/UiOverlay.h"
@@ -50,6 +54,11 @@ namespace engine {
 		UiBridge(UiBridge&&) = delete;
 		UiBridge& operator=(UiBridge&&) = delete;
 
+		// The App's dispatch and the tree and lint providers, or App's own again. Idempotent.
+		void			   install();
+		void			   uninstall();
+		[[nodiscard]] bool installed() const { return isInstalled; }
+
 		// An overlay the App owns (App::addDebugLayer), to get UI::InputEvents before the top scene.
 		void addOverlay(UiOverlay& overlay);
 
@@ -73,6 +82,7 @@ namespace engine {
 		std::vector<UiOverlay*>		 overlays;
 		float						 scrollDelta = 0.0F; // the last wheel event's, until something consumes it
 		bool						 pointerSeen = false;
+		bool						 isInstalled = false;
 		app::DevServer::Registration uiTree;
 		app::DevServer::Registration uiLint;
 	};
