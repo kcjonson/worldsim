@@ -93,7 +93,7 @@ int main(int argc, char* argv[]) {
 		};
 		auto menu = std::make_unique<UI::NavigationMenu>(menuArgs);
 		bridge.addOverlay(*menu);
-		app->addOverlay(std::move(menu));
+		app->addDebugLayer(std::move(menu));
 		LOG_INFO(UI, "Navigation menu overlay registered (%zu scenes available)", sceneCount);
 	}
 

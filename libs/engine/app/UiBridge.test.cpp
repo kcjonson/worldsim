@@ -371,8 +371,8 @@ TEST_F(UiBridgeTest, OverlaysGoBeforeTheSceneTheLastAddedFirst) {
 	engine::UiOverlay* upperRef = upper.get();
 	bridge->addOverlay(*lowerRef);
 	bridge->addOverlay(*upperRef);
-	app->addOverlay(std::move(lower));
-	app->addOverlay(std::move(upper));
+	app->addDebugLayer(std::move(lower));
+	app->addDebugLayer(std::move(upper));
 	push(pointer(Type::PointerDown, 9, 9));
 	frame();
 	EXPECT_EQ(
@@ -393,7 +393,7 @@ TEST_F(UiBridgeTest, OverlaysGoBeforeTheSceneTheLastAddedFirst) {
 TEST_F(UiBridgeTest, ASceneWithoutUiGetsTheEventsTheOverlaysLeave) {
 	auto overlay = std::make_unique<RecordingOverlay>(log, "overlay", true);
 	bridge->addOverlay(*overlay);
-	app->addOverlay(std::move(overlay));
+	app->addDebugLayer(std::move(overlay));
 	app->scenes().add("plain", [this] { return std::make_unique<PlainScene>(log); });
 	app->scenes().switchTo("plain");
 	frame();

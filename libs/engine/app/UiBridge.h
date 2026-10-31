@@ -50,7 +50,7 @@ namespace engine {
 		UiBridge(UiBridge&&) = delete;
 		UiBridge& operator=(UiBridge&&) = delete;
 
-		// An overlay the App owns (App::addOverlay), to get UI::InputEvents before the top scene.
+		// An overlay the App owns (App::addDebugLayer), to get UI::InputEvents before the top scene.
 		void addOverlay(UiOverlay& overlay);
 
 		// The scroll nothing in the ui consumed, which stops it being sent again; 0 when there's none.
