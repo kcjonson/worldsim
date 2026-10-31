@@ -1,175 +1,76 @@
 #include "ColonistListView.h"
 
-#include <chrono>
+#include "scenes/game/ui/Look.h"
+
+#include <ui/Context.h>
+
+#include <string>
+#include <vector>
 
 namespace world_sim {
 
-namespace {
-	// Get current time in seconds
-	float getCurrentTime() {
-		using namespace std::chrono;
-		auto now = steady_clock::now();
-		auto duration = now.time_since_epoch();
-		return duration_cast<milliseconds>(duration).count() / 1000.0F;
+	ColonistListView::ColonistListView(const Args& args)
+		: onColonistSelected(args.onColonistSelected),
+		  onColonistFollowed(args.onColonistFollowed) {}
+
+	void ColonistListView::onMount() {
+		if (getSizeSpec().width.isAuto()) {
+			setSize({kWidth, getSizeSpec().height});
+		}
+		ui::Layout column = getLayout();
+		column.display = ui::Display::Flex;
+		column.flexDirection = ui::FlexDirection::Column;
+		column.gap = getContext()->getTheme().get(look::t::spacing::space2);
+		setLayout(column);
+		setPointerEvents(ui::PointerEvents::Auto);
 	}
-}  // namespace
 
-ColonistListView::ColonistListView(const Args& args)
-	: panelWidth(args.width),
-	  itemHeight(args.itemHeight),
-	  onColonistFollowed(args.onColonistFollowed) {
+	void ColonistListView::update(ColonistListModel& model, ecs::World& world) {
+		model.refresh(world);
+		const ecs::EntityID						   selectedId = model.selectedId();
+		const std::vector<adapters::ColonistData>* shown = &model.colonists();
+		std::vector<adapters::ColonistData>		   capped;
+		if (shown->size() > kMaxColonists) {
+			capped.assign(shown->begin(), shown->begin() + kMaxColonists);
+			shown = &capped;
+		}
+		// Every frame, whatever the model's change flag says: activity progress ticks each frame, and a
+		// card's texts skip a value they already show.
+		reconcileChildren(
+			*shown,
+			[](const adapters::ColonistData& colonist) { return std::to_string(colonist.id); },
+			[&](const adapters::ColonistData& colonist) -> ui::Ref<ui::Component> {
+				const ecs::EntityID id = colonist.id;
+				return addChild<ColonistListItem>({
+					.id = "colonist_" + std::to_string(id),
+					.size = {ui::percent(100.0F), ui::kAuto},
+					.onClick = [this, id](ui::PointerEvent& event) { clicked(id, event.time); },
+					.colonist = colonist,
+					.isSelected = colonist.id == selectedId,
+					.onSelect = onColonistSelected,
+				});
+			},
+			[selectedId](ui::Component& card, const adapters::ColonistData& colonist) {
+				auto& item = static_cast<ColonistListItem&>(card);
+				item.setColonistData(colonist);
+				item.setSelected(colonist.id == selectedId);
+			}
+		);
+	}
 
-	// Wrap onColonistSelected with double-click detection
-	auto originalCallback = args.onColonistSelected;
-	onColonistSelected = [this, originalCallback](ecs::EntityID id) {
-		float currentTime = getCurrentTime();
-
-		// Check for double-click
-		if (id == lastClickedId && (currentTime - lastClickTime) < kDoubleClickThreshold) {
-			// Double-click detected - trigger follow
+	// Runs before the card's own press selects it, so a double click follows, then selects.
+	void ColonistListView::clicked(ecs::EntityID id, double time) {
+		if (id == lastClickedId && time - lastClickTime < kDoubleClickSeconds) {
 			if (onColonistFollowed) {
 				onColonistFollowed(id);
 			}
-			// Reset to prevent triple-click triggering another follow
+			// A third click starts over rather than following again.
 			lastClickedId = ecs::EntityID{0};
-			lastClickTime = 0.0F;
-		} else {
-			// Single click - update tracking
-			lastClickedId = id;
-			lastClickTime = currentTime;
+			lastClickTime = 0.0;
+			return;
 		}
-
-		// Always call original selection callback
-		if (originalCallback) {
-			originalCallback(id);
-		}
-	};
-
-	itemHandles.reserve(kMaxColonists);
-}
-
-void ColonistListView::setPosition(float x, float y) {
-	panelX = x;
-	panelY = y;
-}
-
-void ColonistListView::update(ColonistListModel& model, ecs::World& world) {
-	// Update model and check if data changed
-	bool dataChanged = model.refresh(world);
-
-	// Get current selection from model
-	ecs::EntityID newSelectedId = model.selectedId();
-	bool selectionChanged = (newSelectedId != selectedId);
-	selectedId = newSelectedId;
-
-	if (dataChanged) {
-		// Full rebuild required
-		rebuildUI(model.colonists());
-	} else if (selectionChanged) {
-		// Just update selection highlighting (cheap)
-		updateSelectionHighlight(selectedId);
+		lastClickedId = id;
+		lastClickTime = time;
 	}
-
-	// Always push per-frame values (mood + activity progress) even when the structure
-	// didn't change, so the task meters animate smoothly without a rebuild.
-	updateItemValues(model.colonists());
-}
-
-void ColonistListView::rebuildUI(const std::vector<adapters::ColonistData>& colonists) {
-	// Clear existing items
-	itemHandles.clear();
-
-	// Content width for items
-	float contentWidth = panelWidth - kPadding * 2;
-
-	// Create layout container for items
-	itemLayout = std::make_unique<UI::LayoutContainer>(UI::LayoutContainer::Args{
-		.position = {panelX + kPadding, panelY + kPadding},
-		.size = {contentWidth, 0.0F},  // Height determined by children
-		.direction = UI::Direction::Vertical,
-	});
-
-	// Add colonist items
-	for (size_t i = 0; i < colonists.size() && i < kMaxColonists; ++i) {
-		const auto& colonist = colonists[i];
-
-		auto handle = itemLayout->addChild(ColonistListItem(ColonistListItem::Args{
-			.colonist = colonist,
-			.width = contentWidth,
-			.height = itemHeight - kItemSpacing,
-			.isSelected = (colonist.id == selectedId),
-			.isControlled = colonist.playerControlled,
-			.itemMargin = kItemSpacing * 0.5F,
-			.onSelect = onColonistSelected,
-			.id = "colonist_" + std::to_string(i)
-		}));
-
-		itemHandles.push_back(handle);
-	}
-}
-
-void ColonistListView::updateSelectionHighlight(ecs::EntityID newSelectedId) {
-	if (!itemLayout) {
-		return;
-	}
-
-	for (auto& handle : itemHandles) {
-		if (auto* item = itemLayout->getChild<ColonistListItem>(handle)) {
-			item->setSelected(item->getEntityId() == newSelectedId);
-		}
-	}
-}
-
-void ColonistListView::updateItemValues(const std::vector<adapters::ColonistData>& colonists) {
-	if (!itemLayout) {
-		return;
-	}
-
-	for (size_t i = 0; i < colonists.size() && i < itemHandles.size(); ++i) {
-		if (auto* item = itemLayout->getChild<ColonistListItem>(itemHandles[i])) {
-			item->setMood(colonists[i].mood);
-			item->setActivity(colonists[i].activity, colonists[i].activityProgress);
-			item->setControlled(colonists[i].playerControlled);
-		}
-	}
-}
-
-bool ColonistListView::handleEvent(UI::InputEvent& event) {
-	// Dispatch to layout container first
-	if (itemLayout && itemLayout->handleEvent(event)) {
-		return true;
-	}
-
-	// Consume clicks within the panel bounds to prevent click-through
-	if (event.type == UI::InputEvent::Type::MouseDown ||
-		event.type == UI::InputEvent::Type::MouseUp) {
-		Foundation::Rect bounds = getBounds();
-		auto pos = event.position;
-		if (pos.x >= bounds.x && pos.x <= bounds.x + bounds.width &&
-			pos.y >= bounds.y && pos.y <= bounds.y + bounds.height) {
-			event.consume();
-			return true;
-		}
-	}
-
-	return false;
-}
-
-void ColonistListView::render() {
-	if (!itemLayout || itemHandles.empty()) {
-		return;
-	}
-
-	// Render items via layout container
-	if (itemLayout) {
-		itemLayout->render();
-	}
-}
-
-Foundation::Rect ColonistListView::getBounds() const {
-	float itemsHeight = static_cast<float>(itemHandles.size()) * itemHeight;
-	float panelHeight = kPadding * 2 + itemsHeight;
-	return {panelX, panelY, panelWidth, panelHeight};
-}
 
 } // namespace world_sim

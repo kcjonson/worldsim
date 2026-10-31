@@ -1,291 +1,195 @@
 #include "EntityInfoView.h"
 
+#include "scenes/game/ui/Look.h"
 #include "scenes/game/ui/dialogs/tabs/MeterDraw.h"
 
-#include <components/avatar/Avatar.h>
-#include <components/badge/Badge.h>
-#include <components/icon/Icon.h>
-#include <components/panel/Panel.h>
 #include <ecs/components/Needs.h>
-#include <primitives/Primitives.h>
-#include <theme/Tokens.h>
-#include <theme/Variants.h>
 
+#include <ui/Context.h>
+
+#include <format>
 #include <string>
+#include <type_traits>
 #include <utility>
+#include <variant>
 
 namespace world_sim {
 
-	// ========================================================================
-	// Leaf components (arena-owned, layout-engine sized)
-	// ========================================================================
+	namespace {
 
-	/// Deterministic colonist portrait, mood-tinted (wraps the immediate-mode
-	/// UI::Avatar so it can live in a LayoutContainer).
-	class EntityInfoView::AvatarChip : public UI::Component {
-	  public:
-		explicit AvatarChip(float sizePx) { size = {sizePx, sizePx}; }
+		constexpr float kAvatarSize = 52.0F;
+		constexpr float kIconButtonSize = 18.0F;
+		constexpr float kActionButtonHeight = 26.0F;
+		constexpr float kSlotButtonHeight = 28.0F;
+		constexpr float kLogEmptyHeight = 64.0F;
+		constexpr int	kBeltSlots = 2;
 
-		void setIdentity(const std::string& newSeed, float newMood) {
-			seed = newSeed;
-			mood = newMood;
-		}
+		// One row of a generic selection's slots. A TextListSlot is its header row and a row per item; a
+		// key always names the same kind, so an update knows the component it gets.
+		struct SlotRow {
+			enum class Kind : std::uint8_t { Text, Bar, ListHeader, ListItem, Button };
 
-		void render() override {
-			UI::Avatar(UI::Avatar::Args{.position = getContentPosition(), .size = size.x, .seed = seed, .mood = mood}).render();
-		}
-
-		const char* debugTypeName() const override { return "AvatarChip"; }
-		const char* debugId() const override { return "entity_info_avatar"; }
-
-		bool containsPoint(Foundation::Vec2 point) const override {
-			return point.x >= position.x && point.x <= position.x + size.x && point.y >= position.y && point.y <= position.y + size.y;
-		}
-
-	  private:
-		std::string seed;
-		float		mood{1.0F};
-	};
-
-	/// Small square icon button (eye/close) drawn from a Salvage glyph.
-	class EntityInfoView::GlyphButton : public UI::Component {
-	  public:
-		struct Args {
-			std::string			  glyph;
+			std::string			  key;
+			Kind				  kind = Kind::Text;
+			std::string			  text;
+			float				  percent = 0.0F;
 			std::function<void()> onClick;
-			const char*			  id{nullptr};
 		};
 
-		explicit GlyphButton(Args args)
-			: onClick(std::move(args.onClick)),
-			  id(args.id) {
-			size = {kIconButtonSize, kIconButtonSize};
-			iconHandle = addChild(UI::Icon(UI::Icon::Args{
-				.size = kIconButtonSize - kIconPad * 2.0F,
-				.glyph = std::move(args.glyph),
-				.tint = UI::text_dim,
-			}));
-		}
-
-		void setPosition(float x, float y) override {
-			Component::setPosition(x, y);
-			if (auto* icon = getChild<UI::Icon>(iconHandle)) {
-				icon->setPosition(x + kIconPad, y + kIconPad);
+		std::vector<SlotRow> rowsOf(const std::vector<InfoSlot>& slots, std::uint32_t generation) {
+			std::vector<SlotRow> rows;
+			for (std::size_t index = 0; index < slots.size(); ++index) {
+				const std::string key = std::format("{}_{}", generation, index);
+				std::visit(
+					[&](const auto& slot) {
+						using T = std::decay_t<decltype(slot)>;
+						if constexpr (std::is_same_v<T, TextSlot>) {
+							rows.push_back({.key = key + "_text", .kind = SlotRow::Kind::Text, .text = slot.label + ": " + slot.value});
+						} else if constexpr (std::is_same_v<T, ProgressBarSlot>) {
+							rows.push_back({.key = key + "_bar", .kind = SlotRow::Kind::Bar, .text = slot.label, .percent = slot.value});
+						} else if constexpr (std::is_same_v<T, TextListSlot>) {
+							rows.push_back({.key = key + "_list", .kind = SlotRow::Kind::ListHeader, .text = slot.header + ":"});
+							for (std::size_t item = 0; item < slot.items.size(); ++item) {
+								rows.push_back(
+									{.key = std::format("{}_item_{}", key, item),
+									 .kind = SlotRow::Kind::ListItem,
+									 .text = "- " + slot.items[item]}
+								);
+							}
+						} else if constexpr (std::is_same_v<T, ActionButtonSlot>) {
+							rows.push_back(
+								{.key = key + "_button", .kind = SlotRow::Kind::Button, .text = slot.label, .onClick = slot.onClick}
+							);
+						}
+					},
+					slots[index]
+				);
 			}
+			return rows;
 		}
 
-		void render() override {
-			const Foundation::Rect bounds{position.x, position.y, size.x, size.y};
-			Renderer::Primitives::drawRect(
-				{.bounds = bounds,
-				 .style = {
-					 .fill = UI::bg_inset,
-					 .border = Foundation::BorderStyle{
-						 .color = UI::line_edge, .width = UI::bw, .cornerRadius = UI::r_sm, .position = Foundation::BorderPosition::Inside}}}
-			);
-			if (hovered) {
-				Renderer::Primitives::drawRect({.bounds = bounds, .style = {.fill = UI::bg_hover}});
-			}
-			Component::render();
-		}
-
-		bool handleEvent(UI::InputEvent& event) override {
-			if (event.type == UI::InputEvent::Type::MouseMove) {
-				hovered = containsPoint(event.position);
-				return false;
-			}
-			if (event.type == UI::InputEvent::Type::MouseUp && event.button == foundation::MouseButton::Left &&
-				containsPoint(event.position)) {
-				if (onClick) {
-					onClick();
-				}
-				event.consume();
-				return true;
-			}
-			return false;
-		}
-
-		bool containsPoint(Foundation::Vec2 point) const override {
-			return point.x >= position.x && point.x <= position.x + size.x && point.y >= position.y && point.y <= position.y + size.y;
-		}
-
-		const char* debugTypeName() const override { return "GlyphButton"; }
-		const char* debugId() const override { return id; }
-
-	  private:
-		static constexpr float kIconPad = 3.0F;
-
-		std::function<void()> onClick;
-		const char*			  id{nullptr};
-		UI::LayerHandle		  iconHandle;
-		bool				  hovered{false};
-	};
-
-	/// Inline badge pill (belt tool chip); width follows the label.
-	class EntityInfoView::BadgeChip : public UI::Component {
-	  public:
-		BadgeChip() { size = {16.0F, kBadgeHeight}; }
-
-		void setLabel(const std::string& newLabel) {
-			label = newLabel;
-			size = {UI::Badge::MeasureWidth(label), kBadgeHeight};
-		}
-
-		void render() override {
-			UI::Badge(UI::Badge::Args{.position = position, .label = label, .tone = UI::Tone::Data}).render();
-		}
-
-		const char* debugTypeName() const override { return "BadgeChip"; }
-		const char* debugId() const override { return "entity_info_belt_chip"; }
-
-	  private:
-		// Matches Badge.cpp's fixed pill height
-		static constexpr float kBadgeHeight = 20.0F;
-
-		std::string label;
-	};
-
-	/// Dashed empty-state panel (Log tab stub; no activity-log system yet).
-	class EntityInfoView::EmptyStateBox : public UI::Component {
-	  public:
-		EmptyStateBox(float width, std::string newTitle, std::string newSubtitle)
-			: title(std::move(newTitle)),
-			  subtitle(std::move(newSubtitle)) {
-			size = {width, 64.0F};
-		}
-
-		void render() override {
-			tabs::drawEmptyState({position.x, position.y, size.x, size.y}, title, subtitle);
-		}
-
-		const char* debugTypeName() const override { return "EmptyStateBox"; }
-		const char* debugId() const override { return "entity_info_log_empty"; }
-
-	  private:
-		std::string title;
-		std::string subtitle;
-	};
-
-	// ========================================================================
-	// EntityInfoView
-	// ========================================================================
+	} // namespace
 
 	EntityInfoView::EntityInfoView(const Args& args)
-		: onCloseCallback(args.onClose),
-		  onDetailsCallback(args.onDetails),
-		  onToggleControlCallback(args.onToggleControl),
-		  onGoToCallback(args.onGoTo),
-		  onOpenCraftingDialogCallback(args.onOpenCraftingDialog),
-		  onPlaceCallback(args.onPlace),
-		  onMoveFurnitureCallback(args.onMoveFurniture),
-		  onOpenStorageConfigCallback(args.onOpenStorageConfig),
-		  queryResourcesCallback(args.queryResources),
-		  onDemolishFoundationCallback(args.onDemolishFoundation),
-		  onDemolishBuildingCallback(args.onDemolishBuilding),
-		  onAddToFoundationCallback(args.onAddToFoundation),
-		  onSubtractFromFoundationCallback(args.onSubtractFromFoundation),
-		  onDemolishWallSegmentCallback(args.onDemolishWallSegment),
-		  onDemolishOpeningCallback(args.onDemolishOpening),
-		  m_id(args.id),
-		  panelWidth(args.width),
-		  contentWidth(args.width - kPad * 2.0F) {
-		size = {panelWidth, 0.0F};
-		zIndex = static_cast<short>(UI::z_panel); // exempts root-sibling overlaps (e.g. debug overlay) in the layout lint
+		: theme::Panel({.variant = theme::PanelVariant::Panel, .accent = theme::PanelAccent::Accent, .flush = true}),
+		  modelCallbacks({
+			  .onOpenCraftingDialog = args.onOpenCraftingDialog,
+			  .onPlace = args.onPlace,
+			  .onMoveFurniture = args.onMoveFurniture,
+			  .onOpenStorageConfig = args.onOpenStorageConfig,
+			  .queryResources = args.queryResources,
+			  .onDemolishFoundation = args.onDemolishFoundation,
+			  .onDemolishBuilding = args.onDemolishBuilding,
+			  .onAddToFoundation = args.onAddToFoundation,
+			  .onSubtractFromFoundation = args.onSubtractFromFoundation,
+			  .onDemolishWallSegment = args.onDemolishWallSegment,
+			  .onDemolishOpening = args.onDemolishOpening,
+		  }),
+		  onClose(args.onClose),
+		  onDetails(args.onDetails),
+		  onToggleControl(args.onToggleControl),
+		  onGoTo(args.onGoTo) {}
 
-		auto rootLocal = UI::LayoutContainer(UI::LayoutContainer::Args{
-			.size = {panelWidth, 0.0F}, // fixed width, hug height
-			.direction = UI::Direction::Vertical,
-			.gap = kGap,
-			.padding = UI::Insets{kPad},
+	void EntityInfoView::onMount() {
+		if (getSizeSpec().width.isAuto()) {
+			setSize({kWidth, getSizeSpec().height});
+		}
+		theme::Panel::onMount();
+		// Nothing is selected until the model says otherwise.
+		setVisible(false);
+
+		const ui::Theme& theme = getContext()->getTheme();
+		const float		 gap = theme.get(look::t::spacing::space2);
+		const float		 tight = theme.get(look::t::spacing::space1);
+		const ui::Style	 bodyText = look::text(theme, look::t::color::text, look::t::fontSize::fsSm);
+		const ui::Style	 dimText = look::text(theme, look::t::color::textDim, look::t::fontSize::fsSm);
+
+		const auto column = [](float spacing) {
+			return ui::Layout{.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = spacing};
+		};
+
+		ui::Ref<ui::Component> root = body().addChild<ui::Component>({
 			.id = "entity_info_root",
+			.size = {ui::percent(100.0F), ui::kAuto},
+			.layout = {
+				.display = ui::Display::Flex,
+				.flexDirection = ui::FlexDirection::Column,
+				.gap = gap,
+				.padding = theme.get(look::t::spacing::space3)
+			},
 		});
 
-		// ---- Header row: avatar | identity column | eye+close buttons ----
-		auto headerLocal = UI::LayoutContainer(UI::LayoutContainer::Args{
-			.direction = UI::Direction::Horizontal,
-			.gap = kGap,
+		// The header: avatar, identity column, the eye and close buttons.
+		ui::Ref<ui::Component> header = root.addChild<ui::Component>({
 			.id = "entity_info_header",
+			.layout = {.display = ui::Display::Flex, .gap = gap, .alignItems = ui::AlignItems::Start},
 		});
-		headerLocal.widthMode = UI::SizeMode::Fill; // stretch across the panel
-
-		auto avatarHandle = headerLocal.addChild(AvatarChip(kAvatarSize));
-		avatar = headerLocal.getChild<AvatarChip>(avatarHandle);
-
-		auto identityLocal = UI::LayoutContainer(UI::LayoutContainer::Args{
-			.direction = UI::Direction::Vertical,
-			.gap = UI::space_1,
-			.id = "entity_info_identity",
+		avatarSlot = header.addChild<ui::Component>({.id = "entity_info_avatar", .size = {kAvatarSize, kAvatarSize}});
+		ui::Layout identityLayout = column(tight);
+		identityLayout.flexGrow = 1.0F;
+		ui::Ref<ui::Component> identity =
+			header.addChild<ui::Component>({.id = "entity_info_identity", .size = {0.0F, ui::kAuto}, .layout = identityLayout});
+		nameText = identity.addChild<ui::Text>(
+			{.id = "entity_info_name", .style = look::text(theme, look::t::color::textBright, look::t::fontSize::fsMd), .wrap = true}
+		);
+		subtitleText = identity.addChild<ui::Text>({
+			.id = "entity_info_subtitle",
+			.visible = false,
+			.style = look::text(theme, look::t::color::textDim, look::t::fontSize::fsXs),
+			.wrap = true,
 		});
-		identityLocal.widthMode = UI::SizeMode::Fill; // take the leftover header width
-
-		{
-			auto text = UI::Text(UI::Text::Args{
-				.text = "",
-				.style = {.color = UI::text_bright, .fontSize = UI::fs_md, .wordWrap = true},
-				.id = "entity_info_name",
-			});
-			text.widthMode = UI::SizeMode::Fill;
-			nameText = identityLocal.getChild<UI::Text>(identityLocal.addChild(std::move(text)));
-		}
-		{
-			auto text = UI::Text(UI::Text::Args{
-				.text = "",
-				.style = {.color = UI::text_dim, .fontSize = UI::fs_xs, .wordWrap = true},
-				.id = "entity_info_subtitle",
-			});
-			text.widthMode = UI::SizeMode::Fill;
-			subtitleText = identityLocal.getChild<UI::Text>(identityLocal.addChild(std::move(text)));
-		}
-		moodBar = identityLocal.getChild<UI::ProgressBar>(identityLocal.addChild(UI::ProgressBar(UI::ProgressBar::Args{
-			.width = kMeterWidth,
-			.value = 1.0F,
-			.tone = UI::Tone::Auto,
-			.label = "Mood",
-			.size = UI::Size::Sm,
-			.inlineLabel = true,
+		moodBar = identity.addChild<ui::ProgressBar>({
 			.id = "entity_info_mood",
-		})));
-		taskBar = identityLocal.getChild<UI::ProgressBar>(identityLocal.addChild(UI::ProgressBar(UI::ProgressBar::Args{
-			.width = kMeterWidth,
-			.value = 0.0F,
-			.tone = UI::Tone::Accent,
-			.label = "Idle",
-			.size = UI::Size::Sm,
+			.value = 1.0F,
+			.tone = ui::Tone::Auto,
+			.label = "Mood",
+			.controlSize = ui::ControlSize::Sm,
 			.inlineLabel = true,
-			.id = "entity_info_task",
-		})));
-
-		auto buttonsLocal = UI::LayoutContainer(UI::LayoutContainer::Args{
-			.direction = UI::Direction::Horizontal,
-			.gap = UI::space_1,
-			.id = "entity_info_buttons",
 		});
-		eyeButton = buttonsLocal.getChild<GlyphButton>(buttonsLocal.addChild(GlyphButton(GlyphButton::Args{
-			.glyph = "eye",
-			.onClick = [this]() {
-				if (onDetailsCallback) {
-					onDetailsCallback();
-				}
-			},
-			.id = "entity_info_details",
-		})));
-		closeButton = buttonsLocal.getChild<GlyphButton>(buttonsLocal.addChild(GlyphButton(GlyphButton::Args{
-			.glyph = "close",
-			.onClick = [this]() {
-				if (onCloseCallback) {
-					onCloseCallback();
-				}
-			},
-			.id = "entity_info_close",
-		})));
+		taskBar = identity.addChild<ui::ProgressBar>({
+			.id = "entity_info_task",
+			.value = 0.0F,
+			.tone = ui::Tone::Accent,
+			.label = "Idle",
+			.controlSize = ui::ControlSize::Sm,
+			.inlineLabel = true,
+		});
+		ui::Ref<ui::Component> buttons = header.addChild<ui::Component>({
+			.id = "entity_info_buttons",
+			.layout = {.display = ui::Display::Flex, .gap = tight, .flexShrink = 0.0F},
+		});
 
-		identityCol = headerLocal.getChild<UI::LayoutContainer>(headerLocal.addChild(std::move(identityLocal)));
-		buttonCol = headerLocal.getChild<UI::LayoutContainer>(headerLocal.addChild(std::move(buttonsLocal)));
-		headerRow = rootLocal.getChild<UI::LayoutContainer>(rootLocal.addChild(std::move(headerLocal)));
+		// Small inset squares; the state layers give them their hover.
+		const ui::Style glyph{
+			.backgroundColor = theme.get(look::t::color::bgInset),
+			.borderColor = theme.get(look::t::color::lineEdge),
+			.borderWidth = theme.get(look::t::border::bw),
+			.borderRadius = theme.get(look::t::radius::rSm),
+			.color = theme.get(look::t::color::textDim),
+		};
+		const auto glyphButton = [&](const char* id, const char* icon, std::function<void()> press) {
+			return buttons.addChild<ui::Button>({
+				.id = id,
+				.size = {kIconButtonSize, kIconButtonSize},
+				.style = glyph,
+				.icon = icon,
+				.controlSize = ui::ControlSize::Sm,
+				.onPress = std::move(press),
+			});
+		};
+		eyeButton = glyphButton("entity_info_details", "eye", [this]() {
+			if (onDetails) {
+				onDetails();
+			}
+		});
+		glyphButton("entity_info_close", "close", [this]() {
+			if (onClose) {
+				onClose();
+			}
+		});
 
-		// ---- Tab bar (colonists only) ----
-		tabBar = rootLocal.getChild<UI::TabBar>(rootLocal.addChild(UI::TabBar(UI::TabBar::Args{
-			.width = contentWidth,
+		tabBar = root.addChild<ui::TabBar>({
+			.id = "entity_info_tabs",
 			.tabs =
 				{{.id = "needs", .label = "Needs"},
 				 {.id = "bio", .label = "Bio"},
@@ -293,171 +197,85 @@ namespace world_sim {
 				 {.id = "log", .label = "Log"}},
 			.selectedId = "needs",
 			.onSelect = [this](const std::string& tabId) { setActiveTab(tabId); },
-			.id = "entity_info_tabs",
-		})));
-
-		// ---- Needs tab: one bar per need ----
-		auto needsLocal = UI::LayoutContainer(UI::LayoutContainer::Args{
-			.direction = UI::Direction::Vertical,
-			.gap = UI::space_1,
-			.id = "entity_info_needs",
 		});
-		const auto needCount = static_cast<size_t>(ecs::NeedType::Count);
-		needBars.reserve(needCount);
-		for (size_t i = 0; i < needCount; ++i) {
-			auto handle = needsLocal.addChild(NeedBar(NeedBar::Args{
-				.width = contentWidth,
-				.label = ecs::needLabel(static_cast<ecs::NeedType>(i)),
-				.id = "entity_info_need_" + std::to_string(i),
-			}));
-			needBars.push_back(needsLocal.getChild<NeedBar>(handle));
+
+		// Needs: a bar per need.
+		needsBody = root.addChild<ui::Component>({.id = "entity_info_needs", .layout = column(tight)});
+		const auto needCount = static_cast<std::size_t>(ecs::NeedType::Count);
+		needBars.clear();
+		for (std::size_t i = 0; i < needCount; ++i) {
+			needBars.push_back(needsBody.addChild<NeedBar>(
+				{.id = "entity_info_need_" + std::to_string(i), .label = ecs::needLabel(static_cast<ecs::NeedType>(i))}
+			));
 		}
-		needsBody = rootLocal.getChild<UI::LayoutContainer>(rootLocal.addChild(std::move(needsLocal)));
 
-		// ---- Bio tab ----
-		auto bioLocal = UI::LayoutContainer(UI::LayoutContainer::Args{
-			.direction = UI::Direction::Vertical,
-			.gap = UI::space_1,
-			.id = "entity_info_bio",
-		});
-		auto makeBioRow = [this, &bioLocal](const char* id) {
-			auto text = UI::Text(UI::Text::Args{
-				.width = contentWidth,
-				.text = "",
-				.style = {.color = UI::text, .fontSize = UI::fs_sm, .wordWrap = true},
-				.id = id,
-			});
-			return bioLocal.getChild<UI::Text>(bioLocal.addChild(std::move(text)));
-		};
-		bioAge = makeBioRow("entity_info_bio_age");
-		bioMood = makeBioRow("entity_info_bio_mood");
-		bioBody = rootLocal.getChild<UI::LayoutContainer>(rootLocal.addChild(std::move(bioLocal)));
+		bioBody = root.addChild<ui::Component>({.id = "entity_info_bio", .visible = false, .layout = column(tight)});
+		bioAge = bioBody.addChild<ui::Text>({.id = "entity_info_bio_age", .style = bodyText, .wrap = true});
+		bioMood = bioBody.addChild<ui::Text>({.id = "entity_info_bio_mood", .style = bodyText, .wrap = true});
 
-		// ---- Gear tab: armed line, belt chips, carry meter, backpack ----
-		auto gearLocal = UI::LayoutContainer(UI::LayoutContainer::Args{
-			.direction = UI::Direction::Vertical,
-			.gap = UI::space_1_5,
-			.id = "entity_info_gear",
-		});
-		{
-			auto text = UI::Text(UI::Text::Args{
-				.width = contentWidth,
-				.text = "Armed: (empty)",
-				.style = {.color = UI::text, .fontSize = UI::fs_sm, .wordWrap = true},
-				.id = "entity_info_gear_hands",
-			});
-			gearHands = gearLocal.getChild<UI::Text>(gearLocal.addChild(std::move(text)));
-		}
-		auto beltLocal = UI::LayoutContainer(UI::LayoutContainer::Args{
-			.direction = UI::Direction::Horizontal,
-			.gap = UI::space_1,
-			.crossAlign = UI::CrossAlign::Center,
+		// Gear: what's in hand, the belt's tools, the carry meter, the backpack.
+		gearBody = root.addChild<ui::Component>(
+			{.id = "entity_info_gear", .visible = false, .layout = column(theme.get(look::t::spacing::space15))}
+		);
+		gearHands =
+			gearBody.addChild<ui::Text>({.id = "entity_info_gear_hands", .style = bodyText, .text = "Armed: (empty)", .wrap = true});
+		ui::Ref<ui::Component> belt = gearBody.addChild<ui::Component>({
 			.id = "entity_info_belt",
+			.layout = {.display = ui::Display::Flex, .gap = tight, .alignItems = ui::AlignItems::Center},
 		});
-		{
-			auto label = UI::Text(UI::Text::Args{
-				.text = "Belt:",
-				.style = {.color = UI::text_dim, .fontSize = UI::fs_sm},
-				.id = "entity_info_belt_label",
-			});
-			beltLocal.addChild(std::move(label));
+		belt.addChild<ui::Text>({.id = "entity_info_belt_label", .style = dimText, .text = "Belt:"});
+		beltChips.clear();
+		for (int i = 0; i < kBeltSlots; ++i) {
+			beltChips.push_back(
+				belt.addChild<ui::Badge>({.id = "entity_info_belt_chip_" + std::to_string(i), .visible = false, .tone = ui::Tone::Info})
+			);
 		}
-		// ecs::Inventory has two belt slots
-		for (size_t i = 0; i < 2; ++i) {
-			auto chip = BadgeChip();
-			chip.visible = false;
-			beltChips.push_back(beltLocal.getChild<BadgeChip>(beltLocal.addChild(std::move(chip))));
-		}
-		{
-			auto text = UI::Text(UI::Text::Args{
-				.text = "(empty)",
-				.style = {.color = UI::text_dim, .fontSize = UI::fs_sm},
-				.id = "entity_info_belt_empty",
-			});
-			beltEmpty = beltLocal.getChild<UI::Text>(beltLocal.addChild(std::move(text)));
-		}
-		beltRow = gearLocal.getChild<UI::LayoutContainer>(gearLocal.addChild(std::move(beltLocal)));
-		carryBar = gearLocal.getChild<UI::ProgressBar>(gearLocal.addChild(UI::ProgressBar(UI::ProgressBar::Args{
-			.width = contentWidth,
-			.value = 0.0F,
-			.tone = UI::Tone::Data,
-			.label = "Carry",
-			.size = UI::Size::Sm,
-			.inlineLabel = true,
+		beltEmpty = belt.addChild<ui::Text>({.id = "entity_info_belt_empty", .style = dimText, .text = "(empty)"});
+		carryBar = gearBody.addChild<ui::ProgressBar>({
 			.id = "entity_info_carry",
-		})));
-		{
-			auto text = UI::Text(UI::Text::Args{
-				.width = contentWidth,
-				.text = "Backpack: (empty)",
-				.style = {.color = UI::text_dim, .fontSize = UI::fs_sm, .wordWrap = true},
-				.id = "entity_info_gear_pack",
-			});
-			gearPack = gearLocal.getChild<UI::Text>(gearLocal.addChild(std::move(text)));
-		}
-		gearBody = rootLocal.getChild<UI::LayoutContainer>(rootLocal.addChild(std::move(gearLocal)));
+			.value = 0.0F,
+			.tone = ui::Tone::Info,
+			.label = "Carry",
+			.controlSize = ui::ControlSize::Sm,
+			.inlineLabel = true,
+		});
+		gearPack =
+			gearBody.addChild<ui::Text>({.id = "entity_info_gear_pack", .style = dimText, .text = "Backpack: (empty)", .wrap = true});
 
-		// ---- Log tab: empty-state stub (no activity-log system yet) ----
-		auto logLocal = UI::LayoutContainer(UI::LayoutContainer::Args{
-			.direction = UI::Direction::Vertical,
+		// Log: a stub until an activity log exists.
+		logBody = root.addChild<tabs::EmptyState>({
 			.id = "entity_info_log",
+			.visible = false,
+			.minSize = {ui::kAuto, kLogEmptyHeight},
+			.title = "No activity log yet",
+			.subtitle = "A chronological log arrives with the events update.",
 		});
-		logLocal.addChild(EmptyStateBox(contentWidth, "No activity log yet", "A chronological log arrives with the events update."));
-		logBody = rootLocal.getChild<UI::LayoutContainer>(rootLocal.addChild(std::move(logLocal)));
 
-		// ---- Action row: Draft | Go to | Priorities ----
-		auto actionLocal = UI::LayoutContainer(UI::LayoutContainer::Args{
-			.direction = UI::Direction::Horizontal,
-			.gap = kGap,
-			.id = "entity_info_actions",
+		actionRow = root.addChild<ui::Component>({.id = "entity_info_actions", .layout = {.display = ui::Display::Flex, .gap = gap}});
+		const auto actionButton = [&](const char* id, const char* label, bool enabled, std::function<void()> press) {
+			return actionRow.addChild<ui::Button>({
+				.id = id,
+				.enabled = enabled,
+				.size = {0.0F, kActionButtonHeight},
+				.layout = {.flexGrow = 1.0F},
+				.label = label,
+				.variant = ui::ButtonVariant::Secondary,
+				.onPress = std::move(press),
+			});
+		};
+		draftButton = actionButton("entity_info_draft", "Draft", true, [this]() {
+			if (onToggleControl && selectedColonistId != ecs::EntityID{0}) {
+				onToggleControl(selectedColonistId);
+			}
 		});
-		const float actionButtonWidth = (contentWidth - kGap * 2.0F) / 3.0F;
-		draftButton = actionLocal.getChild<UI::Button>(actionLocal.addChild(UI::Button(UI::Button::Args{
-			.label = "Draft",
-			.size = {actionButtonWidth, kActionButtonHeight},
-			.type = UI::Button::Type::Secondary,
-			.onClick =
-				[this]() {
-					if (onToggleControlCallback && selectedColonistId != ecs::EntityID{0}) {
-						onToggleControlCallback(selectedColonistId);
-					}
-				},
-			.id = "entity_info_draft",
-		})));
-		goToButton = actionLocal.getChild<UI::Button>(actionLocal.addChild(UI::Button(UI::Button::Args{
-			.label = "Go to",
-			.size = {actionButtonWidth, kActionButtonHeight},
-			.type = UI::Button::Type::Secondary,
-			.onClick =
-				[this]() {
-					if (onGoToCallback && selectedColonistId != ecs::EntityID{0}) {
-						onGoToCallback(selectedColonistId);
-					}
-				},
-			.id = "entity_info_goto",
-		})));
-		// Disabled stub: no priorities system yet
-		actionLocal.addChild(UI::Button(UI::Button::Args{
-			.label = "Priorities",
-			.size = {actionButtonWidth, kActionButtonHeight},
-			.type = UI::Button::Type::Secondary,
-			.disabled = true,
-			.id = "entity_info_priorities",
-		}));
-		actionRow = rootLocal.getChild<UI::LayoutContainer>(rootLocal.addChild(std::move(actionLocal)));
-
-		// ---- Generic slot rows (non-colonist selections) ----
-		auto slotsLocal = UI::LayoutContainer(UI::LayoutContainer::Args{
-			.size = {contentWidth, 0.0F},
-			.direction = UI::Direction::Vertical,
-			.gap = kGap,
-			.id = "entity_info_slots",
+		actionButton("entity_info_goto", "Go to", true, [this]() {
+			if (onGoTo && selectedColonistId != ecs::EntityID{0}) {
+				onGoTo(selectedColonistId);
+			}
 		});
-		slotsBody = rootLocal.getChild<UI::LayoutContainer>(rootLocal.addChild(std::move(slotsLocal)));
+		actionButton("entity_info_priorities", "Priorities", false, {});
 
-		root = getChild<UI::LayoutContainer>(addChild(std::move(rootLocal)));
-
-		visible = false;
+		slotsBody = root.addChild<ui::Component>({.id = "entity_info_slots", .visible = false, .layout = column(gap)});
 	}
 
 	void EntityInfoView::update(
@@ -468,120 +286,106 @@ namespace world_sim {
 		const engine::construction::ConstructionWorld* constructionWorld,
 		const ecs::RoomDetectionSystem*				   roomDetection
 	) {
-		EntityInfoModel::Callbacks callbacks{
-			.onOpenCraftingDialog = onOpenCraftingDialogCallback,
-			.onPlace = onPlaceCallback,
-			.onMoveFurniture = onMoveFurnitureCallback,
-			.onOpenStorageConfig = onOpenStorageConfigCallback,
-			.queryResources = queryResourcesCallback,
-			.onDemolishFoundation = onDemolishFoundationCallback,
-			.onDemolishBuilding = onDemolishBuildingCallback,
-			.onAddToFoundation = onAddToFoundationCallback,
-			.onSubtractFromFoundation = onSubtractFromFoundationCallback,
-			.onDemolishWallSegment = onDemolishWallSegmentCallback,
-			.onDemolishOpening = onDemolishOpeningCallback,
-		};
-
-		const auto updateType = m_model.refresh(selection, world, assetRegistry, recipeRegistry, callbacks, constructionWorld, roomDetection);
-
+		const auto updateType =
+			model.refresh(selection, world, assetRegistry, recipeRegistry, modelCallbacks, constructionWorld, roomDetection);
 		switch (updateType) {
 			case EntityInfoModel::UpdateType::None:
 				break;
 			case EntityInfoModel::UpdateType::Hide:
-				visible = false;
+				setVisible(false);
 				break;
 			case EntityInfoModel::UpdateType::Show:
-				visible = true;
-				applyContent(m_model.content(), true);
+				setVisible(true);
+				applyContent(model.content(), true);
 				break;
 			case EntityInfoModel::UpdateType::Structure:
-				applyContent(m_model.content(), true);
+				applyContent(model.content(), true);
 				break;
 			case EntityInfoModel::UpdateType::Values:
-				applyContent(m_model.content(), false);
+				applyContent(model.content(), false);
 				break;
-		}
-
-		if (visible) {
-			applyAnchor();
 		}
 	}
 
 	void EntityInfoView::applyContent(const PanelContent& content, bool structural) {
-		const bool isColonist = content.colonist.has_value();
-		nameText->text = isColonist ? content.colonist->name : content.title;
-		if (isColonist) {
+		if (nameText.get() == nullptr) {
+			return;
+		}
+		if (content.colonist.has_value()) {
+			nameText.get()->setText(content.colonist->name);
 			applyColonist(*content.colonist, structural);
 		} else {
+			nameText.get()->setText(content.title);
 			applyGeneric(content, structural);
 		}
-		markLayoutDirty();
 	}
 
 	void EntityInfoView::applyColonist(const ColonistPanelData& data, bool structural) {
 		selectedColonistId = data.id;
 
-		avatar->visible = true;
-		avatar->setIdentity(data.name, data.moodValue / 100.0F);
-		subtitleText->visible = false;
-		moodBar->visible = true;
-		taskBar->visible = true;
-		eyeButton->visible = static_cast<bool>(onDetailsCallback);
-		tabBar->visible = true;
-		actionRow->visible = true;
-		slotsBody->visible = false;
+		avatarSlot.get()->setVisible(true);
+		showAvatar(data.name, data.moodValue / 100.0F);
+		subtitleText.get()->setVisible(false);
+		moodBar.get()->setVisible(true);
+		taskBar.get()->setVisible(true);
+		eyeButton.get()->setVisible(static_cast<bool>(onDetails));
+		tabBar.get()->setVisible(true);
+		actionRow.get()->setVisible(true);
+		slotsBody.get()->setVisible(false);
 
-		moodBar->setValue(data.moodValue / 100.0F);
-		moodBar->setValueText(std::to_string(static_cast<int>(data.moodValue)) + "% " + data.moodLabel);
+		ui::ProgressBar& mood = *moodBar.get();
+		mood.setValue(data.moodValue / 100.0F);
+		mood.setValueText(std::format("{}% {}", static_cast<int>(data.moodValue), data.moodLabel));
 
-		const bool acting = data.taskProgress >= 0.0F;
-		taskBar->setLabel(data.currentTask);
-		taskBar->setValue(acting ? data.taskProgress : 0.0F);
-		taskBar->setValueText(acting ? std::to_string(static_cast<int>(data.taskProgress * 100.0F)) + "%" : "");
+		const bool		 acting = data.taskProgress >= 0.0F;
+		ui::ProgressBar& task = *taskBar.get();
+		task.setLabel(data.currentTask);
+		task.setValue(acting ? data.taskProgress : 0.0F);
+		task.setValueText(acting ? std::format("{}%", static_cast<int>(data.taskProgress * 100.0F)) : std::string());
 
-		for (size_t i = 0; i < needBars.size(); ++i) {
+		for (std::size_t i = 0; i < needBars.size(); ++i) {
+			NeedBar*   bar = needBars[i].get();
 			const bool has = i < data.needs.size();
-			needBars[i]->visible = has;
+			bar->setVisible(has);
 			if (has) {
-				needBars[i]->setLabel(data.needs[i].label);
-				needBars[i]->setValue(data.needs[i].value);
+				bar->setLabel(data.needs[i].label);
+				bar->setPercent(data.needs[i].value);
 			}
 		}
 
-		bioAge->text = "Age: " + data.age;
-		bioMood->text = "Mood: " + std::to_string(static_cast<int>(data.moodValue)) + "% " + data.moodLabel;
+		bioAge.get()->setText("Age: " + data.age);
+		bioMood.get()->setText(std::format("Mood: {}% {}", static_cast<int>(data.moodValue), data.moodLabel));
 
-		gearHands->text = "Armed: " + data.hands;
-		for (size_t i = 0; i < beltChips.size(); ++i) {
+		gearHands.get()->setText("Armed: " + data.hands);
+		for (std::size_t i = 0; i < beltChips.size(); ++i) {
+			ui::Badge* chip = beltChips[i].get();
 			const bool has = i < data.belt.size();
-			beltChips[i]->visible = has;
+			chip->setVisible(has);
 			if (has) {
-				beltChips[i]->setLabel(data.belt[i]);
+				chip->setLabel(data.belt[i]);
 			}
 		}
-		beltEmpty->visible = data.belt.empty();
+		beltEmpty.get()->setVisible(data.belt.empty());
 
 		const float ratio = data.capacityKg > 0.0F ? data.carriedKg / data.capacityKg : 0.0F;
-		carryBar->setValue(ratio);
-		carryBar->setValueText(
-			std::to_string(static_cast<int>(data.carriedKg + 0.5F)) + " / " + std::to_string(static_cast<int>(data.capacityKg + 0.5F)) +
-			" kg"
+		carryBar.get()->setValue(ratio);
+		carryBar.get()->setValueText(
+			std::format("{} / {} kg", static_cast<int>(data.carriedKg + 0.5F), static_cast<int>(data.capacityKg + 0.5F))
 		);
 
+		std::string pack = "Backpack:";
 		if (data.backpack.empty()) {
-			gearPack->text = "Backpack: (empty)";
-		} else {
-			std::string lines = "Backpack:";
-			for (const auto& line : data.backpack) {
-				lines += "\n" + line;
-			}
-			gearPack->text = std::move(lines);
+			pack += " (empty)";
 		}
+		for (const std::string& line : data.backpack) {
+			pack += "\n" + line;
+		}
+		gearPack.get()->setText(std::move(pack));
 
-		draftButton->setLabel(data.controlled ? "Release" : "Draft");
+		draftButton.get()->setLabel(data.controlled ? "Release" : "Draft");
 
 		if (structural) {
-			tabBar->setSelected("needs");
+			tabBar.get()->setSelectedId("needs");
 			setActiveTab("needs");
 		}
 	}
@@ -589,218 +393,103 @@ namespace world_sim {
 	void EntityInfoView::applyGeneric(const PanelContent& content, bool structural) {
 		selectedColonistId = ecs::EntityID{0};
 
-		avatar->visible = false;
-		moodBar->visible = false;
-		taskBar->visible = false;
-		eyeButton->visible = false;
-		tabBar->visible = false;
-		needsBody->visible = false;
-		bioBody->visible = false;
-		gearBody->visible = false;
-		logBody->visible = false;
-		actionRow->visible = false;
-		// Hidden when empty: a visible zero-height container trips the layout lint
-		slotsBody->visible = !content.slots.empty();
+		avatarSlot.get()->setVisible(false);
+		moodBar.get()->setVisible(false);
+		taskBar.get()->setVisible(false);
+		eyeButton.get()->setVisible(false);
+		tabBar.get()->setVisible(false);
+		needsBody.get()->setVisible(false);
+		bioBody.get()->setVisible(false);
+		gearBody.get()->setVisible(false);
+		logBody.get()->setVisible(false);
+		actionRow.get()->setVisible(false);
+		slotsBody.get()->setVisible(!content.slots.empty());
 
-		subtitleText->text = content.subtitle;
-		subtitleText->visible = !content.subtitle.empty();
+		subtitleText.get()->setText(content.subtitle);
+		subtitleText.get()->setVisible(!content.subtitle.empty());
 
-		// Values updates rewrite rows in place, which can't absorb an item-count
-		// drift inside a TextListSlot (e.g. work orders queued while selected);
-		// rebuild when any list changed size.
-		bool needsRebuild = structural;
-		if (!needsRebuild) {
-			size_t listIdx = 0;
-			for (const auto& slot : content.slots) {
-				if (const auto* list = std::get_if<TextListSlot>(&slot)) {
-					if (listIdx >= slotListSizes.size() || slotListSizes[listIdx] != list->items.size()) {
-						needsRebuild = true;
+		if (structural) {
+			++slotGeneration;
+		}
+		showSlots(content.slots);
+	}
+
+	// Keyed by the slot's place and the selection's generation: a values update keeps every row, a list
+	// that grows or shrinks gains or loses only its items, and a new selection builds them all.
+	void EntityInfoView::showSlots(const std::vector<InfoSlot>& slots) {
+		ui::Component* column = slotsBody.get();
+		if (column == nullptr) {
+			return;
+		}
+		const ui::Theme& theme = getContext()->getTheme();
+		column->reconcileChildren(
+			rowsOf(slots, slotGeneration),
+			[](const SlotRow& row) { return row.key; },
+			[&](const SlotRow& row) -> ui::Ref<ui::Component> {
+				switch (row.kind) {
+					case SlotRow::Kind::Bar:
+						return column->addChild<NeedBar>({.label = row.text, .percent = row.percent});
+					case SlotRow::Kind::Button:
+						return column->addChild<ui::Button>({
+							.size = {ui::percent(100.0F), kSlotButtonHeight},
+							.label = row.text,
+							.variant = ui::ButtonVariant::Secondary,
+							.onPress = row.onClick,
+						});
+					case SlotRow::Kind::ListHeader:
+						return column->addChild<ui::Text>(
+							{.style = look::text(theme, look::t::color::textDim, look::t::fontSize::fsSm), .text = row.text, .wrap = true}
+						);
+					case SlotRow::Kind::Text:
+					case SlotRow::Kind::ListItem:
 						break;
-					}
-					++listIdx;
 				}
+				return column->addChild<ui::Text>(
+					{.style = look::text(theme, look::t::color::text, look::t::fontSize::fsSm), .text = row.text, .wrap = true}
+				);
+			},
+			[](ui::Component& shown, const SlotRow& row) {
+				switch (row.kind) {
+					case SlotRow::Kind::Bar: {
+						auto& bar = static_cast<NeedBar&>(shown);
+						bar.setLabel(row.text);
+						bar.setPercent(row.percent);
+						return;
+					}
+					case SlotRow::Kind::Button: {
+						auto& button = static_cast<ui::Button&>(shown);
+						button.setLabel(row.text);
+						button.setOnPress(row.onClick);
+						return;
+					}
+					case SlotRow::Kind::Text:
+					case SlotRow::Kind::ListHeader:
+					case SlotRow::Kind::ListItem:
+						break;
+				}
+				static_cast<ui::Text&>(shown).setText(row.text);
 			}
-		}
-
-		if (needsRebuild) {
-			rebuildSlots(content.slots);
-		} else {
-			updateSlots(content.slots);
-		}
+		);
 	}
 
-	void EntityInfoView::rebuildSlots(const std::vector<InfoSlot>& slots) {
-		slotsBody->clearChildren();
-		slotTexts.clear();
-		slotBars.clear();
-		slotButtons.clear();
-		slotListItems.clear();
-		slotListSizes.clear();
-
-		for (const auto& slot : slots) {
-			std::visit(
-				[this](const auto& s) {
-					using T = std::decay_t<decltype(s)>;
-					if constexpr (std::is_same_v<T, TextSlot>) {
-						auto handle = slotsBody->addChild(UI::Text(UI::Text::Args{
-							.width = contentWidth,
-							.text = s.label + ": " + s.value,
-							.style = {.color = UI::text, .fontSize = UI::fs_sm, .wordWrap = true},
-						}));
-						slotTexts.push_back(slotsBody->getChild<UI::Text>(handle));
-					} else if constexpr (std::is_same_v<T, ProgressBarSlot>) {
-						auto bar = NeedBar(NeedBar::Args{.width = contentWidth, .label = s.label});
-						bar.setValue(s.value);
-						auto handle = slotsBody->addChild(std::move(bar));
-						slotBars.push_back(slotsBody->getChild<NeedBar>(handle));
-					} else if constexpr (std::is_same_v<T, TextListSlot>) {
-						slotsBody->addChild(UI::Text(UI::Text::Args{
-							.width = contentWidth,
-							.text = s.header + ":",
-							.style = {.color = UI::text_dim, .fontSize = UI::fs_sm, .wordWrap = true},
-						}));
-						std::vector<UI::Text*> items;
-						items.reserve(s.items.size());
-						for (const auto& item : s.items) {
-							auto handle = slotsBody->addChild(UI::Text(UI::Text::Args{
-								.width = contentWidth,
-								.text = "- " + item,
-								.style = {.color = UI::text, .fontSize = UI::fs_sm, .wordWrap = true},
-							}));
-							items.push_back(slotsBody->getChild<UI::Text>(handle));
-						}
-						slotListItems.push_back(std::move(items));
-						slotListSizes.push_back(s.items.size());
-					} else if constexpr (std::is_same_v<T, ActionButtonSlot>) {
-						auto handle = slotsBody->addChild(UI::Button(UI::Button::Args{
-							.label = s.label,
-							.size = {contentWidth, kSlotButtonHeight},
-							.type = UI::Button::Type::Secondary,
-							.onClick = s.onClick,
-						}));
-						slotButtons.push_back(slotsBody->getChild<UI::Button>(handle));
-					}
-				},
-				slot
-			);
+	// theme::Avatar takes its seed once, so another colonist gets a new one.
+	void EntityInfoView::showAvatar(const std::string& seed, float mood) {
+		if (theme::Avatar* shown = avatar.get(); shown != nullptr && seed == avatarSeed) {
+			shown->setMood(mood);
+			return;
 		}
-	}
-
-	void EntityInfoView::updateSlots(const std::vector<InfoSlot>& slots) {
-		size_t textIdx = 0;
-		size_t barIdx = 0;
-		size_t buttonIdx = 0;
-		size_t listIdx = 0;
-
-		for (const auto& slot : slots) {
-			std::visit(
-				[&](const auto& s) {
-					using T = std::decay_t<decltype(s)>;
-					if constexpr (std::is_same_v<T, TextSlot>) {
-						if (textIdx < slotTexts.size()) {
-							slotTexts[textIdx]->text = s.label + ": " + s.value;
-						}
-						++textIdx;
-					} else if constexpr (std::is_same_v<T, ProgressBarSlot>) {
-						if (barIdx < slotBars.size()) {
-							slotBars[barIdx]->setValue(s.value);
-						}
-						++barIdx;
-					} else if constexpr (std::is_same_v<T, TextListSlot>) {
-						if (listIdx < slotListItems.size()) {
-							auto& items = slotListItems[listIdx];
-							for (size_t i = 0; i < s.items.size() && i < items.size(); ++i) {
-								items[i]->text = "- " + s.items[i];
-							}
-						}
-						++listIdx;
-					} else if constexpr (std::is_same_v<T, ActionButtonSlot>) {
-						if (buttonIdx < slotButtons.size()) {
-							slotButtons[buttonIdx]->setLabel(s.label);
-							slotButtons[buttonIdx]->onClick = s.onClick;
-						}
-						++buttonIdx;
-					}
-				},
-				slot
-			);
+		if (avatar.get() != nullptr) {
+			avatarSlot.get()->removeChild(avatar);
 		}
+		avatarSeed = seed;
+		avatar = avatarSlot.addChild<theme::Avatar>({.size = {kAvatarSize, kAvatarSize}, .seed = seed, .mood = mood});
 	}
 
 	void EntityInfoView::setActiveTab(const std::string& tabId) {
-		needsBody->visible = tabId == "needs";
-		bioBody->visible = tabId == "bio";
-		gearBody->visible = tabId == "gear";
-		logBody->visible = tabId == "log";
-		markLayoutDirty();
-		applyAnchor();
-	}
-
-	void EntityInfoView::applyAnchor() {
-		const float height = root->getHeight();
-		position = {panelX, m_viewportHeight - height};
-		size = {panelWidth, height};
-		root->setPosition(position.x, position.y);
-	}
-
-	void EntityInfoView::markLayoutDirty() {
-		// The engine's nested layout() is a final-rect assignment: it adopts the
-		// measured size, freezing a Hug container at its last extent, and that
-		// freeze beats hug measurement forever after -- invalidateLayout() alone
-		// re-runs layout but does not undo it. resetHugAxes() clears the freeze so
-		// visibility/content changes re-measure instead of keeping a stale height
-		// (e.g. an emptied slots body holding its old size, or the panel root
-		// itself never shrinking back down to the viewport).
-		for (UI::LayoutContainer* container :
-			 {root, headerRow, identityCol, buttonCol, needsBody, bioBody, gearBody, logBody, actionRow, beltRow, slotsBody}) {
-			container->resetHugAxes();
-			container->invalidateLayout();
-		}
-	}
-
-	void EntityInfoView::setBottomLeftPosition(float x, float viewportHeight) {
-		panelX = x;
-		m_viewportHeight = viewportHeight;
-		applyAnchor();
-	}
-
-	void EntityInfoView::render() {
-		if (!visible) {
-			return;
-		}
-		UI::Panel(UI::Panel::Args{
-					  .position = position,
-					  .size = size,
-					  .variant = UI::PanelVariant::Panel,
-					  .accent = UI::PanelAccent::Accent,
-		})
-			.render();
-		Component::render();
-	}
-
-	bool EntityInfoView::handleEvent(UI::InputEvent& event) {
-		if (!visible) {
-			return false;
-		}
-
-		if (dispatchEvent(event)) {
-			return true;
-		}
-		if (event.isConsumed()) {
-			return true;
-		}
-
-		// Swallow clicks on the panel surface so they don't reach the world
-		if (event.type == UI::InputEvent::Type::MouseUp && event.button == foundation::MouseButton::Left && containsPoint(event.position)) {
-			event.consume();
-			return true;
-		}
-
-		return false;
-	}
-
-	bool EntityInfoView::containsPoint(Foundation::Vec2 point) const {
-		return point.x >= position.x && point.x <= position.x + size.x && point.y >= position.y && point.y <= position.y + size.y;
+		needsBody.get()->setVisible(tabId == "needs");
+		bioBody.get()->setVisible(tabId == "bio");
+		gearBody.get()->setVisible(tabId == "gear");
+		logBody.get()->setVisible(tabId == "log");
 	}
 
 } // namespace world_sim
