@@ -120,6 +120,8 @@ namespace {
 		void onEnter(app::App& app) override {
 			owner = &app;
 			LOG_INFO(Game, "GameScene - Entering");
+			// Still on worldsim's ui, so the bridge carries its input; the pre-game scenes, on salal's ui, took it off.
+			app.context<world_sim::AppContext>().ui.install();
 
 			// Check for pre-loaded state from GameLoadingScene
 			auto preloadedState = world_sim::GameWorldState::Take();

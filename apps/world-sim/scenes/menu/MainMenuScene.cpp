@@ -1,36 +1,27 @@
-// Main Menu Scene - Salvage title screen.
+// Main Menu Scene - the title screen.
 //
-// Left-aligned identity column (diamond glyph + WORLD-SIM + tagline) over a
-// kicker and a LayoutContainer menu column of hover-aware rows (icon column,
-// hover bracket + hint, disabled dimming), with a footer. The decorative
-// planet docks off the right screen edge behind a scrim.
+// A left-aligned column, centred top to bottom: the identity (diamond glyph,
+// WORLD-SIM and the tagline), a kicker, and the menu's rows, each an icon,
+// a label and a hint. A footer under it. The decorative planet docks off the
+// right screen edge behind a scrim.
 
 #include "GameStartConfig.h"
 #include "NewGameSetup.h"
 #include "SceneTypes.h"
 #include "scenes/shared/DecorativePlanet.h"
+#include "scenes/shared/SalalUi.h"
 #include "scenes/shared/Starfield.h"
-#include "scenes/shared/Widgets.h"
-#include <GL/glew.h>
 
-#include <app/UiScene.h>
 #include <application/App.h>
-#include <components/icon/Icon.h>
-#include <graphics/PrimitiveStyles.h>
-#include <input/InputEvent.h>
-#include <layout/LayoutContainer.h>
 #include <primitives/Primitives.h>
-#include <theme/CssTokens.h>
-#include <theme/Tones.h>
+#include <ui/components/ListRow.h>
+#include <ui/shapes/Text.h>
 #include <utils/Log.h>
 #include <utils/ResourcePath.h>
 
 #include <algorithm>
-#include <array>
 #include <functional>
-#include <memory>
 #include <string>
-#include <vector>
 
 namespace {
 
@@ -39,343 +30,176 @@ namespace {
 	constexpr float		  kRowWidth = 500.0F;
 	constexpr float		  kRowHeight = 44.0F;
 
-	float textScale(float px) { return px / 16.0F; }
+	namespace tokens = world_sim::tokens;
+	namespace family = ui::tokens::font::family;
 
-	class MenuItemRow : public world_sim::Widget {
-	  public:
-		struct Args {
-			std::string			  label;
-			std::string			  hint;
-			const char*			  glyph{nullptr};
-			std::function<void()> action;
-			bool				  primary{false};
-			bool				  enabled{true};
-			const char*			  id{nullptr};
-		};
-
-		explicit MenuItemRow(Args args)
-			: label(std::move(args.label)),
-			  hint(std::move(args.hint)),
-			  action(std::move(args.action)),
-			  primary(args.primary),
-			  enabled(args.enabled),
-			  id(args.id) {
-			widthMode = UI::SizeMode::Hug;
-			size.y = kRowHeight;
-			icon = std::make_unique<UI::Icon>(UI::Icon::Args{
-				.size = 18.0F, .glyph = args.glyph != nullptr ? args.glyph : "", .tint = UI::text_faint});
-			bracket = std::make_unique<UI::Icon>(UI::Icon::Args{.size = 14.0F, .glyph = "chevronRight", .tint = UI::accent});
-		}
-
-		bool handleEvent(UI::InputEvent& event) override {
-			using UI::InputEvent;
-			if (event.type == InputEvent::Type::MouseMove) {
-				hovered = enabled && containsPoint(event.position);
-				return false;
-			}
-			if (event.type == InputEvent::Type::MouseUp && event.button == foundation::MouseButton::Left &&
-			    containsPoint(event.position)) {
-				if (enabled && action) {
-					action();
-					event.consume();
-					return true;
-				}
-			}
-			return false;
-		}
-
-		bool containsPoint(Foundation::Vec2 p) const override {
-			return p.x >= position.x && p.x <= position.x + size.x && p.y >= position.y &&
-				   p.y <= position.y + size.y;
-		}
-
-		void render() override {
-			using Renderer::Primitives::drawRect;
-			using Renderer::Primitives::drawText;
-
-			const Foundation::Rect r{position.x, position.y, size.x, size.y};
-			// Disabled rows render at 40% alpha with no hover response.
-			const float alpha = enabled ? 1.0F : 0.4F;
-			const auto	dim = [alpha](Foundation::Color c) { return UI::withAlpha(c, c.a * alpha); };
-
-			if (hovered) {
-				drawRect({.bounds = r, .style = {.fill = UI::bg_hover}});
-				drawRect({.bounds = {r.x, r.y, 2.0F, r.height}, .style = {.fill = UI::accent}});
-			}
-
-			const float insetX = r.x + (hovered ? UI::space_6 : UI::space_4);
-			// The bracket is the hover cursor, shown only on the hovered row. The
-			// primary row is distinguished by its accent label color, not the bracket.
-			if (hovered) {
-				bracket->setPosition(insetX, r.y + (r.height - 14.0F) * 0.5F);
-				bracket->render();
-			}
-
-			icon->setTint(dim(hovered ? UI::accent : UI::text_faint));
-			icon->setPosition(insetX + 18.0F, r.y + (r.height - 18.0F) * 0.5F);
-			icon->render();
-
-			const Foundation::Color labelColor =
-				!enabled ? dim(UI::text_dim)
-						 : (primary ? UI::accent_bright : (hovered ? UI::text_bright : UI::text_dim));
-			drawText({.text = label,
-					  .position = {insetX + 18.0F + 26.0F, r.y},
-					  .scale = textScale(UI::fs_xl),
-					  .color = labelColor,
-					  .font = theme::fontDisplay,
-					  .vAlign = Foundation::VerticalAlign::Middle,
-					  .boxHeight = r.height,
-					  .letterSpacing = UI::fs_xl * UI::ls_wide});
-
-			// Hint: right-aligned to the row's right edge, but its box starts after
-			// the measured label end + a gap so it can never collide with the label.
-			if (hovered && !hint.empty()) {
-				const float labelX = insetX + 18.0F + 26.0F;
-				float		labelW = 0.0F;
-				if (auto* fontRenderer = Renderer::Primitives::getFontRenderer()) {
-					labelW = fontRenderer->MeasureText(label, textScale(UI::fs_xl), theme::fontDisplay, UI::fs_xl * UI::ls_wide).x;
-				}
-				const float hintLeft = labelX + labelW + UI::space_4;
-				const float hintRight = r.x + r.width - UI::space_4;
-				if (hintRight > hintLeft) {
-					drawText({.text = hint,
-							  .position = {hintLeft, r.y},
-							  .scale = textScale(UI::fs_xs),
-							  .color = UI::text_faint,
-							  .font = theme::fontMono,
-							  .hAlign = Foundation::HorizontalAlign::Right,
-							  .vAlign = Foundation::VerticalAlign::Middle,
-							  .boxWidth = hintRight - hintLeft,
-							  .boxHeight = r.height});
-				}
-			}
-		}
-
-		const char* debugTypeName() const override { return "MenuItemRow"; }
-		const char* debugId() const override { return id; }
-
-	  private:
-		std::string				  label;
-		std::string				  hint;
-		std::function<void()>	  action;
-		bool					  primary{false};
-		bool					  enabled{true};
-		const char*				  id{nullptr};
-		std::unique_ptr<UI::Icon> icon;
-		std::unique_ptr<UI::Icon> bracket;
-		bool					  hovered{false};
-	};
-
-	class MainMenuScene : public engine::UiScene {
+	class MainMenuScene : public app::Scene {
 	  public:
 		void onEnter(app::App& app) override {
 			owner = &app;
 			LOG_INFO(Game, "MainMenuScene - Entering");
-
-			// Identity block on the layout engine (diamond + title on one row, the
-			// tagline below) so the title and tagline can never overlap. Left-aligned.
-			identity = std::make_unique<UI::LayoutContainer>(UI::LayoutContainer::Args{
-				.direction = UI::Direction::Vertical,
-				.gap = UI::space_2,
-				.crossAlign = UI::CrossAlign::Start,
-				.id = "main_menu_identity"});
-			UI::LayoutContainer titleRow(UI::LayoutContainer::Args{
-				.direction = UI::Direction::Horizontal,
-				.gap = 16.0F,
-				.crossAlign = UI::CrossAlign::Center,
-				.id = "main_menu_title_row"});
-			titleRow.addChild(world_sim::Diamond(11.0F, 22.0F, "menu_diamond"));
-			titleRow.addChild(world_sim::Label({.text = "WORLD-SIM",
-												.fontSize = UI::fs_4xl,
-												.color = UI::text_bright,
-												.font = theme::fontDisplay,
-												.letterSpacingEm = UI::ls_wider,
-												.id = "menu_title"}));
-			identity->addChild(std::move(titleRow));
-			identity->addChild(world_sim::Label({.text = "Prospecting Expedition 28-B",
-												 .fontSize = UI::fs_sm,
-												 .color = UI::accent,
-												 .font = theme::fontMono,
-												 .letterSpacingEm = UI::ls_wide,
-												 .transform = Foundation::TextTransform::Uppercase,
-												 .id = "menu_tagline"}));
-
-			menu = std::make_unique<UI::LayoutContainer>(UI::LayoutContainer::Args{
-				.size = {kRowWidth, 0.0F},
-				.direction = UI::Direction::Vertical,
-				.gap = 2.0F,
-				.crossAlign = UI::CrossAlign::Stretch,
-				.id = "main_menu_items"});
-
-			menu->addChild(MenuItemRow({.label = "New Game",
-										.hint = "Begin a new expedition",
-										.glyph = "play",
-										.action = [this]() {
-											world_sim::NewGameSetup::Reset();
-											owner->scenes().switchTo(world_sim::scenes::ScenarioSelect.name);
-										},
-										.primary = true,
-										.id = "menu_new_game"}));
-			menu->addChild(MenuItemRow({.label = "Continue",
-										.hint = "Resume your last colony",
-										.glyph = "refresh",
-										.enabled = false,
-										.id = "menu_continue"}));
-			menu->addChild(MenuItemRow({.label = "Load Game",
-										.hint = "Restore a saved expedition",
-										.glyph = "save",
-										.enabled = false,
-										.id = "menu_load_game"}));
-
-			// Quick Start needs the prebuilt planet shipped next to the exe; if
-			// the build step that bakes it hasn't run, disable the entry rather
-			// than drop the player into a dead loading screen.
-			const bool quickstartReady =
-				Foundation::findResource(world_sim::kQuickstartPlanetResource).has_value();
-			menu->addChild(MenuItemRow({.label = "Quick Start",
-										.hint = quickstartReady
-													? "Jump in on the prebuilt planet"
-													: "Unavailable - run the quickstart-planet build target",
-										.glyph = "bolt",
-										.action = [this]() {
-											auto config = std::make_unique<world_sim::GameStartConfig>();
-											config->source = world_sim::GameStartConfig::Source::QuickStart;
-											world_sim::GameStartConfig::SetPending(std::move(config));
-											owner->scenes().switchTo(world_sim::scenes::GameLoading.name);
-										},
-										.enabled = quickstartReady,
-										.id = "menu_quick_start"}));
-			menu->addChild(MenuItemRow(
-				{.label = "Settings",
-				 .hint = "Graphics, audio, controls",
-				 .glyph = "gear",
-				 .action = [this]() { owner->scenes().switchTo(world_sim::scenes::Settings.name); },
-				 .id = "menu_settings"}
-			));
-			menu->addChild(MenuItemRow({.label = "Credits",
-										.hint = "The crew behind the crew",
-										.glyph = "users",
-										.enabled = false,
-										.id = "menu_credits"}));
-			menu->addChild(MenuItemRow(
-				{.label = "Exit",
-				 .hint = "Quit to desktop",
-				 .glyph = "close",
-				 .action = [this]() { owner->requestExit(); },
-				 .id = "menu_exit"}
-			));
-			itemCount = 7;
+			world_sim::enterSalalUi(app, ui());
+			build();
 		}
 
-		bool handleInput(UI::InputEvent& event) override {
-			return menu && menu->handleEvent(event);
-		}
-
-		void update(const app::FrameContext& frame) override {
-			const auto dt = static_cast<float>(frame.dt);
-			planet.update(dt);
-			if (identity) identity->update(dt);
-			if (menu) menu->update(dt);
-		}
+		void update(const app::FrameContext& frame) override { planet.update(static_cast<float>(frame.dt)); }
 
 		void render(float /*alpha*/) override {
-			using namespace UI;
-			using Renderer::Primitives::drawText;
-
-			glClearColor(bg_void.r, bg_void.g, bg_void.b, 1.0F);
-			glClear(GL_COLOR_BUFFER_BIT);
+			const ui::Theme&		theme = ui().getTheme();
+			const Foundation::Color backdrop = theme.get(tokens::color::bgVoid);
+			Renderer::Primitives::clear(backdrop);
 
 			const float screenW = Renderer::Primitives::PercentWidth(100.0F);
 			const float screenH = Renderer::Primitives::PercentHeight(100.0F);
-			world_sim::renderStarfield(static_cast<int>(screenW), static_cast<int>(screenH), 11U);
+			world_sim::renderStarfield(theme, static_cast<int>(screenW), static_cast<int>(screenH), 11U);
 
-			// Decorative planet docked off the right screen edge, behind the
-			// menu content (its scrim keeps the text legible). Sized against
-			// the viewport (mock proportion) with a floor for small windows;
-			// a quarter of it hangs off the edge.
+			// Docked off the right screen edge, behind the menu (its scrim keeps the text legible), sized
+			// against the viewport with a floor for small windows; a quarter of it hangs off the edge.
 			const float planetSize = std::max(kPlanetMinSize, screenH * 0.55F);
 			const float overhang = planetSize * 0.25F;
-			planet.render({screenW - (planetSize - overhang), (screenH - planetSize) * 0.5F,
-			               planetSize, planetSize},
-			              screenW, screenH);
-
-			// Vertically center the identity + kicker + menu block, positioning
-			// each off measured heights so nothing overlaps.
-			const float identityH = identity ? identity->getHeight() : 92.0F;
-			const float kickerH = fs_2xs * 1.3F;
-			const float menuH = static_cast<float>(itemCount) * (kRowHeight + 2.0F);
-			const float blockH = identityH + space_3 + kickerH + space_3 + menuH;
-			const float y = std::max(80.0F, (screenH - blockH) * 0.5F);
-
-			if (identity) {
-				identity->setPosition(kColX, y);
-				identity->render();
-			}
-
-			// Kicker, then the menu column, each space_3 below the previous block.
-			const float kickerY = y + identityH + space_3;
-			drawText(Renderer::Primitives::TextArgs{
-				.text = "// MAIN MENU",
-				.position = {kColX, kickerY},
-				.scale = textScale(fs_2xs),
-				.color = text_faint,
-				.font = theme::fontMono,
-				.vAlign = Foundation::VerticalAlign::Top,
-				.letterSpacing = fs_2xs * ls_wider});
-
-			if (menu) {
-				menu->setPosition(kColX, kickerY + kickerH + space_3);
-				menu->render();
-			}
-
-			// Footer.
-			const float footerY = screenH - 28.0F;
-			drawText(Renderer::Primitives::TextArgs{
-				.text = "v0.1.0 - Development Build",
-				.position = {kColX, footerY},
-				.scale = textScale(fs_2xs),
-				.color = text_faint,
-				.font = theme::fontMono,
-				.vAlign = Foundation::VerticalAlign::Top});
-			drawText(
-				Renderer::Primitives::TextArgs{
-					.text = "Star system: Maed - Sector 28-B",
-					.position = {kColX, footerY},
-					.scale = textScale(fs_2xs),
-					.color = text_faint,
-					.font = theme::fontMono,
-					.hAlign = Foundation::HorizontalAlign::Right,
-					.vAlign = Foundation::VerticalAlign::Top,
-					.boxWidth = screenW - kColX * 2.0F
-				}
+			planet.render(
+				{screenW - (planetSize - overhang), (screenH - planetSize) * 0.5F, planetSize, planetSize}, screenW, screenH, backdrop
 			);
 		}
 
-		void onExit() override {
-			LOG_INFO(Game, "MainMenuScene - Exiting");
-			identity.reset();
-			menu.reset();
-		}
+		void onExit() override { LOG_INFO(Game, "MainMenuScene - Exiting"); }
 
 		std::string exportState() const override { return R"({"scene": "main_menu"})"; }
 		const char* name() const override { return kSceneName; }
 
-		std::vector<const UI::IComponent*> getUiRoots() const override {
-			std::vector<const UI::IComponent*> roots;
-			if (identity) roots.push_back(identity.get());
-			if (menu) roots.push_back(menu.get());
-			return roots;
-		}
-
 	  private:
-		app::App* owner = nullptr;
-
 		static constexpr float kPlanetMinSize = 640.0F;
 
-		world_sim::DecorativePlanet			 planet;
-		std::unique_ptr<UI::LayoutContainer> identity;
-		std::unique_ptr<UI::LayoutContainer> menu;
-		int									 itemCount = 0;
+		void build() {
+			const ui::Theme& theme = ui().getTheme();
+			const float		 space3 = theme.get(tokens::spacing::space3);
+
+			ui::Ref<ui::Component> column = root().addChild<ui::Component>({
+				.id = "main_menu",
+				.size = {ui::percent(100.0F), ui::percent(100.0F)},
+				.layout = {
+					.display = ui::Display::Flex,
+					.flexDirection = ui::FlexDirection::Column,
+					.gap = space3,
+					.padding = {0.0F, 0.0F, 0.0F, kColX},
+					.alignItems = ui::AlignItems::Start,
+					.justifyContent = ui::JustifyContent::Center
+				},
+			});
+
+			// The identity: the diamond and the title on one row, the tagline below.
+			ui::Ref<ui::Component> identity = column.addChild<ui::Component>({
+				.id = "main_menu_identity",
+				.layout = {
+					.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = theme.get(tokens::spacing::space2)
+				},
+			});
+			ui::Ref<ui::Component> titleRow = identity.addChild<ui::Component>({
+				.id = "main_menu_title_row",
+				.layout = {.display = ui::Display::Flex, .gap = 16.0F, .alignItems = ui::AlignItems::Center},
+			});
+			titleRow.addChild<world_sim::Diamond>({.id = "menu_diamond", .radius = 11.0F});
+			titleRow.addChild<ui::Text>({
+				.id = "menu_title",
+				.style = world_sim::text(
+					theme,
+					{.family = family::display,
+					 .size = tokens::fontSize::fs4xl,
+					 .color = tokens::color::textBright,
+					 .tracking = tokens::letterSpacing::lsWider}
+				),
+				.text = "WORLD-SIM",
+			});
+			identity.addChild<ui::Text>({
+				.id = "menu_tagline",
+				.style = world_sim::text(
+					theme,
+					{.family = family::mono,
+					 .size = tokens::fontSize::fsSm,
+					 .color = tokens::color::accent,
+					 .tracking = tokens::letterSpacing::lsWide,
+					 .transform = Foundation::TextTransform::Uppercase}
+				),
+				.text = "Prospecting Expedition 28-B",
+			});
+
+			column.addChild<ui::Text>({
+				.id = "menu_kicker",
+				.style = world_sim::text(
+					theme,
+					{.family = family::mono,
+					 .size = tokens::fontSize::fs2xs,
+					 .color = tokens::color::textFaint,
+					 .tracking = tokens::letterSpacing::lsWider}
+				),
+				.text = "// MAIN MENU",
+			});
+
+			menu = column.addChild<ui::Component>({
+				.id = "main_menu_items",
+				.size = {kRowWidth, ui::kAuto},
+				.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = 2.0F},
+			});
+			item("menu_new_game", "New Game", "Begin a new expedition", "play", true, [this] {
+				world_sim::NewGameSetup::Reset();
+				owner->scenes().switchTo(world_sim::scenes::ScenarioSelect.name);
+			});
+			item("menu_continue", "Continue", "Resume your last colony", "refresh", false, nullptr);
+			item("menu_load_game", "Load Game", "Restore a saved expedition", "save", false, nullptr);
+			// Quick Start needs the prebuilt planet shipped next to the exe; if the build step that bakes
+			// it hasn't run, the entry is disabled rather than dropping the player into a dead loading
+			// screen.
+			const bool quickstartReady = Foundation::findResource(world_sim::kQuickstartPlanetResource).has_value();
+			item(
+				"menu_quick_start",
+				"Quick Start",
+				quickstartReady ? "Jump in on the prebuilt planet" : "Unavailable - run the quickstart-planet build target",
+				"bolt",
+				quickstartReady,
+				[this] {
+					auto config = std::make_unique<world_sim::GameStartConfig>();
+					config->source = world_sim::GameStartConfig::Source::QuickStart;
+					world_sim::GameStartConfig::SetPending(std::move(config));
+					owner->scenes().switchTo(world_sim::scenes::GameLoading.name);
+				}
+			);
+			item("menu_settings", "Settings", "Graphics, audio, controls", "gear", true, [this] {
+				owner->scenes().switchTo(world_sim::scenes::Settings.name);
+			});
+			item("menu_credits", "Credits", "The crew behind the crew", "users", false, nullptr);
+			item("menu_exit", "Exit", "Quit to desktop", "close", true, [this] { owner->requestExit(); });
+			const ui::Style footer =
+				world_sim::text(theme, {.family = family::mono, .size = tokens::fontSize::fs2xs, .color = tokens::color::textFaint});
+			root().addChild<ui::Text>({
+				.id = "menu_version",
+				.layout = {.position = ui::Position::Absolute, .inset = {.bottom = 16.0F, .left = kColX}},
+				.style = footer,
+				.text = "v0.1.0 - Development Build",
+			});
+			root().addChild<ui::Text>({
+				.id = "menu_system",
+				.layout = {.position = ui::Position::Absolute, .inset = {.right = kColX, .bottom = 16.0F}},
+				.style = footer,
+				.text = "Star system: Maed - Sector 28-B",
+			});
+		}
+
+		ui::Ref<ui::ListRow>
+		item(const char* id, const char* label, const std::string& hint, const char* icon, bool enabled, std::function<void()> action) {
+			return menu.addChild<ui::ListRow>({
+				.id = id,
+				.enabled = enabled,
+				.size = {ui::percent(100.0F), kRowHeight},
+				.label = label,
+				.trailing = hint,
+				.icon = icon,
+				.onPress = std::move(action),
+			});
+		}
+
+		app::App*					owner = nullptr;
+		world_sim::DecorativePlanet planet;
+		ui::Ref<ui::Component>		menu;
 	};
 
 } // namespace

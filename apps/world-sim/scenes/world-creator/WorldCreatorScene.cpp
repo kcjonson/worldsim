@@ -1,7 +1,7 @@
 // World Creator Scene
 // Three model states over a shared starfield -- Configuring (empty stage; the
 // globe appears only once generated), Generating (progress strip), Reviewing
-// (final globe) -- in a 360 | stage | 360 grid. The parameter sidebar carries
+// (final globe) -- in a 360 | stage | 360 row. The parameter sidebar carries
 // a full-width Generate/Cancel button at its bottom; the right column stacks
 // the World Survey pane and, once a site is picked, the Landing Zone pane.
 // Landing selection lives in Reviewing: pick on the globe, then Confirm
@@ -14,30 +14,26 @@
 #include "scenes/landing/LandingSiteDetailsModel.h"
 #include "scenes/landing/LandingSiteDetailsPanel.h"
 #include "scenes/shared/GlobeView.h"
+#include "scenes/shared/SalalUi.h"
 #include "scenes/shared/Starfield.h"
-#include "scenes/shared/Widgets.h"
 #include "ui/ParameterPanel.h"
 #include "ui/WorldSurveyPanel.h"
-
-#include <GL/glew.h>
 
 #include <worldgen/data/WorldData.h>
 #include <worldgen/io/PlanetIO.h>
 #include <worldgen/sampling/LandingSite.h>
 
 #include <app/Keys.h>
-#include <app/UiScene.h>
 #include <application/App.h>
-#include <components/button/Button.h>
-#include <components/dialog/Dialog.h>
-#include <components/segmentedcontrol/SegmentedControl.h>
 #include <graphics/Color.h>
-#include <input/InputEvent.h>
-#include <layout/LayoutContainer.h>
 #include <primitives/Primitives.h>
-#include <shapes/Shapes.h>
-#include <theme/CssTokens.h>
-#include <theme/Tones.h>
+#include <theme/Panel.h>
+#include <ui/components/Button.h>
+#include <ui/components/Dialog.h>
+#include <ui/components/ProgressBar.h>
+#include <ui/components/SegmentedControl.h>
+#include <ui/shapes/Rectangle.h>
+#include <ui/shapes/Text.h>
 #include <utils/Log.h>
 
 #include <algorithm>
@@ -68,11 +64,29 @@ constexpr uint32_t kInitialSubdivision = 256;
 // Viz switcher options and their color modes (right-click cycling can still
 // reach the other analyst modes; the dock then shows no active segment).
 constexpr std::array<planetview::ColorMode, 4> kVizModes{
-	planetview::ColorMode::Terrain, planetview::ColorMode::Biome,
-	planetview::ColorMode::Temperature, planetview::ColorMode::Precipitation};
-const std::vector<std::string> kVizLabels{"Terrain", "Biomes", "Temp", "Rain"};
+	planetview::ColorMode::Terrain,
+	planetview::ColorMode::Biome,
+	planetview::ColorMode::Temperature,
+	planetview::ColorMode::Precipitation
+};
 
-class WorldCreatorScene : public engine::UiScene {
+namespace tokens = world_sim::tokens;
+namespace family = ui::tokens::font::family;
+
+// Shows or hides a component when that changes.
+void show(ui::Component* component, bool visible) {
+	if (component != nullptr && component->isVisible() != visible) {
+		component->setVisible(visible);
+	}
+}
+
+void enable(ui::Component* component, bool enabled) {
+	if (component != nullptr && component->isEnabled() != enabled) {
+		component->setEnabled(enabled);
+	}
+}
+
+class WorldCreatorScene : public app::Scene {
   public:
 	const char* name() const override { return kSceneName; }
 	std::string exportState() const override {
@@ -81,20 +95,16 @@ class WorldCreatorScene : public engine::UiScene {
 			static_cast<int>(model.getState()),
 			globe.isReady() ? "true" : "false",
 			siteValid ? "true" : "false",
-			(confirmDialog && confirmDialog->isOpen()) ? "true" : "false");
+			confirmDialog.get() != nullptr ? "true" : "false"
+		);
 	}
 
 	void onEnter(app::App& app) override {
 		owner = &app;
 		LOG_INFO(Game, "WorldCreatorScene - Entering");
+		world_sim::enterSalalUi(app, ui());
 
-		int vpW = 0;
-		int vpH = 0;
-		Renderer::Primitives::getLogicalViewport(vpW, vpH);
-		viewportW = static_cast<float>(vpW);
-		viewportH = static_cast<float>(vpH);
-
-		buildUI();
+		build();
 
 		// Pre-fill a random seed so the field isn't blank on entry.
 		// Uses the same mechanism as the Random button.
@@ -103,73 +113,15 @@ class WorldCreatorScene : public engine::UiScene {
 		refreshFooter();
 	}
 
-	void onExit() override {
-		LOG_INFO(Game, "WorldCreatorScene - Exiting");
-		panel.reset();
-		surveyFooter.reset();
-		confirmDialog.reset();
-		statusLabel = nullptr;
-		footerActions = nullptr;
-		generateButton = nullptr;
-		cancelButton = nullptr;
-		regenerateButton = nullptr;
-		acceptButton = nullptr;
-		confirmBody = nullptr;
-		confirmCancel = nullptr;
-		confirmLand = nullptr;
-	}
-
-	bool handleInput(UI::InputEvent& event) override {
-		if (confirmDialog && confirmDialog->isOpen()) {
-			confirmDialog->handleEvent(event);
-			return true; // modal: swallow everything while open
-		}
-
-		const bool reviewing =
-			model.getState() == world_sim::WorldCreatorState::Reviewing;
-
-		// Mid-drag the globe owns the mouse: widgets must not see the moves
-		// (hover flicker) and the drag-ending MouseUp belongs to the camera.
-		if (reviewing && globe.isDragging() &&
-		    globe.handleInput(event, stageRect(), true)) {
-			return true;
-		}
-
-		if (generateButton && generateButton->visible && generateButton->handleEvent(event)) return true;
-		if (cancelButton && cancelButton->visible && cancelButton->handleEvent(event)) return true;
-		if (panel && panel->handleEvent(event)) return true;
-		if (activeFooter() != nullptr && activeFooter()->handleEvent(event)) return true;
-
-		// Outside Reviewing the globe doesn't exist on screen: nothing to orbit
-		// or pick.
-		if (!reviewing) return false;
-
-		// Viz dock: a click on a segment switches the globe's color mode.
-		if (event.type == UI::InputEvent::Type::MouseUp &&
-		    event.button == foundation::MouseButton::Left && handleVizClick(event.position)) {
-			event.consume();
-			return true;
-		}
-
-		// Pick before orbit-drag so a left click selects the tile under the
-		// cursor; the same click then begins an orbit drag.
-		if (event.type == UI::InputEvent::Type::MouseDown &&
-		    event.button == foundation::MouseButton::Left) {
-			if (auto picked = globe.pick(event.position, stageRect())) {
-				trySelectSite(*picked);
-			}
-		}
-		return globe.handleInput(event, stageRect(), true);
-	}
+	void onExit() override { LOG_INFO(Game, "WorldCreatorScene - Exiting"); }
 
 	void update(const app::FrameContext& frame) override {
 		const auto dt = static_cast<float>(frame.dt);
-		if (confirmDialog) confirmDialog->update(dt);
 
-		if (engine::key(frame.input, foundation::Key::Escape).pressed()) {
-			if (confirmDialog && confirmDialog->isOpen()) {
-				return; // dialog handles its own escape
-			}
+		// A dialog closed by this frame's Escape mustn't also back the scene out.
+		const bool dialogEscape = confirmDialog.get() != nullptr || dialogClosed;
+		dialogClosed = false;
+		if (engine::key(frame.input, foundation::Key::Escape).pressed() && !dialogEscape) {
 			// ESC backs out: Configuring returns to the crew step of the New
 			// Game flow; Generating/Reviewing keep bailing to the main menu.
 			if (model.getState() == world_sim::WorldCreatorState::Configuring) {
@@ -192,8 +144,7 @@ class WorldCreatorScene : public engine::UiScene {
 
 		if (state == world_sim::WorldCreatorState::Generating) {
 			auto prog = model.pollProgress();
-			progressFraction = prog.totalFraction;
-			progressStage = prog.stageName != nullptr ? prog.stageName : "";
+			showProgress(prog.totalFraction, prog.stageName != nullptr ? prog.stageName : "");
 
 			// Re-check after poll (state may have changed)
 			auto newState = model.getState();
@@ -201,127 +152,54 @@ class WorldCreatorScene : public engine::UiScene {
 				// Anything other than a clean completion or a user cancel is an error
 				if (newState == world_sim::WorldCreatorState::Configuring &&
 				    prog.state != worldgen::GenerationProgress::State::Cancelled) {
-					errorText = "World generation failed. Adjust parameters and try again.";
+					setError("World generation failed. Adjust parameters and try again.");
 					LOG_ERROR(Game, "WorldCreatorScene: generation ended without a result (state=%d)",
 					          static_cast<int>(prog.state));
 				}
 				onStateChanged(newState);
 			}
-		} else if (state == world_sim::WorldCreatorState::Reviewing) {
+		} else if (state == world_sim::WorldCreatorState::Reviewing && confirmDialog.get() == nullptr) {
 			handleCameraKeys(frame.input, dt);
 		}
 
-		if (state == world_sim::WorldCreatorState::Configuring && generateButton) {
-			generateButton->setDisabled(panel && !panel->seedIsValid());
-		}
-		if (state == world_sim::WorldCreatorState::Reviewing && acceptButton != nullptr) {
-			acceptButton->setDisabled(!siteValid); // stays in sync as the player re-picks a site
-		}
+		enable(generateButton.get(), panel.seedIsValid());
+		enable(acceptButton.get(), siteValid); // stays in sync as the player re-picks a site
 
-		if (panel) { panel->update(dt); }
-		if (generateButton) generateButton->update(dt);
-		if (cancelButton) cancelButton->update(dt);
-		if (activeFooter() != nullptr) activeFooter()->update(dt);
+		const bool ready = model.getState() == world_sim::WorldCreatorState::Reviewing && globe.isReady();
+		show(stageHint.get(), ready);
+		show(vizDock.get(), ready);
+		// Right-click cycling reaches modes the dock hasn't got; it then shows none.
+		if (ui::SegmentedControl* viz = vizControl.get(); viz != nullptr && viz->getSelected() != vizIndex()) {
+			viz->setSelected(vizIndex());
+		}
 	}
 
 	void render(float /*alpha*/) override {
-		glClearColor(UI::bg_void.r, UI::bg_void.g, UI::bg_void.b, 1.0F);
-		glClear(GL_COLOR_BUFFER_BIT);
+		const ui::Theme& theme = ui().getTheme();
+		Renderer::Primitives::clear(theme.get(tokens::color::bgVoid));
 
 		int vpW = 0;
 		int vpH = 0;
 		Renderer::Primitives::getLogicalViewport(vpW, vpH);
-		if (vpW > 0 && vpH > 0) {
-			viewportW = static_cast<float>(vpW);
-			viewportH = static_cast<float>(vpH);
-		}
+		const auto viewportW = static_cast<float>(vpW);
+		const auto viewportH = static_cast<float>(vpH);
 
-		world_sim::renderStarfield(static_cast<int>(viewportW), static_cast<int>(viewportH), 5U, true);
-
-		Foundation::Rect stage = stageRect();
-		auto			 state = model.getState();
+		world_sim::renderStarfield(theme, vpW, vpH, 5U, true);
 
 		// No planet is shown until generation completes: the stage stays empty
 		// while configuring, shows only the progress strip while generating, and
 		// reveals the real globe once it is ready. Never a stand-in world.
-		const bool showGlobe =
-			state == world_sim::WorldCreatorState::Reviewing && globe.isReady();
+		if (model.getState() != world_sim::WorldCreatorState::Reviewing || !globe.isReady()) {
+			return;
+		}
 
-		// 3D pass first: Primitives batches flush after the scene, so all 2D
-		// UI composites on top of the blitted globe. The explicit flush paints
+		// 3D pass first: Primitives batches flush after the scene, so the ui
+		// composites on top of the blitted globe. The explicit flush paints
 		// the starfield beneath the blit.
-		if (showGlobe) {
-			Renderer::Primitives::flush();
-			globe.render(stage, viewportW, viewportH);
-		}
-
-		renderHeader();
-
-		const float columnH = footerTop() - kContentTop - kColumnGap;
-		{
-			if (panel) { panel->render(columnH); }
-
-			// Generate / Cancel pinned full-width to the bottom of the sidebar.
-			UI::Button* sideAction = generateButton && generateButton->visible ? generateButton.get()
-									 : (cancelButton && cancelButton->visible ? cancelButton.get() : nullptr);
-			if (sideAction != nullptr) {
-				const float bh = 40.0F;
-				sideAction->setPosition(kMarginX + 12.0F, kContentTop + columnH - bh - 12.0F);
-				sideAction->render();
-			}
-
-			// Right column: World Survey on top. Once reviewing a ready world with
-			// a chosen site, the Landing Zone pane stacks directly beneath it.
-			const float rightX = viewportW - kMarginX - kRightColW;
-			const bool	reviewingReady =
-				state == world_sim::WorldCreatorState::Reviewing && globe.isReady();
-			if (reviewingReady) {
-				const float surveyH = surveyPanel.contentHeight(kRightColW);
-				surveyPanel.render({rightX, kContentTop, kRightColW, surveyH});
-				if (siteValid) {
-					const float landingY = kContentTop + surveyH + kColumnGap;
-					detailsPanel.render(details, {rightX, landingY, kRightColW,
-												  kContentTop + columnH - landingY});
-				}
-			} else {
-				surveyPanel.render({rightX, kContentTop, kRightColW, columnH});
-			}
-		}
-
-		if (state == world_sim::WorldCreatorState::Generating) {
-			renderProgress(stage);
-		} else if (state == world_sim::WorldCreatorState::Reviewing) {
-			renderReviewing(stage);
-		} else if (!errorText.empty()) {
-			UI::Text err(UI::Text::Args{
-				.position = {stage.x, stage.y + stage.height - 24.0F},
-				.text = errorText,
-				.style = {
-					.color = UI::status_crit,
-					.fontSize = UI::fs_md,
-					.hAlign = Foundation::HorizontalAlign::Left,
-					.vAlign = Foundation::VerticalAlign::Middle,
-				},
-			});
-			err.render();
-		}
-
-		renderFooter();
-
-		renderEscHint();
-
-		if (confirmDialog && confirmDialog->isOpen()) {
-			confirmDialog->render();
-		}
-	}
-
-	std::vector<const UI::IComponent*> getUiRoots() const override {
-		std::vector<const UI::IComponent*> roots;
-		if (activeFooter() != nullptr) roots.push_back(activeFooter());
-		if (generateButton && generateButton->visible) roots.push_back(generateButton.get());
-		if (cancelButton && cancelButton->visible) roots.push_back(cancelButton.get());
-		if (confirmDialog && confirmDialog->isOpen()) roots.push_back(confirmDialog.get());
-		return roots;
+		const Foundation::Rect rect = stageRect();
+		Renderer::Primitives::flush();
+		globe.render(rect, viewportW, viewportH);
+		renderMarker(rect, theme);
 	}
 
   private:
@@ -329,59 +207,46 @@ class WorldCreatorScene : public engine::UiScene {
 
 	world_sim::WorldCreatorModel model;
 
-	float viewportW{1280.0F};
-	float viewportH{720.0F};
+	world_sim::ParameterPanel		   panel{callbacks()};
+	world_sim::WorldSurveyPanel		   surveyPanel;
+	world_sim::LandingSiteDetailsPanel detailsPanel;
 
-	std::unique_ptr<world_sim::ParameterPanel> panel;
-	world_sim::WorldSurveyPanel				   surveyPanel;
-
-	// Footer bars: survey (Back | status | Generate/Cancel/Regenerate+Accept)
-	// and landing (note | Confirm Landing Site).
-	std::unique_ptr<UI::LayoutContainer> surveyFooter;
-	world_sim::Label*					 statusLabel{nullptr};
-	UI::LayoutContainer*				 footerActions{nullptr};
-	std::unique_ptr<UI::Button>			 generateButton; // bottom of the sidebar
-	std::unique_ptr<UI::Button>			 cancelButton;	 // bottom of the sidebar
-	UI::Button*							 regenerateButton{nullptr};
-	UI::Button*							 acceptButton{nullptr};
-	std::unique_ptr<UI::Dialog>			 confirmDialog;
-	UI::Text*							 confirmBody{nullptr};
-	UI::Button*							 confirmCancel{nullptr};
-	UI::Button*							 confirmLand{nullptr};
-	Foundation::Vec2					 footerLayoutViewport{0.0F, 0.0F};
+	ui::Ref<ui::Component>		  stage;
+	ui::Ref<ui::Component>		  landingHost;
+	ui::Ref<ui::Button>			  generateButton; // bottom of the sidebar
+	ui::Ref<ui::Button>			  cancelButton;	  // bottom of the sidebar
+	ui::Ref<ui::Text>			  statusText;
+	ui::Ref<ui::Button>			  regenerateButton;
+	ui::Ref<ui::Button>			  acceptButton;
+	ui::Ref<ui::Text>			  escHint;
+	ui::Ref<ui::Text>			  stageHint;
+	ui::Ref<ui::Text>			  pickHintText;
+	ui::Ref<ui::Text>			  errorText;
+	ui::Ref<ui::Component>		  vizDock;
+	ui::Ref<ui::SegmentedControl> vizControl;
+	ui::Ref<ui::Component>		  progressStrip;
+	ui::Ref<ui::Text>			  progressStage;
+	ui::Ref<ui::Text>			  progressPercent;
+	ui::Ref<ui::ProgressBar>	  progressBar;
+	ui::Ref<ui::Dialog>			  confirmDialog;
+	bool						  dialogClosed = false;
 
 	world_sim::GlobeView globe;
-	std::string errorText;
-	float		progressFraction{0.0F};
-	std::string progressStage;
-	float		markerPulse{0.0F};
+	float				 markerPulse{0.0F};
 
 	// Landing selection (Reviewing only). The site auto-suggests on completion
 	// and updates on each land-tile click.
-	planetview::LatLon                 selectedSite{};
-	bool                               siteValid{false};
-	std::string                        pickHint;
-	world_sim::LandingSiteDetails      details;
-	world_sim::LandingSiteDetailsPanel detailsPanel;
+	planetview::LatLon			  selectedSite{};
+	bool						  siteValid{false};
+	world_sim::LandingSiteDetails details;
 
-	float footerTop() const { return viewportH - kFooterHeight; }
-
-	// Stage (globe area) between the parameter sidebar and the right column.
+	// Stage (globe area) between the parameter sidebar and the right column, as the last layout put it.
 	Foundation::Rect stageRect() const {
-		const float top = kContentTop;
-		const float height = footerTop() - kColumnGap - top;
-		const float x = kMarginX + world_sim::ParameterPanel::kPanelWidth + kColumnGap;
-		const float width = viewportW - x - kRightColW - kColumnGap - kMarginX;
-		return {x, top, width, height};
+		const ui::Component* shown = stage.get();
+		return shown != nullptr ? shown->screenBounds() : Foundation::Rect{};
 	}
 
-	UI::LayoutContainer* activeFooter() const {
-		return surveyFooter.get();
-	}
-
-	void buildUI() {
-		using namespace UI;
-
+	world_sim::ParameterPanelCallbacks callbacks() {
 		world_sim::ParameterPanelCallbacks cbs;
 		cbs.onPresetChanged = [this](const std::string& val) {
 			worldgen::Preset preset = worldgen::Preset::EarthLike;
@@ -416,197 +281,424 @@ class WorldCreatorScene : public engine::UiScene {
 			model.randomizeSeed();
 			syncPanelFromModel();
 		};
-
-		panel = std::make_unique<world_sim::ParameterPanel>(
-			Foundation::Vec2{kMarginX, kContentTop}, std::move(cbs));
-		model.setGridSubdivision(kInitialSubdivision);
-		surveyPanel.setWorld(nullptr);
-
-		// Survey footer: Back | status | actions.
-		surveyFooter = std::make_unique<LayoutContainer>(LayoutContainer::Args{
-			.size = {1.0F, 40.0F},
-			.direction = Direction::Horizontal,
-			.gap = space_4,
-			.crossAlign = CrossAlign::Center,
-			.id = "wc_footer"});
-		surveyFooter->addChild(Button(Button::Args{
-			.label = "Back",
-			.size = {120.0F, 40.0F},
-			.type = Button::Type::Secondary,
-			.onClick = [this]() { goBackToParty(); },
-			.id = "btn_wc_back",
-			.iconGlyph = "chevronLeft"}));
-		world_sim::Label status({
-			.text = "Awaiting generation",
-			.fontSize = fs_xs,
-			.color = text_dim,
-			.font = theme::fontMono,
-			.letterSpacingEm = ls_wide,
-			.hAlign = Foundation::HorizontalAlign::Center,
-			.id = "wc_status"});
-		status.widthMode = SizeMode::Fill;
-		LayerHandle statusHandle = surveyFooter->addChild(std::move(status));
-
-		// Fixed width + End distribution: swapping which action buttons are
-		// visible re-lays inside a stable box (a Hug box would ratchet to the
-		// first layout's width and overflow when wider sets appear).
-		LayoutContainer actions(LayoutContainer::Args{
-			.size = {400.0F, 40.0F},
-			.direction = Direction::Horizontal, .gap = space_3,
-			.distribution = Distribution::End, .crossAlign = CrossAlign::Center,
-			.id = "wc_footer_actions"});
-		LayerHandle regenHandle = actions.addChild(Button(Button::Args{
-			.label = "Regenerate",
-			.size = {150.0F, 40.0F},
-			.type = Button::Type::Ghost,
-			.onClick = [this]() { startGeneration(); },
-			.id = "btn_wc_regenerate",
-			.iconGlyph = "refresh"}));
-		LayerHandle acceptHandle = actions.addChild(Button(Button::Args{
-			.label = "Confirm Landing Site",
-			.size = {230.0F, 40.0F},
-			.type = Button::Type::Primary,
-			.onClick = [this]() { openConfirmDialog(); },
-			.id = "btn_wc_accept",
-			.iconGlyph = "rocket"}));
-		LayerHandle actionsHandle = surveyFooter->addChild(std::move(actions));
-
-		footerActions = surveyFooter->getChild<LayoutContainer>(actionsHandle);
-		statusLabel = surveyFooter->getChild<world_sim::Label>(statusHandle);
-		regenerateButton = footerActions->getChild<Button>(regenHandle);
-		acceptButton = footerActions->getChild<Button>(acceptHandle);
-
-		// Generate / Cancel live at the bottom of the parameter sidebar, not the
-		// footer. Full sidebar width; positioned in render(). The scene owns them.
-		const float sideW = world_sim::ParameterPanel::kPanelWidth - 24.0F;
-		generateButton = std::make_unique<Button>(Button::Args{
-			.label = "Generate",
-			.size = {sideW, 40.0F},
-			.type = Button::Type::Primary,
-			.onClick = [this]() { startGeneration(); },
-			.id = "btn_wc_generate",
-			.iconGlyph = "globe"});
-		cancelButton = std::make_unique<Button>(Button::Args{
-			.label = "Cancel",
-			.size = {sideW, 40.0F},
-			.type = Button::Type::Secondary,
-			.onClick = [this]() { model.cancelGeneration(); },
-			.id = "btn_wc_cancel"});
-
-		// Commit-to-descent confirmation.
-		confirmDialog = std::make_unique<Dialog>(Dialog::Args{
-			.title = "Commit to Descent",
-			.kicker = "Confirm",
-			.size = {440.0F, 216.0F},
-			.modal = true});
-		confirmDialog->zIndex = static_cast<short>(z_modal); // overlay layer for the lint's sibling rule
-		LayerHandle bodyHandle = confirmDialog->addChild(Text(Text::Args{
-			.text = "",
-			.style = {.color = text, .fontSize = fs_md, .wordWrap = true},
-			.id = "confirm_body"}));
-		LayerHandle cancelBtnHandle = confirmDialog->addChild(Button(Button::Args{
-			.label = "Cancel",
-			.size = {110.0F, 36.0F},
-			.type = Button::Type::Secondary,
-			.onClick = [this]() { confirmDialog->close(); },
-			.id = "btn_descent_cancel"}));
-		LayerHandle landBtnHandle = confirmDialog->addChild(Button(Button::Args{
-			.label = "Begin Descent",
-			.size = {170.0F, 36.0F},
-			.type = Button::Type::Primary,
-			.onClick = [this]() {
-				confirmDialog->close();
-				land();
-			},
-			.id = "btn_begin_descent",
-			.iconGlyph = "rocket"}));
-		confirmBody = confirmDialog->getChild<Text>(bodyHandle);
-		confirmCancel = confirmDialog->getChild<Button>(cancelBtnHandle);
-		confirmLand = confirmDialog->getChild<Button>(landBtnHandle);
+		return cbs;
 	}
+
+	void build() {
+		const ui::Theme& theme = ui().getTheme();
+		const float		 space3 = theme.get(tokens::spacing::space3);
+		const float		 space4 = theme.get(tokens::spacing::space4);
+		const ui::Style	 mono = world_sim::text(
+			 theme,
+			 {.family = family::mono,
+			  .size = tokens::fontSize::fsXs,
+			  .color = tokens::color::textDim,
+			  .tracking = tokens::letterSpacing::lsWide}
+		 );
+
+		ui::Ref<ui::Component> screen = root().addChild<ui::Component>({
+			.id = "world_creator",
+			.size = {ui::percent(100.0F), ui::percent(100.0F)},
+			.layout = {
+				.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .padding = {0.0F, kMarginX, 0.0F, kMarginX}
+			},
+		});
+
+		// Header: kicker over the title, the ESC hint at the right.
+		ui::Ref<ui::Component> header = screen.addChild<ui::Component>({
+			.size = {ui::percent(100.0F), kContentTop},
+			.layout = {
+				.display = ui::Display::Flex,
+				.padding = {20.0F, 0.0F, 0.0F, 0.0F},
+				.alignItems = ui::AlignItems::Start,
+				.justifyContent = ui::JustifyContent::SpaceBetween
+			},
+		});
+		ui::Ref<ui::Component> titles = header.addChild<ui::Component>({
+			.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = 6.0F},
+		});
+		titles.addChild<ui::Text>({
+			.id = "wc_kicker",
+			.style = world_sim::text(
+				theme,
+				{.family = family::mono,
+				 .size = tokens::fontSize::fs2xs,
+				 .color = tokens::color::textFaint,
+				 .tracking = tokens::letterSpacing::lsWider}
+			),
+			.text = "// NEW GAME    STEP 03 / 03",
+		});
+		titles.addChild<ui::Text>({
+			.id = "wc_title",
+			.style = world_sim::text(
+				theme,
+				{.family = family::display,
+				 .size = tokens::fontSize::fs3xl,
+				 .color = tokens::color::textBright,
+				 .tracking = tokens::letterSpacing::lsWide}
+			),
+			.text = "Generate Planet",
+		});
+		escHint = header.addChild<ui::Text>({
+			.id = "wc_esc_hint",
+			.style = world_sim::text(theme, {.size = tokens::fontSize::fsBase, .color = tokens::color::textDim}),
+			.text = "ESC: Back to crew",
+		});
+
+		// The three columns.
+		ui::Ref<ui::Component> columns = screen.addChild<ui::Component>({
+			.size = {ui::percent(100.0F), 0.0F},
+			.margin = {0.0F, 0.0F, kColumnGap, 0.0F},
+			.layout = {.display = ui::Display::Flex, .gap = kColumnGap, .flexGrow = 1.0F},
+		});
+
+		ui::Ref<::theme::Panel> sidebar = columns.addChild<::theme::Panel>({
+			.id = "wc_parameters",
+			.size = {world_sim::ParameterPanel::kPanelWidth, ui::kAuto},
+			.title = "Parameters",
+			.kicker = "Survey Config",
+			.accent = ::theme::PanelAccent::Data,
+		});
+		if (const ::theme::Panel* shown = sidebar.get()) {
+			ui::Ref<ui::Component> body = shown->body();
+			model.setGridSubdivision(kInitialSubdivision);
+			panel.build(body, theme);
+			// Generate / Cancel pinned full-width to the bottom of the sidebar.
+			generateButton = body.addChild<ui::Button>({
+				.id = "btn_wc_generate",
+				.size = {ui::percent(100.0F), 40.0F},
+				.margin = {space3, 0.0F, 0.0F, 0.0F},
+				.label = "Generate",
+				.icon = "globe",
+				.variant = ui::ButtonVariant::Primary,
+				.onPress = [this] { startGeneration(); },
+			});
+			cancelButton = body.addChild<ui::Button>({
+				.id = "btn_wc_cancel",
+				.visible = false,
+				.size = {ui::percent(100.0F), 40.0F},
+				.margin = {space3, 0.0F, 0.0F, 0.0F},
+				.label = "Cancel",
+				.onPress = [this] { model.cancelGeneration(); },
+			});
+		}
+
+		stage = columns.addChild<ui::Component>({
+			.id = "wc_stage",
+			.size = {0.0F, ui::percent(100.0F)},
+			.layout = {.flexGrow = 1.0F},
+			.pointerEvents = ui::PointerEvents::Auto,
+			.onPointerDown = [this](ui::PointerEvent& event) { stagePress(event); },
+			.onPointerUp = [this](ui::PointerEvent& event) { globe.handleInput(event, stageRect(), true); },
+			.onPointerMove =
+				[this](ui::PointerEvent& event) {
+					if (globe.isDragging()) {
+						globe.handleInput(event, stageRect(), true);
+					}
+				},
+		});
+		if (ui::Component* shownStage = stage.get()) {
+			shownStage->setOnPointer(ui::PointerEvent::Type::Wheel, [this](ui::PointerEvent& event) {
+				if (reviewing()) {
+					globe.handleInput(event, stageRect(), true);
+				}
+			});
+			shownStage->setOnPointer(ui::PointerEvent::Type::Cancel, [this](ui::PointerEvent& event) {
+				globe.handleInput(event, stageRect(), true);
+			});
+		}
+		buildStage(theme, mono);
+
+		ui::Ref<ui::Component> right = columns.addChild<ui::Component>({
+			.id = "wc_right",
+			.size = {kRightColW, ui::kAuto},
+			.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = kColumnGap},
+		});
+		surveyPanel.mount(
+			right.addChild<ui::Component>(
+				{.id = "wc_survey", .layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column}}
+			),
+			theme
+		);
+		landingHost = right.addChild<ui::Component>({
+			.id = "wc_landing",
+			.visible = false,
+			.size = {ui::percent(100.0F), 0.0F},
+			.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .flexGrow = 1.0F},
+		});
+		detailsPanel.mount(landingHost, theme);
+
+		// Footer: a hairline, then Back | status | actions.
+		ui::Ref<ui::Component> footer = screen.addChild<ui::Component>({
+			.size = {ui::percent(100.0F), kFooterHeight},
+			.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = 15.0F},
+		});
+		footer.addChild<ui::Rectangle>(
+			{.size = {ui::percent(100.0F), 1.0F}, .style = {.backgroundColor = theme.get(tokens::color::lineHairline)}}
+		);
+		ui::Ref<ui::Component> bar = footer.addChild<ui::Component>({
+			.id = "wc_footer",
+			.size = {ui::percent(100.0F), 40.0F},
+			.layout = {.display = ui::Display::Flex, .gap = space4, .alignItems = ui::AlignItems::Center},
+		});
+		bar.addChild<ui::Button>({
+			.id = "btn_wc_back",
+			.size = {120.0F, 40.0F},
+			.label = "Back",
+			.icon = "chevronLeft",
+			.onPress = [this] { goBackToParty(); },
+		});
+		ui::Style status = mono;
+		status.textAlign = Foundation::HorizontalAlign::Center;
+		statusText = bar.addChild<ui::Text>({
+			.id = "wc_status",
+			.size = {0.0F, ui::kAuto},
+			.layout = {.flexGrow = 1.0F},
+			.style = status,
+			.text = "Awaiting generation",
+		});
+		ui::Ref<ui::Component> actions = bar.addChild<ui::Component>({
+			.id = "wc_footer_actions",
+			.layout = {.display = ui::Display::Flex, .gap = space3, .alignItems = ui::AlignItems::Center},
+		});
+		regenerateButton = actions.addChild<ui::Button>({
+			.id = "btn_wc_regenerate",
+			.visible = false,
+			.size = {150.0F, 40.0F},
+			.label = "Regenerate",
+			.icon = "refresh",
+			.variant = ui::ButtonVariant::Ghost,
+			.onPress = [this] { startGeneration(); },
+		});
+		acceptButton = actions.addChild<ui::Button>({
+			.id = "btn_wc_accept",
+			.visible = false,
+			.size = {230.0F, 40.0F},
+			.label = "Confirm Landing Site",
+			.icon = "rocket",
+			.variant = ui::ButtonVariant::Primary,
+			.onPress = [this] { openConfirmDialog(); },
+		});
+
+		surveyPanel.setWorld(nullptr);
+	}
+
+	// What sits over the globe: the crosshair hint at the top, the viz dock, the pick hint and the
+	// progress strip at the foot, and a failed generation's error.
+	void buildStage(const ui::Theme& theme, const ui::Style& mono) {
+		const float space4 = theme.get(tokens::spacing::space4);
+		ui::Style	hint = mono;
+		hint.textAlign = Foundation::HorizontalAlign::Center;
+		stageHint = stage.addChild<ui::Text>({
+			.id = "wc_stage_hint",
+			.visible = false,
+			.layout = {.position = ui::Position::Absolute, .inset = {.top = space4, .right = 0.0F, .left = 0.0F}},
+			.style = hint,
+			.text = "Click the surface to set your descent vector",
+		});
+
+		ui::Style pick = world_sim::text(
+			theme, {.size = tokens::fontSize::fsMd, .color = tokens::color::statusWarn, .align = Foundation::HorizontalAlign::Center}
+		);
+		pickHintText = stage.addChild<ui::Text>({
+			.id = "wc_pick_hint",
+			.visible = false,
+			.layout = {.position = ui::Position::Absolute, .inset = {.right = 0.0F, .bottom = 60.0F, .left = 0.0F}},
+			.style = pick,
+			.text = "Select a land tile to start the colony",
+		});
+
+		vizDock = stage.addChild<ui::Component>({
+			.id = "wc_viz_dock",
+			.visible = false,
+			.layout = {
+				.display = ui::Display::Flex,
+				.justifyContent = ui::JustifyContent::Center,
+				.position = ui::Position::Absolute,
+				.inset = {.right = 0.0F, .bottom = space4, .left = 0.0F}
+			},
+		});
+		vizControl = vizDock.addChild<ui::SegmentedControl>({
+			.id = "wc_viz",
+			.options = {"Terrain", "Biomes", "Temp", "Rain"},
+			.selected = 0,
+			.tone = ui::Tone::Info,
+			.controlSize = ui::ControlSize::Sm,
+			.onChange = [this](int index) {
+				if (index >= 0 && static_cast<size_t>(index) < kVizModes.size()) {
+					globe.setColorMode(kVizModes[static_cast<size_t>(index)]);
+				}
+			},
+		});
+
+		// Centered progress strip: teal stage label left, amber percent right.
+		progressStrip = stage.addChild<ui::Component>({
+			.id = "wc_progress",
+			.visible = false,
+			.layout = {
+				.display = ui::Display::Flex,
+				.flexDirection = ui::FlexDirection::Column,
+				.gap = 6.0F,
+				.alignItems = ui::AlignItems::Center,
+				.position = ui::Position::Absolute,
+				.inset = {.right = 0.0F, .bottom = theme.get(tokens::spacing::space12) - 3.0F, .left = 0.0F}
+			},
+		});
+		ui::Ref<ui::Component> labels = progressStrip.addChild<ui::Component>({
+			.size = {420.0F, ui::kAuto},
+			.layout = {.display = ui::Display::Flex, .justifyContent = ui::JustifyContent::SpaceBetween},
+		});
+		ui::Style			   stageStyle = mono;
+		stageStyle.color = theme.get(tokens::color::dataBright);
+		progressStage = labels.addChild<ui::Text>({.id = "wc_progress_stage", .style = stageStyle, .text = "Starting..."});
+		ui::Style percent = mono;
+		percent.color = theme.get(tokens::color::accentBright);
+		progressPercent = labels.addChild<ui::Text>({.id = "wc_progress_percent", .style = percent, .text = "0%"});
+		progressBar = progressStrip.addChild<ui::ProgressBar>(
+			{.id = "wc_progress_bar",
+			 .size = {420.0F, ui::kAuto},
+			 .value = 0.0F,
+			 .tone = ui::Tone::Info,
+			 .controlSize = ui::ControlSize::Sm}
+		);
+
+		errorText = stage.addChild<ui::Text>({
+			.id = "wc_error",
+			.visible = false,
+			.layout = {.position = ui::Position::Absolute, .inset = {.bottom = 12.0F, .left = 0.0F}},
+			.style = world_sim::text(theme, {.size = tokens::fontSize::fsMd, .color = tokens::color::statusCrit}),
+		});
+	}
+
+	bool reviewing() const { return model.getState() == world_sim::WorldCreatorState::Reviewing && globe.isReady(); }
+
+	int vizIndex() const {
+		for (size_t i = 0; i < kVizModes.size(); ++i) {
+			if (kVizModes[i] == globe.colorMode())
+				return static_cast<int>(i);
+		}
+		return -1;
+	}
+
+	// Pick before orbit-drag so a left click selects the tile under the cursor; the same press then
+	// begins an orbit drag, the stage holding the pointer until the release.
+	void stagePress(ui::PointerEvent& event) {
+		if (!reviewing()) {
+			return;
+		}
+		const Foundation::Rect rect = stageRect();
+		if (event.button == foundation::MouseButton::Left) {
+			if (auto picked = globe.pick(event.screen, rect)) {
+				trySelectSite(*picked);
+			}
+		}
+		if (globe.handleInput(event, rect, true) && globe.isDragging()) {
+			if (ui::Component* shown = stage.get()) {
+				shown->capturePointer();
+			}
+		}
+	}
+
+	void setError(const std::string& message) {
+		if (ui::Text* error = errorText.get()) {
+			error->setText(message);
+		}
+	}
+
+	void showProgress(float fraction, const std::string& stageName) {
+		if (ui::Text* label = progressStage.get(); label != nullptr && label->getText() != stageName) {
+			label->setText(stageName);
+		}
+		if (ui::Text* percent = progressPercent.get()) {
+			percent->setText(std::format("{}%", static_cast<int>(fraction * 100.0F)));
+		}
+		if (ui::ProgressBar* bar = progressBar.get()) {
+			bar->setValue(std::clamp(fraction, 0.0F, 1.0F));
+		}
+	}
+
+	void setPickHint(bool shown) { show(pickHintText.get(), shown); }
 
 	// Show/hide footer actions for the current model state.
 	void refreshFooter() {
 		const auto state = model.getState();
-		if (generateButton != nullptr) {
-			generateButton->visible = state == world_sim::WorldCreatorState::Configuring;
+		const bool configuring = state == world_sim::WorldCreatorState::Configuring;
+		const bool generating = state == world_sim::WorldCreatorState::Generating;
+		const bool review = state == world_sim::WorldCreatorState::Reviewing;
+		show(generateButton.get(), configuring);
+		show(cancelButton.get(), generating);
+		show(regenerateButton.get(), review);
+		show(acceptButton.get(), review);
+		show(progressStrip.get(), generating);
+		show(landingHost.get(), review && siteValid);
+		if (ui::Text* error = errorText.get()) {
+			show(error, configuring && !error->getText().empty());
 		}
-		if (cancelButton != nullptr) {
-			cancelButton->visible = state == world_sim::WorldCreatorState::Generating;
-		}
-		const bool reviewing = state == world_sim::WorldCreatorState::Reviewing;
-		if (regenerateButton != nullptr) regenerateButton->visible = reviewing;
-		if (acceptButton != nullptr) {
-			acceptButton->visible = reviewing;
-			acceptButton->setDisabled(!siteValid); // "Confirm Landing Site" needs a chosen site
+		if (ui::Text* hint = escHint.get()) {
+			hint->setText(configuring ? "ESC: Back to crew" : "ESC: Back to menu");
 		}
 
-		if (statusLabel != nullptr) {
+		if (ui::Text* status = statusText.get()) {
+			const ui::Theme& theme = ui().getTheme();
+			ui::Style		 style = status->getDeclaredStyle();
+			style.color = theme.get(review ? tokens::color::statusOk : tokens::color::textDim);
+			status->setStyle(style);
 			switch (state) {
 				case world_sim::WorldCreatorState::Configuring:
-					statusLabel->setText("Awaiting generation");
-					statusLabel->setColor(UI::text_dim);
+					status->setText("Awaiting generation");
 					break;
 				case world_sim::WorldCreatorState::Generating:
-					statusLabel->setText("Generating world...");
-					statusLabel->setColor(UI::text_dim);
+					status->setText("Generating world...");
 					break;
 				case world_sim::WorldCreatorState::Reviewing:
-					statusLabel->setText("World ready - suitable for colonization");
-					statusLabel->setColor(UI::status_ok);
+					status->setText("World ready - suitable for colonization");
 					break;
 			}
 		}
-		// Visibility flips change which children the layout places, so both
-		// the row and its nested actions group must re-lay.
-		if (footerActions != nullptr) footerActions->invalidateLayout();
-		if (surveyFooter) surveyFooter->invalidateLayout();
 	}
 
 	void syncPanelFromModel() {
 		const auto& p = model.getParams();
-		if (panel) {
-			panel->syncValues(
-				p.waterAmount * 100.0,  // fraction -> percent for UI
-				p.tectonicPlateCount,
-				p.planetRadius,
-				p.rotationRate,
-				p.planetAge,
-				p.atmosphereStrength,
-				p.starTemperature,
-				p.semiMajorAxis,
-				p.eccentricity,
-				p.seed);
-		}
+		panel.syncValues(
+			p.waterAmount * 100.0, // fraction -> percent for UI
+			p.tectonicPlateCount,
+			p.planetRadius,
+			p.rotationRate,
+			p.planetAge,
+			p.atmosphereStrength,
+			p.starTemperature,
+			p.semiMajorAxis,
+			p.eccentricity,
+			p.seed
+		);
 	}
 
 	void startGeneration() {
-		if (panel && !panel->seedIsValid()) {
+		if (!panel.seedIsValid()) {
 			return;
 		}
 
 		// Blank seed means "surprise me": pick a fresh seed each run so regenerating
 		// doesn't silently reproduce the identical world from the preset default.
-		if (panel && panel->seedIsEmpty()) {
+		if (panel.seedIsEmpty()) {
 			model.randomizeSeed();
 			syncPanelFromModel();
 		}
 
-		errorText.clear();
+		setError("");
 		siteValid = false;
-		pickHint.clear();
-		progressFraction = 0.0F;
-		progressStage = "Starting...";
+		setPickHint(false);
+		showProgress(0.0F, "Starting...");
 
 		model.startGeneration();
-		if (panel) panel->setGenerating(true);
+		panel.setGenerating(true);
 		surveyPanel.setWorld(nullptr);
 		refreshFooter();
 	}
 
 	void onStateChanged(world_sim::WorldCreatorState newState) {
 		if (newState == world_sim::WorldCreatorState::Reviewing) {
-			if (panel) panel->setGenerating(false);
+			panel.setGenerating(false);
 
 			if (auto result = model.getResult()) {
 				globe.setWorld(result);
@@ -617,45 +709,71 @@ class WorldCreatorScene : public engine::UiScene {
 				selectedSite = {static_cast<float>(suggested.latDeg),
 				                static_cast<float>(suggested.lonDeg)};
 				siteValid = true;
-				pickHint.clear();
+				setPickHint(false);
 				refreshDetails();
 			}
-		} else if (newState == world_sim::WorldCreatorState::Configuring) {
-			if (panel) panel->setGenerating(false);
+			refreshFooter();
+			return;
+		}
+		if (newState == world_sim::WorldCreatorState::Configuring) {
+			panel.setGenerating(false);
 			siteValid = false;
-			}
+		}
 		refreshFooter();
 	}
 
 	void openConfirmDialog() {
-		if (!siteValid || confirmDialog == nullptr) return;
-		if (confirmBody != nullptr) {
-			confirmBody->text = std::format(
+		ui::Component* opener = acceptButton.get();
+		if (!siteValid || opener == nullptr || confirmDialog.get() != nullptr)
+			return;
+		confirmDialog = ui::Dialog::open(
+			*opener,
+			{.title = "Commit to Descent", .kicker = "Confirm", .panelSize = {440.0F, ui::kAuto}, .footer = true, .onClose = [this] {
+				 dialogClosed = true;
+			 }}
+		);
+		const ui::Dialog* dialog = confirmDialog.get();
+		if (dialog == nullptr) {
+			return;
+		}
+		dialog->content().addChild<ui::Text>({
+			.id = "confirm_body",
+			.size = {ui::percent(100.0F), ui::kAuto},
+			.style = world_sim::text(ui().getTheme(), {.size = tokens::fontSize::fsMd}),
+			.text = std::format(
 				"Your colony will begin at {} - {}. Once you commit, there is no turning back.",
-				details.coords, details.biomeName.empty() ? "unknown terrain" : details.biomeName);
-		}
-		confirmDialog->open(viewportW, viewportH);
-		// Dialog children live in content-local coordinates (the content
-		// offset maps (0,0) to the content top-left, and children clip to it).
-		const Foundation::Rect content = confirmDialog->getContentBounds();
-		if (confirmBody != nullptr) {
-			confirmBody->position = {0.0F, 0.0F};
-			confirmBody->setLayoutSize(content.width, UI::kSizeKeep);
-		}
-		if (confirmLand != nullptr) {
-			confirmLand->setPosition(content.width - confirmLand->size.x,
-									 content.height - confirmLand->size.y);
-			if (confirmCancel != nullptr) {
-				confirmCancel->setPosition(confirmLand->getPosition().x - 12.0F - confirmCancel->size.x,
-										   content.height - confirmCancel->size.y);
-			}
-		}
+				details.coords,
+				details.biomeName.empty() ? "unknown terrain" : details.biomeName
+			),
+			.wrap = true,
+		});
+		ui::Ref<ui::Component> actions = dialog->footer();
+		actions.addChild<ui::Button>({
+			.id = "btn_descent_cancel",
+			.label = "Cancel",
+			.onPress = [this] {
+				if (ui::Dialog* shown = confirmDialog.get())
+					shown->close();
+			},
+		});
+		actions.addChild<ui::Button>({
+			.id = "btn_begin_descent",
+			.label = "Begin Descent",
+			.icon = "rocket",
+			.variant = ui::ButtonVariant::Primary,
+			.onPress = [this] {
+				if (ui::Dialog* shown = confirmDialog.get())
+					shown->close();
+				land();
+			},
+		});
 	}
 
 	void handleCameraKeys(const foundation::InputSnapshot& input, float dt) {
 		// While the seed field is focused, keys belong to it (text editing,
 		// cursor arrows), not the camera.
-		if (panel && panel->isSeedFocused()) return;
+		if (panel.isSeedFocused())
+			return;
 
 		const auto down = [&input](foundation::Key key) {
 			return engine::key(input, key).down;
@@ -696,15 +814,18 @@ class WorldCreatorScene : public engine::UiScene {
 		worldgen::TileId tile = result->grid->fromUnitVector(
 			worldgen::Vec3d{unit.x, unit.y, unit.z});
 
+		// Pick errors (clicking water) surface as a short hint at the bottom;
+		// selecting a valid tile clears it.
 		if (isWaterTile(*result, tile)) {
-			pickHint = "Select a land tile to start the colony";
+			setPickHint(true);
 			return;
 		}
 
 		selectedSite = picked;
 		siteValid = true;
-		pickHint.clear();
+		setPickHint(false);
 		refreshDetails();
+		refreshFooter();
 		LOG_INFO(Game, "WorldCreatorScene: selected lat=%.2f lon=%.2f tile=%u",
 		         static_cast<double>(picked.latDeg),
 		         static_cast<double>(picked.lonDeg),
@@ -716,6 +837,7 @@ class WorldCreatorScene : public engine::UiScene {
 		if (siteValid && result) {
 			details = world_sim::buildLandingSiteDetails(
 				*result, selectedSite.latDeg, selectedSite.lonDeg);
+			detailsPanel.show(details);
 		}
 	}
 
@@ -755,198 +877,34 @@ class WorldCreatorScene : public engine::UiScene {
 		owner->scenes().switchTo(world_sim::scenes::PartySelect.name);
 	}
 
-	void renderHeader() {
-		const float kickerY = 20.0F;
-		const float titleY = kickerY + UI::fs_2xs + 6.0F;
-		Renderer::Primitives::drawText({
-			.text = "// NEW GAME    STEP 03 / 03",
-			.position = {kMarginX, kickerY},
-			.scale = UI::fs_2xs / 16.0F,
-			.color = UI::text_faint,
-			.font = theme::fontMono,
-			.vAlign = Foundation::VerticalAlign::Top,
-			.letterSpacing = UI::fs_2xs * UI::ls_wider,
+	// Landing marker: pulsing crosshair ring on the selected site.
+	void renderMarker(const Foundation::Rect& rect, const ui::Theme& theme) const {
+		float sx = 0.0F;
+		float sy = 0.0F;
+		if (!siteValid || !globe.projectLatLon(selectedSite, rect, sx, sy)) {
+			return;
+		}
+		const Foundation::Color accent = theme.get(tokens::color::accent);
+		Foundation::Color		ring = accent;
+		const float				pulse = 0.5F + 0.5F * std::sin(markerPulse * 4.0F);
+		ring.a = 0.9F - pulse * 0.5F;
+		const float ringR = 9.0F + pulse * 4.0F;
+		Renderer::Primitives::drawCircle({
+			.center = {sx, sy},
+			.radius = ringR,
+			.style = {.fill = Foundation::Color{0.0F, 0.0F, 0.0F, 0.0F}, .border = Foundation::BorderStyle{.color = ring, .width = 1.5F}},
 		});
-		Renderer::Primitives::drawText({
-			.text = "Generate Planet",
-			.position = {kMarginX, titleY},
-			.scale = UI::fs_3xl / 16.0F,
-			.color = UI::text_bright,
-			.font = theme::fontDisplay,
-			.vAlign = Foundation::VerticalAlign::Top,
-			.letterSpacing = UI::fs_3xl * UI::ls_wide,
-		});
-	}
-
-	void renderEscHint() {
-		const bool configuring =
-			model.getState() == world_sim::WorldCreatorState::Configuring;
-		UI::Text hint(UI::Text::Args{
-			.position = {viewportW - kMarginX, 26.0F},
-			.text = configuring ? "ESC: Back to crew" : "ESC: Back to menu",
-			.style = {
-				.color = UI::text_dim,
-				.fontSize = UI::fs_base,
-				.hAlign = Foundation::HorizontalAlign::Right,
-				.vAlign = Foundation::VerticalAlign::Middle,
-			},
-		});
-		hint.render();
-	}
-
-	// Centered 3px progress strip: teal stage label left, amber percent right.
-	void renderProgress(const Foundation::Rect& stage) {
-		using Renderer::Primitives::drawRect;
-		using Renderer::Primitives::drawText;
-
-		const float barW = std::min(420.0F, stage.width * 0.8F);
-		const float barX = stage.x + (stage.width - barW) * 0.5F;
-		const float barY = stage.y + stage.height - UI::space_12;
-
-		drawText({.text = progressStage,
-				  .position = {barX, barY - 20.0F},
-				  .scale = UI::fs_xs / 16.0F,
-				  .color = UI::data_bright,
-				  .font = theme::fontMono,
-				  .vAlign = Foundation::VerticalAlign::Top});
-		drawText({.text = std::format("{}%", static_cast<int>(progressFraction * 100.0F)),
-				  .position = {barX, barY - 20.0F},
-				  .scale = UI::fs_xs / 16.0F,
-				  .color = UI::accent_bright,
-				  .font = theme::fontMono,
-				  .hAlign = Foundation::HorizontalAlign::Right,
-				  .vAlign = Foundation::VerticalAlign::Top,
-				  .boxWidth = barW});
-
-		const float radius = std::min(UI::r_pill, 1.5F);
-		drawRect({.bounds = {barX, barY, barW, 3.0F},
-				  .style = {.fill = UI::bg_inset,
-							.border = Foundation::BorderStyle{
-								.color = UI::bg_inset, .width = 0.0F, .cornerRadius = radius,
-								.position = Foundation::BorderPosition::Inside}}});
-		const float fillW = barW * std::clamp(progressFraction, 0.0F, 1.0F);
-		if (fillW > 3.0F) {
-			drawRect({.bounds = {barX, barY, fillW, 3.0F},
-					  .style = {.fill = UI::data,
-								.border = Foundation::BorderStyle{
-									.color = UI::data, .width = 0.0F, .cornerRadius = radius,
-									.position = Foundation::BorderPosition::Inside}}});
+		Renderer::Primitives::drawCircle({.center = {sx, sy}, .radius = 2.5F, .style = {.fill = accent}});
+		constexpr float						  kTickIn = 13.0F;
+		constexpr float						  kTickLen = 6.0F;
+		const std::array<Foundation::Vec2, 4> dirs{{{1.0F, 0.0F}, {-1.0F, 0.0F}, {0.0F, 1.0F}, {0.0F, -1.0F}}};
+		for (const auto& d : dirs) {
+			Renderer::Primitives::drawLine(
+				{.start = {sx + d.x * kTickIn, sy + d.y * kTickIn},
+				 .end = {sx + d.x * (kTickIn + kTickLen), sy + d.y * (kTickIn + kTickLen)},
+				 .style = {.color = accent, .width = 1.5F}}
+			);
 		}
-	}
-
-	// Viz dock geometry, shared by render and hit-testing.
-	UI::SegmentedControl vizControl(const Foundation::Rect& stage) const {
-		UI::SegmentedControl::Args args;
-		args.options = kVizLabels;
-		args.size = UI::Size::Sm;
-		args.tone = UI::Tone::Data;
-		args.selected = -1;
-		for (size_t i = 0; i < kVizModes.size(); ++i) {
-			if (kVizModes[i] == globe.colorMode()) args.selected = static_cast<int>(i);
-		}
-		UI::SegmentedControl probe(args);
-		const Foundation::Vec2 fp = probe.footprint();
-		args.position = {stage.x + (stage.width - fp.x) * 0.5F, stage.y + stage.height - fp.y - UI::space_4};
-		return UI::SegmentedControl(args);
-	}
-
-	bool handleVizClick(Foundation::Vec2 p) {
-		if (!(model.getState() == world_sim::WorldCreatorState::Reviewing && globe.isReady())) {
-			return false;
-		}
-		const Foundation::Rect stage = stageRect();
-		UI::SegmentedControl   control = vizControl(stage);
-		const Foundation::Vec2 fp = control.footprint();
-		const float x0 = stage.x + (stage.width - fp.x) * 0.5F;
-		const float y0 = stage.y + stage.height - fp.y - UI::space_4;
-		if (p.x < x0 || p.x > x0 + fp.x || p.y < y0 || p.y > y0 + fp.y) {
-			return false;
-		}
-		const float segW = fp.x / static_cast<float>(kVizModes.size());
-		const auto	idx = static_cast<size_t>(std::clamp(
-			  static_cast<int>((p.x - x0) / segW), 0, static_cast<int>(kVizModes.size()) - 1));
-		globe.setColorMode(kVizModes[idx]);
-		return true;
-	}
-
-	void renderReviewing(const Foundation::Rect& stage) {
-		// Landing marker: pulsing crosshair ring on the selected site.
-		if (siteValid) {
-			float sx = 0.0F;
-			float sy = 0.0F;
-			if (globe.projectLatLon(selectedSite, stage, sx, sy)) {
-				const float pulse = 0.5F + 0.5F * std::sin(markerPulse * 4.0F);
-				const float ringR = 9.0F + pulse * 4.0F;
-				Renderer::Primitives::drawCircle({
-					.center = {sx, sy},
-					.radius = ringR,
-					.style = {.fill = Foundation::Color{0.0F, 0.0F, 0.0F, 0.0F},
-							  .border = Foundation::BorderStyle{
-								  .color = UI::withAlpha(UI::accent, 0.9F - pulse * 0.5F),
-								  .width = 1.5F}},
-				});
-				Renderer::Primitives::drawCircle({
-					.center = {sx, sy}, .radius = 2.5F, .style = {.fill = UI::accent}});
-				constexpr float kTickIn = 13.0F;
-				constexpr float kTickLen = 6.0F;
-				const std::array<Foundation::Vec2, 4> dirs{{{1.0F, 0.0F}, {-1.0F, 0.0F}, {0.0F, 1.0F}, {0.0F, -1.0F}}};
-				for (const auto& d : dirs) {
-					Renderer::Primitives::drawLine({
-						.start = {sx + d.x * kTickIn, sy + d.y * kTickIn},
-						.end = {sx + d.x * (kTickIn + kTickLen), sy + d.y * (kTickIn + kTickLen)},
-						.style = {.color = UI::accent, .width = 1.5F}});
-				}
-			}
-		}
-
-		if (globe.isReady()) {
-			vizControl(stage).render();
-
-			// Crosshair hint, top-center of the stage. The Landing Zone pane
-			// itself is rendered in the right column beneath the World Survey.
-			Renderer::Primitives::drawText({
-				.text = "Click the surface to set your descent vector",
-				.position = {stage.x, stage.y + UI::space_4},
-				.scale = UI::fs_xs / 16.0F,
-				.color = UI::text_dim,
-				.font = theme::fontMono,
-				.hAlign = Foundation::HorizontalAlign::Center,
-				.vAlign = Foundation::VerticalAlign::Top,
-				.boxWidth = stage.width});
-		}
-
-		// Pick errors (e.g. clicking water) surface as a short hint at the
-		// bottom; selecting a valid tile clears it.
-		if (!pickHint.empty()) {
-			UI::Text text(UI::Text::Args{
-				.position = {stage.x + stage.width * 0.5F, stage.y + stage.height - 60.0F},
-				.text = pickHint,
-				.style = {
-					.color = UI::status_warn,
-					.fontSize = UI::fs_md,
-					.hAlign = Foundation::HorizontalAlign::Center,
-					.vAlign = Foundation::VerticalAlign::Middle,
-				},
-			});
-			text.render();
-		}
-	}
-
-	void renderFooter() {
-		using Renderer::Primitives::drawRect;
-
-		drawRect({.bounds = {kMarginX, footerTop(), viewportW - kMarginX * 2.0F, 1.0F},
-				  .style = {.fill = UI::line_hairline}});
-
-		UI::LayoutContainer* footer = activeFooter();
-		if (footer == nullptr) return;
-		const Foundation::Vec2 want{viewportW, viewportH};
-		if (footerLayoutViewport.x != want.x || footerLayoutViewport.y != want.y) {
-			footerLayoutViewport = want;
-			const Foundation::Rect rect{kMarginX, footerTop() + 16.0F, viewportW - kMarginX * 2.0F, 40.0F};
-			surveyFooter->layout(rect);
-		}
-		footer->render();
 	}
 };
 

@@ -12,6 +12,10 @@
 // scene's component roots at the logical viewport. Make one after App::create, before the first
 // frame, and destroy it after App::shutdown: components unregister from its focus manager as the
 // scenes go, and its focus manager and clipboard clear the ui's singletons as they go.
+//
+// While scenes are moving onto salal's ui, the bridge is installed per scene: a scene on salal's ui
+// uninstalls it as it enters, so App's own dispatch and tree and lint providers reach its ui, and a
+// UiScene installs it again. It starts installed.
 
 #include "app/UiClipboard.h"
 
@@ -45,6 +49,11 @@ namespace engine {
 		UiBridge(UiBridge&&) = delete;
 		UiBridge& operator=(UiBridge&&) = delete;
 
+		// The App's dispatch and the tree and lint providers, or App's own again. Idempotent.
+		void			   install();
+		void			   uninstall();
+		[[nodiscard]] bool installed() const { return isInstalled; }
+
 		// The scroll nothing in the ui consumed, which stops it being sent again; 0 when there's none.
 		// GameScene zooms the camera with it, so a scroll a list takes doesn't zoom too.
 		float consumeScroll();
@@ -64,6 +73,7 @@ namespace engine {
 		UiClipboard					 clipboard;
 		float						 scrollDelta = 0.0F; // the last wheel event's, until something consumes it
 		bool						 pointerSeen = false;
+		bool						 isInstalled = false;
 		app::DevServer::Registration uiTree;
 		app::DevServer::Registration uiLint;
 	};

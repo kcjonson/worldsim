@@ -43,8 +43,20 @@ namespace engine {
 		  clipboard(app.clipboard()) {
 		UI::FocusManager::setInstance(&focus);
 		UI::IClipboard::setInstance(&clipboard);
-		owner.setDispatch([this](app::App& /*app*/) { dispatch(); });
+		install();
+	}
 
+	UiBridge::~UiBridge() {
+		uninstall();
+	}
+
+	// Its providers go in after App's, so they answer while it's installed.
+	void UiBridge::install() {
+		if (isInstalled) {
+			return;
+		}
+		isInstalled = true;
+		owner.setDispatch([this](app::App& /*app*/) { dispatch(); });
 		const auto viewport = [this] {
 			const Renderer::Viewport& window = owner.viewport();
 			return Foundation::Vec2{static_cast<float>(window.logicalWidth), static_cast<float>(window.logicalHeight)};
@@ -53,8 +65,14 @@ namespace engine {
 		uiLint = owner.devServer().stateProvider("ui.lint", [this, viewport] { return UI::lintUiTreeJson(uiRoots(), viewport()); });
 	}
 
-	UiBridge::~UiBridge() {
+	void UiBridge::uninstall() {
+		if (!isInstalled) {
+			return;
+		}
+		isInstalled = false;
 		owner.setDispatch({});
+		uiTree.reset();
+		uiLint.reset();
 	}
 
 	float UiBridge::consumeScroll() {

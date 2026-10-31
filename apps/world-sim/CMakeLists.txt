@@ -68,6 +68,7 @@ add_executable(world-sim
     # Scenes
     scenes/shared/GlobeView.cpp
     scenes/shared/DecorativePlanet.cpp
+    scenes/shared/SalalUi.cpp
     scenes/splash/SplashScene.cpp
     scenes/menu/MainMenuScene.cpp
     scenes/scenario-select/ScenarioSelectScene.cpp
@@ -99,6 +100,7 @@ target_link_libraries(world-sim
         game-systems
         world
         ui
+        theme
         salal::renderer
         salal::foundation
         assets
