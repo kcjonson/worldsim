@@ -1,6 +1,5 @@
 // Game Scene - Main gameplay with chunk-based world rendering
 
-#include "AppContext.h"
 #include "GameWorldState.h"
 #include "NewGameSetup.h"
 #include "SceneTypes.h"
@@ -17,14 +16,11 @@
 
 #include <assets/ConstructionRegistry.h>
 
-#include <components/toast/Toast.h> // For ToastSeverity
 
 #include <GL/glew.h>
 
 #include <algorithm>
 #include <app/Keys.h>
-#include <app/UiBridge.h>
-#include <app/UiScene.h>
 #include <application/App.h>
 #include <chrono>
 #include <cmath>
@@ -35,6 +31,7 @@
 #include <metrics/MetricsCollector.h>
 #include <metrics/PerformanceMetrics.h>
 #include <primitives/Primitives.h>
+#include <scene/Scene.h>
 #include <utils/Log.h>
 #include <world/camera/WorldCamera.h>
 #include <world/chunk/Chunk.h>
@@ -115,7 +112,7 @@ namespace {
 	constexpr uint64_t	  kDefaultWorldSeed = 12345;
 	constexpr float		  kPixelsPerMeter = 8.0F;
 
-	class GameScene : public engine::UiScene {
+	class GameScene : public app::Scene {
 	  public:
 		void onEnter(app::App& app) override {
 			owner = &app;
@@ -346,7 +343,7 @@ namespace {
 						// Visibility is driven by the per-frame status push in update().
 					},
 					.onToast = [this](const std::string& title, const std::string& message) {
-						gameUI->pushNotification(title, message, UI::ToastSeverity::Warning);
+						gameUI->pushNotification(title, message, ui::ToastSeverity::Warning);
 					}
 				}
 			});
@@ -387,13 +384,13 @@ namespace {
 					}
 					if (structure->kind == ecs::StructureKind::Wall) {
 						m_drawingSystem->world().setSegmentState(structure->graphId, engine::construction::FoundationState::Built);
-						gameUI->pushNotification("Construction complete", "Wall built", UI::ToastSeverity::Info);
+						gameUI->pushNotification("Construction complete", "Wall built", ui::ToastSeverity::Info);
 						LOG_INFO(Game, "Wall segment #%llu built (entity %u)", static_cast<unsigned long long>(structure->graphId), static_cast<uint32_t>(blueprintEntity));
 						return;
 					}
 					if (structure->kind == ecs::StructureKind::Opening) {
 						m_drawingSystem->world().setOpeningState(structure->graphId, engine::construction::FoundationState::Built);
-						gameUI->pushNotification("Construction complete", "Opening built", UI::ToastSeverity::Info);
+						gameUI->pushNotification("Construction complete", "Opening built", ui::ToastSeverity::Info);
 						LOG_INFO(
 							Game,
 							"Opening #%llu built (entity %u)",
@@ -412,11 +409,11 @@ namespace {
 						const ecs::EntityID extensionEntity = m_drawingSystem->mergeExtension(structure->graphId);
 						if (extensionEntity != ecs::kInvalidEntity) {
 							m_pendingEntityRemoval.push_back(extensionEntity);
-							gameUI->pushNotification("Construction complete", "Foundation extended", UI::ToastSeverity::Info);
+							gameUI->pushNotification("Construction complete", "Foundation extended", ui::ToastSeverity::Info);
 							return;
 						}
 					}
-					gameUI->pushNotification("Construction complete", "Foundation built", UI::ToastSeverity::Info);
+					gameUI->pushNotification("Construction complete", "Foundation built", ui::ToastSeverity::Info);
 				};
 				actionSys.setStructureCompletedCallback(structureCompleted);
 				constructionSystem.setStructureCompletedCallback(structureCompleted);
@@ -509,7 +506,7 @@ namespace {
 				roomSystem.setConstructionWorld(&m_drawingSystem->world());
 				roomSystem.setRoomFormedCallback([this](ecs::EntityID room) {
 					const auto* roomComp = ecsWorld->getComponent<ecs::Room>(room);
-					gameUI->pushNotification("Room formed", roomComp != nullptr ? roomComp->name : "New room", UI::ToastSeverity::Info);
+					gameUI->pushNotification("Room formed", roomComp != nullptr ? roomComp->name : "New room", ui::ToastSeverity::Info);
 					LOG_INFO(
 						Game, "Room formed: %s (entity %u)", roomComp != nullptr ? roomComp->name.c_str() : "?", static_cast<uint32_t>(room)
 					);
@@ -614,86 +611,70 @@ namespace {
 			refreshThicknessPresets(m_drawingSystem->activeMaterial());
 		}
 
-		/// Handle UI input events dispatched by the ui bridge (engine::UiBridge).
-		/// Forwards to gameUI and handles game-specific interactions (placement, selection).
-		bool handleInput(UI::InputEvent& event) override {
-			// Forward event to UI first
-			bool consumed = gameUI->dispatchEvent(event);
+		// What salal's ui didn't take: a release for the drawing tool, placement or selection, and the
+		// scroll that zooms. The tools' previews follow the pointer in update().
+		bool handleEvent(const foundation::InputEvent& event) override {
+			using Type = foundation::InputEvent::Type;
+			if (event.type == Type::Scroll) {
+				m_pendingScroll += event.scroll.y;
+				return true;
+			}
+			if (event.type != Type::PointerUp) {
+				return false;
+			}
 
-			// Get viewport dimensions for coordinate transforms
 			int logicalW = 0;
 			int logicalH = 0;
 			Renderer::Primitives::getLogicalViewport(logicalW, logicalH);
 
-			// Drawing tool gets input before placement/selection (GameUI already had
-			// first dibs above). It consumes clicks while active.
+			// The drawing tool takes clicks before placement and selection while it's active.
 			if (m_drawingSystem->isActive()) {
-				constexpr int kModAlt = 0x0004; // GLFW_MOD_ALT
-				constexpr int kModCtrl = 0x0002; // GLFW_MOD_CONTROL
-				const bool	  freeform = (event.modifiers & kModAlt) != 0;
-				const bool	  ctrl = (event.modifiers & kModCtrl) != 0;
-
-				if (!consumed && event.type == UI::InputEvent::Type::MouseMove) {
-					// Skip when a UI panel consumed the move, otherwise the preview
-					// tracks the snapped cursor under the panel to a spot you can't click.
-					m_drawingSystem->handleMouseMove(event.position.x, event.position.y, logicalW, logicalH, freeform);
-				} else if (!consumed && event.type == UI::InputEvent::Type::MouseUp) {
-					if (event.button == foundation::MouseButton::Right) {
-						// Foundation: cancel the shape. Wall: end (commit) the chain.
-						m_drawingSystem->cancel();
-						return true;
-					}
-					if (event.button == foundation::MouseButton::Left) {
-						m_drawingSystem->handleClick(event.position.x, event.position.y, logicalW, logicalH, freeform, ctrl);
-						return true;
-					}
-				}
-				return consumed;
-			}
-
-			// Handle placement mode interaction
-			if (m_placementSystem->isActive()) {
-				if (!consumed && event.type == UI::InputEvent::Type::MouseMove) {
-					m_placementSystem->handleMouseMove(event.position.x, event.position.y, logicalW, logicalH);
-				} else if (!consumed && event.type == UI::InputEvent::Type::MouseUp) {
-					if (m_placementSystem->handleClick()) {
-						return true; // Consume click after successful placement
-					}
-				}
-				return consumed;
-			}
-
-			// Handle entity selection on left click release (only if UI didn't consume it)
-			if (!consumed && event.type == UI::InputEvent::Type::MouseUp) {
-				// Right-click while a controlled colonist is selected: walk it to the clicked point
-				// (snapped to the nearest walkable spot inside issuePlayerMoveOrder). Return before the
-				// selection dispatch so right-click never changes the selection or falls through.
-				if (event.button == foundation::MouseButton::Right && m_controlledColonist != 0) {
-					const auto worldPt = m_camera->screenToWorld(event.position.x, event.position.y, logicalW, logicalH, kPixelsPerMeter);
-					auto& ai = ecsWorld->getSystem<ecs::AIDecisionSystem>();
-					if (const auto goal = ai.issuePlayerMoveOrder(m_controlledColonist, glm::vec2{worldPt.x, worldPt.y})) {
-						m_moveMarkerWorld = *goal;
-						m_moveMarkerTtl = 1.0F;
-					}
+				if (event.mouseButton == foundation::MouseButton::Right) {
+					// Foundation: cancel the shape. Wall: end (commit) the chain.
+					m_drawingSystem->cancel();
 					return true;
 				}
-
-				// While the room overlay is active it owns the LEFT click: hit a room ->
-				// RoomSelection, miss -> deselect. It never falls through to structure
-				// selection (rooms aren't in the SelectionSystem ladder). Routed through
-				// setSelection so the result flows through the same sink (current()).
-				if (m_roomOverlay->isActive() && event.button == foundation::MouseButton::Left) {
-					if (auto roomId = m_roomOverlay->handleClick(event.position.x, event.position.y, logicalW, logicalH)) {
-						m_selectionSystem->setSelection(world_sim::RoomSelection{*roomId});
-					} else {
-						m_selectionSystem->clearSelection();
-					}
-				} else {
-					m_selectionSystem->handleClick(event.position.x, event.position.y, logicalW, logicalH);
+				if (event.mouseButton == foundation::MouseButton::Left) {
+					const bool freeform = (event.mods & foundation::ModAlt) != 0;
+					const bool ctrl = (event.mods & foundation::ModControl) != 0;
+					m_drawingSystem->handleClick(event.position.x, event.position.y, logicalW, logicalH, freeform, ctrl);
+					return true;
 				}
+				return false;
 			}
 
-			return consumed;
+			if (m_placementSystem->isActive()) {
+				return m_placementSystem->handleClick(); // a successful placement takes the click
+			}
+
+			// Entity selection on a release.
+			// Right-click while a controlled colonist is selected: walk it to the clicked point
+			// (snapped to the nearest walkable spot inside issuePlayerMoveOrder). Return before the
+			// selection dispatch so right-click never changes the selection or falls through.
+			if (event.mouseButton == foundation::MouseButton::Right && m_controlledColonist != 0) {
+				const auto worldPt = m_camera->screenToWorld(event.position.x, event.position.y, logicalW, logicalH, kPixelsPerMeter);
+				auto& ai = ecsWorld->getSystem<ecs::AIDecisionSystem>();
+				if (const auto goal = ai.issuePlayerMoveOrder(m_controlledColonist, glm::vec2{worldPt.x, worldPt.y})) {
+					m_moveMarkerWorld = *goal;
+					m_moveMarkerTtl = 1.0F;
+				}
+				return true;
+			}
+
+			// While the room overlay is active it owns the LEFT click: hit a room ->
+			// RoomSelection, miss -> deselect. It never falls through to structure
+			// selection (rooms aren't in the SelectionSystem ladder). Routed through
+			// setSelection so the result flows through the same sink (current()).
+			if (m_roomOverlay->isActive() && event.mouseButton == foundation::MouseButton::Left) {
+				if (auto roomId = m_roomOverlay->handleClick(event.position.x, event.position.y, logicalW, logicalH)) {
+					m_selectionSystem->setSelection(world_sim::RoomSelection{*roomId});
+				} else {
+					m_selectionSystem->clearSelection();
+				}
+			} else {
+				m_selectionSystem->handleClick(event.position.x, event.position.y, logicalW, logicalH);
+			}
+			return false;
 		}
 
 		void update(const app::FrameContext& frame) override {
@@ -704,6 +685,20 @@ namespace {
 			const auto down = [&frame](foundation::Key key) {
 				return engine::key(frame.input, key).down;
 			};
+
+			// The drawing tool's and placement's previews follow the pointer every frame, so they track the world
+			// moving under a still cursor, but not while the pointer is over the ui.
+			if (frame.input.pointerInWindow && !ui().hitTest(frame.input.pointer).valid()) {
+				int logicalW = 0;
+				int logicalH = 0;
+				Renderer::Primitives::getLogicalViewport(logicalW, logicalH);
+				const glm::vec2 at = frame.input.pointer;
+				if (m_drawingSystem->isActive()) {
+					m_drawingSystem->handleMouseMove(at.x, at.y, logicalW, logicalH, (frame.input.mods & foundation::ModAlt) != 0);
+				} else if (m_placementSystem->isActive()) {
+					m_placementSystem->handleMouseMove(at.x, at.y, logicalW, logicalH);
+				}
+			}
 
 			// Fade out the player move-order marker.
 			if (m_moveMarkerTtl > 0.0F) {
@@ -840,8 +835,7 @@ namespace {
 				// Accumulate scroll deltas to handle high-precision input devices (Magic Mouse, trackpad)
 				// These devices generate many small fractional scroll events per gesture
 				constexpr float kScrollThreshold = 1.0F; // Trigger zoom after ~1 "notch" of scrolling
-				float			scrollDelta = owner->context<world_sim::AppContext>().ui.consumeScroll();
-				m_scrollAccumulator += scrollDelta;
+				m_scrollAccumulator += std::exchange(m_pendingScroll, 0.0F);
 
 				// Trigger zoom steps when accumulated scroll crosses threshold
 				while (m_scrollAccumulator >= kScrollThreshold) {
@@ -1055,9 +1049,6 @@ namespace {
 			// primitive can ever sort above the UI.
 			Renderer::Primitives::flush();
 
-			// Render unified game UI (overlay + info panel)
-			gameUI->render();
-
 			m_gpuTimer.end();
 
 			// Report timing breakdown to metrics system
@@ -1120,10 +1111,6 @@ namespace {
 
 		const char* name() const override { return kSceneName; }
 
-		std::vector<const UI::IComponent*> getUiRoots() const override {
-			return gameUI ? gameUI->getUiRoots() : std::vector<const UI::IComponent*>{};
-		}
-
 	  private:
 		/// Initialize ECS world with systems and spawn initial entities.
 		void initializeECS() {
@@ -1159,7 +1146,7 @@ namespace {
 
 			// Wire up "Aha!" notification callback for recipe discoveries
 			visionSystem.setRecipeDiscoveryCallback([this](const std::string& recipeLabel) {
-				gameUI->pushNotification("Aha!", "Discovered: " + recipeLabel, UI::ToastSeverity::Info);
+				gameUI->pushNotification("Aha!", "Discovered: " + recipeLabel, ui::ToastSeverity::Info);
 				LOG_INFO(Game, "Recipe discovered: %s", recipeLabel.c_str());
 			});
 
@@ -1194,7 +1181,7 @@ namespace {
 			// Wire up ActionSystem for "item crafted" notifications
 			auto& actionSystem = ecsWorld->getSystem<ecs::ActionSystem>();
 			actionSystem.setItemCraftedCallback([this](const std::string& itemLabel) {
-				gameUI->pushNotification("Crafted", itemLabel, UI::ToastSeverity::Info);
+				gameUI->pushNotification("Crafted", itemLabel, ui::ToastSeverity::Info);
 				LOG_INFO(Game, "Item crafted notification: %s", itemLabel.c_str());
 			});
 
@@ -1761,7 +1748,7 @@ namespace {
 					LOG_WARNING(
 						Game, "Cannot demolish foundation #%llu: walls still stand", static_cast<unsigned long long>(foundationSel->id)
 					);
-					gameUI->pushNotification("Walls still stand", "Use Demolish building", UI::ToastSeverity::Warning);
+					gameUI->pushNotification("Walls still stand", "Use Demolish building", ui::ToastSeverity::Warning);
 					return;
 				}
 			}
@@ -1777,7 +1764,7 @@ namespace {
 			}
 
 			LOG_INFO(Game, "Marked foundation #%llu for demolition", static_cast<unsigned long long>(foundationSel->id));
-			gameUI->pushNotification("Marked for demolition", "Foundation", UI::ToastSeverity::Info);
+			gameUI->pushNotification("Marked for demolition", "Foundation", ui::ToastSeverity::Info);
 			m_selectionSystem->clearSelection();
 		}
 
@@ -1854,7 +1841,7 @@ namespace {
 				segIds.size(),
 				markedOpenings
 			);
-			gameUI->pushNotification("Building marked for demolition", "Foundation, walls, and openings", UI::ToastSeverity::Info);
+			gameUI->pushNotification("Building marked for demolition", "Foundation, walls, and openings", ui::ToastSeverity::Info);
 			m_selectionSystem->clearSelection();
 		}
 
@@ -1898,7 +1885,7 @@ namespace {
 			}
 
 			LOG_INFO(Game, "Marked wall segment #%llu for demolition", static_cast<unsigned long long>(wallSel->id));
-			gameUI->pushNotification("Marked for demolition", "Wall segment", UI::ToastSeverity::Info);
+			gameUI->pushNotification("Marked for demolition", "Wall segment", ui::ToastSeverity::Info);
 			m_selectionSystem->clearSelection();
 		}
 
@@ -1927,7 +1914,7 @@ namespace {
 			}
 
 			LOG_INFO(Game, "Marked opening #%llu for demolition", static_cast<unsigned long long>(openingSel->id));
-			gameUI->pushNotification("Marked for demolition", "Opening", UI::ToastSeverity::Info);
+			gameUI->pushNotification("Marked for demolition", "Opening", ui::ToastSeverity::Info);
 			m_selectionSystem->clearSelection();
 		}
 
@@ -1977,6 +1964,7 @@ namespace {
 		// Scroll accumulator for smooth zoom on high-precision input devices (Magic Mouse, trackpad)
 		// Accumulates fractional scroll deltas and triggers zoom only when threshold is crossed
 		float m_scrollAccumulator = 0.0F;
+		float m_pendingScroll = 0.0F; // wheel the ui didn't take, since the last update
 
 		// The App this scene is on, from onEnter
 		app::App* owner = nullptr;

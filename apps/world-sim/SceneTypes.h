@@ -1,6 +1,9 @@
 #pragma once
 
-#include <app/UiScene.h>
+#include <scene/Scene.h>
+
+#include <functional>
+#include <memory>
 
 namespace app {
 	class SceneStack;
@@ -11,7 +14,7 @@ namespace world_sim {
 	/// @brief Scene registration info - each scene exports one of these
 	struct SceneInfo {
 		const char*			   name;
-		engine::UiSceneFactory factory;
+		std::function<std::unique_ptr<app::Scene>()> factory;
 	};
 
 // ============================================================================
