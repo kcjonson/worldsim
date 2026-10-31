@@ -373,7 +373,7 @@ Use this template for all work items:
 ---
 
 ### ✅ UI Event System
-**Spec/Documentation:** `/docs/technical/ui-framework/event-system.md`
+**Spec/Documentation:** salal's [ui-design.md](https://github.com/kcjonson/salal/blob/main/docs/ui-design.md) and [ui-plan.md](https://github.com/kcjonson/salal/blob/main/docs/ui-plan.md), the record of the ui every app is built on
 **Dependencies:** None
 **Status:** complete
 
@@ -405,7 +405,7 @@ Use this template for all work items:
 ---
 
 ### ✅ UI Architecture: Input System Cleanup
-**Spec/Documentation:** `/docs/technical/ui-framework/event-system.md`
+**Spec/Documentation:** salal's [ui-design.md](https://github.com/kcjonson/salal/blob/main/docs/ui-design.md) and [ui-plan.md](https://github.com/kcjonson/salal/blob/main/docs/ui-plan.md), the record of the ui every app is built on
 **Dependencies:** UI Event System
 **Status:** complete
 
@@ -440,7 +440,7 @@ while (running) {
 ---
 
 ### ✅ UI Architecture: FocusManager Simplification
-**Spec/Documentation:** `/docs/technical/ui-framework/focus-management.md`
+**Spec/Documentation:** salal's [ui-design.md](https://github.com/kcjonson/salal/blob/main/docs/ui-design.md) and [ui-plan.md](https://github.com/kcjonson/salal/blob/main/docs/ui-plan.md), the record of the ui every app is built on
 **Dependencies:** UI Architecture: Input System Cleanup
 **Status:** complete
 
@@ -460,7 +460,7 @@ while (running) {
 ---
 
 ### ✅ UI Architecture: ViewModel Pattern
-**Spec/Documentation:** `/docs/technical/ui-framework/data-binding.md`, `/docs/development-log/plans/2025-12-24-viewmodel-pattern.md`
+**Spec/Documentation:** salal's [ui-design.md](https://github.com/kcjonson/salal/blob/main/docs/ui-design.md) and [ui-plan.md](https://github.com/kcjonson/salal/blob/main/docs/ui-plan.md), the record of the ui every app is built on, `/docs/development-log/plans/2025-12-24-viewmodel-pattern.md`
 **Dependencies:** None
 **Status:** complete
 
@@ -1075,7 +1075,7 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 ---
 
 ### UI Architecture: Animation System
-**Spec/Documentation:** `/docs/technical/ui-framework/animation-system.md` (to be written)
+**Spec/Documentation:** salal's [ui-design.md](https://github.com/kcjonson/salal/blob/main/docs/ui-design.md) and [ui-plan.md](https://github.com/kcjonson/salal/blob/main/docs/ui-plan.md), the record of the ui every app is built on
 **Dependencies:** None
 **Status:** needs spec
 
@@ -1349,7 +1349,7 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 ---
 
 ### GPU-Based SDF Rendering for UI Primitives
-**Spec/Documentation:** `/docs/technical/ui-framework/sdf-rendering.md`
+**Spec/Documentation:** salal's [ui-design.md](https://github.com/kcjonson/salal/blob/main/docs/ui-design.md) and [ui-plan.md](https://github.com/kcjonson/salal/blob/main/docs/ui-plan.md), the record of the ui every app is built on
 **Dependencies:** None
 **Status:** planned
 

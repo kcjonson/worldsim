@@ -79,9 +79,7 @@ Applications:
 
 | Document | Description |
 |----------|-------------|
-| [Event System](./ui-framework/event-system.md) | Input event propagation and consumption |
-| [SDF Rendering](./ui-framework/sdf-rendering.md) | GPU-based primitive rendering (planned) |
-| [UI Rendering Spec Alignment](./ui-framework/ui-rendering-spec-alignment.md) | Migration order against the shared layered UI rendering specification (planned) |
+| [salal's ui-design.md](https://github.com/kcjonson/salal/blob/main/docs/ui-design.md) and [ui-plan.md](https://github.com/kcjonson/salal/blob/main/docs/ui-plan.md) | The ui every app is built on: its design, decided rule by rule, and how it was built and moved into |
 
 ### Networking & Multiplayer
 

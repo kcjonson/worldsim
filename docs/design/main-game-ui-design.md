@@ -1056,8 +1056,7 @@ Components need to handle:
 
 ## 19. Related Documentation
 
-- [UI Framework Architecture](/docs/technical/ui-framework/INDEX.md) — Technical implementation
-- [Rendering Boundaries](/docs/technical/ui-framework/rendering-boundaries.md) — What renders where
+- The ui's implementation: salal's [ui-design.md](https://github.com/kcjonson/salal/blob/main/docs/ui-design.md) and [ui-plan.md](https://github.com/kcjonson/salal/blob/main/docs/ui-plan.md), the record of the ui every app is built on
 - [Colonist Memory System](/docs/design/systems/colonist-memory.md) — Memory mechanics
 - [Needs System](/docs/design/systems/needs-system.md) — Colonist needs affecting UI
 - [Game Start Experience](/docs/design/features/game-start-experience.md) — Pre-gameplay UI flow
