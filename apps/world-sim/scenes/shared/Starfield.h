@@ -10,7 +10,7 @@
 // Call once as the first draw after the clear, before any other UI; the colours are the scene's
 // theme's.
 
-#include "scenes/shared/SalvageUi.h"
+#include "scenes/shared/SalalUi.h"
 
 #include "graphics/Color.h"
 #include "primitives/Primitives.h"

@@ -4,7 +4,7 @@
 // validation errors.
 
 #include "SceneTypes.h"
-#include "scenes/shared/SalvageUi.h"
+#include "scenes/shared/SalalUi.h"
 #include "scenes/shared/Starfield.h"
 #include <application/App.h>
 #include <assets/AssetRegistry.h>
@@ -39,7 +39,7 @@ namespace {
 		void onEnter(app::App& app) override {
 			owner = &app;
 			LOG_INFO(Game, "SplashScene - Entering");
-			world_sim::enterSalvageUi(app, ui());
+			world_sim::enterSalalUi(app, ui());
 			m_timer = 0.0F;
 			m_lastShownCount = -1;
 			m_failed = false;

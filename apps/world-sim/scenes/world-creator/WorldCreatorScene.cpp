@@ -14,7 +14,7 @@
 #include "scenes/landing/LandingSiteDetailsModel.h"
 #include "scenes/landing/LandingSiteDetailsPanel.h"
 #include "scenes/shared/GlobeView.h"
-#include "scenes/shared/SalvageUi.h"
+#include "scenes/shared/SalalUi.h"
 #include "scenes/shared/Starfield.h"
 #include "ui/ParameterPanel.h"
 #include "ui/WorldSurveyPanel.h"
@@ -102,7 +102,7 @@ class WorldCreatorScene : public app::Scene {
 	void onEnter(app::App& app) override {
 		owner = &app;
 		LOG_INFO(Game, "WorldCreatorScene - Entering");
-		world_sim::enterSalvageUi(app, ui());
+		world_sim::enterSalalUi(app, ui());
 
 		build();
 

@@ -68,7 +68,7 @@ add_executable(world-sim
     # Scenes
     scenes/shared/GlobeView.cpp
     scenes/shared/DecorativePlanet.cpp
-    scenes/shared/SalvageUi.cpp
+    scenes/shared/SalalUi.cpp
     scenes/splash/SplashScene.cpp
     scenes/menu/MainMenuScene.cpp
     scenes/scenario-select/ScenarioSelectScene.cpp

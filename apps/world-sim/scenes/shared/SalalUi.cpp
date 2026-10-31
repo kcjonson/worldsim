@@ -1,4 +1,4 @@
-#include "scenes/shared/SalvageUi.h"
+#include "scenes/shared/SalalUi.h"
 
 #include "AppContext.h"
 
@@ -9,7 +9,7 @@
 
 namespace world_sim {
 
-	void enterSalvageUi(app::App& app, ui::Context& context) {
+	void enterSalalUi(app::App& app, ui::Context& context) {
 		app.context<AppContext>().ui.uninstall();
 		context.setTheme(ui::Theme::load({.tokens = &::theme::tokenTable()}).theme);
 		if (!context.icons().has("gear")) {

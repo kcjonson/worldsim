@@ -1,6 +1,6 @@
 #pragma once
 
-// What world-sim's scenes on salal's ui share. enterSalvageUi, from a scene's onEnter, takes the input
+// What world-sim's scenes on salal's ui share. enterSalalUi, from a scene's onEnter, takes the input
 // back from the bridge for App's own dispatch and gives the scene's ui worldsim's theme and icons.
 // Tokens are worldsim's own design tokens, read through the scene's theme; text() turns a type role
 // into a style. Diamond is the mark the title blocks carry, which salal's shapes haven't got.
@@ -17,7 +17,7 @@ namespace world_sim {
 
 	namespace tokens = ::theme::tokens::theme;
 
-	void enterSalvageUi(app::App& app, ui::Context& context);
+	void enterSalalUi(app::App& app, ui::Context& context);
 
 	// A type role: a family, a size and a colour from the tokens, tracked by `tracking` em of the size.
 	struct Type {

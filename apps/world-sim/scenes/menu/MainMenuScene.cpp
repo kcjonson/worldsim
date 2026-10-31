@@ -1,4 +1,4 @@
-// Main Menu Scene - Salvage title screen.
+// Main Menu Scene - the title screen.
 //
 // A left-aligned column, centred top to bottom: the identity (diamond glyph,
 // WORLD-SIM and the tagline), a kicker, and the menu's rows, each an icon,
@@ -9,7 +9,7 @@
 #include "NewGameSetup.h"
 #include "SceneTypes.h"
 #include "scenes/shared/DecorativePlanet.h"
-#include "scenes/shared/SalvageUi.h"
+#include "scenes/shared/SalalUi.h"
 #include "scenes/shared/Starfield.h"
 
 #include <application/App.h>
@@ -38,7 +38,7 @@ namespace {
 		void onEnter(app::App& app) override {
 			owner = &app;
 			LOG_INFO(Game, "MainMenuScene - Entering");
-			world_sim::enterSalvageUi(app, ui());
+			world_sim::enterSalalUi(app, ui());
 			build();
 		}
 

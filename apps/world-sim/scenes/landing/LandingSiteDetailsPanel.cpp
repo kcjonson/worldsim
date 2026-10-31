@@ -1,6 +1,6 @@
 #include "scenes/landing/LandingSiteDetailsPanel.h"
 
-#include "scenes/shared/SalvageUi.h"
+#include "scenes/shared/SalalUi.h"
 
 #include <theme/Panel.h>
 #include <ui/components/Badge.h>

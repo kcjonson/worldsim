@@ -1,6 +1,6 @@
 #include "WorldSurveyPanel.h"
 
-#include "scenes/shared/SalvageUi.h"
+#include "scenes/shared/SalalUi.h"
 
 #include <worldgen/data/Biome.h>
 #include <worldgen/data/WorldData.h>

@@ -9,7 +9,7 @@
 #include "GameStartConfig.h"
 #include "GameWorldState.h"
 #include "SceneTypes.h"
-#include "scenes/shared/SalvageUi.h"
+#include "scenes/shared/SalalUi.h"
 #include "scenes/shared/Starfield.h"
 
 #include <app/Keys.h>
@@ -67,7 +67,7 @@ namespace {
 		void onEnter(app::App& app) override {
 			owner = &app;
 			LOG_INFO(Game, "GameLoadingScene - Entering");
-			world_sim::enterSalvageUi(app, ui());
+			world_sim::enterSalalUi(app, ui());
 			build();
 
 			phase = LoadingPhase::PreparingPlanet;

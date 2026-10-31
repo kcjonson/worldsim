@@ -1,6 +1,6 @@
 #include "ParameterPanel.h"
 
-#include "scenes/shared/SalvageUi.h"
+#include "scenes/shared/SalalUi.h"
 
 #include <ui/components/Button.h>
 
