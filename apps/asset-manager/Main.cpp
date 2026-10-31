@@ -5,7 +5,6 @@
 #include "BaseShader.h"
 #include "SceneTypes.h"
 
-#include <app/UiBridge.h>
 #include <application/App.h>
 #include <application/CommandLine.h>
 #include <assets/AssetBootstrap.h>
@@ -60,7 +59,6 @@ int main(int argc, char* argv[]) {
 	// BrowserScene reads the registry on entry, so load synchronously.
 	engine::assets::initializeAssetSystem(false);
 
-	engine::UiBridge bridge(*app);
 	asset_manager::addScenes(app->scenes());
 	if (!commandLine.scene || !app->scenes().switchTo(*commandLine.scene)) {
 		app->scenes().switchTo(asset_manager::scenes::Browser.name);
