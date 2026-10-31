@@ -1,8 +1,9 @@
 /*
  * Generate worldsim's theme from the canonical tokens.json: the same tokens as a
  * Design Tokens file (Format Module 2025.10) for salal's salal_tokens(),
- * libs/theme/tokens/theme.tokens.json, worldsim's own names under `theme` and
- * salal ui's semantic tokens aliased to them.
+ * libs/theme/tokens/theme.tokens.json, worldsim's own names under `theme`,
+ * salal ui's semantic tokens aliased to them, and ui's component styles set to
+ * the looks worldsim's own components had before it moved onto salal's ui.
  *
  * Run from docs/ui-prototype:  node scripts/gen-cpp-theme.mjs
  */
@@ -65,10 +66,12 @@ function dtcgToken(cat, e) {
 
 const own = {};
 const paths = new Map(); // CSS name -> [token path, type]
+const values = new Map(); // CSS name -> its number, an alias's resolved
 const aliases = [];
 for (const [cat, group] of Object.entries(tokens)) {
 	if (typeof group !== "object") continue;
 	for (const [name, e] of Object.entries(group)) {
+		if (typeof e.value === "number") values.set(name, e.value);
 		if (e.alias) {
 			aliases.push([cat, name, e.alias.match(/^var\(--([\w-]+)\)$/)?.[1]]);
 			continue;
@@ -135,24 +138,85 @@ const mapping = [
 	["state.active.wash", "bg-active"],
 	["focusRing.width", "bw"],
 	["shadow.overlay", "shadow-pop"],
-	["styles.pane.borderRadius", "radius-panel"],
-	["styles.button.borderRadius", "radius-ui"],
 ];
+
+// ui's component styles in the looks worldsim's own components had: [style field, value]. A string
+// is a CSS name and {ui} one of ui's tokens, both aliased; {em: [spacing, size]} is an em letter
+// spacing at a font size, which a style takes in px; {shadow: "none"} is a clear shadow, so the
+// style casts none.
+const styleFields = [
+	["pane.borderRadius", "radius-panel"],
+	["button.backgroundColor", { ui: "base.color.clear" }],
+	["button.borderRadius", "radius-ui"],
+	["button.fontFamily", { ui: "font.family.display" }],
+	["button.letterSpacing", { em: ["ls-wide", "fs-sm"] }],
+	["label.letterSpacing", { em: ["label-spacing", "fs-xs"] }],
+	["overlay.borderColor", "line-edge"],
+	["overlay.borderRadius", "radius-panel"],
+	["segment.fontFamily", { ui: "font.family.display" }],
+	["segment.letterSpacing", { em: ["ls-wide", "fs-sm"] }],
+	["select.backgroundColor", "bg-inset"],
+	["select.borderColor", "line-hairline"],
+	["select.borderRadius", "radius-ui"],
+	["select.color", "text-bright"],
+	["statValue.color", "text-bright"],
+	["tab.fontFamily", { ui: "font.family.display" }],
+	["tab.fontSize", "fs-sm"],
+	["tab.letterSpacing", { em: ["ls-wide", "fs-sm"] }],
+	["textInput.borderColor", "line-hairline"],
+	["textInput.color", "text-bright"],
+	["toast.borderColor", "line-edge"],
+	["toast.borderRadius", "radius-panel"],
+	["tooltip.borderColor", "line-edge"],
+	["tooltip.boxShadow", { shadow: "none" }],
+];
+
+// Text transforms, which salal reads from its extension on a style's group.
+const styleTransforms = [
+	["button", "uppercase"],
+	["segment", "uppercase"],
+	["tab", "uppercase"],
+];
+
+function styleField(field, value) {
+	if (typeof value === "string") {
+		const resolved = paths.get(value);
+		if (!resolved) throw new Error(`styles.${field}: no token ${value}`);
+		return { $value: `{${resolved[0]}}` };
+	}
+	if (value.ui) return { $value: `{${value.ui}}` };
+	if (value.em) {
+		const [spacing, size] = value.em.map((name) => values.get(name));
+		if (spacing === undefined || size === undefined) throw new Error(`styles.${field}: no token in ${value.em}`);
+		return { $type: "dimension", $value: px(Math.round(spacing * size * 10000) / 10000) };
+	}
+	if (value.shadow === "none") {
+		return { $type: "shadow", $value: { color: dtcgColor([0, 0, 0, 0]), offsetX: px(0), offsetY: px(0), blur: px(0), spread: px(0) } };
+	}
+	throw new Error(`styles.${field}: unknown value ${JSON.stringify(value)}`);
+}
 
 const dtcg = {
 	$description:
-		"GENERATED from docs/ui-prototype/src/design-system/tokens.css via tokens.json by docs/ui-prototype/scripts/gen-cpp-theme.mjs. Do not edit by hand. Worldsim's theme over salal ui's default tokens: its own names under theme, and ui's semantic tokens aliased to them.",
+		"GENERATED from docs/ui-prototype/src/design-system/tokens.css via tokens.json by docs/ui-prototype/scripts/gen-cpp-theme.mjs. Do not edit by hand. Worldsim's theme over salal ui's default tokens: its own names under theme, ui's semantic tokens aliased to them, and ui's component styles in worldsim's looks.",
 	theme: own,
+};
+const place = (path, token) => {
+	const segments = path.split(".");
+	let group = dtcg;
+	for (const segment of segments.slice(0, -1)) group = group[segment] ??= {};
+	group[segments.at(-1)] = token;
 };
 for (const [uiPath, name] of mapping) {
 	const resolved = paths.get(name);
 	if (!resolved) throw new Error(`${uiPath}: no token ${name}`);
-	const segments = uiPath.split(".");
-	let group = dtcg;
-	for (const segment of segments.slice(0, -1)) group = group[segment] ??= {};
-	group[segments.at(-1)] = uiPath.startsWith("styles.") ? { $value: `{${resolved[0]}}` } : { $type: resolved[1], $value: `{${resolved[0]}}` };
+	place(uiPath, { $type: resolved[1], $value: `{${resolved[0]}}` });
 }
+for (const [field, value] of styleFields) place(`styles.${field}`, styleField(field, value));
+for (const [style, transform] of styleTransforms) place(`styles.${style}.$extensions`, { salal: { textTransform: transform } });
 
 mkdirSync(dirname(dtcgPath), { recursive: true });
 writeFileSync(dtcgPath, JSON.stringify(dtcg, null, 2) + "\n");
-console.log(`Wrote ${paths.size} tokens and ${mapping.length} of ui's to ${dtcgPath}`);
+console.log(
+	`Wrote ${paths.size} tokens, ${mapping.length} of ui's, ${styleFields.length} style fields and ${styleTransforms.length} transforms to ${dtcgPath}`,
+);
