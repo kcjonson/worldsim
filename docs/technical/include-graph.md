@@ -22,18 +22,18 @@ node tools/resolve-includes.mjs --root path/to/another/checkout
 
 ## Baseline
 
-Production files only (test and bench files excluded), after `libs/engine` split into world, assets, sim and world-view and `libs/world` became worldgen (2026-10-31), with salal at v0.30.1. The split moved files and left their includes alone: the four new rows add up to the old engine and engine(assets) rows, less `Keys.h`'s two includes (one foundation, one external), which went to theme with it. world-view -> sim 8 is `DynamicEntityRenderSystem.cpp`, which draws ECS entities, and assets -> renderer 12 is the vector module (SVG loading and tessellation, and the mesh types `BakedEntityMesh` and `WorldDepthSort` read) plus `AssetRenderer`'s thumbnails.
+Production files only (test and bench files excluded), after `libs/engine` split into world, assets, sim and world-view and `libs/world` became worldgen (2026-10-31), with salal at v0.30.1. The split moved files and left their includes alone: the four new rows add up to the old engine and engine(assets) rows, less `Keys.h`'s two includes (one foundation, one external), which went to theme with it. world-view -> sim 8 is `DynamicEntityRenderSystem.cpp`, which draws ECS entities, and assets -> renderer 12 is the vector module (SVG loading and tessellation, and the mesh types `BakedEntityMesh` and `WorldDepthSort` read) plus `AssetRenderer`'s thumbnails. The pin then moved to salal v0.33.0, past v0.31.0's perf suite, which brings `metrics/GPUFrameTimer.{h,cpp}` and `application/FrameCapture.{h,cpp}`: renderer -> renderer went from 103 to 106 (`GPUFrameTimer.cpp`'s own header and `backend/Backend.h`, and `BatchRenderer.h` including the timer), renderer -> external from 224 to 230 (`<array>`, `<cstddef>` and `<vector>` in `GPUFrameTimer.cpp`, `<cstdint>` and `<memory>` in its header, and `<chrono>` in `BatchRenderer.cpp`), app -> app from 78 to 80 (`App.h` and `FrameCapture.cpp` including `FrameCapture.h`) and app -> external from 270 to 280 (`<nlohmann/json.hpp>`, `<cstddef>`, `<cstdint>`, `<optional>` and `<vector>` in `FrameCapture.h`, `<algorithm>`, `<cmath>`, `<numeric>` and `<utility>` in `FrameCapture.cpp`, and `<cstdint>` in `App.h`). v0.32.0's text transform and fill hooks and v0.33.0's `descendantsFocusable` moved no production cell. The table reads v0.33.0.
 
 | src \ dst | foundation | geometry | renderer | ui | theme | worldgen | planet-view | app | world | assets | sim | world-view | external |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | foundation | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 107 |
 | geometry | 2 | 86 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 158 |
-| renderer | 33 | 0 | 103 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 224 |
+| renderer | 33 | 0 | 106 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 230 |
 | ui | 32 | 0 | 14 | 243 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 271 |
 | theme | 3 | 0 | 2 | 9 | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 18 |
 | worldgen | 34 | 0 | 0 | 0 | 0 | 118 | 0 | 0 | 0 | 0 | 0 | 0 | 149 |
 | planet-view | 2 | 0 | 1 | 0 | 0 | 6 | 11 | 0 | 0 | 0 | 0 | 0 | 38 |
-| app | 33 | 0 | 17 | 4 | 0 | 0 | 0 | 78 | 0 | 0 | 0 | 0 | 270 |
+| app | 33 | 0 | 17 | 4 | 0 | 0 | 0 | 80 | 0 | 0 | 0 | 0 | 280 |
 | world | 12 | 37 | 0 | 0 | 0 | 9 | 0 | 0 | 101 | 0 | 0 | 0 | 120 |
 | assets | 25 | 3 | 12 | 0 | 0 | 0 | 0 | 0 | 12 | 65 | 0 | 0 | 170 |
 | sim | 18 | 44 | 0 | 0 | 0 | 0 | 0 | 0 | 17 | 53 | 263 | 0 | 253 |
