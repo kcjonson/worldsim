@@ -1,6 +1,6 @@
 #pragma once
 
-// ColonistListItem - a selectable colonist card in the roster (Salvage look): a mood-tinted Avatar, the
+// ColonistListItem - a selectable colonist card in the roster: a mood-tinted Avatar, the
 // colonist's first name with a mood percentage, and an activity meter (the current task and its
 // progress). Selected, the card is raised with an amber left edge; under the player's direct control,
 // a teal border and right edge. A press calls onSelect.

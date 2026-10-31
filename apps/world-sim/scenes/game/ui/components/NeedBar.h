@@ -1,6 +1,6 @@
 #pragma once
 
-// NeedBar - a colonist's need, 0 to 100, in the Salvage look: salal's ProgressBar on its auto tone, so
+// NeedBar - a colonist's need, 0 to 100: salal's ProgressBar on its auto tone, so
 // a depleted need reads red and a satisfied one green, its label inside the bar. Compact is the
 // shorter bar under a colonist's header.
 
