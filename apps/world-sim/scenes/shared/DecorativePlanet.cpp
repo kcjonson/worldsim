@@ -5,7 +5,6 @@
 #include <worldgen/io/PlanetIO.h>
 
 #include <primitives/Primitives.h>
-#include <theme/Tokens.h>
 #include <utils/Log.h>
 #include <utils/ResourcePath.h>
 
@@ -83,7 +82,7 @@ void DecorativePlanet::update(float dt) {
 	}
 }
 
-void DecorativePlanet::render(const Foundation::Rect& rect, float logicalW, float logicalH) {
+void DecorativePlanet::render(const Foundation::Rect& rect, float logicalW, float logicalH, Foundation::Color backdrop) {
 	if (!worldSet || !globe.isReady()) return;
 
 	// Paint the backdrop primitives (starfield) beneath the blitted globe; the
@@ -100,8 +99,8 @@ void DecorativePlanet::render(const Foundation::Rect& rect, float logicalW, floa
 	const float				solidX = logicalW * kScrimSolidFrac;
 	const float				clearX = logicalW * kScrimFadeFrac;
 	const float				alpha = kScrimAlpha * fade;
-	const Foundation::Color scrimEdge{UI::bg_void.r, UI::bg_void.g, UI::bg_void.b, alpha};
-	const Foundation::Color scrimClear{UI::bg_void.r, UI::bg_void.g, UI::bg_void.b, 0.0F};
+	const Foundation::Color scrimEdge{backdrop.r, backdrop.g, backdrop.b, alpha};
+	const Foundation::Color scrimClear{backdrop.r, backdrop.g, backdrop.b, 0.0F};
 	Renderer::Primitives::drawRect(Renderer::Primitives::RectArgs{
 		.bounds = {0.0F, 0.0F, solidX, logicalH},
 		.style = {.fill = scrimEdge}});
