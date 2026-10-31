@@ -20,8 +20,8 @@
 #include <input/InputEvent.h>
 #include <layout/LayoutContainer.h>
 #include <primitives/Primitives.h>
-#include <theme/Tokens.h>
-#include <theme/Variants.h>
+#include <theme/CssTokens.h>
+#include <theme/Tones.h>
 #include <utils/Log.h>
 #include <utils/ResourcePath.h>
 

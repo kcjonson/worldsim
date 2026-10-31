@@ -15,7 +15,7 @@
 #include <graphics/PrimitiveStyles.h>
 #include <math/Types.h>
 #include <primitives/Primitives.h>
-#include <theme/Variants.h>
+#include <theme/Tones.h>
 
 #include <array>
 #include <cctype>

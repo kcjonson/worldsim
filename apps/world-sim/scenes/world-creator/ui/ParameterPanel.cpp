@@ -3,8 +3,8 @@
 #include "primitives/Primitives.h"
 #include <components/icon/Icon.h>
 #include <components/panel/Panel.h>
-#include <theme/Tokens.h>
-#include <theme/Variants.h>
+#include <theme/CssTokens.h>
+#include <theme/Tones.h>
 
 #include <focus/FocusManager.h>
 

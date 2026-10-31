@@ -4,7 +4,7 @@
 #include <components/progress/ProgressBar.h>
 #include <input/InputTypes.h>
 #include <primitives/Primitives.h>
-#include <theme/Tokens.h>
+#include <theme/CssTokens.h>
 
 namespace {
 // Recipe list row height.

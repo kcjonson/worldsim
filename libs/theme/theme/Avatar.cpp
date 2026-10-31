@@ -1,6 +1,6 @@
 #include "theme/Avatar.h"
 
-#include <theme/DesignTokens.h>
+#include <theme/Tokens.h>
 
 #include <ui/Context.h>
 #include <ui/shapes/Circle.h>

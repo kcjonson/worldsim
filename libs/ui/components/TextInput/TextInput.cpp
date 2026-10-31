@@ -3,8 +3,8 @@
 #include "core/RenderContext.h"
 #include "focus/FocusManager.h"
 #include "font/FontRenderer.h"
-#include "theme/Tokens.h"
-#include "theme/Variants.h"
+#include "theme/CssTokens.h"
+#include "theme/Tones.h"
 #include "utils/Utf8.h"
 #include <algorithm>
 #include <cmath>

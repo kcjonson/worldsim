@@ -3,7 +3,7 @@
 #include "app/Keys.h"
 #include "app/UiScene.h"
 
-#include <debug/LayoutLint.h>
+#include <debug/UiLayoutLint.h>
 #include <debug/UiTreeSerializer.h>
 #include <input/InputEvent.h>
 

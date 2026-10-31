@@ -15,9 +15,9 @@
 #include <components/stat/Stat.h>
 #include <components/tabbar/TabBar.h>
 #include <components/tooltip/Tooltip.h>
+#include <theme/CssTokens.h>
 #include <theme/IconGlyphs.h>
-#include <theme/Tokens.h>
-#include <theme/Variants.h>
+#include <theme/Tones.h>
 
 #include "SceneTypes.h"
 #include <app/UiScene.h>

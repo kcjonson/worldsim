@@ -1,11 +1,11 @@
 #include "components/divider/Divider.h"
 
-#include "theme/Tokens.h"
-#include "theme/Variants.h"
 #include "font/FontRenderer.h"
 #include "graphics/Color.h"
 #include "graphics/PrimitiveStyles.h"
 #include "primitives/Primitives.h"
+#include "theme/CssTokens.h"
+#include "theme/Tones.h"
 
 #include <algorithm>
 #include <utility>

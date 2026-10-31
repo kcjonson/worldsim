@@ -20,7 +20,7 @@ add_library(ui
     components/slider/Slider.cpp
     components/contextmenu/ContextMenu.cpp
     debug/UiTreeSerializer.cpp
-    debug/LayoutLint.cpp
+    debug/UiLayoutLint.cpp
     clipboard/IClipboard.cpp
     focus/FocusManager.cpp
     input/InputEvent.cpp

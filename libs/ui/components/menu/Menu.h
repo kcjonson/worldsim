@@ -15,8 +15,8 @@
 
 #include "component/Component.h"
 #include "graphics/Color.h"
-#include "theme/Tokens.h"
-#include "theme/Variants.h"
+#include "theme/CssTokens.h"
+#include "theme/Tones.h"
 
 #include <functional>
 #include <string>

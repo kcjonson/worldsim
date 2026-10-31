@@ -12,8 +12,8 @@
 #include "scenes/shared/Starfield.h"
 
 #include <GL/glew.h>
-#include <theme/Tokens.h>
-#include <theme/Variants.h>
+#include <theme/CssTokens.h>
+#include <theme/Tones.h>
 
 #include <app/Keys.h>
 #include <app/UiScene.h>
