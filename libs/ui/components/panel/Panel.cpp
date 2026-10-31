@@ -1,9 +1,9 @@
 #include "components/panel/Panel.h"
 
-#include "theme/Variants.h"
 #include "graphics/Color.h"
 #include "graphics/PrimitiveStyles.h"
 #include "primitives/Primitives.h"
+#include "theme/Tones.h"
 
 #include <algorithm>
 #include <utility>

@@ -1,12 +1,12 @@
 #include "components/avatar/Avatar.h"
 
-#include "theme/Tokens.h"
-#include "theme/Variants.h"
 #include "font/FontRenderer.h"
 #include "graphics/Color.h"
 #include "graphics/PrimitiveStyles.h"
 #include "graphics/Rect.h"
 #include "primitives/Primitives.h"
+#include "theme/CssTokens.h"
+#include "theme/Tones.h"
 
 #include <cmath>
 #include <cstdint>

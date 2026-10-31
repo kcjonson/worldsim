@@ -1,7 +1,7 @@
 #include "GameplayBar.h"
 
-#include <theme/Tokens.h>
-#include <theme/Variants.h>
+#include <theme/CssTokens.h>
+#include <theme/Tones.h>
 #include <utils/Log.h>
 
 namespace world_sim {

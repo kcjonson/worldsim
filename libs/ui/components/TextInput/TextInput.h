@@ -4,8 +4,8 @@
 #include "focus/FocusableBase.h"
 #include "graphics/Color.h"
 #include "math/Types.h"
-#include "theme/Tokens.h"
-#include "theme/Variants.h"
+#include "theme/CssTokens.h"
+#include "theme/Tones.h"
 #include <functional>
 #include <optional>
 #include <string>

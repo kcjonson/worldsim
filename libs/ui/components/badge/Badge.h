@@ -12,8 +12,8 @@
 //
 // Spec: docs/design/ui/design-system/components.md (Badge section).
 
-#include "theme/Variants.h"
 #include "math/Types.h"
+#include "theme/Tones.h"
 #include <string>
 
 namespace UI {

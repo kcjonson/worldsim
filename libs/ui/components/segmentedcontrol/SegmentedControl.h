@@ -14,8 +14,8 @@
 //
 // Spec: docs/design/ui/design-system/components.md (SegmentedControl section).
 
-#include "theme/Variants.h"
 #include "math/Types.h"
+#include "theme/Tones.h"
 #include <string>
 #include <vector>
 

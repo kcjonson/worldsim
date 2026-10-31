@@ -6,7 +6,7 @@
 // into a style. Diamond is the mark the title blocks carry, which salal's shapes haven't got.
 
 #include <application/App.h>
-#include <theme/DesignTokens.h>
+#include <theme/Tokens.h>
 #include <ui/Context.h>
 #include <ui/shapes/Text.h>
 #include <ui/theme/Tokens.h>

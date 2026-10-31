@@ -19,7 +19,7 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const tokens = JSON.parse(readFileSync(resolve(here, "../../design/ui/design-system/tokens.json"), "utf8"));
-const outPath = resolve(here, "../../../libs/ui/theme/Tokens.h");
+const outPath = resolve(here, "../../../libs/ui/theme/CssTokens.h");
 const dtcgPath = resolve(here, "../../../libs/theme/tokens/theme.tokens.json");
 
 const id = (name) => name.replace(/-/g, "_");

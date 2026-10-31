@@ -4,8 +4,8 @@
 #include <font/FontRenderer.h>
 #include <graphics/PrimitiveStyles.h>
 #include <primitives/Primitives.h>
-#include <theme/Tokens.h>
-#include <theme/Variants.h>
+#include <theme/CssTokens.h>
+#include <theme/Tones.h>
 
 #include <cctype>
 #include <cstdio>
