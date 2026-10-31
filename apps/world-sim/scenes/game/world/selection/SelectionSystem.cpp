@@ -540,7 +540,7 @@ void SelectionSystem::renderIndicator(int viewportW, int viewportH) {
 								.width = 3.0F,
 							},
 						.id = "foundation-selection-indicator",
-						.zIndex = 100,
+						.key = 100,
 					}
 				);
 			}
@@ -572,7 +572,7 @@ void SelectionSystem::renderIndicator(int viewportW, int viewportH) {
 								.width = 3.0F,
 							},
 						.id = "opening-selection-indicator",
-						.zIndex = 100,
+						.key = 100,
 					}
 				);
 			}
@@ -609,7 +609,7 @@ void SelectionSystem::renderIndicator(int viewportW, int viewportH) {
 								.width = 3.0F,
 							},
 						.id = "wall-segment-selection-indicator",
-						.zIndex = 100,
+						.key = 100,
 					}
 				);
 			}

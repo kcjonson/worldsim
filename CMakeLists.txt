@@ -72,10 +72,9 @@ enable_testing()
 include(FetchContent)
 FetchContent_Declare(salal
     GIT_REPOSITORY https://github.com/kcjonson/salal.git
-    GIT_TAG        v0.19.0
+    GIT_TAG        v0.25.0
     GIT_SHALLOW    TRUE
 )
-set(SALAL_BUILD_UI OFF)
 set(SALAL_BUILD_APP ON)
 set(SALAL_BUILD_SANDBOX OFF)
 set(SALAL_BUILD_TESTS OFF)

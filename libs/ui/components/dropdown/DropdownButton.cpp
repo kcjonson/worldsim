@@ -305,7 +305,7 @@ namespace UI {
 			.style = {.fill = Foundation::Color::transparent(),
 					  .border = Foundation::BorderStyle{
 						  .color = borderColor, .width = bw, .cornerRadius = r_sm, .position = Foundation::BorderPosition::Inside}},
-			.zIndex = zIndex,
+			.key = zIndex,
 		});
 
 		// State wash, rounded to match the corners.
@@ -315,7 +315,7 @@ namespace UI {
 				.style = {.fill = c,
 						  .border = Foundation::BorderStyle{
 							  .color = c, .width = 0.0F, .cornerRadius = r_sm, .position = Foundation::BorderPosition::Inside}},
-				.zIndex = zIndex,
+				.key = zIndex,
 			});
 		};
 		if (active) {
@@ -339,7 +339,7 @@ namespace UI {
 			.boxHeight = bounds.height,
 			.letterSpacing = fs_sm * ls_wide,
 			.transform = Foundation::TextTransform::Uppercase,
-			.zIndex = static_cast<float>(zIndex) + 0.1F,
+			.key = zIndex,
 		});
 
 		// Render chevron icon (tint follows the label color).

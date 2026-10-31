@@ -144,11 +144,11 @@ namespace engine::world {
 						ring[(i + 1) % n].x, ring[(i + 1) % n].y, ctx.viewportWidth, ctx.viewportHeight, ctx.pixelsPerMeter
 					);
 					Renderer::Primitives::drawLine(Renderer::Primitives::LineArgs{
-						.start = a, .end = b, .style = {.color = col, .width = so.widthPx}, .id = "sel-outline", .zIndex = 0
+						.start = a, .end = b, .style = {.color = col, .width = so.widthPx}, .id = "sel-outline", .key = 0
 					});
 					// Filled dot per vertex for round joins (drawLine has butt caps).
 					Renderer::Primitives::drawCircle(Renderer::Primitives::CircleArgs{
-						.center = a, .radius = so.widthPx * 0.5F, .style = {.fill = col}, .id = "sel-join", .zIndex = 0
+						.center = a, .radius = so.widthPx * 0.5F, .style = {.fill = col}, .id = "sel-join", .key = 0
 					});
 				}
 			}

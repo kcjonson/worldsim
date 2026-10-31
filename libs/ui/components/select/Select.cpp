@@ -308,7 +308,7 @@ void Select::render() {
 		.style = {.fill = bg_inset,
 				  .border = Foundation::BorderStyle{
 					  .color = borderColor, .width = bw, .cornerRadius = r_sm, .position = Foundation::BorderPosition::Inside}},
-		.zIndex = zIndex,
+		.key = zIndex,
 	});
 
 	// Hover wash on the closed field.
@@ -318,7 +318,7 @@ void Select::render() {
 			.style = {.fill = bg_hover,
 					  .border = Foundation::BorderStyle{
 						  .color = bg_hover, .width = 0.0F, .cornerRadius = r_sm, .position = Foundation::BorderPosition::Inside}},
-			.zIndex = zIndex,
+			.key = zIndex,
 		});
 	}
 
@@ -346,7 +346,7 @@ void Select::render() {
 		.vAlign = Foundation::VerticalAlign::Middle,
 		.boxWidth = bounds.width - space_3 - chevronGutter,
 		.boxHeight = bounds.height,
-		.zIndex = static_cast<float>(zIndex) + 0.1F,
+		.key = zIndex,
 	});
 
 	// Chevron glyph on the right; brightens to accent while open/focused.
@@ -362,7 +362,7 @@ void Select::render() {
 		.vAlign = Foundation::VerticalAlign::Middle,
 		.boxWidth = chevronGutter,
 		.boxHeight = bounds.height,
-		.zIndex = static_cast<float>(zIndex) + 0.1F,
+		.key = zIndex,
 	});
 
 	// Render menu if open

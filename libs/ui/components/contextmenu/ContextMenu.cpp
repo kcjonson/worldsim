@@ -297,7 +297,7 @@ namespace UI {
 													  .cornerRadius = r_sm,
 													  .position = Foundation::BorderPosition::Inside},
 					 .boxShadow = Foundation::BoxShadow{.color = withAlpha(bg_void, 0.5F), .blur = 16.0F, .offset = {0.0F, 6.0F}}},
-				.zIndex = zIndex,
+				.key = zIndex,
 			}
 		);
 
@@ -314,7 +314,7 @@ namespace UI {
 					Renderer::Primitives::RectArgs{
 						.bounds = itemBounds,
 						.style = {.fill = bg_hover},
-						.zIndex = zIndex + 1,
+						.key = zIndex + 1,
 					}
 				);
 			}
@@ -331,7 +331,7 @@ namespace UI {
 					.font = fontUi,
 					.vAlign = Foundation::VerticalAlign::Middle,
 					.boxHeight = kItemHeight,
-					.zIndex = static_cast<float>(zIndex + 2),
+					.key = zIndex + 2,
 				}
 			);
 		}

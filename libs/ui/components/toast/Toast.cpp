@@ -193,7 +193,7 @@ void Toast::render() {
 													.position = Foundation::BorderPosition::Inside},
 				  .boxShadow = Foundation::BoxShadow{
 					  .color = fade(withAlpha(severityColor, 0.35F)), .blur = 12.0F, .spread = 0.0F, .offset = {0.0F, 0.0F}}},
-		.zIndex = zIndex,
+		.key = zIndex,
 	});
 
 	// Left severity accent stripe in the card's gutter (above the card fill).
@@ -201,7 +201,7 @@ void Toast::render() {
 	drawRect({
 		.bounds = {contentPos.x, contentPos.y, kStripeWidth, height},
 		.style = {.fill = fade(severityColor)},
-		.zIndex = zIndex + 1,
+		.key = zIndex + 1,
 	});
 
 	// Title in the severity tone (UI font).
@@ -211,7 +211,7 @@ void Toast::render() {
 		.scale = kTitleFontSize / 16.0F,
 		.color = fade(severityColor),
 		.font = fontUi,
-		.zIndex = static_cast<float>(zIndex) + 0.1F,
+		.key = zIndex,
 	});
 
 	// Body text.
@@ -221,7 +221,7 @@ void Toast::render() {
 		.scale = kMessageFontSize / 16.0F,
 		.color = fade(text),
 		.font = fontUi,
-		.zIndex = static_cast<float>(zIndex) + 0.1F,
+		.key = zIndex,
 	});
 
 	// Dismiss button (X): hover wash + a mono glyph.
@@ -234,7 +234,7 @@ void Toast::render() {
 														.width = 0.0F,
 														.cornerRadius = r_sm,
 														.position = Foundation::BorderPosition::Inside}},
-			.zIndex = zIndex + 1,
+			.key = zIndex + 1,
 		});
 	}
 	drawText({
@@ -247,7 +247,7 @@ void Toast::render() {
 		.vAlign = Foundation::VerticalAlign::Middle,
 		.boxWidth = dismissBounds.width,
 		.boxHeight = dismissBounds.height,
-		.zIndex = static_cast<float>(zIndex) + 0.2F,
+		.key = zIndex,
 	});
 
 	// Remaining-time indicator (mono label) while auto-dismiss is counting down.
@@ -264,7 +264,7 @@ void Toast::render() {
 			.scale = fs_2xs / 16.0F,
 			.color = fade(text_dim),
 			.font = fontMono,
-			.zIndex = static_cast<float>(zIndex) + 0.1F,
+			.key = zIndex,
 		});
 	}
 }

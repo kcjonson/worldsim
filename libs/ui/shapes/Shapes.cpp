@@ -12,18 +12,18 @@ namespace UI {
 
 	void Rectangle::render() {
 		Renderer::Primitives::drawRect(
-			{.bounds = {position.x, position.y, size.x, size.y}, .style = style, .id = id, .zIndex = RenderContext::getZIndex()}
+			{.bounds = {position.x, position.y, size.x, size.y}, .style = style, .id = id, .key = RenderContext::getZIndex()}
 		);
 	}
 
 	void Circle::render() {
 		Renderer::Primitives::drawCircle(
-			{.center = center, .radius = radius, .style = style, .id = id, .zIndex = RenderContext::getZIndex()}
+			{.center = center, .radius = radius, .style = style, .id = id, .key = RenderContext::getZIndex()}
 		);
 	}
 
 	void Line::render() {
-		Renderer::Primitives::drawLine({.start = start, .end = end, .style = style, .id = id, .zIndex = RenderContext::getZIndex()});
+		Renderer::Primitives::drawLine({.start = start, .end = end, .style = style, .id = id, .key = RenderContext::getZIndex()});
 	}
 
 	// Text layout API implementation

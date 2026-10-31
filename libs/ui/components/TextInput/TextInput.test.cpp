@@ -134,21 +134,21 @@ namespace UI {
 			Renderer::Primitives::shutdown();
 		}
 
-		// The last flush's vertices, as uploaded.
-		std::vector<Renderer::BatchVertex> uploaded() const {
-			const std::span<const uint8_t>	   bytes = gpu->bufferContents(gpu->geometry(gpu->draws().back().call.geometry)->vertices);
-			std::vector<Renderer::BatchVertex> vertices(bytes.size() / sizeof(Renderer::BatchVertex));
-			std::memcpy(vertices.data(), bytes.data(), vertices.size() * sizeof(Renderer::BatchVertex));
-			return vertices;
+		// The last flush's quads, as uploaded.
+		std::vector<Renderer::BatchInstance> uploaded() const {
+			const std::span<const uint8_t>		 bytes = gpu->bufferContents(gpu->geometry(gpu->draws().back().call.geometry)->vertices);
+			std::vector<Renderer::BatchInstance> quads(bytes.size() / sizeof(Renderer::BatchInstance));
+			std::memcpy(quads.data(), bytes.data(), quads.size() * sizeof(Renderer::BatchInstance));
+			return quads;
 		}
 
 		Renderer::backend::NullBackend* gpu = nullptr;
 		FocusManager					focusManager;
 	};
 
-	// Under a container's offset the text clip moves with the input; the caret, at cursor 0
-	// on the text area's left edge, draws outside it.
-	TEST_F(TextInputRenderTest, TheTextClipFollowsTheOffsetAndTheCaretDrawsOutsideIt) {
+	// The text clip is in the input's own space, which the renderer maps through a
+	// container's offset; the caret, at cursor 0 on the text area's left edge, draws outside it.
+	TEST_F(TextInputRenderTest, TheTextClipIsInTheInputsSpaceAndTheCaretDrawsOutsideIt) {
 		TextInput input(TextInput::Args{.position = {10.0F, 20.0F}, .size = {200.0F, 40.0F}});
 		input.onFocusGained(); // so the caret draws
 
@@ -161,24 +161,26 @@ namespace UI {
 
 		// Across, the text area inside the padding; down, the border's inner edge.
 		const TextInputStyle style;
-		EXPECT_FLOAT_EQ(clip.x, 110.0F + style.paddingLeft);
-		EXPECT_FLOAT_EQ(clip.y, 70.0F + (style.borderWidth * 0.5F));
+		EXPECT_FLOAT_EQ(clip.x, 10.0F + style.paddingLeft);
+		EXPECT_FLOAT_EQ(clip.y, 20.0F + (style.borderWidth * 0.5F));
 		EXPECT_FLOAT_EQ(clip.width, 200.0F - style.paddingLeft - style.paddingRight);
 		EXPECT_FLOAT_EQ(clip.height, 40.0F - style.borderWidth);
 
-		// The caret is the last thing drawn: whole, across the clip's left edge, under no clip.
+		// The caret is the last thing drawn: whole, across the clip's left edge on screen, under no clip.
+		const float clipLeft = clip.x + 100.0F;
 		ASSERT_FALSE(gpu->draws().empty());
-		const std::vector<Renderer::BatchVertex> vertices = uploaded();
-		ASSERT_GE(vertices.size(), 4U);
-		float left = vertices.back().position.x;
-		float right = left;
-		for (size_t i = vertices.size() - 4; i < vertices.size(); ++i) {
-			left = std::min(left, vertices[i].position.x);
-			right = std::max(right, vertices[i].position.x);
-			EXPECT_EQ(vertices[i].clipBounds, Foundation::Vec4(0.0F));
+		const std::vector<Renderer::BatchInstance> quads = uploaded();
+		ASSERT_FALSE(quads.empty());
+		const Renderer::BatchInstance& caret = quads.back();
+		float						   left = caret.corners[0].x;
+		float						   right = left;
+		for (const Foundation::Vec2& corner : caret.corners) {
+			left = std::min(left, corner.x);
+			right = std::max(right, corner.x);
 		}
-		EXPECT_LT(left, clip.x);
-		EXPECT_GT(right, clip.x);
+		EXPECT_EQ(caret.clip, Foundation::Vec4(0.0F));
+		EXPECT_LT(left, clipLeft);
+		EXPECT_GT(right, clipLeft);
 	}
 
 } // namespace UI

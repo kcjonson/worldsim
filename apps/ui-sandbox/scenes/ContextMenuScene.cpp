@@ -234,7 +234,7 @@ namespace {
 					.style =
 						{.fill = Color(0.2F, 0.25F, 0.3F, 1.0F),
 						 .border = BorderStyle{.color = Color(0.4F, 0.5F, 0.6F, 1.0F), .width = 1.0F}},
-					.zIndex = 0,
+					.key = 0,
 				}
 			);
 			Renderer::Primitives::drawRect(
@@ -243,7 +243,7 @@ namespace {
 					.style =
 						{.fill = Color(0.25F, 0.2F, 0.3F, 1.0F),
 						 .border = BorderStyle{.color = Color(0.5F, 0.4F, 0.6F, 1.0F), .width = 1.0F}},
-					.zIndex = 0,
+					.key = 0,
 				}
 			);
 			Renderer::Primitives::drawRect(
@@ -252,7 +252,7 @@ namespace {
 					.style =
 						{.fill = Color(0.3F, 0.2F, 0.25F, 1.0F),
 						 .border = BorderStyle{.color = Color(0.6F, 0.4F, 0.5F, 1.0F), .width = 1.0F}},
-					.zIndex = 0,
+					.key = 0,
 				}
 			);
 

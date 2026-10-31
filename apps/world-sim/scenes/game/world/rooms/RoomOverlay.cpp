@@ -102,7 +102,7 @@ namespace world_sim {
 						.indexCount = mesh.indices.size(),
 						.color = selected ? kSelectedTint : kTint,
 						.id = fillId.c_str(),
-						.zIndex = selected ? kZSelected : kZFill,
+						.key = selected ? kZSelected : kZFill,
 					}
 				);
 			}
@@ -123,7 +123,7 @@ namespace world_sim {
 								.width = edgeWidth,
 							},
 						.id = edgeId.c_str(),
-						.zIndex = edgeZ,
+						.key = edgeZ,
 					}
 				);
 			}
@@ -138,7 +138,7 @@ namespace world_sim {
 						.position = Foundation::Vec2{repScreen.x, repScreen.y},
 						.color = kLabel,
 						.id = labelId.c_str(),
-						.zIndex = static_cast<float>(kZLabel),
+						.key = kZLabel,
 					}
 				);
 			}

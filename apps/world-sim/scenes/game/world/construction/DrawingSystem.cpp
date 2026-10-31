@@ -133,7 +133,7 @@ namespace world_sim {
 				.indexCount = mesh.indices.size(),
 				.color = color,
 				.id = id,
-				.zIndex = zIndex,
+				.key = zIndex,
 			});
 		}
 
@@ -1587,7 +1587,7 @@ namespace world_sim {
 				.indexCount = g.fillIndices.size(),
 				.color = toColor(fs.blueprintFill),
 				.id = "committed_foundation_base",
-				.zIndex = 50,
+				.key = 50,
 			});
 
 			// Layer 2: progress fill, alpha proportional to workDone/workTotal. Ramps from a
@@ -1602,7 +1602,7 @@ namespace world_sim {
 					.indexCount = g.fillIndices.size(),
 					.color = {g.matColor.r, g.matColor.g, g.matColor.b, fillAlpha},
 					.id = "committed_foundation_progress",
-					.zIndex = 51,
+					.key = 51,
 				});
 			}
 
@@ -1616,7 +1616,7 @@ namespace world_sim {
 					.end = screen[(i + 1) % screen.size()],
 					.style = {.color = outline, .width = g.built ? fs.outlineWidthBuilt : fs.outlineWidthBlueprint},
 					.id = "committed_foundation_edge",
-					.zIndex = 52,
+					.key = 52,
 				});
 			}
 		}
@@ -1689,7 +1689,7 @@ namespace world_sim {
 				.end = screen[i + 1],
 				.style = {.color = okColor, .width = ps.lineWidth},
 				.id = "drawing_edge",
-				.zIndex = 901,
+				.key = 901,
 			});
 		}
 
@@ -1700,7 +1700,7 @@ namespace world_sim {
 				.end = toScreen(cursor_),
 				.style = {.color = lineColor, .width = ps.lineWidth},
 				.id = "drawing_rubberband",
-				.zIndex = 902,
+				.key = 902,
 			});
 		}
 
@@ -1718,7 +1718,7 @@ namespace world_sim {
 					.end = toScreen(lastSnap_.guideTo),
 					.style = {.color = toColor(ps.guideColor), .width = ps.guideWidth},
 					.id = "drawing_guide",
-					.zIndex = 899,
+					.key = 899,
 				});
 			}
 			if (lastSnap_.kind == engine::construction::SnapKind::AxisGuide &&
@@ -1729,7 +1729,7 @@ namespace world_sim {
 					.end = toScreen(lastSnap_.guideToAlt),
 					.style = {.color = toColor(ps.guideColor), .width = ps.guideWidth},
 					.id = "drawing_guide_alt",
-					.zIndex = 899,
+					.key = 899,
 				});
 			}
 		}
@@ -1741,7 +1741,7 @@ namespace world_sim {
 				.radius = ps.vertexRadiusPx,
 				.style = {.fill = okColor},
 				.id = "drawing_vertex",
-				.zIndex = 903,
+				.key = 903,
 			});
 		}
 
@@ -1759,7 +1759,7 @@ namespace world_sim {
 					 .border =
 						 Foundation::BorderStyle{.color = closing ? okColor : toColor(ps.originHaloColor), .width = closing ? 3.0F : 1.5F}},
 				.id = "drawing_origin_halo",
-				.zIndex = 904,
+				.key = 904,
 			});
 		}
 
@@ -1775,7 +1775,7 @@ namespace world_sim {
 				.radius = ps.invalidVertexRadiusPx,
 				.style = {.fill = {badColor.r, badColor.g, badColor.b, 0.5F}},
 				.id = "drawing_invalid_vertex",
-				.zIndex = 905,
+				.key = 905,
 			});
 		}
 
@@ -1788,7 +1788,7 @@ namespace world_sim {
 				.radius = ps.invalidVertexRadiusPx,
 				.style = {.fill = {badColor.r, badColor.g, badColor.b, 0.5F}},
 				.id = "drawing_offmesh_cursor",
-				.zIndex = 905,
+				.key = 905,
 			});
 		}
 	}
@@ -1818,7 +1818,7 @@ namespace world_sim {
 					.end = screen[(i + 1) % n],
 					.style = {.color = outline, .width = outlineWidth},
 					.id = edgeId,
-					.zIndex = zEdge,
+					.key = zEdge,
 				});
 			}
 		}
@@ -1841,7 +1841,7 @@ namespace world_sim {
 					.end = toScreen(line[1]),
 					.style = {.color = toColor(ws.outlineColor, 0.8F), .width = ws.outlineWidthBuilt},
 					.id = "committed_wall_fallback",
-					.zIndex = 60,
+					.key = 60,
 				});
 			}
 			return;
@@ -1999,7 +1999,7 @@ namespace world_sim {
 						.end = pt(u, 1.0F - kGlassInset),
 						.style = {.color = mullionColor, .width = std::max(1.0F, outlineWidth)},
 						.id = "committed_opening_mullion",
-						.zIndex = 64,
+						.key = 64,
 					});
 				}
 			} else {
@@ -2034,7 +2034,7 @@ namespace world_sim {
 					.end = pt(0.5F, 1.0F),
 					.style = {.color = seam, .width = std::max(1.0F, outlineWidth)},
 					.id = "committed_opening_seam",
-					.zIndex = 64,
+					.key = 64,
 				});
 			}
 		}
@@ -2131,7 +2131,7 @@ namespace world_sim {
 					.end = toScreen(geometry::dequantize(outline[(i + 1) % outline.size()])),
 					.style = {.color = UI::status_ok, .width = ps.lineWidth * 1.5F},
 					.id = "drawing_edit_outline",
-					.zIndex = 898,
+					.key = 898,
 				});
 			}
 			return;
@@ -2145,7 +2145,7 @@ namespace world_sim {
 			.shadowColor = {0.0F, 0.0F, 0.0F, 0.8F},
 			.shadowOffset = {1.0F, 1.0F},
 			.id = "drawing_edit_reason",
-			.zIndex = 906.0F,
+			.key = 906,
 		});
 	}
 
@@ -2207,7 +2207,7 @@ namespace world_sim {
 				.end = screen[i + 1],
 				.style = {.color = okColor, .width = ps.lineWidth},
 				.id = "wall_centerline",
-				.zIndex = 907,
+				.key = 907,
 			});
 		}
 
@@ -2218,7 +2218,7 @@ namespace world_sim {
 				.end = toScreen(cursor_),
 				.style = {.color = valid ? okColor : badColor, .width = ps.lineWidth},
 				.id = "wall_rubberband",
-				.zIndex = 908,
+				.key = 908,
 			});
 		}
 
@@ -2236,7 +2236,7 @@ namespace world_sim {
 					.end = toScreen(lastSnap_.guideTo),
 					.style = {.color = toColor(ps.guideColor), .width = ps.guideWidth},
 					.id = "wall_guide",
-					.zIndex = 905,
+					.key = 905,
 				});
 			}
 			if (lastSnap_.kind == engine::construction::SnapKind::AxisGuide &&
@@ -2247,7 +2247,7 @@ namespace world_sim {
 					.end = toScreen(lastSnap_.guideToAlt),
 					.style = {.color = toColor(ps.guideColor), .width = ps.guideWidth},
 					.id = "wall_guide_alt",
-					.zIndex = 905,
+					.key = 905,
 				});
 			}
 		}
@@ -2260,7 +2260,7 @@ namespace world_sim {
 				.radius = ps.vertexRadiusPx,
 				.style = {.fill = okColor},
 				.id = "wall_vertex",
-				.zIndex = 909,
+				.key = 909,
 			});
 		}
 
@@ -2275,7 +2275,7 @@ namespace world_sim {
 				.radius = std::max(6.0F, ConstructionRegistry::Get().snapping().vertexSnapRadiusMeters * scale * 0.5F),
 				.style = {.fill = {0.0F, 0.0F, 0.0F, 0.0F}, .border = Foundation::BorderStyle{.color = snapColor, .width = 2.0F}},
 				.id = "wall_snap_target",
-				.zIndex = 910,
+				.key = 910,
 			});
 		}
 	}
