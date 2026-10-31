@@ -1,112 +1,103 @@
 #include "NeedsTabView.h"
 #include "MeterDraw.h"
-#include "TabStyles.h"
 
 #include <ecs/components/Needs.h>
-#include <primitives/Primitives.h>
-#include <theme/CssTokens.h>
-#include <theme/Tones.h>
+#include <ui/Context.h>
 
 #include <string>
 
 namespace world_sim {
 
-namespace {
+	namespace {
 
-// Need ordering (NeedType): 0 Hunger,1 Thirst,2 Energy,3 Bladder,4 Digestion,
-// 5 Hygiene,6 Recreation,7 Temperature. Vitals are 0-4, comfort 5-7.
-constexpr size_t kVitalCount   = 5;
-constexpr size_t kComfortStart = 5;
-constexpr size_t kComfortCount = 3;
+		// By NeedType: 0 Hunger, 1 Thirst, 2 Energy, 3 Bladder, 4 Digestion are vital; 5 Hygiene,
+		// 6 Recreation, 7 Temperature are comfort.
+		constexpr std::size_t kVitalCount = 5;
+		constexpr std::size_t kNeedCount = 8;
 
-constexpr float kMoodGap	= 8.0F;	 // below mood meter
-constexpr float kCaptionGap = 12.0F; // below caption
-constexpr float kColumnGap	= 24.0F;
-constexpr float kRowGap		= 14.0F; // between meter rows
-constexpr float kSectionGap = 12.0F; // between sections within a column
+		constexpr float kColumnGap = 24.0F;
+		constexpr float kRowGap = 14.0F;
+		constexpr float kSectionGap = 12.0F;
+		constexpr float kComfortOpacity = 0.7F; // colonists don't act on comfort needs yet
+		constexpr float kAilmentsHeight = 58.0F;
 
-const char* needLabel(size_t i) {
-	return (i < ecs::kNeedLabels.size()) ? ecs::kNeedLabels[i] : "Need";
-}
-
-} // namespace
-
-void NeedsTabView::create(const Foundation::Rect& bounds) {
-	contentBounds = bounds;
-	size = {bounds.width, bounds.height};
-}
-
-void NeedsTabView::update(const NeedsData& data) {
-	data_ = data;
-}
-
-void NeedsTabView::render() {
-	using namespace tabs;
-	using namespace UI;
-
-	if (!visible) return;
-
-	const Foundation::Vec2 o	 = getContentPosition();
-	const float			   width = contentBounds.width;
-
-	// ---- Full-width Mood meter ----
-	const float		  mood01 = data_.mood / 100.0F;
-	const UI::Tone	  moodTone = data_.mood < 25.0F ? UI::Tone::Crit : (data_.mood < 50.0F ? UI::Tone::Warn : UI::Tone::Ok);
-	// ASCII separator: the SDF font atlas has no middot glyph.
-	const std::string moodValue = std::to_string(static_cast<int>(data_.mood)) + "% - " + (data_.moodLabel.empty() ? "Mood" : data_.moodLabel);
-
-	float y = drawMeter(o.x, o.y, width, "MOOD", mood01, moodValue, UI::toneColor(moodTone));
-	y += kMoodGap;
-
-	drawText("Mood is computed from the needs below; it sinks as they go unmet.", {o.x, y}, fs_xs, UI::text_faint);
-	y += fs_xs + kCaptionGap;
-
-	// ---- Two columns ----
-	const float colWidth = (width - kColumnGap) / 2.0F;
-	const float leftX	 = o.x;
-	const float rightX	 = o.x + colWidth + kColumnGap;
-	const float colTop	 = y;
-
-	// LEFT: Vital Needs + Comfort
-	{
-		float ly = colTop;
-		ly = drawDivider(leftX, ly, colWidth, "VITAL NEEDS");
-		ly += 6.0F;
-
-		for (size_t i = 0; i < kVitalCount; ++i) {
-			const UI::Tone tone = data_.isCritical[i] ? UI::Tone::Crit : (data_.needsAttention[i] ? UI::Tone::Warn : UI::Tone::Ok);
-			const float	   v	= data_.needValues[i] / 100.0F;
-			const std::string valueText = std::to_string(static_cast<int>(data_.needValues[i])) + "%";
-			ly = drawMeter(leftX, ly, colWidth, needLabel(i), v, valueText, UI::toneColor(tone));
-			ly += kRowGap;
+		const char* needLabel(std::size_t index) {
+			return index < ecs::kNeedLabels.size() ? ecs::kNeedLabels[index] : "Need";
 		}
 
-		ly += kSectionGap;
-		ly = drawDivider(leftX, ly, colWidth, "COMFORT");
-		ly += 6.0F;
-
-		for (size_t k = 0; k < kComfortCount; ++k) {
-			const size_t	  i			= kComfortStart + k;
-			const UI::Tone	  tone		= data_.isCritical[i] ? UI::Tone::Crit : (data_.needsAttention[i] ? UI::Tone::Warn : UI::Tone::Ok);
-			const float		  v			= data_.needValues[i] / 100.0F;
-			const std::string valueText = std::to_string(static_cast<int>(data_.needValues[i])) + "%";
-			// Comfort needs are dimmed: colonists don't act on them yet.
-			ly = drawMeter(leftX, ly, colWidth, needLabel(i), v, valueText, UI::toneColor(tone), 0.7F);
-			ly += kRowGap;
+		ui::Ref<ui::Component> column(ui::Component& parent, float gap) {
+			return parent.addChild<ui::Component>({
+				.size = {0.0F, ui::kAuto},
+				.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = gap, .flexGrow = 1.0F},
+			});
 		}
 
-		drawText("Comfort needs are tracked, but colonists don't act on them yet.", {leftX, ly}, fs_2xs, UI::text_faint);
+	} // namespace
+
+	void NeedsTabView::onMount() {
+		const ui::Theme& theme = getContext()->getTheme();
+		ui::Layout		 layout = getLayout();
+		layout.display = ui::Display::Flex;
+		layout.flexDirection = ui::FlexDirection::Column;
+		layout.gap = theme.get(tokens::spacing::space2);
+		setLayout(layout);
+
+		moodMeter = addChild<ui::ProgressBar>({.label = "Mood", .controlSize = ui::ControlSize::Sm});
+		addChild<ui::Text>({
+			.margin = {0.0F, 0.0F, theme.get(tokens::spacing::space1), 0.0F},
+			.style = world_sim::text(theme, {.size = tokens::fontSize::fsXs, .color = tokens::color::textFaint}),
+			.text = "Mood is computed from the needs below; it sinks as they go unmet.",
+			.wrap = true,
+		});
+
+		ui::Ref<ui::Component> columns =
+			addChild<ui::Component>({.layout = {.display = ui::Display::Flex, .gap = kColumnGap, .alignItems = ui::AlignItems::Start}});
+		ui::Ref<ui::Component> left = column(*columns.get(), kRowGap);
+		left.addChild<tabs::KickerDivider>({.label = "Vital needs"});
+		for (std::size_t i = 0; i < kNeedCount; ++i) {
+			if (i == kVitalCount) {
+				left.addChild<tabs::KickerDivider>({.margin = {kSectionGap, 0.0F, 0.0F, 0.0F}, .label = "Comfort"});
+			}
+			needMeters[i] = left.addChild<ui::ProgressBar>({
+				.style = {.opacity = i < kVitalCount ? 1.0F : kComfortOpacity},
+				.label = needLabel(i),
+				.controlSize = ui::ControlSize::Sm,
+			});
+		}
+		left.addChild<ui::Text>({
+			.style = world_sim::text(theme, {.size = tokens::fontSize::fs2xs, .color = tokens::color::textFaint}),
+			.text = "Comfort needs are tracked, but colonists don't act on them yet.",
+			.wrap = true,
+		});
+
+		ui::Ref<ui::Component> right = column(*columns.get(), theme.get(tokens::spacing::space2));
+		right.addChild<tabs::KickerDivider>({.label = "Body & ailments"});
+		right.addChild<tabs::EmptyState>({
+			.minSize = {ui::kAuto, kAilmentsHeight},
+			.title = "No injuries or ailments",
+			.subtitle = "Wounds, illness, and treatment arrive with the medical update.",
+		});
+		update({});
 	}
 
-	// RIGHT: Body & Ailments empty state
-	{
-		float ry = colTop;
-		ry = drawDivider(rightX, ry, colWidth, "BODY & AILMENTS");
-		ry += 6.0F;
+	void NeedsTabView::update(const NeedsData& data) {
+		ui::ProgressBar* mood = moodMeter.get();
+		if (mood == nullptr) {
+			return;
+		}
+		const ui::Tone moodTone = data.mood < 25.0F ? ui::Tone::Danger : (data.mood < 50.0F ? ui::Tone::Warning : ui::Tone::Positive);
+		mood->setValue(data.mood / 100.0F);
+		mood->setTone(moodTone);
+		// An ASCII separator: the font atlas has no middot.
+		mood->setValueText(std::to_string(static_cast<int>(data.mood)) + "% - " + (data.moodLabel.empty() ? "Mood" : data.moodLabel));
 
-		const Foundation::Rect panel{rightX, ry, colWidth, 58.0F};
-		drawEmptyState(panel, "No injuries or ailments", "Wounds, illness, and treatment arrive with the medical update.");
+		for (std::size_t i = 0; i < kNeedCount; ++i) {
+			ui::ProgressBar* meter = needMeters[i].get();
+			const ui::Tone tone = data.isCritical[i] ? ui::Tone::Danger : (data.needsAttention[i] ? ui::Tone::Warning : ui::Tone::Positive);
+			meter->setValue(data.needValues[i] / 100.0F);
+			meter->setTone(tone);
+			meter->setValueText(std::to_string(static_cast<int>(data.needValues[i])) + "%");
+		}
 	}
-}
 
 } // namespace world_sim

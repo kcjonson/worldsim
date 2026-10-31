@@ -17,6 +17,8 @@ add_executable(world-sim
     scenes/game/ui/views/RegionMinimapPanel.cpp
     scenes/game/ui/views/ResourcesPanel.cpp
     scenes/game/ui/views/GlobalTaskListView.cpp
+    scenes/game/ui/views/SectionHeader.cpp
+    scenes/game/ui/views/StatusTextLine.cpp
     # Game scene UI - components
     scenes/game/ui/components/ColonistListItem.cpp
     scenes/game/ui/components/GlobalTaskRow.cpp
@@ -99,7 +101,6 @@ target_link_libraries(world-sim
         engine
         game-systems
         world
-        ui
         theme
         salal::renderer
         salal::foundation

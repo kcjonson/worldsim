@@ -80,9 +80,17 @@ namespace theme {
 		EXPECT_TRUE(low.get()->getStyle().boxShadow.has_value());
 		expectColor(*neutral.get()->getStyle().borderColor, theme.get(t::color::lineEdge));
 		EXPECT_FALSE(neutral.get()->getStyle().boxShadow.has_value());
-		// The disc, two initials, two tick legs, and for the selected one the outline.
-		EXPECT_EQ(low.get()->getChildren().size(), 5U);
-		EXPECT_EQ(neutral.get()->getChildren().size(), 6U);
+		// The disc, two initials, two tick legs, and the outline, shown only while selected.
+		ASSERT_EQ(low.get()->getChildren().size(), 6U);
+		ASSERT_EQ(neutral.get()->getChildren().size(), 6U);
+		EXPECT_FALSE(child(context, *low.get(), 5).isVisible());
+		EXPECT_TRUE(child(context, *neutral.get(), 5).isVisible());
+
+		// A roster card retints its avatar as the colonist's mood and the selection change.
+		low.get()->setMood(0.9F);
+		low.get()->setSelected(true);
+		expectColor(*low.get()->getStyle().borderColor, theme.get(t::color::statusOk));
+		EXPECT_TRUE(child(context, *low.get(), 5).isVisible());
 		EXPECT_FLOAT_EQ(child(context, *neutral.get(), 0).getSize().x, 60.0F * 0.68F);
 	}
 

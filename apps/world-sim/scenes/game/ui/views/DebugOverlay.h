@@ -1,51 +1,33 @@
 #pragma once
 
-// DebugOverlay - Debug information display for development.
-//
-// Shows:
-// - Chunks loaded count
-// - Camera position and current chunk
-// - Current biome
-//
-// Positioned in bottom-left corner, always visible during gameplay.
-// Extends UI::Component to use the Layer system for child management.
+// DebugOverlay - three development lines: chunks loaded, the camera's position and chunk, and that
+// chunk's biome. A column hugging its text, which the pointer passes through to the world.
 
-#include <component/Component.h>
-#include <graphics/Rect.h>
-#include <layer/Layer.h>
-#include <shapes/Shapes.h>
+#include <ui/Component.h>
+#include <ui/shapes/Text.h>
 #include <world/camera/WorldCamera.h>
 #include <world/chunk/ChunkManager.h>
 
-#include <string>
-
 namespace world_sim {
 
-/// Debug overlay showing development information.
-class DebugOverlay : public UI::Component {
-  public:
-	struct Args {
-		std::string id = "debug_overlay";
+	class DebugOverlay : public ui::Component {
+	  public:
+		struct Args {
+			UI_COMMON_ARGS
+		};
+
+		void updateData(const engine::world::WorldCamera& camera, const engine::world::ChunkManager& chunkManager);
+
+		[[nodiscard]] const char* typeName() const override { return "DebugOverlay"; }
+
+	  protected:
+		void							onMount() override;
+		[[nodiscard]] ui::PointerEvents defaultPointerEvents() const override { return ui::PointerEvents::None; }
+
+	  private:
+		ui::Ref<ui::Text> chunks;
+		ui::Ref<ui::Text> cameraLine;
+		ui::Ref<ui::Text> biome;
 	};
 
-	explicit DebugOverlay(const Args& args);
-
-	/// Position elements within the given bounds (call on viewport resize)
-	void layout(const Foundation::Rect& bounds) override;
-
-	/// Update displayed values from camera and chunk manager
-	void updateData(const engine::world::WorldCamera& camera, const engine::world::ChunkManager& chunkManager);
-
-	// render() inherited from Component - auto-renders children
-
-  private:
-	UI::LayerHandle chunksTextHandle;
-	UI::LayerHandle positionTextHandle;
-	UI::LayerHandle biomeTextHandle;
-
-	// Layout constants
-	static constexpr float kLineSpacing = 20.0F;
-	static constexpr float kPadding = 10.0F;
-};
-
-}  // namespace world_sim
+} // namespace world_sim

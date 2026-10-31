@@ -1,11 +1,5 @@
 /*
- * Flatten the icon set (icons.json) into compiled C++ glyph geometry:
- * libs/ui/theme/IconGlyphs.h. Each glyph becomes one or more subpaths
- * of 2D points in the 24x24 icon space, plus a filled flag. The C++ Icon
- * primitive strokes open/closed subpaths (drawLine + round joins) or fills them
- * (Tessellator) depending on the flag. No runtime SVG parsing.
- *
- * Also writes each glyph as a filled SVG for salal's salal_icons(), into
+ * Write the icon set (icons.json) as filled SVGs for salal's salal_icons(), into
  * libs/theme/icons/: filled glyphs as they are, stroked ones outlined at the
  * set's stroke width with round caps and joins, each icon one traced shape.
  * plusBold is plus at stroke width 3. assets/ui/icons' ten go there too.
@@ -21,7 +15,6 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const icons = JSON.parse(readFileSync(resolve(here, "../../design/ui/design-system/icons.json"), "utf8"));
-const outPath = resolve(here, "../../../libs/ui/theme/IconGlyphs.h");
 const svgDir = resolve(here, "../../../libs/theme/icons");
 const assetIcons = resolve(here, "../../../assets/ui/icons");
 
@@ -111,108 +104,12 @@ function parsePathData(d) {
 	return subpaths;
 }
 
-function circleSubpath(cx, cy, r) {
-	const pts = [];
-	for (let k = 0; k < CIRCLE_STEPS; k++) {
-		const a = (k / CIRCLE_STEPS) * Math.PI * 2;
-		pts.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]);
-	}
-	return { pts, closed: true };
-}
-
-function rectSubpath(x, y, w, h) {
-	return { pts: [[x, y], [x + w, y], [x + w, y + h], [x, y + h]], closed: true };
-}
-
 function attr(s, name) {
 	const m = s.match(new RegExp(`${name}="([^"]+)"`));
 	return m ? parseFloat(m[1]) : 0;
 }
 
-function glyphSubpaths(svg) {
-	const subpaths = [];
-	for (const m of svg.matchAll(/<path d="([^"]+)"/g)) subpaths.push(...parsePathData(m[1]));
-	for (const m of svg.matchAll(/<circle ([^>]*?)\/?>/g)) subpaths.push(circleSubpath(attr(m[1], "cx"), attr(m[1], "cy"), attr(m[1], "r")));
-	for (const m of svg.matchAll(/<rect ([^>]*?)\/?>/g)) subpaths.push(rectSubpath(attr(m[1], "x"), attr(m[1], "y"), attr(m[1], "width"), attr(m[1], "height")));
-	return subpaths;
-}
-
-const r3 = (n) => {
-	const v = Math.round(n * 1000) / 1000;
-	return Number.isInteger(v) ? `${v}.0F` : `${v}F`;
-};
-
 const names = Object.keys(icons.glyphs);
-const out = [];
-out.push(`#pragma once
-
-// GENERATED from docs/ui-prototype/src/design-system/primitives/Icon/Icon.tsx
-// (via icons.json) by docs/ui-prototype/scripts/gen-icon-geometry.mjs.
-// Do not edit by hand.
-//
-// Flattened glyph geometry in the 24x24 icon space. Stroked glyphs are drawn as
-// line segments with round joins; filled glyphs are tessellated. See Icon.cpp.
-
-#include "math/Types.h"
-
-#include <string_view>
-
-namespace UI::Icons {
-
-	struct SubPath {
-		const Foundation::Vec2* pts;
-		int						count;
-		bool					closed;
-	};
-
-	struct GlyphDef {
-		const SubPath* subs;
-		int			   subCount;
-		bool		   filled;
-	};
-`);
-
-let totalPts = 0;
-for (const name of names) {
-	const g = icons.glyphs[name];
-	const subs = glyphSubpaths(g.svg);
-	const subNames = [];
-	subs.forEach((sp, idx) => {
-		totalPts += sp.pts.length;
-		const arr = sp.pts.map(([x, y]) => `{${r3(x)}, ${r3(y)}}`).join(", ");
-		out.push(`\tinline const Foundation::Vec2 ${name}_p${idx}[] = {${arr}};`);
-		subNames.push({ var: `${name}_p${idx}`, count: sp.pts.length, closed: sp.closed });
-	});
-	const subList = subNames.map((s) => `{${s.var}, ${s.count}, ${s.closed}}`).join(", ");
-	out.push(`\tinline const SubPath ${name}_subs[] = {${subList}};`);
-	out.push(`\tinline const GlyphDef ${name}_def{${name}_subs, ${subNames.length}, ${g.filled}};`);
-	out.push("");
-}
-
-out.push(`\tstruct Entry {
-		std::string_view name;
-		const GlyphDef*	 def;
-	};
-
-	inline const Entry registry[] = {`);
-out.push(names.map((n) => `\t\t{"${n}", &${n}_def}`).join(",\n") + "};");
-out.push(`
-	inline const GlyphDef* find(std::string_view name) {
-		for (const Entry& e : registry) {
-			if (e.name == name) return e.def;
-		}
-		return nullptr;
-	}
-
-	inline constexpr int count = ${names.length};
-
-} // namespace UI::Icons
-`);
-
-mkdirSync(dirname(outPath), { recursive: true });
-writeFileSync(outPath, out.join("\n") + "\n");
-console.log(`Wrote ${names.length} glyphs (${totalPts} points) to ${outPath}`);
-
 // Outlines, traced as one shape so no two contours overlap: msdfgen's field goes wrong where they
 // do. A shape is a signed distance, negative inside, and a union of parts is their minimum;
 // marching squares follows its zero line on a fine grid, and the loops are thinned to within

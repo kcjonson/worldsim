@@ -10,6 +10,7 @@
 #include "scenes/scenario-select/Scenarios.h"
 #include "scenes/shared/SalalUi.h"
 #include "scenes/shared/Starfield.h"
+#include <theme/Theme.h>
 
 #include <app/Keys.h>
 #include <application/App.h>
@@ -198,7 +199,7 @@ namespace {
 		void onEnter(app::App& app) override {
 			owner = &app;
 			LOG_INFO(Game, "ScenarioSelectScene - Entering");
-			world_sim::enterSalalUi(app, ui());
+			theme::apply(ui());
 
 			// Coming back from a later step restores the previous choice.
 			selectedIndex = 0;

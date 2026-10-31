@@ -99,7 +99,7 @@ This activates the protocol from `/docs/technical/debugging-strategy.md` which u
 - **NEVER assume existing code patterns are correct** - Legacy code may contain violations that haven't been cleaned up
 - **Documented standards override observed patterns** - If code in the codebase contradicts the docs, the docs are correct
 
-Example: If you see `m_` prefixes on member variables in `libs/ui/`, but the coding standards say "camelCase with no prefix" - the standards are correct, the existing code is legacy that needs cleanup.
+Example: If you see `m_` prefixes on member variables in older code, but the coding standards say "camelCase with no prefix" - the standards are correct, the existing code is legacy that needs cleanup.
 
 ### ⚠️ Clean Code: No Legacy, No Fallbacks
 
@@ -260,7 +260,7 @@ before adding.
 - See `/docs/workflows.md` → "Verifying Visual Output"
 
 **Sandbox Control:**
-- The dev server is salal's (`app::DevServer`), in Debug and RelWithDebInfo builds only; a Release build has none unless configured with `-DSALAL_DEV_SERVER_IN_RELEASE=ON` (for profiling). Each app registers what it adds: the ui tree and lint (`libs/engine/app/UiBridge`), and in world-sim's game scene the `/api/dev/<verb>` routes, the `/api/state` views and the `camera` control.
+- The dev server is salal's (`app::DevServer`), in Debug and RelWithDebInfo builds only; a Release build has none unless configured with `-DSALAL_DEV_SERVER_IN_RELEASE=ON` (for profiling). The ui tree and lint come from the top scene's salal ui context; world-sim's game scene adds the `/api/dev/<verb>` routes, the `/api/state` views and the `camera` control.
 - Start: `cd build/apps/ui-sandbox && ./ui-sandbox`
 - Control: `curl "http://127.0.0.1:8090/api/control?action={action}"`
 - Actions: `exit`, `scene&scene=name`, `pause`, `resume`, `reload`, `vsync&value=0|1`, `step&ticks=n` (while paused; it advances nothing in worldsim, where no scene has a fixed tick, so a step is one more rendered frame); world-sim's game scene adds `camera`. A control answers once it has run, at the next frame; `scene` and `reload` answer before their switch applies later that frame. An unknown action, or a scene nothing was added as, is a 404

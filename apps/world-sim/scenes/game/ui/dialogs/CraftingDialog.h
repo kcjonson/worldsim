@@ -1,128 +1,89 @@
 #pragma once
 
-// CraftingDialog - Three-column dialog for recipe selection and queue management
-//
-// Layout:
-// - Left column: Scrollable recipe list with craftability indicators
-// - Center column: Selected recipe details, quantity picker, "Add to Queue" button
-// - Right column: Current job progress + queue with cancel buttons
-//
-// The dialog stays open after adding items (batch mode).
-// Game continues running while dialog is open - queue updates in real-time.
+// CraftingDialog - a crafting station's recipes and queue, a modal ui::Dialog in three columns: the
+// recipe list (dimmed where the colony lacks an input), the selected recipe's details with a quantity
+// picker and Add to Queue, and the running job's progress over the queue with a Cancel for each job. It
+// stays open after adding, for batches. The game runs on while it is open, and update() feeds the queue
+// from the world every frame.
 
 #include "CraftingDialogModel.h"
-#include "../adapters/CraftingAdapter.h"  // For QueueRecipeCallback
+#include "scenes/game/ui/adapters/CraftingAdapter.h"
 
-#include <component/Component.h>
-#include <components/button/Button.h>
-#include <components/dialog/Dialog.h>
-#include <components/scroll/ScrollContainer.h>
 #include <ecs/EntityID.h>
 #include <ecs/World.h>
-#include <layout/LayoutContainer.h>
+#include <ui/components/Button.h>
+#include <ui/components/Dialog.h>
+#include <ui/shapes/Text.h>
 
 #include <functional>
 #include <string>
-#include <vector>
 
 namespace world_sim {
 
-class CraftingDialog : public UI::Component {
-  public:
-	struct Args {
-		std::function<void()> onClose;
-		QueueRecipeCallback onQueueRecipe;  ///< Called with recipe and quantity to add to queue
-		std::function<void(const std::string& recipeDefName)> onCancelJob;
+	class CraftingDialog {
+	  public:
+		struct Args {
+			// The player closed it: its close button, cancel or a press on the scrim. Not called by close().
+			std::function<void()>								  onClose;
+			QueueRecipeCallback									  onQueueRecipe; // a recipe and how many to queue
+			std::function<void(const std::string& recipeDefName)> onCancelJob;
+		};
+
+		explicit CraftingDialog(const Args& args);
+
+		// Its controls' callbacks hold it.
+		CraftingDialog(const CraftingDialog&) = delete;
+		CraftingDialog& operator=(const CraftingDialog&) = delete;
+		CraftingDialog(CraftingDialog&&) = delete;
+		CraftingDialog& operator=(CraftingDialog&&) = delete;
+		~CraftingDialog() = default;
+
+		// Opens it from `opener` on a station; already open, it moves to that station.
+		void open(ui::Component& opener, ecs::EntityID stationId, const std::string& stationDefName, int player = 0);
+		void close();
+
+		[[nodiscard]] bool			isOpen() const { return dialog.get() != nullptr; }
+		[[nodiscard]] ecs::EntityID getStationId() const { return model.stationId(); }
+
+		// Each frame while open.
+		void update(ecs::World& world, const engine::assets::RecipeRegistry& registry);
+
+	  private:
+		void build(ui::Dialog& shown);
+		void showRecipes();
+		void showDetails();
+		void showQuantity();
+		void showQueue();
+		void closed();
+
+		void selectRecipe(const std::string& defName);
+		void changeQuantity(int delta);
+		void addToQueue();
+
+		std::function<void()>					onClose;
+		QueueRecipeCallback						onQueueRecipe;
+		std::function<void(const std::string&)> onCancelJob;
+
+		CraftingDialogModel model;
+		bool				fresh = false;			// opened or moved, so everything shows after the next refresh
+		bool				detailsChanged = false; // a selection, shown after the next refresh
+
+		ui::Ref<ui::Dialog>	   dialog;
+		ui::Ref<ui::Component> recipeList;
+		ui::Ref<ui::Text>	   noSelection;
+		ui::Ref<ui::Component> details;
+		ui::Ref<ui::Text>	   recipeName;
+		ui::Ref<ui::Text>	   description;
+		ui::Ref<ui::Component> requiresSection;
+		ui::Ref<ui::Component> materials;
+		ui::Ref<ui::Component> producesSection;
+		ui::Ref<ui::Component> outputs;
+		ui::Ref<ui::Text>	   workTime;
+		ui::Ref<ui::Text>	   quantity;
+		ui::Ref<ui::Button>	   minusTen;
+		ui::Ref<ui::Button>	   minusOne;
+		ui::Ref<ui::Text>	   emptyQueue;
+		ui::Ref<ui::Component> queueList;
 	};
-
-	explicit CraftingDialog(const Args& args);
-	~CraftingDialog() override = default;
-
-	// Disable copy
-	CraftingDialog(const CraftingDialog&) = delete;
-	CraftingDialog& operator=(const CraftingDialog&) = delete;
-
-	// Allow move
-	CraftingDialog(CraftingDialog&&) noexcept = default;
-	CraftingDialog& operator=(CraftingDialog&&) noexcept = default;
-
-	// Open dialog for a specific crafting station
-	void open(ecs::EntityID stationId, const std::string& stationDefName,
-	          float screenWidth, float screenHeight);
-
-	// Close dialog
-	void close();
-
-	// Query state
-	[[nodiscard]] bool isOpen() const;
-	[[nodiscard]] ecs::EntityID getStationId() const { return model.stationId(); }
-
-	// Per-frame update with ECS world for live queue data
-	void update(ecs::World& world,
-	            const engine::assets::RecipeRegistry& registry,
-	            float deltaTime);
-
-	// IComponent overrides
-	void render() override;
-	bool handleEvent(UI::InputEvent& event) override;
-	bool containsPoint(Foundation::Vec2 point) const override;
-
-  private:
-	// Dialog dimensions
-	static constexpr float kDialogWidth = 620.0F;
-	static constexpr float kDialogHeight = 450.0F;
-	static constexpr float kColumnGap = 12.0F;
-	static constexpr float kContentPadding = 12.0F;
-
-	// Column widths
-	static constexpr float kLeftColumnWidth = 160.0F;
-	static constexpr float kRightColumnWidth = 180.0F;
-	// Center column fills remaining space
-
-	// Callbacks
-	std::function<void()> onCloseCallback;
-	QueueRecipeCallback onQueueRecipeCallback;
-	std::function<void(const std::string&)> onCancelJobCallback;
-
-	// Model
-	CraftingDialogModel model;
-
-	// Child component handles
-	UI::LayerHandle dialogHandle;
-	UI::LayerHandle contentLayoutHandle;  // Horizontal layout for columns
-
-	// Left column - recipe list (composed ListRow children)
-	UI::LayerHandle leftColumnHandle;
-	int recipeSelectedIndex = -1;  // Which recipe is selected (-1 = none)
-
-	// Center column - recipe details
-	UI::LayerHandle centerColumnHandle;
-	UI::LayerHandle addToQueueHandle;
-
-	// Right column - queue
-	UI::LayerHandle rightColumnHandle;
-	std::vector<UI::LayerHandle> queueItemHandles;
-
-	// Track if content has been created
-	bool contentCreated = false;
-	bool needsInitialRebuild = false;
-	bool needsCenterRebuild = false;  // Set when selection changes, cleared after rebuild
-	bool needsRecipeRebuild = false;  // Set when selection/availability changes
-
-	// Internal methods
-	void createDialog();
-	void createColumns();
-	void rebuildRecipeColumn();
-	void rebuildCenterColumn();
-	void rebuildQueueColumn();
-
-	void handleRecipeClick(int recipeIndex);
-	void handleQuantityChange(int delta);
-	void handleAddToQueue();
-	void handleCancelJob(const std::string& recipeDefName);
-
-	// Helper to access content layout (columns are children of this)
-	UI::LayoutContainer* getContentLayout();
-};
 
 } // namespace world_sim

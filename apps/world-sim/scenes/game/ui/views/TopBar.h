@@ -1,109 +1,69 @@
 #pragma once
 
-// TopBar - the colony command strip across the top of the screen (Salvage look).
-//
-// Left:   colony mark + identity (name + "N survivors / Sol D" sub-line)
-// Center: clock (Day D / season / HH:MM) followed by the speed-control pill
-// Right:  alert bell (critical-toast count badge) + Menu button
-//
-// The bar paints its own background, colony mark, identity text, clock, and
-// alert badge inline via the Primitives API; the speed buttons, bell, and menu
-// button are child components. Full width, anchored to the top of the viewport.
+// TopBar - the colony command strip across the top of the screen. Left, the colony mark (nested
+// diamonds) with the colony's name over "N survivors . Sol D"; centred, the clock (day, season, time)
+// and the speed pill; right, the alert bell with its critical-toast count and the Menu button. Its
+// width is the parent's and its height kHeight unless its size says otherwise.
 
 #include "scenes/game/ui/components/SpeedButton.h"
 #include "scenes/game/ui/models/TimeModel.h"
 
-#include <component/Component.h>
-#include <components/button/Button.h>
 #include <ecs/systems/TimeSystem.h>
-#include <graphics/Rect.h>
-#include <input/InputEvent.h>
-#include <layer/Layer.h>
 
+#include <ui/components/Badge.h>
+#include <ui/shapes/Rectangle.h>
+#include <ui/shapes/Text.h>
+
+#include <cstddef>
 #include <functional>
 #include <string>
 
 namespace world_sim {
 
-/// Top command strip: colony identity, clock + speed controls, menu.
-class TopBar : public UI::Component {
-  public:
-	struct Args {
-		std::function<void()> onPause = nullptr;
-		std::function<void(ecs::GameSpeed)> onSpeedChange = nullptr;
-		std::function<void()> onMenuClick = nullptr;
-		std::string colonyName = "Hollow Reach";
-		std::string id = "top_bar";
+	class TopBar : public ui::Rectangle {
+	  public:
+		static constexpr float kHeight = 52.0F;
+
+		struct Args {
+			UI_COMMON_ARGS
+			std::function<void()>				onPause;
+			std::function<void(ecs::GameSpeed)> onSpeedChange;
+			std::function<void()>				onMenuClick;
+			std::string							colonyName = "Hollow Reach";
+		};
+
+		explicit TopBar(const Args& args);
+
+		// From the time model and the survivor count, each frame.
+		void updateData(const TimeModel& timeModel, int survivorCount);
+		// Live critical toasts, the bell's badge; none at 0.
+		void setAlertCount(std::size_t count);
+
+		[[nodiscard]] const char* typeName() const override { return "TopBar"; }
+
+	  protected:
+		void onMount() override;
+		// Its background fades toward the foot, which a Style has no field for.
+		void render() override;
+
+	  private:
+		void pressSpeed(ecs::GameSpeed speed);
+		void showSpeed(ecs::GameSpeed speed);
+
+		std::function<void()>				onPause;
+		std::function<void(ecs::GameSpeed)> onSpeedChange;
+		std::function<void()>				onMenuClick;
+		std::string							colonyName;
+		ui::Ref<ui::Text>					survivors;
+		ui::Ref<ui::Text>					sol;
+		ui::Ref<ui::Text>					day;
+		ui::Ref<ui::Text>					season;
+		ui::Ref<ui::Text>					clock;
+		ui::Ref<SpeedButton>				pauseButton;
+		ui::Ref<SpeedButton>				normalButton;
+		ui::Ref<SpeedButton>				fastButton;
+		ui::Ref<SpeedButton>				veryFastButton;
+		ui::Ref<ui::Badge>					alertBadge;
 	};
 
-	explicit TopBar(const Args& args);
-
-	/// Layout the top bar within viewport bounds
-	void layout(const Foundation::Rect& bounds) override;
-
-	/// Refresh from the time model and current survivor count (call each frame)
-	void updateData(const TimeModel& timeModel, int survivorCount);
-
-	/// Number of live critical toasts; drives the bell's count badge (0 = hidden)
-	void setAlertCount(size_t count);
-
-	/// Handle input events - delegates to children via dispatchEvent
-	bool handleEvent(UI::InputEvent& event) override;
-
-	/// Paint the bar background, identity, and clock, then the child controls
-	void render() override;
-
-	/// Get height of the top bar
-	[[nodiscard]] float getHeight() const override { return kBarHeight; }
-
-  private:
-	// Layout constants
-	static constexpr float kBarHeight = 52.0F;
-	static constexpr float kPadH = 12.0F;	   // horizontal edge padding
-	static constexpr float kSpeedSpacing = 2.0F;
-	static constexpr float kPillPadding = 4.0F;
-	static constexpr float kMenuWidth = 64.0F;
-	static constexpr float kMenuHeight = 28.0F;
-	static constexpr float kBellSize = 28.0F;
-	static constexpr float kMarkHalf = 8.0F;   // colony mark half-diagonal
-
-	// Child handles (interactive controls only)
-	UI::LayerHandle pauseButtonHandle;
-	UI::LayerHandle speed1ButtonHandle;
-	UI::LayerHandle speed2ButtonHandle;
-	UI::LayerHandle speed3ButtonHandle;
-	UI::LayerHandle alertButtonHandle;
-	UI::LayerHandle menuButtonHandle;
-
-	// Callbacks
-	std::function<void()> onPause;
-	std::function<void(ecs::GameSpeed)> onSpeedChange;
-	std::function<void()> onMenuClick;
-
-	// Cached display data (built in updateData, drawn in render)
-	std::string colonyName;
-	std::string dayStr;			// "Day 14"
-	std::string seasonStr;		// "SPRING" (uppercased)
-	std::string timeStr;		// "09:42"
-	std::string survivorPart;	// "3 survivors"
-	std::string solPart;		// "Sol 14"
-	size_t alertCount = 0;		// live critical toasts (badge hidden at 0)
-
-	// Computed layout (set by positionElements)
-	float rowY = 0.0F;		   // vertical center of the bar
-	float identityX = 0.0F;	   // identity text left edge (right of the colony mark)
-	Foundation::Rect alertRect{}; // bell button rect (badge anchors to its corner)
-	float dayX = 0.0F;
-	float seasonX = 0.0F;
-	float timeX = 0.0F;
-	float subDotX = 0.0F;	   // middot separator x in the sub-line
-	float subSolX = 0.0F;	   // "Sol D" run x in the sub-line
-	Foundation::Rect pillRect{};
-
-	void updateSpeedButtonStates(ecs::GameSpeed currentSpeed);
-
-	/// Measure widths and place the clock cluster, speed pill, and menu button
-	void positionElements();
-};
-
-}  // namespace world_sim
+} // namespace world_sim

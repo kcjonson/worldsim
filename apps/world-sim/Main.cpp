@@ -1,12 +1,10 @@
 // World-Sim - Main Game Application
 // Runs on salal's App: the window, the frame, the scene stack and the dev server
 
-#include "AppContext.h"
 #include "BaseShader.h"
 #include "GameBootstrap.h"
 #include "SceneTypes.h"
 
-#include <app/UiBridge.h>
 #include <application/App.h>
 #include <application/CommandLine.h>
 #include <platform/Platform.h>
@@ -62,9 +60,6 @@ int main(int argc, char* argv[]) {
 
 	world_sim::initializeResources(commandLine.scene.has_value());
 
-	engine::UiBridge	  bridge(*app);
-	world_sim::AppContext context{.ui = bridge};
-	app->setContext(context);
 	world_sim::addScenes(app->scenes());
 
 	// "game" starts at "gameloading", so loading always runs first

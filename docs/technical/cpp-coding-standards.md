@@ -75,10 +75,10 @@ Some clang-tidy checks are disabled in `.clang-tidy` due to false positives or c
 Headers (.h) and implementation (.cpp) files live together in the same directory:
 
 ```
-libs/engine/app/
-├── UiBridge.h
-├── UiBridge.cpp
-└── FontAtlases.test.cpp
+libs/theme/theme/
+├── Panel.h
+├── Panel.cpp
+└── Components.test.cpp
 ```
 
 **NOT** separated into `include/` and `src/` directories.
@@ -289,7 +289,7 @@ Folder naming depends on the folder's purpose:
 
 **PascalCase** - when folder contains a single primary class of the same name:
 ```
-libs/ui/components/TextInput/
+components/TextInput/
 ├── TextInput.h
 ├── TextInput.cpp
 └── TextInput.test.cpp
@@ -297,15 +297,9 @@ libs/ui/components/TextInput/
 
 **camelCase** - when folder is a category containing multiple related items:
 ```
-libs/engine/app/
-├── UiScene.h
-├── UiClipboard.h
-├── UiBridge.h
-└── UiBridge.cpp
-
-libs/ui/components/
-├── Button.h
-├── TextInput.h
+apps/world-sim/scenes/game/ui/components/
+├── NeedBar.h
+├── SpeedButton.h
 └── ...
 ```
 

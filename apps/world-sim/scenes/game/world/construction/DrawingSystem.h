@@ -41,6 +41,7 @@
 
 #include <ecs/EntityID.h>
 #include <ecs/World.h>
+#include <graphics/Color.h>
 #include <math/Types.h>
 #include <world/camera/WorldCamera.h>
 
@@ -51,12 +52,12 @@
 namespace engine::assets {
 	struct ThicknessPreset;
 	struct OpeningTypeDef;
-}
+} // namespace engine::assets
 
 namespace ecs {
 	class NavigationSystem;
 	struct StructureBlueprint;
-}
+} // namespace ecs
 
 namespace world_sim {
 
@@ -78,17 +79,17 @@ namespace world_sim {
 
 	/// Live status of the in-progress shape, surfaced to the config strip.
 	struct DrawingStatus {
-		bool		active = false;	 // tool is on (config strip visible)
-		bool		wall = false;	 // true while the wall tool is active (config strip shows presets)
-		bool		opening = false; // true while the opening tool is active (config strip shows the opening type)
+		bool		active = false;			// tool is on (config strip visible)
+		bool		wall = false;			// true while the wall tool is active (config strip shows presets)
+		bool		opening = false;		// true while the opening tool is active (config strip shows the opening type)
 		bool		foundationEdit = false; // true while Add / Subtract is active (material locked to the target's)
 		std::string editLabel;				// "Add to foundation" / "Subtract from foundation"
 		int			pointCount = 0;
 		float		areaSquareMeters = 0.0F;	  // closed-polygon area preview (0 until >= 3 pts); edit: resulting outline
 		float		areaDeltaSquareMeters = 0.0F; // edit: resulting area minus the target's current area
-		bool		valid = true;			 // current cursor placement / shape validity
-		std::string message;				 // validity reason (empty when valid)
-		std::string material;				 // active material name
+		bool		valid = true;				  // current cursor placement / shape validity
+		std::string message;					  // validity reason (empty when valid)
+		std::string material;					  // active material name
 
 		// Wall readouts (meaningful only when wall == true).
 		std::string thicknessPreset;			// active preset name (Light/Standard/Heavy)
@@ -128,7 +129,10 @@ namespace world_sim {
 			ecs::World*					world;
 			engine::world::WorldCamera* camera;
 			ecs::NavigationSystem*		navigation; // world-position validity (isValidPosition); same predicate as the dev verbs
-			Callbacks					callbacks;
+			// The preview's colours where a shape can and can't go, from the scene's theme.
+			Foundation::Color validColor{};
+			Foundation::Color invalidColor{};
+			Callbacks		  callbacks;
 		};
 
 		DrawingSystem() = default;
@@ -427,6 +431,8 @@ namespace world_sim {
 		ecs::EntityID spawnOpeningBlueprintEntity(engine::construction::OpeningId openingId, bool built);
 
 		ecs::World*					ecsWorld_ = nullptr;
+		Foundation::Color			validColor_{};
+		Foundation::Color			invalidColor_{};
 		engine::world::WorldCamera* camera_ = nullptr;
 		ecs::NavigationSystem*		navigation_ = nullptr;
 		Callbacks					callbacks_;
@@ -471,8 +477,8 @@ namespace world_sim {
 		// Foundation Add / Subtract: the foundation being edited, the mode, and the
 		// live result for the drawn polygon (outline preview + validity), refreshed
 		// on every move once the drawing closes into a polygon.
-		engine::construction::FoundationId		 editTarget_ = engine::construction::kInvalidFoundation;
-		engine::construction::FoundationEditMode editMode_ = engine::construction::FoundationEditMode::Add;
+		engine::construction::FoundationId		   editTarget_ = engine::construction::kInvalidFoundation;
+		engine::construction::FoundationEditMode   editMode_ = engine::construction::FoundationEditMode::Add;
 		engine::construction::FoundationEditResult editPreview_;
 		bool									   editPreviewActive_ = false; // >= 3 drawn points to judge
 

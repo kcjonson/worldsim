@@ -14,8 +14,7 @@
  * they come from salal (github.com/kcjonson/salal) through FetchContent, so
  * their four roots, and their four rows, are read from a salal checkout,
  * --salal DIR, which defaults to the one FetchContent populates at
- * build/_deps/salal-src. Salal's ui goes by salal-ui, since worldsim's own ui
- * is still libs/ui; its headers sit under ui/, a path libs/ answers too.
+ * build/_deps/salal-src.
  * A directory under libs/ that LIBS does not list stops the script with exit 2,
  * so a new library cannot be silently ignored. The first hit decides which
  * library the include lands in; an include that resolves nowhere is counted as
@@ -23,9 +22,7 @@
  *
  * Output, in order: an all-files matrix, a production-only matrix (test and
  * bench files excluded, see isTestFile), ambiguous resolutions, includes that
- * cross the documented layering, the engine -> ui coupling surface, and what
- * engine's app/ (the bridge between worldsim's ui and salal's app, until
- * worldsim moves onto salal's ui) includes from libs/.
+ * cross the documented layering, and the engine -> ui coupling surface.
  * Cells are counts of #include lines; self-includes sit on the diagonal.
  *
  * The allowed edges follow the per-library "Depends on" lists in
@@ -39,12 +36,12 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const LIBS = ["foundation", "geometry", "renderer", "salal-ui", "theme", "ui", "world", "planet-view", "game-systems", "app", "engine"];
+const LIBS = ["foundation", "geometry", "renderer", "ui", "theme", "world", "planet-view", "game-systems", "app", "engine"];
 // salal's libraries: the name each goes by here, and its directory under the checkout's libs/.
 const SALAL_LIBS = new Map([
 	["foundation", "foundation"],
 	["renderer", "renderer"],
-	["salal-ui", "ui"],
+	["ui", "ui"],
 	["app", "app"],
 ]);
 const LIBS_ORDER = [...LIBS, "engine(assets)", "external"];
@@ -56,13 +53,12 @@ const ALLOWED = {
 	foundation: new Set(["foundation", "external"]),
 	geometry: new Set(["geometry", "foundation", "external"]),
 	renderer: new Set(["renderer", "foundation", "external"]),
-	"salal-ui": new Set(["salal-ui", "renderer", "foundation", "external"]),
-	theme: new Set(["theme", "salal-ui", "renderer", "foundation", "external"]),
-	ui: new Set(["ui", "theme", "renderer", "foundation", "external"]), // theme for its font families, until ui goes
+	ui: new Set(["ui", "renderer", "foundation", "external"]),
+	theme: new Set(["theme", "ui", "renderer", "foundation", "external"]),
 	world: new Set(["world", "renderer", "foundation", "external"]),
 	"planet-view": new Set(["planet-view", "world", "renderer", "foundation", "external"]),
 	"game-systems": new Set(["game-systems", "world", "renderer", "foundation", "external"]),
-	app: new Set(["app", "salal-ui", "renderer", "foundation", "external"]),
+	app: new Set(["app", "ui", "renderer", "foundation", "external"]),
 };
 
 const USAGE = "usage: node tools/resolve-includes.mjs [-h] [--root ROOT] [--salal DIR]";
@@ -85,9 +81,8 @@ function includeRoots(dirs, root) {
 		dirs.get("foundation"),
 		dirs.get("geometry"),
 		dirs.get("renderer"),
-		dirs.get("salal-ui"), // before libs/, which answers ui/X.h with worldsim's ui
-		dirs.get("theme"),
 		dirs.get("ui"),
+		dirs.get("theme"),
 		dirs.get("world"),
 		dirs.get("planet-view"),
 		join(root, "libs"), // planet-view exports libs/ so "planet-view/X.h" works
@@ -360,13 +355,6 @@ function main() {
 	for (const [h, c] of [...byHdr].sort(byCountDesc)) out.push(`  ${h.padEnd(50)} ${c}`);
 	out.push("", "engine files that include ui (file:line -> header):");
 	for (const r of [...eu].sort(byFileLine)) out.push(`  ${r.rel}:${r.line} -> ${r.resolved}`);
-
-	out.push("", "=== ENGINE app/ (the ui bridge onto salal's app): includes that land in libs/ ===");
-	for (const r of [...rows].sort(byFileLine)) {
-		if (r.srclib === "engine" && r.rel.split("/")[2] === "app" && r.dst !== "external") {
-			out.push(`  ${r.rel}:${r.line} -> ${r.resolved} [${r.dst}]`);
-		}
-	}
 
 	process.stdout.write(out.join("\n") + "\n");
 }

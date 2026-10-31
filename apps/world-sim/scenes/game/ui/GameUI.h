@@ -1,271 +1,173 @@
 #pragma once
 
-// GameUI - Main UI container for the game scene.
-//
-// Contains all game UI elements as children:
-// - DebugOverlay: chunk/position/biome display (top-left)
-// - ZoomControlPanel: floating zoom controls (right side)
-// - BuildToolbar: build mode toggle button (temporary, will be replaced by GameplayBar)
-// - BuildMenu: popup for selecting items to place
-// - ColonistListView: left-side colonist portraits
-// - EntityInfoView: selected entity information
-// - TaskListView: expanded task queue (toggle from info panel)
-//
-// Handles input consumption to prevent click-through to world.
+// GameUI - the game scene's ui, mounted under the scene's root: the top bar, the roster down the left,
+// the selected entity's panel and its task list at the bottom left, the minimap, resources and global
+// task list down the right, the gameplay bar and construction strip at the bottom middle, the zoom
+// column at the bottom right, the build menu, toasts and the three dialogs. It feeds them from the
+// world each frame; salal's ui lays them out, draws them and takes their input, so a press on any of
+// them never reaches the world.
 
-#include "scenes/game/ui/views/BuildMenu.h"
-#include "scenes/game/ui/views/ConstructionConfigStrip.h"
-#include "scenes/game/ui/views/GameplayBar.h"
-#include "scenes/game/ui/views/ColonistListView.h"
-#include "scenes/game/ui/views/DebugOverlay.h"
-#include "scenes/game/ui/views/TopBar.h"
-#include "scenes/game/ui/views/ResourcesPanel.h"
-#include "scenes/game/ui/views/GlobalTaskListView.h"
+#include "scenes/game/ui/dialogs/ColonistDetailsDialog.h"
+#include "scenes/game/ui/dialogs/CraftingDialog.h"
+#include "scenes/game/ui/dialogs/StorageConfigDialog.h"
 #include "scenes/game/ui/models/ColonistListModel.h"
 #include "scenes/game/ui/models/GlobalTaskListModel.h"
 #include "scenes/game/ui/models/ResourcesModel.h"
 #include "scenes/game/ui/models/TimeModel.h"
+#include "scenes/game/ui/views/BuildMenu.h"
+#include "scenes/game/ui/views/ColonistListView.h"
+#include "scenes/game/ui/views/ConstructionConfigStrip.h"
+#include "scenes/game/ui/views/DebugOverlay.h"
 #include "scenes/game/ui/views/EntityInfoView.h"
+#include "scenes/game/ui/views/GameplayBar.h"
+#include "scenes/game/ui/views/GlobalTaskListView.h"
 #include "scenes/game/ui/views/RegionMinimapPanel.h"
+#include "scenes/game/ui/views/ResourcesPanel.h"
+#include "scenes/game/ui/views/TaskListView.h"
+#include "scenes/game/ui/views/TopBar.h"
 #include "scenes/game/ui/views/ZoomControlPanel.h"
 #include "scenes/game/world/selection/SelectionTypes.h"
-#include "scenes/game/ui/views/TaskListView.h"
-#include "scenes/game/ui/dialogs/ColonistDetailsDialog.h"
-#include "scenes/game/ui/dialogs/CraftingDialog.h"
-#include "scenes/game/ui/dialogs/StorageConfigDialog.h"
-
-#include <components/toast/ToastStack.h>
-
-#include <ecs/systems/RoomDetectionSystem.h>
-#include <ecs/systems/TimeSystem.h>
-
-#include <input/InputEvent.h>
 
 #include <assets/AssetRegistry.h>
 #include <assets/RecipeRegistry.h>
 #include <ecs/World.h>
-#include <graphics/Rect.h>
+#include <ecs/systems/RoomDetectionSystem.h>
+#include <ecs/systems/TimeSystem.h>
 #include <world/camera/WorldCamera.h>
 #include <world/chunk/ChunkManager.h>
+
+#include <ui/Component.h>
+#include <ui/components/Toast.h>
 
 #include <functional>
 #include <memory>
 
 namespace world_sim {
 
-/// Callback to query remaining resource count for a world entity
-using ResourceQueryCallback = std::function<std::optional<uint32_t>(const std::string& defName, Foundation::Vec2 position)>;
+	/// Callback to query remaining resource count for a world entity
+	using ResourceQueryCallback = std::function<std::optional<uint32_t>(const std::string& defName, Foundation::Vec2 position)>;
 
-/// Main UI container for the game scene
-class GameUI {
-  public:
-	struct Args {
-		std::function<void()> onZoomIn;
-		std::function<void()> onZoomOut;
-		std::function<void()> onZoomReset;
+	class GameUI {
+	  public:
+		struct Args {
+			ui::Ref<ui::Component>					root; // the scene's root, which the views mount under
+			std::function<void()>					onZoomIn;
+			std::function<void()>					onZoomOut;
+			std::function<void()>					onZoomReset;
+			std::function<void()>					onSelectionCleared;
+			std::function<void(ecs::EntityID)>		onColonistSelected;
+			std::function<void(ecs::EntityID)>		onColonistFollowed;		 ///< Called on double-click to follow
+			std::function<void(ecs::EntityID)>		onColonistControlToggle; ///< Called when the colonist Control/Release button is clicked
+			std::function<void(const std::string&)> onBuildItemSelected;	 ///< Called when item selected from build menu
+			std::function<void(const std::string&)> onProductionSelected;	 ///< Called when production item selected (e.g., CraftingSpot)
+			QueueRecipeCallback						onQueueRecipe;			 ///< Called when recipe queued at station
+			std::function<void(const std::string&)> onCancelJob;			 ///< Called when job canceled from queue
+			std::function<void(ecs::EntityID, const std::string&)> onOpenCraftingDialog; ///< Called to open crafting dialog
+			std::function<void(ecs::EntityID, const std::string&)> onOpenStorageConfig;	 ///< Called to open storage config dialog
+			std::function<void()>								   onPause;				 ///< Called when pause button clicked
+			std::function<void(ecs::GameSpeed)>					   onSpeedChange;		 ///< Called when speed changed
+			std::function<void()>								   onMenuClick;			 ///< Called when menu button clicked
+			std::function<void()> onPlaceFurniture;			///< Called when Place button clicked for packaged furniture
+			std::function<void()> onMoveFurniture;			///< Called when Move button clicked for an installed box
+			std::function<void()> onDemolishFoundation;		///< Called when Demolish foundation clicked (clear foundation only)
+			std::function<void()> onDemolishBuilding;		///< Called when Demolish building clicked (walls + openings + foundation)
+			std::function<void()> onAddToFoundation;		///< Called when a foundation panel's Add clicked
+			std::function<void()> onSubtractFromFoundation; ///< Called when a foundation panel's Subtract clicked
+			std::function<void()> onDemolishWallSegment;	///< Called when Demolish button clicked for a wall segment
+			std::function<void()> onDemolishOpening;		///< Called when Demolish button clicked for an opening
+			ResourceQueryCallback queryResources;			///< Query remaining resource count for harvestable entities
+			std::function<void(const std::string&)> onStructureSelected; ///< Called when a structure tool (e.g. "foundation") is chosen
+			std::function<void(const std::string&)> onConstructionMaterialSelected; ///< Called when a config-strip material card is clicked
+			std::function<void(const std::string&)> onConstructionThicknessSelected; ///< Called when a wall thickness preset is clicked
+			std::function<void()>					onRoomsToggle; ///< Called when the GameplayBar Rooms toggle is clicked
+		};
+
+		explicit GameUI(const Args& args);
+		// Closes the dialogs, whose overlays call back into them; the scene destroys GameUI in onExit,
+		// while its ui context still lives.
+		~GameUI();
+		GameUI(const GameUI&) = delete;
+		GameUI& operator=(const GameUI&) = delete;
+		GameUI(GameUI&&) = delete;
+		GameUI& operator=(GameUI&&) = delete;
+
+		void update(
+			float										   deltaTime,
+			const engine::world::WorldCamera&			   camera,
+			const engine::world::ChunkManager&			   chunkManager,
+			ecs::World&									   ecsWorld,
+			const engine::assets::AssetRegistry&		   assetRegistry,
+			const engine::assets::RecipeRegistry&		   recipeRegistry,
+			const Selection&							   selection,
+			const engine::construction::ConstructionWorld* constructionWorld = nullptr,
+			const ecs::RoomDetectionSystem*				   roomDetection = nullptr
+		);
+
+		void setMinimapContext(Foundation::Vec2 crashSite, double latDeg, double lonDeg, float pixelsPerMeter);
+
+		void pushNotification(
+			const std::string&	  title,
+			const std::string&	  message,
+			ui::ToastSeverity	  severity = ui::ToastSeverity::Info,
+			float				  autoDismissTime = 5.0F, // seconds; 0 keeps it
+			std::function<void()> onClick = nullptr
+		);
+
+		void			   showBuildMenu(const std::vector<BuildMenuItem>& items);
+		void			   hideBuildMenu();
+		[[nodiscard]] bool isBuildMenuVisible() const;
+		void			   setProductionItems(const std::vector<std::pair<std::string, std::string>>& items);
+		void			   setConstructionMaterials(const std::vector<std::pair<std::string, float>>& materials);
+		void			   setConstructionThicknessPresets(const std::vector<ConstructionConfigStrip::ThicknessPresetInfo>& presets);
+		void			   setConstructionStatus(const DrawingStatus& status);
+		void			   setRoomsOverlayActive(bool active);
+
+		void			   showColonistDetails(ecs::EntityID colonistId);
+		void			   hideColonistDetails();
+		[[nodiscard]] bool isColonistDetailsVisible() const;
+		void			   showCraftingDialog(ecs::EntityID stationId, const std::string& stationDefName);
+		void			   hideCraftingDialog();
+		[[nodiscard]] bool isCraftingDialogVisible() const;
+		void			   showStorageConfigDialog(ecs::EntityID containerId, const std::string& containerDefName);
+		void			   hideStorageConfigDialog();
+		[[nodiscard]] bool isStorageConfigVisible() const;
+		[[nodiscard]] bool isGlobalTaskListExpanded() const;
+		void			   toggleDecisionInspector();
+
+	  private:
+		void toggleTaskList();
+		// What depends on the viewport's size: the task list's cap and the build menu's centring.
+		void			  fitViewport(Foundation::Vec2 viewport);
+		[[nodiscard]] int criticalToastCount() const;
+
+		ui::Ref<ui::Component>				   root;
+		ui::Ref<TopBar>						   topBar;
+		ui::Ref<DebugOverlay>				   debugOverlay;
+		ui::Ref<ZoomControlPanel>			   zoomControlPanel;
+		ui::Ref<GameplayBar>				   gameplayBar;
+		ui::Ref<ConstructionConfigStrip>	   configStrip;
+		ui::Ref<BuildMenu>					   buildMenu;
+		ui::Ref<ColonistListView>			   colonistList;
+		ui::Ref<EntityInfoView>				   infoPanel;
+		ui::Ref<TaskListView>				   taskListPanel;
+		ui::Ref<RegionMinimapPanel>			   minimapPanel;
+		ui::Ref<ResourcesPanel>				   resourcesPanel;
+		ui::Ref<GlobalTaskListView>			   globalTaskList;
+		ui::Ref<ui::ToastStack>				   toastStack;
+		std::unique_ptr<ColonistDetailsDialog> colonistDetailsDialog;
+		std::unique_ptr<CraftingDialog>		   craftingDialog;
+		std::unique_ptr<StorageConfigDialog>   storageConfigDialog;
+
+		TimeModel			timeModel;
+		ColonistListModel	colonistListModel;
+		GlobalTaskListModel globalTaskListModel;
+		ResourcesModel		resourcesModel;
+
+		bool				  taskListExpanded = false;
+		ecs::EntityID		  selectedColonistId{0};
+		float				  worldPixelsPerMeter = 0.0F;
+		Foundation::Vec2	  fittedViewport{0.0F, 0.0F};
 		std::function<void()> onSelectionCleared;
-		std::function<void(ecs::EntityID)> onColonistSelected;
-		std::function<void(ecs::EntityID)> onColonistFollowed;		 ///< Called on double-click to follow
-		std::function<void(ecs::EntityID)> onColonistControlToggle;	 ///< Called when the colonist Control/Release button is clicked
-		std::function<void()> onBuildToggle;							 ///< Called when build button clicked
-		std::function<void(const std::string&)> onBuildItemSelected; ///< Called when item selected from build menu
-		std::function<void(const std::string&)> onProductionSelected; ///< Called when production item selected (e.g., CraftingSpot)
-		QueueRecipeCallback onQueueRecipe;								 ///< Called when recipe queued at station
-		std::function<void(const std::string&)> onCancelJob;			 ///< Called when job canceled from queue
-		std::function<void(ecs::EntityID, const std::string&)> onOpenCraftingDialog; ///< Called to open crafting dialog
-		std::function<void(ecs::EntityID, const std::string&)> onOpenStorageConfig; ///< Called to open storage config dialog
-		std::function<void()> onPause;									 ///< Called when pause button clicked
-		std::function<void(ecs::GameSpeed)> onSpeedChange;			 ///< Called when speed changed
-		std::function<void()> onMenuClick;								 ///< Called when menu button clicked
-		std::function<void()> onPlaceFurniture;						 ///< Called when Place button clicked for packaged furniture
-		std::function<void()> onMoveFurniture;						 ///< Called when Move button clicked for an installed box (re-packages + relocates)
-		std::function<void()> onDemolishFoundation; ///< Called when Demolish foundation clicked (clear foundation only)
-		std::function<void()> onDemolishBuilding;	///< Called when Demolish building clicked (cascade: walls + openings + foundation)
-		std::function<void()> onAddToFoundation;	   ///< Called when a foundation panel's Add clicked (activates the Add tool)
-		std::function<void()> onSubtractFromFoundation; ///< Called when a foundation panel's Subtract clicked (activates the Subtract tool)
-		std::function<void()> onDemolishWallSegment;				 ///< Called when Demolish button clicked for a wall segment
-		std::function<void()>					onDemolishOpening; ///< Called when Demolish button clicked for an opening
-		ResourceQueryCallback queryResources;							 ///< Query remaining resource count for harvestable entities
-		std::function<void(const std::string&)> onStructureSelected;	 ///< Called when a structure tool (e.g. "foundation") is chosen
-		std::function<void(const std::string&)> onConstructionMaterialSelected; ///< Called when a config-strip material card is clicked
-		std::function<void(const std::string&)> onConstructionThicknessSelected; ///< Called when a config-strip wall thickness preset is clicked
-		std::function<void()> onRoomsToggle;									 ///< Called when the GameplayBar Rooms toggle is clicked
 	};
-
-	explicit GameUI(const Args& args);
-
-	/// Layout all UI elements within viewport bounds
-	/// @param viewportBounds Logical viewport bounds (not framebuffer)
-	void layout(const Foundation::Rect& viewportBounds);
-
-	/// Dispatch an input event to all UI children
-	/// @param event The event to dispatch - will have consumed flag set if any child handled it
-	/// @return true if any child consumed the event
-	bool dispatchEvent(UI::InputEvent& event);
-
-	/// Update UI state
-	void update(
-		float										   deltaTime,
-		const engine::world::WorldCamera&			   camera,
-		const engine::world::ChunkManager&			   chunkManager,
-		ecs::World&									   ecsWorld,
-		const engine::assets::AssetRegistry&		   assetRegistry,
-		const engine::assets::RecipeRegistry&		   recipeRegistry,
-		const Selection&							   selection,
-		const engine::construction::ConstructionWorld* constructionWorld = nullptr,
-		const ecs::RoomDetectionSystem*				   roomDetection = nullptr
-	);
-
-	/// Render all UI elements
-	void render();
-
-	/// One-time landing context for the region minimap: crash-site window
-	/// center, landing coordinates, and the world's pixels-per-meter scale
-	/// (needed to derive the camera's visible rect each update).
-	void setMinimapContext(Foundation::Vec2 crashSite, double latDeg, double lonDeg, float pixelsPerMeter);
-
-	/// Push a notification to the toast stack
-	/// @param title Short title for the notification
-	/// @param message Detailed message
-	/// @param severity Info, Warning, or Critical (affects styling)
-	/// @param autoDismissTime Seconds before auto-dismiss (0 = persistent)
-	/// @param onClick Optional callback when notification is clicked (for navigation)
-	void pushNotification(const std::string& title, const std::string& message,
-						  UI::ToastSeverity severity = UI::ToastSeverity::Info,
-						  float autoDismissTime = 5.0F,
-						  std::function<void()> onClick = nullptr);
-
-	// --- Build Mode API ---
-
-	/// Set whether build mode is active (updates toolbar button state)
-	void setBuildModeActive(bool active);
-
-	/// Show build menu with available items
-	void showBuildMenu(const std::vector<BuildMenuItem>& items);
-
-	/// Hide build menu
-	void hideBuildMenu();
-
-	/// Check if build menu is visible
-	[[nodiscard]] bool isBuildMenuVisible() const;
-
-	/// Set the production station items in the Production dropdown
-	/// @param items Vector of {defName, label} pairs for placeable production stations
-	void setProductionItems(const std::vector<std::pair<std::string, std::string>>& items);
-
-	// --- Construction Config Strip API ---
-
-	/// Set the material cards shown in the construction config strip.
-	/// @param materials Vector of {name, costPerSquareMeter} pairs.
-	void setConstructionMaterials(const std::vector<std::pair<std::string, float>>& materials);
-
-	/// Set the wall thickness-preset cards shown in the config strip (wall mode).
-	void setConstructionThicknessPresets(const std::vector<ConstructionConfigStrip::ThicknessPresetInfo>& presets);
-
-	/// Push the latest drawing-tool status to the config strip (drives readouts,
-	/// validity line, selection highlight, and visibility).
-	void setConstructionStatus(const DrawingStatus& status);
-
-	/// Reflect the rooms-overlay active state on the GameplayBar toggle button. The
-	/// GameScene pushes this whenever the overlay flips (from the button or the R
-	/// hotkey) so the two stay in sync. Mirrors the setConstructionStatus push.
-	void setRoomsOverlayActive(bool active);
-
-	// --- Colonist Details Dialog API ---
-
-	/// Show colonist details dialog for a specific colonist
-	void showColonistDetails(ecs::EntityID colonistId);
-
-	/// Hide colonist details dialog
-	void hideColonistDetails();
-
-	/// Check if colonist details dialog is visible
-	[[nodiscard]] bool isColonistDetailsVisible() const;
-
-	// --- Crafting Dialog API ---
-
-	/// Show crafting dialog for a specific station
-	void showCraftingDialog(ecs::EntityID stationId, const std::string& stationDefName);
-
-	/// Hide crafting dialog
-	void hideCraftingDialog();
-
-	/// Check if crafting dialog is visible
-	[[nodiscard]] bool isCraftingDialogVisible() const;
-
-	// --- Storage Config Dialog API ---
-
-	/// Show storage config dialog for a specific container
-	void showStorageConfigDialog(ecs::EntityID containerId, const std::string& containerDefName);
-
-	/// Hide storage config dialog
-	void hideStorageConfigDialog();
-
-	/// Check if storage config dialog is visible
-	[[nodiscard]] bool isStorageConfigVisible() const;
-
-	/// Check if global task list is expanded (for blocking scroll zoom)
-	[[nodiscard]] bool isGlobalTaskListExpanded() const;
-
-	/// Toggle the per-colonist decision inspector panel (T hotkey)
-	void toggleDecisionInspector();
-
-	/// Top-level UI roots for the /api/ui/tree and /api/ui/lint snapshot.
-	/// Mirrors render()'s gating so the snapshot only carries what is drawn.
-	/// BuildMenu and ColonistListView are not IComponents and are excluded.
-	[[nodiscard]] std::vector<const UI::IComponent*> getUiRoots() const;
-
-  private:
-	std::unique_ptr<TopBar> topBar;
-	std::unique_ptr<DebugOverlay> debugOverlay;
-	std::unique_ptr<ZoomControlPanel> zoomControlPanel;
-	std::unique_ptr<GameplayBar> gameplayBar;
-	std::unique_ptr<ConstructionConfigStrip> configStrip;
-	std::unique_ptr<BuildMenu> buildMenu;
-	std::unique_ptr<ColonistListView> colonistList;
-	std::unique_ptr<EntityInfoView> infoPanel;
-	std::unique_ptr<TaskListView> taskListPanel;
-	std::unique_ptr<RegionMinimapPanel> minimapPanel;
-	std::unique_ptr<ResourcesPanel> resourcesPanel;
-	std::unique_ptr<GlobalTaskListView> globalTaskList;
-	std::unique_ptr<UI::ToastStack> toastStack;
-	std::unique_ptr<ColonistDetailsDialog> colonistDetailsDialog;
-	std::unique_ptr<CraftingDialog> craftingDialog;
-	std::unique_ptr<StorageConfigDialog> storageConfigDialog;
-
-	// ViewModels (own data + change detection)
-	TimeModel timeModel;
-	ColonistListModel colonistListModel;
-	GlobalTaskListModel globalTaskListModel;
-	ResourcesModel resourcesModel;
-
-	// Task list expansion state
-	bool taskListExpanded = false;
-	ecs::EntityID selectedColonistId{0};
-
-	// Build mode state
-	bool buildMenuVisible = false;
-
-	// World render scale (px/m), pushed with the minimap context; the camera's
-	// visible rect needs it each update
-	float worldPixelsPerMeter = 0.0F;
-
-	// Cached bounds for hit testing
-	Foundation::Rect viewportBounds;
-	Foundation::Rect infoPanelBounds;
-	Foundation::Rect taskListPanelBounds;
-	Foundation::Rect buildMenuBounds;
-
-	// Callbacks
-	std::function<void()> onSelectionCleared;
-
-	// Toggle task list panel visibility
-	void toggleTaskList();
-
-	// Re-position the top-right panel stack (resources panel + global task list
-	// below it); called from layout() and whenever the resources panel's height
-	// changes (toggle or row count change)
-	void positionRightStack();
-};
 
 } // namespace world_sim

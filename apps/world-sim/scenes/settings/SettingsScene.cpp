@@ -8,6 +8,7 @@
 #include "SceneTypes.h"
 #include "UserSettings.h"
 #include "scenes/shared/SalalUi.h"
+#include <theme/Theme.h>
 
 #include <app/Keys.h>
 #include <application/App.h>
@@ -33,7 +34,7 @@ namespace {
 		void onEnter(app::App& app) override {
 			owner = &app;
 			LOG_INFO(Game, "SettingsScene - Entering");
-			world_sim::enterSalalUi(app, ui());
+			theme::apply(ui());
 			build();
 		}
 

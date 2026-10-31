@@ -1,42 +1,49 @@
 #pragma once
 
-// TasksTabView - Tab showing tasks known by a specific colonist.
-//
-// Mirrors the Salvage prototype's Tasks panel: a prominent "Currently" panel
-// (amber left border) for the active task, then a "Known Work" divider and a
-// list of known goal-tasks, each with a status Badge. Manual-render, like the
-// other dossier tabs.
+// TasksTabView - the dossier's Tasks tab: a "Currently" panel with an amber left edge for the running
+// task and its progress, then a Known Work divider over the goal tasks the colonist knows of, each with
+// its detail, its distance and a status badge.
 
 #include "scenes/game/ui/adapters/GlobalTaskAdapter.h"
 
-#include <component/Container.h>
-#include <graphics/Rect.h>
+#include <ui/Component.h>
+#include <ui/components/ProgressBar.h>
+#include <ui/shapes/Text.h>
 
 #include <string>
 #include <vector>
 
 namespace world_sim {
 
-/// Data for Tasks tab - uses adapter's GlobalTaskDisplayData for consistency
-struct TasksTabData {
-	std::vector<adapters::GlobalTaskDisplayData> tasks;
-	size_t totalCount = 0;
+	struct TasksTabData {
+		std::vector<adapters::GlobalTaskDisplayData> tasks;
+		size_t										 totalCount = 0;
 
-	// Current self-assigned task (from BioData), shown in the "Currently" panel.
-	std::string currentTask;
-	// Progress of the running action, 0..1; <0 when idle / still traveling (no meter).
-	float currentProgress = -1.0F;
-};
+		// The colonist's own task (BioData's), for the "Currently" panel.
+		std::string currentTask;
+		// The running action's progress, 0 to 1; below 0 while idle or still travelling, with no meter.
+		float currentProgress = -1.0F;
+	};
 
-class TasksTabView : public UI::Container {
-  public:
-	void create(const Foundation::Rect& contentBounds);
-	void update(const TasksTabData& data);
-	void render() override;
+	class TasksTabView : public ui::Component {
+	  public:
+		struct Args {
+			UI_COMMON_ARGS
+		};
 
-  private:
-	Foundation::Rect contentBounds{};
-	TasksTabData	 data_{};
-};
+		void update(const TasksTabData& data);
+
+		[[nodiscard]] const char* typeName() const override { return "TasksTabView"; }
+
+	  protected:
+		void onMount() override;
+
+	  private:
+		ui::Ref<ui::Text>		 current;
+		ui::Ref<ui::ProgressBar> progress;
+		ui::Ref<ui::Text>		 noWork;
+		ui::Ref<ui::Component>	 taskList;
+		ui::Ref<ui::Text>		 more;
+	};
 
 } // namespace world_sim

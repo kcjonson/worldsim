@@ -1,241 +1,112 @@
 #include "GlobalTaskListView.h"
 
 #include "scenes/game/ui/components/GlobalTaskRow.h"
+#include "scenes/shared/SalalUi.h"
 
-#include <primitives/Primitives.h>
-#include <theme/CssTokens.h>
+#include <ui/Context.h>
 
 #include <format>
+#include <string>
 
 namespace world_sim {
 
-namespace {
-// Chevron icon size and positioning
-constexpr float kChevronSize = 12.0F;
-constexpr float kChevronRightPadding = 8.0F;
-} // namespace
+	namespace {
+		constexpr float kHeaderHeight = 28.0F;
+		constexpr float kExpandedHeight = 320.0F; // header and content
+		constexpr float kPadding = 8.0F;
+		constexpr float kChevronSize = 12.0F;
+		constexpr float kChevronRightPadding = 8.0F;
+		constexpr float kScrollbarReserve = 16.0F;
+	} // namespace
 
-GlobalTaskListView::GlobalTaskListView(const Args& args)
-	: panelWidth(args.width) {
+	void GlobalTaskListView::onMount() {
+		const ui::Theme& theme = getContext()->getTheme();
+		if (getSizeSpec().width.isAuto()) {
+			setSize({kWidth, getSizeSpec().height});
+		}
+		ui::Layout column = getLayout();
+		column.display = ui::Display::Flex;
+		column.flexDirection = ui::FlexDirection::Column;
+		setLayout(column);
 
-	// Create header button (chevron icon is separate)
-	headerButtonHandle = addChild(UI::Button(UI::Button::Args{
-		.label = "Tasks (0)",
-		.position = {0.0F, 0.0F},
-		.size = {panelWidth, kCollapsedHeight},
-		.type = UI::Button::Type::Secondary,
-		.onClick = [this]() { toggle(); },
-		.id = "tasks_header"
-	}));
+		header = addChild<ui::Button>({
+			.id = "tasks_header",
+			.size = {ui::percent(100.0F), kHeaderHeight},
+			.label = "Tasks (0)",
+			.variant = ui::ButtonVariant::Secondary,
+			.onPress = [this]() { toggle(); },
+		});
+		chevron = header.addChild<ui::Icon>({
+			.id = "tasks_chevron",
+			.size = {kChevronSize, kChevronSize},
+			.layout =
+				{.position = ui::Position::Absolute,
+				 .inset = {.top = (kHeaderHeight - kChevronSize) * 0.5F, .right = kChevronRightPadding}},
+			.style = {.color = theme.get(tokens::color::textBright)},
+			.name = "chevron_down",
+		});
 
-	// Create chevron icon (down arrow when collapsed, up when expanded). It sits
-	// on the header button by design; the higher zIndex marks the overlap as
-	// intentional layering for the layout lint.
-	auto chevron = UI::Icon(UI::Icon::Args{
-		.position = {0.0F, 0.0F},  // Will be updated in updateLayout
-		.size = kChevronSize,
-		.svgPath = "assets/ui/icons/chevron_down.svg",
-		.tint = Foundation::Color::white(),
-		.id = "tasks_chevron"
-	});
-	chevron.zIndex = 1;
-	chevronHandle = addChild(std::move(chevron));
-
-	// Create content background (only visible when expanded)
-	contentBackgroundHandle = addChild(UI::Rectangle(UI::Rectangle::Args{
-		.position = {0.0F, kHeaderHeight},
-		.size = {panelWidth, kExpandedMaxHeight - kHeaderHeight},
-		.style = {
-			.fill = UI::bg_panel,
-			.border = Foundation::BorderStyle{
-				.color = UI::line_edge,
-				.width = UI::bw,
-				.cornerRadius = UI::r_md
-			}
-		},
-		.id = "tasks_content_bg",
-		.visible = false
-	}));
-
-	// Create scroll container
-	auto scrollContainer = UI::ScrollContainer(UI::ScrollContainer::Args{
-		.position = {kPadding, kHeaderHeight + kPadding},
-		.size = {panelWidth - kPadding * 2, kExpandedMaxHeight - kHeaderHeight - kPadding * 2},
-		.id = "tasks_scroll"
-	});
-	scrollContainer.visible = false;
-
-	// Create layout container inside scroll
-	auto layout = UI::LayoutContainer(UI::LayoutContainer::Args{
-		.position = {0.0F, 0.0F},
-		.size = {panelWidth - kPadding * 2 - 16.0F, 0.0F},  // 16 for scrollbar
-		.direction = UI::Direction::Vertical,
-		.id = "tasks_layout"
-	});
-	layoutHandle = scrollContainer.addChild(std::move(layout));
-
-	scrollContainerHandle = addChild(std::move(scrollContainer));
-
-	// Overlapping siblings need distinct z for the layout lint: the chevron
-	// rides on the header button; the scroll rides on the content bg.
-	if (auto* chevron = getChild<UI::Icon>(chevronHandle)) {
-		chevron->zIndex = 1;
-	}
-	if (auto* scroll = getChild<UI::ScrollContainer>(scrollContainerHandle)) {
-		scroll->zIndex = 1;
-	}
-	markChildrenNeedSorting();
-}
-
-void GlobalTaskListView::setAnchorPosition(float x, float y) {
-	// Anchor is top-right, so offset by panel width
-	position = {x - panelWidth, y};
-	updateLayout();
-}
-
-void GlobalTaskListView::toggle() {
-	expanded = !expanded;
-	updateHeaderText();
-	updateChevron();
-	updateContentVisibility();
-	updateLayout();
-}
-
-void GlobalTaskListView::updateContentVisibility() {
-	if (auto* contentBg = getChild<UI::Rectangle>(contentBackgroundHandle)) {
-		contentBg->visible = expanded;
-	}
-	// An empty scroll would lint as a zero-height layout; the bare content bg
-	// is the empty state.
-	if (auto* scroll = getChild<UI::ScrollContainer>(scrollContainerHandle)) {
-		scroll->visible = expanded && cachedTaskCount > 0;
-	}
-}
-
-void GlobalTaskListView::updateHeaderText() {
-	auto* header = getChild<UI::Button>(headerButtonHandle);
-	if (header) {
-		header->setLabel(std::format("Tasks ({})", cachedTaskCount));
-	}
-}
-
-void GlobalTaskListView::updateChevron() {
-	auto* chevron = getChild<UI::Icon>(chevronHandle);
-	if (chevron) {
-		// Up arrow when expanded (click to collapse), down arrow when collapsed (click to expand)
-		std::string path = expanded ? "assets/ui/icons/chevron_up.svg" : "assets/ui/icons/chevron_down.svg";
-		chevron->setSvgPath(path);
-	}
-}
-
-void GlobalTaskListView::updateLayout() {
-	// Position header at top
-	auto* header = getChild<UI::Button>(headerButtonHandle);
-	if (header) {
-		header->setPosition(position.x, position.y);
+		// The box keeps its height while the list is short or empty; the list scrolls inside it.
+		content = addChild<ui::Rectangle>({
+			.id = "tasks_content",
+			.visible = false,
+			.size = {ui::percent(100.0F), kExpandedHeight - kHeaderHeight},
+			.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .padding = kPadding},
+			.style = {
+				.backgroundColor = theme.get(tokens::color::bgPanel),
+				.borderColor = theme.get(tokens::color::lineEdge),
+				.borderWidth = theme.get(tokens::border::bw),
+				.borderRadius = theme.get(tokens::radius::rMd)
+			},
+		});
+		list = content.addChild<ui::Component>({
+			.id = "tasks_scroll",
+			.layout =
+				{.display = ui::Display::Flex,
+				 .flexDirection = ui::FlexDirection::Column,
+				 .padding = {0.0F, kScrollbarReserve, 0.0F, 0.0F},
+				 .flexGrow = 1.0F},
+			.overflow = ui::Overflow::Scroll,
+		});
+		show();
 	}
 
-	// Position chevron on the right side of the header button, vertically centered
-	auto* chevron = getChild<UI::Icon>(chevronHandle);
-	if (chevron) {
-		float chevronX = position.x + panelWidth - kChevronSize - kChevronRightPadding;
-		float chevronY = position.y + (kCollapsedHeight - kChevronSize) / 2.0F;
-		chevron->setPosition(chevronX, chevronY);
-	}
-
-	// Position content background
-	auto* contentBg = getChild<UI::Rectangle>(contentBackgroundHandle);
-	if (contentBg) {
-		contentBg->setPosition(position.x, position.y + kHeaderHeight);
-	}
-
-	// Position scroll container
-	auto* scroll = getChild<UI::ScrollContainer>(scrollContainerHandle);
-	if (scroll) {
-		scroll->setPosition(position.x + kPadding, position.y + kHeaderHeight + kPadding);
-	}
-
-	// Update overall size
-	size = {panelWidth, expanded ? kExpandedMaxHeight : kCollapsedHeight};
-}
-
-Foundation::Rect GlobalTaskListView::getBounds() const {
-	return {position.x, position.y, panelWidth, expanded ? kExpandedMaxHeight : kCollapsedHeight};
-}
-
-void GlobalTaskListView::setTaskCount(size_t count) {
-	if (cachedTaskCount != count) {
-		cachedTaskCount = count;
-		updateHeaderText();
-		updateContentVisibility();
-	}
-}
-
-void GlobalTaskListView::setTasks(const std::vector<adapters::GlobalTaskDisplayData>& tasks) {
-	setTaskCount(tasks.size());
-
-	// Get scroll container
-	auto* scroll = getChild<UI::ScrollContainer>(scrollContainerHandle);
-	if (!scroll) return;
-
-	auto* layout = scroll->getChild<UI::LayoutContainer>(layoutHandle);
-	if (!layout) return;
-
-	// Always rebuild for now (can optimize later with change detection)
-	if (taskRowHandles.size() != tasks.size()) {
-		rebuildContent(tasks);
-	} else {
-		// Update existing rows
-		for (size_t i = 0; i < tasks.size() && i < taskRowHandles.size(); ++i) {
-			auto* row = layout->getChild<GlobalTaskRow>(taskRowHandles[i]);
-			if (row) {
-				row->setTaskData(tasks[i]);
-			}
+	void GlobalTaskListView::setTaskCount(std::size_t count) {
+		if (taskCount != count) {
+			taskCount = count;
+			show();
 		}
 	}
-}
 
-void GlobalTaskListView::rebuildContent(const std::vector<adapters::GlobalTaskDisplayData>& tasks) {
-	auto* scroll = getChild<UI::ScrollContainer>(scrollContainerHandle);
-	if (!scroll) return;
-
-	auto* layout = scroll->getChild<UI::LayoutContainer>(layoutHandle);
-	if (!layout) return;
-
-	// Clear existing rows
-	layout->clearChildren();
-	taskRowHandles.clear();
-
-	// Add new rows
-	float rowWidth = panelWidth - kPadding * 2 - 16.0F;
-	for (size_t i = 0; i < tasks.size(); ++i) {
-		auto handle = layout->addChild(GlobalTaskRow(GlobalTaskRow::Args{
-			.task = tasks[i],
-			.width = rowWidth,
-			.showKnownBy = true,
-			.id = std::format("task_row_{}", i)
-		}));
-		taskRowHandles.push_back(handle);
+	void GlobalTaskListView::setTasks(const std::vector<adapters::GlobalTaskDisplayData>& tasks) {
+		setTaskCount(tasks.size());
+		ui::Component* column = list.get();
+		if (column == nullptr) {
+			return;
+		}
+		column->reconcileChildren(
+			tasks,
+			[](const adapters::GlobalTaskDisplayData& task) { return std::to_string(task.id); },
+			[column](const adapters::GlobalTaskDisplayData& task) -> ui::Ref<ui::Component> {
+				return column->addChild<GlobalTaskRow>({.id = std::format("task_row_{}", task.id), .task = task, .showKnownBy = true});
+			},
+			[](ui::Component& shown, const adapters::GlobalTaskDisplayData& task) { static_cast<GlobalTaskRow&>(shown).setTaskData(task); }
+		);
 	}
 
-	// Update scroll content height
-	float contentHeight = static_cast<float>(tasks.size()) * kRowHeight;
-	scroll->setContentHeight(contentHeight);
-}
-
-void GlobalTaskListView::update(float deltaTime) {
-	auto* scroll = getChild<UI::ScrollContainer>(scrollContainerHandle);
-	if (scroll) {
-		scroll->update(deltaTime);
+	void GlobalTaskListView::toggle() {
+		expanded = !expanded;
+		show();
 	}
-}
 
-bool GlobalTaskListView::handleEvent(UI::InputEvent& event) {
-	// Use Component's dispatchEvent to properly route to children
-	// This handles scroll wheel events correctly for Apple Mouse
-	return dispatchEvent(event);
-}
-
-// render() inherited from Component - automatically renders all children
+	void GlobalTaskListView::show() {
+		if (content.get() == nullptr) {
+			return;
+		}
+		header.get()->setLabel(std::format("Tasks ({})", taskCount));
+		content.get()->setVisible(expanded);
+		// Up while expanded, a press collapses it; down while collapsed.
+		chevron.get()->setName(expanded ? "chevron_up" : "chevron_down");
+	}
 
 } // namespace world_sim
