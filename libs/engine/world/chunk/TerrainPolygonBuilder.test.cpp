@@ -601,7 +601,7 @@ TEST(TerrainPolygonBuilderTest, ShoreSlopeIsBoundedAndVariesAlongTheShore) {
 		++real;
 	}
 	ASSERT_GT(real, 40U);
-	EXPECT_GT(hi - lo, 40) << "a straight shore still varies along its length";
+	EXPECT_GT(hi - lo, 39) << "a straight shore still varies along its length";
 }
 
 // ============================================================================

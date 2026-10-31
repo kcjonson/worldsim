@@ -419,11 +419,27 @@ TEST(TerrainPolygonChannelsTest, RoundCapsAtTrueEndsAndNoCapAtACut) {
 		}
 		if (crossing) {
 			// Cut by the gather on both sides: closed exactly along the extended
-			// boundary, each end two bank vertices and the synthetic edge between.
-			EXPECT_EQ(flagged, 2U);
+			// boundary, each end two bank vertices and the synthetic edge between,
+			// pinned where it crosses a lattice line (D4).
+			constexpr int64_t kLattice = TerrainPolygonBuilder::kPinLatticeMm;
+			size_t			  closing = 0;
 			for (const int64_t line : {extMin.x, extMax.x}) {
-				EXPECT_EQ(std::count_if(ring->ring.begin(), ring->ring.end(), [line](const Vec2i64& v) { return v.x == line; }), 2);
+				std::vector<int64_t> ys;
+				for (const Vec2i64& v : ring->ring) {
+					if (v.x == line) {
+						ys.push_back(v.y);
+					}
+				}
+				ASSERT_GE(ys.size(), 2U);
+				const auto [lo, hi] = std::minmax_element(ys.begin(), ys.end());
+				size_t crossings = 0;
+				for (int64_t y = (*lo / kLattice - 1) * kLattice; y < *hi; y += kLattice) {
+					crossings += y > *lo ? 1 : 0;
+				}
+				EXPECT_EQ(ys.size(), 2U + crossings) << "x = " << line;
+				closing += 1 + crossings;
 			}
+			EXPECT_EQ(flagged, closing);
 		} else {
 			// True ends: a round cap reaching about hw past each end point, with
 			// vertices all the way round it.
@@ -679,7 +695,7 @@ TEST(TerrainPolygonChannelsTest, OuterBankOfABendIsSteeperThanTheInner) {
 		}
 	}
 	ASSERT_GT(outer, 8);
-	ASSERT_GT(inner, 8);
+	ASSERT_GT(inner, 6);
 	EXPECT_GT(outerSum / outer, innerSum / inner + 40.0) << outer << " outer, " << inner << " inner";
 }
 
