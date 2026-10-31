@@ -19,7 +19,7 @@ constexpr float kPixelsPerMeter = 8.0F; // Match GameScene constant
 
 void GhostRenderer::render(const std::string& defName,
 						   Foundation::Vec2 worldPos,
-						   const engine::world::WorldCamera& camera,
+						   const world::WorldCamera& camera,
 						   int viewportWidth,
 						   int viewportHeight,
 						   bool isValid) {
@@ -28,7 +28,7 @@ void GhostRenderer::render(const std::string& defName,
 	}
 
 	// Get the tessellated mesh template from the asset registry
-	auto& registry = engine::assets::AssetRegistry::Get();
+	auto& registry = assets::AssetRegistry::Get();
 	const auto* mesh = registry.getTemplate(defName);
 	if (mesh == nullptr || mesh->vertices.empty()) {
 		return;

@@ -86,7 +86,7 @@ class CraftingDialogModel {
 	/// @return Type of update the dialog should perform
 	[[nodiscard]] UpdateType refresh(
 		ecs::World& world,
-		const engine::assets::RecipeRegistry& registry
+		const assets::RecipeRegistry& registry
 	);
 
 	/// Select a recipe by defName
@@ -115,19 +115,19 @@ class CraftingDialogModel {
 
   private:
 	/// Extract recipe list from registry (obtainable = colony material set, built once per refresh)
-	void extractRecipeList(const std::unordered_set<uint32_t>& obtainable, const engine::assets::RecipeRegistry& registry);
+	void extractRecipeList(const std::unordered_set<uint32_t>& obtainable, const assets::RecipeRegistry& registry);
 
 	/// Extract selected recipe details (obtainable = colony material set, built once per refresh)
-	void extractSelectedDetails(const std::unordered_set<uint32_t>& obtainable, const engine::assets::RecipeRegistry& registry);
+	void extractSelectedDetails(const std::unordered_set<uint32_t>& obtainable, const assets::RecipeRegistry& registry);
 
 	/// Extract queue from WorkQueue component
-	void extractQueue(const ecs::World& world, const engine::assets::RecipeRegistry& registry);
+	void extractQueue(const ecs::World& world, const assets::RecipeRegistry& registry);
 
 	/// True when every recipe input is in the colony's obtainable-material set (see
 	/// CraftingAdapter::collectObtainableMaterials/isMaterialObtainable). false marks the recipe
 	/// un-craftable so the dialog dims it and flags the missing inputs.
 	[[nodiscard]] bool checkMaterialAvailability(
-		const std::unordered_set<uint32_t>& obtainable, const engine::assets::RecipeDef& recipe
+		const std::unordered_set<uint32_t>& obtainable, const assets::RecipeDef& recipe
 	) const;
 
 	// State

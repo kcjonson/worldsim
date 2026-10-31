@@ -24,7 +24,7 @@ concurrency:
   cancel-in-progress: true
 
 # Heavy worldgen tests live in tests-heavy.yml, path-gated to
-# worldgen changes (libs/world, vcpkg.json, root CMakeLists) with
+# worldgen changes (libs/worldgen, vcpkg.json, root CMakeLists) with
 # a nightly backstop run. This workflow is the always-on fast gate.
 jobs:
   test:
@@ -77,7 +77,7 @@ jobs:
     - name: Run fast tests
       run: |
         cd build
-        ctest -j4 --output-on-failure -E "(benchmarks|world-tests-heavy)"
+        ctest -j4 --output-on-failure -E "(benchmarks|worldgen-tests-heavy)"
 
     - name: Upload test results
       if: always()
@@ -149,7 +149,7 @@ jobs:
       shell: bash
       run: |
         cd build
-        ctest -j4 --output-on-failure -E "(benchmarks|world-tests-heavy)"
+        ctest -j4 --output-on-failure -E "(benchmarks|worldgen-tests-heavy)"
 
     - name: Upload test results
       if: always()

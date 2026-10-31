@@ -27,9 +27,9 @@ namespace world_sim {
 
 	namespace {
 
-		using engine::assets::ConstructionRegistry;
-		using engine::assets::StyleColor;
-		namespace ec = engine::construction;
+		using assets::ConstructionRegistry;
+		using assets::StyleColor;
+		namespace ec = construction;
 
 		// StyleColor (engine config, float rgba) -> Foundation::Color (renderer rgba).
 		Foundation::Color toColor(StyleColor c) {
@@ -805,7 +805,7 @@ namespace world_sim {
 	// entity per committed segment. The chain is OPEN and hosted by one foundation.
 	// =========================================================================
 
-	const engine::assets::ThicknessPreset* DrawingSystem::activePreset() const {
+	const assets::ThicknessPreset* DrawingSystem::activePreset() const {
 		return ConstructionRegistry::Get().getThicknessPreset(activeMaterial_, activeThicknessPreset_);
 	}
 
@@ -1243,7 +1243,7 @@ namespace world_sim {
 	// mirrors spawnWallSegmentEntity with the type's CONSTANT manifest/work.
 	// =========================================================================
 
-	const engine::assets::OpeningTypeDef* DrawingSystem::activeOpeningType() const {
+	const assets::OpeningTypeDef* DrawingSystem::activeOpeningType() const {
 		return ConstructionRegistry::Get().getOpeningType(activeOpeningType_);
 	}
 
@@ -1712,7 +1712,7 @@ namespace world_sim {
 		// through the reference node(s). An AxisGuide can show two lines at once (an X
 		// lock and a Y lock to two different nodes); the alt pair is zero when only one
 		// axis aligned.
-		if (lastSnap_.kind == engine::construction::SnapKind::Angle || lastSnap_.kind == engine::construction::SnapKind::AxisGuide) {
+		if (lastSnap_.kind == construction::SnapKind::Angle || lastSnap_.kind == construction::SnapKind::AxisGuide) {
 			// Each pair is skipped when degenerate (from == to): an AxisGuide whose
 			// cursor sits exactly on a node collapses the primary line to zero length.
 			if (lastSnap_.guideFrom.x != lastSnap_.guideTo.x || lastSnap_.guideFrom.y != lastSnap_.guideTo.y) {
@@ -1724,7 +1724,7 @@ namespace world_sim {
 					.key = 899,
 				});
 			}
-			if (lastSnap_.kind == engine::construction::SnapKind::AxisGuide &&
+			if (lastSnap_.kind == construction::SnapKind::AxisGuide &&
 				(lastSnap_.guideFromAlt.x != lastSnap_.guideToAlt.x || lastSnap_.guideFromAlt.y != lastSnap_.guideToAlt.y)) {
 				Renderer::Primitives::drawLine({
 					.start = toScreen(lastSnap_.guideFromAlt),
@@ -2226,7 +2226,7 @@ namespace world_sim {
 		// through the reference node(s). An AxisGuide can show two lines at once (an X
 		// lock and a Y lock to two different nodes); the alt pair is zero when only one
 		// axis aligned.
-		if (lastSnap_.kind == engine::construction::SnapKind::Angle || lastSnap_.kind == engine::construction::SnapKind::AxisGuide) {
+		if (lastSnap_.kind == construction::SnapKind::Angle || lastSnap_.kind == construction::SnapKind::AxisGuide) {
 			// Skip a degenerate pair (from == to): an AxisGuide whose cursor sits exactly
 			// on a node collapses the primary line to zero length.
 			if (lastSnap_.guideFrom.x != lastSnap_.guideTo.x || lastSnap_.guideFrom.y != lastSnap_.guideTo.y) {
@@ -2238,7 +2238,7 @@ namespace world_sim {
 					.key = 905,
 				});
 			}
-			if (lastSnap_.kind == engine::construction::SnapKind::AxisGuide &&
+			if (lastSnap_.kind == construction::SnapKind::AxisGuide &&
 				(lastSnap_.guideFromAlt.x != lastSnap_.guideToAlt.x || lastSnap_.guideFromAlt.y != lastSnap_.guideToAlt.y)) {
 				Renderer::Primitives::drawLine({
 					.start = toScreen(lastSnap_.guideFromAlt),
@@ -2262,7 +2262,7 @@ namespace world_sim {
 			});
 		}
 
-		using engine::construction::SnapKind;
+		using construction::SnapKind;
 		if (lastSnap_.kind == SnapKind::WallEndpoint || lastSnap_.kind == SnapKind::WallSegment || lastSnap_.kind == SnapKind::Vertex ||
 			lastSnap_.kind == SnapKind::Edge) {
 			const Foundation::Color snapColor = (lastSnap_.kind == SnapKind::WallEndpoint || lastSnap_.kind == SnapKind::Vertex)

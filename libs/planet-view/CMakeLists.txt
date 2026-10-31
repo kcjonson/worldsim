@@ -19,14 +19,14 @@ target_link_libraries(planet-view
     PUBLIC
         salal::foundation
         salal::renderer
-        world
+        worldgen
         OpenGL::GL
         GLEW::GLEW
         glm::glm
 )
 
 # ── Shader deployment ──
-# Copy planet-view shaders to the shared build shaders/ directory, as the engine
+# Copy planet-view shaders to the shared build shaders/ directory, as world-view
 # does its ground pass, so both ui-sandbox and world-sim find them at runtime.
 file(GLOB_RECURSE PLANET_VIEW_SHADER_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*"

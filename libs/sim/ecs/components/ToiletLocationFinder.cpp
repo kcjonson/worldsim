@@ -1,0 +1,183 @@
+#include "ToiletLocationFinder.h"
+
+#include "MemoryQueries.h"
+#include "Transform.h"
+
+#include "../systems/NavigationSystem.h"
+
+#include "assets/AssetRegistry.h"
+#include "world/chunk/ChunkCoordinate.h"
+#include "world/chunk/ChunkManager.h"
+#include "world/chunk/TerrainPolygonQuery.h"
+
+#include <core/Vec2i64.h>
+#include <utils/Log.h>
+
+#include <cmath>
+#include <limits>
+#include <vector>
+
+namespace ecs {
+
+namespace {
+
+/// Grid spacing for candidate sampling (meters)
+constexpr float kSampleSpacing = 3.0F;
+
+/// Relief stays this far from water, off the shore colonists drink from (the old tile rule's reach).
+constexpr double kMinWaterDistanceMm = 1500.0;
+
+/// Scoring weights
+constexpr float kBioPileClusterBonus = 10.0F;   // Bonus per nearby BioPile
+constexpr float kBioPileClusterRadius = 8.0F;   // Distance to consider "nearby"
+constexpr float kFoodProximityPenalty = 20.0F;  // Penalty per nearby food source
+constexpr float kFoodAvoidanceRadius = 15.0F;   // Distance to avoid from food
+
+/// Collect positions of known waste entities (bio piles) from memory
+[[nodiscard]] std::vector<glm::vec2> collectBioPilePositions(
+	const Memory& memory,
+	const assets::AssetRegistry& registry
+) {
+	std::vector<glm::vec2> positions;
+	auto wastes = findKnownWithCapability(memory, registry, assets::CapabilityType::Waste);
+	for (const auto& entity : wastes) {
+		positions.push_back(entity.position);
+	}
+	return positions;
+}
+
+/// Collect positions of known edible entities from memory
+[[nodiscard]] std::vector<glm::vec2> collectFoodPositions(
+	const Memory& memory,
+	const assets::AssetRegistry& registry
+) {
+	std::vector<glm::vec2> positions;
+	auto edibles = findKnownWithCapability(memory, registry, assets::CapabilityType::Edible);
+	for (const auto& entity : edibles) {
+		positions.push_back(entity.position);
+	}
+	return positions;
+}
+
+/// Check if the given world position is valid for toilet use
+[[nodiscard]] bool isValidToiletSpot(
+	const glm::vec2& pos,
+	const world::ChunkManager& chunkManager,
+	const NavigationSystem& navigation
+) {
+	using namespace world;
+
+	// Rule 1: somewhere a colonist can stand. Water (the terrain rings) and anything
+	// else off the nav mesh is out.
+	if (!navigation.isValidPosition(pos)) {
+		return false;
+	}
+
+	const Chunk* chunk = chunkManager.getChunk(worldToChunk(WorldPosition{pos.x, pos.y}));
+	if (chunk == nullptr || !chunk->isReady()) {
+		return false;  // Chunk not loaded or not ready
+	}
+
+	// Rule 2: not beside the water colonists drink from.
+	const TerrainPolygonQuery water(chunk->terrainPolygons());
+	return water.distanceToWaterMm(geometry::quantize(pos), kMinWaterDistanceMm) > kMinWaterDistanceMm;
+}
+
+/// Calculate score for a candidate position
+[[nodiscard]] float scorePosition(
+	const glm::vec2& candidate,
+	const glm::vec2& colonistPos,
+	const std::vector<glm::vec2>& bioPilePositions,
+	const std::vector<glm::vec2>& foodPositions
+) {
+	// Base score: prefer closer positions (mild preference)
+	float distance = glm::length(candidate - colonistPos);
+	float score = 100.0F - distance;  // Closer is slightly better
+
+	// Bonus for clustering near existing BioPiles
+	for (const auto& pilePos : bioPilePositions) {
+		float distToPile = glm::length(candidate - pilePos);
+		if (distToPile < kBioPileClusterRadius) {
+			// Bonus inversely proportional to distance (closer = more bonus)
+			float proximity = 1.0F - (distToPile / kBioPileClusterRadius);
+			score += kBioPileClusterBonus * proximity;
+		}
+	}
+
+	// Penalty for proximity to food sources
+	for (const auto& foodPos : foodPositions) {
+		float distToFood = glm::length(candidate - foodPos);
+		if (distToFood < kFoodAvoidanceRadius) {
+			// Penalty inversely proportional to distance (closer = more penalty)
+			float proximity = 1.0F - (distToFood / kFoodAvoidanceRadius);
+			score -= kFoodProximityPenalty * proximity;
+		}
+	}
+
+	return score;
+}
+
+} // namespace
+
+std::optional<glm::vec2> findToiletLocation(
+	const glm::vec2& colonistPos,
+	const world::ChunkManager& chunkManager,
+	const NavigationSystem& navigation,
+	World& /*ecsWorld*/,
+	const Memory& memory,
+	const assets::AssetRegistry& registry,
+	float searchRadius
+) {
+	// Collect known BioPile and food positions for scoring (from memory)
+	auto bioPilePositions = collectBioPilePositions(memory, registry);
+	auto foodPositions = collectFoodPositions(memory, registry);
+
+	// Track best candidate
+	std::optional<glm::vec2> bestPosition;
+	float bestScore = -std::numeric_limits<float>::infinity();
+
+	// Sample positions in a grid pattern within search radius
+	int gridSize = static_cast<int>(std::ceil(searchRadius / kSampleSpacing));
+
+	for (int dy = -gridSize; dy <= gridSize; ++dy) {
+		for (int dx = -gridSize; dx <= gridSize; ++dx) {
+			glm::vec2 candidate = colonistPos + glm::vec2(
+				static_cast<float>(dx) * kSampleSpacing,
+				static_cast<float>(dy) * kSampleSpacing
+			);
+
+			// Check if within circular search radius
+			float dist = glm::length(candidate - colonistPos);
+			if (dist > searchRadius) {
+				continue;
+			}
+
+			// Validate spot (walkable, not shore)
+			if (!isValidToiletSpot(candidate, chunkManager, navigation)) {
+				continue;
+			}
+
+			// Score this position
+			float score = scorePosition(candidate, colonistPos, bioPilePositions, foodPositions);
+
+			if (score > bestScore) {
+				bestScore = score;
+				bestPosition = candidate;
+			}
+		}
+	}
+
+	if (bestPosition.has_value()) {
+		LOG_DEBUG(
+			Engine,
+			"[ToiletLocation] Found at (%.1f, %.1f) score=%.1f",
+			bestPosition->x,
+			bestPosition->y,
+			bestScore
+		);
+	}
+
+	return bestPosition;
+}
+
+} // namespace ecs

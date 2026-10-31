@@ -65,14 +65,14 @@ namespace world_sim {
 		const bool			   drawVertexDots = camera->worldDistanceToScreen(1.0F, kPixelsPerMeter) >= kVertexDotMinPixelsPerMeter;
 
 		const auto									   corners = camera->getVisibleCorners(viewportW, viewportH, kPixelsPerMeter);
-		const std::vector<const engine::world::Chunk*> visible = chunks->getVisibleChunks(corners.first, corners.second);
+		const std::vector<const world::Chunk*> visible = chunks->getVisibleChunks(corners.first, corners.second);
 
 		// Draw one ring set (rings or navRings): every edge, colored by kind, with
 		// small vertex dots once zoomed in enough to make them useful rather than
 		// clutter. Synthetic apron-closure edges (D4) and fordable cuts between
 		// channel pieces (D7) get their own colors so they are never mistaken for
 		// real shore; fordable rings, which nav skips, are dimmer.
-		auto drawRings = [&](const std::vector<engine::world::TerrainRing>& rings,
+		auto drawRings = [&](const std::vector<world::TerrainRing>& rings,
 							 const std::string&								idBase,
 							 const char*									tag,
 							 Foundation::Color								edgeColor,
@@ -80,7 +80,7 @@ namespace world_sim {
 							 int											zIndex,
 							 bool											readProfileFlags) {
 			for (std::size_t ri = 0; ri < rings.size(); ++ri) {
-				const engine::world::TerrainRing& terrainRing = rings[ri];
+				const world::TerrainRing& terrainRing = rings[ri];
 				const geometry::Ring&			  ring = terrainRing.ring;
 				if (ring.size() < 2 || !ringBoundsMeters(ring).intersects(viewRect)) {
 					continue;
@@ -99,9 +99,9 @@ namespace world_sim {
 					auto	   flagged = [&](std::size_t v, uint8_t flag) {
 						  return hasProfiles && (terrainRing.profiles[v].flags & flag) != 0;
 					};
-					const bool synthetic = flagged(i, engine::world::ShoreProfile::kFlagSynthetic);
-					const bool fordableCut = flagged(i, engine::world::ShoreProfile::kFlagFordableCut) &&
-											 flagged(next, engine::world::ShoreProfile::kFlagFordableCut);
+					const bool synthetic = flagged(i, world::ShoreProfile::kFlagSynthetic);
+					const bool fordableCut = flagged(i, world::ShoreProfile::kFlagFordableCut) &&
+											 flagged(next, world::ShoreProfile::kFlagFordableCut);
 					Foundation::Color color = synthetic ? kSyntheticEdge : (fordableCut ? kFordableCutEdge : edgeColor);
 					if (!terrainRing.blocksMovement) {
 						color.a *= kFordableAlphaScale;
@@ -138,28 +138,28 @@ namespace world_sim {
 			}
 		};
 
-		for (const engine::world::Chunk* chunk : visible) {
+		for (const world::Chunk* chunk : visible) {
 			if (chunk == nullptr || !chunk->isReady()) {
 				continue;
 			}
 
-			const engine::world::ChunkCoordinate coord = chunk->coordinate();
-			const engine::world::WorldPosition	 origin = coord.origin();
+			const world::ChunkCoordinate coord = chunk->coordinate();
+			const world::WorldPosition	 origin = coord.origin();
 			const std::string					 idBase = "terrainpoly_" + std::to_string(coord.x) + "_" + std::to_string(coord.y);
 
 			// Chunk square outline, thin and faint, so seams between chunks are
 			// easy to spot.
 			const std::array<Foundation::Vec2, 4> squareCorners = {
 				camera->worldToScreen(origin.x, origin.y, viewportW, viewportH, kPixelsPerMeter),
-				camera->worldToScreen(origin.x + engine::world::kChunkWorldSize, origin.y, viewportW, viewportH, kPixelsPerMeter),
+				camera->worldToScreen(origin.x + world::kChunkWorldSize, origin.y, viewportW, viewportH, kPixelsPerMeter),
 				camera->worldToScreen(
-					origin.x + engine::world::kChunkWorldSize,
-					origin.y + engine::world::kChunkWorldSize,
+					origin.x + world::kChunkWorldSize,
+					origin.y + world::kChunkWorldSize,
 					viewportW,
 					viewportH,
 					kPixelsPerMeter
 				),
-				camera->worldToScreen(origin.x, origin.y + engine::world::kChunkWorldSize, viewportW, viewportH, kPixelsPerMeter),
+				camera->worldToScreen(origin.x, origin.y + world::kChunkWorldSize, viewportW, viewportH, kPixelsPerMeter),
 			};
 			for (int i = 0; i < 4; ++i) {
 				const std::string edgeId = idBase + "_sq" + std::to_string(i);
@@ -178,7 +178,7 @@ namespace world_sim {
 				);
 			}
 
-			const engine::world::ChunkTerrainPolygons& polys = chunk->terrainPolygons();
+			const world::ChunkTerrainPolygons& polys = chunk->terrainPolygons();
 			drawRings(polys.rings, idBase, "ring", kRingEdge, 1.5F, kZRingEdge, /*readProfileFlags=*/true);
 			drawRings(polys.navRings, idBase, "nav", kNavRingEdge, 1.0F, kZNavRingEdge, /*readProfileFlags=*/false);
 		}

@@ -272,7 +272,7 @@ namespace world_sim {
 			return;
 		}
 
-		const auto& registry = engine::assets::AssetRegistry::Get();
+		const auto& registry = assets::AssetRegistry::Get();
 		auto		toItem = [&](const ecs::ItemStack& stack) {
 			   const auto* def = registry.getDefinition(stack.defName);
 			   std::string name = (def != nullptr && !def->label.empty()) ? def->label : stack.defName;
@@ -336,10 +336,10 @@ namespace world_sim {
 
 		memoryData.sightRadius = memory->sightRadius;
 
-		auto& assetRegistry = engine::assets::AssetRegistry::Get();
+		auto& assetRegistry = assets::AssetRegistry::Get();
 
 		// Helper to build category from capability
-		auto buildCategory = [&](const std::string& categoryName, engine::assets::CapabilityType capability) {
+		auto buildCategory = [&](const std::string& categoryName, assets::CapabilityType capability) {
 			MemoryCategory category;
 			category.name = categoryName;
 
@@ -370,9 +370,9 @@ namespace world_sim {
 		};
 
 		// Build categories
-		memoryData.categories.push_back(buildCategory("Food Sources", engine::assets::CapabilityType::Edible));
-		memoryData.categories.push_back(buildCategory("Water Sources", engine::assets::CapabilityType::Drinkable));
-		memoryData.categories.push_back(buildCategory("Resources", engine::assets::CapabilityType::Harvestable));
+		memoryData.categories.push_back(buildCategory("Food Sources", assets::CapabilityType::Edible));
+		memoryData.categories.push_back(buildCategory("Water Sources", assets::CapabilityType::Drinkable));
+		memoryData.categories.push_back(buildCategory("Resources", assets::CapabilityType::Harvestable));
 
 		// Threats category - placeholder (no threat system yet)
 		MemoryCategory threats;

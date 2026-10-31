@@ -63,7 +63,7 @@ int main(int argc, char* argv[]) {
 	}
 
 	// GrassScene reads the registry in onEnter (also via --scene=grass), so load synchronously.
-	engine::assets::initializeAssetSystem(false);
+	assets::initializeAssetSystem(false);
 
 	ui_sandbox::addScenes(app->scenes());
 	if (!commandLine.scene || !app->scenes().switchTo(*commandLine.scene)) {

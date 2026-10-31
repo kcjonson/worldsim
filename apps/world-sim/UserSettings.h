@@ -28,7 +28,7 @@ namespace world_sim {
 	  private:
 		UserSettings()
 			: alignSnapToExistingFoundations(
-				  engine::assets::ConstructionRegistry::Get().snapping().alignToExistingDefault) {}
+				  assets::ConstructionRegistry::Get().snapping().alignToExistingDefault) {}
 	};
 
 } // namespace world_sim

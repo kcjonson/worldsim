@@ -11,6 +11,6 @@ target_compile_features(worldgen-cli PRIVATE cxx_std_20)
 
 target_link_libraries(worldgen-cli
     PRIVATE
-        world
+        worldgen
         salal::foundation
 )

@@ -13,9 +13,9 @@ namespace world_sim {
 
 	namespace {
 
-		using engine::assets::ConstructionRegistry;
-		using engine::assets::StyleColor;
-		namespace ec = engine::construction;
+		using assets::ConstructionRegistry;
+		using assets::StyleColor;
+		namespace ec = construction;
 
 		Foundation::Color toColor(StyleColor c) {
 			return {c.r, c.g, c.b, c.a};
@@ -144,7 +144,7 @@ namespace world_sim {
 		);
 	}
 
-	void CommittedGeometryCache::refresh(const engine::construction::ConstructionWorld& world) {
+	void CommittedGeometryCache::refresh(const construction::ConstructionWorld& world) {
 		if (world.version() == builtVersion_) {
 			return;
 		}
@@ -152,7 +152,7 @@ namespace world_sim {
 		builtVersion_ = world.version();
 	}
 
-	void CommittedGeometryCache::rebuild(const engine::construction::ConstructionWorld& world) {
+	void CommittedGeometryCache::rebuild(const construction::ConstructionWorld& world) {
 		foundations_.clear();
 		walls_.clear();
 		junctions_.clear();

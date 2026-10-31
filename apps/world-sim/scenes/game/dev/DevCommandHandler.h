@@ -28,10 +28,10 @@ namespace ecs {
 	struct Inventory;
 	enum class NeedType : std::uint8_t;
 }
-namespace engine::world {
+namespace world {
 	class ChunkManager;
 }
-namespace engine::construction {
+namespace construction {
 	using FoundationId = std::uint64_t;
 }
 namespace worldgen {
@@ -54,7 +54,7 @@ namespace world_sim {
 		world_sim::PlacementSystem*	 placement = nullptr;
 		world_sim::SelectionSystem*	 selection = nullptr;
 		world_sim::GameUI*			 ui = nullptr;
-		engine::world::ChunkManager* chunks = nullptr;
+		world::ChunkManager* chunks = nullptr;
 		ecs::NavigationSystem*		 navigation = nullptr; // world-position validity (isValidPosition)
 
 		// Planet used for the current session; populated from GameStartConfig. Used by

@@ -24,10 +24,10 @@
 #include <worldgen/io/PlanetIO.h>
 #include <worldgen/sampling/LandingSite.h>
 
-#include <app/Keys.h>
 #include <application/App.h>
 #include <graphics/Color.h>
 #include <primitives/Primitives.h>
+#include <theme/Keys.h>
 #include <theme/Panel.h>
 #include <ui/components/Button.h>
 #include <ui/components/Dialog.h>
@@ -122,7 +122,7 @@ namespace {
 			// A dialog closed by this frame's Escape mustn't also back the scene out.
 			const bool dialogEscape = confirmDialog.get() != nullptr || dialogClosed;
 			dialogClosed = false;
-			if (engine::key(frame.input, foundation::Key::Escape).pressed() && !dialogEscape) {
+			if (theme::key(frame.input, foundation::Key::Escape).pressed() && !dialogEscape) {
 				// ESC backs out: Configuring returns to the crew step of the New
 				// Game flow; Generating/Reviewing keep bailing to the main menu.
 				if (model.getState() == world_sim::WorldCreatorState::Configuring) {
@@ -798,7 +798,7 @@ namespace {
 				return;
 
 			const auto down = [&input](foundation::Key key) {
-				return engine::key(input, key).down;
+				return theme::key(input, key).down;
 			};
 			const float step = kKeyPanRate * dt;
 			float		dYaw = 0.0F;

@@ -98,18 +98,22 @@ target_compile_features(world-sim PRIVATE cxx_std_20)
 # Link all required libraries
 target_link_libraries(world-sim
     PRIVATE
-        engine
-        game-systems
+        world-view
+        sim
         world
+        worldgen
+        assets
         theme
+        planet-view
+        salal::app
         salal::renderer
         salal::foundation
-        assets
-        planet-view
+        OpenGL::GL
+        GLEW::GLEW
 )
 
 # The game's own passes' shaders (salal's base shader is compiled in) are staged into
-# ${CMAKE_BINARY_DIR}/shaders by engine-shaders and planet-view-shaders. findResource
+# ${CMAKE_BINARY_DIR}/shaders by world-view-shaders and planet-view-shaders. findResource
 # reads the exe directory first, so mirror them beside the exe on every build; a
 # POST_BUILD step only runs on relink and goes stale on shader edits.
 # The mirror snapshots the whole staging directory, so it has to wait for every target that
@@ -121,7 +125,7 @@ add_custom_target(world-sim-shaders ALL
     COMMENT "Mirroring shaders beside world-sim"
     VERBATIM
 )
-add_dependencies(world-sim-shaders engine-shaders planet-view-shaders)
+add_dependencies(world-sim-shaders world-view-shaders planet-view-shaders)
 
 # Copy fonts to executable directory
 add_custom_command(TARGET world-sim POST_BUILD

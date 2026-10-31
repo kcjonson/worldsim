@@ -92,15 +92,15 @@ namespace world_sim {
 		GameUI& operator=(GameUI&&) = delete;
 
 		void update(
-			float										   deltaTime,
-			const engine::world::WorldCamera&			   camera,
-			const engine::world::ChunkManager&			   chunkManager,
-			ecs::World&									   ecsWorld,
-			const engine::assets::AssetRegistry&		   assetRegistry,
-			const engine::assets::RecipeRegistry&		   recipeRegistry,
-			const Selection&							   selection,
-			const engine::construction::ConstructionWorld* constructionWorld = nullptr,
-			const ecs::RoomDetectionSystem*				   roomDetection = nullptr
+			float								   deltaTime,
+			const world::WorldCamera&			   camera,
+			const world::ChunkManager&			   chunkManager,
+			ecs::World&							   ecsWorld,
+			const assets::AssetRegistry&		   assetRegistry,
+			const assets::RecipeRegistry&		   recipeRegistry,
+			const Selection&					   selection,
+			const construction::ConstructionWorld* constructionWorld = nullptr,
+			const ecs::RoomDetectionSystem*		   roomDetection = nullptr
 		);
 
 		void setMinimapContext(Foundation::Vec2 crashSite, double latDeg, double lonDeg, float pixelsPerMeter);

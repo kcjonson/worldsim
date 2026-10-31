@@ -19,7 +19,7 @@
 #include <string>
 #include <vector>
 
-namespace engine::assets {
+namespace assets {
 	class PlacementExecutor;
 }
 
@@ -51,8 +51,8 @@ class PlacementSystem {
 
 	struct Args {
 		ecs::World*						 world;
-		engine::world::WorldCamera*		 camera;
-		engine::assets::PlacementExecutor* placementExecutor; // owns harvestable resource pools
+		world::WorldCamera*		 camera;
+		assets::PlacementExecutor* placementExecutor; // owns harvestable resource pools
 		ecs::NavigationSystem*			 navigation;		  // world-position validity (isValidPosition)
 		Callbacks						 callbacks;
 	};
@@ -108,8 +108,8 @@ class PlacementSystem {
 
   private:
 	ecs::World*						   ecsWorld = nullptr;
-	engine::world::WorldCamera*		   camera = nullptr;
-	engine::assets::PlacementExecutor* placementExecutor = nullptr;
+	world::WorldCamera*		   camera = nullptr;
+	assets::PlacementExecutor* placementExecutor = nullptr;
 	ecs::NavigationSystem*			   navigation = nullptr;
 	Callbacks						   callbacks;
 

@@ -40,9 +40,9 @@ struct CachedSelection {
 	std::string		  furnitureDefName;	 // For Furniture selection
 	Foundation::Vec2 worldEntityPos;	 // For WorldEntity selection
 	bool			  furniturePackaged{false}; // For Furniture selection
-	engine::construction::FoundationId foundationId{0};	 // For Foundation selection
-	engine::construction::SegmentId	   wallSegmentId{0}; // For WallSegment selection
-	engine::construction::OpeningId	   openingId{0};	 // For Opening selection
+	construction::FoundationId foundationId{0};	 // For Foundation selection
+	construction::SegmentId	   wallSegmentId{0}; // For WallSegment selection
+	construction::OpeningId	   openingId{0};	 // For Opening selection
 	std::uint64_t					   roomId{0};		 // For Room selection
 
 	/// Check if this cache matches the given selection
@@ -97,10 +97,10 @@ class EntityInfoModel {
 	[[nodiscard]] UpdateType refresh(
 		const Selection&							   selection,
 		ecs::World&									   world,
-		const engine::assets::AssetRegistry&		   assetRegistry,
-		const engine::assets::RecipeRegistry&		   recipeRegistry,
+		const assets::AssetRegistry&		   assetRegistry,
+		const assets::RecipeRegistry&		   recipeRegistry,
 		const Callbacks&							   callbacks,
-		const engine::construction::ConstructionWorld* constructionWorld = nullptr,
+		const construction::ConstructionWorld* constructionWorld = nullptr,
 		const ecs::RoomDetectionSystem*				   roomDetection = nullptr
 	);
 

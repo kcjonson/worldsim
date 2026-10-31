@@ -63,12 +63,12 @@ namespace world_sim {
 
 		// Each frame, with the current selection: shows, hides or refreshes the panel as the model says.
 		void update(
-			ecs::World&									   world,
-			const engine::assets::AssetRegistry&		   assetRegistry,
-			const engine::assets::RecipeRegistry&		   recipeRegistry,
-			const Selection&							   selection,
-			const engine::construction::ConstructionWorld* constructionWorld = nullptr,
-			const ecs::RoomDetectionSystem*				   roomDetection = nullptr
+			ecs::World&							   world,
+			const assets::AssetRegistry&		   assetRegistry,
+			const assets::RecipeRegistry&		   recipeRegistry,
+			const Selection&					   selection,
+			const construction::ConstructionWorld* constructionWorld = nullptr,
+			const ecs::RoomDetectionSystem*		   roomDetection = nullptr
 		);
 
 		[[nodiscard]] const char* typeName() const override { return "EntityInfoView"; }

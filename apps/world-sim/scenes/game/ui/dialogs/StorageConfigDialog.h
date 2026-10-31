@@ -51,7 +51,7 @@ namespace world_sim {
 		[[nodiscard]] ecs::EntityID getContainerId() const { return model.containerId(); }
 
 		// Each frame while open.
-		void update(ecs::World& world, const engine::assets::AssetRegistry& registry);
+		void update(ecs::World& world, const assets::AssetRegistry& registry);
 
 	  private:
 		void build(ui::Dialog& shown);

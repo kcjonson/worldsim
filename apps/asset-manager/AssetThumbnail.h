@@ -1,7 +1,7 @@
 #pragma once
 
 // AssetThumbnail - a ui component that draws an asset through the game's render pipeline
-// (engine::assets::prepareAsset), fit to its own box. The one piece of custom rendering in the asset
+// (assets::prepareAsset), fit to its own box. The one piece of custom rendering in the asset
 // manager; everything else is salal's ui. With the collider shown, the asset's collision shape is drawn
 // over the art, or "no collider" in the corner when it has none.
 

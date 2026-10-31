@@ -68,9 +68,9 @@ namespace asset_manager {
 	}
 
 	void AssetDetailView::setAsset(const std::string& name) {
-		const engine::assets::AssetDefinition* def = engine::assets::AssetRegistry::Get().getDefinition(name);
+		const assets::AssetDefinition* def = assets::AssetRegistry::Get().getDefinition(name);
 		defName = def != nullptr ? name : std::string();
-		procedural = def != nullptr && def->assetType != engine::assets::AssetType::Simple;
+		procedural = def != nullptr && def->assetType != assets::AssetType::Simple;
 		variantBase = 1U;
 		if (getContext() != nullptr) {
 			build();
@@ -86,7 +86,7 @@ namespace asset_manager {
 			.size = {ui::percent(100.0F), ui::percent(100.0F)},
 			.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = kGap, .padding = kPad},
 		});
-		const engine::assets::AssetDefinition* def = engine::assets::AssetRegistry::Get().getDefinition(defName);
+		const assets::AssetDefinition* def = assets::AssetRegistry::Get().getDefinition(defName);
 		if (def == nullptr) {
 			content.addChild<ui::Text>(
 				{.layout = kKeepHeight, .style = ui::styles::text::secondary, .text = "Select an asset from the tree"}
@@ -134,7 +134,7 @@ namespace asset_manager {
 
 	// The asset's facts, its validation issues, and its source XML.
 	void AssetDetailView::info(ui::Ref<ui::Component> column) {
-		const engine::assets::AssetDefinition& def = *engine::assets::AssetRegistry::Get().getDefinition(defName);
+		const assets::AssetDefinition&		   def = *assets::AssetRegistry::Get().getDefinition(defName);
 		const ui::Theme&					   palette = getContext()->getTheme();
 
 		std::string meta;
@@ -159,11 +159,11 @@ namespace asset_manager {
 
 		std::string warnings;
 		bool		anyError = false;
-		for (const auto& issue : engine::assets::AssetRegistry::Get().getValidationReport().issues) {
+		for (const auto& issue : assets::AssetRegistry::Get().getValidationReport().issues) {
 			if (issue.defName != defName) {
 				continue;
 			}
-			const bool isError = issue.severity == engine::assets::Severity::Error;
+			const bool isError = issue.severity == assets::Severity::Error;
 			anyError = anyError || isError;
 			warnings += (warnings.empty() ? "" : "\n") + std::string(isError ? "[error] " : "[warning] ");
 			if (!issue.field.empty()) {

@@ -162,13 +162,13 @@ namespace {
 
 	  private:
 		void refreshNames() {
-			allNames = engine::assets::AssetRegistry::Get().getDefinitionNames();
+			allNames = assets::AssetRegistry::Get().getDefinitionNames();
 			std::sort(allNames.begin(), allNames.end());
 			LOG_INFO(Engine, "AssetManager: %zu definitions", allNames.size());
 		}
 
 		void updateSummary() {
-			const engine::assets::ValidationReport& report = engine::assets::AssetRegistry::Get().getValidationReport();
+			const assets::ValidationReport&			report = assets::AssetRegistry::Get().getValidationReport();
 			const int								errors = report.errorCount();
 			ui::Text*								shown = summary.get();
 			shown->setText(
@@ -181,7 +181,7 @@ namespace {
 		}
 
 		std::string categoryOf(const std::string& defName) const {
-			const engine::assets::AssetDefinition* def = engine::assets::AssetRegistry::Get().getDefinition(defName);
+			const assets::AssetDefinition* def = assets::AssetRegistry::Get().getDefinition(defName);
 			if (def == nullptr || def->baseFolder.empty()) {
 				return "other";
 			}
@@ -208,7 +208,7 @@ namespace {
 
 		void reload() {
 			asset_manager::AssetThumbnail::clearCache();
-			auto& registry = engine::assets::AssetRegistry::Get();
+			auto& registry = assets::AssetRegistry::Get();
 			registry.clear();
 			if (!sharedScripts.empty()) {
 				registry.setSharedScriptsPath(sharedScripts);

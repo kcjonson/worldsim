@@ -27,12 +27,12 @@
 #include <utility>
 #include <vector>
 
-namespace engine::assets {
+namespace assets {
 class PlacementExecutor;
 struct PlacedEntity;
 }
 
-namespace engine::construction {
+namespace construction {
 class ConstructionWorld;
 }
 
@@ -64,9 +64,9 @@ class SelectionSystem {
 
 	struct Args {
 		ecs::World*								 world;
-		engine::world::WorldCamera*				 camera;
-		engine::assets::PlacementExecutor*		 placementExecutor;
-		engine::construction::ConstructionWorld* constructionWorld;
+		world::WorldCamera*				 camera;
+		assets::PlacementExecutor*		 placementExecutor;
+		construction::ConstructionWorld* constructionWorld;
 		Callbacks								 callbacks;
 	};
 
@@ -102,7 +102,7 @@ class SelectionSystem {
 	/// Build the selected entity's silhouette outline in world space for injection
 	/// into the entity depth-sort render pass (so a nearer entity occludes it).
 	/// Returns an invalid outline (valid=false) for construction/room/no selection.
-	[[nodiscard]] engine::world::SelectionOutline buildEntityOutline() const;
+	[[nodiscard]] worldview::SelectionOutline buildEntityOutline() const;
 
 	// --- State Queries ---
 
@@ -125,12 +125,12 @@ class SelectionSystem {
 	/// id): scan the selection's chunk + its 8 neighbors for a matching defName at
 	/// (approximately) the stored position. Returns nullptr when the entity is gone
 	/// (felled / chunk unloaded).
-	[[nodiscard]] const engine::assets::PlacedEntity* resolveWorldEntity(const WorldEntitySelection& sel) const;
+	[[nodiscard]] const assets::PlacedEntity* resolveWorldEntity(const WorldEntitySelection& sel) const;
 
 	ecs::World*								 ecsWorld = nullptr;
-	engine::world::WorldCamera*				 camera = nullptr;
-	engine::assets::PlacementExecutor*		 placementExecutor = nullptr;
-	engine::construction::ConstructionWorld* constructionWorld = nullptr;
+	world::WorldCamera*				 camera = nullptr;
+	assets::PlacementExecutor*		 placementExecutor = nullptr;
+	construction::ConstructionWorld* constructionWorld = nullptr;
 	Callbacks								 callbacks;
 
 	Selection selection = NoSelection{};

@@ -14,7 +14,7 @@ namespace ecs {
 	class World;
 }
 
-namespace engine::assets {
+namespace assets {
 	class AssetRegistry;
 }
 
@@ -36,6 +36,6 @@ struct StorageResourcesData {
 };
 
 /// Aggregate the contents of every storage container into display rows
-[[nodiscard]] StorageResourcesData getStorageResources(ecs::World& world, const engine::assets::AssetRegistry& registry);
+[[nodiscard]] StorageResourcesData getStorageResources(ecs::World& world, const assets::AssetRegistry& registry);
 
 } // namespace world_sim::adapters

@@ -14,10 +14,12 @@ target_include_directories(asset-manager
 
 target_compile_features(asset-manager PRIVATE cxx_std_20)
 
+# world-view holds the assembled base shader the App starts the renderer with.
 target_link_libraries(asset-manager
     PRIVATE
-        engine
+        world-view
         theme
+        salal::app
         salal::renderer
         salal::foundation
         assets

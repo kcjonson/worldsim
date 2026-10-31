@@ -48,12 +48,12 @@ namespace world_sim {
 		const auto world = camera->screenToWorld(screenX, screenY, viewportW, viewportH, kPixelsPerMeter);
 		const auto clickMm = geometry::quantize(Foundation::Vec2{world.x, world.y});
 
-		std::vector<engine::construction::RoomHitCandidate> candidates;
+		std::vector<construction::RoomHitCandidate> candidates;
 		candidates.reserve(roomDetection->rooms().size());
 		for (const auto& room : roomDetection->rooms()) {
-			candidates.push_back(engine::construction::RoomHitCandidate{room.roomId, &room.ring});
+			candidates.push_back(construction::RoomHitCandidate{room.roomId, &room.ring});
 		}
-		return engine::construction::roomAtPoint(clickMm, candidates);
+		return construction::roomAtPoint(clickMm, candidates);
 	}
 
 	void RoomOverlay::render(int viewportW, int viewportH) {

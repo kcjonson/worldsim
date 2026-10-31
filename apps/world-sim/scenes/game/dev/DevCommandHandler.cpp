@@ -160,7 +160,7 @@ namespace world_sim {
 		}
 
 		if (where == "loose") {
-			if (engine::assets::AssetRegistry::Get().getDefinition(material) == nullptr) {
+			if (assets::AssetRegistry::Get().getDefinition(material) == nullptr) {
 				LOG_WARNING(Game, "[DevAPI] give loose: unknown asset '%s'", material.c_str());
 				m_ctx.ui->pushNotification("Dev", "Unknown asset: " + material, ui::ToastSeverity::Warning);
 				return;
@@ -199,7 +199,7 @@ namespace world_sim {
 			const std::string slot = param(cmd, "slot", "pack");
 			uint32_t		  added = 0;
 			if (where == "colonist" && slot == "hands") {
-				const auto& registry = engine::assets::AssetRegistry::Get();
+				const auto& registry = assets::AssetRegistry::Get();
 				if (ecs::itemIsTwoHand(registry, material)) {
 					added = ecs::addArmful(*inventory, registry, material, n);
 				} else {
@@ -230,7 +230,7 @@ namespace world_sim {
 			m_ctx.ui->pushNotification("Dev", "spawn needs def=", ui::ToastSeverity::Warning);
 			return;
 		}
-		if (engine::assets::AssetRegistry::Get().getDefinition(def) == nullptr) {
+		if (assets::AssetRegistry::Get().getDefinition(def) == nullptr) {
 			LOG_WARNING(Game, "[DevAPI] spawn: unknown def '%s'", def.c_str());
 			m_ctx.ui->pushNotification("Dev", "Unknown asset: " + def, ui::ToastSeverity::Warning);
 			return;
@@ -571,7 +571,7 @@ namespace world_sim {
 	}
 
 	std::string DevCommandHandler::devFoundationEdit(const app::DevRequest& cmd) {
-		namespace ec = engine::construction;
+		namespace ec = construction;
 		const auto		  target = static_cast<ec::FoundationId>(std::strtoull(param(cmd, "id", "0").c_str(), nullptr, 10));
 		const std::string modeName = param(cmd, "mode", "add");
 		const std::vector<Foundation::Vec2> pts = parsePointList(param(cmd, "pts"));
@@ -622,7 +622,7 @@ namespace world_sim {
 		const std::string material = param(cmd, "material", "Wood");
 		const std::string thickness = param(cmd, "thickness", "Standard");
 		// strtoull, not strtoul: FoundationId is 64-bit, and unsigned long is only 32-bit on Windows.
-		const auto host = static_cast<engine::construction::FoundationId>(std::strtoull(param(cmd, "host", "0").c_str(), nullptr, 10));
+		const auto host = static_cast<construction::FoundationId>(std::strtoull(param(cmd, "host", "0").c_str(), nullptr, 10));
 
 		const std::string builtStr = param(cmd, "built", "1");
 		const bool		  built = (builtStr == "1" || builtStr == "on" || builtStr == "true" || builtStr == "yes");
@@ -655,7 +655,7 @@ namespace world_sim {
 
 	void DevCommandHandler::devOpening(const app::DevRequest& cmd) {
 		const std::string type = param(cmd, "type", "Door");
-		const auto*		  typeDef = engine::assets::ConstructionRegistry::Get().getOpeningType(type);
+		const auto*		  typeDef = assets::ConstructionRegistry::Get().getOpeningType(type);
 		if (typeDef == nullptr) {
 			LOG_WARNING(Game, "[DevAPI] opening: unknown type '%s'", type.c_str());
 			m_ctx.ui->pushNotification("Dev", "Unknown opening type", ui::ToastSeverity::Warning);
@@ -666,18 +666,18 @@ namespace world_sim {
 
 		// Resolve the target segment + centerline t: seg= names it directly (t defaults to
 		// center), pt= snaps to the nearest built wall (t from the snap).
-		engine::construction::SegmentId segment = engine::construction::kInvalidSegment;
+		construction::SegmentId segment = construction::kInvalidSegment;
 		float							t = 0.5F;
 		if (hasParam(cmd, "seg")) {
-			segment = static_cast<engine::construction::SegmentId>(std::strtoull(param(cmd, "seg").c_str(), nullptr, 10));
+			segment = static_cast<construction::SegmentId>(std::strtoull(param(cmd, "seg").c_str(), nullptr, 10));
 		} else if (hasParam(cmd, "pt")) {
 			const std::vector<Foundation::Vec2> pts = parsePointList(param(cmd, "pt"));
 			if (pts.empty()) {
 				LOG_WARNING(Game, "[DevAPI] opening: pt must be 'x,y' world meters");
 				return;
 			}
-			const auto&							   registry = engine::assets::ConstructionRegistry::Get();
-			const engine::construction::SnapEngine snap(registry.snapping(), constructionWorld);
+			const auto&							   registry = assets::ConstructionRegistry::Get();
+			const construction::SnapEngine snap(registry.snapping(), constructionWorld);
 			const auto							   os = snap.snapOpening(pts.front(), typeDef->widthMeters);
 			if (!os.valid) {
 				LOG_WARNING(Game, "[DevAPI] opening: no built wall near pt");
@@ -699,8 +699,8 @@ namespace world_sim {
 		const std::string builtStr = param(cmd, "built", "1");
 		const bool		  built = (builtStr == "1" || builtStr == "on" || builtStr == "true" || builtStr == "yes");
 
-		const engine::construction::OpeningId id = m_ctx.drawing->devCommitOpening(segment, t, type, built);
-		if (id == engine::construction::kInvalidOpening) {
+		const construction::OpeningId id = m_ctx.drawing->devCommitOpening(segment, t, type, built);
+		if (id == construction::kInvalidOpening) {
 			LOG_WARNING(
 				Game,
 				"[DevAPI] opening: commit rejected (segment #%llu, type %s)",
@@ -728,7 +728,7 @@ namespace world_sim {
 		const long		  qtyRaw = std::strtol(param(cmd, "n", "1").c_str(), nullptr, 10);
 		const auto		  qty = static_cast<uint32_t>(qtyRaw < 1 ? 1 : qtyRaw);
 
-		if (engine::assets::RecipeRegistry::Get().getRecipe(recipe) == nullptr) {
+		if (assets::RecipeRegistry::Get().getRecipe(recipe) == nullptr) {
 			LOG_WARNING(Game, "[DevAPI] craft: unknown recipe '%s'", recipe.c_str());
 			m_ctx.ui->pushNotification("Dev", "Unknown recipe: " + recipe, ui::ToastSeverity::Warning);
 			return;
@@ -777,16 +777,16 @@ namespace world_sim {
 			return;
 		}
 
-		engine::assets::ItemCategory category = engine::assets::ItemCategory::RawMaterial;
+		assets::ItemCategory category = assets::ItemCategory::RawMaterial;
 		const std::string			 categoryStr = param(cmd, "category", "RawMaterial");
 		if (equalsIgnoreCase(categoryStr, "Food")) {
-			category = engine::assets::ItemCategory::Food;
+			category = assets::ItemCategory::Food;
 		} else if (equalsIgnoreCase(categoryStr, "Tool")) {
-			category = engine::assets::ItemCategory::Tool;
+			category = assets::ItemCategory::Tool;
 		} else if (equalsIgnoreCase(categoryStr, "Furniture")) {
-			category = engine::assets::ItemCategory::Furniture;
+			category = assets::ItemCategory::Furniture;
 		} else if (equalsIgnoreCase(categoryStr, "None")) {
-			category = engine::assets::ItemCategory::None;
+			category = assets::ItemCategory::None;
 		}
 
 		ecs::StoragePriority priority = ecs::StoragePriority::Medium;
@@ -930,7 +930,7 @@ namespace world_sim {
 				}
 				out << "]";
 
-				out << ",\"cargoKg\":" << ecs::carriedCargoMassKg(*inv, engine::assets::AssetRegistry::Get())
+				out << ",\"cargoKg\":" << ecs::carriedCargoMassKg(*inv, assets::AssetRegistry::Get())
 					<< ",\"carryCapacityKg\":" << inv->carryCapacityKg;
 			}
 			out << "}";
@@ -964,7 +964,7 @@ namespace world_sim {
 			out << (first ? "" : ",");
 			first = false;
 			out << "{\"id\":" << static_cast<unsigned long long>(foundation.id) << ",\"material\":\"" << jsonEscape(foundation.material)
-				<< "\",\"state\":\"" << (foundation.state == engine::construction::FoundationState::Built ? "Built" : "Blueprint")
+				<< "\",\"state\":\"" << (foundation.state == construction::FoundationState::Built ? "Built" : "Blueprint")
 				<< "\",\"entity\":" << static_cast<unsigned long long>(foundation.entity) << ",\"area\":" << cworld.areaSquareMeters(foundation.id);
 
 			// Include material progress from the ECS mirror entity's StructureBlueprint
@@ -995,7 +995,7 @@ namespace world_sim {
 			const auto* v0 = cworld.getVertex(seg.v0);
 			const auto* v1 = cworld.getVertex(seg.v1);
 			out << "{\"id\":" << static_cast<unsigned long long>(seg.id) << ",\"material\":\"" << jsonEscape(seg.material) << "\",\"state\":\""
-				<< (seg.state == engine::construction::FoundationState::Built ? "Built" : "Blueprint") << "\",\"entity\":"
+				<< (seg.state == construction::FoundationState::Built ? "Built" : "Blueprint") << "\",\"entity\":"
 				<< static_cast<unsigned long long>(seg.entity);
 			if (v0 != nullptr) {
 				out << ",\"x0\":" << (static_cast<double>(v0->pos.x) / 1000.0) << ",\"y0\":" << (static_cast<double>(v0->pos.y) / 1000.0);
@@ -1082,11 +1082,11 @@ namespace world_sim {
 				firstRule = false;
 				out << "{\"item\":\"" << jsonEscape(rule.defName) << "\",\"category\":\"";
 				switch (rule.category) {
-					case engine::assets::ItemCategory::None: out << "None"; break;
-					case engine::assets::ItemCategory::RawMaterial: out << "RawMaterial"; break;
-					case engine::assets::ItemCategory::Food: out << "Food"; break;
-					case engine::assets::ItemCategory::Tool: out << "Tool"; break;
-					case engine::assets::ItemCategory::Furniture: out << "Furniture"; break;
+					case assets::ItemCategory::None: out << "None"; break;
+					case assets::ItemCategory::RawMaterial: out << "RawMaterial"; break;
+					case assets::ItemCategory::Food: out << "Food"; break;
+					case assets::ItemCategory::Tool: out << "Tool"; break;
+					case assets::ItemCategory::Furniture: out << "Furniture"; break;
 					default: out << "Unknown"; break;
 				}
 				out << "\",\"priority\":\"" << ecs::storagePriorityToString(rule.priority) << "\",\"min\":" << rule.minAmount

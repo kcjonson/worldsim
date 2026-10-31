@@ -52,9 +52,9 @@ void CachedSelection::update(const Selection& selection) {
 			furnitureDefName.clear();
 			worldEntityPos = {};
 			furniturePackaged = false;
-			foundationId = engine::construction::kInvalidFoundation;
-			wallSegmentId = engine::construction::kInvalidSegment;
-			openingId = engine::construction::kInvalidOpening;
+			foundationId = construction::kInvalidFoundation;
+			wallSegmentId = construction::kInvalidSegment;
+			openingId = construction::kInvalidOpening;
 			roomId = 0;
 
 			if constexpr (std::is_same_v<T, NoSelection>) {
@@ -100,10 +100,10 @@ void CachedSelection::update(const Selection& selection) {
 EntityInfoModel::UpdateType EntityInfoModel::refresh(
 	const Selection&							   selection,
 	ecs::World&									   world,
-	const engine::assets::AssetRegistry&		   assetRegistry,
-	const engine::assets::RecipeRegistry&		   recipeRegistry,
+	const assets::AssetRegistry&		   assetRegistry,
+	const assets::RecipeRegistry&		   recipeRegistry,
 	const Callbacks&							   callbacks,
-	const engine::construction::ConstructionWorld* constructionWorld,
+	const construction::ConstructionWorld* constructionWorld,
 	const ecs::RoomDetectionSystem*				   roomDetection
 ) {
 	// Detect selection types

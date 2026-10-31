@@ -299,7 +299,7 @@ namespace world_sim {
 		);
 	}
 
-	void StorageConfigDialog::update(ecs::World& newWorld, const engine::assets::AssetRegistry& registry) {
+	void StorageConfigDialog::update(ecs::World& newWorld, const assets::AssetRegistry& registry) {
 		if (!isOpen()) {
 			return;
 		}

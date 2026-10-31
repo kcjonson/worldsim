@@ -233,7 +233,7 @@ namespace world_sim {
 		showQuantity();
 	}
 
-	void CraftingDialog::update(ecs::World& world, const engine::assets::RecipeRegistry& registry) {
+	void CraftingDialog::update(ecs::World& world, const assets::RecipeRegistry& registry) {
 		if (!isOpen()) {
 			return;
 		}

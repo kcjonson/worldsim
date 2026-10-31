@@ -31,8 +31,8 @@ namespace world_sim {
 	class TerrainPolygonOverlay {
 	  public:
 		struct Args {
-			engine::world::WorldCamera*	 camera;
-			engine::world::ChunkManager* chunks;
+			world::WorldCamera*	 camera;
+			world::ChunkManager* chunks;
 		};
 
 		TerrainPolygonOverlay() = default;
@@ -46,8 +46,8 @@ namespace world_sim {
 		void render(int viewportW, int viewportH);
 
 	  private:
-		engine::world::WorldCamera*	 camera = nullptr;
-		engine::world::ChunkManager* chunks = nullptr;
+		world::WorldCamera*	 camera = nullptr;
+		world::ChunkManager* chunks = nullptr;
 
 		bool active = false;
 

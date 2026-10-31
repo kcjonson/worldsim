@@ -26,14 +26,14 @@ namespace world_sim {
 	/// Holds initialized world state for transfer between loading and game scenes.
 	/// Uses static SetPending()/Take() pattern for scene-to-scene handoff.
 	struct GameWorldState {
-		std::unique_ptr<engine::world::ChunkManager>	   chunkManager;
-		std::unique_ptr<engine::world::WorldCamera>		   camera;
-		std::unique_ptr<engine::world::ChunkRenderer>	   renderer;
-		std::unique_ptr<engine::world::EntityRenderer>	   entityRenderer;
-		std::unique_ptr<engine::assets::PlacementExecutor> placementExecutor;
+		std::unique_ptr<world::ChunkManager>	   chunkManager;
+		std::unique_ptr<world::WorldCamera>		   camera;
+		std::unique_ptr<worldview::ChunkRenderer>	   renderer;
+		std::unique_ptr<worldview::EntityRenderer>	   entityRenderer;
+		std::unique_ptr<assets::PlacementExecutor> placementExecutor;
 
 		/// Tracks which chunks have completed entity placement
-		std::unordered_set<engine::world::ChunkCoordinate> processedChunks;
+		std::unordered_set<world::ChunkCoordinate> processedChunks;
 
 		/// The generated planet for this session. Forwarded from GameStartConfig so
 		/// GameScene can pass it to DevCommandHandler for /api/state?what=landing.

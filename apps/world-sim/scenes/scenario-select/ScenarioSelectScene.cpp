@@ -12,9 +12,9 @@
 #include "scenes/shared/Starfield.h"
 #include <theme/Theme.h>
 
-#include <app/Keys.h>
 #include <application/App.h>
 #include <primitives/Primitives.h>
+#include <theme/Keys.h>
 #include <ui/components/Badge.h>
 #include <ui/components/Button.h>
 #include <ui/components/Control.h>
@@ -216,7 +216,7 @@ namespace {
 		void onExit() override { LOG_INFO(Game, "ScenarioSelectScene - Exiting"); }
 
 		void update(const app::FrameContext& frame) override {
-			if (engine::key(frame.input, foundation::Key::Escape).pressed()) {
+			if (theme::key(frame.input, foundation::Key::Escape).pressed()) {
 				goBack();
 			}
 		}

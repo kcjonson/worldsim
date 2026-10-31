@@ -183,15 +183,15 @@ namespace world_sim {
 	}
 
 	void GameUI::update(
-		float										   deltaTime,
-		const engine::world::WorldCamera&			   camera,
-		const engine::world::ChunkManager&			   chunkManager,
-		ecs::World&									   ecsWorld,
-		const engine::assets::AssetRegistry&		   assetRegistry,
-		const engine::assets::RecipeRegistry&		   recipeRegistry,
-		const Selection&							   selection,
-		const engine::construction::ConstructionWorld* constructionWorld,
-		const ecs::RoomDetectionSystem*				   roomDetection
+		float								   deltaTime,
+		const world::WorldCamera&			   camera,
+		const world::ChunkManager&			   chunkManager,
+		ecs::World&							   ecsWorld,
+		const assets::AssetRegistry&		   assetRegistry,
+		const assets::RecipeRegistry&		   recipeRegistry,
+		const Selection&					   selection,
+		const construction::ConstructionWorld* constructionWorld,
+		const ecs::RoomDetectionSystem*		   roomDetection
 	) {
 		const Foundation::Vec2 viewport = root.get()->getContext()->getViewport();
 		fitViewport(viewport);

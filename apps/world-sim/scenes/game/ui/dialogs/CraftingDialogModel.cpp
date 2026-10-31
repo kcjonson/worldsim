@@ -58,7 +58,7 @@ void CraftingDialogModel::clear() {
 
 CraftingDialogModel::UpdateType CraftingDialogModel::refresh(
 	ecs::World& world,
-	const engine::assets::RecipeRegistry& registry
+	const assets::RecipeRegistry& registry
 ) {
 	if (currentStationId == 0) {
 		valid = false;
@@ -131,7 +131,7 @@ void CraftingDialogModel::adjustQuantity(int delta) {
 	currentQuantity = static_cast<uint32_t>(std::max(1, newQty));
 }
 
-void CraftingDialogModel::extractRecipeList(const std::unordered_set<uint32_t>& obtainable, const engine::assets::RecipeRegistry& registry) {
+void CraftingDialogModel::extractRecipeList(const std::unordered_set<uint32_t>& obtainable, const assets::RecipeRegistry& registry) {
 	recipeList.clear();
 
 	auto recipes = registry.getRecipesForStation(currentStationDefName);
@@ -154,7 +154,7 @@ void CraftingDialogModel::extractRecipeList(const std::unordered_set<uint32_t>& 
 	});
 }
 
-void CraftingDialogModel::extractSelectedDetails(const std::unordered_set<uint32_t>& obtainable, const engine::assets::RecipeRegistry& registry) {
+void CraftingDialogModel::extractSelectedDetails(const std::unordered_set<uint32_t>& obtainable, const assets::RecipeRegistry& registry) {
 	details = {};
 
 	if (selectedRecipe.empty()) {
@@ -199,7 +199,7 @@ void CraftingDialogModel::extractSelectedDetails(const std::unordered_set<uint32
 	}
 }
 
-void CraftingDialogModel::extractQueue(const ecs::World& world, const engine::assets::RecipeRegistry& registry) {
+void CraftingDialogModel::extractQueue(const ecs::World& world, const assets::RecipeRegistry& registry) {
 	queueItems.clear();
 
 	const auto* workQueue = world.getComponent<ecs::WorkQueue>(currentStationId);
@@ -232,7 +232,7 @@ void CraftingDialogModel::extractQueue(const ecs::World& world, const engine::as
 }
 
 bool CraftingDialogModel::checkMaterialAvailability(
-	const std::unordered_set<uint32_t>& obtainable, const engine::assets::RecipeDef& recipe
+	const std::unordered_set<uint32_t>& obtainable, const assets::RecipeDef& recipe
 ) const {
 	return unobtainableInputs(obtainable, recipe).empty();
 }

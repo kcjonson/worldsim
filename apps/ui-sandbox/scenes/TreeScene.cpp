@@ -30,11 +30,11 @@ namespace {
 			LOG_INFO(UI, "Tree Scene - Lua Asset Generator Demo (40 trees)");
 
 			// Load the tree definition from XML
-			size_t loaded = engine::assets::AssetRegistry::Get().loadDefinitionsFromFolder("assets/definitions");
+			size_t loaded = assets::AssetRegistry::Get().loadDefinitionsFromFolder("assets/definitions");
 			LOG_INFO(UI, "Loaded %zu asset definitions", loaded);
 
 			// Verify the tree definition exists
-			const auto* treeDef = engine::assets::AssetRegistry::Get().getDefinition(kTreeAssetName);
+			const auto* treeDef = assets::AssetRegistry::Get().getDefinition(kTreeAssetName);
 			if (treeDef == nullptr) {
 				LOG_ERROR(UI, "Asset definition not found: %s", kTreeAssetName);
 				return;
@@ -47,8 +47,8 @@ namespace {
 			for (int i = 0; i < kTreeCount; ++i) {
 				uint32_t seed = 1000 + i * 777; // Unique seed for each tree
 
-				engine::assets::GeneratedAsset asset;
-				if (!engine::assets::AssetRegistry::Get().generateAsset(kTreeAssetName, seed, asset)) {
+				assets::GeneratedAsset asset;
+				if (!assets::AssetRegistry::Get().generateAsset(kTreeAssetName, seed, asset)) {
 					LOG_WARNING(UI, "Failed to generate tree %d", i);
 					continue;
 				}

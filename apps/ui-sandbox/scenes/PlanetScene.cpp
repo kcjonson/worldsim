@@ -9,8 +9,8 @@
 #include <planet-view/PlanetMesh.h>
 #include <planet-view/PlanetPicker.h>
 #include <planet-view/PlanetRenderer.h>
-#include <world/worldgen/data/PlanetParams.h>
-#include <world/worldgen/pipeline/PlanetGenerator.h>
+#include <worldgen/data/PlanetParams.h>
+#include <worldgen/pipeline/PlanetGenerator.h>
 
 #include <threading/TaskPool.h>
 
