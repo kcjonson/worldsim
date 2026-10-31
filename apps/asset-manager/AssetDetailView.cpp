@@ -54,6 +54,11 @@ namespace asset_manager {
 			return {.display = ui::Display::Flex, .flexDirection = direction, .gap = gap, .flexGrow = grow};
 		}
 
+		// A column shrinks its children down to nothing, text included, so what must keep its height
+		// doesn't shrink, and the part that scrolls or stretches takes up the difference.
+		constexpr ui::Layout kKeepHeight{.flexShrink = 0.0F};
+		constexpr ui::Layout kHug{.flexShrink = 0.0F, .alignSelf = ui::AlignItems::Start};
+
 	} // namespace
 
 	AssetDetailView::AssetDetailView(const Args& /*args*/) {}
@@ -83,15 +88,17 @@ namespace asset_manager {
 		});
 		const engine::assets::AssetDefinition* def = engine::assets::AssetRegistry::Get().getDefinition(defName);
 		if (def == nullptr) {
-			content.addChild<ui::Text>({.style = ui::styles::text::secondary, .text = "Select an asset from the tree"});
+			content.addChild<ui::Text>(
+				{.layout = kKeepHeight, .style = ui::styles::text::secondary, .text = "Select an asset from the tree"}
+			);
 			return;
 		}
 
 		const std::string category = def->baseFolder.empty() ? "asset" : def->baseFolder.parent_path().filename().string();
-		content.addChild<ui::Text>({.style = ui::styles::label, .text = toUpper(category)});
-		content.addChild<ui::Text>({.style = ui::styles::text::title, .text = defName});
+		content.addChild<ui::Text>({.layout = kKeepHeight, .style = ui::styles::label, .text = toUpper(category)});
+		content.addChild<ui::Text>({.layout = kKeepHeight, .style = ui::styles::text::title, .text = defName});
 		content.addChild<ui::Badge>(
-			{.label = procedural ? "PROCEDURAL" : "SIMPLE", .tone = procedural ? ui::Tone::Accent : ui::Tone::Info}
+			{.layout = kHug, .label = procedural ? "PROCEDURAL" : "SIMPLE", .tone = procedural ? ui::Tone::Accent : ui::Tone::Info}
 		);
 
 		ui::Ref<ui::Component> columns = content.addChild<ui::Component>({.layout = flex(ui::FlexDirection::Row, 20.0F, 1.0F)});
@@ -113,7 +120,9 @@ namespace asset_manager {
 		if (!procedural) {
 			cell(column, 0);
 		} else {
-			column.addChild<ui::Button>({.label = "Randomize", .controlSize = ui::ControlSize::Sm, .onPress = [this] { randomize(); }});
+			column.addChild<ui::Button>({.layout = kHug, .label = "Randomize", .controlSize = ui::ControlSize::Sm, .onPress = [this] {
+											 randomize();
+										 }});
 			for (int row = 0; row < 3; ++row) {
 				ui::Ref<ui::Component> pair = column.addChild<ui::Component>({.layout = flex(ui::FlexDirection::Row, kGap, 1.0F)});
 				cell(pair, row * 2);
@@ -146,7 +155,7 @@ namespace asset_manager {
 			}
 			meta += "\ngroups  " + groups;
 		}
-		column.addChild<ui::Text>({.style = ui::styles::text::secondary, .text = meta, .wrap = true});
+		column.addChild<ui::Text>({.layout = kKeepHeight, .style = ui::styles::text::secondary, .text = meta, .wrap = true});
 
 		std::string warnings;
 		bool		anyError = false;
@@ -165,18 +174,26 @@ namespace asset_manager {
 		if (!warnings.empty()) {
 			const ui::ColorToken tone = anyError ? theme::tokens::theme::color::statusCrit : theme::tokens::theme::color::statusWarn;
 			column.addChild<ui::Text>(
-				{.style = ui::styles::text::body.extend({.color = palette.get(tone)}), .text = warnings, .wrap = true}
+				{.layout = kKeepHeight,
+				 .style = ui::styles::text::body.extend({.color = palette.get(tone)}),
+				 .text = warnings,
+				 .wrap = true}
 			);
 		}
 
 		const std::filesystem::path xmlPath = def.baseFolder / (def.baseFolder.filename().string() + ".xml");
-		column.addChild<ui::Text>({.style = ui::styles::label, .text = toUpper("Definition  -  " + xmlPath.filename().string())});
+		column.addChild<ui::Text>(
+			{.layout = kKeepHeight, .style = ui::styles::label, .text = toUpper("Definition  -  " + xmlPath.filename().string())}
+		);
 		ui::Ref<ui::Rectangle> well = column.addChild<ui::Rectangle>({
 			.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .padding = kGap, .flexGrow = 1.0F},
 			.style = ui::styles::inset,
 			.overflow = ui::Overflow::Scroll,
 		});
-		well.addChild<ui::Text>({.style = ui::styles::text::mono, .text = readFile(xmlPath), .wrap = true});
+		// Unwrapped, as the file reads: a long path has nowhere to break, so the well scrolls sideways.
+		well.addChild<ui::Text>(
+			{.layout = {.alignSelf = ui::AlignItems::Start}, .style = ui::styles::text::mono, .text = readFile(xmlPath)}
+		);
 	}
 
 	void AssetDetailView::applyVariantSeeds() {

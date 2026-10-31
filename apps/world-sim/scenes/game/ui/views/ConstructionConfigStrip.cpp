@@ -194,7 +194,7 @@ namespace world_sim {
 			[](const std::pair<std::string, float>& material) { return material.first; },
 			[&](const std::pair<std::string, float>& material) -> ui::Ref<ui::Component> {
 				return materialRow->addChild<StripCard>({
-					.id = "config_strip_card",
+					.id = "config_strip_card_" + material.first,
 					.size = {kCardWidth, kCardHeight},
 					.name = material.first,
 					.detail = costText(material.second),
@@ -212,7 +212,7 @@ namespace world_sim {
 			[](const ThicknessPresetInfo& preset) { return preset.name; },
 			[&](const ThicknessPresetInfo& preset) -> ui::Ref<ui::Component> {
 				return presetRow->addChild<StripCard>({
-					.id = "config_strip_preset",
+					.id = "config_strip_preset_" + preset.name,
 					.size = {kPresetCardWidth, kCardHeight},
 					.name = preset.name,
 					.detail = thicknessText(preset.thicknessMeters),

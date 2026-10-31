@@ -111,6 +111,7 @@ namespace {
 				.id = "settings_hint",
 				.layout = {.position = ui::Position::Absolute, .inset = {.bottom = 16.0F, .left = kColX}},
 				.style = kicker,
+				.pointerEvents = ui::PointerEvents::None,
 				.text = "Press ESC to return to menu",
 			});
 		}

@@ -175,12 +175,14 @@ namespace {
 				.id = "menu_version",
 				.layout = {.position = ui::Position::Absolute, .inset = {.bottom = 16.0F, .left = kColX}},
 				.style = footer,
+				.pointerEvents = ui::PointerEvents::None,
 				.text = "v0.1.0 - Development Build",
 			});
 			root().addChild<ui::Text>({
 				.id = "menu_system",
 				.layout = {.position = ui::Position::Absolute, .inset = {.right = kColX, .bottom = 16.0F}},
 				.style = footer,
+				.pointerEvents = ui::PointerEvents::None,
 				.text = "Star system: Maed - Sector 28-B",
 			});
 		}

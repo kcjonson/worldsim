@@ -59,8 +59,9 @@ namespace engine::world::terrain_detail {
 	// fBm at a world position, clamped to [-1, 1] (gradient noise can overshoot
 	// slightly, and kMaxWarpMm must be a true bound). The input is formed from the
 	// exact integer mm alone, never a chunk-relative value, so every chunk feeds
-	// the noise bit-identical inputs for the same world point. fractalNoise2 is
-	// fractalNoise3 at z = 0 bit for bit, at half the hashing.
+	// the noise bit-identical inputs for the same world point. fractalNoise2 reads
+	// each octave at its own offset, so unlike fractalNoise3 its octaves' lattice
+	// zeros don't line up.
 	inline float worldNoise(Vec2i64 worldMm, double wavelengthM, uint32_t seed, int octaves) {
 		const auto	x = static_cast<float>(static_cast<double>(worldMm.x) / kMmPerMeter / wavelengthM);
 		const auto	y = static_cast<float>(static_cast<double>(worldMm.y) / kMmPerMeter / wavelengthM);

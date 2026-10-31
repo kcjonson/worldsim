@@ -62,8 +62,9 @@ namespace world_sim {
 				.flexGrow = 1.0F
 			},
 		});
-		ui::Ref<ui::Component> top =
-			info.addChild<ui::Component>({.layout = {.display = ui::Display::Flex, .alignItems = ui::AlignItems::Start}});
+		ui::Ref<ui::Component> top = info.addChild<ui::Component>(
+			{.layout = {.display = ui::Display::Flex, .alignItems = ui::AlignItems::Start, .flexShrink = 0.0F}}
+		);
 		name = top.addChild<ui::Text>(
 			{.layout = {.flexGrow = 1.0F},
 			 .style = world_sim::text(
