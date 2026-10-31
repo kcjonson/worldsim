@@ -1,113 +1,171 @@
 #include "MemoryTabView.h"
-#include "MeterDraw.h"
 #include "TabStyles.h"
 
-#include <components/badge/Badge.h>
-#include <primitives/Primitives.h>
-#include <theme/Tokens.h>
-#include <theme/Variants.h>
+#include <ui/Context.h>
+#include <ui/components/Badge.h>
 
+#include <algorithm>
+#include <array>
 #include <string>
 
 namespace world_sim {
 
-namespace {
+	namespace {
 
-using namespace UI;
-using namespace tabs;
+		constexpr std::size_t kMaxRowsPerCategory = 3;
+		constexpr float		  kColumnGap = 24.0F;
+		constexpr float		  kSummaryGap = 24.0F;
+		constexpr float		  kMetricWidth = 140.0F;
+		constexpr float		  kCategoryGap = 16.0F;
+		constexpr float		  kRowHeight = 16.0F;
+		constexpr float		  kHeadGap = 6.0F;
 
+		ui::Tone categoryTone(const MemoryCategory& category) {
+			if (category.count == 0) {
+				return ui::Tone::Default;
+			}
+			return category.name == "Threats" ? ui::Tone::Danger : ui::Tone::Info;
+		}
 
-constexpr size_t kMaxRowsPerCategory = 3;
-constexpr float	 kColumnGap			 = 24.0F;
-constexpr float	 kSummaryGap		 = 16.0F;
-constexpr float	 kCatGap			 = 16.0F;	// vertical gap between category blocks
-constexpr float	 kRowH				 = 16.0F;	// entity row height
-constexpr float	 kHeadGap			 = 6.0F;	// below category head
+		// One category: its name and count badge, then up to three entities with their positions, a
+		// "+N more" line past those, or "None sighted".
+		class CategoryBlock : public ui::Component {
+		  public:
+			struct Args {
+				UI_COMMON_ARGS
+			};
 
-// Tone for a category by name (food/water/resources informative, threats hot).
-UI::Tone categoryTone(const std::string& name, size_t count) {
-	if (count == 0) return UI::Tone::Default;
-	if (name == "Threats") return UI::Tone::Crit;
-	return UI::Tone::Data;
-}
+			[[nodiscard]] const char* typeName() const override { return "MemoryCategory"; }
 
-// Draw one category block at (x,y) within colWidth. Returns the y past the block.
-float drawCategory(float x, float y, float colWidth, const MemoryCategory& cat) {
-	using namespace tabs;
+			void setCategory(const MemoryCategory& category) {
+				name.get()->setText(category.name);
+				badge.get()->setLabel(std::to_string(category.count));
+				badge.get()->setTone(categoryTone(category));
+				const std::size_t shown = std::min(category.entities.size(), kMaxRowsPerCategory);
+				for (std::size_t i = 0; i < kMaxRowsPerCategory; ++i) {
+					rows[i].get()->setVisible(i < shown);
+					if (i < shown) {
+						const MemoryEntity& entity = category.entities[i];
+						entityNames[i].get()->setText(entity.name);
+						entityPositions[i].get()->setText(
+							"(" + std::to_string(static_cast<int>(entity.x)) + ", " + std::to_string(static_cast<int>(entity.y)) + ")"
+						);
+					}
+				}
+				const bool truncated = !category.entities.empty() && category.count > shown;
+				more.get()->setVisible(truncated);
+				if (truncated) {
+					more.get()->setText("+" + std::to_string(category.count - shown) + " more");
+				}
+				none.get()->setVisible(category.entities.empty());
+			}
 
-	// Head: name (left) + count badge (right).
-	drawText(cat.name, {x, y + 2.0F}, fs_sm, UI::text_bright);
-	const std::string countStr = std::to_string(cat.count);
-	const float		  badgeW   = (space_2 * 2.0F) + measureText(countStr, fs_2xs, UI::fontMono, fs_2xs * ls_wider);
-	UI::Badge({.position = {x + colWidth - badgeW, y}, .label = countStr, .tone = categoryTone(cat.name, cat.count)}).render();
-	y += 22.0F + kHeadGap;
+		  protected:
+			void onMount() override {
+				const ui::Theme& theme = getContext()->getTheme();
+				ui::Layout		 column = getLayout();
+				column.display = ui::Display::Flex;
+				column.flexDirection = ui::FlexDirection::Column;
+				setLayout(column);
+				ui::Ref<ui::Component> head = addChild<ui::Component>({
+					.margin = {0.0F, 0.0F, kHeadGap, 0.0F},
+					.layout = {.display = ui::Display::Flex, .alignItems = ui::AlignItems::Center},
+				});
+				name = head.addChild<ui::Text>(
+					{.layout = {.flexGrow = 1.0F}, .style = look::text(theme, look::t::color::textBright, look::t::fontSize::fsSm)}
+				);
+				badge = head.addChild<ui::Badge>({});
+				const ui::Style entityStyle = look::text(theme, look::t::color::text, look::t::fontSize::fsXs);
+				const ui::Style positionStyle = look::text(theme, look::t::color::dataBright, look::t::fontSize::fs2xs, look::Font::Mono);
+				for (std::size_t i = 0; i < kMaxRowsPerCategory; ++i) {
+					rows[i] = addChild<ui::Component>({
+						.size = {ui::kAuto, kRowHeight},
+						.layout = {.display = ui::Display::Flex, .alignItems = ui::AlignItems::Center},
+					});
+					entityNames[i] = rows[i].addChild<ui::Text>({.layout = {.flexGrow = 1.0F}, .style = entityStyle});
+					entityPositions[i] = rows[i].addChild<ui::Text>({.style = positionStyle});
+				}
+				const ui::Style faint = look::text(theme, look::t::color::textFaint, look::t::fontSize::fs2xs);
+				more = addChild<ui::Text>({.size = {ui::kAuto, kRowHeight}, .style = faint});
+				none = addChild<ui::Text>(
+					{.style = look::text(theme, look::t::color::textFaint, look::t::fontSize::fsXs), .text = "None sighted"}
+				);
+			}
 
-	if (cat.entities.empty()) {
-		drawText("None sighted", {x, y}, fs_xs, UI::text_faint);
-		return y + fs_xs;
+		  private:
+			ui::Ref<ui::Text>										name;
+			ui::Ref<ui::Badge>										badge;
+			std::array<ui::Ref<ui::Component>, kMaxRowsPerCategory> rows;
+			std::array<ui::Ref<ui::Text>, kMaxRowsPerCategory>		entityNames;
+			std::array<ui::Ref<ui::Text>, kMaxRowsPerCategory>		entityPositions;
+			ui::Ref<ui::Text>										more;
+			ui::Ref<ui::Text>										none;
+		};
+
+		ui::Ref<ui::Text> addMetric(ui::Component& row, const ui::Theme& theme, const std::string& label) {
+			ui::Ref<ui::Component> metric = row.addChild<ui::Component>({
+				.size = {kMetricWidth, ui::kAuto},
+				.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = 2.0F},
+			});
+			ui::Ref<ui::Text>	   value = metric.addChild<ui::Text>(
+				 {.style = look::text(theme, look::t::color::textBright, look::t::fontSize::fsXl, look::Font::Display)}
+			 );
+			metric.addChild<ui::Text>({.style = look::text(theme, look::t::color::textDim, look::t::fontSize::fs2xs), .text = label});
+			return value;
+		}
+
+		void showColumn(ui::Component& column, const std::vector<const MemoryCategory*>& categories) {
+			column.reconcileChildren(
+				categories,
+				[](const MemoryCategory* category) { return category->name; },
+				[&column](const MemoryCategory* category) -> ui::Ref<ui::Component> {
+					ui::Ref<CategoryBlock> block = column.addChild<CategoryBlock>({});
+					block.get()->setCategory(*category);
+					return block;
+				},
+				[](ui::Component& block, const MemoryCategory* category) { static_cast<CategoryBlock&>(block).setCategory(*category); }
+			);
+		}
+
+	} // namespace
+
+	void MemoryTabView::onMount() {
+		const ui::Theme& theme = getContext()->getTheme();
+		ui::Layout		 layout = getLayout();
+		layout.display = ui::Display::Flex;
+		layout.flexDirection = ui::FlexDirection::Column;
+		layout.gap = kSummaryGap;
+		setLayout(layout);
+
+		ui::Ref<ui::Component> summary = addChild<ui::Component>({.layout = {.display = ui::Display::Flex}});
+		knownValue = addMetric(*summary.get(), theme, "Locations known");
+		sightValue = addMetric(*summary.get(), theme, "Sight range");
+
+		ui::Ref<ui::Component> grid =
+			addChild<ui::Component>({.layout = {.display = ui::Display::Flex, .gap = kColumnGap, .alignItems = ui::AlignItems::Start}});
+		const ui::Component::Args columnArgs{
+			.size = {0.0F, ui::kAuto},
+			.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = kCategoryGap, .flexGrow = 1.0F},
+		};
+		leftColumn = grid.addChild<ui::Component>(columnArgs);
+		rightColumn = grid.addChild<ui::Component>(columnArgs);
+		update({});
 	}
 
-	const size_t shown = cat.entities.size() < kMaxRowsPerCategory ? cat.entities.size() : kMaxRowsPerCategory;
-	for (size_t i = 0; i < shown; ++i) {
-		const auto&		  e	  = cat.entities[i];
-		drawText(e.name, {x, y}, fs_xs, UI::text);
-		const std::string pos = "(" + std::to_string(static_cast<int>(e.x)) + ", " + std::to_string(static_cast<int>(e.y)) + ")";
-		Renderer::Primitives::drawText({.text = pos, .position = {x, y}, .scale = fs_2xs / 16.0F, .color = UI::data_bright, .font = UI::fontMono, .hAlign = Foundation::HorizontalAlign::Right, .boxWidth = colWidth});
-		y += kRowH;
+	void MemoryTabView::update(const MemoryData& data) {
+		if (knownValue.get() == nullptr) {
+			return;
+		}
+		knownValue.get()->setText(std::to_string(data.totalKnown));
+		sightValue.get()->setText(std::to_string(static_cast<int>(data.sightRadius)) + "m");
+		// Alternating, left first, as the prototype's two-column grid fills.
+		std::vector<const MemoryCategory*> left;
+		std::vector<const MemoryCategory*> right;
+		for (std::size_t i = 0; i < data.categories.size(); ++i) {
+			(i % 2 == 0 ? left : right).push_back(&data.categories[i]);
+		}
+		showColumn(*leftColumn.get(), left);
+		showColumn(*rightColumn.get(), right);
 	}
-
-	if (cat.count > shown) {
-		drawText("+" + std::to_string(cat.count - shown) + " more", {x, y}, fs_2xs, UI::text_faint);
-		y += kRowH;
-	}
-
-	return y;
-}
-
-} // namespace
-
-void MemoryTabView::create(const Foundation::Rect& bounds) {
-	contentBounds = bounds;
-	size = {bounds.width, bounds.height};
-}
-
-void MemoryTabView::update(const MemoryData& data) {
-	data_ = data;
-}
-
-void MemoryTabView::render() {
-	using namespace tabs;
-	using namespace UI;
-
-	if (!visible) return;
-
-	const Foundation::Vec2 o	 = getContentPosition();
-	const float			   width = contentBounds.width;
-
-	// ---- Summary row: two metrics ----
-	const auto metric = [&](float x, const std::string& value, const std::string& label) {
-		Renderer::Primitives::drawText({.text = value, .position = {x, o.y}, .scale = fs_xl / 16.0F, .color = UI::text_bright, .font = UI::fontDisplay});
-		drawText(label, {x, o.y + fs_xl + 2.0F}, fs_2xs, UI::text_dim);
-	};
-	metric(o.x, std::to_string(data_.totalKnown), "Locations known");
-	metric(o.x + 140.0F, std::to_string(static_cast<int>(data_.sightRadius)) + "m", "Sight range");
-
-	float y = o.y + fs_xl + fs_2xs + kSummaryGap + 8.0F;
-
-	// ---- 2-column category grid ----
-	const float colWidth = (width - kColumnGap) / 2.0F;
-	const float leftX	 = o.x;
-	const float rightX	 = o.x + colWidth + kColumnGap;
-
-	float leftY	 = y;
-	float rightY = y;
-	for (size_t i = 0; i < data_.categories.size(); ++i) {
-		const bool	left = (i % 2 == 0);
-		const float cx	 = left ? leftX : rightX;
-		float&		cy	 = left ? leftY : rightY;
-		cy = drawCategory(cx, cy, colWidth, data_.categories[i]);
-		cy += kCatGap;
-	}
-}
 
 } // namespace world_sim

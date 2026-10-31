@@ -1,124 +1,89 @@
 #pragma once
 
-// ColonistDetailsDialog - Full-screen dialog showing detailed colonist information
-//
-// Displays 8 tabs: Bio, Needs, Skills, Social, Gear, Memory, Tasks, Log.
-// A persistent header band (Avatar + 2x2 Stat grid) sits above the tab bar,
-// shared across all tabs. A footer holds Close / Work Priorities / Draft.
-//
-// Game continues running while dialog is open - data refreshes per-frame.
+// ColonistDetailsDialog - a colonist's dossier, a non-modal ui::Dialog: a header band (the Avatar and a
+// 2x2 Stat grid) over eight tabs, Bio, Needs, Skills, Social, Gear, Memory, Tasks and Log, and a footer
+// of Close, Work Priorities and Draft. Only the selected tab's view is mounted. The game runs on while
+// it is open, and update() feeds it from the world every frame.
 
 #include "ColonistDetailsModel.h"
 #include "tabs/BioTabView.h"
 #include "tabs/GearTabView.h"
-#include "tabs/NeedsTabView.h"
 #include "tabs/LogTabView.h"
 #include "tabs/MemoryTabView.h"
+#include "tabs/NeedsTabView.h"
 #include "tabs/SkillsTabView.h"
 #include "tabs/SocialTabView.h"
 #include "tabs/TasksTabView.h"
 
-#include <component/Component.h>
-#include <components/dialog/Dialog.h>
-#include <components/tabbar/TabBar.h>
 #include <ecs/EntityID.h>
 #include <ecs/World.h>
+#include <theme/Avatar.h>
+#include <ui/components/Dialog.h>
+#include <ui/components/Stat.h>
+#include <ui/components/TabBar.h>
 
 #include <functional>
-#include <memory>
 #include <string>
 
 namespace world_sim {
 
-class ColonistDetailsDialog : public UI::Component {
-  public:
-	struct Args {
-		std::function<void()> onClose;	// Called when dialog closes
+	class ColonistDetailsDialog {
+	  public:
+		struct Args {
+			// The player closed it: its close button, cancel or the footer's Close. Not called by close().
+			std::function<void()> onClose;
+		};
+
+		explicit ColonistDetailsDialog(const Args& args);
+
+		// Its tabs' callbacks hold it.
+		ColonistDetailsDialog(const ColonistDetailsDialog&) = delete;
+		ColonistDetailsDialog& operator=(const ColonistDetailsDialog&) = delete;
+		ColonistDetailsDialog(ColonistDetailsDialog&&) = delete;
+		ColonistDetailsDialog& operator=(ColonistDetailsDialog&&) = delete;
+		~ColonistDetailsDialog() = default;
+
+		// Opens it from `opener` on a colonist's Bio tab; already open, it moves to that colonist.
+		void open(ui::Component& opener, ecs::EntityID colonistId, int player = 0);
+		void close();
+
+		[[nodiscard]] bool			isOpen() const { return dialog.get() != nullptr; }
+		[[nodiscard]] ecs::EntityID getColonistId() const { return colonistId; }
+
+		// Each frame while open. The world is non-const for GoalTaskRegistry's queries.
+		void update(ecs::World& world);
+
+	  private:
+		void build(ui::Dialog& shown);
+		void showTab(const std::string& tabId);
+		void showHeader();
+		void feedTab();
+		void closed();
+
+		std::function<void()> onClose;
+		ecs::EntityID		  colonistId{0};
+		std::string			  currentTab;
+		std::string			  avatarSeed;
+		bool				  fresh = false; // opened or moved since the last feed
+		ColonistDetailsModel  model;
+
+		ui::Ref<ui::Dialog>	   dialog;
+		ui::Ref<ui::Component> avatarSlot;
+		ui::Ref<theme::Avatar> avatar;
+		ui::Ref<ui::Stat>	   ageStat;
+		ui::Ref<ui::Stat>	   moodStat;
+		ui::Ref<ui::TabBar>	   tabBar;
+		ui::Ref<ui::Component> tabArea;
+		ui::Ref<ui::Component> tabView;
+
+		ui::Ref<BioTabView>	   bioTab;
+		ui::Ref<NeedsTabView>  needsTab;
+		ui::Ref<SkillsTabView> skillsTab;
+		ui::Ref<SocialTabView> socialTab;
+		ui::Ref<GearTabView>   gearTab;
+		ui::Ref<MemoryTabView> memoryTab;
+		ui::Ref<TasksTabView>  tasksTab;
+		ui::Ref<LogTabView>	   logTab;
 	};
-
-	explicit ColonistDetailsDialog(const Args& args);
-	~ColonistDetailsDialog() override = default;
-
-	// Disable copy
-	ColonistDetailsDialog(const ColonistDetailsDialog&) = delete;
-	ColonistDetailsDialog& operator=(const ColonistDetailsDialog&) = delete;
-
-	// Allow move
-	ColonistDetailsDialog(ColonistDetailsDialog&&) noexcept = default;
-	ColonistDetailsDialog& operator=(ColonistDetailsDialog&&) noexcept = default;
-
-	// Open dialog for a specific colonist
-	void open(ecs::EntityID colonistId, float screenWidth, float screenHeight);
-
-	// Close dialog
-	void close();
-
-	// Query state
-	[[nodiscard]] bool isOpen() const;
-	[[nodiscard]] ecs::EntityID getColonistId() const { return colonistId; }
-
-	// Per-frame update with ECS world for live data
-	// Note: non-const world required for GoalTaskRegistry queries
-	void update(ecs::World& world, float deltaTime);
-
-	// IComponent overrides
-	void render() override;
-	bool handleEvent(UI::InputEvent& event) override;
-	bool containsPoint(Foundation::Vec2 point) const override;
-
-  private:
-	// Tab IDs
-	static constexpr const char* kTabBio = "bio";
-	static constexpr const char* kTabNeeds = "needs";
-	static constexpr const char* kTabSkills = "skills";
-	static constexpr const char* kTabSocial = "social";
-	static constexpr const char* kTabGear = "gear";
-	static constexpr const char* kTabMemory = "memory";
-	static constexpr const char* kTabTasks = "tasks";
-	static constexpr const char* kTabLog = "log";
-
-	// Dialog dimensions (prototype dossier proportions: 760x900 design px)
-	static constexpr float kDialogWidth = 760.0F;
-	static constexpr float kDialogHeight = 900.0F;
-	static constexpr float kFooterHeight = 52.0F;
-	static constexpr float kHeaderBandHeight = 92.0F; // Avatar + stat grid band
-	static constexpr float kTabBarHeight = 36.0F;
-	static constexpr float kContentPadding = 16.0F;
-
-	// Callbacks
-	std::function<void()> onCloseCallback;
-
-	// State
-	ecs::EntityID colonistId{0};
-	std::string currentTab{kTabBio};
-
-	// Model (extracts ECS data)
-	ColonistDetailsModel model;
-
-	// Child components (TabBar + tab views are direct children of the dialog)
-	UI::LayerHandle dialogHandle;
-	UI::LayerHandle tabBarHandle;
-
-	// Tab views (children of content layout)
-	UI::LayerHandle bioTabHandle;
-	UI::LayerHandle needsTabHandle;
-	UI::LayerHandle skillsTabHandle;
-	UI::LayerHandle socialTabHandle;
-	UI::LayerHandle gearTabHandle;
-	UI::LayerHandle memoryTabHandle;
-	UI::LayerHandle tasksTabHandle;
-	UI::LayerHandle logTabHandle;
-
-	// Internal methods
-	void createDialog();
-	void createContent();  // Creates TabBar and tab views
-	void switchToTab(const std::string& tabId);
-	void updateTabContent();
-	void renderHeaderBand();  // Persistent Avatar + Stat grid above the tabs
-	void renderFooter();	  // Close / Work Priorities / Draft buttons
-
-	// Footer button hit-testing (footer buttons are drawn, not child components).
-	[[nodiscard]] Foundation::Rect closeButtonBounds() const;
-};
 
 } // namespace world_sim

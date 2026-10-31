@@ -1,21 +1,33 @@
 #pragma once
 
-// Shared typography and color constants for colonist details tabs
+// The colonist dossier tabs' text styles on worldsim's tokens: a label, muted copy, the small print, and
+// the kicker, small upper-case mono tracked wide.
 
-#include <graphics/Color.h>
+#include "scenes/game/ui/Look.h"
+
+#include <graphics/PrimitiveStyles.h>
 
 namespace world_sim::tabs {
 
-// Font sizes matching NeedBar labels
-constexpr float kTitleSize = 14.0F;
-constexpr float kLabelSize = 12.0F;  // Matches NeedBar normal font
-constexpr float kBodySize = 12.0F;   // Same as labels for consistency
-constexpr float kSmallSize = 10.0F;  // Matches NeedBar compact font
+	[[nodiscard]] inline ui::Style labelText(const ui::Theme& theme) {
+		return look::text(theme, look::t::color::text, look::t::fontSize::fsSm);
+	}
 
-// Colors - bright to match NeedBar white labels
-inline Foundation::Color titleColor() { return Foundation::Color::white(); }
-inline Foundation::Color labelColor() { return Foundation::Color{0.85F, 0.85F, 0.90F, 1.0F}; }
-inline Foundation::Color bodyColor() { return Foundation::Color{0.80F, 0.80F, 0.85F, 1.0F}; }
-inline Foundation::Color mutedColor() { return Foundation::Color{0.55F, 0.55F, 0.60F, 1.0F}; }
+	[[nodiscard]] inline ui::Style mutedText(const ui::Theme& theme) {
+		return look::text(theme, look::t::color::textDim, look::t::fontSize::fsSm);
+	}
+
+	[[nodiscard]] inline ui::Style smallText(const ui::Theme& theme) {
+		return look::text(theme, look::t::color::textDim, look::t::fontSize::fs2xs);
+	}
+
+	[[nodiscard]] inline ui::Style kickerText(const ui::Theme& theme, ui::ColorToken color) {
+		const float size = theme.get(look::t::fontSize::fs2xs);
+		return look::text(theme, color, look::t::fontSize::fs2xs, look::Font::Mono)
+			.extend({
+				.letterSpacing = size * theme.get(look::t::letterSpacing::lsWider),
+				.textTransform = Foundation::TextTransform::Uppercase,
+			});
+	}
 
 } // namespace world_sim::tabs
