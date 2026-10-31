@@ -3,12 +3,12 @@
 // Shows 40 trees generated from the deciduous.lua script, each with unique seeds.
 
 #include "SceneTypes.h"
-#include <app/UiScene.h>
 #include <assets/AssetBatcher.h>
 #include <assets/AssetRegistry.h>
 #include <assets/IAssetGenerator.h>
 #include <graphics/Color.h>
 #include <primitives/Primitives.h>
+#include <scene/Scene.h>
 #include <utils/Log.h>
 #include <vector/Tessellator.h>
 
@@ -24,7 +24,7 @@ namespace {
 	constexpr int kGridCols = 8;
 	constexpr int kGridRows = 5;
 
-	class TreeScene : public engine::UiScene {
+	class TreeScene : public app::Scene {
 	  public:
 		void onEnter(app::App& /*app*/) override {
 			LOG_INFO(UI, "Tree Scene - Lua Asset Generator Demo (40 trees)");

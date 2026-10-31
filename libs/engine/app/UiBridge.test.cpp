@@ -112,6 +112,29 @@ namespace {
 		bool		consumeDowns;
 	};
 
+	// A scene with no ui, getting App's events as they are.
+	class PlainScene : public app::Scene {
+	  public:
+		explicit PlainScene(Log& sceneLog)
+			: log(sceneLog) {}
+
+		const char* name() const override { return "plain"; }
+		void		render(float /*alpha*/) override {}
+
+		bool handleEvent(const foundation::InputEvent& event) override {
+			const char* kind = event.type == Type::PointerMove	 ? "move"
+							   : event.type == Type::PointerDown ? "down"
+							   : event.type == Type::PointerUp	 ? "up"
+							   : event.type == Type::Scroll		 ? "scroll"
+																 : "?";
+			log.push_back(std::string("plain ") + kind + " " + at(event.position));
+			return false;
+		}
+
+	  private:
+		Log& log;
+	};
+
 	class RecordingFocusable : public UI::IFocusable {
 	  public:
 		RecordingFocusable(Log& focusLog, std::string focusName, int tabIndex)
@@ -363,6 +386,36 @@ TEST_F(UiBridgeTest, OverlaysGoBeforeTheSceneTheLastAddedFirst) {
 			"upper move 9,9",
 			"lower move 9,9",
 			"move 9,9",
+		})
+	);
+}
+
+TEST_F(UiBridgeTest, ASceneWithoutUiGetsTheEventsTheOverlaysLeave) {
+	auto overlay = std::make_unique<RecordingOverlay>(log, "overlay", true);
+	bridge->addOverlay(*overlay);
+	app->addOverlay(std::move(overlay));
+	app->scenes().add("plain", [this] { return std::make_unique<PlainScene>(log); });
+	app->scenes().switchTo("plain");
+	frame();
+	log.clear();
+
+	push(pointer(Type::PointerMove, 5, 5));
+	push(pointer(Type::PointerDown, 5, 5));
+	push(pointer(Type::PointerUp, 6, 6));
+	push(wheel(6, 6, 2));
+	frame();
+	EXPECT_EQ(
+		log,
+		(Log{
+			"plain move 5,5",
+			"overlay move 5,5",
+			"overlay down L 5,5",
+			"overlay move 6,6",
+			"overlay up L 6,6",
+			"plain up 6,6",
+			"overlay scroll 2 6,6",
+			"plain scroll 6,6",
+			"overlay move 6,6",
 		})
 	);
 }

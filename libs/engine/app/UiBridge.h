@@ -9,6 +9,9 @@
 // holds under a still cursor; there's none until an event has carried a pointer position. Modifiers
 // come from the Shift, Control and Alt keys held at the end of the frame, with no Super bit.
 //
+// A top scene that isn't a UiScene (ui-sandbox's scenes without ui) gets each event as it is through
+// handleEvent instead, as App's own dispatch would give it, unless paused or an overlay took it.
+//
 // It also gives the ui the App's clipboard and answers /api/ui/tree and /api/ui/lint from the top
 // scene's component roots at the logical viewport. Make one after App::create, before the first
 // frame, and destroy it after App::shutdown: components unregister from its focus manager as the
@@ -57,7 +60,7 @@ namespace engine {
 	  private:
 		void dispatch();
 		void routeKey(const foundation::InputEvent& event);
-		void sendButton(const foundation::InputEvent& event, int mods);
+		bool sendButton(const foundation::InputEvent& event, int mods);
 		bool sendScroll(Foundation::Vec2 position);
 		bool send(UI::InputEvent& event);
 

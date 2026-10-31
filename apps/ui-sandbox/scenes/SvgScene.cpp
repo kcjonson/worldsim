@@ -5,10 +5,10 @@
 // the former "shapes" and "vector-star" scenes.
 
 #include "SceneTypes.h"
-#include <app/UiScene.h>
 #include <graphics/Color.h>
 #include <graphics/Rect.h>
 #include <primitives/Primitives.h>
+#include <scene/Scene.h>
 #include <utils/Log.h>
 #include <utils/ResourcePath.h>
 #include <vector/SVGLoader.h>
@@ -20,7 +20,7 @@ namespace {
 
 	constexpr const char* kSceneName = "svg";
 
-	class SvgScene : public engine::UiScene {
+	class SvgScene : public app::Scene {
 	  public:
 		void onEnter(app::App& /*app*/) override {
 			LOG_INFO(UI, "SVG Scene - vector/SVG capability showcase");

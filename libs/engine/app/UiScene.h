@@ -24,8 +24,7 @@ namespace engine {
 		virtual std::vector<const UI::IComponent*> getUiRoots() const { return {}; }
 	};
 
-	// What a scene list registers by name. Every scene a worldsim app adds is a UiScene, which the
-	// bridge relies on when it hands the top scene its input.
+	// What a scene list registers by name, for apps whose every scene is a UiScene.
 	using UiSceneFactory = std::function<std::unique_ptr<UiScene>()>;
 
 } // namespace engine

@@ -4,10 +4,10 @@
 
 #include "SceneTypes.h"
 #include <app/Keys.h>
-#include <app/UiScene.h>
 #include <graphics/Color.h>
 #include <graphics/Rect.h>
 #include <primitives/Primitives.h>
+#include <scene/Scene.h>
 #include <utils/Log.h>
 #include <vector/Tessellator.h>
 #include <vector/Types.h>
@@ -32,7 +32,7 @@ constexpr const char* kSceneName = "vector-perf";
 		renderer::TessellatedMesh mesh;
 	};
 
-	class VectorPerfScene : public engine::UiScene {
+	class VectorPerfScene : public app::Scene {
 	  public:
 		void onEnter(app::App& /*app*/) override {
 			LOG_INFO(UI, "Vector Performance Scene - 10,000 Stars Stress Test");

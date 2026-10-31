@@ -1,17 +1,13 @@
 #pragma once
 
-#include <app/UiScene.h>
-
-namespace app {
-	class SceneStack;
-} // namespace app
+#include <scene/SceneStack.h>
 
 namespace ui_sandbox {
 
 	/// @brief Scene registration info - each scene exports one of these
 	struct SceneInfo {
-		const char*			   name;
-		engine::UiSceneFactory factory;
+		const char*				 name;
+		app::SceneStack::Factory factory;
 	};
 
 // ============================================================================
