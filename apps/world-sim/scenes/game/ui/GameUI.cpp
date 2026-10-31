@@ -39,6 +39,9 @@ namespace world_sim {
 		: root(args.root),
 		  onSelectionCleared(args.onSelectionCleared) {
 		const ui::Theme& theme = root.get()->getContext()->getTheme();
+		// The HUD is the pointer's and the hotkeys': a click leaves no focus in it for Space or Enter to
+		// press again. The dialogs opened from it are their own, and take focus as ever.
+		root.get()->setDescendantsFocusable(false);
 
 		topBar = root.addChild<TopBar>({
 			.id = "top_bar",
@@ -156,6 +159,11 @@ namespace world_sim {
 							const std::string& title, const std::string& message
 						) { pushNotification(title, message, ui::ToastSeverity::Warning); },
 		});
+		pauseMenuDialog = std::make_unique<PauseMenuDialog>(PauseMenuDialog::Args{
+			.onClose = args.onPauseMenuClosed,
+			.onMainMenu = args.onMainMenu,
+			.onQuitGame = args.onQuitGame,
+		});
 
 		fitViewport(root.get()->getContext()->getViewport());
 	}
@@ -164,6 +172,7 @@ namespace world_sim {
 		colonistDetailsDialog->close();
 		craftingDialog->close();
 		storageConfigDialog->close();
+		pauseMenuDialog->close();
 	}
 
 	void GameUI::fitViewport(Foundation::Vec2 viewport) {
@@ -348,6 +357,14 @@ namespace world_sim {
 
 	bool GameUI::isStorageConfigVisible() const {
 		return storageConfigDialog->isOpen();
+	}
+
+	void GameUI::showPauseMenu() {
+		pauseMenuDialog->open(*root.get());
+	}
+
+	bool GameUI::isPauseMenuVisible() const {
+		return pauseMenuDialog->isOpen();
 	}
 
 	bool GameUI::isGlobalTaskListExpanded() const {
