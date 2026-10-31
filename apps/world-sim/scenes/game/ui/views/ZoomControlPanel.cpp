@@ -2,39 +2,19 @@
 
 namespace world_sim {
 
-ZoomControlPanel::ZoomControlPanel(const Args& args) {
-	zoomControlHandle = addChild(ZoomControl(ZoomControl::Args{
-		.position = {0.0F, 0.0F},  // Will be positioned in layout()
-		.onZoomIn = args.onZoomIn,
-		.onZoomOut = args.onZoomOut,
-		.onZoomReset = args.onZoomReset,
-		.id = "zoom_control"}));
-}
+	ZoomControlPanel::ZoomControlPanel(const Args& args)
+		: onZoomIn(args.onZoomIn),
+		  onZoomOut(args.onZoomOut),
+		  onZoomReset(args.onZoomReset) {}
 
-void ZoomControlPanel::layout(const Foundation::Rect& newBounds) {
-	Component::layout(newBounds);
-
-	if (auto* control = getChild<ZoomControl>(zoomControlHandle)) {
-		// Dock the column in the bottom-right corner
-		float zoomX = newBounds.x + newBounds.width - kRightMargin - ZoomControl::kTotalWidth;
-		float zoomY = newBounds.y + newBounds.height - kBottomMargin - ZoomControl::kTotalHeight;
-		control->setPosition(zoomX, zoomY);
-		// The panel's own reported bounds wrap the control (lint reads these)
-		position = {zoomX, zoomY};
-		size = {ZoomControl::kTotalWidth, ZoomControl::kTotalHeight};
+	void ZoomControlPanel::onMount() {
+		control = addChild<ZoomControl>({.id = "zoom_control", .onZoomIn = onZoomIn, .onZoomOut = onZoomOut, .onZoomReset = onZoomReset});
 	}
-}
 
-void ZoomControlPanel::setZoomPercent(int percent) {
-	if (auto* control = getChild<ZoomControl>(zoomControlHandle)) {
-		control->setZoomPercent(percent);
+	void ZoomControlPanel::setZoomPercent(int percent) {
+		if (ZoomControl* shown = control.get()) {
+			shown->setZoomPercent(percent);
+		}
 	}
-}
 
-bool ZoomControlPanel::handleEvent(UI::InputEvent& event) {
-	return dispatchEvent(event);
-}
-
-// render() inherited from Component - automatically renders all children
-
-}  // namespace world_sim
+} // namespace world_sim

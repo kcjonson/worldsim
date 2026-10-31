@@ -1,7 +1,10 @@
 #include "BuildMenu.h"
 
-#include <primitives/Primitives.h>
-#include <theme/Tokens.h>
+#include "scenes/game/ui/Look.h"
+
+#include <ui/Context.h>
+#include <ui/components/Button.h>
+#include <ui/shapes/Text.h>
 
 namespace world_sim {
 
@@ -10,126 +13,80 @@ namespace world_sim {
 		constexpr float kTitleHeight = 24.0F;
 		constexpr float kButtonHeight = 32.0F;
 		constexpr float kButtonSpacing = 4.0F;
-		constexpr float kFontSize = 14.0F;
 	} // namespace
 
 	BuildMenu::BuildMenu(const Args& args)
-		: m_position(args.position),
-		  m_onSelect(args.onSelect),
-		  m_onClose(args.onClose) {
-		// Create title text
-		m_titleText = std::make_unique<UI::Text>(UI::Text::Args{
-			.position = {m_position.x + m_menuWidth * 0.5F, m_position.y + kPadding + kTitleHeight * 0.5F},
-			.text = "Build",
-			.style =
-				{
-					.color = UI::text_bright,
-					.fontSize = 16.0F,
-					.hAlign = Foundation::HorizontalAlign::Center,
-					.vAlign = Foundation::VerticalAlign::Middle,
-				},
-			.id = "build_menu_title"
+		: onSelect(args.onSelect),
+		  onClose(args.onClose) {}
+
+	void BuildMenu::onMount() {
+		const ui::Theme& theme = getContext()->getTheme();
+		if (getSizeSpec().width.isAuto()) {
+			setSize({kWidth, getSizeSpec().height});
+		}
+		ui::Layout column = getLayout();
+		column.display = ui::Display::Flex;
+		column.flexDirection = ui::FlexDirection::Column;
+		column.gap = kPadding;
+		column.padding = kPadding;
+		setLayout(column);
+		setStyle(
+			ui::Style{
+				.backgroundColor = theme.get(look::t::color::bgPanelRaised),
+				.borderColor = theme.get(look::t::color::lineEdge),
+				.borderWidth = theme.get(look::t::border::bw),
+				.borderRadius = theme.get(look::t::radius::rMd),
+			}
+				.extend(getDeclaredStyle())
+		);
+		setOnKeyDown([this](ui::KeyEvent& event) {
+			if (event.type == ui::KeyEvent::Type::Cancel && onClose) {
+				onClose();
+				event.consume();
+			}
 		});
 
-		rebuildButtons();
+		ui::Style title = look::text(theme, look::t::color::textBright, look::t::fontSize::fsMd);
+		title.textAlign = Foundation::HorizontalAlign::Center;
+		title.verticalAlign = Foundation::VerticalAlign::Middle;
+		addChild<ui::Text>({.id = "build_menu_title", .size = {ui::percent(100.0F), kTitleHeight}, .style = title, .text = "Build"});
+		list = addChild<ui::Component>(
+			{.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = kButtonSpacing}}
+		);
+		showItems();
 	}
 
-	void BuildMenu::setItems(const std::vector<BuildMenuItem>& items) {
-		m_items = items;
-		rebuildButtons();
+	void BuildMenu::setItems(const std::vector<BuildMenuItem>& value) {
+		items = value;
+		showItems();
 	}
 
-	void BuildMenu::rebuildButtons() {
-		float buttonWidth = m_menuWidth - 2 * kPadding;
-		float layoutY = m_position.y + kPadding + kTitleHeight + kPadding;
-
-		// Create layout container for buttons
-		m_buttonLayout = std::make_unique<UI::LayoutContainer>(UI::LayoutContainer::Args{
-			.position = {m_position.x + kPadding, layoutY},
-			.size = {buttonWidth, 0.0F}, // Height determined by children
-			.direction = UI::Direction::Vertical,
-		});
-
-		for (const auto& item : m_items) {
-			// Capture defName by value for the callback
-			std::string defName = item.defName;
-			auto		onClick = [this, defName]() {
-				   if (m_onSelect) {
-					   m_onSelect(defName);
-				   }
-			};
-
-			// Add button with bottom margin for spacing (half on each side = kButtonSpacing/2)
-			m_buttonLayout->addChild(
-				UI::Button(
-					UI::Button::Args{
-						.label = item.label,
-						.size = {buttonWidth, kButtonHeight},
-						.type = UI::Button::Type::Secondary,
-						.onClick = onClick,
-						.id = "build_item",
-						.margin = kButtonSpacing * 0.5F
-					}
-				)
-			);
-		}
-
-		// Calculate menu height: title area + button layout height + padding
-		float buttonAreaHeight = m_buttonLayout->getHeight();
-		m_menuHeight = kPadding + kTitleHeight + kPadding + buttonAreaHeight + kPadding;
-
-		// Update title position
-		if (m_titleText) {
-			m_titleText->position = {m_position.x + m_menuWidth * 0.5F, m_position.y + kPadding + kTitleHeight * 0.5F};
-		}
-	}
-
-	void BuildMenu::setPosition(Foundation::Vec2 newPosition) {
-		if (m_position.x == newPosition.x && m_position.y == newPosition.y) {
+	void BuildMenu::showItems() {
+		ui::Component* column = list.get();
+		if (column == nullptr) {
 			return;
 		}
-		m_position = newPosition;
-		rebuildButtons();
-	}
-
-	bool BuildMenu::handleEvent(UI::InputEvent& event) {
-		// Dispatch to button layout
-		if (m_buttonLayout && m_buttonLayout->handleEvent(event)) {
-			return true;
-		}
-
-		// Consume clicks within the menu bounds to prevent click-through to game world
-		const auto& pos = event.position;
-		if ((event.type == UI::InputEvent::Type::MouseDown || event.type == UI::InputEvent::Type::MouseUp) && pos.x >= m_position.x &&
-			pos.x <= m_position.x + m_menuWidth && pos.y >= m_position.y && pos.y <= m_position.y + m_menuHeight) {
-			event.consume();
-			return true;
-		}
-
-		return false;
-	}
-
-	void BuildMenu::render() {
-		// Draw background panel
-		Foundation::Rect menuRect{m_position.x, m_position.y, m_menuWidth, m_menuHeight};
-
-		Renderer::Primitives::drawRect(
-			Renderer::Primitives::RectArgs{.bounds = menuRect, .style = {.fill = UI::bg_panel_raised, .border = Foundation::BorderStyle{.color = UI::line_edge, .width = UI::bw, .cornerRadius = UI::r_md, .position = Foundation::BorderPosition::Inside}}, .id = "build_menu_bg"}
+		const auto press = [this](const std::string& defName) {
+			return [this, defName]() {
+				if (onSelect) {
+					onSelect(defName);
+				}
+			};
+		};
+		column->reconcileChildren(
+			items,
+			[](const BuildMenuItem& item) { return item.defName; },
+			[&](const BuildMenuItem& item) -> ui::Ref<ui::Component> {
+				return column->addChild<ui::Button>({
+					.id = "build_item",
+					.size = {ui::kAuto, kButtonHeight},
+					.label = item.label,
+					.variant = ui::ButtonVariant::Secondary,
+					.onPress = press(item.defName),
+				});
+			},
+			[](ui::Component& row, const BuildMenuItem& item) { static_cast<ui::Button&>(row).setLabel(item.label); }
 		);
-
-		// Draw title
-		if (m_titleText) {
-			m_titleText->render();
-		}
-
-		// Draw buttons via layout
-		if (m_buttonLayout) {
-			m_buttonLayout->render();
-		}
-	}
-
-	Foundation::Rect BuildMenu::bounds() const {
-		return {m_position.x, m_position.y, m_menuWidth, m_menuHeight};
 	}
 
 } // namespace world_sim

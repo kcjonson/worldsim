@@ -1,230 +1,127 @@
 #include "ResourcesPanel.h"
 
-#include <components/list/ListRow.h>
-#include <layout/LayoutContainer.h>
-#include <primitives/Primitives.h>
-#include <theme/Tokens.h>
+#include "scenes/game/ui/Look.h"
 
-#include <algorithm>
-#include <format>
+#include <ui/Context.h>
+#include <ui/components/Button.h>
+#include <ui/components/ListRow.h>
+
 #include <string>
 
 namespace world_sim {
 
-namespace {
-// Chevron icon size and positioning
-constexpr float kChevronSize = 12.0F;
-constexpr float kChevronRightPadding = 8.0F;
-// Right-side reserve so row counts never sit under the scrollbar
-constexpr float kScrollbarReserve = 16.0F;
-} // namespace
+	namespace {
+		constexpr float kHeaderHeight = 28.0F;
+		constexpr float kMaxExpandedHeight = 240.0F; // header and content
+		constexpr float kRowHeight = 24.0F;
+		constexpr float kChevronSize = 12.0F;
+		constexpr float kChevronRightPadding = 8.0F;
+		constexpr float kScrollbarReserve = 16.0F; // so a count never sits under the scrollbar
+	} // namespace
 
-ResourcesPanel::ResourcesPanel(const Args& args)
-	: panelWidth(args.width),
-	  onToggle(args.onToggle) {
+	ResourcesPanel::ResourcesPanel(const Args& args)
+		: onToggle(args.onToggle) {}
 
-	// Create header button (chevron icon is separate)
-	headerButtonHandle = addChild(UI::Button(UI::Button::Args{
-		.label = "Storage",
-		.position = {0.0F, 0.0F},
-		.size = {panelWidth, kCollapsedHeight},
-		.type = UI::Button::Type::Secondary,
-		.onClick = [this]() { toggle(); },
-		.id = "resources_header"
-	}));
+	void ResourcesPanel::onMount() {
+		const ui::Theme& theme = getContext()->getTheme();
+		const float		 inset = theme.get(look::t::spacing::space2);
+		if (getSizeSpec().width.isAuto()) {
+			setSize({kWidth, getSizeSpec().height});
+		}
+		ui::Layout column = getLayout();
+		column.display = ui::Display::Flex;
+		column.flexDirection = ui::FlexDirection::Column;
+		setLayout(column);
 
-	// Create chevron icon (down arrow when collapsed, up when expanded). It sits
-	// on the header button by design; the higher zIndex marks the overlap as
-	// intentional layering for the layout lint.
-	auto chevron = UI::Icon(UI::Icon::Args{
-		.position = {0.0F, 0.0F},  // Will be updated in updateLayout
-		.size = kChevronSize,
-		.svgPath = "assets/ui/icons/chevron_down.svg",
-		.tint = Foundation::Color::white(),
-		.id = "resources_chevron"
-	});
-	chevron.zIndex = 1;
-	chevronHandle = addChild(std::move(chevron));
+		ui::Ref<ui::Button> header = addChild<ui::Button>({
+			.id = "resources_header",
+			.size = {ui::percent(100.0F), kHeaderHeight},
+			.label = "Storage",
+			.variant = ui::ButtonVariant::Secondary,
+			.onPress = [this]() { toggle(); },
+		});
+		chevron = header.addChild<ui::Icon>({
+			.id = "resources_chevron",
+			.size = {kChevronSize, kChevronSize},
+			.layout =
+				{.position = ui::Position::Absolute,
+				 .inset = {.top = (kHeaderHeight - kChevronSize) * 0.5F, .right = kChevronRightPadding}},
+			.style = {.color = theme.get(look::t::color::textBright)},
+			.name = "chevron_down",
+		});
 
-	// Create content background (only visible when expanded)
-	contentBackgroundHandle = addChild(UI::Rectangle(UI::Rectangle::Args{
-		.position = {0.0F, kHeaderHeight},
-		.size = {panelWidth, kEmptyExpandedHeight - kHeaderHeight},
-		.style = {
-			.fill = UI::bg_panel,
-			.border = Foundation::BorderStyle{
-				.color = UI::line_edge,
-				.width = UI::bw,
-				.cornerRadius = UI::r_md
-			}
-		},
-		.id = "resources_content_bg",
-		.visible = false
-	}));
-
-	// Create empty message text (shown when no storage containers exist)
-	emptyMessageHandle = addChild(UI::Text(UI::Text::Args{
-		.position = {UI::space_2, kHeaderHeight + UI::space_2},
-		.width = panelWidth - UI::space_2 * 2.0F,
-		.text = "No stockpiles built. Create one to track colony resources.",
-		.style = {
-			.color = UI::text_dim,
-			.fontSize = UI::fs_sm,
-			.wordWrap = true
-		},
-		.id = "resources_empty_msg",
-		.visible = false
-	}));
-
-	// Create scroll container with a vertical layout of resource rows inside
-	auto scrollContainer = UI::ScrollContainer(UI::ScrollContainer::Args{
-		.position = {UI::space_2, kHeaderHeight + UI::space_2},
-		.size = {panelWidth - UI::space_2 * 2.0F, kMaxExpandedHeight - kHeaderHeight - UI::space_2 * 2.0F},
-		.id = "resources_scroll"
-	});
-	scrollContainer.visible = false;
-
-	auto layout = UI::LayoutContainer(UI::LayoutContainer::Args{
-		.position = {0.0F, 0.0F},
-		.size = {panelWidth - UI::space_2 * 2.0F - kScrollbarReserve, 0.0F},
-		.direction = UI::Direction::Vertical,
-		.id = "resources_layout"
-	});
-	layoutHandle = scrollContainer.addChild(std::move(layout));
-	scrollContainerHandle = addChild(std::move(scrollContainer));
-
-	// Overlapping siblings need distinct z for the layout lint: the chevron
-	// rides on the header button; message and rows ride on the content bg.
-	if (auto* chevron = getChild<UI::Icon>(chevronHandle)) {
-		chevron->zIndex = 1;
+		content = addChild<ui::Rectangle>({
+			.id = "resources_content",
+			.visible = false,
+			.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .padding = inset},
+			.style = {
+				.backgroundColor = theme.get(look::t::color::bgPanel),
+				.borderColor = theme.get(look::t::color::lineEdge),
+				.borderWidth = theme.get(look::t::border::bw),
+				.borderRadius = theme.get(look::t::radius::rMd)
+			},
+		});
+		emptyMessage = content.addChild<ui::Text>({
+			.id = "resources_empty_msg",
+			.size = {ui::percent(100.0F), ui::kAuto},
+			.style = look::text(theme, look::t::color::textDim, look::t::fontSize::fsSm),
+			.text = "No stockpiles built. Create one to track colony resources.",
+			.wrap = true,
+		});
+		list = content.addChild<ui::Component>({
+			.id = "resources_scroll",
+			.maxSize = {ui::kAuto, kMaxExpandedHeight - kHeaderHeight - (inset * 2.0F)},
+			.layout =
+				{.display = ui::Display::Flex,
+				 .flexDirection = ui::FlexDirection::Column,
+				 .padding = {0.0F, kScrollbarReserve, 0.0F, 0.0F}},
+			.overflow = ui::Overflow::Scroll,
+		});
+		show();
 	}
-	if (auto* msg = getChild<UI::Text>(emptyMessageHandle)) {
-		msg->zIndex = 1;
+
+	void ResourcesPanel::setResources(const std::vector<adapters::ResourceRowData>& value, std::size_t containers) {
+		rows = value;
+		containerCount = containers;
+		if (ui::Component* column = list.get()) {
+			column->reconcileChildren(
+				rows,
+				[](const adapters::ResourceRowData& row) { return row.defName; },
+				[&](const adapters::ResourceRowData& row) -> ui::Ref<ui::Component> {
+					return column->addChild<ui::ListRow>({
+						.id = "resource_row_" + row.defName,
+						.size = {ui::kAuto, kRowHeight},
+						.label = row.displayName,
+						.trailing = std::to_string(row.count),
+					});
+				},
+				[](ui::Component& shown, const adapters::ResourceRowData& row) {
+					auto& listRow = static_cast<ui::ListRow&>(shown);
+					listRow.setLabel(row.displayName);
+					listRow.setTrailing(std::to_string(row.count));
+				}
+			);
+		}
+		show();
 	}
-	if (auto* scroll = getChild<UI::ScrollContainer>(scrollContainerHandle)) {
-		scroll->zIndex = 1;
-	}
-	markChildrenNeedSorting();
 
-	// Start collapsed - updateLayout sets visibility
-	updateLayout();
-}
-
-void ResourcesPanel::setAnchorPosition(float x, float y) {
-	// Anchor is top-right, so offset by panel width
-	position = {x - panelWidth, y};
-	updateLayout();
-}
-
-void ResourcesPanel::setResources(const std::vector<adapters::ResourceRowData>& rows, size_t containers) {
-	rowCount = rows.size();
-	containerCount = containers;
-
-	auto* scroll = getChild<UI::ScrollContainer>(scrollContainerHandle);
-	auto* layout = scroll != nullptr ? scroll->getChild<UI::LayoutContainer>(layoutHandle) : nullptr;
-	if (layout != nullptr) {
-		layout->clearChildren();
-		const float rowWidth = panelWidth - UI::space_2 * 2.0F - kScrollbarReserve;
-		for (size_t i = 0; i < rows.size(); ++i) {
-			layout->addChild(UI::ListRow(UI::ListRow::Args{
-				.label = rows[i].displayName,
-				.trailing = std::to_string(rows[i].count),
-				.size = {rowWidth, kRowHeight},
-				.id = std::format("resource_row_{}", i)
-			}));
+	void ResourcesPanel::toggle() {
+		expanded = !expanded;
+		show();
+		if (onToggle) {
+			onToggle();
 		}
 	}
-	if (scroll != nullptr) {
-		scroll->setContentHeight(static_cast<float>(rows.size()) * kRowHeight);
-		scroll->setViewportSize({panelWidth - UI::space_2 * 2.0F, expandedHeight() - kHeaderHeight - UI::space_2 * 2.0F});
+
+	void ResourcesPanel::show() {
+		if (content.get() == nullptr) {
+			return;
+		}
+		content.get()->setVisible(expanded);
+		emptyMessage.get()->setVisible(containerCount == 0);
+		list.get()->setVisible(containerCount > 0);
+		// Up while expanded, a press collapses it; down while collapsed.
+		chevron.get()->setName(expanded ? "chevron_up" : "chevron_down");
 	}
 
-	updateLayout();
-}
-
-void ResourcesPanel::toggle() {
-	expanded = !expanded;
-	updateChevron();
-	updateLayout();
-	if (onToggle) {
-		onToggle();
-	}
-}
-
-float ResourcesPanel::expandedHeight() const {
-	if (containerCount == 0) {
-		return kEmptyExpandedHeight;
-	}
-	const float contentHeight = static_cast<float>(std::max<size_t>(rowCount, 1)) * kRowHeight + UI::space_2 * 2.0F;
-	return std::min(kHeaderHeight + contentHeight, kMaxExpandedHeight);
-}
-
-void ResourcesPanel::updateChevron() {
-	auto* chevron = getChild<UI::Icon>(chevronHandle);
-	if (chevron) {
-		// Up arrow when expanded (click to collapse), down arrow when collapsed (click to expand)
-		std::string path = expanded ? "assets/ui/icons/chevron_up.svg" : "assets/ui/icons/chevron_down.svg";
-		chevron->setSvgPath(path);
-	}
-}
-
-void ResourcesPanel::updateLayout() {
-	// Position header at top
-	auto* header = getChild<UI::Button>(headerButtonHandle);
-	if (header) {
-		header->setPosition(position.x, position.y);
-	}
-
-	// Position chevron on the right side of the header button, vertically centered
-	auto* chevron = getChild<UI::Icon>(chevronHandle);
-	if (chevron) {
-		float chevronX = position.x + panelWidth - kChevronSize - kChevronRightPadding;
-		float chevronY = position.y + (kCollapsedHeight - kChevronSize) / 2.0F;
-		chevron->setPosition(chevronX, chevronY);
-	}
-
-	const bool showEmpty = expanded && containerCount == 0;
-	const bool showRows = expanded && containerCount > 0;
-
-	auto* contentBg = getChild<UI::Rectangle>(contentBackgroundHandle);
-	if (contentBg) {
-		contentBg->visible = expanded;
-		contentBg->size = {panelWidth, expandedHeight() - kHeaderHeight};
-		contentBg->setPosition(position.x, position.y + kHeaderHeight);
-	}
-
-	auto* emptyMsg = getChild<UI::Text>(emptyMessageHandle);
-	if (emptyMsg) {
-		emptyMsg->visible = showEmpty;
-		emptyMsg->setPosition(position.x + UI::space_2, position.y + kHeaderHeight + UI::space_2);
-	}
-
-	auto* scroll = getChild<UI::ScrollContainer>(scrollContainerHandle);
-	if (scroll) {
-		scroll->visible = showRows;
-		scroll->setPosition(position.x + UI::space_2, position.y + kHeaderHeight + UI::space_2);
-	}
-
-	// Update overall size
-	size = {panelWidth, expanded ? expandedHeight() : kCollapsedHeight};
-}
-
-Foundation::Rect ResourcesPanel::getBounds() const {
-	return {position.x, position.y, panelWidth, expanded ? expandedHeight() : kCollapsedHeight};
-}
-
-void ResourcesPanel::update(float deltaTime) {
-	auto* scroll = getChild<UI::ScrollContainer>(scrollContainerHandle);
-	if (scroll) {
-		scroll->update(deltaTime);
-	}
-}
-
-bool ResourcesPanel::handleEvent(UI::InputEvent& event) {
-	// Use Component's dispatchEvent to properly handle children
-	return dispatchEvent(event);
-}
-
-// render() inherited from Component - automatically renders all children
-
-}  // namespace world_sim
+} // namespace world_sim

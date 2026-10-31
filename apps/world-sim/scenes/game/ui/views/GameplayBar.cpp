@@ -1,301 +1,146 @@
 #include "GameplayBar.h"
 
-#include <theme/Tokens.h>
-#include <theme/Variants.h>
-#include <utils/Log.h>
+#include "scenes/game/ui/Look.h"
+
+#include <ui/Context.h>
 
 namespace world_sim {
 
-// The two appearances the Rooms toggle swaps between (active = highlighted fill).
-UI::ButtonAppearance GameplayBar::roomsButtonAppearance(bool active) {
-	// Start from the secondary style, then tint the fill to read as a toggle: a dim
-	// slate when off, a saturated blue when on (the overlay's own accent).
-	UI::ButtonAppearance	appearance = UI::ButtonStyles::secondary();
-	// Active arms the toggle to the amber accent; off is a quiet inset.
-	const Foundation::Color fill = active ? UI::accent : UI::bg_inset;
-	appearance.normal.background.fill = fill;
-	appearance.hover.background.fill = active ? UI::accent_bright : UI::bg_panel_raised;
-	appearance.pressed.background.fill = active ? UI::accent : UI::bg_active;
-	appearance.focused.background.fill = fill;
-	// Dark label on the amber active state, dim text when off.
-	const Foundation::Color label = active ? UI::accent_contrast : UI::text;
-	appearance.normal.textColor = label;
-	appearance.hover.textColor = active ? UI::accent_contrast : UI::text_bright;
-	appearance.pressed.textColor = label;
-	appearance.focused.textColor = label;
-	appearance.normal.fontSize = 14.0F;
-	appearance.hover.fontSize = 14.0F;
-	appearance.pressed.fontSize = 14.0F;
-	appearance.focused.fontSize = 14.0F;
-	return appearance;
-}
+	namespace {
 
-GameplayBar::GameplayBar(const Args& args)
-	: onBuildClick(args.onBuildClick)
-	, onActionSelected(args.onActionSelected)
-	, onProductionSelected(args.onProductionSelected)
-	, onFurnitureSelected(args.onFurnitureSelected)
-	, onStructureSelected(args.onStructureSelected)
-	, onRoomsToggle(args.onRoomsToggle) {
+		constexpr float kButtonWidth = 100.0F;
+		constexpr float kButtonHeight = 36.0F;
+		constexpr float kButtonSpacing = 8.0F;
+		constexpr float kHorizontalPadding = 12.0F;
+		constexpr float kRoomsButtonWidth = 72.0F; // a single word, narrower than the dropdowns
 
-	// Create background rectangle (added first so it renders behind other children)
-	backgroundHandle = addChild(UI::Rectangle(UI::Rectangle::Args{
-		.position = {0.0F, 0.0F},
-		.size = {400.0F, kBarHeight},  // Width will be set in layout()
-		.style =
-			{
-				.fill = UI::bg_panel,
-				.border =
-					Foundation::BorderStyle{
-						.color = UI::line_edge,
-						.width = UI::bw,
-						.cornerRadius = UI::r_md,
-						.position = Foundation::BorderPosition::Inside},
-			},
-		.id = "gameplay_bar_background"}));
-	if (auto* bg = getChild<UI::Rectangle>(backgroundHandle)) {
-		bg->zIndex = -1; // beneath the buttons it backs (lint: overlap needs distinct z)
-	}
+		ui::MenuItem item(std::string label, const std::function<void(const std::string&)>& callback, std::string value) {
+			return {.label = std::move(label), .onSelect = [callback, value = std::move(value)]() {
+						if (callback) {
+							callback(value);
+						}
+					}};
+		}
 
-	// Create Actions dropdown (stub items for now)
-	actionsDropdownHandle = addChild(UI::DropdownButton(UI::DropdownButton::Args{
-		.label = "Actions",
-		.position = {0.0F, 0.0F},
-		.buttonSize = {kButtonWidth, kButtonHeight},
-		.items =
-			{
-				UI::DropdownItem{
-					.label = "Hunt",
-					.onSelect = [this]() {
-						if (onActionSelected) onActionSelected("hunt");
-					}},
-				UI::DropdownItem{
-					.label = "Harvest",
-					.onSelect = [this]() {
-						if (onActionSelected) onActionSelected("harvest");
-					}},
-				UI::DropdownItem{
-					.label = "Haul",
-					.onSelect = [this]() {
-						if (onActionSelected) onActionSelected("haul");
-					}},
-			},
-		.id = "actions_dropdown",
-		.openUpward = true}));
+	} // namespace
 
-	// Create Build dropdown - structure tools (foundation, wall, openings).
-	buildDropdownHandle = addChild(UI::DropdownButton(UI::DropdownButton::Args{
-		.label = "Build",
-		.position = {0.0F, 0.0F},
-		.buttonSize = {kButtonWidth, kButtonHeight},
-		.items =
-			{
-				UI::DropdownItem{
-					.label = "Foundation",
-					.onSelect = [this]() {
-						if (onStructureSelected) onStructureSelected("foundation");
-					}},
-				UI::DropdownItem{
-					.label = "Wall",
-					.onSelect = [this]() {
-						if (onStructureSelected) onStructureSelected("wall");
-					}},
-				UI::DropdownItem{
-					.label = "Door",
-					.onSelect = [this]() {
-						if (onStructureSelected) onStructureSelected("door");
-					}},
-				UI::DropdownItem{
-					.label = "Window",
-					.onSelect = [this]() {
-						if (onStructureSelected) onStructureSelected("window");
-					}},
-			},
-		.id = "build_dropdown",
-		.openUpward = true}));
+	GameplayBar::GameplayBar(const Args& args)
+		: onActionSelected(args.onActionSelected),
+		  onProductionSelected(args.onProductionSelected),
+		  onFurnitureSelected(args.onFurnitureSelected),
+		  onStructureSelected(args.onStructureSelected),
+		  onRoomsToggle(args.onRoomsToggle) {}
 
-	// Create Production dropdown - production stations that can be placed
-	// Items are populated dynamically via setProductionItems()
-	productionDropdownHandle = addChild(UI::DropdownButton(UI::DropdownButton::Args{
-		.label = "Production",
-		.position = {0.0F, 0.0F},
-		.buttonSize = {kButtonWidth, kButtonHeight},
-		.items = {}, // Populated dynamically
-		.id = "production_dropdown",
-		.openUpward = true}));
+	void GameplayBar::onMount() {
+		const ui::Theme& theme = getContext()->getTheme();
+		if (getSizeSpec().height.isAuto()) {
+			setSize({getSizeSpec().width, kHeight});
+		}
+		ui::Layout row = getLayout();
+		row.display = ui::Display::Flex;
+		row.flexDirection = ui::FlexDirection::Row;
+		row.gap = kButtonSpacing;
+		row.padding = {0.0F, kHorizontalPadding};
+		row.alignItems = ui::AlignItems::Center;
+		setLayout(row);
+		setStyle(
+			ui::Style{
+				.backgroundColor = theme.get(look::t::color::bgPanel),
+				.borderColor = theme.get(look::t::color::lineEdge),
+				.borderWidth = theme.get(look::t::border::bw),
+				.borderRadius = theme.get(look::t::radius::rMd),
+			}
+				.extend(getDeclaredStyle())
+		);
 
-	// Create Furniture dropdown (stub items for now)
-	furnitureDropdownHandle = addChild(UI::DropdownButton(UI::DropdownButton::Args{
-		.label = "Furniture",
-		.position = {0.0F, 0.0F},
-		.buttonSize = {kButtonWidth, kButtonHeight},
-		.items =
-			{
-				UI::DropdownItem{
-					.label = "Beds",
-					.onSelect = [this]() {
-						if (onFurnitureSelected) onFurnitureSelected("beds");
-					}},
-				UI::DropdownItem{
-					.label = "Tables",
-					.onSelect = [this]() {
-						if (onFurnitureSelected) onFurnitureSelected("tables");
-					}},
-				UI::DropdownItem{
-					.label = "Storage",
-					.onSelect = [this]() {
-						if (onFurnitureSelected) onFurnitureSelected("storage");
-					}},
-			},
-		.id = "furniture_dropdown",
-		.openUpward = true}));
+		const auto dropdown = [&](const char* id, const char* label, std::vector<ui::MenuItem> items) {
+			ui::Ref<ui::DropdownButton> made = addChild<ui::DropdownButton>(
+				{.id = id, .size = {kButtonWidth, kButtonHeight}, .label = label, .items = std::move(items), .side = ui::Side::Above}
+			);
+			dropdowns.push_back(made);
+			return made;
+		};
+		dropdown(
+			"actions_dropdown",
+			"Actions",
+			{item("Hunt", onActionSelected, "hunt"), item("Harvest", onActionSelected, "harvest"), item("Haul", onActionSelected, "haul")}
+		);
+		dropdown(
+			"build_dropdown",
+			"Build",
+			{item("Foundation", onStructureSelected, "foundation"),
+			 item("Wall", onStructureSelected, "wall"),
+			 item("Door", onStructureSelected, "door"),
+			 item("Window", onStructureSelected, "window")}
+		);
+		production = dropdown("production_dropdown", "Production", {});
+		dropdown(
+			"furniture_dropdown",
+			"Furniture",
+			{item("Beds", onFurnitureSelected, "beds"),
+			 item("Tables", onFurnitureSelected, "tables"),
+			 item("Storage", onFurnitureSelected, "storage")}
+		);
+		// Placeholders: no zone system exists yet, this holds the slot the zones work will fill.
+		dropdown(
+			"zones_dropdown",
+			"Zones",
+			{{.label = "Stockpile", .enabled = false}, {.label = "Growing", .enabled = false}, {.label = "Dumping", .enabled = false}}
+		);
 
-	// Zones dropdown. Entries are disabled placeholders: no zone system exists
-	// yet, this stakes out the bar slot the zones epic will fill.
-	zonesDropdownHandle = addChild(UI::DropdownButton(UI::DropdownButton::Args{
-		.label = "Zones",
-		.position = {0.0F, 0.0F},
-		.buttonSize = {kButtonWidth, kButtonHeight},
-		.items =
-			{
-				UI::DropdownItem{.label = "Stockpile", .enabled = false},
-				UI::DropdownItem{.label = "Growing", .enabled = false},
-				UI::DropdownItem{.label = "Dumping", .enabled = false},
-			},
-		.id = "zones_dropdown",
-		.openUpward = true}));
-
-	// Rooms overlay toggle. A plain button (not a dropdown) whose fill reflects the
-	// overlay active state; click flips it via onRoomsToggle (the same path the R
-	// hotkey drives), and GameUI pushes the result back via setRoomsActive.
-	roomsButtonHandle = addChild(UI::Button(UI::Button::Args{
-		.label = "Rooms",
-		.position = {0.0F, 0.0F},
-		.size = {kRoomsButtonWidth, kButtonHeight},
-		.type = UI::Button::Type::Custom,
-		.onClick =
-			[this]() {
-				if (onRoomsToggle) onRoomsToggle();
-			},
-		.id = "rooms_toggle"}));
-	if (auto* roomsButton = getChild<UI::Button>(roomsButtonHandle)) {
-		roomsButton->appearance = roomsButtonAppearance(false);
-	}
-}
-
-void GameplayBar::layout(const Foundation::Rect& newBounds) {
-	Component::layout(newBounds);
-
-	// Calculate and cache bar layout (used by positionElements). Five dropdowns plus
-	// the Rooms toggle, with a spacing between each.
-	float totalButtonWidth = (kButtonWidth * 5.0F) + kRoomsButtonWidth + (kButtonSpacing * 5.0F);
-	cachedBarWidth = totalButtonWidth + (kHorizontalPadding * 2.0F);
-	cachedBarX = bounds.x + (bounds.width - cachedBarWidth) / 2.0F;
-	cachedBarY = bounds.y + bounds.height - kBarHeight - kBottomMargin;
-
-	// Reported bounds are the bar rect itself (lint reads these)
-	position = {cachedBarX, cachedBarY};
-	size = {cachedBarWidth, kBarHeight};
-
-	if (auto* bg = getChild<UI::Rectangle>(backgroundHandle)) {
-		bg->size = {cachedBarWidth, kBarHeight};
-		bg->setPosition(cachedBarX, cachedBarY);
-	}
-
-	positionElements();
-}
-
-void GameplayBar::positionElements() {
-	// Use cached layout values from layout()
-	float buttonY = cachedBarY + (kBarHeight - kButtonHeight) / 2.0F;
-	float x = cachedBarX + kHorizontalPadding;
-
-	if (auto* dropdown = getChild<UI::DropdownButton>(actionsDropdownHandle)) {
-		dropdown->setPosition(x, buttonY);
-		x += kButtonWidth + kButtonSpacing;
-	}
-
-	if (auto* dropdown = getChild<UI::DropdownButton>(buildDropdownHandle)) {
-		dropdown->setPosition(x, buttonY);
-		x += kButtonWidth + kButtonSpacing;
-	}
-
-	if (auto* dropdown = getChild<UI::DropdownButton>(productionDropdownHandle)) {
-		dropdown->setPosition(x, buttonY);
-		x += kButtonWidth + kButtonSpacing;
-	}
-
-	if (auto* dropdown = getChild<UI::DropdownButton>(furnitureDropdownHandle)) {
-		dropdown->setPosition(x, buttonY);
-		x += kButtonWidth + kButtonSpacing;
-	}
-
-	if (auto* dropdown = getChild<UI::DropdownButton>(zonesDropdownHandle)) {
-		dropdown->setPosition(x, buttonY);
-		x += kButtonWidth + kButtonSpacing;
-	}
-
-	if (auto* roomsButton = getChild<UI::Button>(roomsButtonHandle)) {
-		roomsButton->setPosition(x, buttonY);
-	}
-}
-
-void GameplayBar::setRoomsActive(bool active) {
-	roomsActive = active;
-	if (auto* roomsButton = getChild<UI::Button>(roomsButtonHandle)) {
-		roomsButton->appearance = roomsButtonAppearance(active);
-	}
-}
-
-bool GameplayBar::handleEvent(UI::InputEvent& event) {
-	return dispatchEvent(event);
-}
-
-void GameplayBar::closeAllDropdowns() {
-	if (auto* dropdown = getChild<UI::DropdownButton>(actionsDropdownHandle)) {
-		dropdown->closeMenu();
-	}
-	if (auto* dropdown = getChild<UI::DropdownButton>(buildDropdownHandle)) {
-		dropdown->closeMenu();
-	}
-	if (auto* dropdown = getChild<UI::DropdownButton>(productionDropdownHandle)) {
-		dropdown->closeMenu();
-	}
-	if (auto* dropdown = getChild<UI::DropdownButton>(furnitureDropdownHandle)) {
-		dropdown->closeMenu();
-	}
-	if (auto* dropdown = getChild<UI::DropdownButton>(zonesDropdownHandle)) {
-		dropdown->closeMenu();
-	}
-}
-
-void GameplayBar::setProductionItems(const std::vector<std::pair<std::string, std::string>>& items) {
-	auto* dropdown = getChild<UI::DropdownButton>(productionDropdownHandle);
-	if (dropdown == nullptr) {
-		LOG_WARNING(Game, "[GameplayBar] Production dropdown not found");
-		return;
-	}
-
-	LOG_INFO(Game, "[GameplayBar] Setting %zu production items", items.size());
-
-	std::vector<UI::DropdownItem> dropdownItems;
-	for (const auto& [defName, label] : items) {
-		LOG_INFO(Game, "[GameplayBar] Adding production item: %s (%s)", label.c_str(), defName.c_str());
-		dropdownItems.push_back(UI::DropdownItem{
-			.label = label,
-			.onSelect = [this, defName]() {
-				LOG_INFO(Game, "[GameplayBar] Production item selected: %s", defName.c_str());
-				if (onProductionSelected) {
-					onProductionSelected(defName);
-				} else {
-					LOG_WARNING(Game, "[GameplayBar] onProductionSelected callback is null!");
+		rooms = addChild<ui::Button>({
+			.id = "rooms_toggle",
+			.size = {kRoomsButtonWidth, kButtonHeight},
+			.label = "Rooms",
+			.variant = ui::ButtonVariant::Secondary,
+			.onPress = [this]() {
+				if (onRoomsToggle) {
+					onRoomsToggle();
 				}
-			}});
+			},
+		});
+		tintRooms();
 	}
 
-	dropdown->setItems(std::move(dropdownItems));
-}
+	void GameplayBar::closeAllDropdowns() {
+		for (const ui::Ref<ui::DropdownButton>& each : dropdowns) {
+			if (ui::DropdownButton* shown = each.get()) {
+				shown->closeMenu();
+			}
+		}
+	}
 
-// render() inherited from Component - automatically renders all children
+	void GameplayBar::setProductionItems(const std::vector<std::pair<std::string, std::string>>& items) {
+		ui::DropdownButton* shown = production.get();
+		if (shown == nullptr) {
+			return;
+		}
+		std::vector<ui::MenuItem> menu;
+		menu.reserve(items.size());
+		for (const auto& [defName, label] : items) {
+			menu.push_back(item(label, onProductionSelected, defName));
+		}
+		shown->setItems(std::move(menu));
+	}
 
-}  // namespace world_sim
+	void GameplayBar::setRoomsActive(bool active) {
+		if (roomsActive != active) {
+			roomsActive = active;
+			tintRooms();
+		}
+	}
+
+	// Armed, the toggle takes the accent with a dark label; off, a quiet inset.
+	void GameplayBar::tintRooms() {
+		ui::Button* button = rooms.get();
+		if (button == nullptr) {
+			return;
+		}
+		const ui::Theme& theme = getContext()->getTheme();
+		button->setStyle({
+			.backgroundColor = theme.get(roomsActive ? look::t::color::accent : look::t::color::bgInset),
+			.color = theme.get(roomsActive ? look::t::color::accentContrast : look::t::color::text),
+		});
+	}
+
+} // namespace world_sim

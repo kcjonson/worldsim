@@ -1,90 +1,70 @@
 #pragma once
 
-// ConstructionConfigStrip - docked strip above the GameplayBar, shown while a
-// structure tool is active (building-construction D11 config strip).
-//
-// Holds material cards (Wood/Stone from ConstructionRegistry, click to select),
-// live readouts, and a validity message line colored via Theme status colors.
-// Hidden when the tool is inactive. Renders directly through Primitives rather
-// than the Layer tree: the readouts and validity text change every frame, so
-// immediate-mode drawing is simpler than reconciling child text nodes.
-//
-// Wall mode (DrawingStatus.wall): the strip additionally shows thickness-preset
-// cards (Light/Standard/Heavy for the active material) and wall readouts
-// (segment length, total length, cost, work) instead of the foundation area.
-//
-// Foundation edit mode (DrawingStatus.foundationEdit): no material cards (the
-// edited foundation's material is locked); the Add / Subtract label, the area of
-// the outline the edit would leave, and its change from the current area.
+// ConstructionConfigStrip - the strip docked above the GameplayBar while a structure tool is active
+// (building-construction D11), hidden otherwise. Material cards (click to pick), then in wall mode the
+// active material's thickness presets, the tool's readouts, and a validity line in a status colour.
+// Foundation Add / Subtract shows no material cards (the edited foundation's material is locked), its
+// label instead, and the area the edit would leave with its change. 60% of its parent's width and
+// kHeight tall unless its size says otherwise.
 
 #include "scenes/game/world/construction/DrawingSystem.h"
 
-#include <component/Component.h>
-#include <graphics/Rect.h>
-#include <input/InputEvent.h>
+#include <ui/shapes/Rectangle.h>
+#include <ui/shapes/Text.h>
 
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace world_sim {
 
-	class ConstructionConfigStrip : public UI::Component {
+	class ConstructionConfigStrip : public ui::Rectangle {
 	  public:
-		/// A thickness preset card: display name + thickness in meters.
+		static constexpr float kHeight = 56.0F;
+
 		struct ThicknessPresetInfo {
 			std::string name;
 			float		thicknessMeters = 0.0F;
 		};
 
 		struct Args {
-			/// Called when a material card is clicked.
+			UI_COMMON_ARGS
 			std::function<void(const std::string&)> onMaterialSelected;
-			/// Called when a thickness-preset card is clicked (wall mode).
-			std::function<void(const std::string&)> onThicknessSelected;
-			std::string								id = "construction_config_strip";
+			std::function<void(const std::string&)> onThicknessSelected; // wall mode
 		};
 
 		explicit ConstructionConfigStrip(const Args& args);
 
-		/// Set the available materials (name + per-m^2 cost), from the registry.
+		// {name, cost per square metre} for each material, from the registry.
 		void setMaterials(std::vector<std::pair<std::string, float>> materials);
-
-		/// Set the wall thickness presets for the active material (wall mode cards).
+		// The active material's wall thickness presets.
 		void setThicknessPresets(std::vector<ThicknessPresetInfo> presets);
-
-		/// Push the latest tool status (drives readouts, validity line, selection
-		/// highlight, and visibility).
+		// The tool's latest status: its readouts, the validity line, the picked cards, and whether the
+		// strip shows at all.
 		void setStatus(const DrawingStatus& status);
 
-		void  layout(const Foundation::Rect& viewportBounds) override;
-		bool  handleEvent(UI::InputEvent& event) override;
-		void  render() override;
-		float getHeight() const override { return kStripHeight; }
+		[[nodiscard]] const char* typeName() const override { return "ConstructionConfigStrip"; }
+
+	  protected:
+		void onMount() override;
 
 	  private:
-		static constexpr float kStripHeight = 56.0F;
-		static constexpr float kGameplayBarReserve = 64.0F; // bar height + margins
-		static constexpr float kCardWidth = 120.0F;
-		static constexpr float kPresetCardWidth = 88.0F;
-		static constexpr float kCardHeight = 40.0F;
-		static constexpr float kCardSpacing = 8.0F;
-		static constexpr float kPadding = 12.0F;
+		void showCards();
+		void showReadouts();
 
-		std::function<void(const std::string&)> onMaterialSelected;
-		std::function<void(const std::string&)> onThicknessSelected;
-
-		std::vector<std::pair<std::string, float>> materials_;
-		std::vector<ThicknessPresetInfo>		   presets_;
-		DrawingStatus							   status_;
-
-		Foundation::Rect stripBounds_{0.0F, 0.0F, 0.0F, 0.0F};
-		// Hit rects for each material card, parallel to materials_.
-		std::vector<Foundation::Rect> cardRects_;
-		// Hit rects for each thickness-preset card, parallel to presets_ (wall mode).
-		std::vector<Foundation::Rect> presetRects_;
-
-		void positionCards();
+		std::function<void(const std::string&)>	   onMaterialSelected;
+		std::function<void(const std::string&)>	   onThicknessSelected;
+		std::vector<std::pair<std::string, float>> materials;
+		std::vector<ThicknessPresetInfo>		   presets;
+		DrawingStatus							   status;
+		ui::ColorToken							   messageColor{};
+		ui::Ref<ui::Component>					   materialCards;
+		ui::Ref<ui::Component>					   presetCards;
+		ui::Ref<ui::Component>					   readouts;
+		ui::Ref<ui::Text>						   readoutTop;
+		ui::Ref<ui::Text>						   readoutBottom;
+		ui::Ref<ui::Text>						   message;
 	};
 
 } // namespace world_sim
