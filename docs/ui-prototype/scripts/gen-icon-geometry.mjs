@@ -6,7 +6,7 @@
  * (Tessellator) depending on the flag. No runtime SVG parsing.
  *
  * Also writes each glyph as a filled SVG for salal's salal_icons(), into
- * libs/salvage/icons/: filled glyphs as they are, stroked ones outlined at the
+ * libs/theme/icons/: filled glyphs as they are, stroked ones outlined at the
  * set's stroke width with round caps and joins, each icon one traced shape.
  * plusBold is plus at stroke width 3. assets/ui/icons' ten go there too.
  *
@@ -22,7 +22,7 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const icons = JSON.parse(readFileSync(resolve(here, "../../design/ui/design-system/icons.json"), "utf8"));
 const outPath = resolve(here, "../../../libs/ui/theme/IconGlyphs.h");
-const svgDir = resolve(here, "../../../libs/salvage/icons");
+const svgDir = resolve(here, "../../../libs/theme/icons");
 const assetIcons = resolve(here, "../../../assets/ui/icons");
 
 const CURVE_STEPS = 16;

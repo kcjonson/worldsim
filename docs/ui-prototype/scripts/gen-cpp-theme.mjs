@@ -2,8 +2,8 @@
  * Generate the C++ design-system token header from the canonical tokens.json.
  * Compile-time constexpr, consumed by the Salvage primitive library. Also writes
  * the same tokens as a Design Tokens file (Format Module 2025.10) for salal's
- * salal_tokens(), libs/salvage/tokens/salvage.tokens.json: worldsim's own names
- * under `salvage`, and salal ui's semantic tokens aliased to them.
+ * salal_tokens(), libs/theme/tokens/theme.tokens.json: worldsim's own names
+ * under `theme`, and salal ui's semantic tokens aliased to them.
  *
  * Run from docs/ui-prototype:  node scripts/gen-cpp-theme.mjs
  *
@@ -20,7 +20,7 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const tokens = JSON.parse(readFileSync(resolve(here, "../../design/ui/design-system/tokens.json"), "utf8"));
 const outPath = resolve(here, "../../../libs/ui/theme/Tokens.h");
-const dtcgPath = resolve(here, "../../../libs/salvage/tokens/salvage.tokens.json");
+const dtcgPath = resolve(here, "../../../libs/theme/tokens/theme.tokens.json");
 
 const id = (name) => name.replace(/-/g, "_");
 const f = (n) => (Number.isInteger(n) ? `${n}.0F` : `${n}F`);
@@ -133,7 +133,7 @@ function dtcgToken(cat, e) {
 	}
 }
 
-const salvage = {};
+const own = {};
 const paths = new Map(); // CSS name -> [token path, type]
 const aliases = [];
 for (const [cat, group] of Object.entries(tokens)) {
@@ -145,15 +145,15 @@ for (const [cat, group] of Object.entries(tokens)) {
 		}
 		const token = dtcgToken(cat, e);
 		if (!token) continue;
-		(salvage[cat] ??= {})[name] = { $type: token[0], $value: token[1] };
-		paths.set(name, [`salvage.${cat}.${name}`, token[0]]);
+		(own[cat] ??= {})[name] = { $type: token[0], $value: token[1] };
+		paths.set(name, [`theme.${cat}.${name}`, token[0]]);
 	}
 }
 for (const [cat, name, target] of aliases) {
 	const resolved = paths.get(target);
 	if (!resolved) continue; // an alias of a CSS-only token
-	(salvage[cat] ??= {})[name] = { $type: resolved[1], $value: `{${resolved[0]}}` };
-	paths.set(name, [`salvage.${cat}.${name}`, resolved[1]]);
+	(own[cat] ??= {})[name] = { $type: resolved[1], $value: `{${resolved[0]}}` };
+	paths.set(name, [`theme.${cat}.${name}`, resolved[1]]);
 }
 
 // ui's tokens as worldsim's: [ui path, CSS name]. Style fields take no $type.
@@ -211,8 +211,8 @@ const mapping = [
 
 const dtcg = {
 	$description:
-		"GENERATED from docs/ui-prototype/src/design-system/tokens.css via tokens.json by docs/ui-prototype/scripts/gen-cpp-theme.mjs. Do not edit by hand. Worldsim's Salvage theme over salal ui's default tokens: its own names under salvage, and ui's semantic tokens aliased to them.",
-	salvage,
+		"GENERATED from docs/ui-prototype/src/design-system/tokens.css via tokens.json by docs/ui-prototype/scripts/gen-cpp-theme.mjs. Do not edit by hand. Worldsim's theme over salal ui's default tokens: its own names under theme, and ui's semantic tokens aliased to them.",
+	theme: own,
 };
 for (const [uiPath, name] of mapping) {
 	const resolved = paths.get(name);

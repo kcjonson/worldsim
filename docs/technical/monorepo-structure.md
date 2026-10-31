@@ -16,7 +16,7 @@ The monorepo is organized by dependency layers, from foundation to high-level:
 libs/
 ├── geometry/            # Exact integer-mm 2D geometry (predicates, arrangement, booleans, offsetting)
 ├── ui/                  # UI framework - components, layout, inspector
-├── salvage/             # Worldsim's design system on salal's ui: the theme's tokens, the icon set
+├── theme/               # Worldsim's design system on salal's ui: the theme's tokens, the icon set
 ├── world/               # World generation and 3D-to-2D sampling
 ├── game-systems/        # Game-specific: chunks, tiles, camera
 └── engine/              # Top layer - ECS, world, assets, the ui bridge onto salal's app
@@ -40,7 +40,7 @@ Each layer can only depend on layers below it:
 ```
 engine
   ↓
-game-systems, ui, world, salvage, app (salal)
+game-systems, ui, world, theme, app (salal)
   ↓
 ui (salal)
   ↓
@@ -83,8 +83,8 @@ foundation (salal)
 - UI inspector for testability (JSON export, debug tools)
 - Depends on: `renderer`, `foundation`
 
-**salvage/**
-- Worldsim's design system on salal's ui: the Salvage theme as a Design Tokens file and the icon set as filled SVGs, both compiled in by salal's `salal_tokens()` and `salal_icons()` (`<salvage/Tokens.h>`, `<salvage/Icons.h>`)
+**theme/**
+- Worldsim's design system on salal's ui: its theme as a Design Tokens file and the icon set as filled SVGs, both compiled in by salal's `salal_tokens()` and `salal_icons()` (`<theme/DesignTokens.h>`, `<theme/Icons.h>`), and its own components on salal's, Panel with its kicker and corner ticks and Avatar (`<theme/Panel.h>`, `<theme/Avatar.h>`)
 - Both are written by the scripts in `docs/ui-prototype/scripts/`, from the prototype's tokens and icons
 - Depends on: `ui` (salal)
 

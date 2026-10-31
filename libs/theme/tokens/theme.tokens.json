@@ -1,6 +1,6 @@
 {
-  "$description": "GENERATED from docs/ui-prototype/src/design-system/tokens.css via tokens.json by docs/ui-prototype/scripts/gen-cpp-theme.mjs. Do not edit by hand. Worldsim's Salvage theme over salal ui's default tokens: its own names under salvage, and ui's semantic tokens aliased to them.",
-  "salvage": {
+  "$description": "GENERATED from docs/ui-prototype/src/design-system/tokens.css via tokens.json by docs/ui-prototype/scripts/gen-cpp-theme.mjs. Do not edit by hand. Worldsim's theme over salal ui's default tokens: its own names under theme, and ui's semantic tokens aliased to them.",
+  "theme": {
     "spacing": {
       "space-0": {
         "$type": "dimension",
@@ -160,31 +160,31 @@
       },
       "radius-xs": {
         "$type": "dimension",
-        "$value": "{salvage.radius.r-xs}"
+        "$value": "{theme.radius.r-xs}"
       },
       "radius-sm": {
         "$type": "dimension",
-        "$value": "{salvage.radius.r-sm}"
+        "$value": "{theme.radius.r-sm}"
       },
       "radius-md": {
         "$type": "dimension",
-        "$value": "{salvage.radius.r-md}"
+        "$value": "{theme.radius.r-md}"
       },
       "radius-lg": {
         "$type": "dimension",
-        "$value": "{salvage.radius.r-lg}"
+        "$value": "{theme.radius.r-lg}"
       },
       "radius-pill": {
         "$type": "dimension",
-        "$value": "{salvage.radius.r-pill}"
+        "$value": "{theme.radius.r-pill}"
       },
       "radius-ui": {
         "$type": "dimension",
-        "$value": "{salvage.radius.r-sm}"
+        "$value": "{theme.radius.r-sm}"
       },
       "radius-panel": {
         "$type": "dimension",
-        "$value": "{salvage.radius.r-sm}"
+        "$value": "{theme.radius.r-sm}"
       }
     },
     "border": {
@@ -380,11 +380,11 @@
       },
       "label-spacing": {
         "$type": "number",
-        "$value": "{salvage.letterSpacing.ls-wider}"
+        "$value": "{theme.letterSpacing.ls-wider}"
       },
       "title-spacing": {
         "$type": "number",
-        "$value": "{salvage.letterSpacing.ls-wide}"
+        "$value": "{theme.letterSpacing.ls-wide}"
       }
     },
     "texture": {
@@ -801,151 +801,151 @@
     "surface": {
       "base": {
         "$type": "color",
-        "$value": "{salvage.color.bg-base}"
+        "$value": "{theme.color.bg-base}"
       },
       "raised": {
         "$type": "color",
-        "$value": "{salvage.color.bg-panel}"
+        "$value": "{theme.color.bg-panel}"
       },
       "sunken": {
         "$type": "color",
-        "$value": "{salvage.color.bg-inset}"
+        "$value": "{theme.color.bg-inset}"
       },
       "overlay": {
         "$type": "color",
-        "$value": "{salvage.color.bg-panel-raised}"
+        "$value": "{theme.color.bg-panel-raised}"
       },
       "control": {
         "$type": "color",
-        "$value": "{salvage.color.bg-panel-raised}"
+        "$value": "{theme.color.bg-panel-raised}"
       }
     },
     "text": {
       "primary": {
         "$type": "color",
-        "$value": "{salvage.color.text}"
+        "$value": "{theme.color.text}"
       },
       "secondary": {
         "$type": "color",
-        "$value": "{salvage.color.text-dim}"
+        "$value": "{theme.color.text-dim}"
       },
       "disabled": {
         "$type": "color",
-        "$value": "{salvage.color.text-disabled}"
+        "$value": "{theme.color.text-disabled}"
       },
       "inverse": {
         "$type": "color",
-        "$value": "{salvage.color.accent-contrast}"
+        "$value": "{theme.color.accent-contrast}"
       }
     },
     "line": {
       "subtle": {
         "$type": "color",
-        "$value": "{salvage.color.line-hairline}"
+        "$value": "{theme.color.line-hairline}"
       },
       "edge": {
         "$type": "color",
-        "$value": "{salvage.color.line-edge}"
+        "$value": "{theme.color.line-edge}"
       },
       "strong": {
         "$type": "color",
-        "$value": "{salvage.color.line-strong}"
+        "$value": "{theme.color.line-strong}"
       }
     },
     "scrim": {
       "$type": "color",
-      "$value": "{salvage.color.scrim}"
+      "$value": "{theme.color.scrim}"
     },
     "focus": {
       "$type": "color",
-      "$value": "{salvage.color.accent}"
+      "$value": "{theme.color.accent}"
     }
   },
   "space": {
     "xxs": {
       "$type": "dimension",
-      "$value": "{salvage.spacing.space-0-5}"
+      "$value": "{theme.spacing.space-0-5}"
     },
     "xs": {
       "$type": "dimension",
-      "$value": "{salvage.spacing.space-1}"
+      "$value": "{theme.spacing.space-1}"
     },
     "sm": {
       "$type": "dimension",
-      "$value": "{salvage.spacing.space-2}"
+      "$value": "{theme.spacing.space-2}"
     },
     "md": {
       "$type": "dimension",
-      "$value": "{salvage.spacing.space-3}"
+      "$value": "{theme.spacing.space-3}"
     },
     "lg": {
       "$type": "dimension",
-      "$value": "{salvage.spacing.space-4}"
+      "$value": "{theme.spacing.space-4}"
     },
     "xl": {
       "$type": "dimension",
-      "$value": "{salvage.spacing.space-6}"
+      "$value": "{theme.spacing.space-6}"
     },
     "xxl": {
       "$type": "dimension",
-      "$value": "{salvage.spacing.space-8}"
+      "$value": "{theme.spacing.space-8}"
     }
   },
   "radius": {
     "none": {
       "$type": "dimension",
-      "$value": "{salvage.radius.r-0}"
+      "$value": "{theme.radius.r-0}"
     },
     "sm": {
       "$type": "dimension",
-      "$value": "{salvage.radius.r-sm}"
+      "$value": "{theme.radius.r-sm}"
     },
     "md": {
       "$type": "dimension",
-      "$value": "{salvage.radius.r-md}"
+      "$value": "{theme.radius.r-md}"
     },
     "lg": {
       "$type": "dimension",
-      "$value": "{salvage.radius.r-lg}"
+      "$value": "{theme.radius.r-lg}"
     },
     "pill": {
       "$type": "dimension",
-      "$value": "{salvage.radius.r-pill}"
+      "$value": "{theme.radius.r-pill}"
     }
   },
   "lineWidth": {
     "thin": {
       "$type": "dimension",
-      "$value": "{salvage.border.bw}"
+      "$value": "{theme.border.bw}"
     },
     "thick": {
       "$type": "dimension",
-      "$value": "{salvage.border.bw-thick}"
+      "$value": "{theme.border.bw-thick}"
     }
   },
   "motion": {
     "duration": {
       "fast": {
         "$type": "duration",
-        "$value": "{salvage.motion.dur-fast}"
+        "$value": "{theme.motion.dur-fast}"
       },
       "normal": {
         "$type": "duration",
-        "$value": "{salvage.motion.dur}"
+        "$value": "{theme.motion.dur}"
       },
       "slow": {
         "$type": "duration",
-        "$value": "{salvage.motion.dur-slow}"
+        "$value": "{theme.motion.dur-slow}"
       }
     },
     "easing": {
       "standard": {
         "$type": "cubicBezier",
-        "$value": "{salvage.motion.ease}"
+        "$value": "{theme.motion.ease}"
       },
       "enter": {
         "$type": "cubicBezier",
-        "$value": "{salvage.motion.ease-out}"
+        "$value": "{theme.motion.ease-out}"
       }
     }
   },
@@ -953,19 +953,19 @@
     "sm": {
       "fontSize": {
         "$type": "dimension",
-        "$value": "{salvage.fontSize.fs-sm}"
+        "$value": "{theme.fontSize.fs-sm}"
       }
     },
     "md": {
       "fontSize": {
         "$type": "dimension",
-        "$value": "{salvage.fontSize.fs-base}"
+        "$value": "{theme.fontSize.fs-base}"
       }
     },
     "lg": {
       "fontSize": {
         "$type": "dimension",
-        "$value": "{salvage.fontSize.fs-md}"
+        "$value": "{theme.fontSize.fs-md}"
       }
     }
   },
@@ -973,39 +973,39 @@
     "accent": {
       "color": {
         "$type": "color",
-        "$value": "{salvage.color.accent}"
+        "$value": "{theme.color.accent}"
       },
       "subtle": {
         "$type": "color",
-        "$value": "{salvage.color.bg-active}"
+        "$value": "{theme.color.bg-active}"
       },
       "onColor": {
         "$type": "color",
-        "$value": "{salvage.color.accent-contrast}"
+        "$value": "{theme.color.accent-contrast}"
       }
     },
     "info": {
       "color": {
         "$type": "color",
-        "$value": "{salvage.color.status-info}"
+        "$value": "{theme.color.status-info}"
       }
     },
     "positive": {
       "color": {
         "$type": "color",
-        "$value": "{salvage.color.status-ok}"
+        "$value": "{theme.color.status-ok}"
       }
     },
     "warning": {
       "color": {
         "$type": "color",
-        "$value": "{salvage.color.status-warn}"
+        "$value": "{theme.color.status-warn}"
       }
     },
     "danger": {
       "color": {
         "$type": "color",
-        "$value": "{salvage.color.status-crit}"
+        "$value": "{theme.color.status-crit}"
       }
     }
   },
@@ -1013,37 +1013,37 @@
     "hover": {
       "wash": {
         "$type": "color",
-        "$value": "{salvage.color.bg-hover}"
+        "$value": "{theme.color.bg-hover}"
       }
     },
     "active": {
       "wash": {
         "$type": "color",
-        "$value": "{salvage.color.bg-active}"
+        "$value": "{theme.color.bg-active}"
       }
     }
   },
   "focusRing": {
     "width": {
       "$type": "dimension",
-      "$value": "{salvage.border.bw}"
+      "$value": "{theme.border.bw}"
     }
   },
   "shadow": {
     "overlay": {
       "$type": "shadow",
-      "$value": "{salvage.shadow.shadow-pop}"
+      "$value": "{theme.shadow.shadow-pop}"
     }
   },
   "styles": {
     "pane": {
       "borderRadius": {
-        "$value": "{salvage.radius.radius-panel}"
+        "$value": "{theme.radius.radius-panel}"
       }
     },
     "button": {
       "borderRadius": {
-        "$value": "{salvage.radius.radius-ui}"
+        "$value": "{theme.radius.radius-ui}"
       }
     }
   }

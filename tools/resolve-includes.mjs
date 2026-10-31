@@ -5,9 +5,9 @@
  * Each #include is resolved against the including file's directory (quoted
  * includes only) and then every library's include root, which approximates
  * the build's lookup with every library's root visible to every file. A salal
- * file sees only salal's roots, as salal's own build does, and a salvage file
- * only those and its own, since salvage links nothing else; so a header salal
- * generates (ui/theme/Tokens.h, salvage/Tokens.h) counts as external. The
+ * file sees only salal's roots, as salal's own build does, and a theme file
+ * only those and its own, since theme links nothing else; so a header salal
+ * generates (ui/theme/Tokens.h, theme/DesignTokens.h) counts as external. The
  * roots are the library directories under libs/, plus libs/ itself for
  * planet-view, which exports it; they are hardcoded here and match CMake as of
  * 2026-10-31. foundation, renderer, app and salal's ui are not in this repo:
@@ -39,7 +39,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const LIBS = ["foundation", "geometry", "renderer", "salal-ui", "salvage", "ui", "world", "planet-view", "game-systems", "app", "engine"];
+const LIBS = ["foundation", "geometry", "renderer", "salal-ui", "theme", "ui", "world", "planet-view", "game-systems", "app", "engine"];
 // salal's libraries: the name each goes by here, and its directory under the checkout's libs/.
 const SALAL_LIBS = new Map([
 	["foundation", "foundation"],
@@ -57,7 +57,7 @@ const ALLOWED = {
 	geometry: new Set(["geometry", "foundation", "external"]),
 	renderer: new Set(["renderer", "foundation", "external"]),
 	"salal-ui": new Set(["salal-ui", "renderer", "foundation", "external"]),
-	salvage: new Set(["salvage", "salal-ui", "renderer", "foundation", "external"]),
+	theme: new Set(["theme", "salal-ui", "renderer", "foundation", "external"]),
 	ui: new Set(["ui", "renderer", "foundation", "external"]),
 	world: new Set(["world", "renderer", "foundation", "external"]),
 	"planet-view": new Set(["planet-view", "world", "renderer", "foundation", "external"]),
@@ -86,7 +86,7 @@ function includeRoots(dirs, root) {
 		dirs.get("geometry"),
 		dirs.get("renderer"),
 		dirs.get("salal-ui"), // before libs/, which answers ui/X.h with worldsim's ui
-		dirs.get("salvage"),
+		dirs.get("theme"),
 		dirs.get("ui"),
 		dirs.get("world"),
 		dirs.get("planet-view"),
@@ -210,7 +210,7 @@ function collectRows(root, salal) {
 	const dirs = libDirs(root, salal);
 	const roots = includeRoots(dirs, root);
 	const salalRoots = [...SALAL_LIBS.keys()].map((lib) => dirs.get(lib));
-	const salvageRoots = [...salalRoots, dirs.get("salvage")];
+	const themeRoots = [...salalRoots, dirs.get("theme")];
 	const rows = [];
 	for (const lib of LIBS) {
 		for (const full of walk(dirs.get(lib))) {
@@ -229,7 +229,7 @@ function collectRows(root, salal) {
 				const m = INC.exec(lines[i]);
 				if (!m) continue;
 				const [, form, target] = m;
-				const libRoots = SALAL_LIBS.has(lib) ? salalRoots : lib === "salvage" ? salvageRoots : roots;
+				const libRoots = SALAL_LIBS.has(lib) ? salalRoots : lib === "theme" ? themeRoots : roots;
 				const cands = resolveInclude(libRoots, full, form, target);
 				let dst = "external";
 				let resolved = "";
