@@ -1,74 +1,43 @@
 #pragma once
 
-// SpeedButton - Individual speed control button with SVG icon.
-//
-// Used in TopBar for pause/1x/3x/10x speed controls.
-// Shows highlighted state when this speed is currently active.
-// Extends UI::Component to use the Layer system for child management.
+// SpeedButton - one of the TopBar's pause, 1x, 3x and 10x buttons: an icon on the inset surface, filled
+// with the accent while it's the current speed.
 
-#include <component/Component.h>
-#include <components/icon/Icon.h>
-#include <input/InputEvent.h>
-#include <layer/Layer.h>
-#include <shapes/Shapes.h>
+#include <ui/components/Control.h>
+#include <ui/shapes/Icon.h>
 
 #include <functional>
 #include <string>
 
 namespace world_sim {
 
-/// Speed control button with active state indicator.
-class SpeedButton : public UI::Component {
-  public:
-	struct Args {
-		std::string iconPath;  // Path to SVG icon (e.g., "ui/icons/pause.svg")
-		Foundation::Vec2 position{0.0F, 0.0F};
-		std::function<void()> onClick = nullptr;
-		std::string id = "speed_button";
+	class SpeedButton : public ui::Control {
+	  public:
+		struct Args {
+			UI_COMMON_ARGS
+			std::string			  icon; // a name in theme::iconAtlas()
+			std::function<void()> onPress;
+		};
+
+		explicit SpeedButton(const Args& args);
+
+		// Whether this is the speed the game runs at.
+		void			   setCurrent(bool value);
+		[[nodiscard]] bool isCurrent() const { return current; }
+
+		[[nodiscard]] const char* typeName() const override { return "SpeedButton"; }
+
+	  protected:
+		void onMount() override;
+		void activate() override;
+
+	  private:
+		void tint();
+
+		std::string			  iconName;
+		std::function<void()> onPress;
+		bool				  current = false;
+		ui::Ref<ui::Icon>	  icon;
 	};
 
-	explicit SpeedButton(const Args& args);
-
-	/// Set whether this button represents the current speed
-	void setActive(bool active);
-
-	/// Check if active
-	[[nodiscard]] bool isActive() const { return active; }
-
-	/// Update position
-	void setPosition(float x, float y) override;
-
-	/// Handle input events
-	bool handleEvent(UI::InputEvent& event) override;
-
-	// render() inherited from Component - auto-renders children
-
-	/// Get width for layout
-	float getWidth() const override { return kButtonSize; }
-
-	/// Get height for layout
-	float getHeight() const override { return kButtonSize; }
-
-	// Owned string: stable storage for the debug UI-tree
-	const char* debugId() const override { return id.c_str(); }
-
-  private:
-	static constexpr float kButtonSize = 28.0F;
-	static constexpr float kIconSize = 16.0F;
-
-	std::function<void()> onClick;
-	std::string id;
-
-	UI::LayerHandle backgroundHandle;
-	UI::LayerHandle iconHandle;
-
-	bool active = false;
-	bool hovered = false;
-	bool pressed = false;
-
-	void updateAppearance();
-	void positionElements();
-	[[nodiscard]] bool containsPoint(Foundation::Vec2 point) const override;
-};
-
-}  // namespace world_sim
+} // namespace world_sim

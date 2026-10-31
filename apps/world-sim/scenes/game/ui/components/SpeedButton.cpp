@@ -1,158 +1,55 @@
 #include "SpeedButton.h"
 
-#include <theme/Tokens.h>
+#include "scenes/game/ui/Look.h"
+
+#include <ui/Context.h>
 
 namespace world_sim {
 
-SpeedButton::SpeedButton(const Args& args)
-	: onClick(args.onClick)
-	, id(args.id) {
-	position = args.position;
-	size = {kButtonSize, kButtonSize};
+	namespace {
+		constexpr float kButtonSize = 28.0F;
+		constexpr float kIconSize = 16.0F;
+	} // namespace
 
-	// Create background rectangle. Children carry no ids: a c_str() captured
-	// here would dangle once this component moves into the parent's arena
-	// (invalid bytes in /api/ui/tree); debugId below names the button itself.
-	backgroundHandle = addChild(UI::Rectangle(UI::Rectangle::Args{
-		.position = {0.0F, 0.0F},
-		.size = {kButtonSize, kButtonSize},
-		.style =
-			{
-				.fill = UI::bg_inset,
-				.border =
-					Foundation::BorderStyle{
-						.color = UI::line_edge,
-						.width = 1.0F,
-						.cornerRadius = 4.0F,
-						.position = Foundation::BorderPosition::Inside},
-			},
-		.zIndex = 501}));
+	SpeedButton::SpeedButton(const Args& args)
+		: iconName(args.icon),
+		  onPress(args.onPress) {}
 
-	// Create icon centered in button
-	iconHandle = addChild(UI::Icon(UI::Icon::Args{
-		.position = {0.0F, 0.0F},
-		.size = kIconSize,
-		.svgPath = "assets/" + args.iconPath,
-		.tint = UI::text_dim}));
-
-	if (auto* iconPtr = getChild<UI::Icon>(iconHandle)) {
-		iconPtr->zIndex = 502;
+	void SpeedButton::onMount() {
+		Control::onMount();
+		setSize({kButtonSize, kButtonSize});
+		setLayout({.display = ui::Display::Flex, .alignItems = ui::AlignItems::Center, .justifyContent = ui::JustifyContent::Center});
+		icon = addChild<ui::Icon>({.size = {kIconSize, kIconSize}, .name = iconName});
+		tint();
 	}
 
-	positionElements();
-}
-
-void SpeedButton::setActive(bool newActive) {
-	if (active == newActive) {
-		return;
-	}
-	active = newActive;
-	updateAppearance();
-}
-
-void SpeedButton::setPosition(float x, float y) {
-	Component::setPosition(x, y);
-	positionElements();
-}
-
-void SpeedButton::positionElements() {
-	if (auto* bg = getChild<UI::Rectangle>(backgroundHandle)) {
-		bg->setPosition(position.x, position.y);
-	}
-	if (auto* iconPtr = getChild<UI::Icon>(iconHandle)) {
-		float iconOffset = (kButtonSize - kIconSize) / 2.0F;
-		iconPtr->setPosition(position.x + iconOffset, position.y + iconOffset);
-	}
-}
-
-bool SpeedButton::handleEvent(UI::InputEvent& event) {
-	if (event.type == UI::InputEvent::Type::MouseMove) {
-		bool wasHovered = hovered;
-		hovered = containsPoint(event.position);
-		if (wasHovered != hovered) {
-			updateAppearance();
-		}
-		return false;  // Don't consume mouse move
-	}
-
-	if (event.type == UI::InputEvent::Type::MouseDown) {
-		if (containsPoint(event.position)) {
-			pressed = true;
-			updateAppearance();
-			return true;
+	void SpeedButton::setCurrent(bool value) {
+		if (current != value) {
+			current = value;
+			tint();
 		}
 	}
 
-	if (event.type == UI::InputEvent::Type::MouseUp) {
-		if (pressed) {
-			pressed = false;
-			updateAppearance();
-			if (containsPoint(event.position) && onClick) {
-				onClick();
-			}
-			return true;
+	void SpeedButton::activate() {
+		if (onPress) {
+			onPress();
 		}
 	}
 
-	return false;
-}
-
-void SpeedButton::updateAppearance() {
-	auto* bg = getChild<UI::Rectangle>(backgroundHandle);
-	auto* iconPtr = getChild<UI::Icon>(iconHandle);
-	if (!bg || !iconPtr) {
-		return;
+	void SpeedButton::tint() {
+		if (getContext() == nullptr) {
+			return;
+		}
+		const ui::Theme& theme = getContext()->getTheme();
+		setStyle({
+			.backgroundColor = theme.get(current ? look::t::color::accent : look::t::color::bgInset),
+			.borderColor = theme.get(current ? look::t::color::accent : look::t::color::lineEdge),
+			.borderWidth = theme.get(look::t::border::bw),
+			.borderRadius = theme.get(look::t::radius::rMd),
+		});
+		if (ui::Icon* shown = icon.get()) {
+			shown->setStyle({.color = theme.get(current ? look::t::color::accentContrast : look::t::color::textDim)});
+		}
 	}
 
-	Foundation::Color bgColor;
-	Foundation::Color borderColor;
-	Foundation::Color iconColor;
-
-	if (active) {
-		// Active state - highlighted
-		bgColor = UI::accent;
-		borderColor = UI::accent;
-		iconColor = UI::accent_contrast;
-	} else if (pressed) {
-		// Pressed state - darker
-		bgColor = Foundation::Color{
-			UI::bg_inset.r - 0.05F,
-			UI::bg_inset.g - 0.05F,
-			UI::bg_inset.b - 0.05F,
-			UI::bg_inset.a};
-		borderColor = UI::line_edge;
-		iconColor = UI::text_dim;
-	} else if (hovered) {
-		// Hover state - lighter
-		bgColor = Foundation::Color{
-			UI::bg_inset.r + 0.1F,
-			UI::bg_inset.g + 0.1F,
-			UI::bg_inset.b + 0.1F,
-			UI::bg_inset.a};
-		borderColor = UI::line_edge;
-		iconColor = UI::text_dim;
-	} else {
-		// Normal state
-		bgColor = UI::bg_inset;
-		borderColor = UI::line_edge;
-		iconColor = UI::text_dim;
-	}
-
-	bg->style.fill = bgColor;
-	bg->style.border = Foundation::BorderStyle{
-		.color = borderColor,
-		.width = 1.0F,
-		.cornerRadius = 4.0F,
-		.position = Foundation::BorderPosition::Inside};
-
-	iconPtr->setTint(iconColor);
-}
-
-bool SpeedButton::containsPoint(Foundation::Vec2 point) const {
-	return point.x >= position.x && point.x < position.x + kButtonSize &&
-		   point.y >= position.y && point.y < position.y + kButtonSize;
-}
-
-// render() inherited from Component - automatically renders all children
-
-}  // namespace world_sim
+} // namespace world_sim

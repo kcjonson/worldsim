@@ -1,106 +1,69 @@
 #include "GlobalTaskRow.h"
 
-#include <primitives/Primitives.h>
-#include <theme/Tokens.h>
+#include "scenes/game/ui/Look.h"
+
+#include <ui/Context.h>
 
 #include <format>
+#include <string>
 
 namespace world_sim {
 
-GlobalTaskRow::GlobalTaskRow(const Args& args)
-	: rowWidth(args.width),
-	  showKnownBy(args.showKnownBy) {
+	namespace {
 
-	// Set component size for layout (LayoutContainer uses this)
-	size = {rowWidth, kRowHeight};
-	margin = 2.0F;
+		constexpr float kPadding = 4.0F;
+		constexpr float kLine1Size = 12.0F;
+		constexpr float kLine2Size = 10.0F;
 
-	// Line 1: "Harvest Berry Bush      (10, 15)  5m"
-	std::string line1Text = std::format("{:<20}  {}  {}",
-		args.task.description,
-		args.task.position,
-		args.task.distance);
+		ui::ColorToken statusColor(const adapters::GlobalTaskDisplayData& task) {
+			if (task.isMine) {
+				return look::t::color::data;
+			}
+			if (task.isBlocked || task.status == "Far" || task.status == "Waiting for harvest") {
+				return look::t::color::textDim;
+			}
+			if (task.isReserved) {
+				return look::t::color::statusWarn;
+			}
+			return look::t::color::statusOk;
+		}
 
-	// No per-child ids: a temporary's c_str() stored here dangles (garbage
-	// bytes in /api/ui/tree that can break the JSON dump).
-	line1Handle = addChild(UI::Text(UI::Text::Args{
-		.position = {kPadding, kPadding},
-		.text = line1Text,
-		.style = {
-			.color = UI::text,
-			.fontSize = kLine1FontSize
-		},
-		.id = nullptr
-	}));
+	} // namespace
 
-	// Line 2: "Available • Known by: Bob, Alice" or "Blocked • 0/11 materials"
-	std::string line2Text = args.task.status;
-	if (!args.task.statusDetail.empty()) {
-		line2Text += " - " + args.task.statusDetail;
-	}
-	if (showKnownBy && !args.task.knownBy.empty()) {
-		line2Text += " - Known by: " + args.task.knownBy;
-	}
+	GlobalTaskRow::GlobalTaskRow(const Args& args)
+		: task(args.task),
+		  showKnownBy(args.showKnownBy) {}
 
-	line2Handle = addChild(UI::Text(UI::Text::Args{
-		.position = {kPadding, kLineSpacing},
-		.text = line2Text,
-		.style = {
-			.color = getStatusColor(args.task),
-			.fontSize = kLine2FontSize
-		},
-		.id = nullptr
-	}));
-}
-
-void GlobalTaskRow::setPosition(float x, float y) {
-	Component::setPosition(x, y);
-
-	// Update child positions relative to our new position
-	Foundation::Vec2 contentPos = getContentPosition();
-	if (auto* text1 = getChild<UI::Text>(line1Handle)) {
-		text1->position = {contentPos.x + kPadding, contentPos.y + kPadding};
-	}
-	if (auto* text2 = getChild<UI::Text>(line2Handle)) {
-		text2->position = {contentPos.x + kPadding, contentPos.y + kLineSpacing};
-	}
-}
-
-void GlobalTaskRow::setTaskData(const adapters::GlobalTaskDisplayData& task) {
-	if (auto* text1 = getChild<UI::Text>(line1Handle)) {
-		text1->text = std::format("{:<20}  {}  {}",
-			task.description,
-			task.position,
-			task.distance);
+	void GlobalTaskRow::onMount() {
+		const ui::Theme& theme = getContext()->getTheme();
+		setLayout({.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = 2.0F, .padding = kPadding});
+		setMargin(2.0F);
+		line1 = addChild<ui::Text>({.style = {.color = theme.get(look::t::color::text), .fontSize = kLine1Size}});
+		line2 = addChild<ui::Text>({.style = {.fontSize = kLine2Size}});
+		show();
 	}
 
-	if (auto* text2 = getChild<UI::Text>(line2Handle)) {
-		std::string line2Text = task.status;
+	void GlobalTaskRow::setTaskData(const adapters::GlobalTaskDisplayData& value) {
+		task = value;
+		show();
+	}
+
+	void GlobalTaskRow::show() {
+		ui::Text* first = line1.get();
+		ui::Text* second = line2.get();
+		if (first == nullptr || second == nullptr) {
+			return;
+		}
+		first->setText(std::format("{:<20}  {}  {}", task.description, task.position, task.distance));
+		std::string status = task.status;
 		if (!task.statusDetail.empty()) {
-			line2Text += " - " + task.statusDetail;
+			status += " - " + task.statusDetail;
 		}
 		if (showKnownBy && !task.knownBy.empty()) {
-			line2Text += " - Known by: " + task.knownBy;
+			status += " - Known by: " + task.knownBy;
 		}
-		text2->text = line2Text;
-		text2->style.color = getStatusColor(task);
+		second->setText(status);
+		second->setStyle({.color = getContext()->getTheme().get(statusColor(task)), .fontSize = kLine2Size});
 	}
-}
-
-Foundation::Color GlobalTaskRow::getStatusColor(const adapters::GlobalTaskDisplayData& task) const {
-	if (task.isMine) {
-		return UI::data;
-	}
-	if (task.isBlocked) {
-		return UI::text_dim; // Blocked tasks shown in muted color
-	}
-	if (task.isReserved) {
-		return UI::status_warn;
-	}
-	if (task.status == "Far" || task.status == "Waiting for harvest") {
-		return UI::text_dim;
-	}
-	return UI::status_ok;
-}
 
 } // namespace world_sim

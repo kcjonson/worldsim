@@ -23,6 +23,7 @@ add_executable(world-sim
     scenes/game/ui/components/NeedBar.cpp
     scenes/game/ui/components/ZoomControl.cpp
     scenes/game/ui/components/SpeedButton.cpp
+    scenes/game/ui/Look.cpp
     # Game scene UI - adapters
     scenes/game/ui/adapters/ColonistAdapter.cpp
     scenes/game/ui/adapters/CraftingAdapter.cpp
@@ -99,6 +100,7 @@ target_link_libraries(world-sim
         game-systems
         world
         ui
+        theme
         salal::renderer
         salal::foundation
         assets
