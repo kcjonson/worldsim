@@ -610,10 +610,25 @@ namespace {
 			refreshThicknessPresets(m_drawingSystem->activeMaterial());
 		}
 
-		// What salal's ui didn't take: a release for the drawing tool, placement or selection, and the
-		// scroll that zooms. The tools' previews follow the pointer in update().
+		// What salal's ui didn't take: Escape, a release for the drawing tool, placement or selection, and
+		// the scroll that zooms. The tools' previews follow the pointer in update().
 		bool handleEvent(const foundation::InputEvent& event) override {
 			using Type = foundation::InputEvent::Type;
+			if (event.type == Type::KeyDown && event.key == foundation::Key::Escape && !event.repeat) {
+				// The ui closes a dialog its focus is in; the dossier, opened from the world, has none. So
+				// the top menu, dialog or panel closes first, then the drawing tool or placement cancels.
+				if (dismissTopOverlay()) {
+					return true;
+				}
+				if (m_drawingSystem->isActive()) {
+					m_drawingSystem->cancel();
+				} else if (m_placementSystem->isActive()) {
+					m_placementSystem->cancel();
+				} else {
+					owner->scenes().switchTo(world_sim::scenes::MainMenu.name);
+				}
+				return true;
+			}
 			if (event.type == Type::Scroll) {
 				m_pendingScroll += event.scroll.y;
 				return true;
@@ -702,18 +717,6 @@ namespace {
 			// Fade out the player move-order marker.
 			if (m_moveMarkerTtl > 0.0F) {
 				m_moveMarkerTtl -= dt;
-			}
-
-			// Handle Escape - cancel the drawing tool / placement first, then exit
-			if (pressed(foundation::Key::Escape)) {
-				if (m_drawingSystem->isActive()) {
-					m_drawingSystem->cancel();
-				} else if (m_placementSystem->isActive()) {
-					m_placementSystem->cancel();
-				} else {
-					owner->scenes().switchTo(world_sim::scenes::MainMenu.name);
-					return; // Don't process rest of update when switching scenes
-				}
 			}
 
 			// Backspace removes the last placed point while drawing.
@@ -1111,6 +1114,21 @@ namespace {
 		const char* name() const override { return kSceneName; }
 
 	  private:
+		// The topmost menu, dialog or panel, closed as the stack closes it: false when there is none.
+		bool dismissTopOverlay() {
+			const std::vector<ui::ComponentId> open = ui().overlays();
+			for (auto it = open.rbegin(); it != open.rend(); ++it) {
+				ui::Component* entry = ui().find(*it);
+				if (entry == nullptr || entry->getOverlayKind() == ui::OverlayKind::Toast ||
+					entry->getOverlayKind() == ui::OverlayKind::Tooltip) {
+					continue;
+				}
+				ui().dismissOverlay(entry->self());
+				return true;
+			}
+			return false;
+		}
+
 		/// Initialize ECS world with systems and spawn initial entities.
 		void initializeECS() {
 			LOG_INFO(Game, "Initializing ECS World");

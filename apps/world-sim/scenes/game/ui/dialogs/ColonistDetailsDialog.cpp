@@ -9,14 +9,15 @@ namespace world_sim {
 
 	namespace {
 
-		constexpr const char* kTabBio = "bio";
-		constexpr const char* kTabNeeds = "needs";
-		constexpr const char* kTabSkills = "skills";
-		constexpr const char* kTabSocial = "social";
-		constexpr const char* kTabGear = "gear";
-		constexpr const char* kTabMemory = "memory";
-		constexpr const char* kTabTasks = "tasks";
-		constexpr const char* kTabLog = "log";
+		// The tab bar makes each tab's ui id "tab_" + its id, so these don't share the entity panel's.
+		constexpr const char* kTabBio = "dossier_bio";
+		constexpr const char* kTabNeeds = "dossier_needs";
+		constexpr const char* kTabSkills = "dossier_skills";
+		constexpr const char* kTabSocial = "dossier_social";
+		constexpr const char* kTabGear = "dossier_gear";
+		constexpr const char* kTabMemory = "dossier_memory";
+		constexpr const char* kTabTasks = "dossier_tasks";
+		constexpr const char* kTabLog = "dossier_log";
 
 		// The prototype dossier's proportions, 760x900 design px.
 		constexpr float kDialogWidth = 760.0F;

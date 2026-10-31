@@ -49,7 +49,7 @@ namespace world_sim {
 		});
 		debugOverlay = root.addChild<DebugOverlay>({.id = "debug_overlay", .layout = absolute({.bottom = 20.0F, .left = 0.0F})});
 		zoomControlPanel = root.addChild<ZoomControlPanel>({
-			.id = "zoom_control",
+			.id = "zoom_panel",
 			.layout = absolute({.right = kEdge, .bottom = kEdge}),
 			.onZoomIn = args.onZoomIn,
 			.onZoomOut = args.onZoomOut,
