@@ -4,8 +4,8 @@ namespace ecs {
 
 /// Cardinal direction for sprite selection (4-way directional sprites)
 enum class CardinalDirection {
-    Up,     // +Y direction (facing away from camera in top-down view)
-    Down,   // -Y direction (facing toward camera - default for colonists)
+    Up,     // -Y direction (screen-up, facing away from camera in top-down view)
+    Down,   // +Y direction (screen-down, facing toward camera - default for colonists)
     Left,   // -X direction
     Right   // +X direction
 };

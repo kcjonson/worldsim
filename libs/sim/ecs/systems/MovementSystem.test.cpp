@@ -9,6 +9,7 @@
 #include "TimeSystem.h"
 
 #include "../World.h"
+#include "../components/FacingDirection.h"
 #include "../components/Movement.h"
 #include "../components/NavPath.h"
 #include "../components/Transform.h"
@@ -110,7 +111,7 @@ TEST_F(MovementTimeScaleTest, FastForwardFollowsNavPathAndArrives) {
 	auto			entity = createMover({0.0F, 0.0F}, goal);
 
 	NavPath path;
-	path.waypoints = {{3.0F, 0.0F}, {3.0F, 3.0F}, goal}; // right, up, right -- two corners to round
+	path.waypoints = {{3.0F, 0.0F}, {3.0F, 3.0F}, goal}; // right, down, right -- two corners to round
 	path.valid	   = true;
 	world->addComponent<NavPath>(entity, path);
 
@@ -120,6 +121,29 @@ TEST_F(MovementTimeScaleTest, FastForwardFollowsNavPathAndArrives) {
 	const auto* pos = world->getComponent<Position>(entity);
 	EXPECT_LT(glm::distance(pos->value, goal), 0.1F) << "stops on the final waypoint";
 	EXPECT_TRUE(world->getComponent<NavPath>(entity)->done()) << "the path is fully consumed";
+}
+
+// World +Y draws lower on screen, so a mover heading +Y faces the camera (the _down sprite) and one
+// heading -Y shows its back (_up). Guards the inverted quantization that rendered the back of the
+// head while walking toward the viewer.
+TEST_F(MovementTimeScaleTest, FacingFollowsScreenDirection) {
+	timeSystem->setSpeed(GameSpeed::Normal);
+	const struct {
+		glm::vec2		  target;
+		CardinalDirection expected;
+	} cases[] = {
+		{{0.0F, 5.0F}, CardinalDirection::Down},
+		{{0.0F, -5.0F}, CardinalDirection::Up},
+		{{5.0F, 0.0F}, CardinalDirection::Right},
+		{{-5.0F, 0.0F}, CardinalDirection::Left},
+	};
+	for (const auto& c : cases) {
+		auto entity = createMover({0.0F, 0.0F}, c.target);
+		world->addComponent<FacingDirection>(entity, FacingDirection{});
+		world->update(kDt);
+		EXPECT_EQ(world->getComponent<FacingDirection>(entity)->direction, c.expected)
+			<< "moving toward (" << c.target.x << ", " << c.target.y << ")";
+	}
 }
 
 }  // namespace

@@ -139,16 +139,17 @@ void MovementSystem::update(float deltaTime) {
             float angle = std::atan2(vel.value.y, vel.value.x);
             constexpr float kQuarterPi = 0.25f * std::numbers::pi_v<float>;
 
+            // World +Y draws lower on screen (toward the viewer), so +Y velocity is Down.
             // Right: -45° to 45° (-0.25π to 0.25π)
-            // Up: 45° to 135° (0.25π to 0.75π)
+            // Down: 45° to 135° (0.25π to 0.75π)
             // Left: 135° to -135° (0.75π to -0.75π, wrapping)
-            // Down: -135° to -45° (-0.75π to -0.25π)
+            // Up: -135° to -45° (-0.75π to -0.25π)
             if (angle >= -kQuarterPi && angle < kQuarterPi) {
                 facing.direction = CardinalDirection::Right;
             } else if (angle >= kQuarterPi && angle < 3.0f * kQuarterPi) {
-                facing.direction = CardinalDirection::Up;
-            } else if (angle >= -3.0f * kQuarterPi && angle < -kQuarterPi) {
                 facing.direction = CardinalDirection::Down;
+            } else if (angle >= -3.0f * kQuarterPi && angle < -kQuarterPi) {
+                facing.direction = CardinalDirection::Up;
             } else {
                 facing.direction = CardinalDirection::Left;
             }
