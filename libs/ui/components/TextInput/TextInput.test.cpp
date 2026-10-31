@@ -134,12 +134,12 @@ namespace UI {
 			Renderer::Primitives::shutdown();
 		}
 
-		// The last flush's vertices, as uploaded.
-		std::vector<Renderer::BatchVertex> uploaded() const {
-			const std::span<const uint8_t>	   bytes = gpu->bufferContents(gpu->geometry(gpu->draws().back().call.geometry)->vertices);
-			std::vector<Renderer::BatchVertex> vertices(bytes.size() / sizeof(Renderer::BatchVertex));
-			std::memcpy(vertices.data(), bytes.data(), vertices.size() * sizeof(Renderer::BatchVertex));
-			return vertices;
+		// The last flush's quads, as uploaded.
+		std::vector<Renderer::BatchInstance> uploaded() const {
+			const std::span<const uint8_t>		 bytes = gpu->bufferContents(gpu->geometry(gpu->draws().back().call.geometry)->vertices);
+			std::vector<Renderer::BatchInstance> quads(bytes.size() / sizeof(Renderer::BatchInstance));
+			std::memcpy(quads.data(), bytes.data(), quads.size() * sizeof(Renderer::BatchInstance));
+			return quads;
 		}
 
 		Renderer::backend::NullBackend* gpu = nullptr;
@@ -169,15 +169,16 @@ namespace UI {
 		// The caret is the last thing drawn: whole, across the clip's left edge on screen, under no clip.
 		const float clipLeft = clip.x + 100.0F;
 		ASSERT_FALSE(gpu->draws().empty());
-		const std::vector<Renderer::BatchVertex> vertices = uploaded();
-		ASSERT_GE(vertices.size(), 4U);
-		float left = vertices.back().position.x;
-		float right = left;
-		for (size_t i = vertices.size() - 4; i < vertices.size(); ++i) {
-			left = std::min(left, vertices[i].position.x);
-			right = std::max(right, vertices[i].position.x);
-			EXPECT_EQ(vertices[i].clipBounds, Foundation::Vec4(0.0F));
+		const std::vector<Renderer::BatchInstance> quads = uploaded();
+		ASSERT_FALSE(quads.empty());
+		const Renderer::BatchInstance& caret = quads.back();
+		float						   left = caret.corners[0].x;
+		float						   right = left;
+		for (const Foundation::Vec2& corner : caret.corners) {
+			left = std::min(left, corner.x);
+			right = std::max(right, corner.x);
 		}
+		EXPECT_EQ(caret.clip, Foundation::Vec4(0.0F));
 		EXPECT_LT(left, clipLeft);
 		EXPECT_GT(right, clipLeft);
 	}

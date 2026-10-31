@@ -4,6 +4,7 @@
 #include "focus/FocusManager.h"
 #include "shapes/Shapes.h"
 #include <backend/NullBackend.h>
+#include <glm/gtc/packing.hpp>
 #include <gtest/gtest.h>
 #include <primitives/Primitives.h>
 
@@ -300,12 +301,12 @@ class DialogRenderTest : public DialogTest {
 		DialogTest::TearDown();
 	}
 
-	// The last flush's vertices, as uploaded.
-	std::vector<Renderer::BatchVertex> uploaded() const {
-		const std::span<const uint8_t>	   bytes = gpu->bufferContents(gpu->geometry(gpu->draws().back().call.geometry)->vertices);
-		std::vector<Renderer::BatchVertex> vertices(bytes.size() / sizeof(Renderer::BatchVertex));
-		std::memcpy(vertices.data(), bytes.data(), vertices.size() * sizeof(Renderer::BatchVertex));
-		return vertices;
+	// The last flush's quads, as uploaded.
+	std::vector<Renderer::BatchInstance> uploaded() const {
+		const std::span<const uint8_t>		 bytes = gpu->bufferContents(gpu->geometry(gpu->draws().back().call.geometry)->vertices);
+		std::vector<Renderer::BatchInstance> quads(bytes.size() / sizeof(Renderer::BatchInstance));
+		std::memcpy(quads.data(), bytes.data(), quads.size() * sizeof(Renderer::BatchInstance));
+		return quads;
 	}
 
 	Renderer::backend::NullBackend* gpu = nullptr;
@@ -328,16 +329,16 @@ TEST_F(DialogRenderTest, AScrollListInADialogDrawsClippedToItsViewportOnScreen) 
 
 	ASSERT_FALSE(gpu->draws().empty());
 	const Foundation::Rect content = dialog.getContentBounds();
-	int					   listVertices = 0;
-	for (const Renderer::BatchVertex& vertex : uploaded()) {
-		if (vertex.color != listColor.toVec4()) {
+	int					   listQuads = 0;
+	for (const Renderer::BatchInstance& quad : uploaded()) {
+		if (quad.fills[0] != glm::packUnorm4x8(listColor.toVec4())) {
 			continue;
 		}
-		++listVertices;
+		++listQuads;
 		// The viewport less its 8px scrollbar, inside the dialog's content clip
-		EXPECT_EQ(vertex.clipBounds, Foundation::Vec4(content.x, content.y, content.x + 142.0F, content.y + 100.0F));
+		EXPECT_EQ(quad.clip, Foundation::Vec4(content.x, content.y, content.x + 142.0F, content.y + 100.0F));
 	}
-	EXPECT_EQ(listVertices, 4);
+	EXPECT_EQ(listQuads, 1);
 }
 
 } // namespace UI
