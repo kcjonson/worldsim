@@ -88,7 +88,7 @@ namespace {
 			});
 			column.addChild<ui::Text>({.id = "settings_kicker", .style = kicker, .text = "// CONSTRUCTION"});
 
-			const ui::Ref<ui::Toggle> align = column.addChild<ui::Toggle>({
+			column.addChild<ui::Toggle>({
 				.id = "settings_align_existing",
 				.size = {kRowWidth, ui::kAuto},
 				.label = "Align to existing foundations",
@@ -106,10 +106,6 @@ namespace {
 				.variant = ui::ButtonVariant::Ghost,
 				.onPress = [this] { back(); },
 			});
-			if (ui::Toggle* first = align.get()) {
-				first->focus();
-			}
-
 			root().addChild<ui::Text>({
 				.id = "settings_hint",
 				.layout = {.position = ui::Position::Absolute, .inset = {.bottom = 16.0F, .left = kColX}},

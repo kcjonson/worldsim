@@ -139,9 +139,8 @@ namespace {
 				.id = "main_menu_items",
 				.size = {kRowWidth, ui::kAuto},
 				.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = 2.0F},
-				.focusGroup = ui::FocusGroup{.orientation = ui::FocusGroup::Orientation::Vertical, .wrap = true},
 			});
-			const ui::Ref<ui::ListRow> newGame = item("menu_new_game", "New Game", "Begin a new expedition", "play", true, [this] {
+			item("menu_new_game", "New Game", "Begin a new expedition", "play", true, [this] {
 				world_sim::NewGameSetup::Reset();
 				owner->scenes().switchTo(world_sim::scenes::ScenarioSelect.name);
 			});
@@ -169,10 +168,6 @@ namespace {
 			});
 			item("menu_credits", "Credits", "The crew behind the crew", "users", false, nullptr);
 			item("menu_exit", "Exit", "Quit to desktop", "close", true, [this] { owner->requestExit(); });
-			if (ui::ListRow* first = newGame.get()) {
-				first->focus();
-			}
-
 			const ui::Style footer =
 				world_sim::text(theme, {.family = family::mono, .size = tokens::fontSize::fs2xs, .color = tokens::color::textFaint});
 			root().addChild<ui::Text>({
