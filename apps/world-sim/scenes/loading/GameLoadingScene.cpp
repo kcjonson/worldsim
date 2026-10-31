@@ -12,8 +12,8 @@
 #include "scenes/shared/Starfield.h"
 
 #include <GL/glew.h>
-#include <theme/Tokens.h>
-#include <theme/Variants.h>
+#include <theme/CssTokens.h>
+#include <theme/Tones.h>
 
 #include <app/Keys.h>
 #include <app/UiScene.h>
@@ -152,7 +152,7 @@ namespace {
 					  .position = {0.0F, cy - 96.0F},
 					  .scale = fs_2xs / 16.0F,
 					  .color = accent,
-					  .font = fontMono,
+					  .font = theme::fontMono,
 					  .hAlign = Foundation::HorizontalAlign::Center,
 					  .vAlign = Foundation::VerticalAlign::Middle,
 					  .boxWidth = screenW,
@@ -161,7 +161,7 @@ namespace {
 					  .position = {0.0F, cy - 56.0F},
 					  .scale = fs_3xl / 16.0F,
 					  .color = text_bright,
-					  .font = fontDisplay,
+					  .font = theme::fontDisplay,
 					  .hAlign = Foundation::HorizontalAlign::Center,
 					  .vAlign = Foundation::VerticalAlign::Middle,
 					  .boxWidth = screenW,
@@ -176,7 +176,7 @@ namespace {
 					  .position = {barX, barY - 20.0F},
 					  .scale = fs_xs / 16.0F,
 					  .color = err ? status_crit : text,
-					  .font = fontMono,
+					  .font = theme::fontMono,
 					  .vAlign = Foundation::VerticalAlign::Top,
 					  .letterSpacing = fs_xs * ls_wide,
 					  .transform = Foundation::TextTransform::Uppercase});
@@ -185,7 +185,7 @@ namespace {
 						  .position = {barX, barY - 20.0F},
 						  .scale = fs_xs / 16.0F,
 						  .color = accent_bright,
-						  .font = fontMono,
+						  .font = theme::fontMono,
 						  .hAlign = Foundation::HorizontalAlign::Right,
 						  .vAlign = Foundation::VerticalAlign::Top,
 						  .boxWidth = barW});

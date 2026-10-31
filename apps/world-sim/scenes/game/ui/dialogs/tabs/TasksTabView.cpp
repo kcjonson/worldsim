@@ -4,8 +4,8 @@
 
 #include <components/badge/Badge.h>
 #include <primitives/Primitives.h>
-#include <theme/Tokens.h>
-#include <theme/Variants.h>
+#include <theme/CssTokens.h>
+#include <theme/Tones.h>
 
 #include <algorithm>
 #include <cctype>
@@ -74,7 +74,7 @@ void TasksTabView::render() {
 		.position	   = {px, y + space_2},
 		.scale		   = fs_2xs / 16.0F,
 		.color		   = UI::accent,
-		.font		   = UI::fontMono,
+		.font		   = theme::fontMono,
 		.letterSpacing = fs_2xs * UI::ls_wider,
 		.transform	   = Foundation::TextTransform::Uppercase,
 	});
@@ -126,12 +126,12 @@ void TasksTabView::render() {
 		// Status badge, right-aligned.
 		const UI::Tone	  tone	 = statusTone(task.status);
 		const std::string label	 = task.status.empty() ? "Available" : task.status;
-		const float		  badgeW = (space_2 * 2.0F) + measureText(label, fs_2xs, UI::fontMono);
+		const float		  badgeW = (space_2 * 2.0F) + measureText(label, fs_2xs, theme::fontMono);
 		UI::Badge({.position = {o.x + width - badgeW, y}, .label = label, .tone = tone}).render();
 
 		// Distance, just left of the badge.
 		if (!task.distance.empty()) {
-			Renderer::Primitives::drawText({.text = task.distance, .position = {o.x, y}, .scale = fs_2xs / 16.0F, .color = UI::data_bright, .font = UI::fontMono, .hAlign = Foundation::HorizontalAlign::Right, .boxWidth = width - badgeW - space_2});
+			Renderer::Primitives::drawText({.text = task.distance, .position = {o.x, y}, .scale = fs_2xs / 16.0F, .color = UI::data_bright, .font = theme::fontMono, .hAlign = Foundation::HorizontalAlign::Right, .boxWidth = width - badgeW - space_2});
 		}
 
 		y += kRowH;

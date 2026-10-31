@@ -4,8 +4,8 @@
 #include <components/icon/Icon.h>
 #include <layout/LayoutContainer.h>
 #include <primitives/Primitives.h>
-#include <theme/Tokens.h>
-#include <theme/Variants.h>
+#include <theme/CssTokens.h>
+#include <theme/Tones.h>
 
 #include <cstdio>
 #include <string>
@@ -92,7 +92,7 @@ namespace world_sim {
 				.position = {position.x + pad, position.y + 5.0F},
 				.scale = UI::fs_2xs / 16.0F,
 				.color = UI::text_faint,
-				.font = UI::fontMono,
+				.font = theme::fontMono,
 				.letterSpacing = UI::fs_2xs * UI::ls_wider,
 				.transform = Foundation::TextTransform::Uppercase,
 			});
@@ -105,7 +105,7 @@ namespace world_sim {
 
 			float chipW = 0.0F;
 			if (!chip.empty()) {
-				chipW = tabs::measureText(chip, UI::fs_2xs, UI::fontMono) + UI::space_2;
+				chipW = tabs::measureText(chip, UI::fs_2xs, theme::fontMono) + UI::space_2;
 				const Foundation::Rect chipRect{position.x + size.x - pad - chipW, rowY - 1.0F, chipW, UI::fs_2xs + 4.0F};
 				Renderer::Primitives::drawRect({
 					.bounds = chipRect,
@@ -117,7 +117,7 @@ namespace world_sim {
 					.position = {chipRect.x, chipRect.y + 2.0F},
 					.scale = UI::fs_2xs / 16.0F,
 					.color = UI::accent,
-					.font = UI::fontMono,
+					.font = theme::fontMono,
 					.hAlign = Foundation::HorizontalAlign::Center,
 					.boxWidth = chipRect.width,
 				});
@@ -125,7 +125,7 @@ namespace world_sim {
 			}
 
 			const float nameW = size.x - pad * 2.0F - chipW;
-			tabs::drawText(elide(itemName, UI::fs_sm, nameW, UI::fontUi), {position.x + pad, rowY}, UI::fs_sm, UI::text_bright);
+			tabs::drawText(elide(itemName, UI::fs_sm, nameW, theme::fontUi), {position.x + pad, rowY}, UI::fs_sm, UI::text_bright);
 		}
 	};
 
@@ -138,7 +138,7 @@ namespace world_sim {
 			float				  fontPx = UI::fs_sm;
 			Foundation::Color	  leftColor = UI::text_bright;
 			Foundation::Color	  rightColor = UI::accent;
-			Renderer::FontFamily  leftFont = UI::fontDisplay;
+			Renderer::FontFamily  leftFont = theme::fontDisplay;
 			bool				  uppercase = false;
 			float				  letterSpacing = 0.0F; // em
 		};
@@ -183,7 +183,7 @@ namespace world_sim {
 					.position = position,
 					.scale = fontPx / 16.0F,
 					.color = rightColor,
-					.font = UI::fontMono,
+					.font = theme::fontMono,
 					.hAlign = Foundation::HorizontalAlign::Right,
 					.boxWidth = size.x,
 				});
@@ -229,14 +229,14 @@ namespace world_sim {
 
 		void render() override {
 			const float nameW = size.x - kKgColW - kQtyColW - UI::space_2 * 2.0F;
-			tabs::drawText(elide(name, UI::fs_sm, nameW, UI::fontUi), position, UI::fs_sm, UI::text);
+			tabs::drawText(elide(name, UI::fs_sm, nameW, theme::fontUi), position, UI::fs_sm, UI::text);
 			if (!qtyText.empty()) {
 				Renderer::Primitives::drawText({
 					.text = qtyText,
 					.position = {position.x, position.y + 1.0F},
 					.scale = UI::fs_2xs / 16.0F,
 					.color = UI::text_dim,
-					.font = UI::fontMono,
+					.font = theme::fontMono,
 					.hAlign = Foundation::HorizontalAlign::Right,
 					.boxWidth = size.x - kKgColW - UI::space_2,
 				});
@@ -246,7 +246,7 @@ namespace world_sim {
 				.position = {position.x, position.y + 1.0F},
 				.scale = UI::fs_2xs / 16.0F,
 				.color = UI::data_bright,
-				.font = UI::fontMono,
+				.font = theme::fontMono,
 				.hAlign = Foundation::HorizontalAlign::Right,
 				.boxWidth = size.x,
 			});
@@ -397,7 +397,7 @@ namespace world_sim {
 			.left = "Weight-based - cargo in hands & pack - tools ride free",
 			.fontPx = UI::fs_2xs,
 			.leftColor = UI::text_faint,
-			.leftFont = UI::fontUi,
+			.leftFont = theme::fontUi,
 		}));
 
 		auto packListC = UI::LayoutContainer(UI::LayoutContainer::Args{.direction = UI::Direction::Vertical, .gap = UI::space_0_5, .id = "gear_pack_list"});
@@ -407,10 +407,10 @@ namespace world_sim {
 			packRows[i] = packListC.getChild<GearStackRow>(rowHandle);
 			packRows[i]->visible = false;
 		}
-		const auto moreHandle = packListC.addChild(GearTextRow(GearTextRow::Args{.left = "", .fontPx = UI::fs_2xs, .leftColor = UI::text_faint, .leftFont = UI::fontUi}));
+		const auto moreHandle = packListC.addChild(GearTextRow(GearTextRow::Args{.left = "", .fontPx = UI::fs_2xs, .leftColor = UI::text_faint, .leftFont = theme::fontUi}));
 		packMoreRow = packListC.getChild<GearTextRow>(moreHandle);
 		packMoreRow->visible = false;
-		const auto emptyHandle = packListC.addChild(GearTextRow(GearTextRow::Args{.left = "Nothing carried", .fontPx = UI::fs_xs, .leftColor = UI::text_faint, .leftFont = UI::fontUi}));
+		const auto emptyHandle = packListC.addChild(GearTextRow(GearTextRow::Args{.left = "Nothing carried", .fontPx = UI::fs_xs, .leftColor = UI::text_faint, .leftFont = theme::fontUi}));
 		packEmptyRow = packListC.getChild<GearTextRow>(emptyHandle);
 
 		const auto packListHandle = packC.addChild(std::move(packListC));
@@ -427,7 +427,7 @@ namespace world_sim {
 			.left = "Quick-draw slots - one-hand tools only",
 			.fontPx = UI::fs_2xs,
 			.leftColor = UI::text_faint,
-			.leftFont = UI::fontUi,
+			.leftFont = theme::fontUi,
 		}));
 		auto beltRowC = UI::LayoutContainer(UI::LayoutContainer::Args{.direction = UI::Direction::Horizontal, .gap = UI::space_2, .id = "gear_belt_row"});
 		for (size_t i = 0; i < beltCells.size(); ++i) {

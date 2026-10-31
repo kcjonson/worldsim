@@ -14,15 +14,14 @@
 
 #include <threading/TaskPool.h>
 
-#include <app/UiScene.h>
 #include <graphics/Color.h>
 #include <primitives/Primitives.h>
+#include <scene/Scene.h>
 #include <utils/Log.h>
 #include <utils/ResourcePath.h>
 
 #include <GL/glew.h>
 #include <input/InputTypes.h>
-#include <ui/input/InputEvent.h>
 
 #include <cstdio>
 #include <memory>
@@ -35,7 +34,7 @@ namespace {
 	// 256 tiles/edge gives 655k tiles: full Earth-like detail with the stub pipeline.
 	constexpr uint32_t kSubdivision = 256;
 
-	class PlanetScene : public engine::UiScene {
+	class PlanetScene : public app::Scene {
 	  public:
 		void onEnter(app::App& /*app*/) override {
 			timeSinceEnter = 0.0F;
@@ -150,16 +149,17 @@ namespace {
 			}
 		}
 
-		bool handleInput(UI::InputEvent& event) override {
+		bool handleEvent(const foundation::InputEvent& event) override {
+			using Type = foundation::InputEvent::Type;
 			// Ignore all mouse input for the first 0.25s after scene activation.
 			// Synthetic/buffered mouse events from scene switching can otherwise
 			// fire spurious right-clicks that cycle the color mode at startup.
-			if (timeSinceEnter < 0.25F && (event.type == UI::InputEvent::Type::MouseDown || event.type == UI::InputEvent::Type::MouseUp ||
-										   event.type == UI::InputEvent::Type::MouseMove)) {
+			if (timeSinceEnter < 0.25F &&
+				(event.type == Type::PointerDown || event.type == Type::PointerUp || event.type == Type::PointerMove)) {
 				return false;
 			}
 
-			if (event.type == UI::InputEvent::Type::MouseDown && event.button == foundation::MouseButton::Left) {
+			if (event.type == Type::PointerDown && event.mouseButton == foundation::MouseButton::Left) {
 
 				if (meshBuilt && lastSnapshot) {
 					int vpW = 0, vpH = 0;
@@ -188,30 +188,27 @@ namespace {
 				}
 				camera.beginDrag(event.position.x, event.position.y);
 				draggingLeft = true;
-				event.consume();
 				return true;
 			}
 
-			if (event.type == UI::InputEvent::Type::MouseMove && draggingLeft) {
+			if (event.type == Type::PointerMove && draggingLeft) {
 				camera.drag(event.position.x, event.position.y);
 				return true;
 			}
 
-			if (event.type == UI::InputEvent::Type::MouseUp && event.button == foundation::MouseButton::Left) {
+			if (event.type == Type::PointerUp && event.mouseButton == foundation::MouseButton::Left) {
 				camera.endDrag();
 				draggingLeft = false;
 			}
 
-			if (event.type == UI::InputEvent::Type::Scroll) {
-				camera.scroll(event.scrollDelta);
-				event.consume();
+			if (event.type == Type::Scroll) {
+				camera.scroll(event.scroll.y);
 				return true;
 			}
 
-			// Right-click cycles color mode (key events not available in this input system).
-			if (event.type == UI::InputEvent::Type::MouseDown && event.button == foundation::MouseButton::Right) {
+			// Right-click cycles color mode.
+			if (event.type == Type::PointerDown && event.mouseButton == foundation::MouseButton::Right) {
 				switchMode((colorModeIdx + 1) % static_cast<int>(planetview::ColorMode::Count));
-				event.consume();
 				return true;
 			}
 

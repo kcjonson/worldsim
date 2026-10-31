@@ -3,19 +3,17 @@
 // worldsim's ui on salal's App, until salal's ui brings its own dispatch. The bridge is the App's
 // dispatch (App::setDispatch). Each frame it walks app.input().events() in order: keys and characters
 // go to the focus manager, paused or not, and unless paused each Left or Right press and release goes
-// to the overlays (last added first) and then the top scene as a UI::InputEvent at its own position,
-// with a move there first, and each wheel event as a scroll, which is sent again every frame until
-// something consumes it. Then, unless paused, a move at the frame's pointer, every frame, so hover
+// to the top scene as a UI::InputEvent at its own position, with a move there first, and each wheel
+// event as a scroll, which is sent again every frame until something consumes it. Then, unless paused, a move at the frame's pointer, every frame, so hover
 // holds under a still cursor; there's none until an event has carried a pointer position. Modifiers
 // come from the Shift, Control and Alt keys held at the end of the frame, with no Super bit.
 //
 // It also gives the ui the App's clipboard and answers /api/ui/tree and /api/ui/lint from the top
 // scene's component roots at the logical viewport. Make one after App::create, before the first
 // frame, and destroy it after App::shutdown: components unregister from its focus manager as the
-// scenes and overlays go, and its focus manager and clipboard clear the ui's singletons as they go.
+// scenes go, and its focus manager and clipboard clear the ui's singletons as they go.
 
 #include "app/UiClipboard.h"
-#include "app/UiOverlay.h"
 
 #include <DevServer/DevServer.h>
 #include <focus/FocusManager.h>
@@ -47,9 +45,6 @@ namespace engine {
 		UiBridge(UiBridge&&) = delete;
 		UiBridge& operator=(UiBridge&&) = delete;
 
-		// An overlay the App owns (App::addOverlay), to get UI::InputEvents before the top scene.
-		void addOverlay(UiOverlay& overlay);
-
 		// The scroll nothing in the ui consumed, which stops it being sent again; 0 when there's none.
 		// GameScene zooms the camera with it, so a scroll a list takes doesn't zoom too.
 		float consumeScroll();
@@ -67,7 +62,6 @@ namespace engine {
 		app::App&					 owner;
 		UI::FocusManager			 focus;
 		UiClipboard					 clipboard;
-		std::vector<UiOverlay*>		 overlays;
 		float						 scrollDelta = 0.0F; // the last wheel event's, until something consumes it
 		bool						 pointerSeen = false;
 		app::DevServer::Registration uiTree;

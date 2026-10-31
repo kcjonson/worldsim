@@ -1,67 +1,60 @@
 #pragma once
 
-// AssetThumbnail - a UI leaf that draws an asset through the game's render
-// pipeline (engine::assets::prepareAsset), fit to its own bounds. The one piece
-// of custom rendering in the asset manager; everything else uses libs/ui.
+// AssetThumbnail - a ui component that draws an asset through the game's render pipeline
+// (engine::assets::prepareAsset), fit to its own box. The one piece of custom rendering in the asset
+// manager; everything else is salal's ui. With the collider shown, the asset's collision shape is drawn
+// over the art, or "no collider" in the corner when it has none.
 
-#include <component/Component.h>
 #include <graphics/Rect.h>
+#include <ui/Component.h>
 #include <vector/Types.h>
+
+#include <glm/vec2.hpp>
 
 #include <cstdint>
 #include <string>
 
-#include <glm/vec2.hpp>
-
 namespace asset_manager {
 
-	class AssetThumbnail : public UI::IComponent {
+	class AssetThumbnail : public ui::Component {
 	  public:
-		AssetThumbnail() = default;
+		struct Args {
+			UI_COMMON_ARGS
+			std::string defName;
+			uint32_t	seed = 42U;
+			bool		animated = false; // sweep the asset's motion clip (the detail preview; the tree's stay still)
+			bool		collider = false;
+		};
+
+		explicit AssetThumbnail(const Args& args);
 
 		void setAsset(std::string defName, uint32_t seed = 42U);
-		void setSize(float width, float height);
-
-		// Opt in to sweeping the asset's motion clip over time (the big detail preview only;
-		// the nav-tree thumbnails stay still). No-op for assets without a motion.
-		void setAnimated(bool animated) { m_animated = animated; }
 
 		// Drop all cached meshes (call after an asset reload so thumbnails rebuild).
 		static void clearCache();
 
-		void			   render() override;
-		[[nodiscard]] float getWidth() const override { return m_size.x + margin; }
-		[[nodiscard]] float getHeight() const override { return m_size.y + margin; }
-		void				setPosition(float x, float y) override { m_pos = {x + margin, y + margin}; }
+		[[nodiscard]] const char* typeName() const override { return "AssetThumbnail"; }
 
-		// True once a mesh has been built and its fit transform is known.
-		[[nodiscard]] bool hasMesh();
-
-		// Map a point in raw asset-mesh space to on-screen pixels, reusing the exact
-		// fitToRect math the preview applied to the mesh (subtracts the source bbox
-		// center). Use for colliders in the mesh-coord frame (procedural assets). Call
-		// only when hasMesh() is true.
-		[[nodiscard]] Foundation::Vec2 localToScreen(const glm::vec2& local);
-
-		// Map a point expressed RELATIVE TO the asset's bbox center (the entity origin)
-		// to on-screen pixels. fitToRect maps that center to the target-rect center, so
-		// this just scales from there -- no source-bbox subtraction. Use for colliders
-		// in the centered frame (simple SVG-metadata assets). Call only when hasMesh().
-		[[nodiscard]] Foundation::Vec2 centeredToScreen(const glm::vec2& local);
+	  protected:
+		void render() override;
 
 	  private:
 		void ensureMesh();
+		void drawCollider();
+		// A point in raw asset-mesh space, or relative to the asset's bbox centre, in this box, by the
+		// fitToRect math the preview applied to the mesh.
+		[[nodiscard]] Foundation::Vec2 meshToLocal(const glm::vec2& point) const;
+		[[nodiscard]] Foundation::Vec2 centeredToLocal(const glm::vec2& point) const;
 
-		std::string						 m_defName;
-		uint32_t						 m_seed = 42U;
-		Foundation::Vec2				 m_pos{0.0F, 0.0F};
-		Foundation::Vec2				 m_size{32.0F, 32.0F};
-		const renderer::TessellatedMesh* m_mesh = nullptr; // points into a shared cache; translated at draw
-		Foundation::Rect				 m_sourceBounds{0.0F, 0.0F, 0.0F, 0.0F}; // raw mesh bounds for the current asset
-		Foundation::Rect				 m_targetRect{0.0F, 0.0F, 0.0F, 0.0F};	 // fit target rect (pixel space)
-		bool							 m_dirty = true;
-		bool							 m_animated = false; // sweep the motion clip (detail preview only)
-			uint64_t						 m_cacheGen = 0; // meshCache generation m_mesh was fetched at; stale => refetch
+		std::string						 defName;
+		uint32_t						 seed;
+		bool							 animated;
+		bool							 collider;
+		const renderer::TessellatedMesh* mesh = nullptr;					   // points into a shared cache
+		Foundation::Rect				 sourceBounds{0.0F, 0.0F, 0.0F, 0.0F}; // raw mesh bounds for the current asset
+		Foundation::Rect				 targetRect{0.0F, 0.0F, 0.0F, 0.0F};   // the fit's target: this box
+		bool							 dirty = true;
+		uint64_t						 cacheGen = 0; // meshCache generation mesh was fetched at; stale => refetch
 	};
 
 } // namespace asset_manager

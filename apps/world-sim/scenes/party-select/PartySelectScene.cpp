@@ -28,8 +28,8 @@
 #include <layout/LayoutContainer.h>
 #include <primitives/Primitives.h>
 #include <shapes/Shapes.h>
-#include <theme/Tokens.h>
-#include <theme/Variants.h>
+#include <theme/CssTokens.h>
+#include <theme/Tones.h>
 #include <utils/Log.h>
 
 #include <algorithm>
@@ -172,13 +172,13 @@ namespace {
 					  .position = {textX, r.y + 14.0F},
 					  .scale = UI::fs_md / 16.0F,
 					  .color = UI::text_bright,
-					  .font = UI::fontDisplay,
+					  .font = theme::fontDisplay,
 					  .vAlign = Foundation::VerticalAlign::Top});
 			drawText({.text = role,
 					  .position = {textX, r.y + 36.0F},
 					  .scale = UI::fs_2xs / 16.0F,
 					  .color = UI::text_faint,
-					  .font = UI::fontMono,
+					  .font = theme::fontMono,
 					  .vAlign = Foundation::VerticalAlign::Top,
 					  .letterSpacing = UI::fs_2xs * UI::ls_wide,
 					  .transform = Foundation::TextTransform::Uppercase});
@@ -196,7 +196,7 @@ namespace {
 					  .position = {moodX, r.y + 32.0F},
 					  .scale = UI::fs_2xs / 16.0F,
 					  .color = UI::text_faint,
-					  .font = UI::fontMono,
+					  .font = theme::fontMono,
 					  .hAlign = Foundation::HorizontalAlign::Right,
 					  .vAlign = Foundation::VerticalAlign::Top,
 					  .boxWidth = kMoodW,
@@ -235,13 +235,13 @@ namespace {
 					  .position = {position.x + 88.0F, position.y + 6.0F},
 					  .scale = UI::fs_2xl / 16.0F,
 					  .color = UI::text_bright,
-					  .font = UI::fontDisplay,
+					  .font = theme::fontDisplay,
 					  .vAlign = Foundation::VerticalAlign::Top});
 			drawText({.text = role,
 					  .position = {position.x + 88.0F, position.y + 44.0F},
 					  .scale = UI::fs_xs / 16.0F,
 					  .color = UI::accent,
-					  .font = UI::fontMono,
+					  .font = theme::fontMono,
 					  .vAlign = Foundation::VerticalAlign::Top,
 					  .letterSpacing = UI::fs_xs * UI::ls_wide,
 					  .transform = Foundation::TextTransform::Uppercase});
@@ -298,7 +298,7 @@ namespace {
 					  .position = {position.x, position.y + 2.0F},
 					  .scale = UI::fs_xs / 16.0F,
 					  .color = UI::text_dim,
-					  .font = UI::fontMono,
+					  .font = theme::fontMono,
 					  .vAlign = Foundation::VerticalAlign::Top,
 					  .letterSpacing = UI::fs_xs * UI::ls_wide,
 					  .transform = Foundation::TextTransform::Uppercase});
@@ -312,7 +312,7 @@ namespace {
 					  .position = {position.x + size.x - kValueW, position.y + 2.0F},
 					  .scale = UI::fs_xs / 16.0F,
 					  .color = UI::accent_bright,
-					  .font = UI::fontMono,
+					  .font = theme::fontMono,
 					  .hAlign = Foundation::HorizontalAlign::Right,
 					  .vAlign = Foundation::VerticalAlign::Top,
 					  .boxWidth = kValueW});
@@ -521,7 +521,7 @@ namespace {
 				.text = "// NEW GAME    STEP 02 / 03",
 				.fontSize = fs_2xs,
 				.color = accent,
-				.font = fontMono,
+				.font = theme::fontMono,
 				.letterSpacingEm = ls_wider,
 				.transform = Foundation::TextTransform::Uppercase,
 				.id = "kicker"}));
@@ -529,7 +529,7 @@ namespace {
 				.text = "Assemble the Crew",
 				.fontSize = fs_3xl,
 				.color = text_bright,
-				.font = fontDisplay,
+				.font = theme::fontDisplay,
 				.id = "title"}));
 			header.addChild(Text(Text::Args{
 				.text = survivorLine(partySize),
@@ -585,7 +585,7 @@ namespace {
 				.text = std::format("{} / {} SLOTS", roster.size(), partySize),
 				.fontSize = fs_2xs,
 				.color = text_faint,
-				.font = fontMono,
+				.font = theme::fontMono,
 				.letterSpacingEm = ls_wide,
 				.id = "slots_label"}));
 			actions.addChild(std::move(actionsRow));

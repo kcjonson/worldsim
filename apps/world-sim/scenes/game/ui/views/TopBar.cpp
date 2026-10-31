@@ -4,8 +4,8 @@
 #include <font/FontRenderer.h>
 #include <graphics/PrimitiveStyles.h>
 #include <primitives/Primitives.h>
-#include <theme/Tokens.h>
-#include <theme/Variants.h>
+#include <theme/CssTokens.h>
+#include <theme/Tones.h>
 
 #include <cctype>
 #include <cstdio>
@@ -152,12 +152,12 @@ void TopBar::positionElements() {
 		return static_cast<float>(s.size()) * px * 0.55F;	// fallback before the font is ready
 	};
 
-	const float w1 = measure(dayStr, UI::fs_md, UI::fontDisplay);
-	const float w2 = measure(seasonStr, UI::fs_xs, UI::fontMono, UI::fs_xs * UI::ls_wide);
-	const float w3 = measure(timeStr, UI::fs_md, UI::fontMono);
+	const float w1 = measure(dayStr, UI::fs_md, theme::fontDisplay);
+	const float w2 = measure(seasonStr, UI::fs_xs, theme::fontMono, UI::fs_xs * UI::ls_wide);
+	const float w3 = measure(timeStr, UI::fs_md, theme::fontMono);
 
 	// Sub-line layout: "<survivors> . <Sol D>", the dot drawn as a vector middot.
-	const float subW = measure(survivorPart, UI::fs_2xs, UI::fontMono);
+	const float subW = measure(survivorPart, UI::fs_2xs, theme::fontMono);
 	subDotX = identityX + subW + UI::space_1_5;
 	subSolX = subDotX + UI::space_1_5;
 
@@ -258,7 +258,7 @@ void TopBar::render() {
 		.position = {identityX, bounds.y + 9.0F},
 		.scale = textScale(UI::fs_md),
 		.color = UI::text_bright,
-		.font = UI::fontDisplay,
+		.font = theme::fontDisplay,
 		.hAlign = Foundation::HorizontalAlign::Left,
 		.vAlign = Foundation::VerticalAlign::Top});
 	drawText(Renderer::Primitives::TextArgs{
@@ -266,7 +266,7 @@ void TopBar::render() {
 		.position = {identityX, bounds.y + kSubY},
 		.scale = textScale(UI::fs_2xs),
 		.color = UI::text_faint,
-		.font = UI::fontMono,
+		.font = theme::fontMono,
 		.hAlign = Foundation::HorizontalAlign::Left,
 		.vAlign = Foundation::VerticalAlign::Top});
 	drawCircle(Renderer::Primitives::CircleArgs{
@@ -278,7 +278,7 @@ void TopBar::render() {
 		.position = {subSolX, bounds.y + kSubY},
 		.scale = textScale(UI::fs_2xs),
 		.color = UI::text_faint,
-		.font = UI::fontMono,
+		.font = theme::fontMono,
 		.hAlign = Foundation::HorizontalAlign::Left,
 		.vAlign = Foundation::VerticalAlign::Top});
 
@@ -288,7 +288,7 @@ void TopBar::render() {
 		.position = {dayX, bounds.y},
 		.scale = textScale(UI::fs_md),
 		.color = UI::text_bright,
-		.font = UI::fontDisplay,
+		.font = theme::fontDisplay,
 		.hAlign = Foundation::HorizontalAlign::Left,
 		.vAlign = Foundation::VerticalAlign::Middle,
 		.boxHeight = kBarHeight});
@@ -297,7 +297,7 @@ void TopBar::render() {
 		.position = {seasonX, bounds.y},
 		.scale = textScale(UI::fs_xs),
 		.color = UI::data,
-		.font = UI::fontMono,
+		.font = theme::fontMono,
 		.hAlign = Foundation::HorizontalAlign::Left,
 		.vAlign = Foundation::VerticalAlign::Middle,
 		.boxHeight = kBarHeight,
@@ -307,7 +307,7 @@ void TopBar::render() {
 		.position = {timeX, bounds.y},
 		.scale = textScale(UI::fs_md),
 		.color = UI::data_bright,
-		.font = UI::fontMono,
+		.font = theme::fontMono,
 		.hAlign = Foundation::HorizontalAlign::Left,
 		.vAlign = Foundation::VerticalAlign::Middle,
 		.boxHeight = kBarHeight});

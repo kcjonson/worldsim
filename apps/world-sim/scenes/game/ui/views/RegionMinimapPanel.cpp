@@ -5,8 +5,8 @@
 #include <graphics/PrimitiveStyles.h>
 #include <graphics/Rect.h>
 #include <primitives/Primitives.h>
-#include <theme/Tokens.h>
-#include <theme/Variants.h>
+#include <theme/CssTokens.h>
+#include <theme/Tones.h>
 
 #include <algorithm>
 #include <cmath>
@@ -221,7 +221,7 @@ void RegionMinimapPanel::renderCoordLabel(const Foundation::Rect& body) const {
 	const Renderer::FontRenderer* fr = Renderer::Primitives::getFontRenderer();
 	auto measure = [&](const std::string& s) -> float {
 		if (fr != nullptr) {
-			return fr->MeasureText(s, textScale(UI::fs_2xs), UI::fontMono, 0.0F).x;
+			return fr->MeasureText(s, textScale(UI::fs_2xs), theme::fontMono, 0.0F).x;
 		}
 		return static_cast<float>(s.size()) * UI::fs_2xs * 0.55F;
 	};
@@ -237,7 +237,7 @@ void RegionMinimapPanel::renderCoordLabel(const Foundation::Rect& body) const {
 			.position = {x, textY},
 			.scale = textScale(UI::fs_2xs),
 			.color = UI::data_bright,
-			.font = UI::fontMono,
+			.font = theme::fontMono,
 			.hAlign = Foundation::HorizontalAlign::Left,
 			.vAlign = Foundation::VerticalAlign::Top});
 		x += measure(s);

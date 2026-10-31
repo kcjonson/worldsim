@@ -10,8 +10,8 @@
 #include <components/stat/Stat.h>
 #include <primitives/Primitives.h>
 #include <shapes/Shapes.h>
-#include <theme/Tokens.h>
-#include <theme/Variants.h>
+#include <theme/CssTokens.h>
+#include <theme/Tones.h>
 
 #include <algorithm>
 #include <array>
@@ -188,7 +188,7 @@ void WorldSurveyPanel::render(const Foundation::Rect& bounds) const {
 				  .position = {row.x + UI::space_3, row.y},
 				  .scale = UI::fs_2xs / 16.0F,
 				  .color = UI::text_dim,
-				  .font = UI::fontMono,
+				  .font = theme::fontMono,
 				  .vAlign = Foundation::VerticalAlign::Middle,
 				  .boxHeight = row.height,
 				  .letterSpacing = UI::fs_2xs * UI::ls_wider});
@@ -210,7 +210,7 @@ void WorldSurveyPanel::render(const Foundation::Rect& bounds) const {
 				  .position = {body.x, y},
 				  .scale = UI::fs_2xs / 16.0F,
 				  .color = UI::text_dim,
-				  .font = UI::fontMono,
+				  .font = theme::fontMono,
 				  .vAlign = Foundation::VerticalAlign::Top,
 				  .letterSpacing = UI::fs_2xs * UI::ls_wider});
 		y += 18.0F;

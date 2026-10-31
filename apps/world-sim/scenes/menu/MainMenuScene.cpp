@@ -20,8 +20,8 @@
 #include <input/InputEvent.h>
 #include <layout/LayoutContainer.h>
 #include <primitives/Primitives.h>
-#include <theme/Tokens.h>
-#include <theme/Variants.h>
+#include <theme/CssTokens.h>
+#include <theme/Tones.h>
 #include <utils/Log.h>
 #include <utils/ResourcePath.h>
 
@@ -122,7 +122,7 @@ namespace {
 					  .position = {insetX + 18.0F + 26.0F, r.y},
 					  .scale = textScale(UI::fs_xl),
 					  .color = labelColor,
-					  .font = UI::fontDisplay,
+					  .font = theme::fontDisplay,
 					  .vAlign = Foundation::VerticalAlign::Middle,
 					  .boxHeight = r.height,
 					  .letterSpacing = UI::fs_xl * UI::ls_wide});
@@ -133,7 +133,7 @@ namespace {
 				const float labelX = insetX + 18.0F + 26.0F;
 				float		labelW = 0.0F;
 				if (auto* fontRenderer = Renderer::Primitives::getFontRenderer()) {
-					labelW = fontRenderer->MeasureText(label, textScale(UI::fs_xl), UI::fontDisplay, UI::fs_xl * UI::ls_wide).x;
+					labelW = fontRenderer->MeasureText(label, textScale(UI::fs_xl), theme::fontDisplay, UI::fs_xl * UI::ls_wide).x;
 				}
 				const float hintLeft = labelX + labelW + UI::space_4;
 				const float hintRight = r.x + r.width - UI::space_4;
@@ -142,7 +142,7 @@ namespace {
 							  .position = {hintLeft, r.y},
 							  .scale = textScale(UI::fs_xs),
 							  .color = UI::text_faint,
-							  .font = UI::fontMono,
+							  .font = theme::fontMono,
 							  .hAlign = Foundation::HorizontalAlign::Right,
 							  .vAlign = Foundation::VerticalAlign::Middle,
 							  .boxWidth = hintRight - hintLeft,
@@ -188,14 +188,14 @@ namespace {
 			titleRow.addChild(world_sim::Label({.text = "WORLD-SIM",
 												.fontSize = UI::fs_4xl,
 												.color = UI::text_bright,
-												.font = UI::fontDisplay,
+												.font = theme::fontDisplay,
 												.letterSpacingEm = UI::ls_wider,
 												.id = "menu_title"}));
 			identity->addChild(std::move(titleRow));
 			identity->addChild(world_sim::Label({.text = "Prospecting Expedition 28-B",
 												 .fontSize = UI::fs_sm,
 												 .color = UI::accent,
-												 .font = UI::fontMono,
+												 .font = theme::fontMono,
 												 .letterSpacingEm = UI::ls_wide,
 												 .transform = Foundation::TextTransform::Uppercase,
 												 .id = "menu_tagline"}));
@@ -319,7 +319,7 @@ namespace {
 				.position = {kColX, kickerY},
 				.scale = textScale(fs_2xs),
 				.color = text_faint,
-				.font = fontMono,
+				.font = theme::fontMono,
 				.vAlign = Foundation::VerticalAlign::Top,
 				.letterSpacing = fs_2xs * ls_wider});
 
@@ -335,7 +335,7 @@ namespace {
 				.position = {kColX, footerY},
 				.scale = textScale(fs_2xs),
 				.color = text_faint,
-				.font = fontMono,
+				.font = theme::fontMono,
 				.vAlign = Foundation::VerticalAlign::Top});
 			drawText(
 				Renderer::Primitives::TextArgs{
@@ -343,7 +343,7 @@ namespace {
 					.position = {kColX, footerY},
 					.scale = textScale(fs_2xs),
 					.color = text_faint,
-					.font = fontMono,
+					.font = theme::fontMono,
 					.hAlign = Foundation::HorizontalAlign::Right,
 					.vAlign = Foundation::VerticalAlign::Top,
 					.boxWidth = screenW - kColX * 2.0F

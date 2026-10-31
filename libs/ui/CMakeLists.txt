@@ -20,7 +20,7 @@ add_library(ui
     components/slider/Slider.cpp
     components/contextmenu/ContextMenu.cpp
     debug/UiTreeSerializer.cpp
-    debug/LayoutLint.cpp
+    debug/UiLayoutLint.cpp
     clipboard/IClipboard.cpp
     focus/FocusManager.cpp
     input/InputEvent.cpp
@@ -47,6 +47,7 @@ target_link_libraries(ui
     PUBLIC
         salal::foundation
         salal::renderer
+        theme # its font families, until this library goes
         nlohmann_json::nlohmann_json
 )
 

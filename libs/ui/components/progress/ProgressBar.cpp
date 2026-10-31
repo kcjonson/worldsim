@@ -5,7 +5,7 @@
 #include "graphics/PrimitiveStyles.h"
 #include "graphics/Rect.h"
 #include "primitives/Primitives.h"
-#include "theme/Tokens.h"
+#include "theme/CssTokens.h"
 
 #include <algorithm>
 
@@ -56,7 +56,7 @@ namespace UI {
 											.position = pos,
 											.scale = scale,
 											.color = color,
-											.font = fontMono,
+											.font = theme::fontMono,
 											.shadowColor = bg_void,
 											.shadowOffset = {1.0F, 1.0F},
 											.letterSpacing = letterSpacing,
@@ -163,7 +163,7 @@ namespace UI {
 						  .position = {position.x, position.y},
 						  .scale = scale,
 						  .color = text_dim,
-						  .font = fontMono,
+						  .font = theme::fontMono,
 						  .letterSpacing = fs_xs * ls_wider,
 						  .transform = Foundation::TextTransform::Uppercase,
 						  .id = "pb_label"});
@@ -174,7 +174,7 @@ namespace UI {
 						  .position = {position.x + width - valueWidth, position.y},
 						  .scale = scale,
 						  .color = toneCol,
-						  .font = fontMono,
+						  .font = theme::fontMono,
 						  .id = "pb_value"});
 			}
 			trackTop += fs_xs + space_1; // header text + column gap

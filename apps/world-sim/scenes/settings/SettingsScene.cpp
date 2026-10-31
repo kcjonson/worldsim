@@ -15,8 +15,8 @@
 #include <graphics/PrimitiveStyles.h>
 #include <input/InputEvent.h>
 #include <primitives/Primitives.h>
-#include <theme/Tokens.h>
-#include <theme/Variants.h>
+#include <theme/CssTokens.h>
+#include <theme/Tones.h>
 #include <utils/Log.h>
 
 #include <memory>
@@ -75,7 +75,7 @@ namespace {
 				.position = {colX, headerY},
 				.scale = textScale(fs_4xl),
 				.color = text_bright,
-				.font = fontDisplay,
+				.font = theme::fontDisplay,
 				.vAlign = Foundation::VerticalAlign::Top,
 				.letterSpacing = fs_4xl * ls_wider});
 			drawText(Renderer::Primitives::TextArgs{
@@ -83,7 +83,7 @@ namespace {
 				.position = {colX, kickerY},
 				.scale = textScale(fs_2xs),
 				.color = text_faint,
-				.font = fontMono,
+				.font = theme::fontMono,
 				.vAlign = Foundation::VerticalAlign::Top,
 				.letterSpacing = fs_2xs * ls_wider});
 
@@ -97,7 +97,7 @@ namespace {
 				.position = {alignRect.x + space_4, alignRect.y},
 				.scale = textScale(fs_lg),
 				.color = hoverAlign ? text_bright : text_dim,
-				.font = fontDisplay,
+				.font = theme::fontDisplay,
 				.vAlign = Foundation::VerticalAlign::Middle,
 				.boxHeight = alignRect.height});
 			drawText(Renderer::Primitives::TextArgs{
@@ -105,7 +105,7 @@ namespace {
 				.position = {alignRect.x, alignRect.y},
 				.scale = textScale(fs_lg),
 				.color = on ? accent_bright : text_faint,
-				.font = fontMono,
+				.font = theme::fontMono,
 				.hAlign = Foundation::HorizontalAlign::Right,
 				.vAlign = Foundation::VerticalAlign::Middle,
 				.boxWidth = alignRect.width - space_4,
@@ -118,7 +118,7 @@ namespace {
 				.position = {colX, footerY},
 				.scale = textScale(fs_2xs),
 				.color = text_faint,
-				.font = fontMono,
+				.font = theme::fontMono,
 				.vAlign = Foundation::VerticalAlign::Top});
 		}
 

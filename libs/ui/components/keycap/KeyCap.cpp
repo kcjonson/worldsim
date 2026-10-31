@@ -1,12 +1,12 @@
 #include "components/keycap/KeyCap.h"
 
-#include "theme/Tokens.h"
-#include "theme/Variants.h"
 #include "font/FontRenderer.h"
 #include "graphics/Color.h"
 #include "graphics/PrimitiveStyles.h"
 #include "graphics/Rect.h"
 #include "primitives/Primitives.h"
+#include "theme/CssTokens.h"
+#include "theme/Tones.h"
 
 #include <algorithm>
 #include <utility>
@@ -32,7 +32,7 @@ namespace UI {
 
 		float measureWidth(const std::string& text, float scale) {
 			if (const Renderer::FontRenderer* font = Renderer::Primitives::getFontRenderer(); font != nullptr) {
-				return font->MeasureText(text, scale, fontMono, kLabelSpacing).x;
+				return font->MeasureText(text, scale, theme::fontMono, kLabelSpacing).x;
 			}
 			return 0.0F;
 		}
@@ -78,7 +78,7 @@ namespace UI {
 				  .position = bounds.position(),
 				  .scale = textScale(fs_2xs),
 				  .color = text_dim,
-				  .font = fontMono,
+				  .font = theme::fontMono,
 				  .hAlign = Foundation::HorizontalAlign::Center,
 				  .vAlign = Foundation::VerticalAlign::Middle,
 				  .boxWidth = bounds.width,

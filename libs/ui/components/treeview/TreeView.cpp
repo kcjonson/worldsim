@@ -2,8 +2,8 @@
 
 #include "graphics/PrimitiveStyles.h"
 #include "primitives/Primitives.h"
-#include "theme/Tokens.h"
-#include "theme/Variants.h"
+#include "theme/CssTokens.h"
+#include "theme/Tones.h"
 
 namespace UI {
 
@@ -234,7 +234,7 @@ void TreeView::render() {
 				  .position = {labelX, rowY},
 				  .scale = textScale(rowTextPx),
 				  .color = hovered ? text_bright : text,
-				  .font = fontUi,
+				  .font = theme::fontUi,
 				  .vAlign = Foundation::VerticalAlign::Middle,
 				  .boxHeight = rowHeight,
 				  .key = zIndex});
@@ -245,7 +245,7 @@ void TreeView::render() {
 					  .position = {contentPos.x, rowY},
 					  .scale = textScale(fs_xs),
 					  .color = text_dim,
-					  .font = fontMono,
+					  .font = theme::fontMono,
 					  .hAlign = Foundation::HorizontalAlign::Right,
 					  .vAlign = Foundation::VerticalAlign::Middle,
 					  .boxWidth = size.x - space_2,

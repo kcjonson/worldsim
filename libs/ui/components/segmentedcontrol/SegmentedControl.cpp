@@ -1,11 +1,11 @@
 #include "components/segmentedcontrol/SegmentedControl.h"
 
-#include "theme/Tokens.h"
 #include "font/FontRenderer.h"
 #include "graphics/Color.h"
 #include "graphics/PrimitiveStyles.h"
 #include "graphics/Rect.h"
 #include "primitives/Primitives.h"
+#include "theme/CssTokens.h"
 
 #include <algorithm>
 #include <utility>
@@ -62,7 +62,7 @@ namespace UI {
 
 		float measureWidth(const std::string& text, float scale, float letterSpacing) {
 			if (const Renderer::FontRenderer* font = Renderer::Primitives::getFontRenderer(); font != nullptr) {
-				return font->MeasureText(text, scale, fontDisplay, letterSpacing).x;
+				return font->MeasureText(text, scale, theme::fontDisplay, letterSpacing).x;
 			}
 			return 0.0F;
 		}
@@ -167,7 +167,7 @@ namespace UI {
 					  .position = segRect.position(),
 					  .scale = scale,
 					  .color = labelCol,
-					  .font = fontDisplay,
+					  .font = theme::fontDisplay,
 					  .hAlign = Foundation::HorizontalAlign::Center,
 					  .vAlign = Foundation::VerticalAlign::Middle,
 					  .boxWidth = segRect.width,

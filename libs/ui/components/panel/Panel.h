@@ -6,15 +6,15 @@
 // variant-tinted background, a hairline/edge border, optional L-bracket corner
 // ticks, and an optional header (mono kicker eyebrow above a larger title).
 //
-// All visuals come from UI tokens (see theme/Tokens.h). Texture
+// All visuals come from UI tokens (see theme/CssTokens.h). Texture
 // passes (scanlines, grain, glow) and real display fonts are later milestones.
 //
 // Spec: docs/design/ui/design-system/components.md (Panel section).
 
-#include "theme/Tokens.h"
 #include "graphics/Color.h"
 #include "graphics/Rect.h"
 #include "math/Types.h"
+#include "theme/CssTokens.h"
 #include <optional>
 #include <string>
 

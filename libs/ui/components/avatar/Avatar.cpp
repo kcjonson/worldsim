@@ -1,12 +1,12 @@
 #include "components/avatar/Avatar.h"
 
-#include "theme/Tokens.h"
-#include "theme/Variants.h"
 #include "font/FontRenderer.h"
 #include "graphics/Color.h"
 #include "graphics/PrimitiveStyles.h"
 #include "graphics/Rect.h"
 #include "primitives/Primitives.h"
+#include "theme/CssTokens.h"
+#include "theme/Tones.h"
 
 #include <cmath>
 #include <cstdint>
@@ -134,7 +134,7 @@ namespace UI {
 		const float			   discRadius = args.size * 0.34F;
 		drawCircle({.center = center, .radius = discRadius, .style = {.fill = hslToRgb(hue, 0.45F, 0.24F)}, .id = "ds_avatar_disc"});
 
-		// Initials centered over the disc, in the portrait's light hue. fontDisplay
+		// Initials centered over the disc, in the portrait's light hue. theme::fontDisplay
 		// because we have no silhouette art to pin them bottom-left against.
 		const std::string initials = initialsOf(args.seed);
 		if (!initials.empty()) {
@@ -148,7 +148,7 @@ namespace UI {
 						  .position = pos,
 						  .scale = scale,
 						  .color = col,
-						  .font = fontDisplay,
+						  .font = theme::fontDisplay,
 						  .hAlign = Foundation::HorizontalAlign::Center,
 						  .vAlign = Foundation::VerticalAlign::Middle,
 						  .boxWidth = args.size,

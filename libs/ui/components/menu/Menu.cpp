@@ -167,7 +167,7 @@ void Menu::render() {
 			.position = {itemBounds.x + space_3, itemBounds.y},
 			.scale = fs_sm / kTextBasePx,
 			.color = textColor,
-			.font = fontUi,
+			.font = theme::fontUi,
 			.vAlign = Foundation::VerticalAlign::Middle,
 			.boxHeight = kMenuItemHeight,
 			.key = zIndex + 2,

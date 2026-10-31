@@ -15,7 +15,7 @@
 #include <graphics/PrimitiveStyles.h>
 #include <math/Types.h>
 #include <primitives/Primitives.h>
-#include <theme/Variants.h>
+#include <theme/Tones.h>
 
 #include <array>
 #include <cctype>
@@ -56,7 +56,7 @@ namespace world_sim {
 			std::string					text;
 			float						fontSize{13.0F};
 			Foundation::Color			color{UI::text};
-			Renderer::FontFamily		font{UI::fontUi};
+			Renderer::FontFamily		font{theme::fontUi};
 			float						letterSpacingEm{0.0F};
 			Foundation::TextTransform	transform{Foundation::TextTransform::None};
 			Foundation::HorizontalAlign hAlign{Foundation::HorizontalAlign::Left};

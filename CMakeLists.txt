@@ -72,7 +72,7 @@ enable_testing()
 include(FetchContent)
 FetchContent_Declare(salal
     GIT_REPOSITORY https://github.com/kcjonson/salal.git
-    GIT_TAG        v0.25.0
+    GIT_TAG        v0.28.0
     GIT_SHALLOW    TRUE
 )
 set(SALAL_BUILD_APP ON)
@@ -85,6 +85,7 @@ FetchContent_MakeAvailable(salal)
 add_subdirectory(libs/geometry)
 
 # Feature layers
+add_subdirectory(libs/theme)
 add_subdirectory(libs/ui)
 add_subdirectory(libs/world)
 add_subdirectory(libs/planet-view)

@@ -3,7 +3,6 @@
 
 #include "app/UiBridge.h"
 #include "BaseShader.h"
-#include "app/UiOverlay.h"
 #include "app/UiScene.h"
 
 #include <application/App.h>
@@ -90,26 +89,6 @@ namespace {
 
 	  private:
 		Args args;
-	};
-
-	class RecordingOverlay : public engine::UiOverlay {
-	  public:
-		RecordingOverlay(Log& overlayLog, std::string overlayName, bool consumesDowns)
-			: log(overlayLog),
-			  name(std::move(overlayName)),
-			  consumeDowns(consumesDowns) {}
-
-		void render() override {}
-
-		bool handleInput(UI::InputEvent& event) override {
-			log.push_back(name + " " + describe(event));
-			return consumeDowns && event.type == UI::InputEvent::Type::MouseDown;
-		}
-
-	  private:
-		Log&		log;
-		std::string name;
-		bool		consumeDowns;
 	};
 
 	class RecordingFocusable : public UI::IFocusable {
@@ -339,32 +318,6 @@ TEST_F(UiBridgeTest, OnlyLeftAndRightButtonsReachTheUi) {
 	push(pointer(Type::PointerDown, 2, 2, MouseButton::Right));
 	frame();
 	EXPECT_EQ(log, (Log{"move 2,2", "down R 2,2", "move 2,2"}));
-}
-
-TEST_F(UiBridgeTest, OverlaysGoBeforeTheSceneTheLastAddedFirst) {
-	auto			   lower = std::make_unique<RecordingOverlay>(log, "lower", true);
-	auto			   upper = std::make_unique<RecordingOverlay>(log, "upper", false);
-	engine::UiOverlay* lowerRef = lower.get();
-	engine::UiOverlay* upperRef = upper.get();
-	bridge->addOverlay(*lowerRef);
-	bridge->addOverlay(*upperRef);
-	app->addOverlay(std::move(lower));
-	app->addOverlay(std::move(upper));
-	push(pointer(Type::PointerDown, 9, 9));
-	frame();
-	EXPECT_EQ(
-		log,
-		(Log{
-			"upper move 9,9",
-			"lower move 9,9",
-			"move 9,9",
-			"upper down L 9,9",
-			"lower down L 9,9",
-			"upper move 9,9",
-			"lower move 9,9",
-			"move 9,9",
-		})
-	);
 }
 
 TEST_F(UiBridgeTest, TheUiGetsTheAppsClipboardAndBothSingletonsGoWithTheBridge) {

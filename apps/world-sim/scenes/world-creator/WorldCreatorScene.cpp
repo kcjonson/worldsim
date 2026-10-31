@@ -36,8 +36,8 @@
 #include <layout/LayoutContainer.h>
 #include <primitives/Primitives.h>
 #include <shapes/Shapes.h>
-#include <theme/Tokens.h>
-#include <theme/Variants.h>
+#include <theme/CssTokens.h>
+#include <theme/Tones.h>
 #include <utils/Log.h>
 
 #include <algorithm>
@@ -440,7 +440,7 @@ class WorldCreatorScene : public engine::UiScene {
 			.text = "Awaiting generation",
 			.fontSize = fs_xs,
 			.color = text_dim,
-			.font = fontMono,
+			.font = theme::fontMono,
 			.letterSpacingEm = ls_wide,
 			.hAlign = Foundation::HorizontalAlign::Center,
 			.id = "wc_status"});
@@ -763,7 +763,7 @@ class WorldCreatorScene : public engine::UiScene {
 			.position = {kMarginX, kickerY},
 			.scale = UI::fs_2xs / 16.0F,
 			.color = UI::text_faint,
-			.font = UI::fontMono,
+			.font = theme::fontMono,
 			.vAlign = Foundation::VerticalAlign::Top,
 			.letterSpacing = UI::fs_2xs * UI::ls_wider,
 		});
@@ -772,7 +772,7 @@ class WorldCreatorScene : public engine::UiScene {
 			.position = {kMarginX, titleY},
 			.scale = UI::fs_3xl / 16.0F,
 			.color = UI::text_bright,
-			.font = UI::fontDisplay,
+			.font = theme::fontDisplay,
 			.vAlign = Foundation::VerticalAlign::Top,
 			.letterSpacing = UI::fs_3xl * UI::ls_wide,
 		});
@@ -807,13 +807,13 @@ class WorldCreatorScene : public engine::UiScene {
 				  .position = {barX, barY - 20.0F},
 				  .scale = UI::fs_xs / 16.0F,
 				  .color = UI::data_bright,
-				  .font = UI::fontMono,
+				  .font = theme::fontMono,
 				  .vAlign = Foundation::VerticalAlign::Top});
 		drawText({.text = std::format("{}%", static_cast<int>(progressFraction * 100.0F)),
 				  .position = {barX, barY - 20.0F},
 				  .scale = UI::fs_xs / 16.0F,
 				  .color = UI::accent_bright,
-				  .font = UI::fontMono,
+				  .font = theme::fontMono,
 				  .hAlign = Foundation::HorizontalAlign::Right,
 				  .vAlign = Foundation::VerticalAlign::Top,
 				  .boxWidth = barW});
@@ -909,7 +909,7 @@ class WorldCreatorScene : public engine::UiScene {
 				.position = {stage.x, stage.y + UI::space_4},
 				.scale = UI::fs_xs / 16.0F,
 				.color = UI::text_dim,
-				.font = UI::fontMono,
+				.font = theme::fontMono,
 				.hAlign = Foundation::HorizontalAlign::Center,
 				.vAlign = Foundation::VerticalAlign::Top,
 				.boxWidth = stage.width});

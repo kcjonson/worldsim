@@ -1,8 +1,8 @@
 #include "ZoomControl.h"
 
 #include <primitives/Primitives.h>
-#include <theme/Tokens.h>
-#include <theme/Variants.h>
+#include <theme/CssTokens.h>
+#include <theme/Tones.h>
 
 namespace world_sim {
 
@@ -80,7 +80,7 @@ void ZoomControl::render() {
 		.position = {position.x, labelY},
 		.scale = kFontSize / 16.0F,
 		.color = UI::text_dim,
-		.font = UI::fontMono,
+		.font = theme::fontMono,
 		.hAlign = Foundation::HorizontalAlign::Center,
 		.vAlign = Foundation::VerticalAlign::Top,
 		.boxWidth = kButtonSize,

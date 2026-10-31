@@ -11,12 +11,12 @@
 // off-screen) while we dial in the resting look.
 
 #include "SceneTypes.h"
-#include <app/UiScene.h>
 #include <assets/AssetDefinition.h>
 #include <assets/AssetRegistry.h>
-#include <input/InputEvent.h>
+#include <input/InputTypes.h>
 #include <primitives/InstanceData.h>
 #include <primitives/Primitives.h>
+#include <scene/Scene.h>
 #include <utils/Log.h>
 #include <vector/Types.h>
 #include <world/rendering/GroundcoverUniforms.h>
@@ -116,7 +116,7 @@ namespace {
 		return m;
 	}
 
-	class GrassScene : public engine::UiScene {
+	class GrassScene : public app::Scene {
 	  public:
 		void onEnter(app::App& /*app*/) override {
 			LOG_INFO(UI, "Grass Scene - placement-driven hair clumps");
@@ -229,8 +229,8 @@ namespace {
 
 		const char* name() const override { return kSceneName; }
 
-		bool handleInput(UI::InputEvent& event) override {
-			if (event.type == UI::InputEvent::Type::MouseMove) {
+		bool handleEvent(const foundation::InputEvent& event) override {
+			if (event.type == foundation::InputEvent::Type::PointerMove) {
 				m_mouse = event.position;
 				m_haveMouse = true;
 			}

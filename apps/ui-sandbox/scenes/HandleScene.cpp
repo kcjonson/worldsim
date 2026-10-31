@@ -2,9 +2,9 @@
 // Demonstrates resource handle safety and validation
 
 #include "SceneTypes.h"
-#include <app/UiScene.h>
 #include <resources/ResourceHandle.h>
 #include <resources/ResourceManager.h>
+#include <scene/Scene.h>
 #include <utils/Log.h>
 
 #include <GL/glew.h>
@@ -30,7 +30,7 @@ constexpr const char* kSceneName = "handles";
 	static void testHandleValidation();
 	static void testCapacityLimit();
 
-	class HandleScene : public engine::UiScene {
+	class HandleScene : public app::Scene {
 	  public:
 		void onEnter(app::App& /*app*/) override {
 			LOG_INFO(UI, "");

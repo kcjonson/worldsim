@@ -1,17 +1,13 @@
 #pragma once
 
-#include <app/UiScene.h>
-
-namespace app {
-	class SceneStack;
-} // namespace app
+#include <scene/SceneStack.h>
 
 namespace ui_sandbox {
 
 	/// @brief Scene registration info - each scene exports one of these
 	struct SceneInfo {
-		const char*			   name;
-		engine::UiSceneFactory factory;
+		const char*				 name;
+		app::SceneStack::Factory factory;
 	};
 
 // ============================================================================
@@ -19,31 +15,15 @@ namespace ui_sandbox {
 // ============================================================================
 // clang-format off
 #define UI_SANDBOX_SCENES(X) \
-	X(Arena)       \
-	X(Handle)      \
-	X(Button)      \
-	X(TabBar)      \
-	X(TextInput)   \
-	X(Grass)       \
-	X(VectorPerf)  \
-	X(Svg)         \
-	X(Clip)        \
-	X(Layer)       \
-	X(TextShapes)  \
-	X(Tree)        \
-	X(Layout)      \
-	X(Scroll)      \
-	X(Icon)        \
-	X(TreeView_)   \
-	X(Dropdown)    \
-	X(Toast_)      \
-	X(Dialog_)     \
-	X(Tooltip_)    \
-	X(ContextMenu_) \
-	X(TextWrap) \
-	X(Planet)  \
-	X(Salvage) \
-	X(SalvageDialog)
+	X(Arena)         \
+	X(Handle)        \
+	X(Grass)         \
+	X(VectorPerf)    \
+	X(Svg)           \
+	X(Tree)          \
+	X(Planet)        \
+	X(Gallery)       \
+	X(GalleryDialog)
 	// clang-format on
 
 	namespace scenes {

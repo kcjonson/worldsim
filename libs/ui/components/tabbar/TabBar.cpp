@@ -4,8 +4,8 @@
 #include "graphics/PrimitiveStyles.h"
 #include "graphics/Rect.h"
 #include "primitives/Primitives.h"
-#include "theme/Tokens.h"
-#include "theme/Variants.h"
+#include "theme/CssTokens.h"
+#include "theme/Tones.h"
 
 #include <glm/glm.hpp>
 #include <input/InputTypes.h>
@@ -19,7 +19,7 @@ namespace UI {
 
 		float textScale(float sizePx) { return sizePx / kTextBasePx; }
 
-		// Salvage tab metrics: 34px bar, fs_sm labels in fontDisplay, letter-spaced
+		// Salvage tab metrics: 34px bar, fs_sm labels in theme::fontDisplay, letter-spaced
 		// (ls_wide) and uppercased; the cell adds space_3 padding on each side.
 		constexpr float kBarHeight = 34.0F;
 		constexpr float kLabelPx = fs_sm;
@@ -152,7 +152,7 @@ namespace UI {
 					  .position = {cell.x, cell.y},
 					  .scale = scale,
 					  .color = labelColor,
-					  .font = fontDisplay,
+					  .font = theme::fontDisplay,
 					  .hAlign = Foundation::HorizontalAlign::Center,
 					  .vAlign = Foundation::VerticalAlign::Middle,
 					  .boxWidth = cell.width,
@@ -346,7 +346,7 @@ namespace UI {
 						ch = static_cast<char>(ch - ('a' - 'A'));
 					}
 				}
-				labelWidth = fontRenderer->MeasureText(measured, scale, fontDisplay, kLabelSpacing).x;
+				labelWidth = fontRenderer->MeasureText(measured, scale, theme::fontDisplay, kLabelSpacing).x;
 			}
 			const float cellWidth = labelWidth + (space_3 * 2.0F);
 

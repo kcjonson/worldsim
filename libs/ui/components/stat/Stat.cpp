@@ -1,9 +1,9 @@
 #include "components/stat/Stat.h"
 
-#include "theme/Tokens.h"
 #include "font/FontRenderer.h"
 #include "graphics/Color.h"
 #include "primitives/Primitives.h"
+#include "theme/CssTokens.h"
 
 #include <utility>
 
@@ -50,7 +50,7 @@ namespace UI {
 					  .position = args.position,
 					  .scale = textScale(fs_2xs),
 					  .color = text_dim,
-					  .font = fontMono,
+					  .font = theme::fontMono,
 					  .letterSpacing = fs_2xs * ls_wider,
 					  .transform = Foundation::TextTransform::Uppercase,
 					  .id = "ds_stat_label"});
@@ -66,19 +66,19 @@ namespace UI {
 				  .position = {args.position.x, valueY},
 				  .scale = valueScale,
 				  .color = valueColor,
-				  .font = fontDisplay,
+				  .font = theme::fontDisplay,
 				  .id = "ds_stat_value"});
 
 		// Unit trails the value, smaller (0.62em of the value) and dim, sitting on
 		// the value's baseline (offset down by the font-size difference).
 		if (!args.unit.empty()) {
 			const float unitPx = valuePx * 0.62F;
-			const float valueWidth = measureWidth(args.value, valueScale, fontDisplay);
+			const float valueWidth = measureWidth(args.value, valueScale, theme::fontDisplay);
 			drawText({.text = args.unit,
 					  .position = {args.position.x + valueWidth + space_0_5, valueY + (valuePx - unitPx)},
 					  .scale = textScale(unitPx),
 					  .color = text_dim,
-					  .font = fontUi,
+					  .font = theme::fontUi,
 					  .id = "ds_stat_unit"});
 		}
 	}

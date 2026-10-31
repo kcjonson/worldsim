@@ -3,8 +3,8 @@
 #include "focus/FocusManager.h"
 #include "graphics/PrimitiveStyles.h"
 #include "primitives/Primitives.h"
-#include "theme/Tokens.h"
-#include "theme/Variants.h"
+#include "theme/CssTokens.h"
+#include "theme/Tones.h"
 
 namespace UI {
 
@@ -341,7 +341,7 @@ void Select::render() {
 		.position = {bounds.x + space_3, bounds.y},
 		.scale = textScale(fs_sm),
 		.color = textColor,
-		.font = fontUi,
+		.font = theme::fontUi,
 		.hAlign = Foundation::HorizontalAlign::Left,
 		.vAlign = Foundation::VerticalAlign::Middle,
 		.boxWidth = bounds.width - space_3 - chevronGutter,
@@ -357,7 +357,7 @@ void Select::render() {
 		.position = {chevronBoxX, bounds.y},
 		.scale = textScale(fs_sm),
 		.color = chevronColor,
-		.font = fontMono,
+		.font = theme::fontMono,
 		.hAlign = Foundation::HorizontalAlign::Center,
 		.vAlign = Foundation::VerticalAlign::Middle,
 		.boxWidth = chevronGutter,

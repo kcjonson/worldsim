@@ -19,7 +19,7 @@ namespace engine {
 
 	class UiScene : public app::Scene {
 	  public:
-		// True when the scene consumed the event. The overlays have had it first.
+		// True when the scene consumed the event.
 		virtual bool							   handleInput(UI::InputEvent& /*event*/) { return false; }
 		virtual std::vector<const UI::IComponent*> getUiRoots() const { return {}; }
 	};

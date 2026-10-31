@@ -3,8 +3,8 @@
 #include "primitives/Primitives.h"
 #include <components/icon/Icon.h>
 #include <components/panel/Panel.h>
-#include <theme/Tokens.h>
-#include <theme/Variants.h>
+#include <theme/CssTokens.h>
+#include <theme/Tones.h>
 
 #include <focus/FocusManager.h>
 
@@ -34,7 +34,7 @@ Renderer::Primitives::TextArgs ParameterPanel::makeLabel(const std::string& text
 		.position = {position.x + kSliderX, y},
 		.scale = UI::fs_2xs / 16.0F,
 		.color = UI::text_dim,
-		.font = UI::fontMono,
+		.font = theme::fontMono,
 		.vAlign = Foundation::VerticalAlign::Top,
 		.letterSpacing = UI::fs_2xs * UI::ls_wider,
 		.transform = Foundation::TextTransform::Uppercase,
@@ -374,7 +374,7 @@ void ParameterPanel::render(float height) {
 		.position = {advancedToggleBounds.x, advancedToggleBounds.y + 3.0F},
 		.scale = UI::fs_2xs / 16.0F,
 		.color = advancedOpen ? UI::text : UI::text_dim,
-		.font = UI::fontMono,
+		.font = theme::fontMono,
 		.vAlign = Foundation::VerticalAlign::Top,
 		.letterSpacing = UI::fs_2xs * UI::ls_wider,
 		.transform = Foundation::TextTransform::Uppercase,

@@ -3,8 +3,8 @@
 #include "core/RenderContext.h"
 #include "focus/FocusManager.h"
 #include "font/FontRenderer.h"
-#include "theme/Tokens.h"
-#include "theme/Variants.h"
+#include "theme/CssTokens.h"
+#include "theme/Tones.h"
 #include "utils/Utf8.h"
 #include <algorithm>
 #include <cmath>
@@ -568,13 +568,13 @@ namespace UI {
 
 		// Calculate baseline Y position for vertically centered text
 		// This matches Text component's bounding box Middle alignment behavior
-		float ascent = fontRenderer->getAscent(scale, fontUi);
+		float ascent = fontRenderer->getAscent(scale, theme::fontUi);
 		float baselineY = position.y + (size.y - ascent) * 0.5F;
 
 		// Generate glyph quads using FontRenderer
 		glm::vec4 glyphColor(style.textColor.r, style.textColor.g, style.textColor.b, style.textColor.a);
 		std::vector<Renderer::FontRenderer::GlyphQuad> glyphs;
-		fontRenderer->generateGlyphQuads(text, glm::vec2(textX, baselineY), scale, glyphColor, glyphs, fontUi);
+		fontRenderer->generateGlyphQuads(text, glm::vec2(textX, baselineY), scale, glyphColor, glyphs, theme::fontUi);
 
 		Renderer::Primitives::drawGlyphs(glyphs.data(), glyphs.size());
 	}
@@ -632,11 +632,11 @@ namespace UI {
 
 		// Measure text before selection start
 		std::string textBeforeStart = text.substr(0, start);
-		float		startX = fontRenderer->MeasureText(textBeforeStart, scale, fontUi).x;
+		float		startX = fontRenderer->MeasureText(textBeforeStart, scale, theme::fontUi).x;
 
 		// Measure text up to selection end
 		std::string textBeforeEnd = text.substr(0, end);
-		float		endX = fontRenderer->MeasureText(textBeforeEnd, scale, fontUi).x;
+		float		endX = fontRenderer->MeasureText(textBeforeEnd, scale, theme::fontUi).x;
 
 		// Calculate selection rectangle (vertically centered in the box)
 		float selectionX = position.x + style.paddingLeft + startX - horizontalScroll;
@@ -676,13 +676,13 @@ namespace UI {
 
 		// Calculate baseline Y position for vertically centered text
 		// This matches Text component's bounding box Middle alignment behavior
-		float ascent = fontRenderer->getAscent(scale, fontUi);
+		float ascent = fontRenderer->getAscent(scale, theme::fontUi);
 		float baselineY = position.y + (size.y - ascent) * 0.5F;
 
 		// Generate glyph quads using FontRenderer
 		glm::vec4 glyphColor(style.placeholderColor.r, style.placeholderColor.g, style.placeholderColor.b, style.placeholderColor.a);
 		std::vector<Renderer::FontRenderer::GlyphQuad> glyphs;
-		fontRenderer->generateGlyphQuads(placeholder, glm::vec2(textX, baselineY), scale, glyphColor, glyphs, fontUi);
+		fontRenderer->generateGlyphQuads(placeholder, glm::vec2(textX, baselineY), scale, glyphColor, glyphs, theme::fontUi);
 
 		Renderer::Primitives::drawGlyphs(glyphs.data(), glyphs.size());
 	}
@@ -700,7 +700,7 @@ namespace UI {
 		float scale = style.fontSize / kBaseFontSize;
 
 		Renderer::FontRenderer* fontRenderer = Renderer::Primitives::getFontRenderer();
-		float					width = fontRenderer ? fontRenderer->MeasureText(textBeforeCursor, scale, fontUi).x : 0.0F;
+		float					width = fontRenderer ? fontRenderer->MeasureText(textBeforeCursor, scale, theme::fontUi).x : 0.0F;
 
 		// Account for padding and scroll
 		return position.x + style.paddingLeft + width - horizontalScroll;
@@ -720,7 +720,7 @@ namespace UI {
 		Renderer::FontRenderer* fontRenderer = Renderer::Primitives::getFontRenderer();
 		for (size_t i = 0; i <= text.size();) {
 			std::string textUpToPos = text.substr(0, i);
-			float		width = fontRenderer ? fontRenderer->MeasureText(textUpToPos, scale, fontUi).x : 0.0F;
+			float		width = fontRenderer ? fontRenderer->MeasureText(textUpToPos, scale, theme::fontUi).x : 0.0F;
 			float		distance = std::abs(width - localX);
 
 			if (distance < bestDistance) {
@@ -758,7 +758,7 @@ namespace UI {
 		float scale = style.fontSize / kBaseFontSize;
 
 		Renderer::FontRenderer* fontRenderer = Renderer::Primitives::getFontRenderer();
-		float					textWidth = fontRenderer ? fontRenderer->MeasureText(text, scale, fontUi).x : 0.0F;
+		float					textWidth = fontRenderer ? fontRenderer->MeasureText(text, scale, theme::fontUi).x : 0.0F;
 		if (textWidth < visibleWidth) {
 			horizontalScroll = 0.0F; // No scroll needed
 		} else {

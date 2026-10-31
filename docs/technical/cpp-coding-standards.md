@@ -299,7 +299,7 @@ libs/ui/components/TextInput/
 ```
 libs/engine/app/
 ├── UiScene.h
-├── UiOverlay.h
+├── UiClipboard.h
 ├── UiBridge.h
 └── UiBridge.cpp
 

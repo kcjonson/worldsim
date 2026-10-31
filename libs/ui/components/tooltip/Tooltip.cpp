@@ -1,10 +1,10 @@
 #include "Tooltip.h"
 
-#include "theme/Tokens.h"
-#include "theme/Variants.h"
 #include "graphics/PrimitiveStyles.h"
 #include "graphics/Rect.h"
 #include "primitives/Primitives.h"
+#include "theme/CssTokens.h"
+#include "theme/Tones.h"
 
 #include <algorithm>
 #include <array>
@@ -153,7 +153,7 @@ namespace UI {
 				.position = {textX, textY},
 				.scale = textScale(kTitleFontSize),
 				.color = fade(text_bright, opacity),
-				.font = fontUi,
+				.font = theme::fontUi,
 				.key = zIndex,
 			}
 		);
@@ -168,7 +168,7 @@ namespace UI {
 					.position = {textX, textY},
 					.scale = textScale(kDescFontSize),
 					.color = fade(text, opacity),
-					.font = fontUi,
+					.font = theme::fontUi,
 					.key = zIndex,
 				}
 			);
@@ -184,7 +184,7 @@ namespace UI {
 					.position = {textX, textY},
 					.scale = textScale(kHotkeyFontSize),
 					.color = fade(text_dim, opacity),
-					.font = fontMono,
+					.font = theme::fontMono,
 					.key = zIndex,
 				}
 			);

@@ -2,9 +2,9 @@
 // Demonstrates memory arena performance and correctness
 
 #include "SceneTypes.h"
-#include <app/UiScene.h>
 #include <math/Types.h>
 #include <memory/Arena.h>
+#include <scene/Scene.h>
 #include <utils/Log.h>
 
 #include <GL/glew.h>
@@ -23,7 +23,7 @@ static void testPerformance();
 	static void testCapacity();
 	static void testScoped();
 
-	class ArenaScene : public engine::UiScene {
+	class ArenaScene : public app::Scene {
 	  public:
 		void onEnter(app::App& /*app*/) override {
 			LOG_INFO(UI, "");

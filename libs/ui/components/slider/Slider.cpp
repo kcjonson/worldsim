@@ -4,8 +4,8 @@
 #include "graphics/PrimitiveStyles.h"
 #include "graphics/Rect.h"
 #include "primitives/Primitives.h"
-#include "theme/Tokens.h"
-#include "theme/Variants.h"
+#include "theme/CssTokens.h"
+#include "theme/Tones.h"
 
 #include <algorithm>
 #include <cmath>
@@ -170,7 +170,7 @@ void Slider::render() {
 				  .position = {contentPos.x, contentPos.y},
 				  .scale = headerScale,
 				  .color = disabled ? text_disabled : text_dim,
-				  .font = fontMono,
+				  .font = theme::fontMono,
 				  .vAlign = Foundation::VerticalAlign::Middle,
 				  .boxWidth = kLabelWidth,
 				  .boxHeight = size.y,
@@ -182,7 +182,7 @@ void Slider::render() {
 					  .position = {contentPos.x, contentPos.y},
 					  .scale = headerScale,
 					  .color = disabled ? text_disabled : accent_bright,
-					  .font = fontMono,
+					  .font = theme::fontMono,
 					  .hAlign = Foundation::HorizontalAlign::Right,
 					  .vAlign = Foundation::VerticalAlign::Middle,
 					  .boxWidth = size.x,

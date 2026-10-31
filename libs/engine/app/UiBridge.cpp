@@ -3,13 +3,12 @@
 #include "app/Keys.h"
 #include "app/UiScene.h"
 
-#include <debug/LayoutLint.h>
+#include <debug/UiLayoutLint.h>
 #include <debug/UiTreeSerializer.h>
 #include <input/InputEvent.h>
 
 #include <application/App.h>
 
-#include <ranges>
 
 namespace engine {
 
@@ -56,10 +55,6 @@ namespace engine {
 
 	UiBridge::~UiBridge() {
 		owner.setDispatch({});
-	}
-
-	void UiBridge::addOverlay(UiOverlay& overlay) {
-		overlays.push_back(&overlay);
 	}
 
 	float UiBridge::consumeScroll() {
@@ -154,11 +149,6 @@ namespace engine {
 	}
 
 	bool UiBridge::send(UI::InputEvent& event) {
-		for (UiOverlay* overlay : std::views::reverse(overlays)) {
-			if (overlay->handleInput(event)) {
-				return true;
-			}
-		}
 		UiScene* scene = topScene();
 		return scene != nullptr && scene->handleInput(event);
 	}

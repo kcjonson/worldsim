@@ -1,11 +1,11 @@
 #include "components/divider/Divider.h"
 
-#include "theme/Tokens.h"
-#include "theme/Variants.h"
 #include "font/FontRenderer.h"
 #include "graphics/Color.h"
 #include "graphics/PrimitiveStyles.h"
 #include "primitives/Primitives.h"
+#include "theme/CssTokens.h"
+#include "theme/Tones.h"
 
 #include <algorithm>
 #include <utility>
@@ -21,7 +21,7 @@ namespace UI {
 
 		float measureWidth(const std::string& text, float scale, float letterSpacing) {
 			if (const Renderer::FontRenderer* font = Renderer::Primitives::getFontRenderer(); font != nullptr) {
-				return font->MeasureText(text, scale, fontMono, letterSpacing).x;
+				return font->MeasureText(text, scale, theme::fontMono, letterSpacing).x;
 			}
 			return 0.0F;
 		}
@@ -63,7 +63,7 @@ namespace UI {
 				  .position = {labelX, lineY - (fs_2xs * 0.5F)}, // center the caption on the line
 				  .scale = scale,
 				  .color = text_faint,
-				  .font = fontMono,
+				  .font = theme::fontMono,
 				  .letterSpacing = labelSpacing,
 				  .transform = Foundation::TextTransform::Uppercase,
 				  .id = "ds_divider_label"});

@@ -17,7 +17,7 @@ target_compile_features(asset-manager PRIVATE cxx_std_20)
 target_link_libraries(asset-manager
     PRIVATE
         engine
-        ui
+        theme
         salal::renderer
         salal::foundation
         assets

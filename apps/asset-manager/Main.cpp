@@ -5,7 +5,6 @@
 #include "BaseShader.h"
 #include "SceneTypes.h"
 
-#include <app/UiBridge.h>
 #include <application/App.h>
 #include <application/CommandLine.h>
 #include <assets/AssetBootstrap.h>
@@ -44,8 +43,8 @@ int main(int argc, char* argv[]) {
 		{.applicationName = "asset-manager",
 		 .frame = {.frameCapHz = 120},
 		 .baseShader = base_shader::source(),
-		 .fontAtlases = UI::kFontAtlases,
-		 .defaultFont = UI::fontDefault,
+		 .fontAtlases = theme::kFontAtlases,
+		 .defaultFont = theme::fontDefault,
 		 .clearColor = {0.1F, 0.1F, 0.15F, 1.0F},
 		 // On wherever the server is compiled in, so a Release build, which has none, logs nothing
 		 .devServer =
@@ -60,7 +59,6 @@ int main(int argc, char* argv[]) {
 	// BrowserScene reads the registry on entry, so load synchronously.
 	engine::assets::initializeAssetSystem(false);
 
-	engine::UiBridge bridge(*app);
 	asset_manager::addScenes(app->scenes());
 	if (!commandLine.scene || !app->scenes().switchTo(*commandLine.scene)) {
 		app->scenes().switchTo(asset_manager::scenes::Browser.name);
