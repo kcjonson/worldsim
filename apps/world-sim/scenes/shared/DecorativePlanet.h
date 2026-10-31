@@ -13,6 +13,8 @@
 
 #include "GlobeView.h"
 
+#include <graphics/Color.h>
+
 namespace world_sim {
 
 class DecorativePlanet {
