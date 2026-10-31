@@ -92,10 +92,11 @@ regression.
   `control?action=camera&x=<x>&y=<y>&zoom=14`, then screenshot):
   - Bob's face shows (eyes, skin), not the all-hair back of the head.
   - Walking toward the top of the screen shows the back of the head.
+  - Walking left or right, the eye and nose lead and the hair trails.
 
 **Why this matters:** world +Y draws lower on screen, and the movement-to-facing quantization
 (MovementSystem, FacingDirection) once mapped +Y to `Up`, so colonists walked toward the viewer
-showing their backs.
+showing their backs. The side-view SVGs also had their hair on the facing side.
 
 ---
 
