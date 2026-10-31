@@ -1,17 +1,17 @@
 #include "WorldSurveyPanel.h"
 
+#include "scenes/shared/SalvageUi.h"
+
 #include <worldgen/data/Biome.h>
 #include <worldgen/data/WorldData.h>
 
-#include <components/badge/Badge.h>
-#include <components/icon/Icon.h>
-#include <components/panel/Panel.h>
-#include <components/progress/ProgressBar.h>
-#include <components/stat/Stat.h>
-#include <primitives/Primitives.h>
-#include <shapes/Shapes.h>
-#include <theme/Tokens.h>
-#include <theme/Variants.h>
+#include <theme/Panel.h>
+#include <ui/components/Badge.h>
+#include <ui/components/ProgressBar.h>
+#include <ui/components/Stat.h>
+#include <ui/shapes/Icon.h>
+#include <ui/shapes/Rectangle.h>
+#include <ui/shapes/Text.h>
 
 #include <algorithm>
 #include <array>
@@ -21,6 +21,8 @@
 namespace world_sim {
 
 namespace {
+
+	namespace family = ui::tokens::font::family;
 
 	bool hasField(const worldgen::GeneratedWorld& w, worldgen::WorldField f) {
 		return (w.validFields & static_cast<uint32_t>(f)) != 0;
@@ -59,13 +61,21 @@ namespace {
 		return Band::None;
 	}
 
-	UI::Tone badgeTone(int tone) {
-		if (tone == 0) return UI::Tone::Ok;
-		if (tone == 1) return UI::Tone::Warn;
-		return UI::Tone::Crit;
+	ui::Tone badgeTone(int tone) {
+		if (tone == 0)
+			return ui::Tone::Positive;
+		if (tone == 1)
+			return ui::Tone::Warning;
+		return ui::Tone::Danger;
 	}
 
 } // namespace
+
+void WorldSurveyPanel::mount(ui::Ref<ui::Component> hostRef, const ui::Theme& themeRef) {
+	host = hostRef;
+	theme = &themeRef;
+	rebuild();
+}
 
 void WorldSurveyPanel::setWorld(std::shared_ptr<const worldgen::GeneratedWorld> newWorld) {
 	world = std::move(newWorld);
@@ -73,198 +83,195 @@ void WorldSurveyPanel::setWorld(std::shared_ptr<const worldgen::GeneratedWorld> 
 	climate.clear();
 	badges.clear();
 	habitability = -1.0F;
-	if (!world) {
-		return;
-	}
+	if (world) {
+		const worldgen::WorldSummary& summary = world->summary;
 
-	const worldgen::WorldSummary& summary = world->summary;
+		if (hasField(*world, worldgen::WorldField::Elevation)) {
+			stats.push_back({"Land", std::format("{:.0f}", summary.landFraction * 100.0F), "%", false});
+			stats.push_back({"Water", std::format("{:.0f}", (1.0F - summary.landFraction) * 100.0F), "%", true});
 
-	if (hasField(*world, worldgen::WorldField::Elevation)) {
-		stats.push_back({"Land", std::format("{:.0f}", summary.landFraction * 100.0F), "%", false});
-		stats.push_back({"Water", std::format("{:.0f}", (1.0F - summary.landFraction) * 100.0F), "%", true});
-
-		const float waterFraction = 1.0F - summary.landFraction;
-		if (waterFraction < 0.15F) {
-			badges.push_back({"Water: Scarce", 1});
-		} else if (waterFraction > 0.92F) {
-			badges.push_back({"Water: Extreme", 1});
-		} else {
-			badges.push_back({"Water: Good", 0});
+			const float waterFraction = 1.0F - summary.landFraction;
+			if (waterFraction < 0.15F) {
+				badges.push_back({"Water: Scarce", 1});
+			} else if (waterFraction > 0.92F) {
+				badges.push_back({"Water: Extreme", 1});
+			} else {
+				badges.push_back({"Water: Good", 0});
+			}
 		}
-	}
-	if (hasField(*world, worldgen::WorldField::TemperatureMean)) {
-		stats.push_back({"Mean Temp", std::format("{:.1f}", summary.meanTemperatureC), " C", false});
-	}
-	if (hasField(*world, worldgen::WorldField::FlowAccum)) {
-		stats.push_back({"River Tiles", std::format("{}", summary.riverTileCount), "", summary.riverTileCount > 0});
-	}
-
-	if (hasField(*world, worldgen::WorldField::Biome)) {
-		habitability = std::clamp(summary.habitability, 0.0F, 1.0F);
-		if (habitability >= 0.55F) {
-			badges.push_back({"Habitability: Good", 0});
-		} else if (habitability >= 0.3F) {
-			badges.push_back({"Habitability: Fair", 1});
-		} else {
-			badges.push_back({"Habitability: Poor", 2});
+		if (hasField(*world, worldgen::WorldField::TemperatureMean)) {
+			stats.push_back({"Mean Temp", std::format("{:.1f}", summary.meanTemperatureC), " C", false});
+		}
+		if (hasField(*world, worldgen::WorldField::FlowAccum)) {
+			stats.push_back({"River Tiles", std::format("{}", summary.riverTileCount), "", summary.riverTileCount > 0});
 		}
 
-		std::array<uint64_t, 5> counts{};
-		uint64_t				landTotal = 0;
-		for (size_t i = 0; i < summary.biomeHistogram.size(); ++i) {
-			const Band band = bandFor(static_cast<worldgen::Biome>(i));
-			if (band == Band::None) continue;
-			counts[static_cast<size_t>(band)] += summary.biomeHistogram[i];
-			landTotal += summary.biomeHistogram[i];
-		}
-		if (landTotal > 0) {
-			constexpr std::array<const char*, 5> kBandNames{"Tropical", "Temperate", "Desert", "Boreal", "Polar"};
-			for (size_t i = 0; i < counts.size(); ++i) {
-				climate.push_back({kBandNames[i], static_cast<float>(counts[i]) / static_cast<float>(landTotal)});
+		if (hasField(*world, worldgen::WorldField::Biome)) {
+			habitability = std::clamp(summary.habitability, 0.0F, 1.0F);
+			if (habitability >= 0.55F) {
+				badges.push_back({"Habitability: Good", 0});
+			} else if (habitability >= 0.3F) {
+				badges.push_back({"Habitability: Fair", 1});
+			} else {
+				badges.push_back({"Habitability: Poor", 2});
+			}
+
+			std::array<uint64_t, 5> counts{};
+			uint64_t				landTotal = 0;
+			for (size_t i = 0; i < summary.biomeHistogram.size(); ++i) {
+				const Band band = bandFor(static_cast<worldgen::Biome>(i));
+				if (band == Band::None)
+					continue;
+				counts[static_cast<size_t>(band)] += summary.biomeHistogram[i];
+				landTotal += summary.biomeHistogram[i];
+			}
+			if (landTotal > 0) {
+				constexpr std::array<const char*, 5> kBandNames{"Tropical", "Temperate", "Desert", "Boreal", "Polar"};
+				for (size_t i = 0; i < counts.size(); ++i) {
+					climate.push_back({kBandNames[i], static_cast<float>(counts[i]) / static_cast<float>(landTotal)});
+				}
 			}
 		}
 	}
+	rebuild();
 }
 
-void WorldSurveyPanel::render(const Foundation::Rect& bounds) const {
-	using Renderer::Primitives::drawRect;
-	using Renderer::Primitives::drawText;
+void WorldSurveyPanel::rebuild() {
+	ui::Component* shownHost = host.get();
+	if (shownHost == nullptr || theme == nullptr) {
+		return;
+	}
+	if (panel.get() != nullptr) {
+		shownHost->removeChild(panel);
+	}
+	// Pending, the panel fills the column; complete, it takes its content's height and the Landing
+	// Zone pane takes the rest.
+	ui::Layout hostLayout = shownHost->getLayout();
+	hostLayout.flexGrow = world ? 0.0F : 1.0F;
+	shownHost->setLayout(hostLayout);
 
-	UI::Panel panel({.position = bounds.position(),
-					 .size = {bounds.width, bounds.height},
-					 .title = "World Survey",
-					 .kicker = world ? "Complete" : "Pending",
-					 .accent = UI::PanelAccent::Accent});
-	panel.render();
-	const Foundation::Rect body = panel.bodyBounds();
+	ui::Ref<::theme::Panel> frame = host.addChild<::theme::Panel>({
+		.id = "world_survey",
+		.size = {ui::percent(100.0F), ui::kAuto},
+		.layout = {.flexGrow = 1.0F},
+		.title = "World Survey",
+		.kicker = world ? "Complete" : "Pending",
+	});
+	panel = frame;
+	const ::theme::Panel* shownFrame = frame.get();
+	if (shownFrame == nullptr) {
+		return;
+	}
+	ui::Ref<ui::Component> body = shownFrame->body();
+	const float			   space2 = theme->get(tokens::spacing::space2);
+	const ui::Style		   label = world_sim::text(
+		   *theme,
+		   {.family = family::mono,
+				.size = tokens::fontSize::fs2xs,
+				.color = tokens::color::textDim,
+				.tracking = tokens::letterSpacing::lsWider,
+				.transform = Foundation::TextTransform::Uppercase}
+	   );
 
 	if (!world) {
-		UI::Icon globe({.position = {body.x + (body.width - 32.0F) * 0.5F, body.y + body.height * 0.4F - 48.0F},
-						.size = 32.0F,
-						.glyph = "globe",
-						.tint = UI::text_faint});
-		globe.render();
-		UI::Text hint(UI::Text::Args{
-			.position = {body.x + (body.width - 220.0F) * 0.5F, body.y + body.height * 0.4F},
-			.width = 220.0F,
-			.text = "Survey data resolves as the world is generated.",
-			.style = {.color = UI::text_faint,
-					  .fontSize = UI::fs_sm,
-					  .hAlign = Foundation::HorizontalAlign::Center,
-					  .wordWrap = true},
+		ui::Ref<ui::Component> empty = body.addChild<ui::Component>({
+			.size = {ui::percent(100.0F), 0.0F},
+			.layout = {
+				.display = ui::Display::Flex,
+				.flexDirection = ui::FlexDirection::Column,
+				.gap = theme->get(tokens::spacing::space4),
+				.alignItems = ui::AlignItems::Center,
+				.justifyContent = ui::JustifyContent::Center,
+				.flexGrow = 1.0F
+			},
 		});
-		hint.render();
+		empty.addChild<ui::Icon>({.size = {32.0F, 32.0F}, .style = {.color = theme->get(tokens::color::textFaint)}, .name = "globe"});
+		empty.addChild<ui::Text>({
+			.size = {220.0F, ui::kAuto},
+			.style = world_sim::text(
+				*theme, {.size = tokens::fontSize::fsSm, .color = tokens::color::textFaint, .align = Foundation::HorizontalAlign::Center}
+			),
+			.text = "Survey data resolves as the world is generated.",
+			.wrap = true,
+		});
 		return;
 	}
 
-	float y = body.y + UI::space_2;
+	ui::Ref<ui::Component> content = body.addChild<ui::Component>({
+		.size = {ui::percent(100.0F), ui::kAuto},
+		.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = space2},
+	});
 
 	// Stat grid, two columns.
-	const float colW = body.width * 0.5F;
+	ui::Ref<ui::Component> statRow;
 	for (size_t i = 0; i < stats.size(); ++i) {
+		if (i % 2 == 0) {
+			statRow = content.addChild<ui::Component>({.size = {ui::percent(100.0F), ui::kAuto}, .layout = {.display = ui::Display::Flex}});
+		}
 		const StatEntry& s = stats[i];
-		const float		 x = body.x + (i % 2 == 0 ? 0.0F : colW);
-		UI::Stat({.position = {x, y},
-				  .label = s.label,
-				  .value = s.value,
-				  .unit = s.unit,
-				  .tone = s.dataTone ? UI::Tone::Data : UI::Tone::Default,
-				  .size = UI::Size::Sm})
-			.render();
-		if (i % 2 == 1) y += 46.0F;
+		statRow.addChild<ui::Stat>({
+			.size = {ui::percent(50.0F), ui::kAuto},
+			.label = s.label,
+			.value = s.value,
+			.unit = s.unit,
+			.tone = s.dataTone ? ui::Tone::Info : ui::Tone::Default,
+			.controlSize = ui::ControlSize::Sm,
+		});
 	}
-	if (stats.size() % 2 == 1) y += 46.0F;
-	y += UI::space_2;
 
 	// Habitability: inset row with five accent pips.
 	if (habitability >= 0.0F) {
-		const Foundation::Rect row{body.x, y, body.width, 36.0F};
-		drawRect({.bounds = row,
-				  .style = {.fill = UI::bg_inset,
-							.border = Foundation::BorderStyle{
-								.color = UI::line_hairline, .width = UI::bw, .cornerRadius = UI::r_sm,
-								.position = Foundation::BorderPosition::Inside}}});
-		drawText({.text = "HABITABILITY",
-				  .position = {row.x + UI::space_3, row.y},
-				  .scale = UI::fs_2xs / 16.0F,
-				  .color = UI::text_dim,
-				  .font = UI::fontMono,
-				  .vAlign = Foundation::VerticalAlign::Middle,
-				  .boxHeight = row.height,
-				  .letterSpacing = UI::fs_2xs * UI::ls_wider});
+		ui::Ref<ui::Rectangle> row = content.addChild<ui::Rectangle>({
+			.size = {ui::percent(100.0F), 36.0F},
+			.layout =
+				{.display = ui::Display::Flex,
+				 .padding = {0.0F, theme->get(tokens::spacing::space3), 0.0F, theme->get(tokens::spacing::space3)},
+				 .alignItems = ui::AlignItems::Center,
+				 .justifyContent = ui::JustifyContent::SpaceBetween},
+			.style = {
+				.backgroundColor = theme->get(tokens::color::bgInset),
+				.borderColor = theme->get(tokens::color::lineHairline),
+				.borderWidth = theme->get(tokens::border::bw),
+				.borderRadius = theme->get(tokens::radius::rSm)
+			},
+		});
+		row.addChild<ui::Text>({.style = label, .text = "Habitability"});
+		ui::Ref<ui::Component> pips = row.addChild<ui::Component>({.layout = {.display = ui::Display::Flex, .gap = 3.0F}});
 		const int filled = static_cast<int>(std::lround(habitability * 5.0F));
 		for (int i = 0; i < 5; ++i) {
-			UI::Icon star({.position = {row.x + row.width - UI::space_3 - (5.0F - static_cast<float>(i)) * 19.0F,
-										row.y + (row.height - 16.0F) * 0.5F},
-						   .size = 16.0F,
-						   .glyph = "star",
-						   .tint = i < filled ? UI::accent : UI::text_faint});
-			star.render();
+			pips.addChild<ui::Icon>({
+				.size = {16.0F, 16.0F},
+				.style = {.color = theme->get(i < filled ? tokens::color::accent : tokens::color::textFaint)},
+				.name = "star",
+			});
 		}
-		y += 36.0F + UI::space_4;
 	}
 
 	// Climate distribution meters.
 	if (!climate.empty()) {
-		drawText({.text = "CLIMATE DISTRIBUTION",
-				  .position = {body.x, y},
-				  .scale = UI::fs_2xs / 16.0F,
-				  .color = UI::text_dim,
-				  .font = UI::fontMono,
-				  .vAlign = Foundation::VerticalAlign::Top,
-				  .letterSpacing = UI::fs_2xs * UI::ls_wider});
-		y += 18.0F;
+		content.addChild<ui::Text>({.margin = {space2, 0.0F, 0.0F, 0.0F}, .style = label, .text = "Climate Distribution"});
 		for (const MeterEntry& m : climate) {
-			UI::ProgressBar bar({.position = {body.x, y},
-								 .width = body.width,
-								 .value = m.fraction,
-								 .tone = UI::Tone::Data,
-								 .label = m.label,
-								 .valueText = std::format("{:.0f}%", m.fraction * 100.0F),
-								 .size = UI::Size::Sm});
-			bar.render();
-			y += 30.0F;
+			content.addChild<ui::ProgressBar>({
+				.size = {ui::percent(100.0F), ui::kAuto},
+				.value = m.fraction,
+				.tone = ui::Tone::Info,
+				.label = m.label,
+				.valueText = std::format("{:.0f}%", m.fraction * 100.0F),
+				.controlSize = ui::ControlSize::Sm,
+			});
 		}
-		y += UI::space_2;
 	}
 
 	// Hazard/report badges.
-	float badgeX = body.x;
-	for (const BadgeEntry& b : badges) {
-		const float w = UI::Badge::MeasureWidth(b.label);
-		if (badgeX + w > body.x + body.width && badgeX > body.x) {
-			badgeX = body.x;
-			y += 26.0F;
+	if (!badges.empty()) {
+		ui::Ref<ui::Component> row = content.addChild<ui::Component>({
+			.margin = {space2, 0.0F, 0.0F, 0.0F},
+			.layout = {.display = ui::Display::Flex, .gap = space2},
+		});
+		for (const BadgeEntry& b : badges) {
+			row.addChild<ui::Badge>({.label = b.label, .tone = badgeTone(b.tone)});
 		}
-		UI::Badge({.position = {badgeX, y}, .label = b.label, .tone = badgeTone(b.tone)}).render();
-		badgeX += w + UI::space_2;
 	}
-}
-
-float WorldSurveyPanel::contentHeight(float width) const {
-	// Probe the panel chrome (header + body padding are fixed, independent of
-	// height) so the frame can be sized to the content it will draw.
-	UI::Panel probe({.position = {0.0F, 0.0F},
-					 .size = {width, 1000.0F},
-					 .title = "World Survey",
-					 .kicker = world ? "Complete" : "Pending",
-					 .accent = UI::PanelAccent::Accent});
-	const Foundation::Rect body = probe.bodyBounds();
-	const float			   topOffset = body.y;
-	const float			   botPad = 1000.0F - (body.y + body.height);
-
-	if (!world) {
-		return topOffset + 120.0F + botPad; // compact empty/pending frame
-	}
-
-	// Mirror render()'s vertical accumulation from body.y.
-	float extent = UI::space_2;
-	const int rows = (static_cast<int>(stats.size()) + 1) / 2;
-	extent += static_cast<float>(rows) * 46.0F + UI::space_2;
-	if (habitability >= 0.0F) extent += 36.0F + UI::space_4;
-	if (!climate.empty()) extent += 18.0F + static_cast<float>(climate.size()) * 30.0F + UI::space_2;
-	if (!badges.empty()) extent += 26.0F;
-	return topOffset + extent + botPad;
 }
 
 } // namespace world_sim

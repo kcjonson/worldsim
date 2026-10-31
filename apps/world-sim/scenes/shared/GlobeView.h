@@ -15,10 +15,10 @@
 #include <planet-view/PlanetRenderer.h>
 #include <worldgen/data/GeneratedWorld.h>
 
-#include <input/InputEvent.h>
+#include <graphics/Rect.h>
 #include <math/Types.h>
-#include <shapes/Shapes.h>
 #include <threading/TaskPool.h>
+#include <ui/Input.h>
 
 #include <memory>
 #include <optional>
@@ -64,9 +64,10 @@ class GlobeView {
 	// disc; around it the blit is transparent, so the scene backdrop shows.
 	void render(const Foundation::Rect& rect, float logicalW, float logicalH, float alpha = 1.0F);
 
-	// Orbit drag / scroll zoom / pick within rect. Right-click cycles color
-	// mode when cycleOnRightClick. Returns true when the event was consumed.
-	bool handleInput(UI::InputEvent& event, const Foundation::Rect& rect, bool cycleOnRightClick);
+	// Orbit drag / wheel zoom within rect, from a ui pointer event at its screen
+	// position. Right-click cycles color mode when cycleOnRightClick. Returns
+	// true when the event was consumed.
+	bool handleInput(ui::PointerEvent& event, const Foundation::Rect& rect, bool cycleOnRightClick);
 
 	// Ray-pick the lat/lon under a logical-coordinate position inside rect.
 	std::optional<planetview::LatLon> pick(Foundation::Vec2 pos, const Foundation::Rect& rect) const;

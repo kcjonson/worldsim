@@ -99,14 +99,15 @@ void GlobeView::render(const Foundation::Rect& rect, float logicalW, float logic
 	glViewport(vp[0], vp[1], vp[2], vp[3]);
 }
 
-bool GlobeView::handleInput(UI::InputEvent& event, const Foundation::Rect& rect, bool cycleOnRightClick) {
+bool GlobeView::handleInput(ui::PointerEvent& event, const Foundation::Rect& rect, bool cycleOnRightClick) {
 	if (!isReady()) return false;
 
 	switch (event.type) {
-		case UI::InputEvent::Type::MouseDown:
-			if (!contains(rect, event.position)) break;
+		case ui::PointerEvent::Type::Down:
+			if (!contains(rect, event.screen))
+				break;
 			if (event.button == foundation::MouseButton::Left) {
-				camera.beginDrag(event.position.x, event.position.y);
+				camera.beginDrag(event.screen.x, event.screen.y);
 				dragging = true;
 				event.consume();
 				return true;
@@ -119,15 +120,16 @@ bool GlobeView::handleInput(UI::InputEvent& event, const Foundation::Rect& rect,
 			}
 			break;
 
-		case UI::InputEvent::Type::MouseMove:
+		case ui::PointerEvent::Type::Move:
 			if (dragging) {
-				camera.drag(event.position.x, event.position.y);
+				camera.drag(event.screen.x, event.screen.y);
 				return true;
 			}
 			break;
 
-		case UI::InputEvent::Type::MouseUp:
-			if (dragging && event.button == foundation::MouseButton::Left) {
+		case ui::PointerEvent::Type::Up:
+		case ui::PointerEvent::Type::Cancel:
+			if (dragging && (event.button == foundation::MouseButton::Left || event.type == ui::PointerEvent::Type::Cancel)) {
 				camera.endDrag();
 				dragging = false;
 				event.consume();
@@ -135,9 +137,10 @@ bool GlobeView::handleInput(UI::InputEvent& event, const Foundation::Rect& rect,
 			}
 			break;
 
-		case UI::InputEvent::Type::Scroll:
-			if (contains(rect, event.position)) {
-				camera.scroll(event.scrollDelta);
+		case ui::PointerEvent::Type::Wheel:
+			// ui's wheel is px of content, positive down; the camera's is notches, positive in.
+			if (contains(rect, event.screen)) {
+				camera.scroll(-event.wheel.y / 48.0F);
 				event.consume();
 				return true;
 			}
