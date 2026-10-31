@@ -15,11 +15,10 @@ The monorepo is organized by dependency layers, from foundation to high-level:
 ```
 libs/
 ├── geometry/            # Exact integer-mm 2D geometry (predicates, arrangement, booleans, offsetting)
-├── ui/                  # UI framework - components, layout, inspector
 ├── theme/               # Worldsim's design system on salal's ui: the theme's tokens, the icon set
 ├── world/               # World generation and 3D-to-2D sampling
 ├── game-systems/        # Game-specific: chunks, tiles, camera
-└── engine/              # Top layer - ECS, world, assets, the ui bridge onto salal's app
+└── engine/              # Top layer - ECS, world, assets
 
 salal (external, build/_deps/salal-src/ after a configure)
 └── libs/
@@ -31,7 +30,7 @@ salal (external, build/_deps/salal-src/ after a configure)
 
 ### Engine libraries from salal
 
-`foundation` and `renderer` were extracted to [salal](https://github.com/kcjonson/salal) and come back in through CMake FetchContent, pinned to a tag by `GIT_TAG` in the root `CMakeLists.txt`; targets link them as `salal::foundation` and `salal::renderer`, and the include spellings (`<utils/Log.h>`, `<primitives/Primitives.h>`) are unchanged. salal's `app` (`salal::app`, `<application/App.h>`, `<scene/Scene.h>`) is what every GUI app runs on: the window, the frame, input, the scene stack and the dev server, which `engine` links and bridges worldsim's ui onto (`libs/engine/app/`). The layering below still holds, three of its layers just live in another repo. Building against a local salal checkout instead of the tag is covered in `CLAUDE.md`.
+`foundation` and `renderer` were extracted to [salal](https://github.com/kcjonson/salal) and come back in through CMake FetchContent, pinned to a tag by `GIT_TAG` in the root `CMakeLists.txt`; targets link them as `salal::foundation` and `salal::renderer`, and the include spellings (`<utils/Log.h>`, `<primitives/Primitives.h>`) are unchanged. salal's `app` (`salal::app`, `<application/App.h>`, `<scene/Scene.h>`) is what every GUI app runs on: the window, the frame, input, the scene stack and the dev server, which `engine` links; every GUI app's scenes are on salal's ui. The layering below still holds, three of its layers just live in another repo. Building against a local salal checkout instead of the tag is covered in `CLAUDE.md`.
 
 ### Dependency Rules
 
@@ -40,7 +39,7 @@ Each layer can only depend on layers below it:
 ```
 engine
   ↓
-game-systems, ui, world, theme, app (salal)
+game-systems, world, theme, app (salal)
   ↓
 ui (salal)
   ↓
@@ -50,8 +49,8 @@ foundation (salal)
 ```
 
 **No circular dependencies allowed.** For example:
-- ✅ `ui` can depend on `renderer` (layer below)
-- ✅ `engine` can depend on `ui` (layer below)
+- ✅ `theme` can depend on `ui` (layer below)
+- ✅ `engine` can depend on `world` (layer below)
 - ❌ `renderer` cannot depend on `ui` (layer above)
 - ❌ `world` cannot depend on `game-systems` (same layer)
 
@@ -76,12 +75,6 @@ foundation (salal)
 - Resource management (textures, shaders, fonts)
 - Depends on: `foundation`
 
-**ui/**
-- Core UI framework (scene graph, base classes)
-- UI components (Button, TextInput, Label, etc.)
-- Layout system (Container, ScrollView, flex-like layouts)
-- UI inspector for testability (JSON export, debug tools)
-- Depends on: `renderer`, `foundation`, and `theme` for its font families until it goes
 
 **theme/**
 - Worldsim's design system on salal's ui: its theme as a Design Tokens file and the icon set as filled SVGs, both compiled in by salal's `salal_tokens()` and `salal_icons()` (`<theme/Tokens.h>`, `<theme/Icons.h>`), and its own components on salal's, Panel with its kicker and corner ticks and Avatar (`<theme/Panel.h>`, `<theme/Avatar.h>`)
@@ -110,7 +103,6 @@ foundation (salal)
 - Depends on: `ui` (salal), `renderer`, `foundation`
 
 **engine/**
-- The bridge between worldsim's ui and salal's app (`app/`: `UiScene`, `UiBridge`, `UiClipboard`), for world-sim until it moves onto salal's ui; ui-sandbox and asset-manager run on salal's ui
 - ECS, world streaming and rendering, construction, navigation, assets
 - Configuration system (JSON loading)
 - Depends on: All layers below

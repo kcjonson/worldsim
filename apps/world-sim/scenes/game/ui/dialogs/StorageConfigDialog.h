@@ -1,25 +1,20 @@
 #pragma once
 
-// StorageConfigDialog - Three-column dialog for storage container configuration
-//
-// Layout:
-// - Left column: Available items grouped by category (tree view with counts)
-// - Center column: Rule configuration form (priority, min/max, add buttons)
-// - Right column: Rules for selected item (with delete buttons)
-//
-// Changes take effect immediately (no Apply/Cancel).
-// Game continues running while dialog is open.
+// StorageConfigDialog - a storage container's rules, a modal ui::Dialog in three columns: the items it
+// can hold, grouped by category (expand and collapse, with counts), a form for a new rule (priority, min
+// and max, and the add buttons), and the selected item's rules, each with a delete. A change takes
+// effect at once; there is no Apply. The game runs on while it is open, and update() feeds it from the
+// world every frame.
 
 #include "StorageConfigDialogModel.h"
 
-#include <component/Component.h>
-#include <components/button/Button.h>
-#include <components/dialog/Dialog.h>
-#include <components/scroll/ScrollContainer.h>
-#include <components/select/Select.h>
 #include <ecs/EntityID.h>
 #include <ecs/World.h>
-#include <layout/LayoutContainer.h>
+#include <ui/components/Checkbox.h>
+#include <ui/components/Dialog.h>
+#include <ui/components/Select.h>
+#include <ui/components/TextInput.h>
+#include <ui/shapes/Text.h>
 
 #include <functional>
 #include <string>
@@ -27,127 +22,75 @@
 
 namespace world_sim {
 
-/// Callback type for opening storage configuration dialog
-using OpenStorageConfigCallback =
-	std::function<void(ecs::EntityID containerId, const std::string& containerDefName)>;
+	using OpenStorageConfigCallback = std::function<void(ecs::EntityID containerId, const std::string& containerDefName)>;
 
-class StorageConfigDialog : public UI::Component {
-  public:
-	struct Args {
-		std::function<void()> onClose;
-		// Fired once per (container, item) when a configured specific-item rule has no colony-known
-		// source. Wired to the toast stack; mirrors the existing onClose seam.
+	class StorageConfigDialog {
+	  public:
+		struct Args {
+			// The player closed it: its close button, cancel or a press on the scrim. Not called by close().
+			std::function<void()> onClose;
+			// Once per (container, item) when a configured specific-item rule has no colony-known source;
+			// the toast stack's.
+			std::function<void(const std::string& title, const std::string& message)> onNotify;
+		};
+
+		explicit StorageConfigDialog(const Args& args);
+
+		// Its controls' callbacks hold it.
+		StorageConfigDialog(const StorageConfigDialog&) = delete;
+		StorageConfigDialog& operator=(const StorageConfigDialog&) = delete;
+		StorageConfigDialog(StorageConfigDialog&&) = delete;
+		StorageConfigDialog& operator=(StorageConfigDialog&&) = delete;
+		~StorageConfigDialog() = default;
+
+		// Opens it from `opener` on a container; already open, it moves to that container.
+		void open(ui::Component& opener, ecs::EntityID containerId, const std::string& containerDefName, int player = 0);
+		void close();
+
+		[[nodiscard]] bool			isOpen() const { return dialog.get() != nullptr; }
+		[[nodiscard]] ecs::EntityID getContainerId() const { return model.containerId(); }
+
+		// Each frame while open.
+		void update(ecs::World& world, const engine::assets::AssetRegistry& registry);
+
+	  private:
+		void build(ui::Dialog& shown);
+		void showItems();
+		void showForm();
+		void showRules();
+		void closed();
+
+		void toggleCategory(int categoryIndex);
+		void selectItem(const std::string& defName);
+		void addRule();
+		void addAll();
+		void removeRule(size_t ruleIndex);
+		void selectAll();
+		void selectNone();
+
+		std::function<void()>													  onClose;
 		std::function<void(const std::string& title, const std::string& message)> onNotify;
+
+		StorageConfigDialogModel model;
+		ecs::World*				 world = nullptr; // from update, for the controls' handlers
+		std::vector<int>		 expandedCategories;
+		bool					 fresh = false; // opened or moved, so everything shows after the next refresh
+		// A control changed the rules or the selection; the item counts and rules show after the next
+		// refresh, which reads them from the world.
+		bool stale = false;
+
+		ui::Ref<ui::Dialog>	   dialog;
+		ui::Ref<ui::Component> itemList;
+		ui::Ref<ui::Text>	   noSelection;
+		ui::Ref<ui::Component> form;
+		ui::Ref<ui::Text>	   itemName;
+		ui::Ref<ui::Select>	   priority;
+		ui::Ref<ui::TextInput> minAmount;
+		ui::Ref<ui::TextInput> maxAmount;
+		ui::Ref<ui::Checkbox>  unlimited;
+		ui::Ref<ui::Text>	   rulesHeader;
+		ui::Ref<ui::Text>	   rulesStatus;
+		ui::Ref<ui::Component> ruleList;
 	};
-
-	explicit StorageConfigDialog(const Args& args);
-	~StorageConfigDialog() override = default;
-
-	// Disable copy
-	StorageConfigDialog(const StorageConfigDialog&) = delete;
-	StorageConfigDialog& operator=(const StorageConfigDialog&) = delete;
-
-	// Allow move
-	StorageConfigDialog(StorageConfigDialog&&) noexcept = default;
-	StorageConfigDialog& operator=(StorageConfigDialog&&) noexcept = default;
-
-	// Open dialog for a specific storage container
-	void open(ecs::EntityID containerId, const std::string& containerDefName,
-			  float screenWidth, float screenHeight);
-
-	// Close dialog
-	void close();
-
-	// Query state
-	[[nodiscard]] bool isOpen() const;
-	[[nodiscard]] ecs::EntityID getContainerId() const { return model.containerId(); }
-
-	// Per-frame update with ECS world for live data
-	void update(ecs::World& world,
-				const engine::assets::AssetRegistry& registry,
-				float deltaTime);
-
-	// IComponent overrides
-	void render() override;
-	bool handleEvent(UI::InputEvent& event) override;
-	bool containsPoint(Foundation::Vec2 point) const override;
-
-  private:
-	// Dialog dimensions
-	static constexpr float kDialogWidth = 720.0F;
-	static constexpr float kDialogHeight = 480.0F;
-	static constexpr float kColumnGap = 12.0F;
-	static constexpr float kContentPadding = 12.0F;
-
-	// Column widths
-	static constexpr float kLeftColumnWidth = 200.0F;
-	static constexpr float kRightColumnWidth = 200.0F;
-	// Center column fills remaining space
-
-	// Callbacks
-	std::function<void()>													  onCloseCallback;
-	std::function<void(const std::string& title, const std::string& message)> onNotifyCallback;
-
-	// Model
-	StorageConfigDialogModel model;
-
-	// ECS world reference (set during update, used by event handlers)
-	ecs::World* worldPtr = nullptr;
-
-	// Child component handles
-	UI::LayerHandle dialogHandle;
-	UI::LayerHandle contentLayoutHandle;
-
-	// Left column - available items
-	UI::LayerHandle leftColumnHandle;
-	std::vector<int> expandedCategories; // Indices of expanded category groups
-
-	// Center column - rule configuration
-	UI::LayerHandle centerColumnHandle;
-	UI::LayerHandle prioritySelectHandle;
-	UI::LayerHandle minAmountHandle;
-	UI::LayerHandle maxAmountHandle;
-	UI::LayerHandle unlimitedCheckHandle;
-	UI::LayerHandle addRuleButtonHandle;
-	UI::LayerHandle addAllButtonHandle;
-
-	// Right column - rules for selected item
-	UI::LayerHandle					 rightColumnHandle;
-	std::vector<UI::LayerHandle> ruleDeleteHandles;
-
-	// Track if content has been created
-	bool contentCreated = false;
-	bool needsInitialRebuild = false;
-	bool needsCenterRebuild = false;
-	bool needsRulesRebuild = false;
-	bool needsLeftRebuild = false;
-
-	// Internal methods
-	void createDialog();
-	void createColumns();
-	void rebuildLeftColumn();
-	void rebuildCenterColumn();
-	void rebuildRulesColumn();
-
-	// Event handlers
-	void handleCategoryToggle(int categoryIndex);
-	void handleAddRule();
-	void handleAddAll();
-	void handleRemoveRule(size_t ruleIndex);
-	void handleSelectAll();
-	void handleSelectNone();
-
-	// Helper to access content layout
-	UI::LayoutContainer* getContentLayout();
-
-	// Build flat list of visible items (respecting expand/collapse)
-	struct FlatItem {
-		enum class Type { CategoryHeader, Item };
-		Type   type;
-		size_t index; // Category index or item index
-	};
-	std::vector<FlatItem> flatItems;
-	void				  rebuildFlatList();
-};
 
 } // namespace world_sim

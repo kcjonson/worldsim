@@ -1,64 +1,45 @@
 #include "BioTabView.h"
 #include "MeterDraw.h"
-#include "TabStyles.h"
 
-#include <font/FontRenderer.h>
-#include <primitives/Primitives.h>
-#include <theme/CssTokens.h>
-#include <theme/Tones.h>
+#include <ui/Context.h>
 
 #include <string>
-#include <vector>
 
 namespace world_sim {
 
-namespace {
+	namespace {
+		constexpr float kRowGap = 10.0F;
+	} // namespace
 
-constexpr float kRowGap = 10.0F; // gap between stacked sections
-
-} // namespace
-
-void BioTabView::create(const Foundation::Rect& bounds) {
-	contentBounds = bounds;
-	size = {bounds.width, bounds.height};
-}
-
-void BioTabView::update(const BioData& data) {
-	data_ = data;
-}
-
-void BioTabView::render() {
-	using namespace tabs;
-	using namespace UI;
-
-	if (!visible) return;
-
-	const Foundation::Vec2 o	 = getContentPosition();
-	const float			   width = contentBounds.width;
-	float				   y	 = o.y;
-
-	// Backstory paragraph.
-	y = drawWrapped(data_.background, {o.x, y}, fs_md, width, UI::text);
-	y += kRowGap;
-
-	// Traits divider + chips (rendered as a comma-joined line).
-	y = drawDivider(o.x, y, width, "TRAITS");
-	y += 6.0F;
-	std::string traitsLine;
-	if (data_.traits.empty()) {
-		traitsLine = "None";
-	} else {
-		for (size_t i = 0; i < data_.traits.size(); ++i) {
-			if (i > 0) traitsLine += ", ";
-			traitsLine += data_.traits[i];
-		}
+	void BioTabView::onMount() {
+		const ui::Theme& theme = getContext()->getTheme();
+		ui::Layout		 column = getLayout();
+		column.display = ui::Display::Flex;
+		column.flexDirection = ui::FlexDirection::Column;
+		column.gap = kRowGap;
+		setLayout(column);
+		background = addChild<ui::Text>(
+			{.style = world_sim::text(theme, {.size = tokens::fontSize::fsMd, .color = tokens::color::text}), .wrap = true}
+		);
+		addChild<tabs::KickerDivider>({.label = "Traits"});
+		traits = addChild<ui::Text>(
+			{.style = world_sim::text(theme, {.size = tokens::fontSize::fsSm, .color = tokens::color::textDim}), .wrap = true}
+		);
+		currently = addChild<ui::Text>({.style = world_sim::text(theme, {.size = tokens::fontSize::fsSm, .color = tokens::color::accent})});
+		update({});
 	}
-	drawText(traitsLine, {o.x, y}, fs_sm, UI::text_dim);
-	y += fs_sm + kRowGap;
 
-	// Current task note, in amber.
-	const std::string taskLine = data_.currentTask.empty() ? "Currently: Idle" : "Currently: " + data_.currentTask;
-	drawText(taskLine, {o.x, y}, fs_sm, UI::accent);
-}
+	void BioTabView::update(const BioData& data) {
+		if (background.get() == nullptr) {
+			return;
+		}
+		background.get()->setText(data.background);
+		std::string traitsLine;
+		for (const std::string& trait : data.traits) {
+			traitsLine += traitsLine.empty() ? trait : ", " + trait;
+		}
+		traits.get()->setText(traitsLine.empty() ? "None" : traitsLine);
+		currently.get()->setText("Currently: " + (data.currentTask.empty() ? std::string("Idle") : data.currentTask));
+	}
 
 } // namespace world_sim

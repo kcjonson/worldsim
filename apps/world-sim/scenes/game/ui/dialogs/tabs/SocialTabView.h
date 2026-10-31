@@ -1,30 +1,29 @@
 #pragma once
 
-#include <component/Container.h>
-#include <graphics/Rect.h>
-#include <layer/Layer.h>
+// SocialTabView - the dossier's Social tab, a placeholder until relationships are tracked.
+
+#include <ui/Component.h>
 
 #include <string>
 
 namespace world_sim {
 
-/// Data for Social tab (placeholder)
-struct SocialData {
-	std::string placeholder = "Relationships not yet tracked";
-};
+	struct SocialData {
+		std::string placeholder = "Relationships not yet tracked";
+	};
 
-/// Social tab content for ColonistDetailsDialog
-/// Placeholder for future relationship tracking
-class SocialTabView : public UI::Container {
-  public:
-	/// Create the tab view with content bounds from parent dialog
-	void create(const Foundation::Rect& contentBounds);
+	class SocialTabView : public ui::Component {
+	  public:
+		struct Args {
+			UI_COMMON_ARGS
+		};
 
-	/// Update content from model data
-	void update(const SocialData& data);
+		void update(const SocialData& data);
 
-  private:
-	UI::LayerHandle layoutHandle;
-};
+		[[nodiscard]] const char* typeName() const override { return "SocialTabView"; }
+
+	  protected:
+		void onMount() override;
+	};
 
 } // namespace world_sim

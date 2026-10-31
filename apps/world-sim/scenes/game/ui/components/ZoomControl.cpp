@@ -1,95 +1,53 @@
 #include "ZoomControl.h"
 
-#include <primitives/Primitives.h>
-#include <theme/CssTokens.h>
-#include <theme/Tones.h>
+#include "scenes/shared/SalalUi.h"
+
+#include <ui/Context.h>
+#include <ui/components/Button.h>
+
+#include <string>
 
 namespace world_sim {
 
-ZoomControl::ZoomControl(const Args& args) {
-	position = args.position;
-	size = {kTotalWidth, kTotalHeight};
+	namespace {
+		constexpr float kButtonSize = 28.0F;
+		constexpr float kSpacing = 4.0F;
+	} // namespace
 
-	// Vertical column, top to bottom: + / reset / -.
-	zoomInButtonHandle = addChild(UI::Button(UI::Button::Args{
-		.label = "",  // Icon-only
-		.position = {0.0F, 0.0F},
-		.size = {kButtonSize, kButtonSize},
-		.type = UI::Button::Type::Primary,
-		.onClick = args.onZoomIn,
-		.id = "btn_zoom_in",
-		.iconPath = "assets/ui/icons/zoom_in.svg",
-		.iconSize = kIconSize}));
+	ZoomControl::ZoomControl(const Args& args)
+		: onZoomIn(args.onZoomIn),
+		  onZoomOut(args.onZoomOut),
+		  onZoomReset(args.onZoomReset) {}
 
-	zoomResetButtonHandle = addChild(UI::Button(UI::Button::Args{
-		.label = "",  // Icon-only
-		.position = {0.0F, 0.0F},
-		.size = {kButtonSize, kButtonSize},
-		.type = UI::Button::Type::Primary,
-		.onClick = args.onZoomReset,
-		.id = "btn_zoom_reset",
-		.iconPath = "assets/ui/icons/zoom_reset.svg",
-		.iconSize = kIconSize}));
-
-	zoomOutButtonHandle = addChild(UI::Button(UI::Button::Args{
-		.label = "",  // Icon-only
-		.position = {0.0F, 0.0F},
-		.size = {kButtonSize, kButtonSize},
-		.type = UI::Button::Type::Primary,
-		.onClick = args.onZoomOut,
-		.id = "btn_zoom_out",
-		.iconPath = "assets/ui/icons/zoom_out.svg",
-		.iconSize = kIconSize}));
-
-	positionElements();
-}
-
-void ZoomControl::setZoomPercent(int percent) {
-	zoomPercent = percent;
-}
-
-void ZoomControl::setPosition(float x, float y) {
-	if (position.x == x && position.y == y) {
-		return;
+	void ZoomControl::onMount() {
+		setLayout(
+			{.display = ui::Display::Flex,
+			 .flexDirection = ui::FlexDirection::Column,
+			 .gap = kSpacing,
+			 .alignItems = ui::AlignItems::Center}
+		);
+		const auto zoomButton = [&](const char* id, const char* icon, const std::function<void()>& onPress) {
+			addChild<ui::Button>(
+				{.id = id, .size = {kButtonSize, kButtonSize}, .icon = icon, .variant = ui::ButtonVariant::Primary, .onPress = onPress}
+			);
+		};
+		zoomButton("btn_zoom_in", "zoom_in", onZoomIn);
+		zoomButton("btn_zoom_reset", "zoom_reset", onZoomReset);
+		zoomButton("btn_zoom_out", "zoom_out", onZoomOut);
+		ui::Style label = world_sim::text(
+			getContext()->getTheme(),
+			{.family = ui::tokens::font::family::mono, .size = tokens::fontSize::fsXs, .color = tokens::color::textDim}
+		);
+		label.textAlign = Foundation::HorizontalAlign::Center;
+		readout = addChild<ui::Text>({.id = "zoom_percent", .size = {kButtonSize, ui::kAuto}, .style = label, .text = "100%"});
+		setZoomPercent(zoomPercent);
 	}
-	Component::setPosition(x, y);
-	positionElements();
-}
 
-void ZoomControl::positionElements() {
-	float y = position.y;
-
-	auto place = [&](UI::LayerHandle handle) {
-		if (auto* btn = getChild<UI::Button>(handle)) {
-			btn->setPosition(position.x, y);
+	void ZoomControl::setZoomPercent(int percent) {
+		zoomPercent = percent;
+		if (ui::Text* shown = readout.get()) {
+			shown->setText(std::to_string(zoomPercent) + "%");
 		}
-		y += kButtonSize + kSpacing;
-	};
-	place(zoomInButtonHandle);
-	place(zoomResetButtonHandle);
-	place(zoomOutButtonHandle);
-}
+	}
 
-void ZoomControl::render() {
-	UI::Component::render();
-
-	// Mono % readout beneath the column.
-	const float labelY = position.y + kButtonSize * 3.0F + kSpacing * 3.0F;
-	Renderer::Primitives::drawText(Renderer::Primitives::TextArgs{
-		.text = std::to_string(zoomPercent) + "%",
-		.position = {position.x, labelY},
-		.scale = kFontSize / 16.0F,
-		.color = UI::text_dim,
-		.font = theme::fontMono,
-		.hAlign = Foundation::HorizontalAlign::Center,
-		.vAlign = Foundation::VerticalAlign::Top,
-		.boxWidth = kButtonSize,
-		.id = "zoom_percent"});
-}
-
-bool ZoomControl::handleEvent(UI::InputEvent& event) {
-	// Use dispatchEvent to route to children in z-order
-	return dispatchEvent(event);
-}
-
-}  // namespace world_sim
+} // namespace world_sim

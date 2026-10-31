@@ -27,6 +27,8 @@ namespace theme {
 
 		// Tints again, so a theme change reaches the ring.
 		void setStyle(const ui::Style& value) override;
+		void setMood(std::optional<float> value);
+		void setSelected(bool value);
 
 		[[nodiscard]] const char* typeName() const override { return "theme::Avatar"; }
 
@@ -41,9 +43,10 @@ namespace theme {
 	  private:
 		void tint();
 
-		std::string			 seed;
-		std::optional<float> mood;
-		bool				 selected;
+		std::string			   seed;
+		std::optional<float>   mood;
+		bool				   selected;
+		ui::Ref<ui::Rectangle> outline;
 	};
 
 } // namespace theme

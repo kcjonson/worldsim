@@ -72,7 +72,7 @@ enable_testing()
 include(FetchContent)
 FetchContent_Declare(salal
     GIT_REPOSITORY https://github.com/kcjonson/salal.git
-    GIT_TAG        v0.28.0
+    GIT_TAG        v0.29.0
     GIT_SHALLOW    TRUE
 )
 set(SALAL_BUILD_APP ON)
@@ -86,7 +86,6 @@ add_subdirectory(libs/geometry)
 
 # Feature layers
 add_subdirectory(libs/theme)
-add_subdirectory(libs/ui)
 add_subdirectory(libs/world)
 add_subdirectory(libs/planet-view)
 add_subdirectory(libs/game-systems)
@@ -112,7 +111,7 @@ add_subdirectory(tools/generate_sdf_atlas)
 # source font changes; the JSON metadata regenerates deterministically.
 #
 # Each entry is "AtlasBaseName:SourceTTF". The atlas base names must match
-# kFontAtlases in libs/ui/theme/Fonts.h, which each app hands to salal's FontRenderer
+# kFontAtlases in libs/theme/theme/Fonts.h, which each app hands to salal's FontRenderer
 # through AppConfig; salal ships no fonts, so this repo makes them here and each app's
 # CMakeLists.txt copies fonts/ beside its exe.
 set(SDF_FONT_ATLASES

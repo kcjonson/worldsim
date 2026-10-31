@@ -1,334 +1,311 @@
 #include "ConstructionConfigStrip.h"
 
-#include <primitives/Primitives.h>
-#include <theme/CssTokens.h>
+#include "scenes/shared/SalalUi.h"
 
-#include <cstdio>
+#include <ui/Context.h>
+#include <ui/components/Control.h>
+
+#include <format>
 
 namespace world_sim {
 
+	namespace {
+
+		constexpr float kCardWidth = 120.0F;
+		constexpr float kPresetCardWidth = 88.0F;
+		constexpr float kCardHeight = 40.0F;
+		constexpr float kCardSpacing = 8.0F;
+		constexpr float kPadding = 12.0F;
+		constexpr float kReadoutGap = 8.0F; // past the gap, before the readouts
+		// Where the validity line starts, from the readouts' left edge.
+		constexpr float kMessageOffset = 180.0F;
+		constexpr float kEditMessageOffset = 280.0F;
+
+		bool sameColor(ui::ColorToken a, ui::ColorToken b) {
+			return a.table == b.table && a.index == b.index;
+		}
+
+		std::string costText(float costPerSquareMeter) {
+			return std::format("{:.1f} /m\xC2\xB2", costPerSquareMeter);
+		}
+
+		std::string thicknessText(float meters) {
+			return std::format("{:.2f} m", meters);
+		}
+
+		// A material or thickness card: its name over a detail line. Picked, it takes the active wash and
+		// a thick accent border. A press picks it.
+		class StripCard : public ui::Control {
+		  public:
+			struct Args {
+				UI_COMMON_ARGS
+				std::string								name;
+				std::string								detail;
+				bool									picked = false;
+				std::function<void(const std::string&)> onPick;
+			};
+
+			explicit StripCard(const Args& args)
+				: name(args.name),
+				  detail(args.detail),
+				  picked(args.picked),
+				  onPick(args.onPick) {}
+
+			void show(std::string detailText, bool isPicked) {
+				detail = std::move(detailText);
+				if (ui::Text* shown = detailLine.get()) {
+					shown->setText(detail);
+				}
+				if (picked != isPicked) {
+					picked = isPicked;
+					tint();
+				}
+			}
+
+			[[nodiscard]] const char* typeName() const override { return "StripCard"; }
+
+		  protected:
+			void onMount() override {
+				Control::onMount();
+				const ui::Theme& theme = getContext()->getTheme();
+				ui::Layout		 column = getLayout();
+				column.display = ui::Display::Flex;
+				column.flexDirection = ui::FlexDirection::Column;
+				column.gap = theme.get(tokens::spacing::space05);
+				column.padding = {5.0F, 8.0F};
+				setLayout(column);
+				addChild<ui::Text>(
+					{.style = world_sim::text(theme, {.size = tokens::fontSize::fsBase, .color = tokens::color::textBright}), .text = name}
+				);
+				detailLine = addChild<ui::Text>(
+					{.style = world_sim::text(theme, {.size = tokens::fontSize::fsXs, .color = tokens::color::textDim}), .text = detail}
+				);
+				tint();
+			}
+
+			void activate() override {
+				if (onPick) {
+					onPick(name);
+				}
+			}
+
+		  private:
+			void tint() {
+				const ui::Theme& theme = getContext()->getTheme();
+				setStyle({
+					.backgroundColor = theme.get(picked ? tokens::color::bgActive : tokens::color::bgInset),
+					.borderColor = theme.get(picked ? tokens::color::accent : tokens::color::lineEdge),
+					.borderWidth = theme.get(picked ? tokens::border::bwThick : tokens::border::bw),
+				});
+			}
+
+			std::string								name;
+			std::string								detail;
+			bool									picked;
+			std::function<void(const std::string&)> onPick;
+			ui::Ref<ui::Text>						detailLine;
+		};
+
+	} // namespace
+
 	ConstructionConfigStrip::ConstructionConfigStrip(const Args& args)
 		: onMaterialSelected(args.onMaterialSelected),
-		  onThicknessSelected(args.onThicknessSelected) {
-		visible = false;
-	}
+		  onThicknessSelected(args.onThicknessSelected) {}
 
-	void ConstructionConfigStrip::setMaterials(std::vector<std::pair<std::string, float>> materials) {
-		materials_ = std::move(materials);
-		positionCards();
-	}
-
-	void ConstructionConfigStrip::setThicknessPresets(std::vector<ThicknessPresetInfo> presets) {
-		presets_ = std::move(presets);
-		positionCards();
-	}
-
-	void ConstructionConfigStrip::setStatus(const DrawingStatus& status) {
-		const bool modeChanged = status_.wall != status.wall || status_.foundationEdit != status.foundationEdit;
-		status_ = status;
-		visible = status.active;
-		// Preset cards only exist in wall mode and material cards drop out while
-		// editing a foundation; reposition when the mode flips.
-		if (modeChanged) {
-			positionCards();
-		}
-	}
-
-	void ConstructionConfigStrip::layout(const Foundation::Rect& viewportBounds) {
-		Component::layout(viewportBounds);
-
-		// Dock the strip horizontally centered, sitting just above the gameplay bar.
-		const float width = viewportBounds.width * 0.6F;
-		stripBounds_ = {
-			viewportBounds.x + (viewportBounds.width - width) * 0.5F,
-			viewportBounds.y + viewportBounds.height - kGameplayBarReserve - kStripHeight,
-			width,
-			kStripHeight,
-		};
-		positionCards();
-	}
-
-	void ConstructionConfigStrip::positionCards() {
-		cardRects_.clear();
-		presetRects_.clear();
-		float		x = stripBounds_.x + kPadding;
-		const float y = stripBounds_.y + (kStripHeight - kCardHeight) * 0.5F;
-		// Add / Subtract uses the edited foundation's material (Add requires the same
-		// material), so there is nothing to pick.
-		const std::size_t materialCards = status_.foundationEdit ? 0 : materials_.size();
-		for (std::size_t i = 0; i < materialCards; ++i) {
-			cardRects_.push_back({x, y, kCardWidth, kCardHeight});
-			x += kCardWidth + kCardSpacing;
-		}
-
-		// Wall mode: thickness-preset cards follow the material cards, after a gap.
-		// Narrower than material cards (just a name + thickness).
-		if (status_.wall) {
-			x += kCardSpacing * 2.0F;
-			for (std::size_t i = 0; i < presets_.size(); ++i) {
-				presetRects_.push_back({x, y, kPresetCardWidth, kCardHeight});
-				x += kPresetCardWidth + kCardSpacing;
+	void ConstructionConfigStrip::onMount() {
+		const ui::Theme& theme = getContext()->getTheme();
+		const ui::Size	 spec = getSizeSpec();
+		setSize({spec.width.isAuto() ? ui::percent(60.0F) : spec.width, spec.height.isAuto() ? ui::Length(kHeight) : spec.height});
+		ui::Layout row = getLayout();
+		row.display = ui::Display::Flex;
+		row.flexDirection = ui::FlexDirection::Row;
+		row.gap = kCardSpacing;
+		row.padding = {0.0F, kPadding};
+		row.alignItems = ui::AlignItems::Center;
+		setLayout(row);
+		setStyle(
+			ui::Style{
+				.backgroundColor = theme.get(tokens::color::bgPanel),
+				.borderColor = theme.get(tokens::color::lineEdge),
+				.borderWidth = theme.get(tokens::border::bw),
 			}
-		}
+				.extend(getDeclaredStyle())
+		);
+		setVisible(status.active);
+
+		const ui::Layout cards{.display = ui::Display::Flex, .gap = kCardSpacing, .alignItems = ui::AlignItems::Center};
+		materialCards = addChild<ui::Component>({.id = "config_strip_materials", .layout = cards});
+		presetCards =
+			addChild<ui::Component>({.id = "config_strip_presets", .margin = {0.0F, 0.0F, 0.0F, kCardSpacing * 2.0F}, .layout = cards});
+		readouts = addChild<ui::Component>({
+			.id = "config_strip_readouts",
+			.margin = {0.0F, 0.0F, 0.0F, kReadoutGap},
+			.layout = {
+				.display = ui::Display::Flex,
+				.flexDirection = ui::FlexDirection::Column,
+				.gap = theme.get(tokens::spacing::space05),
+				.alignItems = ui::AlignItems::Start
+			},
+		});
+		const ui::Style readout = world_sim::text(theme, {.size = tokens::fontSize::fsSm, .color = tokens::color::text});
+		readoutTop = readouts.addChild<ui::Text>({.id = "config_strip_readout_top", .style = readout});
+		readoutBottom = readouts.addChild<ui::Text>({.id = "config_strip_readout_bottom", .style = readout});
+		messageColor = tokens::color::statusOk;
+		message = addChild<ui::Text>(
+			{.id = "config_strip_message",
+			 .style = world_sim::text(theme, {.size = tokens::fontSize::fsBase, .color = messageColor}),
+			 .text = "Ready"}
+		);
+		showCards();
+		showReadouts();
 	}
 
-	bool ConstructionConfigStrip::handleEvent(UI::InputEvent& event) {
-		if (!visible) {
-			return false;
-		}
-
-		// Block clicks anywhere on the strip from falling through to the world.
-		const bool overStrip = stripBounds_.contains(event.position);
-		if (event.type == UI::InputEvent::Type::MouseUp && overStrip) {
-			for (std::size_t i = 0; i < cardRects_.size(); ++i) {
-				if (cardRects_[i].contains(event.position)) {
-					if (onMaterialSelected) {
-						onMaterialSelected(materials_[i].first);
-					}
-					event.consume();
-					return true;
-				}
-			}
-			for (std::size_t i = 0; i < presetRects_.size() && i < presets_.size(); ++i) {
-				if (presetRects_[i].contains(event.position)) {
-					if (onThicknessSelected) {
-						onThicknessSelected(presets_[i].name);
-					}
-					break;
-				}
-			}
-			event.consume();
-			return true;
-		}
-		if ((event.type == UI::InputEvent::Type::MouseDown || event.type == UI::InputEvent::Type::MouseMove) && overStrip) {
-			event.consume();
-			return true;
-		}
-		return false;
+	void ConstructionConfigStrip::setMaterials(std::vector<std::pair<std::string, float>> value) {
+		materials = std::move(value);
+		showCards();
 	}
 
-	void ConstructionConfigStrip::render() {
-		if (!visible) {
+	void ConstructionConfigStrip::setThicknessPresets(std::vector<ThicknessPresetInfo> value) {
+		presets = std::move(value);
+		showCards();
+	}
+
+	void ConstructionConfigStrip::setStatus(const DrawingStatus& value) {
+		const bool picksChanged = status.material != value.material || status.thicknessPreset != value.thicknessPreset ||
+								  status.wall != value.wall || status.foundationEdit != value.foundationEdit;
+		status = value;
+		setVisible(status.active);
+		if (picksChanged) {
+			showCards();
+		}
+		showReadouts();
+	}
+
+	void ConstructionConfigStrip::showCards() {
+		ui::Component* materialRow = materialCards.get();
+		ui::Component* presetRow = presetCards.get();
+		if (materialRow == nullptr || presetRow == nullptr) {
 			return;
 		}
+		// Add / Subtract keeps the edited foundation's material, so there's nothing to pick.
+		materialRow->setVisible(!status.foundationEdit && !materials.empty());
+		materialRow->reconcileChildren(
+			materials,
+			[](const std::pair<std::string, float>& material) { return material.first; },
+			[&](const std::pair<std::string, float>& material) -> ui::Ref<ui::Component> {
+				return materialRow->addChild<StripCard>({
+					.id = "config_strip_card",
+					.size = {kCardWidth, kCardHeight},
+					.name = material.first,
+					.detail = costText(material.second),
+					.picked = material.first == status.material,
+					.onPick = onMaterialSelected,
+				});
+			},
+			[&](ui::Component& card, const std::pair<std::string, float>& material) {
+				static_cast<StripCard&>(card).show(costText(material.second), material.first == status.material);
+			}
+		);
+		presetRow->setVisible(status.wall && !presets.empty());
+		presetRow->reconcileChildren(
+			presets,
+			[](const ThicknessPresetInfo& preset) { return preset.name; },
+			[&](const ThicknessPresetInfo& preset) -> ui::Ref<ui::Component> {
+				return presetRow->addChild<StripCard>({
+					.id = "config_strip_preset",
+					.size = {kPresetCardWidth, kCardHeight},
+					.name = preset.name,
+					.detail = thicknessText(preset.thicknessMeters),
+					.picked = preset.name == status.thicknessPreset,
+					.onPick = onThicknessSelected,
+				});
+			},
+			[&](ui::Component& card, const ThicknessPresetInfo& preset) {
+				static_cast<StripCard&>(card).show(thicknessText(preset.thicknessMeters), preset.name == status.thicknessPreset);
+			}
+		);
+	}
 
-		// Strip background.
-		Renderer::Primitives::drawRect({
-			.bounds = stripBounds_,
-			.style =
-				{.fill = UI::bg_panel,
-				 .border = Foundation::BorderStyle{.color = UI::line_edge, .width = 1.0F}},
-			.id = "config_strip_bg",
-		});
+	void ConstructionConfigStrip::showReadouts() {
+		ui::Text* top = readoutTop.get();
+		ui::Text* bottom = readoutBottom.get();
+		ui::Text* line = message.get();
+		if (top == nullptr || bottom == nullptr || line == nullptr) {
+			return;
+		}
+		const ui::Theme& theme = getContext()->getTheme();
 
-		// Material cards.
-		for (std::size_t i = 0; i < materials_.size() && i < cardRects_.size(); ++i) {
-			const bool selected = (materials_[i].first == status_.material);
-			Renderer::Primitives::drawRect({
-				.bounds = cardRects_[i],
-				.style =
-					{.fill = selected ? UI::bg_active : UI::bg_inset,
-					 .border =
-						 Foundation::BorderStyle{
-							 .color = selected ? UI::accent : UI::line_edge,
-							 .width = selected ? 2.0F : 1.0F
-						 }},
-				.id = "config_strip_card",
-			});
-
-			Renderer::Primitives::drawText({
-				.text = materials_[i].first,
-				.position = {cardRects_[i].x + 8.0F, cardRects_[i].y + 5.0F},
-				.scale = 0.85F,
-				.color = UI::text_bright,
-			});
-
-			char cost[32];
-			std::snprintf(cost, sizeof(cost), "%.1f /m\xC2\xB2", static_cast<double>(materials_[i].second));
-			Renderer::Primitives::drawText({
-				.text = cost,
-				.position = {cardRects_[i].x + 8.0F, cardRects_[i].y + 22.0F},
-				.scale = 0.7F,
-				.color = UI::text_dim,
-			});
+		const float offset = status.foundationEdit ? kEditMessageOffset : kMessageOffset;
+		if (readouts.get()->getSizeSpec().width.resolve(0.0F) != offset - kCardSpacing) {
+			readouts.get()->setSize({offset - kCardSpacing, ui::kAuto});
+			ui::Style topStyle = top->getDeclaredStyle();
+			topStyle.color = theme.get(status.foundationEdit ? tokens::color::textBright : tokens::color::text);
+			top->setStyle(topStyle);
 		}
 
-		// Thickness-preset cards (wall mode).
-		for (std::size_t i = 0; i < presets_.size() && i < presetRects_.size(); ++i) {
-			const bool selected = (presets_[i].name == status_.thicknessPreset);
-			Renderer::Primitives::drawRect({
-				.bounds = presetRects_[i],
-				.style =
-					{.fill = selected ? UI::bg_active : UI::bg_inset,
-					 .border =
-						 Foundation::BorderStyle{
-							 .color = selected ? UI::accent : UI::line_edge,
-							 .width = selected ? 2.0F : 1.0F
-						 }},
-				.id = "config_strip_preset",
-			});
-			Renderer::Primitives::drawText({
-				.text = presets_[i].name,
-				.position = {presetRects_[i].x + 8.0F, presetRects_[i].y + 5.0F},
-				.scale = 0.8F,
-				.color = UI::text_bright,
-			});
-			char thick[24];
-			std::snprintf(thick, sizeof(thick), "%.2f m", static_cast<double>(presets_[i].thicknessMeters));
-			Renderer::Primitives::drawText({
-				.text = thick,
-				.position = {presetRects_[i].x + 8.0F, presetRects_[i].y + 22.0F},
-				.scale = 0.7F,
-				.color = UI::text_dim,
-			});
-		}
-
-		// Readouts, to the right of whichever set of cards is last.
-		float readoutX = stripBounds_.x + kPadding + static_cast<float>(cardRects_.size()) * (kCardWidth + kCardSpacing) + 8.0F;
-		if (status_.wall && !presetRects_.empty()) {
-			readoutX = presetRects_.back().x + kPresetCardWidth + 16.0F;
-		}
-		float messageOffset = 180.0F;
-
-		if (status_.foundationEdit) {
-			// The mode and the locked material, then the outline the edit would leave
-			// and how much it changes the foundation by.
-			Renderer::Primitives::drawText({
-				.text = status_.editLabel + " (" + status_.material + ")",
-				.position = {readoutX, stripBounds_.y + 8.0F},
-				.scale = 0.8F,
-				.color = UI::text_bright,
-			});
-			char areaBuf[64];
-			std::snprintf(
-				areaBuf,
-				sizeof(areaBuf),
-				"Area: %.1f m\xC2\xB2 (%+.1f)",
-				static_cast<double>(status_.areaSquareMeters),
-				static_cast<double>(status_.areaDeltaSquareMeters)
-			);
-			Renderer::Primitives::drawText({
-				.text = areaBuf,
-				.position = {readoutX, stripBounds_.y + 26.0F},
-				.scale = 0.8F,
-				.color = UI::text,
-			});
-			messageOffset = 280.0F;
-		} else if (status_.opening) {
-			// Opening mode: the type (Door/Window) is chosen from the Build menu (no
-			// in-strip selector in v1), so the strip just displays it plus the clear
-			// width. The validity line below carries the snap / placement feedback.
-			Renderer::Primitives::drawText({
-				.text = std::string("Opening: ") + status_.openingType,
-				.position = {readoutX, stripBounds_.y + 8.0F},
-				.scale = 0.8F,
-				.color = UI::text,
-			});
-			char widthBuf[32];
-			std::snprintf(widthBuf, sizeof(widthBuf), "Width: %.2f m", static_cast<double>(status_.openingWidthMeters));
-			Renderer::Primitives::drawText({
-				.text = widthBuf,
-				.position = {readoutX, stripBounds_.y + 26.0F},
-				.scale = 0.8F,
-				.color = UI::text,
-			});
-		} else if (status_.wall) {
-			char lenBuf[48];
-			std::snprintf(
-				lenBuf,
-				sizeof(lenBuf),
-				"Len: %.1f m  (seg %.1f m)",
-				static_cast<double>(status_.totalLengthMeters),
-				static_cast<double>(status_.segmentLengthMeters)
-			);
-			Renderer::Primitives::drawText({
-				.text = lenBuf,
-				.position = {readoutX, stripBounds_.y + 8.0F},
-				.scale = 0.8F,
-				.color = UI::text,
-			});
-			char costBuf[48];
-			std::snprintf(
-				costBuf,
-				sizeof(costBuf),
-				"Cost: %.0f  Work: %.0f",
-				static_cast<double>(status_.wallCost),
-				static_cast<double>(status_.wallWork)
-			);
-			Renderer::Primitives::drawText({
-				.text = costBuf,
-				.position = {readoutX, stripBounds_.y + 26.0F},
-				.scale = 0.8F,
-				.color = UI::text,
-			});
+		if (status.foundationEdit) {
+			// The mode and its locked material, then the outline the edit would leave and how much it
+			// changes the foundation by.
+			top->setText(status.editLabel + " (" + status.material + ")");
+			bottom->setText(std::format("Area: {:.1f} m\xC2\xB2 ({:+.1f})", status.areaSquareMeters, status.areaDeltaSquareMeters));
+		} else if (status.opening) {
+			// The type comes from the Build menu; the validity line carries the snap and placement feedback.
+			top->setText("Opening: " + status.openingType);
+			bottom->setText(std::format("Width: {:.2f} m", status.openingWidthMeters));
+		} else if (status.wall) {
+			top->setText(std::format("Len: {:.1f} m  (seg {:.1f} m)", status.totalLengthMeters, status.segmentLengthMeters));
+			bottom->setText(std::format("Cost: {:.0f}  Work: {:.0f}", status.wallCost, status.wallWork));
 		} else {
-			char areaBuf[48];
-			std::snprintf(areaBuf, sizeof(areaBuf), "Area: %.1f m\xC2\xB2", static_cast<double>(status_.areaSquareMeters));
-			Renderer::Primitives::drawText({
-				.text = areaBuf,
-				.position = {readoutX, stripBounds_.y + 8.0F},
-				.scale = 0.8F,
-				.color = UI::text,
-			});
-			char ptsBuf[32];
-			std::snprintf(ptsBuf, sizeof(ptsBuf), "Points: %d", status_.pointCount);
-			Renderer::Primitives::drawText({
-				.text = ptsBuf,
-				.position = {readoutX, stripBounds_.y + 26.0F},
-				.scale = 0.8F,
-				.color = UI::text,
-			});
+			top->setText(std::format("Area: {:.1f} m\xC2\xB2", status.areaSquareMeters));
+			bottom->setText(std::format("Points: {}", status.pointCount));
 		}
 
-		// Validity message line, colored by status.
-		Foundation::Color msgColor = UI::status_ok;
-		std::string		  message = "Ready";
-		if (status_.opening) {
-			if (status_.valid) {
-				msgColor = UI::status_ok;
-				message = "Click a wall to place";
+		ui::ColorToken color = tokens::color::statusOk;
+		std::string	   text = "Ready";
+		if (status.opening) {
+			if (status.valid) {
+				text = "Click a wall to place";
 			} else {
-				// No wall in range reads as pending (move onto a built wall); an in-range
-				// wall that fails the placement gate reads as blocked.
-				const bool blocked = !status_.message.empty() && status_.message != "no wall in range";
-				msgColor = blocked ? UI::status_crit : UI::status_warn;
-				message = status_.message.empty() ? "Hover a built wall" : status_.message;
+				// No wall in range is pending (move onto a built wall); a wall in range that fails the
+				// placement gate is blocked.
+				const bool blocked = !status.message.empty() && status.message != "no wall in range";
+				color = blocked ? tokens::color::statusCrit : tokens::color::statusWarn;
+				text = status.message.empty() ? "Hover a built wall" : status.message;
 			}
-		} else if (status_.wall) {
-			if (status_.pointCount == 0) {
-				msgColor = UI::status_warn;
-				message = "Click a foundation to start";
+		} else if (status.wall) {
+			if (status.pointCount == 0) {
+				color = tokens::color::statusWarn;
+				text = "Click a foundation to start";
 			} else {
-				msgColor = UI::status_ok;
-				message = "Right-click / Enter to finish";
+				text = "Right-click / Enter to finish";
 			}
-			if (!status_.valid && !status_.message.empty()) {
-				msgColor = UI::status_crit;
-				message = status_.message;
+			if (!status.valid && !status.message.empty()) {
+				color = tokens::color::statusCrit;
+				text = status.message;
 			}
 		} else {
-			if (status_.foundationEdit && status_.pointCount == 0) {
-				message = "Draw a region across the foundation edge";
+			if (status.foundationEdit && status.pointCount == 0) {
+				text = "Draw a region across the foundation edge";
 			}
-			if (status_.pointCount > 0 && status_.pointCount < 3) {
-				msgColor = UI::status_warn;
-				message = "Keep placing points";
+			if (status.pointCount > 0 && status.pointCount < 3) {
+				color = tokens::color::statusWarn;
+				text = "Keep placing points";
 			}
-			if (!status_.valid && !status_.message.empty()) {
-				msgColor = UI::status_crit;
-				message = status_.message;
-			} else if (status_.valid && status_.pointCount >= 3) {
-				msgColor = UI::status_ok;
-				message = "Click origin to close";
+			if (!status.valid && !status.message.empty()) {
+				color = tokens::color::statusCrit;
+				text = status.message;
+			} else if (status.valid && status.pointCount >= 3) {
+				color = tokens::color::statusOk;
+				text = "Click origin to close";
 			}
 		}
-
-		Renderer::Primitives::drawText({
-			.text = message,
-			.position = {readoutX + messageOffset, stripBounds_.y + 18.0F},
-			.scale = 0.85F,
-			.color = msgColor,
-		});
+		line->setText(std::move(text));
+		if (!sameColor(color, messageColor)) {
+			messageColor = color;
+			ui::Style lineStyle = line->getDeclaredStyle();
+			lineStyle.color = theme.get(color);
+			line->setStyle(lineStyle);
+		}
 	}
 
 } // namespace world_sim

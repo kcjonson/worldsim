@@ -9,7 +9,7 @@
 #include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
 
-#include <components/toast/Toast.h> // UI::ToastSeverity
+#include <ui/components/Toast.h>
 
 #include <construction/ConstructionWorld.h>
 #include <construction/SnapEngine.h>
@@ -139,7 +139,7 @@ namespace world_sim {
 		const bool	on = (value == "1" || value == "on" || value == "true" || value == "yes");
 		m_ctx.world->getSystem<ecs::ConstructionSystem>().setFreeBuild(on);
 		LOG_INFO(Game, "[DevAPI] free-build %s", on ? "ON" : "OFF");
-		m_ctx.ui->pushNotification("Dev", on ? "Free-build ON" : "Free-build OFF", UI::ToastSeverity::Info);
+		m_ctx.ui->pushNotification("Dev", on ? "Free-build ON" : "Free-build OFF", ui::ToastSeverity::Info);
 	}
 
 	void DevCommandHandler::devGive(const app::DevRequest& cmd) {
@@ -155,14 +155,14 @@ namespace world_sim {
 		if (where == "site") {
 			const uint32_t credited = m_ctx.world->getSystem<ecs::ConstructionSystem>().creditMaterialToSites(material, n);
 			LOG_INFO(Game, "[DevAPI] give: credited %u %s across build sites", credited, material.c_str());
-			m_ctx.ui->pushNotification("Dev", "Credited " + std::to_string(credited) + " " + material + " to sites", UI::ToastSeverity::Info);
+			m_ctx.ui->pushNotification("Dev", "Credited " + std::to_string(credited) + " " + material + " to sites", ui::ToastSeverity::Info);
 			return;
 		}
 
 		if (where == "loose") {
 			if (engine::assets::AssetRegistry::Get().getDefinition(material) == nullptr) {
 				LOG_WARNING(Game, "[DevAPI] give loose: unknown asset '%s'", material.c_str());
-				m_ctx.ui->pushNotification("Dev", "Unknown asset: " + material, UI::ToastSeverity::Warning);
+				m_ctx.ui->pushNotification("Dev", "Unknown asset: " + material, ui::ToastSeverity::Warning);
 				return;
 			}
 			const Foundation::Vec2 at = parsePoint(param(cmd, "at"));
@@ -181,7 +181,7 @@ namespace world_sim {
 				LOG_WARNING(Game, "[DevAPI] give loose: capped %u -> %u entities", n, kMaxLoose);
 			}
 			LOG_INFO(Game, "[DevAPI] give: dropped %u loose '%s' near (%.1f, %.1f)", count, material.c_str(), at.x, at.y);
-			m_ctx.ui->pushNotification("Dev", "Dropped " + std::to_string(count) + " " + material, UI::ToastSeverity::Info);
+			m_ctx.ui->pushNotification("Dev", "Dropped " + std::to_string(count) + " " + material, ui::ToastSeverity::Info);
 			return;
 		}
 
@@ -190,7 +190,7 @@ namespace world_sim {
 			ecs::Inventory*		   inventory = (where == "colonist") ? nearestColonistInventory(at) : nearestStorageInventory(at);
 			if (inventory == nullptr) {
 				LOG_WARNING(Game, "[DevAPI] give %s: no target found", where.c_str());
-				m_ctx.ui->pushNotification("Dev", "No " + where + " to give to", UI::ToastSeverity::Warning);
+				m_ctx.ui->pushNotification("Dev", "No " + where + " to give to", ui::ToastSeverity::Warning);
 				return;
 			}
 
@@ -215,24 +215,24 @@ namespace world_sim {
 				added = inventory->addItem(material, n);
 			}
 			LOG_INFO(Game, "[DevAPI] give: added %u/%u %s to nearest %s (%s)", added, n, material.c_str(), where.c_str(), slot.c_str());
-			m_ctx.ui->pushNotification("Dev", "Gave " + std::to_string(added) + " " + material + " to " + where, UI::ToastSeverity::Info);
+			m_ctx.ui->pushNotification("Dev", "Gave " + std::to_string(added) + " " + material + " to " + where, ui::ToastSeverity::Info);
 			return;
 		}
 
 		LOG_WARNING(Game, "[DevAPI] give: unknown where=%s (site|loose|colonist|storage)", where.c_str());
-		m_ctx.ui->pushNotification("Dev", "Unknown where: " + where, UI::ToastSeverity::Warning);
+		m_ctx.ui->pushNotification("Dev", "Unknown where: " + where, ui::ToastSeverity::Warning);
 	}
 
 	void DevCommandHandler::devSpawn(const app::DevRequest& cmd) {
 		const std::string def = param(cmd, "def");
 		if (def.empty()) {
 			LOG_WARNING(Game, "[DevAPI] spawn: missing def=<assetName>");
-			m_ctx.ui->pushNotification("Dev", "spawn needs def=", UI::ToastSeverity::Warning);
+			m_ctx.ui->pushNotification("Dev", "spawn needs def=", ui::ToastSeverity::Warning);
 			return;
 		}
 		if (engine::assets::AssetRegistry::Get().getDefinition(def) == nullptr) {
 			LOG_WARNING(Game, "[DevAPI] spawn: unknown def '%s'", def.c_str());
-			m_ctx.ui->pushNotification("Dev", "Unknown asset: " + def, UI::ToastSeverity::Warning);
+			m_ctx.ui->pushNotification("Dev", "Unknown asset: " + def, ui::ToastSeverity::Warning);
 			return;
 		}
 		const Foundation::Vec2 at = parsePoint(param(cmd, "at"));
@@ -261,7 +261,7 @@ namespace world_sim {
 			++spawned;
 		}
 		LOG_INFO(Game, "[DevAPI] spawn: %ld/%ld x '%s' near (%.1f, %.1f)", spawned, n, def.c_str(), at.x, at.y);
-		m_ctx.ui->pushNotification("Dev", "Spawned " + std::to_string(spawned) + " " + def, UI::ToastSeverity::Info);
+		m_ctx.ui->pushNotification("Dev", "Spawned " + std::to_string(spawned) + " " + def, ui::ToastSeverity::Info);
 	}
 
 	void DevCommandHandler::devColonist(const app::DevRequest& cmd) {
@@ -279,7 +279,7 @@ namespace world_sim {
 			m_ctx.spawnColonist({at.x + off.x, at.y + off.y}, name);
 		}
 		LOG_INFO(Game, "[DevAPI] colonist: spawned %ld at (%.1f, %.1f)", n, at.x, at.y);
-		m_ctx.ui->pushNotification("Dev", "Spawned " + std::to_string(n) + " colonist(s)", UI::ToastSeverity::Info);
+		m_ctx.ui->pushNotification("Dev", "Spawned " + std::to_string(n) + " colonist(s)", ui::ToastSeverity::Info);
 	}
 
 	bool DevCommandHandler::requireValidPosition(Foundation::Vec2 at, const char* verb) {
@@ -291,7 +291,7 @@ namespace world_sim {
 		}
 		LOG_WARNING(Game, "[DevAPI] %s: error: %.1f,%.1f not on an active walkable nav mesh, refused", verb, at.x, at.y);
 		m_ctx.ui->pushNotification(
-			"Dev", "Refused: (" + std::to_string(at.x) + ", " + std::to_string(at.y) + ") not on walkable nav mesh", UI::ToastSeverity::Warning
+			"Dev", "Refused: (" + std::to_string(at.x) + ", " + std::to_string(at.y) + ") not on walkable nav mesh", ui::ToastSeverity::Warning
 		);
 		return false;
 	}
@@ -308,7 +308,7 @@ namespace world_sim {
 			return true;
 		}
 		LOG_WARNING(Game, "[DevAPI] %s: error: footprint not on buildable ground (water or off-mesh), refused", verb);
-		m_ctx.ui->pushNotification("Dev", "Refused: footprint not on buildable ground", UI::ToastSeverity::Warning);
+		m_ctx.ui->pushNotification("Dev", "Refused: footprint not on buildable ground", ui::ToastSeverity::Warning);
 		return false;
 	}
 
@@ -320,7 +320,7 @@ namespace world_sim {
 			return true;
 		}
 		LOG_WARNING(Game, "[DevAPI] %s: error: chain not fully on an active walkable nav mesh, refused", verb);
-		m_ctx.ui->pushNotification("Dev", "Refused: wall chain not fully on walkable ground", UI::ToastSeverity::Warning);
+		m_ctx.ui->pushNotification("Dev", "Refused: wall chain not fully on walkable ground", ui::ToastSeverity::Warning);
 		return false;
 	}
 
@@ -412,20 +412,20 @@ namespace world_sim {
 		auto*				needs = m_ctx.world->getComponent<ecs::NeedsComponent>(id);
 		if (needs == nullptr) {
 			LOG_WARNING(Game, "[DevAPI] need: no colonist #%llu", static_cast<unsigned long long>(id));
-			m_ctx.ui->pushNotification("Dev", "No such colonist", UI::ToastSeverity::Warning);
+			m_ctx.ui->pushNotification("Dev", "No such colonist", ui::ToastSeverity::Warning);
 			return;
 		}
 		ecs::NeedType type{};
 		if (!parseNeedType(param(cmd, "need"), type)) {
 			LOG_WARNING(Game, "[DevAPI] need: unknown need '%s'", param(cmd, "need").c_str());
-			m_ctx.ui->pushNotification("Dev", "Unknown need", UI::ToastSeverity::Warning);
+			m_ctx.ui->pushNotification("Dev", "Unknown need", ui::ToastSeverity::Warning);
 			return;
 		}
 		float value = std::strtof(param(cmd, "value", "100").c_str(), nullptr);
 		value = value < 0.0F ? 0.0F : (value > 100.0F ? 100.0F : value);
 		needs->get(type).value = value;
 		LOG_INFO(Game, "[DevAPI] need: %s=%.1f on #%llu", ecs::needLabel(type), static_cast<double>(value), static_cast<unsigned long long>(id));
-		m_ctx.ui->pushNotification("Dev", std::string(ecs::needLabel(type)) + " set", UI::ToastSeverity::Info);
+		m_ctx.ui->pushNotification("Dev", std::string(ecs::needLabel(type)) + " set", ui::ToastSeverity::Info);
 	}
 
 	void DevCommandHandler::devTime(const app::DevRequest& cmd) {
@@ -452,7 +452,7 @@ namespace world_sim {
 
 		const auto snap = timeSystem.snapshot();
 		LOG_INFO(Game, "[DevAPI] time: day %d, %.2fh, speed %d", snap.day, static_cast<double>(snap.timeOfDay), static_cast<int>(snap.speed));
-		m_ctx.ui->pushNotification("Dev", acted ? "Time updated" : "time: speed|set|skip", acted ? UI::ToastSeverity::Info : UI::ToastSeverity::Warning);
+		m_ctx.ui->pushNotification("Dev", acted ? "Time updated" : "time: speed|set|skip", acted ? ui::ToastSeverity::Info : ui::ToastSeverity::Warning);
 	}
 
 	void DevCommandHandler::devTeleport(const app::DevRequest& cmd) {
@@ -460,7 +460,7 @@ namespace world_sim {
 		auto*				pos = m_ctx.world->getComponent<ecs::Position>(id);
 		if (pos == nullptr) {
 			LOG_WARNING(Game, "[DevAPI] teleport: no entity #%llu", static_cast<unsigned long long>(id));
-			m_ctx.ui->pushNotification("Dev", "No such entity", UI::ToastSeverity::Warning);
+			m_ctx.ui->pushNotification("Dev", "No such entity", ui::ToastSeverity::Warning);
 			return;
 		}
 		const Foundation::Vec2 to = parsePoint(param(cmd, "to"));
@@ -475,7 +475,7 @@ namespace world_sim {
 			vel->value = {0.0F, 0.0F};
 		}
 		LOG_INFO(Game, "[DevAPI] teleport: #%llu -> (%.1f, %.1f)", static_cast<unsigned long long>(id), to.x, to.y);
-		m_ctx.ui->pushNotification("Dev", "Teleported", UI::ToastSeverity::Info);
+		m_ctx.ui->pushNotification("Dev", "Teleported", ui::ToastSeverity::Info);
 	}
 
 	void DevCommandHandler::devSelect(const app::DevRequest& cmd) {
@@ -490,7 +490,7 @@ namespace world_sim {
 		}
 		if (id == ecs::kInvalidEntity || !m_ctx.world->isAlive(id)) {
 			LOG_WARNING(Game, "[DevAPI] select: no colonist to select");
-			m_ctx.ui->pushNotification("Dev", "No colonist to select", UI::ToastSeverity::Warning);
+			m_ctx.ui->pushNotification("Dev", "No colonist to select", ui::ToastSeverity::Warning);
 			return;
 		}
 		m_ctx.selection->selectColonist(id);
@@ -501,7 +501,7 @@ namespace world_sim {
 		const ecs::EntityID id = parseEntity(param(cmd, "colonist"));
 		if (!m_ctx.world->isAlive(id)) {
 			LOG_WARNING(Game, "[DevAPI] kill: no entity #%llu", static_cast<unsigned long long>(id));
-			m_ctx.ui->pushNotification("Dev", "No such entity", UI::ToastSeverity::Warning);
+			m_ctx.ui->pushNotification("Dev", "No such entity", ui::ToastSeverity::Warning);
 			return;
 		}
 		const auto* colonistSel = std::get_if<world_sim::ColonistSelection>(&m_ctx.selection->current());
@@ -510,17 +510,17 @@ namespace world_sim {
 		}
 		m_ctx.world->destroyEntity(id);
 		LOG_INFO(Game, "[DevAPI] kill: removed #%llu", static_cast<unsigned long long>(id));
-		m_ctx.ui->pushNotification("Dev", "Colonist removed", UI::ToastSeverity::Info);
+		m_ctx.ui->pushNotification("Dev", "Colonist removed", ui::ToastSeverity::Info);
 	}
 
 	void DevCommandHandler::devComplete(const app::DevRequest& cmd) {
 		const ecs::EntityID id = parseEntity(param(cmd, "id"));
 		if (m_ctx.world->getSystem<ecs::ConstructionSystem>().forceCompleteBlueprint(id)) {
 			LOG_INFO(Game, "[DevAPI] complete: built blueprint #%llu", static_cast<unsigned long long>(id));
-			m_ctx.ui->pushNotification("Dev", "Blueprint built", UI::ToastSeverity::Info);
+			m_ctx.ui->pushNotification("Dev", "Blueprint built", ui::ToastSeverity::Info);
 		} else {
 			LOG_WARNING(Game, "[DevAPI] complete: #%llu is not a buildable blueprint", static_cast<unsigned long long>(id));
-			m_ctx.ui->pushNotification("Dev", "Not a blueprint", UI::ToastSeverity::Warning);
+			m_ctx.ui->pushNotification("Dev", "Not a blueprint", ui::ToastSeverity::Warning);
 		}
 	}
 
@@ -542,7 +542,7 @@ namespace world_sim {
 		const auto commit = constructionWorld.commitFoundation(pts, material);
 		if (!commit.ok()) {
 			LOG_WARNING(Game, "[DevAPI] foundation: commit rejected (status %d)", static_cast<int>(commit.status));
-			m_ctx.ui->pushNotification("Dev", "Foundation commit rejected", UI::ToastSeverity::Warning);
+			m_ctx.ui->pushNotification("Dev", "Foundation commit rejected", ui::ToastSeverity::Warning);
 			return;
 		}
 
@@ -567,7 +567,7 @@ namespace world_sim {
 			built ? 1 : 0,
 			static_cast<uint32_t>(entity)
 		);
-		m_ctx.ui->pushNotification("Dev", built ? "Built foundation placed" : "Foundation blueprint placed", UI::ToastSeverity::Info);
+		m_ctx.ui->pushNotification("Dev", built ? "Built foundation placed" : "Foundation blueprint placed", ui::ToastSeverity::Info);
 	}
 
 	std::string DevCommandHandler::devFoundationEdit(const app::DevRequest& cmd) {
@@ -650,7 +650,7 @@ namespace world_sim {
 			built ? 1 : 0,
 			static_cast<unsigned long long>(host)
 		);
-		m_ctx.ui->pushNotification("Dev", std::to_string(n) + (built ? " built wall(s)" : " wall blueprint(s)"), UI::ToastSeverity::Info);
+		m_ctx.ui->pushNotification("Dev", std::to_string(n) + (built ? " built wall(s)" : " wall blueprint(s)"), ui::ToastSeverity::Info);
 	}
 
 	void DevCommandHandler::devOpening(const app::DevRequest& cmd) {
@@ -658,7 +658,7 @@ namespace world_sim {
 		const auto*		  typeDef = engine::assets::ConstructionRegistry::Get().getOpeningType(type);
 		if (typeDef == nullptr) {
 			LOG_WARNING(Game, "[DevAPI] opening: unknown type '%s'", type.c_str());
-			m_ctx.ui->pushNotification("Dev", "Unknown opening type", UI::ToastSeverity::Warning);
+			m_ctx.ui->pushNotification("Dev", "Unknown opening type", ui::ToastSeverity::Warning);
 			return;
 		}
 
@@ -681,7 +681,7 @@ namespace world_sim {
 			const auto							   os = snap.snapOpening(pts.front(), typeDef->widthMeters);
 			if (!os.valid) {
 				LOG_WARNING(Game, "[DevAPI] opening: no built wall near pt");
-				m_ctx.ui->pushNotification("Dev", "No built wall near point", UI::ToastSeverity::Warning);
+				m_ctx.ui->pushNotification("Dev", "No built wall near point", ui::ToastSeverity::Warning);
 				return;
 			}
 			segment = os.segment;
@@ -707,7 +707,7 @@ namespace world_sim {
 				static_cast<unsigned long long>(segment),
 				type.c_str()
 			);
-			m_ctx.ui->pushNotification("Dev", "Opening commit rejected", UI::ToastSeverity::Warning);
+			m_ctx.ui->pushNotification("Dev", "Opening commit rejected", ui::ToastSeverity::Warning);
 			return;
 		}
 
@@ -720,7 +720,7 @@ namespace world_sim {
 			static_cast<double>(t),
 			built ? 1 : 0
 		);
-		m_ctx.ui->pushNotification("Dev", built ? "Built opening placed" : "Opening blueprint placed", UI::ToastSeverity::Info);
+		m_ctx.ui->pushNotification("Dev", built ? "Built opening placed" : "Opening blueprint placed", ui::ToastSeverity::Info);
 	}
 
 	void DevCommandHandler::devCraft(const app::DevRequest& cmd) {
@@ -730,7 +730,7 @@ namespace world_sim {
 
 		if (engine::assets::RecipeRegistry::Get().getRecipe(recipe) == nullptr) {
 			LOG_WARNING(Game, "[DevAPI] craft: unknown recipe '%s'", recipe.c_str());
-			m_ctx.ui->pushNotification("Dev", "Unknown recipe: " + recipe, UI::ToastSeverity::Warning);
+			m_ctx.ui->pushNotification("Dev", "Unknown recipe: " + recipe, ui::ToastSeverity::Warning);
 			return;
 		}
 
@@ -751,7 +751,7 @@ namespace world_sim {
 		}
 		if (best == nullptr) {
 			LOG_WARNING(Game, "[DevAPI] craft: no crafting station found (spawn a CraftingSpot first)");
-			m_ctx.ui->pushNotification("Dev", "No crafting station to queue at", UI::ToastSeverity::Warning);
+			m_ctx.ui->pushNotification("Dev", "No crafting station to queue at", ui::ToastSeverity::Warning);
 			return;
 		}
 
@@ -759,7 +759,7 @@ namespace world_sim {
 		LOG_INFO(
 			Game, "[DevAPI] craft: queued %u x %s at station #%llu", qty, recipe.c_str(), static_cast<unsigned long long>(bestEntity)
 		);
-		m_ctx.ui->pushNotification("Dev", "Queued " + std::to_string(qty) + " " + recipe, UI::ToastSeverity::Info);
+		m_ctx.ui->pushNotification("Dev", "Queued " + std::to_string(qty) + " " + recipe, ui::ToastSeverity::Info);
 	}
 
 	void DevCommandHandler::devStorage(const app::DevRequest& cmd) {
@@ -767,13 +767,13 @@ namespace world_sim {
 		const ecs::EntityID	   id = nearestStorageEntity(at);
 		if (id == ecs::kInvalidEntity) {
 			LOG_WARNING(Game, "[DevAPI] storage: no storage entity found near (%.1f, %.1f)", at.x, at.y);
-			m_ctx.ui->pushNotification("Dev", "No storage entity found", UI::ToastSeverity::Warning);
+			m_ctx.ui->pushNotification("Dev", "No storage entity found", ui::ToastSeverity::Warning);
 			return;
 		}
 		auto* storageConfig = m_ctx.world->getComponent<ecs::StorageConfiguration>(id);
 		if (storageConfig == nullptr) {
 			LOG_WARNING(Game, "[DevAPI] storage: entity #%llu has no StorageConfiguration", static_cast<unsigned long long>(id));
-			m_ctx.ui->pushNotification("Dev", "Entity has no StorageConfiguration", UI::ToastSeverity::Warning);
+			m_ctx.ui->pushNotification("Dev", "Entity has no StorageConfiguration", ui::ToastSeverity::Warning);
 			return;
 		}
 
@@ -821,7 +821,7 @@ namespace world_sim {
 			minAmount,
 			maxAmount
 		);
-		m_ctx.ui->pushNotification("Dev", "Added storage rule: " + defName + " (" + categoryStr + ")", UI::ToastSeverity::Info);
+		m_ctx.ui->pushNotification("Dev", "Added storage rule: " + defName + " (" + categoryStr + ")", ui::ToastSeverity::Info);
 	}
 
 	Foundation::Vec2 DevCommandHandler::parsePoint(const std::string& spec) {

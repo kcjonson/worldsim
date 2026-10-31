@@ -1,524 +1,518 @@
 #include "GearTabView.h"
-#include "MeterDraw.h"
+#include "TabStyles.h"
 
-#include <components/icon/Icon.h>
-#include <layout/LayoutContainer.h>
 #include <primitives/Primitives.h>
-#include <theme/CssTokens.h>
-#include <theme/Tones.h>
+#include <ui/Context.h>
+#include <ui/shapes/Icon.h>
+#include <ui/shapes/Rectangle.h>
+#include <ui/shapes/Text.h>
 
-#include <cstdio>
+#include <array>
+#include <cstdint>
+#include <format>
+#include <span>
 #include <string>
 
 namespace world_sim {
 
 	namespace {
 
-		constexpr float kSlotBoxH = 40.0F;
-		constexpr float kStackRowH = 18.0F;
+		constexpr float kSlotBoxHeight = 40.0F;
+		constexpr float kStackRowHeight = 18.0F;
 		constexpr float kBeltCellSize = 40.0F;
-		// Prototype figure is a 64x150 viewBox; scaled 1.5x here.
-		constexpr float kFigureW = 96.0F;
-		constexpr float kFigureH = 225.0F;
-		constexpr float kBareMeterH = 6.0F;						// track only
-		constexpr float kLabeledMeterH = UI::fs_2xs + 4.0F + 6.0F; // label row + track
+		constexpr float kToolIcon = 18.0F;
+		constexpr float kPlusIcon = 12.0F;
+		constexpr float kQtyColumn = 44.0F;
+		constexpr float kKgColumn = 64.0F;
+		// The prototype's figure is a 64x150 viewBox, drawn 1.5x.
+		constexpr float kFigureWidth = 96.0F;
+		constexpr float kFigureHeight = 225.0F;
+		constexpr float kEmptyWash = 0.4F; // an empty slot's inset fill
+		constexpr float kLoadWarn = 0.85F; // past this share of capacity, a meter turns to warning
 
-		std::string fmtKg1(float kg) {
-			char buf[32];
-			std::snprintf(buf, sizeof(buf), "%.1f", kg);
-			return buf;
+		std::string kg1(float kg) {
+			return std::format("{:.1f}", kg);
 		}
 
-		std::string fmtKg0(float kg) {
-			char buf[32];
-			std::snprintf(buf, sizeof(buf), "%.0f", kg);
-			return buf;
+		std::string kg0(float kg) {
+			return std::format("{:.0f}", kg);
 		}
 
-		// Trim with "..." so `text` renders within maxWidth.
-		std::string elide(const std::string& text, float fontPx, float maxWidth, Renderer::FontFamily font) {
-			if (tabs::measureText(text, fontPx, font) * tabs::kRenderWidthFudge <= maxWidth) {
-				return text;
-			}
-			std::string t = text;
-			while (!t.empty() && tabs::measureText(t + "...", fontPx, font) * tabs::kRenderWidthFudge > maxWidth) {
-				t.pop_back();
-			}
-			return t + "...";
+		Foundation::Color faded(Foundation::Color color, float alpha) {
+			color.a *= alpha;
+			return color;
+		}
+
+		// A text that cuts off at its own box, so a long name never runs under its neighbours.
+		ui::Ref<ui::Text> clippedText(ui::Component& row, const ui::Style& style) {
+			ui::Ref<ui::Component> clip = row.addChild<ui::Component>({
+				.minSize = {0.0F, ui::kAuto},
+				.layout = {.flexGrow = 1.0F},
+				.overflow = ui::Overflow::Clip,
+			});
+			return clip.addChild<ui::Text>({.style = style});
 		}
 
 	} // namespace
 
-	// A paperdoll slot: mono kicker label on top, item name (or "+ Empty") below.
-	// Filled hand slots get an accent border and an optional "2H" chip.
-	struct GearSlotBox : UI::Component {
-		std::string slotLabel;
-		std::string itemName; // empty = empty slot
-		std::string chip;	  // "2H" for a two-hand item
-		bool		accent = false;
+	// A paperdoll slot: a mono kicker over the item's name, or "+ Empty". A filled hand slot takes an
+	// accent border, and a two-hand item a "2H" chip.
+	class GearSlotBox : public ui::Rectangle {
+	  public:
+		struct Args {
+			UI_COMMON_ARGS
+			std::string label;
+		};
 
-		explicit GearSlotBox(std::string label)
-			: slotLabel(std::move(label)) {
-			size = {0.0F, kSlotBoxH};
-			widthMode = UI::SizeMode::Fill;
-		}
+		explicit GearSlotBox(const Args& args)
+			: label(args.label) {}
 
-		void setItem(std::string name, std::string chipText, bool accentBorder) {
-			itemName = std::move(name);
-			chip = std::move(chipText);
-			accent = accentBorder;
+		[[nodiscard]] const char* typeName() const override { return "GearSlotBox"; }
+
+		void setItem(const std::string& itemName, const std::string& chipText) {
+			filled = true;
+			name.get()->setText(itemName);
+			chipLabel.get()->setText(chipText);
+			chip.get()->setVisible(!chipText.empty());
+			show();
 		}
 
 		void setEmpty() {
-			itemName.clear();
-			chip.clear();
-			accent = false;
+			filled = false;
+			show();
 		}
 
-		const char* debugTypeName() const override { return "GearSlotBox"; }
-
-		void render() override {
-			const bool filled = !itemName.empty();
-			const Foundation::Color borderColor = accent ? UI::accent : (filled ? UI::line_edge : UI::line_hairline);
-			Renderer::Primitives::drawRect({
-				.bounds = {position.x, position.y, size.x, size.y},
-				.style = {.fill = filled ? UI::bg_inset : UI::withAlpha(UI::bg_inset, 0.4F),
-						  .border = Foundation::BorderStyle{.color = borderColor, .width = UI::bw, .cornerRadius = UI::r_sm, .position = Foundation::BorderPosition::Inside}},
+	  protected:
+		void onMount() override {
+			const ui::Theme& theme = getContext()->getTheme();
+			if (getSizeSpec().height.isAuto()) {
+				setSize({getSizeSpec().width, kSlotBoxHeight});
+			}
+			ui::Layout column = getLayout();
+			column.display = ui::Display::Flex;
+			column.flexDirection = ui::FlexDirection::Column;
+			column.gap = theme.get(tokens::spacing::space1);
+			column.padding = {5.0F, theme.get(tokens::spacing::space2)};
+			setLayout(column);
+			addChild<ui::Text>({.style = tabs::kickerText(theme, tokens::color::textFaint), .text = label});
+			ui::Ref<ui::Component> row = addChild<ui::Component>({
+				.layout = {.display = ui::Display::Flex, .gap = theme.get(tokens::spacing::space15), .alignItems = ui::AlignItems::Center},
 			});
-
-			const float pad = UI::space_2;
-			Renderer::Primitives::drawText({
-				.text = slotLabel,
-				.position = {position.x + pad, position.y + 5.0F},
-				.scale = UI::fs_2xs / 16.0F,
-				.color = UI::text_faint,
-				.font = theme::fontMono,
-				.letterSpacing = UI::fs_2xs * UI::ls_wider,
-				.transform = Foundation::TextTransform::Uppercase,
+			empty = row.addChild<ui::Text>(
+				{.style = world_sim::text(theme, {.size = tokens::fontSize::fsXs, .color = tokens::color::textFaint}), .text = "+ Empty"}
+			);
+			name = clippedText(*row.get(), world_sim::text(theme, {.size = tokens::fontSize::fsSm, .color = tokens::color::textBright}));
+			nameBox = name.get()->parent();
+			chip = row.addChild<ui::Rectangle>({
+				.layout = {.display = ui::Display::Flex, .padding = {1.0F, theme.get(tokens::spacing::space1)}},
+				.style = {
+					.backgroundColor = faded(theme.get(tokens::color::accent), 0.15F),
+					.borderColor = faded(theme.get(tokens::color::accent), 0.5F),
+					.borderWidth = theme.get(tokens::border::bw),
+					.borderRadius = theme.get(tokens::radius::rSm),
+				},
 			});
+			chipLabel = chip.addChild<ui::Text>(
+				{.style = world_sim::text(
+					 theme, {.family = ui::tokens::font::family::mono, .size = tokens::fontSize::fs2xs, .color = tokens::color::accent}
+				 )}
+			);
+			show();
+		}
 
-			const float rowY = position.y + 5.0F + UI::fs_2xs + 4.0F;
-			if (!filled) {
-				tabs::drawText("+ Empty", {position.x + pad, rowY}, UI::fs_xs, UI::text_faint);
+	  private:
+		void show() {
+			if (getContext() == nullptr || empty.get() == nullptr) {
 				return;
 			}
-
-			float chipW = 0.0F;
-			if (!chip.empty()) {
-				chipW = tabs::measureText(chip, UI::fs_2xs, theme::fontMono) + UI::space_2;
-				const Foundation::Rect chipRect{position.x + size.x - pad - chipW, rowY - 1.0F, chipW, UI::fs_2xs + 4.0F};
-				Renderer::Primitives::drawRect({
-					.bounds = chipRect,
-					.style = {.fill = UI::withAlpha(UI::accent, 0.15F),
-							  .border = Foundation::BorderStyle{.color = UI::withAlpha(UI::accent, 0.5F), .width = UI::bw, .cornerRadius = UI::r_sm, .position = Foundation::BorderPosition::Inside}},
-				});
-				Renderer::Primitives::drawText({
-					.text = chip,
-					.position = {chipRect.x, chipRect.y + 2.0F},
-					.scale = UI::fs_2xs / 16.0F,
-					.color = UI::accent,
-					.font = theme::fontMono,
-					.hAlign = Foundation::HorizontalAlign::Center,
-					.boxWidth = chipRect.width,
-				});
-				chipW += UI::space_1_5;
+			const ui::Theme&		theme = getContext()->getTheme();
+			const Foundation::Color fill = theme.get(tokens::color::bgInset);
+			setStyle({
+				.backgroundColor = filled ? fill : faded(fill, kEmptyWash),
+				.borderColor = theme.get(filled ? tokens::color::accent : tokens::color::lineHairline),
+				.borderWidth = theme.get(tokens::border::bw),
+				.borderRadius = theme.get(tokens::radius::rSm),
+			});
+			empty.get()->setVisible(!filled);
+			nameBox.get()->setVisible(filled);
+			if (!filled) {
+				chip.get()->setVisible(false);
 			}
-
-			const float nameW = size.x - pad * 2.0F - chipW;
-			tabs::drawText(elide(itemName, UI::fs_sm, nameW, theme::fontUi), {position.x + pad, rowY}, UI::fs_sm, UI::text_bright);
 		}
+
+		std::string			   label;
+		bool				   filled = false;
+		ui::Ref<ui::Text>	   empty;
+		ui::Ref<ui::Component> nameBox;
+		ui::Ref<ui::Text>	   name;
+		ui::Ref<ui::Rectangle> chip;
+		ui::Ref<ui::Text>	   chipLabel;
 	};
 
-	// A full-width row: styled left text plus an optional right-aligned mono value.
-	// Used for section headers ("FIELD PACK" / "14.3 / 30 kg") and caption lines.
-	struct GearTextRow : UI::Component {
+	// A row of text at the left and an optional mono value at the right, in the accent: a section's
+	// header ("FIELD PACK", "14.3 / 30 kg") or a caption.
+	class GearTextRow : public ui::Component {
+	  public:
 		struct Args {
-			std::string			  left;
-			std::string			  right;
-			float				  fontPx = UI::fs_sm;
-			Foundation::Color	  leftColor = UI::text_bright;
-			Foundation::Color	  rightColor = UI::accent;
-			Renderer::FontFamily  leftFont = theme::fontDisplay;
-			bool				  uppercase = false;
-			float				  letterSpacing = 0.0F; // em
+			UI_COMMON_ARGS
+			std::string left;
+			std::string right;
+			ui::Style	leftStyle;
 		};
-
-		std::string			 left;
-		std::string			 right;
-		float				 fontPx;
-		Foundation::Color	 leftColor;
-		Foundation::Color	 rightColor;
-		Renderer::FontFamily leftFont;
-		bool				 uppercase;
-		float				 letterSpacing;
 
 		explicit GearTextRow(const Args& args)
 			: left(args.left),
 			  right(args.right),
-			  fontPx(args.fontPx),
-			  leftColor(args.leftColor),
-			  rightColor(args.rightColor),
-			  leftFont(args.leftFont),
-			  uppercase(args.uppercase),
-			  letterSpacing(args.letterSpacing) {
-			size = {0.0F, fontPx + 4.0F};
-			widthMode = UI::SizeMode::Fill;
+			  leftStyle(args.leftStyle) {}
+
+		[[nodiscard]] const char* typeName() const override { return "GearTextRow"; }
+
+		void setLeft(const std::string& text) { leftText.get()->setText(text); }
+		void setRight(const std::string& text) { rightText.get()->setText(text); }
+
+	  protected:
+		void onMount() override {
+			const ui::Theme& theme = getContext()->getTheme();
+			ui::Layout		 row = getLayout();
+			row.display = ui::Display::Flex;
+			row.gap = theme.get(tokens::spacing::space2);
+			row.alignItems = ui::AlignItems::Center;
+			setLayout(row);
+			leftText = addChild<ui::Text>({.layout = {.flexGrow = 1.0F}, .style = leftStyle, .text = left});
+			ui::Style value = world_sim::text(
+				theme, {.family = ui::tokens::font::family::mono, .size = tokens::fontSize::fsSm, .color = tokens::color::accent}
+			);
+			value.fontSize = leftStyle.fontSize;
+			rightText = addChild<ui::Text>({.style = value, .text = right});
 		}
 
-		const char* debugTypeName() const override { return "GearTextRow"; }
+	  private:
+		std::string		  left;
+		std::string		  right;
+		ui::Style		  leftStyle;
+		ui::Ref<ui::Text> leftText;
+		ui::Ref<ui::Text> rightText;
+	};
 
-		void render() override {
-			Renderer::Primitives::drawText({
-				.text = left,
-				.position = position,
-				.scale = fontPx / 16.0F,
-				.color = leftColor,
-				.font = leftFont,
-				.letterSpacing = fontPx * letterSpacing,
-				.transform = uppercase ? Foundation::TextTransform::Uppercase : Foundation::TextTransform::None,
+	// One backpack stack: its name, the quantity and the mass, the last two right-aligned in columns.
+	class GearStackRow : public ui::Component {
+	  public:
+		struct Args {
+			UI_COMMON_ARGS
+		};
+
+		[[nodiscard]] const char* typeName() const override { return "GearStackRow"; }
+
+		void setItem(const GearItem& item) {
+			name.get()->setText(item.name);
+			quantity.get()->setText(item.quantity > 1 ? "x" + std::to_string(item.quantity) : std::string());
+			mass.get()->setText(kg1(item.totalKg) + " kg");
+		}
+
+	  protected:
+		void onMount() override {
+			const ui::Theme& theme = getContext()->getTheme();
+			setSize({getSizeSpec().width, kStackRowHeight});
+			ui::Layout row = getLayout();
+			row.display = ui::Display::Flex;
+			row.alignItems = ui::AlignItems::Center;
+			setLayout(row);
+			name = clippedText(*this, world_sim::text(theme, {.size = tokens::fontSize::fsSm, .color = tokens::color::text}));
+			const ui::Style right{.textAlign = Foundation::HorizontalAlign::Right};
+			quantity = addChild<ui::Text>({
+				.size = {kQtyColumn, ui::kAuto},
+				.style =
+					world_sim::text(
+						theme, {.family = ui::tokens::font::family::mono, .size = tokens::fontSize::fs2xs, .color = tokens::color::textDim}
+					)
+						.extend(right),
 			});
-			if (!right.empty()) {
-				Renderer::Primitives::drawText({
-					.text = right,
-					.position = position,
-					.scale = fontPx / 16.0F,
-					.color = rightColor,
-					.font = theme::fontMono,
-					.hAlign = Foundation::HorizontalAlign::Right,
-					.boxWidth = size.x,
-				});
-			}
-		}
-	};
-
-	// A Salvage meter row (track + optional label/value line above).
-	struct GearMeterRow : UI::Component {
-		std::string		  label;
-		std::string		  valueText;
-		float			  value01 = 0.0F;
-		Foundation::Color tone = UI::data;
-
-		explicit GearMeterRow(std::string meterLabel)
-			: label(std::move(meterLabel)) {
-			size = {0.0F, label.empty() ? kBareMeterH : kLabeledMeterH};
-			widthMode = UI::SizeMode::Fill;
-		}
-
-		const char* debugTypeName() const override { return "GearMeterRow"; }
-
-		void render() override {
-			tabs::drawMeter(position.x, position.y, size.x, label, value01, valueText, tone);
-		}
-	};
-
-	// One backpack stack: name, xN quantity, right-aligned kg.
-	struct GearStackRow : UI::Component {
-		std::string name;
-		std::string qtyText;
-		std::string kgText;
-
-		static constexpr float kKgColW = 64.0F;
-		static constexpr float kQtyColW = 44.0F;
-
-		GearStackRow() {
-			size = {0.0F, kStackRowH};
-			widthMode = UI::SizeMode::Fill;
-		}
-
-		const char* debugTypeName() const override { return "GearStackRow"; }
-
-		void render() override {
-			const float nameW = size.x - kKgColW - kQtyColW - UI::space_2 * 2.0F;
-			tabs::drawText(elide(name, UI::fs_sm, nameW, theme::fontUi), position, UI::fs_sm, UI::text);
-			if (!qtyText.empty()) {
-				Renderer::Primitives::drawText({
-					.text = qtyText,
-					.position = {position.x, position.y + 1.0F},
-					.scale = UI::fs_2xs / 16.0F,
-					.color = UI::text_dim,
-					.font = theme::fontMono,
-					.hAlign = Foundation::HorizontalAlign::Right,
-					.boxWidth = size.x - kKgColW - UI::space_2,
-				});
-			}
-			Renderer::Primitives::drawText({
-				.text = kgText,
-				.position = {position.x, position.y + 1.0F},
-				.scale = UI::fs_2xs / 16.0F,
-				.color = UI::data_bright,
-				.font = theme::fontMono,
-				.hAlign = Foundation::HorizontalAlign::Right,
-				.boxWidth = size.x,
+			mass = addChild<ui::Text>({
+				.size = {kKgColumn, ui::kAuto},
+				.style = world_sim::text(
+							 theme,
+							 {.family = ui::tokens::font::family::mono, .size = tokens::fontSize::fs2xs, .color = tokens::color::dataBright}
+				)
+							 .extend(right),
 			});
 		}
+
+	  private:
+		ui::Ref<ui::Text> name;
+		ui::Ref<ui::Text> quantity;
+		ui::Ref<ui::Text> mass;
 	};
 
-	// A quick-draw belt slot cell: bordered square with a tool glyph (filled) or
-	// a faint plus (empty). Icons are built once; visibility toggles per update.
-	struct GearBeltCell : UI::Component {
-		bool	  filled = false;
-		UI::Icon* toolIcon = nullptr;
-		UI::Icon* plusIcon = nullptr;
+	// A quick-draw belt slot: a bordered square with a tool glyph when filled, a faint plus when not.
+	class GearBeltCell : public ui::Rectangle {
+	  public:
+		struct Args {
+			UI_COMMON_ARGS
+		};
 
-		GearBeltCell() {
-			size = {kBeltCellSize, kBeltCellSize};
-			const auto toolHandle = addChild(UI::Icon(UI::Icon::Args{.size = 18.0F, .glyph = "hammer", .tint = UI::accent}));
-			const auto plusHandle = addChild(UI::Icon(UI::Icon::Args{.size = 12.0F, .glyph = "plus", .tint = UI::text_dim, .strokeWidth = 3.0F}));
-			toolIcon = getChild<UI::Icon>(toolHandle);
-			plusIcon = getChild<UI::Icon>(plusHandle);
-			setFilled(false);
-		}
+		[[nodiscard]] const char* typeName() const override { return "GearBeltCell"; }
 
 		void setFilled(bool value) {
 			filled = value;
-			toolIcon->visible = filled;
-			plusIcon->visible = !filled;
+			show();
 		}
 
-		void setPosition(float x, float y) override {
-			UI::Component::setPosition(x, y);
-			toolIcon->setPosition(x + (kBeltCellSize - 18.0F) * 0.5F, y + (kBeltCellSize - 18.0F) * 0.5F);
-			plusIcon->setPosition(x + (kBeltCellSize - 12.0F) * 0.5F, y + (kBeltCellSize - 12.0F) * 0.5F);
+	  protected:
+		void onMount() override {
+			const ui::Theme& theme = getContext()->getTheme();
+			setSize({kBeltCellSize, kBeltCellSize});
+			ui::Layout centre = getLayout();
+			centre.display = ui::Display::Flex;
+			centre.alignItems = ui::AlignItems::Center;
+			centre.justifyContent = ui::JustifyContent::Center;
+			setLayout(centre);
+			tool = addChild<ui::Icon>(
+				{.size = {kToolIcon, kToolIcon}, .style = {.color = theme.get(tokens::color::accent)}, .name = "hammer"}
+			);
+			plus = addChild<ui::Icon>(
+				{.size = {kPlusIcon, kPlusIcon}, .style = {.color = theme.get(tokens::color::textDim)}, .name = "plusBold"}
+			);
+			show();
 		}
 
-		const char* debugTypeName() const override { return "GearBeltCell"; }
-
-		void render() override {
-			Renderer::Primitives::drawRect({
-				.bounds = {position.x, position.y, size.x, size.y},
-				.style = {.fill = filled ? UI::bg_inset : UI::withAlpha(UI::bg_inset, 0.4F),
-						  .border = Foundation::BorderStyle{.color = filled ? UI::line_edge : UI::line_hairline, .width = UI::bw, .cornerRadius = UI::r_sm, .position = Foundation::BorderPosition::Inside}},
+	  private:
+		void show() {
+			if (getContext() == nullptr || tool.get() == nullptr) {
+				return;
+			}
+			const ui::Theme&		theme = getContext()->getTheme();
+			const Foundation::Color fill = theme.get(tokens::color::bgInset);
+			setStyle({
+				.backgroundColor = filled ? fill : faded(fill, kEmptyWash),
+				.borderColor = theme.get(filled ? tokens::color::lineEdge : tokens::color::lineHairline),
+				.borderWidth = theme.get(tokens::border::bw),
+				.borderRadius = theme.get(tokens::radius::rSm),
 			});
-			UI::Component::render();
+			tool.get()->setVisible(filled);
+			plus.get()->setVisible(!filled);
 		}
+
+		bool			  filled = false;
+		ui::Ref<ui::Icon> tool;
+		ui::Ref<ui::Icon> plus;
 	};
 
-	// The center body silhouette, traced from the prototype's 64x150 SVG figure.
-	struct GearBodyFigure : UI::Component {
-		GearBodyFigure() { size = {kFigureW, kFigureH}; }
+	namespace {
 
-		const char* debugTypeName() const override { return "GearBodyFigure"; }
-
-		void render() override {
-			const float s = size.y / 150.0F;
-			const float ox = position.x + (size.x - 64.0F * s) * 0.5F;
-			const float oy = position.y;
-			const Foundation::Color fill = UI::text_faint;
-
-			auto drawPoly = [&](const Foundation::Vec2* base, size_t count, const uint16_t* indices, size_t indexCount) {
-				Foundation::Vec2 verts[8];
-				for (size_t i = 0; i < count; ++i) {
-					verts[i] = {ox + base[i].x * s, oy + base[i].y * s};
-				}
-				Renderer::Primitives::drawTriangles({.vertices = verts, .indices = indices, .vertexCount = count, .indexCount = indexCount, .color = fill});
+		// The body silhouette between the worn slots, traced from the prototype's 64x150 SVG figure.
+		// Triangles: there is no component for an arbitrary polygon.
+		class GearBodyFigure : public ui::Component {
+		  public:
+			struct Args {
+				UI_COMMON_ARGS
 			};
 
-			// Head
-			Renderer::Primitives::drawCircle({.center = {ox + 32.0F * s, oy + 18.0F * s}, .radius = 11.0F * s, .style = {.fill = fill}});
+			[[nodiscard]] const char* typeName() const override { return "GearBodyFigure"; }
 
-			// Torso
-			static constexpr Foundation::Vec2 torso[8] = {{21, 30}, {43, 30}, {47, 44}, {42, 47}, {42, 78}, {22, 78}, {22, 47}, {17, 44}};
-			static constexpr uint16_t		  torsoIdx[18] = {0, 1, 2, 0, 2, 3, 0, 3, 6, 0, 6, 7, 6, 3, 4, 6, 4, 5};
-			drawPoly(torso, 8, torsoIdx, 18);
+		  protected:
+			void onMount() override { setSize({kFigureWidth, kFigureHeight}); }
 
-			// Arms
-			static constexpr Foundation::Vec2 armL[4] = {{19, 31}, {9, 64}, {14, 67}, {23, 42}};
-			static constexpr Foundation::Vec2 armR[4] = {{45, 31}, {55, 64}, {50, 67}, {41, 42}};
-			static constexpr uint16_t		  quadIdx[6] = {0, 1, 2, 0, 2, 3};
-			drawPoly(armL, 4, quadIdx, 6);
-			drawPoly(armR, 4, quadIdx, 6);
+			void render() override {
+				const float				scale = size.y / 150.0F;
+				const Foundation::Vec2	origin{(size.x - 64.0F * scale) * 0.5F, 0.0F};
+				const Foundation::Color fill = faded(getContext()->getTheme().get(tokens::color::textFaint), opacity());
 
-			// Legs
-			static constexpr Foundation::Vec2 legL[6] = {{24, 78}, {31, 78}, {31, 120}, {29, 146}, {23, 146}, {25, 118}};
-			static constexpr Foundation::Vec2 legR[6] = {{40, 78}, {33, 78}, {33, 120}, {35, 146}, {41, 146}, {39, 118}};
-			static constexpr uint16_t		  legIdx[12] = {0, 1, 2, 0, 2, 5, 5, 2, 3, 5, 3, 4};
-			drawPoly(legL, 6, legIdx, 12);
-			drawPoly(legR, 6, legIdx, 12);
+				Renderer::Primitives::drawCircle(
+					{.center = origin + Foundation::Vec2{32.0F, 18.0F} * scale,
+					 .radius = 11.0F * scale,
+					 .style = {.fill = fill},
+					 .key = drawKey()}
+				);
+
+				static constexpr Foundation::Vec2 kTorso[8] = {
+					{21, 30}, {43, 30}, {47, 44}, {42, 47}, {42, 78}, {22, 78}, {22, 47}, {17, 44}
+				};
+				static constexpr uint16_t kTorsoIndices[18] = {0, 1, 2, 0, 2, 3, 0, 3, 6, 0, 6, 7, 6, 3, 4, 6, 4, 5};
+				polygon(kTorso, kTorsoIndices, origin, scale, fill);
+
+				static constexpr Foundation::Vec2 kArmLeft[4] = {{19, 31}, {9, 64}, {14, 67}, {23, 42}};
+				static constexpr Foundation::Vec2 kArmRight[4] = {{45, 31}, {55, 64}, {50, 67}, {41, 42}};
+				static constexpr uint16_t		  kQuadIndices[6] = {0, 1, 2, 0, 2, 3};
+				polygon(kArmLeft, kQuadIndices, origin, scale, fill);
+				polygon(kArmRight, kQuadIndices, origin, scale, fill);
+
+				static constexpr Foundation::Vec2 kLegLeft[6] = {{24, 78}, {31, 78}, {31, 120}, {29, 146}, {23, 146}, {25, 118}};
+				static constexpr Foundation::Vec2 kLegRight[6] = {{40, 78}, {33, 78}, {33, 120}, {35, 146}, {41, 146}, {39, 118}};
+				static constexpr uint16_t		  kLegIndices[12] = {0, 1, 2, 0, 2, 5, 5, 2, 3, 5, 3, 4};
+				polygon(kLegLeft, kLegIndices, origin, scale, fill);
+				polygon(kLegRight, kLegIndices, origin, scale, fill);
+			}
+
+		  private:
+			// A shape from the figure's viewBox, `scale` px a unit from `origin` in the box; at most 8 points.
+			void polygon(
+				std::span<const Foundation::Vec2> shape,
+				std::span<const uint16_t>		  indices,
+				Foundation::Vec2				  origin,
+				float							  scale,
+				Foundation::Color				  color
+			) const {
+				std::array<Foundation::Vec2, 8> vertices{};
+				for (size_t i = 0; i < shape.size(); ++i) {
+					vertices[i] = origin + shape[i] * scale;
+				}
+				Renderer::Primitives::drawTriangles({
+					.vertices = vertices.data(),
+					.indices = indices.data(),
+					.vertexCount = shape.size(),
+					.indexCount = indices.size(),
+					.color = color,
+					.key = drawKey(),
+				});
+			}
+		};
+
+		ui::Ref<ui::Component> column(ui::Component& parent, float gap, float grow = 0.0F) {
+			return parent.addChild<ui::Component>({
+				.size = {grow > 0.0F ? ui::Length(0.0F) : ui::kAuto, ui::kAuto},
+				.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = gap, .flexGrow = grow},
+			});
 		}
-	};
 
-	void GearTabView::create(const Foundation::Rect& contentBounds) {
-		size = {contentBounds.width, contentBounds.height};
+		std::string itemLabel(const GearItem& item) {
+			return item.quantity > 1 ? item.name + " x" + std::to_string(item.quantity) : item.name;
+		}
 
-		auto rootC = UI::LayoutContainer(UI::LayoutContainer::Args{
-			.position = {contentBounds.x, contentBounds.y},
-			.size = {contentBounds.width, contentBounds.height},
-			.direction = UI::Direction::Vertical,
-			.gap = UI::space_4,
-			.id = "gear_content",
+	} // namespace
+
+	void GearTabView::onMount() {
+		const ui::Theme& theme = getContext()->getTheme();
+		const float		 sectionGap = theme.get(tokens::spacing::space4);
+		const float		 slotGap = theme.get(tokens::spacing::space15);
+		const float		 rowGap = theme.get(tokens::spacing::space1);
+		ui::Layout		 layout = getLayout();
+		layout.display = ui::Display::Flex;
+		layout.flexDirection = ui::FlexDirection::Column;
+		layout.gap = sectionGap;
+		setLayout(layout);
+
+		const float		heading = theme.get(tokens::fontSize::fsSm);
+		const ui::Style headingStyle =
+			world_sim::text(
+				theme, {.family = ui::tokens::font::family::display, .size = tokens::fontSize::fsSm, .color = tokens::color::textBright}
+			)
+				.extend({
+					.letterSpacing = heading * theme.get(tokens::letterSpacing::lsWide),
+					.textTransform = Foundation::TextTransform::Uppercase,
+				});
+		const ui::Style captionStyle = world_sim::text(theme, {.size = tokens::fontSize::fs2xs, .color = tokens::color::textFaint});
+
+		// The paperdoll: worn stubs, the figure, back and belt and the hands.
+		ui::Ref<ui::Component> paperdoll = addChild<ui::Component>({.layout = {.display = ui::Display::Flex, .gap = sectionGap}});
+		ui::Ref<ui::Component> worn = column(*paperdoll.get(), slotGap, 1.0F);
+		// No apparel system yet, so the worn slots are empty stubs. ASCII separators: the font atlas has no
+		// middot.
+		for (const char* slot : {"Head", "Face", "Body - Over", "Body - Under", "Legs", "Feet"}) {
+			worn.addChild<GearSlotBox>({.label = slot});
+		}
+		ui::Ref<ui::Component> figure = paperdoll.addChild<ui::Component>({
+			.size = {kFigureWidth, ui::kAuto},
+			.layout = {
+				.display = ui::Display::Flex,
+				.flexDirection = ui::FlexDirection::Column,
+				.alignItems = ui::AlignItems::Center,
+				.justifyContent = ui::JustifyContent::Center,
+			},
 		});
+		figure.addChild<GearBodyFigure>({});
+		ui::Ref<ui::Component> carried = column(*paperdoll.get(), slotGap, 1.0F);
+		carried.addChild<GearSlotBox>({.label = "Back"});
+		carried.addChild<GearSlotBox>({.label = "Belt"});
+		bothHandsBox = carried.addChild<GearSlotBox>({.visible = false, .label = "Both Hands"});
+		leftHandBox = carried.addChild<GearSlotBox>({.label = "Left Hand"});
+		rightHandBox = carried.addChild<GearSlotBox>({.label = "Right Hand"});
 
-		// ---- Paperdoll: worn stubs | body figure | back/belt + hands ----
-		auto rowC = UI::LayoutContainer(UI::LayoutContainer::Args{.direction = UI::Direction::Horizontal, .gap = UI::space_4, .id = "gear_paperdoll"});
-		rowC.widthMode = UI::SizeMode::Fill;
+		// The Field Pack: the cargo meter over the stacks.
+		ui::Ref<ui::Component> pack = column(*this, rowGap);
+		packHeader = pack.addChild<GearTextRow>({.left = "Field Pack", .leftStyle = headingStyle});
+		packMeter = pack.addChild<ui::ProgressBar>({.value = 0.0F, .tone = ui::Tone::Info, .controlSize = ui::ControlSize::Sm});
+		pack.addChild<GearTextRow>({.left = "Weight-based - cargo in hands & pack - tools ride free", .leftStyle = captionStyle});
+		ui::Ref<ui::Component> stacks = column(*pack.get(), theme.get(tokens::spacing::space05));
+		for (ui::Ref<GearStackRow>& row : packRows) {
+			row = stacks.addChild<GearStackRow>({.visible = false});
+		}
+		packMoreRow = stacks.addChild<GearTextRow>({.visible = false, .leftStyle = captionStyle});
+		packEmptyRow = stacks.addChild<GearTextRow>(
+			{.left = "Nothing carried",
+			 .leftStyle = world_sim::text(theme, {.size = tokens::fontSize::fsXs, .color = tokens::color::textFaint})}
+		);
 
-		auto leftColC = UI::LayoutContainer(UI::LayoutContainer::Args{.direction = UI::Direction::Vertical, .gap = UI::space_1_5, .id = "gear_worn_left"});
-		leftColC.widthMode = UI::SizeMode::Fill;
-		// No apparel system yet: the worn slots are permanent empty stubs.
-		// ASCII separators only: the SDF font atlas has no middot glyph.
-		for (const char* label : {"Head", "Face", "Body - Over", "Body - Under", "Legs", "Feet"}) {
-			leftColC.addChild(GearSlotBox(label));
+		// The Tool Belt: two quick-draw slots.
+		ui::Ref<ui::Component> belt = column(*this, rowGap);
+		beltHeader = belt.addChild<GearTextRow>({.left = "Tool Belt", .leftStyle = headingStyle});
+		belt.addChild<GearTextRow>({.left = "Quick-draw slots - one-hand tools only", .leftStyle = captionStyle});
+		ui::Ref<ui::Component> cells =
+			belt.addChild<ui::Component>({.layout = {.display = ui::Display::Flex, .gap = theme.get(tokens::spacing::space2)}});
+		for (ui::Ref<GearBeltCell>& cell : beltCells) {
+			cell = cells.addChild<GearBeltCell>({});
 		}
 
-		auto centerColC = UI::LayoutContainer(UI::LayoutContainer::Args{
-			.size = {kFigureW, 0.0F},
-			.direction = UI::Direction::Vertical,
-			.distribution = UI::Distribution::Center,
-			.crossAlign = UI::CrossAlign::Center,
-			.id = "gear_figure_col",
-		});
-		centerColC.heightMode = UI::SizeMode::Fill;
-		centerColC.addChild(GearBodyFigure());
-
-		auto rightColC = UI::LayoutContainer(UI::LayoutContainer::Args{.direction = UI::Direction::Vertical, .gap = UI::space_1_5, .id = "gear_worn_right"});
-		rightColC.widthMode = UI::SizeMode::Fill;
-		rightColC.addChild(GearSlotBox("Back"));
-		rightColC.addChild(GearSlotBox("Belt"));
-		const auto bothHandle = rightColC.addChild(GearSlotBox("Both Hands"));
-		const auto leftHandle = rightColC.addChild(GearSlotBox("Left Hand"));
-		const auto rightHandle = rightColC.addChild(GearSlotBox("Right Hand"));
-		bothHandsBox = rightColC.getChild<GearSlotBox>(bothHandle);
-		leftHandBox = rightColC.getChild<GearSlotBox>(leftHandle);
-		rightHandBox = rightColC.getChild<GearSlotBox>(rightHandle);
-		bothHandsBox->visible = false;
-
-		const auto leftColHandle = rowC.addChild(std::move(leftColC));
-		rowC.addChild(std::move(centerColC));
-		const auto rightColHandle = rowC.addChild(std::move(rightColC));
-		rightCol = rowC.getChild<UI::LayoutContainer>(rightColHandle);
-		(void)leftColHandle;
-
-		// ---- Field Pack: cargo weight meter + stack rows ----
-		auto packC = UI::LayoutContainer(UI::LayoutContainer::Args{.direction = UI::Direction::Vertical, .gap = UI::space_1, .id = "gear_pack"});
-		packC.widthMode = UI::SizeMode::Fill;
-		const auto packHeaderHandle = packC.addChild(GearTextRow(GearTextRow::Args{.left = "Field Pack", .uppercase = true, .letterSpacing = UI::ls_wide}));
-		const auto packMeterHandle = packC.addChild(GearMeterRow(""));
-		packC.addChild(GearTextRow(GearTextRow::Args{
-			.left = "Weight-based - cargo in hands & pack - tools ride free",
-			.fontPx = UI::fs_2xs,
-			.leftColor = UI::text_faint,
-			.leftFont = theme::fontUi,
-		}));
-
-		auto packListC = UI::LayoutContainer(UI::LayoutContainer::Args{.direction = UI::Direction::Vertical, .gap = UI::space_0_5, .id = "gear_pack_list"});
-		packListC.widthMode = UI::SizeMode::Fill;
-		for (size_t i = 0; i < kPackRowPool; ++i) {
-			const auto rowHandle = packListC.addChild(GearStackRow());
-			packRows[i] = packListC.getChild<GearStackRow>(rowHandle);
-			packRows[i]->visible = false;
-		}
-		const auto moreHandle = packListC.addChild(GearTextRow(GearTextRow::Args{.left = "", .fontPx = UI::fs_2xs, .leftColor = UI::text_faint, .leftFont = theme::fontUi}));
-		packMoreRow = packListC.getChild<GearTextRow>(moreHandle);
-		packMoreRow->visible = false;
-		const auto emptyHandle = packListC.addChild(GearTextRow(GearTextRow::Args{.left = "Nothing carried", .fontPx = UI::fs_xs, .leftColor = UI::text_faint, .leftFont = theme::fontUi}));
-		packEmptyRow = packListC.getChild<GearTextRow>(emptyHandle);
-
-		const auto packListHandle = packC.addChild(std::move(packListC));
-		packList = packC.getChild<UI::LayoutContainer>(packListHandle);
-		packHeader = packC.getChild<GearTextRow>(packHeaderHandle);
-		packMeter = packC.getChild<GearMeterRow>(packMeterHandle);
-
-		// ---- Tool Belt: two quick-draw slots ----
-		auto beltC = UI::LayoutContainer(UI::LayoutContainer::Args{.direction = UI::Direction::Vertical, .gap = UI::space_1, .id = "gear_belt"});
-		beltC.widthMode = UI::SizeMode::Fill;
-		const auto beltHeaderHandle = beltC.addChild(GearTextRow(GearTextRow::Args{.left = "Tool Belt", .uppercase = true, .letterSpacing = UI::ls_wide}));
-		beltHeader = beltC.getChild<GearTextRow>(beltHeaderHandle);
-		beltC.addChild(GearTextRow(GearTextRow::Args{
-			.left = "Quick-draw slots - one-hand tools only",
-			.fontPx = UI::fs_2xs,
-			.leftColor = UI::text_faint,
-			.leftFont = theme::fontUi,
-		}));
-		auto beltRowC = UI::LayoutContainer(UI::LayoutContainer::Args{.direction = UI::Direction::Horizontal, .gap = UI::space_2, .id = "gear_belt_row"});
-		for (size_t i = 0; i < beltCells.size(); ++i) {
-			const auto cellHandle = beltRowC.addChild(GearBeltCell());
-			beltCells[i] = beltRowC.getChild<GearBeltCell>(cellHandle);
-		}
-		beltC.addChild(std::move(beltRowC));
-
-		// ---- Assemble ----
-		const auto rowHandle = rootC.addChild(std::move(rowC));
-		const auto packHandle = rootC.addChild(std::move(packC));
-		rootC.addChild(std::move(beltC));
-		const auto totalHandle = rootC.addChild(GearMeterRow("Carry Load"));
-		const auto rootHandle = addChild(std::move(rootC));
-
-		root = getChild<UI::LayoutContainer>(rootHandle);
-		paperdollRow = root->getChild<UI::LayoutContainer>(rowHandle);
-		packSection = root->getChild<UI::LayoutContainer>(packHandle);
-		totalMeter = root->getChild<GearMeterRow>(totalHandle);
+		totalMeter =
+			addChild<ui::ProgressBar>({.value = 0.0F, .tone = ui::Tone::Info, .label = "Carry Load", .controlSize = ui::ControlSize::Sm});
+		update({});
 	}
 
 	void GearTabView::update(const GearData& gear) {
-		if (root == nullptr) {
+		if (totalMeter.get() == nullptr) {
 			return;
 		}
 
-		// Hands: one spanning box for a two-hand armful, otherwise per-hand boxes.
-		bothHandsBox->visible = gear.bothHands;
-		leftHandBox->visible = !gear.bothHands;
-		rightHandBox->visible = !gear.bothHands;
-		if (gear.bothHands) {
-			const GearItem& item = *gear.leftHand;
-			bothHandsBox->setItem(item.quantity > 1 ? item.name + " x" + std::to_string(item.quantity) : item.name, "2H", true);
+		// One spanning box for a two-hand armful, otherwise a box per hand.
+		bothHandsBox.get()->setVisible(gear.bothHands);
+		leftHandBox.get()->setVisible(!gear.bothHands);
+		rightHandBox.get()->setVisible(!gear.bothHands);
+		if (gear.bothHands && gear.leftHand.has_value()) {
+			bothHandsBox.get()->setItem(itemLabel(*gear.leftHand), "2H");
 		} else {
-			auto applyHand = [](GearSlotBox* box, const std::optional<GearItem>& item) {
+			const auto hand = [](GearSlotBox& box, const std::optional<GearItem>& item) {
 				if (item.has_value()) {
-					box->setItem(item->quantity > 1 ? item->name + " x" + std::to_string(item->quantity) : item->name, "", true);
+					box.setItem(itemLabel(*item), "");
 				} else {
-					box->setEmpty();
+					box.setEmpty();
 				}
 			};
-			applyHand(leftHandBox, gear.leftHand);
-			applyHand(rightHandBox, gear.rightHand);
+			hand(*leftHandBox.get(), gear.leftHand);
+			hand(*rightHandBox.get(), gear.rightHand);
 		}
 
-		// Field Pack header, meter, and stack rows.
-		const float cargo01 = gear.capacityKg > 0.0F ? gear.cargoKg / gear.capacityKg : 0.0F;
-		packHeader->right = fmtKg1(gear.cargoKg) + " / " + fmtKg0(gear.capacityKg) + " kg";
-		packMeter->value01 = cargo01;
-		packMeter->tone = cargo01 > 0.85F ? UI::status_warn : UI::data;
+		const float cargo = gear.capacityKg > 0.0F ? gear.cargoKg / gear.capacityKg : 0.0F;
+		packHeader.get()->setRight(kg1(gear.cargoKg) + " / " + kg0(gear.capacityKg) + " kg");
+		packMeter.get()->setValue(cargo);
+		packMeter.get()->setTone(cargo > kLoadWarn ? ui::Tone::Warning : ui::Tone::Info);
 
-		const size_t shown = gear.items.size() < kPackRowPool ? gear.items.size() : kPackRowPool;
 		for (size_t i = 0; i < kPackRowPool; ++i) {
-			GearStackRow* row = packRows[i];
-			row->visible = i < shown;
-			if (i < shown) {
-				const GearItem& item = gear.items[i];
-				row->name = item.name;
-				row->qtyText = item.quantity > 1 ? "x" + std::to_string(item.quantity) : "";
-				row->kgText = fmtKg1(item.totalKg) + " kg";
+			GearStackRow& row = *packRows[i].get();
+			row.setVisible(i < gear.items.size());
+			if (i < gear.items.size()) {
+				row.setItem(gear.items[i]);
 			}
 		}
-		packMoreRow->visible = gear.items.size() > kPackRowPool;
-		if (packMoreRow->visible) {
-			packMoreRow->left = "+" + std::to_string(gear.items.size() - kPackRowPool) + " more";
+		const bool more = gear.items.size() > kPackRowPool;
+		packMoreRow.get()->setVisible(more);
+		if (more) {
+			packMoreRow.get()->setLeft("+" + std::to_string(gear.items.size() - kPackRowPool) + " more");
 		}
-		packEmptyRow->visible = gear.items.empty();
+		packEmptyRow.get()->setVisible(gear.items.empty());
 
-		// Tool Belt slots.
-		uint32_t beltUsed = 0;
+		size_t beltUsed = 0;
 		for (size_t i = 0; i < beltCells.size(); ++i) {
 			const bool filled = gear.belt[i].has_value();
-			beltCells[i]->setFilled(filled);
-			if (filled) {
-				++beltUsed;
-			}
+			beltCells[i].get()->setFilled(filled);
+			beltUsed += filled ? 1 : 0;
 		}
-		beltHeader->right = std::to_string(beltUsed) + " / " + std::to_string(beltCells.size()) + " slots - " + fmtKg1(gear.beltKg) + " kg";
+		beltHeader.get()->setRight(
+			std::to_string(beltUsed) + " / " + std::to_string(beltCells.size()) + " slots - " + kg1(gear.beltKg) + " kg"
+		);
 
-		// Total carry load (tools included).
-		const float total01 = gear.capacityKg > 0.0F ? gear.totalKg / gear.capacityKg : 0.0F;
-		totalMeter->value01 = total01;
-		totalMeter->valueText = fmtKg1(gear.totalKg) + " / " + fmtKg0(gear.capacityKg) + " kg";
-		totalMeter->tone = total01 > 0.85F ? UI::status_warn : UI::data;
-
-		// Visibility flips change measured heights; re-run layout on the chain.
-		packList->invalidateLayout();
-		packSection->invalidateLayout();
-		rightCol->invalidateLayout();
-		paperdollRow->invalidateLayout();
-		root->invalidateLayout();
+		const float total = gear.capacityKg > 0.0F ? gear.totalKg / gear.capacityKg : 0.0F;
+		totalMeter.get()->setValue(total);
+		totalMeter.get()->setValueText(kg1(gear.totalKg) + " / " + kg0(gear.capacityKg) + " kg");
+		totalMeter.get()->setTone(total > kLoadWarn ? ui::Tone::Warning : ui::Tone::Info);
 	}
 
 } // namespace world_sim

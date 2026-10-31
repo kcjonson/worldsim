@@ -133,19 +133,32 @@ namespace theme {
 		addChild<ui::Rectangle>({.position = {side - kTickInset - thin, kTickInset}, .size = {thin, kTickLeg}, .style = faint});
 
 		// Selected: an accent outline a pixel outside the frame.
-		if (selected) {
-			addChild<ui::Rectangle>(
-				{.position = {-2.0F * thin, -2.0F * thin},
-				 .size = {side + (4.0F * thin), side + (4.0F * thin)},
-				 .style = {
-					 .backgroundColor = Foundation::Color(0.0F, 0.0F, 0.0F, 0.0F),
-					 .borderColor = theme.get(t::color::accent),
-					 .borderWidth = thin,
-					 .borderRadius = theme.get(t::radius::rSm)
-				 }}
-			);
-		}
+		outline = addChild<ui::Rectangle>(
+			{.visible = selected,
+			 .position = {-2.0F * thin, -2.0F * thin},
+			 .size = {side + (4.0F * thin), side + (4.0F * thin)},
+			 .style = {
+				 .backgroundColor = Foundation::Color(0.0F, 0.0F, 0.0F, 0.0F),
+				 .borderColor = theme.get(t::color::accent),
+				 .borderWidth = thin,
+				 .borderRadius = theme.get(t::radius::rSm)
+			 }}
+		);
 		tint();
+	}
+
+	void Avatar::setMood(std::optional<float> value) {
+		if (mood != value) {
+			mood = value;
+			tint();
+		}
+	}
+
+	void Avatar::setSelected(bool value) {
+		selected = value;
+		if (ui::Rectangle* shown = outline.get()) {
+			shown->setVisible(value);
+		}
 	}
 
 	void Avatar::setStyle(const ui::Style& value) {

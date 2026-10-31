@@ -13,7 +13,6 @@
 #include <offset/WallOffset.h>
 #include <predicates/Predicates.h>
 #include <primitives/Primitives.h>
-#include <theme/CssTokens.h>
 #include <utils/Log.h>
 #include <vector/Tessellator.h>
 
@@ -107,8 +106,9 @@ namespace world_sim {
 			if (material == nullptr) {
 				return sizing;
 			}
-			sizing.requiredQty =
-				static_cast<uint32_t>(std::ceil(static_cast<double>(areaSquareMeters) * static_cast<double>(material->costRatePerSquareMeter)));
+			sizing.requiredQty = static_cast<uint32_t>(
+				std::ceil(static_cast<double>(areaSquareMeters) * static_cast<double>(material->costRatePerSquareMeter))
+			);
 			sizing.workTotal = areaSquareMeters * material->workRatePerSquareMeter;
 			sizing.maxHp = areaSquareMeters * material->hp;
 			return sizing;
@@ -121,7 +121,7 @@ namespace world_sim {
 			// Scratch mesh reused across calls (several per visible ring per frame);
 			// drawTriangles copies before returning.
 			static thread_local renderer::TessellatedMesh mesh;
-			renderer::Tessellator						   tessellator;
+			renderer::Tessellator						  tessellator;
 			if (!tessellator.Tessellate(renderer::VectorPath{std::vector<Foundation::Vec2>(screen.begin(), screen.end()), true}, mesh) ||
 				mesh.indices.size() < 3) {
 				return;
@@ -153,6 +153,8 @@ namespace world_sim {
 
 	DrawingSystem::DrawingSystem(const Args& args)
 		: ecsWorld_(args.world),
+		  validColor_(args.validColor),
+		  invalidColor_(args.invalidColor),
 		  camera_(args.camera),
 		  navigation_(args.navigation),
 		  callbacks_(args.callbacks) {}
@@ -194,7 +196,8 @@ namespace world_sim {
 		if (navigation_ == nullptr) {
 			return true;
 		}
-		const bool ok = (activeTool_ == ToolKind::Wall) ? navigation_->isPolylineWalkable(Foundation::toGlmVec2(pts)) : footprintBuildable(pts);
+		const bool ok =
+			(activeTool_ == ToolKind::Wall) ? navigation_->isPolylineWalkable(Foundation::toGlmVec2(pts)) : footprintBuildable(pts);
 		if (ok) {
 			return true;
 		}
@@ -323,8 +326,9 @@ namespace world_sim {
 
 		auto&		   registry = ConstructionRegistry::Get();
 		ec::SnapEngine snap(registry.snapping(), constructionWorld_);
-		lastSnap_ = snap.snap(points_, {world.x, world.y}, freeform, effectiveOriginCloseRadiusMeters(),
-							  UserSettings::Get().alignSnapToExistingFoundations);
+		lastSnap_ = snap.snap(
+			points_, {world.x, world.y}, freeform, effectiveOriginCloseRadiusMeters(), UserSettings::Get().alignSnapToExistingFoundations
+		);
 		cursor_ = lastSnap_.point;
 
 		ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
@@ -471,7 +475,7 @@ namespace world_sim {
 		}
 		points_.pop_back();
 		lastValidation_ = {};
-		willClose_ = false;	   // recomputed on the next move; don't leave a stale closing halo
+		willClose_ = false;		// recomputed on the next move; don't leave a stale closing halo
 		cursorOffMesh_ = false; // recomputed on the next move
 		editPreviewActive_ = false;
 		if (points_.empty()) {
@@ -646,8 +650,8 @@ namespace world_sim {
 		FoundationEditOutcome outcome;
 		outcome.target = target;
 
-		auto&					  registry = ConstructionRegistry::Get();
-		ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
+		auto&						   registry = ConstructionRegistry::Get();
+		ec::ConstructionValidator	   validator(registry.constraints(), constructionWorld_);
 		const ec::FoundationEditResult result = validator.validateFoundationEdit(target, drawn, mode, foundationBlueprint(target));
 		if (!result.ok()) {
 			outcome.reason = ec::validationReason(result.validation.code);
@@ -670,7 +674,7 @@ namespace world_sim {
 			geometry::Ring cutter = toRingMm(drawn);
 			geometry::ensureCounterClockwise(cutter);
 			const ec::CommitStatus status = mode == ec::FoundationEditMode::Add ? constructionWorld_.addToFoundation(target, cutter)
-																				 : constructionWorld_.subtractFromFoundation(target, cutter);
+																				: constructionWorld_.subtractFromFoundation(target, cutter);
 			if (status != ec::CommitStatus::Ok) {
 				outcome.reason = "edit rejected";
 				return outcome;
@@ -1663,10 +1667,10 @@ namespace world_sim {
 		// rubber-band + fill turn red before the player commits. The closing case keeps its
 		// own (willClose_) green halo treatment below. An edit also reads red while the
 		// outline it would produce is invalid.
-		const bool editRejected = activeTool_ == ToolKind::FoundationEdit && editPreviewActive_ && !editPreview_.ok();
-		const bool valid = lastValidation_.ok() && !cursorOffMesh_ && !editRejected;
-		const Foundation::Color okColor = UI::status_ok;	 // green
-		const Foundation::Color badColor = UI::status_crit; // red
+		const bool				editRejected = activeTool_ == ToolKind::FoundationEdit && editPreviewActive_ && !editPreview_.ok();
+		const bool				valid = lastValidation_.ok() && !cursorOffMesh_ && !editRejected;
+		const Foundation::Color okColor = validColor_;	  // green
+		const Foundation::Color badColor = invalidColor_; // red
 		const Foundation::Color lineColor = valid ? okColor : badColor;
 
 		std::vector<Foundation::Vec2> screen;
@@ -1708,8 +1712,7 @@ namespace world_sim {
 		// through the reference node(s). An AxisGuide can show two lines at once (an X
 		// lock and a Y lock to two different nodes); the alt pair is zero when only one
 		// axis aligned.
-		if (lastSnap_.kind == engine::construction::SnapKind::Angle ||
-			lastSnap_.kind == engine::construction::SnapKind::AxisGuide) {
+		if (lastSnap_.kind == engine::construction::SnapKind::Angle || lastSnap_.kind == engine::construction::SnapKind::AxisGuide) {
 			// Each pair is skipped when degenerate (from == to): an AxisGuide whose
 			// cursor sits exactly on a node collapses the primary line to zero length.
 			if (lastSnap_.guideFrom.x != lastSnap_.guideTo.x || lastSnap_.guideFrom.y != lastSnap_.guideTo.y) {
@@ -1722,8 +1725,7 @@ namespace world_sim {
 				});
 			}
 			if (lastSnap_.kind == engine::construction::SnapKind::AxisGuide &&
-				(lastSnap_.guideFromAlt.x != lastSnap_.guideToAlt.x ||
-				 lastSnap_.guideFromAlt.y != lastSnap_.guideToAlt.y)) {
+				(lastSnap_.guideFromAlt.x != lastSnap_.guideToAlt.x || lastSnap_.guideFromAlt.y != lastSnap_.guideToAlt.y)) {
 				Renderer::Primitives::drawLine({
 					.start = toScreen(lastSnap_.guideFromAlt),
 					.end = toScreen(lastSnap_.guideToAlt),
@@ -1750,7 +1752,7 @@ namespace world_sim {
 			const float originRadius = ConstructionRegistry::Get().snapping().originCloseRadiusMeters * scale;
 			// Closing reflects whatever the next click will do: the explicit origin snap
 			// or the near-start "snap not block" rescue.
-			const bool	closing = willClose_;
+			const bool closing = willClose_;
 			Renderer::Primitives::drawCircle({
 				.center = screen.front(),
 				.radius = std::max(ps.originHaloMinRadiusPx, originRadius),
@@ -2063,9 +2065,7 @@ namespace world_sim {
 			for (const auto& v : g.footprint) {
 				screen.push_back(toScreen(v));
 			}
-			drawOpeningFill(
-				screen, g.matColor, g.window, g.widthMeters, alpha, g.built ? os.outlineWidthBuilt : os.outlineWidthBlueprint
-			);
+			drawOpeningFill(screen, g.matColor, g.window, g.widthMeters, alpha, g.built ? os.outlineWidthBuilt : os.outlineWidthBlueprint);
 		}
 	}
 
@@ -2093,8 +2093,8 @@ namespace world_sim {
 		}
 
 		const bool				valid = openingValidation_.ok();
-		const Foundation::Color okColor = UI::status_ok;	 // green
-		const Foundation::Color badColor = UI::status_crit; // red
+		const Foundation::Color okColor = validColor_;	  // green
+		const Foundation::Color badColor = invalidColor_; // red
 		const Foundation::Color tint = valid ? okColor : badColor;
 
 		std::vector<Foundation::Vec2> screen;
@@ -2129,7 +2129,7 @@ namespace world_sim {
 				Renderer::Primitives::drawLine({
 					.start = toScreen(geometry::dequantize(outline[i])),
 					.end = toScreen(geometry::dequantize(outline[(i + 1) % outline.size()])),
-					.style = {.color = UI::status_ok, .width = ps.lineWidth * 1.5F},
+					.style = {.color = validColor_, .width = ps.lineWidth * 1.5F},
 					.id = "drawing_edit_outline",
 					.key = 898,
 				});
@@ -2141,7 +2141,7 @@ namespace world_sim {
 			.text = ec::validationReason(editPreview_.validation.code),
 			.position = toScreen(cursor_) + Foundation::Vec2{14.0F, -22.0F},
 			.scale = 0.8F,
-			.color = UI::status_crit,
+			.color = invalidColor_,
 			.shadowColor = {0.0F, 0.0F, 0.0F, 0.8F},
 			.shadowOffset = {1.0F, 1.0F},
 			.id = "drawing_edit_reason",
@@ -2161,8 +2161,8 @@ namespace world_sim {
 		// Off-mesh cursor (on water) reads as invalid like a geometry violation: the
 		// rubber-band band + centerline turn red before the player commits.
 		const bool				valid = lastValidation_.ok() && !cursorOffMesh_;
-		const Foundation::Color okColor = UI::status_ok;	 // green
-		const Foundation::Color badColor = UI::status_crit; // red
+		const Foundation::Color okColor = validColor_;	  // green
+		const Foundation::Color badColor = invalidColor_; // red
 
 		std::vector<Foundation::Vec2> screen;
 		screen.reserve(points_.size());
@@ -2226,8 +2226,7 @@ namespace world_sim {
 		// through the reference node(s). An AxisGuide can show two lines at once (an X
 		// lock and a Y lock to two different nodes); the alt pair is zero when only one
 		// axis aligned.
-		if (lastSnap_.kind == engine::construction::SnapKind::Angle ||
-			lastSnap_.kind == engine::construction::SnapKind::AxisGuide) {
+		if (lastSnap_.kind == engine::construction::SnapKind::Angle || lastSnap_.kind == engine::construction::SnapKind::AxisGuide) {
 			// Skip a degenerate pair (from == to): an AxisGuide whose cursor sits exactly
 			// on a node collapses the primary line to zero length.
 			if (lastSnap_.guideFrom.x != lastSnap_.guideTo.x || lastSnap_.guideFrom.y != lastSnap_.guideTo.y) {
@@ -2240,8 +2239,7 @@ namespace world_sim {
 				});
 			}
 			if (lastSnap_.kind == engine::construction::SnapKind::AxisGuide &&
-				(lastSnap_.guideFromAlt.x != lastSnap_.guideToAlt.x ||
-				 lastSnap_.guideFromAlt.y != lastSnap_.guideToAlt.y)) {
+				(lastSnap_.guideFromAlt.x != lastSnap_.guideToAlt.x || lastSnap_.guideFromAlt.y != lastSnap_.guideToAlt.y)) {
 				Renderer::Primitives::drawLine({
 					.start = toScreen(lastSnap_.guideFromAlt),
 					.end = toScreen(lastSnap_.guideToAlt),

@@ -11,6 +11,7 @@
 #include "scenes/scenario-select/Scenarios.h"
 #include "scenes/shared/SalalUi.h"
 #include "scenes/shared/Starfield.h"
+#include <theme/Theme.h>
 
 #include <app/Keys.h>
 #include <application/App.h>
@@ -198,7 +199,7 @@ namespace {
 		void onEnter(app::App& app) override {
 			owner = &app;
 			LOG_INFO(Game, "PartySelectScene - Entering");
-			world_sim::enterSalalUi(app, ui());
+			theme::apply(ui());
 
 			const auto& setup = world_sim::NewGameSetup::Get();
 			partySize = partySizeForScenario(setup.scenarioId);

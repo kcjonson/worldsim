@@ -1,49 +1,23 @@
 #include "SocialTabView.h"
 #include "TabStyles.h"
 
-#include <layout/LayoutContainer.h>
-#include <shapes/Shapes.h>
+#include <ui/Context.h>
+#include <ui/shapes/Text.h>
 
 namespace world_sim {
 
-void SocialTabView::create(const Foundation::Rect& contentBounds) {
-	using namespace tabs;
+	void SocialTabView::onMount() {
+		const ui::Theme& theme = getContext()->getTheme();
+		ui::Layout		 column = getLayout();
+		column.display = ui::Display::Flex;
+		column.flexDirection = ui::FlexDirection::Column;
+		column.gap = theme.get(tokens::spacing::space2);
+		setLayout(column);
+		addChild<ui::Text>({.style = tabs::labelText(theme), .text = "Relationships"});
+		addChild<ui::Text>({.style = tabs::mutedText(theme), .text = "Not yet tracked"});
+		addChild<ui::Text>({.style = tabs::smallText(theme), .text = "Future: Opinion modifiers, social interactions"});
+	}
 
-	size = {contentBounds.width, contentBounds.height};
-
-	auto layout = UI::LayoutContainer(UI::LayoutContainer::Args{
-		.position = {contentBounds.x, contentBounds.y},
-		.size = {contentBounds.width, contentBounds.height},
-		.direction = UI::Direction::Vertical,
-		.id = "social_content"
-	});
-
-	layout.addChild(UI::Text(UI::Text::Args{
-		.height = kLabelSize,
-		.text = "Relationships",
-		.style = {.color = labelColor(), .fontSize = kLabelSize},
-		.margin = 4.0F
-	}));
-
-	layout.addChild(UI::Text(UI::Text::Args{
-		.height = kBodySize,
-		.text = "Not yet tracked",
-		.style = {.color = mutedColor(), .fontSize = kBodySize},
-		.margin = 8.0F
-	}));
-
-	layout.addChild(UI::Text(UI::Text::Args{
-		.height = kSmallSize,
-		.text = "Future: Opinion modifiers, social interactions",
-		.style = {.color = mutedColor(), .fontSize = kSmallSize},
-		.margin = 2.0F
-	}));
-
-	layoutHandle = addChild(std::move(layout));
-}
-
-void SocialTabView::update(const SocialData& /*data*/) {
-	// Placeholder - no dynamic content yet
-}
+	void SocialTabView::update(const SocialData& /*data*/) {}
 
 } // namespace world_sim
