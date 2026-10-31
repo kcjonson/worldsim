@@ -36,9 +36,9 @@ namespace {
 	namespace tokens = world_sim::tokens;
 	namespace family = ui::tokens::font::family;
 
-	// The title screen's row: the display face, a disabled row at 40%, the primary row's label in
-	// the bright accent. Under the pointer or a player's visible focus it lights: the accent bar,
-	// the chevron, the icon in the accent and the label stepped right.
+	// The title screen's row: the display face, the primary row's label in the bright accent, and a
+	// disabled row faded whole by salal's disabled state. Under the pointer or a player's visible
+	// focus it lights: the accent bar, the chevron, the icon in the accent and the label stepped right.
 	class MenuRow : public ui::Control {
 	  public:
 		struct Args {
@@ -96,11 +96,6 @@ namespace {
 		void refresh() {
 			const ui::Theme& theme = getContext()->getTheme();
 			const bool		 lit = isEnabled() && (pointerInside || isFocusVisible());
-			const float		 alpha = isEnabled() ? 1.0F : 0.4F;
-			const auto		 dim = [alpha](Foundation::Color color) {
-				  color.a *= alpha;
-				  return color;
-			};
 
 			ui::Layout row = getLayout();
 			row.display = ui::Display::Flex;
@@ -113,7 +108,7 @@ namespace {
 			Foundation::Color chevron = theme.get(tokens::color::accent);
 			chevron.a = lit ? chevron.a : 0.0F;
 			bracket.get()->setStyle({.color = chevron});
-			icon.get()->setStyle({.color = dim(theme.get(lit ? tokens::color::accent : tokens::color::textFaint))});
+			icon.get()->setStyle({.color = theme.get(lit ? tokens::color::accent : tokens::color::textFaint)});
 
 			ui::ColorToken labelColor = tokens::color::textDim;
 			if (isEnabled() && primary) {
@@ -121,12 +116,10 @@ namespace {
 			} else if (lit) {
 				labelColor = tokens::color::textBright;
 			}
-			ui::Style labelStyle = world_sim::text(
+			text.get()->setStyle(world_sim::text(
 				theme,
 				{.family = family::display, .size = tokens::fontSize::fsXl, .color = labelColor, .tracking = tokens::letterSpacing::lsWide}
-			);
-			labelStyle.color = dim(*labelStyle.color);
-			text.get()->setStyle(labelStyle);
+			));
 		}
 
 		std::string			   label;
