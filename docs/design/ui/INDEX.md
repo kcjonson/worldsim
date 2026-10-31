@@ -38,4 +38,4 @@ Run from `docs/ui-prototype/`.
 
 - [docs/design/INDEX.md](../INDEX.md) — game design index
 - [docs/design/game-systems/colonists/equipment.md](../game-systems/colonists/equipment.md) — the inventory model the gear UI shows
-- [docs/technical/ui-framework/INDEX.md](../../technical/ui-framework/INDEX.md) — the C++ UI framework (implementation side)
+- The implementation side: salal's [ui-design.md](https://github.com/kcjonson/salal/blob/main/docs/ui-design.md) and [ui-plan.md](https://github.com/kcjonson/salal/blob/main/docs/ui-plan.md), the record of the ui every app is built on

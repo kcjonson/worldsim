@@ -84,5 +84,5 @@ After any coordinate or UI change: pull `/api/ui/tree`, run the layout linter, t
 ## References
 
 - UI Inspection (designed, never built) — `/docs/technical/observability/ui-inspection.md`
-- Layout System (current `LayoutContainer`) — `/docs/technical/ui-framework/layout-system.md`; `libs/ui/layout/LayoutContainer.h`
+- Layout: salal's flex layout, in salal's [ui-design.md](https://github.com/kcjonson/salal/blob/main/docs/ui-design.md) and [ui-plan.md](https://github.com/kcjonson/salal/blob/main/docs/ui-plan.md), the record of the ui every app is built on
 - Salvage UI Cutover (predecessor) — `/docs/design/ui/`

@@ -31,9 +31,7 @@ libs/engine/assets            (shared core, extended)
   - AssetRenderer                new: defName(+seed) -> RGBA pixels via offscreen FBO
 libs/renderer                 (extended)
   - mesh bounds + fit-to-rect    new: geometry math on TessellatedMesh
-libs/ui                       (extended)
-  - GridContainer                new: wrapping, virtualized grid
-apps/asset-manager            (new, GUI)   links: engine ui renderer foundation assets planet-view world
+apps/asset-manager            (new, GUI)   links: engine theme renderer foundation assets
 apps/asset-cli                (new, CLI)   links: assets renderer foundation glfw glew opengl nlohmann_json
 apps/*/Main.cpp              (refactor; was libs/engine/application, now on salal's app)
   - async asset load + splash progress + load report
@@ -270,7 +268,7 @@ Phased so each piece lands behind its own tests. The first three phases are inde
 2. **Validation in the loader.** `AssetValidator` and `ValidationReport`; harden the loader to record coercions, ignored fields, duplicate defNames, name/folder mismatches, unresolved references, and orphans during the load; the render smoke test as a separate pass.
 3. **CLI.** `apps/asset-cli` with list, search, inspect, validate, render; JSON output; exit codes; build integration.
 4. **Async loading and splash.** The startup refactor: async load on a worker thread, `LoadProgress`, splash progress UI, load-complete and error-gate transitions, and the load-report scene.
-5. **GUI.** `GridContainer` (wrapping and virtualized) in `libs/ui`; `apps/asset-manager` with the browser scene, faithful preview with procedural sampling and refresh, inspector, validation view, and reload; build integration.
+5. **GUI.** `apps/asset-manager` on salal's ui, with the browser scene, faithful preview with procedural sampling and refresh, inspector, validation view, and reload; build integration.
 
 ## Related documentation
 
