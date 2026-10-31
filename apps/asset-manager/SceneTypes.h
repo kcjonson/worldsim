@@ -3,17 +3,13 @@
 // Scene registry for the Asset Manager app. The X-macro is the single source of
 // truth for the scene list (mirrors the ui-sandbox pattern).
 
-#include <app/UiScene.h>
-
-namespace app {
-	class SceneStack;
-} // namespace app
+#include <scene/SceneStack.h>
 
 namespace asset_manager {
 
 	struct SceneInfo {
-		const char*			   name;
-		engine::UiSceneFactory factory;
+		const char*				 name;
+		app::SceneStack::Factory factory;
 	};
 
 #define ASSET_MANAGER_SCENES(X) X(Browser)

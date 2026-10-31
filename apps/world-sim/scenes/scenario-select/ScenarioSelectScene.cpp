@@ -291,7 +291,6 @@ namespace {
 			ui::Ref<ui::Component> row = page.addChild<ui::Component>({
 				.id = "scenario_cards",
 				.layout = {.display = ui::Display::Flex, .gap = theme.get(tokens::spacing::space4), .flexGrow = 1.0F},
-				.focusGroup = ui::FocusGroup{.orientation = ui::FocusGroup::Orientation::Horizontal},
 			});
 			cards.clear();
 			for (size_t i = 0; i < world_sim::kScenarios.size(); ++i) {
@@ -337,9 +336,6 @@ namespace {
 			});
 
 			select(selectedIndex);
-			if (ScenarioCard* chosen = cards[static_cast<size_t>(selectedIndex)].get()) {
-				chosen->focus();
-			}
 		}
 
 		void select(int idx) {

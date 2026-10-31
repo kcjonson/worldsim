@@ -19,12 +19,13 @@ namespace engine {
 
 	class UiScene : public app::Scene {
 	  public:
-		// True when the scene consumed the event. The overlays have had it first.
+		// True when the scene consumed the event.
 		virtual bool							   handleInput(UI::InputEvent& /*event*/) { return false; }
 		virtual std::vector<const UI::IComponent*> getUiRoots() const { return {}; }
 	};
 
-	// What a scene list registers by name, for apps whose every scene is a UiScene.
+	// What a scene list registers by name. Every scene a worldsim app adds is a UiScene, which the
+	// bridge relies on when it hands the top scene its input.
 	using UiSceneFactory = std::function<std::unique_ptr<UiScene>()>;
 
 } // namespace engine

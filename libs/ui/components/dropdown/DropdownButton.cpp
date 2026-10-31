@@ -332,7 +332,7 @@ namespace UI {
 			.position = {bounds.x, bounds.y},
 			.scale = textScale(fs_sm),
 			.color = textColor,
-			.font = fontDisplay,
+			.font = theme::fontDisplay,
 			.hAlign = Foundation::HorizontalAlign::Center,
 			.vAlign = Foundation::VerticalAlign::Middle,
 			.boxWidth = bounds.width - chevronGutter,

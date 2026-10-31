@@ -307,7 +307,6 @@ namespace {
 				.id = "roster_list",
 				.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = space2, .flexGrow = 1.0F},
 				.overflow = ui::Overflow::Scroll,
-				.focusGroup = ui::FocusGroup{.orientation = ui::FocusGroup::Orientation::Vertical},
 			});
 			cards.clear();
 			for (size_t i = 0; i < roster.size(); ++i) {
@@ -386,9 +385,6 @@ namespace {
 			});
 
 			select(selectedIndex);
-			if (RosterCard* first = cards.empty() ? nullptr : cards.front().get()) {
-				first->focus();
-			}
 		}
 
 		// The dossier for `slot`: the hero line, the stats, the backstory, the skills and the traits.

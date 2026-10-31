@@ -1,160 +1,134 @@
 #include "NavigationMenu.h"
-#include "graphics/Color.h"
-#include "primitives/Primitives.h"
-#include "utils/Log.h"
 
-namespace UI {
+#include <theme/Theme.h>
+#include <ui/shapes/Text.h>
+#include <ui/theme/Tokens.h>
 
-	NavigationMenu::NavigationMenu(const Args& args)
-		: sceneNames(args.sceneNames),
-		  onSceneSelected(args.onSceneSelected),
-		  coordinateSystem(args.coordinateSystem) {
-		initializeComponents();
-	}
+#include <string_view>
+#include <utility>
 
-	NavigationMenu::~NavigationMenu() = default;
+namespace ui_sandbox {
 
-	void NavigationMenu::initializeComponents() {
-		using namespace Foundation;
+	namespace {
+		constexpr float kMargin = 10.0F; // from the window's edges
+		constexpr float kTabWidth = 116.0F;
+		constexpr float kGap = 6.0F; // between the list and the tab
+		constexpr float kPanelWidth = 200.0F;
+		constexpr float kInset = 4.0F;
 
-		if (coordinateSystem == nullptr) {
-			LOG_ERROR(UI, "NavigationMenu: coordinateSystem is null");
-			return;
+		Foundation::Vec2 logicalSize(const Renderer::Viewport& viewport) {
+			return {static_cast<float>(viewport.logicalWidth), static_cast<float>(viewport.logicalHeight)};
 		}
+	} // namespace
 
-		// Get window size for bottom-right positioning
-		glm::vec2 windowSize = coordinateSystem->getWindowSize();
-
-		// Toggle button position (bottom-right corner)
-		float toggleX = windowSize.x - kToggleSize - kMargin;
-		float toggleY = windowSize.y - kToggleSize - kMargin;
-
-		// Create toggle button with simple icon
-		toggleButton.emplace(
-			Button::Args{
-				.label = "...",
-				.position = {toggleX, toggleY},
-				.size = {kToggleSize, kToggleSize},
-				.type = Button::Type::Primary,
-				.onClick = [this]() { expanded = !expanded; },
-				.id = "menu_toggle_button"
-			}
-		);
-
-		// Calculate menu position (above the toggle button)
-		menuHeight = kHeaderHeight + (static_cast<float>(sceneNames.size()) * kLineHeight);
-		menuX = windowSize.x - kMenuWidth - kMargin;
-		menuY = toggleY - menuHeight - kMenuToggleGap;
-
-		// Create header text
-		headerText = Text(
-			Text::Args{
-				.position = {menuX + 10, menuY + 8},
-				.text = "Scenes",
-				.style = {.color = Color(0.9F, 0.9F, 0.9F, 1.0F), .fontSize = 16.0F},
-				.id = "menu_header_text"
-			}
-		);
-
-		// Create button for each scene
-		menuButtons.clear();
-		buttonIds.clear();
-		buttonIds.reserve(sceneNames.size());
-		for (size_t i = 0; i < sceneNames.size(); i++) {
-			float itemY = menuY + kHeaderHeight + (static_cast<float>(i) * kLineHeight);
-
-			// Capture scene name by value for onClick callback
-			std::string sceneName = sceneNames[i];
-
-			// Store button ID to avoid dangling pointer from temporary string
-			buttonIds.push_back("menu_button_" + std::to_string(i));
-
-			menuButtons.push_back(
-				Button{Button::Args{
-					.label = sceneName,
-					.position = {menuX + 2, itemY + 2},
-					.size = {kMenuWidth - 4, kLineHeight - 4},
-					.type = Button::Type::Secondary,
-					.onClick =
-						[this, sceneName]() {
-							if (onSceneSelected) {
-								onSceneSelected(sceneName);
-							}
-							expanded = false; // Close menu after selection
-						},
-					.id = buttonIds.back().c_str()
-				}}
-			);
+	NavigationMenu::NavigationMenu(app::App& owningApp, Args args)
+		: owner(owningApp),
+		  scenes(std::move(args.scenes)),
+		  context(logicalSize(owningApp.viewport())) {
+		context.setScale(owningApp.uiScale());
+		theme::apply(context);
+		ui::Ref<ui::Component> root = context.root();
+		root.get()->setLayout({
+			.display = ui::Display::Flex,
+			.flexDirection = ui::FlexDirection::Column,
+			.gap = kGap,
+			.padding = kMargin,
+			.alignItems = ui::AlignItems::End,
+			.justifyContent = ui::JustifyContent::End,
+		});
+		panel = root.addChild<ui::Rectangle>({
+			.id = "menu_panel",
+			.visible = false,
+			.size = {kPanelWidth, ui::kAuto},
+			.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .padding = kInset},
+			.style = ui::styles::overlay,
+			.focusGroup = ui::FocusGroup{.orientation = ui::FocusGroup::Orientation::Vertical, .wrap = true},
+		});
+		panel.addChild<ui::Text>({.margin = {6.0F, 8.0F}, .style = ui::styles::label, .text = "SCENES"});
+		for (std::size_t i = 0; i < scenes.size(); ++i) {
+			rows.push_back(panel.addChild<ui::ListRow>({
+				.id = "menu_" + scenes[i],
+				.label = scenes[i],
+				.onPress = [this, i] { choose(i); },
+			}));
 		}
+		tab = root.addChild<ui::Button>({
+			.id = "menu_tab",
+			.size = {kTabWidth, ui::kAuto},
+			.label = "F1 scenes",
+			.controlSize = ui::ControlSize::Sm,
+			.onPress = [this] { setOpen(!open); },
+		});
+		setOpen(args.open);
 	}
 
-	void NavigationMenu::onResize(const Renderer::Viewport& /*viewport*/) {
-		initializeComponents();
-	}
-
-	bool NavigationMenu::handleInput(InputEvent& event) {
-		if (toggleButton && toggleButton->handleEvent(event)) {
+	bool NavigationMenu::handleEvent(const foundation::InputEvent& event) {
+		using Type = foundation::InputEvent::Type;
+		const bool keyboard = event.type == Type::KeyDown || event.type == Type::KeyUp || event.type == Type::Char;
+		if (keyboard && event.key == foundation::Key::F1) {
+			if (event.type == Type::KeyDown && !event.repeat) {
+				setOpen(!open);
+			}
 			return true;
 		}
-		if (expanded) {
-			for (auto& button : menuButtons) {
-				if (button.handleEvent(event)) {
-					return true;
-				}
+		if (keyboard) {
+			if (!open) {
+				return false;
 			}
+			if (event.type == Type::KeyDown && event.key == foundation::Key::Escape) {
+				setOpen(false);
+			} else {
+				context.dispatch(event);
+			}
+			return true;
 		}
-		return false;
+		const bool took = context.dispatch(event);
+		return took && event.type != Type::FocusLost;
 	}
 
 	void NavigationMenu::update(const app::FrameContext& frame) {
-		const auto dt = static_cast<float>(frame.dt);
-
-		// Update toggle button
-		if (toggleButton) {
-			toggleButton->update(dt);
+		const std::size_t running = current();
+		for (std::size_t i = 0; i < rows.size(); ++i) {
+			if (ui::ListRow* row = rows[i].get()) {
+				row->setSelected(i == running);
+			}
 		}
+		context.update(frame.dt);
+	}
 
-		// Update menu buttons if expanded
-		if (expanded) {
-			for (auto& button : menuButtons) {
-				button.update(dt);
+	void NavigationMenu::render() {
+		context.layout();
+		context.render();
+	}
+
+	void NavigationMenu::onResize(const Renderer::Viewport& viewport) {
+		context.setViewport(logicalSize(viewport));
+	}
+
+	void NavigationMenu::setOpen(bool value) {
+		open = value;
+		panel.get()->setVisible(open);
+		if (open) {
+			const std::size_t running = current();
+			if (running < rows.size()) {
+				rows[running].get()->focus();
 			}
 		}
 	}
 
-	void NavigationMenu::render() {
-		using namespace Foundation;
-
-		// Always render the toggle button
-		if (toggleButton) {
-			toggleButton->render();
-		}
-
-		// Only render menu when expanded
-		if (!expanded) {
-			return;
-		}
-
-		// Draw menu background
-		Renderer::Primitives::drawRect(
-			{.bounds = {menuX, menuY, kMenuWidth, menuHeight},
-			 .style =
-				 {.fill = Color(0.15F, 0.15F, 0.2F, 0.95F), .border = BorderStyle{.color = Color(0.4F, 0.4F, 0.5F, 1.0F), .width = 1.0F}},
-			 .id = "menu_background"}
-		);
-
-		// Draw header background
-		Renderer::Primitives::drawRect(
-			{.bounds = {menuX, menuY, kMenuWidth, kHeaderHeight}, .style = {.fill = Color(0.2F, 0.2F, 0.3F, 1.0F)}, .id = "menu_header"}
-		);
-
-		// Render header text
-		headerText.render();
-
-		// Render all menu buttons
-		for (auto& button : menuButtons) {
-			button.render();
-		}
+	void NavigationMenu::choose(std::size_t index) {
+		owner.scenes().switchTo(scenes[index]);
+		setOpen(false);
 	}
 
-} // namespace UI
+	std::size_t NavigationMenu::current() const {
+		const std::string_view top = owner.scenes().topName();
+		for (std::size_t i = 0; i < scenes.size(); ++i) {
+			if (scenes[i] == top) {
+				return i;
+			}
+		}
+		return scenes.size();
+	}
+
+} // namespace ui_sandbox

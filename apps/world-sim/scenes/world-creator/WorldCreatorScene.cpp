@@ -481,9 +481,6 @@ class WorldCreatorScene : public app::Scene {
 		});
 
 		surveyPanel.setWorld(nullptr);
-		if (ui::Button* generate = generateButton.get()) {
-			generate->focus();
-		}
 	}
 
 	// What sits over the globe: the crosshair hint at the top, the viz dock, the pick hint and the
@@ -697,9 +694,6 @@ class WorldCreatorScene : public app::Scene {
 		panel.setGenerating(true);
 		surveyPanel.setWorld(nullptr);
 		refreshFooter();
-		if (ui::Button* cancel = cancelButton.get()) {
-			cancel->focus();
-		}
 	}
 
 	void onStateChanged(world_sim::WorldCreatorState newState) {
@@ -719,9 +713,6 @@ class WorldCreatorScene : public app::Scene {
 				refreshDetails();
 			}
 			refreshFooter();
-			if (ui::Button* accept = acceptButton.get()) {
-				accept->focus();
-			}
 			return;
 		}
 		if (newState == world_sim::WorldCreatorState::Configuring) {
@@ -729,9 +720,6 @@ class WorldCreatorScene : public app::Scene {
 			siteValid = false;
 		}
 		refreshFooter();
-		if (ui::Button* generate = generateButton.get()) {
-			generate->focus();
-		}
 	}
 
 	void openConfirmDialog() {
@@ -768,7 +756,7 @@ class WorldCreatorScene : public app::Scene {
 					shown->close();
 			},
 		});
-		const ui::Ref<ui::Button> descend = actions.addChild<ui::Button>({
+		actions.addChild<ui::Button>({
 			.id = "btn_begin_descent",
 			.label = "Begin Descent",
 			.icon = "rocket",
@@ -779,9 +767,6 @@ class WorldCreatorScene : public app::Scene {
 				land();
 			},
 		});
-		if (ui::Button* shown = descend.get()) {
-			shown->focus();
-		}
 	}
 
 	void handleCameraKeys(const foundation::InputSnapshot& input, float dt) {

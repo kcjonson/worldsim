@@ -58,7 +58,7 @@ const ALLOWED = {
 	renderer: new Set(["renderer", "foundation", "external"]),
 	"salal-ui": new Set(["salal-ui", "renderer", "foundation", "external"]),
 	theme: new Set(["theme", "salal-ui", "renderer", "foundation", "external"]),
-	ui: new Set(["ui", "renderer", "foundation", "external"]),
+	ui: new Set(["ui", "theme", "renderer", "foundation", "external"]), // theme for its font families, until ui goes
 	world: new Set(["world", "renderer", "foundation", "external"]),
 	"planet-view": new Set(["planet-view", "world", "renderer", "foundation", "external"]),
 	"game-systems": new Set(["game-systems", "world", "renderer", "foundation", "external"]),

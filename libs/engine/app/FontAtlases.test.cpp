@@ -42,18 +42,18 @@ namespace {
 
 TEST_F(FontAtlasesTest, EveryFamilyLoadsItsOwnAtlasWithRoomAroundEveryGlyph) {
 	std::vector<Renderer::FontAtlasSource> sources;
-	for (const Renderer::FontAtlasSource& atlas : UI::kFontAtlases) {
+	for (const Renderer::FontAtlasSource& atlas : theme::kFontAtlases) {
 		sources.push_back(
 			{.family = atlas.family,
 			 .pngPath = (projectRoot() / atlas.pngPath).string(),
 			 .jsonPath = (projectRoot() / atlas.jsonPath).string()}
 		);
 	}
-	ASSERT_TRUE(fonts->Initialize(sources, UI::fontDefault));
+	ASSERT_TRUE(fonts->Initialize(sources, theme::fontDefault));
 
-	const Renderer::TextureHandle defaultAtlas = fonts->getAtlasTexture(UI::fontDefault);
-	for (const Renderer::FontAtlasSource& atlas : UI::kFontAtlases) {
-		if (atlas.family != UI::fontDefault) {
+	const Renderer::TextureHandle defaultAtlas = fonts->getAtlasTexture(theme::fontDefault);
+	for (const Renderer::FontAtlasSource& atlas : theme::kFontAtlases) {
+		if (atlas.family != theme::fontDefault) {
 			EXPECT_NE(fonts->getAtlasTexture(atlas.family), defaultAtlas)
 				<< atlas.jsonPath << " didn't load; its family draws with the default";
 		}

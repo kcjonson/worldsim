@@ -2,26 +2,24 @@
 #include "AssetRow.h"
 #include "AssetThumbnail.h"
 #include "SceneTypes.h"
-#include "Theme.h"
 
-#include <app/UiScene.h>
 #include <assets/AssetDefinition.h>
 #include <assets/AssetRegistry.h>
-#include <components/TextInput/TextInput.h>
-#include <components/button/Button.h>
-#include <components/scroll/ScrollContainer.h>
-#include <graphics/Color.h>
-#include <layout/LayoutContainer.h>
 #include <primitives/Primitives.h>
-#include <shapes/Shapes.h>
+#include <scene/Scene.h>
+#include <theme/Theme.h>
+#include <theme/Tokens.h>
+#include <ui/components/Button.h>
+#include <ui/components/TextInput.h>
+#include <ui/shapes/Rectangle.h>
+#include <ui/shapes/Text.h>
+#include <ui/theme/Tokens.h>
 #include <utils/Log.h>
 #include <utils/ResourcePath.h>
 
-#include <GL/glew.h>
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
-#include <initializer_list>
 #include <map>
 #include <memory>
 #include <set>
@@ -30,355 +28,254 @@
 
 namespace {
 
-namespace theme = asset_manager::theme;
+	constexpr const char* kSceneName = "browser";
+	constexpr float		  kTopBar = 56.0F;
+	constexpr float		  kTreeWidth = 324.0F;
 
-constexpr const char* kSceneName = "browser";
-constexpr float		  kTopBar = 56.0F;
-constexpr float		  kTreeWidth = 300.0F;
+	namespace t = theme::tokens::theme;
 
-std::string toLower(std::string s) {
-	std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-	return s;
-}
-
-void fillRect(float x, float y, float w, float h, const Foundation::Color& color) {
-	UI::Rectangle rect(UI::Rectangle::Args{.position = {x, y}, .size = {w, h}, .style = {.fill = color}, .id = "am_fill"});
-	rect.render();
-}
-
-// The asset-manager is always run from a build tree, but authors edit the SOURCE
-// assets/. Walk up from the executable (then cwd) to the repo root -- the first
-// ancestor carrying assets/world plus a repo marker -- and return its assets/ dir,
-// so Reload re-reads the files being edited, not the build-time copy beside the
-// exe (which lacks a repo marker and is therefore skipped). Empty when run outside
-// a source tree (a shipped build), where the caller falls back to findResource.
-std::filesystem::path findSourceAssetsRoot() {
-	namespace fs = std::filesystem;
-	std::vector<fs::path> starts;
-	if (auto exeDir = Foundation::getExecutableDir(); !exeDir.empty()) {
-		starts.push_back(std::move(exeDir));
+	std::string toLower(std::string s) {
+		std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+		return s;
 	}
-	try {
-		starts.push_back(fs::current_path());
-	} catch (const fs::filesystem_error&) {
-		// cwd was deleted (common in IDE terminals); the exe-dir start still covers us.
-	}
-	for (const auto& start : starts) {
-		std::error_code ec;
-		for (fs::path dir = start; !dir.empty(); dir = dir.parent_path()) {
-			const bool hasAssets = fs::exists(dir / "assets" / "world", ec);
-			const bool isRepo = fs::exists(dir / ".git", ec) || fs::exists(dir / "CMakeLists.txt", ec);
-			if (hasAssets && isRepo) {
-				return dir / "assets";
-			}
-			if (dir == dir.root_path()) {
-				break;
+
+	// The asset-manager is always run from a build tree, but authors edit the SOURCE
+	// assets/. Walk up from the executable (then cwd) to the repo root -- the first
+	// ancestor carrying assets/world plus a repo marker -- and return its assets/ dir,
+	// so Reload re-reads the files being edited, not the build-time copy beside the
+	// exe (which lacks a repo marker and is therefore skipped). Empty when run outside
+	// a source tree (a shipped build), where the caller falls back to findResource.
+	std::filesystem::path findSourceAssetsRoot() {
+		namespace fs = std::filesystem;
+		std::vector<fs::path> starts;
+		if (auto exeDir = Foundation::getExecutableDir(); !exeDir.empty()) {
+			starts.push_back(std::move(exeDir));
+		}
+		try {
+			starts.push_back(fs::current_path());
+		} catch (const fs::filesystem_error&) {
+			// cwd was deleted (common in IDE terminals); the exe-dir start still covers us.
+		}
+		for (const auto& start : starts) {
+			std::error_code ec;
+			for (fs::path dir = start; !dir.empty(); dir = dir.parent_path()) {
+				const bool hasAssets = fs::exists(dir / "assets" / "world", ec);
+				const bool isRepo = fs::exists(dir / ".git", ec) || fs::exists(dir / "CMakeLists.txt", ec);
+				if (hasAssets && isRepo) {
+					return dir / "assets";
+				}
+				if (dir == dir.root_path()) {
+					break;
+				}
 			}
 		}
+		return {};
 	}
-	return {};
-}
 
-class BrowserScene : public engine::UiScene {
-  public:
-	void onEnter(app::App& /*app*/) override {
-		LOG_INFO(Engine, "AssetManager BrowserScene - Entering");
+	// A hairline along one edge of its parent.
+	ui::Layout edge(ui::Inset inset) {
+		return {.position = ui::Position::Absolute, .inset = inset};
+	}
 
-		// Prefer the SOURCE assets/ -- this is a live authoring tool, so Reload should
-		// re-read the files being edited, not the build-time copy beside the exe.
-		if (const std::filesystem::path src = findSourceAssetsRoot(); !src.empty()) {
-			m_assetsRoot = (src / "world").string();
-			m_sharedScripts = (src / "shared" / "scripts").string();
-			LOG_INFO(Engine, "AssetManager: live source assets at %s", m_assetsRoot.c_str());
-		} else {
-			m_assetsRoot = Foundation::findResourceString("assets/world");
-			m_sharedScripts = Foundation::findResourceString("assets/shared/scripts");
-		}
+	class BrowserScene : public app::Scene {
+	  public:
+		void onEnter(app::App& /*app*/) override {
+			LOG_INFO(Engine, "AssetManager BrowserScene - Entering");
 
-		refreshNames();
+			// Prefer the SOURCE assets/ -- this is a live authoring tool, so Reload should
+			// re-read the files being edited, not the build-time copy beside the exe.
+			if (const std::filesystem::path src = findSourceAssetsRoot(); !src.empty()) {
+				assetsRoot = (src / "world").string();
+				sharedScripts = (src / "shared" / "scripts").string();
+				LOG_INFO(Engine, "AssetManager: live source assets at %s", assetsRoot.c_str());
+			} else {
+				assetsRoot = Foundation::findResourceString("assets/world");
+				sharedScripts = Foundation::findResourceString("assets/shared/scripts");
+			}
+			refreshNames();
 
-		m_search = std::make_unique<UI::TextInput>(UI::TextInput::Args{
-			.position = {12.0F, 14.0F},
-			.size = {kTreeWidth - 12.0F, 30.0F},
-			.text = "",
-			.placeholder = "Search assets...",
-			.tabIndex = 0,
-			.id = "am_search",
-			.enabled = true,
-			.onChange =
-				[this](const std::string& text) {
-					m_searchText = text;
-					m_pendingRebuild = true;
+			theme::apply(ui());
+			const ui::Theme& palette = ui().getTheme();
+			const float		 hairline = palette.get(t::border::bw);
+			const ui::Style	 surface{.backgroundColor = palette.get(t::color::bgPanel)};
+			root().get()->setLayout({.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column});
+
+			ui::Ref<ui::Rectangle> topBar = root().addChild<ui::Rectangle>({
+				.id = "am_top_bar",
+				.size = {ui::kAuto, kTopBar},
+				.layout =
+					{.display = ui::Display::Flex,
+					 .flexDirection = ui::FlexDirection::Row,
+					 .gap = 12.0F,
+					 .padding = {0.0F, 12.0F},
+					 .alignItems = ui::AlignItems::Center},
+				.style = surface,
+			});
+			topBar.addChild<ui::Rectangle>(
+				{.size = {ui::kAuto, hairline}, .layout = edge({.right = 0.0F, .bottom = 0.0F, .left = 0.0F}), .style = ui::styles::divider}
+			);
+			topBar.addChild<ui::TextInput>({
+				.id = "am_search",
+				.size = {kTreeWidth - 12.0F, ui::kAuto},
+				.placeholder = "Search assets...",
+				.onChange = [this](const std::string& text) {
+					searchText = text;
+					pendingRebuild = true;
 				},
-		});
+			});
+			topBar.addChild<ui::Button>({.id = "am_reload", .label = "Reload", .onPress = [this] { reload(); }});
+			summary = topBar.addChild<ui::Text>({.id = "am_summary", .style = ui::styles::text::secondary});
 
-		m_reload = std::make_unique<UI::Button>(UI::Button::Args{
-			.label = "Reload",
-			.position = {kTreeWidth + 24.0F, 12.0F},
-			.size = {92.0F, 32.0F},
-			.type = UI::Button::Type::Secondary,
-			.onClick = [this]() { reload(); },
-			.id = "am_reload",
-		});
+			ui::Ref<ui::Component> body = root().addChild<ui::Component>(
+				{.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Row, .flexGrow = 1.0F}}
+			);
+			ui::Ref<ui::Rectangle> sidebar = body.addChild<ui::Rectangle>({
+				.size = {kTreeWidth, ui::kAuto},
+				.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .padding = 12.0F},
+				.style = surface,
+			});
+			sidebar.addChild<ui::Rectangle>(
+				{.size = {hairline, ui::kAuto}, .layout = edge({.top = 0.0F, .right = 0.0F, .bottom = 0.0F}), .style = ui::styles::divider}
+			);
+			tree = sidebar.addChild<ui::Component>({
+				.id = "am_tree_scroll",
+				.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .flexGrow = 1.0F},
+				.overflow = ui::Overflow::Scroll,
+			});
+			detail = body.addChild<asset_manager::AssetDetailView>({.layout = {.flexGrow = 1.0F}});
 
-		m_summary = std::make_unique<UI::Text>(UI::Text::Args{
-			.position = {kTreeWidth + 130.0F, 20.0F},
-			.text = "",
-			.style = {.color = Foundation::Color(0.6F, 0.62F, 0.68F, 1.0F), .fontSize = 13.0F, .vAlign = Foundation::VerticalAlign::Middle},
-			.id = "am_summary",
-		});
-
-		m_treeScroll = std::make_unique<UI::ScrollContainer>(UI::ScrollContainer::Args{
-			.position = {12.0F, kTopBar},
-			.size = {kTreeWidth, 200.0F},
-			.id = "am_tree_scroll",
-		});
-
-		layout();
-		updateSummary();
-		rebuildTree();
-		m_detail.setAsset("");
-	}
-
-	bool handleInput(UI::InputEvent& event) override {
-		if (m_reload && m_reload->handleEvent(event)) {
-			return true;
-		}
-		if (m_search && m_search->handleEvent(event)) {
-			return true;
-		}
-		if (m_treeScroll && m_treeScroll->handleEvent(event)) {
-			return true;
-		}
-		return m_detail.handleInput(event);
-	}
-
-	void update(const app::FrameContext& frame) override {
-		const auto dt = static_cast<float>(frame.dt);
-		// Window is resizable; re-layout when the viewport changes so scroll/detail bounds
-		// don't desync from the panels (which read the live viewport each frame).
-		int viewportW = 0;
-		int viewportH = 0;
-		Renderer::Primitives::getLogicalViewport(viewportW, viewportH);
-		if (viewportW != m_lastViewportW || viewportH != m_lastViewportH) {
-			layout();
-		}
-		if (m_pendingRebuild) {
+			updateSummary();
 			rebuildTree();
-			m_pendingRebuild = false;
-		}
-		if (m_search) {
-			m_search->update(dt);
-		}
-		if (m_reload) {
-			m_reload->update(dt);
-		}
-		if (m_treeScroll) {
-			m_treeScroll->update(dt);
-		}
-		m_detail.update(dt);
-	}
-
-	void render(float /*alpha*/) override {
-		glClearColor(theme::bgVoid.r, theme::bgVoid.g, theme::bgVoid.b, 1.0F);
-		glClear(GL_COLOR_BUFFER_BIT);
-
-		int viewportW = 0;
-		int viewportH = 0;
-		Renderer::Primitives::getLogicalViewport(viewportW, viewportH);
-		const float vw = static_cast<float>(viewportW);
-		const float vh = static_cast<float>(viewportH);
-		const float treeRight = kTreeWidth + 24.0F;
-
-		// Left sidebar panel + hairline divider.
-		fillRect(0.0F, kTopBar, treeRight, vh - kTopBar, theme::bgPanel);
-		fillRect(treeRight - 1.0F, kTopBar, 1.0F, vh - kTopBar, theme::lineHairline);
-		// Top bar panel + hairline bottom border.
-		fillRect(0.0F, 0.0F, vw, kTopBar, theme::bgPanel);
-		fillRect(0.0F, kTopBar - 1.0F, vw, 1.0F, theme::lineHairline);
-
-		if (m_treeScroll) {
-			m_treeScroll->render();
-		}
-		m_detail.render();
-		// Top-bar controls last so they sit above the bar surface.
-		if (m_search) {
-			m_search->render();
-		}
-		if (m_reload) {
-			m_reload->render();
-		}
-		if (m_summary) {
-			m_summary->render();
-		}
-	}
-
-	void onExit() override {
-		m_search.reset();
-		m_reload.reset();
-		m_summary.reset();
-		m_treeScroll.reset();
-	}
-
-	std::string exportState() const override { return R"({"scene": "browser", "selected": ")" + m_selected + "\"}"; }
-	const char* name() const override { return kSceneName; }
-
-	// The top bar and the tree; the detail pane draws its own and isn't a component tree.
-	std::vector<const UI::IComponent*> getUiRoots() const override {
-		std::vector<const UI::IComponent*> roots;
-		for (const UI::IComponent* component :
-			 std::initializer_list<const UI::IComponent*>{m_search.get(), m_reload.get(), m_summary.get(), m_treeScroll.get()}) {
-			if (component != nullptr) {
-				roots.push_back(component);
-			}
-		}
-		return roots;
-	}
-
-  private:
-	void refreshNames() {
-		m_allNames = engine::assets::AssetRegistry::Get().getDefinitionNames();
-		std::sort(m_allNames.begin(), m_allNames.end());
-		LOG_INFO(Engine, "AssetManager: %zu definitions", m_allNames.size());
-	}
-
-	void updateSummary() {
-		const engine::assets::ValidationReport& report = engine::assets::AssetRegistry::Get().getValidationReport();
-		const int errors = report.errorCount();
-		m_summary->text = std::to_string(m_allNames.size()) + " assets    -    " + std::to_string(errors) + " errors, " +
-						  std::to_string(report.warningCount()) + " warnings";
-		m_summary->style.color = errors > 0 ? theme::statusCrit : theme::textDim;
-	}
-
-	void layout() {
-		int viewportW = 0;
-		int viewportH = 0;
-		Renderer::Primitives::getLogicalViewport(viewportW, viewportH);
-		m_lastViewportW = viewportW;
-		m_lastViewportH = viewportH;
-		const float vw = static_cast<float>(viewportW);
-		const float vh = static_cast<float>(viewportH);
-
-		m_treeScroll->setPosition(12.0F, kTopBar);
-		m_treeScroll->setViewportSize({kTreeWidth, vh - kTopBar - 12.0F});
-
-		const float detailX = kTreeWidth + 24.0F;
-		m_detail.setBounds({detailX, kTopBar, vw - detailX - 12.0F, vh - kTopBar - 12.0F});
-	}
-
-	std::string categoryOf(const std::string& defName) const {
-		const engine::assets::AssetDefinition* def = engine::assets::AssetRegistry::Get().getDefinition(defName);
-		if (def == nullptr || def->baseFolder.empty()) {
-			return "other";
-		}
-		const std::string parent = def->baseFolder.parent_path().filename().string();
-		return parent.empty() ? "other" : parent;
-	}
-
-	void selectAsset(const std::string& defName) {
-		m_selected = defName;
-		m_detail.setAsset(defName);
-		m_pendingRebuild = true; // refresh selection highlight (deferred out of event dispatch)
-	}
-
-	void toggleCategory(const std::string& category) {
-		auto it = m_collapsed.find(category);
-		if (it == m_collapsed.end()) {
-			m_collapsed.insert(category);
-		} else {
-			m_collapsed.erase(it);
-		}
-		m_pendingRebuild = true;
-	}
-
-	void reload() {
-		asset_manager::AssetThumbnail::clearCache();
-		auto& registry = engine::assets::AssetRegistry::Get();
-		registry.clear();
-		if (!m_sharedScripts.empty()) {
-			registry.setSharedScriptsPath(m_sharedScripts);
-		}
-		registry.loadDefinitionsFromFolder(m_assetsRoot);
-		refreshNames();
-		updateSummary();
-
-		const bool stillPresent = std::find(m_allNames.begin(), m_allNames.end(), m_selected) != m_allNames.end();
-		if (!stillPresent) {
-			m_selected.clear();
-		}
-		m_detail.setAsset(m_selected);
-		m_pendingRebuild = true;
-		LOG_INFO(Engine, "AssetManager: reloaded from disk (%zu definitions)", m_allNames.size());
-	}
-
-	void rebuildTree() {
-		if (!m_treeScroll) {
-			return;
-		}
-		m_treeScroll->clearChildren();
-
-		const float			rowWidth = kTreeWidth - 16.0F;
-		UI::LayoutContainer layoutContainer(UI::LayoutContainer::Args{
-			.position = {0.0F, 0.0F},
-			.size = {rowWidth, 0.0F},
-			.direction = UI::Direction::Vertical,
-			.id = "am_tree_layout",
-		});
-
-		const std::string needle = toLower(m_searchText);
-
-		std::map<std::string, std::vector<std::string>> groups;
-		for (const auto& name : m_allNames) {
-			if (!needle.empty() && toLower(name).find(needle) == std::string::npos) {
-				continue;
-			}
-			groups[categoryOf(name)].push_back(name);
 		}
 
-		for (auto& [category, names] : groups) {
-			const bool expanded = m_collapsed.find(category) == m_collapsed.end();
-			layoutContainer.addChild(asset_manager::GroupHeaderRow(asset_manager::GroupHeaderRow::Args{
-				.label = category,
-				.expanded = expanded,
-				.onToggle = [this, category]() { toggleCategory(category); },
-				.width = rowWidth,
-			}));
-			if (!expanded) {
-				continue;
-			}
-			for (const auto& name : names) {
-				asset_manager::AssetRow row(asset_manager::AssetRow::Args{
-					.defName = name,
-					.onSelect = [this](const std::string& selected) { selectAsset(selected); },
-					.width = rowWidth,
-				});
-				row.setSelected(name == m_selected);
-				layoutContainer.addChild(std::move(row));
+		void update(const app::FrameContext& /*frame*/) override {
+			if (pendingRebuild) {
+				pendingRebuild = false;
+				rebuildTree();
 			}
 		}
 
-		m_treeScroll->addChild(std::move(layoutContainer));
-	}
+		void render(float /*alpha*/) override { Renderer::Primitives::clear(ui().getTheme().get(t::color::bgVoid)); }
 
-	std::unique_ptr<UI::TextInput>		 m_search;
-	std::unique_ptr<UI::Button>			 m_reload;
-	std::unique_ptr<UI::Text>			 m_summary;
-	std::unique_ptr<UI::ScrollContainer> m_treeScroll;
-	asset_manager::AssetDetailView		 m_detail;
+		std::string exportState() const override { return R"({"scene": "browser", "selected": ")" + selected + "\"}"; }
+		const char* name() const override { return kSceneName; }
 
-	std::string				 m_assetsRoot;
-	std::string				 m_sharedScripts;
-	std::vector<std::string> m_allNames;
-	std::string				 m_searchText;
-	std::string				 m_selected;
-	std::set<std::string>	 m_collapsed;
-	bool					 m_pendingRebuild = false;
-	int						 m_lastViewportW = 0;
-	int						 m_lastViewportH = 0;
-};
+	  private:
+		void refreshNames() {
+			allNames = engine::assets::AssetRegistry::Get().getDefinitionNames();
+			std::sort(allNames.begin(), allNames.end());
+			LOG_INFO(Engine, "AssetManager: %zu definitions", allNames.size());
+		}
+
+		void updateSummary() {
+			const engine::assets::ValidationReport& report = engine::assets::AssetRegistry::Get().getValidationReport();
+			const int								errors = report.errorCount();
+			ui::Text*								shown = summary.get();
+			shown->setText(
+				std::to_string(allNames.size()) + " assets    -    " + std::to_string(errors) + " errors, " +
+				std::to_string(report.warningCount()) + " warnings"
+			);
+			shown->setStyle(
+				ui::styles::text::secondary.extend({.color = ui().getTheme().get(errors > 0 ? t::color::statusCrit : t::color::textDim)})
+			);
+		}
+
+		std::string categoryOf(const std::string& defName) const {
+			const engine::assets::AssetDefinition* def = engine::assets::AssetRegistry::Get().getDefinition(defName);
+			if (def == nullptr || def->baseFolder.empty()) {
+				return "other";
+			}
+			const std::string parent = def->baseFolder.parent_path().filename().string();
+			return parent.empty() ? "other" : parent;
+		}
+
+		// Callbacks from the tree's rows defer the rebuild out of the event that removes them.
+		void selectAsset(const std::string& defName) {
+			selected = defName;
+			detail.get()->setAsset(defName);
+			pendingRebuild = true;
+		}
+
+		void toggleCategory(const std::string& category) {
+			auto it = collapsed.find(category);
+			if (it == collapsed.end()) {
+				collapsed.insert(category);
+			} else {
+				collapsed.erase(it);
+			}
+			pendingRebuild = true;
+		}
+
+		void reload() {
+			asset_manager::AssetThumbnail::clearCache();
+			auto& registry = engine::assets::AssetRegistry::Get();
+			registry.clear();
+			if (!sharedScripts.empty()) {
+				registry.setSharedScriptsPath(sharedScripts);
+			}
+			registry.loadDefinitionsFromFolder(assetsRoot);
+			refreshNames();
+			updateSummary();
+
+			if (std::find(allNames.begin(), allNames.end(), selected) == allNames.end()) {
+				selected.clear();
+			}
+			detail.get()->setAsset(selected);
+			pendingRebuild = true;
+			LOG_INFO(Engine, "AssetManager: reloaded from disk (%zu definitions)", allNames.size());
+		}
+
+		void rebuildTree() {
+			if (list.get() != nullptr) {
+				tree.get()->removeChild(list);
+			}
+			list = tree.addChild<ui::Component>(
+				{.id = "am_tree_layout", .layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column}}
+			);
+
+			const std::string								needle = toLower(searchText);
+			std::map<std::string, std::vector<std::string>> groups;
+			for (const auto& name : allNames) {
+				if (!needle.empty() && toLower(name).find(needle) == std::string::npos) {
+					continue;
+				}
+				groups[categoryOf(name)].push_back(name);
+			}
+
+			for (auto& [category, names] : groups) {
+				const bool expanded = !collapsed.contains(category);
+				list.addChild<asset_manager::GroupHeaderRow>({.label = category, .expanded = expanded, .onToggle = [this, category]() {
+																  toggleCategory(category);
+															  }});
+				if (!expanded) {
+					continue;
+				}
+				for (const auto& name : names) {
+					list.addChild<asset_manager::AssetRow>(
+						{.defName = name, .selected = name == selected, .onSelect = [this](const std::string& chosen) {
+							 selectAsset(chosen);
+						 }}
+					);
+				}
+			}
+		}
+
+		ui::Ref<ui::Text>						summary;
+		ui::Ref<ui::Component>					tree;
+		ui::Ref<ui::Component>					list;
+		ui::Ref<asset_manager::AssetDetailView> detail;
+
+		std::string				 assetsRoot;
+		std::string				 sharedScripts;
+		std::vector<std::string> allNames;
+		std::string				 searchText;
+		std::string				 selected;
+		std::set<std::string>	 collapsed;
+		bool					 pendingRebuild = false;
+	};
 
 } // namespace
 
 namespace asset_manager::scenes {
 	extern const asset_manager::SceneInfo Browser = {kSceneName, []() { return std::make_unique<BrowserScene>(); }};
-}
+} // namespace asset_manager::scenes

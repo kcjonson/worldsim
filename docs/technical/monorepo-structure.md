@@ -81,7 +81,7 @@ foundation (salal)
 - UI components (Button, TextInput, Label, etc.)
 - Layout system (Container, ScrollView, flex-like layouts)
 - UI inspector for testability (JSON export, debug tools)
-- Depends on: `renderer`, `foundation`
+- Depends on: `renderer`, `foundation`, and `theme` for its font families until it goes
 
 **theme/**
 - Worldsim's design system on salal's ui: its theme as a Design Tokens file and the icon set as filled SVGs, both compiled in by salal's `salal_tokens()` and `salal_icons()` (`<theme/Tokens.h>`, `<theme/Icons.h>`), and its own components on salal's, Panel with its kicker and corner ticks and Avatar (`<theme/Panel.h>`, `<theme/Avatar.h>`)
@@ -110,7 +110,7 @@ foundation (salal)
 - Depends on: `ui` (salal), `renderer`, `foundation`
 
 **engine/**
-- The bridge between worldsim's ui and salal's app (`app/`: `UiScene`, `UiOverlay`, `UiBridge`), until worldsim moves onto salal's ui
+- The bridge between worldsim's ui and salal's app (`app/`: `UiScene`, `UiBridge`, `UiClipboard`), for world-sim until it moves onto salal's ui; ui-sandbox and asset-manager run on salal's ui
 - ECS, world streaming and rendering, construction, navigation, assets
 - Configuration system (JSON loading)
 - Depends on: All layers below
