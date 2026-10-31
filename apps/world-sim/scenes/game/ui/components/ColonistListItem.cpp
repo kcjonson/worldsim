@@ -94,7 +94,7 @@ void ColonistListItem::render() {
 		.position = {infoX, p.y + kPad},
 		.scale = textScale(UI::fs_sm),
 		.color = UI::text_bright,
-		.font = UI::fontDisplay,
+		.font = theme::fontDisplay,
 		.hAlign = Foundation::HorizontalAlign::Left,
 		.vAlign = Foundation::VerticalAlign::Top});
 	drawText(Renderer::Primitives::TextArgs{
@@ -102,7 +102,7 @@ void ColonistListItem::render() {
 		.position = {infoX, p.y + kPad},
 		.scale = textScale(UI::fs_2xs),
 		.color = moodCol,
-		.font = UI::fontMono,
+		.font = theme::fontMono,
 		.hAlign = Foundation::HorizontalAlign::Right,
 		.vAlign = Foundation::VerticalAlign::Top,
 		.boxWidth = infoW});

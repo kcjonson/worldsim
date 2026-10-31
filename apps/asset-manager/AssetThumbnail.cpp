@@ -5,9 +5,13 @@
 #include <assets/MotionEval.h>
 #include <graphics/Color.h>
 #include <primitives/Primitives.h>
+#include <theme/Tokens.h>
+#include <ui/Context.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
+#include <cmath>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -16,6 +20,7 @@
 namespace asset_manager {
 
 	namespace {
+
 		// Mesh plus the raw (pre-fit) bounds it was built from, so the same fit
 		// transform can be replayed for overlays (e.g. collision outlines).
 		struct CachedMesh {
@@ -31,7 +36,7 @@ namespace asset_manager {
 			return cache;
 		}
 
-		// Bumped whenever meshCache is cleared. A thumbnail that fetched m_mesh at an older
+		// Bumped whenever meshCache is cleared. A thumbnail that fetched its mesh at an older
 		// generation must refetch before use -- the CachedMesh it points into is destroyed by
 		// clearCache(), so drawing through the stale pointer is a use-after-free.
 		uint64_t& cacheGeneration() {
@@ -47,134 +52,111 @@ namespace asset_manager {
 			const float		  p = secs * 0.8F;
 			return p - std::floor(p);
 		}
+
 	} // namespace
+
+	AssetThumbnail::AssetThumbnail(const Args& args)
+		: defName(args.defName),
+		  seed(args.seed),
+		  animated(args.animated),
+		  collider(args.collider) {}
 
 	void AssetThumbnail::clearCache() {
 		meshCache().clear();
 		++cacheGeneration();
 	}
 
-	void AssetThumbnail::setAsset(std::string defName, uint32_t seed) {
-		if (defName != m_defName || seed != m_seed) {
-			m_defName = std::move(defName);
-			m_seed = seed;
-			m_dirty = true;
-		}
-	}
-
-	void AssetThumbnail::setSize(float width, float height) {
-		if (width != m_size.x || height != m_size.y) {
-			m_size = {width, height};
-			m_dirty = true;
+	void AssetThumbnail::setAsset(std::string name, uint32_t assetSeed) {
+		if (name != defName || assetSeed != seed) {
+			defName = std::move(name);
+			seed = assetSeed;
+			dirty = true;
 		}
 	}
 
 	void AssetThumbnail::ensureMesh() {
-		// Refetch when dirty OR when the cache was cleared since our last fetch: clearCache()
-		// frees the CachedMesh m_mesh points into, so a stale pointer is a use-after-free.
-		const uint64_t gen = cacheGeneration();
-		if (!m_dirty && m_cacheGen == gen) {
+		// Refetch when dirty, resized, or when the cache was cleared since the last fetch: clearCache()
+		// frees the CachedMesh the mesh points into, so a stale pointer is a use-after-free.
+		const Foundation::Vec2 size = getSize();
+		const uint64_t		   gen = cacheGeneration();
+		if (!dirty && cacheGen == gen && targetRect.width == size.x && targetRect.height == size.y) {
 			return;
 		}
-		m_dirty = false;
-		m_cacheGen = gen;
-		m_mesh = nullptr;
-		m_sourceBounds = {0.0F, 0.0F, 0.0F, 0.0F};
-		m_targetRect = {0.0F, 0.0F, m_size.x, m_size.y};
-		if (m_defName.empty()) {
+		dirty = false;
+		cacheGen = gen;
+		mesh = nullptr;
+		sourceBounds = {0.0F, 0.0F, 0.0F, 0.0F};
+		targetRect = {0.0F, 0.0F, size.x, size.y};
+		if (defName.empty() || size.x <= 0.0F || size.y <= 0.0F) {
 			return;
 		}
-
-		const std::string key = m_defName + "@" + std::to_string(static_cast<int>(m_size.x)) + "x" +
-								std::to_string(static_cast<int>(m_size.y)) + "#" + std::to_string(m_seed);
+		const std::string key = defName + "@" + std::to_string(static_cast<int>(size.x)) + "x" + std::to_string(static_cast<int>(size.y)) +
+								"#" + std::to_string(seed);
 		auto& cache = meshCache();
 		auto  it = cache.find(key);
 		if (it == cache.end()) {
-			engine::assets::PreparedAsset prepared = engine::assets::prepareAsset(m_defName, m_targetRect, m_seed);
+			engine::assets::PreparedAsset prepared = engine::assets::prepareAsset(defName, targetRect, seed);
 			CachedMesh					  entry;
 			entry.mesh = std::move(prepared.mesh);
 			entry.sourceBounds = prepared.sourceBounds;
 			it = cache.emplace(key, std::move(entry)).first;
 		}
-		m_mesh = &it->second.mesh;
-		m_sourceBounds = it->second.sourceBounds;
+		mesh = &it->second.mesh;
+		sourceBounds = it->second.sourceBounds;
 	}
 
-	bool AssetThumbnail::hasMesh() {
-		ensureMesh();
-		return m_mesh != nullptr && !m_mesh->vertices.empty();
-	}
-
-	Foundation::Vec2 AssetThumbnail::localToScreen(const glm::vec2& local) {
-		ensureMesh();
-		// Replay fitToRect (see renderer::fitToRect): scale to fit source bounds into
-		// the target rect preserving aspect, center, then translate by the draw offset.
-		const Foundation::Rect& src = m_sourceBounds;
-		const Foundation::Rect& dst = m_targetRect;
-		// Degenerate source: fitToRect leaves verts untransformed, so the overlay
-		// must too -- raw local plus the draw offset, matching render().
+	// Replays fitToRect (see renderer::fitToRect): scale to fit the source bounds into this box
+	// preserving aspect, and centre.
+	Foundation::Vec2 AssetThumbnail::meshToLocal(const glm::vec2& point) const {
+		const Foundation::Rect& src = sourceBounds;
+		const Foundation::Rect& dst = targetRect;
+		// Degenerate source: fitToRect leaves verts untransformed, so the overlay must too.
 		if (src.width <= 0.0F || src.height <= 0.0F) {
-			return {local.x + m_pos.x, local.y + m_pos.y};
+			return {point.x, point.y};
 		}
 		const float scale = std::min(dst.width / src.width, dst.height / src.height);
 		const float srcCenterX = src.x + (src.width * 0.5F);
 		const float srcCenterY = src.y + (src.height * 0.5F);
-		const float dstCenterX = dst.x + (dst.width * 0.5F);
-		const float dstCenterY = dst.y + (dst.height * 0.5F);
-		const float fitX = dstCenterX + ((local.x - srcCenterX) * scale);
-		const float fitY = dstCenterY + ((local.y - srcCenterY) * scale);
-		// Mesh verts are translated by m_pos at draw; the overlay must match.
-		return {fitX + m_pos.x, fitY + m_pos.y};
+		return {
+			dst.x + (dst.width * 0.5F) + ((point.x - srcCenterX) * scale), dst.y + (dst.height * 0.5F) + ((point.y - srcCenterY) * scale)
+		};
 	}
 
-	Foundation::Vec2 AssetThumbnail::centeredToScreen(const glm::vec2& local) {
-		ensureMesh();
-		const Foundation::Rect& src = m_sourceBounds;
-		const Foundation::Rect& dst = m_targetRect;
-		// Degenerate source: match localToScreen (raw local + draw offset, no centering).
+	// A point relative to the asset's bbox centre (the entity origin): fitToRect maps that centre to the
+	// box's centre, so this just scales from there.
+	Foundation::Vec2 AssetThumbnail::centeredToLocal(const glm::vec2& point) const {
+		const Foundation::Rect& src = sourceBounds;
+		const Foundation::Rect& dst = targetRect;
 		if (src.width <= 0.0F || src.height <= 0.0F) {
-			return {local.x + m_pos.x, local.y + m_pos.y};
+			return {point.x, point.y};
 		}
-		const float scale	   = std::min(dst.width / src.width, dst.height / src.height);
-		const float dstCenterX = dst.x + (dst.width * 0.5F);
-		const float dstCenterY = dst.y + (dst.height * 0.5F);
-		// `local` is already relative to the mesh bbox center, which fitToRect maps to the
-		// target-rect center -- so scale straight from there (no srcCenter subtraction,
-		// which localToScreen does for raw mesh coords).
-		return {dstCenterX + (local.x * scale) + m_pos.x, dstCenterY + (local.y * scale) + m_pos.y};
+		const float scale = std::min(dst.width / src.width, dst.height / src.height);
+		return {dst.x + (dst.width * 0.5F) + (point.x * scale), dst.y + (dst.height * 0.5F) + (point.y * scale)};
 	}
 
 	void AssetThumbnail::render() {
-		if (!visible) {
-			return;
-		}
 		ensureMesh();
-		if (m_mesh == nullptr || m_mesh->vertices.empty()) {
-			return;
-		}
+		if (mesh != nullptr && !mesh->vertices.empty()) {
+			// Reused across frames/instances so posing the verts doesn't allocate each frame.
+			thread_local std::vector<Foundation::Vec2> verts;
+			verts.assign(mesh->vertices.begin(), mesh->vertices.end());
 
-		// Reused across frames/instances so translating verts to m_pos doesn't allocate each frame.
-		thread_local std::vector<Foundation::Vec2> verts;
-		verts.assign(m_mesh->vertices.begin(), m_mesh->vertices.end());
-
-		// Animate: if this asset declares a motion, sweep its first clip's phase over time and
-		// deform the part vertex ranges in the fitted preview space, so the preview shows the
-		// walk cycle in motion. Assets without a motion (the vast majority) skip this entirely.
-		if (m_animated && !m_mesh->parts.empty()) {
-			const auto* motion = engine::assets::AssetRegistry::Get().getMotion(m_defName);
-			if (motion != nullptr) {
+			// Animate: if this asset declares a motion, sweep its first clip's phase over time and
+			// deform the part vertex ranges in the fitted preview space, so the preview shows the
+			// walk cycle in motion. Assets without a motion (the vast majority) skip this entirely.
+			const auto* motion = animated && !mesh->parts.empty() ? engine::assets::AssetRegistry::Get().getMotion(defName) : nullptr;
+			const Foundation::Rect& src = sourceBounds;
+			const Foundation::Rect& dst = targetRect;
+			if (motion != nullptr && src.width > 0.0F && src.height > 0.0F) {
 				const engine::assets::MotionClip* walk = motion->findClip("walk");
 				const engine::assets::MotionClip* clip = (walk != nullptr) ? walk : &motion->clips.front();
-				const Foundation::Rect&			  src = m_sourceBounds;
-				const Foundation::Rect&			  dst = m_targetRect;
-				if (!clip->drivers.empty() && src.width > 0.0F && src.height > 0.0F) {
+				if (!clip->drivers.empty()) {
 					std::unordered_map<std::string, engine::assets::PartTransform> xforms;
 					engine::assets::evaluateClip(*clip, sweepPhase(), xforms);
-
 					const float		s = std::min(dst.width / src.width, dst.height / src.height);
-					const glm::vec2 srcC{src.x + src.width * 0.5F, src.y + src.height * 0.5F};
-					const glm::vec2 dstC{dst.x + dst.width * 0.5F, dst.y + dst.height * 0.5F};
-					for (const auto& part : m_mesh->parts) {
+					const glm::vec2 srcC{src.x + (src.width * 0.5F), src.y + (src.height * 0.5F)};
+					const glm::vec2 dstC{dst.x + (dst.width * 0.5F), dst.y + (dst.height * 0.5F)};
+					for (const auto& part : mesh->parts) {
 						if (part.name.empty()) {
 							continue;
 						}
@@ -185,10 +167,9 @@ namespace asset_manager {
 						// Convert pivot + translate from meter space into the fitted preview space
 						// (rotation and scale are scale-invariant).
 						engine::assets::PartTransform pt = it->second;
-						pt.pivot	 = {dstC.x + (pt.pivot.x - srcC.x) * s, dstC.y + (pt.pivot.y - srcC.y) * s};
+						pt.pivot = {dstC.x + ((pt.pivot.x - srcC.x) * s), dstC.y + ((pt.pivot.y - srcC.y) * s)};
 						pt.translate = {pt.translate.x * s, pt.translate.y * s};
-						const uint32_t end =
-							std::min<uint32_t>(part.vertexStart + part.vertexCount, static_cast<uint32_t>(verts.size()));
+						const uint32_t end = std::min<uint32_t>(part.vertexStart + part.vertexCount, static_cast<uint32_t>(verts.size()));
 						for (uint32_t i = part.vertexStart; i < end; ++i) {
 							const glm::vec2 r = pt.apply({verts[i].x, verts[i].y});
 							verts[i] = {r.x, r.y};
@@ -196,20 +177,66 @@ namespace asset_manager {
 					}
 				}
 			}
-		}
 
-		for (auto& v : verts) {
-			v.x += m_pos.x;
-			v.y += m_pos.y;
+			Renderer::Primitives::drawTriangles({
+				.vertices = verts.data(),
+				.indices = mesh->indices.data(),
+				.vertexCount = verts.size(),
+				.indexCount = mesh->indices.size(),
+				.color = Foundation::Color(0.7F, 0.7F, 0.7F, 1.0F),
+				.colors = mesh->hasColors() ? mesh->colors.data() : nullptr,
+			});
 		}
-		Renderer::Primitives::drawTriangles({
-			.vertices = verts.data(),
-			.indices = m_mesh->indices.data(),
-			.vertexCount = verts.size(),
-			.indexCount = m_mesh->indices.size(),
-			.color = Foundation::Color(0.7F, 0.7F, 0.7F, 1.0F),
-			.colors = m_mesh->hasColors() ? m_mesh->colors.data() : nullptr,
-		});
+		if (collider) {
+			drawCollider();
+		}
+	}
+
+	// The asset's collision shape over the art, re-resolved from the name each frame, since a reload
+	// clears the registry and a stored definition would dangle.
+	void AssetThumbnail::drawCollider() {
+		const engine::assets::AssetDefinition* def = engine::assets::AssetRegistry::Get().getDefinition(defName);
+		if (def == nullptr) {
+			return;
+		}
+		if (!def->collision.blocks()) {
+			Renderer::Primitives::drawText({
+				.text = "no collider",
+				.position = {8.0F, 8.0F},
+				.scale = 12.0F / 16.0F,
+				.color = getContext()->getTheme().get(theme::tokens::theme::color::textFaint),
+				.id = "am_no_collider",
+			});
+			return;
+		}
+		if (mesh == nullptr || mesh->vertices.empty()) {
+			return;
+		}
+		// Collision points are in the asset's local meter space. Simple (SVG) assets author the collider
+		// in SVG <metadata>, converted to the bbox-centred frame (relative to the entity origin);
+		// procedural colliders are in the generator's mesh-coord frame.
+		std::vector<glm::vec2> points;
+		if (def->collision.type == engine::assets::CollisionShapeType::Rect) {
+			const std::array<glm::vec2, 4> corners = def->collision.rectCornersLocal();
+			points.assign(corners.begin(), corners.end());
+		} else {
+			points = def->collision.pointsMeters;
+		}
+		if (points.size() < 2) {
+			return;
+		}
+		const bool				centered = def->assetType == engine::assets::AssetType::Simple;
+		const Foundation::Color outline{0.0F, 1.0F, 1.0F, 1.0F}; // bright cyan, high contrast on art
+		for (std::size_t i = 0; i < points.size(); ++i) {
+			const glm::vec2& a = points[i];
+			const glm::vec2& b = points[(i + 1) % points.size()];
+			Renderer::Primitives::drawLine({
+				.start = centered ? centeredToLocal(a) : meshToLocal(a),
+				.end = centered ? centeredToLocal(b) : meshToLocal(b),
+				.style = {.color = outline, .width = 2.0F},
+				.id = "am_collision_edge",
+			});
+		}
 	}
 
 } // namespace asset_manager

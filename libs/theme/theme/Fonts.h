@@ -11,11 +11,11 @@
 
 #include <array>
 
-namespace UI {
+namespace theme {
 
 	// fontDefault is Roboto, what text that names no family is drawn and measured
-	// with. The Salvage typeface roles: Display = titles/values/labels,
-	// UI = body/units, Mono = kickers/numeric meters/badges/keycaps/dividers/eyebrows.
+	// with. The typeface roles: Display = titles/values/labels, UI = body/units,
+	// Mono = kickers/numeric meters/badges/keycaps/dividers/eyebrows.
 	inline constexpr Renderer::FontFamily fontDefault{0};
 	inline constexpr Renderer::FontFamily fontDisplay{1};
 	inline constexpr Renderer::FontFamily fontUi{2};
@@ -36,4 +36,4 @@ namespace UI {
 		{.family = fontMono, .pngPath = "fonts/JetBrainsMono-SDF.png", .jsonPath = "fonts/JetBrainsMono-SDF.json"},
 	}};
 
-} // namespace UI
+} // namespace theme

@@ -9,7 +9,6 @@
 
 #include <application/App.h>
 
-#include <ranges>
 
 namespace engine {
 
@@ -76,10 +75,6 @@ namespace engine {
 		uiLint.reset();
 	}
 
-	void UiBridge::addOverlay(UiOverlay& overlay) {
-		overlays.push_back(&overlay);
-	}
-
 	float UiBridge::consumeScroll() {
 		const float delta = scrollDelta;
 		scrollDelta = 0.0F;
@@ -87,12 +82,10 @@ namespace engine {
 	}
 
 	void UiBridge::dispatch() {
-		const bool	paused = owner.paused();
-		const int	mods = heldModifiers(owner.input().frame());
-		app::Scene* plain = topScene() == nullptr ? owner.scenes().top() : nullptr;
-		bool		scrolled = false;
+		const bool paused = owner.paused();
+		const int  mods = heldModifiers(owner.input().frame());
+		bool	   scrolled = false;
 		for (const foundation::InputEvent& event : owner.input().events()) {
-			bool taken = false;
 			switch (event.type) {
 				case EventType::KeyDown:
 					routeKey(event);
@@ -107,7 +100,7 @@ namespace engine {
 				case EventType::PointerUp:
 					pointerSeen = true;
 					if (!paused) {
-						taken = sendButton(event, mods);
+						sendButton(event, mods);
 					}
 					break;
 				case EventType::Scroll:
@@ -117,18 +110,11 @@ namespace engine {
 						scrolled = true;
 						if (sendScroll(event.position)) {
 							scrollDelta = 0.0F;
-							taken = true;
 						}
 					}
 					break;
 				default:
 					break;
-			}
-			if (plain != nullptr && !paused && !taken) {
-				plain->handleEvent(event);
-				if (event.type == EventType::Scroll) {
-					scrollDelta = 0.0F;
-				}
 			}
 		}
 		if (paused || !pointerSeen) {
@@ -162,17 +148,16 @@ namespace engine {
 		focus.routeKeyInput(event.key, shift, ctrl, alt);
 	}
 
-	// A Left or Right press or release at its own position, with a move there first; true when
-	// something took the press or release.
-	bool UiBridge::sendButton(const foundation::InputEvent& event, int mods) {
+	// A Left or Right press or release at its own position, with a move there first.
+	void UiBridge::sendButton(const foundation::InputEvent& event, int mods) {
 		if (event.mouseButton != MouseButton::Left && event.mouseButton != MouseButton::Right) {
-			return false;
+			return;
 		}
 		UI::InputEvent move = UI::InputEvent::mouseMove(event.position, mods);
 		send(move);
 		UI::InputEvent edge = event.type == EventType::PointerDown ? UI::InputEvent::mouseDown(event.position, event.mouseButton, mods)
 																   : UI::InputEvent::mouseUp(event.position, event.mouseButton, mods);
-		return send(edge);
+		send(edge);
 	}
 
 	// The pending scroll at `position`; true when something consumed it.
@@ -182,18 +167,14 @@ namespace engine {
 	}
 
 	bool UiBridge::send(UI::InputEvent& event) {
-		for (UiOverlay* overlay : std::views::reverse(overlays)) {
-			if (overlay->handleInput(event)) {
-				return true;
-			}
-		}
 		UiScene* scene = topScene();
 		return scene != nullptr && scene->handleInput(event);
 	}
 
-	// Null when the top scene isn't a UiScene, or there is none.
+	// Every scene a worldsim app adds to the stack is a UiScene: the scene lists add UiSceneFactory
+	// factories only (UiScene.h).
 	UiScene* UiBridge::topScene() const {
-		return dynamic_cast<UiScene*>(owner.scenes().top());
+		return static_cast<UiScene*>(owner.scenes().top()); // NOLINT(cppcoreguidelines-pro-type-static-cast-downcast)
 	}
 
 	std::vector<const UI::IComponent*> UiBridge::uiRoots() const {

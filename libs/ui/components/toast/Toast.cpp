@@ -210,7 +210,7 @@ void Toast::render() {
 		.position = {contentPos.x + kPadding, contentPos.y + kPadding},
 		.scale = kTitleFontSize / 16.0F,
 		.color = fade(severityColor),
-		.font = fontUi,
+		.font = theme::fontUi,
 		.key = zIndex,
 	});
 
@@ -220,7 +220,7 @@ void Toast::render() {
 		.position = {contentPos.x + kPadding, contentPos.y + kPadding + kTitleFontSize + kLineSpacing},
 		.scale = kMessageFontSize / 16.0F,
 		.color = fade(text),
-		.font = fontUi,
+		.font = theme::fontUi,
 		.key = zIndex,
 	});
 
@@ -242,7 +242,7 @@ void Toast::render() {
 		.position = {dismissBounds.x, dismissBounds.y},
 		.scale = fs_sm / 16.0F,
 		.color = fade(dismissButtonHovered ? text_bright : text_dim),
-		.font = fontMono,
+		.font = theme::fontMono,
 		.hAlign = Foundation::HorizontalAlign::Center,
 		.vAlign = Foundation::VerticalAlign::Middle,
 		.boxWidth = dismissBounds.width,
@@ -263,7 +263,7 @@ void Toast::render() {
 			.position = {timerX, timerY},
 			.scale = fs_2xs / 16.0F,
 			.color = fade(text_dim),
-			.font = fontMono,
+			.font = theme::fontMono,
 			.key = zIndex,
 		});
 	}

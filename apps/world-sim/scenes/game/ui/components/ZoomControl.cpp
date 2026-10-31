@@ -80,7 +80,7 @@ void ZoomControl::render() {
 		.position = {position.x, labelY},
 		.scale = kFontSize / 16.0F,
 		.color = UI::text_dim,
-		.font = UI::fontMono,
+		.font = theme::fontMono,
 		.hAlign = Foundation::HorizontalAlign::Center,
 		.vAlign = Foundation::VerticalAlign::Top,
 		.boxWidth = kButtonSize,

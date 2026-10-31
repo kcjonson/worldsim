@@ -1,83 +1,53 @@
 #pragma once
 
-#include "CoordinateSystem/CoordinateSystem.h"
-#include "components/button/Button.h"
-#include "input/InputEvent.h"
-#include "math/Types.h"
-#include "shapes/Shapes.h"
+// ui-sandbox's scene menu, a debug layer with a ui context of its own in worldsim's theme, after
+// salal's sandbox picker. Closed, it is a tab in the window's bottom-right corner; open, a panel of
+// ListRows stands above the tab, one a scene, the running one selected. F1 or a press on the tab
+// opens and closes it; a row switches to its scene and closes the list; Escape closes it. While it's
+// open the arrows move focus along the rows and Enter picks one.
+//
+// It takes what its ui takes: a press on the tab or the open list, with the rest of that gesture, and
+// the wheel over them; every key while the list is open; and F1.
 
-#include <app/UiOverlay.h>
+#include <application/App.h>
+#include <scene/DebugLayer.h>
+#include <ui/Context.h>
+#include <ui/components/Button.h>
+#include <ui/components/ListRow.h>
+#include <ui/shapes/Rectangle.h>
 
-#include <functional>
-#include <optional>
+#include <cstddef>
 #include <string>
 #include <vector>
 
-// NavigationMenu - Cross-Scene Overlay
-//
-// Collapsible scene navigation menu for the UI sandbox.
-// Displays as a small toggle button in the bottom-right corner.
-// Expands upward to show a list of available scenes when clicked.
-//
-// An overlay the App owns (engine::UiOverlay):
-// - Receives the bridge's input events before scenes
-// - Persists across scene transitions
-// - Renders on top of scenes
+namespace ui_sandbox {
 
-namespace UI {
-
-	struct NavigationMenu : public engine::UiOverlay {
-		// Constructor arguments struct (C++20 designated initializers)
+	class NavigationMenu final : public app::DebugLayer {
+	  public:
 		struct Args {
-			std::vector<std::string>			  sceneNames;
-			std::function<void(const std::string&)> onSceneSelected;
-			Renderer::CoordinateSystem*			  coordinateSystem = nullptr;
+			std::vector<std::string> scenes; // in the order listed, each a name the App's stack has
+			bool					 open = false;
 		};
 
-		// --- Public Methods ---
+		NavigationMenu(app::App& owningApp, Args args);
 
-		explicit NavigationMenu(const Args& args);
-		~NavigationMenu() override;
-
-		// The buttons' callbacks hold this, so it stays where it was made
-		NavigationMenu(const NavigationMenu&) = delete;
-		NavigationMenu& operator=(const NavigationMenu&) = delete;
-		NavigationMenu(NavigationMenu&&) = delete;
-		NavigationMenu& operator=(NavigationMenu&&) = delete;
-
-		bool handleInput(InputEvent& event) override;
+		bool handleEvent(const foundation::InputEvent& event) override;
 		void update(const app::FrameContext& frame) override;
 		void render() override;
 		void onResize(const Renderer::Viewport& viewport) override;
 
 	  private:
-		// Layout constants
-		static constexpr float kToggleSize = 30.0F;
-		static constexpr float kMargin = 10.0F;
-		static constexpr float kMenuWidth = 150.0F;
-		static constexpr float kLineHeight = 25.0F;
-		static constexpr float kHeaderHeight = 30.0F;
-		static constexpr float kMenuToggleGap = 5.0F;
+		void		setOpen(bool value);
+		void		choose(std::size_t index);
+		std::size_t current() const; // the running scene's row; scenes.size() for none
 
-		// State
-		bool								expanded = false;
-		std::vector<std::string>			sceneNames;
-		std::function<void(const std::string&)> onSceneSelected;
-		Renderer::CoordinateSystem*			coordinateSystem = nullptr;
-
-		// Sub-components
-		std::optional<Button>		 toggleButton;
-		std::vector<Button>			 menuButtons;
-		std::vector<std::string>	 buttonIds; // Store button IDs to avoid dangling pointers
-		Text						 headerText;
-
-		// Cached layout values (updated on resize)
-		float menuX = 0.0F;
-		float menuY = 0.0F;
-		float menuHeight = 0.0F;
-
-		// Initialize/reinitialize all sub-components with current window size
-		void initializeComponents();
+		app::App&						  owner;
+		std::vector<std::string>		  scenes;
+		bool							  open = false;
+		ui::Context						  context;
+		ui::Ref<ui::Rectangle>			  panel;
+		ui::Ref<ui::Button>				  tab;
+		std::vector<ui::Ref<ui::ListRow>> rows;
 	};
 
-} // namespace UI
+} // namespace ui_sandbox

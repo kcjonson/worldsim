@@ -31,7 +31,7 @@ namespace UI {
 	float Badge::MeasureWidth(const std::string& label, bool dot) {
 		float labelWidth = 0.0F;
 		if (const Renderer::FontRenderer* font = Renderer::Primitives::getFontRenderer(); font != nullptr) {
-			labelWidth = font->MeasureText(label, textScale(fs_2xs), fontMono, fs_2xs * ls_wider).x;
+			labelWidth = font->MeasureText(label, textScale(fs_2xs), theme::fontMono, fs_2xs * ls_wider).x;
 		}
 		const float dotSpace = dot ? (kDotDiameter + kDotGap) : 0.0F;
 		return (space_2 * 2.0F) + dotSpace + labelWidth;
@@ -72,7 +72,7 @@ namespace UI {
 				  .position = {contentX, bounds.y},
 				  .scale = textScale(fs_2xs),
 				  .color = toneCol,
-				  .font = fontMono,
+				  .font = theme::fontMono,
 				  .vAlign = Foundation::VerticalAlign::Middle,
 				  .boxHeight = kHeight,
 				  .letterSpacing = fs_2xs * ls_wider,

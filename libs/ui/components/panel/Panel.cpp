@@ -117,7 +117,7 @@ namespace UI {
 						  .position = {originX, cursorY},
 						  .scale = textScale(fs_2xs),
 						  .color = accentColor(args.accent),
-						  .font = fontMono,
+						  .font = theme::fontMono,
 						  .letterSpacing = fs_2xs * ls_wider,
 						  .transform = Foundation::TextTransform::Uppercase,
 						  .id = "ds_panel_kicker"});
@@ -129,7 +129,7 @@ namespace UI {
 						  .position = {originX, cursorY},
 						  .scale = textScale(fs_md),
 						  .color = text_bright,
-						  .font = fontDisplay,
+						  .font = theme::fontDisplay,
 						  .letterSpacing = fs_md * ls_wide,
 						  .transform = Foundation::TextTransform::Uppercase,
 						  .id = "ds_panel_title"});

@@ -38,7 +38,7 @@ float drawCategory(float x, float y, float colWidth, const MemoryCategory& cat) 
 	// Head: name (left) + count badge (right).
 	drawText(cat.name, {x, y + 2.0F}, fs_sm, UI::text_bright);
 	const std::string countStr = std::to_string(cat.count);
-	const float		  badgeW   = (space_2 * 2.0F) + measureText(countStr, fs_2xs, UI::fontMono, fs_2xs * ls_wider);
+	const float		  badgeW   = (space_2 * 2.0F) + measureText(countStr, fs_2xs, theme::fontMono, fs_2xs * ls_wider);
 	UI::Badge({.position = {x + colWidth - badgeW, y}, .label = countStr, .tone = categoryTone(cat.name, cat.count)}).render();
 	y += 22.0F + kHeadGap;
 
@@ -52,7 +52,7 @@ float drawCategory(float x, float y, float colWidth, const MemoryCategory& cat) 
 		const auto&		  e	  = cat.entities[i];
 		drawText(e.name, {x, y}, fs_xs, UI::text);
 		const std::string pos = "(" + std::to_string(static_cast<int>(e.x)) + ", " + std::to_string(static_cast<int>(e.y)) + ")";
-		Renderer::Primitives::drawText({.text = pos, .position = {x, y}, .scale = fs_2xs / 16.0F, .color = UI::data_bright, .font = UI::fontMono, .hAlign = Foundation::HorizontalAlign::Right, .boxWidth = colWidth});
+		Renderer::Primitives::drawText({.text = pos, .position = {x, y}, .scale = fs_2xs / 16.0F, .color = UI::data_bright, .font = theme::fontMono, .hAlign = Foundation::HorizontalAlign::Right, .boxWidth = colWidth});
 		y += kRowH;
 	}
 
@@ -86,7 +86,7 @@ void MemoryTabView::render() {
 
 	// ---- Summary row: two metrics ----
 	const auto metric = [&](float x, const std::string& value, const std::string& label) {
-		Renderer::Primitives::drawText({.text = value, .position = {x, o.y}, .scale = fs_xl / 16.0F, .color = UI::text_bright, .font = UI::fontDisplay});
+		Renderer::Primitives::drawText({.text = value, .position = {x, o.y}, .scale = fs_xl / 16.0F, .color = UI::text_bright, .font = theme::fontDisplay});
 		drawText(label, {x, o.y + fs_xl + 2.0F}, fs_2xs, UI::text_dim);
 	};
 	metric(o.x, std::to_string(data_.totalKnown), "Locations known");

@@ -5,6 +5,7 @@
 add_library(theme STATIC
     theme/Avatar.cpp
     theme/Panel.cpp
+    theme/Theme.cpp
 )
 
 target_include_directories(theme
