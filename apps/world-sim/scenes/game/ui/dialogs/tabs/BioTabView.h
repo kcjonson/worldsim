@@ -3,7 +3,6 @@
 // BioTabView - the dossier's Bio tab: the background paragraph, a Traits divider over the traits, and
 // what the colonist is doing now, in the accent.
 
-#include <graphics/Color.h>
 #include <ui/Component.h>
 #include <ui/shapes/Text.h>
 
@@ -20,7 +19,6 @@ namespace world_sim {
 		float					 mood = 100.0F; // 0-100
 		std::string				 moodLabel;		// "Happy", "Content", etc.
 		std::string				 currentTask;	// "Going to food", "Re-routing"
-		Foundation::Color		 currentTaskColor{0.80F, 0.80F, 0.85F, 1.0F};
 	};
 
 	class BioTabView : public ui::Component {

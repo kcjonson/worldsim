@@ -11,6 +11,7 @@
 #include "scenes/shared/DecorativePlanet.h"
 #include "scenes/shared/SalalUi.h"
 #include "scenes/shared/Starfield.h"
+#include <theme/Theme.h>
 
 #include <application/App.h>
 #include <primitives/Primitives.h>
@@ -38,7 +39,7 @@ namespace {
 		void onEnter(app::App& app) override {
 			owner = &app;
 			LOG_INFO(Game, "MainMenuScene - Entering");
-			world_sim::enterSalalUi(app, ui());
+			theme::apply(ui());
 			build();
 		}
 

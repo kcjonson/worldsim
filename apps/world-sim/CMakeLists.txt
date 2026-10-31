@@ -101,7 +101,6 @@ target_link_libraries(world-sim
         engine
         game-systems
         world
-        ui
         theme
         salal::renderer
         salal::foundation

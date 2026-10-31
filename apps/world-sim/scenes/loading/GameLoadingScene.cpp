@@ -11,6 +11,7 @@
 #include "SceneTypes.h"
 #include "scenes/shared/SalalUi.h"
 #include "scenes/shared/Starfield.h"
+#include <theme/Theme.h>
 
 #include <app/Keys.h>
 #include <application/App.h>
@@ -26,7 +27,6 @@
 #include <ecs/GoalTaskRegistry.h>
 #include <graphics/Color.h>
 #include <primitives/Primitives.h>
-#include <shapes/Shapes.h>
 #include <utils/Log.h>
 #include <utils/ResourcePath.h>
 #include <world/camera/WorldCamera.h>
@@ -67,7 +67,7 @@ namespace {
 		void onEnter(app::App& app) override {
 			owner = &app;
 			LOG_INFO(Game, "GameLoadingScene - Entering");
-			world_sim::enterSalalUi(app, ui());
+			theme::apply(ui());
 			build();
 
 			phase = LoadingPhase::PreparingPlanet;

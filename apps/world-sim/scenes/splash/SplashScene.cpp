@@ -9,6 +9,7 @@
 #include <application/App.h>
 #include <assets/AssetRegistry.h>
 #include <primitives/Primitives.h>
+#include <theme/Theme.h>
 #include <ui/components/Button.h>
 #include <ui/shapes/Text.h>
 #include <utils/Log.h>
@@ -39,7 +40,7 @@ namespace {
 		void onEnter(app::App& app) override {
 			owner = &app;
 			LOG_INFO(Game, "SplashScene - Entering");
-			world_sim::enterSalalUi(app, ui());
+			theme::apply(ui());
 			m_timer = 0.0F;
 			m_lastShownCount = -1;
 			m_failed = false;

@@ -85,7 +85,6 @@ FetchContent_MakeAvailable(salal)
 add_subdirectory(libs/geometry)
 
 # Feature layers
-add_subdirectory(libs/ui)
 add_subdirectory(libs/theme)
 add_subdirectory(libs/world)
 add_subdirectory(libs/planet-view)
@@ -112,7 +111,7 @@ add_subdirectory(tools/generate_sdf_atlas)
 # source font changes; the JSON metadata regenerates deterministically.
 #
 # Each entry is "AtlasBaseName:SourceTTF". The atlas base names must match
-# kFontAtlases in libs/ui/theme/Fonts.h, which each app hands to salal's FontRenderer
+# kFontAtlases in libs/theme/theme/Fonts.h, which each app hands to salal's FontRenderer
 # through AppConfig; salal ships no fonts, so this repo makes them here and each app's
 # CMakeLists.txt copies fonts/ beside its exe.
 set(SDF_FONT_ATLASES

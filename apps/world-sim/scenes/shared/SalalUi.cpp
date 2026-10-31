@@ -1,21 +1,10 @@
 #include "scenes/shared/SalalUi.h"
 
-#include "AppContext.h"
-
 #include <primitives/Primitives.h>
-#include <theme/Icons.h>
 
 #include <array>
 
 namespace world_sim {
-
-	void enterSalalUi(app::App& app, ui::Context& context) {
-		app.context<AppContext>().ui.uninstall();
-		context.setTheme(ui::Theme::load({.tokens = &::theme::tokenTable()}).theme);
-		if (!context.icons().has("gear")) {
-			context.icons().add(::theme::iconAtlas());
-		}
-	}
 
 	ui::Style text(const ui::Theme& theme, const Type& type) {
 		const float size = theme.get(type.size);

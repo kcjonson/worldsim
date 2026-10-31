@@ -1,5 +1,4 @@
 add_library(engine
-    app/UiBridge.cpp
     world/TileGrid.cpp
     world/chunk/Chunk.cpp
     world/chunk/ChunkManager.cpp
@@ -69,14 +68,13 @@ target_compile_features(engine PUBLIC cxx_std_20)
 # behind their headers, and the game's own GL (the chunk pass, the scenes' clear
 # pairs, asset-cli's hidden window and the GL test fixtures) reaches them through
 # engine. salal::app is the window, the frame, the scene stack and the dev server
-# every GUI app runs on; app/ bridges worldsim's ui onto it.
+# every GUI app runs on.
 target_link_libraries(engine
     PUBLIC
         salal::foundation
         geometry
         salal::renderer
         salal::app
-        ui
         assets
         world
         OpenGL::GL
@@ -135,6 +133,7 @@ if(BUILD_TESTING)
         target_link_libraries(engine-tests
             PRIVATE
                 engine
+                theme # app/FontAtlases.test.cpp loads the theme's fonts
                 GTest::gtest
                 GTest::gtest_main
         )
