@@ -32,7 +32,7 @@ namespace UI {
 
 		float measureWidth(const std::string& text, float scale) {
 			if (const Renderer::FontRenderer* font = Renderer::Primitives::getFontRenderer(); font != nullptr) {
-				return font->MeasureText(text, scale, fontMono, kLabelSpacing).x;
+				return font->MeasureText(text, scale, theme::fontMono, kLabelSpacing).x;
 			}
 			return 0.0F;
 		}
@@ -78,7 +78,7 @@ namespace UI {
 				  .position = bounds.position(),
 				  .scale = textScale(fs_2xs),
 				  .color = text_dim,
-				  .font = fontMono,
+				  .font = theme::fontMono,
 				  .hAlign = Foundation::HorizontalAlign::Center,
 				  .vAlign = Foundation::VerticalAlign::Middle,
 				  .boxWidth = bounds.width,

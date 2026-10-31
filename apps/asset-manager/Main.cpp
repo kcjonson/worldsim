@@ -44,8 +44,8 @@ int main(int argc, char* argv[]) {
 		{.applicationName = "asset-manager",
 		 .frame = {.frameCapHz = 120},
 		 .baseShader = base_shader::source(),
-		 .fontAtlases = UI::kFontAtlases,
-		 .defaultFont = UI::fontDefault,
+		 .fontAtlases = theme::kFontAtlases,
+		 .defaultFont = theme::fontDefault,
 		 .clearColor = {0.1F, 0.1F, 0.15F, 1.0F},
 		 // On wherever the server is compiled in, so a Release build, which has none, logs nothing
 		 .devServer =

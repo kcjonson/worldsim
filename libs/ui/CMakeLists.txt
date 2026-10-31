@@ -47,6 +47,7 @@ target_link_libraries(ui
     PUBLIC
         salal::foundation
         salal::renderer
+        theme # its font families, until this library goes
         nlohmann_json::nlohmann_json
 )
 

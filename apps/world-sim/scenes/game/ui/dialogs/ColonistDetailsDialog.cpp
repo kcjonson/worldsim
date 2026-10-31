@@ -27,7 +27,7 @@ namespace world_sim {
 		}
 
 		float buttonWidth(const std::string& label) {
-			return textWidth(label, UI::fs_xs, UI::fontDisplay) + kBtnPadX * 2.0F;
+			return textWidth(label, UI::fs_xs, theme::fontDisplay) + kBtnPadX * 2.0F;
 		}
 
 		// Draw a Salvage-style footer button. Variant drives fill/border/label color.
@@ -62,7 +62,7 @@ namespace world_sim {
 				.position	   = bounds.position(),
 				.scale		   = UI::fs_xs / 16.0F,
 				.color		   = labelColor,
-				.font		   = UI::fontDisplay,
+				.font		   = theme::fontDisplay,
 				.hAlign		   = Foundation::HorizontalAlign::Center,
 				.vAlign		   = Foundation::VerticalAlign::Middle,
 				.boxWidth	   = bounds.width,

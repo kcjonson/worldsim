@@ -21,12 +21,12 @@
 namespace world_sim::tabs {
 
 // Draw one line of UI-font text at an absolute point.
-inline void drawText(const std::string& text, Foundation::Vec2 pos, float fontSize, const Foundation::Color& color, Renderer::FontFamily font = UI::fontUi) {
+inline void drawText(const std::string& text, Foundation::Vec2 pos, float fontSize, const Foundation::Color& color, Renderer::FontFamily font = theme::fontUi) {
 	Renderer::Primitives::drawText({.text = text, .position = pos, .scale = fontSize / 16.0F, .color = color, .font = font});
 }
 
 // Measure text width in pixels (0 if no font renderer is available).
-inline float measureText(const std::string& text, float fontSize, Renderer::FontFamily font = UI::fontUi, float letterSpacing = 0.0F) {
+inline float measureText(const std::string& text, float fontSize, Renderer::FontFamily font = theme::fontUi, float letterSpacing = 0.0F) {
 	if (const Renderer::FontRenderer* fonts = Renderer::Primitives::getFontRenderer(); fonts != nullptr) {
 		return fonts->MeasureText(text, fontSize / 16.0F, font, letterSpacing).x;
 	}
@@ -39,7 +39,7 @@ inline constexpr float kRenderWidthFudge = 1.12F;
 inline constexpr float kWrapLineGap		 = 4.0F; // added to fontSize for line height
 
 // Number of lines `text` wraps into at maxWidth (always >= 1).
-inline int wrappedLineCount(const std::string& text, float fontSize, float maxWidth, Renderer::FontFamily font = UI::fontUi) {
+inline int wrappedLineCount(const std::string& text, float fontSize, float maxWidth, Renderer::FontFamily font = theme::fontUi) {
 	const Renderer::FontRenderer* fonts = Renderer::Primitives::getFontRenderer();
 	if (fonts == nullptr || text.empty()) return 1;
 	int			lines = 0;
@@ -63,7 +63,7 @@ inline int wrappedLineCount(const std::string& text, float fontSize, float maxWi
 }
 
 // Word-wrap text to maxWidth, drawing each line; returns the y past the last line.
-inline float drawWrapped(const std::string& text, Foundation::Vec2 pos, float fontSize, float maxWidth, const Foundation::Color& color, Renderer::FontFamily font = UI::fontUi) {
+inline float drawWrapped(const std::string& text, Foundation::Vec2 pos, float fontSize, float maxWidth, const Foundation::Color& color, Renderer::FontFamily font = theme::fontUi) {
 	const float lineH = fontSize + kWrapLineGap;
 	const Renderer::FontRenderer* fonts = Renderer::Primitives::getFontRenderer();
 	if (fonts == nullptr || text.empty()) {
@@ -115,7 +115,7 @@ inline float drawMeter(
 				.position	   = {x, cursorY},
 				.scale		   = kLabelPx / 16.0F,
 				.color		   = UI::withAlpha(UI::text_dim, labelAlpha),
-				.font		   = UI::fontMono,
+				.font		   = theme::fontMono,
 				.letterSpacing = kLabelPx * UI::ls_wider,
 				.transform	   = Foundation::TextTransform::Uppercase,
 			});
@@ -126,7 +126,7 @@ inline float drawMeter(
 				.position = {x, cursorY},
 				.scale	  = kLabelPx / 16.0F,
 				.color	  = UI::withAlpha(tone, labelAlpha),
-				.font	  = UI::fontMono,
+				.font	  = theme::fontMono,
 				.hAlign	  = Foundation::HorizontalAlign::Right,
 				.boxWidth = width,
 			});
@@ -157,14 +157,14 @@ inline float drawMeter(
 // right edge. Mirrors Divider.tsx. Returns the y past the divider.
 inline float drawDivider(float x, float y, float width, const std::string& label) {
 	constexpr float kLabelPx = UI::fs_2xs;
-	const float		labelW	 = measureText(label, kLabelPx, UI::fontMono, kLabelPx * UI::ls_wider) + (label.empty() ? 0.0F : UI::space_2);
+	const float		labelW	 = measureText(label, kLabelPx, theme::fontMono, kLabelPx * UI::ls_wider) + (label.empty() ? 0.0F : UI::space_2);
 
 	Renderer::Primitives::drawText({
 		.text		   = label,
 		.position	   = {x, y},
 		.scale		   = kLabelPx / 16.0F,
 		.color		   = UI::text_faint,
-		.font		   = UI::fontMono,
+		.font		   = theme::fontMono,
 		.letterSpacing = kLabelPx * UI::ls_wider,
 		.transform	   = Foundation::TextTransform::Uppercase,
 	});
@@ -196,7 +196,7 @@ inline float drawEmptyState(const Foundation::Rect& bounds, const std::string& t
 	});
 
 	float ty = bounds.y + pad;
-	Renderer::Primitives::drawText({.text = title, .position = {bounds.x + pad, ty}, .scale = UI::fs_sm / 16.0F, .color = UI::text, .font = UI::fontUi});
+	Renderer::Primitives::drawText({.text = title, .position = {bounds.x + pad, ty}, .scale = UI::fs_sm / 16.0F, .color = UI::text, .font = theme::fontUi});
 	ty += UI::fs_sm + 4.0F;
 	// Wrap the subtitle within the panel so it never runs past the edge.
 	drawWrapped(subtitle, {bounds.x + pad, ty}, UI::fs_xs, innerW, UI::text_faint);

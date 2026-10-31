@@ -141,7 +141,7 @@ namespace UI {
 					for (char& c : upper) {
 						c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
 					}
-					cachedLabelWidth = fontRenderer->MeasureText(upper, textScale(fontPx), fontDisplay, fontPx * ls_wide).x;
+					cachedLabelWidth = fontRenderer->MeasureText(upper, textScale(fontPx), theme::fontDisplay, fontPx * ls_wide).x;
 					measuredFontPx = fontPx;
 					measuredLabel = label;
 				}
@@ -217,7 +217,7 @@ namespace UI {
 					  .position = bounds.position(),
 					  .scale = textScale(fontPx),
 					  .color = textColor,
-					  .font = fontDisplay,
+					  .font = theme::fontDisplay,
 					  .hAlign = Foundation::HorizontalAlign::Center,
 					  .vAlign = Foundation::VerticalAlign::Middle,
 					  .boxWidth = bounds.width,

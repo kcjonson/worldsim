@@ -148,7 +148,7 @@ namespace {
 					  .position = {r.x + kCardPad, r.y + kCardPad + 40.0F},
 					  .scale = UI::fs_md / 16.0F,
 					  .color = UI::text_bright,
-					  .font = UI::fontDisplay,
+					  .font = theme::fontDisplay,
 					  .vAlign = Foundation::VerticalAlign::Top,
 					  .letterSpacing = UI::fs_md * UI::ls_wide,
 					  .transform = Foundation::TextTransform::Uppercase});
@@ -176,7 +176,7 @@ namespace {
 					  .position = {r.x + kCardPad, metaY},
 					  .scale = UI::fs_2xs / 16.0F,
 					  .color = UI::text_faint,
-					  .font = UI::fontMono,
+					  .font = theme::fontMono,
 					  .hAlign = Foundation::HorizontalAlign::Right,
 					  .vAlign = Foundation::VerticalAlign::Top,
 					  .boxWidth = r.width - kCardPad * 2.0F,
@@ -291,7 +291,7 @@ namespace {
 				.text = "// NEW GAME    STEP 01 / 03",
 				.fontSize = fs_2xs,
 				.color = accent,
-				.font = fontMono,
+				.font = theme::fontMono,
 				.letterSpacingEm = ls_wider,
 				.transform = Foundation::TextTransform::Uppercase,
 				.id = "kicker"}));
@@ -299,7 +299,7 @@ namespace {
 				.text = "Select Scenario",
 				.fontSize = fs_3xl,
 				.color = text_bright,
-				.font = fontDisplay,
+				.font = theme::fontDisplay,
 				.letterSpacingEm = ls_wide,
 				.id = "title"}));
 			header.addChild(Text(Text::Args{

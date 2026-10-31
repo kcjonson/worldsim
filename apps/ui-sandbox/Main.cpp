@@ -1,11 +1,10 @@
 // UI Sandbox - Component Testing & Demo Environment
-// Runs on salal's App, with the scene navigation menu as an overlay
+// Runs on salal's App, with the scene navigation menu as a debug layer
 
 #include "BaseShader.h"
 #include "NavigationMenu.h"
 #include "SceneTypes.h"
 
-#include <app/UiBridge.h>
 #include <application/App.h>
 #include <application/CommandLine.h>
 #include <assets/AssetBootstrap.h>
@@ -49,8 +48,8 @@ int main(int argc, char* argv[]) {
 		{.applicationName = "ui-sandbox",
 		 .frame = {.frameCapHz = 120},
 		 .baseShader = base_shader::source(),
-		 .fontAtlases = UI::kFontAtlases,
-		 .defaultFont = UI::fontDefault,
+		 .fontAtlases = theme::kFontAtlases,
+		 .defaultFont = theme::fontDefault,
 		 .clearColor = {0.1F, 0.1F, 0.15F, 1.0F},
 		 // On wherever the server is compiled in, so a Release build, which has none, logs nothing
 		 .devServer =
@@ -66,36 +65,19 @@ int main(int argc, char* argv[]) {
 	// GrassScene reads the registry in onEnter (also via --scene=grass), so load synchronously.
 	engine::assets::initializeAssetSystem(false);
 
-	engine::UiBridge bridge(*app);
 	ui_sandbox::addScenes(app->scenes());
 	if (!commandLine.scene || !app->scenes().switchTo(*commandLine.scene)) {
 		app->scenes().switchTo(ui_sandbox::scenes::Svg.name);
 	}
 
-	// Navigation menu overlay (only when no --scene argument)
-	if (!commandLine.scene) {
-		std::vector<std::string> sceneNames{
+	// The scene menu, open at the start unless a scene was asked for
+	std::vector<std::string> sceneNames{
 #define SCENE_NAME(scene) ui_sandbox::scenes::scene.name,
-			UI_SANDBOX_SCENES(SCENE_NAME)
+		UI_SANDBOX_SCENES(SCENE_NAME)
 #undef SCENE_NAME
-		};
-		std::ranges::sort(sceneNames);
-		const std::size_t		 sceneCount = sceneNames.size();
-		UI::NavigationMenu::Args menuArgs{
-			.sceneNames = std::move(sceneNames),
-			.onSceneSelected =
-				[&stack = app->scenes()](const std::string& sceneName) {
-					if (stack.switchTo(sceneName)) {
-						LOG_INFO(UI, "Switched to scene: %s", sceneName.c_str());
-					}
-				},
-			.coordinateSystem = &app->coordinateSystem(),
-		};
-		auto menu = std::make_unique<UI::NavigationMenu>(menuArgs);
-		bridge.addOverlay(*menu);
-		app->addOverlay(std::move(menu));
-		LOG_INFO(UI, "Navigation menu overlay registered (%zu scenes available)", sceneCount);
-	}
+	};
+	std::ranges::sort(sceneNames);
+	app->addDebugLayer(std::make_unique<ui_sandbox::NavigationMenu>(*app, ui_sandbox::NavigationMenu::Args{.scenes = std::move(sceneNames), .open = !commandLine.scene}));
 
 	app->run();
 	app->shutdown();

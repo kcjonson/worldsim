@@ -311,7 +311,7 @@ namespace UI {
 					  .position = {panel.x + kDialogContentPadding, kickerY},
 					  .scale = fs_2xs / 16.0F,
 					  .color = fade(text_faint),
-					  .font = fontMono,
+					  .font = theme::fontMono,
 					  .letterSpacing = fs_2xs * ls_wider,
 					  .transform = Foundation::TextTransform::Uppercase});
 			titleY = kickerY + fs_2xs + space_1_5;
@@ -323,7 +323,7 @@ namespace UI {
 					  .position = {panel.x + kDialogContentPadding, titleY},
 					  .scale = fs_md / 16.0F,
 					  .color = fade(text_bright),
-					  .font = fontDisplay,
+					  .font = theme::fontDisplay,
 					  .letterSpacing = fs_md * ls_wide,
 					  .transform = Foundation::TextTransform::Uppercase});
 		}
@@ -349,7 +349,7 @@ namespace UI {
 				  .position = {closeBounds.x, closeBounds.y},
 				  .scale = fs_sm / 16.0F,
 				  .color = fade(closeButtonHovered ? accent_bright : text_dim),
-				  .font = fontMono,
+				  .font = theme::fontMono,
 				  .hAlign = Foundation::HorizontalAlign::Center,
 				  .vAlign = Foundation::VerticalAlign::Middle,
 				  .boxWidth = closeBounds.width,

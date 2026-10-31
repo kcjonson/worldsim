@@ -53,7 +53,7 @@ namespace {
 			}
 			auto* fontRenderer = Renderer::Primitives::getFontRenderer();
 			const float bodyW =
-				fontRenderer != nullptr ? fontRenderer->MeasureText(text, textScale(UI::fs_xs), UI::fontMono).x : 200.0F;
+				fontRenderer != nullptr ? fontRenderer->MeasureText(text, textScale(UI::fs_xs), theme::fontMono).x : 200.0F;
 			return kBodyX + bodyW;
 		}
 
@@ -63,13 +63,13 @@ namespace {
 					  .position = position,
 					  .scale = textScale(UI::fs_xs),
 					  .color = UI::status_ok,
-					  .font = UI::fontMono,
+					  .font = theme::fontMono,
 					  .vAlign = Foundation::VerticalAlign::Top});
 			drawText({.text = text,
 					  .position = {position.x + kBodyX, position.y},
 					  .scale = textScale(UI::fs_xs),
 					  .color = UI::text_faint,
-					  .font = UI::fontMono,
+					  .font = theme::fontMono,
 					  .vAlign = Foundation::VerticalAlign::Top});
 		}
 
@@ -199,7 +199,7 @@ namespace {
 				float	 blockW = 0.0F;
 				if (auto* fontRenderer = Renderer::Primitives::getFontRenderer()) {
 					for (const std::string& line : m_errorLines) {
-						blockW = std::max(blockW, fontRenderer->MeasureText(line, textScale(fs_xs), fontMono).x);
+						blockW = std::max(blockW, fontRenderer->MeasureText(line, textScale(fs_xs), theme::fontMono).x);
 					}
 				}
 				const float errX = cx - blockW * 0.5F;
@@ -211,7 +211,7 @@ namespace {
 						.position = {errX, ey},
 						.scale = textScale(fs_xs),
 						.color = status_crit,
-						.font = fontMono,
+						.font = theme::fontMono,
 						.vAlign = Foundation::VerticalAlign::Top});
 					ey += 18.0F;
 				}
@@ -227,7 +227,7 @@ namespace {
 					.position = {0.0F, screenH - 28.0F},
 					.scale = textScale(fs_2xs),
 					.color = text_faint,
-					.font = fontMono,
+					.font = theme::fontMono,
 					.hAlign = Foundation::HorizontalAlign::Right,
 					.vAlign = Foundation::VerticalAlign::Top,
 					.boxWidth = screenW - 24.0F
@@ -276,21 +276,21 @@ namespace {
 			m_identity->addChild(world_sim::Label({.text = "WORLD-SIM",
 												   .fontSize = fs_5xl,
 												   .color = text_bright,
-												   .font = fontDisplay,
+												   .font = theme::fontDisplay,
 												   .letterSpacingEm = ls_widest,
 												   .hAlign = Foundation::HorizontalAlign::Center,
 												   .id = "splash_title"}));
 			m_identity->addChild(world_sim::Label({.text = "PROSPECTING EXPEDITION 28-B",
 												   .fontSize = fs_sm,
 												   .color = accent,
-												   .font = fontMono,
+												   .font = theme::fontMono,
 												   .letterSpacingEm = ls_wider,
 												   .hAlign = Foundation::HorizontalAlign::Center,
 												   .id = "splash_tagline"}));
 			m_identity->addChild(world_sim::Label({.text = "Everything you'll need is already here. It's just not yours yet.",
 												   .fontSize = fs_md,
 												   .color = text_dim,
-												   .font = fontUi,
+												   .font = theme::fontUi,
 												   .hAlign = Foundation::HorizontalAlign::Center,
 												   .id = "splash_flavor",
 												   .margin = space_2}));

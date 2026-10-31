@@ -32,7 +32,7 @@ void LandingSiteDetailsPanel::render(
 			  .position = {body.x + 20.0F, y},
 			  .scale = UI::fs_sm / 16.0F,
 			  .color = UI::data_bright,
-			  .font = UI::fontMono,
+			  .font = theme::fontMono,
 			  .vAlign = Foundation::VerticalAlign::Top});
 	y += 24.0F;
 
@@ -42,7 +42,7 @@ void LandingSiteDetailsPanel::render(
 				  .position = {body.x, y},
 				  .scale = UI::fs_xl / 16.0F,
 				  .color = UI::text_bright,
-				  .font = UI::fontDisplay,
+				  .font = theme::fontDisplay,
 				  .vAlign = Foundation::VerticalAlign::Top});
 		y += 30.0F;
 	}
@@ -82,7 +82,7 @@ void LandingSiteDetailsPanel::render(
 				  .position = {row.x + UI::space_3, row.y},
 				  .scale = UI::fs_2xs / 16.0F,
 				  .color = UI::text_dim,
-				  .font = UI::fontMono,
+				  .font = theme::fontMono,
 				  .vAlign = Foundation::VerticalAlign::Middle,
 				  .boxHeight = row.height,
 				  .letterSpacing = UI::fs_2xs * UI::ls_wider});
@@ -116,7 +116,7 @@ void LandingSiteDetailsPanel::render(
 				  .position = {body.x, y},
 				  .scale = UI::fs_2xs / 16.0F,
 				  .color = UI::text_dim,
-				  .font = UI::fontMono,
+				  .font = theme::fontMono,
 				  .vAlign = Foundation::VerticalAlign::Top,
 				  .letterSpacing = UI::fs_2xs * UI::ls_wider,
 				  .transform = Foundation::TextTransform::Uppercase});
@@ -126,13 +126,13 @@ void LandingSiteDetailsPanel::render(
 					  .position = {body.x, y},
 					  .scale = UI::fs_sm / 16.0F,
 					  .color = UI::text_dim,
-					  .font = UI::fontUi,
+					  .font = theme::fontUi,
 					  .vAlign = Foundation::VerticalAlign::Top});
 			drawText({.text = row.value,
 					  .position = {body.x, y},
 					  .scale = UI::fs_sm / 16.0F,
 					  .color = row.accent,
-					  .font = UI::fontMono,
+					  .font = theme::fontMono,
 					  .hAlign = Foundation::HorizontalAlign::Right,
 					  .vAlign = Foundation::VerticalAlign::Top,
 					  .boxWidth = body.width});
