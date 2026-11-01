@@ -633,6 +633,7 @@ while (running) {
   - [ ] Unit tests
 - [ ] Bake and shader
   - [ ] `GroundTileBank`: wrapped, supersampled, per-mip render into the texture arrays
+  - [x] Bake speed: one generator run a variant, variants on the pool, disk cache
   - [ ] Per-chunk macro texture
   - [ ] `land.glsl` hex sampler, ChunkRenderer bindings and tunables
   - [ ] Delete the atlas path

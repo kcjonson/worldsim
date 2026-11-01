@@ -1,14 +1,18 @@
 // The ground tile baker end to end on a small def: the mip chain's shape, the registry's wrap across the tile edge, a setLod path
-// leaving the coarse mips, and tiled renders matching one big one. Needs a GL 3.3 context; skips on a
-// headless box, like the other GL tests. The filters have their own tests (GroundTileFilter.test.cpp).
+// leaving the coarse mips, tiled renders matching one big one, a bake on the pool matching one in turn,
+// and the disk cache giving a bake back until the script changes. Needs a GL 3.3 context; skips on a
+// headless box, like the other GL tests. The filters and the cache file have their own tests
+// (GroundTileFilter.test.cpp, GroundTileCache.test.cpp).
 
 #include "world/rendering/GroundTileBaker.h"
 
 #include "BaseShader.h"
+#include "world/rendering/GroundTileCache.h"
 
 #include <assets/AssetRegistry.h>
 #include <backend/gl/GLBackend.h>
 #include <primitives/Primitives.h>
+#include <threading/TaskPool.h>
 
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
@@ -191,8 +195,13 @@ TEST(GroundTileBakerTest, TiledRenderMatchesOneTarget) {
 	const TempDir t;
 	loadTestDef(t);
 
-	const std::optional<GroundVariantBake> whole = GroundTileBaker({}).bakeVariant("Ground_BakeTest", 1);
-	const std::optional<GroundVariantBake> tiled = GroundTileBaker({.maxRenderSize = 48}).bakeVariant("Ground_BakeTest", 1);
+	const GroundTileBaker							baker({});
+	std::optional<GroundTileBake>					bake = baker.begin("Ground_BakeTest");
+	ASSERT_TRUE(bake.has_value());
+	const std::optional<std::vector<GroundVariantPaths>> paths = baker.buildPaths(*bake);
+	ASSERT_TRUE(paths.has_value());
+	const std::optional<GroundVariantBake> whole = baker.bakeVariant(*bake, (*paths)[1]);
+	const std::optional<GroundVariantBake> tiled = GroundTileBaker({.maxRenderSize = 48}).bakeVariant(*bake, (*paths)[1]);
 	ASSERT_TRUE(whole.has_value());
 	ASSERT_TRUE(tiled.has_value());
 	ASSERT_EQ(whole->mips.size(), tiled->mips.size());
@@ -205,4 +214,71 @@ TEST(GroundTileBakerTest, TiledRenderMatchesOneTarget) {
 		EXPECT_LE(worst, 1) << "mip " << k << " (a 256 px render in 48 px tiles, the last ones partial)";
 	}
 	assets::AssetRegistry::Get().clearDefinitions();
+}
+
+TEST(GroundTileBakerTest, ParallelBakeMatchesSerialAndTheCacheGivesItBack) {
+	GlFixture gl;
+	if (!gl.ok) {
+		GTEST_SKIP() << "No GL context (headless CI)";
+	}
+	// Four variants that differ: each seed scatters its own squares, some across the edge.
+	const TempDir t;
+	t.write(
+		"Tile/Tile.xml",
+		"<?xml version=\"1.0\"?><AssetDefinitions><AssetDef><defName>Ground_BakeTest</defName><role>ground</role>"
+		"<assetType>procedural</assetType><generator><scriptPath>gen.lua</scriptPath></generator>"
+		"<surface>Snow</surface><period>1</period><pixelsPerMeter>32</pixelsPerMeter><variantCount>4</variantCount>"
+		"</AssetDef></AssetDefinitions>"
+	);
+	const std::string script = std::string(kScript) +
+							   "for i = 1, 40 do\n"
+							   "    local x, y = math.random(), math.random()\n"
+							   "    local s = rect(x, y, x + 0.1, y + 0.1, math.random(), math.random(), math.random())\n"
+							   "    s:setLod(math.random(0, 40))\n"
+							   "    asset:addPath(s)\n"
+							   "end\n";
+	t.write("Tile/gen.lua", script);
+	auto& registry = assets::AssetRegistry::Get();
+	registry.clearDefinitions();
+	registry.loadDefinitionsFromFolder(t.root.string());
+
+	const std::optional<GroundTileBake> serial = GroundTileBaker({}).bakeDef("Ground_BakeTest");
+	foundation::TaskPool				pool(4);
+	const GroundTileCache				cache(t.root / "cache");
+	const GroundTileBaker				cached({.pool = &pool, .cache = &cache});
+	const std::optional<GroundTileBake> parallel = cached.bakeDef("Ground_BakeTest");
+	ASSERT_TRUE(serial.has_value());
+	ASSERT_TRUE(parallel.has_value());
+	EXPECT_FALSE(parallel->fromCache);
+	ASSERT_EQ(serial->variants.size(), 4U);
+	ASSERT_EQ(parallel->variants.size(), 4U);
+	EXPECT_NE(serial->variants[0].mips[0].rgba, serial->variants[1].mips[0].rgba) << "the variants must differ for the match to mean anything";
+
+	const auto expectSameMips = [](const GroundTileBake& a, const GroundTileBake& b, const char* what) {
+		for (size_t v = 0; v < a.variants.size(); ++v) {
+			ASSERT_EQ(a.variants[v].mips.size(), b.variants[v].mips.size()) << what;
+			for (size_t k = 0; k < a.variants[v].mips.size(); ++k) {
+				EXPECT_EQ(a.variants[v].mips[k].rgba, b.variants[v].mips[k].rgba) << what << ", variant " << v << " mip " << k;
+			}
+		}
+	};
+	expectSameMips(*serial, *parallel, "parallel against serial");
+
+	const std::optional<GroundTileBake> again = cached.bakeDef("Ground_BakeTest");
+	ASSERT_TRUE(again.has_value());
+	EXPECT_TRUE(again->fromCache);
+	expectSameMips(*parallel, *again, "the cache against the bake it stored");
+	for (size_t k = 0; k < parallel->metrics.size(); ++k) {
+		EXPECT_EQ(parallel->metrics[k].contrastRatioMin, again->metrics[k].contrastRatioMin) << "the metrics come back too, mip " << k;
+		EXPECT_EQ(parallel->metrics[k].vertexCount, again->metrics[k].vertexCount);
+	}
+
+	t.write("Tile/gen.lua", script + "-- an edit\n");
+	const std::optional<GroundTileBake> edited = cached.bakeDef("Ground_BakeTest");
+	ASSERT_TRUE(edited.has_value());
+	EXPECT_FALSE(edited->fromCache) << "editing the script bakes again";
+	const std::optional<GroundTileBake> afterEdit = cached.bakeDef("Ground_BakeTest");
+	ASSERT_TRUE(afterEdit.has_value());
+	EXPECT_TRUE(afterEdit->fromCache) << "and stores the new bake";
+	registry.clearDefinitions();
 }

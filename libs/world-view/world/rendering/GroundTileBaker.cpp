@@ -1,10 +1,13 @@
 #include "world/rendering/GroundTileBaker.h"
 
+#include "world/rendering/GroundTileCache.h"
+
 #include <assets/AssetDefinition.h>
 #include <assets/AssetRegistry.h>
 #include <graphics/Color.h>
 #include <primitives/Primitives.h>
 #include <resources/RenderTarget.h>
+#include <threading/TaskPool.h>
 #include <utils/Log.h>
 #include <vector/Types.h>
 
@@ -62,7 +65,7 @@ namespace worldview {
 		};
 
 		// The level's triangles in render pixels, unshared (3 vertices each) and in paint order, the ones
-		// that miss the target dropped. buildMeshes has already put every path that crosses the tile edge
+		// that miss the target dropped. buildPaths has already put every path that crosses the tile edge
 		// back in at the opposite one, right after the original, so the target's clip is the whole wrap.
 		struct Triangles {
 			std::vector<Foundation::Vec2>  positions; // 3 a triangle
@@ -237,10 +240,8 @@ namespace worldview {
 		return image;
 	}
 
-	std::optional<GroundVariantBake> GroundTileBaker::bakeVariant(const std::string& defName, uint32_t variant) const {
-		const auto					   start = Clock::now();
-		assets::AssetRegistry&		   registry = assets::AssetRegistry::Get();
-		const assets::AssetDefinition* def = registry.getDefinition(defName);
+	std::optional<GroundTileBake> GroundTileBaker::begin(const std::string& defName) const {
+		const assets::AssetDefinition* def = assets::AssetRegistry::Get().getDefinition(defName);
 		if (def == nullptr || def->role != assets::AssetRole::Ground) {
 			LOG_ERROR(Engine, "GroundTileBaker: '%s' is not a ground def", defName.c_str());
 			return std::nullopt;
@@ -259,34 +260,89 @@ namespace worldview {
 			return std::nullopt;
 		}
 
-		GroundVariantBake bake;
-		bake.variant = variant;
-		bake.seed = variantSeed(defName, variant);
+		std::optional<uint64_t> key;
+		if (args.cache != nullptr) {
+			key = GroundTileCache::keyFor(*def, args.maxRenderSize);
+			std::optional<GroundTileBake> cached = key.has_value() ? args.cache->load(*def, *key) : std::nullopt;
+			if (cached.has_value()) {
+				cached->cacheKey = key;
+				const std::string report = formatReport(*cached);
+				LOG_INFO(Engine, "%s", report.substr(0, report.find('\n')).c_str());
+				return cached;
+			}
+		}
 
-		const int							   levels = mipCount(layer);
+		GroundTileBake bake;
+		bake.defName = defName;
+		bake.periodMeters = def->ground.periodMeters;
+		bake.pixelsPerMeter = def->ground.pixelsPerMeter;
+		bake.layerSize = layer;
+		bake.cacheKey = key;
+		return bake;
+	}
+
+	std::optional<std::vector<GroundVariantPaths>> GroundTileBaker::buildPaths(GroundTileBake& bake) const {
+		const auto					   start = Clock::now();
+		assets::AssetRegistry&		   registry = assets::AssetRegistry::Get();
+		const assets::AssetDefinition* def = registry.getDefinition(bake.defName);
+		if (def == nullptr) {
+			LOG_ERROR(Engine, "GroundTileBaker: '%s' is gone from the registry", bake.defName.c_str());
+			return std::nullopt;
+		}
+		const uint32_t					count = std::max(1U, def->variantCount);
+		const float						density = static_cast<float>(bake.pixelsPerMeter);
+		std::vector<GroundVariantPaths> variants(count);
+		std::vector<uint8_t>			built(count, 0); // not vector<bool>: workers write neighboring entries
+
+		const auto build = [&](size_t first, size_t last) {
+			for (size_t v = first; v < last; ++v) {
+				variants[v].variant = static_cast<uint32_t>(v);
+				variants[v].seed = variantSeed(bake.defName, static_cast<uint32_t>(v));
+				built[v] = registry.buildPaths(bake.defName, variants[v].seed, variants[v].paths, density) ? 1 : 0;
+			}
+		};
+		if (args.pool != nullptr) {
+			args.pool->parallelFor(0, count, 1, build);
+		} else {
+			build(0, count);
+		}
+		bake.pathsMs = msSince(start);
+
+		for (uint32_t v = 0; v < count; ++v) {
+			if (built[v] == 0) {
+				LOG_ERROR(Engine, "GroundTileBaker: '%s' variant %u's generator failed", bake.defName.c_str(), v);
+				return std::nullopt;
+			}
+		}
+		return variants;
+	}
+
+	std::optional<GroundVariantBake> GroundTileBaker::bakeVariant(const GroundTileBake& bake, const GroundVariantPaths& variantPaths) const {
+		const auto		  start = Clock::now();
+		GroundVariantBake out;
+		out.variant = variantPaths.variant;
+		out.seed = variantPaths.seed;
+		out.generateMs = variantPaths.paths.generateMs;
+		out.tessellateMs = variantPaths.paths.tessellateMs;
+
+		const int							   levels = mipCount(bake.layerSize);
 		ground::LinearImage					   mip0;
 		std::vector<renderer::TessellatedMesh> meshes;
 		for (int level = 0; level < levels; ++level) {
-			const int	size = std::max(1, layer >> level);
+			const int	size = std::max(1, bake.layerSize >> level);
 			const int	supersample = supersampleFor(level);
 			const int	renderSize = size * supersample;
-			const float texelsPerMeter = std::ldexp(static_cast<float>(def->ground.pixelsPerMeter), -level);
+			const float texelsPerMeter = std::ldexp(static_cast<float>(bake.pixelsPerMeter), -level);
 
-			auto		 phase = Clock::now();
-			const bool	 drew = registry.buildMeshes(defName, bake.seed, meshes, texelsPerMeter);
-			const double meshMs = msSince(phase);
-			bake.meshMs += meshMs;
-			if (!drew) {
-				if (level == 0) {
-					LOG_ERROR(Engine, "GroundTileBaker: '%s' variant %u drew nothing", defName.c_str(), variant);
-					return std::nullopt;
-				}
-				// Every path is finer than this level; it renders empty and the mean lock fills it from mip 0.
-				meshes.clear();
+			// Drawing nothing past mip 0 is fine: every path is finer than this level, it renders empty, and
+			// the mean lock fills it from mip 0.
+			auto phase = Clock::now();
+			if (!variantPaths.paths.meshesAt(texelsPerMeter, meshes) && level == 0) {
+				LOG_ERROR(Engine, "GroundTileBaker: '%s' variant %u drew nothing", bake.defName.c_str(), out.variant);
+				return std::nullopt;
 			}
 
 			GroundMipSample sample;
-			sample.meshMs = meshMs;
 			sample.renderSize = renderSize;
 			sample.supersample = supersample;
 			sample.meshCount = meshes.size();
@@ -294,9 +350,9 @@ namespace worldview {
 				sample.vertexCount += mesh.vertices.size();
 			}
 
-			phase = Clock::now();
-			const std::vector<uint8_t> pixels = render(meshes, def->ground.periodMeters, renderSize);
-			bake.renderMs += msSince(phase);
+			const std::vector<uint8_t> pixels = render(meshes, bake.periodMeters, renderSize);
+			sample.renderMs = msSince(phase);
+			out.renderMs += sample.renderMs;
 			if (pixels.empty()) {
 				return std::nullopt;
 			}
@@ -312,56 +368,44 @@ namespace worldview {
 				reference = ground::downsample(mip0, size, size, args.pool);
 				sample.lockShift = glm::vec3(ground::lockMean(linear, reference, kMeanLockSigma));
 			}
-			ground::Srgb8Image		  encoded = ground::encodeSrgb8(linear, bake.seed ^ (static_cast<uint32_t>(level) * 0x9E3779B9U));
+			ground::Srgb8Image		  encoded = ground::encodeSrgb8(linear, out.seed ^ (static_cast<uint32_t>(level) * 0x9E3779B9U));
 			const ground::LinearImage decoded = ground::decodeSrgb8(encoded);
 			sample.mean = glm::vec3(ground::mean(decoded));
 			sample.contrast = ground::windowedRmsContrast(decoded);
 			sample.referenceContrast = ground::windowedRmsContrast(reference);
-			bake.mips.push_back({.size = size, .rgba = std::move(encoded.rgba)});
-			bake.samples.push_back(sample);
-			bake.filterMs += msSince(phase);
+			out.mips.push_back({.size = size, .rgba = std::move(encoded.rgba)});
+			out.samples.push_back(sample);
+			out.filterMs += msSince(phase);
 		}
 
-		const auto thinnest = std::min_element(bake.samples.begin(), bake.samples.end(), [](const auto& a, const auto& b) {
+		const auto thinnest = std::min_element(out.samples.begin(), out.samples.end(), [](const auto& a, const auto& b) {
 			return a.minAlpha < b.minAlpha;
 		});
 		if (thinnest->minAlpha < 1.0F - (0.5F / 255.0F)) {
 			LOG_WARNING(
 				Engine,
 				"GroundTileBaker: '%s' variant %u isn't opaque (alpha down to %.3f at mip %d); a ground tile should cover its period",
-				defName.c_str(),
-				variant,
+				bake.defName.c_str(),
+				out.variant,
 				static_cast<double>(thinnest->minAlpha),
-				static_cast<int>(thinnest - bake.samples.begin())
+				static_cast<int>(thinnest - out.samples.begin())
 			);
 		}
-		bake.totalMs = msSince(start);
-		return bake;
+		out.totalMs = msSince(start);
+		return out;
 	}
 
-	std::optional<GroundTileBake> GroundTileBaker::bakeDef(const std::string& defName) const {
-		const auto					   start = Clock::now();
-		const assets::AssetDefinition* def = assets::AssetRegistry::Get().getDefinition(defName);
-		if (def == nullptr || def->role != assets::AssetRole::Ground) {
-			LOG_ERROR(Engine, "GroundTileBaker: '%s' is not a ground def", defName.c_str());
-			return std::nullopt;
-		}
-
-		GroundTileBake bake;
-		bake.defName = defName;
-		bake.periodMeters = def->ground.periodMeters;
-		bake.pixelsPerMeter = def->ground.pixelsPerMeter;
-		bake.layerSize = layerSize(*def);
-		const uint32_t variantCount = std::max(1U, def->variantCount);
-		for (uint32_t variant = 0; variant < variantCount; ++variant) {
-			std::optional<GroundVariantBake> baked = bakeVariant(defName, variant);
-			if (!baked.has_value()) {
-				return std::nullopt;
-			}
-			bake.variants.push_back(std::move(*baked));
-		}
+	void GroundTileBaker::finish(GroundTileBake& bake) const {
 		bake.metrics = measure(bake.variants);
-		bake.totalMs = msSince(start);
+		bake.totalMs = bake.pathsMs;
+		for (const GroundVariantBake& v : bake.variants) {
+			bake.totalMs += v.totalMs;
+		}
+		if (args.cache != nullptr && bake.cacheKey.has_value()) {
+			const auto start = Clock::now();
+			args.cache->store(bake, *bake.cacheKey);
+			bake.totalMs += msSince(start);
+		}
 
 		// A line a log call: the logger truncates long messages.
 		const std::string report = formatReport(bake);
@@ -375,8 +419,28 @@ namespace worldview {
 			failures += m.failures();
 		}
 		if (failures > 0) {
-			LOG_WARNING(Engine, "GroundTileBaker: '%s' fails %d acceptance checks (flagged in the report)", defName.c_str(), failures);
+			LOG_WARNING(Engine, "GroundTileBaker: '%s' fails %d acceptance checks (flagged in the report)", bake.defName.c_str(), failures);
 		}
+	}
+
+	std::optional<GroundTileBake> GroundTileBaker::bakeDef(const std::string& defName) const {
+		std::optional<GroundTileBake> bake = begin(defName);
+		if (!bake.has_value() || bake->fromCache) {
+			return bake;
+		}
+		std::optional<std::vector<GroundVariantPaths>> paths = buildPaths(*bake);
+		if (!paths.has_value()) {
+			return std::nullopt;
+		}
+		for (GroundVariantPaths& variantPaths : *paths) {
+			std::optional<GroundVariantBake> baked = bakeVariant(*bake, variantPaths);
+			if (!baked.has_value()) {
+				return std::nullopt;
+			}
+			bake->variants.push_back(std::move(*baked));
+			variantPaths.paths = {}; // drawn; let the memory go before the next one renders
+		}
+		finish(*bake);
 		return bake;
 	}
 
@@ -403,7 +467,7 @@ namespace worldview {
 				const GroundMipSample& s0 = v.samples[0];
 				m.vertexCount = std::max(m.vertexCount, s.vertexCount);
 				m.meshCount = std::max(m.meshCount, s.meshCount);
-				m.meshMs += s.meshMs / static_cast<double>(variants.size());
+				m.renderMs += s.renderMs / static_cast<double>(variants.size());
 				for (int c = 0; c < 3; ++c) {
 					const float base = std::max(s0.mean[c], 1e-6F);
 					m.meanErrorPercent = std::max(m.meanErrorPercent, 100.0F * std::abs(s.mean[c] - s0.mean[c]) / base);
@@ -429,33 +493,41 @@ namespace worldview {
 
 	std::string GroundTileBaker::formatReport(const GroundTileBake& bake) {
 		std::string out;
-		double		meshMs = 0.0;
-		double		renderMs = 0.0;
-		double		filterMs = 0.0;
-		double		variantMs = 0.0;
-		for (const GroundVariantBake& v : bake.variants) {
-			meshMs += v.meshMs;
-			renderMs += v.renderMs;
-			filterMs += v.filterMs;
-			variantMs += v.totalMs;
-		}
-		const double n = std::max<double>(1.0, static_cast<double>(bake.variants.size()));
 		appendf(
 			out,
-			"Ground bake %s: %zu variants of %.3g m at %u px/m (%d texel layers), %.0f ms, %.0f ms a variant (mesh %.0f, render %.0f, "
-			"filter %.0f)\n",
+			"Ground bake %s: %zu variants of %.3g m at %u px/m (%d texel layers), %.0f ms",
 			bake.defName.c_str(),
 			bake.variants.size(),
 			static_cast<double>(bake.periodMeters),
 			bake.pixelsPerMeter,
 			bake.layerSize,
-			bake.totalMs,
-			variantMs / n,
-			meshMs / n,
-			renderMs / n,
-			filterMs / n
+			bake.totalMs
 		);
-		appendf(out, "mip  size  render       verts  meshes  mesh ms  mean%%  dE0   dEprev  spread  contrast   lock%%\n");
+		if (bake.fromCache) {
+			out += " from the cache\n";
+		} else {
+			double generateMs = 0.0;
+			double tessellateMs = 0.0;
+			double renderMs = 0.0;
+			double filterMs = 0.0;
+			for (const GroundVariantBake& v : bake.variants) {
+				generateMs += v.generateMs;
+				tessellateMs += v.tessellateMs;
+				renderMs += v.renderMs;
+				filterMs += v.filterMs;
+			}
+			const double n = std::max<double>(1.0, static_cast<double>(bake.variants.size()));
+			appendf(
+				out,
+				": paths %.0f ms on the pool (generate %.0f, tessellate %.0f a variant), then render %.0f, filter %.0f a variant\n",
+				bake.pathsMs,
+				generateMs / n,
+				tessellateMs / n,
+				renderMs / n,
+				filterMs / n
+			);
+		}
+		appendf(out, "mip  size  render       verts  meshes   rnd ms  mean%%  dE0   dEprev  spread  contrast   lock%%\n");
 		for (const GroundMipMetrics& m : bake.metrics) {
 			appendf(
 				out,
@@ -466,7 +538,7 @@ namespace worldview {
 				m.supersample,
 				m.vertexCount,
 				m.meshCount,
-				m.meshMs,
+				m.renderMs,
 				static_cast<double>(m.meanErrorPercent),
 				static_cast<double>(m.deltaEToMip0),
 				static_cast<double>(m.deltaEToPrevious),

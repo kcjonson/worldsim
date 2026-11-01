@@ -6,8 +6,8 @@
 #include <ui/components/Button.h>
 #include <ui/shapes/Text.h>
 #include <ui/theme/Tokens.h>
-#include <utils/Log.h>
 #include <world/rendering/GroundTileBaker.h>
+#include <world/rendering/GroundTileCache.h>
 #include <world/rendering/GroundTileFilter.h>
 
 #include <algorithm>
@@ -37,10 +37,15 @@ namespace asset_manager {
 			return bakes;
 		}
 
-		// The filters' rows run here; the asset-manager has no other pool.
+		// The variants' paths and the filters' rows run here; the asset-manager has no other pool.
 		foundation::TaskPool& pool() {
 			static foundation::TaskPool workers;
 			return workers;
+		}
+
+		const worldview::GroundTileCache& diskCache() {
+			static const worldview::GroundTileCache bakes(worldview::GroundTileCache::defaultDirectory());
+			return bakes;
 		}
 
 		std::vector<ground::LinearImage> decodeChain(const worldview::GroundVariantBake& variant) {
@@ -114,57 +119,76 @@ namespace asset_manager {
 		variantCount = std::max(1U, def->variantCount);
 		if (const auto cached = cache().find(defName); cached != cache().end()) {
 			bake = cached->second;
-			showVariant();
-			showZoomStrip();
-			showReport();
+			showBake();
 			return;
 		}
-		bake = std::make_shared<worldview::GroundTileBake>();
-		bake->defName = defName;
-		bake->periodMeters = def->ground.periodMeters;
-		bake->pixelsPerMeter = def->ground.pixelsPerMeter;
-		bake->layerSize = worldview::GroundTileBaker::layerSize(*def);
+		std::optional<worldview::GroundTileBake> begun = baker().begin(defName);
+		if (!begun.has_value()) {
+			status.get()->setText("Bake failed; the log says why");
+			return;
+		}
+		bake = std::make_shared<worldview::GroundTileBake>(std::move(*begun));
+		if (bake->fromCache) {
+			cache()[defName] = bake;
+			showBake();
+			return;
+		}
 		baking = true;
-		status.get()->setText(format("Baking variant 1 of %u...", variantCount));
+		status.get()->setText(format("Generating %u variants...", variantCount));
 		requestUpdate();
 	}
 
-	// One variant a frame, so the window keeps drawing between them.
+	worldview::GroundTileBaker GroundBakeView::baker() const {
+		return worldview::GroundTileBaker({.restoreCoordinateSystem = coordinateSystem, .pool = &pool(), .cache = &diskCache()});
+	}
+
+	// Every variant's paths in one frame, then one variant's render a frame, so the window keeps drawing
+	// between them.
 	void GroundBakeView::update(float /*dt*/) {
 		if (!baking) {
 			return;
 		}
-		const worldview::GroundTileBaker			baker({.restoreCoordinateSystem = coordinateSystem, .pool = &pool()});
-		const auto									next = static_cast<uint32_t>(bake->variants.size());
-		std::optional<worldview::GroundVariantBake> variant = baker.bakeVariant(defName, next);
+		const worldview::GroundTileBaker groundBaker = baker();
+		if (paths.empty()) {
+			std::optional<std::vector<worldview::GroundVariantPaths>> built = groundBaker.buildPaths(*bake);
+			if (!built.has_value()) {
+				baking = false;
+				status.get()->setText("Bake failed generating the variants; the log says why");
+				return;
+			}
+			paths = std::move(*built);
+			status.get()->setText(format("Baking variant 1 of %u...", variantCount));
+			requestUpdate();
+			return;
+		}
+
+		const size_t								next = bake->variants.size();
+		std::optional<worldview::GroundVariantBake> variant = groundBaker.bakeVariant(*bake, paths[next]);
 		if (!variant.has_value()) {
 			baking = false;
-			status.get()->setText(format("Bake failed at variant %u; the log says why", next));
+			paths.clear();
+			status.get()->setText(format("Bake failed at variant %zu; the log says why", next));
 			return;
 		}
 		bake->variants.push_back(std::move(*variant));
+		paths[next].paths = {};
 		if (bake->variants.size() == 1) {
 			showVariant();
 		}
-		if (bake->variants.size() < variantCount) {
+		if (bake->variants.size() < paths.size()) {
 			status.get()->setText(format("Baking variant %zu of %u...", bake->variants.size() + 1, variantCount));
 			requestUpdate();
 			return;
 		}
 
 		baking = false;
-		bake->metrics = worldview::GroundTileBaker::measure(bake->variants);
-		bake->totalMs = 0.0;
-		for (const worldview::GroundVariantBake& v : bake->variants) {
-			bake->totalMs += v.totalMs;
-		}
+		paths.clear();
+		groundBaker.finish(*bake);
 		cache()[defName] = bake;
-		const std::string text = worldview::GroundTileBaker::formatReport(*bake);
-		for (size_t begin = 0; begin < text.size();) {
-			const size_t end = std::min(text.find('\n', begin), text.size());
-			LOG_INFO(Engine, "%s", text.substr(begin, end - begin).c_str());
-			begin = end + 1;
-		}
+		showBake();
+	}
+
+	void GroundBakeView::showBake() {
 		showVariant();
 		showZoomStrip();
 		showReport();
