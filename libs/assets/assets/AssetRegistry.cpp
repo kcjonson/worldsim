@@ -10,6 +10,7 @@
 #include <vector/MeshBounds.h>
 #include <vector/SVGLoader.h>
 #include <vector/Tessellator.h>
+#include <world/chunk/Chunk.h>
 
 #include <pugixml.hpp>
 
@@ -206,6 +207,9 @@ namespace assets {
 			if (s == "groundcover" || s == "Groundcover") {
 				return AssetRole::Groundcover;
 			}
+			if (s == "ground" || s == "Ground") {
+				return AssetRole::Ground;
+			}
 			return AssetRole::WorldObject;
 		}
 
@@ -345,6 +349,92 @@ namespace assets {
 			} catch (...) {
 				return false;
 			}
+			return true;
+		}
+
+		/// Parse an "x,y,z" triple into a glm::vec3. Returns false on malformed input.
+		bool parseVec3(const std::string& str, glm::vec3& out) {
+			const auto first  = str.find(',');
+			const auto second = first == std::string::npos ? std::string::npos : str.find(',', first + 1);
+			if (second == std::string::npos) {
+				return false;
+			}
+			try {
+				out = {std::stof(str.substr(0, first)), std::stof(str.substr(first + 1, second - first - 1)), std::stof(str.substr(second + 1))};
+			} catch (...) {
+				return false;
+			}
+			return true;
+		}
+
+		constexpr uint32_t kGroundDefaultVariantCount = 8;
+
+		/// Read a ground def's elements into def.ground. Missing or malformed ones keep their
+		/// defaults (the validator reports them as issues; here they only log).
+		void parseGroundParams(const pugi::xml_node& defNode, AssetDefinition& def) {
+			GroundParams& ground = def.ground;
+
+			const std::string surfaceName = defNode.child_value("surface");
+			ground.surface				  = world::surfaceFromString(surfaceName);
+			if (!ground.surface.has_value()) {
+				LOG_WARNING(Engine, "Ground AssetDef '%s' has no valid <surface> ('%s')", def.defName.c_str(), surfaceName.c_str());
+			}
+
+			ground.periodMeters	  = defNode.child("period").text().as_float(ground.periodMeters);
+			ground.pixelsPerMeter = defNode.child("pixelsPerMeter").text().as_uint(ground.pixelsPerMeter);
+
+			const std::string rotate = defNode.child_value("rotate");
+			if (rotate == "free" || rotate == "Free") {
+				ground.rotate = GroundRotate::Free;
+			} else if (rotate == "quarter" || rotate == "Quarter") {
+				ground.rotate = GroundRotate::Quarter;
+			} else if (rotate == "none" || rotate == "None") {
+				ground.rotate = GroundRotate::None;
+			} else if (!rotate.empty()) {
+				LOG_WARNING(Engine, "Ground AssetDef '%s' has unknown <rotate> '%s'; using free", def.defName.c_str(), rotate.c_str());
+			}
+
+			const pugi::xml_node macroNode = defNode.child("macro");
+			if (!macroNode) {
+				return;
+			}
+			GroundMacro& macro = ground.macro;
+			macro.amplitude	   = macroNode.child("amplitude").text().as_float(macro.amplitude);
+
+			const auto warnMalformed = [&def](const char* field, const std::string& value) {
+				LOG_WARNING(Engine, "Ground AssetDef '%s' has malformed <macro><%s> '%s'; keeping the default", def.defName.c_str(), field, value.c_str());
+			};
+			const std::string dry	  = macroNode.child_value("dry");
+			const std::string lush	  = macroNode.child_value("lush");
+			const std::string lengths = macroNode.child_value("wavelengths");
+			if (!dry.empty() && !parseVec3(dry, macro.dry)) {
+				warnMalformed("dry", dry);
+			}
+			if (!lush.empty() && !parseVec3(lush, macro.lush)) {
+				warnMalformed("lush", lush);
+			}
+			if (!lengths.empty() && !parseVec2(lengths, macro.wavelengthsMeters)) {
+				warnMalformed("wavelengths", lengths);
+			}
+		}
+
+		/// One mesh holds at most this many vertices: its indices are 16-bit.
+		constexpr size_t kMaxMeshVertices = std::numeric_limits<uint16_t>::max();
+
+		/// The one mesh in `meshes`, for callers that can only draw one. Logs and returns false when
+		/// the asset needed several.
+		bool takeSingleMesh(const std::string& defName, std::vector<renderer::TessellatedMesh>& meshes, renderer::TessellatedMesh& out) {
+			if (meshes.size() != 1) {
+				LOG_ERROR(
+					Engine,
+					"%s needs %zu meshes (a mesh holds at most %zu vertices); only buildMeshes can return it",
+					defName.c_str(),
+					meshes.size(),
+					kMaxMeshVertices
+				);
+				return false;
+			}
+			out = std::move(meshes.front());
 			return true;
 		}
 
@@ -771,7 +861,11 @@ namespace assets {
 			}
 
 			// Variant count
-			def.variantCount = static_cast<uint32_t>(defNode.child("variantCount").text().as_uint(1));
+			const bool isGround = def.role == AssetRole::Ground;
+			def.variantCount = static_cast<uint32_t>(defNode.child("variantCount").text().as_uint(isGround ? kGroundDefaultVariantCount : 1));
+			if (isGround) {
+				parseGroundParams(defNode, def);
+			}
 
 			// Item category (for storage matching and UI grouping)
 			std::string categoryStr = defNode.child_value("category");
@@ -1023,14 +1117,15 @@ namespace assets {
 		// footprint via asset:setCollisionRect, which only surfaces when the script
 		// runs. Run each such script once now (generateAsset does NOT tessellate, so
 		// this is cheap) so nav/collision see the rect at load instead of racing the
-		// first lazy render. XML <collision> always wins; skip capture when set.
+		// first lazy render. XML <collision> always wins; skip capture when set. Ground tiles
+		// never collide, and their generators are the heaviest scripts, so they are skipped too.
 		for (const std::string& name : loadedNames) {
 			auto it = definitions.find(name);
 			if (it == definitions.end()) {
 				continue;
 			}
 			AssetDefinition& def = it->second;
-			if (def.collision.blocks() || def.assetType != AssetType::Procedural) {
+			if (def.collision.blocks() || def.assetType != AssetType::Procedural || def.role == AssetRole::Ground) {
 				continue;
 			}
 			GeneratedAsset tmp;
@@ -1267,8 +1362,12 @@ namespace assets {
 				return nullptr;
 			}
 
-			if (!tessellateAsset(asset, mesh)) {
+			std::vector<renderer::TessellatedMesh> meshes;
+			if (!tessellateAsset(asset, kFullDetail, meshes)) {
 				LOG_ERROR(Engine, "Failed to tessellate asset: %s", defName.c_str());
+				return nullptr;
+			}
+			if (!takeSingleMesh(defName, meshes, mesh)) {
 				return nullptr;
 			}
 		}
@@ -1481,13 +1580,13 @@ namespace assets {
 		return generator->generate(ctx, def->params, outAsset);
 	}
 
-	bool AssetRegistry::tessellateAsset(const GeneratedAsset& asset, renderer::TessellatedMesh& outMesh) {
-		outMesh.clear();
+	bool AssetRegistry::tessellateAsset(const GeneratedAsset& asset, float pixelsPerMeter, std::vector<renderer::TessellatedMesh>& outMeshes) {
+		outMeshes.clear();
 
 		renderer::Tessellator tessellator;
 
 		for (const auto& path : asset.paths) {
-			if (path.vertices.size() < 3) {
+			if (path.vertices.size() < 3 || path.minPixelsPerMeter > pixelsPerMeter) {
 				continue;
 			}
 
@@ -1500,38 +1599,50 @@ namespace assets {
 				LOG_WARNING(Engine, "Failed to tessellate path with %zu vertices", path.vertices.size());
 				continue;
 			}
+			if (pathMesh.vertices.size() > kMaxMeshVertices) {
+				LOG_WARNING(Engine, "Path tessellates to %zu vertices, more than one mesh can index; dropping it", pathMesh.vertices.size());
+				continue;
+			}
+
+			// Start the next mesh when this path would push the current one past the 16-bit index range
+			if (outMeshes.empty() || outMeshes.back().vertices.size() + pathMesh.vertices.size() > kMaxMeshVertices) {
+				outMeshes.emplace_back();
+			}
+			renderer::TessellatedMesh& outMesh = outMeshes.back();
 
 			// Append to output mesh (with index offset)
-			uint16_t baseIndex = static_cast<uint16_t>(outMesh.vertices.size());
+			const auto baseIndex = static_cast<uint16_t>(outMesh.vertices.size());
 			for (const auto& v : pathMesh.vertices) {
 				outMesh.vertices.push_back(v);
 				outMesh.colors.push_back(path.fillColor); // Preserve path color per-vertex
 			}
 			for (const auto& idx : pathMesh.indices) {
-				outMesh.indices.push_back(baseIndex + idx);
+				outMesh.indices.push_back(static_cast<uint16_t>(baseIndex + idx));
 			}
 		}
 
-		return !outMesh.vertices.empty();
+		return !outMeshes.empty();
 	}
 
-	bool AssetRegistry::buildMesh(const std::string& defName, uint32_t seed, renderer::TessellatedMesh& outMesh) {
-		outMesh.clear();
+	bool AssetRegistry::buildMeshes(
+		const std::string& defName, uint32_t seed, std::vector<renderer::TessellatedMesh>& outMeshes, float pixelsPerMeter
+	) {
+		outMeshes.clear();
 
 		const AssetDefinition* def = getDefinition(defName);
 		if (def == nullptr) {
-			LOG_ERROR(Engine, "buildMesh: definition not found: %s", defName.c_str());
+			LOG_ERROR(Engine, "buildMeshes: definition not found: %s", defName.c_str());
 			return false;
 		}
 
 		// Simple assets are a single drawing; reuse the cached, normalized template.
 		if (def->assetType == AssetType::Simple) {
 			const renderer::TessellatedMesh* tmpl = getTemplate(defName);
-			if (tmpl == nullptr) {
+			if (tmpl == nullptr || tmpl->vertices.empty()) {
 				return false;
 			}
-			outMesh = *tmpl;
-			return !outMesh.vertices.empty();
+			outMeshes.push_back(*tmpl);
+			return true;
 		}
 
 		// Procedural assets: generate this seed's form fresh (uncached) and tessellate.
@@ -1539,7 +1650,17 @@ namespace assets {
 		if (!generateAsset(defName, seed, asset)) {
 			return false;
 		}
-		return tessellateAsset(asset, outMesh);
+		return tessellateAsset(asset, pixelsPerMeter, outMeshes);
+	}
+
+	bool AssetRegistry::buildMesh(const std::string& defName, uint32_t seed, renderer::TessellatedMesh& outMesh) {
+		outMesh.clear();
+
+		std::vector<renderer::TessellatedMesh> meshes;
+		if (!buildMeshes(defName, seed, meshes)) {
+			return false;
+		}
+		return takeSingleMesh(defName, meshes, outMesh);
 	}
 
 	void AssetRegistry::clear() {

@@ -5,15 +5,68 @@
 
 #include <graphics/Color.h>
 #include <math/Types.h>
+#include <random/HashNoise.h>
 #include <utils/Log.h>
 
 #define SOL_ALL_SAFETIES_ON 1
 #include <sol/sol.hpp>
 
+#include <cmath>
+#include <cstdint>
 #include <fstream>
+#include <limits>
 #include <sstream>
+#include <stdexcept>
 
 namespace assets {
+
+	namespace {
+
+		// foundation::gradientNoise2 with its lattice wrapped every `period` cells on both axes, so
+		// the field repeats exactly every `period` units of x and y. In cells 0 to period - 2, where
+		// no corner index changes, it equals gradientNoise2 bit for bit (same hash, gradients, fade).
+		float periodicGradientNoise2(float x, float y, int32_t period, uint32_t seed) {
+			int32_t ix = static_cast<int32_t>(x);
+			if (static_cast<float>(ix) > x) {
+				--ix;
+			}
+			int32_t iy = static_cast<int32_t>(y);
+			if (static_cast<float>(iy) > y) {
+				--iy;
+			}
+
+			const float fx = x - static_cast<float>(ix);
+			const float fy = y - static_cast<float>(iy);
+			const float ux = foundation::detail::quintic(fx);
+			const float uy = foundation::detail::quintic(fy);
+
+			const auto wrap = [period](int32_t i) { return ((i % period) + period) % period; };
+			const int32_t x0 = wrap(ix);
+			const int32_t x1 = wrap(ix + 1);
+			const int32_t y0 = wrap(iy);
+			const int32_t y1 = wrap(iy + 1);
+
+			const auto corner = [seed](int32_t cx, int32_t cy, float dx, float dy) {
+				float gx{}, gy{}, gz{};
+				foundation::detail::gradient(foundation::hash3(cx, cy, 0, seed), gx, gy, gz);
+				return gx * dx + gy * dy;
+			};
+			const float g00 = corner(x0, y0, fx, fy);
+			const float g10 = corner(x1, y0, fx - 1.0F, fy);
+			const float g01 = corner(x0, y1, fx, fy - 1.0F);
+			const float g11 = corner(x1, y1, fx - 1.0F, fy - 1.0F);
+
+			const float top	   = foundation::detail::lerp(g00, g10, ux);
+			const float bottom = foundation::detail::lerp(g01, g11, ux);
+			return foundation::detail::lerp(top, bottom, uy);
+		}
+
+		// Lua numbers reach us as doubles; a seed is whatever integer they hold, wrapped to 32 bits.
+		uint32_t toSeed(double seed) {
+			return static_cast<uint32_t>(static_cast<int64_t>(seed));
+		}
+
+	} // namespace
 
 	LuaEngine::LuaEngine() = default;
 	LuaEngine::~LuaEngine() = default;
@@ -127,6 +180,9 @@ namespace assets {
 			[](GeneratedPath& path, float x, float y) { path.vertices.push_back(Vec2{x, y}); },
 			"setColor",
 			[](GeneratedPath& path, float r, float g, float b, float a) { path.fillColor = Color(r, g, b, a); },
+			// Draw this path only where the screen shows at least n pixels per meter (ground tiles)
+			"setLod",
+			[](GeneratedPath& path, float minPixelsPerMeter) { path.minPixelsPerMeter = minPixelsPerMeter; },
 			"close",
 			[](GeneratedPath& path) { path.isClosed = true; },
 			"clear",
@@ -180,6 +236,23 @@ namespace assets {
 			float t = (x - edge0) / (edge1 - edge0);
 			t = t < 0.0F ? 0.0F : (t > 1.0F ? 1.0F : t);
 			return t * t * (3.0F - 2.0F * t);
+		};
+
+		// Seeded gradient noise, about -1 to 1, zero at integer lattice points. Same inputs, same
+		// value on every platform. Scale x and y by 1/featureSize to pick the feature size.
+		lua["noise2"] = [](float x, float y, double seed) {
+			return foundation::gradientNoise2(x, y, toSeed(seed));
+		};
+		// noise2 whose lattice repeats every `period` cells (a whole number >= 1), so
+		// periodicNoise2(x + period, y, period, seed) == periodicNoise2(x, y, period, seed), and the
+		// same along y. Scale x and y into lattice cells first; a ground tile of P meters with
+		// features of F meters calls it as periodicNoise2(x / F, y / F, P / F, seed). The period
+		// arrives as a double because P / F is a float in Lua even when it divides evenly.
+		lua["periodicNoise2"] = [](float x, float y, double period, double seed) {
+			if (period < 1.0 || period != std::floor(period) || period > static_cast<double>(std::numeric_limits<int32_t>::max())) {
+				throw std::invalid_argument("periodicNoise2: period must be a whole number >= 1");
+			}
+			return periodicGradientNoise2(x, y, static_cast<int32_t>(period), toSeed(seed));
 		};
 
 		// Factory function for creating paths - enables Path() syntax instead of Path.new()

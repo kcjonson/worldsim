@@ -158,6 +158,111 @@ TEST(AssetValidatorTest, OrphanSvgIsWarning) {
 	EXPECT_TRUE(hasMessageContaining(r, Severity::Warning, "orphan"));
 }
 
+namespace {
+
+	// Write assets/<folder>/<folder>.xml as a ground def (defName Ground_<folder>) plus its tile SVG.
+	void addGround(TempAssets& t, const std::string& folder, const std::string& extra) {
+		t.writeXml(folder, oneDef("<defName>Ground_" + folder + "</defName><role>ground</role><assetType>simple</assetType><svgPath>tile.svg</svgPath>" + extra));
+		t.writeFile(folder + "/tile.svg", "<svg/>");
+	}
+
+	ValidationReport validateGround(const std::string& extra) {
+		TempAssets t;
+		addGround(t, "Grass", extra);
+		return AssetValidator::validate(t.root, "");
+	}
+
+} // namespace
+
+TEST(AssetValidatorTest, GroundDefWithDefaultsIsClean) {
+	const ValidationReport r = validateGround("<surface>Grass</surface>");
+	EXPECT_FALSE(hasIssue(r, Severity::Error, "surface"));
+	EXPECT_EQ(r.errorCount(), 0);
+	EXPECT_FALSE(hasIssue(r, Severity::Warning, "role")) << "ground is a known role";
+}
+
+TEST(AssetValidatorTest, GroundPeriodMustDivideTheChunk) {
+	EXPECT_EQ(validateGround("<surface>Grass</surface><period>0.5</period>").errorCount(), 0);
+	EXPECT_EQ(validateGround("<surface>Grass</surface><period>512</period><pixelsPerMeter>16</pixelsPerMeter>").errorCount(), 0);
+	EXPECT_TRUE(hasIssue(validateGround("<surface>Grass</surface><period>3</period>"), Severity::Error, "period"));
+	EXPECT_TRUE(hasIssue(validateGround("<surface>Grass</surface><period>1000</period>"), Severity::Error, "period"));
+	EXPECT_TRUE(hasIssue(validateGround("<surface>Grass</surface><period>0</period>"), Severity::Error, "period"));
+	EXPECT_TRUE(hasIssue(validateGround("<surface>Grass</surface><period>-4</period>"), Severity::Error, "period"));
+}
+
+TEST(AssetValidatorTest, GroundPeriodMustFillWholePixels) {
+	// 1/32 m at 16 px/m is half a pixel, so the layer would have no whole size.
+	const ValidationReport r = validateGround("<surface>Grass</surface><period>0.03125</period><pixelsPerMeter>16</pixelsPerMeter>");
+	EXPECT_TRUE(hasMessageContaining(r, Severity::Error, "whole number of pixels"));
+}
+
+TEST(AssetValidatorTest, GroundPixelsPerMeterIsAPowerOfTwoInRange) {
+	for (const char* good : {"16", "64", "128", "512"}) {
+		EXPECT_EQ(validateGround(std::string("<surface>Grass</surface><pixelsPerMeter>") + good + "</pixelsPerMeter>").errorCount(), 0) << good;
+	}
+	for (const char* bad : {"8", "100", "0", "1024", "-64", "abc"}) {
+		EXPECT_TRUE(hasIssue(validateGround(std::string("<surface>Grass</surface><pixelsPerMeter>") + bad + "</pixelsPerMeter>"), Severity::Error, "pixelsPerMeter"))
+			<< bad;
+	}
+}
+
+TEST(AssetValidatorTest, GroundVariantCountIsOneToThirtyTwo) {
+	EXPECT_EQ(validateGround("<surface>Grass</surface><variantCount>1</variantCount>").errorCount(), 0);
+	EXPECT_EQ(validateGround("<surface>Grass</surface><variantCount>32</variantCount>").errorCount(), 0);
+	EXPECT_TRUE(hasIssue(validateGround("<surface>Grass</surface><variantCount>0</variantCount>"), Severity::Error, "variantCount"));
+	EXPECT_TRUE(hasIssue(validateGround("<surface>Grass</surface><variantCount>33</variantCount>"), Severity::Error, "variantCount"));
+}
+
+TEST(AssetValidatorTest, GroundSurfaceMustBeALandSurface) {
+	EXPECT_TRUE(hasIssue(validateGround(""), Severity::Error, "surface"));
+	EXPECT_TRUE(hasIssue(validateGround("<surface>Lava</surface>"), Severity::Error, "surface"));
+	EXPECT_TRUE(hasMessageContaining(validateGround("<surface>Water</surface>"), Severity::Error, "not a land surface"));
+}
+
+TEST(AssetValidatorTest, TwoGroundDefsForOneSurfaceIsError) {
+	TempAssets t;
+	addGround(t, "GrassA", "<surface>Grass</surface>");
+	addGround(t, "GrassB", "<surface>Grass</surface>");
+
+	const ValidationReport r = AssetValidator::validate(t.root, "");
+	EXPECT_TRUE(hasMessageContaining(r, Severity::Error, "already paints this surface"));
+}
+
+TEST(AssetValidatorTest, LandSurfacesWithoutGroundDefsWarnOnceGroundContentExists) {
+	TempAssets t;
+	addGround(t, "Grass", "<surface>Grass</surface>");
+	addGround(t, "Dirt", "<surface>Dirt</surface>");
+
+	const ValidationReport r = AssetValidator::validate(t.root, "");
+	EXPECT_EQ(r.errorCount(), 0);
+	// Ten surfaces, minus Water, minus the two covered.
+	EXPECT_EQ(r.warningCount(), 7);
+	EXPECT_TRUE(hasMessageContaining(r, Severity::Warning, "No ground def paints this land surface"));
+
+	TempAssets none;
+	none.writeXml("Stone", oneDef("<defName>Stone</defName><assetType>simple</assetType><svgPath>stone.svg</svgPath>"));
+	none.writeFile("Stone/stone.svg", "<svg/>");
+	EXPECT_EQ(AssetValidator::validate(none.root, "").warningCount(), 0) << "a library with no ground defs isn't nagged about them";
+}
+
+TEST(AssetValidatorTest, GroundDefWithBiomeRulesIsError) {
+	const ValidationReport r = validateGround("<surface>Grass</surface><placement><biome name=\"TemperateGrassland\"/></placement>");
+	EXPECT_TRUE(hasIssue(r, Severity::Error, "placement"));
+}
+
+TEST(AssetValidatorTest, UnknownGroundRotateIsWarning) {
+	EXPECT_TRUE(hasIssue(validateGround("<surface>Grass</surface><rotate>spin</rotate>"), Severity::Warning, "rotate"));
+	EXPECT_FALSE(hasIssue(validateGround("<surface>Grass</surface><rotate>quarter</rotate>"), Severity::Warning, "rotate"));
+}
+
+TEST(AssetValidatorTest, GroundFieldsOnOtherRolesAreWarnings) {
+	TempAssets t;
+	t.writeXml("Stone", oneDef("<defName>Stone</defName><assetType>simple</assetType><svgPath>stone.svg</svgPath><period>4</period>"));
+	t.writeFile("Stone/stone.svg", "<svg/>");
+
+	EXPECT_TRUE(hasIssue(AssetValidator::validate(t.root, ""), Severity::Warning, "period"));
+}
+
 // Guards the shipped library against validation errors, and prints any issues
 // (warnings included) so regressions are visible in test output.
 TEST(AssetValidatorTest, RealAssetLibraryHasNoErrors) {

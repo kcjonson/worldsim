@@ -1134,6 +1134,13 @@ nine-sample run.
 Water is 0.05 to 0.19 ms of it (the pass with the water half cut out of the shader); the land
 field is the rest (D16 step 7). The pass it replaced cost 0.04 to 0.51 ms.
 
+These numbers were taken with the GPU at P0 (1890 to 1950 MHz). On light views the driver drops
+it to P3 or P2 (1035 to 1410 MHz) and the same pass reads 1.4 to 2.1 ms instead of about 0.95, so
+an unpinned capture compares clocks, not code. The river rows at zoom 20 and 8 above were P0
+readings; unpinned captures read 1.3 to 2.1 ms there. Hold the clocks for any capture you compare
+against this table (`nvidia-smi -lgc` from an admin shell, or a ballast load outside the tile
+timer); [ground-textures.md](../ground-textures.md#clock-state) has the measurements.
+
 **The frame, river view** (the heaviest), frame p50 / p99 max and scene GPU, ms:
 
 | Scenario | Before | After | GPU before | GPU after |

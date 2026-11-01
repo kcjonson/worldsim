@@ -15,6 +15,7 @@
 #include <atomic>
 #include <filesystem>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -107,8 +108,24 @@ namespace assets {
 		/// Simple assets ignore the seed (one drawing); procedural assets use it to
 		/// select a form (vary the seed to sample the generator's range).
 		/// This is the single shared "defName + seed -> mesh" entry point.
+		/// For callers that draw one mesh. An asset over the 65535 vertices a mesh can index
+		/// needs several, and that fails here (logged); use buildMeshes for those.
 		/// @return true if a non-empty mesh was produced
 		bool buildMesh(const std::string& defName, uint32_t seed, renderer::TessellatedMesh& outMesh);
+
+		/// A pixel density that keeps every path, whatever its setLod threshold.
+		static constexpr float kFullDetail = std::numeric_limits<float>::infinity();
+
+		/// buildMesh for assets of any size: the tessellated paths are packed into as many
+		/// meshes as it takes to keep each under 65535 vertices (16-bit indices), in path order.
+		/// A single path that alone tessellates past that is dropped with a warning.
+		/// @param pixelsPerMeter Screen density to build for. A procedural path that called
+		///        setLod(n) is kept only when n <= this; the default keeps all of them. Simple
+		///        assets are always one drawing, whatever the density.
+		/// @return true if at least one non-empty mesh was produced
+		bool buildMeshes(
+			const std::string& defName, uint32_t seed, std::vector<renderer::TessellatedMesh>& outMeshes, float pixelsPerMeter = kFullDetail
+		);
 
 		/// Parse a collision shape from an SVG file's <metadata><collision> block.
 		/// Simple (SVG-backed) assets can author a collider directly in the SVG; the
@@ -221,8 +238,8 @@ namespace assets {
 		AssetRegistry() = default;
 		~AssetRegistry();
 
-		/// Tessellate a generated asset into a mesh
-		bool tessellateAsset(const GeneratedAsset& asset, renderer::TessellatedMesh& outMesh);
+		/// Tessellate a generated asset into meshes of at most 65535 vertices each
+		bool tessellateAsset(const GeneratedAsset& asset, float pixelsPerMeter, std::vector<renderer::TessellatedMesh>& outMeshes);
 
 		/// Build group index from loaded definitions
 		void buildGroupIndex();

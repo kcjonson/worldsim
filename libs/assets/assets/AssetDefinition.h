@@ -16,6 +16,11 @@
 #include "placement/PlacementTypes.h"
 
 #include <glm/vec2.hpp>
+#include <glm/vec3.hpp>
+
+namespace world {
+	enum class Surface : uint8_t;
+}
 
 namespace assets {
 
@@ -229,9 +234,37 @@ namespace assets {
 	/// tile texture at distance, uniform vertex-shader wind, non-interactive (grass).
 	/// WorldObject: everything else scattered in the world (trees, bushes, rocks,
 	/// sticks, stones) - sparse, heterogeneous, individually placed and baked.
+	/// Ground: the repeating tile art of one land surface, baked once at load into the ground
+	/// texture array. Never placed in the world (it has no <biome> rules).
 	enum class AssetRole {
 		WorldObject, // General placed world asset (default)
-		Groundcover  // Dense instanced ground cover (grass)
+		Groundcover, // Dense instanced ground cover (grass)
+		Ground		 // Seamless ground tile variants for one land surface
+	};
+
+	/// How a ground tile may be rotated when the shader picks it. None for art with baked lighting.
+	enum class GroundRotate {
+		Free,	 // Any angle
+		Quarter, // 0, 90, 180 or 270 degrees
+		None	 // Never rotated
+	};
+
+	/// The low-frequency tint a ground surface gets from the shader: the surface color is mixed
+	/// toward `dry` or `lush` by a smooth noise field. Amplitude 0 (the default) leaves it off.
+	struct GroundMacro {
+		glm::vec3 dry{1.0F, 1.0F, 1.0F};			  // Tint where the field is low, r,g,b in 0..1
+		glm::vec3 lush{1.0F, 1.0F, 1.0F};			  // Tint where the field is high, r,g,b in 0..1
+		float	  amplitude = 0.0F;					  // Strength of the tint; 0 turns it off
+		glm::vec2 wavelengthsMeters{96.0F, 24.0F};	  // Coarse and fine noise wavelengths, meters
+	};
+
+	/// Ground-role settings, read from the AssetDef's top-level ground elements.
+	struct GroundParams {
+		std::optional<world::Surface> surface;	  // The land surface this tile set paints; unset until <surface> parses
+		float						  periodMeters = 4.0F;	// Meters one variant covers; must divide 512 so tiles line up across chunks
+		uint32_t					  pixelsPerMeter = 64;	// Bake density; a 4 m variant at 64 is a 256 x 256 layer
+		GroundRotate				  rotate = GroundRotate::Free;
+		GroundMacro					  macro;
 	};
 
 	/// Key-value parameter store for generator configuration.
@@ -372,7 +405,8 @@ namespace assets {
 		std::optional<ItemProperties>	  itemProperties;  // Properties when in inventory (if carryable)
 		AssetRole						  role = AssetRole::WorldObject;
 		AssetComplexity					  complexity = AssetComplexity::Simple;
-		uint32_t						  variantCount = 1; // Number of variants to pre-generate
+		uint32_t						  variantCount = 1; // Number of variants to pre-generate (8 for ground defs that omit it)
+		GroundParams					  ground;			// Only meaningful when role == Ground
 
 		CollisionShape collision; // Physical footprint for navmesh/collision; default None = doesn't block
 
