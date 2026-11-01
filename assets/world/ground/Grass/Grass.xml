@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Grass ground tile: the repeating ground art of Surface::Grass, baked to the ground texture
+     array at load and hex-tiled by the tile shader. Dense, grass-dominant: tuft fans, top blades,
+     clover, rosettes, small soil peeks at mid-green value, pebbles. All look knobs are <params>,
+     so GrassShort, GrassMeadow and GrassTall can reuse ground_grass.lua with their own. -->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>Ground_Grass</defName>
+    <label>Grass</label>
+    <role>ground</role>
+    <surface>Grass</surface>
+    <assetType>procedural</assetType>
+    <generator>
+      <scriptPath>@shared/ground_grass.lua</scriptPath>
+      <params>
+        <!-- Must equal <period> below. -->
+        <period>4</period>
+
+        <!-- Far stack (what the coarse mips show) and the near stack's gap shadow. -->
+        <farBaseColor>#43602F</farBaseColor>
+        <gapColor>#283A20</gapColor>
+
+        <!-- Densities per square meter, sizes in meters (soil and pebbles are diameters, the
+             rest lengths and widths), colors sRGB hex. Tufts grow in clumps: Poisson-disk centers
+             clumpSpacing apart, tufts Gaussian around them with clumpSpread as sigma. -->
+        <soilDensity>9</soilDensity>
+        <soilSize>0.03,0.12</soilSize>
+        <soilColor>#63513A</soilColor>
+        <soilSpeckColor>#4C3E2D</soilSpeckColor>
+        <soilDryColor>#7A6648</soilDryColor>
+
+        <pebbleDensity>24</pebbleDensity>
+        <pebbleSize>0.005,0.02</pebbleSize>
+        <pebbleColorA>#8A8274</pebbleColorA>
+        <pebbleColorB>#A39A88</pebbleColorB>
+        <pebbleColorC>#6F695E</pebbleColorC>
+        <pebbleHaloColor>#2A2A22</pebbleHaloColor>
+        <pebbleHaloAlpha>0.5</pebbleHaloAlpha>
+
+        <undergrowthDensity>340</undergrowthDensity>
+        <undergrowthLength>0.045,0.085</undergrowthLength>
+        <undergrowthHubWidth>0.009,0.014</undergrowthHubWidth>
+        <undergrowthSpikes>4,7</undergrowthSpikes>
+        <undergrowthDark>#3C5C31</undergrowthDark>
+        <undergrowthLight>#4A6C38</undergrowthLight>
+
+        <rosetteDensity>0.6</rosetteDensity>
+        <rosetteLeafLength>0.06,0.14</rosetteLeafLength>
+        <rosetteColor>#46703A</rosetteColor>
+        <rosetteInnerColor>#5C8A48</rosetteInnerColor>
+        <rosetteMidribColor>#8AAE6E</rosetteMidribColor>
+
+        <cloverPatches>1.2</cloverPatches>
+        <cloverPerPatch>6,16</cloverPerPatch>
+        <cloverSpread>0.05,0.09</cloverSpread>
+        <cloverLeaflet>0.022,0.032</cloverLeaflet>
+        <cloverColor>#5C9A4C</cloverColor>
+        <cloverChevronColor>#A8CC90</cloverChevronColor>
+        <cloverTopShare>0.6</cloverTopShare>
+
+        <clumpSpacing>0.22</clumpSpacing>
+        <clumpSpread>0.05,0.085</clumpSpread>
+        <tuftsPerClump>5,11</tuftsPerClump>
+        <tuftLength>0.06,0.14</tuftLength>
+        <tuftSpikes>4,7</tuftSpikes>
+        <tuftHubWidth>0.012,0.02</tuftHubWidth>
+        <tuftDark>#4C6E31</tuftDark>
+        <tuftLight>#5B823B</tuftLight>
+        <tuftHighlightDark>#62903E</tuftHighlightDark>
+        <tuftHighlightLight>#70A046</tuftHighlightLight>
+        <tuftLean>0.85</tuftLean>
+
+        <bladeDensity>280</bladeDensity>
+        <bladeLength>0.09,0.24</bladeLength>
+        <bladeWidth>0.012,0.02</bladeWidth>
+        <broadBladeShare>0.25</broadBladeShare>
+        <broadBladeWidth>0.028,0.038</broadBladeWidth>
+        <bladeBow>0.15</bladeBow>
+        <bladeTuftShare>0.7</bladeTuftShare>
+        <bladeFanSpread>0.55</bladeFanSpread>
+        <bladeRadialShare>0.25</bladeRadialShare>
+        <bladeBaseColor>#628B3C</bladeBaseColor>
+        <bladeTipDark>#6F9844</bladeTipDark>
+        <bladeTipLight>#76A048</bladeTipLight>
+        <underlayColor>#1C2814</underlayColor>
+        <underlayAlpha>0.35</underlayAlpha>
+        <strawShare>0.035</strawShare>
+        <strawDark>#9C9260</strawDark>
+        <strawLight>#B0A46E</strawLight>
+        <dryTipShare>0.1</dryTipShare>
+        <tipHighlightShare>0.2</tipHighlightShare>
+        <flowSpread>0.5</flowSpread>
+
+        <!-- Variation: density field contrast, per-clump tone and its light-core dome, per-element
+             jitter, and how much lusher (darker, more saturated) the dense patches are. Values
+             are fractions, hues in degrees. -->
+        <densityContrast>1.6</densityContrast>
+        <clumpValue>0.06</clumpValue>
+        <clumpDome>0.07</clumpDome>
+        <clumpHue>8</clumpHue>
+        <elementValue>0.04</elementValue>
+        <elementHue>3</elementHue>
+        <lushDarken>0.03</lushDarken>
+        <lushSaturate>0.05</lushSaturate>
+      </params>
+    </generator>
+    <variantCount>8</variantCount>
+    <period>4</period>
+    <pixelsPerMeter>128</pixelsPerMeter>
+    <rotate>free</rotate>
+    <macro>
+      <dry>1.0,0.94,0.72</dry>
+      <lush>0.86,0.96,0.86</lush>
+      <amplitude>0</amplitude>
+      <wavelengths>96,24</wavelengths>
+    </macro>
+  </AssetDef>
+</AssetDefinitions>
