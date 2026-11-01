@@ -319,6 +319,16 @@ void main() {
 		GLuint						vao			= 0;
 	};
 
+	/// The near-interior shortcut reports no warp. Where its test (the low warp
+	/// against a bound) falls within rounding on one side only, one side reports the
+	/// shortcut's zero and the other the full warp, and both read one surface: the
+	/// field is exactly 1 either way, so the warp there isn't compared.
+	bool shortcutSplit(const float* gpu, const SurfaceFieldSample& cpu) {
+		const bool gpuShortcut = gpu[2] == 0.0F && gpu[3] == 0.0F;
+		const bool cpuShortcut = cpu.warpXM == 0.0F && cpu.warpYM == 0.0F;
+		return gpuShortcut != cpuShortcut && gpu[1] == 1.0F && cpu.field == 1.0F;
+	}
+
 } // namespace
 
 TEST(SurfaceFieldGoldenTest, GlslMatchesCpp) {
@@ -339,6 +349,7 @@ TEST(SurfaceFieldGoldenTest, GlslMatchesCpp) {
 		int	  undecidedDiffer = 0;
 		int	  surfaceDiff	  = 0;
 		int	  interior		  = 0;
+		int	  split			  = 0;
 		float worstWarp		  = 0.0F;
 		float worstField	  = 0.0F;
 		for (int j = 0; j < kPixels; ++j) {
@@ -348,8 +359,12 @@ TEST(SurfaceFieldGoldenTest, GlslMatchesCpp) {
 				const float* gpu	  = &pixels[(static_cast<size_t>(j) * kPixels + static_cast<size_t>(i)) * 4];
 				const auto	 gpuId	  = static_cast<int>(std::lround(gpu[0]));
 				const float	 warpDiff = std::max(std::abs(gpu[2] - cpu.warpXM), std::abs(gpu[3] - cpu.warpYM));
-				worstWarp			  = std::max(worstWarp, warpDiff);
-				EXPECT_LE(warpDiff, kTolerance) << region.name << " pixel (" << i << ", " << j << ")";
+				if (shortcutSplit(gpu, cpu)) {
+					++split;
+				} else {
+					worstWarp = std::max(worstWarp, warpDiff);
+					EXPECT_LE(warpDiff, kTolerance) << region.name << " pixel (" << i << ", " << j << ")";
+				}
 				interior += cpu.warpXM == 0.0F && cpu.warpYM == 0.0F && cpu.field == 1.0F ? 1 : 0;
 
 				if (cpu.margin < kIdMargin) {
@@ -370,13 +385,14 @@ TEST(SurfaceFieldGoldenTest, GlslMatchesCpp) {
 			}
 		}
 		std::printf(
-			"[golden] %s: worst warp diff %.3g m, worst field diff %.3g, %d near boundaries, %d interior, %d within the id margin "
-			"(%d of them differ), %d surface mismatches\n",
+			"[golden] %s: worst warp diff %.3g m, worst field diff %.3g, %d near boundaries, %d interior or near-interior (%d "
+			"split), %d within the id margin (%d of them differ), %d surface mismatches\n",
 			region.name,
 			static_cast<double>(worstWarp),
 			static_cast<double>(worstField),
 			boundaries,
 			interior,
+			split,
 			undecided,
 			undecidedDiffer,
 			surfaceDiff
@@ -420,7 +436,9 @@ TEST(SurfaceFieldGoldenTest, FarZoomLodMovesEdgesUnderAPixel) {
 			for (int i = 0; i < kPixels; ++i) {
 				const SurfaceFieldSample cpu = land.cpuAt(region, i, j);
 				const float*			 gpu = &pixels[(static_cast<size_t>(j) * kPixels + static_cast<size_t>(i)) * 4];
-				worstWarp = std::max(worstWarp, std::max(std::abs(gpu[2] - cpu.warpXM), std::abs(gpu[3] - cpu.warpYM)));
+				if (!shortcutSplit(gpu, cpu)) {
+					worstWarp = std::max(worstWarp, std::max(std::abs(gpu[2] - cpu.warpXM), std::abs(gpu[3] - cpu.warpYM)));
+				}
 			}
 		}
 	}

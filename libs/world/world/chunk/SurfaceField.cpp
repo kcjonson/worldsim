@@ -242,8 +242,23 @@ namespace world {
 				foundation::fractalNoise2SplitPair(noiseX, noiseY, noiseFx, noiseFy, wavelength, seed, octaves, gain);
 			return foundation::NoisePair{std::clamp(n.first, -1.0F, 1.0F), std::clamp(n.second, -1.0F, 1.0F)};
 		};
+		const foundation::NoisePair lowNoise = noise(params.warpLowWavelengthM, params.seeds.low, kWarpLowOctaves, kWarpLowGain);
+
+		// In a near-interior tile the fine term moves the read at most fineAmp from
+		// where the low term puts it. While that keeps the read's lattice cell at -1 or 0
+		// from the tile (offset in [-0.5, 1.5)), the block lies within the tile's
+		// one-surface reach and the field is that surface's alone.
+		if ((own.edge & kRenderNearInteriorBit) != 0) {
+			const float lowX = point.fx + lowAmp * lowNoise.first;
+			const float lowY = point.fy + lowAmp * lowNoise.second;
+			const float from = fineAmp - 0.5F + kNearInteriorMarginM;
+			const float to	 = 1.5F - fineAmp - kNearInteriorMarginM;
+			if (lowX >= from && lowX < to && lowY >= from && lowY < to) {
+				return {.surface = static_cast<Surface>(own.surfaceId)};
+			}
+		}
+
 		const foundation::NoisePair fineNoise = noise(params.warpFineWavelengthM, params.seeds.fine, kWarpFineOctaves, params.warpFineGain);
-		const foundation::NoisePair lowNoise  = noise(params.warpLowWavelengthM, params.seeds.low, kWarpLowOctaves, kWarpLowGain);
 		const float warpX = std::clamp(fineAmp * fineNoise.first + lowAmp * lowNoise.first, -kMaxLandWarpM, kMaxLandWarpM);
 		const float warpY = std::clamp(fineAmp * fineNoise.second + lowAmp * lowNoise.second, -kMaxLandWarpM, kMaxLandWarpM);
 
@@ -401,11 +416,16 @@ namespace world {
 
 		// Sliding extremes along each grown row, then down each window column: the
 		// highest level within kEdgeReachTiles, and the least and greatest surface id
-		// within kInteriorReachTiles (the same id at both ends means one surface).
-		const size_t		 rowCells = static_cast<size_t>(width) * static_cast<size_t>(grownHeight);
+		// within kInteriorReachTiles and kNearInteriorReachTiles (the same id at both
+		// ends means one surface).
+		static_assert(kNearInteriorReachTiles < kInteriorReachTiles);
+		constexpr size_t	 kNearSkip = static_cast<size_t>(kGrow - kNearInteriorReachTiles);
+		const size_t		 rowCells  = static_cast<size_t>(width) * static_cast<size_t>(grownHeight);
 		std::vector<uint8_t> rowLevel(rowCells);
 		std::vector<uint8_t> rowMin(rowCells);
 		std::vector<uint8_t> rowMax(rowCells);
+		std::vector<uint8_t> rowNearMin(rowCells);
+		std::vector<uint8_t> rowNearMax(rowCells);
 		for (int32_t gy = 0; gy < grownHeight; ++gy) {
 			const size_t row = static_cast<size_t>(gy) * static_cast<size_t>(grownWidth);
 			for (int32_t x = 0; x < width; ++x) {
@@ -416,17 +436,27 @@ namespace world {
 					top = std::max(top, level[edgeFirst + k]);
 				}
 				const size_t interiorFirst = row + static_cast<size_t>(x);
-				uint8_t		 lo			   = paint[interiorFirst];
-				uint8_t		 hi			   = lo;
-				for (size_t k = 1; k <= 2 * static_cast<size_t>(kGrow); ++k) {
+				uint8_t		 nearLo		   = paint[interiorFirst + kNearSkip];
+				uint8_t		 nearHi		   = nearLo;
+				for (size_t k = kNearSkip + 1; k <= 2 * static_cast<size_t>(kGrow) - kNearSkip; ++k) {
 					const uint8_t id = paint[interiorFirst + k];
-					lo				 = std::min(lo, id);
-					hi				 = std::max(hi, id);
+					nearLo			 = std::min(nearLo, id);
+					nearHi			 = std::max(nearHi, id);
+				}
+				uint8_t lo = nearLo;
+				uint8_t hi = nearHi;
+				for (size_t k = 0; k < kNearSkip; ++k) {
+					for (const uint8_t id : {paint[interiorFirst + k], paint[interiorFirst + 2 * static_cast<size_t>(kGrow) - k]}) {
+						lo = std::min(lo, id);
+						hi = std::max(hi, id);
+					}
 				}
 				const size_t cell = static_cast<size_t>(gy) * static_cast<size_t>(width) + static_cast<size_t>(x);
 				rowLevel[cell]	  = top;
 				rowMin[cell]	  = lo;
 				rowMax[cell]	  = hi;
+				rowNearMin[cell]  = nearLo;
+				rowNearMax[cell]  = nearHi;
 			}
 		}
 
@@ -447,10 +477,17 @@ namespace world {
 					lo = std::min(lo, rowMin[cell(gy + d)]);
 					hi = std::max(hi, rowMax[cell(gy + d)]);
 				}
+				uint8_t nearLo = rowNearMin[cell(gy - kNearInteriorReachTiles)];
+				uint8_t nearHi = rowNearMax[cell(gy - kNearInteriorReachTiles)];
+				for (int32_t d = -kNearInteriorReachTiles + 1; d <= kNearInteriorReachTiles; ++d) {
+					nearLo = std::min(nearLo, rowNearMin[cell(gy + d)]);
+					nearHi = std::max(nearHi, rowNearMax[cell(gy + d)]);
+				}
 				const uint8_t surface = paint[static_cast<size_t>(gy) * static_cast<size_t>(grownWidth) + static_cast<size_t>(x + kGrow)];
+				const auto	  bits	  = static_cast<uint8_t>((lo == hi ? kRenderInteriorBit : 0) | (nearLo == nearHi ? kRenderNearInteriorBit : 0));
 				out[static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)] = {
 					surface,
-					static_cast<uint8_t>(kSurfaceByLevel[top - 1] | (lo == hi ? kRenderInteriorBit : 0))
+					static_cast<uint8_t>(kSurfaceByLevel[top - 1] | bits)
 				};
 			}
 		}

@@ -79,7 +79,9 @@ uniform uint  u_landBreakupSeed;
 
 const int	kRenderApronTiles	   = 3;
 const uint	kRenderEdgeSurfaceMask = 0x0Fu;
+const uint	kRenderNearInteriorBit = 0x40u;
 const uint	kRenderInteriorBit	   = 0x80u;
+const float kNearInteriorMarginM   = 1.0e-3;
 const float kMaxLandWarpM		   = 1.5;
 const int	kWarpFineOctaves	   = 4;
 const int	kWarpLowOctaves		   = 2;
@@ -254,18 +256,35 @@ LandEval evaluateLand(ivec2 tile, vec2 frac, int fineOctaves) {
 	vec2  offset;
 	noisePoint(u_chunkTileOrigin + tile, frac, whole, offset);
 	// Each term's noise pair is the offset's x and y.
-	vec2 fineNoise = clamp(
-		fractalNoise2SplitPair(
-			whole, offset, u_landWarpWavelength.x, u_landWarpInvWavelength.x, u_landWarpSeeds.x, kWarpFineOctaves, u_landWarpFineGain,
-			fineOctaves
-		),
-		-1.0,
-		1.0
-	);
 	vec2 lowNoise = clamp(
 		fractalNoise2SplitPair(
 			whole, offset, u_landWarpWavelength.y, u_landWarpInvWavelength.y, u_landWarpSeeds.y, kWarpLowOctaves, kWarpLowGain,
 			kWarpLowOctaves
+		),
+		-1.0,
+		1.0
+	);
+
+	// A near-interior tile whose read the fine term can't carry out of its
+	// one-surface reach (evaluateSurfaceField has the reasoning).
+	if ((own.g & kRenderNearInteriorBit) != 0u) {
+		vec2 low = frac + lowAmp * lowNoise;
+		if (all(greaterThanEqual(low, vec2(fineAmp - 0.5 + kNearInteriorMarginM))) && all(lessThan(low, vec2(1.5 - fineAmp - kNearInteriorMarginM)))) {
+			e.painted  = own.r;
+			e.field	   = 1.0;
+			e.warp	   = vec2(0.0);
+			e.margin   = 0.5;
+			e.across   = own.r;
+			e.distance = kNoBoundary;
+			e.along	   = 0.0;
+			return e;
+		}
+	}
+
+	vec2 fineNoise = clamp(
+		fractalNoise2SplitPair(
+			whole, offset, u_landWarpWavelength.x, u_landWarpInvWavelength.x, u_landWarpSeeds.x, kWarpFineOctaves, u_landWarpFineGain,
+			fineOctaves
 		),
 		-1.0,
 		1.0

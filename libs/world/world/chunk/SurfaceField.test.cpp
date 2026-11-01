@@ -304,7 +304,8 @@ TEST(SurfaceFieldTest, WaterPaintsAsNearestLandBed) {
 }
 
 // Render tiles: the edge surface is the highest within two tiles, and a tile is
-// interior only when everything within three is its own surface.
+// interior only when everything within three is its own surface, near-interior
+// when everything within two is.
 TEST(SurfaceFieldTest, RenderTilesCarryEdgeSurfaceAndInteriorBit) {
 	const HandField field = handField(0, 0, 21, 21, [](int64_t tx, int64_t ty) { return tx == 10 && ty == 10 ? Surface::Rock : Surface::Grass; });
 	const RenderTileView view = field.view();
@@ -316,8 +317,38 @@ TEST(SurfaceFieldTest, RenderTilesCarryEdgeSurfaceAndInteriorBit) {
 			const Surface edge = reach <= kEdgeReachTiles ? Surface::Rock : Surface::Grass;
 			EXPECT_EQ(tile.edge & kRenderEdgeSurfaceMask, static_cast<uint8_t>(edge)) << "(" << x << ", " << y << ")";
 			EXPECT_EQ((tile.edge & kRenderInteriorBit) != 0, reach > kInteriorReachTiles) << "(" << x << ", " << y << ")";
+			EXPECT_EQ((tile.edge & kRenderNearInteriorBit) != 0, reach > kNearInteriorReachTiles) << "(" << x << ", " << y << ")";
 		}
 	}
+}
+
+// The near-interior shortcut changes nothing but the warp it skips: with the bit
+// cleared, every point paints the same surface with the same field and margin.
+TEST(SurfaceFieldTest, NearInteriorShortcutMatchesTheFullField) {
+	const HandField field = handField(40, -60, 48, 48, [](int64_t tx, int64_t ty) {
+		const int64_t bx = tx / 9;
+		const int64_t by = ty / 7;
+		const int64_t h	 = (bx * 73856093LL) ^ (by * 19349663LL);
+		return (h & 3) == 0 ? Surface::Rock : ((h & 3) == 1 ? Surface::Sand : Surface::Grass);
+	});
+	HandField full = field;
+	for (TileRenderData& tile : full.tiles) {
+		tile.edge &= static_cast<uint8_t>(~kRenderNearInteriorBit);
+	}
+	const SurfaceFieldParams params	   = defaultSurfaceFieldParams(kSeed);
+	int						 shortcuts = 0;
+	for (int j = 0; j < 160; ++j) {
+		for (int i = 0; i < 160; ++i) {
+			const TilePoint			 p		= tilePointOf(46.0 + 0.23 * i, -54.0 + 0.23 * j);
+			const SurfaceFieldSample quick	= evaluateSurfaceField(field.view(), p, params);
+			const SurfaceFieldSample slow	= evaluateSurfaceField(full.view(), p, params);
+			EXPECT_EQ(quick.surface, slow.surface) << i << ", " << j;
+			EXPECT_EQ(quick.field, slow.field) << i << ", " << j;
+			EXPECT_EQ(quick.margin, slow.margin) << i << ", " << j;
+			shortcuts += quick.warpXM != slow.warpXM ? 1 : 0;
+		}
+	}
+	EXPECT_GT(shortcuts, 1000) << "the shortcut should take a fair share of these points";
 }
 
 // Far-zoom LOD (D16 step 7): at the game's 8 px/m, the shader draws all four fine
