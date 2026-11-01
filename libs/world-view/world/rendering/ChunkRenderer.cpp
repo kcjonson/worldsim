@@ -41,11 +41,12 @@ namespace worldview {
 		constexpr int kUnitGroundTiles	= 7;
 
 		// The ground (docs/technical/ground-textures.md, "Shader"): mip levels a quarter
-		// level blurrier than the screen's density, hex blending from 12 px/m up, and
-		// Mikkelsen's gain r of 0.75 at 48 px/m and up, 0.65 midway (in log2 px/m) and
-		// 0.5, none, at 16 and under. Densities are screen pixels a meter.
+		// level blurrier than the screen's density, hex blending from 16 px/m up (one
+		// sample at 12 looks the same and saves 0.05 to 0.10 ms), and Mikkelsen's gain r
+		// of 0.75 at 48 px/m and up, 0.65 midway (in log2 px/m) and 0.5, none, at 16 and
+		// under. Densities are screen pixels a meter.
 		constexpr float				   kGroundLodBias			  = 0.25F;
-		constexpr float				   kGroundHexMinPxPerMeter	  = 12.0F;
+		constexpr float				   kGroundHexMinPxPerMeter	  = 16.0F;
 		constexpr std::array<float, 3> kGroundBlendGain			  = {0.75F, 0.65F, 0.5F};
 		constexpr float				   kGroundBlendNearPxPerMeter = 48.0F;
 		constexpr float				   kGroundBlendFarPxPerMeter  = 16.0F;
