@@ -61,6 +61,8 @@ namespace worldview {
 					return 1;
 				case assets::GroundRotate::None:
 					return 2;
+				case assets::GroundRotate::Mirror:
+					return 3;
 			}
 			return 0;
 		}

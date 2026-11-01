@@ -125,6 +125,18 @@ TEST(GroundAssetTest, EveryFieldParses) {
 	EXPECT_EQ(def->ground.macro.wavelengthsMeters, glm::vec2(120.0F, 30.0F));
 }
 
+TEST(GroundAssetTest, RotateModesParse) {
+	const TempDir t;
+	const auto	  rotateOf = [&t](const char* value) {
+		   const AssetDefinition* def = loadGround(t, std::string("<surface>Dirt</surface><rotate>") + value + "</rotate>");
+		   return def != nullptr ? def->ground.rotate : GroundRotate::Free;
+	};
+	EXPECT_EQ(rotateOf("quarter"), GroundRotate::Quarter);
+	EXPECT_EQ(rotateOf("none"), GroundRotate::None);
+	EXPECT_EQ(rotateOf("mirror"), GroundRotate::Mirror);
+	EXPECT_EQ(rotateOf("Mirror"), GroundRotate::Mirror);
+}
+
 TEST(GroundAssetTest, BadSurfaceAndMacroKeepDefaults) {
 	const TempDir		   t;
 	const AssetDefinition* def = loadGround(t, "<surface>Lava</surface><rotate>spin</rotate><macro><dry>1,2</dry></macro>");

@@ -393,6 +393,8 @@ namespace assets {
 				ground.rotate = GroundRotate::Quarter;
 			} else if (rotate == "none" || rotate == "None") {
 				ground.rotate = GroundRotate::None;
+			} else if (rotate == "mirror" || rotate == "Mirror") {
+				ground.rotate = GroundRotate::Mirror;
 			} else if (!rotate.empty()) {
 				LOG_WARNING(Engine, "Ground AssetDef '%s' has unknown <rotate> '%s'; using free", def.defName.c_str(), rotate.c_str());
 			}

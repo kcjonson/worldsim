@@ -24,7 +24,7 @@ uniform ivec2	   u_chunkTileOrigin; // world tile of the chunk's tile (0, 0)
 
 // Ground tiles (GroundTileBank): sRGB texture arrays, one per layer size, every
 // mip baked from the vectors. Per surface id:
-//   u_groundLayers: x array (0..3), y first layer, z layer count, w rotate (0 free, 1 quarter, 2 none)
+//   u_groundLayers: x array (0..3), y first layer, z layer count, w rotate (0 free, 1 quarter, 2 none, 3 mirror)
 //   u_groundParams: x 1 / period (m), y mip level this draw, z macro tint amount
 //   u_groundDry, u_groundLush: the macro tints, multiplied into the sRGB color
 uniform sampler2DArray u_groundTiles0;
@@ -432,6 +432,8 @@ vec3 groundCellSample(uint surface, vec2 local, ivec2 v) {
 	} else if (layers.w == 1) {
 		uint q = (h >> 8u) & 3u;
 		cs	   = q == 0u ? vec2(1.0, 0.0) : (q == 1u ? vec2(0.0, 1.0) : (q == 2u ? vec2(-1.0, 0.0) : vec2(0.0, -1.0)));
+	} else if (layers.w == 3 && (h & 0x100u) != 0u) {
+		d.x = -d.x; // mirror: flip about the cell's center, no turn; the angle's bit is free here
 	}
 	vec2  uv	= vec2(cs.x * d.x - cs.y * d.y, cs.y * d.x + cs.x * d.y) + vec2(float((h >> 16u) & 0xFFu), float(h >> 24u)) * (1.0 / 256.0);
 	float layer = float(layers.y + int(h % uint(max(layers.z, 1))));

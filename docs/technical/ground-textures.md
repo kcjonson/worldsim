@@ -57,7 +57,7 @@ A ground tile is an asset with the role `ground`. Defs live at `assets/world/gro
 | `<variantCount>` | variants baked, 1 to 32, default 8 (for `simple` the SVG list is the variant list) |
 | `<period>` | meters one variant covers, default 4; it must divide 512 so it lines up across chunks |
 | `<pixelsPerMeter>` | base texel density, default 64, so a 4 m variant is a 256x256 layer |
-| `<rotate>` | `free`, `quarter` or `none`; `none` for art with baked top-left lighting |
+| `<rotate>` | `free`, `quarter`, `none` or `mirror`; `none` for art with baked top-left lighting, `mirror` (never turned, each cell flipped left to right or not) for art with an up, like grass blades |
 | `<macro>` | two tint colors (dry, lush), plus the amplitude and wavelengths of the low-frequency layer the shader mixes between them |
 
 Generators and SVGs draw in meters on a `[0, period]` square. Shapes may cross the edge, so authors never match edges by hand: `AssetRegistry::buildPaths` (and `buildMeshes`, a thin call over it) repeats every path of a procedural ground def that crosses an edge at the offsets it crosses into, right after the original. Paint order holds across the seam, and the meshes clipped to the square are the seamless tile. Drawing the whole mesh 3x3 instead would paint each copy's full-tile layers over the earlier copies' overhang, so the seams would show.

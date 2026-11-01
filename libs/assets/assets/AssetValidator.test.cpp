@@ -258,6 +258,7 @@ TEST(AssetValidatorTest, GroundDefWithBiomeRulesIsError) {
 TEST(AssetValidatorTest, UnknownGroundRotateIsWarning) {
 	EXPECT_TRUE(hasIssue(validateGround("<surface>Grass</surface><rotate>spin</rotate>"), Severity::Warning, "rotate"));
 	EXPECT_FALSE(hasIssue(validateGround("<surface>Grass</surface><rotate>quarter</rotate>"), Severity::Warning, "rotate"));
+	EXPECT_FALSE(hasIssue(validateGround("<surface>Grass</surface><rotate>mirror</rotate>"), Severity::Warning, "rotate"));
 }
 
 TEST(AssetValidatorTest, GroundFieldsOnOtherRolesAreWarnings) {

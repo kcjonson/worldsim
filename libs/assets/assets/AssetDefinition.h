@@ -246,7 +246,8 @@ namespace assets {
 	enum class GroundRotate {
 		Free,	 // Any angle
 		Quarter, // 0, 90, 180 or 270 degrees
-		None	 // Never rotated
+		None,	 // Never rotated
+		Mirror	 // Never rotated, flipped left to right or not; for art with an up (grass blades)
 	};
 
 	/// The low-frequency tint a ground surface gets from the shader: the surface color is mixed

@@ -105,7 +105,7 @@ namespace assets {
 
 			const std::string rotate = assetDef.child("rotate").text().as_string();
 			if (!rotate.empty() && rotate != "free" && rotate != "Free" && rotate != "quarter" && rotate != "Quarter" && rotate != "none" &&
-				rotate != "None") {
+				rotate != "None" && rotate != "mirror" && rotate != "Mirror") {
 				report.add(Severity::Warning, defName, "rotate", "Unknown rotate; the loader treats it as free", rotate);
 			}
 
