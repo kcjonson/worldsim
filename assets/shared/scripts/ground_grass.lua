@@ -1,13 +1,23 @@
 -- Ground grass: one seamless period x period meter tile variant (role ground), painted dark to
--- light, low to high. A far stack (mean base plus soil, clover and tuft proxies) comes first and
--- is what the coarse mips show; a full-tile gap cover tagged setLod(20) hides it from 20 px/m up,
--- and the near stack above it carries soil peeks, pebbles, undergrowth fans, rosettes, clover,
--- two-tone tuft fans and top blades with soft underlays.
+-- light, low to high. Everything is laid out first, then a coarse tone model of the near stack is
+-- built from the layout, then two stacks are drawn, one over the other:
+--
+-- The far stack (mips 4 to 6, untagged) is the tone model averaged into one rect a mip 4 texel, so
+-- the coarse mips keep the near stack's mean and its clump and patch variation, in its places.
+-- A full-tile gap cover tagged setLod(kCover) hides it from mip 3 up.
+--
+-- The near stack (mips 0 to 3) is the grass itself: soil peeks, pebbles, dark undergrowth between
+-- the clumps, clover and rosettes, then clumps of two-tone tuft fans around a lit crown, lighter at
+-- the core and darker at the rim, then top blades. Only fine elements carry tags above kCover. Each
+-- blade takes the model's tone where it lies over a proxy strip of that tone (kept to mip 3): the
+-- light blade and its dark underlay average to the proxy, so the mips that drop the blade keep mip
+-- 0's mean and its blanket over the tufts.
 --
 -- Meters, +Y down, sRGB colors 0..1. Shapes may cross the tile edge; the registry wraps them.
--- Every density field is periodicNoise2 at a wavelength that divides the period, and every count
--- is fixed per square meter, so all variants share the same statistics. No light direction is
--- baked in (the shader rotates tiles freely): underlays and halos are centered.
+-- Every density field is periodicNoise2 with a whole number of cycles across the tile, every count
+-- is fixed per square meter and the random draws that move color are normalized per variant, so
+-- all variants share the same statistics. No light direction is baked in (the shader rotates
+-- tiles freely): underlays and halos are centered.
 
 local P = getFloat("period", 4)
 local AREA = P * P
@@ -21,6 +31,9 @@ local function clamp(v, lo, hi)
 end
 local function uniform(a, b)
 	return a + (b - a) * rand()
+end
+local function signed()
+	return rand() * 2 - 1
 end
 local function gauss()
 	return sqrt(-2 * log(1 - rand())) * cos(TAU * rand())
@@ -88,8 +101,20 @@ end
 
 -- Params -------------------------------------------------------------------------------------
 
-local farBase = hex("farBaseColor", "#43602F")
-local gapColor = hex("gapColor", "#283A20")
+local function triple(key, default)
+	local out = {}
+	for v in getString(key, default):gmatch("[^,]+") do
+		out[#out + 1] = tonumber(v)
+	end
+	return out
+end
+local farGain = triple("farGain", "1,1,1")
+local farContrast = getFloat("farContrast", 1)
+local farCoarseContrast = getFloat("farCoarseContrast", 1)
+local farCellsPerMeter = getFloat("farCellsPerMeter", 8)
+local modelUndergrowth = getFloat("modelUndergrowth", 0.45)
+local modelClumpFill = getFloat("modelClumpFill", 0.9)
+local gapColor = hex("gapColor", "#2A361A")
 
 local soilPerM2 = getFloat("soilDensity", 9)
 local soilLo, soilHi = getFloatRange("soilSize", 0.03, 0.12)
@@ -103,12 +128,12 @@ local pebbleColors = { hex("pebbleColorA", "#8A8274"), hex("pebbleColorB", "#A39
 local haloColor = hex("pebbleHaloColor", "#2A2A22")
 local haloAlpha = getFloat("pebbleHaloAlpha", 0.5)
 
-local underPerM2 = getFloat("undergrowthDensity", 340)
-local underLenLo, underLenHi = getFloatRange("undergrowthLength", 0.045, 0.085)
+local underPerM2 = getFloat("undergrowthDensity", 280)
+local underLenLo, underLenHi = getFloatRange("undergrowthLength", 0.04, 0.08)
 local underHubLo, underHubHi = getFloatRange("undergrowthHubWidth", 0.009, 0.014)
 local underSpikesLo, underSpikesHi = getFloatRange("undergrowthSpikes", 4, 7)
-local underDark = hex("undergrowthDark", "#3C5C31")
-local underLight = hex("undergrowthLight", "#4A6C38")
+local underDark = hex("undergrowthDark", "#35491F")
+local underLight = hex("undergrowthLight", "#435A27")
 
 local rosettePerM2 = getFloat("rosetteDensity", 0.6)
 local rosetteLenLo, rosetteLenHi = getFloatRange("rosetteLeafLength", 0.06, 0.14)
@@ -116,59 +141,68 @@ local rosetteColor = hex("rosetteColor", "#46703A")
 local rosetteInner = hex("rosetteInnerColor", "#5C8A48")
 local rosetteRib = hex("rosetteMidribColor", "#8AAE6E")
 
-local cloverPatchPerM2 = getFloat("cloverPatches", 1.2)
+local cloverPatchPerM2 = getFloat("cloverPatches", 1.4)
 local cloverPerLo, cloverPerHi = getFloatRange("cloverPerPatch", 6, 16)
 local cloverSigmaLo, cloverSigmaHi = getFloatRange("cloverSpread", 0.05, 0.09)
 local leafletLo, leafletHi = getFloatRange("cloverLeaflet", 0.022, 0.032)
-local cloverColor = hex("cloverColor", "#5C9A4C")
+local cloverColor = hex("cloverColor", "#5E9C4A")
 local chevronColor = hex("cloverChevronColor", "#A8CC90")
 local cloverTopShare = getFloat("cloverTopShare", 0.6)
 
-local clumpSpacing = getFloat("clumpSpacing", 0.22)
-local clumpSpreadLo, clumpSpreadHi = getFloatRange("clumpSpread", 0.05, 0.085)
-local tuftsPerClumpLo, tuftsPerClumpHi = getFloatRange("tuftsPerClump", 5, 11)
-local tuftLenLo, tuftLenHi = getFloatRange("tuftLength", 0.06, 0.14)
+local clumpSpacing = getFloat("clumpSpacing", 0.17)
+local clumpRLo, clumpRHi = getFloatRange("clumpRadius", 0.045, 0.16)
+local tuftsPerClumpLo, tuftsPerClumpHi = getFloatRange("tuftsPerClump", 5, 10)
+local tuftSpread = getFloat("tuftSpread", 0.38)
+local tuftReachLo, tuftReachHi = getFloatRange("tuftReach", 0.55, 0.95)
+local crownReachLo, crownReachHi = getFloatRange("crownReach", 0.35, 0.6)
+local crownSpikesLo, crownSpikesHi = getFloatRange("crownSpikes", 7, 11)
 local tuftSpikesLo, tuftSpikesHi = getFloatRange("tuftSpikes", 4, 7)
 local tuftHubLo, tuftHubHi = getFloatRange("tuftHubWidth", 0.012, 0.02)
-local tuftDark = hex("tuftDark", "#4C6E31")
-local tuftLight = hex("tuftLight", "#5B823B")
-local tuftHiDark = hex("tuftHighlightDark", "#62903E")
-local tuftHiLight = hex("tuftHighlightLight", "#70A046")
+local tuftDark = hex("tuftDark", "#4A672B")
+local tuftLight = hex("tuftLight", "#587833")
+local tuftHiDark = hex("tuftHighlightDark", "#648C38")
+local tuftHiLight = hex("tuftHighlightLight", "#739C40")
 local tuftLean = getFloat("tuftLean", 0.85)
 
-local bladePerM2 = getFloat("bladeDensity", 280)
-local bladeLenLo, bladeLenHi = getFloatRange("bladeLength", 0.09, 0.24)
+local bladePerM2 = getFloat("bladeDensity", 240)
+local bladeLenLo, bladeLenHi = getFloatRange("bladeLength", 0.07, 0.2)
 local bladeWLo, bladeWHi = getFloatRange("bladeWidth", 0.012, 0.02)
 local broadShare = getFloat("broadBladeShare", 0.25)
 local broadWLo, broadWHi = getFloatRange("broadBladeWidth", 0.028, 0.038)
 local bladeBow = getFloat("bladeBow", 0.15)
-local bladeInTufts = getFloat("bladeTuftShare", 0.7)
+local bladeInTufts = getFloat("bladeTuftShare", 0.85)
 local bladeFanSpread = getFloat("bladeFanSpread", 0.55)
-local bladeRadialShare = getFloat("bladeRadialShare", 0.25)
-local bladeBase = hex("bladeBaseColor", "#628B3C")
-local bladeTipDark = hex("bladeTipDark", "#6F9844")
-local bladeTipLight = hex("bladeTipLight", "#76A048")
-local underlayColor = hex("underlayColor", "#1C2814")
-local underlayAlpha = getFloat("underlayAlpha", 0.35)
-local strawShare = getFloat("strawShare", 0.035)
+local bladeRadialShare = getFloat("bladeRadialShare", 0.3)
+local bladeGain = getFloat("bladeGain", 1.18)
+local bladeTipGain = getFloat("bladeTipGain", 1.05)
+local bladeHue = getFloat("bladeHue", 3)
+local bladeTipHue = getFloat("bladeTipHue", 5)
+local underlayColor = hex("underlayColor", "#161E0E")
+local underlayAlpha = getFloat("underlayAlpha", 0.5)
+local underlayWidth = getFloat("underlayWidth", 2.0)
+local strawShare = getFloat("strawShare", 0.04)
 local strawDark = hex("strawDark", "#9C9260")
 local strawLight = hex("strawLight", "#B0A46E")
-local dryTipShare = getFloat("dryTipShare", 0.1)
+local dryTipShare = getFloat("dryTipShare", 0.12)
 local tipHighlightShare = getFloat("tipHighlightShare", 0.2)
 local flowSpread = getFloat("flowSpread", 0.5)
 
 local densityContrast = getFloat("densityContrast", 1.6)
-local clumpValue = getFloat("clumpValue", 0.06)
-local clumpDome = getFloat("clumpDome", 0.07)
-local clumpHue = getFloat("clumpHue", 8)
-local elementValue = getFloat("elementValue", 0.04)
-local elementHue = getFloat("elementHue", 3)
+local clumpValue = getFloat("clumpValue", 0.12)
+local clumpDome = getFloat("clumpDome", 0.14)
+local clumpHue = getFloat("clumpHue", 12)
+local clumpSaturation = getFloat("clumpSaturation", 0.1)
+local patchHue = getFloat("patchHue", 5)
+local patchValue = getFloat("patchValue", 0.03)
+local elementValue = getFloat("elementValue", 0.05)
+local elementHue = getFloat("elementHue", 4)
 local lushDarken = getFloat("lushDarken", 0.03)
 local lushSaturate = getFloat("lushSaturate", 0.05)
 
--- LOD tags: a path is baked into mip k only when its tag is at most that mip's px/m, and the
--- whole near stack sits at or above the cover's 20 so the far stack shows alone below it.
-local kCover = 20
+-- LOD tags: a path is baked into mip k only when its tag is at most that mip's px/m (128 / 2^k).
+-- The cover sits between mip 4 (8 px/m) and mip 3 (16), so the near stack shows from mip 3 up and
+-- the far stack alone below it. Fine elements keep the one-texel rule: tag 1 / width.
+local kCover = 12
 local function lodFor(width)
 	return clamp(1 / width, kCover, 128)
 end
@@ -177,20 +211,51 @@ end
 
 local noiseSeed = floor(rand() * 1000000)
 
-local function field(x, y, wavelength, salt)
-	return periodicNoise2(x / wavelength, y / wavelength, P / wavelength, noiseSeed + salt)
+-- Periodic noise with a whole number of cycles across the tile, so it wraps exactly.
+local function field(x, y, cycles, salt)
+	cycles = max(1, floor(cycles + 0.5))
+	local f = cycles / P
+	return periodicNoise2(x * f, y * f, cycles, noiseSeed + salt)
 end
+
+-- A field's mean over this tile, sampled on a grid. A few cycles of noise don't average to zero
+-- over one period, so the fields that move color subtract it: otherwise each variant's mean drifts
+-- with its seed and the hex cells paint a patchwork at far zoom.
+local function tileMean(f)
+	local n, sum = 16, 0
+	for i = 0, n - 1 do
+		for j = 0, n - 1 do
+			sum = sum + f((i + 0.5) * P / n, (j + 0.5) * P / n)
+		end
+	end
+	return sum / (n * n)
+end
+
+local function rawDensity(x, y)
+	return 0.6 * field(x, y, P / 0.8, 11) + 0.4 * field(x, y, P / 0.4, 23)
+end
+local densityOffset = tileMean(rawDensity)
 
 -- Grass density, 0 (thin, soil shows) to 1 (lush). 0.8 m and 0.4 m only: nothing in the tile
 -- varies slower than that, the macro tint does.
 local function density(x, y)
-	local v = 0.6 * field(x, y, 0.8, 11) + 0.4 * field(x, y, 0.4, 23)
-	return clamp(0.5 + v * densityContrast, 0, 1)
+	return clamp(0.5 + (rawDensity(x, y) - densityOffset) * densityContrast, 0, 1)
 end
 
 -- Local blade direction: an isotropic vector field, so blades comb in patches with no global grain.
 local function flowAngle(x, y)
-	return atan(field(x, y, 1.0, 37), field(x, y, 1.0, 41))
+	return atan(field(x, y, P, 37), field(x, y, P, 41))
+end
+
+-- A soft olive-to-green drift over patches of a meter or so, small next to the clump tones.
+local patchValueOffset = tileMean(function(x, y)
+	return field(x, y, 6, 59)
+end)
+local patchHueOffset = tileMean(function(x, y)
+	return field(x, y, 3, 53)
+end)
+local function patchTone(x, y)
+	return 1 + patchValue * (field(x, y, 6, 59) - patchValueOffset), patchHue * (field(x, y, 3, 53) - patchHueOffset)
 end
 
 -- Lush ground is a little darker and more saturated.
@@ -199,7 +264,7 @@ local function lush(c, d)
 end
 
 local function jitter(c, vAmp, hueAmp)
-	return tone(c, 1 + vAmp * (rand() * 2 - 1), hueAmp * (rand() * 2 - 1), 1)
+	return tone(c, 1 + vAmp * signed(), hueAmp * signed(), 1)
 end
 
 -- Emitting -----------------------------------------------------------------------------------
@@ -291,10 +356,12 @@ local function fan(x, y, angles, lens, bends, hubHalf, withSides, c, alpha, lod)
 	finish(p, c, alpha, lod)
 end
 
--- A blade from (x, y) along angle a: length L, base width w, bowed sideways by bow * L. Paints an
--- optional centered underlay, a base segment and a lit tip segment, plus an optional tip highlight.
+-- A blade from (x, y) along angle a: length L, base width w, bowed sideways by bow * L. Paints a
+-- proxy strip in the ground tone under it (kept down to mip 3, so the mips that drop the blade
+-- still cover what's beneath the way the blade does, at its mean), then a centered dark underlay
+-- underlayWidth times as wide, a base segment and a lit tip segment, plus an optional tip highlight.
 local bladeT = { 0, 0.28, 0.55, 0.78 }
-local function blade(x, y, a, L, w, bow, baseCol, tipCol, underlay, highlight, lod)
+local function blade(x, y, a, L, w, bow, proxyCol, baseCol, tipCol, highlight, lod)
 	local dx, dy = cos(a), sin(a)
 	local px, py = -dy, dx
 	local cx, cy, hw = {}, {}, {}
@@ -307,19 +374,27 @@ local function blade(x, y, a, L, w, bow, baseCol, tipCol, underlay, highlight, l
 	end
 	local tx, ty = x + dx * L + px * bow * L, y + dy * L + py * bow * L
 
-	if underlay then
-		local s = 1.7
-		local ex, ey = tx + dx * L * 0.05, ty + dy * L * 0.05
-		local p = Path()
-		addVertex(p, cx[1] + px * hw[1] * s, cy[1] + py * hw[1] * s)
-		addVertex(p, cx[3] + px * hw[3] * s, cy[3] + py * hw[3] * s)
-		addVertex(p, ex, ey)
-		addVertex(p, cx[3] - px * hw[3] * s, cy[3] - py * hw[3] * s)
-		addVertex(p, cx[1] - px * hw[1] * s, cy[1] - py * hw[1] * s)
-		finish(p, underlayColor, underlayAlpha, lod)
-	end
-
+	local s = underlayWidth
+	local ex, ey = tx + dx * L * 0.05, ty + dy * L * 0.05
+	local ax, ay = px * hw[1] * s, py * hw[1] * s
+	local bx, by = px * hw[3] * s, py * hw[3] * s
 	local p = Path()
+	addVertex(p, cx[1] + ax, cy[1] + ay)
+	addVertex(p, cx[3] + bx, cy[3] + by)
+	addVertex(p, ex, ey)
+	addVertex(p, cx[3] - bx, cy[3] - by)
+	addVertex(p, cx[1] - ax, cy[1] - ay)
+	finish(p, proxyCol, 1, kCover)
+
+	p = Path()
+	addVertex(p, cx[1] + ax, cy[1] + ay)
+	addVertex(p, cx[3] + bx, cy[3] + by)
+	addVertex(p, ex, ey)
+	addVertex(p, cx[3] - bx, cy[3] - by)
+	addVertex(p, cx[1] - ax, cy[1] - ay)
+	finish(p, underlayColor, underlayAlpha, lod)
+
+	p = Path()
 	for i = 1, 3 do
 		addVertex(p, cx[i] + px * hw[i], cy[i] + py * hw[i])
 	end
@@ -369,13 +444,13 @@ local function chevron(x, y, a, l, c, alpha)
 	finish(p, c, alpha, 96)
 end
 
+-- A trifoliate stays down to mip 3, where a patch of them averages to the patch's tone.
 local function trifoliate(x, y, l, c)
 	local a0 = rand() * TAU
-	local tag = lodFor(l * 2.2)
 	for i = 0, 2 do
 		local a = a0 + i * TAU / 3 + (rand() - 0.5) * 0.5
 		local ll = l * uniform(0.9, 1.1)
-		leaflet(x, y, a, ll, jitter(c, 0.05, 2), tag)
+		leaflet(x, y, a, ll, jitter(c, 0.05, 2), kCover)
 		chevron(x, y, a, ll, chevronColor, 0.55)
 	end
 end
@@ -518,7 +593,7 @@ local function shuffle(t)
 	end
 end
 
--- Layout (everything placed before anything is drawn, so the far stack can proxy it) ----------
+-- Layout (everything placed before anything is drawn, so the far stack can mirror it) ---------
 
 -- Soil peeks where the grass is thin.
 local soils = weighted(count(soilPerM2), function(x, y)
@@ -529,41 +604,76 @@ for _, s in ipairs(soils) do
 	s.r = lognormal(soilLo, soilHi, 0.5) * 0.5
 end
 
--- Clumps: Poisson-disk centers, each a Thomas cluster of tufts that share a tone and a lean, so
--- the ground reads as clumps of grass with darker crevices between them. Thin ground grows fewer
--- tufts a clump.
+-- Clumps: Poisson-disk centers, each a disc of radius R holding a Thomas cluster of tufts that share
+-- a tone and a lean, around a lit crown. Tufts at the rim flop outward and sit lower, so a clump
+-- shades like a dome seen from straight above: light core, darker rim, no light direction. Thin
+-- ground grows smaller clumps, so more of the dark ground between them shows.
+--
+-- The random parts of size and tone are normalized over the variant (the summed area to what the
+-- spacing and size range give, tones to zero mean), so coverage and mean don't drift from seed to
+-- seed with the clump count or the draws.
+local clumps = {}
+do
+	local sizeSigma = 0.4
+	local sumR2, sumV, sumH, sumS = 0, 0, 0, 0
+	for _, cl in ipairs(poissonTorus(clumpSpacing)) do
+		local c = {
+			x = cl[1],
+			y = cl[2],
+			base = lognormal(clumpRLo, clumpRHi, sizeSigma),
+			dv = signed(),
+			dh = signed(),
+			ds = signed(),
+			lean = tuftLean * uniform(0.4, 1),
+		}
+		sumR2, sumV, sumH, sumS = sumR2 + c.base * c.base, sumV + c.dv, sumH + c.dh, sumS + c.ds
+		clumps[#clumps + 1] = c
+	end
+	local n = max(1, #clumps)
+	-- Bridson's sampling packs about 0.67 / spacing^2 points a square meter.
+	local targetR2 = AREA * 0.67 / (clumpSpacing * clumpSpacing) * clumpRLo * clumpRHi * exp(2 * sizeSigma * sizeSigma)
+	local sizeScale = sqrt(targetR2 / max(sumR2, 1e-9))
+	local mv, mh, ms = sumV / n, sumH / n, sumS / n
+	for _, c in ipairs(clumps) do
+		c.d = density(c.x, c.y)
+		local pv, ph = patchTone(c.x, c.y)
+		c.R = c.base * sizeScale * lerp(0.65, 1.1, c.d)
+		c.v = (1 + clumpValue * (c.dv - mv)) * pv
+		c.h = clumpHue * (c.dh - mh) + ph
+		c.s = 1 + clumpSaturation * (c.ds - ms)
+		c.phi = flowAngle(c.x, c.y) + gauss() * 0.8
+		local body = lush(tone(mix(tuftDark, tuftLight, 0.5), c.v, c.h, c.s), c.d)
+		local hi = lush(tone(mix(tuftHiDark, tuftHiLight, 0.5), c.v, c.h, c.s), c.d)
+		c.tone = mix(body, hi, 0.4)
+		c.crown = lush(tone(mix(tuftHiDark, tuftHiLight, 0.5), c.v * (1 + clumpDome * 0.8), c.h, c.s), c.d)
+	end
+end
+
 local tufts = {}
-for _, cl in ipairs(poissonTorus(clumpSpacing)) do
-	local d = density(cl[1], cl[2])
-	local v = 1 + clumpValue * (rand() * 2 - 1)
-	local h = clumpHue * (rand() * 2 - 1)
-	local lean = tuftLean * uniform(0.4, 1)
-	local phi = flowAngle(cl[1], cl[2]) + gauss() * 0.8
-	local sigma = uniform(clumpSpreadLo, clumpSpreadHi)
-	for _ = 1, floor(lerp(tuftsPerClumpLo, tuftsPerClumpHi, d) + rand()) do
+for _, c in ipairs(clumps) do
+	local sigma = c.R * tuftSpread
+	for _ = 1, floor(lerp(tuftsPerClumpLo, tuftsPerClumpHi, c.d) + rand()) do
 		local ox, oy = gauss() * sigma, gauss() * sigma
-		-- Tufts at the clump's rim flop outward and sit lower, so a clump shades like a dome seen
-		-- from straight above: light core, darker rim, no light direction.
-		local out = min(1, sqrt(ox * ox + oy * oy) / (2 * sigma))
-		local ux, uy = cos(phi) * lean + ox / sigma * 0.3 * out, sin(phi) * lean + oy / sigma * 0.3 * out
+		local out = min(1, sqrt(ox * ox + oy * oy) / c.R)
+		local ux, uy = cos(c.phi) * c.lean + ox / sigma * 0.3 * out, sin(c.phi) * c.lean + oy / sigma * 0.3 * out
 		tufts[#tufts + 1] = {
-			(cl[1] + ox) % P,
-			(cl[2] + oy) % P,
-			d = d,
-			v = v * (1 + clumpDome * (1 - 2 * out)) * (1 + 0.03 * (rand() * 2 - 1)),
-			h = h,
+			(c.x + ox) % P,
+			(c.y + oy) % P,
+			clump = c,
+			v = c.v * (1 + clumpDome * (1 - 2 * out)) * (1 + 0.03 * signed()),
 			lean = min(0.9, sqrt(ux * ux + uy * uy)),
 			phi = atan(uy, ux) + gauss() * 0.35,
+			len = clamp(c.R * uniform(tuftReachLo, tuftReachHi), 0.025, 0.15),
 		}
 	end
 end
 shuffle(tufts)
 for _, t in ipairs(tufts) do
-	t.len = lognormal(tuftLenLo, tuftLenHi, 0.35)
+	local c = t.clump
 	t.k = floor(uniform(tuftSpikesLo, tuftSpikesHi + 1))
 	t.hub = uniform(tuftHubLo, tuftHubHi) * 0.5
-	t.body = lush(tone(mix(tuftDark, tuftLight, rand()), t.v, t.h, 1), t.d)
-	t.hi = lush(tone(mix(tuftHiDark, tuftHiLight, rand()), t.v, t.h, 1), t.d)
+	t.body = lush(tone(mix(tuftDark, tuftLight, rand()), t.v, c.h, c.s), c.d)
+	t.hi = lush(tone(mix(tuftHiDark, tuftHiLight, rand()), t.v, c.h, c.s), c.d)
 end
 
 -- Clover patches: Thomas clusters around blue-noise parents.
@@ -571,9 +681,9 @@ local patches = blueNoise(count(cloverPatchPerM2), 0.6 / sqrt(max(cloverPatchPer
 local clovers = {}
 for _, pa in ipairs(patches) do
 	pa.sigma = uniform(cloverSigmaLo, cloverSigmaHi)
-	pa.c = tone(cloverColor, 1 + 0.05 * (rand() * 2 - 1), 3 * (rand() * 2 - 1), 1)
-	local n = floor(uniform(cloverPerLo, cloverPerHi + 1))
-	for _ = 1, n do
+	pa.c = tone(cloverColor, 1 + 0.05 * signed(), 3 * signed(), 1)
+	pa.n = floor(uniform(cloverPerLo, cloverPerHi + 1))
+	for _ = 1, pa.n do
 		clovers[#clovers + 1] = {
 			(pa[1] + gauss() * pa.sigma) % P,
 			(pa[2] + gauss() * pa.sigma) % P,
@@ -585,19 +695,229 @@ for _, pa in ipairs(patches) do
 end
 shuffle(clovers)
 
--- Far stack ----------------------------------------------------------------------------------
+-- Broadleaf rosettes (blue noise).
+local rosettes = blueNoise(count(rosettePerM2), 0.8 / sqrt(max(rosettePerM2, 0.01)))
+for _, ro in ipairs(rosettes) do
+	ro.k = floor(uniform(5, 9))
+	ro.a0 = rand() * TAU
+	ro.c = jitter(rosetteColor, 0.05, 3)
+	ro.inner = jitter(rosetteInner, 0.04, 3)
+	ro.leaves = {}
+	local sum = 0
+	for i = 1, ro.k do
+		local l = uniform(rosetteLenLo, rosetteLenHi)
+		ro.leaves[i] = { a = ro.a0 + (i - 1 + (rand() - 0.5) * 0.5) * TAU / ro.k, l = l, w = l * uniform(0.3, 0.4), v = uniform(0.95, 1.05) }
+		sum = sum + l
+	end
+	ro.meanLen = sum / ro.k
+end
 
-rect(0, 0, P, P, farBase, 0)
+-- Tone model ---------------------------------------------------------------------------------
+
+-- A coarse model of the near stack before its blades: linear light on a ~3 cm grid, each feature
+-- painted over what's below by the share of its area it covers. Blades take their tone from it, so
+-- each blade averages to the ground it lies on, and the far stack is it, averaged.
+
+-- Built in a function of its own: the main chunk is near Lua's 200-local limit. Returns the
+-- model's sRGB color at (x, y) and the share of (x, y) its clumps cover, after drawing the far
+-- stack from it.
+local groundAt, clumpCover = (function()
+local function toLinear(c)
+	local out = {}
+	for i = 1, 3 do
+		local v = c[i]
+		out[i] = v <= 0.04045 and v / 12.92 or ((v + 0.055) / 1.055) ^ 2.4
+	end
+	return out
+end
+local function toSrgb(l)
+	local out = {}
+	for i = 1, 3 do
+		local v = clamp(l[i], 0, 1)
+		out[i] = v <= 0.0031308 and v * 12.92 or 1.055 * v ^ (1 / 2.4) - 0.055
+	end
+	return out
+end
+
+local gridN = floor(P / 0.03125 + 0.5)
+local cellSize = P / gridN
+local gridR, gridG, gridB, cover = {}, {}, {}, {}
+do
+	local g = toLinear(mix(gapColor, mix(underDark, underLight, 0.5), modelUndergrowth))
+	for k = 1, gridN * gridN do
+		gridR[k], gridG[k], gridB[k], cover[k] = g[1], g[2], g[3], 0
+	end
+end
+
+-- Paints a disc of radius r at (cx, cy), wrapped: fn(out) gives the linear color and the covered
+-- share at out = distance / r (0..1).
+local function paint(cx, cy, r, fn)
+	local i0, i1 = floor((cx - r) / cellSize), floor((cx + r) / cellSize)
+	local j0, j1 = floor((cy - r) / cellSize), floor((cy + r) / cellSize)
+	for j = j0, j1 do
+		local py = (j + 0.5) * cellSize - cy
+		local row = (j % gridN) * gridN + 1
+		for i = i0, i1 do
+			local px = (i + 0.5) * cellSize - cx
+			local out = sqrt(px * px + py * py) / r
+			if out < 1 then
+				local c, w = fn(out)
+				if w > 0 then
+					local k = row + i % gridN
+					gridR[k] = gridR[k] + (c[1] - gridR[k]) * w
+					gridG[k] = gridG[k] + (c[2] - gridG[k]) * w
+					gridB[k] = gridB[k] + (c[3] - gridB[k]) * w
+				end
+			end
+		end
+	end
+end
+
 for _, s in ipairs(soils) do
-	blob(s[1], s[2], s.r * 0.7, 10, 0.25, 1, 0, soilColor, 1, 0)
+	local c = toLinear(soilColor)
+	paint(s[1], s[2], s.r * 1.1, function(out)
+		return c, 0.6 * (1 - out * out)
+	end)
+end
+-- Clumps, inlined: they are most of the painting. A clump's tone runs from its crown at the
+-- center through the dome to its rim, over 1.2 radii, fading out past 0.75.
+do
+	local reach = 1.2
+	local tr, tg, tb = {}, {}, {}
+	for _, c in ipairs(clumps) do
+		local core = toLinear(c.crown)
+		for i = 0, 12 do
+			local out = i / 10
+			local col = toLinear(tone(c.tone, 1 + clumpDome * (1 - 2 * min(out, 1)), 0, 1))
+			if out < 0.5 then
+				col = mix(core, col, out / 0.5)
+			end
+			tr[i], tg[i], tb[i] = col[1], col[2], col[3]
+		end
+		local r = c.R * reach
+		local inv = 1 / c.R
+		local i0, i1 = floor((c.x - r) / cellSize), floor((c.x + r) / cellSize)
+		local j0, j1 = floor((c.y - r) / cellSize), floor((c.y + r) / cellSize)
+		for j = j0, j1 do
+			local py = ((j + 0.5) * cellSize - c.y) * inv
+			local row = (j % gridN) * gridN + 1
+			for i = i0, i1 do
+				local px = ((i + 0.5) * cellSize - c.x) * inv
+				local out = sqrt(px * px + py * py)
+				if out < reach then
+					local t = clamp((out - 0.75) / (reach - 0.75), 0, 1)
+					local w = modelClumpFill * (1 - t * t * (3 - 2 * t))
+					local q = floor(out * 10 + 0.5)
+					local k = row + i % gridN
+					cover[k] = cover[k] + (1 - cover[k]) * w
+					gridR[k] = gridR[k] + (tr[q] - gridR[k]) * w
+					gridG[k] = gridG[k] + (tg[q] - gridG[k]) * w
+					gridB[k] = gridB[k] + (tb[q] - gridB[k]) * w
+				end
+			end
+		end
+	end
+end
+for _, ro in ipairs(rosettes) do
+	local c = toLinear(mix(ro.c, ro.inner, 0.35))
+	paint(ro[1], ro[2], ro.meanLen, function(out)
+		return c, 0.7 * (1 - out * out)
+	end)
 end
 for _, pa in ipairs(patches) do
-	blob(pa[1], pa[2], pa.sigma * 1.3, 10, 0.3, uniform(0.8, 1.2), rand() * TAU, tone(pa.c, 0.94, 0, 1), 1, 0)
+	local c = toLinear(pa.c)
+	-- Trifoliates cover about 0.35 l^2 a leaflet; the patch is Gaussian with sigma pa.sigma.
+	local peak = pa.n * 3 * 0.35 * (0.5 * (leafletLo + leafletHi)) ^ 2 / (TAU * pa.sigma * pa.sigma)
+	paint(pa[1], pa[2], pa.sigma * 2.5, function(out)
+		local r = out * 2.5
+		return c, 1 - exp(-peak * exp(-0.5 * r * r))
+	end)
 end
-for _, t in ipairs(tufts) do
-	local area = 0.7 * t.k * 0.5 * t.len * t.hub * 2
-	blob(t[1], t[2], sqrt(area / math.pi), floor(uniform(5, 9)), 0.3, uniform(0.8, 1.2), rand() * TAU, mix(t.body, t.hi, 0.25), 1, 0)
+
+
+-- Far stack ----------------------------------------------------------------------------------
+
+-- The model averaged into one rect a mip 4 texel (farCellsPerMeter), its color scaled by farGain:
+-- what mips 4 to 6 show, in the near stack's places. Contrast is set in two bands, so mip 4 and mips
+-- 5 and 6 can each match mip 0: detail finer than a few cells (each cell against a blur of its
+-- neighbors) by farContrast, and the coarser drift by farCoarseContrast.
+do
+	local farN = max(1, floor(P * farCellsPerMeter + 0.5))
+	local sumR, sumG, sumB, cnt = {}, {}, {}, {}
+	for k = 1, farN * farN do
+		sumR[k], sumG[k], sumB[k], cnt[k] = 0, 0, 0, 0
+	end
+	local mR, mG, mB = 0, 0, 0
+	for j = 0, gridN - 1 do
+		local fj = floor(j * farN / gridN) * farN + 1
+		for i = 0, gridN - 1 do
+			local k = j * gridN + i + 1
+			local f = fj + floor(i * farN / gridN)
+			sumR[f], sumG[f], sumB[f], cnt[f] = sumR[f] + gridR[k], sumG[f] + gridG[k], sumB[f] + gridB[k], cnt[f] + 1
+			mR, mG, mB = mR + gridR[k], mG + gridG[k], mB + gridB[k]
+		end
+	end
+	local nn = gridN * gridN
+	mR, mG, mB = mR / nn, mG / nn, mB / nn
+	local avg = { {}, {}, {} }
+	for f = 1, farN * farN do
+		local n = max(1, cnt[f])
+		avg[1][f], avg[2][f], avg[3][f] = sumR[f] / n, sumG[f] / n, sumB[f] / n
+	end
+	-- A wrapped 5-tap box blur, twice along each axis.
+	local function blur(src)
+		local a, b = src, {}
+		for _ = 1, 2 do
+			for j = 0, farN - 1 do
+				for i = 0, farN - 1 do
+					local sum = 0
+					for o = -2, 2 do
+						sum = sum + a[j * farN + (i + o) % farN + 1]
+					end
+					b[j * farN + i + 1] = sum / 5
+				end
+			end
+			a, b = b, {}
+			for j = 0, farN - 1 do
+				for i = 0, farN - 1 do
+					local sum = 0
+					for o = -2, 2 do
+						sum = sum + a[((j + o) % farN) * farN + i + 1]
+					end
+					b[j * farN + i + 1] = sum / 5
+				end
+			end
+			a, b = b, {}
+		end
+		return a
+	end
+	local means = { mR, mG, mB }
+	local fs = P / farN
+	local coarse = { blur(avg[1]), blur(avg[2]), blur(avg[3]) }
+	for j = 0, farN - 1 do
+		for i = 0, farN - 1 do
+			local f = j * farN + i + 1
+			local lin = {}
+			for ch = 1, 3 do
+				local m, a, cc = means[ch], avg[ch][f], coarse[ch][f]
+				lin[ch] = (m + (a - cc) * farContrast + (cc - m) * farCoarseContrast) * farGain[ch]
+			end
+			rect(i * fs, j * fs, (i + 1) * fs, (j + 1) * fs, toSrgb(lin), 0)
+		end
+	end
 end
+
+local function cell(x, y)
+	return (floor(y / cellSize) % gridN) * gridN + floor(x / cellSize) % gridN + 1
+end
+return function(x, y)
+	local k = cell(x, y)
+	return toSrgb({ gridR[k], gridG[k], gridB[k] })
+end, function(x, y)
+	return cover[cell(x, y)]
+end
+end)()
+
 
 -- Near stack ---------------------------------------------------------------------------------
 
@@ -605,43 +925,42 @@ rect(0, 0, P, P, gapColor, kCover)
 
 -- Soil peeks: two or three overlapping blobs, a few darker specks, sometimes a dry edge.
 for _, s in ipairs(soils) do
-	local lod = lodFor(s.r * 2)
 	if rand() < 0.15 then
-		blob(s[1], s[2], s.r * 1.12, 12, 0.25, 1, 0, soilDry, 1, lod)
+		blob(s[1], s[2], s.r * 1.12, 12, 0.25, 1, 0, soilDry, 1, kCover)
 	end
 	local parts = rand() < 0.5 and 2 or 3
 	for _ = 1, parts do
 		local ox, oy = gauss() * s.r * 0.35, gauss() * s.r * 0.35
-		blob(s[1] + ox, s[2] + oy, s.r * uniform(0.6, 0.9), 12, 0.3, uniform(0.75, 1.3), rand() * TAU, jitter(soilColor, 0.04, 2), 1, lod)
+		blob(s[1] + ox, s[2] + oy, s.r * uniform(0.6, 0.9), 12, 0.3, uniform(0.75, 1.3), rand() * TAU, jitter(soilColor, 0.04, 2), 1, kCover)
 	end
 	for _ = 1, floor(uniform(1, 4)) do
 		local ox, oy = gauss() * s.r * 0.4, gauss() * s.r * 0.4
-		blob(s[1] + ox, s[2] + oy, s.r * uniform(0.08, 0.16), 6, 0.2, 1, 0, soilDark, 1, max(lod, 64))
+		blob(s[1] + ox, s[2] + oy, s.r * uniform(0.08, 0.16), 6, 0.2, 1, 0, soilDark, 1, 64)
 	end
 end
 
 -- Pebbles, mostly on the soil, each over a soft centered halo.
-do
-	for _ = 1, count(pebblePerM2) do
-		local x, y
-		if #soils > 0 and rand() < 0.7 then
-			local s = soils[floor(rand() * #soils) + 1]
-			x, y = s[1] + gauss() * s.r * 0.6, s[2] + gauss() * s.r * 0.6
-		else
-			x, y = rand() * P, rand() * P
-		end
-		local r = lognormal(pebbleLo, pebbleHi, 0.5) * 0.5
-		local lod = lodFor(r * 2)
-		local sides = floor(uniform(6, 10))
-		local aspect, rot = uniform(0.7, 1.0), rand() * TAU
-		blob(x, y, r * 1.25, sides, 0.15, aspect, rot, haloColor, haloAlpha, lod)
-		blob(x, y, r, sides, 0.15, aspect, rot, jitter(pebbleColors[floor(rand() * 3) + 1], 0.04, 0), 1, lod)
+for _ = 1, count(pebblePerM2) do
+	local x, y
+	if #soils > 0 and rand() < 0.7 then
+		local s = soils[floor(rand() * #soils) + 1]
+		x, y = s[1] + gauss() * s.r * 0.6, s[2] + gauss() * s.r * 0.6
+	else
+		x, y = rand() * P, rand() * P
 	end
+	local r = lognormal(pebbleLo, pebbleHi, 0.5) * 0.5
+	local lod = lodFor(r * 2)
+	local sides = floor(uniform(6, 10))
+	local aspect, rot = uniform(0.7, 1.0), rand() * TAU
+	blob(x, y, r * 1.25, sides, 0.15, aspect, rot, haloColor, haloAlpha, lod)
+	blob(x, y, r, sides, 0.15, aspect, rot, jitter(pebbleColors[floor(rand() * 3) + 1], 0.04, 0), 1, lod)
 end
 
--- Dark undergrowth fans, thinner where the grass is thin.
-for _, u in ipairs(weighted(count(underPerM2), function(x, y)
-	return 0.6 + 0.4 * density(x, y)
+-- Dark undergrowth fans in the ground between clumps, undergrowthDensity a square meter of it (the
+-- ones a clump would hide aren't drawn), thinner where the grass is thin.
+local gapShare = 1 - tileMean(clumpCover)
+for _, u in ipairs(weighted(count(underPerM2 * gapShare), function(x, y)
+	return (0.6 + 0.4 * density(x, y)) * (1 - clumpCover(x, y))
 end)) do
 	local k = floor(uniform(underSpikesLo, underSpikesHi + 1))
 	local angles = fanAngles(k, uniform(0.4, 0.8), rand() * TAU)
@@ -650,7 +969,8 @@ end)) do
 		lens[i] = uniform(underLenLo, underLenHi) * uniform(0.7, 1)
 		bends[i] = gauss() * 0.2
 	end
-	local c = lush(jitter(mix(underDark, underLight, rand()), elementValue, elementHue), density(u[1], u[2]))
+	local pv, ph = patchTone(u[1], u[2])
+	local c = lush(tone(jitter(mix(underDark, underLight, rand()), elementValue, elementHue), pv, ph, 1), density(u[1], u[2]))
 	fan(u[1], u[2], angles, lens, bends, uniform(underHubLo, underHubHi) * 0.5, false, c, 1, kCover)
 end
 
@@ -661,7 +981,8 @@ for _, cl in ipairs(clovers) do
 	end
 end
 
--- Mid tufts: a body fan in the clump tone and a lighter fan on top, turned off the body's spikes.
+-- Tufts: every body fan in its clump's tone, then each clump's lit crown, then the lighter fans on
+-- top, turned off the body's spikes.
 for _, t in ipairs(tufts) do
 	local angles = fanAngles(t.k, t.lean, t.phi)
 	local lens, bends = {}, {}
@@ -671,7 +992,21 @@ for _, t in ipairs(tufts) do
 		bends[i] = gauss() * 0.12
 	end
 	fan(t[1], t[2], angles, lens, bends, t.hub, true, t.body, 1, kCover)
+end
 
+for _, c in ipairs(clumps) do
+	local k = floor(uniform(crownSpikesLo, crownSpikesHi + 1))
+	local angles = fanAngles(k, c.lean * 0.6, c.phi)
+	local lens, bends = {}, {}
+	for i = 1, k do
+		lens[i] = c.R * uniform(crownReachLo, crownReachHi) * (1 + 0.4 * c.lean * cos(angles[i] - c.phi))
+		bends[i] = gauss() * 0.15
+	end
+	local shift = c.R * 0.15 * c.lean
+	fan(c.x + cos(c.phi) * shift, c.y + sin(c.phi) * shift, angles, lens, bends, 0.007, true, c.crown, 1, kCover)
+end
+
+for _, t in ipairs(tufts) do
 	local hk = floor(uniform(3, 7))
 	local hAngles = fanAngles(hk, t.lean, t.phi)
 	local hLens, hBends = {}, {}
@@ -684,21 +1019,13 @@ for _, t in ipairs(tufts) do
 	fan(t[1] + cos(t.phi) * shift, t[2] + sin(t.phi) * shift, hAngles, hLens, hBends, t.hub * 0.7, false, t.hi, 1, kCover)
 end
 
--- Broadleaf rosettes (blue noise), over the tuft fans and under the top blades that cross them.
-for _, ro in ipairs(blueNoise(count(rosettePerM2), 0.8 / sqrt(max(rosettePerM2, 0.01)))) do
-	local k = floor(uniform(5, 9))
-	local a0 = rand() * TAU
-	local c = jitter(rosetteColor, 0.05, 3)
-	local inner = jitter(rosetteInner, 0.04, 3)
-	for i = 1, k do
-		local a = a0 + (i - 1 + (rand() - 0.5) * 0.5) * TAU / k
-		local l = uniform(rosetteLenLo, rosetteLenHi)
-		local w = l * uniform(0.3, 0.4)
-		local v = uniform(0.95, 1.05)
-		leaf(ro[1], ro[2], a, l, w, tone(c, v, 0, 1), kCover)
+-- Rosettes, over the tuft fans and under the top blades that cross them.
+for _, ro in ipairs(rosettes) do
+	for _, lf in ipairs(ro.leaves) do
+		leaf(ro[1], ro[2], lf.a, lf.l, lf.w, tone(ro.c, lf.v, 0, 1), kCover)
 		-- The lit inner leaf, cel-shaded on the same axis.
-		leaf(ro[1] + cos(a) * l * 0.12, ro[2] + sin(a) * l * 0.12, a, l * 0.72, w * 0.6, tone(inner, v, 0, 1), lodFor(w * 0.6))
-		midrib(ro[1], ro[2], a, l, w * 0.08, rosetteRib, 48)
+		leaf(ro[1] + cos(lf.a) * lf.l * 0.12, ro[2] + sin(lf.a) * lf.l * 0.12, lf.a, lf.l * 0.72, lf.w * 0.6, tone(ro.inner, lf.v, 0, 1), kCover)
+		midrib(ro[1], ro[2], lf.a, lf.l, lf.w * 0.08, rosetteRib, 48)
 	end
 end
 
@@ -709,13 +1036,15 @@ for _, cl in ipairs(clovers) do
 	end
 end
 
--- Top blades: most grow from tuft crowns and fall with the tuft's lean (a few radiate), the rest
--- follow the local flow anywhere.
+-- Top blades: most grow from tuft crowns and fall with the tuft's lean (a few radiate); the rest
+-- follow the local flow anywhere. Each segment takes the ground tone where it lies, brightened by
+-- bladeGain, so a blade over a clump's core is light and one reaching into a gap is dark: the
+-- blades carry texture, not tone, and the mips that drop them keep mip 0's mean and patches.
 do
 	local n = count(bladePerM2)
 	local nTuft = #tufts > 0 and floor(n * bladeInTufts + 0.5) or 0
 	for i = 1, n do
-		local x, y, a, d, v, h
+		local x, y, a
 		if i <= nTuft then
 			local t = tufts[floor(rand() * #tufts) + 1]
 			local ox, oy = gauss() * 0.012, gauss() * 0.012
@@ -726,30 +1055,32 @@ do
 			else
 				a = t.phi + gauss() * bladeFanSpread
 			end
-			d, v, h = t.d, t.v, t.h
 		else
 			x, y = rand() * P, rand() * P
 			a = flowAngle(x, y) + gauss() * flowSpread
-			d, v, h = density(x, y), 1 + clumpValue * (rand() * 2 - 1), clumpHue * (rand() * 2 - 1)
 		end
 		local L = lognormal(bladeLenLo, bladeLenHi, 0.3)
 		-- A share of broad blades: they stay in the coarser near mips, where the fine ones drop out.
 		local w = rand() < broadShare and uniform(broadWLo, broadWHi) or uniform(bladeWLo, bladeWHi) * uniform(0.6, 1.0)
 		local bow = bladeBow * gauss()
+		local dx, dy = cos(a), sin(a)
+		local baseGround = groundAt(x + dx * L * 0.28, y + dy * L * 0.28)
+		local tipGround = groundAt(x + dx * L * 0.75, y + dy * L * 0.75)
+		local proxy = mix(baseGround, tipGround, 0.45)
 		local baseCol, tipCol
 		if rand() < strawShare then
 			baseCol = jitter(mix(strawDark, strawLight, rand()), elementValue, elementHue)
 			tipCol = tone(baseCol, 1.05, 0, 0.95)
 			w = w * 0.7
 		else
-			local e = 1 + elementValue * (rand() * 2 - 1)
-			local eh = elementHue * (rand() * 2 - 1)
-			baseCol = lush(tone(bladeBase, v * e, h + eh, 1), d)
-			tipCol = lush(tone(mix(bladeTipDark, bladeTipLight, rand()), v * e, h + eh, 1), d)
+			local e = bladeGain * (1 + elementValue * signed())
+			local eh = elementHue * signed()
+			baseCol = tone(baseGround, e, bladeHue + eh, 1)
+			tipCol = tone(tipGround, e * bladeTipGain, bladeTipHue + eh, 1)
 			if rand() < dryTipShare then
 				tipCol = mix(tipCol, strawDark, 0.45)
 			end
 		end
-		blade(x, y, a, L, w, bow, baseCol, tipCol, true, rand() < tipHighlightShare, lodFor(w))
+		blade(x, y, a, L, w, bow, proxy, baseCol, tipCol, rand() < tipHighlightShare, lodFor(w))
 	end
 end
