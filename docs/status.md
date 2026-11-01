@@ -646,7 +646,8 @@ while (running) {
   - [ ] 3x3 wrapped preview and variant grid
   - [ ] Fixed tile frame for thumbnails
 - [ ] Verify and hand off
-  - [ ] Final perf capture against main with clocks held
+  - [x] In-game GPU hold for perf captures, so nobody locks clocks (WOR-553)
+  - [ ] Final perf capture against main with the GPU hold on
   - [ ] Manual test script `docs/testing/scenarios/ground-tiles.md`
   - [ ] Draft PRs in worldsim and salal (no merge, no tag)
 

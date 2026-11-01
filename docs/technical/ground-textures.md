@@ -223,13 +223,13 @@ The method is WOR-463's (section 6 of the terrain spec), so the numbers compare 
 
 Recorded per run: `tileGpuMs` (the ground and water pass, GPU timestamp queries), scene `gpuMs`, frame p50 and p99 max, and the scroll scenarios' spikes. From the `[ChunkGen]` dev-tools log: chunk generation worker time (median, p90, max) and the main-thread upload per chunk. Plus the bake time added to the splash and the VRAM for the arrays and macro textures.
 
-Captures must hold the GPU clocks (see the finding below): lock them from an admin shell with `nvidia-smi -lgc <min>,<max>` (undo with `-rgc`), or run a ballast load outside the tile timer.
+Captures hold the GPU at P0 with the game's GPU hold (WOR-553, below), never by changing driver clock settings. `scripts/perf-capture.ps1` turns it on for the whole capture (`-NoGpuHold` leaves it off), records each sample's P-state and graphics and memory clocks from a read-only `nvidia-smi --query-gpu=pstate,clocks.gr,clocks.mem` query, and warns in red if any sample wasn't P0. A capture with a sample off P0 gets rerun, not compared.
 
 ### Gates
 
 Every one must hold, on every view and zoom:
 
-- `tileGpuMs` no higher than main beyond the noise floor, which is main captured twice with clocks held, taking the spread per row. The target is net neutral or faster, not a budgeted increase.
+- `tileGpuMs` no higher than main beyond the noise floor, which is main captured twice with the GPU hold on, taking the spread per row. The target is net neutral or faster, not a budgeted increase.
 - `tileGpuMs` under 1.5 ms everywhere.
 - Frame p50 and p99 and scene GPU not worse than main beyond noise, scroll scenarios included (they catch upload hitches).
 - Chunk generation median and p90 not worse beyond the macro texture's own measured cost, and that cost reported.
@@ -242,6 +242,21 @@ Order of measurement: baseline main twice (the noise floor), profile today's pas
 ### Clock state
 
 On light views the driver drops the GPU to P3 or P2 (1035 to 1410 MHz against 1890 to 1950 at P0), and the same pass reads 1.4 to 2.1 ms instead of about 0.95. An unpinned capture then compares clocks, not code. The river zoom 8 and 20 "regression" against the WOR-463 table is this and not a code change; the captures committed with WOR-463 already show it. The unpinned baselines of main from 2026-10-31 (`perf-results/capture-2026-10-31-ground-main-<view>-{1,2}.json`, two runs per view) read river zoom 20 at 1.22 and 1.97 ms against 0.76 at P0, river zoom 8 at 1.51 and 1.53 against 0.99, and coast zoom 1.5 at 1.25 and 1.19 against 0.64. The gates compare against main captured with clocks held, and the table below is that.
+
+### GPU hold (WOR-553)
+
+The spike held P0 with ballast: the tile pass drawn again after its timer closed, as many times as kept the GPU near a utilization target. `GpuHold` (`apps/world-sim/scenes/game/dev/GpuHold.cpp`) is that idea made self-contained, so main and a branch run identical code and neither ChunkRenderer is involved. Each frame, after the scene's GPU timer closes, it draws a throwaway ALU-heavy shader into its own 512x512 target that nothing reads, one instanced draw of full-target passes, about 55 us a pass at P0. No GPU time the game reports counts it, neither `gpuMs` nor `tileGpuMs`; its few GL calls land in the CPU's `sceneRenderMs`, and the frame's image is untouched.
+
+The pass count adapts every frame so the scene's GPU time plus the hold's sits near a fraction of the smoothed frame interval, 0.8 by default. It moves by a tenth of the relative error, at most 10% a frame, which stays stable under the GPU timers' four-frame lag, and a view whose scene span already fills the budget (zoom 0.75 and out, on the river view) gets no passes and stays at P0 on its own load. It's dev-only and off by default: `/api/control?action=gpuhold&value=0|1[&target=0.05..0.95]` toggles it, `/api/state?what=gpuhold` reads back the pass count and its GPU time, and a build without the dev server can't turn it on.
+
+Measured 2026-11-01 on the river view at zoom 20, the same code in both builds, 15 one-second samples each:
+
+| Build | Hold off | Hold on |
+|---|---|---|
+| main (1f46f16b) | P3, dipping to P5, 870 to 1170 MHz; `tileGpuMs` median 1.29 | P0, 1935 MHz, memory 9751 MHz; `tileGpuMs` 0.74 to 0.75 |
+| ground tiles branch | P3, dipping to P5, 915 to 1215 MHz; `tileGpuMs` median 1.39 | P0, 1935 to 1950 MHz, memory 9751 MHz; `tileGpuMs` 0.80 to 0.81 |
+
+The hold ran about 96 passes, 5.3 ms of GPU a frame, and main's 0.74 sits beside the 0.76 in the table below. With game time frozen and the app paused, screenshots with the hold off and on were bit-identical everywhere but the water, which animates while paused and differs between two hold-off screenshots as well. A full capture of the river view with the hold on read P0 in every sample of every scenario.
 
 ### Main at P0
 

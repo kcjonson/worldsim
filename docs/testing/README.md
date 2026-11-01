@@ -19,7 +19,7 @@ protected pixel for pixel: no golden images, no screenshot diffs, in CI or local
 |---|---|---|
 | Unit tests | `*.test.cpp` (one `<lib>-tests` per library: `sim-tests`, `world-tests`, `assets-tests` and so on) | CI, every push |
 | Happy-path scenarios | [scenarios/](./scenarios/) and [regressions.md](./regressions.md) | before every commit that touches what they cover |
-| Gameplay perf | `scripts/perf-capture.ps1` (to port to `.mjs`) | before committing rendering or sim-heavy changes, and after every salal bump |
+| Gameplay perf | `scripts/perf-capture.ps1` (to port to `.mjs`), with the game's GPU hold on so the card stays at P0 and nobody locks clocks; each sample records the P-state, and the script warns if one wasn't P0 ([ground-textures.md](../technical/ground-textures.md#gpu-hold-wor-553)) | before committing rendering or sim-heavy changes, and after every salal bump |
 
 - **Scenarios are the happy-path scripts.** Before committing, the relevant ones are run as a
   manual regression pass by the cheapest subagent fleet that can (Haiku-class), one agent per
@@ -154,6 +154,7 @@ Synchronous JSON, read after the frame renders. The game scene registers these v
 | `landing` | `{landingLatDeg, landingLonDeg, biome, waterClass, riverInTile}` |
 | `time` | `{...}` |
 | `tunables` | every registered tunable and its value |
+| `gpuhold` | `{enabled, target, passes, holdGpuMs, sceneGpuMs, frameMs}`, the GPU hold's state; the GPU times are a few frames old |
 
 ### Other endpoints
 
@@ -162,6 +163,7 @@ Synchronous JSON, read after the frame renders. The game scene registers these v
 | `GET /api/ui/screenshot` | Returns a PNG screenshot. |
 | `GET /api/control?action=exit` | Shuts down the instance (blocking). |
 | `GET /api/control?action=camera&x=&y=&zoom=&panx=&pany=` | Moves the camera (the game scene's control; applied at its next update, so not while paused). `x` and `y` together; `panx`/`pany` -1..1 hold until set to 0. A bad or missing parameter is a 400. |
+| `GET /api/control?action=gpuhold&value=0\|1&target=0.8` | The game scene's GPU hold for perf captures: extra GPU work after the scene's timers, into its own offscreen target, sized each frame so scene plus hold GPU time sits near `target` (0.05 to 0.95) of the frame time, which keeps the card at P0. Off by default. Either parameter may be left out; it answers the hold's state, and a bad value is a 400. |
 | `GET /api/input?ev=click,x,y` | Synthetic input (logical pixels). Event types: `move`/`down`/`up`/`click`/`scroll,x,y,delta`, `keydown,<key>`/`keyup,<key>`, `char,<codepoint>`. It goes the way real input does: keys reach the focused ui component, a scroll the ui doesn't take zooms the camera, and while paused it waits for resume. A malformed event is a 400. The injected pointer position holds (hover persists) until the real cursor moves over the window or a real mouse button or scroll event lands. |
 
 ---
