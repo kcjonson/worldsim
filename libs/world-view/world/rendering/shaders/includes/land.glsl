@@ -102,6 +102,23 @@ int levelOfSurface(uint surfaceId) {
 	return int(nibble) - 1;
 }
 
+// Whole numbers move between int and float here without the GPU's conversion unit,
+// which runs at an eighth of the float rate and is what this pass is short of:
+// adding 1.5 * 2^23 to a float leaves it rounded to a whole number in the low
+// mantissa bits. Exact under 2^22 in magnitude.
+const float kWholeBias	   = 12582912.0;
+const int	kWholeBiasBits = 0x4B400000;
+
+/// x rounded to the nearest whole number.
+int roundToInt(float x) {
+	return floatBitsToInt(x + kWholeBias) - kWholeBiasBits;
+}
+
+/// u (under 2^22) as a float.
+float smallToFloat(uint u) {
+	return intBitsToFloat(int(u) | kWholeBiasBits) - kWholeBias;
+}
+
 // ============================================================================
 // THE FIELD
 // ============================================================================
@@ -152,23 +169,17 @@ uint nibbleMatches(uint nibbles, uint surface) {
 	return (z | (z >> 12u)) & 0xFFu;
 }
 
-/// D16 step 1 at block tile (i, j): the 3x3 binomial of the indicator, then the
-/// thin-feature guard (both neighbors along either axis on the other side).
-float guardedBlur(uint mask, int i, int j) {
-	int sum = 0;
-	sum += blockBit(mask, i - 1, j - 1) ? 1 : 0;
-	sum += blockBit(mask, i, j - 1) ? 2 : 0;
-	sum += blockBit(mask, i + 1, j - 1) ? 1 : 0;
-	sum += blockBit(mask, i - 1, j) ? 2 : 0;
-	sum += blockBit(mask, i, j) ? 4 : 0;
-	sum += blockBit(mask, i + 1, j) ? 2 : 0;
-	sum += blockBit(mask, i - 1, j + 1) ? 1 : 0;
-	sum += blockBit(mask, i, j + 1) ? 2 : 0;
-	sum += blockBit(mask, i + 1, j + 1) ? 1 : 0;
-	float blur	 = float(sum) * 0.0625;
-	bool  inside = blockBit(mask, i, j);
-	bool  thin	 = (blockBit(mask, i - 1, j) != inside && blockBit(mask, i + 1, j) != inside) ||
-				  (blockBit(mask, i, j - 1) != inside && blockBit(mask, i, j + 1) != inside);
+/// Three bits of row `row` from column `c`, weighted 1 2 1: nibble n of
+/// 0x43213210 is that sum for the bits n.
+uint binomialRow(uint mask, int row, int c) {
+	return (0x43213210u >> (((mask >> uint(row * 4 + c)) & 7u) * 4u)) & 15u;
+}
+
+/// D16 step 1 at a block tile: its 3x3 binomial sum of the indicator over 16, then
+/// the thin-feature guard where `thin` (both neighbors along either axis on the
+/// other side). The sums are guardedBlur's in SurfaceField.cpp, gathered by row.
+float guardedBlur(uint sum, bool inside, bool thin) {
+	float blur = smallToFloat(sum) * 0.0625;
 	if (!thin) {
 		return blur;
 	}
@@ -178,10 +189,21 @@ float guardedBlur(uint mask, int i, int j) {
 /// The field at lattice offset t (x) and its gradient per meter (yz), for the
 /// distance to its isoline.
 vec3 blockField(uint mask, vec2 t) {
-	float v00 = guardedBlur(mask, 1, 1);
-	float v10 = guardedBlur(mask, 2, 1);
-	float v01 = guardedBlur(mask, 1, 2);
-	float v11 = guardedBlur(mask, 2, 2);
+	// The inner tiles' rows, left (columns 0-2) and right (1-3), and the thin test
+	// for every bit at once.
+	uint  l0   = binomialRow(mask, 0, 0);
+	uint  r0   = binomialRow(mask, 0, 1);
+	uint  l1   = binomialRow(mask, 1, 0);
+	uint  r1   = binomialRow(mask, 1, 1);
+	uint  l2   = binomialRow(mask, 2, 0);
+	uint  r2   = binomialRow(mask, 2, 1);
+	uint  l3   = binomialRow(mask, 3, 0);
+	uint  r3   = binomialRow(mask, 3, 1);
+	uint  thin = (((mask << 1u) ^ mask) & ((mask >> 1u) ^ mask)) | (((mask << 4u) ^ mask) & ((mask >> 4u) ^ mask));
+	float v00  = guardedBlur(l0 + 2u * l1 + l2, blockBit(mask, 1, 1), blockBit(thin, 1, 1));
+	float v10  = guardedBlur(r0 + 2u * r1 + r2, blockBit(mask, 2, 1), blockBit(thin, 2, 1));
+	float v01  = guardedBlur(l1 + 2u * l2 + l3, blockBit(mask, 1, 2), blockBit(thin, 1, 2));
+	float v11  = guardedBlur(r1 + 2u * r2 + r3, blockBit(mask, 2, 2), blockBit(thin, 2, 2));
 	float bottom = v00 + (v10 - v00) * t.x;
 	float top	 = v01 + (v11 - v01) * t.x;
 	vec2  grad	 = vec2((1.0 - t.y) * (v10 - v00) + t.y * (v11 - v01), top - bottom);
@@ -305,7 +327,7 @@ LandEval evaluateLand(ivec2 tile, vec2 frac, int fineOctaves) {
 		}
 		uint  mask = nibbleMatches(lo, surface) | (nibbleMatches(hi, surface) << 8u);
 		vec3  f	   = blockField(mask, t);
-		float dist = (f.x - 0.5) / max(length(f.yz), 1.0e-4); // meters, negative until it passes
+		float dist = (f.x - 0.5) * min(inversesqrt(dot(f.yz, f.yz)), 1.0e4); // meters, negative until it passes
 		e.margin   = min(e.margin, abs(f.x - 0.5));
 		if (f.x > 0.5) {
 			belowLevel	 = passed ? paintedLevel : -1;
@@ -378,23 +400,6 @@ const float kGroundHexRowM	  = 512.0 / 148.0;
 const float kGroundTopWeight  = 0.98; // a cell holding this much takes the one sample
 const float kGroundMacroSide  = 257.0;
 const vec3	kGroundLuma		  = vec3(0.299, 0.587, 0.114);
-
-// Whole numbers move between int and float here without the GPU's conversion unit,
-// which runs at an eighth of the float rate and is what this pass is short of:
-// adding 1.5 * 2^23 to a float leaves it rounded to a whole number in the low
-// mantissa bits. Exact under 2^22 in magnitude.
-const float kWholeBias	   = 12582912.0;
-const int	kWholeBiasBits = 0x4B400000;
-
-/// x rounded to the nearest whole number.
-int roundToInt(float x) {
-	return floatBitsToInt(x + kWholeBias) - kWholeBiasBits;
-}
-
-/// u (under 2^22) as a float.
-float smallToFloat(uint u) {
-	return intBitsToFloat(int(u) | kWholeBiasBits) - kWholeBias;
-}
 
 struct HexCells {
 	vec2 v1; // skewed ids, whole numbers
