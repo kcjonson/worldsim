@@ -85,6 +85,7 @@ add_executable(world-sim
     scenes/loading/GameLoadingScene.cpp
     scenes/game/dev/CameraCommand.cpp
     scenes/game/dev/DevCommandHandler.cpp
+    scenes/game/dev/GpuHold.cpp
     scenes/game/GameScene.cpp
     scenes/settings/SettingsScene.cpp
 )
