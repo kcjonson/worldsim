@@ -1,8 +1,9 @@
 // Splash Scene - Salvage boot screen. Shows the identity block over a boot
-// log while assets load asynchronously, then enables the "Enter Expedition"
-// button when the library loads cleanly, or blocks with an error summary on
-// validation errors.
+// log while assets load asynchronously and the ground tiles bake, then enables
+// the "Enter Expedition" button when the library loads cleanly, or blocks with
+// an error summary on validation or bake errors.
 
+#include "GameBootstrap.h"
 #include "SceneTypes.h"
 #include "scenes/shared/SalalUi.h"
 #include "scenes/shared/Starfield.h"
@@ -13,6 +14,7 @@
 #include <ui/components/Button.h>
 #include <ui/shapes/Text.h>
 #include <utils/Log.h>
+#include <world/rendering/GroundTileBank.h>
 
 #include <algorithm>
 #include <array>
@@ -65,7 +67,7 @@ namespace {
 				// log on a short timer, then enable the button.
 				m_progress = std::min(1.0F, m_timer / kMinSplashSeconds);
 				revealBootLines();
-				if (m_timer > kMinSplashSeconds) {
+				if (m_timer > kMinSplashSeconds && bakeGround()) {
 					finishLoad();
 				}
 				return;
@@ -88,6 +90,9 @@ namespace {
 				return;
 			}
 
+			if (!bakeGround()) {
+				return;
+			}
 			LOG_INFO(Game, "SplashScene - assets ready (%d defs, %d warnings)", m_lastShownCount, report.warningCount());
 			finishLoad();
 		}
@@ -233,6 +238,53 @@ namespace {
 			}
 		}
 
+		// The ground tiles, a variant a frame so the splash keeps drawing between them; true once every one
+		// is in. A failed bake blocks here as a validation error does.
+		bool bakeGround() {
+			worldview::GroundTileBank& bank = world_sim::groundTiles();
+			if (!bank.ready()) {
+				if (!bank.started()) {
+					while (m_shownBootLines < static_cast<int>(kBootLines.size())) {
+						addBootLine(kBootLines[static_cast<size_t>(m_shownBootLines)]);
+						++m_shownBootLines;
+					}
+					addGroundLine();
+					bank.begin();
+				}
+				if (bank.bakeNext()) {
+					if (ui::Text* text = m_groundText.get()) {
+						text->setText(
+							"Baking ground tiles " + std::to_string(bank.bakedVariants()) + "/" + std::to_string(bank.totalVariants())
+						);
+					}
+					return false;
+				}
+			}
+			if (!bank.errors().empty()) {
+				m_failed = true;
+				showErrorLines(bank.errors());
+				LOG_ERROR(Game, "Ground tiles failed to bake: %zu error(s); blocking at splash", bank.errors().size());
+				return false;
+			}
+			if (ui::Text* stamp = m_groundStamp.get()) {
+				stamp->setText("[ OK ]");
+			}
+			if (ui::Text* text = m_groundText.get()) {
+				text->setText("Ground tiles baked");
+			}
+			return true;
+		}
+
+		// The boot log's last line, which the ground bake updates.
+		void addGroundLine() {
+			ui::Ref<ui::Component> row = m_bootLog.addChild<ui::Component>({.layout = {.display = ui::Display::Flex}});
+			m_groundStamp = row.addChild<ui::Text>(
+				{.size = {52.0F, ui::kAuto}, .style = mono(tokens::fontSize::fsXs, tokens::color::statusOk), .text = "[ .. ]"}
+			);
+			m_groundText =
+				row.addChild<ui::Text>({.style = mono(tokens::fontSize::fsXs, tokens::color::textFaint), .text = "Baking ground tiles"});
+		}
+
 		void finishLoad() {
 			m_progress = 1.0F;
 			while (m_shownBootLines < static_cast<int>(kBootLines.size())) {
@@ -247,24 +299,23 @@ namespace {
 
 		// Up to eight error lines over the boot log; the button stays disabled.
 		void showErrors(const assets::ValidationReport& report) {
+			std::vector<std::string> lines;
+			for (const auto& issue : report.issues) {
+				if (issue.severity == assets::Severity::Error) {
+					lines.push_back((issue.defName.empty() ? std::string("-") : issue.defName) + ": " + issue.message);
+				}
+			}
+			showErrorLines(lines);
+		}
+
+		void showErrorLines(const std::vector<std::string>& lines) {
 			ui::Component* errors = m_errors.get();
 			if (errors == nullptr) {
 				return;
 			}
-			constexpr int kMaxLines = 8;
-			int			  shown = 0;
-			for (const auto& issue : report.issues) {
-				if (issue.severity != assets::Severity::Error) {
-					continue;
-				}
-				if (shown >= kMaxLines) {
-					break;
-				}
-				m_errors.addChild<ui::Text>({
-					.style = mono(tokens::fontSize::fsXs, tokens::color::statusCrit),
-					.text = (issue.defName.empty() ? std::string("-") : issue.defName) + ": " + issue.message,
-				});
-				++shown;
+			constexpr size_t kMaxLines = 8;
+			for (size_t i = 0; i < std::min(lines.size(), kMaxLines); ++i) {
+				m_errors.addChild<ui::Text>({.style = mono(tokens::fontSize::fsXs, tokens::color::statusCrit), .text = lines[i]});
 			}
 			errors->setVisible(true);
 		}
@@ -278,6 +329,8 @@ namespace {
 		float				   m_progress = 0.0F;
 		ui::Ref<ui::Component> m_bootLog;
 		ui::Ref<ui::Component> m_errors;
+		ui::Ref<ui::Text>	   m_groundStamp;
+		ui::Ref<ui::Text>	   m_groundText;
 		ui::Ref<ui::Button>	   m_enterButton;
 	};
 

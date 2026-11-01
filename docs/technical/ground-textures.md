@@ -1,12 +1,12 @@
 # Ground Texture System
 
 Created: 2025-12-13
-Updated: 2026-11-01 (ground tile variants: tiles become SVG/Lua assets baked to texture arrays and mixed by a hex lattice in the shader, and the atlas goes away; spike results and the perf plan added)
+Updated: 2026-11-01 (ground tile variants: tiles become SVG/Lua assets baked to texture arrays and mixed by a hex lattice in the shader, and the atlas goes away; spike results and the perf plan added. Later: the bank, the hex sampler and the macro texture are in the tile pass, the atlas is deleted, and the surfaces without art paint placeholder defs. Then: the bake runs each generator once, on the pool, and keeps its bakes in a disk cache the splash reads)
 Status: In progress
 
 The ground is painted by the tile pass: one quad per chunk whose fragment shader picks a land surface for every pixel, samples that surface's baked ground tiles, and paints water and shore over the result. Which surface a pixel gets is decided by the land field of [terrain-polygons-architecture.md](./organic-terrain/terrain-polygons-architecture.md) D16, so no surface boundary follows the tile grid. This doc covers the ground tile assets, the baker, how the shader samples them, and the per-chunk data the pass reads, and summarizes the field; the spec holds the field's details and defaults.
 
-On main today each surface is one 512x512 pattern in a texture atlas, stamped on every 1 m tile. This doc specifies its replacement. The sections on render tiles and the land field describe what stays.
+On main each surface is one 512x512 pattern in a texture atlas, stamped on every 1 m tile. This doc specifies its replacement, which is built but not yet on main. The sections on render tiles and the land field describe what stays.
 
 ## Why change
 
@@ -87,13 +87,15 @@ A Water tile paints as its bed and water itself is drawn from the distance field
 
 `GroundTileBank` in `libs/world-view/world/rendering/` runs once the asset registry finishes its async load (the splash), on the GL thread, outside any frame.
 
-For each def and each seed `0..variantCount-1` (salted per def name) it runs the generator once and tessellates each path once with `AssetRegistry::buildPaths` (already wrapped, see above), every variant at once on a `TaskPool`. Each generator run builds its own Lua state and the registry is only read, so the runs share nothing; the GL work stays on the GL thread. Each mip then packs the paths its density keeps into meshes with `TessellatedPaths::meshesAt` (a dense tile is over 65,535 vertices, so several meshes) and draws them once into a `Renderer::RenderTarget` the size of the square, which clips the overhang. It renders at 2x and box-downsamples, since salal has no MSAA, then calls `readPixels`. The template is `AssetRenderer::renderToPixels`, and the coordinate system and viewport are restored afterwards. This is the mesh path flora uses, so gradients and colors match the asset-manager exactly.
+For each def and each seed `0..variantCount-1` (salted per def name) `GroundTileBaker` runs the generator once and tessellates each path once with `AssetRegistry::buildPaths` (already wrapped, see above), every variant at once on a `TaskPool`. Each generator run builds its own Lua state and the registry is only read, so the runs share nothing; the GL work stays on the GL thread. Each mip then packs the paths its density keeps into meshes with `TessellatedPaths::meshesAt` (a dense tile is over 65,535 vertices, so several meshes) and draws them once into a `Renderer::RenderTarget` the size of the square, which clips the overhang. It supersamples (8x8 for mips 0 and 1, 4x4 below, since salal has no MSAA), Kaiser-downsamples in linear light, mean-locks each mip to a filtered copy of mip 0 and encodes sRGB. The coordinate system and viewport are restored afterwards. This is the mesh path flora uses, so gradients and colors match the asset-manager exactly.
 
-Every mip level is rendered from the vectors, not generated (`glGenerateMipmap` would neither wrap nor drop LOD nodes); see LOD. Each level is uploaded with `glTexImage3D` into a raw-GL `GL_TEXTURE_2D_ARRAY` that world-view owns, the way `ChunkRenderer` already owns raw textures: RGBA8, `GL_REPEAT`, trilinear, anisotropic when available.
+Every mip level is rendered from the vectors, not generated (`glGenerateMipmap` would neither wrap nor drop LOD nodes); see LOD. The bank allocates each raw-GL `GL_TEXTURE_2D_ARRAY` level by level with `glTexImage3D` once it knows the layer counts, and writes each variant's chain in with `glTexSubImage3D` as soon as it's baked: `GL_SRGB8_ALPHA8` (so filtering and the hex blend run in linear light), `GL_REPEAT`, trilinear, `GL_TEXTURE_MAX_LEVEL` at the last baked mip. No anisotropic filtering; a top-down orthographic view has no anisotropy to filter.
 
-The layers of one array share a size, and the grass surfaces (128 px/m, 512x512 layers) differ from the rest (64 px/m, 256x256), so there are two arrays, one per density. The bank keeps a per-surface table of `{array, firstLayer, layerCount, invPeriod, rotate, macro tints}`. It logs bake time and bytes.
+The layers of one array share a size, and the grass surfaces (128 px/m, 512x512 layers) differ from the rest (64 px/m, 256x256), so there are two arrays, one per layer size; the tile shader has samplers for up to four, and a def needing a fifth is a bake error. The bank keeps a per-surface table of `{array, firstLayer, layerCount, invPeriod, texelsPerMeter, rotate, macro tints and amplitude}`. The baker logs each def's report; the bank logs the totals (its steps' time and the wall clock, how many defs came from the cache) and the bytes of each array.
 
-The bake goes well past 0.5 s, so each def's baked chains are cached on disk (`GroundTileCache`): one file a def, `cache/ground/<defName>.gtile` beside the executable, holding every variant's mips and the samples the report measures, with a checksum. Beside the executable means each build tree (worktree, config) keeps its own, so two builds whose baker code differs never read each other's bakes, and a clean build starts empty. The key is a hash of the def's XML file, its generator script (an `@shared/` one included; scripts are sandboxed and can't load others), name, variant count, period, density, the render tile size, and `GroundTileBaker::kVersion`, which is bumped when the bake's output changes for the same inputs. A file whose key, shape or checksum doesn't match is ignored and the next bake overwrites it, so editing a def's XML or script and pressing Reload in the asset-manager bakes it again.
+The baker works in steps, so a caller can spread a def over frames: `begin` looks the def up in the disk cache (below) and hands back the whole bake when it's there, `buildPaths` runs every variant's generator on the pool, `bakeVariant` renders and filters one variant on the GL thread, and `finish` measures the variants, logs the report and stores the bake. `bakeDef` runs them in order in one call; the asset-manager's Bake view runs them a frame at a time. The bank runs a step a call, so the splash keeps drawing between them: one call uploads every def in a row that the cache holds, and at the first it doesn't, builds that def's paths (the GL thread waits on the pool, about 0.4 s for Grass); each later call bakes and uploads one variant, and the one that bakes a def's last variant stores the def. The splash's boot log shows `Baking ground tiles n/N` and the Enter button waits for the last. A `--scene` jump skips the splash, so `GameLoadingScene` finishes whatever is left before it loads the planet, and a direct switch to the game scene bakes it all at once. A failed variant or a land surface with no def blocks the splash the way a validation error does, and a def that failed isn't stored.
+
+The bake goes well past 0.5 s, so each def's baked chains are cached on disk (`GroundTileCache`): one file a def, `cache/ground/<defName>.gtile` beside the executable, holding every variant's mips and the samples the report measures, with a checksum. Beside the executable means each build tree (worktree, config) and each app (world-sim, asset-manager) keeps its own, so two builds whose baker code differs never read each other's bakes, and a clean build starts empty. The key is a hash of the def's XML file, its generator script (an `@shared/` one included; scripts are sandboxed and can't load others), name, variant count, period, density, the render tile size, and `GroundTileBaker::kVersion`, which is bumped when the bake's output changes for the same inputs. A file whose key, shape or checksum doesn't match is ignored and the next bake overwrites it, so editing a def's XML or script bakes it again: in the asset-manager on Reload, in the game on its next launch.
 
 Ground_Grass (8 variants, 512 px layers, about 230,000 vertices a variant), RelWithDebInfo on a 32-thread machine, 2026-11-01, three cold runs and three from the cache:
 
@@ -103,7 +105,7 @@ Ground_Grass (8 variants, 512 px layers, about 230,000 vertices a variant), RelW
 | Generate once, variants on the pool, cold | 5,700 to 5,830 ms | paths 420 to 455 ms for all 8 at once (generate 240 to 275, tessellate 150 to 160 each), render 520 to 535, filter 131 to 135 |
 | From the cache | 19 to 23 ms | |
 
-What's left cold is the render, and nearly all of it is the GPU finishing salal's batched draws, which `readPixels` waits on: about 150, 120 and 100 ms for the three dense mips (166k, 132k and 120k triangles), against 10 to 14 ms of CPU to build and submit them.
+What's left cold is the render, and nearly all of it is the GPU finishing salal's batched draws, which `readPixels` waits on: about 150, 120 and 100 ms for the three dense mips (166k, 132k and 120k triangles), against 10 to 14 ms of CPU to build and submit them. Those runs predate the grass's calibrated LOD stacks; today's grass draws fewer triangles and bakes cold in about 2.5 s (Performance, "Bake and macro fill").
 
 ## LOD
 
@@ -125,11 +127,14 @@ The shader has its own, separate LOD for the hex blend (the single-sample cutoff
 
 - The lattice is hexagonal in chunk-local meters, with 4 m columns and 512/148 m rows (3.459 m against 3.464 m for a regular hex, 0.15% off). It repeats every 512 m, so it is continuous across chunk borders and precise anywhere, and each cell's id is an integer, so it hashes exactly.
 - Each cell picks a variant layer, a rotation (per `rotate`) and a uv offset with `noiseHash3`. The weights are barycentric, sharpened by a contrast exponent (`terrain/ground/blendContrast`) so flat-color shapes don't ghost.
-- Where one cell dominates (top weight over 0.98, most of a cell's interior once sharpened), the shader takes one sample. Only the transition bands between cells take 2 or 3. This is the same coherent early-out the field uses for interior tiles.
-- Below a density (`terrain/ground/hexMinPxPerMeter`) it skips blending and takes one sample, the way `u_landWarpFineOctaves` drops warp octaves a pixel can't show. The spike ran with 6 px/m, where a 4 m cell is about 24 px. The working value is about 12, because dense blade art would show cut edges on the one-sample fallback.
-- Samples use `textureLod` at a mip level computed once per draw on the CPU, `log2(texture px/m * meters per pixel)`. The view is an orthographic top-down projection, so texel density is the same at every pixel and rotation doesn't change it. That avoids `textureGrad` and per-pixel derivatives, and nothing jumps at tile or hex edges. The two arrays get two levels, one apart.
+- The weights are Mikkelsen's: barycentric to the power `terrain/ground/blendContrast` (7), times 0.4 + 0.6 x the sample's luminance, then his gain with r from `terrain/ground/blendGain`: 0.75 at 48 px/m and up, 0.65 midway in log2 px/m, 0.5 (none) at 16 and under. The CPU turns r into the gain's exponent once a frame.
+- Where one cell dominates (its sharpened weight, before the luminance term, over 0.98: most of a cell's interior), the shader takes one sample. Only the transition bands between cells take 2 or 3. This is the same coherent early-out the field uses for interior tiles.
+- Below a density (`terrain/ground/hexMinPxPerMeter`, 12) it skips blending and takes the dominant cell's sample, the way `u_landWarpFineOctaves` drops warp octaves a pixel can't show. Cell interiors are the same sample either side of the cutoff, so crossing it only hardens the bands between cells. The spike ran with 6 px/m; 12 is the working value because dense blade art would show cut edges on the one-sample fallback.
+- Variants are picked uniformly per cell. Weighted picks (mostly quiet, a few busy) wait for a def that asks for them.
+- Samples use `textureLod` at a mip level computed once per draw on the CPU for each surface, `log2(texels per meter / framebuffer pixels per meter) + terrain/ground/lodBias` (0.25, research rule 9). The view is an orthographic top-down projection, so texel density is the same at every pixel and rotation doesn't change it. That avoids `textureGrad` and per-pixel derivatives, and nothing jumps at tile or hex edges.
+- The samples come back linear (the arrays are sRGB), are blended linear, and `groundColor` encodes the result to sRGB, which the rest of the pass (fringe, rim, water) works in. The macro tint multiplies the sRGB color.
 
-The macro layer comes from a per-chunk texture, not per-pixel noise. The chunk's generation worker bakes a 2 m-per-texel texture (256x256 RGBA8, 256 KB a chunk, same LRU and version key as the render tiles) from salal `HashNoise` fBm. The shader takes one bilinear sample to mix between the surface's dry and lush tints. Per-pixel fBm is what cost about 30 ms in the December tile shader (`docs/debug-swapbuffers-performance.md`) and still costs 0.10 to 0.15 ms of GPU at the spike's scale. The same texture is where phase 2's climate and moisture data lands, and its C++ source can later tint groundcover tufts to match.
+The macro layer comes from a per-chunk texture, not per-pixel noise. The chunk's generation worker fills a 2 m-per-texel texture (`GroundMacro.h`: 257x257 RGBA8, 264 KB a chunk, uploaded with the render tiles under the same version and LRU) from salal `HashNoise` gradient noise, each lattice corner hashed once a chunk. Texel (i, j) sits on chunk-local (2i, 2j) m, so the last row and column are the next chunk's first and a bilinear read matches across the border. R is the dry to lush mix (octaves at 36 and 14 m), G and B value noise at 10 m and 5 m (5 m is the shortest wave 2 m texels carry without a lattice pattern). The shader takes one bilinear sample a pixel: each surface mixes its def's dry and lush tints by R, scaled by the def's amplitude times `terrain/ground/macroAmp`, and every surface's value moves by G and B times `macroMidAmp` (4.5%) and `macroFineAmp` (3.5%). The def's `<wavelengths>` aren't read: one texture serves every surface. Per-pixel fBm is what cost about 30 ms in the December tile shader (`docs/debug-swapbuffers-performance.md`) and still costs 0.10 to 0.15 ms of GPU at the spike's scale. The same texture is where phase 2's climate and moisture data lands, and its C++ source can later tint groundcover tufts to match.
 
 The fringe samples the other surface once, without hex blending: it's a thin band and the blend isn't visible there.
 
@@ -187,12 +192,14 @@ All are live through the debug server: set one with `/api/dev/tunable?name=<name
 | `terrain/land/thinFloor`, `thinCeil` | the thin-feature guard |
 | `terrain/land/fringe/<Surface>`, `rimDark/<Surface>` | fringe width in meters and rim darkening, by upper surface |
 | `terrain/land/fringeOpacity`, `fringeAlongAmp`, `rimW`, `fringeBreakupWavelength` | the fringe's strength, its variation along the edge and its breakup, and the rim's width |
-| `terrain/ground/blendContrast` | exponent that sharpens the hex weights |
-| `terrain/ground/hexSize` | column spacing of the hex lattice in meters (4); the lattice must repeat every 512 m |
-| `terrain/ground/hexMinPxPerMeter` | below this density the shader takes one sample (about 12) |
-| `terrain/ground/macroAmp` | how far the macro layer pushes a surface toward its dry or lush tint |
+| `terrain/ground/blendContrast` | exponent that sharpens the hex weights (7) |
+| `terrain/ground/blendGain` | Mikkelsen's gain r near (48 px/m and up), mid and far (16 and under): 0.75, 0.65, 0.5 |
+| `terrain/ground/hexMinPxPerMeter` | below this density the shader takes one sample (12) |
+| `terrain/ground/lodBias` | added to every surface's mip level (0.25) |
+| `terrain/ground/macroAmp` | scales every def's macro tint amplitude (1) |
+| `terrain/ground/macroMidAmp`, `macroFineAmp` | value swing of the macro's 10 m and 5 m octaves (0.045, 0.035) |
 
-The ground tunables go into `kShaderTunables` (`ChunkRenderer.cpp`).
+The ones the shader reads as they stand are in `kShaderTunables` (`ChunkRenderer.cpp`); `blendGain`, `hexMinPxPerMeter`, `lodBias` and `macroAmp` are turned into per-frame uniforms on the CPU, registered beside the land look's.
 
 ## Memory
 
@@ -202,7 +209,9 @@ The ground tunables go into `kShaderTunables` (`ChunkRenderer.cpp`).
 | The rest | 5 | 64 | 256x256 | 40 | 10 MiB | 13.3 MiB |
 | Total | 9 | | | 72 | 42 MiB | 56 MiB |
 
-That is 8 variants per surface at 4 bytes a texel. The atlas it replaces is 16 MB. Render tiles stay 524 KB a chunk and the macro texture adds 256 KB, so 8 MB over the 32-chunk LRU.
+That is 8 variants per surface at 4 bytes a texel. The atlas it replaces is 16 MB. Render tiles stay 524 KB a chunk and the macro texture adds 264 KB, so 8.3 MiB over the 32-chunk LRU.
+
+Measured with today's content (Grass's 8 variants at 128 px/m, the eight placeholder defs' 4 each at 64 px/m, mips 0 to 6): 21.3 MiB, 10.7 MiB an array.
 
 Driver-side BC1 (S3TC) on upload would be 8x smaller (about 7 MiB) and cost less bandwidth per sample. It gets measured in the bake and shader step and stays only if it's neutral or better and looks right.
 
@@ -275,6 +284,12 @@ What each change costs:
 
 Reading it: the hypothesis that mip 0 of a 512 px/m texture thrashes the texture cache did not hold, so the array is free and not faster. The seams are fixed and the land field is where the pass's time goes. Hex ran with a 6 px/m cutoff, which is why zoom 0.75 pays and 0.5 doesn't; raising the cutoff to about 12 px/m is expected to remove the zoom 0.75 cost, and is not yet measured. Per-pixel fBm in place of the macro texture would cost 0.10 to 0.15 ms.
 
+### Bake and macro fill (2026-11-01)
+
+RelWithDebInfo, today's content: Grass and the eight placeholder defs, 40 variants. With the bake a variant at a time from `buildMeshes`, it added 20.6 s to the splash: Grass's 8 variants took 17.2 s, 2.15 s each, of which 1.9 s was the generator and tessellation, and each placeholder def 0.33 to 0.42 s. With the paths built once on the pool and the disk cache, measured on the game's loading scene (the same steps the splash runs): a cold cache takes 4.47 s of bake steps (4.52 s wall clock), Grass 2.5 s of it (paths 357 ms for all 8 at once, then render 151 and filter 117 a variant) and each placeholder 0.22 to 0.28 s. A warm one takes 36 ms (39 ms wall clock): Grass's 11 MB file reads in 14 ms, each placeholder's in 2, and every upload together takes 3 ms. So the 0.5 s rule holds whenever the cache is warm, and a clean build or an edited def pays the cold bake once.
+
+The macro fill on the chunk worker is 3.0 ms median and 6.6 ms max over 27 chunks, against a 65 ms chunk generation median (`[ChunkGen]` reports it as `macro`). Hashing four corners a texel for each octave cost 12.5 ms; hashing each lattice corner once a chunk gives the same bytes.
+
 ## Testing
 
 - Seams: world-sim on 8081, Grass ground, `camera` control at `zoom=20`, `x = n - 0.0034` (the case that lights every column on main). No tile lines. Repeat at `x = n + 0.003` and at zoom 1 and 3, and pan across a chunk border (a multiple of 512 m): no seam at the lattice or the chunk edge.
@@ -289,7 +304,7 @@ Reading it: the hypothesis that mip 0 of a 512 px/m texture thrashes the texture
 
 - BC1 on upload: neutral or better, and does it look right on dense blade art.
 - The hex cutoff at about 12 px/m: confirm it removes the zoom 0.75 cost and that the one-sample fallback shows no cut edges.
-- The cold bake's render: the GPU time in salal's batched quad path, about 0.4 s a grass variant. A plain indexed-triangle draw for the baker is the next lever, if a cold bake (a clean build, an edited def) needs to get faster.
+- The cold bake's render: the GPU time in salal's batched quad path, about 0.15 s a grass variant with today's art. A plain indexed-triangle draw for the baker is the next lever, if a cold bake (a clean build, an edited def) needs to get faster.
 - Two arrays by density against one array with every layer at 512x512 (the rest would cost about 40 MiB more). The spec picks two.
 - Per-asset shader snippets, to explore. A ground folder could ship a GLSL function beside its XML (for example `assets/world/ground/Grass/surface.frag.glsl`, defining that surface's color from position, the baked sample and the macro tint), and the loader would assemble every snippet into the tile shader at first run, with a switch on surface id. Today the tile shader is one program loaded from a folder, and salal assembles its base shader from hooks at build time, so this moves assembly to load time for the tile pass. Questions: compile time and whether to cache the program binary (`glGetProgramBinary`); validating a modder's GLSL and reporting errors through asset validation; the per-pixel cost being unbounded for shader content, where baked tiles cost the same however detailed they are, so it needs a budget and the perf gates; how it sits with baked variants (a snippet that only post-processes the baked sample is cheap, one that replaces it isn't); and the Rust and Vulkan rewrite, where it becomes SPIR-V.
 

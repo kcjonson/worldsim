@@ -108,7 +108,7 @@ The inspector model is the parsed def, the resolved resource paths, the asset's 
 
 Type discrimination at the data level: `assetType == Simple` is an SVG drawing; anything else is procedural, and within procedural `isLuaGenerator()` (`!scriptPath.empty()`) separates a Lua script from a registered C++ generator.
 
-Coverage in v1 is the folder-per-def XML assets the registry loads. Tiles (`tiles/surfaces/*/pattern.svg`, no XML) and UI icons (`ui/icons/*.svg`) live outside the registry on different paths; the product spec excludes them from v1, and the orphan check below is scoped accordingly.
+Coverage in v1 is the folder-per-def XML assets the registry loads, the ground tiles (`world/ground/`) included. UI icons (`ui/icons/*.svg`) live outside the registry on a different path; the product spec excludes them from v1, and the orphan check below is scoped accordingly.
 
 ## Validation
 

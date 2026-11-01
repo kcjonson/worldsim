@@ -1,5 +1,6 @@
 // Game Scene - Main gameplay with chunk-based world rendering
 
+#include "GameBootstrap.h"
 #include "GameWorldState.h"
 #include "NewGameSetup.h"
 #include "SceneTypes.h"
@@ -40,6 +41,7 @@
 #include <world/chunk/MockWorldSampler.h>
 #include <world/rendering/ChunkRenderer.h>
 #include <world/rendering/EntityRenderer.h>
+#include <world/rendering/GroundTileBank.h>
 
 #include <assets/AssetRegistry.h>
 #include <assets/RecipeRegistry.h>
@@ -149,7 +151,9 @@ namespace {
 				m_camera = std::make_unique<world::WorldCamera>();
 				m_camera->setPanSpeed(200.0F);
 
-				m_renderer = std::make_unique<worldview::ChunkRenderer>(kPixelsPerMeter);
+				// A direct switch here skips the splash and the loading scene, which bake the ground tiles.
+				world_sim::groundTiles().bakeAll();
+				m_renderer = std::make_unique<worldview::ChunkRenderer>(kPixelsPerMeter, world_sim::groundTiles());
 
 				m_entityRenderer = std::make_unique<worldview::EntityRenderer>(kPixelsPerMeter);
 
