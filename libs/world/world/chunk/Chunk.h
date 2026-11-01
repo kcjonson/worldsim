@@ -18,7 +18,9 @@
 #include <chrono>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
 
 namespace world {
 
@@ -65,6 +67,17 @@ enum class Surface : uint8_t {
 		default:
 			return "Unknown";
 	}
+}
+
+/// The Surface named by `name` (as surfaceToString spells it), or nullopt.
+[[nodiscard]] inline std::optional<Surface> surfaceFromString(std::string_view name) {
+	for (uint8_t i = 0; i < static_cast<uint8_t>(Surface::Count); ++i) {
+		const auto surface = static_cast<Surface>(i);
+		if (surfaceToString(surface) == name) {
+			return surface;
+		}
+	}
+	return std::nullopt;
 }
 
 /// Tile data - 8 bytes, stored in flat array per chunk.
