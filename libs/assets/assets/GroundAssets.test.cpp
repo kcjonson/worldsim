@@ -6,6 +6,7 @@
 #include "assets/lua/LuaEngine.h"
 
 #include <random/HashNoise.h>
+#include <vector/Tessellator.h>
 #include <world/chunk/Chunk.h>
 
 #include <gtest/gtest.h>
@@ -13,6 +14,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -333,6 +335,77 @@ TEST(GroundMeshTest, PixelDensityDropsPathsThatNeedMore) {
 	EXPECT_EQ(vertexCountAt(6.0F), 3U) << "below the threshold only the always-drawn path remains";
 	EXPECT_EQ(vertexCountAt(24.0F), 6U) << "at the threshold the fine path is back";
 	EXPECT_EQ(vertexCountAt(AssetRegistry::kFullDetail), 6U);
+	reg.clearDefinitions();
+}
+
+TEST(GroundMeshTest, PathsBuiltOnceMatchARunPerDensity) {
+	// 23,000 random triangles, 69,000 vertices at full detail so the packing splits, tagged 0, 8, 24 and
+	// 64 in turn, all inside the tile so the wrap adds nothing and the reference below needs none.
+	const TempDir t;
+	ASSERT_NE(
+		loadGround(
+			t,
+			"<surface>Grass</surface><period>4</period>",
+			"local lods = {0, 8, 24, 64}\n"
+			"for i = 0, 22999 do\n"
+			"    local x, y = 0.3 + math.random() * 3.2, 0.3 + math.random() * 3.2\n"
+			"    local p = Path()\n"
+			"    p:addVertex(x, y)\n    p:addVertex(x + math.random() * 0.2, y)\n    p:addVertex(x, y + 0.05)\n"
+			"    p:setColor(math.random(), math.random(), 0.3, 1.0)\n"
+			"    p:setLod(lods[i % 4 + 1])\n"
+			"    p:close()\n"
+			"    asset:addPath(p)\n"
+			"end\n"
+		),
+		nullptr
+	);
+	auto& reg = AssetRegistry::Get();
+	constexpr uint32_t kSeed = 77;
+
+	TessellatedPaths once;
+	ASSERT_TRUE(reg.buildPaths("Ground_Tile", kSeed, once));
+	GeneratedAsset generated;
+	ASSERT_TRUE(reg.generateAsset("Ground_Tile", kSeed, generated));
+
+	for (const float density : {AssetRegistry::kFullDetail, 24.0F, 2.0F}) {
+		// The per-mip path as it was: every kept path tessellated at this density, packed in order.
+		std::vector<renderer::TessellatedMesh> reference;
+		renderer::Tessellator				   tessellator;
+		for (const GeneratedPath& path : generated.paths) {
+			renderer::TessellatedMesh pathMesh;
+			if (path.minPixelsPerMeter > density || !tessellator.Tessellate(renderer::VectorPath(path.vertices, path.isClosed), pathMesh)) {
+				continue;
+			}
+			if (reference.empty() || reference.back().vertices.size() + pathMesh.vertices.size() > 65535U) {
+				reference.emplace_back();
+			}
+			renderer::TessellatedMesh& mesh = reference.back();
+			const auto				   base = static_cast<uint16_t>(mesh.vertices.size());
+			for (const auto& v : pathMesh.vertices) {
+				mesh.vertices.push_back(v);
+				mesh.colors.push_back(path.fillColor);
+			}
+			for (const uint16_t i : pathMesh.indices) {
+				mesh.indices.push_back(static_cast<uint16_t>(base + i));
+			}
+		}
+
+		std::vector<renderer::TessellatedMesh> fromOnce;
+		std::vector<renderer::TessellatedMesh> perDensity;
+		ASSERT_TRUE(once.meshesAt(density, fromOnce)) << density;
+		ASSERT_TRUE(reg.buildMeshes("Ground_Tile", kSeed, perDensity, density)) << density;
+		ASSERT_EQ(fromOnce.size(), reference.size()) << density;
+		ASSERT_EQ(perDensity.size(), reference.size()) << density;
+		for (size_t m = 0; m < reference.size(); ++m) {
+			for (const auto* built : {&fromOnce[m], &perDensity[m]}) {
+				ASSERT_EQ(built->vertices.size(), reference[m].vertices.size()) << density << " mesh " << m;
+				EXPECT_EQ(built->indices, reference[m].indices) << density << " mesh " << m;
+				EXPECT_EQ(0, std::memcmp(built->vertices.data(), reference[m].vertices.data(), reference[m].vertices.size() * sizeof(Foundation::Vec2)));
+				EXPECT_EQ(0, std::memcmp(built->colors.data(), reference[m].colors.data(), reference[m].colors.size() * sizeof(Foundation::Color)));
+			}
+		}
+	}
+	EXPECT_GT(once.vertices.size(), 65535U) << "full detail has to split into meshes for the packing to be tested";
 	reg.clearDefinitions();
 }
 
