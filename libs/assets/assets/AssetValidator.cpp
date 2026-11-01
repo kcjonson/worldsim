@@ -288,15 +288,15 @@ namespace assets {
 			}
 		}
 
-		// Every land surface should have a ground def. Only checked once the tree has any ground
-		// content, so a library (or a test tree) that hasn't adopted ground tiles stays quiet.
-		// This becomes an error when the shipped library carries all of them.
+		// Every land surface needs a ground def: the tile shader has nothing else to paint it with.
+		// Only checked once the tree has any ground content, so a library (or a test tree) with no
+		// ground tiles at all stays quiet.
 		if (!groundSurfaceToDef.empty()) {
 			for (uint8_t i = 0; i < static_cast<uint8_t>(world::Surface::Count); ++i) {
 				const auto surface = static_cast<world::Surface>(i);
 				const std::string name = world::surfaceToString(surface);
 				if (surface != world::Surface::Water && groundSurfaceToDef.find(name) == groundSurfaceToDef.end()) {
-					report.add(Severity::Warning, "", "surface", "No ground def paints this land surface", name);
+					report.add(Severity::Error, "", "surface", "No ground def paints this land surface", name);
 				}
 			}
 		}

@@ -166,9 +166,14 @@ namespace {
 		t.writeFile(folder + "/tile.svg", "<svg/>");
 	}
 
+	// A tree with a ground def for every land surface (each one is required): Grass carries xtra, the rest
+	// only their surface.
 	ValidationReport validateGround(const std::string& extra) {
 		TempAssets t;
 		addGround(t, "Grass", extra);
+		for (const char* other : {"Dirt", "Sand", "Rock", "Snow", "Mud", "GrassTall", "GrassShort", "GrassMeadow"}) {
+			addGround(t, other, std::string("<surface>") + other + "</surface>");
+		}
 		return AssetValidator::validate(t.root, "");
 	}
 
@@ -228,21 +233,21 @@ TEST(AssetValidatorTest, TwoGroundDefsForOneSurfaceIsError) {
 	EXPECT_TRUE(hasMessageContaining(r, Severity::Error, "already paints this surface"));
 }
 
-TEST(AssetValidatorTest, LandSurfacesWithoutGroundDefsWarnOnceGroundContentExists) {
+TEST(AssetValidatorTest, LandSurfacesWithoutGroundDefsAreErrorsOnceGroundContentExists) {
 	TempAssets t;
 	addGround(t, "Grass", "<surface>Grass</surface>");
 	addGround(t, "Dirt", "<surface>Dirt</surface>");
 
 	const ValidationReport r = AssetValidator::validate(t.root, "");
-	EXPECT_EQ(r.errorCount(), 0);
 	// Ten surfaces, minus Water, minus the two covered.
-	EXPECT_EQ(r.warningCount(), 7);
-	EXPECT_TRUE(hasMessageContaining(r, Severity::Warning, "No ground def paints this land surface"));
+	EXPECT_EQ(r.errorCount(), 7);
+	EXPECT_TRUE(hasMessageContaining(r, Severity::Error, "No ground def paints this land surface"));
 
 	TempAssets none;
 	none.writeXml("Stone", oneDef("<defName>Stone</defName><assetType>simple</assetType><svgPath>stone.svg</svgPath>"));
 	none.writeFile("Stone/stone.svg", "<svg/>");
-	EXPECT_EQ(AssetValidator::validate(none.root, "").warningCount(), 0) << "a library with no ground defs isn't nagged about them";
+	const ValidationReport bare = AssetValidator::validate(none.root, "");
+	EXPECT_EQ(bare.errorCount() + bare.warningCount(), 0) << "a library with no ground defs isn't held to them";
 }
 
 TEST(AssetValidatorTest, GroundDefWithBiomeRulesIsError) {

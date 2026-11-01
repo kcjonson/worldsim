@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Placeholder ground tile for Surface::GrassShort until its real art lands: the surface's old flat
+     color under a light speckle (ground_placeholder.lua). -->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>Ground_GrassShort</defName>
+    <label>GrassShort</label>
+    <role>ground</role>
+    <surface>GrassShort</surface>
+    <assetType>procedural</assetType>
+    <generator>
+      <scriptPath>@shared/ground_placeholder.lua</scriptPath>
+      <params>
+        <!-- Must equal <period> below. -->
+        <period>4</period>
+        <baseColor>#597347</baseColor>
+      </params>
+    </generator>
+    <variantCount>4</variantCount>
+    <period>4</period>
+    <pixelsPerMeter>64</pixelsPerMeter>
+    <rotate>free</rotate>
+    <macro>
+      <dry>1.0,0.94,0.72</dry>
+      <lush>0.86,0.96,0.86</lush>
+      <amplitude>0.5</amplitude>
+    </macro>
+  </AssetDef>
+</AssetDefinitions>
