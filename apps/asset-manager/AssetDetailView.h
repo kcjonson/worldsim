@@ -3,7 +3,8 @@
 // The right-hand detail pane: a header (category kicker, name, type badge), then two columns. Left, a
 // large preview: one framed thumbnail for a simple asset, or a 2x3 grid of seeded variants under a
 // Randomize button for a procedural one (each cell a different generator seed), the collider drawn over
-// the first. Right, the asset's facts, its validation issues, and its source XML in a scrolling well.
+// the first. Right, the asset's facts, its validation issues, and its source XML in a scrolling well. A
+// ground def also gets a Vectors / Bake switch; Bake swaps both columns for its GroundBakeView.
 
 #include "AssetThumbnail.h"
 
@@ -13,12 +14,17 @@
 #include <cstdint>
 #include <string>
 
+namespace Renderer {
+	class CoordinateSystem;
+}
+
 namespace asset_manager {
 
 	class AssetDetailView : public ui::Component {
 	  public:
 		struct Args {
 			UI_COMMON_ARGS
+			Renderer::CoordinateSystem* coordinateSystem = nullptr; // the app's, for the ground bake's offscreen renders
 		};
 
 		explicit AssetDetailView(const Args& args);
@@ -40,7 +46,10 @@ namespace asset_manager {
 		static constexpr int kVariants = 6;
 
 		std::string									   defName;
+		Renderer::CoordinateSystem*					   coordinateSystem;
 		bool										   procedural = false;
+		bool										   ground = false;
+		bool										   bakeMode = false; // kept across selections
 		uint32_t									   variantBase = 1U;
 		ui::Ref<ui::Component>						   content;
 		std::array<ui::Ref<AssetThumbnail>, kVariants> variants;

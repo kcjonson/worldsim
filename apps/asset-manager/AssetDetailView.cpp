@@ -1,4 +1,5 @@
 #include "AssetDetailView.h"
+#include "GroundBakeView.h"
 
 #include <assets/AssetDefinition.h>
 #include <assets/AssetRegistry.h>
@@ -6,6 +7,7 @@
 #include <ui/Context.h>
 #include <ui/components/Badge.h>
 #include <ui/components/Button.h>
+#include <ui/components/SegmentedControl.h>
 #include <ui/shapes/Rectangle.h>
 #include <ui/shapes/Text.h>
 #include <ui/theme/Tokens.h>
@@ -61,7 +63,8 @@ namespace asset_manager {
 
 	} // namespace
 
-	AssetDetailView::AssetDetailView(const Args& /*args*/) {}
+	AssetDetailView::AssetDetailView(const Args& args)
+		: coordinateSystem(args.coordinateSystem) {}
 
 	void AssetDetailView::onMount() {
 		build();
@@ -71,6 +74,7 @@ namespace asset_manager {
 		const assets::AssetDefinition* def = assets::AssetRegistry::Get().getDefinition(name);
 		defName = def != nullptr ? name : std::string();
 		procedural = def != nullptr && def->assetType != assets::AssetType::Simple;
+		ground = def != nullptr && def->role == assets::AssetRole::Ground;
 		variantBase = 1U;
 		if (getContext() != nullptr) {
 			build();
@@ -100,6 +104,31 @@ namespace asset_manager {
 		content.addChild<ui::Badge>(
 			{.layout = kHug, .label = procedural ? "PROCEDURAL" : "SIMPLE", .tone = procedural ? ui::Tone::Accent : ui::Tone::Info}
 		);
+
+		if (ground) {
+			content.addChild<ui::SegmentedControl>({
+				.id = "am_ground_mode",
+				.layout = kHug,
+				.options = {"Vectors", "Bake"},
+				.selected = bakeMode ? 1 : 0,
+				.controlSize = ui::ControlSize::Sm,
+				.onChange =
+					[this](int index) {
+						bakeMode = index == 1;
+						build();
+					},
+			});
+			if (bakeMode) {
+				content.addChild<GroundBakeView>({
+					.id = "am_ground_bake",
+					.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = kGap, .flexGrow = 1.0F},
+					.overflow = ui::Overflow::Scroll,
+					.defName = defName,
+					.coordinateSystem = coordinateSystem,
+				});
+				return;
+			}
+		}
 
 		ui::Ref<ui::Component> columns = content.addChild<ui::Component>({.layout = flex(ui::FlexDirection::Row, 20.0F, 1.0F)});
 		preview(columns.addChild<ui::Component>({.layout = flex(ui::FlexDirection::Column, kGap, 1.0F)}));
