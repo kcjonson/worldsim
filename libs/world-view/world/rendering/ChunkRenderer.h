@@ -167,9 +167,11 @@ class ChunkRenderer {
 		std::array<int, GroundTileBank::kMaxArrays> groundTiles{-1, -1, -1, -1};
 		int groundLayers = -1;
 		int groundParams = -1;
-		int groundDry = -1;
-		int groundLush = -1;
+		int groundTintBase = -1;
+		int groundTintLush = -1;
 		int groundSeed = -1;
+		int groundCellOrigin = -1;
+		int groundMacroValue = -1;
 		int groundHex = -1;
 		int groundBlendGainK = -1;
 		int groundMacro = -1;
@@ -215,6 +217,8 @@ class ChunkRenderer {
 		const float* hexMinPxPerMeter = nullptr; ///< below it, one sample a pixel
 		const float* blendGain = nullptr;		 ///< Mikkelsen's r near, mid and far (3 values)
 		const float* macroAmp = nullptr;		 ///< scales every def's macro tint amplitude
+		const float* macroMidAmp = nullptr;		 ///< value swing of the macro's mid octave
+		const float* macroFineAmp = nullptr;	 ///< and of its fine one
 	};
 	GroundTunables groundLook;
 

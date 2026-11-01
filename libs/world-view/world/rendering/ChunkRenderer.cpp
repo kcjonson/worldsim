@@ -51,6 +51,13 @@ namespace worldview {
 		constexpr float				   kGroundBlendFarPxPerMeter  = 16.0F;
 		constexpr float				   kGroundMacroAmp			  = 1.0F;
 		constexpr uint32_t			   kSaltGroundCells			  = 0x6E0D7A11U;
+		// The macro layer's value swing at its mid (10 m) and fine (5 m) octaves.
+		constexpr float kGroundMacroMidAmp	= 0.045F;
+		constexpr float kGroundMacroFineAmp = 0.035F;
+		// land.glsl's hex lattice: 128 columns and 148 rows a chunk, each row skewed
+		// half a column, so a chunk's first cell id is (128 cx - 74 cy, 148 cy).
+		constexpr int32_t kGroundHexColumns = 128;
+		constexpr int32_t kGroundHexRows	= 148;
 
 		/// u_groundLayers.w: how land.glsl turns a hex cell's tile.
 		int groundRotateCode(assets::GroundRotate rotate) {
@@ -101,11 +108,8 @@ namespace worldview {
 			ShaderTunable{"terrain/land/fringeOpacity", "u_landFringeOpacity", {0.55F}, 1},
 			ShaderTunable{"terrain/land/fringeAlongAmp", "u_landFringeAlongAmp", {0.35F}, 1},
 			ShaderTunable{"terrain/land/rimW", "u_landRimW", {0.12F}, 1},
-			// Ground: Mikkelsen's weight exponent, and the macro layer's value swing
-			// at its mid (10 m) and fine (5 m) octaves.
+			// Ground: Mikkelsen's weight exponent.
 			ShaderTunable{"terrain/ground/blendContrast", "u_groundBlendContrast", {7.0F}, 1},
-			ShaderTunable{"terrain/ground/macroMidAmp", "u_groundMacroMidAmp", {0.045F}, 1},
-			ShaderTunable{"terrain/ground/macroFineAmp", "u_groundMacroFineAmp", {0.035F}, 1},
 
 			ShaderTunable{"terrain/shore/wobbleAmp", "u_wobbleAmp", {0.12F}, 1},
 			ShaderTunable{"terrain/shore/wobbleWavelength", "u_wobbleWavelength", {1.6F}, 1},
@@ -239,9 +243,11 @@ namespace worldview {
 		}
 		loc.groundLayers = glGetUniformLocation(program, "u_groundLayers");
 		loc.groundParams = glGetUniformLocation(program, "u_groundParams");
-		loc.groundDry = glGetUniformLocation(program, "u_groundDry");
-		loc.groundLush = glGetUniformLocation(program, "u_groundLush");
+		loc.groundTintBase = glGetUniformLocation(program, "u_groundTintBase");
+		loc.groundTintLush = glGetUniformLocation(program, "u_groundTintLush");
 		loc.groundSeed = glGetUniformLocation(program, "u_groundSeed");
+		loc.groundCellOrigin = glGetUniformLocation(program, "u_groundCellOrigin");
+		loc.groundMacroValue = glGetUniformLocation(program, "u_groundMacroValue");
 		loc.groundHex = glGetUniformLocation(program, "u_groundHex");
 		loc.groundBlendGainK = glGetUniformLocation(program, "u_groundBlendGainK");
 		loc.groundMacro = glGetUniformLocation(program, "u_groundMacro");
@@ -289,6 +295,8 @@ namespace worldview {
 		groundLook.hexMinPxPerMeter = addLook("terrain/ground/hexMinPxPerMeter", kGroundHexMinPxPerMeter);
 		groundLook.blendGain = tunables.add("terrain/ground/blendGain", std::span<const float>(kGroundBlendGain));
 		groundLook.macroAmp = addLook("terrain/ground/macroAmp", kGroundMacroAmp);
+		groundLook.macroMidAmp = addLook("terrain/ground/macroMidAmp", kGroundMacroMidAmp);
+		groundLook.macroFineAmp = addLook("terrain/ground/macroFineAmp", kGroundMacroFineAmp);
 		tunableUniforms.clear();
 		tunableUniforms.reserve(kShaderTunables.size());
 		for (const ShaderTunable& t : kShaderTunables) {
@@ -563,31 +571,40 @@ namespace worldview {
 		}
 		glUniform1i(loc.groundMacro, kUnitGroundMacro);
 
+		// Folded here so the shader doesn't per pixel: the variant pick's constants
+		// (land.glsl groundVariant), and the macro tint mix(1, mix(dry, lush, R), amp)
+		// as base + lush * R.
 		constexpr size_t			  kCount = world::kSurfaceCount;
 		std::array<GLint, kCount * 4> layers{};
 		std::array<float, kCount * 4> params{};
-		std::array<float, kCount * 3> dry{};
-		std::array<float, kCount * 3> lush{};
+		std::array<float, kCount * 3> tintBase{};
+		std::array<float, kCount * 3> tintLush{};
 		const float					  bias = *groundLook.lodBias;
 		const float					  macroAmp = *groundLook.macroAmp;
 		for (size_t id = 0; id < kCount; ++id) {
 			const GroundTileBank::Surface& s = groundTiles->surface(static_cast<world::Surface>(id));
+			const int					   variants = std::max(s.layerCount, 1);
+			const float					   amp = s.macro.amplitude * macroAmp;
 			layers[id * 4] = s.array;
 			layers[id * 4 + 1] = s.firstLayer;
-			layers[id * 4 + 2] = s.layerCount;
+			layers[id * 4 + 2] = variants;
 			layers[id * 4 + 3] = groundRotateCode(s.rotate);
 			params[id * 4] = s.invPeriod;
 			params[id * 4 + 1] = s.texelsPerMeter > 0.0F ? std::log2(s.texelsPerMeter / screenPixelsPerMeter) + bias : 0.0F;
-			params[id * 4 + 2] = s.macro.amplitude * macroAmp;
-			for (int c = 0; c < 3; ++c) {
-				dry[id * 3 + static_cast<size_t>(c)] = s.macro.dry[c];
-				lush[id * 3 + static_cast<size_t>(c)] = s.macro.lush[c];
+			params[id * 4 + 2] = 1.0F / static_cast<float>(variants);
+			params[id * 4 + 3] = 0.5F / static_cast<float>(variants) - 0.5F;
+			for (size_t c = 0; c < 3; ++c) {
+				tintBase[id * 3 + c] = 1.0F + amp * (s.macro.dry[c] - 1.0F);
+				tintLush[id * 3 + c] = amp * (s.macro.lush[c] - s.macro.dry[c]);
 			}
 		}
 		glUniform4iv(loc.groundLayers, static_cast<GLsizei>(kCount), layers.data());
 		glUniform4fv(loc.groundParams, static_cast<GLsizei>(kCount), params.data());
-		glUniform3fv(loc.groundDry, static_cast<GLsizei>(kCount), dry.data());
-		glUniform3fv(loc.groundLush, static_cast<GLsizei>(kCount), lush.data());
+		glUniform3fv(loc.groundTintBase, static_cast<GLsizei>(kCount), tintBase.data());
+		glUniform3fv(loc.groundTintLush, static_cast<GLsizei>(kCount), tintLush.data());
+		const float mid = *groundLook.macroMidAmp;
+		const float fine = *groundLook.macroFineAmp;
+		glUniform3f(loc.groundMacroValue, 1.0F - mid - fine, 2.0F * mid, 2.0F * fine);
 		glUniform1ui(loc.groundSeed, groundCellSeed(worldSeed));
 		glUniform1i(loc.groundHex, screenPixelsPerMeter >= *groundLook.hexMinPxPerMeter ? 1 : 0);
 		glUniform1f(loc.groundBlendGainK, groundBlendGainK(groundLook.blendGain, screenPixelsPerMeter));
@@ -676,6 +693,7 @@ namespace worldview {
 			glUniform2f(loc.chunkOrigin, origin.x, origin.y);
 			glUniform1f(loc.chunkWorldSize, world::kChunkWorldSize);
 			glUniform2i(loc.chunkTileOrigin, coord.x * world::kChunkSize, coord.y * world::kChunkSize);
+			glUniform2i(loc.groundCellOrigin, kGroundHexColumns * coord.x - kGroundHexRows / 2 * coord.y, kGroundHexRows * coord.y);
 
 			glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 			lastChunks++;

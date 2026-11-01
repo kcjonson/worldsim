@@ -24,23 +24,24 @@ uniform ivec2	   u_chunkTileOrigin; // world tile of the chunk's tile (0, 0)
 
 // Ground tiles (GroundTileBank): sRGB texture arrays, one per layer size, every
 // mip baked from the vectors. Per surface id:
-//   u_groundLayers: x array (0..3), y first layer, z layer count, w rotate (0 free, 1 quarter, 2 none, 3 mirror)
-//   u_groundParams: x 1 / period (m), y mip level this draw, z macro tint amount
-//   u_groundDry, u_groundLush: the macro tints, multiplied into the sRGB color
+//   u_groundLayers: x array (0..3), y first layer, z layer count (at least 1), w rotate (0 free, 1 quarter, 2 none, 3 mirror)
+//   u_groundParams: x 1 / period (m), y mip level this draw, z 1 / layer count, w 0.5 z - 0.5 (groundVariant)
+//   u_groundTintBase, u_groundTintLush: the macro tint, base + lush * the macro's R,
+//   multiplied into the sRGB color
 uniform sampler2DArray u_groundTiles0;
 uniform sampler2DArray u_groundTiles1;
 uniform sampler2DArray u_groundTiles2;
 uniform sampler2DArray u_groundTiles3;
 uniform ivec4		   u_groundLayers[10];
 uniform vec4		   u_groundParams[10];
-uniform vec3		   u_groundDry[10];
-uniform vec3		   u_groundLush[10];
+uniform vec3		   u_groundTintBase[10];
+uniform vec3		   u_groundTintLush[10];
 uniform uint		   u_groundSeed;
+uniform ivec2		   u_groundCellOrigin;	   // the chunk's first hex cell id (see THE LOOK)
 uniform bool		   u_groundHex;			   // px/m at or over terrain/ground/hexMinPxPerMeter
 uniform float		   u_groundBlendContrast;  // exponent on the barycentric weights
 uniform float		   u_groundBlendGainK;	   // log(1 - r) / log(0.5) for the zoom's gain r; 1 is none
-uniform float		   u_groundMacroMidAmp;	   // value swing of the macro's mid octave
-uniform float		   u_groundMacroFineAmp;   // and of its fine one
+uniform vec3		   u_groundMacroValue;	   // value scale: x + y * macro G + z * macro B
 
 // The chunk's macro texture (GroundMacro.h): 257x257, a texel every 2 m from the
 // chunk's corner, its last row and column the next chunk's first. R the dry to lush
@@ -371,33 +372,50 @@ LandEval evaluateLand(ivec2 tile, vec2 frac, int fineOctaves) {
 // hex-tiling) in chunk-local meters: 4 m columns and 148 rows a chunk, so it
 // repeats every 512 m and lines up across chunk borders. Vertex v (skewed ids)
 // sits at (4 v.x + 2 v.y, kGroundHexRowM v.y); its world id is v plus
-// (128 cx - 74 cy, 148 cy) for chunk (cx, cy).
+// u_groundCellOrigin, (128 cx - 74 cy, 148 cy) for chunk (cx, cy).
 const float kGroundHexColM	  = 4.0;
 const float kGroundHexRowM	  = 512.0 / 148.0;
 const float kGroundTopWeight  = 0.98; // a cell holding this much takes the one sample
 const float kGroundMacroSide  = 257.0;
 const vec3	kGroundLuma		  = vec3(0.299, 0.587, 0.114);
 
+// Whole numbers move between int and float here without the GPU's conversion unit,
+// which runs at an eighth of the float rate and is what this pass is short of:
+// adding 1.5 * 2^23 to a float leaves it rounded to a whole number in the low
+// mantissa bits. Exact under 2^22 in magnitude.
+const float kWholeBias	   = 12582912.0;
+const int	kWholeBiasBits = 0x4B400000;
+
+/// x rounded to the nearest whole number.
+int roundToInt(float x) {
+	return floatBitsToInt(x + kWholeBias) - kWholeBiasBits;
+}
+
+/// u (under 2^22) as a float.
+float smallToFloat(uint u) {
+	return intBitsToFloat(int(u) | kWholeBiasBits) - kWholeBias;
+}
+
 struct HexCells {
-	ivec2 v1;
-	ivec2 v2;
-	ivec2 v3;
-	vec3  w; // barycentric weights of v1, v2, v3
+	vec2 v1; // skewed ids, whole numbers
+	vec2 v2;
+	vec2 v3;
+	vec3 w; // barycentric weights of v1, v2, v3
 };
 
 HexCells groundHexCells(vec2 local) {
 	float	 sv	  = local.y * (1.0 / kGroundHexRowM);
 	vec2	 sk	  = vec2(local.x * (1.0 / kGroundHexColM) - 0.5 * sv, sv);
-	ivec2	 base = ivec2(floor(sk));
-	vec2	 f	  = sk - vec2(base);
+	vec2	 base = floor(sk);
+	vec2	 f	  = sk - base;
 	float	 z	  = 1.0 - f.x - f.y;
-	int		 s	  = z < 0.0 ? 1 : 0;
-	float	 s2	  = float(2 * s - 1);
+	float	 s	  = z < 0.0 ? 1.0 : 0.0;
+	float	 s2	  = 2.0 * s - 1.0;
 	HexCells c;
-	c.w	 = max(vec3(-z * s2, float(s) - f.y * s2, float(s) - f.x * s2), vec3(0.0));
-	c.v1 = base + ivec2(s, s);
-	c.v2 = base + ivec2(s, 1 - s);
-	c.v3 = base + ivec2(1 - s, s);
+	c.w	 = max(vec3(-z * s2, s - f.y * s2, s - f.x * s2), vec3(0.0));
+	c.v1 = base + vec2(s, s);
+	c.v2 = base + vec2(s, 1.0 - s);
+	c.v3 = base + vec2(1.0 - s, s);
 	return c;
 }
 
@@ -414,20 +432,30 @@ vec3 groundFetch(int array, vec3 at, float lod) {
 	return textureLod(u_groundTiles3, at, lod).rgb;
 }
 
+/// The variant of a cell hashed `h`: h % count, in float on h's low 12 bits (an
+/// integer divide by a uniform goes through the conversion unit). `pick` is
+/// (1 / count, 0.5 / count - 0.5): the quotient rounds from half a step off a
+/// whole number. The same as h % count for every power-of-two count up to 4096,
+/// within 1 / 4096 of uniform otherwise.
+uint groundVariant(uint h, int count, vec2 pick) {
+	uint x = h & 0xFFFu;
+	return x - uint(count * roundToInt(smallToFloat(x) * pick.x + pick.y));
+}
+
 /// A surface's tile as hex cell `v` lays it at `local`, linear: the cell's
 /// variant, rotation (by the surface's rotate) and offset hash from its world id.
 /// Variants are picked uniformly; weighted picks (mostly quiet, a few busy) wait
 /// for a ground def that asks for them.
-vec3 groundCellSample(uint surface, vec2 local, ivec2 v) {
+vec3 groundCellSample(uint surface, vec2 local, vec2 v) {
 	ivec4 layers = u_groundLayers[surface];
 	vec4  params = u_groundParams[surface];
-	ivec2 chunk	 = u_chunkTileOrigin / 512;
-	uint  h		 = noiseHash3(v.x + 128 * chunk.x - 74 * chunk.y, v.y + 148 * chunk.y, int(surface), u_groundSeed);
-	vec2  center = vec2(float(v.x) * kGroundHexColM + float(v.y) * (0.5 * kGroundHexColM), float(v.y) * kGroundHexRowM);
+	ivec2 id	 = ivec2(roundToInt(v.x), roundToInt(v.y)) + u_groundCellOrigin;
+	uint  h		 = noiseHash3(id.x, id.y, int(surface), u_groundSeed);
+	vec2  center = vec2(v.x * kGroundHexColM + v.y * (0.5 * kGroundHexColM), v.y * kGroundHexRowM);
 	vec2  d		 = (local - center) * params.x;
 	vec2  cs	 = vec2(1.0, 0.0);
 	if (layers.w == 0) {
-		float angle = float((h >> 8u) & 0xFFu) * (6.2831853 / 256.0);
+		float angle = smallToFloat((h >> 8u) & 0xFFu) * (6.2831853 / 256.0);
 		cs			= vec2(cos(angle), sin(angle));
 	} else if (layers.w == 1) {
 		uint q = (h >> 8u) & 3u;
@@ -435,8 +463,8 @@ vec3 groundCellSample(uint surface, vec2 local, ivec2 v) {
 	} else if (layers.w == 3 && (h & 0x100u) != 0u) {
 		d.x = -d.x; // mirror: flip about the cell's center, no turn; the angle's bit is free here
 	}
-	vec2  uv	= vec2(cs.x * d.x - cs.y * d.y, cs.y * d.x + cs.x * d.y) + vec2(float((h >> 16u) & 0xFFu), float(h >> 24u)) * (1.0 / 256.0);
-	float layer = float(layers.y + int(h % uint(max(layers.z, 1))));
+	vec2  uv	= vec2(cs.x * d.x - cs.y * d.y, cs.y * d.x + cs.x * d.y) + vec2(smallToFloat((h >> 16u) & 0xFFu), smallToFloat(h >> 24u)) * (1.0 / 256.0);
+	float layer = smallToFloat(uint(layers.y) + groundVariant(h, layers.z, params.zw));
 	return groundFetch(layers.x, vec3(uv, layer), params.y);
 }
 
@@ -455,7 +483,7 @@ vec3 groundGain(vec3 w, float k) {
 vec3 groundTexture(uint surface, vec2 local, bool blend) {
 	HexCells c = groundHexCells(local);
 	if (!blend || !u_groundHex) {
-		ivec2 v = c.w.x >= c.w.y && c.w.x >= c.w.z ? c.v1 : (c.w.y >= c.w.z ? c.v2 : c.v3);
+		vec2 v = c.w.x >= c.w.y && c.w.x >= c.w.z ? c.v1 : (c.w.y >= c.w.z ? c.v2 : c.v3);
 		return groundCellSample(surface, local, v);
 	}
 	vec3 w = pow(c.w, vec3(u_groundBlendContrast));
@@ -492,9 +520,9 @@ vec3 groundEncodeSrgb(vec3 linear) {
 /// by the macro layer (`macro`, this pixel's sample of u_groundMacro).
 vec3 groundColor(uint surface, vec2 local, vec4 macro, bool blend) {
 	vec3  color = groundEncodeSrgb(groundTexture(surface, local, blend));
-	vec3  tint	= mix(u_groundDry[surface], u_groundLush[surface], macro.r);
-	float value = 1.0 + (macro.g * 2.0 - 1.0) * u_groundMacroMidAmp + (macro.b * 2.0 - 1.0) * u_groundMacroFineAmp;
-	return color * mix(vec3(1.0), tint, u_groundParams[surface].z) * value;
+	vec3  tint	= u_groundTintBase[surface] + u_groundTintLush[surface] * macro.r;
+	float value = u_groundMacroValue.x + macro.g * u_groundMacroValue.y + macro.b * u_groundMacroValue.z;
+	return color * tint * value;
 }
 
 /// The ground color at chunk-local position `local`, anti-aliased over one pixel.
