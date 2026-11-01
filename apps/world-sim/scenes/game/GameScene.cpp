@@ -232,7 +232,15 @@ namespace {
 						auto& timeSystem = ecsWorld->getSystem<ecs::TimeSystem>();
 						timeSystem.setSpeed(speed);
 					},
-				.onMenuClick = [this]() { owner->scenes().switchTo(world_sim::scenes::MainMenu.name); },
+				.onMenuClick = [this]() { openPauseMenu(); },
+				.onPauseMenuClosed =
+					[this]() {
+						if (std::exchange(m_resumeAfterPauseMenu, false)) {
+							ecsWorld->getSystem<ecs::TimeSystem>().resume();
+						}
+					},
+				.onMainMenu = [this]() { owner->scenes().switchTo(world_sim::scenes::MainMenu.name); },
+				.onQuitGame = [this]() { owner->requestExit(); },
 				.onPlaceFurniture = [this]() { handlePlaceFurniture(); },
 				.onMoveFurniture = [this]() { handleMoveFurniture(); },
 				.onDemolishFoundation = [this]() { handleDemolishFoundation(); },
@@ -610,27 +618,35 @@ namespace {
 			refreshThicknessPresets(m_drawingSystem->activeMaterial());
 		}
 
-		// What salal's ui didn't take: Escape, a release for the drawing tool, placement or selection, and
-		// the scroll that zooms. The tools' previews follow the pointer in update().
+		// What salal's ui didn't take: Escape, the world's hotkeys, a release for the drawing tool, placement or
+		// selection, and the scroll that zooms. The HUD takes no focus, so a key the ui took is a dialog's. The
+		// tools' previews follow the pointer in update().
 		bool handleEvent(const foundation::InputEvent& event) override {
 			using Type = foundation::InputEvent::Type;
-			if (event.type == Type::KeyDown && event.key == foundation::Key::Escape && !event.repeat) {
-				// The ui closes a dialog its focus is in; the dossier, opened from the world, has none. So
-				// the top menu, dialog or panel closes first, then the drawing tool or placement cancels.
-				if (dismissTopOverlay()) {
+			if (event.type == Type::KeyDown && !event.repeat) {
+				if (event.key == foundation::Key::Escape) {
+					// The ui closes a dialog its focus is in; the dossier, opened from the world, has none. So
+					// the top menu, dialog or panel closes first, then the drawing tool or placement cancels,
+					// and with nothing left to close the pause menu opens.
+					if (dismissTopOverlay()) {
+						return true;
+					}
+					if (m_drawingSystem->isActive()) {
+						m_drawingSystem->cancel();
+					} else if (m_placementSystem->isActive()) {
+						m_placementSystem->cancel();
+					} else {
+						openPauseMenu();
+					}
 					return true;
 				}
-				if (m_drawingSystem->isActive()) {
-					m_drawingSystem->cancel();
-				} else if (m_placementSystem->isActive()) {
-					m_placementSystem->cancel();
-				} else {
-					owner->scenes().switchTo(world_sim::scenes::MainMenu.name);
-				}
-				return true;
+				// Typing in a dialog's field sends its keys here too, so a modal dialog holds them off the world.
+				return !modalDialogOpen() && handleHotkey(event.key);
 			}
 			if (event.type == Type::Scroll) {
-				m_pendingScroll += event.scroll.y;
+				if (!modalDialogOpen()) {
+					m_pendingScroll += event.scroll.y;
+				}
 				return true;
 			}
 			if (event.type != Type::PointerUp) {
@@ -693,11 +709,10 @@ namespace {
 
 		void update(const app::FrameContext& frame) override {
 			const auto dt = static_cast<float>(frame.dt);
-			const auto pressed = [&frame](foundation::Key key) {
-				return theme::key(frame.input, key).pressed();
-			};
-			const auto down = [&frame](foundation::Key key) {
-				return theme::key(frame.input, key).down;
+			// The camera's held keys are polled whatever the ui took, so a modal dialog holds them off the world.
+			const bool worldKeys = !modalDialogOpen();
+			const auto down = [&frame, worldKeys](foundation::Key key) {
+				return worldKeys && theme::key(frame.input, key).down;
 			};
 
 			// The drawing tool's and placement's previews follow the pointer every frame, so they track the world
@@ -717,72 +732,6 @@ namespace {
 			// Fade out the player move-order marker.
 			if (m_moveMarkerTtl > 0.0F) {
 				m_moveMarkerTtl -= dt;
-			}
-
-			// Backspace removes the last placed point while drawing.
-			if (pressed(foundation::Key::Backspace) && m_drawingSystem->isActive()) {
-				m_drawingSystem->removeLastPoint();
-			}
-
-			// Enter finishes (commits) a wall chain; the foundation tool ignores it
-			// (it closes on origin-click instead).
-			if (pressed(foundation::Key::Enter) && m_drawingSystem->isActive()) {
-				m_drawingSystem->finishChain();
-			}
-
-			// Handle B key - toggle build mode. Gated while the foundation tool owns
-			// world input so the two tools can't be live at once (see tool-exclusivity
-			// wiring in the placement/drawing activation callbacks).
-			if (pressed(foundation::Key::B) && !m_drawingSystem->isActive()) {
-				m_placementSystem->toggleBuildMenu();
-			}
-
-			// R toggles the rooms overlay (tint/outline/label of detected rooms). Same
-			// state the GameplayBar Rooms button flips, through the same method, so the
-			// two never drift.
-			if (pressed(foundation::Key::R)) {
-				setRoomOverlayActive(!m_roomOverlay->isActive());
-			}
-
-			// N toggles the nav debug overlay (navmesh wireframe + agent routes).
-			if (pressed(foundation::Key::N)) {
-				setNavOverlayActive(!m_navOverlay->isActive());
-			}
-
-			// V toggles the vision debug overlay (visibility polygons + occluders).
-			if (pressed(foundation::Key::V)) {
-				setVisionOverlayActive(!m_visionOverlay->isActive());
-			}
-
-			// G toggles the terrain polygon debug overlay (waterline rings +
-			// clipped navRings, per chunk).
-			if (pressed(foundation::Key::G)) {
-				setTerrainPolygonOverlayActive(!m_terrainPolygonOverlay->isActive());
-			}
-
-			// T toggles the per-colonist decision inspector panel.
-			if (pressed(foundation::Key::T)) {
-				gameUI->toggleDecisionInspector();
-			}
-
-			// Handle time controls
-			auto& timeSystem = ecsWorld->getSystem<ecs::TimeSystem>();
-			if (pressed(foundation::Key::Space)) {
-				timeSystem.togglePause();
-			}
-			if (pressed(foundation::Key::Num1)) {
-				timeSystem.setSpeed(ecs::GameSpeed::Normal);
-			}
-			if (pressed(foundation::Key::Num2)) {
-				timeSystem.setSpeed(ecs::GameSpeed::Fast);
-			}
-			if (pressed(foundation::Key::Num3)) {
-				timeSystem.setSpeed(ecs::GameSpeed::VeryFast);
-			}
-
-			// Zoom reset
-			if (pressed(foundation::Key::Home)) {
-				m_camera->setZoomIndex(world::kDefaultZoomIndex);
 			}
 
 			// Camera movement
@@ -832,8 +781,9 @@ namespace {
 			m_camera->move(dx, dy, dt);
 
 			// Zoom with scroll wheel (snaps to discrete levels)
-			// Skip scroll handling when a modal dialog is open or task list expanded (they scroll instead)
-			if (!gameUI->isCraftingDialogVisible() && !gameUI->isColonistDetailsVisible() && !gameUI->isGlobalTaskListExpanded()) {
+			// Skip scroll handling when the dossier is open or task list expanded (they scroll instead); a modal
+			// dialog keeps the wheel off the world in handleEvent
+			if (!gameUI->isColonistDetailsVisible() && !gameUI->isGlobalTaskListExpanded()) {
 				// Accumulate scroll deltas to handle high-precision input devices (Magic Mouse, trackpad)
 				// These devices generate many small fractional scroll events per gesture
 				constexpr float kScrollThreshold = 1.0F; // Trigger zoom after ~1 "notch" of scrolling
@@ -1114,6 +1064,85 @@ namespace {
 		const char* name() const override { return kSceneName; }
 
 	  private:
+		// The world's one-press keys; false for a key that isn't one, or does nothing now.
+		bool handleHotkey(foundation::Key key) {
+			auto& timeSystem = ecsWorld->getSystem<ecs::TimeSystem>();
+			switch (key) {
+				case foundation::Key::Backspace: // the last placed point, while drawing
+					if (!m_drawingSystem->isActive()) {
+						return false;
+					}
+					m_drawingSystem->removeLastPoint();
+					return true;
+				case foundation::Key::Enter: // finishes a wall chain; the foundation tool closes on its origin instead
+					if (!m_drawingSystem->isActive()) {
+						return false;
+					}
+					m_drawingSystem->finishChain();
+					return true;
+				case foundation::Key::B: // build mode, never while the drawing tool owns world input
+					if (m_drawingSystem->isActive()) {
+						return false;
+					}
+					m_placementSystem->toggleBuildMenu();
+					return true;
+				case foundation::Key::R: // the rooms overlay, through the method the GameplayBar's Rooms button uses
+					setRoomOverlayActive(!m_roomOverlay->isActive());
+					return true;
+				case foundation::Key::N: // the nav debug overlay: navmesh wireframe and agent routes
+					setNavOverlayActive(!m_navOverlay->isActive());
+					return true;
+				case foundation::Key::V: // the vision debug overlay: visibility polygons and occluders
+					setVisionOverlayActive(!m_visionOverlay->isActive());
+					return true;
+				case foundation::Key::G: // the terrain polygon debug overlay: waterline rings and clipped navRings
+					setTerrainPolygonOverlayActive(!m_terrainPolygonOverlay->isActive());
+					return true;
+				case foundation::Key::T: // the per-colonist decision inspector
+					gameUI->toggleDecisionInspector();
+					return true;
+				case foundation::Key::Space:
+					timeSystem.togglePause();
+					return true;
+				case foundation::Key::Num1:
+					timeSystem.setSpeed(ecs::GameSpeed::Normal);
+					return true;
+				case foundation::Key::Num2:
+					timeSystem.setSpeed(ecs::GameSpeed::Fast);
+					return true;
+				case foundation::Key::Num3:
+					timeSystem.setSpeed(ecs::GameSpeed::VeryFast);
+					return true;
+				case foundation::Key::Home:
+					m_camera->setZoomIndex(world::kDefaultZoomIndex);
+					return true;
+				default:
+					return false;
+			}
+		}
+
+		// A modal dialog covers the world: the keys and the wheel the ui leaves aren't the world's.
+		bool modalDialogOpen() {
+			for (const ui::ComponentId id : ui().overlays()) {
+				const ui::Component* entry = ui().find(id);
+				if (entry != nullptr && entry->getOverlayKind() == ui::OverlayKind::Dialog) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		// Opens the pause menu, pausing the sim until it closes; a game already paused stays paused.
+		void openPauseMenu() {
+			if (gameUI->isPauseMenuVisible()) {
+				return;
+			}
+			auto& timeSystem = ecsWorld->getSystem<ecs::TimeSystem>();
+			m_resumeAfterPauseMenu = !timeSystem.isPaused();
+			timeSystem.pause();
+			gameUI->showPauseMenu();
+		}
+
 		// The topmost menu, dialog or panel, closed as the stack closes it: false when there is none.
 		bool dismissTopOverlay() {
 			const std::vector<ui::ComponentId> open = ui().overlays();
@@ -1991,6 +2020,9 @@ namespace {
 		// Accumulates fractional scroll deltas and triggers zoom only when threshold is crossed
 		float m_scrollAccumulator = 0.0F;
 		float m_pendingScroll = 0.0F; // wheel the ui didn't take, since the last update
+
+		// The pause menu paused a running game, so closing it resumes
+		bool m_resumeAfterPauseMenu = false;
 
 		// The App this scene is on, from onEnter
 		app::App* owner = nullptr;

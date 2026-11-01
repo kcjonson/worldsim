@@ -6,8 +6,13 @@
 
 #include <ui/Context.h>
 
+#include <span>
+
 namespace theme {
 
 	void apply(ui::Context& context);
+
+	// ui's font roles named for worldsim's families, as apply loads the theme with them.
+	std::span<const ui::FontFamilyName> fontFamilyNames();
 
 } // namespace theme

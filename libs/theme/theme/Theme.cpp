@@ -21,8 +21,12 @@ namespace theme {
 		}};
 	} // namespace
 
+	std::span<const ui::FontFamilyName> fontFamilyNames() {
+		return kFontFamilyNames;
+	}
+
 	void apply(ui::Context& context) {
-		ui::ThemeLoad load = ui::Theme::load({.tokens = &tokenTable(), .fontFamilies = kFontFamilyNames});
+		ui::ThemeLoad load = ui::Theme::load({.tokens = &tokenTable(), .fontFamilies = fontFamilyNames()});
 		for (const ui::dtcg::Diagnostic& diagnostic : load.diagnostics) {
 			LOG_WARNING(UI, "theme: %s: %s", diagnostic.path.c_str(), diagnostic.message.c_str());
 		}

@@ -3,12 +3,13 @@
 // GameUI - the game scene's ui, mounted under the scene's root: the top bar, the roster down the left,
 // the selected entity's panel and its task list at the bottom left, the minimap, resources and global
 // task list down the right, the gameplay bar and construction strip at the bottom middle, the zoom
-// column at the bottom right, the build menu, toasts and the three dialogs. It feeds them from the
-// world each frame; salal's ui lays them out, draws them and takes their input, so a press on any of
-// them never reaches the world.
+// column at the bottom right, the build menu, toasts, the three dialogs and the pause menu. It feeds
+// them from the world each frame; salal's ui lays them out, draws them and takes their input, so a
+// press on any of them never reaches the world.
 
 #include "scenes/game/ui/dialogs/ColonistDetailsDialog.h"
 #include "scenes/game/ui/dialogs/CraftingDialog.h"
+#include "scenes/game/ui/dialogs/PauseMenuDialog.h"
 #include "scenes/game/ui/dialogs/StorageConfigDialog.h"
 #include "scenes/game/ui/models/ColonistListModel.h"
 #include "scenes/game/ui/models/GlobalTaskListModel.h"
@@ -67,8 +68,11 @@ namespace world_sim {
 			std::function<void()>								   onPause;				 ///< Called when pause button clicked
 			std::function<void(ecs::GameSpeed)>					   onSpeedChange;		 ///< Called when speed changed
 			std::function<void()>								   onMenuClick;			 ///< Called when menu button clicked
-			std::function<void()> onPlaceFurniture;			///< Called when Place button clicked for packaged furniture
-			std::function<void()> onMoveFurniture;			///< Called when Move button clicked for an installed box
+			std::function<void()>								   onPauseMenuClosed;	 ///< Called when the player closes the pause menu
+			std::function<void()>								   onMainMenu; ///< Called when the pause menu's Main Menu is chosen
+			std::function<void()>								   onQuitGame; ///< Called when the pause menu's Quit Game is chosen
+			std::function<void()> onPlaceFurniture;							   ///< Called when Place button clicked for packaged furniture
+			std::function<void()> onMoveFurniture;							   ///< Called when Move button clicked for an installed box
 			std::function<void()> onDemolishFoundation;		///< Called when Demolish foundation clicked (clear foundation only)
 			std::function<void()> onDemolishBuilding;		///< Called when Demolish building clicked (walls + openings + foundation)
 			std::function<void()> onAddToFoundation;		///< Called when a foundation panel's Add clicked
@@ -131,6 +135,8 @@ namespace world_sim {
 		void			   showStorageConfigDialog(ecs::EntityID containerId, const std::string& containerDefName);
 		void			   hideStorageConfigDialog();
 		[[nodiscard]] bool isStorageConfigVisible() const;
+		void			   showPauseMenu();
+		[[nodiscard]] bool isPauseMenuVisible() const;
 		[[nodiscard]] bool isGlobalTaskListExpanded() const;
 		void			   toggleDecisionInspector();
 
@@ -157,6 +163,7 @@ namespace world_sim {
 		std::unique_ptr<ColonistDetailsDialog> colonistDetailsDialog;
 		std::unique_ptr<CraftingDialog>		   craftingDialog;
 		std::unique_ptr<StorageConfigDialog>   storageConfigDialog;
+		std::unique_ptr<PauseMenuDialog>	   pauseMenuDialog;
 
 		TimeModel			timeModel;
 		ColonistListModel	colonistListModel;

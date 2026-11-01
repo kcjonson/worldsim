@@ -86,7 +86,10 @@ Day 15, Summer | 14:32
 
 ### 1.3 Menu Button
 
-Opens pause menu: Save, Load, Settings, Quit to Main Menu
+Opens the pause menu, as does Escape with nothing else to close: a modal dialog over the game, which
+pauses the sim until it closes (a game already paused stays paused). Rows: Resume, Save, Load, Main
+Menu, Quit Game. Resume is first so the focus the dialog takes lands on it, and Space or Enter resumes
+rather than leaving the game. Save and Load are disabled until saving exists; Settings is still to come.
 
 ---
 
@@ -1100,8 +1103,13 @@ Components need to handle:
 |-----|--------|
 | Space | Pause/Unpause |
 | 1/2/3 | Game speed |
-| Escape | Cancel action / Close panel |
+| Escape | Cancel action / Close panel; with nothing to close, the pause menu |
 | ` | Toggle dev console |
+
+The HUD takes no keyboard focus: a click on a HUD button acts and leaves nothing focused, so these
+keys always reach the world, the way RimWorld and Factorio behave. Dialogs and full-screen menus keep
+focus, navigable by keyboard and pad; while a modal dialog is open, the world's keys, camera and wheel
+are off. The world's hotkeys read only the keys the ui didn't use.
 
 ### Camera
 

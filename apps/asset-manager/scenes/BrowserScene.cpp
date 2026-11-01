@@ -1,9 +1,11 @@
 #include "AssetDetailView.h"
 #include "AssetRow.h"
 #include "AssetThumbnail.h"
+#include "GroundBakeView.h"
 #include "SceneTypes.h"
 
 #include <assets/AssetDefinition.h>
+#include <application/App.h>
 #include <assets/AssetRegistry.h>
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
@@ -79,7 +81,7 @@ namespace {
 
 	class BrowserScene : public app::Scene {
 	  public:
-		void onEnter(app::App& /*app*/) override {
+		void onEnter(app::App& app) override {
 			LOG_INFO(Engine, "AssetManager BrowserScene - Entering");
 
 			// Prefer the SOURCE assets/ -- this is a live authoring tool, so Reload should
@@ -142,7 +144,7 @@ namespace {
 				.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .flexGrow = 1.0F},
 				.overflow = ui::Overflow::Scroll,
 			});
-			detail = body.addChild<asset_manager::AssetDetailView>({.layout = {.flexGrow = 1.0F}});
+			detail = body.addChild<asset_manager::AssetDetailView>({.layout = {.flexGrow = 1.0F}, .coordinateSystem = &app.coordinateSystem()});
 
 			updateSummary();
 			rebuildTree();
@@ -208,6 +210,7 @@ namespace {
 
 		void reload() {
 			asset_manager::AssetThumbnail::clearCache();
+			asset_manager::GroundBakeView::clearCache();
 			auto& registry = assets::AssetRegistry::Get();
 			registry.clear();
 			if (!sharedScripts.empty()) {
