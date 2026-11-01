@@ -632,12 +632,13 @@ while (running) {
   - [ ] `tessellateAsset` index-wrap fix
   - [ ] Unit tests
 - [ ] Bake and shader
-  - [ ] `GroundTileBank`: wrapped, supersampled, per-mip render into the texture arrays
-  - [ ] Per-chunk macro texture
-  - [ ] `land.glsl` hex sampler, ChunkRenderer bindings and tunables
-  - [ ] Delete the atlas path
+  - [x] `GroundTileBank`: wrapped, supersampled, per-mip render into the texture arrays
+  - [x] Per-chunk macro texture
+  - [x] `land.glsl` hex sampler, ChunkRenderer bindings and tunables
+  - [x] Delete the atlas path
   - [ ] Measure BC1 on upload
 - [ ] Content
+  - [x] Placeholder defs for the eight surfaces without art (`ground_placeholder.lua`)
   - [ ] Grass generator and the four grass defs
   - [ ] Dirt as a static SVG, and Sand, Mud, Rock, Snow generators
 - [ ] Asset-manager preview

@@ -1,6 +1,7 @@
 #include "Chunk.h"
 
 #include "world/chunk/ApronField.h"
+#include "world/chunk/GroundMacro.h"
 #include "world/chunk/SurfaceField.h"
 #include "world/chunk/TerrainPolygonBuilder.h"
 #include "world/chunk/TerrainPolygonQuery.h"
@@ -97,10 +98,12 @@ namespace world {
 
 		computeRenderData(extended, terrain);
 		const double renderMs = stageMs();
+		fillGroundMacro(m_coord, m_worldSeed, m_groundMacro);
+		const double macroMs = stageMs();
 		// Permanent worker-thread generation cost by stage. DEBUG: dev-tools log server.
 		LOG_DEBUG(
 			World,
-			"[ChunkGen] (%d, %d) %.1f ms: tiles %.1f, apron %.1f, polygons %.1f, bake %.1f, surfaces %.1f, render tiles %.1f",
+			"[ChunkGen] (%d, %d) %.1f ms: tiles %.1f, apron %.1f, polygons %.1f, bake %.1f, surfaces %.1f, render tiles %.1f, macro %.1f",
 			m_coord.x,
 			m_coord.y,
 			std::chrono::duration<double, std::milli>(stageEnd - start).count(),
@@ -109,7 +112,8 @@ namespace world {
 			polygonsMs,
 			bakeMs,
 			surfacesMs,
-			renderMs
+			renderMs,
+			macroMs
 		);
 
 		m_renderDataVersion.fetch_add(1, std::memory_order_release);
@@ -273,83 +277,6 @@ namespace world {
 		h *= 0xFF51AFD7ED558CCDULL;
 		h ^= h >> 33;
 		return static_cast<uint32_t>(h);
-	}
-
-	Foundation::Color Chunk::getBiomeColor(Biome biome) {
-		switch (biome) {
-			case Biome::TemperateGrassland:
-			case Biome::TropicalSavanna:
-			case Biome::AlpineGrassland:
-				return Foundation::Color(0.29F, 0.49F, 0.25F, 1.0F);
-
-			case Biome::TemperateDeciduousForest:
-			case Biome::TropicalRainforest:
-			case Biome::TropicalSeasonalForest:
-			case Biome::TemperateRainforest:
-			case Biome::BorealForest:
-			case Biome::MontaneForest:
-				return Foundation::Color(0.18F, 0.35F, 0.12F, 1.0F);
-
-			case Biome::HotDesert:
-			case Biome::ColdDesert:
-			case Biome::SemiDesert:
-			case Biome::XericShrubland:
-				return Foundation::Color(0.82F, 0.71F, 0.47F, 1.0F);
-
-			case Biome::ArcticTundra:
-			case Biome::AlpineTundra:
-			case Biome::PolarDesert:
-				return Foundation::Color(0.75F, 0.78F, 0.80F, 1.0F);
-
-			case Biome::TemperateWetland:
-			case Biome::TropicalWetland:
-				return Foundation::Color(0.25F, 0.42F, 0.35F, 1.0F);
-
-			case Biome::Beach:
-				return Foundation::Color(0.77F, 0.64F, 0.35F, 1.0F);
-
-			case Biome::Ocean:
-			case Biome::Lake:
-				return Foundation::Color(0.10F, 0.30F, 0.48F, 1.0F);
-
-			case Biome::Count:
-				return Foundation::Color(0.5F, 0.5F, 0.5F, 1.0F);
-		}
-		return Foundation::Color(0.5F, 0.5F, 0.5F, 1.0F);
-	}
-
-	Foundation::Color Chunk::getSurfaceColor(Surface surface) {
-		switch (surface) {
-			case Surface::Grass:
-				return Foundation::Color(0.29F, 0.49F, 0.25F, 1.0F); // #4a7c3f
-
-			case Surface::Dirt:
-				return Foundation::Color(0.45F, 0.35F, 0.25F, 1.0F);
-
-			case Surface::Sand:
-				return Foundation::Color(0.82F, 0.71F, 0.47F, 1.0F);
-
-			case Surface::Rock:
-				return Foundation::Color(0.42F, 0.42F, 0.42F, 1.0F);
-
-			case Surface::Snow:
-				return Foundation::Color(0.95F, 0.97F, 1.0F, 1.0F);
-
-			case Surface::Mud:
-				return Foundation::Color(0.35F, 0.25F, 0.15F, 1.0F); // Darker brown than Dirt
-
-			case Surface::GrassTall:
-				return Foundation::Color(0.25F, 0.45F, 0.22F, 1.0F); // Slightly darker green
-
-			case Surface::GrassShort:
-				return Foundation::Color(0.35F, 0.45F, 0.28F, 1.0F); // Yellow-green, drier
-
-			case Surface::GrassMeadow:
-				return Foundation::Color(0.22F, 0.42F, 0.20F, 1.0F); // Lush deep green
-
-			default:
-				return Foundation::Color(0.5F, 0.5F, 0.5F, 1.0F);
-		}
 	}
 
 } // namespace world

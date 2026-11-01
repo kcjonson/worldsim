@@ -6,6 +6,7 @@
 // loads the prebuilt quickstart planet shipped with the game (built by the
 // `quickstart-planet` CMake target). It is never generated at runtime.
 
+#include "GameBootstrap.h"
 #include "GameStartConfig.h"
 #include "GameWorldState.h"
 #include "SceneTypes.h"
@@ -36,6 +37,7 @@
 #include <world/chunk/GeneratedWorldSampler.h>
 #include <world/rendering/ChunkRenderer.h>
 #include <world/rendering/EntityRenderer.h>
+#include <world/rendering/GroundTileBank.h>
 
 #include <worldgen/data/Biome.h>
 #include <worldgen/io/PlanetIO.h>
@@ -60,7 +62,7 @@ namespace {
 	namespace family = ui::tokens::font::family;
 
 	/// Loading phases
-	enum class LoadingPhase { PreparingPlanet, Initializing, ConfigError, LoadingChunks, PlacingEntities, Complete, Cancelling };
+	enum class LoadingPhase { BakingGround, PreparingPlanet, Initializing, ConfigError, LoadingChunks, PlacingEntities, Complete, Cancelling };
 
 	class GameLoadingScene : public app::Scene {
 	  public:
@@ -70,7 +72,7 @@ namespace {
 			theme::apply(ui());
 			build();
 
-			phase = LoadingPhase::PreparingPlanet;
+			phase = LoadingPhase::BakingGround;
 			progress = 0.0F;
 			chunksLoaded = 0;
 			chunksProcessed = 0;
@@ -107,6 +109,10 @@ namespace {
 			}
 
 			switch (phase) {
+				case LoadingPhase::BakingGround:
+					bakeGround();
+					break;
+
 				case LoadingPhase::PreparingPlanet:
 					preparePlanet();
 					break;
@@ -246,6 +252,23 @@ namespace {
 			}
 		}
 
+		/// Before phase 0: the ground tiles, which the splash bakes; a --scene jump skips it, so they're baked here,
+		/// a variant a frame so the bar moves.
+		void bakeGround() {
+			worldview::GroundTileBank& bank = world_sim::groundTiles();
+			if (!bank.ready() && bank.bakeNext()) {
+				progress = 0.25F * static_cast<float>(bank.bakedVariants()) / static_cast<float>(std::max(1, bank.totalVariants()));
+				updateStatusText("Baking ground tiles...");
+				return;
+			}
+			if (!bank.errors().empty()) {
+				LOG_ERROR(Game, "GameLoadingScene - %zu ground tile error(s); the log above says which", bank.errors().size());
+				phase = LoadingPhase::ConfigError;
+				return;
+			}
+			phase = LoadingPhase::PreparingPlanet;
+		}
+
 		/// Phase 0: ensure we have a planet to land on.
 		/// Creator flow already provides one; Quick Start loads the prebuilt
 		/// planet shipped with the game. It is never generated at runtime — the
@@ -341,7 +364,7 @@ namespace {
 			worldState->camera->setPosition({worldState->spawnPosition.x, worldState->spawnPosition.y});
 
 			// Create renderers
-			worldState->renderer = std::make_unique<worldview::ChunkRenderer>(kPixelsPerMeter);
+			worldState->renderer = std::make_unique<worldview::ChunkRenderer>(kPixelsPerMeter, world_sim::groundTiles());
 			worldState->entityRenderer = std::make_unique<worldview::EntityRenderer>(kPixelsPerMeter);
 
 			// Initialize placement executor

@@ -7,11 +7,10 @@
 #include "world/Biome.h"
 #include "world/chunk/ChunkCoordinate.h"
 #include "world/chunk/ChunkSampleResult.h"
+#include "world/chunk/GroundMacro.h"
 #include "world/chunk/RenderTiles.h"
 #include "world/chunk/TerrainDistanceField.h"
 #include "world/chunk/TerrainPolygons.h"
-
-#include <graphics/Color.h>
 
 #include <array>
 #include <atomic>
@@ -172,12 +171,6 @@ class Chunk {
 		return m_tiles[256 * kChunkSize + 256].primaryBiome;
 	}
 
-	/// Get color for a biome (for ground rendering)
-	[[nodiscard]] static Foundation::Color getBiomeColor(Biome biome);
-
-	/// Get color for surface type
-	[[nodiscard]] static Foundation::Color getSurfaceColor(Surface surface);
-
 	/// Update last accessed time (for LRU eviction)
 	/// Note: touch() is const because m_lastAccessed is mutable - LRU timestamp
 	/// is not considered part of the logical state of the chunk.
@@ -196,8 +189,12 @@ class Chunk {
 	/// chunk's tile-data texture by ChunkRenderer.
 	[[nodiscard]] const TileRenderData* renderData() const { return m_renderData.data(); }
 
-	/// Version counter for render data, bumped by generate(). GPU caches compare it
-	/// to detect stale uploads.
+	/// The ground's macro texture (GroundMacro.h), kGroundMacroBytes of RGBA8, uploaded
+	/// beside the render tiles under renderDataVersion().
+	[[nodiscard]] const uint8_t* groundMacro() const { return m_groundMacro.data(); }
+
+	/// Version counter for render data and the macro texture, bumped by generate(). GPU
+	/// caches compare it to detect stale uploads.
 	[[nodiscard]] uint32_t renderDataVersion() const { return m_renderDataVersion.load(std::memory_order_acquire); }
 
 	/// Get the chunk's terrain polygon rings (D2): waterline, channel, and pond,
@@ -222,6 +219,9 @@ class Chunk {
 
 	/// Render tiles over the chunk square plus its render apron (518 x 518 x 2 bytes)
 	std::array<TileRenderData, static_cast<size_t>(kRenderTilesSide) * kRenderTilesSide> m_renderData;
+
+	/// The ground's macro texture (257 x 257 x 4 bytes)
+	std::array<uint8_t, kGroundMacroBytes> m_groundMacro{};
 
 	/// Thread-safe flag indicating generation is complete
 	std::atomic<bool> m_generationComplete{false};

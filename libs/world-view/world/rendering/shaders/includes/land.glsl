@@ -5,6 +5,8 @@
 // world::evaluateSurfaceField (SurfaceField.cpp) step for step, in the same
 // order and the same expressions; SurfaceFieldGolden.test.cpp renders it and
 // compares the two. The picture sums only the octaves a pixel can show (D16 step 7).
+// Each surface paints with its baked ground tiles, hex-tiled and tinted by the
+// chunk's macro texture (docs/technical/ground-textures.md, "Shader").
 //
 // Positions are a whole tile plus the offset inside it: the noise and every lattice
 // read are formed from those two parts, never from a large float world coordinate.
@@ -20,11 +22,30 @@
 uniform usampler2D u_tileData;
 uniform ivec2	   u_chunkTileOrigin; // world tile of the chunk's tile (0, 0)
 
-// Tile atlas (TileAtlasBuilder): uvMin.xy, uvMax.xy per surface id, the first
-// u_tileAtlasRectCount set. 64 leaves room past Surface::Count.
-uniform sampler2D u_tileAtlas;
-uniform int		  u_tileAtlasRectCount;
-uniform vec4	  u_tileAtlasRects[64];
+// Ground tiles (GroundTileBank): sRGB texture arrays, one per layer size, every
+// mip baked from the vectors. Per surface id:
+//   u_groundLayers: x array (0..3), y first layer, z layer count, w rotate (0 free, 1 quarter, 2 none)
+//   u_groundParams: x 1 / period (m), y mip level this draw, z macro tint amount
+//   u_groundDry, u_groundLush: the macro tints, multiplied into the sRGB color
+uniform sampler2DArray u_groundTiles0;
+uniform sampler2DArray u_groundTiles1;
+uniform sampler2DArray u_groundTiles2;
+uniform sampler2DArray u_groundTiles3;
+uniform ivec4		   u_groundLayers[10];
+uniform vec4		   u_groundParams[10];
+uniform vec3		   u_groundDry[10];
+uniform vec3		   u_groundLush[10];
+uniform uint		   u_groundSeed;
+uniform bool		   u_groundHex;			   // px/m at or over terrain/ground/hexMinPxPerMeter
+uniform float		   u_groundBlendContrast;  // exponent on the barycentric weights
+uniform float		   u_groundBlendGainK;	   // log(1 - r) / log(0.5) for the zoom's gain r; 1 is none
+uniform float		   u_groundMacroMidAmp;	   // value swing of the macro's mid octave
+uniform float		   u_groundMacroFineAmp;   // and of its fine one
+
+// The chunk's macro texture (GroundMacro.h): 257x257, a texel every 2 m from the
+// chunk's corner, its last row and column the next chunk's first. R the dry to lush
+// mix, G and B value noise around 0.5.
+uniform sampler2D u_groundMacro;
 
 // The field (SurfaceFieldParams): per surface id where indexed.
 uniform float u_landWarpFine[10];
@@ -346,13 +367,132 @@ LandEval evaluateLand(ivec2 tile, vec2 frac, int fineOctaves) {
 // THE LOOK
 // ============================================================================
 
-vec3 atlasColor(uint surfaceId, vec2 uv) {
-	int idx = int(surfaceId);
-	if (idx < u_tileAtlasRectCount) {
-		vec4 rect = u_tileAtlasRects[idx];
-		return textureLod(u_tileAtlas, rect.xy + uv * (rect.zw - rect.xy), 0.0).rgb;
+// Ground tile variants are mixed on a hex lattice (Mikkelsen 2022, practical
+// hex-tiling) in chunk-local meters: 4 m columns and 148 rows a chunk, so it
+// repeats every 512 m and lines up across chunk borders. Vertex v (skewed ids)
+// sits at (4 v.x + 2 v.y, kGroundHexRowM v.y); its world id is v plus
+// (128 cx - 74 cy, 148 cy) for chunk (cx, cy).
+const float kGroundHexColM	  = 4.0;
+const float kGroundHexRowM	  = 512.0 / 148.0;
+const float kGroundTopWeight  = 0.98; // a cell holding this much takes the one sample
+const float kGroundMacroSide  = 257.0;
+const vec3	kGroundLuma		  = vec3(0.299, 0.587, 0.114);
+
+struct HexCells {
+	ivec2 v1;
+	ivec2 v2;
+	ivec2 v3;
+	vec3  w; // barycentric weights of v1, v2, v3
+};
+
+HexCells groundHexCells(vec2 local) {
+	float	 sv	  = local.y * (1.0 / kGroundHexRowM);
+	vec2	 sk	  = vec2(local.x * (1.0 / kGroundHexColM) - 0.5 * sv, sv);
+	ivec2	 base = ivec2(floor(sk));
+	vec2	 f	  = sk - vec2(base);
+	float	 z	  = 1.0 - f.x - f.y;
+	int		 s	  = z < 0.0 ? 1 : 0;
+	float	 s2	  = float(2 * s - 1);
+	HexCells c;
+	c.w	 = max(vec3(-z * s2, float(s) - f.y * s2, float(s) - f.x * s2), vec3(0.0));
+	c.v1 = base + ivec2(s, s);
+	c.v2 = base + ivec2(s, 1 - s);
+	c.v3 = base + ivec2(1 - s, s);
+	return c;
+}
+
+vec3 groundFetch(int array, vec3 at, float lod) {
+	if (array == 0) {
+		return textureLod(u_groundTiles0, at, lod).rgb;
 	}
-	return vec3(1.0);
+	if (array == 1) {
+		return textureLod(u_groundTiles1, at, lod).rgb;
+	}
+	if (array == 2) {
+		return textureLod(u_groundTiles2, at, lod).rgb;
+	}
+	return textureLod(u_groundTiles3, at, lod).rgb;
+}
+
+/// A surface's tile as hex cell `v` lays it at `local`, linear: the cell's
+/// variant, rotation (by the surface's rotate) and offset hash from its world id.
+/// Variants are picked uniformly; weighted picks (mostly quiet, a few busy) wait
+/// for a ground def that asks for them.
+vec3 groundCellSample(uint surface, vec2 local, ivec2 v) {
+	ivec4 layers = u_groundLayers[surface];
+	vec4  params = u_groundParams[surface];
+	ivec2 chunk	 = u_chunkTileOrigin / 512;
+	uint  h		 = noiseHash3(v.x + 128 * chunk.x - 74 * chunk.y, v.y + 148 * chunk.y, int(surface), u_groundSeed);
+	vec2  center = vec2(float(v.x) * kGroundHexColM + float(v.y) * (0.5 * kGroundHexColM), float(v.y) * kGroundHexRowM);
+	vec2  d		 = (local - center) * params.x;
+	vec2  cs	 = vec2(1.0, 0.0);
+	if (layers.w == 0) {
+		float angle = float((h >> 8u) & 0xFFu) * (6.2831853 / 256.0);
+		cs			= vec2(cos(angle), sin(angle));
+	} else if (layers.w == 1) {
+		uint q = (h >> 8u) & 3u;
+		cs	   = q == 0u ? vec2(1.0, 0.0) : (q == 1u ? vec2(0.0, 1.0) : (q == 2u ? vec2(-1.0, 0.0) : vec2(0.0, -1.0)));
+	}
+	vec2  uv	= vec2(cs.x * d.x - cs.y * d.y, cs.y * d.x + cs.x * d.y) + vec2(float((h >> 16u) & 0xFFu), float(h >> 24u)) * (1.0 / 256.0);
+	float layer = float(layers.y + int(h % uint(max(layers.z, 1))));
+	return groundFetch(layers.x, vec3(uv, layer), params.y);
+}
+
+/// Mikkelsen's gain on blend weights: more contrast for k > 1.
+vec3 groundGain(vec3 w, float k) {
+	vec3 s = 2.0 * step(0.5, w);
+	vec3 m = 2.0 * (1.0 - s);
+	vec3 r = 0.5 * s + 0.25 * m * pow(max(vec3(0.0), s + w * m), vec3(k));
+	return r / (r.x + r.y + r.z);
+}
+
+/// A surface's linear ground color at `local`: the hex cells' samples, weighted
+/// by their sharpened barycentric weights times 0.4 + 0.6 luminance, then the
+/// zoom's gain. One sample where a cell holds kGroundTopWeight, below the hex
+/// cutoff, or with `blend` false (the fringe's other surface): the dominant cell.
+vec3 groundTexture(uint surface, vec2 local, bool blend) {
+	HexCells c = groundHexCells(local);
+	if (!blend || !u_groundHex) {
+		ivec2 v = c.w.x >= c.w.y && c.w.x >= c.w.z ? c.v1 : (c.w.y >= c.w.z ? c.v2 : c.v3);
+		return groundCellSample(surface, local, v);
+	}
+	vec3 w = pow(c.w, vec3(u_groundBlendContrast));
+	w /= w.x + w.y + w.z;
+	if (w.x >= kGroundTopWeight) {
+		return groundCellSample(surface, local, c.v1);
+	}
+	if (w.y >= kGroundTopWeight) {
+		return groundCellSample(surface, local, c.v2);
+	}
+	if (w.z >= kGroundTopWeight) {
+		return groundCellSample(surface, local, c.v3);
+	}
+	// A transition band: the cells holding more than the dominant one leaves over.
+	float floorW = 1.0 - kGroundTopWeight;
+	vec3  c1	 = w.x > floorW ? groundCellSample(surface, local, c.v1) : vec3(0.0);
+	vec3  c2	 = w.y > floorW ? groundCellSample(surface, local, c.v2) : vec3(0.0);
+	vec3  c3	 = w.z > floorW ? groundCellSample(surface, local, c.v3) : vec3(0.0);
+	w *= vec3(greaterThan(w, vec3(floorW))) * (0.4 + 0.6 * vec3(dot(c1, kGroundLuma), dot(c2, kGroundLuma), dot(c3, kGroundLuma)));
+	w /= w.x + w.y + w.z;
+	if (u_groundBlendGainK != 1.0) {
+		w = groundGain(w, u_groundBlendGainK);
+	}
+	return w.x * c1 + w.y * c2 + w.z * c3;
+}
+
+vec3 groundEncodeSrgb(vec3 linear) {
+	vec3 low  = linear * 12.92;
+	vec3 high = 1.055 * pow(max(linear, vec3(0.0)), vec3(1.0 / 2.4)) - 0.055;
+	return mix(low, high, step(vec3(0.0031308), linear));
+}
+
+/// A surface's ground color in sRGB, which the rest of the pass works in, tinted
+/// by the macro layer (`macro`, this pixel's sample of u_groundMacro).
+vec3 groundColor(uint surface, vec2 local, vec4 macro, bool blend) {
+	vec3  color = groundEncodeSrgb(groundTexture(surface, local, blend));
+	vec3  tint	= mix(u_groundDry[surface], u_groundLush[surface], macro.r);
+	float value = 1.0 + (macro.g * 2.0 - 1.0) * u_groundMacroMidAmp + (macro.b * 2.0 - 1.0) * u_groundMacroFineAmp;
+	return color * mix(vec3(1.0), tint, u_groundParams[surface].z) * value;
 }
 
 /// The ground color at chunk-local position `local`, anti-aliased over one pixel.
@@ -360,7 +500,8 @@ vec3 landColor(vec2 local, float metersPerPixel) {
 	ivec2	 tile	 = clamp(ivec2(floor(local)), ivec2(0), ivec2(511));
 	vec2	 frac	 = local - vec2(tile);
 	LandEval e		 = evaluateLand(tile, frac, u_landWarpFineOctaves);
-	vec3	 painted = atlasColor(e.painted, frac);
+	vec4	 macro	 = textureLod(u_groundMacro, (local * 0.5 + 0.5) * (1.0 / kGroundMacroSide), 0.0);
+	vec3	 painted = groundColor(e.painted, local, macro, true);
 	if (e.across == e.painted) {
 		return painted;
 	}
@@ -388,8 +529,9 @@ vec3 landColor(vec2 local, float metersPerPixel) {
 	float fringe  = fringeW > 0.0 ? u_landFringeOpacity * breakup * (1.0 - smoothstep(0.0, fringeW, max(-sigma, 0.0))) : 0.0;
 	float rim	  = u_landRimDark[int(upper)] * (1.0 - smoothstep(0.0, u_landRimW, max(sigma, 0.0)));
 
-	vec3 upperColor = paintedIsUpper ? painted : atlasColor(upper, frac);
-	vec3 lowerColor = paintedIsUpper ? atlasColor(lower, frac) : painted;
+	// The fringe's other surface takes one sample: the band is thin and a blend wouldn't show.
+	vec3 upperColor = paintedIsUpper ? painted : groundColor(upper, local, macro, false);
+	vec3 lowerColor = paintedIsUpper ? groundColor(lower, local, macro, false) : painted;
 	vec3 lowerSide	= mix(lowerColor, upperColor, fringe);
 	vec3 upperSide	= upperColor * (1.0 - rim);
 	return mix(lowerSide, upperSide, smoothstep(-0.5 * metersPerPixel, 0.5 * metersPerPixel, sigma));

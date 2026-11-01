@@ -58,7 +58,7 @@ int main(int argc, char* argv[]) {
 		return 1;
 	}
 
-	world_sim::initializeResources(commandLine.scene.has_value());
+	world_sim::initializeResources(*app, commandLine.scene.has_value());
 
 	world_sim::addScenes(app->scenes());
 
