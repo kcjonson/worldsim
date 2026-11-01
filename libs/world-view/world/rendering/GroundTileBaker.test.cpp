@@ -1,4 +1,4 @@
-// The ground tile baker end to end on a small def: the mip chain's shape, the 3x3 wrap, a setLod path
+// The ground tile baker end to end on a small def: the mip chain's shape, the registry's wrap across the tile edge, a setLod path
 // leaving the coarse mips, and tiled renders matching one big one. Needs a GL 3.3 context; skips on a
 // headless box, like the other GL tests. The filters have their own tests (GroundTileFilter.test.cpp).
 

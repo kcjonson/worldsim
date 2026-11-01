@@ -2,8 +2,9 @@
 
 // Bakes a ground def's tile variants into CPU-side mip chains (docs/technical/ground-textures.md,
 // "Baker" and "LOD"). Every mip is drawn from the vectors at that mip's density, so a path tagged with
-// setLod drops out at the mip its author chose. Each is drawn 3x3 wrapped into a target covering exactly
-// one period, supersampled (8x8 for mips 0 and 1, 4x4 below), Kaiser-downsampled in linear light with an
+// setLod drops out at the mip its author chose. Each is drawn once into a target covering exactly one
+// period (buildMeshes has already repeated the paths that cross the tile edge, so the target's clip is
+// the wrap), supersampled (8x8 for mips 0 and 1, 4x4 below), Kaiser-downsampled in linear light with an
 // anti-ringing clamp (GroundTileFilter.h), mean-locked to a filtered copy of mip 0, and encoded to sRGB
 // 8-bit for GL_SRGB8_ALPHA8. The runtime uploads the chains; the asset-manager shows them.
 //
@@ -48,7 +49,7 @@ namespace worldview {
 	struct GroundMipSample {
 		int		  renderSize = 0;			// edge of the supersampled render, px
 		int		  supersample = 1;			// render px per texel along each axis
-		size_t	  vertexCount = 0;			// vertices the level's meshes hold (before the wrap copies)
+		size_t	  vertexCount = 0;			// vertices the level's meshes hold, buildMeshes' wrap copies included
 		size_t	  meshCount = 0;			// meshes those took, each under 65,536 vertices
 		double	  meshMs = 0.0;				// buildMeshes for this level: the whole generator run plus tessellating what survives
 		glm::vec3 mean{0.0F};				// linear mean of the encoded mip
@@ -156,10 +157,10 @@ namespace worldview {
 		[[nodiscard]] static std::string formatReport(const GroundTileBake& bake);
 
 	  private:
-		// The level's meshes drawn 3x3 wrapped into a renderSize square covering one period: premultiplied
-		// 8-bit sRGB, rows top to bottom. Empty when a render target couldn't be made.
+		// The level's meshes drawn once into a renderSize square covering one period: premultiplied 8-bit
+		// sRGB, rows top to bottom. Empty when a render target couldn't be made.
 		[[nodiscard]] std::vector<uint8_t>
-		renderWrapped(std::span<const renderer::TessellatedMesh> meshes, float periodMeters, int renderSize) const;
+		render(std::span<const renderer::TessellatedMesh> meshes, float periodMeters, int renderSize) const;
 
 		Args args;
 	};

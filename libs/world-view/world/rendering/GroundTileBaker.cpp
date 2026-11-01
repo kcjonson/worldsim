@@ -61,17 +61,16 @@ namespace worldview {
 			int							height = 0;
 		};
 
-		// The level's triangles in render pixels, each followed by its copies one period away (the 3x3
-		// wrap) that land in the target, so a shape crossing one edge comes back in at the opposite one.
-		// A triangle's copies follow it directly to keep the generator's paint order: drawing all the
-		// copies after the whole tile would paint the base over every shape that wraps.
-		struct WrappedTriangles {
+		// The level's triangles in render pixels, unshared (3 vertices each) and in paint order, the ones
+		// that miss the target dropped. buildMeshes has already put every path that crosses the tile edge
+		// back in at the opposite one, right after the original, so the target's clip is the whole wrap.
+		struct Triangles {
 			std::vector<Foundation::Vec2>  positions; // 3 a triangle
 			std::vector<Foundation::Color> colors;
 		};
 
-		WrappedTriangles wrapTriangles(std::span<const renderer::TessellatedMesh> meshes, float scale, float renderSize) {
-			WrappedTriangles		out;
+		Triangles scaleTriangles(std::span<const renderer::TessellatedMesh> meshes, float scale, float renderSize) {
+			Triangles				out;
 			const Foundation::Color fallback(0.7F, 0.7F, 0.7F, 1.0F);
 			for (const renderer::TessellatedMesh& mesh : meshes) {
 				const bool hasColors = mesh.hasColors();
@@ -91,18 +90,12 @@ namespace worldview {
 						minY = std::min(minY, p[k].y);
 						maxY = std::max(maxY, p[k].y);
 					}
-					for (int oy = -1; oy <= 1; ++oy) {
-						for (int ox = -1; ox <= 1; ++ox) {
-							const Foundation::Vec2 offset(static_cast<float>(ox) * renderSize, static_cast<float>(oy) * renderSize);
-							if (minX + offset.x >= renderSize || maxX + offset.x <= 0.0F || minY + offset.y >= renderSize ||
-								maxY + offset.y <= 0.0F) {
-								continue;
-							}
-							for (size_t k = 0; k < 3; ++k) {
-								out.positions.push_back(p[k] + offset);
-								out.colors.push_back(c[k]);
-							}
-						}
+					if (minX >= renderSize || maxX <= 0.0F || minY >= renderSize || maxY <= 0.0F) {
+						continue;
+					}
+					for (size_t k = 0; k < 3; ++k) {
+						out.positions.push_back(p[k]);
+						out.colors.push_back(c[k]);
 					}
 				}
 			}
@@ -155,12 +148,12 @@ namespace worldview {
 	}
 
 	std::vector<uint8_t>
-	GroundTileBaker::renderWrapped(std::span<const renderer::TessellatedMesh> meshes, float periodMeters, int renderSize) const {
-		const float			   size = static_cast<float>(renderSize);
-		const WrappedTriangles triangles = wrapTriangles(meshes, size / periodMeters, size);
-		const size_t		   triangleCount = triangles.positions.size() / 3;
-		const int			   tileSize = std::clamp(args.maxRenderSize, 1, renderSize);
-		const bool			   tiled = tileSize < renderSize;
+	GroundTileBaker::render(std::span<const renderer::TessellatedMesh> meshes, float periodMeters, int renderSize) const {
+		const float		size = static_cast<float>(renderSize);
+		const Triangles triangles = scaleTriangles(meshes, size / periodMeters, size);
+		const size_t	triangleCount = triangles.positions.size() / 3;
+		const int		tileSize = std::clamp(args.maxRenderSize, 1, renderSize);
+		const bool		tiled = tileSize < renderSize;
 
 		const std::vector<uint16_t>&   indices = sequentialIndices();
 		std::vector<Foundation::Vec2>  chunkPositions;
@@ -302,7 +295,7 @@ namespace worldview {
 			}
 
 			phase = Clock::now();
-			const std::vector<uint8_t> pixels = renderWrapped(meshes, def->ground.periodMeters, renderSize);
+			const std::vector<uint8_t> pixels = render(meshes, def->ground.periodMeters, renderSize);
 			bake.renderMs += msSince(phase);
 			if (pixels.empty()) {
 				return std::nullopt;
