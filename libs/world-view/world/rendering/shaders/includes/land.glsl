@@ -512,26 +512,32 @@ vec3 groundTexture(uint surface, vec2 local, bool blend) {
 	}
 	vec3 w = pow(c.w, vec3(u_groundBlendContrast));
 	w /= w.x + w.y + w.z;
-	if (w.x >= kGroundTopWeight) {
-		return groundCellSample(surface, local, c.v1);
+
+	// The heaviest cell first (ties to v1, then v2) and the other two after it, so
+	// every pixel takes its first sample from the same instructions and only the
+	// transition bands branch for more: a warp straddling a band edge runs the one
+	// sample once.
+	bool first1 = w.x >= w.y && w.x >= w.z;
+	bool first2 = !first1 && w.y >= w.z;
+	vec2 vA		= first1 ? c.v1 : (first2 ? c.v2 : c.v3);
+	vec2 vB		= first1 ? c.v2 : c.v1;
+	vec2 vC		= first1 || first2 ? c.v3 : c.v2;
+	vec3 ws		= first1 ? w : (first2 ? w.yxz : w.zxy);
+	vec3 cA		= groundCellSample(surface, local, vA);
+	if (ws.x >= kGroundTopWeight) {
+		return cA;
 	}
-	if (w.y >= kGroundTopWeight) {
-		return groundCellSample(surface, local, c.v2);
-	}
-	if (w.z >= kGroundTopWeight) {
-		return groundCellSample(surface, local, c.v3);
-	}
-	// A transition band: the cells holding more than the dominant one leaves over.
+
+	// A transition band: the cells holding more than the heaviest one leaves over.
 	float floorW = 1.0 - kGroundTopWeight;
-	vec3  c1	 = w.x > floorW ? groundCellSample(surface, local, c.v1) : vec3(0.0);
-	vec3  c2	 = w.y > floorW ? groundCellSample(surface, local, c.v2) : vec3(0.0);
-	vec3  c3	 = w.z > floorW ? groundCellSample(surface, local, c.v3) : vec3(0.0);
-	w *= vec3(greaterThan(w, vec3(floorW))) * (0.4 + 0.6 * vec3(dot(c1, kGroundLuma), dot(c2, kGroundLuma), dot(c3, kGroundLuma)));
-	w /= w.x + w.y + w.z;
+	vec3  cB	 = ws.y > floorW ? groundCellSample(surface, local, vB) : vec3(0.0);
+	vec3  cC	 = ws.z > floorW ? groundCellSample(surface, local, vC) : vec3(0.0);
+	ws *= vec3(greaterThan(ws, vec3(floorW))) * (0.4 + 0.6 * vec3(dot(cA, kGroundLuma), dot(cB, kGroundLuma), dot(cC, kGroundLuma)));
+	ws /= ws.x + ws.y + ws.z;
 	if (u_groundBlendGainK != 1.0) {
-		w = groundGain(w, u_groundBlendGainK);
+		ws = groundGain(ws, u_groundBlendGainK);
 	}
-	return w.x * c1 + w.y * c2 + w.z * c3;
+	return ws.x * cA + ws.y * cB + ws.z * cC;
 }
 
 vec3 groundEncodeSrgb(vec3 linear) {
