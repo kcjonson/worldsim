@@ -156,8 +156,8 @@
     <variantCount>8</variantCount>
     <period>4</period>
     <pixelsPerMeter>128</pixelsPerMeter>
-    <!-- Grass stands up the screen, so cells don't turn. -->
-    <rotate>none</rotate>
+    <!-- Grass stands up the screen, so cells never turn; they only flip left to right to break repetition. -->
+    <rotate>mirror</rotate>
     <macro>
       <dry>1.0,0.94,0.72</dry>
       <lush>0.86,0.96,0.86</lush>
