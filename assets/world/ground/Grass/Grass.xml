@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Grass ground tile: the repeating ground art of Surface::Grass, baked to the ground texture
-     array at load and hex-tiled by the tile shader. Dense, grass-dominant: clumps of tuft fans with
-     light cores and dark ground between them, top blades, clover, rosettes, small soil peeks at
-     mid-green value, pebbles. All look knobs are <params>, so GrassShort, GrassMeadow and GrassTall
+     array at load and hex-tiled by the tile shader. Seen like the flora, from a hair off top-down:
+     clumps of upright tuft fans and blades standing up the screen, nearer ones over farther ones,
+     with bits of earthy ground (soil, dark litter, a few pebbles) showing between them, clover and
+     rosettes. Grass-dominant. All look knobs are <params>, so GrassShort, GrassMeadow and GrassTall
      can reuse ground_grass.lua with their own. -->
 <AssetDefinitions>
   <AssetDef>
@@ -17,42 +18,60 @@
         <!-- Must equal <period> below. -->
         <period>4</period>
 
-        <!-- The tone model: a coarse picture of the near stack before its blades, which the blades
-             take their tone from and the far stack (mips 4 to 6) is drawn from, one rect a texel of
-             farCellsPerMeter. modelUndergrowth is the share of the gap the undergrowth covers and
-             modelClumpFill the share of a clump's disc its tufts cover. farGain (linear, per
-             channel), farContrast and farCoarseContrast calibrate the far stack against the bake: lock under 3% and
-             contrast 70-100% on mips 4 to 6. gapColor is the near stack's dark ground. -->
+        <!-- The tone model: a coarse picture of the near stack that the far stack (mips 4 to 6) is
+             drawn from, one rect a texel of farCellsPerMeter. modelUndergrowth is the share of the
+             open ground the undergrowth covers and modelClumpFill the share of a clump's disc its
+             tufts cover. farMean is mip 0's mean, sRGB 0-255, as the bake measures it over the
+             variants: set it again whenever the near stack's look changes. farContrast (mip 4) and
+             farCoarseContrast (mips 5 and 6) calibrate the far stack's contrast to 70-100% of the
+             bake's reference. groundColor is the near stack's bare ground. -->
         <modelUndergrowth>0.3</modelUndergrowth>
-        <modelClumpFill>0.8</modelClumpFill>
-        <farGain>0.918,0.888,0.94</farGain>
-        <farContrast>0.95</farContrast>
-        <farCoarseContrast>0.62</farCoarseContrast>
+        <modelClumpFill>0.6</modelClumpFill>
+        <farMean>80.6,106.8,48.8</farMean>
+        <farContrast>1.1</farContrast>
+        <farCoarseContrast>0.27</farCoarseContrast>
         <farCellsPerMeter>8</farCellsPerMeter>
-        <gapColor>#2E3A1C</gapColor>
+        <groundColor>#463A28</groundColor>
 
         <!-- Densities per square meter, sizes in meters (soil and pebbles are diameters, clump
-             radii are radii, the rest lengths and widths), colors sRGB hex. -->
+             radii are radii, the rest lengths and widths), angles in radians off vertical, colors
+             sRGB hex. Litter is dark flecks and dead bits on the open ground, litterDensity a square
+             meter of it; litterShares are the dark and mid shares (the rest dry), picked so the
+             litter averages to groundColor. -->
+        <litterDensity>400</litterDensity>
+        <litterSize>0.012,0.03</litterSize>
+        <litterDark>#33291A</litterDark>
+        <litterMid>#54482E</litterMid>
+        <litterDry>#76663F</litterDry>
+        <litterShares>0.55,0.33</litterShares>
+
         <soilDensity>9</soilDensity>
         <soilSize>0.03,0.12</soilSize>
-        <soilColor>#63513A</soilColor>
-        <soilSpeckColor>#4C3E2D</soilSpeckColor>
-        <soilDryColor>#7A6648</soilDryColor>
+        <soilColor>#6A5538</soilColor>
+        <soilSpeckColor>#4C3D2C</soilSpeckColor>
+        <soilDryColor>#82704F</soilDryColor>
 
-        <pebbleDensity>24</pebbleDensity>
-        <pebbleSize>0.005,0.02</pebbleSize>
+        <pebbleDensity>10</pebbleDensity>
+        <pebbleSize>0.006,0.02</pebbleSize>
         <pebbleColorA>#8A8274</pebbleColorA>
         <pebbleColorB>#A39A88</pebbleColorB>
         <pebbleColorC>#6F695E</pebbleColorC>
         <pebbleHaloColor>#2A2A22</pebbleHaloColor>
         <pebbleHaloAlpha>0.5</pebbleHaloAlpha>
 
-        <undergrowthDensity>380</undergrowthDensity>
-        <undergrowthLength>0.04,0.08</undergrowthLength>
-        <undergrowthHubWidth>0.009,0.014</undergrowthHubWidth>
-        <undergrowthSpikes>4,7</undergrowthSpikes>
-        <undergrowthDark>#3A5224</undergrowthDark>
-        <undergrowthLight>#48652E</undergrowthLight>
+        <!-- Undergrowth: low upright fans filling the holes the clumps leave until groundShow of
+             the tile is open ground (at most undergrowthDensity a square meter), their valleys at
+             undergrowthFill of their spikes. groundShow 0.1 leaves about 15-20% of mip 0 showing
+             earth, at the stamp grid's 3.3 cm resolution. -->
+        <undergrowthDensity>700</undergrowthDensity>
+        <undergrowthLength>0.06,0.1</undergrowthLength>
+        <undergrowthHubWidth>0.008,0.012</undergrowthHubWidth>
+        <undergrowthSpikes>5,8</undergrowthSpikes>
+        <undergrowthFan>0.45,0.7</undergrowthFan>
+        <undergrowthFill>0.45</undergrowthFill>
+        <groundShow>0.1</groundShow>
+        <undergrowthDark>#426028</undergrowthDark>
+        <undergrowthLight>#4F6E33</undergrowthLight>
 
         <rosetteDensity>0.8</rosetteDensity>
         <rosetteLeafLength>0.06,0.14</rosetteLeafLength>
@@ -60,48 +79,52 @@
         <rosetteInnerColor>#5C8A48</rosetteInnerColor>
         <rosetteMidribColor>#8AAE6E</rosetteMidribColor>
 
-        <cloverPatches>1.4</cloverPatches>
+        <cloverPatches>1.2</cloverPatches>
         <cloverPerPatch>6,16</cloverPerPatch>
         <cloverSpread>0.05,0.09</cloverSpread>
         <cloverLeaflet>0.022,0.032</cloverLeaflet>
         <cloverColor>#5E9C4A</cloverColor>
         <cloverChevronColor>#A8CC90</cloverChevronColor>
-        <cloverTopShare>0.6</cloverTopShare>
 
-        <!-- Clumps: Poisson-disk centers clumpSpacing apart, each a disc of clumpRadius holding
-             tuftsPerClump tufts (Gaussian, sigma tuftSpread of the radius) whose spikes reach
-             tuftReach of it, around a lit crown fan reaching crownReach of it. -->
-        <clumpSpacing>0.2</clumpSpacing>
-        <clumpRadius>0.08,0.24</clumpRadius>
-        <tuftsPerClump>7,13</tuftsPerClump>
-        <tuftSpread>0.4</tuftSpread>
-        <tuftReach>0.55,0.95</tuftReach>
-        <crownReach>0.45,0.75</crownReach>
-        <crownSpikes>7,11</crownSpikes>
-        <tuftSpikes>4,7</tuftSpikes>
-        <tuftHubWidth>0.012,0.02</tuftHubWidth>
-        <tuftDark>#4F6D2D</tuftDark>
-        <tuftLight>#5C7F39</tuftLight>
-        <tuftHighlightDark>#658C3D</tuftHighlightDark>
-        <tuftHighlightLight>#709A44</tuftHighlightLight>
-        <tuftLean>0.85</tuftLean>
+        <!-- Clumps: Poisson-disk centers clumpSpacing apart, each a disc of clumpRadius holding the
+             roots of tuftsPerClump tufts (Gaussian, sigma tuftSpread of the radius), all leaning by
+             the clump's sway (sigma clumpSway). A tuft is an upright fan tuftLength tall (projected,
+             so short) of half-angle tuftFan, leaning out by up to tuftFanOut toward the disc's
+             sides, its outer spikes curling out by tuftBend of their length and its valleys at
+             tuftFill of them, with a lit fan in front of it. -->
+        <clumpSpacing>0.24</clumpSpacing>
+        <clumpRadius>0.1,0.26</clumpRadius>
+        <clumpSway>0.12</clumpSway>
+        <tuftsPerClump>11,18</tuftsPerClump>
+        <tuftSpread>0.5</tuftSpread>
+        <tuftLength>0.06,0.12</tuftLength>
+        <tuftFan>0.45,0.75</tuftFan>
+        <tuftFanOut>0.35</tuftFanOut>
+        <tuftBend>0.15</tuftBend>
+        <tuftFill>0.55</tuftFill>
+        <tuftSpikes>5,8</tuftSpikes>
+        <tuftHubWidth>0.016,0.026</tuftHubWidth>
+        <tuftDark>#527530</tuftDark>
+        <tuftLight>#5E883A</tuftLight>
+        <tuftHighlightDark>#67953F</tuftHighlightDark>
+        <tuftHighlightLight>#72A345</tuftHighlightLight>
 
-        <!-- Top blades. Each segment takes the ground tone where it lies, its value times bladeGain
-             (tips times bladeTipGain too, hues turned warmer by bladeHue and bladeTipHue), over a
-             dark underlay underlayWidth times as wide at underlayAlpha. Light blade and dark
-             underlay should average to the ground beneath, so the mips that drop the blades keep
-             mip 0's mean: tune bladeGain against the bake's lock column for mips 1 to 3. -->
-        <bladeDensity>220</bladeDensity>
-        <bladeLength>0.06,0.18</bladeLength>
+        <!-- Blades, standing up the screen: bladeTuftShare of them grow from a tuft's root in its
+             tones, the rest stand anywhere in the tuft palette. Leans off vertical are Gaussian,
+             sigma bladeLean. Base values are times bladeGain, tips times bladeTipGain too, hues
+             turned warmer by bladeHue and bladeTipHue, over a dark underlay underlayWidth times as
+             wide at underlayAlpha. The proxy each blade sits on is colored to what blade and
+             underlay average to, so the mips that drop the blades keep mip 0's mean. -->
+        <bladeDensity>140</bladeDensity>
+        <bladeLength>0.06,0.13</bladeLength>
         <bladeWidth>0.014,0.022</bladeWidth>
         <broadBladeShare>0.25</broadBladeShare>
         <broadBladeWidth>0.028,0.038</broadBladeWidth>
         <bladeBow>0.15</bladeBow>
-        <bladeTuftShare>0.7</bladeTuftShare>
-        <bladeFanSpread>0.55</bladeFanSpread>
-        <bladeRadialShare>0.3</bladeRadialShare>
-        <bladeGain>1.25</bladeGain>
-        <bladeTipGain>1.05</bladeTipGain>
+        <bladeTuftShare>0.5</bladeTuftShare>
+        <bladeLean>0.3</bladeLean>
+        <bladeGain>1.1</bladeGain>
+        <bladeTipGain>1.12</bladeTipGain>
         <bladeHue>0</bladeHue>
         <bladeTipHue>2</bladeTipHue>
         <underlayColor>#161E0E</underlayColor>
@@ -112,15 +135,14 @@
         <strawLight>#B0A46E</strawLight>
         <dryTipShare>0.2</dryTipShare>
         <tipHighlightShare>0.1</tipHighlightShare>
-        <flowSpread>0.5</flowSpread>
 
         <!-- Variation: density field contrast, per-clump value, hue and saturation, the clump's
              light-core dome, a soft olive-to-green patch drift, per-element jitter, and how much
              lusher (darker, more saturated) the dense patches are. Values are fractions, hues in
              degrees (positive is warmer). -->
         <densityContrast>1.6</densityContrast>
-        <clumpValue>0.12</clumpValue>
-        <clumpDome>0.12</clumpDome>
+        <clumpValue>0.24</clumpValue>
+        <clumpDome>0.15</clumpDome>
         <clumpHue>14</clumpHue>
         <clumpSaturation>0.1</clumpSaturation>
         <patchHue>6</patchHue>
@@ -134,7 +156,8 @@
     <variantCount>8</variantCount>
     <period>4</period>
     <pixelsPerMeter>128</pixelsPerMeter>
-    <rotate>free</rotate>
+    <!-- Grass stands up the screen, so cells don't turn. -->
+    <rotate>none</rotate>
     <macro>
       <dry>1.0,0.94,0.72</dry>
       <lush>0.86,0.96,0.86</lush>
