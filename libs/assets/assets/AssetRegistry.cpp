@@ -14,9 +14,12 @@
 
 #include <pugixml.hpp>
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <iterator>
 #include <limits>
 #include <sstream>
 
@@ -436,6 +439,55 @@ namespace assets {
 			}
 			out = std::move(meshes.front());
 			return true;
+		}
+
+		/// Repeat every path of a ground tile that crosses an edge of its [0, period] square at the
+		/// offsets it crosses into, right after the original. Paint order then holds across the
+		/// seam, and the meshes clipped to the square are the seamless tile: drawn once, not 3x3.
+		void wrapGroundPaths(GeneratedAsset& asset, float period) {
+			// Shifts along one axis that bring a [low, high] span back across the square; [0] is the original.
+			const auto shifts = [period](float low, float high, std::array<float, 3>& out) {
+				size_t count = 1;
+				if (low < 0.0F && high > 0.0F) {
+					out[count++] = period;
+				}
+				if (low < period && high > period) {
+					out[count++] = -period;
+				}
+				return count;
+			};
+
+			std::vector<GeneratedPath> wrapped;
+			wrapped.reserve(asset.paths.size() + (asset.paths.size() / 4));
+			std::vector<GeneratedPath> copies;
+			for (GeneratedPath& path : asset.paths) {
+				Foundation::Vec2 lo{std::numeric_limits<float>::max(), std::numeric_limits<float>::max()};
+				Foundation::Vec2 hi{std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest()};
+				for (const Foundation::Vec2& v : path.vertices) {
+					lo = {std::min(lo.x, v.x), std::min(lo.y, v.y)};
+					hi = {std::max(hi.x, v.x), std::max(hi.y, v.y)};
+				}
+				std::array<float, 3> dx{};
+				std::array<float, 3> dy{};
+				const size_t		 nx = shifts(lo.x, hi.x, dx);
+				const size_t		 ny = shifts(lo.y, hi.y, dy);
+
+				copies.clear();
+				for (size_t ix = 0; ix < nx; ++ix) {
+					for (size_t iy = 0; iy < ny; ++iy) {
+						if (ix == 0 && iy == 0) {
+							continue;
+						}
+						GeneratedPath& copy = copies.emplace_back(path);
+						for (Foundation::Vec2& v : copy.vertices) {
+							v = {v.x + dx[ix], v.y + dy[iy]};
+						}
+					}
+				}
+				wrapped.push_back(std::move(path));
+				std::move(copies.begin(), copies.end(), std::back_inserter(wrapped));
+			}
+			asset.paths = std::move(wrapped);
 		}
 
 		/// SVG curve-flattening tolerance. Shared by every loadSVG call so the render
@@ -1649,6 +1701,9 @@ namespace assets {
 		GeneratedAsset asset;
 		if (!generateAsset(defName, seed, asset)) {
 			return false;
+		}
+		if (def->role == AssetRole::Ground) {
+			wrapGroundPaths(asset, def->ground.periodMeters);
 		}
 		return tessellateAsset(asset, pixelsPerMeter, outMeshes);
 	}

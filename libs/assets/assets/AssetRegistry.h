@@ -119,6 +119,9 @@ namespace assets {
 		/// buildMesh for assets of any size: the tessellated paths are packed into as many
 		/// meshes as it takes to keep each under 65535 vertices (16-bit indices), in path order.
 		/// A single path that alone tessellates past that is dropped with a warning.
+		/// A procedural ground tile comes back wrapped: a path crossing an edge of its [0, period]
+		/// square is repeated where it crosses into, so the meshes clipped to that square are the
+		/// seamless tile.
 		/// @param pixelsPerMeter Screen density to build for. A procedural path that called
 		///        setLod(n) is kept only when n <= this; the default keeps all of them. Simple
 		///        assets are always one drawing, whatever the density.

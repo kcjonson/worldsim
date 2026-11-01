@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace assets;
@@ -333,4 +334,44 @@ TEST(GroundMeshTest, PixelDensityDropsPathsThatNeedMore) {
 	EXPECT_EQ(vertexCountAt(24.0F), 6U) << "at the threshold the fine path is back";
 	EXPECT_EQ(vertexCountAt(AssetRegistry::kFullDetail), 6U);
 	reg.clearDefinitions();
+}
+
+TEST(GroundMeshTest, PathsCrossingTheTileEdgeWrapRightAfterTheOriginal) {
+	const TempDir t;
+	ASSERT_NE(
+		loadGround(
+			t,
+			"<surface>Grass</surface><period>4</period>",
+			"local function tri(x, y)\n"
+			"    local p = Path()\n"
+			"    p:addVertex(x, y)\n    p:addVertex(x + 0.5, y)\n    p:addVertex(x, y + 0.5)\n    p:close()\n"
+			"    asset:addPath(p)\n"
+			"end\n"
+			"tri(3.75, 1)\n"
+			"tri(1, 1)\n"
+			"tri(-0.25, -0.25)\n"
+		),
+		nullptr
+	);
+	std::vector<renderer::TessellatedMesh> meshes;
+	ASSERT_TRUE(AssetRegistry::Get().buildMeshes("Ground_Tile", 0, meshes));
+	ASSERT_EQ(meshes.size(), 1U);
+	const auto& v = meshes[0].vertices;
+
+	// Each path is one triangle, three vertices in path order; its lowest corner names it.
+	std::vector<std::pair<float, float>> corners;
+	for (size_t i = 0; i + 2 < v.size(); i += 3) {
+		corners.emplace_back(std::min({v[i].x, v[i + 1].x, v[i + 2].x}), std::min({v[i].y, v[i + 1].y, v[i + 2].y}));
+	}
+	const std::vector<std::pair<float, float>> expected{
+		{3.75F, 1.0F},	  // crosses the right edge
+		{-0.25F, 1.0F},	  // its copy, before the next path
+		{1.0F, 1.0F},	  // inside: no copy
+		{-0.25F, -0.25F}, // crosses the top-left corner
+		{-0.25F, 3.75F},
+		{3.75F, -0.25F},
+		{3.75F, 3.75F},
+	};
+	EXPECT_EQ(corners, expected);
+	AssetRegistry::Get().clearDefinitions();
 }

@@ -60,7 +60,7 @@ A ground tile is an asset with the role `ground`. Defs live at `assets/world/gro
 | `<rotate>` | `free`, `quarter` or `none`; `none` for art with baked top-left lighting |
 | `<macro>` | two tint colors (dry, lush), plus the amplitude and wavelengths of the low-frequency layer the shader mixes between them |
 
-Generators and SVGs draw in meters on a `[0, period]` square. Shapes may cross the edge; the baker wraps them, so authors never match edges by hand.
+Generators and SVGs draw in meters on a `[0, period]` square. Shapes may cross the edge, so authors never match edges by hand: `AssetRegistry::buildMeshes` repeats every path of a procedural ground def that crosses an edge at the offsets it crosses into, right after the original. Paint order holds across the seam, and the meshes clipped to the square are the seamless tile. Drawing the whole mesh 3x3 instead would paint each copy's full-tile layers over the earlier copies' overhang, so the seams would show.
 
 Validation (`AssetValidator.cpp`): exactly one ground def per land surface, `period` divides 512, `variantCount` is 1 to 32, and the role is known (`parseAssetRole`, `isKnownRole`).
 
@@ -87,7 +87,7 @@ A Water tile paints as its bed and water itself is drawn from the distance field
 
 `GroundTileBank` in `libs/world-view/world/rendering/` runs once the asset registry finishes its async load (the splash), on the GL thread, outside any frame.
 
-For each def and each seed `0..variantCount-1` (salted per def name) it builds the mesh with `buildMesh` and draws it into a `Renderer::RenderTarget` 3x3 times, offset by plus or minus the period with `PushTransform`; that is the wrap. It renders at 2x and box-downsamples, since salal has no MSAA, then calls `readPixels`. The template is `AssetRenderer::renderToPixels`, and the coordinate system and viewport are restored afterwards. This is the mesh path flora uses, so gradients and colors match the asset-manager exactly.
+For each def and each seed `0..variantCount-1` (salted per def name) it builds the meshes with `buildMeshes` (already wrapped, see above; a dense tile is over 65,535 vertices, so several meshes) and draws them once into a `Renderer::RenderTarget` the size of the square, which clips the overhang. It renders at 2x and box-downsamples, since salal has no MSAA, then calls `readPixels`. The template is `AssetRenderer::renderToPixels`, and the coordinate system and viewport are restored afterwards. This is the mesh path flora uses, so gradients and colors match the asset-manager exactly.
 
 Every mip level is rendered from the vectors, not generated (`glGenerateMipmap` would neither wrap nor drop LOD nodes); see LOD. Each level is uploaded with `glTexImage3D` into a raw-GL `GL_TEXTURE_2D_ARRAY` that world-view owns, the way `ChunkRenderer` already owns raw textures: RGBA8, `GL_REPEAT`, trilinear, anisotropic when available.
 
@@ -99,7 +99,7 @@ If the bake adds more than 0.5 s to the splash, the baked arrays get cached on d
 
 An SVG element, or a `<g>`, may carry `data-lod="N"`: draw it only where the screen shows at least N pixels per meter. The game's zoom runs 2 to 160 px/m, default 24. The attribute inherits, and an element's effective N is the largest on itself and its ancestors. An element without one is always drawn. A Lua path gets the same through `path:setLod(N)`, a new field on `GeneratedPath`.
 
-The LOD is baked into the mip chain, so it costs nothing per frame. Mip k of a layer has `pixelsPerMeter / 2^k` texels per meter, and the GPU picks it when the screen shows about that many pixels per meter. The baker renders each mip from the vectors (3x3 wrapped, 2x supersampled at that level's size), including only the nodes whose N is at or below that level's density. Pebbles, flower specks and blade strokes drop out cleanly at the zoom the author chose, instead of averaging into a muddy tint, and trilinear filtering fades each one over an octave of zoom. Rendering every level costs about 1.33x the base render at load.
+The LOD is baked into the mip chain, so it costs nothing per frame. Mip k of a layer has `pixelsPerMeter / 2^k` texels per meter, and the GPU picks it when the screen shows about that many pixels per meter. The baker renders each mip from the vectors (wrapped, 2x supersampled at that level's size), including only the nodes whose N is at or below that level's density. Pebbles, flower specks and blade strokes drop out cleanly at the zoom the author chose, instead of averaging into a muddy tint, and trilinear filtering fades each one over an octave of zoom. Rendering every level costs about 1.33x the base render at load.
 
 NanoSVG drops attributes it doesn't know, so the loader filters in XML first. A pugixml pass resolves each element's effective `data-lod` and writes one filtered SVG text per distinct band, and each text is then parsed. salal's `loadSVG` only takes a path, so this needs a small salal addition: load from a string. That is one salal PR and a tag bump, which the worldsim PR pins.
 
