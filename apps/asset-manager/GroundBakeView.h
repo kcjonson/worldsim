@@ -4,23 +4,24 @@
 // worldview::GroundTileBaker, then the selected variant's mips 0 to 6 side by side at their texel size, a
 // zoom strip of what the game shows at 160 down to 3 px/m (each a 2x2 of four variants, sampled the way
 // the runtime does: one LOD a draw with its +0.25 bias, trilinear between the two mips around it), and
-// the bake's metrics and timings. It bakes one variant a frame from its update, which runs outside the
-// frame's batch, so the window stays live. Bakes are cached by def until Reload clears them.
+// the bake's metrics and timings. Its update, which runs outside the frame's batch, generates every
+// variant's paths at once on the pool in one frame and then renders one variant a frame, so the window
+// stays live. Bakes are cached in memory by def until Reload clears them, and on disk beside the exe
+// (GroundTileCache) under a key of the def's files, so editing its XML or script and pressing Reload
+// bakes it again and anything else comes back from disk.
 
 #include "TileImageStrip.h"
 
 #include <ui/Component.h>
+#include <world/rendering/GroundTileBaker.h>
 
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace Renderer {
 	class CoordinateSystem;
-}
-
-namespace worldview {
-	struct GroundTileBake;
 }
 
 namespace ui {
@@ -49,20 +50,23 @@ namespace asset_manager {
 		void update(float dt) override;
 
 	  private:
-		void showVariant();
-		void showZoomStrip();
-		void showReport();
+		[[nodiscard]] worldview::GroundTileBaker baker() const;
+		void									 showBake();
+		void									 showVariant();
+		void									 showZoomStrip();
+		void									 showReport();
 
-		std::string								   defName;
-		Renderer::CoordinateSystem*				   coordinateSystem;
-		std::shared_ptr<worldview::GroundTileBake> bake; // the cached one when done, else the one being built
-		uint32_t								   variantCount = 0;
-		uint32_t								   shownVariant = 0;
-		bool									   baking = false;
-		ui::Ref<ui::Text>						   status;
-		ui::Ref<TileImageStrip>					   mips;
-		ui::Ref<TileImageStrip>					   zoom;
-		ui::Ref<ui::Text>						   report;
+		std::string									 defName;
+		Renderer::CoordinateSystem*					 coordinateSystem;
+		std::shared_ptr<worldview::GroundTileBake>	 bake;	// the cached one when done, else the one being built
+		std::vector<worldview::GroundVariantPaths>	 paths; // every variant's, while their renders are pending
+		uint32_t									 variantCount = 0;
+		uint32_t									 shownVariant = 0;
+		bool										 baking = false;
+		ui::Ref<ui::Text>							 status;
+		ui::Ref<TileImageStrip>						 mips;
+		ui::Ref<TileImageStrip>						 zoom;
+		ui::Ref<ui::Text>							 report;
 	};
 
 } // namespace asset_manager

@@ -8,6 +8,7 @@
 #include "assets/AssetValidator.h"
 #include "assets/IAssetGenerator.h"
 #include "assets/MotionDef.h"
+#include "assets/TessellatedPaths.h"
 
 #include <polygon/Polygon.h>
 #include <vector/Types.h>
@@ -130,6 +131,21 @@ namespace assets {
 			const std::string& defName, uint32_t seed, std::vector<renderer::TessellatedMesh>& outMeshes, float pixelsPerMeter = kFullDetail
 		);
 
+		/// The procedural half of buildMeshes, for callers that want several densities from one
+		/// generator run: the seed's paths, each tessellated once (a ground tile's wrapped, as
+		/// above), so outPaths.meshesAt(d) is what buildMeshes returns at d. Safe to call from
+		/// several threads at once while no load or clear runs: each call runs its own generator
+		/// (a fresh Lua state for a script) and touches no cache.
+		/// @param maxPixelsPerMeter The finest density meshesAt will be asked for; paths that need
+		///        more aren't tessellated.
+		/// @return false when the def isn't procedural or its generator fails (logged)
+		bool buildPaths(const std::string& defName, uint32_t seed, TessellatedPaths& outPaths, float maxPixelsPerMeter = kFullDetail);
+
+		/// Where a def's generator script is on disk: its scriptPath, with @shared/ resolved against
+		/// the shared scripts folder. Empty when the def names no script, or a @shared/ one with no
+		/// folder set (logged).
+		[[nodiscard]] std::filesystem::path resolveScriptPath(const AssetDefinition& def) const;
+
 		/// Parse a collision shape from an SVG file's <metadata><collision> block.
 		/// Simple (SVG-backed) assets can author a collider directly in the SVG; the
 		/// authored points are in SVG user units and are converted to the local-meter
@@ -240,9 +256,6 @@ namespace assets {
 	  private:
 		AssetRegistry() = default;
 		~AssetRegistry();
-
-		/// Tessellate a generated asset into meshes of at most 65535 vertices each
-		bool tessellateAsset(const GeneratedAsset& asset, float pixelsPerMeter, std::vector<renderer::TessellatedMesh>& outMeshes);
 
 		/// Build group index from loaded definitions
 		void buildGroupIndex();

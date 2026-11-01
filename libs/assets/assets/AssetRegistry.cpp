@@ -9,13 +9,13 @@
 #include <utils/Log.h>
 #include <vector/MeshBounds.h>
 #include <vector/SVGLoader.h>
-#include <vector/Tessellator.h>
 #include <world/chunk/Chunk.h>
 
 #include <pugixml.hpp>
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -421,9 +421,6 @@ namespace assets {
 			}
 		}
 
-		/// One mesh holds at most this many vertices: its indices are 16-bit.
-		constexpr size_t kMaxMeshVertices = std::numeric_limits<uint16_t>::max();
-
 		/// The one mesh in `meshes`, for callers that can only draw one. Logs and returns false when
 		/// the asset needed several.
 		bool takeSingleMesh(const std::string& defName, std::vector<renderer::TessellatedMesh>& meshes, renderer::TessellatedMesh& out) {
@@ -433,7 +430,7 @@ namespace assets {
 					"%s needs %zu meshes (a mesh holds at most %zu vertices); only buildMeshes can return it",
 					defName.c_str(),
 					meshes.size(),
-					kMaxMeshVertices
+					TessellatedPaths::kMaxMeshVertices
 				);
 				return false;
 			}
@@ -1158,6 +1155,7 @@ namespace assets {
 
 			// Store base folder for relative path resolution
 			def.baseFolder = baseFolder;
+			def.sourceFile = fs::absolute(xmlPath);
 
 			// Store definition
 			loadedNames.push_back(def.defName);
@@ -1414,8 +1412,10 @@ namespace assets {
 				return nullptr;
 			}
 
+			TessellatedPaths paths;
+			paths.tessellate(asset, kFullDetail);
 			std::vector<renderer::TessellatedMesh> meshes;
-			if (!tessellateAsset(asset, kFullDetail, meshes)) {
+			if (!paths.meshesAt(kFullDetail, meshes)) {
 				LOG_ERROR(Engine, "Failed to tessellate asset: %s", defName.c_str());
 				return nullptr;
 			}
@@ -1575,6 +1575,18 @@ namespace assets {
 		return emplaced.first->second.empty() ? nullptr : &emplaced.first->second;
 	}
 
+	std::filesystem::path AssetRegistry::resolveScriptPath(const AssetDefinition& def) const {
+		const std::string kSharedPrefix = "@shared/";
+		if (def.scriptPath.compare(0, kSharedPrefix.size(), kSharedPrefix) != 0) {
+			return def.resolvePath(def.scriptPath);
+		}
+		if (m_sharedScriptsPath.empty()) {
+			LOG_ERROR(Engine, "Shared scripts path not configured, but @shared/ prefix used in: %s", def.scriptPath.c_str());
+			return {};
+		}
+		return m_sharedScriptsPath / def.scriptPath.substr(kSharedPrefix.size());
+	}
+
 	bool AssetRegistry::generateAsset(const std::string& defName, uint32_t seed, GeneratedAsset& outAsset) {
 		const AssetDefinition* def = getDefinition(defName);
 		if (def == nullptr) {
@@ -1596,23 +1608,11 @@ namespace assets {
 		// Check if this is a Lua script generator
 		if (def->isLuaGenerator()) {
 			try {
-				// Resolve script path - check for @shared/ prefix
-				std::string		  resolvedScriptPath;
-				const std::string kSharedPrefix = "@shared/";
-				if (def->scriptPath.compare(0, kSharedPrefix.size(), kSharedPrefix) == 0) {
-					// Script is in shared folder - resolve using shared scripts path
-					if (m_sharedScriptsPath.empty()) {
-						LOG_ERROR(Engine, "Shared scripts path not configured, but @shared/ prefix used in: %s", def->scriptPath.c_str());
-						return false;
-					}
-					std::string relativePath = def->scriptPath.substr(kSharedPrefix.size());
-					resolvedScriptPath = (m_sharedScriptsPath / relativePath).string();
-					LOG_DEBUG(Engine, "Resolved shared script: %s -> %s", def->scriptPath.c_str(), resolvedScriptPath.c_str());
-				} else {
-					// Script is local to asset folder
-					resolvedScriptPath = def->resolvePath(def->scriptPath).string();
-					LOG_DEBUG(Engine, "Resolved local script: %s -> %s", def->scriptPath.c_str(), resolvedScriptPath.c_str());
+				const std::string resolvedScriptPath = resolveScriptPath(*def).string();
+				if (resolvedScriptPath.empty()) {
+					return false;
 				}
+				LOG_DEBUG(Engine, "Resolved script: %s -> %s", def->scriptPath.c_str(), resolvedScriptPath.c_str());
 
 				LuaGenerator luaGen(resolvedScriptPath);
 				return luaGen.generate(ctx, def->params, outAsset);
@@ -1632,48 +1632,21 @@ namespace assets {
 		return generator->generate(ctx, def->params, outAsset);
 	}
 
-	bool AssetRegistry::tessellateAsset(const GeneratedAsset& asset, float pixelsPerMeter, std::vector<renderer::TessellatedMesh>& outMeshes) {
-		outMeshes.clear();
-
-		renderer::Tessellator tessellator;
-
-		for (const auto& path : asset.paths) {
-			if (path.vertices.size() < 3 || path.minPixelsPerMeter > pixelsPerMeter) {
-				continue;
-			}
-
-			renderer::VectorPath vectorPath;
-			vectorPath.vertices = path.vertices;
-			vectorPath.isClosed = path.isClosed;
-
-			renderer::TessellatedMesh pathMesh;
-			if (!tessellator.Tessellate(vectorPath, pathMesh)) {
-				LOG_WARNING(Engine, "Failed to tessellate path with %zu vertices", path.vertices.size());
-				continue;
-			}
-			if (pathMesh.vertices.size() > kMaxMeshVertices) {
-				LOG_WARNING(Engine, "Path tessellates to %zu vertices, more than one mesh can index; dropping it", pathMesh.vertices.size());
-				continue;
-			}
-
-			// Start the next mesh when this path would push the current one past the 16-bit index range
-			if (outMeshes.empty() || outMeshes.back().vertices.size() + pathMesh.vertices.size() > kMaxMeshVertices) {
-				outMeshes.emplace_back();
-			}
-			renderer::TessellatedMesh& outMesh = outMeshes.back();
-
-			// Append to output mesh (with index offset)
-			const auto baseIndex = static_cast<uint16_t>(outMesh.vertices.size());
-			for (const auto& v : pathMesh.vertices) {
-				outMesh.vertices.push_back(v);
-				outMesh.colors.push_back(path.fillColor); // Preserve path color per-vertex
-			}
-			for (const auto& idx : pathMesh.indices) {
-				outMesh.indices.push_back(static_cast<uint16_t>(baseIndex + idx));
-			}
+	bool AssetRegistry::buildPaths(const std::string& defName, uint32_t seed, TessellatedPaths& outPaths, float maxPixelsPerMeter) {
+		outPaths = {};
+		const auto	   start = std::chrono::steady_clock::now();
+		GeneratedAsset asset;
+		if (!generateAsset(defName, seed, asset)) {
+			return false;
 		}
+		outPaths.generateMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
 
-		return !outMeshes.empty();
+		const AssetDefinition* def = getDefinition(defName);
+		if (def->role == AssetRole::Ground) {
+			wrapGroundPaths(asset, def->ground.periodMeters);
+		}
+		outPaths.tessellate(asset, maxPixelsPerMeter);
+		return true;
 	}
 
 	bool AssetRegistry::buildMeshes(
@@ -1698,14 +1671,8 @@ namespace assets {
 		}
 
 		// Procedural assets: generate this seed's form fresh (uncached) and tessellate.
-		GeneratedAsset asset;
-		if (!generateAsset(defName, seed, asset)) {
-			return false;
-		}
-		if (def->role == AssetRole::Ground) {
-			wrapGroundPaths(asset, def->ground.periodMeters);
-		}
-		return tessellateAsset(asset, pixelsPerMeter, outMeshes);
+		TessellatedPaths paths;
+		return buildPaths(defName, seed, paths, pixelsPerMeter) && paths.meshesAt(pixelsPerMeter, outMeshes);
 	}
 
 	bool AssetRegistry::buildMesh(const std::string& defName, uint32_t seed, renderer::TessellatedMesh& outMesh) {

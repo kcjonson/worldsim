@@ -19,3 +19,6 @@ Launch `asset-manager`; the dev server is on its usual port.
 6. Type part of a name in search: the tree narrows to matching assets.
 7. Scroll the XML well and the tree: both scroll on their own, the XML sideways too, since its lines don't wrap.
 8. Click Reload: the summary and tree rebuild, the selection kept when it still exists.
+9. Select Ground_Grass and pick Bake: the status counts through generating and baking the variants, then shows the mips, the zoom strip and the report; the log's `Ground bake Ground_Grass` line gives the time and the paths, render and filter split.
+10. Close and relaunch, open Ground_Grass's Bake again: it shows at once, and the log line says `from the cache`.
+11. Add a comment line to `assets/shared/scripts/ground_grass.lua`, click Reload: the log says the def changed since its cached bake, and it bakes again. Take the comment out.

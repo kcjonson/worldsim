@@ -1,17 +1,23 @@
 #pragma once
 
 // Bakes a ground def's tile variants into CPU-side mip chains (docs/technical/ground-textures.md,
-// "Baker" and "LOD"). Every mip is drawn from the vectors at that mip's density, so a path tagged with
-// setLod drops out at the mip its author chose. Each is drawn once into a target covering exactly one
-// period (buildMeshes has already repeated the paths that cross the tile edge, so the target's clip is
-// the wrap), supersampled (8x8 for mips 0 and 1, 4x4 below), Kaiser-downsampled in linear light with an
-// anti-ringing clamp (GroundTileFilter.h), mean-locked to a filtered copy of mip 0, and encoded to sRGB
-// 8-bit for GL_SRGB8_ALPHA8. The runtime uploads the chains; the asset-manager shows them.
+// "Baker" and "LOD"). Each variant's generator runs once and each of its paths is tessellated once
+// (AssetRegistry::buildPaths, every variant at once on the pool); every mip is then drawn from those
+// paths at that mip's density, so a path tagged with setLod drops out at the mip its author chose. Each
+// is drawn once into a target covering exactly one period (the paths that cross the tile edge are already
+// repeated, so the target's clip is the wrap), supersampled (8x8 for mips 0 and 1, 4x4 below),
+// Kaiser-downsampled in linear light with an anti-ringing clamp (GroundTileFilter.h), mean-locked to a
+// filtered copy of mip 0, and encoded to sRGB 8-bit for GL_SRGB8_ALPHA8. A def whose files haven't
+// changed since its last bake comes from the disk cache instead (GroundTileCache.h). The runtime uploads
+// the chains; the asset-manager shows them.
 //
-// GL thread only, outside any frame: each render opens and flushes its own offscreen batch, and puts the
-// coordinate system, viewport and bound target back afterwards.
+// buildPaths runs on any thread but a pool worker. bakeVariant, and bakeDef that calls it, are GL thread
+// only, outside any frame: each render opens and flushes its own offscreen batch, and puts the coordinate
+// system, viewport and bound target back afterwards.
 
 #include "world/rendering/GroundTileFilter.h"
+
+#include <assets/TessellatedPaths.h>
 
 #include <glm/vec3.hpp>
 
@@ -39,6 +45,8 @@ namespace foundation {
 
 namespace worldview {
 
+	class GroundTileCache;
+
 	/// One mip of one variant: straight-alpha sRGB, 8 bits a channel, rows top to bottom, size x size.
 	struct GroundMip {
 		int					 size = 0;
@@ -49,9 +57,9 @@ namespace worldview {
 	struct GroundMipSample {
 		int		  renderSize = 0;			// edge of the supersampled render, px
 		int		  supersample = 1;			// render px per texel along each axis
-		size_t	  vertexCount = 0;			// vertices the level's meshes hold, buildMeshes' wrap copies included
+		size_t	  vertexCount = 0;			// vertices the level's meshes hold, the wrap's copies included
 		size_t	  meshCount = 0;			// meshes those took, each under 65,536 vertices
-		double	  meshMs = 0.0;				// buildMeshes for this level: the whole generator run plus tessellating what survives
+		double	  renderMs = 0.0;			// packing the level's meshes, the GPU draw and the readback
 		glm::vec3 mean{0.0F};				// linear mean of the encoded mip
 		float	  contrast = 0.0F;			// windowed RMS luminance contrast of the encoded mip
 		float	  referenceContrast = 0.0F; // the same of Ref_k, the Kaiser downsample of mip 0
@@ -59,15 +67,23 @@ namespace worldview {
 		float	  minAlpha = 1.0F;			// smallest alpha in the render; a ground tile should be opaque
 	};
 
+	/// One variant's generator output, tessellated: what every mip of it is drawn from.
+	struct GroundVariantPaths {
+		uint32_t				 variant = 0;
+		uint32_t				 seed = 0;
+		assets::TessellatedPaths paths; // its generateMs and tessellateMs say what it took
+	};
+
 	struct GroundVariantBake {
 		uint32_t					 variant = 0;
 		uint32_t					 seed = 0;
 		std::vector<GroundMip>		 mips; // mip 0 first
 		std::vector<GroundMipSample> samples;
-		double						 meshMs = 0.0;	 // the generator and tessellation, every level
-		double						 renderMs = 0.0; // GPU draw and readback
-		double						 filterMs = 0.0; // downsample, mean lock, encode, measure
-		double						 totalMs = 0.0;
+		double						 generateMs = 0.0;	 // the generator run, on a pool worker
+		double						 tessellateMs = 0.0; // every path once, on the same worker
+		double						 renderMs = 0.0;	 // every level's pack, GPU draw and readback
+		double						 filterMs = 0.0;	 // downsample, mean lock, encode, measure
+		double						 totalMs = 0.0;		 // render and filter, the GL thread's share
 	};
 
 	/// One mip level's acceptance metrics over all of a def's variants (docs/technical/ground-textures.md,
@@ -85,7 +101,7 @@ namespace worldview {
 		int	   supersample = 1;
 		size_t vertexCount = 0; // the largest over variants
 		size_t meshCount = 0;
-		double meshMs = 0.0;			// buildMeshes for this level, averaged over variants
+		double renderMs = 0.0;			// this level's pack, draw and readback, averaged over variants
 		float  meanErrorPercent = 0.0F; // |mean_k - mean_0| / mean_0, per channel, in linear light
 		float  deltaEToMip0 = 0.0F;		// CIE76 of the means
 		float  deltaEToPrevious = 0.0F; // against mip k - 1; 0 for mip 0
@@ -113,8 +129,11 @@ namespace worldview {
 		uint32_t					   pixelsPerMeter = 0;
 		int							   layerSize = 0;
 		std::vector<GroundVariantBake> variants;
-		std::vector<GroundMipMetrics>  metrics; // one a mip level
-		double						   totalMs = 0.0;
+		std::vector<GroundMipMetrics>  metrics;			  // one a mip level
+		double						   pathsMs = 0.0;	  // every variant's paths, wall clock
+		double						   totalMs = 0.0;	  // the paths, every variant's render and filter, and the store
+		bool						   fromCache = false; // read back from disk, so totalMs is the only timing
+		std::optional<uint64_t>		   cacheKey;		  // the def's files' key when the bake began; none without a cache
 	};
 
 	class GroundTileBaker {
@@ -125,13 +144,19 @@ namespace worldview {
 			Renderer::CoordinateSystem* restoreCoordinateSystem = nullptr;
 			/// Largest render target edge; a supersampled mip bigger than this renders in tiles.
 			int maxRenderSize = 4096;
-			/// Runs the filters' rows in parallel when given.
+			/// Builds the variants' paths, and runs the filters' rows, in parallel when given. A pool runs
+			/// one parallelFor at a time, so nothing else may use it while a bake step runs.
 			foundation::TaskPool* pool = nullptr;
+			/// Where bakes are kept between runs; without one every bake starts from the generator.
+			const GroundTileCache* cache = nullptr;
 		};
 
-		static constexpr int   kMaxMipLevels = 7;	  // mips 0 to 6
-		static constexpr int   kMaxLayerSize = 1024;  // the supersampled mip 0 is then 8192 px a side
-		static constexpr float kMeanLockSigma = 2.0F; // texels of the mip being locked
+		/// Part of every cache key: bump it when the bake draws or filters differently, so the bakes on
+		/// disk from before are dropped.
+		static constexpr uint32_t kVersion = 1;
+		static constexpr int	  kMaxMipLevels = 7;	 // mips 0 to 6
+		static constexpr int	  kMaxLayerSize = 1024;	 // the supersampled mip 0 is then 8192 px a side
+		static constexpr float	  kMeanLockSigma = 2.0F; // texels of the mip being locked
 
 		explicit GroundTileBaker(const Args& args);
 
@@ -143,11 +168,25 @@ namespace worldview {
 		[[nodiscard]] static int mipCount(int layerSize);
 		[[nodiscard]] static int supersampleFor(int level);
 
-		/// One variant's chain, or nullopt (logged) when the def isn't a bakeable ground def or mip 0 drew
-		/// nothing.
-		[[nodiscard]] std::optional<GroundVariantBake> bakeVariant(const std::string& defName, uint32_t variant) const;
+		/// A bake's first step: the def's bake from the disk cache when it holds one of the def's files as
+		/// they are now (fromCache set, nothing left to do), else the def's bake with its period, density,
+		/// layer size and cache key filled and no variants yet. Nullopt (logged) when the def isn't a
+		/// bakeable ground def.
+		[[nodiscard]] std::optional<GroundTileBake> begin(const std::string& defName) const;
 
-		/// Every variant and the def's metrics. Logs the report, a warning when a metric fails.
+		/// Every variant's paths, one generator run and one tessellation each, all at once on the pool;
+		/// sets bake.pathsMs. Nullopt (logged) when a generator fails.
+		[[nodiscard]] std::optional<std::vector<GroundVariantPaths>> buildPaths(GroundTileBake& bake) const;
+
+		/// One variant's chain drawn from its paths, or nullopt (logged) when mip 0 drew nothing or a
+		/// render target couldn't be made.
+		[[nodiscard]] std::optional<GroundVariantBake> bakeVariant(const GroundTileBake& bake, const GroundVariantPaths& paths) const;
+
+		/// Measures the bake's variants, logs the report (a warning when a metric fails), and stores the
+		/// bake in the disk cache under the key begin took.
+		void finish(GroundTileBake& bake) const;
+
+		/// begin, then when it isn't cached buildPaths, every variant's bakeVariant, and finish.
 		[[nodiscard]] std::optional<GroundTileBake> bakeDef(const std::string& defName) const;
 
 		/// The metrics over variants already baked (all with the same levels).
