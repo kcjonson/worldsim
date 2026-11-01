@@ -50,6 +50,7 @@ namespace worldview {
 		int		  supersample = 1;			// render px per texel along each axis
 		size_t	  vertexCount = 0;			// vertices the level's meshes hold (before the wrap copies)
 		size_t	  meshCount = 0;			// meshes those took, each under 65,536 vertices
+		double	  meshMs = 0.0;				// buildMeshes for this level: the whole generator run plus tessellating what survives
 		glm::vec3 mean{0.0F};				// linear mean of the encoded mip
 		float	  contrast = 0.0F;			// windowed RMS luminance contrast of the encoded mip
 		float	  referenceContrast = 0.0F; // the same of Ref_k, the Kaiser downsample of mip 0
@@ -83,6 +84,7 @@ namespace worldview {
 		int	   supersample = 1;
 		size_t vertexCount = 0; // the largest over variants
 		size_t meshCount = 0;
+		double meshMs = 0.0;			// buildMeshes for this level, averaged over variants
 		float  meanErrorPercent = 0.0F; // |mean_k - mean_0| / mean_0, per channel, in linear light
 		float  deltaEToMip0 = 0.0F;		// CIE76 of the means
 		float  deltaEToPrevious = 0.0F; // against mip k - 1; 0 for mip 0

@@ -279,9 +279,10 @@ namespace worldview {
 			const int	renderSize = size * supersample;
 			const float texelsPerMeter = std::ldexp(static_cast<float>(def->ground.pixelsPerMeter), -level);
 
-			auto	   phase = Clock::now();
-			const bool drew = registry.buildMeshes(defName, bake.seed, meshes, texelsPerMeter);
-			bake.meshMs += msSince(phase);
+			auto		 phase = Clock::now();
+			const bool	 drew = registry.buildMeshes(defName, bake.seed, meshes, texelsPerMeter);
+			const double meshMs = msSince(phase);
+			bake.meshMs += meshMs;
 			if (!drew) {
 				if (level == 0) {
 					LOG_ERROR(Engine, "GroundTileBaker: '%s' variant %u drew nothing", defName.c_str(), variant);
@@ -292,6 +293,7 @@ namespace worldview {
 			}
 
 			GroundMipSample sample;
+			sample.meshMs = meshMs;
 			sample.renderSize = renderSize;
 			sample.supersample = supersample;
 			sample.meshCount = meshes.size();
@@ -408,6 +410,7 @@ namespace worldview {
 				const GroundMipSample& s0 = v.samples[0];
 				m.vertexCount = std::max(m.vertexCount, s.vertexCount);
 				m.meshCount = std::max(m.meshCount, s.meshCount);
+				m.meshMs += s.meshMs / static_cast<double>(variants.size());
 				for (int c = 0; c < 3; ++c) {
 					const float base = std::max(s0.mean[c], 1e-6F);
 					m.meanErrorPercent = std::max(m.meanErrorPercent, 100.0F * std::abs(s.mean[c] - s0.mean[c]) / base);
@@ -459,17 +462,18 @@ namespace worldview {
 			renderMs / n,
 			filterMs / n
 		);
-		appendf(out, "mip  size  render       verts  meshes  mean%%  dE0   dEprev  spread  contrast   lock%%\n");
+		appendf(out, "mip  size  render       verts  meshes  mesh ms  mean%%  dE0   dEprev  spread  contrast   lock%%\n");
 		for (const GroundMipMetrics& m : bake.metrics) {
 			appendf(
 				out,
-				"%3d  %4d  %4d (%dx)  %7zu  %6zu  %5.2f  %4.2f  %6.2f  %6.2f  %3.0f-%3.0f%%  %5.2f",
+				"%3d  %4d  %4d (%dx)  %7zu  %6zu  %7.1f  %5.2f  %4.2f  %6.2f  %6.2f  %3.0f-%3.0f%%  %5.2f",
 				m.level,
 				m.size,
 				m.renderSize,
 				m.supersample,
 				m.vertexCount,
 				m.meshCount,
+				m.meshMs,
 				static_cast<double>(m.meanErrorPercent),
 				static_cast<double>(m.deltaEToMip0),
 				static_cast<double>(m.deltaEToPrevious),
