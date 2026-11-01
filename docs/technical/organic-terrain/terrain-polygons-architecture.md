@@ -850,7 +850,8 @@ evaluation; `shaders/includes/land.glsl` is the same steps in the same order, an
 5. **Seams and render tiles.** The shader reads RG8UI render tiles over the chunk square plus
    `kRenderApronTiles` = 3 on every side (518 x 518, 524 KB a chunk; the RGBA32UI tile data it
    replaces, with edge, corner, and family masks and eight neighbor ids, was 4 MB). R is the paint
-   surface, G the edge surface (low nibble) and an interior bit (0x80). A point reads its field
+   surface, G the edge surface (low nibble), an interior bit (0x80, every tile within 3 one
+   surface) and a near-interior bit (0x40, every tile within 2). A point reads its field
    at most 3 tiles out (1.5 m warp, the bilinear footprint, the blur), exactly the apron. The
    chunk fills it from its `ApronField`, each tile post-processed with
    `TilePostProcessor::finalSurface` over the chunk's own `TerrainPolygonQuery` (D11), so apron
@@ -879,8 +880,17 @@ evaluation; `shaders/includes/land.glsl` is the same steps in the same order, an
    chunk. Cost, measured in game: about 40 ms of a chunk's 140 to 180 ms of placement on the
    quickstart landing, about 80 of 550 ms in dense grassland (150 000 instances).
 7. **Cost.** A tile is interior when every tile within 3 of it is one surface; its pixels cost
-   one fetch and one atlas sample, as before. Elsewhere a pixel costs 21 texel fetches, six
-   pair-noise octaves, and the per-surface blur and guard of the surfaces present. The shader
+   one fetch and one ground sample. Elsewhere a pixel costs 21 texel fetches, six
+   pair-noise octaves, and the per-surface blur and guard of the surfaces present. In a
+   near-interior tile (every tile within 2 one surface) the fine warp moves the read at most
+   its amplitude from where the low warp puts it, so a pixel whose low-warped offset lies in
+   [fine amplitude - 0.5, 1.5 - fine amplitude) on both axes (less a 1 mm margin) reads a
+   4x4 block inside that reach: one surface, field 1. The field skips the fine noise and the
+   block there, in C++ and GLSL alike; only the reported warp changes (zero), and
+   `SurfaceFieldTest.NearInteriorShortcutMatchesTheFullField` holds the rest to the full
+   evaluation. The blur's 3x3 binomial sums come from each row's 1 2 1 sum (a nibble table)
+   and the thin-feature test runs on the whole 4x4 mask at once, bit-identical to the per-bit
+   form. The shader
    holds no arrays: a const array indexed at run time is copied to local memory in every
    fragment on NVIDIA. Measured at 3072x1728 on an RTX 3090 (section 6), the land pass is 0.3
    to 0.9 ms on the landing's river view, where most tiles are interior, and 0.6 to 1.3 ms on
@@ -1064,7 +1074,7 @@ invalidates the render cache and, through the nav signature, the mesh.
 | `kRenderApronTiles` / `kRenderSurfaceReachTiles` | 3 / 9 | D16 |
 | land warp, fine / low | 4 octaves, gain 0.6, base 4 m / 2 octaves, gain 0.5, base 26 m; clamp 1.5 m a component; read 0.375 m off the tile grid | D16 |
 | land warp amplitude by upper surface, fine / low | grass variants, dirt, sand, mud 0.55 / 0.7 m; snow 0.45 / 0.7; rock 0.2 / 0.4 | D16 |
-| edge surface / interior / bed reach | 2 / 3 / 3 tiles | D16 |
+| edge surface / interior / near-interior / bed reach | 2 / 3 / 2 / 3 tiles | D16 |
 | land fringe width / rim | grass 0.35, sand 0.25, dirt and mud 0.2, rock 0 m; opacity 0.55, +-35 % along the edge, 1 m breakup / rock 30 % over 0.12 m | D16 |
 | `kLandLodMinWavelengthPx` | 4 px: the shader drops a finer fine-warp octave | D16 step 7 |
 

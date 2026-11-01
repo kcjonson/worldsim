@@ -1,7 +1,7 @@
 # Ground Texture System
 
 Created: 2025-12-13
-Updated: 2026-11-01 (ground tile variants: tiles become SVG/Lua assets baked to texture arrays and mixed by a hex lattice in the shader, and the atlas goes away; spike results and the perf plan added. Later: the bank, the hex sampler and the macro texture are in the tile pass, the atlas is deleted, and the surfaces without art paint placeholder defs. Then: the bake runs each generator once, on the pool, and keeps its bakes in a disk cache the splash reads)
+Updated: 2026-11-01 (ground tile variants: tiles become SVG/Lua assets baked to texture arrays and mixed by a hex lattice in the shader, and the atlas goes away; spike results and the perf plan added. Later: the bank, the hex sampler and the macro texture are in the tile pass, the atlas is deleted, and the surfaces without art paint placeholder defs. Then: the bake runs each generator once, on the pool, and keeps its bakes in a disk cache the splash reads. Then: the tile pass back under main in every cell, through a leaner sampler, a cheaper land field, no ground under open water and hex blending from 16 px/m)
 Status: In progress
 
 The ground is painted by the tile pass: one quad per chunk whose fragment shader picks a land surface for every pixel, samples that surface's baked ground tiles, and paints water and shore over the result. Which surface a pixel gets is decided by the land field of [terrain-polygons-architecture.md](./organic-terrain/terrain-polygons-architecture.md) D16, so no surface boundary follows the tile grid. This doc covers the ground tile assets, the baker, how the shader samples them, and the per-chunk data the pass reads, and summarizes the field; the spec holds the field's details and defaults.
@@ -128,9 +128,10 @@ The shader has its own, separate LOD for the hex blend (the single-sample cutoff
 - The lattice is hexagonal in chunk-local meters, with 4 m columns and 512/148 m rows (3.459 m against 3.464 m for a regular hex, 0.15% off). It repeats every 512 m, so it is continuous across chunk borders and precise anywhere, and each cell's id is an integer, so it hashes exactly.
 - Each cell picks a variant layer, a rotation (per `rotate`) and a uv offset with `noiseHash3`. The weights are barycentric, sharpened by a contrast exponent (`terrain/ground/blendContrast`) so flat-color shapes don't ghost.
 - The weights are Mikkelsen's: barycentric to the power `terrain/ground/blendContrast` (7), times 0.4 + 0.6 x the sample's luminance, then his gain with r from `terrain/ground/blendGain`: 0.75 at 48 px/m and up, 0.65 midway in log2 px/m, 0.5 (none) at 16 and under. The CPU turns r into the gain's exponent once a frame.
-- Where one cell dominates (its sharpened weight, before the luminance term, over 0.98: most of a cell's interior), the shader takes one sample. Only the transition bands between cells take 2 or 3. This is the same coherent early-out the field uses for interior tiles.
-- Below a density (`terrain/ground/hexMinPxPerMeter`, 12) it skips blending and takes the dominant cell's sample, the way `u_landWarpFineOctaves` drops warp octaves a pixel can't show. Cell interiors are the same sample either side of the cutoff, so crossing it only hardens the bands between cells. The spike ran with 6 px/m; 12 is the working value because dense blade art would show cut edges on the one-sample fallback.
-- Variants are picked uniformly per cell. Weighted picks (mostly quiet, a few busy) wait for a def that asks for them.
+- Where one cell dominates (its sharpened weight, before the luminance term, over 0.98: 58% of the area at contrast 7), the shader takes one sample. Only the transition bands between cells take 2 or 3, 1.48 samples a pixel on average. Every pixel takes its heaviest cell's sample from the same instructions and only the bands branch for more, so a warp straddling a band edge runs that sample once.
+- Below a density (`terrain/ground/hexMinPxPerMeter`, 16) it skips blending and takes the dominant cell's sample, the way `u_landWarpFineOctaves` drops warp octaves a pixel can't show. Cell interiors are the same sample either side of the cutoff, so crossing it only hardens the bands between cells. The spike ran with 6 px/m and the first build with 12. At 12 px/m (zoom 1.5) the one-sample ground matched the blend to the eye in screenshots, the hard cell edges a few levels of 255 at most in speckled art, and it saves 0.05 to 0.10 ms there, so the blend starts at 16, where the gain ramp starts.
+- Variants are picked uniformly per cell, in float on the hash's low 12 bits: the same pick as `h % count` for every power-of-two count, within 1/4096 of uniform otherwise. Weighted picks (mostly quiet, a few busy) wait for a def that asks for them.
+- The sampler stays off the GPU's conversion unit, which runs at an eighth of the float rate and is what the pass is short of: cell ids stay floats and cross to int through a 1.5 x 2^23 bias, and the CPU folds the chunk's first cell id, the variant pick's constants, and the macro tint and value into per-draw uniforms.
 - Samples use `textureLod` at a mip level computed once per draw on the CPU for each surface, `log2(texels per meter / framebuffer pixels per meter) + terrain/ground/lodBias` (0.25, research rule 9). The view is an orthographic top-down projection, so texel density is the same at every pixel and rotation doesn't change it. That avoids `textureGrad` and per-pixel derivatives, and nothing jumps at tile or hex edges.
 - The samples come back linear (the arrays are sRGB), are blended linear, and `groundColor` encodes the result to sRGB, which the rest of the pass (fringe, rim, water) works in. The macro tint multiplies the sRGB color.
 
@@ -139,6 +140,8 @@ The macro layer comes from a per-chunk texture, not per-pixel noise. The chunk's
 The fringe samples the other surface once, without hex blending: it's a thin band and the blend isn't visible there.
 
 `landColor` calls `groundColor` for the painted, upper and lower surfaces. The fringe and rim logic is unchanged, and `evaluateLand` is untouched, so `SurfaceFieldGolden.test.cpp` stays valid (it only checks the field).
+
+Under open water the ground isn't evaluated at all. `tile.frag` asks `water.glsl` for the pixel's water coverage first (`waterPixel`: the distance field, its wobble, the coverage) and calls `landColor` only where some ground shows; where the coverage is 1 the water mixes the ground out entirely, so the picture is the same.
 
 What a ground pixel costs, against main:
 
@@ -149,6 +152,7 @@ What a ground pixel costs, against main:
 | Macro | none | 1 bilinear sample |
 | Per-pixel noise | none | none (one hash per hex cell) |
 | Surface edges | 2 samples | 2 to 4 samples, the fringe's other surface takes 1 |
+| Under open water | the field and 1 sample | nothing |
 
 Deleted with the atlas: `GameBootstrap::initializeTileAtlas`, `surfacePatternPath`, `assets/tiles/surfaces/`, and the now-dead `Chunk::getSurfaceColor` and `getBiomeColor`.
 
@@ -165,7 +169,7 @@ Dirt ports `assets/tiles/surfaces/Dirt/pattern.svg` to a static-SVG def, rescale
 A chunk's generation worker builds its render tiles (`Chunk::computeRenderData`, with `paintSurfaces` and `buildRenderTiles` from `SurfaceField.cpp`): 518x518 two-byte tiles covering the chunk square plus `kRenderApronTiles` = 3 on every side, uploaded as one RG8UI texture.
 
 - R, the paint surface: the tile's final surface, or for a Water tile its bed, the surface of the nearest land tile within 3 tiles (Sand when there is none).
-- G, the edge byte: the edge surface in the low nibble (the highest surface within 2 tiles, whose warp amplitudes the tile takes) and the interior bit, 0x80, set when every tile within 3 is one surface.
+- G, the edge byte: the edge surface in the low nibble (the highest surface within 2 tiles, whose warp amplitudes the tile takes), the interior bit, 0x80, set when every tile within 3 is one surface, and the near-interior bit, 0x40, set when every tile within 2 is.
 
 Apron tiles come from the chunk's own apron, post-processed the way the neighbor post-processes its own tiles (D11), so both sides of a border read the same tiles and draw the same field. `ChunkRenderer` keeps an LRU cache of 32 chunks' textures and re-uploads a chunk's when its `renderDataVersion` changes. Render tiles cost 524 KB a chunk; the RGBA32UI tile data they replaced, with neighbor ids and edge masks, was 4 MB. The macro texture joins them with the same key.
 
@@ -177,6 +181,7 @@ A summary; D16 in the spec is the definition.
 2. Every surface is read at one warped point: world-space vector fBm, a fine term (4 m base, 4 octaves) plus a low term (26 m base, 2 octaves), with amplitudes by surface blended from the tiles' edge surfaces (rock's are smaller, so its edges stay harder), each component clamped to 1.5 m.
 3. Surfaces paint low to high (D13): the highest whose field passes 0.5, else the one with the largest field.
 4. The edge is anti-aliased over one pixel from `u_metersPerPixel`, with a sparse fringe of the upper surface on the lower side whose width follows the warp noise along the edge, and a rim darkening just inside the upper surface (rock only by default). A pixel in an interior tile costs one render-tile fetch, one macro sample and one ground sample.
+5. In a near-interior tile the fine warp moves the read at most its amplitude from where the low warp puts it, so after the low noise the field checks whether that range keeps the read's 4x4 block inside the tile's one-surface reach; when it does the surface is the tile's, with field 1, and the fine noise and the block are skipped. Surface, field and margin are unchanged (`SurfaceFieldTest.NearInteriorShortcutMatchesTheFullField`); only the reported warp is zero there.
 
 `world::evaluateSurfaceField` is the one evaluation. `land.glsl` does the same steps in the same order, and `SurfaceFieldGolden.test.cpp` renders the shader and compares the two. Placement asks the C++ evaluation, so flora grows on the surface that is drawn.
 
@@ -194,12 +199,12 @@ All are live through the debug server: set one with `/api/dev/tunable?name=<name
 | `terrain/land/fringeOpacity`, `fringeAlongAmp`, `rimW`, `fringeBreakupWavelength` | the fringe's strength, its variation along the edge and its breakup, and the rim's width |
 | `terrain/ground/blendContrast` | exponent that sharpens the hex weights (7) |
 | `terrain/ground/blendGain` | Mikkelsen's gain r near (48 px/m and up), mid and far (16 and under): 0.75, 0.65, 0.5 |
-| `terrain/ground/hexMinPxPerMeter` | below this density the shader takes one sample (12) |
+| `terrain/ground/hexMinPxPerMeter` | below this density the shader takes one sample (16) |
 | `terrain/ground/lodBias` | added to every surface's mip level (0.25) |
 | `terrain/ground/macroAmp` | scales every def's macro tint amplitude (1) |
 | `terrain/ground/macroMidAmp`, `macroFineAmp` | value swing of the macro's 10 m and 5 m octaves (0.045, 0.035) |
 
-The ones the shader reads as they stand are in `kShaderTunables` (`ChunkRenderer.cpp`); `blendGain`, `hexMinPxPerMeter`, `lodBias` and `macroAmp` are turned into per-frame uniforms on the CPU, registered beside the land look's.
+The ones the shader reads as they stand are in `kShaderTunables` (`ChunkRenderer.cpp`), `blendContrast` among them. The rest of the ground's are turned into per-frame uniforms on the CPU (`ChunkRenderer::applyGroundUniforms`), registered beside the land look's: the gain's exponent from `blendGain`, the hex flag from `hexMinPxPerMeter`, mip levels from `lodBias`, and the macro tint and value folded from `macroAmp`, `macroMidAmp` and `macroFineAmp`.
 
 ## Memory
 
@@ -297,13 +302,84 @@ What each change costs:
 | Fringe samples once | -0.00 to -0.02 ms |
 | Packed 4x4 neighborhood | bit-exact, no gain, 4.3 MB a chunk (137 MB over the 32-chunk LRU), 7 to 13 ms to build: dropped |
 
-Reading it: the hypothesis that mip 0 of a 512 px/m texture thrashes the texture cache did not hold, so the array is free and not faster. The seams are fixed and the land field is where the pass's time goes. Hex ran with a 6 px/m cutoff, which is why zoom 0.75 pays and 0.5 doesn't; raising the cutoff to about 12 px/m is expected to remove the zoom 0.75 cost, and is not yet measured. Per-pixel fBm in place of the macro texture would cost 0.10 to 0.15 ms.
+Reading it: the hypothesis that mip 0 of a 512 px/m texture thrashes the texture cache did not hold, so the array is free and not faster. The seams are fixed and the land field is where the pass's time goes. Hex ran with a 6 px/m cutoff, which is why zoom 0.75 pays and 0.5 doesn't; raising the cutoff to about 12 px/m was expected to remove the zoom 0.75 cost, and did (it's 16 now, below). Per-pixel fBm in place of the macro texture would cost 0.10 to 0.15 ms.
 
 ### Bake and macro fill (2026-11-01)
 
 RelWithDebInfo, today's content: Grass and the eight placeholder defs, 40 variants. With the bake a variant at a time from `buildMeshes`, it added 20.6 s to the splash: Grass's 8 variants took 17.2 s, 2.15 s each, of which 1.9 s was the generator and tessellation, and each placeholder def 0.33 to 0.42 s. With the paths built once on the pool and the disk cache, measured on the game's loading scene (the same steps the splash runs): a cold cache takes 4.47 s of bake steps (4.52 s wall clock), Grass 2.5 s of it (paths 357 ms for all 8 at once, then render 151 and filter 117 a variant) and each placeholder 0.22 to 0.28 s. A warm one takes 36 ms (39 ms wall clock): Grass's 11 MB file reads in 14 ms, each placeholder's in 2, and every upload together takes 3 ms. So the 0.5 s rule holds whenever the cache is warm, and a clean build or an edited def pays the cold bake once.
 
 The macro fill on the chunk worker is 3.0 ms median and 6.6 ms max over 27 chunks, against a 65 ms chunk generation median (`[ChunkGen]` reports it as `macro`). Hashing four corners a texel for each octave cost 12.5 ms; hashing each lattice corner once a chunk gives the same bytes.
+
+### Back under main (2026-11-01)
+
+The first full build (e533e5b7) read 0.04 to 0.11 ms of `tileGpuMs` over main in every cell, median +0.06. A temporary bitmask uniform replaced one suspect at a time, interleaved at fixed cameras on the three views. The instrumented build itself read 0.03 to 0.06 ms over the clean one, so these are shares, not exact costs:
+
+| Replaced | `tileGpuMs` saved |
+|---|---|
+| The whole ground sampler, by a constant color | 0.10 to 0.12 at zoom 20, 0.13 to 0.14 at 3, 0.15 to 0.17 at 1.5, 0.08 to 0.10 at 0.75 and 0.25 |
+| Hex blending, by one sample everywhere | 0.03 to 0.04 at zoom 20, 0.05 at 3, 0.07 to 0.09 at 1.5, none below the cutoff |
+| The cell hash, by a cheap stand-in | 0.01 to 0.03 |
+| The variant pick's integer modulo | 0.01 to 0.02 |
+| The sRGB encode | 0.00 to 0.02 |
+| The macro sample and tint | 0.00 to 0.01 |
+| Rotation and mirror | 0.00 to 0.01 |
+| The hex lattice on the one-sample path, the four-way array choice, per-surface uniform indexing | nothing measurable |
+| The land field's warp noise (for scale) | 0.14 to 0.45 |
+| One fewer fine warp octave | 0.03 to 0.07 |
+
+No single item made the far-zoom cost, where hex blending is off: the one-sample path paid about 0.05 ms in a dozen quarter-rate operations a pixel (int and float conversions, MUFU), each worth about 0.01. What was kept, each measured with the full capture against the commit before it:
+
+| Commit | Change | `tileGpuMs` |
+|---|---|---|
+| fbfe6617 | Sampler off the conversion unit: float cell ids through the 1.5 x 2^23 bias, the variant pick in float, the cell origin and macro tint folded on the CPU | river 0.01 to 0.02 lower in every cell |
+| 56caa3a6 | The field's blur summed by row, the thin test on the whole mask, one inversesqrt for the isoline distance (the field is bit-identical) | river 0.02 to 0.07 lower in every cell |
+| e24ebf8d | The near-interior shortcut (render tile bit 0x40) | 0.03 to 0.06 lower at zoom 20 and 8, up to 0.03 elsewhere |
+| 4f66be04 | The ground evaluated only where water doesn't cover it | river 0.10 to 0.24 lower at zoom 3 to 20; coast up to 0.07 idle and 0.06 to 0.11 on both sea scrolls; desert within 0.01 |
+| 6e5abd53 | Hex blending from 16 px/m, was 12 | 0.05 to 0.10 lower at zoom 1.5 only |
+| 84cfbe3a | The heaviest hex cell sampled first, from one place | the desert scroll at zoom 3 from 0.25 to 0.24; others within 0.01 |
+
+Final, two runs per view against main's two, every sample at P0 (27 of 27 scenarios in each run), `tileGpuMs` in ms, the e533e5b7 column the mean of its two runs:
+
+| Scenario | View | main r1 / r2 | e533e5b7 | final r1 / r2 | main | final | delta |
+|---|---|---|---|---|---|---|---|
+| idle zoom=20 | river | 0.74 / 0.74 | 0.81 (+0.07) | 0.60 / 0.60 | 0.74 | 0.60 | -0.14 |
+| idle zoom=20 | coast | 0.73 / 0.73 | 0.80 (+0.07) | 0.67 / 0.67 | 0.73 | 0.67 | -0.06 |
+| idle zoom=20 | desert | 0.81 / 0.82 | 0.89 (+0.07) | 0.73 / 0.73 | 0.81 | 0.73 | -0.08 |
+| idle zoom=8 | river | 0.97 / 0.98 | 1.04 (+0.07) | 0.69 / 0.69 | 0.97 | 0.69 | -0.29 |
+| idle zoom=8 | coast | 0.60 / 0.60 | 0.65 (+0.05) | 0.55 / 0.55 | 0.60 | 0.55 | -0.05 |
+| idle zoom=8 | desert | 0.72 / 0.72 | 0.78 (+0.06) | 0.66 / 0.66 | 0.72 | 0.66 | -0.06 |
+| idle zoom=3 | river | 0.66 / 0.67 | 0.74 (+0.07) | 0.53 / 0.53 | 0.67 | 0.53 | -0.14 |
+| idle zoom=3 | coast | 0.66 / 0.66 | 0.74 (+0.08) | 0.59 / 0.59 | 0.66 | 0.59 | -0.07 |
+| idle zoom=3 | desert | 0.56 / 0.56 | 0.63 (+0.07) | 0.54 / 0.54 | 0.56 | 0.54 | -0.02 |
+| idle zoom=1.5 | river | 0.57 / 0.57 | 0.67 (+0.10) | 0.49 / 0.49 | 0.57 | 0.49 | -0.08 |
+| idle zoom=1.5 | coast | 0.64 / 0.64 | 0.75 (+0.11) | 0.57 / 0.57 | 0.64 | 0.57 | -0.07 |
+| idle zoom=1.5 | desert | 0.51 / 0.52 | 0.61 (+0.09) | 0.49 / 0.49 | 0.52 | 0.49 | -0.03 |
+| idle zoom=0.75 | river | 0.46 / 0.46 | 0.50 (+0.04) | 0.42 / 0.42 | 0.46 | 0.42 | -0.04 |
+| idle zoom=0.75 | coast | 0.59 / 0.59 | 0.64 (+0.05) | 0.54 / 0.54 | 0.59 | 0.54 | -0.05 |
+| idle zoom=0.75 | desert | 0.50 / 0.50 | 0.54 (+0.04) | 0.48 / 0.48 | 0.50 | 0.48 | -0.02 |
+| idle zoom=0.5 | river | 0.44 / 0.44 | 0.48 (+0.04) | 0.41 / 0.41 | 0.44 | 0.41 | -0.03 |
+| idle zoom=0.5 | coast | 0.59 / 0.59 | 0.64 (+0.05) | 0.55 / 0.55 | 0.59 | 0.55 | -0.04 |
+| idle zoom=0.5 | desert | 0.52 / 0.52 | 0.56 (+0.04) | 0.50 / 0.50 | 0.52 | 0.50 | -0.02 |
+| idle zoom=0.25 | river | 0.36 / 0.35 | 0.40 (+0.05) | 0.35 / 0.35 | 0.35 | 0.35 | -0.01 |
+| idle zoom=0.25 | coast | 0.50 / 0.51 | 0.56 (+0.06) | 0.46 / 0.46 | 0.51 | 0.46 | -0.04 |
+| idle zoom=0.25 | desert | 0.43 / 0.44 | 0.48 (+0.04) | 0.42 / 0.42 | 0.43 | 0.42 | -0.02 |
+| scroll zoom=3 | river | 0.41 / 0.41 | 0.48 (+0.07) | 0.41 / 0.41 | 0.41 | 0.41 | +0.00 |
+| scroll zoom=3 | coast | 0.33 / 0.33 | 0.45 (+0.11) | 0.31 / 0.31 | 0.33 | 0.31 | -0.02 |
+| scroll zoom=3 | desert | 0.22 / 0.23 | 0.29 (+0.06) | 0.23 / 0.24 | 0.23 | 0.23 | +0.01 |
+| scroll zoom=0.75 | river | 0.39 / 0.37 | 0.42 (+0.04) | 0.39 / 0.38 | 0.38 | 0.39 | +0.01 |
+| scroll zoom=0.75 | coast | 0.33 / 0.33 | 0.39 (+0.06) | 0.31 / 0.31 | 0.33 | 0.31 | -0.02 |
+| scroll zoom=0.75 | desert | 0.74 / 0.74 | 0.79 (+0.05) | 0.71 / 0.71 | 0.74 | 0.71 | -0.03 |
+
+Every cell is at or under main + 0.02 ms: 24 of 27 are lower, the desert scroll at zoom 3 and the river scroll at zoom 0.75 read +0.01 and the river scroll at zoom 3 +0.00, and the median is -0.04. The desert scroll at zoom 3 is the tight one; hex blending is 0.03 to 0.04 ms of it, and off it reads 0.21. Screenshots at x 97, y 27 match the e533e5b7 build on the ground at zoom 20 and 3 (the only differing pixels are the HUD's); at zoom 1.5 the hex cutoff leaves hard cell edges, a mean of 0.7 and at most 28 levels of 255 in a few pixels, which don't read at 1:1. Scene `gpuMs` from river zoom 0.75 out is the entity pass and swings by about 1 ms between runs of the same build, so it isn't a measure of this pass.
+
+Tried and dropped:
+
+- Skipping the sharpening pow where one barycentric weight guarantees the one sample (0.636 at contrast 7, 40% of hex pixels), with a 256-entry cosine and sine table for free rotation: within 0.01 everywhere, so the hex path isn't short of MUFU.
+- Folding the below-cutoff path into the hex sample slots: hex-off zooms 0.01 to 0.02 slower, so it keeps its own early return.
+- Bilinear on the nearest mip instead of trilinear, and a lod bias of 1.25: no change on the desert scroll, so filtering and the texture cache aren't the limit.
+- A polynomial sRGB encode on sqrt, fit offline: 2 to 5 levels of 255 off, too far to be the same picture.
+
+Not taken: storing the arrays as plain RGBA8 to drop the encode (about 0.01, but filtering and the hex blend would leave linear light, which the bake's downsampling is built around), and dropping a fine warp octave or a cheaper noise (0.03 to 0.07, but edges move, and the gate held without it).
 
 ## Testing
 
@@ -318,7 +394,6 @@ The macro fill on the chunk worker is 3.0 ms median and 6.6 ms max over 27 chunk
 ## Open questions
 
 - BC1 on upload: neutral or better, and does it look right on dense blade art.
-- The hex cutoff at about 12 px/m: confirm it removes the zoom 0.75 cost and that the one-sample fallback shows no cut edges.
 - The cold bake's render: the GPU time in salal's batched quad path, about 0.15 s a grass variant with today's art. A plain indexed-triangle draw for the baker is the next lever, if a cold bake (a clean build, an edited def) needs to get faster.
 - Two arrays by density against one array with every layer at 512x512 (the rest would cost about 40 MiB more). The spec picks two.
 - Per-asset shader snippets, to explore. A ground folder could ship a GLSL function beside its XML (for example `assets/world/ground/Grass/surface.frag.glsl`, defining that surface's color from position, the baked sample and the macro tint), and the loader would assemble every snippet into the tile shader at first run, with a switch on surface id. Today the tile shader is one program loaded from a folder, and salal assembles its base shader from hooks at build time, so this moves assembly to load time for the tile pass. Questions: compile time and whether to cache the program binary (`glGetProgramBinary`); validating a modder's GLSL and reporting errors through asset validation; the per-pixel cost being unbounded for shader content, where baked tiles cost the same however detailed they are, so it needs a budget and the perf gates; how it sits with baked variants (a snippet that only post-processes the baked sample is cheap, one that replaces it isn't); and the Rust and Vulkan rewrite, where it becomes SPIR-V.
