@@ -348,6 +348,26 @@ namespace assets {
 			return true;
 		}
 
+		/// One mesh holds at most this many vertices: its indices are 16-bit.
+		constexpr size_t kMaxMeshVertices = std::numeric_limits<uint16_t>::max();
+
+		/// The one mesh in `meshes`, for callers that can only draw one. Logs and returns false when
+		/// the asset needed several.
+		bool takeSingleMesh(const std::string& defName, std::vector<renderer::TessellatedMesh>& meshes, renderer::TessellatedMesh& out) {
+			if (meshes.size() != 1) {
+				LOG_ERROR(
+					Engine,
+					"%s needs %zu meshes (a mesh holds at most %zu vertices); only buildMeshes can return it",
+					defName.c_str(),
+					meshes.size(),
+					kMaxMeshVertices
+				);
+				return false;
+			}
+			out = std::move(meshes.front());
+			return true;
+		}
+
 		/// SVG curve-flattening tolerance. Shared by every loadSVG call so the render
 		/// path and the collision path flatten identically.
 		constexpr float kSvgCurveTolerance = 0.5F;
@@ -1267,8 +1287,12 @@ namespace assets {
 				return nullptr;
 			}
 
-			if (!tessellateAsset(asset, mesh)) {
+			std::vector<renderer::TessellatedMesh> meshes;
+			if (!tessellateAsset(asset, kFullDetail, meshes)) {
 				LOG_ERROR(Engine, "Failed to tessellate asset: %s", defName.c_str());
+				return nullptr;
+			}
+			if (!takeSingleMesh(defName, meshes, mesh)) {
 				return nullptr;
 			}
 		}
@@ -1481,13 +1505,13 @@ namespace assets {
 		return generator->generate(ctx, def->params, outAsset);
 	}
 
-	bool AssetRegistry::tessellateAsset(const GeneratedAsset& asset, renderer::TessellatedMesh& outMesh) {
-		outMesh.clear();
+	bool AssetRegistry::tessellateAsset(const GeneratedAsset& asset, float pixelsPerMeter, std::vector<renderer::TessellatedMesh>& outMeshes) {
+		outMeshes.clear();
 
 		renderer::Tessellator tessellator;
 
 		for (const auto& path : asset.paths) {
-			if (path.vertices.size() < 3) {
+			if (path.vertices.size() < 3 || path.minPixelsPerMeter > pixelsPerMeter) {
 				continue;
 			}
 
@@ -1500,38 +1524,50 @@ namespace assets {
 				LOG_WARNING(Engine, "Failed to tessellate path with %zu vertices", path.vertices.size());
 				continue;
 			}
+			if (pathMesh.vertices.size() > kMaxMeshVertices) {
+				LOG_WARNING(Engine, "Path tessellates to %zu vertices, more than one mesh can index; dropping it", pathMesh.vertices.size());
+				continue;
+			}
+
+			// Start the next mesh when this path would push the current one past the 16-bit index range
+			if (outMeshes.empty() || outMeshes.back().vertices.size() + pathMesh.vertices.size() > kMaxMeshVertices) {
+				outMeshes.emplace_back();
+			}
+			renderer::TessellatedMesh& outMesh = outMeshes.back();
 
 			// Append to output mesh (with index offset)
-			uint16_t baseIndex = static_cast<uint16_t>(outMesh.vertices.size());
+			const auto baseIndex = static_cast<uint16_t>(outMesh.vertices.size());
 			for (const auto& v : pathMesh.vertices) {
 				outMesh.vertices.push_back(v);
 				outMesh.colors.push_back(path.fillColor); // Preserve path color per-vertex
 			}
 			for (const auto& idx : pathMesh.indices) {
-				outMesh.indices.push_back(baseIndex + idx);
+				outMesh.indices.push_back(static_cast<uint16_t>(baseIndex + idx));
 			}
 		}
 
-		return !outMesh.vertices.empty();
+		return !outMeshes.empty();
 	}
 
-	bool AssetRegistry::buildMesh(const std::string& defName, uint32_t seed, renderer::TessellatedMesh& outMesh) {
-		outMesh.clear();
+	bool AssetRegistry::buildMeshes(
+		const std::string& defName, uint32_t seed, std::vector<renderer::TessellatedMesh>& outMeshes, float pixelsPerMeter
+	) {
+		outMeshes.clear();
 
 		const AssetDefinition* def = getDefinition(defName);
 		if (def == nullptr) {
-			LOG_ERROR(Engine, "buildMesh: definition not found: %s", defName.c_str());
+			LOG_ERROR(Engine, "buildMeshes: definition not found: %s", defName.c_str());
 			return false;
 		}
 
 		// Simple assets are a single drawing; reuse the cached, normalized template.
 		if (def->assetType == AssetType::Simple) {
 			const renderer::TessellatedMesh* tmpl = getTemplate(defName);
-			if (tmpl == nullptr) {
+			if (tmpl == nullptr || tmpl->vertices.empty()) {
 				return false;
 			}
-			outMesh = *tmpl;
-			return !outMesh.vertices.empty();
+			outMeshes.push_back(*tmpl);
+			return true;
 		}
 
 		// Procedural assets: generate this seed's form fresh (uncached) and tessellate.
@@ -1539,7 +1575,17 @@ namespace assets {
 		if (!generateAsset(defName, seed, asset)) {
 			return false;
 		}
-		return tessellateAsset(asset, outMesh);
+		return tessellateAsset(asset, pixelsPerMeter, outMeshes);
+	}
+
+	bool AssetRegistry::buildMesh(const std::string& defName, uint32_t seed, renderer::TessellatedMesh& outMesh) {
+		outMesh.clear();
+
+		std::vector<renderer::TessellatedMesh> meshes;
+		if (!buildMeshes(defName, seed, meshes)) {
+			return false;
+		}
+		return takeSingleMesh(defName, meshes, outMesh);
 	}
 
 	void AssetRegistry::clear() {
