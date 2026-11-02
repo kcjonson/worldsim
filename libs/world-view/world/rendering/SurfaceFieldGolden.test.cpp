@@ -4,8 +4,10 @@
 // pixel's world point (surface id, field, warp); the same points go through
 // evaluateSurfaceField over the same render tiles, and the two must agree: the warp
 // and the field within kTolerance, the surface exactly wherever no field is within
-// kIdMargin of flipping it. The chunk sits 70 km out, where a float world coordinate
-// would already have lost the warp's finest octave. A second test holds the band's
+// kIdMargin of flipping it. Two chunks sit 70 km out on either side of the origin,
+// where a float world coordinate would already have lost the warp's finest octave,
+// and a third's far corner reads across zero, so the noise's floor division and
+// hashing run on negative tiles as well as positive. A second test holds the band's
 // distance to the painted boundary, and a third the far-zoom LOD (D16 step 7) under
 // the pixel it is drawn at.
 //
@@ -35,7 +37,9 @@ using namespace world;
 namespace {
 
 	constexpr uint64_t		  kSeed = 0x5EEDF00DULL;
-	const ChunkCoordinate kChunk{136, 2}; // tile origin (69632, 1024)
+	const ChunkCoordinate kChunk{136, 2};			// tile origin (69632, 1024)
+	const ChunkCoordinate kNegativeChunk{-137, -3}; // tile origin (-70144, -1536)
+	const ChunkCoordinate kChunkBelowZero{-1, -1};	// tile origin (-512, -512)
 	constexpr int			  kPixels = 256;  // per side of each rendered region
 	constexpr float			  kStepM  = 0.125F;
 
@@ -77,14 +81,14 @@ namespace {
 		return static_cast<uint8_t>(kLand[block % kLand.size()]);
 	}
 
-	/// The chunk's render tiles, built the way Chunk::computeRenderData builds them.
-	std::vector<TileRenderData> syntheticRenderTiles() {
+	/// A chunk's render tiles, built the way Chunk::computeRenderData builds them.
+	std::vector<TileRenderData> syntheticRenderTiles(ChunkCoordinate chunk) {
 		constexpr int32_t kPaintMargin	 = kRenderApronTiles + kInteriorReachTiles;
 		constexpr int32_t kSurfaceMargin = kRenderSurfaceReachTiles;
 		constexpr int32_t kPaintSide	 = kChunkSize + 2 * kPaintMargin;
 		constexpr int32_t kSurfaceSide	 = kChunkSize + 2 * kSurfaceMargin;
-		const int64_t	  originX		 = static_cast<int64_t>(kChunk.x) * kChunkSize - kSurfaceMargin;
-		const int64_t	  originY		 = static_cast<int64_t>(kChunk.y) * kChunkSize - kSurfaceMargin;
+		const int64_t	  originX		 = static_cast<int64_t>(chunk.x) * kChunkSize - kSurfaceMargin;
+		const int64_t	  originY		 = static_cast<int64_t>(chunk.y) * kChunkSize - kSurfaceMargin;
 		std::vector<uint8_t> surfaces(static_cast<size_t>(kSurfaceSide) * kSurfaceSide);
 		for (int32_t y = 0; y < kSurfaceSide; ++y) {
 			for (int32_t x = 0; x < kSurfaceSide; ++x) {
@@ -199,23 +203,31 @@ void main() {
 	};
 
 	struct Region {
-		float originX; // chunk-local meters
-		float originY;
-		const char* name;
+		ChunkCoordinate chunk;
+		float			originX; // chunk-local meters
+		float			originY;
+		const char*		name;
 	};
 
-	// The middle of the chunk, and two corners, where the field reads the apron.
-	constexpr std::array<Region, 3> kRegions = {{{200.0F, 312.0F, "middle"}, {0.0F, 0.0F, "origin corner"}, {480.0F, 480.0F, "far corner"}}};
+	// The middle of the chunk, and two corners, where the field reads the apron; the
+	// middle of its mirror across the origin; and the far corner of the chunk below
+	// zero, whose warp and block read tiles on both sides of it.
+	const std::array<Region, 5> kRegions = {{
+		{kChunk, 200.0F, 312.0F, "middle"},
+		{kChunk, 0.0F, 0.0F, "origin corner"},
+		{kChunk, 480.0F, 480.0F, "far corner"},
+		{kNegativeChunk, 200.0F, 312.0F, "negative middle"},
+		{kChunkBelowZero, 480.0F, 480.0F, "corner at zero"},
+	}};
 
-	/// The test shader (`main`, kFragmentMain or kBandMain) over the synthetic chunk's
-	/// render tiles, uploaded as the game uploads them, with the field's uniforms set
-	/// as ChunkRenderer::applyLandUniforms sets them. Needs a current context; `error`
-	/// is empty once it is ready.
+	/// The test shader (`main`, kFragmentMain or kBandMain) over each region's synthetic
+	/// chunk's render tiles, uploaded as the game uploads them, with the field's uniforms
+	/// set as ChunkRenderer::applyLandUniforms sets them. Needs a current context;
+	/// `error` is empty once it is ready.
 	class LandProgram {
 	  public:
 		explicit LandProgram(const char* main = kFragmentMain)
-			: tiles(syntheticRenderTiles()),
-			  params(defaultSurfaceFieldParams(kSeed)) {
+			: params(defaultSurfaceFieldParams(kSeed)) {
 			const std::optional<std::string> land = Renderer::ShaderPreprocessor::process(landInclude());
 			if (!land) {
 				error = "cannot read " + landInclude().string();
@@ -240,16 +252,21 @@ void main() {
 				return;
 			}
 
-			glGenTextures(1, &tileTexture);
 			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, tileTexture);
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RG8UI, kRenderTilesSide, kRenderTilesSide, 0, GL_RG_INTEGER, GL_UNSIGNED_BYTE, tiles.data());
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+			for (const Region& region : kRegions) {
+				if (find(region.chunk) != nullptr) {
+					continue;
+				}
+				ChunkTiles& chunk = chunks.emplace_back(ChunkTiles{.coord = region.chunk, .tiles = syntheticRenderTiles(region.chunk)});
+				glGenTextures(1, &chunk.texture);
+				glBindTexture(GL_TEXTURE_2D, chunk.texture);
+				glTexImage2D(GL_TEXTURE_2D, 0, GL_RG8UI, kRenderTilesSide, kRenderTilesSide, 0, GL_RG_INTEGER, GL_UNSIGNED_BYTE, chunk.tiles.data());
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+			}
 
 			glUseProgram(program);
 			glUniform1i(at("u_tileData"), 0);
-			glUniform2i(at("u_chunkTileOrigin"), static_cast<GLint>(tileOriginX()), static_cast<GLint>(tileOriginY()));
 			glUniform1fv(at("u_landWarpFine"), static_cast<GLsizei>(kSurfaceCount), params.warpFineM.data());
 			glUniform1fv(at("u_landWarpLow"), static_cast<GLsizei>(kSurfaceCount), params.warpLowM.data());
 			glUniform2i(at("u_landWarpWavelength"), params.warpFineWavelengthM, params.warpLowWavelengthM);
@@ -281,7 +298,6 @@ void main() {
 			glViewport(0, 0, kPixels, kPixels);
 			glDisable(GL_BLEND);
 			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, tileTexture);
 		}
 
 		~LandProgram() {
@@ -289,7 +305,9 @@ void main() {
 			glDeleteFramebuffers(1, &framebuffer);
 			glDeleteVertexArrays(1, &vao);
 			glDeleteTextures(1, &target);
-			glDeleteTextures(1, &tileTexture);
+			for (const ChunkTiles& chunk : chunks) {
+				glDeleteTextures(1, &chunk.texture);
+			}
 			glDeleteProgram(program);
 		}
 
@@ -298,6 +316,8 @@ void main() {
 
 		/// Each pixel's four outputs, fine warp summed over `fineOctaves`.
 		[[nodiscard]] std::vector<float> render(const Region& region, int fineOctaves) const {
+			glBindTexture(GL_TEXTURE_2D, find(region.chunk)->texture);
+			glUniform2i(at("u_chunkTileOrigin"), static_cast<GLint>(tileOrigin(region.chunk.x)), static_cast<GLint>(tileOrigin(region.chunk.y)));
 			glUniform2f(at("u_regionOrigin"), region.originX, region.originY);
 			glUniform1i(at("u_fineOctaves"), fineOctaves);
 			glClear(GL_COLOR_BUFFER_BIT);
@@ -314,8 +334,10 @@ void main() {
 			const float	  localY = region.originY + (static_cast<float>(j) + 0.5F) * kStepM;
 			const auto	  tileX	 = static_cast<int64_t>(std::floor(localX));
 			const auto	  tileY	 = static_cast<int64_t>(std::floor(localY));
-			const TilePoint p{tileOriginX() + tileX, tileOriginY() + tileY, localX - static_cast<float>(tileX), localY - static_cast<float>(tileY)};
-			return evaluateSurfaceField(chunkRenderTiles(kChunk, tiles), p, params);
+			const TilePoint p{
+				tileOrigin(region.chunk.x) + tileX, tileOrigin(region.chunk.y) + tileY, localX - static_cast<float>(tileX), localY - static_cast<float>(tileY)
+			};
+			return evaluateSurfaceField(chunkRenderTiles(region.chunk, find(region.chunk)->tiles), p, params);
 		}
 
 		[[nodiscard]] const SurfaceFieldParams& fieldParams() const { return params; }
@@ -323,17 +345,25 @@ void main() {
 		std::string error;
 
 	  private:
-		static int64_t tileOriginX() { return static_cast<int64_t>(kChunk.x) * kChunkSize; }
-		static int64_t tileOriginY() { return static_cast<int64_t>(kChunk.y) * kChunkSize; }
-		GLint		   at(const char* name) const { return glGetUniformLocation(program, name); }
+		struct ChunkTiles {
+			ChunkCoordinate				coord;
+			std::vector<TileRenderData> tiles;
+			GLuint						texture = 0;
+		};
 
-		std::vector<TileRenderData> tiles;
-		SurfaceFieldParams			params;
-		GLuint						program		= 0;
-		GLuint						tileTexture = 0;
-		GLuint						target		= 0;
-		GLuint						framebuffer = 0;
-		GLuint						vao			= 0;
+		static int64_t tileOrigin(int32_t chunk) { return static_cast<int64_t>(chunk) * kChunkSize; }
+		GLint		   at(const char* name) const { return glGetUniformLocation(program, name); }
+		[[nodiscard]] const ChunkTiles* find(ChunkCoordinate coord) const {
+			const auto it = std::find_if(chunks.begin(), chunks.end(), [coord](const ChunkTiles& c) { return c.coord == coord; });
+			return it == chunks.end() ? nullptr : &*it;
+		}
+
+		std::vector<ChunkTiles> chunks;
+		SurfaceFieldParams		params;
+		GLuint					program		= 0;
+		GLuint					target		= 0;
+		GLuint					framebuffer = 0;
+		GLuint					vao			= 0;
 	};
 
 	/// The near-interior shortcut reports no warp. Where its test (the low warp
