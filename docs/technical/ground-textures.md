@@ -219,7 +219,7 @@ A summary; D16 in the spec is the definition.
 2. Every surface is read at one warped point: world-space vector fBm, a fine term (4 m base, 4 octaves) plus a low term (26 m base, 2 octaves), with amplitudes by surface blended from the tiles' edge surfaces (rock's are smaller, so its edges stay harder), each component clamped to 1.5 m.
 3. Surfaces paint low to high (D13): the highest whose field passes 0.5, else the one with the largest field.
 4. The edge look is the height contest of Surface transitions: in a band around the isoline, capped at the field's reach, the pair's two surfaces are mixed by their baked heights, the signed distance and the fine warp noise. It replaced the sparse fringe, the rim and the 1 px anti-aliasing line. A pixel in an interior tile costs one render-tile fetch, one macro sample and one ground sample.
-5. In a near-interior tile the fine warp moves the read at most its amplitude from where the low warp puts it, so after the low noise the field checks whether that range keeps the read's 4x4 block inside the tile's one-surface reach; when it does the surface is the tile's, with field 1, and the fine noise and the block are skipped. Surface, field and margin are unchanged (`SurfaceFieldTest.NearInteriorShortcutMatchesTheFullField`); only the reported warp is zero there.
+5. In a near-interior tile the fine warp moves the read at most its amplitude from where the low warp puts it, so after the low noise the field checks whether that range keeps the read's 4x4 block inside the tile's one-surface reach; when it does the surface is the tile's, with field 1, and the fine noise and the block are skipped. Failing that, it checks again once the fine term's first octave is in: each octave's gradient noise stays within [-1, 1], so the other three move the read at most the amplitude times their share of the weight (0.54 at the default gain), around where the first octave puts it. That share counts every later octave, so it holds for a far-zoom picture that sums fewer. Surface, field and margin are unchanged (`SurfaceFieldTest.NearInteriorShortcutMatchesTheFullField`, which also runs a 1 m fine amplitude where only the second check can pass; `WarpNoiseOctaveStaysWithinOne` holds the bound); only the reported warp is zero there. The fine term is summed an octave at a time in `fractalNoise2SplitPair`'s order, on both sides, so its sums are that function's bits.
 
 `world::evaluateSurfaceField` is the one evaluation. `land.glsl` does the same steps in the same order, and `SurfaceFieldGolden.test.cpp` renders the shader and compares the two. Placement asks the C++ evaluation, so flora grows on the surface that is drawn.
 
@@ -480,11 +480,58 @@ Every bit-for-bit change was checked by hashing the golden test's GLSL output ov
 
 8 of 9 cells read 0.01 to 0.03 under the final, the zoom 3 scroll level; desert zoom 3, the one cell over main, is +0.04 where it was +0.06. Scene `gpuMs` and frame p50 and p99 match the final within their run-to-run swing.
 
+**The near-interior test after the first fine octave** (WOR-564, The land field step 5). Where desert zoom 3's cost sits, from temporary probe shaders that colored each pixel by its path (not kept): 36% of the view's pixels are interior, 11% take the near-interior shortcut and 52% the full path. 38% of all pixels read a block of more than one surface, mostly Grass and GrassShort mixed tile by tile at the organic biome edges, so they need the full path whatever the shortcut does. The other 14% read a one-surface block the shortcut couldn't prove, in rings a few pixels wide between the near-interior tiles and those edges. A calibration build that returned one surface after the low noise for every non-interior pixel (wrong output) read 0.27 ms against 0.60, so the fine noise, the block, the loop and the band are 0.33 ms of the view; but a fragment warp saves only when all its pixels exit, and counted by 8 x 4 pixel block a test after the first fine octave could free 7.8% of the warps, after the second 3.0% more, after the third 2.1% and at the exact read 2.7%, while 40% hold an edge pixel.
+
+Screening, one camera (the desert view at zoom 8, 3 and 1.5, 9 samples each, every one at P0), not full captures. The block bit is a render-tile bit tried and dropped (0x10: the 4x4 block at the tile's lattice cell is one surface); the range test asks, for a read range from a bound, the block bit of the one lattice cell it spans, else the near-interior bit (two cells an axis) or the interior bit (three) of the tile at its second cell:
+
+| Variant | zoom 8 / 3 / 1.5 |
+|---|---|
+| Round 2 | 0.69 / 0.60 / 0.51 |
+| The range test, from the low-warped bound, in every non-interior tile in place of the near-interior test | 0.70 / 0.61 / 0.51 |
+| That, and the range test after fine octaves 0 and 1 | 0.69 / 0.60 / 0.51 |
+| The near-interior test, and the range test after octaves 0 and 1 | 0.68 / 0.59 / 0.49 |
+| The near-interior test, and the range test after every octave | 0.70 / 0.61 / 0.52 |
+| The near-interior test, and the range test after octave 0 | 0.67 / 0.58 / 0.49 |
+| The near-interior test, and it again after octave 0 (kept) | 0.68 / 0.58 / 0.49 |
+| The near-interior test, and it again after octaves 0 and 1 | 0.69 / 0.58 / 0.49 |
+
+Every test costs each pixel that reaches it, and most of those sit in warps with an edge pixel, so a second test after the first octave cost what its exits saved, and reaching past the tile's own bit won nothing measurable. The kept test needs no new bits, so the chunk worker is untouched.
+
+Final, two desert runs (`perf-results/capture-2026-11-02-interior-oct0-desert-*`, every sample at P0), `tileGpuMs` in ms, differences of the means:
+
+| Scenario | main r1 / r2 | round 2 r1 / r2 | final r1 / r2 | final - round 2 | final - main |
+|---|---|---|---|---|---|
+| idle zoom=20 | 0.81 / 0.82 | 0.62 / 0.62 | 0.60 / 0.60 | -0.020 | -0.215 |
+| idle zoom=8 | 0.72 / 0.72 | 0.69 / 0.69 | 0.67 / 0.68 | -0.015 | -0.045 |
+| idle zoom=3 | 0.56 / 0.56 | 0.60 / 0.60 | 0.57 / 0.58 | -0.025 | +0.015 |
+| idle zoom=1.5 | 0.51 / 0.52 | 0.51 / 0.51 | 0.49 / 0.49 | -0.020 | -0.025 |
+| idle zoom=0.75 | 0.50 / 0.50 | 0.44 / 0.44 | 0.43 / 0.43 | -0.010 | -0.070 |
+| idle zoom=0.5 | 0.52 / 0.52 | 0.44 / 0.44 | 0.42 / 0.43 | -0.015 | -0.095 |
+| idle zoom=0.25 | 0.43 / 0.44 | 0.36 / 0.37 | 0.37 / 0.37 | +0.005 | -0.065 |
+| scroll zoom=3 | 0.22 / 0.23 | 0.21 / 0.21 | 0.20 / 0.20 | -0.010 | -0.025 |
+| scroll zoom=0.75 | 0.74 / 0.74 | 0.63 / 0.63 | 0.60 / 0.60 | -0.030 | -0.140 |
+
+River and coast, one run each (`...-interior-oct0-river-1`, `...-coast-1`, every sample at P0) against main's two:
+
+| Scenario | river main r1 / r2 | river final | coast main r1 / r2 | coast final |
+|---|---|---|---|---|
+| idle zoom=20 | 0.74 / 0.74 | 0.54 | 0.73 / 0.73 | 0.27 |
+| idle zoom=8 | 0.97 / 0.98 | 0.68 | 0.60 / 0.60 | 0.51 |
+| idle zoom=3 | 0.66 / 0.67 | 0.48 | 0.66 / 0.66 | 0.62 |
+| idle zoom=1.5 | 0.57 / 0.57 | 0.41 | 0.64 / 0.64 | 0.54 |
+| idle zoom=0.75 | 0.46 / 0.46 | 0.36 | 0.59 / 0.59 | 0.51 |
+| idle zoom=0.5 | 0.44 / 0.44 | 0.35 | 0.59 / 0.59 | 0.51 |
+| idle zoom=0.25 | 0.36 / 0.35 | 0.31 | 0.50 / 0.51 | 0.42 |
+| scroll zoom=3 | 0.41 / 0.41 | 0.35 | 0.33 / 0.33 | 0.31 |
+| scroll zoom=0.75 | 0.39 / 0.37 | 0.33 | 0.33 / 0.33 | 0.31 |
+
+Desert zoom 3 reads 0.57 and 0.58 against main's 0.56 and 0.56, +0.01 to +0.02 at the noise floor, where round 2 read +0.04; the other 26 cells are under main, coast zoom 3 by 0.04 now. Scene `gpuMs` and frame p50 match the references within their run-to-run swing. Bit for bit: over the golden test's three regions the shader's surface ids and fields are identical before and after, its warps identical except where the new test reports none (all with a field of exactly 1 before), and the C++ fine and low sums match `foundation::fractalNoise2SplitPair` bit for bit over 160,000 points (both probes temporary).
+
 **Gates,** on every view and zoom (the method and noise floor are in Performance):
 
-- `tileGpuMs` at or under main beyond the noise floor and under 1.5 ms: held in 26 of 27 cells, desert zoom 3 over (above; +0.04 after round 2).
+- `tileGpuMs` at or under main beyond the noise floor and under 1.5 ms: held in 26 of 27 cells, desert zoom 3 at the floor, +0.01 to +0.02 after WOR-564 (above; +0.04 after round 2).
 - Frame p50 and p99 and scene GPU not worse beyond the content change: held.
-- Chunk generation: unchanged by this step (WOR-558 reported it).
+- Chunk generation: unchanged by this step (WOR-558 reported it). WOR-564 leaves the chunk worker's code alone; on one fixed camera path through the three views, 63 chunks before read a 59.8 ms median and 166.8 ms p90 (render tiles 12.1 and 13.9), 62 after 60.9 and 133.8 (12.0 and 13.8).
 - Cold bake reported and at most +20%: +10% (WOR-559), and round 2's art about 1 s more, 21.1 to 21.3 s against a 22 s budget (Bake and macro fill); warm under 100 ms: 31 to 37 ms.
 
 ## Tunables
@@ -700,7 +747,7 @@ Not taken: storing the arrays as plain RGBA8 to drop the encode (about 0.01, but
 
 - Compressed formats: heights make alpha real data, so BC1 (no alpha) is out. BC3 or BC7 is twice BC1's size, about 14 MiB for the arrays against 56 MiB raw. Whether either is neutral or better, and looks right on dense blade art, is still to measure.
 - The cold bake's render: the GPU time in salal's batched quad path, about 0.15 s a grass variant with today's art. A plain indexed-triangle draw for the baker is the next lever; the height pass's render at mip 0 adds 2.3 s to a cold bake, nearly all of the +10% it costs.
-- The cost of organic biome edges at mid zoom: desert zoom 3 reads 0.04 ms over main after round 2's 0.2 m family band (0.06 before; Surface transitions, Perf ledger), from the field's full path on the many more boundary pixels WOR-558 made. The six noise octaves are most of what's left and must stay bit for bit with the C++ twin; a cheaper twin (C++ and GLSL changed together, placement re-verified) is the lever.
+- The cost of organic biome edges at mid zoom: desert zoom 3 reads 0.01 to 0.02 ms over main after WOR-564's second near-interior test (0.04 after round 2's 0.2 m family band, 0.06 before; Surface transitions, Perf ledger), from the field's full path on the many more boundary pixels WOR-558 made. Shortcuts have little left to take: the one-surface reads they can't prove lie in rings a few pixels wide beside true edges, whose warps hold edge pixels, and 38% of that view's pixels read a block of more than one surface, mostly Grass and GrassShort mixed tile by tile. The six noise octaves, the block, the loop and the band on those pixels are what's left, and must stay bit for bit with the C++ twin; a cheaper twin (C++ and GLSL changed together, placement re-verified) is the lever.
 - Grass family heights: rank-normalized per surface, as designed, or on one shared scale so taller blades overtop shorter ones across a family edge (short tips 0.35, grass 0.5, meadow 0.7, tall 0.95, ranked across the family only). Per surface holds so far: in round 2 a family edge reads as a change of sward even at 0.2 m, with no dissolve; the shared scale stays the fallback.
 - Tuning pair values: edits to `<transition>` blocks take a restart, with no re-bake (measured: 31 ms of warm bake steps after an edit). A dev verb that sets one pair field live is the cheap fix if that proves slow.
 - Two arrays by density against one array with every layer at 512x512 (the rest would cost about 40 MiB more). The spec picks two.
