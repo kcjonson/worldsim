@@ -231,7 +231,7 @@ Where two land surfaces meet, a band around the field's isoline shows whichever 
 
 The field is untouched: D13 levels, the warp, the block and the paint rule, the C++ twin and `SurfaceFieldGolden`. So the contest is look-only (D1), placement still agrees with the painted surface, and inside the band the visible surface can differ from the painted one by at most the band width.
 
-The edges it is tuned on come from chunk generation, not the field. A biome boundary was a 16 m staircase (one biome per 16 x 16 m sector), which no band can hide; it is picked per tile now, with bays, headlands and islands (terrain spec, D16, biome edges; WOR-558).
+The edges it is tuned on come from chunk generation, not the field. A biome boundary was a 16 m staircase (one biome per 16 x 16 m sector), which no band can hide; it is picked per tile now, with bays, headlands and islands (terrain spec, D16, biome edges; WOR-558). The same edges about doubled the waterline and nav ring vertices on coasts and lakes. That was measured against the sector pick (WOR-563, terrain spec section 6): no frame cost, since water draws from the distance field; on the worker a coast chunk generates in 113 ms against 86, mostly the longer shore's polygons and bake, and its water-only nav regions build in 0.3 ms against 0.1. The 100 mm ring tolerance stays: the extra vertices are 1 m tile steps the blur rounds but keeps, and a looser tolerance thins the shore profiles first.
 
 ### Heights in alpha
 

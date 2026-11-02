@@ -1292,6 +1292,65 @@ three coast chunks go from 157 to 179 ring vertices a chunk to 407 to 484 (nav 9
 About one of those vertices in 16 m of shore is a pin (D6 step 4); the rest are the bends the
 100 mm simplification keeps.
 
+**What the ring growth costs (WOR-563).** Measured headless on the quickstart planet, over
+fixed chunks: the coast at x = 70 km (chunks (136, -2) to (136, 1) and (137, -1)), the lake
+shore at (-3860, 2300) ((-9, 3) and (-8, 3) to (-8, 5)) and five landing river chunks around
+(0, 0) as a control. "Before" is the sector pick restored in the working tree over the same
+tiles and generators (never committed), "after" the per-tile pick. RelWithDebInfo, five runs
+of everything: chunk timings pooled over them, each nav build and path batch their median.
+Nav and paths are on the 128 m regions tiling each chunk that hold water (water only, as
+`nav::appendWaterObstacles` emits it, no trees), each path query a fixed pair with both ends
+on land in both builds, 0.3 m agent radius, the RRA* cache as `NavigationSystem::requestPath`
+sets it:
+
+| | Coast, before | Coast, after | Lake, before | Lake, after |
+|---|---|---|---|---|
+| Ring vertices | 1057 | 2178 | 800 | 1756 |
+| Nav ring vertices | 639 | 1611 | 427 | 1246 |
+| Shore length (m) | 2723 | 3388 | 2077 | 2628 |
+| Vertices a meter of shore (shore chunks) | 0.34 | 0.60 | 0.32 | 0.63 |
+| SDF near tiles | 319 | 400 | 232 | 295 |
+| Chunk generation, median / p90 (ms) | 85.6 / 99.9 | 113.1 / 122.3 | 81.1 / 93.8 | 106.7 / 120.3 |
+| Polygons, median (ms) | 39.8 | 52.3 | 41.0 | 52.7 |
+| Bake, median (ms) | 15.7 | 25.2 | 15.3 | 23.7 |
+| Tiles and apron, median (ms) | 14.5 | 20.1 | 11.9 | 17.2 |
+| Nav input vertices, shore regions | 762 | 1736 | 559 | 1384 |
+| Nav build per region, mean / p90 / max (ms) | 0.10 / 0.27 / 0.39 | 0.29 / 0.83 / 1.02 | 0.08 / 0.25 / 0.41 | 0.23 / 0.73 / 1.32 |
+| Path query (us), 1118 coast and 521 lake pairs | 2.05 | 2.22 | 1.44 | 2.28 |
+
+The river chunks don't move (1778 ring vertices, generation 76 against 78 ms, nav within 4%,
+paths level), which is the run-to-run swing. Repeat runs of each build stay within 2 ms of these
+medians and 0.3 ms of the nav sums. The tiles and apron row is the pick, not the rings (6 ms at
+most a chunk, above).
+
+Nothing here reaches the frame. The water and shore pass reads only the distance field (D10),
+so its GPU time doesn't depend on a ring's vertices, and no ring reaches the GPU outside the
+debug overlay; 25% more near tiles is 2.1 MB more texture over the five coast chunks (26 KB a
+tile). Path queries run on the main thread but cost under a microsecond more. The rest is worker
+time: polygons, bake and nav builds, all off the main thread.
+
+The vertices doubled because the shore got longer and denser. Per-tile edges put a 1 m tile
+step in every shore that isn't axis-aligned, and the 3x3 blur rounds a step without removing
+it: an unwarped straight edge at 1 in 16 wanders 0.81 m peak to peak around its line, 0.31 m
+at 1 in 4, 0.06 at 1 in 2 and 0.03 at 45 degrees. The 100 mm simplification keeps those steps,
+and so would any tolerance under about 0.4 m. What a looser tolerance takes first is the bank
+detail and the shore profiles' sampling. Measured on the coast:
+
+| Tolerance | Ring vertices | Nav vertices | Nav build, sum of regions (ms) | Bake alone (ms) | Polygons alone (ms) | world-tests |
+|---|---|---|---|---|---|---|
+| 100 mm, all rings (kept) | 2178 | 1611 | 12.3 | 25.4 | 52.7 | pass |
+| 150 mm, waterlines only | 1816 | 1285 | 9.2 | 23.8 | 52.0 | `ShoreSlopeIsBoundedAndVariesAlongTheShore` fails |
+| 200 mm, all rings | 1551 | 1048 | 7.3 | 22.9 | 51.4 | 6 fail: the slope test, two channel tests (a pond mouth's flare, an outer bank's slope) and three seam tests' edge-count floors |
+
+At 125 mm on waterlines the slope test still fails. Its straight shore keeps 109 vertices at
+100 mm (one in 5 m) and 97 at 150, and losing those drops the slope range from 40 to 34
+bytes: the shore profile is sampled at the vertices (D15), and a straight shore already
+undersamples the slope noise's 5 m octave. The tolerance stays 100 mm. A looser one buys back
+1.6 to 2.5 ms of bake a coast chunk and under 0.1 ms of nav a region (0.12 at 200 mm), none
+of it on the frame, and costs D15's variance on every shore; the polygons stage, the larger
+share, follows the shore's length and doesn't move. Cutting the tile steps themselves means a
+wider blur in the waterline field, which reshapes every thin feature D5 guards.
+
 **Nav.** Rebuilding the landing region (128 m square, 643 blocking rings, most of them trees):
 763 ms on the worker for 5434 triangles, against 499 ms for 3082 with the tile marcher
 (39f35c45); the input extraction on the main thread is 0.5 ms (1.4 with the marcher). The
