@@ -1,7 +1,7 @@
 # Scenario 02: Stock box with wood
 
 **Status:** ready  
-**Last verified:** 2026-06-28
+**Last verified:** 2026-11-02
 
 Verifies that a colonist with an axe chops trees, hauls wood, and stocks a `BasicBox` to a
 target quantity via a storage rule.
@@ -14,8 +14,12 @@ Colonist has an `AxePrimitive`. Either run [01-craft-axe-and-box.md](./01-craft-
 first, or give the axe directly:
 
 ```
-curl.exe "http://127.0.0.1:<PORT>/api/dev/give?material=AxePrimitive&n=1&where=colonist"
+curl.exe "http://127.0.0.1:<PORT>/api/dev/give?material=AxePrimitive&n=1&where=colonist&slot=hands"
 ```
+
+`slot=hands` seats the axe in hand, where a crafted one lands. The default (`slot=pack`) leaves
+it in the backpack: Bob still chops with it, but there's nothing in hand to stow on a fell, so the
+belt stays empty.
 
 ---
 
@@ -63,7 +67,7 @@ curl.exe "http://127.0.0.1:<PORT>/api/dev/time?speed=3"
 
 ```
 curl.exe "http://127.0.0.1:<PORT>/api/state?what=storage"
-# -> storage[0].rules[0].item == "Wood", rules[0].min == 200
+# -> storages[0].rules has an entry with item == "Wood", min == 200 (after the default "*" rules)
 ```
 
 2. Watch Bob chop a tree. After a fell, poll colonist state:
@@ -79,7 +83,7 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=colonists"
 
 ```
 curl.exe "http://127.0.0.1:<PORT>/api/state?what=storage"
-# -> storage[0].inventory.Wood climbs with each deposit trip
+# -> storages[0].inventory.Wood climbs with each deposit trip
 ```
 
 4. Keep Bob's needs up every ~2 real minutes:
@@ -94,7 +98,7 @@ curl.exe "http://127.0.0.1:<PORT>/api/dev/need?colonist=<BOB_ID>&need=Energy&val
 
 ```
 curl.exe "http://127.0.0.1:<PORT>/api/state?what=storage"
-# -> storage[0].inventory.Wood >= 200
+# -> storages[0].inventory.Wood >= 200
 ```
 
 ---
@@ -104,11 +108,11 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=storage"
 ```
 # Box inventory reaches target
 GET /api/state?what=storage
-  -> storage[0].inventory.Wood >= 200
+  -> storages[0].inventory.Wood >= 200
 
 # Colonist used axe (stow-on-fell: axe on belt after a chop)
 GET /api/state?what=colonists
-  -> colonists[0].belt.AxePrimitive >= 1  (at some point during the run)
+  -> colonists[0].belt contains "AxePrimitive"  (at some point during the run)
 ```
 
 ---
