@@ -7,7 +7,7 @@
 //
 // The key hashes everything the bake reads: the def's XML file, its generator script (an @shared/ one
 // included; scripts are sandboxed and can't load others), its params, name, variant count, period and
-// density, the render tile size, and GroundTileBaker::kVersion. Editing any of them, then reloading,
+// density, its seed group, the render tile size, and GroundTileBaker::kVersion. Editing any of them, then reloading,
 // re-bakes. Code changes that alter the bake's output need kVersion bumped.
 //
 // Any thread; load and store of one def must not overlap.

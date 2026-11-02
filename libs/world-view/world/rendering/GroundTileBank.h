@@ -9,8 +9,8 @@
 // scene can keep drawing between them: begin(), then bakeNext() until it returns false. The first step
 // looks every def up in the disk cache (GroundTileCache, beside the exe) at once, on the pool. A step
 // uploads every def in a row that the cache held, and at the first it didn't, builds that def's paths
-// on the pool; each later step bakes and uploads one of its variants, and the last stores the def in the
-// cache.
+// on the pool and draws and ranks their heights; each later step bakes and uploads one of its variants,
+// and the last stores the def in the cache.
 
 #include "world/chunk/SurfaceField.h"
 #include "world/rendering/GroundTileBaker.h"
@@ -144,6 +144,7 @@ namespace worldview {
 		int									  bakedDefs = 0;
 		double								  lookupMs = 0.0; // lookUpAll: keys, and reading the cached defs
 		double								  pathsMs = 0.0;
+		double								  heightsMs = 0.0; // bakeHeights: render, filter and rank
 		double								  renderMs = 0.0; // bakeVariant: render and filter
 		double								  finishMs = 0.0; // measure, report and store
 		double								  uploadMs = 0.0;

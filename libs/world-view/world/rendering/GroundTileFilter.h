@@ -5,7 +5,8 @@
 // metrics. No GL, so every piece is unit-tested on its own (GroundTileFilter.test.cpp).
 //
 // A ground tile is one period of a pattern that repeats forever, so every filter here wraps at the
-// edges. Images hold premultiplied linear RGBA; ground tiles are opaque, where that is plain color.
+// edges. Ground tiles are opaque: images hold linear RGB, never premultiplied, and alpha is plain data,
+// the baked height (docs/technical/ground-textures.md, "Heights in alpha"), filtered like any channel.
 
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
@@ -20,7 +21,7 @@ namespace foundation {
 
 namespace worldview::ground {
 
-	/// RGBA in linear light, premultiplied by alpha, rows top to bottom.
+	/// RGB in linear light and A as plain data, rows top to bottom.
 	struct LinearImage {
 		int					   width = 0;
 		int					   height = 0;
@@ -40,11 +41,32 @@ namespace worldview::ground {
 		}
 	};
 
-	/// Straight-alpha sRGB, 8 bits a channel, rows top to bottom: what the runtime uploads as GL_SRGB8_ALPHA8.
+	/// sRGB color and linear alpha, 8 bits a channel, rows top to bottom: what the runtime uploads as
+	/// GL_SRGB8_ALPHA8.
 	struct Srgb8Image {
 		int					 width = 0;
 		int					 height = 0;
 		std::vector<uint8_t> rgba;
+	};
+
+	/// One channel of floats, rows top to bottom: a variant's heights.
+	struct Plane {
+		int				   width = 0;
+		int				   height = 0;
+		std::vector<float> values;
+
+		Plane() = default;
+		Plane(int newWidth, int newHeight)
+			: width(newWidth),
+			  height(newHeight),
+			  values(static_cast<size_t>(newWidth) * static_cast<size_t>(newHeight), 0.0F) {}
+
+		[[nodiscard]] float& at(int x, int y) {
+			return values[(static_cast<size_t>(y) * static_cast<size_t>(width)) + static_cast<size_t>(x)];
+		}
+		[[nodiscard]] float at(int x, int y) const {
+			return values[(static_cast<size_t>(y) * static_cast<size_t>(width)) + static_cast<size_t>(x)];
+		}
 	};
 
 	[[nodiscard]] float srgbToLinear(float encoded);
@@ -93,9 +115,10 @@ namespace worldview::ground {
 	/// is restored afterwards as a uniform offset. Rows run on `pool` when given.
 	[[nodiscard]] LinearImage downsample(const LinearImage& src, int dstWidth, int dstHeight, foundation::TaskPool* pool = nullptr);
 
-	/// The same from a render target's bytes: 8-bit sRGB premultiplied by alpha (what salal draws), rows
-	/// top to bottom, srcWidth * srcHeight * 4 of them. Each texel is decoded to linear light first.
-	[[nodiscard]] LinearImage downsampleSrgb8Premultiplied(
+	/// The same from a render target's bytes: 8-bit sRGB (what salal draws), rows top to bottom,
+	/// srcWidth * srcHeight * 4 of them. Color decodes to linear light as opaque, whatever the alpha,
+	/// and alpha is kept as data.
+	[[nodiscard]] LinearImage downsampleSrgb8(
 		std::span<const uint8_t> rgba,
 		int						 srcWidth,
 		int						 srcHeight,
@@ -108,27 +131,46 @@ namespace worldview::ground {
 	/// so the mean is kept.
 	[[nodiscard]] LinearImage blurWrapped(const LinearImage& src, float sigma);
 
-	/// The mean lock: rendered += blur(reference - rendered, sigma), wrapping, then clamped to a valid
-	/// premultiplied color. The blur keeps the residual's mean, so the result's mean is the reference's
-	/// (up to the clamp), while the rendered detail keeps its contrast. Both images must be one size.
-	/// Returns the mean shift it applied: mean(reference) - mean(rendered) before the lock.
+	/// The mean lock: rendered += blur(reference - rendered, sigma), wrapping, then clamped to 0..1 per
+	/// channel. The blur keeps the residual's mean, so the result's mean is the reference's (up to the
+	/// clamp), while the rendered detail keeps its contrast. Both images must be one size. A channel that
+	/// already matches the reference (the heights, copied in first) is left as it is. Returns the mean
+	/// shift it applied: mean(reference) - mean(rendered) before the lock.
 	glm::vec4 lockMean(LinearImage& rendered, const LinearImage& reference, float sigma);
 
 	[[nodiscard]] glm::vec4 mean(const LinearImage& image);
 
-	/// The smallest alpha in the image; ground tiles should be opaque (1).
-	[[nodiscard]] float minAlpha(const LinearImage& image);
-
-	/// Encode to straight-alpha sRGB 8-bit. Color is dithered by up to half a code before rounding, from
-	/// a hash of (x, y, channel, ditherSeed): rounding is then unbiased, so a flat far mip keeps its mean
-	/// instead of snapping to the nearest code. A small level's dither errors don't average out, so a
-	/// channel whose linear mean lands more than 0.05% off then has its codes stepped one at a time, the
-	/// texels that rounded furthest the wrong way first, until no step brings it closer. Alpha rounds
-	/// plainly.
+	/// Encode to 8 bits a channel: sRGB color, linear alpha. Color is dithered by up to half a code before
+	/// rounding, from a hash of (x, y, channel, ditherSeed): rounding is then unbiased, so a flat far mip
+	/// keeps its mean instead of snapping to the nearest code. A small level's dither errors don't average
+	/// out, so a channel whose linear mean lands more than 0.05% off then has its codes stepped one at a
+	/// time, the texels that rounded furthest the wrong way first, until no step brings it closer. Alpha
+	/// rounds plainly, undithered.
 	[[nodiscard]] Srgb8Image encodeSrgb8(const LinearImage& image, uint32_t ditherSeed);
 
-	/// Back to premultiplied linear light.
+	/// Back to linear light, alpha as data.
 	[[nodiscard]] LinearImage decodeSrgb8(const Srgb8Image& image);
+
+	/// The plane down by a whole factor, each output texel the mean of a factor x factor block.
+	[[nodiscard]] Plane boxDownsample(const Plane& src, int factor);
+
+	/// Separable Gaussian blur with `sigma` texels, wrapping, weights summing to 1.
+	[[nodiscard]] Plane blurWrapped(const Plane& src, float sigma);
+
+	/// Tileable blue noise in -1..1 with a uniform histogram: white noise from a hash of (x, y, seed) with
+	/// a wrapped blur of itself taken away, so its energy sits at the highest frequencies, then ranked.
+	[[nodiscard]] Plane blueNoise(int width, int height, uint32_t seed);
+
+	/// How far the tie-break moves a height that ties with others (docs/technical/ground-textures.md,
+	/// "Heights in alpha").
+	inline constexpr float kHeightTieBreak = 0.03F;
+
+	/// Replaces every value of every plane by its rank among all of them, 0 to 1, so the heights of a
+	/// surface's variants share one uniform histogram. Values that round to the same 1 / 65536 tie: a group
+	/// takes the middle of its ranks, plus blue noise (one tile from seed, each plane reading it at its own
+	/// wrapped offset) times the lesser of tieBreak and half the group's span, so a flat area dithers about
+	/// its middle instead of flipping at one distance, and no texel passes a higher value's rank.
+	void rankNormalize(std::span<Plane> planes, uint32_t seed, float tieBreak = kHeightTieBreak);
 
 	/// CIE L*a*b* (D65) of a linear sRGB color.
 	[[nodiscard]] glm::vec3 linearToLab(glm::vec3 rgb);

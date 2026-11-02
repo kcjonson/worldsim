@@ -6,6 +6,7 @@
 #include <array>
 #include <cmath>
 #include <functional>
+#include <numeric>
 #include <numbers>
 
 namespace worldview::ground {
@@ -94,38 +95,33 @@ namespace worldview::ground {
 			}
 		}
 
-		// Moves the image's mean to 	arget, per channel and exactly, without leaving the valid range: a
-		// step down scales the channel, so black stays black; a step up fills each texel toward its alpha
-		// in proportion to the room it has, so a full texel stays full. A uniform offset would push dark
-		// texels below zero and lose the clamped part.
+		// Moves the image's mean to target, per channel and exactly, without leaving 0..1: a step down
+		// scales the channel, so 0 stays 0; a step up fills each texel toward 1 in proportion to the room
+		// it has, so a full texel stays full. A uniform offset would push dark texels below zero and lose
+		// the clamped part.
 		void restoreMean(LinearImage& image, const glm::vec4& target) {
 			if (image.texels.empty()) {
 				return;
 			}
-			const auto shift = [&image](int channel, float current, float wanted, float ceiling) {
-				if (wanted < current) {
-					const float gain = current > 0.0F ? std::max(0.0F, wanted) / current : 0.0F;
+			const glm::vec4 current = mean(image);
+			for (int c = 0; c < kChannels; ++c) {
+				const float wanted = target[c];
+				if (wanted < current[c]) {
+					const float gain = current[c] > 0.0F ? std::max(0.0F, wanted) / current[c] : 0.0F;
 					for (glm::vec4& t : image.texels) {
-						t[channel] *= gain;
+						t[c] *= gain;
 					}
-				} else if (wanted > current) {
-					const float room = ceiling - current;
-					const float fill = room > 1e-9F ? std::min(1.0F, (wanted - current) / room) : 0.0F;
+				} else if (wanted > current[c]) {
+					const float room = 1.0F - current[c];
+					const float fill = room > 1e-9F ? std::min(1.0F, (wanted - current[c]) / room) : 0.0F;
 					for (glm::vec4& t : image.texels) {
-						t[channel] += fill * ((channel == 3 ? 1.0F : t.a) - t[channel]);
+						t[c] += fill * (1.0F - t[c]);
 					}
 				}
-			};
-			const glm::vec4 before = mean(image);
-			shift(3, before.a, target.a, 1.0F);
-			const glm::vec4 current = mean(image);
-			for (int c = 0; c < 3; ++c) {
-				shift(c, current[c], target[c], current.a);
 			}
 		}
 
-		// The separable downsample. `decodeRow(y, out)` writes source row y as srcWidth * 4 premultiplied
-		// linear floats. The horizontal pass keeps, per output column and source row, the filtered value
+		// The separable downsample. `decodeRow(y, out)` writes source row y as srcWidth * 4 linear floats. The horizontal pass keeps, per output column and source row, the filtered value
 		// and the lobe's min and max; the vertical pass filters those and clamps to the min of the mins and
 		// the max of the maxes, which is the min and max over the 2D lobe window.
 		template <typename DecodeRow>
@@ -234,6 +230,23 @@ namespace worldview::ground {
 			return (0.2126F * texel.r) + (0.7152F * texel.g) + (0.0722F * texel.b);
 		}
 
+		// A Gaussian of `sigma` taps out to 3 sigma (at least 1) each side, summing to 1; the center is
+		// the middle entry.
+		std::vector<float> gaussianWeights(float sigma) {
+			const int		   radius = std::max(1, static_cast<int>(std::ceil(3.0F * sigma)));
+			std::vector<float> weights(static_cast<size_t>((2 * radius) + 1));
+			float			   sum = 0.0F;
+			for (int k = -radius; k <= radius; ++k) {
+				const float w = std::exp(-static_cast<float>(k * k) / (2.0F * sigma * sigma));
+				weights[static_cast<size_t>(k + radius)] = w;
+				sum += w;
+			}
+			for (float& w : weights) {
+				w /= sum;
+			}
+			return weights;
+		}
+
 	} // namespace
 
 	float srgbToLinear(float encoded) {
@@ -323,13 +336,8 @@ namespace worldview::ground {
 		return downsampleRows(src.width, src.height, dstWidth, dstHeight, decodeRow, pool);
 	}
 
-	LinearImage downsampleSrgb8Premultiplied(
-		std::span<const uint8_t> rgba,
-		int						 srcWidth,
-		int						 srcHeight,
-		int						 dstWidth,
-		int						 dstHeight,
-		foundation::TaskPool*	 pool
+	LinearImage downsampleSrgb8(
+		std::span<const uint8_t> rgba, int srcWidth, int srcHeight, int dstWidth, int dstHeight, foundation::TaskPool* pool
 	) {
 		const std::array<float, 256>& table = srgbDecodeTable();
 		const auto					  decodeRow = [&](int y, float* out) {
@@ -337,23 +345,10 @@ namespace worldview::ground {
 			   for (int x = 0; x < srcWidth; ++x) {
 				   const uint8_t* p = row + (static_cast<size_t>(x) * kChannels);
 				   float*		  o = out + (static_cast<size_t>(x) * kChannels);
-				   const uint8_t  a = p[3];
-				   if (a == 255) {
-					   o[0] = table[p[0]];
-					   o[1] = table[p[1]];
-					   o[2] = table[p[2]];
-					   o[3] = 1.0F;
-				   } else if (a == 0) {
-					   o[0] = o[1] = o[2] = o[3] = 0.0F;
-				   } else {
-					   // The target blended in its 8-bit encoding, premultiplied: undo the alpha there, decode,
-					   // and premultiply again in linear light.
-					   const float alpha = static_cast<float>(a) / 255.0F;
-					   for (int c = 0; c < 3; ++c) {
-						   o[c] = srgbToLinear(std::min(1.0F, static_cast<float>(p[c]) / static_cast<float>(a))) * alpha;
-					   }
-					   o[3] = alpha;
-				   }
+				   o[0] = table[p[0]];
+				   o[1] = table[p[1]];
+				   o[2] = table[p[2]];
+				   o[3] = static_cast<float>(p[3]) / 255.0F;
 			   }
 		};
 		return downsampleRows(srcWidth, srcHeight, dstWidth, dstHeight, decodeRow, pool);
@@ -363,17 +358,8 @@ namespace worldview::ground {
 		if (src.width <= 0 || src.height <= 0 || !(sigma > 0.0F)) {
 			return src;
 		}
-		const int		   radius = std::max(1, static_cast<int>(std::ceil(3.0F * sigma)));
-		std::vector<float> weights(static_cast<size_t>((2 * radius) + 1));
-		float			   sum = 0.0F;
-		for (int k = -radius; k <= radius; ++k) {
-			const float w = std::exp(-static_cast<float>(k * k) / (2.0F * sigma * sigma));
-			weights[static_cast<size_t>(k + radius)] = w;
-			sum += w;
-		}
-		for (float& w : weights) {
-			w /= sum;
-		}
+		const std::vector<float> weights = gaussianWeights(sigma);
+		const int				 radius = static_cast<int>(weights.size() / 2);
 
 		LinearImage across(src.width, src.height);
 		for (int y = 0; y < src.height; ++y) {
@@ -410,10 +396,8 @@ namespace worldview::ground {
 		const LinearImage smooth = blurWrapped(residual, sigma);
 		for (size_t i = 0; i < rendered.texels.size(); ++i) {
 			glm::vec4& t = rendered.texels[i];
-			t += smooth.texels[i];
-			t.a = std::clamp(t.a, 0.0F, 1.0F);
-			for (int c = 0; c < 3; ++c) {
-				t[c] = std::clamp(t[c], 0.0F, t.a);
+			for (int c = 0; c < kChannels; ++c) {
+				t[c] = std::clamp(t[c] + smooth.texels[i][c], 0.0F, 1.0F);
 			}
 		}
 		// Where the clamp bit, what it cut goes back across the tile.
@@ -438,14 +422,6 @@ namespace worldview::ground {
 		};
 	}
 
-	float minAlpha(const LinearImage& image) {
-		float lowest = 1.0F;
-		for (const glm::vec4& t : image.texels) {
-			lowest = std::min(lowest, t.a);
-		}
-		return lowest;
-	}
-
 	Srgb8Image encodeSrgb8(const LinearImage& image, uint32_t ditherSeed) {
 		Srgb8Image out{.width = image.width, .height = image.height, .rgba = {}};
 		const size_t count = image.texels.size();
@@ -455,20 +431,18 @@ namespace worldview::ground {
 			for (int x = 0; x < image.width; ++x) {
 				const size_t	 i = (static_cast<size_t>(y) * static_cast<size_t>(image.width)) + static_cast<size_t>(x);
 				const glm::vec4& t = image.texels[i];
-				const float		 alpha = std::clamp(t.a, 0.0F, 1.0F);
 				uint8_t*		 o = &out.rgba[i * kChannels];
 				for (int c = 0; c < 3; ++c) {
-					const float straight = alpha > 0.0F ? t[c] / alpha : 0.0F;
 					const float dither =
 						(static_cast<float>(
 							 ditherHash(static_cast<uint32_t>(x), static_cast<uint32_t>(y), static_cast<uint32_t>(c), ditherSeed) >> 8U
 						 ) /
 						 16777216.0F) -
 						0.5F;
-					wanted[(i * 3) + static_cast<size_t>(c)] = linearToSrgb(straight) * 255.0F;
+					wanted[(i * 3) + static_cast<size_t>(c)] = linearToSrgb(t[c]) * 255.0F;
 					o[c] = static_cast<uint8_t>(std::clamp(std::lround(wanted[(i * 3) + static_cast<size_t>(c)] + dither), 0L, 255L));
 				}
-				o[3] = static_cast<uint8_t>(std::lround(alpha * 255.0F));
+				o[3] = static_cast<uint8_t>(std::lround(std::clamp(t.a, 0.0F, 1.0F) * 255.0F));
 			}
 		}
 
@@ -483,9 +457,8 @@ namespace worldview::ground {
 			double target = 0.0;
 			double have = 0.0;
 			for (size_t i = 0; i < count; ++i) {
-				const double alpha = static_cast<double>(out.rgba[(i * kChannels) + 3]) / 255.0;
-				target += image.texels[i][c];
-				have += table[out.rgba[(i * kChannels) + static_cast<size_t>(c)]] * alpha;
+				target += std::clamp(image.texels[i][c], 0.0F, 1.0F);
+				have += table[out.rgba[(i * kChannels) + static_cast<size_t>(c)]];
 			}
 			double error = target - have;
 			if (std::abs(error) <= kTolerance * std::max(target, 1e-9)) {
@@ -504,13 +477,12 @@ namespace worldview::ground {
 			}
 			std::sort(order.begin(), order.end(), [&](size_t a, size_t b) { return residual(a) > residual(b); });
 			for (const size_t i : order) {
-				uint8_t&   code = out.rgba[(i * kChannels) + static_cast<size_t>(c)];
-				const int  next = static_cast<int>(code) + direction;
-				const auto alpha = static_cast<double>(out.rgba[(i * kChannels) + 3]) / 255.0;
+				uint8_t&  code = out.rgba[(i * kChannels) + static_cast<size_t>(c)];
+				const int next = static_cast<int>(code) + direction;
 				if (next < 0 || next > 255) {
 					continue;
 				}
-				const double delta = (table[static_cast<size_t>(next)] - table[code]) * alpha;
+				const double delta = table[static_cast<size_t>(next)] - table[code];
 				if (std::abs(error - delta) < std::abs(error)) {
 					code = static_cast<uint8_t>(next);
 					error -= delta;
@@ -525,10 +497,124 @@ namespace worldview::ground {
 		LinearImage					  out(image.width, image.height);
 		for (size_t i = 0; i < out.texels.size(); ++i) {
 			const uint8_t* p = &image.rgba[i * kChannels];
-			const float	   alpha = static_cast<float>(p[3]) / 255.0F;
-			out.texels[i] = {table[p[0]] * alpha, table[p[1]] * alpha, table[p[2]] * alpha, alpha};
+			out.texels[i] = {table[p[0]], table[p[1]], table[p[2]], static_cast<float>(p[3]) / 255.0F};
 		}
 		return out;
+	}
+
+	Plane boxDownsample(const Plane& src, int factor) {
+		if (factor <= 1 || src.width < factor || src.height < factor) {
+			return src;
+		}
+		Plane		out(src.width / factor, src.height / factor);
+		const float scale = 1.0F / static_cast<float>(factor * factor);
+		for (int y = 0; y < out.height; ++y) {
+			for (int x = 0; x < out.width; ++x) {
+				float sum = 0.0F;
+				for (int j = 0; j < factor; ++j) {
+					for (int i = 0; i < factor; ++i) {
+						sum += src.at((x * factor) + i, (y * factor) + j);
+					}
+				}
+				out.at(x, y) = sum * scale;
+			}
+		}
+		return out;
+	}
+
+	Plane blurWrapped(const Plane& src, float sigma) {
+		if (src.width <= 0 || src.height <= 0 || !(sigma > 0.0F)) {
+			return src;
+		}
+		const std::vector<float> weights = gaussianWeights(sigma);
+		const int				 radius = static_cast<int>(weights.size() / 2);
+		Plane					 across(src.width, src.height);
+		for (int y = 0; y < src.height; ++y) {
+			for (int x = 0; x < src.width; ++x) {
+				float acc = 0.0F;
+				for (int k = -radius; k <= radius; ++k) {
+					acc += weights[static_cast<size_t>(k + radius)] * src.at(wrapIndex(x + k, src.width), y);
+				}
+				across.at(x, y) = acc;
+			}
+		}
+		Plane out(src.width, src.height);
+		for (int y = 0; y < src.height; ++y) {
+			for (int x = 0; x < src.width; ++x) {
+				float acc = 0.0F;
+				for (int k = -radius; k <= radius; ++k) {
+					acc += weights[static_cast<size_t>(k + radius)] * across.at(x, wrapIndex(y + k, src.height));
+				}
+				out.at(x, y) = acc;
+			}
+		}
+		return out;
+	}
+
+	Plane blueNoise(int width, int height, uint32_t seed) {
+		Plane white(width, height);
+		for (int y = 0; y < height; ++y) {
+			for (int x = 0; x < width; ++x) {
+				white.at(x, y) = static_cast<float>(ditherHash(static_cast<uint32_t>(x), static_cast<uint32_t>(y), 7U, seed) >> 8U) / 16777216.0F;
+			}
+		}
+		const Plane low = blurWrapped(white, 1.0F);
+		Plane		noise(width, height);
+		for (size_t i = 0; i < noise.values.size(); ++i) {
+			noise.values[i] = white.values[i] - low.values[i];
+		}
+		std::vector<uint32_t> order(noise.values.size());
+		std::iota(order.begin(), order.end(), 0U);
+		std::sort(order.begin(), order.end(), [&noise](uint32_t a, uint32_t b) { return noise.values[a] < noise.values[b]; });
+		const float step = order.size() > 1 ? 2.0F / static_cast<float>(order.size() - 1) : 0.0F;
+		for (size_t r = 0; r < order.size(); ++r) {
+			noise.values[order[r]] = (static_cast<float>(r) * step) - 1.0F;
+		}
+		return noise;
+	}
+
+	void rankNormalize(std::span<Plane> planes, uint32_t seed, float tieBreak) {
+		constexpr size_t kBins = 65536;
+		const auto		 binOf = [](float v) {
+			  return static_cast<size_t>(std::lround(std::clamp(v, 0.0F, 1.0F) * static_cast<float>(kBins - 1)));
+		};
+		// Counting sort on the binned values: a bin is a tie group, its ranks first[bin] .. first[bin + 1] - 1.
+		std::vector<size_t> first(kBins + 1, 0);
+		size_t				total = 0;
+		for (const Plane& plane : planes) {
+			for (const float v : plane.values) {
+				++first[binOf(v) + 1];
+			}
+			total += plane.values.size();
+		}
+		if (total == 0) {
+			return;
+		}
+		for (size_t b = 0; b < kBins; ++b) {
+			first[b + 1] += first[b];
+		}
+		const double last = std::max<double>(1.0, static_cast<double>(total - 1));
+		// One tile of noise, each plane reading it from its own wrapped offset: ranking the noise is a sort.
+		Plane noise;
+		for (size_t p = 0; p < planes.size(); ++p) {
+			Plane& plane = planes[p];
+			if (noise.width != plane.width || noise.height != plane.height) {
+				noise = blueNoise(plane.width, plane.height, seed);
+			}
+			const uint32_t offset = ditherHash(static_cast<uint32_t>(p), 0U, 11U, seed);
+			const int	   dx = static_cast<int>(offset % static_cast<uint32_t>(std::max(1, plane.width)));
+			const int	   dy = static_cast<int>((offset >> 16U) % static_cast<uint32_t>(std::max(1, plane.height)));
+			for (int y = 0; y < plane.height; ++y) {
+				for (int x = 0; x < plane.width; ++x) {
+					float&		 v = plane.at(x, y);
+					const size_t bin = binOf(v);
+					const double low = static_cast<double>(first[bin]) / last;
+					const double high = static_cast<double>(first[bin + 1] - 1) / last;
+					const double reach = std::min(static_cast<double>(tieBreak), 0.5 * (high - low));
+					v = static_cast<float>((0.5 * (low + high)) + (reach * noise.at((x + dx) % plane.width, (y + dy) % plane.height)));
+				}
+			}
+		}
 	}
 
 	glm::vec3 linearToLab(glm::vec3 rgb) {

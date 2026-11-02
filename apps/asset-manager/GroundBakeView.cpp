@@ -103,6 +103,10 @@ namespace asset_manager {
 		addChild<ui::Text>({.layout = kKeepHeight, .style = ui::styles::label, .text = "MIPS, ONE TEXEL A PIXEL"});
 		mips = addChild<TileImageStrip>({.id = "am_bake_mips", .layout = kHug});
 		addChild<ui::Text>(
+			{.layout = kKeepHeight, .style = ui::styles::label, .text = "HEIGHTS (ALPHA), BLACK LOW, WHITE HIGH, ONE TEXEL A PIXEL"}
+		);
+		heights = addChild<TileImageStrip>({.id = "am_bake_heights", .layout = kHug});
+		addChild<ui::Text>(
 			{.layout = kKeepHeight,
 			 .style = ui::styles::label,
 			 .text = "WHAT THE GAME SHOWS  -  VARIANTS 0 TO 3 IN A 2X2, LOD BIAS +0.25, TRILINEAR"}
@@ -156,6 +160,11 @@ namespace asset_manager {
 				status.get()->setText("Bake failed generating the variants; the log says why");
 				return;
 			}
+			if (!groundBaker.bakeHeights(*bake, *built)) {
+				baking = false;
+				status.get()->setText("Bake failed drawing the heights; the log says why");
+				return;
+			}
 			paths = std::move(*built);
 			status.get()->setText(format("Baking variant 1 of %u...", variantCount));
 			requestUpdate();
@@ -200,12 +209,22 @@ namespace asset_manager {
 		}
 		const size_t						index = std::min<size_t>(shownVariant, bake->variants.size() - 1);
 		const worldview::GroundVariantBake& variant = bake->variants[index];
-		std::vector<TileImageStrip::Image>	images;
+		std::vector<TileImageStrip::Image>	colorImages;
+		std::vector<TileImageStrip::Image>	heightImages;
 		for (size_t k = 0; k < variant.mips.size(); ++k) {
 			const worldview::GroundMip& mip = variant.mips[k];
-			images.push_back({.width = mip.size, .height = mip.size, .rgba = mip.rgba, .caption = format("mip %zu\n%d px", k, mip.size)});
+			TileImageStrip::Image		color{.width = mip.size, .height = mip.size, .rgba = mip.rgba, .caption = format("mip %zu\n%d px", k, mip.size)};
+			TileImageStrip::Image		height{.width = mip.size, .height = mip.size, .rgba = mip.rgba, .caption = color.caption};
+			for (size_t i = 0; i + 3 < mip.rgba.size(); i += 4) {
+				color.rgba[i + 3] = 255; // alpha is the height, not coverage
+				height.rgba[i] = height.rgba[i + 1] = height.rgba[i + 2] = mip.rgba[i + 3];
+				height.rgba[i + 3] = 255;
+			}
+			colorImages.push_back(std::move(color));
+			heightImages.push_back(std::move(height));
 		}
-		mips.get()->setImages(std::move(images));
+		mips.get()->setImages(std::move(colorImages));
+		heights.get()->setImages(std::move(heightImages));
 		if (!baking) {
 			status.get()->setText(format(
 				"Variant %zu of %u, seed %08x  -  %.3g m at %u px/m  -  bake %.2f s",
@@ -252,10 +271,9 @@ namespace asset_manager {
 					const glm::vec4 c = ground::sampleTrilinear(chains[chain], u, v, lod);
 					uint8_t*		out = &image.rgba[((static_cast<size_t>(py) * panel) + static_cast<size_t>(px)) * 4];
 					for (int ch = 0; ch < 3; ++ch) {
-						const float straight = c.a > 0.0F ? c[ch] / c.a : 0.0F;
-						out[ch] = static_cast<uint8_t>(std::lround(ground::linearToSrgb(straight) * 255.0F));
+						out[ch] = static_cast<uint8_t>(std::lround(ground::linearToSrgb(c[ch]) * 255.0F));
 					}
-					out[3] = static_cast<uint8_t>(std::lround(std::clamp(c.a, 0.0F, 1.0F) * 255.0F));
+					out[3] = 255;
 				}
 			}
 			const int lower = static_cast<int>(std::floor(lod));

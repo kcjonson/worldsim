@@ -81,7 +81,7 @@ namespace {
 					.contrast = 0.5F,
 					.referenceContrast = 0.6F,
 					.lockShift = glm::vec3(0.01F),
-					.minAlpha = 1.0F,
+					.heightSpread = 0.25F + (0.01F * static_cast<float>(level)),
 				});
 			}
 		}
@@ -114,6 +114,7 @@ TEST(GroundTileCacheTest, AStoredBakeComesBackWhole) {
 			EXPECT_EQ(loaded->variants[v].samples[k].mean, stored.variants[v].samples[k].mean);
 			EXPECT_EQ(loaded->variants[v].samples[k].vertexCount, stored.variants[v].samples[k].vertexCount);
 			EXPECT_EQ(loaded->variants[v].samples[k].referenceContrast, stored.variants[v].samples[k].referenceContrast);
+			EXPECT_EQ(loaded->variants[v].samples[k].heightSpread, stored.variants[v].samples[k].heightSpread);
 		}
 	}
 	EXPECT_EQ(loaded->metrics.size(), 6U) << "the metrics are measured again from the samples";

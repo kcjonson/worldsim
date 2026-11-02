@@ -22,7 +22,7 @@ namespace worldview {
 		namespace fs = std::filesystem;
 
 		constexpr uint32_t kMagic = 0x54475357U; // "WSGT" read as little-endian bytes
-		constexpr uint32_t kFormatVersion = 1;	 // the file layout below; part of the key
+		constexpr uint32_t kFormatVersion = 2;	 // the file layout below; part of the key
 
 		std::optional<std::vector<uint8_t>> readBytes(const fs::path& path) {
 			std::error_code	 ec;
@@ -116,7 +116,7 @@ namespace worldview {
 			w.put(s.contrast);
 			w.put(s.referenceContrast);
 			w.put(s.lockShift);
-			w.put(s.minAlpha);
+			w.put(s.heightSpread);
 		}
 
 		GroundMipSample getSample(Reader& r) {
@@ -129,7 +129,7 @@ namespace worldview {
 			s.contrast = r.get<float>();
 			s.referenceContrast = r.get<float>();
 			s.lockShift = r.get<glm::vec3>();
-			s.minAlpha = r.get<float>();
+			s.heightSpread = r.get<float>();
 			return s;
 		}
 
@@ -169,6 +169,7 @@ namespace worldview {
 		mix(kFormatVersion);
 		mix(GroundTileBaker::kVersion);
 		mixText(def.defName);
+		mixText(def.ground.seedGroup);
 		mix(def.variantCount);
 		mix(def.ground.periodMeters);
 		mix(def.ground.pixelsPerMeter);

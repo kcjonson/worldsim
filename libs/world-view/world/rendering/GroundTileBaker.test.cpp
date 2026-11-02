@@ -1,6 +1,7 @@
 // The ground tile baker end to end on a small def: the mip chain's shape, the registry's wrap across the tile edge, a setLod path
-// leaving the coarse mips, tiled renders matching one big one, a bake on the pool matching one in turn,
-// and the disk cache giving a bake back until the script changes. Needs a GL 3.3 context; skips on a
+// leaving the coarse mips, heights in alpha by paint order or setHeight, tiled renders matching one big
+// one, a bake on the pool matching one in turn, and the disk cache giving a bake back until the script
+// changes. Needs a GL 3.3 context; skips on a
 // headless box, like the other GL tests. The filters and the cache file have their own tests
 // (GroundTileFilter.test.cpp, GroundTileCache.test.cpp).
 
@@ -140,10 +141,10 @@ asset:addPath(fine)
 
 } // namespace
 
-TEST(GroundTileBakerTest, SeedsAreSaltedByDefAndVariant) {
-	EXPECT_NE(GroundTileBaker::variantSeed("Ground_Grass", 0), GroundTileBaker::variantSeed("Ground_Grass", 1));
-	EXPECT_NE(GroundTileBaker::variantSeed("Ground_Grass", 0), GroundTileBaker::variantSeed("Ground_Snow", 0));
-	EXPECT_EQ(GroundTileBaker::variantSeed("Ground_Grass", 3), GroundTileBaker::variantSeed("Ground_Grass", 3));
+TEST(GroundTileBakerTest, SeedsAreSaltedBySeedGroupAndVariant) {
+	EXPECT_NE(GroundTileBaker::variantSeed("grass", 0), GroundTileBaker::variantSeed("grass", 1));
+	EXPECT_NE(GroundTileBaker::variantSeed("grass", 0), GroundTileBaker::variantSeed("Ground_Snow", 0));
+	EXPECT_EQ(GroundTileBaker::variantSeed("grass", 3), GroundTileBaker::variantSeed("grass", 3)) << "one group, one layout a variant";
 	EXPECT_EQ(GroundTileBaker::mipCount(512), 7) << "capped at mip 6";
 	EXPECT_EQ(GroundTileBaker::mipCount(32), 6) << "32 down to 1";
 	EXPECT_EQ(GroundTileBaker::supersampleFor(1), 8);
@@ -167,7 +168,6 @@ TEST(GroundTileBakerTest, BakesAWrappedChainAndDropsLodPaths) {
 	for (size_t k = 0; k < v.mips.size(); ++k) {
 		EXPECT_EQ(v.mips[k].size, 32 >> k);
 		EXPECT_EQ(v.mips[k].rgba.size(), static_cast<size_t>(v.mips[k].size) * v.mips[k].size * 4);
-		EXPECT_FLOAT_EQ(v.samples[k].minAlpha, 1.0F) << "the base covers the period at mip " << k;
 	}
 	EXPECT_EQ(v.samples[0].renderSize, 256);
 	EXPECT_EQ(v.samples[2].renderSize, 32);
@@ -184,7 +184,64 @@ TEST(GroundTileBakerTest, BakesAWrappedChainAndDropsLodPaths) {
 	EXPECT_LT(linearAt(mip1, 8, 8, 0), 0.5F * linearAt(mip0, 16, 16, 0)) << "and gone from mip 1, but for the mean lock's faint tint";
 	EXPECT_GT(linearAt(mip1, 8, 8, 0), linearAt(mip1, 8, 2, 0)) << "the tint keeps its light where it was";
 	EXPECT_LT(bake->metrics[1].meanErrorPercent, 0.5F) << "the lock holds mip 1's mean to mip 0's";
+
+	// No path set a height, so each takes its paint order: the base lowest, the light square (its copy
+	// across the edge too), the setLod square on top.
+	const auto heightAt = [&mip0](int x, int y) { return mip0.rgba[((static_cast<size_t>(y) * mip0.size) + x) * 4 + 3]; };
+	EXPECT_LT(heightAt(1, 3), heightAt(30, 16));
+	EXPECT_LT(heightAt(1, 3), heightAt(1, 16));
+	EXPECT_LT(heightAt(30, 16), heightAt(16, 16));
 	assets::AssetRegistry::Get().clearDefinitions();
+}
+
+TEST(GroundTileBakerTest, HeightsRankByPaintOrderUnlessSet) {
+	GlFixture gl;
+	if (!gl.ok) {
+		GTEST_SKIP() << "No GL context (headless CI)";
+	}
+	// A base and two squares over it, the second set to height 0: below the base, though painted last.
+	const TempDir t;
+	t.write(
+		"Tile/Tile.xml",
+		"<?xml version=\"1.0\"?><AssetDefinitions><AssetDef><defName>Ground_BakeTest</defName><role>ground</role>"
+		"<assetType>procedural</assetType><generator><scriptPath>gen.lua</scriptPath></generator>"
+		"<surface>Snow</surface><period>1</period><pixelsPerMeter>32</pixelsPerMeter><variantCount>2</variantCount>"
+		"</AssetDef></AssetDefinitions>"
+	);
+	t.write(
+		"Tile/gen.lua",
+		std::string(kScript).substr(0, std::string(kScript).find("asset:addPath")) +
+			"asset:addPath(rect(0, 0, 1, 1, 0.5, 0.5, 0.5))\n"
+			"asset:addPath(rect(0.125, 0.125, 0.375, 0.375, 0.5, 0.5, 0.5))\n"
+			"local sunk = rect(0.625, 0.625, 0.875, 0.875, 0.5, 0.5, 0.5)\n"
+			"sunk:setHeight(0)\n"
+			"asset:addPath(sunk)\n"
+	);
+	auto& registry = assets::AssetRegistry::Get();
+	registry.clearDefinitions();
+	registry.loadDefinitionsFromFolder(t.root.string());
+
+	const std::optional<GroundTileBake> bake = GroundTileBaker({}).bakeDef("Ground_BakeTest");
+	ASSERT_TRUE(bake.has_value());
+	const GroundVariantBake& v = bake->variants[0];
+	const GroundMip&		 mip0 = v.mips[0];
+	const auto heightAt = [&mip0](int x, int y) { return mip0.rgba[((static_cast<size_t>(y) * mip0.size) + x) * 4 + 3]; };
+	EXPECT_LT(heightAt(24, 24), heightAt(16, 2)) << "the set square under the base";
+	EXPECT_LT(heightAt(16, 2), heightAt(8, 8)) << "the base under the square painted over it";
+	EXPECT_GT(v.samples[0].heightSpread, 0.1F) << "ranked heights spread across 0 to 1";
+
+	// Down the chain the heights are filtered, so each mip keeps mip 0's mean height.
+	const auto meanHeight = [](const GroundMip& mip) {
+		double sum = 0.0;
+		for (size_t i = 3; i < mip.rgba.size(); i += 4) {
+			sum += mip.rgba[i];
+		}
+		return sum / (static_cast<double>(mip.size) * mip.size * 255.0);
+	};
+	for (size_t k = 1; k < v.mips.size(); ++k) {
+		EXPECT_NEAR(meanHeight(v.mips[k]), meanHeight(mip0), 1.0 / 255.0) << "mip " << k;
+	}
+	registry.clearDefinitions();
 }
 
 TEST(GroundTileBakerTest, TiledRenderMatchesOneTarget) {
@@ -198,8 +255,9 @@ TEST(GroundTileBakerTest, TiledRenderMatchesOneTarget) {
 	const GroundTileBaker							baker({});
 	std::optional<GroundTileBake>					bake = baker.begin("Ground_BakeTest");
 	ASSERT_TRUE(bake.has_value());
-	const std::optional<std::vector<GroundVariantPaths>> paths = baker.buildPaths(*bake);
+	std::optional<std::vector<GroundVariantPaths>> paths = baker.buildPaths(*bake);
 	ASSERT_TRUE(paths.has_value());
+	ASSERT_TRUE(baker.bakeHeights(*bake, *paths));
 	const std::optional<GroundVariantBake> whole = baker.bakeVariant(*bake, (*paths)[1]);
 	const std::optional<GroundVariantBake> tiled = GroundTileBaker({.maxRenderSize = 48}).bakeVariant(*bake, (*paths)[1]);
 	ASSERT_TRUE(whole.has_value());

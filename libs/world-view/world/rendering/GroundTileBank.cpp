@@ -231,6 +231,14 @@ namespace worldview {
 			endDef();
 			return false;
 		}
+		phase = Clock::now();
+		const bool drewHeights = groundBaker.bakeHeights(*bake, *paths);
+		heightsMs += msSince(phase);
+		if (!drewHeights) {
+			fail(def.defName + ": its heights failed to bake (the log says why)");
+			endDef();
+			return false;
+		}
 		current = std::move(*bake);
 		currentPaths = std::move(*paths);
 		return true;
@@ -272,7 +280,7 @@ namespace worldview {
 
 	void GroundTileBank::finish() {
 		pool.reset();
-		const double stepsMs = lookupMs + pathsMs + renderMs + finishMs + uploadMs;
+		const double stepsMs = lookupMs + pathsMs + heightsMs + renderMs + finishMs + uploadMs;
 		LOG_INFO(
 			Renderer,
 			"GroundTileBank: %d variants of %zu defs in %.0f ms of bake steps (%.0f ms wall clock), %d from the cache, %d baked, %zu "
@@ -287,9 +295,11 @@ namespace worldview {
 		);
 		LOG_INFO(
 			Renderer,
-			"GroundTileBank: lookup %.0f ms, paths %.0f, render and filter %.0f, finish %.0f, upload %.0f; %.1f MiB of texture arrays",
+			"GroundTileBank: lookup %.0f ms, paths %.0f, heights %.0f, render and filter %.0f, finish %.0f, upload %.0f; %.1f MiB of "
+			"texture arrays",
 			lookupMs,
 			pathsMs,
+			heightsMs,
 			renderMs,
 			finishMs,
 			uploadMs,

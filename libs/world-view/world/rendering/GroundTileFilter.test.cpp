@@ -100,7 +100,7 @@ TEST(GroundTileFilterTest, DownsampleOfAConstantStaysConstant) {
 		bytes[i + 2] = 50;
 		bytes[i + 3] = 255;
 	}
-	const LinearImage fromBytes = downsampleSrgb8Premultiplied(bytes, 32, 32, 8, 8);
+	const LinearImage fromBytes = downsampleSrgb8(bytes, 32, 32, 8, 8);
 	for (const glm::vec4& t : fromBytes.texels) {
 		EXPECT_NEAR(t.r, srgbToLinear(100.0F / 255.0F), 1e-5F);
 		EXPECT_NEAR(t.g, srgbToLinear(150.0F / 255.0F), 1e-5F);
@@ -129,7 +129,7 @@ TEST(GroundTileFilterTest, CheckerDownsamplesToItsMeanInLinearLight) {
 			p[3] = 255;
 		}
 	}
-	const LinearImage fromBytes = downsampleSrgb8Premultiplied(bytes, 32, 32, 4, 4);
+	const LinearImage fromBytes = downsampleSrgb8(bytes, 32, 32, 4, 4);
 	EXPECT_NEAR(fromBytes.at(1, 2).g, 0.5F, 1e-4F);
 	EXPECT_NEAR(linearToSrgb(fromBytes.at(1, 2).g) * 255.0F, 188.0F, 0.5F);
 }
@@ -167,7 +167,6 @@ TEST(GroundTileFilterTest, DownsampleKeepsTheMeanOfSmallLightDetail) {
 	for (int c = 0; c < 4; ++c) {
 		EXPECT_NEAR(got[c], in[c], in[c] * 1e-5F) << "channel " << c;
 	}
-	EXPECT_GE(minAlpha(out), 1.0F);
 	for (const glm::vec4& t : out.texels) {
 		EXPECT_GE(t.b, 0.0F);
 	}
@@ -280,7 +279,129 @@ TEST(GroundTileFilterTest, MetricsOnSyntheticImages) {
 		}
 	}
 	EXPECT_NEAR(windowedRmsContrast(blocks), 0.0F, 1e-6F);
-	EXPECT_FLOAT_EQ(minAlpha(blocks), 1.0F);
+}
+
+TEST(GroundTileFilterTest, AlphaIsHeightDataNotCoverage) {
+	// A render target's bytes: one color everywhere, alpha a ramp of heights across x. Color decodes as
+	// opaque whatever the alpha, and alpha filters as data: each output texel the mean of its columns.
+	std::vector<uint8_t> bytes(32 * 32 * 4);
+	for (int y = 0; y < 32; ++y) {
+		for (int x = 0; x < 32; ++x) {
+			uint8_t* p = &bytes[((static_cast<size_t>(y) * 32) + static_cast<size_t>(x)) * 4];
+			p[0] = 180;
+			p[1] = 120;
+			p[2] = 60;
+			p[3] = static_cast<uint8_t>(x * 8);
+		}
+	}
+	const LinearImage down = downsampleSrgb8(bytes, 32, 32, 8, 8);
+	for (const glm::vec4& t : down.texels) {
+		EXPECT_NEAR(t.r, srgbToLinear(180.0F / 255.0F), 1e-5F) << "not divided or scaled by the alpha";
+		EXPECT_NEAR(t.b, srgbToLinear(60.0F / 255.0F), 1e-5F);
+	}
+	EXPECT_NEAR(mean(down).a, (31.0F * 8.0F / 2.0F) / 255.0F, 1e-4F) << "the heights' mean is kept";
+	EXPECT_LT(down.at(1, 3).a, down.at(6, 3).a) << "and the ramp comes through";
+
+	// Encoding writes alpha straight, undithered, and leaves color alone at any alpha; decoding gives both
+	// back as they were.
+	LinearImage image = filled(4, 4, {0.6F, 0.3F, 0.1F, 0.0F});
+	for (size_t i = 0; i < image.texels.size(); ++i) {
+		image.texels[i].a = static_cast<float>(i) / 15.0F;
+	}
+	const Srgb8Image encoded = encodeSrgb8(image, 9U);
+	for (size_t i = 0; i < image.texels.size(); ++i) {
+		EXPECT_EQ(encoded.rgba[(i * 4) + 3], static_cast<uint8_t>(std::lround(image.texels[i].a * 255.0F)));
+	}
+	const LinearImage decoded = decodeSrgb8(encoded);
+	EXPECT_NEAR(decoded.at(0, 0).r, 0.6F, 0.01F) << "a texel of height 0 keeps its color";
+	EXPECT_NEAR(mean(decoded).g, 0.3F, 0.3F * 0.005F);
+
+	// The mean lock moves color, not a height that already matches its reference, and color above the
+	// height isn't clamped to it.
+	LinearImage reference = image;
+	LinearImage rendered = image;
+	for (glm::vec4& t : rendered.texels) {
+		t.r *= 0.9F;
+	}
+	lockMean(rendered, reference, 2.0F);
+	for (size_t i = 0; i < image.texels.size(); ++i) {
+		EXPECT_FLOAT_EQ(rendered.texels[i].a, image.texels[i].a);
+		EXPECT_NEAR(rendered.texels[i].r, 0.6F, 1e-4F);
+	}
+}
+
+TEST(GroundTileFilterTest, RankNormalizedHeightsAreUniformWithABoundedTieBreak) {
+	// Two planes of distinct values, one low and one high: ranked together, so the low plane fills the
+	// bottom half, the order holds, and the histogram is flat.
+	std::vector<Plane> planes(2, Plane(32, 32));
+	for (int y = 0; y < 32; ++y) {
+		for (int x = 0; x < 32; ++x) {
+			const float v = (static_cast<float>((y * 32) + x) + (0.5F * noise(x, y, 0))) / 1024.0F;
+			planes[0].at(x, y) = 0.1F + (0.3F * std::sqrt(v));
+			planes[1].at(x, y) = 0.6F + (0.3F * v);
+		}
+	}
+	const std::vector<Plane> before = planes;
+	rankNormalize(planes, 5U);
+	std::vector<int> histogram(8, 0);
+	for (size_t p = 0; p < planes.size(); ++p) {
+		for (size_t i = 0; i < planes[p].values.size(); ++i) {
+			const float v = planes[p].values[i];
+			EXPECT_GE(v, 0.0F);
+			EXPECT_LE(v, 1.0F);
+			EXPECT_EQ(v < 0.5F, p == 0) << "the low plane takes the low ranks";
+			++histogram[std::min(7, static_cast<int>(v * 8.0F))];
+			if (i > 0) {
+				EXPECT_EQ(v > planes[p].values[i - 1], before[p].values[i] > before[p].values[i - 1]) << "the order holds";
+			}
+		}
+	}
+	for (const int count : histogram) {
+		EXPECT_EQ(count, 256) << "a uniform histogram";
+	}
+
+	// A plane mostly flat: the flat texels tie, sit at the middle of their ranks and dither no more than
+	// the tie-break about it, and the distinct texels keep their places above and below.
+	Plane mostlyFlat(64, 64);
+	for (int y = 0; y < 64; ++y) {
+		for (int x = 0; x < 64; ++x) {
+			mostlyFlat.at(x, y) = x < 8 ? 0.05F * noise(x, y, 1) : (x >= 56 ? 0.95F + (0.05F * noise(x, y, 2)) : 0.5F);
+		}
+	}
+	std::vector<Plane> one{mostlyFlat};
+	rankNormalize(one, 6U);
+	const float middle = 0.5F; // the flat 48 columns of 64 hold ranks 0.125 to 0.875
+	double		sum = 0.0;
+	float		lowest = 1.0F;
+	float		highest = 0.0F;
+	for (int y = 0; y < 64; ++y) {
+		for (int x = 8; x < 56; ++x) {
+			const float v = one[0].at(x, y);
+			sum += v;
+			lowest = std::min(lowest, v);
+			highest = std::max(highest, v);
+		}
+		EXPECT_LT(one[0].at(3, y), 0.125F);
+		EXPECT_GT(one[0].at(60, y), 0.875F);
+	}
+	EXPECT_NEAR(sum / (64.0 * 48.0), middle, 1e-3);
+	EXPECT_GE(lowest, middle - kHeightTieBreak - 1e-4F);
+	EXPECT_LE(highest, middle + kHeightTieBreak + 1e-4F);
+	EXPECT_GT(highest - lowest, kHeightTieBreak) << "the tie-break spreads the flat area, not a step at one value";
+
+	// The tie-break's noise is uniform in -1..1 and tiles: it holds its high frequencies across the wrap.
+	constexpr int kSide = 128;
+	const Plane	  blue = blueNoise(kSide, kSide, 3U);
+	double		  neighbor = 0.0;
+	double		  wrapped = 0.0;
+	for (int a = 0; a < kSide; ++a) {
+		for (int b = 0; b + 1 < kSide; ++b) {
+			neighbor += blue.at(b, a) * blue.at(b + 1, a);
+		}
+		wrapped += (blue.at(kSide - 1, a) * blue.at(0, a)) + (blue.at(a, kSide - 1) * blue.at(a, 0));
+	}
+	EXPECT_LT(neighbor / ((kSide - 1.0) * kSide), -0.03) << "neighbors anticorrelate: blue, not white";
+	EXPECT_LT(wrapped / (2.0 * kSide), 0.0) << "across the seams too";
 }
 
 TEST(GroundTileFilterTest, LodAndTrilinearSampleMatchTheRuntime) {

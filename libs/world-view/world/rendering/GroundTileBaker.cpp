@@ -114,6 +114,22 @@ namespace worldview {
 			return h;
 		}
 
+		// The standard deviation of an image's alpha: the spread of its heights.
+		float heightSpread(const ground::LinearImage& image) {
+			if (image.texels.empty()) {
+				return 0.0F;
+			}
+			double sum = 0.0;
+			double sumSquares = 0.0;
+			for (const glm::vec4& t : image.texels) {
+				sum += t.a;
+				sumSquares += static_cast<double>(t.a) * t.a;
+			}
+			const double n = static_cast<double>(image.texels.size());
+			const double average = sum / n;
+			return static_cast<float>(std::sqrt(std::max(0.0, (sumSquares / n) - (average * average))));
+		}
+
 		void appendf(std::string& out, const char* format, auto... values) {
 			char line[256];
 			std::snprintf(line, sizeof(line), format, values...);
@@ -125,9 +141,9 @@ namespace worldview {
 	GroundTileBaker::GroundTileBaker(const Args& newArgs)
 		: args(newArgs) {}
 
-	uint32_t GroundTileBaker::variantSeed(const std::string& defName, uint32_t variant) {
-		uint32_t h = 2166136261U; // FNV-1a over the name
-		for (const char c : defName) {
+	uint32_t GroundTileBaker::variantSeed(const std::string& seedGroup, uint32_t variant) {
+		uint32_t h = 2166136261U; // FNV-1a over the group
+		for (const char c : seedGroup) {
 			h ^= static_cast<uint8_t>(c);
 			h *= 16777619U;
 		}
@@ -297,7 +313,7 @@ namespace worldview {
 		const auto build = [&](size_t first, size_t last) {
 			for (size_t v = first; v < last; ++v) {
 				variants[v].variant = static_cast<uint32_t>(v);
-				variants[v].seed = variantSeed(bake.defName, static_cast<uint32_t>(v));
+				variants[v].seed = variantSeed(def->ground.seedGroup, static_cast<uint32_t>(v));
 				built[v] = registry.buildPaths(bake.defName, variants[v].seed, variants[v].paths, density) ? 1 : 0;
 			}
 		};
@@ -317,6 +333,47 @@ namespace worldview {
 		return variants;
 	}
 
+	bool GroundTileBaker::bakeHeights(GroundTileBake& bake, std::span<GroundVariantPaths> variants) const {
+		const auto start = Clock::now();
+		const int  renderSize = bake.layerSize * kHeightSupersample;
+
+		// The renders one after another on this thread, then the filters side by side on the pool.
+		std::vector<std::vector<uint8_t>>	   drawn(variants.size());
+		std::vector<renderer::TessellatedMesh> meshes;
+		for (size_t v = 0; v < variants.size(); ++v) {
+			if (!variants[v].paths.heightMeshesAt(static_cast<float>(bake.pixelsPerMeter), meshes)) {
+				LOG_ERROR(Engine, "GroundTileBaker: '%s' variant %u has no heights to draw", bake.defName.c_str(), variants[v].variant);
+				return false;
+			}
+			drawn[v] = render(meshes, bake.periodMeters, renderSize);
+			if (drawn[v].empty()) {
+				return false;
+			}
+		}
+
+		std::vector<ground::Plane> planes(variants.size());
+		const auto				   filter = [&](size_t first, size_t last) {
+			  for (size_t v = first; v < last; ++v) {
+				  ground::Plane gray(renderSize, renderSize);
+				  for (size_t i = 0; i < gray.values.size(); ++i) {
+					  gray.values[i] = static_cast<float>(drawn[v][i * 4]) / 255.0F;
+				  }
+				  planes[v] = ground::blurWrapped(ground::boxDownsample(gray, kHeightSupersample), kHeightBlurSigma);
+			  }
+		};
+		if (args.pool != nullptr) {
+			args.pool->parallelFor(0, variants.size(), 1, filter);
+		} else {
+			filter(0, variants.size());
+		}
+		ground::rankNormalize(planes, variants.empty() ? 0U : mix32(variants.front().seed ^ 0x68656967U));
+		for (size_t v = 0; v < variants.size(); ++v) {
+			variants[v].heights = std::move(planes[v]);
+		}
+		bake.heightsMs = msSince(start);
+		return true;
+	}
+
 	std::optional<GroundVariantBake> GroundTileBaker::bakeVariant(const GroundTileBake& bake, const GroundVariantPaths& variantPaths) const {
 		const auto		  start = Clock::now();
 		GroundVariantBake out;
@@ -324,6 +381,12 @@ namespace worldview {
 		out.seed = variantPaths.seed;
 		out.generateMs = variantPaths.paths.generateMs;
 		out.tessellateMs = variantPaths.paths.tessellateMs;
+
+		const ground::Plane& heights = variantPaths.heights;
+		if (heights.width != bake.layerSize || heights.height != bake.layerSize) {
+			LOG_ERROR(Engine, "GroundTileBaker: '%s' variant %u has no heights; bakeHeights runs first", bake.defName.c_str(), out.variant);
+			return std::nullopt;
+		}
 
 		const int							   levels = mipCount(bake.layerSize);
 		ground::LinearImage					   mip0;
@@ -358,19 +421,27 @@ namespace worldview {
 			}
 
 			phase = Clock::now();
-			ground::LinearImage linear = ground::downsampleSrgb8Premultiplied(pixels, renderSize, renderSize, size, size, args.pool);
-			sample.minAlpha = ground::minAlpha(linear);
+			ground::LinearImage linear = ground::downsampleSrgb8(pixels, renderSize, renderSize, size, size, args.pool);
 			ground::LinearImage reference;
 			if (level == 0) {
+				for (size_t i = 0; i < linear.texels.size(); ++i) {
+					linear.texels[i].a = heights.values[i];
+				}
 				mip0 = linear;
 				reference = linear;
 			} else {
+				// The heights come down the chain filtered from mip 0's, copied in before the lock so it
+				// leaves them be.
 				reference = ground::downsample(mip0, size, size, args.pool);
+				for (size_t i = 0; i < linear.texels.size(); ++i) {
+					linear.texels[i].a = reference.texels[i].a;
+				}
 				sample.lockShift = glm::vec3(ground::lockMean(linear, reference, kMeanLockSigma));
 			}
 			ground::Srgb8Image		  encoded = ground::encodeSrgb8(linear, out.seed ^ (static_cast<uint32_t>(level) * 0x9E3779B9U));
 			const ground::LinearImage decoded = ground::decodeSrgb8(encoded);
 			sample.mean = glm::vec3(ground::mean(decoded));
+			sample.heightSpread = heightSpread(decoded);
 			sample.contrast = ground::windowedRmsContrast(decoded);
 			sample.referenceContrast = ground::windowedRmsContrast(reference);
 			out.mips.push_back({.size = size, .rgba = std::move(encoded.rgba)});
@@ -378,26 +449,13 @@ namespace worldview {
 			out.filterMs += msSince(phase);
 		}
 
-		const auto thinnest = std::min_element(out.samples.begin(), out.samples.end(), [](const auto& a, const auto& b) {
-			return a.minAlpha < b.minAlpha;
-		});
-		if (thinnest->minAlpha < 1.0F - (0.5F / 255.0F)) {
-			LOG_WARNING(
-				Engine,
-				"GroundTileBaker: '%s' variant %u isn't opaque (alpha down to %.3f at mip %d); a ground tile should cover its period",
-				bake.defName.c_str(),
-				out.variant,
-				static_cast<double>(thinnest->minAlpha),
-				static_cast<int>(thinnest - out.samples.begin())
-			);
-		}
 		out.totalMs = msSince(start);
 		return out;
 	}
 
 	void GroundTileBaker::finish(GroundTileBake& bake) const {
 		bake.metrics = measure(bake.variants);
-		bake.totalMs = bake.pathsMs;
+		bake.totalMs = bake.pathsMs + bake.heightsMs;
 		for (const GroundVariantBake& v : bake.variants) {
 			bake.totalMs += v.totalMs;
 		}
@@ -429,7 +487,7 @@ namespace worldview {
 			return bake;
 		}
 		std::optional<std::vector<GroundVariantPaths>> paths = buildPaths(*bake);
-		if (!paths.has_value()) {
+		if (!paths.has_value() || !bakeHeights(*bake, *paths)) {
 			return std::nullopt;
 		}
 		for (GroundVariantPaths& variantPaths : *paths) {
@@ -468,6 +526,7 @@ namespace worldview {
 				m.vertexCount = std::max(m.vertexCount, s.vertexCount);
 				m.meshCount = std::max(m.meshCount, s.meshCount);
 				m.renderMs += s.renderMs / static_cast<double>(variants.size());
+				m.heightSpread += s.heightSpread / static_cast<float>(variants.size());
 				for (int c = 0; c < 3; ++c) {
 					const float base = std::max(s0.mean[c], 1e-6F);
 					m.meanErrorPercent = std::max(m.meanErrorPercent, 100.0F * std::abs(s.mean[c] - s0.mean[c]) / base);
@@ -519,19 +578,21 @@ namespace worldview {
 			const double n = std::max<double>(1.0, static_cast<double>(bake.variants.size()));
 			appendf(
 				out,
-				": paths %.0f ms on the pool (generate %.0f, tessellate %.0f a variant), then render %.0f, filter %.0f a variant\n",
+				": paths %.0f ms on the pool (generate %.0f, tessellate %.0f a variant), heights %.0f, then render %.0f, filter %.0f a "
+				"variant\n",
 				bake.pathsMs,
 				generateMs / n,
 				tessellateMs / n,
+				bake.heightsMs,
 				renderMs / n,
 				filterMs / n
 			);
 		}
-		appendf(out, "mip  size  render       verts  meshes   rnd ms  mean%%  dE0   dEprev  spread  contrast   lock%%\n");
+		appendf(out, "mip  size  render       verts  meshes   rnd ms  mean%%  dE0   dEprev  spread  contrast   lock%%  h sd\n");
 		for (const GroundMipMetrics& m : bake.metrics) {
 			appendf(
 				out,
-				"%3d  %4d  %4d (%dx)  %7zu  %6zu  %7.1f  %5.2f  %4.2f  %6.2f  %6.2f  %3.0f-%3.0f%%  %5.2f",
+				"%3d  %4d  %4d (%dx)  %7zu  %6zu  %7.1f  %5.2f  %4.2f  %6.2f  %6.2f  %3.0f-%3.0f%%  %5.2f  %4.2f",
 				m.level,
 				m.size,
 				m.renderSize,
@@ -545,7 +606,8 @@ namespace worldview {
 				static_cast<double>(m.variantSpread),
 				static_cast<double>(m.contrastRatioMin * 100.0F),
 				static_cast<double>(m.contrastRatioMax * 100.0F),
-				static_cast<double>(m.lockShiftPercent)
+				static_cast<double>(m.lockShiftPercent),
+				static_cast<double>(m.heightSpread)
 			);
 			if (m.failures() > 0) {
 				out += "  FAIL:";
