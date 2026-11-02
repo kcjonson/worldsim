@@ -33,9 +33,9 @@ namespace world_sim {
 		GpuHold(GpuHold&&) = delete;
 		GpuHold& operator=(GpuHold&&) = delete;
 
-		/// /api/control?action=gpuhold: value=0|1 turns it off or on, target=0.05..0.95 sets the
-		/// fraction of the frame time to hold; either may be left out. False, with the 400's message in
-		/// error, for any other value.
+		/// /api/control?action=gpuhold (GpuHoldCommand.h): value=0|1 turns it off or on, target=0.05..0.95
+		/// sets the fraction of the frame time to hold; either may be left out. False, with the 400's message
+		/// in error, for any other value.
 		bool configure(const std::map<std::string, std::string>& params, std::string& error);
 
 		/// Once a frame, with GL current and no GPU timer span open. sceneGpuMs: the scene's GPU time.

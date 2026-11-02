@@ -1,5 +1,7 @@
 #include "scenes/game/dev/GpuHold.h"
 
+#include "scenes/game/dev/GpuHoldCommand.h"
+
 #include <backend/gl/GLFramebuffer.h>
 #include <backend/gl/GLTexture.h>
 #include <backend/gl/GLVertexArray.h>
@@ -10,7 +12,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdlib>
 #include <sstream>
 
 namespace world_sim {
@@ -21,8 +22,6 @@ namespace world_sim {
 		constexpr int	kIterations = 128; // the fragment loop: a pass is about 55 us at P0 on a 3090
 		constexpr float kMaxPasses = 1024.0F;
 		constexpr float kMinPassCount = 0.25F; // below one pass draws nothing, and grows back from here
-		constexpr float kMinTarget = 0.05F;
-		constexpr float kMaxTarget = 0.95F;
 
 		// Each frame the pass count moves by kGain of the load's relative error, at most kMaxStep either
 		// way. The GPU timer's result is four frames old, and this stays stable under that lag.
@@ -56,16 +55,6 @@ void main() {
 }
 )";
 
-		bool parseFloat(const std::string& text, float& out) {
-			char*		end = nullptr;
-			const float parsed = std::strtof(text.c_str(), &end);
-			if (end == text.c_str() || *end != '\0' || !std::isfinite(parsed)) {
-				return false;
-			}
-			out = parsed;
-			return true;
-		}
-
 	} // namespace
 
 	struct GpuHold::Gl {
@@ -80,28 +69,15 @@ void main() {
 	GpuHold::~GpuHold() = default;
 
 	bool GpuHold::configure(const std::map<std::string, std::string>& params, std::string& error) {
-		std::optional<bool>	 on;
-		std::optional<float> fraction;
-		if (const auto it = params.find("value"); it != params.end()) {
-			if (it->second != "0" && it->second != "1") {
-				error = "gpuhold: value must be 0 or 1";
-				return false;
-			}
-			on = it->second == "1";
+		const std::optional<GpuHoldCommand> command = parseGpuHoldCommand(params, error);
+		if (!command) {
+			return false;
 		}
-		if (const auto it = params.find("target"); it != params.end()) {
-			float parsed = 0.0F;
-			if (!parseFloat(it->second, parsed) || parsed < kMinTarget || parsed > kMaxTarget) {
-				error = "gpuhold: target must be a number from 0.05 to 0.95";
-				return false;
-			}
-			fraction = parsed;
+		if (command->target) {
+			target = *command->target;
 		}
-		if (fraction) {
-			target = *fraction;
-		}
-		if (on && *on != enabled) {
-			enabled = *on;
+		if (command->enabled && *command->enabled != enabled) {
+			enabled = *command->enabled;
 			reset();
 			LOG_INFO(Game, "GPU hold %s (target %.2f of the frame)", enabled ? "on" : "off", static_cast<double>(target));
 		}
