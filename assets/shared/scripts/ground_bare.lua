@@ -606,7 +606,8 @@ layoutPatches("tint")
 -- the k-th of <prefix>Colors and its height bump from <prefix>Relief. With <prefix>Bevel a rise is
 -- also lit along its upper edge and shaded along its lower one, and a hollow the other way: copies
 -- of the level moved that far up and down under it, the lit one <prefix>Lit times its color and the
--- shaded one what cancels it.
+-- shaded one what cancels it, or the shaded one <prefix>Shade when given (snow's lee is blue, not
+-- grey) and the lit one what cancels that.
 -- The field is <prefix>Waves waves of <prefix>Cycles a period, stretched <prefix>Stretch along x,
 -- falling off as cycles^-<prefix>Slope. The levels are ground: the tone grid and the far mips see them.
 local function moved(s, dx, dy)
@@ -629,6 +630,7 @@ local function layoutRegions(prefix)
 	local bevel = getFloat(prefix .. "Bevel", 0)
 	local sorted = sortedValues(g)
 	local litK = getFloat(prefix .. "Lit", 1.15)
+	local shade = getString(prefix .. "Shade", "")
 	for k, share in ipairs(levels) do
 		local sign = share > 0 and 1 or -1
 		local loops = contourLoops(g, quantile(sorted, share > 0 and 1 - share or -share), sign)
@@ -639,8 +641,13 @@ local function layoutRegions(prefix)
 			if bevel > 0 then
 				-- The lit and shaded edges are as wide and cancel in linear light, so however far a level's
 				-- outline runs they leave the mean be, and they're too thin for the tone grid to see.
-				local lit = { c[1] * litK, c[2] * litK, c[3] * litK }
-				local dark = { 2 * c[1] - lit[1], 2 * c[2] - lit[2], 2 * c[3] - lit[3] }
+				local lit, dark = { c[1] * litK, c[2] * litK, c[3] * litK }, nil
+				if shade ~= "" then
+					dark = toLinear(parseHex(shade))
+					lit = { 2 * c[1] - dark[1], 2 * c[2] - dark[2], 2 * c[3] - dark[3] }
+				else
+					dark = { 2 * c[1] - lit[1], 2 * c[2] - lit[2], 2 * c[3] - lit[3] }
+				end
 				local edge = bump(rise * 0.5)
 				steps[#steps + 1] = { moved(s, 0, -bevel), sign > 0 and lit or dark, edge, thin = true }
 				steps[#steps + 1] = { moved(s, 0, bevel), sign > 0 and dark or lit, edge, thin = true }

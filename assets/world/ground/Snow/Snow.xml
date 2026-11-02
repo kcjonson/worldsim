@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Snow ground tile: soft off-white snow (ground_bare.lua). Wind-sculpted drifts and fine ripples,
-     each a bright crest over a cool blue lee, soft blue hollows, faint grain, sparse ice sparkle that
-     only the nearest zooms show, and the odd twig or grass tip poking through. -->
+<!-- Snow ground tile: soft off-white snow (ground_bare.lua). Wind-packed and quiet: faint drifts lit
+     along their upper edges over a cool blue lee, soft blue hollows, dense faint grain, sparse ice
+     sparkle that only the nearest zooms show, and the odd twig or grass tip poking through. -->
 <AssetDefinitions>
   <AssetDef>
     <defName>Ground_Snow</defName>
@@ -12,41 +12,34 @@
     <generator>
       <scriptPath>@shared/ground_bare.lua</scriptPath>
       <params>
-        <!-- Must equal <period> below. The knobs are documented in Dirt.xml and Sand.xml; sparkle and
+        <!-- Must equal <period> below. The knobs are documented in Dirt.xml and Rock.xml; sparkle and
              grass tips are here. -->
         <period>4</period>
         <baseColor>#E1E7EE</baseColor>
 
-        <patchDensity>1</patchDensity>
-        <patchSize>0.35,0.8</patchSize>
-        <patchLight>#E7ECF1</patchLight>
-        <patchDark>#D9E1EB</patchDark>
-        <patchSteps>3</patchSteps>
-        <patchStretch>2.5</patchStretch>
-        <patchWobble>0.5</patchWobble>
+        <!-- Regions (documented in Rock.xml): tone is the wind-packed snow, faintly brighter mounds
+             and cool blue hollows, stretched across the screen by the wind; ledge is the drifts, each
+             lit along its upper edge and shaded in a cool blue (ledgeShade) along its lower one, so
+             they read as soft sculpted shapes, never as lines. -->
+        <toneWaves>48</toneWaves>
+        <toneCycles>3,14</toneCycles>
+        <toneStretch>1.8</toneStretch>
+        <toneSlope>2.6</toneSlope>
+        <toneLevels>0.36,0.12,-0.34,-0.12</toneLevels>
+        <toneColors>#E5EAF0,#E9EDF3,#DAE2EC,#D4DCE8</toneColors>
+        <ledgeWaves>40</ledgeWaves>
+        <ledgeCycles>3,10</ledgeCycles>
+        <ledgeStretch>2.2</ledgeStretch>
+        <ledgeSlope>2.2</ledgeSlope>
+        <ledgeLevels>0.3</ledgeLevels>
+        <ledgeColors>#E3E8EE</ledgeColors>
+        <ledgeBevel>0.022</ledgeBevel>
+        <ledgeShade>#D3DCE8</ledgeShade>
 
-        <driftWavelength>0.35</driftWavelength>
-        <driftWidth>0.05,0.09</driftWidth>
-        <driftCoverage>0.75</driftCoverage>
-        <driftAmp>0.07</driftAmp>
-        <driftWaveCycles>5</driftWaveCycles>
-        <driftWander>0.75</driftWander>
-        <driftBreakCycles>5</driftBreakCycles>
-        <driftSoft>1</driftSoft>
-        <driftLit>#F3F6F9</driftLit>
-        <driftShadow>#C6D2E2</driftShadow>
-        <rippleWavelength>0.13</rippleWavelength>
-        <rippleWidth>0.014,0.02</rippleWidth>
-        <rippleCoverage>0.5</rippleCoverage>
-        <rippleAmp>0.03</rippleAmp>
-        <rippleWaveCycles>10</rippleWaveCycles>
-        <rippleWander>0.6</rippleWander>
-        <rippleLit>#ECF0F5</rippleLit>
-        <rippleShadow>#D3DCE8</rippleShadow>
-
-        <grainDensity>300</grainDensity>
-        <grainSize>0.012,0.02</grainSize>
-        <grainContrast>0.05</grainContrast>
+        <!-- Grain: dense, faint sugar. -->
+        <grainDensity>1200</grainDensity>
+        <grainSize>0.006,0.012</grainSize>
+        <grainContrast>0.035</grainContrast>
 
         <twigDensity>0.3</twigDensity>
         <twigLength>0.05,0.12</twigLength>
@@ -74,7 +67,7 @@
         <sparkleColors>#FFFFFF,#FFFFFF,#F2F8FF,#FFF8E8</sparkleColors>
 
         <farContrast>0.9</farContrast>
-        <farGain>0.9988,1.0007,1.0034</farGain>
+        <farGain>0.9996,0.9971,0.9991</farGain>
 
         <!-- Heights (documented in Dirt.xml): one flat, mid height for all the snow, so it ranks as one tie
              group, and only twigs, stones and grass tips stand out of it. -->
