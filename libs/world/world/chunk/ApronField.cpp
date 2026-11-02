@@ -1,5 +1,7 @@
 #include "ApronField.h"
 
+#include "world/chunk/TerrainPolygonBuilder.h"
+
 #include <array>
 #include <cassert>
 
@@ -14,74 +16,86 @@ namespace world {
 
 	} // namespace
 
-	NeighborhoodGrids::NeighborhoodGrids(const ChunkSampleResult& sampleData)
-		: m_sampleData(sampleData),
-		  m_grids(9) {}
+	ChunkNeighborhood::ChunkNeighborhood(ChunkCoordinate coord, const ChunkSampleResult& sampleData, uint64_t worldSeed)
+		: center(coord),
+		  sample(sampleData),
+		  seed(worldSeed) {}
 
-	const ChunkSampleResult& NeighborhoodGrids::grid(int32_t dx, int32_t dy) {
+	const ChunkBiomes& ChunkNeighborhood::biomes(int32_t dx, int32_t dy) {
 		assert(dx >= -1 && dx <= 1 && dy >= -1 && dy <= 1);
-		if (dx == 0 && dy == 0) {
-			return m_sampleData;
+		std::optional<ChunkBiomes>& chunk = chunks[neighborIndex(dx, dy)];
+		if (!chunk) {
+			const std::array<BiomeWeights, 4> corners = (dx == 0 && dy == 0) ? sample.cornerBiomes : sample.neighborCornerBiomes(dx, dy);
+			chunk.emplace(ChunkCoordinate{center.x + dx, center.y + dy}, corners, seed);
 		}
-		const size_t idx = neighborIndex(dx, dy);
-		if (!m_built[idx]) {
-			m_grids[idx].cornerBiomes = m_sampleData.neighborCornerBiomes(dx, dy);
-			m_grids[idx].cornerElevations = m_sampleData.neighborCornerElevations(dx, dy);
-			m_grids[idx].computeSectorGrid();
-			m_built[idx] = true;
-		}
-		return m_grids[idx];
+		return *chunk;
 	}
 
-	Biome NeighborhoodGrids::primaryBiomeAt(ChunkCoordinate coord, int64_t tx, int64_t ty) {
-		const int64_t lx = tx - static_cast<int64_t>(coord.x) * kChunkSize;
-		const int64_t ly = ty - static_cast<int64_t>(coord.y) * kChunkSize;
+	float ChunkNeighborhood::tileElevation(int32_t dx, int32_t dy, uint16_t localX, uint16_t localY) const {
+		const std::array<float, 4> corners = (dx == 0 && dy == 0) ? sample.cornerElevations : sample.neighborCornerElevations(dx, dy);
+		const float				   u = static_cast<float>(localX) / static_cast<float>(kChunkSize - 1);
+		const float				   v = static_cast<float>(localY) / static_cast<float>(kChunkSize - 1);
+		const float				   top = corners[0] * (1.0F - u) + corners[1] * u;
+		const float				   bottom = corners[2] * (1.0F - u) + corners[3] * u;
+		return top * (1.0F - v) + bottom * v;
+	}
+
+	ChunkNeighborhood::Owner ChunkNeighborhood::ownerOf(int64_t tx, int64_t ty) const {
+		const int64_t lx = tx - static_cast<int64_t>(center.x) * kChunkSize;
+		const int64_t ly = ty - static_cast<int64_t>(center.y) * kChunkSize;
+		assert(lx >= -kChunkSize && lx < 2 * kChunkSize && ly >= -kChunkSize && ly < 2 * kChunkSize);
 		const int32_t dx = (lx < 0) ? -1 : ((lx >= kChunkSize) ? 1 : 0);
 		const int32_t dy = (ly < 0) ? -1 : ((ly >= kChunkSize) ? 1 : 0);
-		assert(lx >= -kChunkSize && lx < 2 * kChunkSize && ly >= -kChunkSize && ly < 2 * kChunkSize);
-		const auto nx = static_cast<uint16_t>(lx - dx * kChunkSize);
-		const auto ny = static_cast<uint16_t>(ly - dy * kChunkSize);
-		return grid(dx, dy).getTileBiome(nx, ny).primary();
+		return {
+			.dx = dx,
+			.dy = dy,
+			.localX = static_cast<uint16_t>(lx - dx * kChunkSize),
+			.localY = static_cast<uint16_t>(ly - dy * kChunkSize),
+		};
 	}
 
-	ApronField ApronField::build(ChunkCoordinate coord, const ChunkSampleResult& neighborhoodSource,
-	                              const ChunkSampleResult& hydrology, uint64_t worldSeed) {
+	TileBiome ChunkNeighborhood::tileBiomeAt(int64_t tx, int64_t ty) {
+		const Owner owner = ownerOf(tx, ty);
+		return biomes(owner.dx, owner.dy).at(owner.localX, owner.localY);
+	}
+
+	bool ChunkNeighborhood::isBiomeWaterAt(int64_t tx, int64_t ty) {
+		const Owner		   owner = ownerOf(tx, ty);
+		const ChunkBiomes& chunk = biomes(owner.dx, owner.dy);
+		return chunk.anyWater() && isBiomeWater(chunk.at(owner.localX, owner.localY).primary);
+	}
+
+	ApronField ApronField::build(ChunkNeighborhood& neighborhood, const ChunkSampleResult& hydrology) {
 		ApronField field;
 		field.m_top.resize(static_cast<size_t>(kExtendedSize) * static_cast<size_t>(kApronTiles));
 		field.m_bottom.resize(static_cast<size_t>(kExtendedSize) * static_cast<size_t>(kApronTiles));
 		field.m_left.resize(static_cast<size_t>(kApronTiles) * static_cast<size_t>(kChunkSize));
 		field.m_right.resize(static_cast<size_t>(kApronTiles) * static_cast<size_t>(kChunkSize));
 
-		// Each of the 8 neighbors' own biome/elevation grid, reused for every apron
-		// tile that neighbor owns.
-		NeighborhoodGrids grids(neighborhoodSource);
-
 		// Compute one extended-region tile: find the neighbor chunk that owns it,
-		// resolve biome/elevation from that neighbor's own grid, and run it through
-		// the same tile-compute core the neighbor's own generate() would use.
+		// take its biome and elevation as that neighbor computes them, and run it
+		// through the same tile-compute core the neighbor's own generate() uses.
 		// Hydrology (river/pond) always comes from `hydrology`: it is a
 		// world-position query already gathered over the extended AABB (D4), so it
 		// covers every apron tile regardless of which neighbor conceptually owns it.
-		auto computeExtended = [&](int32_t ex, int32_t ey) -> TileData {
-			const int32_t lx = ex - kApronTiles;
-			const int32_t ly = ey - kApronTiles;
-			const int32_t dx = (lx < 0) ? -1 : ((lx >= kChunkSize) ? 1 : 0);
-			const int32_t dy = (ly < 0) ? -1 : ((ly >= kChunkSize) ? 1 : 0);
-			assert((dx != 0 || dy != 0) && "extended coordinate falls inside the chunk's own square");
-			const auto nx = static_cast<uint16_t>(lx - dx * kChunkSize);
-			const auto ny = static_cast<uint16_t>(ly - dy * kChunkSize);
-			const ChunkCoordinate neighborCoord{coord.x + dx, coord.y + dy};
-			const ChunkSampleResult& grid = grids.grid(dx, dy);
-
-			return Chunk::computeTileFrom({
-				.coord = neighborCoord,
-				.localX = nx,
-				.localY = ny,
-				.biomeWeights = grid.getTileBiome(nx, ny),
-				.elevationMeters = grid.getTileElevation(nx, ny),
-				.hydrology = &hydrology,
-				.worldSeed = worldSeed,
-			});
+		const ChunkCoordinate coord = neighborhood.coord();
+		auto				  computeExtended = [&](int32_t ex, int32_t ey) -> TileData {
+			 const int32_t lx = ex - kApronTiles;
+			 const int32_t ly = ey - kApronTiles;
+			 const int32_t dx = (lx < 0) ? -1 : ((lx >= kChunkSize) ? 1 : 0);
+			 const int32_t dy = (ly < 0) ? -1 : ((ly >= kChunkSize) ? 1 : 0);
+			 assert((dx != 0 || dy != 0) && "extended coordinate falls inside the chunk's own square");
+			 const auto nx = static_cast<uint16_t>(lx - dx * kChunkSize);
+			 const auto ny = static_cast<uint16_t>(ly - dy * kChunkSize);
+			 return Chunk::computeTileFrom({
+				 .coord = {coord.x + dx, coord.y + dy},
+				 .localX = nx,
+				 .localY = ny,
+				 .biome = neighborhood.biomes(dx, dy).at(nx, ny),
+				 .elevationMeters = neighborhood.tileElevation(dx, dy, nx, ny),
+				 .hydrology = &hydrology,
+				 .worldSeed = neighborhood.worldSeed(),
+			 });
 		};
 
 		for (int32_t ey = 0; ey < kApronTiles; ++ey) {

@@ -60,9 +60,19 @@ namespace world {
 		// below) reads only the segments near the chunk via this hydrology-only
 		// result; the builder reads the whole gather off m_biomeData directly.
 		const ChunkSampleResult raster = m_biomeData.rasterHydrology(m_coord);
+		ChunkNeighborhood		neighborhood(m_coord, m_biomeData, m_worldSeed);
+		const ChunkBiomes&		biomes = neighborhood.biomes(0, 0);
 		for (uint16_t y = 0; y < kChunkSize; ++y) {
 			for (uint16_t x = 0; x < kChunkSize; ++x) {
-				m_tiles[y * kChunkSize + x] = computeTile(x, y, raster);
+				m_tiles[y * kChunkSize + x] = computeTileFrom({
+					.coord = m_coord,
+					.localX = x,
+					.localY = y,
+					.biome = biomes.at(x, y),
+					.elevationMeters = neighborhood.tileElevation(0, 0, x, y),
+					.hydrology = &raster,
+					.worldSeed = m_worldSeed,
+				});
 			}
 		}
 		const double tilesMs = stageMs();
@@ -71,17 +81,27 @@ namespace world {
 		// then their distance field (D10): before post-processing, so these tiles
 		// match what a neighbor's apron computes for them. The apron lives on to
 		// fill the render tiles' apron below.
-		const ApronField	apron = ApronField::build(m_coord, m_biomeData, raster, m_worldSeed);
+		const ApronField	apron = ApronField::build(neighborhood, raster);
 		const ExtendedTiles extended(*this, apron);
 		const double		apronMs = stageMs();
 		double				polygonsMs = 0.0;
 		{
-			NeighborhoodGrids	 neighborhood(m_biomeData);
+			// Biome water over the extended region is its tiles' (already picked); beyond it, where
+			// river mouths reach, the neighborhood picks the same tile.
+			const int64_t		 extendedX = static_cast<int64_t>(m_coord.x) * kChunkSize - kApronTiles;
+			const int64_t		 extendedY = static_cast<int64_t>(m_coord.y) * kChunkSize - kApronTiles;
 			ChunkTerrainPolygons polygons = TerrainPolygonBuilder::build(
 				m_coord,
 				m_worldSeed,
 				[&extended](int32_t ex, int32_t ey) -> const TileData& { return extended.at(ex, ey); },
-				[this, &neighborhood](int64_t tx, int64_t ty) { return isBiomeWater(neighborhood.primaryBiomeAt(m_coord, tx, ty)); },
+				[&](int64_t tx, int64_t ty) {
+					const int64_t ex = tx - extendedX;
+					const int64_t ey = ty - extendedY;
+					if (ex >= 0 && ey >= 0 && ex < kExtendedSize && ey < kExtendedSize) {
+						return isBiomeWater(extended.at(static_cast<int32_t>(ex), static_cast<int32_t>(ey)));
+					}
+					return neighborhood.isBiomeWaterAt(tx, ty);
+				},
 				m_biomeData.riverSegments,
 				m_biomeData.pondBlobs
 			);
@@ -159,28 +179,12 @@ namespace world {
 		return m_tiles[localY * kChunkSize + localX];
 	}
 
-	TileData Chunk::computeTile(uint16_t localX, uint16_t localY, const ChunkSampleResult& hydrology) const {
-		return computeTileFrom({
-			.coord = m_coord,
-			.localX = localX,
-			.localY = localY,
-			.biomeWeights = m_biomeData.getTileBiome(localX, localY),
-			.elevationMeters = m_biomeData.getTileElevation(localX, localY),
-			.hydrology = &hydrology,
-			.worldSeed = m_worldSeed,
-		});
-	}
-
 	TileData Chunk::computeTileFrom(const TileComputeArgs& args) {
 		TileData tile;
 
-		// Store primary and secondary biomes with blend weight
-		tile.primaryBiome = args.biomeWeights.primary();
-		tile.secondaryBiome = args.biomeWeights.secondary();
-
-		// Convert float weight (0.0-1.0) to uint8_t (0-255)
-		float primaryWeight = args.biomeWeights.primaryWeight();
-		tile.biomeBlend = static_cast<uint8_t>(std::min(255.0F, primaryWeight * 255.0F));
+		tile.primaryBiome = args.biome.primary;
+		tile.secondaryBiome = args.biome.secondary;
+		tile.biomeBlend = args.biome.blend;
 
 		// Elevation in meters -> centimeters, clamped to uint16_t
 		float elevCm = args.elevationMeters * 100.0F;

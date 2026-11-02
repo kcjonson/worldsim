@@ -15,50 +15,70 @@
 #include "world/chunk/Chunk.h"
 #include "world/chunk/ChunkCoordinate.h"
 #include "world/chunk/ChunkSampleResult.h"
+#include "world/chunk/TileBiomes.h"
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace world {
 
-/// The biome/elevation grids of a chunk's 3x3 neighborhood, each rebuilt from the
-/// sample data's neighborhood corner lattice exactly as that neighbor builds its
-/// own (D4), lazily, on first use. The chunk itself (0, 0) reads `sampleData`.
-/// One per generation call: not thread-safe.
-class NeighborhoodGrids {
+/// A generating chunk's 3x3 neighborhood (D4): the biome and elevation of every
+/// tile its generation reads, each chunk's computed as that chunk computes its
+/// own, from the sample's corner lattice. The chunk itself (0, 0) reads the
+/// sample's own corners. Each chunk's ChunkBiomes is built on first use. One per
+/// generation call: not thread-safe.
+class ChunkNeighborhood {
   public:
-	/// `sampleData` must carry the neighborhood corner lattice
+	/// `sample` must carry the neighborhood corner lattice
 	/// (fillNeighborhoodCorners) and outlive this.
-	explicit NeighborhoodGrids(const ChunkSampleResult& sampleData);
+	ChunkNeighborhood(ChunkCoordinate coord, const ChunkSampleResult& sample, uint64_t worldSeed);
 
-	/// Grid of the neighbor at offset (dx, dy), each in [-1, 1].
-	[[nodiscard]] const ChunkSampleResult& grid(int32_t dx, int32_t dy);
+	[[nodiscard]] ChunkCoordinate coord() const { return center; }
+	[[nodiscard]] uint64_t worldSeed() const { return seed; }
 
-	/// Primary biome of world tile (tx, ty), the tile the owning chunk's own
-	/// generate() computes there. (tx, ty) must lie in the neighborhood of `coord`.
-	[[nodiscard]] Biome primaryBiomeAt(ChunkCoordinate coord, int64_t tx, int64_t ty);
+	/// The biomes of the chunk at offset (dx, dy), each in [-1, 1].
+	[[nodiscard]] const ChunkBiomes& biomes(int32_t dx, int32_t dy);
+
+	/// Elevation, meters, of local tile (localX, localY) of the chunk at offset
+	/// (dx, dy): one plane a chunk through its corners.
+	[[nodiscard]] float tileElevation(int32_t dx, int32_t dy, uint16_t localX, uint16_t localY) const;
+
+	/// The biome of world tile (tx, ty), the one its owning chunk's own
+	/// generate() computes there. (tx, ty) must lie in the neighborhood.
+	[[nodiscard]] TileBiome tileBiomeAt(int64_t tx, int64_t ty);
+
+	/// isBiomeWater (D5) of world tile (tx, ty), as tileBiomeAt, without the pick
+	/// where the owning chunk weighs no water biome.
+	[[nodiscard]] bool isBiomeWaterAt(int64_t tx, int64_t ty);
 
   private:
-	const ChunkSampleResult&	   m_sampleData;
-	std::vector<ChunkSampleResult> m_grids; // on the heap: nine are ~330 KB, too much for a worker's stack
-	std::array<bool, 9>			   m_built{};
+	struct Owner {
+		int32_t	 dx = 0;
+		int32_t	 dy = 0;
+		uint16_t localX = 0;
+		uint16_t localY = 0;
+	};
+	[[nodiscard]] Owner ownerOf(int64_t tx, int64_t ty) const;
+
+	ChunkCoordinate						  center;
+	const ChunkSampleResult&			  sample;
+	uint64_t							  seed;
+	std::array<std::optional<ChunkBiomes>, 9> chunks;
 };
 
 /// The apron ring of tiles around a chunk: the kExtendedSize x kExtendedSize
 /// extended region minus the chunk's own kChunkSize x kChunkSize square.
 class ApronField {
   public:
-	/// Build the apron for `coord`. `neighborhoodSource` must carry the
-	/// neighborhood corner lattice (fillNeighborhoodCorners); it is normally the
-	/// generating chunk's own ChunkSampleResult (m_biomeData), used only for that
-	/// lattice, never for river/pond queries. `hydrology` supplies
+	/// Build the apron of the neighborhood's chunk, each tile's biome and
+	/// elevation from the neighbor that owns it. `hydrology` supplies
 	/// riverHalfWidthAt/pondDepthAt for every apron tile regardless of which
 	/// neighbor conceptually owns it (river/pond geometry is world-position-based
 	/// and doesn't care); it is normally the generating chunk's rasterHydrology()
 	/// result, gathered over the extended AABB (D4).
-	[[nodiscard]] static ApronField build(ChunkCoordinate coord, const ChunkSampleResult& neighborhoodSource,
-	                                       const ChunkSampleResult& hydrology, uint64_t worldSeed);
+	[[nodiscard]] static ApronField build(ChunkNeighborhood& neighborhood, const ChunkSampleResult& hydrology);
 
 	/// Tile at extended-region coordinates (ex, ey), each in [0, kExtendedSize),
 	/// excluding the interior [kApronTiles, kApronTiles + kChunkSize) square (that

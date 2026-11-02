@@ -13,6 +13,7 @@ add_library(world
     world/chunk/TerrainDistanceField.cpp
     world/chunk/TerrainPolygonBuilder.cpp
     world/chunk/TerrainPolygonQuery.cpp
+    world/chunk/TileBiomes.cpp
 )
 
 target_include_directories(world

@@ -114,16 +114,15 @@ namespace {
 		const world::GeneratedWorldSampler			sampler(world.world, world.landingLat, world.landingLon);
 		auto chunk = std::make_unique<Chunk>(coord, sampler.sampleChunk(coord), sampler.getWorldSeed());
 		chunk->generate();
-		const world::ApronField	   apron = world::ApronField::build(
-			coord, chunk->biomeData(), chunk->biomeData().rasterHydrology(coord), sampler.getWorldSeed());
+		world::ChunkNeighborhood   neighborhood(coord, chunk->biomeData(), sampler.getWorldSeed());
+		const world::ApronField	   apron = world::ApronField::build(neighborhood, chunk->biomeData().rasterHydrology(coord));
 		const world::ExtendedTiles extended(*chunk, apron);
 		const TerrainPolygonBuilder::ExtendedTileFn fn = [&extended](int32_t ex, int32_t ey) -> const TileData& {
 			return extended.at(ex, ey);
 		};
 		const world::ChunkSampleResult& sample = chunk->biomeData();
-		world::NeighborhoodGrids		neighborhood(sample);
-		const TerrainPolygonBuilder::BiomeWaterFn waterFn = [&neighborhood, coord](int64_t tx, int64_t ty) {
-			return world::isBiomeWater(neighborhood.primaryBiomeAt(coord, tx, ty));
+		const TerrainPolygonBuilder::BiomeWaterFn waterFn = [&neighborhood](int64_t tx, int64_t ty) {
+			return neighborhood.isBiomeWaterAt(tx, ty);
 		};
 		ChunkTerrainPolygons polys;
 		for (auto _ : state) {

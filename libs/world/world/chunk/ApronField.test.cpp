@@ -83,8 +83,8 @@ TEST(ApronFieldTest, MatchesRealNeighborsAcrossEastSouthSoutheastBorders) {
 		neighbors[c] = generateChunk(sampler, c);
 	}
 
-	ApronField apron = ApronField::build(origin, chunk00->biomeData(), chunk00->biomeData().rasterHydrology(origin),
-	                                      sampler.getWorldSeed());
+	ChunkNeighborhood neighborhood(origin, chunk00->biomeData(), sampler.getWorldSeed());
+	ApronField apron = ApronField::build(neighborhood, chunk00->biomeData().rasterHydrology(origin));
 
 	int checked = 0;
 	for (int32_t ey = 0; ey < kExtendedSize; ++ey) {
@@ -124,8 +124,8 @@ TEST(ApronFieldTest, NegativeCoordinateNeighborMatches) {
 	std::unique_ptr<Chunk> chunkNeg = generateChunk(sampler, origin);
 	std::unique_ptr<Chunk> chunkSE = generateChunk(sampler, southeast);
 
-	ApronField apron = ApronField::build(origin, chunkNeg->biomeData(), chunkNeg->biomeData().rasterHydrology(origin),
-	                                      sampler.getWorldSeed());
+	ChunkNeighborhood neighborhood(origin, chunkNeg->biomeData(), sampler.getWorldSeed());
+	ApronField apron = ApronField::build(neighborhood, chunkNeg->biomeData().rasterHydrology(origin));
 
 	int checked = 0;
 	for (int32_t ey = kApronTiles + kChunkSize; ey < kExtendedSize; ++ey) {
@@ -147,8 +147,8 @@ TEST(ApronFieldTest, ExtendedTilesCoversInteriorAndApronWithNoGap) {
 	const ChunkCoordinate origin{3, -2};
 
 	std::unique_ptr<Chunk> chunk = generateChunk(sampler, origin);
-	ApronField apron = ApronField::build(origin, chunk->biomeData(), chunk->biomeData().rasterHydrology(origin),
-	                                      sampler.getWorldSeed());
+	ChunkNeighborhood neighborhood(origin, chunk->biomeData(), sampler.getWorldSeed());
+	ApronField apron = ApronField::build(neighborhood, chunk->biomeData().rasterHydrology(origin));
 	ExtendedTiles extended(*chunk, apron);
 
 	// Interior: must read the chunk's own (post-processed) tile.

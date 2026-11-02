@@ -538,13 +538,13 @@ TEST(TerrainPolygonSeamsTest, AMouthPastTheApronFlaresTheSameInBothChunks) {
 namespace {
 
 	// The chunk's extended tiles at any apron, computed the way ApronField does
-	// (each tile from its owning neighbor's grid, hydrology from this chunk's
+	// (each tile from its owning neighbor's corners, hydrology from this chunk's
 	// sample), so a reference build sees what a wider apron would.
 	HandTiles realTiles(const Chunk& chunk, int32_t apronTiles, uint64_t worldSeed) {
-		const ChunkCoordinate				  coord	 = chunk.coordinate();
-		const ChunkSampleResult&			  sample = chunk.biomeData();
-		const std::shared_ptr<NeighborhoodGrids> grids = std::make_shared<NeighborhoodGrids>(sample);
-		HandTiles tiles(coord, [grids, coord](int64_t tx, int64_t ty) { return grids->primaryBiomeAt(coord, tx, ty); }, apronTiles);
+		const ChunkCoordinate					 coord		  = chunk.coordinate();
+		const ChunkSampleResult&				 sample		  = chunk.biomeData();
+		const std::shared_ptr<ChunkNeighborhood> neighborhood = std::make_shared<ChunkNeighborhood>(coord, sample, worldSeed);
+		HandTiles tiles(coord, [neighborhood](int64_t tx, int64_t ty) { return neighborhood->tileBiomeAt(tx, ty).primary; }, apronTiles);
 		for (int32_t ey = 0; ey < tiles.size; ++ey) {
 			for (int32_t ex = 0; ex < tiles.size; ++ex) {
 				const int64_t lx = tiles.originX() + ex - static_cast<int64_t>(coord.x) * kChunkSize;
@@ -553,13 +553,12 @@ namespace {
 				const int32_t dy = ly < 0 ? -1 : (ly >= kChunkSize ? 1 : 0);
 				const auto	  nx = static_cast<uint16_t>(lx - dx * kChunkSize);
 				const auto	  ny = static_cast<uint16_t>(ly - dy * kChunkSize);
-				const ChunkSampleResult& grid = grids->grid(dx, dy);
 				tiles.at(ex, ey) = Chunk::computeTileFrom({
 					.coord			 = {coord.x + dx, coord.y + dy},
 					.localX			 = nx,
 					.localY			 = ny,
-					.biomeWeights	 = grid.getTileBiome(nx, ny),
-					.elevationMeters = grid.getTileElevation(nx, ny),
+					.biome			 = neighborhood->biomes(dx, dy).at(nx, ny),
+					.elevationMeters = neighborhood->tileElevation(dx, dy, nx, ny),
 					.hydrology		 = &sample,
 					.worldSeed		 = worldSeed,
 				});
@@ -765,7 +764,8 @@ TEST(TerrainPolygonSeamsTest, RealRiverBorderTilesPostProcessTheSameFromEitherCh
 	std::map<std::pair<int32_t, int32_t>, ApronField> aprons;
 	for (const auto& [key, chunk] : real.chunks) {
 		const ChunkCoordinate coord = chunk->coordinate();
-		aprons.emplace(key, ApronField::build(coord, chunk->biomeData(), chunk->biomeData().rasterHydrology(coord), real.worldSeed));
+		ChunkNeighborhood	  neighborhood(coord, chunk->biomeData(), real.worldSeed);
+		aprons.emplace(key, ApronField::build(neighborhood, chunk->biomeData().rasterHydrology(coord)));
 	}
 	SurfaceTally tally;
 	for (const auto& [key, chunk] : real.chunks) {

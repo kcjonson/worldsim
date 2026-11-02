@@ -11,6 +11,7 @@
 #include "world/chunk/RenderTiles.h"
 #include "world/chunk/TerrainDistanceField.h"
 #include "world/chunk/TerrainPolygons.h"
+#include "world/chunk/TileBiomes.h"
 
 #include <array>
 #include <atomic>
@@ -89,18 +90,6 @@ struct TileData {
 	uint16_t elevation = 0;             ///< 2 bytes - centimeters above sea level
 	uint8_t moisture = 128;             ///< 1 byte - normalized 0-255
 	uint8_t waterDepth = 0;             ///< 1 byte - cosmetic water depth (0=land/shallowest, 255=deepest); data only, the renderer paints depth from the distance field
-
-	/// Get biome weights as BiomeWeights (for compatibility during migration)
-	[[nodiscard]] BiomeWeights biome() const {
-		if (biomeBlend == 255 || primaryBiome == secondaryBiome) {
-			return BiomeWeights::single(primaryBiome);
-		}
-		BiomeWeights bw;
-		float primaryWeight = static_cast<float>(biomeBlend) / 255.0F;
-		bw.set(primaryBiome, primaryWeight);
-		bw.set(secondaryBiome, 1.0F - primaryWeight);
-		return bw;
-	}
 };
 
 class ExtendedTiles;
@@ -112,9 +101,9 @@ class TerrainPolygonQuery;
 class Chunk {
   public:
 	/// Designated-initializer args for the shared tile-compute core (below). Biome
-	/// weight and elevation are passed in already resolved (a sector-grid lookup)
-	/// rather than a sample-data reference, because the caller may be resolving
-	/// them from a neighbor chunk's own grid (ApronField), not this chunk's.
+	/// and elevation are passed in already resolved (ChunkNeighborhood) rather
+	/// than a sample-data reference, because the caller may be resolving them
+	/// from a neighbor chunk's own corners (ApronField), not this chunk's.
 	/// `hydrology` supplies riverHalfWidthAt/pondDepthAt; it is always the
 	/// generating chunk's own sample data (gathered over the extended AABB, D4),
 	/// since river/pond geometry is world-position-based and doesn't care which
@@ -123,7 +112,7 @@ class Chunk {
 		ChunkCoordinate coord;   ///< Tile's owning chunk (tileHash + world position)
 		uint16_t localX = 0;
 		uint16_t localY = 0;
-		BiomeWeights biomeWeights;
+		TileBiome biome;
 		float elevationMeters = 0.0F;
 		const ChunkSampleResult* hydrology = nullptr;
 		uint64_t worldSeed = 0;
@@ -234,11 +223,6 @@ class Chunk {
 	std::shared_ptr<const ChunkTerrainPolygons> m_terrainPolygons = std::make_shared<const ChunkTerrainPolygons>();
 	TerrainDistanceField						m_terrainDistanceField;
 
-	/// Compute tile data for a single tile during generation. Thin wrapper around
-	/// computeTileFrom() using this chunk's own coordinate and sample data, with
-	/// rivers and ponds from `hydrology` (m_biomeData's rasterHydrology).
-	[[nodiscard]] TileData computeTile(uint16_t localX, uint16_t localY, const ChunkSampleResult& hydrology) const;
-
 	/// Install a freshly built polygon set, bump its version (monotonic per
 	/// chunk, like m_renderDataVersion), and bake its distance field at that
 	/// version. Called from generate(), before m_generationComplete's release
@@ -254,8 +238,8 @@ class Chunk {
 	/// any (coord, biome, local tile, elevation, seed), not just this chunk's own.
 	/// Elevation is passed in (already resolved by the caller) rather than
 	/// re-derived from a sample source, so it works the same for a chunk's own
-	/// tiles (computeTile) and for an apron tile resolved against a neighbor's
-	/// grid (ApronField).
+	/// tiles and for an apron tile resolved against a neighbor's corners
+	/// (ApronField).
 	[[nodiscard]] static Surface selectSurfaceFor(ChunkCoordinate coord, Biome biome, uint16_t localX,
 	                                               uint16_t localY, float elevationMeters, uint64_t worldSeed);
 };
