@@ -100,6 +100,9 @@ namespace world_sim {
 		ui::Ref<ui::Text>				nameText;
 		ui::Ref<ui::Text>				subtitleText;
 		ui::Ref<ui::ProgressBar>		moodBar;
+		ui::Ref<ui::Component>			taskRow;
+		ui::Ref<ui::Text>				taskText;
+		ui::Ref<ui::Text>				taskPercent;
 		ui::Ref<ui::ProgressBar>		taskBar;
 		ui::Ref<ui::Button>				eyeButton;
 		ui::Ref<ui::TabBar>				tabBar;

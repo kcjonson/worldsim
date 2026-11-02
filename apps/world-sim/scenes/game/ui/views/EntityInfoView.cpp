@@ -148,14 +148,22 @@ namespace world_sim {
 			.controlSize = ui::ControlSize::Sm,
 			.inlineLabel = true,
 		});
-		taskBar = identity.addChild<ui::ProgressBar>({
-			.id = "entity_info_task",
-			.value = 0.0F,
-			.tone = ui::Tone::Accent,
-			.label = "Idle",
-			.controlSize = ui::ControlSize::Sm,
-			.inlineLabel = true,
+		// The current task over a thin bar: a task's name can be any length, so it wraps here where the
+		// inline label the mood bar uses couldn't.
+		taskRow = identity.addChild<ui::Component>({.id = "entity_info_task", .layout = column(tight)});
+		ui::Ref<ui::Component> taskHead =
+			taskRow.addChild<ui::Component>({.layout = {.display = ui::Display::Flex, .gap = gap, .alignItems = ui::AlignItems::Start}});
+		taskText = taskHead.addChild<ui::Text>(
+			{.id = "entity_info_task_name", .layout = {.flexGrow = 1.0F}, .style = dimText, .wrap = true}
+		);
+		taskPercent = taskHead.addChild<ui::Text>({
+			.id = "entity_info_task_percent",
+			.layout = {.flexShrink = 0.0F},
+			.style = world_sim::text(
+				theme, {.family = ui::tokens::font::family::mono, .size = tokens::fontSize::fsSm, .color = tokens::color::accent}
+			),
 		});
+		taskBar = taskRow.addChild<ui::ProgressBar>({.value = 0.0F, .tone = ui::Tone::Accent, .controlSize = ui::ControlSize::Sm});
 		ui::Ref<ui::Component> buttons = header.addChild<ui::Component>({
 			.id = "entity_info_buttons",
 			.layout = {.display = ui::Display::Flex, .gap = tight, .flexShrink = 0.0F},
@@ -258,7 +266,7 @@ namespace world_sim {
 			return actionRow.addChild<ui::Button>({
 				.id = id,
 				.enabled = enabled,
-				.size = {0.0F, kActionButtonHeight},
+				.size = {ui::kAuto, kActionButtonHeight},
 				.layout = {.flexGrow = 1.0F},
 				.label = label,
 				.variant = ui::ButtonVariant::Secondary,
@@ -329,7 +337,7 @@ namespace world_sim {
 		showAvatar(data.name, data.moodValue / 100.0F);
 		subtitleText.get()->setVisible(false);
 		moodBar.get()->setVisible(true);
-		taskBar.get()->setVisible(true);
+		taskRow.get()->setVisible(true);
 		eyeButton.get()->setVisible(static_cast<bool>(onDetails));
 		tabBar.get()->setVisible(true);
 		actionRow.get()->setVisible(true);
@@ -339,11 +347,13 @@ namespace world_sim {
 		mood.setValue(data.moodValue / 100.0F);
 		mood.setValueText(std::format("{}% {}", static_cast<int>(data.moodValue), data.moodLabel));
 
-		const bool		 acting = data.taskProgress >= 0.0F;
-		ui::ProgressBar& task = *taskBar.get();
-		task.setLabel(data.currentTask);
-		task.setValue(acting ? data.taskProgress : 0.0F);
-		task.setValueText(acting ? std::format("{}%", static_cast<int>(data.taskProgress * 100.0F)) : std::string());
+		const bool acting = data.taskProgress >= 0.0F;
+		taskText.get()->setText(data.currentTask);
+		taskPercent.get()->setVisible(acting);
+		if (acting) {
+			taskPercent.get()->setText(std::format("{}%", static_cast<int>(data.taskProgress * 100.0F)));
+		}
+		taskBar.get()->setValue(acting ? data.taskProgress : 0.0F);
 
 		for (std::size_t i = 0; i < needBars.size(); ++i) {
 			NeedBar*   bar = needBars[i].get();
@@ -397,7 +407,7 @@ namespace world_sim {
 
 		avatarSlot.get()->setVisible(false);
 		moodBar.get()->setVisible(false);
-		taskBar.get()->setVisible(false);
+		taskRow.get()->setVisible(false);
 		eyeButton.get()->setVisible(false);
 		tabBar.get()->setVisible(false);
 		needsBody.get()->setVisible(false);

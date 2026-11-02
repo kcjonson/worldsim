@@ -8,11 +8,9 @@ namespace world_sim {
 
 	namespace {
 
-		constexpr float kButtonWidth = 100.0F;
 		constexpr float kButtonHeight = 36.0F;
 		constexpr float kButtonSpacing = 8.0F;
 		constexpr float kHorizontalPadding = 12.0F;
-		constexpr float kRoomsButtonWidth = 72.0F; // a single word, narrower than the dropdowns
 
 		ui::MenuItem item(std::string label, const std::function<void(const std::string&)>& callback, std::string value) {
 			return {.label = std::move(label), .onSelect = [callback, value = std::move(value)]() {
@@ -55,7 +53,7 @@ namespace world_sim {
 
 		const auto dropdown = [&](const char* id, const char* label, std::vector<ui::MenuItem> items) {
 			ui::Ref<ui::DropdownButton> made = addChild<ui::DropdownButton>(
-				{.id = id, .size = {kButtonWidth, kButtonHeight}, .label = label, .items = std::move(items), .side = ui::Side::Above}
+				{.id = id, .size = {ui::kAuto, kButtonHeight}, .label = label, .items = std::move(items), .side = ui::Side::Above}
 			);
 			dropdowns.push_back(made);
 			return made;
@@ -90,7 +88,7 @@ namespace world_sim {
 
 		rooms = addChild<ui::Button>({
 			.id = "rooms_toggle",
-			.size = {kRoomsButtonWidth, kButtonHeight},
+			.size = {ui::kAuto, kButtonHeight},
 			.label = "Rooms",
 			.variant = ui::ButtonVariant::Secondary,
 			.onPress = [this]() {
