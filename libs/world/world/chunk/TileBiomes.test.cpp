@@ -128,9 +128,37 @@ namespace world {
 		EXPECT_EQ(compared, 4U * (4U * kApronTiles * kChunkSize + 4U * kApronTiles * kApronTiles));
 	}
 
+	// At tile (73, 214) of these corners the grassland scores 0.85000002 and the semi-desert 0.15000007,
+	// a rounding tie with the pick's reach R: a - b rounds under R, so the pair isn't settled, while
+	// b + R rounds to a. The prune once tested the second form and dropped the runner-up, which left the
+	// pick without one, reading past its candidates.
+	TEST(TileBiomesTest, ARunnerUpAtARoundingTieStaysInThePick) {
+		const auto corner = [](int grassland) {
+			BiomeWeights weights;
+			weights.set(Biome::TemperateGrassland, static_cast<float>(grassland) / 255.0F);
+			weights.set(Biome::SemiDesert, static_cast<float>(255 - grassland) / 255.0F);
+			return weights;
+		};
+		const ChunkBiomes biomes(ChunkCoordinate{0, 0}, {corner(204), corner(255), corner(255), corner(41)}, kSeed);
+
+		const TileBiome tie = biomes.at(73, 214);
+		EXPECT_EQ(tie.primary, Biome::TemperateGrassland);
+		EXPECT_EQ(tie.secondary, Biome::SemiDesert);
+		EXPECT_EQ(tie.blend, 217);
+
+		const std::set<Biome> pair = {Biome::TemperateGrassland, Biome::SemiDesert};
+		for (uint16_t y = 0; y < kChunkSize; ++y) {
+			for (uint16_t x = 0; x < kChunkSize; ++x) {
+				const TileBiome tile = biomes.at(x, y);
+				ASSERT_TRUE(pair.contains(tile.primary) && pair.contains(tile.secondary) && tile.primary != tile.secondary)
+					<< "tile " << x << ", " << y;
+			}
+		}
+	}
+
 	// The edge across a chunk is no longer the sector grid's staircase: about one boundary edge in
-	// sixteen falls on a sector line, as it would anywhere, and none runs along one for long (5 tiles
-	// at most here). The old pick put every boundary edge on a sector line, in runs of 16.
+	// sixteen falls on a sector line, as it would anywhere (6.6% here), and none runs along one for
+	// long (6 tiles at most here). The old pick put every boundary edge on a sector line, in runs of 16.
 	TEST(TileBiomesTest, EdgesDoNotFollowTheSectorGrid) {
 		const CellEdge	edge{.x0 = 256.0, .y0 = 256.0, .angle = 0.6};
 		size_t			boundary = 0;
@@ -168,8 +196,8 @@ namespace world {
 		}
 		ASSERT_EQ(seen, (std::set<Biome>{Biome::TemperateGrassland, Biome::SemiDesert}));
 		ASSERT_GT(boundary, 1000U);
-		EXPECT_LT(static_cast<double>(onSectorLine) / static_cast<double>(boundary), 2.0 / 16.0);
-		EXPECT_LE(longestRun, 10);
+		EXPECT_NEAR(static_cast<double>(onSectorLine) / static_cast<double>(boundary), 1.0 / 16.0, 0.01);
+		EXPECT_LE(longestRun, 7);
 	}
 
 } // namespace world

@@ -181,9 +181,14 @@ namespace world {
 
 		// A biome the noise can't lift to within the ecotone's reach of the leader plays no part, and
 		// a stage ends the pick once what's left can't change the winner or bring a land pair within
-		// the ecotone's reach.
+		// the ecotone's reach. Both tests compare one float expression, the leader's lead: written
+		// another way (b + reach <= a) a rounding tie could prune the runner-up of a pair `settled`
+		// had just called open, leaving `rank` without one.
+		auto leadOver = [&](size_t k) {
+			return score[lead] - score[k];
+		};
 		auto settled = [&](float reachLeft) {
-			return score[lead] - score[next] >= 2.0F * reachLeft + (candidates[lead].water ? 0.0F : kEcotoneReach);
+			return leadOver(next) >= 2.0F * reachLeft + (candidates[lead].water ? 0.0F : kEcotoneReach);
 		};
 		rank();
 		if (settled(kCoarseReach + kFineReach)) {
@@ -191,7 +196,7 @@ namespace world {
 		}
 		const float reach = 2.0F * (kCoarseReach + kFineReach) + kEcotoneReach;
 		for (size_t k = 0; k < count; ++k) {
-			if (score[k] + reach <= score[lead]) {
+			if (leadOver(k) >= reach) {
 				active &= ~(1U << k);
 			}
 		}
