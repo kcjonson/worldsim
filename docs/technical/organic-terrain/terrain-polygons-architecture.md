@@ -745,7 +745,7 @@ As built (TerrainChannelBuilder, per reach, from the ribbon points the stroke us
 
 Unchanged: Mud < Sand < Dirt < GrassShort < Grass < GrassMeadow < GrassTall < Rock < Snow,
 higher paints over lower. Water is no longer in the stack; it is a polygon drawn on top.
-How the boundaries between these surfaces are drawn is D16.
+How the boundaries between these surfaces are drawn is D16: a height contest in a band around the field's isoline (ground-textures.md, Surface transitions). The order is what names a pair's upper surface, and each pair's parameters are keyed by it.
 
 ### D15: Variance, or why a shore must never read as a stroke
 
@@ -786,6 +786,12 @@ What each source drives (renderer task and placement rules consume this):
 
 The waterline warp itself is multi-scale (D6): the 26 m term shapes bays and headlands, the
 6 m fBm shapes the bank. A single amplitude at a single scale is exactly the stroke look.
+
+Land edges follow the same rule (D16). The contest that draws them has no constant along-edge
+term: the baked heights vary at texture scale, its threshold moves with the fine warp noise's
+x (`nu * (n - 0.5)`), and the warp's local stretch varies the on-screen band width. `nu` is
+tuned until the band's width swings 30 to 40 % along the edge, the figure the fringe's
+width followed.
 
 ### D14: Determinism
 
@@ -838,13 +844,19 @@ evaluation; `shaders/includes/land.glsl` is the same steps in the same order, an
    origin, in C++ and GLSL alike.
 3. **Priority paint.** Low to high per D13: the highest surface whose field passes 0.5 paints.
    Where none passes (three or more surfaces meeting) the largest field paints, ties to the
-   higher surface. Anti-aliased over one pixel (`u_metersPerPixel`, as the water pass does)
-   against the nearest boundary of the painted region, its distance `(F - 0.5) / |grad F|` from
-   the bilinear gradient. The edge look is a function of that distance only: a sparse fringe of
-   the upper surface on the lower side (0.35 m for grass, 0.25 sand, 0.2 dirt and mud, none for
-   rock) whose width follows the fine warp noise +-35 % along the edge (D15) and is broken up by
-   a 1 m noise, and a rim darkening just inside the upper surface (rock only, 30 % over
-   0.12 m). No term reads a tile edge.
+   higher surface. The distance to the nearest boundary of the painted region is
+   `(F - 0.5) / |grad F|` from the bilinear gradient. The edge look is a height contest in a band around that boundary: the
+   pair's two surfaces are mixed by the heights baked into their ground tiles' alpha, the signed
+   distance and the fine warp noise's x (D15), with a contact shadow, stain, ridge and tint
+   from per-pair parameters in the ground defs. It replaces the sparse fringe of the upper
+   surface (0.35 m for grass, 0.25 sand, 0.2 dirt and mud, none for rock) with its 1 m
+   breakup noise, the rim darkening (rock only, 30 % over 0.12 m) and the one-pixel
+   anti-aliasing line, and costs no extra texture sample: the band already samples both
+   surfaces. The band is capped at the field's reach, 1.5 m: the blur is one tile and the
+   bilinear footprint half a tile, so past that the field is 1, its gradient 0, and the
+   shortcut bits return no boundary. The field itself, its levels and the paint rule don't
+   change, so the contest is look-only (D1) and placement agrees as before. No term reads a
+   tile edge. The definition is ground-textures.md, Surface transitions.
 4. **Mud** (D11 makes it distance-to-water) and **point-bar sand** (D12) are ordinary surfaces
    in the stack once they are tiles, so they get the same edge.
 5. **Seams and render tiles.** The shader reads RG8UI render tiles over the chunk square plus
@@ -895,7 +907,7 @@ evaluation; `shaders/includes/land.glsl` is the same steps in the same order, an
    fragment on NVIDIA. Measured at 3072x1728 on an RTX 3090 (section 6), the land pass is 0.3
    to 0.9 ms on the landing's river view, where most tiles are interior, and 0.6 to 1.3 ms on
    the busier coast and desert views; the six warp octaves are 0.3 to 0.5 ms of that, the
-   fringe path 0.05 to 0.1 ms. At far zoom the shader drops a fine warp octave whose
+   fringe path 0.05 to 0.1 ms (the cost the contest has to beat, ground-textures.md). At far zoom the shader drops a fine warp octave whose
    wavelength is under `kLandLodMinWavelengthPx` = 4 pixels (`landWarpFineOctaves`): zoom
    0.25 sums the 4 m and 2 m octaves, 0.5 and 0.75 three, zoom 1 and in all four. The kept
    octaves weigh what they do in the full sum, so an edge moves by at most the dropped
@@ -905,8 +917,37 @@ evaluation; `shaders/includes/land.glsl` is the same steps in the same order, an
    and holds the LOD to that bound, and `SurfaceFieldTest.FarZoomDropsFineOctavesUnderFourPixels`
    pins where it kicks in. It saves about 0.1 ms at zoom 0.25.
 
-Biome water edges themselves are still quantized to 16 m sectors upstream of all this
-(WOR-467); D16 smooths what the tiles give it, it does not add large-scale variety.
+**Biome edges (WOR-467).** Upstream of all this, biome edges are still quantized to 16 m
+sectors: `ChunkSampleResult::getTileBiome` returns one biome per 16 x 16 m sector, from weights
+interpolated between chunk corners 512 m apart, so every biome boundary, a coast and a lake
+among them, is a 16 m staircase along a near-straight diagonal, and the generators'
+`NoiseUtils::valueNoise` draws axis-aligned straight runs inside a biome. D16 smooths what the
+tiles give it and adds no large-scale variety; its 1.5 m warp can't break a 16 m step. The
+design that does:
+
+- Per-tile pick. The biome weights are interpolated per tile from the chunk corners (the
+  per-tile form of `computeSectorGrid`), then world-space gradient fBm is added to the weight
+  difference before the primary biome is thresholded: 2 to 3 octaves at about 200, 50 and
+  12 m, from salal `HashNoise`, with lattice corners hashed once a chunk the way
+  `fillGroundMacro` does.
+- Ecotone band. Where the perturbed weight sits near the threshold, the generator is picked
+  per tile against a 2 to 8 m noise: grass islands in sand, sand bays in grass, which the
+  field then smooths.
+- Generators. `NoiseUtils::valueNoise` gives way to gradient noise, and is deleted if nothing
+  else uses it.
+- Purity. The pick stays a pure function of world tile and seed (D14), so the apron and the
+  seams stay bit-identical. One change covers every reader: `Chunk::computeTileFrom`,
+  `ApronField` (`getTileBiome`, `primaryBiomeAt`) and the waterline builder's biome-water
+  lookups.
+- Knock-on. Coasts, lakes and wetlands reshape, which is WOR-467's goal: waterline rings and
+  their vertex counts, the nav rings, the SDF bake and mud all move, and flora placement
+  follows the per-tile biome by itself. Tests that hand-fill `sectorGrid`
+  (`NavigationSystem.test.cpp`, `VisionSystem.test.cpp`, the staircase lake in
+  `TerrainPolygonBuilder.test.cpp`, the `MockWorldSampler` users) move to the new lookup; the
+  seam tests keep their meaning.
+
+It ships first in the Ground Surface Blending epic, so the transitions are tuned on the real
+edge shapes.
 
 ---
 
@@ -1075,7 +1116,7 @@ invalidates the render cache and, through the nav signature, the mesh.
 | land warp, fine / low | 4 octaves, gain 0.6, base 4 m / 2 octaves, gain 0.5, base 26 m; clamp 1.5 m a component; read 0.375 m off the tile grid | D16 |
 | land warp amplitude by upper surface, fine / low | grass variants, dirt, sand, mud 0.55 / 0.7 m; snow 0.45 / 0.7; rock 0.2 / 0.4 | D16 |
 | edge surface / interior / near-interior / bed reach | 2 / 3 / 2 / 3 tiles | D16 |
-| land fringe width / rim | grass 0.35, sand 0.25, dirt and mud 0.2, rock 0 m; opacity 0.55, +-35 % along the edge, 1 m breakup / rock 30 % over 0.12 m | D16 |
+| land edge band | a height contest, parameters per pair in the ground defs (width, offset, softness, breakup, shadow, stain, ridge, tint); `width + abs(offset)` at most 1.5 m, the field's reach; replaces the fringe (grass 0.35 m, sand 0.25, dirt and mud 0.2, rock 0; opacity 0.55) and the rim (rock 30 % over 0.12 m) | D16, ground-textures.md |
 | `kLandLodMinWavelengthPx` | 4 px: the shader drops a finer fine-warp octave | D16 step 7 |
 
 All of these are candidates for the debug server's tunables so the look can be A/B'd live.
@@ -1239,8 +1280,9 @@ Maps one-to-one onto the epic's tasks:
    delete the tile water branch and the water bleed.
 7. Vision shore points and distance-based mud, point bars (D11, D12).
 8. Every land-on-land boundary drawn as a warped field isoline (D16): tile-data apron,
-   per-surface field with the D5/D6 recipe, priority paint, fringe bands, placement reading
-   the same field. Replaces the neighbor bleed in `tile.glsl`.
+   per-surface field with the D5/D6 recipe, priority paint, edge bands (a fringe, replaced by
+   the height contest of ground-textures.md), placement reading the same field. Replaces the
+   neighbor bleed in `tile.glsl`.
 9. Perf validation across zoom levels.
 
 ---
@@ -1269,7 +1311,9 @@ Maps one-to-one onto the epic's tasks:
   land field's (`ThinFeatureGuard.h`, D5 step 3), and its point evaluator `WaterlineField`
   still shares the lattice fill's core. No quickstart ring changed: biome water follows 16 m
   sectors (WOR-467), so none of it runs 1 tile wide, and the ring vertices of every chunk
-  loaded at the landing (0, 20) and the coast (70030, 0) hash the same before and after.
+  loaded at the landing (0, 20) and the coast (70030, 0) hash the same before and after. Per-tile
+  biome edges (D16, biome edges) change that on purpose: ring hashes move, and a coast or lake
+  can now run 1 tile wide, which is what the guard is for.
 - Ocean vs lake distinction for L2/L4: the biome tells us, but wetland water needs its own
   band set (no beach, reeds everywhere). Decide when the renderer task starts.
 - Whether the fine SDF band (±8 m) is enough for the widest shallows on very gentle ocean
