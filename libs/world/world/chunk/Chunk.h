@@ -241,12 +241,9 @@ class Chunk {
 
 	/// Select surface type based on biome using organic noise-based patches, for
 	/// any local tile of the chunk whose patch fields `patchNoise` holds, not just
-	/// this chunk's own. Elevation is passed in (already resolved by the caller)
-	/// rather than re-derived from a sample source, so it works the same for a
-	/// chunk's own tiles and for an apron tile resolved against a neighbor's
-	/// corners (ApronField).
-	[[nodiscard]] static Surface selectSurfaceFor(const generation::PatchNoise& patchNoise, Biome biome, uint16_t localX,
-	                                               uint16_t localY, float elevationMeters);
+	/// this chunk's own, so it works the same for a chunk's own tiles and for an
+	/// apron tile resolved against a neighbor's corners (ApronField).
+	[[nodiscard]] static Surface selectSurfaceFor(const generation::PatchNoise& patchNoise, Biome biome, uint16_t localX, uint16_t localY);
 };
 
 }  // namespace world

@@ -573,7 +573,7 @@ namespace worldview::ground {
 		return noise;
 	}
 
-	void rankNormalize(std::span<Plane> planes, uint32_t seed, float tieBreak) {
+	void rankNormalize(std::span<Plane> planes, uint32_t seed) {
 		constexpr size_t kBins = 65536;
 		const auto		 binOf = [](float v) {
 			  return static_cast<size_t>(std::lround(std::clamp(v, 0.0F, 1.0F) * static_cast<float>(kBins - 1)));
@@ -610,7 +610,7 @@ namespace worldview::ground {
 					const size_t bin = binOf(v);
 					const double low = static_cast<double>(first[bin]) / last;
 					const double high = static_cast<double>(first[bin + 1] - 1) / last;
-					const double reach = std::min(static_cast<double>(tieBreak), 0.5 * (high - low));
+					const double reach = std::min(static_cast<double>(kHeightTieBreak), 0.5 * (high - low));
 					v = static_cast<float>((0.5 * (low + high)) + (reach * noise.at((x + dx) % plane.width, (y + dy) % plane.height)));
 				}
 			}

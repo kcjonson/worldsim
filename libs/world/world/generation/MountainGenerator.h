@@ -11,7 +11,8 @@ namespace world::generation {
 class MountainGenerator {
 public:
 	[[nodiscard]] static Surface generate(const GenerationContext& ctx) {
-		return ctx.patch(PatchField::Outcrop) > 0.2304F ? Surface::Snow : Surface::Rock;
+		constexpr float kSnowThreshold = 0.2304F; // the top 11% of the outcrop field
+		return ctx.patch(PatchField::Outcrop) > kSnowThreshold ? Surface::Snow : Surface::Rock;
 	}
 };
 

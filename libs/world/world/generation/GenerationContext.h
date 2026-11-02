@@ -18,7 +18,6 @@ struct GenerationContext {
 	uint16_t localY = 0;        ///< Tile Y within chunk (0 to kChunkSize-1)
 	const PatchNoise* noise = nullptr; ///< the owning chunk's patch fields
 	Biome biome = Biome::TemperateGrassland; ///< Primary biome at this tile
-	float elevation = 0.0F;     ///< Elevation in meters
 
 	/// `field` at this tile.
 	[[nodiscard]] float patch(PatchField field) const { return noise->at(field, localX, localY); }

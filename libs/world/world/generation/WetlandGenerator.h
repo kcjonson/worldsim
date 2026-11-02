@@ -11,7 +11,8 @@ namespace world::generation {
 class WetlandGenerator {
 public:
 	[[nodiscard]] static Surface generate(const GenerationContext& ctx) {
-		return ctx.patch(PatchField::MarshIslands) > 0.2317F ? Surface::GrassTall : Surface::Water;
+		constexpr float kIslandThreshold = 0.2317F; // the top 11% of the marsh island field
+		return ctx.patch(PatchField::MarshIslands) > kIslandThreshold ? Surface::GrassTall : Surface::Water;
 	}
 };
 

@@ -168,9 +168,9 @@ namespace worldview::ground {
 	/// Replaces every value of every plane by its rank among all of them, 0 to 1, so the heights of a
 	/// surface's variants share one uniform histogram. Values that round to the same 1 / 65536 tie: a group
 	/// takes the middle of its ranks, plus blue noise (one tile from seed, each plane reading it at its own
-	/// wrapped offset) times the lesser of tieBreak and half the group's span, so a flat area dithers about
-	/// its middle instead of flipping at one distance, and no texel passes a higher value's rank.
-	void rankNormalize(std::span<Plane> planes, uint32_t seed, float tieBreak = kHeightTieBreak);
+	/// wrapped offset) times the lesser of kHeightTieBreak and half the group's span, so a flat area dithers
+	/// about its middle instead of flipping at one distance, and no texel passes a higher value's rank.
+	void rankNormalize(std::span<Plane> planes, uint32_t seed);
 
 	/// CIE L*a*b* (D65) of a linear sRGB color.
 	[[nodiscard]] glm::vec3 linearToLab(glm::vec3 rgb);

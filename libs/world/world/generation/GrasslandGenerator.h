@@ -22,17 +22,23 @@ namespace world::generation {
 class GrasslandGenerator {
 public:
 	[[nodiscard]] static Surface generate(const GenerationContext& ctx) {
-		if (ctx.patch(PatchField::Dirt) > 0.512F) {
+		constexpr float kDirtThreshold = 0.512F;		 // the top 0.2% of the dirt field
+		constexpr float kTallGrassThreshold = 0.225F;	 // the wettest 12% of the moisture field
+		constexpr float kShortGrassThreshold = -0.1734F; // the driest 18%
+		// Tested only in the mid moisture zone, so set for meadow on 2.6% of all grassland
+		// tiles, not on a share of the fertility field.
+		constexpr float kMeadowThreshold = 0.3323F;
+		if (ctx.patch(PatchField::Dirt) > kDirtThreshold) {
 			return Surface::Dirt;
 		}
 		const float moisture = ctx.patch(PatchField::Moisture);
-		if (moisture > 0.225F) {
+		if (moisture > kTallGrassThreshold) {
 			return Surface::GrassTall;
 		}
-		if (moisture < -0.1734F) {
+		if (moisture < kShortGrassThreshold) {
 			return Surface::GrassShort;
 		}
-		if (ctx.patch(PatchField::Fertility) > 0.3323F) {
+		if (ctx.patch(PatchField::Fertility) > kMeadowThreshold) {
 			return Surface::GrassMeadow;
 		}
 		return Surface::Grass;

@@ -193,7 +193,7 @@ namespace world {
 		tile.elevation = static_cast<uint16_t>(std::clamp(elevCm, 0.0F, 65535.0F));
 
 		// Select surface type based on primary biome (uses spatial clustering)
-		tile.surface = selectSurfaceFor(*args.patchNoise, tile.primaryBiome, args.localX, args.localY, args.elevationMeters);
+		tile.surface = selectSurfaceFor(*args.patchNoise, tile.primaryBiome, args.localX, args.localY);
 
 		// Water depth byte (cosmetic tile data, not drawn). Biome water
 		// (ocean/lake/wetland) reads deep; river channels set depth from their width
@@ -251,15 +251,13 @@ namespace world {
 		return tile;
 	}
 
-	Surface Chunk::selectSurfaceFor(const generation::PatchNoise& patchNoise, Biome biome, uint16_t localX, uint16_t localY,
-	                                 float elevationMeters) {
+	Surface Chunk::selectSurfaceFor(const generation::PatchNoise& patchNoise, Biome biome, uint16_t localX, uint16_t localY) {
 		// Delegate to biome-specific generators via dispatcher
 		generation::GenerationContext ctx{
 			.localX = localX,
 			.localY = localY,
 			.noise = &patchNoise,
 			.biome = biome,
-			.elevation = elevationMeters
 		};
 
 		return generation::BiomeDispatcher::generate(ctx);

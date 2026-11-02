@@ -11,7 +11,8 @@ namespace world::generation {
 class DesertGenerator {
 public:
 	[[nodiscard]] static Surface generate(const GenerationContext& ctx) {
-		return ctx.patch(PatchField::Outcrop) > 0.4371F ? Surface::Rock : Surface::Sand;
+		constexpr float kRockThreshold = 0.4371F; // the top 0.9% of the outcrop field
+		return ctx.patch(PatchField::Outcrop) > kRockThreshold ? Surface::Rock : Surface::Sand;
 	}
 };
 

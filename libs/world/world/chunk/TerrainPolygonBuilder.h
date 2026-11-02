@@ -59,8 +59,9 @@ class TerrainPolygonBuilder {
 	/// [ty, ty + 1) m. Must agree with ExtendedTileFn over the extended region and
 	/// answer for every tile within kBiomeWaterReachM of the chunk square: river
 	/// mouths are found by evaluating the waterline field along the centerline
-	/// out there (D7). Chunk::generate answers from its 3x3 neighborhood's biome
-	/// grids (NeighborhoodGrids), which is what each neighbor's own tiles read.
+	/// out there (D7). Chunk::generate answers from the extended tiles where they
+	/// reach, and past them from ChunkNeighborhood, which picks each tile from its
+	/// owning chunk's corners the way that chunk picks its own (TileBiomes.h).
 	using BiomeWaterFn = std::function<bool(int64_t tx, int64_t ty)>;
 
 	using RiverSegment = worldgen::RiverNetwork2D::Segment;

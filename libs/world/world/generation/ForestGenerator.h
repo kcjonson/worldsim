@@ -12,10 +12,12 @@ namespace world::generation {
 class ForestGenerator {
 public:
 	[[nodiscard]] static Surface generate(const GenerationContext& ctx) {
-		if (ctx.patch(PatchField::Outcrop) > 0.4815F) {
+		constexpr float kDirtThreshold = 0.4815F;	   // the top 0.4% of the outcrop field
+		constexpr float kTallGrassThreshold = 0.2506F; // the top 9% of the moisture field
+		if (ctx.patch(PatchField::Outcrop) > kDirtThreshold) {
 			return Surface::Dirt;
 		}
-		if (ctx.patch(PatchField::Moisture) > 0.2506F) {
+		if (ctx.patch(PatchField::Moisture) > kTallGrassThreshold) {
 			return Surface::GrassTall;
 		}
 		return Surface::Grass;

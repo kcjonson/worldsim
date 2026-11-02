@@ -11,7 +11,8 @@ namespace world::generation {
 class TundraGenerator {
 public:
 	[[nodiscard]] static Surface generate(const GenerationContext& ctx) {
-		return ctx.patch(PatchField::Outcrop) > 0.4815F ? Surface::Rock : Surface::Snow;
+		constexpr float kRockThreshold = 0.4815F; // the top 0.4% of the outcrop field
+		return ctx.patch(PatchField::Outcrop) > kRockThreshold ? Surface::Rock : Surface::Snow;
 	}
 };
 
