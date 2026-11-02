@@ -4,22 +4,22 @@
 -- shadows fall down it, which holds in every hex cell because the shader only mirrors these cells
 -- left to right.
 --
--- The ground itself (the base, broad tone patches and rock plates) is laid out first and painted into
--- a 6.25 cm tone grid, which every ground-born layer above takes its color from (grain, crests,
--- cracks, lumps, shadows), so those keep the patches' contrast instead of pulling them toward the
--- base, and which is scaled so each variant averages to the base exactly. Paint order: the far ground,
--- the near ground (base, patches, plates), drifts and ripples (a lit crest over a shadowed lee),
--- cracks, grain, pits, lichen, puddles, lumps, then the loose pieces (roots, straw, leaves, twigs,
--- shells, stones) back to front, grass tips poking through, and sparkle. Every layer is off at
--- density 0.
+-- The ground itself (the base, blob tone patches, and regions cut along the contours of a spectral
+-- field, with joints staining it) is laid out first and painted into a 6.25 cm tone grid, which every
+-- ground-born layer above takes its color from (grain, crests, cracks, lumps, shadows), so those keep
+-- the ground's contrast instead of pulling them toward the base, and which is scaled so each variant
+-- averages to the base exactly. Paint order: the far ground, the near ground (base, patches,
+-- regions), drifts and ripples (a lit crest over a shadowed lee), cracks, joints, grain, pits,
+-- lichen, puddles, lumps, then the loose pieces (roots, straw, leaves, twigs, shells, stones) back to
+-- front, grass tips poking through, and sparkle. Every layer is off at density 0.
 --
 -- LOD: the far ground, the tone grid (puddles and lichen averaged in) as one rect a mip 4 texel, is
 -- all mips 4 to 6 show; it's scaled to set their contrast and mean from the bake's report, as Grass's
 -- far stack is. The near ground covers it from mip 3 up. Pieces keep to the mips where they're a
 -- texel across (tag 1 / width; the ground's mass, lumps and crests, to half a texel) and never past
 -- kFar. What drops out is balanced where it can be, so the mips that drop it keep mip 0's mean: each
--- light grain has a dark twin, a crest's lit strip cancels its lee, a lump's cap its darkened body,
--- and a stone sits on a proxy in its own average.
+-- light grain has a dark twin, a crest's lit strip cancels its lee, a region's lit edge its shaded
+-- one, a lump's cap its darkened body, and a stone sits on a proxy in its own average.
 --
 -- Meters, +Y down, sRGB colors 0..1. Densities are per square meter and counts are fixed per variant,
 -- and every noise field has a whole number of cycles across the tile, so all variants share the same
@@ -65,6 +65,14 @@ local function hexList(key, fallback)
 	end
 	if #out == 0 and fallback then
 		out[1] = fallback
+	end
+	return out
+end
+-- A comma-separated list of numbers.
+local function numberList(key)
+	local out = {}
+	for v in getString(key, ""):gmatch("[^,%s]+") do
+		out[#out + 1] = tonumber(v)
 	end
 	return out
 end
@@ -140,7 +148,6 @@ local addPath = asset.addPath
 -- height; what lies on it (lumps, pieces, stones, grass tips) stands a fixed step above heightBase. No
 -- height draws a random number, so the colors are the same as without them.
 local H = { base = getFloat("heightBase", 0.3), relief = getFloat("heightRelief", 1), now = 0 }
-H.joint = getFloat("heightPlateJoint", 0.1)
 H.puddleRim = getFloat("heightPuddleRim", H.base * 0.5)
 local function at(h)
 	H.now = clamp(h, 0, 1)
@@ -310,6 +317,243 @@ local function blueNoise(n, spacing)
 	return pts
 end
 
+-- Spectral fields and contours -------------------------------------------------------------------
+
+-- A periodic random field on a kFieldN x kFieldN grid of nodes over the tile, indexed [j * N + i + 1]:
+-- a sum of waves with whole numbers of cycles across the tile, so it wraps exactly and its shapes run
+-- whichever way the spectrum says (periodicNoise2 has one period for both axes, so it can't stretch).
+-- Wave vectors come from an annulus of cyclesLo to cyclesHi a period, measured with the x component
+-- times stretch, so stretch 2 makes features twice as long across the screen as down it; none is
+-- under 3 cycles (1.33 m). Each wave is drawn with weight cycles^-slope and a random phase, every
+-- variant from the same spectrum, so all share its statistics. Normalized to zero mean, unit RMS.
+local kFieldN = 128
+local fieldCos, fieldSin = {}, {}
+for k = 0, kFieldN - 1 do
+	fieldCos[k], fieldSin[k] = cos(TAU * k / kFieldN), sin(TAU * k / kFieldN)
+end
+local function spectralGrid(cyclesLo, cyclesHi, stretch, waves, slope)
+	local n = kFieldN
+	local cand, total = {}, 0
+	local kmax = math.ceil(cyclesHi)
+	for ky = 0, kmax do
+		for kx = -kmax, kmax do
+			if ky > 0 or kx > 0 then
+				local r = sqrt((kx * stretch) ^ 2 + ky * ky)
+				if r >= cyclesLo and r <= cyclesHi and kx * kx + ky * ky >= 9 then
+					total = total + r ^ -slope
+					cand[#cand + 1] = { kx, ky, total }
+				end
+			end
+		end
+	end
+	local g = {}
+	for k = 1, n * n do
+		g[k] = 0
+	end
+	for _ = 1, waves do
+		local pickAt, lo, hi = rand() * total, 1, #cand
+		while lo < hi do
+			local mid = floor((lo + hi) / 2)
+			if cand[mid][3] < pickAt then
+				lo = mid + 1
+			else
+				hi = mid
+			end
+		end
+		local kx, ky = cand[lo][1] % n, cand[lo][2] % n
+		local phase = rand() * TAU
+		local cp, sp = cos(phase), sin(phase)
+		-- The wave at every phase index, twice over, so a row's column index plus its offset needs no wrap.
+		local wave, column = {}, {}
+		for t = 0, n - 1 do
+			wave[t] = fieldCos[t] * cp - fieldSin[t] * sp
+			wave[t + n] = wave[t]
+			column[t] = (kx * t) % n
+		end
+		for j = 0, n - 1 do
+			local offset = (ky * j) % n
+			local row = j * n + 1
+			for i = 0, n - 1 do
+				g[row + i] = g[row + i] + wave[column[i] + offset]
+			end
+		end
+	end
+	local sum, sum2 = 0, 0
+	for k = 1, n * n do
+		sum = sum + g[k]
+	end
+	local mean = sum / (n * n)
+	for k = 1, n * n do
+		g[k] = g[k] - mean
+		sum2 = sum2 + g[k] * g[k]
+	end
+	local scale = 1 / sqrt(max(sum2 / (n * n), 1e-12))
+	for k = 1, n * n do
+		g[k] = g[k] * scale
+	end
+	return g
+end
+
+-- A grid's values in order, and the one below which share of them lie.
+local function sortedValues(g)
+	local sorted = {}
+	for k = 1, #g do
+		sorted[k] = g[k]
+	end
+	table.sort(sorted)
+	return sorted
+end
+local function quantile(sorted, share)
+	return sorted[clamp(floor(share * #sorted) + 1, 1, #sorted)]
+end
+
+-- Drops loop points within tol of the line through their kept neighbors.
+local function simplifyLoop(xs, ys, tol)
+	local n = #xs
+	local ox, oy = { xs[1] }, { ys[1] }
+	for i = 2, n do
+		local ax, ay = ox[#ox], oy[#oy]
+		local bx, by = xs[i % n + 1], ys[i % n + 1]
+		local dx, dy = bx - ax, by - ay
+		local len = sqrt(dx * dx + dy * dy)
+		local d = len > 1e-9 and abs((xs[i] - ax) * dy - (ys[i] - ay) * dx) / len or sqrt((xs[i] - ax) ^ 2 + (ys[i] - ay) ^ 2)
+		if d > tol then
+			ox[#ox + 1], oy[#oy + 1] = xs[i], ys[i]
+		end
+	end
+	return ox, oy
+end
+
+-- The loops bounding the part of the tile where sign * value > sign * t, traced by marching squares
+-- on a field grid. Outside the tile counts as out, so a region reaching an edge closes along it; the
+-- field wraps, so the next tile's copy carries the region on, and a copy moved across an edge comes
+-- back on the far side the way the field does. Each loop is { xs, ys }; the region is their even-odd
+-- union (regionShape).
+local function contourLoops(g, t, sign)
+	local n = kFieldN
+	local h = P / n
+	local function inside(i, j)
+		if i < 0 or j < 0 or i > n or j > n then
+			return false
+		end
+		return sign * g[(j % n) * n + i % n + 1] > sign * t
+	end
+	local function value(i, j)
+		return g[(j % n) * n + i % n + 1]
+	end
+	-- An edge's key: its first node and whether it runs along x (0) or y (1).
+	local stride = n + 4
+	local function key(i, j, axis)
+		return ((j + 2) * stride + (i + 2)) * 2 + axis
+	end
+	local vertex = {}
+	local function edgeVertex(i, j, axis)
+		local k = key(i, j, axis)
+		if not vertex[k] then
+			local i2, j2 = i + (axis == 0 and 1 or 0), j + (axis == 1 and 1 or 0)
+			local real1 = i >= 0 and j >= 0 and i <= n and j <= n
+			local real2 = i2 >= 0 and j2 >= 0 and i2 <= n and j2 <= n
+			local s
+			if real1 and real2 then
+				local v1, v2 = value(i, j), value(i2, j2)
+				s = clamp((t - v1) / (v2 - v1), 0, 1)
+			else
+				s = real1 and 0 or 1 -- outside the tile: the crossing is at the real node
+			end
+			vertex[k] = { (i + (i2 - i) * s) * h, (j + (j2 - j) * s) * h }
+		end
+		return k
+	end
+	local links = {}
+	local function link(a, b)
+		links[a] = links[a] or {}
+		links[b] = links[b] or {}
+		local la, lb = links[a], links[b]
+		la[#la + 1], lb[#lb + 1] = b, a
+	end
+	for j = -1, n do
+		for i = -1, n do
+			local a, b, c, d = inside(i, j), inside(i + 1, j), inside(i + 1, j + 1), inside(i, j + 1)
+			local case = (a and 1 or 0) + (b and 2 or 0) + (c and 4 or 0) + (d and 8 or 0)
+			if case ~= 0 and case ~= 15 then
+				local top, bottom = edgeVertex(i, j, 0), edgeVertex(i, j + 1, 0)
+				local left, right = edgeVertex(i, j, 1), edgeVertex(i + 1, j, 1)
+				if case == 5 or case == 10 then
+					local centerIn = sign * (value(i, j) + value(i + 1, j) + value(i + 1, j + 1) + value(i, j + 1)) * 0.25 > sign * t
+					if (case == 5) == centerIn then
+						link(top, right) -- the outside corners b and d cut off
+						link(bottom, left)
+					else
+						link(left, top) -- the inside corners a and c cut off
+						link(right, bottom)
+					end
+				elseif case == 1 or case == 14 then
+					link(left, top)
+				elseif case == 2 or case == 13 then
+					link(top, right)
+				elseif case == 3 or case == 12 then
+					link(left, right)
+				elseif case == 4 or case == 11 then
+					link(right, bottom)
+				elseif case == 6 or case == 9 then
+					link(top, bottom)
+				else -- 7 or 8
+					link(left, bottom)
+				end
+			end
+		end
+	end
+	local loops, seen = {}, {}
+	local starts = {}
+	for k in pairs(links) do
+		starts[#starts + 1] = k
+	end
+	table.sort(starts) -- pairs() order isn't fixed; the loops' order must be
+	for _, k0 in ipairs(starts) do
+		if not seen[k0] then
+			local xs, ys = {}, {}
+			local prev, cur = nil, k0
+			repeat
+				seen[cur] = true
+				local v = vertex[cur]
+				if #xs == 0 or abs(v[1] - xs[#xs]) + abs(v[2] - ys[#ys]) > 1e-7 then
+					xs[#xs + 1], ys[#ys + 1] = v[1], v[2]
+				end
+				local l = links[cur]
+				local nxt = l[1] ~= prev and l[1] or l[2]
+				if l[1] == l[2] then
+					nxt = l[1]
+				end
+				prev, cur = cur, nxt
+			until cur == k0 or cur == nil
+			xs, ys = simplifyLoop(xs, ys, 0.002)
+			if #xs >= 3 then
+				loops[#loops + 1] = { xs = xs, ys = ys }
+			end
+		end
+	end
+	return loops
+end
+
+-- One polygon holding every loop, filled even-odd: each loop after the first is reached from the
+-- first one's start and left the same way, so the bridges there and back cancel.
+local function regionShape(loops)
+	local xs, ys = {}, {}
+	local ax, ay = loops[1].xs[1], loops[1].ys[1]
+	for k, loop in ipairs(loops) do
+		if k > 1 then
+			xs[#xs + 1], ys[#ys + 1] = ax, ay
+		end
+		for q = 1, #loop.xs do
+			xs[#xs + 1], ys[#ys + 1] = loop.xs[q], loop.ys[q]
+		end
+		if k > 1 then
+			xs[#xs + 1], ys[#ys + 1] = loop.xs[1], loop.ys[1]
+		end
+	end
+	return shape(xs, ys)
+end
+
 -- Base and patches -----------------------------------------------------------------------------
 
 -- Tone patches: blue-noise blobs stretched by stretch along x, half in the light tone and half in the
@@ -355,132 +599,109 @@ end
 layoutPatches("patch")
 layoutPatches("tint")
 
--- The part of convex polygon (xs, ys) where nx * x + ny * y <= d.
-local function clipHalf(xs, ys, nx, ny, d)
-	local ox, oy = {}, {}
-	local n = #xs
-	if n == 0 then
-		return ox, oy
+-- Regions: the ground split along the level sets of a spectral field into nested cel steps, shapes
+-- that are a field's contours and so never read as blobs, cells or a repeat. <prefix>Levels lists
+-- area shares in paint order: a positive share is the highest that much of the tile (a rise), a
+-- negative one the lowest (a hollow), so every variant gives each level the same area. Level k takes
+-- the k-th of <prefix>Colors and its height bump from <prefix>Relief. With <prefix>Bevel a rise is
+-- also lit along its upper edge and shaded along its lower one, and a hollow the other way: copies
+-- of the level moved that far up and down under it, the lit one <prefix>Lit times its color and the
+-- shaded one what cancels it.
+-- The field is <prefix>Waves waves of <prefix>Cycles a period, stretched <prefix>Stretch along x,
+-- falling off as cycles^-<prefix>Slope. The levels are ground: the tone grid and the far mips see them.
+local function moved(s, dx, dy)
+	local xs, ys = {}, {}
+	for i = 1, s.n do
+		xs[i], ys[i] = s.xs[i] + dx, s.ys[i] + dy
 	end
-	local px, py = xs[n], ys[n]
-	local pd = nx * px + ny * py - d
-	for i = 1, n do
-		local cx, cy = xs[i], ys[i]
-		local cd = nx * cx + ny * cy - d
-		if (cd <= 0) ~= (pd <= 0) then
-			local t = pd / (pd - cd)
-			ox[#ox + 1], oy[#oy + 1] = px + (cx - px) * t, py + (cy - py) * t
-		end
-		if cd <= 0 then
-			ox[#ox + 1], oy[#oy + 1] = cx, cy
-		end
-		px, py, pd = cx, cy, cd
-	end
-	return ox, oy
+	return shape(xs, ys)
 end
+local function layoutRegions(prefix)
+	local waves = getInt(prefix .. "Waves", 0)
+	if waves <= 0 then
+		return
+	end
+	local lo, hi = getFloatRange(prefix .. "Cycles", 3, 10)
+	local g = spectralGrid(lo, hi, getFloat(prefix .. "Stretch", 1), waves, getFloat(prefix .. "Slope", 1))
+	local levels = numberList(prefix .. "Levels")
+	local colors = hexList(prefix .. "Colors", base)
+	local relief = numberList(prefix .. "Relief")
+	local bevel = getFloat(prefix .. "Bevel", 0)
+	local sorted = sortedValues(g)
+	local litK = getFloat(prefix .. "Lit", 1.15)
+	for k, share in ipairs(levels) do
+		local sign = share > 0 and 1 or -1
+		local loops = contourLoops(g, quantile(sorted, share > 0 and 1 - share or -share), sign)
+		if #loops > 0 then
+			local s = regionShape(loops)
+			local c = toLinear(colors[(k - 1) % #colors + 1])
+			local rise = relief[k] or 0
+			if bevel > 0 then
+				-- The lit and shaded edges are as wide and cancel in linear light, so however far a level's
+				-- outline runs they leave the mean be, and they're too thin for the tone grid to see.
+				local lit = { c[1] * litK, c[2] * litK, c[3] * litK }
+				local dark = { 2 * c[1] - lit[1], 2 * c[2] - lit[2], 2 * c[3] - lit[3] }
+				local edge = bump(rise * 0.5)
+				steps[#steps + 1] = { moved(s, 0, -bevel), sign > 0 and lit or dark, edge, thin = true }
+				steps[#steps + 1] = { moved(s, 0, bevel), sign > 0 and dark or lit, edge, thin = true }
+			end
+			steps[#steps + 1] = { s, c, bump(rise) }
+		end
+	end
+end
+layoutRegions("tone")
+layoutRegions("ledge")
 
--- Rock plates: the ground broken into slabs along joints. Voronoi cells of loosely spaced sites on the
--- torus, each inset by half its joint's width (plateJoint, varying edge to edge) so plateJointColor
--- shows between them, shaded as a slab lit from the top: a lit band plateBevel wide along its upper
--- edges, a shaded band along its lower ones, the face between. A plateMerge share of neighbors have
--- no joint or bevel between them, so slabs come in irregular sizes, and face tones follow a broad
--- field so merged neighbors match. Every edge then wiggles by plateWiggle, the same way in all three
--- layers. They're ground: the tone grid and the far mips see them.
-do
-	local density = getFloat("plateDensity", 0)
-	if density > 0 then
-		local joint = getFloat("plateJoint", 0.02)
-		local colors = hexList("plateColors", base)
-		local spread = getFloat("plateJitter", 0.06)
-		local bevelLo, bevelHi = getFloatRange("plateBevel", 0.01, 0.02)
-		local litK, darkK = getFloat("plateLit", 1.3), getFloat("plateDark", 0.7)
-		local mergeShare = getFloat("plateMerge", 0)
-		local wiggle = getFloat("plateWiggle", 0)
-		local toneCycles = getFloat("plateToneCycles", 4)
-		local spacing = 1 / sqrt(density)
-		local reach = 2.5 * spacing
-		steps[#steps + 1] = { shape({ 0, P, P, 0 }, { 0, 0, P, P }), toLinear(hex("plateJointColor", "#404040")), H.joint }
-		local sites = blueNoise(count(density), 0.5 * spacing)
-		-- Per pair of neighbors, decided once for both: merged or not, and the joint's width.
-		local edges = {}
-		local function edge(i, j)
-			local key = min(i, j) * 65536 + max(i, j)
-			local e = edges[key]
-			if not e then
-				e = { merged = rand() < mergeShare, width = joint * uniform(0.5, 1.6) }
-				edges[key] = e
+-- Joints: long fractures that wander across the rock, a few to a tile, with short side fractures
+-- branching off them. Laid out here as polylines, so lichen can favor them, and drawn after the
+-- cracks: a band of weathering stain, the lit lip of the crack's lower wall (it faces up the screen,
+-- into the light) and the dark crack. "fracture" is a second, finer set. Every walk is jointWidth
+-- wide at its middle, tapering to its ends.
+local joints = {}
+local function layoutJoints(prefix)
+	local density = getFloat(prefix .. "Density", 0)
+	if density <= 0 then
+		return
+	end
+	local lenLo, lenHi = getFloatRange(prefix .. "Length", 0.8, 2)
+	local wLo, wHi = getFloatRange(prefix .. "Width", 0.012, 0.025)
+	local turn = getFloat(prefix .. "Turn", 0.1)
+	local kink = getFloat(prefix .. "Kink", 0.03)
+	local branch = getFloat(prefix .. "Branch", 0.05)
+	local stain = getFloat(prefix .. "Stain", 0)
+	local stainK = getFloat(prefix .. "StainDark", 0.9)
+	local dark, lip = hex(prefix .. "Color", "#000000"), hex(prefix .. "LipColor", "#FFFFFF")
+	local stepLen = 0.03
+	local function walk(x, y, a, len, w, depth)
+		local px, py = { x }, { y }
+		local n = max(3, floor(len / stepLen))
+		for k = 1, n do
+			a = a + gauss() * turn
+			if rand() < kink then
+				a = a + (rand() < 0.5 and -1 or 1) * uniform(0.3, 0.7)
 			end
-			return e
-		end
-		-- Edges subdivided to 3 cm and pushed by a periodic vector field, so joints wander.
-		local function wiggled(s)
-			if wiggle <= 0 then
-				return s
-			end
-			local xs, ys = {}, {}
-			for k = 1, s.n do
-				local ax, ay = s.xs[k], s.ys[k]
-				local bx, by = s.xs[k % s.n + 1], s.ys[k % s.n + 1]
-				local parts = max(1, floor(sqrt((bx - ax) ^ 2 + (by - ay) ^ 2) / 0.03 + 0.5))
-				for q = 0, parts - 1 do
-					local t = q / parts
-					local x, y = ax + (bx - ax) * t, ay + (by - ay) * t
-					xs[#xs + 1] = x + wiggle * field(x, y, 16, 211)
-					ys[#ys + 1] = y + wiggle * field(x, y, 16, 223)
-				end
-			end
-			return shape(xs, ys)
-		end
-		for i, si in ipairs(sites) do
-			-- The inset cell as half-planes n . p <= d: each neighbor's bisector moved toward the site.
-			local planes = {}
-			for j, sj in ipairs(sites) do
-				local dx, dy = wrapDelta(sj[1] - si[1]), wrapDelta(sj[2] - si[2])
-				local d2 = dx * dx + dy * dy
-				if j ~= i and d2 < reach * reach then
-					local len = sqrt(d2)
-					local nx, ny = dx / len, dy / len
-					local e = edge(i, j)
-					local inset = e.merged and 0 or e.width * 0.5
-					planes[#planes + 1] = { nx, ny, (si[1] + dx * 0.5) * nx + (si[2] + dy * 0.5) * ny - inset, e.merged }
-				end
-			end
-			-- The cell, and its intersection with copies of itself moved down by each of shifts (only
-			-- the jointed edges move, so merged ones get no bevel).
-			local function cell(shifts)
-				local xs = { si[1] - reach, si[1] + reach, si[1] + reach, si[1] - reach }
-				local ys = { si[2] - reach, si[2] - reach, si[2] + reach, si[2] + reach }
-				for _, pl in ipairs(planes) do
-					xs, ys = clipHalf(xs, ys, pl[1], pl[2], pl[3])
-				end
-				for _, t in ipairs(shifts) do
-					for _, pl in ipairs(planes) do
-						if not pl[4] then
-							xs, ys = clipHalf(xs, ys, pl[1], pl[2], pl[3] + pl[2] * t)
-						end
-					end
-				end
-				return wiggled(shape(xs, ys))
-			end
-			local tone = clamp(0.5 + 0.8 * field(si[1], si[2], toneCycles, 227), 0, 0.999)
-			local c = colors[floor(tone * #colors) + 1]
-			local face = toLinear(shade(c, 1 + spread * (rand() * 2 - 1)))
-			local bevel = uniform(bevelLo, bevelHi)
-			-- The slab's top: the ground's height, some slabs higher than others; its bevels slope off it.
-			local top = H.base + 0.08 * clamp(field(si[1], si[2], toneCycles * 3, 239) / 0.7, -1, 1)
-			local layers = {
-				{ cell({}), litK, top - 0.05 },
-				{ cell({ bevel }), darkK, top - 0.08 },
-				{ cell({ bevel, -bevel * 0.8 }), 1, top },
-			}
-			for _, layer in ipairs(layers) do
-				if layer[1].n >= 3 then
-					steps[#steps + 1] = { layer[1], { face[1] * layer[2], face[2] * layer[2], face[3] * layer[2] }, clamp(layer[3], 0, 1) }
-				end
+			x, y = x + cos(a) * stepLen, y + sin(a) * stepLen
+			px[#px + 1], py[#py + 1] = x, y
+			if depth < 2 and k > 2 and k < n - 2 and rand() < branch then
+				walk(x, y, a + (rand() < 0.5 and -1 or 1) * uniform(0.5, 1.2), len * uniform(0.15, 0.4), w * 0.55, depth + 1)
 			end
 		end
+		local band = depth == 0 and stain or stain * 0.5
+		joints[#joints + 1] = { px = px, py = py, w = w, stain = band, stainK = stainK, dark = dark, lip = lip }
+	end
+	-- Lengths are normalized per variant, so every variant has as much joint.
+	local lens, sum = {}, 0
+	for i = 1, count(density) do
+		lens[i] = lognormal(lenLo, lenHi, 0.35)
+		sum = sum + lens[i]
+	end
+	local scale = #lens * sqrt(lenLo * lenHi) / max(sum, 1e-9)
+	for i = 1, #lens do
+		walk(rand() * P, rand() * P, rand() * TAU, lens[i] * scale, uniform(wLo, wHi), 0)
 	end
 end
+layoutJoints("joint")
+layoutJoints("fracture")
 
 -- Puddles: small standing water in a hollow, lit from the top of the screen: a dark wet rim, the
 -- lower bank lit along the bottom edge, the water with the upper bank's shade across its top, a few
@@ -529,36 +750,76 @@ do
 	end
 end
 
--- Lichen: crustose colonies, an irregular crust in lichenColors (taken in turn) kept down to the mip
--- where the colony is a texel across, spotted with light and dark dots in pairs around its color.
--- Laid out here, so the far ground can average them in like the puddles, and drawn after the grain.
+-- Lichen: sparse colonies of crustose lichen, each a loose cluster of small rosettes, so a colony's
+-- outline is ragged rather than round. A colony takes one of lichenColors, sits within a few
+-- centimeters of a joint lichenNearJoint of the time (water runs there), and scatters rosettes about
+-- its center, larger toward it, each a lighter growing rim around its body and, when big enough, a
+-- dark fruiting dot or two. Laid out here, so the far ground can average them in, and drawn after the
+-- grain.
 local lichens = {}
 do
 	local density = getFloat("lichenDensity", 0)
 	if density > 0 then
-		local rLo, rHi = getFloatRange("lichenSize", 0.03, 0.08)
-		local dLo, dHi = getFloatRange("lichenDot", 0.008, 0.018)
+		local rLo, rHi = getFloatRange("lichenSize", 0.05, 0.15)
+		local dLo, dHi = getFloatRange("lichenDot", 0.006, 0.025)
 		local colors = hexList("lichenColors", base)
-		for i, p in ipairs(blueNoise(count(density), 0.6 / sqrt(density))) do
-			local c = colors[(i - 1) % #colors + 1]
-			local r = lognormal(rLo, rHi, 0.4)
-			local l = {
-				crust = blobShape(p[1], p[2], r, 14, 0.5, uniform(0.8, 1.25), rand() * TAU),
-				crustColor = shade(c, 0.9),
-				lod = lodFor(r * 2),
-				dots = {},
-			}
-			for _ = 1, floor(r * r * 4000) do
-				local a, d = rand() * TAU, r * sqrt(rand()) * 0.9
-				local size = uniform(dLo, dHi)
-				local k = rand() < 0.5 and 1.15 or 0.82
-				l.dots[#l.dots + 1] = { blobShape(p[1] + cos(a) * d, p[2] + sin(a) * d, size * 0.5, 6, 0.2, 1, 0), shade(c, k), lodFor(size) }
+		local nearJoint = getFloat("lichenNearJoint", 0)
+		local perArea = getFloat("lichenRosettes", 900)
+		local fruit = hex("lichenFruitColor", "#3A3631")
+		-- Radii are normalized per variant, so every variant has as much lichen.
+		local radii, sum = {}, 0
+		for i = 1, count(density) do
+			radii[i] = lognormal(rLo, rHi, 0.4)
+			sum = sum + radii[i] * radii[i]
+		end
+		local scale = sqrt(#radii * rLo * rHi / max(sum, 1e-9))
+		for i = 1, #radii do
+			local cx, cy = rand() * P, rand() * P
+			local along = rand() * TAU
+			if #joints > 0 and rand() < nearJoint then
+				local j = joints[floor(rand() * #joints) + 1]
+				local q = floor(rand() * #j.px) + 1
+				cx, cy = j.px[q] + gauss() * 0.04, j.py[q] + gauss() * 0.04
+				local q2 = min(#j.px, q + 1)
+				along = math.atan(j.py[q2] - j.py[max(1, q2 - 1)], j.px[q2] - j.px[max(1, q2 - 1)])
 			end
-			lichens[#lichens + 1] = l
+			local c = colors[(i - 1) % #colors + 1]
+			local R = radii[i] * scale
+			local stretch = uniform(1, 1.8)
+			local ca, sa = cos(along), sin(along)
+			-- Positions and sizes first, the sizes normalized so every colony of a radius covers as much.
+			local spots, sum2 = {}, 0
+			for k = 1, max(3, floor(R * R * perArea)) do
+				local u, v = gauss() * 0.5 * R * stretch, gauss() * 0.5 * R / stretch
+				local d = sqrt((u / stretch) ^ 2 + (v * stretch) ^ 2) / R
+				spots[k] = { u, v, lognormal(dLo, dHi, 0.45) * clamp(1.1 - 0.6 * d, 0.35, 1) }
+				sum2 = sum2 + spots[k][3] ^ 2
+			end
+			local sizeScale = sqrt(#spots * dLo * dHi * 0.55 / max(sum2, 1e-12))
+			local rosettes = {}
+			for _, spot in ipairs(spots) do
+				local u, v, size = spot[1], spot[2], spot[3] * sizeScale
+				local x, y = cx + u * ca - v * sa, cy + u * sa + v * ca
+				local body = jitter(c, 0.07)
+				local r = {
+					rim = blobShape(x, y, size * 0.5, 9, 0.45, uniform(0.8, 1.25), rand() * TAU),
+					rimColor = shade(body, 1.18),
+					color = body,
+					dots = {},
+				}
+				r.body = blobShape(x + (rand() - 0.5) * size * 0.1, y + size * 0.04, size * 0.34, 8, 0.35, 1, rand() * TAU)
+				if size > 0.012 then
+					for _ = 1, floor(uniform(0, 3)) do
+						local a, dd = rand() * TAU, size * 0.2 * sqrt(rand())
+						r.dots[#r.dots + 1] = blobShape(x + cos(a) * dd, y + sin(a) * dd, size * 0.07, 5, 0.2, 1, 0)
+					end
+				end
+				rosettes[#rosettes + 1] = r
+			end
+			lichens[#lichens + 1] = { rosettes = rosettes, fruit = fruit, lod = lodFor(2 * R) }
 		end
 	end
 end
-
 -- The ground's tone (base and patches) on a 6.25 cm grid, linear: what the ground-born layers above
 -- (grain, ripples, cracks, lumps, shadows) are colored from, so they keep the patches' contrast at
 -- every mip rather than pulling them toward the base. Then the whole ground is scaled so each
@@ -580,21 +841,53 @@ local function insideShape(s, x, y)
 	end
 	return hit
 end
--- Paints shape s into a grid of linear colors (cell centers inside it take color c), wrapped.
-local function fillGrid(target, s, c)
+-- Calls visit with the wrapped index of every grid cell whose center is inside shape s (even-odd),
+-- a row at a time: the row's crossings once, then the cells between them.
+local function gridCells(s, visit)
+	local xs, ys, n = s.xs, s.ys, s.n
 	local x0, x1, y0, y1 = math.huge, -math.huge, math.huge, -math.huge
-	for i = 1, s.n do
-		x0, x1 = min(x0, s.xs[i]), max(x1, s.xs[i])
-		y0, y1 = min(y0, s.ys[i]), max(y1, s.ys[i])
+	for i = 1, n do
+		x0, x1 = min(x0, xs[i]), max(x1, xs[i])
+		y0, y1 = min(y0, ys[i]), max(y1, ys[i])
 	end
 	for j = floor(y0 / gridCell), floor(y1 / gridCell) do
 		local cy = (j + 0.5) * gridCell
-		for i = floor(x0 / gridCell), floor(x1 / gridCell) do
-			if insideShape(s, (i + 0.5) * gridCell, cy) then
-				target[(j % kGridN) * kGridN + i % kGridN + 1] = c
+		local cuts = {}
+		local jx, jy = xs[n], ys[n]
+		for k = 1, n do
+			local ix, iy = xs[k], ys[k]
+			if (iy > cy) ~= (jy > cy) then
+				cuts[#cuts + 1] = (jx - ix) * (cy - iy) / (jy - iy) + ix
+			end
+			jx, jy = ix, iy
+		end
+		if #cuts > 0 then
+			table.sort(cuts)
+			local q = 1
+			for i = floor(x0 / gridCell), floor(x1 / gridCell) do
+				local cx = (i + 0.5) * gridCell
+				while q <= #cuts and cuts[q] <= cx do
+					q = q + 1
+				end
+				if (#cuts - q) % 2 == 0 then
+					visit((j % kGridN) * kGridN + i % kGridN + 1)
+				end
 			end
 		end
 	end
+end
+-- Paints shape s into a grid of linear colors (cell centers inside it take color c), wrapped.
+local function fillGrid(target, s, c)
+	gridCells(s, function(k)
+		target[k] = c
+	end)
+end
+-- Scales the light of the grid cells inside shape s by k.
+local function shadeGrid(target, s, k)
+	gridCells(s, function(i)
+		local g = target[i]
+		target[i] = { g[1] * k, g[2] * k, g[3] * k }
+	end)
 end
 -- Whether (x, y) lies in a puddle's rim, across the wrap: lumps and grain keep out of the water.
 local function inPuddle(x, y)
@@ -612,7 +905,16 @@ do
 		grid[k] = b
 	end
 	for _, st in ipairs(steps) do
-		fillGrid(grid, st[1], st[2])
+		if not st.thin then
+			fillGrid(grid, st[1], st[2])
+		end
+	end
+	-- Joints stain the ground about them, so the far mips keep them as faint dark lines; before the
+	-- scaling, so it holds each variant's mean too.
+	for _, jt in ipairs(joints) do
+		if jt.stain > 0 then
+			shadeGrid(grid, stripShape(jt.px, jt.py, jt.w + 2 * jt.stain, 0.3, 0), jt.stainK)
+		end
 	end
 	local m = { 0, 0, 0 }
 	for k = 1, kGridN * kGridN do
@@ -659,7 +961,9 @@ do
 		farGrid[k] = grid[k]
 	end
 	for _, l in ipairs(lichens) do
-		fillGrid(farGrid, l.crust, toLinear(l.crustColor))
+		for _, r in ipairs(l.rosettes) do
+			fillGrid(farGrid, r.rim, toLinear(mix(r.rimColor, r.color, 0.45)))
+		end
 	end
 	for _, p in ipairs(puddles) do
 		local g = grid[(floor(p.y / gridCell) % kGridN) * kGridN + floor(p.x / gridCell) % kGridN + 1]
@@ -892,6 +1196,38 @@ do
 	end
 end
 
+-- Joints ---------------------------------------------------------------------------------------
+
+-- The walks laid out above, a few points at a time in the ground's tone where they lie: the stain
+-- band (already in the tone grid, so drawn in its color down to the far ground), the lit lip below
+-- the crack, as wide as balances it, and the crack, the lowest thing on the surface.
+for _, jt in ipairs(joints) do
+	local px, py, w = jt.px, jt.py, jt.w
+	local lw = balancedWidth(w, jt.lip, jt.dark)
+	local lod = lodFor(w)
+	local stL, stR
+	if jt.stain > 0 then
+		stL, stR = stripSides(px, py, w + 2 * jt.stain, 0.3, 0)
+	end
+	local lipL, lipR = stripSides(px, py, w + lw, 0.25, 0)
+	local crL, crR = stripSides(px, py, w, 0.25, 0)
+	local i0 = 1
+	while i0 < #px do
+		local i1 = min(#px, i0 + 5)
+		local m = floor((i0 + i1) / 2)
+		local mx, my = px[m] % P, py[m] % P
+		if stL then
+			at(bump(-0.08))
+			emitShape(stripPart(stL, stR, i0, i1), toSrgb(groundAt(mx, my)), kFar)
+		end
+		at(bump(0.01))
+		emitShape(stripPart(lipL, lipR, i0, i1), onGround(jt.lip, mx, my), lod, 0, lw * 0.6)
+		at(bump(-0.45))
+		emitShape(stripPart(crL, crR, i0, i1), onGround(jt.dark, mx, my), lod)
+		i0 = i1
+	end
+end
+
 -- Grain ----------------------------------------------------------------------------------------
 
 -- Specks in pairs, a light one and a dark twin of the same size, grainContrast either way in linear
@@ -945,13 +1281,18 @@ do
 	end
 end
 
--- Lichen: the colonies laid out above, a crust and its dots.
+-- Lichen: the colonies laid out above, each rosette a rim, its body and its fruiting dots, all kept
+-- down to the mip where the colony is a texel across, so a colony fades as a tint rather than its
+-- rosettes dropping out one by one.
 for _, l in ipairs(lichens) do
-	at(bump(0.04))
-	emitShape(l.crust, l.crustColor, l.lod)
-	at(bump(0.05))
-	for _, d in ipairs(l.dots) do
-		emitShape(d[1], d[2], d[3])
+	for _, r in ipairs(l.rosettes) do
+		at(bump(0.03))
+		emitShape(r.rim, r.rimColor, l.lod)
+		at(bump(0.04))
+		emitShape(r.body, r.color, l.lod)
+		for _, d in ipairs(r.dots) do
+			emitShape(d, l.fruit, l.lod)
+		end
 	end
 end
 
@@ -1208,6 +1549,7 @@ end
 -- on a proxy, its shadow's outline in what the stone averages to there, kept down to mip 3: the shadow
 -- covers it exactly wherever the stone is drawn, and where the stone has dropped out the proxy keeps
 -- its share of the mean (stones are grey on colored ground, so they'd otherwise shift its hue).
+-- stoneNearJoint of them lie in a joint, where grit collects.
 do
 	local density = getFloat("stoneDensity", 0)
 	if density > 0 then
@@ -1215,8 +1557,14 @@ do
 		local colors = hexList("stoneColors", base)
 		local shadowK = getFloat("stoneShadow", 0.5)
 		local litK = getFloat("stoneLit", 1.35)
+		local nearJoint = #joints > 0 and getFloat("stoneNearJoint", 0) or 0
 		for _ = 1, count(density) do
 			local x, y = rand() * P, rand() * P
+			if nearJoint > 0 and rand() < nearJoint then
+				local jt = joints[floor(rand() * #joints) + 1]
+				local q = floor(rand() * #jt.px) + 1
+				x, y = jt.px[q] % P, jt.py[q] % P
+			end
 			local size = lognormal(sLo, sHi, 0.5)
 			local r = size * 0.5
 			local c = jitter(pick(colors), 0.05)

@@ -93,11 +93,11 @@
         <farGain>0.9873,0.9995,1.0019</farGain>
 
         <!-- Heights, for the transition contest (docs/technical/ground-textures.md, "Heights in alpha"):
-             the ground at heightBase, its small relief (patches, ripple crests, cracks, grain, pits) heightRelief
-             times a fixed bump, and what lies on it (clods, pieces, stones, grass tips) a fixed step above
-             heightBase. heightPlateJoint is a rock joint's and heightPuddleRim a puddle's rim, the water
-             being 0. The bake ranks them per surface, so only their order counts. Dirt keeps the defaults:
-             0.3, 1, 0.1 and half heightBase. -->
+             the ground at heightBase, its small relief (patches, regions, ripple crests, cracks, joints,
+             grain, pits) heightRelief times a fixed bump, and what lies on it (clods, pieces, stones, grass
+             tips) a fixed step above heightBase. heightPuddleRim is a puddle's wet rim, the water being 0.
+             The bake ranks them per surface, so only their order counts. Dirt keeps the defaults: 0.3, 1
+             and half heightBase. -->
       </params>
     </generator>
     <variantCount>8</variantCount>
