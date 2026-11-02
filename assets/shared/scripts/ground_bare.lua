@@ -9,17 +9,17 @@
 -- ground-born layer above takes its color from (grain, crests, cracks, lumps, shadows), so those keep
 -- the ground's contrast instead of pulling them toward the base, and which is scaled so each variant
 -- averages to the base exactly. Paint order: the far ground, the near ground (base, patches,
--- regions), drifts and ripples (a lit crest over a shadowed lee), cracks, joints, grain, pits,
--- lichen, puddles, lumps, then the loose pieces (roots, straw, leaves, twigs, shells, stones) back to
--- front, grass tips poking through, and sparkle. Every layer is off at density 0.
+-- regions), ripple fragments (a lit crest over a shadowed lee), wind streaks, cracks, joints, grain,
+-- pits, lichen, puddles, lumps, then the loose pieces (roots, straw, leaves, twigs, shells, stones)
+-- back to front, grass tips poking through, and sparkle. Every layer is off at density 0.
 --
 -- LOD: the far ground, the tone grid (puddles and lichen averaged in) as one rect a mip 4 texel, is
 -- all mips 4 to 6 show; it's scaled to set their contrast and mean from the bake's report, as Grass's
 -- far stack is. The near ground covers it from mip 3 up. Pieces keep to the mips where they're a
 -- texel across (tag 1 / width; the ground's mass, lumps and crests, to half a texel) and never past
 -- kFar. What drops out is balanced where it can be, so the mips that drop it keep mip 0's mean: each
--- light grain has a dark twin, a crest's lit strip cancels its lee, a region's lit edge its shaded
--- one, a lump's cap its darkened body, and a stone sits on a proxy in its own average.
+-- light grain or streak has a dark twin, a crest's lit strip cancels its lee, a region's lit edge
+-- its shaded one, a lump's cap its darkened body, and a stone sits on a proxy in its own average.
 --
 -- Meters, +Y down, sRGB colors 0..1. Densities are per square meter and counts are fixed per variant,
 -- and every noise field has a whole number of cycles across the tile, so all variants share the same
@@ -1079,12 +1079,19 @@ local function groundShade(x, y, k)
 	return toSrgb({ g[1] * k, g[2] * k, g[3] * k })
 end
 
--- Ripples and drifts ---------------------------------------------------------------------------
+-- Ripples ------------------------------------------------------------------------------------------
 
--- Rows of crests across the tile, wavelength apart (rounded so a whole number fits), each a wavy line
--- broken into runs where a periodic field is high. A run is a shadowed lee strip below the crest and
--- a lit strip above it, as wide as balances the shadow, tapering at both ends; soft ones step to it
--- in two.
+-- Wind ripples as short fragments: crests in rows wavelength apart (rounded so a whole number fits),
+-- every row bending by the same two waves (so neighbors run parallel, a field of ripples) with wander
+-- of the bend noise of its own, broken into fragments wherever a periodic field of breakCycles a period
+-- falls under coverage, which patchiness moves with a field of 3 cycles a period, so the ripples come
+-- in fields with smooth sand between. Fragments run a few to a few tens of centimeters, so no crest is
+-- long enough for a hex cell's edge to cut it as a line: the edge reads as one more break. Each
+-- fragment sits a little off its row, bows down the screen toward its ends and tapers to both, and is
+-- a lit strip above the crest over a shadowed lee below, as wide as cancels it in linear light, each
+-- over a half step soft times as wide. The crest stands a little above the ground and the lee a little
+-- below it, less than the ground's own rises and hollows, so a transition follows those and the rows
+-- only break its edge up.
 local function ripples(prefix)
 	local wavelength = getFloat(prefix .. "Wavelength", 0)
 	if wavelength <= 0 then
@@ -1093,39 +1100,38 @@ local function ripples(prefix)
 	local rows = max(1, floor(P / wavelength + 0.5))
 	wavelength = P / rows
 	local wLo, wHi = getFloatRange(prefix .. "Width", 0.015, 0.03)
-	local coverage = getFloat(prefix .. "Coverage", 0.6)
+	local coverage = getFloat(prefix .. "Coverage", 0.5)
 	local amp = getFloat(prefix .. "Amp", 0.03)
 	local waveCycles = getFloat(prefix .. "WaveCycles", 3)
-	local breakCycles = getFloat(prefix .. "BreakCycles", 8)
+	local breakCycles = getFloat(prefix .. "BreakCycles", 20)
 	local wander = clamp(getFloat(prefix .. "Wander", 0.3), 0, 1)
-	local soft = getInt(prefix .. "Soft", 0) ~= 0
+	local bow = getFloat(prefix .. "Bow", 0.4)
+	local patchiness = getFloat(prefix .. "Patchiness", 0)
+	local soft = max(1, getFloat(prefix .. "Soft", 1))
 	local lit, shadow = hex(prefix .. "Lit", "#FFFFFF"), hex(prefix .. "Shadow", "#000000")
 	local step = min(0.02, wavelength * 0.25)
 	local nx = floor(P / step + 0.5)
 	step = P / nx
 	-- The break field's threshold for the coverage asked: noise is about -0.7..0.7, so map linearly.
 	local threshold = 0.7 - 1.4 * clamp(coverage, 0, 1)
-	-- Every row bends by the same two waves along x (waveCycles and about 1.7 times as many a period),
-	-- their phases drifting a cycle or two down the tile, so neighboring crests run parallel and the
-	-- pattern meanders as a whole; wander of the bend is noise instead, each row its own.
 	local n1 = max(1, floor(waveCycles + 0.5))
 	local n2 = max(1, floor(waveCycles * 1.7 + 0.5))
 	local ph1, ph2 = rand() * TAU, rand() * TAU
 	for j = 0, rows - 1 do
 		local y0 = (j + 0.5 + (rand() - 0.5) * 0.2) * wavelength
-		local w = uniform(wLo, wHi)
 		local salt = 101 + j * 7
 		local function crestY(x)
 			local waves = 0.65 * sin(TAU * (n1 * x + y0) / P + ph1) + 0.35 * sin(TAU * (n2 * x - 2 * y0) / P + ph2)
 			local noise = 1.4 * field(x, y0, n1 * 2, 71) + 0.6 * field(x, y0, n2 * 2, 73)
 			return y0 + amp * ((1 - wander) * waves + wander * noise)
 		end
-		-- Runs along the row, wrapping: each starts where the break field rises through the threshold;
-		-- a row it never breaks is one run around the tile with no ends to taper.
+		-- Fragments along the row, wrapping: each starts where the break field rises through the
+		-- threshold; a row it never breaks is one run around the tile with no ends to taper.
 		local on = {}
 		local start = nil
 		for i = 0, nx - 1 do
-			on[i] = field(i * step, y0, breakCycles, salt) > threshold
+			local x = i * step
+			on[i] = field(x, y0, breakCycles, salt) > threshold - patchiness * field(x, y0, 3, 89)
 		end
 		for i = 0, nx - 1 do
 			if not on[i] and on[(i + 1) % nx] then
@@ -1146,61 +1152,86 @@ local function ripples(prefix)
 					while on[i % nx] and i - first < nx do
 						i, visited = i + 1, visited + 1
 					end
-					runs[#runs + 1] = { first, i - first, 0.3 }
+					runs[#runs + 1] = { first, i - first, 0.45 }
 				else
 					i, visited = i + 1, visited + 1
 				end
 			end
 		end
 		for _, run in ipairs(runs) do
+			local w = uniform(wLo, wHi)
+			local dy = (rand() - 0.5) * 0.3 * wavelength
+			local sag = run[3] > 0 and bow * w * uniform(0.5, 1.5) or 0
 			local px, py = {}, {}
 			for i = run[1], run[1] + run[2] do
 				local x = i * step
-				px[#px + 1], py[#py + 1] = x, crestY(x % P)
+				local t = (i - run[1]) / max(1, run[2])
+				px[#px + 1], py[#py + 1] = x, crestY(x % P) + dy + sag * (2 * t - 1) ^ 2
 			end
-			if #px >= 4 then
+			if #px >= 3 then
 				-- Emitted a few points at a time, each part in the ground's tone where it lies.
 				local lw = balancedWidth(w, lit, shadow)
 				local lod = lodFor(2 * min(w, lw))
-				local litL, litR = stripSides(px, py, lw, run[3], -1)
-				local shL, shR = stripSides(px, py, w, run[3], 1)
-				local litInL, litInR, shInL, shInR
-				if soft then
-					litInL, litInR = stripSides(px, py, lw * 0.5, run[3], -1)
-					shInL, shInR = stripSides(px, py, w * 0.5, run[3], 1)
-				end
+				-- The half step as a pair, a lit strip over a shadowed one, is the ripple a coarser mip shows.
+				local softLod = lodFor(soft * (w + lw))
+				local litL, litR = stripSides(px, py, lw * soft, run[3], -1)
+				local shL, shR = stripSides(px, py, w * soft, run[3], 1)
+				local litInL, litInR = stripSides(px, py, lw, run[3], -1)
+				local shInL, shInR = stripSides(px, py, w, run[3], 1)
 				local i0 = 1
 				while i0 < #px do
 					local i1 = min(#px, i0 + 5)
 					local m = floor((i0 + i1) / 2)
 					local mx, my = px[m] % P, py[m] % P
+					local g = toSrgb(groundAt(mx, my))
 					local litC, shC = onGround(lit, mx, my), onGround(shadow, mx, my)
-					-- The crest stands highest, its lee below it, both over the ground.
-					if soft then
-						-- A half step over the whole strip, the full step nearer the crest.
-						local g = toSrgb(groundAt(mx, my))
-						at(bump(0.06))
-						emitShape(stripPart(litL, litR, i0, i1), mix(g, litC, 0.5), lod)
-						at(bump(0.02))
-						emitShape(stripPart(shL, shR, i0, i1), mix(g, shC, 0.5), lod)
-						at(bump(0.1))
-						emitShape(stripPart(litInL, litInR, i0, i1), litC, lod)
-						at(bump(0.04))
-						emitShape(stripPart(shInL, shInR, i0, i1), shC, lod)
-					else
-						at(bump(0.1))
-						emitShape(stripPart(litL, litR, i0, i1), litC, lod)
-						at(bump(0.03))
-						emitShape(stripPart(shL, shR, i0, i1), shC, lod)
+					if soft > 1 then
+						at(bump(0.01))
+						emitShape(stripPart(litL, litR, i0, i1), mix(g, litC, 0.5), softLod)
+						at(bump(-0.01))
+						emitShape(stripPart(shL, shR, i0, i1), mix(g, shC, 0.5), softLod)
 					end
+					at(bump(0.02))
+					emitShape(stripPart(litInL, litInR, i0, i1), litC, lod)
+					at(bump(-0.02))
+					emitShape(stripPart(shInL, shInR, i0, i1), shC, lod)
 					i0 = i1
 				end
 			end
 		end
 	end
 end
-ripples("drift")
 ripples("ripple")
+
+-- Streaks: wind-combed grain, thin lenses lying along the wind (across the screen, within streakAngle),
+-- in pairs of a light one and a dark twin of the same size, streakContrast either way in linear light,
+-- so they cancel where they drop out. Each is placed on its own, so nothing lines up across a cell
+-- edge. A light streak is a little high, its dark twin a little low.
+do
+	local density = getFloat("streakDensity", 0)
+	if density > 0 then
+		local lenLo, lenHi = getFloatRange("streakLength", 0.04, 0.12)
+		local wLo, wHi = getFloatRange("streakWidth", 0.005, 0.01)
+		local contrast = getFloat("streakContrast", 0.08)
+		local angle = getFloat("streakAngle", 0.15)
+		for _ = 1, floor(count(density) / 2) do
+			local L, w = lognormal(lenLo, lenHi, 0.4), uniform(wLo, wHi)
+			local lod = lodFor(w)
+			for k = 1, 2 do
+				local x, y, a = rand() * P, rand() * P, (rand() * 2 - 1) * angle
+				local ca, sa = cos(a), sin(a)
+				local xs, ys = {}, {}
+				for i = 0, 7 do
+					local t = TAU * i / 8
+					local lx, ly = cos(t) * L * 0.5, sin(t) * w * 0.5
+					xs[i + 1], ys[i + 1] = x + lx * ca - ly * sa, y + lx * sa + ly * ca
+				end
+				at(bump(k == 1 and 0.02 or -0.02))
+				emitShape(shape(xs, ys), groundShade(x, y, k == 1 and 1 + contrast or 1 - contrast), lod)
+			end
+		end
+	end
+end
 
 -- Cracks ---------------------------------------------------------------------------------------
 
