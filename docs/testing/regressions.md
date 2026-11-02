@@ -26,9 +26,9 @@ can never be completed and may leave the colonist stuck.
 ### Belt stow-on-fell
 
 - [ ] Colonist has a crafted `AxePrimitive` seated in hand (from [scenarios/01](./scenarios/01-craft-axe-and-box.md)
-  or via `give`). After a tree fell:
+  or via `give ... &where=colonist&slot=hands`). After a tree fell:
   - `?what=colonists` -> `colonists[0].hands.Wood >= 1` (carried armful, not 0)
-  - `?what=colonists` -> `colonists[0].belt.AxePrimitive >= 1` (stowed to belt)
+  - `?what=colonists` -> `colonists[0].belt` contains `"AxePrimitive"` (stowed to belt)
   - No log entry matching "Collected 0 ... carry-limited" (the zero-collect bug is fixed)
   - Wood is hauled to storage in subsequent trips.
 
