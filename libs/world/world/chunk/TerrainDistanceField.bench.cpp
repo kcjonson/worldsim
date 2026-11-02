@@ -3,7 +3,8 @@
 // once outside the timed loop; only TerrainDistanceField::bake is timed.
 //
 //  - AllLand: no rings, no thalwegs.
-//  - StaircaseLake: the ~400 m lake of the waterline bench, ~1.3 km of shore.
+//  - LakeShore: the waterline bench's generated lake shore crossing the chunk, as
+//    the per-tile biome pick draws it (LakeShoreTestWorld.h).
 //  - Archipelago: water wherever a 40 m value noise exceeds one half.
 //  - RiverSource: the carved-river world's headwater chunk, where the trunk
 //    starts and its springs and feeders fan out.
@@ -14,6 +15,7 @@
 
 #include "world/chunk/Chunk.h"
 #include "world/chunk/GeneratedWorldSampler.h"
+#include "world/chunk/LakeShoreTestWorld.h"
 #include "world/chunk/RiverTestWorld.h"
 #include "world/chunk/TerrainDistanceField.h"
 #include "world/chunk/TerrainPolygonBuilder.h"
@@ -62,12 +64,6 @@ namespace {
 		return TerrainPolygonBuilder::build(kCoord, kSeed, fn, waterFn, {}, {});
 	}
 
-	bool staircaseLake(int32_t ex, int32_t ey) {
-		const double sx = std::floor(ex / 16.0) * 16.0 + 8.0 - 264.0;
-		const double sy = std::floor(ey / 16.0) * 16.0 + 8.0 - 264.0;
-		return sx * sx + sy * sy < 200.0 * 200.0;
-	}
-
 	bool archipelago(int32_t ex, int32_t ey) {
 		return foundation::valueNoise3(static_cast<float>(ex) / 40.0F, static_cast<float>(ey) / 40.0F, 0.0F, 7U) > 0.5F;
 	}
@@ -97,8 +93,10 @@ namespace {
 		runBake(state, ChunkTerrainPolygons{}, kCoord);
 	}
 
-	void BM_TerrainDistanceField_StaircaseLake(benchmark::State& state) {
-		runBake(state, buildFromTiles(staircaseLake), kCoord);
+	void BM_TerrainDistanceField_LakeShore(benchmark::State& state) {
+		auto chunk = std::make_unique<world::Chunk>(world::shore_test::kLakeShoreChunk, world::shore_test::lakeShoreSample(), kSeed);
+		chunk->generate();
+		runBake(state, chunk->terrainPolygons(), world::shore_test::kLakeShoreChunk);
 	}
 
 	void BM_TerrainDistanceField_Archipelago(benchmark::State& state) {
@@ -150,7 +148,7 @@ namespace {
 } // namespace
 
 BENCHMARK(BM_TerrainDistanceField_AllLand)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_TerrainDistanceField_StaircaseLake)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_TerrainDistanceField_LakeShore)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_TerrainDistanceField_Archipelago)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_TerrainDistanceField_RiverSource)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_TerrainDistanceField_WideRiver)->Unit(benchmark::kMillisecond);
