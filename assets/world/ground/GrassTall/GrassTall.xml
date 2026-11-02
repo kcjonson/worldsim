@@ -8,6 +8,7 @@
     <label>GrassTall</label>
     <role>ground</role>
     <surface>GrassTall</surface>
+    <seedGroup>grass</seedGroup>
     <assetType>procedural</assetType>
     <generator>
       <scriptPath>@shared/ground_grass.lua</scriptPath>
@@ -18,9 +19,9 @@
 
         <modelUndergrowth>0.3</modelUndergrowth>
         <modelClumpFill>0.6</modelClumpFill>
-        <farMean>65.37,93,40.9</farMean>
+        <farMean>64.95,91.98,40.52</farMean>
         <farContrast>1.42</farContrast>
-        <farCoarseContrast>0.34</farCoarseContrast>
+        <farCoarseContrast>0.31</farCoarseContrast>
         <farCellsPerMeter>8</farCellsPerMeter>
         <groundColor>#33301E</groundColor>
 

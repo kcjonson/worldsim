@@ -11,6 +11,9 @@
     <label>Grass</label>
     <role>ground</role>
     <surface>Grass</surface>
+    <!-- The grass family bakes from one seed group: variant k of each starts from one seed, so blades
+         line up where two members meet (ground_grass.lua). -->
+    <seedGroup>grass</seedGroup>
     <assetType>procedural</assetType>
     <generator>
       <scriptPath>@shared/ground_grass.lua</scriptPath>
@@ -27,9 +30,9 @@
              bake's reference. groundColor is the near stack's bare ground. -->
         <modelUndergrowth>0.3</modelUndergrowth>
         <modelClumpFill>0.6</modelClumpFill>
-        <farMean>80.6,106.8,48.8</farMean>
+        <farMean>80.2,105.88,48.62</farMean>
         <farContrast>1.1</farContrast>
-        <farCoarseContrast>0.27</farCoarseContrast>
+        <farCoarseContrast>0.25</farCoarseContrast>
         <farCellsPerMeter>8</farCellsPerMeter>
         <groundColor>#463A28</groundColor>
 

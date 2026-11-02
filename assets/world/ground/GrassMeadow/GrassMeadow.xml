@@ -9,6 +9,7 @@
     <label>GrassMeadow</label>
     <role>ground</role>
     <surface>GrassMeadow</surface>
+    <seedGroup>grass</seedGroup>
     <assetType>procedural</assetType>
     <generator>
       <scriptPath>@shared/ground_grass.lua</scriptPath>
@@ -19,9 +20,9 @@
 
         <modelUndergrowth>0.8</modelUndergrowth>
         <modelClumpFill>0.6</modelClumpFill>
-        <farMean>77.8,115.96,48.85</farMean>
+        <farMean>77.19,114.97,48.55</farMean>
         <farContrast>1.15</farContrast>
-        <farCoarseContrast>0.34</farCoarseContrast>
+        <farCoarseContrast>0.31</farCoarseContrast>
         <farCellsPerMeter>8</farCellsPerMeter>
         <groundColor>#3E3923</groundColor>
 

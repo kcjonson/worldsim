@@ -23,6 +23,18 @@
 -- random draws that move color are normalized per variant, so all variants share the same
 -- statistics. Nothing is lit from a side (the shader may mirror cells left to right, never turn
 -- them): leans are symmetric about vertical and underlays are centered. Only up is special.
+--
+-- The family (Grass, GrassShort, GrassMeadow and GrassTall) bakes from one seed group, so variant k of
+-- each starts from one seed, and every layout stage and every clump, tuft, blade and plant reseeds from
+-- it by a fixed id before it draws. Clumps come from one candidate set at kFamilySpacing that each
+-- member thins to its own clumpSpacing, and a member's params choose how many of the shared tufts and
+-- blades it keeps and how it styles them, never where the kept ones stand: blades line up where two
+-- members meet.
+--
+-- Heights (path:setHeight) are for the shader's transition contest: the soil and gaps lowest, then
+-- litter, pebbles and rosettes, the undergrowth, clover, tufts above them, and blades low at the base
+-- and high at the tip, the longer ones higher; flower heads top it all. The bake ranks them per
+-- surface, so only their order counts.
 
 local P = getFloat("period", 4)
 local AREA = P * P
@@ -50,6 +62,20 @@ local function lognormal(lo, hi, sigma)
 end
 local function count(perSquareMeter)
 	return floor(perSquareMeter * AREA + 0.5)
+end
+
+-- The family's shared streams and the height the next path takes. stream(id) reseeds math.random from
+-- the variant's seed and a fixed id, scrambled so neighboring ids start far apart.
+local F = { now = 0, spacing = 0.12 }
+function F.stream(id)
+	math.randomseed(seed, (id * 0x9E3779B97F4A7C15) ~ 0x2545F4914F6CDD1D)
+end
+function F.at(h)
+	F.now = clamp(h, 0, 1)
+end
+-- t in 0..1 within a size range.
+function F.within(v, lo, hi)
+	return hi > lo and clamp((v - lo) / (hi - lo), 0, 1) or 0.5
 end
 
 -- Colors -------------------------------------------------------------------------------------
@@ -134,13 +160,6 @@ local function triple(key, default)
 	end
 	return out
 end
-local farMean = triple("farMean", "83,106,51")
-farMean = toLinear({ farMean[1] / 255, farMean[2] / 255, farMean[3] / 255 })
-local farContrast = getFloat("farContrast", 1)
-local farCoarseContrast = getFloat("farCoarseContrast", 1)
-local farCellsPerMeter = getFloat("farCellsPerMeter", 8)
-local modelUndergrowth = getFloat("modelUndergrowth", 0.3)
-local modelClumpFill = getFloat("modelClumpFill", 0.8)
 local groundColor = hex("groundColor", "#3A3320")
 
 -- The flat ground's and the accents' knobs live in tables: the main chunk is near Lua's 200-local
@@ -252,13 +271,10 @@ local strawLight = hex("strawLight", "#B0A46E")
 local dryTipShare = getFloat("dryTipShare", 0.2)
 local tipHighlightShare = getFloat("tipHighlightShare", 0.1)
 
-local densityContrast = getFloat("densityContrast", 1.6)
 local clumpValue = getFloat("clumpValue", 0.12)
 local clumpDome = getFloat("clumpDome", 0.12)
 local clumpHue = getFloat("clumpHue", 14)
 local clumpSaturation = getFloat("clumpSaturation", 0.1)
-local patchHue = getFloat("patchHue", 6)
-local patchValue = getFloat("patchValue", 0.035)
 local elementValue = getFloat("elementValue", 0.05)
 local elementHue = getFloat("elementHue", 4)
 local lushDarken = getFloat("lushDarken", 0.03)
@@ -277,6 +293,7 @@ local kMaxLean = 1.25
 
 -- Fields -------------------------------------------------------------------------------------
 
+F.stream(1)
 local noiseSeed = floor(rand() * 1000000)
 
 -- Periodic noise with a whole number of cycles across the tile, so it wraps exactly.
@@ -297,6 +314,9 @@ end
 local kFieldN = 64
 local densityGrid, patchVGrid, patchHGrid = {}, {}, {}
 do
+	local densityContrast = getFloat("densityContrast", 1.6)
+	local patchHue = getFloat("patchHue", 6)
+	local patchValue = getFloat("patchValue", 0.035)
 	local sumD, sumV, sumH = 0, 0, 0
 	for j = 0, kFieldN - 1 do
 		for i = 0, kFieldN - 1 do
@@ -346,6 +366,7 @@ end
 local pathProto = Path()
 local addVertex, setColor, setLod, closePath = pathProto.addVertex, pathProto.setColor, pathProto.setLod, pathProto.close
 local addPath = asset.addPath
+F.setHeight = pathProto.setHeight
 
 local function put(xs, ys, n, c, alpha, lod)
 	local p = Path()
@@ -356,6 +377,7 @@ local function put(xs, ys, n, c, alpha, lod)
 	if lod > 0 then
 		setLod(p, lod)
 	end
+	F.setHeight(p, F.now)
 	closePath(p)
 	addPath(asset, p)
 end
@@ -404,7 +426,7 @@ local function hold(list, xs, ys, n, c, alpha, lod)
 	for i = 1, n do
 		hx[i], hy[i] = xs[i], ys[i]
 	end
-	list[#list + 1] = { hx, hy, n, c, alpha, lod }
+	list[#list + 1] = { hx, hy, n, c, alpha, lod, F.now }
 end
 
 local function emitPoly(xs, ys, n, c, alpha, lod)
@@ -590,9 +612,14 @@ local function blade(x, y, a, L, w, bow, baseCol, tipCol, highlight, lod)
 		proxy[ch] = (rB * bl[ch] + rT * tl[ch] + rest * underlayAlpha * underLin[ch]) / (1 - rest * (1 - underlayAlpha))
 	end
 
+	-- Low at the base and high at the tip, the longer blades higher.
+	local tall = F.within(L, bladeLenLo, bladeLenHi)
+	F.at(0.42)
 	emitPoly(UX, UY, 5, toSrgb(proxy), 1, kCover)
 	emitPoly(UX, UY, 5, underlayColor, underlayAlpha, lod)
+	F.at(0.45 + 0.1 * tall)
 	emitPoly(BX, BY, 6, baseCol, 1, lod)
+	F.at(0.72 + 0.2 * tall)
 	emitPoly(TX, TY, 5, tipCol, 1, lod)
 
 	if highlight then
@@ -600,6 +627,7 @@ local function blade(x, y, a, L, w, bow, baseCol, tipCol, highlight, lod)
 		vtx(cx[4] + px * hw[4] * h, cy[4] + py * hw[4] * h)
 		vtx(tx, ty)
 		vtx(cx[4] - px * hw[4] * h, cy[4] - py * hw[4] * h)
+		F.at(0.75 + 0.2 * tall)
 		emit(tone(tipCol, 1.06, 0, 1), 1, 96)
 	end
 end
@@ -631,7 +659,9 @@ local function trifoliate(x, y, l, c)
 	for i = 0, 2 do
 		local a = a0 + i * TAU / 3 + (rand() - 0.5) * 0.5
 		local ll = l * uniform(0.9, 1.1)
+		F.at(0.36)
 		leaflet(x, y, a, ll, jitter(c, 0.05, 2), kCover)
+		F.at(0.37)
 		chevron(x, y, a, ll, clover.chevron, 0.55)
 	end
 end
@@ -766,6 +796,7 @@ end
 -- Layout (everything placed before anything is drawn, so the far stack can mirror it) ---------
 
 -- Soil peeks where the grass is thin.
+F.stream(2)
 local soils = weighted(count(soil.perM2), function(x, y)
 	local d = density(x, y)
 	return (1 - d) ^ 3
@@ -786,18 +817,31 @@ local clumps = {}
 do
 	local sizeSigma = 0.4
 	local sumR2, sumV, sumH, sumS = 0, 0, 0, 0
-	for _, cl in ipairs(poissonTorus(clumpSpacing)) do
-		local c = {
-			x = cl[1],
-			y = cl[2],
-			base = lognormal(clumpRLo, clumpRHi, sizeSigma),
-			dv = signed(),
-			dh = signed(),
-			ds = signed(),
-			sway = clumpSway * clamp(gauss(), -2, 2),
-		}
-		sumR2, sumV, sumH, sumS = sumR2 + c.base * c.base, sumV + c.dv, sumH + c.dh, sumS + c.ds
-		clumps[#clumps + 1] = c
+	-- The family's candidates, each with its draws taken whether it's kept or not, then kept in order
+	-- where nothing kept lies within clumpSpacing: a member with wider spacing keeps a subset.
+	F.stream(3)
+	local candidates = poissonTorus(F.spacing)
+	for i, cl in ipairs(candidates) do
+		cl.id = i
+		cl.base = lognormal(clumpRLo, clumpRHi, sizeSigma)
+		cl.dv, cl.dh, cl.ds = signed(), signed(), signed()
+		cl.sway = clumpSway * clamp(gauss(), -2, 2)
+	end
+	local r2 = clumpSpacing * clumpSpacing
+	for _, cl in ipairs(candidates) do
+		local fits = true
+		for _, k in ipairs(clumps) do
+			local dx, dy = wrapDelta(k.x - cl[1]), wrapDelta(k.y - cl[2])
+			if dx * dx + dy * dy < r2 then
+				fits = false
+				break
+			end
+		end
+		if fits then
+			local c = { x = cl[1], y = cl[2], id = cl.id, base = cl.base, dv = cl.dv, dh = cl.dh, ds = cl.ds, sway = cl.sway }
+			sumR2, sumV, sumH, sumS = sumR2 + c.base * c.base, sumV + c.dv, sumH + c.dh, sumS + c.ds
+			clumps[#clumps + 1] = c
+		end
 	end
 	local n = max(1, #clumps)
 	-- Bridson's sampling packs about 0.67 / spacing^2 points a square meter.
@@ -822,35 +866,37 @@ end
 
 local tufts = {}
 for _, c in ipairs(clumps) do
+	F.stream(1000000 + c.id)
 	local sigma = c.R * tuftSpread
-	for _ = 1, floor(lerp(tuftsPerClumpLo, tuftsPerClumpHi, c.d) + rand()) do
+	local n = floor(lerp(tuftsPerClumpLo, tuftsPerClumpHi, c.d) + rand())
+	for k = 1, min(n, 63) do
 		local ox, oy = gauss() * sigma, gauss() * sigma
 		local out = min(1, sqrt(ox * ox + oy * oy) / c.R)
 		local tilt = c.sway + tuftFanOut * clamp(ox / c.R, -1, 1) + 0.1 * gauss()
-		tufts[#tufts + 1] = {
+		local t = {
 			(c.x + ox) % P,
 			(c.y + oy) % P,
 			clump = c,
+			id = c.id * 64 + k,
 			v = c.v * (1 + clumpDome * (1 - 2 * out)) * (1 + 0.03 * signed()),
 			dir = UP + clamp(tilt, -0.7, 0.7),
 			len = uniform(tuftLenLo, tuftLenHi) * c.lenScale,
 			fan = uniform(tuftFanLo, tuftFanHi),
 			blades = {},
 		}
+		t.k = floor(uniform(tuftSpikesLo, tuftSpikesHi + 1))
+		t.hub = uniform(tuftHubLo, tuftHubHi) * 0.5
+		t.body = lushTone(mix(tuftDark, tuftLight, rand()), t.v, c.h, c.s, c.d)
+		t.hi = lushTone(mix(tuftHiDark, tuftHiLight, rand()), t.v, c.h, c.s, c.d)
+		t.by = t[2]
+		t.kind = 1
+		tufts[#tufts + 1] = t
 	end
-end
-for _, t in ipairs(tufts) do
-	local c = t.clump
-	t.k = floor(uniform(tuftSpikesLo, tuftSpikesHi + 1))
-	t.hub = uniform(tuftHubLo, tuftHubHi) * 0.5
-	t.body = lushTone(mix(tuftDark, tuftLight, rand()), t.v, c.h, c.s, c.d)
-	t.hi = lushTone(mix(tuftHiDark, tuftHiLight, rand()), t.v, c.h, c.s, c.d)
-	t.by = t[2]
-	t.kind = 1
 end
 
 -- Clover patches: Thomas clusters around blue-noise parents. Clover is the brightest thing on the
 -- ground, so the patch sizes are normalized to the variant's expected total.
+F.stream(4)
 local patches = blueNoise(count(clover.patchesPerM2), 0.6 / sqrt(max(clover.patchesPerM2, 0.01)))
 local clovers = {}
 do
@@ -870,13 +916,14 @@ for _, pa in ipairs(patches) do
 	for _ = 1, pa.n do
 		local y = (pa[2] + gauss() * pa.sigma) % P
 		local l = uniform(clover.leafletLo, clover.leafletHi)
-		clovers[#clovers + 1] = { (pa[1] + gauss() * pa.sigma) % P, y, l = l, c = pa.c, by = y + 0.6 * l, kind = 3 }
+		clovers[#clovers + 1] = { (pa[1] + gauss() * pa.sigma) % P, y, l = l, c = pa.c, by = y + 0.6 * l, kind = 3, id = #clovers + 1 }
 	end
 end
 
 -- Wildflowers: clusters around blue-noise parents, their sizes normalized to the variant's expected
 -- total like clover, plus blue-noise singles.
 local flowers = {}
+F.stream(5)
 do
 	local function head(x, y, species)
 		local size = uniform(flower.sizeLo, flower.sizeHi)
@@ -898,6 +945,7 @@ do
 			petal = petal,
 			center = center,
 			proxy = toSrgb(proxy),
+			id = #flowers + 1,
 		}
 	end
 	local n = #flower.colors
@@ -924,6 +972,7 @@ do
 end
 
 -- Broadleaf rosettes (blue noise), flat on the ground.
+F.stream(6)
 local rosettes = blueNoise(count(rosette.perM2), 0.8 / sqrt(max(rosette.perM2, 0.01)))
 for _, ro in ipairs(rosettes) do
 	ro.k = floor(uniform(5, 9))
@@ -989,6 +1038,7 @@ end
 -- undergrowthDensity a square meter, fewer where the grass is thin, so the ground shows more there.
 -- Each fan is centered in a cell drawn from the open ones; covered cells leave the list as they turn up.
 local undergrowth = {}
+F.stream(7)
 do
 	local n, cell = cover.n, cover.cell
 	local cap = count(underPerM2)
@@ -1022,6 +1072,7 @@ do
 				c = lushTone(mix(underDark, underLight, rand()), pv * (1 + elementValue * signed()), ph + elementHue * signed(), 1, density(x, y)),
 				by = y,
 				kind = 4,
+				id = #undergrowth + 1,
 			}
 			stamp(x, y, u.dir, u.spread, 0.8 * len)
 			undergrowth[#undergrowth + 1] = u
@@ -1034,8 +1085,16 @@ end
 -- A coarse model of the near stack: linear light on a ~3 cm grid, each feature painted over what's
 -- below by the share of its area it covers. The far stack is it, averaged.
 --
--- Built in a function of its own: the main chunk is near Lua's 200-local limit.
+-- Built in a function of its own, which reads its own params: the main chunk is near Lua's 200-local
+-- limit.
 local function drawFarStack()
+local farMean = triple("farMean", "83,106,51")
+farMean = toLinear({ farMean[1] / 255, farMean[2] / 255, farMean[3] / 255 })
+local farContrast = getFloat("farContrast", 1)
+local farCoarseContrast = getFloat("farCoarseContrast", 1)
+local farCellsPerMeter = getFloat("farCellsPerMeter", 8)
+local modelUndergrowth = getFloat("modelUndergrowth", 0.3)
+local modelClumpFill = getFloat("modelClumpFill", 0.8)
 local gridN = floor(P / 0.03125 + 0.5)
 local cellSize = P / gridN
 local gridR, gridG, gridB = {}, {}, {}
@@ -1207,7 +1266,10 @@ drawFarStack()
 
 -- Near stack: the flat ground ----------------------------------------------------------------
 
+F.at(0.06)
 rect(0, 0, P, P, groundColor, kCover)
+F.stream(8)
+F.at(0.1)
 
 -- Litter: dark flecks and dead bits lying on the open ground, litterDensity a square meter of it,
 -- averaging to the ground color, so the mips that drop them keep its mean.
@@ -1223,15 +1285,19 @@ for _ = 1, count(litter.perM2) do
 end
 
 -- Soil peeks: two or three overlapping blobs, a few darker specks, sometimes a dry edge.
+F.stream(9)
 for _, s in ipairs(soils) do
+	F.at(0.04)
 	if rand() < 0.15 then
 		blob(s[1], s[2], s.r * 1.12, 12, 0.25, 1, 0, soil.dry, 1, kCover)
 	end
+	F.at(0.03)
 	local parts = rand() < 0.5 and 2 or 3
 	for _ = 1, parts do
 		local ox, oy = gauss() * s.r * 0.35, gauss() * s.r * 0.35
 		blob(s[1] + ox, s[2] + oy, s.r * uniform(0.6, 0.9), 12, 0.3, uniform(0.75, 1.3), rand() * TAU, jitter(soil.color, 0.04, 2), 1, kCover)
 	end
+	F.at(0.035)
 	for _ = 1, floor(uniform(1, 4)) do
 		local ox, oy = gauss() * s.r * 0.4, gauss() * s.r * 0.4
 		blob(s[1] + ox, s[2] + oy, s.r * uniform(0.08, 0.16), 6, 0.2, 1, 0, soil.speck, 1, 64)
@@ -1239,6 +1305,7 @@ for _, s in ipairs(soils) do
 end
 
 -- Pebbles, mostly on the soil, each over a soft centered halo.
+F.stream(10)
 for _ = 1, count(pebble.perM2) do
 	local x, y
 	if #soils > 0 and rand() < 0.7 then
@@ -1251,16 +1318,21 @@ for _ = 1, count(pebble.perM2) do
 	local lod = lodFor(r * 2)
 	local sides = floor(uniform(6, 10))
 	local aspect, rot = uniform(0.7, 1.0), rand() * TAU
+	F.at(0.1)
 	blob(x, y, r * 1.25, sides, 0.15, aspect, rot, pebble.halo, pebble.haloAlpha, lod)
+	F.at(0.16)
 	blob(x, y, r, sides, 0.15, aspect, rot, jitter(pebble.colors[floor(rand() * 3) + 1], 0.04, 0), 1, lod)
 end
 
 -- Rosettes lie flat, under everything that stands.
 for _, ro in ipairs(rosettes) do
 	for _, lf in ipairs(ro.leaves) do
+		F.at(0.2)
 		leaf(ro[1], ro[2], lf.a, lf.l, lf.w, tone(ro.c, lf.v, 0, 1), kCover)
+		F.at(0.22)
 		-- The lit inner leaf, cel-shaded on the same axis.
 		leaf(ro[1] + cos(lf.a) * lf.l * 0.12, ro[2] + sin(lf.a) * lf.l * 0.12, lf.a, lf.l * 0.72, lf.w * 0.6, tone(ro.inner, lf.v, 0, 1), kCover)
+		F.at(0.23)
 		midrib(ro[1], ro[2], lf.a, lf.l, lf.w * 0.08, rosette.rib, 48)
 	end
 end
@@ -1284,11 +1356,40 @@ end
 do
 	local n = count(bladePerM2)
 	local nTuft = #tufts > 0 and floor(n * bladeInTufts + 0.5) or 0
-	for i = 1, n do
-		local b = {}
+	-- Blades on tufts: each tuft draws the arrival times of a unit-rate Poisson process from its own
+	-- stream, and the nTuft earliest over all tufts are its blades. The count is exact, and a member
+	-- sharing a tuft keeps the first of the same blades on it. Loose blades are a candidate list, the
+	-- first n of it kept.
+	local blades = {}
+	local arrivals = {}
+	local horizon = 3 * nTuft / max(1, #tufts) + 3
+	for _, t in ipairs(tufts) do
+		F.stream(2000000 + t.id * 16)
+		local time = 0
+		for j = 1, 15 do
+			time = time - log(1 - rand())
+			if time > horizon then
+				break
+			end
+			arrivals[#arrivals + 1] = { time, t, j }
+		end
+	end
+	table.sort(arrivals, function(a, b)
+		return a[1] < b[1]
+	end)
+	for i = 1, min(nTuft, #arrivals) do
+		local a = arrivals[i]
+		blades[#blades + 1] = { tuft = a[2], id = 2000000 + a[2].id * 16 + a[3] }
+	end
+	for i = 1, n - nTuft do
+		blades[#blades + 1] = { id = 50000000 + i }
+	end
+	for _, b in ipairs(blades) do
+		F.stream(b.id)
 		local baseTone, tipTone, d, pv, ph
-		if i <= nTuft then
-			local t = tufts[floor(rand() * #tufts) + 1]
+		local t = b.tuft
+		b.tuft = nil
+		if t then
 			b[1], b[2] = t[1] + gauss() * t.hub, t[2] + math.abs(gauss()) * 0.004
 			b.a = t.dir + gauss() * bladeLean * 0.6
 			-- The tuft's tones are lush already.
@@ -1332,10 +1433,15 @@ local function drawBlade(b)
 end
 
 local drawItem = {
-	-- A tuft: its body fan, a lit fan standing a little higher in front of it, then its blades.
+	-- A tuft: its body fan, a lit fan standing a little higher in front of it, then its blades. The
+	-- taller tufts stand higher.
 	function(t)
+		F.stream(3000000 + t.id)
+		local tall = F.within(t.len, tuftLenLo * 0.8, tuftLenHi * 1.1)
+		F.at(0.5 + 0.12 * tall)
 		upFan(t[1], t[2], t.k, t.dir, t.fan, t.len, tuftBend, t.hub, tuftFill, true, t.body, kCover)
 		local lift = t.len * 0.18
+		F.at(0.56 + 0.12 * tall)
 		upFan(t[1] + cos(t.dir) * lift, t[2] + sin(t.dir) * lift, floor(uniform(4, 7)), t.dir, t.fan * 0.7, t.len * 0.75, tuftBend, t.hub * 0.7, tuftFill * 0.55, false, t.hi, kCover)
 		for _, b in ipairs(t.blades) do
 			drawBlade(b)
@@ -1343,25 +1449,33 @@ local drawItem = {
 	end,
 	drawBlade,
 	function(cl)
+		F.stream(4000000 + cl.id)
 		trifoliate(cl[1], cl[2], cl.l, cl.c)
 	end,
 	-- Undergrowth: a low, splayed fan.
 	function(u)
+		F.stream(5000000 + u.id)
+		F.at(0.28 + 0.08 * F.within(u.len, underLenLo, underLenHi))
 		upFan(u[1], u[2], u.k, u.dir, u.spread, u.len, tuftBend, u.hub, underFill, false, u.c, kCover)
 	end,
 	-- A flower head: a centered contact shadow, a disc in the head's average color (kept down to mip 3,
 	-- like the blade proxies, so the mips that drop the petals keep mip 0's mean), the petals and the
 	-- center over it.
 	function(f)
+		F.stream(6000000 + f.id)
 		local s, x, y = f.size, f[1], f[2]
+		F.at(0.45)
 		blob(x, y, s * 0.62, 10, 0.1, 1, 0, underlayColor, underlayAlpha * 0.5, lodFor(s))
+		F.at(0.88)
 		blob(x, y, s * 0.55, 10, 0.08, 1, 0, f.proxy, 1, kCover)
 		local petalLen, petalW = s * 0.3, s * 0.16
+		F.at(0.94)
 		for i = 0, f.k - 1 do
 			local a = f.a0 + (i + (rand() - 0.5) * 0.3) * TAU / f.k
 			local c = tone(f.petal, uniform(0.96, 1.04), 0, 1)
 			blob(x + cos(a) * petalLen * 0.85, y + sin(a) * petalLen * 0.85, petalW, 8, 0.1, petalLen / petalW, a, c, 1, lodFor(petalW * 2))
 		end
+		F.at(0.96)
 		blob(x, y, s * 0.13, 7, 0.1, 1, 0, f.center, 1, lodFor(s * 0.26))
 	end,
 }
@@ -1384,9 +1498,11 @@ for i = 1, first - 1 do
 	drawItem[items[i].kind](items[i])
 end
 for _, s in ipairs(depth.held) do
+	F.at(s[7])
 	put(s[1], s[2], s[3], s[4], s[5], s[6])
 end
 for _, s in ipairs(depth.top) do
+	F.at(s[7])
 	put(s[1], s[2], s[3], s[4], s[5], s[6])
 end
 depth.mode = 0
