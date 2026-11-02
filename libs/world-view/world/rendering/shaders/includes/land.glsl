@@ -432,7 +432,6 @@ const float kGroundHexColM	  = 4.0;
 const float kGroundHexRowM	  = 512.0 / 148.0;
 const float kGroundTopWeight  = 0.98; // a cell holding this much takes the one sample
 const float kGroundMacroSide  = 257.0;
-const vec3	kGroundLuma		  = vec3(0.299, 0.587, 0.114);
 
 struct HexCells {
 	vec2 v1; // skewed ids, whole numbers
@@ -518,12 +517,13 @@ vec3 groundGain(vec3 w, float k) {
 }
 
 /// A surface's linear ground color at `local`, its height in alpha: the hex cells'
-/// samples, weighted by their sharpened barycentric weights times 0.4 + 0.6
-/// luminance, then the zoom's gain. One sample where a cell holds
-/// kGroundTopWeight, below the hex cutoff, or with `blend` false: the dominant cell.
-vec4 groundTexture(uint surface, vec2 local, bool blend) {
+/// samples, weighted by their sharpened barycentric weights times 0.4 + 0.6 times
+/// the baked height (Mikkelsen weighs by luminance; the height keeps what stands
+/// tallest, tuft tops, across a cell seam), then the zoom's gain. One sample, the
+/// dominant cell's, where a cell holds kGroundTopWeight or below the hex cutoff.
+vec4 groundTexture(uint surface, vec2 local) {
 	HexCells c = groundHexCells(local);
-	if (!blend || !u_groundHex) {
+	if (!u_groundHex) {
 		vec2 v = c.w.x >= c.w.y && c.w.x >= c.w.z ? c.v1 : (c.w.y >= c.w.z ? c.v2 : c.v3);
 		return groundCellSample(surface, local, v);
 	}
@@ -549,7 +549,7 @@ vec4 groundTexture(uint surface, vec2 local, bool blend) {
 	float floorW = 1.0 - kGroundTopWeight;
 	vec4  cB	 = ws.y > floorW ? groundCellSample(surface, local, vB) : vec4(0.0);
 	vec4  cC	 = ws.z > floorW ? groundCellSample(surface, local, vC) : vec4(0.0);
-	ws *= vec3(greaterThan(ws, vec3(floorW))) * (0.4 + 0.6 * vec3(dot(cA.rgb, kGroundLuma), dot(cB.rgb, kGroundLuma), dot(cC.rgb, kGroundLuma)));
+	ws *= vec3(greaterThan(ws, vec3(floorW))) * (0.4 + 0.6 * vec3(cA.a, cB.a, cC.a));
 	ws /= ws.x + ws.y + ws.z;
 	if (u_groundBlendGainK != 1.0) {
 		ws = groundGain(ws, u_groundBlendGainK);
@@ -583,7 +583,7 @@ vec3 landColor(vec2 local) {
 	vec2	 frac	 = local - whole;
 	LandEval e		 = evaluateLand(tile, frac, u_landWarpFineOctaves);
 	vec4	 macro	 = textureLod(u_groundMacro, (local * 0.5 + 0.5) * (1.0 / kGroundMacroSide), 0.0);
-	vec4	 painted = groundTexture(e.painted, local, true);
+	vec4	 painted = groundTexture(e.painted, local);
 	if (e.across != e.painted) {
 		int	  paintedLevel	 = levelOfSurface(e.painted);
 		int	  acrossLevel	 = levelOfSurface(e.across);
@@ -594,7 +594,7 @@ vec3 landColor(vec2 local) {
 		float bu			 = clamp(sigma * band.x + band.y, 0.0, 1.0); // (b + 1) / 2
 		if (bu > 0.0 && bu < 1.0) {
 			vec4  shade	  = u_landPair[2 * pair + 1];
-			vec4  other	  = groundTexture(e.across, local, true);
+			vec4  other	  = groundTexture(e.across, local);
 			vec4  upper	  = paintedIsUpper ? painted : other;
 			vec4  lower	  = paintedIsUpper ? other : painted;
 			uint  upperId = paintedIsUpper ? e.painted : e.across;
@@ -608,9 +608,10 @@ vec3 landColor(vec2 local) {
 			float a		 = s + shade.w * (1.0 - s) * clamp(1.0 + b, 0.0, 1.0);
 			float stain	 = 1.0 - shade.y * (1.0 - smoothstep(0.0, 1.0, b));
 			float light	 = (1.0 - shade.x * (1.0 - s) * clamp(1.0 + 4.0 * b, 0.0, 1.0)) * (1.0 + shade.z * clamp(1.0 - 5.0 * abs(b - 0.8), 0.0, 1.0));
-			vec3  cUpper = groundEncodeSrgb(upper.rgb) * groundTint(upperId, macro) * stain;
-			vec3  cLower = groundEncodeSrgb(lower.rgb) * groundTint(lowerId, macro);
-			return mix(cLower, cUpper, a) * light;
+			// Mixed in linear light, the way the hex blend mixes, and encoded once; the
+			// macro tints, which multiply the sRGB color, mix by the same weight.
+			vec3 linear = mix(lower.rgb, upper.rgb * stain, a) * light;
+			return groundEncodeSrgb(linear) * mix(groundTint(lowerId, macro), groundTint(upperId, macro), a);
 		}
 	}
 	return groundEncodeSrgb(painted.rgb) * groundTint(e.painted, macro);
