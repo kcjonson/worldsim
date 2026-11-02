@@ -1,7 +1,7 @@
 # Ground Texture System
 
 Created: 2025-12-13
-Updated: 2026-11-01 (ground tile variants: tiles become SVG/Lua assets baked to texture arrays and mixed by a hex lattice in the shader, and the atlas goes away; spike results and the perf plan added. Later: the bank, the hex sampler and the macro texture are in the tile pass, the atlas is deleted, and the surfaces without art paint placeholder defs. Then: the bake runs each generator once, on the pool, and keeps its bakes in a disk cache the splash reads. Then: the tile pass back under main in every cell, through a leaner sampler, a cheaper land field, no ground under open water and hex blending from 16 px/m. Then: round 1 of the real art for the eight surfaces that painted placeholders, the grass family from `ground_grass.lua` and Dirt, Sand, Mud, Rock and Snow from one new generator, `ground_bare.lua`; the bank reads its cached defs side by side and the encode keeps a small mip's mean. Then: surface transitions specified, design only: baked heights in the ground arrays' alpha and a height contest that replaces the fringe and rim, pair parameters in the defs, and the band capped at the field's reach. Then: the heights are baked (WOR-559), the mip window is fitted and kept over per-mip equalization, and the grass family bakes from one seed group)
+Updated: 2026-11-01 (ground tile variants: tiles become SVG/Lua assets baked to texture arrays and mixed by a hex lattice in the shader, and the atlas goes away; spike results and the perf plan added. Later: the bank, the hex sampler and the macro texture are in the tile pass, the atlas is deleted, and the surfaces without art paint placeholder defs. Then: the bake runs each generator once, on the pool, and keeps its bakes in a disk cache the splash reads. Then: the tile pass back under main in every cell, through a leaner sampler, a cheaper land field, no ground under open water and hex blending from 16 px/m. Then: round 1 of the real art for the eight surfaces that painted placeholders, the grass family from `ground_grass.lua` and Dirt, Sand, Mud, Rock and Snow from one new generator, `ground_bare.lua`; the bank reads its cached defs side by side and the encode keeps a small mip's mean. Then: surface transitions specified, design only: baked heights in the ground arrays' alpha and a height contest that replaces the fringe and rim, pair parameters in the defs, and the band capped at the field's reach. Then: the heights are baked (WOR-559), the mip window is fitted and kept over per-mip equalization, and the grass family bakes from one seed group. Then: the height contest is built (WOR-560): the fringe and rim are deleted, every pair's band and shading come from the defs, the band reads a distance that stays continuous out to the field's reach, the grass family hashes its hex cells alike, and the field does less work a pixel, bit for bit)
 Status: In progress
 
 The ground is painted by the tile pass: one quad per chunk whose fragment shader picks a land surface for every pixel, samples that surface's baked ground tiles, and paints water and shore over the result. Which surface a pixel gets is decided by the land field of [terrain-polygons-architecture.md](./organic-terrain/terrain-polygons-architecture.md) D16, so no surface boundary follows the tile grid. This doc covers the ground tile assets, the baker, how the shader samples them, and the per-chunk data the pass reads, and summarizes the field; the spec holds the field's details and defaults.
@@ -65,7 +65,7 @@ A ground tile is an asset with the role `ground`. Defs live at `assets/world/gro
 
 Generators and SVGs draw in meters on a `[0, period]` square. Shapes may cross the edge, so authors never match edges by hand: `AssetRegistry::buildPaths` (and `buildMeshes`, a thin call over it) repeats every path of a procedural ground def that crosses an edge at the offsets it crosses into, right after the original. Paint order holds across the seam, and the meshes clipped to the square are the seamless tile. Drawing the whole mesh 3x3 instead would paint each copy's full-tile layers over the earlier copies' overhang, so the seams would show.
 
-Validation (`AssetValidator.cpp`): exactly one ground def per land surface, `period` divides 512, `variantCount` is 1 to 32, and the role is known (`parseAssetRole`, `isKnownRole`).
+Validation (`AssetValidator.cpp`): exactly one ground def per land surface, `period` divides 512, `variantCount` is 1 to 32, the role is known (`parseAssetRole`, `isKnownRole`), and the `<transition>` rules of Surface transitions. The loader and the validator read `<transition>` through one function, `readGroundTransitions` (`GroundTransition.cpp`).
 
 Lua gets two noise bindings (`LuaEngine.cpp`, `registerBindings`), both thin wrappers over salal's `foundation/random/HashNoise.h`: `noise2(x, y, seed)`, and `periodicNoise2(x, y, period, seed)`, which wraps the gradient lattice so density fields tile. A Lua path also gets `path:setLod(N)` (see LOD below) and `path:setHeight(h)` (see Surface transitions).
 
@@ -98,7 +98,7 @@ The layers of one array share a size, and the grass surfaces (128 px/m, 512x512 
 
 The baker works in steps, so a caller can spread a def over frames: `begin` looks the def up in the disk cache (below) and hands back the whole bake when it's there, `buildPaths` runs every variant's generator on the pool, `bakeHeights` draws and ranks every variant's heights on the GL thread, `bakeVariant` renders and filters one variant there, and `finish` measures the variants, logs the report and stores the bake. `bakeDef` runs them in order in one call; the asset-manager's Bake view runs them a frame at a time. The bank runs a step a call, so the splash keeps drawing between them: the first call looks every def up in the cache at once, on the pool, since reading the cached bakes is most of a warm bake; a call uploads every def in a row that the cache held, and at the first it didn't, builds that def's paths (the GL thread waits on the pool, about 0.4 s for Grass) and draws its heights (0.1 to 0.4 s); each later call bakes and uploads one variant, and the one that bakes a def's last variant stores the def. The splash's boot log shows `Baking ground tiles n/N` and the Enter button waits for the last. A `--scene` jump skips the splash, so `GameLoadingScene` finishes whatever is left before it loads the planet, and a direct switch to the game scene bakes it all at once. A failed variant or a land surface with no def blocks the splash the way a validation error does, and a def that failed isn't stored.
 
-The bake goes well past 0.5 s, so each def's baked chains are cached on disk (`GroundTileCache`): one file a def, `cache/ground/<defName>.gtile` beside the executable, holding every variant's mips and the samples the report measures, with a checksum. Beside the executable means each build tree (worktree, config) and each app (world-sim, asset-manager) keeps its own, so two builds whose baker code differs never read each other's bakes, and a clean build starts empty. The key is a hash of the def's XML file, its generator script (an `@shared/` one included; scripts are sandboxed and can't load others), name, seed group, variant count, period, density, the render tile size, and `GroundTileBaker::kVersion`, which is bumped when the bake's output changes for the same inputs. The hashed XML leaves out the `<transition>` blocks, which the bake never reads, so tuning a pair never re-bakes. A file whose key, shape or checksum doesn't match is ignored and the next bake overwrites it, so editing a def's XML or script bakes it again: in the asset-manager on Reload, in the game on its next launch.
+The bake goes well past 0.5 s, so each def's baked chains are cached on disk (`GroundTileCache`): one file a def, `cache/ground/<defName>.gtile` beside the executable, holding every variant's mips and the samples the report measures, with a checksum. Beside the executable means each build tree (worktree, config) and each app (world-sim, asset-manager) keeps its own, so two builds whose baker code differs never read each other's bakes, and a clean build starts empty. The key is a hash of the def's XML file, its generator script (an `@shared/` one included; scripts are sandboxed and can't load others), name, seed group, variant count, period, density, the render tile size, and `GroundTileBaker::kVersion`, which is bumped when the bake's output changes for the same inputs. The XML is hashed as the bake sees it (`assets::groundBakeXml`): parsed, without comments or `<transition>` blocks, and written back out raw, so tuning a pair or editing a comment never re-bakes (an edited pair loaded all nine defs from the cache in 31 ms). A file whose key, shape or checksum doesn't match is ignored and the next bake overwrites it, so editing a def's XML or script bakes it again: in the asset-manager on Reload, in the game on its next launch.
 
 Ground_Grass (8 variants, 512 px layers, about 230,000 vertices a variant), RelWithDebInfo on a 32-thread machine, 2026-11-01, three cold runs and three from the cache:
 
@@ -129,20 +129,20 @@ The shader has its own, separate LOD for the hex blend (the single-sample cutoff
 `groundColor(surface, local, mpp)` is stochastic hex-tiling (after Mikkelsen 2022, practical hex-tiling):
 
 - The lattice is hexagonal in chunk-local meters, with 4 m columns and 512/148 m rows (3.459 m against 3.464 m for a regular hex, 0.15% off). It repeats every 512 m, so it is continuous across chunk borders and precise anywhere, and each cell's id is an integer, so it hashes exactly.
-- Each cell picks a variant layer, a rotation (per `rotate`) and a uv offset with `noiseHash3`. The weights are barycentric, sharpened by a contrast exponent (`terrain/ground/blendContrast`) so flat-color shapes don't ghost.
-- The weights are Mikkelsen's: barycentric to the power `terrain/ground/blendContrast` (7), times 0.4 + 0.6 x the sample's luminance (the baked height from alpha instead, which the arrays now carry: it keeps tuft tops across cell seams and saves three dot products; an A/B in Surface transitions), then his gain with r from `terrain/ground/blendGain`: 0.75 at 48 px/m and up, 0.65 midway in log2 px/m, 0.5 (none) at 16 and under. The CPU turns r into the gain's exponent once a frame.
+- Each cell picks a variant layer, a rotation (per `rotate`) and a uv offset with `noiseHash3` of its world id and the surface's seed group: the lowest surface id sharing the def's `<seedGroup>` (`GroundTileBank::Surface::hashSurface`, packed above the rotate bits of `u_groundLayers.w`). The grass family's members therefore pick the same variant, flip and offset in every cell, and their co-baked layouts meet across a family edge. The weights are barycentric, sharpened by a contrast exponent (`terrain/ground/blendContrast`) so flat-color shapes don't ghost.
+- The weights are Mikkelsen's: barycentric to the power `terrain/ground/blendContrast` (7), times 0.4 + 0.6 x the sample's baked height (alpha; Mikkelsen weighs by luminance, and the height keeps tuft tops across cell seams and saves three dot products), then his gain with r from `terrain/ground/blendGain`: 0.75 at 48 px/m and up, 0.65 midway in log2 px/m, 0.5 (none) at 16 and under. The CPU turns r into the gain's exponent once a frame.
 - Where one cell dominates (its sharpened weight, before the luminance term, over 0.98: 58% of the area at contrast 7), the shader takes one sample. Only the transition bands between cells take 2 or 3, 1.48 samples a pixel on average. Every pixel takes its heaviest cell's sample from the same instructions and only the bands branch for more, so a warp straddling a band edge runs that sample once.
 - Below a density (`terrain/ground/hexMinPxPerMeter`, 16) it skips blending and takes the dominant cell's sample, the way `u_landWarpFineOctaves` drops warp octaves a pixel can't show. Cell interiors are the same sample either side of the cutoff, so crossing it only hardens the bands between cells. The spike ran with 6 px/m and the first build with 12. At 12 px/m (zoom 1.5) the one-sample ground matched the blend to the eye in screenshots, the hard cell edges a few levels of 255 at most in speckled art, and it saves 0.05 to 0.10 ms there, so the blend starts at 16, where the gain ramp starts.
 - Variants are picked uniformly per cell, in float on the hash's low 12 bits: the same pick as `h % count` for every power-of-two count, within 1/4096 of uniform otherwise. Weighted picks (mostly quiet, a few busy) wait for a def that asks for them.
 - The sampler stays off the GPU's conversion unit, which runs at an eighth of the float rate and is what the pass is short of: cell ids stay floats and cross to int through a 1.5 x 2^23 bias, and the CPU folds the chunk's first cell id, the variant pick's constants, and the macro tint and value into per-draw uniforms.
 - Samples use `textureLod` at a mip level computed once per draw on the CPU for each surface, `log2(texels per meter / framebuffer pixels per meter) + terrain/ground/lodBias` (0.25, research rule 9). The view is an orthographic top-down projection, so texel density is the same at every pixel and rotation doesn't change it. That avoids `textureGrad` and per-pixel derivatives, and nothing jumps at tile or hex edges.
-- The samples come back linear (the arrays are sRGB), are blended linear, and `groundColor` encodes the result to sRGB, which the rest of the pass (fringe, rim, water) works in. The macro tint multiplies the sRGB color.
+- The samples come back linear (the arrays are sRGB) with the height in alpha, are blended linear, and `landColor` encodes the result to sRGB once, which water works in. The macro tint multiplies the sRGB color (`groundTint`).
 
 The macro layer comes from a per-chunk texture, not per-pixel noise. The chunk's generation worker fills a 2 m-per-texel texture (`GroundMacro.h`: 257x257 RGBA8, 264 KB a chunk, uploaded with the render tiles under the same version and LRU) from salal `HashNoise` gradient noise, each lattice corner hashed once a chunk. Texel (i, j) sits on chunk-local (2i, 2j) m, so the last row and column are the next chunk's first and a bilinear read matches across the border. R is the dry to lush mix (octaves at 36 and 14 m), G and B value noise at 10 m and 5 m (5 m is the shortest wave 2 m texels carry without a lattice pattern). The shader takes one bilinear sample a pixel: each surface mixes its def's dry and lush tints by R, scaled by the def's amplitude times `terrain/ground/macroAmp`, and every surface's value moves by G and B times `macroMidAmp` (4.5%) and `macroFineAmp` (3.5%). The def's `<wavelengths>` aren't read: one texture serves every surface. Per-pixel fBm is what cost about 30 ms in the December tile shader (`docs/debug-swapbuffers-performance.md`) and still costs 0.10 to 0.15 ms of GPU at the spike's scale. The same texture is where phase 2's climate and moisture data lands, and its C++ source can later tint groundcover tufts to match.
 
-At a surface edge, the band of Surface transitions samples both surfaces through `groundColor`, so the contest compares hex-blended heights and no pattern cut shows where the band meets the interior. This replaces the fringe, which sampled the other surface once without hex blending; dominant-cell single taps inside the band are an A/B.
+At a surface edge, the band of Surface transitions samples both surfaces through `groundTexture`, hex-blended, so the contest compares hex-blended heights and no pattern cut shows where the band meets the interior. Dominant-cell single taps inside the band were tried and dropped: a hex seam crossing a wide band shows as a hard cut through the blades at zoom 20.
 
-`landColor` calls `groundColor` for the painted surface and, in a band, for the pair's two surfaces. The fringe and rim logic is replaced by the contest (Surface transitions). `evaluateLand` is untouched, so `SurfaceFieldGolden.test.cpp` stays valid (it only checks the field).
+`landColor` samples the painted surface and, where a pixel lies in a band, the pair's other one, then runs the contest (Surface transitions). Of `evaluateLand` only the distance it reports for the edge look changed (`isolineDistance`, Band cap); painted surface, field, margin and warp are bit for bit what they were, so `SurfaceFieldGolden.test.cpp` holds unchanged.
 
 Under open water the ground isn't evaluated at all. `tile.frag` asks `water.glsl` for the pixel's water coverage first (`waterPixel`: the distance field, its wobble, the coverage) and calls `landColor` only where some ground shows; where the coverage is 1 the water mixes the ground out entirely, so the picture is the same.
 
@@ -154,7 +154,7 @@ What a ground pixel costs, against main:
 | Ground samples, interior | 1, mip 0 of a 512 px/m pattern | 1 where a cell dominates, 2 or 3 in blend bands, mipmapped |
 | Macro | none | 1 bilinear sample |
 | Per-pixel noise | none | none (one hash per hex cell) |
-| Surface edges | 2 samples | in the band 2 to 6 (both surfaces hex-blended; 2 with dominant-cell taps), outside it 1 |
+| Surface edges | 2 samples | in the band 2 to 6 (both surfaces hex-blended), outside it 1 |
 | Under open water | the field and 1 sample | nothing |
 
 Deleted with the atlas: `GameBootstrap::initializeTileAtlas`, `surfacePatternPath`, `assets/tiles/surfaces/`, and the now-dead `Chunk::getSurfaceColor` and `getBiomeColor`.
@@ -184,7 +184,7 @@ The tile mean is mip 0's, over the 8 variants; each macro's dry and lush average
 
 Rotation: the grass family is `mirror` because blades stand up the screen; Dirt, Mud, Rock and Snow because their relief is lit from the top (clod caps and shadows, slab bevels, pits, puddle banks); Sand and Snow also because their ripples and drifts run across the screen, which a turn would point every way.
 
-Blending risks, round 1's notes on each surface. They feed the pair recipes in Surface transitions, where the height contest replaces the fringe:
+Blending risks, round 1's notes on each surface. They feed the pair recipes in Surface transitions, where the height contest draws the edge:
 
 - The grass family reads as one family: any pair's boundary is a change in sward, not a change of material. Short is olive-yellow and lighter, Tall darker and bluer, Meadow more saturated, and the far mips keep them apart by mean alone. Meadow's flower heads stand high, so they reach into a band as pale specks, which is fine.
 - GrassShort shows Dirt-like earth between its tufts (ground #5C4D33), so a Dirt to GrassShort edge reads naturally hard or soft. Dirt to Grass is a bigger step (Grass's earth is darker), which a soft edge suits. Clods are 2.5 to 8 cm, so an edge through them doesn't show.
@@ -209,16 +209,16 @@ A summary; D16 in the spec is the definition.
 1. For each surface among the 4x4 tiles around a point, its indicator at tile centers is blurred with the 3x3 binomial, guarded so 1-tile patches and 1-wide paths survive (the axis rule, floor 0.85, ceiling 0.15), and read bilinearly between tile centers.
 2. Every surface is read at one warped point: world-space vector fBm, a fine term (4 m base, 4 octaves) plus a low term (26 m base, 2 octaves), with amplitudes by surface blended from the tiles' edge surfaces (rock's are smaller, so its edges stay harder), each component clamped to 1.5 m.
 3. Surfaces paint low to high (D13): the highest whose field passes 0.5, else the one with the largest field.
-4. The edge look is the height contest of Surface transitions: in a band around the isoline, capped at the field's reach, the pair's two surfaces are mixed by their baked heights, the signed distance and the fine warp noise. It replaces the sparse fringe, the rim and the 1 px anti-aliasing line. A pixel in an interior tile costs one render-tile fetch, one macro sample and one ground sample.
+4. The edge look is the height contest of Surface transitions: in a band around the isoline, capped at the field's reach, the pair's two surfaces are mixed by their baked heights, the signed distance and the fine warp noise. It replaced the sparse fringe, the rim and the 1 px anti-aliasing line. A pixel in an interior tile costs one render-tile fetch, one macro sample and one ground sample.
 5. In a near-interior tile the fine warp moves the read at most its amplitude from where the low warp puts it, so after the low noise the field checks whether that range keeps the read's 4x4 block inside the tile's one-surface reach; when it does the surface is the tile's, with field 1, and the fine noise and the block are skipped. Surface, field and margin are unchanged (`SurfaceFieldTest.NearInteriorShortcutMatchesTheFullField`); only the reported warp is zero there.
 
 `world::evaluateSurfaceField` is the one evaluation. `land.glsl` does the same steps in the same order, and `SurfaceFieldGolden.test.cpp` renders the shader and compares the two. Placement asks the C++ evaluation, so flora grows on the surface that is drawn.
 
 ## Surface transitions
 
-Status: the heights in alpha are built (WOR-559); the contest, the pair parameters and the shading are design. The fringe and rim described elsewhere in this doc stay in the code until the contest lands, and those places say they are replaced.
+Status: built. The heights in alpha are WOR-559; the contest, the pair parameters, the shading and the band cap are WOR-560. The recipes are starting values, retuned on the real edges in round 2 (WOR-561).
 
-Where two land surfaces meet, a band around the field's isoline shows whichever surface stands taller at each texel. The ground arrays' alpha carries a baked height, which nothing reads until the contest lands. The contest compares the two surfaces' heights, biased by the signed distance to the isoline, so grass tufts stand over dirt, sand fills the joints in rock, snow settles in hollows and rock tops poke through. It replaces the fringe, its breakup noise, the rim and the 1 px anti-aliasing line, and it adds no texture sample: a boundary pixel already samples both surfaces.
+Where two land surfaces meet, a band around the field's isoline shows whichever surface stands taller at each texel. The ground arrays' alpha carries a baked height. The contest compares the two surfaces' heights, biased by the signed distance to the isoline, so grass tufts stand over dirt, sand fills the joints in rock, snow settles in hollows and rock tops poke through. It replaced the fringe, its breakup noise, the rim and the 1 px anti-aliasing line, and the band's second surface takes the samples the fringe's did, hex-blended now.
 
 The field is untouched: D13 levels, the warp, the block and the paint rule, the C++ twin and `SurfaceFieldGolden`. So the contest is look-only (D1), placement still agrees with the painted surface, and inside the band the visible surface can differ from the painted one by at most the band width.
 
@@ -237,7 +237,7 @@ The edges it is tuned on come from chunk generation, not the field. A biome boun
 
 ### The contest
 
-For a pixel in the band, A is the pair's upper surface by D13 and B the lower. `landColor` swaps painted and across into that order, as it does for the fringe today, so both sides of the isoline evaluate one expression.
+For a pixel in the band, A is the pair's upper surface by D13 and B the lower. `landColor` swaps painted and across into that order, so both sides of the isoline evaluate one expression.
 
 ```
 b     = clamp((sigma + o) / w, -1, 1)
@@ -250,7 +250,7 @@ color = mix(cB, cA, s)
 
 | Term | Unit | Meaning |
 |------|------|---------|
-| `sigma` | m | signed distance to the pair's isoline (the field's `distance`), positive into A. Read-space meters, so the warp's local stretch varies the on-screen width along the edge |
+| `sigma` | m | signed distance to the pair's isoline (the field's `distance`, from `isolineDistance`, Band cap), positive into A. Read-space meters, so the warp's local stretch varies the on-screen width along the edge |
 | `w` | m | band half-width |
 | `o` | m | offset. The band spans sigma in [-w - o, w - o]; positive means A spills over B, negative means B spills over A. `abs(o)` stays under `w` |
 | `hA`, `hB` | 0..1 | baked heights: the alpha of each surface's (hex-blended) sample |
@@ -260,7 +260,11 @@ color = mix(cB, cA, s)
 | `K` | height | slope of b in D. `1 + W + nu/2` makes s exactly 0 at b = -1 and 1 at b = 1 for any heights in [0, 1] |
 | `s` | 0..1 | weight of A |
 
-The support is compact: at |b| = 1, s is exactly 0 or 1, so outside the band a pixel takes one ground sample, the one s selects, and nothing pops at the band's edge. The mix is in linear light and encoded once; macro tints apply per surface before it, as now (moving them into linear light belongs to the single-encode A/B in the perf ledger).
+The support is compact: at |b| = 1, s is exactly 0 or 1, so outside the band a pixel takes one ground sample, the one s selects, and nothing pops at the band's edge. The validator holds |o| under w, so the surface outside the band is always the painted one: `landColor` works out b first and samples the other surface only where 0 < (b + 1) / 2 < 1.
+
+The colors mix in linear light, the way the hex blend mixes, and are encoded once (the single-encode A/B, kept). The macro tints multiply the sRGB result, each surface's mixed by the same weight the colors are.
+
+The CPU folds everything per pair and per draw into two vec4 (`GroundPairs.h`, `packGroundPairs`). The first holds 0.5 / w and 0.5 + 0.5 o / w, so (b + 1) / 2 is one saturated multiply-add of sigma, then 1 / (2W) and nu / (4W), so s is `saturate((hA - hB) / (2W) + b (1 / (2W) + nu / (4W) + 0.5) + along nu / (4W) + 0.5)`, with W this draw's mip window; the second holds the four shading strengths. The shader divides nothing. `ChunkRenderer::applyGroundUniforms` uploads the 162 vec4 once a frame from the table `GroundTileBank` builds from the defs at load.
 
 `nu` starts at 0.5 everywhere and is tuned until the band's width swings 30 to 40% along the edge, the D15 rule that no along-edge parameter is constant.
 
@@ -273,9 +277,9 @@ mip = max(mipA, mipB)
 W   = max(W0, Wc * saturate(mip / mipC))
 ```
 
-`mipA` and `mipB` are the per-surface mip levels the CPU already picks once per draw (`log2(texels per meter / pixels per meter) + lodBias`), so the window is a few ALU on uniforms. No `fwidth`, no derivatives, no helper-lane dependency.
+`mipA` and `mipB` are the per-surface mip levels the CPU already picks once per draw (`log2(texels per meter / pixels per meter) + lodBias`), so the window is folded into the pair table on the CPU. No `fwidth`, no derivatives, no helper-lane dependency.
 
-Fitted: **`Wc` 1.0 and `mipC` 6**, so `W = max(W0, mip / 6)` across the chain. The fit only pins the slope, about 0.17 a mip: any `mipC` past the last mip with `Wc` scaled to match gives the same error, and the spec's starting 0.6 and 2.5 cost 12% more. `w` is also floored at one pixel (`u_metersPerPixel`) so the band never narrows below the line it replaces at far zoom; the fit doesn't include that floor, which the contest step checks on screen.
+Fitted: **`Wc` 1.0 and `mipC` 6**, so `W = max(W0, mip / 6)` across the chain. The fit only pins the slope, about 0.17 a mip: any `mipC` past the last mip with `Wc` scaled to match gives the same error, and the spec's starting 0.6 and 2.5 cost 12% more. `w` is also floored at one framebuffer pixel so the band never narrows below the line it replaced at far zoom; the fit doesn't include that floor. In game at zoom 0.5 every pair's edge is a soft one or two pixel ramp with no crisp line.
 
 Per-mip equalization (each mip's heights rank-equalized at bake time, Castano's alpha-mip method generalized from one threshold to all, `W` staying `W0`) was A/B'd against the window and dropped. The reference is the contest on mip 0's 8-bit heights at 256 samples a meter, box-averaged to each screen pixel; a candidate is the contest on one trilinear sample a pixel at the runtime's LOD (bias 0.25). Six pairs with their starting recipes' `w`, `o` and `W0` (Grass over Dirt, Rock over Sand, Snow over Rock, GrassShort over Dirt, Grass over Mud, Grass over GrassShort), `nu` 0.5 with `along` two sines down a straight 4 m edge, three variant pairs and offsets each. Coverage error is the RMS of candidate minus reference over the band's pixels, the profile error the RMS of their along-edge means, and the band width the 10 to 90% span of that mean:
 
@@ -293,7 +297,7 @@ Summed over the zooms, the squared error is 0.103 equalized, 0.036 at the starti
 
 ### Pair parameters
 
-A pair's parameters live in the upper surface's def. They resolve at load into a uniform table of 81 x 2 vec4 indexed `upper * 9 + lower` by D13 level (a uniform array is fine on NVIDIA, unlike a run-time-indexed const array); 36 entries are ever read and the rest stay zero. One formula serves every pair, with no branch per kind: a strength of 0 multiplies by 1.
+A pair's parameters live in the upper surface's def. They resolve at load into a table of 81 entries indexed `upper * 9 + lower` by D13 level (`buildGroundPairTable`), which each draw packs into a uniform array of 162 vec4 (a uniform array is fine on NVIDIA, unlike a run-time-indexed const array); 36 entries are ever read and the rest stay zero. One formula serves every pair, with no branch per kind: a strength of 0 multiplies by 1.
 
 ```xml
 <!-- Rock.xml: how Rock meets what lies below it. -->
@@ -323,7 +327,7 @@ A pair's parameters live in the upper surface's def. They resolve at load into a
 | `<ridge>` | | 0 to 1 | strength of the ridge lightening |
 | `<tint>` | | 0 to 1 | strength of the tint toward the upper surface |
 
-A def with no `<transition>` gets width 0.4, offset 0, softness 0.1, breakup 0.5, and no shading. `over` names a surface lower in D13 than the def's own. The validator rejects an `over` that isn't, a width plus offset past the cap, an offset not under the width, and warns on unknown elements. `GroundTileBank` resolves the table once at load. Nothing registers per-pair tunables, so editing a pair takes a restart, which doesn't re-bake (the blocks are outside the cache key).
+A def with no `<transition>` gets width 0.4, offset 0, softness 0.1, breakup 0.5, and no shading. `over` names a surface lower in D13 than the def's own. An override is checked as resolved, its fields over the default block's. The validator rejects an `over` that isn't a lower land surface, a width plus offset past the cap, an offset not strictly inside the width, a field that isn't a number in its range, and a second default or a second block over one surface; it warns on unknown elements. The loader runs the same rules (`readGroundTransitions`) and drops a block that breaks one, so its pair keeps the default block. Nothing registers per-pair tunables, so editing a pair takes a restart, which doesn't re-bake (the blocks are outside the cache key).
 
 ### Shading terms
 
@@ -344,11 +348,11 @@ color  = color * (1 + ridge * saturate(1 - 5 * abs(b - 0.8)))
 | ridge | a line at b = 0.8, near the upper surface's outer reach | lightens, a sand drift line |
 | tint | the lower surface, falling off toward b = -1 | veils it with the upper's color, snow's cool cast |
 
-The shapes are starting values, tuned by eye with the recipes.
+The shapes are starting values, tuned by eye with the recipes. They run in linear light, before the one encode, so a strength darkens more than the same number would on the sRGB color: shadow 0.25 takes a quarter of the light, about 12% of the sRGB value. The tint folds into A's weight, `a = s + tint (1 - s) saturate(1 + b)`, and the macro tints mix by `a` too.
 
 ### Band cap
 
-The field reports a boundary only within its reach. A surface's field is its tile indicator blurred by the 3 x 3 binomial and read bilinearly between tile centers. One tile of blur plus half a tile of bilinear footprint from the nearest tile of another surface (the "bilinear read spans the next tile center, and the blur one tile more" of `RenderTiles.h`), it is exactly 1 with a zero gradient. There the interior and near-interior bits return field 1 with no boundary (`across == painted`), and the full path's zero gradient puts the distance far past any band, so the pixel takes one sample. The reach constants:
+The field reports a boundary only within its reach. A surface's field is its tile indicator blurred by the 3 x 3 binomial and read bilinearly between tile centers. One tile of blur plus half a tile of bilinear footprint from the nearest tile of another surface (the "bilinear read spans the next tile center, and the blur one tile more" of `RenderTiles.h`), it is exactly 1 with a zero gradient. There the interior and near-interior bits return field 1 with no boundary (`across == painted`), and on the full path a field of 1 reads 1.5 m (below), the outer edge of any band the cap allows, so the pixel takes one sample. The reach constants:
 
 | Constant | Value | Where |
 |----------|-------|-------|
@@ -361,7 +365,9 @@ The field reports a boundary only within its reach. A surface's field is its til
 
 **Cap: `width + abs(offset)` at most 1.5 m**, read-space meters from the isoline (0.5 m of bilinear footprint plus 1 m of blur; the warp clamp is also 1.5 m, but that bounds how far the read moves, not how far the field extends). The band's outermost pixel sits at |sigma| = width + |offset|; a band reaching past 1.5 m would still be partial where the field stops reporting, a visible cut. The recipes keep 0.1 m in hand (1.4 m). Widening the reach means a bigger render apron, interior reaches and `kApronTiles`, which costs every view, and is out of scope.
 
-Open: the distance estimate is exact only about 0.5 m out. `sigma` comes from `(F - 0.5) / |grad F|` of the bilinear cell the read falls in (`blockField`). Across a straight tile edge F is linear to the nearest tile centers, 0.5 m out; in the next cell the slope halves, so the estimate runs high (1.0 just past 0.5 m, 2.0 where the field reaches 1 at 1.5 m) and steps where the cell changes. The old fringe (at most 0.47 m) never got there; a band wider than 0.5 m does. This is worked by hand for a straight edge, not measured. The contest step starts by plotting reported against true distance across straight, diagonal and corner edges. If a step shows, `sigma` comes from F directly (`(F - 0.5) / 0.5`: continuous, but it saturates at 1 m, which becomes the cap) or the bands narrow to what the estimate supports.
+The distance, measured. `sigma` was `(F - 0.5) / |grad F|` of the bilinear cell the read falls in. Plotted offline against the true distance to the isoline (the field rebuilt from tile masks, no warp; scratch script, not kept): on a straight edge it is exact to 0.5 m and then jumps by 0.51 m, to 1.0, because the next cell's slope is half; on a diagonal it jumps by up to 3.7 m and on a convex corner by 2.5 m where the field flattens; at a concave notch and along a 1-wide path the gradient vanishes at the saddle and the estimate runs to the 1e4 clamp. In game the grass over Dirt band (0.65 m reach) showed it at zoom 20 as a straight cut through a dirt patch half a meter inside its edge.
+
+So `sigma` comes from F alone (`isolineDistance` in `land.glsl`): `4u - 2 clamp(u, -0.25, 0.25)` with `u = F - 0.5`. Across a straight tile edge F runs from 0.5 to 0.75 over the first half meter and half as steep to 1 at 1.5 m, and this inverts that, so it is exact on a straight edge all the way to the cap, reaches 1.5 m exactly where F does 0 or 1, and is continuous everywhere (the largest step in the plot is the 1 cm sampling). Elsewhere it is close: within 0.04 m on a diagonal out to 1 m (1.21 at a true 1.26), 0.79 at a true 0.97 outside a convex corner, 0.66 at a true 0.48 across a 1-wide path. The cut is gone in game, and the widest bands (the grass family's 1.4 m, Snow's 1.2 + 0.2) show no step at their outer edge at zoom 20. It is also cheaper: no gradient, no inverse square root per surface. The field the golden test checks (painted, field, margin, warp) is bit for bit unchanged; only `distance` reads differently, and only the edge look reads it. The cap stays 1.5 m.
 
 ### Starting recipes
 
@@ -381,42 +387,80 @@ Rows are keyed the way they read on screen. The record column says where they li
 
 Values come from the transition research, trimmed to the cap, and every one is a starting point for the round 2 pass. Snow's research range (0.8 to 1.5 m wide at 0.2 offset) and the family's (1.5 to 3 m) were cut to fit.
 
+As shipped, the grass defs name every pair (no default block); Rock's default block is the grass recipe and its Sand, Dirt and Mud overrides set shadow 0; Dirt and Sand name theirs; Snow's default is its recipe and its Mud override takes the Mud recipe (offset 0, tint 0), since anything over Mud stains. Each def's lead comment says what its blocks do. In game: tufts break over dirt with a faint shadow under them, sand ripple crests reach into a rock outcrop's edge and its joints, snow fills rock joints first with the tops standing out and a cool veil over the rock nearest the snow, grass darkens toward a mud bank while the puddles stay inside the mud, and a grass family edge is a soft change of sward with no line. Shots in the hand-off.
+
 ### Perf ledger
 
 **Deleted**
 
-- The fringe's 2-octave breakup noise. It is transcendental and conversion bound, the pass's expensive kind of work; `along` replaces it free.
-- The 1 px anti-aliasing mix, and the second sRGB encode if the single-encode A/B wins.
-- `u_landFringeW[10]`, `u_landRimDark[10]`, `u_landFringeOpacity`, `u_landFringeAlongAmp`, `u_landRimW` and `u_landBreakupWavelength`, their `kShaderTunables` entries and the `terrain/land/*` tunables behind them.
-- The baker's opacity warning and the premultiplied treatment of ground alpha (done, WOR-559).
-- `NoiseUtils` and its value noise, replaced by gradient patch noise hashed once a chunk (`generation::PatchNoise`, WOR-558). Tiles got cheaper: 19.9 ms median a chunk against 25.5 (terrain spec, section 6).
+- The fringe's 2-octave breakup noise; `along` replaces it free. The 1 px anti-aliasing mix and the band's second sRGB encode.
+- `u_landFringeW[10]`, `u_landRimDark[10]`, `u_landFringeOpacity`, `u_landFringeAlongAmp`, `u_landRimW`, `u_landBreakupWavelength`, `u_landBreakupInvWavelength` and `u_landBreakupSeed`, their `kShaderTunables` entries, the `terrain/land/fringe/*`, `rimDark/*`, `fringeOpacity`, `fringeAlongAmp`, `rimW` and `fringeBreakupWavelength` tunables, and their defaults and seed in `ChunkRenderer.cpp`.
+- The field's gradient and its inverse square root a surface (`isolineDistance`).
+- The baker's opacity warning and the premultiplied treatment of ground alpha (WOR-559).
+- `NoiseUtils` and its value noise, replaced by gradient patch noise hashed once a chunk (`generation::PatchNoise`, WOR-558).
 
 **Added**
 
-- Per band pixel: two uniform vec4 reads, the contest (6 to 8 ALU), the mip window (about 3), the shading terms (a dozen or so; counted, not measured), and the other surface through the hex sampler (up to 2 more taps, none with dominant-cell taps).
-- Per program: the 162-vec4 pair table, uploaded when the defs change.
-- Bake: the height pass, 2.3 s cold (+10%) and nothing warm (WOR-559).
-- Chunk generation: the per-tile biome pick and gradient noise, measured and reported.
-- Memory: none. Alpha is already in `GL_SRGB8_ALPHA8`. BC1 drops out of the running (Open questions).
+- Per band pixel: two uniform vec4 reads, the contest and the shading terms (a dozen or two ALU, no divide), the other surface through the hex sampler, and its macro tint.
+- Per frame: the 162-vec4 pair table, packed with the zoom's mip window on the CPU.
+- Bake: the height pass, 2.3 s cold (+10%) and nothing warm (WOR-559). Editing a `<transition>` never re-bakes.
+- Memory: none.
 
-**A/B list.** Each is measured alone against the branch tip before blending, kept only if it wins beyond the noise floor (about 0.01 ms) and, where it changes the picture, still looks right.
+**A/B, desert view.** One capture each (the noise floor is about 0.01 ms), each against the step before it; `tileGpuMs` in ms at idle zoom 20, 8, 3, 1.5, 0.75, 0.5, 0.25 and scroll 3, 0.75. The tip before blending read 0.65, 0.73, 0.63, 0.54, 0.48, 0.48, 0.42, 0.22, 0.68.
 
-1. The contest in place of the fringe, its breakup and the rim.
-2. The mip window against per-mip equalization (done offline, WOR-559: the window, fitted).
-3. Linear mix with one encode.
-4. Hex weights from the baked height instead of luminance.
-5. Dominant-cell single taps in the band (backed out if cell borders show as pattern cuts).
-6. Each shading term.
-7. Chunk generation with the new biome edges, against main.
+| # | Change | Delta per cell | Kept |
+|---|---|---|---|
+| 1 | The contest in place of the fringe, its breakup and the rim | 0, 0, 0, 0, -0.02, -0.02, -0.04, 0, -0.02 | yes |
+| 2 | `sigma` from F (Band cap) | +0.02, +0.01, +0.01, 0, +0.01, 0, 0, 0, +0.01: the per-pixel cost drops, but the bands are now as wide as their recipes; the gradient's step had cut the wide ones short | yes, it is the fix |
+| 3 | The band's second surface through the painted one's hex lattice and weights, and its cell taps where the pair hashes alike | -0.01, 0, 0, +0.01, +0.01, +0.01, +0.01, +0.01, +0.01 | no |
+| 4 | The field off the conversion unit, bit for bit: the noise's gradient decode, cell floors and base through the 1.5 x 2^23 bias, the warped lattice read and the pixel's tile likewise | -0.01, 0, 0, -0.01, -0.01, 0, 0, 0, 0 | yes |
+| 5 | The 4x4 block's paint ids gathered a 2x2 quad at a time (`GL_ARB_texture_gather`): 4 texture instructions for 16, bit for bit | -0.01, -0.01, -0.01, 0, 0, 0, 0, 0, -0.01 | yes |
+| 6 | Linear mix with one encode, and hex weights from the height instead of luminance; each alone is under the noise floor, so measured together | 0, 0, 0, 0, 0, -0.01, 0, -0.01, 0 | yes |
+| 7 | Dominant-cell single taps in the band | not captured: a hex seam crossing a family band showed a hard cut through the blades at zoom 20 | no |
+| 8 | The field's per-surface work, bit for bit: in a two-surface block the second surface's sums, indicator and thin bits are the first's complement (16 less, inverse, same), the thin guard a select, and the noise's floor division one unsigned divide | -0.01, -0.01, -0.01, -0.01, -0.01, 0, -0.01, 0, -0.01 | yes |
+
+Every bit-for-bit change was checked by hashing the golden test's GLSL output over its three regions before and after (identical hashes; the probe isn't kept). A temporary debug mask (not kept) put the desert view's zoom 3 cost at about 0.13 ms in the 4x4 block and its per-surface loop, 0.09 in the painted surface's sampler (0.05 of it hex blending) and 0.04 in the band, and NVIDIA's program binary text showed the per-surface loop and the six noise octaves as mostly integer work, which is where 4, 5 and 8 went. Halving the grass family's band (1.4 to 0.7 m), probed at the four cameras below, saves 0.01 at desert zoom 8, 3 and 1.5 and 0.02 at coast zoom 3; not taken, it is a look decision for round 2.
+
+**Final,** two runs per view against main's two (`perf-results/capture-2026-11-02-contest-final-*`, every sample at P0), `tileGpuMs` in ms, the tip column the branch before blending:
+
+| Scenario | View | main r1 / r2 | tip | final r1 / r2 | final - main |
+|---|---|---|---|---|---|
+| idle zoom=20 | river | 0.74 / 0.74 | 0.57 | 0.54 / 0.55 | -0.19 |
+| idle zoom=20 | coast | 0.73 / 0.73 | 0.30 | 0.29 / 0.30 | -0.43 |
+| idle zoom=20 | desert | 0.81 / 0.82 | 0.65 | 0.65 / 0.65 | -0.16 |
+| idle zoom=8 | river | 0.97 / 0.98 | 0.71 | 0.68 / 0.69 | -0.29 |
+| idle zoom=8 | coast | 0.60 / 0.60 | 0.55 | 0.55 / 0.55 | -0.05 |
+| idle zoom=8 | desert | 0.72 / 0.72 | 0.73 | 0.72 / 0.72 | +0.00 |
+| idle zoom=3 | river | 0.66 / 0.67 | 0.50 | 0.48 / 0.49 | -0.18 |
+| idle zoom=3 | coast | 0.66 / 0.66 | 0.68 | 0.67 / 0.67 | +0.01 |
+| idle zoom=3 | desert | 0.56 / 0.56 | 0.63 | 0.62 / 0.62 | +0.06 |
+| idle zoom=1.5 | river | 0.57 / 0.57 | 0.44 | 0.42 / 0.43 | -0.14 |
+| idle zoom=1.5 | coast | 0.64 / 0.64 | 0.60 | 0.58 / 0.58 | -0.06 |
+| idle zoom=1.5 | desert | 0.51 / 0.52 | 0.54 | 0.53 / 0.52 | +0.01 |
+| idle zoom=0.75 | river | 0.46 / 0.46 | 0.40 | 0.37 / 0.38 | -0.09 |
+| idle zoom=0.75 | coast | 0.59 / 0.59 | 0.56 | 0.53 / 0.53 | -0.06 |
+| idle zoom=0.75 | desert | 0.50 / 0.50 | 0.48 | 0.46 / 0.45 | -0.04 |
+| idle zoom=0.5 | river | 0.44 / 0.44 | 0.39 | 0.36 / 0.37 | -0.08 |
+| idle zoom=0.5 | coast | 0.59 / 0.59 | 0.56 | 0.53 / 0.53 | -0.06 |
+| idle zoom=0.5 | desert | 0.52 / 0.52 | 0.48 | 0.45 / 0.45 | -0.07 |
+| idle zoom=0.25 | river | 0.36 / 0.35 | 0.34 | 0.31 / 0.31 | -0.04 |
+| idle zoom=0.25 | coast | 0.50 / 0.51 | 0.46 | 0.42 / 0.42 | -0.09 |
+| idle zoom=0.25 | desert | 0.43 / 0.44 | 0.42 | 0.37 / 0.37 | -0.07 |
+| scroll zoom=3 | river | 0.41 / 0.41 | 0.37 | 0.37 / 0.37 | -0.04 |
+| scroll zoom=3 | coast | 0.33 / 0.33 | 0.31 | 0.31 / 0.31 | -0.02 |
+| scroll zoom=3 | desert | 0.22 / 0.23 | 0.22 | 0.21 / 0.21 | -0.02 |
+| scroll zoom=0.75 | river | 0.39 / 0.37 | 0.37 | 0.36 / 0.35 | -0.03 |
+| scroll zoom=0.75 | coast | 0.33 / 0.33 | 0.31 | 0.31 / 0.31 | -0.02 |
+| scroll zoom=0.75 | desert | 0.74 / 0.74 | 0.68 | 0.65 / 0.66 | -0.08 |
+
+24 of 27 cells are at or under main; the median is -0.06. Coast zoom 3 reads +0.01 and desert zoom 1.5 +0.01, both at the noise floor (desert zoom 1.5's two runs read 0.53 and 0.52 against main's 0.51 and 0.52); desert zoom 8 is level. Desert zoom 3 is +0.06 and stays over: the tip read +0.07 there before any of this, from WOR-558's organic biome edges, which put many more pixels of that view on the field's full path (the noise, the block and the per-surface loop), and the contest, at the fringe's cost, doesn't change that. The remaining levers are the field's six noise octaves, which must stay bit for bit with the C++ twin, and the family band's width. Everything is under 1.5 ms. Frame p50 and p99 and scene `gpuMs` match main and the tip within their run-to-run swing; the river view from zoom 0.75 out is the entity pass (1 to 3 ms between runs of one build), and coast scroll 3's p99 (66 against 62) and the far zooms' p50 were the tip's too, from the chunk content.
 
 **Gates,** on every view and zoom (the method and noise floor are in Performance):
 
-- `tileGpuMs` at or under main beyond the noise floor and under 1.5 ms. The tight cells today are the desert scroll at zoom 3 (+0.01) and both river scrolls.
-- Frame p50 and p99 and scene GPU not worse.
-- Chunk generation median and p90 not worse beyond the biome edges' own measured cost, reported. Tiles are 26 ms of a 52 to 65 ms land chunk today.
-- Cold bake reported and at most +20%; warm under 100 ms.
-
-References are main twice (`perf-results/capture-2026-11-01-ground-main-*`) and the branch tip before blending, captured once for the A/Bs. Captures run one after another: they share world-sim's port and the GPU they time. Expected: net faster in the band, since the breakup noise and one encode go and a few ALU come. Unproven until measured.
+- `tileGpuMs` at or under main beyond the noise floor and under 1.5 ms: held in 26 of 27 cells, desert zoom 3 over (above).
+- Frame p50 and p99 and scene GPU not worse beyond the content change: held.
+- Chunk generation: unchanged by this step (WOR-558 reported it).
+- Cold bake reported and at most +20%: +10% (WOR-559); warm under 100 ms: 31 to 36 ms.
 
 ## Tunables
 
@@ -428,8 +472,6 @@ All are live through the debug server: set one with `/api/dev/tunable?name=<name
 | `terrain/land/warpFineWavelength`, `warpLowWavelength` | base wavelengths, whole meters |
 | `terrain/land/warpFineGain` | amplitude the fine term keeps per octave |
 | `terrain/land/thinFloor`, `thinCeil` | the thin-feature guard |
-| `terrain/land/fringe/<Surface>`, `rimDark/<Surface>` | fringe width in meters and rim darkening, by upper surface. Replaced by the contest; deleted with it |
-| `terrain/land/fringeOpacity`, `fringeAlongAmp`, `rimW`, `fringeBreakupWavelength` | the fringe's strength, its variation along the edge and its breakup, and the rim's width. Replaced by the contest; deleted with it |
 | `terrain/ground/blendContrast` | exponent that sharpens the hex weights (7) |
 | `terrain/ground/blendGain` | Mikkelsen's gain r near (48 px/m and up), mid and far (16 and under): 0.75, 0.65, 0.5 |
 | `terrain/ground/hexMinPxPerMeter` | below this density the shader takes one sample (16) |
@@ -437,7 +479,7 @@ All are live through the debug server: set one with `/api/dev/tunable?name=<name
 | `terrain/ground/macroAmp` | scales every def's macro tint amplitude (1) |
 | `terrain/ground/macroMidAmp`, `macroFineAmp` | value swing of the macro's 10 m and 5 m octaves (0.045, 0.035) |
 
-The contest's parameters are not tunables. They are per pair, in the ground defs' `<transition>` blocks (Surface transitions), so nothing registers an 81-entry table. The ones the shader reads as they stand are in `kShaderTunables` (`ChunkRenderer.cpp`), `blendContrast` among them. The rest of the ground's are turned into per-frame uniforms on the CPU (`ChunkRenderer::applyGroundUniforms`), registered beside the land look's: the gain's exponent from `blendGain`, the hex flag from `hexMinPxPerMeter`, mip levels from `lodBias`, and the macro tint and value folded from `macroAmp`, `macroMidAmp` and `macroFineAmp`.
+The contest's parameters are not tunables. They are per pair, in the ground defs' `<transition>` blocks (Surface transitions), so nothing registers an 81-entry table. The ones the shader reads as they stand are in `kShaderTunables` (`ChunkRenderer.cpp`), `blendContrast` among them. The rest of the ground's are turned into per-frame uniforms on the CPU (`ChunkRenderer::applyGroundUniforms`), registered beside the field's: the gain's exponent from `blendGain`, the hex flag from `hexMinPxPerMeter`, mip levels from `lodBias`, and the macro tint and value folded from `macroAmp`, `macroMidAmp` and `macroFineAmp`.
 
 ## Memory
 
@@ -619,11 +661,11 @@ Not taken: storing the arrays as plain RGBA8 to drop the encode (about 0.01, but
 ## Testing
 
 - Seams: world-sim on 8081, Grass ground, `camera` control at `zoom=20`, `x = n - 0.0034` (the case that lights every column on main). No tile lines. Repeat at `x = n + 0.003` and at zoom 1 and 3, and pan across a chunk border (a multiple of 512 m): no seam at the lattice or the chunk edge.
-- Variety: screenshots at zoom 1, 3 and 20 on Grass, a GrassTall patch and a Dirt edge. No visible 1 m or 4 m repeat, and the fringe and rim still read at surface boundaries.
+- Variety: screenshots at zoom 1, 3 and 20 on Grass, a GrassTall patch and a Dirt edge. No visible 1 m or 4 m repeat.
 - LOD: zoom out step by step over GrassMeadow. Flower specks tagged `data-lod` fade near their threshold, with no muddy tint left behind and no popping.
 - Asset-manager: the ground category lists all 9 land surfaces, the 3x3 preview shows no seam, an edit to a generator param followed by Reload shows the change, and validation is clean.
 - Unit tests: validator rules, periodic noise wraps, `data-lod` inheritance and per-band filtering, a mesh over 65,535 vertices splits, paths built once match a generator run per density, a bake on the pool matches one in turn bit for bit, and the bake cache's round trip, key and damaged files. `SurfaceFieldGolden` and the existing suite pass.
-- Transitions: in game at zoom 20, 3, 1.5 and 0.5, one view a pair: grass over Dirt (tufts over the edge, contact shadow), grass over Sand (the desert view), Sand over Rock (the joints fill), Snow over Rock (the tundra, x 0, y 6000000), Mud at a river (the stain), and a grass family edge (no visible line). At 0.5 no shimmering line: the mip window holds. Unit tests: the height bake (rank normalization, alpha survives the filter, `setHeight` default), and the `<transition>` parse and validator rules. `SurfaceFieldGolden` doesn't change.
+- Transitions: in game at zoom 20, 3, 1.5 and 0.5, one view a pair: grass over Dirt (tufts over the edge, contact shadow), grass over Sand (the desert view), Sand over Rock (the joints fill), Snow over Rock (the tundra, x 0, y 6000000), Mud at a river (the stain), and a grass family edge (no visible line). At 0.5 no shimmering line: the mip window holds. Unit tests: the height bake (rank normalization, alpha survives the filter, `setHeight` default), the `<transition>` parse (defaults, overrides, a broken block dropped) and validator rules (`over`, the band cap, the offset, ranges, duplicates, unknown fields), the pair table's build and per-draw pack and its compact support (`GroundPairs.test.cpp`), and the cache key ignoring comments and `<transition>` blocks. `SurfaceFieldGolden` doesn't change.
 - Performance: the final capture per the gates above, plus the transitions' own in Surface transitions.
 - Manual script: `docs/testing/scenarios/ground-tiles.md`, one numbered line a step, written at hand-off.
 
@@ -632,10 +674,9 @@ Not taken: storing the arrays as plain RGBA8 to drop the encode (about 0.01, but
 - Linear art across hex cells: Sand's ripples and Snow's drifts break where two cells meet, a vertical seam through the crests at zoom 20. Cells take a random offset each way, so rows can't line up; options are crests broken often enough that a cell border reads as one more break, or a per-def offset snapped to the crest spacing along y (a shader and schema change). Round 2 takes the first for Sand, with short ripple fragments in place of continuous rows; Snow's drifts follow if that holds.
 - Compressed formats: heights make alpha real data, so BC1 (no alpha) is out. BC3 or BC7 is twice BC1's size, about 14 MiB for the arrays against 56 MiB raw. Whether either is neutral or better, and looks right on dense blade art, is still to measure.
 - The cold bake's render: the GPU time in salal's batched quad path, about 0.15 s a grass variant with today's art. A plain indexed-triangle draw for the baker is the next lever; the height pass's render at mip 0 adds 2.3 s to a cold bake, nearly all of the +10% it costs.
-- The hex hash's surface term: `groundCellSample` hashes `int(surface)` into each cell's variant, mirror and offset, so two members of the grass family pick differently in one cell and their co-baked layouts don't meet. Hashing a per-surface seed-group id instead (say the group's lowest surface id, in `u_groundLayers` or a uniform beside it) makes equal variant counts pick the same layer and offset, so blades line up through a family transition. A shader change for the contest step.
-- Distance accuracy past 0.5 m: the first-order `sigma` steps where the bilinear cell changes. Measure it on straight, diagonal and corner edges before any band is wider than 0.5 m (Surface transitions, band cap).
+- The cost of organic biome edges at mid zoom: desert zoom 3 reads 0.06 ms over main (Surface transitions, Perf ledger), from the field's full path on the many more boundary pixels WOR-558 made. The six noise octaves are most of it and must stay bit for bit with the C++ twin; a cheaper twin (C++ and GLSL changed together, placement re-verified) or a narrower family band are the levers.
 - Grass family heights: rank-normalized per surface, as designed, or on one shared scale so taller blades overtop shorter ones across a family edge (short tips 0.35, grass 0.5, meadow 0.7, tall 0.95, ranked across the family only). Per surface first; the shared scale is the fallback if a family edge reads as a dissolve instead of growth.
-- Tuning pair values: edits to `<transition>` blocks take a restart, with no re-bake. A dev verb that sets one pair field live is the cheap fix if that proves slow.
+- Tuning pair values: edits to `<transition>` blocks take a restart, with no re-bake (measured: 31 ms of warm bake steps after an edit). A dev verb that sets one pair field live is the cheap fix if that proves slow.
 - Two arrays by density against one array with every layer at 512x512 (the rest would cost about 40 MiB more). The spec picks two.
 - Per-asset shader snippets, to explore. A ground folder could ship a GLSL function beside its XML (for example `assets/world/ground/Grass/surface.frag.glsl`, defining that surface's color from position, the baked sample and the macro tint), and the loader would assemble every snippet into the tile shader at first run, with a switch on surface id. Today the tile shader is one program loaded from a folder, and salal assembles its base shader from hooks at build time, so this moves assembly to load time for the tile pass. Questions: compile time and whether to cache the program binary (`glGetProgramBinary`); validating a modder's GLSL and reporting errors through asset validation; the per-pixel cost being unbounded for shader content, where baked tiles cost the same however detailed they are, so it needs a budget and the perf gates; how it sits with baked variants (a snippet that only post-processes the baked sample is cheap, one that replaces it isn't); and the Rust and Vulkan rewrite, where it becomes SPIR-V.
 

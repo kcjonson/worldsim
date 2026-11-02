@@ -844,15 +844,17 @@ evaluation; `shaders/includes/land.glsl` is the same steps in the same order, an
    origin, in C++ and GLSL alike.
 3. **Priority paint.** Low to high per D13: the highest surface whose field passes 0.5 paints.
    Where none passes (three or more surfaces meeting) the largest field paints, ties to the
-   higher surface. The distance to the nearest boundary of the painted region is
-   `(F - 0.5) / |grad F|` from the bilinear gradient. The edge look is a height contest in a band around that boundary: the
+   higher surface. The distance to the nearest boundary of the painted region comes from each
+   surface's field alone (`isolineDistance`): it inverts the field's profile across a straight tile
+   edge, so it is exact there out to the 1.5 m reach and continuous everywhere, where the
+   bilinear gradient's `(F - 0.5) / |grad F|`, used before, stepped half a meter out on a straight
+   edge and further on corners. The edge look is a height contest in a band around that boundary: the
    pair's two surfaces are mixed by the heights baked into their ground tiles' alpha, the signed
    distance and the fine warp noise's x (D15), with a contact shadow, stain, ridge and tint
    from per-pair parameters in the ground defs. It replaces the sparse fringe of the upper
    surface (0.35 m for grass, 0.25 sand, 0.2 dirt and mud, none for rock) with its 1 m
    breakup noise, the rim darkening (rock only, 30 % over 0.12 m) and the one-pixel
-   anti-aliasing line, and costs no extra texture sample: the band already samples both
-   surfaces. The band is capped at the field's reach, 1.5 m: the blur is one tile and the
+   anti-aliasing line, and its second surface takes the samples the fringe's did. The band is capped at the field's reach, 1.5 m: the blur is one tile and the
    bilinear footprint half a tile, so past that the field is 1, its gradient 0, and the
    shortcut bits return no boundary. The field itself, its levels and the paint rule don't
    change, so the contest is look-only (D1) and placement agrees as before. No term reads a
@@ -892,8 +894,10 @@ evaluation; `shaders/includes/land.glsl` is the same steps in the same order, an
    chunk. Cost, measured in game: about 40 ms of a chunk's 140 to 180 ms of placement on the
    quickstart landing, about 80 of 550 ms in dense grassland (150 000 instances).
 7. **Cost.** A tile is interior when every tile within 3 of it is one surface; its pixels cost
-   one fetch and one ground sample. Elsewhere a pixel costs 21 texel fetches, six
-   pair-noise octaves, and the per-surface blur and guard of the surfaces present. In a
+   one fetch and one ground sample. Elsewhere a pixel reads 21 render tiles in 9 texture
+   instructions (the 4x4 block gathered a 2x2 quad at a time), six pair-noise octaves, and the
+   per-surface blur and guard of the surfaces present; in a block of exactly two surfaces the
+   second's sums, indicator and thin bits are the first's complement, bit for bit the same field. In a
    near-interior tile (every tile within 2 one surface) the fine warp moves the read at most
    its amplitude from where the low warp puts it, so a pixel whose low-warped offset lies in
    [fine amplitude - 0.5, 1.5 - fine amplitude) on both axes (less a 1 mm margin) reads a
@@ -907,7 +911,8 @@ evaluation; `shaders/includes/land.glsl` is the same steps in the same order, an
    fragment on NVIDIA. Measured at 3072x1728 on an RTX 3090 (section 6), the land pass is 0.3
    to 0.9 ms on the landing's river view, where most tiles are interior, and 0.6 to 1.3 ms on
    the busier coast and desert views; the six warp octaves are 0.3 to 0.5 ms of that, the
-   fringe path 0.05 to 0.1 ms (the cost the contest has to beat, ground-textures.md). At far zoom the shader drops a fine warp octave whose
+   fringe path 0.05 to 0.1 ms; the contest that replaced it measured the same or less
+   (ground-textures.md, Perf ledger). At far zoom the shader drops a fine warp octave whose
    wavelength is under `kLandLodMinWavelengthPx` = 4 pixels (`landWarpFineOctaves`): zoom
    0.25 sums the 4 m and 2 m octaves, 0.5 and 0.75 three, zoom 1 and in all four. The kept
    octaves weigh what they do in the full sum, so an edge moves by at most the dropped
