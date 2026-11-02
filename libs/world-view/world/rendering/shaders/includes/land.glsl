@@ -194,16 +194,16 @@ float blockField(uvec4 sums, uint mask, uint thin, vec2 t) {
 	return landBilinear(v00, v10, v01, v11, t);
 }
 
-/// Signed meters from a surface's isoline, positive inside, from its field alone:
-/// across a straight tile edge the field runs linear to 0.25 from 0.5 over the
-/// first half meter and half as steep over the next meter, to 0 or 1 at 1.5 m, and
-/// this inverts that, so it is exact there, near it on corners and diagonals, and
-/// continuous everywhere. (F - 0.5) / |grad F| jumps where the bilinear cell
-/// changes, half a meter out on a straight edge, which a band wider than that shows
-/// as a cut (ground-textures.md, "Band cap").
-float isolineDistance(float field) {
-	float u = field - 0.5;
-	return 4.0 * u - 2.0 * clamp(u, -0.25, 0.25);
+/// Meters from the painted boundary, from the painted surface's lead over the
+/// surface that would take over (evaluateLand). Across a straight edge between two
+/// surfaces the lead is F - 0.5, which runs linear to 0.25 over the first half
+/// meter and half as steep over the next meter, to 0.5 at 1.5 m, and this inverts
+/// that, so it is exact there, near it on corners and diagonals, and continuous
+/// everywhere. (F - 0.5) / |grad F| jumps where the bilinear cell changes, half a
+/// meter out on a straight edge, which a band wider than that shows as a cut
+/// (ground-textures.md, "Band cap").
+float leadDistance(float lead) {
+	return 4.0 * lead - 2.0 * clamp(lead, -0.25, 0.25);
 }
 
 struct LandEval {
@@ -334,23 +334,21 @@ LandEval evaluateLand(ivec2 tile, vec2 frac, int fineOctaves) {
 
 	// One pass, low to high. The highest surface whose field passes 0.5 paints;
 	// where none does (a junction of three or more), the largest field, ties to the
-	// higher. Alongside, the nearest boundary of the painted region for the edge
-	// look: the isoline of every surface that would take over by passing 0.5 (those
-	// above the painted one; all others where nothing passes), and the painted
-	// surface's own, past which the passing surface below it shows, else the
-	// largest other field. Scalars only, no per-surface arrays.
+	// higher. Alongside, for the edge look, the painted surface P's lead over the
+	// surface that would take over, 0 on the painted boundary and continuous across
+	// it: P beats a lower C while it passes or leads, max((fP - fC) / 2, fP - 0.5),
+	// and a higher C while C doesn't pass and P leads, min((fP - fC) / 2, 0.5 - fC),
+	// so on each side the largest field is the nearest. Between two surfaces both
+	// read F - 0.5. Where three meet, no surface's own isoline is the boundary.
+	// Scalars only, no per-surface arrays.
 	bool  passed	   = false;
 	int	  paintedLevel = 0;
 	float paintedField = 0.0;
-	float paintedDist  = kNoBoundary;
-	int	  belowLevel   = -1; // the passing surface just under the painted one
-	float aboveDist	   = kNoBoundary;
-	int	  aboveLevel   = -1; // nearest isoline among the surfaces above it
-	float nearDist	   = kNoBoundary;
-	int	  nearLevel	   = -1;
-	float nextDist	   = kNoBoundary;
-	int	  nextLevel	   = -1;
-	int	  bestLevel	   = 0;
+	int	  belowLevel   = -1; // the largest field under the painted surface
+	float belowField   = -1.0;
+	int	  aboveLevel   = -1; // the largest field over it
+	float aboveField   = -1.0;
+	int	  bestLevel	   = 0; // until it takes the current level, the largest under it
 	float bestField	   = -1.0;
 	int	  secondLevel  = -1;
 	float secondField  = -1.0;
@@ -380,29 +378,19 @@ LandEval evaluateLand(ivec2 tile, vec2 frac, int fineOctaves) {
 			thin = blockThin(mask);
 		}
 		seenFirst = true;
-		float f	   = blockField(sums, mask, thin, t);
-		float dist = isolineDistance(f); // negative until it passes
-		e.margin   = min(e.margin, abs(f - 0.5));
+		float f	  = blockField(sums, mask, thin, t);
+		e.margin  = min(e.margin, abs(f - 0.5));
 		if (f > 0.5) {
-			belowLevel	 = passed ? paintedLevel : -1;
 			passed		 = true;
 			paintedLevel = level;
 			paintedField = f;
-			paintedDist	 = dist;
-			aboveDist	 = kNoBoundary;
+			belowLevel	 = bestField >= 0.0 ? bestLevel : -1;
+			belowField	 = bestField;
 			aboveLevel	 = -1;
-		} else if (-dist < aboveDist) {
-			aboveDist  = -dist;
+			aboveField	 = -1.0;
+		} else if (f > aboveField) {
 			aboveLevel = level;
-		}
-		if (-dist < nearDist) {
-			nextDist  = nearDist;
-			nextLevel = nearLevel;
-			nearDist  = -dist;
-			nearLevel = level;
-		} else if (-dist < nextDist) {
-			nextDist  = -dist;
-			nextLevel = level;
+			aboveField = f;
 		}
 		if (f >= bestField) {
 			secondField = bestField;
@@ -416,26 +404,26 @@ LandEval evaluateLand(ivec2 tile, vec2 frac, int fineOctaves) {
 	}
 
 	int	  acrossLevel = -1;
-	float distance	  = kNoBoundary;
+	float lead		  = 0.0;
 	if (passed) {
-		acrossLevel = aboveLevel;
-		distance	= aboveDist;
-		int below	= belowLevel >= 0 ? belowLevel : (bestLevel != paintedLevel ? bestLevel : secondLevel);
-		if (below >= 0 && paintedDist < distance) {
-			acrossLevel = below;
-			distance	= paintedDist;
-		}
+		float belowLead = max(0.5 * (paintedField - belowField), paintedField - 0.5);
+		float aboveLead = min(0.5 * (paintedField - aboveField), 0.5 - aboveField);
+		bool  fromAbove = aboveLevel >= 0 && (belowLevel < 0 || aboveLead < belowLead);
+		acrossLevel		= fromAbove ? aboveLevel : belowLevel;
+		lead			= fromAbove ? aboveLead : belowLead;
 	} else {
+		// All fields at most 0.5, so the lead over either side is half the gap to
+		// the second largest.
 		paintedLevel = bestLevel;
 		paintedField = bestField;
 		e.margin	 = min(e.margin, bestField - secondField);
-		acrossLevel	 = nearLevel != paintedLevel ? nearLevel : nextLevel;
-		distance	 = nearLevel != paintedLevel ? nearDist : nextDist;
+		acrossLevel	 = secondLevel;
+		lead		 = 0.5 * (bestField - secondField);
 	}
 	e.painted  = surfaceOfLevel(paintedLevel);
 	e.field	   = paintedField;
 	e.across   = acrossLevel >= 0 ? surfaceOfLevel(acrossLevel) : e.painted;
-	e.distance = acrossLevel >= 0 ? distance : kNoBoundary;
+	e.distance = acrossLevel >= 0 ? leadDistance(lead) : kNoBoundary;
 	return e;
 }
 

@@ -846,9 +846,10 @@ most macOS offers).
    origin, in C++ and GLSL alike.
 3. **Priority paint.** Low to high per D13: the highest surface whose field passes 0.5 paints.
    Where none passes (three or more surfaces meeting) the largest field paints, ties to the
-   higher surface. The distance to the nearest boundary of the painted region comes from each
-   surface's field alone (`isolineDistance`): it inverts the field's profile across a straight tile
-   edge, so it is exact there out to the 1.5 m reach and continuous everywhere, where the
+   higher surface. The distance to the nearest boundary of the painted region comes from the
+   painted surface's lead over the surface that would take over (`leadDistance`), which is 0 on
+   the painted boundary where three or more meet too: it inverts the field's profile across a
+   straight tile edge, so it is exact there out to the 1.5 m reach and continuous everywhere, where the
    bilinear gradient's `(F - 0.5) / |grad F|`, used before, stepped half a meter out on a straight
    edge and further on corners. The edge look is a height contest in a band around that boundary: the
    pair's two surfaces are mixed by the heights baked into their ground tiles' alpha, the signed

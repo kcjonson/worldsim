@@ -5,8 +5,9 @@
 // evaluateSurfaceField over the same render tiles, and the two must agree: the warp
 // and the field within kTolerance, the surface exactly wherever no field is within
 // kIdMargin of flipping it. The chunk sits 70 km out, where a float world coordinate
-// would already have lost the warp's finest octave. A second test holds the far-zoom
-// LOD (D16 step 7) under the pixel it is drawn at.
+// would already have lost the warp's finest octave. A second test holds the band's
+// distance to the painted boundary, and a third the far-zoom LOD (D16 step 7) under
+// the pixel it is drawn at.
 //
 // Needs a GL 3.3 context; skips on a headless box, like the other GL tests.
 
@@ -122,6 +123,21 @@ void main() {
 }
 )";
 
+	/// The edge look's view of the same points: surface id, the surface across the
+	/// nearest boundary, and the meters to it.
+	constexpr const char* kBandMain = R"(
+uniform vec2  u_regionOrigin;
+uniform float u_step;
+uniform int	  u_fineOctaves;
+layout(location = 0) out vec4 outSample;
+void main() {
+	vec2	 local = u_regionOrigin + gl_FragCoord.xy * u_step;
+	ivec2	 tile  = ivec2(floor(local));
+	LandEval e	   = evaluateLand(tile, local - vec2(tile), u_fineOctaves);
+	outSample	   = vec4(float(e.painted), float(e.across), e.distance, 0.0);
+}
+)";
+
 	GLuint compile(GLenum type, const std::string& source, std::string& log) {
 		const GLuint shader = glCreateShader(type);
 		const char*	 text	= source.c_str();
@@ -191,12 +207,13 @@ void main() {
 	// The middle of the chunk, and two corners, where the field reads the apron.
 	constexpr std::array<Region, 3> kRegions = {{{200.0F, 312.0F, "middle"}, {0.0F, 0.0F, "origin corner"}, {480.0F, 480.0F, "far corner"}}};
 
-	/// The test shader over the synthetic chunk's render tiles, uploaded as the game
-	/// uploads them, with the field's uniforms set as ChunkRenderer::applyLandUniforms
-	/// sets them. Needs a current context; `error` is empty once it is ready.
+	/// The test shader (`main`, kFragmentMain or kBandMain) over the synthetic chunk's
+	/// render tiles, uploaded as the game uploads them, with the field's uniforms set
+	/// as ChunkRenderer::applyLandUniforms sets them. Needs a current context; `error`
+	/// is empty once it is ready.
 	class LandProgram {
 	  public:
-		LandProgram()
+		explicit LandProgram(const char* main = kFragmentMain)
 			: tiles(syntheticRenderTiles()),
 			  params(defaultSurfaceFieldParams(kSeed)) {
 			const std::optional<std::string> land = Renderer::ShaderPreprocessor::process(landInclude());
@@ -205,7 +222,7 @@ void main() {
 				return;
 			}
 			const GLuint vs = compile(GL_VERTEX_SHADER, kVertexSource, error);
-			const GLuint fs = vs == 0 ? 0 : compile(GL_FRAGMENT_SHADER, std::string("#version 410 core\n") + *land + kFragmentMain, error);
+			const GLuint fs = vs == 0 ? 0 : compile(GL_FRAGMENT_SHADER, std::string("#version 410 core\n") + *land + main, error);
 			if (fs == 0) {
 				glDeleteShader(vs);
 				return;
@@ -279,7 +296,7 @@ void main() {
 		LandProgram(const LandProgram&)			   = delete;
 		LandProgram& operator=(const LandProgram&) = delete;
 
-		/// Each pixel's (surface id, field, warp x, warp y), fine warp summed over `fineOctaves`.
+		/// Each pixel's four outputs, fine warp summed over `fineOctaves`.
 		[[nodiscard]] std::vector<float> render(const Region& region, int fineOctaves) const {
 			glUniform2f(at("u_regionOrigin"), region.originX, region.originY);
 			glUniform1i(at("u_fineOctaves"), fineOctaves);
@@ -399,6 +416,58 @@ TEST(SurfaceFieldGoldenTest, GlslMatchesCpp) {
 		);
 		EXPECT_GT(boundaries, kPixels * kPixels / 20) << region.name << ": the region should cross plenty of edges";
 	}
+}
+
+// The edge look's band is placed by the field's `distance` (ground-textures.md,
+// "Band cap"), so on the two sides of a painted boundary each pixel has to name the
+// other's surface and read about zero. Neighbors' reads sit at most a couple of
+// steps apart once the warp stretches them. Where three surfaces meet, no
+// surface's own isoline is the boundary; measuring from one put the band up to half
+// a meter off the painted edge, a sliver of bare sand between grass and its tufts.
+TEST(SurfaceFieldGoldenTest, BandDistanceMeetsAtThePaintedBoundary) {
+	GlContext gl;
+	if (!gl.ok) {
+		GTEST_SKIP() << "No GL 3.3 context (headless)";
+	}
+	const LandProgram land(kBandMain);
+	ASSERT_TRUE(land.error.empty()) << land.error;
+
+	constexpr float kBoundaryReachM = 2.0F * kStepM;
+	int				pairs			= 0;
+	int				meet			= 0;
+	int				far				= 0;
+	float			worst			= 0.0F;
+	for (const Region& region : kRegions) {
+		const std::vector<float> pixels = land.render(region, kWarpFineOctaves);
+		ASSERT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+		const auto at = [&](int i, int j) { return &pixels[(static_cast<size_t>(j) * kPixels + static_cast<size_t>(i)) * 4]; };
+		for (int j = 0; j + 1 < kPixels; ++j) {
+			for (int i = 0; i + 1 < kPixels; ++i) {
+				const float* a = at(i, j);
+				for (const float* b : {at(i + 1, j), at(i, j + 1)}) {
+					if (a[0] == b[0]) {
+						continue;
+					}
+					++pairs;
+					// A third surface's boundary can be nearer to one of them at a junction.
+					if (a[1] != b[0] || b[1] != a[0]) {
+						continue;
+					}
+					++meet;
+					const float distance = std::max(a[2], b[2]);
+					worst				 = std::max(worst, distance);
+					if (distance > kBoundaryReachM && ++far <= 5) {
+						ADD_FAILURE() << region.name << " pixel (" << i << ", " << j << "): surfaces " << a[0] << " and " << b[0] << " meet at " << a[2]
+									  << " m and " << b[2] << " m";
+					}
+				}
+			}
+		}
+	}
+	std::printf("[band] %d painted boundary pairs, %d naming each other, worst distance %.3f m, %d over %.2f m\n", pairs, meet,
+				static_cast<double>(worst), far, static_cast<double>(kBoundaryReachM));
+	EXPECT_GT(meet, pairs * 9 / 10) << "most boundaries are between two surfaces";
+	EXPECT_EQ(far, 0);
 }
 
 // At zoom 0.25 (0.5 m a pixel) the shader sums two of the four fine octaves. The
