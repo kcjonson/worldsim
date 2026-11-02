@@ -27,7 +27,7 @@ namespace worldview {
 		GroundPairTable						  table{};
 		for (size_t upper = 1; upper < kLandLevels; ++upper) {
 			for (size_t lower = 0; lower < upper; ++lower) {
-				table[upper * kLandLevels + lower] = bySurface[byLevel[upper]][byLevel[lower]];
+				table[landPairIndex(upper, lower)] = bySurface[byLevel[upper]][byLevel[lower]];
 			}
 		}
 		return table;
@@ -37,10 +37,9 @@ namespace worldview {
 		const GroundPairTable& table, const std::array<float, world::kSurfaceCount>& mipLevels, float metersPerPixel, std::span<float, kLandPairFloats> out
 	) {
 		const std::array<size_t, kLandLevels> byLevel = surfacesByLevel();
-		std::fill(out.begin(), out.end(), 0.0F);
 		for (size_t upper = 1; upper < kLandLevels; ++upper) {
 			for (size_t lower = 0; lower < upper; ++lower) {
-				const size_t					pair = upper * kLandLevels + lower;
+				const size_t					pair = landPairIndex(upper, lower);
 				const assets::GroundTransition& t = table[pair];
 				const float						mip = std::max(mipLevels[byLevel[upper]], mipLevels[byLevel[lower]]);
 				const float						window = std::max(t.softness, mip * kLandWindowPerMip);

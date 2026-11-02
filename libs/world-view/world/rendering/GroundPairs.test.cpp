@@ -5,6 +5,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 
 using namespace worldview;
@@ -20,7 +21,7 @@ namespace {
 	}
 
 	size_t pairIndex(world::Surface upper, world::Surface lower) {
-		return level(upper) * kLandLevels + level(lower);
+		return landPairIndex(level(upper), level(lower));
 	}
 
 	/// Every surface's transitions told apart by width: upper surface id * 0.1 + lower surface id * 0.01.
@@ -43,14 +44,18 @@ TEST(GroundPairsTest, AnEntryIsTheUpperSurfacesTransitionOverTheLower) {
 	for (const auto& [upper, lower] : {std::pair{S::Rock, S::Sand}, {S::Snow, S::Mud}, {S::GrassTall, S::GrassShort}, {S::Sand, S::Mud}, {S::Grass, S::Dirt}}) {
 		EXPECT_EQ(table[pairIndex(upper, lower)], bySurface[id(upper)][id(lower)]) << world::surfaceToString(upper) << " over " << world::surfaceToString(lower);
 	}
-	EXPECT_EQ(pairIndex(S::Snow, S::Rock), 8U * 9U + 7U) << "Snow and Rock are D13 levels 8 and 7";
+	EXPECT_EQ(pairIndex(S::Snow, S::Rock), kLandPairs - 1) << "Snow and Rock are D13 levels 8 and 7, the last pair";
 
-	// Never read: the upper level isn't above the lower one.
-	for (size_t upper = 0; upper < kLandLevels; ++upper) {
-		for (size_t lower = upper; lower < kLandLevels; ++lower) {
-			EXPECT_EQ(table[upper * kLandLevels + lower], assets::GroundTransition{}) << upper << ", " << lower;
+	// Only pairs with the upper level above the lower are stored, each once: the index runs over the
+	// table without a gap or a collision.
+	std::array<int, kLandPairs> hits{};
+	for (size_t upper = 1; upper < kLandLevels; ++upper) {
+		for (size_t lower = 0; lower < upper; ++lower) {
+			ASSERT_LT(landPairIndex(upper, lower), kLandPairs) << upper << ", " << lower;
+			++hits[landPairIndex(upper, lower)];
 		}
 	}
+	EXPECT_TRUE(std::all_of(hits.begin(), hits.end(), [](int h) { return h == 1; }));
 }
 
 TEST(GroundPairsTest, ADrawPacksItsMipWindowAndPixelFloor) {

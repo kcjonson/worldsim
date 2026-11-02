@@ -26,7 +26,7 @@ uniform ivec2	   u_chunkTileOrigin; // world tile of the chunk's tile (0, 0)
 // mip baked from the vectors, alpha the baked height. Per surface id:
 //   u_groundLayers: x array (0..3), y first layer, z layer count (at least 1), w rotate (low 2 bits:
 //   0 free, 1 quarter, 2 none, 3 mirror) | the surface id its cells hash << 2 (its seed group's lowest)
-//   u_groundParams: x 1 / period (m), y mip level this draw, z 1 / layer count, w 0.5 z - 0.5 (groundVariant)
+//   u_groundParams: x 1 / period (m), y mip level this draw, z 1 / layer count, w 0.5 z (groundVariant)
 //   u_groundTintBase, u_groundTintLush: the macro tint, base + lush * the macro's R,
 //   multiplied into the sRGB color
 uniform sampler2DArray u_groundTiles0;
@@ -62,12 +62,13 @@ uniform float u_landThinCeil;
 // ones would move an edge by a fraction of a pixel.
 uniform int u_landWarpFineOctaves;
 
-// The edge look (ground-textures.md, Surface transitions): two vec4 a pair of D13
-// levels at upper * 9 + lower, from the upper surface's def with this draw's mip
-// window folded in (GroundPairs.h packGroundPairs):
+// The edge look (ground-textures.md, Surface transitions): two vec4 for each pair of
+// D13 levels, upper above lower, at pair i = upper * (upper - 1) / 2 + lower
+// (landPairIndex), from the upper surface's def with this draw's mip window folded
+// in (GroundPairs.h packGroundPairs):
 //   [2 i]     x 0.5 / w, y 0.5 + 0.5 o / w, z 1 / (2 W), w nu / (4 W)
 //   [2 i + 1] shadow, stain, ridge, tint
-uniform vec4 u_landPair[162];
+uniform vec4 u_landPair[72];
 
 // ============================================================================
 // CONSTANTS (RenderTiles.h, SurfaceField.h)
@@ -321,7 +322,7 @@ LandEval evaluateLand(ivec2 tile, vec2 frac, int fineOctaves) {
 	// gathered a 2x2 quad at a time: four texture instructions where fetching each
 	// tile took sixteen. A gather's x, y, z and w are its quad's tiles (0, 1), (1, 1),
 	// (1, 0) and (0, 0), and it is centered on the quad's shared corner.
-	vec2  corner = vec2(smallToFloat(uint(cx + kRenderApronTiles)), smallToFloat(uint(cy + kRenderApronTiles))) * kRenderTilesInvSide;
+	vec2  corner = vec2(ivec2(cx, cy) + kRenderApronTiles) * kRenderTilesInvSide;
 	uvec4 q00	 = textureGather(u_tileData, corner);
 	uvec4 q20	 = textureGather(u_tileData, corner + vec2(2.0 * kRenderTilesInvSide, 0.0));
 	uvec4 q02	 = textureGather(u_tileData, corner + vec2(0.0, 2.0 * kRenderTilesInvSide));
@@ -479,12 +480,19 @@ vec4 groundFetch(int array, vec3 at, float lod) {
 
 /// The variant of a cell hashed `h`: h % count, in float on h's low 12 bits (an
 /// integer divide by a uniform goes through the conversion unit). `pick` is
-/// (1 / count, 0.5 / count - 0.5): the quotient rounds from half a step off a
-/// whole number. The same as h % count for every power-of-two count up to 4096,
-/// within 1 / 4096 of uniform otherwise.
+/// (1 / count, 0.5 / count): the quotient floors from half a step past a whole
+/// number, and the floor keeps roundToInt's bias from folding into the sum. The
+/// same as h % count for every power-of-two count up to 4096, within 1 / 4096 of
+/// uniform otherwise.
 uint groundVariant(uint h, int count, vec2 pick) {
 	uint x = h & 0xFFFu;
-	return x - uint(count * roundToInt(smallToFloat(x) * pick.x + pick.y));
+	return x - uint(count * roundToInt(floor(smallToFloat(x) * pick.x + pick.y)));
+}
+
+/// `bits` (0..255) / 256, from a mantissa in [1, 2): a sum or product a compiler
+/// reorders around it rounds at that scale, not at the whole-number bias's.
+float byteFraction(uint bits) {
+	return uintBitsToFloat(0x3F800000u | bits << 15u) - 1.0;
 }
 
 /// A surface's tile as hex cell `v` lays it at `local`, linear, its height in
@@ -503,7 +511,7 @@ vec4 groundCellSample(uint surface, vec2 local, vec2 v) {
 	vec2  d		 = (local - center) * params.x;
 	vec2  cs	 = vec2(1.0, 0.0);
 	if (rotate == 0) {
-		float angle = smallToFloat((h >> 8u) & 0xFFu) * (6.2831853 / 256.0);
+		float angle = byteFraction((h >> 8u) & 0xFFu) * 6.2831853;
 		cs			= vec2(cos(angle), sin(angle));
 	} else if (rotate == 1) {
 		uint q = (h >> 8u) & 3u;
@@ -511,7 +519,7 @@ vec4 groundCellSample(uint surface, vec2 local, vec2 v) {
 	} else if (rotate == 3 && (h & 0x100u) != 0u) {
 		d.x = -d.x; // mirror: flip about the cell's center, no turn; the angle's bit is free here
 	}
-	vec2  uv	= vec2(cs.x * d.x - cs.y * d.y, cs.y * d.x + cs.x * d.y) + vec2(smallToFloat((h >> 16u) & 0xFFu), smallToFloat(h >> 24u)) * (1.0 / 256.0);
+	vec2  uv	= vec2(cs.x * d.x - cs.y * d.y, cs.y * d.x + cs.x * d.y) + vec2(byteFraction((h >> 16u) & 0xFFu), byteFraction(h >> 24u));
 	float layer = smallToFloat(uint(layers.y) + groundVariant(h, layers.z, params.zw));
 	return groundFetch(layers.x, vec3(uv, layer), params.y);
 }
@@ -596,7 +604,8 @@ vec3 landColor(vec2 local) {
 		int	  paintedLevel	 = levelOfSurface(e.painted);
 		int	  acrossLevel	 = levelOfSurface(e.across);
 		bool  paintedIsUpper = paintedLevel > acrossLevel;
-		int	  pair			 = paintedIsUpper ? paintedLevel * 9 + acrossLevel : acrossLevel * 9 + paintedLevel;
+		int	  upperLevel	 = paintedIsUpper ? paintedLevel : acrossLevel;
+		int	  pair			 = ((upperLevel * (upperLevel - 1)) >> 1) + (paintedIsUpper ? acrossLevel : paintedLevel);
 		vec4  band			 = u_landPair[2 * pair];
 		float sigma			 = paintedIsUpper ? e.distance : -e.distance; // positive into the upper surface
 		float bu			 = clamp(sigma * band.x + band.y, 0.0, 1.0); // (b + 1) / 2

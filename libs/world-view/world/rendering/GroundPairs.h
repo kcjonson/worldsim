@@ -2,7 +2,7 @@
 
 // The land shader's pair table (docs/technical/ground-textures.md, "Pair parameters" and "The contest"):
 // for every pair of land surfaces, what the upper one's def says about meeting the lower one, at
-// `upper * kLandLevels + lower` by D13 level (0 Mud .. 8 Snow). Built once from the defs; each draw packs
+// landPairIndex(upper, lower) by D13 level (0 Mud .. 8 Snow). Built once from the defs; each draw packs
 // it into land.glsl's u_landPair with that draw's mip window and pixel size folded in, so the shader's
 // contest is a handful of multiply-adds and no divide.
 
@@ -17,7 +17,8 @@
 namespace worldview {
 
 	inline constexpr size_t kLandLevels = 9;
-	inline constexpr size_t kLandPairs = kLandLevels * kLandLevels;
+	/// Pairs of D13 levels, the upper above the lower: the only ones a band reads.
+	inline constexpr size_t kLandPairs = kLandLevels * (kLandLevels - 1) / 2;
 	/// vec4s an entry takes in u_landPair.
 	inline constexpr size_t kLandPairVec4s = 2;
 	inline constexpr size_t kLandPairFloats = kLandPairs * kLandPairVec4s * 4;
@@ -26,7 +27,12 @@ namespace worldview {
 	/// reference (ground-textures.md, "The mip window").
 	inline constexpr float kLandWindowPerMip = 1.0F / 6.0F;
 
-	/// Entries whose upper level isn't above their lower are never read and stay default.
+	/// Where D13 level `upper` over `lower` (upper > lower) sits in the table and in u_landPair: the rows of
+	/// a lower triangle, as land.glsl indexes it.
+	[[nodiscard]] constexpr size_t landPairIndex(size_t upper, size_t lower) {
+		return (upper * (upper - 1) / 2) + lower;
+	}
+
 	using GroundPairTable = std::array<assets::GroundTransition, kLandPairs>;
 
 	/// The table from every surface's transitions, indexed by surface id (Water's are never read).

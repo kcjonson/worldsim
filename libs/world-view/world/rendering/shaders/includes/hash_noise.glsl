@@ -9,7 +9,17 @@
 // which runs at an eighth of the float rate and is what the tile pass is short of:
 // adding 1.5 * 2^23 to a float leaves it rounded to a whole number in the low
 // mantissa bits. Exact under 2^22 in magnitude, so the values are the ones a
-// conversion gives.
+// conversion gives. Exact only in source order: a compiler that moved the bias
+// across the arithmetic around it, (F - K) + f taken as (F + f) - K or (F - K) * s
+// as F * s - K * s, would round f to a whole number or s's product to the bias's
+// precision. So the bias only meets folds that stay exact (whole numbers, powers
+// of two: the gradient decode's - 1, the blur's / 16) and arguments a fold can't
+// reach into (floors). A whole number that is then added to a fraction or scaled
+// by one converts with float() (splitNoisePoint's base below, the 4x4 block's
+// gather corner in land.glsl), a few conversions a pixel that cost nothing
+// measurable. `precise` would hold the order too, but the NVIDIA compiler turns it
+// into no fused multiply-adds well past the marked values: 0.02 to 0.05 ms on the
+// desert view.
 const float kWholeBias	   = 12582912.0;
 const int	kWholeBiasBits = 0x4B400000;
 
@@ -99,8 +109,7 @@ struct SplitNoisePoint {
 SplitNoisePoint splitNoisePoint(ivec2 whole, vec2 frac, int wavelength) {
 	SplitNoisePoint p;
 	p.q		= ivec2(noiseFloorDiv(whole.x, wavelength), noiseFloorDiv(whole.y, wavelength));
-	uvec2 r = uvec2(whole - p.q * wavelength);
-	p.base	= vec2(smallToFloat(r.x), smallToFloat(r.y)) + frac;
+	p.base	= vec2(whole - p.q * wavelength) + frac;
 	return p;
 }
 

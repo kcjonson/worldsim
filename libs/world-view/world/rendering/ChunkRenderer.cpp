@@ -534,7 +534,7 @@ namespace worldview {
 			params[id * 4] = s.invPeriod;
 			params[id * 4 + 1] = mipLevels[id];
 			params[id * 4 + 2] = 1.0F / static_cast<float>(variants);
-			params[id * 4 + 3] = 0.5F / static_cast<float>(variants) - 0.5F;
+			params[id * 4 + 3] = 0.5F / static_cast<float>(variants);
 			for (size_t c = 0; c < 3; ++c) {
 				tintBase[id * 3 + c] = 1.0F + amp * (s.macro.dry[c] - 1.0F);
 				tintLush[id * 3 + c] = amp * (s.macro.lush[c] - s.macro.dry[c]);
