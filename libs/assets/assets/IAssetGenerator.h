@@ -24,6 +24,7 @@ namespace assets {
 struct GenerationContext {
 	uint32_t seed = 0;			// Deterministic seed for RNG
 	uint32_t variantIndex = 0;	// Which variant is being generated
+	std::optional<float> periodMeters;		// A ground def's <period>, the tile a variant covers; unset for other roles
 
 	/// Create a seeded random number generator
 	std::mt19937 createRng() const { return std::mt19937(seed + variantIndex); }

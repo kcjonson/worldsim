@@ -142,6 +142,12 @@ namespace assets {
 		return params.find(key) != params.end();
 	}
 
+	std::vector<std::pair<std::string, std::string>> GeneratorParams::sorted() const {
+		std::vector<std::pair<std::string, std::string>> out(params.begin(), params.end());
+		std::sort(out.begin(), out.end());
+		return out;
+	}
+
 	// ============================================================================
 	// GeneratorRegistry Implementation
 	// ============================================================================
@@ -355,21 +361,6 @@ namespace assets {
 			return true;
 		}
 
-		/// Parse an "x,y,z" triple into a glm::vec3. Returns false on malformed input.
-		bool parseVec3(const std::string& str, glm::vec3& out) {
-			const auto first  = str.find(',');
-			const auto second = first == std::string::npos ? std::string::npos : str.find(',', first + 1);
-			if (second == std::string::npos) {
-				return false;
-			}
-			try {
-				out = {std::stof(str.substr(0, first)), std::stof(str.substr(first + 1, second - first - 1)), std::stof(str.substr(second + 1))};
-			} catch (...) {
-				return false;
-			}
-			return true;
-		}
-
 		constexpr uint32_t kGroundDefaultVariantCount = 8;
 
 		/// Read a ground def's elements into def.ground. Missing or malformed ones keep their
@@ -409,27 +400,17 @@ namespace assets {
 				LOG_WARNING(Engine, "Ground AssetDef '%s' <transition>: %s (%s)", def.defName.c_str(), issue.message.c_str(), issue.context.c_str());
 			}
 
-			const pugi::xml_node macroNode = defNode.child("macro");
-			if (!macroNode) {
-				return;
-			}
-			GroundMacro& macro = ground.macro;
-			macro.amplitude	   = macroNode.child("amplitude").text().as_float(macro.amplitude);
-
-			const auto warnMalformed = [&def](const char* field, const std::string& value) {
-				LOG_WARNING(Engine, "Ground AssetDef '%s' has malformed <macro><%s> '%s'; keeping the default", def.defName.c_str(), field, value.c_str());
-			};
-			const std::string dry	  = macroNode.child_value("dry");
-			const std::string lush	  = macroNode.child_value("lush");
-			const std::string lengths = macroNode.child_value("wavelengths");
-			if (!dry.empty() && !parseVec3(dry, macro.dry)) {
-				warnMalformed("dry", dry);
-			}
-			if (!lush.empty() && !parseVec3(lush, macro.lush)) {
-				warnMalformed("lush", lush);
-			}
-			if (!lengths.empty() && !parseVec2(lengths, macro.wavelengthsMeters)) {
-				warnMalformed("wavelengths", lengths);
+			std::vector<GroundMacroIssue> macroIssues;
+			ground.macro = readGroundMacro(defNode, macroIssues);
+			for (const GroundMacroIssue& issue : macroIssues) {
+				LOG_WARNING(
+					Engine,
+					"Ground AssetDef '%s' <macro><%s> %s ('%s'); keeping the default",
+					def.defName.c_str(),
+					issue.field.c_str(),
+					issue.message.c_str(),
+					issue.value.c_str()
+				);
 			}
 		}
 
@@ -1180,7 +1161,6 @@ namespace assets {
 
 			// Store base folder for relative path resolution
 			def.baseFolder = baseFolder;
-			def.sourceFile = fs::absolute(xmlPath);
 
 			// Store definition
 			loadedNames.push_back(def.defName);
@@ -1628,6 +1608,9 @@ namespace assets {
 		GenerationContext ctx;
 		ctx.seed = seed;
 		ctx.variantIndex = 0;
+		if (def->role == AssetRole::Ground) {
+			ctx.periodMeters = def->ground.periodMeters;
+		}
 		outAsset.clear();
 
 		// Check if this is a Lua script generator

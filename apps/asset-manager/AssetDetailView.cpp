@@ -146,6 +146,7 @@ namespace asset_manager {
 				.size = {ui::percent(100.0F), ui::percent(100.0F)},
 				.animated = true,
 				.collider = index == 0 && !ground,
+				.coordinateSystem = coordinateSystem,
 			});
 		};
 		if (!procedural) {
@@ -159,7 +160,9 @@ namespace asset_manager {
 				ui::Ref<ui::Component> row = column.addChild<ui::Component>({.layout = flex(ui::FlexDirection::Row, kGap, 1.0F)});
 				ui::Ref<ui::Rectangle> frame =
 					row.addChild<ui::Rectangle>({.layout = {.padding = 8.0F, .flexGrow = 2.0F}, .style = ui::styles::inset});
-				tiling = frame.addChild<AssetThumbnail>({.size = {ui::percent(100.0F), ui::percent(100.0F)}, .tiles = 3});
+				tiling = frame.addChild<AssetThumbnail>(
+					{.size = {ui::percent(100.0F), ui::percent(100.0F)}, .tiles = 3, .coordinateSystem = coordinateSystem}
+				);
 				grid = row.addChild<ui::Component>({.layout = flex(ui::FlexDirection::Column, kGap, 1.0F)});
 			}
 			for (int row = 0; row < 3; ++row) {

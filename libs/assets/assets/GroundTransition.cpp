@@ -8,7 +8,6 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <sstream>
 #include <string_view>
 
 namespace assets {
@@ -176,21 +175,6 @@ namespace assets {
 			}
 		}
 		return out;
-	}
-
-	std::optional<std::string> groundBakeXml(const std::filesystem::path& file) {
-		pugi::xml_document doc;
-		if (!doc.load_file(file.c_str())) {
-			return std::nullopt;
-		}
-		for (pugi::xml_node def : doc.child("AssetDefinitions").children("AssetDef")) {
-			while (const pugi::xml_node block = def.child("transition")) {
-				def.remove_child(block);
-			}
-		}
-		std::ostringstream out;
-		doc.save(out, "", pugi::format_raw);
-		return out.str();
 	}
 
 } // namespace assets

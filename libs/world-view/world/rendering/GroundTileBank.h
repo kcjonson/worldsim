@@ -10,7 +10,8 @@
 // looks every def up in the disk cache (GroundTileCache, beside the exe) at once, on the pool. A step
 // uploads every def in a row that the cache held, and at the first it didn't, builds that def's paths
 // on the pool and draws and ranks their heights; each later step bakes and uploads one of its variants,
-// and the last stores the def in the cache.
+// and the last stores the def in the cache. A step that fails or throws fails its def with the reason in
+// errors() and the bake moves on to the next, so no step runs twice.
 
 #include "world/chunk/SurfaceField.h"
 #include "world/rendering/GroundPairs.h"
@@ -18,6 +19,7 @@
 #include "world/rendering/GroundTileCache.h"
 
 #include <assets/AssetDefinition.h>
+#include <assets/GroundLayer.h>
 
 #include <array>
 #include <chrono>
@@ -41,8 +43,8 @@ namespace worldview {
 
 	class GroundTileBank {
 	  public:
-		/// The tile shader has a sampler for each (u_groundTiles0 .. 3).
-		static constexpr int kMaxArrays = 4;
+		/// One array per layer size; the tile shader has a sampler for each (u_groundTiles0 .. 3).
+		static constexpr int kMaxArrays = assets::kMaxGroundArrays;
 
 		struct Args {
 			/// The app's coordinate system, put back after each offscreen render.
@@ -80,17 +82,15 @@ namespace worldview {
 		GroundTileBank& operator=(GroundTileBank&&) = delete;
 
 		/// Plans the bake from the registry's ground defs and allocates the arrays. The registry must have
-		/// finished loading. A land surface with no def, or a layer size past kMaxArrays, is an error.
+		/// finished loading. A land surface with no def, a def outside the validator's limits or past the
+		/// GPU's (its largest texture, its array layers, kMaxArrays sizes), or an array GL can't allocate is an
+		/// error, and the defs it affects aren't baked.
 		void begin();
 
 		/// Runs the next step; false once none are left. Logs the totals (time, bytes) at the end; the baker
 		/// logs each def's report.
 		bool bakeNext();
 
-		/// begin() if it hasn't run, then every step left.
-		void bakeAll();
-
-		[[nodiscard]] bool started() const { return isStarted; }
 		[[nodiscard]] bool ready() const { return isStarted && nextDef >= defs.size(); }
 		/// Variants in their layers (baked or read from the cache), or given up on with their def.
 		[[nodiscard]] int bakedVariants() const {
@@ -116,6 +116,8 @@ namespace worldview {
 		};
 
 		[[nodiscard]] GroundTileBaker baker() const;
+		// begin's work: the defs into arrays and the surface table, then the arrays allocated.
+		void plan();
 		// Every def's cache lookup on the pool at once: reading the cached bakes is most of a warm bake.
 		void lookUpAll(const GroundTileBaker& groundBaker);
 		// The next def's cache lookup: true when it wasn't cached and its paths are built, so its variants
@@ -123,6 +125,7 @@ namespace worldview {
 		bool startDef(const GroundTileBaker& groundBaker);
 		void bakeVariant(const GroundTileBaker& groundBaker);
 		void endDef();
+		// Each planned array's levels; an array GL refuses is failed, deleted, and its defs dropped.
 		void allocateArrays();
 		void upload(const Def& def, const GroundVariantBake& bake) const;
 		void finish();
@@ -138,7 +141,9 @@ namespace worldview {
 		std::vector<Def>						  defs;
 		size_t									  nextDef = 0;
 		std::vector<std::optional<GroundTileBake>> lookups;		// each def's, from lookUpAll, until startDef takes it
+		std::vector<std::string>				   lookupErrors; // and what its lookup threw, if it did
 		bool									  lookedUp = false;
+		int										   maxRenderSize = 0; // the baker's render tile: its default, or the GPU's largest texture
 		std::optional<GroundTileBake>			  current;		// the def being baked, its variants so far
 		std::vector<GroundVariantPaths>			  currentPaths; // and every variant's paths
 		int										  doneVariants = 0;

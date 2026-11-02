@@ -152,8 +152,18 @@ namespace {
 				m_camera = std::make_unique<world::WorldCamera>();
 				m_camera->setPanSpeed(200.0F);
 
-				// A direct switch here skips the splash and the loading scene, which bake the ground tiles.
-				world_sim::groundTiles().bakeAll();
+				// A direct switch here (the dev server's scene or reload) skips the scenes that bake the ground tiles,
+				// so the bake runs to the end here, behind the same gate; a failure goes to the splash, which shows it.
+				world_sim::GroundBakeStep bake;
+				while (!(bake = world_sim::stepGroundBake()).done) {}
+				if (!bake.errors.empty()) {
+					LOG_ERROR(
+						Game,
+						"GameScene - asset validation or the ground bake failed (%zu error(s)); back to the splash",
+						bake.errors.size()
+					);
+					owner->scenes().switchTo(world_sim::scenes::Splash.name);
+				}
 				m_renderer = std::make_unique<worldview::ChunkRenderer>(kPixelsPerMeter, world_sim::groundTiles());
 
 				m_entityRenderer = std::make_unique<worldview::EntityRenderer>(kPixelsPerMeter);
@@ -577,15 +587,15 @@ namespace {
 			}));
 
 			// GPU hold for perf captures (/api/control?action=gpuhold, /api/state?what=gpuhold), off until asked
-			m_gpuHold = std::make_unique<world_sim::GpuHold>();
+			gpuHold = std::make_unique<world_sim::GpuHold>();
 			m_devRegistrations.push_back(owner->devServer().control("gpuhold", [this](const app::DevRequest& request) {
 				std::string error;
-				if (!m_gpuHold->configure(request.params, error)) {
+				if (!gpuHold->configure(request.params, error)) {
 					return app::DevResponse{.status = 400, .body = R"({"error":")" + error + "\"}"};
 				}
-				return app::DevResponse{.body = m_gpuHold->statusJson()};
+				return app::DevResponse{.body = gpuHold->statusJson()};
 			}));
-			m_devRegistrations.push_back(owner->devServer().stateProvider("gpuhold", [this]() { return m_gpuHold->statusJson(); }));
+			m_devRegistrations.push_back(owner->devServer().stateProvider("gpuhold", [this]() { return gpuHold->statusJson(); }));
 
 			// Rooms overlay: scene-owned world-space layer that tints/outlines/labels
 			// detected rooms when toggled on (R). Reads the same RoomDetectionSystem
@@ -1020,7 +1030,7 @@ namespace {
 			m_gpuTimer.end();
 
 			// Perf captures' GPU work, outside every scene timer and into its own target. No-op unless on.
-			m_gpuHold->render(m_gpuTimer.getTimeMs());
+			gpuHold->render(m_gpuTimer.getTimeMs());
 
 			// Report timing breakdown to metrics system
 			auto* metrics = owner->metrics();
@@ -1053,7 +1063,7 @@ namespace {
 			// The dev routes and the camera control point into the systems below
 			m_devRegistrations.clear();
 			m_pendingCamera.reset();
-			m_gpuHold.reset();
+			gpuHold.reset();
 
 			// Wait for all pending async tasks to complete before destroying executor
 			if (m_asyncProcessor) {
@@ -2054,7 +2064,7 @@ namespace {
 		float									m_debugPanY = 0.0F;
 
 		// Holds the GPU at its top clocks for a perf capture, while the gpuhold control has it on
-		std::unique_ptr<world_sim::GpuHold> m_gpuHold;
+		std::unique_ptr<world_sim::GpuHold> gpuHold;
 
 		// World interaction subsystems (extracted from GameScene)
 		std::unique_ptr<world_sim::PlacementSystem>		  m_placementSystem;

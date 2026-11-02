@@ -13,9 +13,7 @@
     <generator>
       <scriptPath>@shared/ground_bare.lua</scriptPath>
       <params>
-        <!-- Must equal <period> below. The knobs are documented in Dirt.xml; ripples, streaks and
-             shells are here. -->
-        <period>4</period>
+        <!-- The knobs are documented in Dirt.xml; ripples, streaks and shells are here. -->
         <baseColor>#CBB083</baseColor>
 
         <!-- Regions (documented in Rock.xml): faint dune tones, stretched across the screen by the

@@ -13,9 +13,7 @@
     <generator>
       <scriptPath>@shared/ground_bare.lua</scriptPath>
       <params>
-        <!-- Must equal <period> below. The knobs are documented in Dirt.xml; regions, joints, pits
-             and lichen are here. -->
-        <period>4</period>
+        <!-- The knobs are documented in Dirt.xml; regions, joints, pits and lichen are here. -->
         <baseColor>#79746C</baseColor>
 
         <!-- Regions: the ground cut along a spectral field's contours into nested tone steps.

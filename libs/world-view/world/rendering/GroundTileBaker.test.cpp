@@ -12,6 +12,7 @@
 #include "world/rendering/GroundTileCache.h"
 
 #include <assets/AssetRegistry.h>
+#include <assets/IAssetGenerator.h>
 #include <backend/gl/GLBackend.h>
 #include <primitives/Primitives.h>
 #include <threading/TaskPool.h>
@@ -26,6 +27,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <stdexcept>
 #include <string>
 
 using namespace worldview;
@@ -391,4 +393,77 @@ TEST(GroundTileBankTest, AnOversizedLayerAllocatesNoArray) {
 	}
 	EXPECT_TRUE(named) << "the def is named in the bank's errors";
 	assets::AssetRegistry::Get().clearDefinitions();
+}
+
+TEST(GroundTileBakerTest, AVariantCountPastTheValidatorsIsRefusedBeforeAnythingIsGenerated) {
+	// The asset-manager's Bake view could reach begin with a def that failed validation; 500 variants would
+	// run 500 generators at once.
+	for (const char* count : {"0", "33", "500"}) {
+		const TempDir t;
+		t.write(
+			"Tile/Tile.xml",
+			std::string(
+				"<?xml version=\"1.0\"?><AssetDefinitions><AssetDef><defName>Ground_Many</defName><role>ground</role>"
+				"<assetType>procedural</assetType><generator><scriptPath>gen.lua</scriptPath></generator>"
+				"<surface>Snow</surface><period>1</period><pixelsPerMeter>32</pixelsPerMeter><variantCount>"
+			) + count +
+				"</variantCount></AssetDef></AssetDefinitions>"
+		);
+		t.write("Tile/gen.lua", "error('the generator must not run')\n");
+		auto& registry = assets::AssetRegistry::Get();
+		registry.clearDefinitions();
+		registry.loadDefinitionsFromFolder(t.root.string());
+		EXPECT_FALSE(GroundTileBaker({}).begin("Ground_Many").has_value()) << count;
+		registry.clearDefinitions();
+	}
+}
+
+namespace {
+
+	class ThrowingGenerator : public assets::IAssetGenerator {
+	  public:
+		bool generate(
+			const assets::GenerationContext& /*ctx*/,
+			const assets::GeneratorParams& /*params*/,
+			assets::GeneratedAsset& /*out*/
+		) override {
+			throw std::runtime_error("the generator blew up");
+		}
+		[[nodiscard]] assets::AssetComplexity getComplexity() const override { return assets::AssetComplexity::Simple; }
+		[[nodiscard]] assets::AnimationType	  getAnimationType() const override { return assets::AnimationType::None; }
+		[[nodiscard]] const char*			  getName() const override { return "GroundBankThrowTest"; }
+	};
+
+} // namespace
+
+TEST(GroundTileBankTest, AThrowingStepFailsItsDefWithTheMessageAndTheBakeMovesOn) {
+	GlFixture gl;
+	if (!gl.ok) {
+		GTEST_SKIP() << "No GL context (headless CI)";
+	}
+	assets::GeneratorRegistry::Get().registerGenerator("GroundBankThrowTest", [] { return std::make_unique<ThrowingGenerator>(); });
+	const TempDir t;
+	t.write(
+		"Tile/Tile.xml",
+		"<?xml version=\"1.0\"?><AssetDefinitions><AssetDef><defName>Ground_Throws</defName><role>ground</role>"
+		"<assetType>procedural</assetType><generator><name>GroundBankThrowTest</name></generator>"
+		"<surface>Snow</surface><period>1</period><pixelsPerMeter>32</pixelsPerMeter><variantCount>2</variantCount>"
+		"</AssetDef></AssetDefinitions>"
+	);
+	auto& registry = assets::AssetRegistry::Get();
+	registry.clearDefinitions();
+	registry.loadDefinitionsFromFolder(t.root.string());
+
+	GroundTileBank bank({});
+	int			   steps = 0;
+	while (bank.bakeNext()) {
+		ASSERT_LT(++steps, 8) << "a step that threw must not run again";
+	}
+	EXPECT_TRUE(bank.ready());
+	bool named = false;
+	for (const std::string& line : bank.errors()) {
+		named = named || (line.find("Ground_Throws") != std::string::npos && line.find("the generator blew up") != std::string::npos);
+	}
+	EXPECT_TRUE(named) << "the def and what it threw are in the bank's errors, for the splash to show";
+	registry.clearDefinitions();
 }

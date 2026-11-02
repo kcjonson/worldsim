@@ -25,8 +25,10 @@ namespace assets {
 
 	// CPU geometry prep (no GL). Builds the asset's meshes for `seed` and fits them
 	// centered into `target`, preserving aspect ratio. Simple assets ignore the seed. A
-	// ground tile frames its [0, period] square rather than its mesh bounds.
-	PreparedAsset prepareAsset(const std::string& defName, const Foundation::Rect& target, uint32_t seed);
+	// ground tile frames its [0, period] square rather than its mesh bounds, and is built at
+	// the density that square lands at (`pixelScale` device pixels a target unit), so a path
+	// tagged finer than that (setLod) is neither tessellated nor drawn.
+	PreparedAsset prepareAsset(const std::string& defName, const Foundation::Rect& target, uint32_t seed, float pixelScale = 1.0F);
 
 	// Prepare `count` procedural forms from seeds baseSeed .. baseSeed + count - 1.
 	std::vector<PreparedAsset> prepareSamples(const std::string& defName, const Foundation::Rect& target, int count, uint32_t baseSeed);

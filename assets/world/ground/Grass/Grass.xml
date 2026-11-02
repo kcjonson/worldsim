@@ -18,9 +18,6 @@
     <generator>
       <scriptPath>@shared/ground_grass.lua</scriptPath>
       <params>
-        <!-- Must equal <period> below. -->
-        <period>4</period>
-
         <!-- The tone model: a coarse picture of the near stack that the far stack (mips 4 to 6) is
              drawn from, one rect a texel of farCellsPerMeter. modelUndergrowth is the share of the
              open ground the undergrowth covers and modelClumpFill the share of a clump's disc its

@@ -45,16 +45,18 @@ namespace assets {
 
 	} // namespace
 
-	PreparedAsset prepareAsset(const std::string& defName, const Foundation::Rect& target, uint32_t seed) {
+	PreparedAsset prepareAsset(const std::string& defName, const Foundation::Rect& target, uint32_t seed, float pixelScale) {
 		PreparedAsset		   result;
 		AssetRegistry&		   registry = AssetRegistry::Get();
 		const AssetDefinition* def = registry.getDefinition(defName);
-		if (def == nullptr || !registry.buildMeshes(defName, seed, result.meshes)) {
+		const bool			   ground = def != nullptr && def->role == AssetRole::Ground;
+		const float			   period = ground ? def->ground.periodMeters : 0.0F;
+		const float			   pixelsPerMeter =
+			   ground && period > 0.0F ? std::min(target.width, target.height) * pixelScale / period : AssetRegistry::kFullDetail;
+		if (def == nullptr || !registry.buildMeshes(defName, seed, result.meshes, pixelsPerMeter)) {
 			result.hasOutput = false;
 			return result;
 		}
-		const bool			   ground = def->role == AssetRole::Ground;
-		const float			   period = def->ground.periodMeters;
 		const Foundation::Rect bounds = ground ? Foundation::Rect{0.0F, 0.0F, period, period} : unionBounds(result.meshes);
 		for (auto& mesh : result.meshes) {
 			renderer::fitToRect(mesh, bounds, target);

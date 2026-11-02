@@ -6,9 +6,9 @@
 // a 2x2 of four variants, sampled the way the runtime does: one LOD a draw with its +0.25 bias, trilinear
 // between the two mips around it), and the bake's metrics and timings. Its update, which runs outside the
 // frame's batch, generates every variant's paths at once on the pool and draws their heights in one
-// frame, then renders one variant a frame, so the window stays live. Bakes are cached in memory by def until Reload clears them, and on disk beside the exe
-// (GroundTileCache) under a key of the def's files, so editing its XML or script and pressing Reload
-// bakes it again and anything else comes back from disk.
+// frame, then renders one variant a frame, so the window stays live. Bakes are cached in memory by def until Reload clears them, and on
+// disk beside the exe (GroundTileCache) under a key of the def and its script, so editing its XML or script and pressing Reload bakes it
+// again and anything else comes back from disk. A def that fails validation shows its errors instead, unbaked, as the game would refuse it.
 
 #include "TileImageStrip.h"
 

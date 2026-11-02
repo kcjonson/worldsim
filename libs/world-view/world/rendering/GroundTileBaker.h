@@ -133,6 +133,7 @@ namespace worldview {
 		float						   periodMeters = 0.0F;
 		uint32_t					   pixelsPerMeter = 0;
 		int							   layerSize = 0;
+		uint32_t					   variantCount = 0; // the def's when the bake began
 		std::vector<GroundVariantBake> variants;
 		std::vector<GroundMipMetrics>  metrics;			  // one a mip level
 		double						   pathsMs = 0.0;	  // every variant's paths, wall clock
@@ -177,10 +178,11 @@ namespace worldview {
 		[[nodiscard]] static int mipCount(int layerSize);
 		[[nodiscard]] static int supersampleFor(int level);
 
-		/// A bake's first step: the def's bake from the disk cache when it holds one of the def's files as
-		/// they are now (fromCache set, nothing left to do), else the def's bake with its period, density,
-		/// layer size and cache key filled and no variants yet. Nullopt (logged) when the def isn't a
-		/// bakeable ground def, or its layer isn't a supported size; nothing is allocated before that check.
+		/// A bake's first step: the def's bake from the disk cache when it holds one under the def's key
+		/// (fromCache set, nothing left to do), else the def's bake with its period, density, layer size,
+		/// variant count and cache key filled and no variants yet. Nullopt (logged) when the def isn't a
+		/// bakeable ground def, or its layer size or variant count is outside what the validator allows
+		/// (assets/GroundLayer.h); nothing is allocated or generated before that check.
 		[[nodiscard]] std::optional<GroundTileBake> begin(const std::string& defName) const;
 
 		/// Every variant's paths, one generator run and one tessellation each, all at once on the pool;

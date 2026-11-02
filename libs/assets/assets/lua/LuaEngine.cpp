@@ -70,6 +70,10 @@ namespace assets {
 			return static_cast<uint32_t>(static_cast<int64_t>(seed));
 		}
 
+		// How far a periodicNoise2 period may sit off a whole number: P / F in floating point lands a hair
+		// off one (2.1 / 0.7 is 3.0000000000000004).
+		constexpr double kPeriodTolerance = 1e-6;
+
 	} // namespace
 
 	LuaEngine::LuaEngine() = default;
@@ -181,7 +185,13 @@ namespace assets {
 			sol::property([](GeneratedPath& p) { return p.isClosed; }, [](GeneratedPath& p, bool v) { p.isClosed = v; }),
 			// Convenience methods
 			"addVertex",
-			[](GeneratedPath& path, float x, float y) { path.vertices.push_back(Vec2{x, y}); },
+			// A NaN or infinite coordinate is a Lua error: the tessellator has no guard, and one would spoil the mesh
+			[](GeneratedPath& path, float x, float y) {
+				if (!std::isfinite(x) || !std::isfinite(y)) {
+					throw std::invalid_argument("addVertex: vertex coordinates must be finite numbers");
+				}
+				path.vertices.push_back(Vec2{x, y});
+			},
 			"setColor",
 			[](GeneratedPath& path, float r, float g, float b, float a) { path.fillColor = Color(r, g, b, a); },
 			// Draw this path only where the screen shows at least n pixels per meter (ground tiles)
@@ -259,12 +269,15 @@ namespace assets {
 		// periodicNoise2(x + period, y, period, seed) == periodicNoise2(x, y, period, seed), and the
 		// same along y. Scale x and y into lattice cells first; a ground tile of P meters with
 		// features of F meters calls it as periodicNoise2(x / F, y / F, P / F, seed). The period
-		// arrives as a double because P / F is a float in Lua even when it divides evenly.
+		// arrives as a double because P / F is a float in Lua even when it divides evenly, and one
+		// within kPeriodTolerance of a whole number is taken as that number.
 		lua["periodicNoise2"] = [](float x, float y, double period, double seed) {
-			if (period < 1.0 || period != std::floor(period) || period > static_cast<double>(std::numeric_limits<int32_t>::max())) {
+			const double whole = std::round(period);
+			if (!(std::abs(period - whole) < kPeriodTolerance) || whole < 1.0 ||
+				whole > static_cast<double>(std::numeric_limits<int32_t>::max())) {
 				throw std::invalid_argument("periodicNoise2: period must be a whole number >= 1");
 			}
-			return periodicGradientNoise2(x, y, static_cast<int32_t>(period), toSeed(seed));
+			return periodicGradientNoise2(x, y, static_cast<int32_t>(whole), toSeed(seed));
 		};
 
 		// Factory function for creating paths - enables Path() syntax instead of Path.new()
@@ -324,6 +337,11 @@ namespace assets {
 			// Set up the context for this execution
 			(*m_lua)["seed"] = ctx.seed;
 			(*m_lua)["variantIndex"] = ctx.variantIndex;
+			if (ctx.periodMeters.has_value()) {
+				(*m_lua)["period"] = *ctx.periodMeters;
+			} else {
+				(*m_lua)["period"] = sol::lua_nil;
+			}
 
 			// Seed the random number generator using sol2's type-safe method
 			// (avoids string concatenation which could be a code injection risk)

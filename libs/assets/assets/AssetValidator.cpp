@@ -2,6 +2,7 @@
 
 #include "assets/AssetDefinition.h"
 #include "assets/GroundLayer.h"
+#include "assets/GroundTint.h"
 
 #include <world/chunk/Chunk.h>
 
@@ -9,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -57,16 +59,17 @@ namespace assets {
 
 		// The chunk edge in meters; a ground tile's period must divide it so tiles line up across chunks.
 		constexpr double kChunkMeters = 512.0;
-		constexpr int	 kMaxGroundVariants = 32;
 		constexpr int	 kMinGroundPixelsPerMeter = 16;
 		constexpr int	 kMaxGroundPixelsPerMeter = 512;
 
-		// Ground defs are baked into one texture array, so their settings have hard limits.
-		// `surfaceToDef` carries the surfaces already claimed across files, to catch two defs painting one.
+		// Ground defs are baked into texture arrays, so their settings have hard limits (GroundLayer.h).
+		// `surfaceToDef` carries the surfaces already claimed across files, to catch two defs painting one,
+		// and `layerSizes` each layer size in use and the first def using it, for the bank's array count.
 		void validateGroundDef(
 			const pugi::xml_node&						  assetDef,
 			const std::string&							  defName,
 			std::unordered_map<std::string, std::string>& surfaceToDef,
+			std::map<int, std::string>&					  layerSizes,
 			ValidationReport&							  report
 		) {
 			const std::string surfaceName = assetDef.child("surface").text().as_string();
@@ -127,14 +130,21 @@ namespace assets {
 							" pixels; the baker takes no bigger layer",
 						std::to_string(layer.texels) + " px at " + std::to_string(pixelsPerMeter) + " px/m"
 					);
+				} else {
+					layerSizes.emplace(layer.texels, defName);
 				}
 			}
 
 			const pugi::xml_node variantNode = assetDef.child("variantCount");
 			if (variantNode) {
-				const int variantCount = variantNode.text().as_int(0);
-				if (variantCount < 1 || variantCount > kMaxGroundVariants) {
-					report.add(Severity::Error, defName, "variantCount", "variantCount must be from 1 to 32 for a ground def", variantNode.text().as_string());
+				if (!groundVariantCountSupported(variantNode.text().as_llong(0))) {
+					report.add(
+						Severity::Error,
+						defName,
+						"variantCount",
+						"variantCount must be from 1 to " + std::to_string(kMaxGroundVariants) + " for a ground def",
+						variantNode.text().as_string()
+					);
 				}
 			}
 
@@ -146,6 +156,12 @@ namespace assets {
 
 			if (assetDef.child("placement").child("biome")) {
 				report.add(Severity::Error, defName, "placement", "Ground defs are never placed in the world; remove the <biome> rules");
+			}
+
+			std::vector<GroundMacroIssue> macroIssues;
+			readGroundMacro(assetDef, macroIssues);
+			for (GroundMacroIssue& issue : macroIssues) {
+				report.add(Severity::Error, defName, "macro", "<" + issue.field + "> " + issue.message, std::move(issue.value));
 			}
 
 			const bool						   landSurface = surface.has_value() && *surface != world::Surface::Water;
@@ -192,6 +208,9 @@ namespace assets {
 
 		// Surface name -> the ground def that paints it, across the whole tree.
 		std::unordered_map<std::string, std::string> groundSurfaceToDef;
+
+		// Ground layer size -> the first def baking layers of it.
+		std::map<int, std::string> groundLayerSizes;
 
 		std::error_code						   iterEc;
 		fs::recursive_directory_iterator	   it(assetsRoot, iterEc);
@@ -262,7 +281,7 @@ namespace assets {
 				}
 
 				if (isGroundRole(role)) {
-					validateGroundDef(assetDef, defName, groundSurfaceToDef, report);
+					validateGroundDef(assetDef, defName, groundSurfaceToDef, groundLayerSizes, report);
 				} else {
 					for (const char* field : {"surface", "period", "pixelsPerMeter", "rotate", "macro", "seedGroup", "transition"}) {
 						if (assetDef.child(field)) {
@@ -341,6 +360,22 @@ namespace assets {
 					report.add(Severity::Error, "", "surface", "No ground def paints this land surface", name);
 				}
 			}
+		}
+
+		// The bank keeps one texture array per layer size, and the tile shader samples at most kMaxGroundArrays.
+		if (groundLayerSizes.size() > static_cast<size_t>(kMaxGroundArrays)) {
+			std::string sizes;
+			for (const auto& [texels, defName] : groundLayerSizes) {
+				sizes += (sizes.empty() ? "" : ", ") + std::to_string(texels) + " px (" + defName + ")";
+			}
+			report.add(
+				Severity::Error,
+				"",
+				"pixelsPerMeter",
+				"The ground defs bake " + std::to_string(groundLayerSizes.size()) + " layer sizes; the tile shader holds " +
+					std::to_string(kMaxGroundArrays) + ", one texture array each",
+				sizes
+			);
 		}
 
 		return report;

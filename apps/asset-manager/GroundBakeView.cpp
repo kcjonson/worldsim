@@ -2,6 +2,7 @@
 
 #include <assets/AssetDefinition.h>
 #include <assets/AssetRegistry.h>
+#include <assets/AssetValidator.h>
 #include <threading/TaskPool.h>
 #include <ui/components/Button.h>
 #include <ui/shapes/Text.h>
@@ -120,9 +121,22 @@ namespace asset_manager {
 			status.get()->setText("Not a ground def");
 			return;
 		}
-		variantCount = std::max(1U, def->variantCount);
+		// The game never bakes a def that fails validation, so neither does this.
+		std::string errors;
+		for (const assets::ValidationIssue& issue : assets::AssetRegistry::Get().getValidationReport().issues) {
+			if (issue.defName == defName && issue.severity == assets::Severity::Error) {
+				errors += "\n" + (issue.field.empty() ? std::string() : issue.field + ": ") + issue.message +
+						  (issue.context.empty() ? std::string() : " (" + issue.context + ")");
+			}
+		}
+		if (!errors.empty()) {
+			status.get()->setText("Not baked: the def fails validation");
+			report.get()->setText(errors.substr(1));
+			return;
+		}
 		if (const auto cached = cache().find(defName); cached != cache().end()) {
 			bake = cached->second;
+			variantCount = bake->variantCount;
 			showBake();
 			return;
 		}
@@ -132,6 +146,7 @@ namespace asset_manager {
 			return;
 		}
 		bake = std::make_shared<worldview::GroundTileBake>(std::move(*begun));
+		variantCount = bake->variantCount;
 		if (bake->fromCache) {
 			cache()[defName] = bake;
 			showBake();

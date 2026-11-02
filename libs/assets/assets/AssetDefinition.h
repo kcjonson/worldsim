@@ -10,9 +10,11 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <variant>
 #include <vector>
 
+#include "GroundTint.h"
 #include "GroundTransition.h"
 #include "placement/PlacementTypes.h"
 
@@ -251,15 +253,6 @@ namespace assets {
 		Mirror	 // Never rotated, flipped left to right or not; for art with an up (grass blades)
 	};
 
-	/// The low-frequency tint a ground surface gets from the shader: the surface color is mixed
-	/// toward `dry` or `lush` by a smooth noise field. Amplitude 0 (the default) leaves it off.
-	struct GroundMacro {
-		glm::vec3 dry{1.0F, 1.0F, 1.0F};			  // Tint where the field is low, r,g,b in 0..1
-		glm::vec3 lush{1.0F, 1.0F, 1.0F};			  // Tint where the field is high, r,g,b in 0..1
-		float	  amplitude = 0.0F;					  // Strength of the tint; 0 turns it off
-		glm::vec2 wavelengthsMeters{96.0F, 24.0F};	  // Coarse and fine noise wavelengths, meters
-	};
-
 	/// Ground-role settings, read from the AssetDef's top-level ground elements.
 	struct GroundParams {
 		std::optional<world::Surface> surface;	  // The land surface this tile set paints; unset until <surface> parses
@@ -301,6 +294,9 @@ namespace assets {
 
 		/// Check if a parameter exists
 		bool has(const char* key) const;
+
+		/// Every parameter as written, sorted by name: what a generator run reads, in a stable order.
+		[[nodiscard]] std::vector<std::pair<std::string, std::string>> sorted() const;
 
 	  private:
 		std::unordered_map<std::string, std::string> params;
@@ -401,7 +397,6 @@ namespace assets {
 		std::string			  svgPath;			  // For Simple assets: path to SVG file
 		std::string			  motionPath;		  // Optional motion (animation clips) file; @shared/ or relative to baseFolder
 		std::filesystem::path baseFolder;		  // Folder containing this asset's definition (for relative path resolution)
-		std::filesystem::path sourceFile;		  // The XML file it was read from; empty for one registered in code
 		float				  worldHeight = 1.0F; // World height in meters (for SVG normalization)
 		// Half-range of random placement rotation, in radians. 0 = upright (default): placed
 		// assets are upright billboards (trees, grass, bushes) and look wrong tilted. Opt-in (>0)

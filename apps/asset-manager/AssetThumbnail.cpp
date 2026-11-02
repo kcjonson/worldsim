@@ -1,5 +1,6 @@
 #include "AssetThumbnail.h"
 
+#include <CoordinateSystem/CoordinateSystem.h>
 #include <assets/AssetRegistry.h>
 #include <assets/AssetRenderer.h>
 #include <assets/MotionEval.h>
@@ -15,6 +16,8 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -22,30 +25,64 @@
 
 namespace asset_manager {
 
+	// Meshes plus the raw (pre-fit) bounds they were built from, so the same fit
+	// transform can be replayed for overlays (e.g. collision outlines).
+	struct ThumbnailMesh {
+		std::vector<renderer::TessellatedMesh> meshes;
+		Foundation::Rect					   sourceBounds{0.0F, 0.0F, 0.0F, 0.0F};
+		std::optional<Foundation::Rect>		   clip;
+	};
+
 	namespace {
 
-		// Meshes plus the raw (pre-fit) bounds they were built from, so the same fit
-		// transform can be replayed for overlays (e.g. collision outlines).
-		struct CachedMesh {
-			std::vector<renderer::TessellatedMesh> meshes;
-			Foundation::Rect					   sourceBounds{0.0F, 0.0F, 0.0F, 0.0F};
-			std::optional<Foundation::Rect>		   clip;
+		// What the cache may hold before it drops the least recently fetched meshes. A thumbnail drawing one
+		// keeps it alive through its own reference.
+		constexpr size_t kMeshCacheBudget = size_t{128} * 1024 * 1024;
+
+		struct CacheEntry {
+			std::shared_ptr<const ThumbnailMesh> mesh;
+			size_t								 bytes = 0;
+			uint64_t							 lastFetch = 0;
 		};
 
 		// Shared across all thumbnails so rebuilt rows reuse meshes (no re-tessellation). The
 		// asset-manager is single-threaded -- reload runs synchronously on the UI loop, never
-		// concurrent with render -- so this map and cacheGeneration() need no locking.
-		std::unordered_map<std::string, CachedMesh>& meshCache() {
-			static std::unordered_map<std::string, CachedMesh> cache;
+		// concurrent with render -- so this cache needs no locking.
+		struct MeshCache {
+			std::unordered_map<std::string, CacheEntry> entries;
+			size_t										bytes = 0;
+			uint64_t									fetches = 0;
+			// Bumped on every clear, so a thumbnail that fetched before a reload fetches the new art.
+			uint64_t generation = 0;
+		};
+
+		MeshCache& meshCache() {
+			static MeshCache cache;
 			return cache;
 		}
 
-		// Bumped whenever meshCache is cleared. A thumbnail that fetched its mesh at an older
-		// generation must refetch before use -- the CachedMesh it points into is destroyed by
-		// clearCache(), so drawing through the stale pointer is a use-after-free.
-		uint64_t& cacheGeneration() {
-			static uint64_t gen = 0;
-			return gen;
+		size_t meshBytes(const ThumbnailMesh& mesh) {
+			size_t bytes = 0;
+			for (const renderer::TessellatedMesh& m : mesh.meshes) {
+				bytes += (m.vertices.size() * sizeof(Foundation::Vec2)) + (m.colors.size() * sizeof(Foundation::Color)) +
+						 (m.indices.size() * sizeof(uint16_t));
+			}
+			return bytes;
+		}
+
+		// Drops the least recently fetched entries, but never `keep`, until the cache fits its budget.
+		void trimMeshCache(const std::string& keep) {
+			MeshCache& cache = meshCache();
+			while (cache.bytes > kMeshCacheBudget && cache.entries.size() > 1) {
+				auto oldest = cache.entries.end();
+				for (auto it = cache.entries.begin(); it != cache.entries.end(); ++it) {
+					if (it->first != keep && (oldest == cache.entries.end() || it->second.lastFetch < oldest->second.lastFetch)) {
+						oldest = it;
+					}
+				}
+				cache.bytes -= oldest->second.bytes;
+				cache.entries.erase(oldest);
+			}
 		}
 
 		// Wall-clock-driven walk phase [0,1) for the preview sweep, so an asset with a motion
@@ -127,11 +164,19 @@ namespace asset_manager {
 		  seed(args.seed),
 		  animated(args.animated),
 		  collider(args.collider),
-		  tiles(std::max(1, args.tiles)) {}
+		  tiles(std::max(1, args.tiles)),
+		  coordinateSystem(args.coordinateSystem) {}
 
 	void AssetThumbnail::clearCache() {
-		meshCache().clear();
-		++cacheGeneration();
+		MeshCache& cache = meshCache();
+		cache.entries.clear();
+		cache.bytes = 0;
+		++cache.generation;
+	}
+
+	float AssetThumbnail::pixelScale() const {
+		const float ratio = coordinateSystem != nullptr ? coordinateSystem->getPixelRatio() : 1.0F;
+		return ratio * (getContext() != nullptr ? getContext()->getScale() : 1.0F);
 	}
 
 	void AssetThumbnail::setAsset(std::string name, uint32_t assetSeed) {
@@ -143,17 +188,19 @@ namespace asset_manager {
 	}
 
 	void AssetThumbnail::ensureMesh() {
-		// Refetch when dirty, resized, or when the cache was cleared since the last fetch: clearCache()
-		// frees the CachedMesh the mesh points into, so a stale pointer is a use-after-free.
+		// Refetch when dirty, resized, moved to a screen of another pixel ratio, or after a reload cleared
+		// the cache, which means the art may have changed.
 		const Foundation::Vec2 size = getSize();
-		const uint64_t		   gen = cacheGeneration();
-		if (!dirty && cacheGen == gen && fetchedSize.x == size.x && fetchedSize.y == size.y) {
+		const float			   scale = pixelScale();
+		MeshCache&			   cache = meshCache();
+		if (!dirty && cacheGen == cache.generation && fetchedSize.x == size.x && fetchedSize.y == size.y && fetchedScale == scale) {
 			return;
 		}
 		dirty = false;
-		cacheGen = gen;
+		cacheGen = cache.generation;
 		fetchedSize = size;
-		meshes = nullptr;
+		fetchedScale = scale;
+		mesh.reset();
 		repeat = 1;
 		sourceBounds = {0.0F, 0.0F, 0.0F, 0.0F};
 		targetRect = {0.0F, 0.0F, size.x, size.y};
@@ -175,20 +222,23 @@ namespace asset_manager {
 			};
 		}
 		const std::string key = defName + "@" + std::to_string(static_cast<int>(size.x)) + "x" + std::to_string(static_cast<int>(size.y)) +
-								"#" + std::to_string(seed) + "*" + std::to_string(repeat);
-		auto& cache = meshCache();
-		auto  it = cache.find(key);
-		if (it == cache.end()) {
-			assets::PreparedAsset prepared = assets::prepareAsset(defName, targetRect, seed);
-			CachedMesh			  entry;
-			entry.meshes = std::move(prepared.meshes);
-			entry.sourceBounds = prepared.sourceBounds;
-			entry.clip = prepared.clip;
-			it = cache.emplace(key, std::move(entry)).first;
+								"#" + std::to_string(seed) + "*" + std::to_string(repeat) + "/" + std::to_string(scale);
+		auto it = cache.entries.find(key);
+		if (it == cache.entries.end()) {
+			assets::PreparedAsset prepared = assets::prepareAsset(defName, targetRect, seed, scale);
+			auto				  built = std::make_shared<ThumbnailMesh>();
+			built->meshes = std::move(prepared.meshes);
+			built->sourceBounds = prepared.sourceBounds;
+			built->clip = prepared.clip;
+			const size_t bytes = meshBytes(*built);
+			it = cache.entries.emplace(key, CacheEntry{.mesh = std::move(built), .bytes = bytes}).first;
+			cache.bytes += bytes;
 		}
-		meshes = &it->second.meshes;
-		sourceBounds = it->second.sourceBounds;
-		clip = it->second.clip;
+		it->second.lastFetch = ++cache.fetches;
+		mesh = it->second.mesh;
+		sourceBounds = mesh->sourceBounds;
+		clip = mesh->clip;
+		trimMeshCache(key);
 	}
 
 	// Replays fitToRect (see renderer::fitToRect): scale to fit the source bounds into this box
@@ -222,7 +272,7 @@ namespace asset_manager {
 
 	void AssetThumbnail::render() {
 		ensureMesh();
-		if (meshes != nullptr && !meshes->empty()) {
+		if (mesh != nullptr && !mesh->meshes.empty()) {
 			drawMeshes();
 		}
 		if (collider) {
@@ -247,8 +297,8 @@ namespace asset_manager {
 		const float fade = opacity();
 
 		if (!clip.has_value()) {
-			for (const auto& mesh : *meshes) {
-				drawMesh(mesh, xforms, sourceBounds, targetRect, fade, drawKey());
+			for (const renderer::TessellatedMesh& part : mesh->meshes) {
+				drawMesh(part, xforms, sourceBounds, targetRect, fade, drawKey());
 			}
 			return;
 		}
@@ -261,8 +311,8 @@ namespace asset_manager {
 				const float dy = static_cast<float>(row - mid) * clip->height;
 				Renderer::Primitives::pushClip({clip->x + dx, clip->y + dy, clip->width, clip->height});
 				Renderer::Primitives::PushTransform(glm::translate(Foundation::Mat4(1.0F), glm::vec3(dx, dy, 0.0F)));
-				for (const auto& mesh : *meshes) {
-					drawMesh(mesh, xforms, sourceBounds, targetRect, fade, drawKey());
+				for (const renderer::TessellatedMesh& part : mesh->meshes) {
+					drawMesh(part, xforms, sourceBounds, targetRect, fade, drawKey());
 				}
 				Renderer::Primitives::PopTransform();
 				Renderer::Primitives::popClip();
@@ -290,7 +340,7 @@ namespace asset_manager {
 			});
 			return;
 		}
-		if (meshes == nullptr || meshes->empty()) {
+		if (mesh == nullptr || mesh->meshes.empty()) {
 			return;
 		}
 		// Collision points are in the asset's local meter space. Simple (SVG) assets author the collider

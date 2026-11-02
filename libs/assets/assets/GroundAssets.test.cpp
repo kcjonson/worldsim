@@ -145,6 +145,19 @@ TEST(GroundAssetTest, BadSurfaceAndMacroKeepDefaults) {
 	EXPECT_FALSE(def->ground.surface.has_value());
 	EXPECT_EQ(def->ground.rotate, GroundRotate::Free);
 	EXPECT_EQ(def->ground.macro.dry, glm::vec3(1.0F));
+
+	// The loader reads <macro> through readGroundMacro, as the validator does: what it refuses keeps the default.
+	def = loadGround(
+		t,
+		"<surface>Dirt</surface><macro><dry>0.9,0.9,0.9,0.9</dry><lush>nan,1,1</lush><amplitude>inf</amplitude><wavelengths>-1,2</"
+		"wavelengths>"
+		"</macro>"
+	);
+	ASSERT_NE(def, nullptr);
+	EXPECT_EQ(def->ground.macro.dry, glm::vec3(1.0F)) << "a fourth component isn't dropped silently";
+	EXPECT_EQ(def->ground.macro.lush, glm::vec3(1.0F));
+	EXPECT_FLOAT_EQ(def->ground.macro.amplitude, 0.0F);
+	EXPECT_EQ(def->ground.macro.wavelengthsMeters, glm::vec2(96.0F, 24.0F));
 }
 
 TEST(GroundAssetTest, SurfaceNamesRoundTrip) {
@@ -245,13 +258,75 @@ TEST(GroundLuaTest, PeriodicNoise2TakesAPeriodAtInt32Max) {
 }
 
 TEST(GroundLuaTest, PeriodicNoise2RejectsAPeriodThatIsNotAWholeNumber) {
-	for (const char* period : {"0", "-3", "2.5"}) {
+	for (const char* period : {"0", "-3", "2.5", "3.00001", "0/0", "math.huge"}) {
 		bool		ok = true;
 		std::string error;
 		runLua(std::string("local v = periodicNoise2(0.5, 0.5, ") + period + ", 1)\n", &ok, &error);
 		EXPECT_FALSE(ok) << period;
 		EXPECT_NE(error.find("period"), std::string::npos) << error;
 	}
+}
+
+TEST(GroundLuaTest, PeriodicNoise2TakesAPeriodAHairOffAWholeNumberAsThatNumber) {
+	// P / F as the doc says to pass it: 2.1 / 0.7 is 3.0000000000000004 in doubles, 0.3 / 0.1 is 2.9999999999999996.
+	bool		   ok = false;
+	GeneratedAsset out = runLua(
+		"assert(2.1 / 0.7 ~= 3 and 0.3 / 0.1 ~= 3)\n"
+		"local above, below = Path(), Path()\n"
+		"for i = 0, 15 do\n"
+		"    local x, y = i * 0.375 + 0.25, i * 0.625 + 0.5\n"
+		"    above:addVertex(periodicNoise2(x, y, 2.1 / 0.7, 7), periodicNoise2(x, y, 3, 7))\n"
+		"    below:addVertex(periodicNoise2(x, y, 0.3 / 0.1, 7), periodicNoise2(x, y, 3, 7))\n"
+		"end\n"
+		"asset:addPath(above)\nasset:addPath(below)\n",
+		&ok
+	);
+	ASSERT_TRUE(ok);
+	ASSERT_EQ(out.paths.size(), 2U);
+	for (size_t i = 0; i < 16; ++i) {
+		EXPECT_EQ(out.paths[0].vertices[i].x, out.paths[0].vertices[i].y) << "sample " << i;
+		EXPECT_EQ(out.paths[1].vertices[i].x, out.paths[1].vertices[i].y) << "sample " << i;
+	}
+}
+
+TEST(GroundLuaTest, VerticesMustBeFinite) {
+	for (const char* script : {
+			 "Path():addVertex(0/0, 1)\n",
+			 "Path():addVertex(1, math.huge)\n",
+			 "Path():addVertex(-math.huge, 0)\n",
+		 }) {
+		bool		ok = true;
+		std::string error;
+		runLua(script, &ok, &error);
+		EXPECT_FALSE(ok) << script;
+		EXPECT_NE(error.find("addVertex"), std::string::npos) << error;
+	}
+
+	bool				 ok = false;
+	const GeneratedAsset fine = runLua("local p = Path()\np:addVertex(1e30, -2.5)\nasset:addPath(p)\n", &ok);
+	EXPECT_TRUE(ok);
+	ASSERT_EQ(fine.paths.size(), 1U);
+	EXPECT_EQ(fine.paths[0].vertices[0].x, 1e30F);
+}
+
+TEST(GroundLuaTest, AGroundGeneratorReadsItsDefsPeriod) {
+	// The def's <period> is the only one: the generator gets it as the global `period`, and other roles get nil.
+	const TempDir		   t;
+	const AssetDefinition* def = loadGround(
+		t,
+		"<surface>Snow</surface><period>2</period>",
+		"local p = Path()\np:addVertex(period, 0)\np:addVertex(period, 1)\np:addVertex(0, 1)\nasset:addPath(p)\n"
+	);
+	ASSERT_NE(def, nullptr);
+	GeneratedAsset out;
+	ASSERT_TRUE(AssetRegistry::Get().generateAsset("Ground_Tile", 1, out));
+	ASSERT_EQ(out.paths.size(), 1U);
+	EXPECT_FLOAT_EQ(out.paths[0].vertices[0].x, 2.0F);
+
+	bool ok = false;
+	runLua("assert(period == nil, 'period is only set for a ground def')\n", &ok);
+	EXPECT_TRUE(ok);
+	AssetRegistry::Get().clearDefinitions();
 }
 
 TEST(GroundLuaTest, SetLodLandsOnTheGeneratedPath) {

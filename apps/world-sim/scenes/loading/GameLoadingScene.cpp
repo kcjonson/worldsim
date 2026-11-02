@@ -253,16 +253,19 @@ namespace {
 		}
 
 		/// Before phase 0: the ground tiles, which the splash bakes; a --scene jump skips it, so they're baked here,
-		/// a variant a frame so the bar moves.
+		/// behind the same validation gate, a variant a frame so the bar moves.
 		void bakeGround() {
-			worldview::GroundTileBank& bank = world_sim::groundTiles();
-			if (!bank.ready() && bank.bakeNext()) {
+			const world_sim::GroundBakeStep step = world_sim::stepGroundBake();
+			if (!step.done) {
+				const worldview::GroundTileBank& bank = world_sim::groundTiles();
 				progress = 0.25F * static_cast<float>(bank.bakedVariants()) / static_cast<float>(std::max(1, bank.totalVariants()));
 				updateStatusText("Baking ground tiles...");
 				return;
 			}
-			if (!bank.errors().empty()) {
-				LOG_ERROR(Game, "GameLoadingScene - %zu ground tile error(s); the log above says which", bank.errors().size());
+			if (!step.errors.empty()) {
+				for (const std::string& error : step.errors) {
+					LOG_ERROR(Game, "GameLoadingScene - %s", error.c_str());
+				}
 				phase = LoadingPhase::ConfigError;
 				return;
 			}
