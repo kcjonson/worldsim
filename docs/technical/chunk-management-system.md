@@ -110,6 +110,10 @@ namespace std {
 
 This is the **sampled data from the 3D world**, stored per-chunk (not per-tile).
 
+> **Superseded (WOR-558).** The sector grid below is gone: a tile's biome is picked per tile from
+> the corner weights plus world-space gradient noise (`libs/world/world/chunk/TileBiomes.h`;
+> terrain-polygons-architecture.md, D16, biome edges).
+
 ```cpp
 struct ChunkBiomeData {
     // Pure chunk optimization

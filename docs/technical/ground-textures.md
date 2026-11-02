@@ -221,7 +221,7 @@ Where two land surfaces meet, a band around the field's isoline shows whichever 
 
 The field is untouched: D13 levels, the warp, the block and the paint rule, the C++ twin and `SurfaceFieldGolden`. So the contest is look-only (D1), placement still agrees with the painted surface, and inside the band the visible surface can differ from the painted one by at most the band width.
 
-The edges it is tuned on come from chunk generation, not the field. A biome boundary is a 16 m staircase today (`ChunkSampleResult::getTileBiome` returns one biome per 16 x 16 m sector), which no band can hide. The terrain spec's biome edges note (D16) makes them per-tile and irregular first.
+The edges it is tuned on come from chunk generation, not the field. A biome boundary was a 16 m staircase (one biome per 16 x 16 m sector), which no band can hide; it is picked per tile now, with bays, headlands and islands (terrain spec, D16, biome edges; WOR-558).
 
 ### Heights in alpha
 
@@ -373,7 +373,7 @@ Values come from the transition research, trimmed to the cap, and every one is a
 - The 1 px anti-aliasing mix, and the second sRGB encode if the single-encode A/B wins.
 - `u_landFringeW[10]`, `u_landRimDark[10]`, `u_landFringeOpacity`, `u_landFringeAlongAmp`, `u_landRimW` and `u_landBreakupWavelength`, their `kShaderTunables` entries and the `terrain/land/*` tunables behind them.
 - The baker's opacity warning and the premultiplied treatment of ground alpha.
-- `NoiseUtils::valueNoise`, if nothing else uses it once the generators move to gradient noise (terrain spec, biome edges).
+- `NoiseUtils` and its value noise, replaced by gradient patch noise hashed once a chunk (`generation::PatchNoise`, WOR-558). Tiles got cheaper: 19.9 ms median a chunk against 25.5 (terrain spec, section 6).
 
 **Added**
 

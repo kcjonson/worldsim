@@ -308,6 +308,11 @@ BiomeInfluence SphericalWorld::SampleBiomeInfluence(SphericalCoordinate coord,
 
 ## Sector Grid Interpolation
 
+> **Superseded (WOR-558).** The sector grid is gone: a tile's biome is picked per tile from the
+> chunk's corner weights plus world-space gradient noise (`libs/world/world/chunk/TileBiomes.h`;
+> terrain-polygons-architecture.md, D16, biome edges). The sector grid made every biome boundary
+> a 16 m staircase. The original design follows.
+
 For boundary chunks, we pre-compute a 32×32 sector grid:
 
 ```cpp

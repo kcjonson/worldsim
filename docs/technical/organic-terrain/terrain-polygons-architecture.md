@@ -917,37 +917,65 @@ evaluation; `shaders/includes/land.glsl` is the same steps in the same order, an
    and holds the LOD to that bound, and `SurfaceFieldTest.FarZoomDropsFineOctavesUnderFourPixels`
    pins where it kicks in. It saves about 0.1 ms at zoom 0.25.
 
-**Biome edges (WOR-467).** Upstream of all this, biome edges are still quantized to 16 m
-sectors: `ChunkSampleResult::getTileBiome` returns one biome per 16 x 16 m sector, from weights
-interpolated between chunk corners 512 m apart, so every biome boundary, a coast and a lake
-among them, is a 16 m staircase along a near-straight diagonal, and the generators'
-`NoiseUtils::valueNoise` draws axis-aligned straight runs inside a biome. D16 smooths what the
-tiles give it and adds no large-scale variety; its 1.5 m warp can't break a 16 m step. The
-design that does:
+**Biome edges (WOR-467, WOR-558).** Upstream of all this, a tile's biome used to come from a
+16 x 16 m sector grid interpolated between chunk corners 512 m apart, so every biome boundary,
+a coast and a lake among them, was a 16 m staircase along a near-straight diagonal, and D16's
+1.5 m warp couldn't break a 16 m step. The pick is per tile now (`TileBiomes.h`, `ChunkBiomes`):
 
-- Per-tile pick. The biome weights are interpolated per tile from the chunk corners (the
-  per-tile form of `computeSectorGrid`), then world-space gradient fBm is added to the weight
-  difference before the primary biome is thresholded: 2 to 3 octaves at about 200, 50 and
-  12 m, from salal `HashNoise`, with lattice corners hashed once a chunk the way
-  `fillGroundMacro` does.
-- Ecotone band. Where the perturbed weight sits near the threshold, the generator is picked
-  per tile against a 2 to 8 m noise: grass islands in sand, sand bays in grass, which the
-  field then smooths.
-- Generators. `NoiseUtils::valueNoise` gives way to gradient noise, and is deleted if nothing
-  else uses it.
-- Purity. The pick stays a pure function of world tile and seed (D14), so the apron and the
-  seams stay bit-identical. One change covers every reader: `Chunk::computeTileFrom`,
-  `ApronField` (`getTileBiome`, `primaryBiomeAt`) and the waterline builder's biome-water
-  lookups.
-- Knock-on. Coasts, lakes and wetlands reshape, which is WOR-467's goal: waterline rings and
-  their vertex counts, the nav rings, the SDF bake and mud all move, and flora placement
-  follows the per-tile biome by itself. Tests that hand-fill `sectorGrid`
-  (`NavigationSystem.test.cpp`, `VisionSystem.test.cpp`, the staircase lake in
-  `TerrainPolygonBuilder.test.cpp`, the `MockWorldSampler` users) move to the new lookup; the
-  seam tests keep their meaning.
+- Weights. Each biome a chunk's corners weigh is interpolated bilinearly at the tile's center,
+  `u = (x + 0.5) / 512`, so a chunk's last tile and its neighbor's first sit half a tile
+  either side of the corners they share and the weights run on across the border.
+- Edge noise. Each biome's weight is raised by its own world-space gradient fBm (salal
+  `HashNoise`): 200 m at 0.23 of a weight, 50 m at 0.06, 12 m at 0.02, and the largest wins,
+  ties to the lower biome. Across the planet's blend band (500 m either side of a cell edge,
+  where a weight difference changes 0.002 a meter) that bends a boundary into bays and
+  headlands tens of meters deep at 200 m and a few meters at 12 m. Noise per biome rather than
+  per pair keeps the pick continuous where three biomes meet.
+- Ecotone. Where two land biomes' scores lie within 0.08, one 8 m octave of amplitude 0.08
+  decides, which leaves islands and bays of 3 to 10 m standing off the edge: along 2 km of
+  synthetic edge, about 190 islands of 5 tiles or more against 15 single tiles, which the field
+  keeps as blobs about 1 m across. A 4 m octave on top added fragments of a tile or two and no
+  islands, so it isn't there. The pick is the tile's primary biome, so flora follows an island
+  too. A pair with biome water (D5) skips the ecotone, so the waterline and the tiles under it
+  stay on the same line.
+- Cost. The two coarse octaves are summed at every 8th tile and read bilinearly (under 1e-3 of
+  a weight off); the 12 m and ecotone octaves are hashed once a chunk (`NoiseOctaveGrid`, the
+  lattice cache `fillGroundMacro` uses too). Gradient noise stays within [-1, 1], so the pick
+  stops at the first stage whose remaining octaves can't change the winner or bring a land pair
+  within the ecotone's reach: a one-biome chunk reads no noise, and a chunk an edge crosses
+  costs about 6 ms of picks at most. Numbers in section 6.
+- Purity (D14). A tile is always picked by its owning chunk's `ChunkBiomes`, built from that
+  chunk's corners and the world seed. `ChunkNeighborhood` holds the 3x3 neighborhood's, from
+  the sample's corner lattice, for the apron (`ApronField::build`) and for biome water past the
+  extended region (river mouths, D7); over the extended region the waterline reads the
+  already-picked tiles. `TileBiomesTest.ApronTilesEqualTheOwnersOwn` checks every apron tile
+  of four chunks against the owner's own pick across all eight borders, with a three-biome
+  world (two land biomes and ocean) crossing them; `ApronFieldTest`, `RenderTileSeamsTest`,
+  `TerrainPolygonSeamsTest` and `SurfaceFieldGolden` pass unchanged.
+  `TileBiomesTest.EdgesDoNotFollowTheSectorGrid` holds a synthetic edge to about one boundary
+  edge in sixteen on a sector line, in runs of 5 tiles at most (the sector grid put every one
+  there, in runs of 16).
+- Generators. Their patch noise is gradient fBm (`generation::PatchNoise`, two octaves, the
+  lattice hashed once a chunk) in place of hashed value noise, whose cells drew straight runs
+  wherever two corners hashed alike. The wavelengths are 1.7 to 1.9 times the old ones, which
+  keeps patch sizes and leaves the grass family's patch edges covering no more ground (tiles
+  within 3 of another surface: 73% of grassland against 75%, 28% of forest against 31%), and
+  the thresholds are re-derived for the same shares, measured over 4 million tiles a biome:
 
-It ships first in the Ground Surface Blending epic, so the transitions are tuned on the real
-edge shapes.
+  | Biome group | Surface | Before | After |
+  |---|---|---|---|
+  | Grassland | Grass / GrassShort / GrassTall / GrassMeadow / Dirt | 67.0 / 18.5 / 11.7 / 2.60 / 0.20 % | 66.8 / 18.5 / 11.9 / 2.64 / 0.20 % |
+  | Forest | Grass / GrassTall / Dirt | 90.4 / 9.19 / 0.40 % | 90.3 / 9.35 / 0.40 % |
+  | Desert | Rock | 0.91 % | 0.87 % |
+  | Beach, tundra | Rock | 0.40 % | 0.40 % |
+  | Mountain | Snow | 11.5 % | 11.3 % |
+  | Wetland | GrassTall | 11.4 % | 11.3 % |
+
+- Tests. Nav and vision tests that hand-filled 16 m sectors of water carve it with a pond now,
+  since a corner lattice 512 m apart can't place a 16 m patch: `NavigationSystem.test.cpp`'s
+  water patch is a pond of radius 8 m at (40, 40), its snap bounds read from the pond's rim,
+  and the Tier-3 push test overshoots the region's edge instead of a 16 m island;
+  `VisionSystem.test.cpp`'s lake is a pond of radius 20 m.
 
 ---
 
@@ -1237,6 +1265,28 @@ the workers keep up; the far edge of a zoom 0.25 view is still blank, because it
 wide and the chunk manager keeps one chunk around the camera's (1536 m), and flora appears
 when placement lands (140 to 550 ms a chunk).
 
+**Per-tile biome edges (WOR-558).** Measured on the 120 chunks `scripts/perf-capture.ps1`
+generates across the three views, the branch tip before (85cd4799) against after, worker ms:
+
+| | Median | p90 | Max |
+|---|---|---|---|
+| Total, before | 66.8 | 105.5 | 284 |
+| Total, after | 54.8 | 87.5 | 316 |
+| Tiles, before | 25.5 | 34.7 | 52.8 |
+| Tiles, after | 19.9 | 28.0 | 62.2 |
+
+The tile stage got cheaper: the generators' patch noise hashes its lattice once a chunk, where
+value noise hashed four corners a tile per octave, and that pays for the pick, which costs up
+to 6 ms in a chunk an edge crosses and nothing in a one-biome chunk. The max is the landing
+river chunk's bake (227 ms, 178 before). The coast chunks at x = 70 km take 161 to 175 ms
+against 144 to 146, polygons and bake both: the shore runs longer and bends more. Waterline
+rings carry more vertices for the same reason. Rebuilt with each pick over the same tiles,
+three coast chunks go from 157 to 179 ring vertices a chunk to 407 to 484 (nav 97 to 112, to
+321 to 390), four chunks of a lake shore at (-3860, 2300) from 176 to 342 to 442 to 523 (nav
+92 to 239, to 348 to 391); the open-ocean chunk beside the coast barely moves (144 to 164).
+About one of those vertices in 16 m of shore is a pin (D6 step 4); the rest are the bends the
+100 mm simplification keeps.
+
 **Nav.** Rebuilding the landing region (128 m square, 643 blocking rings, most of them trees):
 763 ms on the worker for 5434 triangles, against 499 ms for 3082 with the tile marcher
 (39f35c45); the input extraction on the main thread is 0.5 ms (1.4 with the marcher). The
@@ -1312,8 +1362,8 @@ Maps one-to-one onto the epic's tasks:
   still shares the lattice fill's core. No quickstart ring changed: biome water follows 16 m
   sectors (WOR-467), so none of it runs 1 tile wide, and the ring vertices of every chunk
   loaded at the landing (0, 20) and the coast (70030, 0) hash the same before and after. Per-tile
-  biome edges (D16, biome edges) change that on purpose: ring hashes move, and a coast or lake
-  can now run 1 tile wide, which is what the guard is for.
+  biome edges (D16, biome edges; WOR-558) changed that on purpose: ring hashes moved, and a
+  coast or lake can now run 1 tile wide, which is what the guard is for.
 - Ocean vs lake distinction for L2/L4: the biome tells us, but wetland water needs its own
   band set (no beach, reeds everywhere). Decide when the renderer task starts.
 - Whether the fine SDF band (±8 m) is enough for the widest shallows on very gentle ocean
