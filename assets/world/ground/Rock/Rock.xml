@@ -122,16 +122,17 @@
       <amplitude>0.4</amplitude>
     </macro>
     <!-- How Rock meets the ones below it (docs/technical/ground-textures.md, "Pair parameters"): the
-         default is grass, held in the joints with a contact shadow under the slab edges; sand and dirt
-         fill the joints first and leave the tops as islands, sand with a drift line; mud stains. -->
+         default is grass, held in the joints with a contact shadow under the stone's edge; sand and dirt
+         fill the joints and hollows first and leave the tops as islands, sand with a drift line; mud
+         stains. -->
     <transition>
       <width>0.5</width>
       <softness>0.05</softness>
       <shadow>0.25</shadow>
     </transition>
     <transition over="Sand">
-      <width>0.7</width>
-      <offset>-0.2</offset>
+      <width>0.5</width>
+      <offset>-0.15</offset>
       <softness>0.04</softness>
       <shadow>0</shadow>
       <ridge>0.06</ridge>

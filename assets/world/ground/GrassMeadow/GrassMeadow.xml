@@ -144,8 +144,9 @@
       <wavelengths>96,24</wavelengths>
     </macro>
     <!-- How this surface meets the ones below it (docs/technical/ground-textures.md, "Pair parameters"):
-         tufts spill over dirt with a contact shadow, a narrow soft band onto bright sand, a stain onto
-         mud, and the widest soft band the field supports within the grass family. -->
+         tufts spill over dirt with a contact shadow, a narrow soft band onto bright sand with a fainter
+         one, a stain onto mud, and a narrow band within the grass family, whose co-baked layouts meet
+         blade for blade. -->
     <transition over="Dirt">
       <width>0.5</width>
       <offset>0.15</offset>
@@ -156,6 +157,7 @@
       <width>0.3</width>
       <offset>0.1</offset>
       <softness>0.05</softness>
+      <shadow>0.12</shadow>
     </transition>
     <transition over="Mud">
       <width>0.25</width>
@@ -163,11 +165,11 @@
       <stain>0.25</stain>
     </transition>
     <transition over="GrassShort">
-      <width>1.4</width>
+      <width>0.2</width>
       <softness>0.15</softness>
     </transition>
     <transition over="Grass">
-      <width>1.4</width>
+      <width>0.2</width>
       <softness>0.15</softness>
     </transition>
   </AssetDef>
