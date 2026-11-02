@@ -703,29 +703,56 @@ end
 layoutJoints("joint")
 layoutJoints("fracture")
 
--- Puddles: small standing water in a hollow, lit from the top of the screen: a dark wet rim, the
--- lower bank lit along the bottom edge, the water with the upper bank's shade across its top, a few
--- streaks of sky reflection and a glint. Laid out here, so the far ground can average them in, and
--- drawn in paint order further down. Their sizes are normalized per variant like the patches.
+-- Puddles: small standing water in a hollow, holding the sky: flat, with none of the top-lit shading
+-- that would read as a bump. The water is puddleColors' first, set a little down the screen inside
+-- its outline, which leaves a thin light lip in puddleLipColor along the far edge (the top of the
+-- screen); later colors are smaller steps set further down, the murkier near side. Two streaks of
+-- puddleSheenColor lie across it, and around it the mud is wet, darker and glossy: rings in
+-- puddleWetColors (designed against the base, carried onto the local tone) reaching puddleWetReach of
+-- the puddle's size beyond it, with three dabs of the sheen along the far bank. Laid out here, so the
+-- far ground can average them in, and drawn in paint order further down. Their area (size and
+-- aspect) is normalized per variant like the patches.
 local puddles = {}
 do
 	local density = getFloat("puddleDensity", 0)
 	if density > 0 then
 		local rLo, rHi = getFloatRange("puddleSize", 0.04, 0.12)
-		local rim, water = hex("puddleRimColor", "#000000"), hex("puddleColor", "#202020")
-		local bank, hollow = hex("puddleBankColor", "#808080"), hex("puddleShadeColor", "#101010")
-		local sheen = hex("puddleSheenColor", "#808080")
-		local pts = blueNoise(count(density), 0.6 / sqrt(density))
+		local aLo, aHi = getFloatRange("puddleAspect", 1.2, 1.7)
+		local water = hexList("puddleColors", { 0.25, 0.25, 0.25 })
+		local wet = hexList("puddleWetColors", base)
+		local lip, sheen = hex("puddleLipColor", "#C0C0C0"), hex("puddleSheenColor", "#808080")
+		local wetReach = getFloat("puddleWetReach", 0.7)
+		-- Water gathers in the low ground: each puddle takes the lowest of puddleGather random spots on a
+		-- field of 3 cycles a period, kept a little apart, so they come in loose groups, not evenly.
+		local gather = max(1, getInt("puddleGather", 1))
+		local pts = {}
+		for _ = 1, count(density) do
+			local best, bestV = nil, math.huge
+			for _ = 1, gather do
+				local x, y = rand() * P, rand() * P
+				local v = field(x, y, 3, 307)
+				for _, q in ipairs(pts) do
+					local dx, dy = wrapDelta(q[1] - x), wrapDelta(q[2] - y)
+					if dx * dx + dy * dy < (2.5 * rHi) ^ 2 then
+						v = v + 1
+					end
+				end
+				if v < bestV then
+					best, bestV = { x, y }, v
+				end
+			end
+			pts[#pts + 1] = best
+		end
 		local sum = 0
 		for _, p in ipairs(pts) do
-			p.r = lognormal(rLo, rHi, 0.4)
-			sum = sum + p.r * p.r
+			p.r, p.aspect = lognormal(rLo, rHi, 0.5), uniform(aLo, aHi)
+			sum = sum + p.r * p.r * p.aspect
 		end
-		local scale = sqrt(#pts * rLo * rHi * exp(2 * 0.4 * 0.4) / max(sum, 1e-9))
+		local scale = sqrt(#pts * rLo * rHi * exp(2 * 0.5 * 0.5) * (aLo + aHi) * 0.5 / max(sum, 1e-9))
 		for _, p in ipairs(pts) do
-			local r = p.r * scale
+			local r, aspect = p.r * scale, p.aspect
 			local x, y = p[1], p[2]
-			local outline = blobShape(x, y, r, 16, 0.35, uniform(1.2, 1.7), (rand() - 0.5) * 0.4)
+			local outline = blobShape(x, y, r, 16, 0.5, aspect, (rand() - 0.5) * 0.3)
 			local function step(k, dy)
 				local xs, ys = {}, {}
 				for i = 1, outline.n do
@@ -733,16 +760,25 @@ do
 				end
 				return shape(xs, ys)
 			end
-			local layers = {
-				{ step(1.2, 0), rim, onBase = true },
-				{ step(1.1, r * 0.1), bank, onBase = true },
-				{ outline, hollow },
-				{ step(0.94, r * 0.12), water },
-			}
-			-- Sky streaks: short, thin and level, in the lower part of the water.
-			for _ = 1, floor(uniform(1, 4)) do
-				local sx, sy = x + (rand() - 0.5) * r, y + uniform(0.05, 0.45) * r
-				local len, hw = r * uniform(0.25, 0.55), r * uniform(0.05, 0.08)
+			local layers = {}
+			for k, c in ipairs(wet) do
+				layers[#layers + 1] = { step(1 + wetReach * (#wet - k + 1) / #wet, r * 0.05), c, onBase = true }
+			end
+			-- Gloss on the wet mud along the far bank: three small dabs of the sheen.
+			for _ = 1, 3 do
+				local a = -math.pi * uniform(0.15, 0.85)
+				local d = uniform(1.15, 1 + wetReach * 0.8)
+				local gx, gy = x + cos(a) * r * aspect * d, y + sin(a) * r * d
+				layers[#layers + 1] = { blobShape(gx, gy, r * uniform(0.08, 0.14), 6, 0.3, uniform(1.4, 2.2), 0), sheen }
+			end
+			layers[#layers + 1] = { outline, lip }
+			for k, c in ipairs(water) do
+				layers[#layers + 1] = { step(0.97 - 0.22 * (k - 1), r * (0.08 + 0.06 * (k - 1))), c }
+			end
+			-- Sky streaks: thin and level, across the sky.
+			for _ = 1, 2 do
+				local sx, sy = x + (rand() - 0.5) * r * 0.7, y + uniform(-0.1, 0.25) * r
+				local len, hw = r * uniform(0.35, 0.7), r * uniform(0.035, 0.06)
 				layers[#layers + 1] = { shape({ sx - len, sx, sx + len, sx }, { sy, sy - hw, sy, sy + hw }), sheen }
 			end
 			puddles[#puddles + 1] = { x = x, y = y, r = r, layers = layers }
@@ -893,7 +929,7 @@ end
 local function inPuddle(x, y)
 	for _, p in ipairs(puddles) do
 		local dx, dy = wrapDelta(x - p.x), wrapDelta(y - p.y)
-		if abs(dx) < p.r * 3 and abs(dy) < p.r * 3 and insideShape(p.layers[1][1], p.x + dx, p.y + dy) then
+		if abs(dx) < p.r * 4 and abs(dy) < p.r * 4 and insideShape(p.layers[1][1], p.x + dx, p.y + dy) then
 			return true
 		end
 	end
@@ -1309,7 +1345,7 @@ do
 			at(layer.onBase and H.puddleRim or 0)
 			emitShape(layer[1], layer.onBase and onGround(layer[2], p.x, p.y) or layer[2], lod)
 		end
-		local g = blobShape(p.x + (rand() - 0.5) * p.r, p.y - p.r * 0.45, p.r * 0.12, 6, 0.2, 2.2, 0)
+		local g = blobShape(p.x + (rand() - 0.5) * p.r, p.y - p.r * 0.12, p.r * 0.1, 6, 0.2, 2.2, 0)
 		at(0)
 		emitShape(g, glint, 64)
 	end

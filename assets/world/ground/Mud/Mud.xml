@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Mud ground tile: dark wet ground (ground_bare.lua). Densely churned lumps lit from the top, a share
-     of them with a wet gloss dab, faint wetter and drier patches, small puddles holding the sky in a
-     hollow (lit lower bank, shaded upper edge, streaks of reflection), a few stones, twigs, fallen
+     of them with a wet gloss dab, faint wetter and drier patches, small puddles holding the sky (a
+     light lip along the far edge, wet dark mud around them), a few stones, twigs, fallen
      leaves and soggy straw. -->
 <AssetDefinitions>
   <AssetDef>
@@ -16,7 +16,7 @@
         <!-- Must equal <period> below. The knobs are documented in Dirt.xml; puddles, gloss and leaves
              are here. -->
         <period>4</period>
-        <baseColor>#4F3F30</baseColor>
+        <baseColor>#4F3E2F</baseColor>
 
         <patchDensity>1.2</patchDensity>
         <patchSize>0.3,0.7</patchSize>
@@ -30,18 +30,23 @@
         <tintDark>#4C3C2E</tintDark>
         <tintSteps>1</tintSteps>
 
-        <!-- Puddles: blobs of puddleSize radius, sized so every variant holds the same water. A rim in
-             puddleRimColor and the lower bank in puddleBankColor (both carried onto the local tone),
-             the water in puddleColor with puddleShadeColor across its top, streaks of puddleSheenColor
-             and a glint. No lump grows in one. -->
-        <puddleDensity>0.65</puddleDensity>
-        <puddleSize>0.08,0.2</puddleSize>
-        <puddleRimColor>#2E241B</puddleRimColor>
-        <puddleBankColor>#6A5743</puddleBankColor>
-        <puddleShadeColor>#26282A</puddleShadeColor>
-        <puddleColor>#3B4044</puddleColor>
-        <puddleSheenColor>#6E7A82</puddleSheenColor>
-        <puddleGlintColor>#B4BFC5</puddleGlintColor>
+        <!-- Puddles: small water in hollows, puddleSize in radius and puddleAspect times as wide,
+             sized so every variant holds the same water, each at the lowest of puddleGather spots on
+             a broad field, so they gather in groups. A lip in puddleLipColor along the far edge,
+             the far bank's reflection under it in puddleColors' first, the sky in the rest, each a
+             smaller step set a little down the screen, streaks of puddleSheenColor and a glint, inside
+             wet, darker rings in puddleWetColors (carried onto the local tone) reaching puddleWetReach
+             of its size beyond it, with dabs of the sheen on the far bank. No lump grows in one. -->
+        <puddleDensity>0.4</puddleDensity>
+        <puddleSize>0.04,0.12</puddleSize>
+        <puddleAspect>1.4,2.4</puddleAspect>
+        <puddleWetReach>1</puddleWetReach>
+        <puddleGather>8</puddleGather>
+        <puddleWetColors>#3F3328,#35291F</puddleWetColors>
+        <puddleLipColor>#8EA3B1</puddleLipColor>
+        <puddleColors>#577080</puddleColors>
+        <puddleSheenColor>#7E96A5</puddleSheenColor>
+        <puddleGlintColor>#E6EDF0</puddleGlintColor>
 
         <grainDensity>300</grainDensity>
         <grainSize>0.014,0.022</grainSize>
@@ -83,9 +88,9 @@
         <stoneShadow>0.55</stoneShadow>
         <stoneLit>1.3</stoneLit>
 
-        <farContrast>1.15</farContrast>
-        <farCoarseContrast>0.75</farCoarseContrast>
-        <farGain>0.9951,1.0093,1.0096</farGain>
+        <farContrast>1.25</farContrast>
+        <farCoarseContrast>0.82</farCoarseContrast>
+        <farGain>0.9965,1.0277,1.0282</farGain>
       </params>
     </generator>
     <variantCount>8</variantCount>
