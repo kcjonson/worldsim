@@ -683,7 +683,7 @@ while (running) {
 - [x] Waterline and nav ring growth from organic edges measured, not trimmed (WOR-563; no frame cost, worker time in terrain spec section 6)
 - [ ] Verify and hand off (WOR-562)
   - [ ] Final perf capture against main
-  - [ ] `docs/testing/scenarios/ground-tiles.md` transition steps
+  - [x] `docs/testing/scenarios/08-ground-tiles.md` transition steps
   - [ ] Regression pass
   - [ ] Draft PRs (textures, then blending stacked on top); hand-off screenshots of each pair at zoom 20, 3, 1.5 and 0.5
 
