@@ -30,8 +30,8 @@ namespace asset_manager {
 		// A panel shows the 2x2 of variants, two periods a side (8 m at the default 4), clipped to this.
 		constexpr float kMaxPanel = 256.0F;
 
-		constexpr ui::Layout kKeepHeight{.flexShrink = 0.0F};
-		constexpr ui::Layout kHug{.flexShrink = 0.0F, .alignSelf = ui::AlignItems::Start};
+		const ui::Layout kKeepHeight{.flexShrink = 0.0F};
+		const ui::Layout kHug{.flexShrink = 0.0F, .alignSelf = ui::AlignItems::Start};
 
 		std::unordered_map<std::string, std::shared_ptr<worldview::GroundTileBake>>& cache() {
 			static std::unordered_map<std::string, std::shared_ptr<worldview::GroundTileBake>> bakes;
