@@ -18,6 +18,6 @@ out vec4 FragColor;
 void main() {
 	WaterPixel water = u_hasWater ? waterPixel(v_localPos, v_worldPos) : dryPixel();
 	// Fully under water the ground doesn't show (shadeWater mixes it out by 1).
-	vec3 ground = water.water < 1.0 ? landColor(v_localPos, u_metersPerPixel) : vec3(0.0);
+	vec3 ground = water.water < 1.0 ? landColor(v_localPos) : vec3(0.0);
 	FragColor	= vec4(water.shore ? shadeWater(water, ground, v_localPos, v_worldPos) : ground, 1.0);
 }

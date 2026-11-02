@@ -23,8 +23,9 @@ uniform usampler2D u_tileData;
 uniform ivec2	   u_chunkTileOrigin; // world tile of the chunk's tile (0, 0)
 
 // Ground tiles (GroundTileBank): sRGB texture arrays, one per layer size, every
-// mip baked from the vectors. Per surface id:
-//   u_groundLayers: x array (0..3), y first layer, z layer count (at least 1), w rotate (0 free, 1 quarter, 2 none, 3 mirror)
+// mip baked from the vectors, alpha the baked height. Per surface id:
+//   u_groundLayers: x array (0..3), y first layer, z layer count (at least 1), w rotate (low 2 bits:
+//   0 free, 1 quarter, 2 none, 3 mirror) | the surface id its cells hash << 2 (its seed group's lowest)
 //   u_groundParams: x 1 / period (m), y mip level this draw, z 1 / layer count, w 0.5 z - 0.5 (groundVariant)
 //   u_groundTintBase, u_groundTintLush: the macro tint, base + lush * the macro's R,
 //   multiplied into the sRGB color
@@ -61,17 +62,12 @@ uniform float u_landThinCeil;
 // ones would move an edge by a fraction of a pixel.
 uniform int u_landWarpFineOctaves;
 
-// The look, all tunables (ChunkRenderer.cpp): a sparse fringe of the upper surface
-// on the lower side of each edge, its width varying along the edge (D15) with the
-// fine warp noise, and a rim just inside the upper surface. Meters.
-uniform float u_landFringeW[10];
-uniform float u_landRimDark[10];
-uniform float u_landFringeOpacity;
-uniform float u_landFringeAlongAmp;
-uniform float u_landRimW;
-uniform int	  u_landBreakupWavelength; // whole meters
-uniform float u_landBreakupInvWavelength;
-uniform uint  u_landBreakupSeed;
+// The edge look (ground-textures.md, Surface transitions): two vec4 a pair of D13
+// levels at upper * 9 + lower, from the upper surface's def with this draw's mip
+// window folded in (GroundPairs.h packGroundPairs):
+//   [2 i]     x 0.5 / w, y 0.5 + 0.5 o / w, z 1 / (2 W), w nu / (4 W)
+//   [2 i + 1] shadow, stain, ridge, tint
+uniform vec4 u_landPair[162];
 
 // ============================================================================
 // CONSTANTS (RenderTiles.h, SurfaceField.h)
@@ -188,9 +184,8 @@ float guardedBlur(uint sum, bool inside, bool thin) {
 	return inside ? max(blur, u_landThinFloor) : min(blur, u_landThinCeil);
 }
 
-/// The field at lattice offset t (x) and its gradient per meter (yz), for the
-/// distance to its isoline.
-vec3 blockField(uint mask, vec2 t) {
+/// The field at lattice offset t.
+float blockField(uint mask, vec2 t) {
 	// The inner tiles' rows, left (columns 0-2) and right (1-3), and the thin test
 	// for every bit at once.
 	uint  l0   = binomialRow(mask, 0, 0);
@@ -206,10 +201,19 @@ vec3 blockField(uint mask, vec2 t) {
 	float v10  = guardedBlur(r0 + 2u * r1 + r2, blockBit(mask, 2, 1), blockBit(thin, 2, 1));
 	float v01  = guardedBlur(l1 + 2u * l2 + l3, blockBit(mask, 1, 2), blockBit(thin, 1, 2));
 	float v11  = guardedBlur(r1 + 2u * r2 + r3, blockBit(mask, 2, 2), blockBit(thin, 2, 2));
-	float bottom = v00 + (v10 - v00) * t.x;
-	float top	 = v01 + (v11 - v01) * t.x;
-	vec2  grad	 = vec2((1.0 - t.y) * (v10 - v00) + t.y * (v11 - v01), top - bottom);
-	return vec3(bottom + (top - bottom) * t.y, grad);
+	return landBilinear(v00, v10, v01, v11, t);
+}
+
+/// Signed meters from a surface's isoline, positive inside, from its field alone:
+/// across a straight tile edge the field runs linear to 0.25 from 0.5 over the
+/// first half meter and half as steep over the next meter, to 0 or 1 at 1.5 m, and
+/// this inverts that, so it is exact there, near it on corners and diagonals, and
+/// continuous everywhere. (F - 0.5) / |grad F| jumps where the bilinear cell
+/// changes, half a meter out on a straight edge, which a band wider than that shows
+/// as a cut (ground-textures.md, "Band cap").
+float isolineDistance(float field) {
+	float u = field - 0.5;
+	return 4.0 * u - 2.0 * clamp(u, -0.25, 0.25);
 }
 
 struct LandEval {
@@ -219,7 +223,7 @@ struct LandEval {
 	float margin;	// SurfaceFieldSample::margin
 	uint  across;	// the surface across the nearest boundary, `painted` when none
 	float distance; // meters to that boundary
-	float along;	// the fine warp noise's x in [-1, 1], which the fringe width follows
+	float along;	// the fine warp noise's x in [-1, 1], which the contest's threshold follows
 };
 
 /// The field at a point, its fine warp summed over `fineOctaves` of
@@ -317,8 +321,8 @@ LandEval evaluateLand(ivec2 tile, vec2 frac, int fineOctaves) {
 
 	// One pass, low to high. The highest surface whose field passes 0.5 paints;
 	// where none does (a junction of three or more), the largest field, ties to the
-	// higher. Alongside, the nearest boundary of the painted region for
-	// anti-aliasing and the edge look: the isoline of every surface that would take
+	// higher. Alongside, the nearest boundary of the painted region for the edge
+	// look: the isoline of every surface that would take
 	// over by passing 0.5 (those above the painted one; all others where nothing
 	// passes), and the painted surface's own, past which the passing surface below
 	// it shows, else the largest other field. Scalars only, no per-surface arrays.
@@ -335,7 +339,6 @@ LandEval evaluateLand(ivec2 tile, vec2 frac, int fineOctaves) {
 	int	  nextLevel	   = -1;
 	int	  bestLevel	   = 0;
 	float bestField	   = -1.0;
-	float bestDist	   = kNoBoundary;
 	int	  secondLevel  = -1;
 	float secondField  = -1.0;
 	e.margin		   = kNoBoundary;
@@ -345,14 +348,14 @@ LandEval evaluateLand(ivec2 tile, vec2 frac, int fineOctaves) {
 			continue;
 		}
 		uint  mask = nibbleMatches(lo, surface) | (nibbleMatches(hi, surface) << 8u);
-		vec3  f	   = blockField(mask, t);
-		float dist = (f.x - 0.5) * min(inversesqrt(dot(f.yz, f.yz)), 1.0e4); // meters, negative until it passes
-		e.margin   = min(e.margin, abs(f.x - 0.5));
-		if (f.x > 0.5) {
+		float f	   = blockField(mask, t);
+		float dist = isolineDistance(f); // negative until it passes
+		e.margin   = min(e.margin, abs(f - 0.5));
+		if (f > 0.5) {
 			belowLevel	 = passed ? paintedLevel : -1;
 			passed		 = true;
 			paintedLevel = level;
-			paintedField = f.x;
+			paintedField = f;
 			paintedDist	 = dist;
 			aboveDist	 = kNoBoundary;
 			aboveLevel	 = -1;
@@ -369,14 +372,13 @@ LandEval evaluateLand(ivec2 tile, vec2 frac, int fineOctaves) {
 			nextDist  = -dist;
 			nextLevel = level;
 		}
-		if (f.x >= bestField) {
+		if (f >= bestField) {
 			secondField = bestField;
 			secondLevel = bestField >= 0.0 ? bestLevel : -1;
-			bestField	= f.x;
+			bestField	= f;
 			bestLevel	= level;
-			bestDist	= dist;
-		} else if (f.x >= secondField) {
-			secondField = f.x;
+		} else if (f >= secondField) {
+			secondField = f;
 			secondLevel = level;
 		}
 	}
@@ -443,17 +445,17 @@ HexCells groundHexCells(vec2 local) {
 	return c;
 }
 
-vec3 groundFetch(int array, vec3 at, float lod) {
+vec4 groundFetch(int array, vec3 at, float lod) {
 	if (array == 0) {
-		return textureLod(u_groundTiles0, at, lod).rgb;
+		return textureLod(u_groundTiles0, at, lod);
 	}
 	if (array == 1) {
-		return textureLod(u_groundTiles1, at, lod).rgb;
+		return textureLod(u_groundTiles1, at, lod);
 	}
 	if (array == 2) {
-		return textureLod(u_groundTiles2, at, lod).rgb;
+		return textureLod(u_groundTiles2, at, lod);
 	}
-	return textureLod(u_groundTiles3, at, lod).rgb;
+	return textureLod(u_groundTiles3, at, lod);
 }
 
 /// The variant of a cell hashed `h`: h % count, in float on h's low 12 bits (an
@@ -466,25 +468,28 @@ uint groundVariant(uint h, int count, vec2 pick) {
 	return x - uint(count * roundToInt(smallToFloat(x) * pick.x + pick.y));
 }
 
-/// A surface's tile as hex cell `v` lays it at `local`, linear: the cell's
-/// variant, rotation (by the surface's rotate) and offset hash from its world id.
-/// Variants are picked uniformly; weighted picks (mostly quiet, a few busy) wait
-/// for a ground def that asks for them.
-vec3 groundCellSample(uint surface, vec2 local, vec2 v) {
+/// A surface's tile as hex cell `v` lays it at `local`, linear, its height in
+/// alpha: the cell's variant, rotation (by the surface's rotate) and offset hash
+/// from its world id and the surface's seed group, so a co-baked family picks
+/// alike and its layouts meet across the family's edges. Variants are picked
+/// uniformly; weighted picks (mostly quiet, a few busy) wait for a ground def that
+/// asks for them.
+vec4 groundCellSample(uint surface, vec2 local, vec2 v) {
 	ivec4 layers = u_groundLayers[surface];
 	vec4  params = u_groundParams[surface];
+	int	  rotate = layers.w & 3;
 	ivec2 id	 = ivec2(roundToInt(v.x), roundToInt(v.y)) + u_groundCellOrigin;
-	uint  h		 = noiseHash3(id.x, id.y, int(surface), u_groundSeed);
+	uint  h		 = noiseHash3(id.x, id.y, layers.w >> 2, u_groundSeed);
 	vec2  center = vec2(v.x * kGroundHexColM + v.y * (0.5 * kGroundHexColM), v.y * kGroundHexRowM);
 	vec2  d		 = (local - center) * params.x;
 	vec2  cs	 = vec2(1.0, 0.0);
-	if (layers.w == 0) {
+	if (rotate == 0) {
 		float angle = smallToFloat((h >> 8u) & 0xFFu) * (6.2831853 / 256.0);
 		cs			= vec2(cos(angle), sin(angle));
-	} else if (layers.w == 1) {
+	} else if (rotate == 1) {
 		uint q = (h >> 8u) & 3u;
 		cs	   = q == 0u ? vec2(1.0, 0.0) : (q == 1u ? vec2(0.0, 1.0) : (q == 2u ? vec2(-1.0, 0.0) : vec2(0.0, -1.0)));
-	} else if (layers.w == 3 && (h & 0x100u) != 0u) {
+	} else if (rotate == 3 && (h & 0x100u) != 0u) {
 		d.x = -d.x; // mirror: flip about the cell's center, no turn; the angle's bit is free here
 	}
 	vec2  uv	= vec2(cs.x * d.x - cs.y * d.y, cs.y * d.x + cs.x * d.y) + vec2(smallToFloat((h >> 16u) & 0xFFu), smallToFloat(h >> 24u)) * (1.0 / 256.0);
@@ -500,11 +505,11 @@ vec3 groundGain(vec3 w, float k) {
 	return r / (r.x + r.y + r.z);
 }
 
-/// A surface's linear ground color at `local`: the hex cells' samples, weighted
-/// by their sharpened barycentric weights times 0.4 + 0.6 luminance, then the
-/// zoom's gain. One sample where a cell holds kGroundTopWeight, below the hex
-/// cutoff, or with `blend` false (the fringe's other surface): the dominant cell.
-vec3 groundTexture(uint surface, vec2 local, bool blend) {
+/// A surface's linear ground color at `local`, its height in alpha: the hex cells'
+/// samples, weighted by their sharpened barycentric weights times 0.4 + 0.6
+/// luminance, then the zoom's gain. One sample where a cell holds
+/// kGroundTopWeight, below the hex cutoff, or with `blend` false: the dominant cell.
+vec4 groundTexture(uint surface, vec2 local, bool blend) {
 	HexCells c = groundHexCells(local);
 	if (!blend || !u_groundHex) {
 		vec2 v = c.w.x >= c.w.y && c.w.x >= c.w.z ? c.v1 : (c.w.y >= c.w.z ? c.v2 : c.v3);
@@ -523,16 +528,16 @@ vec3 groundTexture(uint surface, vec2 local, bool blend) {
 	vec2 vB		= first1 ? c.v2 : c.v1;
 	vec2 vC		= first1 || first2 ? c.v3 : c.v2;
 	vec3 ws		= first1 ? w : (first2 ? w.yxz : w.zxy);
-	vec3 cA		= groundCellSample(surface, local, vA);
+	vec4 cA		= groundCellSample(surface, local, vA);
 	if (ws.x >= kGroundTopWeight) {
 		return cA;
 	}
 
 	// A transition band: the cells holding more than the heaviest one leaves over.
 	float floorW = 1.0 - kGroundTopWeight;
-	vec3  cB	 = ws.y > floorW ? groundCellSample(surface, local, vB) : vec3(0.0);
-	vec3  cC	 = ws.z > floorW ? groundCellSample(surface, local, vC) : vec3(0.0);
-	ws *= vec3(greaterThan(ws, vec3(floorW))) * (0.4 + 0.6 * vec3(dot(cA, kGroundLuma), dot(cB, kGroundLuma), dot(cC, kGroundLuma)));
+	vec4  cB	 = ws.y > floorW ? groundCellSample(surface, local, vB) : vec4(0.0);
+	vec4  cC	 = ws.z > floorW ? groundCellSample(surface, local, vC) : vec4(0.0);
+	ws *= vec3(greaterThan(ws, vec3(floorW))) * (0.4 + 0.6 * vec3(dot(cA.rgb, kGroundLuma), dot(cB.rgb, kGroundLuma), dot(cC.rgb, kGroundLuma)));
 	ws /= ws.x + ws.y + ws.z;
 	if (u_groundBlendGainK != 1.0) {
 		ws = groundGain(ws, u_groundBlendGainK);
@@ -546,53 +551,54 @@ vec3 groundEncodeSrgb(vec3 linear) {
 	return mix(low, high, step(vec3(0.0031308), linear));
 }
 
-/// A surface's ground color in sRGB, which the rest of the pass works in, tinted
-/// by the macro layer (`macro`, this pixel's sample of u_groundMacro).
-vec3 groundColor(uint surface, vec2 local, vec4 macro, bool blend) {
-	vec3  color = groundEncodeSrgb(groundTexture(surface, local, blend));
+/// A surface's macro tint and value at this pixel (`macro`, its sample of
+/// u_groundMacro), multiplied into its sRGB color.
+vec3 groundTint(uint surface, vec4 macro) {
 	vec3  tint	= u_groundTintBase[surface] + u_groundTintLush[surface] * macro.r;
 	float value = u_groundMacroValue.x + macro.g * u_groundMacroValue.y + macro.b * u_groundMacroValue.z;
-	return color * tint * value;
+	return tint * value;
 }
 
-/// The ground color at chunk-local position `local`, anti-aliased over one pixel.
-vec3 landColor(vec2 local, float metersPerPixel) {
+/// The ground color at chunk-local position `local`, in sRGB. Where an edge's band
+/// reaches, its two surfaces contest by height (ground-textures.md, "The contest"):
+/// b runs -1 to 1 across the band, the upper surface's baked height against the
+/// lower's decides each texel, the window softens the decision, and the breakup
+/// moves the threshold along the edge with the field's fine warp noise. At |b| = 1
+/// the result is exactly one surface, so outside the band a pixel takes one sample.
+vec3 landColor(vec2 local) {
 	ivec2	 tile	 = clamp(ivec2(floor(local)), ivec2(0), ivec2(511));
 	vec2	 frac	 = local - vec2(tile);
 	LandEval e		 = evaluateLand(tile, frac, u_landWarpFineOctaves);
 	vec4	 macro	 = textureLod(u_groundMacro, (local * 0.5 + 0.5) * (1.0 / kGroundMacroSide), 0.0);
-	vec3	 painted = groundColor(e.painted, local, macro, true);
-	if (e.across == e.painted) {
-		return painted;
+	vec4	 painted = groundTexture(e.painted, local, true);
+	if (e.across != e.painted) {
+		int	  paintedLevel	 = levelOfSurface(e.painted);
+		int	  acrossLevel	 = levelOfSurface(e.across);
+		bool  paintedIsUpper = paintedLevel > acrossLevel;
+		int	  pair			 = paintedIsUpper ? paintedLevel * 9 + acrossLevel : acrossLevel * 9 + paintedLevel;
+		vec4  band			 = u_landPair[2 * pair];
+		float sigma			 = paintedIsUpper ? e.distance : -e.distance; // positive into the upper surface
+		float bu			 = clamp(sigma * band.x + band.y, 0.0, 1.0); // (b + 1) / 2
+		if (bu > 0.0 && bu < 1.0) {
+			vec4  shade	  = u_landPair[2 * pair + 1];
+			vec4  other	  = groundTexture(e.across, local, true);
+			vec4  upper	  = paintedIsUpper ? painted : other;
+			vec4  lower	  = paintedIsUpper ? other : painted;
+			uint  upperId = paintedIsUpper ? e.painted : e.across;
+			uint  lowerId = paintedIsUpper ? e.across : e.painted;
+			float b		  = 2.0 * bu - 1.0;
+			float s		  = clamp((upper.a - lower.a) * band.z + b * (band.z + band.w + 0.5) + e.along * band.w + 0.5, 0.0, 1.0);
+			// The shading terms, each nothing at |b| = 1: the tint veils the lower surface
+			// with the upper's color, the stain darkens the upper toward the edge, the
+			// contact shadow darkens what shows of the lower under the upper's edge, and
+			// the ridge lightens a line near the upper's outer reach.
+			float a		 = s + shade.w * (1.0 - s) * clamp(1.0 + b, 0.0, 1.0);
+			float stain	 = 1.0 - shade.y * (1.0 - smoothstep(0.0, 1.0, b));
+			float light	 = (1.0 - shade.x * (1.0 - s) * clamp(1.0 + 4.0 * b, 0.0, 1.0)) * (1.0 + shade.z * clamp(1.0 - 5.0 * abs(b - 0.8), 0.0, 1.0));
+			vec3  cUpper = groundEncodeSrgb(upper.rgb) * groundTint(upperId, macro) * stain;
+			vec3  cLower = groundEncodeSrgb(lower.rgb) * groundTint(lowerId, macro);
+			return mix(cLower, cUpper, a) * light;
+		}
 	}
-
-	// Signed distance to the boundary, positive into the upper surface of the pair.
-	bool paintedIsUpper = levelOfSurface(e.painted) > levelOfSurface(e.across);
-	uint upper			= paintedIsUpper ? e.painted : e.across;
-	uint lower			= paintedIsUpper ? e.across : e.painted;
-	float sigma			= paintedIsUpper ? e.distance : -e.distance;
-
-	float fringeReach = u_landFringeW[int(upper)] * (1.0 + u_landFringeAlongAmp);
-	if (e.distance >= max(max(fringeReach, u_landRimW), metersPerPixel)) {
-		return painted;
-	}
-
-	ivec2 whole;
-	vec2  offset;
-	noisePoint(u_chunkTileOrigin + tile, frac, whole, offset);
-	float breakup = smoothstep(
-		-0.25,
-		0.35,
-		fractalNoise2SplitPair(whole, offset, u_landBreakupWavelength, u_landBreakupInvWavelength, u_landBreakupSeed, 2, 0.5, 2).x
-	);
-	float fringeW = u_landFringeW[int(upper)] * (1.0 + u_landFringeAlongAmp * e.along);
-	float fringe  = fringeW > 0.0 ? u_landFringeOpacity * breakup * (1.0 - smoothstep(0.0, fringeW, max(-sigma, 0.0))) : 0.0;
-	float rim	  = u_landRimDark[int(upper)] * (1.0 - smoothstep(0.0, u_landRimW, max(sigma, 0.0)));
-
-	// The fringe's other surface takes one sample: the band is thin and a blend wouldn't show.
-	vec3 upperColor = paintedIsUpper ? painted : groundColor(upper, local, macro, false);
-	vec3 lowerColor = paintedIsUpper ? groundColor(lower, local, macro, false) : painted;
-	vec3 lowerSide	= mix(lowerColor, upperColor, fringe);
-	vec3 upperSide	= upperColor * (1.0 - rim);
-	return mix(lowerSide, upperSide, smoothstep(-0.5 * metersPerPixel, 0.5 * metersPerPixel, sigma));
+	return groundEncodeSrgb(painted.rgb) * groundTint(e.painted, macro);
 }

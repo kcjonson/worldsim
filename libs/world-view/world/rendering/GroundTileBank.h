@@ -13,6 +13,7 @@
 // and the last stores the def in the cache.
 
 #include "world/chunk/SurfaceField.h"
+#include "world/rendering/GroundPairs.h"
 #include "world/rendering/GroundTileBaker.h"
 #include "world/rendering/GroundTileCache.h"
 
@@ -66,6 +67,9 @@ namespace worldview {
 			float				 texelsPerMeter = 0.0F; // mip 0; the draw's LOD is log2(texelsPerMeter / screen px a meter) + bias
 			assets::GroundRotate rotate = assets::GroundRotate::Free;
 			assets::GroundMacro	 macro;
+			// The surface id its hex cells hash: the lowest in its seed group, so a co-baked family picks the same
+			// variant, flip and offset in a cell and its layouts line up across the family's edges.
+			int hashSurface = 0;
 		};
 
 		explicit GroundTileBank(const Args& args);
@@ -99,6 +103,8 @@ namespace worldview {
 
 		[[nodiscard]] std::span<const Array> arrays() const { return {arrayTable.data(), arrayCount}; }
 		[[nodiscard]] const Surface&		 surface(world::Surface id) const { return surfaces[static_cast<size_t>(id)]; }
+		/// Every pair of land surfaces' transition, from the defs (GroundPairs.h).
+		[[nodiscard]] const GroundPairTable& pairs() const { return pairTable; }
 		[[nodiscard]] size_t				 bytes() const;
 
 	  private:
@@ -128,6 +134,7 @@ namespace worldview {
 		std::array<Array, kMaxArrays>			  arrayTable{};
 		size_t									  arrayCount = 0;
 		std::array<Surface, world::kSurfaceCount> surfaces{};
+		GroundPairTable						  pairTable{};
 		std::vector<Def>						  defs;
 		size_t									  nextDef = 0;
 		std::vector<std::optional<GroundTileBake>> lookups;		// each def's, from lookUpAll, until startDef takes it

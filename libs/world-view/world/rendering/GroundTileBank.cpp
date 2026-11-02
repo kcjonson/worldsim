@@ -70,7 +70,9 @@ namespace worldview {
 		std::vector<std::string>	 names = registry.getDefinitionNames();
 		std::sort(names.begin(), names.end());
 
-		std::array<bool, world::kSurfaceCount> painted{};
+		std::array<bool, world::kSurfaceCount>					 painted{};
+		std::array<std::string, world::kSurfaceCount>			 seedGroups;
+		std::array<assets::GroundTransitions, world::kSurfaceCount> transitions{};
 		for (const std::string& name : names) {
 			const assets::AssetDefinition* def = registry.getDefinition(name);
 			if (def == nullptr || def->role != assets::AssetRole::Ground || !def->ground.surface.has_value()) {
@@ -105,6 +107,8 @@ namespace worldview {
 				.macro = def->ground.macro,
 			};
 			painted[static_cast<size_t>(id)] = true;
+			seedGroups[static_cast<size_t>(id)] = def->ground.seedGroup;
+			transitions[static_cast<size_t>(id)] = def->ground.transitions;
 			defs.push_back({.defName = name, .array = static_cast<int>(array), .firstLayer = s.firstLayer, .variants = variants});
 			arrayTable[array].layers += static_cast<int>(variants);
 			variantTotal += static_cast<int>(variants);
@@ -115,7 +119,15 @@ namespace worldview {
 			if (surface != world::Surface::Water && !painted[id]) {
 				fail("no ground def paints " + world::surfaceToString(surface));
 			}
+			surfaces[id].hashSurface = static_cast<int>(id);
+			for (size_t other = 0; other < id; ++other) {
+				if (painted[id] && painted[other] && seedGroups[other] == seedGroups[id]) {
+					surfaces[id].hashSurface = static_cast<int>(other);
+					break;
+				}
+			}
 		}
+		pairTable = buildGroundPairTable(transitions);
 
 		allocateArrays();
 		LOG_INFO(Renderer, "GroundTileBank: %d variants of %zu defs into %zu texture arrays", variantTotal, defs.size(), arrayCount);

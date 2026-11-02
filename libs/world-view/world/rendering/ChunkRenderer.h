@@ -121,15 +121,16 @@ class ChunkRenderer {
 	/// Set every tunable uniform from the Tunables registry (once per frame).
 	void applyTunables() const;
 
-	/// Set the land field's and the land look's uniforms (once per frame): the
-	/// field's tunables through SurfaceFieldParams, so the shader gets the exact
-	/// values an evaluation on the CPU uses, seeded from the world, and the fine
-	/// warp octaves worth drawing at this pixel size.
+	/// Set the land field's uniforms (once per frame): its tunables through
+	/// SurfaceFieldParams, so the shader gets the exact values an evaluation on the
+	/// CPU uses, seeded from the world, and the fine warp octaves worth drawing at
+	/// this pixel size.
 	void applyLandUniforms(uint64_t worldSeed, float metersPerPixel) const;
 
 	/// Bind the ground tile arrays and set the ground's uniforms (once per frame):
 	/// each surface's layers and mip level at this many screen pixels a meter, the
-	/// zoom's blend gain and hex cutoff, and the macro tints.
+	/// zoom's blend gain and hex cutoff, the macro tints, and the pair table with
+	/// this zoom's mip window (GroundPairs.h).
 	void applyGroundUniforms(uint64_t worldSeed, float screenPixelsPerMeter) const;
 
 	const GroundTileBank* groundTiles = nullptr;
@@ -193,22 +194,9 @@ class ChunkRenderer {
 		int landThinFloor = -1;
 		int landThinCeil = -1;
 		int landWarpFineOctaves = -1;
-		int landFringeW = -1;
-		int landRimDark = -1;
-		int landBreakupWavelength = -1;
-		int landBreakupInvWavelength = -1;
-		int landBreakupSeed = -1;
+		int landPair = -1;
 	};
 	UniformLocations loc;
-
-	/// The land look's per-surface tunables (terrain/land/fringe/*, rimDark/*), set
-	/// as uniform arrays; its scalars ride tunableUniforms.
-	struct LandLookTunables {
-		std::array<const float*, world::kSurfaceCount> fringeW{};
-		std::array<const float*, world::kSurfaceCount> rimDark{};
-		const float* breakupWavelength = nullptr;
-	};
-	LandLookTunables landLook;
 
 	/// The ground's tunables the CPU turns into per-frame uniforms; the ones the
 	/// shader reads as they stand ride tunableUniforms.
