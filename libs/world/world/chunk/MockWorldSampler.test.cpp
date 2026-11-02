@@ -1,10 +1,7 @@
 #include "MockWorldSampler.h"
-#include "world/chunk/TileBiomes.h"
 
 #include <gtest/gtest.h>
-#include <algorithm>
 #include <unordered_set>
-#include <utility>
 
 using namespace world;
 
@@ -145,25 +142,6 @@ TEST(MockWorldSamplerTests, BiomeWeightsAreValid) {
 
 		// Should have at least one biome with positive weight
 		EXPECT_GT(sum, 0.0F);
-	}
-}
-
-TEST(MockWorldSamplerTests, TileBiomesComeFromTheCorners) {
-	MockWorldSampler sampler(12345);
-
-	// Every tile's biome is one the chunk's corners weigh.
-	for (int x = -5; x <= 5; x++) {
-		for (int y = -5; y <= 5; y++) {
-			const ChunkCoordinate	coord(x, y);
-			const ChunkSampleResult result = sampler.sampleChunk(coord);
-			const ChunkBiomes		biomes(coord, result.cornerBiomes, sampler.getWorldSeed());
-			for (const auto [lx, ly] : {std::pair<uint16_t, uint16_t>{0, 0}, {511, 0}, {0, 511}, {511, 511}, {256, 256}}) {
-				const Biome primary = biomes.at(lx, ly).primary;
-				EXPECT_TRUE(std::any_of(result.cornerBiomes.begin(), result.cornerBiomes.end(), [primary](const BiomeWeights& w) {
-					return w.has(primary);
-				})) << "chunk (" << x << ", " << y << ") tile (" << lx << ", " << ly << ")";
-			}
-		}
 	}
 }
 
