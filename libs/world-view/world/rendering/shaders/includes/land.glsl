@@ -218,20 +218,32 @@ struct LandEval {
 	float along;	// the fine warp noise's x in [-1, 1], which the contest's threshold follows
 };
 
+/// One surface's field alone, as a block of only it reads: 1, no boundary.
+LandEval oneSurface(uint surface) {
+	LandEval e;
+	e.painted  = surface;
+	e.field	   = 1.0;
+	e.warp	   = vec2(0.0);
+	e.margin   = 0.5;
+	e.across   = surface;
+	e.distance = kNoBoundary;
+	e.along	   = 0.0;
+	return e;
+}
+
+/// In a near-interior tile, whether a read the fine term can move at most `reach`
+/// from `at` (an offset from the tile) keeps its block inside the tile's one-surface
+/// reach (evaluateSurfaceField has the reasoning).
+bool nearInteriorHolds(vec2 at, float reach) {
+	return all(greaterThanEqual(at, vec2(reach - 0.5 + kNearInteriorMarginM))) && all(lessThan(at, vec2(1.5 - reach - kNearInteriorMarginM)));
+}
+
 /// The field at a point, its fine warp summed over `fineOctaves` of
 /// kWarpFineOctaves (all of them for the exact field placement evaluates).
 LandEval evaluateLand(ivec2 tile, vec2 frac, int fineOctaves) {
-	LandEval e;
-	uvec2	 own = renderTile(tile);
+	uvec2 own = renderTile(tile);
 	if ((own.g & kRenderInteriorBit) != 0u) {
-		e.painted  = own.r;
-		e.field	   = 1.0;
-		e.warp	   = vec2(0.0);
-		e.margin   = 0.5;
-		e.across   = own.r;
-		e.distance = kNoBoundary;
-		e.along	   = 0.0;
-		return e;
+		return oneSurface(own.r);
 	}
 
 	// Warp amplitudes: bilinear over the tile centers around the point, each
@@ -261,30 +273,40 @@ LandEval evaluateLand(ivec2 tile, vec2 frac, int fineOctaves) {
 		1.0
 	);
 
-	// A near-interior tile whose read the fine term can't carry out of its
-	// one-surface reach (evaluateSurfaceField has the reasoning).
-	if ((own.g & kRenderNearInteriorBit) != 0u) {
-		vec2 low = frac + lowAmp * lowNoise;
-		if (all(greaterThanEqual(low, vec2(fineAmp - 0.5 + kNearInteriorMarginM))) && all(lessThan(low, vec2(1.5 - fineAmp - kNearInteriorMarginM)))) {
-			e.painted  = own.r;
-			e.field	   = 1.0;
-			e.warp	   = vec2(0.0);
-			e.margin   = 0.5;
-			e.across   = own.r;
-			e.distance = kNoBoundary;
-			e.along	   = 0.0;
-			return e;
-		}
+	// A near-interior tile whose read the fine term can't carry out of its one-surface
+	// reach: where the low term puts the read, and again once the first fine octave is
+	// in, against what the other octaves can add.
+	bool nearInterior = (own.g & kRenderNearInteriorBit) != 0u;
+	vec2 lowAt		  = frac + lowAmp * lowNoise;
+	if (nearInterior && nearInteriorHolds(lowAt, fineAmp)) {
+		return oneSurface(own.r);
 	}
 
-	vec2 fineNoise = clamp(
-		fractalNoise2SplitPair(
-			whole, offset, u_landWarpWavelength.x, u_landWarpInvWavelength.x, u_landWarpSeeds.x, kWarpFineOctaves, u_landWarpFineGain,
-			fineOctaves
-		),
-		-1.0,
-		1.0
-	);
+	// fractalNoise2SplitPair's fine sum an octave at a time; `total` is its weight over
+	// every octave.
+	SplitNoisePoint finePoint = splitNoisePoint(whole, offset, u_landWarpWavelength.x);
+	float			total	  = 0.0;
+	float			amp		  = 1.0;
+	for (int i = 0; i < kWarpFineOctaves; ++i) {
+		total += amp;
+		amp *= u_landWarpFineGain;
+	}
+	vec2  value = vec2(0.0);
+	float norm	= 0.0;
+	amp			= 1.0;
+	for (int i = 0; i < kWarpFineOctaves; ++i) {
+		if (i < fineOctaves) {
+			value += splitNoiseOctave(finePoint, u_landWarpInvWavelength.x, u_landWarpSeeds.x, i) * amp;
+		}
+		norm += amp;
+		amp *= u_landWarpFineGain;
+		if (i == 0 && nearInterior && nearInteriorHolds(lowAt + fineAmp * value / total, fineAmp * (total - norm) / total)) {
+			return oneSurface(own.r);
+		}
+	}
+	vec2 fineNoise = clamp(value / norm, -1.0, 1.0);
+
+	LandEval e;
 	e.warp	= clamp(fineAmp * fineNoise + lowAmp * lowNoise, -kMaxLandWarpM, kMaxLandWarpM);
 	e.along = fineNoise.x;
 

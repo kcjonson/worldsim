@@ -4,6 +4,8 @@
 
 #include "SurfaceField.h"
 
+#include <random/HashNoise.h>
+
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -323,7 +325,9 @@ TEST(SurfaceFieldTest, RenderTilesCarryEdgeSurfaceAndInteriorBit) {
 }
 
 // The near-interior shortcut changes nothing but the warp it skips: with the bit
-// cleared, every point paints the same surface with the same field and margin.
+// cleared, every point paints the same surface with the same field and margin. At a
+// fine amplitude of 1 m the low-warped test can never pass (its window is empty), so
+// every shortcut there is the test after the first fine octave.
 TEST(SurfaceFieldTest, NearInteriorShortcutMatchesTheFullField) {
 	const HandField field = handField(40, -60, 48, 48, [](int64_t tx, int64_t ty) {
 		const int64_t bx = tx / 9;
@@ -335,20 +339,42 @@ TEST(SurfaceFieldTest, NearInteriorShortcutMatchesTheFullField) {
 	for (TileRenderData& tile : full.tiles) {
 		tile.edge &= static_cast<uint8_t>(~kRenderNearInteriorBit);
 	}
-	const SurfaceFieldParams params	   = defaultSurfaceFieldParams(kSeed);
-	int						 shortcuts = 0;
-	for (int j = 0; j < 160; ++j) {
-		for (int i = 0; i < 160; ++i) {
-			const TilePoint			 p		= tilePointOf(46.0 + 0.23 * i, -54.0 + 0.23 * j);
-			const SurfaceFieldSample quick	= evaluateSurfaceField(field.view(), p, params);
-			const SurfaceFieldSample slow	= evaluateSurfaceField(full.view(), p, params);
-			EXPECT_EQ(quick.surface, slow.surface) << i << ", " << j;
-			EXPECT_EQ(quick.field, slow.field) << i << ", " << j;
-			EXPECT_EQ(quick.margin, slow.margin) << i << ", " << j;
-			shortcuts += quick.warpXM != slow.warpXM ? 1 : 0;
+	SurfaceFieldParams wideFine = defaultSurfaceFieldParams(kSeed);
+	wideFine.warpFineM.fill(1.0F);
+	for (const SurfaceFieldParams& params : {defaultSurfaceFieldParams(kSeed), wideFine}) {
+		int shortcuts = 0;
+		for (int j = 0; j < 160; ++j) {
+			for (int i = 0; i < 160; ++i) {
+				const TilePoint			 p	   = tilePointOf(46.0 + 0.23 * i, -54.0 + 0.23 * j);
+				const SurfaceFieldSample quick = evaluateSurfaceField(field.view(), p, params);
+				const SurfaceFieldSample slow  = evaluateSurfaceField(full.view(), p, params);
+				EXPECT_EQ(quick.surface, slow.surface) << i << ", " << j;
+				EXPECT_EQ(quick.field, slow.field) << i << ", " << j;
+				EXPECT_EQ(quick.margin, slow.margin) << i << ", " << j;
+				shortcuts += quick.warpXM != slow.warpXM ? 1 : 0;
+			}
+		}
+		EXPECT_GT(shortcuts, 1000) << "the shortcut should take a fair share of these points";
+	}
+}
+
+// The test after the first fine octave bounds what the others add by their weight,
+// which holds only while each octave's noise stays within [-1, 1].
+TEST(SurfaceFieldTest, WarpNoiseOctaveStaysWithinOne) {
+	float most = 0.0F;
+	for (uint32_t seed = 0; seed < 8; ++seed) {
+		for (int32_t cell = -40; cell < 40; ++cell) {
+			for (int j = 0; j < 32; ++j) {
+				for (int i = 0; i < 32; ++i) {
+					const foundation::NoisePair n =
+						foundation::gradientNoise2PairCell(cell * 7, cell * 13 + j, (static_cast<float>(i) + 0.5F) / 32.0F, static_cast<float>(j) / 32.0F, seed);
+					most = std::max({most, std::abs(n.first), std::abs(n.second)});
+				}
+			}
 		}
 	}
-	EXPECT_GT(shortcuts, 1000) << "the shortcut should take a fair share of these points";
+	EXPECT_LE(most, 1.0F);
+	EXPECT_GT(most, 0.9F) << "the bound should be near what the noise reaches";
 }
 
 // Far-zoom LOD (D16 step 7): at the game's 8 px/m, the shader draws all four fine

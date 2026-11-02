@@ -89,6 +89,30 @@ int noiseFloorDiv(int a, int b) {
 	return a >= 0 ? q : -q;
 }
 
+// fractalNoise2SplitPair's position, split into whole wavelengths `q` and the
+// remainder `base`, in [0, wavelength).
+struct SplitNoisePoint {
+	ivec2 q;
+	vec2  base;
+};
+
+SplitNoisePoint splitNoisePoint(ivec2 whole, vec2 frac, int wavelength) {
+	SplitNoisePoint p;
+	p.q		= ivec2(noiseFloorDiv(whole.x, wavelength), noiseFloorDiv(whole.y, wavelength));
+	uvec2 r = uvec2(whole - p.q * wavelength);
+	p.base	= vec2(smallToFloat(r.x), smallToFloat(r.y)) + frac;
+	return p;
+}
+
+/// Octave `i` of fractalNoise2SplitPair at lacunarity 2, unweighted.
+vec2 splitNoiseOctave(SplitNoisePoint p, float invWavelength, uint seed, int i) {
+	int	  cells = 1 << i;
+	vec2  u		= p.base * (invWavelength * float(cells));
+	vec2  cell	= floor(u);
+	ivec2 c		= ivec2(roundToInt(cell.x), roundToInt(cell.y));
+	return gradientNoise2PairCell(p.q * cells + c, u - cell, seed + uint(i));
+}
+
 // fractalNoise2SplitPair with lacunarity 2, summing only the first `summed` of its
 // `octaves` (a far-zoom LOD drops the finer ones) but normalizing over all of them,
 // so each kept octave weighs what it does in the full sum. `invWavelength` must be
@@ -96,19 +120,13 @@ int noiseFloorDiv(int a, int b) {
 vec2 fractalNoise2SplitPair(
 	ivec2 whole, vec2 frac, int wavelength, float invWavelength, uint seed, int octaves, float gain, int summed
 ) {
-	ivec2 q		= ivec2(noiseFloorDiv(whole.x, wavelength), noiseFloorDiv(whole.y, wavelength));
-	uvec2 r		= uvec2(whole - q * wavelength); // in [0, wavelength)
-	vec2  base	= vec2(smallToFloat(r.x), smallToFloat(r.y)) + frac;
-	vec2  value = vec2(0.0);
-	float amp	= 1.0;
-	float norm	= 0.0;
+	SplitNoisePoint p	  = splitNoisePoint(whole, frac, wavelength);
+	vec2			value = vec2(0.0);
+	float			amp	  = 1.0;
+	float			norm  = 0.0;
 	for (int i = 0; i < octaves; ++i) {
 		if (i < summed) {
-			int	  cells = 1 << i;
-			vec2  u		= base * (invWavelength * float(cells));
-			vec2  cell	= floor(u);
-			ivec2 c		= ivec2(roundToInt(cell.x), roundToInt(cell.y));
-			value += gradientNoise2PairCell(q * cells + c, u - cell, seed + uint(i)) * amp;
+			value += splitNoiseOctave(p, invWavelength, seed, i) * amp;
 		}
 		norm += amp;
 		amp *= gain;

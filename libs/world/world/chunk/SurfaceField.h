@@ -38,11 +38,12 @@ inline constexpr int32_t kEdgeReachTiles = 2;
 /// A tile is interior when every tile this far around it has its surface.
 inline constexpr int32_t kInteriorReachTiles = 3;
 /// And near-interior at this reach: a point there whose read stays within it, which
-/// the low warp term and the fine term's amplitude bound, sees only that surface
-/// (evaluateSurfaceField skips the fine noise and the block).
+/// the low warp term and the fine term's amplitude bound (or the fine term's first
+/// octave and what the others can add), sees only that surface (evaluateSurfaceField
+/// skips the fine noise, or all but its first octave, and the block).
 inline constexpr int32_t kNearInteriorReachTiles = 2;
-/// How far inside that bound the low-warped point must be, meters: float rounding
-/// in the full warp can't carry the read across it.
+/// How far inside that bound the tested point must be, meters: float rounding in
+/// the full warp can't carry the read across it.
 inline constexpr float kNearInteriorMarginM = 1.0e-3F;
 /// A Water tile's bed is the nearest land tile at most this far away.
 inline constexpr int32_t kBedReachTiles = 3;
