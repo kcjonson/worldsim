@@ -95,6 +95,10 @@ struct TileData {
 class ExtendedTiles;
 class TerrainPolygonQuery;
 
+namespace generation {
+	class PatchNoise;
+}
+
 /// A 512×512 region of the world.
 /// Tiles are pre-computed during generate() and stored in a flat array.
 /// All systems read from the same definitive tile data.
@@ -113,6 +117,7 @@ class Chunk {
 		uint16_t localX = 0;
 		uint16_t localY = 0;
 		TileBiome biome;
+		const generation::PatchNoise* patchNoise = nullptr; ///< the owning chunk's (ChunkNeighborhood)
 		float elevationMeters = 0.0F;
 		const ChunkSampleResult* hydrology = nullptr;
 		uint64_t worldSeed = 0;
@@ -235,13 +240,13 @@ class Chunk {
 	void computeRenderData(const ExtendedTiles& extended, const TerrainPolygonQuery& terrain);
 
 	/// Select surface type based on biome using organic noise-based patches, for
-	/// any (coord, biome, local tile, elevation, seed), not just this chunk's own.
-	/// Elevation is passed in (already resolved by the caller) rather than
-	/// re-derived from a sample source, so it works the same for a chunk's own
-	/// tiles and for an apron tile resolved against a neighbor's corners
-	/// (ApronField).
-	[[nodiscard]] static Surface selectSurfaceFor(ChunkCoordinate coord, Biome biome, uint16_t localX,
-	                                               uint16_t localY, float elevationMeters, uint64_t worldSeed);
+	/// any local tile of the chunk whose patch fields `patchNoise` holds, not just
+	/// this chunk's own. Elevation is passed in (already resolved by the caller)
+	/// rather than re-derived from a sample source, so it works the same for a
+	/// chunk's own tiles and for an apron tile resolved against a neighbor's
+	/// corners (ApronField).
+	[[nodiscard]] static Surface selectSurfaceFor(const generation::PatchNoise& patchNoise, Biome biome, uint16_t localX,
+	                                               uint16_t localY, float elevationMeters);
 };
 
 }  // namespace world

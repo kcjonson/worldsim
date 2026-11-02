@@ -558,6 +558,7 @@ namespace {
 					.localX			 = nx,
 					.localY			 = ny,
 					.biome			 = neighborhood->biomes(dx, dy).at(nx, ny),
+					.patchNoise		 = &neighborhood->patchNoise(dx, dy),
 					.elevationMeters = neighborhood->tileElevation(dx, dy, nx, ny),
 					.hydrology		 = &sample,
 					.worldSeed		 = worldSeed,

@@ -16,6 +16,7 @@
 #include "world/chunk/ChunkCoordinate.h"
 #include "world/chunk/ChunkSampleResult.h"
 #include "world/chunk/TileBiomes.h"
+#include "world/generation/PatchNoise.h"
 
 #include <array>
 #include <cstdint>
@@ -27,8 +28,8 @@ namespace world {
 /// A generating chunk's 3x3 neighborhood (D4): the biome and elevation of every
 /// tile its generation reads, each chunk's computed as that chunk computes its
 /// own, from the sample's corner lattice. The chunk itself (0, 0) reads the
-/// sample's own corners. Each chunk's ChunkBiomes is built on first use. One per
-/// generation call: not thread-safe.
+/// sample's own corners. Each chunk's ChunkBiomes and PatchNoise are built on
+/// first use. One per generation call: not thread-safe.
 class ChunkNeighborhood {
   public:
 	/// `sample` must carry the neighborhood corner lattice
@@ -40,6 +41,9 @@ class ChunkNeighborhood {
 
 	/// The biomes of the chunk at offset (dx, dy), each in [-1, 1].
 	[[nodiscard]] const ChunkBiomes& biomes(int32_t dx, int32_t dy);
+
+	/// The generators' patch fields over the chunk at offset (dx, dy).
+	[[nodiscard]] const generation::PatchNoise& patchNoise(int32_t dx, int32_t dy);
 
 	/// Elevation, meters, of local tile (localX, localY) of the chunk at offset
 	/// (dx, dy): one plane a chunk through its corners.
@@ -66,6 +70,7 @@ class ChunkNeighborhood {
 	const ChunkSampleResult&			  sample;
 	uint64_t							  seed;
 	std::array<std::optional<ChunkBiomes>, 9> chunks;
+	std::array<std::optional<generation::PatchNoise>, 9> patches;
 };
 
 /// The apron ring of tiles around a chunk: the kExtendedSize x kExtendedSize

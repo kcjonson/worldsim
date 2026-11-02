@@ -5,6 +5,7 @@
 
 #include "world/Biome.h"
 #include "world/chunk/ChunkCoordinate.h" // Provides kChunkSize
+#include "world/generation/PatchNoise.h"
 
 #include <cstdint>
 
@@ -13,22 +14,14 @@ namespace world::generation {
 /// Context passed to biome generators containing all available input data.
 /// Designed for deterministic generation: same context = same output.
 struct GenerationContext {
-	ChunkCoordinate chunkCoord; ///< Chunk being generated
 	uint16_t localX = 0;        ///< Tile X within chunk (0 to kChunkSize-1)
 	uint16_t localY = 0;        ///< Tile Y within chunk (0 to kChunkSize-1)
-	uint64_t worldSeed = 0;     ///< World seed for determinism
+	const PatchNoise* noise = nullptr; ///< the owning chunk's patch fields
 	Biome biome = Biome::TemperateGrassland; ///< Primary biome at this tile
 	float elevation = 0.0F;     ///< Elevation in meters
 
-	/// Calculate world X position in tile units
-	[[nodiscard]] float worldX() const {
-		return static_cast<float>(chunkCoord.x * world::kChunkSize + localX);
-	}
-
-	/// Calculate world Y position in tile units
-	[[nodiscard]] float worldY() const {
-		return static_cast<float>(chunkCoord.y * world::kChunkSize + localY);
-	}
+	/// `field` at this tile.
+	[[nodiscard]] float patch(PatchField field) const { return noise->at(field, localX, localY); }
 };
 
 } // namespace world::generation

@@ -31,6 +31,15 @@ namespace world {
 		return *chunk;
 	}
 
+	const generation::PatchNoise& ChunkNeighborhood::patchNoise(int32_t dx, int32_t dy) {
+		assert(dx >= -1 && dx <= 1 && dy >= -1 && dy <= 1);
+		std::optional<generation::PatchNoise>& patch = patches[neighborIndex(dx, dy)];
+		if (!patch) {
+			patch.emplace(ChunkCoordinate{center.x + dx, center.y + dy}, seed);
+		}
+		return *patch;
+	}
+
 	float ChunkNeighborhood::tileElevation(int32_t dx, int32_t dy, uint16_t localX, uint16_t localY) const {
 		const std::array<float, 4> corners = (dx == 0 && dy == 0) ? sample.cornerElevations : sample.neighborCornerElevations(dx, dy);
 		const float				   u = static_cast<float>(localX) / static_cast<float>(kChunkSize - 1);
@@ -92,6 +101,7 @@ namespace world {
 				 .localX = nx,
 				 .localY = ny,
 				 .biome = neighborhood.biomes(dx, dy).at(nx, ny),
+				 .patchNoise = &neighborhood.patchNoise(dx, dy),
 				 .elevationMeters = neighborhood.tileElevation(dx, dy, nx, ny),
 				 .hydrology = &hydrology,
 				 .worldSeed = neighborhood.worldSeed(),

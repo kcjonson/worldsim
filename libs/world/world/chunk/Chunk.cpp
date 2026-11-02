@@ -62,6 +62,7 @@ namespace world {
 		const ChunkSampleResult raster = m_biomeData.rasterHydrology(m_coord);
 		ChunkNeighborhood		neighborhood(m_coord, m_biomeData, m_worldSeed);
 		const ChunkBiomes&		biomes = neighborhood.biomes(0, 0);
+		const generation::PatchNoise& patchNoise = neighborhood.patchNoise(0, 0);
 		for (uint16_t y = 0; y < kChunkSize; ++y) {
 			for (uint16_t x = 0; x < kChunkSize; ++x) {
 				m_tiles[y * kChunkSize + x] = computeTileFrom({
@@ -69,6 +70,7 @@ namespace world {
 					.localX = x,
 					.localY = y,
 					.biome = biomes.at(x, y),
+					.patchNoise = &patchNoise,
 					.elevationMeters = neighborhood.tileElevation(0, 0, x, y),
 					.hydrology = &raster,
 					.worldSeed = m_worldSeed,
@@ -191,7 +193,7 @@ namespace world {
 		tile.elevation = static_cast<uint16_t>(std::clamp(elevCm, 0.0F, 65535.0F));
 
 		// Select surface type based on primary biome (uses spatial clustering)
-		tile.surface = selectSurfaceFor(args.coord, tile.primaryBiome, args.localX, args.localY, args.elevationMeters, args.worldSeed);
+		tile.surface = selectSurfaceFor(*args.patchNoise, tile.primaryBiome, args.localX, args.localY, args.elevationMeters);
 
 		// Water depth byte (cosmetic tile data, not drawn). Biome water
 		// (ocean/lake/wetland) reads deep; river channels set depth from their width
@@ -249,19 +251,18 @@ namespace world {
 		return tile;
 	}
 
-	Surface Chunk::selectSurfaceFor(ChunkCoordinate coord, Biome biome, uint16_t localX, uint16_t localY,
-	                                 float elevationMeters, uint64_t worldSeed) {
+	Surface Chunk::selectSurfaceFor(const generation::PatchNoise& patchNoise, Biome biome, uint16_t localX, uint16_t localY,
+	                                 float elevationMeters) {
 		// Delegate to biome-specific generators via dispatcher
 		generation::GenerationContext ctx{
-			.chunkCoord = coord,
 			.localX = localX,
 			.localY = localY,
-			.worldSeed = worldSeed,
+			.noise = &patchNoise,
 			.biome = biome,
 			.elevation = elevationMeters
 		};
 
-		return generation::BiomeDispatcher::generate(ctx).surface;
+		return generation::BiomeDispatcher::generate(ctx);
 	}
 
 	void Chunk::setTerrainPolygons(ChunkTerrainPolygons polygons) {

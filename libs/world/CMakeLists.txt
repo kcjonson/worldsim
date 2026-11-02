@@ -14,6 +14,7 @@ add_library(world
     world/chunk/TerrainPolygonBuilder.cpp
     world/chunk/TerrainPolygonQuery.cpp
     world/chunk/TileBiomes.cpp
+    world/generation/PatchNoise.cpp
 )
 
 target_include_directories(world
