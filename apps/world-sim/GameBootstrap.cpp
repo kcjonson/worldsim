@@ -2,6 +2,8 @@
 
 #include <application/App.h>
 #include <assets/AssetBootstrap.h>
+#include <assets/AssetRegistry.h>
+#include <assets/AssetValidator.h>
 #include <world/rendering/GroundTileBank.h>
 
 #include <cassert>
@@ -29,6 +31,24 @@ namespace world_sim {
 	worldview::GroundTileBank& groundTiles() {
 		assert(g_groundTiles != nullptr && "initializeResources makes the ground tile bank");
 		return *g_groundTiles;
+	}
+
+	GroundBakeStep stepGroundBake() {
+		const assets::ValidationReport& report = assets::AssetRegistry::Get().getValidationReport();
+		if (report.hasErrors()) {
+			GroundBakeStep failed{.done = true};
+			for (const assets::ValidationIssue& issue : report.issues) {
+				if (issue.severity == assets::Severity::Error) {
+					failed.errors.push_back((issue.defName.empty() ? std::string("-") : issue.defName) + ": " + issue.message);
+				}
+			}
+			return failed;
+		}
+		worldview::GroundTileBank& bank = groundTiles();
+		if (!bank.ready() && bank.bakeNext()) {
+			return {};
+		}
+		return {.done = true, .errors = bank.errors()};
 	}
 
 } // namespace world_sim

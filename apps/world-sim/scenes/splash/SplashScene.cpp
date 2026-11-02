@@ -82,18 +82,12 @@ namespace {
 				return;
 			}
 
-			const assets::ValidationReport& report = registry.getValidationReport();
-			if (report.hasErrors()) {
-				m_failed = true;
-				showErrors(report);
-				LOG_ERROR(Game, "Asset validation failed: %d error(s); blocking at splash", report.errorCount());
-				return;
-			}
-
 			if (!bakeGround()) {
 				return;
 			}
-			LOG_INFO(Game, "SplashScene - assets ready (%d defs, %d warnings)", m_lastShownCount, report.warningCount());
+			LOG_INFO(
+				Game, "SplashScene - assets ready (%d defs, %d warnings)", m_lastShownCount, registry.getValidationReport().warningCount()
+			);
 			finishLoad();
 		}
 
@@ -239,37 +233,35 @@ namespace {
 		}
 
 		// The ground tiles, a variant a frame so the splash keeps drawing between them; true once every one
-		// is in. A failed bake blocks here as a validation error does.
+		// is in. A validation error or a failed bake blocks here.
 		bool bakeGround() {
-			worldview::GroundTileBank& bank = world_sim::groundTiles();
-			if (!bank.ready()) {
-				if (!bank.started()) {
-					while (m_shownBootLines < static_cast<int>(kBootLines.size())) {
-						addBootLine(kBootLines[static_cast<size_t>(m_shownBootLines)]);
-						++m_shownBootLines;
-					}
-					addGroundLine();
-					bank.begin();
+			if (groundStamp.get() == nullptr) {
+				while (m_shownBootLines < static_cast<int>(kBootLines.size())) {
+					addBootLine(kBootLines[static_cast<size_t>(m_shownBootLines)]);
+					++m_shownBootLines;
 				}
-				if (bank.bakeNext()) {
-					if (ui::Text* text = m_groundText.get()) {
-						text->setText(
-							"Baking ground tiles " + std::to_string(bank.bakedVariants()) + "/" + std::to_string(bank.totalVariants())
-						);
-					}
-					return false;
-				}
+				addGroundLine();
 			}
-			if (!bank.errors().empty()) {
-				m_failed = true;
-				showErrorLines(bank.errors());
-				LOG_ERROR(Game, "Ground tiles failed to bake: %zu error(s); blocking at splash", bank.errors().size());
+			const world_sim::GroundBakeStep step = world_sim::stepGroundBake();
+			if (!step.done) {
+				const worldview::GroundTileBank& bank = world_sim::groundTiles();
+				if (ui::Text* text = groundText.get()) {
+					text->setText(
+						"Baking ground tiles " + std::to_string(bank.bakedVariants()) + "/" + std::to_string(bank.totalVariants())
+					);
+				}
 				return false;
 			}
-			if (ui::Text* stamp = m_groundStamp.get()) {
+			if (!step.errors.empty()) {
+				m_failed = true;
+				showErrorLines(step.errors);
+				LOG_ERROR(Game, "Asset validation or the ground bake failed: %zu error(s); blocking at splash", step.errors.size());
+				return false;
+			}
+			if (ui::Text* stamp = groundStamp.get()) {
 				stamp->setText("[ OK ]");
 			}
-			if (ui::Text* text = m_groundText.get()) {
+			if (ui::Text* text = groundText.get()) {
 				text->setText("Ground tiles baked");
 			}
 			return true;
@@ -278,10 +270,10 @@ namespace {
 		// The boot log's last line, which the ground bake updates.
 		void addGroundLine() {
 			ui::Ref<ui::Component> row = m_bootLog.addChild<ui::Component>({.layout = {.display = ui::Display::Flex}});
-			m_groundStamp = row.addChild<ui::Text>(
+			groundStamp = row.addChild<ui::Text>(
 				{.size = {52.0F, ui::kAuto}, .style = mono(tokens::fontSize::fsXs, tokens::color::statusOk), .text = "[ .. ]"}
 			);
-			m_groundText =
+			groundText =
 				row.addChild<ui::Text>({.style = mono(tokens::fontSize::fsXs, tokens::color::textFaint), .text = "Baking ground tiles"});
 		}
 
@@ -298,16 +290,6 @@ namespace {
 		}
 
 		// Up to eight error lines over the boot log; the button stays disabled.
-		void showErrors(const assets::ValidationReport& report) {
-			std::vector<std::string> lines;
-			for (const auto& issue : report.issues) {
-				if (issue.severity == assets::Severity::Error) {
-					lines.push_back((issue.defName.empty() ? std::string("-") : issue.defName) + ": " + issue.message);
-				}
-			}
-			showErrorLines(lines);
-		}
-
 		void showErrorLines(const std::vector<std::string>& lines) {
 			ui::Component* errors = m_errors.get();
 			if (errors == nullptr) {
@@ -329,8 +311,8 @@ namespace {
 		float				   m_progress = 0.0F;
 		ui::Ref<ui::Component> m_bootLog;
 		ui::Ref<ui::Component> m_errors;
-		ui::Ref<ui::Text>	   m_groundStamp;
-		ui::Ref<ui::Text>	   m_groundText;
+		ui::Ref<ui::Text>	   groundStamp;
+		ui::Ref<ui::Text>	   groundText;
 		ui::Ref<ui::Button>	   m_enterButton;
 	};
 

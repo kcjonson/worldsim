@@ -152,8 +152,18 @@ namespace {
 				m_camera = std::make_unique<world::WorldCamera>();
 				m_camera->setPanSpeed(200.0F);
 
-				// A direct switch here skips the splash and the loading scene, which bake the ground tiles.
-				world_sim::groundTiles().bakeAll();
+				// A direct switch here (the dev server's scene or reload) skips the scenes that bake the ground tiles,
+				// so the bake runs to the end here, behind the same gate; a failure goes to the splash, which shows it.
+				world_sim::GroundBakeStep bake;
+				while (!(bake = world_sim::stepGroundBake()).done) {}
+				if (!bake.errors.empty()) {
+					LOG_ERROR(
+						Game,
+						"GameScene - asset validation or the ground bake failed (%zu error(s)); back to the splash",
+						bake.errors.size()
+					);
+					owner->scenes().switchTo(world_sim::scenes::Splash.name);
+				}
 				m_renderer = std::make_unique<worldview::ChunkRenderer>(kPixelsPerMeter, world_sim::groundTiles());
 
 				m_entityRenderer = std::make_unique<worldview::EntityRenderer>(kPixelsPerMeter);

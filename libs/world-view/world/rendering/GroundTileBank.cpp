@@ -10,6 +10,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <exception>
+#include <string>
 
 namespace worldview {
 
@@ -28,6 +30,33 @@ namespace worldview {
 		size_t levelBytes(int layerSize, int level, int layers) {
 			const auto size = static_cast<size_t>(std::max(1, layerSize >> level));
 			return size * size * 4 * static_cast<size_t>(layers);
+		}
+
+		// Runs a bake step and catches what it throws, the message in `error`: left to salal's guard, an
+		// exception would only be logged, and the next call would run the same step again.
+		template <typename Step>
+		bool guarded(Step&& step, std::string& error) {
+			try {
+				step();
+				return true;
+			} catch (const std::exception& e) {
+				error = e.what();
+			} catch (...) {
+				error = "an exception that isn't a std::exception";
+			}
+			return false;
+		}
+
+		GLint glLimit(GLenum name) {
+			GLint value = 0;
+			glGetIntegerv(name, &value);
+			return value;
+		}
+
+		// Drops the GL errors raised before a check, so the check sees only its own. Bounded: a lost
+		// context keeps reporting.
+		void clearGlErrors() {
+			for (int i = 0; i < 16 && glGetError() != GL_NO_ERROR; ++i) {}
 		}
 
 	} // namespace
@@ -58,7 +87,9 @@ namespace worldview {
 	}
 
 	GroundTileBaker GroundTileBank::baker() const {
-		return GroundTileBaker({.restoreCoordinateSystem = args.restoreCoordinateSystem, .pool = pool.get(), .cache = &cache});
+		return GroundTileBaker(
+			{.restoreCoordinateSystem = args.restoreCoordinateSystem, .maxRenderSize = maxRenderSize, .pool = pool.get(), .cache = &cache}
+		);
 	}
 
 	void GroundTileBank::begin() {
@@ -67,6 +98,22 @@ namespace worldview {
 		}
 		isStarted = true;
 		startTime = Clock::now();
+
+		std::string error;
+		if (!guarded([this] { plan(); }, error)) {
+			fail("planning the ground bake threw: " + error);
+			defs.clear();
+		}
+		LOG_INFO(Renderer, "GroundTileBank: %d variants of %zu defs into %zu texture arrays", variantTotal, defs.size(), arrayCount);
+		if (defs.empty()) {
+			finish();
+		}
+	}
+
+	void GroundTileBank::plan() {
+		const GLint maxTextureSize = glLimit(GL_MAX_TEXTURE_SIZE);
+		const GLint maxLayers = glLimit(GL_MAX_ARRAY_TEXTURE_LAYERS);
+		maxRenderSize = std::min(GroundTileBaker::Args{}.maxRenderSize, static_cast<int>(maxTextureSize));
 
 		const assets::AssetRegistry& registry = assets::AssetRegistry::Get();
 		std::vector<std::string>	 names = registry.getDefinitionNames();
@@ -96,6 +143,20 @@ namespace worldview {
 				fail(line);
 				continue;
 			}
+			if (!assets::groundVariantCountSupported(def->variantCount)) {
+				fail(
+					name + ": " + std::to_string(def->variantCount) + " variants; a ground def bakes 1 to " +
+					std::to_string(assets::kMaxGroundVariants)
+				);
+				continue;
+			}
+			if (layerSize > maxTextureSize) {
+				fail(
+					name + ": a " + std::to_string(layerSize) + " texel layer is past this GPU's largest texture, " +
+					std::to_string(maxTextureSize)
+				);
+				continue;
+			}
 			size_t				 array = 0;
 			while (array < arrayCount && arrayTable[array].layerSize != layerSize) {
 				++array;
@@ -103,16 +164,23 @@ namespace worldview {
 			if (array == arrayCount) {
 				if (arrayCount == kMaxArrays) {
 					fail(
-						name + ": a " + std::to_string(layerSize) + " texel layer would need a fifth texture array; the tile shader has " +
-						std::to_string(kMaxArrays)
+						name + ": a " + std::to_string(layerSize) +
+						" texel layer would need one more texture array than the tile shader's " + std::to_string(kMaxArrays)
 					);
 					continue;
 				}
 				arrayTable[arrayCount++] = {.layerSize = layerSize, .levels = GroundTileBaker::mipCount(layerSize)};
 			}
 
-			const uint32_t variants = std::max(1U, def->variantCount);
-			Surface&	   s = surfaces[static_cast<size_t>(id)];
+			const uint32_t variants = def->variantCount;
+			if (arrayTable[array].layers + static_cast<int>(variants) > maxLayers) {
+				fail(
+					name + ": its " + std::to_string(variants) + " layers would take texture array " + std::to_string(array) + " past " +
+					std::to_string(maxLayers) + ", this GPU's most"
+				);
+				continue;
+			}
+			Surface& s = surfaces[static_cast<size_t>(id)];
 			s = {
 				.array = static_cast<int>(array),
 				.firstLayer = arrayTable[array].layers,
@@ -146,15 +214,13 @@ namespace worldview {
 		pairTable = buildGroundPairTable(transitions);
 
 		allocateArrays();
-		LOG_INFO(Renderer, "GroundTileBank: %d variants of %zu defs into %zu texture arrays", variantTotal, defs.size(), arrayCount);
-		if (defs.empty()) {
-			finish();
-			return;
+		if (!defs.empty()) {
+			pool = std::make_unique<foundation::TaskPool>();
 		}
-		pool = std::make_unique<foundation::TaskPool>();
 	}
 
 	void GroundTileBank::allocateArrays() {
+		clearGlErrors();
 		for (size_t i = 0; i < arrayCount; ++i) {
 			Array& a = arrayTable[i];
 			glGenTextures(1, &a.texture);
@@ -170,8 +236,40 @@ namespace worldview {
 			glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 			glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_BASE_LEVEL, 0);
 			glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAX_LEVEL, a.levels - 1);
+
+			const GLenum status = glGetError();
+			if (status == GL_NO_ERROR) {
+				continue;
+			}
+			char line[192];
+			std::snprintf(
+				line,
+				sizeof(line),
+				"texture array %zu (%d layers of %dx%d, %.1f MiB) couldn't be allocated: GL error 0x%04x%s",
+				i,
+				a.layers,
+				a.layerSize,
+				a.layerSize,
+				mebibytes(a.bytes),
+				status,
+				status == GL_OUT_OF_MEMORY ? " (out of video memory)" : ""
+			);
+			fail(line);
+			clearGlErrors();
+			glDeleteTextures(1, &a.texture);
+			a.texture = 0;
+			a.bytes = 0;
 		}
 		glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+
+		// A def whose array isn't there has nowhere to upload, so it isn't baked.
+		std::erase_if(defs, [this](const Def& def) {
+			if (arrayTable[static_cast<size_t>(def.array)].texture != 0) {
+				return false;
+			}
+			variantTotal -= static_cast<int>(def.variants);
+			return true;
+		});
 	}
 
 	void GroundTileBank::upload(const Def& def, const GroundVariantBake& bake) const {
@@ -216,19 +314,19 @@ namespace worldview {
 		return false;
 	}
 
-	void GroundTileBank::bakeAll() {
-		while (bakeNext()) {}
-	}
-
 	void GroundTileBank::lookUpAll(const GroundTileBaker& groundBaker) {
 		const auto start = Clock::now();
+		lookedUp = true;
 		lookups.resize(defs.size());
+		lookupErrors.resize(defs.size());
 		pool->parallelFor(0, defs.size(), 1, [&](size_t first, size_t last) {
 			for (size_t i = first; i < last; ++i) {
-				lookups[i] = groundBaker.begin(defs[i].defName);
+				std::string error;
+				if (!guarded([&] { lookups[i] = groundBaker.begin(defs[i].defName); }, error)) {
+					lookupErrors[i] = "its cache lookup threw: " + error;
+				}
 			}
 		});
-		lookedUp = true;
 		lookupMs += msSince(start);
 	}
 
@@ -237,7 +335,8 @@ namespace worldview {
 		std::optional<GroundTileBake> bake = std::move(lookups[nextDef]);
 		lookups[nextDef].reset();
 		if (!bake.has_value()) {
-			fail(def.defName + ": not a bakeable ground def (the log says why)");
+			const std::string& error = lookupErrors[nextDef];
+			fail(def.defName + ": " + (error.empty() ? "not a bakeable ground def (the log says why)" : error));
 			endDef();
 			return false;
 		}
@@ -252,18 +351,23 @@ namespace worldview {
 			return false;
 		}
 
-		std::optional<std::vector<GroundVariantPaths>> paths = groundBaker.buildPaths(*bake);
+		std::string									   error;
+		std::optional<std::vector<GroundVariantPaths>> paths;
+		const bool									   built = guarded([&] { paths = groundBaker.buildPaths(*bake); }, error);
 		pathsMs += msSince(phase);
 		if (!paths.has_value()) {
-			fail(def.defName + ": a variant's generator failed (the log says why)");
+			fail(def.defName + ": " + (built ? "a variant's generator failed (the log says why)" : "building its paths threw: " + error));
 			endDef();
 			return false;
 		}
 		phase = Clock::now();
-		const bool drewHeights = groundBaker.bakeHeights(*bake, *paths);
+		bool	   drewHeights = false;
+		const bool ranHeights = guarded([&] { drewHeights = groundBaker.bakeHeights(*bake, *paths); }, error);
 		heightsMs += msSince(phase);
 		if (!drewHeights) {
-			fail(def.defName + ": its heights failed to bake (the log says why)");
+			fail(
+				def.defName + ": " + (ranHeights ? "its heights failed to bake (the log says why)" : "baking its heights threw: " + error)
+			);
 			endDef();
 			return false;
 		}
@@ -276,11 +380,16 @@ namespace worldview {
 		const Def&						 def = defs[nextDef];
 		GroundVariantPaths&				 paths = currentPaths[current->variants.size()];
 		auto							 phase = Clock::now();
-		std::optional<GroundVariantBake> baked = groundBaker.bakeVariant(*current, paths);
+		std::string						 error;
+		std::optional<GroundVariantBake> baked;
+		const bool						 ran = guarded([&] { baked = groundBaker.bakeVariant(*current, paths); }, error);
 		renderMs += msSince(phase);
 		paths.paths = {}; // drawn; let the memory go before the next one renders
 		if (!baked.has_value()) {
-			fail(def.defName + ": variant " + std::to_string(paths.variant) + " failed to bake (the log says why)");
+			fail(
+				def.defName + ": variant " + std::to_string(paths.variant) +
+				(ran ? " failed to bake (the log says why)" : " threw while baking: " + error)
+			);
 			endDef();
 			return;
 		}
@@ -293,9 +402,13 @@ namespace worldview {
 			return;
 		}
 		phase = Clock::now();
-		groundBaker.finish(*current);
+		const bool finished = guarded([&] { groundBaker.finish(*current); }, error);
 		finishMs += msSince(phase);
-		++bakedDefs;
+		if (finished) {
+			++bakedDefs;
+		} else {
+			fail(def.defName + ": measuring and storing its bake threw: " + error);
+		}
 		endDef();
 	}
 
