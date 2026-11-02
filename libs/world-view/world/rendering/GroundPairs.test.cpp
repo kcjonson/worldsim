@@ -79,6 +79,11 @@ TEST(GroundPairsTest, ADrawPacksItsMipWindowAndPixelFloor) {
 	EXPECT_FLOAT_EQ(v[1], 0.5F - 0.1F);
 	EXPECT_FLOAT_EQ(v[2], 0.5F / 0.04F);
 
+	// The pixel floor stops at the field's reach: width plus offset at most kGroundBandReachM.
+	packGroundPairs(table, mips, 2.0F, out);
+	EXPECT_FLOAT_EQ(v[0], 0.5F / 1.3F);
+	EXPECT_FLOAT_EQ(v[1], 0.5F + 0.5F * -0.2F / 1.3F);
+
 	// The contest's compact support: at b = +-1 the weight is exactly 1 or 0 for any heights in [0, 1].
 	const float inv2W = v[2];
 	const float nu4W  = v[3];

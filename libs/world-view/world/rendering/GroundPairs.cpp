@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cmath>
 
 namespace worldview {
 
@@ -43,7 +44,7 @@ namespace worldview {
 				const assets::GroundTransition& t = table[pair];
 				const float						mip = std::max(mipLevels[byLevel[upper]], mipLevels[byLevel[lower]]);
 				const float						window = std::max(t.softness, mip * kLandWindowPerMip);
-				const float						width = std::max(t.widthM, metersPerPixel);
+				const float width = std::max(t.widthM, std::min(metersPerPixel, assets::kGroundBandReachM - std::abs(t.offsetM)));
 				assert(window > 0.0F && width > 0.0F);
 				float* v = out.data() + pair * kLandPairVec4s * 4;
 				v[0] = 0.5F / width;

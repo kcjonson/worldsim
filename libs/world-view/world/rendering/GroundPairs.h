@@ -37,8 +37,9 @@ namespace worldview {
 	///   z 1 / (2 W), w nu / (4 W): the contest is saturate((hA - hB) z + b (z + w + 0.5) + along w + 0.5)
 	///   then shadow, stain, ridge and tint.
 	/// W is the window, max(softness, max(mip of either surface) * kLandWindowPerMip), and w the width
-	/// floored at one pixel so a band never narrows below the line it replaces. `mipLevels` is each
-	/// surface's mip level this draw, by surface id, lod bias included.
+	/// floored at one pixel so a band never narrows below the line it replaces. The floor stops where w plus
+	/// the offset reaches assets::kGroundBandReachM, past which the field reports no edge and the band would
+	/// end in a cut. `mipLevels` is each surface's mip level this draw, by surface id, lod bias included.
 	void packGroundPairs(
 		const GroundPairTable& table, const std::array<float, world::kSurfaceCount>& mipLevels, float metersPerPixel, std::span<float, kLandPairFloats> out
 	);
