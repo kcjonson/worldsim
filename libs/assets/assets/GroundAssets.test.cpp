@@ -1,5 +1,5 @@
 // Tests for the asset side of ground tile variants: the ground role and its schema, the Lua
-// noise and setLod bindings, and meshes too big for 16-bit indices.
+// noise, setLod and setHeight bindings, paint-order heights, and meshes too big for 16-bit indices.
 
 #include "assets/AssetDefinition.h"
 #include "assets/AssetRegistry.h"
@@ -249,6 +249,30 @@ TEST(GroundLuaTest, SetLodLandsOnTheGeneratedPath) {
 	EXPECT_FLOAT_EQ(out.paths[1].minPixelsPerMeter, 0.0F);
 }
 
+TEST(GroundLuaTest, SetHeightLandsOnTheGeneratedPathWithinZeroToOne) {
+	bool		   ok = false;
+	GeneratedAsset out = runLua(
+		"local unset, set = Path(), Path()\n"
+		"set:setHeight(0.7)\n"
+		"asset:addPath(unset)\nasset:addPath(set)\n",
+		&ok
+	);
+	ASSERT_TRUE(ok);
+	ASSERT_EQ(out.paths.size(), 2U);
+	EXPECT_FALSE(out.paths[0].height.has_value());
+	ASSERT_TRUE(out.paths[1].height.has_value());
+	EXPECT_FLOAT_EQ(*out.paths[1].height, 0.7F);
+	out.paths[1].clear();
+	EXPECT_FALSE(out.paths[1].height.has_value());
+
+	for (const char* height : {"-0.1", "1.5"}) {
+		std::string error;
+		runLua(std::string("Path():setHeight(") + height + ")\n", &ok, &error);
+		EXPECT_FALSE(ok) << height;
+		EXPECT_NE(error.find("setHeight"), std::string::npos) << error;
+	}
+}
+
 namespace {
 
 	// A Lua body that adds `count` triangles, path i spanning x in [i, i + 0.5].
@@ -458,5 +482,57 @@ TEST(GroundMeshTest, PathsCrossingTheTileEdgeWrapRightAfterTheOriginal) {
 		{3.75F, 3.75F},
 	};
 	EXPECT_EQ(corners, expected);
+	AssetRegistry::Get().clearDefinitions();
+}
+
+TEST(GroundMeshTest, UnsetHeightsTakeTheirPaintOrderRank) {
+	// Four paths, the second with a height of its own, the third crossing the right edge.
+	const TempDir t;
+	ASSERT_NE(
+		loadGround(
+			t,
+			"<surface>Grass</surface><period>4</period>",
+			"local function tri(x, y)\n"
+			"    local p = Path()\n"
+			"    p:addVertex(x, y)\n    p:addVertex(x + 0.5, y)\n    p:addVertex(x, y + 0.5)\n    p:setColor(0.3, 0.6, 0.2, 0.5)\n"
+			"    p:close()\n"
+			"    return p\n"
+			"end\n"
+			"asset:addPath(tri(1, 1))\n"
+			"local set = tri(2, 1)\n"
+			"set:setHeight(0.1)\n"
+			"asset:addPath(set)\n"
+			"asset:addPath(tri(3.75, 2))\n"
+			"asset:addPath(tri(1, 3))\n"
+		),
+		nullptr
+	);
+	TessellatedPaths paths;
+	ASSERT_TRUE(AssetRegistry::Get().buildPaths("Ground_Tile", 0, paths));
+	ASSERT_EQ(paths.paths.size(), 5U) << "the edge-crossing path and its copy";
+	const std::vector<float> heights{0.25F, 0.1F, 0.75F, 0.75F, 1.0F};
+	for (size_t i = 0; i < heights.size(); ++i) {
+		EXPECT_FLOAT_EQ(paths.paths[i].height, heights[i]) << "path " << i << ": its rank among the generator's 4, the copy its original's";
+	}
+
+	std::vector<renderer::TessellatedMesh> meshes;
+	ASSERT_TRUE(paths.heightMeshesAt(AssetRegistry::kFullDetail, meshes));
+	ASSERT_EQ(meshes.size(), 1U);
+	ASSERT_EQ(meshes[0].colors.size(), 15U);
+	const auto expectGray = [](const Foundation::Color& c, float height) {
+		EXPECT_FLOAT_EQ(c.r, height);
+		EXPECT_FLOAT_EQ(c.g, height);
+		EXPECT_FLOAT_EQ(c.b, height);
+		EXPECT_FLOAT_EQ(c.a, 0.5F) << "its fill's alpha kept";
+	};
+	expectGray(meshes[0].colors[3], 0.1F);
+	expectGray(meshes[0].colors[14], 1.0F);
+	AssetRegistry::Get().clearDefinitions();
+}
+
+TEST(GroundAssetTest, SeedGroupDefaultsToTheDefName) {
+	const TempDir t;
+	EXPECT_EQ(loadGround(t, "<surface>Grass</surface>")->ground.seedGroup, "Ground_Tile");
+	EXPECT_EQ(loadGround(t, "<surface>Grass</surface><seedGroup>grass</seedGroup>")->ground.seedGroup, "grass");
 	AssetRegistry::Get().clearDefinitions();
 }

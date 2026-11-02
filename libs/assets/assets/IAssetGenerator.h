@@ -51,12 +51,16 @@ struct GeneratedPath {
 	// Drawn only where the screen shows at least this many pixels per meter (path:setLod in Lua).
 	// 0 = always drawn. The ground tile bake reads it to leave fine detail out of coarse mips.
 	float						  minPixelsPerMeter = 0.0F;
+	// The ground tile bake's height for this path, 0 to 1 (path:setHeight in Lua). Unset, a ground
+	// path takes its paint-order rank.
+	std::optional<float>		  height;
 
 	void clear() {
 		vertices.clear();
 		fillColor = Foundation::Color(0.3F, 0.6F, 0.2F, 1.0F);
 		isClosed = true;
 		minPixelsPerMeter = 0.0F;
+		height.reset();
 	}
 };
 

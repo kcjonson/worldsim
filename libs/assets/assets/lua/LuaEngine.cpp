@@ -183,6 +183,14 @@ namespace assets {
 			// Draw this path only where the screen shows at least n pixels per meter (ground tiles)
 			"setLod",
 			[](GeneratedPath& path, float minPixelsPerMeter) { path.minPixelsPerMeter = minPixelsPerMeter; },
+			// This path's height in the ground tile bake, 0 to 1
+			"setHeight",
+			[](GeneratedPath& path, float height) {
+				if (!(height >= 0.0F && height <= 1.0F)) {
+					throw std::invalid_argument("setHeight: the height must be from 0 to 1");
+				}
+				path.height = height;
+			},
 			"close",
 			[](GeneratedPath& path) { path.isClosed = true; },
 			"clear",

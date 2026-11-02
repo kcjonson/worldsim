@@ -7,6 +7,39 @@
 
 namespace assets {
 
+	namespace {
+
+		// The paths drawn at pixelsPerMeter packed into meshes, each vertex colored colorOf(path, vertex).
+		template <typename ColorOf>
+		bool packMeshes(
+			const TessellatedPaths& source, float pixelsPerMeter, std::vector<renderer::TessellatedMesh>& outMeshes, const ColorOf& colorOf
+		) {
+			outMeshes.clear();
+			for (const TessellatedPaths::Path& path : source.paths) {
+				if (path.minPixelsPerMeter > pixelsPerMeter) {
+					continue;
+				}
+				// Start the next mesh when this path would push the current one past the 16-bit index range
+				if (outMeshes.empty() || outMeshes.back().vertices.size() + path.vertexCount > TessellatedPaths::kMaxMeshVertices) {
+					outMeshes.emplace_back();
+				}
+				renderer::TessellatedMesh& mesh = outMeshes.back();
+				const auto				   base = static_cast<uint16_t>(mesh.vertices.size());
+				const auto				   firstVertex = static_cast<std::ptrdiff_t>(path.firstVertex);
+				const auto				   lastVertex = firstVertex + static_cast<std::ptrdiff_t>(path.vertexCount);
+				mesh.vertices.insert(mesh.vertices.end(), source.vertices.begin() + firstVertex, source.vertices.begin() + lastVertex);
+				for (uint32_t v = path.firstVertex; v < path.firstVertex + path.vertexCount; ++v) {
+					mesh.colors.push_back(colorOf(path, v));
+				}
+				for (uint32_t i = 0; i < path.indexCount; ++i) {
+					mesh.indices.push_back(static_cast<uint16_t>(base + source.indices[path.firstIndex + i]));
+				}
+			}
+			return !outMeshes.empty();
+		}
+
+	} // namespace
+
 	void TessellatedPaths::tessellate(const GeneratedAsset& asset, float maxPixelsPerMeter) {
 		const auto start = std::chrono::steady_clock::now();
 		vertices.clear();
@@ -38,6 +71,7 @@ namespace assets {
 				.firstIndex = static_cast<uint32_t>(indices.size()),
 				.indexCount = static_cast<uint32_t>(pathMesh.indices.size()),
 				.minPixelsPerMeter = path.minPixelsPerMeter,
+				.height = path.height.value_or(0.0F),
 			});
 			vertices.insert(vertices.end(), pathMesh.vertices.begin(), pathMesh.vertices.end());
 			colors.insert(colors.end(), pathMesh.vertices.size(), path.fillColor);
@@ -47,26 +81,13 @@ namespace assets {
 	}
 
 	bool TessellatedPaths::meshesAt(float pixelsPerMeter, std::vector<renderer::TessellatedMesh>& outMeshes) const {
-		outMeshes.clear();
-		for (const Path& path : paths) {
-			if (path.minPixelsPerMeter > pixelsPerMeter) {
-				continue;
-			}
-			// Start the next mesh when this path would push the current one past the 16-bit index range
-			if (outMeshes.empty() || outMeshes.back().vertices.size() + path.vertexCount > kMaxMeshVertices) {
-				outMeshes.emplace_back();
-			}
-			renderer::TessellatedMesh& mesh = outMeshes.back();
-			const auto				   base = static_cast<uint16_t>(mesh.vertices.size());
-			const auto				   firstVertex = static_cast<std::ptrdiff_t>(path.firstVertex);
-			const auto				   lastVertex = firstVertex + static_cast<std::ptrdiff_t>(path.vertexCount);
-			mesh.vertices.insert(mesh.vertices.end(), vertices.begin() + firstVertex, vertices.begin() + lastVertex);
-			mesh.colors.insert(mesh.colors.end(), colors.begin() + firstVertex, colors.begin() + lastVertex);
-			for (uint32_t i = 0; i < path.indexCount; ++i) {
-				mesh.indices.push_back(static_cast<uint16_t>(base + indices[path.firstIndex + i]));
-			}
-		}
-		return !outMeshes.empty();
+		return packMeshes(*this, pixelsPerMeter, outMeshes, [this](const Path& /*path*/, uint32_t v) { return colors[v]; });
+	}
+
+	bool TessellatedPaths::heightMeshesAt(float pixelsPerMeter, std::vector<renderer::TessellatedMesh>& outMeshes) const {
+		return packMeshes(*this, pixelsPerMeter, outMeshes, [this](const Path& path, uint32_t v) {
+			return Foundation::Color(path.height, path.height, path.height, colors[v].a);
+		});
 	}
 
 } // namespace assets

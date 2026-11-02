@@ -222,7 +222,7 @@ namespace assets {
 				if (isGroundRole(role)) {
 					validateGroundDef(assetDef, defName, groundSurfaceToDef, report);
 				} else {
-					for (const char* field : {"surface", "period", "pixelsPerMeter", "rotate", "macro"}) {
+					for (const char* field : {"surface", "period", "pixelsPerMeter", "rotate", "macro", "seedGroup"}) {
 						if (assetDef.child(field)) {
 							report.add(Severity::Warning, defName, field, std::string("<") + field + "> is only read for role ground; it has no effect", fileCtx);
 						}

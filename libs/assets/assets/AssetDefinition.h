@@ -266,6 +266,9 @@ namespace assets {
 		uint32_t					  pixelsPerMeter = 64;	// Bake density; a 4 m variant at 64 is a 256 x 256 layer
 		GroundRotate				  rotate = GroundRotate::Free;
 		GroundMacro					  macro;
+		// Salts the bake's generator seeds: defs sharing a group get the same seed for each variant index,
+		// so a family drawn by one generator lays its variants out alike. The def's name when unset.
+		std::string					  seedGroup;
 	};
 
 	/// Key-value parameter store for generator configuration.

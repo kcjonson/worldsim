@@ -28,6 +28,7 @@ namespace assets {
 			uint32_t firstIndex = 0;
 			uint32_t indexCount = 0;
 			float	 minPixelsPerMeter = 0.0F; // drawn where the screen shows at least this many px/m
+			float	 height = 0.0F;			   // the ground bake's height, 0 to 1 (GeneratedPath::height)
 		};
 
 		std::vector<Foundation::Vec2>  vertices;
@@ -45,6 +46,10 @@ namespace assets {
 		/// The paths drawn at pixelsPerMeter, in order, packed into as many meshes as keep each within
 		/// kMaxMeshVertices. False when that's none.
 		bool meshesAt(float pixelsPerMeter, std::vector<renderer::TessellatedMesh>& outMeshes) const;
+
+		/// meshesAt with each path in flat gray at its height, keeping its fill's alpha: what the ground
+		/// bake's height pass draws.
+		bool heightMeshesAt(float pixelsPerMeter, std::vector<renderer::TessellatedMesh>& outMeshes) const;
 	};
 
 } // namespace assets

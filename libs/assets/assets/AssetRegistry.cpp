@@ -385,6 +385,10 @@ namespace assets {
 
 			ground.periodMeters	  = defNode.child("period").text().as_float(ground.periodMeters);
 			ground.pixelsPerMeter = defNode.child("pixelsPerMeter").text().as_uint(ground.pixelsPerMeter);
+			ground.seedGroup	  = defNode.child_value("seedGroup");
+			if (ground.seedGroup.empty()) {
+				ground.seedGroup = def.defName;
+			}
 
 			const std::string rotate = defNode.child_value("rotate");
 			if (rotate == "free" || rotate == "Free") {
@@ -438,6 +442,19 @@ namespace assets {
 			}
 			out = std::move(meshes.front());
 			return true;
+		}
+
+		/// A ground path that set no height takes its paint-order rank, from 1 / n for the first of n paths
+		/// to 1 for the last, so where only those paint, the topmost path at a texel is its height and
+		/// a texel nothing covers, 0, is the lowest.
+		void rankUnsetHeights(GeneratedAsset& asset) {
+			const float n = static_cast<float>(asset.paths.size());
+			for (size_t i = 0; i < asset.paths.size(); ++i) {
+				GeneratedPath& path = asset.paths[i];
+				if (!path.height.has_value()) {
+					path.height = static_cast<float>(i + 1) / n;
+				}
+			}
 		}
 
 		/// Repeat every path of a ground tile that crosses an edge of its [0, period] square at the
@@ -1645,6 +1662,7 @@ namespace assets {
 
 		const AssetDefinition* def = getDefinition(defName);
 		if (def->role == AssetRole::Ground) {
+			rankUnsetHeights(asset); // before the wrap, so a copy keeps its original's rank
 			wrapGroundPaths(asset, def->ground.periodMeters);
 		}
 		outPaths.tessellate(asset, maxPixelsPerMeter);
