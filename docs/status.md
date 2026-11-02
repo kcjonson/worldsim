@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-11-02 (Ground Surface Blending: the waterline and nav ring growth from the organic biome edges measured against the sector pick and left as is (WOR-563): no frame cost, a coast chunk 113 ms on the worker against 86 and its water-only nav regions 0.3 ms against 0.1, and no ring tolerance past 100 mm keeps the shore profiles and every test. Before that: the near-interior test runs again after the fine warp's first octave, bound by what the other octaves can add, in the C++ field and land.glsl alike, bit for bit (WOR-564); desert zoom 3 tileGpuMs 0.57 and 0.58 against main's 0.56, was 0.60, every other cell of the 27 under main, chunk generation untouched. Before that: art round 2 (WOR-561): Rock, Mud, Sand and Snow redrawn in ground_bare.lua (weathered stone with a few joints and lichen colonies, small sky-tinted puddles, short ripple fragments and wind streaks, quiet wind-packed snow), the recipes retuned (Snow crisp with a lip, Sand over Rock narrower, the grass family band 0.2 m), desert tileGpuMs 0.01 to 0.03 under the contest's final, cold bake 21.1 to 21.3 s, warm 33 to 37 ms. Before that: the height contest (WOR-560): the fringe, its breakup and the rim are deleted, each pair's band and shading come from the ground defs' <transition> blocks (validated, outside the bake key), the band reads a distance from the field's value that stays continuous to the 1.5 m reach, the grass family hashes its hex cells alike, and the field sheds per-pixel work bit for bit; tileGpuMs at or under main in 26 of 27 cells, desert zoom 3 still +0.06 from the organic biome edges. Before that: heights in the ground arrays' alpha (WOR-559): path:setHeight with a paint-order default, a second render at mip 0 ranked per surface to a uniform histogram, filtered mips with a widening contest window kept over per-mip equalization (zoom loss 0.032 against 0.103), the grass family co-baked from one seed group; cold bake 20.2 s (+10%), warm 32 ms. Before that: biome edges are per-tile and organic (WOR-558): a tile picks its biome from the corner weights plus world-space gradient noise and an ecotone, the sector grid is gone, the generators run on gradient patch noise hashed once a chunk, and chunk generation got cheaper (median 55 ms against 67). Before that: spec written, a height contest in the ground arrays' alpha replaces the fringe and rim and biome edges become per-tile, no code yet. Before that, Ground Tile Variants: round 1 of the real ground art for the eight surfaces that painted placeholders, the grass family from ground_grass.lua and Dirt, Sand, Mud, Rock and Snow from one new generator, ground_bare.lua, every bake clean but the mips 1 to 3 contrast flags Grass shows too, awaiting Kevin's feedback. Before that: the tile pass is back under main in every view and zoom (a leaner sampler, a cheaper land field, no ground under open water, hex blending from 16 px/m). Before that: the tile pass paints the baked arrays through the hex sampler and the macro texture, the atlas is deleted, and the bake runs each generator once on the pool and keeps a disk cache, so a warm bake takes about 40 ms. Earlier that day: the epic started, perf baseline and spike done, spec rewritten in docs/technical/ground-textures.md. Earlier: 2026-09-28 Construction G3: foundation Add / Subtract. An editable blueprint is reshaped in place, an Add onto a built foundation becomes an extension blueprint that merges into it once built, and the result is judged against every foundation rule, including the new foundation-to-foundation pathing clearance. See dev log 2026-09-28-foundation-add-subtract.md. Earlier: 2026-09-27 WOR-493/WOR-488 fixed: the navmesh is one constrained Delaunay triangulation of the arrangement, so no face drops (chunk-corner water pinches and 300-tree land faces no longer blank the landing), a route deferred for want of a mesh is requested again when the nav generation moves, and the "Waiting for the area to settle" hold gives way to the first wander. See dev log 2026-09-27-frozen-colonist-unplaceable-stations.md. Earlier: 2026-09-26 Organic Terrain Geometry epic complete: water is the terrain rings for nav, rendering, vision, and mud, and every land boundary is a warped field isoline. See dev log 2026-09-26-organic-terrain-geometry.md. Earlier: WOR-463: perf validated across zoom levels; the ground and water pass stays under 1.5 ms of GPU at 3072x1728 at every zoom (now reported as tileGpuMs), far-zoom land LOD, 0.25 m near distance-field texels, the waterline lattice's one-sided cells filled in spans, nav regions recenter without blocking the frame. Earlier: WOR-462: every land-on-land boundary drawn as the isoline of a warped per-surface field (SurfaceField + land.glsl, golden-tested against each other), render tiles shrunk to 524 KB a chunk with a 3-tile apron post-processed like the neighbors' tiles, placement reading the painted field and the water rings, tile.glsl neighbor bleed and tile adjacency deleted. Earlier: WOR-461: vision drinks from shore points sampled along the rings, mud banks by distance to the rings that continue across chunk borders, point-bar sand on tight inner bends, TerrainPolygonQuery over each chunk's rings. Earlier: WOR-460: water and shore painted per pixel from the distance field, tile water path deleted, shader look tunable live over /api/dev/tunable. Earlier: WOR-459: nav reads the chunks' terrain rings, tile marcher deleted; colonists stop at the smooth waterline and wade fordable creeks. Earlier: WOR-457 per-chunk waterline rings built on the chunk worker, contour module in libs/geometry. Earlier: Game UI to Prototype Polish complete: 8 PRs merged (#256-#261, #263, #264) — layout verification harness (/api/ui/tree + /api/ui/lint), LayoutContainer auto-layout engine (Fill/Hug/Fixed, distribution, gap/padding, auto text wrap), MSDF text fixes, ScenarioSelect + PartySelect scenes with party→spawn wiring, starfield/planet backdrops, EntityInfoView rebuild, region minimap panel, dossier Gear paperdoll, full pre-game screen fidelity; lint reports zero violations on every screen. See dev log 2026-07-03-game-ui-prototype-polish.md. Earlier: Colonist task arbitration complete: (tier,score) key, 7-tier ladder, job lifecycle, TaskListView inspector, 879 engine-tests green, combined four-scenario flow verified end-to-end. Earlier: Colonist gameplay stabilization complete and merged (#241): grass is now a first-class GPU-instanced groundcover role driven by a procedural Lua asset (24 variants, ~486k tufts @ 120fps/1.75ms), placed entities no longer randomly tilt (opt-in <randomRotation>), and the EntityRenderer god-class was decomposed into per-path renderers. Story 0 of Living Environment Rendering; M-A wind next. See dev log 2026-06-27-groundcover-render-path.md. Earlier: Worldgen M7 complete: input-validation envelope + fail-loud reason channel, golden full-pipeline worldHash gate that turns dual-platform CI into a cross-platform determinism check (+ worldgen-cli --expect-hash), and a benchmark-calibrated default resolution (gen-time sweep on the reference machine; kept n=1024 as a documented kDefaultGridSubdivision). Closes the last engineering task of the World Generation & Creator epic; only the deferred planet-DB streaming and landing-difficulty UX remain. See dev log 2026-06-26-worldgen-m7-hardening.md. Earlier: Physical carry & stacks epics complete and merged (#218/#219/#224/#228/#230/#232/#233): two-hand wood armfuls + strength-derived carry, then a universal physical "stack" model -- one material capped at its own stackSize everywhere -- plus construction sites that hold their required materials directly and dump to the ground on demolish. See dev log 2026-06-26-physical-stack-inventory.md and plan 2026-06-26-bulk-material-carry-felling.md. Earlier: 2D landscape from 3D hydrology epic complete and merged (#212) -- replaced the noise-flood ponds with sparse biome/precip-weighted ponds + desert oases, implemented Distribution::Spaced with grove/glade/thicket clustering for denser natural forests, and fixed riparian plants (reeds on the mud bank + bankside bushes); follows the merged 2D rivers #208 and tributaries/springs #210. See dev log 2026-06-22-hydrology-ponds-and-proper-forests.md. Earlier: Realistic chained build loop: mass-based carry weight + axe-gated chopping + wood-unit tree harvesting; the colonist chops to its carry cap, hauls, repeats, then builds. Plus the task-chaining UI/AI fixes found verifying it (in-progress-work priority calc, friendly labels, full-width info-panel task lines, "Next" chain step, build-progress percent + on-map fill, global task list Build umbrella + who's-working-it). See dev log 2026-06-20-carry-weight-axe-gated-harvest.md. Earlier on main: Asset Manager epic #205 (dev log 2026-06-20-asset-manager.md), Cryosphere #199, Navigation P4 belief filtering #189/#191/#194, Vision System #172-184, Salvage UI cutover #176-181)
+Last Updated: 2026-11-02 (Ground Tile Variants and Ground Surface Blending are complete and merged, #332 carried by #333: baked, hex-mixed ground tile variants, height-contested surface edges and organic biome edges, with the tile pass at or under main in 26 of 27 perf cells. See dev logs 2026-11-02-ground-tile-variants.md and 2026-11-02-ground-surface-blending.md; what is left is planned as Ground Tile Follow-ups. Earlier: 2026-09-28 Construction G3: foundation Add / Subtract. An editable blueprint is reshaped in place, an Add onto a built foundation becomes an extension blueprint that merges into it once built, and the result is judged against every foundation rule, including the new foundation-to-foundation pathing clearance. See dev log 2026-09-28-foundation-add-subtract.md. Earlier: 2026-09-27 WOR-493/WOR-488 fixed: the navmesh is one constrained Delaunay triangulation of the arrangement, so no face drops (chunk-corner water pinches and 300-tree land faces no longer blank the landing), a route deferred for want of a mesh is requested again when the nav generation moves, and the "Waiting for the area to settle" hold gives way to the first wander. See dev log 2026-09-27-frozen-colonist-unplaceable-stations.md. Earlier: 2026-09-26 Organic Terrain Geometry epic complete: water is the terrain rings for nav, rendering, vision, and mud, and every land boundary is a warped field isoline. See dev log 2026-09-26-organic-terrain-geometry.md. Earlier: WOR-463: perf validated across zoom levels; the ground and water pass stays under 1.5 ms of GPU at 3072x1728 at every zoom (now reported as tileGpuMs), far-zoom land LOD, 0.25 m near distance-field texels, the waterline lattice's one-sided cells filled in spans, nav regions recenter without blocking the frame. Earlier: WOR-462: every land-on-land boundary drawn as the isoline of a warped per-surface field (SurfaceField + land.glsl, golden-tested against each other), render tiles shrunk to 524 KB a chunk with a 3-tile apron post-processed like the neighbors' tiles, placement reading the painted field and the water rings, tile.glsl neighbor bleed and tile adjacency deleted. Earlier: WOR-461: vision drinks from shore points sampled along the rings, mud banks by distance to the rings that continue across chunk borders, point-bar sand on tight inner bends, TerrainPolygonQuery over each chunk's rings. Earlier: WOR-460: water and shore painted per pixel from the distance field, tile water path deleted, shader look tunable live over /api/dev/tunable. Earlier: WOR-459: nav reads the chunks' terrain rings, tile marcher deleted; colonists stop at the smooth waterline and wade fordable creeks. Earlier: WOR-457 per-chunk waterline rings built on the chunk worker, contour module in libs/geometry. Earlier: Game UI to Prototype Polish complete: 8 PRs merged (#256-#261, #263, #264) — layout verification harness (/api/ui/tree + /api/ui/lint), LayoutContainer auto-layout engine (Fill/Hug/Fixed, distribution, gap/padding, auto text wrap), MSDF text fixes, ScenarioSelect + PartySelect scenes with party→spawn wiring, starfield/planet backdrops, EntityInfoView rebuild, region minimap panel, dossier Gear paperdoll, full pre-game screen fidelity; lint reports zero violations on every screen. See dev log 2026-07-03-game-ui-prototype-polish.md. Earlier: Colonist task arbitration complete: (tier,score) key, 7-tier ladder, job lifecycle, TaskListView inspector, 879 engine-tests green, combined four-scenario flow verified end-to-end. Earlier: Colonist gameplay stabilization complete and merged (#241): grass is now a first-class GPU-instanced groundcover role driven by a procedural Lua asset (24 variants, ~486k tufts @ 120fps/1.75ms), placed entities no longer randomly tilt (opt-in <randomRotation>), and the EntityRenderer god-class was decomposed into per-path renderers. Story 0 of Living Environment Rendering; M-A wind next. See dev log 2026-06-27-groundcover-render-path.md. Earlier: Worldgen M7 complete: input-validation envelope + fail-loud reason channel, golden full-pipeline worldHash gate that turns dual-platform CI into a cross-platform determinism check (+ worldgen-cli --expect-hash), and a benchmark-calibrated default resolution (gen-time sweep on the reference machine; kept n=1024 as a documented kDefaultGridSubdivision). Closes the last engineering task of the World Generation & Creator epic; only the deferred planet-DB streaming and landing-difficulty UX remain. See dev log 2026-06-26-worldgen-m7-hardening.md. Earlier: Physical carry & stacks epics complete and merged (#218/#219/#224/#228/#230/#232/#233): two-hand wood armfuls + strength-derived carry, then a universal physical "stack" model -- one material capped at its own stackSize everywhere -- plus construction sites that hold their required materials directly and dump to the ground on demolish. See dev log 2026-06-26-physical-stack-inventory.md and plan 2026-06-26-bulk-material-carry-felling.md. Earlier: 2D landscape from 3D hydrology epic complete and merged (#212) -- replaced the noise-flood ponds with sparse biome/precip-weighted ponds + desert oases, implemented Distribution::Spaced with grove/glade/thicket clustering for denser natural forests, and fixed riparian plants (reeds on the mud bank + bankside bushes); follows the merged 2D rivers #208 and tributaries/springs #210. See dev log 2026-06-22-hydrology-ponds-and-proper-forests.md. Earlier: Realistic chained build loop: mass-based carry weight + axe-gated chopping + wood-unit tree harvesting; the colonist chops to its carry cap, hauls, repeats, then builds. Plus the task-chaining UI/AI fixes found verifying it (in-progress-work priority calc, friendly labels, full-width info-panel task lines, "Next" chain step, build-progress percent + on-map fill, global task list Build umbrella + who's-working-it). See dev log 2026-06-20-carry-weight-axe-gated-harvest.md. Earlier on main: Asset Manager epic #205 (dev log 2026-06-20-asset-manager.md), Cryosphere #199, Navigation P4 belief filtering #189/#191/#194, Vision System #172-184, Salvage UI cutover #176-181)
 
 ## Epic/Story/Task Template
 
@@ -27,6 +27,95 @@ Use this template for all work items:
 ---
 
 ## Recently Completed Epics (Last 4)
+
+### ✅ Ground Surface Blending
+**Spec/Documentation:** `/docs/technical/ground-textures.md` (Surface transitions), `/docs/technical/organic-terrain/terrain-polygons-architecture.md` (D13, D15, D16, biome edges), plan `/docs/development-log/plans/2026-11-02-ground-blending.md`, dev log `2026-11-02-ground-surface-blending.md`
+**Dependencies:** Ground Tile Variants
+**Status:** complete (Specboard WOR-556; merged via #333, which carries #332)
+
+**Tasks:**
+- [x] Spec (WOR-557)
+- [x] Organic biome edges and gradient noise (WOR-558)
+  - [x] Per-tile biome pick from interpolated corner weights plus world-space gradient fBm and an ecotone band
+  - [x] Gradient noise in the generators, `NoiseUtils::valueNoise` deleted if unused
+  - [x] Apron, waterline and `Chunk::computeTileFrom` on the new lookup; tests that hand-fill `sectorGrid` moved
+  - [x] Before and after screenshots (desert staircase, a coast, a lake); chunk generation cost reported
+- [x] Heights in the ground arrays (WOR-559)
+  - [x] Lua `path:setHeight`, paint-order default
+  - [x] Height pass in the baker, rank normalization, alpha filtered as data, `kVersion` bump
+  - [x] Mip strategy A/B: filtered mips and a widening window kept, `Wc` and `mipC` fitted
+  - [x] Grass family seed-group co-bake
+  - [x] Tests (rank normalization, alpha survives the filter, `setHeight` default); cold and warm bake reported
+- [x] Height contest (WOR-560)
+  - [x] `<transition>` schema, validator rules, pair table upload
+  - [x] Contest in `land.glsl`; fringe, rim and their tunables deleted
+  - [x] Mip window fit; distance accuracy past 0.5 m checked (it stepped; the band's distance now comes from the field's value)
+  - [x] Perf A/Bs against the branch tip before blending (desert zoom 3 still 0.06 ms over main)
+- [x] Art round 2 (WOR-561)
+  - [x] Rock, Mud, Sand and Snow
+  - [x] Heights tuned per surface and pair recipes tuned on the real edges
+- [x] Desert zoom 3: the near-interior test again after the first fine octave (WOR-564; +0.01 to +0.02 ms over main, was +0.04)
+- [x] Waterline and nav ring growth from organic edges measured, not trimmed (WOR-563; no frame cost, worker time in terrain spec section 6)
+- [x] Verify and hand off (WOR-562)
+  - [x] Final perf capture against main
+  - [x] `docs/testing/scenarios/09-ground-tiles.md` transition steps
+  - [x] Regression pass (01-04, 06 and 08 pass; WOR-566, WOR-567 and WOR-568 filed, outside this branch's code)
+  - [x] PRs (textures #332, then blending #333 stacked on top, which carries #332's commits); hand-off screenshots of each pair at zoom 20, 3, 1.5 and 0.5
+- [x] macOS GLSL 4.10 fix: the tile shader compiles as 4.10 so `textureGather` is core (WOR-565)
+- [x] Band distance at three-surface junctions measured from the paint rule's lead (WOR-569, found in Kevin's manual test)
+- [x] 5-agent review, fixes in
+  - [x] Biome pick read past its candidates at a rounding tie (out-of-bounds read)
+  - [x] Ground bake cache keyed on the def as loaded, one cache file a def with sanitized names
+  - [x] One bake path for every scene, a step that throws or that GL refuses fails its def
+  - [x] Pair table stored as a triangle of 36 pairs
+  - [x] Fold-safe bias math in the shader
+  - [x] Golden test rendered over negative tiles too
+  - [x] Validation of macro, variant count and layer size
+- [x] Kevin's manual test, approved 2026-11-02
+
+**Result:** Surface edges are a height contest between the two surfaces' baked heights, and biome edges are per-tile and organic. The merged tile pass reads at or under main in 26 of 27 cells (desert idle zoom 3 is 0.58 ms against main's 0.56), cold bake about 21 s, warm 33 to 37 ms. ✅
+
+### ✅ Ground Tile Variants
+**Spec/Documentation:** `/docs/technical/ground-textures.md`, plan `/docs/development-log/plans/2026-11-02-ground-tile-variants.md`, dev log `2026-11-02-ground-tile-variants.md`
+**Dependencies:** none
+**Status:** complete (Specboard WOR-545; merged via #333, which carries #332)
+
+**Tasks:**
+- [x] Perf baseline and spike
+  - [x] Baseline captures of main on the river, coast and desert views
+  - [x] Profile today's tile pass (atlas, water, land field)
+  - [x] Spike on a throwaway branch: texture array, hex sampler, macro texture, fringe, packed neighborhood
+- [x] Spec and board
+  - [x] Rewrite ground-textures.md with the spike numbers
+  - [x] Specboard epic and tasks
+  - [x] Add the epic here
+- [x] Asset side
+  - [x] `ground` role, schema parse, validator rules
+  - [x] Lua `noise2`, `periodicNoise2`, `path:setLod`
+  - [x] `tessellateAsset` index-wrap fix
+  - [x] Unit tests
+- [x] Bake and shader
+  - [x] `GroundTileBank`: wrapped, supersampled, per-mip render into the texture arrays
+  - [x] Bake speed: one generator run a variant, variants on the pool, disk cache, which the splash bake reads
+  - [x] Per-chunk macro texture
+  - [x] `land.glsl` hex sampler, ChunkRenderer bindings and tunables
+  - [x] Delete the atlas path
+- [x] Content
+  - [x] Placeholder defs for the eight surfaces without art (`ground_placeholder.lua`, deleted with the real art)
+  - [x] Grass generator and the four grass defs (GrassShort, GrassMeadow and GrassTall round 1, with wildflowers for Meadow)
+  - [x] Dirt, Sand, Mud, Rock and Snow from one generator, `ground_bare.lua` (round 1)
+  - [x] Art round 2 from Kevin's feedback (Rock, Mud, Sand and Snow redrawn, WOR-561)
+- [x] Asset-manager preview
+  - [x] 3x3 wrapped preview and variant grid
+  - [x] Fixed tile frame for thumbnails
+- [x] Verify and hand off
+  - [x] In-game GPU hold for perf captures, so nobody locks clocks (WOR-553)
+  - [x] Tile pass back to net neutral or faster than main in every cell
+  - [x] Final perf capture against main with the GPU hold on
+  - [x] Manual test script `docs/testing/scenarios/09-ground-tiles.md`
+  - [x] PRs #332 and #333 merged; salal needed no change and stays pinned at v0.34.0
+
+**Result:** All nine land surfaces paint from Lua-generated ground tiles baked to texture arrays and mixed by a hex lattice, and the atlas is gone. At its close the tile pass read within +0.01 ms of main in all 27 cells (24 lower, median -0.04), cold bake 18.3 s, warm 35 to 38 ms. The `data-lod` loader and BC3/BC7 moved to Ground Tile Follow-ups. ✅
 
 ### ✅ Organic Terrain Geometry (terrain polygons)
 **Spec/Documentation:** `/docs/technical/organic-terrain/terrain-polygons-architecture.md`, dev log `2026-09-26-organic-terrain-geometry.md`
@@ -67,625 +156,9 @@ Use this template for all work items:
 
 **Result:** The game UI matches the prototype's structure and polish on every screen, verified by machine-checked layout linting. Follow-ups recorded in the dev log: ASCII-only font atlas, font-family threading for wrapped text, window-size flag for multi-resolution lint, Hug-freeze engine wart. ✅
 
-### ✅ Colonist task arbitration
-**Spec/Documentation:** `docs/technical/colonist-task-arbitration.md`
-**Dependencies:** Colonist gameplay stabilization (complete), Goal-Driven Task Generation (in progress)
-**Status:** complete (3 commits on this branch)
-
-**Goal:** Replace the drifted additive-float priority with a lexicographic `(tier, score)` key; add a job-lifecycle model so a colonist commits to an active work order across distractions.
-
-**Tasks:**
-- [x] Implement the `(tier, score)` lexicographic arbitrator in AIDecisionSystem
-- [x] 7-tier ladder classification for all action types (tiers in `assets/config/work/priority-tuning.xml <TaskTiers>`, fail-loud startup validation)
-- [x] Within-tier score: distanceFactor (300*max(0,1-d/60), dominant), skillBonus, taskAgeBonus, hysteresis margin (50)
-- [x] Job lifecycle: harvest locate-by-entity-id (kills phantom loop); StorageGoalSystem retires stale stocking-harvests; floor constants deleted
-- [x] TaskListView inspector: tier/score/breakdown/selectionSummary, live update, T hotkey
-- [x] Acceptance: combined four-scenario flow end-to-end, zero phantom harvest-loops, zero queued-job stalls, 879 engine-tests green
-- [x] Docs updated (this file, ai-behavior.md, priority-config.md, colonist-task-arbitration.md, dev log entry)
-
-**Result:** Lexicographic arbitration restored; phantom harvest-loop and queued-job stall fixed. Follow-ups: packaged-furniture lifecycle + findValidPositionNear; stocking re-arm / discovery-gating. ✅
-
-### ✅ Colonist gameplay stabilization (craft → harvest → construction loop)
-**Spec/Documentation:** dev log `2026-06-29-colonist-gameplay-stabilization.md`; arbitration spec `docs/technical/colonist-task-arbitration.md`; testing suite `docs/testing/`
-**Dependencies:** Navmesh/craft reliability (#240), Building & Construction
-**Status:** complete (merged PR #241)
-
-**Goal:** Drive four end-to-end gameplay scenarios to reliable completion: craft axe, craft + stock storage box, fill a box to ~200 wood by real chop + haul, build a wood foundation with wall clearing + provisioning + construction.
-
-**Tasks:**
-- [x] Harvest/build target snap to reachable adjacent point + off-area reject (keystone)
-- [x] Destructive fell reclaims navmesh hole (PlacementExecutor removalEpoch → region rebuild)
-- [x] Belt stow-to-free-hands on armful pickup (axe → belt before two-hand wood armful)
-- [x] Loose-pile haul: carry-state-first phase, deposit-redirect on carrying-at-source
-- [x] Wall-collision-aware off-mesh recovery snap
-- [x] Whole-footprint on-water placement refusal (NavigationSystem::isAreaWalkable; DrawingSystem + dev verbs)
-- [x] Gather-food priority lowered + construction provisioning/build-action priority floors (interim)
-- [x] StorageRule.minAmount shortfall → harvest goals (chop-and-stock loop)
-- [x] Forest-by-river quickstart landing + denser forest + fail-fast on missing prebuilt planet
-- [x] Construction readback: walls, delivered/required/progress, phase
-- [x] Dev tooling: /api/dev/storage, /api/state?what=storage|landing, hands/belt in colonist state
-- [x] docs/testing/ scenario suite (4 scenarios, regression log)
-- [x] Arbitration spec (docs/technical/colonist-task-arbitration.md) + Specboard epic filed
-
-**Result:** All four gameplay scenarios complete end-to-end. 872 engine tests green. Open follow-ups: crafted-box placement/packaged-furniture lifecycle, items-in-river/findValidPositionNear, mirrored colonist sprites, dev-tools spawn UX, arbitration implementation. ✅
-
-### ✅ Physical carry & stacks (two-hand armfuls, universal stacks, construction-direct materials)
-**Spec/Documentation:** dev log `2026-06-26-physical-stack-inventory.md`, plan `2026-06-26-bulk-material-carry-felling.md`; specs `/docs/technical/bulk-materials-carry-and-felling.md`, `/docs/technical/physical-stack-inventory.md`
-**Dependencies:** Realistic chained build loop (carry weight + axe-gated harvest)
-**Status:** complete (merged #218, #219, #224, #228, #230, #232, #233)
-
-**Goal:** Make wood a two-hand bulky item carried as a strength-limited armful (felling is one destructive action that drops a loose pile), then make a "stack" a universal physical unit -- one material, quantity in [1, stackSize] -- everywhere from hands to boxes to build sites, with carry bound by weight or count, whichever comes first.
-
-**Tasks:**
-- [x] Bulk carry & felling (epic `de719237`, #218 + follow-ups #219): two-hand wood armful, Strength -> carry capacity, one-shot destructive felling, loose ground stacks, hand-aware haul/craft/deposit, HUD carry surfaces
-- [x] Physical stacks (epic `0db82dab`, #224/#228/#230/#232/#233): slot-based multi-stack Inventory, per-material stackSize (Wood 40, Berry 200, Stick 100), ground-pile split + scatter, construction sites hold materials directly (no Inventory; demolish drops salvage at tear-down completion), storage hauls sized by item capacity, armful clamped to stackSize
-
-**Result:** A stack is one material in [1, stackSize] everywhere -- hands, pack, shelf, box, build site, ground; carry binds on weight or count, whichever comes first; build sites hold their manifest directly and dump to the ground on demolish. Deferred: per-stack container UI (`88dc9e90`), DrawingSystem rename (`7d785fc6`). ✅
-
-### ✅ 2D Landscape from 3D Hydrology (rivers, ponds, forests)
-**Spec/Documentation:** dev logs `2026-06-21-2d-rivers-and-water-landing.md`, `2026-06-21-river-tributaries-springs.md`, `2026-06-22-hydrology-ponds-and-proper-forests.md`
-**Dependencies:** Water Availability (3D drainage), World Generation & Creator
-**Status:** complete (merged #208, #210, #212)
-
-**Goal:** Render the 3D planet's hydrology into the 2D landing world at the right scale and make the surrounding landscape read as real -- followable rivers, sparse hydrology-driven ponds with desert oases, and dense naturally-clustered forests with working waterside plants.
-
-**Tasks:**
-- [x] 2D rivers from 3D drainage (RiverNetwork2D: meandered flow-sized polylines, seam-safe) + water-biased landing (#208)
-- [x] River tributaries, springs, and trickle headwaters (#210)
-- [x] Hydrology ponds: remove noise-flood ponds; sparse biome/precip-weighted PondNetwork2D; desert oasis via distance-to-water (#212)
-- [x] Proper forests: implement `Distribution::Spaced`; grove/glade/thicket density field; denser forest trees (#212)
-- [x] Riparian plants: reeds on the mud bank (`near="Mud"`, mud now forms on sand too); bankside berry/woody bushes in forest biomes (#212)
-
-**Result:** The 2D world now grows rivers, sparse ponds, desert oases, clustered forests, and waterside plants from the 3D hydrology/biome data. Self-review on #212 fixed 4/5 findings; the 5th (cross-chunk Spaced spacing) is filed as Worldsim bug `e0c87da0`. Follow-ups: pond inlet/outlet streams, water-loving riparian trees. ✅
-
-### ✅ Dev/Test Tools (HTTP verbs + developer-client tab)
-**Spec/Documentation:** `/docs/development-log/entries/2026-06-16-dev-tools-api-and-tab.md`, `/docs/development-log/plans/2026-06-16-dev-tools-api-and-tab.md`
-**Dependencies:** None
-**Status:** complete (merged PR #157)
-
-**Completed Tasks:**
-- [x] Step 1: `spawn`, `colonist`, `give` (replaces `givewood`; site/loose/colonist/storage)
-- [x] Step 2: `need`, `time` (speed/set/skip), `teleport`, `select`, `kill`, `complete`
-- [x] Step 3: synchronous `/api/state?what=summary|colonists|construction|time` (screenshot-style request/response handshake)
-- [x] Phase 2: Dev Tools tab (DevToolsService + DevToolsPanel) in the static developer-client
-- [x] Refactor: dev surface extracted from GameScene into DevCommandHandler (scenes/game/dev/)
-- [x] `parseDevVerb` tests refreshed (7/7); two rounds of Copilot review cleared (single-flight `/api/state`, CV wait, jsonEscape)
-
-**Result:** Dev-only `/api/dev/<verb>` controls plus a synchronous `/api/state` readback, driven from a Dev Tools tab in the static developer-client, so sim state can be set up and asserted on without screenshots. In-browser tab click-test was skipped by choice (build clean, every endpoint curl-verified); `demolish`, inventory-in-readback, and `query/count` deferred as optional. ✅
-
-### ✅ UI Design System (Salvage) — extraction
-**Spec/Documentation:** `/docs/design/ui/`
-**Dependencies:** None
-**Status:** complete (docs extracted from prototype; C++ implementation is a separate future epic)
-
-**Goal:** Extract the approved "Salvage" UI prototype (`docs/ui-prototype/`) into durable design docs so the C++ build follows the docs, not the throwaway CSS. The prototype is kept as the live look-and-feel sandbox.
-
-**Completed Tasks:**
-- [x] Design language doc (principles, palette, typography, texture, motion)
-- [x] Tokens: deterministic `tokens.json` (+ rgba floats, `palette.svg`) and readable `tokens.md`, generated from `tokens.css`
-- [x] Component catalog: all 14 primitives (variants, props, states, anatomy, behavior/formulas)
-- [x] Icons: 51-glyph set extracted to `icons.json` + `icons-preview.svg` + `icons.md`
-- [x] Screen specs: 7 screens (pre-game flow + in-game HUD with every sub-state)
-- [x] Mocks: rendered shots of every screen and in-game state (Playwright capture script) + anatomy wireframes for the dense screens
-- [x] Re-runnable extraction scripts in the prototype; wired into `/docs/design/INDEX.md`
-
-**Result:** `/docs/design/ui/` holds the canonical UI spec. The data that only lived in code (icon paths, token values, component formulas, font identities) is now in text. Next: C++ implementation (generate `constexpr Theme.h` from `tokens.json`, build the primitive library, stroke-tessellated icons, multi-font). ✅
-
-### ✅ Water Availability (worldgen + landing UX)
-**Spec/Documentation:** `/docs/development-log/entries/2026-06-15-worldgen-water-and-plate-realism.md`, `.claude/plans/water-hydrology.md`
-**Dependencies:** Climate/Biome/Shelf Retune
-**Status:** complete (PRs #144, #146 merged)
-
-**Goal:** Fix the coarse drainage so flow reaches the sea or ponds into basins, set the dead kFlagRiver/kFlagLake flags, and tell the player whether a landing site has fresh water (details pane + globe Hydrology mode). Worldgen stays coarse (amount + direction); actual river/lake geometry is deferred to chunk load.
-
-**Completed Tasks:**
-- [x] W-0: water stats baseline (WorldStats + worldgen-cli)
-- [x] W-1: priority-flood depression routing + coarse kFlagRiver/kFlagLake + basin spill levels (resolution-invariant river quantile)
-- [x] W-2: globe Hydrology color mode
-- [x] W-3: landing-site water signal + details pane (river/lake on tile-or-neighbor, coast, rain-fed) + freshwater-biased default site
-- [x] W-4: docs + PR; two Copilot rounds cleared; sub-1m lake spill-depth truncation fix (#146)
-
-**Result:** Every land tile routes to the sea or a marked endorheic basin; lakes form in real basins; rivers ~4-5% of land, stable across resolution; landing pane reports water/terrain/climate/difficulty. Deterministic across thread counts. Follow-ups: valley erosion, 2D chunk-time river/lake rendering. ✅
-
-### ✅ Plate Boundary Realism (straight-mountains fix)
-**Spec/Documentation:** `/docs/development-log/entries/2026-06-15-worldgen-water-and-plate-realism.md`
-**Dependencies:** Tectonic History Simulation
-**Status:** complete (PR #145 merged)
-
-**Goal:** Kill the dead-straight mountain walls that appeared across many generated worlds.
-
-**Completed Tasks:**
-- [x] Multi-agent diagnosis: root cause is the great-circle rift cut (tryRift plane-split), amplified by a flat plate-size distribution and a uniform belt-lift pedestal
-- [x] Curved rift cut: two-front noisy Dijkstra split replacing the great-circle plane (oversized + suture paths)
-- [x] Power-law plate-size hierarchy at seeding (few large, many small)
-- [x] Along-belt lift modulation so ranges get passes/saddles instead of a uniform wall
-- [x] Ultra 2048 generator option; golden hash re-pin; six-seed biome acceptance test; Copilot cleared
-
-**Result:** Rift seams meander like real margins, no straight great-circle cuts on any seed (including low plate counts); the plate inventory has an Earth-like size hierarchy; mountain crests break into passes. Deterministic across thread counts. ✅
-
-### ✅ Climate, Biome & Shelf Realism Retune (worldgen)
-**Spec/Documentation:** `/docs/development-log/entries/2026-06-14-climate-biome-shelf-retune.md`
-**Dependencies:** Tectonic History Simulation
-**Status:** complete (PR #139 merged)
-
-**Goal:** Retune the climate/biome stages (written against the old smooth terrain) for the new linear belts + bimodal hypsometry.
-
-**Completed Tasks:**
-- [x] C-1..C-5: meridional wind + distance-to-ocean moisture-advection sweep (rain shadows that scale to wide belts) + continentality temperature; piecewise continental shelf; biome rebalance + montane decouple + biome-fraction acceptance stats; dead-flag hygiene (kFlagCoast/kFlagGlacier); docs + dev log
-- [x] Self-review (2 agents) + fixes; two Copilot rounds cleared; CI timeout fix (trimmed heavy acceptance tests)
-
-**Result:** ArcticTundra ~47%→8-16%, HotDesert restored to ~8-10%, forests ~35-40%; visible rain shadows behind belts; shelves submerged ~6%; biomes bend around terrain instead of rigid latitude stripes. Deterministic across thread counts, n=1024 ~16.6s. Follow-up: water-availability hydrology, valley erosion. ✅
-
-### ✅ Tectonic History Simulation (worldgen realism overhaul)
-**Spec/Documentation:** `.claude/plans/tectonic-history.md`, `/docs/development-log/entries/2026-06-13-tectonic-history-simulation.md`
-**Dependencies:** World Generation & Creator (M1–M6)
-**Status:** complete (PR #136 merged)
-
-**Goal:** Replace single-pass Voronoi plates + Gaussian-kernel terrain with a coarse time-stepped tectonic history (Euler-pole motion, subduction, ridges with crust age, collisions/sutures, rifting, slab pull, hotspots) upsampled to full resolution; elevation from Airy isostasy + seafloor depth-age law.
-
-**Completed Tasks:**
-- [x] M-T0–M-T6: headless worldgen-cli + WorldStats; PlateSim coarse sim; Wilson-cycle events (incl. M-T2.5 arc crust, M-T2.6 slab pull, M-T2.7 coherence); CrustStage + crustAge/orogenyAge + PlanetIO v3 (incl. M-T3.5/3.6 signed-distance coastlines); TerrainStage rewrite (incl. M-T4.5 linear belts + geodesic metric); deletion/hardening/edge cases; docs + dev log
-- [x] Self-review (3 agents) + fixes; Copilot review cleared; flaky cancel test fixed
-
-**Result:** Hexagonal continents and smooth dome mountains gone. Crisp organic coastlines, linear ridged mountain belts (geodesic aspect 5–7), bimodal hypsometry, Earth-like ocean ages, deterministic across thread counts, n=1024 in ~11s. Follow-ups: climate/biome retune, fluvial hydrology. ✅
-
-### ✅ GameScene Subsystem Extraction
-**Spec/Documentation:** `/docs/technical/gamescene-refactoring.md`
-**Dependencies:** None
-**Status:** complete
-
-**Goal:** Extract placement and selection logic from GameScene into dedicated subsystems. Prevent god-class anti-pattern as gameplay systems grow.
-
-**Completed Tasks:**
-- [x] PlacementSystem Extraction
-  - [x] Create `scenes/game/world/placement/PlacementSystem.h/cpp`
-  - [x] Create `scenes/game/world/placement/PlacementTypes.h` (shared BuildMenuItem)
-  - [x] Move PlacementMode and GhostRenderer ownership
-  - [x] Move spawning/relocation logic (spawnEntity, m_relocatingEntityId)
-  - [x] Move UI callbacks (toggleBuildMenu, selectBuildItem, beginRelocation)
-- [x] SelectionSystem Extraction
-  - [x] Create `scenes/game/world/selection/SelectionSystem.h/cpp`
-  - [x] Create `scenes/game/world/selection/SelectionTypes.h` (moved from Selection.h)
-  - [x] Move Selection state ownership
-  - [x] Move handleClick with priority logic
-  - [x] Move renderIndicator
-  - [x] Selection priority constants in header
-- [x] GameScene Cleanup
-  - [x] GameScene is now thin coordinator
-  - [x] Subsystems initialized with dependency injection
-  - [x] All UI files updated to use new include paths
-
-**Result:** GameScene reduced from ~900 lines to ~620 lines (placement: ~180 lines, selection: ~100 lines extracted). Subsystems now own their own state and logic. ✅
-
----
-
-### ✅ Main Game UI: Core HUD
-**Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Sections 1, 2, 5, 9)
-**Dependencies:** Main Game UI: Primitives Foundation, UI Architecture: ViewModel Pattern
-**Status:** complete
-
-**Goal:** Implement main gameplay HUD (top bar, colonist list, gameplay bar, zoom).
-
-**Completed Tasks:**
-- [x] TimeSystem Foundation
-  - [x] GameSpeed enum (Paused, Normal, Fast, VeryFast)
-  - [x] Season enum with advancement
-  - [x] effectiveTimeScale() for time-scaled systems
-  - [x] NeedsDecaySystem uses TimeSystem
-- [x] Top Bar
-  - [x] Date/Time display (Day X, Season | HH:MM)
-  - [x] Game speed controls ([⏸] [▶] [▶▶] [▶▶▶])
-  - [x] Hotkeys (Space pause, 1/2/3 speed)
-  - [x] Menu button
-- [x] Zoom Controls
-  - [x] Floating [+] [⟳] [-] buttons in viewport
-  - [x] Home key to reset zoom
-- [x] Colonist List Enhancements
-  - [x] Portrait Card (avatar + mood bar + name)
-  - [x] Status tint (green/yellow/red background based on mood)
-  - [x] Click to select, double-click to follow
-- [x] Gameplay Bar
-  - [x] Category dropdowns: [Actions▾] [Build▾] [Production▾] [Furniture▾]
-  - [x] Upward menu expansion (openUpward flag)
-  - [x] B key for build toggle
-- [x] UI Restructure
-  - [x] Created DebugOverlay (extracted from GameOverlay)
-  - [x] Created ZoomControlPanel (wrapper for ZoomControl)
-  - [x] Deleted GameOverlay and BuildToolbar
-  - [x] Layer system refactor for all new components
-
-**Deferred:**
-- Vertical scrollable colonist list (works fine at current scale, can add if needed)
-- A/Q/R hotkeys (conflict with WASD camera movement)
-
-**Result:** Full HUD implementation with TimeSystem, TopBar with speed controls, GameplayBar with category dropdowns, enhanced colonist list with mood tints and double-click to follow, and floating zoom controls. ✅
-
----
-
-### ✅ Simple Asset Support (SVG-Only)
-**Spec/Documentation:** `/docs/technical/asset-system/asset-definitions.md`, `/docs/technical/asset-system/folder-based-assets.md`
-**Dependencies:** None (Folder-Based Asset Migration was done as part of this)
-**Status:** complete
-
-**Goal:** Support hand-crafted SVG assets without Lua scripts via data-driven XML definitions.
-
-**Completed Tasks:**
-- [x] Folder-per-asset structure (`FolderName/FolderName.xml` pattern)
-- [x] XML parsing with pugixml (defName, label, assetType, svgPath, worldHeight)
-- [x] Rendering settings (complexity, tier)
-- [x] Per-biome placement with spawn chance, distribution
-- [x] Clumping parameters (clumpSize, clumpRadius, clumpSpacing)
-- [x] Entity relationships (affinity, avoids, requires)
-- [x] Groups with group index for lookups
-- [x] Animation parameters (windResponse, swayFrequency)
-- [x] Capabilities (edible, drinkable, harvestable, carryable, craftable, etc.)
-- [x] Item properties (stackSize, nutrition, spoilable)
-- [x] `@shared/` prefix resolution for shared scripts
-- [x] Template caching (tessellated meshes cached)
-- [x] DefName → ID interning for runtime performance
-
-**Optional Future Enhancements:** Variation (colorRange, scaleRange), inheritance (parent attribute), LOD levels, shared SVG components (@components/).
-
-**Result:** Assets like Reed, BerryBush, Berry, Stick, SmallStone, CraftingSpot all use this system. New simple assets can be added by creating a folder with XML + SVG. ✅
-
----
-
-### ✅ Ground Texture System
-**Spec/Documentation:** `/docs/technical/ground-textures.md`, `/docs/development-log/plans/2025-12-22-ground-texture-system.md`
-**Dependencies:** None
-**Status:** complete
-
-**Goal:** Replace flat-color tiles with textured terrain using hybrid Tier 1 (rasterized texture) + Tier 3 (vector grass) approach, with hard/soft edge blending.
-
-**Completed Tasks:**
-- [x] Render-to-Texture Infrastructure
-  - [x] Create RenderToTexture class (FBO wrapper with RAII)
-  - [x] Unit tests for RenderToTexture
-- [x] Tile Texture Atlas
-  - [x] TileTextureAtlas class (atlas allocator)
-  - [x] TileAtlasBuilder (builds atlas from SVG patterns)
-  - [x] TilePatternBaker (rasterizes SVG to RGBA)
-  - [x] Fallback checker pattern for missing SVGs
-- [x] Tile Pattern Assets (6 of 10 surfaces)
-  - [x] Grass, GrassShort, GrassTall, GrassMeadow (basic patterns)
-  - [x] Dirt (rich: pebbles, cracks, dried grass)
-  - [x] Water (rich: ripples, reflections, depth patches)
-- [x] Surface Family System
-  - [x] SurfaceFamily enum (Ground, Water, Rock)
-  - [x] getSurfaceFamily() and getHardEdgeMaskByFamily()
-  - [x] getSurfaceStackOrder() for blend direction
-- [x] Shader Integration
-  - [x] uber.frag tile render mode (kRenderModeTile = -3.0)
-  - [x] tile.glsl with blend weight functions
-  - [x] Early-out optimizations for interior tiles/pixels
-- [x] ChunkRenderer Integration
-  - [x] drawTile() with all 8 neighbor IDs + masks
-  - [x] World tile coordinates for procedural variation
-- [x] Soft Edge Blending
-  - [x] computeHigherBleedWeights() - cardinal blending
-  - [x] computeDiagonalCornerWeights() - diagonal corners
-  - [x] computeTileEdgeDarkening() - procedural edge noise
-
-**Optional Future Work:** Add missing patterns (Sand, Rock, Snow, Mud), enrich grass patterns, tune grass entity density.
-
-**Result:** Tiles render with textured patterns, soft blending between same-family surfaces, hard edges at family boundaries (shorelines, cliffs). ✅
-
----
-
-### ✅ UI Event System
-**Spec/Documentation:** salal's [ui-design.md](https://github.com/kcjonson/salal/blob/main/docs/ui-design.md) and [ui-plan.md](https://github.com/kcjonson/salal/blob/main/docs/ui-plan.md), the record of the ui every app is built on
-**Dependencies:** None
-**Status:** complete
-
-**Goal:** Replace manual hit-testing boilerplate (~69 lines of QUICKFIX code) with event consumption. Components call `event.consume()` to stop propagation. MouseMove events handle hover state.
-
-**Completed Tasks:**
-- [x] Event Infrastructure
-  - [x] Create InputEvent struct with type, position, consumed flag
-  - [x] Add handleEvent() to IComponent interface
-  - [x] Add containsPoint() to IComponent for hit testing
-- [x] Component Updates
-  - [x] Update Button to use handleEvent() and consume clicks
-  - [x] Update TabBar to use handleEvent()
-  - [x] Migrate BuildToolbar, BuildMenu, ColonistListPanel
-  - [x] Migrate EntityInfoPanel, TaskListPanel
-- [x] Dispatch System
-  - [x] Add dispatchEvent() to Component base class
-  - [x] GameUI dispatches to all children in z-order
-  - [x] GameScene dispatches MouseMove, MouseDown, MouseUp events
-- [x] QUICKFIX Cleanup
-  - [x] Remove isPointOverUI() from GameUI, GameOverlay
-  - [x] Remove isPointOver() from ZoomControl, BuildToolbar, BuildMenu
-  - [x] Remove handleInput() polling from all migrated components
-
-**Deferred:** Debug Integration (hit-test endpoint, SSE events) - can be added when needed.
-
-**Result:** Clean event propagation model. Adding new UI panels no longer requires updating multiple files. Components consume events to prevent click-through. ✅
-
----
-
-### ✅ UI Architecture: Input System Cleanup
-**Spec/Documentation:** salal's [ui-design.md](https://github.com/kcjonson/salal/blob/main/docs/ui-design.md) and [ui-plan.md](https://github.com/kcjonson/salal/blob/main/docs/ui-plan.md), the record of the ui every app is built on
-**Dependencies:** UI Event System
-**Status:** complete
-
-**Goal:** Complete the event-based input architecture. Remove `handleInput(float dt)` (wrong pattern per [Game Programming Patterns](https://gameprogrammingpatterns.com/game-loop.html)) in favor of `handleInput(InputEvent&)`.
-
-**Completed Tasks:**
-- [x] Remove handleInput() from ILayer/Component (components don't poll)
-- [x] Add handleEvent() to TextInput (was missing)
-- [x] Container::handleEvent() dispatches to children
-- [x] Application creates InputEvents and dispatches to scene
-- [x] Rename handleEvent to handleInput on IScene (consistency)
-- [x] Remove handleInput(float dt) from IScene (wrong pattern)
-- [x] Remove handleInput(float dt) from SceneManager
-- [x] Update all scenes to implement handleInput(InputEvent&)
-- [x] Add IOverlay interface for cross-scene UI (NavigationMenu, future ESC menu)
-- [x] SceneManager manages overlays as peers to scenes
-- [x] Test all scenes
-
-**Architecture (Industry Best Practice):**
-```
-while (running) {
-    processInput();    // No dt - discrete events
-    update(elapsed);   // dt here - advance simulation
-    render();
-}
-```
-
-**Key insight:** Input handling does NOT need delta time. It captures discrete events ("what happened?"). Delta time belongs in `update()` where simulation advances ("how much time passed?").
-
-**Result:** Clean separation between discrete input events and continuous simulation updates. Scenes receive `InputEvent&` from Application and forward to UI components. Keyboard polling (WASD, ESC) happens in `update()`. ✅
-
----
-
-### ✅ UI Architecture: FocusManager Simplification
-**Spec/Documentation:** salal's [ui-design.md](https://github.com/kcjonson/salal/blob/main/docs/ui-design.md) and [ui-plan.md](https://github.com/kcjonson/salal/blob/main/docs/ui-plan.md), the record of the ui every app is built on
-**Dependencies:** UI Architecture: Input System Cleanup
-**Status:** complete
-
-**Goal:** Reduce ~40 lines of FocusManager boilerplate per focusable component via CRTP base class.
-
-**Completed Tasks:**
-- [x] Create FocusableBase<T> CRTP template (`libs/ui/focus/FocusableBase.h`)
-  - [x] Auto-register in constructor
-  - [x] Auto-unregister in destructor
-  - [x] Handle move semantics correctly (unregister old, register new)
-- [x] Migrate Button to use FocusableBase<Button>
-- [x] Migrate TabBar to use FocusableBase<TabBar>
-- [x] Migrate TextInput to use FocusableBase<TextInput>
-
-**Result:** Components now inherit from `FocusableBase<T>` and use `= default` for move constructor/assignment. FocusManager registration is automatic. ~120 lines of boilerplate removed across 3 components. ✅
-
----
-
-### ✅ UI Architecture: ViewModel Pattern
-**Spec/Documentation:** salal's [ui-design.md](https://github.com/kcjonson/salal/blob/main/docs/ui-design.md) and [ui-plan.md](https://github.com/kcjonson/salal/blob/main/docs/ui-plan.md), the record of the ui every app is built on, `/docs/development-log/plans/2025-12-24-viewmodel-pattern.md`
-**Dependencies:** None
-**Status:** complete
-
-**Goal:** Establish clear data ownership and efficient updates via ViewModel pattern.
-
-**Completed Tasks:**
-- [x] Create directory structure (scenes/game/ui/{adapters,models,panels,components})
-- [x] Create UIState.h with Selection struct
-- [x] Create ColonistAdapter (ECS query layer)
-- [x] Create ColonistListModel with change detection
-- [x] Migrate ColonistListPanel to use ViewModel
-- [x] Move SelectionAdapter to adapters folder
-- [x] Move CraftingAdapter to adapters folder
-- [x] Create EntityInfoModel with UpdateType enum
-- [x] Migrate EntityInfoPanel to use ViewModel
-- [x] File reorganization
-  - [x] Move panels to panels/ (EntityInfoPanel, TaskListPanel, BuildMenu, BuildToolbar, GameOverlay)
-  - [x] Move reusable components to components/ (NeedBar, ZoomControl, InfoSlot, Selection)
-  - [x] Move world rendering to world/ (GhostRenderer, PlacementMode, NotificationManager)
-  - [x] Move GameUI to scenes/game/ui/
-  - [x] Delete old components/ directory
-
-**Architecture Notes:**
-- Pull-based models: `refresh(world)` returns bool for change detection
-- Adapter layer: Centralizes ECS queries (ColonistAdapter, SelectionAdapter, CraftingAdapter)
-- UpdateType enum: `None`, `Values`, `Structure`, `Show`, `Hide` for tiered updates
-
-**Result:** Clean separation between data (models), ECS queries (adapters), rendering (panels), and reusable UI elements (components). ✅
-
----
-
-### ✅ UI Architecture: Theme System
-**Spec/Documentation:** `/docs/development-log/plans/2025-12-25-ui-theme-system.md`
-**Dependencies:** None
-**Status:** complete
-
-**Goal:** Centralize UI styling (colors, spacing, typography) via design tokens. Eliminate hardcoded color values across views.
-
-**Terminology:**
-- **Panel** (design) = Visual style (dark bg, 1px border)
-- **View** (structural) = Composite UI element (EntityInfoView, TaskListView)
-- **Component** = Base class for all UI elements (unchanged)
-
-**Completed Tasks:**
-- [x] Create `libs/ui/theme/` directory with `Theme.h` and `PanelStyle.h`
-- [x] Design tokens: Colors (panel, text, status), Spacing, Typography, Borders
-- [x] Panel style factories: `floating()`, `closeButton()`, `actionButton()`, `card()`, `selection()`
-- [x] Rename `panels/` folder → `views/`
-- [x] Rename `EntityInfoPanel` → `EntityInfoView`
-- [x] Rename `TaskListPanel` → `TaskListView`
-- [x] Rename `ColonistListPanel` → `ColonistListView`
-- [x] Apply theme tokens to EntityInfoView
-- [x] Apply theme tokens to TaskListView
-- [x] Apply theme tokens to ColonistListView
-- [x] Apply theme tokens to BuildMenu
-
-**Deferred (Phase 2):**
-- Edge mask support for docked panels (per-edge border control)
-- Per-corner radius when edges are removed
-
-**Result:** All views now use centralized theme tokens from `libs/ui/theme/`. Hardcoded colors eliminated. Consistent visual identity across all panels. ✅
-
----
-
-### ✅ UI Architecture: Layout System
-**Spec/Documentation:** `/docs/development-log/plans/warm-honking-hedgehog.md`
-**Dependencies:** None
-**Status:** complete
-
-**Goal:** Add automatic layout containers for component positioning via uniform layout API on all UI elements.
-
-**Design Decisions:**
-- **Uniform API on IComponent** — All UI elements (components + shapes) participate in layout via `getWidth()`/`getHeight()`/`setPosition()` + `margin`
-- **CSS-like margin** — Margin adds to position (content draws inside) and adds to reported size
-- **Single LayoutContainer** — Direction attribute (Vertical/Horizontal) instead of separate VStack/HStack
-- **No Spacer, no flex** — Use margins for spacing between elements
-- **Hybrid sizing model:** Stacking axis is child-driven (query sizes), cross axis is parent-driven
-
-**Completed Tasks:**
-- [x] Add layout API to IComponent interface (getWidth/getHeight/setPosition/margin)
-- [x] Add default implementation to Component base class
-- [x] Implement layout API on all Shapes (Rectangle, Circle, Line, Text)
-- [x] Update Button to use base class size/position
-- [x] Update TextInput to use base class size/position
-- [x] Update TabBar to use base class size/position
-- [x] Create LayoutTypes.h (Direction, HAlign, VAlign enums)
-- [x] Implement LayoutContainer (extends Container)
-  - [x] Vertical stacking with HAlign (Left/Center/Right)
-  - [x] Horizontal stacking with VAlign (Top/Center/Bottom)
-  - [x] Dirty flag for layout caching
-  - [x] Container margin offsets children
-- [x] Update CMakeLists.txt
-- [x] Create LayoutScene demo in ui-sandbox
-- [x] Unit tests (14 tests covering all layout scenarios)
-- [x] View Migrations
-  - [x] Create ColonistListItem component (portrait + name + mood bar)
-  - [x] Migrate ColonistListView to use ColonistListItem + LayoutContainer
-  - [x] Create SectionHeader component (generic section title)
-  - [x] Create StatusTextLine component (status-colored task line)
-  - [x] Migrate TaskListView to use SectionHeader + StatusTextLine + LayoutContainer
-
-**Result:** LayoutContainer automatically positions children based on their reported sizes. Components use CSS-like margin for spacing. All UI elements participate in layout through uniform API. ColonistListView and TaskListView now use automatic layout instead of manual yOffset tracking. ✅
-
----
-
-### ✅ Main Game UI: Complex Components
-**Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Section 17)
-**Dependencies:** ~~Main Game UI: Primitives Foundation~~ (complete)
-**Status:** complete
-
-**Goal:** Build components for information-dense screens (resources, dropdowns, notifications).
-
-**Completed Tasks:**
-- [x] Icon Component
-  - [x] SVG rendering with tessellation pipeline (loadSVG → Tessellator → drawTriangles)
-  - [x] Tinting/colorization support
-  - [x] Unit tests (11)
-  - [x] IconScene demo
-- [x] Tree View Component
-  - [x] Expandable/collapsible nodes (▶/▼)
-  - [x] Nested hierarchy with indentation
-  - [x] Flattened rows pattern for efficient iteration
-  - [x] Unit tests (16)
-  - [x] TreeViewScene demo
-- [x] Dropdown Button Component
-  - [x] Button with ▾ indicator
-  - [x] Expands menu panel on click
-  - [x] Closes on focus lost via FocusableBase
-  - [x] Keyboard navigation (Up/Down/Enter/Escape)
-  - [x] Disabled item support
-  - [x] Unit tests (17)
-  - [x] DropdownScene demo
-- [x] Toast + Toast Stack
-  - [x] Notification popup with title, message, dismiss button
-  - [x] Auto-dismiss timer with countdown display
-  - [x] Persistent mode (autoDismissTime = 0)
-  - [x] Severity styling (Info/Warning/Critical colors)
-  - [x] Fade in/out animation
-  - [x] ToastStack container with vertical stacking
-  - [x] Anchor positions (TopRight, TopLeft, BottomRight, BottomLeft)
-  - [x] Max toasts limit with oldest removal
-  - [x] Unit tests (23: 14 Toast + 9 ToastStack)
-  - [x] ToastScene demo
-
-**Result:** All complex components implemented with theme-based styling, layout integration, and comprehensive test coverage (67 new tests total). Components use minimal constructors with sensible defaults. ✅
-
 ---
 
 ## In Progress Epics
-
-### Ground Tile Variants
-**Spec/Documentation:** `/docs/technical/ground-textures.md`
-**Dependencies:** none
-**Status:** in progress
-
-**Tasks:**
-- [x] Perf baseline and spike
-  - [x] Baseline captures of main on the river, coast and desert views
-  - [x] Profile today's tile pass (atlas, water, land field)
-  - [x] Spike on a throwaway branch: texture array, hex sampler, macro texture, fringe, packed neighborhood
-- [ ] Spec and board
-  - [ ] Rewrite ground-textures.md with the spike numbers
-  - [ ] Specboard epic and tasks
-  - [ ] Add the epic here
-- [ ] Asset side
-  - [ ] `ground` role, schema parse, validator rules
-  - [ ] Lua `noise2`, `periodicNoise2`, `path:setLod`
-  - [ ] `data-lod` filtering and the salal load-from-string addition
-  - [ ] `tessellateAsset` index-wrap fix
-  - [ ] Unit tests
-- [ ] Bake and shader
-  - [x] `GroundTileBank`: wrapped, supersampled, per-mip render into the texture arrays
-  - [x] Bake speed: one generator run a variant, variants on the pool, disk cache, which the splash bake reads
-  - [x] Per-chunk macro texture
-  - [x] `land.glsl` hex sampler, ChunkRenderer bindings and tunables
-  - [x] Delete the atlas path
-  - [ ] Measure BC1 on upload
-- [ ] Content
-  - [x] Placeholder defs for the eight surfaces without art (`ground_placeholder.lua`, deleted with the real art)
-  - [x] Grass generator and the four grass defs (GrassShort, GrassMeadow and GrassTall round 1, with wildflowers for Meadow)
-  - [x] Dirt, Sand, Mud, Rock and Snow from one generator, `ground_bare.lua` (round 1)
-  - [x] Art round 2 from Kevin's feedback (Rock, Mud, Sand and Snow redrawn, WOR-561)
-- [ ] Asset-manager preview
-  - [ ] 3x3 wrapped preview and variant grid
-  - [ ] Fixed tile frame for thumbnails
-- [ ] Verify and hand off
-  - [x] In-game GPU hold for perf captures, so nobody locks clocks (WOR-553)
-  - [x] Tile pass back to net neutral or faster than main in every cell
-  - [x] Final perf capture against main with the GPU hold on
-  - [x] Manual test script `docs/testing/scenarios/09-ground-tiles.md`
-  - [ ] Draft PRs in worldsim and salal (no merge, no tag)
-
-### Ground Surface Blending
-**Spec/Documentation:** `/docs/technical/ground-textures.md` (Surface transitions), `/docs/technical/organic-terrain/terrain-polygons-architecture.md` (D13, D15, D16, biome edges), `.claude/plans/ground-blending.md`
-**Dependencies:** Ground Tile Variants
-**Status:** in progress
-
-**Tasks:**
-- [x] Spec (WOR-557)
-- [x] Organic biome edges and gradient noise (WOR-558)
-  - [x] Per-tile biome pick from interpolated corner weights plus world-space gradient fBm and an ecotone band
-  - [x] Gradient noise in the generators, `NoiseUtils::valueNoise` deleted if unused
-  - [x] Apron, waterline and `Chunk::computeTileFrom` on the new lookup; tests that hand-fill `sectorGrid` moved
-  - [x] Before and after screenshots (desert staircase, a coast, a lake); chunk generation cost reported
-- [x] Heights in the ground arrays (WOR-559)
-  - [x] Lua `path:setHeight`, paint-order default
-  - [x] Height pass in the baker, rank normalization, alpha filtered as data, `kVersion` bump
-  - [x] Mip strategy A/B: filtered mips and a widening window kept, `Wc` and `mipC` fitted
-  - [x] Grass family seed-group co-bake
-  - [x] Tests (rank normalization, alpha survives the filter, `setHeight` default); cold and warm bake reported
-- [x] Height contest (WOR-560)
-  - [x] `<transition>` schema, validator rules, pair table upload
-  - [x] Contest in `land.glsl`; fringe, rim and their tunables deleted
-  - [x] Mip window fit; distance accuracy past 0.5 m checked (it stepped; the band's distance now comes from the field's value)
-  - [x] Perf A/Bs against the branch tip before blending (desert zoom 3 still 0.06 ms over main)
-- [x] Art round 2 (WOR-561)
-  - [x] Rock, Mud, Sand and Snow
-  - [x] Heights tuned per surface and pair recipes tuned on the real edges
-- [x] Desert zoom 3: the near-interior test again after the first fine octave (WOR-564; +0.01 to +0.02 ms over main, was +0.04)
-- [x] Waterline and nav ring growth from organic edges measured, not trimmed (WOR-563; no frame cost, worker time in terrain spec section 6)
-- [ ] Verify and hand off (WOR-562)
-  - [x] Final perf capture against main
-  - [x] `docs/testing/scenarios/09-ground-tiles.md` transition steps
-  - [x] Regression pass (01-04, 06 and 08 pass; WOR-566, WOR-567 and WOR-568 filed, outside this branch's code)
-  - [x] Draft PRs (textures, then blending stacked on top); hand-off screenshots of each pair at zoom 20, 3, 1.5 and 0.5
 
 ### Build & Test Speed Improvements
 **Spec/Documentation:** `/docs/technical/build-performance.md`
@@ -981,6 +454,22 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 ---
 
 ## Planned Epics
+
+### Ground Tile Follow-ups
+**Spec/Documentation:** `/docs/technical/ground-textures.md`
+**Dependencies:** Ground Tile Variants, Ground Surface Blending (both complete)
+**Status:** ready
+
+**Tasks:**
+- [ ] `data-lod` filtering and the salal load-from-string addition (SVG ground defs, `assetType` simple)
+- [ ] Measure BC3 or BC7 on upload (BC1 is out: heights make alpha real data; about 14 MiB for the arrays against 56 MiB raw)
+- [ ] Run `SurfaceFieldGolden` on CI under a software GL (Mesa llvmpipe on Linux); CI has no GL context, so the C++/GLSL twin is only checked on the dev box
+- [ ] Have salal request a 4.1 core context; the tile shaders are GLSL 4.10 and salal asks for 3.3, which NVIDIA and macOS accept and a strict driver may not
+- [ ] A per-user ground bake cache directory; it sits beside the exe today, so a read-only install re-bakes every launch
+- [ ] Put the salal tag and a Lua API version in the ground bake cache key; only a manual `GroundTileBaker::kVersion` bump covers engine changes today
+- [ ] Asset-manager Bake view speed: about 2.5x slower than the splash bake, and a run under contention measured 13.8 s
+
+---
 
 ### UI Scale setting
 **Spec/Documentation:** `docs/design/ui/ui-scale-setting.md`

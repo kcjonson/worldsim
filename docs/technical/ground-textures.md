@@ -1,23 +1,23 @@
 # Ground Texture System
 
 Created: 2025-12-13
-Updated: 2026-11-01 (ground tile variants: tiles become SVG/Lua assets baked to texture arrays and mixed by a hex lattice in the shader, and the atlas goes away; spike results and the perf plan added. Later: the bank, the hex sampler and the macro texture are in the tile pass, the atlas is deleted, and the surfaces without art paint placeholder defs. Then: the bake runs each generator once, on the pool, and keeps its bakes in a disk cache the splash reads. Then: the tile pass back under main in every cell, through a leaner sampler, a cheaper land field, no ground under open water and hex blending from 16 px/m. Then: round 1 of the real art for the eight surfaces that painted placeholders, the grass family from `ground_grass.lua` and Dirt, Sand, Mud, Rock and Snow from one new generator, `ground_bare.lua`; the bank reads its cached defs side by side and the encode keeps a small mip's mean. Then: surface transitions specified, design only: baked heights in the ground arrays' alpha and a height contest that replaces the fringe and rim, pair parameters in the defs, and the band capped at the field's reach. Then: the heights are baked (WOR-559), the mip window is fitted and kept over per-mip equalization, and the grass family bakes from one seed group. Then: the height contest is built (WOR-560): the fringe and rim are deleted, every pair's band and shading come from the defs, the band reads a distance that stays continuous out to the field's reach, the grass family hashes its hex cells alike, and the field does less work a pixel, bit for bit. Then: round 2 of the bare surfaces' art, Rock, Mud, Sand and Snow redrawn from new `ground_bare.lua` layers (regions cut along spectral-field contours, joints, lichen colonies, sky-tinted puddles, ripple fragments, wind streaks), and the pair recipes retuned on the real edges, the grass family's band down to 0.2 m (WOR-561). Then: review fixes, the pair table stored as a triangle of 36 pairs, the shader's whole-number bias kept out of every sum a reordering compiler could fold it into, and the golden test run over negative tiles)
-Status: In progress
+Updated: 2026-11-01 (ground tile variants: tiles become SVG/Lua assets baked to texture arrays and mixed by a hex lattice in the shader, and the atlas goes away; spike results and the perf plan added. Later: the bank, the hex sampler and the macro texture are in the tile pass, the atlas is deleted, and the surfaces without art paint placeholder defs. Then: the bake runs each generator once, on the pool, and keeps its bakes in a disk cache the splash reads. Then: the tile pass back under main in every cell, through a leaner sampler, a cheaper land field, no ground under open water and hex blending from 16 px/m. Then: round 1 of the real art for the eight surfaces that painted placeholders, the grass family from `ground_grass.lua` and Dirt, Sand, Mud, Rock and Snow from one new generator, `ground_bare.lua`; the bank reads its cached defs side by side and the encode keeps a small mip's mean. Then: surface transitions specified, design only: baked heights in the ground arrays' alpha and a height contest that replaces the fringe and rim, pair parameters in the defs, and the band capped at the field's reach. Then: the heights are baked (WOR-559), the mip window is fitted and kept over per-mip equalization, and the grass family bakes from one seed group. Then: the height contest is built (WOR-560): the fringe and rim are deleted, every pair's band and shading come from the defs, the band reads a distance that stays continuous out to the field's reach, the grass family hashes its hex cells alike, and the field does less work a pixel, bit for bit. Then: round 2 of the bare surfaces' art, Rock, Mud, Sand and Snow redrawn from new `ground_bare.lua` layers (regions cut along spectral-field contours, joints, lichen colonies, sky-tinted puddles, ripple fragments, wind streaks), and the pair recipes retuned on the real edges, the grass family's band down to 0.2 m (WOR-561). Then: review fixes, the pair table stored as a triangle of 36 pairs, the shader's whole-number bias kept out of every sum a reordering compiler could fold it into, and the golden test run over negative tiles. Then: tested by hand and merged to main, #332 (tile variants) carried by #333 (surface blending), with the draft-state wording rewritten to what shipped)
+Status: Built and merged. Open items are in status.md under Ground Tile Follow-ups.
 
 The ground is painted by the tile pass: one quad per chunk whose fragment shader picks a land surface for every pixel, samples that surface's baked ground tiles, and paints water and shore over the result. Which surface a pixel gets is decided by the land field of [terrain-polygons-architecture.md](./organic-terrain/terrain-polygons-architecture.md) D16, so no surface boundary follows the tile grid. This doc covers the ground tile assets, the baker, how the shader samples them, and the per-chunk data the pass reads, and summarizes the field; the spec holds the field's details and defaults.
 
-On main each surface is one 512x512 pattern in a texture atlas, stamped on every 1 m tile. This doc specifies its replacement, which is built but not yet on main. The sections on render tiles and the land field describe what stays.
+Each surface used to be one 512x512 pattern in a texture atlas, stamped on every 1 m tile. This doc describes what replaced it: a set of baked variants a surface, mixed by a hex lattice in the shader. The atlas is deleted. The sections on render tiles and the land field describe what stayed.
 
 ## Why change
 
-Two problems with the pass on main:
+Two problems with the old pass:
 
-1. Faint lines on every tile edge that flicker while panning. `land.glsl` samples each pattern at the point's offset inside its 1 m tile, from an atlas whose cells are packed edge to edge with linear filtering, no gutter and no mipmaps. Every tile boundary blends in half a texel of the neighboring atlas cell (Grass's right edge picks up Dirt, GrassTall's left edge picks up Mud). The camera isn't pixel-snapped, so the band comes and goes with the sub-pixel offset.
-2. Repetition. The same pattern is stamped on every tile, so its soft ellipses read as a 1 m grid of spots, and the only variation is the surface id: Grass, GrassShort, GrassMeadow and GrassTall are flat greens that differ by tint.
+1. Faint lines on every tile edge that flickered while panning. `land.glsl` sampled each pattern at the point's offset inside its 1 m tile, from an atlas whose cells were packed edge to edge with linear filtering, no gutter and no mipmaps. Every tile boundary blended in half a texel of the neighboring atlas cell (Grass's right edge picked up Dirt, GrassTall's left edge picked up Mud). The camera isn't pixel-snapped, so the band came and went with the sub-pixel offset.
+2. Repetition. The same pattern was stamped on every tile, so its soft ellipses read as a 1 m grid of spots, and the only variation was the surface id: Grass, GrassShort, GrassMeadow and GrassTall were flat greens that differed by tint.
 
-The design keeps tiles as SVG files on disk, so they stay moddable, and uses the procedural-tree approach (a Lua generator and seeds) to make many unique variants of each. A baker rasterizes them once at load into mipmapped texture arrays, and the shader mixes variants through a hex lattice. The atlas (salal's `TileAtlasBuilder`, built by `GameBootstrap`) is removed, which removes problem 1 at its source; there's no separate stopgap.
+The tiles are assets on disk, so they stay moddable, and use the procedural-tree approach (a Lua generator and seeds) to make many unique variants of each (fixed SVG variants are planned, see Ground tile assets). A baker rasterizes them once at load into mipmapped texture arrays, and the shader mixes variants through a hex lattice. The atlas (salal's `TileAtlasBuilder`, built by `GameBootstrap`) is gone, which removed problem 1 at its source; there was no separate stopgap.
 
-Rollout: nothing from this work merges until it has been tested by hand. It lives on draft PRs in worldsim and salal, and the salal change needs a tag before the worldsim PR could land.
+Rollout: the tile variants shipped as #332 and the surface blending as #333, which carries #332's commits, and both were tested by hand before they merged. Salal needed no change, so there was no tag to wait on and worldsim stays pinned at v0.34.0. The `data-lod` loader below is the one piece that would need a salal addition, and it isn't built.
 
 ## Layers
 
@@ -69,7 +69,7 @@ Validation (`AssetValidator.cpp`): exactly one ground def per land surface, `ass
 
 Lua gets two noise bindings (`LuaEngine.cpp`, `registerBindings`), both thin wrappers over salal's `foundation/random/HashNoise.h`: `noise2(x, y, seed)`, and `periodicNoise2(x, y, period, seed)`, which wraps the gradient lattice so density fields tile; a period within 1e-6 of a whole number counts as that number, since `P / F` lands a hair off one in floating point. `path:addVertex` raises a Lua error for a NaN or infinite coordinate. A Lua path also gets `path:setLod(N)` (see LOD below) and `path:setHeight(h)` (see Surface transitions).
 
-`tessellateAsset` currently wraps its `uint16` indices silently past 65,535 vertices (`AssetRegistry.cpp`). It splits into several meshes instead, the way `SVGLoader.cpp` guards. Dense ground tiles will hit the limit, and so could flora.
+`tessellateAsset` used to wrap its `uint16` indices silently past 65,535 vertices (`AssetRegistry.cpp`). It splits into several meshes now, the way `SVGLoader.cpp` guards. Dense ground tiles hit the limit, and so could flora.
 
 | Surface | D13 level | Source | px/m |
 |---------|-----------|--------|------|
@@ -112,11 +112,13 @@ What's left cold is the render, and nearly all of it is the GPU finishing salal'
 
 ## LOD
 
+Built: Lua `path:setLod(N)` and the baked mip chain it feeds. Not built: the SVG `data-lod` attribute below and the salal load-from-string addition it needs (Ground Tile Follow-ups in status.md). Every shipped def is procedural, so none needs them yet.
+
 An SVG element, or a `<g>`, may carry `data-lod="N"`: draw it only where the screen shows at least N pixels per meter. The game's zoom runs 2 to 160 px/m, default 24. The attribute inherits, and an element's effective N is the largest on itself and its ancestors. An element without one is always drawn. A Lua path gets the same through `path:setLod(N)`, a new field on `GeneratedPath`.
 
 The LOD is baked into the mip chain, so it costs nothing per frame. Mip k of a layer has `pixelsPerMeter / 2^k` texels per meter, and the GPU picks it when the screen shows about that many pixels per meter. The baker renders each mip from the vectors (wrapped, 2x supersampled at that level's size), including only the nodes whose N is at or below that level's density. Pebbles, flower specks and blade strokes drop out cleanly at the zoom the author chose, instead of averaging into a muddy tint, and trilinear filtering fades each one over an octave of zoom. Rendering every level costs about 1.33x the base render at load.
 
-NanoSVG drops attributes it doesn't know, so the loader filters in XML first. A pugixml pass resolves each element's effective `data-lod` and writes one filtered SVG text per distinct band, and each text is then parsed. salal's `loadSVG` only takes a path, so this needs a small salal addition: load from a string. That is one salal PR and a tag bump, which the worldsim PR pins.
+NanoSVG drops attributes it doesn't know, so the loader filters in XML first. A pugixml pass resolves each element's effective `data-lod` and writes one filtered SVG text per distinct band, and each text is then parsed. salal's `loadSVG` only takes a path, so this needs a small salal addition: load from a string. That is one salal PR and a tag bump, which the worldsim change would pin.
 
 Flora could adopt the same convention later; it's out of scope here.
 
@@ -400,7 +402,7 @@ Rows are keyed the way they read on screen. The record column says where they li
 
 The family band went from 1.4 m through 0.7 and 0.35 to 0.2: the co-baked layouts and the shared hex hash put the same blades in the same places in every member, so even at 0.2 m an edge reads as a change of sward with no line and no cut through a blade, at zoom 20 down to 1.5, where the field's warp is most of what a boundary's softness comes from. It's the widest band most of the grass shows and the cheapest change on the pass (Perf ledger). Snow's crisp window is safe at far zoom because the mip window still widens with the mip: at zoom 0.5 its edge is a soft one or two pixel ramp.
 
-As shipped, the grass defs name every pair (no default block); Rock's default block is the grass recipe and its Sand, Dirt and Mud overrides set shadow 0; Dirt and Sand name theirs; Snow's default is its recipe and its Mud override takes the Mud recipe (offset 0, no ridge or shadow), since anything over Mud stains. Each def's lead comment says what its blocks do. In game: tufts break over dirt with a faint shadow under them and over sand with a fainter one; sand creeps into a rock outcrop's joints and hollows as ragged lobes, without the horizontal streaks round 1's ripple crests drew; snow lies crisp on rock, filling its low spots first, with a dark contact line and a bright lip and no veil; grass darkens toward a mud bank while the puddles stay inside the mud; and a grass family edge is a soft change of sward. Shots in the hand-off.
+As shipped, the grass defs name every pair (no default block); Rock's default block is the grass recipe and its Sand, Dirt and Mud overrides set shadow 0; Dirt and Sand name theirs; Snow's default is its recipe and its Mud override takes the Mud recipe (offset 0, no ridge or shadow), since anything over Mud stains. Each def's lead comment says what its blocks do. In game: tufts break over dirt with a faint shadow under them and over sand with a fainter one; sand creeps into a rock outcrop's joints and hollows as ragged lobes, without the horizontal streaks round 1's ripple crests drew; snow lies crisp on rock, filling its low spots first, with a dark contact line and a bright lip and no veil; grass darkens toward a mud bank while the puddles stay inside the mud; and a grass family edge is a soft change of sward. The hand-off screenshots of each pair at zoom 20, 3, 1.5 and 0.5 went with the PRs.
 
 ### Perf ledger
 
@@ -574,7 +576,7 @@ That is 8 variants per surface at 4 bytes a texel. The atlas it replaces is 16 M
 
 Measured with today's content (every def's 8 variants, mips 0 to 6): 56.0 MiB, 42.7 MiB for the grass family's 32 layers and 13.3 MiB for the other five surfaces' 40. With the placeholders it was 21.3 MiB.
 
-Driver-side BC1 (S3TC) on upload would be 8x smaller (about 7 MiB) and cost less bandwidth per sample. It gets measured in the bake and shader step and stays only if it's neutral or better and looks right.
+Driver-side BC1 (S3TC) on upload would have been 8x smaller (about 7 MiB), but heights make alpha real data and BC1 has none. BC3 or BC7 is the open measurement, about 14 MiB for the arrays (Open questions).
 
 ## Performance
 
@@ -598,7 +600,7 @@ Every one must hold, on every view and zoom:
 
 Runtime cost doesn't grow with art complexity. Tiles are sampled as textures, so a modder's denser SVG or busier generator only moves bake time, never frame time. The final capture with real content checks that.
 
-Order of measurement: baseline main twice (the noise floor), profile today's pass before changing it, measure each change alone against the baseline so a regression has a name, then a final capture with real content before the PR. The tables go into this doc and the dev-log entry, and the JSON sits beside the WOR-463 captures in `perf-results/`.
+Order of measurement: baseline main twice (the noise floor), profile today's pass before changing it, measure each change alone against the baseline so a regression has a name, then a final capture with real content before the PR. The tables are in this doc and the dev-log entries, and the JSON sits beside the WOR-463 captures in `perf-results/` (the ones this doc cites are committed).
 
 ### Clock state
 
@@ -745,9 +747,9 @@ Not taken: storing the arrays as plain RGBA8 to drop the encode (about 0.01, but
 
 - Seams: world-sim on 8081, Grass ground, `camera` control at `zoom=20`, `x = n - 0.0034` (the case that lights every column on main). No tile lines. Repeat at `x = n + 0.003` and at zoom 1 and 3, and pan across a chunk border (a multiple of 512 m): no seam at the lattice or the chunk edge.
 - Variety: screenshots at zoom 1, 3 and 20 on Grass, a GrassTall patch and a Dirt edge. No visible 1 m or 4 m repeat.
-- LOD: zoom out step by step over GrassMeadow. Flower specks tagged `data-lod` fade near their threshold, with no muddy tint left behind and no popping.
+- LOD: zoom out step by step over GrassMeadow. Flower heads tagged with `path:setLod` fade near their threshold, with no muddy tint left behind and no popping.
 - Asset-manager: the ground category lists all 9 land surfaces, the 3x3 preview shows no seam, an edit to a generator param followed by Reload shows the change, and validation is clean.
-- Unit tests: validator rules, periodic noise wraps, `data-lod` inheritance and per-band filtering, a mesh over 65,535 vertices splits, paths built once match a generator run per density, a bake on the pool matches one in turn bit for bit, and the bake cache's round trip, key and damaged files. `SurfaceFieldGolden` and the existing suite pass.
+- Unit tests: validator rules, periodic noise wraps, a mesh over 65,535 vertices splits, paths built once match a generator run per density, a bake on the pool matches one in turn bit for bit, and the bake cache's round trip, key and damaged files. `SurfaceFieldGolden` and the existing suite pass.
 - Transitions: in game at zoom 20, 3, 1.5 and 0.5, one view a pair: grass over Dirt (tufts over the edge, contact shadow), grass over Sand (the desert view), Sand over Rock (the joints fill), Snow over Rock (the tundra, x 0, y 6000000), Mud at a river (the stain), and a grass family edge (no visible line). At 0.5 no shimmering line: the mip window holds. Unit tests: the height bake (rank normalization, alpha survives the filter, `setHeight` default), the `<transition>` parse (defaults, overrides, a broken block dropped) and validator rules (`over`, the band cap, the offset, ranges, duplicates, unknown fields), the pair table's build and per-draw pack and its compact support (`GroundPairs.test.cpp`), and the cache key ignoring comments, `<macro>` and `<transition>` blocks.
 - Golden: `SurfaceFieldGolden.test.cpp` compiles the real `land.glsl` as GLSL 4.10 and renders five 32 m regions of a synthetic world in three chunks: the middle and two corners of one 70 km out, the middle of its mirror across the origin, and the far corner of chunk (-1, -1), whose reads cross zero, so the noise's floor division and hashing run on negative tiles too. `GlslMatchesCpp` holds the painted surface to the C++ wherever no field is within 1e-5 of flipping it, and the field and warp within 1e-4, except the warp of a pixel where only one side took the near-interior shortcut (`shortcutSplit`): both read one surface at field exactly 1 there, and the shortcut reports no warp, so rounding on one side of its bound would otherwise fail a pixel whose surface agrees. `BandDistanceMeetsAtThePaintedBoundary` holds the band's distance on both sides of each painted boundary to two pixels (0.22 m at worst), and `FarZoomLodMovesEdgesUnderAPixel` the far-zoom LOD to its bound.
 - Performance: the final capture per the gates above, plus the transitions' own in Surface transitions.
@@ -762,6 +764,18 @@ Not taken: storing the arrays as plain RGBA8 to drop the encode (about 0.01, but
 - Tuning pair values: edits to `<transition>` blocks take a restart, with no re-bake (measured: 31 ms of warm bake steps after an edit). A dev verb that sets one pair field live is the cheap fix if that proves slow.
 - Two arrays by density against one array with every layer at 512x512 (the rest would cost about 40 MiB more). The spec picks two.
 - Per-asset shader snippets, to explore. A ground folder could ship a GLSL function beside its XML (for example `assets/world/ground/Grass/surface.frag.glsl`, defining that surface's color from position, the baked sample and the macro tint), and the loader would assemble every snippet into the tile shader at first run, with a switch on surface id. Today the tile shader is one program loaded from a folder, and salal assembles its base shader from hooks at build time, so this moves assembly to load time for the tile pass. Questions: compile time and whether to cache the program binary (`glGetProgramBinary`); validating a modder's GLSL and reporting errors through asset validation; the per-pixel cost being unbounded for shader content, where baked tiles cost the same however detailed they are, so it needs a budget and the perf gates; how it sits with baked variants (a snippet that only post-processes the baked sample is cheap, one that replaces it isn't); and the Rust and Vulkan rewrite, where it becomes SPIR-V.
+
+## Follow-ups
+
+Planned, tracked as Ground Tile Follow-ups in status.md. None blocks the shipped work.
+
+- SVG ground defs with the `data-lod` filter, and the salal load-from-string addition (LOD).
+- BC3 or BC7 for the arrays (Open questions).
+- `SurfaceFieldGolden` on CI. There is no GL context there today, so the C++ and GLSL twins are only compared on the dev box; a software GL (Mesa llvmpipe on Linux) would let CI run it.
+- A 4.1 core context from salal. The tile shaders are GLSL 4.10 and salal asks for 3.3; NVIDIA and macOS accept that, a strict driver may not (Shader).
+- A per-user ground bake cache directory. The cache sits beside the executable, so a read-only install re-bakes on every launch.
+- The salal tag and a Lua API version in the bake cache key. Only a manual `GroundTileBaker::kVersion` bump covers an engine change today.
+- The asset-manager Bake view's speed: about 2.5 times slower than the splash bake, and 13.8 s in a run under contention.
 
 ## Later
 

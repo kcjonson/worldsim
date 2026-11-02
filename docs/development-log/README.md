@@ -62,6 +62,11 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 ### 2026
 
+#### November 2026
+
+- [2026-11-02 - Ground surface blending: height-contested edges and organic biome edges (WOR-556)](./entries/2026-11-02-ground-surface-blending.md)
+- [2026-11-02 - Ground tile variants: baked, hex-mixed ground arrays (WOR-545)](./entries/2026-11-02-ground-tile-variants.md)
+
 #### October 2026
 
 - [2026-10-25 - Dev server out of foundation; the logger takes a sink (SAL-30)](./entries/2026-10-25-dev-server-out-of-foundation.md)
