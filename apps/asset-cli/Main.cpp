@@ -348,8 +348,8 @@ namespace {
 		// missing SVGs, generator failures, and empty output). No GL required.
 		if (renderSmoke) {
 			for (const auto& name : sortedDefNames()) {
-				renderer::TessellatedMesh mesh;
-				if (!AssetRegistry::Get().buildMesh(name, 0, mesh)) {
+				std::vector<renderer::TessellatedMesh> meshes;
+				if (!AssetRegistry::Get().buildMeshes(name, 0, meshes)) {
 					report.add(Severity::Error, name, "render", "Asset produced no geometry (render smoke test)", "");
 				}
 			}

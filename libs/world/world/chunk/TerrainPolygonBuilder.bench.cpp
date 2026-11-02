@@ -1,18 +1,19 @@
 // Worker-thread cost of the waterline build (terrain-polygons-architecture.md
-// section 6: "a few tens of ms on the worker"). Three extended tile fields:
+// section 6: "a few tens of ms on the worker"). Two hand-built extended tile fields:
 //
-//  - StaircaseLake: one lake ~400 m across built from 16 m biome sectors, the shape
-//    corner-interpolated biomes produce; ~1.3 km of staircase shore.
 //  - Archipelago: water wherever a 40 m value noise exceeds one half, dozens of
 //    lakes and islands; the shore-heaviest chunk a real planet would make.
 //  - AllOcean: every tile water, so the only ring is the synthetic closure.
 //
-// Two river chunks from the carved-river test world (RiverNetwork2D geometry
-// through GeneratedWorldSampler, the tiles from a generated chunk plus its
-// apron), timing the build alone with its channel rings (D7):
+// Three generated chunks, the tiles from Chunk::generate plus its apron, timing
+// the build alone:
 //
-//  - RiverSource: the headwater, where the trunk starts and its springs and
-//    feeders fan out.
+//  - LakeShore: a lake's shore crossing the chunk as the per-tile biome pick draws
+//    it from a planet blend band (LakeShoreTestWorld.h), with its bays and
+//    headlands; the shore a lake or coast chunk carries.
+//  - RiverSource: the carved-river test world's headwater (RiverNetwork2D geometry
+//    through GeneratedWorldSampler), where the trunk starts and its springs and
+//    feeders fan out, with its channel rings (D7).
 //  - RiverTrunk: ~520 m of the ~10 m wide meandering trunk.
 //
 // Plus Chunk::generate end to end for an all-land and an all-water chunk, to show
@@ -22,6 +23,7 @@
 #include "world/chunk/Chunk.h"
 #include "world/chunk/ChunkSampleResult.h"
 #include "world/chunk/GeneratedWorldSampler.h"
+#include "world/chunk/LakeShoreTestWorld.h"
 #include "world/chunk/RiverTestWorld.h"
 #include "world/chunk/TerrainPolygonBuilder.h"
 
@@ -29,9 +31,9 @@
 
 #include <benchmark/benchmark.h>
 
-#include <cmath>
 #include <cstdint>
 #include <memory>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -57,12 +59,6 @@ namespace {
 			}
 		}
 		return tiles;
-	}
-
-	bool staircaseLake(int32_t ex, int32_t ey) {
-		const double sx = std::floor(ex / 16.0) * 16.0 + 8.0 - 264.0;
-		const double sy = std::floor(ey / 16.0) * 16.0 + 8.0 - 264.0;
-		return sx * sx + sy * sy < 200.0 * 200.0;
 	}
 
 	bool archipelago(int32_t ex, int32_t ey) {
@@ -109,33 +105,36 @@ namespace {
 		reportCounts(state, polys);
 	}
 
-	void runRiverBuild(benchmark::State& state, ChunkCoordinate coord) {
-		const world::river_test::CarvedRiverWorld world = world::river_test::makeCarvedRiverWorld();
-		const world::GeneratedWorldSampler			sampler(world.world, world.landingLat, world.landingLon);
-		auto chunk = std::make_unique<Chunk>(coord, sampler.sampleChunk(coord), sampler.getWorldSeed());
+	void runGeneratedBuild(benchmark::State& state, ChunkCoordinate coord, world::ChunkSampleResult sampled, uint64_t worldSeed) {
+		auto chunk = std::make_unique<Chunk>(coord, std::move(sampled), worldSeed);
 		chunk->generate();
-		const world::ApronField	   apron = world::ApronField::build(
-			coord, chunk->biomeData(), chunk->biomeData().rasterHydrology(coord), sampler.getWorldSeed());
+		world::ChunkNeighborhood   neighborhood(coord, chunk->biomeData(), worldSeed);
+		const world::ApronField	   apron = world::ApronField::build(neighborhood, chunk->biomeData().rasterHydrology(coord));
 		const world::ExtendedTiles extended(*chunk, apron);
 		const TerrainPolygonBuilder::ExtendedTileFn fn = [&extended](int32_t ex, int32_t ey) -> const TileData& {
 			return extended.at(ex, ey);
 		};
 		const world::ChunkSampleResult& sample = chunk->biomeData();
-		world::NeighborhoodGrids		neighborhood(sample);
-		const TerrainPolygonBuilder::BiomeWaterFn waterFn = [&neighborhood, coord](int64_t tx, int64_t ty) {
-			return world::isBiomeWater(neighborhood.primaryBiomeAt(coord, tx, ty));
+		const TerrainPolygonBuilder::BiomeWaterFn waterFn = [&neighborhood](int64_t tx, int64_t ty) {
+			return neighborhood.isBiomeWaterAt(tx, ty);
 		};
 		ChunkTerrainPolygons polys;
 		for (auto _ : state) {
-			polys = TerrainPolygonBuilder::build(coord, sampler.getWorldSeed(), fn, waterFn, sample.riverSegments, sample.pondBlobs);
+			polys = TerrainPolygonBuilder::build(coord, worldSeed, fn, waterFn, sample.riverSegments, sample.pondBlobs);
 			benchmark::DoNotOptimize(polys);
 		}
 		reportCounts(state, polys);
 		state.counters["segments"] = static_cast<double>(sample.riverSegments.size());
 	}
 
-	void BM_TerrainPolygonBuilder_StaircaseLake(benchmark::State& state) {
-		runBuild(state, staircaseLake, Biome::Lake);
+	void runRiverBuild(benchmark::State& state, ChunkCoordinate coord) {
+		const world::river_test::CarvedRiverWorld world = world::river_test::makeCarvedRiverWorld();
+		const world::GeneratedWorldSampler			sampler(world.world, world.landingLat, world.landingLon);
+		runGeneratedBuild(state, coord, sampler.sampleChunk(coord), sampler.getWorldSeed());
+	}
+
+	void BM_TerrainPolygonBuilder_LakeShore(benchmark::State& state) {
+		runGeneratedBuild(state, world::shore_test::kLakeShoreChunk, world::shore_test::lakeShoreSample(), kSeed);
 	}
 
 	void BM_TerrainPolygonBuilder_Archipelago(benchmark::State& state) {
@@ -200,7 +199,7 @@ namespace {
 
 } // namespace
 
-BENCHMARK(BM_TerrainPolygonBuilder_StaircaseLake)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_TerrainPolygonBuilder_LakeShore)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_TerrainPolygonBuilder_Archipelago)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_TerrainPolygonBuilder_AllOcean)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_TerrainPolygonBuilder_RiverSource)->Unit(benchmark::kMillisecond);

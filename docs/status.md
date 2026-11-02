@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-09-28 (Construction G3: foundation Add / Subtract. An editable blueprint is reshaped in place, an Add onto a built foundation becomes an extension blueprint that merges into it once built, and the result is judged against every foundation rule, including the new foundation-to-foundation pathing clearance. See dev log 2026-09-28-foundation-add-subtract.md. Earlier: 2026-09-27 WOR-493/WOR-488 fixed: the navmesh is one constrained Delaunay triangulation of the arrangement, so no face drops (chunk-corner water pinches and 300-tree land faces no longer blank the landing), a route deferred for want of a mesh is requested again when the nav generation moves, and the "Waiting for the area to settle" hold gives way to the first wander. See dev log 2026-09-27-frozen-colonist-unplaceable-stations.md. Earlier: 2026-09-26 Organic Terrain Geometry epic complete: water is the terrain rings for nav, rendering, vision, and mud, and every land boundary is a warped field isoline. See dev log 2026-09-26-organic-terrain-geometry.md. Earlier: WOR-463: perf validated across zoom levels; the ground and water pass stays under 1.5 ms of GPU at 3072x1728 at every zoom (now reported as tileGpuMs), far-zoom land LOD, 0.25 m near distance-field texels, the waterline lattice's one-sided cells filled in spans, nav regions recenter without blocking the frame. Earlier: WOR-462: every land-on-land boundary drawn as the isoline of a warped per-surface field (SurfaceField + land.glsl, golden-tested against each other), render tiles shrunk to 524 KB a chunk with a 3-tile apron post-processed like the neighbors' tiles, placement reading the painted field and the water rings, tile.glsl neighbor bleed and tile adjacency deleted. Earlier: WOR-461: vision drinks from shore points sampled along the rings, mud banks by distance to the rings that continue across chunk borders, point-bar sand on tight inner bends, TerrainPolygonQuery over each chunk's rings. Earlier: WOR-460: water and shore painted per pixel from the distance field, tile water path deleted, shader look tunable live over /api/dev/tunable. Earlier: WOR-459: nav reads the chunks' terrain rings, tile marcher deleted; colonists stop at the smooth waterline and wade fordable creeks. Earlier: WOR-457 per-chunk waterline rings built on the chunk worker, contour module in libs/geometry. Earlier: Game UI to Prototype Polish complete: 8 PRs merged (#256-#261, #263, #264) — layout verification harness (/api/ui/tree + /api/ui/lint), LayoutContainer auto-layout engine (Fill/Hug/Fixed, distribution, gap/padding, auto text wrap), MSDF text fixes, ScenarioSelect + PartySelect scenes with party→spawn wiring, starfield/planet backdrops, EntityInfoView rebuild, region minimap panel, dossier Gear paperdoll, full pre-game screen fidelity; lint reports zero violations on every screen. See dev log 2026-07-03-game-ui-prototype-polish.md. Earlier: Colonist task arbitration complete: (tier,score) key, 7-tier ladder, job lifecycle, TaskListView inspector, 879 engine-tests green, combined four-scenario flow verified end-to-end. Earlier: Colonist gameplay stabilization complete and merged (#241): grass is now a first-class GPU-instanced groundcover role driven by a procedural Lua asset (24 variants, ~486k tufts @ 120fps/1.75ms), placed entities no longer randomly tilt (opt-in <randomRotation>), and the EntityRenderer god-class was decomposed into per-path renderers. Story 0 of Living Environment Rendering; M-A wind next. See dev log 2026-06-27-groundcover-render-path.md. Earlier: Worldgen M7 complete: input-validation envelope + fail-loud reason channel, golden full-pipeline worldHash gate that turns dual-platform CI into a cross-platform determinism check (+ worldgen-cli --expect-hash), and a benchmark-calibrated default resolution (gen-time sweep on the reference machine; kept n=1024 as a documented kDefaultGridSubdivision). Closes the last engineering task of the World Generation & Creator epic; only the deferred planet-DB streaming and landing-difficulty UX remain. See dev log 2026-06-26-worldgen-m7-hardening.md. Earlier: Physical carry & stacks epics complete and merged (#218/#219/#224/#228/#230/#232/#233): two-hand wood armfuls + strength-derived carry, then a universal physical "stack" model -- one material capped at its own stackSize everywhere -- plus construction sites that hold their required materials directly and dump to the ground on demolish. See dev log 2026-06-26-physical-stack-inventory.md and plan 2026-06-26-bulk-material-carry-felling.md. Earlier: 2D landscape from 3D hydrology epic complete and merged (#212) -- replaced the noise-flood ponds with sparse biome/precip-weighted ponds + desert oases, implemented Distribution::Spaced with grove/glade/thicket clustering for denser natural forests, and fixed riparian plants (reeds on the mud bank + bankside bushes); follows the merged 2D rivers #208 and tributaries/springs #210. See dev log 2026-06-22-hydrology-ponds-and-proper-forests.md. Earlier: Realistic chained build loop: mass-based carry weight + axe-gated chopping + wood-unit tree harvesting; the colonist chops to its carry cap, hauls, repeats, then builds. Plus the task-chaining UI/AI fixes found verifying it (in-progress-work priority calc, friendly labels, full-width info-panel task lines, "Next" chain step, build-progress percent + on-map fill, global task list Build umbrella + who's-working-it). See dev log 2026-06-20-carry-weight-axe-gated-harvest.md. Earlier on main: Asset Manager epic #205 (dev log 2026-06-20-asset-manager.md), Cryosphere #199, Navigation P4 belief filtering #189/#191/#194, Vision System #172-184, Salvage UI cutover #176-181)
+Last Updated: 2026-11-02 (Ground Tile Variants and Ground Surface Blending are complete and merged, #332 carried by #333: baked, hex-mixed ground tile variants, height-contested surface edges and organic biome edges, with the tile pass at or under main in 26 of 27 perf cells. See dev logs 2026-11-02-ground-tile-variants.md and 2026-11-02-ground-surface-blending.md; what is left is planned as Ground Tile Follow-ups. Earlier: 2026-09-28 Construction G3: foundation Add / Subtract. An editable blueprint is reshaped in place, an Add onto a built foundation becomes an extension blueprint that merges into it once built, and the result is judged against every foundation rule, including the new foundation-to-foundation pathing clearance. See dev log 2026-09-28-foundation-add-subtract.md. Earlier: 2026-09-27 WOR-493/WOR-488 fixed: the navmesh is one constrained Delaunay triangulation of the arrangement, so no face drops (chunk-corner water pinches and 300-tree land faces no longer blank the landing), a route deferred for want of a mesh is requested again when the nav generation moves, and the "Waiting for the area to settle" hold gives way to the first wander. See dev log 2026-09-27-frozen-colonist-unplaceable-stations.md. Earlier: 2026-09-26 Organic Terrain Geometry epic complete: water is the terrain rings for nav, rendering, vision, and mud, and every land boundary is a warped field isoline. See dev log 2026-09-26-organic-terrain-geometry.md. Earlier: WOR-463: perf validated across zoom levels; the ground and water pass stays under 1.5 ms of GPU at 3072x1728 at every zoom (now reported as tileGpuMs), far-zoom land LOD, 0.25 m near distance-field texels, the waterline lattice's one-sided cells filled in spans, nav regions recenter without blocking the frame. Earlier: WOR-462: every land-on-land boundary drawn as the isoline of a warped per-surface field (SurfaceField + land.glsl, golden-tested against each other), render tiles shrunk to 524 KB a chunk with a 3-tile apron post-processed like the neighbors' tiles, placement reading the painted field and the water rings, tile.glsl neighbor bleed and tile adjacency deleted. Earlier: WOR-461: vision drinks from shore points sampled along the rings, mud banks by distance to the rings that continue across chunk borders, point-bar sand on tight inner bends, TerrainPolygonQuery over each chunk's rings. Earlier: WOR-460: water and shore painted per pixel from the distance field, tile water path deleted, shader look tunable live over /api/dev/tunable. Earlier: WOR-459: nav reads the chunks' terrain rings, tile marcher deleted; colonists stop at the smooth waterline and wade fordable creeks. Earlier: WOR-457 per-chunk waterline rings built on the chunk worker, contour module in libs/geometry. Earlier: Game UI to Prototype Polish complete: 8 PRs merged (#256-#261, #263, #264) — layout verification harness (/api/ui/tree + /api/ui/lint), LayoutContainer auto-layout engine (Fill/Hug/Fixed, distribution, gap/padding, auto text wrap), MSDF text fixes, ScenarioSelect + PartySelect scenes with party→spawn wiring, starfield/planet backdrops, EntityInfoView rebuild, region minimap panel, dossier Gear paperdoll, full pre-game screen fidelity; lint reports zero violations on every screen. See dev log 2026-07-03-game-ui-prototype-polish.md. Earlier: Colonist task arbitration complete: (tier,score) key, 7-tier ladder, job lifecycle, TaskListView inspector, 879 engine-tests green, combined four-scenario flow verified end-to-end. Earlier: Colonist gameplay stabilization complete and merged (#241): grass is now a first-class GPU-instanced groundcover role driven by a procedural Lua asset (24 variants, ~486k tufts @ 120fps/1.75ms), placed entities no longer randomly tilt (opt-in <randomRotation>), and the EntityRenderer god-class was decomposed into per-path renderers. Story 0 of Living Environment Rendering; M-A wind next. See dev log 2026-06-27-groundcover-render-path.md. Earlier: Worldgen M7 complete: input-validation envelope + fail-loud reason channel, golden full-pipeline worldHash gate that turns dual-platform CI into a cross-platform determinism check (+ worldgen-cli --expect-hash), and a benchmark-calibrated default resolution (gen-time sweep on the reference machine; kept n=1024 as a documented kDefaultGridSubdivision). Closes the last engineering task of the World Generation & Creator epic; only the deferred planet-DB streaming and landing-difficulty UX remain. See dev log 2026-06-26-worldgen-m7-hardening.md. Earlier: Physical carry & stacks epics complete and merged (#218/#219/#224/#228/#230/#232/#233): two-hand wood armfuls + strength-derived carry, then a universal physical "stack" model -- one material capped at its own stackSize everywhere -- plus construction sites that hold their required materials directly and dump to the ground on demolish. See dev log 2026-06-26-physical-stack-inventory.md and plan 2026-06-26-bulk-material-carry-felling.md. Earlier: 2D landscape from 3D hydrology epic complete and merged (#212) -- replaced the noise-flood ponds with sparse biome/precip-weighted ponds + desert oases, implemented Distribution::Spaced with grove/glade/thicket clustering for denser natural forests, and fixed riparian plants (reeds on the mud bank + bankside bushes); follows the merged 2D rivers #208 and tributaries/springs #210. See dev log 2026-06-22-hydrology-ponds-and-proper-forests.md. Earlier: Realistic chained build loop: mass-based carry weight + axe-gated chopping + wood-unit tree harvesting; the colonist chops to its carry cap, hauls, repeats, then builds. Plus the task-chaining UI/AI fixes found verifying it (in-progress-work priority calc, friendly labels, full-width info-panel task lines, "Next" chain step, build-progress percent + on-map fill, global task list Build umbrella + who's-working-it). See dev log 2026-06-20-carry-weight-axe-gated-harvest.md. Earlier on main: Asset Manager epic #205 (dev log 2026-06-20-asset-manager.md), Cryosphere #199, Navigation P4 belief filtering #189/#191/#194, Vision System #172-184, Salvage UI cutover #176-181)
 
 ## Epic/Story/Task Template
 
@@ -27,6 +27,95 @@ Use this template for all work items:
 ---
 
 ## Recently Completed Epics (Last 4)
+
+### ✅ Ground Surface Blending
+**Spec/Documentation:** `/docs/technical/ground-textures.md` (Surface transitions), `/docs/technical/organic-terrain/terrain-polygons-architecture.md` (D13, D15, D16, biome edges), plan `/docs/development-log/plans/2026-11-02-ground-blending.md`, dev log `2026-11-02-ground-surface-blending.md`
+**Dependencies:** Ground Tile Variants
+**Status:** complete (Specboard WOR-556; merged via #333, which carries #332)
+
+**Tasks:**
+- [x] Spec (WOR-557)
+- [x] Organic biome edges and gradient noise (WOR-558)
+  - [x] Per-tile biome pick from interpolated corner weights plus world-space gradient fBm and an ecotone band
+  - [x] Gradient noise in the generators, `NoiseUtils::valueNoise` deleted if unused
+  - [x] Apron, waterline and `Chunk::computeTileFrom` on the new lookup; tests that hand-fill `sectorGrid` moved
+  - [x] Before and after screenshots (desert staircase, a coast, a lake); chunk generation cost reported
+- [x] Heights in the ground arrays (WOR-559)
+  - [x] Lua `path:setHeight`, paint-order default
+  - [x] Height pass in the baker, rank normalization, alpha filtered as data, `kVersion` bump
+  - [x] Mip strategy A/B: filtered mips and a widening window kept, `Wc` and `mipC` fitted
+  - [x] Grass family seed-group co-bake
+  - [x] Tests (rank normalization, alpha survives the filter, `setHeight` default); cold and warm bake reported
+- [x] Height contest (WOR-560)
+  - [x] `<transition>` schema, validator rules, pair table upload
+  - [x] Contest in `land.glsl`; fringe, rim and their tunables deleted
+  - [x] Mip window fit; distance accuracy past 0.5 m checked (it stepped; the band's distance now comes from the field's value)
+  - [x] Perf A/Bs against the branch tip before blending (desert zoom 3 still 0.06 ms over main)
+- [x] Art round 2 (WOR-561)
+  - [x] Rock, Mud, Sand and Snow
+  - [x] Heights tuned per surface and pair recipes tuned on the real edges
+- [x] Desert zoom 3: the near-interior test again after the first fine octave (WOR-564; +0.01 to +0.02 ms over main, was +0.04)
+- [x] Waterline and nav ring growth from organic edges measured, not trimmed (WOR-563; no frame cost, worker time in terrain spec section 6)
+- [x] Verify and hand off (WOR-562)
+  - [x] Final perf capture against main
+  - [x] `docs/testing/scenarios/09-ground-tiles.md` transition steps
+  - [x] Regression pass (01-04, 06 and 08 pass; WOR-566, WOR-567 and WOR-568 filed, outside this branch's code)
+  - [x] PRs (textures #332, then blending #333 stacked on top, which carries #332's commits); hand-off screenshots of each pair at zoom 20, 3, 1.5 and 0.5
+- [x] macOS GLSL 4.10 fix: the tile shader compiles as 4.10 so `textureGather` is core (WOR-565)
+- [x] Band distance at three-surface junctions measured from the paint rule's lead (WOR-569, found in Kevin's manual test)
+- [x] 5-agent review, fixes in
+  - [x] Biome pick read past its candidates at a rounding tie (out-of-bounds read)
+  - [x] Ground bake cache keyed on the def as loaded, one cache file a def with sanitized names
+  - [x] One bake path for every scene, a step that throws or that GL refuses fails its def
+  - [x] Pair table stored as a triangle of 36 pairs
+  - [x] Fold-safe bias math in the shader
+  - [x] Golden test rendered over negative tiles too
+  - [x] Validation of macro, variant count and layer size
+- [x] Kevin's manual test, approved 2026-11-02
+
+**Result:** Surface edges are a height contest between the two surfaces' baked heights, and biome edges are per-tile and organic. The merged tile pass reads at or under main in 26 of 27 cells (desert idle zoom 3 is 0.58 ms against main's 0.56), cold bake about 21 s, warm 33 to 37 ms. ✅
+
+### ✅ Ground Tile Variants
+**Spec/Documentation:** `/docs/technical/ground-textures.md`, plan `/docs/development-log/plans/2026-11-02-ground-tile-variants.md`, dev log `2026-11-02-ground-tile-variants.md`
+**Dependencies:** none
+**Status:** complete (Specboard WOR-545; merged via #333, which carries #332)
+
+**Tasks:**
+- [x] Perf baseline and spike
+  - [x] Baseline captures of main on the river, coast and desert views
+  - [x] Profile today's tile pass (atlas, water, land field)
+  - [x] Spike on a throwaway branch: texture array, hex sampler, macro texture, fringe, packed neighborhood
+- [x] Spec and board
+  - [x] Rewrite ground-textures.md with the spike numbers
+  - [x] Specboard epic and tasks
+  - [x] Add the epic here
+- [x] Asset side
+  - [x] `ground` role, schema parse, validator rules
+  - [x] Lua `noise2`, `periodicNoise2`, `path:setLod`
+  - [x] `tessellateAsset` index-wrap fix
+  - [x] Unit tests
+- [x] Bake and shader
+  - [x] `GroundTileBank`: wrapped, supersampled, per-mip render into the texture arrays
+  - [x] Bake speed: one generator run a variant, variants on the pool, disk cache, which the splash bake reads
+  - [x] Per-chunk macro texture
+  - [x] `land.glsl` hex sampler, ChunkRenderer bindings and tunables
+  - [x] Delete the atlas path
+- [x] Content
+  - [x] Placeholder defs for the eight surfaces without art (`ground_placeholder.lua`, deleted with the real art)
+  - [x] Grass generator and the four grass defs (GrassShort, GrassMeadow and GrassTall round 1, with wildflowers for Meadow)
+  - [x] Dirt, Sand, Mud, Rock and Snow from one generator, `ground_bare.lua` (round 1)
+  - [x] Art round 2 from Kevin's feedback (Rock, Mud, Sand and Snow redrawn, WOR-561)
+- [x] Asset-manager preview
+  - [x] 3x3 wrapped preview and variant grid
+  - [x] Fixed tile frame for thumbnails
+- [x] Verify and hand off
+  - [x] In-game GPU hold for perf captures, so nobody locks clocks (WOR-553)
+  - [x] Tile pass back to net neutral or faster than main in every cell
+  - [x] Final perf capture against main with the GPU hold on
+  - [x] Manual test script `docs/testing/scenarios/09-ground-tiles.md`
+  - [x] PRs #332 and #333 merged; salal needed no change and stays pinned at v0.34.0
+
+**Result:** All nine land surfaces paint from Lua-generated ground tiles baked to texture arrays and mixed by a hex lattice, and the atlas is gone. At its close the tile pass read within +0.01 ms of main in all 27 cells (24 lower, median -0.04), cold bake 18.3 s, warm 35 to 38 ms. The `data-lod` loader and BC3/BC7 moved to Ground Tile Follow-ups. ✅
 
 ### ✅ Organic Terrain Geometry (terrain polygons)
 **Spec/Documentation:** `/docs/technical/organic-terrain/terrain-polygons-architecture.md`, dev log `2026-09-26-organic-terrain-geometry.md`
@@ -905,6 +994,22 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 ---
 
 ## Planned Epics
+
+### Ground Tile Follow-ups
+**Spec/Documentation:** `/docs/technical/ground-textures.md`
+**Dependencies:** Ground Tile Variants, Ground Surface Blending (both complete)
+**Status:** ready
+
+**Tasks:**
+- [ ] `data-lod` filtering and the salal load-from-string addition (SVG ground defs, `assetType` simple)
+- [ ] Measure BC3 or BC7 on upload (BC1 is out: heights make alpha real data; about 14 MiB for the arrays against 56 MiB raw)
+- [ ] Run `SurfaceFieldGolden` on CI under a software GL (Mesa llvmpipe on Linux); CI has no GL context, so the C++/GLSL twin is only checked on the dev box
+- [ ] Have salal request a 4.1 core context; the tile shaders are GLSL 4.10 and salal asks for 3.3, which NVIDIA and macOS accept and a strict driver may not
+- [ ] A per-user ground bake cache directory; it sits beside the exe today, so a read-only install re-bakes every launch
+- [ ] Put the salal tag and a Lua API version in the ground bake cache key; only a manual `GroundTileBaker::kVersion` bump covers engine changes today
+- [ ] Asset-manager Bake view speed: about 2.5x slower than the splash bake, and a run under contention measured 13.8 s
+
+---
 
 ### UI Scale setting
 **Spec/Documentation:** `docs/design/ui/ui-scale-setting.md`

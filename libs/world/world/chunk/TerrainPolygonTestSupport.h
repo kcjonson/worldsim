@@ -48,7 +48,7 @@ inline TileData tileOf(Biome biome) {
 using BiomeAt = std::function<Biome(int64_t tx, int64_t ty)>;
 
 // A hand-built extended region (chunk plus apron), for features smaller than
-// the 16-tile biome sectors a sampler can place, plus the world around it for
+// a sampler's corner lattice can place, plus the world around it for
 // the builder's biome water query: the stored tiles where they reach, `beyond`
 // elsewhere.
 struct HandTiles {

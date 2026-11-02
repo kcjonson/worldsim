@@ -13,16 +13,59 @@
 
 namespace assets {
 
-	PreparedAsset prepareAsset(const std::string& defName, const Foundation::Rect& target, uint32_t seed) {
-		PreparedAsset result;
-		if (!AssetRegistry::Get().buildMesh(defName, seed, result.mesh)) {
+	namespace {
+
+		Foundation::Rect unionBounds(const std::vector<renderer::TessellatedMesh>& meshes) {
+			Foundation::Rect bounds{0.0F, 0.0F, 0.0F, 0.0F};
+			bool			 first = true;
+			for (const auto& mesh : meshes) {
+				const Foundation::Rect b = renderer::computeBounds(mesh);
+				if (first) {
+					bounds = b;
+					first = false;
+					continue;
+				}
+				const float right = std::max(bounds.x + bounds.width, b.x + b.width);
+				const float bottom = std::max(bounds.y + bounds.height, b.y + b.height);
+				bounds.x = std::min(bounds.x, b.x);
+				bounds.y = std::min(bounds.y, b.y);
+				bounds.width = right - bounds.x;
+				bounds.height = bottom - bounds.y;
+			}
+			return bounds;
+		}
+
+		// Where renderer::fitToRect puts `src` inside `dst`.
+		Foundation::Rect fittedRect(const Foundation::Rect& src, const Foundation::Rect& dst) {
+			const float scale = std::min(dst.width / src.width, dst.height / src.height);
+			const float w = src.width * scale;
+			const float h = src.height * scale;
+			return {dst.x + ((dst.width - w) * 0.5F), dst.y + ((dst.height - h) * 0.5F), w, h};
+		}
+
+	} // namespace
+
+	PreparedAsset prepareAsset(const std::string& defName, const Foundation::Rect& target, uint32_t seed, float pixelScale) {
+		PreparedAsset		   result;
+		AssetRegistry&		   registry = AssetRegistry::Get();
+		const AssetDefinition* def = registry.getDefinition(defName);
+		const bool			   ground = def != nullptr && def->role == AssetRole::Ground;
+		const float			   period = ground ? def->ground.periodMeters : 0.0F;
+		const float			   pixelsPerMeter =
+			   ground && period > 0.0F ? std::min(target.width, target.height) * pixelScale / period : AssetRegistry::kFullDetail;
+		if (def == nullptr || !registry.buildMeshes(defName, seed, result.meshes, pixelsPerMeter)) {
 			result.hasOutput = false;
 			return result;
 		}
-		const Foundation::Rect bounds = renderer::computeBounds(result.mesh);
-		renderer::fitToRect(result.mesh, bounds, target);
+		const Foundation::Rect bounds = ground ? Foundation::Rect{0.0F, 0.0F, period, period} : unionBounds(result.meshes);
+		for (auto& mesh : result.meshes) {
+			renderer::fitToRect(mesh, bounds, target);
+		}
 		result.sourceBounds = bounds;
 		result.targetRect = target;
+		if (ground && bounds.width > 0.0F) {
+			result.clip = fittedRect(bounds, target);
+		}
 		return result;
 	}
 
@@ -61,15 +104,24 @@ namespace assets {
 		Renderer::Primitives::clear(background);
 
 		Renderer::Primitives::beginFrame();
-		if (prepared.hasOutput && !prepared.mesh.indices.empty()) {
+		if (prepared.clip) {
+			Renderer::Primitives::pushClip(*prepared.clip);
+		}
+		for (const auto& mesh : prepared.meshes) {
+			if (mesh.indices.empty()) {
+				continue;
+			}
 			Renderer::Primitives::drawTriangles({
-				.vertices = prepared.mesh.vertices.data(),
-				.indices = prepared.mesh.indices.data(),
-				.vertexCount = prepared.mesh.vertices.size(),
-				.indexCount = prepared.mesh.indices.size(),
+				.vertices = mesh.vertices.data(),
+				.indices = mesh.indices.data(),
+				.vertexCount = mesh.vertices.size(),
+				.indexCount = mesh.indices.size(),
 				.color = Foundation::Color(0.7F, 0.7F, 0.7F, 1.0F), // fallback if the mesh has no per-vertex colors
-				.colors = prepared.mesh.hasColors() ? prepared.mesh.colors.data() : nullptr,
+				.colors = mesh.hasColors() ? mesh.colors.data() : nullptr,
 			});
+		}
+		if (prepared.clip) {
+			Renderer::Primitives::popClip();
 		}
 		Renderer::Primitives::endFrame();
 

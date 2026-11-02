@@ -18,8 +18,6 @@ namespace world {
 		result.cornerElevations[2] = sampleElevation(coord.corner(ChunkCorner::SouthWest));
 		result.cornerElevations[3] = sampleElevation(coord.corner(ChunkCorner::SouthEast));
 
-		result.computeSectorGrid();
-
 		fillNeighborhoodCorners(result, coord,
 		                         [this](WorldPosition p) { return sampleBiomeAt(p); },
 		                         [this](WorldPosition p) { return sampleElevation(p); });

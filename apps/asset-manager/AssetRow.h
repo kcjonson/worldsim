@@ -21,6 +21,7 @@ namespace asset_manager {
 			std::string								defName;
 			bool									selected = false;
 			std::function<void(const std::string&)> onSelect;
+			const Renderer::CoordinateSystem*		coordinateSystem = nullptr; // the app's, for the thumbnail's detail
 		};
 
 		explicit AssetRow(const Args& args);
@@ -38,6 +39,7 @@ namespace asset_manager {
 		std::string								defName;
 		bool									selectedAtStart;
 		std::function<void(const std::string&)> onSelect;
+		const Renderer::CoordinateSystem*		coordinateSystem;
 		ui::Ref<ui::Rectangle>					bar;
 	};
 

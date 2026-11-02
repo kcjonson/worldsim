@@ -29,6 +29,7 @@
 #include <world/chunk/ChunkManager.h>
 #include <world/chunk/ChunkSampleResult.h>
 #include <world/chunk/IWorldSampler.h>
+#include <worldgen/sampling/PondNetwork2D.h>
 
 #include <algorithm>
 #include <chrono>
@@ -139,25 +140,20 @@ namespace {
 		[[nodiscard]] uint64_t getWorldSeed() const override { return 7u; }
 	};
 
-	// Mostly-land sampler with a water patch carved into the origin chunk: sectors whose
-	// local tile range covers ~[32 m, 48 m) on both axes read Ocean, the rest grassland.
-	// Lets a test assert isValidPosition is false on a real water face inside the region
-	// while a nearby land face is valid. (Sector = localTile / 16; chunk is 512 tiles.)
+	// Mostly-land sampler with one pond: a blob of water centred at (40, 40), radius 8 m wobbled
+	// by its rim sinusoids to 5.5..10.5 m (8 m due west, so its west shore is x = 32). Lets a
+	// test assert isValidPosition is false on a real water face inside the region while a nearby
+	// land face is valid. Every chunk around the origin carries the pond, as a world sampler's
+	// gather would.
+	constexpr worldgen::PondNetwork2D::Pond kPatchPond{.cx = 40.0, .cy = 40.0, .radius = 8.0F, .phaseA = 0.0F, .phaseB = 0.0F, .depth = 120};
+
 	class WaterPatchSampler : public world::IWorldSampler {
 	  public:
 		[[nodiscard]] world::ChunkSampleResult sampleChunk(world::ChunkCoordinate coord) const override {
 			world::ChunkSampleResult r = world::makeUniformChunkSampleResult(
 				world::BiomeWeights::single(world::Biome::TemperateGrassland), 1.0F);
-			// Only carve the patch in the origin chunk so points near (0,0) stay land.
-			if (coord.x == 0 && coord.y == 0) {
-				const world::BiomeWeights ocean =
-					world::BiomeWeights::single(world::Biome::Ocean);
-				// Tiles [32,48) -> sectors [2,3); a 16 m square of open water at ~(40,40).
-				for (int sy = 2; sy < 3; ++sy) {
-					for (int sx = 2; sx < 3; ++sx) {
-						r.sectorGrid[static_cast<size_t>(sy * world::kSectorGridSize + sx)] = ocean;
-					}
-				}
+			if (coord.x >= -1 && coord.x <= 1 && coord.y >= -1 && coord.y <= 1) {
+				r.pondBlobs.push_back(kPatchPond);
 			}
 			return r;
 		}
@@ -165,32 +161,14 @@ namespace {
 		[[nodiscard]] uint64_t getWorldSeed() const override { return 7u; }
 	};
 
-	// Inverse of WaterPatchSampler: open water EVERYWHERE except one 16 m land sector
-	// (the "island") carved into the origin chunk at world [32,48) on both axes. The only
-	// walkable face in the whole region is that island, which lets a test drop an origin in
-	// the surrounding water close to the island and force findValidPositionNear's Tier-3
-	// PUSH branch: nearest walkable (the island, ~4 m off) is inside minDist, yet a 24 m ring
-	// clears the island entirely (its farthest corner is ~21.5 m from the origin) so no ring
-	// sample is on mesh, and the radial push to minDist lands past the island back in water.
-	class LandIslandSampler : public world::IWorldSampler {
-	  public:
-		[[nodiscard]] world::ChunkSampleResult sampleChunk(world::ChunkCoordinate coord) const override {
-			// Default the whole chunk (and neighborhood) to water by seeding every
-			// corner Ocean.
-			world::ChunkSampleResult r = world::makeUniformChunkSampleResult(
-				world::BiomeWeights::single(world::Biome::Ocean), 1.0F);
-			// Carve the single land island only in the origin chunk so the rest stays water.
-			if (coord.x == 0 && coord.y == 0) {
-				const world::BiomeWeights land =
-					world::BiomeWeights::single(world::Biome::TemperateGrassland);
-				// Tiles [32,48) -> sector (2,2): one 16 m square of walkable land at ~(40,40).
-				r.sectorGrid[static_cast<size_t>(2 * world::kSectorGridSize + 2)] = land;
-			}
-			return r;
+	// The pond's least rim radius, which is how far its center is from the nearest shore.
+	float patchPondNearestShore() {
+		double least = kPatchPond.radius * 2.0;
+		for (int i = 0; i < 3600; ++i) {
+			least = std::min(least, worldgen::PondNetwork2D::rimRadiusAt(kPatchPond, 6.283185307179586 * i / 3600.0));
 		}
-		[[nodiscard]] float	   sampleElevation(world::WorldPosition) const override { return 1.0F; }
-		[[nodiscard]] uint64_t getWorldSeed() const override { return 7u; }
-	};
+		return static_cast<float>(least);
+	}
 
 	// All land but one pond centred on the chunk corner (0, 0), so it spans the four
 	// chunks around it. Each chunk clips its navRing piece to its own square, and the
@@ -1136,14 +1114,14 @@ TEST_F(NavigationSystemTest, InSimAreaTrueInsideFalseOutside) {
 // region is invalid; a point no region covers is invalid (can't place off-mesh yet).
 
 TEST_F(NavigationSystemTest, IsValidPositionTrueOnWalkableFaceFalseOnWaterAndOffMesh) {
-	// Mostly-land world with a 16 m water patch at ~(40,40) inside the origin chunk.
+	// Mostly-land world with a pond at (40,40) inside the origin chunk.
 	auto chunks = std::make_unique<world::ChunkManager>(std::make_unique<WaterPatchSampler>());
 	chunks->setLoadRadius(2);
 	chunks->setUnloadRadius(4);
 	chunks->update({0.0F, 0.0F});
 	chunks->finishPendingGeneration();
 
-	ConstructionWorld cw; // empty: open terrain plus the water patch obstacle
+	ConstructionWorld cw; // empty: open terrain plus the pond obstacle
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
@@ -1157,7 +1135,7 @@ TEST_F(NavigationSystemTest, IsValidPositionTrueOnWalkableFaceFalseOnWaterAndOff
 	ASSERT_TRUE(sys.inSimArea(land)) << "land point must be inside the region";
 	EXPECT_TRUE(sys.isValidPosition(land)) << "a walkable land face must be a valid position";
 
-	// A point inside the water patch is off-mesh (water face): INVALID, but still in-region.
+	// A point inside the pond is off-mesh (water face): INVALID, but still in-region.
 	const glm::vec2 water{40.0F, 40.0F};
 	ASSERT_TRUE(sys.inSimArea(water)) << "the water point must be inside the region";
 	EXPECT_FALSE(sys.isOnMesh(water)) << "the water ring must not be a walkable face";
@@ -1236,14 +1214,15 @@ TEST_F(NavigationSystemTest, NearestTerrainWalkablePointLeavesWaterBeforeAnyRegi
 	ASSERT_TRUE(stay.has_value());
 	EXPECT_EQ(*stay, land);
 
-	// The patch is a 16 m square at [32, 48): its middle is ~8 m from any shore.
+	// The snap from the pond's center lands on its nearest shore, the least rim radius away.
+	const float					   shore = patchPondNearestShore();
 	const std::optional<glm::vec2> moved = sys.nearestTerrainWalkablePoint({40.0F, 40.0F});
 	ASSERT_TRUE(moved.has_value());
 	const float dx = moved->x - 40.0F;
 	const float dy = moved->y - 40.0F;
 	const float d  = std::sqrt(dx * dx + dy * dy);
-	EXPECT_GT(d, 6.0F) << "the snap must leave the water";
-	EXPECT_LT(d, 11.0F) << "the snap must land on the nearest shore, not somewhere far";
+	EXPECT_GT(d, shore - 0.5F) << "the snap must leave the water";
+	EXPECT_LT(d, shore + 1.5F) << "the snap must land on the nearest shore, not somewhere far";
 	const std::optional<glm::vec2> again = sys.nearestTerrainWalkablePoint(*moved);
 	ASSERT_TRUE(again.has_value());
 	EXPECT_EQ(*again, *moved) << "the snapped point is itself walkable terrain";
@@ -1264,7 +1243,7 @@ TEST_F(NavigationSystemTest, GroupSpawnPointsFromWaterDropAllLandOnWalkableGroun
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	sys.setChunkManager(chunks.get());
 
-	// The patch is water on [32, 48); (34, 40) is ~2 m in from its west shore.
+	// The pond's west shore is x = 32; (34, 40) is ~2 m in from it.
 	const glm::vec2	 drop{34.0F, 40.0F};
 	constexpr size_t kCrew		 = 6;
 	constexpr float	 kRing		 = 1.5F;
@@ -1380,7 +1359,7 @@ TEST_F(NavigationSystemTest, GroupSpawnPointsNeverLandsInsideBuiltWallBand) {
 // Vertex-only validity is insufficient: a footprint can have every corner on land yet
 // span water, or fully enclose a water pond. These predicates sample edges + interior
 // (isAreaWalkable) or the centerline (isSegmentWalkable) so any off-mesh part rejects.
-// All use the WaterPatchSampler's 16 m water square at world ~[32,48) on both axes.
+// All use the WaterPatchSampler's pond at (40,40), at most 10.5 m from its center to any shore.
 
 namespace {
 	// Set up a system over the water-patch world + a 60 m origin region with a built mesh.
@@ -1393,7 +1372,7 @@ namespace {
 		chunks->finishPendingGeneration();
 		sys.setChunkManager(chunks.get());
 		// 60 m region at origin (clamped to 64), exactly as the existing water-patch test
-		// wires it: covers the origin land AND the [32,48] water square. (Viewport center/
+		// wires it: covers the origin land AND the pond. (Viewport center/
 		// half in meters; mirrors NavigationSystemTest::pushArea, inlined for a free helper.)
 		sys.setViewportRect(glm::vec2{0.0F, 0.0F}, glm::vec2{60.0F, 60.0F});
 		sys.setConstructionWorld(&cw);
@@ -1408,7 +1387,7 @@ TEST_F(NavigationSystemTest, IsAreaWalkableTrueWhenWhollyOnLand) {
 	auto chunks = wireWaterPatch(sys, cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
-	// A 4 m square wholly on land (well clear of the [32,48] water patch).
+	// A 4 m square wholly on land (well clear of the pond).
 	const std::vector<glm::vec2> onLand{{4.0F, 4.0F}, {8.0F, 4.0F}, {8.0F, 8.0F}, {4.0F, 8.0F}};
 	for (const auto& v : onLand) {
 		ASSERT_TRUE(sys.isValidPosition(v)) << "each corner must be on walkable land for the test premise";
@@ -1423,8 +1402,8 @@ TEST_F(NavigationSystemTest, IsAreaWalkableFalseWhenFootprintSpansWater) {
 	auto chunks = wireWaterPatch(sys, cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
-	// Corners straddle the water square horizontally: x=28 and x=52 are LAND (outside
-	// [32,48]), but the footprint's middle (and its top/bottom edges) crosses the water.
+	// Corners straddle the pond horizontally: x=28 and x=52 are LAND (12 m from its center,
+	// past its 10.5 m rim), but the footprint's middle (and its top/bottom edges) crosses the water.
 	// Vertex-only validation would WRONGLY accept this; the edge samples catch the water.
 	const std::vector<glm::vec2> spanning{{28.0F, 38.0F}, {52.0F, 38.0F}, {52.0F, 42.0F}, {28.0F, 42.0F}};
 	ASSERT_TRUE(sys.isValidPosition(spanning[0])) << "left corners must be on land (premise)";
@@ -1441,9 +1420,9 @@ TEST_F(NavigationSystemTest, IsAreaWalkableFalseWhenFootprintEnclosesWaterPond) 
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
 	// A big square whose corners AND edges are all on land but that fully encloses the
-	// [32,48] water square. Only the INTERIOR grid sampling can catch this -- the edge
-	// pass alone would pass. Corners at 28 and 52 are land; edges run along y=28/y=52 and
-	// x=28/x=52, all outside the water square.
+	// pond. Only the INTERIOR grid sampling can catch this -- the edge pass alone would
+	// pass. Corners at 28 and 52 are land; edges run along y=28/y=52 and x=28/x=52, all
+	// outside the pond.
 	const std::vector<glm::vec2> enclosing{{28.0F, 28.0F}, {52.0F, 28.0F}, {52.0F, 52.0F}, {28.0F, 52.0F}};
 	for (const auto& v : enclosing) {
 		ASSERT_TRUE(sys.isValidPosition(v)) << "each corner must be on land (premise)";
@@ -1454,7 +1433,7 @@ TEST_F(NavigationSystemTest, IsAreaWalkableFalseWhenFootprintEnclosesWaterPond) 
 
 // Water is geography, not a clearable entity, so it must block the terrain-only BUILDABLE checks too
 // (unlike a tree, which is buildable-over). Guards the terrain cache: a footprint spanning or enclosing
-// the [32,48] water square is unbuildable, a point in the water is not a buildable vertex, and land is.
+// the pond is unbuildable, a point in the water is not a buildable vertex, and land is.
 TEST_F(NavigationSystemTest, WaterBlocksBuildabilityUnlikeTrees) {
 	ConstructionWorld cw;
 	World			  world;
@@ -1483,7 +1462,7 @@ TEST_F(NavigationSystemTest, IsSegmentAndPolylineWalkableCatchWaterCrossing) {
 	// A wall segment fully on land is walkable.
 	EXPECT_TRUE(sys.isSegmentWalkable({4.0F, 4.0F}, {8.0F, 4.0F})) << "an all-land segment must be walkable";
 
-	// A segment whose endpoints are land (x=28, x=52) but that crosses the water square
+	// A segment whose endpoints are land (x=28, x=52) but that crosses the pond
 	// is rejected: the centerline samples land inside the water.
 	EXPECT_FALSE(sys.isSegmentWalkable({28.0F, 40.0F}, {52.0F, 40.0F})) << "a segment crossing water must be rejected";
 
@@ -1835,11 +1814,11 @@ TEST_F(NavigationSystemTest, FindValidPositionNearInPocketFallsBackToNearestWalk
 	ConstructionWorld cw;
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	auto chunks = wireWaterPatch(sys, cw); // 16 m water square at world [32,48)
+	auto chunks = wireWaterPatch(sys, cw); // pond at world (40,40)
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
-	// Center of the water square: in-region but off-mesh, and a 1 m ring around it is wholly
-	// inside the ~16 m water hole, so no ring sample is walkable -> Tier-3 fallback.
+	// Center of the pond: in-region but off-mesh, and a 1 m ring around it is wholly
+	// inside the water, 5.5 m or more from any shore, so no ring sample is walkable -> Tier-3 fallback.
 	const glm::vec2 origin{40.0F, 40.0F};
 	ASSERT_TRUE(sys.inSimArea(origin)) << "origin must be inside the region";
 	ASSERT_FALSE(sys.isOnMesh(origin)) << "origin must be off-mesh (inside the water hole)";
@@ -1852,51 +1831,36 @@ TEST_F(NavigationSystemTest, FindValidPositionNearInPocketFallsBackToNearestWalk
 		<< "the fallback result must be at least minDist from the origin";
 }
 
-namespace {
-	// Wire the LandIslandSampler world (water everywhere except one 16 m land island at world
-	// [32,48)) onto a system over a 60 m origin region with a built mesh. Returns the
-	// ChunkManager the caller must keep alive for the system's lifetime.
-	std::unique_ptr<world::ChunkManager> wireLandIsland(NavigationSystem& sys, ConstructionWorld& cw) {
-		auto chunks = std::make_unique<world::ChunkManager>(std::make_unique<LandIslandSampler>());
-		chunks->setLoadRadius(2);
-		chunks->setUnloadRadius(4);
-		chunks->update({0.0F, 0.0F});
-		chunks->finishPendingGeneration();
-		sys.setChunkManager(chunks.get());
-		sys.setViewportRect(glm::vec2{0.0F, 0.0F}, glm::vec2{60.0F, 60.0F});
-		sys.setConstructionWorld(&cw);
-		return chunks;
-	}
-} // namespace
-
 // Tier-3 PUSH branch (distinct from the early-return the pocket test above hits): the origin
-// sits in open water 4 m off a lone 16 m land island, the ONLY walkable face in the region.
-// nearestPathableOnMesh(origin) lands on the island ~4 m away (< minDist), so the fallback
-// pushes that point radially out to minDist=24 m -- which overshoots the island back into
-// water. Pre-fix that off-mesh pushed point was returned verbatim (a target a colonist could
-// never path to, stalling the place goal); the isOnMesh gate now falls back to the island
+// sits in the pond, ~5.5 m off its nearest shore, and minDist reaches past the region on every
+// side, so no ring sample is on mesh. nearestPathableOnMesh(origin) lands on the shore (< minDist),
+// so the fallback pushes that point radially out to minDist -- which overshoots the region's
+// walkable floor. Pre-fix that off-mesh pushed point was returned verbatim (a target a colonist
+// could never path to, stalling the place goal); the isOnMesh gate now falls back to the shore
 // point. We assert the result is on mesh, which fails without the gate and passes with it.
 TEST_F(NavigationSystemTest, FindValidPositionNearPushedFallbackStaysOnMesh) {
 	ConstructionWorld cw;
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	auto chunks = wireLandIsland(sys, cw); // 16 m land island at world [32,48), water elsewhere
+	auto chunks = wireWaterPatch(sys, cw); // pond at world (40,40), region [-60, 60] on both axes
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
-	// 4 m west of the island's west face (x=32); the whole island lies within ~21.5 m, so a
-	// 24 m ring clears it and every ring sample is off-mesh -> the Tier-3 push fires.
-	const glm::vec2 origin{28.0F, 40.0F};
+	// The region's farthest corner, (-60, -60), is 141.4 m from the origin, so a 150 m ring clears
+	// the region and every ring sample is off-mesh -> the Tier-3 push fires.
+	const glm::vec2 origin{40.0F, 40.0F};
+	const float		minDist = 150.0F;
 	ASSERT_TRUE(sys.inSimArea(origin)) << "origin must be inside the region";
-	ASSERT_FALSE(sys.isOnMesh(origin)) << "origin must be off-mesh (in the surrounding water)";
+	ASSERT_FALSE(sys.isOnMesh(origin)) << "origin must be off-mesh (in the pond)";
 	const std::optional<glm::vec2> nearest = sys.findValidPositionNear(origin, 0.0F);
-	ASSERT_TRUE(nearest.has_value()) << "the island gives a nearest walkable point";
-	ASSERT_LT(glm::distance(origin, *nearest), 24.0F) << "nearest island point must be inside minDist (push premise)";
+	ASSERT_TRUE(nearest.has_value()) << "the shore gives a nearest walkable point";
+	ASSERT_LT(glm::distance(origin, *nearest), minDist) << "nearest shore point must be inside minDist (push premise)";
+	ASSERT_FALSE(sys.isOnMesh(origin + (*nearest - origin) / glm::distance(origin, *nearest) * minDist))
+		<< "the push must land off the mesh (premise)";
 
-	const float					   minDist = 24.0F;
 	const std::optional<glm::vec2> result = sys.findValidPositionNear(origin, minDist);
-	ASSERT_TRUE(result.has_value()) << "the region has a walkable island, so a result must exist";
+	ASSERT_TRUE(result.has_value()) << "the region has walkable land, so a result must exist";
 	EXPECT_TRUE(sys.isOnMesh(*result))
-		<< "the pushed Tier-3 fallback must be re-validated on mesh, not returned off-mesh in water";
+		<< "the pushed Tier-3 fallback must be re-validated on mesh, not returned off-mesh past the region";
 }
 
 // Determinism: two identical calls return the exact same point (no RNG, fixed angle set).

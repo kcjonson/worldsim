@@ -1,4 +1,5 @@
 #include "AssetDetailView.h"
+#include "GroundBakeView.h"
 
 #include <assets/AssetDefinition.h>
 #include <assets/AssetRegistry.h>
@@ -6,6 +7,7 @@
 #include <ui/Context.h>
 #include <ui/components/Badge.h>
 #include <ui/components/Button.h>
+#include <ui/components/SegmentedControl.h>
 #include <ui/shapes/Rectangle.h>
 #include <ui/shapes/Text.h>
 #include <ui/theme/Tokens.h>
@@ -61,7 +63,8 @@ namespace asset_manager {
 
 	} // namespace
 
-	AssetDetailView::AssetDetailView(const Args& /*args*/) {}
+	AssetDetailView::AssetDetailView(const Args& args)
+		: coordinateSystem(args.coordinateSystem) {}
 
 	void AssetDetailView::onMount() {
 		build();
@@ -71,6 +74,7 @@ namespace asset_manager {
 		const assets::AssetDefinition* def = assets::AssetRegistry::Get().getDefinition(name);
 		defName = def != nullptr ? name : std::string();
 		procedural = def != nullptr && def->assetType != assets::AssetType::Simple;
+		ground = def != nullptr && def->role == assets::AssetRole::Ground;
 		variantBase = 1U;
 		if (getContext() != nullptr) {
 			build();
@@ -82,6 +86,7 @@ namespace asset_manager {
 			removeChild(content);
 		}
 		variants = {};
+		tiling = {};
 		content = addChild<ui::Component>({
 			.size = {ui::percent(100.0F), ui::percent(100.0F)},
 			.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = kGap, .padding = kPad},
@@ -101,12 +106,38 @@ namespace asset_manager {
 			{.layout = kHug, .label = procedural ? "PROCEDURAL" : "SIMPLE", .tone = procedural ? ui::Tone::Accent : ui::Tone::Info}
 		);
 
+		if (ground) {
+			content.addChild<ui::SegmentedControl>({
+				.id = "am_ground_mode",
+				.layout = kHug,
+				.options = {"Vectors", "Bake"},
+				.selected = bakeMode ? 1 : 0,
+				.controlSize = ui::ControlSize::Sm,
+				.onChange =
+					[this](int index) {
+						bakeMode = index == 1;
+						build();
+					},
+			});
+			if (bakeMode) {
+				content.addChild<GroundBakeView>({
+					.id = "am_ground_bake",
+					.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = kGap, .flexGrow = 1.0F},
+					.overflow = ui::Overflow::Scroll,
+					.defName = defName,
+					.coordinateSystem = coordinateSystem,
+				});
+				return;
+			}
+		}
+
 		ui::Ref<ui::Component> columns = content.addChild<ui::Component>({.layout = flex(ui::FlexDirection::Row, 20.0F, 1.0F)});
 		preview(columns.addChild<ui::Component>({.layout = flex(ui::FlexDirection::Column, kGap, 1.0F)}));
 		info(columns.addChild<ui::Component>({.size = {kInfoWidth, ui::kAuto}, .layout = flex(ui::FlexDirection::Column, kGap)}));
 	}
 
-	// One framed thumbnail, or six in a 2x3 grid under Randomize; the collider over the first.
+	// One framed thumbnail, or six in a 2x3 grid under Randomize; the collider over the first. A ground
+	// tile puts the first variant, tiled 3x3, to the left of the grid.
 	void AssetDetailView::preview(ui::Ref<ui::Component> column) {
 		const auto cell = [this](ui::Ref<ui::Component> parent, int index) {
 			ui::Ref<ui::Rectangle> frame =
@@ -114,7 +145,8 @@ namespace asset_manager {
 			variants[static_cast<std::size_t>(index)] = frame.addChild<AssetThumbnail>({
 				.size = {ui::percent(100.0F), ui::percent(100.0F)},
 				.animated = true,
-				.collider = index == 0,
+				.collider = index == 0 && !ground,
+				.coordinateSystem = coordinateSystem,
 			});
 		};
 		if (!procedural) {
@@ -123,8 +155,18 @@ namespace asset_manager {
 			column.addChild<ui::Button>({.layout = kHug, .label = "Randomize", .controlSize = ui::ControlSize::Sm, .onPress = [this] {
 											 randomize();
 										 }});
+			ui::Ref<ui::Component> grid = column;
+			if (ground) {
+				ui::Ref<ui::Component> row = column.addChild<ui::Component>({.layout = flex(ui::FlexDirection::Row, kGap, 1.0F)});
+				ui::Ref<ui::Rectangle> frame =
+					row.addChild<ui::Rectangle>({.layout = {.padding = 8.0F, .flexGrow = 2.0F}, .style = ui::styles::inset});
+				tiling = frame.addChild<AssetThumbnail>(
+					{.size = {ui::percent(100.0F), ui::percent(100.0F)}, .tiles = 3, .coordinateSystem = coordinateSystem}
+				);
+				grid = row.addChild<ui::Component>({.layout = flex(ui::FlexDirection::Column, kGap, 1.0F)});
+			}
 			for (int row = 0; row < 3; ++row) {
-				ui::Ref<ui::Component> pair = column.addChild<ui::Component>({.layout = flex(ui::FlexDirection::Row, kGap, 1.0F)});
+				ui::Ref<ui::Component> pair = grid.addChild<ui::Component>({.layout = flex(ui::FlexDirection::Row, kGap, 1.0F)});
 				cell(pair, row * 2);
 				cell(pair, (row * 2) + 1);
 			}
@@ -147,6 +189,10 @@ namespace asset_manager {
 		}
 		if (!def.scriptPath.empty()) {
 			meta += "\nscript  " + def.scriptPath;
+		}
+		if (ground) {
+			meta += "\nground  " + fmtFloat(def.ground.periodMeters) + " m at " + std::to_string(def.ground.pixelsPerMeter) + " px/m, " +
+					std::to_string(def.variantCount) + " variants";
 		}
 		if (!def.placement.groups.empty()) {
 			std::string groups;
@@ -201,6 +247,9 @@ namespace asset_manager {
 			if (AssetThumbnail* thumb = variants[static_cast<std::size_t>(i)].get()) {
 				thumb->setAsset(defName, procedural ? variantBase + static_cast<uint32_t>(i) : 42U);
 			}
+		}
+		if (AssetThumbnail* thumb = tiling.get()) {
+			thumb->setAsset(defName, variantBase);
 		}
 	}
 

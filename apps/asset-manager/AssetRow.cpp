@@ -37,7 +37,8 @@ namespace asset_manager {
 	AssetRow::AssetRow(const Args& args)
 		: defName(args.defName),
 		  selectedAtStart(args.selected),
-		  onSelect(args.onSelect) {}
+		  onSelect(args.onSelect),
+		  coordinateSystem(args.coordinateSystem) {}
 
 	ui::StyleId AssetRow::themeStyle() const {
 		return ui::styles::listRow.theme;
@@ -55,7 +56,7 @@ namespace asset_manager {
 			.layout = {.position = ui::Position::Absolute, .inset = {.top = 0.0F, .bottom = 0.0F, .left = 0.0F}},
 			.style = {.backgroundColor = theme.get(ui::tokens::tone::accent::color)},
 		});
-		addChild<AssetThumbnail>({.size = {kThumbSize, kThumbSize}, .defName = defName});
+		addChild<AssetThumbnail>({.size = {kThumbSize, kThumbSize}, .defName = defName, .coordinateSystem = coordinateSystem});
 		addChild<ui::Text>({.layout = {.flexGrow = 1.0F}, .style = ui::styles::text::body, .text = defName});
 		setSelected(selectedAtStart);
 	}

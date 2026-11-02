@@ -9,13 +9,17 @@
 #include <utils/Log.h>
 #include <vector/MeshBounds.h>
 #include <vector/SVGLoader.h>
-#include <vector/Tessellator.h>
+#include <world/chunk/Chunk.h>
 
 #include <pugixml.hpp>
 
+#include <algorithm>
+#include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <iterator>
 #include <limits>
 #include <sstream>
 
@@ -138,6 +142,12 @@ namespace assets {
 		return params.find(key) != params.end();
 	}
 
+	std::vector<std::pair<std::string, std::string>> GeneratorParams::sorted() const {
+		std::vector<std::pair<std::string, std::string>> out(params.begin(), params.end());
+		std::sort(out.begin(), out.end());
+		return out;
+	}
+
 	// ============================================================================
 	// GeneratorRegistry Implementation
 	// ============================================================================
@@ -205,6 +215,9 @@ namespace assets {
 			std::string s(str);
 			if (s == "groundcover" || s == "Groundcover") {
 				return AssetRole::Groundcover;
+			}
+			if (s == "ground" || s == "Ground") {
+				return AssetRole::Ground;
 			}
 			return AssetRole::WorldObject;
 		}
@@ -346,6 +359,138 @@ namespace assets {
 				return false;
 			}
 			return true;
+		}
+
+		constexpr uint32_t kGroundDefaultVariantCount = 8;
+
+		/// Read a ground def's elements into def.ground. Missing or malformed ones keep their
+		/// defaults (the validator reports them as issues; here they only log).
+		void parseGroundParams(const pugi::xml_node& defNode, AssetDefinition& def) {
+			GroundParams& ground = def.ground;
+
+			const std::string surfaceName = defNode.child_value("surface");
+			ground.surface				  = world::surfaceFromString(surfaceName);
+			if (!ground.surface.has_value()) {
+				LOG_WARNING(Engine, "Ground AssetDef '%s' has no valid <surface> ('%s')", def.defName.c_str(), surfaceName.c_str());
+			}
+
+			ground.periodMeters	  = defNode.child("period").text().as_float(ground.periodMeters);
+			ground.pixelsPerMeter = defNode.child("pixelsPerMeter").text().as_uint(ground.pixelsPerMeter);
+			ground.seedGroup	  = defNode.child_value("seedGroup");
+			if (ground.seedGroup.empty()) {
+				ground.seedGroup = def.defName;
+			}
+
+			const std::string rotate = defNode.child_value("rotate");
+			if (rotate == "free" || rotate == "Free") {
+				ground.rotate = GroundRotate::Free;
+			} else if (rotate == "quarter" || rotate == "Quarter") {
+				ground.rotate = GroundRotate::Quarter;
+			} else if (rotate == "none" || rotate == "None") {
+				ground.rotate = GroundRotate::None;
+			} else if (rotate == "mirror" || rotate == "Mirror") {
+				ground.rotate = GroundRotate::Mirror;
+			} else if (!rotate.empty()) {
+				LOG_WARNING(Engine, "Ground AssetDef '%s' has unknown <rotate> '%s'; using free", def.defName.c_str(), rotate.c_str());
+			}
+
+			std::vector<GroundTransitionIssue> transitionIssues;
+			ground.transitions = readGroundTransitions(defNode, ground.surface, transitionIssues);
+			for (const GroundTransitionIssue& issue : transitionIssues) {
+				LOG_WARNING(Engine, "Ground AssetDef '%s' <transition>: %s (%s)", def.defName.c_str(), issue.message.c_str(), issue.context.c_str());
+			}
+
+			std::vector<GroundMacroIssue> macroIssues;
+			ground.macro = readGroundMacro(defNode, macroIssues);
+			for (const GroundMacroIssue& issue : macroIssues) {
+				LOG_WARNING(
+					Engine,
+					"Ground AssetDef '%s' <macro><%s> %s ('%s'); keeping the default",
+					def.defName.c_str(),
+					issue.field.c_str(),
+					issue.message.c_str(),
+					issue.value.c_str()
+				);
+			}
+		}
+
+		/// The one mesh in `meshes`, for callers that can only draw one. Logs and returns false when
+		/// the asset needed several.
+		bool takeSingleMesh(const std::string& defName, std::vector<renderer::TessellatedMesh>& meshes, renderer::TessellatedMesh& out) {
+			if (meshes.size() != 1) {
+				LOG_ERROR(
+					Engine,
+					"%s needs %zu meshes (a mesh holds at most %zu vertices); only buildMeshes can return it",
+					defName.c_str(),
+					meshes.size(),
+					TessellatedPaths::kMaxMeshVertices
+				);
+				return false;
+			}
+			out = std::move(meshes.front());
+			return true;
+		}
+
+		/// A ground path that set no height takes its paint-order rank, from 1 / n for the first of n paths
+		/// to 1 for the last, so where only those paint, the topmost path at a texel is its height and
+		/// a texel nothing covers, 0, is the lowest.
+		void rankUnsetHeights(GeneratedAsset& asset) {
+			const float n = static_cast<float>(asset.paths.size());
+			for (size_t i = 0; i < asset.paths.size(); ++i) {
+				GeneratedPath& path = asset.paths[i];
+				if (!path.height.has_value()) {
+					path.height = static_cast<float>(i + 1) / n;
+				}
+			}
+		}
+
+		/// Repeat every path of a ground tile that crosses an edge of its [0, period] square at the
+		/// offsets it crosses into, right after the original. Paint order then holds across the
+		/// seam, and the meshes clipped to the square are the seamless tile: drawn once, not 3x3.
+		void wrapGroundPaths(GeneratedAsset& asset, float period) {
+			// Shifts along one axis that bring a [low, high] span back across the square; [0] is the original.
+			const auto shifts = [period](float low, float high, std::array<float, 3>& out) {
+				size_t count = 1;
+				if (low < 0.0F && high > 0.0F) {
+					out[count++] = period;
+				}
+				if (low < period && high > period) {
+					out[count++] = -period;
+				}
+				return count;
+			};
+
+			std::vector<GeneratedPath> wrapped;
+			wrapped.reserve(asset.paths.size() + (asset.paths.size() / 4));
+			std::vector<GeneratedPath> copies;
+			for (GeneratedPath& path : asset.paths) {
+				Foundation::Vec2 lo{std::numeric_limits<float>::max(), std::numeric_limits<float>::max()};
+				Foundation::Vec2 hi{std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest()};
+				for (const Foundation::Vec2& v : path.vertices) {
+					lo = {std::min(lo.x, v.x), std::min(lo.y, v.y)};
+					hi = {std::max(hi.x, v.x), std::max(hi.y, v.y)};
+				}
+				std::array<float, 3> dx{};
+				std::array<float, 3> dy{};
+				const size_t		 nx = shifts(lo.x, hi.x, dx);
+				const size_t		 ny = shifts(lo.y, hi.y, dy);
+
+				copies.clear();
+				for (size_t ix = 0; ix < nx; ++ix) {
+					for (size_t iy = 0; iy < ny; ++iy) {
+						if (ix == 0 && iy == 0) {
+							continue;
+						}
+						GeneratedPath& copy = copies.emplace_back(path);
+						for (Foundation::Vec2& v : copy.vertices) {
+							v = {v.x + dx[ix], v.y + dy[iy]};
+						}
+					}
+				}
+				wrapped.push_back(std::move(path));
+				std::move(copies.begin(), copies.end(), std::back_inserter(wrapped));
+			}
+			asset.paths = std::move(wrapped);
 		}
 
 		/// SVG curve-flattening tolerance. Shared by every loadSVG call so the render
@@ -771,7 +916,11 @@ namespace assets {
 			}
 
 			// Variant count
-			def.variantCount = static_cast<uint32_t>(defNode.child("variantCount").text().as_uint(1));
+			const bool isGround = def.role == AssetRole::Ground;
+			def.variantCount = static_cast<uint32_t>(defNode.child("variantCount").text().as_uint(isGround ? kGroundDefaultVariantCount : 1));
+			if (isGround) {
+				parseGroundParams(defNode, def);
+			}
 
 			// Item category (for storage matching and UI grouping)
 			std::string categoryStr = defNode.child_value("category");
@@ -1023,14 +1172,15 @@ namespace assets {
 		// footprint via asset:setCollisionRect, which only surfaces when the script
 		// runs. Run each such script once now (generateAsset does NOT tessellate, so
 		// this is cheap) so nav/collision see the rect at load instead of racing the
-		// first lazy render. XML <collision> always wins; skip capture when set.
+		// first lazy render. XML <collision> always wins; skip capture when set. Ground tiles
+		// never collide, and their generators are the heaviest scripts, so they are skipped too.
 		for (const std::string& name : loadedNames) {
 			auto it = definitions.find(name);
 			if (it == definitions.end()) {
 				continue;
 			}
 			AssetDefinition& def = it->second;
-			if (def.collision.blocks() || def.assetType != AssetType::Procedural) {
+			if (def.collision.blocks() || def.assetType != AssetType::Procedural || def.role == AssetRole::Ground) {
 				continue;
 			}
 			GeneratedAsset tmp;
@@ -1267,8 +1417,14 @@ namespace assets {
 				return nullptr;
 			}
 
-			if (!tessellateAsset(asset, mesh)) {
+			TessellatedPaths paths;
+			paths.tessellate(asset, kFullDetail);
+			std::vector<renderer::TessellatedMesh> meshes;
+			if (!paths.meshesAt(kFullDetail, meshes)) {
 				LOG_ERROR(Engine, "Failed to tessellate asset: %s", defName.c_str());
+				return nullptr;
+			}
+			if (!takeSingleMesh(defName, meshes, mesh)) {
 				return nullptr;
 			}
 		}
@@ -1424,6 +1580,18 @@ namespace assets {
 		return emplaced.first->second.empty() ? nullptr : &emplaced.first->second;
 	}
 
+	std::filesystem::path AssetRegistry::resolveScriptPath(const AssetDefinition& def) const {
+		const std::string kSharedPrefix = "@shared/";
+		if (def.scriptPath.compare(0, kSharedPrefix.size(), kSharedPrefix) != 0) {
+			return def.resolvePath(def.scriptPath);
+		}
+		if (m_sharedScriptsPath.empty()) {
+			LOG_ERROR(Engine, "Shared scripts path not configured, but @shared/ prefix used in: %s", def.scriptPath.c_str());
+			return {};
+		}
+		return m_sharedScriptsPath / def.scriptPath.substr(kSharedPrefix.size());
+	}
+
 	bool AssetRegistry::generateAsset(const std::string& defName, uint32_t seed, GeneratedAsset& outAsset) {
 		const AssetDefinition* def = getDefinition(defName);
 		if (def == nullptr) {
@@ -1440,28 +1608,19 @@ namespace assets {
 		GenerationContext ctx;
 		ctx.seed = seed;
 		ctx.variantIndex = 0;
+		if (def->role == AssetRole::Ground) {
+			ctx.periodMeters = def->ground.periodMeters;
+		}
 		outAsset.clear();
 
 		// Check if this is a Lua script generator
 		if (def->isLuaGenerator()) {
 			try {
-				// Resolve script path - check for @shared/ prefix
-				std::string		  resolvedScriptPath;
-				const std::string kSharedPrefix = "@shared/";
-				if (def->scriptPath.compare(0, kSharedPrefix.size(), kSharedPrefix) == 0) {
-					// Script is in shared folder - resolve using shared scripts path
-					if (m_sharedScriptsPath.empty()) {
-						LOG_ERROR(Engine, "Shared scripts path not configured, but @shared/ prefix used in: %s", def->scriptPath.c_str());
-						return false;
-					}
-					std::string relativePath = def->scriptPath.substr(kSharedPrefix.size());
-					resolvedScriptPath = (m_sharedScriptsPath / relativePath).string();
-					LOG_DEBUG(Engine, "Resolved shared script: %s -> %s", def->scriptPath.c_str(), resolvedScriptPath.c_str());
-				} else {
-					// Script is local to asset folder
-					resolvedScriptPath = def->resolvePath(def->scriptPath).string();
-					LOG_DEBUG(Engine, "Resolved local script: %s -> %s", def->scriptPath.c_str(), resolvedScriptPath.c_str());
+				const std::string resolvedScriptPath = resolveScriptPath(*def).string();
+				if (resolvedScriptPath.empty()) {
+					return false;
 				}
+				LOG_DEBUG(Engine, "Resolved script: %s -> %s", def->scriptPath.c_str(), resolvedScriptPath.c_str());
 
 				LuaGenerator luaGen(resolvedScriptPath);
 				return luaGen.generate(ctx, def->params, outAsset);
@@ -1481,65 +1640,58 @@ namespace assets {
 		return generator->generate(ctx, def->params, outAsset);
 	}
 
-	bool AssetRegistry::tessellateAsset(const GeneratedAsset& asset, renderer::TessellatedMesh& outMesh) {
-		outMesh.clear();
-
-		renderer::Tessellator tessellator;
-
-		for (const auto& path : asset.paths) {
-			if (path.vertices.size() < 3) {
-				continue;
-			}
-
-			renderer::VectorPath vectorPath;
-			vectorPath.vertices = path.vertices;
-			vectorPath.isClosed = path.isClosed;
-
-			renderer::TessellatedMesh pathMesh;
-			if (!tessellator.Tessellate(vectorPath, pathMesh)) {
-				LOG_WARNING(Engine, "Failed to tessellate path with %zu vertices", path.vertices.size());
-				continue;
-			}
-
-			// Append to output mesh (with index offset)
-			uint16_t baseIndex = static_cast<uint16_t>(outMesh.vertices.size());
-			for (const auto& v : pathMesh.vertices) {
-				outMesh.vertices.push_back(v);
-				outMesh.colors.push_back(path.fillColor); // Preserve path color per-vertex
-			}
-			for (const auto& idx : pathMesh.indices) {
-				outMesh.indices.push_back(baseIndex + idx);
-			}
+	bool AssetRegistry::buildPaths(const std::string& defName, uint32_t seed, TessellatedPaths& outPaths, float maxPixelsPerMeter) {
+		outPaths = {};
+		const auto	   start = std::chrono::steady_clock::now();
+		GeneratedAsset asset;
+		if (!generateAsset(defName, seed, asset)) {
+			return false;
 		}
+		outPaths.generateMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
 
-		return !outMesh.vertices.empty();
+		const AssetDefinition* def = getDefinition(defName);
+		if (def->role == AssetRole::Ground) {
+			rankUnsetHeights(asset); // before the wrap, so a copy keeps its original's rank
+			wrapGroundPaths(asset, def->ground.periodMeters);
+		}
+		outPaths.tessellate(asset, maxPixelsPerMeter);
+		return true;
 	}
 
-	bool AssetRegistry::buildMesh(const std::string& defName, uint32_t seed, renderer::TessellatedMesh& outMesh) {
-		outMesh.clear();
+	bool AssetRegistry::buildMeshes(
+		const std::string& defName, uint32_t seed, std::vector<renderer::TessellatedMesh>& outMeshes, float pixelsPerMeter
+	) {
+		outMeshes.clear();
 
 		const AssetDefinition* def = getDefinition(defName);
 		if (def == nullptr) {
-			LOG_ERROR(Engine, "buildMesh: definition not found: %s", defName.c_str());
+			LOG_ERROR(Engine, "buildMeshes: definition not found: %s", defName.c_str());
 			return false;
 		}
 
 		// Simple assets are a single drawing; reuse the cached, normalized template.
 		if (def->assetType == AssetType::Simple) {
 			const renderer::TessellatedMesh* tmpl = getTemplate(defName);
-			if (tmpl == nullptr) {
+			if (tmpl == nullptr || tmpl->vertices.empty()) {
 				return false;
 			}
-			outMesh = *tmpl;
-			return !outMesh.vertices.empty();
+			outMeshes.push_back(*tmpl);
+			return true;
 		}
 
 		// Procedural assets: generate this seed's form fresh (uncached) and tessellate.
-		GeneratedAsset asset;
-		if (!generateAsset(defName, seed, asset)) {
+		TessellatedPaths paths;
+		return buildPaths(defName, seed, paths, pixelsPerMeter) && paths.meshesAt(pixelsPerMeter, outMeshes);
+	}
+
+	bool AssetRegistry::buildMesh(const std::string& defName, uint32_t seed, renderer::TessellatedMesh& outMesh) {
+		outMesh.clear();
+
+		std::vector<renderer::TessellatedMesh> meshes;
+		if (!buildMeshes(defName, seed, meshes)) {
 			return false;
 		}
-		return tessellateAsset(asset, outMesh);
+		return takeSingleMesh(defName, meshes, outMesh);
 	}
 
 	void AssetRegistry::clear() {

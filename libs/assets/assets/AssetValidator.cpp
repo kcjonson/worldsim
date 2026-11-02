@@ -1,8 +1,16 @@
 #include "assets/AssetValidator.h"
 
+#include "assets/AssetDefinition.h"
+#include "assets/GroundLayer.h"
+#include "assets/GroundTint.h"
+
+#include <world/chunk/Chunk.h>
+
 #include <pugixml.hpp>
 
 #include <algorithm>
+#include <cmath>
+#include <map>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -33,8 +41,135 @@ namespace assets {
 			return s == "simple" || s == "Simple" || s == "procedural" || s == "Procedural";
 		}
 
+		bool isSimpleAssetType(const std::string& s) {
+			return s == "simple" || s == "Simple";
+		}
+
+		bool isGroundRole(const std::string& s) {
+			return s == "ground" || s == "Ground";
+		}
+
 		bool isKnownRole(const std::string& s) {
-			return s == "groundcover" || s == "Groundcover" || s == "worldobject" || s == "WorldObject";
+			return s == "groundcover" || s == "Groundcover" || s == "worldobject" || s == "WorldObject" || isGroundRole(s);
+		}
+
+		bool isWholeNumber(double v) {
+			return std::abs(v - std::round(v)) < 1e-6;
+		}
+
+		// The chunk edge in meters; a ground tile's period must divide it so tiles line up across chunks.
+		constexpr double kChunkMeters = 512.0;
+		constexpr int	 kMinGroundPixelsPerMeter = 16;
+		constexpr int	 kMaxGroundPixelsPerMeter = 512;
+
+		// Ground defs are baked into texture arrays, so their settings have hard limits (GroundLayer.h).
+		// `surfaceToDef` carries the surfaces already claimed across files, to catch two defs painting one,
+		// and `layerSizes` each layer size in use and the first def using it, for the bank's array count.
+		void validateGroundDef(
+			const pugi::xml_node&						  assetDef,
+			const std::string&							  defName,
+			std::unordered_map<std::string, std::string>& surfaceToDef,
+			std::map<int, std::string>&					  layerSizes,
+			ValidationReport&							  report
+		) {
+			const std::string surfaceName = assetDef.child("surface").text().as_string();
+			const auto		  surface = world::surfaceFromString(surfaceName);
+			if (!surface.has_value()) {
+				report.add(Severity::Error, defName, "surface", "Ground def needs a <surface> naming a world surface", surfaceName);
+			} else if (*surface == world::Surface::Water) {
+				report.add(Severity::Error, defName, "surface", "Water is not a land surface; ground tiles paint land only", surfaceName);
+			} else if (const auto claimed = surfaceToDef.emplace(surfaceName, defName); !claimed.second) {
+				report.add(Severity::Error, defName, "surface", "Another ground def already paints this surface", claimed.first->second + " and " + defName);
+			}
+
+			// The baker draws a ground def through AssetRegistry::buildPaths, which only runs generators.
+			// Loading an SVG per variant (with data-lod) is planned in docs/technical/ground-textures.md.
+			if (isSimpleAssetType(assetDef.child("assetType").text().as_string())) {
+				report.add(
+					Severity::Error,
+					defName,
+					"assetType",
+					"SVG ground defs aren't supported yet; use assetType procedural with a generator",
+					"simple"
+				);
+			}
+
+			const GroundParams defaults;
+
+			const pugi::xml_node pixelsNode = assetDef.child("pixelsPerMeter");
+			const int			 pixelsPerMeter = pixelsNode ? pixelsNode.text().as_int(0) : static_cast<int>(defaults.pixelsPerMeter);
+			const bool			 pixelsValid = pixelsPerMeter >= kMinGroundPixelsPerMeter && pixelsPerMeter <= kMaxGroundPixelsPerMeter &&
+									   (pixelsPerMeter & (pixelsPerMeter - 1)) == 0;
+			if (!pixelsValid) {
+				report.add(
+					Severity::Error, defName, "pixelsPerMeter", "pixelsPerMeter must be a power of two from 16 to 512", pixelsNode.text().as_string()
+				);
+			}
+
+			const pugi::xml_node periodNode = assetDef.child("period");
+			const double		 period = periodNode ? periodNode.text().as_double(0.0) : static_cast<double>(defaults.periodMeters);
+			const bool			 periodValid = period > 0.0 && isWholeNumber(kChunkMeters / period);
+			if (!periodValid) {
+				report.add(Severity::Error, defName, "period", "period must divide 512 (meters) exactly so tiles line up across chunks", periodNode.text().as_string());
+			} else if (pixelsValid) {
+				const GroundLayer layer = groundLayer(period, pixelsPerMeter);
+				if (!layer.whole) {
+					report.add(
+						Severity::Error,
+						defName,
+						"period",
+						"period x pixelsPerMeter must be a whole number of pixels",
+						periodNode.text().as_string()
+					);
+				} else if (!layer.inRange) {
+					report.add(
+						Severity::Error,
+						defName,
+						"period",
+						"period x pixelsPerMeter must be from 1 to " + std::to_string(kMaxGroundLayerSize) +
+							" pixels; the baker takes no bigger layer",
+						std::to_string(layer.texels) + " px at " + std::to_string(pixelsPerMeter) + " px/m"
+					);
+				} else {
+					layerSizes.emplace(layer.texels, defName);
+				}
+			}
+
+			const pugi::xml_node variantNode = assetDef.child("variantCount");
+			if (variantNode) {
+				if (!groundVariantCountSupported(variantNode.text().as_llong(0))) {
+					report.add(
+						Severity::Error,
+						defName,
+						"variantCount",
+						"variantCount must be from 1 to " + std::to_string(kMaxGroundVariants) + " for a ground def",
+						variantNode.text().as_string()
+					);
+				}
+			}
+
+			const std::string rotate = assetDef.child("rotate").text().as_string();
+			if (!rotate.empty() && rotate != "free" && rotate != "Free" && rotate != "quarter" && rotate != "Quarter" && rotate != "none" &&
+				rotate != "None" && rotate != "mirror" && rotate != "Mirror") {
+				report.add(Severity::Warning, defName, "rotate", "Unknown rotate; the loader treats it as free", rotate);
+			}
+
+			if (assetDef.child("placement").child("biome")) {
+				report.add(Severity::Error, defName, "placement", "Ground defs are never placed in the world; remove the <biome> rules");
+			}
+
+			std::vector<GroundMacroIssue> macroIssues;
+			readGroundMacro(assetDef, macroIssues);
+			for (GroundMacroIssue& issue : macroIssues) {
+				report.add(Severity::Error, defName, "macro", "<" + issue.field + "> " + issue.message, std::move(issue.value));
+			}
+
+			const bool						   landSurface = surface.has_value() && *surface != world::Surface::Water;
+			std::vector<GroundTransitionIssue> transitionIssues;
+			readGroundTransitions(assetDef, landSurface ? surface : std::nullopt, transitionIssues);
+			for (GroundTransitionIssue& issue : transitionIssues) {
+				report.add(issue.error ? Severity::Error : Severity::Warning, defName, "transition", std::move(issue.message), std::move(issue.context));
+			}
 		}
 
 		// Resolve a generator script path the way AssetRegistry::generateAsset does.
@@ -70,6 +205,12 @@ namespace assets {
 
 		// defName -> file it was first declared in, for cross-library duplicate detection.
 		std::unordered_map<std::string, std::string> defNameToFile;
+
+		// Surface name -> the ground def that paints it, across the whole tree.
+		std::unordered_map<std::string, std::string> groundSurfaceToDef;
+
+		// Ground layer size -> the first def baking layers of it.
+		std::map<int, std::string> groundLayerSizes;
 
 		std::error_code						   iterEc;
 		fs::recursive_directory_iterator	   it(assetsRoot, iterEc);
@@ -139,6 +280,16 @@ namespace assets {
 					report.add(Severity::Warning, defName, "role", "Unknown role; the loader treats it as WorldObject", role);
 				}
 
+				if (isGroundRole(role)) {
+					validateGroundDef(assetDef, defName, groundSurfaceToDef, groundLayerSizes, report);
+				} else {
+					for (const char* field : {"surface", "period", "pixelsPerMeter", "rotate", "macro", "seedGroup", "transition"}) {
+						if (assetDef.child(field)) {
+							report.add(Severity::Warning, defName, field, std::string("<") + field + "> is only read for role ground; it has no effect", fileCtx);
+						}
+					}
+				}
+
 				// svgPath must resolve to a real file.
 				const std::string svgPath = assetDef.child("svgPath").text().as_string();
 				if (!svgPath.empty()) {
@@ -196,6 +347,35 @@ namespace assets {
 					report.add(Severity::Warning, "", "", "SVG file is not referenced by any definition (orphan)", f.path().string());
 				}
 			}
+		}
+
+		// Every land surface needs a ground def: the tile shader has nothing else to paint it with.
+		// Only checked once the tree has any ground content, so a library (or a test tree) with no
+		// ground tiles at all stays quiet.
+		if (!groundSurfaceToDef.empty()) {
+			for (uint8_t i = 0; i < static_cast<uint8_t>(world::Surface::Count); ++i) {
+				const auto surface = static_cast<world::Surface>(i);
+				const std::string name = world::surfaceToString(surface);
+				if (surface != world::Surface::Water && groundSurfaceToDef.find(name) == groundSurfaceToDef.end()) {
+					report.add(Severity::Error, "", "surface", "No ground def paints this land surface", name);
+				}
+			}
+		}
+
+		// The bank keeps one texture array per layer size, and the tile shader samples at most kMaxGroundArrays.
+		if (groundLayerSizes.size() > static_cast<size_t>(kMaxGroundArrays)) {
+			std::string sizes;
+			for (const auto& [texels, defName] : groundLayerSizes) {
+				sizes += (sizes.empty() ? "" : ", ") + std::to_string(texels) + " px (" + defName + ")";
+			}
+			report.add(
+				Severity::Error,
+				"",
+				"pixelsPerMeter",
+				"The ground defs bake " + std::to_string(groundLayerSizes.size()) + " layer sizes; the tile shader holds " +
+					std::to_string(kMaxGroundArrays) + ", one texture array each",
+				sizes
+			);
 		}
 
 		return report;

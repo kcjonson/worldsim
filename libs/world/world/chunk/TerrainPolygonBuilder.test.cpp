@@ -176,8 +176,8 @@ namespace {
 	}
 
 	// A sampler that places biomes by chunk-corner lattice point, so a lake can be
-	// put exactly where several chunks meet. Tile biomes are corner-interpolated
-	// per 16-tile sector, so a Lake corner makes a staircase-edged lake around it.
+	// put exactly where several chunks meet. Tile biomes are picked from the
+	// corners (TileBiomes.h), so a Lake corner makes an organic lake around it.
 	class CornerBiomeSampler : public IWorldSampler {
 	  public:
 		using BiomeAt	  = std::function<Biome(int32_t lx, int32_t ly)>;
@@ -197,7 +197,6 @@ namespace {
 				result.cornerBiomes[i]	   = biomeAtWorld(coord.corner(corners[i]));
 				result.cornerElevations[i] = sampleElevation(coord.corner(corners[i]));
 			}
-			result.computeSectorGrid();
 			fillNeighborhoodCorners(
 				result,
 				coord,

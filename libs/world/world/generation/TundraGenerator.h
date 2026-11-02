@@ -2,32 +2,17 @@
 
 // TundraGenerator - Terrain generation for Tundra biome
 
+#include "world/chunk/Chunk.h"
 #include "world/generation/GenerationContext.h"
-#include "world/generation/GenerationResult.h"
-#include "world/generation/NoiseUtils.h"
 
 namespace world::generation {
 
-/// Tundra surface generator.
-/// Primary: Snow, Variation: Rock outcrops
+/// Tundra: Snow, with rock outcrops on 0.4% of tiles.
 class TundraGenerator {
 public:
-	[[nodiscard]] static GenerationResult generate(const GenerationContext& ctx) {
-		GenerationResult result;
-		float			 worldX = ctx.worldX();
-		float			 worldY = ctx.worldY();
-
-		constexpr float kPatchScale = 0.15F;
-		float			variationNoise = NoiseUtils::fractalNoise(
-            worldX * kPatchScale, worldY * kPatchScale,
-            ctx.worldSeed + 50000, 2, 0.5F
-        );
-
-		constexpr float kRockThreshold = 0.88F;
-		result.surface = (variationNoise > kRockThreshold) ? Surface::Rock : Surface::Snow;
-		result.moisture = 200; // Frozen moisture
-
-		return result;
+	[[nodiscard]] static Surface generate(const GenerationContext& ctx) {
+		constexpr float kRockThreshold = 0.4815F; // the top 0.4% of the outcrop field
+		return ctx.patch(PatchField::Outcrop) > kRockThreshold ? Surface::Rock : Surface::Snow;
 	}
 };
 

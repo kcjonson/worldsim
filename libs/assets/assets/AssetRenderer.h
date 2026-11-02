@@ -9,21 +9,26 @@
 #include "vector/Types.h"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
 namespace assets {
 
 	struct PreparedAsset {
-		renderer::TessellatedMesh mesh;		   // vertices in target-rect pixel space
-		Foundation::Rect		  sourceBounds{0.0F, 0.0F, 0.0F, 0.0F}; // raw mesh bounds (asset-local space) before fit
-		Foundation::Rect		  targetRect{0.0F, 0.0F, 0.0F, 0.0F};	// rect the mesh was fit into (pixel space)
-		bool					  hasOutput = true; // false if the asset produced no geometry
+		std::vector<renderer::TessellatedMesh> meshes;								 // vertices in target-rect pixel space, drawn in order
+		Foundation::Rect					   sourceBounds{0.0F, 0.0F, 0.0F, 0.0F}; // framed region in asset-local space, before fit
+		Foundation::Rect					   targetRect{0.0F, 0.0F, 0.0F, 0.0F};	 // rect the mesh was fit into (pixel space)
+		std::optional<Foundation::Rect>		   clip;			 // a ground tile's square in pixel space; draw clipped to it
+		bool								   hasOutput = true; // false if the asset produced no geometry
 	};
 
-	// CPU geometry prep (no GL). Builds the asset's mesh for `seed` and fits it
-	// centered into `target`, preserving aspect ratio. Simple assets ignore the seed.
-	PreparedAsset prepareAsset(const std::string& defName, const Foundation::Rect& target, uint32_t seed);
+	// CPU geometry prep (no GL). Builds the asset's meshes for `seed` and fits them
+	// centered into `target`, preserving aspect ratio. Simple assets ignore the seed. A
+	// ground tile frames its [0, period] square rather than its mesh bounds, and is built at
+	// the density that square lands at (`pixelScale` device pixels a target unit), so a path
+	// tagged finer than that (setLod) is neither tessellated nor drawn.
+	PreparedAsset prepareAsset(const std::string& defName, const Foundation::Rect& target, uint32_t seed, float pixelScale = 1.0F);
 
 	// Prepare `count` procedural forms from seeds baseSeed .. baseSeed + count - 1.
 	std::vector<PreparedAsset> prepareSamples(const std::string& defName, const Foundation::Rect& target, int count, uint32_t baseSeed);

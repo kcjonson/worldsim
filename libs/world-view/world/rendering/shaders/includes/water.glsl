@@ -250,25 +250,52 @@ float shoreBand(float d, float w, float aa) {
 	return w > 0.0 ? 1.0 - smoothstep(min(w * u_bandTail, w - aa), w, d) : 0.0;
 }
 
-vec3 shadeWater(vec3 ground, vec2 local, vec2 world) {
-	TerrainSdf sdf = sampleSdf(local);
-	float	   aa  = u_metersPerPixel;
+/// Where a pixel sits against the water, worked out before the ground so the
+/// ground is only evaluated where some of it shows.
+struct WaterPixel {
+	bool	   shore; // within reach of the shore bands and the edge stroke: shadeWater paints
+	TerrainSdf sdf;
+	float	   d;	  // sdf.d, wobbled at fine zoom
+	float	   water; // the water's coverage: at 1 the ground doesn't show
+};
+
+/// A pixel of a chunk without water.
+WaterPixel dryPixel() {
+	return WaterPixel(false, TerrainSdf(1.0e9, kNoThalweg, kWaterKindOcean), 1.0e9, 0.0);
+}
+
+WaterPixel waterPixel(vec2 local, vec2 world) {
+	WaterPixel p;
+	p.sdf	= sampleSdf(local);
+	float aa = u_metersPerPixel;
 
 	// Past the widest land band and the edge stroke nothing paints.
 	float bandReach = max(max(u_drySandW, u_wetSandW), u_mudW * u_wetlandMudGain) * (1.0 + u_alongAmp);
 	float reach		= bandReach + u_edgeW * (1.0 + u_edgeSlopeGain) + u_wobbleAmp + aa;
-	if (sdf.d >= reach) {
-		return ground;
+	p.shore			= p.sdf.d < reach;
+	p.d				= p.sdf.d;
+	p.water			= 0.0;
+	if (!p.shore) {
+		return p;
 	}
 
-	// Far zoom: a pixel spans more than a band, the fine effects would only alias.
-	bool fine = aa <= u_lodBandM;
-
-	// Wobble the distance itself, under a texel, so the line never reads as a vector outline.
-	float d = sdf.d;
-	if (fine) {
-		d += u_wobbleAmp * waterFbm(world / u_wobbleWavelength, 3, kSeedWobble);
+	// Wobble the distance itself, under a texel, so the line never reads as a vector
+	// outline. Far zoom (a pixel spans more than a band) leaves the fine effects out.
+	if (aa <= u_lodBandM) {
+		p.d += u_wobbleAmp * waterFbm(world / u_wobbleWavelength, 3, kSeedWobble);
 	}
+	p.water = 1.0 - smoothstep(-0.5 * aa, 0.5 * aa, p.d);
+	return p;
+}
+
+/// Shore bands and water over `ground` (unused where p.water is 1), for a pixel
+/// whose p.shore is set.
+vec3 shadeWater(WaterPixel p, vec3 ground, vec2 local, vec2 world) {
+	TerrainSdf sdf	 = p.sdf;
+	float	   aa	 = u_metersPerPixel;
+	bool	   fine	 = aa <= u_lodBandM;
+	float	   d	 = p.d;
+	float	   water = p.water;
 
 	vec4  prof	   = sampleShoreProfile(local);
 	float slope	   = prof.r;
@@ -285,8 +312,6 @@ vec3 shadeWater(vec3 ground, vec2 local, vec2 world) {
 	float gentle  = 1.0 - slope;
 	float along	  = 1.0 + u_alongAmp * waterFbm(world / u_alongWavelength, 2, kSeedAlong);
 	float mudGain = wetland ? u_wetlandMudGain : 1.0;
-
-	float water = 1.0 - smoothstep(-0.5 * aa, 0.5 * aa, d);
 
 	// Waterline stroke on both sides: wider and darker on steep shores, almost
 	// none on gentle ones. Held to a pixel wide, with its darkness scaled down to match.

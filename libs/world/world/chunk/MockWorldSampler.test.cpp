@@ -145,30 +145,6 @@ TEST(MockWorldSamplerTests, BiomeWeightsAreValid) {
 	}
 }
 
-TEST(MockWorldSamplerTests, SectorGridAlwaysComputed) {
-	MockWorldSampler sampler(12345);
-
-	// All chunks should have their sector grid computed for tile biome lookup
-	for (int x = -5; x <= 5; x++) {
-		for (int y = -5; y <= 5; y++) {
-			ChunkSampleResult result = sampler.sampleChunk(ChunkCoordinate(x, y));
-
-			// Verify sector grid is valid - getTileBiome should work for all tiles
-			// Check corner tiles
-			auto nwBiome = result.getTileBiome(0, 0);
-			auto neBiome = result.getTileBiome(511, 0);
-			auto swBiome = result.getTileBiome(0, 511);
-			auto seBiome = result.getTileBiome(511, 511);
-
-			// All should have valid weights summing to 1
-			EXPECT_NEAR(nwBiome.total(), 1.0F, 0.01F);
-			EXPECT_NEAR(neBiome.total(), 1.0F, 0.01F);
-			EXPECT_NEAR(swBiome.total(), 1.0F, 0.01F);
-			EXPECT_NEAR(seBiome.total(), 1.0F, 0.01F);
-		}
-	}
-}
-
 // ============================================================================
 // Seed Tests
 // ============================================================================

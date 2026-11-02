@@ -1,6 +1,5 @@
 #include "ChunkRenderer.h"
 
-#include <backend/gl/GLBackend.h>
 #include <debug/Tunables.h>
 #include <primitives/Primitives.h>
 #include <random/HashNoise.h>
@@ -30,14 +29,65 @@ namespace worldview {
 		// Near tiles per atlas row: the atlas is at most 32 * 66 = 2112 texels wide.
 		constexpr int kNearAtlasMaxColumns = Field::kTilesPerSide;
 
-		// Texture units: atlas 0, tile data 1, then the distance field.
-		constexpr int kUnitTileAtlas	= 0;
+		// Texture units: the macro 0, tile data 1, the distance field 2 to 6, then one
+		// for each ground tile array.
+		constexpr int kUnitGroundMacro	= 0;
 		constexpr int kUnitTileData		= 1;
 		constexpr int kUnitSdfTileMap	= 2;
 		constexpr int kUnitSdfNear		= 3;
 		constexpr int kUnitSdfFar		= 4;
 		constexpr int kUnitShoreProfile = 5;
 		constexpr int kUnitChannelFrame = 6;
+		constexpr int kUnitGroundTiles	= 7;
+
+		// The ground (docs/technical/ground-textures.md, "Shader"): mip levels a quarter
+		// level blurrier than the screen's density, hex blending from 16 px/m up (one
+		// sample at 12 looks the same and saves 0.05 to 0.10 ms), and Mikkelsen's gain r
+		// of 0.75 at 48 px/m and up, 0.65 midway (in log2 px/m) and 0.5, none, at 16 and
+		// under. Densities are screen pixels a meter.
+		constexpr float				   kGroundLodBias			  = 0.25F;
+		constexpr float				   kGroundHexMinPxPerMeter	  = 16.0F;
+		constexpr std::array<float, 3> kGroundBlendGain			  = {0.75F, 0.65F, 0.5F};
+		constexpr float				   kGroundBlendNearPxPerMeter = 48.0F;
+		constexpr float				   kGroundBlendFarPxPerMeter  = 16.0F;
+		constexpr float				   kGroundMacroAmp			  = 1.0F;
+		constexpr uint32_t			   kSaltGroundCells			  = 0x6E0D7A11U;
+		// The macro layer's value swing at its mid (10 m) and fine (5 m) octaves.
+		constexpr float kGroundMacroMidAmp	= 0.045F;
+		constexpr float kGroundMacroFineAmp = 0.035F;
+		// land.glsl's hex lattice: 128 columns and 148 rows a chunk, each row skewed
+		// half a column, so a chunk's first cell id is (128 cx - 74 cy, 148 cy).
+		constexpr int32_t kGroundHexColumns = 128;
+		constexpr int32_t kGroundHexRows	= 148;
+
+		/// u_groundLayers.w: how land.glsl turns a hex cell's tile.
+		int groundRotateCode(assets::GroundRotate rotate) {
+			switch (rotate) {
+				case assets::GroundRotate::Free:
+					return 0;
+				case assets::GroundRotate::Quarter:
+					return 1;
+				case assets::GroundRotate::None:
+					return 2;
+				case assets::GroundRotate::Mirror:
+					return 3;
+			}
+			return 0;
+		}
+
+		uint32_t groundCellSeed(uint64_t worldSeed) {
+			return foundation::hash3(static_cast<int32_t>(kSaltGroundCells), static_cast<int32_t>(worldSeed >> 32U), 0, static_cast<uint32_t>(worldSeed));
+		}
+
+		/// Mikkelsen's gain exponent log(1 - r) / log(0.5) at a screen density, r from
+		/// the near, mid and far tunables, linear in log2 px/m.
+		float groundBlendGainK(const float* gain, float screenPixelsPerMeter) {
+			const float nearLog = std::log2(kGroundBlendNearPxPerMeter);
+			const float farLog	= std::log2(kGroundBlendFarPxPerMeter);
+			const float t		= std::clamp((std::log2(std::max(screenPixelsPerMeter, 1.0e-3F)) - farLog) / (nearLog - farLog), 0.0F, 1.0F);
+			const float r		= t < 0.5F ? std::lerp(gain[2], gain[1], 2.0F * t) : std::lerp(gain[1], gain[0], 2.0F * t - 1.0F);
+			return -std::log2(1.0F - std::clamp(r, 0.01F, 0.99F));
+		}
 
 		// Wraps shader time so its float precision holds; the animations jump once an hour.
 		constexpr double kTimeWrapSeconds = 3600.0;
@@ -52,13 +102,10 @@ namespace worldview {
 
 		// Water: starting values from terrain-polygons-architecture.md 10.5; the ones
 		// 10.5 leaves open (colors, patch thresholds, shimmer, foam motion, flow speed,
-		// wetland mud gain) are WOR-460's first pass. Land look (D16 step 3): the
-		// fringe's opacity and along-edge variation (D15's +-35%), the rim's width.
-		// Widths are meters.
+		// wetland mud gain) are WOR-460's first pass. Widths are meters.
 		constexpr std::array kShaderTunables = {
-			ShaderTunable{"terrain/land/fringeOpacity", "u_landFringeOpacity", {0.55F}, 1},
-			ShaderTunable{"terrain/land/fringeAlongAmp", "u_landFringeAlongAmp", {0.35F}, 1},
-			ShaderTunable{"terrain/land/rimW", "u_landRimW", {0.12F}, 1},
+			// Ground: Mikkelsen's weight exponent.
+			ShaderTunable{"terrain/ground/blendContrast", "u_groundBlendContrast", {7.0F}, 1},
 
 			ShaderTunable{"terrain/shore/wobbleAmp", "u_wobbleAmp", {0.12F}, 1},
 			ShaderTunable{"terrain/shore/wobbleWavelength", "u_wobbleWavelength", {1.6F}, 1},
@@ -121,34 +168,6 @@ namespace worldview {
 			ShaderTunable{"terrain/color/foam", "u_foam", {0.92F, 0.95F, 0.95F}, 3},
 		};
 
-		/// The land look per surface id (D16 step 3), for the edges where the surface
-		/// is the upper one: the width of the sparse fringe it lays on the lower
-		/// surface (meters), and how much it darkens just inside its edge. Grass sheds
-		/// a fringe onto soil; rock keeps a hard, dark rim.
-		struct LandLookDefaults {
-			float fringeM;
-			float rimDark;
-		};
-		constexpr std::array<LandLookDefaults, world::kSurfaceCount> kLandLookDefaults = {{
-			{0.35F, 0.0F}, // Grass
-			{0.2F, 0.0F},  // Dirt
-			{0.25F, 0.0F}, // Sand
-			{0.0F, 0.3F},  // Rock
-			{0.0F, 0.0F},  // Water, never painted
-			{0.3F, 0.0F},  // Snow
-			{0.2F, 0.0F},  // Mud
-			{0.35F, 0.0F}, // GrassTall
-			{0.35F, 0.0F}, // GrassShort
-			{0.35F, 0.0F}, // GrassMeadow
-		}};
-		constexpr float	   kNoLook					= 0.0F;
-		constexpr float	   kLandBreakupWavelengthM	= 1.0F;
-		constexpr uint32_t kSaltLandBreakup			= 0x1A4D0005U;
-
-		uint32_t landBreakupSeed(uint64_t worldSeed) {
-			return foundation::hash3(static_cast<int32_t>(kSaltLandBreakup), static_cast<int32_t>(worldSeed >> 32U), 0, static_cast<uint32_t>(worldSeed));
-		}
-
 		Renderer::GLTexture makeTexture(int width, int height, GLenum internalFormat, GLenum format, GLenum type, const void* data, GLint filter) {
 			Renderer::GLTexture texture(width, height, internalFormat, format, type, data);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
@@ -162,8 +181,9 @@ namespace worldview {
 		}
 	} // namespace
 
-	ChunkRenderer::ChunkRenderer(float pixelsPerMeter)
-		: pixelsPerMeterValue(pixelsPerMeter) {}
+	ChunkRenderer::ChunkRenderer(float pixelsPerMeter, const GroundTileBank& tiles)
+		: groundTiles(&tiles),
+		  pixelsPerMeterValue(pixelsPerMeter) {}
 
 	bool ChunkRenderer::initGL() {
 		if (glInitAttempted) {
@@ -186,9 +206,19 @@ namespace worldview {
 		loc.pixelsPerMeter = glGetUniformLocation(program, "u_pixelsPerMeter");
 		loc.viewportSize = glGetUniformLocation(program, "u_viewportSize");
 		loc.tileData = glGetUniformLocation(program, "u_tileData");
-		loc.tileAtlas = glGetUniformLocation(program, "u_tileAtlas");
-		loc.tileAtlasRectCount = glGetUniformLocation(program, "u_tileAtlasRectCount");
-		loc.tileAtlasRects = glGetUniformLocation(program, "u_tileAtlasRects");
+		for (size_t i = 0; i < loc.groundTiles.size(); ++i) {
+			loc.groundTiles[i] = glGetUniformLocation(program, ("u_groundTiles" + std::to_string(i)).c_str());
+		}
+		loc.groundLayers = glGetUniformLocation(program, "u_groundLayers");
+		loc.groundParams = glGetUniformLocation(program, "u_groundParams");
+		loc.groundTintBase = glGetUniformLocation(program, "u_groundTintBase");
+		loc.groundTintLush = glGetUniformLocation(program, "u_groundTintLush");
+		loc.groundSeed = glGetUniformLocation(program, "u_groundSeed");
+		loc.groundCellOrigin = glGetUniformLocation(program, "u_groundCellOrigin");
+		loc.groundMacroValue = glGetUniformLocation(program, "u_groundMacroValue");
+		loc.groundHex = glGetUniformLocation(program, "u_groundHex");
+		loc.groundBlendGainK = glGetUniformLocation(program, "u_groundBlendGainK");
+		loc.groundMacro = glGetUniformLocation(program, "u_groundMacro");
 		loc.hasWater = glGetUniformLocation(program, "u_hasWater");
 		loc.sdfTileMap = glGetUniformLocation(program, "u_sdfTileMap");
 		loc.sdfNear = glGetUniformLocation(program, "u_sdfNear");
@@ -207,28 +237,19 @@ namespace worldview {
 		loc.landThinFloor = glGetUniformLocation(program, "u_landThinFloor");
 		loc.landThinCeil = glGetUniformLocation(program, "u_landThinCeil");
 		loc.landWarpFineOctaves = glGetUniformLocation(program, "u_landWarpFineOctaves");
-		loc.landFringeW = glGetUniformLocation(program, "u_landFringeW");
-		loc.landRimDark = glGetUniformLocation(program, "u_landRimDark");
-		loc.landBreakupWavelength = glGetUniformLocation(program, "u_landBreakupWavelength");
-		loc.landBreakupInvWavelength = glGetUniformLocation(program, "u_landBreakupInvWavelength");
-		loc.landBreakupSeed = glGetUniformLocation(program, "u_landBreakupSeed");
+		loc.landPair = glGetUniformLocation(program, "u_landPair");
 
 		Foundation::Tunables& tunables = Foundation::Tunables::instance();
 		world::SurfaceFieldTunables::get();
 		auto addLook = [&tunables](const std::string& name, const float& value) {
 			return tunables.add(name, std::span<const float>(&value, 1));
 		};
-		for (size_t id = 0; id < world::kSurfaceCount; ++id) {
-			if (id == static_cast<size_t>(world::Surface::Water)) {
-				landLook.fringeW[id] = &kNoLook;
-				landLook.rimDark[id] = &kNoLook;
-				continue;
-			}
-			const std::string surface = world::surfaceToString(static_cast<world::Surface>(id));
-			landLook.fringeW[id] = addLook("terrain/land/fringe/" + surface, kLandLookDefaults[id].fringeM);
-			landLook.rimDark[id] = addLook("terrain/land/rimDark/" + surface, kLandLookDefaults[id].rimDark);
-		}
-		landLook.breakupWavelength = addLook("terrain/land/fringeBreakupWavelength", kLandBreakupWavelengthM);
+		groundLook.lodBias = addLook("terrain/ground/lodBias", kGroundLodBias);
+		groundLook.hexMinPxPerMeter = addLook("terrain/ground/hexMinPxPerMeter", kGroundHexMinPxPerMeter);
+		groundLook.blendGain = tunables.add("terrain/ground/blendGain", std::span<const float>(kGroundBlendGain));
+		groundLook.macroAmp = addLook("terrain/ground/macroAmp", kGroundMacroAmp);
+		groundLook.macroMidAmp = addLook("terrain/ground/macroMidAmp", kGroundMacroMidAmp);
+		groundLook.macroFineAmp = addLook("terrain/ground/macroFineAmp", kGroundMacroFineAmp);
 		tunableUniforms.clear();
 		tunableUniforms.reserve(kShaderTunables.size());
 		for (const ShaderTunable& t : kShaderTunables) {
@@ -349,16 +370,24 @@ namespace worldview {
 		ChunkTextures& entry = textureCache[chunk.coordinate()];
 		entry.lastAccessFrame = frameCounter;
 
-		glActiveTexture(static_cast<GLenum>(GL_TEXTURE0 + kUnitTileData));
 		const uint32_t tileVersion = chunk.renderDataVersion();
-		// Rows are 2 * 518 = 1036 bytes, so the default 4-byte unpack alignment holds.
+		// Render tile rows are 2 * 518 = 1036 bytes and macro rows 4 * 257 = 1028, so the
+		// default 4-byte unpack alignment holds for both.
 		if (!entry.tileData.isValid()) {
+			glActiveTexture(static_cast<GLenum>(GL_TEXTURE0 + kUnitTileData));
 			entry.tileData =
 				makeTexture(world::kRenderTilesSide, world::kRenderTilesSide, GL_RG8UI, GL_RG_INTEGER, GL_UNSIGNED_BYTE, chunk.renderData(), GL_NEAREST);
+			glActiveTexture(static_cast<GLenum>(GL_TEXTURE0 + kUnitGroundMacro));
+			entry.groundMacro =
+				makeTexture(world::kGroundMacroSide, world::kGroundMacroSide, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, chunk.groundMacro(), GL_LINEAR);
 			entry.tileVersion = tileVersion;
-		} else if (entry.tileVersion != tileVersion && takeStaleBudget(kTileDataBytes)) {
+		} else if (entry.tileVersion != tileVersion && takeStaleBudget(kChunkTileBytes)) {
+			glActiveTexture(static_cast<GLenum>(GL_TEXTURE0 + kUnitTileData));
 			entry.tileData.bind();
 			glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, world::kRenderTilesSide, world::kRenderTilesSide, GL_RG_INTEGER, GL_UNSIGNED_BYTE, chunk.renderData());
+			glActiveTexture(static_cast<GLenum>(GL_TEXTURE0 + kUnitGroundMacro));
+			entry.groundMacro.bind();
+			glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, world::kGroundMacroSide, world::kGroundMacroSide, GL_RGBA, GL_UNSIGNED_BYTE, chunk.groundMacro());
 			entry.tileVersion = tileVersion;
 		}
 
@@ -409,7 +438,7 @@ namespace worldview {
 	size_t ChunkRenderer::cachedTileBytes() const {
 		size_t total = 0;
 		for (const auto& [coord, entry] : textureCache) {
-			total += entry.tileData.isValid() ? kTileDataBytes : 0;
+			total += entry.tileData.isValid() ? kChunkTileBytes : 0;
 		}
 		return total;
 	}
@@ -470,19 +499,60 @@ namespace worldview {
 		glUniform1f(loc.landThinFloor, field.thinFloor);
 		glUniform1f(loc.landThinCeil, field.thinCeil);
 		glUniform1i(loc.landWarpFineOctaves, world::landWarpFineOctaves(metersPerPixel, field.warpFineWavelengthM));
+	}
 
-		std::array<float, world::kSurfaceCount> fringe{};
-		std::array<float, world::kSurfaceCount> rim{};
-		for (size_t id = 0; id < world::kSurfaceCount; ++id) {
-			fringe[id] = *landLook.fringeW[id];
-			rim[id]	   = *landLook.rimDark[id];
+	void ChunkRenderer::applyGroundUniforms(uint64_t worldSeed, float screenPixelsPerMeter) const {
+		const std::span<const GroundTileBank::Array> arrays = groundTiles->arrays();
+		for (size_t i = 0; i < loc.groundTiles.size(); ++i) {
+			const int unit = kUnitGroundTiles + static_cast<int>(i);
+			glActiveTexture(static_cast<GLenum>(GL_TEXTURE0 + unit));
+			glBindTexture(GL_TEXTURE_2D_ARRAY, i < arrays.size() ? arrays[i].texture : 0);
+			glUniform1i(loc.groundTiles[i], unit);
 		}
-		glUniform1fv(loc.landFringeW, static_cast<GLsizei>(world::kSurfaceCount), fringe.data());
-		glUniform1fv(loc.landRimDark, static_cast<GLsizei>(world::kSurfaceCount), rim.data());
-		const int32_t breakup = world::landWavelength(*landLook.breakupWavelength);
-		glUniform1i(loc.landBreakupWavelength, breakup);
-		glUniform1f(loc.landBreakupInvWavelength, inverse(breakup));
-		glUniform1ui(loc.landBreakupSeed, landBreakupSeed(worldSeed));
+		glUniform1i(loc.groundMacro, kUnitGroundMacro);
+
+		// Folded here so the shader doesn't per pixel: the variant pick's constants
+		// (land.glsl groundVariant), the macro tint mix(1, mix(dry, lush, R), amp) as
+		// base + lush * R, and the pair table's mip window and pixel floor (GroundPairs.h).
+		constexpr size_t			  kCount = world::kSurfaceCount;
+		std::array<GLint, kCount * 4> layers{};
+		std::array<float, kCount * 4> params{};
+		std::array<float, kCount * 3> tintBase{};
+		std::array<float, kCount * 3> tintLush{};
+		std::array<float, kCount>	  mipLevels{};
+		const float					  bias = *groundLook.lodBias;
+		const float					  macroAmp = *groundLook.macroAmp;
+		for (size_t id = 0; id < kCount; ++id) {
+			const GroundTileBank::Surface& s = groundTiles->surface(static_cast<world::Surface>(id));
+			const int					   variants = std::max(s.layerCount, 1);
+			const float					   amp = s.macro.amplitude * macroAmp;
+			layers[id * 4] = s.array;
+			layers[id * 4 + 1] = s.firstLayer;
+			layers[id * 4 + 2] = variants;
+			layers[id * 4 + 3] = groundRotateCode(s.rotate) | (s.hashSurface << 2);
+			mipLevels[id] = s.texelsPerMeter > 0.0F ? std::log2(s.texelsPerMeter / screenPixelsPerMeter) + bias : 0.0F;
+			params[id * 4] = s.invPeriod;
+			params[id * 4 + 1] = mipLevels[id];
+			params[id * 4 + 2] = 1.0F / static_cast<float>(variants);
+			params[id * 4 + 3] = 0.5F / static_cast<float>(variants);
+			for (size_t c = 0; c < 3; ++c) {
+				tintBase[id * 3 + c] = 1.0F + amp * (s.macro.dry[c] - 1.0F);
+				tintLush[id * 3 + c] = amp * (s.macro.lush[c] - s.macro.dry[c]);
+			}
+		}
+		glUniform4iv(loc.groundLayers, static_cast<GLsizei>(kCount), layers.data());
+		glUniform4fv(loc.groundParams, static_cast<GLsizei>(kCount), params.data());
+		glUniform3fv(loc.groundTintBase, static_cast<GLsizei>(kCount), tintBase.data());
+		glUniform3fv(loc.groundTintLush, static_cast<GLsizei>(kCount), tintLush.data());
+		std::array<float, kLandPairFloats> pairs{};
+		packGroundPairs(groundTiles->pairs(), mipLevels, 1.0F / screenPixelsPerMeter, pairs);
+		glUniform4fv(loc.landPair, static_cast<GLsizei>(kLandPairs * kLandPairVec4s), pairs.data());
+		const float mid = *groundLook.macroMidAmp;
+		const float fine = *groundLook.macroFineAmp;
+		glUniform3f(loc.groundMacroValue, 1.0F - mid - fine, 2.0F * mid, 2.0F * fine);
+		glUniform1ui(loc.groundSeed, groundCellSeed(worldSeed));
+		glUniform1i(loc.groundHex, screenPixelsPerMeter >= *groundLook.hexMinPxPerMeter ? 1 : 0);
+		glUniform1f(loc.groundBlendGainK, groundBlendGainK(groundLook.blendGain, screenPixelsPerMeter));
 	}
 
 	void ChunkRenderer::render(const world::ChunkManager& chunkManager, const world::WorldCamera& camera, int viewportWidth, int viewportHeight) {
@@ -499,6 +569,13 @@ namespace worldview {
 		}
 
 		if (!initGL()) {
+			return;
+		}
+		if (!groundTiles->ready()) {
+			if (!loggedUnreadyGround) {
+				loggedUnreadyGround = true;
+				LOG_ERROR(Renderer, "ChunkRenderer: the ground tiles aren't baked; nothing to paint the ground with");
+			}
 			return;
 		}
 
@@ -529,14 +606,14 @@ namespace worldview {
 		glUniform1f(loc.time, static_cast<float>(std::fmod(seconds, kTimeWrapSeconds)));
 		applyTunables();
 		applyLandUniforms(visibleChunks.front()->worldSeed(), metersPerPixel);
-
-		const auto& atlasRects = Renderer::Primitives::getTileAtlasRects();
-		bindUnit(kUnitTileAtlas, Renderer::backend::gl::name(Renderer::Primitives::getTileAtlasTexture()));
-		glUniform1i(loc.tileAtlas, kUnitTileAtlas);
-		glUniform1i(loc.tileAtlasRectCount, static_cast<GLint>(atlasRects.size()));
-		if (!atlasRects.empty()) {
-			glUniform4fv(loc.tileAtlasRects, static_cast<GLsizei>(atlasRects.size()), reinterpret_cast<const float*>(atlasRects.data()));
-		}
+		// Mip levels and the hex cutoff go by the framebuffer's pixels, which a HiDPI
+		// display has more of than the logical viewport the camera works in.
+		int framebufferWidth = 0;
+		int framebufferHeight = 0;
+		Renderer::Primitives::getViewport(framebufferWidth, framebufferHeight);
+		const float pixelScale =
+			viewportWidth > 0 && framebufferWidth > 0 ? std::clamp(static_cast<float>(framebufferWidth) / static_cast<float>(viewportWidth), 1.0F, 4.0F) : 1.0F;
+		applyGroundUniforms(visibleChunks.front()->worldSeed(), pixelScale / metersPerPixel);
 		glUniform1i(loc.tileData, kUnitTileData);
 		glUniform1i(loc.sdfTileMap, kUnitSdfTileMap);
 		glUniform1i(loc.sdfNear, kUnitSdfNear);
@@ -553,6 +630,7 @@ namespace worldview {
 
 			const ChunkTextures& entry = ensureTextures(*chunk);
 			bindUnit(kUnitTileData, entry.tileData.handle());
+			bindUnit(kUnitGroundMacro, entry.groundMacro.handle());
 			bindWater(entry);
 
 			world::WorldPosition origin = chunk->worldOrigin();
@@ -560,6 +638,7 @@ namespace worldview {
 			glUniform2f(loc.chunkOrigin, origin.x, origin.y);
 			glUniform1f(loc.chunkWorldSize, world::kChunkWorldSize);
 			glUniform2i(loc.chunkTileOrigin, coord.x * world::kChunkSize, coord.y * world::kChunkSize);
+			glUniform2i(loc.groundCellOrigin, kGroundHexColumns * coord.x - kGroundHexRows / 2 * coord.y, kGroundHexRows * coord.y);
 
 			glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 			lastChunks++;

@@ -4,9 +4,12 @@
 // pixel's world point (surface id, field, warp); the same points go through
 // evaluateSurfaceField over the same render tiles, and the two must agree: the warp
 // and the field within kTolerance, the surface exactly wherever no field is within
-// kIdMargin of flipping it. The chunk sits 70 km out, where a float world coordinate
-// would already have lost the warp's finest octave. A second test holds the far-zoom
-// LOD (D16 step 7) under the pixel it is drawn at.
+// kIdMargin of flipping it. Two chunks sit 70 km out on either side of the origin,
+// where a float world coordinate would already have lost the warp's finest octave,
+// and a third's far corner reads across zero, so the noise's floor division and
+// hashing run on negative tiles as well as positive. A second test holds the band's
+// distance to the painted boundary, and a third the far-zoom LOD (D16 step 7) under
+// the pixel it is drawn at.
 //
 // Needs a GL 3.3 context; skips on a headless box, like the other GL tests.
 
@@ -34,7 +37,9 @@ using namespace world;
 namespace {
 
 	constexpr uint64_t		  kSeed = 0x5EEDF00DULL;
-	const ChunkCoordinate kChunk{136, 2}; // tile origin (69632, 1024)
+	const ChunkCoordinate kChunk{136, 2};			// tile origin (69632, 1024)
+	const ChunkCoordinate kNegativeChunk{-137, -3}; // tile origin (-70144, -1536)
+	const ChunkCoordinate kChunkBelowZero{-1, -1};	// tile origin (-512, -512)
 	constexpr int			  kPixels = 256;  // per side of each rendered region
 	constexpr float			  kStepM  = 0.125F;
 
@@ -76,14 +81,14 @@ namespace {
 		return static_cast<uint8_t>(kLand[block % kLand.size()]);
 	}
 
-	/// The chunk's render tiles, built the way Chunk::computeRenderData builds them.
-	std::vector<TileRenderData> syntheticRenderTiles() {
+	/// A chunk's render tiles, built the way Chunk::computeRenderData builds them.
+	std::vector<TileRenderData> syntheticRenderTiles(ChunkCoordinate chunk) {
 		constexpr int32_t kPaintMargin	 = kRenderApronTiles + kInteriorReachTiles;
 		constexpr int32_t kSurfaceMargin = kRenderSurfaceReachTiles;
 		constexpr int32_t kPaintSide	 = kChunkSize + 2 * kPaintMargin;
 		constexpr int32_t kSurfaceSide	 = kChunkSize + 2 * kSurfaceMargin;
-		const int64_t	  originX		 = static_cast<int64_t>(kChunk.x) * kChunkSize - kSurfaceMargin;
-		const int64_t	  originY		 = static_cast<int64_t>(kChunk.y) * kChunkSize - kSurfaceMargin;
+		const int64_t	  originX		 = static_cast<int64_t>(chunk.x) * kChunkSize - kSurfaceMargin;
+		const int64_t	  originY		 = static_cast<int64_t>(chunk.y) * kChunkSize - kSurfaceMargin;
 		std::vector<uint8_t> surfaces(static_cast<size_t>(kSurfaceSide) * kSurfaceSide);
 		for (int32_t y = 0; y < kSurfaceSide; ++y) {
 			for (int32_t x = 0; x < kSurfaceSide; ++x) {
@@ -102,7 +107,7 @@ namespace {
 		return std::filesystem::current_path() / "shaders" / "includes" / "land.glsl";
 	}
 
-	constexpr const char* kVertexSource = R"(#version 330 core
+	constexpr const char* kVertexSource = R"(#version 410 core
 void main() {
 	vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
 	gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
@@ -119,6 +124,21 @@ void main() {
 	ivec2	 tile  = ivec2(floor(local));
 	LandEval e	   = evaluateLand(tile, local - vec2(tile), u_fineOctaves);
 	outSample	   = vec4(float(e.painted), e.field, e.warp);
+}
+)";
+
+	/// The edge look's view of the same points: surface id, the surface across the
+	/// nearest boundary, and the meters to it.
+	constexpr const char* kBandMain = R"(
+uniform vec2  u_regionOrigin;
+uniform float u_step;
+uniform int	  u_fineOctaves;
+layout(location = 0) out vec4 outSample;
+void main() {
+	vec2	 local = u_regionOrigin + gl_FragCoord.xy * u_step;
+	ivec2	 tile  = ivec2(floor(local));
+	LandEval e	   = evaluateLand(tile, local - vec2(tile), u_fineOctaves);
+	outSample	   = vec4(float(e.painted), float(e.across), e.distance, 0.0);
 }
 )";
 
@@ -183,29 +203,38 @@ void main() {
 	};
 
 	struct Region {
-		float originX; // chunk-local meters
-		float originY;
-		const char* name;
+		ChunkCoordinate chunk;
+		float			originX; // chunk-local meters
+		float			originY;
+		const char*		name;
 	};
 
-	// The middle of the chunk, and two corners, where the field reads the apron.
-	constexpr std::array<Region, 3> kRegions = {{{200.0F, 312.0F, "middle"}, {0.0F, 0.0F, "origin corner"}, {480.0F, 480.0F, "far corner"}}};
+	// The middle of the chunk, and two corners, where the field reads the apron; the
+	// middle of its mirror across the origin; and the far corner of the chunk below
+	// zero, whose warp and block read tiles on both sides of it.
+	const std::array<Region, 5> kRegions = {{
+		{kChunk, 200.0F, 312.0F, "middle"},
+		{kChunk, 0.0F, 0.0F, "origin corner"},
+		{kChunk, 480.0F, 480.0F, "far corner"},
+		{kNegativeChunk, 200.0F, 312.0F, "negative middle"},
+		{kChunkBelowZero, 480.0F, 480.0F, "corner at zero"},
+	}};
 
-	/// The test shader over the synthetic chunk's render tiles, uploaded as the game
-	/// uploads them, with the field's uniforms set as ChunkRenderer::applyLandUniforms
-	/// sets them. Needs a current context; `error` is empty once it is ready.
+	/// The test shader (`main`, kFragmentMain or kBandMain) over each region's synthetic
+	/// chunk's render tiles, uploaded as the game uploads them, with the field's uniforms
+	/// set as ChunkRenderer::applyLandUniforms sets them. Needs a current context;
+	/// `error` is empty once it is ready.
 	class LandProgram {
 	  public:
-		LandProgram()
-			: tiles(syntheticRenderTiles()),
-			  params(defaultSurfaceFieldParams(kSeed)) {
+		explicit LandProgram(const char* main = kFragmentMain)
+			: params(defaultSurfaceFieldParams(kSeed)) {
 			const std::optional<std::string> land = Renderer::ShaderPreprocessor::process(landInclude());
 			if (!land) {
 				error = "cannot read " + landInclude().string();
 				return;
 			}
 			const GLuint vs = compile(GL_VERTEX_SHADER, kVertexSource, error);
-			const GLuint fs = vs == 0 ? 0 : compile(GL_FRAGMENT_SHADER, std::string("#version 330 core\n") + *land + kFragmentMain, error);
+			const GLuint fs = vs == 0 ? 0 : compile(GL_FRAGMENT_SHADER, std::string("#version 410 core\n") + *land + main, error);
 			if (fs == 0) {
 				glDeleteShader(vs);
 				return;
@@ -223,16 +252,21 @@ void main() {
 				return;
 			}
 
-			glGenTextures(1, &tileTexture);
 			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, tileTexture);
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RG8UI, kRenderTilesSide, kRenderTilesSide, 0, GL_RG_INTEGER, GL_UNSIGNED_BYTE, tiles.data());
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+			for (const Region& region : kRegions) {
+				if (find(region.chunk) != nullptr) {
+					continue;
+				}
+				ChunkTiles& chunk = chunks.emplace_back(ChunkTiles{.coord = region.chunk, .tiles = syntheticRenderTiles(region.chunk)});
+				glGenTextures(1, &chunk.texture);
+				glBindTexture(GL_TEXTURE_2D, chunk.texture);
+				glTexImage2D(GL_TEXTURE_2D, 0, GL_RG8UI, kRenderTilesSide, kRenderTilesSide, 0, GL_RG_INTEGER, GL_UNSIGNED_BYTE, chunk.tiles.data());
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+			}
 
 			glUseProgram(program);
 			glUniform1i(at("u_tileData"), 0);
-			glUniform2i(at("u_chunkTileOrigin"), static_cast<GLint>(tileOriginX()), static_cast<GLint>(tileOriginY()));
 			glUniform1fv(at("u_landWarpFine"), static_cast<GLsizei>(kSurfaceCount), params.warpFineM.data());
 			glUniform1fv(at("u_landWarpLow"), static_cast<GLsizei>(kSurfaceCount), params.warpLowM.data());
 			glUniform2i(at("u_landWarpWavelength"), params.warpFineWavelengthM, params.warpLowWavelengthM);
@@ -264,7 +298,6 @@ void main() {
 			glViewport(0, 0, kPixels, kPixels);
 			glDisable(GL_BLEND);
 			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, tileTexture);
 		}
 
 		~LandProgram() {
@@ -272,15 +305,19 @@ void main() {
 			glDeleteFramebuffers(1, &framebuffer);
 			glDeleteVertexArrays(1, &vao);
 			glDeleteTextures(1, &target);
-			glDeleteTextures(1, &tileTexture);
+			for (const ChunkTiles& chunk : chunks) {
+				glDeleteTextures(1, &chunk.texture);
+			}
 			glDeleteProgram(program);
 		}
 
 		LandProgram(const LandProgram&)			   = delete;
 		LandProgram& operator=(const LandProgram&) = delete;
 
-		/// Each pixel's (surface id, field, warp x, warp y), fine warp summed over `fineOctaves`.
+		/// Each pixel's four outputs, fine warp summed over `fineOctaves`.
 		[[nodiscard]] std::vector<float> render(const Region& region, int fineOctaves) const {
+			glBindTexture(GL_TEXTURE_2D, find(region.chunk)->texture);
+			glUniform2i(at("u_chunkTileOrigin"), static_cast<GLint>(tileOrigin(region.chunk.x)), static_cast<GLint>(tileOrigin(region.chunk.y)));
 			glUniform2f(at("u_regionOrigin"), region.originX, region.originY);
 			glUniform1i(at("u_fineOctaves"), fineOctaves);
 			glClear(GL_COLOR_BUFFER_BIT);
@@ -297,8 +334,10 @@ void main() {
 			const float	  localY = region.originY + (static_cast<float>(j) + 0.5F) * kStepM;
 			const auto	  tileX	 = static_cast<int64_t>(std::floor(localX));
 			const auto	  tileY	 = static_cast<int64_t>(std::floor(localY));
-			const TilePoint p{tileOriginX() + tileX, tileOriginY() + tileY, localX - static_cast<float>(tileX), localY - static_cast<float>(tileY)};
-			return evaluateSurfaceField(chunkRenderTiles(kChunk, tiles), p, params);
+			const TilePoint p{
+				tileOrigin(region.chunk.x) + tileX, tileOrigin(region.chunk.y) + tileY, localX - static_cast<float>(tileX), localY - static_cast<float>(tileY)
+			};
+			return evaluateSurfaceField(chunkRenderTiles(region.chunk, find(region.chunk)->tiles), p, params);
 		}
 
 		[[nodiscard]] const SurfaceFieldParams& fieldParams() const { return params; }
@@ -306,18 +345,36 @@ void main() {
 		std::string error;
 
 	  private:
-		static int64_t tileOriginX() { return static_cast<int64_t>(kChunk.x) * kChunkSize; }
-		static int64_t tileOriginY() { return static_cast<int64_t>(kChunk.y) * kChunkSize; }
-		GLint		   at(const char* name) const { return glGetUniformLocation(program, name); }
+		struct ChunkTiles {
+			ChunkCoordinate				coord;
+			std::vector<TileRenderData> tiles;
+			GLuint						texture = 0;
+		};
 
-		std::vector<TileRenderData> tiles;
-		SurfaceFieldParams			params;
-		GLuint						program		= 0;
-		GLuint						tileTexture = 0;
-		GLuint						target		= 0;
-		GLuint						framebuffer = 0;
-		GLuint						vao			= 0;
+		static int64_t tileOrigin(int32_t chunk) { return static_cast<int64_t>(chunk) * kChunkSize; }
+		GLint		   at(const char* name) const { return glGetUniformLocation(program, name); }
+		[[nodiscard]] const ChunkTiles* find(ChunkCoordinate coord) const {
+			const auto it = std::find_if(chunks.begin(), chunks.end(), [coord](const ChunkTiles& c) { return c.coord == coord; });
+			return it == chunks.end() ? nullptr : &*it;
+		}
+
+		std::vector<ChunkTiles> chunks;
+		SurfaceFieldParams		params;
+		GLuint					program		= 0;
+		GLuint					target		= 0;
+		GLuint					framebuffer = 0;
+		GLuint					vao			= 0;
 	};
+
+	/// The near-interior shortcut reports no warp. Where its test (the low warp
+	/// against a bound) falls within rounding on one side only, one side reports the
+	/// shortcut's zero and the other the full warp, and both read one surface: the
+	/// field is exactly 1 either way, so the warp there isn't compared.
+	bool shortcutSplit(const float* gpu, const SurfaceFieldSample& cpu) {
+		const bool gpuShortcut = gpu[2] == 0.0F && gpu[3] == 0.0F;
+		const bool cpuShortcut = cpu.warpXM == 0.0F && cpu.warpYM == 0.0F;
+		return gpuShortcut != cpuShortcut && gpu[1] == 1.0F && cpu.field == 1.0F;
+	}
 
 } // namespace
 
@@ -339,6 +396,7 @@ TEST(SurfaceFieldGoldenTest, GlslMatchesCpp) {
 		int	  undecidedDiffer = 0;
 		int	  surfaceDiff	  = 0;
 		int	  interior		  = 0;
+		int	  split			  = 0;
 		float worstWarp		  = 0.0F;
 		float worstField	  = 0.0F;
 		for (int j = 0; j < kPixels; ++j) {
@@ -348,8 +406,12 @@ TEST(SurfaceFieldGoldenTest, GlslMatchesCpp) {
 				const float* gpu	  = &pixels[(static_cast<size_t>(j) * kPixels + static_cast<size_t>(i)) * 4];
 				const auto	 gpuId	  = static_cast<int>(std::lround(gpu[0]));
 				const float	 warpDiff = std::max(std::abs(gpu[2] - cpu.warpXM), std::abs(gpu[3] - cpu.warpYM));
-				worstWarp			  = std::max(worstWarp, warpDiff);
-				EXPECT_LE(warpDiff, kTolerance) << region.name << " pixel (" << i << ", " << j << ")";
+				if (shortcutSplit(gpu, cpu)) {
+					++split;
+				} else {
+					worstWarp = std::max(worstWarp, warpDiff);
+					EXPECT_LE(warpDiff, kTolerance) << region.name << " pixel (" << i << ", " << j << ")";
+				}
 				interior += cpu.warpXM == 0.0F && cpu.warpYM == 0.0F && cpu.field == 1.0F ? 1 : 0;
 
 				if (cpu.margin < kIdMargin) {
@@ -370,19 +432,72 @@ TEST(SurfaceFieldGoldenTest, GlslMatchesCpp) {
 			}
 		}
 		std::printf(
-			"[golden] %s: worst warp diff %.3g m, worst field diff %.3g, %d near boundaries, %d interior, %d within the id margin "
-			"(%d of them differ), %d surface mismatches\n",
+			"[golden] %s: worst warp diff %.3g m, worst field diff %.3g, %d near boundaries, %d interior or near-interior (%d "
+			"split), %d within the id margin (%d of them differ), %d surface mismatches\n",
 			region.name,
 			static_cast<double>(worstWarp),
 			static_cast<double>(worstField),
 			boundaries,
 			interior,
+			split,
 			undecided,
 			undecidedDiffer,
 			surfaceDiff
 		);
 		EXPECT_GT(boundaries, kPixels * kPixels / 20) << region.name << ": the region should cross plenty of edges";
 	}
+}
+
+// The edge look's band is placed by the field's `distance` (ground-textures.md,
+// "Band cap"), so on the two sides of a painted boundary each pixel has to name the
+// other's surface and read about zero. Neighbors' reads sit at most a couple of
+// steps apart once the warp stretches them. Where three surfaces meet, no
+// surface's own isoline is the boundary; measuring from one put the band up to half
+// a meter off the painted edge, a sliver of bare sand between grass and its tufts.
+TEST(SurfaceFieldGoldenTest, BandDistanceMeetsAtThePaintedBoundary) {
+	GlContext gl;
+	if (!gl.ok) {
+		GTEST_SKIP() << "No GL 3.3 context (headless)";
+	}
+	const LandProgram land(kBandMain);
+	ASSERT_TRUE(land.error.empty()) << land.error;
+
+	constexpr float kBoundaryReachM = 2.0F * kStepM;
+	int				pairs			= 0;
+	int				meet			= 0;
+	int				far				= 0;
+	float			worst			= 0.0F;
+	for (const Region& region : kRegions) {
+		const std::vector<float> pixels = land.render(region, kWarpFineOctaves);
+		ASSERT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+		const auto at = [&](int i, int j) { return &pixels[(static_cast<size_t>(j) * kPixels + static_cast<size_t>(i)) * 4]; };
+		for (int j = 0; j + 1 < kPixels; ++j) {
+			for (int i = 0; i + 1 < kPixels; ++i) {
+				const float* a = at(i, j);
+				for (const float* b : {at(i + 1, j), at(i, j + 1)}) {
+					if (a[0] == b[0]) {
+						continue;
+					}
+					++pairs;
+					// A third surface's boundary can be nearer to one of them at a junction.
+					if (a[1] != b[0] || b[1] != a[0]) {
+						continue;
+					}
+					++meet;
+					const float distance = std::max(a[2], b[2]);
+					worst				 = std::max(worst, distance);
+					if (distance > kBoundaryReachM && ++far <= 5) {
+						ADD_FAILURE() << region.name << " pixel (" << i << ", " << j << "): surfaces " << a[0] << " and " << b[0] << " meet at " << a[2]
+									  << " m and " << b[2] << " m";
+					}
+				}
+			}
+		}
+	}
+	std::printf("[band] %d painted boundary pairs, %d naming each other, worst distance %.3f m, %d over %.2f m\n", pairs, meet,
+				static_cast<double>(worst), far, static_cast<double>(kBoundaryReachM));
+	EXPECT_GT(meet, pairs * 9 / 10) << "most boundaries are between two surfaces";
+	EXPECT_EQ(far, 0);
 }
 
 // At zoom 0.25 (0.5 m a pixel) the shader sums two of the four fine octaves. The
@@ -420,7 +535,9 @@ TEST(SurfaceFieldGoldenTest, FarZoomLodMovesEdgesUnderAPixel) {
 			for (int i = 0; i < kPixels; ++i) {
 				const SurfaceFieldSample cpu = land.cpuAt(region, i, j);
 				const float*			 gpu = &pixels[(static_cast<size_t>(j) * kPixels + static_cast<size_t>(i)) * 4];
-				worstWarp = std::max(worstWarp, std::max(std::abs(gpu[2] - cpu.warpXM), std::abs(gpu[3] - cpu.warpYM)));
+				if (!shortcutSplit(gpu, cpu)) {
+					worstWarp = std::max(worstWarp, std::max(std::abs(gpu[2] - cpu.warpXM), std::abs(gpu[3] - cpu.warpYM)));
+				}
 			}
 		}
 	}

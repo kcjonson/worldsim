@@ -1,5 +1,6 @@
 #include "SurfaceField.h"
 
+#include <core/IntegerDivision.h>
 #include <debug/Tunables.h>
 #include <random/HashNoise.h>
 
@@ -103,6 +104,69 @@ namespace world {
 			auto is		 = [&block, s](int64_t x, int64_t y) { return block[static_cast<size_t>(y * 4 + x)] == s; };
 			auto guarded = [&is, thinFloor, thinCeil](int64_t i, int64_t j) { return guardedBlur(is, i, j, thinFloor, thinCeil); };
 			return bilinear(guarded(1, 1), guarded(2, 1), guarded(1, 2), guarded(2, 2), tx, ty);
+		}
+
+		// foundation::fractalNoise2SplitPair split into its position and its octaves, so
+		// the fine term can stop after its first: its expressions in its order, so the
+		// sums are its bits. land.glsl's splitNoisePoint and splitNoiseOctave are these.
+		struct SplitNoisePoint {
+			int64_t qx;
+			int64_t qy;
+			float	baseX; // in [0, wavelength)
+			float	baseY;
+			float	inverse;
+		};
+
+		SplitNoisePoint splitNoisePoint(int64_t wholeX, int64_t wholeY, float fracX, float fracY, int32_t wavelength) {
+			const int64_t qx = geometry::floorDiv(wholeX, wavelength);
+			const int64_t qy = geometry::floorDiv(wholeY, wavelength);
+			return {
+				qx,
+				qy,
+				static_cast<float>(wholeX - qx * wavelength) + fracX,
+				static_cast<float>(wholeY - qy * wavelength) + fracY,
+				1.0F / static_cast<float>(wavelength)
+			};
+		}
+
+		// Octave `octave` at lacunarity 2, unweighted.
+		foundation::NoisePair splitNoiseOctave(const SplitNoisePoint& p, uint32_t seed, int octave) {
+			const int64_t cells = int64_t{1} << octave;
+			const float	  scale = p.inverse * static_cast<float>(cells); // a power of two times 1 / wavelength: exact
+			const float	  u		= p.baseX * scale;						 // [0, 2^octave), so truncation is floor
+			const float	  v		= p.baseY * scale;
+			const auto	  cu	= static_cast<int32_t>(u);
+			const auto	  cv	= static_cast<int32_t>(v);
+			return foundation::gradientNoise2PairCell(
+				static_cast<int32_t>(p.qx * cells + cu),
+				static_cast<int32_t>(p.qy * cells + cv),
+				u - static_cast<float>(cu),
+				v - static_cast<float>(cv),
+				seed + static_cast<uint32_t>(octave)
+			);
+		}
+
+		foundation::NoisePair splitNoiseSum(const SplitNoisePoint& p, uint32_t seed, int octaves, float gain) {
+			foundation::NoisePair value;
+			float				  amplitude = 1.0F;
+			float				  norm		= 0.0F;
+			for (int i = 0; i < octaves; ++i) {
+				const foundation::NoisePair n = splitNoiseOctave(p, seed, i);
+				value.first += n.first * amplitude;
+				value.second += n.second * amplitude;
+				norm += amplitude;
+				amplitude *= gain;
+			}
+			return {value.first / norm, value.second / norm};
+		}
+
+		// In a near-interior tile, whether a read the fine term can move at most `reach`
+		// from (atX, atY), offsets from the tile, keeps its block inside the tile's
+		// one-surface reach.
+		bool nearInteriorHolds(float atX, float atY, float reach) {
+			const float from = reach - 0.5F + kNearInteriorMarginM;
+			const float to	 = 1.5F - reach - kNearInteriorMarginM;
+			return atX >= from && atX < to && atY >= from && atY < to;
 		}
 
 	} // namespace
@@ -237,13 +301,48 @@ namespace world {
 		const float	  noiseFx = phasedX >= 1.0F ? phasedX - 1.0F : phasedX;
 		const float	  noiseFy = phasedY >= 1.0F ? phasedY - 1.0F : phasedY;
 		// Each term's noise pair is the offset's x and y.
-		auto noise = [&](int32_t wavelength, uint32_t seed, int octaves, float gain) {
-			const foundation::NoisePair n =
-				foundation::fractalNoise2SplitPair(noiseX, noiseY, noiseFx, noiseFy, wavelength, seed, octaves, gain);
-			return foundation::NoisePair{std::clamp(n.first, -1.0F, 1.0F), std::clamp(n.second, -1.0F, 1.0F)};
-		};
-		const foundation::NoisePair fineNoise = noise(params.warpFineWavelengthM, params.seeds.fine, kWarpFineOctaves, params.warpFineGain);
-		const foundation::NoisePair lowNoise  = noise(params.warpLowWavelengthM, params.seeds.low, kWarpLowOctaves, kWarpLowGain);
+		const foundation::NoisePair lowSum =
+			splitNoiseSum(splitNoisePoint(noiseX, noiseY, noiseFx, noiseFy, params.warpLowWavelengthM), params.seeds.low, kWarpLowOctaves, kWarpLowGain);
+		const foundation::NoisePair lowNoise = {std::clamp(lowSum.first, -1.0F, 1.0F), std::clamp(lowSum.second, -1.0F, 1.0F)};
+
+		// In a near-interior tile the fine term moves the read at most fineAmp from
+		// where the low term puts it. While that keeps the read's lattice cell at -1 or 0
+		// from the tile (offset in [-0.5, 1.5)), the block lies within the tile's
+		// one-surface reach and the field is that surface's alone. Each octave's
+		// gradient noise is within [-1, 1] (a blend of corner dot products, each at most
+		// |dx| + |dy|, which the fades weigh to at most 0.5 an axis), so once the first
+		// fine octave is in, the others move the read at most fineAmp times their share
+		// of the weight: the same test around where the first octave puts the read. The
+		// share counts every later octave, so it holds for the shader's fewer too.
+		const bool	nearInterior = (own.edge & kRenderNearInteriorBit) != 0;
+		const float lowAtX		 = point.fx + lowAmp * lowNoise.first;
+		const float lowAtY		 = point.fy + lowAmp * lowNoise.second;
+		if (nearInterior && nearInteriorHolds(lowAtX, lowAtY, fineAmp)) {
+			return {.surface = static_cast<Surface>(own.surfaceId)};
+		}
+
+		const SplitNoisePoint finePoint = splitNoisePoint(noiseX, noiseY, noiseFx, noiseFy, params.warpFineWavelengthM);
+		float				  total		= 0.0F;
+		float				  amplitude	= 1.0F;
+		for (int i = 0; i < kWarpFineOctaves; ++i) {
+			total += amplitude;
+			amplitude *= params.warpFineGain;
+		}
+		foundation::NoisePair fineSum;
+		float				  norm = 0.0F;
+		amplitude				   = 1.0F;
+		for (int i = 0; i < kWarpFineOctaves; ++i) {
+			const foundation::NoisePair n = splitNoiseOctave(finePoint, params.seeds.fine, i);
+			fineSum.first += n.first * amplitude;
+			fineSum.second += n.second * amplitude;
+			norm += amplitude;
+			amplitude *= params.warpFineGain;
+			if (i == 0 && nearInterior &&
+				nearInteriorHolds(lowAtX + fineAmp * fineSum.first / total, lowAtY + fineAmp * fineSum.second / total, fineAmp * (total - norm) / total)) {
+				return {.surface = static_cast<Surface>(own.surfaceId)};
+			}
+		}
+		const foundation::NoisePair fineNoise = {std::clamp(fineSum.first / norm, -1.0F, 1.0F), std::clamp(fineSum.second / norm, -1.0F, 1.0F)};
 		const float warpX = std::clamp(fineAmp * fineNoise.first + lowAmp * lowNoise.first, -kMaxLandWarpM, kMaxLandWarpM);
 		const float warpY = std::clamp(fineAmp * fineNoise.second + lowAmp * lowNoise.second, -kMaxLandWarpM, kMaxLandWarpM);
 
@@ -401,11 +500,16 @@ namespace world {
 
 		// Sliding extremes along each grown row, then down each window column: the
 		// highest level within kEdgeReachTiles, and the least and greatest surface id
-		// within kInteriorReachTiles (the same id at both ends means one surface).
-		const size_t		 rowCells = static_cast<size_t>(width) * static_cast<size_t>(grownHeight);
+		// within kInteriorReachTiles and kNearInteriorReachTiles (the same id at both
+		// ends means one surface).
+		static_assert(kNearInteriorReachTiles < kInteriorReachTiles);
+		constexpr size_t	 kNearSkip = static_cast<size_t>(kGrow - kNearInteriorReachTiles);
+		const size_t		 rowCells  = static_cast<size_t>(width) * static_cast<size_t>(grownHeight);
 		std::vector<uint8_t> rowLevel(rowCells);
 		std::vector<uint8_t> rowMin(rowCells);
 		std::vector<uint8_t> rowMax(rowCells);
+		std::vector<uint8_t> rowNearMin(rowCells);
+		std::vector<uint8_t> rowNearMax(rowCells);
 		for (int32_t gy = 0; gy < grownHeight; ++gy) {
 			const size_t row = static_cast<size_t>(gy) * static_cast<size_t>(grownWidth);
 			for (int32_t x = 0; x < width; ++x) {
@@ -416,17 +520,27 @@ namespace world {
 					top = std::max(top, level[edgeFirst + k]);
 				}
 				const size_t interiorFirst = row + static_cast<size_t>(x);
-				uint8_t		 lo			   = paint[interiorFirst];
-				uint8_t		 hi			   = lo;
-				for (size_t k = 1; k <= 2 * static_cast<size_t>(kGrow); ++k) {
+				uint8_t		 nearLo		   = paint[interiorFirst + kNearSkip];
+				uint8_t		 nearHi		   = nearLo;
+				for (size_t k = kNearSkip + 1; k <= 2 * static_cast<size_t>(kGrow) - kNearSkip; ++k) {
 					const uint8_t id = paint[interiorFirst + k];
-					lo				 = std::min(lo, id);
-					hi				 = std::max(hi, id);
+					nearLo			 = std::min(nearLo, id);
+					nearHi			 = std::max(nearHi, id);
+				}
+				uint8_t lo = nearLo;
+				uint8_t hi = nearHi;
+				for (size_t k = 0; k < kNearSkip; ++k) {
+					for (const uint8_t id : {paint[interiorFirst + k], paint[interiorFirst + 2 * static_cast<size_t>(kGrow) - k]}) {
+						lo = std::min(lo, id);
+						hi = std::max(hi, id);
+					}
 				}
 				const size_t cell = static_cast<size_t>(gy) * static_cast<size_t>(width) + static_cast<size_t>(x);
 				rowLevel[cell]	  = top;
 				rowMin[cell]	  = lo;
 				rowMax[cell]	  = hi;
+				rowNearMin[cell]  = nearLo;
+				rowNearMax[cell]  = nearHi;
 			}
 		}
 
@@ -447,10 +561,17 @@ namespace world {
 					lo = std::min(lo, rowMin[cell(gy + d)]);
 					hi = std::max(hi, rowMax[cell(gy + d)]);
 				}
+				uint8_t nearLo = rowNearMin[cell(gy - kNearInteriorReachTiles)];
+				uint8_t nearHi = rowNearMax[cell(gy - kNearInteriorReachTiles)];
+				for (int32_t d = -kNearInteriorReachTiles + 1; d <= kNearInteriorReachTiles; ++d) {
+					nearLo = std::min(nearLo, rowNearMin[cell(gy + d)]);
+					nearHi = std::max(nearHi, rowNearMax[cell(gy + d)]);
+				}
 				const uint8_t surface = paint[static_cast<size_t>(gy) * static_cast<size_t>(grownWidth) + static_cast<size_t>(x + kGrow)];
+				const auto	  bits	  = static_cast<uint8_t>((lo == hi ? kRenderInteriorBit : 0) | (nearLo == nearHi ? kRenderNearInteriorBit : 0));
 				out[static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)] = {
 					surface,
-					static_cast<uint8_t>(kSurfaceByLevel[top - 1] | (lo == hi ? kRenderInteriorBit : 0))
+					static_cast<uint8_t>(kSurfaceByLevel[top - 1] | bits)
 				};
 			}
 		}

@@ -10,12 +10,20 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <variant>
 #include <vector>
 
+#include "GroundTint.h"
+#include "GroundTransition.h"
 #include "placement/PlacementTypes.h"
 
 #include <glm/vec2.hpp>
+#include <glm/vec3.hpp>
+
+namespace world {
+	enum class Surface : uint8_t;
+}
 
 namespace assets {
 
@@ -229,9 +237,35 @@ namespace assets {
 	/// tile texture at distance, uniform vertex-shader wind, non-interactive (grass).
 	/// WorldObject: everything else scattered in the world (trees, bushes, rocks,
 	/// sticks, stones) - sparse, heterogeneous, individually placed and baked.
+	/// Ground: the repeating tile art of one land surface, baked once at load into the ground
+	/// texture array. Never placed in the world (it has no <biome> rules).
 	enum class AssetRole {
 		WorldObject, // General placed world asset (default)
-		Groundcover  // Dense instanced ground cover (grass)
+		Groundcover, // Dense instanced ground cover (grass)
+		Ground		 // Seamless ground tile variants for one land surface
+	};
+
+	/// How a ground tile may be rotated when the shader picks it. None for art with baked lighting.
+	enum class GroundRotate {
+		Free,	 // Any angle
+		Quarter, // 0, 90, 180 or 270 degrees
+		None,	 // Never rotated
+		Mirror	 // Never rotated, flipped left to right or not; for art with an up (grass blades)
+	};
+
+	/// Ground-role settings, read from the AssetDef's top-level ground elements.
+	struct GroundParams {
+		std::optional<world::Surface> surface;	  // The land surface this tile set paints; unset until <surface> parses
+		float						  periodMeters = 4.0F;	// Meters one variant covers; must divide 512 so tiles line up across chunks
+		uint32_t					  pixelsPerMeter = 64;	// Bake density; a 4 m variant at 64 is a 256 x 256 layer
+		GroundRotate				  rotate = GroundRotate::Free;
+		GroundMacro					  macro;
+		// Salts the bake's generator seeds: defs sharing a group get the same seed for each variant index,
+		// so a family drawn by one generator lays its variants out alike. The def's name when unset.
+		std::string					  seedGroup;
+		// How this surface meets each lower one, by the lower surface's id (<transition>). Not part of the
+		// bake's cache key: the bake never reads it.
+		GroundTransitions			  transitions{};
 	};
 
 	/// Key-value parameter store for generator configuration.
@@ -260,6 +294,9 @@ namespace assets {
 
 		/// Check if a parameter exists
 		bool has(const char* key) const;
+
+		/// Every parameter as written, sorted by name: what a generator run reads, in a stable order.
+		[[nodiscard]] std::vector<std::pair<std::string, std::string>> sorted() const;
 
 	  private:
 		std::unordered_map<std::string, std::string> params;
@@ -372,7 +409,8 @@ namespace assets {
 		std::optional<ItemProperties>	  itemProperties;  // Properties when in inventory (if carryable)
 		AssetRole						  role = AssetRole::WorldObject;
 		AssetComplexity					  complexity = AssetComplexity::Simple;
-		uint32_t						  variantCount = 1; // Number of variants to pre-generate
+		uint32_t						  variantCount = 1; // Number of variants to pre-generate (8 for ground defs that omit it)
+		GroundParams					  ground;			// Only meaningful when role == Ground
 
 		CollisionShape collision; // Physical footprint for navmesh/collision; default None = doesn't block
 

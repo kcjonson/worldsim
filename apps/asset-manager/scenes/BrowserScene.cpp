@@ -1,9 +1,11 @@
 #include "AssetDetailView.h"
 #include "AssetRow.h"
 #include "AssetThumbnail.h"
+#include "GroundBakeView.h"
 #include "SceneTypes.h"
 
 #include <assets/AssetDefinition.h>
+#include <application/App.h>
 #include <assets/AssetRegistry.h>
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
@@ -79,8 +81,9 @@ namespace {
 
 	class BrowserScene : public app::Scene {
 	  public:
-		void onEnter(app::App& /*app*/) override {
+		void onEnter(app::App& app) override {
 			LOG_INFO(Engine, "AssetManager BrowserScene - Entering");
+			coordinateSystem = &app.coordinateSystem();
 
 			// Prefer the SOURCE assets/ -- this is a live authoring tool, so Reload should
 			// re-read the files being edited, not the build-time copy beside the exe.
@@ -146,7 +149,7 @@ namespace {
 				.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .flexGrow = 1.0F},
 				.overflow = ui::Overflow::Scroll,
 			});
-			detail = body.addChild<asset_manager::AssetDetailView>({.layout = {.flexGrow = 1.0F}});
+			detail = body.addChild<asset_manager::AssetDetailView>({.layout = {.flexGrow = 1.0F}, .coordinateSystem = coordinateSystem});
 
 			updateSummary();
 			rebuildTree();
@@ -212,6 +215,7 @@ namespace {
 
 		void reload() {
 			asset_manager::AssetThumbnail::clearCache();
+			asset_manager::GroundBakeView::clearCache();
 			auto& registry = assets::AssetRegistry::Get();
 			registry.clear();
 			if (!sharedScripts.empty()) {
@@ -255,11 +259,12 @@ namespace {
 					continue;
 				}
 				for (const auto& name : names) {
-					list.addChild<asset_manager::AssetRow>(
-						{.defName = name, .selected = name == selected, .onSelect = [this](const std::string& chosen) {
-							 selectAsset(chosen);
-						 }}
-					);
+					list.addChild<asset_manager::AssetRow>({
+						.defName = name,
+						.selected = name == selected,
+						.onSelect = [this](const std::string& chosen) { selectAsset(chosen); },
+						.coordinateSystem = coordinateSystem,
+					});
 				}
 			}
 		}
@@ -276,6 +281,7 @@ namespace {
 		std::string				 selected;
 		std::set<std::string>	 collapsed;
 		bool					 pendingRebuild = false;
+		Renderer::CoordinateSystem* coordinateSystem = nullptr; // the app's
 	};
 
 } // namespace

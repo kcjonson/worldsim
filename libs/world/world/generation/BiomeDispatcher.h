@@ -3,8 +3,8 @@
 // BiomeDispatcher - Routes generation to the appropriate biome generator.
 // All 21 worldgen biomes are mapped to one of the 8 existing generators.
 
+#include "world/chunk/Chunk.h"
 #include "world/generation/GenerationContext.h"
-#include "world/generation/GenerationResult.h"
 
 #include "world/generation/BeachGenerator.h"
 #include "world/generation/DesertGenerator.h"
@@ -19,7 +19,7 @@ namespace world::generation {
 
 class BiomeDispatcher {
 public:
-    [[nodiscard]] static GenerationResult generate(const GenerationContext& ctx) {
+    [[nodiscard]] static Surface generate(const GenerationContext& ctx) {
         switch (ctx.biome) {
             // ── Forest group ──────────────────────────────────────────────
             case Biome::TropicalRainforest:
