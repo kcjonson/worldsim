@@ -7,6 +7,7 @@
 #include "world/rendering/GroundTileBaker.h"
 
 #include "BaseShader.h"
+#include "world/rendering/GroundTileBank.h"
 #include "world/rendering/GroundTileCache.h"
 
 #include <assets/AssetRegistry.h>
@@ -281,4 +282,55 @@ TEST(GroundTileBakerTest, ParallelBakeMatchesSerialAndTheCacheGivesItBack) {
 	ASSERT_TRUE(afterEdit.has_value());
 	EXPECT_TRUE(afterEdit->fromCache) << "and stores the new bake";
 	registry.clearDefinitions();
+}
+
+namespace {
+
+	// A Snow def at 512 m x 16 px/m: a valid period, but an 8192 texel layer, past the 1024 the baker takes.
+	void loadOversizedDef(const TempDir& t) {
+		t.write(
+			"Big/Big.xml",
+			"<?xml version=\"1.0\"?><AssetDefinitions><AssetDef><defName>Ground_Oversized</defName><role>ground</role>"
+			"<assetType>procedural</assetType><generator><scriptPath>gen.lua</scriptPath></generator>"
+			"<surface>Snow</surface><period>512</period><pixelsPerMeter>16</pixelsPerMeter>"
+			"</AssetDef></AssetDefinitions>"
+		);
+		t.write("Big/gen.lua", "");
+		auto& registry = assets::AssetRegistry::Get();
+		registry.clearDefinitions();
+		registry.loadDefinitionsFromFolder(t.root.string());
+	}
+
+} // namespace
+
+TEST(GroundTileBakerTest, AnOversizedLayerIsRefusedBeforeAnythingIsBuilt) {
+	const TempDir t;
+	loadOversizedDef(t);
+	const assets::AssetDefinition* def = assets::AssetRegistry::Get().getDefinition("Ground_Oversized");
+	ASSERT_NE(def, nullptr);
+
+	EXPECT_EQ(GroundTileBaker::layerSize(*def), 0);
+	EXPECT_FALSE(GroundTileBaker({}).begin("Ground_Oversized").has_value());
+	assets::AssetRegistry::Get().clearDefinitions();
+}
+
+TEST(GroundTileBankTest, AnOversizedLayerAllocatesNoArray) {
+	GlFixture gl;
+	if (!gl.ok) {
+		GTEST_SKIP() << "No GL context (headless CI)";
+	}
+	const TempDir t;
+	loadOversizedDef(t);
+
+	GroundTileBank bank({});
+	bank.begin();
+	EXPECT_TRUE(bank.arrays().empty());
+	EXPECT_EQ(bank.bytes(), 0U);
+	EXPECT_EQ(bank.totalVariants(), 0);
+	bool named = false;
+	for (const std::string& line : bank.errors()) {
+		named = named || line.find("Ground_Oversized") != std::string::npos;
+	}
+	EXPECT_TRUE(named) << "the def is named in the bank's errors";
+	assets::AssetRegistry::Get().clearDefinitions();
 }

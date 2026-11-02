@@ -1,6 +1,7 @@
 #include "world/rendering/GroundTileBank.h"
 
 #include <assets/AssetRegistry.h>
+#include <assets/GroundLayer.h>
 #include <threading/TaskPool.h>
 #include <utils/Log.h>
 
@@ -8,6 +9,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 
 namespace worldview {
 
@@ -78,6 +80,20 @@ namespace worldview {
 			}
 			const world::Surface id = *def->ground.surface;
 			const int			 layerSize = GroundTileBaker::layerSize(*def);
+			if (layerSize == 0) {
+				char line[256];
+				std::snprintf(
+					line,
+					sizeof(line),
+					"%s: %.3g m at %u px/m is not a layer of 1 to %d whole texels",
+					name.c_str(),
+					static_cast<double>(def->ground.periodMeters),
+					def->ground.pixelsPerMeter,
+					assets::kMaxGroundLayerSize
+				);
+				fail(line);
+				continue;
+			}
 			size_t				 array = 0;
 			while (array < arrayCount && arrayTable[array].layerSize != layerSize) {
 				++array;

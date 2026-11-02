@@ -155,14 +155,14 @@ namespace worldview {
 		/// disk from before are dropped.
 		static constexpr uint32_t kVersion = 2;
 		static constexpr int	  kMaxMipLevels = 7;	 // mips 0 to 6
-		static constexpr int	  kMaxLayerSize = 1024;	 // the supersampled mip 0 is then 8192 px a side
 		static constexpr float	  kMeanLockSigma = 2.0F; // texels of the mip being locked
 
 		explicit GroundTileBaker(const Args& args);
 
 		/// The generator seed of a def's variant, salted by the def's name so two defs' variant 0 differ.
 		[[nodiscard]] static uint32_t variantSeed(const std::string& defName, uint32_t variant);
-		/// Texels along a layer's edge at mip 0: period x pixelsPerMeter.
+		/// Texels along a layer's edge at mip 0: period x pixelsPerMeter. 0 when that isn't a whole number
+		/// from 1 to assets::kMaxGroundLayerSize (assets/GroundLayer.h, which AssetValidator checks too).
 		[[nodiscard]] static int layerSize(const assets::AssetDefinition& def);
 		/// Mips 0 to 6, fewer when the layer reaches 1 texel sooner.
 		[[nodiscard]] static int mipCount(int layerSize);
@@ -171,7 +171,7 @@ namespace worldview {
 		/// A bake's first step: the def's bake from the disk cache when it holds one of the def's files as
 		/// they are now (fromCache set, nothing left to do), else the def's bake with its period, density,
 		/// layer size and cache key filled and no variants yet. Nullopt (logged) when the def isn't a
-		/// bakeable ground def.
+		/// bakeable ground def, or its layer isn't a supported size; nothing is allocated before that check.
 		[[nodiscard]] std::optional<GroundTileBake> begin(const std::string& defName) const;
 
 		/// Every variant's paths, one generator run and one tessellation each, all at once on the pool;
