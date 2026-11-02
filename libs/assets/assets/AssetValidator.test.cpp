@@ -160,10 +160,9 @@ TEST(AssetValidatorTest, OrphanSvgIsWarning) {
 
 namespace {
 
-	// Write assets/<folder>/<folder>.xml as a ground def (defName Ground_<folder>) plus its tile SVG.
+	// Write assets/<folder>/<folder>.xml as a procedural ground def (defName Ground_<folder>).
 	void addGround(TempAssets& t, const std::string& folder, const std::string& extra) {
-		t.writeXml(folder, oneDef("<defName>Ground_" + folder + "</defName><role>ground</role><assetType>simple</assetType><svgPath>tile.svg</svgPath>" + extra));
-		t.writeFile(folder + "/tile.svg", "<svg/>");
+		t.writeXml(folder, oneDef("<defName>Ground_" + folder + "</defName><role>ground</role><assetType>procedural</assetType>" + extra));
 	}
 
 	// A tree with a ground def for every land surface (each one is required): Grass carries xtra, the rest
@@ -183,12 +182,32 @@ TEST(AssetValidatorTest, GroundDefWithDefaultsIsClean) {
 	const ValidationReport r = validateGround("<surface>Grass</surface>");
 	EXPECT_FALSE(hasIssue(r, Severity::Error, "surface"));
 	EXPECT_EQ(r.errorCount(), 0);
+	EXPECT_FALSE(hasIssue(r, Severity::Error, "assetType"));
 	EXPECT_FALSE(hasIssue(r, Severity::Warning, "role")) << "ground is a known role";
+}
+
+TEST(AssetValidatorTest, SvgGroundDefIsNotSupportedYet) {
+	// The baker only runs generators (AssetRegistry::buildPaths rejects a non-procedural def).
+	for (const char* assetType : {"simple", "Simple"}) {
+		TempAssets t;
+		t.writeXml(
+			"Grass",
+			oneDef(
+				std::string("<defName>Ground_Grass</defName><role>ground</role><surface>Grass</surface><assetType>") + assetType +
+				"</assetType><svgPath>tile.svg</svgPath>"
+			)
+		);
+		t.writeFile("Grass/tile.svg", "<svg/>");
+
+		const ValidationReport r = AssetValidator::validate(t.root, "");
+		EXPECT_TRUE(hasIssue(r, Severity::Error, "assetType")) << assetType;
+		EXPECT_TRUE(hasMessageContaining(r, Severity::Error, "SVG ground defs aren't supported yet")) << assetType;
+	}
 }
 
 TEST(AssetValidatorTest, GroundPeriodMustDivideTheChunk) {
 	EXPECT_EQ(validateGround("<surface>Grass</surface><period>0.5</period>").errorCount(), 0);
-	EXPECT_EQ(validateGround("<surface>Grass</surface><period>512</period><pixelsPerMeter>16</pixelsPerMeter>").errorCount(), 0);
+	EXPECT_EQ(validateGround("<surface>Grass</surface><period>64</period><pixelsPerMeter>16</pixelsPerMeter>").errorCount(), 0);
 	EXPECT_TRUE(hasIssue(validateGround("<surface>Grass</surface><period>3</period>"), Severity::Error, "period"));
 	EXPECT_TRUE(hasIssue(validateGround("<surface>Grass</surface><period>1000</period>"), Severity::Error, "period"));
 	EXPECT_TRUE(hasIssue(validateGround("<surface>Grass</surface><period>0</period>"), Severity::Error, "period"));
@@ -201,9 +220,33 @@ TEST(AssetValidatorTest, GroundPeriodMustFillWholePixels) {
 	EXPECT_TRUE(hasMessageContaining(r, Severity::Error, "whole number of pixels"));
 }
 
+TEST(AssetValidatorTest, GroundLayerFitsTheBaker) {
+	// The baker takes 1 to 1024 texels along a layer's edge (period x pixelsPerMeter), and rejects the
+	// def before allocating anything otherwise.
+	for (const char* good :
+		 {"<period>64</period><pixelsPerMeter>16</pixelsPerMeter>", "<period>2</period><pixelsPerMeter>512</pixelsPerMeter>"}) {
+		EXPECT_EQ(validateGround(std::string("<surface>Grass</surface>") + good).errorCount(), 0) << good;
+	}
+	for (const char* tooBig : {
+			 "<period>512</period><pixelsPerMeter>16</pixelsPerMeter>",
+			 "<period>128</period><pixelsPerMeter>16</pixelsPerMeter>",
+			 "<period>4</period><pixelsPerMeter>512</pixelsPerMeter>",
+			 "<period>8</period><pixelsPerMeter>256</pixelsPerMeter>",
+		 }) {
+		const ValidationReport r = validateGround(std::string("<surface>Grass</surface>") + tooBig);
+		EXPECT_TRUE(hasIssue(r, Severity::Error, "period")) << tooBig;
+		EXPECT_TRUE(hasMessageContaining(r, Severity::Error, "from 1 to 1024 pixels")) << tooBig;
+		EXPECT_EQ(r.errorCount(), 1) << tooBig;
+	}
+}
+
 TEST(AssetValidatorTest, GroundPixelsPerMeterIsAPowerOfTwoInRange) {
 	for (const char* good : {"16", "64", "128", "512"}) {
-		EXPECT_EQ(validateGround(std::string("<surface>Grass</surface><pixelsPerMeter>") + good + "</pixelsPerMeter>").errorCount(), 0) << good;
+		EXPECT_EQ(
+			validateGround(std::string("<surface>Grass</surface><period>1</period><pixelsPerMeter>") + good + "</pixelsPerMeter>")
+				.errorCount(),
+			0
+		) << good;
 	}
 	for (const char* bad : {"8", "100", "0", "1024", "-64", "abc"}) {
 		EXPECT_TRUE(hasIssue(validateGround(std::string("<surface>Grass</surface><pixelsPerMeter>") + bad + "</pixelsPerMeter>"), Severity::Error, "pixelsPerMeter"))

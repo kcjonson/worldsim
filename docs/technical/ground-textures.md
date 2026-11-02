@@ -54,7 +54,7 @@ A ground tile is an asset with the role `ground`. Defs live at `assets/world/gro
 | Field | Meaning |
 |-------|---------|
 | `<surface>` | the `world::Surface` it paints |
-| `<assetType>` | `procedural` with a `<generator>`, or `simple` with one or more `<svgPath>`s, each SVG being one fixed variant |
+| `<assetType>` | `procedural` with a `<generator>`. `simple` with one or more `<svgPath>`s, each SVG being one fixed variant, is planned (it needs the `data-lod` loader below); validation rejects it for now |
 | `<variantCount>` | variants baked, 1 to 32, default 8 (for `simple` the SVG list is the variant list) |
 | `<period>` | meters one variant covers, default 4; it must divide 512 so it lines up across chunks |
 | `<pixelsPerMeter>` | base texel density, default 64, so a 4 m variant is a 256x256 layer |
@@ -65,7 +65,7 @@ A ground tile is an asset with the role `ground`. Defs live at `assets/world/gro
 
 Generators and SVGs draw in meters on a `[0, period]` square. Shapes may cross the edge, so authors never match edges by hand: `AssetRegistry::buildPaths` (and `buildMeshes`, a thin call over it) repeats every path of a procedural ground def that crosses an edge at the offsets it crosses into, right after the original. Paint order holds across the seam, and the meshes clipped to the square are the seamless tile. Drawing the whole mesh 3x3 instead would paint each copy's full-tile layers over the earlier copies' overhang, so the seams would show.
 
-Validation (`AssetValidator.cpp`): exactly one ground def per land surface, `period` divides 512, `variantCount` is 1 to 32, the role is known (`parseAssetRole`, `isKnownRole`), and the `<transition>` rules of Surface transitions. The loader and the validator read `<transition>` through one function, `readGroundTransitions` (`GroundTransition.cpp`).
+Validation (`AssetValidator.cpp`): exactly one ground def per land surface, `assetType` is `procedural`, `period` divides 512, `period` x `pixelsPerMeter` is a whole number of texels from 1 to 1024 (`GroundLayer.h`, the same rule `GroundTileBaker::begin` and `GroundTileBank::begin` apply before they allocate), `variantCount` is 1 to 32, the role is known (`parseAssetRole`, `isKnownRole`), and the `<transition>` rules of Surface transitions. The loader and the validator read `<transition>` through one function, `readGroundTransitions` (`GroundTransition.cpp`).
 
 Lua gets two noise bindings (`LuaEngine.cpp`, `registerBindings`), both thin wrappers over salal's `foundation/random/HashNoise.h`: `noise2(x, y, seed)`, and `periodicNoise2(x, y, period, seed)`, which wraps the gradient lattice so density fields tile. A Lua path also gets `path:setLod(N)` (see LOD below) and `path:setHeight(h)` (see Surface transitions).
 

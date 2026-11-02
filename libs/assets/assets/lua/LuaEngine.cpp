@@ -40,7 +40,11 @@ namespace assets {
 			const float ux = foundation::detail::quintic(fx);
 			const float uy = foundation::detail::quintic(fy);
 
-			const auto wrap = [period](int32_t i) { return ((i % period) + period) % period; };
+			// The remainder first, then period only when it's negative: i % period + period overflows int32 for periods near its max.
+			const auto wrap = [period](int32_t i) {
+				const int32_t r = i % period;
+				return r < 0 ? r + period : r;
+			};
 			const int32_t x0 = wrap(ix);
 			const int32_t x1 = wrap(ix + 1);
 			const int32_t y0 = wrap(iy);

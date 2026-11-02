@@ -137,7 +137,7 @@ try {
     }
     try {
         Invoke-RestMethod "$base/api/control?action=vsync&value=1" -TimeoutSec 5 | Out-Null
-        Set-Camera "x=$X&y=$Y&zoom=3"
+        Set-Camera "x=$X&y=$Y&zoom=3&panx=0&pany=0"
     } catch {}
 }
 

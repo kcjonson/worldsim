@@ -222,6 +222,28 @@ TEST(GroundLuaTest, PeriodicNoise2RepeatsEveryPeriod) {
 	EXPECT_TRUE(wrapChangesField) << "in the last cell the wrapped lattice must differ from plain noise2";
 }
 
+TEST(GroundLuaTest, PeriodicNoise2TakesAPeriodAtInt32Max) {
+	// i % period + period overflows int32 here; with the wrap done right the positive cells (all of
+	// them far below period - 1) are plain noise2, and the negative ones wrap to the far end of the period.
+	bool		   ok = false;
+	GeneratedAsset out = runLua(
+		"local positive, negative = Path(), Path()\n"
+		"for i = 0, 15 do\n"
+		"    local x, y = i * 0.75 + 0.5, i * 0.25 + 0.5\n"
+		"    positive:addVertex(periodicNoise2(x, y, 2147483647, 7), noise2(x, y, 7))\n"
+		"    negative:addVertex(periodicNoise2(-x, -y, 2147483647, 7), 0)\n"
+		"end\n"
+		"asset:addPath(positive)\nasset:addPath(negative)\n",
+		&ok
+	);
+	ASSERT_TRUE(ok);
+	ASSERT_EQ(out.paths.size(), 2U);
+	for (size_t i = 0; i < 16; ++i) {
+		EXPECT_EQ(out.paths[0].vertices[i].x, out.paths[0].vertices[i].y) << "sample " << i;
+		EXPECT_LE(std::abs(out.paths[1].vertices[i].x), 1.01F) << "negative sample " << i;
+	}
+}
+
 TEST(GroundLuaTest, PeriodicNoise2RejectsAPeriodThatIsNotAWholeNumber) {
 	for (const char* period : {"0", "-3", "2.5"}) {
 		bool		ok = true;

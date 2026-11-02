@@ -1,6 +1,7 @@
 #include "assets/AssetValidator.h"
 
 #include "assets/AssetDefinition.h"
+#include "assets/GroundLayer.h"
 
 #include <world/chunk/Chunk.h>
 
@@ -36,6 +37,10 @@ namespace assets {
 
 		bool isKnownAssetType(const std::string& s) {
 			return s == "simple" || s == "Simple" || s == "procedural" || s == "Procedural";
+		}
+
+		bool isSimpleAssetType(const std::string& s) {
+			return s == "simple" || s == "Simple";
 		}
 
 		bool isGroundRole(const std::string& s) {
@@ -74,6 +79,18 @@ namespace assets {
 				report.add(Severity::Error, defName, "surface", "Another ground def already paints this surface", claimed.first->second + " and " + defName);
 			}
 
+			// The baker draws a ground def through AssetRegistry::buildPaths, which only runs generators.
+			// Loading an SVG per variant (with data-lod) is planned in docs/technical/ground-textures.md.
+			if (isSimpleAssetType(assetDef.child("assetType").text().as_string())) {
+				report.add(
+					Severity::Error,
+					defName,
+					"assetType",
+					"SVG ground defs aren't supported yet; use assetType procedural with a generator",
+					"simple"
+				);
+			}
+
 			const GroundParams defaults;
 
 			const pugi::xml_node pixelsNode = assetDef.child("pixelsPerMeter");
@@ -91,8 +108,26 @@ namespace assets {
 			const bool			 periodValid = period > 0.0 && isWholeNumber(kChunkMeters / period);
 			if (!periodValid) {
 				report.add(Severity::Error, defName, "period", "period must divide 512 (meters) exactly so tiles line up across chunks", periodNode.text().as_string());
-			} else if (pixelsValid && !isWholeNumber(period * pixelsPerMeter)) {
-				report.add(Severity::Error, defName, "period", "period x pixelsPerMeter must be a whole number of pixels", periodNode.text().as_string());
+			} else if (pixelsValid) {
+				const GroundLayer layer = groundLayer(period, pixelsPerMeter);
+				if (!layer.whole) {
+					report.add(
+						Severity::Error,
+						defName,
+						"period",
+						"period x pixelsPerMeter must be a whole number of pixels",
+						periodNode.text().as_string()
+					);
+				} else if (!layer.inRange) {
+					report.add(
+						Severity::Error,
+						defName,
+						"period",
+						"period x pixelsPerMeter must be from 1 to " + std::to_string(kMaxGroundLayerSize) +
+							" pixels; the baker takes no bigger layer",
+						std::to_string(layer.texels) + " px at " + std::to_string(pixelsPerMeter) + " px/m"
+					);
+				}
 			}
 
 			const pugi::xml_node variantNode = assetDef.child("variantCount");

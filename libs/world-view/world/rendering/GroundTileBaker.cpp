@@ -4,6 +4,7 @@
 
 #include <assets/AssetDefinition.h>
 #include <assets/AssetRegistry.h>
+#include <assets/GroundLayer.h>
 #include <graphics/Color.h>
 #include <primitives/Primitives.h>
 #include <resources/RenderTarget.h>
@@ -151,7 +152,8 @@ namespace worldview {
 	}
 
 	int GroundTileBaker::layerSize(const assets::AssetDefinition& def) {
-		return static_cast<int>(std::lround(def.ground.periodMeters * static_cast<float>(def.ground.pixelsPerMeter)));
+		const assets::GroundLayer layer = assets::groundLayer(def.ground.periodMeters, def.ground.pixelsPerMeter);
+		return layer.supported() ? layer.texels : 0;
 	}
 
 	int GroundTileBaker::mipCount(int layer) {
@@ -263,15 +265,14 @@ namespace worldview {
 			return std::nullopt;
 		}
 		const int layer = layerSize(*def);
-		if (layer < 1 || layer > kMaxLayerSize || !(def->ground.periodMeters > 0.0F)) {
+		if (layer == 0) {
 			LOG_ERROR(
 				Engine,
-				"GroundTileBaker: '%s' has a %d texel layer (%.3g m at %u px/m); the baker takes 1 to %d",
+				"GroundTileBaker: '%s' has no supported layer (%.3g m at %u px/m); it takes a whole number of texels from 1 to %d",
 				defName.c_str(),
-				layer,
 				static_cast<double>(def->ground.periodMeters),
 				def->ground.pixelsPerMeter,
-				kMaxLayerSize
+				assets::kMaxGroundLayerSize
 			);
 			return std::nullopt;
 		}
