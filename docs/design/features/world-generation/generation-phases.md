@@ -210,7 +210,7 @@ Downhill pointers are assigned per tile (the strictly lower neighbor, ties broke
 
 **Conceptual Process**:
 - Sea level is set by histogram quantile so the ocean fraction matches the player's water-amount parameter (±2%). Terrain Phase 3 already produces the bimodal hypsometry (abyssal ~-5500 m, land platform ~+400 m), so the sea level quantile falls cleanly in the gap between the two modes.
-- The continental shelf profile, already embedded in the terrain by Phase 3, gives a shallow submerged rim around each continent. The shelf rises gently from the shelf break (~-140 m) across ~200 km to the inner edge, then blends into the platform. This puts roughly 5-7% of continental crust below sea level as shallow ocean — consistent with Earth's passive-margin shelves and visible as light-blue coastal rims in ocean maps.
+- (Being replaced: [Continental Margins](../../../technical/continental-margins.md) builds shelves from rift thinning, isostasy, flexure, and sediment fill instead of this fixed ramp.) The continental shelf profile, already embedded in the terrain by Phase 3, gives a shallow submerged rim around each continent. The shelf rises gently from the shelf break (~-140 m) across ~200 km to the inner edge, then blends into the platform. This puts roughly 5-7% of continental crust below sea level as shallow ocean — consistent with Earth's passive-margin shelves and visible as light-blue coastal rims in ocean maps.
 - Coastlines, ocean basins, and seas are identified by flood-fill from the set sea level. Islands are land tiles entirely surrounded by ocean tiles.
 
 **Output**:
