@@ -13,9 +13,7 @@
     <generator>
       <scriptPath>@shared/ground_bare.lua</scriptPath>
       <params>
-        <!-- Must equal <period> below. The knobs are documented in Dirt.xml; puddles, gloss and leaves
-             are here. -->
-        <period>4</period>
+        <!-- The knobs are documented in Dirt.xml; puddles, gloss and leaves are here. -->
         <baseColor>#4F3E2F</baseColor>
 
         <patchDensity>1.2</patchDensity>

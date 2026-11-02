@@ -14,9 +14,8 @@
     <generator>
       <scriptPath>@shared/ground_grass.lua</scriptPath>
       <params>
-        <!-- The knobs are documented in Grass.xml. period must equal <period> below; farMean is mip 0's
-             mean as the bake measures it, set again whenever the look changes. -->
-        <period>4</period>
+        <!-- The knobs are documented in Grass.xml; farMean is mip 0's mean as the bake measures it, set
+             again whenever the look changes. -->
 
         <modelUndergrowth>0.8</modelUndergrowth>
         <modelClumpFill>0.6</modelClumpFill>

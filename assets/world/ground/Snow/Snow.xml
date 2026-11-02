@@ -12,9 +12,7 @@
     <generator>
       <scriptPath>@shared/ground_bare.lua</scriptPath>
       <params>
-        <!-- Must equal <period> below. The knobs are documented in Dirt.xml and Rock.xml; sparkle and
-             grass tips are here. -->
-        <period>4</period>
+        <!-- The knobs are documented in Dirt.xml and Rock.xml; sparkle and grass tips are here. -->
         <baseColor>#E1E7EE</baseColor>
 
         <!-- Regions (documented in Rock.xml): tone is the wind-packed snow, faintly brighter mounds

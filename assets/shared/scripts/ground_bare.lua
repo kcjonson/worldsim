@@ -25,7 +25,7 @@
 -- and every noise field has a whole number of cycles across the tile, so all variants share the same
 -- statistics.
 
-local P = getFloat("period", 4)
+local P = period -- the def's <period>, meters
 local AREA = P * P
 local TAU = math.pi * 2
 

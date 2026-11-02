@@ -36,7 +36,7 @@
 -- and high at the tip, the longer ones higher; flower heads top it all. The bake ranks them per
 -- surface, so only their order counts.
 
-local P = getFloat("period", 4)
+local P = period -- the def's <period>, meters
 local AREA = P * P
 local TAU = math.pi * 2
 local UP = -math.pi / 2

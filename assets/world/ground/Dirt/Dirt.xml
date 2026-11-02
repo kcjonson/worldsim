@@ -12,11 +12,10 @@
     <generator>
       <scriptPath>@shared/ground_bare.lua</scriptPath>
       <params>
-        <!-- Must equal <period> below. Densities are a square meter, sizes meters (diameters, lengths
-             and widths), colors sRGB hex; a multiplier scales a color's linear light. Every layer is
-             off at density 0, and the script's header gives the paint order. The other bare surfaces
-             document only the knobs Dirt doesn't use. -->
-        <period>4</period>
+        <!-- Densities are a square meter, sizes meters (diameters, lengths and widths), colors sRGB
+             hex; a multiplier scales a color's linear light. Every layer is off at density 0, and the
+             script's header gives the paint order. The other bare surfaces document only the knobs
+             Dirt doesn't use. -->
         <!-- The ground's mean tone: the patches and the far mips are scaled so each variant averages
              to it. -->
         <baseColor>#6C5440</baseColor>

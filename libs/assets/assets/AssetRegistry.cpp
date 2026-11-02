@@ -1633,6 +1633,9 @@ namespace assets {
 		GenerationContext ctx;
 		ctx.seed = seed;
 		ctx.variantIndex = 0;
+		if (def->role == AssetRole::Ground) {
+			ctx.periodMeters = def->ground.periodMeters;
+		}
 		outAsset.clear();
 
 		// Check if this is a Lua script generator
