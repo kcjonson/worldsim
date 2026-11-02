@@ -156,6 +156,546 @@ Use this template for all work items:
 
 **Result:** The game UI matches the prototype's structure and polish on every screen, verified by machine-checked layout linting. Follow-ups recorded in the dev log: ASCII-only font atlas, font-family threading for wrapped text, window-size flag for multi-resolution lint, Hug-freeze engine wart. ✅
 
+### ✅ Colonist task arbitration
+**Spec/Documentation:** `docs/technical/colonist-task-arbitration.md`
+**Dependencies:** Colonist gameplay stabilization (complete), Goal-Driven Task Generation (in progress)
+**Status:** complete (3 commits on this branch)
+
+**Goal:** Replace the drifted additive-float priority with a lexicographic `(tier, score)` key; add a job-lifecycle model so a colonist commits to an active work order across distractions.
+
+**Tasks:**
+- [x] Implement the `(tier, score)` lexicographic arbitrator in AIDecisionSystem
+- [x] 7-tier ladder classification for all action types (tiers in `assets/config/work/priority-tuning.xml <TaskTiers>`, fail-loud startup validation)
+- [x] Within-tier score: distanceFactor (300*max(0,1-d/60), dominant), skillBonus, taskAgeBonus, hysteresis margin (50)
+- [x] Job lifecycle: harvest locate-by-entity-id (kills phantom loop); StorageGoalSystem retires stale stocking-harvests; floor constants deleted
+- [x] TaskListView inspector: tier/score/breakdown/selectionSummary, live update, T hotkey
+- [x] Acceptance: combined four-scenario flow end-to-end, zero phantom harvest-loops, zero queued-job stalls, 879 engine-tests green
+- [x] Docs updated (this file, ai-behavior.md, priority-config.md, colonist-task-arbitration.md, dev log entry)
+
+**Result:** Lexicographic arbitration restored; phantom harvest-loop and queued-job stall fixed. Follow-ups: packaged-furniture lifecycle + findValidPositionNear; stocking re-arm / discovery-gating. ✅
+
+### ✅ Colonist gameplay stabilization (craft → harvest → construction loop)
+**Spec/Documentation:** dev log `2026-06-29-colonist-gameplay-stabilization.md`; arbitration spec `docs/technical/colonist-task-arbitration.md`; testing suite `docs/testing/`
+**Dependencies:** Navmesh/craft reliability (#240), Building & Construction
+**Status:** complete (merged PR #241)
+
+**Goal:** Drive four end-to-end gameplay scenarios to reliable completion: craft axe, craft + stock storage box, fill a box to ~200 wood by real chop + haul, build a wood foundation with wall clearing + provisioning + construction.
+
+**Tasks:**
+- [x] Harvest/build target snap to reachable adjacent point + off-area reject (keystone)
+- [x] Destructive fell reclaims navmesh hole (PlacementExecutor removalEpoch → region rebuild)
+- [x] Belt stow-to-free-hands on armful pickup (axe → belt before two-hand wood armful)
+- [x] Loose-pile haul: carry-state-first phase, deposit-redirect on carrying-at-source
+- [x] Wall-collision-aware off-mesh recovery snap
+- [x] Whole-footprint on-water placement refusal (NavigationSystem::isAreaWalkable; DrawingSystem + dev verbs)
+- [x] Gather-food priority lowered + construction provisioning/build-action priority floors (interim)
+- [x] StorageRule.minAmount shortfall → harvest goals (chop-and-stock loop)
+- [x] Forest-by-river quickstart landing + denser forest + fail-fast on missing prebuilt planet
+- [x] Construction readback: walls, delivered/required/progress, phase
+- [x] Dev tooling: /api/dev/storage, /api/state?what=storage|landing, hands/belt in colonist state
+- [x] docs/testing/ scenario suite (4 scenarios, regression log)
+- [x] Arbitration spec (docs/technical/colonist-task-arbitration.md) + Specboard epic filed
+
+**Result:** All four gameplay scenarios complete end-to-end. 872 engine tests green. Open follow-ups: crafted-box placement/packaged-furniture lifecycle, items-in-river/findValidPositionNear, mirrored colonist sprites, dev-tools spawn UX, arbitration implementation. ✅
+
+### ✅ Physical carry & stacks (two-hand armfuls, universal stacks, construction-direct materials)
+**Spec/Documentation:** dev log `2026-06-26-physical-stack-inventory.md`, plan `2026-06-26-bulk-material-carry-felling.md`; specs `/docs/technical/bulk-materials-carry-and-felling.md`, `/docs/technical/physical-stack-inventory.md`
+**Dependencies:** Realistic chained build loop (carry weight + axe-gated harvest)
+**Status:** complete (merged #218, #219, #224, #228, #230, #232, #233)
+
+**Goal:** Make wood a two-hand bulky item carried as a strength-limited armful (felling is one destructive action that drops a loose pile), then make a "stack" a universal physical unit -- one material, quantity in [1, stackSize] -- everywhere from hands to boxes to build sites, with carry bound by weight or count, whichever comes first.
+
+**Tasks:**
+- [x] Bulk carry & felling (epic `de719237`, #218 + follow-ups #219): two-hand wood armful, Strength -> carry capacity, one-shot destructive felling, loose ground stacks, hand-aware haul/craft/deposit, HUD carry surfaces
+- [x] Physical stacks (epic `0db82dab`, #224/#228/#230/#232/#233): slot-based multi-stack Inventory, per-material stackSize (Wood 40, Berry 200, Stick 100), ground-pile split + scatter, construction sites hold materials directly (no Inventory; demolish drops salvage at tear-down completion), storage hauls sized by item capacity, armful clamped to stackSize
+
+**Result:** A stack is one material in [1, stackSize] everywhere -- hands, pack, shelf, box, build site, ground; carry binds on weight or count, whichever comes first; build sites hold their manifest directly and dump to the ground on demolish. Deferred: per-stack container UI (`88dc9e90`), DrawingSystem rename (`7d785fc6`). ✅
+
+### ✅ 2D Landscape from 3D Hydrology (rivers, ponds, forests)
+**Spec/Documentation:** dev logs `2026-06-21-2d-rivers-and-water-landing.md`, `2026-06-21-river-tributaries-springs.md`, `2026-06-22-hydrology-ponds-and-proper-forests.md`
+**Dependencies:** Water Availability (3D drainage), World Generation & Creator
+**Status:** complete (merged #208, #210, #212)
+
+**Goal:** Render the 3D planet's hydrology into the 2D landing world at the right scale and make the surrounding landscape read as real -- followable rivers, sparse hydrology-driven ponds with desert oases, and dense naturally-clustered forests with working waterside plants.
+
+**Tasks:**
+- [x] 2D rivers from 3D drainage (RiverNetwork2D: meandered flow-sized polylines, seam-safe) + water-biased landing (#208)
+- [x] River tributaries, springs, and trickle headwaters (#210)
+- [x] Hydrology ponds: remove noise-flood ponds; sparse biome/precip-weighted PondNetwork2D; desert oasis via distance-to-water (#212)
+- [x] Proper forests: implement `Distribution::Spaced`; grove/glade/thicket density field; denser forest trees (#212)
+- [x] Riparian plants: reeds on the mud bank (`near="Mud"`, mud now forms on sand too); bankside berry/woody bushes in forest biomes (#212)
+
+**Result:** The 2D world now grows rivers, sparse ponds, desert oases, clustered forests, and waterside plants from the 3D hydrology/biome data. Self-review on #212 fixed 4/5 findings; the 5th (cross-chunk Spaced spacing) is filed as Worldsim bug `e0c87da0`. Follow-ups: pond inlet/outlet streams, water-loving riparian trees. ✅
+
+### ✅ Dev/Test Tools (HTTP verbs + developer-client tab)
+**Spec/Documentation:** `/docs/development-log/entries/2026-06-16-dev-tools-api-and-tab.md`, `/docs/development-log/plans/2026-06-16-dev-tools-api-and-tab.md`
+**Dependencies:** None
+**Status:** complete (merged PR #157)
+
+**Completed Tasks:**
+- [x] Step 1: `spawn`, `colonist`, `give` (replaces `givewood`; site/loose/colonist/storage)
+- [x] Step 2: `need`, `time` (speed/set/skip), `teleport`, `select`, `kill`, `complete`
+- [x] Step 3: synchronous `/api/state?what=summary|colonists|construction|time` (screenshot-style request/response handshake)
+- [x] Phase 2: Dev Tools tab (DevToolsService + DevToolsPanel) in the static developer-client
+- [x] Refactor: dev surface extracted from GameScene into DevCommandHandler (scenes/game/dev/)
+- [x] `parseDevVerb` tests refreshed (7/7); two rounds of Copilot review cleared (single-flight `/api/state`, CV wait, jsonEscape)
+
+**Result:** Dev-only `/api/dev/<verb>` controls plus a synchronous `/api/state` readback, driven from a Dev Tools tab in the static developer-client, so sim state can be set up and asserted on without screenshots. In-browser tab click-test was skipped by choice (build clean, every endpoint curl-verified); `demolish`, inventory-in-readback, and `query/count` deferred as optional. ✅
+
+### ✅ UI Design System (Salvage) — extraction
+**Spec/Documentation:** `/docs/design/ui/`
+**Dependencies:** None
+**Status:** complete (docs extracted from prototype; C++ implementation is a separate future epic)
+
+**Goal:** Extract the approved "Salvage" UI prototype (`docs/ui-prototype/`) into durable design docs so the C++ build follows the docs, not the throwaway CSS. The prototype is kept as the live look-and-feel sandbox.
+
+**Completed Tasks:**
+- [x] Design language doc (principles, palette, typography, texture, motion)
+- [x] Tokens: deterministic `tokens.json` (+ rgba floats, `palette.svg`) and readable `tokens.md`, generated from `tokens.css`
+- [x] Component catalog: all 14 primitives (variants, props, states, anatomy, behavior/formulas)
+- [x] Icons: 51-glyph set extracted to `icons.json` + `icons-preview.svg` + `icons.md`
+- [x] Screen specs: 7 screens (pre-game flow + in-game HUD with every sub-state)
+- [x] Mocks: rendered shots of every screen and in-game state (Playwright capture script) + anatomy wireframes for the dense screens
+- [x] Re-runnable extraction scripts in the prototype; wired into `/docs/design/INDEX.md`
+
+**Result:** `/docs/design/ui/` holds the canonical UI spec. The data that only lived in code (icon paths, token values, component formulas, font identities) is now in text. Next: C++ implementation (generate `constexpr Theme.h` from `tokens.json`, build the primitive library, stroke-tessellated icons, multi-font). ✅
+
+### ✅ Water Availability (worldgen + landing UX)
+**Spec/Documentation:** `/docs/development-log/entries/2026-06-15-worldgen-water-and-plate-realism.md`, `.claude/plans/water-hydrology.md`
+**Dependencies:** Climate/Biome/Shelf Retune
+**Status:** complete (PRs #144, #146 merged)
+
+**Goal:** Fix the coarse drainage so flow reaches the sea or ponds into basins, set the dead kFlagRiver/kFlagLake flags, and tell the player whether a landing site has fresh water (details pane + globe Hydrology mode). Worldgen stays coarse (amount + direction); actual river/lake geometry is deferred to chunk load.
+
+**Completed Tasks:**
+- [x] W-0: water stats baseline (WorldStats + worldgen-cli)
+- [x] W-1: priority-flood depression routing + coarse kFlagRiver/kFlagLake + basin spill levels (resolution-invariant river quantile)
+- [x] W-2: globe Hydrology color mode
+- [x] W-3: landing-site water signal + details pane (river/lake on tile-or-neighbor, coast, rain-fed) + freshwater-biased default site
+- [x] W-4: docs + PR; two Copilot rounds cleared; sub-1m lake spill-depth truncation fix (#146)
+
+**Result:** Every land tile routes to the sea or a marked endorheic basin; lakes form in real basins; rivers ~4-5% of land, stable across resolution; landing pane reports water/terrain/climate/difficulty. Deterministic across thread counts. Follow-ups: valley erosion, 2D chunk-time river/lake rendering. ✅
+
+### ✅ Plate Boundary Realism (straight-mountains fix)
+**Spec/Documentation:** `/docs/development-log/entries/2026-06-15-worldgen-water-and-plate-realism.md`
+**Dependencies:** Tectonic History Simulation
+**Status:** complete (PR #145 merged)
+
+**Goal:** Kill the dead-straight mountain walls that appeared across many generated worlds.
+
+**Completed Tasks:**
+- [x] Multi-agent diagnosis: root cause is the great-circle rift cut (tryRift plane-split), amplified by a flat plate-size distribution and a uniform belt-lift pedestal
+- [x] Curved rift cut: two-front noisy Dijkstra split replacing the great-circle plane (oversized + suture paths)
+- [x] Power-law plate-size hierarchy at seeding (few large, many small)
+- [x] Along-belt lift modulation so ranges get passes/saddles instead of a uniform wall
+- [x] Ultra 2048 generator option; golden hash re-pin; six-seed biome acceptance test; Copilot cleared
+
+**Result:** Rift seams meander like real margins, no straight great-circle cuts on any seed (including low plate counts); the plate inventory has an Earth-like size hierarchy; mountain crests break into passes. Deterministic across thread counts. ✅
+
+### ✅ Climate, Biome & Shelf Realism Retune (worldgen)
+**Spec/Documentation:** `/docs/development-log/entries/2026-06-14-climate-biome-shelf-retune.md`
+**Dependencies:** Tectonic History Simulation
+**Status:** complete (PR #139 merged)
+
+**Goal:** Retune the climate/biome stages (written against the old smooth terrain) for the new linear belts + bimodal hypsometry.
+
+**Completed Tasks:**
+- [x] C-1..C-5: meridional wind + distance-to-ocean moisture-advection sweep (rain shadows that scale to wide belts) + continentality temperature; piecewise continental shelf; biome rebalance + montane decouple + biome-fraction acceptance stats; dead-flag hygiene (kFlagCoast/kFlagGlacier); docs + dev log
+- [x] Self-review (2 agents) + fixes; two Copilot rounds cleared; CI timeout fix (trimmed heavy acceptance tests)
+
+**Result:** ArcticTundra ~47%→8-16%, HotDesert restored to ~8-10%, forests ~35-40%; visible rain shadows behind belts; shelves submerged ~6%; biomes bend around terrain instead of rigid latitude stripes. Deterministic across thread counts, n=1024 ~16.6s. Follow-up: water-availability hydrology, valley erosion. ✅
+
+### ✅ Tectonic History Simulation (worldgen realism overhaul)
+**Spec/Documentation:** `.claude/plans/tectonic-history.md`, `/docs/development-log/entries/2026-06-13-tectonic-history-simulation.md`
+**Dependencies:** World Generation & Creator (M1–M6)
+**Status:** complete (PR #136 merged)
+
+**Goal:** Replace single-pass Voronoi plates + Gaussian-kernel terrain with a coarse time-stepped tectonic history (Euler-pole motion, subduction, ridges with crust age, collisions/sutures, rifting, slab pull, hotspots) upsampled to full resolution; elevation from Airy isostasy + seafloor depth-age law.
+
+**Completed Tasks:**
+- [x] M-T0–M-T6: headless worldgen-cli + WorldStats; PlateSim coarse sim; Wilson-cycle events (incl. M-T2.5 arc crust, M-T2.6 slab pull, M-T2.7 coherence); CrustStage + crustAge/orogenyAge + PlanetIO v3 (incl. M-T3.5/3.6 signed-distance coastlines); TerrainStage rewrite (incl. M-T4.5 linear belts + geodesic metric); deletion/hardening/edge cases; docs + dev log
+- [x] Self-review (3 agents) + fixes; Copilot review cleared; flaky cancel test fixed
+
+**Result:** Hexagonal continents and smooth dome mountains gone. Crisp organic coastlines, linear ridged mountain belts (geodesic aspect 5–7), bimodal hypsometry, Earth-like ocean ages, deterministic across thread counts, n=1024 in ~11s. Follow-ups: climate/biome retune, fluvial hydrology. ✅
+
+### ✅ GameScene Subsystem Extraction
+**Spec/Documentation:** `/docs/technical/gamescene-refactoring.md`
+**Dependencies:** None
+**Status:** complete
+
+**Goal:** Extract placement and selection logic from GameScene into dedicated subsystems. Prevent god-class anti-pattern as gameplay systems grow.
+
+**Completed Tasks:**
+- [x] PlacementSystem Extraction
+  - [x] Create `scenes/game/world/placement/PlacementSystem.h/cpp`
+  - [x] Create `scenes/game/world/placement/PlacementTypes.h` (shared BuildMenuItem)
+  - [x] Move PlacementMode and GhostRenderer ownership
+  - [x] Move spawning/relocation logic (spawnEntity, m_relocatingEntityId)
+  - [x] Move UI callbacks (toggleBuildMenu, selectBuildItem, beginRelocation)
+- [x] SelectionSystem Extraction
+  - [x] Create `scenes/game/world/selection/SelectionSystem.h/cpp`
+  - [x] Create `scenes/game/world/selection/SelectionTypes.h` (moved from Selection.h)
+  - [x] Move Selection state ownership
+  - [x] Move handleClick with priority logic
+  - [x] Move renderIndicator
+  - [x] Selection priority constants in header
+- [x] GameScene Cleanup
+  - [x] GameScene is now thin coordinator
+  - [x] Subsystems initialized with dependency injection
+  - [x] All UI files updated to use new include paths
+
+**Result:** GameScene reduced from ~900 lines to ~620 lines (placement: ~180 lines, selection: ~100 lines extracted). Subsystems now own their own state and logic. ✅
+
+---
+
+### ✅ Main Game UI: Core HUD
+**Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Sections 1, 2, 5, 9)
+**Dependencies:** Main Game UI: Primitives Foundation, UI Architecture: ViewModel Pattern
+**Status:** complete
+
+**Goal:** Implement main gameplay HUD (top bar, colonist list, gameplay bar, zoom).
+
+**Completed Tasks:**
+- [x] TimeSystem Foundation
+  - [x] GameSpeed enum (Paused, Normal, Fast, VeryFast)
+  - [x] Season enum with advancement
+  - [x] effectiveTimeScale() for time-scaled systems
+  - [x] NeedsDecaySystem uses TimeSystem
+- [x] Top Bar
+  - [x] Date/Time display (Day X, Season | HH:MM)
+  - [x] Game speed controls ([⏸] [▶] [▶▶] [▶▶▶])
+  - [x] Hotkeys (Space pause, 1/2/3 speed)
+  - [x] Menu button
+- [x] Zoom Controls
+  - [x] Floating [+] [⟳] [-] buttons in viewport
+  - [x] Home key to reset zoom
+- [x] Colonist List Enhancements
+  - [x] Portrait Card (avatar + mood bar + name)
+  - [x] Status tint (green/yellow/red background based on mood)
+  - [x] Click to select, double-click to follow
+- [x] Gameplay Bar
+  - [x] Category dropdowns: [Actions▾] [Build▾] [Production▾] [Furniture▾]
+  - [x] Upward menu expansion (openUpward flag)
+  - [x] B key for build toggle
+- [x] UI Restructure
+  - [x] Created DebugOverlay (extracted from GameOverlay)
+  - [x] Created ZoomControlPanel (wrapper for ZoomControl)
+  - [x] Deleted GameOverlay and BuildToolbar
+  - [x] Layer system refactor for all new components
+
+**Deferred:**
+- Vertical scrollable colonist list (works fine at current scale, can add if needed)
+- A/Q/R hotkeys (conflict with WASD camera movement)
+
+**Result:** Full HUD implementation with TimeSystem, TopBar with speed controls, GameplayBar with category dropdowns, enhanced colonist list with mood tints and double-click to follow, and floating zoom controls. ✅
+
+---
+
+### ✅ Simple Asset Support (SVG-Only)
+**Spec/Documentation:** `/docs/technical/asset-system/asset-definitions.md`, `/docs/technical/asset-system/folder-based-assets.md`
+**Dependencies:** None (Folder-Based Asset Migration was done as part of this)
+**Status:** complete
+
+**Goal:** Support hand-crafted SVG assets without Lua scripts via data-driven XML definitions.
+
+**Completed Tasks:**
+- [x] Folder-per-asset structure (`FolderName/FolderName.xml` pattern)
+- [x] XML parsing with pugixml (defName, label, assetType, svgPath, worldHeight)
+- [x] Rendering settings (complexity, tier)
+- [x] Per-biome placement with spawn chance, distribution
+- [x] Clumping parameters (clumpSize, clumpRadius, clumpSpacing)
+- [x] Entity relationships (affinity, avoids, requires)
+- [x] Groups with group index for lookups
+- [x] Animation parameters (windResponse, swayFrequency)
+- [x] Capabilities (edible, drinkable, harvestable, carryable, craftable, etc.)
+- [x] Item properties (stackSize, nutrition, spoilable)
+- [x] `@shared/` prefix resolution for shared scripts
+- [x] Template caching (tessellated meshes cached)
+- [x] DefName → ID interning for runtime performance
+
+**Optional Future Enhancements:** Variation (colorRange, scaleRange), inheritance (parent attribute), LOD levels, shared SVG components (@components/).
+
+**Result:** Assets like Reed, BerryBush, Berry, Stick, SmallStone, CraftingSpot all use this system. New simple assets can be added by creating a folder with XML + SVG. ✅
+
+---
+
+### ✅ Ground Texture System
+**Spec/Documentation:** `/docs/technical/ground-textures.md`, `/docs/development-log/plans/2025-12-22-ground-texture-system.md`
+**Dependencies:** None
+**Status:** complete
+
+**Goal:** Replace flat-color tiles with textured terrain using hybrid Tier 1 (rasterized texture) + Tier 3 (vector grass) approach, with hard/soft edge blending.
+
+**Completed Tasks:**
+- [x] Render-to-Texture Infrastructure
+  - [x] Create RenderToTexture class (FBO wrapper with RAII)
+  - [x] Unit tests for RenderToTexture
+- [x] Tile Texture Atlas
+  - [x] TileTextureAtlas class (atlas allocator)
+  - [x] TileAtlasBuilder (builds atlas from SVG patterns)
+  - [x] TilePatternBaker (rasterizes SVG to RGBA)
+  - [x] Fallback checker pattern for missing SVGs
+- [x] Tile Pattern Assets (6 of 10 surfaces)
+  - [x] Grass, GrassShort, GrassTall, GrassMeadow (basic patterns)
+  - [x] Dirt (rich: pebbles, cracks, dried grass)
+  - [x] Water (rich: ripples, reflections, depth patches)
+- [x] Surface Family System
+  - [x] SurfaceFamily enum (Ground, Water, Rock)
+  - [x] getSurfaceFamily() and getHardEdgeMaskByFamily()
+  - [x] getSurfaceStackOrder() for blend direction
+- [x] Shader Integration
+  - [x] uber.frag tile render mode (kRenderModeTile = -3.0)
+  - [x] tile.glsl with blend weight functions
+  - [x] Early-out optimizations for interior tiles/pixels
+- [x] ChunkRenderer Integration
+  - [x] drawTile() with all 8 neighbor IDs + masks
+  - [x] World tile coordinates for procedural variation
+- [x] Soft Edge Blending
+  - [x] computeHigherBleedWeights() - cardinal blending
+  - [x] computeDiagonalCornerWeights() - diagonal corners
+  - [x] computeTileEdgeDarkening() - procedural edge noise
+
+**Optional Future Work:** Add missing patterns (Sand, Rock, Snow, Mud), enrich grass patterns, tune grass entity density.
+
+**Result:** Tiles render with textured patterns, soft blending between same-family surfaces, hard edges at family boundaries (shorelines, cliffs). ✅
+
+---
+
+### ✅ UI Event System
+**Spec/Documentation:** salal's [ui-design.md](https://github.com/kcjonson/salal/blob/main/docs/ui-design.md) and [ui-plan.md](https://github.com/kcjonson/salal/blob/main/docs/ui-plan.md), the record of the ui every app is built on
+**Dependencies:** None
+**Status:** complete
+
+**Goal:** Replace manual hit-testing boilerplate (~69 lines of QUICKFIX code) with event consumption. Components call `event.consume()` to stop propagation. MouseMove events handle hover state.
+
+**Completed Tasks:**
+- [x] Event Infrastructure
+  - [x] Create InputEvent struct with type, position, consumed flag
+  - [x] Add handleEvent() to IComponent interface
+  - [x] Add containsPoint() to IComponent for hit testing
+- [x] Component Updates
+  - [x] Update Button to use handleEvent() and consume clicks
+  - [x] Update TabBar to use handleEvent()
+  - [x] Migrate BuildToolbar, BuildMenu, ColonistListPanel
+  - [x] Migrate EntityInfoPanel, TaskListPanel
+- [x] Dispatch System
+  - [x] Add dispatchEvent() to Component base class
+  - [x] GameUI dispatches to all children in z-order
+  - [x] GameScene dispatches MouseMove, MouseDown, MouseUp events
+- [x] QUICKFIX Cleanup
+  - [x] Remove isPointOverUI() from GameUI, GameOverlay
+  - [x] Remove isPointOver() from ZoomControl, BuildToolbar, BuildMenu
+  - [x] Remove handleInput() polling from all migrated components
+
+**Deferred:** Debug Integration (hit-test endpoint, SSE events) - can be added when needed.
+
+**Result:** Clean event propagation model. Adding new UI panels no longer requires updating multiple files. Components consume events to prevent click-through. ✅
+
+---
+
+### ✅ UI Architecture: Input System Cleanup
+**Spec/Documentation:** salal's [ui-design.md](https://github.com/kcjonson/salal/blob/main/docs/ui-design.md) and [ui-plan.md](https://github.com/kcjonson/salal/blob/main/docs/ui-plan.md), the record of the ui every app is built on
+**Dependencies:** UI Event System
+**Status:** complete
+
+**Goal:** Complete the event-based input architecture. Remove `handleInput(float dt)` (wrong pattern per [Game Programming Patterns](https://gameprogrammingpatterns.com/game-loop.html)) in favor of `handleInput(InputEvent&)`.
+
+**Completed Tasks:**
+- [x] Remove handleInput() from ILayer/Component (components don't poll)
+- [x] Add handleEvent() to TextInput (was missing)
+- [x] Container::handleEvent() dispatches to children
+- [x] Application creates InputEvents and dispatches to scene
+- [x] Rename handleEvent to handleInput on IScene (consistency)
+- [x] Remove handleInput(float dt) from IScene (wrong pattern)
+- [x] Remove handleInput(float dt) from SceneManager
+- [x] Update all scenes to implement handleInput(InputEvent&)
+- [x] Add IOverlay interface for cross-scene UI (NavigationMenu, future ESC menu)
+- [x] SceneManager manages overlays as peers to scenes
+- [x] Test all scenes
+
+**Architecture (Industry Best Practice):**
+```
+while (running) {
+    processInput();    // No dt - discrete events
+    update(elapsed);   // dt here - advance simulation
+    render();
+}
+```
+
+**Key insight:** Input handling does NOT need delta time. It captures discrete events ("what happened?"). Delta time belongs in `update()` where simulation advances ("how much time passed?").
+
+**Result:** Clean separation between discrete input events and continuous simulation updates. Scenes receive `InputEvent&` from Application and forward to UI components. Keyboard polling (WASD, ESC) happens in `update()`. ✅
+
+---
+
+### ✅ UI Architecture: FocusManager Simplification
+**Spec/Documentation:** salal's [ui-design.md](https://github.com/kcjonson/salal/blob/main/docs/ui-design.md) and [ui-plan.md](https://github.com/kcjonson/salal/blob/main/docs/ui-plan.md), the record of the ui every app is built on
+**Dependencies:** UI Architecture: Input System Cleanup
+**Status:** complete
+
+**Goal:** Reduce ~40 lines of FocusManager boilerplate per focusable component via CRTP base class.
+
+**Completed Tasks:**
+- [x] Create FocusableBase<T> CRTP template (`libs/ui/focus/FocusableBase.h`)
+  - [x] Auto-register in constructor
+  - [x] Auto-unregister in destructor
+  - [x] Handle move semantics correctly (unregister old, register new)
+- [x] Migrate Button to use FocusableBase<Button>
+- [x] Migrate TabBar to use FocusableBase<TabBar>
+- [x] Migrate TextInput to use FocusableBase<TextInput>
+
+**Result:** Components now inherit from `FocusableBase<T>` and use `= default` for move constructor/assignment. FocusManager registration is automatic. ~120 lines of boilerplate removed across 3 components. ✅
+
+---
+
+### ✅ UI Architecture: ViewModel Pattern
+**Spec/Documentation:** salal's [ui-design.md](https://github.com/kcjonson/salal/blob/main/docs/ui-design.md) and [ui-plan.md](https://github.com/kcjonson/salal/blob/main/docs/ui-plan.md), the record of the ui every app is built on, `/docs/development-log/plans/2025-12-24-viewmodel-pattern.md`
+**Dependencies:** None
+**Status:** complete
+
+**Goal:** Establish clear data ownership and efficient updates via ViewModel pattern.
+
+**Completed Tasks:**
+- [x] Create directory structure (scenes/game/ui/{adapters,models,panels,components})
+- [x] Create UIState.h with Selection struct
+- [x] Create ColonistAdapter (ECS query layer)
+- [x] Create ColonistListModel with change detection
+- [x] Migrate ColonistListPanel to use ViewModel
+- [x] Move SelectionAdapter to adapters folder
+- [x] Move CraftingAdapter to adapters folder
+- [x] Create EntityInfoModel with UpdateType enum
+- [x] Migrate EntityInfoPanel to use ViewModel
+- [x] File reorganization
+  - [x] Move panels to panels/ (EntityInfoPanel, TaskListPanel, BuildMenu, BuildToolbar, GameOverlay)
+  - [x] Move reusable components to components/ (NeedBar, ZoomControl, InfoSlot, Selection)
+  - [x] Move world rendering to world/ (GhostRenderer, PlacementMode, NotificationManager)
+  - [x] Move GameUI to scenes/game/ui/
+  - [x] Delete old components/ directory
+
+**Architecture Notes:**
+- Pull-based models: `refresh(world)` returns bool for change detection
+- Adapter layer: Centralizes ECS queries (ColonistAdapter, SelectionAdapter, CraftingAdapter)
+- UpdateType enum: `None`, `Values`, `Structure`, `Show`, `Hide` for tiered updates
+
+**Result:** Clean separation between data (models), ECS queries (adapters), rendering (panels), and reusable UI elements (components). ✅
+
+---
+
+### ✅ UI Architecture: Theme System
+**Spec/Documentation:** `/docs/development-log/plans/2025-12-25-ui-theme-system.md`
+**Dependencies:** None
+**Status:** complete
+
+**Goal:** Centralize UI styling (colors, spacing, typography) via design tokens. Eliminate hardcoded color values across views.
+
+**Terminology:**
+- **Panel** (design) = Visual style (dark bg, 1px border)
+- **View** (structural) = Composite UI element (EntityInfoView, TaskListView)
+- **Component** = Base class for all UI elements (unchanged)
+
+**Completed Tasks:**
+- [x] Create `libs/ui/theme/` directory with `Theme.h` and `PanelStyle.h`
+- [x] Design tokens: Colors (panel, text, status), Spacing, Typography, Borders
+- [x] Panel style factories: `floating()`, `closeButton()`, `actionButton()`, `card()`, `selection()`
+- [x] Rename `panels/` folder → `views/`
+- [x] Rename `EntityInfoPanel` → `EntityInfoView`
+- [x] Rename `TaskListPanel` → `TaskListView`
+- [x] Rename `ColonistListPanel` → `ColonistListView`
+- [x] Apply theme tokens to EntityInfoView
+- [x] Apply theme tokens to TaskListView
+- [x] Apply theme tokens to ColonistListView
+- [x] Apply theme tokens to BuildMenu
+
+**Deferred (Phase 2):**
+- Edge mask support for docked panels (per-edge border control)
+- Per-corner radius when edges are removed
+
+**Result:** All views now use centralized theme tokens from `libs/ui/theme/`. Hardcoded colors eliminated. Consistent visual identity across all panels. ✅
+
+---
+
+### ✅ UI Architecture: Layout System
+**Spec/Documentation:** `/docs/development-log/plans/warm-honking-hedgehog.md`
+**Dependencies:** None
+**Status:** complete
+
+**Goal:** Add automatic layout containers for component positioning via uniform layout API on all UI elements.
+
+**Design Decisions:**
+- **Uniform API on IComponent** — All UI elements (components + shapes) participate in layout via `getWidth()`/`getHeight()`/`setPosition()` + `margin`
+- **CSS-like margin** — Margin adds to position (content draws inside) and adds to reported size
+- **Single LayoutContainer** — Direction attribute (Vertical/Horizontal) instead of separate VStack/HStack
+- **No Spacer, no flex** — Use margins for spacing between elements
+- **Hybrid sizing model:** Stacking axis is child-driven (query sizes), cross axis is parent-driven
+
+**Completed Tasks:**
+- [x] Add layout API to IComponent interface (getWidth/getHeight/setPosition/margin)
+- [x] Add default implementation to Component base class
+- [x] Implement layout API on all Shapes (Rectangle, Circle, Line, Text)
+- [x] Update Button to use base class size/position
+- [x] Update TextInput to use base class size/position
+- [x] Update TabBar to use base class size/position
+- [x] Create LayoutTypes.h (Direction, HAlign, VAlign enums)
+- [x] Implement LayoutContainer (extends Container)
+  - [x] Vertical stacking with HAlign (Left/Center/Right)
+  - [x] Horizontal stacking with VAlign (Top/Center/Bottom)
+  - [x] Dirty flag for layout caching
+  - [x] Container margin offsets children
+- [x] Update CMakeLists.txt
+- [x] Create LayoutScene demo in ui-sandbox
+- [x] Unit tests (14 tests covering all layout scenarios)
+- [x] View Migrations
+  - [x] Create ColonistListItem component (portrait + name + mood bar)
+  - [x] Migrate ColonistListView to use ColonistListItem + LayoutContainer
+  - [x] Create SectionHeader component (generic section title)
+  - [x] Create StatusTextLine component (status-colored task line)
+  - [x] Migrate TaskListView to use SectionHeader + StatusTextLine + LayoutContainer
+
+**Result:** LayoutContainer automatically positions children based on their reported sizes. Components use CSS-like margin for spacing. All UI elements participate in layout through uniform API. ColonistListView and TaskListView now use automatic layout instead of manual yOffset tracking. ✅
+
+---
+
+### ✅ Main Game UI: Complex Components
+**Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Section 17)
+**Dependencies:** ~~Main Game UI: Primitives Foundation~~ (complete)
+**Status:** complete
+
+**Goal:** Build components for information-dense screens (resources, dropdowns, notifications).
+
+**Completed Tasks:**
+- [x] Icon Component
+  - [x] SVG rendering with tessellation pipeline (loadSVG → Tessellator → drawTriangles)
+  - [x] Tinting/colorization support
+  - [x] Unit tests (11)
+  - [x] IconScene demo
+- [x] Tree View Component
+  - [x] Expandable/collapsible nodes (▶/▼)
+  - [x] Nested hierarchy with indentation
+  - [x] Flattened rows pattern for efficient iteration
+  - [x] Unit tests (16)
+  - [x] TreeViewScene demo
+- [x] Dropdown Button Component
+  - [x] Button with ▾ indicator
+  - [x] Expands menu panel on click
+  - [x] Closes on focus lost via FocusableBase
+  - [x] Keyboard navigation (Up/Down/Enter/Escape)
+  - [x] Disabled item support
+  - [x] Unit tests (17)
+  - [x] DropdownScene demo
+- [x] Toast + Toast Stack
+  - [x] Notification popup with title, message, dismiss button
+  - [x] Auto-dismiss timer with countdown display
+  - [x] Persistent mode (autoDismissTime = 0)
+  - [x] Severity styling (Info/Warning/Critical colors)
+  - [x] Fade in/out animation
+  - [x] ToastStack container with vertical stacking
+  - [x] Anchor positions (TopRight, TopLeft, BottomRight, BottomLeft)
+  - [x] Max toasts limit with oldest removal
+  - [x] Unit tests (23: 14 Toast + 9 ToastStack)
+  - [x] ToastScene demo
+
+**Result:** All complex components implemented with theme-based styling, layout integration, and comprehensive test coverage (67 new tests total). Components use minimal constructors with sensible defaults. ✅
+
 ---
 
 ## In Progress Epics

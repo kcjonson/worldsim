@@ -441,7 +441,7 @@ As shipped, the grass defs name every pair (no default block); Rock's default bl
 
 Every bit-for-bit change was checked by hashing the golden test's GLSL output over its three regions before and after (identical hashes; the probe isn't kept). Rows 10 to 13 are one capture each in one sitting, the tip's shader re-read beside them, so desert zoom 3 stays where the tip had it, 0.58 against main's 0.56. A temporary debug mask (not kept) put the desert view's zoom 3 cost at about 0.13 ms in the 4x4 block and its per-surface loop, 0.09 in the painted surface's sampler (0.05 of it hex blending) and 0.04 in the band, and NVIDIA's program binary text showed the per-surface loop and the six noise octaves as mostly integer work, which is where 4, 5 and 8 went. Halving the grass family's band (1.4 to 0.7 m), probed at the four cameras below, saves 0.01 at desert zoom 8, 3 and 1.5 and 0.02 at coast zoom 3; round 2 took 0.2 m (Recipes, and the round 2 capture below).
 
-**Final,** two runs per view against main's two (`perf-results/capture-2026-11-02-contest-final-*`, every sample at P0), `tileGpuMs` in ms, the tip column the branch before blending:
+**Final,** two runs per view against main's two (`perf-results/capture-2026-11-02-contest-final-*` against `perf-results/capture-2026-11-01-ground-main-*`, every sample at P0), `tileGpuMs` in ms, the tip column the branch before blending:
 
 | Scenario | View | main r1 / r2 | tip | final r1 / r2 | final - main |
 |---|---|---|---|---|---|
