@@ -173,6 +173,9 @@ namespace worldview {
 			return false;
 		}
 		const GroundTileBaker groundBaker = baker();
+		if (!lookedUp) {
+			lookUpAll(groundBaker);
+		}
 		if (current.has_value()) {
 			bakeVariant(groundBaker);
 		} else {
@@ -189,18 +192,29 @@ namespace worldview {
 		while (bakeNext()) {}
 	}
 
+	void GroundTileBank::lookUpAll(const GroundTileBaker& groundBaker) {
+		const auto start = Clock::now();
+		lookups.resize(defs.size());
+		pool->parallelFor(0, defs.size(), 1, [&](size_t first, size_t last) {
+			for (size_t i = first; i < last; ++i) {
+				lookups[i] = groundBaker.begin(defs[i].defName);
+			}
+		});
+		lookedUp = true;
+		lookupMs += msSince(start);
+	}
+
 	bool GroundTileBank::startDef(const GroundTileBaker& groundBaker) {
 		const Def&					  def = defs[nextDef];
-		auto						  phase = Clock::now();
-		std::optional<GroundTileBake> bake = groundBaker.begin(def.defName);
-		lookupMs += msSince(phase);
+		std::optional<GroundTileBake> bake = std::move(lookups[nextDef]);
+		lookups[nextDef].reset();
 		if (!bake.has_value()) {
 			fail(def.defName + ": not a bakeable ground def (the log says why)");
 			endDef();
 			return false;
 		}
+		auto phase = Clock::now();
 		if (bake->fromCache) {
-			phase = Clock::now();
 			for (const GroundVariantBake& variant : bake->variants) {
 				upload(def, variant);
 			}
@@ -210,7 +224,6 @@ namespace worldview {
 			return false;
 		}
 
-		phase = Clock::now();
 		std::optional<std::vector<GroundVariantPaths>> paths = groundBaker.buildPaths(*bake);
 		pathsMs += msSince(phase);
 		if (!paths.has_value()) {

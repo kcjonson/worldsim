@@ -6,10 +6,11 @@
 // with a per-surface table of where its layers sit and how the tile shader samples them.
 //
 // Built once the asset registry has loaded, on the GL thread and outside any frame, a step a call, so a
-// scene can keep drawing between them: begin(), then bakeNext() until it returns false. A step uploads
-// every def in a row that the disk cache holds (GroundTileCache, beside the exe), and at the first it
-// doesn't, builds that def's paths on the pool; each later step bakes and uploads one of its variants,
-// and the last stores the def in the cache.
+// scene can keep drawing between them: begin(), then bakeNext() until it returns false. The first step
+// looks every def up in the disk cache (GroundTileCache, beside the exe) at once, on the pool. A step
+// uploads every def in a row that the cache held, and at the first it didn't, builds that def's paths
+// on the pool; each later step bakes and uploads one of its variants, and the last stores the def in the
+// cache.
 
 #include "world/chunk/SurfaceField.h"
 #include "world/rendering/GroundTileBaker.h"
@@ -109,6 +110,8 @@ namespace worldview {
 		};
 
 		[[nodiscard]] GroundTileBaker baker() const;
+		// Every def's cache lookup on the pool at once: reading the cached bakes is most of a warm bake.
+		void lookUpAll(const GroundTileBaker& groundBaker);
 		// The next def's cache lookup: true when it wasn't cached and its paths are built, so its variants
 		// are left to bake; false when it's done (read from the cache and uploaded) or failed.
 		bool startDef(const GroundTileBaker& groundBaker);
@@ -127,6 +130,8 @@ namespace worldview {
 		std::array<Surface, world::kSurfaceCount> surfaces{};
 		std::vector<Def>						  defs;
 		size_t									  nextDef = 0;
+		std::vector<std::optional<GroundTileBake>> lookups;		// each def's, from lookUpAll, until startDef takes it
+		bool									  lookedUp = false;
 		std::optional<GroundTileBake>			  current;		// the def being baked, its variants so far
 		std::vector<GroundVariantPaths>			  currentPaths; // and every variant's paths
 		int										  doneVariants = 0;
@@ -137,7 +142,7 @@ namespace worldview {
 		std::chrono::steady_clock::time_point startTime;
 		int									  cachedDefs = 0;
 		int									  bakedDefs = 0;
-		double								  lookupMs = 0.0; // begin: keys, and reading the cached defs
+		double								  lookupMs = 0.0; // lookUpAll: keys, and reading the cached defs
 		double								  pathsMs = 0.0;
 		double								  renderMs = 0.0; // bakeVariant: render and filter
 		double								  finishMs = 0.0; // measure, report and store
