@@ -3,6 +3,7 @@ add_library(world
     world/chunk/Chunk.cpp
     world/chunk/ChunkManager.cpp
     world/chunk/GroundMacro.cpp
+    world/chunk/NoiseLattice.cpp
     world/chunk/TilePostProcessor.cpp
     world/chunk/MockWorldSampler.cpp
     world/chunk/GeneratedWorldSampler.cpp
