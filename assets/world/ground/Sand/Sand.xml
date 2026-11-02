@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Placeholder ground tile for Surface::Sand until its real art lands: the surface's old flat
-     color under a light speckle (ground_placeholder.lua). -->
+<!-- Sand ground tile: fine pale grain (ground_bare.lua). Rows of wind ripples meandering across the
+     screen, each a lit crest over a shadowed lee, broader faint swells, low dune-tone patches, mixed
+     mineral grains, a few pebbles, shell bits and dry twigs. -->
 <AssetDefinitions>
   <AssetDef>
     <defName>Ground_Sand</defName>
@@ -9,21 +10,92 @@
     <surface>Sand</surface>
     <assetType>procedural</assetType>
     <generator>
-      <scriptPath>@shared/ground_placeholder.lua</scriptPath>
+      <scriptPath>@shared/ground_bare.lua</scriptPath>
       <params>
-        <!-- Must equal <period> below. -->
+        <!-- Must equal <period> below. The knobs are documented in Dirt.xml; ripples and shells are
+             here. -->
         <period>4</period>
-        <baseColor>#D1B578</baseColor>
+        <baseColor>#CBB083</baseColor>
+
+        <patchDensity>1</patchDensity>
+        <patchSize>0.35,0.8</patchSize>
+        <patchLight>#CFB588</patchLight>
+        <patchDark>#C6AB7E</patchDark>
+        <patchSteps>2</patchSteps>
+        <patchStretch>1.6</patchStretch>
+        <tintDensity>2</tintDensity>
+        <tintSize>0.12,0.3</tintSize>
+        <tintLight>#CEB487</tintLight>
+        <tintDark>#C8AD7F</tintDark>
+        <tintSteps>1</tintSteps>
+        <tintStretch>1.3</tintStretch>
+
+        <!-- Ripples: rows of crests rippleWavelength apart, each bending by rippleAmp along two waves
+             rippleWaveCycles (and 1.7 times as many) a period that every row shares, so they run
+             parallel, with rippleWander of the bend noise of its own; broken into runs over
+             rippleCoverage of the row (rippleBreakCycles a period). A run is a shadow strip rippleWidth
+             wide below the crest and a lit strip above it as wide as cancels it in linear light;
+             rippleSoft 1 steps to each in two. drift is a second, coarser set. -->
+        <driftWavelength>0.5</driftWavelength>
+        <driftWidth>0.035,0.06</driftWidth>
+        <driftCoverage>0.6</driftCoverage>
+        <driftAmp>0.08</driftAmp>
+        <driftWaveCycles>4</driftWaveCycles>
+        <driftBreakCycles>5</driftBreakCycles>
+        <driftLit>#D2BA8E</driftLit>
+        <driftShadow>#BEA275</driftShadow>
+        <rippleWavelength>0.12</rippleWavelength>
+        <rippleWidth>0.018,0.028</rippleWidth>
+        <rippleCoverage>0.75</rippleCoverage>
+        <rippleAmp>0.035</rippleAmp>
+        <rippleWaveCycles>9</rippleWaveCycles>
+        <rippleBreakCycles>7</rippleBreakCycles>
+        <rippleLit>#D8C398</rippleLit>
+        <rippleShadow>#B49866</rippleShadow>
+
+        <grainDensity>700</grainDensity>
+        <grainSize>0.012,0.02</grainSize>
+        <grainContrast>0.12</grainContrast>
+        <grainTints>#8C7C6C,#EFE4CC,#B07A50,#6E665E</grainTints>
+        <grainTintShare>0.12</grainTintShare>
+
+        <strawDensity>0.6</strawDensity>
+        <strawLength>0.03,0.07</strawLength>
+        <strawWidth>0.009,0.012</strawWidth>
+        <strawColors>#B8A274,#A08A5C</strawColors>
+
+        <twigDensity>0.25</twigDensity>
+        <twigLength>0.04,0.09</twigLength>
+        <twigWidth>0.009,0.012</twigWidth>
+        <twigColors>#8E7752,#7A6446</twigColors>
+        <twigShadow>0.7</twigShadow>
+
+        <!-- Shells: little fans in shellColors with shellRidgeColor ridges. -->
+        <shellDensity>1.5</shellDensity>
+        <shellSize>0.015,0.026</shellSize>
+        <shellColors>#EEE4D2,#E8D2C4,#F2EADC</shellColors>
+        <shellRidgeColor>#C2B098</shellRidgeColor>
+
+        <stoneDensity>3</stoneDensity>
+        <stoneSize>0.012,0.03</stoneSize>
+        <stoneColors>#A99B88,#8E8274,#C3B6A0,#9A8A7A</stoneColors>
+        <stoneShadow>0.62</stoneShadow>
+        <stoneLit>1.3</stoneLit>
+
+        <farContrast>0.88</farContrast>
+        <farGain>0.9889,1.0003,1.0049</farGain>
       </params>
     </generator>
-    <variantCount>4</variantCount>
+    <variantCount>8</variantCount>
     <period>4</period>
     <pixelsPerMeter>64</pixelsPerMeter>
-    <rotate>free</rotate>
+    <!-- Lit from the top and its ripples run across the screen: cells only flip left to right, which
+         keeps both; a turn would point the ripples every way and the light with them. -->
+    <rotate>mirror</rotate>
     <macro>
-      <dry>1.04,1.0,0.92</dry>
-      <lush>0.92,0.92,0.9</lush>
-      <amplitude>0.5</amplitude>
+      <dry>1.04,1.02,0.96</dry>
+      <lush>0.96,0.98,1.04</lush>
+      <amplitude>0.4</amplitude>
     </macro>
   </AssetDef>
 </AssetDefinitions>

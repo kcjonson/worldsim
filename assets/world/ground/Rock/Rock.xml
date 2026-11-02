@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Placeholder ground tile for Surface::Rock until its real art lands: the surface's old flat
-     color under a light speckle (ground_placeholder.lua). -->
+<!-- Rock ground tile: weathered bedrock (ground_bare.lua). Grey slabs of uneven size broken along
+     wandering joints, each lit along its upper edges and shaded along its lower ones, fractures with a
+     lit lip, mineral speckle, pits, crustose lichen in pale yellow-green, grey-green and ochre, and grit
+     and pebbles. -->
 <AssetDefinitions>
   <AssetDef>
     <defName>Ground_Rock</defName>
@@ -9,21 +11,79 @@
     <surface>Rock</surface>
     <assetType>procedural</assetType>
     <generator>
-      <scriptPath>@shared/ground_placeholder.lua</scriptPath>
+      <scriptPath>@shared/ground_bare.lua</scriptPath>
       <params>
-        <!-- Must equal <period> below. -->
+        <!-- Must equal <period> below. The knobs are documented in Dirt.xml; plates, pits and lichen
+             are here. -->
         <period>4</period>
-        <baseColor>#6B6B6B</baseColor>
+        <baseColor>#78736B</baseColor>
+
+        <!-- Plates: Voronoi slabs of loosely spaced sites, plateDensity a square meter, inset so joints
+             about plateJoint wide (half to 1.6 times it, edge to edge) show plateJointColor between
+             them; plateMerge of neighbors share no joint, so slabs come in uneven sizes. Each face is
+             one of plateColors, picked by a field of plateToneCycles a period so merged neighbors
+             match, with plateJitter of its light either way; a band plateBevel wide along its upper
+             edges is plateLit times as light, one along its lower edges plateDark times. Every edge
+             wanders by plateWiggle. -->
+        <plateDensity>10</plateDensity>
+        <plateJoint>0.022</plateJoint>
+        <plateJointColor>#5A564F</plateJointColor>
+        <plateMerge>0.45</plateMerge>
+        <plateColors>#827D74,#8A8479,#7A766F,#857F78</plateColors>
+        <plateToneCycles>2</plateToneCycles>
+        <plateJitter>0.05</plateJitter>
+        <plateBevel>0.012,0.022</plateBevel>
+        <plateLit>1.32</plateLit>
+        <plateDark>0.68</plateDark>
+        <plateWiggle>0.008</plateWiggle>
+
+        <crackDensity>1.5</crackDensity>
+        <crackLength>0.1,0.35</crackLength>
+        <crackWidth>0.008,0.013</crackWidth>
+        <crackColor>#4A4640</crackColor>
+        <crackLipColor>#A39D92</crackLipColor>
+
+        <grainDensity>500</grainDensity>
+        <grainSize>0.012,0.02</grainSize>
+        <grainContrast>0.18</grainContrast>
+        <grainTints>#9C968A,#5E5A54,#B0A999</grainTints>
+        <grainTintShare>0.2</grainTintShare>
+
+        <!-- Pits: hollows pitSize across, their upper wall pitDark and lower wall pitLit times the
+             ground's light. -->
+        <pitDensity>25</pitDensity>
+        <pitSize>0.012,0.03</pitSize>
+        <pitDark>0.6</pitDark>
+        <pitLit>1.3</pitLit>
+
+        <!-- Lichen: colonies of lichenSize radius, a crust in one of lichenColors (taken in turn)
+             spotted with dots lichenDot across. -->
+        <lichenDensity>2</lichenDensity>
+        <lichenSize>0.04,0.12</lichenSize>
+        <lichenDot>0.012,0.022</lichenDot>
+        <lichenColors>#A3A37E,#8D9870,#B39E6E,#979C92</lichenColors>
+
+        <stoneDensity>8</stoneDensity>
+        <stoneSize>0.012,0.035</stoneSize>
+        <stoneColors>#8E897F,#9C968A,#77736B</stoneColors>
+        <stoneShadow>0.5</stoneShadow>
+        <stoneLit>1.3</stoneLit>
+
+        <farContrast>0.97</farContrast>
+        <farCoarseContrast>0.765</farCoarseContrast>
+        <farGain>1.0459,1.048,1.0407</farGain>
       </params>
     </generator>
-    <variantCount>4</variantCount>
+    <variantCount>8</variantCount>
     <period>4</period>
     <pixelsPerMeter>64</pixelsPerMeter>
-    <rotate>free</rotate>
+    <!-- Lit from the top of the screen (slab edges, pits, stones), so cells only flip left to right,
+         which keeps the light. -->
+    <rotate>mirror</rotate>
     <macro>
-      <dry>1.03,1.0,0.95</dry>
-      <lush>0.94,0.96,0.98</lush>
-      <amplitude>0.5</amplitude>
+      <dry>1.04,1.02,0.98</dry>
+      <lush>0.96,0.98,1.02</lush>
+      <amplitude>0.4</amplitude>
     </macro>
   </AssetDef>
 </AssetDefinitions>

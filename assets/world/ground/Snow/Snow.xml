@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Placeholder ground tile for Surface::Snow until its real art lands: the surface's old flat
-     color under a light speckle (ground_placeholder.lua). -->
+<!-- Snow ground tile: soft off-white snow (ground_bare.lua). Wind-sculpted drifts and fine ripples,
+     each a bright crest over a cool blue lee, soft blue hollows, faint grain, sparse ice sparkle that
+     only the nearest zooms show, and the odd twig or grass tip poking through. -->
 <AssetDefinitions>
   <AssetDef>
     <defName>Ground_Snow</defName>
@@ -9,21 +10,82 @@
     <surface>Snow</surface>
     <assetType>procedural</assetType>
     <generator>
-      <scriptPath>@shared/ground_placeholder.lua</scriptPath>
+      <scriptPath>@shared/ground_bare.lua</scriptPath>
       <params>
-        <!-- Must equal <period> below. -->
+        <!-- Must equal <period> below. The knobs are documented in Dirt.xml and Sand.xml; sparkle and
+             grass tips are here. -->
         <period>4</period>
-        <baseColor>#F2F7FF</baseColor>
+        <baseColor>#E1E7EE</baseColor>
+
+        <patchDensity>1</patchDensity>
+        <patchSize>0.35,0.8</patchSize>
+        <patchLight>#E7ECF1</patchLight>
+        <patchDark>#D9E1EB</patchDark>
+        <patchSteps>3</patchSteps>
+        <patchStretch>2.5</patchStretch>
+        <patchWobble>0.5</patchWobble>
+
+        <driftWavelength>0.35</driftWavelength>
+        <driftWidth>0.05,0.09</driftWidth>
+        <driftCoverage>0.75</driftCoverage>
+        <driftAmp>0.07</driftAmp>
+        <driftWaveCycles>5</driftWaveCycles>
+        <driftWander>0.75</driftWander>
+        <driftBreakCycles>5</driftBreakCycles>
+        <driftSoft>1</driftSoft>
+        <driftLit>#F3F6F9</driftLit>
+        <driftShadow>#C6D2E2</driftShadow>
+        <rippleWavelength>0.13</rippleWavelength>
+        <rippleWidth>0.014,0.02</rippleWidth>
+        <rippleCoverage>0.5</rippleCoverage>
+        <rippleAmp>0.03</rippleAmp>
+        <rippleWaveCycles>10</rippleWaveCycles>
+        <rippleWander>0.6</rippleWander>
+        <rippleLit>#ECF0F5</rippleLit>
+        <rippleShadow>#D3DCE8</rippleShadow>
+
+        <grainDensity>300</grainDensity>
+        <grainSize>0.012,0.02</grainSize>
+        <grainContrast>0.05</grainContrast>
+
+        <twigDensity>0.3</twigDensity>
+        <twigLength>0.05,0.12</twigLength>
+        <twigWidth>0.009,0.013</twigWidth>
+        <twigColors>#4A3A2C,#5C4A36</twigColors>
+        <twigShadow>0.8</twigShadow>
+
+        <stoneDensity>0.5</stoneDensity>
+        <stoneSize>0.015,0.04</stoneSize>
+        <stoneColors>#7A766E,#8A857C</stoneColors>
+        <stoneShadow>0.75</stoneShadow>
+        <stoneLit>1.25</stoneLit>
+
+        <!-- Grass tips: two to four short strokes fanning up from a root, over a shadow tipShadow times
+             the ground's light. -->
+        <tipDensity>0.3</tipDensity>
+        <tipLength>0.05,0.1</tipLength>
+        <tipWidth>0.009,0.012</tipWidth>
+        <tipColors>#6B6847,#827A52,#5A5A40</tipColors>
+        <tipShadow>0.82</tipShadow>
+
+        <!-- Sparkle: four-point stars sparkleSize across in sparkleColors, at mip 0 only. -->
+        <sparkleDensity>20</sparkleDensity>
+        <sparkleSize>0.016,0.024</sparkleSize>
+        <sparkleColors>#FFFFFF,#FFFFFF,#F2F8FF,#FFF8E8</sparkleColors>
+
+        <farContrast>0.9</farContrast>
+        <farGain>0.9988,1.0007,1.0034</farGain>
       </params>
     </generator>
-    <variantCount>4</variantCount>
+    <variantCount>8</variantCount>
     <period>4</period>
     <pixelsPerMeter>64</pixelsPerMeter>
-    <rotate>free</rotate>
+    <!-- Lit from the top and its drifts run across the screen: cells only flip left to right. -->
+    <rotate>mirror</rotate>
     <macro>
-      <dry>1.0,0.99,0.97</dry>
-      <lush>0.96,0.98,1.0</lush>
-      <amplitude>0.5</amplitude>
+      <dry>1.02,1.01,0.98</dry>
+      <lush>0.98,0.99,1.02</lush>
+      <amplitude>0.3</amplitude>
     </macro>
   </AssetDef>
 </AssetDefinitions>
