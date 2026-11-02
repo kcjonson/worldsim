@@ -11,6 +11,8 @@
 // Positions are a whole tile plus the offset inside it: the noise and every lattice
 // read are formed from those two parts, never from a large float world coordinate.
 
+#extension GL_ARB_texture_gather : require
+
 #include "hash_noise.glsl"
 
 // ============================================================================
@@ -74,6 +76,7 @@ uniform vec4 u_landPair[162];
 // ============================================================================
 
 const int	kRenderApronTiles	   = 3;
+const float kRenderTilesInvSide	   = 1.0 / 518.0; // kRenderTilesSide
 const uint	kRenderEdgeSurfaceMask = 0x0Fu;
 const uint	kRenderNearInteriorBit = 0x40u;
 const uint	kRenderInteriorBit	   = 0x80u;
@@ -98,23 +101,6 @@ uint surfaceOfLevel(int level) {
 int levelOfSurface(uint surfaceId) {
 	uint nibble = surfaceId < 8u ? (0x71908235u >> (surfaceId * 4u)) & 15u : (0x64u >> ((surfaceId - 8u) * 4u)) & 15u;
 	return int(nibble) - 1;
-}
-
-// Whole numbers move between int and float here without the GPU's conversion unit,
-// which runs at an eighth of the float rate and is what this pass is short of:
-// adding 1.5 * 2^23 to a float leaves it rounded to a whole number in the low
-// mantissa bits. Exact under 2^22 in magnitude.
-const float kWholeBias	   = 12582912.0;
-const int	kWholeBiasBits = 0x4B400000;
-
-/// x rounded to the nearest whole number.
-int roundToInt(float x) {
-	return floatBitsToInt(x + kWholeBias) - kWholeBiasBits;
-}
-
-/// u (under 2^22) as a float.
-float smallToFloat(uint u) {
-	return intBitsToFloat(int(u) | kWholeBiasBits) - kWholeBias;
 }
 
 // ============================================================================
@@ -178,29 +164,35 @@ uint binomialRow(uint mask, int row, int c) {
 /// other side). The sums are guardedBlur's in SurfaceField.cpp, gathered by row.
 float guardedBlur(uint sum, bool inside, bool thin) {
 	float blur = smallToFloat(sum) * 0.0625;
-	if (!thin) {
-		return blur;
-	}
-	return inside ? max(blur, u_landThinFloor) : min(blur, u_landThinCeil);
+	return thin ? (inside ? max(blur, u_landThinFloor) : min(blur, u_landThinCeil)) : blur;
 }
 
-/// The field at lattice offset t.
-float blockField(uint mask, vec2 t) {
-	// The inner tiles' rows, left (columns 0-2) and right (1-3), and the thin test
-	// for every bit at once.
-	uint  l0   = binomialRow(mask, 0, 0);
-	uint  r0   = binomialRow(mask, 0, 1);
-	uint  l1   = binomialRow(mask, 1, 0);
-	uint  r1   = binomialRow(mask, 1, 1);
-	uint  l2   = binomialRow(mask, 2, 0);
-	uint  r2   = binomialRow(mask, 2, 1);
-	uint  l3   = binomialRow(mask, 3, 0);
-	uint  r3   = binomialRow(mask, 3, 1);
-	uint  thin = (((mask << 1u) ^ mask) & ((mask >> 1u) ^ mask)) | (((mask << 4u) ^ mask) & ((mask >> 4u) ^ mask));
-	float v00  = guardedBlur(l0 + 2u * l1 + l2, blockBit(mask, 1, 1), blockBit(thin, 1, 1));
-	float v10  = guardedBlur(r0 + 2u * r1 + r2, blockBit(mask, 2, 1), blockBit(thin, 2, 1));
-	float v01  = guardedBlur(l1 + 2u * l2 + l3, blockBit(mask, 1, 2), blockBit(thin, 1, 2));
-	float v11  = guardedBlur(r1 + 2u * r2 + r3, blockBit(mask, 2, 2), blockBit(thin, 2, 2));
+/// One surface's 3x3 binomial sums at the block's inner tiles (1, 1), (2, 1),
+/// (1, 2) and (2, 2), from its rows' sums, left (columns 0-2) and right (1-3).
+uvec4 blockSums(uint mask) {
+	uint l0 = binomialRow(mask, 0, 0);
+	uint r0 = binomialRow(mask, 0, 1);
+	uint l1 = binomialRow(mask, 1, 0);
+	uint r1 = binomialRow(mask, 1, 1);
+	uint l2 = binomialRow(mask, 2, 0);
+	uint r2 = binomialRow(mask, 2, 1);
+	uint l3 = binomialRow(mask, 3, 0);
+	uint r3 = binomialRow(mask, 3, 1);
+	return uvec4(l0 + 2u * l1 + l2, r0 + 2u * r1 + r2, l1 + 2u * l2 + l3, r1 + 2u * r2 + r3);
+}
+
+/// The thin test for every bit of a mask at once: both neighbors along either axis
+/// on the other side.
+uint blockThin(uint mask) {
+	return (((mask << 1u) ^ mask) & ((mask >> 1u) ^ mask)) | (((mask << 4u) ^ mask) & ((mask >> 4u) ^ mask));
+}
+
+/// The field at lattice offset t, from a surface's inner sums, mask and thin bits.
+float blockField(uvec4 sums, uint mask, uint thin, vec2 t) {
+	float v00 = guardedBlur(sums.x, blockBit(mask, 1, 1), blockBit(thin, 1, 1));
+	float v10 = guardedBlur(sums.y, blockBit(mask, 2, 1), blockBit(thin, 2, 1));
+	float v01 = guardedBlur(sums.z, blockBit(mask, 1, 2), blockBit(thin, 1, 2));
+	float v11 = guardedBlur(sums.w, blockBit(mask, 2, 2), blockBit(thin, 2, 2));
 	return landBilinear(v00, v10, v01, v11, t);
 }
 
@@ -302,30 +294,31 @@ LandEval evaluateLand(ivec2 tile, vec2 frac, int fineOctaves) {
 	int	 cx;
 	int	 cy;
 	vec2 t;
-	latticeRead(tile.x + int(w.x), s.x - w.x, cx, t.x);
-	latticeRead(tile.y + int(w.y), s.y - w.y, cy, t.y);
+	latticeRead(tile.x + roundToInt(w.x), s.x - w.x, cx, t.x);
+	latticeRead(tile.y + roundToInt(w.y), s.y - w.y, cy, t.y);
 
-	// The 4x4 block's surface ids as nibbles, rows 0-1 in `lo` and rows 2-3 in `hi`.
-	uint lo		 = 0u;
-	uint hi		 = 0u;
-	uint present = 0u;
-	for (int j = 0; j < 4; ++j) {
-		for (int i = 0; i < 4; ++i) {
-			uint id	   = renderTile(ivec2(cx - 1 + i, cy - 1 + j)).r;
-			uint shift = uint(((j & 1) * 4 + i) * 4);
-			lo |= j < 2 ? id << shift : 0u;
-			hi |= j < 2 ? 0u : id << shift;
-			present |= 1u << id;
-		}
-	}
+	// The 4x4 block's surface ids as nibbles, rows 0-1 in `lo` and rows 2-3 in `hi`,
+	// gathered a 2x2 quad at a time: four texture instructions where fetching each
+	// tile took sixteen. A gather's x, y, z and w are its quad's tiles (0, 1), (1, 1),
+	// (1, 0) and (0, 0), and it is centered on the quad's shared corner.
+	vec2  corner = vec2(smallToFloat(uint(cx + kRenderApronTiles)), smallToFloat(uint(cy + kRenderApronTiles))) * kRenderTilesInvSide;
+	uvec4 q00	 = textureGather(u_tileData, corner);
+	uvec4 q20	 = textureGather(u_tileData, corner + vec2(2.0 * kRenderTilesInvSide, 0.0));
+	uvec4 q02	 = textureGather(u_tileData, corner + vec2(0.0, 2.0 * kRenderTilesInvSide));
+	uvec4 q22	 = textureGather(u_tileData, corner + vec2(2.0 * kRenderTilesInvSide));
+	uint  lo	 = q00.w | q00.z << 4u | q20.w << 8u | q20.z << 12u | q00.x << 16u | q00.y << 20u | q20.x << 24u | q20.y << 28u;
+	uint  hi	 = q02.w | q02.z << 4u | q22.w << 8u | q22.z << 12u | q02.x << 16u | q02.y << 20u | q22.x << 24u | q22.y << 28u;
+	uint  present = (1u << q00.x) | (1u << q00.y) | (1u << q00.z) | (1u << q00.w) | (1u << q20.x) | (1u << q20.y) | (1u << q20.z) |
+				   (1u << q20.w) | (1u << q02.x) | (1u << q02.y) | (1u << q02.z) | (1u << q02.w) | (1u << q22.x) | (1u << q22.y) |
+				   (1u << q22.z) | (1u << q22.w);
 
 	// One pass, low to high. The highest surface whose field passes 0.5 paints;
 	// where none does (a junction of three or more), the largest field, ties to the
 	// higher. Alongside, the nearest boundary of the painted region for the edge
-	// look: the isoline of every surface that would take
-	// over by passing 0.5 (those above the painted one; all others where nothing
-	// passes), and the painted surface's own, past which the passing surface below
-	// it shows, else the largest other field. Scalars only, no per-surface arrays.
+	// look: the isoline of every surface that would take over by passing 0.5 (those
+	// above the painted one; all others where nothing passes), and the painted
+	// surface's own, past which the passing surface below it shows, else the
+	// largest other field. Scalars only, no per-surface arrays.
 	bool  passed	   = false;
 	int	  paintedLevel = 0;
 	float paintedField = 0.0;
@@ -342,13 +335,32 @@ LandEval evaluateLand(ivec2 tile, vec2 frac, int fineOctaves) {
 	int	  secondLevel  = -1;
 	float secondField  = -1.0;
 	e.margin		   = kNoBoundary;
+	// Where the block holds exactly two surfaces, as most edges do, the second's
+	// inputs are the first's complement: every tile is one or the other, so its
+	// sums are 16 less the first's, its indicator the inverse, and its thin bits,
+	// which compare each tile with its neighbors, the same. The same integers into
+	// the same float steps, so the field is bit for bit what its own mask gives.
+	uint  others	= present & (present - 1u);
+	bool  twoOnly	= others != 0u && (others & (others - 1u)) == 0u;
+	bool  seenFirst = false;
+	uvec4 sums		= uvec4(0u);
+	uint  mask		= 0u;
+	uint  thin		= 0u;
 	for (int level = 0; level < 9; ++level) {
 		uint surface = surfaceOfLevel(level);
 		if ((present & (1u << surface)) == 0u) {
 			continue;
 		}
-		uint  mask = nibbleMatches(lo, surface) | (nibbleMatches(hi, surface) << 8u);
-		float f	   = blockField(mask, t);
+		if (twoOnly && seenFirst) {
+			sums = uvec4(16u) - sums;
+			mask = ~mask;
+		} else {
+			mask = nibbleMatches(lo, surface) | (nibbleMatches(hi, surface) << 8u);
+			sums = blockSums(mask);
+			thin = blockThin(mask);
+		}
+		seenFirst = true;
+		float f	   = blockField(sums, mask, thin, t);
 		float dist = isolineDistance(f); // negative until it passes
 		e.margin   = min(e.margin, abs(f - 0.5));
 		if (f > 0.5) {
@@ -566,8 +578,9 @@ vec3 groundTint(uint surface, vec4 macro) {
 /// moves the threshold along the edge with the field's fine warp noise. At |b| = 1
 /// the result is exactly one surface, so outside the band a pixel takes one sample.
 vec3 landColor(vec2 local) {
-	ivec2	 tile	 = clamp(ivec2(floor(local)), ivec2(0), ivec2(511));
-	vec2	 frac	 = local - vec2(tile);
+	vec2	 whole	 = clamp(floor(local), vec2(0.0), vec2(511.0));
+	ivec2	 tile	 = ivec2(roundToInt(whole.x), roundToInt(whole.y));
+	vec2	 frac	 = local - whole;
 	LandEval e		 = evaluateLand(tile, frac, u_landWarpFineOctaves);
 	vec4	 macro	 = textureLod(u_groundMacro, (local * 0.5 + 0.5) * (1.0 / kGroundMacroSide), 0.0);
 	vec4	 painted = groundTexture(e.painted, local, true);

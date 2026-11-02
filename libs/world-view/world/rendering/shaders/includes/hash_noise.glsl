@@ -5,6 +5,24 @@
 // fuse a multiply-add). SurfaceFieldGolden.test.cpp holds the two together through
 // the land field.
 
+// Whole numbers move between int and float here without the GPU's conversion unit,
+// which runs at an eighth of the float rate and is what the tile pass is short of:
+// adding 1.5 * 2^23 to a float leaves it rounded to a whole number in the low
+// mantissa bits. Exact under 2^22 in magnitude, so the values are the ones a
+// conversion gives.
+const float kWholeBias	   = 12582912.0;
+const int	kWholeBiasBits = 0x4B400000;
+
+/// x rounded to the nearest whole number.
+int roundToInt(float x) {
+	return floatBitsToInt(x + kWholeBias) - kWholeBiasBits;
+}
+
+/// u (under 2^22) as a float.
+float smallToFloat(uint u) {
+	return intBitsToFloat(int(u) | kWholeBiasBits) - kWholeBias;
+}
+
 uint noiseHash3(int x, int y, int z, uint seed) {
 	uint h = 0x811C9DC5u;
 	h ^= seed;
@@ -39,7 +57,8 @@ float noiseQuintic(float t) {
 
 /// detail::gradient's entry `index` (0..15), x and y.
 vec2 noiseGradient(uint index) {
-	return vec2(ivec2(uvec2(kNoiseGradientX, kNoiseGradientY) >> (index * 2u) & 3u)) - 1.0;
+	uvec2 g = uvec2(kNoiseGradientX, kNoiseGradientY) >> (index * 2u) & 3u;
+	return vec2(smallToFloat(g.x), smallToFloat(g.y)) - 1.0;
 }
 
 /// The two fields of gradientNoise2PairCell at one corner: gradients from bits 0-3
@@ -63,8 +82,11 @@ vec2 gradientNoise2PairCell(ivec2 cell, vec2 f, uint seed) {
 	return x0 + uy * (x1 - x0);
 }
 
+/// floor(a / b) for b > 0 with one unsigned divide: of a, or for a negative a of
+/// |a| + b - 1, negated. Branching to a divide either side put two in the code.
 int noiseFloorDiv(int a, int b) {
-	return a >= 0 ? a / b : -((-a + b - 1) / b);
+	int q = int(uint(a >= 0 ? a : b - 1 - a) / uint(b));
+	return a >= 0 ? q : -q;
 }
 
 // fractalNoise2SplitPair with lacunarity 2, summing only the first `summed` of its
@@ -75,7 +97,8 @@ vec2 fractalNoise2SplitPair(
 	ivec2 whole, vec2 frac, int wavelength, float invWavelength, uint seed, int octaves, float gain, int summed
 ) {
 	ivec2 q		= ivec2(noiseFloorDiv(whole.x, wavelength), noiseFloorDiv(whole.y, wavelength));
-	vec2  base	= vec2(whole - q * wavelength) + frac;
+	uvec2 r		= uvec2(whole - q * wavelength); // in [0, wavelength)
+	vec2  base	= vec2(smallToFloat(r.x), smallToFloat(r.y)) + frac;
 	vec2  value = vec2(0.0);
 	float amp	= 1.0;
 	float norm	= 0.0;
@@ -83,8 +106,9 @@ vec2 fractalNoise2SplitPair(
 		if (i < summed) {
 			int	  cells = 1 << i;
 			vec2  u		= base * (invWavelength * float(cells));
-			ivec2 c		= ivec2(u); // u >= 0: truncation is floor
-			value += gradientNoise2PairCell(q * cells + c, u - vec2(c), seed + uint(i)) * amp;
+			vec2  cell	= floor(u);
+			ivec2 c		= ivec2(roundToInt(cell.x), roundToInt(cell.y));
+			value += gradientNoise2PairCell(q * cells + c, u - cell, seed + uint(i)) * amp;
 		}
 		norm += amp;
 		amp *= gain;
