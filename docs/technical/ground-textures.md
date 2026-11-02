@@ -741,7 +741,7 @@ Not taken: storing the arrays as plain RGBA8 to drop the encode (about 0.01, but
 - Unit tests: validator rules, periodic noise wraps, `data-lod` inheritance and per-band filtering, a mesh over 65,535 vertices splits, paths built once match a generator run per density, a bake on the pool matches one in turn bit for bit, and the bake cache's round trip, key and damaged files. `SurfaceFieldGolden` and the existing suite pass.
 - Transitions: in game at zoom 20, 3, 1.5 and 0.5, one view a pair: grass over Dirt (tufts over the edge, contact shadow), grass over Sand (the desert view), Sand over Rock (the joints fill), Snow over Rock (the tundra, x 0, y 6000000), Mud at a river (the stain), and a grass family edge (no visible line). At 0.5 no shimmering line: the mip window holds. Unit tests: the height bake (rank normalization, alpha survives the filter, `setHeight` default), the `<transition>` parse (defaults, overrides, a broken block dropped) and validator rules (`over`, the band cap, the offset, ranges, duplicates, unknown fields), the pair table's build and per-draw pack and its compact support (`GroundPairs.test.cpp`), and the cache key ignoring comments and `<transition>` blocks. `SurfaceFieldGolden` doesn't change.
 - Performance: the final capture per the gates above, plus the transitions' own in Surface transitions.
-- Manual script: `docs/testing/scenarios/ground-tiles.md`, one numbered line a step, written at hand-off.
+- Manual script: `docs/testing/scenarios/08-ground-tiles.md`, one numbered line a step.
 
 ## Open questions
 
