@@ -419,7 +419,8 @@ TileData GenerateTileDetail(int localX, int localY,
                             uint64_t worldSeed) {
     TileData tile;
 
-    // 1. Get biome (from sector grid or pure chunk)
+    // 1. Get biome: picked per tile from the chunk's corners and world-space edge
+    //    noise (ChunkBiomes::at, TileBiomes.h), or the pure chunk's one biome
     tile.biome = GetTileBiome(chunkData, localX, localY);
 
     // 2. Create deterministic RNG for this tile
@@ -636,7 +637,7 @@ void LoadChunksParallel(const vector<ChunkCoordinate>& coords) {
 ### Tile Generation Cost
 
 **Per Tile**:
-- Biome lookup: 0.001ms (sector grid access)
+- Biome lookup: 0.001ms (estimated for the sector grid; the per-tile pick that replaced it is measured in terrain-polygons-architecture.md, D16, biome edges)
 - RNG + procedural: 0.002ms
 - Total: **0.003ms per tile**
 
@@ -648,7 +649,7 @@ void LoadChunksParallel(const vector<ChunkCoordinate>& coords) {
 ### Memory Access Patterns
 
 **Cache-Friendly**:
-- Sector grid: 32×32 array, fits in L1 cache (4 KB)
+- Biome pick: the corners' weights and one chunk's noise lattices, hashed once a chunk (`NoiseOctaveGrid`)
 - Corner elevations: 4 floats, fits in cache line
 - Sequential tile access: good spatial locality
 
@@ -771,6 +772,8 @@ TEST(Sampling, DeterministicGeneration) {
     EXPECT_EQ(tile1, tile2);
 }
 
+// Historical: the sector grid this tested is gone (WOR-558); TileBiomes.test.cpp
+// holds the per-tile pick.
 TEST(Sampling, BiomeInterpolation) {
     BiomeInfluence corners[4] = {
         {BiomeType::Forest, 1.0f},

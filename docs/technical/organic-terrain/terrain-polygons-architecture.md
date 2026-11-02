@@ -281,7 +281,8 @@ hole), and no per-ring retry loop is needed.
    curve in a cell compute the same vertices in it, whatever the rest of their rings look like.
    Costs at most one extra vertex per lattice crossing, about one per 16 m of shore: +4.5%
    nav vertices on the archipelago benchmark chunk, +19% on the staircase lake (a 16 m
-   staircase crosses a lattice line at nearly every step).
+   staircase crosses a lattice line at nearly every step; that bench chunk is now a generated
+   lake shore, `LakeShoreTestWorld.h`).
 5. Quantize to integer mm.
 6. `simplifyRing` at `kRingSimplifyEpsMm = 100`, per run (pins are never removed). Not 500:
    nav and render use the same ring verbatim, and 500 would erase the bank detail. The vertex
@@ -948,10 +949,16 @@ a coast and a lake among them, was a 16 m staircase along a near-straight diagon
   stay on the same line.
 - Cost. The two coarse octaves are summed at every 8th tile and read bilinearly (under 1e-3 of
   a weight off); the 12 m and ecotone octaves are hashed once a chunk (`NoiseOctaveGrid`, the
-  lattice cache `fillGroundMacro` uses too). Gradient noise stays within [-1, 1], so the pick
-  stops at the first stage whose remaining octaves can't change the winner or bring a land pair
-  within the ecotone's reach: a one-biome chunk reads no noise, and a chunk an edge crosses
-  costs about 6 ms of picks at most. Numbers in section 6.
+  lattice cache `fillGroundMacro` uses too; `NoiseLatticeTest` holds it to salal's
+  `gradientNoise2` bit for bit where that function's float position is exact, at origins on
+  both sides of zero, and to the same bits from any grid origin). Gradient noise stays within
+  [-1, 1], so the pick stops at the first stage whose remaining octaves can't change the winner
+  or bring a land pair within the ecotone's reach: a one-biome chunk reads no noise, and a chunk
+  an edge crosses costs about 6 ms of picks at most. The stage test and the prune that drops
+  the biomes left out of reach compare one float expression, the leader's lead over a biome;
+  written as `b + reach <= a`, the prune once dropped a runner-up the stage test had just called
+  open, at a rounding tie, and the pick read past its candidates
+  (`TileBiomesTest.ARunnerUpAtARoundingTieStaysInThePick`). Numbers in section 6.
 - Purity (D14). A tile is always picked by its owning chunk's `ChunkBiomes`, built from that
   chunk's corners and the world seed. `ChunkNeighborhood` holds the 3x3 neighborhood's, from
   the sample's corner lattice, for the apron (`ApronField::build`) and for biome water past the
@@ -961,8 +968,8 @@ a coast and a lake among them, was a 16 m staircase along a near-straight diagon
   world (two land biomes and ocean) crossing them; `ApronFieldTest`, `RenderTileSeamsTest`,
   `TerrainPolygonSeamsTest` and `SurfaceFieldGolden` pass unchanged.
   `TileBiomesTest.EdgesDoNotFollowTheSectorGrid` holds a synthetic edge to about one boundary
-  edge in sixteen on a sector line, in runs of 5 tiles at most (the sector grid put every one
-  there, in runs of 16).
+  edge in sixteen on a sector line (6.6% over three chunks), in runs of 6 tiles at most (the
+  sector grid put every one there, in runs of 16).
 - Generators. Their patch noise is gradient fBm (`generation::PatchNoise`, two octaves, the
   lattice hashed once a chunk) in place of hashed value noise, whose cells drew straight runs
   wherever two corners hashed alike. The wavelengths are 1.7 to 1.9 times the old ones, which

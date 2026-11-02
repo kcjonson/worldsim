@@ -184,8 +184,8 @@ When sampling a chunk from the 3D world, we classify it based on proximity to sp
 **Boundary Chunk** (~36% of chunks):
 - Chunk crosses or is near spherical tile boundary
 - Tiles have varying biome percentages
-- Requires interpolation grid
-- Memory: ~200 bytes + (32×32 × sizeof(BiomeInfluence)) ≈ 2-4 KB
+- Each tile picks its biome from the four corners' weights and world-space edge noise (`ChunkBiomes`, `TileBiomes.h`)
+- Memory: ~200 bytes, the corners' weights included (the pick's noise grids live only while the chunk generates)
 - More expensive generation
 
 **Classification Algorithm**:
@@ -235,14 +235,9 @@ ChunkBiomeData Sample3DWorld(ChunkCoordinate coord, const SphericalWorld& world)
         SampleBiomeInfluence(coord.SouthEast(), world)
     };
 
-    // Build 32×32 sector grid via bilinear interpolation
-    for (int sy = 0; sy < kSectorGridSize; sy++) {
-        for (int sx = 0; sx < kSectorGridSize; sx++) {
-            float u = float(sx) / (kSectorGridSize - 1);
-            float v = float(sy) / (kSectorGridSize - 1);
-            data.sectorGrid[sy][sx] = BilinearInterpolate(cornerBiomes, u, v);
-        }
-    }
+    // The corners are all the chunk keeps: each tile picks its biome from them, raised
+    // by world-space edge noise (ChunkBiomes, TileBiomes.h), when the chunk generates
+    std::copy(std::begin(cornerBiomes), std::end(cornerBiomes), data.cornerBiomes);
 
     // Sample elevations and climate
     data.cornerElevations[0] = SampleElevation(coord.NorthWest());
@@ -293,10 +288,8 @@ TileData Chunk::GenerateBaseTile(int localX, int localY) const {
     if (biomeData.isPure) {
         tile.biome = {biomeData.singleBiome, 1.0f};  // 100% single biome
     } else {
-        // Lookup in pre-computed sector grid
-        int sectorX = localX / 16;  // 512 tiles / 32 sectors = 16 tiles/sector
-        int sectorY = localY / 16;
-        tile.biome = biomeData.sectorGrid[sectorY][sectorX];
+        // Picked per tile from the corners and world-space edge noise (ChunkBiomes::at)
+        tile.biome = biomes.at(localX, localY);
     }
 
     // 2. Generate deterministic properties from seed
@@ -612,11 +605,11 @@ void SynchronizeChunk(ChunkCoordinate coord) {
 
 **Chunk Loading**:
 - Pure chunk: ~0.1 ms (5 3D queries + setup)
-- Boundary chunk: ~0.5 ms (8 3D queries + 1024 interpolations)
+- Boundary chunk: ~0.5 ms (8 3D queries)
 
 **Tile Generation** (per tile):
 - Pure chunk tile: ~0.001 ms (hash + RNG + selection)
-- Boundary chunk tile: ~0.002 ms (sector lookup + hash + RNG)
+- Boundary chunk tile: ~0.002 ms (per-tile biome pick + hash + RNG)
 
 **Rendering** (262k tiles per chunk):
 - Don't render all at once! Only visible tiles.
@@ -626,7 +619,7 @@ void SynchronizeChunk(ChunkCoordinate coord) {
 
 **1. Chunk-Level Batching**:
 - Pure chunks: single render batch (all same biome)
-- Boundary chunks: batch by sector (32×32 sectors)
+- Boundary chunks: batch by biome
 
 **2. Tile Entity Pooling**:
 - Reuse tile data structures (don't allocate per tile)
