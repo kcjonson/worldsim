@@ -11,8 +11,6 @@
 // Positions are a whole tile plus the offset inside it: the noise and every lattice
 // read are formed from those two parts, never from a large float world coordinate.
 
-#extension GL_ARB_texture_gather : require
-
 #include "hash_noise.glsl"
 
 // ============================================================================

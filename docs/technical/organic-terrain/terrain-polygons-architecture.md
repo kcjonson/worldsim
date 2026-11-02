@@ -813,7 +813,9 @@ D5/D6, so a grass/dirt edge and a shoreline are of a piece.
 Land boundaries are look-only (nothing walkable, D1), so they stay in the shader instead of
 becoming rings. `world::evaluateSurfaceField` (`SurfaceField.cpp`) is the one
 evaluation; `shaders/includes/land.glsl` is the same steps in the same order, and
-`SurfaceFieldGolden.test.cpp` renders it and compares.
+`SurfaceFieldGolden.test.cpp` renders it and compares. The tile shaders are GLSL 4.10 core
+(the field gathers its render tiles with `textureGather`, core from 4.00, and 4.10 is the
+most macOS offers).
 
 1. **Field per surface, on the dual grid.** For every surface in the point's 4x4 tile
    neighborhood (the blur's reach plus the bilinear footprint), the indicator is sampled at tile

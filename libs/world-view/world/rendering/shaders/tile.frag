@@ -1,4 +1,4 @@
-#version 330 core
+#version 410 core
 
 // Tile pass fragment shader: the land pass (land.glsl) paints the chunk's ground
 // from its render tiles, every surface boundary the isoline of a warped field, then

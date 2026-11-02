@@ -102,7 +102,7 @@ namespace {
 		return std::filesystem::current_path() / "shaders" / "includes" / "land.glsl";
 	}
 
-	constexpr const char* kVertexSource = R"(#version 330 core
+	constexpr const char* kVertexSource = R"(#version 410 core
 void main() {
 	vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
 	gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
@@ -205,7 +205,7 @@ void main() {
 				return;
 			}
 			const GLuint vs = compile(GL_VERTEX_SHADER, kVertexSource, error);
-			const GLuint fs = vs == 0 ? 0 : compile(GL_FRAGMENT_SHADER, std::string("#version 330 core\n") + *land + kFragmentMain, error);
+			const GLuint fs = vs == 0 ? 0 : compile(GL_FRAGMENT_SHADER, std::string("#version 410 core\n") + *land + kFragmentMain, error);
 			if (fs == 0) {
 				glDeleteShader(vs);
 				return;

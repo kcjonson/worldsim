@@ -124,6 +124,8 @@ The shader has its own, separate LOD for the hex blend (the single-sample cutoff
 
 ## Shader
 
+The tile pass (`tile.vert`, `tile.frag`, everything `land.glsl` includes) is GLSL 4.10 core. `textureGather` is core from 4.00, so no extension is needed, and 4.10 is what macOS caps OpenGL at. salal asks GLFW for a 3.3 core forward-compatible context. macOS answers a core request of 3.2 or later with its newest core profile (4.1). The NVIDIA driver on the reference machine reports 3.3.0 for it and compiles the 4.10 shaders anyway; a driver that holds GLSL to the context version would need salal's request raised to 4.1. The rest of the renderer stays at 330.
+
 `land.glsl` loses `u_tileAtlas`, `u_tileAtlasRects`, `u_tileAtlasRectCount` and `atlasColor`. In their place are one `sampler2DArray` per texel density and per-surface uniform arrays (array, first layer, layer count, inverse period, rotate mode, macro tints), indexed the way `u_landWarpFine[10]` already is.
 
 `groundColor(surface, local, mpp)` is stochastic hex-tiling (after Mikkelsen 2022, practical hex-tiling):
@@ -423,7 +425,7 @@ As shipped, the grass defs name every pair (no default block); Rock's default bl
 | 2 | `sigma` from F (Band cap) | +0.02, +0.01, +0.01, 0, +0.01, 0, 0, 0, +0.01: the per-pixel cost drops, but the bands are now as wide as their recipes; the gradient's step had cut the wide ones short | yes, it is the fix |
 | 3 | The band's second surface through the painted one's hex lattice and weights, and its cell taps where the pair hashes alike | -0.01, 0, 0, +0.01, +0.01, +0.01, +0.01, +0.01, +0.01 | no |
 | 4 | The field off the conversion unit, bit for bit: the noise's gradient decode, cell floors and base through the 1.5 x 2^23 bias, the warped lattice read and the pixel's tile likewise | -0.01, 0, 0, -0.01, -0.01, 0, 0, 0, 0 | yes |
-| 5 | The 4x4 block's paint ids gathered a 2x2 quad at a time (`GL_ARB_texture_gather`): 4 texture instructions for 16, bit for bit | -0.01, -0.01, -0.01, 0, 0, 0, 0, 0, -0.01 | yes |
+| 5 | The 4x4 block's paint ids gathered a 2x2 quad at a time (`textureGather`, core from GLSL 4.00): 4 texture instructions for 16, bit for bit | -0.01, -0.01, -0.01, 0, 0, 0, 0, 0, -0.01 | yes |
 | 6 | Linear mix with one encode, and hex weights from the height instead of luminance; each alone is under the noise floor, so measured together | 0, 0, 0, 0, 0, -0.01, 0, -0.01, 0 | yes |
 | 7 | Dominant-cell single taps in the band | not captured: a hex seam crossing a family band showed a hard cut through the blades at zoom 20 | no |
 | 8 | The field's per-surface work, bit for bit: in a two-surface block the second surface's sums, indicator and thin bits are the first's complement (16 less, inverse, same), the thin guard a select, and the noise's floor division one unsigned divide | -0.01, -0.01, -0.01, -0.01, -0.01, 0, -0.01, 0, -0.01 | yes |
