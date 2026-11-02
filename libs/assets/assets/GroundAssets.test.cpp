@@ -145,6 +145,19 @@ TEST(GroundAssetTest, BadSurfaceAndMacroKeepDefaults) {
 	EXPECT_FALSE(def->ground.surface.has_value());
 	EXPECT_EQ(def->ground.rotate, GroundRotate::Free);
 	EXPECT_EQ(def->ground.macro.dry, glm::vec3(1.0F));
+
+	// The loader reads <macro> through readGroundMacro, as the validator does: what it refuses keeps the default.
+	def = loadGround(
+		t,
+		"<surface>Dirt</surface><macro><dry>0.9,0.9,0.9,0.9</dry><lush>nan,1,1</lush><amplitude>inf</amplitude><wavelengths>-1,2</"
+		"wavelengths>"
+		"</macro>"
+	);
+	ASSERT_NE(def, nullptr);
+	EXPECT_EQ(def->ground.macro.dry, glm::vec3(1.0F)) << "a fourth component isn't dropped silently";
+	EXPECT_EQ(def->ground.macro.lush, glm::vec3(1.0F));
+	EXPECT_FLOAT_EQ(def->ground.macro.amplitude, 0.0F);
+	EXPECT_EQ(def->ground.macro.wavelengthsMeters, glm::vec2(96.0F, 24.0F));
 }
 
 TEST(GroundAssetTest, SurfaceNamesRoundTrip) {

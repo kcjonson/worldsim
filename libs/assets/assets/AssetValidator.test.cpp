@@ -4,12 +4,15 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <string>
+#include <vector>
 
 using namespace assets;
 
@@ -296,6 +299,57 @@ TEST(AssetValidatorTest, LandSurfacesWithoutGroundDefsAreErrorsOnceGroundContent
 TEST(AssetValidatorTest, GroundDefWithBiomeRulesIsError) {
 	const ValidationReport r = validateGround("<surface>Grass</surface><placement><biome name=\"TemperateGrassland\"/></placement>");
 	EXPECT_TRUE(hasIssue(r, Severity::Error, "placement"));
+}
+
+TEST(AssetValidatorTest, GroundDefsUseNoMoreLayerSizesThanTheBankHolds) {
+	// Each def a 4 m tile, so its pixelsPerMeter sets its layer: 64 to 1024 texels, one texture array a size.
+	const auto validateSizes = [](const std::vector<int>& pixelsPerMeter) {
+		TempAssets	t;
+		const char* surfaces[] = {"Grass", "Dirt", "Sand", "Rock", "Snow", "Mud", "GrassTall", "GrassShort", "GrassMeadow"};
+		for (size_t i = 0; i < std::size(surfaces); ++i) {
+			const int density = pixelsPerMeter[std::min(i, pixelsPerMeter.size() - 1)];
+			addGround(
+				t,
+				surfaces[i],
+				std::string("<surface>") + surfaces[i] + "</surface><pixelsPerMeter>" + std::to_string(density) + "</pixelsPerMeter>"
+			);
+		}
+		return AssetValidator::validate(t.root, "");
+	};
+	EXPECT_EQ(validateSizes({16, 32, 64, 128}).errorCount(), 0) << "four sizes fill the four arrays";
+	const ValidationReport five = validateSizes({16, 32, 64, 128, 256});
+	EXPECT_EQ(five.errorCount(), 1);
+	EXPECT_TRUE(hasMessageContaining(five, Severity::Error, "5 layer sizes")) << "one more size than the tile shader holds";
+}
+
+TEST(AssetValidatorTest, GroundMacroIsFiniteNumbersInRange) {
+	const std::string good =
+		"<macro><dry>1.08,1.05,1</dry><lush> 0.92, 0.95 ,1 </lush><amplitude>0.5</amplitude><wavelengths>96,24</wavelengths></macro>";
+	EXPECT_EQ(validateGround("<surface>Grass</surface>" + good).errorCount(), 0);
+	EXPECT_EQ(validateGround("<surface>Grass</surface><macro><amplitude>1</amplitude></macro>").errorCount(), 0)
+		<< "children left out keep their defaults";
+
+	for (const char* bad : {
+			 "<dry>1,2</dry>",
+			 "<dry>1,1,1,1</dry>",
+			 "<dry>1,,1</dry>",
+			 "<dry>nan,1,1</dry>",
+			 "<lush>1,inf,1</lush>",
+			 "<lush>-0.1,1,1</lush>",
+			 "<lush>1,2.5,1</lush>",
+			 "<lush>green</lush>",
+			 "<amplitude>nan</amplitude>",
+			 "<amplitude>-0.5</amplitude>",
+			 "<amplitude>1.5</amplitude>",
+			 "<amplitude>0.5x</amplitude>",
+			 "<wavelengths>96</wavelengths>",
+			 "<wavelengths>0,24</wavelengths>",
+			 "<wavelengths>96,1e40</wavelengths>",
+		 }) {
+		const ValidationReport r = validateGround(std::string("<surface>Grass</surface><macro>") + bad + "</macro>");
+		EXPECT_TRUE(hasIssue(r, Severity::Error, "macro")) << bad;
+		EXPECT_EQ(r.errorCount(), 1) << bad;
+	}
 }
 
 TEST(AssetValidatorTest, UnknownGroundRotateIsWarning) {

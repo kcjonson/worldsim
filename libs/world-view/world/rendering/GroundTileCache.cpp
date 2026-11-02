@@ -231,7 +231,7 @@ namespace worldview {
 
 		const int	   layer = GroundTileBaker::layerSize(def);
 		const int	   levels = GroundTileBaker::mipCount(layer);
-		const uint32_t variants = std::max(1U, def.variantCount);
+		const uint32_t variants = def.variantCount;
 		if (r.getText() != def.defName || r.get<int32_t>() != layer || r.get<uint32_t>() != variants || r.get<int32_t>() != levels) {
 			return damaged("for another def or shape");
 		}
@@ -241,6 +241,7 @@ namespace worldview {
 		bake.periodMeters = def.ground.periodMeters;
 		bake.pixelsPerMeter = def.ground.pixelsPerMeter;
 		bake.layerSize = layer;
+		bake.variantCount = variants;
 		bake.fromCache = true;
 		for (uint32_t v = 0; v < variants && r.ok; ++v) {
 			GroundVariantBake& variant = bake.variants.emplace_back();

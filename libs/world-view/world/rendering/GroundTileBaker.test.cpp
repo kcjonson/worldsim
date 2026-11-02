@@ -392,3 +392,26 @@ TEST(GroundTileBankTest, AnOversizedLayerAllocatesNoArray) {
 	EXPECT_TRUE(named) << "the def is named in the bank's errors";
 	assets::AssetRegistry::Get().clearDefinitions();
 }
+
+TEST(GroundTileBakerTest, AVariantCountPastTheValidatorsIsRefusedBeforeAnythingIsGenerated) {
+	// The asset-manager's Bake view could reach begin with a def that failed validation; 500 variants would
+	// run 500 generators at once.
+	for (const char* count : {"0", "33", "500"}) {
+		const TempDir t;
+		t.write(
+			"Tile/Tile.xml",
+			std::string(
+				"<?xml version=\"1.0\"?><AssetDefinitions><AssetDef><defName>Ground_Many</defName><role>ground</role>"
+				"<assetType>procedural</assetType><generator><scriptPath>gen.lua</scriptPath></generator>"
+				"<surface>Snow</surface><period>1</period><pixelsPerMeter>32</pixelsPerMeter><variantCount>"
+			) + count +
+				"</variantCount></AssetDef></AssetDefinitions>"
+		);
+		t.write("Tile/gen.lua", "error('the generator must not run')\n");
+		auto& registry = assets::AssetRegistry::Get();
+		registry.clearDefinitions();
+		registry.loadDefinitionsFromFolder(t.root.string());
+		EXPECT_FALSE(GroundTileBaker({}).begin("Ground_Many").has_value()) << count;
+		registry.clearDefinitions();
+	}
+}

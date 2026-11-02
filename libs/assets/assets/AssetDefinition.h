@@ -14,6 +14,7 @@
 #include <variant>
 #include <vector>
 
+#include "GroundTint.h"
 #include "GroundTransition.h"
 #include "placement/PlacementTypes.h"
 
@@ -250,15 +251,6 @@ namespace assets {
 		Quarter, // 0, 90, 180 or 270 degrees
 		None,	 // Never rotated
 		Mirror	 // Never rotated, flipped left to right or not; for art with an up (grass blades)
-	};
-
-	/// The low-frequency tint a ground surface gets from the shader: the surface color is mixed
-	/// toward `dry` or `lush` by a smooth noise field. Amplitude 0 (the default) leaves it off.
-	struct GroundMacro {
-		glm::vec3 dry{1.0F, 1.0F, 1.0F};			  // Tint where the field is low, r,g,b in 0..1
-		glm::vec3 lush{1.0F, 1.0F, 1.0F};			  // Tint where the field is high, r,g,b in 0..1
-		float	  amplitude = 0.0F;					  // Strength of the tint; 0 turns it off
-		glm::vec2 wavelengthsMeters{96.0F, 24.0F};	  // Coarse and fine noise wavelengths, meters
 	};
 
 	/// Ground-role settings, read from the AssetDef's top-level ground elements.

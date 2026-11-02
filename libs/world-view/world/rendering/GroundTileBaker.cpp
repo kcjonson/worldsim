@@ -276,6 +276,16 @@ namespace worldview {
 			);
 			return std::nullopt;
 		}
+		if (!assets::groundVariantCountSupported(def->variantCount)) {
+			LOG_ERROR(
+				Engine,
+				"GroundTileBaker: '%s' asks for %u variants; a ground def bakes 1 to %u",
+				defName.c_str(),
+				def->variantCount,
+				assets::kMaxGroundVariants
+			);
+			return std::nullopt;
+		}
 
 		std::optional<uint64_t> key;
 		if (args.cache != nullptr) {
@@ -294,6 +304,7 @@ namespace worldview {
 		bake.periodMeters = def->ground.periodMeters;
 		bake.pixelsPerMeter = def->ground.pixelsPerMeter;
 		bake.layerSize = layer;
+		bake.variantCount = def->variantCount;
 		bake.cacheKey = key;
 		return bake;
 	}
@@ -306,7 +317,7 @@ namespace worldview {
 			LOG_ERROR(Engine, "GroundTileBaker: '%s' is gone from the registry", bake.defName.c_str());
 			return std::nullopt;
 		}
-		const uint32_t					count = std::max(1U, def->variantCount);
+		const uint32_t					count = bake.variantCount;
 		const float						density = static_cast<float>(bake.pixelsPerMeter);
 		std::vector<GroundVariantPaths> variants(count);
 		std::vector<uint8_t>			built(count, 0); // not vector<bool>: workers write neighboring entries
