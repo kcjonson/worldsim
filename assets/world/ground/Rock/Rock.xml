@@ -72,6 +72,10 @@
         <farContrast>0.97</farContrast>
         <farCoarseContrast>0.765</farCoarseContrast>
         <farGain>1.0459,1.048,1.0407</farGain>
+
+        <!-- Heights (documented in Dirt.xml): the slab tops are the ground, high, so grain, pits and cracks
+             sit on and into them and the joints, at heightPlateJoint, are the low ground. -->
+        <heightBase>0.75</heightBase>
       </params>
     </generator>
     <variantCount>8</variantCount>

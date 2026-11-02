@@ -128,8 +128,33 @@ local function lodFor(width)
 end
 
 local pathProto = Path()
-local addVertex, setColor, setLod, closePath = pathProto.addVertex, pathProto.setColor, pathProto.setLod, pathProto.close
+local addVertex, setColor, setLod, setHeight, closePath =
+	pathProto.addVertex, pathProto.setColor, pathProto.setLod, pathProto.setHeight, pathProto.close
 local addPath = asset.addPath
+
+-- Heights (path:setHeight, 0 to 1): what the bake puts in the ground arrays' alpha for the shader's
+-- transition contest. Only their order within the surface counts, since the bake ranks them, and a
+-- layer's paths share one height, or take one from their own size, never from where they sit: the depth
+-- sorted layers would otherwise rise down the tile. The ground is at heightBase, and its small relief
+-- (patches, crests, cracks, grain, pits) is heightRelief times a fixed bump, so 0 leaves it one flat
+-- height; what lies on it (lumps, pieces, stones, grass tips) stands a fixed step above heightBase. No
+-- height draws a random number, so the colors are the same as without them.
+local H = { base = getFloat("heightBase", 0.3), relief = getFloat("heightRelief", 1), now = 0 }
+H.joint = getFloat("heightPlateJoint", 0.1)
+H.puddleRim = getFloat("heightPuddleRim", H.base * 0.5)
+local function at(h)
+	H.now = clamp(h, 0, 1)
+end
+local function bump(d)
+	return clamp(H.base + H.relief * d, 0, 1)
+end
+local function above(d)
+	return clamp(H.base + d, 0, 1)
+end
+-- t in 0..1 within a size range: the bigger stand a little higher.
+local function sized(size, lo, hi)
+	return hi > lo and clamp((size - lo) / (hi - lo), 0, 1) - 0.5 or 0
+end
 
 local function put(xs, ys, n, c, lod)
 	local p = Path()
@@ -140,6 +165,7 @@ local function put(xs, ys, n, c, lod)
 	if lod > 0 then
 		setLod(p, lod)
 	end
+	setHeight(p, H.now)
 	closePath(p)
 	addPath(asset, p)
 end
@@ -290,7 +316,9 @@ end
 -- dark, each a few nested steps from the base's tone to the patch's, so they read as flat cel steps.
 -- Inner steps sit a little up the screen: a mound is lit on its upper side, a hollow shaded there.
 -- Their sizes are normalized per variant, so every variant covers about the same area with each tone.
-local steps = {} -- every step polygon in paint order: { shape, linear color }
+-- A light patch is a mound and a dark one a hollow, each step a little higher or lower.
+local steps = {} -- every step polygon in paint order: { shape, linear color, height }
+local patchRelief = { patch = 0.06, tint = 0.03 }
 local function layoutPatches(prefix)
 	local density = getFloat(prefix .. "Density", 0)
 	if density <= 0 then
@@ -319,7 +347,8 @@ local function layoutPatches(prefix)
 				xs[i] = p[1] + (outline.xs[i] - p[1]) * k
 				ys[i] = p[2] + (outline.ys[i] - p[2]) * k - (s - 1) * r * 0.08
 			end
-			steps[#steps + 1] = { shape(xs, ys), toLinear(mix(base, tones[p.tone], s / stepCount)) }
+			local rise = (p.tone == 1 and 1 or -1) * patchRelief[prefix] * s / stepCount
+			steps[#steps + 1] = { shape(xs, ys), toLinear(mix(base, tones[p.tone], s / stepCount)), bump(rise) }
 		end
 	end
 end
@@ -370,7 +399,7 @@ do
 		local toneCycles = getFloat("plateToneCycles", 4)
 		local spacing = 1 / sqrt(density)
 		local reach = 2.5 * spacing
-		steps[#steps + 1] = { shape({ 0, P, P, 0 }, { 0, 0, P, P }), toLinear(hex("plateJointColor", "#404040")) }
+		steps[#steps + 1] = { shape({ 0, P, P, 0 }, { 0, 0, P, P }), toLinear(hex("plateJointColor", "#404040")), H.joint }
 		local sites = blueNoise(count(density), 0.5 * spacing)
 		-- Per pair of neighbors, decided once for both: merged or not, and the joint's width.
 		local edges = {}
@@ -437,14 +466,16 @@ do
 			local c = colors[floor(tone * #colors) + 1]
 			local face = toLinear(shade(c, 1 + spread * (rand() * 2 - 1)))
 			local bevel = uniform(bevelLo, bevelHi)
+			-- The slab's top: the ground's height, some slabs higher than others; its bevels slope off it.
+			local top = H.base + 0.08 * clamp(field(si[1], si[2], toneCycles * 3, 239) / 0.7, -1, 1)
 			local layers = {
-				{ cell({}), litK },
-				{ cell({ bevel }), darkK },
-				{ cell({ bevel, -bevel * 0.8 }), 1 },
+				{ cell({}), litK, top - 0.05 },
+				{ cell({ bevel }), darkK, top - 0.08 },
+				{ cell({ bevel, -bevel * 0.8 }), 1, top },
 			}
 			for _, layer in ipairs(layers) do
 				if layer[1].n >= 3 then
-					steps[#steps + 1] = { layer[1], { face[1] * layer[2], face[2] * layer[2], face[3] * layer[2] } }
+					steps[#steps + 1] = { layer[1], { face[1] * layer[2], face[2] * layer[2], face[3] * layer[2] }, clamp(layer[3], 0, 1) }
 				end
 			end
 		end
@@ -640,6 +671,7 @@ do
 			fillGrid(farGrid, layer[1], c)
 		end
 	end
+	at(H.base) -- under the near ground at mip 0, where heights are drawn
 	local farN = max(1, floor(P * getFloat("farCellsPerMeter", 4) + 0.5))
 	local per = kGridN / farN
 	local fs = P / farN
@@ -675,8 +707,10 @@ do
 		end
 	end
 	-- The near ground covers it from mip 3 up.
+	at(H.base)
 	put({ 0, P, P, 0 }, { 0, 0, P, P }, 4, toSrgb(ground), kFar)
 	for _, st in ipairs(steps) do
+		at(st[3])
 		emitShape(st[1], toSrgb(st[2]), kFar)
 	end
 end
@@ -794,15 +828,22 @@ local function ripples(prefix)
 					local m = floor((i0 + i1) / 2)
 					local mx, my = px[m] % P, py[m] % P
 					local litC, shC = onGround(lit, mx, my), onGround(shadow, mx, my)
+					-- The crest stands highest, its lee below it, both over the ground.
 					if soft then
 						-- A half step over the whole strip, the full step nearer the crest.
 						local g = toSrgb(groundAt(mx, my))
+						at(bump(0.06))
 						emitShape(stripPart(litL, litR, i0, i1), mix(g, litC, 0.5), lod)
+						at(bump(0.02))
 						emitShape(stripPart(shL, shR, i0, i1), mix(g, shC, 0.5), lod)
+						at(bump(0.1))
 						emitShape(stripPart(litInL, litInR, i0, i1), litC, lod)
+						at(bump(0.04))
 						emitShape(stripPart(shInL, shInR, i0, i1), shC, lod)
 					else
+						at(bump(0.1))
 						emitShape(stripPart(litL, litR, i0, i1), litC, lod)
+						at(bump(0.03))
 						emitShape(stripPart(shL, shR, i0, i1), shC, lod)
 					end
 					i0 = i1
@@ -840,7 +881,9 @@ do
 			local lw = balancedWidth(w, lip, dark)
 			local lod = lodFor(w)
 			local mx, my = px[floor(#px / 2) + 1] % P, py[floor(#py / 2) + 1] % P
+			at(bump(0.02))
 			emitShape(stripShape(px, py, w + lw, 0.25, 0), onGround(lip, mx, my), lod, 0, -lw * 0.6)
+			at(bump(-0.2))
 			emitShape(stripShape(px, py, w, 0.25, 0), onGround(dark, mx, my), lod)
 		end
 		for _ = 1, count(density) do
@@ -868,8 +911,10 @@ do
 				local c
 				if #tints > 0 and rand() < tintShare then
 					c = jitter(pick(tints), 0.05)
+					at(bump(0.03))
 				else
 					c = groundShade(x, y, (k == 1 and 1 + contrast or 1 - contrast) * (1 + 0.05 * (rand() * 2 - 1)))
+					at(bump(k == 1 and 0.06 or -0.06)) -- a light grain is a top, its dark twin a hollow
 				end
 				emitShape(blobShape(x, y, size * 0.5, 6, 0.3, uniform(0.6, 1), rand() * TAU), c, lod)
 			end
@@ -892,7 +937,9 @@ do
 			local r = size * 0.5
 			local lod = lodFor(size * 2)
 			local s = blobShape(x, y, r, 7, 0.3, uniform(0.8, 1.3), rand() * TAU)
+			at(bump(-0.12))
 			emitShape(s, groundShade(x, y, litK), lod)
+			at(bump(-0.18))
 			emitShape(s, groundShade(x, y, darkK), lod, 0, -r * 0.3, 0.85, x, y)
 		end
 	end
@@ -900,7 +947,9 @@ end
 
 -- Lichen: the colonies laid out above, a crust and its dots.
 for _, l in ipairs(lichens) do
+	at(bump(0.04))
 	emitShape(l.crust, l.crustColor, l.lod)
+	at(bump(0.05))
 	for _, d in ipairs(l.dots) do
 		emitShape(d[1], d[2], d[3])
 	end
@@ -914,10 +963,13 @@ do
 	local glint = hex("puddleGlintColor", "#FFFFFF")
 	for _, p in ipairs(puddles) do
 		local lod = lodFor(p.r * 2)
+		-- The rim and bank sit low, the water lowest of everything.
 		for _, layer in ipairs(p.layers) do
+			at(layer.onBase and H.puddleRim or 0)
 			emitShape(layer[1], layer.onBase and onGround(layer[2], p.x, p.y) or layer[2], lod)
 		end
 		local g = blobShape(p.x + (rand() - 0.5) * p.r, p.y - p.r * 0.45, p.r * 0.12, 6, 0.2, 2.2, 0)
+		at(0)
 		emitShape(g, glint, 64)
 	end
 end
@@ -958,8 +1010,12 @@ do
 			local lod = max(lodFor(l.size * 2), farthest)
 			local c = shade(onGround(pick(colors), l[1] % P, l[2] % P), bodyK * (1 + spread * (rand() * 2 - 1)))
 			local s = blobShape(l[1], l[2], r, 8, 0.3, uniform(0.8, 1.3), rand() * TAU)
+			local body = above(0.2 + 0.1 * sized(l.size, sLo, sHi))
+			at(bump(0))
 			emitShape(s, groundShade(l[1] % P, (l[2] + r * 0.3) % P, shadowK), lod, 0, r * 0.3, 1.04, l[1], l[2])
+			at(body)
 			emitShape(s, c, lod)
+			at(body + 0.12) -- the lit cap is the clod's top, and its gloss dab with it
 			emitShape(s, shade(c, capK), lod, 0, -r * 0.22, capScale, l[1], l[2])
 			if rand() < glossShare then
 				local g = blobShape(l[1] + (rand() - 0.5) * r * 0.4, l[2] - r * 0.4, r * 0.14, 6, 0.2, 1.8, 0)
@@ -1007,6 +1063,7 @@ do
 				px[#px + 1], py[#py + 1] = x, y
 			end
 			addPiece(py[1], function()
+				at(bump(0.02)) -- half sunk
 				emitShape(stripShape(px, py, w, 0.4, 0), jitter(color, 0.08), lodFor(w))
 			end)
 		end
@@ -1026,6 +1083,7 @@ do
 			local c = jitter(pick(colors), 0.06)
 			addPiece(y + abs(sin(a)) * L, function()
 				local px, py = strokeLine(x, y, a, L, bow, 4)
+				at(above(0.25))
 				emitShape(stripShape(px, py, w, 0.2, 0), c, lodFor(w))
 			end)
 		end
@@ -1059,7 +1117,9 @@ do
 				end
 				local s = shape(xs, ys)
 				local lod = lodFor(W)
+				at(bump(0))
 				emitShape(s, groundShade(x, y, shadowK), lod, 0, W * 0.25)
+				at(above(0.25))
 				emitShape(s, c, lod)
 				local px, py = { x - ca * L * 0.45, x + ca * L * 0.4 }, { y - sa * L * 0.45, y + sa * L * 0.4 }
 				emitShape(stripShape(px, py, W * 0.12, 0.1, 0), shade(c, 0.6), lodFor(W * 0.24))
@@ -1095,13 +1155,16 @@ do
 					local bx, by = strokeLine(px[i], py[i], b.a, b.L, 0.1, 3)
 					strokes[#strokes + 1] = stripShape(bx, by, w * 0.65, 0.3, 0)
 				end
+				at(bump(0))
 				for _, s in ipairs(strokes) do
 					emitShape(s, shadow, lod, 0, w * 0.7)
 				end
+				at(above(0.3))
 				for _, s in ipairs(strokes) do
 					emitShape(s, c, lod)
 				end
 				-- A lit line along the top of the main stick.
+				at(above(0.32))
 				emitShape(stripShape(px, py, w * 0.35, 0.2, -1), shade(c, 1.45), lodFor(w * 0.7), 0, -w * 0.1)
 			end)
 		end
@@ -1128,7 +1191,9 @@ do
 					xs[#xs + 1], ys[#ys + 1] = x + cos(t) * rr, y + sin(t) * rr
 				end
 				local lod = lodFor(r * 2)
+				at(bump(0))
 				emitShape(shape(xs, ys), groundShade(x, y, 0.62), lod, 0, r * 0.25)
+				at(above(0.25))
 				emitShape(shape(xs, ys), c, lod)
 				for k = -1, 1 do
 					local t = a + k * 0.6
@@ -1166,9 +1231,13 @@ do
 				for ch = 1, 3 do
 					proxy[ch] = 0.26 * sl[ch] + 0.34 * ll[ch] + 0.4 * cl[ch]
 				end
+				local top = above(0.4 + 0.1 * sized(size, sLo, sHi))
+				at(bump(0))
 				emitShape(s, toSrgb(proxy), kFar, r * 0.05, r * 0.32, 1.06, x, y)
 				emitShape(s, shadow, lod, r * 0.05, r * 0.32, 1.06, x, y)
+				at(top)
 				emitShape(s, c, lod)
+				at(top + 0.05)
 				emitShape(s, lit, lodFor(size * 0.55), 0, -r * 0.2, 0.62, x, y)
 			end)
 		end
@@ -1204,7 +1273,9 @@ do
 			local k = floor(uniform(2, 5))
 			local w = uniform(wLo, wHi)
 			local sh = blobShape(t[1], t[2] + w, w * 2.2, 8, 0.2, 1.8, 0)
+			at(bump(0))
 			emitShape(sh, groundShade(t[1], t[2], shadowK), lodFor(w * 2))
+			at(above(0.35)) -- blades poke up through the ground
 			for i = 1, k do
 				local rel = k > 1 and (2 * (i - 1) / (k - 1) - 1) or 0
 				local a = -math.pi / 2 + rel * 0.45 + gauss() * 0.12
@@ -1233,6 +1304,7 @@ do
 				local t = a + i * TAU / 8
 				xs[#xs + 1], ys[#ys + 1] = x + cos(t) * rr, y + sin(t) * rr
 			end
+			at(bump(0.02))
 			put(xs, ys, 8, pick(colors), 64)
 		end
 	end

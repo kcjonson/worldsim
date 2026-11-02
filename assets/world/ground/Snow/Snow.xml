@@ -75,6 +75,11 @@
 
         <farContrast>0.9</farContrast>
         <farGain>0.9988,1.0007,1.0034</farGain>
+
+        <!-- Heights (documented in Dirt.xml): one flat, mid height for all the snow, so it ranks as one tie
+             group, and only twigs, stones and grass tips stand out of it. -->
+        <heightBase>0.5</heightBase>
+        <heightRelief>0</heightRelief>
       </params>
     </generator>
     <variantCount>8</variantCount>
