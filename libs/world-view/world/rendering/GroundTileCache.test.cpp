@@ -1,6 +1,7 @@
 // The ground bake's disk cache: a stored bake comes back byte for byte, the key moves when the def's
-// script or XML does, and a damaged file is ignored until the next store rewrites it. No GL: the bake is
-// made up. GroundTileBaker.test.cpp runs the cache behind a real bake.
+// script does or its XML is reloaded, every def name gets a safe file of its own, and a damaged file is
+// ignored until the next store rewrites it. No GL: the bake is made up. GroundTileBaker.test.cpp runs the
+// cache behind a real bake.
 
 #include "world/rendering/GroundTileCache.h"
 
@@ -8,11 +9,14 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 
 using namespace worldview;
 
@@ -42,9 +46,11 @@ namespace {
 		}
 	};
 
-	std::string defXml(const std::string& inner = "") {
+	std::string defXml(const std::string& params = "", const std::string& inner = "") {
 		return "<?xml version=\"1.0\"?><AssetDefinitions><AssetDef><defName>Ground_CacheTest</defName><role>ground</role>"
-			   "<assetType>procedural</assetType><generator><scriptPath>gen.lua</scriptPath></generator>"
+			   "<assetType>procedural</assetType><generator><scriptPath>gen.lua</scriptPath><params>" +
+			   params +
+			   "</params></generator>"
 			   "<surface>Snow</surface><period>1</period><pixelsPerMeter>32</pixelsPerMeter><variantCount>2</variantCount>" +
 			   inner + "</AssetDef></AssetDefinitions>";
 	}
@@ -120,32 +126,82 @@ TEST(GroundTileCacheTest, AStoredBakeComesBackWhole) {
 	assets::AssetRegistry::Get().clearDefinitions();
 }
 
-TEST(GroundTileCacheTest, EditingTheScriptOrXmlMovesTheKey) {
-	const TempDir				   t;
-	const assets::AssetDefinition& def = loadDef(t);
-	const GroundTileCache		   cache(t.root / "cache");
-	const uint64_t				   original = GroundTileCache::keyFor(def, 4096).value();
-	EXPECT_EQ(GroundTileCache::keyFor(def, 4096).value(), original) << "the same files, the same key";
-	EXPECT_NE(GroundTileCache::keyFor(def, 2048).value(), original) << "the render tile size is in it";
+TEST(GroundTileCacheTest, TheKeyFollowsTheLoadedDefAndTheScript) {
+	const TempDir t;
+	auto&		  registry = assets::AssetRegistry::Get();
+	const auto	  keyNow = [&registry]() {
+		   return GroundTileCache::keyFor(*registry.getDefinition("Ground_CacheTest"), 4096);
+	};
+	const auto reload = [&registry, &t]() {
+		registry.clearDefinitions();
+		registry.loadDefinitionsFromFolder(t.root.string());
+	};
+	const GroundTileCache cache(t.root / "cache");
+	loadDef(t);
+	const uint64_t original = keyNow().value();
+	EXPECT_EQ(keyNow().value(), original) << "the same def, the same key";
+	EXPECT_NE(GroundTileCache::keyFor(*registry.getDefinition("Ground_CacheTest"), 2048).value(), original)
+		<< "the render tile size is in it";
 	ASSERT_TRUE(cache.store(madeUpBake(), original));
 
+	// The generator reads its script from disk on every run, so an edit moves the key at once.
 	t.write("Tile/gen.lua", "-- a generator, edited\n");
-	const uint64_t scriptEdited = GroundTileCache::keyFor(def, 4096).value();
+	const uint64_t scriptEdited = keyNow().value();
 	EXPECT_NE(scriptEdited, original);
-	EXPECT_FALSE(cache.load(def, scriptEdited).has_value()) << "a bake stored under the old key is stale";
+	EXPECT_FALSE(cache.load(*registry.getDefinition("Ground_CacheTest"), scriptEdited).has_value())
+		<< "a bake stored under the old key is stale";
 
-	t.write("Tile/Tile.xml", defXml("<rotate>mirror</rotate>"));
-	const uint64_t xmlEdited = GroundTileCache::keyFor(def, 4096).value();
-	EXPECT_NE(xmlEdited, scriptEdited);
+	// The generator runs the params parsed at load, so an XML edit moves the key once it is reloaded, not before.
+	t.write("Tile/Tile.xml", defXml("<density>3</density>"));
+	EXPECT_EQ(keyNow().value(), scriptEdited) << "until a reload the bake still runs the def as loaded";
+	reload();
+	const uint64_t paramsEdited = keyNow().value();
+	EXPECT_NE(paramsEdited, scriptEdited);
+
 	t.write(
 		"Tile/Tile.xml",
-		defXml("<rotate>mirror</rotate><!-- a note --><transition><width>0.8</width></transition><transition over=\"Dirt\"><tint>0.3</tint></transition>")
+		defXml(
+			"<!-- a note --><density>3</density>",
+			"<rotate>mirror</rotate><macro><amplitude>0.4</amplitude></macro>"
+			"<transition><width>0.8</width></transition><transition over=\"Dirt\"><tint>0.3</tint></transition>"
+		)
 	);
-	EXPECT_EQ(GroundTileCache::keyFor(def, 4096).value(), xmlEdited) << "a comment or a <transition> block never re-bakes";
+	reload();
+	EXPECT_EQ(keyNow().value(), paramsEdited) << "a comment, <rotate>, <macro> or a <transition> block never re-bakes";
 
 	fs::remove(t.root / "Tile" / "gen.lua");
-	EXPECT_FALSE(GroundTileCache::keyFor(def, 4096).has_value()) << "no script, nothing to key a bake on";
-	assets::AssetRegistry::Get().clearDefinitions();
+	EXPECT_FALSE(keyNow().has_value()) << "no script, nothing to key a bake on";
+	registry.clearDefinitions();
+}
+
+TEST(GroundTileCacheTest, EveryNameGetsItsOwnFileInsideTheDirectory) {
+	const fs::path		  directory = fs::path("cache") / "ground";
+	const GroundTileCache cache(directory);
+	const auto			  lower = [](std::string s) {
+		   std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+		   return s;
+	};
+
+	const fs::path grass = cache.pathFor("Ground_Grass");
+	EXPECT_EQ(grass, cache.pathFor("Ground_Grass")) << "one name, one file, every run";
+	EXPECT_EQ(grass.parent_path(), directory);
+	EXPECT_EQ(grass.filename().string().rfind("Ground_Grass-", 0), 0U) << grass;
+	EXPECT_EQ(grass.extension(), ".gtile");
+	EXPECT_NE(lower(cache.pathFor("ground_grass").filename().string()), lower(grass.filename().string()))
+		<< "names that differ only in case don't share a file on a case-blind file system";
+
+	for (const std::string& name :
+		 std::vector<std::string>{"../../escape", "..", "a:b", "a/b\\c", "Ground Grass?*", std::string(300, 'x')}) {
+		const fs::path path = cache.pathFor(name);
+		EXPECT_EQ(path.parent_path(), directory) << name;
+		const std::string file = path.filename().string();
+		EXPECT_LE(file.size(), 80U) << name;
+		EXPECT_EQ(file.find(".."), std::string::npos) << name;
+		for (const char c : path.stem().string()) {
+			EXPECT_TRUE(std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_' || c == '-') << name << ": " << file;
+		}
+	}
+	EXPECT_NE(cache.pathFor("a:b"), cache.pathFor("a/b")) << "names that sanitize alike still get files of their own";
 }
 
 TEST(GroundTileCacheTest, ADamagedFileIsIgnoredUntilStoredAgain) {

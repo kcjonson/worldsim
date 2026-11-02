@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <span>
@@ -143,7 +144,16 @@ namespace worldview {
 	}
 
 	std::filesystem::path GroundTileCache::pathFor(const std::string& defName) const {
-		return directory / (defName + ".gtile");
+		constexpr size_t kMaxStem = 48;
+		std::string		 stem;
+		for (const char c : defName.substr(0, kMaxStem)) {
+			const bool safe = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
+			stem += safe ? c : '_';
+		}
+		const uint64_t h = foundation::hashBytes(defName.data(), defName.size());
+		char		   suffix[16];
+		std::snprintf(suffix, sizeof(suffix), "-%08x", static_cast<uint32_t>(h ^ (h >> 32)));
+		return directory / (stem + suffix + ".gtile");
 	}
 
 	std::optional<uint64_t> GroundTileCache::keyFor(const assets::AssetDefinition& def, int maxRenderSize) {
@@ -156,15 +166,6 @@ namespace worldview {
 		const auto mixText = [&mixBytes](std::string_view text) {
 			mixBytes({reinterpret_cast<const uint8_t*>(text.data()), text.size()});
 		};
-		const auto mixFile = [&mixBytes, &def](const fs::path& path, const char* what) {
-			const std::optional<std::vector<uint8_t>> bytes = readBytes(path);
-			if (!bytes.has_value()) {
-				LOG_WARNING(Engine, "GroundTileCache: can't read %s's %s (%s); not caching it", def.defName.c_str(), what, path.string().c_str());
-				return false;
-			}
-			mixBytes(*bytes);
-			return true;
-		};
 
 		mix(kFormatVersion);
 		mix(GroundTileBaker::kVersion);
@@ -175,19 +176,24 @@ namespace worldview {
 		mix(def.ground.pixelsPerMeter);
 		mix(maxRenderSize);
 		mixText(def.generatorName);
-		if (!def.sourceFile.empty()) {
-			const std::optional<std::string> xml = assets::groundBakeXml(def.sourceFile);
-			if (!xml.has_value()) {
-				LOG_WARNING(Engine, "GroundTileCache: can't read %s's XML (%s); not caching it", def.defName.c_str(), def.sourceFile.string().c_str());
-				return std::nullopt;
-			}
-			mixText(*xml);
+		// The params the registry parsed at load, which the generator runs, not the XML as it is on disk now.
+		const std::vector<std::pair<std::string, std::string>> params = def.params.sorted();
+		mix(static_cast<uint64_t>(params.size()));
+		for (const auto& [name, value] : params) {
+			mixText(name);
+			mixText(value);
 		}
 		if (def.isLuaGenerator()) {
+			// The generator reads its script from disk on every run, so the script is keyed as it is now.
 			const fs::path script = assets::AssetRegistry::Get().resolveScriptPath(def);
-			if (script.empty() || !mixFile(script, "script")) {
+			const std::optional<std::vector<uint8_t>> bytes = script.empty() ? std::nullopt : readBytes(script);
+			if (!bytes.has_value()) {
+				LOG_WARNING(
+					Engine, "GroundTileCache: can't read %s's script (%s); not caching it", def.defName.c_str(), script.string().c_str()
+				);
 				return std::nullopt;
 			}
+			mixBytes(*bytes);
 		}
 		return h;
 	}

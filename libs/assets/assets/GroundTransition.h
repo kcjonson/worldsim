@@ -8,7 +8,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <filesystem>
 #include <optional>
 #include <string>
 #include <vector>
@@ -59,9 +58,5 @@ namespace assets {
 	/// schema doesn't know is a warning and is ignored.
 	GroundTransitions
 	readGroundTransitions(const pugi::xml_node& defNode, std::optional<world::Surface> surface, std::vector<GroundTransitionIssue>& issues);
-
-	/// A ground def file's XML as the bake sees it, for its cache key: parsed, without comments or any
-	/// <transition> block, written back out raw. Nullopt when the file doesn't parse.
-	[[nodiscard]] std::optional<std::string> groundBakeXml(const std::filesystem::path& file);
 
 } // namespace assets

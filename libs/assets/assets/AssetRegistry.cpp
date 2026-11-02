@@ -142,6 +142,12 @@ namespace assets {
 		return params.find(key) != params.end();
 	}
 
+	std::vector<std::pair<std::string, std::string>> GeneratorParams::sorted() const {
+		std::vector<std::pair<std::string, std::string>> out(params.begin(), params.end());
+		std::sort(out.begin(), out.end());
+		return out;
+	}
+
 	// ============================================================================
 	// GeneratorRegistry Implementation
 	// ============================================================================
@@ -1180,7 +1186,6 @@ namespace assets {
 
 			// Store base folder for relative path resolution
 			def.baseFolder = baseFolder;
-			def.sourceFile = fs::absolute(xmlPath);
 
 			// Store definition
 			loadedNames.push_back(def.defName);

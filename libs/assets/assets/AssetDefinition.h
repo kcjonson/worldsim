@@ -10,6 +10,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -302,6 +303,9 @@ namespace assets {
 		/// Check if a parameter exists
 		bool has(const char* key) const;
 
+		/// Every parameter as written, sorted by name: what a generator run reads, in a stable order.
+		[[nodiscard]] std::vector<std::pair<std::string, std::string>> sorted() const;
+
 	  private:
 		std::unordered_map<std::string, std::string> params;
 	};
@@ -401,7 +405,6 @@ namespace assets {
 		std::string			  svgPath;			  // For Simple assets: path to SVG file
 		std::string			  motionPath;		  // Optional motion (animation clips) file; @shared/ or relative to baseFolder
 		std::filesystem::path baseFolder;		  // Folder containing this asset's definition (for relative path resolution)
-		std::filesystem::path sourceFile;		  // The XML file it was read from; empty for one registered in code
 		float				  worldHeight = 1.0F; // World height in meters (for SVG normalization)
 		// Half-range of random placement rotation, in radians. 0 = upright (default): placed
 		// assets are upright billboards (trees, grass, bushes) and look wrong tilted. Opt-in (>0)
