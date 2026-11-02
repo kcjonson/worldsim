@@ -54,9 +54,12 @@ end
 
 -- Colors -------------------------------------------------------------------------------------
 
-local function hex(key, default)
-	local s = getString(key, default):gsub("#", "")
+local function parseHex(text)
+	local s = text:gsub("#", "")
 	return { tonumber(s:sub(1, 2), 16) / 255, tonumber(s:sub(3, 4), 16) / 255, tonumber(s:sub(5, 6), 16) / 255 }
+end
+local function hex(key, default)
+	return parseHex(getString(key, default))
 end
 
 local function toHsv(c)
@@ -191,6 +194,25 @@ local clover = {
 clover.perLo, clover.perHi = getFloatRange("cloverPerPatch", 6, 16)
 clover.sigmaLo, clover.sigmaHi = getFloatRange("cloverSpread", 0.05, 0.09)
 clover.leafletLo, clover.leafletHi = getFloatRange("cloverLeaflet", 0.022, 0.032)
+
+-- Wildflowers: heads standing over the grass, in Thomas clusters around blue-noise parents plus blue-noise
+-- singles. Petal colors and their centers are lists; clusters take them in turn, so every variant has the
+-- same mix. Off (0 clusters, 0 singles) by default.
+local flower = {
+	clustersPerM2 = getFloat("flowerClusters", 0),
+	singlesPerM2 = getFloat("flowerSingles", 0),
+	colors = {},
+	centers = {},
+}
+for c in getString("flowerColors", "#EAE6D6"):gmatch("[^,%s]+") do
+	flower.colors[#flower.colors + 1] = parseHex(c)
+end
+for c in getString("flowerCenters", "#D8AE34"):gmatch("[^,%s]+") do
+	flower.centers[#flower.centers + 1] = parseHex(c)
+end
+flower.perLo, flower.perHi = getFloatRange("flowerPerCluster", 4, 9)
+flower.sigmaLo, flower.sigmaHi = getFloatRange("flowerSpread", 0.03, 0.06)
+flower.sizeLo, flower.sizeHi = getFloatRange("flowerSize", 0.025, 0.04)
 
 local clumpSpacing = getFloat("clumpSpacing", 0.2)
 local clumpRLo, clumpRHi = getFloatRange("clumpRadius", 0.08, 0.24)
@@ -852,6 +874,55 @@ for _, pa in ipairs(patches) do
 	end
 end
 
+-- Wildflowers: clusters around blue-noise parents, their sizes normalized to the variant's expected
+-- total like clover, plus blue-noise singles.
+local flowers = {}
+do
+	local function head(x, y, species)
+		local size = uniform(flower.sizeLo, flower.sizeHi)
+		local petal = jitter(flower.colors[species], 0.04, 3)
+		local center = flower.centers[(species - 1) % #flower.centers + 1]
+		-- What the head averages to over its disc, for the proxy it sits on: the petals cover about 80% of
+		-- the disc, the center 6%, the proxy itself the rest.
+		local pl, cl = toLinear(petal), toLinear(center)
+		local proxy = {}
+		for ch = 1, 3 do
+			proxy[ch] = (0.8 * pl[ch] + 0.06 * cl[ch]) / 0.86
+		end
+		flowers[#flowers + 1] = {
+			x % P,
+			y % P,
+			size = size,
+			k = floor(uniform(5, 7)),
+			a0 = rand() * TAU,
+			petal = petal,
+			center = center,
+			proxy = toSrgb(proxy),
+		}
+	end
+	local n = #flower.colors
+	if n > 0 and flower.clustersPerM2 > 0 then
+		local parents = blueNoise(count(flower.clustersPerM2), 0.6 / sqrt(flower.clustersPerM2))
+		local sum = 0
+		for _, pa in ipairs(parents) do
+			pa.raw = uniform(flower.perLo, flower.perHi)
+			sum = sum + pa.raw
+		end
+		local scale = #parents * 0.5 * (flower.perLo + flower.perHi) / max(sum, 1)
+		for i, pa in ipairs(parents) do
+			local sigma = uniform(flower.sigmaLo, flower.sigmaHi)
+			for _ = 1, floor(pa.raw * scale + 0.5) do
+				head(pa[1] + gauss() * sigma, pa[2] + gauss() * sigma, (i - 1) % n + 1)
+			end
+		end
+	end
+	if n > 0 and flower.singlesPerM2 > 0 then
+		for i, s in ipairs(blueNoise(count(flower.singlesPerM2), 0.5 / sqrt(flower.singlesPerM2))) do
+			head(s[1], s[2], (i - 1) % n + 1)
+		end
+	end
+end
+
 -- Broadleaf rosettes (blue noise), flat on the ground.
 local rosettes = blueNoise(count(rosette.perM2), 0.8 / sqrt(max(rosette.perM2, 0.01)))
 for _, ro in ipairs(rosettes) do
@@ -1053,6 +1124,16 @@ for _, pa in ipairs(patches) do
 	paint(pa[1], pa[2], pa.sigma * 2.5, function(out)
 		local r = out * 2.5
 		return c, 1 - exp(-peak * exp(-0.5 * r * r))
+	end)
+end
+-- Flower heads are smaller than a grid cell, so each is painted a cell wide at the share of it the head
+-- covers: they're bright, and the far stack should carry them where they are.
+for _, f in ipairs(flowers) do
+	local c = toLinear(f.proxy)
+	local r = max(f.size * 0.55, cellSize)
+	local share = min(1, (f.size * 0.55 / r) ^ 2)
+	paint(f[1], f[2], r, function()
+		return c, share
 	end)
 end
 
@@ -1268,6 +1349,21 @@ local drawItem = {
 	function(u)
 		upFan(u[1], u[2], u.k, u.dir, u.spread, u.len, tuftBend, u.hub, underFill, false, u.c, kCover)
 	end,
+	-- A flower head: a centered contact shadow, a disc in the head's average color (kept down to mip 3,
+	-- like the blade proxies, so the mips that drop the petals keep mip 0's mean), the petals and the
+	-- center over it.
+	function(f)
+		local s, x, y = f.size, f[1], f[2]
+		blob(x, y, s * 0.62, 10, 0.1, 1, 0, underlayColor, underlayAlpha * 0.5, lodFor(s))
+		blob(x, y, s * 0.55, 10, 0.08, 1, 0, f.proxy, 1, kCover)
+		local petalLen, petalW = s * 0.3, s * 0.16
+		for i = 0, f.k - 1 do
+			local a = f.a0 + (i + (rand() - 0.5) * 0.3) * TAU / f.k
+			local c = tone(f.petal, uniform(0.96, 1.04), 0, 1)
+			blob(x + cos(a) * petalLen * 0.85, y + sin(a) * petalLen * 0.85, petalW, 8, 0.1, petalLen / petalW, a, c, 1, lodFor(petalW * 2))
+		end
+		blob(x, y, s * 0.13, 7, 0.1, 1, 0, f.center, 1, lodFor(s * 0.26))
+	end,
 }
 
 table.sort(items, function(a, b)
@@ -1294,3 +1390,8 @@ for _, s in ipairs(depth.top) do
 	put(s[1], s[2], s[3], s[4], s[5], s[6])
 end
 depth.mode = 0
+
+-- Flower heads top the sward, so nothing covers them; the registry wraps the ones crossing an edge.
+for _, f in ipairs(flowers) do
+	drawItem[5](f)
+end

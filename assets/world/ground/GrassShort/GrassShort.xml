@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Placeholder ground tile for Surface::GrassShort until its real art lands: the surface's old flat
-     color under a light speckle (ground_placeholder.lua). -->
+<!-- GrassShort ground tile: Grass's generator (ground_grass.lua) with shorter, sparser, drier
+     grass. Smaller clumps of short tufts and blades in yellower olive tones, more straw and dry tips, and
+     more of the earthy ground between them: soil peeks, litter and pebbles. -->
 <AssetDefinitions>
   <AssetDef>
     <defName>Ground_GrassShort</defName>
@@ -9,21 +10,125 @@
     <surface>GrassShort</surface>
     <assetType>procedural</assetType>
     <generator>
-      <scriptPath>@shared/ground_placeholder.lua</scriptPath>
+      <scriptPath>@shared/ground_grass.lua</scriptPath>
       <params>
-        <!-- Must equal <period> below. -->
+        <!-- The knobs are documented in Grass.xml. period must equal <period> below; farMean is mip 0's
+             mean as the bake measures it, set again whenever the look changes. -->
         <period>4</period>
-        <baseColor>#597347</baseColor>
+
+        <modelUndergrowth>0.3</modelUndergrowth>
+        <modelClumpFill>0.6</modelClumpFill>
+        <farMean>93.1,105.26,51.87</farMean>
+        <farContrast>0.72</farContrast>
+        <farCoarseContrast>0.215</farCoarseContrast>
+        <farCellsPerMeter>8</farCellsPerMeter>
+        <groundColor>#5C4D33</groundColor>
+
+        <litterDensity>150</litterDensity>
+        <litterSize>0.012,0.03</litterSize>
+        <litterDark>#40362A</litterDark>
+        <litterMid>#63553A</litterMid>
+        <litterDry>#8A7A50</litterDry>
+        <litterShares>0.55,0.33</litterShares>
+
+        <soilDensity>14</soilDensity>
+        <soilSize>0.04,0.14</soilSize>
+        <soilColor>#78633F</soilColor>
+        <soilSpeckColor>#574631</soilSpeckColor>
+        <soilDryColor>#93805A</soilDryColor>
+
+        <pebbleDensity>10</pebbleDensity>
+        <pebbleSize>0.006,0.02</pebbleSize>
+        <pebbleColorA>#8A8274</pebbleColorA>
+        <pebbleColorB>#A39A88</pebbleColorB>
+        <pebbleColorC>#6F695E</pebbleColorC>
+        <pebbleHaloColor>#2A2A22</pebbleHaloColor>
+        <pebbleHaloAlpha>0.5</pebbleHaloAlpha>
+
+        <undergrowthDensity>400</undergrowthDensity>
+        <undergrowthLength>0.06,0.095</undergrowthLength>
+        <undergrowthHubWidth>0.008,0.012</undergrowthHubWidth>
+        <undergrowthSpikes>5,8</undergrowthSpikes>
+        <undergrowthFan>0.5,0.8</undergrowthFan>
+        <undergrowthFill>0.45</undergrowthFill>
+        <groundShow>0.12</groundShow>
+        <undergrowthDark>#4A6429</undergrowthDark>
+        <undergrowthLight>#556F30</undergrowthLight>
+
+        <rosetteDensity>0.5</rosetteDensity>
+        <rosetteLeafLength>0.06,0.14</rosetteLeafLength>
+        <rosetteColor>#57703A</rosetteColor>
+        <rosetteInnerColor>#6C8748</rosetteInnerColor>
+        <rosetteMidribColor>#8AAE6E</rosetteMidribColor>
+
+        <cloverPatches>0.5</cloverPatches>
+        <cloverPerPatch>6,16</cloverPerPatch>
+        <cloverSpread>0.05,0.09</cloverSpread>
+        <cloverLeaflet>0.022,0.032</cloverLeaflet>
+        <cloverColor>#6A9A4C</cloverColor>
+        <cloverChevronColor>#A8CC90</cloverChevronColor>
+
+        <clumpSpacing>0.3</clumpSpacing>
+        <clumpRadius>0.1,0.22</clumpRadius>
+        <clumpSway>0.12</clumpSway>
+        <tuftsPerClump>12,16</tuftsPerClump>
+        <tuftSpread>0.45</tuftSpread>
+        <tuftLength>0.05,0.085</tuftLength>
+        <tuftFan>0.45,0.75</tuftFan>
+        <tuftFanOut>0.35</tuftFanOut>
+        <tuftBend>0.15</tuftBend>
+        <tuftFill>0.55</tuftFill>
+        <tuftSpikes>4,7</tuftSpikes>
+        <tuftHubWidth>0.012,0.02</tuftHubWidth>
+        <tuftDark>#708C3C</tuftDark>
+        <tuftLight>#7E9B45</tuftLight>
+        <tuftHighlightDark>#8DA94E</tuftHighlightDark>
+        <tuftHighlightLight>#9BB658</tuftHighlightLight>
+
+        <bladeDensity>90</bladeDensity>
+        <bladeLength>0.04,0.085</bladeLength>
+        <bladeWidth>0.012,0.02</bladeWidth>
+        <broadBladeShare>0.15</broadBladeShare>
+        <broadBladeWidth>0.028,0.038</broadBladeWidth>
+        <bladeBow>0.15</bladeBow>
+        <bladeTuftShare>0.5</bladeTuftShare>
+        <bladeLean>0.3</bladeLean>
+        <bladeGain>1.1</bladeGain>
+        <bladeTipGain>1.12</bladeTipGain>
+        <bladeHue>0</bladeHue>
+        <bladeTipHue>4</bladeTipHue>
+        <underlayColor>#161E0E</underlayColor>
+        <underlayAlpha>0.55</underlayAlpha>
+        <underlayWidth>2.2</underlayWidth>
+        <strawShare>0.18</strawShare>
+        <strawDark>#A89A62</strawDark>
+        <strawLight>#BDAF77</strawLight>
+        <dryTipShare>0.5</dryTipShare>
+        <tipHighlightShare>0.1</tipHighlightShare>
+
+        <densityContrast>2.2</densityContrast>
+        <clumpValue>0.32</clumpValue>
+        <clumpDome>0.15</clumpDome>
+        <clumpHue>16</clumpHue>
+        <clumpSaturation>0.1</clumpSaturation>
+        <patchHue>14</patchHue>
+        <patchValue>0.05</patchValue>
+        <elementValue>0.05</elementValue>
+        <elementHue>4</elementHue>
+        <lushDarken>0.06</lushDarken>
+        <lushSaturate>0.12</lushSaturate>
       </params>
     </generator>
-    <variantCount>4</variantCount>
+    <variantCount>8</variantCount>
     <period>4</period>
-    <pixelsPerMeter>64</pixelsPerMeter>
-    <rotate>free</rotate>
+    <pixelsPerMeter>128</pixelsPerMeter>
+    <!-- Grass stands up the screen, so cells never turn; they only flip left to right. -->
+    <rotate>mirror</rotate>
     <macro>
-      <dry>1.0,0.94,0.72</dry>
-      <lush>0.86,0.96,0.86</lush>
-      <amplitude>0.5</amplitude>
+      <dry>1.06,1.02,0.86</dry>
+      <lush>0.94,0.98,1.1</lush>
+      <amplitude>0.4</amplitude>
+      <wavelengths>96,24</wavelengths>
     </macro>
   </AssetDef>
 </AssetDefinitions>
