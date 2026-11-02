@@ -1,4 +1,4 @@
-# Scenario 08: ground tiles
+# Scenario 09: ground tiles
 
 **Status:** ready  
 **Last verified:** 2026-11-02

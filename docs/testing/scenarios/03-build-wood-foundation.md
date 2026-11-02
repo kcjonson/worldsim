@@ -14,7 +14,7 @@ Colonist has an `AxePrimitive`. Either run [01-craft-axe-and-box.md](./01-craft-
 first, or give the axe directly:
 
 ```
-curl.exe "http://127.0.0.1:<PORT>/api/dev/give?material=AxePrimitive&n=1&where=colonist"
+curl.exe "http://127.0.0.1:<PORT>/api/dev/give?material=AxePrimitive&n=1&where=colonist&slot=hands"
 ```
 
 ---

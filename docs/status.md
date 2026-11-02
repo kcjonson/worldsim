@@ -650,7 +650,7 @@ while (running) {
   - [x] In-game GPU hold for perf captures, so nobody locks clocks (WOR-553)
   - [x] Tile pass back to net neutral or faster than main in every cell
   - [x] Final perf capture against main with the GPU hold on
-  - [x] Manual test script `docs/testing/scenarios/08-ground-tiles.md`
+  - [x] Manual test script `docs/testing/scenarios/09-ground-tiles.md`
   - [ ] Draft PRs in worldsim and salal (no merge, no tag)
 
 ### Ground Surface Blending
@@ -683,7 +683,7 @@ while (running) {
 - [x] Waterline and nav ring growth from organic edges measured, not trimmed (WOR-563; no frame cost, worker time in terrain spec section 6)
 - [ ] Verify and hand off (WOR-562)
   - [x] Final perf capture against main
-  - [x] `docs/testing/scenarios/08-ground-tiles.md` transition steps
+  - [x] `docs/testing/scenarios/09-ground-tiles.md` transition steps
   - [x] Regression pass (01-04, 06 and 08 pass; WOR-566, WOR-567 and WOR-568 filed, outside this branch's code)
   - [x] Draft PRs (textures, then blending stacked on top); hand-off screenshots of each pair at zoom 20, 3, 1.5 and 0.5
 

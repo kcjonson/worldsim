@@ -50,7 +50,8 @@ protected pixel for pixel: no golden images, no screenshot diffs, in CI or local
 | 05 | ui-sandbox scene menu and gallery | [scenarios/05-ui-sandbox-menu-and-gallery.md](./scenarios/05-ui-sandbox-menu-and-gallery.md) |
 | 06 | asset-manager browse | [scenarios/06-asset-manager-browse.md](./scenarios/06-asset-manager-browse.md) |
 | 07 | Pause menu | [scenarios/07-pause-menu.md](./scenarios/07-pause-menu.md) |
-| 08 | Ground tiles | [scenarios/08-ground-tiles.md](./scenarios/08-ground-tiles.md) |
+| 08 | HUD text fits | [scenarios/08-hud-text-fits.md](./scenarios/08-hud-text-fits.md) |
+| 09 | Ground tiles | [scenarios/09-ground-tiles.md](./scenarios/09-ground-tiles.md) |
 
 **Run each scenario in isolation** from a fresh launch, or use `give` / `need` dev verbs to
 set preconditions from a running instance. The fully-combined four-scenario flow now runs

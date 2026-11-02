@@ -254,23 +254,25 @@ namespace ecs {
 		// Get the packaged entity
 		auto packagedEntity = static_cast<EntityID>(placeEff.packagedEntityId);
 
-		// Clear the colonist's carrying state and hands. Empty hands are only a problem when this
-		// colonist was actually carrying THIS box: a crafted-furniture box spawns AT its place
-		// target (source == target), so startPlacePackagedAction skips the degenerate pickup phase
-		// and goes straight to phase 2 -- the box installs correctly with hands legitimately empty.
-		// carryingPackagedEntity (set only by a real PickupPackaged) is the authoritative carry
-		// state; warn only when it says we should be holding the box yet the hands are empty.
-		const bool shouldBeCarrying = inventory.carryingPackagedEntity.has_value()
-									  && inventory.carryingPackagedEntity.value() == placeEff.packagedEntityId;
-		if (shouldBeCarrying && !inventory.leftHand.has_value() && !inventory.rightHand.has_value()) {
-			LOG_WARNING(
-				Engine,
-				"[Action] Colonist completed PlacePackaged but hands were already empty - pickup phase may have failed"
-			);
+		// Release the box from the hands only when this colonist actually carried it. A crafted-
+		// furniture box spawns AT its place target (source == target), so startPlacePackagedAction
+		// skips the degenerate pickup phase and goes straight to phase 2: the hands never held the
+		// box and may hold something else (the axe just crafted at the same station), which must
+		// survive the install. carryingPackagedEntity (set only by a real PickupPackaged) is the
+		// authoritative carry state.
+		const bool carried = inventory.carryingPackagedEntity.has_value()
+							 && inventory.carryingPackagedEntity.value() == placeEff.packagedEntityId;
+		if (carried) {
+			if (!inventory.leftHand.has_value() && !inventory.rightHand.has_value()) {
+				LOG_WARNING(
+					Engine,
+					"[Action] Colonist completed PlacePackaged but hands were already empty - pickup phase may have failed"
+				);
+			}
+			inventory.carryingPackagedEntity.reset();
+			inventory.leftHand.reset();
+			inventory.rightHand.reset();
 		}
-		inventory.carryingPackagedEntity.reset();
-		inventory.leftHand.reset();
-		inventory.rightHand.reset();
 
 		// Verify entity still exists before manipulating it
 		if (!world->isAlive(packagedEntity)) {

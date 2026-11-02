@@ -20,7 +20,8 @@ namespace world_sim {
 
 	class ColonistListView : public ui::Component {
 	  public:
-		static constexpr float		 kWidth = 208.0F;
+		// Room in a card's activity meter for the longest activity, DECONSTRUCTING 100%.
+		static constexpr float		 kWidth = 224.0F;
 		static constexpr std::size_t kMaxColonists = 20;
 		static constexpr double		 kDoubleClickSeconds = 0.4;
 

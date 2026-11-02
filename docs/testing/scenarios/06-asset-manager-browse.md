@@ -16,9 +16,10 @@ Launch `asset-manager`; the dev server is on its usual port.
 3. Click a category header: its rows collapse and the chevron points right; click again to expand.
 4. Click an asset row: the row shows selected and the right pane fills with its kicker, name, badge, preview and XML. The preview shows the asset, not an empty frame, with the collider outlined in cyan over it, or "no collider" in its corner.
 5. Pick a procedural asset: six variant previews under Randomize, every one drawn; click Randomize and the previews change.
-6. Type part of a name in search: the tree narrows to matching assets.
-7. Scroll the XML well and the tree: both scroll on their own, the XML sideways too, since its lines don't wrap.
-8. Click Reload: the summary and tree rebuild, the selection kept when it still exists.
-9. Select Ground_Grass and pick Bake: the status counts through generating and baking the variants, then shows the mips, the zoom strip and the report; the log's `Ground bake Ground_Grass` line gives the time and the paths, render and filter split.
-10. Close and relaunch, open Ground_Grass's Bake again: it shows at once, and the log line says `from the cache`.
-11. Add a comment line to `assets/shared/scripts/ground_grass.lua`, click Reload: the log says the def changed since its cached bake, and it bakes again. Take the comment out.
+6. Pick Groundcover_Grass, whose XML is long: the top bar keeps its height with search and Reload inside it, and `/api/ui/lint` is `"count":0`.
+7. Type part of a name in search: the tree narrows to matching assets.
+8. Scroll the XML well and the tree: both scroll on their own, the XML sideways too, since its lines don't wrap.
+9. Click Reload: the summary and tree rebuild, the selection kept when it still exists.
+10. Select Ground_Grass and pick Bake: the status counts through generating and baking the variants, then shows the mips, the zoom strip and the report; the log's `Ground bake Ground_Grass` line gives the time and the paths, render and filter split.
+11. Close and relaunch, open Ground_Grass's Bake again: it shows at once, and the log line says `from the cache`.
+12. Add a comment line to `assets/shared/scripts/ground_grass.lua`, click Reload: the log says the def changed since its cached bake, and it bakes again. Take the comment out.
