@@ -112,6 +112,13 @@ namespace assets {
 			if (assetDef.child("placement").child("biome")) {
 				report.add(Severity::Error, defName, "placement", "Ground defs are never placed in the world; remove the <biome> rules");
 			}
+
+			const bool						   landSurface = surface.has_value() && *surface != world::Surface::Water;
+			std::vector<GroundTransitionIssue> transitionIssues;
+			readGroundTransitions(assetDef, landSurface ? surface : std::nullopt, transitionIssues);
+			for (GroundTransitionIssue& issue : transitionIssues) {
+				report.add(issue.error ? Severity::Error : Severity::Warning, defName, "transition", std::move(issue.message), std::move(issue.context));
+			}
 		}
 
 		// Resolve a generator script path the way AssetRegistry::generateAsset does.
@@ -222,7 +229,7 @@ namespace assets {
 				if (isGroundRole(role)) {
 					validateGroundDef(assetDef, defName, groundSurfaceToDef, report);
 				} else {
-					for (const char* field : {"surface", "period", "pixelsPerMeter", "rotate", "macro", "seedGroup"}) {
+					for (const char* field : {"surface", "period", "pixelsPerMeter", "rotate", "macro", "seedGroup", "transition"}) {
 						if (assetDef.child(field)) {
 							report.add(Severity::Warning, defName, field, std::string("<") + field + "> is only read for role ground; it has no effect", fileCtx);
 						}

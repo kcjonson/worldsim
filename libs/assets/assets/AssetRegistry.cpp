@@ -403,6 +403,12 @@ namespace assets {
 				LOG_WARNING(Engine, "Ground AssetDef '%s' has unknown <rotate> '%s'; using free", def.defName.c_str(), rotate.c_str());
 			}
 
+			std::vector<GroundTransitionIssue> transitionIssues;
+			ground.transitions = readGroundTransitions(defNode, ground.surface, transitionIssues);
+			for (const GroundTransitionIssue& issue : transitionIssues) {
+				LOG_WARNING(Engine, "Ground AssetDef '%s' <transition>: %s (%s)", def.defName.c_str(), issue.message.c_str(), issue.context.c_str());
+			}
+
 			const pugi::xml_node macroNode = defNode.child("macro");
 			if (!macroNode) {
 				return;

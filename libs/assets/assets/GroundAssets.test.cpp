@@ -536,3 +536,57 @@ TEST(GroundAssetTest, SeedGroupDefaultsToTheDefName) {
 	EXPECT_EQ(loadGround(t, "<surface>Grass</surface><seedGroup>grass</seedGroup>")->ground.seedGroup, "grass");
 	AssetRegistry::Get().clearDefinitions();
 }
+
+TEST(GroundAssetTest, TransitionsStartFromTheDefaultBlockAndOverridesKeepWhatTheyLeaveOut) {
+	const TempDir	   t;
+	const auto		   at = [](const AssetDefinition* def, world::Surface lower) { return def->ground.transitions[static_cast<size_t>(lower)]; };
+	const GroundTransition schema;
+
+	const AssetDefinition* bare = loadGround(t, "<surface>Rock</surface>");
+	ASSERT_NE(bare, nullptr);
+	EXPECT_EQ(at(bare, world::Surface::Sand), schema) << "no <transition>: every pair takes the schema's defaults";
+	EXPECT_FLOAT_EQ(schema.widthM, 0.4F);
+	EXPECT_FLOAT_EQ(schema.softness, 0.1F);
+	EXPECT_FLOAT_EQ(schema.breakup, 0.5F);
+
+	const AssetDefinition* def = loadGround(
+		t,
+		"<surface>Rock</surface>"
+		"<transition><width>0.5</width><softness>0.05</softness><shadow>0.25</shadow></transition>"
+		"<transition over=\"Sand\"><width>0.7</width><offset>-0.2</offset><ridge>0.06</ridge></transition>"
+	);
+	ASSERT_NE(def, nullptr);
+	const GroundTransition grass = at(def, world::Surface::Grass);
+	EXPECT_FLOAT_EQ(grass.widthM, 0.5F);
+	EXPECT_FLOAT_EQ(grass.offsetM, 0.0F);
+	EXPECT_FLOAT_EQ(grass.softness, 0.05F);
+	EXPECT_FLOAT_EQ(grass.breakup, 0.5F) << "a field the default block leaves out keeps the schema's";
+	EXPECT_FLOAT_EQ(grass.shadow, 0.25F);
+
+	const GroundTransition sand = at(def, world::Surface::Sand);
+	EXPECT_FLOAT_EQ(sand.widthM, 0.7F);
+	EXPECT_FLOAT_EQ(sand.offsetM, -0.2F);
+	EXPECT_FLOAT_EQ(sand.ridge, 0.06F);
+	EXPECT_FLOAT_EQ(sand.softness, 0.05F) << "an override's left-out fields keep the default block's";
+	EXPECT_FLOAT_EQ(sand.shadow, 0.25F);
+	AssetRegistry::Get().clearDefinitions();
+}
+
+TEST(GroundAssetTest, ABrokenTransitionBlockIsDroppedAndItsPairKeepsTheDefault) {
+	const TempDir		   t;
+	const AssetDefinition* def = loadGround(
+		t,
+		"<surface>Snow</surface>"
+		"<transition><width>1.2</width><offset>0.2</offset><tint>0.25</tint></transition>"
+		"<transition over=\"Rock\"><width>1.4</width><offset>0.2</offset></transition>" // past the 1.5 m reach
+		"<transition over=\"Mud\"><width>0.25</width><offset>0</offset><stain>lots</stain></transition>"
+	);
+	ASSERT_NE(def, nullptr);
+	for (const world::Surface lower : {world::Surface::Rock, world::Surface::Mud}) {
+		const GroundTransition& pair = def->ground.transitions[static_cast<size_t>(lower)];
+		EXPECT_FLOAT_EQ(pair.widthM, 1.2F) << world::surfaceToString(lower);
+		EXPECT_FLOAT_EQ(pair.tint, 0.25F) << world::surfaceToString(lower);
+		EXPECT_FLOAT_EQ(pair.stain, 0.0F) << world::surfaceToString(lower);
+	}
+	AssetRegistry::Get().clearDefinitions();
+}

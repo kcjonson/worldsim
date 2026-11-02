@@ -32,7 +32,8 @@ namespace worldview {
 		/// builds whose baker code differs never read each other's bakes, and a clean build starts empty.
 		[[nodiscard]] static std::filesystem::path defaultDirectory();
 
-		/// The def's key, or nullopt (logged) when its XML or script can't be read.
+		/// The def's key, or nullopt (logged) when its XML or script can't be read. The XML is keyed as the
+		/// bake sees it (assets::groundBakeXml), so a comment or a <transition> block never re-bakes.
 		[[nodiscard]] static std::optional<uint64_t> keyFor(const assets::AssetDefinition& def, int maxRenderSize);
 
 		/// The bake stored under the key, its timings zero and its metrics measured again; nullopt when

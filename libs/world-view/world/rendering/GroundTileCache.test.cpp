@@ -42,12 +42,11 @@ namespace {
 		}
 	};
 
-	std::string defXml(const std::string& extra = "") {
+	std::string defXml(const std::string& inner = "") {
 		return "<?xml version=\"1.0\"?><AssetDefinitions><AssetDef><defName>Ground_CacheTest</defName><role>ground</role>"
 			   "<assetType>procedural</assetType><generator><scriptPath>gen.lua</scriptPath></generator>"
-			   "<surface>Snow</surface><period>1</period><pixelsPerMeter>32</pixelsPerMeter><variantCount>2</variantCount>"
-			   "</AssetDef></AssetDefinitions>" +
-			   extra;
+			   "<surface>Snow</surface><period>1</period><pixelsPerMeter>32</pixelsPerMeter><variantCount>2</variantCount>" +
+			   inner + "</AssetDef></AssetDefinitions>";
 	}
 
 	const assets::AssetDefinition& loadDef(const TempDir& t) {
@@ -135,8 +134,14 @@ TEST(GroundTileCacheTest, EditingTheScriptOrXmlMovesTheKey) {
 	EXPECT_NE(scriptEdited, original);
 	EXPECT_FALSE(cache.load(def, scriptEdited).has_value()) << "a bake stored under the old key is stale";
 
-	t.write("Tile/Tile.xml", defXml("<!-- edited -->"));
-	EXPECT_NE(GroundTileCache::keyFor(def, 4096).value(), scriptEdited);
+	t.write("Tile/Tile.xml", defXml("<rotate>mirror</rotate>"));
+	const uint64_t xmlEdited = GroundTileCache::keyFor(def, 4096).value();
+	EXPECT_NE(xmlEdited, scriptEdited);
+	t.write(
+		"Tile/Tile.xml",
+		defXml("<rotate>mirror</rotate><!-- a note --><transition><width>0.8</width></transition><transition over=\"Dirt\"><tint>0.3</tint></transition>")
+	);
+	EXPECT_EQ(GroundTileCache::keyFor(def, 4096).value(), xmlEdited) << "a comment or a <transition> block never re-bakes";
 
 	fs::remove(t.root / "Tile" / "gen.lua");
 	EXPECT_FALSE(GroundTileCache::keyFor(def, 4096).has_value()) << "no script, nothing to key a bake on";

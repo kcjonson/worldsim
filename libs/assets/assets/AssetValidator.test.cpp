@@ -261,6 +261,69 @@ TEST(AssetValidatorTest, UnknownGroundRotateIsWarning) {
 	EXPECT_FALSE(hasIssue(validateGround("<surface>Grass</surface><rotate>mirror</rotate>"), Severity::Warning, "rotate"));
 }
 
+TEST(AssetValidatorTest, GroundTransitionRecipesWithinTheirRulesAreClean) {
+	const ValidationReport r = validateGround(
+		"<surface>Grass</surface>"
+		"<transition><width>1.4</width><softness>0.15</softness></transition>"
+		"<transition over=\"Dirt\"><width>0.5</width><offset>0.15</offset><softness>0.06</softness><shadow>0.25</shadow></transition>"
+		"<transition over=\"Sand\"><width>1.2</width><offset>-0.3</offset><breakup>0.8</breakup><stain>1</stain><ridge>0</ridge><tint>0.5</tint></transition>"
+	);
+	EXPECT_FALSE(hasIssue(r, Severity::Error, "transition"));
+	EXPECT_FALSE(hasIssue(r, Severity::Warning, "transition"));
+}
+
+TEST(AssetValidatorTest, GroundTransitionOverMustNameALowerLandSurface) {
+	EXPECT_TRUE(hasMessageContaining(validateGround("<surface>Grass</surface><transition over=\"Rock\"/>"), Severity::Error, "below this one"));
+	EXPECT_TRUE(hasMessageContaining(validateGround("<surface>Grass</surface><transition over=\"Grass\"/>"), Severity::Error, "below this one"));
+	EXPECT_TRUE(hasMessageContaining(validateGround("<surface>Grass</surface><transition over=\"Water\"/>"), Severity::Error, "land surface"));
+	EXPECT_TRUE(hasMessageContaining(validateGround("<surface>Grass</surface><transition over=\"Lava\"/>"), Severity::Error, "land surface"));
+	EXPECT_FALSE(hasIssue(validateGround("<surface>Grass</surface><transition over=\"GrassShort\"/>"), Severity::Error, "transition"));
+}
+
+TEST(AssetValidatorTest, GroundTransitionBandIsCappedAtTheFieldsReach) {
+	EXPECT_TRUE(hasMessageContaining(
+		validateGround("<surface>Grass</surface><transition><width>1.4</width><offset>0.2</offset></transition>"), Severity::Error, "at most 1.5 m"
+	));
+	EXPECT_FALSE(hasIssue(validateGround("<surface>Grass</surface><transition><width>1.2</width><offset>0.3</offset></transition>"), Severity::Error, "transition"))
+		<< "exactly at the reach";
+	// An override is checked as resolved: its offset against the default block's width.
+	EXPECT_TRUE(hasMessageContaining(
+		validateGround("<surface>Grass</surface><transition><width>1.3</width></transition><transition over=\"Dirt\"><offset>0.25</offset></transition>"),
+		Severity::Error,
+		"at most 1.5 m"
+	));
+}
+
+TEST(AssetValidatorTest, GroundTransitionOffsetMustStayInsideTheWidth) {
+	EXPECT_TRUE(hasMessageContaining(
+		validateGround("<surface>Grass</surface><transition><width>0.3</width><offset>0.3</offset></transition>"), Severity::Error, "strictly between"
+	));
+	EXPECT_TRUE(hasMessageContaining(
+		validateGround("<surface>Grass</surface><transition><width>0.3</width><offset>-0.4</offset></transition>"), Severity::Error, "strictly between"
+	));
+}
+
+TEST(AssetValidatorTest, GroundTransitionFieldsAreNumbersInRange) {
+	for (const char* bad : {"<width>0.01</width>", "<width>1.5</width>", "<softness>0.02</softness>", "<softness>0.4</softness>", "<breakup>0.9</breakup>",
+							"<shadow>-0.1</shadow>", "<stain>1.5</stain>", "<ridge>2</ridge>", "<tint>-1</tint>"}) {
+		EXPECT_TRUE(hasMessageContaining(validateGround(std::string("<surface>Grass</surface><transition>") + bad + "</transition>"), Severity::Error, "must be from"))
+			<< bad;
+	}
+	EXPECT_TRUE(hasMessageContaining(
+		validateGround("<surface>Grass</surface><transition><width>wide</width></transition>"), Severity::Error, "is not a number"
+	));
+}
+
+TEST(AssetValidatorTest, GroundTransitionDuplicatesAreErrorsAndUnknownFieldsWarnings) {
+	EXPECT_TRUE(hasMessageContaining(validateGround("<surface>Grass</surface><transition/><transition/>"), Severity::Error, "second default"));
+	EXPECT_TRUE(hasMessageContaining(
+		validateGround("<surface>Grass</surface><transition over=\"Dirt\"/><transition over=\"Dirt\"/>"), Severity::Error, "second <transition>"
+	));
+	const ValidationReport unknown = validateGround("<surface>Grass</surface><transition><glow>1</glow></transition>");
+	EXPECT_TRUE(hasMessageContaining(unknown, Severity::Warning, "not a transition field"));
+	EXPECT_FALSE(hasIssue(unknown, Severity::Error, "transition"));
+}
+
 TEST(AssetValidatorTest, GroundFieldsOnOtherRolesAreWarnings) {
 	TempAssets t;
 	t.writeXml("Stone", oneDef("<defName>Stone</defName><assetType>simple</assetType><svgPath>stone.svg</svgPath><period>4</period>"));

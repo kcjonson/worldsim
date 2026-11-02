@@ -175,8 +175,13 @@ namespace worldview {
 		mix(def.ground.pixelsPerMeter);
 		mix(maxRenderSize);
 		mixText(def.generatorName);
-		if (!def.sourceFile.empty() && !mixFile(def.sourceFile, "XML")) {
-			return std::nullopt;
+		if (!def.sourceFile.empty()) {
+			const std::optional<std::string> xml = assets::groundBakeXml(def.sourceFile);
+			if (!xml.has_value()) {
+				LOG_WARNING(Engine, "GroundTileCache: can't read %s's XML (%s); not caching it", def.defName.c_str(), def.sourceFile.string().c_str());
+				return std::nullopt;
+			}
+			mixText(*xml);
 		}
 		if (def.isLuaGenerator()) {
 			const fs::path script = assets::AssetRegistry::Get().resolveScriptPath(def);

@@ -13,6 +13,7 @@
 #include <variant>
 #include <vector>
 
+#include "GroundTransition.h"
 #include "placement/PlacementTypes.h"
 
 #include <glm/vec2.hpp>
@@ -269,6 +270,9 @@ namespace assets {
 		// Salts the bake's generator seeds: defs sharing a group get the same seed for each variant index,
 		// so a family drawn by one generator lays its variants out alike. The def's name when unset.
 		std::string					  seedGroup;
+		// How this surface meets each lower one, by the lower surface's id (<transition>). Not part of the
+		// bake's cache key: the bake never reads it.
+		GroundTransitions			  transitions{};
 	};
 
 	/// Key-value parameter store for generator configuration.
