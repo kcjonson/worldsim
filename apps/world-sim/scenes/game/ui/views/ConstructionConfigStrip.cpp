@@ -11,7 +11,7 @@ namespace world_sim {
 
 	namespace {
 
-		constexpr float kCardWidth = 120.0F;
+		constexpr float kCardWidth = 120.0F; // the narrowest; a longer name widens its card
 		constexpr float kPresetCardWidth = 88.0F;
 		constexpr float kCardHeight = 40.0F;
 		constexpr float kCardSpacing = 8.0F;
@@ -195,7 +195,8 @@ namespace world_sim {
 			[&](const std::pair<std::string, float>& material) -> ui::Ref<ui::Component> {
 				return materialRow->addChild<StripCard>({
 					.id = "config_strip_card_" + material.first,
-					.size = {kCardWidth, kCardHeight},
+					.size = {ui::kAuto, kCardHeight},
+					.minSize = {kCardWidth, ui::kAuto},
 					.name = material.first,
 					.detail = costText(material.second),
 					.picked = material.first == status.material,
@@ -213,7 +214,8 @@ namespace world_sim {
 			[&](const ThicknessPresetInfo& preset) -> ui::Ref<ui::Component> {
 				return presetRow->addChild<StripCard>({
 					.id = "config_strip_preset_" + preset.name,
-					.size = {kPresetCardWidth, kCardHeight},
+					.size = {ui::kAuto, kCardHeight},
+					.minSize = {kPresetCardWidth, ui::kAuto},
 					.name = preset.name,
 					.detail = thicknessText(preset.thicknessMeters),
 					.picked = preset.name == status.thicknessPreset,

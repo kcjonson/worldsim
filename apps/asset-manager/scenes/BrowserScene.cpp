@@ -108,7 +108,8 @@ namespace {
 					 .flexDirection = ui::FlexDirection::Row,
 					 .gap = 12.0F,
 					 .padding = {0.0F, 12.0F},
-					 .alignItems = ui::AlignItems::Center},
+					 .alignItems = ui::AlignItems::Center,
+					 .flexShrink = 0.0F},
 				.style = surface,
 			});
 			topBar.addChild<ui::Rectangle>(
@@ -126,9 +127,12 @@ namespace {
 			topBar.addChild<ui::Button>({.id = "am_reload", .label = "Reload", .onPress = [this] { reload(); }});
 			summary = topBar.addChild<ui::Text>({.id = "am_summary", .style = ui::styles::text::secondary});
 
-			ui::Ref<ui::Component> body = root().addChild<ui::Component>(
-				{.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Row, .flexGrow = 1.0F}}
-			);
+			// Free to be shorter than its content, so a long definition scrolls in its well instead of
+			// pushing the window's height.
+			ui::Ref<ui::Component> body = root().addChild<ui::Component>({
+				.minSize = {ui::kAuto, 0.0F},
+				.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Row, .flexGrow = 1.0F},
+			});
 			ui::Ref<ui::Rectangle> sidebar = body.addChild<ui::Rectangle>({
 				.size = {kTreeWidth, ui::kAuto},
 				.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .padding = 12.0F},

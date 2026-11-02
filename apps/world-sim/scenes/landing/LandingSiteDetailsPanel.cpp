@@ -66,10 +66,12 @@ namespace world_sim {
 		// Biome-name header.
 		if (!details.biomeName.empty()) {
 			content.addChild<ui::Text>({
+				.size = {ui::percent(100.0F), ui::kAuto},
 				.style = world_sim::text(
 					*theme, {.family = family::display, .size = tokens::fontSize::fsXl, .color = tokens::color::textBright}
 				),
 				.text = details.biomeName,
+				.wrap = true,
 			});
 		}
 
