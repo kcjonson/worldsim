@@ -92,5 +92,20 @@
       <lush>0.98,0.99,1.02</lush>
       <amplitude>0.3</amplitude>
     </macro>
+    <!-- How Snow meets the ones below it (docs/technical/ground-textures.md, "Pair parameters"): wide and
+         soft, settling in hollows before it covers tops, with a cool veil and no dark rim; mud stains. -->
+    <transition>
+      <width>1.2</width>
+      <offset>0.2</offset>
+      <softness>0.15</softness>
+      <tint>0.25</tint>
+    </transition>
+    <transition over="Mud">
+      <width>0.25</width>
+      <softness>0.2</softness>
+      <stain>0.25</stain>
+      <offset>0</offset>
+      <tint>0</tint>
+    </transition>
   </AssetDef>
 </AssetDefinitions>

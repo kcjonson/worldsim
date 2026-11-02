@@ -110,5 +110,16 @@
       <lush>0.92,0.95,1.0</lush>
       <amplitude>0.5</amplitude>
     </macro>
+    <!-- How Dirt meets the ones below it (docs/technical/ground-textures.md, "Pair parameters"): a soft
+         band onto sand with no shadow, a stain onto mud. -->
+    <transition over="Sand">
+      <width>0.3</width>
+      <softness>0.1</softness>
+    </transition>
+    <transition over="Mud">
+      <width>0.25</width>
+      <softness>0.2</softness>
+      <stain>0.25</stain>
+    </transition>
   </AssetDef>
 </AssetDefinitions>

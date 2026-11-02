@@ -97,5 +97,12 @@
       <lush>0.96,0.98,1.04</lush>
       <amplitude>0.4</amplitude>
     </macro>
+    <!-- How Sand meets Mud (docs/technical/ground-textures.md, "Pair parameters"): the sand darkens
+         toward the edge, where the mud wets it. -->
+    <transition over="Mud">
+      <width>0.25</width>
+      <softness>0.2</softness>
+      <stain>0.25</stain>
+    </transition>
   </AssetDef>
 </AssetDefinitions>
