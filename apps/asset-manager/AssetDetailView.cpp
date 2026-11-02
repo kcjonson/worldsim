@@ -58,8 +58,8 @@ namespace asset_manager {
 
 		// A column shrinks its children down to nothing, text included, so what must keep its height
 		// doesn't shrink, and the part that scrolls or stretches takes up the difference.
-		constexpr ui::Layout kKeepHeight{.flexShrink = 0.0F};
-		constexpr ui::Layout kHug{.flexShrink = 0.0F, .alignSelf = ui::AlignItems::Start};
+		const ui::Layout kKeepHeight{.flexShrink = 0.0F};
+		const ui::Layout kHug{.flexShrink = 0.0F, .alignSelf = ui::AlignItems::Start};
 
 	} // namespace
 
