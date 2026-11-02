@@ -448,12 +448,15 @@ namespace worldview::ground {
 
 	Srgb8Image encodeSrgb8(const LinearImage& image, uint32_t ditherSeed) {
 		Srgb8Image out{.width = image.width, .height = image.height, .rgba = {}};
-		out.rgba.resize(image.texels.size() * kChannels);
+		const size_t count = image.texels.size();
+		out.rgba.resize(count * kChannels);
+		std::vector<float> wanted(count * 3); // each channel's code before the dither and rounding
 		for (int y = 0; y < image.height; ++y) {
 			for (int x = 0; x < image.width; ++x) {
-				const glm::vec4& t = image.at(x, y);
+				const size_t	 i = (static_cast<size_t>(y) * static_cast<size_t>(image.width)) + static_cast<size_t>(x);
+				const glm::vec4& t = image.texels[i];
 				const float		 alpha = std::clamp(t.a, 0.0F, 1.0F);
-				uint8_t* o = &out.rgba[((static_cast<size_t>(y) * static_cast<size_t>(image.width)) + static_cast<size_t>(x)) * kChannels];
+				uint8_t*		 o = &out.rgba[i * kChannels];
 				for (int c = 0; c < 3; ++c) {
 					const float straight = alpha > 0.0F ? t[c] / alpha : 0.0F;
 					const float dither =
@@ -462,10 +465,56 @@ namespace worldview::ground {
 						 ) /
 						 16777216.0F) -
 						0.5F;
-					const float code = (linearToSrgb(straight) * 255.0F) + dither;
-					o[c] = static_cast<uint8_t>(std::clamp(std::lround(code), 0L, 255L));
+					wanted[(i * 3) + static_cast<size_t>(c)] = linearToSrgb(straight) * 255.0F;
+					o[c] = static_cast<uint8_t>(std::clamp(std::lround(wanted[(i * 3) + static_cast<size_t>(c)] + dither), 0L, 255L));
 				}
 				o[3] = static_cast<uint8_t>(std::lround(alpha * 255.0F));
+			}
+		}
+
+		// The dither leaves each texel unbiased, but a small level's errors don't average out: on a 4x4
+		// mip one code of a dark channel is several percent of its light. Where a channel's mean has
+		// drifted past kTolerance, step the texels that rounded furthest the wrong way one code each,
+		// while each step brings the mean closer.
+		constexpr double			  kTolerance = 0.0005;
+		const std::array<float, 256>& table = srgbDecodeTable();
+		std::vector<size_t>			  order;
+		for (int c = 0; c < 3; ++c) {
+			double target = 0.0;
+			double have = 0.0;
+			for (size_t i = 0; i < count; ++i) {
+				const double alpha = static_cast<double>(out.rgba[(i * kChannels) + 3]) / 255.0;
+				target += image.texels[i][c];
+				have += table[out.rgba[(i * kChannels) + static_cast<size_t>(c)]] * alpha;
+			}
+			double error = target - have;
+			if (std::abs(error) <= kTolerance * std::max(target, 1e-9)) {
+				continue;
+			}
+			const int direction = error > 0.0 ? 1 : -1;
+			const auto residual = [&](size_t i) {
+				return static_cast<float>(direction) *
+					   (wanted[(i * 3) + static_cast<size_t>(c)] - static_cast<float>(out.rgba[(i * kChannels) + static_cast<size_t>(c)]));
+			};
+			order.clear();
+			for (size_t i = 0; i < count; ++i) {
+				if (residual(i) > 0.0F) {
+					order.push_back(i);
+				}
+			}
+			std::sort(order.begin(), order.end(), [&](size_t a, size_t b) { return residual(a) > residual(b); });
+			for (const size_t i : order) {
+				uint8_t&   code = out.rgba[(i * kChannels) + static_cast<size_t>(c)];
+				const int  next = static_cast<int>(code) + direction;
+				const auto alpha = static_cast<double>(out.rgba[(i * kChannels) + 3]) / 255.0;
+				if (next < 0 || next > 255) {
+					continue;
+				}
+				const double delta = (table[static_cast<size_t>(next)] - table[code]) * alpha;
+				if (std::abs(error - delta) < std::abs(error)) {
+					code = static_cast<uint8_t>(next);
+					error -= delta;
+				}
 			}
 		}
 		return out;

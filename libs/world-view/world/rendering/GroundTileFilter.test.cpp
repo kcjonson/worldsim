@@ -231,6 +231,25 @@ TEST(GroundTileFilterTest, DitheredEncodingKeepsAFlatMean) {
 	EXPECT_NEAR(mean(decodeSrgb8(encoded)).r, 0.2F, 0.2F * 0.0025F);
 }
 
+TEST(GroundTileFilterTest, DitheredEncodingKeepsASmallLevelsMean) {
+	// A 4x4 mip of a dark ground: 16 texels' dither errors alone leave a channel's mean up to about 1% off
+	// (a code near sRGB 50 is 4% of its light), so the encode steps codes until it's back within 0.05%.
+	for (uint32_t seed = 0; seed < 32; ++seed) {
+		LinearImage level(4, 4);
+		for (int y = 0; y < 4; ++y) {
+			for (int x = 0; x < 4; ++x) {
+				const int s = static_cast<int>(seed) * 3;
+				level.at(x, y) = {0.07F + (0.01F * noise(x, y, s)), 0.05F + (0.008F * noise(x, y, s + 1)), 0.03F + (0.006F * noise(x, y, s + 2)), 1.0F};
+			}
+		}
+		const glm::vec4 target = mean(level);
+		const glm::vec4 encoded = mean(decodeSrgb8(encodeSrgb8(level, seed)));
+		for (int c = 0; c < 3; ++c) {
+			EXPECT_LT(std::abs(encoded[c] - target[c]) / target[c], 0.005F) << "seed " << seed << ", channel " << c;
+		}
+	}
+}
+
 TEST(GroundTileFilterTest, MetricsOnSyntheticImages) {
 	EXPECT_NEAR(linearToLab(glm::vec3(1.0F)).x, 100.0F, 0.01F);
 	EXPECT_NEAR(linearToLab(glm::vec3(1.0F)).y, 0.0F, 0.01F);

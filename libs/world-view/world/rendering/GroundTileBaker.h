@@ -153,7 +153,7 @@ namespace worldview {
 
 		/// Part of every cache key: bump it when the bake draws or filters differently, so the bakes on
 		/// disk from before are dropped.
-		static constexpr uint32_t kVersion = 1;
+		static constexpr uint32_t kVersion = 2;
 		static constexpr int	  kMaxMipLevels = 7;	 // mips 0 to 6
 		static constexpr int	  kMaxLayerSize = 1024;	 // the supersampled mip 0 is then 8192 px a side
 		static constexpr float	  kMeanLockSigma = 2.0F; // texels of the mip being locked

@@ -121,7 +121,10 @@ namespace worldview::ground {
 
 	/// Encode to straight-alpha sRGB 8-bit. Color is dithered by up to half a code before rounding, from
 	/// a hash of (x, y, channel, ditherSeed): rounding is then unbiased, so a flat far mip keeps its mean
-	/// instead of snapping to the nearest code. Alpha rounds plainly.
+	/// instead of snapping to the nearest code. A small level's dither errors don't average out, so a
+	/// channel whose linear mean lands more than 0.05% off then has its codes stepped one at a time, the
+	/// texels that rounded furthest the wrong way first, until no step brings it closer. Alpha rounds
+	/// plainly.
 	[[nodiscard]] Srgb8Image encodeSrgb8(const LinearImage& image, uint32_t ditherSeed);
 
 	/// Back to premultiplied linear light.
