@@ -62,6 +62,10 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 ### 2026
 
+#### November 2026
+
+- [2026-11-02 - Coast rims, hexagonal shelves, and active margins](./entries/2026-11-02-coast-rims-and-hex-shelves.md)
+
 #### October 2026
 
 - [2026-10-25 - Dev server out of foundation; the logger takes a sink (SAL-30)](./entries/2026-10-25-dev-server-out-of-foundation.md)
