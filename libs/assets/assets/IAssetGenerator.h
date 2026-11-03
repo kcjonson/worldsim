@@ -24,6 +24,7 @@ namespace assets {
 struct GenerationContext {
 	uint32_t seed = 0;			// Deterministic seed for RNG
 	uint32_t variantIndex = 0;	// Which variant is being generated
+	std::optional<float> periodMeters;		// A ground def's <period>, the tile a variant covers; unset for other roles
 
 	/// Create a seeded random number generator
 	std::mt19937 createRng() const { return std::mt19937(seed + variantIndex); }
@@ -48,11 +49,19 @@ struct GeneratedPath {
 	std::vector<Foundation::Vec2> vertices;
 	Foundation::Color			  fillColor{0.3F, 0.6F, 0.2F, 1.0F};	 // Default grass green
 	bool						  isClosed = true;
+	// Drawn only where the screen shows at least this many pixels per meter (path:setLod in Lua).
+	// 0 = always drawn. The ground tile bake reads it to leave fine detail out of coarse mips.
+	float						  minPixelsPerMeter = 0.0F;
+	// The ground tile bake's height for this path, 0 to 1 (path:setHeight in Lua). Unset, a ground
+	// path takes its paint-order rank.
+	std::optional<float>		  height;
 
 	void clear() {
 		vertices.clear();
 		fillColor = Foundation::Color(0.3F, 0.6F, 0.2F, 1.0F);
 		isClosed = true;
+		minPixelsPerMeter = 0.0F;
+		height.reset();
 	}
 };
 

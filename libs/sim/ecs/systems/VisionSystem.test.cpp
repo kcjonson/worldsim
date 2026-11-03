@@ -157,21 +157,16 @@ namespace {
 		sys.update(0.0F);
 	}
 
-	// Grassland with a 32 m square lake at [32, 64) m on both axes in chunk (0, 0)
-	// (biome sectors 2 and 3 of 16 m).
+	// Grassland with a pond in chunk (0, 0), centred at (48, 52) with radius 20 m (its rim
+	// sinusoids put the south shore at y = 32 and the rest 13.7..26.3 m out).
 	class LakeSampler : public world::IWorldSampler {
 	  public:
 		[[nodiscard]] world::ChunkSampleResult sampleChunk(ChunkCoordinate coord) const override {
 			world::ChunkSampleResult r = world::makeUniformChunkSampleResult(
 				world::BiomeWeights::single(world::Biome::TemperateGrassland), 1.0F
 			);
-			if (coord.x == 0 && coord.y == 0) {
-				for (int sy = 2; sy < 4; ++sy) {
-					for (int sx = 2; sx < 4; ++sx) {
-						r.sectorGrid[static_cast<size_t>(sy * world::kSectorGridSize + sx)] =
-							world::BiomeWeights::single(world::Biome::Lake);
-					}
-				}
+			if (coord.x >= -1 && coord.x <= 1 && coord.y >= -1 && coord.y <= 1) {
+				r.pondBlobs.push_back({.cx = 48.0, .cy = 52.0, .radius = 20.0F, .phaseA = 1.5708F, .phaseB = 1.5708F, .depth = 120});
 			}
 			return r;
 		}

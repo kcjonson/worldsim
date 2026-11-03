@@ -85,6 +85,8 @@ add_executable(world-sim
     scenes/loading/GameLoadingScene.cpp
     scenes/game/dev/CameraCommand.cpp
     scenes/game/dev/DevCommandHandler.cpp
+    scenes/game/dev/GpuHold.cpp
+    scenes/game/dev/GpuHoldCommand.cpp
     scenes/game/GameScene.cpp
     scenes/settings/SettingsScene.cpp
 )
@@ -158,6 +160,8 @@ if(BUILD_TESTING)
     add_executable(world-sim-tests
         scenes/game/dev/CameraCommand.cpp
         scenes/game/dev/CameraCommand.test.cpp
+        scenes/game/dev/GpuHoldCommand.cpp
+        scenes/game/dev/GpuHoldCommand.test.cpp
     )
     target_include_directories(world-sim-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_compile_features(world-sim-tests PRIVATE cxx_std_20)

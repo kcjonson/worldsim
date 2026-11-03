@@ -1,6 +1,7 @@
 #include "Chunk.h"
 
 #include "world/chunk/ApronField.h"
+#include "world/chunk/GroundMacro.h"
 #include "world/chunk/SurfaceField.h"
 #include "world/chunk/TerrainPolygonBuilder.h"
 #include "world/chunk/TerrainPolygonQuery.h"
@@ -59,9 +60,21 @@ namespace world {
 		// below) reads only the segments near the chunk via this hydrology-only
 		// result; the builder reads the whole gather off m_biomeData directly.
 		const ChunkSampleResult raster = m_biomeData.rasterHydrology(m_coord);
+		ChunkNeighborhood		neighborhood(m_coord, m_biomeData, m_worldSeed);
+		const ChunkBiomes&		biomes = neighborhood.biomes(0, 0);
+		const generation::PatchNoise& patchNoise = neighborhood.patchNoise(0, 0);
 		for (uint16_t y = 0; y < kChunkSize; ++y) {
 			for (uint16_t x = 0; x < kChunkSize; ++x) {
-				m_tiles[y * kChunkSize + x] = computeTile(x, y, raster);
+				m_tiles[y * kChunkSize + x] = computeTileFrom({
+					.coord = m_coord,
+					.localX = x,
+					.localY = y,
+					.biome = biomes.at(x, y),
+					.patchNoise = &patchNoise,
+					.elevationMeters = neighborhood.tileElevation(0, 0, x, y),
+					.hydrology = &raster,
+					.worldSeed = m_worldSeed,
+				});
 			}
 		}
 		const double tilesMs = stageMs();
@@ -70,17 +83,27 @@ namespace world {
 		// then their distance field (D10): before post-processing, so these tiles
 		// match what a neighbor's apron computes for them. The apron lives on to
 		// fill the render tiles' apron below.
-		const ApronField	apron = ApronField::build(m_coord, m_biomeData, raster, m_worldSeed);
+		const ApronField	apron = ApronField::build(neighborhood, raster);
 		const ExtendedTiles extended(*this, apron);
 		const double		apronMs = stageMs();
 		double				polygonsMs = 0.0;
 		{
-			NeighborhoodGrids	 neighborhood(m_biomeData);
+			// Biome water over the extended region is its tiles' (already picked); beyond it, where
+			// river mouths reach, the neighborhood picks the same tile.
+			const int64_t		 extendedX = static_cast<int64_t>(m_coord.x) * kChunkSize - kApronTiles;
+			const int64_t		 extendedY = static_cast<int64_t>(m_coord.y) * kChunkSize - kApronTiles;
 			ChunkTerrainPolygons polygons = TerrainPolygonBuilder::build(
 				m_coord,
 				m_worldSeed,
 				[&extended](int32_t ex, int32_t ey) -> const TileData& { return extended.at(ex, ey); },
-				[this, &neighborhood](int64_t tx, int64_t ty) { return isBiomeWater(neighborhood.primaryBiomeAt(m_coord, tx, ty)); },
+				[&](int64_t tx, int64_t ty) {
+					const int64_t ex = tx - extendedX;
+					const int64_t ey = ty - extendedY;
+					if (ex >= 0 && ey >= 0 && ex < kExtendedSize && ey < kExtendedSize) {
+						return isBiomeWater(extended.at(static_cast<int32_t>(ex), static_cast<int32_t>(ey)));
+					}
+					return neighborhood.isBiomeWaterAt(tx, ty);
+				},
 				m_biomeData.riverSegments,
 				m_biomeData.pondBlobs
 			);
@@ -97,10 +120,12 @@ namespace world {
 
 		computeRenderData(extended, terrain);
 		const double renderMs = stageMs();
+		fillGroundMacro(m_coord, m_worldSeed, m_groundMacro);
+		const double macroMs = stageMs();
 		// Permanent worker-thread generation cost by stage. DEBUG: dev-tools log server.
 		LOG_DEBUG(
 			World,
-			"[ChunkGen] (%d, %d) %.1f ms: tiles %.1f, apron %.1f, polygons %.1f, bake %.1f, surfaces %.1f, render tiles %.1f",
+			"[ChunkGen] (%d, %d) %.1f ms: tiles %.1f, apron %.1f, polygons %.1f, bake %.1f, surfaces %.1f, render tiles %.1f, macro %.1f",
 			m_coord.x,
 			m_coord.y,
 			std::chrono::duration<double, std::milli>(stageEnd - start).count(),
@@ -109,7 +134,8 @@ namespace world {
 			polygonsMs,
 			bakeMs,
 			surfacesMs,
-			renderMs
+			renderMs,
+			macroMs
 		);
 
 		m_renderDataVersion.fetch_add(1, std::memory_order_release);
@@ -155,35 +181,19 @@ namespace world {
 		return m_tiles[localY * kChunkSize + localX];
 	}
 
-	TileData Chunk::computeTile(uint16_t localX, uint16_t localY, const ChunkSampleResult& hydrology) const {
-		return computeTileFrom({
-			.coord = m_coord,
-			.localX = localX,
-			.localY = localY,
-			.biomeWeights = m_biomeData.getTileBiome(localX, localY),
-			.elevationMeters = m_biomeData.getTileElevation(localX, localY),
-			.hydrology = &hydrology,
-			.worldSeed = m_worldSeed,
-		});
-	}
-
 	TileData Chunk::computeTileFrom(const TileComputeArgs& args) {
 		TileData tile;
 
-		// Store primary and secondary biomes with blend weight
-		tile.primaryBiome = args.biomeWeights.primary();
-		tile.secondaryBiome = args.biomeWeights.secondary();
-
-		// Convert float weight (0.0-1.0) to uint8_t (0-255)
-		float primaryWeight = args.biomeWeights.primaryWeight();
-		tile.biomeBlend = static_cast<uint8_t>(std::min(255.0F, primaryWeight * 255.0F));
+		tile.primaryBiome = args.biome.primary;
+		tile.secondaryBiome = args.biome.secondary;
+		tile.biomeBlend = args.biome.blend;
 
 		// Elevation in meters -> centimeters, clamped to uint16_t
 		float elevCm = args.elevationMeters * 100.0F;
 		tile.elevation = static_cast<uint16_t>(std::clamp(elevCm, 0.0F, 65535.0F));
 
 		// Select surface type based on primary biome (uses spatial clustering)
-		tile.surface = selectSurfaceFor(args.coord, tile.primaryBiome, args.localX, args.localY, args.elevationMeters, args.worldSeed);
+		tile.surface = selectSurfaceFor(*args.patchNoise, tile.primaryBiome, args.localX, args.localY);
 
 		// Water depth byte (cosmetic tile data, not drawn). Biome water
 		// (ocean/lake/wetland) reads deep; river channels set depth from their width
@@ -241,19 +251,16 @@ namespace world {
 		return tile;
 	}
 
-	Surface Chunk::selectSurfaceFor(ChunkCoordinate coord, Biome biome, uint16_t localX, uint16_t localY,
-	                                 float elevationMeters, uint64_t worldSeed) {
+	Surface Chunk::selectSurfaceFor(const generation::PatchNoise& patchNoise, Biome biome, uint16_t localX, uint16_t localY) {
 		// Delegate to biome-specific generators via dispatcher
 		generation::GenerationContext ctx{
-			.chunkCoord = coord,
 			.localX = localX,
 			.localY = localY,
-			.worldSeed = worldSeed,
+			.noise = &patchNoise,
 			.biome = biome,
-			.elevation = elevationMeters
 		};
 
-		return generation::BiomeDispatcher::generate(ctx).surface;
+		return generation::BiomeDispatcher::generate(ctx);
 	}
 
 	void Chunk::setTerrainPolygons(ChunkTerrainPolygons polygons) {
@@ -273,83 +280,6 @@ namespace world {
 		h *= 0xFF51AFD7ED558CCDULL;
 		h ^= h >> 33;
 		return static_cast<uint32_t>(h);
-	}
-
-	Foundation::Color Chunk::getBiomeColor(Biome biome) {
-		switch (biome) {
-			case Biome::TemperateGrassland:
-			case Biome::TropicalSavanna:
-			case Biome::AlpineGrassland:
-				return Foundation::Color(0.29F, 0.49F, 0.25F, 1.0F);
-
-			case Biome::TemperateDeciduousForest:
-			case Biome::TropicalRainforest:
-			case Biome::TropicalSeasonalForest:
-			case Biome::TemperateRainforest:
-			case Biome::BorealForest:
-			case Biome::MontaneForest:
-				return Foundation::Color(0.18F, 0.35F, 0.12F, 1.0F);
-
-			case Biome::HotDesert:
-			case Biome::ColdDesert:
-			case Biome::SemiDesert:
-			case Biome::XericShrubland:
-				return Foundation::Color(0.82F, 0.71F, 0.47F, 1.0F);
-
-			case Biome::ArcticTundra:
-			case Biome::AlpineTundra:
-			case Biome::PolarDesert:
-				return Foundation::Color(0.75F, 0.78F, 0.80F, 1.0F);
-
-			case Biome::TemperateWetland:
-			case Biome::TropicalWetland:
-				return Foundation::Color(0.25F, 0.42F, 0.35F, 1.0F);
-
-			case Biome::Beach:
-				return Foundation::Color(0.77F, 0.64F, 0.35F, 1.0F);
-
-			case Biome::Ocean:
-			case Biome::Lake:
-				return Foundation::Color(0.10F, 0.30F, 0.48F, 1.0F);
-
-			case Biome::Count:
-				return Foundation::Color(0.5F, 0.5F, 0.5F, 1.0F);
-		}
-		return Foundation::Color(0.5F, 0.5F, 0.5F, 1.0F);
-	}
-
-	Foundation::Color Chunk::getSurfaceColor(Surface surface) {
-		switch (surface) {
-			case Surface::Grass:
-				return Foundation::Color(0.29F, 0.49F, 0.25F, 1.0F); // #4a7c3f
-
-			case Surface::Dirt:
-				return Foundation::Color(0.45F, 0.35F, 0.25F, 1.0F);
-
-			case Surface::Sand:
-				return Foundation::Color(0.82F, 0.71F, 0.47F, 1.0F);
-
-			case Surface::Rock:
-				return Foundation::Color(0.42F, 0.42F, 0.42F, 1.0F);
-
-			case Surface::Snow:
-				return Foundation::Color(0.95F, 0.97F, 1.0F, 1.0F);
-
-			case Surface::Mud:
-				return Foundation::Color(0.35F, 0.25F, 0.15F, 1.0F); // Darker brown than Dirt
-
-			case Surface::GrassTall:
-				return Foundation::Color(0.25F, 0.45F, 0.22F, 1.0F); // Slightly darker green
-
-			case Surface::GrassShort:
-				return Foundation::Color(0.35F, 0.45F, 0.28F, 1.0F); // Yellow-green, drier
-
-			case Surface::GrassMeadow:
-				return Foundation::Color(0.22F, 0.42F, 0.20F, 1.0F); // Lush deep green
-
-			default:
-				return Foundation::Color(0.5F, 0.5F, 0.5F, 1.0F);
-		}
 	}
 
 } // namespace world

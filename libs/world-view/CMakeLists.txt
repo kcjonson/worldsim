@@ -3,6 +3,11 @@ add_library(world-view
     world/rendering/EntityRenderer.cpp
     world/rendering/BakedChunkRenderer.cpp
     world/rendering/GroundcoverRenderer.cpp
+    world/rendering/GroundPairs.cpp
+    world/rendering/GroundTileBank.cpp
+    world/rendering/GroundTileBaker.cpp
+    world/rendering/GroundTileCache.cpp
+    world/rendering/GroundTileFilter.cpp
     world/rendering/InstancedEntityRenderer.cpp
     world/rendering/BatchedEntityRenderer.cpp
     world/rendering/TemplateMeshCache.cpp

@@ -2,32 +2,17 @@
 
 // BeachGenerator - Terrain generation for Beach biome
 
+#include "world/chunk/Chunk.h"
 #include "world/generation/GenerationContext.h"
-#include "world/generation/GenerationResult.h"
-#include "world/generation/NoiseUtils.h"
 
 namespace world::generation {
 
-/// Beach surface generator.
-/// Primary: Sand, Variation: Rock outcrops
+/// Beach: Sand, with rock outcrops on 0.4% of tiles.
 class BeachGenerator {
 public:
-	[[nodiscard]] static GenerationResult generate(const GenerationContext& ctx) {
-		GenerationResult result;
-		float			 worldX = ctx.worldX();
-		float			 worldY = ctx.worldY();
-
-		constexpr float kPatchScale = 0.15F;
-		float			variationNoise = NoiseUtils::fractalNoise(
-            worldX * kPatchScale, worldY * kPatchScale,
-            ctx.worldSeed + 50000, 2, 0.5F
-        );
-
-		constexpr float kRockThreshold = 0.88F;
-		result.surface = (variationNoise > kRockThreshold) ? Surface::Rock : Surface::Sand;
-		result.moisture = 150; // Moderate (sea spray)
-
-		return result;
+	[[nodiscard]] static Surface generate(const GenerationContext& ctx) {
+		constexpr float kRockThreshold = 0.4815F; // the top 0.4% of the outcrop field
+		return ctx.patch(PatchField::Outcrop) > kRockThreshold ? Surface::Rock : Surface::Sand;
 	}
 };
 

@@ -2,6 +2,8 @@ add_library(world
     world/TileGrid.cpp
     world/chunk/Chunk.cpp
     world/chunk/ChunkManager.cpp
+    world/chunk/GroundMacro.cpp
+    world/chunk/NoiseLattice.cpp
     world/chunk/TilePostProcessor.cpp
     world/chunk/MockWorldSampler.cpp
     world/chunk/GeneratedWorldSampler.cpp
@@ -11,6 +13,8 @@ add_library(world
     world/chunk/TerrainDistanceField.cpp
     world/chunk/TerrainPolygonBuilder.cpp
     world/chunk/TerrainPolygonQuery.cpp
+    world/chunk/TileBiomes.cpp
+    world/generation/PatchNoise.cpp
 )
 
 target_include_directories(world

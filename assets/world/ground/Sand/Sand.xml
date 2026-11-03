@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Sand ground tile: fine pale grain (ground_bare.lua). Short fragments of wind ripples across the
+     screen, each a lit crest over a shadowed lee, wind-combed streaks, faint dune tones stretched by
+     the wind, mixed
+     mineral grains, a few pebbles, shell bits and dry twigs. -->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>Ground_Sand</defName>
+    <label>Sand</label>
+    <role>ground</role>
+    <surface>Sand</surface>
+    <assetType>procedural</assetType>
+    <generator>
+      <scriptPath>@shared/ground_bare.lua</scriptPath>
+      <params>
+        <!-- The knobs are documented in Dirt.xml; ripples, streaks and shells are here. -->
+        <baseColor>#CBB083</baseColor>
+
+        <!-- Regions (documented in Rock.xml): faint dune tones, stretched across the screen by the
+             wind. -->
+        <toneWaves>48</toneWaves>
+        <toneCycles>4,14</toneCycles>
+        <toneStretch>2</toneStretch>
+        <toneSlope>2.6</toneSlope>
+        <toneLevels>0.38,0.14,-0.36,-0.12</toneLevels>
+        <toneColors>#CEB487,#D2B88B,#C8AD80,#C4A97C</toneColors>
+        <toneRelief>0.04,0.08,-0.04,-0.08</toneRelief>
+
+        <!-- Ripples: short crest fragments in rows rippleWavelength apart, every row bending by
+             rippleAmp along two waves rippleWaveCycles (and 1.7 times as many) a period, with
+             rippleWander of the bend noise of its own, broken where a field of rippleBreakCycles a
+             period falls under rippleCoverage, which ripplePatchiness moves so ripples come in fields
+             with smooth sand between. Each fragment bows rippleBow of its width down the screen
+             toward its ends: a shadow strip rippleWidth wide below the crest in rippleShadow and a lit
+             strip above it in rippleLit, as wide as cancels it in linear light, each over a half step
+             rippleSoft times as wide. -->
+        <rippleWavelength>0.12</rippleWavelength>
+        <rippleWidth>0.018,0.028</rippleWidth>
+        <rippleCoverage>0.55</rippleCoverage>
+        <rippleAmp>0.035</rippleAmp>
+        <rippleWaveCycles>9</rippleWaveCycles>
+        <rippleBreakCycles>10</rippleBreakCycles>
+        <rippleWander>0.5</rippleWander>
+        <rippleBow>0.6</rippleBow>
+        <ripplePatchiness>0.6</ripplePatchiness>
+        <rippleSoft>2</rippleSoft>
+        <rippleLit>#D8C398</rippleLit>
+        <rippleShadow>#B49866</rippleShadow>
+
+        <!-- Streaks: streakDensity wind-combed lenses a square meter, streakLength long and streakWidth
+             wide, within streakAngle radians of level, in light and dark pairs streakContrast either
+             way. -->
+        <streakDensity>400</streakDensity>
+        <streakLength>0.04,0.12</streakLength>
+        <streakWidth>0.005,0.01</streakWidth>
+        <streakContrast>0.07</streakContrast>
+        <streakAngle>0.15</streakAngle>
+
+        <grainDensity>700</grainDensity>
+        <grainSize>0.012,0.02</grainSize>
+        <grainContrast>0.12</grainContrast>
+        <grainTints>#8C7C6C,#EFE4CC,#B07A50,#6E665E</grainTints>
+        <grainTintShare>0.12</grainTintShare>
+
+        <strawDensity>0.6</strawDensity>
+        <strawLength>0.03,0.07</strawLength>
+        <strawWidth>0.009,0.012</strawWidth>
+        <strawColors>#B8A274,#A08A5C</strawColors>
+
+        <twigDensity>0.25</twigDensity>
+        <twigLength>0.04,0.09</twigLength>
+        <twigWidth>0.009,0.012</twigWidth>
+        <twigColors>#8E7752,#7A6446</twigColors>
+        <twigShadow>0.7</twigShadow>
+
+        <!-- Shells: little fans in shellColors with shellRidgeColor ridges. -->
+        <shellDensity>1.5</shellDensity>
+        <shellSize>0.015,0.026</shellSize>
+        <shellColors>#EEE4D2,#E8D2C4,#F2EADC</shellColors>
+        <shellRidgeColor>#C2B098</shellRidgeColor>
+
+        <stoneDensity>3</stoneDensity>
+        <stoneSize>0.012,0.03</stoneSize>
+        <stoneColors>#A99B88,#8E8274,#C3B6A0,#9A8A7A</stoneColors>
+        <stoneShadow>0.62</stoneShadow>
+        <stoneLit>1.3</stoneLit>
+
+        <farContrast>1</farContrast>
+        <farCoarseContrast>0.88</farCoarseContrast>
+        <farGain>0.9943,0.9969,1.0009</farGain>
+      </params>
+    </generator>
+    <variantCount>8</variantCount>
+    <period>4</period>
+    <pixelsPerMeter>64</pixelsPerMeter>
+    <!-- Lit from the top and its ripples run across the screen: cells only flip left to right, which
+         keeps both; a turn would point the ripples every way and the light with them. -->
+    <rotate>mirror</rotate>
+    <macro>
+      <dry>1.04,1.02,0.96</dry>
+      <lush>0.96,0.98,1.04</lush>
+      <amplitude>0.4</amplitude>
+    </macro>
+    <!-- How Sand meets Mud (docs/technical/ground-textures.md, "Pair parameters"): the sand darkens
+         toward the edge, where the mud wets it. -->
+    <transition over="Mud">
+      <width>0.25</width>
+      <softness>0.2</softness>
+      <stain>0.25</stain>
+    </transition>
+  </AssetDef>
+</AssetDefinitions>

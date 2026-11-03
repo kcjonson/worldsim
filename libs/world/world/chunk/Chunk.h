@@ -7,18 +7,20 @@
 #include "world/Biome.h"
 #include "world/chunk/ChunkCoordinate.h"
 #include "world/chunk/ChunkSampleResult.h"
+#include "world/chunk/GroundMacro.h"
 #include "world/chunk/RenderTiles.h"
 #include "world/chunk/TerrainDistanceField.h"
 #include "world/chunk/TerrainPolygons.h"
-
-#include <graphics/Color.h>
+#include "world/chunk/TileBiomes.h"
 
 #include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
 
 namespace world {
 
@@ -67,6 +69,17 @@ enum class Surface : uint8_t {
 	}
 }
 
+/// The Surface named by `name` (as surfaceToString spells it), or nullopt.
+[[nodiscard]] inline std::optional<Surface> surfaceFromString(std::string_view name) {
+	for (uint8_t i = 0; i < static_cast<uint8_t>(Surface::Count); ++i) {
+		const auto surface = static_cast<Surface>(i);
+		if (surfaceToString(surface) == name) {
+			return surface;
+		}
+	}
+	return std::nullopt;
+}
+
 /// Tile data - 8 bytes, stored in flat array per chunk.
 /// Designed for single source of truth: computed once, read by all systems.
 struct TileData {
@@ -77,22 +90,14 @@ struct TileData {
 	uint16_t elevation = 0;             ///< 2 bytes - centimeters above sea level
 	uint8_t moisture = 128;             ///< 1 byte - normalized 0-255
 	uint8_t waterDepth = 0;             ///< 1 byte - cosmetic water depth (0=land/shallowest, 255=deepest); data only, the renderer paints depth from the distance field
-
-	/// Get biome weights as BiomeWeights (for compatibility during migration)
-	[[nodiscard]] BiomeWeights biome() const {
-		if (biomeBlend == 255 || primaryBiome == secondaryBiome) {
-			return BiomeWeights::single(primaryBiome);
-		}
-		BiomeWeights bw;
-		float primaryWeight = static_cast<float>(biomeBlend) / 255.0F;
-		bw.set(primaryBiome, primaryWeight);
-		bw.set(secondaryBiome, 1.0F - primaryWeight);
-		return bw;
-	}
 };
 
 class ExtendedTiles;
 class TerrainPolygonQuery;
+
+namespace generation {
+	class PatchNoise;
+}
 
 /// A 512×512 region of the world.
 /// Tiles are pre-computed during generate() and stored in a flat array.
@@ -100,9 +105,9 @@ class TerrainPolygonQuery;
 class Chunk {
   public:
 	/// Designated-initializer args for the shared tile-compute core (below). Biome
-	/// weight and elevation are passed in already resolved (a sector-grid lookup)
-	/// rather than a sample-data reference, because the caller may be resolving
-	/// them from a neighbor chunk's own grid (ApronField), not this chunk's.
+	/// and elevation are passed in already resolved (ChunkNeighborhood) rather
+	/// than a sample-data reference, because the caller may be resolving them
+	/// from a neighbor chunk's own corners (ApronField), not this chunk's.
 	/// `hydrology` supplies riverHalfWidthAt/pondDepthAt; it is always the
 	/// generating chunk's own sample data (gathered over the extended AABB, D4),
 	/// since river/pond geometry is world-position-based and doesn't care which
@@ -111,7 +116,8 @@ class Chunk {
 		ChunkCoordinate coord;   ///< Tile's owning chunk (tileHash + world position)
 		uint16_t localX = 0;
 		uint16_t localY = 0;
-		BiomeWeights biomeWeights;
+		TileBiome biome;
+		const generation::PatchNoise* patchNoise = nullptr; ///< the owning chunk's (ChunkNeighborhood)
 		float elevationMeters = 0.0F;
 		const ChunkSampleResult* hydrology = nullptr;
 		uint64_t worldSeed = 0;
@@ -159,12 +165,6 @@ class Chunk {
 		return m_tiles[256 * kChunkSize + 256].primaryBiome;
 	}
 
-	/// Get color for a biome (for ground rendering)
-	[[nodiscard]] static Foundation::Color getBiomeColor(Biome biome);
-
-	/// Get color for surface type
-	[[nodiscard]] static Foundation::Color getSurfaceColor(Surface surface);
-
 	/// Update last accessed time (for LRU eviction)
 	/// Note: touch() is const because m_lastAccessed is mutable - LRU timestamp
 	/// is not considered part of the logical state of the chunk.
@@ -183,8 +183,12 @@ class Chunk {
 	/// chunk's tile-data texture by ChunkRenderer.
 	[[nodiscard]] const TileRenderData* renderData() const { return m_renderData.data(); }
 
-	/// Version counter for render data, bumped by generate(). GPU caches compare it
-	/// to detect stale uploads.
+	/// The ground's macro texture (GroundMacro.h), kGroundMacroBytes of RGBA8, uploaded
+	/// beside the render tiles under renderDataVersion().
+	[[nodiscard]] const uint8_t* groundMacro() const { return m_groundMacro.data(); }
+
+	/// Version counter for render data and the macro texture, bumped by generate(). GPU
+	/// caches compare it to detect stale uploads.
 	[[nodiscard]] uint32_t renderDataVersion() const { return m_renderDataVersion.load(std::memory_order_acquire); }
 
 	/// Get the chunk's terrain polygon rings (D2): waterline, channel, and pond,
@@ -210,6 +214,9 @@ class Chunk {
 	/// Render tiles over the chunk square plus its render apron (518 x 518 x 2 bytes)
 	std::array<TileRenderData, static_cast<size_t>(kRenderTilesSide) * kRenderTilesSide> m_renderData;
 
+	/// The ground's macro texture (257 x 257 x 4 bytes)
+	std::array<uint8_t, kGroundMacroBytes> m_groundMacro{};
+
 	/// Thread-safe flag indicating generation is complete
 	std::atomic<bool> m_generationComplete{false};
 
@@ -220,11 +227,6 @@ class Chunk {
 	/// field (D10). Installed together by generate() via setTerrainPolygons().
 	std::shared_ptr<const ChunkTerrainPolygons> m_terrainPolygons = std::make_shared<const ChunkTerrainPolygons>();
 	TerrainDistanceField						m_terrainDistanceField;
-
-	/// Compute tile data for a single tile during generation. Thin wrapper around
-	/// computeTileFrom() using this chunk's own coordinate and sample data, with
-	/// rivers and ponds from `hydrology` (m_biomeData's rasterHydrology).
-	[[nodiscard]] TileData computeTile(uint16_t localX, uint16_t localY, const ChunkSampleResult& hydrology) const;
 
 	/// Install a freshly built polygon set, bump its version (monotonic per
 	/// chunk, like m_renderDataVersion), and bake its distance field at that
@@ -238,13 +240,10 @@ class Chunk {
 	void computeRenderData(const ExtendedTiles& extended, const TerrainPolygonQuery& terrain);
 
 	/// Select surface type based on biome using organic noise-based patches, for
-	/// any (coord, biome, local tile, elevation, seed), not just this chunk's own.
-	/// Elevation is passed in (already resolved by the caller) rather than
-	/// re-derived from a sample source, so it works the same for a chunk's own
-	/// tiles (computeTile) and for an apron tile resolved against a neighbor's
-	/// grid (ApronField).
-	[[nodiscard]] static Surface selectSurfaceFor(ChunkCoordinate coord, Biome biome, uint16_t localX,
-	                                               uint16_t localY, float elevationMeters, uint64_t worldSeed);
+	/// any local tile of the chunk whose patch fields `patchNoise` holds, not just
+	/// this chunk's own, so it works the same for a chunk's own tiles and for an
+	/// apron tile resolved against a neighbor's corners (ApronField).
+	[[nodiscard]] static Surface selectSurfaceFor(const generation::PatchNoise& patchNoise, Biome biome, uint16_t localX, uint16_t localY);
 };
 
 }  // namespace world

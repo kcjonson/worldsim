@@ -1,8 +1,8 @@
 #pragma once
 
-// GlobalTaskRow - a task in the global task list, two lines: the description with its position and
-// distance, then its status (coloured) with what holds it up and, in the global view, who knows of it.
-// Display only.
+// GlobalTaskRow - a task in the global task list: the description with its position and distance at
+// the end, then its status (coloured) with what holds it up and, in the global view, who knows of it.
+// Both wrap to the row's width. Display only.
 
 #include "scenes/game/ui/adapters/GlobalTaskAdapter.h"
 
@@ -33,7 +33,8 @@ namespace world_sim {
 
 		adapters::GlobalTaskDisplayData task;
 		bool							showKnownBy;
-		ui::Ref<ui::Text>				line1;
+		ui::Ref<ui::Text>				description;
+		ui::Ref<ui::Text>				where;
 		ui::Ref<ui::Text>				line2;
 	};
 

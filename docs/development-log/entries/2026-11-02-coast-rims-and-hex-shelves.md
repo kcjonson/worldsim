@@ -62,7 +62,7 @@ Known residuals:
 ## Related Documentation
 
 - [Continental Margins](../../technical/continental-margins.md), the physical model that replaces the painted shelf
-- [Scenario 08: World creator coasts](../../testing/scenarios/08-world-creator-coasts.md)
+- [Scenario 10: World creator coasts](../../testing/scenarios/10-world-creator-coasts.md)
 
 ## Next Steps
 

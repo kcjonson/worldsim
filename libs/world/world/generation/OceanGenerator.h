@@ -2,20 +2,16 @@
 
 // OceanGenerator - Terrain generation for Ocean biome
 
+#include "world/chunk/Chunk.h"
 #include "world/generation/GenerationContext.h"
-#include "world/generation/GenerationResult.h"
 
 namespace world::generation {
 
-/// Ocean surface generator.
-/// Always returns Water.
+/// Ocean: always Water.
 class OceanGenerator {
 public:
-	[[nodiscard]] static GenerationResult generate([[maybe_unused]] const GenerationContext& ctx) {
-		GenerationResult result;
-		result.surface = Surface::Water;
-		result.moisture = 255;
-		return result;
+	[[nodiscard]] static Surface generate([[maybe_unused]] const GenerationContext& ctx) {
+		return Surface::Water;
 	}
 };
 

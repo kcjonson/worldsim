@@ -8,6 +8,7 @@
 #include "assets/AssetValidator.h"
 #include "assets/IAssetGenerator.h"
 #include "assets/MotionDef.h"
+#include "assets/TessellatedPaths.h"
 
 #include <polygon/Polygon.h>
 #include <vector/Types.h>
@@ -15,6 +16,7 @@
 #include <atomic>
 #include <filesystem>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -107,8 +109,42 @@ namespace assets {
 		/// Simple assets ignore the seed (one drawing); procedural assets use it to
 		/// select a form (vary the seed to sample the generator's range).
 		/// This is the single shared "defName + seed -> mesh" entry point.
+		/// For callers that draw one mesh. An asset over the 65535 vertices a mesh can index
+		/// needs several, and that fails here (logged); use buildMeshes for those.
 		/// @return true if a non-empty mesh was produced
 		bool buildMesh(const std::string& defName, uint32_t seed, renderer::TessellatedMesh& outMesh);
+
+		/// A pixel density that keeps every path, whatever its setLod threshold.
+		static constexpr float kFullDetail = std::numeric_limits<float>::infinity();
+
+		/// buildMesh for assets of any size: the tessellated paths are packed into as many
+		/// meshes as it takes to keep each under 65535 vertices (16-bit indices), in path order.
+		/// A single path that alone tessellates past that is dropped with a warning.
+		/// A procedural ground tile comes back wrapped: a path crossing an edge of its [0, period]
+		/// square is repeated where it crosses into, so the meshes clipped to that square are the
+		/// seamless tile.
+		/// @param pixelsPerMeter Screen density to build for. A procedural path that called
+		///        setLod(n) is kept only when n <= this; the default keeps all of them. Simple
+		///        assets are always one drawing, whatever the density.
+		/// @return true if at least one non-empty mesh was produced
+		bool buildMeshes(
+			const std::string& defName, uint32_t seed, std::vector<renderer::TessellatedMesh>& outMeshes, float pixelsPerMeter = kFullDetail
+		);
+
+		/// The procedural half of buildMeshes, for callers that want several densities from one
+		/// generator run: the seed's paths, each tessellated once (a ground tile's wrapped, as
+		/// above), so outPaths.meshesAt(d) is what buildMeshes returns at d. Safe to call from
+		/// several threads at once while no load or clear runs: each call runs its own generator
+		/// (a fresh Lua state for a script) and touches no cache.
+		/// @param maxPixelsPerMeter The finest density meshesAt will be asked for; paths that need
+		///        more aren't tessellated.
+		/// @return false when the def isn't procedural or its generator fails (logged)
+		bool buildPaths(const std::string& defName, uint32_t seed, TessellatedPaths& outPaths, float maxPixelsPerMeter = kFullDetail);
+
+		/// Where a def's generator script is on disk: its scriptPath, with @shared/ resolved against
+		/// the shared scripts folder. Empty when the def names no script, or a @shared/ one with no
+		/// folder set (logged).
+		[[nodiscard]] std::filesystem::path resolveScriptPath(const AssetDefinition& def) const;
 
 		/// Parse a collision shape from an SVG file's <metadata><collision> block.
 		/// Simple (SVG-backed) assets can author a collider directly in the SVG; the
@@ -220,9 +256,6 @@ namespace assets {
 	  private:
 		AssetRegistry() = default;
 		~AssetRegistry();
-
-		/// Tessellate a generated asset into a mesh
-		bool tessellateAsset(const GeneratedAsset& asset, renderer::TessellatedMesh& outMesh);
 
 		/// Build group index from loaded definitions
 		void buildGroupIndex();

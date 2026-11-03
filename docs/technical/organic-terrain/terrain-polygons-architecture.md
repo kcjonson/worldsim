@@ -281,7 +281,8 @@ hole), and no per-ring retry loop is needed.
    curve in a cell compute the same vertices in it, whatever the rest of their rings look like.
    Costs at most one extra vertex per lattice crossing, about one per 16 m of shore: +4.5%
    nav vertices on the archipelago benchmark chunk, +19% on the staircase lake (a 16 m
-   staircase crosses a lattice line at nearly every step).
+   staircase crosses a lattice line at nearly every step; that bench chunk is now a generated
+   lake shore, `LakeShoreTestWorld.h`).
 5. Quantize to integer mm.
 6. `simplifyRing` at `kRingSimplifyEpsMm = 100`, per run (pins are never removed). Not 500:
    nav and render use the same ring verbatim, and 500 would erase the bank detail. The vertex
@@ -745,7 +746,7 @@ As built (TerrainChannelBuilder, per reach, from the ribbon points the stroke us
 
 Unchanged: Mud < Sand < Dirt < GrassShort < Grass < GrassMeadow < GrassTall < Rock < Snow,
 higher paints over lower. Water is no longer in the stack; it is a polygon drawn on top.
-How the boundaries between these surfaces are drawn is D16.
+How the boundaries between these surfaces are drawn is D16: a height contest in a band around the field's isoline (ground-textures.md, Surface transitions). The order is what names a pair's upper surface, and each pair's parameters are keyed by it.
 
 ### D15: Variance, or why a shore must never read as a stroke
 
@@ -787,6 +788,12 @@ What each source drives (renderer task and placement rules consume this):
 The waterline warp itself is multi-scale (D6): the 26 m term shapes bays and headlands, the
 6 m fBm shapes the bank. A single amplitude at a single scale is exactly the stroke look.
 
+Land edges follow the same rule (D16). The contest that draws them has no constant along-edge
+term: the baked heights vary at texture scale, its threshold moves with the fine warp noise's
+x (`nu * (n - 0.5)`), and the warp's local stretch varies the on-screen band width. `nu` is
+tuned until the band's width swings 30 to 40 % along the edge, the figure the fringe's
+width followed.
+
 ### D14: Determinism
 
 Every step is a pure function of (tile data, sample result, world position, fixed seeds).
@@ -807,7 +814,9 @@ D5/D6, so a grass/dirt edge and a shoreline are of a piece.
 Land boundaries are look-only (nothing walkable, D1), so they stay in the shader instead of
 becoming rings. `world::evaluateSurfaceField` (`SurfaceField.cpp`) is the one
 evaluation; `shaders/includes/land.glsl` is the same steps in the same order, and
-`SurfaceFieldGolden.test.cpp` renders it and compares.
+`SurfaceFieldGolden.test.cpp` renders it and compares. The tile shaders are GLSL 4.10 core
+(the field gathers its render tiles with `textureGather`, core from 4.00, and 4.10 is the
+most macOS offers).
 
 1. **Field per surface, on the dual grid.** For every surface in the point's 4x4 tile
    neighborhood (the blur's reach plus the bilinear footprint), the indicator is sampled at tile
@@ -838,19 +847,29 @@ evaluation; `shaders/includes/land.glsl` is the same steps in the same order, an
    origin, in C++ and GLSL alike.
 3. **Priority paint.** Low to high per D13: the highest surface whose field passes 0.5 paints.
    Where none passes (three or more surfaces meeting) the largest field paints, ties to the
-   higher surface. Anti-aliased over one pixel (`u_metersPerPixel`, as the water pass does)
-   against the nearest boundary of the painted region, its distance `(F - 0.5) / |grad F|` from
-   the bilinear gradient. The edge look is a function of that distance only: a sparse fringe of
-   the upper surface on the lower side (0.35 m for grass, 0.25 sand, 0.2 dirt and mud, none for
-   rock) whose width follows the fine warp noise +-35 % along the edge (D15) and is broken up by
-   a 1 m noise, and a rim darkening just inside the upper surface (rock only, 30 % over
-   0.12 m). No term reads a tile edge.
+   higher surface. The distance to the nearest boundary of the painted region comes from the
+   painted surface's lead over the surface that would take over (`leadDistance`), which is 0 on
+   the painted boundary where three or more meet too: it inverts the field's profile across a
+   straight tile edge, so it is exact there out to the 1.5 m reach and continuous everywhere, where the
+   bilinear gradient's `(F - 0.5) / |grad F|`, used before, stepped half a meter out on a straight
+   edge and further on corners. The edge look is a height contest in a band around that boundary: the
+   pair's two surfaces are mixed by the heights baked into their ground tiles' alpha, the signed
+   distance and the fine warp noise's x (D15), with a contact shadow, stain, ridge and tint
+   from per-pair parameters in the ground defs. It replaces the sparse fringe of the upper
+   surface (0.35 m for grass, 0.25 sand, 0.2 dirt and mud, none for rock) with its 1 m
+   breakup noise, the rim darkening (rock only, 30 % over 0.12 m) and the one-pixel
+   anti-aliasing line, and its second surface takes the samples the fringe's did. The band is capped at the field's reach, 1.5 m: the blur is one tile and the
+   bilinear footprint half a tile, so past that the field is 1, its gradient 0, and the
+   shortcut bits return no boundary. The field itself, its levels and the paint rule don't
+   change, so the contest is look-only (D1) and placement agrees as before. No term reads a
+   tile edge. The definition is ground-textures.md, Surface transitions.
 4. **Mud** (D11 makes it distance-to-water) and **point-bar sand** (D12) are ordinary surfaces
    in the stack once they are tiles, so they get the same edge.
 5. **Seams and render tiles.** The shader reads RG8UI render tiles over the chunk square plus
    `kRenderApronTiles` = 3 on every side (518 x 518, 524 KB a chunk; the RGBA32UI tile data it
    replaces, with edge, corner, and family masks and eight neighbor ids, was 4 MB). R is the paint
-   surface, G the edge surface (low nibble) and an interior bit (0x80). A point reads its field
+   surface, G the edge surface (low nibble), an interior bit (0x80, every tile within 3 one
+   surface) and a near-interior bit (0x40, every tile within 2). A point reads its field
    at most 3 tiles out (1.5 m warp, the bilinear footprint, the blur), exactly the apron. The
    chunk fills it from its `ApronField`, each tile post-processed with
    `TilePostProcessor::finalSurface` over the chunk's own `TerrainPolygonQuery` (D11), so apron
@@ -879,13 +898,25 @@ evaluation; `shaders/includes/land.glsl` is the same steps in the same order, an
    chunk. Cost, measured in game: about 40 ms of a chunk's 140 to 180 ms of placement on the
    quickstart landing, about 80 of 550 ms in dense grassland (150 000 instances).
 7. **Cost.** A tile is interior when every tile within 3 of it is one surface; its pixels cost
-   one fetch and one atlas sample, as before. Elsewhere a pixel costs 21 texel fetches, six
-   pair-noise octaves, and the per-surface blur and guard of the surfaces present. The shader
+   one fetch and one ground sample. Elsewhere a pixel reads 21 render tiles in 9 texture
+   instructions (the 4x4 block gathered a 2x2 quad at a time), six pair-noise octaves, and the
+   per-surface blur and guard of the surfaces present; in a block of exactly two surfaces the
+   second's sums, indicator and thin bits are the first's complement, bit for bit the same field. In a
+   near-interior tile (every tile within 2 one surface) the fine warp moves the read at most
+   its amplitude from where the low warp puts it, so a pixel whose low-warped offset lies in
+   [fine amplitude - 0.5, 1.5 - fine amplitude) on both axes (less a 1 mm margin) reads a
+   4x4 block inside that reach: one surface, field 1. The field skips the fine noise and the
+   block there, in C++ and GLSL alike; only the reported warp changes (zero), and
+   `SurfaceFieldTest.NearInteriorShortcutMatchesTheFullField` holds the rest to the full
+   evaluation. The blur's 3x3 binomial sums come from each row's 1 2 1 sum (a nibble table)
+   and the thin-feature test runs on the whole 4x4 mask at once, bit-identical to the per-bit
+   form. The shader
    holds no arrays: a const array indexed at run time is copied to local memory in every
    fragment on NVIDIA. Measured at 3072x1728 on an RTX 3090 (section 6), the land pass is 0.3
    to 0.9 ms on the landing's river view, where most tiles are interior, and 0.6 to 1.3 ms on
    the busier coast and desert views; the six warp octaves are 0.3 to 0.5 ms of that, the
-   fringe path 0.05 to 0.1 ms. At far zoom the shader drops a fine warp octave whose
+   fringe path 0.05 to 0.1 ms; the contest that replaced it measured the same or less
+   (ground-textures.md, Perf ledger). At far zoom the shader drops a fine warp octave whose
    wavelength is under `kLandLodMinWavelengthPx` = 4 pixels (`landWarpFineOctaves`): zoom
    0.25 sums the 4 m and 2 m octaves, 0.5 and 0.75 three, zoom 1 and in all four. The kept
    octaves weigh what they do in the full sum, so an edge moves by at most the dropped
@@ -895,8 +926,71 @@ evaluation; `shaders/includes/land.glsl` is the same steps in the same order, an
    and holds the LOD to that bound, and `SurfaceFieldTest.FarZoomDropsFineOctavesUnderFourPixels`
    pins where it kicks in. It saves about 0.1 ms at zoom 0.25.
 
-Biome water edges themselves are still quantized to 16 m sectors upstream of all this
-(WOR-467); D16 smooths what the tiles give it, it does not add large-scale variety.
+**Biome edges (WOR-467, WOR-558).** Upstream of all this, a tile's biome used to come from a
+16 x 16 m sector grid interpolated between chunk corners 512 m apart, so every biome boundary,
+a coast and a lake among them, was a 16 m staircase along a near-straight diagonal, and D16's
+1.5 m warp couldn't break a 16 m step. The pick is per tile now (`TileBiomes.h`, `ChunkBiomes`):
+
+- Weights. Each biome a chunk's corners weigh is interpolated bilinearly at the tile's center,
+  `u = (x + 0.5) / 512`, so a chunk's last tile and its neighbor's first sit half a tile
+  either side of the corners they share and the weights run on across the border.
+- Edge noise. Each biome's weight is raised by its own world-space gradient fBm (salal
+  `HashNoise`): 200 m at 0.23 of a weight, 50 m at 0.06, 12 m at 0.02, and the largest wins,
+  ties to the lower biome. Across the planet's blend band (500 m either side of a cell edge,
+  where a weight difference changes 0.002 a meter) that bends a boundary into bays and
+  headlands tens of meters deep at 200 m and a few meters at 12 m. Noise per biome rather than
+  per pair keeps the pick continuous where three biomes meet.
+- Ecotone. Where two land biomes' scores lie within 0.08, one 8 m octave of amplitude 0.08
+  decides, which leaves islands and bays of 3 to 10 m standing off the edge: along 2 km of
+  synthetic edge, about 190 islands of 5 tiles or more against 15 single tiles, which the field
+  keeps as blobs about 1 m across. A 4 m octave on top added fragments of a tile or two and no
+  islands, so it isn't there. The pick is the tile's primary biome, so flora follows an island
+  too. A pair with biome water (D5) skips the ecotone, so the waterline and the tiles under it
+  stay on the same line.
+- Cost. The two coarse octaves are summed at every 8th tile and read bilinearly (under 1e-3 of
+  a weight off); the 12 m and ecotone octaves are hashed once a chunk (`NoiseOctaveGrid`, the
+  lattice cache `fillGroundMacro` uses too; `NoiseLatticeTest` holds it to salal's
+  `gradientNoise2` bit for bit where that function's float position is exact, at origins on
+  both sides of zero, and to the same bits from any grid origin). Gradient noise stays within
+  [-1, 1], so the pick stops at the first stage whose remaining octaves can't change the winner
+  or bring a land pair within the ecotone's reach: a one-biome chunk reads no noise, and a chunk
+  an edge crosses costs about 6 ms of picks at most. The stage test and the prune that drops
+  the biomes left out of reach compare one float expression, the leader's lead over a biome;
+  written as `b + reach <= a`, the prune once dropped a runner-up the stage test had just called
+  open, at a rounding tie, and the pick read past its candidates
+  (`TileBiomesTest.ARunnerUpAtARoundingTieStaysInThePick`). Numbers in section 6.
+- Purity (D14). A tile is always picked by its owning chunk's `ChunkBiomes`, built from that
+  chunk's corners and the world seed. `ChunkNeighborhood` holds the 3x3 neighborhood's, from
+  the sample's corner lattice, for the apron (`ApronField::build`) and for biome water past the
+  extended region (river mouths, D7); over the extended region the waterline reads the
+  already-picked tiles. `TileBiomesTest.ApronTilesEqualTheOwnersOwn` checks every apron tile
+  of four chunks against the owner's own pick across all eight borders, with a three-biome
+  world (two land biomes and ocean) crossing them; `ApronFieldTest`, `RenderTileSeamsTest`,
+  `TerrainPolygonSeamsTest` and `SurfaceFieldGolden` pass unchanged.
+  `TileBiomesTest.EdgesDoNotFollowTheSectorGrid` holds a synthetic edge to about one boundary
+  edge in sixteen on a sector line (6.6% over three chunks), in runs of 6 tiles at most (the
+  sector grid put every one there, in runs of 16).
+- Generators. Their patch noise is gradient fBm (`generation::PatchNoise`, two octaves, the
+  lattice hashed once a chunk) in place of hashed value noise, whose cells drew straight runs
+  wherever two corners hashed alike. The wavelengths are 1.7 to 1.9 times the old ones, which
+  keeps patch sizes and leaves the grass family's patch edges covering no more ground (tiles
+  within 3 of another surface: 73% of grassland against 75%, 28% of forest against 31%), and
+  the thresholds are re-derived for the same shares, measured over 4 million tiles a biome:
+
+  | Biome group | Surface | Before | After |
+  |---|---|---|---|
+  | Grassland | Grass / GrassShort / GrassTall / GrassMeadow / Dirt | 67.0 / 18.5 / 11.7 / 2.60 / 0.20 % | 66.8 / 18.5 / 11.9 / 2.64 / 0.20 % |
+  | Forest | Grass / GrassTall / Dirt | 90.4 / 9.19 / 0.40 % | 90.3 / 9.35 / 0.40 % |
+  | Desert | Rock | 0.91 % | 0.87 % |
+  | Beach, tundra | Rock | 0.40 % | 0.40 % |
+  | Mountain | Snow | 11.5 % | 11.3 % |
+  | Wetland | GrassTall | 11.4 % | 11.3 % |
+
+- Tests. Nav and vision tests that hand-filled 16 m sectors of water carve it with a pond now,
+  since a corner lattice 512 m apart can't place a 16 m patch: `NavigationSystem.test.cpp`'s
+  water patch is a pond of radius 8 m at (40, 40), its snap bounds read from the pond's rim,
+  and the Tier-3 push test overshoots the region's edge instead of a 16 m island;
+  `VisionSystem.test.cpp`'s lake is a pond of radius 20 m.
 
 ---
 
@@ -1064,8 +1158,8 @@ invalidates the render cache and, through the nav signature, the mesh.
 | `kRenderApronTiles` / `kRenderSurfaceReachTiles` | 3 / 9 | D16 |
 | land warp, fine / low | 4 octaves, gain 0.6, base 4 m / 2 octaves, gain 0.5, base 26 m; clamp 1.5 m a component; read 0.375 m off the tile grid | D16 |
 | land warp amplitude by upper surface, fine / low | grass variants, dirt, sand, mud 0.55 / 0.7 m; snow 0.45 / 0.7; rock 0.2 / 0.4 | D16 |
-| edge surface / interior / bed reach | 2 / 3 / 3 tiles | D16 |
-| land fringe width / rim | grass 0.35, sand 0.25, dirt and mud 0.2, rock 0 m; opacity 0.55, +-35 % along the edge, 1 m breakup / rock 30 % over 0.12 m | D16 |
+| edge surface / interior / near-interior / bed reach | 2 / 3 / 2 / 3 tiles | D16 |
+| land edge band | a height contest, parameters per pair in the ground defs (width, offset, softness, breakup, shadow, stain, ridge, tint); `width + abs(offset)` at most 1.5 m, the field's reach; replaces the fringe (grass 0.35 m, sand 0.25, dirt and mud 0.2, rock 0; opacity 0.55) and the rim (rock 30 % over 0.12 m) | D16, ground-textures.md |
 | `kLandLodMinWavelengthPx` | 4 px: the shader drops a finer fine-warp octave | D16 step 7 |
 
 All of these are candidates for the debug server's tunables so the look can be A/B'd live.
@@ -1134,6 +1228,13 @@ nine-sample run.
 Water is 0.05 to 0.19 ms of it (the pass with the water half cut out of the shader); the land
 field is the rest (D16 step 7). The pass it replaced cost 0.04 to 0.51 ms.
 
+These numbers were taken with the GPU at P0 (1890 to 1950 MHz). On light views the driver drops
+it to P3 or P2 (1035 to 1410 MHz) and the same pass reads 1.4 to 2.1 ms instead of about 0.95, so
+an unpinned capture compares clocks, not code. The river rows at zoom 20 and 8 above were P0
+readings; unpinned captures read 1.3 to 2.1 ms there. Hold P0 for any capture you compare against
+this table, which `scripts/perf-capture.ps1` does with the game's GPU hold (WOR-553);
+[ground-textures.md](../ground-textures.md#clock-state) has the measurements.
+
 **The frame, river view** (the heaviest), frame p50 / p99 max and scene GPU, ms:
 
 | Scenario | Before | After | GPU before | GPU after |
@@ -1179,6 +1280,87 @@ the workers keep up; the far edge of a zoom 0.25 view is still blank, because it
 wide and the chunk manager keeps one chunk around the camera's (1536 m), and flora appears
 when placement lands (140 to 550 ms a chunk).
 
+**Per-tile biome edges (WOR-558).** Measured on the 120 chunks `scripts/perf-capture.ps1`
+generates across the three views, the branch tip before (85cd4799) against after, worker ms:
+
+| | Median | p90 | Max |
+|---|---|---|---|
+| Total, before | 66.8 | 105.5 | 284 |
+| Total, after | 54.8 | 87.5 | 316 |
+| Tiles, before | 25.5 | 34.7 | 52.8 |
+| Tiles, after | 19.9 | 28.0 | 62.2 |
+
+The tile stage got cheaper: the generators' patch noise hashes its lattice once a chunk, where
+value noise hashed four corners a tile per octave, and that pays for the pick, which costs up
+to 6 ms in a chunk an edge crosses and nothing in a one-biome chunk. The max is the landing
+river chunk's bake (227 ms, 178 before). The coast chunks at x = 70 km take 161 to 175 ms
+against 144 to 146, polygons and bake both: the shore runs longer and bends more. Waterline
+rings carry more vertices for the same reason. Rebuilt with each pick over the same tiles,
+three coast chunks go from 157 to 179 ring vertices a chunk to 407 to 484 (nav 97 to 112, to
+321 to 390), four chunks of a lake shore at (-3860, 2300) from 176 to 342 to 442 to 523 (nav
+92 to 239, to 348 to 391); the open-ocean chunk beside the coast barely moves (144 to 164).
+About one of those vertices in 16 m of shore is a pin (D6 step 4); the rest are the bends the
+100 mm simplification keeps.
+
+**What the ring growth costs (WOR-563).** Measured headless on the quickstart planet, over
+fixed chunks: the coast at x = 70 km (chunks (136, -2) to (136, 1) and (137, -1)), the lake
+shore at (-3860, 2300) ((-9, 3) and (-8, 3) to (-8, 5)) and five landing river chunks around
+(0, 0) as a control. "Before" is the sector pick restored in the working tree over the same
+tiles and generators (never committed), "after" the per-tile pick. RelWithDebInfo, five runs
+of everything: chunk timings pooled over them, each nav build and path batch their median.
+Nav and paths are on the 128 m regions tiling each chunk that hold water (water only, as
+`nav::appendWaterObstacles` emits it, no trees), each path query a fixed pair with both ends
+on land in both builds, 0.3 m agent radius, the RRA* cache as `NavigationSystem::requestPath`
+sets it:
+
+| | Coast, before | Coast, after | Lake, before | Lake, after |
+|---|---|---|---|---|
+| Ring vertices | 1057 | 2178 | 800 | 1756 |
+| Nav ring vertices | 639 | 1611 | 427 | 1246 |
+| Shore length (m) | 2723 | 3388 | 2077 | 2628 |
+| Vertices a meter of shore (shore chunks) | 0.34 | 0.60 | 0.32 | 0.63 |
+| SDF near tiles | 319 | 400 | 232 | 295 |
+| Chunk generation, median / p90 (ms) | 85.6 / 99.9 | 113.1 / 122.3 | 81.1 / 93.8 | 106.7 / 120.3 |
+| Polygons, median (ms) | 39.8 | 52.3 | 41.0 | 52.7 |
+| Bake, median (ms) | 15.7 | 25.2 | 15.3 | 23.7 |
+| Tiles and apron, median (ms) | 14.5 | 20.1 | 11.9 | 17.2 |
+| Nav input vertices, shore regions | 762 | 1736 | 559 | 1384 |
+| Nav build per region, mean / p90 / max (ms) | 0.10 / 0.27 / 0.39 | 0.29 / 0.83 / 1.02 | 0.08 / 0.25 / 0.41 | 0.23 / 0.73 / 1.32 |
+| Path query (us), 1118 coast and 521 lake pairs | 2.05 | 2.22 | 1.44 | 2.28 |
+
+The river chunks don't move (1778 ring vertices, generation 76 against 78 ms, nav within 4%,
+paths level), which is the run-to-run swing. Repeat runs of each build stay within 2 ms of these
+medians and 0.3 ms of the nav sums. The tiles and apron row is the pick, not the rings (6 ms at
+most a chunk, above).
+
+Nothing here reaches the frame. The water and shore pass reads only the distance field (D10),
+so its GPU time doesn't depend on a ring's vertices, and no ring reaches the GPU outside the
+debug overlay; 25% more near tiles is 2.1 MB more texture over the five coast chunks (26 KB a
+tile). Path queries run on the main thread but cost under a microsecond more. The rest is worker
+time: polygons, bake and nav builds, all off the main thread.
+
+The vertices doubled because the shore got longer and denser. Per-tile edges put a 1 m tile
+step in every shore that isn't axis-aligned, and the 3x3 blur rounds a step without removing
+it: an unwarped straight edge at 1 in 16 wanders 0.81 m peak to peak around its line, 0.31 m
+at 1 in 4, 0.06 at 1 in 2 and 0.03 at 45 degrees. The 100 mm simplification keeps those steps,
+and so would any tolerance under about 0.4 m. What a looser tolerance takes first is the bank
+detail and the shore profiles' sampling. Measured on the coast:
+
+| Tolerance | Ring vertices | Nav vertices | Nav build, sum of regions (ms) | Bake alone (ms) | Polygons alone (ms) | world-tests |
+|---|---|---|---|---|---|---|
+| 100 mm, all rings (kept) | 2178 | 1611 | 12.3 | 25.4 | 52.7 | pass |
+| 150 mm, waterlines only | 1816 | 1285 | 9.2 | 23.8 | 52.0 | `ShoreSlopeIsBoundedAndVariesAlongTheShore` fails |
+| 200 mm, all rings | 1551 | 1048 | 7.3 | 22.9 | 51.4 | 6 fail: the slope test, two channel tests (a pond mouth's flare, an outer bank's slope) and three seam tests' edge-count floors |
+
+At 125 mm on waterlines the slope test still fails. Its straight shore keeps 109 vertices at
+100 mm (one in 5 m) and 97 at 150, and losing those drops the slope range from 40 to 34
+bytes: the shore profile is sampled at the vertices (D15), and a straight shore already
+undersamples the slope noise's 5 m octave. The tolerance stays 100 mm. A looser one buys back
+1.6 to 2.5 ms of bake a coast chunk and under 0.1 ms of nav a region (0.12 at 200 mm), none
+of it on the frame, and costs D15's variance on every shore; the polygons stage, the larger
+share, follows the shore's length and doesn't move. Cutting the tile steps themselves means a
+wider blur in the waterline field, which reshapes every thin feature D5 guards.
+
 **Nav.** Rebuilding the landing region (128 m square, 643 blocking rings, most of them trees):
 763 ms on the worker for 5434 triangles, against 499 ms for 3082 with the tile marcher
 (39f35c45); the input extraction on the main thread is 0.5 ms (1.4 with the marcher). The
@@ -1222,8 +1404,9 @@ Maps one-to-one onto the epic's tasks:
    delete the tile water branch and the water bleed.
 7. Vision shore points and distance-based mud, point bars (D11, D12).
 8. Every land-on-land boundary drawn as a warped field isoline (D16): tile-data apron,
-   per-surface field with the D5/D6 recipe, priority paint, fringe bands, placement reading
-   the same field. Replaces the neighbor bleed in `tile.glsl`.
+   per-surface field with the D5/D6 recipe, priority paint, edge bands (a fringe, replaced by
+   the height contest of ground-textures.md), placement reading the same field. Replaces the
+   neighbor bleed in `tile.glsl`.
 9. Perf validation across zoom levels.
 
 ---
@@ -1252,7 +1435,9 @@ Maps one-to-one onto the epic's tasks:
   land field's (`ThinFeatureGuard.h`, D5 step 3), and its point evaluator `WaterlineField`
   still shares the lattice fill's core. No quickstart ring changed: biome water follows 16 m
   sectors (WOR-467), so none of it runs 1 tile wide, and the ring vertices of every chunk
-  loaded at the landing (0, 20) and the coast (70030, 0) hash the same before and after.
+  loaded at the landing (0, 20) and the coast (70030, 0) hash the same before and after. Per-tile
+  biome edges (D16, biome edges; WOR-558) changed that on purpose: ring hashes moved, and a
+  coast or lake can now run 1 tile wide, which is what the guard is for.
 - Ocean vs lake distinction for L2/L4: the biome tells us, but wetland water needs its own
   band set (no beach, reeds everywhere). Decide when the renderer task starts.
 - Whether the fine SDF band (±8 m) is enough for the widest shallows on very gentle ocean

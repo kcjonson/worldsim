@@ -1,587 +1,102 @@
 {
-  "atlas": {
-    "type": "msdf",
-    "distanceRange": 4,
-    "size": 32,
-    "width": 512,
-    "height": 512
-  },
-  "metrics": {
-    "emSize": 1,
-    "ascender": 1.02,
-    "descender": -0.3,
-    "lineHeight": 1.32
-  },
-  "glyphs": {
-    "A": {
-      "atlas": {"x": 0, "y": 0, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.015625, "bottom": 0.0084375, "right": 0.046875, "top": 0.0540625},
-      "plane": {"left": 0.05, "bottom": 0, "right": 0.55, "top": 0.73},
-      "advance": 0.6
-    },
-    "B": {
-      "atlas": {"x": 0.0625, "y": 0, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.0800937, "bottom": 0.0084375, "right": 0.107406, "top": 0.0540625},
-      "plane": {"left": 0.093, "bottom": 0, "right": 0.53, "top": 0.73},
-      "advance": 0.6
-    },
-    "C": {
-      "atlas": {"x": 0.125, "y": 0, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.142813, "bottom": 0.0078125, "right": 0.169687, "top": 0.0546875},
-      "plane": {"left": 0.092, "bottom": -0.01, "right": 0.522, "top": 0.74},
-      "advance": 0.6
-    },
-    "D": {
-      "atlas": {"x": 0.1875, "y": 0, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.205625, "bottom": 0.0084375, "right": 0.231875, "top": 0.0540625},
-      "plane": {"left": 0.092, "bottom": 0, "right": 0.512, "top": 0.73},
-      "advance": 0.6
-    },
-    "E": {
-      "atlas": {"x": 0.25, "y": 0, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.268125, "bottom": 0.0084375, "right": 0.294375, "top": 0.0540625},
-      "plane": {"left": 0.1, "bottom": 0, "right": 0.52, "top": 0.73},
-      "advance": 0.6
-    },
-    "F": {
-      "atlas": {"x": 0.3125, "y": 0, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.330313, "bottom": 0.0084375, "right": 0.357187, "top": 0.0540625},
-      "plane": {"left": 0.095, "bottom": 0, "right": 0.525, "top": 0.73},
-      "advance": 0.6
-    },
-    "G": {
-      "atlas": {"x": 0.375, "y": 0, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.392813, "bottom": 0.0078125, "right": 0.419687, "top": 0.0546875},
-      "plane": {"left": 0.088, "bottom": -0.01, "right": 0.518, "top": 0.74},
-      "advance": 0.6
-    },
-    "H": {
-      "atlas": {"x": 0.4375, "y": 0, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.455813, "bottom": 0.0084375, "right": 0.481687, "top": 0.0540625},
-      "plane": {"left": 0.093, "bottom": 0, "right": 0.507, "top": 0.73},
-      "advance": 0.6
-    },
-    "I": {
-      "atlas": {"x": 0.5, "y": 0, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.519062, "bottom": 0.0084375, "right": 0.543438, "top": 0.0540625},
-      "plane": {"left": 0.105, "bottom": 0, "right": 0.495, "top": 0.73},
-      "advance": 0.6
-    },
-    "J": {
-      "atlas": {"x": 0.5625, "y": 0, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.579688, "bottom": 0.008125, "right": 0.607812, "top": 0.054375},
-      "plane": {"left": 0.045, "bottom": -0.01, "right": 0.495, "top": 0.73},
-      "advance": 0.6
-    },
-    "K": {
-      "atlas": {"x": 0.625, "y": 0, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.641625, "bottom": 0.0084375, "right": 0.670875, "top": 0.0540625},
-      "plane": {"left": 0.092, "bottom": 0, "right": 0.56, "top": 0.73},
-      "advance": 0.6
-    },
-    "L": {
-      "atlas": {"x": 0.6875, "y": 0, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.705625, "bottom": 0.0084375, "right": 0.731875, "top": 0.0540625},
-      "plane": {"left": 0.13, "bottom": 0, "right": 0.55, "top": 0.73},
-      "advance": 0.6
-    },
-    "M": {
-      "atlas": {"x": 0.75, "y": 0, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.767, "bottom": 0.0084375, "right": 0.7955, "top": 0.0540625},
-      "plane": {"left": 0.072, "bottom": 0, "right": 0.528, "top": 0.73},
-      "advance": 0.6
-    },
-    "N": {
-      "atlas": {"x": 0.8125, "y": 0, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.830625, "bottom": 0.0084375, "right": 0.856875, "top": 0.0540625},
-      "plane": {"left": 0.09, "bottom": 0, "right": 0.51, "top": 0.73},
-      "advance": 0.6
-    },
-    "O": {
-      "atlas": {"x": 0.875, "y": 0, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.893, "bottom": 0.0078125, "right": 0.9195, "top": 0.0546875},
-      "plane": {"left": 0.088, "bottom": -0.01, "right": 0.512, "top": 0.74},
-      "advance": 0.6
-    },
-    "P": {
-      "atlas": {"x": 0.9375, "y": 0, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.954438, "bottom": 0.0084375, "right": 0.983062, "top": 0.0540625},
-      "plane": {"left": 0.092, "bottom": 0, "right": 0.55, "top": 0.73},
-      "advance": 0.6
-    },
-    "Q": {
-      "atlas": {"x": 0, "y": 0.375, "width": 0.0703125, "height": 0.0703125},
-      "atlasBounds": {"left": 0.0212188, "bottom": 0.381406, "right": 0.0490938, "top": 0.438906},
-      "plane": {"left": 0.08, "bottom": -0.18, "right": 0.526, "top": 0.74},
-      "advance": 0.6
-    },
-    "R": {
-      "atlas": {"x": 0.0625, "y": 0.0625, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.079625, "bottom": 0.0709375, "right": 0.107875, "top": 0.116562},
-      "plane": {"left": 0.093, "bottom": 0, "right": 0.545, "top": 0.73},
-      "advance": 0.6
-    },
-    "S": {
-      "atlas": {"x": 0.125, "y": 0.0625, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.142, "bottom": 0.0703125, "right": 0.1705, "top": 0.117188},
-      "plane": {"left": 0.072, "bottom": -0.01, "right": 0.528, "top": 0.74},
-      "advance": 0.6
-    },
-    "T": {
-      "atlas": {"x": 0.1875, "y": 0.0625, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.203437, "bottom": 0.0709375, "right": 0.234063, "top": 0.116562},
-      "plane": {"left": 0.055, "bottom": 0, "right": 0.545, "top": 0.73},
-      "advance": 0.6
-    },
-    "U": {
-      "atlas": {"x": 0.25, "y": 0.0625, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.268125, "bottom": 0.070625, "right": 0.294375, "top": 0.116875},
-      "plane": {"left": 0.09, "bottom": -0.01, "right": 0.51, "top": 0.73},
-      "advance": 0.6
-    },
-    "V": {
-      "atlas": {"x": 0.3125, "y": 0.0625, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.328125, "bottom": 0.0709375, "right": 0.359375, "top": 0.116562},
-      "plane": {"left": 0.05, "bottom": 0, "right": 0.55, "top": 0.73},
-      "advance": 0.6
-    },
-    "W": {
-      "atlas": {"x": 0.375, "y": 0.0625, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.38875, "bottom": 0.0709375, "right": 0.42375, "top": 0.116562},
-      "plane": {"left": 0.02, "bottom": 0, "right": 0.58, "top": 0.73},
-      "advance": 0.6
-    },
-    "X": {
-      "atlas": {"x": 0.4375, "y": 0.0625, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.4525, "bottom": 0.0709375, "right": 0.485, "top": 0.116562},
-      "plane": {"left": 0.04, "bottom": 0, "right": 0.56, "top": 0.73},
-      "advance": 0.6
-    },
-    "Y": {
-      "atlas": {"x": 0.5, "y": 0.0625, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.514687, "bottom": 0.0709375, "right": 0.547813, "top": 0.116562},
-      "plane": {"left": 0.035, "bottom": 0, "right": 0.565, "top": 0.73},
-      "advance": 0.6
-    },
-    "Z": {
-      "atlas": {"x": 0.5625, "y": 0.0625, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.580313, "bottom": 0.0709375, "right": 0.607187, "top": 0.116562},
-      "plane": {"left": 0.085, "bottom": 0, "right": 0.515, "top": 0.73},
-      "advance": 0.6
-    },
-    "a": {
-      "atlas": {"x": 0.625, "y": 0.0625, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.642469, "bottom": 0.0759375, "right": 0.670031, "top": 0.111563},
-      "plane": {"left": 0.067, "bottom": -0.01, "right": 0.508, "top": 0.56},
-      "advance": 0.6
-    },
-    "b": {
-      "atlas": {"x": 0.6875, "y": 0.0625, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.705594, "bottom": 0.070625, "right": 0.731906, "top": 0.116875},
-      "plane": {"left": 0.092, "bottom": -0.01, "right": 0.513, "top": 0.73},
-      "advance": 0.6
-    },
-    "c": {
-      "atlas": {"x": 0.75, "y": 0.0625, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.767656, "bottom": 0.0759375, "right": 0.794844, "top": 0.111563},
-      "plane": {"left": 0.088, "bottom": -0.01, "right": 0.523, "top": 0.56},
-      "advance": 0.6
-    },
-    "d": {
-      "atlas": {"x": 0.8125, "y": 0.0625, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.830594, "bottom": 0.070625, "right": 0.856906, "top": 0.116875},
-      "plane": {"left": 0.087, "bottom": -0.01, "right": 0.508, "top": 0.73},
-      "advance": 0.6
-    },
-    "e": {
-      "atlas": {"x": 0.875, "y": 0.0625, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.89275, "bottom": 0.0759375, "right": 0.91975, "top": 0.111563},
-      "plane": {"left": 0.084, "bottom": -0.01, "right": 0.516, "top": 0.56},
-      "advance": 0.6
-    },
-    "f": {
-      "atlas": {"x": 0.9375, "y": 0.0625, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.953906, "bottom": 0.0709375, "right": 0.983594, "top": 0.116562},
-      "plane": {"left": 0.055, "bottom": 0, "right": 0.53, "top": 0.73},
-      "advance": 0.6
-    },
-    "g": {
-      "atlas": {"x": 0, "y": 0.125, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.0181562, "bottom": 0.133125, "right": 0.0443438, "top": 0.179375},
-      "plane": {"left": 0.088, "bottom": -0.18, "right": 0.507, "top": 0.56},
-      "advance": 0.6
-    },
-    "h": {
-      "atlas": {"x": 0.0625, "y": 0.125, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.0806875, "bottom": 0.133437, "right": 0.106813, "top": 0.179063},
-      "plane": {"left": 0.092, "bottom": 0, "right": 0.51, "top": 0.73},
-      "advance": 0.6
-    },
-    "i": {
-      "atlas": {"x": 0.125, "y": 0.125, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.141563, "bottom": 0.131969, "right": 0.170938, "top": 0.180531},
-      "plane": {"left": 0.085, "bottom": 0, "right": 0.555, "top": 0.777},
-      "advance": 0.6
-    },
-    "j": {
-      "atlas": {"x": 0.0703125, "y": 0.375, "width": 0.0703125, "height": 0.0703125},
-      "atlasBounds": {"left": 0.0940312, "bottom": 0.38025, "right": 0.116906, "top": 0.440063},
-      "plane": {"left": 0.085, "bottom": -0.18, "right": 0.451, "top": 0.777},
-      "advance": 0.6
-    },
-    "k": {
-      "atlas": {"x": 0.25, "y": 0.125, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.266813, "bottom": 0.133437, "right": 0.295687, "top": 0.179063},
-      "plane": {"left": 0.097, "bottom": 0, "right": 0.559, "top": 0.73},
-      "advance": 0.6
-    },
-    "l": {
-      "atlas": {"x": 0.3125, "y": 0.125, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.3275, "bottom": 0.133437, "right": 0.36, "top": 0.179063},
-      "plane": {"left": 0.03, "bottom": 0, "right": 0.55, "top": 0.73},
-      "advance": 0.6
-    },
-    "m": {
-      "atlas": {"x": 0.375, "y": 0.125, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.39125, "bottom": 0.13875, "right": 0.42125, "top": 0.17375},
-      "plane": {"left": 0.06, "bottom": 0, "right": 0.54, "top": 0.56},
-      "advance": 0.6
-    },
-    "n": {
-      "atlas": {"x": 0.4375, "y": 0.125, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.455688, "bottom": 0.13875, "right": 0.481812, "top": 0.17375},
-      "plane": {"left": 0.092, "bottom": 0, "right": 0.51, "top": 0.56},
-      "advance": 0.6
-    },
-    "o": {
-      "atlas": {"x": 0.5, "y": 0.125, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.51775, "bottom": 0.138563, "right": 0.54475, "top": 0.173937},
-      "plane": {"left": 0.084, "bottom": -0.008, "right": 0.516, "top": 0.558},
-      "advance": 0.6
-    },
-    "p": {
-      "atlas": {"x": 0.5625, "y": 0.125, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.580594, "bottom": 0.133125, "right": 0.606906, "top": 0.179375},
-      "plane": {"left": 0.092, "bottom": -0.18, "right": 0.513, "top": 0.56},
-      "advance": 0.6
-    },
-    "q": {
-      "atlas": {"x": 0.625, "y": 0.125, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.643094, "bottom": 0.133125, "right": 0.669406, "top": 0.179375},
-      "plane": {"left": 0.087, "bottom": -0.18, "right": 0.508, "top": 0.56},
-      "advance": 0.6
-    },
-    "r": {
-      "atlas": {"x": 0.6875, "y": 0.125, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.705688, "bottom": 0.13875, "right": 0.731812, "top": 0.17375},
-      "plane": {"left": 0.112, "bottom": 0, "right": 0.53, "top": 0.56},
-      "advance": 0.6
-    },
-    "s": {
-      "atlas": {"x": 0.75, "y": 0.125, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.767813, "bottom": 0.138563, "right": 0.794687, "top": 0.173937},
-      "plane": {"left": 0.085, "bottom": -0.008, "right": 0.515, "top": 0.558},
-      "advance": 0.6
-    },
-    "t": {
-      "atlas": {"x": 0.8125, "y": 0.125, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.828969, "bottom": 0.134219, "right": 0.858531, "top": 0.178281},
-      "plane": {"left": 0.047, "bottom": 0, "right": 0.52, "top": 0.705},
-      "advance": 0.6
-    },
-    "u": {
-      "atlas": {"x": 0.875, "y": 0.125, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.893125, "bottom": 0.13875, "right": 0.919375, "top": 0.17375},
-      "plane": {"left": 0.09, "bottom": -0.01, "right": 0.51, "top": 0.55},
-      "advance": 0.6
-    },
-    "v": {
-      "atlas": {"x": 0.9375, "y": 0.125, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.953375, "bottom": 0.139063, "right": 0.984125, "top": 0.173437},
-      "plane": {"left": 0.054, "bottom": 0, "right": 0.546, "top": 0.55},
-      "advance": 0.6
-    },
-    "w": {
-      "atlas": {"x": 0, "y": 0.1875, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.0144375, "bottom": 0.201563, "right": 0.0480625, "top": 0.235937},
-      "plane": {"left": 0.031, "bottom": 0, "right": 0.569, "top": 0.55},
-      "advance": 0.6
-    },
-    "x": {
-      "atlas": {"x": 0.0625, "y": 0.1875, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.078125, "bottom": 0.201563, "right": 0.109375, "top": 0.235937},
-      "plane": {"left": 0.05, "bottom": 0, "right": 0.55, "top": 0.55},
-      "advance": 0.6
-    },
-    "y": {
-      "atlas": {"x": 0.125, "y": 0.1875, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.140875, "bottom": 0.195937, "right": 0.171625, "top": 0.241563},
-      "plane": {"left": 0.054, "bottom": -0.18, "right": 0.546, "top": 0.55},
-      "advance": 0.6
-    },
-    "z": {
-      "atlas": {"x": 0.1875, "y": 0.1875, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.205625, "bottom": 0.201563, "right": 0.231875, "top": 0.235937},
-      "plane": {"left": 0.09, "bottom": 0, "right": 0.51, "top": 0.55},
-      "advance": 0.6
-    },
-    "0": {
-      "atlas": {"x": 0.25, "y": 0.1875, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.2675, "bottom": 0.195312, "right": 0.295, "top": 0.242188},
-      "plane": {"left": 0.08, "bottom": -0.01, "right": 0.52, "top": 0.74},
-      "advance": 0.6
-    },
-    "1": {
-      "atlas": {"x": 0.3125, "y": 0.1875, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.329688, "bottom": 0.195937, "right": 0.357812, "top": 0.241563},
-      "plane": {"left": 0.09, "bottom": 0, "right": 0.54, "top": 0.73},
-      "advance": 0.6
-    },
-    "2": {
-      "atlas": {"x": 0.375, "y": 0.1875, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.392156, "bottom": 0.195625, "right": 0.420344, "top": 0.241875},
-      "plane": {"left": 0.076, "bottom": 0, "right": 0.527, "top": 0.74},
-      "advance": 0.6
-    },
-    "3": {
-      "atlas": {"x": 0.4375, "y": 0.1875, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.455, "bottom": 0.195625, "right": 0.4825, "top": 0.241875},
-      "plane": {"left": 0.07, "bottom": -0.01, "right": 0.51, "top": 0.73},
-      "advance": 0.6
-    },
-    "4": {
-      "atlas": {"x": 0.5, "y": 0.1875, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.518125, "bottom": 0.195937, "right": 0.544375, "top": 0.241563},
-      "plane": {"left": 0.07, "bottom": 0, "right": 0.49, "top": 0.73},
-      "advance": 0.6
-    },
-    "5": {
-      "atlas": {"x": 0.5625, "y": 0.1875, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.58, "bottom": 0.195625, "right": 0.6075, "top": 0.241875},
-      "plane": {"left": 0.075, "bottom": -0.01, "right": 0.515, "top": 0.73},
-      "advance": 0.6
-    },
-    "6": {
-      "atlas": {"x": 0.625, "y": 0.1875, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.6415, "bottom": 0.195625, "right": 0.671, "top": 0.241875},
-      "plane": {"left": 0.064, "bottom": -0.01, "right": 0.536, "top": 0.73},
-      "advance": 0.6
-    },
-    "7": {
-      "atlas": {"x": 0.6875, "y": 0.1875, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.70425, "bottom": 0.195937, "right": 0.73325, "top": 0.241563},
-      "plane": {"left": 0.082, "bottom": 0, "right": 0.546, "top": 0.73},
-      "advance": 0.6
-    },
-    "8": {
-      "atlas": {"x": 0.75, "y": 0.1875, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.766625, "bottom": 0.195312, "right": 0.795875, "top": 0.242188},
-      "plane": {"left": 0.066, "bottom": -0.01, "right": 0.534, "top": 0.74},
-      "advance": 0.6
-    },
-    "9": {
-      "atlas": {"x": 0.8125, "y": 0.1875, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.829, "bottom": 0.195625, "right": 0.8585, "top": 0.241875},
-      "plane": {"left": 0.064, "bottom": 0, "right": 0.536, "top": 0.74},
-      "advance": 0.6
-    },
-    " ": {
-      "atlas": null,
-      "atlasBounds": null,
-      "plane": null,
-      "advance": 0.6
-    },
-    "!": {
-      "atlas": {"x": 0.875, "y": 0.1875, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.901563, "bottom": 0.195781, "right": 0.910937, "top": 0.241719},
-      "plane": {"left": 0.225, "bottom": -0.005, "right": 0.375, "top": 0.73},
-      "advance": 0.6
-    },
-    "@": {
-      "atlas": {"x": 0.140625, "y": 0.375, "width": 0.0703125, "height": 0.0703125},
-      "atlasBounds": {"left": 0.159688, "bottom": 0.381406, "right": 0.191875, "top": 0.438906},
-      "plane": {"left": 0.045, "bottom": -0.18, "right": 0.56, "top": 0.74},
-      "advance": 0.6
-    },
-    "#": {
-      "atlas": {"x": 0, "y": 0.25, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.0146875, "bottom": 0.258437, "right": 0.0478125, "top": 0.304063},
-      "plane": {"left": 0.035, "bottom": 0, "right": 0.565, "top": 0.73},
-      "advance": 0.6
-    },
-    "$": {
-      "atlas": {"x": 0.210938, "y": 0.375, "width": 0.0742188, "height": 0.0742188},
-      "atlasBounds": {"left": 0.233797, "bottom": 0.380547, "right": 0.262297, "top": 0.443672},
-      "plane": {"left": 0.072, "bottom": -0.14, "right": 0.528, "top": 0.87},
-      "advance": 0.6
-    },
-    "%": {
-      "atlas": {"x": 0.125, "y": 0.25, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.138375, "bottom": 0.258125, "right": 0.174125, "top": 0.304375},
-      "plane": {"left": 0.014, "bottom": -0.005, "right": 0.586, "top": 0.735},
-      "advance": 0.6
-    },
-    "^": {
-      "atlas": {"x": 0.1875, "y": 0.25, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.205, "bottom": 0.269062, "right": 0.2325, "top": 0.293438},
-      "plane": {"left": 0.08, "bottom": 0.34, "right": 0.52, "top": 0.73},
-      "advance": 0.6
-    },
-    "&": {
-      "atlas": {"x": 0.25, "y": 0.25, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.262813, "bottom": 0.257844, "right": 0.299687, "top": 0.304656},
-      "plane": {"left": 0.025, "bottom": -0.009, "right": 0.615, "top": 0.74},
-      "advance": 0.6
-    },
-    "*": {
-      "atlas": {"x": 0.3125, "y": 0.25, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.32725, "bottom": 0.265094, "right": 0.36025, "top": 0.297406},
-      "plane": {"left": 0.036, "bottom": 0.103, "right": 0.564, "top": 0.62},
-      "advance": 0.6
-    },
-    "(": {
-      "atlas": {"x": 0.285156, "y": 0.375, "width": 0.0703125, "height": 0.0703125},
-      "atlasBounds": {"left": 0.310937, "bottom": 0.380156, "right": 0.329688, "top": 0.440156},
-      "plane": {"left": 0.185, "bottom": -0.12, "right": 0.485, "top": 0.84},
-      "advance": 0.6
-    },
-    ")": {
-      "atlas": {"x": 0.355469, "y": 0.375, "width": 0.0703125, "height": 0.0703125},
-      "atlasBounds": {"left": 0.38125, "bottom": 0.380156, "right": 0.4, "top": 0.440156},
-      "plane": {"left": 0.115, "bottom": -0.12, "right": 0.415, "top": 0.84},
-      "advance": 0.6
-    },
-    "_": {
-      "atlas": {"x": 0.5, "y": 0.25, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.51625, "bottom": 0.278906, "right": 0.54625, "top": 0.283594},
-      "plane": {"left": 0.06, "bottom": -0.1, "right": 0.54, "top": -0.025},
-      "advance": 0.6
-    },
-    "+": {
-      "atlas": {"x": 0.5625, "y": 0.25, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.579063, "bottom": 0.266562, "right": 0.608437, "top": 0.295938},
-      "plane": {"left": 0.065, "bottom": 0.095, "right": 0.535, "top": 0.565},
-      "advance": 0.6
-    },
-    "-": {
-      "atlas": {"x": 0.625, "y": 0.25, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.64625, "bottom": 0.27875, "right": 0.66625, "top": 0.28375},
-      "plane": {"left": 0.14, "bottom": 0.29, "right": 0.46, "top": 0.37},
-      "advance": 0.6
-    },
-    "=": {
-      "atlas": {"x": 0.6875, "y": 0.25, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.705313, "bottom": 0.27125, "right": 0.732187, "top": 0.29125},
-      "plane": {"left": 0.085, "bottom": 0.17, "right": 0.515, "top": 0.49},
-      "advance": 0.6
-    },
-    "[": {
-      "atlas": {"x": 0.425781, "y": 0.375, "width": 0.0703125, "height": 0.0703125},
-      "atlasBounds": {"left": 0.453281, "bottom": 0.380781, "right": 0.468594, "top": 0.439531},
-      "plane": {"left": 0.205, "bottom": -0.11, "right": 0.45, "top": 0.83},
-      "advance": 0.6
-    },
-    "]": {
-      "atlas": {"x": 0.496094, "y": 0.375, "width": 0.0703125, "height": 0.0703125},
-      "atlasBounds": {"left": 0.523594, "bottom": 0.380781, "right": 0.538906, "top": 0.439531},
-      "plane": {"left": 0.15, "bottom": -0.11, "right": 0.395, "top": 0.83},
-      "advance": 0.6
-    },
-    "{": {
-      "atlas": {"x": 0.566406, "y": 0.375, "width": 0.0703125, "height": 0.0703125},
-      "atlasBounds": {"left": 0.588125, "bottom": 0.380781, "right": 0.615, "top": 0.439531},
-      "plane": {"left": 0.075, "bottom": -0.11, "right": 0.505, "top": 0.83},
-      "advance": 0.6
-    },
-    "}": {
-      "atlas": {"x": 0.636719, "y": 0.375, "width": 0.0703125, "height": 0.0703125},
-      "atlasBounds": {"left": 0.658438, "bottom": 0.380781, "right": 0.685312, "top": 0.439531},
-      "plane": {"left": 0.095, "bottom": -0.11, "right": 0.525, "top": 0.83},
-      "advance": 0.6
-    },
-    "|": {
-      "atlas": {"x": 0.707031, "y": 0.375, "width": 0.0703125, "height": 0.0703125},
-      "atlasBounds": {"left": 0.739375, "bottom": 0.380781, "right": 0.745, "top": 0.439531},
-      "plane": {"left": 0.255, "bottom": -0.11, "right": 0.345, "top": 0.83},
-      "advance": 0.6
-    },
-    ";": {
-      "atlas": {"x": 0.0625, "y": 0.3125, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.088125, "bottom": 0.32125, "right": 0.099375, "top": 0.36625},
-      "plane": {"left": 0.205, "bottom": -0.16, "right": 0.385, "top": 0.56},
-      "advance": 0.6
-    },
-    "'": {
-      "atlas": {"x": 0.125, "y": 0.3125, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.153062, "bottom": 0.334375, "right": 0.159438, "top": 0.353125},
-      "plane": {"left": 0.249, "bottom": 0.43, "right": 0.351, "top": 0.73},
-      "advance": 0.6
-    },
-    ":": {
-      "atlas": {"x": 0.1875, "y": 0.3125, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.213562, "bottom": 0.325937, "right": 0.223938, "top": 0.361563},
-      "plane": {"left": 0.217, "bottom": -0.01, "right": 0.383, "top": 0.56},
-      "advance": 0.6
-    },
-    "\"": {
-      "atlas": {"x": 0.25, "y": 0.3125, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.271437, "bottom": 0.334375, "right": 0.291063, "top": 0.353125},
-      "plane": {"left": 0.143, "bottom": 0.43, "right": 0.457, "top": 0.73},
-      "advance": 0.6
-    },
-    ",": {
-      "atlas": {"x": 0.3125, "y": 0.3125, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.338656, "bottom": 0.334187, "right": 0.348844, "top": 0.353313},
-      "plane": {"left": 0.21, "bottom": -0.16, "right": 0.373, "top": 0.146},
-      "advance": 0.6
-    },
-    ".": {
-      "atlas": {"x": 0.375, "y": 0.3125, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.401125, "bottom": 0.338687, "right": 0.411375, "top": 0.348812},
-      "plane": {"left": 0.218, "bottom": -0.01, "right": 0.382, "top": 0.152},
-      "advance": 0.6
-    },
-    "/": {
-      "atlas": {"x": 0.777344, "y": 0.375, "width": 0.0703125, "height": 0.0703125},
-      "atlasBounds": {"left": 0.798438, "bottom": 0.380781, "right": 0.826562, "top": 0.439531},
-      "plane": {"left": 0.075, "bottom": -0.11, "right": 0.525, "top": 0.83},
-      "advance": 0.6
-    },
-    "<": {
-      "atlas": {"x": 0.5, "y": 0.3125, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.517813, "bottom": 0.327188, "right": 0.544687, "top": 0.360312},
-      "plane": {"left": 0.085, "bottom": 0.065, "right": 0.515, "top": 0.595},
-      "advance": 0.6
-    },
-    ">": {
-      "atlas": {"x": 0.5625, "y": 0.3125, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.580313, "bottom": 0.327188, "right": 0.607187, "top": 0.360312},
-      "plane": {"left": 0.085, "bottom": 0.065, "right": 0.515, "top": 0.595},
-      "advance": 0.6
-    },
-    "?": {
-      "atlas": {"x": 0.625, "y": 0.3125, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.645156, "bottom": 0.320781, "right": 0.667344, "top": 0.366719},
-      "plane": {"left": 0.13, "bottom": -0.005, "right": 0.485, "top": 0.73},
-      "advance": 0.6
-    },
-    "`": {
-      "atlas": {"x": 0.6875, "y": 0.3125, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.712187, "bottom": 0.339375, "right": 0.725313, "top": 0.348125},
-      "plane": {"left": 0.162, "bottom": 0.645, "right": 0.372, "top": 0.785},
-      "advance": 0.6
-    },
-    "~": {
-      "atlas": {"x": 0.75, "y": 0.3125, "width": 0.0625, "height": 0.0625},
-      "atlasBounds": {"left": 0.766875, "bottom": 0.337344, "right": 0.795625, "top": 0.350156},
-      "plane": {"left": 0.07, "bottom": 0.25, "right": 0.53, "top": 0.455},
-      "advance": 0.6
-    },
-    "\\": {
-      "atlas": {"x": 0.847656, "y": 0.375, "width": 0.0703125, "height": 0.0703125},
-      "atlasBounds": {"left": 0.86875, "bottom": 0.380781, "right": 0.896875, "top": 0.439531},
-      "plane": {"left": 0.075, "bottom": -0.11, "right": 0.525, "top": 0.83},
-      "advance": 0.6
-    }
-  }
+	"atlas": {"type":"msdf","distanceRange":4,"distanceRangeMiddle":0,"size":32,"width":512,"height":512,"yOrigin":"bottom"},
+	"metrics": {"emSize":1,"lineHeight":1.32,"ascender":1.02,"descender":-0.3},
+	"glyphs": [
+		{"unicode":32,"advance":0.6},
+		{"unicode":33,"advance":0.6,"planeBounds":{"left":0.1625,"bottom":-0.0675,"right":0.4375,"top":0.7925},"atlasBounds":{"left":459.6,"bottom":98.24,"right":468.4,"top":125.76}},
+		{"unicode":34,"advance":0.6,"planeBounds":{"left":0.0805,"bottom":0.3675,"right":0.5195,"top":0.7925},"atlasBounds":{"left":136.976,"bottom":169.2,"right":151.024,"top":182.8}},
+		{"unicode":35,"advance":0.6,"planeBounds":{"left":-0.0275,"bottom":-0.0625,"right":0.6275,"top":0.7925},"atlasBounds":{"left":5.52,"bottom":130.32,"right":26.48,"top":157.68}},
+		{"unicode":36,"advance":0.6,"planeBounds":{"left":0.0095,"bottom":-0.2025,"right":0.5905,"top":0.9325},"atlasBounds":{"left":117.704,"bottom":192.84,"right":136.296,"top":229.16}},
+		{"unicode":37,"advance":0.6,"planeBounds":{"left":-0.0485,"bottom":-0.0675,"right":0.6485,"top":0.7975},"atlasBounds":{"left":68.848,"bottom":130.16,"right":91.152,"top":157.84}},
+		{"unicode":38,"advance":0.6,"planeBounds":{"left":-0.0375,"bottom":-0.0715,"right":0.6775,"top":0.8025},"atlasBounds":{"left":132.56,"bottom":130.016,"right":155.44,"top":157.984}},
+		{"unicode":39,"advance":0.6,"planeBounds":{"left":0.1865,"bottom":0.3675,"right":0.4135,"top":0.7925},"atlasBounds":{"left":76.368,"bottom":169.2,"right":83.632,"top":182.8}},
+		{"unicode":40,"advance":0.6,"planeBounds":{"left":0.1225,"bottom":-0.1825,"right":0.5475,"top":0.9025},"atlasBounds":{"left":157.2,"bottom":192.64,"right":170.8,"top":227.36}},
+		{"unicode":41,"advance":0.6,"planeBounds":{"left":0.0525,"bottom":-0.1825,"right":0.4775,"top":0.9025},"atlasBounds":{"left":193.2,"bottom":192.64,"right":206.8,"top":227.36}},
+		{"unicode":42,"advance":0.6,"planeBounds":{"left":-0.0265,"bottom":0.0405,"right":0.6265,"top":0.6825},"atlasBounds":{"left":165.552,"bottom":133.728,"right":186.448,"top":154.272}},
+		{"unicode":43,"advance":0.6,"planeBounds":{"left":0.0025,"bottom":0.0325,"right":0.5975,"top":0.6275},"atlasBounds":{"left":294.48,"bottom":134.48,"right":313.52,"top":153.52}},
+		{"unicode":44,"advance":0.6,"planeBounds":{"left":0.1475,"bottom":-0.2225,"right":0.4355,"top":0.2085},"atlasBounds":{"left":171.392,"bottom":169.104,"right":180.608,"top":182.896}},
+		{"unicode":45,"advance":0.6,"planeBounds":{"left":0.0775,"bottom":0.2275,"right":0.5225,"top":0.4325},"atlasBounds":{"left":328.88,"bottom":140.72,"right":343.12,"top":147.28}},
+		{"unicode":46,"advance":0.6,"planeBounds":{"left":0.1555,"bottom":-0.0725,"right":0.4445,"top":0.2145},"atlasBounds":{"left":203.376,"bottom":171.408,"right":212.624,"top":180.592}},
+		{"unicode":47,"advance":0.6,"planeBounds":{"left":0.0125,"bottom":-0.1725,"right":0.5875,"top":0.8925},"atlasBounds":{"left":406.8,"bottom":192.96,"right":425.2,"top":227.04}},
+		{"unicode":48,"advance":0.6,"planeBounds":{"left":0.0175,"bottom":-0.0725,"right":0.5825,"top":0.8025},"atlasBounds":{"left":134.96,"bottom":98,"right":153.04,"top":126}},
+		{"unicode":49,"advance":0.6,"planeBounds":{"left":0.0275,"bottom":-0.0625,"right":0.6025,"top":0.7925},"atlasBounds":{"left":166.8,"bottom":98.32,"right":185.2,"top":125.68}},
+		{"unicode":50,"advance":0.6,"planeBounds":{"left":0.0135,"bottom":-0.0625,"right":0.5895,"top":0.8025},"atlasBounds":{"left":198.784,"bottom":98.16,"right":217.216,"top":125.84}},
+		{"unicode":51,"advance":0.6,"planeBounds":{"left":0.0075,"bottom":-0.0725,"right":0.5725,"top":0.7925},"atlasBounds":{"left":230.96,"bottom":98.16,"right":249.04,"top":125.84}},
+		{"unicode":52,"advance":0.6,"planeBounds":{"left":0.0075,"bottom":-0.0625,"right":0.5525,"top":0.7925},"atlasBounds":{"left":263.28,"bottom":98.32,"right":280.72,"top":125.68}},
+		{"unicode":53,"advance":0.6,"planeBounds":{"left":0.0125,"bottom":-0.0725,"right":0.5775,"top":0.7925},"atlasBounds":{"left":294.96,"bottom":98.16,"right":313.04,"top":125.84}},
+		{"unicode":54,"advance":0.6,"planeBounds":{"left":0.0015,"bottom":-0.0725,"right":0.5985,"top":0.7925},"atlasBounds":{"left":326.448,"bottom":98.16,"right":345.552,"top":125.84}},
+		{"unicode":55,"advance":0.6,"planeBounds":{"left":0.0195,"bottom":-0.0625,"right":0.6085,"top":0.7925},"atlasBounds":{"left":358.576,"bottom":98.32,"right":377.424,"top":125.68}},
+		{"unicode":56,"advance":0.6,"planeBounds":{"left":0.0035,"bottom":-0.0725,"right":0.5965,"top":0.8025},"atlasBounds":{"left":390.512,"bottom":98,"right":409.488,"top":126}},
+		{"unicode":57,"advance":0.6,"planeBounds":{"left":0.0015,"bottom":-0.0625,"right":0.5985,"top":0.8025},"atlasBounds":{"left":422.448,"bottom":98.16,"right":441.552,"top":125.84}},
+		{"unicode":58,"advance":0.6,"planeBounds":{"left":0.1545,"bottom":-0.0725,"right":0.4455,"top":0.6225},"atlasBounds":{"left":107.344,"bottom":164.88,"right":116.656,"top":187.12}},
+		{"unicode":59,"advance":0.6,"planeBounds":{"left":0.1425,"bottom":-0.2225,"right":0.4475,"top":0.6225},"atlasBounds":{"left":43.12,"bottom":162.48,"right":52.88,"top":189.52}},
+		{"unicode":60,"advance":0.6,"planeBounds":{"left":0.0225,"bottom":0.0025,"right":0.5775,"top":0.6575},"atlasBounds":{"left":263.12,"bottom":165.52,"right":280.88,"top":186.48}},
+		{"unicode":61,"advance":0.6,"planeBounds":{"left":0.0225,"bottom":0.1075,"right":0.5775,"top":0.5525},"atlasBounds":{"left":359.12,"bottom":136.88,"right":376.88,"top":151.12}},
+		{"unicode":62,"advance":0.6,"planeBounds":{"left":0.0225,"bottom":0.0025,"right":0.5775,"top":0.6575},"atlasBounds":{"left":295.12,"bottom":165.52,"right":312.88,"top":186.48}},
+		{"unicode":63,"advance":0.6,"planeBounds":{"left":0.0675,"bottom":-0.0675,"right":0.5475,"top":0.7925},"atlasBounds":{"left":328.32,"bottom":162.24,"right":343.68,"top":189.76}},
+		{"unicode":64,"advance":0.6,"planeBounds":{"left":-0.0175,"bottom":-0.2425,"right":0.6225,"top":0.8025},"atlasBounds":{"left":79.76,"bottom":193.28,"right":100.24,"top":226.72}},
+		{"unicode":65,"advance":0.6,"planeBounds":{"left":-0.0125,"bottom":-0.0625,"right":0.6125,"top":0.7925},"atlasBounds":{"left":6,"bottom":2.32,"right":26,"top":29.68}},
+		{"unicode":66,"advance":0.6,"planeBounds":{"left":0.0305,"bottom":-0.0625,"right":0.5925,"top":0.7925},"atlasBounds":{"left":39.008,"bottom":2.32,"right":56.992,"top":29.68}},
+		{"unicode":67,"advance":0.6,"planeBounds":{"left":0.0295,"bottom":-0.0725,"right":0.5845,"top":0.8025},"atlasBounds":{"left":71.12,"bottom":2,"right":88.88,"top":30}},
+		{"unicode":68,"advance":0.6,"planeBounds":{"left":0.0295,"bottom":-0.0625,"right":0.5745,"top":0.7925},"atlasBounds":{"left":103.28,"bottom":2.32,"right":120.72,"top":29.68}},
+		{"unicode":69,"advance":0.6,"planeBounds":{"left":0.0375,"bottom":-0.0625,"right":0.5825,"top":0.7925},"atlasBounds":{"left":135.28,"bottom":2.32,"right":152.72,"top":29.68}},
+		{"unicode":70,"advance":0.6,"planeBounds":{"left":0.0325,"bottom":-0.0625,"right":0.5875,"top":0.7925},"atlasBounds":{"left":167.12,"bottom":2.32,"right":184.88,"top":29.68}},
+		{"unicode":71,"advance":0.6,"planeBounds":{"left":0.0255,"bottom":-0.0725,"right":0.5805,"top":0.8025},"atlasBounds":{"left":199.12,"bottom":2,"right":216.88,"top":30}},
+		{"unicode":72,"advance":0.6,"planeBounds":{"left":0.0305,"bottom":-0.0625,"right":0.5695,"top":0.7925},"atlasBounds":{"left":231.376,"bottom":2.32,"right":248.624,"top":29.68}},
+		{"unicode":73,"advance":0.6,"planeBounds":{"left":0.0425,"bottom":-0.0625,"right":0.5575,"top":0.7925},"atlasBounds":{"left":263.76,"bottom":2.32,"right":280.24,"top":29.68}},
+		{"unicode":74,"advance":0.6,"planeBounds":{"left":-0.0175,"bottom":-0.0725,"right":0.5575,"top":0.7925},"atlasBounds":{"left":294.8,"bottom":2.16,"right":313.2,"top":29.84}},
+		{"unicode":75,"advance":0.6,"planeBounds":{"left":0.0295,"bottom":-0.0625,"right":0.6225,"top":0.7925},"atlasBounds":{"left":326.512,"bottom":2.32,"right":345.488,"top":29.68}},
+		{"unicode":76,"advance":0.6,"planeBounds":{"left":0.0675,"bottom":-0.0625,"right":0.6125,"top":0.7925},"atlasBounds":{"left":359.28,"bottom":2.32,"right":376.72,"top":29.68}},
+		{"unicode":77,"advance":0.6,"planeBounds":{"left":0.0095,"bottom":-0.0625,"right":0.5905,"top":0.7925},"atlasBounds":{"left":390.704,"bottom":2.32,"right":409.296,"top":29.68}},
+		{"unicode":78,"advance":0.6,"planeBounds":{"left":0.0275,"bottom":-0.0625,"right":0.5725,"top":0.7925},"atlasBounds":{"left":423.28,"bottom":2.32,"right":440.72,"top":29.68}},
+		{"unicode":79,"advance":0.6,"planeBounds":{"left":0.0255,"bottom":-0.0725,"right":0.5745,"top":0.8025},"atlasBounds":{"left":455.216,"bottom":2,"right":472.784,"top":30}},
+		{"unicode":80,"advance":0.6,"planeBounds":{"left":0.0295,"bottom":-0.0625,"right":0.6125,"top":0.7925},"atlasBounds":{"left":486.672,"bottom":2.32,"right":505.328,"top":29.68}},
+		{"unicode":81,"advance":0.6,"planeBounds":{"left":0.0175,"bottom":-0.2425,"right":0.5885,"top":0.8025},"atlasBounds":{"left":8.864,"bottom":193.28,"right":27.136,"top":226.72}},
+		{"unicode":82,"advance":0.6,"planeBounds":{"left":0.0305,"bottom":-0.0625,"right":0.6075,"top":0.7925},"atlasBounds":{"left":38.768,"bottom":34.32,"right":57.232,"top":61.68}},
+		{"unicode":83,"advance":0.6,"planeBounds":{"left":0.0095,"bottom":-0.0725,"right":0.5905,"top":0.8025},"atlasBounds":{"left":70.704,"bottom":34,"right":89.296,"top":62}},
+		{"unicode":84,"advance":0.6,"planeBounds":{"left":-0.0075,"bottom":-0.0625,"right":0.6075,"top":0.7925},"atlasBounds":{"left":102.16,"bottom":34.32,"right":121.84,"top":61.68}},
+		{"unicode":85,"advance":0.6,"planeBounds":{"left":0.0275,"bottom":-0.0725,"right":0.5725,"top":0.7925},"atlasBounds":{"left":135.28,"bottom":34.16,"right":152.72,"top":61.84}},
+		{"unicode":86,"advance":0.6,"planeBounds":{"left":-0.0125,"bottom":-0.0625,"right":0.6125,"top":0.7925},"atlasBounds":{"left":166,"bottom":34.32,"right":186,"top":61.68}},
+		{"unicode":87,"advance":0.6,"planeBounds":{"left":-0.0425,"bottom":-0.0625,"right":0.6425,"top":0.7925},"atlasBounds":{"left":197.04,"bottom":34.32,"right":218.96,"top":61.68}},
+		{"unicode":88,"advance":0.6,"planeBounds":{"left":-0.0225,"bottom":-0.0625,"right":0.6225,"top":0.7925},"atlasBounds":{"left":229.68,"bottom":34.32,"right":250.32,"top":61.68}},
+		{"unicode":89,"advance":0.6,"planeBounds":{"left":-0.0275,"bottom":-0.0625,"right":0.6275,"top":0.7925},"atlasBounds":{"left":261.52,"bottom":34.32,"right":282.48,"top":61.68}},
+		{"unicode":90,"advance":0.6,"planeBounds":{"left":0.0225,"bottom":-0.0625,"right":0.5775,"top":0.7925},"atlasBounds":{"left":295.12,"bottom":34.32,"right":312.88,"top":61.68}},
+		{"unicode":91,"advance":0.6,"planeBounds":{"left":0.1425,"bottom":-0.1725,"right":0.5125,"top":0.8925},"atlasBounds":{"left":230.08,"bottom":192.96,"right":241.92,"top":227.04}},
+		{"unicode":92,"advance":0.6,"planeBounds":{"left":0.0125,"bottom":-0.1725,"right":0.5875,"top":0.8925},"atlasBounds":{"left":442.8,"bottom":192.96,"right":461.2,"top":227.04}},
+		{"unicode":93,"advance":0.6,"planeBounds":{"left":0.0875,"bottom":-0.1725,"right":0.4575,"top":0.8925},"atlasBounds":{"left":266.08,"bottom":192.96,"right":277.92,"top":227.04}},
+		{"unicode":94,"advance":0.6,"planeBounds":{"left":0.0175,"bottom":0.2775,"right":0.5825,"top":0.7925},"atlasBounds":{"left":102.96,"bottom":135.76,"right":121.04,"top":152.24}},
+		{"unicode":95,"advance":0.6,"planeBounds":{"left":-0.0025,"bottom":-0.1625,"right":0.6025,"top":0.0375},"atlasBounds":{"left":262.32,"bottom":140.8,"right":281.68,"top":147.2}},
+		{"unicode":96,"advance":0.6,"planeBounds":{"left":0.0995,"bottom":0.5825,"right":0.4345,"top":0.8475},"atlasBounds":{"left":362.64,"bottom":171.76,"right":373.36,"top":180.24}},
+		{"unicode":97,"advance":0.6,"planeBounds":{"left":0.0045,"bottom":-0.0725,"right":0.5705,"top":0.6225},"atlasBounds":{"left":326.944,"bottom":36.88,"right":345.056,"top":59.12}},
+		{"unicode":98,"advance":0.6,"planeBounds":{"left":0.0295,"bottom":-0.0725,"right":0.5755,"top":0.7925},"atlasBounds":{"left":359.264,"bottom":34.16,"right":376.736,"top":61.84}},
+		{"unicode":99,"advance":0.6,"planeBounds":{"left":0.0255,"bottom":-0.0725,"right":0.5855,"top":0.6225},"atlasBounds":{"left":391.04,"bottom":36.88,"right":408.96,"top":59.12}},
+		{"unicode":100,"advance":0.6,"planeBounds":{"left":0.0245,"bottom":-0.0725,"right":0.5705,"top":0.7925},"atlasBounds":{"left":423.264,"bottom":34.16,"right":440.736,"top":61.84}},
+		{"unicode":101,"advance":0.6,"planeBounds":{"left":0.0215,"bottom":-0.0725,"right":0.5785,"top":0.6225},"atlasBounds":{"left":455.088,"bottom":36.88,"right":472.912,"top":59.12}},
+		{"unicode":102,"advance":0.6,"planeBounds":{"left":-0.0075,"bottom":-0.0625,"right":0.5925,"top":0.7925},"atlasBounds":{"left":486.4,"bottom":34.32,"right":505.6,"top":61.68}},
+		{"unicode":103,"advance":0.6,"planeBounds":{"left":0.0255,"bottom":-0.2425,"right":0.5695,"top":0.6225},"atlasBounds":{"left":7.296,"bottom":66.16,"right":24.704,"top":93.84}},
+		{"unicode":104,"advance":0.6,"planeBounds":{"left":0.0295,"bottom":-0.0625,"right":0.5725,"top":0.7925},"atlasBounds":{"left":39.312,"bottom":66.32,"right":56.688,"top":93.68}},
+		{"unicode":105,"advance":0.6,"planeBounds":{"left":0.0225,"bottom":-0.0625,"right":0.6175,"top":0.8395},"atlasBounds":{"left":70.48,"bottom":65.568,"right":89.52,"top":94.432}},
+		{"unicode":106,"advance":0.6,"planeBounds":{"left":0.0225,"bottom":-0.2425,"right":0.5135,"top":0.8395},"atlasBounds":{"left":46.144,"bottom":192.688,"right":61.856,"top":227.312}},
+		{"unicode":107,"advance":0.6,"planeBounds":{"left":0.0345,"bottom":-0.0625,"right":0.6215,"top":0.7925},"atlasBounds":{"left":134.608,"bottom":66.32,"right":153.392,"top":93.68}},
+		{"unicode":108,"advance":0.6,"planeBounds":{"left":-0.0325,"bottom":-0.0625,"right":0.6125,"top":0.7925},"atlasBounds":{"left":165.68,"bottom":66.32,"right":186.32,"top":93.68}},
+		{"unicode":109,"advance":0.6,"planeBounds":{"left":-0.0025,"bottom":-0.0625,"right":0.6025,"top":0.6225},"atlasBounds":{"left":198.32,"bottom":69.04,"right":217.68,"top":90.96}},
+		{"unicode":110,"advance":0.6,"planeBounds":{"left":0.0295,"bottom":-0.0625,"right":0.5725,"top":0.6225},"atlasBounds":{"left":231.312,"bottom":69.04,"right":248.688,"top":90.96}},
+		{"unicode":111,"advance":0.6,"planeBounds":{"left":0.0215,"bottom":-0.0705,"right":0.5785,"top":0.6205},"atlasBounds":{"left":263.088,"bottom":68.944,"right":280.912,"top":91.056}},
+		{"unicode":112,"advance":0.6,"planeBounds":{"left":0.0295,"bottom":-0.2425,"right":0.5755,"top":0.6225},"atlasBounds":{"left":295.264,"bottom":66.16,"right":312.736,"top":93.84}},
+		{"unicode":113,"advance":0.6,"planeBounds":{"left":0.0245,"bottom":-0.2425,"right":0.5705,"top":0.6225},"atlasBounds":{"left":327.264,"bottom":66.16,"right":344.736,"top":93.84}},
+		{"unicode":114,"advance":0.6,"planeBounds":{"left":0.0495,"bottom":-0.0625,"right":0.5925,"top":0.6225},"atlasBounds":{"left":359.312,"bottom":69.04,"right":376.688,"top":90.96}},
+		{"unicode":115,"advance":0.6,"planeBounds":{"left":0.0225,"bottom":-0.0705,"right":0.5775,"top":0.6205},"atlasBounds":{"left":391.12,"bottom":68.944,"right":408.88,"top":91.056}},
+		{"unicode":116,"advance":0.6,"planeBounds":{"left":-0.0155,"bottom":-0.0625,"right":0.5825,"top":0.7675},"atlasBounds":{"left":422.432,"bottom":66.72,"right":441.568,"top":93.28}},
+		{"unicode":117,"advance":0.6,"planeBounds":{"left":0.0275,"bottom":-0.0725,"right":0.5725,"top":0.6125},"atlasBounds":{"left":455.28,"bottom":69.04,"right":472.72,"top":90.96}},
+		{"unicode":118,"advance":0.6,"planeBounds":{"left":-0.0085,"bottom":-0.0625,"right":0.6085,"top":0.6125},"atlasBounds":{"left":486.128,"bottom":69.2,"right":505.872,"top":90.8}},
+		{"unicode":119,"advance":0.6,"planeBounds":{"left":-0.0315,"bottom":-0.0625,"right":0.6315,"top":0.6125},"atlasBounds":{"left":5.392,"bottom":101.2,"right":26.608,"top":122.8}},
+		{"unicode":120,"advance":0.6,"planeBounds":{"left":-0.0125,"bottom":-0.0625,"right":0.6125,"top":0.6125},"atlasBounds":{"left":38,"bottom":101.2,"right":58,"top":122.8}},
+		{"unicode":121,"advance":0.6,"planeBounds":{"left":-0.0085,"bottom":-0.2425,"right":0.6085,"top":0.6125},"atlasBounds":{"left":70.128,"bottom":98.32,"right":89.872,"top":125.68}},
+		{"unicode":122,"advance":0.6,"planeBounds":{"left":0.0275,"bottom":-0.0625,"right":0.5725,"top":0.6125},"atlasBounds":{"left":103.28,"bottom":101.2,"right":120.72,"top":122.8}},
+		{"unicode":123,"advance":0.6,"planeBounds":{"left":0.0125,"bottom":-0.1725,"right":0.5675,"top":0.8925},"atlasBounds":{"left":299.12,"bottom":192.96,"right":316.88,"top":227.04}},
+		{"unicode":124,"advance":0.6,"planeBounds":{"left":0.1925,"bottom":-0.1725,"right":0.4075,"top":0.8925},"atlasBounds":{"left":376.56,"bottom":192.96,"right":383.44,"top":227.04}},
+		{"unicode":125,"advance":0.6,"planeBounds":{"left":0.0325,"bottom":-0.1725,"right":0.5875,"top":0.8925},"atlasBounds":{"left":335.12,"bottom":192.96,"right":352.88,"top":227.04}},
+		{"unicode":126,"advance":0.6,"planeBounds":{"left":0.0075,"bottom":0.1875,"right":0.5925,"top":0.5175},"atlasBounds":{"left":390.64,"bottom":170.72,"right":409.36,"top":181.28}}
+	],
+	"kerning": []
 }

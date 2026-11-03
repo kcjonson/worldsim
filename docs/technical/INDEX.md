@@ -134,7 +134,7 @@ Applications:
 | [Chunk Management System](./chunk-management-system.md) | Infinite 2D world from 3D sphere |
 | [3D to 2D Sampling](./3d-to-2d-sampling.md) | Converting spherical world to tiles (locateHex) |
 | [Flat Tile Storage Refactor](./flat-tile-storage-refactor.md) | Proposed: Replace layered tiles with flat array |
-| [Ground Textures](./ground-textures.md) | Surface SVG patterns in the tile atlas, per-chunk render tiles, and a summary of the D16 land field that paints them |
+| [Ground Textures](./ground-textures.md) | Built: Lua ground tile assets baked to texture arrays and hex-mixed in the shader, the height contest at surface edges, per-chunk render tiles, a summary of the D16 land field that paints them, and the perf ledger |
 | [Organic Terrain Geometry](./organic-terrain-geometry.md) | Research: tile centers as lattice samples, organic shorelines, river ribbons |
 | [Terrain Polygons Architecture](./organic-terrain/terrain-polygons-architecture.md) | Design spec: per-chunk waterline/river/pond rings as the truth for nav, render, vision, mud; realism rules; mocks |
 | [Building & Construction Architecture](./building-construction-architecture.md) | Freeform structures: geometry lib, room detection, structure rendering |

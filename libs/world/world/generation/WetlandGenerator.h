@@ -2,37 +2,17 @@
 
 // WetlandGenerator - Terrain generation for Wetland biome
 
+#include "world/chunk/Chunk.h"
 #include "world/generation/GenerationContext.h"
-#include "world/generation/GenerationResult.h"
-#include "world/generation/NoiseUtils.h"
 
 namespace world::generation {
 
-/// Wetland surface generator.
-/// Primary: Water, Variation: Grass patches (islands)
+/// Wetland: Water, with islands of tall marsh grass on 11% of tiles.
 class WetlandGenerator {
 public:
-	[[nodiscard]] static GenerationResult generate(const GenerationContext& ctx) {
-		GenerationResult result;
-		float			 worldX = ctx.worldX();
-		float			 worldY = ctx.worldY();
-
-		constexpr float kPatchScale = 0.12F;
-		float			variationNoise = NoiseUtils::fractalNoise(
-            worldX * kPatchScale, worldY * kPatchScale,
-            ctx.worldSeed + 50000, 2, 0.5F
-        );
-
-		// Wetland is mostly water with grass islands
-		constexpr float kGrassThreshold = 0.70F;
-		if (variationNoise > kGrassThreshold) {
-			result.surface = Surface::GrassTall; // Tall marsh grass
-		} else {
-			result.surface = Surface::Water;
-		}
-		result.moisture = 240; // Very wet
-
-		return result;
+	[[nodiscard]] static Surface generate(const GenerationContext& ctx) {
+		constexpr float kIslandThreshold = 0.2317F; // the top 11% of the marsh island field
+		return ctx.patch(PatchField::MarshIslands) > kIslandThreshold ? Surface::GrassTall : Surface::Water;
 	}
 };
 

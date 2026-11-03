@@ -1,4 +1,4 @@
-#version 330 core
+#version 410 core
 
 // Tile pass vertex shader - one unit quad per chunk, expanded to world space.
 // All per-tile data lives in a chunk tile-data texture sampled by tile.frag,

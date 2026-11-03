@@ -25,13 +25,15 @@ struct TileRenderData {
 	/// Paint surface (a Surface value, never Water: a Water tile paints as its bed).
 	uint8_t surfaceId = 0;
 	/// Low nibble: the surface whose edge character (warp amplitudes) this tile's warp
-	/// uses. kRenderInteriorBit: every tile within kInteriorReachTiles is one surface.
+	/// uses. kRenderInteriorBit: every tile within kInteriorReachTiles is one surface;
+	/// kRenderNearInteriorBit: every tile within kNearInteriorReachTiles is.
 	uint8_t edge = 0;
 
 	bool operator==(const TileRenderData&) const = default;
 };
 
 inline constexpr uint8_t kRenderEdgeSurfaceMask = 0x0F;
+inline constexpr uint8_t kRenderNearInteriorBit = 0x40;
 inline constexpr uint8_t kRenderInteriorBit = 0x80;
 
 /// A rectangle of render tiles, addressed by world tile.

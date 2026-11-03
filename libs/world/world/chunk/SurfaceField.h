@@ -37,6 +37,14 @@ inline constexpr size_t kSurfaceCount = static_cast<size_t>(Surface::Count);
 inline constexpr int32_t kEdgeReachTiles = 2;
 /// A tile is interior when every tile this far around it has its surface.
 inline constexpr int32_t kInteriorReachTiles = 3;
+/// And near-interior at this reach: a point there whose read stays within it, which
+/// the low warp term and the fine term's amplitude bound (or the fine term's first
+/// octave and what the others can add), sees only that surface (evaluateSurfaceField
+/// skips the fine noise, or all but its first octave, and the block).
+inline constexpr int32_t kNearInteriorReachTiles = 2;
+/// How far inside that bound the tested point must be, meters: float rounding in
+/// the full warp can't carry the read across it.
+inline constexpr float kNearInteriorMarginM = 1.0e-3F;
 /// A Water tile's bed is the nearest land tile at most this far away.
 inline constexpr int32_t kBedReachTiles = 3;
 /// A chunk's render tiles are a function of the final tile surfaces this far past
@@ -157,7 +165,8 @@ struct SurfaceFieldSample {
 
 /// Render tiles of a width x height window from the paint surfaces of the window
 /// grown by kInteriorReachTiles on each side (row-major): the paint surface, the
-/// highest surface within kEdgeReachTiles as the edge surface, and the interior bit.
+/// highest surface within kEdgeReachTiles as the edge surface, and the interior and
+/// near-interior bits.
 [[nodiscard]] std::vector<TileRenderData> buildRenderTiles(std::span<const uint8_t> paint, int32_t width, int32_t height);
 
 } // namespace world

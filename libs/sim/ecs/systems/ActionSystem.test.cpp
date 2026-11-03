@@ -1465,6 +1465,47 @@ TEST_F(ActionSystemGoalTest, PlacePackagedFromCraftInstallsAtTargetAndUnpackages
 	ASSERT_NE(boxPos, nullptr);
 	EXPECT_FLOAT_EQ(boxPos->value.x, targetPos.x) << "the box must end at its install target";
 	EXPECT_FLOAT_EQ(boxPos->value.y, targetPos.y);
+	EXPECT_FALSE(inventory->carryingPackagedEntity.has_value()) << "the carried box leaves the hands on install";
+	EXPECT_FALSE(inventory->leftHand.has_value());
+	EXPECT_FALSE(inventory->rightHand.has_value());
+}
+
+// Regression (WOR-566): a box crafted at a station spawns AT its install target, so the pickup
+// phase is skipped and the colonist never carries it. Installing it must leave whatever the
+// colonist holds alone -- here the axe crafted just before at the same station.
+TEST_F(ActionSystemGoalTest, PlacePackagedWithoutPickupKeepsHeldTool) {
+	world->registerSystem<BuildGoalSystem>();
+
+	const glm::vec2 targetPos{3.0F, 2.0F};
+	EntityID		box = world->createEntity();
+	world->addComponent<Position>(box, Position{targetPos});
+	world->addComponent<Appearance>(box, Appearance{"BasicBox", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+	ecs::Packaged packaged;
+	packaged.targetPosition = targetPos;
+	world->addComponent<ecs::Packaged>(box, packaged);
+	for (int i = 0; i < 35; ++i) {
+		world->update(0.016F);
+	}
+
+	auto  colonist = createColonist(targetPos);
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	inventory->rightHand = ItemStack{"AxePrimitive", 1};
+
+	auto* task = world->getComponent<Task>(colonist);
+	task->type = TaskType::PlacePackaged;
+	task->state = TaskState::Arrived;
+	task->placePackagedEntityId = static_cast<uint64_t>(box);
+	task->placeSourcePosition = targetPos;
+	task->placeTargetPosition = targetPos;
+	task->targetPosition = targetPos;
+
+	world->update(0.1F); // source == target: starts PlacePackaged directly, no pickup
+	world->update(2.0F); // complete the install
+
+	EXPECT_EQ(world->getComponent<ecs::Packaged>(box), nullptr) << "the box still installs";
+	ASSERT_TRUE(inventory->rightHand.has_value()) << "the held axe must survive installing a box it never carried";
+	EXPECT_EQ(inventory->rightHand->defName, "AxePrimitive");
+	EXPECT_FALSE(inventory->leftHand.has_value());
 }
 
 // =============================================================================

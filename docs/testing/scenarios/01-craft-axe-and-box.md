@@ -1,7 +1,7 @@
 # Scenario 01: Craft axe and box
 
 **Status:** ready  
-**Last verified:** 2026-06-28
+**Last verified:** 2026-11-02
 
 Verifies the full gather-and-craft loop: a colonist harvests raw materials from nearby world
 entities (no freebies) and produces both a `Recipe_AxePrimitive` and a `Recipe_BasicBox` at a
@@ -118,7 +118,7 @@ GET /api/state?what=colonists
 
 # Box exists as a storage entity
 GET /api/state?what=storage
-  -> storage[].some(s => s.defName == "BasicBox")
+  -> storages[].some(s => s.defName == "BasicBox")
 ```
 
 ---

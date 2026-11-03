@@ -1,14 +1,15 @@
 // SDF Atlas Generator Tool
 // Generates multi-channel signed distance field atlases for fonts
 
-#include <msdfgen.h>
-#include <msdfgen-ext.h>
-#include <iostream>
-#include <fstream>
-#include <vector>
-#include <string>
-#include <cmath>
 #include <algorithm>
+#include <charconv>
+#include <cmath>
+#include <fstream>
+#include <iostream>
+#include <msdfgen-ext.h>
+#include <msdfgen.h>
+#include <string>
+#include <vector>
 
 struct GlyphData {
 	char character;
@@ -57,6 +58,20 @@ struct AtlasConfig {
 namespace {
 
 	constexpr double kSide = 1e-9; // em either side of an edge, to tell which side the fill is on
+
+	// Nine decimals, far finer than the float the renderer reads, printed shortest, so a
+	// regenerated atlas diffs only where a glyph moved.
+	std::string number(double value) {
+		const double rounded = std::round(value * 1e9) / 1e9;
+		char		 buffer[32];
+		const auto	 result = std::to_chars(buffer, buffer + sizeof(buffer), rounded == 0.0 ? 0.0 : rounded);
+		return {buffer, result.ptr};
+	}
+
+	std::string bounds(double left, double bottom, double right, double top) {
+		return "{\"left\":" + number(left) + ",\"bottom\":" + number(bottom) + ",\"right\":" + number(right) + ",\"top\":" + number(top) +
+			   "}";
+	}
 
 	// Under the nonzero rule, which is how TrueType outlines fill.
 	bool isFilled(const msdfgen::Shape& shape, msdfgen::Point2 point) {
@@ -632,83 +647,46 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
-	jsonFile << "{\n";
-	jsonFile << "  \"atlas\": {\n";
-	jsonFile << "    \"type\": \"msdf\",\n";
-	jsonFile << "    \"distanceRange\": " << config.pixelRange << ",\n";
-	jsonFile << "    \"size\": " << config.glyphSize << ",\n";
-	jsonFile << "    \"width\": " << config.atlasWidth << ",\n";
-	jsonFile << "    \"height\": " << config.atlasHeight << "\n";
-	jsonFile << "  },\n";
-	jsonFile << "  \"metrics\": {\n";
-	jsonFile << "    \"emSize\": " << metrics.emSize << ",\n";
-	jsonFile << "    \"ascender\": " << metrics.ascenderY << ",\n";
-	jsonFile << "    \"descender\": " << metrics.descenderY << ",\n";
-	jsonFile << "    \"lineHeight\": " << metrics.lineHeight << "\n";
-	jsonFile << "  },\n";
-	jsonFile << "  \"glyphs\": {\n";
+	// msdf-atlas-gen's layout, which salal's FontRenderer reads: glyphs by code point, atlas bounds
+	// in pixels from the image's bottom row. Both bounds hold the half of the distance range the
+	// edge fades over, the atlas bounds clamped to the image. One glyph a line, so a regenerated
+	// atlas diffs by glyph.
+	const double halfRange = config.pixelRange * 0.5;
+	const double padEm = halfRange / config.glyphSize;
+	const double width = config.atlasWidth;
+	const double height = config.atlasHeight;
 
-	bool first = true;
+	std::vector<const GlyphData*> ordered;
 	for (const auto& glyph : glyphs) {
-		if (!first) jsonFile << ",\n";
-		first = false;
-
-		// Escape special JSON characters
-		std::string charStr;
-		char c = glyph.character;
-		if (c == '\"') charStr = "\\\"";
-		else if (c == '\\') charStr = "\\\\";
-		else if (c == '\n') charStr = "\\n";
-		else if (c == '\r') charStr = "\\r";
-		else if (c == '\t') charStr = "\\t";
-		else charStr = std::string(1, c);
-
-		jsonFile << "    \"" << charStr << "\": {\n";
-
-		// Atlas cell coordinates (normalized 0-1) - the full allocated cell
-		if (!glyph.shape.contours.empty()) {
-			double normX = static_cast<double>(glyph.atlasX) / config.atlasWidth;
-			double normY = static_cast<double>(glyph.atlasY) / config.atlasHeight;
-			double normW = static_cast<double>(glyph.atlasWidth) / config.atlasWidth;
-			double normH = static_cast<double>(glyph.atlasHeight) / config.atlasHeight;
-
-			jsonFile << "      \"atlas\": {";
-			jsonFile << "\"x\": " << normX << ", ";
-			jsonFile << "\"y\": " << normY << ", ";
-			jsonFile << "\"width\": " << normW << ", ";
-			jsonFile << "\"height\": " << normH << "},\n";
-
-			// Atlas bounds (normalized 0-1) - actual glyph content within the cell
-			// Reference: https://github.com/Chlumsky/msdf-atlas-gen/issues/2
-			// These are the pixel coordinates where the actual glyph is rendered
-			double atlasBoundsLeft = (glyph.atlasX + glyph.atlasBoundsLeft) / config.atlasWidth;
-			double atlasBoundsBottom = (glyph.atlasY + glyph.atlasBoundsBottom) / config.atlasHeight;
-			double atlasBoundsRight = (glyph.atlasX + glyph.atlasBoundsRight) / config.atlasWidth;
-			double atlasBoundsTop = (glyph.atlasY + glyph.atlasBoundsTop) / config.atlasHeight;
-
-			jsonFile << "      \"atlasBounds\": {";
-			jsonFile << "\"left\": " << atlasBoundsLeft << ", ";
-			jsonFile << "\"bottom\": " << atlasBoundsBottom << ", ";
-			jsonFile << "\"right\": " << atlasBoundsRight << ", ";
-			jsonFile << "\"top\": " << atlasBoundsTop << "},\n";
-
-			jsonFile << "      \"plane\": {";
-			jsonFile << "\"left\": " << glyph.planeLeft << ", ";
-			jsonFile << "\"bottom\": " << glyph.planeBottom << ", ";
-			jsonFile << "\"right\": " << glyph.planeRight << ", ";
-			jsonFile << "\"top\": " << glyph.planeTop << "},\n";
-		} else {
-			// Whitespace - no atlas coordinates
-			jsonFile << "      \"atlas\": null,\n";
-			jsonFile << "      \"atlasBounds\": null,\n";
-			jsonFile << "      \"plane\": null,\n";
-		}
-
-		jsonFile << "      \"advance\": " << glyph.advance << "\n";
-		jsonFile << "    }";
+		ordered.push_back(&glyph);
 	}
+	std::sort(ordered.begin(), ordered.end(), [](const GlyphData* a, const GlyphData* b) { return a->unicode < b->unicode; });
 
-	jsonFile << "\n  }\n";
+	jsonFile << "{\n";
+	jsonFile << "\t\"atlas\": {\"type\":\"msdf\",\"distanceRange\":" << number(config.pixelRange)
+			 << ",\"distanceRangeMiddle\":0,\"size\":" << config.glyphSize << ",\"width\":" << config.atlasWidth
+			 << ",\"height\":" << config.atlasHeight << ",\"yOrigin\":\"bottom\"},\n";
+	jsonFile << "\t\"metrics\": {\"emSize\":" << number(metrics.emSize) << ",\"lineHeight\":" << number(metrics.lineHeight)
+			 << ",\"ascender\":" << number(metrics.ascenderY) << ",\"descender\":" << number(metrics.descenderY) << "},\n";
+	jsonFile << "\t\"glyphs\": [\n";
+	for (std::size_t i = 0; i < ordered.size(); ++i) {
+		const GlyphData& glyph = *ordered[i];
+		jsonFile << "\t\t{\"unicode\":" << glyph.unicode << ",\"advance\":" << number(glyph.advance);
+		if (!glyph.shape.contours.empty()) {
+			jsonFile << ",\"planeBounds\":"
+					 << bounds(glyph.planeLeft - padEm, glyph.planeBottom - padEm, glyph.planeRight + padEm, glyph.planeTop + padEm);
+			jsonFile << ",\"atlasBounds\":"
+					 << bounds(
+							std::clamp(glyph.atlasX + glyph.atlasBoundsLeft - halfRange, 0.0, width),
+							std::clamp(glyph.atlasY + glyph.atlasBoundsBottom - halfRange, 0.0, height),
+							std::clamp(glyph.atlasX + glyph.atlasBoundsRight + halfRange, 0.0, width),
+							std::clamp(glyph.atlasY + glyph.atlasBoundsTop + halfRange, 0.0, height)
+						);
+		}
+		jsonFile << (i + 1 < ordered.size() ? "},\n" : "}\n");
+	}
+	jsonFile << "\t],\n";
+	jsonFile << "\t\"kerning\": []\n";
 	jsonFile << "}\n";
 	jsonFile.close();
 
