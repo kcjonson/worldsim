@@ -1141,8 +1141,8 @@ void TerrainStage::run(StageContext& ctx) {
             ctx.data.boundaryDistance[t] = d >= 65535.0f ? uint16_t(65535) : static_cast<uint16_t>(d + 0.5f);
         }
         // Step 5 recomputes distances from the seeds, so only the seeds stay.
-        boundary.distTiles       = {};
-        boundary.secondDistTiles = {};
+        boundary.distTiles.clear();       boundary.distTiles.shrink_to_fit();
+        boundary.secondDistTiles.clear(); boundary.secondDistTiles.shrink_to_fit();
     }
     // Distance from tile t to boundary row r's side of the boundary itself, which runs
     // half a spacing beyond the rows' centres, as for the crust edge.
@@ -1486,12 +1486,14 @@ void TerrainStage::run(StageContext& ctx) {
     // itself when it is on the slab plate, else the mean of the slab-plate rows across it.
     // An anchor's floor is its tiles' mean, like its other inputs.
     {
-        std::vector<float> slabRowElev(boundaryCount, 0.0f);
+        std::vector<float>   slabRowElev(boundaryCount, 0.0f);
+        std::vector<uint8_t> isSlabRow(boundaryCount, 0u);
         ctx.pool.parallelFor(0, boundaryCount, kGrainSize, [&](size_t begin, size_t end) {
             throwIfCancelled(ctx);
             for (size_t i = begin; i < end; ++i) {
                 if (ctx.data.plateId[boundaryRows[i]] == boundaryInput[i].slabPlate) {
                     slabRowElev[i] = tileElevation(boundaryRows[i]);
+                    isSlabRow[i]   = 1u;
                 }
             }
         });
@@ -1511,7 +1513,11 @@ void TerrainStage::run(StageContext& ctx) {
                     if (ctx.data.plateId[nbrs[k]] != in.slabPlate) continue;
                     const auto it = std::lower_bound(boundaryRows.begin(), boundaryRows.end(), nbrs[k]);
                     if (it == boundaryRows.end() || *it != nbrs[k]) continue;
-                    sum += slabRowElev[static_cast<size_t>(it - boundaryRows.begin())];
+                    // At a triple junction the neighbour can be on this pair's slab plate yet
+                    // overriding for its own pair, so the first pass never synthesized it.
+                    const auto j = static_cast<size_t>(it - boundaryRows.begin());
+                    if (isSlabRow[j] == 0u) continue;
+                    sum += slabRowElev[j];
                     ++n;
                 }
                 if (n > 0) in.axisM = sum / static_cast<float>(n);
