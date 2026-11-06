@@ -2,6 +2,8 @@
 
 #include "worldgen/grid/SphereGrid.h"
 
+#include <threading/TaskPool.h>
+
 #include <atomic>
 #include <cstdint>
 #include <limits>
@@ -13,21 +15,21 @@ namespace worldgen {
 // of area (sqrt(3)/2) s^2 cover 4 pi. Matches the grid's mean neighbor chord to ~0.1%.
 double meanSpacingChord(const SphereGrid& grid);
 
+// A tile centre in floats. The distance passes read every tile's centre several times over,
+// and the grid computes one per call, so they work from a copy: 12 bytes a tile.
+struct TileCenterF {
+    float x = 0.0f, y = 0.0f, z = 0.0f;
+};
+// Every tile's centre, filled across the pool.
+std::vector<TileCenterF> tileCentersF(const SphereGrid& grid, foundation::TaskPool& pool);
+
 struct SeedDistanceArgs {
-    const SphereGrid&          grid;
-    const std::vector<TileId>& seeds;  // a tile listed twice keeps its first index
+    const SphereGrid&               grid;
+    const std::vector<TileCenterF>& centers; // tileCentersF(grid)
+    const std::vector<TileId>&      seeds;   // a tile listed twice keeps its first index
     const std::atomic<bool>&   cancel; // polled; throws CancelledException when set
     // Resolve distances only this far, in tile spacings; unset covers the whole sphere.
     float maxTiles = std::numeric_limits<float>::infinity();
-    // Optional second seed. Each label packs two 8-bit keys (key0 | key1 << 8). Within
-    // secondReachTiles of its nearest seed, a tile also gets the nearest seed of another
-    // label than its nearest seed's that holds its tile key (when tileKeys is given). Only
-    // seeds less than secondBandTiles farther than the nearest count, so the second covers
-    // a band either side of every border between two labels' regions.
-    const std::vector<uint32_t>* labels           = nullptr;
-    const std::vector<uint8_t>*  tileKeys         = nullptr;
-    float                        secondBandTiles  = 0.0f;
-    float                        secondReachTiles = std::numeric_limits<float>::infinity();
 };
 
 inline constexpr uint32_t kNoSeed = 0xFFFFFFFFu;
@@ -35,9 +37,6 @@ inline constexpr uint32_t kNoSeed = 0xFFFFFFFFu;
 struct SeedDistanceResult {
     std::vector<float>    distTiles;   // to the nearest seed, in mean tile spacings
     std::vector<uint32_t> nearestSeed; // index into args.seeds, or kNoSeed past maxTiles
-    // With labels only: the second seed, else kNoSeed and infinity.
-    std::vector<float>    secondDistTiles;
-    std::vector<uint32_t> secondSeed;
 };
 
 // Straight-line distance from every tile center to its nearest seed's center, in mean
@@ -51,8 +50,7 @@ struct SeedDistanceResult {
 // first keeps the tile). Only tiles closer than maxTiles to a seed are ever visited,
 // so the work scales with the band around the seeds; every tile farther out (every
 // tile, given no seeds) reads exactly maxTiles. The nearest seed is the propagation's
-// state, so it is always returned. The second seed propagates the same way, in a pass
-// started from the borders between labels' regions and confined to the band.
+// state, so it is always returned.
 SeedDistanceResult seedDistance(const SeedDistanceArgs& args);
 
 } // namespace worldgen

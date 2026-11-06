@@ -488,7 +488,7 @@ TEST(PlanetGeneratorHeavy, GoldenWorldHash) {
     auto world = runToCompletion(params, /*timeoutSeconds=*/120);
     ASSERT_NE(world, nullptr) << "generation did not complete";
 
-    constexpr uint64_t kGoldenWorldHash = 0xe2649f9b49013b0fULL;
+    constexpr uint64_t kGoldenWorldHash = 0x884ddc49add73496ULL;
     EXPECT_EQ(world->worldHash, kGoldenWorldHash)
         << "worldHash drifted. If this change was intentional, re-pin "
            "kGoldenWorldHash to 0x" << std::hex << world->worldHash

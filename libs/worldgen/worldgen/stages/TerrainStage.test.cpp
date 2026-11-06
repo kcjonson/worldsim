@@ -186,7 +186,7 @@ TEST(TerrainStageHeavy, MountainsAtConvergentCC) {
     if (cntCC == 0u) { GTEST_SKIP() << "No CC convergent land tiles within 8 of boundary"; }
     double meanCC = sumCC / cntCC;
 
-    // Measured 937 m above the land mean, over 742 tiles.
+    // Measured 932 m above the land mean, over 742 tiles.
     EXPECT_GT(meanCC, meanLand + 800.0)
         << "CC mountain mean " << meanCC << " vs land mean " << meanLand;
 }
@@ -319,11 +319,13 @@ TEST(TerrainStageHeavy, TrenchArcStructure) {
             if (!up(nbrs[k])) { shore.push_back(t); break; }
         }
     }
-    const std::atomic<bool> noCancel{false};
-    const SeedDistanceResult fromRow   = seedDistance({.grid = grid, .seeds = overSeeds, .cancel = noCancel,
-                                                       .maxTiles = static_cast<float>(400.0 / km)});
-    const SeedDistanceResult fromShore = seedDistance({.grid = grid, .seeds = shore, .cancel = noCancel,
-                                                       .maxTiles = static_cast<float>(1000.0 / km)});
+    const std::atomic<bool>        noCancel{false};
+    foundation::TaskPool           pool(2);
+    const std::vector<TileCenterF> centers   = tileCentersF(grid, pool);
+    const SeedDistanceResult       fromRow   = seedDistance({.grid = grid, .centers = centers, .seeds = overSeeds,
+                                                             .cancel = noCancel, .maxTiles = static_cast<float>(400.0 / km)});
+    const SeedDistanceResult       fromShore = seedDistance({.grid = grid, .centers = centers, .seeds = shore,
+                                                             .cancel = noCancel, .maxTiles = static_cast<float>(1000.0 / km)});
     std::vector<double> coastKm;
     for (const TileId r : overSeeds) {
         const uint32_t s = fromShore.nearestSeed[r];
@@ -348,8 +350,8 @@ TEST(TerrainStageHeavy, TrenchArcStructure) {
     const double nearLandFrac  = static_cast<double>(nearLand) / nearAll;
     const double arcLandFrac   = static_cast<double>(arcLand) / arcAll;
 
-    // Measured at n=256: median step 870 m (a row is 30 km, a steep stretch of inner
-    // wall), 14 of 194 overriding rows deeper, coast median 106 km, forearc 12% land, arc
+    // Measured at n=256: median step 799 m (a row is 30 km, a steep stretch of inner
+    // wall), 16 of 194 overriding rows deeper, coast median 102 km, forearc 11% land, arc
     // band 52% land.
     EXPECT_LT(medianStepM, 1500.0) << "median slab/overriding row step " << medianStepM << " m";
     EXPECT_LT(overDeeper, pairs / 5u) << overDeeper << " of " << pairs << " overriding rows lie deeper than the slab row";
@@ -357,6 +359,87 @@ TEST(TerrainStageHeavy, TrenchArcStructure) {
     EXPECT_LT(medianCoastKm, 200.0) << "coast median " << medianCoastKm << " km from the trench";
     EXPECT_LT(nearLandFrac, 0.15) << "the forearc within 60 km of the trench is " << nearLandFrac << " land";
     EXPECT_GT(arcLandFrac, nearLandFrac + 0.3) << "arc band land " << arcLandFrac << " vs forearc " << nearLandFrac;
+}
+
+// ============================================================================
+// No cliff where the nearest boundary jumps. Across a bend or a notch in a boundary row,
+// or from one boundary to another, a tile's nearest boundary tile jumps along strike,
+// further the farther out; kernels that followed it stepped there, cutting straight
+// cliffs of 3-4 km across the land behind a margin. Counted on continental crust 60-200 km
+// from the boundary: neighbouring tiles off the rows whose nearest boundary tiles are 4 or
+// more spacings apart, a step over 1.5 km between them that is more than twice the steps on
+// either side along the same line. Tiles with different crust or orogeny ages are left
+// out: those fields step between coarse cells (WOR-599), not at boundaries.
+// ============================================================================
+
+TEST(TerrainStageHeavy, NoCliffsWhereTheNearestBoundaryJumps) {
+    auto world = runPipeline(makeParams(512, 0.70, 12, 7ULL), 600);
+    ASSERT_NE(world, nullptr);
+
+    const SphereGrid&  grid = *world->grid;
+    const WorldData&   data = world->data;
+    const uint32_t     N    = grid.tileCount();
+    const double       km   = spacingKm(*world);
+    std::vector<TileId> rows;
+    for (TileId t = 0; t < N; ++t) {
+        if (data.boundaryType[t] != 0u) rows.push_back(t);
+    }
+    ASSERT_FALSE(rows.empty());
+    foundation::TaskPool           pool(4);
+    const std::vector<TileCenterF> centers = tileCentersF(grid, pool);
+    const std::atomic<bool>        noCancel{false};
+    const SeedDistanceResult       nearest = seedDistance({.grid = grid, .centers = centers, .seeds = rows, .cancel = noCancel});
+    const double spacing = std::sqrt(8.0 * 3.14159265358979323846 / (std::sqrt(3.0) * N));
+    auto apartTiles = [&](TileId a, TileId b) {
+        const Vec3d  ca = grid.tileCenter(rows[nearest.nearestSeed[a]]);
+        const Vec3d  cb = grid.tileCenter(rows[nearest.nearestSeed[b]]);
+        const double dx = ca.x - cb.x, dy = ca.y - cb.y, dz = ca.z - cb.z;
+        return std::sqrt(dx * dx + dy * dy + dz * dz) / spacing;
+    };
+    auto onCrustOffRow = [&](TileId t) {
+        return data.boundaryType[t] == 0u && (data.flags[t] & kFlagContinentalCrust) != 0;
+    };
+    auto offRow = [&](TileId t) { return data.boundaryType[t] == 0u; };
+    const auto& e = data.elevation;
+
+    uint32_t cliffs = 0u;
+    std::array<TileId, 6> nt{}, nn{};
+    for (TileId t = 0; t < N; ++t) {
+        if (!onCrustOffRow(t)) continue;
+        const double bandKm = data.boundaryDistance[t] * km;
+        if (bandKm <= 60.0 || bandKm > 200.0) continue;
+        const Vec3d    pt = grid.tileCenter(t);
+        const uint32_t ct = grid.neighbors(t, nt);
+        for (uint32_t k = 0; k < ct; ++k) {
+            const TileId nb = nt[k];
+            if (nb <= t || !onCrustOffRow(nb)) continue;
+            if (data.crustAge[t] != data.crustAge[nb] || data.orogenyAge[t] != data.orogenyAge[nb]) continue;
+            const float step = std::fabs(e[nb] - e[t]);
+            if (step <= 1500.0f || apartTiles(t, nb) < 4.0) continue;
+            // The tiles before and after the pair along the same line.
+            const Vec3d  pn = grid.tileCenter(nb);
+            const double dx = pn.x - pt.x, dy = pn.y - pt.y, dz = pn.z - pt.z;
+            TileId prev = t, next = nb;
+            double lo = std::numeric_limits<double>::max(), hi = -lo;
+            for (uint32_t j = 0; j < ct; ++j) {
+                const Vec3d  q   = grid.tileCenter(nt[j]);
+                const double dot = (q.x - pt.x) * dx + (q.y - pt.y) * dy + (q.z - pt.z) * dz;
+                if (dot < lo) { lo = dot; prev = nt[j]; }
+            }
+            const uint32_t cn = grid.neighbors(nb, nn);
+            for (uint32_t j = 0; j < cn; ++j) {
+                const Vec3d  q   = grid.tileCenter(nn[j]);
+                const double dot = (q.x - pn.x) * dx + (q.y - pn.y) * dy + (q.z - pn.z) * dz;
+                if (dot > hi) { hi = dot; next = nn[j]; }
+            }
+            if (!offRow(prev) || !offRow(next)) continue;
+            const float side = std::max(std::fabs(e[t] - e[prev]), std::fabs(e[next] - e[nb]));
+            if (step > 2.0f * side) ++cliffs;
+        }
+    }
+    // Measured 48 (seeds 1, 31337 and 12345: 58, 41, 32). With each tile reading its nearest
+    // boundary tile's inputs alone, as before the anchors: 278 (221, 148, 157).
+    EXPECT_LT(cliffs, 120u) << cliffs << " isolated cliffs over 1.5 km where the nearest boundary jumps";
 }
 
 // ============================================================================

@@ -23,11 +23,24 @@ double meanSpacingChord(const SphereGrid& grid) {
         8.0 * kPi / (foundation::det_math::sqrt(3.0) * static_cast<double>(grid.tileCount())));
 }
 
+std::vector<TileCenterF> tileCentersF(const SphereGrid& grid, foundation::TaskPool& pool) {
+    constexpr size_t         kGrain = 1u << 16;
+    std::vector<TileCenterF> centers(grid.tileCount());
+    pool.parallelFor(0, centers.size(), kGrain, [&](size_t begin, size_t end) {
+        for (size_t t = begin; t < end; ++t) {
+            const Vec3d c = grid.tileCenter(static_cast<TileId>(t));
+            centers[t]    = {static_cast<float>(c.x), static_cast<float>(c.y), static_cast<float>(c.z)};
+        }
+    });
+    return centers;
+}
+
 SeedDistanceResult seedDistance(const SeedDistanceArgs& args) {
     if (args.cancel.load(std::memory_order_relaxed)) throw CancelledException{};
 
-    const SphereGrid& grid       = args.grid;
-    const TileId      totalTiles = grid.tileCount();
+    const SphereGrid&               grid       = args.grid;
+    const std::vector<TileCenterF>& centers    = args.centers;
+    const TileId                    totalTiles = grid.tileCount();
     const double      spacing    = meanSpacingChord(grid);
     const double      maxChord   = static_cast<double>(args.maxTiles) * spacing;
 
@@ -47,9 +60,9 @@ SeedDistanceResult seedDistance(const SeedDistanceArgs& args) {
             throw CancelledException{};
         }
     };
-    auto chord2 = [](const Vec3d& a, const Vec3d& b) {
-        const double dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
-        return static_cast<float>(dx * dx + dy * dy + dz * dz);
+    auto chord2 = [](const TileCenterF& a, const TileCenterF& b) {
+        const float dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
+        return dx * dx + dy * dy + dz * dz;
     };
 
     // A tile sits in the queue at most once, so it never holds more than the frontier.
@@ -67,87 +80,17 @@ SeedDistanceResult seedDistance(const SeedDistanceArgs& args) {
         queue.pop_front();
         nearest[t] &= ~kQueuedBit;
         const uint32_t seed = nearest[t];
-        const Vec3d    sc   = grid.tileCenter(args.seeds[seed]);
+        const TileCenterF& sc = centers[args.seeds[seed]];
         const uint32_t cnt  = grid.neighbors(t, nbrs);
         for (uint32_t k = 0; k < cnt; ++k) {
             const TileId nb = nbrs[k];
             if ((nearest[nb] & ~kQueuedBit) == seed) continue;
-            const float d2 = chord2(grid.tileCenter(nb), sc);
+            const float d2 = chord2(centers[nb], sc);
             if (d2 >= dist[nb]) continue;
             dist[nb] = d2;
             const bool waiting = nearest[nb] != kNoSeed && (nearest[nb] & kQueuedBit) != 0u;
             nearest[nb] = seed | kQueuedBit;
             if (!waiting) queue.push_back(nb);
-        }
-    }
-
-    // The second seed: seeded on each side of every border between two labels' regions by
-    // the seed across it, then carried inward until the difference in distance passes the
-    // band.
-    if (args.labels != nullptr) {
-        const auto&            labels = *args.labels;
-        const double           band   = static_cast<double>(args.secondBandTiles) * spacing;
-        const double           reach  = static_cast<double>(args.secondReachTiles) * spacing;
-        const float            reach2 = static_cast<float>(reach * reach);
-        std::vector<float>&    dist2  = result.secondDistTiles;
-        std::vector<uint32_t>& second = result.secondSeed;
-        dist2.assign(totalTiles, std::numeric_limits<float>::infinity());
-        second.assign(totalTiles, kNoSeed);
-
-        // Seed s may be tile t's second: of another label than t's nearest seed, holding
-        // t's key, at squared chord d2 inside the band.
-        auto qualifies = [&](TileId t, uint32_t s, float d2) {
-            if (labels[s] == labels[nearest[t]]) return false;
-            if (args.tileKeys != nullptr) {
-                const uint32_t key = (*args.tileKeys)[t];
-                if ((labels[s] & 0xFFu) != key && ((labels[s] >> 8) & 0xFFu) != key) return false;
-            }
-            return foundation::det_math::sqrt(static_cast<double>(d2)) -
-                       foundation::det_math::sqrt(static_cast<double>(dist[t])) < band;
-        };
-        for (TileId t = 0; t < totalTiles; ++t) {
-            if (nearest[t] == kNoSeed || dist[t] >= reach2) continue;
-            const Vec3d    c   = grid.tileCenter(t);
-            const uint32_t cnt = grid.neighbors(t, nbrs);
-            for (uint32_t k = 0; k < cnt; ++k) {
-                const uint32_t s = nearest[nbrs[k]];
-                if (s == kNoSeed || s == nearest[t] || s == second[t]) continue;
-                const Vec3d sc = grid.tileCenter(args.seeds[s]);
-                const float d2 = chord2(c, sc);
-                if (d2 >= dist2[t] || !qualifies(t, s, d2)) continue;
-                dist2[t]  = d2;
-                second[t] = s;
-            }
-            if (second[t] != kNoSeed) {
-                second[t] |= kQueuedBit;
-                queue.push_back(t);
-            }
-        }
-        while (!queue.empty()) {
-            pollCancel();
-            const TileId t = queue.front();
-            queue.pop_front();
-            second[t] &= ~kQueuedBit;
-            const uint32_t seed = second[t];
-            const Vec3d    sc   = grid.tileCenter(args.seeds[seed]);
-            const uint32_t cnt  = grid.neighbors(t, nbrs);
-            for (uint32_t k = 0; k < cnt; ++k) {
-                const TileId nb = nbrs[k];
-                if (nearest[nb] == kNoSeed || nearest[nb] == seed || dist[nb] >= reach2) continue;
-                if ((second[nb] & ~kQueuedBit) == seed) continue;
-                const Vec3d c  = grid.tileCenter(nb);
-                const float d2 = chord2(c, sc);
-                if (d2 >= dist2[nb] || !qualifies(nb, seed, d2)) continue;
-                dist2[nb] = d2;
-                const bool waiting = second[nb] != kNoSeed && (second[nb] & kQueuedBit) != 0u;
-                second[nb] = seed | kQueuedBit;
-                if (!waiting) queue.push_back(nb);
-            }
-        }
-        for (TileId t = 0; t < totalTiles; ++t) {
-            if (second[t] != kNoSeed) {
-                dist2[t] = static_cast<float>(foundation::det_math::sqrt(static_cast<double>(dist2[t])) / spacing);
-            }
         }
     }
 

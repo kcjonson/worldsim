@@ -23,14 +23,13 @@
 //   1. Boundary classification: relative Euler velocity from world.plates against the
 //      boundary normal averaged along the boundary -> BoundaryType; slab plate per pair.
 //   2. Kernel blend: each kernel family's share, convergence, and the oceanic share of the
-//      slab side, along each plate pair's boundary, pooled into anchors that a tile reads
-//      over a band of distance, so the inputs carry no step where the nearest tile jumps.
-//   3. Straight-line crust-edge distance (continental shelf ramp), and the rifted-margin
-//      weight from the nearest divergent boundary.
-//   4. Straight-line boundary distance; kernels run on the distance to the nearest
-//      boundary, and near the bisector with another boundary on the second's too, blending
-//      the two.
-//   5. Elevation synthesis: slab rows first (trench floors), then every tile.
+//      slab side, along each plate pair's boundary, pooled into anchors.
+//   3. Straight-line crust-edge distance (continental shelf ramp).
+//   4. Straight-line distance to the nearest boundary tile.
+//   5. Elevation synthesis: each tile weighs the anchors around it whose boundaries hold its
+//      plate (one partition of unity, so the kernels blend without a step along a boundary
+//      or between boundaries), runs each boundary's kernels at its own distance and takes
+//      their weighted mean; the slab-plate boundary tiles go first, for the trench floors.
 //   6. Sea level: histogram quantile at waterAmount.
 //
 // Determinism: every per-tile value is a pure function of (tile id, params, seeds).
@@ -55,6 +54,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -221,11 +221,13 @@ constexpr double kRidgeSegmentKm       = 50.0;
 constexpr double kBoundaryBlendKm      = 150.0;
 // Floor on those radii in tile spacings, so coarse grids still average over neighbours.
 constexpr double kBoundaryRadiusMinSpacings = 2.5;
-// A tile reads the kernel inputs of the boundary nearby, pooled into anchors kInputAnchorKm
-// across, over a band of distance kInputBandMinSpacings wide at the boundary that widens with
-// the distance out to the bisector blend (kBoundaryBlendKm).
-constexpr double kInputAnchorKm        = 20.0;
-constexpr float  kInputBandMinSpacings = 2.0f;
+// A tile weighs the boundaries around it through anchors, their tiles pooled kInputAnchorKm
+// across, over a band of distance kInputBandMinKm wide at the boundary that widens with the
+// distance out to the bisector blend (kBoundaryBlendKm). The overriding side reads the trench
+// floor from the slab plate's tiles within kFloorBandSpacings of its nearest.
+constexpr double kInputAnchorKm     = 20.0;
+constexpr double kInputBandMinKm    = 75.0;
+constexpr float  kFloorBandSpacings = 2.0f;
 // An averaged normal shorter than this fraction of its weight sum has cancelled across a
 // fold in the boundary; the radius halves until it is coherent.
 constexpr double kNormalCoherenceMin = 0.5;
@@ -361,7 +363,8 @@ inline float depthAgeElevationM(float crustAgeMyr) {
 // forearc's full width and smoothstepped to 0 at its end.
 struct ForearcPullArgs {
     double distKm   = 0.0; // from the trench axis, true km
-    double axisM    = 0.0; // trench floor at the axis
+    double axisM    = 0.0; // trench floor at the axis nearest
+    double regionM  = 0.0; // trench floor along the boundary nearby
     double forearcM = 0.0; // forearc terrace depth
     double fullKm   = 0.0;
     double endKm    = 0.0;
@@ -372,14 +375,15 @@ struct ForearcPull {
 };
 inline ForearcPull forearcPull(const ForearcPullArgs& args) {
     if (args.distKm >= args.endKm) return {};
-    const double x    = args.distKm / kInnerWallSigKm;
-    const double wall = foundation::det_math::exp(-0.5 * x * x);
+    const double wall   = cutGaussian(static_cast<float>(args.distKm), static_cast<float>(kInnerWallSigKm));
     const float  weight = 1.0f - smoothstep01(static_cast<float>((args.distKm - args.fullKm) / (args.endKm - args.fullKm)));
-    // A trench floor above the forearc means the slab side is too buoyant to go down (a
-    // continent arriving): the forearc rises with it, as at Timor or Taiwan, instead of
-    // leaving a moat behind a raised axis.
-    const double forearcM = std::max(args.forearcM, args.axisM);
-    return {static_cast<float>(forearcM + (args.axisM - forearcM) * wall), weight};
+    // The wall climbs from the floor at the axis, which hands over to the boundary's floor
+    // nearby as the wall dies out. A floor above the forearc means the slab side is too
+    // buoyant to go down (a continent arriving): the forearc rises with it, as at Timor or
+    // Taiwan, instead of leaving a moat behind a raised axis.
+    const double floorM   = args.regionM + (args.axisM - args.regionM) * wall;
+    const double forearcM = std::max(args.forearcM, floorM);
+    return {static_cast<float>(forearcM + (floorM - forearcM) * wall), weight};
 }
 
 // Piecewise continental shelf profile driven by signed crust-edge distance.
@@ -767,7 +771,7 @@ void TerrainStage::run(StageContext& ctx) {
     // 2. Kernel blend: each kernel family's share among the same plate pair's boundary
     //    tiles within kBoundaryBlendKm, and their convergence averaged the same way, so
     //    where the type changes along a boundary or a segment ends the kernels hand over
-    //    smoothly. Between pairs, the kernels blend across the bisector instead (step 5).
+    //    smoothly. Between pairs, the kernels blend in step 5's gather.
     // =========================================================================
 
     struct BoundaryKernelInput {
@@ -900,67 +904,101 @@ void TerrainStage::run(StageContext& ctx) {
     const float bisectorBlendTiles = static_cast<float>(
         std::max(kBoundaryBlendKm / spacingKm, kBoundaryRadiusMinSpacings));
 
-    // Kernel inputs reach a tile from its boundary's stretch nearby, not from the single
-    // nearest boundary tile: which tile is nearest jumps along the boundary across a bend
-    // or a notch in the row, the farther out the farther, and its inputs jump with it. The
-    // boundary tiles are pooled per plate pair into anchors; a tile takes every anchor of
-    // the pair within a band of the nearest anchor's distance, weighted down across the
-    // band. The band is narrow at the boundary, where the overriding side's trench axis
-    // meets the slab row's own floor, and widens with the distance.
+    // A tile's boundaries reach it through anchors: the boundary tiles pooled per plate pair
+    // into cells kInputAnchorKm across, each with its tiles' mean position and inputs. Step
+    // 5 weighs every anchor around a tile whose pair holds the tile's plate (gatherAt).
+    // A weighted sum of inputs, for an anchor's mean over its tiles and a tile's over its
+    // anchors.
+    struct InputSum {
+        double wCO = 0.0, wOO = 0.0, wDiv = 0.0, wTr = 0.0, conv = 0.0, subducting = 0.0, axisM = 0.0;
+        double weight = 0.0;
+        void add(const BoundaryKernelInput& in, double w) {
+            wCO += w * in.wCO; wOO += w * in.wOO; wDiv += w * in.wDiv; wTr += w * in.wTr;
+            conv += w * in.conv; subducting += w * in.subducting; axisM += w * in.axisM;
+            weight += w;
+        }
+        // The weighted mean, on `pair`'s plates.
+        BoundaryKernelInput mean(const BoundaryKernelInput& pair) const {
+            BoundaryKernelInput out = pair;
+            out.wCO        = static_cast<float>(wCO / weight);
+            out.wOO        = static_cast<float>(wOO / weight);
+            out.wDiv       = static_cast<float>(wDiv / weight);
+            out.wTr        = static_cast<float>(wTr / weight);
+            out.conv       = static_cast<float>(conv / weight);
+            out.subducting = static_cast<float>(subducting / weight);
+            out.axisM      = static_cast<float>(axisM / weight);
+            return out;
+        }
+    };
     struct InputAnchor {
-        Vec3d               center; // the mean of its tiles' centres, on the sphere
-        BoundaryKernelInput in;     // the mean of its tiles' inputs
+        Vec3d               center;   // the mean of its tiles' centres, on the sphere
+        BoundaryKernelInput in;       // the mean of its tiles' inputs
+        uint32_t            pair;     // pairKey
+        uint32_t            rowBegin; // its tiles: [rowBegin, rowEnd) of the members
+        uint32_t            rowEnd;
     };
     std::vector<InputAnchor> anchors;
+    // The anchors' tiles, grouped by anchor: centre, and whether on the pair's slab plate.
+    std::vector<Vec3d>       memberCenter(boundaryCount);
+    std::vector<uint8_t>     memberOnSlab(boundaryCount);
+    std::vector<uint32_t>    rowMember(boundaryCount); // boundary tile -> its member slot
     std::vector<uint32_t>    rowAnchor(boundaryCount); // boundary tile -> its anchor
-    // Per anchor, the pair's anchors within reach of a band around it, nearest first:
+    float                    anchorExtent = 0.0f; // farthest a member sits from its anchor, tile spacings
+    // A tile's gather weighs anchors over a band of distance past the nearest, kInputBandMinKm
+    // at the boundary and widening with the distance up to the bisector blend.
+    const float bandMinTiles = static_cast<float>(std::max(kInputBandMinKm / spacingKm, kBoundaryRadiusMinSpacings));
+    auto bandAt = [&](float d) { return std::min(bisectorBlendTiles, bandMinTiles + d); };
+    // How far from a tile its gather looks, given its nearest boundary tile at d1 (spacings):
+    // its own plate's boundary is within two spacings more, the band past that, the
+    // anchors' extent either side, and the trench floor's band and a row beyond.
+    auto gatherReachAt = [&](float d1) {
+        return d1 + 2.0f + bandAt(d1 + 2.0f) + 3.0f * anchorExtent + kFloorBandSpacings + 2.0f;
+    };
+    // Per anchor, every anchor a gather starting from it can need, nearest first:
     // (distance in tile spacings, anchor).
     std::vector<uint32_t>                   neighbourStart;
     std::vector<std::pair<float, uint32_t>> neighbours;
     {
         const double    cell  = std::max(kInputAnchorKm / planetRadiusKm, spacingChord);
         const CellIndex cells = buildCellIndex(cell, pairKey);
-        std::vector<uint32_t> anchorPair;
         for (size_t k = 0; k < cells.size();) {
-            size_t end = k;
-            Vec3d  sum{};
-            double in[7] = {};
+            size_t   end = k;
+            Vec3d    sum{};
+            InputSum in;
             for (; end < cells.size() && cells[end].first == cells[k].first; ++end) {
                 const uint32_t i = cells[end].second;
                 const Vec3d&   c = boundaryTiles[i].center;
-                const BoundaryKernelInput& b = boundaryInput[i];
                 sum = {sum.x + c.x, sum.y + c.y, sum.z + c.z};
-                in[0] += b.wCO; in[1] += b.wOO; in[2] += b.wDiv; in[3] += b.wTr;
-                in[4] += b.conv; in[5] += b.subducting; in[6] += b.axisM;
-                rowAnchor[i] = static_cast<uint32_t>(anchors.size());
+                in.add(boundaryInput[i], 1.0);
+                memberCenter[end] = c;
+                memberOnSlab[end] = boundaryTiles[i].plate == boundaryInput[i].slabPlate ? 1u : 0u;
+                rowMember[i]      = static_cast<uint32_t>(end);
+                rowAnchor[i]      = static_cast<uint32_t>(anchors.size());
             }
-            const double n   = static_cast<double>(end - k);
             const double len = length3d(sum.x, sum.y, sum.z);
-            InputAnchor a{{sum.x / len, sum.y / len, sum.z / len}, boundaryInput[cells[k].second]};
-            a.in.wCO = static_cast<float>(in[0] / n); a.in.wOO = static_cast<float>(in[1] / n);
-            a.in.wDiv = static_cast<float>(in[2] / n); a.in.wTr = static_cast<float>(in[3] / n);
-            a.in.conv = static_cast<float>(in[4] / n); a.in.subducting = static_cast<float>(in[5] / n);
-            a.in.axisM = static_cast<float>(in[6] / n);
-            anchors.push_back(a);
-            anchorPair.push_back(static_cast<uint32_t>(cells[k].first >> 48));
+            anchors.push_back({{sum.x / len, sum.y / len, sum.z / len},
+                               in.mean(boundaryInput[cells[k].second]),
+                               static_cast<uint32_t>(cells[k].first >> 48),
+                               static_cast<uint32_t>(k), static_cast<uint32_t>(end)});
             k = end;
         }
         auto chordTo = [](const Vec3d& a, const Vec3d& b) {
             const double dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
             return foundation::det_math::sqrt(dx * dx + dy * dy + dz * dz);
         };
-        double extent = 0.0; // the farthest a boundary tile sits from its anchor
-        for (uint32_t i = 0; i < boundaryCount; ++i) {
-            extent = std::max(extent, chordTo(boundaryTiles[i].center, anchors[rowAnchor[i]].center));
+        double extent = 0.0;
+        for (const InputAnchor& a : anchors) {
+            for (uint32_t m = a.rowBegin; m < a.rowEnd; ++m) extent = std::max(extent, chordTo(memberCenter[m], a.center));
         }
-        // A tile within kernel reach of a boundary tile is within reach + extent of its
-        // anchor, and every anchor in its band is within that again plus the band.
-        const double radius = 2.0 * (kernelReachTiles * spacingChord + extent) + bisectorBlendTiles * spacingChord;
+        anchorExtent = static_cast<float>(extent / spacingChord);
+        // A gather starts from the anchor of the tile's nearest boundary tile, at most kernel
+        // reach and the extent from the tile, and looks gatherReachAt(reach) around the tile.
+        const double radius = (kernelReachTiles + anchorExtent + gatherReachAt(kernelReachTiles)) * spacingChord;
         const uint32_t anchorCount = static_cast<uint32_t>(anchors.size());
         CellIndex anchorCells(anchorCount);
         for (uint32_t a = 0; a < anchorCount; ++a) {
             const Vec3d& p = anchors[a].center;
-            anchorCells[a] = {cellKey(anchorPair[a], cellOf(p.x, radius), cellOf(p.y, radius), cellOf(p.z, radius)), a};
+            anchorCells[a] = {cellKey(0u, cellOf(p.x, radius), cellOf(p.y, radius), cellOf(p.z, radius)), a};
         }
         std::sort(anchorCells.begin(), anchorCells.end());
         std::vector<std::vector<std::pair<float, uint32_t>>> lists(anchorCount);
@@ -973,7 +1011,7 @@ void TerrainStage::run(StageContext& ctx) {
                 for (int64_t dx = -1; dx <= 1; ++dx)
                     for (int64_t dy = -1; dy <= 1; ++dy)
                         for (int64_t dz = -1; dz <= 1; ++dz) {
-                            const uint64_t key = cellKey(anchorPair[a], x + dx, y + dy, z + dz);
+                            const uint64_t key = cellKey(0u, x + dx, y + dy, z + dz);
                             auto it = std::lower_bound(anchorCells.begin(), anchorCells.end(), std::make_pair(key, 0u));
                             for (; it != anchorCells.end() && it->first == key; ++it) {
                                 if (it->second == a) continue;
@@ -992,54 +1030,15 @@ void TerrainStage::run(StageContext& ctx) {
         neighbours.reserve(neighbourStart[anchorCount]);
         for (auto& list : lists) neighbours.insert(neighbours.end(), list.begin(), list.end());
     }
-    // The inputs at tile t of boundary tile `row`'s pair, distRow (tile spacings) from it.
-    auto softInput = [&](TileId t, uint32_t row, float distRow) {
-        const Vec3d p    = ctx.grid.tileCenter(t);
-        const float band = std::min(bisectorBlendTiles, kInputBandMinSpacings + distRow);
-        auto distTo = [&](uint32_t a) {
-            const Vec3d& c = anchors[a].center;
-            const double dx = p.x - c.x, dy = p.y - c.y, dz = p.z - c.z;
-            return static_cast<float>(foundation::det_math::sqrt(dx * dx + dy * dy + dz * dz) / spacingChord);
-        };
-        // The band's anchors, found from the row's own: past d0 + dMin + band from it, no
-        // anchor can be within the band of the tile.
-        thread_local std::vector<std::pair<float, uint32_t>> inBand;
-        inBand.clear();
-        const uint32_t a0   = rowAnchor[row];
-        const float    d0   = distTo(a0);
-        float          dMin = d0;
-        inBand.push_back({d0, a0});
-        for (uint32_t k = neighbourStart[a0]; k < neighbourStart[a0 + 1]; ++k) {
-            if (neighbours[k].first > d0 + dMin + band) break;
-            const float d = distTo(neighbours[k].second);
-            if (d >= dMin + band) continue;
-            inBand.push_back({d, neighbours[k].second});
-            dMin = std::min(dMin, d);
-        }
-        double sumW = 0.0, in[7] = {};
-        for (const auto& [d, a] : inBand) {
-            const float x = (d - dMin) / band;
-            if (x >= 1.0f) continue;
-            const double w = 1.0 - smoothstep01(x);
-            const BoundaryKernelInput& b = anchors[a].in;
-            in[0] += w * b.wCO; in[1] += w * b.wOO; in[2] += w * b.wDiv; in[3] += w * b.wTr;
-            in[4] += w * b.conv; in[5] += w * b.subducting; in[6] += w * b.axisM;
-            sumW += w;
-        }
-        BoundaryKernelInput out = anchors[a0].in;
-        out.wCO = static_cast<float>(in[0] / sumW); out.wOO = static_cast<float>(in[1] / sumW);
-        out.wDiv = static_cast<float>(in[2] / sumW); out.wTr = static_cast<float>(in[3] / sumW);
-        out.conv = static_cast<float>(in[4] / sumW); out.subducting = static_cast<float>(in[5] / sumW);
-        out.axisM = static_cast<float>(in[6] / sumW);
-        return out;
-    };
 
     // =========================================================================
     // 3. Crust-edge distance (for continental shelf ramp), in tile spacings.
     //    Straight-line: the coastline is an iso-contour of this field, so its contours
-    //    must be round. And the rifted-margin weight.
+    //    must be round.
     // =========================================================================
 
+    // Every tile's centre, for this step's and the next's distance passes.
+    std::vector<TileCenterF> centers = tileCentersF(ctx.grid, ctx.pool);
     std::vector<float> crustEdgeDist;
     {
         std::vector<uint8_t> isEdge(N, 0u);
@@ -1063,6 +1062,7 @@ void TerrainStage::run(StageContext& ctx) {
         // band (plus a tile) needs a real distance.
         crustEdgeDist = seedDistance({
             .grid     = ctx.grid,
+            .centers  = centers,
             .seeds    = edgeTiles,
             .cancel   = ctx.cancelRequested,
             .maxTiles = kmToTiles(std::max(kShelfWidthKm, kSlopeWidthKm)) + 1.0f,
@@ -1072,94 +1072,163 @@ void TerrainStage::run(StageContext& ctx) {
         for (float& d : crustEdgeDist) d += 0.5f;
     }
 
-    // Rifted-margin weight: the rift kernel's falloff from the nearest divergent boundary,
-    // by that boundary's divergent share, for the oceanic slope in step 5. It is taken from
-    // the nearest divergent boundary, not the nearest boundary: across a ridge-transform
-    // margin an oceanic tile can sit nearest the transform while the tile beside it digs
-    // the rift valley.
-    std::vector<float> riftBlend;
-    {
-        std::vector<TileId>   divergentRows;
-        std::vector<uint32_t> divergentIndex; // divergent seed -> boundary row
-        for (uint32_t i = 0; i < boundaryCount; ++i) {
-            if (ctx.data.boundaryType[boundaryTiles[i].tile] == static_cast<uint8_t>(BType::Divergent)) {
-                divergentRows.push_back(boundaryTiles[i].tile);
-                divergentIndex.push_back(i);
-            }
-        }
-        SeedDistanceResult divergent = seedDistance({
-            .grid     = ctx.grid,
-            .seeds    = divergentRows,
-            .cancel   = ctx.cancelRequested,
-            .maxTiles = kKernelCutSigmas * sigRift,
-        });
-        riftBlend = std::move(divergent.distTiles); // the weight replaces the distance in place
-        ctx.pool.parallelFor(0, N, kGrainSize, [&](size_t begin, size_t end) {
-            for (size_t t = begin; t < end; ++t) {
-                const uint32_t seed = divergent.nearestSeed[t];
-                riftBlend[t] = seed == kNoSeed
-                    ? 0.0f
-                    : softInput(static_cast<TileId>(t), divergentIndex[seed], riftBlend[t] + 0.5f).wDiv *
-                          cutGaussian(riftBlend[t] + 0.5f, sigRift);
-            }
-        });
-    }
-
     ctx.reportProgress(0.20f);
     throwIfCancelled(ctx);
 
     // =========================================================================
-    // 4. Boundary distance: straight-line distance (tile spacings) from every tile to
-    //    its nearest boundary tile, and near the bisector to another of its plate's
-    //    boundaries, to that one's nearest tile too, so both kernels can blend across it.
-    //    Continuous, with round contours and near-Voronoi nearest-boundary regions. Across
-    //    a bend in one boundary the distance runs on without a step and the inputs come
-    //    from the anchors (step 2), so the same boundary needs no second.
+    // 4. Boundary distance: straight-line distance (tile spacings) from every tile to its
+    //    nearest boundary tile, where its gather (step 5) starts.
     // =========================================================================
 
-    std::vector<TileId> boundaryRows(boundaryCount); // seed index -> tile
-    SeedDistanceResult  boundary;
+    std::vector<TileId>   boundaryRows(boundaryCount); // seed index -> tile
+    std::vector<uint32_t> nearestRow;
     {
-        std::vector<uint32_t> pair(boundaryCount);
-        for (uint32_t i = 0; i < boundaryCount; ++i) {
-            boundaryRows[i] = boundaryTiles[i].tile;
-            pair[i]         = pairKey(i);
-        }
+        for (uint32_t i = 0; i < boundaryCount; ++i) boundaryRows[i] = boundaryTiles[i].tile;
         boundaryTiles.clear(); boundaryTiles.shrink_to_fit();
 
-        boundary = seedDistance({
-            .grid             = ctx.grid,
-            .seeds            = boundaryRows,
-            .cancel           = ctx.cancelRequested,
-            .labels           = &pair,
-            .tileKeys         = &ctx.data.plateId,
-            .secondBandTiles  = bisectorBlendTiles,
-            .secondReachTiles = kernelReachTiles,
+        SeedDistanceResult boundary = seedDistance({
+            .grid    = ctx.grid,
+            .centers = centers,
+            .seeds   = boundaryRows,
+            .cancel  = ctx.cancelRequested,
         });
         for (uint32_t t = 0; t < N; ++t) {
             const float d = boundary.distTiles[t];
             ctx.data.boundaryDistance[t] = d >= 65535.0f ? uint16_t(65535) : static_cast<uint16_t>(d + 0.5f);
         }
-        // Step 5 recomputes distances from the seeds, so only the seeds stay.
-        boundary.distTiles.clear();       boundary.distTiles.shrink_to_fit();
-        boundary.secondDistTiles.clear(); boundary.secondDistTiles.shrink_to_fit();
+        nearestRow = std::move(boundary.nearestSeed);
     }
-    // Distance from tile t to boundary row r's side of the boundary itself, which runs
-    // half a spacing beyond the rows' centres, as for the crust edge.
-    auto rowDistTiles = [&](TileId t, uint32_t r) {
-        const Vec3d a = ctx.grid.tileCenter(t), b = ctx.grid.tileCenter(boundaryRows[r]);
-        const double dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
-        return static_cast<float>(foundation::det_math::sqrt(dx * dx + dy * dy + dz * dz) / spacingChord) + 0.5f;
-    };
+    centers.clear(); centers.shrink_to_fit();
 
     ctx.reportProgress(0.32f);
     throwIfCancelled(ctx);
 
     // =========================================================================
-    // 5. Elevation synthesis: the slab rows first, for each boundary's trench floor at
-    //    the axis, then every tile in parallel. A pure function of (tile id, coarse
-    //    fields, full-res fields, seeds).
+    // 5. Elevation synthesis: the slab-plate boundary tiles first, for each boundary's
+    //    trench floor at the axis, then every tile in parallel. A pure function of
+    //    (tile id, coarse fields, full-res fields, seeds).
     // =========================================================================
+
+    // The trench floor at each slab-plate member: its elevation once the passes below have
+    // run, the first estimate (step 2) until then.
+    std::vector<float> memberFloor(boundaryCount);
+    for (uint32_t i = 0; i < boundaryCount; ++i) memberFloor[rowMember[i]] = boundaryInput[i].axisM;
+    // Past this distance (tile spacings) from the axis the inner wall is gone, so no tile
+    // there reads the floor at the axis.
+    const float wallReachTiles = static_cast<float>(kKernelCutSigmas * kInnerWallSigKm / spacingKm);
+
+    // One plate pair around a tile: its weight in the tile's blend, its inputs there, its
+    // distance (to the boundary itself, half a spacing past its nearest member), and the
+    // trench floor read from its slab-plate members nearest the tile.
+    struct NearPair {
+        uint32_t            pair     = 0;
+        uint32_t            anchor   = 0; // one of its anchors, for the pair's plates
+        InputSum            sum;
+        float               rowDist  = std::numeric_limits<float>::infinity(); // to its nearest member
+        float               slabDist = std::numeric_limits<float>::infinity(); // to its nearest slab-plate member
+        double              floorSum = 0.0, floorWeight = 0.0;
+        BoundaryKernelInput in;
+        float               dist   = 0.0f;
+        float               floorM = 0.0f;
+    };
+    // The pairs around tile t (centre p) whose boundaries hold its plate, none past kernel
+    // reach. Every anchor of such a pair weighs 1 - smoothstep((d - dNearest) / band), d its
+    // distance from the tile and dNearest the nearest one's; a pair's weight is its anchors'
+    // sum and its inputs their weighted mean, so one partition of unity over the anchors
+    // gives both the inputs along a boundary and the blend between boundaries. The weights
+    // are continuous in the tile's position and reach exactly 0 one band past the nearest,
+    // so an anchor joins or leaves only at weight 0, and nothing steps where the nearest
+    // boundary tile jumps, along one boundary or from one to another. The band sets how far
+    // a hand-over spreads: at the boundary kInputBandMinKm, so where two boundaries meet a
+    // forearc and a trench several km apart in height hand over without a cliff, and wider
+    // with the distance, since across a bend the nearest tile jumps along strike by about the
+    // distance; it stops at kBoundaryBlendKm. Each pair's kernels still run at its own exact
+    // distance, so the band moves no feature off its boundary.
+    auto gatherAt = [&](TileId t, const Vec3d& p, uint8_t plate) -> const std::vector<NearPair>& {
+        thread_local std::vector<NearPair>                           pairs;
+        thread_local std::vector<std::pair<float, uint32_t>>         nearAnchors;
+        thread_local std::vector<std::pair<uint32_t, std::pair<float, uint32_t>>> floorMembers;
+        pairs.clear();
+        const uint32_t row = nearestRow[t];
+        if (row == kNoSeed) return pairs;
+        auto distTo = [&](const Vec3d& c) {
+            const double dx = p.x - c.x, dy = p.y - c.y, dz = p.z - c.z;
+            return static_cast<float>(foundation::det_math::sqrt(dx * dx + dy * dy + dz * dz) / spacingChord);
+        };
+        // Every pair's distance is at least the nearest boundary tile's, and every kernel is
+        // exactly zero past reach.
+        const float d1 = distTo(memberCenter[rowMember[row]]);
+        if (d1 + 0.5f >= kernelReachTiles) return pairs;
+        auto holds = [&](uint32_t pair) { return (pair & 0xFFu) == plate || (pair >> 8) == plate; };
+        const float    reach = gatherReachAt(d1);
+        const uint32_t a0    = rowAnchor[row];
+        const float    d0    = distTo(anchors[a0].center);
+        nearAnchors.clear();
+        if (holds(anchors[a0].pair) && d0 < reach) nearAnchors.push_back({d0, a0});
+        for (uint32_t k = neighbourStart[a0]; k < neighbourStart[a0 + 1]; ++k) {
+            if (neighbours[k].first >= d0 + reach) break;
+            const uint32_t a = neighbours[k].second;
+            if (!holds(anchors[a].pair)) continue;
+            const float d = distTo(anchors[a].center);
+            if (d < reach) nearAnchors.push_back({d, a});
+        }
+        if (nearAnchors.empty()) return pairs;
+        std::sort(nearAnchors.begin(), nearAnchors.end());
+
+        // Each pair's nearest member, nearest slab-plate member and the slab-plate members
+        // within the floor band of it, from its anchors nearest first: no member of an anchor
+        // is nearer the tile than its distance less the extent.
+        const bool wantFloor = d1 + 0.5f < wallReachTiles;
+        floorMembers.clear();
+        for (const auto& [d, a] : nearAnchors) {
+            const uint32_t pair = anchors[a].pair;
+            uint32_t pi = 0;
+            while (pi < pairs.size() && pairs[pi].pair != pair) ++pi;
+            if (pi == pairs.size()) {
+                pairs.push_back({});
+                pairs[pi].pair   = pair;
+                pairs[pi].anchor = a;
+            }
+            NearPair&   np    = pairs[pi];
+            const float lower = d - anchorExtent;
+            if (lower >= np.rowDist && (!wantFloor || lower >= np.slabDist + kFloorBandSpacings)) continue;
+            for (uint32_t m = anchors[a].rowBegin; m < anchors[a].rowEnd; ++m) {
+                const float dm = distTo(memberCenter[m]);
+                np.rowDist = std::min(np.rowDist, dm);
+                if (wantFloor && memberOnSlab[m] != 0u) {
+                    np.slabDist = std::min(np.slabDist, dm);
+                    floorMembers.push_back({pi, {dm, m}});
+                }
+            }
+        }
+        for (const auto& [pi, member] : floorMembers) {
+            NearPair&   np = pairs[pi];
+            const float x  = (member.first - np.slabDist) / kFloorBandSpacings;
+            if (x >= 1.0f) continue;
+            const double w = 1.0 - smoothstep01(x);
+            np.floorSum    += w * memberFloor[member.second];
+            np.floorWeight += w;
+        }
+
+        float dNearestRow = std::numeric_limits<float>::infinity();
+        for (const NearPair& np : pairs) dNearestRow = std::min(dNearestRow, np.rowDist);
+        const float band     = bandAt(dNearestRow);
+        const float dNearest = nearAnchors.front().first;
+        for (const auto& [d, a] : nearAnchors) {
+            const float x = (d - dNearest) / band;
+            if (x >= 1.0f) break;
+            uint32_t pi = 0;
+            while (pairs[pi].pair != anchors[a].pair) ++pi;
+            pairs[pi].sum.add(anchors[a].in, 1.0 - smoothstep01(x));
+        }
+        for (NearPair& np : pairs) {
+            if (np.sum.weight <= 0.0) continue;
+            np.in     = np.sum.mean(anchors[np.anchor].in);
+            np.dist   = np.rowDist + 0.5f;
+            np.floorM = np.floorWeight > 0.0 ? static_cast<float>(np.floorSum / np.floorWeight) : np.in.axisM;
+        }
+        return pairs;
+    };
 
     // The elevation of tile t: this section's recipe, start to finish.
     auto tileElevation = [&](size_t t) {
@@ -1168,29 +1237,16 @@ void TerrainStage::run(StageContext& ctx) {
         // Signed crust-edge distance, stage km: positive inland, negative seaward.
         const float signedEdgeKm = (isCont ? 1.0f : -1.0f) * crustEdgeDist[t] * tileWidthKm;
 
-        // The nearest boundary and, near the bisector to another (step 4), the second,
-        // with the second's share of the blend: half and half on the bisector, so the
-        // nearest boundary can change without a step.
-        const uint32_t nearestRow = boundary.nearestSeed[t];
-        const uint32_t secondRow  = boundary.secondSeed[t];
-        const float    distNear   = nearestRow == kNoSeed ? 0.0f : rowDistTiles(static_cast<TileId>(t), nearestRow);
-        float distSecond = 0.0f, wSecond = 0.0f;
-        if (secondRow != kNoSeed) {
-            distSecond = rowDistTiles(static_cast<TileId>(t), secondRow);
-            wSecond    = 0.5f * (1.0f - smoothstep01((distSecond - distNear) / bisectorBlendTiles));
-        }
-        // Their kernel inputs; none past kernel reach, where every kernel is zero.
-        const BoundaryKernelInput nearIn = nearestRow != kNoSeed && distNear < kernelReachTiles
-            ? softInput(static_cast<TileId>(t), nearestRow, distNear)
-            : BoundaryKernelInput{};
-        const BoundaryKernelInput secondIn = wSecond > 0.0f && distSecond < kernelReachTiles
-            ? softInput(static_cast<TileId>(t), secondRow, distSecond)
-            : BoundaryKernelInput{};
-
         Vec3d  ctr = ctx.grid.tileCenter(static_cast<uint32_t>(t));
         float  cx  = static_cast<float>(ctr.x);
         float  cy  = static_cast<float>(ctr.y);
         float  cz  = static_cast<float>(ctr.z);
+
+        // The boundaries around the tile, each by its weight; everything they add below is
+        // their weighted mean.
+        const std::vector<NearPair>& nearby = gatherAt(static_cast<TileId>(t), ctr, plate);
+        double nearWeight = 0.0;
+        for (const NearPair& np : nearby) nearWeight += np.sum.weight;
 
         // ---- Sample coarse fields through the same warp CrustStage used ----
         const tectonics::WarpResult w = tectonics::warpedCoarseDir(
@@ -1321,17 +1377,20 @@ void TerrainStage::run(StageContext& ctx) {
 
             // Neither a rifted margin nor a slab going down a trench stands at the shelf
             // break: the floor returns to its depth-age depth by the rift and trench
-            // kernels' own falloff, each by its share (the slab side's trench below, the
-            // rifted-margin weight from step 3).
-            auto slabTrench = [&](const BoundaryKernelInput& bi, float d) {
-                if (plate != bi.slabPlate) return 0.0f;
-                return bi.subducting * (bi.wCO * cutGaussian(d, sigTrenchCO) + bi.wOO * cutGaussian(d, sigTrenchOO));
-            };
-            float slabTrenchW = slabTrench(nearIn, distNear);
-            if (wSecond > 0.0f) {
-                slabTrenchW += wSecond * (slabTrench(secondIn, distSecond) - slabTrenchW);
+            // kernels' own falloff, each by its share.
+            double riftSum = 0.0, slabTrenchSum = 0.0;
+            for (const NearPair& np : nearby) {
+                if (np.sum.weight <= 0.0) continue;
+                const BoundaryKernelInput& bi = np.in;
+                riftSum += np.sum.weight * bi.wDiv * cutGaussian(np.dist, sigRift);
+                if (plate == bi.slabPlate) {
+                    slabTrenchSum += np.sum.weight * bi.subducting *
+                                     (bi.wCO * cutGaussian(np.dist, sigTrenchCO) + bi.wOO * cutGaussian(np.dist, sigTrenchOO));
+                }
             }
-            const float depthAgeW = 1.0f - (1.0f - riftBlend[t]) * (1.0f - slabTrenchW);
+            const float riftW       = nearWeight > 0.0 ? static_cast<float>(riftSum / nearWeight) : 0.0f;
+            const float slabTrenchW = nearWeight > 0.0 ? static_cast<float>(slabTrenchSum / nearWeight) : 0.0f;
+            const float depthAgeW   = 1.0f - (1.0f - riftW) * (1.0f - slabTrenchW);
             z += depthAgeW * (zDepthAge - z);
             reliefSlopeFade += depthAgeW * (1.0f - reliefSlopeFade);
 
@@ -1350,15 +1409,14 @@ void TerrainStage::run(StageContext& ctx) {
         // Each family scaled by its share along the boundary (step 2), at the distance
         // from the boundary itself. The side is the tile's own plate: the slab plate of
         // the boundary's pair carries the trench, the other the forearc and arc, so the
-        // side only changes at the plate boundary, and a tile on neither plate of the
-        // pair takes nothing from it.
+        // side only changes at the plate boundary.
         // Continental crust on the slab plate is too buoyant to follow it down: the
         // trench fades out across its slope (stage km) inland of the crust edge, and where
         // the slab side at the boundary is continental, subduction gives way to collision.
         // The forearc pulls the overriding plate toward the margin profile rather than
         // adding to it, so the coast lands at the same distance whatever the platform;
-        // its inner wall starts from the slab side's own trench floor, so the deepest
-        // point is the axis.
+        // its inner wall starts from the slab side's own floor nearest the tile (floorM),
+        // so the deepest point is the axis.
         const float trenchCrustFade = 1.0f - smoothstep01(signedEdgeKm / kSlopeWidthKm);
         // Rift or axial valley by crust, eased across the crust edge over the slope's width.
         const float riftCrust = smoothstep01(0.5f + 0.5f * signedEdgeKm / kSlopeWidthKm);
@@ -1387,15 +1445,13 @@ void TerrainStage::run(StageContext& ctx) {
             float kernel       = 0.0f;
             float coneSuppress = 0.0f; // share of the volcanic cones taken off (below)
         };
-        auto boundaryKernel = [&](const BoundaryKernelInput& bi, float distT) {
+        auto boundaryKernel = [&](const BoundaryKernelInput& bi, float distT, float floorM) {
             KernelOut out;
             const bool onSlab = plate == bi.slabPlate;
-            if (!onSlab && plate != bi.overPlate) return out;
             const double distKm = static_cast<double>(distT) * spacingKm;
             // Subduction only where the slab side is oceanic; the rest is collision.
             const float wCO = bi.wCO * bi.subducting;
             const float wOO = bi.wOO * bi.subducting;
-            const double axisM = bi.axisM; // where the inner wall starts
             // The forearc pull, summed over the subduction families by share: the
             // overriding share, the share-weighted pull weight and pull, and the
             // share-weighted reach of the cone suppression.
@@ -1404,8 +1460,9 @@ void TerrainStage::run(StageContext& ctx) {
                 if (onSlab) {
                     out.kernel += wCO * kTrenchCOAmpM * cutGaussian(distT, sigTrenchCO) * trenchCrustFade;
                 } else {
-                    const ForearcPull fa = forearcPull({.distKm = distKm, .axisM = axisM, .forearcM = kForearcCODepthM,
-                                                        .fullKm = kForearcCOFullKm, .endKm = kForearcCOEndKm});
+                    const ForearcPull fa = forearcPull({.distKm = distKm, .axisM = floorM, .regionM = bi.axisM,
+                                                        .forearcM = kForearcCODepthM, .fullKm = kForearcCOFullKm,
+                                                        .endKm = kForearcCOEndKm});
                     out.kernel += wCO * kArcCOAmpM * bi.conv * cutGaussian(distT - arcGapCO, sigArcCO);
                     pullShare  += wCO;
                     pullWeight += wCO * fa.weight;
@@ -1417,8 +1474,9 @@ void TerrainStage::run(StageContext& ctx) {
                 if (onSlab) {
                     out.kernel += wOO * kTrenchOOAmpM * cutGaussian(distT, sigTrenchOO) * trenchCrustFade;
                 } else {
-                    const ForearcPull fa = forearcPull({.distKm = distKm, .axisM = axisM, .forearcM = kForearcOODepthM,
-                                                        .fullKm = kForearcOOFullKm, .endKm = kForearcOOEndKm});
+                    const ForearcPull fa = forearcPull({.distKm = distKm, .axisM = floorM, .regionM = bi.axisM,
+                                                        .forearcM = kForearcOODepthM, .fullKm = kForearcOOFullKm,
+                                                        .endKm = kForearcOOEndKm});
                     const float arcAmp = kArcOOAmpM * (kOOConvBase + kOOConvAmp * bi.conv) * island();
                     out.kernel += wOO * arcAmp * cutGaussian(distT - arcGapOO, sigArcOO);
                     pullShare  += wOO;
@@ -1450,11 +1508,13 @@ void TerrainStage::run(StageContext& ctx) {
             }
             return out;
         };
-        KernelOut kernel = boundaryKernel(nearIn, distNear);
-        if (wSecond > 0.0f) {
-            const KernelOut other = boundaryKernel(secondIn, distSecond);
-            kernel.kernel       += wSecond * (other.kernel - kernel.kernel);
-            kernel.coneSuppress += wSecond * (other.coneSuppress - kernel.coneSuppress);
+        KernelOut kernel;
+        for (const NearPair& np : nearby) {
+            if (np.sum.weight <= 0.0) continue;
+            const KernelOut k = boundaryKernel(np.in, np.dist, np.floorM);
+            const float     w = static_cast<float>(np.sum.weight / nearWeight);
+            kernel.kernel       += w * k.kernel;
+            kernel.coneSuppress += w * k.coneSuppress;
         }
         // Continental collision (CC) adds no kernel: its relief is the isostatic
         // platform and the ridged belts.
@@ -1481,56 +1541,36 @@ void TerrainStage::run(StageContext& ctx) {
     };
 
     // Each boundary's trench floor at the axis, where the overriding plate's inner wall
-    // starts, is the slab row's own elevation there, so the two sides meet with the axis
-    // deepest. The slab rows take no forearc pull, so they come first: the boundary tile
-    // itself when it is on the slab plate, else the mean of the slab-plate rows across it.
-    // An anchor's floor is its tiles' mean, like its other inputs.
+    // starts, is the slab plate's own elevation there, so the two sides meet with the axis
+    // deepest: the slab-plate members' elevations, read by the overriding side's gathers
+    // (above), and their mean in each anchor for the floor along the boundary. A slab-plate
+    // member reads no floor of its own pair, but at a triple junction it can be overriding
+    // for another pair and read that one's, which can read its own in turn. The passes
+    // repeat until those settle: after three, a fourth would move under 0.1% of the
+    // slab-plate members, by tens of metres at most.
     {
-        std::vector<float>   slabRowElev(boundaryCount, 0.0f);
-        std::vector<uint8_t> isSlabRow(boundaryCount, 0u);
-        ctx.pool.parallelFor(0, boundaryCount, kGrainSize, [&](size_t begin, size_t end) {
-            throwIfCancelled(ctx);
-            for (size_t i = begin; i < end; ++i) {
-                if (ctx.data.plateId[boundaryRows[i]] == boundaryInput[i].slabPlate) {
-                    slabRowElev[i] = tileElevation(boundaryRows[i]);
-                    isSlabRow[i]   = 1u;
-                }
-            }
-        });
-        ctx.pool.parallelFor(0, boundaryCount, kGrainSize, [&](size_t begin, size_t end) {
-            std::array<TileId, 6> nbrs{};
-            for (size_t i = begin; i < end; ++i) {
-                BoundaryKernelInput& in = boundaryInput[i];
-                const TileId tile = boundaryRows[i];
-                if (ctx.data.plateId[tile] == in.slabPlate) {
-                    in.axisM = slabRowElev[i];
-                    continue;
-                }
-                float sum = 0.0f;
-                uint32_t n = 0;
-                const uint32_t cnt = ctx.grid.neighbors(tile, nbrs);
-                for (uint32_t k = 0; k < cnt; ++k) {
-                    if (ctx.data.plateId[nbrs[k]] != in.slabPlate) continue;
-                    const auto it = std::lower_bound(boundaryRows.begin(), boundaryRows.end(), nbrs[k]);
-                    if (it == boundaryRows.end() || *it != nbrs[k]) continue;
-                    // At a triple junction the neighbour can be on this pair's slab plate yet
-                    // overriding for its own pair, so the first pass never synthesized it.
-                    const auto j = static_cast<size_t>(it - boundaryRows.begin());
-                    if (isSlabRow[j] == 0u) continue;
-                    sum += slabRowElev[j];
+        constexpr int kFloorPasses = 3;
+        std::vector<uint32_t> slabRows;
+        for (uint32_t i = 0; i < boundaryCount; ++i) {
+            if (memberOnSlab[rowMember[i]] != 0u) slabRows.push_back(i);
+        }
+        std::vector<float> settled(slabRows.size());
+        for (int pass = 0; pass < kFloorPasses; ++pass) {
+            ctx.pool.parallelFor(0, slabRows.size(), kGrainSize, [&](size_t begin, size_t end) {
+                throwIfCancelled(ctx);
+                for (size_t k = begin; k < end; ++k) settled[k] = tileElevation(boundaryRows[slabRows[k]]);
+            });
+            for (size_t k = 0; k < slabRows.size(); ++k) memberFloor[rowMember[slabRows[k]]] = settled[k];
+            for (InputAnchor& a : anchors) {
+                double   sum = 0.0;
+                uint32_t n   = 0;
+                for (uint32_t m = a.rowBegin; m < a.rowEnd; ++m) {
+                    if (memberOnSlab[m] == 0u) continue;
+                    sum += memberFloor[m];
                     ++n;
                 }
-                if (n > 0) in.axisM = sum / static_cast<float>(n);
+                if (n > 0) a.in.axisM = static_cast<float>(sum / n);
             }
-        });
-        std::vector<double>   floorSum(anchors.size(), 0.0);
-        std::vector<uint32_t> floorCount(anchors.size(), 0u);
-        for (uint32_t i = 0; i < boundaryCount; ++i) {
-            floorSum[rowAnchor[i]] += boundaryInput[i].axisM;
-            ++floorCount[rowAnchor[i]];
-        }
-        for (size_t a = 0; a < anchors.size(); ++a) {
-            anchors[a].in.axisM = static_cast<float>(floorSum[a] / floorCount[a]);
         }
     }
     boundaryInput.clear(); boundaryInput.shrink_to_fit();
@@ -1542,13 +1582,16 @@ void TerrainStage::run(StageContext& ctx) {
     });
 
     // Free transient arrays
-    boundary = {};
+    nearestRow.clear();     nearestRow.shrink_to_fit();
     anchors.clear();        anchors.shrink_to_fit();
+    memberCenter.clear();   memberCenter.shrink_to_fit();
+    memberOnSlab.clear();   memberOnSlab.shrink_to_fit();
+    memberFloor.clear();    memberFloor.shrink_to_fit();
+    rowMember.clear();      rowMember.shrink_to_fit();
     rowAnchor.clear();      rowAnchor.shrink_to_fit();
     neighbourStart.clear(); neighbourStart.shrink_to_fit();
     neighbours.clear();     neighbours.shrink_to_fit();
     crustEdgeDist.clear();  crustEdgeDist.shrink_to_fit();
-    riftBlend.clear(); riftBlend.shrink_to_fit();
 
     ctx.reportProgress(0.90f);
     throwIfCancelled(ctx);
