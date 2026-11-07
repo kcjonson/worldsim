@@ -1,0 +1,46 @@
+name: Save vcpkg cache
+description: >
+  Saves the folder setup-vcpkg restored, pruned to the packages this job
+  installed, when vcpkg built or downloaded anything new.
+
+inputs:
+  installedDir:
+    description: vcpkg install root (CMake's VCPKG_INSTALLED_DIR)
+    default: build/vcpkg_installed
+
+runs:
+  using: composite
+  steps:
+    - name: Prune vcpkg cache
+      id: prune
+      shell: bash
+      env:
+        STATUS: ${{ inputs.installedDir }}/vcpkg/status
+      run: |
+        root="$VCPKG_CACHE_ROOT"
+        added="$(find "$root" -path "$root/downloads/tools" -prune -o -type f -newer "$root/.restored" -print -quit)"
+        if [ -z "$added" ]; then
+          echo "vcpkg added nothing; not saving"
+          exit 0
+        fi
+        if [ ! -f "$STATUS" ]; then
+          echo "::warning::No vcpkg status file at $STATUS; not saving the vcpkg cache"
+          exit 0
+        fi
+        # Restored packages this job no longer installs (an older compiler or port
+        # version, or another job's) would otherwise carry forward in every entry.
+        abis="$RUNNER_TEMP/vcpkg-abis.txt"
+        tr -d '\r' < "$STATUS" | sed -n 's/^Abi: //p' | sort -u > "$abis"
+        find "$root/bin" -type f -name '*.zip' | while read -r zip; do
+          grep -qxF "$(basename "$zip" .zip)" "$abis" || rm -f "$zip"
+        done
+        echo "save=true" >> "$GITHUB_OUTPUT"
+
+    - name: Save vcpkg cache
+      if: steps.prune.outputs.save == 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: |
+          ${{ runner.temp }}/vcpkg-cache
+          !${{ runner.temp }}/vcpkg-cache/downloads/tools
+        key: vcpkg/${{ runner.os }}/${{ github.job }}/${{ github.run_id }}-${{ github.run_attempt }}

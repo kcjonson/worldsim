@@ -1,0 +1,53 @@
+name: Setup vcpkg
+description: >
+  Bootstraps vcpkg at a pinned commit and restores its binary cache and
+  downloads folder from the Actions cache. Run save-vcpkg-cache after the
+  first CMake configure.
+
+inputs:
+  vcpkgGitCommitId:
+    description: vcpkg commit for the tool, scripts and triplets (ports come from the vcpkg.json baseline)
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # run-vcpkg@v11 defaults VCPKG_BINARY_SOURCES to x-gha, which vcpkg has removed,
+    # and leaves a value that is already set alone. bin/ holds built packages by ABI
+    # hash, downloads/ the source archives and tools, so a rebuild after a compiler
+    # bump still needs no network.
+    - name: Point vcpkg at the cache folder
+      shell: bash
+      run: |
+        root="$RUNNER_TEMP/vcpkg-cache"
+        if [ "$RUNNER_OS" = Windows ]; then root="$(cygpath -m "$root")"; fi
+        mkdir -p "$root/bin" "$root/downloads"
+        {
+          echo "VCPKG_CACHE_ROOT=$root"
+          echo "VCPKG_BINARY_SOURCES=clear;files,$root/bin,readwrite"
+          echo "VCPKG_DOWNLOADS=$root/downloads"
+        } >> "$GITHUB_ENV"
+
+    # The key never matches. This restores the newest entry for this job, or else any
+    # job on this OS (its downloads still apply; packages whose ABI differs just miss).
+    # save-vcpkg-cache writes a new entry only when vcpkg added something. Extracted
+    # tools are left out: vcpkg re-extracts them from the cached archives.
+    - name: Restore vcpkg cache
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          ${{ runner.temp }}/vcpkg-cache
+          !${{ runner.temp }}/vcpkg-cache/downloads/tools
+        key: vcpkg/${{ runner.os }}/${{ github.job }}/${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: |
+          vcpkg/${{ runner.os }}/${{ github.job }}/
+          vcpkg/${{ runner.os }}/
+
+    - name: Mark the restored cache
+      shell: bash
+      run: touch "$VCPKG_CACHE_ROOT/.restored"
+
+    - name: Bootstrap vcpkg
+      uses: lukka/run-vcpkg@v11
+      with:
+        vcpkgGitCommitId: ${{ inputs.vcpkgGitCommitId }}
