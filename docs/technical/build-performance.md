@@ -64,11 +64,16 @@ Local before/after timings: see Results below.
   (toolchain drift, indirect breakage of the golden-hash tests).
 - **build.yml artifact upload deleted.** It uploaded the entire multi-GB build tree with 1-day
   retention and had zero consumers.
-- **vcpkg setup left exactly as is.** `lukka/run-vcpkg@v11` with the pinned vcpkg commit is
-  what makes configure extraction-shaped instead of a 20+ minute source build. The pinned
-  commit predates vcpkg's removal of the `x-gha` binary-cache backend; refreshing the pin
-  will silently break binary caching. When a `vcpkg.json` baseline bump forces a newer vcpkg,
-  switch binary caching to `VCPKG_DEFAULT_BINARY_CACHE` + `actions/cache` in the same PR.
+- **vcpkg binary cache in the Actions cache (WOR-601).** `lukka/run-vcpkg@v11` points vcpkg
+  at the `x-gha` backend, which vcpkg has removed (both tool pins log it). So every job built
+  all 25 ports from source and fetched their sources on every run, which took 2.1 min on Linux
+  and 4.5 min on Windows. A timeout at lua.org or any other source host failed Configure.
+  `.github/actions/setup-vcpkg` puts a `files` binary cache and `VCPKG_DOWNLOADS` under
+  `$RUNNER_TEMP/vcpkg-cache`, then restores the newest entry for the job, or failing that,
+  for any job on the OS. Its key never matches, so `save-vcpkg-cache` (right after configure)
+  writes a new entry only when vcpkg built or downloaded something, pruned to the ABIs the job
+  installed. A fixed key would stop saving once a runner compiler bump changed every ABI.
+  Downloads aren't pruned, so a full rebuild after a compiler bump needs no network.
 - **tests.yml and build.yml also run on push to main.** Actions caches are branch-scoped: a
   PR run can only restore caches created on the same PR or on main. Without a main run, every
   new PR would start cold; the post-merge run is what seeds the warm start. (Public repo,
@@ -168,7 +173,7 @@ Local before/after timings: see Results below.
 | Precompiled headers (`cmake/pch.cmake`, per-target PRIVATE std+glm+GL sets) | After measuring MSVC PCH x ccache and PCH x sccache interactions on a branch; CI escape hatch is `-DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON` |
 | lld-link / mold | Debug link of world-sim exceeds ~15 s post-Ninja (`CMAKE_LINKER_TYPE LLD`, CMake ≥3.29) |
 | Changed-paths test selection script | Full fast suite exceeds ~5 min wall locally |
-| vcpkg pin refresh + files-based binary cache | A vcpkg.json baseline bump forces it (do both together) |
+| vcpkg pin refresh (Linux jobs) | A vcpkg.json baseline bump forces it |
 | npm stamp for developer-client on macOS Debug | macOS iteration is annoyed by npm install on every build |
 
 ## Results

@@ -45,7 +45,7 @@ jobs:
       uses: mozilla-actions/sccache-action@v0.0.10
 
     - name: Setup vcpkg
-      uses: lukka/run-vcpkg@v11
+      uses: ./.github/actions/setup-vcpkg
       with:
         vcpkgGitCommitId: '8f54ef5453e7e76ff01e15988bf243e7247c5eb5'
 
@@ -60,6 +60,9 @@ jobs:
       env:
         CC: clang
         CXX: clang++
+
+    - name: Save vcpkg cache
+      uses: ./.github/actions/save-vcpkg-cache
 
     # Only the heavy bucket's executable, not the whole tree.
     - name: Build worldgen-tests
@@ -103,7 +106,7 @@ jobs:
       uses: mozilla-actions/sccache-action@v0.0.10
 
     - name: Setup vcpkg
-      uses: lukka/run-vcpkg@v11
+      uses: ./.github/actions/setup-vcpkg
       with:
         # Windows builds ports from source when the binary cache is cold, and the
         # older tool commit's msys2 packages (pkgconf, via vcpkg_fixup_pkgconfig)
@@ -125,6 +128,9 @@ jobs:
           -DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded \
           -DBUILD_DEVELOPER_CLIENT=OFF \
           -DBUILD_TESTING=ON
+
+    - name: Save vcpkg cache
+      uses: ./.github/actions/save-vcpkg-cache
 
     - name: Build worldgen-tests
       shell: bash
