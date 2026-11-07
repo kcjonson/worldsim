@@ -99,15 +99,22 @@ if(BUILD_TESTING)
         # across cores (one entry serialized ~16 min Linux / ~27 min Windows on CI).
         # gtest distributes filtered tests round-robin by index, so the dominant
         # suites (PlateSimHeavy, TerrainStageHeavy: 13 tests each) split evenly with
-        # no suite list to maintain. TIMEOUT is per-shard: worst observed CI shard
-        # plus margin (was 2400 for the whole bucket).
+        # no suite list to maintain.
+        #
+        # TIMEOUT is per shard, and it is the only hang guard: the test helpers
+        # (PlanetGenerator.test.h) wait for a run to end with no deadline of their
+        # own, since a fixed per-run deadline failed slow runners as null worlds.
+        # Calibration (2026-11-06, Windows Debug, ctest -j4): shards take 511-694 s
+        # on a typical windows-latest runner and 792-1077 s on a slow one (~1.5x).
+        # 2400 s is over 2x the slowest shard seen. If shard times grow, remeasure
+        # and keep TIMEOUT at least 2x the slow-runner worst case.
         set(WORLDGEN_HEAVY_SHARDS 4)
         math(EXPR _heavy_last_shard "${WORLDGEN_HEAVY_SHARDS} - 1")
         foreach(shard RANGE ${_heavy_last_shard})
             add_test(NAME worldgen-tests-heavy-${shard} COMMAND worldgen-tests --gtest_filter=*Heavy.*)
             set_tests_properties(worldgen-tests-heavy-${shard} PROPERTIES
                 LABELS "heavy"
-                TIMEOUT 1200
+                TIMEOUT 2400
                 ENVIRONMENT "GTEST_TOTAL_SHARDS=${WORLDGEN_HEAVY_SHARDS};GTEST_SHARD_INDEX=${shard}")
         endforeach()
     endif()

@@ -14,7 +14,7 @@
 #include "worldgen/data/WorldData.h"
 #include "worldgen/grid/SphereGrid.h"
 #include "worldgen/pipeline/GenerationStage.h"
-#include "worldgen/pipeline/PlanetGenerator.h"
+#include "worldgen/pipeline/PlanetGenerator.test.h"
 #include "worldgen/stages/AtmosphereStage.h"
 #include "worldgen/stages/BiomeStage.h"
 #include "worldgen/stages/OceanStage.h"
@@ -28,10 +28,8 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <chrono>
 #include <cstdint>
 #include <set>
-#include <thread>
 
 namespace worldgen {
 
@@ -610,15 +608,7 @@ TEST(BiomeStageHeavy, WorldSummaryFullPipeline) {
     params.gridSubdivision = 48;
     params.seed = 0xB10BE5EED12345ULL;
 
-    PlanetGenerator gen;
-    gen.start(params);
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
-    while (std::chrono::steady_clock::now() < deadline) {
-        auto prog = gen.progress();
-        if (prog.state != GenerationProgress::State::Running) break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    }
-    auto world = gen.takeResult();
+    auto world = runToCompletion(params);
     ASSERT_NE(world, nullptr);
 
     const auto& s = world->summary;

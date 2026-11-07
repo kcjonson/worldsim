@@ -4,38 +4,18 @@
 
 #include "worldgen/data/PlanetParams.h"
 #include "worldgen/grid/SphereGrid.h"
-#include "worldgen/pipeline/PlanetGenerator.h"
+#include "worldgen/pipeline/PlanetGenerator.test.h"
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <numeric>
 #include <optional>
-#include <thread>
 
 namespace worldgen {
 
 namespace {
-
-std::shared_ptr<const GeneratedWorld> runPipeline(const PlanetParams& params,
-                                                   int timeoutSeconds = 120) {
-    PlanetGenerator gen;
-    gen.start(params);
-    auto deadline = std::chrono::steady_clock::now() +
-                    std::chrono::seconds(timeoutSeconds);
-    while (std::chrono::steady_clock::now() < deadline) {
-        auto prog = gen.progress();
-        if (prog.state == GenerationProgress::State::Complete ||
-            prog.state == GenerationProgress::State::Failed ||
-            prog.state == GenerationProgress::State::Cancelled) {
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    return gen.takeResult();
-}
 
 // The range checks below share one world and its stats: a pipeline run costs
 // seconds in a Debug build, and none of the checks depends on the seed. n=32 so
@@ -45,7 +25,7 @@ const WorldStats* sharedStats() {
 		PlanetParams p = PlanetParams::preset(Preset::EarthLike);
 		p.gridSubdivision = 32;
 		p.seed = 0xBEEF1234u;
-		auto world = runPipeline(p, 180);
+		auto world = runToCompletion(p);
 		if (!world)
 			return std::nullopt;
 		return computeWorldStats(*world);
@@ -237,7 +217,7 @@ TEST(WorldStatsHeavy, EarthLikeBiomeFractionsAcceptance) {
         p.gridSubdivision = 64;
         p.seed = seed;
 
-        auto world = runPipeline(p, 180);
+        auto world = runToCompletion(p);
         ASSERT_NE(world, nullptr);
         WorldStats stats = computeWorldStats(*world);
         ASSERT_GT(stats.landTileCount, 0.0f);
@@ -300,7 +280,7 @@ TEST(WorldStatsHeavy, HypsometryBimodalityIgnoresShelfShoulder) {
     p.gridSubdivision = 64;
     p.seed = 42;
 
-    auto world = runPipeline(p, 180);
+    auto world = runToCompletion(p);
     ASSERT_NE(world, nullptr);
 
     WorldStats stats = computeWorldStats(*world);
@@ -335,7 +315,7 @@ TEST(WorldStatsHeavy, HypsometryLandModeAboveZeroAtHighWaterAmount) {
     p.waterAmount = 0.85f;
     p.seed = 42;
 
-    auto world = runPipeline(p, 180);
+    auto world = runToCompletion(p);
     ASSERT_NE(world, nullptr);
 
     WorldStats stats = computeWorldStats(*world);
@@ -370,7 +350,7 @@ TEST(WorldStatsHeavy, DrainageRoutesToOcean) {
     p.gridSubdivision = 64; // enough land for stable lake/river fractions
     p.seed = 42;
 
-    auto world = runPipeline(p, 180);
+    auto world = runToCompletion(p);
     ASSERT_NE(world, nullptr);
 
     const SphereGrid& grid = *world->grid;
