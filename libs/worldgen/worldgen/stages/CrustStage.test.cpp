@@ -7,39 +7,17 @@
 //   4. orogenyAge is either 65535 (never) or < 65535 (valid Myr).
 //   5. Cross-thread determinism: worldHash identical with TaskPool size 1 vs 8.
 
-#include "worldgen/pipeline/PlanetGenerator.h"
+#include "worldgen/pipeline/PlanetGenerator.test.h"
 #include "worldgen/data/PlanetParams.h"
 #include "worldgen/data/WorldData.h"
 
 #include <gtest/gtest.h>
 
-#include <chrono>
 #include <cstdint>
-#include <thread>
 
 namespace worldgen {
 
 namespace {
-
-std::shared_ptr<const GeneratedWorld> runPipeline(const PlanetParams& params,
-                                                   int timeoutSeconds = 300,
-                                                   unsigned threadCount = 0) {
-    PlanetGenerator gen(threadCount);
-    gen.start(params);
-
-    auto deadline = std::chrono::steady_clock::now() +
-                    std::chrono::seconds(timeoutSeconds);
-    while (std::chrono::steady_clock::now() < deadline) {
-        auto prog = gen.progress();
-        if (prog.state == GenerationProgress::State::Complete ||
-            prog.state == GenerationProgress::State::Failed  ||
-            prog.state == GenerationProgress::State::Cancelled) {
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
-    return gen.takeResult();
-}
 
 PlanetParams makeParams(uint32_t n, double waterAmount = 0.70, int K = 8,
                         uint64_t seed = 0xC5057420C5057420ULL) {
@@ -59,7 +37,7 @@ PlanetParams makeParams(uint32_t n, double waterAmount = 0.70, int K = 8,
 
 TEST(CrustStageHeavy, ValidPlateIds) {
     // n=64 keeps this fast; coarseN stays 128 (capped by PlateSim)
-    auto world = runPipeline(makeParams(64, 0.70, 8, 0xC501C501C501C501ULL));
+    auto world = runToCompletion(makeParams(64, 0.70, 8, 0xC501C501C501C501ULL));
     ASSERT_NE(world, nullptr);
 
     const uint32_t N = world->grid->tileCount();
@@ -80,7 +58,7 @@ TEST(CrustStageHeavy, ValidPlateIds) {
 // ============================================================================
 
 TEST(CrustStageHeavy, CrustFractionSaneBand) {
-    auto world = runPipeline(makeParams(64, 0.70, 8, 0xC502C502C502C502ULL));
+    auto world = runToCompletion(makeParams(64, 0.70, 8, 0xC502C502C502C502ULL));
     ASSERT_NE(world, nullptr);
 
     ASSERT_NE(world->tectonicHistory, nullptr);
@@ -103,7 +81,7 @@ TEST(CrustStageHeavy, CrustFractionSaneBand) {
 // ============================================================================
 
 TEST(CrustStageHeavy, CrustAgeInRange) {
-    auto world = runPipeline(makeParams(64, 0.70, 8, 0xC503C503C503C503ULL));
+    auto world = runToCompletion(makeParams(64, 0.70, 8, 0xC503C503C503C503ULL));
     ASSERT_NE(world, nullptr);
 
     const uint32_t N = world->grid->tileCount();
@@ -120,7 +98,7 @@ TEST(CrustStageHeavy, CrustAgeInRange) {
 // ============================================================================
 
 TEST(CrustStageHeavy, OrogenyAgeValid) {
-    auto world = runPipeline(makeParams(64, 0.70, 8, 0xC504C504C504C504ULL));
+    auto world = runToCompletion(makeParams(64, 0.70, 8, 0xC504C504C504C504ULL));
     ASSERT_NE(world, nullptr);
 
     const uint32_t N = world->grid->tileCount();
@@ -152,8 +130,8 @@ TEST(CrustStageHeavy, OrogenyAgeValid) {
 TEST(CrustStageHeavy, DeterministicAcrossThreadCounts) {
     PlanetParams params = makeParams(128, 0.70, 8, 0xDE7128C8DE7128C8ULL);
 
-    auto w1 = runPipeline(params, 600, 1);
-    auto w8 = runPipeline(params, 600, 8);
+    auto w1 = runToCompletion(params, 1);
+    auto w8 = runToCompletion(params, 8);
 
     ASSERT_NE(w1, nullptr) << "Pipeline (threads=1) failed";
     ASSERT_NE(w8, nullptr) << "Pipeline (threads=8) failed";
@@ -168,7 +146,7 @@ TEST(CrustStageHeavy, DeterministicAcrossThreadCounts) {
 // ============================================================================
 
 TEST(CrustStageHeavy, ValidFieldsSet) {
-    auto world = runPipeline(makeParams(64));
+    auto world = runToCompletion(makeParams(64));
     ASSERT_NE(world, nullptr);
 
     EXPECT_NE(world->validFields & static_cast<uint32_t>(WorldField::PlateId),   0u);

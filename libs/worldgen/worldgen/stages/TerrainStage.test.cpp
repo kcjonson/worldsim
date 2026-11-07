@@ -3,7 +3,7 @@
 // All tests at n=128 (fixed seeds) unless noted.
 // WORLDGEN_VISUAL=1: writes debug images at n=512 to build/debug-images/.
 
-#include "worldgen/pipeline/PlanetGenerator.h"
+#include "worldgen/pipeline/PlanetGenerator.test.h"
 #include "worldgen/data/PlanetParams.h"
 #include "worldgen/data/WorldData.h"
 #include "worldgen/debug/DebugImageExporter.h"
@@ -15,39 +15,17 @@
 #include <array>
 #include <atomic>
 #include <cassert>
-#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <string>
-#include <thread>
 #include <vector>
 
 namespace worldgen {
 
 namespace {
-
-std::shared_ptr<const GeneratedWorld> runPipeline(const PlanetParams& params,
-                                                   int timeoutSeconds = 180,
-                                                   unsigned threadCount = 0) {
-    PlanetGenerator gen(threadCount);
-    gen.start(params);
-
-    auto deadline = std::chrono::steady_clock::now() +
-                    std::chrono::seconds(timeoutSeconds);
-    while (std::chrono::steady_clock::now() < deadline) {
-        auto prog = gen.progress();
-        if (prog.state == GenerationProgress::State::Complete ||
-            prog.state == GenerationProgress::State::Failed  ||
-            prog.state == GenerationProgress::State::Cancelled) {
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    return gen.takeResult();
-}
 
 PlanetParams makeParams(uint32_t n, double waterAmount = 0.70, int K = 12,
                         uint64_t seed = 0xFACEFEED42ULL) {
@@ -116,7 +94,7 @@ uint64_t arrayHash(const std::vector<T>& v) {
 // ============================================================================
 
 TEST(TerrainStageHeavy, OceanFractionEarthLike) {
-    auto world = runPipeline(makeParams(128, 0.70, 12, 0xFACEFEED42ULL));
+    auto world = runToCompletion(makeParams(128, 0.70, 12, 0xFACEFEED42ULL));
     ASSERT_NE(world, nullptr);
 
     const uint32_t N = static_cast<uint32_t>(world->data.elevation.size());
@@ -135,7 +113,7 @@ TEST(TerrainStageHeavy, OceanFractionEarthLike) {
 }
 
 TEST(TerrainStageHeavy, OceanFractionDry) {
-    auto world = runPipeline(makeParams(128, 0.40, 12, 0xABCDEF12ULL));
+    auto world = runToCompletion(makeParams(128, 0.40, 12, 0xABCDEF12ULL));
     ASSERT_NE(world, nullptr);
 
     const uint32_t N = static_cast<uint32_t>(world->data.elevation.size());
@@ -156,7 +134,7 @@ TEST(TerrainStageHeavy, OceanFractionDry) {
 // ============================================================================
 
 TEST(TerrainStageHeavy, MountainsAtConvergentCC) {
-    auto world = runPipeline(makeParams(128, 0.70, 12, 0xFACEFEED42ULL));
+    auto world = runToCompletion(makeParams(128, 0.70, 12, 0xFACEFEED42ULL));
     ASSERT_NE(world, nullptr);
 
     const uint32_t N   = static_cast<uint32_t>(world->data.elevation.size());
@@ -205,7 +183,7 @@ TEST(TerrainStageHeavy, MountainsAtConvergentCC) {
 // ============================================================================
 
 TEST(TerrainStageHeavy, HypsometryBimodal) {
-    auto world = runPipeline(makeParams(256, 0.70, 12, 0xFACEFEED42ULL));
+    auto world = runToCompletion(makeParams(256, 0.70, 12, 0xFACEFEED42ULL));
     ASSERT_NE(world, nullptr);
 
     const uint32_t N    = static_cast<uint32_t>(world->data.elevation.size());
@@ -245,7 +223,7 @@ TEST(TerrainStageHeavy, HypsometryBimodal) {
 // ============================================================================
 
 TEST(TerrainStageHeavy, TrenchArcStructure) {
-    auto world = runPipeline(makeParams(256, 0.70, 12, 0xFACEFEED42ULL), 300);
+    auto world = runToCompletion(makeParams(256, 0.70, 12, 0xFACEFEED42ULL));
     ASSERT_NE(world, nullptr);
 
     const SphereGrid& grid = *world->grid;
@@ -373,7 +351,7 @@ TEST(TerrainStageHeavy, TrenchArcStructure) {
 // ============================================================================
 
 TEST(TerrainStageHeavy, NoCliffsWhereTheNearestBoundaryJumps) {
-    auto world = runPipeline(makeParams(512, 0.70, 12, 7ULL), 600);
+    auto world = runToCompletion(makeParams(512, 0.70, 12, 7ULL));
     ASSERT_NE(world, nullptr);
 
     const SphereGrid&  grid = *world->grid;
@@ -448,7 +426,7 @@ TEST(TerrainStageHeavy, NoCliffsWhereTheNearestBoundaryJumps) {
 // ============================================================================
 
 TEST(TerrainStageHeavy, PassiveMarginsCalm) {
-    auto world = runPipeline(makeParams(128, 0.70, 12, 0xFACEFEED42ULL));
+    auto world = runToCompletion(makeParams(128, 0.70, 12, 0xFACEFEED42ULL));
     ASSERT_NE(world, nullptr);
 
     const uint32_t N = static_cast<uint32_t>(world->data.elevation.size());
@@ -476,8 +454,8 @@ TEST(TerrainStageHeavy, PassiveMarginsCalm) {
 
 TEST(TerrainStageHeavy, Deterministic) {
     auto p  = makeParams(64, 0.70, 12, 0xCAFEBABEDEAD0000ULL);
-    auto w1 = runPipeline(p);
-    auto w2 = runPipeline(p);
+    auto w1 = runToCompletion(p);
+    auto w2 = runToCompletion(p);
     ASSERT_NE(w1, nullptr); ASSERT_NE(w2, nullptr);
 
     uint64_t h1e = arrayHash(w1->data.elevation);
@@ -494,8 +472,8 @@ TEST(TerrainStageHeavy, Deterministic) {
 
 TEST(TerrainStageHeavy, DeterministicAcrossThreadCounts) {
     const auto p  = makeParams(64, 0.70, 12, 0xCAFEBABEDEAD0000ULL);
-    const auto w1 = runPipeline(p, 180, 1);
-    const auto w8 = runPipeline(p, 180, 8);
+    const auto w1 = runToCompletion(p, 1);
+    const auto w8 = runToCompletion(p, 8);
     ASSERT_NE(w1, nullptr); ASSERT_NE(w8, nullptr);
     EXPECT_EQ(arrayHash(w1->data.elevation), arrayHash(w8->data.elevation));
     EXPECT_EQ(arrayHash(w1->data.boundaryType), arrayHash(w8->data.boundaryType));
@@ -506,8 +484,8 @@ TEST(TerrainStageHeavy, DeterministicAcrossThreadCounts) {
 TEST(TerrainStageHeavy, DifferentSeedsDiffer) {
     auto p1 = makeParams(64, 0.70, 12, 0xAAAAAAAAAAAAAAAAULL);
     auto p2 = makeParams(64, 0.70, 12, 0xBBBBBBBBBBBBBBBBULL);
-    auto w1 = runPipeline(p1);
-    auto w2 = runPipeline(p2);
+    auto w1 = runToCompletion(p1);
+    auto w2 = runToCompletion(p2);
     ASSERT_NE(w1, nullptr); ASSERT_NE(w2, nullptr);
 
     uint64_t h1 = arrayHash(w1->data.elevation);
@@ -520,7 +498,7 @@ TEST(TerrainStageHeavy, DifferentSeedsDiffer) {
 // ============================================================================
 
 TEST(TerrainStageHeavy, ValidFieldsSet) {
-    auto world = runPipeline(makeParams(64));
+    auto world = runToCompletion(makeParams(64));
     ASSERT_NE(world, nullptr);
 
     EXPECT_NE(world->validFields & static_cast<uint32_t>(WorldField::Elevation),       0u);
@@ -533,7 +511,7 @@ TEST(TerrainStageHeavy, ValidFieldsSet) {
 // ============================================================================
 
 TEST(TerrainStageHeavy, BoundaryDistanceNonTrivial) {
-    auto world = runPipeline(makeParams(128, 0.70, 12, 0xFACEFEED42ULL));
+    auto world = runToCompletion(makeParams(128, 0.70, 12, 0xFACEFEED42ULL));
     ASSERT_NE(world, nullptr);
 
     const uint32_t N = static_cast<uint32_t>(world->data.boundaryDistance.size());
@@ -552,7 +530,7 @@ TEST(TerrainStageHeavy, BoundaryDistanceNonTrivial) {
 // ============================================================================
 
 TEST(TerrainStageHeavy, ElevationRange) {
-    auto world = runPipeline(makeParams(128, 0.70, 12, 0xFACEFEED42ULL));
+    auto world = runToCompletion(makeParams(128, 0.70, 12, 0xFACEFEED42ULL));
     ASSERT_NE(world, nullptr);
 
     const uint32_t N = static_cast<uint32_t>(world->data.elevation.size());
@@ -578,7 +556,7 @@ TEST(TerrainStageHeavy, ElevationRange) {
 // ============================================================================
 
 TEST(TerrainStageHeavy, ConvergentBoundaryFraction) {
-    auto world = runPipeline(makeParams(256, 0.70, 12, 0xFACEFEED42ULL));
+    auto world = runToCompletion(makeParams(256, 0.70, 12, 0xFACEFEED42ULL));
     ASSERT_NE(world, nullptr);
 
     const uint32_t N = static_cast<uint32_t>(world->data.boundaryType.size());
@@ -686,7 +664,7 @@ TEST(TerrainStage, ConvergenceSignCorrectness) {
 TEST(TerrainStageHeavy, ShelfProfileAndSubmergedFraction) {
     // n=256: tileCount = 10*256^2+2 = 655362, tileWidthKm ≈ 40030/sqrt(655362) ≈ 49 km.
     // Enough resolution to resolve the 200 km shelf band (kShelfWidthKm in TerrainStage).
-    auto world = runPipeline(makeParams(256, 0.70, 12, 0xFACEFEED42ULL), 300);
+    auto world = runToCompletion(makeParams(256, 0.70, 12, 0xFACEFEED42ULL));
     ASSERT_NE(world, nullptr);
 
     const uint32_t N     = static_cast<uint32_t>(world->data.elevation.size());
@@ -793,7 +771,7 @@ TEST(TerrainStageHeavy, ShelfProfileAndSubmergedFraction) {
 
 TEST(TerrainStageVisualHeavy, WriteDebugImages) {
     const uint32_t n = 256;
-    auto world = runPipeline(makeParams(n, 0.70, 12, 42ULL), 300);
+    auto world = runToCompletion(makeParams(n, 0.70, 12, 42ULL));
     ASSERT_NE(world, nullptr) << "Pipeline failed at n=" << n;
 
 #ifdef _WIN32
@@ -818,7 +796,7 @@ TEST(TerrainStageVisualHeavy, WriteDebugImages) {
     if (visual && std::string(visual) == "1") {
         printf("[TerrainStageVisual] Running n=512 seed 42 (WORLDGEN_VISUAL=1)...\n");
         fflush(stdout);
-        auto w512 = runPipeline(makeParams(512, 0.70, 12, 42ULL), 600);
+        auto w512 = runToCompletion(makeParams(512, 0.70, 12, 42ULL));
         if (w512) {
             exportEquirectangularBmp(*w512, WorldFieldOrMode::Elevation,
                                      "build/debug-images/elevation.bmp", 2048);
@@ -827,12 +805,12 @@ TEST(TerrainStageVisualHeavy, WriteDebugImages) {
             printf("[TerrainStageVisual] n=512 seed 42 images written to build/debug-images/\n");
             fflush(stdout);
         } else {
-            printf("[TerrainStageVisual] n=512 seed 42 pipeline failed or timed out\n");
+            printf("[TerrainStageVisual] n=512 seed 42 pipeline failed\n");
         }
 
         printf("[TerrainStageVisual] Running n=512 seed 1337...\n");
         fflush(stdout);
-        auto w512b = runPipeline(makeParams(512, 0.70, 12, 1337ULL), 600);
+        auto w512b = runToCompletion(makeParams(512, 0.70, 12, 1337ULL));
         if (w512b) {
             exportEquirectangularBmp(*w512b, WorldFieldOrMode::Elevation,
                                      "build/debug-images/elevation_seed1337.bmp", 2048);
@@ -841,7 +819,7 @@ TEST(TerrainStageVisualHeavy, WriteDebugImages) {
             printf("[TerrainStageVisual] n=512 seed 1337 images written\n");
             fflush(stdout);
         } else {
-            printf("[TerrainStageVisual] n=512 seed 1337 failed or timed out\n");
+            printf("[TerrainStageVisual] n=512 seed 1337 failed\n");
         }
     }
 }
