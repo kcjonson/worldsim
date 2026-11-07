@@ -41,6 +41,7 @@ runs:
       uses: actions/cache/save@v4
       with:
         path: |
-          ${{ runner.temp }}/vcpkg-cache
+          ${{ runner.temp }}/vcpkg-cache/bin
+          ${{ runner.temp }}/vcpkg-cache/downloads/*
           !${{ runner.temp }}/vcpkg-cache/downloads/tools
         key: vcpkg/${{ runner.os }}/${{ github.job }}/${{ github.run_id }}-${{ github.run_attempt }}
