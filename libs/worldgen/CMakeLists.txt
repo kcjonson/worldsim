@@ -10,6 +10,7 @@ add_library(worldgen
     worldgen/tectonics/TectonicHistory.cpp
     worldgen/stages/AtmosphereStage.cpp
     worldgen/stages/DrainageRouting.cpp
+    worldgen/stages/SeedDistance.cpp
     worldgen/stages/PrecipitationStage.cpp
     worldgen/stages/OceanStage.cpp
     worldgen/stages/BiomeStage.cpp

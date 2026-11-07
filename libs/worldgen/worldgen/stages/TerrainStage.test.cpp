@@ -7,12 +7,16 @@
 #include "worldgen/data/PlanetParams.h"
 #include "worldgen/data/WorldData.h"
 #include "worldgen/debug/DebugImageExporter.h"
+#include "worldgen/stages/SeedDistance.h"
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
+#include <atomic>
 #include <cassert>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -26,8 +30,9 @@ namespace worldgen {
 namespace {
 
 std::shared_ptr<const GeneratedWorld> runPipeline(const PlanetParams& params,
-                                                   int timeoutSeconds = 180) {
-    PlanetGenerator gen;
+                                                   int timeoutSeconds = 180,
+                                                   unsigned threadCount = 0) {
+    PlanetGenerator gen(threadCount);
     gen.start(params);
 
     auto deadline = std::chrono::steady_clock::now() +
@@ -52,6 +57,44 @@ PlanetParams makeParams(uint32_t n, double waterAmount = 0.70, int K = 12,
     p.tectonicPlateCount = K;
     p.seed               = seed;
     return p;
+}
+
+// boundaryType is set on the boundary rows only. Each tile's nearest row, by a
+// multi-source BFS from the rows (first wave wins): that row's tile, and the hop count.
+struct NearestRow {
+    std::vector<TileId>   row;
+    std::vector<uint16_t> hops;
+};
+
+NearestRow nearestBoundaryRow(const GeneratedWorld& world) {
+    const SphereGrid& grid = *world.grid;
+    const uint32_t    N    = grid.tileCount();
+    NearestRow        out{std::vector<TileId>(N, 0u), std::vector<uint16_t>(N, 0xFFFFu)};
+    std::vector<TileId> queue;
+    for (TileId t = 0; t < N; ++t) {
+        if (world.data.boundaryType[t] == 0u) continue;
+        out.row[t]  = t;
+        out.hops[t] = 0u;
+        queue.push_back(t);
+    }
+    std::array<TileId, 6> nbrs{};
+    for (size_t i = 0; i < queue.size(); ++i) {
+        const TileId   t   = queue[i];
+        const uint32_t cnt = grid.neighbors(t, nbrs);
+        for (uint32_t k = 0; k < cnt; ++k) {
+            if (out.hops[nbrs[k]] != 0xFFFFu) continue;
+            out.row[nbrs[k]]  = out.row[t];
+            out.hops[nbrs[k]] = static_cast<uint16_t>(out.hops[t] + 1u);
+            queue.push_back(nbrs[k]);
+        }
+    }
+    return out;
+}
+
+// Mean tile spacing in true km (planet radius).
+double spacingKm(const GeneratedWorld& world) {
+    const double n = static_cast<double>(world.grid->tileCount());
+    return std::sqrt(8.0 * 3.14159265358979323846 / (std::sqrt(3.0) * n)) * world.derived.planetRadiusMeters / 1000.0;
 }
 
 template<typename T>
@@ -108,7 +151,7 @@ TEST(TerrainStageHeavy, OceanFractionDry) {
 
 // ============================================================================
 // Mountains at convergent CC boundaries
-// Mean elevation of land tiles with ConvergentCC within 8 tiles of boundary
+// Mean elevation of land tiles within 8 hops of a ConvergentCC boundary row
 // > mean land elevation + 800m
 // ============================================================================
 
@@ -129,12 +172,13 @@ TEST(TerrainStageHeavy, MountainsAtConvergentCC) {
     if (cntLand == 0u) { GTEST_SKIP() << "No land tiles"; }
     double meanLand = sumLand / cntLand;
 
-    // Mean elevation of ConvergentCC land tiles within 8 tiles of boundary
+    // Mean elevation of land tiles whose nearest boundary row is ConvergentCC, within 8 hops
     constexpr uint8_t kBTypeCC = 1u; // ConvergentCC
+    const NearestRow nearest = nearestBoundaryRow(*world);
     double sumCC = 0.0; uint32_t cntCC = 0u;
     for (uint32_t t = 0; t < N; ++t) {
-        if (world->data.boundaryType[t] == kBTypeCC &&
-            world->data.boundaryDistance[t] <= 8 &&
+        if (world->data.boundaryType[nearest.row[t]] == kBTypeCC &&
+            nearest.hops[t] <= 8u &&
             world->data.elevation[t] >= seaLevel) {
             sumCC += world->data.elevation[t]; ++cntCC;
         }
@@ -142,6 +186,7 @@ TEST(TerrainStageHeavy, MountainsAtConvergentCC) {
     if (cntCC == 0u) { GTEST_SKIP() << "No CC convergent land tiles within 8 of boundary"; }
     double meanCC = sumCC / cntCC;
 
+    // Measured 932 m above the land mean, over 742 tiles.
     EXPECT_GT(meanCC, meanLand + 800.0)
         << "CC mountain mean " << meanCC << " vs land mean " << meanLand;
 }
@@ -191,76 +236,210 @@ TEST(TerrainStageHeavy, HypsometryBimodal) {
 }
 
 // ============================================================================
-// Trench-arc structure for ConvergentCO boundaries:
-//   Oceanic side at d∈[0,3]: mean elevation < oceanic abyssal mean - 1500m
-//   Continental side has local max in arc band vs near boundary
+// Subduction margin structure at ConvergentCO boundaries (n=256), where the slab side is
+// oceanic (TerrainStage's rule: the pair's denser plate goes down):
+//   the slab row and the overriding row across from it meet without a step, and the
+//   deepest of the two is the slab row (the trench axis is deepest);
+//   the coast stands well inland of the trench on the overriding plate;
+//   the forearc is drowned and the arc land stands beyond it.
 // ============================================================================
 
 TEST(TerrainStageHeavy, TrenchArcStructure) {
-    auto world = runPipeline(makeParams(128, 0.70, 12, 0xFACEFEED42ULL));
+    auto world = runPipeline(makeParams(256, 0.70, 12, 0xFACEFEED42ULL), 300);
     ASSERT_NE(world, nullptr);
 
-    const uint32_t N = static_cast<uint32_t>(world->data.elevation.size());
+    const SphereGrid& grid = *world->grid;
+    const uint32_t    N    = grid.tileCount();
+    const float       sea  = world->seaLevelMeters;
+    const double      km   = spacingKm(*world);
+    auto isCrust = [&](uint32_t t) { return (world->data.flags[t] & kFlagContinentalCrust) != 0; };
+    auto up      = [&](uint32_t t) { return world->data.elevation[t] >= sea; };
+    std::array<TileId, 6> nbrs{};
 
-    // Compute oceanic abyssal mean (all oceanic tiles)
-    double sumOceanic = 0.0; uint32_t cntOceanic = 0u;
+    // Each boundary row's dominant foreign plate, and the slab plate of each pair.
+    std::vector<uint8_t> foreign(N, 255u);
+    std::vector<double>   density(256 * 256, 0.0);
+    std::vector<uint32_t> rows(256 * 256, 0u);
     for (uint32_t t = 0; t < N; ++t) {
-        bool isCrust = (world->data.flags[t] & kFlagContinentalCrust) != 0;
-        if (!isCrust) { sumOceanic += world->data.elevation[t]; ++cntOceanic; }
+        if (world->data.boundaryType[t] == 0u) continue;
+        const uint8_t  p   = world->data.plateId[t];
+        const uint32_t cnt = grid.neighbors(t, nbrs);
+        uint32_t best = 0u;
+        for (uint32_t k = 0; k < cnt; ++k) {
+            const uint8_t q = world->data.plateId[nbrs[k]];
+            if (q == p) continue;
+            uint32_t n = 0u;
+            for (uint32_t k2 = k; k2 < cnt; ++k2) n += world->data.plateId[nbrs[k2]] == q ? 1u : 0u;
+            if (n > best) { best = n; foreign[t] = q; }
+        }
+        const size_t key = static_cast<size_t>(p) * 256 + foreign[t];
+        density[key] += isCrust(t) ? 0.0 : 1.0 + world->data.crustAge[t] / 100.0;
+        ++rows[key];
     }
-    if (cntOceanic < 100u) { GTEST_SKIP() << "Not enough oceanic tiles"; }
-    double abyssalMean = sumOceanic / cntOceanic;
+    auto slabOf = [&](uint8_t a, uint8_t b) {
+        auto mean = [&](uint8_t x, uint8_t y) {
+            const size_t key = static_cast<size_t>(x) * 256 + y;
+            return rows[key] > 0u ? density[key] / rows[key] : 0.0;
+        };
+        const double da = mean(a, b), db = mean(b, a);
+        return da > db ? a : db > da ? b : std::max(a, b);
+    };
 
-    constexpr uint8_t kBTypeCO = 2u; // ConvergentCO
-    constexpr uint8_t kSideSubducting = 2u;
-    constexpr uint8_t kSideOverriding = 1u;
-
-    // Oceanic (subducting) side near boundary → should be trench (very deep)
-    double sumTrench = 0.0; uint32_t cntTrench = 0u;
-    // Continental (overriding) side in arc band vs near boundary
-    double sumArcBand = 0.0; uint32_t cntArcBand = 0u;
-    double sumNearBnd = 0.0; uint32_t cntNearBnd = 0u;
-
+    // Across each subducting CO boundary point: the oceanic slab row against the
+    // overriding rows beside it.
+    constexpr uint8_t kBTypeCO = 2u;
+    uint32_t pairs = 0u, overDeeper = 0u;
+    std::vector<float> steps;
+    std::vector<uint8_t> overRow(N, 0u);
     for (uint32_t t = 0; t < N; ++t) {
-        if (world->data.boundaryType[t] != kBTypeCO) continue;
-        uint16_t dist = world->data.boundaryDistance[t];
-        bool isCrust  = (world->data.flags[t] & kFlagContinentalCrust) != 0;
-
-        // Determine side from crust type (this tile)
-        // Subducting = oceanic side, overriding = continental side
-        bool isOceanicSide = !isCrust;
-
-        if (isOceanicSide && dist <= 3) {
-            sumTrench += world->data.elevation[t]; ++cntTrench;
-        }
-        if (!isOceanicSide) {
-            // arc band: 10-25 tiles inland (roughly 150-250km depending on n)
-            if (dist >= 10 && dist <= 25) {
-                sumArcBand += world->data.elevation[t]; ++cntArcBand;
-            }
-            if (dist <= 2) {
-                sumNearBnd += world->data.elevation[t]; ++cntNearBnd;
-            }
+        if (world->data.boundaryType[t] != kBTypeCO || isCrust(t) || foreign[t] == 255u) continue;
+        const uint8_t p = world->data.plateId[t];
+        if (slabOf(p, foreign[t]) != p) continue;
+        const uint32_t cnt = grid.neighbors(t, nbrs);
+        for (uint32_t k = 0; k < cnt; ++k) {
+            const TileId o = nbrs[k];
+            if (world->data.plateId[o] == p || world->data.boundaryType[o] == 0u) continue;
+            overRow[o] = 1u;
+            const float step = world->data.elevation[o] - world->data.elevation[t];
+            ++pairs;
+            steps.push_back(std::fabs(step));
+            if (step < -300.0f) ++overDeeper;
         }
     }
+    ASSERT_GE(pairs, 50u);
 
-    if (cntTrench >= 10u) {
-        double trenchMean = sumTrench / cntTrench;
-        // Trenches must be at least 500 m deeper than the abyssal mean —
-        // tectonic-history pipeline produces different velocity magnitudes than
-        // the old Voronoi plates, so the 1500 m threshold was pipeline-specific.
-        EXPECT_LT(trenchMean, abyssalMean - 500.0)
-            << "Trench mean " << trenchMean << " vs abyssal mean - 500 = " << (abyssalMean - 500.0);
-    } else {
-        GTEST_SKIP() << "Not enough CO subducting tiles near boundary (cntTrench=" << cntTrench << ")";
+    // The overriding plate behind those rows: its tiles by distance from the nearest
+    // overriding row, and the distance from each overriding row to its plate's coast.
+    std::vector<TileId> overSeeds, shore;
+    for (uint32_t t = 0; t < N; ++t) {
+        if (overRow[t] != 0u) overSeeds.push_back(t);
+        if (!up(t)) continue;
+        const uint32_t cnt = grid.neighbors(t, nbrs);
+        for (uint32_t k = 0; k < cnt; ++k) {
+            if (!up(nbrs[k])) { shore.push_back(t); break; }
+        }
     }
+    const std::atomic<bool>        noCancel{false};
+    foundation::TaskPool           pool(2);
+    const std::vector<TileCenterF> centers   = tileCentersF(grid, pool);
+    const SeedDistanceResult       fromRow   = seedDistance({.grid = grid, .centers = centers, .seeds = overSeeds,
+                                                             .cancel = noCancel, .maxTiles = static_cast<float>(400.0 / km)});
+    const SeedDistanceResult       fromShore = seedDistance({.grid = grid, .centers = centers, .seeds = shore,
+                                                             .cancel = noCancel, .maxTiles = static_cast<float>(1000.0 / km)});
+    std::vector<double> coastKm;
+    for (const TileId r : overSeeds) {
+        const uint32_t s = fromShore.nearestSeed[r];
+        if (s == kNoSeed || world->data.plateId[shore[s]] != world->data.plateId[r]) continue;
+        coastKm.push_back(up(r) ? 0.0 : fromShore.distTiles[r] * km);
+    }
+    uint32_t nearAll = 0u, nearLand = 0u, arcAll = 0u, arcLand = 0u;
+    for (uint32_t t = 0; t < N; ++t) {
+        const uint32_t r = fromRow.nearestSeed[t];
+        if (r == kNoSeed || world->data.plateId[t] != world->data.plateId[overSeeds[r]]) continue;
+        const double d = fromRow.distTiles[t] * km;
+        if (d <= 60.0) { ++nearAll; if (up(t)) ++nearLand; }
+        if (d >= 200.0 && d <= 300.0) { ++arcAll; if (up(t)) ++arcLand; }
+    }
+    ASSERT_GE(coastKm.size(), 20u);
+    ASSERT_GE(nearAll, 50u);
+    ASSERT_GE(arcAll, 50u);
+    std::sort(coastKm.begin(), coastKm.end());
+    std::sort(steps.begin(), steps.end());
+    const double medianStepM   = steps[steps.size() / 2];
+    const double medianCoastKm = coastKm[coastKm.size() / 2];
+    const double nearLandFrac  = static_cast<double>(nearLand) / nearAll;
+    const double arcLandFrac   = static_cast<double>(arcLand) / arcAll;
 
-    if (cntArcBand >= 10u && cntNearBnd >= 5u) {
-        double arcMean = sumArcBand / cntArcBand;
-        double nearMean = sumNearBnd / cntNearBnd;
-        EXPECT_GT(arcMean, nearMean)
-            << "Arc band mean " << arcMean << " should exceed near-boundary mean " << nearMean;
+    // Measured at n=256: median step 799 m (a row is 30 km, a steep stretch of inner
+    // wall), 16 of 194 overriding rows deeper, coast median 102 km, forearc 11% land, arc
+    // band 52% land.
+    EXPECT_LT(medianStepM, 1500.0) << "median slab/overriding row step " << medianStepM << " m";
+    EXPECT_LT(overDeeper, pairs / 5u) << overDeeper << " of " << pairs << " overriding rows lie deeper than the slab row";
+    EXPECT_GT(medianCoastKm, 60.0) << "coast median " << medianCoastKm << " km from the trench";
+    EXPECT_LT(medianCoastKm, 200.0) << "coast median " << medianCoastKm << " km from the trench";
+    EXPECT_LT(nearLandFrac, 0.15) << "the forearc within 60 km of the trench is " << nearLandFrac << " land";
+    EXPECT_GT(arcLandFrac, nearLandFrac + 0.3) << "arc band land " << arcLandFrac << " vs forearc " << nearLandFrac;
+}
+
+// ============================================================================
+// No cliff where the nearest boundary jumps. Across a bend or a notch in a boundary row,
+// or from one boundary to another, a tile's nearest boundary tile jumps along strike,
+// further the farther out; kernels that followed it stepped there, cutting straight
+// cliffs of 3-4 km across the land behind a margin. Counted on continental crust 60-200 km
+// from the boundary: neighbouring tiles off the rows whose nearest boundary tiles are 4 or
+// more spacings apart, a step over 1.5 km between them that is more than twice the steps on
+// either side along the same line. Tiles with different crust or orogeny ages are left
+// out: those fields step between coarse cells (WOR-599), not at boundaries.
+// ============================================================================
+
+TEST(TerrainStageHeavy, NoCliffsWhereTheNearestBoundaryJumps) {
+    auto world = runPipeline(makeParams(512, 0.70, 12, 7ULL), 600);
+    ASSERT_NE(world, nullptr);
+
+    const SphereGrid&  grid = *world->grid;
+    const WorldData&   data = world->data;
+    const uint32_t     N    = grid.tileCount();
+    const double       km   = spacingKm(*world);
+    std::vector<TileId> rows;
+    for (TileId t = 0; t < N; ++t) {
+        if (data.boundaryType[t] != 0u) rows.push_back(t);
     }
+    ASSERT_FALSE(rows.empty());
+    foundation::TaskPool           pool(4);
+    const std::vector<TileCenterF> centers = tileCentersF(grid, pool);
+    const std::atomic<bool>        noCancel{false};
+    const SeedDistanceResult       nearest = seedDistance({.grid = grid, .centers = centers, .seeds = rows, .cancel = noCancel});
+    const double spacing = std::sqrt(8.0 * 3.14159265358979323846 / (std::sqrt(3.0) * N));
+    auto apartTiles = [&](TileId a, TileId b) {
+        const Vec3d  ca = grid.tileCenter(rows[nearest.nearestSeed[a]]);
+        const Vec3d  cb = grid.tileCenter(rows[nearest.nearestSeed[b]]);
+        const double dx = ca.x - cb.x, dy = ca.y - cb.y, dz = ca.z - cb.z;
+        return std::sqrt(dx * dx + dy * dy + dz * dz) / spacing;
+    };
+    auto onCrustOffRow = [&](TileId t) {
+        return data.boundaryType[t] == 0u && (data.flags[t] & kFlagContinentalCrust) != 0;
+    };
+    auto offRow = [&](TileId t) { return data.boundaryType[t] == 0u; };
+    const auto& e = data.elevation;
+
+    uint32_t cliffs = 0u;
+    std::array<TileId, 6> nt{}, nn{};
+    for (TileId t = 0; t < N; ++t) {
+        if (!onCrustOffRow(t)) continue;
+        const double bandKm = data.boundaryDistance[t] * km;
+        if (bandKm <= 60.0 || bandKm > 200.0) continue;
+        const Vec3d    pt = grid.tileCenter(t);
+        const uint32_t ct = grid.neighbors(t, nt);
+        for (uint32_t k = 0; k < ct; ++k) {
+            const TileId nb = nt[k];
+            if (nb <= t || !onCrustOffRow(nb)) continue;
+            if (data.crustAge[t] != data.crustAge[nb] || data.orogenyAge[t] != data.orogenyAge[nb]) continue;
+            const float step = std::fabs(e[nb] - e[t]);
+            if (step <= 1500.0f || apartTiles(t, nb) < 4.0) continue;
+            // The tiles before and after the pair along the same line.
+            const Vec3d  pn = grid.tileCenter(nb);
+            const double dx = pn.x - pt.x, dy = pn.y - pt.y, dz = pn.z - pt.z;
+            TileId prev = t, next = nb;
+            double lo = std::numeric_limits<double>::max(), hi = -lo;
+            for (uint32_t j = 0; j < ct; ++j) {
+                const Vec3d  q   = grid.tileCenter(nt[j]);
+                const double dot = (q.x - pt.x) * dx + (q.y - pt.y) * dy + (q.z - pt.z) * dz;
+                if (dot < lo) { lo = dot; prev = nt[j]; }
+            }
+            const uint32_t cn = grid.neighbors(nb, nn);
+            for (uint32_t j = 0; j < cn; ++j) {
+                const Vec3d  q   = grid.tileCenter(nn[j]);
+                const double dot = (q.x - pn.x) * dx + (q.y - pn.y) * dy + (q.z - pn.z) * dz;
+                if (dot > hi) { hi = dot; next = nn[j]; }
+            }
+            if (!offRow(prev) || !offRow(next)) continue;
+            const float side = std::max(std::fabs(e[t] - e[prev]), std::fabs(e[next] - e[nb]));
+            if (step > 2.0f * side) ++cliffs;
+        }
+    }
+    // Measured 48 (seeds 1, 31337 and 12345: 58, 41, 32). With each tile reading its nearest
+    // boundary tile's inputs alone, as before the anchors: 278 (221, 148, 157).
+    EXPECT_LT(cliffs, 120u) << cliffs << " isolated cliffs over 1.5 km where the nearest boundary jumps";
 }
 
 // ============================================================================
@@ -311,6 +490,17 @@ TEST(TerrainStageHeavy, Deterministic) {
 
     EXPECT_FLOAT_EQ(w1->seaLevelMeters, w2->seaLevelMeters)
         << "seaLevelMeters differs between runs";
+}
+
+TEST(TerrainStageHeavy, DeterministicAcrossThreadCounts) {
+    const auto p  = makeParams(64, 0.70, 12, 0xCAFEBABEDEAD0000ULL);
+    const auto w1 = runPipeline(p, 180, 1);
+    const auto w8 = runPipeline(p, 180, 8);
+    ASSERT_NE(w1, nullptr); ASSERT_NE(w8, nullptr);
+    EXPECT_EQ(arrayHash(w1->data.elevation), arrayHash(w8->data.elevation));
+    EXPECT_EQ(arrayHash(w1->data.boundaryType), arrayHash(w8->data.boundaryType));
+    EXPECT_EQ(arrayHash(w1->data.boundaryDistance), arrayHash(w8->data.boundaryDistance));
+    EXPECT_FLOAT_EQ(w1->seaLevelMeters, w8->seaLevelMeters);
 }
 
 TEST(TerrainStageHeavy, DifferentSeedsDiffer) {
@@ -540,19 +730,61 @@ TEST(TerrainStageHeavy, ShelfProfileAndSubmergedFraction) {
         << "shelfSubmergedFraction=" << shelfSubmergedFraction
         << " suspiciously high (>30%); shelf profile may be too wide or too shallow";
 
-    // --- Shallow shelf tiles exist at -50m to -200m below sea level ---
-    // (These are the nearly-flat shelf tiles.) With a 200 km shelf (kShelfWidthKm=200)
-    // at -120m and n=256 there should be a noticeable population here.
-    uint32_t shallowShelfTiles = 0u;
+    // --- A visible shelf shoulder: water shallower than 250 m, nearly all of it shelf ---
+    // The quantile sea level lands in the shelf band here, so the outer shelf (continental
+    // crust) floods to a few meters, and the top of the slope (oceanic crust beside it)
+    // lies a little deeper.
+    const SphereGrid& grid = *world->grid;
+    auto isCrust = [&](uint32_t t) { return (world->data.flags[t] & kFlagContinentalCrust) != 0; };
+    std::array<TileId, 6> nbrs{};
+    auto besideCrust = [&](uint32_t t) {
+        const uint32_t cnt = grid.neighbors(t, nbrs);
+        for (uint32_t k = 0; k < cnt; ++k) {
+            if (isCrust(nbrs[k])) return true;
+        }
+        return false;
+    };
+    uint32_t shallowTiles = 0u, shallowShelfTiles = 0u;
     for (uint32_t t = 0; t < N; ++t) {
         float r = world->data.elevation[t] - sea;
-        // shallow shelf band: 50 to 250m below sea level
-        if (r >= -250.0f && r < -50.0f) ++shallowShelfTiles;
+        if (r < -250.0f || r >= 0.0f) continue;
+        ++shallowTiles;
+        if (isCrust(t) || besideCrust(t)) ++shallowShelfTiles;
     }
-    double shallowFraction = static_cast<double>(shallowShelfTiles) / static_cast<double>(N);
-    EXPECT_GT(shallowFraction, 0.005)
-        << "Shallow shelf band (<250m, >50m below sea) only " << (shallowFraction * 100.0)
+    double shallowFraction = static_cast<double>(shallowTiles) / static_cast<double>(N);
+    double shelfShare      = shallowTiles > 0u ? static_cast<double>(shallowShelfTiles) / shallowTiles : 0.0;
+    EXPECT_GT(shallowFraction, 0.01)
+        << "Shallow water (<250m below sea) only " << (shallowFraction * 100.0)
         << "% of tiles; expected a visible shelf shoulder";
+    // Measured 1.43% of tiles, 98.2% of them shelf or the oceanic edge row beside it.
+    EXPECT_GT(shelfShare, 0.9)
+        << "Only " << (shelfShare * 100.0) << "% of the shallow water is shelf or the edge row beside it";
+
+    // --- No land rim outside a flooded shelf on passive margins ---
+    // An oceanic edge tile above sea beside a submerged continental edge tile is land
+    // seaward of the shelf: the rim abyssal noise raises when it runs at full amplitude up
+    // to the shelf break. Far from plate boundaries no trench or arc kernel reaches the
+    // edge; volcanism lifts the shelf behind a cone too, so it rarely counts here. Only
+    // edge tiles beside a flooded shelf can hold a rim, so they are the denominator.
+    constexpr uint16_t kPassiveBoundarySpacings = 10; // boundaryDistance units, ~300 km at n=256
+    uint32_t floodedEdgeTiles = 0u;
+    uint32_t rimTiles = 0u;
+    for (uint32_t t = 0; t < N; ++t) {
+        if (isCrust(t) || world->data.boundaryDistance[t] <= kPassiveBoundarySpacings) continue;
+        bool floodedShelf = false;
+        uint32_t cnt = grid.neighbors(t, nbrs);
+        for (uint32_t k = 0; k < cnt; ++k) {
+            if (isCrust(nbrs[k]) && world->data.elevation[nbrs[k]] < sea) floodedShelf = true;
+        }
+        if (!floodedShelf) continue;
+        ++floodedEdgeTiles;
+        if (world->data.elevation[t] >= sea) ++rimTiles;
+    }
+    ASSERT_GT(floodedEdgeTiles, 500u);
+    double rimFraction = static_cast<double>(rimTiles) / static_cast<double>(floodedEdgeTiles);
+    EXPECT_LT(rimFraction, 0.03)
+        << rimTiles << " of " << floodedEdgeTiles
+        << " passive-margin oceanic edge tiles beside a flooded shelf stand above sea";
 }
 
 // ============================================================================

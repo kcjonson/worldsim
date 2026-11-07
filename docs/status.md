@@ -995,6 +995,24 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 
 ## Planned Epics
 
+### Continental margins: emergent shelves and inland seas (worldgen)
+**Spec/Documentation:** `/docs/technical/continental-margins.md`
+**Dependencies:** Tectonic History Simulation, Fluvial Erosion, Cryosphere (all landed)
+**Status:** ready
+
+**Goal:** Replace the painted constant-width shelf ramp with shelves that emerge from rift thinning, Airy isostasy plus thermal subsidence, flexure, sediment fill from the drainage, and glacial lowstands, so shelf width varies by margin type, age, and supply, and inland seas form where the physics puts them.
+
+**Tasks:**
+- [ ] True tile spacing everywhere (tileWidthKm 1.65x error); km constants in real km
+- [ ] Spike: flexure solver + glacial climate pass cost at n=1024/2048; set the perf budget
+- [ ] PlateSim rift phase: stretching, breakup, failed rifts, rift-history fields, margin labels
+- [ ] Full-res margin thinning + Airy without the knee + McKenzie thermal term; delete the shelf ramp
+- [ ] Flexural isostasy solver
+- [ ] Glacial-maximum climate pass: lowstand depth + glacial load depression
+- [ ] Margin stage: BQART supply, longshore spread, fill to profile, planing, sediment flexure, final sea level
+- [ ] Inland seas: failed-rift sag + slab dynamic topography
+- [ ] Earth-anchored gates, docs, dev log, globe before/after review
+
 ### Ground Tile Follow-ups
 **Spec/Documentation:** `/docs/technical/ground-textures.md`
 **Dependencies:** Ground Tile Variants, Ground Surface Blending (both complete)

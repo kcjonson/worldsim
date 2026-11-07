@@ -38,7 +38,7 @@ inline constexpr float kRiverLandFraction = 0.04f;
 // Written by TerrainStage; read by any consumer that interprets plate boundaries.
 // Values are stored as uint8_t; cast via static_cast<BoundaryType>(data.boundaryType[t]).
 enum class BoundaryType : uint8_t {
-    None         = 0,  // interior tile — no plate boundary within BFS reach
+    None         = 0,  // not on a plate boundary
     ConvergentCC = 1,  // both sides continental crust (collision mountain belt)
     ConvergentCO = 2,  // one continental, one oceanic (subduction zone + arc)
     ConvergentOO = 3,  // both oceanic (island arc + trench)
@@ -89,7 +89,8 @@ inline constexpr uint32_t kAllWorldFields = 0x7FFFFu; // bits 0..18
 //                       0=None (interior), 1=ConvergentCC, 2=ConvergentCO,
 //                       3=ConvergentOO, 4=Divergent, 5=Transform.
 //                       Written by TerrainStage; consumers must use the same enum values.
-//   boundaryDistance:  uint16, tiles from nearest plate boundary
+//   boundaryDistance:  uint16, straight-line distance in mean tile spacings to the nearest
+//                      plate-boundary tile, rounded; 65535 when there is none (one plate)
 //   biome:             uint8, Biome enum value
 //   flags:             uint8, kFlag* bits
 //   waterDepth:        uint16, meters (0 = land or dry)

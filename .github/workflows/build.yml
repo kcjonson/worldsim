@@ -27,7 +27,7 @@ jobs:
   build:
     # Skip while the PR is a draft; re-runs when marked ready for review.
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # the LLVM apt source below is noble's
     env:
       SCCACHE_GHA_ENABLED: "true"
 

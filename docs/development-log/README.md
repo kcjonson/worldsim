@@ -64,6 +64,7 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 #### November 2026
 
+- [2026-11-02 - Coast rims, hexagonal shelves, and active margins](./entries/2026-11-02-coast-rims-and-hex-shelves.md)
 - [2026-11-02 - Ground surface blending: height-contested edges and organic biome edges (WOR-556)](./entries/2026-11-02-ground-surface-blending.md)
 - [2026-11-02 - Ground tile variants: baked, hex-mixed ground arrays (WOR-545)](./entries/2026-11-02-ground-tile-variants.md)
 
