@@ -1,4 +1,5 @@
 #include "NavigationSystem.h"
+#include "NavigationSystem.test.h"
 
 #include "AIDecisionSystem.h"
 #include "../World.h"
@@ -32,14 +33,12 @@
 #include <worldgen/sampling/PondNetwork2D.h>
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
-#include <thread>
 #include <unordered_set>
 #include <vector>
 
@@ -99,20 +98,6 @@ namespace {
 			EXPECT_TRUE(cw.setOpeningState(op, FoundationState::Built));
 		}
 		return south;
-	}
-
-	// Pump update() until a mesh is built or the bound is hit. The build is async,
-	// so we poll with a short yield/sleep between frames (mirrors how the chunk
-	// processor's futures are polled). Bounded so a hung build fails loudly.
-	bool pumpUntilMesh(NavigationSystem& sys, int maxFrames = 500) {
-		for (int i = 0; i < maxFrames; ++i) {
-			sys.update(0.0F);
-			if (sys.hasMesh()) {
-				return true;
-			}
-			std::this_thread::sleep_for(std::chrono::milliseconds(2));
-		}
-		return false;
 	}
 
 	// First built region's mesh. The viewport-tracking tests drive a single region, so the
@@ -323,14 +308,9 @@ TEST_F(NavigationSystemTest, RebuildOnVersionChangeOpensPath) {
 	ASSERT_TRUE(cw.setOpeningState(op, FoundationState::Built));
 	ASSERT_NE(cw.version(), before);
 
-	// Pump until the rebuilt mesh makes the path reachable (bounded).
-	bool opened = false;
-	for (int i = 0; i < 500 && !opened; ++i) {
-		sys.update(0.0F);
-		opened = sys.requestPath(kOutside, kInside, kAgentRadius).has_value();
-		std::this_thread::sleep_for(std::chrono::milliseconds(2));
-	}
-	EXPECT_TRUE(opened) << "door rebuild never opened the path";
+	EXPECT_TRUE(pumpUntil(sys, "the door to open the path", [&] {
+		return sys.requestPath(kOutside, kInside, kAgentRadius).has_value();
+	})) << "door rebuild never opened the path";
 }
 
 // Rebuild the other direction: an open (door) room is pathable; setting the door
@@ -358,13 +338,9 @@ TEST_F(NavigationSystemTest, RebuildSealsRoomWhenDoorRemoved) {
 	}
 	ASSERT_NE(cw.version(), before);
 
-	bool sealed = false;
-	for (int i = 0; i < 500 && !sealed; ++i) {
-		sys.update(0.0F);
-		sealed = !sys.requestPath(kOutside, kInside, kAgentRadius).has_value();
-		std::this_thread::sleep_for(std::chrono::milliseconds(2));
-	}
-	EXPECT_TRUE(sealed) << "blueprinting the door never re-sealed the room";
+	EXPECT_TRUE(pumpUntil(sys, "the room to seal", [&] {
+		return !sys.requestPath(kOutside, kInside, kAgentRadius).has_value();
+	})) << "blueprinting the door never re-sealed the room";
 }
 
 // Deferred wiring: pumping update() before the ConstructionWorld is set must NOT
@@ -521,11 +497,8 @@ TEST_F(NavigationSystemTest, GenerationBumpsOnMeshSwap) {
 	OpeningId op = cw.addOpening(south, 0.5F, "Door", "Wood");
 	ASSERT_NE(op, kInvalidOpening);
 	ASSERT_TRUE(cw.setOpeningState(op, FoundationState::Built));
-	for (int i = 0; i < 500 && sys.generation() == afterFirst; ++i) {
-		sys.update(0.0F);
-		std::this_thread::sleep_for(std::chrono::milliseconds(2));
-	}
-	EXPECT_GT(sys.generation(), afterFirst) << "rebuild swap should bump generation again";
+	EXPECT_TRUE(pumpUntil(sys, "the rebuild swap", [&] { return sys.generation() > afterFirst; }))
+		<< "rebuild swap should bump generation again";
 }
 
 // Every region's mesh swap moves generation(), including one whose own swap count lags another
@@ -547,11 +520,8 @@ TEST_F(NavigationSystemTest, GenerationMovesWhenALaggingRegionSwaps) {
 	for (std::int64_t edit = 0; edit < 2; ++edit) {
 		const std::uint64_t before = sys.generation();
 		buildWall(cw, {10000 + edit * 2000, 10000}, {11000 + edit * 2000, 10000});
-		for (int i = 0; i < 500 && sys.generation() == before; ++i) {
-			sys.update(0.0F);
-			std::this_thread::sleep_for(std::chrono::milliseconds(2));
-		}
-		ASSERT_NE(sys.generation(), before) << "wall edit " << edit << " never rebuilt region A";
+		ASSERT_TRUE(pumpUntil(sys, "the wall-edit rebuild", [&] { return sys.generation() != before; }))
+			<< "wall edit " << edit << " never rebuilt region A";
 	}
 
 	// Colonist B, 100 m away, gets a disjoint region whose first swap lands behind A's count.
@@ -559,13 +529,8 @@ TEST_F(NavigationSystemTest, GenerationMovesWhenALaggingRegionSwaps) {
 	EntityID b = world.createEntity();
 	world.addComponent<Position>(b, Position{glm::vec2{100.0F, 0.0F}});
 	world.addComponent<Colonist>(b, Colonist{"B"});
-	bool bBuilt = false;
-	for (int i = 0; i < 500 && !bBuilt; ++i) {
-		sys.update(0.0F);
-		bBuilt = sys.builtRegions().size() == 2U;
-		std::this_thread::sleep_for(std::chrono::milliseconds(2));
-	}
-	ASSERT_TRUE(bBuilt) << "region B never built";
+	ASSERT_TRUE(pumpUntil(sys, "region B", [&] { return sys.builtRegions().size() == 2U; }))
+		<< "region B never built";
 	EXPECT_NE(sys.generation(), beforeB) << "region B's first mesh swap left generation() unchanged";
 }
 
@@ -630,13 +595,9 @@ TEST_F(NavigationSystemTest, MeshRebuildClearsRraCaches) {
 	ASSERT_NE(op, kInvalidOpening);
 	ASSERT_TRUE(cw.setOpeningState(op, FoundationState::Built));
 
-	bool opened = false;
-	for (int i = 0; i < 500 && !opened; ++i) {
-		sys.update(0.0F);
-		opened = sys.generation() != genBefore && sys.requestPath(kOutside, kInside, kAgentRadius).has_value();
-		std::this_thread::sleep_for(std::chrono::milliseconds(2));
-	}
-	ASSERT_TRUE(opened) << "door rebuild never opened the path";
+	ASSERT_TRUE(pumpUntil(sys, "the door to open the path", [&] {
+		return sys.generation() != genBefore && sys.requestPath(kOutside, kInside, kAgentRadius).has_value();
+	})) << "door rebuild never opened the path";
 	EXPECT_GT(sys.generation(), genBefore) << "mesh swapped";
 
 	// After the swap the path is reachable AND correct. The cache map was cleared on the
@@ -744,17 +705,14 @@ TEST_F(NavigationSystemTest, ZoomOutRebuildExpandsArea) {
 
 	// Zoom out: 100 m (> 20% bigger than 30 m after clamping stays 100 m).
 	pushArea(sys, {0, 0}, 100000);
-	bool grew = false;
-	for (int i = 0; i < 500 && !grew; ++i) {
-		sys.update(0.0F);
-		if (sys.generation() != gen1) {
-			const Aabb aabb2 = meshAabb(firstMesh(sys));
-			grew = (aabb2.maxX - aabb2.minX) > (aabb1.maxX - aabb1.minX)
-				|| (aabb2.maxY - aabb2.minY) > (aabb1.maxY - aabb1.minY);
+	EXPECT_TRUE(pumpUntil(sys, "a larger mesh", [&] {
+		if (sys.generation() == gen1) {
+			return false;
 		}
-		std::this_thread::sleep_for(std::chrono::milliseconds(2));
-	}
-	EXPECT_TRUE(grew) << "zoom-out rebuild should produce a larger mesh AABB";
+		const Aabb aabb2 = meshAabb(firstMesh(sys));
+		return (aabb2.maxX - aabb2.minX) > (aabb1.maxX - aabb1.minX)
+			|| (aabb2.maxY - aabb2.minY) > (aabb1.maxY - aabb1.minY);
+	})) << "zoom-out rebuild should produce a larger mesh AABB";
 	EXPECT_GT(sys.generation(), gen1) << "generation must bump on zoom-out rebuild";
 }
 
@@ -777,17 +735,14 @@ TEST_F(NavigationSystemTest, ZoomInRebuildShrinksArea) {
 
 	// Zoom in: 50 m (50% of 100 m -> delta 50% > 20% threshold).
 	pushArea(sys, {0, 0}, 50000);
-	bool shrank = false;
-	for (int i = 0; i < 500 && !shrank; ++i) {
-		sys.update(0.0F);
-		if (sys.generation() != gen1) {
-			const Aabb aabb2 = meshAabb(firstMesh(sys));
-			shrank = (aabb2.maxX - aabb2.minX) < (aabb1.maxX - aabb1.minX)
-				  || (aabb2.maxY - aabb2.minY) < (aabb1.maxY - aabb1.minY);
+	EXPECT_TRUE(pumpUntil(sys, "a smaller mesh", [&] {
+		if (sys.generation() == gen1) {
+			return false;
 		}
-		std::this_thread::sleep_for(std::chrono::milliseconds(2));
-	}
-	EXPECT_TRUE(shrank) << "zoom-in rebuild should produce a smaller mesh AABB";
+		const Aabb aabb2 = meshAabb(firstMesh(sys));
+		return (aabb2.maxX - aabb2.minX) < (aabb1.maxX - aabb1.minX)
+			|| (aabb2.maxY - aabb2.minY) < (aabb1.maxY - aabb1.minY);
+	})) << "zoom-in rebuild should produce a smaller mesh AABB";
 	EXPECT_GT(sys.generation(), gen1) << "generation must bump on zoom-in rebuild";
 }
 
@@ -811,13 +766,8 @@ TEST_F(NavigationSystemTest, PanPastEdgeMarginTriggersRebuild) {
 	// Pan the viewport center to 55 m: that is within kEdgeMarginMm (8 m) of the +60 m
 	// edge, so the driver crosses the margin and the region must recenter/rebuild.
 	pushArea(sys, {55000, 0}, 60000);
-	bool recentered = false;
-	for (int i = 0; i < 500 && !recentered; ++i) {
-		sys.update(0.0F);
-		recentered = sys.generation() != gen1;
-		std::this_thread::sleep_for(std::chrono::milliseconds(2));
-	}
-	EXPECT_TRUE(recentered) << "pan past the edge margin must trigger a rebuild";
+	EXPECT_TRUE(pumpUntil(sys, "the recenter rebuild", [&] { return sys.generation() != gen1; }))
+		<< "pan past the edge margin must trigger a rebuild";
 }
 
 // Pan the viewport driver but keep it comfortably inside the built region (and the
@@ -838,11 +788,11 @@ TEST_F(NavigationSystemTest, PanWithinMarginNoRebuild) {
 	// Pan to 5 m (driver stays ~55 m from the +60 m edge, well past the 8 m margin) and a
 	// 5% size change (< 20% threshold).
 	pushArea(sys, {5000, 0}, 63000); // 63/60 = 1.05 -> 5% delta, driver at 5 m
-	for (int i = 0; i < 50; ++i) {
-		sys.update(0.0F);
-		std::this_thread::sleep_for(std::chrono::milliseconds(2));
-	}
-	EXPECT_EQ(sys.generation(), gen1) << "a pan within the margin must NOT trigger a rebuild";
+	// update() launches any rebuild its gates call for before it returns, so one frame is
+	// the whole check, however slow the runner.
+	sys.update(0.0F);
+	EXPECT_FALSE(sys.isBuilding()) << "a pan within the margin must NOT trigger a rebuild";
+	EXPECT_EQ(sys.generation(), gen1);
 }
 
 // Half-extent clamped to kMinSimHalfExtentMm: requesting 1 m (below min) builds
@@ -936,14 +886,8 @@ TEST_F(NavigationSystemTest, InAreaPlacementCompletionTriggersRebuild) {
 	executor.storeChunkResult(std::move(result));
 	processed.insert(coord);
 
-	// Pump until the signature-driven rebuild lands.
-	bool rebuilt = false;
-	for (int i = 0; i < 500 && !rebuilt; ++i) {
-		sys.update(0.0F);
-		rebuilt = sys.generation() != gen1;
-		std::this_thread::sleep_for(std::chrono::milliseconds(2));
-	}
-	ASSERT_TRUE(rebuilt) << "in-area placement completion must trigger a rebuild";
+	ASSERT_TRUE(pumpUntil(sys, "the placement-driven rebuild", [&] { return sys.generation() != gen1; }))
+		<< "in-area placement completion must trigger a rebuild";
 	EXPECT_GT(sys.generation(), gen1) << "generation must bump on the placement-driven rebuild";
 	// The late tree is now carved in: the obstacle changed the triangulation.
 	EXPECT_NE(firstMesh(sys).triangles.size(), triBefore)
@@ -1045,13 +989,8 @@ TEST_F(NavigationSystemTest, InAreaEntityRemovalTriggersRebuildAndReclaimsHole) 
 	// unchanged -- the removal epoch is the sole trigger for the rebuild.
 	ASSERT_TRUE(executor.removeEntity(coord, treeAt, "Test_NavFellTree")) << "tree must be removed from the index";
 
-	bool rebuilt = false;
-	for (int i = 0; i < 500 && !rebuilt; ++i) {
-		sys.update(0.0F);
-		rebuilt = sys.generation() != gen1;
-		std::this_thread::sleep_for(std::chrono::milliseconds(2));
-	}
-	ASSERT_TRUE(rebuilt) << "an in-area entity removal must trigger a rebuild (reclaim the trunk hole)";
+	ASSERT_TRUE(pumpUntil(sys, "the removal-driven rebuild", [&] { return sys.generation() != gen1; }))
+		<< "an in-area entity removal must trigger a rebuild (reclaim the trunk hole)";
 	EXPECT_GT(sys.generation(), gen1) << "generation must bump on the removal-driven rebuild";
 	// Hole reclaimed: the mesh with the tree gone differs from the mesh with it carved in.
 	EXPECT_NE(firstMesh(sys).triangles.size(), triWithTree)
@@ -1993,13 +1932,8 @@ TEST_F(NavigationSystemTest, QueryDispatchSelectsRegionContainingPoint) {
 
 	// No viewport pushed: regions come solely from the two colonists. Pump until both
 	// regions have built their meshes.
-	bool twoRegions = false;
-	for (int i = 0; i < 500 && !twoRegions; ++i) {
-		sys.update(0.0F);
-		twoRegions = sys.builtRegions().size() == 2u;
-		std::this_thread::sleep_for(std::chrono::milliseconds(2));
-	}
-	ASSERT_TRUE(twoRegions) << "two disjoint colonists must produce two built regions";
+	ASSERT_TRUE(pumpUntil(sys, "two built regions", [&] { return sys.builtRegions().size() == 2u; }))
+		<< "two disjoint colonists must produce two built regions";
 
 	// Each colonist's position is inside SOME built region; a point between them (50 m) is
 	// covered by neither (the squares are 30 m half-extent, so they reach to +/-30 m).

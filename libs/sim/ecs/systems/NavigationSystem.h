@@ -308,6 +308,12 @@ class NavigationSystem : public ISystem {
 	// still in flight does not count until it lands.)
 	[[nodiscard]] bool hasMesh() const;
 
+	// True while any region's build is in flight. update() launches every build its gates
+	// call for before it returns, so false right after an update means the system has
+	// settled: with the same inputs, no later update changes a mesh. Tests use it to tell
+	// a build still landing from one that will never start.
+	[[nodiscard]] bool isBuilding() const;
+
 	// Monotonic count of mesh swaps across all regions. A stored NavPath stamps this at plan
 	// time so the replan loop can detect "the world rebuilt under me", and a deferred route
 	// waits on it to move. Stays 0 until the first mesh lands. Every region's swap bumps it,

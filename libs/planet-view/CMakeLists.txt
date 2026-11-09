@@ -77,10 +77,14 @@ if(BUILD_TESTING)
         # The PlanetColorizerBake tests run full PlanetGenerator pipelines whose
         # internal pool is hardware_concurrency - 1. Declare that footprint so
         # parallel ctest doesn't co-schedule other pool-spawning exes and starve
-        # the generation past its deadline (bit us on the 4-core CI runners).
-        # TIMEOUT: 4 generate()-calling tests x 300 s worst-case deadline = 1200 s
-        # hang budget; 1500 keeps margin over it. Re-size if tests add generations.
-        set_tests_properties(planet-view-tests PROPERTIES PROCESSORS 3 TIMEOUT 1500)
+        # the generation (bit us on the 4-core CI runners).
+        #
+        # TIMEOUT is the only hang guard: the generations wait for their run to end
+        # with no deadline of their own (worldgen's PlanetGenerator.test.h).
+        # Calibration (2026-11, CI Debug, ctest -j4): 28-75 s across Linux and
+        # Windows runners. 300 s is 4x the slowest; keep it at least 2x the
+        # slow-runner worst case if tests add generations.
+        set_tests_properties(planet-view-tests PROPERTIES PROCESSORS 3 TIMEOUT 300)
     endif()
 
     if(PLANET_VIEW_BENCHMARK_SOURCES)

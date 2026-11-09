@@ -6,6 +6,7 @@
 #include "ActionSystem.h"
 #include "MovementSystem.h"
 #include "NavigationSystem.h"
+#include "NavigationSystem.test.h"
 #include "PhysicsSystem.h"
 
 #include "../GoalTaskRegistry.h"
@@ -49,7 +50,6 @@
 #include <cmath>
 #include <memory>
 #include <optional>
-#include <thread>
 
 namespace ecs::test {
 
@@ -3174,7 +3174,9 @@ namespace ecs::test {
 	// The running game's first decision happens before the async region build has produced a mesh.
 	// This wires a real NavigationSystem (all-land chunks, a viewport region at the origin, an empty
 	// construction world) plus MovementSystem and PhysicsSystem, so a test can let the AI decide with
-	// no mesh, tick until the build lands, and then check the colonist walks a route.
+	// no mesh, pump the NavigationSystem alone until the build lands (pumpUntilMesh: no sim time
+	// passes however long the runner takes, and the AI sees the mesh on the next tick), and then
+	// check the colonist walks a route.
 	class AIDecisionFirstMeshTest : public AIDecisionSystemTest {
 	  protected:
 		void SetUp() override {
@@ -3200,20 +3202,6 @@ namespace ecs::test {
 			// before the chunks and construction world go away.
 			AIDecisionSystemTest::TearDown();
 			chunks.reset();
-		}
-
-		// Tick the whole world until the async region build lands. NavigationSystem drains finished
-		// builds at the top of its update, ahead of the AI, so the AI sees the mesh on that same tick.
-		// Bounded so a hung build fails instead of spinning.
-		[[nodiscard]] bool tickUntilMesh() {
-			for (int i = 0; i < 500; ++i) {
-				world->update(kTick);
-				if (nav->hasMesh()) {
-					return true;
-				}
-				std::this_thread::sleep_for(std::chrono::milliseconds(2));
-			}
-			return false;
 		}
 
 		[[nodiscard]] bool followingRoute(EntityID colonist) {
@@ -3249,7 +3237,7 @@ namespace ecs::test {
 		EXPECT_FLOAT_EQ(getTrace(colonist)->lastEvaluationTime, firstEvaluation)
 			<< "a parked colonist must not re-decide every frame";
 
-		ASSERT_TRUE(tickUntilMesh()) << "navmesh never built";
+		ASSERT_TRUE(pumpUntilMesh(*nav)) << "navmesh never built";
 
 		bool walking = false;
 		for (int i = 0; i < kTicksAfterMesh && !walking; ++i) {
@@ -3288,7 +3276,7 @@ namespace ecs::test {
 		ASSERT_FALSE(getMovementTarget(colonist)->active) << "the route is held until a mesh exists";
 		EXPECT_EQ(task->navState, NavState::AwaitingMesh) << "the held route shows as waiting, not traveling";
 
-		ASSERT_TRUE(tickUntilMesh()) << "navmesh never built";
+		ASSERT_TRUE(pumpUntilMesh(*nav)) << "navmesh never built";
 
 		bool routed = false;
 		for (int i = 0; i < kTicksAfterMesh && !routed; ++i) {

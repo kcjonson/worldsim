@@ -1,12 +1,11 @@
 // Tests for AssetRegistry asynchronous loading (beginLoadAsync).
 
 #include "assets/AssetRegistry.h"
+#include "assets/AssetRegistry.test.h"
 
 #include <gtest/gtest.h>
 
-#include <chrono>
 #include <filesystem>
-#include <thread>
 
 using namespace assets;
 
@@ -35,12 +34,7 @@ TEST(AssetRegistryAsyncTest, BeginLoadAsyncPopulatesRegistry) {
 	reg.beginLoadAsync(world.string());
 	EXPECT_TRUE(reg.loadProgress().started.load());
 
-	// Poll up to ~10s for the worker to finish.
-	for (int i = 0; i < 1000 && !reg.isLoadComplete(); ++i) {
-		std::this_thread::sleep_for(std::chrono::milliseconds(10));
-	}
-
-	ASSERT_TRUE(reg.isLoadComplete());
+	waitForAsyncLoad(reg);
 	EXPECT_GT(reg.getDefinitionNames().size(), 0U);
 	EXPECT_GT(reg.loadProgress().defsLoaded.load(), 0);
 	EXPECT_EQ(reg.getValidationReport().errorCount(), 0); // shipped library is clean
