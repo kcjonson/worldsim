@@ -5,44 +5,18 @@
 // motion resolution) headlessly for every direction.
 
 #include "assets/AssetRegistry.h"
+#include "assets/AssetRegistry.test.h"
 
 #include <gtest/gtest.h>
 
-#include <chrono>
-#include <filesystem>
-#include <thread>
-
 using namespace assets;
 
-namespace {
-
-	// <root>/libs/assets/assets/ColonistDirectionalAssets.test.cpp -> walk up to <root>.
-	std::filesystem::path projectRoot() {
-		std::filesystem::path p = __FILE__;
-		return p.parent_path().parent_path().parent_path().parent_path();
-	}
-
-	// Complete-or-not, distinct from assets being absent: a load that never
-	// finishes is a FAILURE, not a skip, so a real asset-load regression can't
-	// silently stop being tested.
-	bool loadWorld(AssetRegistry& reg) {
-		reg.setSharedScriptsPath(projectRoot() / "assets" / "shared" / "scripts");
-		reg.beginLoadAsync((projectRoot() / "assets" / "world").string());
-		for (int i = 0; i < 1000 && !reg.isLoadComplete(); ++i) {
-			std::this_thread::sleep_for(std::chrono::milliseconds(10));
-		}
-		return reg.isLoadComplete();
-	}
-
-} // namespace
-
 TEST(ColonistDirectionalAssets, AllDirectionTemplatesAndMotionsResolve) {
-	if (!std::filesystem::exists(projectRoot() / "assets" / "world")) {
-		GTEST_SKIP() << "assets/world not found";
-	}
 	auto& reg = AssetRegistry::Get();
 	reg.clear();
-	ASSERT_TRUE(loadWorld(reg)) << "asset load did not complete within 10s";
+	if (!loadShippedLibrary(reg)) {
+		GTEST_SKIP() << "assets/world not found";
+	}
 
 	for (const char* name : {"Colonist_down", "Colonist_up", "Colonist_left", "Colonist_right"}) {
 		SCOPED_TRACE(name);

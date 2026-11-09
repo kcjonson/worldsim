@@ -92,6 +92,12 @@ if(BUILD_TESTING)
             target_compile_options(assets-tests PRIVATE -O0 -g)
         endif()
         add_test(NAME assets-tests COMMAND assets-tests)
+        # TIMEOUT is the only hang guard: the async-load and chunk-placement waits
+        # have no deadline of their own (AssetRegistry.test.h).
+        # Calibration (2026-11, CI Debug, ctest -j4): 17-56 s across Linux and
+        # Windows runners. 300 s is 5x the slowest; keep it at least 2x the
+        # slow-runner worst case.
+        set_tests_properties(assets-tests PROPERTIES TIMEOUT 300)
     endif()
 
     if(ASSETS_BENCHMARK_SOURCES)

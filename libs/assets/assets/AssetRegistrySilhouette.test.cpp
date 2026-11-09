@@ -6,6 +6,7 @@
 // silhouette from their stroke bands (no bounds-rect fallback).
 
 #include "assets/AssetRegistry.h"
+#include "assets/AssetRegistry.test.h"
 
 #include <core/Vec2i64.h>
 #include <predicates/Predicates.h>
@@ -13,20 +14,11 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
-#include <filesystem>
-#include <thread>
 
 using namespace assets;
 
 namespace {
-
-	// <root>/libs/assets/assets/AssetRegistrySilhouette.test.cpp -> walk up to <root>.
-	std::filesystem::path projectRoot() {
-		std::filesystem::path p = __FILE__;
-		return p.parent_path().parent_path().parent_path().parent_path();
-	}
 
 	bool insideAny(const std::vector<geometry::Ring>& rings, const geometry::Vec2i64& p) {
 		for (const auto& r : rings) {
@@ -37,19 +29,6 @@ namespace {
 		return false;
 	}
 
-	bool loadWorld(AssetRegistry& reg) {
-		const std::filesystem::path world = projectRoot() / "assets" / "world";
-		if (!std::filesystem::exists(world)) {
-			return false;
-		}
-		reg.setSharedScriptsPath(projectRoot() / "assets" / "shared" / "scripts");
-		reg.beginLoadAsync(world.string());
-		for (int i = 0; i < 1000 && !reg.isLoadComplete(); ++i) {
-			std::this_thread::sleep_for(std::chrono::milliseconds(10));
-		}
-		return reg.isLoadComplete();
-	}
-
 } // namespace
 
 // The silhouette must enclose everything the tessellator fills: every filled
@@ -58,7 +37,7 @@ namespace {
 TEST(AssetRegistrySilhouette, EnclosesTessellatedFill) {
 	auto& reg = AssetRegistry::Get();
 	reg.clear();
-	if (!loadWorld(reg)) {
+	if (!loadShippedLibrary(reg)) {
 		GTEST_SKIP() << "assets/world not found";
 	}
 
@@ -126,7 +105,7 @@ TEST(AssetRegistrySilhouette, EnclosesTessellatedFill) {
 TEST(AssetRegistrySilhouette, StrokeOnlyGetsRealSilhouette) {
 	auto& reg = AssetRegistry::Get();
 	reg.clear();
-	if (!loadWorld(reg)) {
+	if (!loadShippedLibrary(reg)) {
 		GTEST_SKIP() << "assets/world not found";
 	}
 

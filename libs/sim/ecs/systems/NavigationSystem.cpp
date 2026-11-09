@@ -742,6 +742,10 @@ namespace ecs {
 		return false;
 	}
 
+	bool NavigationSystem::isBuilding() const {
+		return std::ranges::any_of(regions, [](const SimulationRegion& r) { return r.future.valid(); });
+	}
+
 	std::vector<NavigationSystem::RegionView> NavigationSystem::builtRegions() const {
 		std::vector<RegionView> out;
 		out.reserve(regions.size());

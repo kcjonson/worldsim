@@ -31,8 +31,6 @@ namespace {
 	constexpr uint64_t kQuickstartSeed = 424242;
 	constexpr uint64_t kOtherWorldSeed = 987654321;
 
-	constexpr auto kTaskTimeout = std::chrono::seconds(60);
-
 	// Every tile is grassland, so what a chunk grows is decided by the world seed alone.
 	class SeededGrasslandSampler : public world::IWorldSampler {
 	  public:
@@ -119,17 +117,15 @@ namespace {
 	}
 
 	// Launch the chunk and pump the processor the way the game loop does, until it is integrated.
+	// No deadline: a slow runner can't be told from a hang by the clock, so a task that never
+	// finishes is left to the assets-tests ctest TIMEOUT.
 	::testing::AssertionResult placeAndWait(AsyncChunkProcessor& processor, const world::Chunk& chunk) {
 		processor.launchTask(&chunk);
 		if (!processor.isProcessing(chunk.coordinate())) {
 			return ::testing::AssertionFailure() << "launchTask did not start the chunk";
 		}
-		const auto deadline = std::chrono::steady_clock::now() + kTaskTimeout;
 		while (processor.hasPending()) {
 			processor.pollCompleted();
-			if (std::chrono::steady_clock::now() > deadline) {
-				return ::testing::AssertionFailure() << "placement task never finished";
-			}
 			std::this_thread::sleep_for(std::chrono::milliseconds(2));
 		}
 		return ::testing::AssertionSuccess();

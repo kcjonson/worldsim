@@ -73,5 +73,11 @@ if(BUILD_TESTING)
             target_compile_options(sim-tests PRIVATE -O0 -g)
         endif()
         add_test(NAME sim-tests COMMAND sim-tests)
+        # TIMEOUT is the only hang guard: the navigation waits pump until their build
+        # lands, with no frame or wall-clock budget (NavigationSystem.test.h).
+        # Calibration (2026-11, CI Debug, ctest -j4): 179-384 s across Linux and
+        # Windows runners, which differ about 2x run to run. 1200 s is 3x the
+        # slowest; keep it at least 2x the slow-runner worst case.
+        set_tests_properties(sim-tests PROPERTIES TIMEOUT 1200)
     endif()
 endif()
