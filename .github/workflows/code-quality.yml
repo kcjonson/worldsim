@@ -55,7 +55,7 @@ jobs:
       run: ./scripts/lint.sh --check
 
     - name: Setup vcpkg (for clang-tidy)
-      uses: lukka/run-vcpkg@v11
+      uses: ./.github/actions/setup-vcpkg
       with:
         vcpkgGitCommitId: '8f54ef5453e7e76ff01e15988bf243e7247c5eb5'
 
@@ -68,6 +68,9 @@ jobs:
       env:
         CC: clang
         CXX: clang++
+
+    - name: Save vcpkg cache
+      uses: ./.github/actions/save-vcpkg-cache
 
     # salal_base_shader() generates world-view's BaseShader.h at build time, and the
     # files that start the renderer or fill a hook block include it.
