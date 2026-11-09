@@ -1,4 +1,5 @@
 #include "worldgen/pipeline/PlanetGenerator.h"
+#include "worldgen/pipeline/PlanetGenerator.test.h"
 #include "worldgen/data/PlanetParams.h"
 #include "worldgen/debug/DebugImageExporter.h"
 
@@ -14,28 +15,6 @@
 namespace worldgen {
 
 namespace {
-
-// Run generator at n=64 to completion with a timeout
-std::shared_ptr<const GeneratedWorld> runToCompletion(const PlanetParams& params,
-                                                       int timeoutSeconds = 60) {
-    PlanetGenerator gen;
-    gen.start(params);
-
-    auto deadline = std::chrono::steady_clock::now() +
-                    std::chrono::seconds(timeoutSeconds);
-
-    while (std::chrono::steady_clock::now() < deadline) {
-        auto prog = gen.progress();
-        if (prog.state == GenerationProgress::State::Complete ||
-            prog.state == GenerationProgress::State::Failed ||
-            prog.state == GenerationProgress::State::Cancelled) {
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-
-    return gen.takeResult();
-}
 
 uint64_t plateIdHash(const GeneratedWorld& world) {
 	uint64_t h = 0;
@@ -71,8 +50,7 @@ const ObservedRun& observedRun() {
 
 		std::shared_ptr<const GeneratedWorld> snap;
 
-		auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
-		while (std::chrono::steady_clock::now() < deadline) {
+		for (;;) {
 			auto prog = gen.progress();
 			if (prog.totalFraction < r.maxTotalFraction)
 				r.progressWentBackwards = true;
@@ -177,19 +155,11 @@ TEST(PlanetGeneratorHeavy, CancelStopsGeneration) {
     auto cancelStart = std::chrono::steady_clock::now();
     gen.cancel();
 
-    // Generous deadline: even a heavily loaded runner observes cancellation in far
-    // less than this, and full generation at n=256 would itself finish well inside
-    // it, so reaching Cancelled (not Done) proves the cancel was honored mid-run.
-    auto deadline = cancelStart + std::chrono::seconds(30);
-    GenerationProgress::State finalState = GenerationProgress::State::Running;
-    while (std::chrono::steady_clock::now() < deadline) {
-        auto prog = gen.progress();
-        if (prog.state != GenerationProgress::State::Running) {
-            finalState = prog.state;
-            break;
-        }
+    // An ignored cancel lets the run finish as Complete, so the state it ends in is
+    // the verdict; a run that never ends is the ctest TIMEOUT's to catch.
+    GenerationProgress::State finalState;
+    while ((finalState = gen.progress().state) == GenerationProgress::State::Running)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
 
     auto elapsed = std::chrono::steady_clock::now() - cancelStart;
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
@@ -224,13 +194,10 @@ TEST(PlanetGenerator, RestartClearsSnapshot) {
 	// need takeResult() to leave the snapshot in place, and it doesn't: it moves it.
 	PlanetGenerator gen;
 	gen.start(params);
-	auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
-	while (std::chrono::steady_clock::now() < deadline) {
-		if (gen.snapshot() != nullptr)
-			break;
+	while (gen.snapshot() == nullptr && gen.progress().state == GenerationProgress::State::Running)
 		std::this_thread::sleep_for(std::chrono::milliseconds(10));
-	}
-	ASSERT_NE(gen.snapshot(), nullptr);
+	ASSERT_NE(gen.snapshot(), nullptr) << "run ended " << generationStateName(gen.progress().state)
+									   << " without publishing a snapshot";
 
 	// Restart (which cancels the run in flight) and assert the snapshot is cleared
 	// before any stage of the new run completes.
@@ -258,12 +225,7 @@ TEST(PlanetGenerator, RerunPublishesFreshWorld) {
     auto runOnce = [&](uint64_t seed) -> std::shared_ptr<const GeneratedWorld> {
         params.seed = seed;
         gen.start(params);
-        auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
-        while (std::chrono::steady_clock::now() < deadline) {
-            if (gen.progress().state == GenerationProgress::State::Complete) break;
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        }
-        return gen.takeResult();
+        return waitForResult(gen);
     };
 
     auto first = runOnce(0x1111111111111111ULL);
@@ -334,8 +296,8 @@ TEST(DebugExport, DISABLED_ExportBmps) {
     printf("[DebugExport] Generating n=128 planet (seed 0xABCD1234ABCD1234)...\n");
     fflush(stdout);
 
-    auto world = runToCompletion(params, 300);
-    ASSERT_NE(world, nullptr) << "Planet generation failed or timed out";
+    auto world = runToCompletion(params);
+    ASSERT_NE(world, nullptr) << "Planet generation failed";
 
     const std::string dir = "debug-images/";
     std::filesystem::create_directories(dir);
@@ -374,12 +336,6 @@ TEST(DebugExport, DISABLED_ExportBmps) {
 
 namespace {
 
-// Run full pipeline to completion and return the world, or nullptr on timeout.
-std::shared_ptr<const GeneratedWorld> runEdge(const PlanetParams& params,
-                                               int timeoutSeconds = 120) {
-    return runToCompletion(params, timeoutSeconds);
-}
-
 // Fraction of tiles with kFlagOcean set.
 float oceanFraction(const GeneratedWorld& w) {
     const uint32_t N = w.grid->tileCount();
@@ -410,7 +366,7 @@ TEST(PlanetGeneratorHeavy, SmallGridN64Completes) {
     params.gridSubdivision = 64;
     params.seed = 0x6464646464646464ULL;
 
-    auto world = runEdge(params);
+    auto world = runToCompletion(params);
     ASSERT_NE(world, nullptr) << "n=64 pipeline failed";
 
     float of = oceanFraction(*world);
@@ -426,7 +382,7 @@ TEST(PlanetGeneratorHeavy, PlatesMin2Completes) {
     params.tectonicPlateCount = 2;
     params.seed = 0x0002000200020002ULL;
 
-    auto world = runEdge(params);
+    auto world = runToCompletion(params);
     ASSERT_NE(world, nullptr) << "K=2 pipeline failed";
 
     float of = oceanFraction(*world);
@@ -444,7 +400,7 @@ TEST(PlanetGeneratorHeavy, WaterExtreme095Completes) {
     params.waterAmount = 0.95;
     params.seed = 0x9595959595959595ULL;
 
-    auto world = runEdge(params);
+    auto world = runToCompletion(params);
     ASSERT_NE(world, nullptr) << "water=0.95 pipeline failed";
 
     float of = oceanFraction(*world);
@@ -458,7 +414,7 @@ TEST(PlanetGeneratorHeavy, WaterExtreme005Completes) {
     params.waterAmount = 0.05;
     params.seed = 0x0505050505050505ULL;
 
-    auto world = runEdge(params);
+    auto world = runToCompletion(params);
     ASSERT_NE(world, nullptr) << "water=0.05 pipeline failed";
 
     float of = oceanFraction(*world);
@@ -485,7 +441,7 @@ TEST(PlanetGeneratorHeavy, GoldenWorldHash) {
     params.gridSubdivision = 64;
     params.seed            = 0x5151515151515151ULL;
 
-    auto world = runToCompletion(params, /*timeoutSeconds=*/120);
+    auto world = runToCompletion(params);
     ASSERT_NE(world, nullptr) << "generation did not complete";
 
     constexpr uint64_t kGoldenWorldHash = 0x884ddc49add73496ULL;
