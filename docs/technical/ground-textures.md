@@ -592,7 +592,7 @@ The method is WOR-463's (section 6 of the terrain spec), so the numbers compare 
 
 Recorded per run: `tileGpuMs` (the ground and water pass, GPU timestamp queries), scene `gpuMs`, frame p50 and p99 max, and the scroll scenarios' spikes. From the `[ChunkGen]` dev-tools log: chunk generation worker time (median, p90, max) and the main-thread upload per chunk. Plus the bake time added to the splash and the VRAM for the arrays and macro textures.
 
-Captures hold the GPU at P0 with the game's GPU hold (WOR-553, below), never by changing driver clock settings. `scripts/perf-capture.ps1` turns it on for the whole capture (`-NoGpuHold` leaves it off), records each sample's P-state and graphics and memory clocks from a read-only `nvidia-smi --query-gpu=pstate,clocks.gr,clocks.mem` query, and warns in red if any sample wasn't P0. A capture with a sample off P0 gets rerun, not compared.
+Captures hold the GPU at P0 with the game's GPU hold (WOR-553, below), never by changing driver clock settings. `scripts/perf-capture.ps1` turns it on for the whole capture (`-NoGpuHold` leaves it off), records each sample's P-state and graphics and memory clocks from a read-only `nvidia-smi --query-gpu=pstate,clocks.gr,clocks.mem` query, and warns in red if any sample wasn't P0. A capture with a sample off P0 isn't compared. Check the machine before any capture, and read a worse result as unconfirmed unless it was idle ([testing README](../testing/README.md#performance)).
 
 ### Gates
 
