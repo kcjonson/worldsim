@@ -73,9 +73,9 @@ Each frame, in `EntityRenderer::renderInstanced`, after drawing the background (
 
 1. **Gather.** Collect the visible tall static occluders via `SpatialIndex::queryRect` over `computeVisibleBounds` (the same gather `BatchedEntityRenderer` already does) plus the dynamic ECS entities, into one vector of lightweight `{anchorY, const PlacedEntity*, isAnimated}` items, frustum-culled to the visible set.
 2. **Sort.** `std::stable_sort` ascending by `anchorY`.
-3. **Submit in order.** Emit each entity so submission order equals depth order. Preserve instancing by submitting consecutive same-template non-animated entities as one `drawInstanced` run, breaking a run only where an actor or animated entity interleaves. Animated colonists flush their CPU per-part-deformed batch at their sorted position instead of dead-last, keeping the existing 16-bit index-overflow flush.
+3. **Submit in order.** Emit the entities so any two whose drawn areas can overlap are submitted in depth order; two that cannot touch may swap, since the result is the same. Each non-animated entity joins the latest open `drawInstanced` run of its template, unless an entity in a later run shares a cell of a world-space overlap grid with it (bounds from the template's local extent, scale, and rotation; cells about the mean entity size, at most 256 a side); then it opens a new run. Runs draw in the order they opened. An animated colonist or the selection outline draws every open run first, then flushes its CPU batch at its sorted position, keeping the existing 16-bit index-overflow flush.
 
-Submission order equals depth order, so the UI `BatchRenderer` DrawGroup z-sort is not reused for the world; it stays a clean UI-only primitive.
+Overlapping pairs keep the painter's order, so the UI `BatchRenderer` DrawGroup z-sort is not reused for the world; it stays a clean UI-only primitive.
 
 To make trees interleavable, stop routing the tall bucket into the baked mesh (or skip `kTallFloraBucket` at draw in `BakedChunkRenderer`); short flora keeps its bake and impostor fade. Tall occluders are gathered live from the spatial index into the sorted stream.
 

@@ -276,6 +276,16 @@ Trees draw in the depth-sorted stream, and a run breaks whenever the mesh change
 - Baseline main twice with `scripts/perf-capture.ps1` for the noise floor, plus a forest view at the quickstart landing at zoom 1 and at 0.25, the furthest zoom (trees draw at every zoom). Record frame time, draw calls, and triangles, with trees counted apart (R11).
 - A/B R3 alone (variants wired, old generator) against that baseline. This isolates the draw-call cost from the new art's triangle cost.
 - Gate: no regression beyond noise in any cell. If R3 fails the gate, pack a def's variants into one vertex and index buffer and draw each by index range, so the run key goes back to the def. salal's backend already takes an index range for instanced draws; `drawInstanced` needs only to expose it. A def's variants must then fit 65,535 vertices together. Taken only on a measured failure.
+- Measured with R3 built (RelWithDebInfo, 3072x1728, landing forest at world 5,4, GPU held, read from `/api/metrics` and `/api/state?what=uprights`): GPU time tracked upright draws, about 5 microseconds each on main and on the branch alike. Forcing every tree to its def's mature variant 0 put zoom 1.5 back at 1,003 draws and 5.3 to 5.9 ms (main: 911 and 4.9 to 5.4), so the cost was the runs breaking between variants; the per-def tall routing added the other 10%. Restoring 50,000-instance buffers changed nothing on the GPU. The fix kept the variants and changed the run rule instead (`world-depth-sorting.md`, "Submit in order"): an entity joins its template's latest open run unless something in a later run may overlap it, so only overlapping pairs keep the painter's order. No salal change was needed.
+
+| Zoom | GPU ms main | before fix | after fix | Upright draws main | before | after |
+|---|---|---|---|---|---|---|
+| 8 | 1.3 to 1.9 | | 1.3 to 1.8 | 40 | | 44 to 49 |
+| 3 | 2.1 to 2.6 | | 1.8 to 2.5 | 229 | | 162 to 165 |
+| 1.5 | 4.9 to 5.4 | 8.6 to 9.5 | 2.7 to 3.2 | 911 | 1,709 | 471 to 473 |
+| 0.75 | 18.0 to 18.7 | 32.8 to 34.0 | 8.3 | 3,310 | 6,398 | 1,457 |
+| 0.25 | 117 | | 45 | 23,700 | | 9,220 |
+
 - If far zoom fails on triangles, gate the leaf flecks and caps with `path:setLod` and build the tree template per zoom band, which the registry already supports for ground tiles.
 - R9 cuts tree count about in half and raises covered pixels from 13.3% (measured, R11) to 35% of a forest view, each crown several layers deep. A/B the rescale on its own (old generator, new sizes and spacing): draw calls should fall, fill cost may rise. If fill fails the gate, the first lever is fewer full-size layers per cluster.
 - R10: measure a forest view with 20 colonists standing under crowns against the same view with none.

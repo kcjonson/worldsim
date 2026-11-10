@@ -26,10 +26,13 @@ struct TessellatedMesh;
 namespace worldview {
 
 /// Emits the Y-sorted upright stream (tall static occluders + dynamic ECS
-/// entities) in the order the caller supplies, so submission order == depth
-/// order. Consecutive same-template non-animated entities are coalesced into one
-/// GPU-instanced draw; animated colonists (per-part deformed) break the run and
-/// flush at their sorted position on the CPU triangle path.
+/// entities) so that every pair of entities whose drawn areas can overlap is
+/// submitted in depth order. Non-animated entities are gathered into runs of one
+/// template, each one GPU-instanced draw: an entity joins its template's latest
+/// open run unless something in a later run may overlap it, so entities that
+/// cannot touch reorder freely and variants interleaved by depth still share a
+/// draw. Animated colonists (per-part deformed) and the selection outline draw on
+/// the CPU path at their sorted position, after every run opened before them.
 class InstancedEntityRenderer {
   public:
 	/// Emit the pre-sorted upright stream in order (ascending anchorY).
@@ -45,21 +48,49 @@ class InstancedEntityRenderer {
 	// frame costs 128 KB and one carpeting a zoomed-out view grows to fit.
 	static constexpr uint32_t kInitialInstanceCapacity = 4096;
 
+	// The overlap grid's side is at most this many cells; its cells are never smaller
+	// than the mean entity, so a typical entity covers a few cells.
+	static constexpr uint32_t kMaxOverlapGridSide = 256;
+
 	// GPU mesh per template id: the SHARED geometry (VBO/IBO) every instance of the
-	// template draws, and the room in its instance buffer. Each handle releases its
-	// buffers when the vector is destroyed.
+	// template draws, the room in its instance buffer, and the mesh's local bounds.
+	// Each handle releases its buffers when the vector is destroyed.
 	struct MeshSlot {
 		Renderer::InstancedMeshHandle handle;
 		uint32_t					  capacity = 0;
+		uint32_t					  triangles = 0;
+		Foundation::Vec2			  boundsMin{0.0F, 0.0F};
+		Foundation::Vec2			  boundsMax{0.0F, 0.0F};
+		float						  radius = 0.0F;	// furthest vertex from the origin, for a rotated instance
 		bool						  uploaded = false; // tried once; a failed upload is not retried every frame
 	};
 	std::vector<MeshSlot> m_meshSlots;
 
-	// Current run of consecutive same-template non-animated entities, drawn as one
-	// drawInstanced call and flushed whenever the template changes or an animated
-	// entity interleaves (preserving depth order).
-	std::vector<Renderer::InstanceData> m_runInstances;
-	uint32_t							m_runTemplateId = 0;
+	// One entity of the stream, classified and, when instanced, bounded in world space.
+	enum class ItemKind : uint8_t { Skip, Animated, Instanced };
+	struct ItemBounds {
+		Foundation::Vec2 min{0.0F, 0.0F};
+		Foundation::Vec2 max{0.0F, 0.0F};
+		ItemKind		 kind = ItemKind::Skip;
+	};
+	std::vector<ItemBounds> m_itemBounds;
+
+	// This frame's runs, drawn in index order. Runs from m_firstOpenRun on are open:
+	// not yet drawn, so a later entity can still join one.
+	struct Run {
+		uint32_t							templateId = 0;
+		std::vector<Renderer::InstanceData> instances;
+	};
+	std::vector<Run> m_runs;
+	uint32_t		 m_runCount = 0;
+	uint32_t		 m_firstOpenRun = 0;
+
+	// Per template id, 1 + the index of its latest run this frame (0: none yet).
+	std::vector<uint32_t> m_latestRunOfTemplate;
+
+	// World-space grid over this frame's instanced entities: per cell, 1 + the index of
+	// the latest run holding an entity whose bounds touch the cell (0: none).
+	std::vector<uint32_t> m_overlapGrid;
 
 	// Memoized template meshes (by template id)
 	TemplateMeshCache m_templateCache;
