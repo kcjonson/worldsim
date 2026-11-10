@@ -39,6 +39,7 @@ namespace ecs::test {
 
 	namespace {
 		constexpr const char* kTree = "Flora_ClearTestTree";
+		constexpr const char* kBush = "Flora_ClearTestBush";
 
 		class FootprintClearingTest : public ::testing::Test {
 		  protected:
@@ -70,6 +71,34 @@ namespace ecs::test {
 				cap.destructive = true;
 				tree.capabilities.harvestable = cap;
 				registry.registerTestDefinition(std::move(tree));
+
+				// A berry bush: one-hand yield, regrows rather than falling, and slower to strip than
+				// the tree is to fell, so a tree clear finishes while a bush clear is still underway.
+				// Edible as the other suites register it: assets::getEdibleItemNames() caches the edible
+				// set on first call for the whole process, and the AI here may be the first caller.
+				assets::AssetDefinition berry;
+				berry.defName = "Berry";
+				berry.label = "Berry";
+				berry.handsRequired = 1;
+				berry.capabilities.carryable = assets::CarryableCapability{1};
+				berry.itemProperties = assets::ItemProperties{};
+				berry.itemProperties->stackSize = 200;
+				berry.itemProperties->massKg = 0.15F;
+				berry.itemProperties->edible = assets::EdibleCapability{0.3F, assets::CapabilityQuality::Normal, true};
+				registry.registerTestDefinition(std::move(berry));
+
+				assets::AssetDefinition bush;
+				bush.defName = kBush;
+				bush.label = "Clear Test Bush";
+				assets::HarvestableCapability bushCap;
+				bushCap.yieldDefName = "Berry";
+				bushCap.amountMin = 3;
+				bushCap.amountMax = 3;
+				bushCap.durability = 30.0F;
+				bushCap.destructive = false;
+				bushCap.regrowthTime = 60.0F;
+				bush.capabilities.harvestable = bushCap;
+				registry.registerTestDefinition(std::move(bush));
 
 				world = std::make_unique<World>();
 				world->registerSystem<AIDecisionSystem>(registry, assets::RecipeRegistry::Get(), 42);
@@ -104,8 +133,8 @@ namespace ecs::test {
 				assets::AssetRegistry::Get().clearDefinitions();
 			}
 
-			/// Plant trees in the placement index, as world generation would.
-			void plantTrees(const std::vector<glm::vec2>& at) {
+			/// Plant trees (and berry bushes) in the placement index, as world generation would.
+			void plantTrees(const std::vector<glm::vec2>& at, const std::vector<glm::vec2>& bushes = {}) {
 				const world::ChunkCoordinate coord = world::worldToChunk({at.front().x, at.front().y});
 				assets::SpatialIndex		 index;
 				for (const glm::vec2& pos : at) {
@@ -113,6 +142,12 @@ namespace ecs::test {
 					tree.defName = kTree;
 					tree.position = pos;
 					index.insert(tree);
+				}
+				for (const glm::vec2& pos : bushes) {
+					assets::PlacedEntity bush;
+					bush.defName = kBush;
+					bush.position = pos;
+					index.insert(bush);
 				}
 				assets::AsyncChunkPlacementResult result;
 				result.coord = coord;
@@ -139,23 +174,24 @@ namespace ecs::test {
 				return entity;
 			}
 
-			static void remember(Memory& memory, glm::vec2 pos) {
+			static void remember(Memory& memory, glm::vec2 pos, const char* defName = kTree) {
 				auto&		   registry = assets::AssetRegistry::Get();
-				const uint32_t id = registry.getDefNameId(kTree);
+				const uint32_t id = registry.getDefNameId(defName);
 				memory.rememberWorldEntity(pos, id, registry.getCapabilityMask(id));
 			}
 
-			bool treeStands(glm::vec2 pos) const {
+			bool treeStands(glm::vec2 pos, const char* defName = kTree) const {
 				const auto* index = executor.getChunkIndex(world::worldToChunk({pos.x, pos.y}));
-				return index != nullptr && index->hasNearby(pos, 0.1F, kTree);
+				return index != nullptr && index->hasNearby(pos, 0.1F, defName);
 			}
 
-			/// Run frames, arriving each colonist at its task target at once, until `done` holds.
-			template <typename Done> bool runUntil(Done done, int maxFrames = 3000) {
+			/// Run frames, arriving each colonist at its task target at once (unless `held`, who stays
+			/// on the way), until `done` holds.
+			template <typename Done> bool runUntil(Done done, int maxFrames = 3000, EntityID held = kInvalidEntity) {
 				for (int frame = 0; frame < maxFrames; ++frame) {
 					world->update(0.016F);
 					for (auto [entity, task, pos] : world->view<Task, Position>()) {
-						if (task.state == TaskState::Moving) {
+						if (task.state == TaskState::Moving && entity != held) {
 							pos.value = task.targetPosition;
 							task.state = TaskState::Arrived;
 						}
@@ -242,6 +278,72 @@ namespace ecs::test {
 		});
 		EXPECT_TRUE(built) << "the felled Wood reaches the site";
 		EXPECT_EQ(mostHauls, 1U) << "only construction's own Haul; the completed Harvest creates none";
+	}
+
+
+	// Two colonists clear different blockers in one footprint. The tree falls while the other
+	// colonist is still on his way to the bush; that must not end his clear (same task, same goal),
+	// and both blockers end up removed.
+	TEST_F(FootprintClearingTest, FirstClearToFinishDoesNotResetAnother) {
+		const glm::vec2 tree{2.0F, 2.0F};
+		const glm::vec2 bush{6.0F, 6.0F};
+		plantTrees({tree}, {bush});
+		createColonist({1.0F, 1.0F}, {tree});
+		auto stripper = createColonist({30.0F, 30.0F}, {});
+		remember(*world->getComponent<Memory>(stripper), bush, kBush);
+		world->getComponent<Inventory>(stripper)->addItem("Berry", 5); // fed: he strips the bush only to clear it
+
+		ASSERT_TRUE(runUntil([&] { return !treeStands(tree); }, 3000, stripper)) << "precondition: the tree is felled first";
+		const Task* task = world->getComponent<Task>(stripper);
+		ASSERT_EQ(task->type, TaskType::Harvest) << "precondition: he is on his way to the bush";
+		const uint64_t goalId = task->harvestGoalId;
+
+		bool kept = true;
+		runUntil(
+			[&] {
+				kept = kept && task->type == TaskType::Harvest && task->harvestGoalId == goalId;
+				return false;
+			},
+			60,
+			stripper
+		);
+		EXPECT_TRUE(kept) << "the tree falling must not reset his clear";
+
+		EXPECT_TRUE(runUntil([&] { return phase() == StructureBlueprint::BuildPhase::AwaitingMaterials; })) << "both are cleared";
+		EXPECT_FALSE(treeStands(tree));
+		EXPECT_FALSE(treeStands(bush, kBush));
+	}
+
+	// A colonist who reaches his blocker only after another blocker was cleared still clears it: the
+	// harvest he started on that clear removes the bush rather than leaving it to regrow.
+	TEST_F(FootprintClearingTest, ClearStartedAfterAnotherBlockerFellStillRemovesItsBlocker) {
+		const glm::vec2 tree{2.0F, 2.0F};
+		const glm::vec2 bush{6.0F, 6.0F};
+		plantTrees({tree}, {bush});
+		createColonist({1.0F, 1.0F}, {tree});
+		auto stripper = createColonist({30.0F, 30.0F}, {});
+		remember(*world->getComponent<Memory>(stripper), bush, kBush);
+		world->getComponent<Inventory>(stripper)->addItem("Berry", 5); // fed: he strips the bush only to clear it
+
+		ASSERT_TRUE(runUntil([&] { return !treeStands(tree); }, 3000, stripper)) << "precondition: the tree is felled first";
+		auto* task = world->getComponent<Task>(stripper);
+		ASSERT_EQ(task->type, TaskType::Harvest) << "precondition: he is on his way to the bush";
+		const uint64_t goalId = task->harvestGoalId;
+
+		// He arrives right after the tree fell.
+		world->getComponent<Position>(stripper)->value = task->targetPosition;
+		task->state = TaskState::Arrived;
+
+		bool harvested = false;
+		bool sameClear = true;
+		ASSERT_TRUE(runUntil([&] {
+			const bool harvesting = world->getComponent<Action>(stripper)->type == ActionType::Harvest;
+			sameClear = sameClear && (harvested || harvesting || task->harvestGoalId == goalId);
+			harvested = harvested || harvesting;
+			return harvested && !harvesting;
+		})) << "he harvests the bush";
+		EXPECT_TRUE(sameClear) << "on the clear he set out on";
+		EXPECT_FALSE(treeStands(bush, kBush)) << "that harvest removed the bush";
 	}
 
 } // namespace ecs::test

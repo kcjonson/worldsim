@@ -786,8 +786,9 @@ namespace ecs {
 			}
 		}
 
-		/// Evaluate harvest options by querying Harvest goals from GoalTaskRegistry
-		/// Goal-driven: Goals define WHAT items are needed (via yieldDefNameId), Memory provides harvestable sources
+		/// Evaluate harvest options by querying Harvest goals from GoalTaskRegistry.
+		/// Goal-driven: a goal names the item it needs (yieldDefNameId), or for a construction clear the
+		/// footprint whose harvestables it removes (clearFootprint); Memory provides the sources.
 		/// @param registry Asset registry for capability and definition lookups
 		/// @param memory Colonist memory (known entities)
 		/// @param position Colonist position

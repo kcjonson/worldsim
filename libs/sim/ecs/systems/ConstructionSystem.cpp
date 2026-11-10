@@ -294,10 +294,10 @@ namespace ecs {
 
 		auto& registry = GoalTaskRegistry::Get();
 
-		// One clear Harvest CHILD per blueprint at a time, served by any harvestable a colonist knows
-		// inside the footprint. Harvesting removes that blocker and retires the goal, and the next
-		// pass re-emits while the footprint still holds one. A blocker removed some other way (a
-		// craft Harvest fells it) leaves the goal valid for the rest. The yield stays with the
+		// One clear Harvest CHILD per blueprint, served by any harvestable a colonist knows inside the
+		// footprint; each such harvest removes its blocker. The goal keeps one identity until the
+		// footprint is empty (update() then retires it via retireChildGoals), so several colonists
+		// clearing different blockers never see it vanish under them. The yield stays with the
 		// colonist; once materials are due, the per-material Haul carries any of it the site needs.
 		// The child hangs under the umbrella (parentGoalId set) so it is owned/cleaned alongside the
 		// blueprint without fighting the umbrella for the single-top-level-per-destination slot.
@@ -314,7 +314,7 @@ namespace ecs {
 		clearGoal.owner = GoalOwner::ConstructionGoalSystem;
 		clearGoal.destinationEntity = blueprintEntity;
 		clearGoal.destinationPosition = bounds.center();
-		clearGoal.targetAmount = 1; // one blocker per goal; retired when its harvest removes the source
+		clearGoal.targetAmount = 1; // never credited: the goal stands until the footprint is clear
 		clearGoal.clearFootprint = bounds;
 		clearGoal.parentGoalId = umbrellaGoalId; // child of the umbrella: skips the destination guard
 		clearGoal.status = GoalStatus::Available;
@@ -728,10 +728,8 @@ namespace ecs {
 			if (child->destinationEntity != blueprintEntity) {
 				continue;
 			}
-			// Material children carry a chainId (the Harvest/Haul delivery chain); the clear-Harvest
-			// child does not. When keeping material children, retire only the chain-less clear goal.
-			const bool isMaterialChild = child->chainId.has_value();
-			if (keepMaterialChildren && isMaterialChild) {
+			// When keeping material children, retire only the clear goal.
+			if (keepMaterialChildren && !child->clearFootprint.has_value()) {
 				continue;
 			}
 			toRemove.push_back(child->id);

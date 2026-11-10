@@ -85,14 +85,12 @@ namespace ecs {
 		const uint32_t wanted = std::min({collEff.quantity, massFit, slotFit});
 
 		uint32_t added = 0;
-		bool	 sourceRemoved = false;
 
 		const auto removeSource = [&]() {
 			if (m_onRemoveEntity) {
 				m_onRemoveEntity(collEff.sourceDefName, collEff.sourcePosition.x, collEff.sourcePosition.y);
 			}
 			memory.forgetWorldEntity(collEff.sourcePosition, harvestRegistry.getDefNameId(collEff.sourceDefName));
-			sourceRemoved = true;
 			LOG_DEBUG(
 				Engine, "[Action] Removed source %s at (%.1f, %.1f)", collEff.sourceDefName.c_str(), collEff.sourcePosition.x, collEff.sourcePosition.y
 			);
@@ -221,12 +219,14 @@ namespace ecs {
 		} else if (sourceHasResourcePool(harvestRegistry, collEff.sourceDefName) && m_onDecrementResource) {
 			// Withdraw only what the colonist can carry; the pool clamps to its own contents and
 			// reports depletion, so a bush's sticks are conserved across trips. A clear takes the
-			// whole pool in one pass and removes the bush; what doesn't fit drops.
+			// whole pool in one pass and removes the bush: the pack takes all that fits (not one cut's
+			// yield) and the rest drops.
 			const uint32_t request = collEff.clearsSource ? UINT32_MAX : wanted;
+			const uint32_t packRoom = collEff.clearsSource ? std::min(massFit, slotFit) : wanted;
 			if (request > 0) {
 				const ResourceDraw draw =
 					m_onDecrementResource(collEff.sourceDefName, collEff.sourcePosition.x, collEff.sourcePosition.y, request);
-				added = inventory.addItem(collEff.itemDefName, std::min(draw.removed, wanted));
+				added = inventory.addItem(collEff.itemDefName, std::min(draw.removed, packRoom));
 				dropUncarried(draw.removed - added);
 				LOG_INFO(
 					Engine,
@@ -330,16 +330,13 @@ namespace ecs {
 			}
 		}
 
-		// For goal-driven Harvest tasks, update the GoalTaskRegistry. A clear goal is done once its
-		// harvest removed a blocker, whatever landed in the pack. Any other goal records only what
-		// actually landed in inventory, so its progress reflects real items the colonist now carries.
+		// For goal-driven Harvest tasks, update the GoalTaskRegistry. Record only what actually landed
+		// in inventory, so the goal's progress reflects real items the colonist now carries. A clear
+		// goal records nothing: it stands until the footprint is empty, so colonists clearing other
+		// blockers in it keep their task, and ConstructionSystem retires it then.
 		auto&		goalRegistry = GoalTaskRegistry::Get();
 		const auto* goal = (task.type == TaskType::Harvest && task.harvestGoalId != 0) ? goalRegistry.getGoal(task.harvestGoalId) : nullptr;
-		if (goal != nullptr && goal->clearFootprint.has_value()) {
-			if (sourceRemoved) {
-				goalRegistry.removeGoal(task.harvestGoalId);
-			}
-		} else if (goal != nullptr && added > 0) {
+		if (goal != nullptr && !goal->clearFootprint.has_value() && added > 0) {
 			goalRegistry.recordDelivery(task.harvestGoalId, added);
 
 			goal = goalRegistry.getGoal(task.harvestGoalId);

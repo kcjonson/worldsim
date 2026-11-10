@@ -2893,16 +2893,15 @@ class ClearHarvestTest : public ::testing::Test {
 		umbrella.status = GoalStatus::Blocked;
 		const uint64_t umbrellaId = goals.createGoal(std::move(umbrella));
 
+		// Shaped as ConstructionSystem::emitClearGoals emits it: a footprint, no item.
 		const uint32_t berryId = assetRegistry.getDefNameId("TestBerry");
-		GoalTask clear;
+		GoalTask	   clear;
 		clear.type = TaskType::Harvest;
 		clear.owner = GoalOwner::ConstructionGoalSystem;
 		clear.destinationEntity = site;
-		clear.destinationPosition = bushPos;
-		clear.acceptedDefNameIds = {berryId};
-		clear.targetAmount = 1;
-		clear.yieldDefNameId = berryId;
 		clear.clearFootprint = FootprintBounds{bushPos - glm::vec2{2.0F, 2.0F}, bushPos + glm::vec2{2.0F, 2.0F}};
+		clear.destinationPosition = clear.clearFootprint->center();
+		clear.targetAmount = 1;
 		clear.parentGoalId = umbrellaId;
 		clear.status = GoalStatus::Available;
 		clearGoalId = goals.createGoal(std::move(clear));
@@ -2947,17 +2946,6 @@ class ClearHarvestTest : public ::testing::Test {
 	uint32_t			   pool = 5;
 };
 
-// The clear harvest's yield (berries) is not a site material; construction emits its own
-// per-material Hauls, so completing the clear must not mint a Haul to the site.
-TEST_F(ClearHarvestTest, ConstructionClearHarvestCreatesNoHaulGoal) {
-	auto colonist = createClearingColonist();
-	harvest();
-
-	ASSERT_EQ(world->getComponent<Inventory>(colonist)->getQuantity("TestBerry"), 3U) << "precondition: the clear harvested";
-	EXPECT_EQ(GoalTaskRegistry::Get().getGoal(clearGoalId), nullptr) << "the completed clear goal is retired";
-	EXPECT_TRUE(GoalTaskRegistry::Get().getGoalsOfType(TaskType::Haul).empty()) << "a construction harvest spawns no Haul";
-}
-
 // Clearing a footprint removes what stands in it: a regrowing bush is removed (not put on a
 // regrowth cooldown it would survive), the colonist yields once, and nothing drops to the ground.
 TEST_F(ClearHarvestTest, ClearHarvestOfRegrowingBushRemovesItOnce) {
@@ -2970,11 +2958,12 @@ TEST_F(ClearHarvestTest, ClearHarvestOfRegrowingBushRemovesItOnce) {
 	EXPECT_EQ(dropCalls, 0) << "a one-hand yield that fits drops nothing";
 	const uint32_t bushId = assets::AssetRegistry::Get().getDefNameId("Flora_TestBerryBush");
 	EXPECT_FALSE(world->getComponent<Memory>(colonist)->knowsWorldEntity(bushPos, bushId)) << "the harvester forgets it";
+	EXPECT_NE(GoalTaskRegistry::Get().getGoal(clearGoalId), nullptr) << "the clear goal stands until the footprint is clear";
+	EXPECT_TRUE(GoalTaskRegistry::Get().getGoalsOfType(TaskType::Haul).empty()) << "a clear spawns no Haul";
 }
 
-
 // A clear doesn't depend on carry room: with the pack full, the bush is still removed, the whole
-// yield drops as one pile, and the clear goal retires so the site can move on.
+// yield drops as one pile.
 TEST_F(ClearHarvestTest, ClearWithFullPackRemovesBushAndDropsTheYield) {
 	auto  colonist = createClearingColonist();
 	auto* inventory = world->getComponent<Inventory>(colonist);
@@ -2985,19 +2974,19 @@ TEST_F(ClearHarvestTest, ClearWithFullPackRemovesBushAndDropsTheYield) {
 	EXPECT_EQ(removeCalls, 1) << "the bush is removed with nothing carried off";
 	EXPECT_EQ(dropCalls, 1);
 	EXPECT_EQ(droppedQuantity, 3U) << "the whole yield drops as one pile";
-	EXPECT_EQ(GoalTaskRegistry::Get().getGoal(clearGoalId), nullptr) << "the clear goal retires on removal, not on carried yield";
 }
 
-// A pooled shrub is cleared in one pass: the clear takes the whole pool (what fits into the pack,
-// the rest as a pile) and removes the shrub, instead of one carry's worth per pass until depleted.
+// A pooled shrub is cleared in one pass: the clear takes the whole pool and removes the shrub,
+// instead of one cut per pass until depleted. The pack takes all that fits, not one cut's yield (3
+// here), so an empty-handed colonist pockets the whole pool of 5 and nothing drops.
 TEST_F(ClearHarvestTest, PoolSourceClearRemovesShrubInOnePass) {
 	auto colonist = createClearingColonist("Flora_TestPoolShrub");
 	harvest();
 
 	EXPECT_EQ(removeCalls, 1) << "the shrub is removed on the first clear";
 	EXPECT_EQ(pool, 0U) << "the whole pool was taken";
-	EXPECT_EQ(world->getComponent<Inventory>(colonist)->getQuantity("TestBerry") + droppedQuantity, 5U) << "nothing is created or lost";
-	EXPECT_EQ(GoalTaskRegistry::Get().getGoal(clearGoalId), nullptr);
+	EXPECT_EQ(world->getComponent<Inventory>(colonist)->getQuantity("TestBerry"), 5U) << "all of it fits in the pack";
+	EXPECT_EQ(dropCalls, 0) << "nothing drops when it all fits";
 }
 
 } // namespace ecs::test
