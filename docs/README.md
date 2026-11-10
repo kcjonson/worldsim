@@ -9,7 +9,7 @@ Project documentation for World-Sim organized by purpose and audience.
 **New to the project?** Start here:
 
 1. Read the main [README.md](../README.md) for build instructions
-2. Check [status.md](./status.md) to see what we're working on
+2. Check Specboard (board: Worldsim) to see what we're working on
 3. Review [setup.md](./setup.md) for development environment setup
 4. Consult [workflows.md](./workflows.md) for common tasks
 
@@ -18,7 +18,7 @@ Project documentation for World-Sim organized by purpose and audience.
 1. Check [design/INDEX.md](./design/INDEX.md) for game design requirements
 2. Check [technical/INDEX.md](./technical/INDEX.md) for implementation details
 3. Check [design/mvp-scope.md](./design/mvp-scope.md) for what's in scope
-4. Update [status.md](./status.md) when done
+4. Update the Specboard item when done
 
 ---
 
@@ -27,7 +27,6 @@ Project documentation for World-Sim organized by purpose and audience.
 ```
 docs/
 ├── README.md                    # This file - navigation hub
-├── status.md                    # Current project status
 ├── setup.md                     # Development environment setup
 ├── workflows.md                 # Common development tasks
 │
@@ -64,14 +63,9 @@ docs/
 
 ## Core Documents
 
-### status.md
+### Specboard
 
-**Read this first** to understand where we are in development:
-- Current sprint goals and active tasks
-- Recent architectural decisions
-- Known blockers and issues
-
-**Update after significant work.**
+Current work, planned epics, bugs, and blockers live in Specboard (board: Worldsim), not in this folder. Each epic links its spec here in `docs/`.
 
 ### development-log/
 
