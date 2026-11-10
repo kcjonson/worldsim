@@ -276,7 +276,7 @@ bands were the categorical-first guarantee; the code's collapse to single-digit 
 classification; `inProgressBonus` becomes the within-tier hysteresis margin.
 **Honor:** `distanceBonus`, `skillBonus`, and `taskAgeBonus` carry over as within-tier score
 factors; `reEvalInterval` 0.5 s is unchanged; `taskSwitchThreshold` becomes the within-tier
-hysteresis threshold; `reservationTimeout` is unchanged. The `PriorityConfig` class and
+hysteresis threshold; `reservationTimeout` is deleted ([Task Claims](./task-claims.md) uses no timeouts). The `PriorityConfig` class and
 `priority-tuning.xml` need a targeted update post-acceptance to reflect the new factor roles.
 
 ### [Task Chains](../design/game-systems/colonists/task-chains.md)
@@ -308,7 +308,7 @@ discovery-gating (undiscovered entities generate no tasks), and the reservation 
 (Phase 3, unwired).
 
 **Honor:** unchanged. `servesActiveWorkOrder` lives on GoalTasks in the registry. Discovery
-gating is unaffected. Reservations remain Phase-3-unwired.
+gating is unaffected. Reservations are specified separately as claims on colonist tasks ([Task Claims](./task-claims.md)).
 
 ### [Decision Trace System](../design/game-systems/colonists/decision-trace.md)
 
@@ -528,8 +528,8 @@ is visible.
   tier 4 (Active Work Orders) as an explicit slot.
 - [Priority Configuration System](../design/game-systems/colonists/priority-config.md) —
   the predecessor numeric-band system. Needs a targeted update post-acceptance: band bases
-  replaced by tier integer, bonus roles updated. The `reEvalInterval`, `taskSwitchThreshold`,
-  and `reservationTimeout` fields carry over unchanged.
+  replaced by tier integer, bonus roles updated. The `reEvalInterval` and `taskSwitchThreshold`
+  fields carry over unchanged; `reservationTimeout` is deleted (see [Task Claims](./task-claims.md)).
 - [Decision Trace System](../design/game-systems/colonists/decision-trace.md) — the design
   contract for the per-colonist trace component and the task list display.
 - [Work Priorities](../design/game-systems/colonists/work-priorities.md) — the existing

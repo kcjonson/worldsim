@@ -96,6 +96,7 @@ Applications:
 | [Developer Server](./observability/developer-server.md) | HTTP/SSE streaming from applications |
 | [Developer Client](./observability/developer-client.md) | External TypeScript/Vite web app |
 | [UI Inspection](./observability/ui-inspection.md) | UI hierarchy and hover inspection |
+| [sim-cli](./sim-cli.md) | Spec: headless colonist sim over a shared SimSession; command scripts, decision history, determinism, scenario ctests |
 
 ### Vector Graphics System
 
@@ -139,6 +140,7 @@ Applications:
 | [Terrain Polygons Architecture](./organic-terrain/terrain-polygons-architecture.md) | Design spec: per-chunk waterline/river/pond rings as the truth for nav, render, vision, mud; realism rules; mocks |
 | [Building & Construction Architecture](./building-construction-architecture.md) | Freeform structures: geometry lib, room detection, structure rendering |
 | [Crafting & Material Provisioning](./crafting-provisioning-architecture.md) | Craft-as-construction: station store, metered/no-leftover deposit, pickup-by-source, giveItemToColonist cascade |
+| [Task Claims](./task-claims.md) | Spec: claims as data on colonist tasks with a derived index, chain claims, availability, bumping, craft binding |
 | [Pathfinding Architecture](./pathfinding-architecture.md) | Four-tier navigation: planet hex graph, chunk components, CDT navmesh, physical agents; multi-region sim area, runtime-validity predicate, findValidPositionNear |
 | [Vision Architecture](./vision-architecture.md) | Wall-occluded sight: visibility polygons, discovery/witnessing, fog of war |
 

@@ -283,17 +283,18 @@ Critical need wins. Bob drops rock (handsRequired=2), eats.
 
 ### Item Stowed
 
-1. Item in backpack
-2. Chain tasks remain in registry
-3. Deposit still gets +2000 bonus
-4. Colonist resumes naturally after interruption
+1. Item on belt or in backpack
+2. The interrupted work, with its inbound and in-flight claims for the item, is kept as the task's
+   suspended record ([Task Claims](../../../technical/task-claims.md))
+3. After the need, the colonist's carry-in option continues the suspended work and keeps its claims
+4. Choosing any other work discards the suspended record
 
 ### Item Dropped
 
-1. Item spawns at colonist position
-2. Original colonist's chain progress cleared
-3. New pickup task generated (anyone can do it)
-4. No ownership — first colonist to select it starts new chain
+1. Item spawns at colonist position as a loose pile
+2. Original colonist's chain progress and claims for it end
+3. The pile is an ordinary source with no claims (anyone can haul it)
+4. No ownership: first colonist to select it starts new chain
 
 ---
 

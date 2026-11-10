@@ -346,21 +346,14 @@ void selectTaskFromTrace(EntityID entity, Task& task, const DecisionTrace& trace
 }
 ```
 
-### Reservation System (Future)
+### Claims
 
-When reservation is implemented:
-
-```cpp
-enum class Status {
-    Selected,
-    Available,
-    NoSource,
-    Satisfied,
-    Reserved    // Added: Another colonist claimed this
-};
-```
-
-The trace will show "Berry Bush (reserved by Alice)" to explain why Bob didn't pick it.
+With [task claims](../../../technical/task-claims.md), `OptionStatus` gains `Reserved`: another
+colonist's task holds this target. Options are deduplicated to the best source per goal and item
+before scoring, so the trace keeps at most one Reserved row per goal and item, for a better source
+someone else holds. The row names the holder from the claim index: "Berry Bush (reserved by
+Alice)". A colonist whose claim was taken by a critical need or a player order shows "bumped by
+Alice (critical hunger)" on the option it re-plans to.
 
 ---
 
