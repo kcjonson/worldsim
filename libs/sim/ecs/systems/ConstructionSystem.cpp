@@ -290,12 +290,12 @@ namespace ecs {
 		auto& registry = GoalTaskRegistry::Get();
 		auto& assetRegistry = assets::AssetRegistry::Get();
 
-		// One clear Harvest CHILD per blueprint is enough: it requests the yield of the blockers
-		// (e.g. Wood from trees), which AIDecision serves against any matching harvestable on the
-		// site. Chopping clears the footprint AND feeds the Wood manifest. The child hangs under
-		// the umbrella (parentGoalId set) so it is owned/cleaned alongside the blueprint without
-		// fighting the umbrella for the single-top-level-per-destination slot; the actual harvest
-		// target is a tree the colonist knows about.
+		// One clear Harvest CHILD per blueprint at a time: it targets one blocker (its position and
+		// yield), and harvesting it removes it, so each pass clears one blocker until the footprint
+		// is empty. The yield stays with the colonist; once materials are due, the per-material
+		// Haul carries any of it the site needs. The child hangs under the umbrella (parentGoalId
+		// set) so it is owned/cleaned alongside the blueprint without fighting the umbrella for the
+		// single-top-level-per-destination slot.
 		for (const auto* g : registry.getGoalsByOwner(GoalOwner::ConstructionGoalSystem)) {
 			if (g->destinationEntity == blueprintEntity && g->type == TaskType::Harvest && g->parentGoalId.has_value() &&
 				g->parentGoalId.value() == umbrellaGoalId) {
@@ -357,6 +357,7 @@ namespace ecs {
 		clearGoal.acceptedDefNameIds = {yieldDefNameId};
 		clearGoal.targetAmount = 1; // clear at least one blocker per pass; re-emitted while not clear
 		clearGoal.yieldDefNameId = yieldDefNameId;
+		clearGoal.clearsFootprint = true;
 		clearGoal.parentGoalId = umbrellaGoalId; // child of the umbrella: skips the destination guard
 		clearGoal.status = GoalStatus::Available;
 		registry.createGoal(std::move(clearGoal));

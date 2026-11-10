@@ -2811,4 +2811,147 @@ TEST_F(ActionSystemHarvestLocateTest, VanishedTargetIdClearsActionWithoutGrabbin
 	    << "vanished target id clears the action; the nearby decoy must NOT be chopped";
 }
 
+// =============================================================================
+// Construction clear harvest
+// =============================================================================
+// A construction clear Harvest of a regrowing bush (a berry bush inside a foundation footprint).
+class ClearHarvestTest : public ::testing::Test {
+  protected:
+	void SetUp() override {
+		GoalTaskRegistry::Get().clear();
+		world = std::make_unique<World>();
+		auto& registry = assets::AssetRegistry::Get();
+
+		assets::AssetDefinition berry;
+		berry.defName = "TestBerry";
+		berry.label = "Test Berry";
+		berry.handsRequired = 1;
+		berry.capabilities.carryable = assets::CarryableCapability{1};
+		berry.itemProperties = assets::ItemProperties{};
+		berry.itemProperties->stackSize = 200;
+		berry.itemProperties->massKg = 0.15F;
+		registry.registerTestDefinition(std::move(berry));
+
+		assets::AssetDefinition bush;
+		bush.defName = "Flora_TestBerryBush";
+		bush.label = "Test Berry Bush";
+		assets::HarvestableCapability cap;
+		cap.yieldDefName = "TestBerry";
+		cap.amountMin = 3; // deterministic yield, no RNG
+		cap.amountMax = 3;
+		cap.durability = 10.0F;
+		cap.destructive = false;
+		cap.regrowthTime = 60.0F;
+		bush.capabilities.harvestable = cap;
+		registry.registerTestDefinition(std::move(bush));
+
+		auto& action = world->registerSystem<ActionSystem>();
+		action.setRemoveEntityCallback([this](const std::string& /*defName*/, float /*x*/, float /*y*/) { ++removeCalls; });
+		action.setEntityCooldownCallback([this](const std::string& /*defName*/, float /*x*/, float /*y*/, float /*seconds*/) {
+			++cooldownCalls;
+		});
+		action.setDropResourceCallback([this](const std::string& /*defName*/, float /*x*/, float /*y*/, uint32_t /*qty*/) {
+			++dropCalls;
+		});
+		action.setDropItemCallback([this](const std::string& /*defName*/, float /*x*/, float /*y*/) { ++dropCalls; });
+	}
+
+	void TearDown() override {
+		GoalTaskRegistry::Get().clear();
+		assets::AssetRegistry::Get().clearDefinitions();
+		world.reset();
+	}
+
+	/// A colonist standing at the bush with a Harvest task serving the site's clear goal, as
+	/// ConstructionSystem::emitClearGoals emits it (child of the umbrella Build goal).
+	EntityID createClearingColonist() {
+		auto& assetRegistry = assets::AssetRegistry::Get();
+		auto& goals = GoalTaskRegistry::Get();
+
+		site = world->createEntity();
+		GoalTask umbrella;
+		umbrella.type = TaskType::Build;
+		umbrella.owner = GoalOwner::ConstructionGoalSystem;
+		umbrella.destinationEntity = site;
+		umbrella.targetAmount = 1;
+		umbrella.status = GoalStatus::Blocked;
+		const uint64_t umbrellaId = goals.createGoal(std::move(umbrella));
+
+		const uint32_t berryId = assetRegistry.getDefNameId("TestBerry");
+		GoalTask clear;
+		clear.type = TaskType::Harvest;
+		clear.owner = GoalOwner::ConstructionGoalSystem;
+		clear.destinationEntity = site;
+		clear.destinationPosition = bushPos;
+		clear.acceptedDefNameIds = {berryId};
+		clear.targetAmount = 1;
+		clear.yieldDefNameId = berryId;
+		clear.clearsFootprint = true;
+		clear.parentGoalId = umbrellaId;
+		clear.status = GoalStatus::Available;
+		clearGoalId = goals.createGoal(std::move(clear));
+
+		auto entity = world->createEntity();
+		world->addComponent<Position>(entity, Position{bushPos + glm::vec2{1.0F, 0.0F}});
+		world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
+		world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
+		world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+		world->addComponent<Inventory>(entity, Inventory::createForColonist());
+		world->addComponent<Action>(entity, Action{});
+
+		const uint32_t bushId = assetRegistry.getDefNameId("Flora_TestBerryBush");
+		Memory memory;
+		memory.rememberWorldEntity(bushPos, bushId, assetRegistry.getCapabilityMask(bushId));
+		world->addComponent<Memory>(entity, std::move(memory));
+
+		Task task;
+		task.type = TaskType::Harvest;
+		task.state = TaskState::Arrived;
+		task.targetPosition = bushPos + glm::vec2{1.0F, 0.0F};
+		task.harvestGoalId = clearGoalId;
+		task.harvestTargetEntityId = hashWorldEntity(bushPos, bushId);
+		task.harvestYieldDefNameId = berryId;
+		world->addComponent<Task>(entity, std::move(task));
+		return entity;
+	}
+
+	void harvest() {
+		world->update(0.1F); // start
+		world->update(5.0F); // complete (durability 10 at the untrained rate)
+	}
+
+	const glm::vec2		   bushPos{10.0F, 10.0F};
+	std::unique_ptr<World> world;
+	EntityID			   site = kInvalidEntity;
+	uint64_t			   clearGoalId = 0;
+	int					   removeCalls = 0;
+	int					   cooldownCalls = 0;
+	int					   dropCalls = 0;
+};
+
+// The clear harvest's yield (berries) is not a site material; construction emits its own
+// per-material Hauls, so completing the clear must not mint a Haul to the site.
+TEST_F(ClearHarvestTest, ConstructionClearHarvestCreatesNoHaulGoal) {
+	auto colonist = createClearingColonist();
+	harvest();
+
+	ASSERT_EQ(world->getComponent<Inventory>(colonist)->getQuantity("TestBerry"), 3U) << "precondition: the clear harvested";
+	EXPECT_EQ(GoalTaskRegistry::Get().getGoal(clearGoalId), nullptr) << "the completed clear goal is retired";
+	EXPECT_TRUE(GoalTaskRegistry::Get().getGoalsOfType(TaskType::Haul).empty()) << "a construction harvest spawns no Haul";
+}
+
+// Clearing a footprint removes what stands in it: a regrowing bush is removed (not put on a
+// regrowth cooldown it would survive), the colonist yields once, and nothing drops to the ground.
+TEST_F(ClearHarvestTest, ClearHarvestOfRegrowingBushRemovesItOnce) {
+	auto colonist = createClearingColonist();
+	harvest();
+
+	EXPECT_EQ(world->getComponent<Inventory>(colonist)->getQuantity("TestBerry"), 3U) << "one yield, into the pack";
+	EXPECT_EQ(removeCalls, 1) << "the bush is removed from the footprint";
+	EXPECT_EQ(cooldownCalls, 0) << "a removed bush gets no regrowth cooldown";
+	EXPECT_EQ(dropCalls, 0) << "a one-hand yield that fits drops nothing";
+	const uint32_t bushId = assets::AssetRegistry::Get().getDefNameId("Flora_TestBerryBush");
+	EXPECT_FALSE(world->getComponent<Memory>(colonist)->knowsWorldEntity(bushPos, bushId)) << "the harvester forgets it";
+}
+
 } // namespace ecs::test

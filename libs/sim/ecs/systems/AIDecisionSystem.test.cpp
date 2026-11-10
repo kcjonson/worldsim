@@ -2792,6 +2792,116 @@ namespace ecs::test {
 		EXPECT_NE(task->type, TaskType::Haul) << "a full storage offers no haul; addableCount is 0";
 	}
 
+	// A build site takes only what its manifest still lacks. A construction Haul for an item the
+	// blueprint doesn't require (Berry from a clear harvest) or has already satisfied (Plank)
+	// offers no delivery: the deposit would record 0 and the colonist would repeat it forever.
+	TEST_F(AIDecisionSystemTest, NoBuildSiteDeliveryForUnneededOrSatisfiedItem) {
+		auto& registry = assets::AssetRegistry::Get();
+		for (const char* name : {"Berry", "Plank"}) {
+			assets::AssetDefinition def;
+			def.defName = name;
+			def.label = name;
+			def.handsRequired = 1;
+			def.capabilities.carryable = assets::CarryableCapability{1};
+			def.itemProperties = assets::ItemProperties{};
+			def.itemProperties->stackSize = 50;
+			def.itemProperties->massKg = 0.1F;
+			registry.registerTestDefinition(std::move(def));
+		}
+
+		auto colonist = createColonist({0.0F, 0.0F});
+		setNeedValue(colonist, NeedType::Hunger, 100.0F);
+		setNeedValue(colonist, NeedType::Thirst, 100.0F);
+		setNeedValue(colonist, NeedType::Energy, 100.0F);
+		setNeedValue(colonist, NeedType::Bladder, 100.0F);
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		inventory->addItem("Berry", 3);
+		inventory->addItem("Plank", 3);
+
+		auto site = world->createEntity();
+		world->addComponent<Position>(site, Position{{4.0F, 0.0F}});
+		StructureBlueprint blueprint;
+		blueprint.phase = StructureBlueprint::BuildPhase::AwaitingMaterials;
+		blueprint.required = {{"Plank", 4}};
+		blueprint.delivered = {{"Plank", 4}};
+		world->addComponent<StructureBlueprint>(site, std::move(blueprint));
+
+		for (const char* name : {"Berry", "Plank"}) {
+			GoalTask haul;
+			haul.type = TaskType::Haul;
+			haul.owner = GoalOwner::ConstructionGoalSystem;
+			haul.destinationEntity = site;
+			haul.destinationPosition = {4.0F, 0.0F};
+			haul.acceptedDefNameIds = {registry.getDefNameId(name)};
+			haul.targetAmount = 3; // a goal counter that still reads open
+			haul.parentGoalId = 999;
+			haul.status = GoalStatus::Available;
+			GoalTaskRegistry::Get().createGoal(std::move(haul));
+		}
+
+		world->update(0.016F);
+
+		auto* task = getTask(colonist);
+		ASSERT_NE(task, nullptr);
+		EXPECT_NE(task->type, TaskType::Haul) << "the site needs neither item, so no delivery is offered";
+	}
+
+	// A construction clear Harvest names one blocker; only that harvestable may serve it, since the
+	// harvest removes its source. A same-yield bush nearer the colonist is not offered.
+	TEST_F(AIDecisionSystemTest, ClearHarvestTargetsOnlyItsBlocker) {
+		auto& registry = assets::AssetRegistry::Get();
+
+		assets::AssetDefinition berryDef;
+		berryDef.defName = "Berry";
+		berryDef.label = "Berry";
+		berryDef.handsRequired = 1;
+		berryDef.capabilities.carryable = assets::CarryableCapability{1};
+		berryDef.itemProperties = assets::ItemProperties{};
+		berryDef.itemProperties->stackSize = 50;
+		berryDef.itemProperties->massKg = 0.1F;
+		registry.registerTestDefinition(std::move(berryDef));
+
+		assets::AssetDefinition bushDef;
+		bushDef.defName = "Flora_TestBush";
+		bushDef.label = "Test Bush";
+		assets::HarvestableCapability cap;
+		cap.yieldDefName = "Berry";
+		cap.destructive = false;
+		cap.regrowthTime = 60.0F;
+		bushDef.capabilities.harvestable = cap;
+		registry.registerTestDefinition(std::move(bushDef));
+		const uint32_t bushId = registry.getDefNameId("Flora_TestBush");
+
+		auto colonist = createColonist({0.0F, 0.0F});
+		setNeedValue(colonist, NeedType::Hunger, 100.0F);
+		setNeedValue(colonist, NeedType::Thirst, 100.0F);
+		setNeedValue(colonist, NeedType::Energy, 100.0F);
+		setNeedValue(colonist, NeedType::Bladder, 100.0F);
+
+		const glm::vec2 nearBush{1.0F, 0.0F};
+		const glm::vec2 blocker{20.0F, 0.0F};
+		addKnownEntity(colonist, nearBush, bushId, assets::CapabilityType::Harvestable);
+		addKnownEntity(colonist, blocker, bushId, assets::CapabilityType::Harvestable);
+
+		GoalTask clear;
+		clear.type = TaskType::Harvest;
+		clear.owner = GoalOwner::ConstructionGoalSystem;
+		clear.destinationPosition = blocker;
+		clear.acceptedDefNameIds = {registry.getDefNameId("Berry")};
+		clear.yieldDefNameId = registry.getDefNameId("Berry");
+		clear.targetAmount = 1;
+		clear.clearsFootprint = true;
+		clear.status = GoalStatus::Available;
+		GoalTaskRegistry::Get().createGoal(std::move(clear));
+
+		world->update(0.016F);
+
+		auto* task = getTask(colonist);
+		ASSERT_NE(task, nullptr);
+		ASSERT_EQ(task->type, TaskType::Harvest);
+		EXPECT_EQ(task->harvestTargetEntityId, hashWorldEntity(blocker, bushId)) << "only the named blocker serves a clear";
+	}
+
 	// A craft fetch must not be offered when the colonist is at/over its carry-weight cap: the
 	// Pickup clamps to cargoUnitsThatFit and adds 0, the staged count never rises, and the AI would
 	// otherwise re-issue the identical fetch every tick -- an infinite "fetch -> collect 0 -> fetch"

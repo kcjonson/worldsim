@@ -472,15 +472,24 @@ namespace ecs {
 							// Both craft and construction deposits MOVE the carried material into the
 							// destination (station store or blueprint manifest), so the pack empties on
 							// delivery; the next tick the colonist carries 0 and this option drops out.
-							// Just gate on carrying something.
 
-							// Storage destinations are slot-counted: the goal's availableCapacity() is a
-							// free-slot count, not an item count, so size the carry-in by the box's real
-							// per-item headroom (addableCount: stack room + freeSlots * stackSize), exactly
-							// as the loose-pile path does. Craft/construction destinations meter at deposit
-							// time, so the goal's availableCapacity() bounds them correctly.
+							// Size the carry-in by what the destination can actually take, and offer
+							// nothing at 0 (a deposit of 0 would repeat forever):
+							//  - A build site takes only what its manifest still lacks (remaining), so an
+							//    unrequired or already-satisfied item has no option.
+							//  - Storage destinations are slot-counted: the goal's availableCapacity() is a
+							//    free-slot count, not an item count, so use the box's real per-item headroom
+							//    (addableCount: stack room + freeSlots * stackSize), as the loose-pile path does.
+							//  - Craft destinations meter at deposit time; the goal's availableCapacity()
+							//    bounds them.
 							uint32_t haulCap = goal->availableCapacity();
-							if (isStorageStockingHaul) {
+							if (isConstructionHaul) {
+								const auto* blueprint = world != nullptr ? world->getComponent<StructureBlueprint>(goal->destinationEntity) : nullptr;
+								haulCap = blueprint != nullptr ? std::min(haulCap, blueprint->remaining(itemDefName)) : 0U;
+								if (haulCap == 0) {
+									continue; // the site needs no more of this item
+								}
+							} else if (isStorageStockingHaul) {
 								const auto* destInv = world != nullptr ? world->getComponent<Inventory>(goal->destinationEntity) : nullptr;
 								haulCap = destInv != nullptr ? destInv->addableCount(itemDefName) : 0U;
 								if (haulCap == 0) {
@@ -831,6 +840,13 @@ namespace ecs {
 				for (const auto& [key, knownEntity] : memory.knownWorldEntities) {
 					// Check if this entity is harvestable
 					if (!registry.hasCapability(knownEntity.defNameId, assets::CapabilityType::Harvestable)) {
+						continue;
+					}
+
+					// A footprint clear removes its source, so only the blocker it names may serve it.
+					constexpr float kBlockerMatchEps = 0.25F;
+					if (goal->clearsFootprint &&
+						glm::distance(knownEntity.position, goal->destinationPosition) > kBlockerMatchEps) {
 						continue;
 					}
 

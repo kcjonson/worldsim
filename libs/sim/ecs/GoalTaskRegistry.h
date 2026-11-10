@@ -79,6 +79,10 @@ namespace ecs {
 		// For Harvest goals: what item type is yielded when harvesting completes
 		uint32_t yieldDefNameId = 0; // e.g., Tree yields Wood
 
+		// Construction clear Harvest: served only by the blocker at destinationPosition, and the
+		// harvest removes it (clearing a footprint removes what stands there, regrowing or not).
+		bool clearsFootprint = false;
+
 		// For Craft goals: identity of the recipe this goal's child hierarchy was built for.
 		// Hash of the recipe defName. When a station's next job switches to a different
 		// recipe, this changes and the child Harvest/Haul goals are rebuilt. 0 = not a Craft

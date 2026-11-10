@@ -341,7 +341,11 @@ namespace ecs {
 			if (goal != nullptr && goal->availableCapacity() == 0) {
 				// Harvest done: the material is in the colonist's inventory now, so the Haul that
 				// carries it to the station can be created here (not up front), then the goal is retired.
-				goalRegistry.createHaulForCompletedHarvest(task.harvestGoalId);
+				// Construction emits its own per-material Hauls sized to the manifest, so its Harvests
+				// spawn none (a clear Harvest's yield may not be a site material at all).
+				if (goal->owner != GoalOwner::ConstructionGoalSystem) {
+					goalRegistry.createHaulForCompletedHarvest(task.harvestGoalId);
+				}
 				goalRegistry.removeGoal(task.harvestGoalId);
 			}
 		}
@@ -435,6 +439,10 @@ namespace ecs {
 			yieldAmount = yieldDist(m_rng);
 		}
 
+		// A footprint clear removes the blocker even when its harvest normally leaves it to regrow.
+		const auto* goal = GoalTaskRegistry::Get().getGoal(task.harvestGoalId);
+		const bool	clearsFootprint = goal != nullptr && goal->clearsFootprint;
+
 		// Build the Harvest at the ENTITY's position (the actual tree), not task.targetPosition (the
 		// snapped stand point). applyCollectionEffect resolves the source pool/pile by this position.
 		action = Action::Harvest(
@@ -443,7 +451,7 @@ namespace ecs {
 			harvestCap.durability,
 			entity.position,
 			defName,
-			harvestCap.destructive,
+			harvestCap.destructive || clearsFootprint,
 			harvestCap.regrowthTime
 		);
 		LOG_DEBUG(
