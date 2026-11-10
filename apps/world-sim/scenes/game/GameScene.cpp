@@ -1212,7 +1212,8 @@ namespace {
 			ecsWorld->registerSystem<ecs::ConstructionSystem>();							// Priority 58 - foundation lifecycle goals
 			ecsWorld->registerSystem<ecs::RoomDetectionSystem>();							// Priority 59 - derive rooms from built walls
 			ecsWorld->registerSystem<ecs::NavigationSystem>();								// Priority 51 - cached navmesh + path queries
-			ecsWorld->registerSystem<ecs::AIDecisionSystem>(assetRegistry, recipeRegistry, systemSeeds.aiDecision); // Priority 60
+			// Priority 60
+			ecsWorld->registerSystem<ecs::AIDecisionSystem>(assetRegistry, recipeRegistry, systemSeeds.aiDecision);
 			ecsWorld->registerSystem<ecs::MovementSystem>();								// Priority 100
 			ecsWorld->registerSystem<ecs::PhysicsSystem>();									// Priority 200
 			ecsWorld->registerSystem<ecs::CollisionSystem>();			// Priority 250 - positional separation after physics

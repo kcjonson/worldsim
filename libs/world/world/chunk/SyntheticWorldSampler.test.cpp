@@ -60,12 +60,14 @@ namespace world {
 		}
 	}
 
-	TEST(SyntheticWorldSamplerTest, PondReachesOnlyTheChunksItsRimCanTouch) {
+	// Chunks gather the pond out to kRiverGatherMarginM past their square, as GeneratedWorldSampler does.
+	TEST(SyntheticWorldSamplerTest, PondIsGatheredWithinTheWorldSamplerMargin) {
 		const worldgen::PondNetwork2D::Pond pond{.cx = 60.0, .cy = 0.0, .radius = 15.0F, .depth = 120};
 		const SyntheticWorldSampler			sampler(kSeed, {.pond = pond});
 		EXPECT_EQ(sampler.sampleChunk({0, 0}).pondBlobs.size(), 1U);
 		EXPECT_EQ(sampler.sampleChunk({0, -1}).pondBlobs.size(), 1U) << "the pond straddles y = 0";
-		EXPECT_TRUE(sampler.sampleChunk({-1, 0}).pondBlobs.empty());
+		EXPECT_EQ(sampler.sampleChunk({-1, 0}).pondBlobs.size(), 1U) << "60 m off its square, inside the margin";
+		EXPECT_TRUE(sampler.sampleChunk({-2, 0}).pondBlobs.empty()) << "572 m off its square";
 		EXPECT_TRUE(sampler.sampleChunk({3, 3}).pondBlobs.empty());
 	}
 

@@ -296,8 +296,6 @@ namespace ecs {
 			// chainId tags the carry-in Haul (spawned on harvest completion) as a stocking delivery,
 			// so the decision layer routes it from inventory into the box rather than treating it as
 			// an ordinary loose-pile haul.
-			// The carry-in Haul (createHaulForCompletedHarvest copies the chainId) is told apart from an
-			// ordinary loose-pile haul by being StorageGoalSystem-owned AND having a chainId.
 			harvest.chainId = GoalTaskRegistry::Get().allocateChainId();
 
 			registry.createGoal(std::move(harvest));

@@ -316,8 +316,11 @@ class NavigationSystem : public ISystem {
 	// Blocks until the system settles: evaluates the region rebuild gates against the
 	// current inputs, launches what they call for, waits for every in-flight build, swaps
 	// each in as update() would, and repeats until no gate fires. Advances nothing else;
-	// isBuilding() is false when it returns. For hosts that want repeatable results
-	// (tests, the headless sim), never the game, whose frames must not wait on a build.
+	// isBuilding() is false when it returns. It reads only chunks that are ready now, so a
+	// caller settles chunk generation (ChunkManager::finishPendingGeneration) and placement
+	// first. For hosts that want repeatable results (tests, the headless sim), never the
+	// game, whose frames must not wait on a build. A wait longer than a minute logs
+	// a warning naming the regions still building and keeps waiting.
 	void finishPendingBuilds();
 
 	// Monotonic count of mesh swaps across all regions. A stored NavPath stamps this at plan

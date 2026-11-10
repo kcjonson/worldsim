@@ -20,8 +20,9 @@ namespace world {
 				const double theta = 2.0 * std::numbers::pi * i / kRimSamples;
 				widestRim = std::max(widestRim, worldgen::PondNetwork2D::rimRadiusAt(*map.pond, theta));
 			}
-			// One more meter covers the rim between samples.
-			pondReachM = widestRim + 1.0 + static_cast<double>(kApronTiles) * kTileSize;
+			// The gather margin every world sampler uses (ChunkSampleResult.h), widened by the pond's
+			// footprint; one more meter covers the rim between samples.
+			pondReachM = kRiverGatherMarginM + widestRim + 1.0;
 		}
 	}
 

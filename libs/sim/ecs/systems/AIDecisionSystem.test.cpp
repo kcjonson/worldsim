@@ -434,6 +434,10 @@ namespace ecs::test {
 			for (int i = 0; i < 8; ++i) {
 				world->update(0.016F);
 				auto* task = getTask(colonist);
+				if (task == nullptr) {
+					ADD_FAILURE() << "colonist has no Task";
+					break;
+				}
 				EXPECT_EQ(task->type, TaskType::Wander);
 				targets.push_back(task->targetPosition);
 				task->state = TaskState::Arrived;

@@ -317,7 +317,7 @@ TEST_F(NavigationSystemTest, RebuildSealsRoomWhenDoorRemoved) {
 	ASSERT_NE(cw.version(), before);
 
 	sys.finishPendingBuilds();
-	EXPECT_TRUE(!sys.requestPath(kOutside, kInside, kAgentRadius).has_value()) << "blueprinting the door never re-sealed the room";
+	EXPECT_FALSE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value()) << "blueprinting the door never re-sealed the room";
 }
 
 // Deferred wiring: pumping update() before the ConstructionWorld is set must NOT
@@ -515,8 +515,7 @@ TEST_F(NavigationSystemTest, GenerationMovesWhenALaggingRegionSwaps) {
 	world.addComponent<Position>(b, Position{glm::vec2{100.0F, 0.0F}});
 	world.addComponent<Colonist>(b, Colonist{"B"});
 	sys.finishPendingBuilds();
-	ASSERT_TRUE(sys.builtRegions().size() == 2U)
-		<< "region B never built";
+	ASSERT_EQ(sys.builtRegions().size(), 2U) << "region B never built";
 	EXPECT_NE(sys.generation(), beforeB) << "region B's first mesh swap left generation() unchanged";
 }
 
@@ -1917,25 +1916,17 @@ TEST(SimAreaClusteringTest, EmptyInputYieldsNoRegions) {
 	EXPECT_TRUE(clusterAabbs({}).empty());
 }
 
-// finishPendingBuilds launches what the gates call for, waits for every region, and swaps
-// each in; with nothing pending it changes nothing.
-TEST_F(NavigationSystemTest, FinishPendingBuildsSettlesEveryRegion) {
+// With nothing pending finishPendingBuilds changes nothing; after an edit it returns with the
+// rebuild landed. (Two regions both landing is QueryDispatchSelectsRegionContainingPoint.)
+TEST_F(NavigationSystemTest, FinishPendingBuildsIsANoOpUntilAnInputChanges) {
 	ConstructionWorld cw;
 
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	sys.setChunkManager(m_chunks.get());
 	sys.setConstructionWorld(&cw);
-	for (const glm::vec2 at : {glm::vec2{0.0F, 0.0F}, glm::vec2{100.0F, 0.0F}}) {
-		EntityID colonist = world.createEntity();
-		world.addComponent<Position>(colonist, Position{at});
-		world.addComponent<Colonist>(colonist, Colonist{"C"});
-	}
-
+	wireArea(sys);
 	sys.finishPendingBuilds();
-	EXPECT_FALSE(sys.isBuilding());
-	EXPECT_EQ(sys.regionCount(), 2u);
-	EXPECT_EQ(sys.builtRegions().size(), 2u) << "every gated region has its mesh";
+	ASSERT_TRUE(sys.hasMesh());
 
 	const std::uint64_t settled = sys.generation();
 	sys.finishPendingBuilds();

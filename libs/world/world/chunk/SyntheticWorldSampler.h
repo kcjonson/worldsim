@@ -3,7 +3,7 @@
 // SyntheticWorldSampler - a flat map built from a few parameters, for tests and the headless sim.
 // One biome on level ground everywhere, and optionally one pond blob. The pond's shore is the blob's
 // rim exactly (no biome blending across chunk corners), so a colonist can stand a known distance from
-// the water.
+// the water. What grows on the map is placement's business, not the sampler's.
 
 #include "world/Biome.h"
 #include "world/chunk/IWorldSampler.h"
@@ -32,8 +32,8 @@ namespace world {
 	  private:
 		uint64_t	 seed;
 		SyntheticMap map;
-		/// How far from the pond's center a chunk can be and still draw some of it: the rim's widest
-		/// reach plus the apron a chunk generates beyond its square.
+		/// How far from the pond's center a chunk gathers it: kRiverGatherMarginM plus the rim's widest
+		/// reach, as GeneratedWorldSampler gathers ponds.
 		double pondReachM = 0.0;
 	};
 

@@ -33,6 +33,7 @@ class WorkConfigTest : public ::testing::Test {
         TaskChainRegistry::Get().clear();
         WorkTypeRegistry::Get().clear();
         PriorityConfig::Get().clear();
+        ConstructionRegistry::Get().clear();
         ConfigValidator::clearErrors();
     }
 
