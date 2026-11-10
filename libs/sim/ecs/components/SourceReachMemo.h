@@ -33,6 +33,22 @@ namespace ecs {
 			std::uint64_t		   beliefVersion = 0; // Memory::beliefVersion
 			std::vector<RegionKey> regions;			  // every region holding the colonist, by ascending id
 			bool				   operator==(const Key&) const = default;
+
+			/// A fingerprint of the key, small enough to stamp on a task: equal keys, equal stamps.
+			[[nodiscard]] std::uint64_t stamp() const {
+				std::uint64_t h = 1469598103934665603ULL;
+				const auto	  mix = [&h](std::uint64_t v) { h = (h ^ v) * 1099511628211ULL; };
+				mix(beliefVersion);
+				for (const RegionKey& r : regions) {
+					for (const std::uint64_t v :
+						 {static_cast<std::uint64_t>(r.regionId), r.meshGeneration, static_cast<std::uint64_t>(r.minX),
+						  static_cast<std::uint64_t>(r.minY), static_cast<std::uint64_t>(r.maxX), static_cast<std::uint64_t>(r.maxY),
+						  static_cast<std::uint64_t>(r.reachRoot), static_cast<std::uint64_t>(r.startTri)}) {
+						mix(v);
+					}
+				}
+				return h;
+			}
 		};
 
 		/// Forget every verdict when the key changes, or once verdicts (forgotten sources' included)

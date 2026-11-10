@@ -3989,4 +3989,24 @@ namespace ecs::test {
 		EXPECT_EQ(*thirst->targetPosition, inArea);
 	}
 
+	// A mesh swap in some other region (another colonist's, or the viewport's while the camera pans)
+	// changes nothing this colonist's verdicts depend on: the failure is still recorded and the
+	// colonist moves on, instead of retrying the walled-in water every time any region rebuilds.
+	TEST_F(AIDecisionWalledWaterTest, SwapInAnotherRegionStillRecordsTheFailure) {
+		const auto colonist = makeThirstyColonistWithWalledWater();
+		world->update(kTick);
+		ASSERT_EQ(getTask(colonist)->targetPosition, kInRoom);
+		ASSERT_EQ(getTask(colonist)->navState, NavState::CantFindWayTo);
+
+		const std::uint64_t before = nav->generation();
+		const auto			farDriver = world->createEntity();
+		world->addComponent<Position>(farDriver, Position{{300.0F, 0.0F}});
+		world->addComponent<Colonist>(farDriver, Colonist{"Far"});
+		ASSERT_TRUE(pumpUntil(*nav, "the far region", [&] { return nav->builtRegions().size() == 2U && !nav->isBuilding(); }));
+		ASSERT_NE(nav->generation(), before) << "the far region's swap moved the global generation";
+
+		world->update(kTick);
+		EXPECT_EQ(getTask(colonist)->targetPosition, kOutside) << "the failure was dropped over an unrelated swap";
+	}
+
 } // namespace ecs::test
