@@ -775,10 +775,10 @@ Not taken: storing the arrays as plain RGBA8 to drop the encode (about 0.01, but
 
 Planned, tracked as Ground Tile Follow-ups in status.md. None blocks the shipped work.
 
-- SVG ground defs with the `data-lod` filter, and the salal load-from-string addition (LOD).
+- SVG ground defs with the `data-lod` filter (LOD). salal's `loadSVG` takes a byte span since v0.37, so the filtered markup can load from memory.
 - BC3 or BC7 for the arrays (Open questions).
 - A 4.1 core context from salal. The tile shaders are GLSL 4.10 and salal asks for 3.3; NVIDIA and macOS accept that, a strict driver may not (Shader).
-- The asset-manager Bake view's speed, which waits on salal: a cold Ground_Grass bake takes 11.8 s there and 3.3 s on the splash. salal's stream buffer (`GLBackend::updateBuffer`) orphans its whole high-water size on every upload and never shrinks. A ground def opens in the Vectors view, which draws its tile about 15 times a frame (3.4 million quads, 334 MB), so the batch's buffer grows to 669 MB and each of the bake's flushes, about ten a dense render, reallocates all of it (the heights step goes from 0.4 to 2.4 s, a variant's render from 0.19 to 1.0 s). Sizing each orphan to its upload (`std::bit_ceil(bytes)`) brought the view to 3.3 to 3.7 s and left the splash at 3.3 s. The fix is a salal change and a tag bump.
+- The asset-manager Vectors view draws a ground def's tile about 15 times a frame (3.4 million quads, 334 MB uploaded). Drawing the previews once into render targets would take that to nothing between changes.
 
 ## Later
 
