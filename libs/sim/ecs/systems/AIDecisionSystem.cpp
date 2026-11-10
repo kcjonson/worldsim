@@ -1219,9 +1219,9 @@ namespace ecs {
 
 			// Edge-leg retry. A leg toward a goal beyond the colonist's regions ends by stopping him inside
 			// his region's recenter margin, and the recenter's swap re-plans the next leg (replan above).
-			// When no build comes (his region can't move toward the goal: a cluster clamped at its max
-			// size), ask for the next leg on the periodic cadence, so the walk finds one or ends as no
-			// route (stalledWalkingToward) instead of standing there forever.
+			// When no build comes (the leg ended short of the recenter margin, or his region is clamped to
+			// the loaded-chunk extent), ask for the next leg on the periodic cadence, so the walk finds one
+			// or ends as no route (stalledWalkingToward) instead of standing there forever.
 			if (auto* navPath = world->getComponent<NavPath>(entity);
 				navPath != nullptr && navPath->valid && navPath->endsShortOfGoal &&
 				navPath->current >= navPath->waypoints.size() && task.state == TaskState::Moving &&
