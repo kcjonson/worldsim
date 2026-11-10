@@ -106,13 +106,10 @@ namespace assets {
 		/// its mature variant 0's height). Builds that template the first time.
 		bool isTallDef(const std::string& defName);
 
-		/// The farthest any drawn point of a tall def's template reaches from its origin, times
-		/// the def's largest placement scale, over every template built so far. Every placed
-		/// static has its template built at placement, so this covers what can be on screen.
-		[[nodiscard]] float maxTallReachMeters() const { return m_maxTallReach.load(std::memory_order_relaxed); }
-
-		/// maxTallReachMeters over every template but groundcover, short ones included: how far
-		/// from its origin a click can land on any placed or dynamic entity.
+		/// The farthest any drawn point of a template but groundcover reaches from its origin,
+		/// times the def's largest placement scale, over every template built so far: how far
+		/// from its origin an entity can draw or be clicked. Every placed static has its
+		/// template built at placement, so this covers what can be on screen.
 		[[nodiscard]] float maxReachMeters() const { return m_maxReach.load(std::memory_order_relaxed); }
 
 		/// Get the resolved motion (animation clips) for a def, or nullptr if it declares none.
@@ -144,7 +141,10 @@ namespace assets {
 		/// @param traits The variant being generated: Lua sees variantIndex and the age class
 		///        name as ageClass (nil for a def without age classes)
 		/// @return true if generation succeeded
-		bool generateAsset(const std::string& defName, uint32_t seed, GeneratedAsset& outAsset, TreeTraits traits = {});
+		/// @param error When given, receives the script error of a failed Lua generation
+		bool generateAsset(
+			const std::string& defName, uint32_t seed, GeneratedAsset& outAsset, TreeTraits traits = {}, std::string* error = nullptr
+		);
 
 		/// Build an uncached tessellated mesh for an asset at a given seed.
 		/// Simple assets ignore the seed (one drawing); procedural assets use it to
@@ -321,7 +321,7 @@ namespace assets {
 		/// A template's mesh, or why there is none.
 		struct BuiltTemplate {
 			std::optional<renderer::TessellatedMesh> mesh;
-			std::string								 error; // set when the mesh is over kMaxMeshVertices
+			std::string								 error; // why a procedural template has no mesh
 		};
 		struct TemplateEntry {
 			std::optional<renderer::TessellatedMesh> mesh;
@@ -353,7 +353,6 @@ namespace assets {
 		std::unordered_map<TemplateKey, uint32_t, TemplateKeyHash> m_templateIds;
 		std::vector<std::unique_ptr<TemplateEntry>>				m_templates;
 		mutable std::mutex										templateCacheMutex;
-		std::atomic<float>										m_maxTallReach{0.0F};
 		std::atomic<float>										m_maxReach{0.0F};
 
 		// Resolved motion per def (empty MotionDef = "resolved, has none"). Guarded separately.

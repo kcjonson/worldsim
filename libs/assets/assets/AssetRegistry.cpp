@@ -1490,8 +1490,10 @@ namespace assets {
 			}
 		} else {
 			GeneratedAsset asset;
-			if (!generateAsset(def.defName, generationSeed(def, traits), asset, traits)) {
-				LOG_ERROR(Engine, "Failed to generate %s", describeTemplate(def, traits).c_str());
+			std::string scriptError;
+			if (!generateAsset(def.defName, generationSeed(def, traits), asset, traits, &scriptError)) {
+				out.error = "Failed to generate " + describeTemplate(def, traits) + (scriptError.empty() ? "" : ": " + scriptError);
+				LOG_ERROR(Engine, "%s", out.error.c_str());
 				return out;
 			}
 
@@ -1506,7 +1508,8 @@ namespace assets {
 				return out;
 			}
 			if (!drawn) {
-				LOG_ERROR(Engine, "Failed to tessellate %s", describeTemplate(def, traits).c_str());
+				out.error = "Failed to tessellate " + describeTemplate(def, traits) + ": no geometry";
+				LOG_ERROR(Engine, "%s", out.error.c_str());
 				return out;
 			}
 			mesh = std::move(meshes.front());
@@ -1536,9 +1539,6 @@ namespace assets {
 		}
 		if (!groundcover) {
 			raiseTo(m_maxReach, reach);
-		}
-		if (defTall) {
-			raiseTo(m_maxTallReach, reach);
 		}
 		return id;
 	}
@@ -1829,7 +1829,9 @@ namespace assets {
 		return m_sharedScriptsPath.empty() ? std::filesystem::path{} : m_sharedScriptsPath / "lib";
 	}
 
-	bool AssetRegistry::generateAsset(const std::string& defName, uint32_t seed, GeneratedAsset& outAsset, TreeTraits traits) {
+	bool AssetRegistry::generateAsset(
+		const std::string& defName, uint32_t seed, GeneratedAsset& outAsset, TreeTraits traits, std::string* error
+	) {
 		const AssetDefinition* def = getDefinition(defName);
 		if (def == nullptr) {
 			LOG_ERROR(Engine, "Definition not found: %s", defName.c_str());
@@ -1867,9 +1869,16 @@ namespace assets {
 				LOG_DEBUG(Engine, "Resolved script: %s -> %s", def->scriptPath.c_str(), resolvedScriptPath.c_str());
 
 				LuaGenerator luaGen(resolvedScriptPath, preludeDir());
-				return luaGen.generate(ctx, def->params, outAsset);
+				const bool generated = luaGen.generate(ctx, def->params, outAsset);
+				if (!generated && error != nullptr) {
+					*error = luaGen.lastError();
+				}
+				return generated;
 			} catch (const std::exception& e) {
 				LOG_ERROR(Engine, "LuaGenerator error for '%s': %s", def->scriptPath.c_str(), e.what());
+				if (error != nullptr) {
+					*error = e.what();
+				}
 				return false;
 			}
 		}
@@ -2133,7 +2142,6 @@ namespace assets {
 			m_templateIds.clear();
 			m_templates.clear();
 		}
-		m_maxTallReach.store(0.0F, std::memory_order_relaxed);
 		m_maxReach.store(0.0F, std::memory_order_relaxed);
 		{
 			std::lock_guard<std::mutex> lk(m_motionCacheMutex);

@@ -186,6 +186,30 @@ asset:addPath(p)
 )");
 		}
 
+		// A tree whose sapling draws nothing and whose mature variant 1 fails in the script.
+		void writeFailingTree(const TempAssetFolder& folder) {
+			folder.write("FailTree/FailTree.xml", R"(<?xml version="1.0"?><AssetDefinitions><AssetDef>
+  <defName>Flora_FailTree</defName>
+  <assetType>procedural</assetType>
+  <generator><scriptPath>gen.lua</scriptPath></generator>
+  <ageClasses>
+    <ageClass name="sapling" weight="0.25" variants="1"/>
+    <ageClass name="mature" weight="0.75" variants="2"/>
+  </ageClasses>
+</AssetDef></AssetDefinitions>)");
+			folder.write("FailTree/gen.lua", R"(
+if ageClass == "sapling" then
+  return
+end
+if variantIndex == 1 then
+  error("generator exploded")
+end
+local p = Path()
+p:addVertex(0, 0) p:addVertex(1, 0) p:addVertex(1, 1) p:addVertex(0, 1)
+asset:addPath(p)
+)");
+		}
+
 		float minX(const renderer::TessellatedMesh& mesh) {
 			float out = mesh.vertices.front().x;
 			for (const auto& v : mesh.vertices) {
@@ -266,6 +290,29 @@ asset:addPath(p)
 		ASSERT_NE(named, report.issues.end());
 		EXPECT_NE(named->message.find("66000 vertices"), std::string::npos) << named->message;
 		EXPECT_EQ(registry.getTemplate("Flora_TestTree", {.ageClass = 1, .variant = 2}), nullptr);
+		registry.clear();
+	}
+
+	// A variant whose generator fails, or draws nothing, is a load error naming the def, age
+	// class, and variant, with the script's own error text when there is one.
+	TEST(TreeTraits, AVariantWithNoMeshIsALoadErrorNamingIt) {
+		const TempAssetFolder folder;
+		writeFailingTree(folder);
+		AssetRegistry& registry = AssetRegistry::Get();
+		registry.clear();
+		registry.loadDefinitionsFromFolder(folder.root.string());
+
+		const ValidationReport& report = registry.getValidationReport();
+		const auto				errorFor = [&](const std::string& where) {
+			return std::find_if(report.issues.begin(), report.issues.end(), [&](const ValidationIssue& issue) {
+				return issue.severity == Severity::Error && issue.defName == "Flora_FailTree" && issue.message.find(where) != std::string::npos;
+			});
+		};
+		const auto failed = errorFor("age class 'mature' variant 1");
+		ASSERT_NE(failed, report.issues.end());
+		EXPECT_NE(failed->message.find("generator exploded"), std::string::npos) << failed->message;
+		EXPECT_NE(errorFor("age class 'sapling' variant 0"), report.issues.end());
+		EXPECT_EQ(errorFor("age class 'mature' variant 0"), report.issues.end());
 		registry.clear();
 	}
 
