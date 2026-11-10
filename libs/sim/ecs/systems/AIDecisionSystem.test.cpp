@@ -3172,20 +3172,42 @@ namespace ecs::test {
 			[[nodiscard]] float	   sampleElevation(world::WorldPosition) const override { return 1.0F; }
 			[[nodiscard]] uint64_t getWorldSeed() const override { return 7U; }
 		};
+
+		// Open grassland with one pond at (40, 40); its rim is at most 10.5 m from the center.
+		constexpr worldgen::PondNetwork2D::Pond kSlidePond{
+			.cx = 40.0, .cy = 40.0, .radius = 8.0F, .phaseA = 0.0F, .phaseB = 0.0F, .depth = 120};
+
+		class PondSampler : public world::IWorldSampler {
+		  public:
+			[[nodiscard]] world::ChunkSampleResult sampleChunk(world::ChunkCoordinate coord) const override {
+				world::ChunkSampleResult r = world::makeUniformChunkSampleResult(
+					world::BiomeWeights::single(world::Biome::TemperateGrassland), 1.0F);
+				if (coord.x >= -1 && coord.x <= 1 && coord.y >= -1 && coord.y <= 1) {
+					r.pondBlobs.push_back(kSlidePond);
+				}
+				return r;
+			}
+			[[nodiscard]] float	   sampleElevation(world::WorldPosition) const override { return 1.0F; }
+			[[nodiscard]] uint64_t getWorldSeed() const override { return 7U; }
+		};
 	} // namespace
 
 	// The running game's first decision happens before the async region build has produced a mesh.
-	// This wires a real NavigationSystem (all-land chunks, a viewport region at the origin, an empty
-	// construction world) plus MovementSystem and PhysicsSystem, so a test can let the AI decide with
-	// no mesh, pump the NavigationSystem alone until the build lands (pumpUntilMesh: no sim time
-	// passes however long the runner takes, and the AI sees the mesh on the next tick), and then
-	// check the colonist walks a route.
+	// This wires a real NavigationSystem (all-land chunks unless a fixture swaps the sampler, a
+	// viewport region at the origin, an empty construction world) plus MovementSystem and
+	// PhysicsSystem, so a test can let the AI decide with no mesh, pump the NavigationSystem alone
+	// until the build lands (pumpUntilMesh: no sim time passes however long the runner takes, and the
+	// AI sees the mesh on the next tick), and then check the colonist walks a route.
 	class AIDecisionFirstMeshTest : public AIDecisionSystemTest {
 	  protected:
+		[[nodiscard]] virtual std::unique_ptr<world::IWorldSampler> makeSampler() const {
+			return std::make_unique<OpenLandSampler>();
+		}
+
 		void SetUp() override {
 			AIDecisionSystemTest::SetUp();
 
-			chunks = std::make_unique<world::ChunkManager>(std::make_unique<OpenLandSampler>());
+			chunks = std::make_unique<world::ChunkManager>(makeSampler());
 			chunks->setLoadRadius(2);
 			chunks->setUnloadRadius(4);
 			chunks->update({0.0F, 0.0F});
@@ -3210,6 +3232,17 @@ namespace ecs::test {
 		[[nodiscard]] bool followingRoute(EntityID colonist) {
 			const auto* navPath = world->getComponent<NavPath>(colonist);
 			return getMovementTarget(colonist)->active && navPath != nullptr && navPath->valid;
+		}
+
+		// Lets an idle colonist pick a wander and walk it until it is actually moving.
+		[[nodiscard]] bool walkUntilMoving(EntityID colonist) {
+			for (int i = 0; i < 20; ++i) {
+				world->update(kTick);
+				if (glm::length(world->getComponent<Velocity>(colonist)->value) > 0.5F) {
+					return true;
+				}
+			}
+			return false;
 		}
 
 		static constexpr float kTick = 0.1F;
@@ -3301,59 +3334,57 @@ namespace ecs::test {
 		EXPECT_LT(glm::distance(now, bush), glm::distance(start, bush) - 0.5F) << "the colonist walks toward the bush";
 	}
 
+	TEST_F(AIDecisionFirstMeshTest, ControlledColonistWalksToMoveOrder) {
+		ASSERT_TRUE(pumpUntilMesh(*nav)) << "navmesh never built";
+		const glm::vec2 start{0.0F, 0.0F};
+		const glm::vec2 goal{8.0F, 3.0F};
+		const auto		colonist = createColonist(start);
+		satisfyAllNeeds(*getNeeds(colonist));
+
+		auto& ai = world->getSystem<AIDecisionSystem>();
+		ai.enterControl(colonist);
+		ASSERT_TRUE(ai.issuePlayerMoveOrder(colonist, goal).has_value());
+
+		for (int i = 0; i < 20; ++i) { // 2 s at 2 m/s
+			world->update(kTick);
+		}
+		const glm::vec2 now = world->getComponent<Position>(colonist)->value;
+		EXPECT_LT(glm::distance(now, goal), glm::distance(start, goal) - 2.0F) << "the move order went nowhere";
+	}
+
+	TEST_F(AIDecisionFirstMeshTest, TakingControlOfWalkingColonistStopsIt) {
+		ASSERT_TRUE(pumpUntilMesh(*nav)) << "navmesh never built";
+		const auto colonist = createColonist({0.0F, 0.0F});
+		satisfyAllNeeds(*getNeeds(colonist));
+		ASSERT_TRUE(walkUntilMoving(colonist)) << "the colonist never set off on its wander";
+
+		world->getSystem<AIDecisionSystem>().enterControl(colonist);
+		const glm::vec2 heldAt = world->getComponent<Position>(colonist)->value;
+		world->update(kTick);
+
+		EXPECT_EQ(glm::length(world->getComponent<Velocity>(colonist)->value), 0.0F) << "still carrying a stride";
+		EXPECT_LT(glm::distance(world->getComponent<Position>(colonist)->value, heldAt), 1e-4F)
+			<< "the colonist coasted after the player took control";
+	}
+
 	// =============================================================================
 	// Need actions started in place
 	// =============================================================================
 
-	namespace {
-		// Open grassland with one pond at (40, 40); its rim is at most 10.5 m from the center.
-		constexpr worldgen::PondNetwork2D::Pond kSlidePond{
-			.cx = 40.0, .cy = 40.0, .radius = 8.0F, .phaseA = 0.0F, .phaseB = 0.0F, .depth = 120};
-
-		class PondSampler : public world::IWorldSampler {
-		  public:
-			[[nodiscard]] world::ChunkSampleResult sampleChunk(world::ChunkCoordinate coord) const override {
-				world::ChunkSampleResult r = world::makeUniformChunkSampleResult(
-					world::BiomeWeights::single(world::Biome::TemperateGrassland), 1.0F);
-				if (coord.x >= -1 && coord.x <= 1 && coord.y >= -1 && coord.y <= 1) {
-					r.pondBlobs.push_back(kSlidePond);
-				}
-				return r;
-			}
-			[[nodiscard]] float	   sampleElevation(world::WorldPosition) const override { return 1.0F; }
-			[[nodiscard]] uint64_t getWorldSeed() const override { return 7U; }
-		};
-	} // namespace
-
 	// The whole frame pipeline a need action runs through: AI, nav, movement, physics, and actions,
-	// over a built mesh. A ground-fallback need action (Sleep, Eat from inventory, Toilet) starts in
-	// place with the movement target switched off, so whatever velocity the colonist was walking at
-	// when it decided must not carry it anywhere for the action's duration.
-	class NeedActionInPlaceTest : public AIDecisionSystemTest {
+	// over a built mesh with a pond. A ground-fallback need action (Sleep, Eat from inventory, Toilet)
+	// starts in place with the movement target switched off, so whatever velocity the colonist was
+	// walking at when it decided must not carry it anywhere for the action's duration.
+	class NeedActionInPlaceTest : public AIDecisionFirstMeshTest {
 	  protected:
 		void SetUp() override {
-			AIDecisionSystemTest::SetUp();
-
-			chunks = std::make_unique<world::ChunkManager>(std::make_unique<PondSampler>());
-			chunks->setLoadRadius(2);
-			chunks->setUnloadRadius(4);
-			chunks->update({0.0F, 0.0F});
-			chunks->finishPendingGeneration();
-
-			nav = &world->registerSystem<NavigationSystem>();
-			nav->setChunkManager(chunks.get());
-			nav->setConstructionWorld(&construction);
-			nav->setViewportRect({0.0F, 0.0F}, {60.0F, 60.0F});
-			world->getSystem<AIDecisionSystem>().setNavigationSystem(nav);
-			world->registerSystem<MovementSystem>();
-			world->registerSystem<PhysicsSystem>();
+			AIDecisionFirstMeshTest::SetUp();
 			world->registerSystem<ActionSystem>();
 			ASSERT_TRUE(pumpUntilMesh(*nav)) << "navmesh never built";
 		}
 
-		void TearDown() override {
-			AIDecisionSystemTest::TearDown();
-			chunks.reset();
+		[[nodiscard]] std::unique_ptr<world::IWorldSampler> makeSampler() const override {
+			return std::make_unique<PondSampler>();
 		}
 
 		EntityID createActingColonist(glm::vec2 position) {
@@ -3361,17 +3392,6 @@ namespace ecs::test {
 			world->addComponent<Action>(colonist, Action{});
 			satisfyAllNeeds(*getNeeds(colonist));
 			return colonist;
-		}
-
-		// Lets an idle colonist pick a wander and walk it until it is actually moving.
-		[[nodiscard]] bool walkUntilMoving(EntityID colonist) {
-			for (int i = 0; i < 20; ++i) {
-				world->update(kTick);
-				if (glm::length(world->getComponent<Velocity>(colonist)->value) > 0.5F) {
-					return true;
-				}
-			}
-			return false;
 		}
 
 		struct Stillness {
@@ -3393,12 +3413,6 @@ namespace ecs::test {
 			}
 			return result;
 		}
-
-		static constexpr float kTick = 0.1F;
-
-		std::unique_ptr<world::ChunkManager> chunks;
-		construction::ConstructionWorld		 construction;
-		NavigationSystem*					 nav = nullptr;
 	};
 
 	TEST_F(NeedActionInPlaceTest, SleepStartedMidStrideStaysPut) {
