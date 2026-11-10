@@ -127,7 +127,14 @@ namespace assets {
 		return std::max<int64_t>(1, static_cast<int64_t>(std::ceil(spanMeters / kFloraCellSizeMeters)));
 	}
 
+	bool floraPointWithinWorld(float x, float y) {
+		return std::isfinite(x) && std::isfinite(y) && std::abs(x) <= kFloraMaxCoordMeters && std::abs(y) <= kFloraMaxCoordMeters;
+	}
+
 	bool floraRectWithinLimits(const FloraRect& rect) {
+		if (!floraPointWithinWorld(rect.minX, rect.minY) || !floraPointWithinWorld(rect.maxX, rect.maxY)) {
+			return false;
+		}
 		const float width = rect.maxX - rect.minX;
 		const float height = rect.maxY - rect.minY;
 		if (!std::isfinite(width) || !std::isfinite(height) || width <= 0.0F || height <= 0.0F || width > kFloraMaxSpanMeters ||

@@ -41,6 +41,12 @@ namespace assets {
 	inline constexpr float	  kFloraMaxSpanMeters = 500.0F;
 	inline constexpr int64_t kFloraMaxCells = 25000000;
 
+	// Largest world coordinate (either axis, either sign) a flora query accepts: 2^24 m, where
+	// a float stops holding whole metres, so the 1 m tile grid is no longer addressable. It is
+	// 32,768 chunks out, far inside int32 for world::worldToChunk, and leaves room for the
+	// crown padding and the near search half-size added to a query before it is gathered.
+	inline constexpr float kFloraMaxCoordMeters = 16777216.0F;
+
 	// Most trees one nearest-of-age query lists.
 	inline constexpr size_t kFloraNearestMax = 20;
 
@@ -104,9 +110,13 @@ namespace assets {
 	// size, and at least one. The cover grid and floraRectWithinLimits both count with this.
 	[[nodiscard]] int64_t floraAxisCells(float spanMeters);
 
-	// Whether `rect` can be measured: finite, above zero on both axes (so not inverted),
-	// each side at most kFloraMaxSpanMeters, and at most kFloraMaxCells cells in all.
-	// Check it before gathering anything for the rect.
+	// Whether the point is finite and within kFloraMaxCoordMeters of the origin on both axes.
+	// Check it before converting a query position to a chunk.
+	[[nodiscard]] bool floraPointWithinWorld(float x, float y);
+
+	// Whether `rect` can be measured: both corners within the world (floraPointWithinWorld),
+	// above zero on both axes (so not inverted), each side at most kFloraMaxSpanMeters, and
+	// at most kFloraMaxCells cells in all. Check it before gathering anything for the rect.
 	[[nodiscard]] bool floraRectWithinLimits(const FloraRect& rect);
 
 	// Whether the def is in the kTreeGroup placement group.

@@ -56,6 +56,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <iomanip>
+#include <limits>
 #include <unordered_map>
 
 namespace world_sim {
@@ -680,6 +681,9 @@ namespace world_sim {
 				!std::isfinite(nearY)) {
 				return {.status = 400, .body = R"({"error":"flora: age=<name> and near=x,y go together"})"};
 			}
+			if (!assets::floraPointWithinWorld(nearX, nearY)) {
+				return {.status = 400, .body = R"({"error":"flora: near must be within 16777216 m of the origin on both axes"})"};
+			}
 			const std::string defName = param(cmd, "def");
 			gather({nearX - kNearSearchMeters, nearY - kNearSearchMeters, nearX + kNearSearchMeters, nearY + kNearSearchMeters});
 			describeDefs();
@@ -691,8 +695,11 @@ namespace world_sim {
 				 << "],\"def\":\"" << jsonEscape(defName) << "\",\"searchHalfSizeM\":" << kNearSearchMeters << ",\"trees\":[";
 			for (size_t i = 0; i < trees.size(); ++i) {
 				const assets::FloraTreeSighting& t = trees[i];
-				json << (i == 0 ? "" : ",") << "{\"def\":\"" << jsonEscape(t.defName) << "\",\"x\":" << t.position.x << ",\"y\":" << t.position.y
-					 << ",\"ageClass\":\"" << jsonEscape(t.ageClass) << "\",\"variant\":" << t.variant << ",\"distance\":" << t.distance << "}";
+				// x and y round-trip exactly, so a position read back names the same tree; the distance stays at two decimals.
+				json << (i == 0 ? "" : ",") << "{\"def\":\"" << jsonEscape(t.defName) << "\",\"x\":" << std::defaultfloat
+					 << std::setprecision(std::numeric_limits<float>::max_digits10) << t.position.x << ",\"y\":" << t.position.y
+					 << std::fixed << std::setprecision(2) << ",\"ageClass\":\"" << jsonEscape(t.ageClass) << "\",\"variant\":" << t.variant
+					 << ",\"distance\":" << t.distance << "}";
 			}
 			json << "]}";
 			return {.body = json.str()};
@@ -719,7 +726,7 @@ namespace world_sim {
 		if (!assets::floraRectWithinLimits(rect)) {
 			return {
 				.status = 400,
-				.body = R"({"error":"flora: rect sides must be above 0 and at most 500 m, and the rect at most 25 million 0.1 m cells"})"
+				.body = R"({"error":"flora: rect sides must be above 0 and at most 500 m, the rect at most 25 million 0.1 m cells, and every coordinate within 16777216 m of the origin"})"
 			};
 		}
 
