@@ -184,6 +184,15 @@ namespace ecs {
 				   assets::isItemEdible(def->capabilities.harvestable->yieldDefName);
 		}
 
+		/// The memo key for a colonist's reach: what every remembered verdict, and a failed route, depends on.
+		[[nodiscard]] SourceReachMemo::Key reachKey(const NavigationSystem::Reach& reach, const Memory& memory) {
+			return {.regionId = reach.startRegionId,
+					.regionGeneration = reach.startRegionGeneration,
+					.beliefVersion = memory.beliefVersion,
+					.reachRoot = reach.from.root,
+					.startTri = reach.from.root < 0 ? reach.from.startTri : -1};
+		}
+
 		/// Skill names for work types
 		constexpr const char* kSkillFarming = "Farming";
 		constexpr const char* kSkillCrafting = "Crafting";
@@ -1175,7 +1184,7 @@ namespace ecs {
 					// denial) invalidates it and clears movementTarget.active to stop the
 					// colonist instead of beelining through the believed wall.
 					const NavRequestOutcome outcome = requestNavPath(entity, task.targetPosition, position, memory, movementTarget);
-					applyNavOutcome(task, outcome, memory);
+					applyNavOutcome(task, outcome);
 					if (outcome == NavRequestOutcome::Routed) {
 						// Show "Re-routing" for ~30 ticks so the player sees the colonist react
 						// to a newly-discovered wall before the panel reverts to "Going to".
@@ -1201,7 +1210,7 @@ namespace ecs {
 				// again if the route still can't be planned.
 				movementTarget.active = true;
 				const NavRequestOutcome outcome = requestNavPath(entity, task.targetPosition, position, memory, movementTarget);
-				applyNavOutcome(task, outcome, memory);
+				applyNavOutcome(task, outcome);
 			}
 
 			// Chain-leg repath: a multi-phase task (Haul Pickup->Deposit, PlacePackaged
@@ -1218,7 +1227,7 @@ namespace ecs {
 			if (auto* navPath = world->getComponent<NavPath>(entity); task.state == TaskState::Moving &&
 				movementTarget.active && (navPath == nullptr || !navPath->valid)) {
 				const NavRequestOutcome outcome = requestNavPath(entity, task.targetPosition, position, memory, movementTarget);
-				applyNavOutcome(task, outcome, memory);
+				applyNavOutcome(task, outcome);
 			}
 
 			// Drain the Rerouting hold counter so "Re-routing" is a brief visible beat.
@@ -1312,9 +1321,8 @@ namespace ecs {
 						// A task whose route failed on a mesh or belief that has since changed is a fresh
 						// pick: keeping it would leave the colonist stopped with a stale failure and no new
 						// route request.
-						const bool failedOnStaleNav = task.navState == NavState::CantFindWayTo && m_navSystem != nullptr &&
-													  (task.blockedNavGeneration != m_navSystem->generation() ||
-													   task.blockedBeliefVersion != memory.beliefVersion);
+						const bool failedOnStaleNav =
+							task.navState == NavState::CantFindWayTo && task.blockedReachStamp != m_reachStamp;
 						isSameTask = sameType && sameTarget && samePlaceTarget && !failedOnStaleNav;
 					}
 				}
@@ -1535,23 +1543,18 @@ namespace ecs {
 		// reach subtree of the same mesh, so one surrounded by unreachable sources doesn't test them all
 		// again every decision. A source anywhere else is judged live (by which regions cover it, no
 		// mesh involved) and never remembered, since which region a point falls in moves on its own.
+		m_reachStamp = 0;
 		if (reach.has_value()) {
-			sourceReach.keep(
-				{.regionId = reach->startRegionId,
-				 .regionGeneration = reach->startRegionGeneration,
-				 .beliefVersion = memory.beliefVersion,
-				 .reachRoot = reach->from.root,
-				 .startTri = reach->from.root < 0 ? reach->from.startTri : -1},
-				2 * Memory::kMaxWorldEntities
-			);
+			const SourceReachMemo::Key key = reachKey(*reach, memory);
+			m_reachStamp = key.stamp();
+			sourceReach.keep(key, 2 * Memory::kMaxWorldEntities);
 			// The route to the need source this colonist was heading for just came back with no believed
 			// route, though the forest let it through (a known wall's room, a passage the funnel can't
 			// take). Remember it unreachable like any other verdict so the walk moves on to the next
-			// source, but only if no mesh and no belief changed since the failure, or the verdict would
-			// outlive what it was true for.
+			// source, but only under the key it failed under, or the verdict would outlive what it was
+			// true for.
 			if (currentTask.type == TaskType::FulfillNeed && currentTask.navState == NavState::CantFindWayTo &&
-				currentTask.needSourceKey != 0 && currentTask.blockedNavGeneration == m_navSystem->generation() &&
-				currentTask.blockedBeliefVersion == memory.beliefVersion &&
+				currentTask.needSourceKey != 0 && currentTask.blockedReachStamp == m_reachStamp &&
 				m_navSystem->sharesStartRegion(*reach, currentTask.targetPosition)) {
 				sourceReach.recordUnreachable(currentTask.needSourceKey);
 			}
@@ -2048,7 +2051,7 @@ namespace ecs {
 			const Memory* memory = world->getComponent<Memory>(entity);
 			if (memory != nullptr) {
 				const NavRequestOutcome outcome = requestNavPath(entity, task.targetPosition, position, *memory, movementTarget);
-				applyNavOutcome(task, outcome, *memory);
+				applyNavOutcome(task, outcome);
 			}
 		}
 	}
@@ -2139,6 +2142,9 @@ namespace ecs {
 			if (auto* velocity = world->getComponent<Velocity>(entity)) {
 				velocity->value = {0.0F, 0.0F};
 			}
+			if (auto* task = world->getComponent<Task>(entity)) {
+				task->blockedReachStamp = reachKey(m_navSystem->reachFrom(position.value, radius, belief), memory).stamp();
+			}
 			LOG_DEBUG(Engine, "[Nav] Entity %llu: no believed route to (%.2f, %.2f), stopping",
 				static_cast<unsigned long long>(entity), goal.x, goal.y);
 			return NavRequestOutcome::Blocked;
@@ -2167,7 +2173,7 @@ namespace ecs {
 		return NavRequestOutcome::Routed;
 	}
 
-	void AIDecisionSystem::applyNavOutcome(Task& task, NavRequestOutcome outcome, const Memory& memory) const {
+	void AIDecisionSystem::applyNavOutcome(Task& task, NavRequestOutcome outcome) const {
 		task.navStateHold = 0;
 		switch (outcome) {
 			case NavRequestOutcome::Routed:
@@ -2182,8 +2188,6 @@ namespace ecs {
 				return;
 			case NavRequestOutcome::Blocked:
 				task.navState = NavState::CantFindWayTo;
-				task.blockedNavGeneration = m_navSystem->generation();
-				task.blockedBeliefVersion = memory.beliefVersion;
 				return;
 		}
 	}
@@ -2388,7 +2392,7 @@ namespace ecs {
 			// deferred-route retry runs ahead of the control gate, so the order resumes on its own
 			// once a mesh build covers it.
 			const NavRequestOutcome outcome = requestNavPath(entity, goal, *position, *memory, *movementTarget);
-			applyNavOutcome(*task, outcome, *memory);
+			applyNavOutcome(*task, outcome);
 		}
 		return goal;
 	}

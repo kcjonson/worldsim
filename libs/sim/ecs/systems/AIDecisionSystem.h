@@ -162,7 +162,7 @@ private:
 	/// Record a route request's outcome as the task's nav state. Only Blocked is "can't find a way".
 	/// Waiting defers the route (AwaitingMesh) and stamps the current nav generation, so update()
 	/// requests it again once the generation moves; Routed and Unmeshed are ordinary travel.
-	void applyNavOutcome(struct Task& task, NavRequestOutcome outcome, const struct Memory& memory) const;
+	void applyNavOutcome(struct Task& task, NavRequestOutcome outcome) const;
 
 	/// Format a human-readable reason for an option
 	[[nodiscard]] static std::string formatOptionReason(
@@ -202,6 +202,9 @@ private:
 
 	/// Reused candidate storage for need-source queries, so a decision allocates nothing once it has grown
 	std::vector<SourceCandidate> m_sourceScratch;
+
+	/// SourceReachMemo::Key::stamp() of the colonist being decided this update (0 without a mesh)
+	std::uint64_t m_reachStamp = 0;
 
 	/// How often to re-evaluate tasks (seconds)
 	static constexpr float kReEvalInterval = 0.5F;

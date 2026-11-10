@@ -25,6 +25,16 @@ namespace ecs {
 			std::int32_t  reachRoot = -1;
 			std::int32_t  startTri = -1; // set only without a reach root: such a start reaches just its own triangle
 			bool		  operator==(const Key&) const = default;
+
+			/// A fingerprint of the key, small enough to stamp on a task: equal keys, equal stamps.
+			[[nodiscard]] std::uint64_t stamp() const {
+				std::uint64_t h = 1469598103934665603ULL;
+				for (const std::uint64_t v : {static_cast<std::uint64_t>(regionId), regionGeneration, beliefVersion,
+											  static_cast<std::uint64_t>(reachRoot), static_cast<std::uint64_t>(startTri)}) {
+					h = (h ^ v) * 1099511628211ULL;
+				}
+				return h;
+			}
 		};
 
 		/// Forget every verdict when the key changes, or once verdicts (forgotten sources' included)
