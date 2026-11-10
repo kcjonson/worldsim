@@ -6,32 +6,44 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <optional>
 #include <unordered_map>
+#include <vector>
 
 namespace ecs {
 
-	/// Reach verdicts for sources in the colonist's own nav region, by Memory key. Such a verdict depends
-	/// on the source's position, that region's mesh, the colonist's structural belief and which reach
-	/// subtree the colonist stands in, not on where in the subtree it stands or on what else it
-	/// remembers. So verdicts hold while the key does, and a colonist among unreachable sources tests each
-	/// one once, not every decision. A source in another region is never held here: the region a point
-	/// falls in can change without this region's mesh changing.
+	/// Reach verdicts for sources inside the nav regions holding the colonist, by Memory key. Such a
+	/// verdict depends on the source's position, those regions' meshes (each with the rect it covers), the colonist's
+	/// structural belief and which reach subtree it stands in within each, not on where in those subtrees
+	/// it stands or on what else it remembers. So verdicts hold while the key does, and a colonist among
+	/// unreachable sources tests each one once, not every decision. For a source outside every region
+	/// holding the colonist only a failed route is held (the route to the area's edge toward it depends
+	/// on those regions alone); a probe's answer for it isn't, since whether a region covers it changes
+	/// on its own.
 	struct SourceReachMemo {
-		struct Key {
-			std::int32_t  regionId = -1;		 // NavigationSystem::Reach::startRegionId
-			std::uint64_t regionGeneration = 0; // that region's mesh swap count
-			std::uint64_t beliefVersion = 0;	 // Memory::beliefVersion
+		/// One region holding the colonist, as far as its verdicts can tell (NavigationSystem::RegionReach).
+		struct RegionKey {
+			std::int32_t  regionId = -1;
+			std::uint64_t meshGeneration = 0; // its mesh, and with it the rect that mesh covers
 			std::int32_t  reachRoot = -1;
 			std::int32_t  startTri = -1; // set only without a reach root: such a start reaches just its own triangle
-			bool		  operator==(const Key&) const = default;
+			bool		  operator==(const RegionKey&) const = default;
+		};
+		struct Key {
+			std::uint64_t		   beliefVersion = 0; // Memory::beliefVersion
+			std::vector<RegionKey> regions;			  // every region holding the colonist, by ascending id
+			bool				   operator==(const Key&) const = default;
 
 			/// A fingerprint of the key, small enough to stamp on a task: equal keys, equal stamps.
 			[[nodiscard]] std::uint64_t stamp() const {
 				std::uint64_t h = 1469598103934665603ULL;
-				for (const std::uint64_t v : {static_cast<std::uint64_t>(regionId), regionGeneration, beliefVersion,
-											  static_cast<std::uint64_t>(reachRoot), static_cast<std::uint64_t>(startTri)}) {
-					h = (h ^ v) * 1099511628211ULL;
+				const auto	  mix = [&h](std::uint64_t v) { h = (h ^ v) * 1099511628211ULL; };
+				mix(beliefVersion);
+				for (const RegionKey& r : regions) {
+					for (const std::uint64_t v :
+						 {static_cast<std::uint64_t>(r.regionId), r.meshGeneration, static_cast<std::uint64_t>(r.reachRoot),
+						  static_cast<std::uint64_t>(r.startTri)}) {
+						mix(v);
+					}
 				}
 				return h;
 			}
@@ -66,7 +78,7 @@ namespace ecs {
 		}
 
 	  private:
-		std::optional<Key>						key;
+		Key										key;
 		std::unordered_map<std::uint64_t, bool> verdicts;
 	};
 

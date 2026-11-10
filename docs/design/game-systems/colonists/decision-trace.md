@@ -237,7 +237,7 @@ auto nearest = findNearestReachableWithCapability(
 
 A known source the colonist can't reach (across a river, say) is skipped for the next nearest, and every known source is tried before the option is `NoSource`, so a colonist goes without only when nothing it knows of is reachable. The Hunger option and the gather-food option share one food source: the nearest reachable known harvestable whose yield is edible. A bed or toilet that can't be reached falls back to the ground, as when none is known.
 
-"Can't reach" means two things. The pre-check: no route through the nav forest, or the source sits in a different built nav region (routes stay inside one region). And a route that actually came back "no believed route": the colonist remembers that source as unreachable until its region's mesh, its wall belief, or the part of the map it stands in changes, then tries it again.
+"Can't reach" means two things. The pre-check: no route through the nav forest, or no built nav region holds both the colonist and the source (routes stay inside one region). A source outside every region ranks after every reachable one inside, and is walked toward region by region. And a route that actually came back "no believed route": the colonist remembers that source as unreachable until its region's mesh, its wall belief, or the part of the map it stands in changes, then tries it again.
 
 ---
 

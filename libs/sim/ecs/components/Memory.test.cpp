@@ -168,6 +168,7 @@ namespace {
 	constexpr uint16_t kSourceMask = 1U << static_cast<unsigned>(kSourceCapability);
 
 	const auto anySource = [](uint64_t, const ecs::KnownWorldEntity&) { return true; };
+	const auto sameRank = [](const ecs::KnownWorldEntity&) { return std::uint8_t{0}; };
 
 } // namespace
 
@@ -187,8 +188,8 @@ TEST(MemoryQueries, NearestSourceTieBreaksOnKeyNotInsertionOrder) {
 	ASSERT_TRUE(northFirst.rememberWorldEntity(north, kDefId, kSourceMask));
 	ASSERT_TRUE(northFirst.rememberWorldEntity(east, kDefId, kSourceMask));
 
-	const auto a = ecs::findNearestReachableWithCapability(eastFirst, kSourceCapability, {0.0F, 0.0F}, anySource, anywhere, scratch);
-	const auto b = ecs::findNearestReachableWithCapability(northFirst, kSourceCapability, {0.0F, 0.0F}, anySource, anywhere, scratch);
+	const auto a = ecs::findNearestReachableWithCapability(eastFirst, kSourceCapability, {0.0F, 0.0F}, anySource, sameRank, anywhere, scratch);
+	const auto b = ecs::findNearestReachableWithCapability(northFirst, kSourceCapability, {0.0F, 0.0F}, anySource, sameRank, anywhere, scratch);
 	ASSERT_TRUE(a.has_value());
 	ASSERT_TRUE(b.has_value());
 	EXPECT_EQ(a->position, expected);
@@ -208,7 +209,7 @@ TEST(MemoryQueries, NearestReachableSourceWalksEveryCandidate) {
 
 	size_t	   tested = 0;
 	const auto found = ecs::findNearestReachableWithCapability(
-		memory, kSourceCapability, {0.0F, 0.0F}, anySource,
+		memory, kSourceCapability, {0.0F, 0.0F}, anySource, sameRank,
 		[&](uint64_t, const glm::vec2& p) {
 			++tested;
 			return p == farthest;
@@ -220,7 +221,7 @@ TEST(MemoryQueries, NearestReachableSourceWalksEveryCandidate) {
 	EXPECT_EQ(tested, kSources) << "each candidate tested once, nearest first";
 
 	EXPECT_FALSE(ecs::findNearestReachableWithCapability(
-					 memory, kSourceCapability, {0.0F, 0.0F}, anySource, [](uint64_t, const glm::vec2&) { return false; },
+					 memory, kSourceCapability, {0.0F, 0.0F}, anySource, sameRank, [](uint64_t, const glm::vec2&) { return false; },
 					 scratch
 	)
 					 .has_value());
@@ -242,7 +243,7 @@ TEST(MemoryQueries, SourceReachMemoTestsEachSourceOncePerKey) {
 	const auto query = [&](const ecs::SourceReachMemo::Key& key) {
 		memo.keep(key, 2 * ecs::Memory::kMaxWorldEntities);
 		return ecs::findNearestReachableWithCapability(
-			memory, kSourceCapability, {0.0F, 0.0F}, anySource,
+			memory, kSourceCapability, {0.0F, 0.0F}, anySource, sameRank,
 			[&](uint64_t sourceKey, const glm::vec2& position) {
 				return memo.reachable(sourceKey, position, [&](const glm::vec2& p) {
 					++probes;
@@ -253,7 +254,7 @@ TEST(MemoryQueries, SourceReachMemoTestsEachSourceOncePerKey) {
 		);
 	};
 
-	const ecs::SourceReachMemo::Key meshA{.regionId = 0, .regionGeneration = 1, .beliefVersion = 0, .reachRoot = 5};
+	const ecs::SourceReachMemo::Key meshA{.beliefVersion = 0, .regions = {{.regionId = 0, .meshGeneration = 1, .reachRoot = 5}}};
 	EXPECT_FALSE(query(meshA).has_value());
 	EXPECT_EQ(probes, kSources) << "the first decision tests every source";
 	EXPECT_FALSE(query(meshA).has_value());
@@ -266,7 +267,7 @@ TEST(MemoryQueries, SourceReachMemoTestsEachSourceOncePerKey) {
 	EXPECT_EQ(learned->position, reachableSource);
 	EXPECT_EQ(probes, kSources + 1) << "only the new source is tested";
 
-	const ecs::SourceReachMemo::Key meshB{.regionId = 0, .regionGeneration = 2, .beliefVersion = 0, .reachRoot = 5};
+	const ecs::SourceReachMemo::Key meshB{.beliefVersion = 0, .regions = {{.regionId = 0, .meshGeneration = 2, .reachRoot = 5}}};
 	EXPECT_TRUE(query(meshB).has_value());
 	EXPECT_EQ(probes, 2 * kSources + 2) << "a nav rebuild tests every source again, nearest first, up to the reachable one";
 }

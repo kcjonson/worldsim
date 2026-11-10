@@ -184,13 +184,17 @@ namespace ecs {
 				   assets::isItemEdible(def->capabilities.harvestable->yieldDefName);
 		}
 
-		/// The memo key for a colonist's reach: what every remembered verdict, and a failed route, depends on.
-		[[nodiscard]] SourceReachMemo::Key reachKey(const NavigationSystem::Reach& reach, const Memory& memory) {
-			return {.regionId = reach.startRegionId,
-					.regionGeneration = reach.startRegionGeneration,
-					.beliefVersion = memory.beliefVersion,
-					.reachRoot = reach.from.root,
-					.startTri = reach.from.root < 0 ? reach.from.startTri : -1};
+		/// The memo key for a colonist's reach: what every remembered verdict, and a failed route, depends
+		/// on. Fills `out`, reusing its storage.
+		void fillReachKey(const NavigationSystem::Reach& reach, const Memory& memory, SourceReachMemo::Key& out) {
+			out.beliefVersion = memory.beliefVersion;
+			out.regions.clear();
+			for (const auto& region : reach.regions) {
+				out.regions.push_back({.regionId = region.id,
+									   .meshGeneration = region.meshGeneration,
+									   .reachRoot = region.from.root,
+									   .startTri = region.from.root < 0 ? region.from.startTri : -1});
+			}
 		}
 
 		/// Skill names for work types
@@ -1197,7 +1201,7 @@ namespace ecs {
 			}
 
 			// Deferred-route retry. requestNavPath holds a route it can't plan yet (no mesh built,
-			// or an endpoint outside every built region) and applyNavOutcome parks the task in
+			// or the colonist outside every built region) and applyNavOutcome parks the task in
 			// AwaitingMesh with the nav generation it was deferred at. Nothing else would request
 			// it again: replan-on-discovery needs a live route, the chain-leg repath below needs an
 			// active target, and a re-eval that re-selects the same option keeps the task
@@ -1209,6 +1213,21 @@ namespace ecs {
 				// The hold switched movement off; re-arm it for the request, which switches it off
 				// again if the route still can't be planned.
 				movementTarget.active = true;
+				const NavRequestOutcome outcome = requestNavPath(entity, task.targetPosition, position, memory, movementTarget);
+				applyNavOutcome(task, outcome);
+			}
+
+			// Edge-leg retry. A leg toward a goal beyond the colonist's regions ends by stopping him inside
+			// his region's recenter margin, and the recenter's swap re-plans the next leg (replan above).
+			// When no build comes (water or a wall cut the leg short of the margin, so his region has no
+			// reason to move), ask for the next leg on the periodic cadence, so the walk finds one or ends
+			// as no route (stalledWalkingToward) instead of standing there forever.
+
+			if (auto* navPath = world->getComponent<NavPath>(entity);
+				navPath != nullptr && navPath->valid && navPath->endsShortOfGoal &&
+				navPath->current >= navPath->waypoints.size() && task.state == TaskState::Moving &&
+				task.timeSinceEvaluation >= kReEvalInterval && m_navSystem != nullptr &&
+				!m_navSystem->isBuildingAround(position.value)) {
 				const NavRequestOutcome outcome = requestNavPath(entity, task.targetPosition, position, memory, movementTarget);
 				applyNavOutcome(task, outcome);
 			}
@@ -1529,57 +1548,62 @@ namespace ecs {
 		const geometry::nav::BeliefFilter belief{&memory.knownSegments, &memory.knownOpenings};
 		const bool						  haveMesh = (m_navSystem != nullptr) && m_navSystem->hasMesh();
 
-		// Everything this colonist can reach, from one start-side climb of the nav forest; each
-		// target test is then a locate and a subtree check. No mesh: nothing is provably unreachable.
-		std::optional<NavigationSystem::Reach> reach;
+		// Everything this colonist can reach, from one start-side climb of the nav forest per region
+		// holding it; each target test is then a locate and a subtree check. No mesh: nothing is
+		// provably unreachable.
+		const NavigationSystem::Reach* reach = nullptr;
 		if (haveMesh) {
-			reach = m_navSystem->reachFrom(position.value, agentRadius, belief);
+			m_navSystem->reachFrom(position.value, agentRadius, belief, m_reach);
+			reach = &m_reach;
 		}
 		const auto canReach = [&](const glm::vec2& target) {
-			return !reach.has_value() || m_navSystem->reaches(*reach, target);
+			return reach == nullptr || m_navSystem->reaches(*reach, target);
 		};
 
-		// Verdicts for sources in the colonist's own region are remembered while it stays in the same
-		// reach subtree of the same mesh, so one surrounded by unreachable sources doesn't test them all
-		// again every decision. A source anywhere else is judged live (by which regions cover it, no
-		// mesh involved) and never remembered, since which region a point falls in moves on its own.
+		// Verdicts for sources inside the regions holding the colonist are remembered while it stays in
+		// the same reach subtree of the same meshes, so one surrounded by unreachable sources doesn't
+		// test them all again every decision. A source anywhere else is judged live (by which regions
+		// cover it, no mesh involved) and never remembered, since that changes on its own.
 		m_reachStamp = 0;
-		if (reach.has_value()) {
-			const SourceReachMemo::Key key = reachKey(*reach, memory);
-			m_reachStamp = key.stamp();
-			sourceReach.keep(key, 2 * Memory::kMaxWorldEntities);
+		if (reach != nullptr) {
+			fillReachKey(*reach, memory, m_reachKey);
+			m_reachStamp = m_reachKey.stamp();
+			sourceReach.keep(m_reachKey, 2 * Memory::kMaxWorldEntities);
 			// The route to the need source this colonist was heading for just came back with no believed
 			// route, though the forest let it through (a known wall's room, a passage the funnel can't
 			// take). Remember it unreachable like any other verdict so the walk moves on to the next
 			// source, but only under the key it failed under, or the verdict would outlive what it was
 			// true for.
 			if (currentTask.type == TaskType::FulfillNeed && currentTask.navState == NavState::CantFindWayTo &&
-				currentTask.needSourceKey != 0 && currentTask.blockedReachStamp == m_reachStamp &&
-				m_navSystem->sharesStartRegion(*reach, currentTask.targetPosition)) {
+				currentTask.needSourceKey != 0 && currentTask.blockedReachStamp == m_reachStamp) {
 				sourceReach.recordUnreachable(currentTask.needSourceKey);
 			}
 		}
 		const auto canReachSource = [&](uint64_t sourceKey, const glm::vec2& sourcePosition) {
-			if (!reach.has_value()) {
+			if (reach == nullptr) {
 				return true;
 			}
-			return m_navSystem->sharesStartRegion(*reach, sourcePosition) ? sourceReach.reachable(sourceKey, sourcePosition, canReach)
-																		   : canReach(sourcePosition);
+			return m_navSystem->coversGoal(*reach, sourcePosition) ? sourceReach.reachable(sourceKey, sourcePosition, canReach)
+																   : canReach(sourcePosition);
 		};
 		// Drop a source already found unreachable before anything else looks at it.
 		const auto notKnownUnreachable = [&](uint64_t sourceKey, const KnownWorldEntity& known) {
-			return !reach.has_value() || !sourceReach.knownUnreachable(sourceKey) ||
-				   !m_navSystem->sharesStartRegion(*reach, known.position);
+			return reach == nullptr || !sourceReach.knownUnreachable(sourceKey);
 		};
 		const auto anywhere = [](uint64_t, const glm::vec2&) { return true; };
 		const auto anySource = [](uint64_t, const KnownWorldEntity&) { return true; };
 
 		// A need targets the nearest remembered source the colonist can reach, so known sources across
-		// a river don't hide a reachable one farther off.
-		const auto findNeedSource = [&](assets::CapabilityType capability, const auto& accept, const auto& reachable) {
-			return findNearestReachableWithCapability(memory, capability, position.value, accept, reachable, m_sourceScratch);
+		// a river don't hide a reachable one farther off. A source inside a region holding the colonist
+		// beats any other, however near: one beyond them is a walk to the edge and a wait for his region
+		// to follow, and is the target only when nothing within reach is reachable.
+		const auto beyondReachLast = [&](const KnownWorldEntity& known) {
+			return static_cast<std::uint8_t>(reach != nullptr && !m_navSystem->coversGoal(*reach, known.position) ? 1 : 0);
 		};
-
+		const auto findNeedSource = [&](assets::CapabilityType capability, const auto& accept, const auto& reachable) {
+			return findNearestReachableWithCapability(memory, capability, position.value, accept, beyondReachLast, reachable,
+													  m_sourceScratch);
+		};
 		// With an empty pack, the one food source both the Hunger option and the gather-food option
 		// target: the nearest reachable remembered harvestable whose yield is edible. The gather
 		// option is on offer whenever the pack is empty, so this is probed even when Hunger is met.
@@ -1828,7 +1852,7 @@ namespace ecs {
 		// exists, or there's no nav system at all (headless/tests, direct movement). With a nav
 		// system but no mesh, emit no idle option; the colonist holds (see the no-option hold in
 		// selectTaskFromTrace) until the mesh lands. Needs and work keep their own options, but they
-		// too only MOVE once requestNavPath returns a route -- an off-area or pre-mesh leg HOLDS, it
+		// too only MOVE once requestNavPath returns a route -- a pre-mesh or off-area-colonist leg HOLDS, it
 		// does not slide blind. (Off-mesh stranding is handled separately by the snap-to-mesh
 		// recovery at the top of update().)
 		const bool canNavigate = (m_navSystem == nullptr) || haveMesh;
@@ -1887,34 +1911,21 @@ namespace ecs {
 				continue;
 			}
 			const bool needsTarget = option.taskType != TaskType::Wander && option.targetPosition.has_value();
-			// Snap only the task types whose action looks its target up by entity/footprint and so
-			// is satisfied by arriving ADJACENT: Harvest (incl. footprint clearing), Build, and
-			// Deconstruct. Their stored target is a CENTER that can sit in a navmesh hole -- a tree
-			// trunk's collision carves the tile out, so the pathfinder (which needs the goal point
-			// itself on a walkable triangle and never snaps) can never reach it. Snapping to the
-			// nearest walkable point makes the chop/clear/build reachable; a center already walkable
-			// snaps essentially in place. Haul/Craft are EXCLUDED: their actions validate arrival
-			// against the EXACT source/target position (haulSourcePosition / haulTargetPosition /
-			// station) within a tight tolerance, and their targets (loose piles, storage, stations)
-			// already sit on walkable ground -- snapping would move the nav goal off the tolerance-
-			// checked point and the action would report "not at source or target" forever.
-			const bool snapEligible = option.taskType == TaskType::Harvest ||
-									  option.taskType == TaskType::Build || option.taskType == TaskType::Deconstruct;
-			if (haveMesh && needsTarget && snapEligible) {
-				// nullopt means the target is outside every active sim region (off-area): drop the
-				// option to NoSource so the colonist prefers a reachable nearby source and never
-				// commits to an off-area target it would hold on forever.
-				// The snap nudge stays within HarvestActions' kPositionTolerance (0.5 m) of the target,
-				// so the colonist still registers "at source" on arrival. (The arbitration epic's
-				// locate-by-entity supersedes this position-based snap.)
-				const auto snapped = m_navSystem->nearestPathablePoint(option.targetPosition.value());
-				if (!snapped.has_value()) {
-					option.status = OptionStatus::NoSource; // off every active region: don't commit
+			// A target a region holding the colonist covers is resolved to where its route ends
+			// (routeGoalFor); one beyond them keeps its centre and is walked toward, and requestNavPath
+			// resolves it the same way once a region holding him covers it.
+			if (reach != nullptr && needsTarget && m_navSystem->coversGoal(*reach, option.targetPosition.value())) {
+				const auto routeGoal = routeGoalFor(option.taskType, option.targetPosition.value());
+				if (!routeGoal.has_value()) {
+					option.status = OptionStatus::NoSource; // its region has no walkable floor
 					continue;
 				}
-				option.targetPosition  = snapped;
-				option.targetReachable = false; // a moved target is tested where it now is
+				if (*routeGoal != option.targetPosition.value()) {
+					option.targetPosition  = routeGoal;
+					option.targetReachable = false; // a moved target is tested where it now is
+				}
 			}
+
 			if (needsTarget && !option.targetReachable && !canReach(option.targetPosition.value())) {
 				option.status = OptionStatus::NoSource; // unreachable: skip it rather than freeze on it
 				continue;
@@ -2053,6 +2064,46 @@ namespace ecs {
 		}
 	}
 
+	std::optional<glm::vec2> AIDecisionSystem::routeGoalFor(TaskType type, glm::vec2 target) const {
+		// Snap only the task types whose action looks its target up by entity/footprint and so is
+		// satisfied by arriving ADJACENT -- Harvest (incl. footprint clearing), Build, Deconstruct --
+		// and a player's move order (None), which just wants him as near the click as he can stand.
+		// A harvest/build target is a CENTER that can sit in a navmesh hole (a tree trunk's collision
+		// carves the tile out), which no route can end at. Haul/Craft are EXCLUDED: their actions
+		// validate arrival against the EXACT source/target position (haulSourcePosition /
+		// haulTargetPosition / station) within a tight tolerance, so snapping would move the route off
+		// the tolerance-checked point and the action would report "not at source or target" forever;
+		// an off-mesh one is left to fail its route. A target already on a walkable face stays put: the
+		// nearest-face snap measures to triangle edges, so on open ground (large faces) it would move a
+		// walkable target metres off. The snap nudge stays within HarvestActions' kPositionTolerance
+		// (0.5 m) of the target. (The arbitration epic's locate-by-entity supersedes this snap.)
+		const bool snapEligible = type == TaskType::Harvest || type == TaskType::Build || type == TaskType::Deconstruct ||
+								  type == TaskType::None;
+		if (!snapEligible || m_navSystem->isOnMesh(target)) {
+			return target;
+		}
+		return m_navSystem->nearestPathablePoint(target);
+	}
+
+	bool AIDecisionSystem::stalledWalkingToward(EntityID entity, const glm::vec2& goal, const Position& position) {
+		auto* task = world->getComponent<Task>(entity);
+		if (task == nullptr) {
+			return false;
+		}
+		const float toGoal = glm::distance(position.value, goal);
+		if (toGoal < task->edgeWalkBestDistance - kEdgeWalkMinProgressMeters) {
+			task->edgeWalkBestDistance = toGoal;
+			task->edgeWalkStalledLegs = 0;
+			return false;
+		}
+		// Only a leg he finished counts: a replan mid-leg (any region's swap) isn't a stall.
+		const auto* navPath = world->getComponent<NavPath>(entity);
+		if (navPath != nullptr && navPath->valid && navPath->endsShortOfGoal && navPath->current >= navPath->waypoints.size()) {
+			++task->edgeWalkStalledLegs;
+		}
+		return task->edgeWalkStalledLegs >= kEdgeWalkMaxStalledLegs;
+	}
+
 	AIDecisionSystem::NavRequestOutcome AIDecisionSystem::requestNavPath(
 		EntityID entity, const glm::vec2& goal, const Position& position, const Memory& memory,
 		MovementTarget& movementTarget) {
@@ -2085,21 +2136,17 @@ namespace ecs {
 			return NavRequestOutcome::Waiting;
 		}
 
-		// LOD seam: if either endpoint is outside the BUILT simulation area the exact mesh can't
-		// answer the query (the off-area leg is beyond LOD0, and there is no coarse far-field graph
-		// yet). A colonist may NOT slide blind toward an off-area goal -- that is the beeline this
-		// architecture forbids. HOLD instead, exactly like the no-mesh case: deactivate movement,
-		// invalidate any stale route. The deferred-route retry requests it again
-		// after each region build lands, so it routes once a build covers both endpoints.
-		//
-		// FUTURE LOD1: path to the area edge via LOD0, hand off to a coarse regional graph for the
-		// long-haul leg, re-enter LOD0 near the goal. Until that lands, off-area goals are held.
-		if (!m_navSystem->inSimArea(position.value) || !m_navSystem->inSimArea(goal)) {
+		// LOD seam: a colonist outside the BUILT simulation area has no mesh to plan from, and may
+		// NOT slide blind toward its goal -- that is the beeline this architecture forbids. HOLD
+		// instead, exactly like the no-mesh case: deactivate movement (MovementSystem then stops
+		// him), invalidate any stale route. The deferred-route retry requests it again after each
+		// region build lands.
+		if (!m_navSystem->inSimArea(position.value)) {
 			if (auto* navPath = world->getComponent<NavPath>(entity)) {
 				navPath->valid = false;
 			}
 			movementTarget.active = false;
-			LOG_DEBUG(Engine, "[Nav] Entity %llu: off-area endpoint, holding (no LOD0 route to (%.2f, %.2f))",
+			LOG_DEBUG(Engine, "[Nav] Entity %llu: colonist off every region, holding (no LOD0 route to (%.2f, %.2f))",
 				static_cast<unsigned long long>(entity), goal.x, goal.y);
 			return NavRequestOutcome::Waiting;
 		}
@@ -2116,7 +2163,44 @@ namespace ecs {
 		// synchronously inside requestPath, so there's no lifetime hazard.
 		const geometry::nav::BeliefFilter belief{&memory.knownSegments, &memory.knownOpenings};
 
-		auto path = m_navSystem->requestPath(position.value, goal, radius, belief);
+		// A goal no region holding the colonist covers (off every region, or only in a region he isn't
+		// in) can't be routed to directly. Route to the point in his regions nearest it instead:
+		// standing there puts him inside the recenter margin, his region follows him toward the goal,
+		// and the mesh swap re-requests this same goal (replan on a nav generation change) until a
+		// region holding him covers it. Arriving there isn't arriving at the goal. Legs that stop
+		// getting him closer (water in the way, a region that can't follow him) end the walk as no
+		// route, like any other, so the need moves on and retries when his reach changes.
+		// FUTURE LOD1: a coarse regional graph for the long-haul leg instead of region-by-region steps.
+		NavigationSystem::Reach from;
+		m_navSystem->reachFrom(position.value, radius, belief, from);
+		const bool							  goalBeyondReach = !m_navSystem->coversGoal(from, goal);
+		std::optional<std::vector<glm::vec2>> path;
+		if (goalBeyondReach) {
+			if (!stalledWalkingToward(entity, goal, position)) {
+				const auto staging = m_navSystem->stagingPointToward(from, position.value, goal);
+				if (!staging.has_value() && m_navSystem->isBuildingAround(position.value)) {
+					// No step from here yet, but his region is rebuilding (recentering on him, usually):
+					// hold for it like the no-mesh case; the deferred retry asks again once it lands.
+					if (auto* navPath = world->getComponent<NavPath>(entity)) {
+						navPath->valid = false;
+					}
+					movementTarget.active = false;
+					return NavRequestOutcome::Waiting;
+				}
+				if (staging.has_value()) {
+					path = m_navSystem->requestPath(position.value, *staging, radius, belief);
+				}
+			}
+		} else {
+			// A goal walked toward from beyond his regions kept its centre (or a click its raw point);
+			// now a region holding him covers it, route to where it resolves, as the option evaluation
+			// would have.
+			const Task*		taskNow	  = world->getComponent<Task>(entity);
+			const auto		routeGoal = routeGoalFor(taskNow != nullptr ? taskNow->type : TaskType::None, goal);
+			if (routeGoal.has_value()) {
+				path = m_navSystem->requestPath(position.value, *routeGoal, radius, belief);
+			}
+		}
 		if (!path.has_value()) {
 			// A mesh exists but the colonist's belief admits no route: a believed wall cuts the
 			// corridor. STOP rather than beeline dishonestly through that wall -- clear
@@ -2128,19 +2212,21 @@ namespace ecs {
 			}
 			movementTarget.active = false;
 			if (auto* task = world->getComponent<Task>(entity)) {
-				task->blockedReachStamp = reachKey(m_navSystem->reachFrom(position.value, radius, belief), memory).stamp();
+				SourceReachMemo::Key failedKey;
+				fillReachKey(from, memory, failedKey);
+				task->blockedReachStamp = failedKey.stamp();
 			}
 			LOG_DEBUG(Engine, "[Nav] Entity %llu: no believed route to (%.2f, %.2f), stopping",
 				static_cast<unsigned long long>(entity), goal.x, goal.y);
 			return NavRequestOutcome::Blocked;
 		}
-
 		// Attach or overwrite the route. waypoints[0] is ~the start, so steer toward
 		// index 1 when there's more than one point (skip the point we're standing on).
 		NavPath navPath;
 		navPath.waypoints = std::move(*path);
 		navPath.current = navPath.waypoints.size() >= 2 ? 1 : 0;
 		navPath.valid = true;
+		navPath.endsShortOfGoal = goalBeyondReach;
 		// Stamp the belief/nav versions this route was planned against, so the replan
 		// loop can detect staleness with a cheap compare (no re-query).
 		navPath.builtBeliefVersion = memory.beliefVersion;
@@ -2155,6 +2241,9 @@ namespace ecs {
 
 		LOG_DEBUG(Engine, "[Nav] Entity %llu: path to (%.2f, %.2f), %zu waypoints",
 			static_cast<unsigned long long>(entity), goal.x, goal.y, count);
+		// A route means go: a replan can land on a colonist stopped at the end of an edge leg (or by
+		// any other stop), and a valid route he never follows freezes him on a task kept as "the same".
+		movementTarget.active = true;
 		return NavRequestOutcome::Routed;
 	}
 
@@ -2337,24 +2426,32 @@ namespace ecs {
 		auto* task = world->getComponent<Task>(entity);
 		auto* movementTarget = world->getComponent<MovementTarget>(entity);
 		if (position == nullptr || task == nullptr || movementTarget == nullptr) {
+			LOG_DEBUG(Engine, "[AI] Entity %llu: move order to (%.2f, %.2f) refused, not a colonist that can move",
+				static_cast<unsigned long long>(entity), worldGoal.x, worldGoal.y);
 			return std::nullopt;
 		}
 
-		// Snap an unwalkable click (water, inside a wall, off the sim area) to the nearest pathable
-		// point so a near-miss click still walks the colonist as close as it can get. With no
-		// NavigationSystem (headless), take the raw goal -- there's no mesh to judge it against.
+		// Snap an unwalkable click (water, inside a wall) to the nearest walkable point in the regions
+		// the player can place in (his view's included), so a near-miss click still walks the colonist
+		// as close as it can get. A click no region holds (visible ground past the camera region's
+		// 64 m) keeps its point. Either way a goal beyond his own regions is walked toward like any
+		// other, resolved by routeGoalFor once a region of his covers it, and ends as no route if it
+		// can't be reached. With no NavigationSystem (headless), take the raw goal -- there's no mesh
+		// to judge it against.
 		float radius = 0.3F;
 		if (const auto* agentRadius = world->getComponent<AgentRadius>(entity)) {
 			radius = agentRadius->radiusMeters;
 		}
 		glm::vec2 goal = worldGoal;
-		if (m_navSystem != nullptr && !m_navSystem->isOnMesh(goal)) {
-			const auto snapped = m_navSystem->nearestPathablePoint(goal, radius);
-			if (!snapped.has_value()) {
-				return std::nullopt;  // nothing reachable near the click; leave the colonist be
+		if (m_navSystem != nullptr && !m_navSystem->isValidPosition(goal)) {
+			if (const auto snapped = m_navSystem->nearestValidPosition(goal, radius)) {
+				goal = *snapped;
+			} else {
+				LOG_DEBUG(Engine, "[AI] Entity %llu: move order to (%.2f, %.2f) is in no nav region, walking toward it",
+					static_cast<unsigned long long>(entity), goal.x, goal.y);
 			}
-			goal = *snapped;
 		}
+
 
 		// Express the walk as an ordinary Moving task so the existing repath-on-discovery and
 		// arrival hand-off carry it. type=None means ActionSystem does nothing on arrival -- the

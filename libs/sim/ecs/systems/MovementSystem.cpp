@@ -80,6 +80,13 @@ void MovementSystem::update(float deltaTime) {
 
             if (distance < threshold) {
                 ++navPath->current;
+                if (navPath->done() && navPath->endsShortOfGoal) {
+                    // At the area's edge on the way to an off-area goal: stand and wait for the
+                    // region to follow (the replan on its mesh swap takes the next leg).
+                    vel.value = {0.0f, 0.0f};
+                    target.active = false;
+                    continue;
+                }
                 if (navPath->done()) {
                     // Reached the goal: same arrival hand-off the direct-movement block performs.
                     vel.value = {0.0f, 0.0f};

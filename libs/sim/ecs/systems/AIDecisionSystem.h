@@ -16,7 +16,9 @@
 #include "../ISystem.h"
 #include "../components/MemoryQueries.h"
 #include "../components/Needs.h"
+#include "../components/SourceReachMemo.h"
 #include "../components/Task.h"
+#include "NavigationSystem.h"
 
 #include <functional>
 #include <glm/vec2.hpp>
@@ -35,8 +37,6 @@ class ChunkManager;
 }
 
 namespace ecs {
-
-class NavigationSystem;
 
 namespace test {
 class AIDecisionSystemTest;
@@ -164,6 +164,20 @@ private:
 	/// requests it again once the generation moves; Routed and Unmeshed are ordinary travel.
 	void applyNavOutcome(struct Task& task, NavRequestOutcome outcome) const;
 
+	/// Where a route to `target` for a task of `type` ends, judged on colonist regions: `target` itself,
+	/// or for an adjacent-satisfied task (Harvest, Build, Deconstruct, a move order) off a walkable face,
+	/// the nearest walkable point. nullopt when that snap finds no floor. Both the option evaluation
+	/// and requestNavPath resolve through it, so a target is decided one way.
+	[[nodiscard]] std::optional<glm::vec2> routeGoalFor(TaskType type, glm::vec2 target) const;
+
+	/// Walking toward a goal no region holding the colonist covers, one edge leg at a time: has he
+
+	/// finished kEdgeWalkMaxStalledLegs legs in a row without getting kEdgeWalkMinProgressMeters
+	/// closer? Then the walk is over (water in the way, a region that can't follow him).
+	[[nodiscard]] bool stalledWalkingToward(EntityID entity, const glm::vec2& goal, const struct Position& position);
+	static constexpr std::uint8_t kEdgeWalkMaxStalledLegs = 3;
+	static constexpr float		  kEdgeWalkMinProgressMeters = 1.0F;
+
 	/// Format a human-readable reason for an option
 	[[nodiscard]] static std::string formatOptionReason(
 		const struct EvaluatedOption& option,
@@ -203,8 +217,11 @@ private:
 	/// Reused candidate storage for need-source queries, so a decision allocates nothing once it has grown
 	std::vector<SourceCandidate> m_sourceScratch;
 
-	/// SourceReachMemo::Key::stamp() of the colonist being decided this update (0 without a mesh)
-	std::uint64_t m_reachStamp = 0;
+	/// Reused per decision: the colonist's reach, the memo key built from it, and its stamp (0 without
+	/// a mesh)
+	NavigationSystem::Reach m_reach;
+	SourceReachMemo::Key    m_reachKey;
+	std::uint64_t			m_reachStamp = 0;
 
 	/// How often to re-evaluate tasks (seconds)
 	static constexpr float kReEvalInterval = 0.5F;
