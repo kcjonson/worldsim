@@ -1609,6 +1609,10 @@ namespace assets {
 		return m_sharedScriptsPath / def.scriptPath.substr(kSharedPrefix.size());
 	}
 
+	std::filesystem::path AssetRegistry::preludeDir() const {
+		return m_sharedScriptsPath.empty() ? std::filesystem::path{} : m_sharedScriptsPath / "lib";
+	}
+
 	bool AssetRegistry::generateAsset(const std::string& defName, uint32_t seed, GeneratedAsset& outAsset) {
 		const AssetDefinition* def = getDefinition(defName);
 		if (def == nullptr) {
@@ -1639,7 +1643,7 @@ namespace assets {
 				}
 				LOG_DEBUG(Engine, "Resolved script: %s -> %s", def->scriptPath.c_str(), resolvedScriptPath.c_str());
 
-				LuaGenerator luaGen(resolvedScriptPath);
+				LuaGenerator luaGen(resolvedScriptPath, preludeDir());
 				return luaGen.generate(ctx, def->params, outAsset);
 			} catch (const std::exception& e) {
 				LOG_ERROR(Engine, "LuaGenerator error for '%s': %s", def->scriptPath.c_str(), e.what());

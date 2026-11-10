@@ -12,6 +12,7 @@
 #include <sol/sol.hpp>
 
 #include <cmath>
+#include <algorithm>
 #include <cstdint>
 #include <fstream>
 #include <limits>
@@ -82,10 +83,27 @@ namespace assets {
 	LuaEngine::LuaEngine(LuaEngine&&) noexcept = default;
 	LuaEngine& LuaEngine::operator=(LuaEngine&&) noexcept = default;
 
-	bool LuaEngine::initialize() {
+	std::vector<std::filesystem::path> LuaEngine::preludeFiles(const std::filesystem::path& dir) {
+		namespace fs = std::filesystem;
+		std::vector<fs::path> files;
+		std::error_code		  ec;
+		if (dir.empty() || !fs::is_directory(dir, ec)) {
+			return files;
+		}
+		for (const fs::directory_entry& entry : fs::directory_iterator(dir, ec)) {
+			if (entry.is_regular_file(ec) && entry.path().extension() == ".lua") {
+				files.push_back(entry.path());
+			}
+		}
+		std::sort(files.begin(), files.end(), [](const fs::path& a, const fs::path& b) { return a.filename() < b.filename(); });
+		return files;
+	}
+
+	bool LuaEngine::initialize(std::filesystem::path preludeDir) {
 		if (m_initialized) {
 			return true;
 		}
+		m_preludeDir = std::move(preludeDir);
 
 		try {
 			m_lua = std::make_unique<sol::state>();
@@ -309,6 +327,27 @@ namespace assets {
 		LOG_DEBUG(Engine, "Lua sandbox configured");
 	}
 
+	bool LuaEngine::runPrelude() {
+		for (const std::filesystem::path& file : preludeFiles(m_preludeDir)) {
+			std::ifstream in(file, std::ios::binary);
+			if (!in.is_open()) {
+				m_lastError = "Failed to open prelude file: " + file.string();
+				LOG_ERROR(Engine, "%s", m_lastError.c_str());
+				return false;
+			}
+			std::stringstream buffer;
+			buffer << in.rdbuf();
+			auto result = m_lua->script(buffer.str(), [](lua_State*, sol::protected_function_result pfr) { return pfr; }, "@" + file.string());
+			if (!result.valid()) {
+				sol::error err = result;
+				m_lastError = "Prelude file " + file.string() + " failed: " + err.what();
+				LOG_ERROR(Engine, "%s", m_lastError.c_str());
+				return false;
+			}
+		}
+		return true;
+	}
+
 	bool LuaEngine::executeGenerator(
 		const std::string&		 scriptPath,
 		const GenerationContext& ctx,
@@ -370,6 +409,10 @@ namespace assets {
 			// Clear and expose the output asset
 			outAsset.clear();
 			(*m_lua)["asset"] = &outAsset;
+
+			if (!runPrelude()) {
+				return false;
+			}
 
 			// Execute the script
 			auto result = m_lua->script(script, [](lua_State*, sol::protected_function_result pfr) { return pfr; });

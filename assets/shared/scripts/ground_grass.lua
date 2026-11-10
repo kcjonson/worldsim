@@ -39,37 +39,23 @@
 local P = period -- the def's <period>, meters
 local AREA = P * P
 local TAU = math.pi * 2
-local UP = -math.pi / 2
+local UP = lib.shape.up
 
-local rand, floor, sqrt, sin, cos, atan, exp, log, min, max =
-	math.random, math.floor, math.sqrt, math.sin, math.cos, math.atan, math.exp, math.log, math.min, math.max
+local rand, floor, sqrt, sin, cos, exp, log, min, max =
+	math.random, math.floor, math.sqrt, math.sin, math.cos, math.exp, math.log, math.min, math.max
 
-local function clamp(v, lo, hi)
-	return v < lo and lo or (v > hi and hi or v)
-end
-local function uniform(a, b)
-	return a + (b - a) * rand()
-end
-local function signed()
-	return rand() * 2 - 1
-end
-local function gauss()
-	return sqrt(-2 * log(1 - rand())) * cos(TAU * rand())
-end
--- Lognormal around the range's geometric middle, clamped to the range.
-local function lognormal(lo, hi, sigma)
-	return clamp(sqrt(lo * hi) * exp(sigma * gauss()), lo, hi)
-end
+local clamp = lib.num.clamp
+local uniform, signed, gauss, lognormal = lib.random.uniform, lib.random.signed, lib.random.gauss, lib.random.lognormal
+local stream = lib.random.stream
+local parseHex, hex, toLinear, toSrgb, mix, tone =
+	lib.color.parseHex, lib.color.hex, lib.color.toLinear, lib.color.toSrgb, lib.color.mixSrgb, lib.color.tone
+
 local function count(perSquareMeter)
 	return floor(perSquareMeter * AREA + 0.5)
 end
 
--- The family's shared streams and the height the next path takes. stream(id) reseeds math.random from
--- the variant's seed and a fixed id, scrambled so neighboring ids start far apart.
+-- The height the next path takes.
 local F = { now = 0, spacing = 0.12 }
-function F.stream(id)
-	math.randomseed(seed, (id * 0x9E3779B97F4A7C15) ~ 0x2545F4914F6CDD1D)
-end
 function F.at(h)
 	F.now = clamp(h, 0, 1)
 end
@@ -80,76 +66,11 @@ end
 
 -- Colors -------------------------------------------------------------------------------------
 
-local function parseHex(text)
-	local s = text:gsub("#", "")
-	return { tonumber(s:sub(1, 2), 16) / 255, tonumber(s:sub(3, 4), 16) / 255, tonumber(s:sub(5, 6), 16) / 255 }
-end
-local function hex(key, default)
-	return parseHex(getString(key, default))
-end
 
-local function toHsv(c)
-	local r, g, b = c[1], c[2], c[3]
-	local hi, lo = max(r, g, b), min(r, g, b)
-	local d = hi - lo
-	local h = 0
-	if d > 0 then
-		if hi == r then
-			h = ((g - b) / d) % 6
-		elseif hi == g then
-			h = (b - r) / d + 2
-		else
-			h = (r - g) / d + 4
-		end
-		h = h / 6
-	end
-	return h, hi > 0 and d / hi or 0, hi
-end
 
-local function fromHsv(h, s, v)
-	local i = floor(h * 6) % 6
-	local f = h * 6 - floor(h * 6)
-	local p, q, t = v * (1 - s), v * (1 - f * s), v * (1 - (1 - f) * s)
-	if i == 0 then
-		return { v, t, p }
-	elseif i == 1 then
-		return { q, v, p }
-	elseif i == 2 then
-		return { p, v, t }
-	elseif i == 3 then
-		return { p, q, v }
-	elseif i == 4 then
-		return { t, p, v }
-	end
-	return { v, p, q }
-end
 
--- c with its value scaled by vMul, hue turned by hueDeg (positive = warmer) and saturation scaled by sMul.
-local function tone(c, vMul, hueDeg, sMul)
-	local h, s, v = toHsv(c)
-	return fromHsv((h - hueDeg / 360) % 1, clamp(s * sMul, 0, 1), clamp(v * vMul, 0, 1))
-end
 
-local function mix(a, b, t)
-	return { a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, a[3] + (b[3] - a[3]) * t }
-end
 
-local function toLinear(c)
-	local out = {}
-	for i = 1, 3 do
-		local v = c[i]
-		out[i] = v <= 0.04045 and v / 12.92 or ((v + 0.055) / 1.055) ^ 2.4
-	end
-	return out
-end
-local function toSrgb(l)
-	local out = {}
-	for i = 1, 3 do
-		local v = clamp(l[i], 0, 1)
-		out[i] = v <= 0.0031308 and v * 12.92 or 1.055 * v ^ (1 / 2.4) - 0.055
-	end
-	return out
-end
 
 -- Params -------------------------------------------------------------------------------------
 
@@ -293,7 +214,7 @@ local kMaxLean = 1.25
 
 -- Fields -------------------------------------------------------------------------------------
 
-F.stream(1)
+stream(1)
 local noiseSeed = floor(rand() * 1000000)
 
 -- Periodic noise with a whole number of cycles across the tile, so it wraps exactly.
@@ -500,51 +421,9 @@ local function blob(x, y, r, n, wobble, aspect, rot, c, alpha, lod)
 	emit(c, alpha, lod)
 end
 
--- An upright fan rooted at (x, y): k spikes fanned symmetrically about dir with half-angle spread,
--- ascending (left to right through up) and jittered less than half a step so they stay in order,
--- the middle ones longest (len) and the outer ones shorter, curling outward by bend of their length
--- (positive curls clockwise: outward and down for a spike leaning right). One polygon: the root's
--- left corner, each spike (withSides adds a mid point on each side so it tapers with a curve), a
--- valley between neighbors at fill of the shorter one, so a fan is a solid mound with a spiky top,
--- the root's right corner. Written straight into the scratch polygon: fans are most of the vertices.
-local FA, FL, FB = {}, {}, {}
+-- An upright fan rooted at (x, y), drawn as one polygon; lib.shape.upFan has the shape.
 local function upFan(x, y, k, dir, spread, len, bend, hubHalf, fill, withSides, c, lod)
-	local step = 0.35 * spread / max(1, k - 1)
-	for i = 1, k do
-		local rel = k > 1 and (2 * (i - 1) / (k - 1) - 1) or 0
-		FA[i] = clamp(dir + spread * rel + (rand() - 0.5) * 2 * step, UP - kMaxLean, UP + kMaxLean)
-		FL[i] = len * uniform(0.75, 1.1) * (1 - 0.3 * rel * rel)
-		FB[i] = bend * rel + 0.1 * (rand() - 0.5)
-	end
-	local n = 1
-	SX[1], SY[1] = x - hubHalf * 1.5, y
-	local hw = hubHalf * 0.5
-	for i = 1, k do
-		local ai = FA[i]
-		local dx, dy = cos(ai), sin(ai)
-		local L = FL[i]
-		local b = FB[i] * L
-		local tx, ty = x + dx * L - dy * b, y + dy * L + dx * b
-		if withSides then
-			local mx, my = x + dx * L * 0.5 - dy * b * 0.3, y + dy * L * 0.5 + dx * b * 0.3
-			SX[n + 1], SY[n + 1] = mx + dy * hw, my - dx * hw
-			SX[n + 2], SY[n + 2] = tx, ty
-			SX[n + 3], SY[n + 3] = mx - dy * hw, my + dx * hw
-			n = n + 3
-		else
-			n = n + 1
-			SX[n], SY[n] = tx, ty
-		end
-		if i < k then
-			local an = FA[i + 1]
-			local r = fill * min(L, FL[i + 1])
-			local am = (ai + an) * 0.5
-			n = n + 1
-			SX[n], SY[n] = x + cos(am) * r, y + sin(am) * r
-		end
-	end
-	n = n + 1
-	SX[n], SY[n] = x + hubHalf * 1.5, y
+	local n = lib.shape.upFan(SX, SY, x, y, k, dir, spread, len, bend, hubHalf, fill, withSides, kMaxLean)
 	emitPoly(SX, SY, n, c, 1, lod)
 end
 
@@ -796,7 +675,7 @@ end
 -- Layout (everything placed before anything is drawn, so the far stack can mirror it) ---------
 
 -- Soil peeks where the grass is thin.
-F.stream(2)
+stream(2)
 local soils = weighted(count(soil.perM2), function(x, y)
 	local d = density(x, y)
 	return (1 - d) ^ 3
@@ -819,7 +698,7 @@ do
 	local sumR2, sumV, sumH, sumS = 0, 0, 0, 0
 	-- The family's candidates, each with its draws taken whether it's kept or not, then kept in order
 	-- where nothing kept lies within clumpSpacing: a member with wider spacing keeps a subset.
-	F.stream(3)
+	stream(3)
 	local candidates = poissonTorus(F.spacing)
 	for i, cl in ipairs(candidates) do
 		cl.id = i
@@ -866,7 +745,7 @@ end
 
 local tufts = {}
 for _, c in ipairs(clumps) do
-	F.stream(1000000 + c.id)
+	stream(1000000 + c.id)
 	local sigma = c.R * tuftSpread
 	local n = floor(lerp(tuftsPerClumpLo, tuftsPerClumpHi, c.d) + rand())
 	for k = 1, min(n, 63) do
@@ -896,7 +775,7 @@ end
 
 -- Clover patches: Thomas clusters around blue-noise parents. Clover is the brightest thing on the
 -- ground, so the patch sizes are normalized to the variant's expected total.
-F.stream(4)
+stream(4)
 local patches = blueNoise(count(clover.patchesPerM2), 0.6 / sqrt(max(clover.patchesPerM2, 0.01)))
 local clovers = {}
 do
@@ -923,7 +802,7 @@ end
 -- Wildflowers: clusters around blue-noise parents, their sizes normalized to the variant's expected
 -- total like clover, plus blue-noise singles.
 local flowers = {}
-F.stream(5)
+stream(5)
 do
 	local function head(x, y, species)
 		local size = uniform(flower.sizeLo, flower.sizeHi)
@@ -972,7 +851,7 @@ do
 end
 
 -- Broadleaf rosettes (blue noise), flat on the ground.
-F.stream(6)
+stream(6)
 local rosettes = blueNoise(count(rosette.perM2), 0.8 / sqrt(max(rosette.perM2, 0.01)))
 for _, ro in ipairs(rosettes) do
 	ro.k = floor(uniform(5, 9))
@@ -1038,7 +917,7 @@ end
 -- undergrowthDensity a square meter, fewer where the grass is thin, so the ground shows more there.
 -- Each fan is centered in a cell drawn from the open ones; covered cells leave the list as they turn up.
 local undergrowth = {}
-F.stream(7)
+stream(7)
 do
 	local n, cell = cover.n, cover.cell
 	local cap = count(underPerM2)
@@ -1268,7 +1147,7 @@ drawFarStack()
 
 F.at(0.06)
 rect(0, 0, P, P, groundColor, kCover)
-F.stream(8)
+stream(8)
 F.at(0.1)
 
 -- Litter: dark flecks and dead bits lying on the open ground, litterDensity a square meter of it,
@@ -1285,7 +1164,7 @@ for _ = 1, count(litter.perM2) do
 end
 
 -- Soil peeks: two or three overlapping blobs, a few darker specks, sometimes a dry edge.
-F.stream(9)
+stream(9)
 for _, s in ipairs(soils) do
 	F.at(0.04)
 	if rand() < 0.15 then
@@ -1305,7 +1184,7 @@ for _, s in ipairs(soils) do
 end
 
 -- Pebbles, mostly on the soil, each over a soft centered halo.
-F.stream(10)
+stream(10)
 for _ = 1, count(pebble.perM2) do
 	local x, y
 	if #soils > 0 and rand() < 0.7 then
@@ -1364,7 +1243,7 @@ do
 	local arrivals = {}
 	local horizon = 3 * nTuft / max(1, #tufts) + 3
 	for _, t in ipairs(tufts) do
-		F.stream(2000000 + t.id * 16)
+		stream(2000000 + t.id * 16)
 		local time = 0
 		for j = 1, 15 do
 			time = time - log(1 - rand())
@@ -1385,7 +1264,7 @@ do
 		blades[#blades + 1] = { id = 50000000 + i }
 	end
 	for _, b in ipairs(blades) do
-		F.stream(b.id)
+		stream(b.id)
 		local baseTone, tipTone, d, pv, ph
 		local t = b.tuft
 		b.tuft = nil
@@ -1436,7 +1315,7 @@ local drawItem = {
 	-- A tuft: its body fan, a lit fan standing a little higher in front of it, then its blades. The
 	-- taller tufts stand higher.
 	function(t)
-		F.stream(3000000 + t.id)
+		stream(3000000 + t.id)
 		local tall = F.within(t.len, tuftLenLo * 0.8, tuftLenHi * 1.1)
 		F.at(0.5 + 0.12 * tall)
 		upFan(t[1], t[2], t.k, t.dir, t.fan, t.len, tuftBend, t.hub, tuftFill, true, t.body, kCover)
@@ -1449,12 +1328,12 @@ local drawItem = {
 	end,
 	drawBlade,
 	function(cl)
-		F.stream(4000000 + cl.id)
+		stream(4000000 + cl.id)
 		trifoliate(cl[1], cl[2], cl.l, cl.c)
 	end,
 	-- Undergrowth: a low, splayed fan.
 	function(u)
-		F.stream(5000000 + u.id)
+		stream(5000000 + u.id)
 		F.at(0.28 + 0.08 * F.within(u.len, underLenLo, underLenHi))
 		upFan(u[1], u[2], u.k, u.dir, u.spread, u.len, tuftBend, u.hub, underFill, false, u.c, kCover)
 	end,
@@ -1462,7 +1341,7 @@ local drawItem = {
 	-- like the blade proxies, so the mips that drop the petals keep mip 0's mean), the petals and the
 	-- center over it.
 	function(f)
-		F.stream(6000000 + f.id)
+		stream(6000000 + f.id)
 		local s, x, y = f.size, f[1], f[2]
 		F.at(0.45)
 		blob(x, y, s * 0.62, 10, 0.1, 1, 0, underlayColor, underlayAlpha * 0.5, lodFor(s))

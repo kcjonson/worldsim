@@ -6,6 +6,7 @@
 #include "assets/IAssetGenerator.h"
 #include "assets/lua/LuaEngine.h"
 
+#include <filesystem>
 #include <memory>
 #include <string>
 
@@ -17,7 +18,8 @@ class LuaGenerator : public IAssetGenerator {
   public:
 	/// Create a Lua generator for a specific script
 	/// @param scriptPath Path to the Lua script file
-	explicit LuaGenerator(std::string scriptPath);
+	/// @param preludeDir Folder of prelude scripts that run before it (empty for none)
+	LuaGenerator(std::string scriptPath, std::filesystem::path preludeDir);
 	~LuaGenerator() override = default;
 
 	// Non-copyable (owns LuaEngine)
@@ -46,6 +48,7 @@ class LuaGenerator : public IAssetGenerator {
   private:
 	std::string m_scriptPath;
 	std::string m_name;
+	std::filesystem::path m_preludeDir;
 	LuaEngine m_engine;
 	bool m_initialized = false;
 };
