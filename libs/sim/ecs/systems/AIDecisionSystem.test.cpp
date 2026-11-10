@@ -3817,13 +3817,13 @@ namespace ecs::test {
 
 		// The retry must come from the rebuild: same region, same centre, a new mesh.
 		const glm::vec2 here = world->getComponent<Position>(colonist)->value;
-		const auto		regionBefore = nav->reachFrom(here, 0.3F);
+		const auto		regionBefore = reachOf(*nav, here, 0.3F);
 		const auto		centreBefore = nav->builtRegions().front().center;
 		rebuildRegionMesh();
-		const auto regionAfter = nav->reachFrom(here, 0.3F);
+		const auto regionAfter = reachOf(*nav, here, 0.3F);
 		ASSERT_EQ(nav->builtRegions().size(), 1U);
-		EXPECT_EQ(regionAfter.startRegionId, regionBefore.startRegionId);
-		EXPECT_NE(regionAfter.startRegionGeneration, regionBefore.startRegionGeneration) << "the region's mesh was rebuilt";
+		EXPECT_EQ(regionAfter.regions.at(0).id, regionBefore.regions.at(0).id);
+		EXPECT_NE(regionAfter.regions.at(0).meshGeneration, regionBefore.regions.at(0).meshGeneration) << "the region's mesh was rebuilt";
 		EXPECT_EQ(nav->builtRegions().front().center, centreBefore) << "and the region didn't move";
 
 		choseRoom = 0;
@@ -3848,6 +3848,145 @@ namespace ecs::test {
 
 		world->update(kTick);
 		EXPECT_EQ(getTask(colonist)->targetPosition, kOutside) << "the failure on the new mesh is recorded";
+	}
+
+	// Regions overlap in normal play: a region keeps its rect until its driver nears the edge, while a
+	// new driver's region is built beside it. These tests build that on open land: a colonist B drives
+	// a region around the origin and then steps west without it moving (-30..30); the viewport drives
+	// a second region east (16..76). The AI colonist stands in the overlap with water only in the east.
+	class AIDecisionOverlapTest : public AIDecisionFirstMeshTest {
+	  protected:
+		void SetUp() override {
+			AIDecisionFirstMeshTest::SetUp();
+			nav->setViewportRect({-200.0F, 0.0F}, {30.0F, 30.0F});
+			driver = world->createEntity();
+			world->addComponent<Position>(driver, Position{{0.0F, 0.0F}});
+			world->addComponent<Colonist>(driver, Colonist{"B"});
+			ASSERT_TRUE(pumpUntil(*nav, "B's region", [&] { return hasRegionCentredAt(0); }));
+
+			world->getComponent<Position>(driver)->value = {-15.0F, 0.0F}; // 15 m inside: B's region stays put
+			nav->setViewportRect({46.0F, 0.0F}, {30.0F, 30.0F});
+			ASSERT_TRUE(pumpUntil(*nav, "the east region", [&] {
+				return hasRegionCentredAt(46000) && hasRegionCentredAt(0) && !nav->isBuilding();
+			}));
+		}
+
+		[[nodiscard]] bool hasRegionCentredAt(std::int64_t xMm) const {
+			for (const auto& region : nav->builtRegions()) {
+				if (region.center.x == xMm && region.center.y == 0) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		EntityID driver = 0;
+		static constexpr glm::vec2 kInOverlap{25.0F, 0.0F}; // in both regions; B's (lower id) is its first
+		static constexpr glm::vec2 kEastOnly{45.0F, 0.0F};	// only in the east region
+	};
+
+	// The live case: the colonist stands in both regions, the water is 20 m away in only one of them.
+	// Resolving each point to its first region put them in different regions and gave no route.
+	TEST_F(AIDecisionOverlapTest, NeedReachesSourceThroughTheRegionHoldingBoth) {
+		ASSERT_TRUE(nav->requestPath(kInOverlap, kEastOnly, 0.3F).has_value()) << "the east region holds both";
+
+		const auto colonist = createColonist(kInOverlap);
+		satisfyAllNeeds(*getNeeds(colonist));
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+		setNeedValue(colonist, NeedType::Thirst, 40.0F);
+		addKnownEntity(colonist, kEastOnly, kWaterDefId, assets::CapabilityType::Drinkable);
+
+		world->update(kTick);
+		const auto* thirst = findOption(*getTrace(colonist), [](const EvaluatedOption& o) {
+			return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Thirst;
+		});
+		ASSERT_NE(thirst, nullptr);
+		EXPECT_EQ(thirst->status, OptionStatus::Selected);
+		EXPECT_TRUE(followingRoute(colonist)) << "the route through the east region was found";
+
+		// The region the route didn't use goes away (B walks off): the route still gets him there.
+		world->getComponent<Position>(driver)->value = {-300.0F, 0.0F};
+		bool arrived = false;
+		for (int i = 0; i < 200 && !arrived; ++i) {
+			world->update(kTick);
+			arrived = getTask(colonist)->state == TaskState::Arrived;
+		}
+		EXPECT_FALSE(hasRegionCentredAt(0)) << "B's old region was dropped";
+		EXPECT_TRUE(arrived) << "never reached the water";
+		EXPECT_LT(glm::distance(world->getComponent<Position>(colonist)->value, kEastOnly), 0.5F);
+	}
+
+	// Both points in both regions: the route comes from the first region (by id) holding both, every
+	// time, and the pre-check agrees.
+	TEST_F(AIDecisionOverlapTest, PairInSeveralRegionsRoutesTheSameEachTime) {
+		const glm::vec2 a{20.0F, 5.0F};
+		const glm::vec2 b{28.0F, -6.0F};
+		const auto		first = nav->requestPath(a, b, 0.3F);
+		ASSERT_TRUE(first.has_value());
+		for (int i = 0; i < 3; ++i) {
+			EXPECT_EQ(nav->requestPath(a, b, 0.3F), first);
+		}
+		EXPECT_TRUE(isReachable(*nav, a, b, 0.3F));
+		EXPECT_EQ(reachOf(*nav, a, 0.3F).regions.size(), 2U) << "the start is in both regions";
+	}
+
+	// The sim area is the colonist's own 30 m region; the viewport is far off.
+	class AIDecisionOffAreaTest : public AIDecisionFirstMeshTest {
+	  protected:
+		EntityID makeThirstyColonistWithItsOwnRegion() {
+			nav->setViewportRect({-400.0F, 0.0F}, {30.0F, 30.0F});
+			const auto colonist = createColonist({0.0F, 0.0F});
+			world->addComponent<Colonist>(colonist, Colonist{"A"});
+			satisfyAllNeeds(*getNeeds(colonist));
+			world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+			setNeedValue(colonist, NeedType::Thirst, 40.0F);
+			EXPECT_TRUE(pumpUntil(*nav, "its region", [&] { return nav->inSimArea({0.0F, 0.0F}) && !nav->isBuilding(); }));
+			return colonist;
+		}
+
+		[[nodiscard]] const EvaluatedOption* thirstOption(EntityID colonist) {
+			return findOption(*getTrace(colonist), [](const EvaluatedOption& o) {
+				return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Thirst;
+			});
+		}
+	};
+
+	// Water known only outside the sim area: the colonist walks to his region's edge, the region
+	// follows, and he gets there. Holding still for a build that would never come starved him.
+	TEST_F(AIDecisionOffAreaTest, ColonistWalksToAnOffAreaSource) {
+		const auto		colonist = makeThirstyColonistWithItsOwnRegion();
+		const glm::vec2 water{90.0F, 10.0F};
+		addKnownEntity(colonist, water, kWaterDefId, assets::CapabilityType::Drinkable);
+		ASSERT_FALSE(nav->inSimArea(water));
+
+		bool arrived = false;
+		for (int i = 0; i < 1500 && !arrived; ++i) {
+			world->update(kTick);
+			(void)pumpUntil(*nav, "builds to settle", [&] { return !nav->isBuilding(); });
+			const Task* task = getTask(colonist);
+			arrived = task->state == TaskState::Arrived && task->targetPosition == water;
+		}
+		EXPECT_TRUE(arrived) << "stuck at (" << world->getComponent<Position>(colonist)->value.x << ", "
+							 << world->getComponent<Position>(colonist)->value.y << ")";
+		EXPECT_LT(glm::distance(world->getComponent<Position>(colonist)->value, water), 0.5F);
+	}
+
+	// An off-area source is the target only when nothing inside the area is reachable, however near.
+	TEST_F(AIDecisionOffAreaTest, InAreaSourceBeatsNearerOffAreaOne) {
+		const auto		colonist = makeThirstyColonistWithItsOwnRegion();
+		const glm::vec2 offArea{32.0F, 0.0F};	// 32 m, just outside the region
+		const glm::vec2 inArea{-27.0F, -27.0F}; // 38 m, inside it
+		addKnownEntity(colonist, offArea, kWaterDefId, assets::CapabilityType::Drinkable);
+		addKnownEntity(colonist, inArea, kWaterDefId, assets::CapabilityType::Drinkable);
+		ASSERT_FALSE(nav->inSimArea(offArea));
+		ASSERT_TRUE(nav->inSimArea(inArea));
+
+		world->update(kTick);
+		const auto* thirst = thirstOption(colonist);
+		ASSERT_NE(thirst, nullptr);
+		EXPECT_EQ(thirst->status, OptionStatus::Selected);
+		ASSERT_TRUE(thirst->targetPosition.has_value());
+		EXPECT_EQ(*thirst->targetPosition, inArea);
 	}
 
 } // namespace ecs::test

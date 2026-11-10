@@ -550,22 +550,22 @@ TEST_F(NavigationSystemTest, ReachIdentifiesItsOwnRegionsMesh) {
 	world.addComponent<Position>(a, Position{posA});
 	world.addComponent<Colonist>(a, Colonist{"A"});
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "region A never built";
-	const NavigationSystem::Reach first = sys.reachFrom(posA, kAgentRadius);
-	ASSERT_GE(first.startRegionId, 0);
+	const NavigationSystem::Reach first = reachOf(sys, posA, kAgentRadius);
+	ASSERT_GE(first.regions.at(0).id, 0);
 
 	EntityID b = world.createEntity();
 	world.addComponent<Position>(b, Position{glm::vec2{100.0F, 0.0F}});
 	world.addComponent<Colonist>(b, Colonist{"B"});
 	ASSERT_TRUE(pumpUntil(sys, "region B", [&] { return sys.builtRegions().size() == 2U; })) << "region B never built";
-	const NavigationSystem::Reach afterB = sys.reachFrom(posA, kAgentRadius);
-	EXPECT_EQ(afterB.startRegionId, first.startRegionId);
-	EXPECT_EQ(afterB.startRegionGeneration, first.startRegionGeneration) << "region B's swap touched region A's key";
+	const NavigationSystem::Reach afterB = reachOf(sys, posA, kAgentRadius);
+	EXPECT_EQ(afterB.regions.at(0).id, first.regions.at(0).id);
+	EXPECT_EQ(afterB.regions.at(0).meshGeneration, first.regions.at(0).meshGeneration) << "region B's swap touched region A's key";
 
 	buildWall(cw, {10000, 10000}, {11000, 10000});
 	EXPECT_TRUE(pumpUntil(sys, "region A's wall-edit rebuild", [&] {
-		return sys.reachFrom(posA, kAgentRadius).startRegionGeneration != first.startRegionGeneration;
+		return reachOf(sys, posA, kAgentRadius).regions.at(0).meshGeneration != first.regions.at(0).meshGeneration;
 	})) << "region A's own swap left its key unchanged";
-	EXPECT_EQ(sys.reachFrom(posA, kAgentRadius).startRegionId, first.startRegionId);
+	EXPECT_EQ(reachOf(sys, posA, kAgentRadius).regions.at(0).id, first.regions.at(0).id);
 }
 
 // --- RRA* heuristic wiring + instrumentation (P3.5) --------------------------

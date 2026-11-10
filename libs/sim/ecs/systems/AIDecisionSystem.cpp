@@ -1521,29 +1521,36 @@ namespace ecs {
 		const geometry::nav::BeliefFilter belief{&memory.knownSegments, &memory.knownOpenings};
 		const bool						  haveMesh = (m_navSystem != nullptr) && m_navSystem->hasMesh();
 
-		// Everything this colonist can reach, from one start-side climb of the nav forest; each
-		// target test is then a locate and a subtree check. No mesh: nothing is provably unreachable.
-		std::optional<NavigationSystem::Reach> reach;
+		// Everything this colonist can reach, from one start-side climb of the nav forest per region
+		// holding it; each target test is then a locate and a subtree check. No mesh: nothing is
+		// provably unreachable.
+		const NavigationSystem::Reach* reach = nullptr;
 		if (haveMesh) {
-			reach = m_navSystem->reachFrom(position.value, agentRadius, belief);
+			m_navSystem->reachFrom(position.value, agentRadius, belief, m_reach);
+			reach = &m_reach;
 		}
 		const auto canReach = [&](const glm::vec2& target) {
-			return !reach.has_value() || m_navSystem->reaches(*reach, target);
+			return reach == nullptr || m_navSystem->reaches(*reach, target);
 		};
 
-		// Verdicts for sources in the colonist's own region are remembered while it stays in the same
-		// reach subtree of the same mesh, so one surrounded by unreachable sources doesn't test them all
-		// again every decision. A source anywhere else is judged live (by which regions cover it, no
-		// mesh involved) and never remembered, since which region a point falls in moves on its own.
-		if (reach.has_value()) {
-			sourceReach.keep(
-				{.regionId = reach->startRegionId,
-				 .regionGeneration = reach->startRegionGeneration,
-				 .beliefVersion = memory.beliefVersion,
-				 .reachRoot = reach->from.root,
-				 .startTri = reach->from.root < 0 ? reach->from.startTri : -1},
-				2 * Memory::kMaxWorldEntities
-			);
+		// Verdicts for sources inside the regions holding the colonist are remembered while it stays in
+		// the same reach subtree of the same meshes, so one surrounded by unreachable sources doesn't
+		// test them all again every decision. A source anywhere else is judged live (by which regions
+		// cover it, no mesh involved) and never remembered, since that changes on its own.
+		if (reach != nullptr) {
+			m_reachKey.beliefVersion = memory.beliefVersion;
+			m_reachKey.regions.clear();
+			for (const auto& region : reach->regions) {
+				m_reachKey.regions.push_back({.regionId = region.id,
+											  .meshGeneration = region.meshGeneration,
+											  .minX = region.rect.minX,
+											  .minY = region.rect.minY,
+											  .maxX = region.rect.maxX,
+											  .maxY = region.rect.maxY,
+											  .reachRoot = region.from.root,
+											  .startTri = region.from.root < 0 ? region.from.startTri : -1});
+			}
+			sourceReach.keep(m_reachKey, 2 * Memory::kMaxWorldEntities);
 			// The route to the need source this colonist was heading for just came back with no believed
 			// route, though the forest let it through (a known wall's room, a passage the funnel can't
 			// take). Remember it unreachable like any other verdict so the walk moves on to the next
@@ -1551,32 +1558,35 @@ namespace ecs {
 			// outlive what it was true for.
 			if (currentTask.type == TaskType::FulfillNeed && currentTask.navState == NavState::CantFindWayTo &&
 				currentTask.needSourceKey != 0 && currentTask.blockedNavGeneration == m_navSystem->generation() &&
-				currentTask.blockedBeliefVersion == memory.beliefVersion &&
-				m_navSystem->sharesStartRegion(*reach, currentTask.targetPosition)) {
+				currentTask.blockedBeliefVersion == memory.beliefVersion) {
 				sourceReach.recordUnreachable(currentTask.needSourceKey);
 			}
 		}
 		const auto canReachSource = [&](uint64_t sourceKey, const glm::vec2& sourcePosition) {
-			if (!reach.has_value()) {
+			if (reach == nullptr) {
 				return true;
 			}
-			return m_navSystem->sharesStartRegion(*reach, sourcePosition) ? sourceReach.reachable(sourceKey, sourcePosition, canReach)
-																		   : canReach(sourcePosition);
+			return m_navSystem->coversGoal(*reach, sourcePosition) ? sourceReach.reachable(sourceKey, sourcePosition, canReach)
+																   : canReach(sourcePosition);
 		};
 		// Drop a source already found unreachable before anything else looks at it.
 		const auto notKnownUnreachable = [&](uint64_t sourceKey, const KnownWorldEntity& known) {
-			return !reach.has_value() || !sourceReach.knownUnreachable(sourceKey) ||
-				   !m_navSystem->sharesStartRegion(*reach, known.position);
+			return reach == nullptr || !sourceReach.knownUnreachable(sourceKey);
 		};
 		const auto anywhere = [](uint64_t, const glm::vec2&) { return true; };
 		const auto anySource = [](uint64_t, const KnownWorldEntity&) { return true; };
 
 		// A need targets the nearest remembered source the colonist can reach, so known sources across
-		// a river don't hide a reachable one farther off.
-		const auto findNeedSource = [&](assets::CapabilityType capability, const auto& accept, const auto& reachable) {
-			return findNearestReachableWithCapability(memory, capability, position.value, accept, reachable, m_sourceScratch);
+		// a river don't hide a reachable one farther off. A source inside the sim area beats any outside
+		// it, however near: an off-area one is a walk to the area's edge and a wait for the region to
+		// follow, and is the target only when nothing inside the area is reachable.
+		const auto offAreaLast = [&](const KnownWorldEntity& known) {
+			return static_cast<std::uint8_t>(reach != nullptr && !m_navSystem->inSimArea(known.position) ? 1 : 0);
 		};
-
+		const auto findNeedSource = [&](assets::CapabilityType capability, const auto& accept, const auto& reachable) {
+			return findNearestReachableWithCapability(memory, capability, position.value, accept, offAreaLast, reachable,
+													  m_sourceScratch);
+		};
 		// With an empty pack, the one food source both the Hunger option and the gather-food option
 		// target: the nearest reachable remembered harvestable whose yield is edible. The gather
 		// option is on offer whenever the pack is empty, so this is probed even when Hunger is met.
@@ -2088,16 +2098,11 @@ namespace ecs {
 			return NavRequestOutcome::Waiting;
 		}
 
-		// LOD seam: if either endpoint is outside the BUILT simulation area the exact mesh can't
-		// answer the query (the off-area leg is beyond LOD0, and there is no coarse far-field graph
-		// yet). A colonist may NOT slide blind toward an off-area goal -- that is the beeline this
-		// architecture forbids. HOLD instead, exactly like the no-mesh case: deactivate movement,
-		// zero velocity, invalidate any stale route. The deferred-route retry requests it again
-		// after each region build lands, so it routes once a build covers both endpoints.
-		//
-		// FUTURE LOD1: path to the area edge via LOD0, hand off to a coarse regional graph for the
-		// long-haul leg, re-enter LOD0 near the goal. Until that lands, off-area goals are held.
-		if (!m_navSystem->inSimArea(position.value) || !m_navSystem->inSimArea(goal)) {
+		// LOD seam: a colonist outside the BUILT simulation area has no mesh to plan from, and may
+		// NOT slide blind toward its goal -- that is the beeline this architecture forbids. HOLD
+		// instead, exactly like the no-mesh case: deactivate movement, zero velocity, invalidate any
+		// stale route. The deferred-route retry requests it again after each region build lands.
+		if (!m_navSystem->inSimArea(position.value)) {
 			if (auto* navPath = world->getComponent<NavPath>(entity)) {
 				navPath->valid = false;
 			}
@@ -2122,7 +2127,20 @@ namespace ecs {
 		// synchronously inside requestPath, so there's no lifetime hazard.
 		const geometry::nav::BeliefFilter belief{&memory.knownSegments, &memory.knownOpenings};
 
-		auto path = m_navSystem->requestPath(position.value, goal, radius, belief);
+		// A goal outside every region is beyond LOD0. Route to the edge of the colonist's region
+		// nearest it instead: standing there puts the colonist inside the recenter margin, its region
+		// follows it toward the goal, and the mesh swap re-requests this same goal (replan on a nav
+		// generation change) until a build covers it. Arriving at the edge isn't arriving at the goal.
+		// FUTURE LOD1: a coarse regional graph for the long-haul leg instead of region-by-region steps.
+		const bool goalOffArea = !m_navSystem->inSimArea(goal);
+		std::optional<std::vector<glm::vec2>> path;
+		if (goalOffArea) {
+			if (const auto staging = m_navSystem->stagingPointToward(position.value, goal)) {
+				path = m_navSystem->requestPath(position.value, *staging, radius, belief);
+			}
+		} else {
+			path = m_navSystem->requestPath(position.value, goal, radius, belief);
+		}
 		if (!path.has_value()) {
 			// A mesh exists but the colonist's belief admits no route: a believed wall cuts the
 			// corridor. STOP rather than beeline dishonestly through that wall -- clear
@@ -2150,6 +2168,7 @@ namespace ecs {
 		navPath.waypoints = std::move(*path);
 		navPath.current = navPath.waypoints.size() >= 2 ? 1 : 0;
 		navPath.valid = true;
+		navPath.endsShortOfGoal = goalOffArea;
 		// Stamp the belief/nav versions this route was planned against, so the replan
 		// loop can detect staleness with a cheap compare (no re-query).
 		navPath.builtBeliefVersion = memory.beliefVersion;

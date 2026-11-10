@@ -58,10 +58,17 @@ namespace ecs {
 		}
 	}
 
+	[[nodiscard]] inline NavigationSystem::Reach reachOf(const NavigationSystem& nav, glm::vec2 start, float agentRadius,
+													  geometry::nav::BeliefFilter belief = {}) {
+		NavigationSystem::Reach reach;
+		nav.reachFrom(start, agentRadius, belief, reach);
+		return reach;
+	}
+
 	// One start, one goal: the reachFrom/reaches pair the AI runs over many goals.
 	[[nodiscard]] inline bool isReachable(const NavigationSystem& nav, glm::vec2 start, glm::vec2 goal, float agentRadius,
 										   geometry::nav::BeliefFilter belief = {}) {
-		return nav.reaches(nav.reachFrom(start, agentRadius, belief), goal);
+		return nav.reaches(reachOf(nav, start, agentRadius, belief), goal);
 	}
 
 	[[nodiscard]] inline bool pumpUntilMesh(NavigationSystem& nav) {

@@ -764,40 +764,40 @@ namespace ecs {
 	std::optional<std::vector<glm::vec2>>
 	NavigationSystem::requestPath(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
 								  gnav::BeliefFilter belief) const {
-		// Dispatch by position: both endpoints must lie in the SAME built region, else no route.
-		// The AI holds a route only when an endpoint is outside every region (requestNavPath's
-		// off-area branch); a goal in a different built region comes back here as no route, which
-		// requestNavPath reports as Blocked. Long-range routing across regions is Phase 2.
-		const int startRegion = regionContaining(startMeters);
-		const int goalRegion  = regionContaining(goalMeters);
-		if (startRegion < 0 || startRegion != goalRegion) {
-			return std::nullopt;
-		}
-		const SimulationRegion& region	= regions[static_cast<std::size_t>(startRegion)];
-		const gnav::NavMesh&	navMesh = region.navMesh;
-
+		// Dispatch by pair: try each built region whose rect holds both endpoints, in creation
+		// (ascending id) order, until one routes. Regions overlap, so the region a point
+		// resolves to alone can lack the other endpoint while another region's mesh holds both.
+		// No region holding both -> no route (requestNavPath reports it Blocked; long-range
+		// routing across regions is Phase 2).
 		const geometry::Vec2i64 startMm = nav::toMm(startMeters);
 		const geometry::Vec2i64 goalMm	= nav::toMm(goalMeters);
 		const std::int64_t radiusMm =
 			static_cast<std::int64_t>(std::llround(static_cast<double>(agentRadiusMeters) * 1000.0));
 
-		// RRA* heuristic: locate the goal triangle in THIS region and hand pathThrough the
-		// resumable reverse-search cache for it (keyed by region id + goal triangle).
-		gnav::RraCache*	   rra	   = nullptr;
-		const std::int32_t goalTri = gnav::locateTriangle(navMesh, goalMm);
-		if (goalTri >= 0) {
-			const RraKey key{region.id, goalTri};
-			if (rraCaches.size() >= kMaxRraCaches && rraCaches.find(key) == rraCaches.end()) {
-				rraCaches.clear();
+		for (const SimulationRegion& region : regions) {
+			if (!region.hasMesh() || !region.rect().contains(startMm) || !region.rect().contains(goalMm)) {
+				continue;
 			}
-			gnav::RraCache& cache = rraCaches[key];
-			cache.goalTri		  = goalTri;
-			rra					  = &cache;
-		}
+			const gnav::NavMesh& navMesh = region.navMesh;
 
-		const gnav::PathResult result = gnav::pathThrough(navMesh, startMm, goalMm, radiusMm, belief, rra);
+			// RRA* heuristic: locate the goal triangle in THIS region and hand pathThrough the
+			// resumable reverse-search cache for it (keyed by region id + goal triangle).
+			gnav::RraCache*	   rra	   = nullptr;
+			const std::int32_t goalTri = gnav::locateTriangle(navMesh, goalMm);
+			if (goalTri >= 0) {
+				const RraKey key{region.id, goalTri};
+				if (rraCaches.size() >= kMaxRraCaches && rraCaches.find(key) == rraCaches.end()) {
+					rraCaches.clear();
+				}
+				gnav::RraCache& cache = rraCaches[key];
+				cache.goalTri		  = goalTri;
+				rra					  = &cache;
+			}
 
-		if (result.reachable) {
+			const gnav::PathResult result = gnav::pathThrough(navMesh, startMm, goalMm, radiusMm, belief, rra);
+			if (!result.reachable) {
+				continue;
+			}
 			++navStats.totalQueries;
 			navStats.totalNodesExpanded += static_cast<std::uint64_t>(result.nodesExpanded);
 			navStats.lastNodesExpanded = result.nodesExpanded;
@@ -806,56 +806,71 @@ namespace ecs {
 					  static_cast<long long>(result.nodesExpanded), static_cast<long long>(result.peakOpenSet),
 					  static_cast<unsigned long long>(navStats.totalQueries),
 					  static_cast<unsigned long long>(navStats.totalNodesExpanded));
-		}
 
-		if (!result.reachable) {
-			return std::nullopt;
+			std::vector<glm::vec2> waypoints;
+			waypoints.reserve(result.points.size());
+			for (const geometry::Vec2i64& p : result.points) {
+				waypoints.push_back(nav::toMeters(p));
+			}
+			return waypoints;
 		}
-
-		std::vector<glm::vec2> waypoints;
-		waypoints.reserve(result.points.size());
-		for (const geometry::Vec2i64& p : result.points) {
-			waypoints.push_back(nav::toMeters(p));
-		}
-		return waypoints;
+		return std::nullopt;
 	}
 
-	NavigationSystem::Reach NavigationSystem::reachFrom(glm::vec2 startMeters, float agentRadiusMeters,
-														gnav::BeliefFilter belief) const {
-		Reach reach;
-		reach.belief	  = belief;
-		reach.startRegion = regionContaining(startMeters);
-		if (reach.startRegion >= 0) {
-			const SimulationRegion& region = regions[static_cast<std::size_t>(reach.startRegion)];
-			const std::int64_t		radiusMm =
-				static_cast<std::int64_t>(std::llround(static_cast<double>(agentRadiusMeters) * 1000.0));
-			reach.startRegionId			= region.id;
-			reach.startRegionGeneration = region.meshGeneration;
-			reach.from					= gnav::reachFrom(region.navMesh, nav::toMm(startMeters), radiusMm, belief);
+	void NavigationSystem::reachFrom(glm::vec2 startMeters, float agentRadiusMeters, gnav::BeliefFilter belief,
+									 Reach& out) const {
+		out.belief = belief;
+		out.regions.clear();
+		const geometry::Vec2i64 startMm = nav::toMm(startMeters);
+		const std::int64_t		radiusMm =
+			static_cast<std::int64_t>(std::llround(static_cast<double>(agentRadiusMeters) * 1000.0));
+		for (std::size_t r = 0; r < regions.size(); ++r) {
+			const SimulationRegion& region = regions[r];
+			if (!region.hasMesh() || !region.rect().contains(startMm)) {
+				continue;
+			}
+			out.regions.push_back({.index = static_cast<int>(r),
+								   .id = region.id,
+								   .meshGeneration = region.meshGeneration,
+								   .rect = region.rect(),
+								   .from = gnav::reachFrom(region.navMesh, startMm, radiusMm, belief)});
 		}
-		return reach;
 	}
 
-	bool NavigationSystem::sharesStartRegion(const Reach& reach, glm::vec2 goalMeters) const {
-		return reach.startRegion >= 0 && regionContaining(goalMeters) == reach.startRegion;
+	bool NavigationSystem::coversGoal(const Reach& reach, glm::vec2 goalMeters) const {
+		const geometry::Vec2i64 goalMm = nav::toMm(goalMeters);
+		return std::any_of(reach.regions.begin(), reach.regions.end(),
+						   [&](const RegionReach& r) { return r.rect.contains(goalMm); });
 	}
 
 	bool NavigationSystem::reaches(const Reach& reach, glm::vec2 goalMeters) const {
-		// No mesh under the start, or the goal off every region: can't prove unreachable, and
-		// requestNavPath holds that route until a build covers it.
-		if (reach.startRegion < 0) {
+		// No mesh under the start, or the goal off every region: can't prove unreachable.
+		// requestNavPath holds the first and walks toward the second.
+		if (reach.regions.empty() || regionContaining(goalMeters) < 0) {
 			return true;
 		}
-		const int goalRegion = regionContaining(goalMeters);
-		if (goalRegion < 0) {
-			return true;
+		// A region holding both points whose forest lets it through; none (including no region
+		// holding both) is the sound reject requestPath agrees with.
+		const geometry::Vec2i64 goalMm = nav::toMm(goalMeters);
+		for (const RegionReach& r : reach.regions) {
+			if (r.rect.contains(goalMm) &&
+				gnav::reaches(regions[static_cast<std::size_t>(r.index)].navMesh, r.from, goalMm, reach.belief)) {
+				return true;
+			}
 		}
-		// A goal in another built region: requestPath won't route between regions.
-		if (goalRegion != reach.startRegion) {
-			return false;
+		return false;
+	}
+
+	std::optional<glm::vec2> NavigationSystem::stagingPointToward(glm::vec2 startMeters, glm::vec2 goalMeters) const {
+		const int start = regionContaining(startMeters);
+		if (start < 0) {
+			return std::nullopt;
 		}
-		return gnav::reaches(regions[static_cast<std::size_t>(reach.startRegion)].navMesh, reach.from,
-							 nav::toMm(goalMeters), reach.belief);
+		const SimAabb			rect = regions[static_cast<std::size_t>(start)].rect();
+		const geometry::Vec2i64 goalMm = nav::toMm(goalMeters);
+		const geometry::Vec2i64 staged{std::clamp(goalMm.x, rect.minX + kStagingInsetMm, rect.maxX - kStagingInsetMm),
+									   std::clamp(goalMm.y, rect.minY + kStagingInsetMm, rect.maxY - kStagingInsetMm)};
+		return nearestPathableOnMesh(regions[static_cast<std::size_t>(start)].navMesh, nav::toMeters(staged));
 	}
 
 	namespace {

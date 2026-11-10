@@ -16,7 +16,9 @@
 #include "../ISystem.h"
 #include "../components/MemoryQueries.h"
 #include "../components/Needs.h"
+#include "../components/SourceReachMemo.h"
 #include "../components/Task.h"
+#include "NavigationSystem.h"
 
 #include <functional>
 #include <glm/vec2.hpp>
@@ -35,8 +37,6 @@ class ChunkManager;
 }
 
 namespace ecs {
-
-class NavigationSystem;
 
 namespace test {
 class AIDecisionSystemTest;
@@ -202,6 +202,10 @@ private:
 
 	/// Reused candidate storage for need-source queries, so a decision allocates nothing once it has grown
 	std::vector<SourceCandidate> m_sourceScratch;
+
+	/// Reused per decision: the colonist's reach and the memo key built from it
+	NavigationSystem::Reach m_reach;
+	SourceReachMemo::Key    m_reachKey;
 
 	/// How often to re-evaluate tasks (seconds)
 	static constexpr float kReEvalInterval = 0.5F;
