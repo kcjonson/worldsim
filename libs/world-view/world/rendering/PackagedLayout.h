@@ -1,5 +1,6 @@
 #pragma once
 
+#include "assets/AssetRegistry.h"
 #include "assets/placement/SpatialIndex.h" // PlacedEntity
 
 #include <glm/vec2.hpp>
@@ -47,6 +48,7 @@ namespace worldview {
 		// Crate + item share the ground baseline; equal anchorY + stable sort keeps the
 		// crate (built first) behind the item after the global depth sort.
 		out.crate.anchorY = bottomY;
+		out.crate.templateId = assets::AssetRegistry::Get().templateId(out.crate.defName, {});
 
 		out.item.defName   = itemDefName;
 		out.item.position  = {crateCenterX - scaledItemWidth * 0.5F, bottomY - scaledItemHeight - kItemLiftOffset};
@@ -54,6 +56,7 @@ namespace worldview {
 		out.item.scale	   = itemScale * kPackagedScaleFactor;
 		out.item.colorTint = itemColorTint;
 		out.item.anchorY   = bottomY;
+		out.item.templateId = assets::AssetRegistry::Get().templateId(itemDefName, {});
 		return out;
 	}
 

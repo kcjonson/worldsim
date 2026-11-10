@@ -9,6 +9,7 @@
 #include "assets/IAssetGenerator.h"
 #include "assets/MotionDef.h"
 #include "assets/TessellatedPaths.h"
+#include "assets/TreeTraits.h"
 
 #include <polygon/Polygon.h>
 #include <vector/Types.h>
@@ -23,6 +24,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <vector>
 
 namespace assets {
 
@@ -77,12 +79,41 @@ namespace assets {
 		/// @return Pointer to definition, or nullptr if not found
 		const AssetDefinition* getDefinition(const std::string& defName) const;
 
-		/// Generate or retrieve a cached tessellated mesh template for an asset.
-		/// For instanced assets (grass), this returns the single template.
-		/// For complex assets, this returns the default variant.
-		/// @param defName The definition name
-		/// @return Pointer to tessellated mesh, or nullptr if not found/failed
-		const renderer::TessellatedMesh* getTemplate(const std::string& defName);
+		/// The template id of a def's mesh for an instance with `traits`, building the template the
+		/// first time. One template per (def, age class, variant): a simple (SVG) asset is one
+		/// drawing, and groundcover renders its variants itself, so both map every traits value to
+		/// variant 0. The id is stable until the next clear and is what the renderers key their
+		/// GPU meshes and instanced runs by. 0 when the def is unknown or the traits are out of
+		/// its range (logged). A template whose generator fails keeps its id and has no mesh.
+		/// Thread-safe; generation and tessellation run outside the cache lock.
+		uint32_t templateId(const std::string& defName, TreeTraits traits);
+
+		/// The mesh of a template id, or nullptr for 0 or a template that failed to build.
+		const renderer::TessellatedMesh* getTemplate(uint32_t templateId) const;
+
+		/// getTemplate(templateId(defName, traits)).
+		const renderer::TessellatedMesh* getTemplate(const std::string& defName, TreeTraits traits);
+
+		/// The seed a template is generated with: 0 for a def with a single variant, else the
+		/// shared variantSeed hash of the def and age class name, at the variant.
+		[[nodiscard]] static uint32_t generationSeed(const AssetDefinition& def, TreeTraits traits);
+
+		/// The traits of a def's mature variant 0: the age class named "mature", or the first
+		/// when it has none of that name.
+		[[nodiscard]] static TreeTraits matureTraits(const AssetDefinition& def);
+
+		/// Whether every instance of the def draws in the Y-sorted upright stream (routesTall on
+		/// its mature variant 0's height). Builds that template the first time.
+		bool isTallDef(const std::string& defName);
+
+		/// The farthest any drawn point of a tall def's template reaches from its origin, times
+		/// the def's largest placement scale, over every template built so far. Every placed
+		/// static has its template built at placement, so this covers what can be on screen.
+		[[nodiscard]] float maxTallReachMeters() const { return m_maxTallReach.load(std::memory_order_relaxed); }
+
+		/// maxTallReachMeters over every template but groundcover, short ones included: how far
+		/// from its origin a click can land on any placed or dynamic entity.
+		[[nodiscard]] float maxReachMeters() const { return m_maxReach.load(std::memory_order_relaxed); }
 
 		/// Get the resolved motion (animation clips) for a def, or nullptr if it declares none.
 		/// Driver pivots are resolved against the def's SVG nodes (find_node, by authored node
@@ -90,20 +121,30 @@ namespace assets {
 		/// Rotation amps are returned in radians, posX/posY amps in meters. Lazily loaded + cached.
 		const MotionDef* getMotion(const std::string& defName);
 
-		/// Get the cached selection silhouette for a def (see AssetSilhouette).
+		/// Get the cached selection silhouette for a template (see AssetSilhouette).
 		/// Lazily rasterized from the tessellated template mesh triangles (fills AND stroke
 		/// bands) via geometry::silhouetteOfTriangles: `rings` at close 0, `hitRegion` at a
-		/// small close; holes filled, disjoint blobs kept separate. `valid` is false only when
-		/// the template has no geometry (no bounds-rect fallback). Thread-safe (own mutex, heavy
-		/// compute off-lock), safe to call from chunk workers like getTemplate.
-		const AssetSilhouette* getSilhouette(const std::string& defName);
+		/// small close; holes filled, disjoint blobs kept separate. Triangles under
+		/// kSilhouetteMinAlpha (shadows) are left out. `valid` is false only when nothing
+		/// opaque is drawn (no bounds-rect fallback). Thread-safe (own mutex, heavy compute
+		/// off-lock), safe to call from chunk workers like getTemplate.
+		const AssetSilhouette* getSilhouette(uint32_t templateId);
+
+		/// getSilhouette(templateId(defName, traits)).
+		const AssetSilhouette* getSilhouette(const std::string& defName, TreeTraits traits);
+
+		/// A triangle whose vertices are all below this alpha (a cast shadow) is not part of
+		/// the silhouette, so it is neither outlined, clicked, nor counted as canopy.
+		static constexpr float kSilhouetteMinAlpha = 0.5F;
 
 		/// Generate an asset directly (does not cache)
 		/// @param defName The definition name
-		/// @param seed Random seed for generation
+		/// @param seed Random seed for generation; Lua seeds math.random from it alone
 		/// @param outAsset Output generated asset
+		/// @param traits The variant being generated: Lua sees variantIndex and the age class
+		///        name as ageClass (nil for a def without age classes)
 		/// @return true if generation succeeded
-		bool generateAsset(const std::string& defName, uint32_t seed, GeneratedAsset& outAsset);
+		bool generateAsset(const std::string& defName, uint32_t seed, GeneratedAsset& outAsset, TreeTraits traits = {});
 
 		/// Build an uncached tessellated mesh for an asset at a given seed.
 		/// Simple assets ignore the seed (one drawing); procedural assets use it to
@@ -267,22 +308,63 @@ namespace assets {
 		/// Build string interning index from loaded definitions
 		void buildDefNameIndex();
 
-		std::unordered_map<std::string, AssetDefinition>		   definitions;
-		std::unordered_map<std::string, renderer::TessellatedMesh> templateCache;
+		struct TemplateKey {
+			std::string defName;
+			TreeTraits	traits;
+
+			bool operator==(const TemplateKey&) const = default;
+		};
+		struct TemplateKeyHash {
+			size_t operator()(const TemplateKey& key) const;
+		};
+
+		/// A template's mesh, or why there is none.
+		struct BuiltTemplate {
+			std::optional<renderer::TessellatedMesh> mesh;
+			std::string								 error; // set when the mesh is over kMaxMeshVertices
+		};
+		struct TemplateEntry {
+			std::optional<renderer::TessellatedMesh> mesh;
+			bool									 defTall = false;
+		};
+
+		/// The traits a template of `def` is keyed by (see templateId), or nullopt when out of range.
+		[[nodiscard]] static std::optional<TreeTraits> templateTraits(const AssetDefinition& def, TreeTraits traits);
+
+		/// Generates and tessellates one template. Touches no cache, so it runs on any thread.
+		[[nodiscard]] BuiltTemplate buildTemplate(const AssetDefinition& def, TreeTraits traits);
+
+		/// Files a built template under its key and returns its id; when another thread filed the
+		/// key first, that one's id. Resolves the def's routing first, outside the lock.
+		uint32_t insertTemplate(const AssetDefinition& def, TreeTraits traits, BuiltTemplate built);
+
+		/// Builds every variant of each def with age classes, in parallel, before the first chunk
+		/// asks for one. A variant over kMaxMeshVertices is an error in the validation report.
+		void prewarmTreeVariants();
+
+		/// Drops every template, silhouette, and resolved motion.
+		void clearCaches();
+
+		std::unordered_map<std::string, AssetDefinition> definitions;
+
+		// Templates by id - 1. unique_ptr keeps each entry's address stable while the vector grows,
+		// so getTemplate's pointer outlives the lock. Guarded by templateCacheMutex, which getTemplate
+		// holds only to look up or insert: chunk workers and the render thread both ask.
+		std::unordered_map<TemplateKey, uint32_t, TemplateKeyHash> m_templateIds;
+		std::vector<std::unique_ptr<TemplateEntry>>				m_templates;
+		mutable std::mutex										templateCacheMutex;
+		std::atomic<float>										m_maxTallReach{0.0F};
+		std::atomic<float>										m_maxReach{0.0F};
 
 		// Resolved motion per def (empty MotionDef = "resolved, has none"). Guarded separately.
 		std::unordered_map<std::string, MotionDef> m_motionCache;
 		mutable std::mutex						   m_motionCacheMutex;
 
-		// Lazily-computed selection silhouette per def. Guarded separately; the raster
+		// Lazily-computed selection silhouette per template id. Guarded separately; the raster
 		// rasterize/flood-fill runs off-lock (like getMotion), the cache lock is held only
 		// to check/insert. Rasterized from the template mesh triangles.
-		std::unordered_map<std::string, AssetSilhouette> m_silhouetteCache;
-		mutable std::mutex								 m_silhouetteCacheMutex;
-
-		// getTemplate lazily tessellates into templateCache and is called from
-		// chunk worker threads (entity mesh baking) as well as the render thread
-		mutable std::mutex templateCacheMutex;
+		std::unordered_map<uint32_t, AssetSilhouette> m_silhouetteCache;
+		mutable std::mutex							  m_silhouetteCacheMutex;
 
 		// Group index: group name → list of defNames that belong to it
 		std::unordered_map<std::string, std::vector<std::string>> groupIndex;

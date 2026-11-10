@@ -5,6 +5,7 @@
 #include <assets/AssetDefinition.h>
 #include <assets/AssetRegistry.h>
 #include <assets/GroundLayer.h>
+#include <assets/VariantSeed.h>
 #include <graphics/Color.h>
 #include <primitives/Primitives.h>
 #include <resources/RenderTarget.h>
@@ -141,15 +142,6 @@ namespace worldview {
 
 	GroundTileBaker::GroundTileBaker(const Args& newArgs)
 		: args(newArgs) {}
-
-	uint32_t GroundTileBaker::variantSeed(const std::string& seedGroup, uint32_t variant) {
-		uint32_t h = 2166136261U; // FNV-1a over the group
-		for (const char c : seedGroup) {
-			h ^= static_cast<uint8_t>(c);
-			h *= 16777619U;
-		}
-		return mix32(h ^ ((variant + 1U) * 0x9E3779B9U));
-	}
 
 	int GroundTileBaker::layerSize(const assets::AssetDefinition& def) {
 		const assets::GroundLayer layer = assets::groundLayer(def.ground.periodMeters, def.ground.pixelsPerMeter);
@@ -325,7 +317,7 @@ namespace worldview {
 		const auto build = [&](size_t first, size_t last) {
 			for (size_t v = first; v < last; ++v) {
 				variants[v].variant = static_cast<uint32_t>(v);
-				variants[v].seed = variantSeed(def->ground.seedGroup, static_cast<uint32_t>(v));
+				variants[v].seed = assets::variantSeed(def->ground.seedGroup, static_cast<uint32_t>(v));
 				built[v] = registry.buildPaths(bake.defName, variants[v].seed, variants[v].paths, density) ? 1 : 0;
 			}
 		};

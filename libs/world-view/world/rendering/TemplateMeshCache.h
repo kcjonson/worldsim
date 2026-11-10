@@ -1,10 +1,10 @@
 #pragma once
 
-// Memoizes AssetRegistry::getTemplate(defName) pointers per renderer, so the
-// registry lookup happens once per defName instead of per entity per frame.
+// Memoizes AssetRegistry::getTemplate(templateId) pointers per renderer, so the
+// registry's lock is taken once per template instead of per entity per frame.
 
-#include <string>
-#include <unordered_map>
+#include <cstdint>
+#include <vector>
 
 namespace renderer {
 struct TessellatedMesh;
@@ -12,14 +12,18 @@ struct TessellatedMesh;
 
 namespace worldview {
 
-/// Per-renderer cache of template meshes keyed by defName. The cached pointer
+/// Per-renderer cache of template meshes indexed by template id. The cached pointer
 /// (including null) is the registry's, so behavior matches a direct lookup.
 class TemplateMeshCache {
   public:
-	const renderer::TessellatedMesh* get(const std::string& defName);
+	const renderer::TessellatedMesh* get(uint32_t templateId);
 
   private:
-	std::unordered_map<std::string, const renderer::TessellatedMesh*> m_cache;
+	struct Slot {
+		const renderer::TessellatedMesh* mesh = nullptr;
+		bool							 resolved = false;
+	};
+	std::vector<Slot> m_slots;
 };
 
 }  // namespace worldview

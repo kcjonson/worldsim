@@ -661,9 +661,6 @@ namespace world_sim {
 				if (const auto* def = registry.getDefinition(e->defName); def != nullptr && assets::isTreeDef(*def)) {
 					t.isTree = true;
 					t.woodPerTree = assets::woodPerTree(*def);
-					if (const auto* sil = registry.getSilhouette(e->defName); sil != nullptr && sil->valid) {
-						t.rings = &sil->rings;
-					}
 					for (const assets::AgeClass& age : def->ageClasses) {
 						t.ageClassNames.push_back(age.name);
 					}
@@ -722,7 +719,11 @@ namespace world_sim {
 
 		gather({rect.minX - kCrownReachMeters, rect.minY - kCrownReachMeters, rect.maxX + kCrownReachMeters, rect.maxY + kCrownReachMeters});
 		describeDefs();
-		const assets::FloraMeasurement m = assets::measureFlora(rect, loadedAreas, entities, traits);
+		const assets::FloraMeasurement m =
+			assets::measureFlora(rect, loadedAreas, entities, traits, [&registry](const assets::PlacedEntity& tree) {
+				const assets::AssetSilhouette* sil = registry.getSilhouette(tree.templateId);
+				return sil != nullptr && sil->valid ? &sil->rings : nullptr;
+			});
 
 		std::ostringstream json;
 		json << std::fixed << std::setprecision(2) << "{\"rect\":[" << m.rect.minX << "," << m.rect.minY << "," << m.rect.maxX << ","

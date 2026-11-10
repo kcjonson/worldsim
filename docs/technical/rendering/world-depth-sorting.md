@@ -46,7 +46,7 @@ The only sort primitive in the codebase, `BatchRenderer`'s DrawGroup z-index sta
 Add `float anchorY` to `assets::PlacedEntity` = the bottom-most (max) world-Y of the renderable's mesh, its ground-contact line. Invariant: larger `anchorY` draws later, so it appears in front.
 
 Per-type derivation reconciles the two current position conventions into one rule:
-- **Static occluders** (trees, bushes, rocks): `anchorY = position.y + templateMaxY * scale`. Optionally snap to the `CollisionShape` trunk-base rect bottom (`offsetMeters.y + halfExtentsMeters.y`) where an asset defines one. Computed where tall occluders are gathered for the sorted stream, not baked into the frozen mesh.
+- **Static occluders** (trees, bushes, rocks): `anchorY = position.y + templateMaxY * scale`, where the template is the instance's own (def, age class, variant) mesh. Optionally snap to the `CollisionShape` trunk-base rect bottom (`offsetMeters.y + halfExtentsMeters.y`) where an asset defines one; not done yet, since today's oak and maple draw their trunk foot up to 1.1 m south of the rect. Computed once at placement and stored on the `PlacedEntity`, not baked into the frozen mesh.
 - **Dynamic colonists**: feet, `anchorY = position.y + meshMaxY * scale`, reusing the mesh bbox min/max already scanned in `DynamicEntityRenderSystem`.
 - **Packaged items / crates**: the existing bottom baseline. Keep crate-behind-item intra-pair order after the global sort (equal or epsilon-separated `anchorY`).
 
@@ -73,7 +73,7 @@ Each frame, in `EntityRenderer::renderInstanced`, after drawing the background (
 
 1. **Gather.** Collect the visible tall static occluders via `SpatialIndex::queryRect` over `computeVisibleBounds` (the same gather `BatchedEntityRenderer` already does) plus the dynamic ECS entities, into one vector of lightweight `{anchorY, const PlacedEntity*, isAnimated}` items, frustum-culled to the visible set.
 2. **Sort.** `std::stable_sort` ascending by `anchorY`.
-3. **Submit in order.** Emit each entity so submission order equals depth order. Preserve instancing by submitting consecutive same-`defName` non-animated entities as one `drawInstanced` run, breaking a run only where an actor or animated entity interleaves. Animated colonists flush their CPU per-part-deformed batch at their sorted position instead of dead-last, keeping the existing 16-bit index-overflow flush.
+3. **Submit in order.** Emit each entity so submission order equals depth order. Preserve instancing by submitting consecutive same-template non-animated entities as one `drawInstanced` run, breaking a run only where an actor or animated entity interleaves. Animated colonists flush their CPU per-part-deformed batch at their sorted position instead of dead-last, keeping the existing 16-bit index-overflow flush.
 
 Submission order equals depth order, so the UI `BatchRenderer` DrawGroup z-sort is not reused for the world; it stays a clean UI-only primitive.
 
@@ -83,6 +83,14 @@ Rejected alternatives, for the record:
 - **GL depth buffer.** Every world pass draws alpha-blended, anti-aliased cel-shaded edges; `GL_DEPTH_TEST` hard-rejects fragments and tears transparent/AA edges and overlapping canopies. The pure scaled-ortho camera makes a CPU painter sort exact anyway, so a depth buffer adds hazard with no benefit.
 - **Reuse the UI DrawGroup z-sort for the world.** The baked and instanced paths bypass `BatchRenderer` entirely; forcing all entities through per-`add*` groups defeats GPU instancing and, once any explicit z is set, pays a full `stable_sort` plus a complete emit-index-buffer rebuild every frame (measured in `libs/renderer/primitives/ZSort.bench.cpp`).
 - **Zoom-scaled depth bands.** More machinery for only approximate within-band ordering, plus band-boundary popping. Kept in reserve as a perf fallback (see Phasing).
+
+## Templates, routing, and the gather margin
+
+Added with tree variety (`docs/technical/asset-system/tree-variety.md`, R3). Every placed static and dynamic entity carries `PlacedEntity::templateId`, the registry's integer id for its (def, age class, variant) template, resolved once where the entity is made (placement, or `DynamicEntityRenderSystem` for actors). `InstancedEntityRenderer` keys its GPU meshes and its instanced runs by that id, so `emitSorted` does no string work per entity. A mesh handle starts with room for 4,096 instances and is re-uploaded at the next power of two when a run outgrows it.
+
+Tall or short is decided per def, not per instance: `AssetRegistry::isTallDef` measures the def's mature variant 0, unscaled, against `kShortFloraMaxHeight` (`FloraRouting.h`). Placement stores the answer in `isTallOccluder` and the bake skips exactly the entities that have it set, so the two can't disagree.
+
+The visible-rect gather is padded by `AssetRegistry::maxTallReachMeters`, the farthest any tall template draws from its origin times its def's largest placement scale, instead of a fixed 2 m. Trees whose crowns reach into the view from a trunk outside it are gathered.
 
 ## Walls & foundations as ECS entities
 
@@ -147,7 +155,8 @@ Benchmark methodology: capture frame time, draw calls, and entity/triangle count
 - `libs/world-view/world/rendering/InstancedEntityRenderer.cpp` — extract an "emit one entity" helper; fold animated colonists in at sorted position.
 - `libs/assets/assets/placement/BakedEntityMesh.cpp` / `BakedChunkRenderer.cpp` — expose template maxY, exclude tall occluders from the baked draw.
 - `libs/world-view/world/rendering/DynamicEntityRenderSystem.cpp` — dynamic `anchorY`.
-- `libs/assets/assets/placement/SpatialIndex.h` — `PlacedEntity.anchorY`, `queryRect`.
+- `libs/assets/assets/placement/SpatialIndex.h` — `PlacedEntity.anchorY`, `templateId`, `queryRect`.
+- `libs/assets/assets/placement/FloraRouting.h` — `kShortFloraMaxHeight` and the per-def tall rule.
 - `libs/world-view/world/rendering/BatchedEntityRenderer.cpp` — fallback parity.
 - `scenes/game/world/construction/DrawingSystem.*`, `ConstructionWorld`, `ecs/systems/ConstructionSystem`, `NavigationSystem`, `WallCollisionSystem` — walls/foundations as entities while keeping topology as nav/collision truth.
 - `libs/renderer/primitives/ZSort.bench.cpp` — benchmark reference.

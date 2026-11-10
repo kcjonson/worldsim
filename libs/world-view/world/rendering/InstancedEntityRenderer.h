@@ -2,8 +2,8 @@
 
 // InstancedEntityRenderer - dynamic ECS entities via GPU instancing.
 // Dynamic entities (from ECS) change position each frame, so we rebuild their
-// instance batches per frame and draw one batch per mesh type. Shared mesh
-// geometry (VBO/IBO) is uploaded once per defName and reused.
+// instance batches per frame and draw one batch per run of one template. Shared
+// mesh geometry (VBO/IBO) is uploaded once per template id and reused.
 
 #include "assets/placement/PlacementExecutor.h"
 #include "assets/placement/RenderContext.h"
@@ -17,8 +17,6 @@
 #include <math/Types.h>
 
 #include <cstdint>
-#include <string>
-#include <unordered_map>
 #include <vector>
 
 namespace renderer {
@@ -29,7 +27,7 @@ namespace worldview {
 
 /// Emits the Y-sorted upright stream (tall static occluders + dynamic ECS
 /// entities) in the order the caller supplies, so submission order == depth
-/// order. Consecutive same-defName non-animated entities are coalesced into one
+/// order. Consecutive same-template non-animated entities are coalesced into one
 /// GPU-instanced draw; animated colonists (per-part deformed) break the run and
 /// flush at their sorted position on the CPU triangle path.
 class InstancedEntityRenderer {
@@ -42,22 +40,28 @@ class InstancedEntityRenderer {
 	void setSelectionOutline(SelectionOutline o) { m_selectionOutline = std::move(o); }
 
   private:
-	// Maximum instances per mesh type for GPU instancing
-	// Set high enough to handle extreme zoom-out scenarios (observed 34k+ entities)
-	static constexpr uint32_t kMaxInstancesPerMesh = 50000;
+	// Instance room a mesh handle starts with. A run that outgrows its handle re-uploads
+	// it at the next power of two that holds the run, so a template drawn a few times a
+	// frame costs 128 KB and one carpeting a zoomed-out view grows to fit.
+	static constexpr uint32_t kInitialInstanceCapacity = 4096;
 
-	// Cache for GPU mesh handles (keyed by defName)
-	// These hold the SHARED mesh geometry (VBO/IBO) that all chunks reference;
-	// each handle releases its buffers when the map is destroyed
-	std::unordered_map<std::string, Renderer::InstancedMeshHandle> m_meshHandles;
+	// GPU mesh per template id: the SHARED geometry (VBO/IBO) every instance of the
+	// template draws, and the room in its instance buffer. Each handle releases its
+	// buffers when the vector is destroyed.
+	struct MeshSlot {
+		Renderer::InstancedMeshHandle handle;
+		uint32_t					  capacity = 0;
+		bool						  uploaded = false; // tried once; a failed upload is not retried every frame
+	};
+	std::vector<MeshSlot> m_meshSlots;
 
-	// Current run of consecutive same-defName non-animated entities, drawn as one
-	// drawInstanced call and flushed whenever the defName changes or an animated
+	// Current run of consecutive same-template non-animated entities, drawn as one
+	// drawInstanced call and flushed whenever the template changes or an animated
 	// entity interleaves (preserving depth order).
 	std::vector<Renderer::InstanceData> m_runInstances;
-	std::string							m_runDefName;
+	uint32_t							m_runTemplateId = 0;
 
-	// Memoized template meshes (keyed by defName)
+	// Memoized template meshes (by template id)
 	TemplateMeshCache m_templateCache;
 
 	// Per-frame CPU geometry for animated entities (per-part deformed, so not GPU-instanceable):
@@ -70,11 +74,8 @@ class InstancedEntityRenderer {
 	// entity-backed is selected). Drawn at its anchorY inside emitSorted.
 	SelectionOutline m_selectionOutline;
 
-	/// Get or create GPU mesh handle for a template
-	Renderer::InstancedMeshHandle& getOrCreateMeshHandle(
-		const std::string& defName,
-		const renderer::TessellatedMesh* mesh
-	);
+	/// The GPU mesh of a template, uploaded on first use with kInitialInstanceCapacity.
+	MeshSlot& meshSlot(uint32_t templateId, const renderer::TessellatedMesh& mesh);
 
 	/// Append one animated entity's per-part-deformed, screen-space triangles to
 	/// the CPU batch (m_anim*). animVertexBase tracks the batch's 16-bit index base.

@@ -50,6 +50,19 @@ A script that calls a helper often can alias it once at the top (`local clamp = 
 
 The prelude is part of the ground tile bake cache key: the names and bytes of every file in `lib/` are hashed with the generator script, so editing a helper re-bakes the defs that run. A generator is re-run from the files on disk each time, so the asset manager's Reload picks up an edited helper wherever it runs a generator again.
 
+## Globals and the seed
+
+The engine sets these globals before the prelude runs:
+
+| Global | What it holds |
+|--------|---------------|
+| `seed` | The generation seed. `math.random` is seeded from it alone, so it is already different for every variant. |
+| `variantIndex` | Which variant of its age class is being drawn, from 0. Set for every template the game draws (`AssetRegistry::templateId`). Generators drawn by seed alone (ground tiles, groundcover, `asset-cli render --seed`) see 0. |
+| `ageClass` | The age class name (`"sapling"`, `"mature"`, `"veteran"`) for a def with `<ageClasses>`, and nil for any other def. |
+| `period` | A ground def's `<period>` in metres; nil for other roles. |
+
+A template's seed comes from `AssetRegistry::generationSeed`: 0 for a def with a single variant, otherwise the hash ground tiles use (`assets::variantSeed`, `VariantSeed.h`) of the def name and age class name (`Flora_TreeOak:mature`), at the variant index. A def without age classes hashes its name alone. The seed is a pure function of (def, age class, variant), so a variant draws the same mesh every load.
+
 ## Script Structure
 
 Every generator script must define a `generate` function:
@@ -171,7 +184,7 @@ local copy = path:clone()
 
 ### Random Number Generator (RNG)
 
-Seeded RNG for deterministic generation. The seed comes from the variant index.
+Seeded RNG for deterministic generation. The seed is the `seed` global (see "Globals and the seed").
 
 ```lua
 -- Random float in range [min, max]

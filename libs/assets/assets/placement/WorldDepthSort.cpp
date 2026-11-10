@@ -1,5 +1,6 @@
 #include "WorldDepthSort.h"
 
+#include "assets/AssetRegistry.h"
 #include "assets/placement/RenderContext.h"
 
 #include <vector/Types.h>
@@ -29,7 +30,11 @@ namespace assets {
 
 	void WorldDepthGather::gather(const RenderContext& ctx, std::vector<DepthSortItem>& out, bool backgroundOnFastPath) {
 		out.clear();
-		const VisibleBounds vis = computeVisibleBounds(ctx.camera, ctx.viewportWidth, ctx.viewportHeight, ctx.pixelsPerMeter);
+		// Padded by the farthest a tall template draws from its origin, so a crown reaching into
+		// the view from a trunk outside it is gathered.
+		const VisibleBounds vis = computeVisibleBounds(
+			ctx.camera, ctx.viewportWidth, ctx.viewportHeight, ctx.pixelsPerMeter, AssetRegistry::Get().maxTallReachMeters()
+		);
 
 		// Visible static occluders, gathered live from the placement index (same
 		// per-chunk queryRect the batched path uses). anchorY + isTallOccluder were

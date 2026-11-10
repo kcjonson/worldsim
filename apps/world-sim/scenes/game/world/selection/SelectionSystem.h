@@ -149,12 +149,11 @@ class SelectionSystem {
 	/// not handleClick so the next same-spot click starts fresh.
 	void resetCycleState();
 
-	// Broad-phase pick radii only (centroid pre-cull / spatial query); the precise
-	// silhouette test decides the actual hit. Dynamic ECS types scan globally and
-	// pre-cull to kSelectionRadius; world entities widen to kWorldEntitySelectRadius so
-	// a large canopy far from its trunk anchor is still caught before the silhouette test.
-	static constexpr float kSelectionRadius = 2.0F;			 // meters
-	static constexpr float kWorldEntitySelectRadius = 8.0F;	 // meters
+	// Broad-phase pick radius only (centroid pre-cull); the precise silhouette test
+	// decides the actual hit. Dynamic ECS types scan globally and pre-cull to it. World
+	// entities query out to AssetRegistry::maxReachMeters instead, so a large canopy far
+	// from its trunk anchor is still caught before the silhouette test.
+	static constexpr float kSelectionRadius = 2.0F; // meters
 	static constexpr float kPixelsPerMeter = 8.0F;
 
 	// Thickness of the gold selection outline, in logical pixels.

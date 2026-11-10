@@ -4,9 +4,12 @@
 #include "assets/AssetRegistry.h"
 #include "assets/SvgPathNodes.h"
 #include "assets/TreeDefSchema.h"
+#include "assets/VariantSeed.h"
 #include "assets/lua/LuaGenerator.h"
+#include "assets/placement/FloraRouting.h"
 
 #include <silhouette/Silhouette.h>
+#include <threading/TaskPool.h>
 #include <utils/Log.h>
 #include <vector/MeshBounds.h>
 #include <vector/SVGLoader.h>
@@ -1328,6 +1331,7 @@ namespace assets {
 		// Validate on load so the game (at launch) and the Asset Manager share one
 		// report. No GL; safe on the load worker thread.
 		m_validationReport = AssetValidator::validate(folderPath, m_sharedScriptsPath);
+		prewarmTreeVariants();
 		LOG_INFO(
 			Engine, "Asset validation: %d error(s), %d warning(s)", m_validationReport.errorCount(), m_validationReport.warningCount()
 		);
@@ -1365,52 +1369,110 @@ namespace assets {
 		return nullptr;
 	}
 
-	const renderer::TessellatedMesh* AssetRegistry::getTemplate(const std::string& defName) {
-		// Guard the lazy tessellation cache: chunk workers baking entity meshes
-		// call this concurrently with the render thread
-		std::lock_guard<std::mutex> lock(templateCacheMutex);
-
-		// Check cache first
-		auto cacheIt = templateCache.find(defName);
-		if (cacheIt != templateCache.end()) {
-			return &cacheIt->second;
+	namespace {
+		/// "Flora_TreeOak age class 'mature' variant 3", or "Flora_TreePine variant 3" without age classes.
+		std::string describeTemplate(const AssetDefinition& def, TreeTraits traits) {
+			std::string out = def.defName;
+			if (!def.ageClasses.empty()) {
+				out += " age class '" + def.ageClasses[traits.ageClass].name + "'";
+			}
+			return out + " variant " + std::to_string(traits.variant);
 		}
 
-		// Get definition
-		const AssetDefinition* def = getDefinition(defName);
-		if (def == nullptr) {
-			LOG_ERROR(Engine, "Definition not found: %s", defName.c_str());
-			return nullptr;
+		/// Farthest vertex from the template origin, in meters.
+		float meshReach(const renderer::TessellatedMesh& mesh) {
+			float reachSq = 0.0F;
+			for (const auto& v : mesh.vertices) {
+				reachSq = std::max(reachSq, (v.x * v.x) + (v.y * v.y));
+			}
+			return std::sqrt(reachSq);
 		}
 
+		float meshHeight(const renderer::TessellatedMesh& mesh) {
+			if (mesh.vertices.empty()) {
+				return 0.0F;
+			}
+			float minY = mesh.vertices.front().y;
+			float maxY = minY;
+			for (const auto& v : mesh.vertices) {
+				minY = std::min(minY, v.y);
+				maxY = std::max(maxY, v.y);
+			}
+			return maxY - minY;
+		}
+
+		void raiseTo(std::atomic<float>& target, float value) {
+			float current = target.load(std::memory_order_relaxed);
+			while (value > current && !target.compare_exchange_weak(current, value, std::memory_order_relaxed)) {
+			}
+		}
+	} // namespace
+
+	size_t AssetRegistry::TemplateKeyHash::operator()(const TemplateKey& key) const {
+		const size_t traits = (static_cast<size_t>(key.traits.ageClass) << 16U) | key.traits.variant;
+		return std::hash<std::string>{}(key.defName) ^ (traits * 0x9E3779B97F4A7C15ULL);
+	}
+
+	std::optional<TreeTraits> AssetRegistry::templateTraits(const AssetDefinition& def, TreeTraits traits) {
+		if (def.assetType == AssetType::Simple || def.role == AssetRole::Groundcover) {
+			return TreeTraits{};
+		}
+		if (def.ageClasses.empty()) {
+			if (traits.ageClass != 0 || traits.variant >= std::max<uint32_t>(def.variantCount, 1U)) {
+				return std::nullopt;
+			}
+			return traits;
+		}
+		if (traits.ageClass >= def.ageClasses.size() || traits.variant >= def.ageClasses[traits.ageClass].variants) {
+			return std::nullopt;
+		}
+		return traits;
+	}
+
+	uint32_t AssetRegistry::generationSeed(const AssetDefinition& def, TreeTraits traits) {
+		const bool singleVariant =
+			def.ageClasses.empty() ? def.variantCount <= 1 : def.ageClasses.size() == 1 && def.ageClasses.front().variants <= 1;
+		if (singleVariant) {
+			return 0;
+		}
+		if (def.ageClasses.empty()) {
+			return variantSeed(def.defName, traits.variant);
+		}
+		return variantSeed(def.defName + ":" + def.ageClasses[traits.ageClass].name, traits.variant);
+	}
+
+	TreeTraits AssetRegistry::matureTraits(const AssetDefinition& def) {
+		for (size_t i = 0; i < def.ageClasses.size(); ++i) {
+			if (def.ageClasses[i].name == "mature") {
+				return {.ageClass = static_cast<uint8_t>(i), .variant = 0};
+			}
+		}
+		return {};
+	}
+
+	AssetRegistry::BuiltTemplate AssetRegistry::buildTemplate(const AssetDefinition& def, TreeTraits traits) {
+		BuiltTemplate			  out;
 		renderer::TessellatedMesh mesh;
 
-		if (def->assetType == AssetType::Simple) {
-			// Load SVG and tessellate directly
-			if (def->svgPath.empty()) {
-				LOG_ERROR(Engine, "Simple asset %s has no svgPath", defName.c_str());
-				return nullptr;
+		if (def.assetType == AssetType::Simple) {
+			if (def.svgPath.empty()) {
+				LOG_ERROR(Engine, "Simple asset %s has no svgPath", def.defName.c_str());
+				return out;
 			}
 
 			// Resolve SVG path relative to asset folder
-			std::string resolvedSvgPath = def->resolvePath(def->svgPath).string();
-			LOG_DEBUG(Engine, "Resolved SVG path: %s -> %s", def->svgPath.c_str(), resolvedSvgPath.c_str());
+			std::string resolvedSvgPath = def.resolvePath(def.svgPath).string();
+			LOG_DEBUG(Engine, "Resolved SVG path: %s -> %s", def.svgPath.c_str(), resolvedSvgPath.c_str());
 
 			std::vector<renderer::LoadedSVGShape> shapes;
 			if (!renderer::loadSVG(resolvedSvgPath, kSvgCurveTolerance, shapes)) {
-				LOG_ERROR(Engine, "Failed to load SVG: %s (resolved from %s)", resolvedSvgPath.c_str(), def->svgPath.c_str());
-				return nullptr;
+				LOG_ERROR(Engine, "Failed to load SVG: %s (resolved from %s)", resolvedSvgPath.c_str(), def.svgPath.c_str());
+				return out;
 			}
 
-			const SvgMeterFrame frame		= computeSvgMeterFrame(shapes, def->worldHeight);
+			const SvgMeterFrame frame		= computeSvgMeterFrame(shapes, def.worldHeight);
 			const float			scaleFactor = frame.valid ? frame.scaleFactor : 1.0F;
-			LOG_INFO(
-				Engine,
-				"SVG '%s': worldHeight=%.2f, scaleFactor=%.4f",
-				defName.c_str(),
-				def->worldHeight,
-				scaleFactor
-			);
+			LOG_INFO(Engine, "SVG '%s': worldHeight=%.2f, scaleFactor=%.4f", def.defName.c_str(), def.worldHeight, scaleFactor);
 
 			// Tessellate each shape (baking solid/gradient per-vertex colors) in SVG space, then
 			// normalize the whole mesh to worldHeight.
@@ -1423,38 +1485,180 @@ namespace assets {
 			}
 
 			if (mesh.vertices.empty()) {
-				LOG_ERROR(Engine, "Failed to tessellate SVG asset: %s", defName.c_str());
-				return nullptr;
+				LOG_ERROR(Engine, "Failed to tessellate SVG asset: %s", def.defName.c_str());
+				return out;
 			}
 		} else {
-			// Generate procedural asset
 			GeneratedAsset asset;
-			if (!generateAsset(defName, 42, asset)) { // Use fixed seed for template
-				LOG_ERROR(Engine, "Failed to generate asset: %s", defName.c_str());
-				return nullptr;
+			if (!generateAsset(def.defName, generationSeed(def, traits), asset, traits)) {
+				LOG_ERROR(Engine, "Failed to generate %s", describeTemplate(def, traits).c_str());
+				return out;
 			}
 
 			TessellatedPaths paths;
 			paths.tessellate(asset, kFullDetail);
 			std::vector<renderer::TessellatedMesh> meshes;
-			if (!paths.meshesAt(kFullDetail, meshes)) {
-				LOG_ERROR(Engine, "Failed to tessellate asset: %s", defName.c_str());
-				return nullptr;
+			const bool							   drawn = paths.meshesAt(kFullDetail, meshes);
+			if (meshes.size() > 1 || paths.oversizeVertices > 0) {
+				out.error = describeTemplate(def, traits) + " tessellates to " + std::to_string(paths.vertices.size() + paths.oversizeVertices) +
+							" vertices; a template mesh holds at most " + std::to_string(TessellatedPaths::kMaxMeshVertices);
+				LOG_ERROR(Engine, "%s", out.error.c_str());
+				return out;
 			}
-			if (!takeSingleMesh(defName, meshes, mesh)) {
-				return nullptr;
+			if (!drawn) {
+				LOG_ERROR(Engine, "Failed to tessellate %s", describeTemplate(def, traits).c_str());
+				return out;
 			}
+			mesh = std::move(meshes.front());
 		}
 
-		// Cache and return
-		templateCache[defName] = std::move(mesh);
-		return &templateCache[defName];
+		out.mesh = std::move(mesh);
+		return out;
 	}
 
-	const AssetSilhouette* AssetRegistry::getSilhouette(const std::string& defName) {
+	uint32_t AssetRegistry::insertTemplate(const AssetDefinition& def, TreeTraits traits, BuiltTemplate built) {
+		const bool groundcover = def.role == AssetRole::Groundcover;
+		const bool isMature	   = traits == templateTraits(def, matureTraits(def));
+		const bool defTall =
+			isMature ? routesTall(built.mesh.has_value() ? meshHeight(*built.mesh) : 0.0F, groundcover) : isTallDef(def.defName);
+		const float reach = built.mesh.has_value() ? meshReach(*built.mesh) * def.placement.scale.max : 0.0F;
+
+		uint32_t id = 0;
+		{
+			std::lock_guard<std::mutex> lock(templateCacheMutex);
+			auto [it, inserted] = m_templateIds.try_emplace(TemplateKey{def.defName, traits}, 0U);
+			if (!inserted) {
+				return it->second;
+			}
+			m_templates.push_back(std::make_unique<TemplateEntry>(TemplateEntry{std::move(built.mesh), defTall}));
+			id			= static_cast<uint32_t>(m_templates.size());
+			it->second = id;
+		}
+		if (!groundcover) {
+			raiseTo(m_maxReach, reach);
+		}
+		if (defTall) {
+			raiseTo(m_maxTallReach, reach);
+		}
+		return id;
+	}
+
+	uint32_t AssetRegistry::templateId(const std::string& defName, TreeTraits traits) {
+		const AssetDefinition* def = getDefinition(defName);
+		if (def == nullptr) {
+			LOG_ERROR(Engine, "Definition not found: %s", defName.c_str());
+			return 0;
+		}
+		const std::optional<TreeTraits> key = templateTraits(*def, traits);
+		if (!key.has_value()) {
+			LOG_ERROR(
+				Engine, "%s has no age class %u variant %u", defName.c_str(), static_cast<unsigned>(traits.ageClass), static_cast<unsigned>(traits.variant)
+			);
+			return 0;
+		}
+		{
+			std::lock_guard<std::mutex> lock(templateCacheMutex);
+			auto						it = m_templateIds.find(TemplateKey{defName, *key});
+			if (it != m_templateIds.end()) {
+				return it->second;
+			}
+		}
+		return insertTemplate(*def, *key, buildTemplate(*def, *key));
+	}
+
+	const renderer::TessellatedMesh* AssetRegistry::getTemplate(uint32_t templateId) const {
+		if (templateId == 0) {
+			return nullptr;
+		}
+		std::lock_guard<std::mutex> lock(templateCacheMutex);
+		if (templateId > m_templates.size()) {
+			return nullptr;
+		}
+		const std::optional<renderer::TessellatedMesh>& mesh = m_templates[templateId - 1]->mesh;
+		return mesh.has_value() ? &*mesh : nullptr;
+	}
+
+	const renderer::TessellatedMesh* AssetRegistry::getTemplate(const std::string& defName, TreeTraits traits) {
+		return getTemplate(templateId(defName, traits));
+	}
+
+	bool AssetRegistry::isTallDef(const std::string& defName) {
+		const AssetDefinition* def = getDefinition(defName);
+		if (def == nullptr) {
+			return false;
+		}
+		const uint32_t id = templateId(defName, matureTraits(*def));
+		if (id == 0) {
+			return false;
+		}
+		std::lock_guard<std::mutex> lock(templateCacheMutex);
+		return m_templates[id - 1]->defTall;
+	}
+
+	void AssetRegistry::prewarmTreeVariants() {
+		struct Job {
+			const AssetDefinition* def = nullptr;
+			TreeTraits			   traits;
+			bool				   mature = false;
+			BuiltTemplate		   built;
+		};
+		std::vector<Job> jobs;
+		for (const auto& [name, def] : definitions) {
+			if (def.ageClasses.empty() || def.assetType != AssetType::Procedural) {
+				continue;
+			}
+			const TreeTraits mature = matureTraits(def);
+			for (size_t a = 0; a < def.ageClasses.size(); ++a) {
+				for (uint16_t v = 0; v < def.ageClasses[a].variants; ++v) {
+					const TreeTraits traits{.ageClass = static_cast<uint8_t>(a), .variant = v};
+					jobs.push_back({.def = &def, .traits = traits, .mature = traits == mature});
+				}
+			}
+		}
+		if (jobs.empty()) {
+			return;
+		}
+		// The def's mature variant 0 first, so filing the rest finds its routing decided. Ordered by
+		// name otherwise, so ids come out the same every load.
+		std::sort(jobs.begin(), jobs.end(), [](const Job& a, const Job& b) {
+			if (a.def->defName != b.def->defName) {
+				return a.def->defName < b.def->defName;
+			}
+			if (a.mature != b.mature) {
+				return a.mature;
+			}
+			return a.traits.ageClass != b.traits.ageClass ? a.traits.ageClass < b.traits.ageClass : a.traits.variant < b.traits.variant;
+		});
+
+		const auto			 start = std::chrono::steady_clock::now();
+		foundation::TaskPool pool;
+		pool.parallelFor(0, jobs.size(), 1, [&](size_t first, size_t last) {
+			for (size_t i = first; i < last; ++i) {
+				jobs[i].built = buildTemplate(*jobs[i].def, jobs[i].traits);
+			}
+		});
+		for (Job& job : jobs) {
+			if (!job.built.error.empty()) {
+				m_validationReport.add(Severity::Error, job.def->defName, "ageClasses", job.built.error, "");
+			}
+			insertTemplate(*job.def, job.traits, std::move(job.built));
+		}
+		LOG_INFO(
+			Engine,
+			"Prewarmed %zu tree variants in %.1f ms",
+			jobs.size(),
+			std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count()
+		);
+	}
+
+	const AssetSilhouette* AssetRegistry::getSilhouette(const std::string& defName, TreeTraits traits) {
+		return getSilhouette(templateId(defName, traits));
+	}
+
+	const AssetSilhouette* AssetRegistry::getSilhouette(uint32_t templateId) {
 		{
 			std::lock_guard<std::mutex> lk(m_silhouetteCacheMutex);
-			auto						it = m_silhouetteCache.find(defName);
+			auto						it = m_silhouetteCache.find(templateId);
 			if (it != m_silhouetteCache.end()) {
 				return &it->second;
 			}
@@ -1467,10 +1671,10 @@ namespace assets {
 
 		AssetSilhouette sil;
 
-		const renderer::TessellatedMesh* tmpl = getTemplate(defName);
+		const renderer::TessellatedMesh* tmpl = getTemplate(templateId);
 		if (tmpl != nullptr && !tmpl->vertices.empty() && !tmpl->indices.empty()) {
-			// Bounds centre in the template frame == the dynamic render path's -centerOffset,
-			// so the shared instance transform, outline, and hit-test never drift.
+			// Bounds centre of the whole drawn mesh in the template frame == the dynamic render
+			// path's -centerOffset, so the shared instance transform, outline, and hit-test never drift.
 			const Foundation::Rect b = renderer::computeBounds(*tmpl);
 			sil.boundsCenterMeters	 = {b.x + b.width * 0.5F, b.y + b.height * 0.5F};
 
@@ -1478,14 +1682,26 @@ namespace assets {
 			// the template-local mm frame. This captures fills AND stroke bands (e.g. a reed's
 			// stroke stem, which a fill-contour silhouette would miss), so the outline hugs
 			// exactly what is drawn and the reed stays one connected shape.
+			const bool hasColors = tmpl->hasColors();
+			const auto faint	 = [&](uint16_t idx) { return hasColors && tmpl->colors[idx].a < kSilhouetteMinAlpha; };
 			std::vector<geometry::Vec2i64> triVerts;
 			triVerts.reserve(tmpl->indices.size());
-			for (const auto idx : tmpl->indices) {
-				const Foundation::Vec2& v = tmpl->vertices[idx];
-				triVerts.push_back(geometry::quantize({v.x, v.y}));
+			for (size_t t = 0; t + 2 < tmpl->indices.size(); t += 3) {
+				const uint16_t i0 = tmpl->indices[t];
+				const uint16_t i1 = tmpl->indices[t + 1];
+				const uint16_t i2 = tmpl->indices[t + 2];
+				if (faint(i0) && faint(i1) && faint(i2)) {
+					continue;
+				}
+				for (const uint16_t idx : {i0, i1, i2}) {
+					const Foundation::Vec2& v = tmpl->vertices[idx];
+					triVerts.push_back(geometry::quantize({v.x, v.y}));
+				}
 			}
-			sil.rings	  = geometry::silhouetteOfTriangles(triVerts, kSilhouetteResolution, 0);
-			sil.hitRegion = geometry::silhouetteOfTriangles(triVerts, kSilhouetteResolution, kHitRegionCloseRadiusPx);
+			if (!triVerts.empty()) {
+				sil.rings	  = geometry::silhouetteOfTriangles(triVerts, kSilhouetteResolution, 0);
+				sil.hitRegion = geometry::silhouetteOfTriangles(triVerts, kSilhouetteResolution, kHitRegionCloseRadiusPx);
+			}
 		}
 
 		if (sil.hitRegion.empty()) {
@@ -1494,7 +1710,7 @@ namespace assets {
 		sil.valid = !sil.rings.empty();
 
 		std::lock_guard<std::mutex> lk(m_silhouetteCacheMutex);
-		auto [it, inserted] = m_silhouetteCache.emplace(defName, std::move(sil));
+		auto [it, inserted] = m_silhouetteCache.emplace(templateId, std::move(sil));
 		return &it->second;
 	}
 
@@ -1613,7 +1829,7 @@ namespace assets {
 		return m_sharedScriptsPath.empty() ? std::filesystem::path{} : m_sharedScriptsPath / "lib";
 	}
 
-	bool AssetRegistry::generateAsset(const std::string& defName, uint32_t seed, GeneratedAsset& outAsset) {
+	bool AssetRegistry::generateAsset(const std::string& defName, uint32_t seed, GeneratedAsset& outAsset, TreeTraits traits) {
 		const AssetDefinition* def = getDefinition(defName);
 		if (def == nullptr) {
 			LOG_ERROR(Engine, "Definition not found: %s", defName.c_str());
@@ -1624,11 +1840,18 @@ namespace assets {
 			LOG_ERROR(Engine, "Asset %s is not procedural", defName.c_str());
 			return false;
 		}
+		if (!def->ageClasses.empty() && traits.ageClass >= def->ageClasses.size()) {
+			LOG_ERROR(Engine, "Asset %s has no age class %u", defName.c_str(), static_cast<unsigned>(traits.ageClass));
+			return false;
+		}
 
 		// Set up generation context
 		GenerationContext ctx;
 		ctx.seed = seed;
-		ctx.variantIndex = 0;
+		ctx.variantIndex = traits.variant;
+		if (!def->ageClasses.empty()) {
+			ctx.ageClass = def->ageClasses[traits.ageClass].name;
+		}
 		if (def->role == AssetRole::Ground) {
 			ctx.periodMeters = def->ground.periodMeters;
 		}
@@ -1692,7 +1915,7 @@ namespace assets {
 
 		// Simple assets are a single drawing; reuse the cached, normalized template.
 		if (def->assetType == AssetType::Simple) {
-			const renderer::TessellatedMesh* tmpl = getTemplate(defName);
+			const renderer::TessellatedMesh* tmpl = getTemplate(defName, TreeTraits{});
 			if (tmpl == nullptr || tmpl->vertices.empty()) {
 				return false;
 			}
@@ -1721,15 +1944,7 @@ namespace assets {
 			m_loadThread.join();
 		}
 		definitions.clear();
-		templateCache.clear();
-		{
-			std::lock_guard<std::mutex> lk(m_motionCacheMutex);
-			m_motionCache.clear();
-		}
-		{
-			std::lock_guard<std::mutex> lk(m_silhouetteCacheMutex);
-			m_silhouetteCache.clear();
-		}
+		clearCaches();
 		groupIndex.clear();
 		// Reset the string-interning index too (mirrors clearDefinitions); otherwise name<->id
 		// and capability lookups return stale mappings for now-destroyed defs until a reload.
@@ -1912,9 +2127,14 @@ namespace assets {
 		LOG_DEBUG(Engine, "Registered test definition: %s", defName.c_str());
 	}
 
-	void AssetRegistry::clearDefinitions() {
-		definitions.clear();
-		templateCache.clear();
+	void AssetRegistry::clearCaches() {
+		{
+			std::lock_guard<std::mutex> lk(templateCacheMutex);
+			m_templateIds.clear();
+			m_templates.clear();
+		}
+		m_maxTallReach.store(0.0F, std::memory_order_relaxed);
+		m_maxReach.store(0.0F, std::memory_order_relaxed);
 		{
 			std::lock_guard<std::mutex> lk(m_motionCacheMutex);
 			m_motionCache.clear();
@@ -1923,6 +2143,11 @@ namespace assets {
 			std::lock_guard<std::mutex> lk(m_silhouetteCacheMutex);
 			m_silhouetteCache.clear();
 		}
+	}
+
+	void AssetRegistry::clearDefinitions() {
+		definitions.clear();
+		clearCaches();
 		groupIndex.clear();
 		m_defNameToId.clear();
 		m_idToDefName.clear();

@@ -7,21 +7,17 @@
 
 namespace worldview {
 
-	Renderer::InstancedMeshHandle&
-	InstancedEntityRenderer::getOrCreateMeshHandle(const std::string& defName, const renderer::TessellatedMesh* mesh) {
-		auto it = m_meshHandles.find(defName);
-		if (it != m_meshHandles.end()) {
-			return it->second;
+	InstancedEntityRenderer::MeshSlot& InstancedEntityRenderer::meshSlot(uint32_t templateId, const renderer::TessellatedMesh& mesh) {
+		if (templateId >= m_meshSlots.size()) {
+			m_meshSlots.resize(static_cast<size_t>(templateId) + 1);
 		}
-
-		// Upload mesh to GPU; a missing mesh leaves an invalid handle in the map so
-		// the lookup is not retried every frame
-		Renderer::InstancedMeshHandle handle;
-		if (mesh != nullptr) {
-			handle = Renderer::Primitives::uploadInstancedMesh(*mesh, kMaxInstancesPerMesh);
+		MeshSlot& slot = m_meshSlots[templateId];
+		if (!slot.uploaded) {
+			slot.handle = Renderer::Primitives::uploadInstancedMesh(mesh, kInitialInstanceCapacity);
+			slot.capacity = kInitialInstanceCapacity;
+			slot.uploaded = true;
 		}
-		auto [insertedIt, _] = m_meshHandles.emplace(defName, std::move(handle));
-		return insertedIt->second;
+		return slot;
 	}
 
 	void InstancedEntityRenderer::emitAnimated(
@@ -81,7 +77,7 @@ namespace worldview {
 		const Renderer::Primitives::WorldCamera camera{.position = {camX, camY}, .zoom = zoom, .pixelsPerMeter = ctx.pixelsPerMeter};
 
 		m_runInstances.clear();
-		m_runDefName.clear();
+		m_runTemplateId = 0;
 		m_animVertices.clear();
 		m_animColors.clear();
 		m_animIndices.clear();
@@ -98,16 +94,23 @@ namespace worldview {
 			if (m_runInstances.empty()) {
 				return;
 			}
-			auto it = m_meshHandles.find(m_runDefName);
-			if (it != m_meshHandles.end() && it->second.isValid()) {
-				const auto count = static_cast<uint32_t>(m_runInstances.size());
-				Renderer::Primitives::drawInstanced(it->second, m_runInstances.data(), count, camera);
-				// drawInstanced splits a run past the handle's capacity into several draws
-				stats.uprightDrawCalls += (count + kMaxInstancesPerMesh - 1) / kMaxInstancesPerMesh;
+			MeshSlot&	   slot = m_meshSlots[m_runTemplateId]; // made by meshSlot when the run started
+			const auto count = static_cast<uint32_t>(m_runInstances.size());
+			if (count > slot.capacity) {
+				uint32_t capacity = slot.capacity;
+				while (capacity < count) {
+					capacity *= 2;
+				}
+				slot.handle = Renderer::Primitives::uploadInstancedMesh(*m_templateCache.get(m_runTemplateId), capacity);
+				slot.capacity = capacity;
+			}
+			if (slot.handle.isValid()) {
+				Renderer::Primitives::drawInstanced(slot.handle, m_runInstances.data(), count, camera);
+				stats.uprightDrawCalls++;
 				stats.uprightTriangles += count * runTriangles;
 			}
 			m_runInstances.clear();
-			m_runDefName.clear();
+			m_runTemplateId = 0;
 		};
 		auto flushAnim = [&]() {
 			if (m_animIndices.empty()) {
@@ -173,7 +176,7 @@ namespace worldview {
 			}
 
 			const assets::PlacedEntity& entity = *item.entity;
-			const auto*					templateMesh = m_templateCache.get(entity.defName);
+			const auto*					templateMesh = m_templateCache.get(entity.templateId);
 			if (templateMesh == nullptr) {
 				continue;
 			}
@@ -191,16 +194,15 @@ namespace worldview {
 				continue;
 			}
 
-			// Non-animated: coalesce consecutive same-defName entities into one run.
-			auto& handle = getOrCreateMeshHandle(entity.defName, templateMesh);
-			if (!handle.isValid()) {
+			// Non-animated: coalesce consecutive same-template entities into one run.
+			if (!meshSlot(entity.templateId, *templateMesh).handle.isValid()) {
 				continue;
 			}
 			flushAnim(); // draw any pending anim behind this run
-			if (!m_runInstances.empty() && m_runDefName != entity.defName) {
+			if (!m_runInstances.empty() && m_runTemplateId != entity.templateId) {
 				flushRun();
 			}
-			m_runDefName = entity.defName;
+			m_runTemplateId = entity.templateId;
 			runTriangles = static_cast<uint32_t>(templateMesh->getTriangleCount());
 			m_runInstances.emplace_back(
 				Foundation::Vec2(entity.position.x, entity.position.y), entity.rotation, entity.scale, entity.colorTint

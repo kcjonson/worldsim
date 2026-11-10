@@ -5,9 +5,9 @@
 // is here so it is testable without a renderer or a running game.
 //
 // A tree is a placed static with isTallOccluder set, the renderer's own tall/short
-// rule (kShortFloraMaxHeight), whose def is in the kTreeGroup placement group. Other
+// rule (FloraRouting.h), whose def is in the kTreeGroup placement group. Other
 // tall occluders (reeds, big rocks) are counted apart, outside the totals and the
-// cover. Canopy cover is the union of the trees' silhouettes
+// cover. Canopy cover is the union of the trees' silhouettes, each its own variant's,
 // rasterised on a kFloraCellSizeMeters grid, sampled at cell centres, so crowns
 // that overlap are counted once. Trees of a def with age classes are also counted
 // per age class, from PlacedEntity::traits.
@@ -20,6 +20,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -50,15 +51,17 @@ namespace assets {
 		[[nodiscard]] double area() const { return static_cast<double>(maxX - minX) * static_cast<double>(maxY - minY); }
 	};
 
-	// What the measure needs from a def: whether it is a tree (isTreeDef), its silhouette
-	// rings in the template-local millimetre frame (AssetSilhouette::rings), the wood
-	// one tree yields, and its age class names in index order (empty when it has none).
+	// What the measure needs from a def: whether it is a tree (isTreeDef), the wood one
+	// tree yields, and its age class names in index order (empty when it has none).
 	struct FloraDefTraits {
-		bool							   isTree = false;
-		const std::vector<geometry::Ring>* rings = nullptr;
-		double							   woodPerTree = 0.0;
-		std::vector<std::string>		   ageClassNames;
+		bool					 isTree = false;
+		double					 woodPerTree = 0.0;
+		std::vector<std::string> ageClassNames;
 	};
+
+	// One tree's crown: the silhouette rings of the template it draws, in the
+	// template-local millimetre frame (AssetSilhouette::rings), or null when it has none.
+	using CrownLookup = std::function<const std::vector<geometry::Ring>*(const PlacedEntity&)>;
 
 	struct FloraAgeMeasure {
 		std::string name;
@@ -108,14 +111,15 @@ namespace assets {
 	// holds data for (loaded chunks); only their overlap with the rect is measured.
 	// Entities that are not tall occluders are skipped. A tall occluder is counted when
 	// its position is inside the rect and a loaded area, in `defs` when its def is a
-	// tree and in `otherTallOccluders` otherwise. Every tree passed adds its crown to the
-	// cover, so pass the trees near the rect, not only in it. A def missing from
-	// `traits` is not a tree.
+	// tree and in `otherTallOccluders` otherwise. Every tree passed adds its crown (from
+	// `crowns`) to the cover, so pass the trees near the rect, not only in it. A def
+	// missing from `traits` is not a tree.
 	[[nodiscard]] FloraMeasurement measureFlora(
 		const FloraRect&									   rect,
 		const std::vector<FloraRect>&						   loadedAreas,
 		const std::vector<const PlacedEntity*>&				   entities,
-		const std::unordered_map<std::string, FloraDefTraits>& traits
+		const std::unordered_map<std::string, FloraDefTraits>& traits,
+		const CrownLookup&									   crowns
 	);
 
 	// The trees among `entities` whose age class is named `ageClass`, nearest to `near` first,

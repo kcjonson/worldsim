@@ -61,12 +61,14 @@ void DynamicEntityRenderSystem::update(float deltaTime) {
         }
 
         placed.defName = defName;
+        placed.traits = appearance.traits;
+        placed.templateId = assetRegistry.templateId(defName, appearance.traits);
 
         // Re-center the mesh on its bbox (entity position is the center) and derive the
         // world transform through the shared helper so render, outline, and hit-test agree.
         glm::vec2   boundsCenter{0.0F, 0.0F};
         float       meshMaxY = 0.0F;  // Bottom-most local-Y (feet); drives the depth anchor
-        const auto* mesh	 = assetRegistry.getTemplate(defName);
+        const auto* mesh	 = assetRegistry.getTemplate(placed.templateId);
         if (mesh != nullptr && !mesh->vertices.empty()) {
             float minX = mesh->vertices[0].x;
             float maxX = mesh->vertices[0].x;

@@ -13,7 +13,6 @@
 #include <functional>
 #include <memory>
 #include <optional>
-#include <random>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -22,26 +21,10 @@ namespace assets {
 
 /// Context provided to generators during asset generation
 struct GenerationContext {
-	uint32_t seed = 0;			// Deterministic seed for RNG
-	uint32_t variantIndex = 0;	// Which variant is being generated
+	uint32_t seed = 0;			// Deterministic seed for RNG; already distinct per variant
+	uint32_t variantIndex = 0;	// Which variant of its age class is being generated
+	std::optional<std::string> ageClass;	// The age class's name; unset for a def without <ageClasses>
 	std::optional<float> periodMeters;		// A ground def's <period>, the tile a variant covers; unset for other roles
-
-	/// Create a seeded random number generator
-	std::mt19937 createRng() const { return std::mt19937(seed + variantIndex); }
-
-	/// Generate a random float in range [min, max]
-	float randomFloat(float min, float max) const {
-		std::mt19937						 rng(seed + variantIndex);
-		std::uniform_real_distribution<float> dist(min, max);
-		return dist(rng);
-	}
-
-	/// Generate a random float in range [min, max] with additional offset
-	float randomFloat(float min, float max, uint32_t offset) const {
-		std::mt19937						 rng(seed + variantIndex + offset);
-		std::uniform_real_distribution<float> dist(min, max);
-		return dist(rng);
-	}
 };
 
 /// A single path (filled polygon) in a generated asset

@@ -26,11 +26,11 @@ namespace worldview {
 			chunkOrigin.x, chunkOrigin.y, chunkOrigin.x + world::kChunkWorldSize, chunkOrigin.y + world::kChunkWorldSize
 		);
 
-		auto cpuData = assets::bakeChunkEntities(entities, coord, [this](const std::string& defName) -> const renderer::TessellatedMesh* {
-			if (assets::isGroundcoverDef(defName)) {
+		auto cpuData = assets::bakeChunkEntities(entities, coord, [this](const assets::PlacedEntity& entity) -> const renderer::TessellatedMesh* {
+			if (assets::isGroundcoverDef(entity.defName)) {
 				return nullptr; // groundcover renders via the instanced path, not baking
 			}
-			return m_templateCache.get(defName);
+			return m_templateCache.get(entity.templateId);
 		});
 		uploadBakedChunk(coord, std::move(cpuData), frameCounter);
 	}

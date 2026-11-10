@@ -12,6 +12,10 @@ namespace assets {
 		// A 2 m x 2 m crown centred on the trunk, in the template-local millimetre frame.
 		const std::vector<geometry::Ring> kSquareCrown{{{-1000, -1000}, {1000, -1000}, {1000, 1000}, {-1000, 1000}}};
 
+		const std::vector<geometry::Ring>* squareCrowns(const PlacedEntity& /*tree*/) {
+			return &kSquareCrown;
+		}
+
 		PlacedEntity tree(const std::string& defName, float x, float y, bool tall = true, uint8_t ageClass = 0) {
 			PlacedEntity e;
 			e.defName = defName;
@@ -25,9 +29,9 @@ namespace assets {
 
 	TEST(FloraMeasure, CountsTreesDensityCoverAndWoodWithoutDoubleCountingOverlap) {
 		const std::unordered_map<std::string, FloraDefTraits> traits{
-			{"Oak", {.isTree = true, .rings = &kSquareCrown, .woodPerTree = 25.0}},
-			{"Maple", {.isTree = true, .rings = &kSquareCrown, .woodPerTree = 10.0}},
-			{"Rock", {.isTree = false, .rings = &kSquareCrown, .woodPerTree = 0.0}},
+			{"Oak", {.isTree = true, .woodPerTree = 25.0}},
+			{"Maple", {.isTree = true, .woodPerTree = 10.0}},
+			{"Rock", {.isTree = false, .woodPerTree = 0.0}},
 		};
 		// Two oaks whose crowns overlap by 1 m x 2 m, one maple apart, a short plant, and a
 		// tall rock that is not a tree and stays out of the totals and the cover.
@@ -44,7 +48,7 @@ namespace assets {
 		}
 		const FloraRect rect{0.0F, 0.0F, 20.0F, 10.0F};
 
-		const FloraMeasurement all = measureFlora(rect, {rect}, entities, traits);
+		const FloraMeasurement all = measureFlora(rect, {rect}, entities, traits, squareCrowns);
 		EXPECT_DOUBLE_EQ(all.measuredAreaM2, 200.0);
 		EXPECT_EQ(all.treeCount, 3U);
 		EXPECT_DOUBLE_EQ(all.treesPerThousandM2, 15.0);
@@ -62,7 +66,7 @@ namespace assets {
 		EXPECT_EQ(all.otherTallOccluders[0].count, 1U);
 
 		// Only the west half loaded: the maple is past it, and the area is honest about it.
-		const FloraMeasurement half = measureFlora(rect, {{0.0F, 0.0F, 10.0F, 10.0F}}, entities, traits);
+		const FloraMeasurement half = measureFlora(rect, {{0.0F, 0.0F, 10.0F, 10.0F}}, entities, traits, squareCrowns);
 		EXPECT_DOUBLE_EQ(half.rectAreaM2, 200.0);
 		EXPECT_DOUBLE_EQ(half.measuredAreaM2, 100.0);
 		EXPECT_EQ(half.treeCount, 2U);
@@ -74,9 +78,9 @@ namespace assets {
 	// query lists one class, nearest first, filtered by def when asked.
 	TEST(FloraMeasure, CountsAgeClassesAndFindsTheNearestOfAnAge) {
 		const std::unordered_map<std::string, FloraDefTraits> traits{
-			{"Oak", {.isTree = true, .rings = &kSquareCrown, .woodPerTree = 25.0, .ageClassNames = {"sapling", "mature", "veteran"}}},
-			{"Maple", {.isTree = true, .rings = &kSquareCrown, .woodPerTree = 10.0, .ageClassNames = {"sapling", "mature", "veteran"}}},
-			{"Pine", {.isTree = true, .rings = &kSquareCrown, .woodPerTree = 10.0}},
+			{"Oak", {.isTree = true, .woodPerTree = 25.0, .ageClassNames = {"sapling", "mature", "veteran"}}},
+			{"Maple", {.isTree = true, .woodPerTree = 10.0, .ageClassNames = {"sapling", "mature", "veteran"}}},
+			{"Pine", {.isTree = true, .woodPerTree = 10.0}},
 		};
 		const std::vector<PlacedEntity> world{
 			tree("Oak", 5.0F, 5.0F, true, 0),
@@ -91,7 +95,7 @@ namespace assets {
 		}
 		const FloraRect rect{0.0F, 0.0F, 20.0F, 10.0F};
 
-		const FloraMeasurement m = measureFlora(rect, {rect}, entities, traits);
+		const FloraMeasurement m = measureFlora(rect, {rect}, entities, traits, squareCrowns);
 		ASSERT_EQ(m.defs.size(), 3U);
 		const FloraDefMeasure& oak = m.defs[1];
 		ASSERT_EQ(oak.defName, "Oak");

@@ -112,14 +112,14 @@ Sim and tools:
 
 - `getTemplate(defName, traits)`; the cache key is (def, age class, variant). The fixed seed 42 is deleted; a def with one variant generates with seed 0.
 - Callers that take the traits: `TemplateMeshCache`, `InstancedEntityRenderer` (mesh handles and run key), `bakeChunkEntities`, the depth attributes at placement, `getSilhouette` (hit test and selection outline), and `DynamicEntityRenderSystem`. `GhostRenderer` previews placement defs only and passes default traits.
-- Tree variants are generated before the first chunk needs them. That is new: add a prewarm for defs with `<ageClasses>`, run in parallel per variant the way the ground tile baker does, with generation and tessellation outside the registry mutex. Report the load-time delta. If it is more than the player would notice, reuse the ground tile disk cache's keying to store tessellated variants; that would also deliver the planned Variant Cache System.
+- Tree variants are generated before the first chunk needs them. That is new: add a prewarm for defs with `<ageClasses>`, run in parallel per variant the way the ground tile baker does, with generation and tessellation outside the registry mutex. Report the load-time delta. If it is more than the player would notice, reuse the ground tile disk cache's keying to store tessellated variants; that would also deliver the planned Variant Cache System. Built: oak's and maple's 32 variants prewarm in about 11 ms, and the whole library load went from about 145 ms to 160 ms (asset-cli, RelWithDebInfo), so there is no disk cache. Defs without age classes (pine, palm) still build their variants lazily.
 - A variant over 65,535 vertices is a load error naming the def, age class, and variant, never a missing tree.
 - Instance capacity per mesh handle is sized to what a variant can plausibly show (start at 4,096 and grow), not 50,000.
 - Tall or short routing (`kShortFloraMaxHeight`) is decided per def from its mature variant 0 (D9), at both sites that decide it today.
-- The depth key for a def with a collision rect is the rect's lower edge, the trunk foot, which `world-depth-sorting.md` already allows. Otherwise R7's shadow, flare, and tufts would move every tree forward in the sort.
+- The depth key for a def with a collision rect is the rect's lower edge, the trunk foot, which `world-depth-sorting.md` already allows. Otherwise R7's shadow, flare, and tufts would move every tree forward in the sort. Not built with R3: today's oak and maple draw their trunk foot up to 1.1 m south of the rect, so this waits for R5's generator.
 - The silhouette skips triangles under 0.5 alpha, so shadows are not part of the outline or the hit area.
-- The gather margin and the selection broad phase use the registry's largest tall-entity extent, not 2 m and 8 m. Without this, R9's trees pop in at the screen edges.
-- Asset-manager detail view shows one row per age class, using the same (age class, variant) keys the game uses and one scale across the rows, so a sapling looks small beside a veteran.
+- The gather margin and the selection broad phase use the registry's largest tall-entity extent, not 2 m and 8 m. Without this, R9's trees pop in at the screen edges. As built, the selection broad phase uses the largest extent of any template but groundcover (`maxReachMeters`), since short selectables such as bushes must stay clickable where no tree is loaded.
+- Asset-manager detail view shows one row per age class, using the same (age class, variant) keys the game uses and one scale across the rows, so a sapling looks small beside a veteran. Not built with R3; its own task.
 
 ### R4 Collision per age class
 
