@@ -47,14 +47,8 @@ namespace {
 			if (!failure.empty()) {
 				return;
 			}
-			glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-			glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-			glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-			glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-			glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
-			window = glfwCreateWindow(64, 64, "ground-bake-test", nullptr, nullptr);
+			window = worldsim::test::createHiddenWindow(64, "ground-bake-test", failure);
 			if (window == nullptr) {
-				failure = "glfwCreateWindow failed for a 3.3 core forward-compatible context: " + worldsim::test::glfwLastError();
 				return;
 			}
 			glfwMakeContextCurrent(window);

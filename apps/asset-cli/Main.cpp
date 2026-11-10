@@ -17,6 +17,7 @@
 #include "utils/Log.h"
 #include "utils/ResourcePath.h"
 #include "vector/Types.h"
+#include "world/rendering/GlVersion.h"
 #include "world/rendering/GroundTileBaker.h"
 
 #include <GL/glew.h>
@@ -139,8 +140,8 @@ namespace {
 			return false;
 		}
 		glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, worldview::kGlMajor);
+		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, worldview::kGlMinor);
 		glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 		glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 		g_window = glfwCreateWindow(16, 16, "asset-cli", nullptr, nullptr);

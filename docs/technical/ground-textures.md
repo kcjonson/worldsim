@@ -172,7 +172,7 @@ The shader has its own, separate LOD for the hex blend (the single-sample cutoff
 
 ## Shader
 
-The tile pass (`tile.vert`, `tile.frag`, everything `land.glsl` includes) is GLSL 4.10 core. `textureGather` is core from 4.00, so no extension is needed, and 4.10 is what macOS caps OpenGL at. salal asks GLFW for a 3.3 core forward-compatible context. macOS answers a core request of 3.2 or later with its newest core profile (4.1). The NVIDIA driver on the reference machine reports 3.3.0 for it and compiles the 4.10 shaders anyway; a driver that holds GLSL to the context version would need salal's request raised to 4.1. The rest of the renderer stays at 330.
+The tile pass (`tile.vert`, `tile.frag`, everything `land.glsl` includes) is GLSL 4.10 core. `textureGather` is core from 4.00, so no extension is needed, and 4.10 is what macOS caps OpenGL at. So every worldsim context asks for 4.1 core, forward compatible (`world/rendering/GlVersion.h`): the apps through salal's `WindowConfig::glVersion` (salal v0.40), `asset-cli` and the GL tests through their own hints, and each app logs the version it got. A driver that can't give 4.1 fails the window with that version in the log, where before it could hand back 3.3 and reject the tile shaders later. salal's own shaders stay at 330, which a 4.1 context compiles.
 
 `land.glsl` loses `u_tileAtlas`, `u_tileAtlasRects`, `u_tileAtlasRectCount` and `atlasColor`. In their place are one `sampler2DArray` per texel density and per-surface uniform arrays (array, first layer, layer count, inverse period, rotate mode, macro tints), indexed the way `u_landWarpFine[10]` already is.
 
@@ -817,7 +817,6 @@ Not taken: storing the arrays as plain RGBA8 to drop the encode (about 0.01, but
 Planned, tracked in Specboard as WOR-583, Ground tile follow-ups. None blocks the shipped work.
 
 - BC3 or BC7 for the arrays (Open questions).
-- A 4.1 core context from salal. The tile shaders are GLSL 4.10 and salal asks for 3.3; NVIDIA and macOS accept that, a strict driver may not (Shader).
 
 ## Later
 
