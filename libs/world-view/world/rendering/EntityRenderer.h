@@ -90,6 +90,10 @@ class EntityRenderer {
 	[[nodiscard]] uint32_t lastDrawCallCount() const { return m_lastDrawCallCount; }
 	[[nodiscard]] uint32_t lastTriangleCount() const { return m_lastTriangleCount; }
 
+	/// The depth-sorted upright stream's share of last frame's draws (RenderStats::upright*)
+	[[nodiscard]] uint32_t lastUprightDrawCallCount() const { return m_lastUprightDrawCallCount; }
+	[[nodiscard]] uint32_t lastUprightTriangleCount() const { return m_lastUprightTriangleCount; }
+
 	/// Upload a CPU-baked chunk mesh (from a worker thread bake) to the GPU.
 	/// Call on the render thread; replaces any existing baked data for the chunk.
 	void uploadBakedChunk(const world::ChunkCoordinate& coord, assets::BakedChunkCPUData&& cpuData);
@@ -112,6 +116,8 @@ class EntityRenderer {
 	uint32_t m_lastEntityCount = 0;
 	uint32_t m_lastDrawCallCount = 0;
 	uint32_t m_lastTriangleCount = 0;
+	uint32_t m_lastUprightDrawCallCount = 0;
+	uint32_t m_lastUprightTriangleCount = 0;
 	uint64_t frameCounter = 0;  // Incremented each render call (for LRU tracking)
 
 	// --- Instancing Mode ---

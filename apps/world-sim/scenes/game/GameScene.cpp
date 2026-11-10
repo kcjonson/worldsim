@@ -568,6 +568,9 @@ namespace {
 				.ui = gameUI.get(),
 				.chunks = m_chunkManager.get(),
 				.navigation = &ecsWorld->getSystem<ecs::NavigationSystem>(),
+				.placementIndex = m_placementExecutor.get(),
+				.camera = m_camera.get(),
+				.pixelsPerMeter = kPixelsPerMeter,
 				.planet = m_planet,
 				.landingLatDeg = m_landingLatDeg,
 				.landingLonDeg = m_landingLonDeg,
@@ -596,6 +599,13 @@ namespace {
 				return app::DevResponse{.body = gpuHold->statusJson()};
 			}));
 			m_devRegistrations.push_back(owner->devServer().stateProvider("gpuhold", [this]() { return gpuHold->statusJson(); }));
+
+			// The depth-sorted upright stream's draws (trees and actors), which /api/metrics folds into
+			// its totals, split out for perf captures (/api/state?what=uprights)
+			m_devRegistrations.push_back(owner->devServer().stateProvider("uprights", [this]() {
+				return "{\"uprightDrawCalls\":" + std::to_string(m_entityRenderer->lastUprightDrawCallCount()) +
+					   ",\"uprightTriangles\":" + std::to_string(m_entityRenderer->lastUprightTriangleCount()) + "}";
+			}));
 
 			// Rooms overlay: scene-owned world-space layer that tints/outlines/labels
 			// detected rooms when toggled on (R). Reads the same RoomDetectionSystem

@@ -17,7 +17,7 @@ The aim is trees and forests more realistic than RimWorld's, held to what stays 
 - Placed entities are not saved. Each chunk is regenerated from the world seed, with one RNG shared by every def in spawn order, so an extra RNG draw per tree would reshuffle every later placement in the chunk.
 - Collision is one rect per def, captured at load from variant 0, and scaled by `entity.scale` in `NavInputBuilder` and `StaticRectCollisionSystem`.
 - Yield and work come straight from the def's `<harvestable>` (`HarvestActions.cpp`, `NeedActions.cpp`); the roll is a fresh random. The sim, colonist memory, and selection identify a tree by defName and position.
-- Scale: a colonist is 1.0 m tall, an oak crown nominally 1.6 m across, a maple 1.2 m. A real open-grown oak is 15 to 24 m across, so today's trees are about 12x compressed. The quickstart forest is about 100 trees per 1,000 m2 at about 15% canopy cover; both figures are read off one screenshot, and no tool measures them (R11).
+- Scale: a colonist is 1.0 m tall, an oak crown nominally 1.6 m across, a maple 1.2 m. A real open-grown oak is 15 to 24 m across, so today's trees are about 12x compressed. Measured with R11's flora view on 2026-11-10: a 100 m square centred on the quickstart landing holds 36.9 trees per 1,000 m2 (oak 19.4, maple 17.5) at 13.3% canopy cover, with 800 wood per 1,000 m2. The default camera view there (128 m x 72 m) reads 37.4 trees and 13.6%. The square takes in the river, so the forest away from it is somewhat denser. Cover includes the oak's offset drop shadow, which `getSilhouette` keeps until R3.
 - Nothing fades. `rendering/world-depth-sorting.md` cut canopy fade outright ("a pawn may be fully hidden behind a tree"), which was the right call for 1.6 m crowns.
 
 ### Existing code this builds on
@@ -54,7 +54,7 @@ Rendering:
 - salal has an offscreen `RenderTarget` usable inside a frame (the ground tile baker uses one) and `drawImage` with a tint, which together give layer opacity. It has `drawPolygon` (cached fill with an antialiased border), and `emitSorted` already injects the selection outline at a sorted depth. The backend's instanced draw takes an index range that `drawInstanced` does not expose. There is no stencil use, no multiply blend, and no base-vertex draw.
 - `GhostRenderer` (placement preview) lowers every vertex's alpha, so it has the layer-stacking problem and is no use for trees. It draws above all entities.
 - The tall path has no fade or LOD; trees draw at every zoom down to 0.25. `path:setLod` exists and only the ground scripts use it.
-- `emitSorted` counts entities but not its draw calls or triangles.
+- `emitSorted` counts its entities, draw calls, and triangles; the last two are `/api/state?what=uprights`, which `perf-capture.ps1` records. At the landing's default view it is 228 draw calls for about 380 tall occluders.
 
 Sim and tools:
 - Harvest and the selection panel know a tree only as defName and position; neither ever holds a `PlacedEntity`. Trees spawned by `/api/dev/spawn` are ECS entities, not placed entities.
@@ -160,7 +160,7 @@ A tree has at most 40 tips. The recursion is a few hundred operations per varian
 - Rare condition, about 1 variant in 8: a thinning crown or a yellowing patch.
 - Randomness is seeded per variant; palette jitter is small (+/-3% per channel) so species identity holds.
 - The trunk foot sits at the origin and the trunk's collision rect depends on age class only (R4).
-- Budget: a mature variant tessellates to at most 1.5x the triangles of today's oak template. Measure today's first and record it here.
+- Budget: a mature variant tessellates to at most 1.5x the triangles of today's oak template, which `asset-cli inspect` reads as 102 triangles and 126 vertices (88 to 146 triangles across seeds 0 to 14).
 
 Left out on purpose: light competition between neighbours and crowns leaning away from each other (real and visible, but it makes one tree's shape depend on others, which breaks D1), growth over time, and anything at leaf level.
 
@@ -230,7 +230,7 @@ Crown width in metres, drawn by the generator at this size (D3):
 - Spacing between species is new: a `spaced` def also rejects a spot within 1.5 m of any member of its group (`trees`), so trunks of different species never sit on top of each other. This is a rejection only, with no extra random draws. Making `<avoids>` and `<affinity>` strengths work as documented would change every biome's placement and is filed separately.
 - Spacing across chunk seams is an existing open bug and stays out of scope.
 - Other forest biomes are tuned to the same target, with the 40% ceiling of D10. Grassland keeps its count of lone trees.
-- Base yield and durability per tree rise so wood per 1,000 m2 of forest, and wood per unit of chopping work, stay within 10% of today's. With about half the trees that is roughly 1.8x per tree. Measure today's first.
+- Base yield and durability per tree rise so wood per 1,000 m2 of forest, and wood per unit of chopping work, stay within 10% of today's. With about half the trees that is roughly 1.8x per tree. Today's is 800 wood per 1,000 m2 at the landing (R11's view, the 100 m square above).
 - Collision stays the trunk foot, so colonists walk under crowns.
 
 Left for later: open-grown form (a lone tree's crown is about twice as wide as the same tree in a wood), and splitting trunk from crown in the depth sort so a colonist standing in front of a trunk does not draw over a crown that should be above them.
@@ -253,7 +253,7 @@ Left for later: open-grown form (a lone tree's crown is about twice as wide as t
 
 No tool reports trees per area, canopy cover, or wood per area, and R9 and the yield rules are all stated in those terms.
 
-- A new state view, `/api/state?what=flora&rect=x0,y0,x1,y1` (defaulting to the camera's view): per def and per age class, the count and count per 1,000 m2; canopy cover as the rasterised union of the trees' silhouettes over the rect; expected wood per 1,000 m2 from the yields.
+- A new view, `/api/dev/flora?rect=x0,y0,x1,y1` (defaulting to the camera's view): per def and per age class, the count and count per 1,000 m2; canopy cover as the rasterised union of the trees' silhouettes over the rect; expected wood per 1,000 m2 from the yields. It is a dev route rather than a state view because salal's state providers take no query parameters. Built without age classes; each def is an object, so the per-age breakdown goes under it.
 - With `age=<name>&near=x,y` it lists the nearest trees of that age class, so a test scenario can find a sapling and a veteran without spawning one.
 - Take the baseline on main at the quickstart landing before any other task changes placement, and record the numbers in this spec in place of the screenshot estimates.
 - `asset-cli inspect` gains triangle and vertex counts per def, age class, and variant, for R5's budget.
@@ -277,7 +277,7 @@ Trees draw in the depth-sorted stream, and a run breaks whenever the mesh change
 - A/B R3 alone (variants wired, old generator) against that baseline. This isolates the draw-call cost from the new art's triangle cost.
 - Gate: no regression beyond noise in any cell. If R3 fails the gate, pack a def's variants into one vertex and index buffer and draw each by index range, so the run key goes back to the def. salal's backend already takes an index range for instanced draws; `drawInstanced` needs only to expose it. A def's variants must then fit 65,535 vertices together. Taken only on a measured failure.
 - If far zoom fails on triangles, gate the leaf flecks and caps with `path:setLod` and build the tree template per zoom band, which the registry already supports for ground tiles.
-- R9 cuts tree count about in half and raises covered pixels from about 15% to 35% of a forest view, each crown several layers deep. A/B the rescale on its own (old generator, new sizes and spacing): draw calls should fall, fill cost may rise. If fill fails the gate, the first lever is fewer full-size layers per cluster.
+- R9 cuts tree count about in half and raises covered pixels from 13.3% (measured, R11) to 35% of a forest view, each crown several layers deep. A/B the rescale on its own (old generator, new sizes and spacing): draw calls should fall, fill cost may rise. If fill fails the gate, the first lever is fewer full-size layers per cluster.
 - R10: measure a forest view with 20 colonists standing under crowns against the same view with none.
 - One full capture at the end with the new generator and all three species.
 - Look for wins while in `InstancedEntityRenderer::emitSorted`: it does a string compare and a string-keyed map lookup per entity per frame; an integer mesh id on the placed entity removes both.

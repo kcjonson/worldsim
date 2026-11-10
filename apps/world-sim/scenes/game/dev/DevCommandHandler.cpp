@@ -8,6 +8,8 @@
 
 #include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
+#include <assets/placement/FloraMeasure.h>
+#include <assets/placement/PlacementExecutor.h>
 
 #include <ui/components/Toast.h>
 
@@ -39,16 +41,22 @@
 
 #include <utils/Log.h>
 
+#include <world/camera/WorldCamera.h>
 #include <world/chunk/ChunkManager.h>
+
+#include <primitives/Primitives.h>
 
 #include <worldgen/data/Biome.h>
 #include <worldgen/data/GeneratedWorld.h>
 #include <worldgen/sampling/LandingSite.h>
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <iomanip>
+#include <unordered_map>
 
 namespace world_sim {
 
@@ -80,6 +88,7 @@ namespace world_sim {
 		registrations.push_back(server.route("foundation-edit", [this](const app::DevRequest& cmd) {
 			return app::DevResponse{.body = devFoundationEdit(cmd)};
 		}));
+		registrations.push_back(server.route("flora", [this](const app::DevRequest& cmd) { return devFlora(cmd); }));
 
 		const auto view = [&](const char* what, void (DevCommandHandler::*serialize)(std::ostringstream&)) {
 			registrations.push_back(server.stateProvider(what, [this, serialize] {
@@ -611,6 +620,98 @@ namespace world_sim {
 			 << ",\"extension\":" << outcome.extension << ",\"entity\":" << outcome.entity
 			 << ",\"area\":" << outcome.areaSquareMeters << "}";
 		return json.str();
+	}
+
+	app::DevResponse DevCommandHandler::devFlora(const app::DevRequest& cmd) {
+		// Far past any crown (the largest planned is 4.9 m across), so every tree whose
+		// crown reaches into the rect is gathered for the cover.
+		constexpr float kCrownReachMeters = 10.0F;
+
+		assets::FloraRect rect;
+		if (hasParam(cmd, "rect")) {
+			float x0 = 0.0F;
+			float y0 = 0.0F;
+			float x1 = 0.0F;
+			float y1 = 0.0F;
+			if (std::sscanf(param(cmd, "rect").c_str(), "%f,%f,%f,%f", &x0, &y0, &x1, &y1) != 4 || !std::isfinite(x0) ||
+				!std::isfinite(y0) || !std::isfinite(x1) || !std::isfinite(y1)) {
+				return {.status = 400, .body = R"({"error":"flora: rect must be x0,y0,x1,y1 in world metres"})"};
+			}
+			rect = {std::min(x0, x1), std::min(y0, y1), std::max(x0, x1), std::max(y0, y1)};
+		} else {
+			int w = 0;
+			int h = 0;
+			Renderer::Primitives::getLogicalViewport(w, h);
+			const Foundation::Rect view = m_ctx.camera->getVisibleRect(w, h, m_ctx.pixelsPerMeter);
+			rect = {view.x, view.y, view.x + view.width, view.y + view.height};
+		}
+		if (!assets::floraRectWithinLimits(rect)) {
+			return {
+				.status = 400,
+				.body = R"({"error":"flora: rect sides must be above 0 and at most 500 m, and the rect at most 25 million 0.1 m cells"})"
+			};
+		}
+
+		const auto	firstChunk = world::worldToChunk({rect.minX - kCrownReachMeters, rect.minY - kCrownReachMeters});
+		const auto	lastChunk = world::worldToChunk({rect.maxX + kCrownReachMeters, rect.maxY + kCrownReachMeters});
+		std::vector<assets::FloraRect>		   loadedAreas;
+		std::vector<const assets::PlacedEntity*> entities;
+		for (int32_t cy = firstChunk.y; cy <= lastChunk.y; ++cy) {
+			for (int32_t cx = firstChunk.x; cx <= lastChunk.x; ++cx) {
+				const world::ChunkCoordinate coord{cx, cy};
+				const assets::SpatialIndex*	 index = m_ctx.placementIndex->getChunkIndex(coord);
+				if (index == nullptr) {
+					continue;
+				}
+				const world::WorldPosition origin = coord.origin();
+				loadedAreas.push_back({origin.x, origin.y, origin.x + world::kChunkWorldSize, origin.y + world::kChunkWorldSize});
+				const auto nearby = index->queryRect(
+					rect.minX - kCrownReachMeters, rect.minY - kCrownReachMeters, rect.maxX + kCrownReachMeters, rect.maxY + kCrownReachMeters
+				);
+				entities.insert(entities.end(), nearby.begin(), nearby.end());
+			}
+		}
+
+		auto&											 registry = assets::AssetRegistry::Get();
+		std::unordered_map<std::string, assets::FloraDefTraits> traits;
+		for (const assets::PlacedEntity* e : entities) {
+			if (!e->isTallOccluder || traits.contains(e->defName)) {
+				continue;
+			}
+			assets::FloraDefTraits t;
+			if (const auto* def = registry.getDefinition(e->defName); def != nullptr && assets::isTreeDef(*def)) {
+				t.isTree = true;
+				t.woodPerTree = assets::woodPerTree(*def);
+				if (const auto* sil = registry.getSilhouette(e->defName); sil != nullptr && sil->valid) {
+					t.rings = &sil->rings;
+				}
+			}
+			traits.emplace(e->defName, t);
+		}
+
+		const assets::FloraMeasurement m = assets::measureFlora(rect, loadedAreas, entities, traits);
+
+		// Each def is an object so a per-age breakdown can be added under it without breaking readers.
+		std::ostringstream json;
+		json << std::fixed << std::setprecision(2) << "{\"rect\":[" << m.rect.minX << "," << m.rect.minY << "," << m.rect.maxX << ","
+			 << m.rect.maxY << "],\"rectAreaM2\":" << m.rectAreaM2 << ",\"measuredAreaM2\":" << m.measuredAreaM2
+			 << ",\"cellSizeM\":" << assets::kFloraCellSizeMeters << ",\"trees\":" << m.treeCount
+			 << ",\"treesPer1000m2\":" << m.treesPerThousandM2 << ",\"canopyCover\":" << std::setprecision(4) << m.canopyCover
+			 << std::setprecision(2) << ",\"woodPer1000m2\":" << m.woodPerThousandM2 << ",\"defs\":[";
+		for (size_t i = 0; i < m.defs.size(); ++i) {
+			const assets::FloraDefMeasure& d = m.defs[i];
+			json << (i == 0 ? "" : ",") << "{\"def\":\"" << jsonEscape(d.defName) << "\",\"count\":" << d.count
+				 << ",\"per1000m2\":" << d.perThousandM2 << ",\"woodPerTree\":" << d.woodPerTree
+				 << ",\"woodPer1000m2\":" << d.woodPerThousandM2 << "}";
+		}
+		json << "],\"otherTallOccluders\":[";
+		for (size_t i = 0; i < m.otherTallOccluders.size(); ++i) {
+			const assets::FloraDefMeasure& d = m.otherTallOccluders[i];
+			json << (i == 0 ? "" : ",") << "{\"def\":\"" << jsonEscape(d.defName) << "\",\"count\":" << d.count
+				 << ",\"per1000m2\":" << d.perThousandM2 << "}";
+		}
+		json << "]}";
+		return {.body = json.str()};
 	}
 
 	void DevCommandHandler::devWalls(const app::DevRequest& cmd) {
