@@ -40,6 +40,7 @@ namespace ecs::test {
 	namespace {
 		constexpr const char* kTree = "Flora_ClearTestTree";
 		constexpr const char* kBush = "Flora_ClearTestBush";
+		constexpr uint32_t	  kTestRngSeed = 42;
 
 		class FootprintClearingTest : public ::testing::Test {
 		  protected:
@@ -101,8 +102,8 @@ namespace ecs::test {
 				registry.registerTestDefinition(std::move(bush));
 
 				world = std::make_unique<World>();
-				world->registerSystem<AIDecisionSystem>(registry, assets::RecipeRegistry::Get(), 42);
-				auto& action = world->registerSystem<ActionSystem>();
+				world->registerSystem<AIDecisionSystem>(registry, assets::RecipeRegistry::Get(), kTestRngSeed);
+				auto& action = world->registerSystem<ActionSystem>(kTestRngSeed);
 				action.setRemoveEntityCallback([this](const std::string& defName, float x, float y) {
 					executor.removeEntity(world::worldToChunk({x, y}), {x, y}, defName);
 				});

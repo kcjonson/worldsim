@@ -83,69 +83,29 @@ Mods load alphabetically after base game, allowing later mods to override earlie
 
 ## Implementation
 
-### GameLoadingScene Integration
+### Loading the work config
 
-Add config loading to the `Initializing` phase:
+`assets::loadWorkConfig(configRoot)` (libs/assets/assets/WorkConfig.h) clears the work-config
+registries (ActionTypeRegistry, TaskChainRegistry, WorkTypeRegistry, PriorityConfig,
+ConstructionRegistry, and ConfigValidator's errors), loads them from `configRoot` in the order above,
+checks that priority-tuning.xml gives every task type an arbitration tier, loads construction, and
+cross-validates. It returns every error as a string; an empty list means the config is loaded. It needs
+no GL and no scene, so the headless sim calls it too.
+
+The loading scene clears `ecs::GoalTaskRegistry` itself (a sim singleton libs/assets can't reach),
+then calls it in the `Initializing` phase:
 
 ```cpp
-// GameLoadingScene.cpp
-
-void initializeWorldSystems() {
-    LOG_INFO(Game, "GameLoadingScene - Initializing world systems");
-
-    // NEW: Load work configuration
-    updateStatusText("Loading configuration...");
-    if (!loadWorkConfigs()) {
-        // Error already logged, transition to error state
-        phase = LoadingPhase::ConfigError;
-        return;
+// GameLoadingScene.cpp, initializeWorldSystems()
+updateStatusText("Loading configuration...");
+ecs::GoalTaskRegistry::Get().clear();
+const auto configErrors = assets::loadWorkConfig("assets/config");
+if (!configErrors.empty()) {
+    for (const auto& error : configErrors) {
+        LOG_ERROR(Game, "%s", error.c_str());
     }
-
-    // ... existing initialization code ...
-}
-
-bool loadWorkConfigs() {
-    // Clear any previous configs (supports menu → new game cycle)
-    ActionTypeRegistry::Get().clear();
-    TaskChainRegistry::Get().clear();
-    WorkTypeRegistry::Get().clear();
-    PriorityConfig::Get().clear();
-    ConfigValidator::clearErrors();
-
-    // Load in dependency order
-    std::string basePath = "assets/config/";
-
-    if (!ActionTypeRegistry::Get().loadFromFile(basePath + "actions/action-types.xml")) {
-        LOG_ERROR(Game, "Failed to load action-types.xml");
-        return false;
-    }
-
-    if (!TaskChainRegistry::Get().loadFromFile(basePath + "work/task-chains.xml")) {
-        LOG_ERROR(Game, "Failed to load task-chains.xml");
-        return false;
-    }
-
-    if (!WorkTypeRegistry::Get().loadFromFile(basePath + "work/work-types.xml")) {
-        LOG_ERROR(Game, "Failed to load work-types.xml");
-        return false;
-    }
-
-    if (!PriorityConfig::Get().loadFromFile(basePath + "work/priority-tuning.xml")) {
-        LOG_ERROR(Game, "Failed to load priority-tuning.xml");
-        return false;
-    }
-
-    // TODO: Load mod configs here (future)
-    // loadModConfigs(enabledMods);
-
-    // Validate cross-references
-    if (!ConfigValidator::validateAll()) {
-        LOG_ERROR(Game, "Config validation failed");
-        return false;
-    }
-
-    LOG_INFO(Game, "Work configuration loaded successfully");
-    return true;
+    phase = LoadingPhase::ConfigError;
+    return;
 }
 ```
 
@@ -245,7 +205,7 @@ When mod support is added:
 1. Main Menu gets "Mods" button
 2. Mods screen shows available mods with enable/disable toggles
 3. Enabled mods stored in save file or user preferences
-4. `loadWorkConfigs()` loads base + enabled mods in order
+4. `assets::loadWorkConfig` loads base + enabled mods in order
 5. Mod load order: alphabetical (or explicit load order in mod metadata)
 
 See [task-generation-architecture.md](./task-generation-architecture.md#mod-loading) for mod validation rules.

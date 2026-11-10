@@ -390,9 +390,20 @@ class NavigationSystem : public ISystem {
 
 	// True while any region's build is in flight. update() launches every build its gates
 	// call for before it returns, so false right after an update means the system has
-	// settled: with the same inputs, no later update changes a mesh. Tests use it to tell
-	// a build still landing from one that will never start.
+	// settled: with the same inputs, no later update changes a mesh.
 	[[nodiscard]] bool isBuilding() const;
+
+	// Blocks until the system settles: evaluates the region rebuild gates against the
+	// current inputs, launches what they call for, waits for every in-flight build, swaps
+	// each in as update() would, and repeats until no gate fires. Advances nothing else;
+	// isBuilding() is false when it returns. It reads only chunks that are ready now, so a
+	// caller settles chunk generation (ChunkManager::finishPendingGeneration) and placement
+	// first. It waits on the futures the BuildRunner hands back, so it needs a runner whose
+	// builds finish on their own (the default does). For hosts that want repeatable results
+	// (tests, the headless sim), never the game, whose frames must not wait on a build. A
+	// wait longer than a minute logs a warning naming the regions still building and keeps
+	// waiting.
+	void finishPendingBuilds();
 
 	// Monotonic count of COLONIST-region mesh swaps. A stored NavPath stamps this at plan time so
 	// the replan loop can detect "the world rebuilt under me", and a deferred route waits on it to

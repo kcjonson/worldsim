@@ -50,6 +50,7 @@
 #include <assets/placement/PlacementExecutor.h>
 
 // ECS
+#include <ecs/SystemSeeds.h>
 #include <ecs/World.h>
 #include <ecs/components/Action.h>
 #include <ecs/components/AgentRadius.h>
@@ -1195,6 +1196,11 @@ namespace {
 
 			ecsWorld = std::make_unique<ecs::World>();
 
+			std::random_device entropy;
+			const uint64_t	   sessionSeed = (uint64_t{entropy()} << 32) | entropy();
+			const auto		   systemSeeds = ecs::deriveSystemSeeds(sessionSeed);
+			LOG_INFO(Game, "Session seed: %llu", static_cast<unsigned long long>(sessionSeed));
+
 			// Register systems in priority order (lower = runs first)
 			auto& assetRegistry = assets::AssetRegistry::Get();
 			auto& recipeRegistry = assets::RecipeRegistry::Get();
@@ -1207,13 +1213,14 @@ namespace {
 			ecsWorld->registerSystem<ecs::ConstructionSystem>();							// Priority 58 - foundation lifecycle goals
 			ecsWorld->registerSystem<ecs::RoomDetectionSystem>();							// Priority 59 - derive rooms from built walls
 			ecsWorld->registerSystem<ecs::NavigationSystem>();								// Priority 51 - cached navmesh + path queries
-			ecsWorld->registerSystem<ecs::AIDecisionSystem>(assetRegistry, recipeRegistry); // Priority 60
+			// Priority 60
+			ecsWorld->registerSystem<ecs::AIDecisionSystem>(assetRegistry, recipeRegistry, systemSeeds.aiDecision);
 			ecsWorld->registerSystem<ecs::MovementSystem>();								// Priority 100
 			ecsWorld->registerSystem<ecs::PhysicsSystem>();									// Priority 200
 			ecsWorld->registerSystem<ecs::CollisionSystem>();			// Priority 250 - positional separation after physics
 			ecsWorld->registerSystem<ecs::WallCollisionSystem>();		// Priority 260 - wall safety-net after agent separation
 			ecsWorld->registerSystem<ecs::StaticRectCollisionSystem>(); // Priority 270 - flora-rect safety-net after wall collision
-			ecsWorld->registerSystem<ecs::ActionSystem>();				// Priority 350
+			ecsWorld->registerSystem<ecs::ActionSystem>(systemSeeds.action); // Priority 350
 			ecsWorld->registerSystem<worldview::DynamicEntityRenderSystem>(); // Priority 900
 
 			// Wire up VisionSystem with placement data for entity queries

@@ -46,6 +46,7 @@
 #include <world/chunk/ChunkManager.h>
 #include <world/chunk/ChunkSampleResult.h>
 #include <world/chunk/IWorldSampler.h>
+#include <world/chunk/SyntheticWorldSampler.h>
 
 #include <worldgen/sampling/PondNetwork2D.h>
 
@@ -434,6 +435,36 @@ namespace ecs::test {
 		// Should have a new task (timer reset)
 		EXPECT_EQ(task->type, TaskType::Wander);
 		EXPECT_EQ(task->timeSinceEvaluation, 0.0F);
+	}
+
+	// The session seed is the only source of the wander sequence: a replay with the same seed picks
+	// the same targets, arrival after arrival.
+	TEST_F(AIDecisionSystemTest, WanderSequenceFollowsSeed) {
+		auto wanderTargets = [this](uint32_t seed) {
+			world = std::make_unique<World>();
+			world->registerSystem<AIDecisionSystem>(assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), seed);
+			auto colonist = createColonist({0.0F, 0.0F});
+			for (auto need : {NeedType::Hunger, NeedType::Thirst, NeedType::Energy, NeedType::Bladder}) {
+				setNeedValue(colonist, need, 100.0F);
+			}
+			std::vector<glm::vec2> targets;
+			for (int i = 0; i < 8; ++i) {
+				world->update(0.016F);
+				auto* task = getTask(colonist);
+				if (task == nullptr) {
+					ADD_FAILURE() << "colonist has no Task";
+					break;
+				}
+				EXPECT_EQ(task->type, TaskType::Wander);
+				targets.push_back(task->targetPosition);
+				task->state = TaskState::Arrived;
+			}
+			return targets;
+		};
+
+		const auto first = wanderTargets(kTestRngSeed);
+		EXPECT_EQ(wanderTargets(kTestRngSeed), first);
+		EXPECT_NE(wanderTargets(kTestRngSeed + 1), first);
 	}
 
 	TEST_F(AIDecisionSystemTest, ReEvaluatesWhenCriticalNeedEmerges) {
@@ -2345,7 +2376,7 @@ namespace ecs::test {
 			// This is critical - the bug only manifests when both systems run
 			auto& recipeRegistry = assets::RecipeRegistry::Get();
 			world->registerSystem<AIDecisionSystem>(registry, recipeRegistry, kTestRngSeed);
-			world->registerSystem<ActionSystem>();
+			world->registerSystem<ActionSystem>(kTestRngSeed);
 		}
 
 		void TearDown() override {
@@ -3383,34 +3414,9 @@ namespace ecs::test {
 	}
 
 	namespace {
-		// Every tile grassland, so the region around the origin is open walkable ground.
-		class OpenLandSampler : public world::IWorldSampler {
-		  public:
-			[[nodiscard]] world::ChunkSampleResult sampleChunk(world::ChunkCoordinate) const override {
-				return world::makeUniformChunkSampleResult(
-					world::BiomeWeights::single(world::Biome::TemperateGrassland), 1.0F);
-			}
-			[[nodiscard]] float	   sampleElevation(world::WorldPosition) const override { return 1.0F; }
-			[[nodiscard]] uint64_t getWorldSeed() const override { return 7U; }
-		};
-
 		// Open grassland with one pond at (40, 40); its rim is at most 10.5 m from the center.
 		constexpr worldgen::PondNetwork2D::Pond kSlidePond{
 			.cx = 40.0, .cy = 40.0, .radius = 8.0F, .phaseA = 0.0F, .phaseB = 0.0F, .depth = 120};
-
-		class PondSampler : public world::IWorldSampler {
-		  public:
-			[[nodiscard]] world::ChunkSampleResult sampleChunk(world::ChunkCoordinate coord) const override {
-				world::ChunkSampleResult r = world::makeUniformChunkSampleResult(
-					world::BiomeWeights::single(world::Biome::TemperateGrassland), 1.0F);
-				if (coord.x >= -1 && coord.x <= 1 && coord.y >= -1 && coord.y <= 1) {
-					r.pondBlobs.push_back(kSlidePond);
-				}
-				return r;
-			}
-			[[nodiscard]] float	   sampleElevation(world::WorldPosition) const override { return 1.0F; }
-			[[nodiscard]] uint64_t getWorldSeed() const override { return 7U; }
-		};
 
 		// Open land cut by two straight rivers, 6 m wide, along y = +20 and y = -20 across the whole
 		// area: three land components, the band between them (where the colonist stands), the north bank
@@ -3437,9 +3443,9 @@ namespace ecs::test {
 	// The running game's first decision happens before the async region build has produced a mesh.
 	// This wires a real NavigationSystem (all-land chunks unless a fixture swaps the sampler, a 60 m
 	// colonist region at the origin driven by bare Colonist-tagged entities, an empty construction
-	// world) plus MovementSystem and PhysicsSystem, so a test can let the AI decide with no mesh, pump
-	// the NavigationSystem alone until the build lands (pumpUntilMesh: no sim time passes however long
-	// the runner takes, and the AI sees the mesh on the next tick), and then check the colonist walks
+	// world) plus MovementSystem and PhysicsSystem, so a test can let the AI decide with no mesh, settle
+	// the NavigationSystem alone (finishPendingBuilds: no sim time passes however long the build
+	// takes, and the AI sees the mesh on the next tick), and then check the colonist walks
 	// a route.
 	class AIDecisionFirstMeshTest : public AIDecisionSystemTest {
 	  protected:
@@ -3469,7 +3475,7 @@ namespace ecs::test {
 		}
 
 		[[nodiscard]] virtual std::unique_ptr<world::IWorldSampler> makeSampler() const {
-			return std::make_unique<OpenLandSampler>();
+			return std::make_unique<world::SyntheticWorldSampler>(7U, world::SyntheticMap{});
 		}
 
 		// Drops the origin region, so the regions are only the ones the test makes.
@@ -3525,7 +3531,8 @@ namespace ecs::test {
 		EXPECT_FLOAT_EQ(getTrace(colonist)->lastEvaluationTime, firstEvaluation)
 			<< "a parked colonist must not re-decide every frame";
 
-		ASSERT_TRUE(pumpUntilMesh(*nav)) << "navmesh never built";
+		nav->finishPendingBuilds();
+		ASSERT_TRUE(nav->hasMesh()) << "navmesh never built";
 
 		bool walking = false;
 		for (int i = 0; i < kTicksAfterMesh && !walking; ++i) {
@@ -3564,7 +3571,8 @@ namespace ecs::test {
 		ASSERT_FALSE(getMovementTarget(colonist)->active) << "the route is held until a mesh exists";
 		EXPECT_EQ(task->navState, NavState::AwaitingMesh) << "the held route shows as waiting, not traveling";
 
-		ASSERT_TRUE(pumpUntilMesh(*nav)) << "navmesh never built";
+		nav->finishPendingBuilds();
+		ASSERT_TRUE(nav->hasMesh()) << "navmesh never built";
 
 		bool routed = false;
 		for (int i = 0; i < kTicksAfterMesh && !routed; ++i) {
@@ -3587,7 +3595,8 @@ namespace ecs::test {
 	}
 
 	TEST_F(AIDecisionFirstMeshTest, ControlledColonistWalksToMoveOrder) {
-		ASSERT_TRUE(pumpUntilMesh(*nav)) << "navmesh never built";
+		nav->finishPendingBuilds();
+		ASSERT_TRUE(nav->hasMesh()) << "navmesh never built";
 		const glm::vec2 start{0.0F, 0.0F};
 		const glm::vec2 goal{8.0F, 3.0F};
 		const auto		colonist = createColonist(start);
@@ -3605,7 +3614,8 @@ namespace ecs::test {
 	}
 
 	TEST_F(AIDecisionFirstMeshTest, TakingControlOfWalkingColonistStopsIt) {
-		ASSERT_TRUE(pumpUntilMesh(*nav)) << "navmesh never built";
+		nav->finishPendingBuilds();
+		ASSERT_TRUE(nav->hasMesh()) << "navmesh never built";
 		const auto colonist = createColonist({0.0F, 0.0F});
 		satisfyAllNeeds(*getNeeds(colonist));
 		ASSERT_TRUE(walkUntilMoving(colonist)) << "the colonist never set off on its wander";
@@ -3631,12 +3641,13 @@ namespace ecs::test {
 	  protected:
 		void SetUp() override {
 			AIDecisionFirstMeshTest::SetUp();
-			world->registerSystem<ActionSystem>();
-			ASSERT_TRUE(pumpUntilMesh(*nav)) << "navmesh never built";
+			world->registerSystem<ActionSystem>(kTestRngSeed);
+			nav->finishPendingBuilds();
+			ASSERT_TRUE(nav->hasMesh()) << "navmesh never built";
 		}
 
 		[[nodiscard]] std::unique_ptr<world::IWorldSampler> makeSampler() const override {
-			return std::make_unique<PondSampler>();
+			return std::make_unique<world::SyntheticWorldSampler>(7U, world::SyntheticMap{.pond = kSlidePond});
 		}
 
 		EntityID createActingColonist(glm::vec2 position) {
@@ -3758,7 +3769,8 @@ namespace ecs::test {
 		EntityID makeColonistBetweenRivers() {
 			const auto colonist = createColonist(kStart);
 			satisfyAllNeeds(*getNeeds(colonist));
-			EXPECT_TRUE(pumpUntilMesh(*nav)) << "navmesh never built";
+			nav->finishPendingBuilds();
+			EXPECT_TRUE(nav->hasMesh()) << "navmesh never built";
 			const auto*						  memory = world->getComponent<Memory>(colonist);
 			const geometry::nav::BeliefFilter belief{&memory->knownSegments, &memory->knownOpenings};
 			EXPECT_FALSE(isReachable(*nav, kStart, northBank(0.0F), kAgentRadius, belief)) << "the north bank must be unreachable";
@@ -3937,7 +3949,8 @@ namespace ecs::test {
 			}
 			addKnownEntity(colonist, kBush, registerBerryBush(assets::AssetRegistry::Get()), assets::CapabilityType::Harvestable);
 
-			EXPECT_TRUE(pumpUntilMesh(*nav)) << "navmesh never built";
+			nav->finishPendingBuilds();
+			EXPECT_TRUE(nav->hasMesh()) << "navmesh never built";
 			EXPECT_FALSE(canReachBush(colonist)) << "the bush in the known wall must start out unreachable";
 			return colonist;
 		}
@@ -3976,8 +3989,8 @@ namespace ecs::test {
 		ASSERT_EQ(hungerStatus(colonist), OptionStatus::NoSource) << "the walled-in bush can't be the target";
 
 		ASSERT_TRUE(construction.removeSegment(wallSegment));
-		ASSERT_TRUE(pumpUntil(*nav, "the rebuild without the wall", [&] { return canReachBush(colonist); }))
-			<< "the rebuilt mesh never opened the bush up";
+		nav->finishPendingBuilds();
+		ASSERT_TRUE(canReachBush(colonist)) << "the rebuilt mesh never opened the bush up";
 		EXPECT_TRUE(hungerSelectedWithin(colonist)) << "the colonist kept the stale verdict and left the bush alone";
 	}
 
@@ -4012,7 +4025,8 @@ namespace ecs::test {
 		addKnownEntity(colonist, otherRegion, kWaterDefId, assets::CapabilityType::Drinkable);
 		addKnownEntity(colonist, ownRegion, kWaterDefId, assets::CapabilityType::Drinkable);
 
-		ASSERT_TRUE(pumpUntil(*nav, "both regions", [&] { return nav->builtRegions().size() == 2U; }));
+		nav->finishPendingBuilds();
+		ASSERT_EQ(nav->builtRegions().size(), 2U);
 		ASSERT_FALSE(nav->requestPath(start, otherRegion, 0.3F).has_value()) << "no route between regions";
 		ASSERT_TRUE(nav->requestPath(start, ownRegion, 0.3F).has_value());
 
@@ -4055,7 +4069,8 @@ namespace ecs::test {
 			addKnownEntity(colonist, kInRoom, kWaterDefId, assets::CapabilityType::Drinkable);
 			addKnownEntity(colonist, kOutside, kWaterDefId, assets::CapabilityType::Drinkable);
 
-			EXPECT_TRUE(pumpUntilMesh(*nav)) << "navmesh never built";
+			nav->finishPendingBuilds();
+			EXPECT_TRUE(nav->hasMesh()) << "navmesh never built";
 			const geometry::nav::BeliefFilter belief{&memory->knownSegments, &memory->knownOpenings};
 			EXPECT_TRUE(isReachable(*nav, kStart, kInRoom, 0.3F, belief)) << "the room must pass the pre-check";
 			EXPECT_FALSE(nav->requestPath(kStart, kInRoom, 0.3F, belief).has_value()) << "and fail the believed route";
@@ -4072,7 +4087,8 @@ namespace ecs::test {
 				construction.setSegmentState(id, construction::FoundationState::Built);
 			}
 			// Until the rebuilds settle: the commit and the state change can each launch one.
-			ASSERT_TRUE(pumpUntil(*nav, "the wall-edit rebuild", [&] { return nav->generation() != before && !nav->isBuilding(); }));
+			nav->finishPendingBuilds();
+			ASSERT_NE(nav->generation(), before);
 		}
 
 		// Runs `ticks` updates and counts the decisions that chose each water.
@@ -4159,15 +4175,15 @@ namespace ecs::test {
 			driver = world->createEntity();
 			world->addComponent<Position>(driver, Position{{0.0F, 0.0F}});
 			world->addComponent<Colonist>(driver, Colonist{"B"});
-			ASSERT_TRUE(pumpUntil(*nav, "B's region", [&] { return hasRegionCentredAt(0); }));
+			nav->finishPendingBuilds();
+			ASSERT_TRUE(hasRegionCentredAt(0));
 
 			world->getComponent<Position>(driver)->value = {-15.0F, 0.0F}; // 15 m inside: B's region stays put
 			const auto east = world->createEntity();
 			world->addComponent<Position>(east, Position{{46.0F, 0.0F}});
 			world->addComponent<Colonist>(east, Colonist{"C"});
-			ASSERT_TRUE(pumpUntil(*nav, "the east region", [&] {
-				return hasRegionCentredAt(46000) && hasRegionCentredAt(0) && !nav->isBuilding();
-			}));
+			nav->finishPendingBuilds();
+			ASSERT_TRUE(hasRegionCentredAt(46000) && hasRegionCentredAt(0));
 		}
 
 		[[nodiscard]] bool hasRegionCentredAt(std::int64_t xMm) const {
@@ -4239,7 +4255,8 @@ namespace ecs::test {
 			satisfyAllNeeds(*getNeeds(colonist));
 			world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
 			setNeedValue(colonist, NeedType::Thirst, 40.0F);
-			EXPECT_TRUE(pumpUntil(*nav, "its region", [&] { return nav->inSimArea({0.0F, 0.0F}) && !nav->isBuilding(); }));
+			nav->finishPendingBuilds();
+			EXPECT_TRUE(nav->inSimArea({0.0F, 0.0F}));
 			return colonist;
 		}
 
@@ -4261,7 +4278,7 @@ namespace ecs::test {
 		bool arrived = false;
 		for (int i = 0; i < 1500 && !arrived; ++i) {
 			world->update(kTick);
-			(void)pumpUntil(*nav, "builds to settle", [&] { return !nav->isBuilding(); });
+			nav->finishPendingBuilds();
 			const Task* task = getTask(colonist);
 			arrived = task->state == TaskState::Arrived && task->targetPosition == water;
 		}
@@ -4301,7 +4318,8 @@ namespace ecs::test {
 		const auto			farDriver = world->createEntity();
 		world->addComponent<Position>(farDriver, Position{{300.0F, 0.0F}});
 		world->addComponent<Colonist>(farDriver, Colonist{"Far"});
-		ASSERT_TRUE(pumpUntil(*nav, "the far region", [&] { return nav->builtRegions().size() == 2U && !nav->isBuilding(); }));
+		nav->finishPendingBuilds();
+		ASSERT_EQ(nav->builtRegions().size(), 2U);
 		ASSERT_NE(nav->generation(), before) << "the far region's swap moved the global generation";
 
 		world->update(kTick);
@@ -4313,7 +4331,7 @@ namespace ecs::test {
 	[[nodiscard]] bool tickUntil(World& world, NavigationSystem& nav, int maxTicks, Done&& done) {
 		for (int i = 0; i < maxTicks; ++i) {
 			world.update(0.1F);
-			(void)pumpUntil(nav, "builds to settle", [&] { return !nav.isBuilding(); });
+			nav.finishPendingBuilds();
 			if (done()) {
 				return true;
 			}
@@ -4328,7 +4346,8 @@ namespace ecs::test {
 		const auto		colonist = makeThirstyColonistWithItsOwnRegion();
 		const glm::vec2 water{100.0F, 0.0F};
 		nav->setViewportRect(water, {30.0F, 30.0F});
-		ASSERT_TRUE(pumpUntil(*nav, "the camera region", [&] { return nav->builtRegions().size() == 2U && !nav->isBuilding(); }));
+		nav->finishPendingBuilds();
+		ASSERT_EQ(nav->builtRegions().size(), 2U);
 		ASSERT_FALSE(nav->inSimArea(water)) << "the camera region answers no colonist query";
 		addKnownEntity(colonist, water, kWaterDefId, assets::CapabilityType::Drinkable);
 
@@ -4360,7 +4379,8 @@ namespace ecs::test {
 		const auto			commit = construction.commitSegment({-20000, -20000}, {-18000, -20000}, "Wood", "Standard",
 																construction::kInvalidFoundation);
 		ASSERT_TRUE(commit.ok());
-		ASSERT_TRUE(pumpUntil(*nav, "the rebuild", [&] { return nav->generation() != before && !nav->isBuilding(); }));
+		nav->finishPendingBuilds();
+		ASSERT_NE(nav->generation(), before);
 		world->update(kTick);
 		EXPECT_TRUE(getMovementTarget(colonist)->active) << "the replanned route was never followed";
 	}
@@ -4376,7 +4396,8 @@ namespace ecs::test {
 		satisfyAllNeeds(*getNeeds(colonist));
 		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
 		setNeedValue(colonist, NeedType::Thirst, 40.0F);
-		ASSERT_TRUE(pumpUntil(*nav, "both regions", [&] { return nav->builtRegions().size() == 2U && !nav->isBuilding(); }));
+		nav->finishPendingBuilds();
+		ASSERT_EQ(nav->builtRegions().size(), 2U);
 		const glm::vec2 water{-115.0F, 0.0F};
 		addKnownEntity(colonist, water, kWaterDefId, assets::CapabilityType::Drinkable);
 
@@ -4399,7 +4420,8 @@ namespace ecs::test {
 			satisfyAllNeeds(*getNeeds(colonist));
 			world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
 			setNeedValue(colonist, NeedType::Thirst, 40.0F);
-			EXPECT_TRUE(pumpUntil(*nav, "his region", [&] { return nav->inSimArea(kStart) && !nav->isBuilding(); }));
+			nav->finishPendingBuilds();
+			EXPECT_TRUE(nav->inSimArea(kStart));
 			return colonist;
 		}
 	};
@@ -4490,7 +4512,8 @@ namespace ecs::test {
 		setNeedValue(colonist, NeedType::Thirst, 100.0F);
 		const glm::vec2 click{90.0F, 5.0F};
 		nav->setViewportRect(click, {30.0F, 30.0F});
-		ASSERT_TRUE(pumpUntil(*nav, "the camera region", [&] { return nav->builtRegions().size() == 2U && !nav->isBuilding(); }));
+		nav->finishPendingBuilds();
+		ASSERT_EQ(nav->builtRegions().size(), 2U);
 		ASSERT_FALSE(nav->inSimArea(click));
 
 		auto& ai = world->getSystem<AIDecisionSystem>();
@@ -4525,7 +4548,8 @@ namespace ecs::test {
 		EXPECT_LE(noCamera->x, 30.0F) << "a spot outside every colonist region";
 
 		nav->setViewportRect({40.0F, 0.0F}, {30.0F, 30.0F});
-		ASSERT_TRUE(pumpUntil(*nav, "the camera region", [&] { return nav->builtRegions().size() == 2U && !nav->isBuilding(); }));
+		nav->finishPendingBuilds();
+		ASSERT_EQ(nav->builtRegions().size(), 2U);
 		EXPECT_EQ(spot(), noCamera) << "the camera's region changed where he relieves himself";
 	}
 

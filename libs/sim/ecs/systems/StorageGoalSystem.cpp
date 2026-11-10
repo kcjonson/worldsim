@@ -16,19 +16,6 @@
 
 namespace ecs {
 
-	namespace {
-		// Generate a unique chain ID linking a stocking Harvest to the carry-in Haul it spawns
-		// (createHaulForCompletedHarvest copies the chainId). The carry-in Haul is recognized as a
-		// stocking delivery -- not an ordinary loose-pile haul -- by being StorageGoalSystem-owned
-		// AND having a chainId, so the chainId must be non-zero/unique. Internal linkage: a static
-		// local counter, distinct from other systems' generators.
-		uint64_t generateChainId() {
-			static uint64_t nextChainId = 1;
-			return nextChainId++;
-		}
-
-	} // namespace
-
 	void StorageGoalSystem::update(float /*deltaTime*/) {
 		if (world == nullptr) {
 			return;
@@ -309,7 +296,7 @@ namespace ecs {
 			// chainId tags the carry-in Haul (spawned on harvest completion) as a stocking delivery,
 			// so the decision layer routes it from inventory into the box rather than treating it as
 			// an ordinary loose-pile haul.
-			harvest.chainId = generateChainId();
+			harvest.chainId = GoalTaskRegistry::Get().allocateChainId();
 
 			registry.createGoal(std::move(harvest));
 		}

@@ -16,6 +16,7 @@ add_library(assets
     assets/RecipeRegistry.cpp
     assets/TaskChainRegistry.cpp
     assets/WorkTypeRegistry.cpp
+    assets/WorkConfig.cpp
     assets/lua/LuaEngine.cpp
     assets/lua/LuaGenerator.cpp
     assets/placement/DependencyGraph.cpp

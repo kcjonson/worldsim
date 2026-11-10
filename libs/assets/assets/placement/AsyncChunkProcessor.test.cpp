@@ -6,8 +6,7 @@
 
 #include <world/chunk/Chunk.h>
 #include <world/chunk/ChunkManager.h>
-#include <world/chunk/ChunkSampleResult.h>
-#include <world/chunk/IWorldSampler.h>
+#include <world/chunk/SyntheticWorldSampler.h>
 
 #include <gtest/gtest.h>
 
@@ -31,25 +30,10 @@ namespace {
 	constexpr uint64_t kQuickstartSeed = 424242;
 	constexpr uint64_t kOtherWorldSeed = 987654321;
 
-	// Every tile is grassland, so what a chunk grows is decided by the world seed alone.
-	class SeededGrasslandSampler : public world::IWorldSampler {
-	  public:
-		explicit SeededGrasslandSampler(uint64_t worldSeed)
-			: seed(worldSeed) {}
-
-		[[nodiscard]] world::ChunkSampleResult sampleChunk(world::ChunkCoordinate /*coord*/) const override {
-			return world::makeUniformChunkSampleResult(world::BiomeWeights::single(world::Biome::TemperateGrassland), 1.0F);
-		}
-		[[nodiscard]] float	   sampleElevation(world::WorldPosition /*pos*/) const override { return 1.0F; }
-		[[nodiscard]] uint64_t getWorldSeed() const override { return seed; }
-
-	  private:
-		uint64_t seed;
-	};
-
-	// One ready chunk at the origin of a world with the given seed.
+	// One ready chunk at the origin of an all-grassland world with the given seed, so what the chunk
+	// grows is decided by the world seed alone.
 	std::unique_ptr<world::ChunkManager> loadOriginChunk(uint64_t worldSeed) {
-		auto chunks = std::make_unique<world::ChunkManager>(std::make_unique<SeededGrasslandSampler>(worldSeed));
+		auto chunks = std::make_unique<world::ChunkManager>(std::make_unique<world::SyntheticWorldSampler>(worldSeed, world::SyntheticMap{}));
 		chunks->setLoadRadius(0);
 		chunks->update({0.0F, 0.0F});
 		chunks->finishPendingGeneration();

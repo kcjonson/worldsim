@@ -24,6 +24,7 @@
 #include <chrono>
 #include <cmath>
 #include <functional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -745,6 +746,35 @@ namespace ecs {
 		// the render clock.
 		const std::vector<DesiredRegion> desired = computeDesiredRegions();
 		reconcileRegions(desired);
+	}
+
+	void NavigationSystem::finishPendingBuilds() {
+		// update() launches every build its gates call for, so once it leaves nothing in
+		// flight the gates are quiet against the current inputs.
+		// A build can take seconds in a slow Debug run, so the wait has no deadline; a long one
+		// says which regions it is stuck on, so a hang shows in the log before a test TIMEOUT.
+		constexpr auto kSlowBuildWarning = std::chrono::seconds(60);
+		for (update(0.0F); isBuilding(); update(0.0F)) {
+			for (SimulationRegion& region : regions) {
+				if (!region.future.valid()) {
+					continue;
+				}
+				while (region.future.wait_for(kSlowBuildWarning) != std::future_status::ready) {
+					std::string building;
+					for (const SimulationRegion& r : regions) {
+						if (r.future.valid() && r.future.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+							building += (building.empty() ? "" : ", ") + std::to_string(r.id);
+						}
+					}
+					LOG_WARNING(Engine, "[NavBuild] finishPendingBuilds still waiting after another %lld s on region(s) %s",
+								static_cast<long long>(kSlowBuildWarning.count()), building.c_str());
+				}
+			}
+		}
+		for (std::future<geometry::nav::NavMesh>& build : retiringBuilds) {
+			build.wait();
+		}
+		retiringBuilds.clear();
 	}
 
 	int NavigationSystem::regionAt(geometry::Vec2i64 mm, RegionScope scope) const {

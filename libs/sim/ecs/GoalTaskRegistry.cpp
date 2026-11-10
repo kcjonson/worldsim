@@ -14,6 +14,7 @@ namespace ecs {
 		ownerToGoals.clear();
 		parentToChildren.clear();
 		nextGoalId = 1;
+		nextChainId = 1;
 	}
 
 	uint64_t GoalTaskRegistry::createGoal(GoalTask goal) {

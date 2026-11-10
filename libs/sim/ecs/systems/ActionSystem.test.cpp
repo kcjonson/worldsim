@@ -31,6 +31,8 @@
 
 namespace ecs::test {
 
+constexpr uint32_t kTestRngSeed = 42;
+
 // =============================================================================
 // harvestWorkRate (pure helper)
 // =============================================================================
@@ -201,7 +203,7 @@ class ActionSystemTest : public ::testing::Test {
 		berryDef.itemProperties->edible = assets::EdibleCapability{0.3F, assets::CapabilityQuality::Normal, true};
 		assets::AssetRegistry::Get().registerTestDefinition(std::move(berryDef));
 
-		world->registerSystem<ActionSystem>();
+		world->registerSystem<ActionSystem>(kTestRngSeed);
 	}
 
 	void TearDown() override {
@@ -516,7 +518,7 @@ class ActionSystemGoalTest : public ::testing::Test {
 		GoalTaskRegistry::Get().clear();
 		assets::RecipeRegistry::Get().clear();
 		world = std::make_unique<World>();
-		world->registerSystem<ActionSystem>();
+		world->registerSystem<ActionSystem>(kTestRngSeed);
 	}
 
 	void TearDown() override {
@@ -1534,7 +1536,7 @@ class FellingTest : public ::testing::Test {
 		woodDef.itemProperties->massKg = 2.5F;
 		assets::AssetRegistry::Get().registerTestDefinition(std::move(woodDef));
 
-		auto& action = world->registerSystem<ActionSystem>();
+		auto& action = world->registerSystem<ActionSystem>(kTestRngSeed);
 		action.setDropResourceCallback(
 			[this](const std::string& defName, float /*x*/, float /*y*/, uint32_t quantity) {
 				++dropCalls;
@@ -1772,7 +1774,7 @@ class LoosePileHaulTest : public ::testing::Test {
 		woodDef.itemProperties->massKg = 2.5F;
 		assets::AssetRegistry::Get().registerTestDefinition(std::move(woodDef));
 
-		auto& action = world->registerSystem<ActionSystem>();
+		auto& action = world->registerSystem<ActionSystem>(kTestRngSeed);
 		// Mirror GameScene: a drained pile is removed by its exact entity id (not a position
 		// scan), so two same-material piles within the match epsilon can never alias.
 		action.setRemoveEntityByIdCallback([this](EntityID entity) {
@@ -1937,7 +1939,7 @@ class HandMaterialActionTest : public ::testing::Test {
 		plankDef.itemProperties->massKg = 0.5F;
 		assets::AssetRegistry::Get().registerTestDefinition(std::move(plankDef));
 
-		world->registerSystem<ActionSystem>();
+		world->registerSystem<ActionSystem>(kTestRngSeed);
 	}
 
 	void TearDown() override {
@@ -2451,7 +2453,7 @@ class ActionSystemTimeTest : public ::testing::Test {
 		assets::AssetRegistry::Get().registerTestDefinition(std::move(berryDef));
 
 		timeSystem = &world->registerSystem<TimeSystem>();
-		world->registerSystem<ActionSystem>();
+		world->registerSystem<ActionSystem>(kTestRngSeed);
 	}
 
 	void TearDown() override {
@@ -2607,7 +2609,7 @@ class ActionSystemHarvestTimeTest : public ::testing::Test {
 		tree.capabilities.harvestable = cap;
 		assets::AssetRegistry::Get().registerTestDefinition(std::move(tree));
 
-		world->registerSystem<ActionSystem>();
+		world->registerSystem<ActionSystem>(kTestRngSeed);
 	}
 
 	void TearDown() override {
@@ -2716,7 +2718,7 @@ class ActionSystemHarvestLocateTest : public ::testing::Test {
 		tree.capabilities.harvestable = cap;
 		assets::AssetRegistry::Get().registerTestDefinition(std::move(tree));
 
-		world->registerSystem<ActionSystem>();
+		world->registerSystem<ActionSystem>(kTestRngSeed);
 	}
 
 	void TearDown() override {
@@ -2855,7 +2857,7 @@ class ClearHarvestTest : public ::testing::Test {
 		shrub.capabilities.harvestable = cap;
 		registry.registerTestDefinition(std::move(shrub));
 
-		auto& action = world->registerSystem<ActionSystem>();
+		auto& action = world->registerSystem<ActionSystem>(kTestRngSeed);
 		action.setDecrementResourceCallback([this](const std::string& /*defName*/, float /*x*/, float /*y*/, uint32_t requested) {
 			const uint32_t removed = std::min(requested, pool);
 			pool -= removed;
