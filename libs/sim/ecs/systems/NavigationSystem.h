@@ -227,14 +227,14 @@ class NavigationSystem : public ISystem {
 	// Does some region holding the start also hold this goal, kRouteGoalInsetMm or more inside its rect?
 	// Only for such a goal does reaches() consult a mesh, and only such a goal is routed to directly
 	// (requestPath applies the same inset to its goal); any other is walked toward.
+
 	[[nodiscard]] bool coversGoal(const Reach& reach, glm::vec2 goalMeters) const;
 
 	// For a goal no region holding the start covers: where to walk to get closer. For each region
 	// holding the start, the goal clamped kStagingInsetMm inside its rect (so a colonist standing there
 	// is within kEdgeMarginMm and its region recenters toward the goal), then back along the line to
-	// the start, every kStagingSampleStepMm, to the first point the start reaches that is still
-	// kStagingInsetMm inside the rect (so it stays a goal requestPath takes); the candidate nearest
-
+	// the start, every kStagingSampleStepMm, to the first point the start reaches that a route may end
+	// at (kRouteGoalInsetMm inside the rect); the candidate nearest
 	// the goal wins. nullopt when none lies kStagingMinLegMm or more from the start: no step toward the
 	// goal is possible from here. Bounded: one reach test per sample, a few hundred at most.
 	[[nodiscard]] std::optional<glm::vec2> stagingPointToward(const Reach& reach, glm::vec2 startMeters,
@@ -260,6 +260,7 @@ class NavigationSystem : public ISystem {
 	// walkable face there (e.g. a colonist that beelined into a water hole) or when no colonist
 	// region covers it. The validity test for a colonist's own decisions (recovery, toilet spots),
 	// so they don't depend on the camera; player and world actions use isValidPosition.
+
 	[[nodiscard]] bool isOnMesh(glm::vec2 meters) const;
 
 	// Canonical world-position validity for spawn/placement/teleport. A position is VALID

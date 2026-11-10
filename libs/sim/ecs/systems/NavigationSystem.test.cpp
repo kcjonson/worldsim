@@ -1153,16 +1153,15 @@ TEST_F(NavigationSystemTest, RraCacheMapIsBounded) {
 
 // --- Phase B: viewport-tracking simulation area (snap-on-scroll) -------------
 //
-// These tests drive the camera region through setViewportRect (GameScene does the
-// camera->rect math in production). Each test verifies that the rebuild trigger fires
-// (or not) on the exact conditions described in the Phase B design:
+// These tests drive setSimulationArea directly (GameScene does the camera->area
+// math in production). Each test verifies that the rebuild trigger fires (or not)
+// on the exact conditions described in the Phase B design:
 //
 //  * first push (no built area) -> rebuild
 //  * zoom-out (larger half-extent, >20% change) -> rebuild, AABB grows
 //  * zoom-in (smaller half-extent, >20% change) -> rebuild, AABB shrinks
-//  * pan the centre within kEdgeMarginMm of the built edge -> rebuild, center moves
-//  * a pan that stays inside the margin and a size change under 20% -> NO rebuild
-
+//  * pan past kRecenterThresholdMm -> rebuild, center moves
+//  * tiny delta below both thresholds -> NO rebuild (hysteresis)
 //  * half-extent clamped to [kMinSimHalfExtentMm, kMaxSimHalfExtentMm]
 
 // Helper: AABB of a mesh (min/max over the vertex list).

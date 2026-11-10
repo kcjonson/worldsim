@@ -40,11 +40,10 @@ namespace ecs {
 		// edge, the mesh's border can leave it off every face (a snap there lands metres away), and a
 		// colonist walking toward it stands kStagingInsetMm inside, in the recenter margin, so his region
 		// moves to hold it properly.
-		bool insideBy(const SimAabb& rect, geometry::Vec2i64 p, std::int64_t inset) {
-			return p.x >= rect.minX + inset && p.x <= rect.maxX - inset && p.y >= rect.minY + inset && p.y <= rect.maxY - inset;
-		}
 		bool holdsGoal(const SimAabb& rect, geometry::Vec2i64 goal) {
-			return insideBy(rect, goal, NavigationSystem::kRouteGoalInsetMm);
+			constexpr std::int64_t kInset = NavigationSystem::kRouteGoalInsetMm;
+			return goal.x >= rect.minX + kInset && goal.x <= rect.maxX - kInset && goal.y >= rect.minY + kInset &&
+				   goal.y <= rect.maxY - kInset;
 		}
 
 
@@ -950,11 +949,9 @@ namespace ecs {
 				const double			t = static_cast<double>(i) / static_cast<double>(steps);
 				const geometry::Vec2i64 p{staged.x + static_cast<std::int64_t>(std::llround(dx * t)),
 										  staged.y + static_cast<std::int64_t>(std::llround(dy * t))};
-				// Every sample keeps the clamp point's slack (kStagingInsetMm inside), so after the
-				// mm -> float m -> mm round trip it is still a goal requestPath takes; one in the band
-				// nearer the edge is where the start can stand but a leg can't end.
-				if (!insideBy(r.rect, p, kStagingInsetMm) || !gnav::reaches(mesh, r.from, p, reach.belief)) {
-
+				// A sample in the band nearer the edge than kRouteGoalInsetMm is one requestPath would
+				// refuse as a goal (the start can stand there; the leg can't end there).
+				if (!holdsGoal(r.rect, p) || !gnav::reaches(mesh, r.from, p, reach.belief)) {
 					continue;
 				}
 

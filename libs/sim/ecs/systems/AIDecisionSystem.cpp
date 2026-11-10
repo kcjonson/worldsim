@@ -1220,18 +1220,16 @@ namespace ecs {
 			// Edge-leg retry. A leg toward a goal beyond the colonist's regions ends by stopping him inside
 			// his region's recenter margin, and the recenter's swap re-plans the next leg (replan above).
 			// When no build comes (water or a wall cut the leg short of the margin, so his region has no
-			// reason to move), ask for the next leg every kReEvalInterval he stands there, so the walk finds
-			// one or ends as no route (stalledWalkingToward) instead of standing there forever. Timed on its
-			// own clock: direct control zeroes timeSinceEvaluation every frame.
+			// reason to move), ask for the next leg on the periodic cadence, so the walk finds one or ends
+			// as no route (stalledWalkingToward) instead of standing there forever.
+
 			if (auto* navPath = world->getComponent<NavPath>(entity);
 				navPath != nullptr && navPath->valid && navPath->endsShortOfGoal &&
-				navPath->current >= navPath->waypoints.size() && task.state == TaskState::Moving && m_navSystem != nullptr) {
-				task.edgeLegWaitSeconds += deltaTime;
-				if (task.edgeLegWaitSeconds >= kReEvalInterval && !m_navSystem->isBuildingAround(position.value)) {
-					task.edgeLegWaitSeconds = 0.0F;
-					const NavRequestOutcome outcome = requestNavPath(entity, task.targetPosition, position, memory, movementTarget);
-					applyNavOutcome(task, outcome);
-				}
+				navPath->current >= navPath->waypoints.size() && task.state == TaskState::Moving &&
+				task.timeSinceEvaluation >= kReEvalInterval && m_navSystem != nullptr &&
+				!m_navSystem->isBuildingAround(position.value)) {
+				const NavRequestOutcome outcome = requestNavPath(entity, task.targetPosition, position, memory, movementTarget);
+				applyNavOutcome(task, outcome);
 			}
 
 			// Chain-leg repath: a multi-phase task (Haul Pickup->Deposit, PlacePackaged
@@ -1913,21 +1911,22 @@ namespace ecs {
 				continue;
 			}
 			const bool needsTarget = option.taskType != TaskType::Wander && option.targetPosition.has_value();
-			// The option keeps its target (the task stores it as is); the reach test is made where its
-			// route would end (routeGoalFor), the point requestNavPath routes to.
-			std::optional<glm::vec2> routeGoal = option.targetPosition;
-			if (reach != nullptr && needsTarget) {
-				routeGoal = routeGoalFor(option.taskType, option.targetPosition.value(), agentRadius);
+			// A target a region holding the colonist covers is resolved to where its route ends
+			// (routeGoalFor); one beyond them keeps its centre and is walked toward, and requestNavPath
+			// resolves it the same way once a region holding him covers it.
+			if (reach != nullptr && needsTarget && m_navSystem->coversGoal(*reach, option.targetPosition.value())) {
+				const auto routeGoal = routeGoalFor(option.taskType, option.targetPosition.value());
 				if (!routeGoal.has_value()) {
 					option.status = OptionStatus::NoSource; // its region has no walkable floor
 					continue;
 				}
 				if (*routeGoal != option.targetPosition.value()) {
-					option.targetReachable = false; // a moved route end is tested where it is
+					option.targetPosition  = routeGoal;
+					option.targetReachable = false; // a moved target is tested where it now is
 				}
 			}
 
-			if (needsTarget && !option.targetReachable && !canReach(routeGoal.value())) {
+			if (needsTarget && !option.targetReachable && !canReach(option.targetPosition.value())) {
 				option.status = OptionStatus::NoSource; // unreachable: skip it rather than freeze on it
 				continue;
 			}
@@ -2068,25 +2067,25 @@ namespace ecs {
 		}
 	}
 
-	std::optional<glm::vec2> AIDecisionSystem::routeGoalFor(TaskType type, glm::vec2 target, float agentRadius) const {
-		// Snap only the task types satisfied by arriving ADJACENT: Harvest (incl. footprint clearing),
-		// Build and Deconstruct, whose actions find their entity or blueprint by id, and a player's move
-		// order (None), which wants him as near the click as he can stand. A harvest target is a CENTER
-		// that can sit in a navmesh hole (a tree trunk's collision carves the tile out), which no route
-		// can end at. Haul/Craft are EXCLUDED: their actions validate arrival against the EXACT
-		// source/target position (haulSourcePosition / haulTargetPosition / station) within a tight
-		// tolerance, so an off-mesh one is left to fail its route rather than be moved off that point.
-		// A target no colonist region holds can't be judged yet and stays as it is (walked toward). One
-		// already on a walkable face stays put: the nearest-face snap measures to triangle edges, so on
-		// open ground (large faces) it would move a walkable target metres off. The snap clears built
-		// walls by the agent's radius, as a click's snap does. (The arbitration epic's locate-by-entity
-		// supersedes this snap.)
+	std::optional<glm::vec2> AIDecisionSystem::routeGoalFor(TaskType type, glm::vec2 target) const {
+		// Snap only the task types whose action looks its target up by entity/footprint and so is
+		// satisfied by arriving ADJACENT -- Harvest (incl. footprint clearing), Build, Deconstruct --
+		// and a player's move order (None), which just wants him as near the click as he can stand.
+		// A harvest/build target is a CENTER that can sit in a navmesh hole (a tree trunk's collision
+		// carves the tile out), which no route can end at. Haul/Craft are EXCLUDED: their actions
+		// validate arrival against the EXACT source/target position (haulSourcePosition /
+		// haulTargetPosition / station) within a tight tolerance, so snapping would move the route off
+		// the tolerance-checked point and the action would report "not at source or target" forever;
+		// an off-mesh one is left to fail its route. A target already on a walkable face stays put: the
+		// nearest-face snap measures to triangle edges, so on open ground (large faces) it would move a
+		// walkable target metres off. The snap nudge stays within HarvestActions' kPositionTolerance
+		// (0.5 m) of the target. (The arbitration epic's locate-by-entity supersedes this snap.)
 		const bool snapEligible = type == TaskType::Harvest || type == TaskType::Build || type == TaskType::Deconstruct ||
 								  type == TaskType::None;
-		if (!snapEligible || !m_navSystem->inSimArea(target) || m_navSystem->isOnMesh(target)) {
+		if (!snapEligible || m_navSystem->isOnMesh(target)) {
 			return target;
 		}
-		return m_navSystem->nearestPathablePoint(target, agentRadius);
+		return m_navSystem->nearestPathablePoint(target);
 	}
 
 	bool AIDecisionSystem::stalledWalkingToward(EntityID entity, const glm::vec2& goal, const Position& position) {
@@ -2180,25 +2179,13 @@ namespace ecs {
 		// getting him closer (water in the way, a region that can't follow him) end the walk as no
 		// route, like any other, so the need moves on and retries when his reach changes.
 		// FUTURE LOD1: a coarse regional graph for the long-haul leg instead of region-by-region steps.
-		// The goal is first resolved to where its route ends (routeGoalFor, as the option evaluation
-		// tested it), and coverage is judged at that point: a snapped point can lie in another region.
 		NavigationSystem::Reach from;
 		m_navSystem->reachFrom(position.value, radius, belief, from);
-		const Task*							  taskNow	= world->getComponent<Task>(entity);
-		const std::optional<glm::vec2>		  routeGoal = routeGoalFor(taskNow != nullptr ? taskNow->type : TaskType::None, goal, radius);
-		const bool							  goalBeyondReach = routeGoal.has_value() && !m_navSystem->coversGoal(from, *routeGoal);
+		const bool							  goalBeyondReach = !m_navSystem->coversGoal(from, goal);
 		std::optional<std::vector<glm::vec2>> path;
-		const char*							  whyNoRoute = "no believed route to";
-		if (!routeGoal.has_value()) {
-			whyNoRoute = "no walkable floor near";
-		} else if (goalBeyondReach) {
-			whyNoRoute = "edge walk got no closer to";
-			if (!stalledWalkingToward(entity, *routeGoal, position)) {
-				// nullopt: nothing his regions let him reach lies 0.5 m or more nearer it than where he
-				// stands (on the near bank of a river between them, say). Crossing to it, or finding a
-				// way round past what his regions see, is Phase 2's long-range routing.
-				whyNoRoute = "no step from here toward";
-				const auto staging = m_navSystem->stagingPointToward(from, position.value, *routeGoal);
+		if (goalBeyondReach) {
+			if (!stalledWalkingToward(entity, goal, position)) {
+				const auto staging = m_navSystem->stagingPointToward(from, position.value, goal);
 				if (!staging.has_value() && m_navSystem->isBuildingAround(position.value)) {
 					// No step from here yet, but his region is rebuilding (recentering on him, usually):
 					// hold for it like the no-mesh case; the deferred retry asks again once it lands.
@@ -2212,15 +2199,19 @@ namespace ecs {
 					return NavRequestOutcome::Waiting;
 				}
 				if (staging.has_value()) {
-					whyNoRoute = "no believed route for the next leg toward";
-					path	   = m_navSystem->requestPath(position.value, *staging, radius, belief);
+					path = m_navSystem->requestPath(position.value, *staging, radius, belief);
 				}
-
 			}
 		} else {
-			path = m_navSystem->requestPath(position.value, *routeGoal, radius, belief);
+			// A goal walked toward from beyond his regions kept its centre (or a click its raw point);
+			// now a region holding him covers it, route to where it resolves, as the option evaluation
+			// would have.
+			const Task*		taskNow	  = world->getComponent<Task>(entity);
+			const auto		routeGoal = routeGoalFor(taskNow != nullptr ? taskNow->type : TaskType::None, goal);
+			if (routeGoal.has_value()) {
+				path = m_navSystem->requestPath(position.value, *routeGoal, radius, belief);
+			}
 		}
-
 		if (!path.has_value()) {
 			// A mesh exists but the colonist's belief admits no route: a believed wall cuts the
 			// corridor. STOP rather than beeline dishonestly through that wall -- clear
@@ -2242,8 +2233,8 @@ namespace ecs {
 				fillReachKey(from, memory, failedKey);
 				task->blockedReachStamp = failedKey.stamp();
 			}
-			LOG_DEBUG(Engine, "[Nav] Entity %llu: %s (%.2f, %.2f), stopping",
-				static_cast<unsigned long long>(entity), whyNoRoute, goal.x, goal.y);
+			LOG_DEBUG(Engine, "[Nav] Entity %llu: no believed route to (%.2f, %.2f), stopping",
+				static_cast<unsigned long long>(entity), goal.x, goal.y);
 			return NavRequestOutcome::Blocked;
 		}
 		// Attach or overwrite the route. waypoints[0] is ~the start, so steer toward
@@ -2476,9 +2467,8 @@ namespace ecs {
 			if (const auto snapped = m_navSystem->nearestValidPosition(goal, radius)) {
 				goal = *snapped;
 			} else {
-				LOG_DEBUG(Engine, "[AI] Entity %llu: move order to (%.2f, %.2f) is in no nav region; routing toward it a region at a time",
+				LOG_DEBUG(Engine, "[AI] Entity %llu: move order to (%.2f, %.2f) is in no nav region, walking toward it",
 					static_cast<unsigned long long>(entity), goal.x, goal.y);
-
 			}
 		}
 
