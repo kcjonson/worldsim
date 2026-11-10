@@ -8,6 +8,7 @@
 #include "world/rendering/GroundTileBaker.h"
 
 #include "BaseShader.h"
+#include "world/rendering/GlTest.test.h"
 #include "world/rendering/GroundTileBank.h"
 #include "world/rendering/GroundTileCache.h"
 
@@ -39,9 +40,11 @@ namespace {
 	struct GlFixture {
 		GLFWwindow* window = nullptr;
 		bool		ok = false;
+		const char* failure = "";
 
 		GlFixture() {
 			if (glfwInit() != GLFW_TRUE) {
+				failure = "glfwInit failed";
 				return;
 			}
 			glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
@@ -51,12 +54,14 @@ namespace {
 			glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 			window = glfwCreateWindow(64, 64, "ground-bake-test", nullptr, nullptr);
 			if (window == nullptr) {
+				failure = "glfwCreateWindow failed for a 3.3 core forward-compatible context";
 				glfwTerminate();
 				return;
 			}
 			glfwMakeContextCurrent(window);
 			std::unique_ptr<Renderer::backend::gl::GLBackend> backend = Renderer::backend::gl::GLBackend::create();
 			if (backend == nullptr) {
+				failure = "GLBackend::create failed";
 				glfwDestroyWindow(window);
 				window = nullptr;
 				glfwTerminate();
@@ -156,9 +161,7 @@ TEST(GroundTileBakerTest, SeedsAreSaltedBySeedGroupAndVariant) {
 
 TEST(GroundTileBakerTest, BakesAWrappedChainAndDropsLodPaths) {
 	GlFixture gl;
-	if (!gl.ok) {
-		GTEST_SKIP() << "No GL context (headless CI)";
-	}
+	SKIP_OR_FAIL_WITHOUT_GL(gl);
 	const TempDir t;
 	loadTestDef(t);
 
@@ -199,9 +202,7 @@ TEST(GroundTileBakerTest, BakesAWrappedChainAndDropsLodPaths) {
 
 TEST(GroundTileBakerTest, HeightsRankByPaintOrderUnlessSet) {
 	GlFixture gl;
-	if (!gl.ok) {
-		GTEST_SKIP() << "No GL context (headless CI)";
-	}
+	SKIP_OR_FAIL_WITHOUT_GL(gl);
 	// A base and two squares over it, the second set to height 0: below the base, though painted last.
 	const TempDir t;
 	t.write(
@@ -249,9 +250,7 @@ TEST(GroundTileBakerTest, HeightsRankByPaintOrderUnlessSet) {
 
 TEST(GroundTileBakerTest, TiledRenderMatchesOneTarget) {
 	GlFixture gl;
-	if (!gl.ok) {
-		GTEST_SKIP() << "No GL context (headless CI)";
-	}
+	SKIP_OR_FAIL_WITHOUT_GL(gl);
 	const TempDir t;
 	loadTestDef(t);
 
@@ -279,9 +278,7 @@ TEST(GroundTileBakerTest, TiledRenderMatchesOneTarget) {
 
 TEST(GroundTileBakerTest, ParallelBakeMatchesSerialAndTheCacheGivesItBack) {
 	GlFixture gl;
-	if (!gl.ok) {
-		GTEST_SKIP() << "No GL context (headless CI)";
-	}
+	SKIP_OR_FAIL_WITHOUT_GL(gl);
 	// Four variants that differ: each seed scatters its own squares, some across the edge.
 	const TempDir t;
 	t.write(
@@ -376,9 +373,7 @@ TEST(GroundTileBakerTest, AnOversizedLayerIsRefusedBeforeAnythingIsBuilt) {
 
 TEST(GroundTileBankTest, AnOversizedLayerAllocatesNoArray) {
 	GlFixture gl;
-	if (!gl.ok) {
-		GTEST_SKIP() << "No GL context (headless CI)";
-	}
+	SKIP_OR_FAIL_WITHOUT_GL(gl);
 	const TempDir t;
 	loadOversizedDef(t);
 
@@ -438,9 +433,7 @@ namespace {
 
 TEST(GroundTileBankTest, AThrowingStepFailsItsDefWithTheMessageAndTheBakeMovesOn) {
 	GlFixture gl;
-	if (!gl.ok) {
-		GTEST_SKIP() << "No GL context (headless CI)";
-	}
+	SKIP_OR_FAIL_WITHOUT_GL(gl);
 	assets::GeneratorRegistry::Get().registerGenerator("GroundBankThrowTest", [] { return std::make_unique<ThrowingGenerator>(); });
 	const TempDir t;
 	t.write(

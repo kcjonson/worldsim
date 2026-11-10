@@ -1021,7 +1021,7 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 **Tasks:**
 - [ ] `data-lod` filtering and the salal load-from-string addition (SVG ground defs, `assetType` simple)
 - [ ] Measure BC3 or BC7 on upload (BC1 is out: heights make alpha real data; about 14 MiB for the arrays against 56 MiB raw)
-- [ ] Run `SurfaceFieldGolden` on CI under a software GL (Mesa llvmpipe on Linux); CI has no GL context, so the C++/GLSL twin is only checked on the dev box
+- [x] Run `SurfaceFieldGolden` on CI under a software GL (Mesa llvmpipe on Linux); the Linux job runs the GL tests behind Xvfb and fails rather than skips without a context
 - [ ] Have salal request a 4.1 core context; the tile shaders are GLSL 4.10 and salal asks for 3.3, which NVIDIA and macOS accept and a strict driver may not
 - [ ] A per-user ground bake cache directory; it sits beside the exe today, so a read-only install re-bakes every launch
 - [ ] Put the salal tag and a Lua API version in the ground bake cache key; only a manual `GroundTileBaker::kVersion` bump covers engine changes today

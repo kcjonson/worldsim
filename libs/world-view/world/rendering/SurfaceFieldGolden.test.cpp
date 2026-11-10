@@ -14,6 +14,7 @@
 // Needs a GL 3.3 context; skips on a headless box, like the other GL tests.
 
 #include "world/chunk/SurfaceField.h"
+#include "world/rendering/GlTest.test.h"
 
 #include <backend/gl/ShaderPreprocessor.h>
 #include <core/IntegerDivision.h>
@@ -165,9 +166,11 @@ void main() {
 	struct GlContext {
 		GLFWwindow* window = nullptr;
 		bool		ok	   = false;
+		const char* failure = "";
 
 		GlContext() {
 			if (glfwInit() != GLFW_TRUE) {
+				failure = "glfwInit failed";
 				return;
 			}
 			glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
@@ -177,12 +180,14 @@ void main() {
 			glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 			window = glfwCreateWindow(64, 64, "surface-field-golden", nullptr, nullptr);
 			if (window == nullptr) {
+				failure = "glfwCreateWindow failed for a 3.3 core forward-compatible context";
 				glfwTerminate();
 				return;
 			}
 			glfwMakeContextCurrent(window);
 			glewExperimental = GL_TRUE;
 			if (glewInit() != GLEW_OK) {
+				failure = "glewInit failed";
 				glfwDestroyWindow(window);
 				glfwTerminate();
 				window = nullptr;
@@ -380,9 +385,7 @@ void main() {
 
 TEST(SurfaceFieldGoldenTest, GlslMatchesCpp) {
 	GlContext gl;
-	if (!gl.ok) {
-		GTEST_SKIP() << "No GL 3.3 context (headless)";
-	}
+	SKIP_OR_FAIL_WITHOUT_GL(gl);
 	const LandProgram land;
 	ASSERT_TRUE(land.error.empty()) << land.error;
 
@@ -456,9 +459,7 @@ TEST(SurfaceFieldGoldenTest, GlslMatchesCpp) {
 // a meter off the painted edge, a sliver of bare sand between grass and its tufts.
 TEST(SurfaceFieldGoldenTest, BandDistanceMeetsAtThePaintedBoundary) {
 	GlContext gl;
-	if (!gl.ok) {
-		GTEST_SKIP() << "No GL 3.3 context (headless)";
-	}
+	SKIP_OR_FAIL_WITHOUT_GL(gl);
 	const LandProgram land(kBandMain);
 	ASSERT_TRUE(land.error.empty()) << land.error;
 
@@ -506,9 +507,7 @@ TEST(SurfaceFieldGoldenTest, BandDistanceMeetsAtThePaintedBoundary) {
 // the widest fine amplitude, 0.146 m at the defaults: under a third of a pixel.
 TEST(SurfaceFieldGoldenTest, FarZoomLodMovesEdgesUnderAPixel) {
 	GlContext gl;
-	if (!gl.ok) {
-		GTEST_SKIP() << "No GL 3.3 context (headless)";
-	}
+	SKIP_OR_FAIL_WITHOUT_GL(gl);
 	const LandProgram land;
 	ASSERT_TRUE(land.error.empty()) << land.error;
 

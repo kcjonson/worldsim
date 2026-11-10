@@ -31,6 +31,7 @@ protected pixel for pixel: no golden images, no screenshot diffs, in CI or local
   project has hit most. Run the perf capture against `main` on the same machine and compare. When
   a drop follows a salal bump, run salal's perf suite at the old and new engine tags on the same
   machine: if the engine's numbers moved, file it in salal; if not, it's worldsim.
+- **GL tests run on the Linux CI job.** It installs Xvfb and Mesa llvmpipe and sets `WORLDSIM_REQUIRE_GL=1`, so `SurfaceFieldGolden`, `GroundTileBaker` and `AssetRenderer` fail there if no context comes up instead of skipping. Unset, they skip without one, as on the Windows job (GDI's GL 1.1) or a box with no GL.
 - **Unit tests are bounded.** Before adding one, look for a test covering the same path, and
   merge duplicates when touching a suite.
 - **Lint and tree are helpers, not tests.** While building or checking UI, call `/api/ui/lint`
