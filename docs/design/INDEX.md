@@ -133,4 +133,4 @@ When consolidating or superseding documents, add a "Historical Addendum" section
 
 - [Technical Design Documents](/docs/technical/INDEX.md) — How things are implemented
 - [Development Log](/docs/development-log/README.md) — Implementation history
-- [Project Status](/docs/status.md) — Current work
+- Project status: Specboard (board: Worldsim)

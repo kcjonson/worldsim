@@ -43,7 +43,7 @@ When completing significant work:
 
 3. **Add entry to this index** (below, newest first)
 
-4. **Update status.md** with current project state
+4. **Update the Specboard item** with the outcome
 
 ### What Goes Here vs. Other Docs
 
@@ -52,7 +52,7 @@ When completing significant work:
 | **What was built** (historical record) | Development log entries |
 | **How something works** (current design) | Technical docs |
 | **What to build** (requirements) | Design docs |
-| **Current project state** | status.md |
+| **Current project state** | Specboard (board: Worldsim) |
 
 Development log entries are **immutable history**. Don't update old entries — create new ones if things change.
 

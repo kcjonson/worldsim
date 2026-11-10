@@ -158,5 +158,5 @@ Applications:
 
 - [Game Design Documents](/docs/design/INDEX.md) — What we're building
 - [Development Log](/docs/development-log/README.md) — Implementation history
-- [Project Status](/docs/status.md) — Current work
+- Project status: Specboard (board: Worldsim)
 - [Workflows](/docs/workflows.md) — Common development tasks
