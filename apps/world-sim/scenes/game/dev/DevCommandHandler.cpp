@@ -716,8 +716,11 @@ namespace world_sim {
 			const Foundation::Rect view = m_ctx.camera->getVisibleRect(w, h, m_ctx.pixelsPerMeter);
 			rect = {view.x, view.y, view.x + view.width, view.y + view.height};
 		}
-		if (rect.area() <= 0.0 || rect.area() > assets::kFloraMaxRectAreaM2) {
-			return {.status = 400, .body = R"({"error":"flora: rect area must be above 0 and at most 250000 m2"})"};
+		if (!assets::floraRectWithinLimits(rect)) {
+			return {
+				.status = 400,
+				.body = R"({"error":"flora: rect sides must be above 0 and at most 500 m, and the rect at most 25 million 0.1 m cells"})"
+			};
 		}
 
 		gather({rect.minX - kCrownReachMeters, rect.minY - kCrownReachMeters, rect.maxX + kCrownReachMeters, rect.maxY + kCrownReachMeters});

@@ -1,6 +1,8 @@
 #include "assets/placement/FloraMeasure.h"
 
 #include <gtest/gtest.h>
+#include <cmath>
+#include <limits>
 
 #include <string>
 #include <unordered_map>
@@ -114,6 +116,33 @@ namespace assets {
 		EXPECT_EQ(nearestTreesOfAge({10.0F, 5.0F}, "sapling", "Maple", kFloraNearestMax, entities, traits).size(), 1U);
 		EXPECT_EQ(nearestTreesOfAge({10.0F, 5.0F}, "sapling", "", 1, entities, traits).size(), 1U);
 		EXPECT_EQ(nearestTreesOfAge({10.0F, 5.0F}, "veteran", "", kFloraNearestMax, entities, traits).front().position.x, 9.0F);
+	}
+
+	TEST(FloraMeasure, RectLimitsBoundTheGridNotJustTheArea) {
+		EXPECT_TRUE(floraRectWithinLimits({0.0F, 0.0F, 500.0F, 500.0F}));
+		EXPECT_FALSE(floraRectWithinLimits({0.0F, 0.0F, 100000000.0F, 0.001F})); // ~100,000 m2 but a billion cells
+		EXPECT_FALSE(floraRectWithinLimits({0.0F, 0.0F, 501.0F, 10.0F}));
+		EXPECT_FALSE(floraRectWithinLimits({0.0F, 0.0F, 0.0F, 10.0F}));
+		EXPECT_FALSE(floraRectWithinLimits({10.0F, 10.0F, 0.0F, 0.0F}));
+
+		// Coordinates are bounded by the world, not just the size: a rect far out is refused.
+		EXPECT_TRUE(floraRectWithinLimits({kFloraMaxCoordMeters - 10.0F, -kFloraMaxCoordMeters, kFloraMaxCoordMeters, -kFloraMaxCoordMeters + 10.0F}));
+		EXPECT_FALSE(floraRectWithinLimits({1e30F, 0.0F, 1e30F + 1e24F, 10.0F}));
+		EXPECT_FALSE(floraRectWithinLimits({0.0F, 0.0F, 10.0F, 2.0F * kFloraMaxCoordMeters}));
+		EXPECT_FALSE(floraRectWithinLimits({-1e30F, 0.0F, -1e30F + 1e24F, 10.0F}));
+
+		EXPECT_TRUE(floraPointWithinWorld(0.0F, 0.0F));
+		EXPECT_TRUE(floraPointWithinWorld(-kFloraMaxCoordMeters, kFloraMaxCoordMeters));
+		EXPECT_FALSE(floraPointWithinWorld(1e30F, 0.0F));
+		EXPECT_FALSE(floraPointWithinWorld(0.0F, -1e30F));
+		EXPECT_FALSE(floraPointWithinWorld(std::nextafter(kFloraMaxCoordMeters, 1e30F), 0.0F));
+		EXPECT_FALSE(floraPointWithinWorld(std::numeric_limits<float>::quiet_NaN(), 0.0F));
+		EXPECT_FALSE(floraPointWithinWorld(0.0F, std::numeric_limits<float>::infinity()));
+
+		// An oversized rect measures nothing and allocates no grid.
+		const FloraMeasurement m = measureFlora({0.0F, 0.0F, 100000000.0F, 0.001F}, {}, {}, {});
+		EXPECT_EQ(m.rectAreaM2, 0.0);
+		EXPECT_EQ(m.treeCount, 0U);
 	}
 
 } // namespace assets

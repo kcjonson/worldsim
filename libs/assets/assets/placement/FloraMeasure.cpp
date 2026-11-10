@@ -49,8 +49,8 @@ namespace assets {
 		  public:
 			explicit CoverGrid(const FloraRect& bounds)
 				: rect(bounds),
-				  columns(std::max(1, static_cast<int>(std::ceil((bounds.maxX - bounds.minX) / kFloraCellSizeMeters)))),
-				  rows(std::max(1, static_cast<int>(std::ceil((bounds.maxY - bounds.minY) / kFloraCellSizeMeters)))),
+				  columns(static_cast<int>(floraAxisCells(bounds.maxX - bounds.minX))),
+				  rows(static_cast<int>(floraAxisCells(bounds.maxY - bounds.minY))),
 				  cells(static_cast<size_t>(columns) * static_cast<size_t>(rows), 0U) {}
 
 			void markMeasured(const FloraRect& area) {
@@ -123,6 +123,20 @@ namespace assets {
 
 	} // namespace
 
+	int64_t floraAxisCells(float spanMeters) {
+		return std::max<int64_t>(1, static_cast<int64_t>(std::ceil(spanMeters / kFloraCellSizeMeters)));
+	}
+
+	bool floraRectWithinLimits(const FloraRect& rect) {
+		const float width = rect.maxX - rect.minX;
+		const float height = rect.maxY - rect.minY;
+		if (!std::isfinite(width) || !std::isfinite(height) || width <= 0.0F || height <= 0.0F || width > kFloraMaxSpanMeters ||
+			height > kFloraMaxSpanMeters) {
+			return false;
+		}
+		return floraAxisCells(width) * floraAxisCells(height) <= kFloraMaxCells;
+	}
+
 	bool isTreeDef(const AssetDefinition& def) {
 		const auto& groups = def.placement.groups;
 		return std::find(groups.begin(), groups.end(), kTreeGroup) != groups.end();
@@ -145,6 +159,9 @@ namespace assets {
 		const std::vector<const PlacedEntity*>&				   entities,
 		const std::unordered_map<std::string, FloraDefTraits>& traits
 	) {
+		if (!floraRectWithinLimits(rect)) {
+			return {};
+		}
 		FloraMeasurement out;
 		out.rect = rect;
 		out.rectAreaM2 = rect.area();
