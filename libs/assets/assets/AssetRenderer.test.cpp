@@ -40,11 +40,11 @@ namespace {
 	struct GlFixture {
 		GLFWwindow* window = nullptr;
 		bool		ok = false;
-		const char* failure = "";
+		std::string failure;
 
 		GlFixture() {
-			if (glfwInit() != GLFW_TRUE) {
-				failure = "glfwInit failed";
+			failure = worldsim::test::startGlfw();
+			if (!failure.empty()) {
 				return;
 			}
 			glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
@@ -54,8 +54,7 @@ namespace {
 			glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 			window = glfwCreateWindow(64, 64, "asset-render-test", nullptr, nullptr);
 			if (window == nullptr) {
-				failure = "glfwCreateWindow failed for a 3.3 core forward-compatible context";
-				glfwTerminate();
+				failure = "glfwCreateWindow failed for a 3.3 core forward-compatible context: " + worldsim::test::glfwLastError();
 				return;
 			}
 			glfwMakeContextCurrent(window);
@@ -65,7 +64,6 @@ namespace {
 				failure = "GLBackend::create failed";
 				glfwDestroyWindow(window);
 				window = nullptr;
-				glfwTerminate();
 				return;
 			}
 			Renderer::Primitives::init(std::move(backend), base_shader::source());
@@ -78,7 +76,6 @@ namespace {
 			}
 			if (window != nullptr) {
 				glfwDestroyWindow(window);
-				glfwTerminate();
 			}
 		}
 
