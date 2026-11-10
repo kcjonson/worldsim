@@ -10,6 +10,7 @@
 #include "../components/Movement.h"
 #include "../components/NavPath.h"
 #include "../components/Needs.h"
+#include "../components/SourceReachMemo.h"
 #include "../components/Task.h"
 #include "../components/Transform.h"
 
@@ -492,16 +493,13 @@ TEST_F(NavigationSystemTest, GenerationBumpsOnMeshSwap) {
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "initial navmesh never built";
 	const std::uint64_t afterFirst = sys.generation();
 	EXPECT_GT(afterFirst, 0u) << "first mesh swap should bump generation";
-	const std::uint64_t reachAfterFirst = sys.reachVersion();
 
-	// A geometry change forces a rebuild; the swap-in bumps generation again, and reachVersion with
-	// it, so cached reach verdicts (the AI's SourceReachMemo) are dropped.
+	// A geometry change forces a rebuild; the swap-in bumps generation again.
 	OpeningId op = cw.addOpening(south, 0.5F, "Door", "Wood");
 	ASSERT_NE(op, kInvalidOpening);
 	ASSERT_TRUE(cw.setOpeningState(op, FoundationState::Built));
 	EXPECT_TRUE(pumpUntil(sys, "the rebuild swap", [&] { return sys.generation() > afterFirst; }))
 		<< "rebuild swap should bump generation again";
-	EXPECT_GT(sys.reachVersion(), reachAfterFirst) << "a mesh swap must invalidate cached reach verdicts";
 }
 
 // Every region's mesh swap moves generation(), including one whose own swap count lags another
@@ -535,6 +533,39 @@ TEST_F(NavigationSystemTest, GenerationMovesWhenALaggingRegionSwaps) {
 	ASSERT_TRUE(pumpUntil(sys, "region B", [&] { return sys.builtRegions().size() == 2U; }))
 		<< "region B never built";
 	EXPECT_NE(sys.generation(), beforeB) << "region B's first mesh swap left generation() unchanged";
+}
+
+// A Reach names its start region by stable id and that region's own swap count, which is what the
+// AI's SourceReachMemo keys on: another region's swap leaves it alone, a swap in its own region moves it.
+TEST_F(NavigationSystemTest, ReachIdentifiesItsOwnRegionsMesh) {
+	ConstructionWorld cw;
+
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(m_chunks.get());
+	sys.setConstructionWorld(&cw);
+
+	const glm::vec2 posA{0.0F, 0.0F};
+	EntityID		a = world.createEntity();
+	world.addComponent<Position>(a, Position{posA});
+	world.addComponent<Colonist>(a, Colonist{"A"});
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "region A never built";
+	const NavigationSystem::Reach first = sys.reachFrom(posA, kAgentRadius);
+	ASSERT_GE(first.startRegionId, 0);
+
+	EntityID b = world.createEntity();
+	world.addComponent<Position>(b, Position{glm::vec2{100.0F, 0.0F}});
+	world.addComponent<Colonist>(b, Colonist{"B"});
+	ASSERT_TRUE(pumpUntil(sys, "region B", [&] { return sys.builtRegions().size() == 2U; })) << "region B never built";
+	const NavigationSystem::Reach afterB = sys.reachFrom(posA, kAgentRadius);
+	EXPECT_EQ(afterB.startRegionId, first.startRegionId);
+	EXPECT_EQ(afterB.startRegionGeneration, first.startRegionGeneration) << "region B's swap touched region A's key";
+
+	buildWall(cw, {10000, 10000}, {11000, 10000});
+	EXPECT_TRUE(pumpUntil(sys, "region A's wall-edit rebuild", [&] {
+		return sys.reachFrom(posA, kAgentRadius).startRegionGeneration != first.startRegionGeneration;
+	})) << "region A's own swap left its key unchanged";
+	EXPECT_EQ(sys.reachFrom(posA, kAgentRadius).startRegionId, first.startRegionId);
 }
 
 // --- RRA* heuristic wiring + instrumentation (P3.5) --------------------------
@@ -1586,6 +1617,7 @@ namespace {
 		world.addComponent<Inventory>(c, Inventory::createForColonist());
 		world.addComponent<Task>(c, Task{});
 		world.addComponent<DecisionTrace>(c, DecisionTrace{});
+		world.addComponent<SourceReachMemo>(c, SourceReachMemo{});
 		return c;
 	}
 } // namespace

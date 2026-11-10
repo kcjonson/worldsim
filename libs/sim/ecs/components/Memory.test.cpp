@@ -8,9 +8,9 @@
 // first touch after relocation erased a freed node — heap corruption that
 // crashed the game whenever a second colonist spawned.
 
-#include "DecisionTrace.h"
 #include "Memory.h"
 #include "MemoryQueries.h"
+#include "SourceReachMemo.h"
 
 #include <gtest/gtest.h>
 
@@ -162,7 +162,6 @@ TEST(MemoryComponent, ClearResetsLru) {
 	EXPECT_EQ(m.worldEntityCount(), 32U);
 }
 
-
 namespace {
 
 	constexpr auto	   kSourceCapability = assets::CapabilityType::Harvestable;
@@ -254,7 +253,7 @@ TEST(MemoryQueries, SourceReachMemoTestsEachSourceOncePerKey) {
 		);
 	};
 
-	const ecs::SourceReachMemo::Key meshA{.navReachVersion = 1, .beliefVersion = 0, .startRegion = 0, .reachRoot = 5};
+	const ecs::SourceReachMemo::Key meshA{.regionId = 0, .regionGeneration = 1, .beliefVersion = 0, .reachRoot = 5};
 	EXPECT_FALSE(query(meshA).has_value());
 	EXPECT_EQ(probes, kSources) << "the first decision tests every source";
 	EXPECT_FALSE(query(meshA).has_value());
@@ -267,7 +266,7 @@ TEST(MemoryQueries, SourceReachMemoTestsEachSourceOncePerKey) {
 	EXPECT_EQ(learned->position, reachableSource);
 	EXPECT_EQ(probes, kSources + 1) << "only the new source is tested";
 
-	const ecs::SourceReachMemo::Key meshB{.navReachVersion = 2, .beliefVersion = 0, .startRegion = 0, .reachRoot = 5};
+	const ecs::SourceReachMemo::Key meshB{.regionId = 0, .regionGeneration = 2, .beliefVersion = 0, .reachRoot = 5};
 	EXPECT_TRUE(query(meshB).has_value());
 	EXPECT_EQ(probes, 2 * kSources + 2) << "a nav rebuild tests every source again, nearest first, up to the reachable one";
 }

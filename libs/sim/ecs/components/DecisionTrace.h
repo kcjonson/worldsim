@@ -13,7 +13,6 @@
 #include <cstdint>
 #include <optional>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 namespace ecs {
@@ -149,50 +148,6 @@ namespace ecs {
 		[[nodiscard]] bool isActionable() const { return status == OptionStatus::Selected || status == OptionStatus::Available; }
 	};
 
-	/// Reach verdicts for a colonist's known sources, by Memory key. A verdict depends on the source's
-	/// position, the nav regions, the colonist's structural belief and which reach subtree the colonist
-	/// stands in, not on where in that subtree it stands or on what else it remembers. So verdicts hold
-	/// while the key does, and a colonist among unreachable sources tests each one once, not every decision.
-	struct SourceReachMemo {
-		struct Key {
-			std::uint64_t navReachVersion = 0; // NavigationSystem::reachVersion()
-			std::uint64_t beliefVersion = 0;   // Memory::beliefVersion
-			int			  startRegion = -1;
-			std::int32_t  reachRoot = -1;
-			std::int32_t  startTri = -1; // set only without a reach root: such a start reaches just its own triangle
-			bool		  operator==(const Key&) const = default;
-		};
-
-		/// Forget every verdict when the key changes, or once verdicts (forgotten sources' included)
-		/// pass maxVerdicts.
-		void keep(const Key& next, size_t maxVerdicts) {
-			if (key != next || verdicts.size() > maxVerdicts) {
-				verdicts.clear();
-				key = next;
-			}
-		}
-
-		/// A source already found unreachable under the current key, so a query can drop it up front.
-		[[nodiscard]] bool knownUnreachable(std::uint64_t sourceKey) const {
-			const auto it = verdicts.find(sourceKey);
-			return it != verdicts.end() && !it->second;
-		}
-
-		/// The remembered verdict for a source, running probe(position) the first time it's asked.
-		template <typename Probe>
-		[[nodiscard]] bool reachable(std::uint64_t sourceKey, const glm::vec2& position, Probe&& probe) {
-			const auto [it, added] = verdicts.try_emplace(sourceKey, false);
-			if (added) {
-				it->second = probe(position);
-			}
-			return it->second;
-		}
-
-	  private:
-		std::optional<Key>						key;
-		std::unordered_map<std::uint64_t, bool> verdicts;
-	};
-
 	/// Decision trace component - captures the full decision context
 	struct DecisionTrace {
 		/// All evaluated options, sorted by the (tier, score) key (highest priority first)
@@ -203,9 +158,6 @@ namespace ecs {
 
 		/// Summary of why the current task was selected
 		std::string selectionSummary;
-
-		/// Carried across evaluations (clear() keeps it); see SourceReachMemo
-		SourceReachMemo sourceReach;
 
 		/// Clear the trace for re-evaluation
 		void clear() {

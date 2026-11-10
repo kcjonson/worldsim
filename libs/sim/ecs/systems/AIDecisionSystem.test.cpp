@@ -22,6 +22,7 @@
 #include "../components/Needs.h"
 #include "../components/PlayerControlled.h"
 #include "../components/Skills.h"
+#include "../components/SourceReachMemo.h"
 #include "../components/StorageConfiguration.h"
 #include "../components/Structure.h"
 #include "../components/StructureBlueprint.h"
@@ -30,6 +31,7 @@
 
 #include "assets/ActionTypeRegistry.h"
 #include "assets/AssetRegistry.h"
+#include "assets/ConstructionRegistry.h"
 #include "assets/PriorityConfig.h"
 #include "assets/RecipeRegistry.h"
 
@@ -48,6 +50,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <filesystem>
 #include <memory>
 #include <optional>
 
@@ -107,6 +110,7 @@ namespace ecs::test {
 			world->addComponent<Inventory>(entity, Inventory::createForColonist());
 			world->addComponent<Task>(entity, Task{});
 			world->addComponent<DecisionTrace>(entity, DecisionTrace{});
+			world->addComponent<SourceReachMemo>(entity, SourceReachMemo{});
 			return entity;
 		}
 
@@ -2354,6 +2358,7 @@ namespace ecs::test {
 			world->addComponent<Task>(entity, Task{});
 			world->addComponent<Action>(entity, Action{});				 // Required for ActionSystem
 			world->addComponent<DecisionTrace>(entity, DecisionTrace{}); // Required for priority-based switching
+			world->addComponent<SourceReachMemo>(entity, SourceReachMemo{});
 			return entity;
 		}
 
@@ -3588,6 +3593,104 @@ namespace ecs::test {
 		const auto* gather = gatherFoodOption(*trace);
 		ASSERT_NE(gather, nullptr);
 		EXPECT_EQ(gather->status, OptionStatus::NoSource);
+	}
+
+	// A berry bush standing in a wall the colonist knows is out of reach (a known wall blocks unless the
+	// colonist also knows a door through it), so the memo holds "unreachable" for it. These pin the two
+	// ways that verdict has to be dropped, or the colonist goes without food it could now reach: its
+	// region's mesh swapping in without the wall, and the colonist learning of a door.
+	class AIDecisionWallTest : public AIDecisionFirstMeshTest {
+	  protected:
+		void SetUp() override {
+			assets::ConstructionRegistry::Get().clear();
+			const std::filesystem::path root =
+				std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path().parent_path();
+			ASSERT_TRUE(assets::ConstructionRegistry::Get().load((root / "assets" / "config" / "construction").string()));
+			AIDecisionFirstMeshTest::SetUp();
+		}
+
+		void TearDown() override {
+			AIDecisionFirstMeshTest::TearDown();
+			assets::ConstructionRegistry::Get().clear();
+		}
+
+		// A built wall across x = 8 m with the bush at its middle, the colonist knowing every segment of
+		// it and the bush, hungry with an empty pack, and the mesh built with the wall in it.
+		EntityID makeHungryColonistBesideWall(bool withDoor) {
+			const auto commit = construction.commitSegment({8000, -2000}, {8000, 2000}, "Wood", "Standard",
+														   construction::kInvalidFoundation);
+			EXPECT_TRUE(commit.ok());
+			wallSegment = commit.id;
+			for (const auto id : commit.createdSegments) {
+				construction.setSegmentState(id, construction::FoundationState::Built);
+			}
+			if (withDoor) {
+				door = construction.addOpening(wallSegment, 0.5F, "Door", "Wood");
+				EXPECT_NE(door, construction::kInvalidOpening);
+				EXPECT_TRUE(construction.setOpeningState(door, construction::FoundationState::Built));
+			}
+
+			const auto colonist = createColonist(kStart);
+			satisfyAllNeeds(*getNeeds(colonist));
+			setNeedValue(colonist, NeedType::Hunger, 40.0F);
+			auto* memory = world->getComponent<Memory>(colonist);
+			for (const auto id : commit.createdSegments) {
+				memory->rememberSegment(static_cast<std::uint64_t>(id));
+			}
+			addKnownEntity(colonist, kBush, registerBerryBush(assets::AssetRegistry::Get()), assets::CapabilityType::Harvestable);
+
+			EXPECT_TRUE(pumpUntilMesh(*nav)) << "navmesh never built";
+			EXPECT_FALSE(canReachBush(colonist)) << "the bush in the known wall must start out unreachable";
+			return colonist;
+		}
+
+		[[nodiscard]] bool canReachBush(EntityID colonist) {
+			const auto*						  memory = world->getComponent<Memory>(colonist);
+			const geometry::nav::BeliefFilter belief{&memory->knownSegments, &memory->knownOpenings};
+			return isReachable(*nav, world->getComponent<Position>(colonist)->value, kBush, 0.3F, belief);
+		}
+
+		[[nodiscard]] OptionStatus hungerStatus(EntityID colonist) {
+			const auto* hunger = findOption(*getTrace(colonist), isHungerNeedOption);
+			return hunger != nullptr ? hunger->status : OptionStatus::Satisfied;
+		}
+
+		// Runs decisions until Hunger is the chosen task, for at most kTicksAfterMesh ticks.
+		[[nodiscard]] bool hungerSelectedWithin(EntityID colonist) {
+			for (int i = 0; i < kTicksAfterMesh; ++i) {
+				world->update(kTick);
+				if (hungerStatus(colonist) == OptionStatus::Selected) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		static constexpr glm::vec2 kStart{0.0F, 0.0F};
+		static constexpr glm::vec2 kBush{8.0F, 0.0F};
+		construction::SegmentId	   wallSegment = construction::kInvalidSegment;
+		construction::OpeningId	   door = construction::kInvalidOpening;
+	};
+
+	TEST_F(AIDecisionWallTest, MeshSwapWithoutTheWallMakesTheBushReachableAgain) {
+		const auto colonist = makeHungryColonistBesideWall(false);
+		world->update(kTick);
+		ASSERT_EQ(hungerStatus(colonist), OptionStatus::NoSource) << "the walled-in bush can't be the target";
+
+		ASSERT_TRUE(construction.removeSegment(wallSegment));
+		ASSERT_TRUE(pumpUntil(*nav, "the rebuild without the wall", [&] { return canReachBush(colonist); }))
+			<< "the rebuilt mesh never opened the bush up";
+		EXPECT_TRUE(hungerSelectedWithin(colonist)) << "the colonist kept the stale verdict and left the bush alone";
+	}
+
+	TEST_F(AIDecisionWallTest, LearningOfADoorMakesTheBushReachable) {
+		const auto colonist = makeHungryColonistBesideWall(true);
+		world->update(kTick);
+		ASSERT_EQ(hungerStatus(colonist), OptionStatus::NoSource) << "an unknown door doesn't open a known wall";
+
+		world->getComponent<Memory>(colonist)->rememberOpening(static_cast<std::uint64_t>(door));
+		ASSERT_TRUE(canReachBush(colonist)) << "knowing the door opens the bush up";
+		EXPECT_TRUE(hungerSelectedWithin(colonist)) << "the colonist kept the stale verdict and left the bush alone";
 	}
 
 } // namespace ecs::test

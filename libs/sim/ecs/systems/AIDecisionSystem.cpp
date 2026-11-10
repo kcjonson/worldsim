@@ -18,6 +18,7 @@
 #include "../components/Packaged.h"
 #include "../components/PlayerControlled.h"
 #include "../components/Skills.h"
+#include "../components/SourceReachMemo.h"
 #include "../components/StorageConfiguration.h"
 #include "../components/StructureBlueprint.h"
 #include "../components/Task.h"
@@ -1253,14 +1254,15 @@ namespace ecs {
 			bool	  hasActiveAction = (action != nullptr && action->isActive());
 			TaskState previousState = task.state;
 
-			// Check if entity has DecisionTrace component for trace-based selection
+			// Check if entity has the decision components for trace-based selection
 			auto* trace = world->getComponent<DecisionTrace>(entity);
-			if (trace != nullptr) {
+			auto* sourceReach = world->getComponent<SourceReachMemo>(entity);
+			if (trace != nullptr && sourceReach != nullptr) {
 				// Get optional Skills component for skill bonus calculation
 				auto* skills = world->getComponent<Skills>(entity);
 
 				// Build full decision trace (always, for UI updates)
-				buildDecisionTrace(entity, position, needs, memory, task, inventory, skills, *trace);
+				buildDecisionTrace(entity, position, needs, memory, task, inventory, skills, *sourceReach, *trace);
 
 				// Get the best option's (tier, score) key
 				const auto* selected = trace->getSelected();
@@ -1499,6 +1501,7 @@ namespace ecs {
 		const Task&			  currentTask,
 		const Inventory&	  inventory,
 		const Skills*		  skills,
+		SourceReachMemo&	  sourceReach,
 		DecisionTrace&		  trace
 	) {
 		trace.clear();
@@ -1522,24 +1525,28 @@ namespace ecs {
 			return !reach.has_value() || m_navSystem->reaches(*reach, target);
 		};
 
-		// Known sources' verdicts are remembered while the colonist stays in the same reach subtree,
-		// so one surrounded by unreachable sources doesn't test them all again every decision.
+		// Verdicts for sources in the colonist's own region are remembered while it stays in the same
+		// reach subtree of the same mesh, so one surrounded by unreachable sources doesn't test them all
+		// again every decision. A source in another region always passes (reaches() can't prove it
+		// unreachable) and is never remembered, since which region a point falls in moves on its own.
 		if (reach.has_value()) {
-			trace.sourceReach.keep(
-				{.navReachVersion = m_navSystem->reachVersion(),
+			sourceReach.keep(
+				{.regionId = reach->startRegionId,
+				 .regionGeneration = reach->startRegionGeneration,
 				 .beliefVersion = memory.beliefVersion,
-				 .startRegion = reach->startRegion,
 				 .reachRoot = reach->from.root,
 				 .startTri = reach->from.root < 0 ? reach->from.startTri : -1},
 				2 * Memory::kMaxWorldEntities
 			);
 		}
 		const auto canReachSource = [&](uint64_t sourceKey, const glm::vec2& sourcePosition) {
-			return !reach.has_value() || trace.sourceReach.reachable(sourceKey, sourcePosition, canReach);
+			return !reach.has_value() || !m_navSystem->sharesStartRegion(*reach, sourcePosition) ||
+				   sourceReach.reachable(sourceKey, sourcePosition, canReach);
 		};
 		// Drop a source already found unreachable before anything else looks at it.
-		const auto notKnownUnreachable = [&](uint64_t sourceKey, const KnownWorldEntity&) {
-			return !reach.has_value() || !trace.sourceReach.knownUnreachable(sourceKey);
+		const auto notKnownUnreachable = [&](uint64_t sourceKey, const KnownWorldEntity& known) {
+			return !reach.has_value() || !sourceReach.knownUnreachable(sourceKey) ||
+				   !m_navSystem->sharesStartRegion(*reach, known.position);
 		};
 		const auto anywhere = [](uint64_t, const glm::vec2&) { return true; };
 		const auto anySource = [](uint64_t, const KnownWorldEntity&) { return true; };

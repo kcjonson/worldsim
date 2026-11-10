@@ -179,19 +179,21 @@ class NavigationSystem : public ISystem {
 	// mesh is building or when operating outside any sim region; a goal-validity
 	// pre-filter must not reject everything in that window.
 	//
-	// A Reach is valid while reachVersion() is unchanged; the belief's sets must outlive it.
+	// A Reach is used within one frame (the next update() may move or drop regions); the belief's
+	// sets must outlive it. For a goal sharesStartRegion() admits, reaches() depends only on the start
+	// region's mesh, which startRegionId and startRegionGeneration identify across frames.
 	struct Reach {
-		int							startRegion = -1; // -1: no region covers the start, every goal passes
+		int							startRegion = -1;	// index this frame; -1: no region covers the start
+		std::int32_t				startRegionId = -1; // stable across frames, unlike the index
+		std::uint64_t				startRegionGeneration = 0; // the start region's mesh swap count
 		geometry::nav::ReachFrom	from;
 		geometry::nav::BeliefFilter belief;
 	};
 	[[nodiscard]] Reach reachFrom(glm::vec2 startMeters, float agentRadiusMeters,
 								  geometry::nav::BeliefFilter belief = {}) const;
 	[[nodiscard]] bool	reaches(const Reach& reach, glm::vec2 goalMeters) const;
-
-	// Changes whenever reaches() could answer differently for the same start and goal: a mesh
-	// swap, a region recentering (its rect moves before the new mesh lands), or a region dropped.
-	[[nodiscard]] std::uint64_t reachVersion() const { return regionsReachVersion; }
+	// Does the region holding the start also hold this goal? reaches() is true for any goal it doesn't.
+	[[nodiscard]] bool sharesStartRegion(const Reach& reach, glm::vec2 goalMeters) const;
 
 	// LOD seam predicate: true when `meters` falls inside some BUILT region rect. Outside
 	// every built region the caller treats movement as the no-mesh beeline (LOD1 coarse
@@ -500,9 +502,6 @@ class NavigationSystem : public ISystem {
 
 	// Bumped on every region's mesh swap; see generation().
 	std::uint64_t meshGeneration = 0;
-
-	// See reachVersion().
-	std::uint64_t regionsReachVersion = 0;
 
 	// Cached terrain-only mesh for placement buildability (isAreaBuildable / isPointBuildable). Built
 	// on demand over a generous area so a whole drawing gesture reuses one build; invalidated when a

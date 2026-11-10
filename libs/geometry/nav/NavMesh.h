@@ -234,8 +234,8 @@ namespace geometry::nav {
 
 	// The reconstruction-tree node whose subtree is every triangle a disc of `diameterMm` can
 	// POSSIBLY reach from `tri`: tri's highest ancestor whose capacity admits the disc. A goal
-	// triangle is under it iff the widest disc any path from tri to it admits is >= diameterMm. -1 when tri is a non-node.
-	// O(log n).
+	// triangle is under it iff the widest disc any path from tri to it admits is >= diameterMm.
+	// -1 when tri is a non-node. O(log n).
 	std::int32_t reachRootInForest(const ReachabilityForest& forest, std::int32_t tri, std::int64_t diameterMm);
 
 	// Is triangle `tri` in the subtree of reconstruction-tree node `node`? False for a non-node

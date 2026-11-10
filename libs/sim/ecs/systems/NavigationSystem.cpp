@@ -525,7 +525,6 @@ namespace ecs {
 			region.future	= {};
 			++region.meshGeneration;
 			++meshGeneration;
-			++regionsReachVersion;
 
 			std::size_t walkable = 0;
 			std::size_t floor	 = 0;
@@ -659,7 +658,6 @@ namespace ecs {
 				}
 				region.center	  = wantCenter;
 				region.halfExtent = wantHalf;
-				++regionsReachVersion; // the old mesh now answers for a moved rect
 				launchBuild(region);
 				// Permanent region-lifecycle diagnostic (recenter onto a moved driver/viewport).
 				LOG_DEBUG(Engine, "[NavBuild] region %d recenter -> (%lld, %lld) half=%lld", region.id,
@@ -701,7 +699,6 @@ namespace ecs {
 			// Permanent region-lifecycle diagnostic (region torn down, no longer wanted).
 			LOG_DEBUG(Engine, "[NavBuild] region %d dropped", goneId);
 			regions.erase(regions.begin() + static_cast<std::ptrdiff_t>(r));
-			++regionsReachVersion;
 		}
 	}
 
@@ -828,12 +825,18 @@ namespace ecs {
 		reach.belief	  = belief;
 		reach.startRegion = regionContaining(startMeters);
 		if (reach.startRegion >= 0) {
-			const std::int64_t radiusMm =
+			const SimulationRegion& region = regions[static_cast<std::size_t>(reach.startRegion)];
+			const std::int64_t		radiusMm =
 				static_cast<std::int64_t>(std::llround(static_cast<double>(agentRadiusMeters) * 1000.0));
-			reach.from = gnav::reachFrom(regions[static_cast<std::size_t>(reach.startRegion)].navMesh,
-										 nav::toMm(startMeters), radiusMm, belief);
+			reach.startRegionId			= region.id;
+			reach.startRegionGeneration = region.meshGeneration;
+			reach.from					= gnav::reachFrom(region.navMesh, nav::toMm(startMeters), radiusMm, belief);
 		}
 		return reach;
+	}
+
+	bool NavigationSystem::sharesStartRegion(const Reach& reach, glm::vec2 goalMeters) const {
+		return reach.startRegion >= 0 && regionContaining(goalMeters) == reach.startRegion;
 	}
 
 	bool NavigationSystem::reaches(const Reach& reach, glm::vec2 goalMeters) const {
@@ -841,7 +844,7 @@ namespace ecs {
 		// cross-region pair): can't prove unreachable, so don't reject. Colonists beeline
 		// legitimately during startup/outdoor play; the agent moves toward the area and
 		// switches to in-region routing once both endpoints share a region.
-		if (reach.startRegion < 0 || regionContaining(goalMeters) != reach.startRegion) {
+		if (!sharesStartRegion(reach, goalMeters)) {
 			return true;
 		}
 		return gnav::reaches(regions[static_cast<std::size_t>(reach.startRegion)].navMesh, reach.from,

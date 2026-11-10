@@ -636,6 +636,41 @@ TEST(Reachability, SoundnessFuzzRejectImpliesNoPath) {
 	(void)overApproxAllowed;
 }
 
+// reaches(reachFrom()) end to end against an oracle built from the parts it replaced: locate, the
+// endpoint traversability gate, the same-triangle shortcut, then component plus bottleneck.
+TEST(Reachability, ReachesMatchesOracleOnFuzzMeshes) {
+	LCG rng(0xC0FFEE5EEDULL);
+	std::unordered_set<std::uint64_t> noSegs;
+	std::unordered_set<std::uint64_t> noOps;
+	int								  rejected = 0;
+	for (int variant = 0; variant < 5; ++variant) {
+		const NavMesh m = buildFuzzMesh(variant);
+		ASSERT_FALSE(m.triangles.empty());
+		for (int i = 0; i < 400; ++i) {
+			const Vec2i64	   start{rng.next(-200, 5200), rng.next(-200, 5200)};
+			const Vec2i64	   goal{rng.next(-200, 5200), rng.next(-200, 5200)};
+			const std::int64_t radius = rng.next(0, 400);
+			const bool		   useBelief = (rng.next(0, 1) == 1);
+			const BeliefFilter belief = useBelief ? BeliefFilter{&noSegs, &noOps} : BeliefFilter{};
+
+			// Truth belief gates on truthTraversable; a belief knowing no walls on terrainTraversable.
+			const auto standable = [&](const NavTriangle& t) { return useBelief ? terrainTraversable(t) : truthTraversable(t); };
+			const ReachabilityForest& forest = useBelief ? m.terrainForest : m.truthForest;
+			const std::int32_t		  s = locateTriangle(m, start);
+			const std::int32_t		  g = locateTriangle(m, goal);
+			bool					  expected = false;
+			if (s >= 0 && g >= 0 && standable(m.triangles[s]) && standable(m.triangles[g])) {
+				expected = s == g || (reachableInForest(forest, s, g) && bottleneckInForest(forest, s, g) >= radius * 2);
+			}
+			const bool actual = reaches(m, reachFrom(m, start, radius, belief), goal, belief);
+			ASSERT_EQ(actual, expected) << "variant=" << variant << " i=" << i << " start=(" << start.x << "," << start.y
+										<< ") goal=(" << goal.x << "," << goal.y << ") r=" << radius << " belief=" << useBelief;
+			rejected += expected ? 0 : 1;
+		}
+	}
+	EXPECT_GT(rejected, 0) << "the fuzz must reach the reject branch";
+}
+
 TEST(Reachability, SameTriangleIsReachable) {
 	// Degenerate: start and goal in the same triangle. reachable() is true regardless
 	// of radius (the bottleneck is unconstrained), matching pathThrough's same-triangle

@@ -116,6 +116,7 @@ private:
 	/// @param currentTask Current task (used to preserve target when already pursuing a need)
 	/// @param inventory Colonist inventory (for checking food availability)
 	/// @param skills Optional colonist skills (for skill bonus calculation)
+	/// @param sourceReach The colonist's remembered reach verdicts for its known sources
 	void buildDecisionTrace(
 		EntityID entity,
 		const struct Position& position,
@@ -124,6 +125,7 @@ private:
 		const struct Task& currentTask,
 		const struct Inventory& inventory,
 		const struct Skills* skills,
+		struct SourceReachMemo& sourceReach,
 		struct DecisionTrace& trace);
 
 	/// Select task from the decision trace (picks first Selected option)

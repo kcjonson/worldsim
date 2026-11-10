@@ -69,6 +69,7 @@
 #include <ecs/components/ResourceStack.h>
 #include <ecs/components/Room.h>
 #include <ecs/components/Skills.h>
+#include <ecs/components/SourceReachMemo.h>
 #include <ecs/components/Structure.h>
 #include <ecs/components/StructureBlueprint.h>
 #include <ecs/components/StructureHealth.h>
@@ -1547,6 +1548,7 @@ namespace {
 			ecsWorld->addComponent<ecs::Memory>(entity, ecs::Memory{.owner = entity});
 			ecsWorld->addComponent<ecs::Task>(entity, ecs::Task{});
 			ecsWorld->addComponent<ecs::DecisionTrace>(entity, ecs::DecisionTrace{});
+			ecsWorld->addComponent<ecs::SourceReachMemo>(entity, ecs::SourceReachMemo{});
 			ecsWorld->addComponent<ecs::Action>(entity, ecs::Action{});
 			ecsWorld->addComponent<ecs::AgentRadius>(entity, ecs::AgentRadius{});
 
