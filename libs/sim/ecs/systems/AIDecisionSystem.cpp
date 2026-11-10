@@ -1066,11 +1066,11 @@ namespace ecs {
 	AIDecisionSystem::AIDecisionSystem(
 		const assets::AssetRegistry&  registry,
 		const assets::RecipeRegistry& recipeRegistry,
-		std::optional<uint32_t>				  rngSeed
+		uint32_t					  rngSeed
 	)
 		: m_registry(registry),
 		  m_recipeRegistry(recipeRegistry),
-		  m_rng(rngSeed.value_or(std::random_device{}())) {}
+		  m_rng(rngSeed) {}
 
 	void AIDecisionSystem::update(float deltaTime) {
 		// Advance this system's monotonic clock (used for lastEvaluationTime + within-tier task age).

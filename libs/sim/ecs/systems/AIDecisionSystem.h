@@ -46,11 +46,10 @@ class AIDecisionSystem : public ISystem {
 	friend class test::AIDecisionSystemTest;
 
 public:
-	/// Construct with optional RNG seed (defaults to random_device for non-determinism)
 	explicit AIDecisionSystem(
 		const assets::AssetRegistry& registry,
 		const assets::RecipeRegistry& recipeRegistry,
-		std::optional<uint32_t> rngSeed = std::nullopt);
+		uint32_t rngSeed);
 
 	void update(float deltaTime) override;
 
@@ -208,7 +207,7 @@ private:
 	/// is not wired to this system yet; this monotonic accumulator is sufficient for both uses.
 	float m_elapsedTime = 0.0F;
 
-	/// Random number generator for wander behavior (seeded from random_device by default)
+	/// Random number generator for wander behavior
 	std::mt19937 m_rng;
 
 	/// Callback for dropping items on the ground (when chain is interrupted)

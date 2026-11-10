@@ -424,6 +424,32 @@ namespace ecs::test {
 		EXPECT_EQ(task->timeSinceEvaluation, 0.0F);
 	}
 
+	// The session seed is the only source of the wander sequence: a replay with the same seed picks
+	// the same targets, arrival after arrival.
+	TEST_F(AIDecisionSystemTest, WanderSequenceFollowsSeed) {
+		auto wanderTargets = [this](uint32_t seed) {
+			world = std::make_unique<World>();
+			world->registerSystem<AIDecisionSystem>(assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), seed);
+			auto colonist = createColonist({0.0F, 0.0F});
+			for (auto need : {NeedType::Hunger, NeedType::Thirst, NeedType::Energy, NeedType::Bladder}) {
+				setNeedValue(colonist, need, 100.0F);
+			}
+			std::vector<glm::vec2> targets;
+			for (int i = 0; i < 8; ++i) {
+				world->update(0.016F);
+				auto* task = getTask(colonist);
+				EXPECT_EQ(task->type, TaskType::Wander);
+				targets.push_back(task->targetPosition);
+				task->state = TaskState::Arrived;
+			}
+			return targets;
+		};
+
+		const auto first = wanderTargets(kTestRngSeed);
+		EXPECT_EQ(wanderTargets(kTestRngSeed), first);
+		EXPECT_NE(wanderTargets(kTestRngSeed + 1), first);
+	}
+
 	TEST_F(AIDecisionSystemTest, ReEvaluatesWhenCriticalNeedEmerges) {
 		auto colonist = createColonist({0.0F, 0.0F});
 
@@ -2214,7 +2240,7 @@ namespace ecs::test {
 			// This is critical - the bug only manifests when both systems run
 			auto& recipeRegistry = assets::RecipeRegistry::Get();
 			world->registerSystem<AIDecisionSystem>(registry, recipeRegistry, kTestRngSeed);
-			world->registerSystem<ActionSystem>();
+			world->registerSystem<ActionSystem>(kTestRngSeed);
 		}
 
 		void TearDown() override {

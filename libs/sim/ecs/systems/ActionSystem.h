@@ -20,9 +20,8 @@ namespace ecs {
 
 class ActionSystem : public ISystem {
 public:
-	/// Construct ActionSystem with optional RNG seed (for deterministic testing)
-	explicit ActionSystem(std::optional<uint32_t> rngSeed = std::nullopt)
-		: m_rng(rngSeed.value_or(std::random_device{}())) {}
+	explicit ActionSystem(uint32_t rngSeed)
+		: m_rng(rngSeed) {}
 
 	void update(float deltaTime) override;
 
