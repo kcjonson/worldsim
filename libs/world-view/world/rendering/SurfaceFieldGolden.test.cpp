@@ -14,6 +14,7 @@
 // Needs a GL 3.3 context; skips on a headless box, like the other GL tests.
 
 #include "world/chunk/SurfaceField.h"
+#include "world/rendering/GlTest.test.h"
 
 #include <backend/gl/ShaderPreprocessor.h>
 #include <core/IntegerDivision.h>
@@ -99,12 +100,7 @@ namespace {
 	}
 
 	std::filesystem::path landInclude() {
-		const std::filesystem::path source = std::filesystem::path(__FILE__).parent_path() / "shaders" / "includes" / "land.glsl";
-		std::error_code				ec;
-		if (std::filesystem::exists(source, ec)) {
-			return source;
-		}
-		return std::filesystem::current_path() / "shaders" / "includes" / "land.glsl";
+		return std::filesystem::path(WORLD_VIEW_SHADER_DIR) / "includes" / "land.glsl";
 	}
 
 	constexpr const char* kVertexSource = R"(#version 410 core
@@ -165,9 +161,11 @@ void main() {
 	struct GlContext {
 		GLFWwindow* window = nullptr;
 		bool		ok	   = false;
+		std::string failure;
 
 		GlContext() {
-			if (glfwInit() != GLFW_TRUE) {
+			failure = worldsim::test::startGlfw();
+			if (!failure.empty()) {
 				return;
 			}
 			glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
@@ -177,14 +175,14 @@ void main() {
 			glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 			window = glfwCreateWindow(64, 64, "surface-field-golden", nullptr, nullptr);
 			if (window == nullptr) {
-				glfwTerminate();
+				failure = "glfwCreateWindow failed for a 3.3 core forward-compatible context: " + worldsim::test::glfwLastError();
 				return;
 			}
 			glfwMakeContextCurrent(window);
 			glewExperimental = GL_TRUE;
 			if (glewInit() != GLEW_OK) {
+				failure = "glewInit failed";
 				glfwDestroyWindow(window);
-				glfwTerminate();
 				window = nullptr;
 				return;
 			}
@@ -194,7 +192,6 @@ void main() {
 		~GlContext() {
 			if (window != nullptr) {
 				glfwDestroyWindow(window);
-				glfwTerminate();
 			}
 		}
 
@@ -380,9 +377,7 @@ void main() {
 
 TEST(SurfaceFieldGoldenTest, GlslMatchesCpp) {
 	GlContext gl;
-	if (!gl.ok) {
-		GTEST_SKIP() << "No GL 3.3 context (headless)";
-	}
+	SKIP_OR_FAIL_WITHOUT_GL(gl);
 	const LandProgram land;
 	ASSERT_TRUE(land.error.empty()) << land.error;
 
@@ -456,9 +451,7 @@ TEST(SurfaceFieldGoldenTest, GlslMatchesCpp) {
 // a meter off the painted edge, a sliver of bare sand between grass and its tufts.
 TEST(SurfaceFieldGoldenTest, BandDistanceMeetsAtThePaintedBoundary) {
 	GlContext gl;
-	if (!gl.ok) {
-		GTEST_SKIP() << "No GL 3.3 context (headless)";
-	}
+	SKIP_OR_FAIL_WITHOUT_GL(gl);
 	const LandProgram land(kBandMain);
 	ASSERT_TRUE(land.error.empty()) << land.error;
 
@@ -506,9 +499,7 @@ TEST(SurfaceFieldGoldenTest, BandDistanceMeetsAtThePaintedBoundary) {
 // the widest fine amplitude, 0.146 m at the defaults: under a third of a pixel.
 TEST(SurfaceFieldGoldenTest, FarZoomLodMovesEdgesUnderAPixel) {
 	GlContext gl;
-	if (!gl.ok) {
-		GTEST_SKIP() << "No GL 3.3 context (headless)";
-	}
+	SKIP_OR_FAIL_WITHOUT_GL(gl);
 	const LandProgram land;
 	ASSERT_TRUE(land.error.empty()) << land.error;
 

@@ -106,11 +106,19 @@ if(BUILD_TESTING)
                 GTest::gtest
                 GTest::gtest_main
         )
+        # Where SurfaceFieldGolden reads land.glsl from, whatever the working directory
+        # (MSVC's __FILE__ is relative to the build dir, and ctest runs from another).
+        target_compile_definitions(world-view-tests PRIVATE
+            WORLD_VIEW_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/world/rendering/shaders")
         if(MSVC)
             target_compile_options(world-view-tests PRIVATE /Od)
         else()
             target_compile_options(world-view-tests PRIVATE -O0 -g)
         endif()
         add_test(NAME world-view-tests COMMAND world-view-tests)
+        # TIMEOUT is the only hang guard. On the Linux CI job the GL tests run on Mesa
+        # llvmpipe: 69 s there with half of them up (2026-11-10). Keep it at least 2.5x
+        # the measured wall time.
+        set_tests_properties(world-view-tests PROPERTIES TIMEOUT 300)
     endif()
 endif()

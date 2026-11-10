@@ -5,6 +5,7 @@
 #include "assets/AssetRegistry.h"
 
 #include "BaseShader.h"
+#include "world/rendering/GlTest.test.h"
 #include "backend/gl/GLBackend.h"
 #include "primitives/Primitives.h"
 
@@ -39,9 +40,11 @@ namespace {
 	struct GlFixture {
 		GLFWwindow* window = nullptr;
 		bool		ok = false;
+		std::string failure;
 
 		GlFixture() {
-			if (glfwInit() != GLFW_TRUE) {
+			failure = worldsim::test::startGlfw();
+			if (!failure.empty()) {
 				return;
 			}
 			glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
@@ -51,16 +54,16 @@ namespace {
 			glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 			window = glfwCreateWindow(64, 64, "asset-render-test", nullptr, nullptr);
 			if (window == nullptr) {
-				glfwTerminate();
+				failure = "glfwCreateWindow failed for a 3.3 core forward-compatible context: " + worldsim::test::glfwLastError();
 				return;
 			}
 			glfwMakeContextCurrent(window);
 			// The renderer's GL backend initializes GLEW on this context
 			std::unique_ptr<Renderer::backend::gl::GLBackend> backend = Renderer::backend::gl::GLBackend::create();
 			if (backend == nullptr) {
+				failure = "GLBackend::create failed";
 				glfwDestroyWindow(window);
 				window = nullptr;
-				glfwTerminate();
 				return;
 			}
 			Renderer::Primitives::init(std::move(backend), base_shader::source());
@@ -73,7 +76,6 @@ namespace {
 			}
 			if (window != nullptr) {
 				glfwDestroyWindow(window);
-				glfwTerminate();
 			}
 		}
 
@@ -105,9 +107,7 @@ namespace {
 
 TEST(AssetRendererTest, ProceduralRenderIsDeterministic) {
 	GlFixture gl;
-	if (!gl.ok) {
-		GTEST_SKIP() << "No GL context (headless CI)";
-	}
+	SKIP_OR_FAIL_WITHOUT_GL(gl);
 	loadAssets();
 
 	const std::string proc = firstOfType(AssetType::Procedural);
@@ -141,9 +141,7 @@ TEST(AssetRendererTest, ProceduralRenderIsDeterministic) {
 
 TEST(AssetRendererTest, RendersVisibleGeometry) {
 	GlFixture gl;
-	if (!gl.ok) {
-		GTEST_SKIP() << "No GL context (headless CI)";
-	}
+	SKIP_OR_FAIL_WITHOUT_GL(gl);
 	loadAssets();
 
 	const std::string simple = firstOfType(AssetType::Simple);
@@ -168,9 +166,7 @@ TEST(AssetRendererTest, RendersVisibleGeometry) {
 
 TEST(AssetRendererTest, TranslucentBackgroundComesBackStraight) {
 	GlFixture gl;
-	if (!gl.ok) {
-		GTEST_SKIP() << "No GL context (headless CI)";
-	}
+	SKIP_OR_FAIL_WITHOUT_GL(gl);
 	loadAssets();
 
 	const std::string simple = firstOfType(AssetType::Simple);
