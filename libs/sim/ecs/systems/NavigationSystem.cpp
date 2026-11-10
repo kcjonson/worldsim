@@ -821,23 +821,33 @@ namespace ecs {
 
 	bool NavigationSystem::isReachable(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
 									   gnav::BeliefFilter belief) const {
+		return reaches(reachFrom(startMeters, agentRadiusMeters, belief), goalMeters);
+	}
+
+	NavigationSystem::Reach NavigationSystem::reachFrom(glm::vec2 startMeters, float agentRadiusMeters,
+														gnav::BeliefFilter belief) const {
+		Reach reach;
+		reach.belief	  = belief;
+		reach.startRegion = regionContaining(startMeters);
+		if (reach.startRegion >= 0) {
+			const std::int64_t radiusMm =
+				static_cast<std::int64_t>(std::llround(static_cast<double>(agentRadiusMeters) * 1000.0));
+			reach.from = gnav::reachFrom(regions[static_cast<std::size_t>(reach.startRegion)].navMesh,
+										 nav::toMm(startMeters), radiusMm, belief);
+		}
+		return reach;
+	}
+
+	bool NavigationSystem::reaches(const Reach& reach, glm::vec2 goalMeters) const {
 		// No single region covers both endpoints (no mesh yet, off-area endpoint, or a
 		// cross-region pair): can't prove unreachable, so don't reject. Colonists beeline
 		// legitimately during startup/outdoor play; the agent moves toward the area and
 		// switches to in-region routing once both endpoints share a region.
-		const int startRegion = regionContaining(startMeters);
-		const int goalRegion  = regionContaining(goalMeters);
-		if (startRegion < 0 || startRegion != goalRegion) {
+		if (reach.startRegion < 0 || regionContaining(goalMeters) != reach.startRegion) {
 			return true;
 		}
-		const gnav::NavMesh& navMesh = regions[static_cast<std::size_t>(startRegion)].navMesh;
-
-		const geometry::Vec2i64 startMm = nav::toMm(startMeters);
-		const geometry::Vec2i64 goalMm	= nav::toMm(goalMeters);
-		const std::int64_t radiusMm =
-			static_cast<std::int64_t>(std::llround(static_cast<double>(agentRadiusMeters) * 1000.0));
-
-		return gnav::reachable(navMesh, startMm, goalMm, radiusMm, belief);
+		return gnav::reaches(regions[static_cast<std::size_t>(reach.startRegion)].navMesh, reach.from,
+							 nav::toMm(goalMeters), reach.belief);
 	}
 
 	namespace {

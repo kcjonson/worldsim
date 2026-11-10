@@ -147,7 +147,9 @@ void AIDecisionSystem::buildDecisionTrace(
 
         // Check memory for fulfillment source
         auto capability = needToCapability(needType);
-        auto nearest = findNeedSource(capability, acceptAll, need.needsAttention());
+        // Nearest known source the colonist can reach (see Query Pattern below)
+        auto nearest = findNearestReachableWithCapability(
+            memory, capability, position.value, anySource, canReach, m_sourceScratch);
 
         if (nearest.has_value()) {
             option.targetPosition = nearest->position;
@@ -218,18 +220,22 @@ The DecisionTrace respects the memory constraint:
 ### Query Pattern
 
 ```cpp
-// The nearest remembered source the colonist can reach, probed nearest first
+// The colonist's reach, computed once per decision: one climb of the nav reachability forest
+std::optional<NavigationSystem::Reach> reach;
+if (haveMesh) reach = m_navSystem->reachFrom(position.value, agentRadius, belief);
+auto canReach = [&](const glm::vec2& p) { return !reach || m_navSystem->reaches(*reach, p); };
+
 auto nearest = findNearestReachableWithCapability(
-    memory,                 // Colonist's personal memory
-    capability,             // Harvestable, Drinkable, etc.
-    position.value,         // Colonist position
-    accept,                 // Hunger: the harvestable's yield is edible
-    reachable,              // NavigationSystem::isReachable; empty when the need is satisfied or there is no mesh
-    kMaxSourceReachChecks   // At most this many reachability probes per option (4)
+    memory,          // Colonist's personal memory
+    capability,      // Harvestable, Drinkable, etc.
+    position.value,  // Colonist position
+    accept,          // Hunger: the harvestable's yield is edible; other needs accept any source
+    canReach,        // A satisfied need passes an always-true test: it only shows its nearest
+    m_sourceScratch  // Reused candidate storage
 );
 ```
 
-A known source the colonist can't reach (across a river, say) is skipped for the next nearest. The Hunger option and the gather-food option share one food source: the nearest reachable known harvestable whose yield is edible. If none of the nearest four known sources is reachable, the option is `NoSource`.
+A known source the colonist can't reach (across a river, say) is skipped for the next nearest, and every known source is tried before the option is `NoSource`, so a colonist goes without only when nothing it knows of is reachable. The Hunger option and the gather-food option share one food source: the nearest reachable known harvestable whose yield is edible. A bed or toilet that can't be reached falls back to the ground, as when none is known.
 
 ---
 

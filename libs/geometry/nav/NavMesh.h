@@ -244,4 +244,14 @@ namespace geometry::nav {
 	// O(log n) via binary-lifting LCA over the reconstruction tree.
 	std::int64_t bottleneckInForest(const ReachabilityForest& forest, std::int32_t triA, std::int32_t triB);
 
+	// The reconstruction-tree node whose subtree is every triangle a disc of `diameterMm` can
+	// POSSIBLY reach from `tri`: tri's highest ancestor whose capacity admits the disc. A goal
+	// triangle is under it iff bottleneck(tri, goal) >= diameterMm. -1 when tri is a non-node.
+	// O(log n).
+	std::int32_t reachRootInForest(const ReachabilityForest& forest, std::int32_t tri, std::int64_t diameterMm);
+
+	// Is triangle `tri` in the subtree of reconstruction-tree node `node`? False for a non-node
+	// triangle or node -1. O(log n).
+	bool inForestSubtree(const ReachabilityForest& forest, std::int32_t node, std::int32_t tri);
+
 } // namespace geometry::nav

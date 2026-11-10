@@ -144,10 +144,11 @@ namespace geometry::nav {
 			const NavMesh& mesh, std::int32_t startTri, std::int32_t goalTri, std::int64_t diameterMm,
 			const BeliefFilter& belief) {
 			const ReachabilityForest& forest = forestFor(mesh, belief);
-			if (!reachableInForest(forest, startTri, goalTri)) {
-				return true; // different component (or a non-node endpoint): unreachable
-			}
-			return bottleneckInForest(forest, startTri, goalTri) < diameterMm; // too narrow for the disc
+			return !inForestSubtree(forest, reachRootInForest(forest, startTri, diameterMm), goalTri);
+		}
+
+		[[nodiscard]] std::int64_t discDiameterMm(std::int64_t agentRadiusMm) {
+			return (agentRadiusMm > 0) ? agentRadiusMm * 2 : 0;
 		}
 
 		// Collapse consecutive duplicate points and points collinear with their
@@ -285,22 +286,35 @@ namespace geometry::nav {
 
 	bool reachable(const NavMesh& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
 				   BeliefFilter belief) {
+		return reaches(mesh, reachFrom(mesh, start, agentRadiusMm, belief), goal, belief);
+	}
+
+	ReachFrom reachFrom(const NavMesh& mesh, const Vec2i64& start, std::int64_t agentRadiusMm, BeliefFilter belief) {
+		ReachFrom from;
 		const std::int32_t startTri = locateTriangle(mesh, start);
-		const std::int32_t goalTri	= locateTriangle(mesh, goal);
-		if (startTri < 0 || goalTri < 0) {
-			return false; // off-mesh: not reachable
+		// A start on a face this belief cannot stand on reaches nothing, same as pathThrough's
+		// endpoint gate (e.g. start inside a wall the agent knows blocks).
+		if (startTri < 0 || !traversable(mesh.triangles[startTri], belief)) {
+			return from;
 		}
-		// An endpoint on a face this belief cannot stand on is unreachable, same as
-		// pathThrough's endpoint gate (e.g. start inside a wall the agent knows blocks).
-		if (!traversable(mesh.triangles[startTri], belief) || !traversable(mesh.triangles[goalTri], belief)) {
+		from.startTri = startTri;
+		from.root	  = reachRootInForest(forestFor(mesh, belief), startTri, discDiameterMm(agentRadiusMm));
+		return from;
+	}
+
+	bool reaches(const NavMesh& mesh, const ReachFrom& from, const Vec2i64& goal, BeliefFilter belief) {
+		if (from.startTri < 0) {
+			return false; // off-mesh or untraversable start
+		}
+		const std::int32_t goalTri = locateTriangle(mesh, goal);
+		if (goalTri < 0 || !traversable(mesh.triangles[goalTri], belief)) {
 			return false;
 		}
-		if (startTri == goalTri) {
+		if (goalTri == from.startTri) {
 			return true; // same triangle: trivially reachable
 		}
-		const std::int64_t diameterMm = (agentRadiusMm > 0) ? agentRadiusMm * 2 : 0;
 		// `false` = the forest proves unreachability (sound); otherwise "maybe".
-		return !reachabilityRejects(mesh, startTri, goalTri, diameterMm, belief);
+		return inForestSubtree(forestFor(mesh, belief), from.root, goalTri);
 	}
 
 	PathResult pathThrough(const NavMesh& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
@@ -329,7 +343,7 @@ namespace geometry::nav {
 		// Disc diameter the width gates compare against. Computed once; both the
 		// reachability short-circuit and the A* width filter use this exact value, so
 		// they never disagree on the threshold.
-		const std::int64_t diameterMm = (agentRadiusMm > 0) ? agentRadiusMm * 2 : 0;
+		const std::int64_t diameterMm = discDiameterMm(agentRadiusMm);
 
 		// Width-aware reachability short-circuit (P3.3): reject a provably-unreachable
 		// goal before paying for the A* allocation + search. Sound: a `true` from the

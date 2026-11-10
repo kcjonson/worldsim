@@ -44,7 +44,8 @@ namespace ecs {
 		std::optional<glm::vec2> targetPosition;
 		std::optional<uint32_t>	 targetDefNameId; // For display name lookup
 		float					 distanceToTarget = 0.0F;
-
+		// The builder already proved the target reachable (need sources), so selection skips its probe
+		bool					 targetReachable = false;
 
 		// Crafting-specific fields (for Craft tasks)
 		std::string craftRecipeDefName;

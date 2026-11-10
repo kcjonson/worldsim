@@ -95,4 +95,15 @@ namespace geometry::nav {
 	bool reachable(const NavMesh& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
 				   BeliefFilter belief = {});
 
+	// reachable() split at the start: reachFrom does the start-side work once (locate, endpoint
+	// gate, the disc's reach root in the forest), and reaches() tests one goal against it with a
+	// locate and an O(log n) subtree check. reachable(s, g) == reaches(reachFrom(s), g), so many
+	// goals from one start cost one start-side climb. Pass reaches() the belief reachFrom took.
+	struct ReachFrom {
+		std::int32_t startTri = -1; // -1: off-mesh or untraversable start, reaches nothing
+		std::int32_t root	  = -1; // forest node whose subtree the disc can reach; -1 for a non-node start
+	};
+	ReachFrom reachFrom(const NavMesh& mesh, const Vec2i64& start, std::int64_t agentRadiusMm, BeliefFilter belief = {});
+	bool	  reaches(const NavMesh& mesh, const ReachFrom& from, const Vec2i64& goal, BeliefFilter belief = {});
+
 } // namespace geometry::nav

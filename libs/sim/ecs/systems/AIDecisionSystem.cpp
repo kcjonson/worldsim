@@ -40,7 +40,6 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
-#include <functional>
 #include <numbers>
 
 namespace ecs {
@@ -183,10 +182,6 @@ namespace ecs {
 			return def != nullptr && def->capabilities.harvestable.has_value() &&
 				   assets::isItemEdible(def->capabilities.harvestable->yieldDefName);
 		}
-
-		/// How many remembered sources one need option may probe for reachability, nearest first,
-		/// before it gives up on them. Each probe is one NavigationSystem::isReachable.
-		constexpr size_t kMaxSourceReachChecks = 4;
 
 		/// Skill names for work types
 		constexpr const char* kSkillFarming = "Farming";
@@ -1517,31 +1512,34 @@ namespace ecs {
 		const geometry::nav::BeliefFilter belief{&memory.knownSegments, &memory.knownOpenings};
 		const bool						  haveMesh = (m_navSystem != nullptr) && m_navSystem->hasMesh();
 
-		// A need targets the nearest remembered source the colonist can reach, so a nearer one across
-		// a river doesn't hide a reachable one farther off. Only a source the colonist would act on
-		// now is probed; a satisfied need just shows its nearest.
-		const std::function<bool(const glm::vec2&)> canReach = [&](const glm::vec2& target) {
-			return m_navSystem->isReachable(position.value, target, agentRadius, belief);
+		// Everything this colonist can reach, from one start-side climb of the nav forest; each
+		// target test is then a locate and a subtree check. No mesh: nothing is provably unreachable.
+		std::optional<NavigationSystem::Reach> reach;
+		if (haveMesh) {
+			reach = m_navSystem->reachFrom(position.value, agentRadius, belief);
+		}
+		const auto canReach = [&](const glm::vec2& target) {
+			return !reach.has_value() || m_navSystem->reaches(*reach, target);
 		};
-		const auto findNeedSource = [&](assets::CapabilityType							   capability,
-										const std::function<bool(const KnownWorldEntity&)>& accept,
-										bool												   actingNow) {
-			return findNearestReachableWithCapability(
-				memory, capability, position.value, accept,
-				haveMesh && actingNow ? canReach : std::function<bool(const glm::vec2&)>{}, kMaxSourceReachChecks
-			);
+		const auto anywhere = [](const glm::vec2&) { return true; };
+		const auto anySource = [](const KnownWorldEntity&) { return true; };
+
+		// A need targets the nearest remembered source the colonist can reach, so known sources across
+		// a river don't hide a reachable one farther off.
+		const auto findNeedSource = [&](assets::CapabilityType capability, const auto& accept, const auto& reachable) {
+			return findNearestReachableWithCapability(memory, capability, position.value, accept, reachable, m_sourceScratch);
 		};
 
 		// With an empty pack, the one food source both the Hunger option and the gather-food option
 		// target: the nearest reachable remembered harvestable whose yield is edible. The gather
-		// option is always on offer with an empty pack, so it is always probed.
+		// option is on offer whenever the pack is empty, so this is probed even when Hunger is met.
 		const bool						packHasFood = hasEdibleFood(inventory);
 		std::optional<KnownWorldEntity> foodSource;
 		if (!packHasFood) {
 			foodSource = findNeedSource(
 				assets::CapabilityType::Harvestable,
 				[this](const KnownWorldEntity& known) { return yieldsEdibleFood(m_registry, known.defNameId); },
-				true
+				canReach
 			);
 		}
 
@@ -1584,6 +1582,7 @@ namespace ecs {
 					option.targetPosition = foodSource->position;
 					option.targetDefNameId = foodSource->defNameId;
 					option.distanceToTarget = glm::distance(position.value, foodSource->position);
+					option.targetReachable = true;
 					option.status = need.needsAttention() ? OptionStatus::Available : OptionStatus::Satisfied;
 					option.reason = formatOptionReason(option, needTypeName(needType));
 					if (option.status == OptionStatus::Available) {
@@ -1602,14 +1601,15 @@ namespace ecs {
 
 			// Standard handling for other needs
 			auto capability = needToCapability(needType);
-			auto nearest = findNeedSource(
-				capability, [](const KnownWorldEntity&) { return true; }, need.needsAttention()
-			);
+			// A satisfied need only shows its nearest source, so it spends no reachability tests.
+			const auto nearest = need.needsAttention() ? findNeedSource(capability, anySource, canReach)
+													   : findNeedSource(capability, anySource, anywhere);
 
 			if (nearest.has_value()) {
 				option.targetPosition = nearest->position;
 				option.targetDefNameId = nearest->defNameId;
 				option.distanceToTarget = glm::distance(position.value, nearest->position);
+				option.targetReachable = need.needsAttention();
 
 				if (need.needsAttention()) {
 					option.status = OptionStatus::Available;
@@ -1673,6 +1673,7 @@ namespace ecs {
 			if (foodSource.has_value()) {
 				gatherOption.targetPosition = foodSource->position;
 				gatherOption.distanceToTarget = glm::distance(position.value, foodSource->position);
+				gatherOption.targetReachable = true;
 				gatherOption.status = OptionStatus::Available;
 				gatherOption.reason = "Gathering food (inventory empty)";
 			} else {
@@ -1782,10 +1783,10 @@ namespace ecs {
 			// it can't path to -- emit no idle option at all. The no-option hold then makes it stand
 			// and look around instead of committing to an unreachable point and thrashing on it.
 			glm::vec2 wanderTarget	= generateWanderTarget(position.value);
-			bool	  foundReachable = !haveMesh || m_navSystem->isReachable(position.value, wanderTarget, agentRadius, belief);
+			bool	  foundReachable = canReach(wanderTarget);
 			for (int attempt = 0; !foundReachable && attempt < 5; ++attempt) {
 				const glm::vec2 candidate = generateWanderTarget(position.value);
-				if (m_navSystem->isReachable(position.value, candidate, agentRadius, belief)) {
+				if (canReach(candidate)) {
 					wanderTarget   = candidate;
 					foundReachable = true;
 				}
@@ -1818,13 +1819,14 @@ namespace ecs {
 		std::sort(trace.options.begin(), trace.options.end(), EvaluatedOption::higherPriority);
 
 		// Select the first actionable option the colonist can actually REACH, scanning in priority
-		// order. isReachable is a sound, cheap pre-filter: false means DEFINITELY unreachable
+		// order. The reach test is a sound, cheap pre-filter: false means DEFINITELY unreachable
 		// (off-mesh, or a disconnected component -- e.g. a reed or water across a river with no land
 		// bridge). Probing in priority order means we only test down to the best reachable option,
 		// not the whole list. An unreachable higher-priority option drops to NoSource so the colonist
 		// won't commit to it and freeze at the bank; Wander is never filtered, so there is always a
-		// fallback that keeps it moving and exploring for new sources. No mesh yet -> isReachable
-		// returns true, so startup / outdoor beelining is unaffected.
+		// fallback that keeps it moving and exploring for new sources. No mesh yet -> the reach test
+		// passes, so startup / outdoor beelining is unaffected. A need source the builder already
+		// chose as reachable (targetReachable) isn't tested again.
 		for (auto& option : trace.options) {
 			if (option.status != OptionStatus::Available) {
 				continue;
@@ -1857,8 +1859,7 @@ namespace ecs {
 				}
 				option.targetPosition = snapped;
 			}
-			if (haveMesh && needsTarget &&
-				!m_navSystem->isReachable(position.value, option.targetPosition.value(), agentRadius, belief)) {
+			if (needsTarget && !option.targetReachable && !canReach(option.targetPosition.value())) {
 				option.status = OptionStatus::NoSource; // unreachable: skip it rather than freeze on it
 				continue;
 			}

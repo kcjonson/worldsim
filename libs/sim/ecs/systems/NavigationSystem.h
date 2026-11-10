@@ -179,6 +179,19 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] bool isReachable(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
 								   geometry::nav::BeliefFilter belief = {}) const;
 
+	// isReachable split at the start, for testing many goals from one start: reachFrom does the
+	// start-side work once, reaches() answers isReachable(start, goal) for each goal with a region
+	// lookup, a locate and an O(log n) forest check. Valid until the next update() (a region
+	// rebuild invalidates it); the belief's sets must outlive it.
+	struct Reach {
+		int							startRegion = -1; // -1: no region covers the start, every goal passes
+		geometry::nav::ReachFrom	from;
+		geometry::nav::BeliefFilter belief;
+	};
+	[[nodiscard]] Reach reachFrom(glm::vec2 startMeters, float agentRadiusMeters,
+								  geometry::nav::BeliefFilter belief = {}) const;
+	[[nodiscard]] bool	reaches(const Reach& reach, glm::vec2 goalMeters) const;
+
 	// LOD seam predicate: true when `meters` falls inside some BUILT region rect. Outside
 	// every built region the caller treats movement as the no-mesh beeline (LOD1 coarse
 	// routing is Phase 2). False when no region has been built yet.

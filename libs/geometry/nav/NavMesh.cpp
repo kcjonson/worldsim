@@ -559,6 +559,38 @@ namespace geometry::nav {
 		return f.nodeCap[forestLca(f, triA, triB)];
 	}
 
+	std::int32_t reachRootInForest(const ReachabilityForest& f, std::int32_t tri, std::int64_t diameterMm) {
+		if (tri < 0 || tri >= static_cast<std::int32_t>(f.component.size()) || f.component[tri] < 0) {
+			return -1;
+		}
+		// Capacities never increase toward the root (Kruskal merges in descending capacity), so the
+		// ancestors admitting the disc are a prefix of the climb and binary lifting finds its end.
+		std::int32_t node = tri;
+		for (std::int32_t k = f.levels - 1; k >= 0; --k) {
+			const std::int32_t up = f.up[k][node];
+			if (f.nodeCap[up] >= diameterMm) {
+				node = up;
+			}
+		}
+		return node;
+	}
+
+	bool inForestSubtree(const ReachabilityForest& f, std::int32_t node, std::int32_t tri) {
+		if (node < 0 || tri < 0 || tri >= static_cast<std::int32_t>(f.component.size()) || f.component[tri] < 0) {
+			return false;
+		}
+		std::int32_t diff = f.depth[tri] - f.depth[node];
+		if (diff < 0) {
+			return false;
+		}
+		for (std::int32_t k = 0; k < f.levels; ++k) {
+			if ((diff >> k) & 1) {
+				tri = f.up[k][tri];
+			}
+		}
+		return tri == node;
+	}
+
 	NavMesh buildNavMesh(const NavMeshInput& input) {
 		NavMesh result;
 

@@ -9,6 +9,7 @@
 // crashed the game whenever a second colonist spawned.
 
 #include "Memory.h"
+#include "MemoryQueries.h"
 
 #include <gtest/gtest.h>
 
@@ -158,4 +159,62 @@ TEST(MemoryComponent, ClearResetsLru) {
 		EXPECT_TRUE(m.rememberWorldEntity(posFor(i), kDefId, kMask));
 	}
 	EXPECT_EQ(m.worldEntityCount(), 32U);
+}
+
+// Two sources at the same distance resolve by memory key, whichever was remembered first, so every
+// machine picks the same one.
+TEST(MemoryQueries, NearestSourceTieBreaksOnKeyNotInsertionOrder) {
+	const glm::vec2 east{3.0F, 0.0F};
+	const glm::vec2 north{0.0F, 3.0F};
+	const glm::vec2 expected = ecs::hashWorldEntity(east, kDefId) < ecs::hashWorldEntity(north, kDefId) ? east : north;
+	const auto		anySource = [](const ecs::KnownWorldEntity&) { return true; };
+	const auto		anywhere = [](const glm::vec2&) { return true; };
+	std::vector<ecs::SourceCandidate> scratch;
+
+	ecs::Memory eastFirst;
+	ASSERT_TRUE(eastFirst.rememberWorldEntity(east, kDefId, kMask));
+	ASSERT_TRUE(eastFirst.rememberWorldEntity(north, kDefId, kMask));
+	ecs::Memory northFirst;
+	ASSERT_TRUE(northFirst.rememberWorldEntity(north, kDefId, kMask));
+	ASSERT_TRUE(northFirst.rememberWorldEntity(east, kDefId, kMask));
+
+	const auto capability = static_cast<assets::CapabilityType>(0);
+	const auto a = ecs::findNearestReachableWithCapability(eastFirst, capability, {0.0F, 0.0F}, anySource, anywhere, scratch);
+	const auto b = ecs::findNearestReachableWithCapability(northFirst, capability, {0.0F, 0.0F}, anySource, anywhere, scratch);
+	ASSERT_TRUE(a.has_value());
+	ASSERT_TRUE(b.has_value());
+	EXPECT_EQ(a->position, expected);
+	EXPECT_EQ(b->position, expected);
+}
+
+// No cap on how far down the list the walk goes: with every nearer source unreachable, the farthest
+// reachable one is still found, and nothing reachable is nullopt.
+TEST(MemoryQueries, NearestReachableSourceWalksEveryCandidate) {
+	ecs::Memory memory;
+	constexpr size_t kSources = 12;
+	for (size_t i = 0; i < kSources; ++i) {
+		ASSERT_TRUE(memory.rememberWorldEntity(posFor(i + 1), kDefId, kMask));
+	}
+	const glm::vec2 farthest = posFor(kSources);
+	const auto		anySource = [](const ecs::KnownWorldEntity&) { return true; };
+	std::vector<ecs::SourceCandidate> scratch;
+	const auto capability = static_cast<assets::CapabilityType>(0);
+
+	size_t	   tested = 0;
+	const auto found = ecs::findNearestReachableWithCapability(
+		memory, capability, {0.0F, 0.0F}, anySource,
+		[&](const glm::vec2& p) {
+			++tested;
+			return p == farthest;
+		},
+		scratch
+	);
+	ASSERT_TRUE(found.has_value());
+	EXPECT_EQ(found->position, farthest);
+	EXPECT_EQ(tested, kSources) << "each candidate tested once, nearest first";
+
+	EXPECT_FALSE(ecs::findNearestReachableWithCapability(
+					 memory, capability, {0.0F, 0.0F}, anySource, [](const glm::vec2&) { return false; }, scratch
+	)
+					 .has_value());
 }

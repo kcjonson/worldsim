@@ -14,6 +14,7 @@
 
 #include "../EntityID.h"
 #include "../ISystem.h"
+#include "../components/MemoryQueries.h"
 #include "../components/Needs.h"
 #include "../components/Task.h"
 
@@ -21,6 +22,7 @@
 #include <glm/vec2.hpp>
 #include <optional>
 #include <random>
+#include <vector>
 
 namespace assets {
 class AssetRegistry;
@@ -195,6 +197,9 @@ private:
 	/// off-mesh recovery. Unset until GameScene wires it; the recovery only uses it once a real
 	/// value is present (it has no meaning in headless tests).
 	std::optional<glm::vec2> m_colonyOrigin;
+
+	/// Reused candidate storage for need-source queries, so a decision allocates nothing once it has grown
+	std::vector<SourceCandidate> m_sourceScratch;
 
 	/// How often to re-evaluate tasks (seconds)
 	static constexpr float kReEvalInterval = 0.5F;

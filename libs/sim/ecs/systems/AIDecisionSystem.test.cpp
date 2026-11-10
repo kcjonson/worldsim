@@ -2206,18 +2206,28 @@ namespace ecs::test {
 		}
 	} // namespace
 
-	// Critically hungry with an empty pack and a work order on offer: the nearest known harvestable
-	// yields sticks, a berry bush sits a little farther off. Hunger must go to the berry bush at the
-	// critical tier and preempt the work, not read the stick bush as "no food source".
-	TEST_F(AIDecisionSystemTest, CriticalHungerTargetsEdibleSourceOverNearerNonEdibleHarvestable) {
-		auto& registry = assets::AssetRegistry::Get();
+	// Hungry with an empty pack and a work order on offer: the nearest known harvestable yields sticks,
+	// a berry bush sits a little farther off. Hunger targets the berry bush, never reading the stick
+	// bush as "no food source". Critical hunger (tier 2) preempts the work order (tier 4); routine
+	// hunger (tier 5) is on offer below it.
+	struct HungerLevelCase {
+		float hunger;
+		int	  tier;
+		bool  preemptsWork;
+	};
+
+	class HungerEdibleSourceTest : public AIDecisionSystemTest, public ::testing::WithParamInterface<HungerLevelCase> {};
+
+	TEST_P(HungerEdibleSourceTest, TargetsEdibleSourceOverNearerNonEdibleHarvestable) {
+		const HungerLevelCase level = GetParam();
+		auto&				  registry = assets::AssetRegistry::Get();
 		auto [stickBushId, stickId] = registerHarvestableYielding(registry, "Flora_WorkBush", "WorkStick");
 		const uint32_t	berryBushId = registerBerryBush(registry);
 		const glm::vec2 berryPos{4.0F, 0.0F};
 
 		auto colonist = createColonist({0.0F, 0.0F});
 		satisfyAllNeeds(*getNeeds(colonist));
-		setNeedValue(colonist, NeedType::Hunger, 5.0F); // critical
+		setNeedValue(colonist, NeedType::Hunger, level.hunger);
 		addKnownEntity(colonist, {2.0F, 0.0F}, stickBushId, assets::CapabilityType::Harvestable);
 		addKnownEntity(colonist, berryPos, berryBushId, assets::CapabilityType::Harvestable);
 
@@ -2249,41 +2259,24 @@ namespace ecs::test {
 		ASSERT_NE(trace, nullptr);
 		const auto* work = findOption(*trace, [](const EvaluatedOption& o) { return o.taskType == TaskType::Harvest; });
 		ASSERT_NE(work, nullptr) << "the work order offers a harvest";
-		EXPECT_EQ(work->status, OptionStatus::Available) << "the work is on offer but not chosen";
-
 		const auto* hunger = findOption(*trace, isHungerNeedOption);
 		ASSERT_NE(hunger, nullptr);
-		EXPECT_EQ(hunger->status, OptionStatus::Selected) << "critical hunger preempts the work order";
-		EXPECT_EQ(hunger->tier, 2);
+		EXPECT_EQ(hunger->tier, level.tier);
 		ASSERT_TRUE(hunger->targetPosition.has_value());
 		EXPECT_EQ(*hunger->targetPosition, berryPos) << "hunger targets the edible source, not the nearer stick bush";
-		EXPECT_EQ(getTask(colonist)->needToFulfill, NeedType::Hunger);
+		if (level.preemptsWork) {
+			EXPECT_EQ(hunger->status, OptionStatus::Selected) << "critical hunger preempts the work order";
+			EXPECT_EQ(work->status, OptionStatus::Available);
+		} else {
+			EXPECT_EQ(hunger->status, OptionStatus::Available) << "routine hunger waits behind the work order";
+			EXPECT_EQ(work->status, OptionStatus::Selected);
+		}
 	}
 
-	// The same at the routine seek level: an Available Hunger option targets the edible source.
-	TEST_F(AIDecisionSystemTest, HungerTargetsEdibleSourceOverNearerNonEdibleHarvestable) {
-		auto& registry = assets::AssetRegistry::Get();
-		const uint32_t stickBushId = registerHarvestableYielding(registry, "Flora_StickBush", "Stick").harvestableId;
-		const uint32_t	berryBushId = registerBerryBush(registry);
-		const glm::vec2 berryPos{4.0F, 0.0F};
-
-		auto colonist = createColonist({0.0F, 0.0F});
-		satisfyAllNeeds(*getNeeds(colonist));
-		setNeedValue(colonist, NeedType::Hunger, 40.0F); // below the seek threshold, above critical
-		addKnownEntity(colonist, {2.0F, 0.0F}, stickBushId, assets::CapabilityType::Harvestable);
-		addKnownEntity(colonist, berryPos, berryBushId, assets::CapabilityType::Harvestable);
-
-		world->update(0.016F);
-
-		auto* trace = getTrace(colonist);
-		ASSERT_NE(trace, nullptr);
-		const auto* hunger = findOption(*trace, isHungerNeedOption);
-		ASSERT_NE(hunger, nullptr);
-		EXPECT_EQ(hunger->status, OptionStatus::Selected);
-		EXPECT_EQ(hunger->tier, 5);
-		ASSERT_TRUE(hunger->targetPosition.has_value());
-		EXPECT_EQ(*hunger->targetPosition, berryPos);
-	}
+	INSTANTIATE_TEST_SUITE_P(
+		HungerLevels, HungerEdibleSourceTest,
+		::testing::Values(HungerLevelCase{5.0F, 2, true}, HungerLevelCase{40.0F, 5, false})
+	);
 
 	// Knowing only harvestables that aren't food is the one case a hungry colonist has no source:
 	// Hunger and gather-food both stay NoSource rather than targeting the stick bush.
@@ -3296,19 +3289,20 @@ namespace ecs::test {
 			[[nodiscard]] uint64_t getWorldSeed() const override { return 7U; }
 		};
 
-		// Open land with one pond centred at (40, 40), its rim 5.5..10.5 m out (NavigationSystem.test's
-		// WaterPatchSampler). A source remembered at its centre is known but can't be reached.
-		constexpr glm::vec2 kPondCenter{40.0F, 40.0F};
+		// Open land cut by two straight rivers, 6 m wide, along y = +20 and y = -20 across the whole
+		// area: three land components, the band between them (where the colonist stands), the north bank
+		// and the south bank.
+		constexpr float kRiverY = 20.0F;
+		constexpr float kRiverHalfWidth = 3.0F;
 
-		class PondSampler : public world::IWorldSampler {
+		class TwoRiverSampler : public world::IWorldSampler {
 		  public:
-			[[nodiscard]] world::ChunkSampleResult sampleChunk(world::ChunkCoordinate coord) const override {
+			[[nodiscard]] world::ChunkSampleResult sampleChunk(world::ChunkCoordinate) const override {
 				world::ChunkSampleResult r = world::makeUniformChunkSampleResult(
 					world::BiomeWeights::single(world::Biome::TemperateGrassland), 1.0F);
-				if (coord.x >= -1 && coord.x <= 1 && coord.y >= -1 && coord.y <= 1) {
-					r.pondBlobs.push_back(
-						{.cx = kPondCenter.x, .cy = kPondCenter.y, .radius = 8.0F, .phaseA = 0.0F, .phaseB = 0.0F, .depth = 120}
-					);
+				for (const float y : {kRiverY, -kRiverY}) {
+					r.riverSegments.push_back({.x0 = -400.0, .y0 = y, .x1 = 400.0, .y1 = y, .halfWidth0 = kRiverHalfWidth,
+											   .halfWidth1 = kRiverHalfWidth, .s0 = 0.0, .s1 = 800.0});
 				}
 				return r;
 			}
@@ -3448,75 +3442,93 @@ namespace ecs::test {
 		EXPECT_LT(glm::distance(now, bush), glm::distance(start, bush) - 0.5F) << "the colonist walks toward the bush";
 	}
 
-	// A need's nearest known source can be out of reach (here in a pond; in the game, across a river)
-	// while a farther one isn't. The need takes the nearest REACHABLE source instead of giving up (WOR-607).
-	class AIDecisionPondTest : public AIDecisionFirstMeshTest {
+	// Known sources across a river are out of reach while a farther one on the colonist's side isn't.
+	// A need takes the nearest REACHABLE source, however many unreachable ones are nearer (WOR-607).
+	class AIDecisionRiverTest : public AIDecisionFirstMeshTest {
 	  protected:
 		[[nodiscard]] std::unique_ptr<world::IWorldSampler> makeSampler() const override {
-			return std::make_unique<PondSampler>();
+			return std::make_unique<TwoRiverSampler>();
 		}
 
-		// A colonist 14 m from the pond's centre, with the mesh built and the pond proven unreachable
-		// and kReachableSource proven reachable, so a failure is the AI's choice and not the fixture.
-		EntityID makeColonistBesidePond() {
+		// A colonist between the rivers with the mesh built, both banks proven unreachable and
+		// kReachable proven reachable, so a failure is the AI's choice and not the fixture.
+		EntityID makeColonistBetweenRivers() {
 			const auto colonist = createColonist(kStart);
 			satisfyAllNeeds(*getNeeds(colonist));
 			EXPECT_TRUE(pumpUntilMesh(*nav)) << "navmesh never built";
 			const auto*						  memory = world->getComponent<Memory>(colonist);
 			const geometry::nav::BeliefFilter belief{&memory->knownSegments, &memory->knownOpenings};
-			EXPECT_FALSE(nav->isReachable(kStart, kPondCenter, kAgentRadius, belief)) << "the pond centre must be unreachable";
-			EXPECT_TRUE(nav->isReachable(kStart, kReachableSource, kAgentRadius, belief));
+			EXPECT_FALSE(nav->isReachable(kStart, northBank(0.0F), kAgentRadius, belief)) << "the north bank must be unreachable";
+			EXPECT_FALSE(nav->isReachable(kStart, southBank(0.0F), kAgentRadius, belief)) << "the south bank must be unreachable";
+			EXPECT_TRUE(nav->isReachable(kStart, kReachable, kAgentRadius, belief));
 			return colonist;
 		}
 
-		static constexpr glm::vec2 kStart{30.0F, 30.0F};		   // 14.1 m from the pond centre
-		static constexpr glm::vec2 kReachableSource{10.0F, 10.0F}; // 28.3 m away, on open land
+		[[nodiscard]] static glm::vec2 northBank(float x) { return {x, kRiverY + 4.0F}; } // 24 m out
+		[[nodiscard]] static glm::vec2 southBank(float x) { return {x, -kRiverY - 4.0F}; }
+
+		[[nodiscard]] static const EvaluatedOption* gatherFoodOption(const DecisionTrace& trace) {
+			return findOption(trace, [](const EvaluatedOption& o) {
+				return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Hunger && o.threshold == 0.0F;
+			});
+		}
+
+		// Hunger and gather-food both target kReachable, Hunger being the chosen task.
+		void expectFoodGoesToReachable(EntityID colonist) {
+			const auto* trace = getTrace(colonist);
+			ASSERT_NE(trace, nullptr);
+			const auto* hunger = findOption(*trace, isHungerNeedOption);
+			ASSERT_NE(hunger, nullptr);
+			EXPECT_EQ(hunger->status, OptionStatus::Selected);
+			ASSERT_TRUE(hunger->targetPosition.has_value());
+			EXPECT_EQ(*hunger->targetPosition, kReachable);
+			const auto* gather = gatherFoodOption(*trace);
+			ASSERT_NE(gather, nullptr);
+			EXPECT_EQ(gather->status, OptionStatus::Available);
+			ASSERT_TRUE(gather->targetPosition.has_value());
+			EXPECT_EQ(*gather->targetPosition, kReachable);
+		}
+
+		static constexpr glm::vec2 kStart{0.0F, 0.0F};
+		static constexpr glm::vec2 kReachable{40.0F, 0.0F}; // between the rivers, farther than either bank
 		static constexpr float	   kAgentRadius = 0.3F;
 	};
 
-	TEST_F(AIDecisionPondTest, HungerSkipsUnreachableNearestFoodForReachableFartherOne) {
+	// A berry patch across the river: the four nearest known bushes are all on the north bank.
+	TEST_F(AIDecisionRiverTest, FoodSkipsEveryUnreachableNearerSourceOnOneComponent) {
 		const uint32_t berryBushId = registerBerryBush(assets::AssetRegistry::Get());
-		const auto	   colonist = makeColonistBesidePond();
+		const auto	   colonist = makeColonistBetweenRivers();
 		setNeedValue(colonist, NeedType::Hunger, 40.0F);
-		addKnownEntity(colonist, kPondCenter, berryBushId, assets::CapabilityType::Harvestable);
-		addKnownEntity(colonist, kReachableSource, berryBushId, assets::CapabilityType::Harvestable);
+		for (const float x : {0.0F, 2.0F, -2.0F, 4.0F}) {
+			addKnownEntity(colonist, northBank(x), berryBushId, assets::CapabilityType::Harvestable);
+		}
+		addKnownEntity(colonist, kReachable, berryBushId, assets::CapabilityType::Harvestable);
 
 		world->update(kTick);
-
-		auto* trace = getTrace(colonist);
-		ASSERT_NE(trace, nullptr);
-		const auto* hunger = findOption(*trace, isHungerNeedOption);
-		ASSERT_NE(hunger, nullptr);
-		EXPECT_EQ(hunger->status, OptionStatus::Selected);
-		ASSERT_TRUE(hunger->targetPosition.has_value());
-		EXPECT_EQ(*hunger->targetPosition, kReachableSource);
+		expectFoodGoesToReachable(colonist);
 	}
 
-	TEST_F(AIDecisionPondTest, GatherFoodSkipsUnreachableNearestFoodForReachableFartherOne) {
+	// The same with the unreachable bushes split across two components, the north and south banks.
+	TEST_F(AIDecisionRiverTest, FoodSkipsUnreachableSourcesOnTwoComponents) {
 		const uint32_t berryBushId = registerBerryBush(assets::AssetRegistry::Get());
-		const auto	   colonist = makeColonistBesidePond();
-		addKnownEntity(colonist, kPondCenter, berryBushId, assets::CapabilityType::Harvestable);
-		addKnownEntity(colonist, kReachableSource, berryBushId, assets::CapabilityType::Harvestable);
+		const auto	   colonist = makeColonistBetweenRivers();
+		setNeedValue(colonist, NeedType::Hunger, 40.0F);
+		for (const float x : {0.0F, 3.0F}) {
+			addKnownEntity(colonist, northBank(x), berryBushId, assets::CapabilityType::Harvestable);
+			addKnownEntity(colonist, southBank(x), berryBushId, assets::CapabilityType::Harvestable);
+		}
+		addKnownEntity(colonist, kReachable, berryBushId, assets::CapabilityType::Harvestable);
 
 		world->update(kTick);
-
-		auto* trace = getTrace(colonist);
-		ASSERT_NE(trace, nullptr);
-		const auto* gather = findOption(*trace, [](const EvaluatedOption& o) {
-			return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Hunger && o.threshold == 0.0F;
-		});
-		ASSERT_NE(gather, nullptr);
-		EXPECT_EQ(gather->status, OptionStatus::Selected);
-		ASSERT_TRUE(gather->targetPosition.has_value());
-		EXPECT_EQ(*gather->targetPosition, kReachableSource);
+		expectFoodGoesToReachable(colonist);
 	}
 
-	TEST_F(AIDecisionPondTest, ThirstSkipsUnreachableNearestWaterForReachableFartherOne) {
-		const auto colonist = makeColonistBesidePond();
+	TEST_F(AIDecisionRiverTest, ThirstSkipsUnreachableNearestWaterForReachableFartherOne) {
+		const auto colonist = makeColonistBetweenRivers();
 		world->getComponent<Inventory>(colonist)->addItem("Berry", 1); // no gather-food option in the way
 		setNeedValue(colonist, NeedType::Thirst, 40.0F);
-		addKnownEntity(colonist, kPondCenter, kWaterDefId, assets::CapabilityType::Drinkable);
-		addKnownEntity(colonist, kReachableSource, kWaterDefId, assets::CapabilityType::Drinkable);
+		addKnownEntity(colonist, northBank(0.0F), kWaterDefId, assets::CapabilityType::Drinkable);
+		addKnownEntity(colonist, kReachable, kWaterDefId, assets::CapabilityType::Drinkable);
 
 		world->update(kTick);
 
@@ -3528,15 +3540,41 @@ namespace ecs::test {
 		ASSERT_NE(thirst, nullptr);
 		EXPECT_EQ(thirst->status, OptionStatus::Selected);
 		ASSERT_TRUE(thirst->targetPosition.has_value());
-		EXPECT_EQ(*thirst->targetPosition, kReachableSource);
+		EXPECT_EQ(*thirst->targetPosition, kReachable);
+	}
+
+	// A bed and a toilet the colonist knows but can't reach don't strand Energy and Bladder: they
+	// take the ground fallback, as when no source is known.
+	TEST_F(AIDecisionRiverTest, UnreachableBedAndToiletFallBackToGround) {
+		const auto colonist = makeColonistBetweenRivers();
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+		setNeedValue(colonist, NeedType::Energy, 20.0F);
+		setNeedValue(colonist, NeedType::Bladder, 20.0F);
+		addKnownEntity(colonist, northBank(0.0F), kBedDefId, assets::CapabilityType::Sleepable);
+		addKnownEntity(colonist, southBank(0.0F), kToiletDefId, assets::CapabilityType::Toilet);
+
+		world->update(kTick);
+
+		auto* trace = getTrace(colonist);
+		ASSERT_NE(trace, nullptr);
+		for (const NeedType need : {NeedType::Energy, NeedType::Bladder}) {
+			const auto* option = findOption(*trace, [need](const EvaluatedOption& o) {
+				return o.taskType == TaskType::FulfillNeed && o.needType == need;
+			});
+			ASSERT_NE(option, nullptr);
+			EXPECT_NE(option->status, OptionStatus::NoSource) << static_cast<int>(need);
+			ASSERT_TRUE(option->targetPosition.has_value());
+			EXPECT_EQ(*option->targetPosition, kStart) << static_cast<int>(need) << " uses the ground where it stands";
+		}
 	}
 
 	// Every known food source out of reach: the colonist has nothing it can eat, so Hunger is NoSource.
-	TEST_F(AIDecisionPondTest, HungerHasNoSourceWhenEveryKnownFoodIsUnreachable) {
+	TEST_F(AIDecisionRiverTest, HungerHasNoSourceWhenEveryKnownFoodIsUnreachable) {
 		const uint32_t berryBushId = registerBerryBush(assets::AssetRegistry::Get());
-		const auto	   colonist = makeColonistBesidePond();
+		const auto	   colonist = makeColonistBetweenRivers();
 		setNeedValue(colonist, NeedType::Hunger, 40.0F);
-		addKnownEntity(colonist, kPondCenter, berryBushId, assets::CapabilityType::Harvestable);
+		addKnownEntity(colonist, northBank(0.0F), berryBushId, assets::CapabilityType::Harvestable);
+		addKnownEntity(colonist, southBank(0.0F), berryBushId, assets::CapabilityType::Harvestable);
 
 		world->update(kTick);
 
@@ -3545,6 +3583,9 @@ namespace ecs::test {
 		const auto* hunger = findOption(*trace, isHungerNeedOption);
 		ASSERT_NE(hunger, nullptr);
 		EXPECT_EQ(hunger->status, OptionStatus::NoSource);
+		const auto* gather = gatherFoodOption(*trace);
+		ASSERT_NE(gather, nullptr);
+		EXPECT_EQ(gather->status, OptionStatus::NoSource);
 	}
 
 } // namespace ecs::test

@@ -8,8 +8,13 @@
 
 #include "assets/AssetDefinition.h"
 
+#include <glm/geometric.hpp>
+
+#include <algorithm>
+#include <cstdint>
 #include <functional>
 #include <optional>
+#include <tuple>
 #include <vector>
 
 namespace assets {
@@ -28,17 +33,49 @@ namespace ecs {
 	const assets::AssetRegistry&  registry,
 	assets::CapabilityType		  capability);
 
+/// A remembered source and its squared distance, as findNearestReachableWithCapability orders them.
+struct SourceCandidate {
+	float					distSq;
+	uint64_t				key;
+	const KnownWorldEntity* entity;
+};
+
 /// Find the nearest known world entity with `capability` that `accept` admits and `reachable` confirms.
-/// Candidates are tried nearest first (ties broken by memory key, so the pick is deterministic), and
-/// `reachable` is asked about at most `maxReachChecks` of them; past that bound the query returns
-/// nullopt rather than probing every remembered source. An empty `reachable` admits every candidate.
+/// One pass over Memory's capability index collects the accepted candidates into `scratch` (caller-owned
+/// and reused, so no allocation once it has grown to fit), then pops them nearest first, ties broken by
+/// memory key so the pick is deterministic, until `reachable` admits one. Every accepted candidate is
+/// tried before the answer is nullopt: O(n + k log n) for the k-th nearest, plus k `reachable` calls.
+template <typename Accept, typename Reachable>
 [[nodiscard]] std::optional<KnownWorldEntity> findNearestReachableWithCapability(
-	const Memory&										  memory,
-	assets::CapabilityType								  capability,
-	const glm::vec2&									  fromPosition,
-	const std::function<bool(const KnownWorldEntity&)>&	  accept,
-	const std::function<bool(const glm::vec2&)>&		  reachable,
-	size_t												  maxReachChecks);
+	const Memory&				  memory,
+	assets::CapabilityType		  capability,
+	const glm::vec2&			  fromPosition,
+	Accept&&					  accept,
+	Reachable&&					  reachable,
+	std::vector<SourceCandidate>& scratch) {
+	scratch.clear();
+	for (uint64_t key : memory.getEntitiesWithCapability(capability)) {
+		const auto* entity = memory.getWorldEntity(key);
+		if (entity == nullptr || !accept(*entity)) {
+			continue;
+		}
+		const glm::vec2 diff = entity->position - fromPosition;
+		scratch.push_back({glm::dot(diff, diff), key, entity});
+	}
+	const auto farther = [](const SourceCandidate& a, const SourceCandidate& b) {
+		return std::tie(a.distSq, a.key) > std::tie(b.distSq, b.key);
+	};
+	std::make_heap(scratch.begin(), scratch.end(), farther);
+	while (!scratch.empty()) {
+		std::pop_heap(scratch.begin(), scratch.end(), farther);
+		const KnownWorldEntity& nearest = *scratch.back().entity;
+		scratch.pop_back();
+		if (reachable(nearest.position)) {
+			return nearest;
+		}
+	}
+	return std::nullopt;
+}
 
 /// Find the entity that minimizes total trip: start -> entity -> destination
 /// For multi-leg tasks (gather then deliver, pickup then haul)
