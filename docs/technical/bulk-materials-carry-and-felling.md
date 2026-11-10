@@ -181,7 +181,8 @@ first). Not code — engine touch-points are named so the work is concrete.
   `kStoreWithinReachMeters` (1.5 m) of the drop spot, nearest first, taking what
   `ecs::storageRoomFor` allows (the box's rules accept the item; physical room clamped to its
   configured max, the same rule the storage-to-storage pull uses). Packaged boxes and crafting
-  stations never take it, and the colonist doesn't walk. Only the remainder drops. A fell's
+  stations never take it, a box behind a built wall is out of reach (the vision occluders, so
+  doors and windows are gaps), and the colonist doesn't walk. Only the remainder drops. A fell's
   leftover wood isn't something the colonist holds, so it still drops straight to the ground.
 - Merge on drop: `ecs::resourcePileDrops` tops up same-def piles within `kPileMergeRadius` (1 m)
   of the drop, nearest first, to their stackSize before spawning anything.
@@ -192,7 +193,7 @@ first). Not code — engine touch-points are named so the work is concrete.
   item dropped on a pile lands beside it, never on it. Footprints come from the shared layouts so
   spacing matches what's drawn: `worldview::pileFootprintRadius` (the circle around a FULL pile
   of the item, so top-ups never outgrow it) and `kPackagedFootprintRadius` (half the crate's
-  diagonal, centered on the crate box). `GameScene::dropResourcePiles` gathers them within 10 m and
+  diagonal, centered on the crate box). `GameScene::dropResourcePiles` gathers every pile and crate and
   passes the nav mesh's `isValidPosition` as the ground test for the first `kWalkableSearchRings`
   rings; past those clearance alone decides so a drop always lands. Radii live in
   `ResourceStack.h`; tuning is deferred. Deterministic, no RNG.

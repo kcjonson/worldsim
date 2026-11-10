@@ -1749,28 +1749,19 @@ namespace {
 				return it->second * scale;
 			};
 
-			// Wide enough to hold anything a drop's spiral could reach before it finds clear ground.
-			constexpr float					 kNearbyRadius = 10.0F;
-			auto							 isNear = [x, y](glm::vec2 p) {
-				  const float dx = p.x - x;
-				  const float dy = p.y - y;
-				  return dx * dx + dy * dy <= kNearbyRadius * kNearbyRadius;
-			};
+			// Every pile and crate, not a radius around the drop: the spiral has no fixed reach, so
+			// any cutoff could leave out something a crowded drop ends up next to.
 			std::vector<ecs::GroundOccupant> nearby;
 			std::vector<ecs::ResourceStack*> nearbyStacks;
 			for (auto [entity, pos, appearance, stack] : ecsWorld->view<ecs::Position, ecs::Appearance, ecs::ResourceStack>()) {
-				if (!isNear(pos.value)) {
-					continue;
-				}
 				nearby.push_back({pos.value, pileRadius(appearance.defName, appearance.scale), stack.quantity, appearance.defName == defName});
 				nearbyStacks.push_back(&stack);
 			}
 			for (auto [entity, pos, packaged] : ecsWorld->view<ecs::Position, ecs::Packaged>()) {
-				const glm::vec2 center = worldview::packagedFootprintCenter(pos.value);
-				if (packaged.beingCarried || !isNear(center)) {
+				if (packaged.beingCarried) {
 					continue;
 				}
-				nearby.push_back({center, worldview::kPackagedFootprintRadius, 0, false});
+				nearby.push_back({worldview::packagedFootprintCenter(pos.value), worldview::kPackagedFootprintRadius, 0, false});
 			}
 
 			const auto& nav = ecsWorld->getSystem<ecs::NavigationSystem>();

@@ -6,12 +6,16 @@
 #include "components/StorageConfiguration.h"
 #include "components/Transform.h"
 #include "components/WorkQueue.h"
+#include "systems/VisionSystem.h"
 
 #include "assets/AssetRegistry.h"
 
+#include <nav/NavCoords.h>
 #include <utils/Log.h>
+#include <visibility/Visibility.h>
 
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 namespace ecs {
@@ -47,6 +51,15 @@ namespace ecs {
 				Inventory* inventory = nullptr;
 				uint32_t   room = 0;
 			};
+			// Reach is a straight arm's length, so a built wall between the colonist and the box
+			// rules the box out. Doors and windows are gaps in the occluders, as they are for sight.
+			const geometry::Vec2i64				   fromMm = nav::toMm(position);
+			const auto							   reachMm = static_cast<std::int64_t>(std::ceil(kStoreWithinReachMeters * 1000.0F)) + 1;
+			std::vector<geometry::OccluderSegment> walls;
+			if (const auto* vision = world.tryGetSystem<VisionSystem>()) {
+				vision->geometry().queryOccluders(fromMm, reachMm, walls);
+			}
+
 			std::vector<Candidate> inReach;
 			for (auto [entity, config, inventory, pos] : world.view<StorageConfiguration, Inventory, Position>()) {
 				// A packaged box isn't set down yet and a station's store only takes its recipe's bill.
@@ -57,6 +70,9 @@ namespace ecs {
 				const float dy = pos.value.y - position.y;
 				const float distSq = dx * dx + dy * dy;
 				if (distSq > kStoreWithinReachMeters * kStoreWithinReachMeters) {
+					continue;
+				}
+				if (!walls.empty() && !geometry::hasLineOfSight(fromMm, nav::toMm(pos.value), reachMm, walls)) {
 					continue;
 				}
 				const uint32_t room = storageRoomFor(config, inventory, defName, def->category);

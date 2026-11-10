@@ -159,9 +159,20 @@ namespace world_sim {
 		}
 
 		if (where == "loose") {
-			if (assets::AssetRegistry::Get().getDefinition(material) == nullptr) {
+			const auto* def = assets::AssetRegistry::Get().getDefinition(material);
+			if (def == nullptr) {
 				LOG_WARNING(Game, "[DevAPI] give loose: unknown asset '%s'", material.c_str());
 				m_ctx.ui->pushNotification("Dev", "Unknown asset: " + material, ui::ToastSeverity::Warning);
+				return;
+			}
+			// Each new pile is cleared against every pile already placed, so the pile count (not
+			// the unit count) is what a big n costs.
+			constexpr uint32_t kMaxLoosePiles = 50;
+			const uint32_t	   stackSize = def->itemProperties.has_value() ? def->itemProperties->stackSize : 0U;
+			const uint32_t	   piles = stackSize == 0 ? 1U : (n - 1U) / stackSize + 1U;
+			if (piles > kMaxLoosePiles) {
+				LOG_WARNING(Game, "[DevAPI] give loose: %u '%s' is %u piles, over the %u limit", n, material.c_str(), piles, kMaxLoosePiles);
+				m_ctx.ui->pushNotification("Dev", "Too many: " + std::to_string(piles) + " piles of " + material, ui::ToastSeverity::Warning);
 				return;
 			}
 			const Foundation::Vec2 at = parsePoint(param(cmd, "at"));

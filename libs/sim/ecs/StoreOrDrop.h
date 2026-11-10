@@ -38,7 +38,7 @@ namespace ecs {
 
 	/// Get rid of `quantity` units of `defName` at `position`: deposit as much as fits into placed
 	/// storage within kStoreWithinReachMeters (nearest first; not Packaged, not a crafting
-	/// station), then drop the rest through `drop`. Safe inside a system's view loop: it only
+	/// station, not behind a built wall), then drop the rest through `drop`. Safe inside a system's view loop: it only
 	/// mutates existing Inventory components and the drop callback enqueues. Returns units stored.
 	uint32_t storeOrDrop(
 		World& world, const std::string& defName, uint32_t quantity, glm::vec2 position, const DropResourceCallback& drop

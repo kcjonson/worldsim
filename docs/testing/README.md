@@ -132,7 +132,7 @@ game scene registers them: elsewhere, or for a verb it doesn't have, the request
 |------|-----------|-------|
 | `spawn` | `def=<asset>&at=x,y&n=1&scatter=0` | Spawns a world entity (tree, station, container, loose item). |
 | `colonist` | `at=x,y&n=1&name=` | Spawns a colonist at the given position. |
-| `give` | `material=<defName>&n=<qty>&where=site\|loose\|colonist\|storage[&at=x,y]` | Gives material to the colonist, a site, or storage; `loose` drops it on the ground at `at` as stack-capped piles. |
+| `give` | `material=<defName>&n=<qty>&where=site\|loose\|colonist\|storage[&at=x,y]` | Gives material to the colonist, a site, or storage; `loose` drops it on the ground at `at` as stack-capped piles, refused over 50 piles. |
 | `need` | `colonist=<id>&need=Hunger\|Thirst\|Energy\|...&value=0..100` | Sets a colonist's need to the given value. |
 | `time` | `speed=0..3` or `set=HH:MM` or `skip=Nh\|Nm` | Controls game time. `speed=3` accelerates. |
 | `teleport` | `colonist=<id>&to=x,y` | Teleports a colonist. |

@@ -9,6 +9,7 @@
 #include "../StoreOrDrop.h"
 #include "../World.h"
 #include "TimeSystem.h"
+#include "VisionSystem.h"
 #include "../components/Action.h"
 #include "../components/Appearance.h"
 #include "../components/Inventory.h"
@@ -26,8 +27,13 @@
 #include "../components/WorkQueue.h"
 
 #include "assets/AssetRegistry.h"
+#include "assets/ConstructionRegistry.h"
 #include "assets/RecipeDef.h"
 #include "assets/RecipeRegistry.h"
+
+#include <construction/ConstructionWorld.h>
+
+#include <filesystem>
 
 #include <gtest/gtest.h>
 
@@ -1786,6 +1792,31 @@ TEST_F(FellingTest, FullOrNonAcceptingBoxInReachStillDrops) {
 	EXPECT_EQ(world->getComponent<Inventory>(picky)->getQuantity("Wood"), 0U);
 	EXPECT_EQ(dropCalls, 1);
 	EXPECT_EQ(lastDropQty, 14U);
+}
+
+// A box within reach but on the far side of a built wall can't be reached, so the armful drops.
+TEST_F(FellingTest, BoxBehindWallIsIgnored) {
+	const std::filesystem::path root =
+		std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path().parent_path();
+	assets::ConstructionRegistry::Get().clear();
+	ASSERT_TRUE(assets::ConstructionRegistry::Get().load((root / "assets" / "config" / "construction").string()));
+
+	construction::ConstructionWorld cw;
+	const auto wall = cw.commitSegment({1500, 0}, {1500, 3000}, "Wood", "Standard", construction::kInvalidFoundation);
+	ASSERT_TRUE(wall.ok());
+	for (construction::SegmentId id : wall.createdSegments) {
+		cw.setSegmentState(id, construction::FoundationState::Built);
+	}
+	world->registerSystem<VisionSystem>().setConstructionWorld(&cw);
+
+	auto	 colonist = createColonist({1.0F, 1.0F});
+	EntityID box = createBox({2.0F, 1.0F}, 4);
+	pickUpPackagedHoldingWood(colonist);
+
+	EXPECT_EQ(world->getComponent<Inventory>(box)->getQuantity("Wood"), 0U);
+	EXPECT_EQ(dropCalls, 1);
+	EXPECT_EQ(lastDropQty, 14U);
+	assets::ConstructionRegistry::Get().clear();
 }
 
 // A box beyond reach is ignored: the colonist doesn't walk to put the armful away.
