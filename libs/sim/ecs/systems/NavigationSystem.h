@@ -173,7 +173,7 @@ class NavigationSystem : public ISystem {
 	// --- Queries (synchronous, dispatched to the region containing the point) -
 
 	// Taut polyline in world meters from start to goal for a disc agent of the given
-	// radius, or nullopt when no built colonist region's rect holds BOTH endpoints, the goal kStagingInsetMm in (long-range
+	// radius, or nullopt when no built colonist region's rect holds BOTH endpoints, the goal kRouteGoalInsetMm in (long-range
 	// routing across regions is Phase 2) or no such region's mesh has a route. Colonist regions
 	// can overlap (a region keeps its rect until a driver nears the edge), so a pair is routed
 	// through the regions holding both whose MeshStamp is the newest among them, in ascending id,
@@ -224,7 +224,7 @@ class NavigationSystem : public ISystem {
 	void				reachFrom(glm::vec2 startMeters, float agentRadiusMeters, geometry::nav::BeliefFilter belief,
 								  Reach& out) const;
 	[[nodiscard]] bool	reaches(const Reach& reach, glm::vec2 goalMeters) const;
-	// Does some region holding the start also hold this goal, kStagingInsetMm or more inside its rect?
+	// Does some region holding the start also hold this goal, kRouteGoalInsetMm or more inside its rect?
 	// Only for such a goal does reaches() consult a mesh, and only such a goal is routed to directly
 	// (requestPath applies the same inset to its goal); any other is walked toward.
 
@@ -233,12 +233,17 @@ class NavigationSystem : public ISystem {
 	// For a goal no region holding the start covers: where to walk to get closer. For each region
 	// holding the start, the goal clamped kStagingInsetMm inside its rect (so a colonist standing there
 	// is within kEdgeMarginMm and its region recenters toward the goal), then back along the line to
-	// the start, every kStagingSampleStepMm, to the first point the start reaches; the candidate nearest
+	// the start, every kStagingSampleStepMm, to the first point the start reaches that a route may end
+	// at (kRouteGoalInsetMm inside the rect); the candidate nearest
 	// the goal wins. nullopt when none lies kStagingMinLegMm or more from the start: no step toward the
 	// goal is possible from here. Bounded: one reach test per sample, a few hundred at most.
 	[[nodiscard]] std::optional<glm::vec2> stagingPointToward(const Reach& reach, glm::vec2 startMeters,
 															  glm::vec2 goalMeters) const;
-	static constexpr std::int64_t kStagingInsetMm	   = 2000; // 2 m
+	// A route goal must lie this far inside a region's rect. Staging sits a metre deeper, so the mm ->
+	// float m -> mm round trip far from the origin can't push a staging point back out of it.
+	static constexpr std::int64_t kRouteGoalInsetMm	   = 2000; // 2 m
+	static constexpr std::int64_t kStagingInsetMm	   = 3000; // 3 m
+
 	static constexpr std::int64_t kStagingSampleStepMm = 1000; // 1 m
 	static constexpr std::int64_t kStagingMinLegMm	   = 500;  // 0.5 m
 	// LOD seam predicate: true when `meters` falls inside some BUILT colonist region rect. A

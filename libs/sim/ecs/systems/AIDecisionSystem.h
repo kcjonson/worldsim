@@ -164,7 +164,14 @@ private:
 	/// requests it again once the generation moves; Routed and Unmeshed are ordinary travel.
 	void applyNavOutcome(struct Task& task, NavRequestOutcome outcome) const;
 
+	/// Where a route to `target` for a task of `type` ends, judged on colonist regions: `target` itself,
+	/// or for an adjacent-satisfied task (Harvest, Build, Deconstruct, a move order) off a walkable face,
+	/// the nearest walkable point. nullopt when that snap finds no floor. Both the option evaluation
+	/// and requestNavPath resolve through it, so a target is decided one way.
+	[[nodiscard]] std::optional<glm::vec2> routeGoalFor(TaskType type, glm::vec2 target) const;
+
 	/// Walking toward a goal no region holding the colonist covers, one edge leg at a time: has he
+
 	/// finished kEdgeWalkMaxStalledLegs legs in a row without getting kEdgeWalkMinProgressMeters
 	/// closer? Then the walk is over (water in the way, a region that can't follow him).
 	[[nodiscard]] bool stalledWalkingToward(EntityID entity, const glm::vec2& goal, const struct Position& position);

@@ -1911,36 +1911,19 @@ namespace ecs {
 				continue;
 			}
 			const bool needsTarget = option.taskType != TaskType::Wander && option.targetPosition.has_value();
-			// Snap only the task types whose action looks its target up by entity/footprint and so
-			// is satisfied by arriving ADJACENT: Harvest (incl. footprint clearing), Build, and
-			// Deconstruct. Their stored target is a CENTER that can sit in a navmesh hole -- a tree
-			// trunk's collision carves the tile out, so the pathfinder (which needs the goal point
-			// itself on a walkable triangle and never snaps) can never reach it. Snapping to the
-			// nearest walkable point makes the chop/clear/build reachable; a center already walkable
-			// snaps essentially in place. Haul/Craft are EXCLUDED: their actions validate arrival
-			// against the EXACT source/target position (haulSourcePosition / haulTargetPosition /
-			// station) within a tight tolerance, and their targets (loose piles, storage, stations)
-			// already sit on walkable ground -- snapping would move the nav goal off the tolerance-
-			// checked point and the action would report "not at source or target" forever.
-			const bool snapEligible = option.taskType == TaskType::Harvest ||
-									  option.taskType == TaskType::Build || option.taskType == TaskType::Deconstruct;
-			// Only a target a region holding the colonist covers is snapped here; one beyond them keeps its
-			// centre and is walked toward (requestNavPath), and the route snaps it once a region holding
-			// him covers it. The snap nudge stays within HarvestActions' kPositionTolerance (0.5 m) of the
-			// target, so the colonist still registers "at source" on arrival. (The arbitration epic's
-			// locate-by-entity supersedes this position-based snap.)
-			// A target already on a walkable face stays put: the nearest-face snap measures to triangle
-			// edges, so on open ground (large faces) it would move a walkable target metres off.
-			if (reach != nullptr && needsTarget && snapEligible && m_navSystem->coversGoal(*reach, option.targetPosition.value()) &&
-				!m_navSystem->isOnMesh(option.targetPosition.value())) {
-
-				const auto snapped = m_navSystem->nearestPathablePoint(option.targetPosition.value());
-				if (!snapped.has_value()) {
+			// A target a region holding the colonist covers is resolved to where its route ends
+			// (routeGoalFor); one beyond them keeps its centre and is walked toward, and requestNavPath
+			// resolves it the same way once a region holding him covers it.
+			if (reach != nullptr && needsTarget && m_navSystem->coversGoal(*reach, option.targetPosition.value())) {
+				const auto routeGoal = routeGoalFor(option.taskType, option.targetPosition.value());
+				if (!routeGoal.has_value()) {
 					option.status = OptionStatus::NoSource; // its region has no walkable floor
 					continue;
 				}
-				option.targetPosition  = snapped;
-				option.targetReachable = false; // a moved target is tested where it now is
+				if (*routeGoal != option.targetPosition.value()) {
+					option.targetPosition  = routeGoal;
+					option.targetReachable = false; // a moved target is tested where it now is
+				}
 			}
 
 			if (needsTarget && !option.targetReachable && !canReach(option.targetPosition.value())) {
@@ -2084,6 +2067,27 @@ namespace ecs {
 		}
 	}
 
+	std::optional<glm::vec2> AIDecisionSystem::routeGoalFor(TaskType type, glm::vec2 target) const {
+		// Snap only the task types whose action looks its target up by entity/footprint and so is
+		// satisfied by arriving ADJACENT -- Harvest (incl. footprint clearing), Build, Deconstruct --
+		// and a player's move order (None), which just wants him as near the click as he can stand.
+		// A harvest/build target is a CENTER that can sit in a navmesh hole (a tree trunk's collision
+		// carves the tile out), which no route can end at. Haul/Craft are EXCLUDED: their actions
+		// validate arrival against the EXACT source/target position (haulSourcePosition /
+		// haulTargetPosition / station) within a tight tolerance, so snapping would move the route off
+		// the tolerance-checked point and the action would report "not at source or target" forever;
+		// an off-mesh one is left to fail its route. A target already on a walkable face stays put: the
+		// nearest-face snap measures to triangle edges, so on open ground (large faces) it would move a
+		// walkable target metres off. The snap nudge stays within HarvestActions' kPositionTolerance
+		// (0.5 m) of the target. (The arbitration epic's locate-by-entity supersedes this snap.)
+		const bool snapEligible = type == TaskType::Harvest || type == TaskType::Build || type == TaskType::Deconstruct ||
+								  type == TaskType::None;
+		if (!snapEligible || m_navSystem->isOnMesh(target)) {
+			return target;
+		}
+		return m_navSystem->nearestPathablePoint(target);
+	}
+
 	bool AIDecisionSystem::stalledWalkingToward(EntityID entity, const glm::vec2& goal, const Position& position) {
 		auto* task = world->getComponent<Task>(entity);
 		if (task == nullptr) {
@@ -2199,16 +2203,14 @@ namespace ecs {
 				}
 			}
 		} else {
-			// A harvest/build target walked toward from beyond his regions kept its centre, which can sit
-			// in the hole its own collision carves; now a region holding him covers it, route to the
-			// walkable point beside it (within the action's arrival tolerance).
-			glm::vec2 routeGoal = goal;
-			if (!m_navSystem->isOnMesh(goal)) {
-				if (const auto snapped = m_navSystem->nearestPathablePoint(goal)) {
-					routeGoal = *snapped;
-				}
+			// A goal walked toward from beyond his regions kept its centre (or a click its raw point);
+			// now a region holding him covers it, route to where it resolves, as the option evaluation
+			// would have.
+			const Task*		taskNow	  = world->getComponent<Task>(entity);
+			const auto		routeGoal = routeGoalFor(taskNow != nullptr ? taskNow->type : TaskType::None, goal);
+			if (routeGoal.has_value()) {
+				path = m_navSystem->requestPath(position.value, *routeGoal, radius, belief);
 			}
-			path = m_navSystem->requestPath(position.value, routeGoal, radius, belief);
 		}
 		if (!path.has_value()) {
 			// A mesh exists but the colonist's belief admits no route: a believed wall cuts the
@@ -2444,27 +2446,32 @@ namespace ecs {
 		auto* task = world->getComponent<Task>(entity);
 		auto* movementTarget = world->getComponent<MovementTarget>(entity);
 		if (position == nullptr || task == nullptr || movementTarget == nullptr) {
+			LOG_DEBUG(Engine, "[AI] Entity %llu: move order to (%.2f, %.2f) refused, not a colonist that can move",
+				static_cast<unsigned long long>(entity), worldGoal.x, worldGoal.y);
 			return std::nullopt;
 		}
 
 		// Snap an unwalkable click (water, inside a wall) to the nearest walkable point in the regions
 		// the player can place in (his view's included), so a near-miss click still walks the colonist
-		// as close as it can get; a goal beyond the colonist's own regions is then walked toward like
-		// any other. With no NavigationSystem (headless), take the raw goal -- there's no mesh to judge
-		// it against.
+		// as close as it can get. A click no region holds (visible ground past the camera region's
+		// 64 m) keeps its point. Either way a goal beyond his own regions is walked toward like any
+		// other, resolved by routeGoalFor once a region of his covers it, and ends as no route if it
+		// can't be reached. With no NavigationSystem (headless), take the raw goal -- there's no mesh
+		// to judge it against.
 		float radius = 0.3F;
 		if (const auto* agentRadius = world->getComponent<AgentRadius>(entity)) {
 			radius = agentRadius->radiusMeters;
 		}
 		glm::vec2 goal = worldGoal;
 		if (m_navSystem != nullptr && !m_navSystem->isValidPosition(goal)) {
-			const auto snapped = m_navSystem->nearestValidPosition(goal, radius);
-
-			if (!snapped.has_value()) {
-				return std::nullopt;  // nothing reachable near the click; leave the colonist be
+			if (const auto snapped = m_navSystem->nearestValidPosition(goal, radius)) {
+				goal = *snapped;
+			} else {
+				LOG_DEBUG(Engine, "[AI] Entity %llu: move order to (%.2f, %.2f) is in no nav region, walking toward it",
+					static_cast<unsigned long long>(entity), goal.x, goal.y);
 			}
-			goal = *snapped;
 		}
+
 
 		// Express the walk as an ordinary Moving task so the existing repath-on-discovery and
 		// arrival hand-off carry it. type=None means ActionSystem does nothing on arrival -- the

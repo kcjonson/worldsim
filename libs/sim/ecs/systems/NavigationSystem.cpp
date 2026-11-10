@@ -36,12 +36,12 @@ namespace ecs {
 			return owner == RegionOwner::Camera ? "camera" : "colonists";
 		}
 
-		// A route goal counts as in a region only kStagingInsetMm or more inside its rect. Nearer the
+		// A route goal counts as in a region only kRouteGoalInsetMm or more inside its rect. Nearer the
 		// edge, the mesh's border can leave it off every face (a snap there lands metres away), and a
 		// colonist walking toward it stands kStagingInsetMm inside, in the recenter margin, so his region
 		// moves to hold it properly.
 		bool holdsGoal(const SimAabb& rect, geometry::Vec2i64 goal) {
-			constexpr std::int64_t kInset = NavigationSystem::kStagingInsetMm;
+			constexpr std::int64_t kInset = NavigationSystem::kRouteGoalInsetMm;
 			return goal.x >= rect.minX + kInset && goal.x <= rect.maxX - kInset && goal.y >= rect.minY + kInset &&
 				   goal.y <= rect.maxY - kInset;
 		}
@@ -669,7 +669,8 @@ namespace ecs {
 		// A colonist region no cluster wants any more still serves a colonist standing in its mesh
 		// until some wanted colonist region's served mesh holds him too: when clusters merge, the
 		// survivor's larger mesh is still building, and dropping the other at once would leave him in
-		// no built region (held, his reach empty, recovery skipped) until it lands.
+		// no built region (held, his reach empty, recovery skipped) until it lands. Decided for every
+		// region before any is erased, so the indices it reads still match.
 		auto stillServes = [&](std::size_t r) {
 			const SimulationRegion& region = regions[r];
 			if (region.owner != RegionOwner::Colonists || !region.hasMesh()) {
@@ -696,11 +697,16 @@ namespace ecs {
 			return false;
 		};
 
+		std::vector<bool> keep(regions.size(), false);
+		for (std::size_t r = 0; r < regions.size(); ++r) {
+			keep[r] = regionMatched[r] || stillServes(r);
+		}
+
 		// Drop regions no longer wanted, retiring any in-flight build (its worker owns its
 		// input by value) rather than waiting on it, unless retiringBuilds is already at
 		// its cap. Also purge their RRA caches.
 		for (std::size_t r = regions.size(); r-- > 0;) {
-			if (regionMatched[r] || stillServes(r)) {
+			if (keep[r]) {
 				continue;
 			}
 			if (regions[r].future.valid()) {
@@ -943,9 +949,12 @@ namespace ecs {
 				const double			t = static_cast<double>(i) / static_cast<double>(steps);
 				const geometry::Vec2i64 p{staged.x + static_cast<std::int64_t>(std::llround(dx * t)),
 										  staged.y + static_cast<std::int64_t>(std::llround(dy * t))};
-				if (!gnav::reaches(mesh, r.from, p, reach.belief)) {
+				// A sample in the band nearer the edge than kRouteGoalInsetMm is one requestPath would
+				// refuse as a goal (the start can stand there; the leg can't end there).
+				if (!holdsGoal(r.rect, p) || !gnav::reaches(mesh, r.from, p, reach.belief)) {
 					continue;
 				}
+
 				const double gx		= static_cast<double>(goalMm.x - p.x);
 				const double gy		= static_cast<double>(goalMm.y - p.y);
 				const double toGoal = std::sqrt(gx * gx + gy * gy);

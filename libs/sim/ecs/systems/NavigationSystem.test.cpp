@@ -848,7 +848,131 @@ TEST_F(NavigationSystemTest, MergedClusterKeepsTheAbsorbedColonistCoveredUntilTh
 	EXPECT_TRUE(sys.inSimArea({0.0F, 0.0F}));
 }
 
+// A region dropped in the same update as a lingering colonist region is judged: the keep/drop
+// decision for every region is made before any is erased, so erasing the camera's old region (between
+// the lingering one and the survivor) can't make the survivor read as unwanted and keep the
+// lingering region past the survivor's swap.
+TEST_F(NavigationSystemTest, LingeringRegionDropsWhenTheSurvivorLandsDespiteAnotherDrop) {
+	ConstructionWorld cw;
+	World			  world;
+	ManualBuilds	  builds;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setBuildRunner(builds.runner());
+	sys.setChunkManager(m_chunks.get());
+	sys.setConstructionWorld(&cw);
+	auto settle = [&] {
+		sys.update(0.0F);
+		builds.finishAll();
+		sys.update(0.0F);
+	};
+	const EntityID second = addColonistDriver(world, {70.0F, 0.0F}); // the lingering region, first
+	settle();
+	sys.setViewportRect({-300.0F, 0.0F}, {30.0F, 30.0F}); // the camera's, second
+	settle();
+	(void)addColonistDriver(world, {0.0F, 0.0F}); // the survivor, third
+	settle();
+	ASSERT_EQ(sys.builtRegions().size(), 3U);
+
+	const glm::vec2 joined{45.0F, 0.0F};
+	world.getComponent<Position>(second)->value = joined; // the clusters merge; the survivor recenters
+	sys.update(0.0F);
+	ASSERT_EQ(colonistRegions(sys).size(), 2U) << "his old region lingers while the survivor builds";
+
+	sys.setViewportRect({300.0F, 0.0F}, {30.0F, 30.0F}); // drops the camera's old region this update
+	builds.finishAll();
+	sys.update(0.0F); // the survivor lands holding him
+	EXPECT_EQ(colonistRegions(sys).size(), 1U) << "the lingering region outlived the survivor's swap";
+	EXPECT_TRUE(sys.inSimArea(joined));
+	builds.finishAll();
+}
+
+// Staging leaves a metre of slack inside the 2 m a route goal needs, so a leg far from the origin
+// (where meters are coarse floats) still routes, and with the start in the 2 m band at the edge the
+// leg ends deeper in, where a route may end, even when the first staging sample is walled off.
+TEST_F(NavigationSystemTest, StagingPointIsAlwaysARoutableGoal) {
+	std::vector<glm::vec2> origins{{0.0F, 0.0F}};
+	for (int i = 0; i < 8; ++i) {
+		origins.push_back({20000.0F + 0.373F * static_cast<float>(i), -19999.0F - 0.611F * static_cast<float>(i)});
+	}
+	for (const glm::vec2 origin : origins) {
+		auto chunks = std::make_unique<world::ChunkManager>(std::make_unique<LandSampler>());
+		chunks->setLoadRadius(1);
+		chunks->setUnloadRadius(4);
+		chunks->update({origin.x, origin.y});
+		chunks->finishPendingGeneration();
+		ConstructionWorld cw;
+		World			  world;
+		ManualBuilds	  builds;
+		NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+		sys.setBuildRunner(builds.runner());
+		sys.setChunkManager(chunks.get());
+		sys.setConstructionWorld(&cw);
+		// A sealed 1 m box 2 m inside the region's north-east corner, where a staging point with no
+		// slack would land: the walk back from it toward a start in the 2 m band at the east edge
+		// crosses only band points.
+		const Vec2i64 box = nav::toMm(origin + glm::vec2{28.0F, 28.0F});
+		buildWall(cw, {box.x - 500, box.y - 500}, {box.x + 500, box.y - 500});
+		buildWall(cw, {box.x + 500, box.y - 500}, {box.x + 500, box.y + 500});
+		buildWall(cw, {box.x + 500, box.y + 500}, {box.x - 500, box.y + 500});
+		buildWall(cw, {box.x - 500, box.y + 500}, {box.x - 500, box.y - 500});
+		const EntityID colonist = addColonistDriver(world, origin);
+		sys.update(0.0F);
+		builds.finishAll();
+		sys.update(0.0F);
+		ASSERT_TRUE(sys.inSimArea(origin));
+
+		const NavigationSystem::RegionView region = colonistRegions(sys).at(0);
+		const glm::vec2 centre = nav::toMeters(region.center);
+		const glm::vec2 edge   = centre + glm::vec2{static_cast<float>(region.halfExtent) / 1000.0F, 0.0F}; // east edge
+		const glm::vec2 goal   = origin + glm::vec2{100.0F, 200.0F};
+		for (const glm::vec2 start : {origin, edge - glm::vec2{1.0F, 0.0F}}) { // the second is 1 m from the edge
+			world.getComponent<Position>(colonist)->value = start;
+			const NavigationSystem::Reach reach = reachOf(sys, start, kAgentRadius);
+			ASSERT_FALSE(reach.regions.empty());
+			ASSERT_FALSE(sys.coversGoal(reach, goal));
+			const std::optional<glm::vec2> staging = sys.stagingPointToward(reach, start, goal);
+			ASSERT_TRUE(staging.has_value()) << "from (" << start.x << ", " << start.y << ")";
+			EXPECT_TRUE(sys.coversGoal(reach, *staging)) << "the staging point is no route goal";
+			EXPECT_TRUE(sys.requestPath(start, *staging, kAgentRadius).has_value())
+				<< "the router refused its own leg from (" << start.x << ", " << start.y << ")";
+		}
+
+		// The rule itself: a goal 1 m inside the rect isn't routed to, one 2.5 m inside is.
+		const NavigationSystem::Reach reach = reachOf(sys, origin, kAgentRadius);
+		EXPECT_FALSE(sys.coversGoal(reach, edge - glm::vec2{1.0F, 0.0F}));
+		EXPECT_TRUE(sys.coversGoal(reach, edge - glm::vec2{2.5F, 0.0F}));
+		EXPECT_FALSE(sys.requestPath(origin, edge - glm::vec2{1.0F, 0.0F}, kAgentRadius).has_value());
+		EXPECT_TRUE(sys.requestPath(origin, edge - glm::vec2{2.5F, 0.0F}, kAgentRadius).has_value());
+	}
+}
+
+// A click on water in the camera's region snaps to the shore beside it, against the camera's mesh.
+TEST_F(NavigationSystemTest, NearestValidPositionSnapsAnOffFaceClickInTheCameraRegion) {
+	auto chunks = std::make_unique<world::ChunkManager>(std::make_unique<WaterPatchSampler>());
+	chunks->setLoadRadius(2);
+	chunks->setUnloadRadius(4);
+	chunks->update({0.0F, 0.0F});
+	chunks->finishPendingGeneration();
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(chunks.get());
+	sys.setConstructionWorld(&cw);
+	pushArea(sys, {40000, 40000}, 40000);
+	ASSERT_TRUE(pumpUntilMesh(sys));
+
+	const glm::vec2 pond{40.0F, 40.0F};
+	ASSERT_FALSE(sys.isValidPosition(pond));
+	ASSERT_FALSE(sys.nearestPathablePoint(pond, kAgentRadius).has_value()) << "no colonist region: the colonist snap has nothing";
+	const std::optional<glm::vec2> snapped = sys.nearestValidPosition(pond, kAgentRadius);
+	ASSERT_TRUE(snapped.has_value());
+	EXPECT_TRUE(sys.isValidPosition(*snapped));
+	EXPECT_LT(glm::distance(*snapped, pond), kPatchPond.radius * 1.5F) << "snapped to a far shore";
+	EXPECT_FALSE(sys.nearestValidPosition({400.0F, 400.0F}, kAgentRadius).has_value()) << "a click no region holds";
+}
+
 // The camera's region serves placement checks but no colonist query.
+
 TEST_F(NavigationSystemTest, CameraRegionServesPlacementButNoColonistQuery) {
 	ConstructionWorld cw;
 	World			  world;
@@ -1466,9 +1590,6 @@ TEST_F(NavigationSystemTest, LandAroundWaterPinchedAtAChunkCornerIsValid) {
 	chunks->update({100.0F, 100.0F});	// chunk (0, 0)
 	chunks->update({-100.0F, -100.0F}); // chunk (-1, -1)
 	chunks->finishPendingGeneration();
-	// The sim region's size is capped by the load radius; nothing calls update() again,
-	// so raising it loads no more chunks.
-	chunks->setLoadRadius(2);
 	ASSERT_EQ(chunks->getChunk({0, -1}), nullptr);
 	ASSERT_EQ(chunks->getChunk({-1, 0}), nullptr);
 
