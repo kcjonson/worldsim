@@ -1,11 +1,13 @@
 // Unit tests for Work Configuration System
 // Tests ActionTypeRegistry, TaskChainRegistry, WorkTypeRegistry,
-// PriorityConfig, and ConfigValidator.
+// PriorityConfig, ConfigValidator, and loadWorkConfig.
 
 #include "assets/ActionTypeRegistry.h"
 #include "assets/ConfigValidator.h"
+#include "assets/ConstructionRegistry.h"
 #include "assets/PriorityConfig.h"
 #include "assets/TaskChainRegistry.h"
+#include "assets/WorkConfig.h"
 #include "assets/WorkTypeRegistry.h"
 
 #include <gtest/gtest.h>
@@ -585,4 +587,30 @@ TEST_F(WorkConfigTest, Integration_FullConfigLoad) {
     EXPECT_EQ(WorkTypeRegistry::Get().categoryCount(), 2);
     EXPECT_EQ(WorkTypeRegistry::Get().workTypeCount(), 2);
     EXPECT_EQ(PriorityConfig::Get().getChainBonus(), 2000);
+}
+
+// ============================================================================
+// loadWorkConfig
+// ============================================================================
+
+namespace {
+    std::filesystem::path shippedConfigRoot() {
+        // <root>/libs/assets/assets/WorkConfig.test.cpp -> <root>/assets/config
+        return std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path() / "assets" /
+               "config";
+    }
+} // namespace
+
+TEST_F(WorkConfigTest, LoadWorkConfig_ShippedConfigLoadsClean) {
+    for (const auto& error : loadWorkConfig(shippedConfigRoot())) {
+        ADD_FAILURE() << error;
+    }
+    EXPECT_GT(ActionTypeRegistry::Get().size(), 0);
+    EXPECT_GT(TaskChainRegistry::Get().size(), 0);
+    EXPECT_GT(WorkTypeRegistry::Get().workTypeCount(), 0);
+    EXPECT_TRUE(ConstructionRegistry::Get().materialsLoaded());
+}
+
+TEST_F(WorkConfigTest, LoadWorkConfig_MissingFolderReportsError) {
+    EXPECT_FALSE(loadWorkConfig(std::filesystem::temp_directory_path() / "no-such-work-config").empty());
 }
