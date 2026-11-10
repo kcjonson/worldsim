@@ -65,6 +65,7 @@ struct Task {
 	std::uint64_t blockedNavGeneration = 0;
 	std::uint64_t blockedBeliefVersion = 0;
 	// Memory key of the remembered source a FulfillNeed task is heading for; 0 for none (ground, pack).
+	// Copied from the selected EvaluatedOption::sourceKey, kept on the task so a failed route can name it.
 	std::uint64_t needSourceKey = 0;
 
 	/// Target position to move to

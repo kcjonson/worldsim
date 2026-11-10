@@ -1309,7 +1309,13 @@ namespace ecs {
 							}
 						}
 
-						isSameTask = sameType && sameTarget && samePlaceTarget;
+						// A task whose route failed on a mesh or belief that has since changed is a fresh
+						// pick: keeping it would leave the colonist stopped with a stale failure and no new
+						// route request.
+						const bool failedOnStaleNav = task.navState == NavState::CantFindWayTo && m_navSystem != nullptr &&
+													  (task.blockedNavGeneration != m_navSystem->generation() ||
+													   task.blockedBeliefVersion != memory.beliefVersion);
+						isSameTask = sameType && sameTarget && samePlaceTarget && !failedOnStaleNav;
 					}
 				}
 
@@ -2175,7 +2181,7 @@ namespace ecs {
 				task.deferredNavGeneration = m_navSystem->generation();
 				return;
 			case NavRequestOutcome::Blocked:
-				task.navState			   = NavState::CantFindWayTo;
+				task.navState = NavState::CantFindWayTo;
 				task.blockedNavGeneration = m_navSystem->generation();
 				task.blockedBeliefVersion = memory.beliefVersion;
 				return;

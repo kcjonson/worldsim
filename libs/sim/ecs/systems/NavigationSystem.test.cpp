@@ -1943,8 +1943,9 @@ TEST(SimAreaClusteringTest, EmptyInputYieldsNoRegions) {
 // --- Query dispatch by position (point -> correct region) ---------------------
 //
 // Two colonists far enough apart drive two disjoint regions. A query dispatches to the
-// region containing the point: a same-region path solves, a cross-region pair holds
-// (nullopt -- long-range routing is Phase 2), and inSimArea/isOnMesh resolve per region.
+// region containing the point: a same-region path solves, a cross-region pair has no route
+// (nullopt -- long-range routing is Phase 2; the AI reports it Blocked, since both ends are in
+// the sim area), and inSimArea/isOnMesh resolve per region.
 
 TEST_F(NavigationSystemTest, QueryDispatchSelectsRegionContainingPoint) {
 	ConstructionWorld cw; // empty: open terrain, two regions of plain walkable ground
@@ -1981,10 +1982,10 @@ TEST_F(NavigationSystemTest, QueryDispatchSelectsRegionContainingPoint) {
 	EXPECT_TRUE(sys.requestPath(aPos, nearA, kAgentRadius).has_value())
 		<< "a same-region path over open ground should solve";
 
-	// A cross-region pair holds: start in A's region, goal in B's region. Phase 2 owns
-	// long-range routing; Phase 1 returns nullopt so the task waits.
+	// A cross-region pair has no route: start in A's region, goal in B's region. Phase 2 owns
+	// long-range routing; Phase 1 returns nullopt.
 	EXPECT_FALSE(sys.requestPath(aPos, bPos, kAgentRadius).has_value())
-		<< "a cross-region path must hold (nullopt) in Phase 1";
+		<< "a cross-region pair has no route (nullopt) in Phase 1";
 
 	// The pre-check matches requestPath: a goal in another built region is unreachable from here.
 	EXPECT_FALSE(isReachable(sys, aPos, bPos, kAgentRadius))

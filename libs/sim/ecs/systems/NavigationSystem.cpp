@@ -764,9 +764,10 @@ namespace ecs {
 	std::optional<std::vector<glm::vec2>>
 	NavigationSystem::requestPath(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
 								  gnav::BeliefFilter belief) const {
-		// Dispatch by position: both endpoints must lie in the SAME built region. Different
-		// regions (or a goal outside every region) -> hold the task; long-range routing
-		// across unsimulated space is Phase 2.
+		// Dispatch by position: both endpoints must lie in the SAME built region, else no route.
+		// The AI holds a route only when an endpoint is outside every region (requestNavPath's
+		// off-area branch); a goal in a different built region comes back here as no route, which
+		// requestNavPath reports as Blocked. Long-range routing across regions is Phase 2.
 		const int startRegion = regionContaining(startMeters);
 		const int goalRegion  = regionContaining(goalMeters);
 		if (startRegion < 0 || startRegion != goalRegion) {

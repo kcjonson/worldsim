@@ -3732,43 +3732,55 @@ namespace ecs::test {
 	}
 
 	// Water in a room whose walls the colonist knows: the forest the pre-check uses treats walls as
-	// open, so the room passes it, but the believed route fails. The failed route is remembered like any
-	// other verdict, so the colonist goes for the next water instead of retrying this one every decision,
-	// and tries it again once the mesh changes.
-	TEST_F(AIDecisionWallTest, FailedRouteSendsTheNeedToTheNextSource) {
-		const glm::vec2 inRoom{8.0F, 0.0F};
-		const glm::vec2 outside{-30.0F, 0.0F};
-		const std::array<geometry::Vec2i64, 4> corners{{{6000, -2000}, {10000, -2000}, {10000, 2000}, {6000, 2000}}};
-		std::vector<construction::SegmentId> walls;
-		for (size_t i = 0; i < corners.size(); ++i) {
-			const auto a = corners[i];
-			const auto b = corners[(i + 1) % corners.size()];
-			const auto commit = construction.commitSegment({a.x, a.y}, {b.x, b.y}, "Wood", "Standard", construction::kInvalidFoundation);
+	// open, so the room passes it, but the believed route fails. Another water source sits outside.
+	class AIDecisionWalledWaterTest : public AIDecisionWallTest {
+	  protected:
+		EntityID makeThirstyColonistWithWalledWater() {
+			const std::array<geometry::Vec2i64, 4> corners{{{6000, -2000}, {10000, -2000}, {10000, 2000}, {6000, 2000}}};
+			std::vector<construction::SegmentId>	 walls;
+			for (size_t i = 0; i < corners.size(); ++i) {
+				const auto commit = construction.commitSegment(corners[i], corners[(i + 1) % corners.size()], "Wood",
+															   "Standard", construction::kInvalidFoundation);
+				EXPECT_TRUE(commit.ok());
+				for (const auto id : commit.createdSegments) {
+					construction.setSegmentState(id, construction::FoundationState::Built);
+					walls.push_back(id);
+				}
+			}
+
+			const auto colonist = createColonist(kStart);
+			satisfyAllNeeds(*getNeeds(colonist));
+			world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+			setNeedValue(colonist, NeedType::Thirst, 40.0F);
+			auto* memory = world->getComponent<Memory>(colonist);
+			for (const auto id : walls) {
+				memory->rememberSegment(static_cast<std::uint64_t>(id));
+			}
+			addKnownEntity(colonist, kInRoom, kWaterDefId, assets::CapabilityType::Drinkable);
+			addKnownEntity(colonist, kOutside, kWaterDefId, assets::CapabilityType::Drinkable);
+
+			EXPECT_TRUE(pumpUntilMesh(*nav)) << "navmesh never built";
+			const geometry::nav::BeliefFilter belief{&memory->knownSegments, &memory->knownOpenings};
+			EXPECT_TRUE(isReachable(*nav, kStart, kInRoom, 0.3F, belief)) << "the room must pass the pre-check";
+			EXPECT_FALSE(nav->requestPath(kStart, kInRoom, 0.3F, belief).has_value()) << "and fail the believed route";
+			return colonist;
+		}
+
+		// A wall far from everything, so the region's mesh rebuilds without anything else changing.
+		void rebuildRegionMesh() {
+			const std::uint64_t before = nav->generation();
+			const auto commit = construction.commitSegment({30000, 30000}, {32000, 30000}, "Wood", "Standard",
+														   construction::kInvalidFoundation);
 			ASSERT_TRUE(commit.ok());
 			for (const auto id : commit.createdSegments) {
 				construction.setSegmentState(id, construction::FoundationState::Built);
-				walls.push_back(id);
 			}
+			// Until the rebuilds settle: the commit and the state change can each launch one.
+			ASSERT_TRUE(pumpUntil(*nav, "the wall-edit rebuild", [&] { return nav->generation() != before && !nav->isBuilding(); }));
 		}
-
-		const auto colonist = createColonist(kStart);
-		satisfyAllNeeds(*getNeeds(colonist));
-		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
-		setNeedValue(colonist, NeedType::Thirst, 40.0F);
-		auto* memory = world->getComponent<Memory>(colonist);
-		for (const auto id : walls) {
-			memory->rememberSegment(static_cast<std::uint64_t>(id));
-		}
-		addKnownEntity(colonist, inRoom, kWaterDefId, assets::CapabilityType::Drinkable);
-		addKnownEntity(colonist, outside, kWaterDefId, assets::CapabilityType::Drinkable);
-
-		ASSERT_TRUE(pumpUntilMesh(*nav)) << "navmesh never built";
-		const geometry::nav::BeliefFilter belief{&memory->knownSegments, &memory->knownOpenings};
-		ASSERT_TRUE(isReachable(*nav, kStart, inRoom, 0.3F, belief)) << "the room must pass the pre-check";
-		ASSERT_FALSE(nav->requestPath(kStart, inRoom, 0.3F, belief).has_value()) << "and fail the believed route";
 
 		// Runs `ticks` updates and counts the decisions that chose each water.
-		const auto decide = [&](int ticks, int& choseRoom, int& choseOutside) {
+		void decide(EntityID colonist, int ticks, int& choseRoom, int& choseOutside) {
 			float lastDecision = getTrace(colonist)->lastEvaluationTime;
 			for (int i = 0; i < ticks; ++i) {
 				world->update(kTick);
@@ -3781,33 +3793,61 @@ namespace ecs::test {
 					return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Thirst;
 				});
 				if (thirst != nullptr && thirst->status == OptionStatus::Selected) {
-					choseRoom += *thirst->targetPosition == inRoom ? 1 : 0;
-					choseOutside += *thirst->targetPosition == outside ? 1 : 0;
+					choseRoom += *thirst->targetPosition == kInRoom ? 1 : 0;
+					choseOutside += *thirst->targetPosition == kOutside ? 1 : 0;
 				}
 			}
-		};
+		}
+
+		static constexpr glm::vec2 kInRoom{8.0F, 0.0F};
+		static constexpr glm::vec2 kOutside{-30.0F, 0.0F};
+	};
+
+	// The failed route is remembered like any other verdict, so the colonist goes for the next water
+	// instead of retrying this one every decision, and tries it again once the mesh changes.
+	TEST_F(AIDecisionWalledWaterTest, FailedRouteSendsTheNeedToTheNextSource) {
+		const auto colonist = makeThirstyColonistWithWalledWater();
 
 		int choseRoom = 0;
 		int choseOutside = 0;
-		decide(20, choseRoom, choseOutside);
+		decide(colonist, 20, choseRoom, choseOutside);
 		EXPECT_EQ(choseRoom, 1) << "the walled-in water is tried once, not every decision";
 		EXPECT_GE(choseOutside, 1) << "the colonist goes for the water it can reach";
-		EXPECT_EQ(getTask(colonist)->targetPosition, outside);
+		EXPECT_EQ(getTask(colonist)->targetPosition, kOutside);
 
-		// A mesh change elsewhere in the region: the failed water is worth one more try.
-		const std::uint64_t before = nav->generation();
-		const auto			commit = construction.commitSegment({30000, 30000}, {32000, 30000}, "Wood", "Standard",
-																construction::kInvalidFoundation);
-		ASSERT_TRUE(commit.ok());
-		for (const auto id : commit.createdSegments) {
-			construction.setSegmentState(id, construction::FoundationState::Built);
-		}
-		ASSERT_TRUE(pumpUntil(*nav, "the wall-edit rebuild", [&] { return nav->generation() != before; }));
+		// The retry must come from the rebuild: same region, same centre, a new mesh.
+		const glm::vec2 here = world->getComponent<Position>(colonist)->value;
+		const auto		regionBefore = nav->reachFrom(here, 0.3F);
+		const auto		centreBefore = nav->builtRegions().front().center;
+		rebuildRegionMesh();
+		const auto regionAfter = nav->reachFrom(here, 0.3F);
+		ASSERT_EQ(nav->builtRegions().size(), 1U);
+		EXPECT_EQ(regionAfter.startRegionId, regionBefore.startRegionId);
+		EXPECT_NE(regionAfter.startRegionGeneration, regionBefore.startRegionGeneration) << "the region's mesh was rebuilt";
+		EXPECT_EQ(nav->builtRegions().front().center, centreBefore) << "and the region didn't move";
+
 		choseRoom = 0;
 		choseOutside = 0;
-		decide(20, choseRoom, choseOutside);
+		decide(colonist, 20, choseRoom, choseOutside);
 		EXPECT_EQ(choseRoom, 1) << "after the mesh changed the walled-in water is tried again, once";
-		EXPECT_EQ(getTask(colonist)->targetPosition, outside);
+		EXPECT_EQ(getTask(colonist)->targetPosition, kOutside);
+	}
+
+	// A mesh swap landing between the failed route and the next decision: the failure was found on the
+	// old mesh, so it isn't recorded, and the source is simply tried again on the new one.
+	TEST_F(AIDecisionWalledWaterTest, FailureBeforeAMeshSwapIsNotRecorded) {
+		const auto colonist = makeThirstyColonistWithWalledWater();
+		world->update(kTick);
+		ASSERT_EQ(getTask(colonist)->targetPosition, kInRoom);
+		ASSERT_EQ(getTask(colonist)->navState, NavState::CantFindWayTo) << "the first decision's route fails";
+
+		rebuildRegionMesh();
+		world->update(kTick);
+		EXPECT_EQ(getTask(colonist)->targetPosition, kInRoom) << "a failure from before the swap was recorded";
+		EXPECT_EQ(getTask(colonist)->navState, NavState::CantFindWayTo);
+
+		world->update(kTick);
+		EXPECT_EQ(getTask(colonist)->targetPosition, kOutside) << "the failure on the new mesh is recorded";
 	}
 
 } // namespace ecs::test
