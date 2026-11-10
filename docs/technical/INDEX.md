@@ -120,6 +120,7 @@ Applications:
 | [Asset Definitions](./asset-system/asset-definitions.md) | XML format, inheritance |
 | [Entity Placement](./entity-placement-system.md) | Biome rules, distribution |
 | [Lua Scripting API](./asset-system/lua-scripting-api.md) | Procedural generation |
+| [Tree Variety and World Fit](./asset-system/tree-variety.md) | Spec, not built: per-tree age class and mesh variant from world position, a skeleton-first deciduous generator, oak/maple/birch by growth habit, open-woodland scale and density, see-through trees, a flora measurement view, yield by age, ground contact; includes a survey of the existing code it builds on |
 | [Asset Manager](./asset-manager/README.md) | Browse/inspect/validate/render tool: shared render path, load-time validation, GUI + headless CLI |
 
 ### World & Game
