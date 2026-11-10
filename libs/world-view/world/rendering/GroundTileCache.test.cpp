@@ -1,7 +1,8 @@
 // The ground bake's disk cache: a stored bake comes back byte for byte, the key moves when the def's
-// script does or its XML is reloaded, every def name gets a safe file of its own, and a damaged file is
-// ignored until the next store rewrites it. No GL: the bake is made up. GroundTileBaker.test.cpp runs the
-// cache behind a real bake.
+// script does or its XML is reloaded and the old key's bake stays beside the new one, every def name and
+// key gets a safe file of its own, a damaged file is ignored until the next store rewrites it, and a store
+// past the cap evicts the least recently used. No GL: the bake is made up. GroundTileBaker.test.cpp runs
+// the cache behind a real bake.
 
 #include "world/rendering/GroundTileCache.h"
 
@@ -12,6 +13,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -150,6 +152,10 @@ TEST(GroundTileCacheTest, TheKeyFollowsTheLoadedDefAndTheScript) {
 	EXPECT_NE(scriptEdited, original);
 	EXPECT_FALSE(cache.load(*registry.getDefinition("Ground_CacheTest"), scriptEdited).has_value())
 		<< "a bake stored under the old key is stale";
+	ASSERT_TRUE(cache.store(madeUpBake(), scriptEdited));
+	EXPECT_TRUE(cache.load(*registry.getDefinition("Ground_CacheTest"), scriptEdited).has_value());
+	EXPECT_TRUE(cache.load(*registry.getDefinition("Ground_CacheTest"), original).has_value())
+		<< "the old key's bake stays beside it, for a build that still keys the def that way";
 
 	// The generator runs the params parsed at load, so an XML edit moves the key once it is reloaded, not before.
 	t.write("Tile/Tile.xml", defXml("<density>3</density>"));
@@ -182,17 +188,19 @@ TEST(GroundTileCacheTest, EveryNameGetsItsOwnFileInsideTheDirectory) {
 		   return s;
 	};
 
-	const fs::path grass = cache.pathFor("Ground_Grass");
-	EXPECT_EQ(grass, cache.pathFor("Ground_Grass")) << "one name, one file, every run";
+	const fs::path grass = cache.pathFor("Ground_Grass", 0x0123456789ABCDEFULL);
+	EXPECT_EQ(grass, cache.pathFor("Ground_Grass", 0x0123456789ABCDEFULL)) << "one name and key, one file, every run";
 	EXPECT_EQ(grass.parent_path(), directory);
 	EXPECT_EQ(grass.filename().string().rfind("Ground_Grass-", 0), 0U) << grass;
+	EXPECT_NE(grass.filename().string().find("-0123456789abcdef.gtile"), std::string::npos) << grass;
 	EXPECT_EQ(grass.extension(), ".gtile");
-	EXPECT_NE(lower(cache.pathFor("ground_grass").filename().string()), lower(grass.filename().string()))
+	EXPECT_NE(cache.pathFor("Ground_Grass", 1), grass) << "another key, another file";
+	EXPECT_NE(lower(cache.pathFor("ground_grass", 0x0123456789ABCDEFULL).filename().string()), lower(grass.filename().string()))
 		<< "names that differ only in case don't share a file on a case-blind file system";
 
 	for (const std::string& name :
 		 std::vector<std::string>{"../../escape", "..", "a:b", "a/b\\c", "Ground Grass?*", std::string(300, 'x')}) {
-		const fs::path path = cache.pathFor(name);
+		const fs::path path = cache.pathFor(name, ~0ULL);
 		EXPECT_EQ(path.parent_path(), directory) << name;
 		const std::string file = path.filename().string();
 		EXPECT_LE(file.size(), 80U) << name;
@@ -201,7 +209,7 @@ TEST(GroundTileCacheTest, EveryNameGetsItsOwnFileInsideTheDirectory) {
 			EXPECT_TRUE(std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_' || c == '-') << name << ": " << file;
 		}
 	}
-	EXPECT_NE(cache.pathFor("a:b"), cache.pathFor("a/b")) << "names that sanitize alike still get files of their own";
+	EXPECT_NE(cache.pathFor("a:b", 1), cache.pathFor("a/b", 1)) << "names that sanitize alike still get files of their own";
 }
 
 TEST(GroundTileCacheTest, ADamagedFileIsIgnoredUntilStoredAgain) {
@@ -210,7 +218,7 @@ TEST(GroundTileCacheTest, ADamagedFileIsIgnoredUntilStoredAgain) {
 	const GroundTileCache		   cache(t.root / "cache");
 	const uint64_t				   key = GroundTileCache::keyFor(def, 4096).value();
 	ASSERT_TRUE(cache.store(madeUpBake(), key));
-	const fs::path	file = cache.pathFor(def.defName);
+	const fs::path	file = cache.pathFor(def.defName, key);
 	const uintmax_t size = fs::file_size(file);
 
 	{
@@ -228,5 +236,51 @@ TEST(GroundTileCacheTest, ADamagedFileIsIgnoredUntilStoredAgain) {
 
 	ASSERT_TRUE(cache.store(madeUpBake(), key));
 	EXPECT_TRUE(cache.load(def, key).has_value()) << "and the next store makes it good";
+	assets::AssetRegistry::Get().clearDefinitions();
+}
+
+TEST(GroundTileCacheTest, AStorePastTheCapEvictsTheLeastRecentlyUsed) {
+	const TempDir				   t;
+	const assets::AssetDefinition& def = loadDef(t);
+	const fs::path				   directory = t.root / "cache";
+	ASSERT_TRUE(GroundTileCache(directory).store(madeUpBake(), 1));
+	const uintmax_t bakeBytes = fs::file_size(GroundTileCache(directory).pathFor(def.defName, 1));
+	const auto		total = [&directory]() {
+		 uintmax_t bytes = 0;
+		 for (const fs::directory_entry& entry : fs::directory_iterator(directory)) {
+			 bytes += entry.path().extension() == ".gtile" ? entry.file_size() : 0;
+		 }
+		 return bytes;
+	};
+
+	// Room for three bakes. Each stored a minute after the last, by its file time, not by sleeping.
+	const GroundTileCache	 cache(directory, (bakeBytes * 3) + (bakeBytes / 2));
+	const fs::file_time_type longAgo = fs::file_time_type::clock::now() - std::chrono::minutes(30);
+	for (uint64_t key = 1; key <= 3; ++key) {
+		ASSERT_TRUE(cache.store(madeUpBake(), key));
+		fs::last_write_time(cache.pathFor(def.defName, key), longAgo + std::chrono::minutes(static_cast<int>(key)));
+	}
+	ASSERT_TRUE(cache.load(def, 1).has_value()) << "a load makes the oldest the most recently used";
+
+	// A crashed writer's temporary file goes with the next store; one being written now doesn't.
+	const fs::path crashed = fs::path(cache.pathFor(def.defName, 9)).concat(".77.0.tmp");
+	const fs::path writing = fs::path(cache.pathFor(def.defName, 9)).concat(".78.0.tmp");
+	std::ofstream(crashed) << "half a bake";
+	std::ofstream(writing) << "half a bake";
+	fs::last_write_time(crashed, fs::file_time_type::clock::now() - std::chrono::hours(2));
+
+	ASSERT_TRUE(cache.store(madeUpBake(), 4));
+	EXPECT_FALSE(fs::exists(cache.pathFor(def.defName, 2))) << "the least recently used goes";
+	EXPECT_TRUE(fs::exists(cache.pathFor(def.defName, 1)));
+	EXPECT_TRUE(fs::exists(cache.pathFor(def.defName, 3)));
+	EXPECT_TRUE(fs::exists(cache.pathFor(def.defName, 4)));
+	EXPECT_LE(total(), (bakeBytes * 3) + (bakeBytes / 2));
+	EXPECT_FALSE(fs::exists(crashed));
+	EXPECT_TRUE(fs::exists(writing));
+
+	const GroundTileCache tiny(directory, 1);
+	ASSERT_TRUE(tiny.store(madeUpBake(), 5));
+	EXPECT_TRUE(tiny.load(def, 5).has_value()) << "a store never evicts the bake it just stored";
+	EXPECT_EQ(total(), bakeBytes) << "and evicts every other";
 	assets::AssetRegistry::Get().clearDefinitions();
 }

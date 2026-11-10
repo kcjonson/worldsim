@@ -3,10 +3,12 @@
 #include <assets/AssetDefinition.h>
 #include <assets/AssetRegistry.h>
 #include <assets/AssetValidator.h>
+#include <storage/UserDirectories.h>
 #include <threading/TaskPool.h>
 #include <ui/components/Button.h>
 #include <ui/shapes/Text.h>
 #include <ui/theme/Tokens.h>
+#include <world/AppIdentity.h>
 #include <world/rendering/GroundTileBaker.h>
 #include <world/rendering/GroundTileCache.h>
 #include <world/rendering/GroundTileFilter.h>
@@ -15,6 +17,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <optional>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -44,9 +47,11 @@ namespace asset_manager {
 			return workers;
 		}
 
-		const worldview::GroundTileCache& diskCache() {
-			static const worldview::GroundTileCache bakes(worldview::GroundTileCache::defaultDirectory());
-			return bakes;
+		// The game's, so a bake either app stores warms the other.
+		const worldview::GroundTileCache* diskCache() {
+			static const std::optional<worldview::GroundTileCache> bakes =
+				worldview::GroundTileCache::inUserData(app::userDataDir(worldview::kOrganization, worldview::kGameName));
+			return bakes.has_value() ? &*bakes : nullptr;
 		}
 
 		std::vector<ground::LinearImage> decodeChain(const worldview::GroundVariantBake& variant) {
@@ -158,7 +163,7 @@ namespace asset_manager {
 	}
 
 	worldview::GroundTileBaker GroundBakeView::baker() const {
-		return worldview::GroundTileBaker({.restoreCoordinateSystem = coordinateSystem, .pool = &pool(), .cache = &diskCache()});
+		return worldview::GroundTileBaker({.restoreCoordinateSystem = coordinateSystem, .pool = &pool(), .cache = diskCache()});
 	}
 
 	// Every variant's paths in one frame, then one variant's render a frame, so the window keeps drawing

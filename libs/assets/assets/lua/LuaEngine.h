@@ -6,6 +6,7 @@
 
 #include "assets/IAssetGenerator.h"
 
+#include <cstdint>
 #include <memory>
 #include <string>
 
@@ -20,6 +21,9 @@ namespace assets {
 /// Provides a sandboxed Lua environment with access to asset generation APIs.
 class LuaEngine {
   public:
+	/// Part of the ground bake cache key: bump it when a binding or builtin changes what a script generates.
+	static constexpr uint32_t kApiVersion = 1;
+
 	LuaEngine();
 	~LuaEngine();
 

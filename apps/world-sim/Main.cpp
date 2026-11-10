@@ -10,6 +10,7 @@
 #include <platform/Platform.h>
 #include <theme/Fonts.h>
 #include <utils/Log.h>
+#include <world/AppIdentity.h>
 
 #include <cstdio>
 #include <memory>
@@ -41,7 +42,8 @@ int main(int argc, char* argv[]) {
 		return 1;
 	}
 	std::unique_ptr<app::App> app = app::App::create(
-		{.applicationName = "world-sim",
+		{.organization = worldview::kOrganization,
+		 .applicationName = worldview::kGameName,
 		 .frame = {.frameCapHz = 120},
 		 .baseShader = base_shader::source(),
 		 .fontAtlases = theme::kFontAtlases,

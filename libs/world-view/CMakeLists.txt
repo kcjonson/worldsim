@@ -43,6 +43,27 @@ target_link_libraries(world-view
 # fill the hook's block.
 salal_base_shader(world-view HOOKS world/rendering/hooks)
 
+# salal's version, part of the ground bake cache key: SalalVersion.h, which only GroundTileCache.cpp
+# includes. The step runs on every build, since a sibling checkout (FETCHCONTENT_SOURCE_DIR_SALAL) can
+# change under it, and rewrites the header only when the version does (cmake/salal-version.cmake).
+find_package(Git)
+if(NOT Git_FOUND)
+    message(FATAL_ERROR "world-view: git not found. The ground bake cache key needs salal's version, git describe in ${salal_SOURCE_DIR}.")
+endif()
+set(WORLD_VIEW_GENERATED_DIR "${CMAKE_BINARY_DIR}/generated/world-view")
+add_custom_target(world-view-salal-version
+    COMMAND ${CMAKE_COMMAND}
+        -DGIT=${GIT_EXECUTABLE}
+        -DSALAL_DIR=${salal_SOURCE_DIR}
+        -DOUTPUT=${WORLD_VIEW_GENERATED_DIR}/SalalVersion.h
+        -P ${CMAKE_SOURCE_DIR}/cmake/salal-version.cmake
+    BYPRODUCTS ${WORLD_VIEW_GENERATED_DIR}/SalalVersion.h
+    COMMENT "Reading salal's version for the ground bake cache key"
+    VERBATIM
+)
+add_dependencies(world-view world-view-salal-version)
+target_include_directories(world-view PRIVATE ${WORLD_VIEW_GENERATED_DIR})
+
 # The ground pass (tile.vert, tile.frag, includes/) is the game's own GL, loaded at run
 # time. Stage it into the shared build shaders/ directory, as planet-view stages its own.
 # salal's base shader and the hooks (world/rendering/hooks/, outside this folder) are
