@@ -165,19 +165,40 @@ class NavigationSystem : public ISystem {
 	requestPath(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
 				geometry::nav::BeliefFilter belief = {}) const;
 
-	// Sound reachability pre-filter against the region containing both endpoints:
-	// delegates to geometry::nav::reachable (O(log n) component + bottleneck check).
+	// Sound reachability pre-filter against the region containing both endpoints, split at the
+	// start so many goals from one start cost one start-side climb: reachFrom locates the start
+	// and finds its reach root in the region's forest (geometry::nav::reachFrom), and reaches()
+	// tests a goal with a region lookup, a locate and an O(log n) subtree check.
 	//
 	// Semantics are asymmetric by design:
 	//   false => DEFINITELY unreachable (disconnected component or bottleneck < disc).
 	//   true  => MAYBE reachable (over-approximation). Caller runs requestPath for certainty.
 	//
-	// No-region / cross-region policy: when no single region covers both endpoints this
-	// returns true ("can't prove unreachable"). Colonists legitimately beeline while the
-	// mesh is building or when operating outside any sim region; a goal-validity
+	// No-region / off-area policy: when no region covers the start, or none covers the goal,
+	// reaches() returns true ("can't prove unreachable"). The mesh may still be building, and
+	// requestNavPath holds such a route and retries it after each build; a goal-validity
 	// pre-filter must not reject everything in that window.
-	[[nodiscard]] bool isReachable(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
-								   geometry::nav::BeliefFilter belief = {}) const;
+	//
+	// Cross-region policy: a goal in a different BUILT region than the start is false.
+	// requestPath routes only within one region (Phase 1), so the route would come back
+	// "no believed route" and a colonist picking that goal again would never get there.
+	//
+	// A Reach is used within one frame (the next update() may move or drop regions); the belief's
+	// sets must outlive it. For a goal sharesStartRegion() admits, reaches() depends only on the start
+	// region's mesh, which startRegionId and startRegionGeneration identify across frames.
+	struct Reach {
+		int							startRegion = -1;	// index this frame; -1: no region covers the start
+		std::int32_t				startRegionId = -1; // stable across frames, unlike the index
+		std::uint64_t				startRegionGeneration = 0; // the start region's mesh swap count
+		geometry::nav::ReachFrom	from;
+		geometry::nav::BeliefFilter belief;
+	};
+	[[nodiscard]] Reach reachFrom(glm::vec2 startMeters, float agentRadiusMeters,
+								  geometry::nav::BeliefFilter belief = {}) const;
+	[[nodiscard]] bool	reaches(const Reach& reach, glm::vec2 goalMeters) const;
+	// Does the region holding the start also hold this goal? Only for such a goal does reaches()
+	// consult the mesh; for any other its answer follows from which regions cover the two points.
+	[[nodiscard]] bool sharesStartRegion(const Reach& reach, glm::vec2 goalMeters) const;
 
 	// LOD seam predicate: true when `meters` falls inside some BUILT region rect. Outside
 	// every built region the caller treats movement as the no-mesh beeline (LOD1 coarse

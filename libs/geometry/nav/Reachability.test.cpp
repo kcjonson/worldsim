@@ -26,6 +26,84 @@ using namespace geometry::nav;
 
 namespace {
 
+	// Oracles over the forest's raw tables, independent of reachRootInForest / inForestSubtree.
+
+	// LCA of two reconstruction-tree nodes in the same tree by binary lifting.
+	std::int32_t forestLca(const ReachabilityForest& f, std::int32_t a, std::int32_t b) {
+		if (f.depth[a] < f.depth[b]) {
+			std::swap(a, b);
+		}
+		std::int32_t diff = f.depth[a] - f.depth[b];
+		for (std::int32_t k = 0; k < f.levels; ++k) {
+			if ((diff >> k) & 1) {
+				a = f.up[k][a];
+			}
+		}
+		if (a == b) {
+			return a;
+		}
+		for (std::int32_t k = f.levels - 1; k >= 0; --k) {
+			if (f.up[k][a] != f.up[k][b]) {
+				a = f.up[k][a];
+				b = f.up[k][b];
+			}
+		}
+		return f.up[0][a];
+	}
+
+	// Same component (connected ignoring width); false for an out-of-range or non-node triangle.
+	bool reachableInForest(const ReachabilityForest& f, std::int32_t triA, std::int32_t triB) {
+		if (triA < 0 || triB < 0 || triA >= static_cast<std::int32_t>(f.component.size()) ||
+			triB >= static_cast<std::int32_t>(f.component.size())) {
+			return false;
+		}
+		if (f.component[triA] < 0 || f.component[triB] < 0) {
+			return false;
+		}
+		return f.component[triA] == f.component[triB];
+	}
+
+	// The widest disc diameter any path between two triangles admits: the capacity at their LCA, 0
+	// when disconnected, kUnconstrainedWidth for a triangle with itself.
+	std::int64_t bottleneckInForest(const ReachabilityForest& f, std::int32_t triA, std::int32_t triB) {
+		if (!reachableInForest(f, triA, triB)) {
+			return 0;
+		}
+		if (triA == triB) {
+			return kUnconstrainedWidth;
+		}
+		return f.nodeCap[forestLca(f, triA, triB)];
+	}
+
+	bool reachable(const NavMesh& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
+				   BeliefFilter belief = {}) {
+		return reaches(mesh, reachFrom(mesh, start, agentRadiusMm, belief), goal, belief);
+	}
+
+	// The subtree test must agree with the bottleneck oracle for every pair and for diameters at and
+	// around each pair's bottleneck: b is under a's reach root for D iff a and b are connected and
+	// bottleneck(a, b) >= D.
+	void expectSubtreeMatchesBottleneck(const ReachabilityForest& f, std::int32_t triangleCount) {
+		for (std::int32_t a = 0; a < triangleCount; ++a) {
+			for (std::int32_t b = 0; b < triangleCount; ++b) {
+				const bool		   connected = reachableInForest(f, a, b);
+				const std::int64_t bn		 = bottleneckInForest(f, a, b);
+				std::vector<std::int64_t> diameters{0, bn};
+				if (bn > 0) {
+					diameters.push_back(bn - 1);
+				}
+				if (bn < kUnconstrainedWidth) {
+					diameters.push_back(bn + 1);
+				}
+				for (const std::int64_t d : diameters) {
+					const bool expected = connected && bn >= d;
+					ASSERT_EQ(inForestSubtree(f, reachRootInForest(f, a, d), b), expected)
+						<< "a=" << a << " b=" << b << " D=" << d << " bottleneck=" << bn;
+				}
+			}
+		}
+	}
+
 	NavInputPolygon border(std::vector<Vec2i64> ring) {
 		return {std::move(ring), false, 1};
 	}
@@ -329,6 +407,10 @@ TEST(Reachability, BottleneckMatchesBruteForce) {
 	ASSERT_GE(bt, 0);
 	ASSERT_GE(at, 0);
 	EXPECT_EQ(bottleneckInForest(m.terrainForest, bt, at), 400) << "the route's bottleneck is the 400 mm gap";
+
+	const auto n = static_cast<std::int32_t>(m.triangles.size());
+	expectSubtreeMatchesBottleneck(m.terrainForest, n);
+	expectSubtreeMatchesBottleneck(m.truthForest, n);
 }
 
 // --- Fit-by-clearance: small agent passes, large agent rejected --------------
@@ -498,6 +580,16 @@ namespace {
 
 } // namespace
 
+TEST(Reachability, ReachSubtreeMatchesBottleneckOnFuzzMeshes) {
+	for (int variant = 0; variant < 5; ++variant) {
+		const NavMesh m = buildFuzzMesh(variant);
+		ASSERT_FALSE(m.triangles.empty());
+		const auto n = static_cast<std::int32_t>(m.triangles.size());
+		expectSubtreeMatchesBottleneck(m.terrainForest, n);
+		expectSubtreeMatchesBottleneck(m.truthForest, n);
+	}
+}
+
 TEST(Reachability, SoundnessFuzzRejectImpliesNoPath) {
 	// The core invariant: if reachable() returns false, pathThrough() with the SAME
 	// (start, goal, radius, belief) must return an empty/unreachable path. A reject
@@ -542,6 +634,41 @@ TEST(Reachability, SoundnessFuzzRejectImpliesNoPath) {
 	EXPECT_GT(rejected, 0) << "fuzz must hit the reject branch to be meaningful";
 	// (overApproxAllowed may be 0 or positive; both are acceptable.)
 	(void)overApproxAllowed;
+}
+
+// reaches(reachFrom()) end to end against an oracle built from the parts it replaced: locate, the
+// endpoint traversability gate, the same-triangle shortcut, then component plus bottleneck.
+TEST(Reachability, ReachesMatchesOracleOnFuzzMeshes) {
+	LCG rng(0xC0FFEE5EEDULL);
+	std::unordered_set<std::uint64_t> noSegs;
+	std::unordered_set<std::uint64_t> noOps;
+	int								  rejected = 0;
+	for (int variant = 0; variant < 5; ++variant) {
+		const NavMesh m = buildFuzzMesh(variant);
+		ASSERT_FALSE(m.triangles.empty());
+		for (int i = 0; i < 400; ++i) {
+			const Vec2i64	   start{rng.next(-200, 5200), rng.next(-200, 5200)};
+			const Vec2i64	   goal{rng.next(-200, 5200), rng.next(-200, 5200)};
+			const std::int64_t radius = rng.next(0, 400);
+			const bool		   useBelief = (rng.next(0, 1) == 1);
+			const BeliefFilter belief = useBelief ? BeliefFilter{&noSegs, &noOps} : BeliefFilter{};
+
+			// Truth belief gates on truthTraversable; a belief knowing no walls on terrainTraversable.
+			const auto standable = [&](const NavTriangle& t) { return useBelief ? terrainTraversable(t) : truthTraversable(t); };
+			const ReachabilityForest& forest = useBelief ? m.terrainForest : m.truthForest;
+			const std::int32_t		  s = locateTriangle(m, start);
+			const std::int32_t		  g = locateTriangle(m, goal);
+			bool					  expected = false;
+			if (s >= 0 && g >= 0 && standable(m.triangles[s]) && standable(m.triangles[g])) {
+				expected = s == g || (reachableInForest(forest, s, g) && bottleneckInForest(forest, s, g) >= radius * 2);
+			}
+			const bool actual = reaches(m, reachFrom(m, start, radius, belief), goal, belief);
+			ASSERT_EQ(actual, expected) << "variant=" << variant << " i=" << i << " start=(" << start.x << "," << start.y
+										<< ") goal=(" << goal.x << "," << goal.y << ") r=" << radius << " belief=" << useBelief;
+			rejected += expected ? 0 : 1;
+		}
+	}
+	EXPECT_GT(rejected, 0) << "the fuzz must reach the reject branch";
 }
 
 TEST(Reachability, SameTriangleIsReachable) {

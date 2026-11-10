@@ -18,6 +18,7 @@
 #include "../components/Packaged.h"
 #include "../components/PlayerControlled.h"
 #include "../components/Skills.h"
+#include "../components/SourceReachMemo.h"
 #include "../components/StorageConfiguration.h"
 #include "../components/StructureBlueprint.h"
 #include "../components/Task.h"
@@ -173,6 +174,23 @@ namespace ecs {
 				}
 			}
 			return false;
+		}
+
+		/// Does harvesting this definition yield something edible? Not every harvestable is food
+		/// (WoodyBush yields Stick, Reed yields PlantFiber).
+		[[nodiscard]] bool yieldsEdibleFood(const assets::AssetRegistry& registry, uint32_t defNameId) {
+			const auto* def = registry.getDefinition(registry.getDefName(defNameId));
+			return def != nullptr && def->capabilities.harvestable.has_value() &&
+				   assets::isItemEdible(def->capabilities.harvestable->yieldDefName);
+		}
+
+		/// The memo key for a colonist's reach: what every remembered verdict, and a failed route, depends on.
+		[[nodiscard]] SourceReachMemo::Key reachKey(const NavigationSystem::Reach& reach, const Memory& memory) {
+			return {.regionId = reach.startRegionId,
+					.regionGeneration = reach.startRegionGeneration,
+					.beliefVersion = memory.beliefVersion,
+					.reachRoot = reach.from.root,
+					.startTri = reach.from.root < 0 ? reach.from.startTri : -1};
 		}
 
 		/// Skill names for work types
@@ -1245,14 +1263,15 @@ namespace ecs {
 			bool	  hasActiveAction = (action != nullptr && action->isActive());
 			TaskState previousState = task.state;
 
-			// Check if entity has DecisionTrace component for trace-based selection
+			// Check if entity has the decision components for trace-based selection
 			auto* trace = world->getComponent<DecisionTrace>(entity);
-			if (trace != nullptr) {
+			auto* sourceReach = world->getComponent<SourceReachMemo>(entity);
+			if (trace != nullptr && sourceReach != nullptr) {
 				// Get optional Skills component for skill bonus calculation
 				auto* skills = world->getComponent<Skills>(entity);
 
 				// Build full decision trace (always, for UI updates)
-				buildDecisionTrace(entity, position, needs, memory, task, inventory, skills, *trace);
+				buildDecisionTrace(entity, position, needs, memory, task, inventory, skills, *sourceReach, *trace);
 
 				// Get the best option's (tier, score) key
 				const auto* selected = trace->getSelected();
@@ -1299,7 +1318,12 @@ namespace ecs {
 							}
 						}
 
-						isSameTask = sameType && sameTarget && samePlaceTarget;
+						// A task whose route failed on a mesh or belief that has since changed is a fresh
+						// pick: keeping it would leave the colonist stopped with a stale failure and no new
+						// route request.
+						const bool failedOnStaleNav =
+							task.navState == NavState::CantFindWayTo && task.blockedReachStamp != m_reachStamp;
+						isSameTask = sameType && sameTarget && samePlaceTarget && !failedOnStaleNav;
 					}
 				}
 
@@ -1491,9 +1515,85 @@ namespace ecs {
 		const Task&			  currentTask,
 		const Inventory&	  inventory,
 		const Skills*		  skills,
+		SourceReachMemo&	  sourceReach,
 		DecisionTrace&		  trace
 	) {
 		trace.clear();
+
+		// Agent footprint + belief for every reachability check below (need sources, reachable-wander
+		// generation and the option filter).
+		float agentRadius = 0.3F;
+		if (const auto* ar = world->getComponent<AgentRadius>(entity)) {
+			agentRadius = ar->radiusMeters;
+		}
+		const geometry::nav::BeliefFilter belief{&memory.knownSegments, &memory.knownOpenings};
+		const bool						  haveMesh = (m_navSystem != nullptr) && m_navSystem->hasMesh();
+
+		// Everything this colonist can reach, from one start-side climb of the nav forest; each
+		// target test is then a locate and a subtree check. No mesh: nothing is provably unreachable.
+		std::optional<NavigationSystem::Reach> reach;
+		if (haveMesh) {
+			reach = m_navSystem->reachFrom(position.value, agentRadius, belief);
+		}
+		const auto canReach = [&](const glm::vec2& target) {
+			return !reach.has_value() || m_navSystem->reaches(*reach, target);
+		};
+
+		// Verdicts for sources in the colonist's own region are remembered while it stays in the same
+		// reach subtree of the same mesh, so one surrounded by unreachable sources doesn't test them all
+		// again every decision. A source anywhere else is judged live (by which regions cover it, no
+		// mesh involved) and never remembered, since which region a point falls in moves on its own.
+		m_reachStamp = 0;
+		if (reach.has_value()) {
+			const SourceReachMemo::Key key = reachKey(*reach, memory);
+			m_reachStamp = key.stamp();
+			sourceReach.keep(key, 2 * Memory::kMaxWorldEntities);
+			// The route to the need source this colonist was heading for just came back with no believed
+			// route, though the forest let it through (a known wall's room, a passage the funnel can't
+			// take). Remember it unreachable like any other verdict so the walk moves on to the next
+			// source, but only under the key it failed under, or the verdict would outlive what it was
+			// true for.
+			if (currentTask.type == TaskType::FulfillNeed && currentTask.navState == NavState::CantFindWayTo &&
+				currentTask.needSourceKey != 0 && currentTask.blockedReachStamp == m_reachStamp &&
+				m_navSystem->sharesStartRegion(*reach, currentTask.targetPosition)) {
+				sourceReach.recordUnreachable(currentTask.needSourceKey);
+			}
+		}
+		const auto canReachSource = [&](uint64_t sourceKey, const glm::vec2& sourcePosition) {
+			if (!reach.has_value()) {
+				return true;
+			}
+			return m_navSystem->sharesStartRegion(*reach, sourcePosition) ? sourceReach.reachable(sourceKey, sourcePosition, canReach)
+																		   : canReach(sourcePosition);
+		};
+		// Drop a source already found unreachable before anything else looks at it.
+		const auto notKnownUnreachable = [&](uint64_t sourceKey, const KnownWorldEntity& known) {
+			return !reach.has_value() || !sourceReach.knownUnreachable(sourceKey) ||
+				   !m_navSystem->sharesStartRegion(*reach, known.position);
+		};
+		const auto anywhere = [](uint64_t, const glm::vec2&) { return true; };
+		const auto anySource = [](uint64_t, const KnownWorldEntity&) { return true; };
+
+		// A need targets the nearest remembered source the colonist can reach, so known sources across
+		// a river don't hide a reachable one farther off.
+		const auto findNeedSource = [&](assets::CapabilityType capability, const auto& accept, const auto& reachable) {
+			return findNearestReachableWithCapability(memory, capability, position.value, accept, reachable, m_sourceScratch);
+		};
+
+		// With an empty pack, the one food source both the Hunger option and the gather-food option
+		// target: the nearest reachable remembered harvestable whose yield is edible. The gather
+		// option is on offer whenever the pack is empty, so this is probed even when Hunger is met.
+		const bool						packHasFood = hasEdibleFood(inventory);
+		std::optional<KnownWorldEntity> foodSource;
+		if (!packHasFood) {
+			foodSource = findNeedSource(
+				assets::CapabilityType::Harvestable,
+				[&](uint64_t sourceKey, const KnownWorldEntity& known) {
+					return notKnownUnreachable(sourceKey, known) && yieldsEdibleFood(m_registry, known.defNameId);
+				},
+				canReachSource
+			);
+		}
 
 		// Evaluate each actionable need type
 		for (auto needType : NeedsComponent::kActionableNeeds) {
@@ -1515,7 +1615,7 @@ namespace ecs {
 			// Special handling for hunger: check inventory first
 			if (needType == NeedType::Hunger) {
 				// First priority: eat from inventory if we have any edible food
-				if (hasEdibleFood(inventory)) {
+				if (packHasFood) {
 					// Food in inventory - eat at current position (no movement needed)
 					option.targetPosition = position.value;
 					option.distanceToTarget = 0.0F;
@@ -1529,32 +1629,23 @@ namespace ecs {
 					continue;
 				}
 
-				// Second priority: find harvestable food source
-				auto harvestable =
-					findNearestWithCapability(memory, m_registry, assets::CapabilityType::Harvestable, position.value);
-				if (harvestable.has_value()) {
-					// Check if this harvestable yields edible food
-					const auto& defName = m_registry.getDefName(harvestable->defNameId);
-					const auto* def = m_registry.getDefinition(defName);
-					if (def != nullptr && def->capabilities.harvestable.has_value()) {
-						const auto& harvestCap = def->capabilities.harvestable.value();
-						// Check if yield is any edible item (data-driven check)
-						if (assets::isItemEdible(harvestCap.yieldDefName)) {
-							option.targetPosition = harvestable->position;
-							option.targetDefNameId = harvestable->defNameId;
-							option.distanceToTarget = glm::distance(position.value, harvestable->position);
-							option.status = need.needsAttention() ? OptionStatus::Available : OptionStatus::Satisfied;
-							option.reason = formatOptionReason(option, needTypeName(needType));
-							if (option.status == OptionStatus::Available) {
-								option.reason += " (harvest)";
-							}
-							trace.options.push_back(option);
-							continue;
-						}
+				// Second priority: harvest the known food source
+				if (foodSource.has_value()) {
+					option.targetPosition = foodSource->position;
+					option.targetDefNameId = foodSource->defNameId;
+					option.distanceToTarget = glm::distance(position.value, foodSource->position);
+					option.targetReachable = true;
+					option.sourceKey = hashWorldEntity(foodSource->position, foodSource->defNameId);
+					option.status = need.needsAttention() ? OptionStatus::Available : OptionStatus::Satisfied;
+					option.reason = formatOptionReason(option, needTypeName(needType));
+					if (option.status == OptionStatus::Available) {
+						option.reason += " (harvest)";
 					}
+					trace.options.push_back(option);
+					continue;
 				}
 
-				// No food in inventory and no harvestable food source found
+				// No food in inventory and no reachable food source known
 				option.status = need.needsAttention() ? OptionStatus::NoSource : OptionStatus::Satisfied;
 				option.reason = formatOptionReason(option, needTypeName(needType));
 				trace.options.push_back(option);
@@ -1563,12 +1654,16 @@ namespace ecs {
 
 			// Standard handling for other needs
 			auto capability = needToCapability(needType);
-			auto nearest = findNearestWithCapability(memory, m_registry, capability, position.value);
+			// A satisfied need only shows its nearest source, so it spends no reachability tests.
+			const auto nearest = need.needsAttention() ? findNeedSource(capability, notKnownUnreachable, canReachSource)
+													   : findNeedSource(capability, anySource, anywhere);
 
 			if (nearest.has_value()) {
 				option.targetPosition = nearest->position;
 				option.targetDefNameId = nearest->defNameId;
 				option.distanceToTarget = glm::distance(position.value, nearest->position);
+				option.targetReachable = need.needsAttention();
+				option.sourceKey = hashWorldEntity(nearest->position, nearest->defNameId);
 
 				if (need.needsAttention()) {
 					option.status = OptionStatus::Available;
@@ -1617,31 +1712,7 @@ namespace ecs {
 
 		// Add "Gather Food" work option (tier 7)
 		// Only show if colonist has no food in inventory
-		if (!hasEdibleFood(inventory)) {
-			// Look for harvestable food sources that yield EDIBLE items
-			// (not all harvestables yield food - e.g., WoodyBush → Stick, Reed → PlantFiber)
-			std::optional<KnownWorldEntity> edibleHarvestable;
-			float							nearestEdibleDist = std::numeric_limits<float>::max();
-
-			for (const auto& [key, entity] : memory.knownWorldEntities) {
-				if (!m_registry.hasCapability(entity.defNameId, assets::CapabilityType::Harvestable)) {
-					continue;
-				}
-				// Check if this harvestable yields edible food
-				const auto& defName = m_registry.getDefName(entity.defNameId);
-				const auto* def = m_registry.getDefinition(defName);
-				if (def != nullptr && def->capabilities.harvestable.has_value()) {
-					const auto& harvestCap = def->capabilities.harvestable.value();
-					if (assets::isItemEdible(harvestCap.yieldDefName)) {
-						float dist = glm::distance(position.value, entity.position);
-						if (dist < nearestEdibleDist) {
-							nearestEdibleDist = dist;
-							edibleHarvestable = KnownWorldEntity{entity.defNameId, entity.position};
-						}
-					}
-				}
-			}
-
+		if (!packHasFood) {
 			EvaluatedOption gatherOption;
 			gatherOption.taskType = TaskType::FulfillNeed; // Reuse FulfillNeed for now
 			gatherOption.needType = NeedType::Hunger;	   // Will trigger Harvest action
@@ -1653,9 +1724,11 @@ namespace ecs {
 			gatherOption.skillLevel = farmSkillLevel;
 			gatherOption.skillBonus = farmSkillBonus;
 
-			if (edibleHarvestable.has_value()) {
-				gatherOption.targetPosition = edibleHarvestable->position;
-				gatherOption.distanceToTarget = nearestEdibleDist;
+			if (foodSource.has_value()) {
+				gatherOption.targetPosition = foodSource->position;
+				gatherOption.distanceToTarget = glm::distance(position.value, foodSource->position);
+				gatherOption.targetReachable = true;
+				gatherOption.sourceKey = hashWorldEntity(foodSource->position, foodSource->defNameId);
 				gatherOption.status = OptionStatus::Available;
 				gatherOption.reason = "Gathering food (inventory empty)";
 			} else {
@@ -1747,15 +1820,6 @@ namespace ecs {
 		// Place packaged items at target locations
 		evaluatePlacePackagedOptions(world, position.value, inventory, trace);
 
-		// Agent footprint + belief for the reachability checks below (reachable-wander generation
-		// and the option filter). Defined once here so both uses share them.
-		float agentRadius = 0.3F;
-		if (const auto* ar = world->getComponent<AgentRadius>(entity)) {
-			agentRadius = ar->radiusMeters;
-		}
-		const geometry::nav::BeliefFilter belief{&memory.knownSegments, &memory.knownOpenings};
-		const bool						  haveMesh = (m_navSystem != nullptr) && m_navSystem->hasMesh();
-
 		// Firm "can I actually navigate right now?" gate. An idle wander picks a random point;
 		// with no navmesh yet (the costly startup window) the colonist has no idea what's walkable,
 		// and isReachable can't help -- it returns true ("can't prove unreachable") when there's no
@@ -1774,10 +1838,10 @@ namespace ecs {
 			// it can't path to -- emit no idle option at all. The no-option hold then makes it stand
 			// and look around instead of committing to an unreachable point and thrashing on it.
 			glm::vec2 wanderTarget	= generateWanderTarget(position.value);
-			bool	  foundReachable = !haveMesh || m_navSystem->isReachable(position.value, wanderTarget, agentRadius, belief);
+			bool	  foundReachable = canReach(wanderTarget);
 			for (int attempt = 0; !foundReachable && attempt < 5; ++attempt) {
 				const glm::vec2 candidate = generateWanderTarget(position.value);
-				if (m_navSystem->isReachable(position.value, candidate, agentRadius, belief)) {
+				if (canReach(candidate)) {
 					wanderTarget   = candidate;
 					foundReachable = true;
 				}
@@ -1810,13 +1874,14 @@ namespace ecs {
 		std::sort(trace.options.begin(), trace.options.end(), EvaluatedOption::higherPriority);
 
 		// Select the first actionable option the colonist can actually REACH, scanning in priority
-		// order. isReachable is a sound, cheap pre-filter: false means DEFINITELY unreachable
+		// order. The reach test is a sound, cheap pre-filter: false means DEFINITELY unreachable
 		// (off-mesh, or a disconnected component -- e.g. a reed or water across a river with no land
 		// bridge). Probing in priority order means we only test down to the best reachable option,
 		// not the whole list. An unreachable higher-priority option drops to NoSource so the colonist
 		// won't commit to it and freeze at the bank; Wander is never filtered, so there is always a
-		// fallback that keeps it moving and exploring for new sources. No mesh yet -> isReachable
-		// returns true, so startup / outdoor beelining is unaffected.
+		// fallback that keeps it moving and exploring for new sources. No mesh yet -> the reach test
+		// passes, so startup / outdoor beelining is unaffected. A need source the builder already
+		// chose as reachable (targetReachable) isn't tested again.
 		for (auto& option : trace.options) {
 			if (option.status != OptionStatus::Available) {
 				continue;
@@ -1847,10 +1912,10 @@ namespace ecs {
 					option.status = OptionStatus::NoSource; // off every active region: don't commit
 					continue;
 				}
-				option.targetPosition = snapped;
+				option.targetPosition  = snapped;
+				option.targetReachable = false; // a moved target is tested where it now is
 			}
-			if (haveMesh && needsTarget &&
-				!m_navSystem->isReachable(position.value, option.targetPosition.value(), agentRadius, belief)) {
+			if (needsTarget && !option.targetReachable && !canReach(option.targetPosition.value())) {
 				option.status = OptionStatus::NoSource; // unreachable: skip it rather than freeze on it
 				continue;
 			}
@@ -1894,6 +1959,7 @@ namespace ecs {
 		task.needToFulfill = selected->needType;
 		task.targetPosition = selected->targetPosition.value_or(position.value);
 		task.reason = selected->reason;
+		task.needSourceKey = selected->sourceKey;
 
 		// Copy crafting-specific fields for Craft tasks
 		if (selected->taskType == TaskType::Craft) {
@@ -2061,6 +2127,9 @@ namespace ecs {
 				navPath->valid = false;
 			}
 			movementTarget.active = false;
+			if (auto* task = world->getComponent<Task>(entity)) {
+				task->blockedReachStamp = reachKey(m_navSystem->reachFrom(position.value, radius, belief), memory).stamp();
+			}
 			LOG_DEBUG(Engine, "[Nav] Entity %llu: no believed route to (%.2f, %.2f), stopping",
 				static_cast<unsigned long long>(entity), goal.x, goal.y);
 			return NavRequestOutcome::Blocked;

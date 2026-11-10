@@ -512,51 +512,36 @@ namespace geometry::nav {
 
 	} // namespace
 
-	// LCA of two reconstruction-tree nodes a, b. Caller guarantees both are in the
-	// SAME tree (same root); otherwise the climb meets at a shared root only if one
-	// exists, so callers must check components first. Lift the deeper node up to the
-	// shallower's depth, then climb both together.
-	static std::int32_t forestLca(const ReachabilityForest& f, std::int32_t a, std::int32_t b) {
-		if (f.depth[a] < f.depth[b]) {
-			std::swap(a, b);
+	std::int32_t reachRootInForest(const ReachabilityForest& f, std::int32_t tri, std::int64_t diameterMm) {
+		if (tri < 0 || tri >= static_cast<std::int32_t>(f.component.size()) || f.component[tri] < 0) {
+			return -1;
 		}
-		std::int32_t diff = f.depth[a] - f.depth[b];
-		for (std::int32_t k = 0; k < f.levels; ++k) {
-			if ((diff >> k) & 1) {
-				a = f.up[k][a];
-			}
-		}
-		if (a == b) {
-			return a;
-		}
+		// Capacities never increase toward the root (Kruskal merges in descending capacity), so the
+		// ancestors admitting the disc are a prefix of the climb and binary lifting finds its end.
+		std::int32_t node = tri;
 		for (std::int32_t k = f.levels - 1; k >= 0; --k) {
-			if (f.up[k][a] != f.up[k][b]) {
-				a = f.up[k][a];
-				b = f.up[k][b];
+			const std::int32_t up = f.up[k][node];
+			if (f.nodeCap[up] >= diameterMm) {
+				node = up;
 			}
 		}
-		return f.up[0][a]; // common parent
+		return node;
 	}
 
-	bool reachableInForest(const ReachabilityForest& f, std::int32_t triA, std::int32_t triB) {
-		if (triA < 0 || triB < 0 || triA >= static_cast<std::int32_t>(f.component.size()) ||
-			triB >= static_cast<std::int32_t>(f.component.size())) {
+	bool inForestSubtree(const ReachabilityForest& f, std::int32_t node, std::int32_t tri) {
+		if (node < 0 || tri < 0 || tri >= static_cast<std::int32_t>(f.component.size()) || f.component[tri] < 0) {
 			return false;
 		}
-		if (f.component[triA] < 0 || f.component[triB] < 0) {
-			return false; // a non-node endpoint is unreachable for this predicate
+		std::int32_t diff = f.depth[tri] - f.depth[node];
+		if (diff < 0) {
+			return false;
 		}
-		return f.component[triA] == f.component[triB];
-	}
-
-	std::int64_t bottleneckInForest(const ReachabilityForest& f, std::int32_t triA, std::int32_t triB) {
-		if (!reachableInForest(f, triA, triB)) {
-			return 0; // disconnected (or a non-node endpoint): admits no disc
+		for (std::int32_t k = 0; k < f.levels; ++k) {
+			if ((diff >> k) & 1) {
+				tri = f.up[k][tri];
+			}
 		}
-		if (triA == triB) {
-			return kUnconstrainedWidth; // a triangle reaches itself with no squeeze
-		}
-		return f.nodeCap[forestLca(f, triA, triB)];
+		return tri == node;
 	}
 
 	NavMesh buildNavMesh(const NavMeshInput& input) {

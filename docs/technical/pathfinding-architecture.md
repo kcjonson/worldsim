@@ -99,7 +99,7 @@ builds a square region per driver, **clusters overlapping squares into merged re
 self-gates rebuilds off the render clock: a region recenters only when one of its drivers nears
 the region-rect edge or its obstacle inputs change. A stationary colonist under a held camera
 triggers zero rebuilds; panning far spawns a separate viewport region instead of dragging a
-colonist's region with it. Queries dispatch by position: `requestPath` / `isReachable` /
+colonist's region with it. Queries dispatch by position: `requestPath` / `reachFrom` + `reaches` /
 `isOnMesh` / `nearestPathablePoint` / `inSimArea` select the region containing the point.
 `requestPath` holds when the endpoints fall in different regions or outside all regions
 (long-range routing across unsimulated space is Phase 2). RRA* caches are keyed by region id plus
@@ -268,7 +268,7 @@ The signature scenario through every tier:
 5. **Assault (Tiers 2 + 3).** Raiders request exact paths through their believed layout: triangle A*, corridor-width filtered for each body size, funneled through door portals. Door slot queues form the siege crush at the breach; collision circles make the crowd physical; a colonist holding the doorway is actually holding a doorway. Surprises mid-assault (an interior wall they didn't know, a corridor the player just sealed) hit the same discovery-replan loop as everyone else.
 6. **Rout (handoff, reversed).** Survivors fleeing past the boundary collapse back into a Tier 0 record and route home.
 
-The AI/pathfinding interface this implies is thin: `isReachable(from, to, traversalClass)` (Tier 1, O(1)), `requestPath(...)` (async via TaskPool, answered in a frame or two), `navVersion()` for replan triggers, and spatial target queries filtered by reachability. Squad coordination lives in the AI on top of area assignment; pathfinding stays a service.
+The AI/pathfinding interface this implies is thin: `reachFrom(from, radius, belief)` once per start, then `reaches(reach, to)` per goal (Tier 1, a locate plus an O(log n) forest check), `requestPath(...)` (async via TaskPool, answered in a frame or two), `navVersion()` for replan triggers, and spatial target queries filtered by reachability. Squad coordination lives in the AI on top of area assignment; pathfinding stays a service.
 
 ## 7. Phasing
 

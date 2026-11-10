@@ -10,6 +10,7 @@
 #include "../components/Movement.h"
 #include "../components/NavPath.h"
 #include "../components/Needs.h"
+#include "../components/SourceReachMemo.h"
 #include "../components/Task.h"
 #include "../components/Transform.h"
 
@@ -224,7 +225,7 @@ TEST_F(NavigationSystemTest, NoMeshBeforeBuildReturnsNullopt) {
 	EXPECT_FALSE(sys.hasMesh());
 	EXPECT_FALSE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value());
 	// No-mesh policy: isReachable cannot prove unreachable, so it returns true.
-	EXPECT_TRUE(sys.isReachable(kOutside, kInside, kAgentRadius));
+	EXPECT_TRUE(isReachable(sys, kOutside, kInside, kAgentRadius));
 }
 
 // update() with nothing wired is a safe no-op, and a query still returns nullopt.
@@ -254,7 +255,7 @@ TEST_F(NavigationSystemTest, PathThroughDoorSucceeds) {
 	std::optional<std::vector<glm::vec2>> path = sys.requestPath(kOutside, kInside, kAgentRadius);
 	ASSERT_TRUE(path.has_value());
 	EXPECT_GE(path->size(), 2u); // at least start..goal
-	EXPECT_TRUE(sys.isReachable(kOutside, kInside, kAgentRadius));
+	EXPECT_TRUE(isReachable(sys, kOutside, kInside, kAgentRadius));
 }
 
 // A window (non-pathable opening) leaves the wall solid: no path.
@@ -446,7 +447,7 @@ TEST_F(NavigationSystemTest, IsReachableTrueForReachableGoal) {
 	sys.setConstructionWorld(&cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
-	EXPECT_TRUE(sys.isReachable(kOutside, kInside, kAgentRadius));
+	EXPECT_TRUE(isReachable(sys, kOutside, kInside, kAgentRadius));
 	EXPECT_TRUE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value());
 }
 
@@ -462,7 +463,7 @@ TEST_F(NavigationSystemTest, IsReachableFalseForWalledOffGoal) {
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
 	// reachable() should detect the disconnected component and return false.
-	EXPECT_FALSE(sys.isReachable(kOutside, kInside, kAgentRadius));
+	EXPECT_FALSE(isReachable(sys, kOutside, kInside, kAgentRadius));
 	// requestPath must also return nullopt (short-circuit already there via pathThrough).
 	EXPECT_FALSE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value());
 }
@@ -473,7 +474,7 @@ TEST_F(NavigationSystemTest, IsReachableTrueWhenNoMesh) {
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 
 	ASSERT_FALSE(sys.hasMesh());
-	EXPECT_TRUE(sys.isReachable(kOutside, kInside, kAgentRadius));
+	EXPECT_TRUE(isReachable(sys, kOutside, kInside, kAgentRadius));
 	// requestPath is still nullopt with no mesh.
 	EXPECT_FALSE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value());
 }
@@ -532,6 +533,39 @@ TEST_F(NavigationSystemTest, GenerationMovesWhenALaggingRegionSwaps) {
 	ASSERT_TRUE(pumpUntil(sys, "region B", [&] { return sys.builtRegions().size() == 2U; }))
 		<< "region B never built";
 	EXPECT_NE(sys.generation(), beforeB) << "region B's first mesh swap left generation() unchanged";
+}
+
+// A Reach names its start region by stable id and that region's own swap count, which is what the
+// AI's SourceReachMemo keys on: another region's swap leaves it alone, a swap in its own region moves it.
+TEST_F(NavigationSystemTest, ReachIdentifiesItsOwnRegionsMesh) {
+	ConstructionWorld cw;
+
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(m_chunks.get());
+	sys.setConstructionWorld(&cw);
+
+	const glm::vec2 posA{0.0F, 0.0F};
+	EntityID		a = world.createEntity();
+	world.addComponent<Position>(a, Position{posA});
+	world.addComponent<Colonist>(a, Colonist{"A"});
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "region A never built";
+	const NavigationSystem::Reach first = sys.reachFrom(posA, kAgentRadius);
+	ASSERT_GE(first.startRegionId, 0);
+
+	EntityID b = world.createEntity();
+	world.addComponent<Position>(b, Position{glm::vec2{100.0F, 0.0F}});
+	world.addComponent<Colonist>(b, Colonist{"B"});
+	ASSERT_TRUE(pumpUntil(sys, "region B", [&] { return sys.builtRegions().size() == 2U; })) << "region B never built";
+	const NavigationSystem::Reach afterB = sys.reachFrom(posA, kAgentRadius);
+	EXPECT_EQ(afterB.startRegionId, first.startRegionId);
+	EXPECT_EQ(afterB.startRegionGeneration, first.startRegionGeneration) << "region B's swap touched region A's key";
+
+	buildWall(cw, {10000, 10000}, {11000, 10000});
+	EXPECT_TRUE(pumpUntil(sys, "region A's wall-edit rebuild", [&] {
+		return sys.reachFrom(posA, kAgentRadius).startRegionGeneration != first.startRegionGeneration;
+	})) << "region A's own swap left its key unchanged";
+	EXPECT_EQ(sys.reachFrom(posA, kAgentRadius).startRegionId, first.startRegionId);
 }
 
 // --- RRA* heuristic wiring + instrumentation (P3.5) --------------------------
@@ -1481,17 +1515,17 @@ TEST_F(NavigationSystemTest, IsReachableTrueForOffAreaGoal) {
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
 	// Confirm in-area walled-off goal IS false (baseline: the closed room blocks it).
-	EXPECT_FALSE(sys.isReachable(kOutside, kInside, kAgentRadius))
+	EXPECT_FALSE(isReachable(sys, kOutside, kInside, kAgentRadius))
 		<< "in-area closed-room goal should be false (baseline for this test)";
 
 	// Now try a goal far outside the built area: must return true ("can't prove unreachable").
 	const glm::vec2 offAreaGoal{200.0F, 200.0F}; // well outside 60 m area
-	EXPECT_TRUE(sys.isReachable(kOutside, offAreaGoal, kAgentRadius))
+	EXPECT_TRUE(isReachable(sys, kOutside, offAreaGoal, kAgentRadius))
 		<< "off-area goal must return true (can't prove unreachable)";
 
 	// Also true when START is off-area.
 	const glm::vec2 offAreaStart{200.0F, 0.0F};
-	EXPECT_TRUE(sys.isReachable(offAreaStart, kInside, kAgentRadius))
+	EXPECT_TRUE(isReachable(sys, offAreaStart, kInside, kAgentRadius))
 		<< "off-area start must return true (can't prove unreachable)";
 }
 
@@ -1583,6 +1617,7 @@ namespace {
 		world.addComponent<Inventory>(c, Inventory::createForColonist());
 		world.addComponent<Task>(c, Task{});
 		world.addComponent<DecisionTrace>(c, DecisionTrace{});
+		world.addComponent<SourceReachMemo>(c, SourceReachMemo{});
 		return c;
 	}
 } // namespace
@@ -1908,8 +1943,9 @@ TEST(SimAreaClusteringTest, EmptyInputYieldsNoRegions) {
 // --- Query dispatch by position (point -> correct region) ---------------------
 //
 // Two colonists far enough apart drive two disjoint regions. A query dispatches to the
-// region containing the point: a same-region path solves, a cross-region pair holds
-// (nullopt -- long-range routing is Phase 2), and inSimArea/isOnMesh resolve per region.
+// region containing the point: a same-region path solves, a cross-region pair has no route
+// (nullopt -- long-range routing is Phase 2; the AI reports it Blocked, since both ends are in
+// the sim area), and inSimArea/isOnMesh resolve per region.
 
 TEST_F(NavigationSystemTest, QueryDispatchSelectsRegionContainingPoint) {
 	ConstructionWorld cw; // empty: open terrain, two regions of plain walkable ground
@@ -1946,12 +1982,12 @@ TEST_F(NavigationSystemTest, QueryDispatchSelectsRegionContainingPoint) {
 	EXPECT_TRUE(sys.requestPath(aPos, nearA, kAgentRadius).has_value())
 		<< "a same-region path over open ground should solve";
 
-	// A cross-region pair holds: start in A's region, goal in B's region. Phase 2 owns
-	// long-range routing; Phase 1 returns nullopt so the task waits.
+	// A cross-region pair has no route: start in A's region, goal in B's region. Phase 2 owns
+	// long-range routing; Phase 1 returns nullopt.
 	EXPECT_FALSE(sys.requestPath(aPos, bPos, kAgentRadius).has_value())
-		<< "a cross-region path must hold (nullopt) in Phase 1";
+		<< "a cross-region pair has no route (nullopt) in Phase 1";
 
-	// isReachable mirrors the hold: cross-region returns true ("can't prove unreachable").
-	EXPECT_TRUE(sys.isReachable(aPos, bPos, kAgentRadius))
-		<< "cross-region isReachable must not falsely reject";
+	// The pre-check matches requestPath: a goal in another built region is unreachable from here.
+	EXPECT_FALSE(isReachable(sys, aPos, bPos, kAgentRadius))
+		<< "a goal in another built region must not pass the pre-check";
 }

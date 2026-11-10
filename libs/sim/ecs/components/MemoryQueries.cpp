@@ -28,34 +28,6 @@ namespace ecs {
 		return result;
 	}
 
-	std::optional<KnownWorldEntity> findNearestWithCapability(
-		const Memory& memory,
-		const assets::AssetRegistry& /*registry*/,
-		assets::CapabilityType capability,
-		const glm::vec2&	   fromPosition
-	) {
-		std::optional<KnownWorldEntity> nearest;
-		float							minDistSq = std::numeric_limits<float>::max();
-
-		// Use capability index for O(1) set access
-		const auto& entityKeys = memory.getEntitiesWithCapability(capability);
-
-		for (uint64_t key : entityKeys) {
-			const auto* entity = memory.getWorldEntity(key);
-			if (entity != nullptr) {
-				glm::vec2 diff = entity->position - fromPosition;
-				float	  distSq = glm::dot(diff, diff); // Squared distance avoids sqrt
-
-				if (distSq < minDistSq) {
-					minDistSq = distSq;
-					nearest = *entity;
-				}
-			}
-		}
-
-		return nearest;
-	}
-
 	std::optional<KnownWorldEntity> findOptimalForTrip(
 		const Memory&										memory,
 		const glm::vec2&									fromPosition,

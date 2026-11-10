@@ -147,7 +147,9 @@ void AIDecisionSystem::buildDecisionTrace(
 
         // Check memory for fulfillment source
         auto capability = needToCapability(needType);
-        auto nearest = findNearestWithCapability(memory, m_registry, capability, position.value);
+        // Nearest known source the colonist can reach (see Query Pattern below)
+        auto nearest = findNearestReachableWithCapability(
+            memory, capability, position.value, anySource, canReach, m_sourceScratch);
 
         if (nearest.has_value()) {
             option.targetPosition = nearest->position;
@@ -218,14 +220,24 @@ The DecisionTrace respects the memory constraint:
 ### Query Pattern
 
 ```cpp
-// Uses existing MemoryQueries functions
-auto nearest = findNearestWithCapability(
-    memory,           // Colonist's personal memory
-    m_registry,       // For capability lookup
-    capability,       // Edible, Drinkable, etc.
-    position.value    // Colonist position
+// The colonist's reach, computed once per decision: one climb of the nav reachability forest
+std::optional<NavigationSystem::Reach> reach;
+if (haveMesh) reach = m_navSystem->reachFrom(position.value, agentRadius, belief);
+auto canReach = [&](const glm::vec2& p) { return !reach || m_navSystem->reaches(*reach, p); };
+
+auto nearest = findNearestReachableWithCapability(
+    memory,          // Colonist's personal memory
+    capability,      // Harvestable, Drinkable, etc.
+    position.value,  // Colonist position
+    accept,          // Hunger: the harvestable's yield is edible; other needs accept any source
+    canReach,        // A satisfied need passes an always-true test: it only shows its nearest
+    m_sourceScratch  // Reused candidate storage
 );
 ```
+
+A known source the colonist can't reach (across a river, say) is skipped for the next nearest, and every known source is tried before the option is `NoSource`, so a colonist goes without only when nothing it knows of is reachable. The Hunger option and the gather-food option share one food source: the nearest reachable known harvestable whose yield is edible. A bed or toilet that can't be reached falls back to the ground, as when none is known.
+
+"Can't reach" means two things. The pre-check: no route through the nav forest, or the source sits in a different built nav region (routes stay inside one region). And a route that actually came back "no believed route": the colonist remembers that source as unreachable until its region's mesh, its wall belief, or the part of the map it stands in changes, then tries it again.
 
 ---
 

@@ -14,6 +14,7 @@
 #include "../World.h"
 #include "../components/Action.h"
 #include "../components/Appearance.h"
+#include "../components/Colonist.h"
 #include "../components/DecisionTrace.h"
 #include "../components/Inventory.h"
 #include "../components/Memory.h"
@@ -22,6 +23,7 @@
 #include "../components/Needs.h"
 #include "../components/PlayerControlled.h"
 #include "../components/Skills.h"
+#include "../components/SourceReachMemo.h"
 #include "../components/StorageConfiguration.h"
 #include "../components/Structure.h"
 #include "../components/StructureBlueprint.h"
@@ -30,6 +32,7 @@
 
 #include "assets/ActionTypeRegistry.h"
 #include "assets/AssetRegistry.h"
+#include "assets/ConstructionRegistry.h"
 #include "assets/PriorityConfig.h"
 #include "assets/RecipeRegistry.h"
 
@@ -49,8 +52,10 @@
 #include <glm/vec2.hpp>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
+#include <filesystem>
 #include <memory>
 #include <optional>
 
@@ -110,6 +115,7 @@ namespace ecs::test {
 			world->addComponent<Inventory>(entity, Inventory::createForColonist());
 			world->addComponent<Task>(entity, Task{});
 			world->addComponent<DecisionTrace>(entity, DecisionTrace{});
+			world->addComponent<SourceReachMemo>(entity, SourceReachMemo{});
 			return entity;
 		}
 
@@ -2188,6 +2194,125 @@ namespace ecs::test {
 	}
 
 	// =============================================================================
+	// Need source selection: the Hunger option targets known EDIBLE food (WOR-605)
+	// =============================================================================
+
+	namespace {
+		// A tool-less harvestable yielding the fixture's edible Berry.
+		[[nodiscard]] uint32_t registerBerryBush(assets::AssetRegistry& registry) {
+			assets::AssetDefinition berryBush;
+			berryBush.defName = "Flora_BerryBush";
+			berryBush.label = "Berry Bush";
+			berryBush.capabilities.harvestable = assets::HarvestableCapability{};
+			berryBush.capabilities.harvestable->yieldDefName = "Berry";
+			registry.registerTestDefinition(std::move(berryBush));
+			return registry.getDefNameId("Flora_BerryBush");
+		}
+
+		// The real Hunger option, not the gather-food sentinel that shares its need type.
+		[[nodiscard]] bool isHungerNeedOption(const EvaluatedOption& o) {
+			return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Hunger && o.threshold > 0.0F;
+		}
+	} // namespace
+
+	// Hungry with an empty pack and a work order on offer: the nearest known harvestable yields sticks,
+	// a berry bush sits a little farther off. Hunger targets the berry bush, never reading the stick
+	// bush as "no food source". Critical hunger (tier 2) preempts the work order (tier 4); routine
+	// hunger (tier 5) is on offer below it.
+	struct HungerLevelCase {
+		float hunger;
+		int	  tier;
+		bool  preemptsWork;
+	};
+
+	class HungerEdibleSourceTest : public AIDecisionSystemTest, public ::testing::WithParamInterface<HungerLevelCase> {};
+
+	TEST_P(HungerEdibleSourceTest, TargetsEdibleSourceOverNearerNonEdibleHarvestable) {
+		const HungerLevelCase level = GetParam();
+		auto&				  registry = assets::AssetRegistry::Get();
+		auto [stickBushId, stickId] = registerHarvestableYielding(registry, "Flora_WorkBush", "WorkStick");
+		const uint32_t	berryBushId = registerBerryBush(registry);
+		const glm::vec2 berryPos{4.0F, 0.0F};
+
+		auto colonist = createColonist({0.0F, 0.0F});
+		satisfyAllNeeds(*getNeeds(colonist));
+		setNeedValue(colonist, NeedType::Hunger, level.hunger);
+		addKnownEntity(colonist, {2.0F, 0.0F}, stickBushId, assets::CapabilityType::Harvestable);
+		addKnownEntity(colonist, berryPos, berryBushId, assets::CapabilityType::Harvestable);
+
+		// A work order wanting sticks: a tier-4 Harvest of the nearer bush.
+		const auto station = world->createEntity();
+		world->addComponent<Position>(station, Position{{6.0F, 0.0F}});
+		GoalTask craft;
+		craft.type = TaskType::Craft;
+		craft.owner = GoalOwner::CraftingGoalSystem;
+		craft.destinationEntity = station;
+		craft.destinationPosition = {6.0F, 0.0F};
+		craft.targetAmount = 2;
+		craft.status = GoalStatus::Blocked;
+		const uint64_t craftId = GoalTaskRegistry::Get().createGoal(std::move(craft));
+		GoalTask harvest;
+		harvest.type = TaskType::Harvest;
+		harvest.owner = GoalOwner::CraftingGoalSystem;
+		harvest.destinationEntity = station;
+		harvest.destinationPosition = {6.0F, 0.0F};
+		harvest.yieldDefNameId = stickId;
+		harvest.targetAmount = 2;
+		harvest.parentGoalId = craftId;
+		harvest.status = GoalStatus::Available;
+		GoalTaskRegistry::Get().createGoal(std::move(harvest));
+
+		world->update(0.016F);
+
+		auto* trace = getTrace(colonist);
+		ASSERT_NE(trace, nullptr);
+		const auto* work = findOption(*trace, [](const EvaluatedOption& o) { return o.taskType == TaskType::Harvest; });
+		ASSERT_NE(work, nullptr) << "the work order offers a harvest";
+		const auto* hunger = findOption(*trace, isHungerNeedOption);
+		ASSERT_NE(hunger, nullptr);
+		EXPECT_EQ(hunger->tier, level.tier);
+		ASSERT_TRUE(hunger->targetPosition.has_value());
+		EXPECT_EQ(*hunger->targetPosition, berryPos) << "hunger targets the edible source, not the nearer stick bush";
+		if (level.preemptsWork) {
+			EXPECT_EQ(hunger->status, OptionStatus::Selected) << "critical hunger preempts the work order";
+			EXPECT_EQ(work->status, OptionStatus::Available);
+		} else {
+			EXPECT_EQ(hunger->status, OptionStatus::Available) << "routine hunger waits behind the work order";
+			EXPECT_EQ(work->status, OptionStatus::Selected);
+		}
+	}
+
+	INSTANTIATE_TEST_SUITE_P(
+		HungerLevels, HungerEdibleSourceTest,
+		::testing::Values(HungerLevelCase{5.0F, 2, true}, HungerLevelCase{40.0F, 5, false})
+	);
+
+	// Knowing only harvestables that aren't food is the one case a hungry colonist has no source:
+	// Hunger and gather-food both stay NoSource rather than targeting the stick bush.
+	TEST_F(AIDecisionSystemTest, HungerHasNoSourceWhenNoKnownHarvestableIsEdible) {
+		auto& registry = assets::AssetRegistry::Get();
+		const uint32_t stickBushId = registerHarvestableYielding(registry, "Flora_StickBush", "Stick").harvestableId;
+
+		auto colonist = createColonist({0.0F, 0.0F});
+		satisfyAllNeeds(*getNeeds(colonist));
+		setNeedValue(colonist, NeedType::Hunger, 5.0F);
+		addKnownEntity(colonist, {2.0F, 0.0F}, stickBushId, assets::CapabilityType::Harvestable);
+
+		world->update(0.016F);
+
+		auto* trace = getTrace(colonist);
+		ASSERT_NE(trace, nullptr);
+		const auto* hunger = findOption(*trace, isHungerNeedOption);
+		ASSERT_NE(hunger, nullptr);
+		EXPECT_EQ(hunger->status, OptionStatus::NoSource);
+		const auto* gather = findOption(*trace, [](const EvaluatedOption& o) {
+			return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Hunger && o.threshold == 0.0F;
+		});
+		ASSERT_NE(gather, nullptr);
+		EXPECT_EQ(gather->status, OptionStatus::NoSource);
+	}
+
+	// =============================================================================
 	// Integration Tests with ActionSystem - Bug Reproduction
 	// =============================================================================
 
@@ -2238,6 +2363,7 @@ namespace ecs::test {
 			world->addComponent<Task>(entity, Task{});
 			world->addComponent<Action>(entity, Action{});				 // Required for ActionSystem
 			world->addComponent<DecisionTrace>(entity, DecisionTrace{}); // Required for priority-based switching
+			world->addComponent<SourceReachMemo>(entity, SourceReachMemo{});
 			return entity;
 		}
 
@@ -3190,6 +3316,27 @@ namespace ecs::test {
 			[[nodiscard]] float	   sampleElevation(world::WorldPosition) const override { return 1.0F; }
 			[[nodiscard]] uint64_t getWorldSeed() const override { return 7U; }
 		};
+
+		// Open land cut by two straight rivers, 6 m wide, along y = +20 and y = -20 across the whole
+		// area: three land components, the band between them (where the colonist stands), the north bank
+		// and the south bank.
+		constexpr float kRiverY = 20.0F;
+		constexpr float kRiverHalfWidth = 3.0F;
+
+		class TwoRiverSampler : public world::IWorldSampler {
+		  public:
+			[[nodiscard]] world::ChunkSampleResult sampleChunk(world::ChunkCoordinate) const override {
+				world::ChunkSampleResult r = world::makeUniformChunkSampleResult(
+					world::BiomeWeights::single(world::Biome::TemperateGrassland), 1.0F);
+				for (const float y : {kRiverY, -kRiverY}) {
+					r.riverSegments.push_back({.x0 = -400.0, .y0 = y, .x1 = 400.0, .y1 = y, .halfWidth0 = kRiverHalfWidth,
+											   .halfWidth1 = kRiverHalfWidth, .s0 = 0.0, .s1 = 800.0});
+				}
+				return r;
+			}
+			[[nodiscard]] float	   sampleElevation(world::WorldPosition) const override { return 1.0F; }
+			[[nodiscard]] uint64_t getWorldSeed() const override { return 7U; }
+		};
 	} // namespace
 
 	// The running game's first decision happens before the async region build has produced a mesh.
@@ -3227,6 +3374,10 @@ namespace ecs::test {
 			// before the chunks and construction world go away.
 			AIDecisionSystemTest::TearDown();
 			chunks.reset();
+		}
+
+		[[nodiscard]] virtual std::unique_ptr<world::IWorldSampler> makeSampler() const {
+			return std::make_unique<OpenLandSampler>();
 		}
 
 		[[nodiscard]] bool followingRoute(EntityID colonist) {
@@ -3491,6 +3642,427 @@ namespace ecs::test {
 		}
 		EXPECT_FALSE(action->isActive()) << "the sleep never finished";
 		EXPECT_LE(decisions, 1) << "the sleeper re-decided " << decisions << " times during one sleep";
+	}
+
+	// Known sources across a river are out of reach while a farther one on the colonist's side isn't.
+	// A need takes the nearest REACHABLE source, however many unreachable ones are nearer (WOR-607).
+	class AIDecisionRiverTest : public AIDecisionFirstMeshTest {
+	  protected:
+		[[nodiscard]] std::unique_ptr<world::IWorldSampler> makeSampler() const override {
+			return std::make_unique<TwoRiverSampler>();
+		}
+
+		// A colonist between the rivers with the mesh built, both banks proven unreachable and
+		// kReachable proven reachable, so a failure is the AI's choice and not the fixture.
+		EntityID makeColonistBetweenRivers() {
+			const auto colonist = createColonist(kStart);
+			satisfyAllNeeds(*getNeeds(colonist));
+			EXPECT_TRUE(pumpUntilMesh(*nav)) << "navmesh never built";
+			const auto*						  memory = world->getComponent<Memory>(colonist);
+			const geometry::nav::BeliefFilter belief{&memory->knownSegments, &memory->knownOpenings};
+			EXPECT_FALSE(isReachable(*nav, kStart, northBank(0.0F), kAgentRadius, belief)) << "the north bank must be unreachable";
+			EXPECT_FALSE(isReachable(*nav, kStart, southBank(0.0F), kAgentRadius, belief)) << "the south bank must be unreachable";
+			EXPECT_TRUE(isReachable(*nav, kStart, kReachable, kAgentRadius, belief));
+			return colonist;
+		}
+
+		[[nodiscard]] static glm::vec2 northBank(float x) { return {x, kRiverY + 4.0F}; } // 24 m out
+		[[nodiscard]] static glm::vec2 southBank(float x) { return {x, -kRiverY - 4.0F}; }
+
+		[[nodiscard]] static const EvaluatedOption* gatherFoodOption(const DecisionTrace& trace) {
+			return findOption(trace, [](const EvaluatedOption& o) {
+				return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Hunger && o.threshold == 0.0F;
+			});
+		}
+
+		// Hunger and gather-food both target kReachable, Hunger being the chosen task.
+		void expectFoodGoesToReachable(EntityID colonist) {
+			const auto* trace = getTrace(colonist);
+			ASSERT_NE(trace, nullptr);
+			const auto* hunger = findOption(*trace, isHungerNeedOption);
+			ASSERT_NE(hunger, nullptr);
+			EXPECT_EQ(hunger->status, OptionStatus::Selected);
+			ASSERT_TRUE(hunger->targetPosition.has_value());
+			EXPECT_EQ(*hunger->targetPosition, kReachable);
+			const auto* gather = gatherFoodOption(*trace);
+			ASSERT_NE(gather, nullptr);
+			EXPECT_EQ(gather->status, OptionStatus::Available);
+			ASSERT_TRUE(gather->targetPosition.has_value());
+			EXPECT_EQ(*gather->targetPosition, kReachable);
+		}
+
+		static constexpr glm::vec2 kStart{0.0F, 0.0F};
+		static constexpr glm::vec2 kReachable{40.0F, 0.0F}; // between the rivers, farther than either bank
+		static constexpr float	   kAgentRadius = 0.3F;
+	};
+
+	// A berry patch across the river: the four nearest known bushes are all on the north bank.
+	TEST_F(AIDecisionRiverTest, FoodSkipsEveryUnreachableNearerSourceOnOneComponent) {
+		const uint32_t berryBushId = registerBerryBush(assets::AssetRegistry::Get());
+		const auto	   colonist = makeColonistBetweenRivers();
+		setNeedValue(colonist, NeedType::Hunger, 40.0F);
+		for (const float x : {0.0F, 2.0F, -2.0F, 4.0F}) {
+			addKnownEntity(colonist, northBank(x), berryBushId, assets::CapabilityType::Harvestable);
+		}
+		addKnownEntity(colonist, kReachable, berryBushId, assets::CapabilityType::Harvestable);
+
+		world->update(kTick);
+		expectFoodGoesToReachable(colonist);
+	}
+
+	// The same with the unreachable bushes split across two components, the north and south banks.
+	TEST_F(AIDecisionRiverTest, FoodSkipsUnreachableSourcesOnTwoComponents) {
+		const uint32_t berryBushId = registerBerryBush(assets::AssetRegistry::Get());
+		const auto	   colonist = makeColonistBetweenRivers();
+		setNeedValue(colonist, NeedType::Hunger, 40.0F);
+		for (const float x : {0.0F, 3.0F}) {
+			addKnownEntity(colonist, northBank(x), berryBushId, assets::CapabilityType::Harvestable);
+			addKnownEntity(colonist, southBank(x), berryBushId, assets::CapabilityType::Harvestable);
+		}
+		addKnownEntity(colonist, kReachable, berryBushId, assets::CapabilityType::Harvestable);
+
+		world->update(kTick);
+		expectFoodGoesToReachable(colonist);
+	}
+
+	TEST_F(AIDecisionRiverTest, ThirstSkipsUnreachableNearestWaterForReachableFartherOne) {
+		const auto colonist = makeColonistBetweenRivers();
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 1); // no gather-food option in the way
+		setNeedValue(colonist, NeedType::Thirst, 40.0F);
+		addKnownEntity(colonist, northBank(0.0F), kWaterDefId, assets::CapabilityType::Drinkable);
+		addKnownEntity(colonist, kReachable, kWaterDefId, assets::CapabilityType::Drinkable);
+
+		world->update(kTick);
+
+		auto* trace = getTrace(colonist);
+		ASSERT_NE(trace, nullptr);
+		const auto* thirst = findOption(*trace, [](const EvaluatedOption& o) {
+			return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Thirst;
+		});
+		ASSERT_NE(thirst, nullptr);
+		EXPECT_EQ(thirst->status, OptionStatus::Selected);
+		ASSERT_TRUE(thirst->targetPosition.has_value());
+		EXPECT_EQ(*thirst->targetPosition, kReachable);
+	}
+
+	// A bed and a toilet the colonist knows but can't reach don't strand Energy and Bladder: they
+	// take the ground fallback, as when no source is known.
+	TEST_F(AIDecisionRiverTest, UnreachableBedAndToiletFallBackToGround) {
+		const auto colonist = makeColonistBetweenRivers();
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+		setNeedValue(colonist, NeedType::Energy, 20.0F);
+		setNeedValue(colonist, NeedType::Bladder, 20.0F);
+		addKnownEntity(colonist, northBank(0.0F), kBedDefId, assets::CapabilityType::Sleepable);
+		addKnownEntity(colonist, southBank(0.0F), kToiletDefId, assets::CapabilityType::Toilet);
+
+		world->update(kTick);
+
+		auto* trace = getTrace(colonist);
+		ASSERT_NE(trace, nullptr);
+		for (const NeedType need : {NeedType::Energy, NeedType::Bladder}) {
+			const auto* option = findOption(*trace, [need](const EvaluatedOption& o) {
+				return o.taskType == TaskType::FulfillNeed && o.needType == need;
+			});
+			ASSERT_NE(option, nullptr);
+			EXPECT_NE(option->status, OptionStatus::NoSource) << static_cast<int>(need);
+			ASSERT_TRUE(option->targetPosition.has_value());
+			// Wherever the ground fallback picks, it's on the colonist's side of both rivers.
+			EXPECT_LT(std::abs(option->targetPosition->y), kRiverY - kRiverHalfWidth)
+				<< static_cast<int>(need) << " targets ground the colonist can reach, not the source across the river";
+		}
+	}
+
+	// Every known food source out of reach: the colonist has nothing it can eat, so Hunger is NoSource.
+	TEST_F(AIDecisionRiverTest, HungerHasNoSourceWhenEveryKnownFoodIsUnreachable) {
+		const uint32_t berryBushId = registerBerryBush(assets::AssetRegistry::Get());
+		const auto	   colonist = makeColonistBetweenRivers();
+		setNeedValue(colonist, NeedType::Hunger, 40.0F);
+		addKnownEntity(colonist, northBank(0.0F), berryBushId, assets::CapabilityType::Harvestable);
+		addKnownEntity(colonist, southBank(0.0F), berryBushId, assets::CapabilityType::Harvestable);
+
+		world->update(kTick);
+
+		auto* trace = getTrace(colonist);
+		ASSERT_NE(trace, nullptr);
+		const auto* hunger = findOption(*trace, isHungerNeedOption);
+		ASSERT_NE(hunger, nullptr);
+		EXPECT_EQ(hunger->status, OptionStatus::NoSource);
+		const auto* gather = gatherFoodOption(*trace);
+		ASSERT_NE(gather, nullptr);
+		EXPECT_EQ(gather->status, OptionStatus::NoSource);
+	}
+
+	// A berry bush standing in a wall the colonist knows is out of reach (a known wall blocks unless the
+	// colonist also knows a door through it), so the memo holds "unreachable" for it. These pin the two
+	// ways that verdict has to be dropped, or the colonist goes without food it could now reach: its
+	// region's mesh swapping in without the wall, and the colonist learning of a door.
+	class AIDecisionWallTest : public AIDecisionFirstMeshTest {
+	  protected:
+		void SetUp() override {
+			assets::ConstructionRegistry::Get().clear();
+			const std::filesystem::path root =
+				std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path().parent_path();
+			ASSERT_TRUE(assets::ConstructionRegistry::Get().load((root / "assets" / "config" / "construction").string()));
+			AIDecisionFirstMeshTest::SetUp();
+		}
+
+		void TearDown() override {
+			AIDecisionFirstMeshTest::TearDown();
+			assets::ConstructionRegistry::Get().clear();
+		}
+
+		// A built wall across x = 8 m with the bush at its middle, the colonist knowing every segment of
+		// it and the bush, hungry with an empty pack, and the mesh built with the wall in it.
+		EntityID makeHungryColonistBesideWall(bool withDoor) {
+			const auto commit = construction.commitSegment({8000, -2000}, {8000, 2000}, "Wood", "Standard",
+														   construction::kInvalidFoundation);
+			EXPECT_TRUE(commit.ok());
+			wallSegment = commit.id;
+			for (const auto id : commit.createdSegments) {
+				construction.setSegmentState(id, construction::FoundationState::Built);
+			}
+			if (withDoor) {
+				door = construction.addOpening(wallSegment, 0.5F, "Door", "Wood");
+				EXPECT_NE(door, construction::kInvalidOpening);
+				EXPECT_TRUE(construction.setOpeningState(door, construction::FoundationState::Built));
+			}
+
+			const auto colonist = createColonist(kStart);
+			satisfyAllNeeds(*getNeeds(colonist));
+			setNeedValue(colonist, NeedType::Hunger, 40.0F);
+			auto* memory = world->getComponent<Memory>(colonist);
+			for (const auto id : commit.createdSegments) {
+				memory->rememberSegment(static_cast<std::uint64_t>(id));
+			}
+			addKnownEntity(colonist, kBush, registerBerryBush(assets::AssetRegistry::Get()), assets::CapabilityType::Harvestable);
+
+			EXPECT_TRUE(pumpUntilMesh(*nav)) << "navmesh never built";
+			EXPECT_FALSE(canReachBush(colonist)) << "the bush in the known wall must start out unreachable";
+			return colonist;
+		}
+
+		[[nodiscard]] bool canReachBush(EntityID colonist) {
+			const auto*						  memory = world->getComponent<Memory>(colonist);
+			const geometry::nav::BeliefFilter belief{&memory->knownSegments, &memory->knownOpenings};
+			return isReachable(*nav, world->getComponent<Position>(colonist)->value, kBush, 0.3F, belief);
+		}
+
+		[[nodiscard]] OptionStatus hungerStatus(EntityID colonist) {
+			const auto* hunger = findOption(*getTrace(colonist), isHungerNeedOption);
+			return hunger != nullptr ? hunger->status : OptionStatus::Satisfied;
+		}
+
+		// Runs decisions until Hunger is the chosen task, for at most kTicksAfterMesh ticks.
+		[[nodiscard]] bool hungerSelectedWithin(EntityID colonist) {
+			for (int i = 0; i < kTicksAfterMesh; ++i) {
+				world->update(kTick);
+				if (hungerStatus(colonist) == OptionStatus::Selected) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		static constexpr glm::vec2 kStart{0.0F, 0.0F};
+		static constexpr glm::vec2 kBush{8.0F, 0.0F};
+		construction::SegmentId	   wallSegment = construction::kInvalidSegment;
+		construction::OpeningId	   door = construction::kInvalidOpening;
+	};
+
+	TEST_F(AIDecisionWallTest, MeshSwapWithoutTheWallMakesTheBushReachableAgain) {
+		const auto colonist = makeHungryColonistBesideWall(false);
+		world->update(kTick);
+		ASSERT_EQ(hungerStatus(colonist), OptionStatus::NoSource) << "the walled-in bush can't be the target";
+
+		ASSERT_TRUE(construction.removeSegment(wallSegment));
+		ASSERT_TRUE(pumpUntil(*nav, "the rebuild without the wall", [&] { return canReachBush(colonist); }))
+			<< "the rebuilt mesh never opened the bush up";
+		EXPECT_TRUE(hungerSelectedWithin(colonist)) << "the colonist kept the stale verdict and left the bush alone";
+	}
+
+	TEST_F(AIDecisionWallTest, LearningOfADoorMakesTheBushReachable) {
+		const auto colonist = makeHungryColonistBesideWall(true);
+		world->update(kTick);
+		ASSERT_EQ(hungerStatus(colonist), OptionStatus::NoSource) << "an unknown door doesn't open a known wall";
+
+		world->getComponent<Memory>(colonist)->rememberOpening(static_cast<std::uint64_t>(door));
+		ASSERT_TRUE(canReachBush(colonist)) << "knowing the door opens the bush up";
+		EXPECT_TRUE(hungerSelectedWithin(colonist)) << "the colonist kept the stale verdict and left the bush alone";
+	}
+
+	// The nearest known water sits in another built region. requestPath routes only within one region,
+	// so the pre-check has to say no; saying "can't prove unreachable" sent a thirsty colonist at that
+	// water over and over, each route coming back "no believed route", while it knew water it could
+	// reach (seen live: 13 game-hours at Thirst 0 beside the viewport's region).
+	TEST_F(AIDecisionFirstMeshTest, NeedSkipsSourceInAnotherRegion) {
+		// The colonist stands in the viewport's region (-60..60); another colonist 100 m out drives a
+		// second region (70..130) with a gap between them.
+		const glm::vec2 start{50.0F, 0.0F};
+		const glm::vec2 otherRegion{71.0F, 0.0F}; // in the far region, 21 m away
+		const glm::vec2 ownRegion{20.0F, 0.0F};	  // in its own region, 30 m away
+		const auto		farColonist = world->createEntity();
+		world->addComponent<Position>(farColonist, Position{{100.0F, 0.0F}});
+		world->addComponent<Colonist>(farColonist, Colonist{"B"});
+
+		const auto colonist = createColonist(start);
+		satisfyAllNeeds(*getNeeds(colonist));
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+		setNeedValue(colonist, NeedType::Thirst, 40.0F);
+		addKnownEntity(colonist, otherRegion, kWaterDefId, assets::CapabilityType::Drinkable);
+		addKnownEntity(colonist, ownRegion, kWaterDefId, assets::CapabilityType::Drinkable);
+
+		ASSERT_TRUE(pumpUntil(*nav, "both regions", [&] { return nav->builtRegions().size() == 2U; }));
+		ASSERT_FALSE(nav->requestPath(start, otherRegion, 0.3F).has_value()) << "no route between regions";
+		ASSERT_TRUE(nav->requestPath(start, ownRegion, 0.3F).has_value());
+
+		world->update(kTick);
+
+		const auto* thirst = findOption(*getTrace(colonist), [](const EvaluatedOption& o) {
+			return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Thirst;
+		});
+		ASSERT_NE(thirst, nullptr);
+		EXPECT_EQ(thirst->status, OptionStatus::Selected);
+		ASSERT_TRUE(thirst->targetPosition.has_value());
+		EXPECT_EQ(*thirst->targetPosition, ownRegion) << "the water in the other region can't be routed to";
+	}
+
+	// Water in a room whose walls the colonist knows: the forest the pre-check uses treats walls as
+	// open, so the room passes it, but the believed route fails. Another water source sits outside.
+	class AIDecisionWalledWaterTest : public AIDecisionWallTest {
+	  protected:
+		EntityID makeThirstyColonistWithWalledWater() {
+			const std::array<geometry::Vec2i64, 4> corners{{{6000, -2000}, {10000, -2000}, {10000, 2000}, {6000, 2000}}};
+			std::vector<construction::SegmentId>	 walls;
+			for (size_t i = 0; i < corners.size(); ++i) {
+				const auto commit = construction.commitSegment(corners[i], corners[(i + 1) % corners.size()], "Wood",
+															   "Standard", construction::kInvalidFoundation);
+				EXPECT_TRUE(commit.ok());
+				for (const auto id : commit.createdSegments) {
+					construction.setSegmentState(id, construction::FoundationState::Built);
+					walls.push_back(id);
+				}
+			}
+
+			const auto colonist = createColonist(kStart);
+			satisfyAllNeeds(*getNeeds(colonist));
+			world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+			setNeedValue(colonist, NeedType::Thirst, 40.0F);
+			auto* memory = world->getComponent<Memory>(colonist);
+			for (const auto id : walls) {
+				memory->rememberSegment(static_cast<std::uint64_t>(id));
+			}
+			addKnownEntity(colonist, kInRoom, kWaterDefId, assets::CapabilityType::Drinkable);
+			addKnownEntity(colonist, kOutside, kWaterDefId, assets::CapabilityType::Drinkable);
+
+			EXPECT_TRUE(pumpUntilMesh(*nav)) << "navmesh never built";
+			const geometry::nav::BeliefFilter belief{&memory->knownSegments, &memory->knownOpenings};
+			EXPECT_TRUE(isReachable(*nav, kStart, kInRoom, 0.3F, belief)) << "the room must pass the pre-check";
+			EXPECT_FALSE(nav->requestPath(kStart, kInRoom, 0.3F, belief).has_value()) << "and fail the believed route";
+			return colonist;
+		}
+
+		// A wall far from everything, so the region's mesh rebuilds without anything else changing.
+		void rebuildRegionMesh() {
+			const std::uint64_t before = nav->generation();
+			const auto commit = construction.commitSegment({30000, 30000}, {32000, 30000}, "Wood", "Standard",
+														   construction::kInvalidFoundation);
+			ASSERT_TRUE(commit.ok());
+			for (const auto id : commit.createdSegments) {
+				construction.setSegmentState(id, construction::FoundationState::Built);
+			}
+			// Until the rebuilds settle: the commit and the state change can each launch one.
+			ASSERT_TRUE(pumpUntil(*nav, "the wall-edit rebuild", [&] { return nav->generation() != before && !nav->isBuilding(); }));
+		}
+
+		// Runs `ticks` updates and counts the decisions that chose each water.
+		void decide(EntityID colonist, int ticks, int& choseRoom, int& choseOutside) {
+			float lastDecision = getTrace(colonist)->lastEvaluationTime;
+			for (int i = 0; i < ticks; ++i) {
+				world->update(kTick);
+				const auto* trace = getTrace(colonist);
+				if (trace->lastEvaluationTime == lastDecision) {
+					continue;
+				}
+				lastDecision = trace->lastEvaluationTime;
+				const auto* thirst = findOption(*trace, [](const EvaluatedOption& o) {
+					return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Thirst;
+				});
+				if (thirst != nullptr && thirst->status == OptionStatus::Selected) {
+					choseRoom += *thirst->targetPosition == kInRoom ? 1 : 0;
+					choseOutside += *thirst->targetPosition == kOutside ? 1 : 0;
+				}
+			}
+		}
+
+		static constexpr glm::vec2 kInRoom{8.0F, 0.0F};
+		static constexpr glm::vec2 kOutside{-30.0F, 0.0F};
+	};
+
+	// The failed route is remembered like any other verdict, so the colonist goes for the next water
+	// instead of retrying this one every decision, and tries it again once the mesh changes.
+	TEST_F(AIDecisionWalledWaterTest, FailedRouteSendsTheNeedToTheNextSource) {
+		const auto colonist = makeThirstyColonistWithWalledWater();
+
+		int choseRoom = 0;
+		int choseOutside = 0;
+		decide(colonist, 20, choseRoom, choseOutside);
+		EXPECT_EQ(choseRoom, 1) << "the walled-in water is tried once, not every decision";
+		EXPECT_GE(choseOutside, 1) << "the colonist goes for the water it can reach";
+		EXPECT_EQ(getTask(colonist)->targetPosition, kOutside);
+
+		// The retry must come from the rebuild: same region, same centre, a new mesh.
+		const glm::vec2 here = world->getComponent<Position>(colonist)->value;
+		const auto		regionBefore = nav->reachFrom(here, 0.3F);
+		const auto		centreBefore = nav->builtRegions().front().center;
+		rebuildRegionMesh();
+		const auto regionAfter = nav->reachFrom(here, 0.3F);
+		ASSERT_EQ(nav->builtRegions().size(), 1U);
+		EXPECT_EQ(regionAfter.startRegionId, regionBefore.startRegionId);
+		EXPECT_NE(regionAfter.startRegionGeneration, regionBefore.startRegionGeneration) << "the region's mesh was rebuilt";
+		EXPECT_EQ(nav->builtRegions().front().center, centreBefore) << "and the region didn't move";
+
+		choseRoom = 0;
+		choseOutside = 0;
+		decide(colonist, 20, choseRoom, choseOutside);
+		EXPECT_EQ(choseRoom, 1) << "after the mesh changed the walled-in water is tried again, once";
+		EXPECT_EQ(getTask(colonist)->targetPosition, kOutside);
+	}
+
+	// A mesh swap landing between the failed route and the next decision: the failure was found on the
+	// old mesh, so it isn't recorded, and the source is simply tried again on the new one.
+	TEST_F(AIDecisionWalledWaterTest, FailureBeforeAMeshSwapIsNotRecorded) {
+		const auto colonist = makeThirstyColonistWithWalledWater();
+		world->update(kTick);
+		ASSERT_EQ(getTask(colonist)->targetPosition, kInRoom);
+		ASSERT_EQ(getTask(colonist)->navState, NavState::CantFindWayTo) << "the first decision's route fails";
+
+		rebuildRegionMesh();
+		world->update(kTick);
+		EXPECT_EQ(getTask(colonist)->targetPosition, kInRoom) << "a failure from before the swap was recorded";
+		EXPECT_EQ(getTask(colonist)->navState, NavState::CantFindWayTo);
+
+		world->update(kTick);
+		EXPECT_EQ(getTask(colonist)->targetPosition, kOutside) << "the failure on the new mesh is recorded";
+	}
+
+	// A mesh swap in some other region (another colonist's, or the viewport's while the camera pans)
+	// changes nothing this colonist's verdicts depend on: the failure is still recorded and the
+	// colonist moves on, instead of retrying the walled-in water every time any region rebuilds.
+	TEST_F(AIDecisionWalledWaterTest, SwapInAnotherRegionStillRecordsTheFailure) {
+		const auto colonist = makeThirstyColonistWithWalledWater();
+		world->update(kTick);
+		ASSERT_EQ(getTask(colonist)->targetPosition, kInRoom);
+		ASSERT_EQ(getTask(colonist)->navState, NavState::CantFindWayTo);
+
+		const std::uint64_t before = nav->generation();
+		const auto			farDriver = world->createEntity();
+		world->addComponent<Position>(farDriver, Position{{300.0F, 0.0F}});
+		world->addComponent<Colonist>(farDriver, Colonist{"Far"});
+		ASSERT_TRUE(pumpUntil(*nav, "the far region", [&] { return nav->builtRegions().size() == 2U && !nav->isBuilding(); }));
+		ASSERT_NE(nav->generation(), before) << "the far region's swap moved the global generation";
+
+		world->update(kTick);
+		EXPECT_EQ(getTask(colonist)->targetPosition, kOutside) << "the failure was dropped over an unrelated swap";
 	}
 
 } // namespace ecs::test

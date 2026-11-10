@@ -764,9 +764,10 @@ namespace ecs {
 	std::optional<std::vector<glm::vec2>>
 	NavigationSystem::requestPath(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
 								  gnav::BeliefFilter belief) const {
-		// Dispatch by position: both endpoints must lie in the SAME built region. Different
-		// regions (or a goal outside every region) -> hold the task; long-range routing
-		// across unsimulated space is Phase 2.
+		// Dispatch by position: both endpoints must lie in the SAME built region, else no route.
+		// The AI holds a route only when an endpoint is outside every region (requestNavPath's
+		// off-area branch); a goal in a different built region comes back here as no route, which
+		// requestNavPath reports as Blocked. Long-range routing across regions is Phase 2.
 		const int startRegion = regionContaining(startMeters);
 		const int goalRegion  = regionContaining(goalMeters);
 		if (startRegion < 0 || startRegion != goalRegion) {
@@ -819,25 +820,42 @@ namespace ecs {
 		return waypoints;
 	}
 
-	bool NavigationSystem::isReachable(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
-									   gnav::BeliefFilter belief) const {
-		// No single region covers both endpoints (no mesh yet, off-area endpoint, or a
-		// cross-region pair): can't prove unreachable, so don't reject. Colonists beeline
-		// legitimately during startup/outdoor play; the agent moves toward the area and
-		// switches to in-region routing once both endpoints share a region.
-		const int startRegion = regionContaining(startMeters);
-		const int goalRegion  = regionContaining(goalMeters);
-		if (startRegion < 0 || startRegion != goalRegion) {
+	NavigationSystem::Reach NavigationSystem::reachFrom(glm::vec2 startMeters, float agentRadiusMeters,
+														gnav::BeliefFilter belief) const {
+		Reach reach;
+		reach.belief	  = belief;
+		reach.startRegion = regionContaining(startMeters);
+		if (reach.startRegion >= 0) {
+			const SimulationRegion& region = regions[static_cast<std::size_t>(reach.startRegion)];
+			const std::int64_t		radiusMm =
+				static_cast<std::int64_t>(std::llround(static_cast<double>(agentRadiusMeters) * 1000.0));
+			reach.startRegionId			= region.id;
+			reach.startRegionGeneration = region.meshGeneration;
+			reach.from					= gnav::reachFrom(region.navMesh, nav::toMm(startMeters), radiusMm, belief);
+		}
+		return reach;
+	}
+
+	bool NavigationSystem::sharesStartRegion(const Reach& reach, glm::vec2 goalMeters) const {
+		return reach.startRegion >= 0 && regionContaining(goalMeters) == reach.startRegion;
+	}
+
+	bool NavigationSystem::reaches(const Reach& reach, glm::vec2 goalMeters) const {
+		// No mesh under the start, or the goal off every region: can't prove unreachable, and
+		// requestNavPath holds that route until a build covers it.
+		if (reach.startRegion < 0) {
 			return true;
 		}
-		const gnav::NavMesh& navMesh = regions[static_cast<std::size_t>(startRegion)].navMesh;
-
-		const geometry::Vec2i64 startMm = nav::toMm(startMeters);
-		const geometry::Vec2i64 goalMm	= nav::toMm(goalMeters);
-		const std::int64_t radiusMm =
-			static_cast<std::int64_t>(std::llround(static_cast<double>(agentRadiusMeters) * 1000.0));
-
-		return gnav::reachable(navMesh, startMm, goalMm, radiusMm, belief);
+		const int goalRegion = regionContaining(goalMeters);
+		if (goalRegion < 0) {
+			return true;
+		}
+		// A goal in another built region: requestPath won't route between regions.
+		if (goalRegion != reach.startRegion) {
+			return false;
+		}
+		return gnav::reaches(regions[static_cast<std::size_t>(reach.startRegion)].navMesh, reach.from,
+							 nav::toMm(goalMeters), reach.belief);
 	}
 
 	namespace {
