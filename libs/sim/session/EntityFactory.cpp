@@ -109,20 +109,39 @@ namespace ecs {
 
 		// A harvestable needs its resource pool seeded the way chunk placement seeds it, or a chop
 		// withdraws nothing.
-		if (def != nullptr && def->capabilities.harvestable.has_value()) {
-			const auto& harvestable = def->capabilities.harvestable.value();
-			if (harvestable.totalResourceMin > 0 && harvestable.totalResourceMax > 0) {
-				// Seeded from the position's raw float bits (std::hash<float> is implementation-defined),
-				// so a given spot rolls the same amount on every run.
-				const uint32_t							bx = std::bit_cast<uint32_t>(position.x);
-				const uint32_t							by = std::bit_cast<uint32_t>(position.y);
-				std::mt19937							rng((bx * 0x9E3779B9U) ^ (by + 0x85EBCA6BU + (bx << 6) + (bx >> 2)));
-				std::uniform_int_distribution<uint32_t> amount(harvestable.totalResourceMin, harvestable.totalResourceMax);
-				placement.initResourceCount(world::worldToChunk({position.x, position.y}), {position.x, position.y}, defName, amount(rng));
-			}
-		}
-
+		seedResourcePool(defName, position, std::nullopt);
 		return entity;
+	}
+
+	bool EntityFactory::placeStatic(const std::string& defName, glm::vec2 position, float rotation, std::optional<uint32_t> resources) {
+		const world::ChunkCoordinate coord = world::worldToChunk({position.x, position.y});
+		if (!placement.insertEntity(coord, assets::PlacedEntity{.defName = defName, .position = position, .rotation = rotation})) {
+			LOG_WARNING(Engine, "Can't place '%s' at (%.1f, %.1f): chunk (%d, %d) hasn't finished placement", defName.c_str(), position.x,
+						position.y, coord.x, coord.y);
+			return false;
+		}
+		seedResourcePool(defName, position, resources);
+		LOG_INFO(Engine, "Placed static '%s' at (%.1f, %.1f)", defName.c_str(), position.x, position.y);
+		return true;
+	}
+
+	void EntityFactory::seedResourcePool(const std::string& defName, glm::vec2 position, std::optional<uint32_t> resources) {
+		const auto* def = assets::AssetRegistry::Get().getDefinition(defName);
+		if (def == nullptr || !def->capabilities.harvestable.has_value()) {
+			return;
+		}
+		const auto& harvestable = def->capabilities.harvestable.value();
+		if (!resources.has_value()) {
+			if (harvestable.totalResourceMin == 0 || harvestable.totalResourceMax == 0) {
+				return;
+			}
+			const uint32_t							bx = std::bit_cast<uint32_t>(position.x);
+			const uint32_t							by = std::bit_cast<uint32_t>(position.y);
+			std::mt19937							rng((bx * 0x9E3779B9U) ^ (by + 0x85EBCA6BU + (bx << 6) + (bx >> 2)));
+			std::uniform_int_distribution<uint32_t> amount(harvestable.totalResourceMin, harvestable.totalResourceMax);
+			resources = amount(rng);
+		}
+		placement.initResourceCount(world::worldToChunk({position.x, position.y}), position, defName, *resources);
 	}
 
 	void EntityFactory::dropResourcePiles(const std::string& defName, glm::vec2 position, uint32_t quantity) {

@@ -23,6 +23,7 @@
 #include <construction/ConstructionWorld.h>
 
 #include <nav/PathQuery.h>
+#include <session/EntityFactory.h>
 
 #include <world/chunk/ChunkManager.h>
 #include <world/chunk/SyntheticWorldSampler.h>
@@ -989,6 +990,42 @@ TEST_F(NavigationSystemTest, InAreaEntityRemovalTriggersRebuildAndReclaimsHole) 
 
 	// The felled tree's footprint is now walkable ground (locate succeeds + terrain-traversable).
 	EXPECT_TRUE(sys.isOnMesh(treeAt)) << "the felled tree's tile must become walkable after the rebuild";
+}
+
+// A tree placed into a processed chunk at runtime is the same obstacle a generated one is: the
+// edit epoch rebuilds the covering region and the trunk is carved out of the mesh.
+TEST_F(NavigationSystemTest, PlacedStaticBecomesAnObstacleAfterRebuild) {
+	AssetRegistry&	reg = AssetRegistry::Get();
+	AssetDefinition tree;
+	tree.defName					 = "Test_NavPlacedTree";
+	tree.collision.type				 = CollisionShapeType::Rect;
+	tree.collision.halfExtentsMeters = {0.4F, 0.4F};
+	reg.registerTestDefinition(tree);
+
+	PlacementExecutor					executor(reg);
+	std::unordered_set<ChunkCoordinate> processed;
+	const glm::vec2						treeAt{10.0F, 10.0F};
+	const ChunkCoordinate				coord = world::worldToChunk({treeAt.x, treeAt.y});
+	assets::AsyncChunkPlacementResult nothingPlaced;
+	nothingPlaced.coord = coord;
+	executor.storeChunkResult(std::move(nothingPlaced));
+	processed.insert(coord);
+
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys);
+	sys.setPlacementData(&executor, &processed);
+	sys.setConstructionWorld(&cw);
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.isOnMesh(treeAt)) << "open ground before the tree is placed";
+	const std::uint64_t before = sys.generation();
+
+	EntityFactory factory(world, executor);
+	ASSERT_TRUE(factory.placeStatic("Test_NavPlacedTree", treeAt, 0.0F));
+	sys.finishPendingBuilds();
+	EXPECT_GT(sys.generation(), before) << "the insert must rebuild the covering region";
+	EXPECT_FALSE(sys.isOnMesh(treeAt)) << "the placed trunk is carved out of the mesh";
 }
 
 // --- Phase C: query LOD seam (inSimArea + isReachable off-area policy) -------

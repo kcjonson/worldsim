@@ -159,6 +159,17 @@ namespace assets {
 		/// Remove chunk data (call when chunk is unloaded)
 		void unloadChunk(world::ChunkCoordinate coord);
 
+		/// A static def lives in the placement index rather than as an ECS entity: it has biome
+		/// placement rules, which is also what puts it in the spawn order.
+		[[nodiscard]] static bool isStaticDef(const AssetDefinition& def);
+
+		/// File a static entity in a processed chunk's index, as chunk placement files one, and bump
+		/// the edit epoch. False, changing nothing, when the chunk hasn't finished placement: its
+		/// result replaces the whole index when it lands, so an earlier insert would be lost. An
+		/// inserted entity lives and dies with its chunk; unloading the chunk drops it, and reloading
+		/// regenerates only what the placement rules produce.
+		[[nodiscard]] bool insertEntity(world::ChunkCoordinate coord, PlacedEntity entity);
+
 		/// Remove an entity at the specified position
 		/// @param coord Chunk coordinate containing the entity
 		/// @param position World position of the entity
@@ -201,14 +212,13 @@ namespace assets {
 		///         is erased, so a following getResourceCount() returns nullopt (= depleted).
 		uint32_t decrementResourceCount(world::ChunkCoordinate coord, glm::vec2 position, const std::string& defName, uint32_t requested);
 
-		/// Monotonic counter bumped every time a placed entity is removed from a chunk index
-		/// (a destructive harvest felling a tree, a depleted resource node). The nav mesh
-		/// gathers its flora obstacle rings from the LIVE chunk indices, so a removal must
-		/// force the covering region to rebuild -- otherwise the felled tree's trunk hole
-		/// lingers in the mesh and that tile never becomes walkable. NavigationSystem folds
-		/// this epoch into its rebuild gate; chunk membership and the construction version
-		/// alone don't see an in-chunk entity removal.
-		[[nodiscard]] uint64_t removalEpoch() const { return m_removalEpoch; }
+		/// Monotonic counter bumped every time a chunk index gains or loses an entity after its
+		/// placement landed (an insert, a destructive harvest, a depleted resource node). The nav
+		/// mesh gathers its flora obstacle rings from the live chunk indices, so an edit must force
+		/// the covering region to rebuild: a felled tree's trunk hole becomes walkable, an inserted
+		/// tree becomes an obstacle. NavigationSystem folds this epoch into its rebuild gate; chunk
+		/// membership and the construction version alone don't see an in-chunk edit.
+		[[nodiscard]] uint64_t editEpoch() const { return m_editEpoch; }
 
 		/// Get spawn order (for debugging/testing)
 		[[nodiscard]] const std::vector<std::string>& getSpawnOrder() const { return m_spawnOrder; }
@@ -228,8 +238,8 @@ namespace assets {
 		// Per-chunk spatial indices
 		std::unordered_map<world::ChunkCoordinate, SpatialIndex> m_chunkIndices;
 
-		// Bumped on every successful entity removal; see removalEpoch().
-		uint64_t m_removalEpoch = 0;
+		// Bumped on every successful insert or removal; see editEpoch().
+		uint64_t m_editEpoch = 0;
 
 		/// Entity cooldown key - uniquely identifies an entity for cooldown tracking
 		/// Uses quantized position (integer tile coordinates) for reliable hashing

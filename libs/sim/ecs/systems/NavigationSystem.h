@@ -394,7 +394,7 @@ class NavigationSystem : public ISystem {
 		std::future<geometry::nav::NavMesh> future; // in-flight build (valid only while running)
 		std::uint64_t			 builtVersion			 = UINT64_MAX; // ConstructionWorld::version at launch
 		std::uint64_t			 builtAreaChunkSignature = 0;		   // areaChunkSignature at launch
-		std::uint64_t			 builtRemovalEpoch		 = UINT64_MAX; // PlacementExecutor::removalEpoch at launch
+		std::uint64_t			 builtEditEpoch			 = UINT64_MAX; // PlacementExecutor::editEpoch at launch
 		std::uint64_t			 meshGeneration			 = 0;		   // bumped on this region's mesh swap
 
 		[[nodiscard]] bool hasMesh() const { return !navMesh.triangles.empty(); }

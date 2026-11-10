@@ -444,6 +444,30 @@ TEST_F(VisionSystemTest, RememberSegmentReturnsTrueOnce) {
 
 // --- Stale-memory reconciliation (Pass: continuous away-from-target corrector) -
 
+// An entity inserted into a processed chunk after its placement landed (a spawned tree) is
+// seen the way a generated one is.
+TEST_F(VisionSystemTest, InsertedEntityInViewIsRemembered) {
+	AssetRegistry&						reg = AssetRegistry::Get();
+	PlacementExecutor					executor(reg);
+	std::unordered_set<ChunkCoordinate> processed;
+	const ChunkCoordinate				coord{0, 0};
+	assets::AsyncChunkPlacementResult nothingPlaced;
+	nothingPlaced.coord = coord;
+	executor.storeChunkResult(std::move(nothingPlaced));
+	processed.insert(coord);
+
+	const glm::vec2 targetPos{3.0F, 1.0F};
+	ASSERT_TRUE(executor.insertEntity(coord, PlacedEntity{.defName = kTargetDefName, .position = targetPos}));
+
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setPlacementData(&executor, &processed);
+	EntityID observer = spawnObserver(world, {0.0F, 0.0F});
+
+	tick(sys);
+	EXPECT_TRUE(remembers(world, observer, targetPos));
+}
+
 // Observer discovers a placed entity via a normal tick, the entity is then removed
 // from the placement index (destructive harvest / pickup), and on the next tick --
 // with the spot still in view -- the observer forgets it.

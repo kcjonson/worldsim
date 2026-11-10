@@ -122,4 +122,57 @@ namespace ecs::test {
 		EXPECT_FALSE(world.getComponent<Packaged>(loose)->targetPosition.has_value());
 	}
 
+	// Integration replaces a chunk's whole index when its placement lands, so an earlier insert
+	// would vanish; it is refused instead.
+	TEST_F(EntityFactoryTest, PlaceStaticIsRefusedBeforeTheChunksPlacementLands) {
+		EXPECT_FALSE(factory.placeStatic("Wood", {3.0F, 3.0F}, 0.0F));
+		EXPECT_EQ(placement.getChunkIndex({0, 0}), nullptr);
+		EXPECT_EQ(placement.editEpoch(), 0U);
+	}
+
+	// A placed bush is filed in the index with a resource pool and depletes and is removed the way
+	// a generated one does.
+	TEST_F(EntityFactoryTest, PlacedStaticJoinsTheIndexWithItsResourcePool) {
+		assets::AssetDefinition bush;
+		bush.defName = "Test_StickBush";
+		bush.placement.biomes.push_back(assets::BiomePlacement{.biomeName = "TemperateGrassland"});
+		bush.capabilities.harvestable = assets::HarvestableCapability{};
+		bush.capabilities.harvestable->yieldDefName = "Wood";
+		bush.capabilities.harvestable->destructive = false;
+		bush.capabilities.harvestable->totalResourceMin = 3;
+		bush.capabilities.harvestable->totalResourceMax = 5;
+		assets::AssetRegistry::Get().registerTestDefinition(std::move(bush));
+		ASSERT_TRUE(assets::PlacementExecutor::isStaticDef(*assets::AssetRegistry::Get().getDefinition("Test_StickBush")));
+		EXPECT_FALSE(assets::PlacementExecutor::isStaticDef(*assets::AssetRegistry::Get().getDefinition("CraftingSpot")));
+
+		const world::ChunkCoordinate coord{0, 0};
+		assets::AsyncChunkPlacementResult nothingPlaced;
+		nothingPlaced.coord = coord;
+		placement.storeChunkResult(std::move(nothingPlaced));
+
+		const glm::vec2 rolled{4.0F, 4.0F};
+		const glm::vec2 given{8.0F, 4.0F};
+		ASSERT_TRUE(factory.placeStatic("Test_StickBush", rolled, 0.0F));
+		ASSERT_TRUE(factory.placeStatic("Test_StickBush", given, 0.0F, 7U));
+		EXPECT_EQ(placement.editEpoch(), 2U);
+		EXPECT_EQ(placement.getChunkIndex(coord)->queryRadius(rolled, 0.1F).size(), 1U);
+		int ecsEntities = 0;
+		for ([[maybe_unused]] auto [entity, appearance] : world.view<Appearance>()) {
+			++ecsEntities;
+		}
+		EXPECT_EQ(ecsEntities, 0) << "a static is not an ECS entity";
+
+		const auto pool = placement.getResourceCount(coord, rolled, "Test_StickBush");
+		ASSERT_TRUE(pool.has_value());
+		EXPECT_GE(*pool, 3U);
+		EXPECT_LE(*pool, 5U);
+		EXPECT_EQ(placement.getResourceCount(coord, given, "Test_StickBush"), 7U);
+
+		EXPECT_EQ(placement.decrementResourceCount(coord, given, "Test_StickBush", 10), 7U);
+		EXPECT_FALSE(placement.getResourceCount(coord, given, "Test_StickBush").has_value()) << "depleted";
+		EXPECT_TRUE(placement.removeEntity(coord, given, "Test_StickBush"));
+		EXPECT_TRUE(placement.getChunkIndex(coord)->queryRadius(given, 0.1F).empty());
+		EXPECT_EQ(placement.editEpoch(), 3U);
+	}
+
 } // namespace ecs::test

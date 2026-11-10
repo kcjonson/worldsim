@@ -392,14 +392,13 @@ namespace ecs {
 		if (areaChunkSignature(region.center, region.halfExtent) != region.builtAreaChunkSignature) {
 			return true;
 		}
-		// A felled tree / depleted node is removed from the live chunk index but leaves no
-		// chunk-membership or construction-version change, so neither check above sees it.
-		// The placement removal epoch does: any removal forces the covering region to rebuild
-		// and reclaim the trunk hole as walkable ground (the mesh re-gathers flora rings from
-		// the live index). Region-wide, not per-position -- a removal anywhere rebuilds, which
-		// is fine: harvests are infrequent relative to the gate.
-		const std::uint64_t epoch = (placement != nullptr) ? placement->removalEpoch() : 0;
-		if (epoch != region.builtRemovalEpoch) {
+		// A felled tree or an inserted one changes the live chunk index but not chunk membership
+		// or the construction version, so neither check above sees it. The placement edit epoch
+		// does: any edit forces the covering region to rebuild (the mesh re-gathers flora rings
+		// from the live index). Region-wide, not per-position -- an edit anywhere rebuilds, which
+		// is fine: edits are infrequent relative to the gate.
+		const std::uint64_t epoch = (placement != nullptr) ? placement->editEpoch() : 0;
+		if (epoch != region.builtEditEpoch) {
 			return true;
 		}
 		return false;
@@ -482,9 +481,9 @@ namespace ecs {
 
 		region.builtVersion				= constructionWorld->version();
 		region.builtAreaChunkSignature	= areaChunkSignature(region.center, region.halfExtent);
-		// Snapshot the removal epoch from the SAME live index buildInput just read, so the
-		// gate only refires on a removal that lands after this build.
-		region.builtRemovalEpoch		= (placement != nullptr) ? placement->removalEpoch() : 0;
+		// Snapshot the edit epoch from the SAME live index buildInput just read, so the
+		// gate only refires on an edit that lands after this build.
+		region.builtEditEpoch			= (placement != nullptr) ? placement->editEpoch() : 0;
 
 		const double inputMs =
 			std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - inputStart).count();

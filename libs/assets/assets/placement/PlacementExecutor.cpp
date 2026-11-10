@@ -17,6 +17,12 @@ namespace assets {
 
 	namespace {
 
+		void stampStaticDepth(PlacedEntity& entity, const MeshYExtent& templateExtent, bool isGroundcover) {
+			const auto depth = computeStaticDepthAttribs(entity.position.y, templateExtent, entity.scale, isGroundcover);
+			entity.anchorY = depth.anchorY;
+			entity.isTallOccluder = depth.isTallOccluder;
+		}
+
 		// Grove-density noise: a low-frequency, domain-warped value-noise field in [0,1]
 		// that varies "spaced" flora (trees) so a forest reads as dense stands with both
 		// rare open glades and rare extra-dense thickets, rather than an even orchard. A
@@ -102,8 +108,7 @@ namespace assets {
 				continue;
 			}
 
-			// Only add to graph if it has biome placement rules
-			if (def->placement.biomes.empty()) {
+			if (!isStaticDef(*def)) {
 				continue;
 			}
 
@@ -222,9 +227,7 @@ namespace assets {
 		// and the result list. anchorY + isTallOccluder then ride along on the frozen
 		// index copies for the gather to read directly.
 		auto placeAndRecord = [&](PlacedEntity& entity) {
-			const auto depth = assets::computeStaticDepthAttribs(entity.position.y, templateExtent, entity.scale, isGroundcover);
-			entity.anchorY = depth.anchorY;
-			entity.isTallOccluder = depth.isTallOccluder;
+			stampStaticDepth(entity, templateExtent, isGroundcover);
 			chunkIndex.insert(entity);
 			outEntities.push_back(entity);
 		};
@@ -712,6 +715,25 @@ namespace assets {
 		};
 	}
 
+	bool PlacementExecutor::isStaticDef(const AssetDefinition& def) {
+		return !def.placement.biomes.empty();
+	}
+
+	bool PlacementExecutor::insertEntity(world::ChunkCoordinate coord, PlacedEntity entity) {
+		auto it = m_chunkIndices.find(coord);
+		if (it == m_chunkIndices.end()) {
+			return false;
+		}
+		stampStaticDepth(entity, meshYExtent(AssetRegistry::Get().getTemplate(entity.defName)), isGroundcoverDef(entity.defName));
+		it->second.insert(entity);
+		++m_editEpoch;
+		LOG_DEBUG(
+			Engine, "PlacementExecutor: Inserted entity %s at (%.1f, %.1f) in chunk (%d, %d)", entity.defName.c_str(), entity.position.x,
+			entity.position.y, coord.x, coord.y
+		);
+		return true;
+	}
+
 	bool PlacementExecutor::removeEntity(world::ChunkCoordinate coord, glm::vec2 position, const std::string& defName) {
 		auto it = m_chunkIndices.find(coord);
 		if (it == m_chunkIndices.end()) {
@@ -721,10 +743,7 @@ namespace assets {
 
 		bool removed = it->second.remove(position, defName);
 		if (removed) {
-			// A removed flora obstacle changes the nav obstacle set: bump the epoch so the
-			// NavigationSystem rebuilds the covering region and reclaims the trunk hole as
-			// walkable ground.
-			++m_removalEpoch;
+			++m_editEpoch;
 			LOG_DEBUG(
 				Engine,
 				"PlacementExecutor: Removed entity %s at (%.1f, %.1f) in chunk (%d, %d)",

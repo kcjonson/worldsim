@@ -37,6 +37,13 @@ namespace ecs {
 		/// pool rolled from the position.
 		EntityID createWorldEntity(const std::string& defName, glm::vec2 position);
 
+		/// A static entity (PlacementExecutor::isStaticDef) filed in its chunk's placement index, the
+		/// same kind of thing chunk placement makes: nav, collision, vision, and harvest all see it. A
+		/// harvestable gets `resources` in its pool, or a roll from its def's range by position. False
+		/// when the chunk hasn't finished placement; nothing is placed.
+		[[nodiscard]] bool
+		placeStatic(const std::string& defName, glm::vec2 position, float rotation, std::optional<uint32_t> resources = std::nullopt);
+
 		/// Haulable ground piles of quantity items, split at the item's stack size into piles
 		/// spread around position. The one ground-pile drop path.
 		void dropResourcePiles(const std::string& defName, glm::vec2 position, uint32_t quantity);
@@ -46,6 +53,11 @@ namespace ecs {
 		EntityID createPackaged(const std::string& defName, glm::vec2 position, std::optional<glm::vec2> target);
 
 	  private:
+		/// Seed a harvestable's resource pool: `resources` when given, else a roll from the def's
+		/// range seeded by the position's raw float bits (std::hash<float> is implementation-defined),
+		/// so a given spot rolls the same amount on every run.
+		void seedResourcePool(const std::string& defName, glm::vec2 position, std::optional<uint32_t> resources);
+
 		World&					   world;
 		assets::PlacementExecutor& placement;
 	};
