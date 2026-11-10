@@ -471,9 +471,6 @@ namespace world_sim {
 		if (auto* target = m_ctx.world->getComponent<ecs::MovementTarget>(id)) {
 			target->active = false;
 		}
-		if (auto* vel = m_ctx.world->getComponent<ecs::Velocity>(id)) {
-			vel->value = {0.0F, 0.0F};
-		}
 		LOG_INFO(Game, "[DevAPI] teleport: #%llu -> (%.1f, %.1f)", static_cast<unsigned long long>(id), to.x, to.y);
 		m_ctx.ui->pushNotification("Dev", "Teleported", ui::ToastSeverity::Info);
 	}

@@ -128,6 +128,8 @@ namespace ecs {
 				float restoreAmount = 0.0F;
 				if (action.hasNeedEffect()) {
 					restoreAmount = action.needEffect().restoreAmount;
+				} else if (action.hasConsumptionEffect()) {
+					restoreAmount = action.consumptionEffect().restoreAmount;
 				}
 				LOG_INFO(
 					Engine,
