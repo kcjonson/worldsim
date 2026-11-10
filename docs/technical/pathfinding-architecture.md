@@ -99,32 +99,46 @@ keeps two kinds of region, with the owner stored on each. **Colonist regions** c
 positions alone: each colonist drives a 30 m square, and overlapping squares cluster into one
 region while the cluster fits the 128 m max (`clusterColonists`); a square that would push a
 cluster past it starts another, overlapping one. No colonist region is clamped below its
-colonists, so each sits at least 30 m inside his. The **camera region** follows the viewport and is
+colonists: each sits at least 30 m inside the rect his cluster asks for, and a served region, which
+recenters only once a driver comes within its 8 m edge margin, holds every driver at least 8 m
+inside. Half-extents clamp to [30 m, 64 m] only, not to the loaded chunks (load radius 1 of 512 m
+chunks reaches far past 64 m). When clusters merge, the absorbed colonist's old region keeps
+serving him until a wanted region's served mesh holds him, so a merge never leaves him in no built
+region while the survivor's larger mesh builds. The **camera region** follows the viewport and is
 never merged with a colonist region (decided 2026-11-10: merged, a colonist's region was pinned and
 clamped by the camera, which capped how far he could walk while the player watched him and made the
 region rebuild every time a build landed). Rebuilds self-gate off the render clock: a region
 recenters only when one of its drivers nears its edge or its obstacle inputs change, so a
 stationary colonist under a held camera triggers zero rebuilds, and moving the camera rebuilds only
-the camera region. A region asked to recenter onto the rect it already has doesn't rebuild unless
-its obstacle inputs changed. Mesh queries use the rect the served mesh was built for (`meshRect`,
+the camera region, and only colonist-region swaps move `generation()`, the stamp colonist routes
+replan on. Mesh queries use the rect the served mesh was built for (`meshRect`,
 set at its swap), not the rect of a build still in flight. Where the camera region overlaps a
 colonist region that ground is meshed twice; the colonist's 30 m region costs 10-25 ms a build on
 the forested quickstart, against about 300 ms for a 64 m region.
 
 **Query dispatch.** Colonist queries (`requestPath`, `reachFrom`/`reaches`/`coversGoal`/
 `stagingPointToward`, `inSimArea`, `isOnMesh`, `nearestPathablePoint` and so the recovery snap,
-`isBuildingAround`) consult colonist regions only, so where the camera is never changes what a
-colonist can reach. Colonist regions can overlap (a region keeps its rect until a driver nears the
+`isBuildingAround`) consult colonist regions only, so within loaded chunks where the camera is never
+changes what a colonist can reach. (Chunk streaming itself still follows the camera, a separate
+bug.) Colonist regions can overlap (a region keeps its rect until a driver nears the
 edge, while a neighbour is built beside it), so each mesh carries a `MeshStamp` (the construction
 version and placement removal epoch it was built from, set at its swap), and a point or pair is
 answered by the built regions holding it whose stamp is the newest among them, in id order: a pair
 is routed through each such region holding both ends until one finds a route, `reaches` passes a
 goal when one of them lets it through, and a point goes to the first of them. A stale mesh never
-overrides a fresher one; regions on equal stamps were built from the same world. A goal no colonist
+overrides a fresher one. Equal stamps don't mean the same world: the stamp leaves out chunk
+readiness (a chunk finishing its terrain or placement), which is a per-area hash with no order, so
+two overlapping regions on one stamp can briefly differ there until the late chunk rebuilds them
+both, a few frames. A route goal counts as in a region only 2 m or more inside its rect, where a
+colonist walking toward it stands in the recenter margin. A goal no colonist
 region holding him covers (off every region, or only in the camera's) is walked toward: he routes
 to the reachable point in his regions nearest it (`stagingPointToward`, inside the recenter margin),
 his region follows him, and the mesh swap re-plans the same goal until a region holding him covers
-it. A leg that gets him nowhere, or three finished legs that get him no closer, end the walk as no
+it. A harvest, build or deconstruct target walked toward keeps its centre until a region holding
+him covers it, and is snapped to the walkable point beside it only then, and only when it's off a
+face. A player's move order snaps against every region (he clicks what he sees) and is walked
+toward the same way. A leg that gets him nowhere, or three finished legs that get him no closer, end the walk as no
+
 route, so a need moves on to its next source and retries this one when his reach changes. The edge
 walk is a stand-in for Phase 2 below, not a long-range router: it only sees what his 30 m region
 sees, so water or walls that need a wider detour end it. A colonist outside every colonist region
@@ -148,7 +162,9 @@ camera, so placement works wherever the player looks. This is the single canonic
 world-positioning path respects (One Path Rule): dev spawn / give-loose / teleport and
 build-placement preview (the ghost reads validity from the mesh each frame, goes red off-mesh,
 blocks the click), and the area/segment/polyline walkability checks sample it. `isOnMesh` is the
-same face test scoped to colonist regions, for colonist recovery. All ad-hoc checks were deleted.
+same face test scoped to colonist regions, for a colonist's own decisions (recovery, toilet spots),
+so they never depend on the camera; `nearestValidPosition` is the all-region snap for move orders.
+All ad-hoc checks were deleted.
 
 **World-data-vs-runtime boundary (load-bearing).** The 3D world/planet data exists ONLY to spawn
 chunk data at initial load and during chunk generation. It is NOT read at runtime for anything

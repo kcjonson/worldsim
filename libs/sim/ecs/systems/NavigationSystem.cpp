@@ -36,6 +36,17 @@ namespace ecs {
 			return owner == RegionOwner::Camera ? "camera" : "colonists";
 		}
 
+		// A route goal counts as in a region only kStagingInsetMm or more inside its rect. Nearer the
+		// edge, the mesh's border can leave it off every face (a snap there lands metres away), and a
+		// colonist walking toward it stands kStagingInsetMm inside, in the recenter margin, so his region
+		// moves to hold it properly.
+		bool holdsGoal(const SimAabb& rect, geometry::Vec2i64 goal) {
+			constexpr std::int64_t kInset = NavigationSystem::kStagingInsetMm;
+			return goal.x >= rect.minX + kInset && goal.x <= rect.maxX - kInset && goal.y >= rect.minY + kInset &&
+				   goal.y <= rect.maxY - kInset;
+		}
+
+
 		// Squared distance and closest-point-on-segment, in meters. Used by
 		// nearestPathablePoint; kept local and free of glm free functions.
 		float dist2(glm::vec2 a, glm::vec2 b) {
@@ -360,15 +371,8 @@ namespace ecs {
 		}
 	}
 
-	std::int64_t NavigationSystem::clampHalfExtent(std::int64_t requested) const {
-		std::int64_t clamped = std::max(kMinSimHalfExtentMm, std::min(kMaxSimHalfExtentMm, requested));
-		if (chunkManager != nullptr) {
-			const std::int64_t chunkMm	  = static_cast<std::int64_t>(world::kChunkSize) * 1000;
-			const std::int64_t loadRadius = static_cast<std::int64_t>(chunkManager->loadRadius());
-			const std::int64_t maxRadius  = loadRadius * chunkMm - chunkMm / 2;
-			clamped = std::max<std::int64_t>(0, std::min(clamped, maxRadius));
-		}
-		return clamped;
+	std::int64_t NavigationSystem::clampHalfExtent(std::int64_t requested) {
+		return std::max(kMinSimHalfExtentMm, std::min(kMaxSimHalfExtentMm, requested));
 	}
 
 	std::uint64_t NavigationSystem::areaChunkSignature(geometry::Vec2i64 center, std::int64_t halfExtent) const {
@@ -470,17 +474,22 @@ namespace ecs {
 		LOG_DEBUG(Engine, "[NavBuild] region %d buildInput %.2f ms: polys=%zu walkableBorders=%zu blockedRings=%zu",
 				 region.id, inputMs, input.polygons.size(), walkableBorders, input.polygons.size() - walkableBorders);
 
-		region.future = std::async(std::launch::async, [input = std::move(input), id = region.id]() {
+		region.future = buildRunner(std::move(input), region.id);
+	}
+
+	std::future<geometry::nav::NavMesh> NavigationSystem::runBuildAsync(gnav::NavMeshInput input, std::int32_t regionId) {
+		return std::async(std::launch::async, [input = std::move(input), regionId]() {
 			const auto			   buildStart = std::chrono::steady_clock::now();
 			geometry::nav::NavMesh m		  = gnav::buildNavMesh(input);
 			const double		   buildMs =
 				std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - buildStart).count();
 			// Permanent worker-thread build-timing diagnostic. DEBUG keeps it off the default stream.
-			LOG_DEBUG(Engine, "[NavBuild] region %d buildNavMesh %.2f ms: tris=%zu verts=%zu", id, buildMs,
+			LOG_DEBUG(Engine, "[NavBuild] region %d buildNavMesh %.2f ms: tris=%zu verts=%zu", regionId, buildMs,
 					 m.triangles.size(), m.vertices.size());
 			return m;
 		});
 	}
+
 
 	void NavigationSystem::drainFinishedBuilds() {
 		std::erase_if(retiringBuilds, [](const std::future<geometry::nav::NavMesh>& build) {
@@ -499,7 +508,10 @@ namespace ecs {
 			region.meshStamp = {.constructionVersion = region.builtVersion, .removalEpoch = region.builtRemovalEpoch};
 			region.future	= {};
 			++region.meshGeneration;
-			++meshGeneration;
+			if (region.owner == RegionOwner::Colonists) {
+				++meshGeneration;
+			}
+
 
 			std::size_t walkable = 0;
 			std::size_t floor	 = 0;
@@ -631,16 +643,6 @@ namespace ecs {
 				if (region.future.valid()) {
 					continue;
 				}
-				// "Recentering" onto the rect it already has: a driver held inside the margin of a
-				// region clamped below its cluster (to the loaded-chunk extent). Rebuilding would make
-				// the same mesh again, every time a build lands, forever; only an obstacle-input change
-				// warrants one.
-				if (region.center == wantCenter && region.halfExtent == wantHalf) {
-					if (regionObstaclesChanged(region)) {
-						launchBuild(region);
-					}
-					continue;
-				}
 				region.center	  = wantCenter;
 				region.halfExtent = wantHalf;
 				launchBuild(region);
@@ -664,11 +666,41 @@ namespace ecs {
 			}
 		}
 
+		// A colonist region no cluster wants any more still serves a colonist standing in its mesh
+		// until some wanted colonist region's served mesh holds him too: when clusters merge, the
+		// survivor's larger mesh is still building, and dropping the other at once would leave him in
+		// no built region (held, his reach empty, recovery skipped) until it lands.
+		auto stillServes = [&](std::size_t r) {
+			const SimulationRegion& region = regions[r];
+			if (region.owner != RegionOwner::Colonists || !region.hasMesh()) {
+				return false;
+			}
+			for (const DesiredRegion& want : desired) {
+				if (want.owner != RegionOwner::Colonists) {
+					continue;
+				}
+				for (const geometry::Vec2i64& p : want.drivers) {
+					if (!region.meshRect.contains(p)) {
+						continue;
+					}
+					bool held = false;
+					for (std::size_t q = 0; q < regions.size() && !held; ++q) {
+						held = q != r && regionMatched[q] && regions[q].owner == RegionOwner::Colonists &&
+							   regions[q].hasMesh() && regions[q].meshRect.contains(p);
+					}
+					if (!held) {
+						return true;
+					}
+				}
+			}
+			return false;
+		};
+
 		// Drop regions no longer wanted, retiring any in-flight build (its worker owns its
 		// input by value) rather than waiting on it, unless retiringBuilds is already at
 		// its cap. Also purge their RRA caches.
 		for (std::size_t r = regions.size(); r-- > 0;) {
-			if (regionMatched[r]) {
+			if (regionMatched[r] || stillServes(r)) {
 				continue;
 			}
 			if (regions[r].future.valid()) {
@@ -755,7 +787,9 @@ namespace ecs {
 							   .center = r.center,
 							   .halfExtent = r.halfExtent,
 							   .owner = r.owner,
-							   .meshGeneration = r.meshGeneration});
+							   .id = r.id,
+							   .meshGeneration = r.meshGeneration,
+							   .meshStamp = r.meshStamp});
 			}
 		}
 		return out;
@@ -785,7 +819,7 @@ namespace ecs {
 
 		auto holdsPair = [&](const SimulationRegion& region) {
 			return region.owner == RegionOwner::Colonists && region.hasMesh() && region.meshRect.contains(startMm) &&
-				   region.meshRect.contains(goalMm);
+				   holdsGoal(region.meshRect, goalMm);
 		};
 		MeshStamp newest;
 		for (const SimulationRegion& region : regions) {
@@ -860,7 +894,7 @@ namespace ecs {
 	bool NavigationSystem::coversGoal(const Reach& reach, glm::vec2 goalMeters) const {
 		const geometry::Vec2i64 goalMm = nav::toMm(goalMeters);
 		return std::any_of(reach.regions.begin(), reach.regions.end(),
-						   [&](const RegionReach& r) { return r.rect.contains(goalMm); });
+						   [&](const RegionReach& r) { return holdsGoal(r.rect, goalMm); });
 	}
 
 	bool NavigationSystem::reaches(const Reach& reach, glm::vec2 goalMeters) const {
@@ -875,12 +909,12 @@ namespace ecs {
 		const geometry::Vec2i64 goalMm = nav::toMm(goalMeters);
 		MeshStamp				newest;
 		for (const RegionReach& r : reach.regions) {
-			if (r.rect.contains(goalMm)) {
+			if (holdsGoal(r.rect, goalMm)) {
 				newest = std::max(newest, r.stamp);
 			}
 		}
 		for (const RegionReach& r : reach.regions) {
-			if (r.rect.contains(goalMm) && r.stamp == newest &&
+			if (holdsGoal(r.rect, goalMm) && r.stamp == newest &&
 				gnav::reaches(regions[static_cast<std::size_t>(r.index)].navMesh, r.from, goalMm, reach.belief)) {
 				return true;
 			}
@@ -1271,7 +1305,16 @@ namespace ecs {
 	}
 
 	std::optional<glm::vec2> NavigationSystem::nearestPathablePoint(glm::vec2 meters, float agentRadiusMeters) const {
-		const int region = regionAt(nav::toMm(meters), RegionScope::Colonists);
+		return nearestClearPoint(meters, agentRadiusMeters, RegionScope::Colonists);
+	}
+
+	std::optional<glm::vec2> NavigationSystem::nearestValidPosition(glm::vec2 meters, float agentRadiusMeters) const {
+		return nearestClearPoint(meters, agentRadiusMeters, RegionScope::All);
+	}
+
+	std::optional<glm::vec2> NavigationSystem::nearestClearPoint(glm::vec2 meters, float agentRadiusMeters,
+																 RegionScope scope) const {
+		const int region = regionAt(nav::toMm(meters), scope);
 		if (region < 0) {
 			return std::nullopt; // off every region: caller leaves the colonist put
 		}
@@ -1283,7 +1326,7 @@ namespace ecs {
 			return nearestPathableOnMesh(navMesh, meters);
 		}
 
-		auto onMesh = [&](glm::vec2 p) { return isOnMesh(p); };
+		auto onMesh = [&](glm::vec2 p) { return scope == RegionScope::Colonists ? isOnMesh(p) : isValidPosition(p); };
 
 		// Fast path: take the bare nearest-walkable point and push it out of the bands. In
 		// the common case (a roomy face beside the wall) the ejected point stays on that

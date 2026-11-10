@@ -1219,9 +1219,10 @@ namespace ecs {
 
 			// Edge-leg retry. A leg toward a goal beyond the colonist's regions ends by stopping him inside
 			// his region's recenter margin, and the recenter's swap re-plans the next leg (replan above).
-			// When no build comes (the leg ended short of the recenter margin, or his region is clamped to
-			// the loaded-chunk extent), ask for the next leg on the periodic cadence, so the walk finds one
-			// or ends as no route (stalledWalkingToward) instead of standing there forever.
+			// When no build comes (water or a wall cut the leg short of the margin, so his region has no
+			// reason to move), ask for the next leg on the periodic cadence, so the walk finds one or ends
+			// as no route (stalledWalkingToward) instead of standing there forever.
+
 			if (auto* navPath = world->getComponent<NavPath>(entity);
 				navPath != nullptr && navPath->valid && navPath->endsShortOfGoal &&
 				navPath->current >= navPath->waypoints.size() && task.state == TaskState::Moving &&
@@ -1923,21 +1924,25 @@ namespace ecs {
 			// checked point and the action would report "not at source or target" forever.
 			const bool snapEligible = option.taskType == TaskType::Harvest ||
 									  option.taskType == TaskType::Build || option.taskType == TaskType::Deconstruct;
-			if (haveMesh && needsTarget && snapEligible) {
-				// nullopt means the target is outside every active sim region (off-area): drop the
-				// option to NoSource so the colonist prefers a reachable nearby source and never
-				// commits to an off-area target it would hold on forever.
-				// The snap nudge stays within HarvestActions' kPositionTolerance (0.5 m) of the target,
-				// so the colonist still registers "at source" on arrival. (The arbitration epic's
-				// locate-by-entity supersedes this position-based snap.)
+			// Only a target a region holding the colonist covers is snapped here; one beyond them keeps its
+			// centre and is walked toward (requestNavPath), and the route snaps it once a region holding
+			// him covers it. The snap nudge stays within HarvestActions' kPositionTolerance (0.5 m) of the
+			// target, so the colonist still registers "at source" on arrival. (The arbitration epic's
+			// locate-by-entity supersedes this position-based snap.)
+			// A target already on a walkable face stays put: the nearest-face snap measures to triangle
+			// edges, so on open ground (large faces) it would move a walkable target metres off.
+			if (reach != nullptr && needsTarget && snapEligible && m_navSystem->coversGoal(*reach, option.targetPosition.value()) &&
+				!m_navSystem->isOnMesh(option.targetPosition.value())) {
+
 				const auto snapped = m_navSystem->nearestPathablePoint(option.targetPosition.value());
 				if (!snapped.has_value()) {
-					option.status = OptionStatus::NoSource; // off every active region: don't commit
+					option.status = OptionStatus::NoSource; // its region has no walkable floor
 					continue;
 				}
 				option.targetPosition  = snapped;
 				option.targetReachable = false; // a moved target is tested where it now is
 			}
+
 			if (needsTarget && !option.targetReachable && !canReach(option.targetPosition.value())) {
 				option.status = OptionStatus::NoSource; // unreachable: skip it rather than freeze on it
 				continue;
@@ -2194,7 +2199,16 @@ namespace ecs {
 				}
 			}
 		} else {
-			path = m_navSystem->requestPath(position.value, goal, radius, belief);
+			// A harvest/build target walked toward from beyond his regions kept its centre, which can sit
+			// in the hole its own collision carves; now a region holding him covers it, route to the
+			// walkable point beside it (within the action's arrival tolerance).
+			glm::vec2 routeGoal = goal;
+			if (!m_navSystem->isOnMesh(goal)) {
+				if (const auto snapped = m_navSystem->nearestPathablePoint(goal)) {
+					routeGoal = *snapped;
+				}
+			}
+			path = m_navSystem->requestPath(position.value, routeGoal, radius, belief);
 		}
 		if (!path.has_value()) {
 			// A mesh exists but the colonist's belief admits no route: a believed wall cuts the
@@ -2433,16 +2447,19 @@ namespace ecs {
 			return std::nullopt;
 		}
 
-		// Snap an unwalkable click (water, inside a wall, off the sim area) to the nearest pathable
-		// point so a near-miss click still walks the colonist as close as it can get. With no
-		// NavigationSystem (headless), take the raw goal -- there's no mesh to judge it against.
+		// Snap an unwalkable click (water, inside a wall) to the nearest walkable point in the regions
+		// the player can place in (his view's included), so a near-miss click still walks the colonist
+		// as close as it can get; a goal beyond the colonist's own regions is then walked toward like
+		// any other. With no NavigationSystem (headless), take the raw goal -- there's no mesh to judge
+		// it against.
 		float radius = 0.3F;
 		if (const auto* agentRadius = world->getComponent<AgentRadius>(entity)) {
 			radius = agentRadius->radiusMeters;
 		}
 		glm::vec2 goal = worldGoal;
-		if (m_navSystem != nullptr && !m_navSystem->isOnMesh(goal)) {
-			const auto snapped = m_navSystem->nearestPathablePoint(goal, radius);
+		if (m_navSystem != nullptr && !m_navSystem->isValidPosition(goal)) {
+			const auto snapped = m_navSystem->nearestValidPosition(goal, radius);
+
 			if (!snapped.has_value()) {
 				return std::nullopt;  // nothing reachable near the click; leave the colonist be
 			}

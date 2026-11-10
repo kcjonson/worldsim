@@ -28,6 +28,7 @@
 #include "../components/Structure.h"
 #include "../components/StructureBlueprint.h"
 #include "../components/Task.h"
+#include "../components/ToiletLocationFinder.h"
 #include "../components/Transform.h"
 
 #include "assets/ActionTypeRegistry.h"
@@ -4143,4 +4144,155 @@ namespace ecs::test {
 		EXPECT_LE(choseAcross, 3) << "and then given up on, not retried every decision";
 	}
 
+	// The only water he knows is far across the river, beyond every region he could get: once no step
+	// toward it is possible from the bank, the walk ends as no route, and Thirst reads NoSource instead
+	// of him standing on the bank forever.
+	TEST_F(AIDecisionRiverWalkTest, WalkWithNoStepLeftEnds) {
+		const auto		colonist = makeThirstyColonistWithItsOwnRegion();
+		const glm::vec2 farAcross{60.0F, 200.0F};
+		addKnownEntity(colonist, farAcross, kWaterDefId, assets::CapabilityType::Drinkable);
+
+		const bool gaveUp = tickUntil(*world, *nav, 1500, [&] {
+			const auto* thirst = findOption(*getTrace(colonist), [](const EvaluatedOption& o) {
+				return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Thirst;
+			});
+			return thirst != nullptr && thirst->status == OptionStatus::NoSource;
+		});
+		const glm::vec2 at = world->getComponent<Position>(colonist)->value;
+		EXPECT_TRUE(gaveUp) << "still walking at (" << at.x << ", " << at.y << ")";
+		EXPECT_LT(std::abs(at.y), kRiverY - kRiverHalfWidth) << "he never left his side of the river";
+	}
+
+	// Legs that finish without getting him closer (something holds him in place; here the test puts him
+	// back after every leg) end the walk after kEdgeWalkMaxStalledLegs of them, though a step toward the
+	// water is always on offer.
+	TEST_F(AIDecisionOffAreaTest, LegsThatGetHimNoCloserEndTheWalk) {
+		const auto		colonist = makeThirstyColonistWithItsOwnRegion();
+		const glm::vec2 home{0.0F, 0.0F};
+		const glm::vec2 water{90.0F, 0.0F};
+		addKnownEntity(colonist, water, kWaterDefId, assets::CapabilityType::Drinkable);
+
+		int	 finishedLegs = 0;
+		bool ended		  = false;
+		for (int i = 0; i < 400 && !ended; ++i) {
+			if (auto* navPath = world->getComponent<NavPath>(colonist);
+				navPath != nullptr && navPath->valid && navPath->endsShortOfGoal && navPath->current < navPath->waypoints.size()) {
+				navPath->current = navPath->waypoints.size();
+				getMovementTarget(colonist)->active = false;
+				++finishedLegs;
+
+			}
+			world->getComponent<Position>(colonist)->value = home;
+			world->update(kTick);
+			const Task* task   = getTask(colonist);
+			const auto* thirst = findOption(*getTrace(colonist), [](const EvaluatedOption& o) {
+				return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Thirst;
+			});
+			ended = (task->targetPosition == water && task->navState == NavState::CantFindWayTo) ||
+					(thirst != nullptr && thirst->status == OptionStatus::NoSource);
+
+		}
+		EXPECT_TRUE(ended) << "the walk never ended after " << finishedLegs << " legs that got him nowhere";
+		EXPECT_GE(finishedLegs, 3) << "it ended before the stalled legs ran out";
+	}
+
+	// A right-click outside every colonist region (on ground the player sees in the camera's region) is
+
+	// taken: it snaps against the camera's mesh, and the order walks him there like any other goal.
+	TEST_F(AIDecisionOffAreaTest, MoveOrderOutsideHisRegionsWalksHimThere) {
+		const auto colonist = makeThirstyColonistWithItsOwnRegion();
+		setNeedValue(colonist, NeedType::Thirst, 100.0F);
+		const glm::vec2 click{90.0F, 5.0F};
+		nav->setViewportRect(click, {30.0F, 30.0F});
+		ASSERT_TRUE(pumpUntil(*nav, "the camera region", [&] { return nav->builtRegions().size() == 2U && !nav->isBuilding(); }));
+		ASSERT_FALSE(nav->inSimArea(click));
+
+		auto& ai = world->getSystem<AIDecisionSystem>();
+		ai.enterControl(colonist);
+		const auto routed = ai.issuePlayerMoveOrder(colonist, click);
+		ASSERT_TRUE(routed.has_value()) << "the order was dropped";
+		EXPECT_LT(glm::distance(*routed, click), 0.5F);
+
+		const bool arrived = tickUntil(*world, *nav, 1500, [&] { return getTask(colonist)->state == TaskState::Arrived; });
+		const glm::vec2 at = world->getComponent<Position>(colonist)->value;
+		EXPECT_TRUE(arrived) << "stuck at (" << at.x << ", " << at.y << ")";
+		EXPECT_LT(glm::distance(at, *routed), 0.5F);
+	}
+
+	// Where to relieve himself is a colonist's own choice: the camera's region, which holds better
+	// spots past the edge of his, must not change it. Food he knows around him pushes the best spot
+	// east, past his region's edge at x = 30.
+	TEST_F(AIDecisionOffAreaTest, ToiletSpotIsTheSameWhereverTheCameraIs) {
+		const auto colonist = makeThirstyColonistWithItsOwnRegion();
+		const glm::vec2 at{20.0F, 0.0F}; // 10 m inside his region's edge: it stays put
+		world->getComponent<Position>(colonist)->value = at;
+		for (const glm::vec2 food : {glm::vec2{10.0F, 0.0F}, glm::vec2{15.0F, 0.0F}, glm::vec2{20.0F, 0.0F},
+									 glm::vec2{20.0F, 5.0F}, glm::vec2{20.0F, -5.0F}}) {
+			addKnownEntity(colonist, food, kBerryBushDefId, assets::CapabilityType::Edible);
+		}
+		const Memory& memory = *world->getComponent<Memory>(colonist);
+		const auto	  spot = [&] {
+			   return findToiletLocation(at, *chunks, *nav, *world, memory, assets::AssetRegistry::Get());
+		};
+		const std::optional<glm::vec2> noCamera = spot();
+		ASSERT_TRUE(noCamera.has_value());
+		EXPECT_LE(noCamera->x, 30.0F) << "a spot outside every colonist region";
+
+		nav->setViewportRect({40.0F, 0.0F}, {30.0F, 30.0F});
+		ASSERT_TRUE(pumpUntil(*nav, "the camera region", [&] { return nav->builtRegions().size() == 2U && !nav->isBuilding(); }));
+		EXPECT_EQ(spot(), noCamera) << "the camera's region changed where he relieves himself";
+	}
+
+	// A harvest target beyond his regions is taken and walked toward, not dropped as NoSource for
+
+	// lying outside every colonist region.
+	TEST_F(AIDecisionOffAreaTest, HarvestTargetBeyondHisRegionsIsWalkedTo) {
+		auto& registry = assets::AssetRegistry::Get();
+		auto [bushId, stickId] = registerHarvestableYielding(registry, "Flora_FarBush", "FarStick");
+		const auto colonist = makeThirstyColonistWithItsOwnRegion();
+		satisfyAllNeeds(*getNeeds(colonist));
+		const glm::vec2 bush{70.0F, 0.0F};
+		addKnownEntity(colonist, bush, bushId, assets::CapabilityType::Harvestable);
+		ASSERT_FALSE(nav->inSimArea(bush));
+
+		GoalTask craft;
+		craft.type = TaskType::Craft;
+		craft.owner = GoalOwner::CraftingGoalSystem;
+		craft.destinationPosition = {0.0F, 0.0F};
+		craft.targetAmount = 1;
+		craft.status = GoalStatus::Blocked;
+		const uint64_t craftId = GoalTaskRegistry::Get().createGoal(std::move(craft));
+		GoalTask harvest;
+		harvest.type = TaskType::Harvest;
+		harvest.owner = GoalOwner::CraftingGoalSystem;
+		harvest.destinationPosition = {0.0F, 0.0F};
+		harvest.yieldDefNameId = stickId;
+		harvest.targetAmount = 1;
+		harvest.parentGoalId = craftId;
+		harvest.status = GoalStatus::Available;
+		GoalTaskRegistry::Get().createGoal(std::move(harvest));
+
+		world->update(kTick);
+		const auto* option = findOption(*getTrace(colonist), [](const EvaluatedOption& o) { return o.taskType == TaskType::Harvest; });
+		ASSERT_NE(option, nullptr);
+		EXPECT_EQ(option->status, OptionStatus::Selected);
+
+		float	   closest = glm::distance(world->getComponent<Position>(colonist)->value, bush);
+		bool	   arrived = false;
+		const bool near	   = tickUntil(*world, *nav, 1500, [&] {
+			   closest = std::min(closest, glm::distance(world->getComponent<Position>(colonist)->value, bush));
+			   const Task* task = getTask(colonist);
+			   arrived = arrived || (task->type == TaskType::Harvest && task->state == TaskState::Arrived);
+
+			   return arrived;
+		   });
+		EXPECT_TRUE(near) << "never arrived; got no closer than " << closest << " m";
+
+
+		EXPECT_LT(closest, 1.0F) << "arrived at (" << world->getComponent<Position>(colonist)->value.x << ", "
+								 << world->getComponent<Position>(colonist)->value.y << ") for a target at ("
+								 << getTask(colonist)->targetPosition.x << ", " << getTask(colonist)->targetPosition.y << ")";
+	}
+
 } // namespace ecs::test
+
