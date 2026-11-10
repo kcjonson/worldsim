@@ -367,10 +367,17 @@ namespace assets {
 		float		nearDistance = 0.0F; // Max tiles from nearTileType to spawn
 	};
 
+	/// The range a placed instance's scale is drawn from (<placement><scale min max/>).
+	struct PlacementScale {
+		float min = 0.8F;
+		float max = 1.2F;
+	};
+
 	/// Placement parameters - where assets spawn in the world.
 	/// Contains per-biome configuration for flexible spawn behavior.
 	struct PlacementParams {
 		std::vector<BiomePlacement> biomes; // Per-biome spawn configuration
+		PlacementScale				scale;
 
 		// Entity placement system fields (self-declared groups and relationships)
 		std::vector<std::string>		   groups;		  // Groups this asset belongs to (e.g., "trees", "flowers")
@@ -385,6 +392,16 @@ namespace assets {
 			}
 			return nullptr;
 		}
+	};
+
+	/// One <ageClass> of a def's <ageClasses>: how often it occurs, how many mesh variants it
+	/// has, and how its yield and felling work scale against the def's <harvestable>.
+	struct AgeClass {
+		std::string name;
+		float		weight = 1.0F;
+		uint16_t	variants = 1;
+		float		yieldScale = 1.0F;
+		float		workScale = 1.0F;
 	};
 
 	/// Complete asset definition parsed from XML
@@ -410,6 +427,8 @@ namespace assets {
 		AssetRole						  role = AssetRole::WorldObject;
 		AssetComplexity					  complexity = AssetComplexity::Simple;
 		uint32_t						  variantCount = 1; // Number of variants to pre-generate (8 for ground defs that omit it)
+		// Empty: one age class of variantCount variants. A def never has both (AssetValidator).
+		std::vector<AgeClass>			  ageClasses;
 		GroundParams					  ground;			// Only meaningful when role == Ground
 
 		CollisionShape collision; // Physical footprint for navmesh/collision; default None = doesn't block

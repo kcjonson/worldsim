@@ -663,3 +663,153 @@ TEST(PlacementExecutorTests, CooldownPositionQuantization) {
 	EXPECT_FALSE(executor.isEntityOnCooldown({0, 0}, {10.0F, 21.0F}, "BerryBush"));
 }
 
+// ============================================================================
+// Placement golden
+// ============================================================================
+
+namespace {
+
+	uint64_t fnvMix(uint64_t hash, const void* data, size_t size) {
+		const auto* bytes = static_cast<const unsigned char*>(data);
+		for (size_t i = 0; i < size; ++i) {
+			hash ^= bytes[i];
+			hash *= 0x100000001B3ULL;
+		}
+		return hash;
+	}
+
+	// Every field placement draws from the chunk RNG, in order: name, position, rotation,
+	// scale, tint.
+	uint64_t placementHash(const std::vector<PlacedEntity>& entities) {
+		uint64_t hash = 0xCBF29CE484222325ULL;
+		for (const PlacedEntity& e : entities) {
+			hash = fnvMix(hash, e.defName.data(), e.defName.size() + 1);
+			const float fields[] = {e.position.x, e.position.y, e.rotation, e.scale, e.colorTint.r, e.colorTint.g, e.colorTint.b, e.colorTint.a};
+			hash = fnvMix(hash, fields, sizeof(fields));
+		}
+		return hash;
+	}
+
+	const std::vector<AgeClass> kTreeAges{
+		{.name = "sapling", .weight = 0.25F, .variants = 4, .yieldScale = 0.25F, .workScale = 0.35F},
+		{.name = "mature", .weight = 0.55F, .variants = 8},
+		{.name = "veteran", .weight = 0.20F, .variants = 4, .yieldScale = 1.8F, .workScale = 1.6F},
+	};
+
+	// A spaced oak and maple with age classes, clumped bushes, and uniform rocks across a
+	// forest and a grassland half, with a river stripe the placer skips. `oakScale` is the
+	// oak's own placement scale range.
+	void registerGoldenDefs(AssetRegistry& registry, PlacementScale oakScale = {}) {
+		registry.clear();
+		AssetDefinition oak = makeFloraDef("Golden_Oak", world::Biome::TemperateDeciduousForest, Distribution::Spaced, 0.45F, 3.0F);
+		oak.ageClasses = kTreeAges;
+		oak.placement.scale = oakScale;
+		registry.registerTestDefinition(oak);
+
+		AssetDefinition maple = makeFloraDef("Golden_Maple", world::Biome::TemperateDeciduousForest, Distribution::Spaced, 0.40F, 2.8F);
+		BiomePlacement lone;
+		lone.biomeName = world::biomeToString(world::Biome::TemperateGrassland);
+		lone.spawnChance = 0.01F;
+		lone.distribution = Distribution::Spaced;
+		lone.spacing.minDistance = 12.0F;
+		maple.placement.biomes.push_back(lone);
+		maple.ageClasses = kTreeAges;
+		registry.registerTestDefinition(maple);
+
+		registry.registerTestDefinition(makeFloraDef("Golden_Bush", world::Biome::TemperateGrassland, Distribution::Clumped, 0.01F, 0.0F));
+
+		AssetDefinition rock = makeFloraDef("Golden_Rock", world::Biome::TemperateGrassland, Distribution::Uniform, 0.02F, 0.0F);
+		rock.maxRandomRotation = 3.14159265F;
+		BiomePlacement forestRock = rock.placement.biomes.front();
+		forestRock.biomeName = world::biomeToString(world::Biome::TemperateDeciduousForest);
+		rock.placement.biomes.push_back(forestRock);
+		registry.registerTestDefinition(rock);
+	}
+
+	ChunkPlacementContext goldenContext(world::ChunkCoordinate coord) {
+		ChunkPlacementContext ctx;
+		ctx.coord = coord;
+		ctx.worldSeed = 424242;
+		ctx.getBiome = [](uint16_t localX, uint16_t /*localY*/) {
+			return localX < 300 ? world::Biome::TemperateDeciduousForest : world::Biome::TemperateGrassland;
+		};
+		ctx.isWater = [origin = coord.origin()](glm::vec2 pos) {
+			const float localY = pos.y - origin.y;
+			return localY >= 200.0F && localY < 206.0F;
+		};
+		ctx.landSurface = [](glm::vec2 /*pos*/) { return world::Surface::Grass; };
+		return ctx;
+	}
+
+	struct GoldenChunk {
+		world::ChunkCoordinate coord;
+		size_t				   count;
+		uint64_t			   hash;
+	};
+
+} // namespace
+
+// Placement of every entity, for a fixed seed, matches what it was before per-tree
+// traits existed, and each carries its computed traits. The hashes were captured from
+// the placer that had no traits or age classes; a change that draws from or reorders
+// the chunk RNG changes them. The standard library's distributions are
+// implementation-defined, so the golden is MSVC's.
+TEST(PlacementExecutorTests, PlacementMatchesGolden) {
+#if !defined(_MSVC_STL_VERSION)
+	GTEST_SKIP() << "golden captured with MSVC's standard library; other libraries draw differently";
+#else
+	auto& registry = AssetRegistry::Get();
+	registerGoldenDefs(registry);
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	const GoldenChunk golden[] = {
+		{{0, 0}, 7344, 17200122207072769837ULL},
+		{{3, -2}, 7072, 16064193191493374804ULL},
+		{{-5, 7}, 7054, 5432118265719953071ULL},
+	};
+	for (const GoldenChunk& chunk : golden) {
+		const auto result = executor.processChunk(goldenContext(chunk.coord));
+		EXPECT_EQ(result.entities.size(), chunk.count) << "chunk " << chunk.coord.x << "," << chunk.coord.y;
+		EXPECT_EQ(placementHash(result.entities), chunk.hash) << "chunk " << chunk.coord.x << "," << chunk.coord.y;
+		for (const PlacedEntity& e : result.entities) {
+			EXPECT_EQ(e.traits, computeTreeTraits(*registry.getDefinition(e.defName), e.position, 424242));
+		}
+	}
+#endif
+}
+
+// A def's own scale range replaces the shared one and draws as many values, so its
+// scales move into the range and nothing else in the chunk moves.
+TEST(PlacementExecutorTests, DefScaleRangeMovesOnlyThatDefsScale) {
+	auto& registry = AssetRegistry::Get();
+	const world::ChunkCoordinate coord{3, -2};
+
+	registerGoldenDefs(registry);
+	PlacementExecutor shared(registry);
+	shared.initialize();
+	const auto before = shared.processChunk(goldenContext(coord)).entities;
+
+	constexpr PlacementScale kNarrow{0.93F, 1.07F};
+	registerGoldenDefs(registry, kNarrow);
+	PlacementExecutor narrowed(registry);
+	narrowed.initialize();
+	const auto after = narrowed.processChunk(goldenContext(coord)).entities;
+
+	ASSERT_EQ(after.size(), before.size());
+	size_t oaks = 0;
+	for (size_t i = 0; i < after.size(); ++i) {
+		ASSERT_EQ(after[i].defName, before[i].defName);
+		EXPECT_EQ(after[i].position, before[i].position);
+		EXPECT_EQ(after[i].rotation, before[i].rotation);
+		EXPECT_EQ(after[i].colorTint, before[i].colorTint);
+		if (after[i].defName == "Golden_Oak") {
+			++oaks;
+			EXPECT_GE(after[i].scale, kNarrow.min);
+			EXPECT_LE(after[i].scale, kNarrow.max);
+		} else {
+			EXPECT_EQ(after[i].scale, before[i].scale);
+		}
+	}
+	EXPECT_GT(oaks, 100U);
+}

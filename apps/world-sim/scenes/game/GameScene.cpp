@@ -333,6 +333,7 @@ namespace {
 				.camera = m_camera.get(),
 				.placementExecutor = m_placementExecutor.get(),
 				.navigation = &ecsWorld->getSystem<ecs::NavigationSystem>(),
+				.worldSeed = m_chunkManager->worldSeed(),
 				.callbacks = {
 					.onShowBuildMenu = [this](const std::vector<world_sim::BuildMenuItem>& items) { gameUI->showBuildMenu(items); },
 					.onHideBuildMenu = [this]() { gameUI->hideBuildMenu(); },

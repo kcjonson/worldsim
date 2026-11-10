@@ -56,6 +56,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <iomanip>
+#include <limits>
 #include <unordered_map>
 
 namespace world_sim {
@@ -626,6 +627,83 @@ namespace world_sim {
 		// Far past any crown (the largest planned is 4.9 m across), so every tree whose
 		// crown reaches into the rect is gathered for the cover.
 		constexpr float kCrownReachMeters = 10.0F;
+		// How far from near= the nearest-of-age query looks.
+		constexpr float kNearSearchMeters = 200.0F;
+
+		// The placed statics over a rect, with the chunk squares placement holds data for.
+		std::vector<assets::FloraRect>			 loadedAreas;
+		std::vector<const assets::PlacedEntity*> entities;
+		const auto gather = [&](const assets::FloraRect& area) {
+			const auto firstChunk = world::worldToChunk({area.minX, area.minY});
+			const auto lastChunk = world::worldToChunk({area.maxX, area.maxY});
+			for (int32_t cy = firstChunk.y; cy <= lastChunk.y; ++cy) {
+				for (int32_t cx = firstChunk.x; cx <= lastChunk.x; ++cx) {
+					const world::ChunkCoordinate coord{cx, cy};
+					const assets::SpatialIndex*	 index = m_ctx.placementIndex->getChunkIndex(coord);
+					if (index == nullptr) {
+						continue;
+					}
+					const world::WorldPosition origin = coord.origin();
+					loadedAreas.push_back({origin.x, origin.y, origin.x + world::kChunkWorldSize, origin.y + world::kChunkWorldSize});
+					const auto nearby = index->queryRect(area.minX, area.minY, area.maxX, area.maxY);
+					entities.insert(entities.end(), nearby.begin(), nearby.end());
+				}
+			}
+		};
+
+		auto&											 registry = assets::AssetRegistry::Get();
+		std::unordered_map<std::string, assets::FloraDefTraits> traits;
+		const auto describeDefs = [&] {
+			for (const assets::PlacedEntity* e : entities) {
+				if (!e->isTallOccluder || traits.contains(e->defName)) {
+					continue;
+				}
+				assets::FloraDefTraits t;
+				if (const auto* def = registry.getDefinition(e->defName); def != nullptr && assets::isTreeDef(*def)) {
+					t.isTree = true;
+					t.woodPerTree = assets::woodPerTree(*def);
+					if (const auto* sil = registry.getSilhouette(e->defName); sil != nullptr && sil->valid) {
+						t.rings = &sil->rings;
+					}
+					for (const assets::AgeClass& age : def->ageClasses) {
+						t.ageClassNames.push_back(age.name);
+					}
+				}
+				traits.emplace(e->defName, t);
+			}
+		};
+
+		if (hasParam(cmd, "age") || hasParam(cmd, "near")) {
+			const std::string age = param(cmd, "age");
+			float			  nearX = 0.0F;
+			float			  nearY = 0.0F;
+			if (age.empty() || std::sscanf(param(cmd, "near").c_str(), "%f,%f", &nearX, &nearY) != 2 || !std::isfinite(nearX) ||
+				!std::isfinite(nearY)) {
+				return {.status = 400, .body = R"({"error":"flora: age=<name> and near=x,y go together"})"};
+			}
+			if (!assets::floraPointWithinWorld(nearX, nearY)) {
+				return {.status = 400, .body = R"({"error":"flora: near must be within 16777216 m of the origin on both axes"})"};
+			}
+			const std::string defName = param(cmd, "def");
+			gather({nearX - kNearSearchMeters, nearY - kNearSearchMeters, nearX + kNearSearchMeters, nearY + kNearSearchMeters});
+			describeDefs();
+			const std::vector<assets::FloraTreeSighting> trees =
+				assets::nearestTreesOfAge({nearX, nearY}, age, defName, assets::kFloraNearestMax, entities, traits);
+
+			std::ostringstream json;
+			json << std::fixed << std::setprecision(2) << "{\"age\":\"" << jsonEscape(age) << "\",\"near\":[" << nearX << "," << nearY
+				 << "],\"def\":\"" << jsonEscape(defName) << "\",\"searchHalfSizeM\":" << kNearSearchMeters << ",\"trees\":[";
+			for (size_t i = 0; i < trees.size(); ++i) {
+				const assets::FloraTreeSighting& t = trees[i];
+				// x and y round-trip exactly, so a position read back names the same tree; the distance stays at two decimals.
+				json << (i == 0 ? "" : ",") << "{\"def\":\"" << jsonEscape(t.defName) << "\",\"x\":" << std::defaultfloat
+					 << std::setprecision(std::numeric_limits<float>::max_digits10) << t.position.x << ",\"y\":" << t.position.y
+					 << std::fixed << std::setprecision(2) << ",\"ageClass\":\"" << jsonEscape(t.ageClass) << "\",\"variant\":" << t.variant
+					 << ",\"distance\":" << t.distance << "}";
+			}
+			json << "]}";
+			return {.body = json.str()};
+		}
 
 		assets::FloraRect rect;
 		if (hasParam(cmd, "rect")) {
@@ -648,50 +726,14 @@ namespace world_sim {
 		if (!assets::floraRectWithinLimits(rect)) {
 			return {
 				.status = 400,
-				.body = R"({"error":"flora: rect sides must be above 0 and at most 500 m, and the rect at most 25 million 0.1 m cells"})"
+				.body = R"({"error":"flora: rect sides must be above 0 and at most 500 m, the rect at most 25 million 0.1 m cells, and every coordinate within 16777216 m of the origin"})"
 			};
 		}
 
-		const auto	firstChunk = world::worldToChunk({rect.minX - kCrownReachMeters, rect.minY - kCrownReachMeters});
-		const auto	lastChunk = world::worldToChunk({rect.maxX + kCrownReachMeters, rect.maxY + kCrownReachMeters});
-		std::vector<assets::FloraRect>		   loadedAreas;
-		std::vector<const assets::PlacedEntity*> entities;
-		for (int32_t cy = firstChunk.y; cy <= lastChunk.y; ++cy) {
-			for (int32_t cx = firstChunk.x; cx <= lastChunk.x; ++cx) {
-				const world::ChunkCoordinate coord{cx, cy};
-				const assets::SpatialIndex*	 index = m_ctx.placementIndex->getChunkIndex(coord);
-				if (index == nullptr) {
-					continue;
-				}
-				const world::WorldPosition origin = coord.origin();
-				loadedAreas.push_back({origin.x, origin.y, origin.x + world::kChunkWorldSize, origin.y + world::kChunkWorldSize});
-				const auto nearby = index->queryRect(
-					rect.minX - kCrownReachMeters, rect.minY - kCrownReachMeters, rect.maxX + kCrownReachMeters, rect.maxY + kCrownReachMeters
-				);
-				entities.insert(entities.end(), nearby.begin(), nearby.end());
-			}
-		}
-
-		auto&											 registry = assets::AssetRegistry::Get();
-		std::unordered_map<std::string, assets::FloraDefTraits> traits;
-		for (const assets::PlacedEntity* e : entities) {
-			if (!e->isTallOccluder || traits.contains(e->defName)) {
-				continue;
-			}
-			assets::FloraDefTraits t;
-			if (const auto* def = registry.getDefinition(e->defName); def != nullptr && assets::isTreeDef(*def)) {
-				t.isTree = true;
-				t.woodPerTree = assets::woodPerTree(*def);
-				if (const auto* sil = registry.getSilhouette(e->defName); sil != nullptr && sil->valid) {
-					t.rings = &sil->rings;
-				}
-			}
-			traits.emplace(e->defName, t);
-		}
-
+		gather({rect.minX - kCrownReachMeters, rect.minY - kCrownReachMeters, rect.maxX + kCrownReachMeters, rect.maxY + kCrownReachMeters});
+		describeDefs();
 		const assets::FloraMeasurement m = assets::measureFlora(rect, loadedAreas, entities, traits);
 
-		// Each def is an object so a per-age breakdown can be added under it without breaking readers.
 		std::ostringstream json;
 		json << std::fixed << std::setprecision(2) << "{\"rect\":[" << m.rect.minX << "," << m.rect.minY << "," << m.rect.maxX << ","
 			 << m.rect.maxY << "],\"rectAreaM2\":" << m.rectAreaM2 << ",\"measuredAreaM2\":" << m.measuredAreaM2
@@ -702,7 +744,13 @@ namespace world_sim {
 			const assets::FloraDefMeasure& d = m.defs[i];
 			json << (i == 0 ? "" : ",") << "{\"def\":\"" << jsonEscape(d.defName) << "\",\"count\":" << d.count
 				 << ",\"per1000m2\":" << d.perThousandM2 << ",\"woodPerTree\":" << d.woodPerTree
-				 << ",\"woodPer1000m2\":" << d.woodPerThousandM2 << "}";
+				 << ",\"woodPer1000m2\":" << d.woodPerThousandM2 << ",\"ageClasses\":[";
+			for (size_t k = 0; k < d.ageClasses.size(); ++k) {
+				const assets::FloraAgeMeasure& a = d.ageClasses[k];
+				json << (k == 0 ? "" : ",") << "{\"name\":\"" << jsonEscape(a.name) << "\",\"count\":" << a.count
+					 << ",\"per1000m2\":" << a.perThousandM2 << "}";
+			}
+			json << "]}";
 		}
 		json << "],\"otherTallOccluders\":[";
 		for (size_t i = 0; i < m.otherTallOccluders.size(); ++i) {

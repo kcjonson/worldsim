@@ -9,12 +9,16 @@
 // tall occluders (reeds, big rocks) are counted apart, outside the totals and the
 // cover. Canopy cover is the union of the trees' silhouettes
 // rasterised on a kFloraCellSizeMeters grid, sampled at cell centres, so crowns
-// that overlap are counted once.
+// that overlap are counted once. Trees of a def with age classes are also counted
+// per age class, from PlacedEntity::traits.
 
 #include "assets/placement/SpatialIndex.h" // PlacedEntity
 
 #include <polygon/Polygon.h> // geometry::Ring
 
+#include <glm/vec2.hpp>
+
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -37,6 +41,15 @@ namespace assets {
 	inline constexpr float	  kFloraMaxSpanMeters = 500.0F;
 	inline constexpr int64_t kFloraMaxCells = 25000000;
 
+	// Largest world coordinate (either axis, either sign) a flora query accepts: 2^24 m, where
+	// a float stops holding whole metres, so the 1 m tile grid is no longer addressable. It is
+	// 32,768 chunks out, far inside int32 for world::worldToChunk, and leaves room for the
+	// crown padding and the near search half-size added to a query before it is gathered.
+	inline constexpr float kFloraMaxCoordMeters = 16777216.0F;
+
+	// Most trees one nearest-of-age query lists.
+	inline constexpr size_t kFloraNearestMax = 20;
+
 	struct FloraRect {
 		float minX = 0.0F;
 		float minY = 0.0F;
@@ -47,12 +60,19 @@ namespace assets {
 	};
 
 	// What the measure needs from a def: whether it is a tree (isTreeDef), its silhouette
-	// rings in the template-local millimetre frame (AssetSilhouette::rings), and the wood
-	// one tree yields.
+	// rings in the template-local millimetre frame (AssetSilhouette::rings), the wood
+	// one tree yields, and its age class names in index order (empty when it has none).
 	struct FloraDefTraits {
 		bool							   isTree = false;
 		const std::vector<geometry::Ring>* rings = nullptr;
 		double							   woodPerTree = 0.0;
+		std::vector<std::string>		   ageClassNames;
+	};
+
+	struct FloraAgeMeasure {
+		std::string name;
+		uint32_t	count = 0;
+		double		perThousandM2 = 0.0;
 	};
 
 	struct FloraDefMeasure {
@@ -61,6 +81,16 @@ namespace assets {
 		double		perThousandM2 = 0.0;
 		double		woodPerTree = 0.0;
 		double		woodPerThousandM2 = 0.0;
+		std::vector<FloraAgeMeasure> ageClasses; // one per age class of the def, in its order; empty when it has none
+	};
+
+	// One tree a nearest-of-age query found.
+	struct FloraTreeSighting {
+		std::string defName;
+		glm::vec2	position{0.0F, 0.0F};
+		std::string ageClass;
+		uint16_t	variant = 0;
+		double		distance = 0.0;
 	};
 
 	struct FloraMeasurement {
@@ -80,9 +110,13 @@ namespace assets {
 	// size, and at least one. The cover grid and floraRectWithinLimits both count with this.
 	[[nodiscard]] int64_t floraAxisCells(float spanMeters);
 
-	// Whether `rect` can be measured: finite, above zero on both axes (so not inverted),
-	// each side at most kFloraMaxSpanMeters, and at most kFloraMaxCells cells in all.
-	// Check it before gathering anything for the rect.
+	// Whether the point is finite and within kFloraMaxCoordMeters of the origin on both axes.
+	// Check it before converting a query position to a chunk.
+	[[nodiscard]] bool floraPointWithinWorld(float x, float y);
+
+	// Whether `rect` can be measured: both corners within the world (floraPointWithinWorld),
+	// above zero on both axes (so not inverted), each side at most kFloraMaxSpanMeters, and
+	// at most kFloraMaxCells cells in all. Check it before gathering anything for the rect.
 	[[nodiscard]] bool floraRectWithinLimits(const FloraRect& rect);
 
 	// Whether the def is in the kTreeGroup placement group.
@@ -104,6 +138,18 @@ namespace assets {
 	[[nodiscard]] FloraMeasurement measureFlora(
 		const FloraRect&									   rect,
 		const std::vector<FloraRect>&						   loadedAreas,
+		const std::vector<const PlacedEntity*>&				   entities,
+		const std::unordered_map<std::string, FloraDefTraits>& traits
+	);
+
+	// The trees among `entities` whose age class is named `ageClass`, nearest to `near` first,
+	// at most `limit`. With `defName` set, only trees of that def. A tree is what measureFlora
+	// counts as one.
+	[[nodiscard]] std::vector<FloraTreeSighting> nearestTreesOfAge(
+		glm::vec2											   near,
+		const std::string&									   ageClass,
+		const std::string&									   defName,
+		size_t											   limit,
 		const std::vector<const PlacedEntity*>&				   entities,
 		const std::unordered_map<std::string, FloraDefTraits>& traits
 	);

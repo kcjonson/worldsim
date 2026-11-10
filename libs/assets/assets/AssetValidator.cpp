@@ -3,6 +3,7 @@
 #include "assets/AssetDefinition.h"
 #include "assets/GroundLayer.h"
 #include "assets/GroundTint.h"
+#include "assets/TreeDefSchema.h"
 
 #include <world/chunk/Chunk.h>
 
@@ -326,6 +327,13 @@ namespace assets {
 				// top-level <variantCount>).
 				if (assetDef.child("rendering").child("variantCount")) {
 					report.add(Severity::Warning, defName, "variantCount", "variantCount inside <rendering> is ignored; move it to a top-level <variantCount>", fileCtx);
+				}
+
+				std::vector<TreeDefIssue> treeIssues;
+				readAgeClasses(assetDef, treeIssues);
+				readPlacementScale(assetDef, treeIssues);
+				for (TreeDefIssue& issue : treeIssues) {
+					report.add(Severity::Error, defName, issue.field, std::move(issue.message), std::move(issue.value));
 				}
 			}
 
