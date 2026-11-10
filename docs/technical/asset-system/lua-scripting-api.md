@@ -30,29 +30,25 @@ assets/world/flora/MapleTree/
 └── maple_leaf.svg      # SVG component used by script
 ```
 
-## Module Loading
+## Prelude
 
-Scripts can load modules using `require()`:
+Each generator runs in its own sandboxed Lua state, and `require`, `dofile`, `loadfile` and `package` are nil. Shared helpers come from the prelude instead: every `.lua` file directly in `assets/shared/scripts/lib/` runs in the generator's state before the generator script, sorted by file name. The engine loads it, not Lua, so the sandbox is unchanged. A file can use what the files sorted before it defined at load time; at call time it can use all of them.
 
-```lua
--- Asset-local modules (checked first)
-local helper = require("helper")           -- ./helper.lua
+A prelude file that cannot be read or fails to run fails the generator with that file named in the error. It must not draw random numbers when it loads, since the generator's stream is already seeded.
 
--- Shared modules (registered by name, no paths)
-local branch = require("branch_utils")     -- From shared/scripts/
-local noise = require("noise")             -- From shared/scripts/
+Everything lives in one global table, `lib`, with one sub-table per file:
 
--- Load local SVG components
-local leaf = loadSvg("maple_leaf.svg")     -- ./maple_leaf.svg
+| File | Table | Holds |
+|------|-------|-------|
+| `num.lua` | `lib.num` | `clamp` (doubles; the global `clamp` the engine binds is a float one) |
+| `random.lua` | `lib.random` | `uniform`, `signed`, `gauss`, `lognormal`, `stream(id)` (reseeds `math.random` from the variant's seed and an id, one stream per stage) |
+| `color.lua` | `lib.color` | `parseHex`, `hex`, `toLinear`, `toSrgb`, `luminance`, `shade`, `mixLinear`, `mixSrgb`, `toHsv`, `fromHsv`, `tone` |
+| `shape.lua` | `lib.shape` | `polygon`, `stripSides`, `stripPart`, `strip` (a tapered strip along a polyline), `upFan` (a grass tuft), `up` |
+| `bark.lua` | `lib.bark` | `texturedTrunk` |
 
--- Load shared SVG components
-local template = loadComponent("leaf_shapes")  -- From shared/components/
-```
+A script that calls a helper often can alias it once at the top (`local clamp = lib.num.clamp`). Moving a helper into the prelude must not change what a generator draws, so keep its arithmetic and its random draw order as they were.
 
-**Resolution order for `require("foo")`:**
-1. Check asset folder for `foo.lua`
-2. Check shared module registry for "foo"
-3. Error if not found
+The prelude is part of the ground tile bake cache key: the names and bytes of every file in `lib/` are hashed with the generator script, so editing a helper re-bakes the defs that run. A generator is re-run from the files on disk each time, so the asset manager's Reload picks up an edited helper wherever it runs a generator again.
 
 ## Script Structure
 
@@ -445,12 +441,12 @@ For mod safety, the scripting environment is sandboxed:
 - Table operations
 - Custom asset API (VectorAsset, VectorPath, etc.)
 - Loading SVGs via `loadSvg()` (local) and `loadComponent()` (shared)
-- Loading modules via `require()` (local first, then shared registry)
+- The prelude's helpers in `lib` (see Prelude)
 
 ### NOT Allowed
 - File I/O (`io` module disabled)
 - OS access (`os` module disabled)
-- Loading arbitrary scripts (`loadfile`, `dofile` disabled)
+- Loading arbitrary scripts (`require`, `loadfile`, `dofile` and `package` are nil)
 - Network access
 - `debug` module
 

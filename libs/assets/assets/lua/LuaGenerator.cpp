@@ -9,8 +9,9 @@
 
 namespace assets {
 
-LuaGenerator::LuaGenerator(std::string scriptPath)
-	: m_scriptPath(std::move(scriptPath)) {
+LuaGenerator::LuaGenerator(std::string scriptPath, std::filesystem::path preludeDir)
+	: m_scriptPath(std::move(scriptPath))
+	, m_preludeDir(std::move(preludeDir)) {
 	// Extract name from script path (filename without extension)
 	std::filesystem::path path(m_scriptPath);
 	m_name = path.stem().string();
@@ -19,7 +20,7 @@ LuaGenerator::LuaGenerator(std::string scriptPath)
 bool LuaGenerator::generate(const GenerationContext& ctx, const GeneratorParams& params, GeneratedAsset& out) {
 	// Lazy initialization of Lua engine
 	if (!m_initialized) {
-		if (!m_engine.initialize()) {
+		if (!m_engine.initialize(m_preludeDir)) {
 			LOG_ERROR(Engine, "Failed to initialize Lua engine for generator: %s", m_name.c_str());
 			return false;
 		}
