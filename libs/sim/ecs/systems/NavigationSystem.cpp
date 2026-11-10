@@ -479,6 +479,7 @@ namespace ecs {
 										assets::AssetRegistry::Get(), *constructionWorld,
 										assets::ConstructionRegistry::Get());
 
+		region.launchedRect				= region.rect();
 		region.builtVersion				= constructionWorld->version();
 		region.builtAreaChunkSignature	= areaChunkSignature(region.center, region.halfExtent);
 		// Snapshot the removal epoch from the SAME live index buildInput just read, so the
@@ -522,6 +523,7 @@ namespace ecs {
 				continue; // still building: keep serving the old mesh
 			}
 			region.navMesh = region.future.get(); // swap the new mesh in; old mesh is dropped
+			region.meshRect = region.launchedRect;
 			region.future	= {};
 			++region.meshGeneration;
 			++meshGeneration;
@@ -656,6 +658,16 @@ namespace ecs {
 				if (region.future.valid()) {
 					continue;
 				}
+				// "Recentering" onto the rect it already has: a driver held inside the margin of a
+				// region that can't move toward it (a merged cluster clamped to the max size, its centre
+				// pinned by the other drivers). Rebuilding would make the same mesh again, every time a
+				// build lands, forever; only an obstacle-input change warrants one.
+				if (region.center == wantCenter && region.halfExtent == wantHalf) {
+					if (regionObstaclesChanged(region)) {
+						launchBuild(region);
+					}
+					continue;
+				}
 				region.center	  = wantCenter;
 				region.halfExtent = wantHalf;
 				launchBuild(region);
@@ -726,7 +738,7 @@ namespace ecs {
 	int NavigationSystem::regionContaining(glm::vec2 meters) const {
 		const geometry::Vec2i64 pMm = nav::toMm(meters);
 		for (std::size_t r = 0; r < regions.size(); ++r) {
-			if (regions[r].hasMesh() && regions[r].rect().contains(pMm)) {
+			if (regions[r].hasMesh() && regions[r].meshRect.contains(pMm)) {
 				return static_cast<int>(r);
 			}
 		}
@@ -761,6 +773,12 @@ namespace ecs {
 		return regionContaining(meters) >= 0;
 	}
 
+	bool NavigationSystem::isBuildingAround(glm::vec2 meters) const {
+		const geometry::Vec2i64 mm = nav::toMm(meters);
+		return std::any_of(regions.begin(), regions.end(),
+						   [&](const SimulationRegion& region) { return region.future.valid() && region.rect().contains(mm); });
+	}
+
 	std::optional<std::vector<glm::vec2>>
 	NavigationSystem::requestPath(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
 								  gnav::BeliefFilter belief) const {
@@ -775,7 +793,7 @@ namespace ecs {
 			static_cast<std::int64_t>(std::llround(static_cast<double>(agentRadiusMeters) * 1000.0));
 
 		for (const SimulationRegion& region : regions) {
-			if (!region.hasMesh() || !region.rect().contains(startMm) || !region.rect().contains(goalMm)) {
+			if (!region.hasMesh() || !region.meshRect.contains(startMm) || !region.meshRect.contains(goalMm)) {
 				continue;
 			}
 			const gnav::NavMesh& navMesh = region.navMesh;
@@ -826,13 +844,13 @@ namespace ecs {
 			static_cast<std::int64_t>(std::llround(static_cast<double>(agentRadiusMeters) * 1000.0));
 		for (std::size_t r = 0; r < regions.size(); ++r) {
 			const SimulationRegion& region = regions[r];
-			if (!region.hasMesh() || !region.rect().contains(startMm)) {
+			if (!region.hasMesh() || !region.meshRect.contains(startMm)) {
 				continue;
 			}
 			out.regions.push_back({.index = static_cast<int>(r),
 								   .id = region.id,
 								   .meshGeneration = region.meshGeneration,
-								   .rect = region.rect(),
+								   .rect = region.meshRect,
 								   .from = gnav::reachFrom(region.navMesh, startMm, radiusMm, belief)});
 		}
 	}
@@ -844,13 +862,14 @@ namespace ecs {
 	}
 
 	bool NavigationSystem::reaches(const Reach& reach, glm::vec2 goalMeters) const {
-		// No mesh under the start, or the goal off every region: can't prove unreachable.
-		// requestNavPath holds the first and walks toward the second.
-		if (reach.regions.empty() || regionContaining(goalMeters) < 0) {
+		// No mesh under the start: can't prove unreachable (requestNavPath holds). A goal no region
+		// holding the start covers is walked toward (requestNavPath routes to the area's edge), so
+		// it passes too; whether that walk gets anywhere is the walk's to find out.
+		if (reach.regions.empty() || !coversGoal(reach, goalMeters)) {
 			return true;
 		}
-		// A region holding both points whose forest lets it through; none (including no region
-		// holding both) is the sound reject requestPath agrees with.
+		// A region holding both points whose forest lets it through; none is the sound reject
+		// requestPath agrees with.
 		const geometry::Vec2i64 goalMm = nav::toMm(goalMeters);
 		for (const RegionReach& r : reach.regions) {
 			if (r.rect.contains(goalMm) &&
@@ -861,16 +880,49 @@ namespace ecs {
 		return false;
 	}
 
-	std::optional<glm::vec2> NavigationSystem::stagingPointToward(glm::vec2 startMeters, glm::vec2 goalMeters) const {
-		const int start = regionContaining(startMeters);
-		if (start < 0) {
+	std::optional<glm::vec2> NavigationSystem::stagingPointToward(const Reach& reach, glm::vec2 startMeters,
+																  glm::vec2 goalMeters) const {
+		const geometry::Vec2i64 startMm = nav::toMm(startMeters);
+		const geometry::Vec2i64 goalMm	= nav::toMm(goalMeters);
+		std::optional<geometry::Vec2i64> best;
+		double							 bestToGoal = 0.0;
+		for (const RegionReach& r : reach.regions) {
+			// The goal clamped into this region, inset so standing there is inside the recenter margin;
+			// then back along the line toward the start to the first point the start reaches, so the leg
+			// never ends somewhere the colonist can't get to.
+			const geometry::Vec2i64 staged{std::clamp(goalMm.x, r.rect.minX + kStagingInsetMm, r.rect.maxX - kStagingInsetMm),
+										   std::clamp(goalMm.y, r.rect.minY + kStagingInsetMm, r.rect.maxY - kStagingInsetMm)};
+			const double dx	   = static_cast<double>(startMm.x - staged.x);
+			const double dy	   = static_cast<double>(startMm.y - staged.y);
+			const auto	 steps = static_cast<std::int64_t>(std::ceil(std::sqrt(dx * dx + dy * dy) /
+																	  static_cast<double>(kStagingSampleStepMm)));
+			const gnav::NavMesh& mesh = regions[static_cast<std::size_t>(r.index)].navMesh;
+			for (std::int64_t i = 0; i < steps; ++i) {
+				const double			t = static_cast<double>(i) / static_cast<double>(steps);
+				const geometry::Vec2i64 p{staged.x + static_cast<std::int64_t>(std::llround(dx * t)),
+										  staged.y + static_cast<std::int64_t>(std::llround(dy * t))};
+				if (!gnav::reaches(mesh, r.from, p, reach.belief)) {
+					continue;
+				}
+				const double gx		= static_cast<double>(goalMm.x - p.x);
+				const double gy		= static_cast<double>(goalMm.y - p.y);
+				const double toGoal = std::sqrt(gx * gx + gy * gy);
+				if (!best.has_value() || toGoal < bestToGoal) {
+					best	   = p;
+					bestToGoal = toGoal;
+				}
+				break;
+			}
+		}
+		if (!best.has_value()) {
 			return std::nullopt;
 		}
-		const SimAabb			rect = regions[static_cast<std::size_t>(start)].rect();
-		const geometry::Vec2i64 goalMm = nav::toMm(goalMeters);
-		const geometry::Vec2i64 staged{std::clamp(goalMm.x, rect.minX + kStagingInsetMm, rect.maxX - kStagingInsetMm),
-									   std::clamp(goalMm.y, rect.minY + kStagingInsetMm, rect.maxY - kStagingInsetMm)};
-		return nearestPathableOnMesh(regions[static_cast<std::size_t>(start)].navMesh, nav::toMeters(staged));
+		const double sx = static_cast<double>(best->x - startMm.x);
+		const double sy = static_cast<double>(best->y - startMm.y);
+		if (sx * sx + sy * sy < static_cast<double>(kStagingMinLegMm) * static_cast<double>(kStagingMinLegMm)) {
+			return std::nullopt; // nowhere closer to the goal this colonist can reach from here
+		}
+		return nav::toMeters(*best);
 	}
 
 	namespace {
@@ -1003,11 +1055,12 @@ namespace ecs {
 	} // namespace
 
 	bool NavigationSystem::isOnMesh(glm::vec2 meters) const {
-		const int r = regionContaining(meters);
-		if (r < 0) {
-			return false;
-		}
-		return pointOnNavMesh(regions[static_cast<std::size_t>(r)].navMesh, meters);
+		// Any region holding the point: overlapping regions can disagree while one has rebuilt and the
+		// other hasn't, and a point on the fresh mesh must not read as stranded against the stale one.
+		const geometry::Vec2i64 mm = nav::toMm(meters);
+		return std::any_of(regions.begin(), regions.end(), [&](const SimulationRegion& region) {
+			return region.hasMesh() && region.meshRect.contains(mm) && pointOnNavMesh(region.navMesh, meters);
+		});
 	}
 
 	bool NavigationSystem::isSegmentWalkable(glm::vec2 aMeters, glm::vec2 bMeters) const {

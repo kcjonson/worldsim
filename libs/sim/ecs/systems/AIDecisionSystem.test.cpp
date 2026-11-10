@@ -4009,4 +4009,128 @@ namespace ecs::test {
 		EXPECT_EQ(getTask(colonist)->targetPosition, kOutside) << "the failure was dropped over an unrelated swap";
 	}
 
+	// Runs ticks (letting each update's builds land) until done() holds; returns whether it did.
+	template <typename Done>
+	[[nodiscard]] bool tickUntil(World& world, NavigationSystem& nav, int maxTicks, Done&& done) {
+		for (int i = 0; i < maxTicks; ++i) {
+			world.update(0.1F);
+			(void)pumpUntil(nav, "builds to settle", [&] { return !nav.isBuilding(); });
+			if (done()) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	// The player pans to a lake: the water is in the viewport's region, which doesn't touch the
+	// colonist's. No region holding him covers it, so he walks toward it rather than reading NoSource
+	// while the player watches the water.
+	TEST_F(AIDecisionOffAreaTest, ColonistWalksToASourceInAnotherBuiltRegion) {
+		const auto		colonist = makeThirstyColonistWithItsOwnRegion();
+		const glm::vec2 water{100.0F, 0.0F};
+		nav->setViewportRect(water, {30.0F, 30.0F});
+		ASSERT_TRUE(pumpUntil(*nav, "the viewport's region", [&] { return nav->inSimArea(water) && !nav->isBuilding(); }));
+		ASSERT_FALSE(nav->requestPath({0.0F, 0.0F}, water, 0.3F).has_value()) << "no region holds both";
+		addKnownEntity(colonist, water, kWaterDefId, assets::CapabilityType::Drinkable);
+
+		const bool arrived = tickUntil(*world, *nav, 1500, [&] {
+			const Task* task = getTask(colonist);
+			return task->state == TaskState::Arrived && task->targetPosition == water;
+		});
+		EXPECT_TRUE(arrived) << "stuck at (" << world->getComponent<Position>(colonist)->value.x << ", "
+							 << world->getComponent<Position>(colonist)->value.y << ")";
+	}
+
+	// A colonist stopped at the end of an edge leg (his movement off) whose next replan finds a route
+	// must start walking it. A route he never follows froze him on a task kept as "the same".
+	TEST_F(AIDecisionOffAreaTest, ReplanOntoAStoppedColonistStartsHimMoving) {
+		const auto		colonist = makeThirstyColonistWithItsOwnRegion();
+		const glm::vec2 water{80.0F, 0.0F};
+		addKnownEntity(colonist, water, kWaterDefId, assets::CapabilityType::Drinkable);
+		world->update(kTick);
+		auto* navPath = world->getComponent<NavPath>(colonist);
+		ASSERT_NE(navPath, nullptr);
+		ASSERT_TRUE(navPath->valid && navPath->endsShortOfGoal) << "the first leg heads for the region's edge";
+
+		// What MovementSystem leaves at the end of the leg.
+		navPath->current = navPath->waypoints.size();
+		getMovementTarget(colonist)->active = false;
+
+		// Any mesh swap replans the leg.
+		const std::uint64_t before = nav->generation();
+		const auto			commit = construction.commitSegment({-20000, -20000}, {-18000, -20000}, "Wood", "Standard",
+																construction::kInvalidFoundation);
+		ASSERT_TRUE(commit.ok());
+		ASSERT_TRUE(pumpUntil(*nav, "the rebuild", [&] { return nav->generation() != before && !nav->isBuilding(); }));
+		world->update(kTick);
+		EXPECT_TRUE(getMovementTarget(colonist)->active) << "the replanned route was never followed";
+	}
+
+	// The colonist's square merges with the viewport's, and the merged region is clamped to its max
+	// size around a centre the viewport pins: walking west toward water past its edge, he reaches a
+	// point (x = -50 here, still overlapping the viewport's square) the region can't follow him beyond.
+	// He mustn't stand there forever: the walk ends, and with no other water known Thirst reads NoSource.
+	// (NavigationSystemTest.DriverHeldInAClampedRegionDoesNotRebuildIt covers the region side.)
+	TEST_F(AIDecisionOffAreaTest, WalkThatTheRegionCantFollowEnds) {
+		nav->setViewportRect({40.0F, 0.0F}, {64.0F, 64.0F});
+		const auto colonist = createColonist({0.0F, 0.0F});
+		world->addComponent<Colonist>(colonist, Colonist{"A"});
+		satisfyAllNeeds(*getNeeds(colonist));
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+		setNeedValue(colonist, NeedType::Thirst, 40.0F);
+		ASSERT_TRUE(pumpUntil(*nav, "the merged region", [&] { return nav->inSimArea({0.0F, 0.0F}) && !nav->isBuilding(); }));
+		ASSERT_EQ(nav->builtRegions().size(), 1U) << "his square and the viewport's merge";
+		const glm::vec2 water{-90.0F, 0.0F};
+		addKnownEntity(colonist, water, kWaterDefId, assets::CapabilityType::Drinkable);
+
+		const bool gaveUp = tickUntil(*world, *nav, 1500, [&] {
+			const auto* thirst = thirstOption(colonist);
+			return thirst != nullptr && thirst->status == OptionStatus::NoSource;
+		});
+		EXPECT_TRUE(gaveUp) << "still at (" << world->getComponent<Position>(colonist)->value.x << ", "
+							<< world->getComponent<Position>(colonist)->value.y << "), task "
+							<< static_cast<int>(getTask(colonist)->navState);
+	}
+
+	// The two-river world, with the colonist driving his own 30 m region (the viewport far off).
+	class AIDecisionRiverWalkTest : public AIDecisionRiverTest {
+	  protected:
+		EntityID makeThirstyColonistWithItsOwnRegion() {
+			nav->setViewportRect({-400.0F, 0.0F}, {30.0F, 30.0F});
+			const auto colonist = createColonist(kStart);
+			world->addComponent<Colonist>(colonist, Colonist{"A"});
+			satisfyAllNeeds(*getNeeds(colonist));
+			world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+			setNeedValue(colonist, NeedType::Thirst, 40.0F);
+			EXPECT_TRUE(pumpUntil(*nav, "his region", [&] { return nav->inSimArea(kStart) && !nav->isBuilding(); }));
+			return colonist;
+		}
+	};
+
+	// Water past his region's edge, across a river: each leg toward it ends on his side of the river
+	// and no leg gets him closer. The walk ends, the water is remembered unreachable, and he goes for
+	// the other water he knows, in another direction.
+	TEST_F(AIDecisionRiverWalkTest, WalkBlockedByWaterEndsAndTheNextSourceIsUsed) {
+		const auto		colonist = makeThirstyColonistWithItsOwnRegion();
+		const glm::vec2 acrossRiver{0.0F, 40.0F}; // past his region (|y| <= 30) and the river at y = 20
+		const glm::vec2 alongBand{50.0F, 0.0F};	  // past his region too, but on his side of both rivers
+		addKnownEntity(colonist, acrossRiver, kWaterDefId, assets::CapabilityType::Drinkable);
+		addKnownEntity(colonist, alongBand, kWaterDefId, assets::CapabilityType::Drinkable);
+
+		int		  choseAcross = 0; // times the colonist took up a task for it, not decisions that kept one
+		glm::vec2 lastTarget{0.0F, 0.0F};
+		const bool arrived = tickUntil(*world, *nav, 1500, [&] {
+			const Task* task = getTask(colonist);
+			if (task->targetPosition == acrossRiver && lastTarget != acrossRiver) {
+				++choseAcross;
+			}
+			lastTarget = task->targetPosition;
+			return task->state == TaskState::Arrived && task->targetPosition == alongBand;
+		});
+		EXPECT_TRUE(arrived) << "never reached the water on his side, at (" << world->getComponent<Position>(colonist)->value.x
+							 << ", " << world->getComponent<Position>(colonist)->value.y << ")";
+		EXPECT_GE(choseAcross, 1) << "the nearer water across the river is tried first";
+		EXPECT_LE(choseAcross, 3) << "and then given up on, not retried every decision";
+	}
+
 } // namespace ecs::test

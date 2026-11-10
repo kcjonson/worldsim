@@ -26,8 +26,8 @@
 // rebuild. Panning/zooming the camera moves only the viewport region, never a
 // colonist's region.
 //
-// Point queries (isOnMesh / nearestPathablePoint / inSimArea) dispatch by position: the
-// first region (by id) whose rect contains the point. Pair queries (requestPath, reachFrom +
+// Point queries (nearestPathablePoint / inSimArea) dispatch by position: the first region (by
+// id) whose rect contains the point; isOnMesh asks every region holding it. Pair queries (requestPath, reachFrom +
 // reaches) dispatch by pair: a region whose rect contains BOTH points, since regions overlap.
 // No region holding both -> no route; long-range routing across regions is Phase 2.
 
@@ -173,14 +173,15 @@ class NavigationSystem : public ISystem {
 	// O(log n) subtree check, so it agrees with requestPath's pair dispatch.
 	//
 	// Semantics are asymmetric by design:
-	//   false => DEFINITELY unreachable (no region holding both passes it: disconnected
-	//            component, bottleneck < disc, or no region holds both points at all).
+	//   false => DEFINITELY unreachable (a region holding the start covers the goal and none of
+	//            those lets it through: disconnected component or bottleneck < disc).
 	//   true  => MAYBE reachable (over-approximation). Caller runs requestPath for certainty.
 	//
-	// No-region / off-area policy: when no region covers the start, or none covers the goal,
-	// reaches() returns true ("can't prove unreachable"). The mesh may still be building, and
-	// requestNavPath walks toward an off-area goal (or holds without a mesh) and retries after
-	// each build; a goal-validity pre-filter must not reject everything in that window.
+	// Beyond-reach policy: when no region covers the start, or no region holding the start covers
+	// the goal, reaches() returns true ("can't prove unreachable"). Without a mesh requestNavPath
+	// holds and retries after each build; a goal beyond the start's regions (off every region, or
+	// only in a region the colonist isn't in) is walked toward, an edge leg at a time, until a region
+	// holding him covers it or the legs stop getting him closer.
 	//
 	// A Reach is used within one frame (the next update() may move or drop regions); the belief's
 	// sets must outlive it. For a goal coversGoal() admits, reaches() depends only on the regions
@@ -189,7 +190,7 @@ class NavigationSystem : public ISystem {
 		int						 index = -1; // into the region list this frame
 		std::int32_t			 id = -1;	 // stable across frames, unlike the index
 		std::uint64_t			 meshGeneration = 0;
-		SimAabb					 rect;
+		SimAabb					 rect; // the rect its mesh covers
 		geometry::nav::ReachFrom from;
 	};
 	struct Reach {
@@ -201,22 +202,32 @@ class NavigationSystem : public ISystem {
 								  Reach& out) const;
 	[[nodiscard]] bool	reaches(const Reach& reach, glm::vec2 goalMeters) const;
 	// Does some region holding the start also hold this goal? Only for such a goal does reaches()
-	// consult a mesh; for any other its answer follows from which regions cover the two points.
+	// consult a mesh, and only such a goal is routed to directly; any other is walked toward.
 	[[nodiscard]] bool coversGoal(const Reach& reach, glm::vec2 goalMeters) const;
 
-	// For a goal outside every region: the walkable point near the edge of the region holding the
-	// start, nearest the goal, kStagingInsetMm inside the rect so a colonist standing there is within
-	// kEdgeMarginMm and its region recenters toward the goal. nullopt when no region holds the start.
-	[[nodiscard]] std::optional<glm::vec2> stagingPointToward(glm::vec2 startMeters, glm::vec2 goalMeters) const;
-	static constexpr std::int64_t kStagingInsetMm = 2000; // 2 m
-
+	// For a goal no region holding the start covers: where to walk to get closer. For each region
+	// holding the start, the goal clamped kStagingInsetMm inside its rect (so a colonist standing there
+	// is within kEdgeMarginMm and its region recenters toward the goal), then back along the line to
+	// the start, every kStagingSampleStepMm, to the first point the start reaches; the candidate nearest
+	// the goal wins. nullopt when none lies kStagingMinLegMm or more from the start: no step toward the
+	// goal is possible from here. Bounded: one reach test per sample, a few hundred at most.
+	[[nodiscard]] std::optional<glm::vec2> stagingPointToward(const Reach& reach, glm::vec2 startMeters,
+															  glm::vec2 goalMeters) const;
+	static constexpr std::int64_t kStagingInsetMm	   = 2000; // 2 m
+	static constexpr std::int64_t kStagingSampleStepMm = 1000; // 1 m
+	static constexpr std::int64_t kStagingMinLegMm	   = 500;  // 0.5 m
 	// LOD seam predicate: true when `meters` falls inside some BUILT region rect. Outside
 	// every built region the caller treats movement as the no-mesh beeline (LOD1 coarse
 	// routing is Phase 2). False when no region has been built yet.
 	[[nodiscard]] bool inSimArea(glm::vec2 meters) const;
 
-	// True when `meters` lies on walkable mesh inside the region that contains it. False
-	// when the point is off-mesh within its region (e.g. a colonist that beelined into a
+	// Is a build in flight for a region whose rect (as launched) holds this point? A colonist standing
+	// at his region's edge waits for it, since its swap re-plans his route.
+	[[nodiscard]] bool isBuildingAround(glm::vec2 meters) const;
+
+	// True when `meters` lies on walkable mesh in some region that contains it (regions overlap,
+	// and one may have rebuilt while another hasn't). False when the point is off-mesh in every
+	// region holding it (e.g. a colonist that beelined into a
 	// water hole) or when no region covers it. Lets a path failure distinguish a stranded
 	// colonist (recover by snapping back onto land) from one merely walled off.
 	[[nodiscard]] bool isOnMesh(glm::vec2 meters) const;
@@ -410,14 +421,18 @@ class NavigationSystem : public ISystem {
 	// Per-cluster navmesh + its build state. One per merged region this tick.
 	struct SimulationRegion {
 		std::int32_t			 id		   = 0;	  // stable across rebuilds; RRA cache key prefix
-		geometry::Vec2i64		 center{0, 0};	  // BUILT center (mm)
-		std::int64_t			 halfExtent = 0;  // BUILT half-extent (mm)
+		geometry::Vec2i64		 center{0, 0};	  // center (mm) of the last build launched; the served mesh may be older
+		std::int64_t			 halfExtent = 0;  // half-extent (mm) of the last build launched, likewise
 		geometry::nav::NavMesh	 navMesh;		  // current queryable mesh (empty = building)
 		std::future<geometry::nav::NavMesh> future; // in-flight build (valid only while running)
 		std::uint64_t			 builtVersion			 = UINT64_MAX; // ConstructionWorld::version at launch
 		std::uint64_t			 builtAreaChunkSignature = 0;		   // areaChunkSignature at launch
 		std::uint64_t			 builtRemovalEpoch		 = UINT64_MAX; // PlacementExecutor::removalEpoch at launch
 		std::uint64_t			 meshGeneration			 = 0;		   // bumped on this region's mesh swap
+		// The rect the served mesh was built for (set at its swap), and the one the build in flight was
+		// launched for. Mesh queries use meshRect: center/halfExtent move at launch, before the mesh does.
+		SimAabb					 meshRect;
+		SimAabb					 launchedRect;
 
 		[[nodiscard]] bool hasMesh() const { return !navMesh.triangles.empty(); }
 		[[nodiscard]] SimAabb rect() const {

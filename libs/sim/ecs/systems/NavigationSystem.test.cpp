@@ -535,6 +535,34 @@ TEST_F(NavigationSystemTest, GenerationMovesWhenALaggingRegionSwaps) {
 	EXPECT_NE(sys.generation(), beforeB) << "region B's first mesh swap left generation() unchanged";
 }
 
+// A colonist's square merged with the viewport's into a region clamped to its max size, its centre
+// pinned by the viewport: the colonist stands inside the region's edge margin, so every update asks for
+// a recenter, and the recenter lands on the rect the region already has. Rebuilding that gives the
+// same mesh, and did so every time a build landed, for as long as he stood there.
+TEST_F(NavigationSystemTest, DriverHeldInAClampedRegionDoesNotRebuildIt) {
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(m_chunks.get());
+	sys.setConstructionWorld(&cw);
+	pushArea(sys, {40000, 0}, 64000); // viewport square -24..104 m
+
+	// His square (-80..-20 m) overlaps it: union -80..104 m, clamped to 64 m around x = 12, so the
+	// region spans -52..76 m and he is 2 m inside its west edge.
+	EntityID colonist = world.createEntity();
+	world.addComponent<Position>(colonist, Position{glm::vec2{-50.0F, 0.0F}});
+	world.addComponent<Colonist>(colonist, Colonist{"A"});
+	ASSERT_TRUE(pumpUntil(sys, "the merged region", [&] { return sys.inSimArea({-50.0F, 0.0F}) && !sys.isBuilding(); }));
+	ASSERT_EQ(sys.builtRegions().size(), 1U);
+
+	const std::uint64_t settled = sys.generation();
+	for (int i = 0; i < 30; ++i) {
+		sys.update(0.0F);
+		(void)pumpUntil(sys, "any build", [&] { return !sys.isBuilding(); });
+	}
+	EXPECT_EQ(sys.generation(), settled) << "the region kept rebuilding the rect it already had";
+}
+
 // A Reach names its start region by stable id and that region's own swap count, which is what the
 // AI's SourceReachMemo keys on: another region's swap leaves it alone, a swap in its own region moves it.
 TEST_F(NavigationSystemTest, ReachIdentifiesItsOwnRegionsMesh) {
@@ -1987,7 +2015,8 @@ TEST_F(NavigationSystemTest, QueryDispatchSelectsRegionContainingPoint) {
 	EXPECT_FALSE(sys.requestPath(aPos, bPos, kAgentRadius).has_value())
 		<< "a cross-region pair has no route (nullopt) in Phase 1";
 
-	// The pre-check matches requestPath: a goal in another built region is unreachable from here.
-	EXPECT_FALSE(isReachable(sys, aPos, bPos, kAgentRadius))
-		<< "a goal in another built region must not pass the pre-check";
+	// A goal only in another built region passes the pre-check: the AI walks toward it (edge legs)
+	// rather than routing to it, since no region holding the start covers it.
+	EXPECT_TRUE(isReachable(sys, aPos, bPos, kAgentRadius))
+		<< "a goal beyond the start's regions is walked toward, not rejected";
 }

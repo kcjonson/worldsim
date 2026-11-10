@@ -12,7 +12,7 @@
 namespace ecs {
 
 	/// Reach verdicts for sources inside the nav regions holding the colonist, by Memory key. Such a
-	/// verdict depends on the source's position, those regions' meshes and rects, the colonist's
+	/// verdict depends on the source's position, those regions' meshes (each with the rect it covers), the colonist's
 	/// structural belief and which reach subtree it stands in within each, not on where in those subtrees
 	/// it stands or on what else it remembers. So verdicts hold while the key does, and a colonist among
 	/// unreachable sources tests each one once, not every decision. For a source outside every region
@@ -23,8 +23,7 @@ namespace ecs {
 		/// One region holding the colonist, as far as its verdicts can tell (NavigationSystem::RegionReach).
 		struct RegionKey {
 			std::int32_t  regionId = -1;
-			std::uint64_t meshGeneration = 0;
-			std::int64_t  minX = 0, minY = 0, maxX = 0, maxY = 0; // its rect, mm: moves on a recenter
+			std::uint64_t meshGeneration = 0; // its mesh, and with it the rect that mesh covers
 			std::int32_t  reachRoot = -1;
 			std::int32_t  startTri = -1; // set only without a reach root: such a start reaches just its own triangle
 			bool		  operator==(const RegionKey&) const = default;
@@ -41,9 +40,8 @@ namespace ecs {
 				mix(beliefVersion);
 				for (const RegionKey& r : regions) {
 					for (const std::uint64_t v :
-						 {static_cast<std::uint64_t>(r.regionId), r.meshGeneration, static_cast<std::uint64_t>(r.minX),
-						  static_cast<std::uint64_t>(r.minY), static_cast<std::uint64_t>(r.maxX), static_cast<std::uint64_t>(r.maxY),
-						  static_cast<std::uint64_t>(r.reachRoot), static_cast<std::uint64_t>(r.startTri)}) {
+						 {static_cast<std::uint64_t>(r.regionId), r.meshGeneration, static_cast<std::uint64_t>(r.reachRoot),
+						  static_cast<std::uint64_t>(r.startTri)}) {
 						mix(v);
 					}
 				}

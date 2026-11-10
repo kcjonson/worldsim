@@ -12,6 +12,7 @@
 #include "../components/FacingDirection.h"
 #include "../components/Movement.h"
 #include "../components/NavPath.h"
+#include "../components/Task.h"
 #include "../components/Transform.h"
 
 #include <glm/geometric.hpp>
@@ -121,6 +122,30 @@ TEST_F(MovementTimeScaleTest, FastForwardFollowsNavPathAndArrives) {
 	const auto* pos = world->getComponent<Position>(entity);
 	EXPECT_LT(glm::distance(pos->value, goal), 0.1F) << "stops on the final waypoint";
 	EXPECT_TRUE(world->getComponent<NavPath>(entity)->done()) << "the path is fully consumed";
+}
+
+// A route that ends at the sim area's edge, short of an off-area goal, stops the colonist at its end
+// without arriving: the task stays Moving (so no action starts there) and the route stays valid for
+// the replan that takes the next leg.
+TEST_F(MovementTimeScaleTest, RouteEndingShortOfGoalStopsWithoutArriving) {
+	const glm::vec2 edge{3.0F, 0.0F};
+	auto			entity = createMover({0.0F, 0.0F}, {40.0F, 0.0F});
+	Task			task;
+	task.state = TaskState::Moving;
+	world->addComponent<Task>(entity, task);
+
+	NavPath path;
+	path.waypoints		 = {{0.0F, 0.0F}, edge};
+	path.current		 = 1;
+	path.valid			 = true;
+	path.endsShortOfGoal = true;
+	world->addComponent<NavPath>(entity, path);
+
+	ASSERT_GT(runToArrival(entity, kDt, 400), 0) << "never stopped at the end of the leg";
+	EXPECT_LT(glm::distance(world->getComponent<Position>(entity)->value, edge), 0.1F);
+	EXPECT_EQ(world->getComponent<Task>(entity)->state, TaskState::Moving) << "the end of an edge leg isn't arrival";
+	EXPECT_TRUE(world->getComponent<NavPath>(entity)->valid) << "the leg stays valid for the replan";
+	EXPECT_EQ(world->getComponent<Velocity>(entity)->value, glm::vec2(0.0F, 0.0F));
 }
 
 // World +Y draws lower on screen, so a mover heading +Y faces the camera (the _down sprite) and one

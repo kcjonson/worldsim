@@ -192,10 +192,6 @@ namespace ecs {
 			for (const auto& region : reach.regions) {
 				out.regions.push_back({.regionId = region.id,
 									   .meshGeneration = region.meshGeneration,
-									   .minX = region.rect.minX,
-									   .minY = region.rect.minY,
-									   .maxX = region.rect.maxX,
-									   .maxY = region.rect.maxY,
 									   .reachRoot = region.from.root,
 									   .startTri = region.from.root < 0 ? region.from.startTri : -1});
 			}
@@ -1205,7 +1201,7 @@ namespace ecs {
 			}
 
 			// Deferred-route retry. requestNavPath holds a route it can't plan yet (no mesh built,
-			// or an endpoint outside every built region) and applyNavOutcome parks the task in
+			// or the colonist outside every built region) and applyNavOutcome parks the task in
 			// AwaitingMesh with the nav generation it was deferred at. Nothing else would request
 			// it again: replan-on-discovery needs a live route, the chain-leg repath below needs an
 			// active target, and a re-eval that re-selects the same option keeps the task
@@ -1217,6 +1213,20 @@ namespace ecs {
 				// The hold switched movement off; re-arm it for the request, which switches it off
 				// again if the route still can't be planned.
 				movementTarget.active = true;
+				const NavRequestOutcome outcome = requestNavPath(entity, task.targetPosition, position, memory, movementTarget);
+				applyNavOutcome(task, outcome);
+			}
+
+			// Edge-leg retry. A leg toward a goal beyond the colonist's regions ends by stopping him inside
+			// his region's recenter margin, and the recenter's swap re-plans the next leg (replan above).
+			// When no build comes (his region can't move toward the goal: a cluster clamped at its max
+			// size), ask for the next leg on the periodic cadence, so the walk finds one or ends as no
+			// route (stalledWalkingToward) instead of standing there forever.
+			if (auto* navPath = world->getComponent<NavPath>(entity);
+				navPath != nullptr && navPath->valid && navPath->endsShortOfGoal &&
+				navPath->current >= navPath->waypoints.size() && task.state == TaskState::Moving &&
+				task.timeSinceEvaluation >= kReEvalInterval && m_navSystem != nullptr &&
+				!m_navSystem->isBuildingAround(position.value)) {
 				const NavRequestOutcome outcome = requestNavPath(entity, task.targetPosition, position, memory, movementTarget);
 				applyNavOutcome(task, outcome);
 			}
@@ -1583,14 +1593,14 @@ namespace ecs {
 		const auto anySource = [](uint64_t, const KnownWorldEntity&) { return true; };
 
 		// A need targets the nearest remembered source the colonist can reach, so known sources across
-		// a river don't hide a reachable one farther off. A source inside the sim area beats any outside
-		// it, however near: an off-area one is a walk to the area's edge and a wait for the region to
-		// follow, and is the target only when nothing inside the area is reachable.
-		const auto offAreaLast = [&](const KnownWorldEntity& known) {
-			return static_cast<std::uint8_t>(reach != nullptr && !m_navSystem->inSimArea(known.position) ? 1 : 0);
+		// a river don't hide a reachable one farther off. A source inside a region holding the colonist
+		// beats any other, however near: one beyond them is a walk to the edge and a wait for his region
+		// to follow, and is the target only when nothing within reach is reachable.
+		const auto beyondReachLast = [&](const KnownWorldEntity& known) {
+			return static_cast<std::uint8_t>(reach != nullptr && !m_navSystem->coversGoal(*reach, known.position) ? 1 : 0);
 		};
 		const auto findNeedSource = [&](assets::CapabilityType capability, const auto& accept, const auto& reachable) {
-			return findNearestReachableWithCapability(memory, capability, position.value, accept, offAreaLast, reachable,
+			return findNearestReachableWithCapability(memory, capability, position.value, accept, beyondReachLast, reachable,
 													  m_sourceScratch);
 		};
 		// With an empty pack, the one food source both the Hunger option and the gather-food option
@@ -1841,7 +1851,7 @@ namespace ecs {
 		// exists, or there's no nav system at all (headless/tests, direct movement). With a nav
 		// system but no mesh, emit no idle option; the colonist holds (see the no-option hold in
 		// selectTaskFromTrace) until the mesh lands. Needs and work keep their own options, but they
-		// too only MOVE once requestNavPath returns a route -- an off-area or pre-mesh leg HOLDS, it
+		// too only MOVE once requestNavPath returns a route -- a pre-mesh or off-area-colonist leg HOLDS, it
 		// does not slide blind. (Off-mesh stranding is handled separately by the snap-to-mesh
 		// recovery at the top of update().)
 		const bool canNavigate = (m_navSystem == nullptr) || haveMesh;
@@ -2069,6 +2079,25 @@ namespace ecs {
 		}
 	}
 
+	bool AIDecisionSystem::stalledWalkingToward(EntityID entity, const glm::vec2& goal, const Position& position) {
+		auto* task = world->getComponent<Task>(entity);
+		if (task == nullptr) {
+			return false;
+		}
+		const float toGoal = glm::distance(position.value, goal);
+		if (toGoal < task->edgeWalkBestDistance - kEdgeWalkMinProgressMeters) {
+			task->edgeWalkBestDistance = toGoal;
+			task->edgeWalkStalledLegs = 0;
+			return false;
+		}
+		// Only a leg he finished counts: a replan mid-leg (any region's swap) isn't a stall.
+		const auto* navPath = world->getComponent<NavPath>(entity);
+		if (navPath != nullptr && navPath->valid && navPath->endsShortOfGoal && navPath->current >= navPath->waypoints.size()) {
+			++task->edgeWalkStalledLegs;
+		}
+		return task->edgeWalkStalledLegs >= kEdgeWalkMaxStalledLegs;
+	}
+
 	AIDecisionSystem::NavRequestOutcome AIDecisionSystem::requestNavPath(
 		EntityID entity, const glm::vec2& goal, const Position& position, const Memory& memory,
 		MovementTarget& movementTarget) {
@@ -2116,7 +2145,7 @@ namespace ecs {
 			if (auto* velocity = world->getComponent<Velocity>(entity)) {
 				velocity->value = {0.0F, 0.0F};
 			}
-			LOG_DEBUG(Engine, "[Nav] Entity %llu: off-area endpoint, holding (no LOD0 route to (%.2f, %.2f))",
+			LOG_DEBUG(Engine, "[Nav] Entity %llu: colonist off every region, holding (no LOD0 route to (%.2f, %.2f))",
 				static_cast<unsigned long long>(entity), goal.x, goal.y);
 			return NavRequestOutcome::Waiting;
 		}
@@ -2133,16 +2162,36 @@ namespace ecs {
 		// synchronously inside requestPath, so there's no lifetime hazard.
 		const geometry::nav::BeliefFilter belief{&memory.knownSegments, &memory.knownOpenings};
 
-		// A goal outside every region is beyond LOD0. Route to the edge of the colonist's region
-		// nearest it instead: standing there puts the colonist inside the recenter margin, its region
-		// follows it toward the goal, and the mesh swap re-requests this same goal (replan on a nav
-		// generation change) until a build covers it. Arriving at the edge isn't arriving at the goal.
+		// A goal no region holding the colonist covers (off every region, or only in a region he isn't
+		// in) can't be routed to directly. Route to the point in his regions nearest it instead:
+		// standing there puts him inside the recenter margin, his region follows him toward the goal,
+		// and the mesh swap re-requests this same goal (replan on a nav generation change) until a
+		// region holding him covers it. Arriving there isn't arriving at the goal. Legs that stop
+		// getting him closer (water in the way, a region that can't follow him) end the walk as no
+		// route, like any other, so the need moves on and retries when his reach changes.
 		// FUTURE LOD1: a coarse regional graph for the long-haul leg instead of region-by-region steps.
-		const bool goalOffArea = !m_navSystem->inSimArea(goal);
+		NavigationSystem::Reach from;
+		m_navSystem->reachFrom(position.value, radius, belief, from);
+		const bool							  goalBeyondReach = !m_navSystem->coversGoal(from, goal);
 		std::optional<std::vector<glm::vec2>> path;
-		if (goalOffArea) {
-			if (const auto staging = m_navSystem->stagingPointToward(position.value, goal)) {
-				path = m_navSystem->requestPath(position.value, *staging, radius, belief);
+		if (goalBeyondReach) {
+			if (!stalledWalkingToward(entity, goal, position)) {
+				const auto staging = m_navSystem->stagingPointToward(from, position.value, goal);
+				if (!staging.has_value() && m_navSystem->isBuildingAround(position.value)) {
+					// No step from here yet, but his region is rebuilding (recentering on him, usually):
+					// hold for it like the no-mesh case; the deferred retry asks again once it lands.
+					if (auto* navPath = world->getComponent<NavPath>(entity)) {
+						navPath->valid = false;
+					}
+					movementTarget.active = false;
+					if (auto* velocity = world->getComponent<Velocity>(entity)) {
+						velocity->value = {0.0F, 0.0F};
+					}
+					return NavRequestOutcome::Waiting;
+				}
+				if (staging.has_value()) {
+					path = m_navSystem->requestPath(position.value, *staging, radius, belief);
+				}
 			}
 		} else {
 			path = m_navSystem->requestPath(position.value, goal, radius, belief);
@@ -2164,24 +2213,21 @@ namespace ecs {
 				velocity->value = {0.0F, 0.0F};
 			}
 			if (auto* task = world->getComponent<Task>(entity)) {
-				NavigationSystem::Reach failedFrom;
-				m_navSystem->reachFrom(position.value, radius, belief, failedFrom);
 				SourceReachMemo::Key failedKey;
-				fillReachKey(failedFrom, memory, failedKey);
+				fillReachKey(from, memory, failedKey);
 				task->blockedReachStamp = failedKey.stamp();
 			}
 			LOG_DEBUG(Engine, "[Nav] Entity %llu: no believed route to (%.2f, %.2f), stopping",
 				static_cast<unsigned long long>(entity), goal.x, goal.y);
 			return NavRequestOutcome::Blocked;
 		}
-
 		// Attach or overwrite the route. waypoints[0] is ~the start, so steer toward
 		// index 1 when there's more than one point (skip the point we're standing on).
 		NavPath navPath;
 		navPath.waypoints = std::move(*path);
 		navPath.current = navPath.waypoints.size() >= 2 ? 1 : 0;
 		navPath.valid = true;
-		navPath.endsShortOfGoal = goalOffArea;
+		navPath.endsShortOfGoal = goalBeyondReach;
 		// Stamp the belief/nav versions this route was planned against, so the replan
 		// loop can detect staleness with a cheap compare (no re-query).
 		navPath.builtBeliefVersion = memory.beliefVersion;
@@ -2196,6 +2242,9 @@ namespace ecs {
 
 		LOG_DEBUG(Engine, "[Nav] Entity %llu: path to (%.2f, %.2f), %zu waypoints",
 			static_cast<unsigned long long>(entity), goal.x, goal.y, count);
+		// A route means go: a replan can land on a colonist stopped at the end of an edge leg (or by
+		// any other stop), and a valid route he never follows freezes him on a task kept as "the same".
+		movementTarget.active = true;
 		return NavRequestOutcome::Routed;
 	}
 

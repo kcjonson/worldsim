@@ -9,6 +9,7 @@
 #include <glm/vec2.hpp>
 
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 
@@ -67,6 +68,10 @@ struct Task {
 	// Memory key of the remembered source a FulfillNeed task is heading for; 0 for none (ground, pack).
 	// Copied from the selected EvaluatedOption::sourceKey, kept on the task so a failed route can name it.
 	std::uint64_t needSourceKey = 0;
+	// Walking toward a goal no region holding the colonist covers (edge legs): the closest he has got
+	// to it, and how many finished legs since then got him no closer. Reset with the task.
+	float		 edgeWalkBestDistance = std::numeric_limits<float>::max();
+	std::uint8_t edgeWalkStalledLegs = 0;
 
 	/// Target position to move to
 	glm::vec2 targetPosition{0.0F, 0.0F};
@@ -142,6 +147,8 @@ struct Task {
 		navState = NavState::Traveling;
 		navStateHold = 0;
 		deferredNavGeneration = 0;
+		edgeWalkBestDistance = std::numeric_limits<float>::max();
+		edgeWalkStalledLegs = 0;
 		targetPosition = glm::vec2{0.0F, 0.0F};
 		needToFulfill = NeedType::Count;
 		harvestTargetEntityId = 0;

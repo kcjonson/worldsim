@@ -164,6 +164,13 @@ private:
 	/// requests it again once the generation moves; Routed and Unmeshed are ordinary travel.
 	void applyNavOutcome(struct Task& task, NavRequestOutcome outcome) const;
 
+	/// Walking toward a goal no region holding the colonist covers, one edge leg at a time: has he
+	/// finished kEdgeWalkMaxStalledLegs legs in a row without getting kEdgeWalkMinProgressMeters
+	/// closer? Then the walk is over (water in the way, a region that can't follow him).
+	[[nodiscard]] bool stalledWalkingToward(EntityID entity, const glm::vec2& goal, const struct Position& position);
+	static constexpr std::uint8_t kEdgeWalkMaxStalledLegs = 3;
+	static constexpr float		  kEdgeWalkMinProgressMeters = 1.0F;
+
 	/// Format a human-readable reason for an option
 	[[nodiscard]] static std::string formatOptionReason(
 		const struct EvaluatedOption& option,

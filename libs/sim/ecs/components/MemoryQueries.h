@@ -33,7 +33,7 @@ namespace ecs {
 	const assets::AssetRegistry&  registry,
 	assets::CapabilityType		  capability);
 
-//// A remembered source, its rank and its squared distance, as findNearestReachableWithCapability orders them.
+/// A remembered source, its rank and its squared distance, as findNearestReachableWithCapability orders them.
 struct SourceCandidate {
 	std::uint8_t			rank;
 	float					distSq;
