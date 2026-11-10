@@ -775,10 +775,10 @@ Not taken: storing the arrays as plain RGBA8 to drop the encode (about 0.01, but
 
 Planned, tracked in Specboard as WOR-583, Ground tile follow-ups. None blocks the shipped work.
 
-- SVG ground defs with the `data-lod` filter, and the salal load-from-string addition (LOD).
+- SVG ground defs with the `data-lod` filter (LOD). salal's `loadSVG` takes a byte span since v0.37, so the filtered markup can load from memory.
 - BC3 or BC7 for the arrays (Open questions).
 - A 4.1 core context from salal. The tile shaders are GLSL 4.10 and salal asks for 3.3; NVIDIA and macOS accept that, a strict driver may not (Shader).
-- The asset-manager Bake view's speed: about 2.5 times slower than the splash bake, and 13.8 s in a run under contention.
+- The asset-manager Vectors view draws a ground def's tile about 15 times a frame (3.4 million quads, 334 MB uploaded). Drawing the previews once into render targets would take that to nothing between changes.
 
 ## Later
 
