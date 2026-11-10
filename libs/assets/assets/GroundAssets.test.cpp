@@ -684,10 +684,36 @@ TEST(LuaPreludeTest, FilesRunInNameOrderBeforeTheGeneratorAndItCallsTheirHelpers
 	ASSERT_EQ(out.paths.size(), 1U);
 	EXPECT_EQ(out.paths[0].vertices.size(), 6U) << "helper(#'ab' + 1) = 6 vertices";
 
-	const std::vector<fs::path> files = LuaEngine::preludeFiles(t.root / "lib");
-	ASSERT_EQ(files.size(), 2U);
-	EXPECT_EQ(files[0].filename(), "a.lua");
-	EXPECT_EQ(files[1].filename(), "b.lua");
+	const PreludeFiles prelude = LuaEngine::preludeFiles(t.root / "lib");
+	EXPECT_TRUE(prelude.error.empty()) << prelude.error;
+	ASSERT_EQ(prelude.files.size(), 2U);
+	EXPECT_EQ(prelude.files[0].filename(), "a.lua");
+	EXPECT_EQ(prelude.files[1].filename(), "b.lua");
+}
+
+TEST(LuaPreludeTest, AMissingOrUnsetFolderIsNoPreludeNotAnError) {
+	const TempDir t;
+	for (const fs::path& dir : {fs::path{}, t.root / "nowhere"}) {
+		const PreludeFiles prelude = LuaEngine::preludeFiles(dir);
+		EXPECT_TRUE(prelude.files.empty());
+		EXPECT_TRUE(prelude.error.empty()) << prelude.error;
+	}
+}
+
+TEST(LuaPreludeTest, APreludePathThatIsNotAFolderFailsAndNamesItAndSoDoesTheGenerator) {
+	const TempDir t;
+	t.write("lib", "a regular file where the folder should be\n");
+	t.write("gen.lua", "-- never reached\n");
+
+	const PreludeFiles prelude = LuaEngine::preludeFiles(t.root / "lib");
+	EXPECT_TRUE(prelude.files.empty());
+	EXPECT_NE(prelude.error.find("lib"), std::string::npos) << prelude.error;
+
+	LuaEngine engine;
+	ASSERT_TRUE(engine.initialize(t.root / "lib"));
+	GeneratedAsset out;
+	EXPECT_FALSE(engine.executeGenerator((t.root / "gen.lua").string(), GenerationContext{}, GeneratorParams{}, out));
+	EXPECT_EQ(engine.getLastError(), prelude.error);
 }
 
 TEST(LuaPreludeTest, ABrokenPreludeFileIsALoadErrorThatNamesIt) {

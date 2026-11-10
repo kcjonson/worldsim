@@ -229,7 +229,12 @@ namespace worldview {
 			mixBytes(*bytes);
 			// The prelude runs before every generator, so editing a helper re-bakes what uses it. The file names are
 			// keyed too, so a rename or a removal moves the key as an edit does.
-			for (const fs::path& file : assets::LuaEngine::preludeFiles(assets::AssetRegistry::Get().preludeDir())) {
+			const assets::PreludeFiles prelude = assets::LuaEngine::preludeFiles(assets::AssetRegistry::Get().preludeDir());
+			if (!prelude.error.empty()) {
+				LOG_WARNING(Engine, "GroundTileCache: %s's prelude: %s; not caching it", def.defName.c_str(), prelude.error.c_str());
+				return std::nullopt;
+			}
+			for (const fs::path& file : prelude.files) {
 				const std::optional<std::vector<uint8_t>> preludeBytes = readBytes(file);
 				if (!preludeBytes.has_value()) {
 					LOG_WARNING(

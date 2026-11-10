@@ -34,7 +34,7 @@ assets/world/flora/MapleTree/
 
 Each generator runs in its own sandboxed Lua state, and `require`, `dofile`, `loadfile` and `package` are nil. Shared helpers come from the prelude instead: every `.lua` file directly in `assets/shared/scripts/lib/` runs in the generator's state before the generator script, sorted by file name. The engine loads it, not Lua, so the sandbox is unchanged. A file can use what the files sorted before it defined at load time; at call time it can use all of them.
 
-A prelude file that cannot be read or fails to run fails the generator with that file named in the error. It must not draw random numbers when it loads, since the generator's stream is already seeded.
+A prelude folder that does not exist is no prelude. A prelude file that cannot be read or fails to run, or a folder that cannot be listed (or is a file), fails the generator with the path named in the error; the bake cache declines to cache it. It must not draw random numbers when it loads, since the generator's stream is already seeded.
 
 Everything lives in one global table, `lib`, with one sub-table per file:
 

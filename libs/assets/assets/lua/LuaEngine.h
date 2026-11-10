@@ -19,6 +19,12 @@ class state;
 
 namespace assets {
 
+/// The prelude files found in a folder, or why they could not be listed (error is empty on success).
+struct PreludeFiles {
+	std::vector<std::filesystem::path> files;
+	std::string						   error;
+};
+
 /// Lua scripting engine for procedural asset generation.
 /// Provides a sandboxed Lua environment with access to asset generation APIs.
 class LuaEngine {
@@ -37,9 +43,11 @@ class LuaEngine {
 	LuaEngine(LuaEngine&&) noexcept;
 	LuaEngine& operator=(LuaEngine&&) noexcept;
 
-	/// The prelude: every .lua file directly in dir, sorted by file name. Empty when dir is empty or
-	/// missing. The ground bake cache keys these files, so it reads the same list the engine runs.
-	[[nodiscard]] static std::vector<std::filesystem::path> preludeFiles(const std::filesystem::path& dir);
+	/// The prelude: every .lua file directly in dir, sorted by file name. No files, and no error, when dir is
+	/// empty or missing. A dir that is not a folder, or any filesystem error while listing it, sets error
+	/// (naming the path) and leaves files empty. The ground bake cache keys these files, so it reads the
+	/// same list the engine runs.
+	[[nodiscard]] static PreludeFiles preludeFiles(const std::filesystem::path& dir);
 
 	/// Initialize the Lua state and register API bindings
 	/// @param preludeDir Folder of prelude scripts that run before each generator (see preludeFiles)
