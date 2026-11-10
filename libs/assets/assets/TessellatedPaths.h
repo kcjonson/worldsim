@@ -37,10 +37,11 @@ namespace assets {
 		std::vector<Path>			   paths;			 // paint order
 		double						   generateMs = 0.0; // the generator run that drew them
 		double						   tessellateMs = 0.0;
+		size_t						   oversizeVertices = 0; // vertices of the paths dropped for passing kMaxMeshVertices alone
 
 		/// Replaces what this holds with the asset's paths drawn at or below maxPixelsPerMeter, each
 		/// tessellated. A path of under 3 vertices, one the tessellator rejects, and one that alone
-		/// passes kMaxMeshVertices are dropped, the last two logged.
+		/// passes kMaxMeshVertices are dropped, the last two logged (the last also in oversizeVertices).
 		void tessellate(const GeneratedAsset& asset, float maxPixelsPerMeter);
 
 		/// The paths drawn at pixelsPerMeter, in order, packed into as many meshes as keep each within

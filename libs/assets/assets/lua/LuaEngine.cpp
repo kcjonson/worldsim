@@ -413,15 +413,20 @@ namespace assets {
 			// Set up the context for this execution
 			(*m_lua)["seed"] = ctx.seed;
 			(*m_lua)["variantIndex"] = ctx.variantIndex;
+			if (ctx.ageClass.has_value()) {
+				(*m_lua)["ageClass"] = *ctx.ageClass;
+			} else {
+				(*m_lua)["ageClass"] = sol::lua_nil;
+			}
 			if (ctx.periodMeters.has_value()) {
 				(*m_lua)["period"] = *ctx.periodMeters;
 			} else {
 				(*m_lua)["period"] = sol::lua_nil;
 			}
 
-			// Seed the random number generator using sol2's type-safe method
-			// (avoids string concatenation which could be a code injection risk)
-			(*m_lua)["math"]["randomseed"](ctx.seed + ctx.variantIndex);
+			// Seed from the seed alone: it is already distinct per variant (AssetRegistry::generationSeed).
+			// sol2's call, not a built string, so nothing is injected.
+			(*m_lua)["math"]["randomseed"](ctx.seed);
 
 			// Create helper functions to access params
 			// NOTE: These lambdas capture `params` and `outAsset` by reference. This is safe

@@ -1762,7 +1762,7 @@ namespace {
 							 .emplace(
 								 pileDef,
 								 std::make_pair(
-									 worldview::templateBounds(registry.getTemplate(pileDef)), worldview::pileItem(registry.getDefinition(pileDef))
+									 worldview::templateBounds(registry.getTemplate(pileDef, {})), worldview::pileItem(registry.getDefinition(pileDef))
 								 )
 							 )
 							 .first;

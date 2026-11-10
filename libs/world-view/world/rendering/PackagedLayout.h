@@ -1,5 +1,6 @@
 #pragma once
 
+#include "assets/AssetRegistry.h"
 #include "assets/placement/SpatialIndex.h" // PlacedEntity
 #include "graphics/Rect.h"
 
@@ -63,6 +64,7 @@ namespace worldview {
 			sprite.scale = 1.0F;
 			sprite.colorTint = {1.0F, 1.0F, 1.0F, 1.0F};
 			sprite.anchorY = bottomY;
+			sprite.templateId = assets::AssetRegistry::Get().templateId(sprite.defName, {});
 			return sprite;
 		};
 
@@ -80,6 +82,7 @@ namespace worldview {
 		out.item.scale = fit;
 		out.item.colorTint = itemColorTint;
 		out.item.anchorY = bottomY;
+		out.item.templateId = assets::AssetRegistry::Get().templateId(itemDefName, {});
 		return out;
 	}
 

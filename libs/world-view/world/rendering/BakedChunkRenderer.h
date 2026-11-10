@@ -112,7 +112,7 @@ class BakedChunkRenderer {
 	};
 	std::vector<PendingUpload> m_pendingUploads;
 
-	// Memoized template meshes (keyed by defName)
+	// Memoized template meshes (by template id)
 	TemplateMeshCache m_templateCache;
 
 	/// Upload a single sub-chunk's buffers into an existing cache entry.

@@ -1,6 +1,6 @@
 # Entity Selection Silhouette — Technical Spec
 
-**Status:** Design
+**Status:** Built. Since tree variety (`docs/technical/asset-system/tree-variety.md`, R3) the silhouette is per template, not per `defName`; see "Per-template since tree variety" below.
 **Created:** 2026-07-02
 **Depends on:** the entity depth-sort (world-depth-sorting Story A, PR #248) for the entity-layer sort key the outline draws against; the in-house planar arrangement (`libs/geometry/arrangement`) and `RingBoolean` reference; `AssetRegistry` template cache.
 
@@ -158,6 +158,14 @@ Deferred (Tier-2, documented not built): a per-frame posed outline for the singl
 - Changing construction hit-tests/outlines (walls/openings/foundations/rooms already exact).
 - Coupling `CollisionShape` to selection: **the derived visual silhouette wins for hit-testing; `CollisionShape` stays nav-only** (it's the trunk, deliberately smaller than the canopy; its local frame differs from the template frame — never mix its coords into the silhouette test).
 - Per-instance-seed silhouette variation (uses the fixed-seed shared template).
+
+## Per-template since tree variety
+
+Each tree draws its own (def, age class, variant) mesh, so the silhouette is cached per template id (`getSilhouette(templateId)`, or `getSilhouette(defName, traits)`). A placed entity uses its stored `templateId`; a dynamic entity resolves its `Appearance` defName (with the facing suffix) and traits. A simple (SVG) asset is one drawing, so all its traits share one template.
+
+Triangles whose three vertices are all below `AssetRegistry::kSilhouetteMinAlpha` (0.5) are left out of the raster, so a drop shadow is not part of the outline, the hit area, or the flora view's canopy cover. `boundsCenterMeters` still comes from the whole drawn mesh, since it must match the render transform.
+
+The world-entity broad phase queries out to `AssetRegistry::maxReachMeters` (the farthest any non-groundcover template reaches from its origin, times its def's largest placement scale, never under `kSelectionRadius`) instead of a fixed 8 m.
 
 ## 13. Decisions log
 

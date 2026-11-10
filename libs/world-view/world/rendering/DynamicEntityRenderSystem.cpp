@@ -45,7 +45,7 @@ void DynamicEntityRenderSystem::update(float deltaTime) {
         if (packaged != nullptr) {
             const worldview::PackagedLayout pl = worldview::packagedLayout(
                 pos.value, appearance.defName, appearance.scale, appearance.colorTint,
-                worldview::templateBounds(assetRegistry.getTemplate(appearance.defName))
+                worldview::templateBounds(assetRegistry.getTemplate(appearance.defName, {}))
             );
             renderData.push_back(pl.crateBack);
             renderData.push_back(pl.item);
@@ -63,10 +63,12 @@ void DynamicEntityRenderSystem::update(float deltaTime) {
         }
 
         placed.defName = defName;
+        placed.traits = appearance.traits;
+        placed.templateId = assetRegistry.templateId(defName, appearance.traits);
 
         // Re-center the mesh on its bbox (entity position is the center) and derive the
         // world transform through the shared helper so render, outline, and hit-test agree.
-        const auto*            mesh   = assetRegistry.getTemplate(defName);
+        const auto*            mesh   = assetRegistry.getTemplate(placed.templateId);
         const Foundation::Rect bounds = worldview::templateBounds(mesh);
         const glm::vec2        boundsCenter{bounds.x + bounds.width * 0.5F, bounds.y + bounds.height * 0.5F};
         const float            meshMaxY = bounds.y + bounds.height; // Bottom-most local-Y (feet); drives the depth anchor
@@ -75,7 +77,7 @@ void DynamicEntityRenderSystem::update(float deltaTime) {
         // layout so the hit-test and outline match what's drawn.
         if (const auto* stack = world->getComponent<ecs::ResourceStack>(entity)) {
             const worldview::PileLayout pile = worldview::pileLayout(
-                pos.value, defName, appearance.scale, appearance.colorTint, bounds,
+                pos.value, defName, placed.templateId, appearance.scale, appearance.colorTint, bounds,
                 worldview::pileItem(assetRegistry.getDefinition(appearance.defName)), stack->quantity
             );
             for (std::size_t i = 0; i < pile.count; ++i) {

@@ -22,7 +22,7 @@ TEST(PileLayout, SpriteCountFollowsFillFraction) {
 TEST(PileLayout, SingleUnitMatchesDynamicTransform) {
 	const glm::vec2 pos{10.0F, -4.0F};
 	const glm::vec2 boundsCenter{0.5F, 0.2F};
-	const auto		pile = pileLayout(pos, "Wood", 1.0F, {1, 1, 1, 1}, Foundation::Rect{0.0F, 0.0F, 1.0F, 0.4F}, {0.4F, 40}, 1);
+	const auto		pile = pileLayout(pos, "Wood", 0, 1.0F, {1, 1, 1, 1}, Foundation::Rect{0.0F, 0.0F, 1.0F, 0.4F}, {0.4F, 40}, 1);
 	ASSERT_EQ(pile.count, 1U);
 	const glm::vec2 want = worldview::dynamicInstanceTransform(pos, 1.0F, boundsCenter).origin;
 	EXPECT_FLOAT_EQ(pile.sprites[0].position.x, want.x);
@@ -34,7 +34,7 @@ TEST(PileLayout, SingleUnitMatchesDynamicTransform) {
 // within ~0.5 m of each other, deterministic, and front rows sort in front of back rows.
 TEST(PileLayout, FullPileIsCompactAndCentered) {
 	const glm::vec2 pos{0.0F, 0.0F};
-	const auto		pile = pileLayout(pos, "Wood", 1.0F, {1, 1, 1, 1}, Foundation::Rect{-0.5F, -0.2F, 1.0F, 0.4F}, {0.4F, 40}, 40);
+	const auto		pile = pileLayout(pos, "Wood", 0, 1.0F, {1, 1, 1, 1}, Foundation::Rect{-0.5F, -0.2F, 1.0F, 0.4F}, {0.4F, 40}, 40);
 	ASSERT_EQ(pile.count, 5U);
 	float sumY = 0.0F;
 	for (std::size_t i = 0; i < pile.count; ++i) {
@@ -57,7 +57,7 @@ TEST(PileLayout, FootprintHoldsFullPile) {
 	const Foundation::Rect		 bounds{0.0F, 0.0F, 1.07F, 0.4F};
 	const worldview::PileItem	 wood{0.4F, 40};
 	const float					 radius = worldview::pileFootprintRadius(bounds, 1.0F, wood);
-	const auto					 full = pileLayout({0.0F, 0.0F}, "Wood", 1.0F, {1, 1, 1, 1}, bounds, wood, 40);
+	const auto					 full = pileLayout({0.0F, 0.0F}, "Wood", 0, 1.0F, {1, 1, 1, 1}, bounds, wood, 40);
 	for (std::size_t i = 0; i < full.count; ++i) {
 		const glm::vec2 lo = full.sprites[i].position;
 		const glm::vec2 hi = lo + glm::vec2{bounds.width, bounds.height};
@@ -69,7 +69,7 @@ TEST(PileLayout, FootprintHoldsFullPile) {
 
 	// At half scale the heap's row offsets shrink with the sprites, and the footprint still holds it.
 	const float halfRadius = worldview::pileFootprintRadius(bounds, 0.5F, wood);
-	const auto	half = pileLayout({0.0F, 0.0F}, "Wood", 0.5F, {1, 1, 1, 1}, bounds, wood, 40);
+	const auto	half = pileLayout({0.0F, 0.0F}, "Wood", 0, 0.5F, {1, 1, 1, 1}, bounds, wood, 40);
 	EXPECT_LT(halfRadius, radius);
 	EXPECT_NEAR(half.sprites[1].position.y - half.sprites[0].position.y, 0.5F * (full.sprites[1].position.y - full.sprites[0].position.y), 1e-5F);
 	for (std::size_t i = 0; i < half.count; ++i) {

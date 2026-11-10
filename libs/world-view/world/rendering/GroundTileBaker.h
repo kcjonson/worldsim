@@ -170,9 +170,6 @@ namespace worldview {
 
 		explicit GroundTileBaker(const Args& args);
 
-		/// The generator seed of a def's variant, salted by its seed group (the def's name unless it names
-		/// one), so two defs' variant 0 differ unless they share a group.
-		[[nodiscard]] static uint32_t variantSeed(const std::string& seedGroup, uint32_t variant);
 		/// Texels along a layer's edge at mip 0: period x pixelsPerMeter. 0 when that isn't a whole number
 		/// from 1 to assets::kMaxGroundLayerSize (assets/GroundLayer.h, which AssetValidator checks too).
 		[[nodiscard]] static int layerSize(const assets::AssetDefinition& def);

@@ -70,10 +70,12 @@ namespace worldview {
 		return scaled > kMaxPileSprites ? kMaxPileSprites : static_cast<std::size_t>(scaled);
 	}
 
-	/// `itemBounds` is the item template's local bounds in meters (templateBounds).
+	/// `templateId` is the item's template (AssetRegistry::templateId), `itemBounds` its local
+	/// bounds in meters (templateBounds).
 	[[nodiscard]] inline PileLayout pileLayout(
 		glm::vec2				posValue,
 		const std::string&		defName,
+		std::uint32_t			templateId,
 		float					scale,
 		glm::vec4				colorTint,
 		const Foundation::Rect& itemBounds,
@@ -101,6 +103,7 @@ namespace worldview {
 			};
 			assets::PlacedEntity& sprite = out.sprites[i];
 			sprite.defName = defName;
+			sprite.templateId = templateId;
 			sprite.position = dynamicInstanceTransform(center, scale, boundsCenter).origin;
 			sprite.rotation = 0.0F;
 			sprite.scale = scale;
@@ -116,7 +119,7 @@ namespace worldview {
 	[[nodiscard]] inline float pileFootprintRadius(const Foundation::Rect& itemBounds, float scale, const PileItem& item) {
 		const std::uint32_t fullStack =
 			(item.stackSize == 0 || item.stackSize == UINT32_MAX) ? static_cast<std::uint32_t>(kMaxPileSprites) : item.stackSize;
-		const PileLayout pile = pileLayout({0.0F, 0.0F}, std::string{}, scale, {1.0F, 1.0F, 1.0F, 1.0F}, itemBounds, item, fullStack);
+		const PileLayout pile = pileLayout({0.0F, 0.0F}, std::string{}, 0, scale, {1.0F, 1.0F, 1.0F, 1.0F}, itemBounds, item, fullStack);
 		float			 reachX = 0.0F;
 		float			 reachY = 0.0F;
 		for (std::size_t i = 0; i < pile.count; ++i) {

@@ -14,6 +14,7 @@
 
 #include <assets/AssetRegistry.h>
 #include <assets/IAssetGenerator.h>
+#include <assets/VariantSeed.h>
 #include <backend/gl/GLBackend.h>
 #include <primitives/Primitives.h>
 #include <threading/TaskPool.h>
@@ -147,9 +148,9 @@ asset:addPath(fine)
 } // namespace
 
 TEST(GroundTileBakerTest, SeedsAreSaltedBySeedGroupAndVariant) {
-	EXPECT_NE(GroundTileBaker::variantSeed("grass", 0), GroundTileBaker::variantSeed("grass", 1));
-	EXPECT_NE(GroundTileBaker::variantSeed("grass", 0), GroundTileBaker::variantSeed("Ground_Snow", 0));
-	EXPECT_EQ(GroundTileBaker::variantSeed("grass", 3), GroundTileBaker::variantSeed("grass", 3)) << "one group, one layout a variant";
+	EXPECT_NE(assets::variantSeed("grass", 0), assets::variantSeed("grass", 1));
+	EXPECT_NE(assets::variantSeed("grass", 0), assets::variantSeed("Ground_Snow", 0));
+	EXPECT_EQ(assets::variantSeed("grass", 3), assets::variantSeed("grass", 3)) << "one group, one layout a variant";
 	EXPECT_EQ(GroundTileBaker::mipCount(512), 7) << "capped at mip 6";
 	EXPECT_EQ(GroundTileBaker::mipCount(32), 6) << "32 down to 1";
 	EXPECT_EQ(GroundTileBaker::supersampleFor(1), 8);
