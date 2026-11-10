@@ -180,6 +180,30 @@ TEST(GroundTileCacheTest, TheKeyFollowsTheLoadedDefAndTheScript) {
 	registry.clearDefinitions();
 }
 
+TEST(GroundTileCacheTest, EditingAPreludeFileMovesTheKey) {
+	const TempDir t;
+	auto&		  registry = assets::AssetRegistry::Get();
+	registry.setSharedScriptsPath(t.root / "shared");
+	t.write("shared/lib/a.lua", "-- a helper\n");
+	loadDef(t);
+	const auto keyNow = [&registry]() { return GroundTileCache::keyFor(*registry.getDefinition("Ground_CacheTest"), 4096).value(); };
+	const uint64_t original = keyNow();
+
+	t.write("shared/lib/a.lua", "-- a helper, edited\n");
+	const uint64_t edited = keyNow();
+	EXPECT_NE(edited, original);
+
+	t.write("shared/lib/b.lua", "-- another\n");
+	const uint64_t added = keyNow();
+	EXPECT_NE(added, edited);
+
+	fs::remove(t.root / "shared" / "lib" / "b.lua");
+	EXPECT_EQ(keyNow(), edited) << "the key follows the files that are there";
+
+	registry.setSharedScriptsPath({});
+	registry.clearDefinitions();
+}
+
 TEST(GroundTileCacheTest, EveryNameGetsItsOwnFileInsideTheDirectory) {
 	const fs::path		  directory = fs::path("cache") / "ground";
 	const GroundTileCache cache(directory);

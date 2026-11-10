@@ -10,7 +10,7 @@
 //
 // The key hashes everything the bake reads: the def as the registry parsed it (its generator params, name,
 // variant count, period and density, seed group and generator name), its generator script as it is on
-// disk (an @shared/ one included; scripts are sandboxed and can't load others) with LuaEngine::kApiVersion,
+// disk (an @shared/ one included) and the prelude files that run before it, with LuaEngine::kApiVersion,
 // the render tile size, salal's version (git describe of the checkout built against, with a hash of its
 // diff when dirty), and GroundTileBaker::kVersion for worldsim's own bake code. Editing the def's XML or
 // script, then reloading, re-bakes; a part of the XML the bake never reads, like <macro> or <transition>,

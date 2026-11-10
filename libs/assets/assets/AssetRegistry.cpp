@@ -3,6 +3,7 @@
 
 #include "assets/AssetRegistry.h"
 #include "assets/SvgPathNodes.h"
+#include "assets/TreeDefSchema.h"
 #include "assets/lua/LuaGenerator.h"
 
 #include <silhouette/Silhouette.h>
@@ -922,6 +923,22 @@ namespace assets {
 				parseGroundParams(defNode, def);
 			}
 
+			std::vector<TreeDefIssue> treeIssues;
+			def.ageClasses = readAgeClasses(defNode, treeIssues);
+			if (const std::optional<PlacementScale> scale = readPlacementScale(defNode, treeIssues); scale.has_value()) {
+				def.placement.scale = *scale;
+			}
+			for (const TreeDefIssue& issue : treeIssues) {
+				LOG_WARNING(
+					Engine,
+					"AssetDef '%s' <%s> %s ('%s'); ignoring the block",
+					def.defName.c_str(),
+					issue.field.c_str(),
+					issue.message.c_str(),
+					issue.value.c_str()
+				);
+			}
+
 			// Item category (for storage matching and UI grouping)
 			std::string categoryStr = defNode.child_value("category");
 			if (!categoryStr.empty()) {
@@ -1592,6 +1609,10 @@ namespace assets {
 		return m_sharedScriptsPath / def.scriptPath.substr(kSharedPrefix.size());
 	}
 
+	std::filesystem::path AssetRegistry::preludeDir() const {
+		return m_sharedScriptsPath.empty() ? std::filesystem::path{} : m_sharedScriptsPath / "lib";
+	}
+
 	bool AssetRegistry::generateAsset(const std::string& defName, uint32_t seed, GeneratedAsset& outAsset) {
 		const AssetDefinition* def = getDefinition(defName);
 		if (def == nullptr) {
@@ -1622,7 +1643,7 @@ namespace assets {
 				}
 				LOG_DEBUG(Engine, "Resolved script: %s -> %s", def->scriptPath.c_str(), resolvedScriptPath.c_str());
 
-				LuaGenerator luaGen(resolvedScriptPath);
+				LuaGenerator luaGen(resolvedScriptPath, preludeDir());
 				return luaGen.generate(ctx, def->params, outAsset);
 			} catch (const std::exception& e) {
 				LOG_ERROR(Engine, "LuaGenerator error for '%s': %s", def->scriptPath.c_str(), e.what());

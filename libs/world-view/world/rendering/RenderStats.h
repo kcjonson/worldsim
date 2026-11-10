@@ -14,6 +14,13 @@ namespace worldview {
 		uint32_t entities = 0;
 		uint32_t drawCalls = 0;
 		uint32_t triangles = 0;
+
+		// The depth-sorted upright stream (InstancedEntityRenderer::emitSorted): tall statics
+		// and actors. Those draws go through the batch renderer, so the batch totals already
+		// hold them; these split them out for perf captures, in the batch renderer's units
+		// (an actor's triangle counts as two, an instanced mesh as its indices / 3 per instance).
+		uint32_t uprightDrawCalls = 0;
+		uint32_t uprightTriangles = 0;
 	};
 
 } // namespace worldview

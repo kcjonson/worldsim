@@ -86,6 +86,7 @@ namespace worldview {
 		m_animColors.clear();
 		m_animIndices.clear();
 		uint32_t animVertexBase = 0;
+		uint32_t runTriangles = 0; // the current run's template triangles, per instance
 
 		// drawInstanced draws immediately; the CPU triangle batch only draws when the
 		// BatchRenderer is flushed. To keep submission order == depth order we flush the
@@ -99,9 +100,11 @@ namespace worldview {
 			}
 			auto it = m_meshHandles.find(m_runDefName);
 			if (it != m_meshHandles.end() && it->second.isValid()) {
-				Renderer::Primitives::drawInstanced(
-					it->second, m_runInstances.data(), static_cast<uint32_t>(m_runInstances.size()), camera
-				);
+				const auto count = static_cast<uint32_t>(m_runInstances.size());
+				Renderer::Primitives::drawInstanced(it->second, m_runInstances.data(), count, camera);
+				// drawInstanced splits a run past the handle's capacity into several draws
+				stats.uprightDrawCalls += (count + kMaxInstancesPerMesh - 1) / kMaxInstancesPerMesh;
+				stats.uprightTriangles += count * runTriangles;
 			}
 			m_runInstances.clear();
 			m_runDefName.clear();
@@ -110,6 +113,10 @@ namespace worldview {
 			if (m_animIndices.empty()) {
 				return;
 			}
+			stats.uprightDrawCalls++;
+			// The batch renderer draws each submitted triangle as two (a quad with a repeated
+			// corner) and counts it so; match that or this undercounts against the total.
+			stats.uprightTriangles += static_cast<uint32_t>(m_animIndices.size() / 3) * 2;
 			Renderer::Primitives::drawTriangles(Renderer::Primitives::TrianglesArgs{
 				.vertices = m_animVertices.data(),
 				.indices = m_animIndices.data(),
@@ -196,6 +203,7 @@ namespace worldview {
 				flushRun();
 			}
 			m_runDefName = entity.defName;
+			runTriangles = static_cast<uint32_t>(templateMesh->getTriangleCount());
 			m_runInstances.emplace_back(
 				Foundation::Vec2(entity.position.x, entity.position.y), entity.rotation, entity.scale, entity.colorTint
 			);

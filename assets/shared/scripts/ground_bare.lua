@@ -29,34 +29,21 @@ local P = period -- the def's <period>, meters
 local AREA = P * P
 local TAU = math.pi * 2
 
-local rand, floor, sqrt, sin, cos, exp, log, min, max, abs =
-	math.random, math.floor, math.sqrt, math.sin, math.cos, math.exp, math.log, math.min, math.max, math.abs
+local rand, floor, sqrt, sin, cos, exp, min, max, abs =
+	math.random, math.floor, math.sqrt, math.sin, math.cos, math.exp, math.min, math.max, math.abs
 
-local function clamp(v, lo, hi)
-	return v < lo and lo or (v > hi and hi or v)
-end
-local function uniform(a, b)
-	return a + (b - a) * rand()
-end
-local function gauss()
-	return sqrt(-2 * log(1 - rand())) * cos(TAU * rand())
-end
-local function lognormal(lo, hi, sigma)
-	return clamp(sqrt(lo * hi) * exp(sigma * gauss()), lo, hi)
-end
+local clamp = lib.num.clamp
+local uniform, gauss, lognormal = lib.random.uniform, lib.random.gauss, lib.random.lognormal
+local parseHex, hex, toLinear, toSrgb, luminance, shade, mix =
+	lib.color.parseHex, lib.color.hex, lib.color.toLinear, lib.color.toSrgb, lib.color.luminance, lib.color.shade, lib.color.mixLinear
+local shape, stripSides, stripPart, stripShape = lib.shape.polygon, lib.shape.stripSides, lib.shape.stripPart, lib.shape.strip
+
 local function count(perSquareMeter)
 	return floor(perSquareMeter * AREA + 0.5)
 end
 
 -- Colors -------------------------------------------------------------------------------------
 
-local function parseHex(text)
-	local s = text:gsub("#", "")
-	return { tonumber(s:sub(1, 2), 16) / 255, tonumber(s:sub(3, 4), 16) / 255, tonumber(s:sub(5, 6), 16) / 255 }
-end
-local function hex(key, default)
-	return parseHex(getString(key, default))
-end
 -- A comma-separated list of colors; fallback when the param is absent.
 local function hexList(key, fallback)
 	local out = {}
@@ -77,37 +64,7 @@ local function numberList(key)
 	return out
 end
 
-local function toLinear(c)
-	local out = {}
-	for i = 1, 3 do
-		local v = c[i]
-		out[i] = v <= 0.04045 and v / 12.92 or ((v + 0.055) / 1.055) ^ 2.4
-	end
-	return out
-end
-local function toSrgb(l)
-	local out = {}
-	for i = 1, 3 do
-		local v = clamp(l[i], 0, 1)
-		out[i] = v <= 0.0031308 and v * 12.92 or 1.055 * v ^ (1 / 2.4) - 0.055
-	end
-	return out
-end
-local function luminance(c)
-	local l = toLinear(c)
-	return 0.2126 * l[1] + 0.7152 * l[2] + 0.0722 * l[3]
-end
 
--- c with its linear value scaled by k: the same hue, k times the light.
-local function shade(c, k)
-	local l = toLinear(c)
-	return toSrgb({ l[1] * k, l[2] * k, l[3] * k })
-end
--- Linear-light mix.
-local function mix(a, b, t)
-	local la, lb = toLinear(a), toLinear(b)
-	return toSrgb({ la[1] + (lb[1] - la[1]) * t, la[2] + (lb[2] - la[2]) * t, la[3] + (lb[3] - la[3]) * t })
-end
 local function jitter(c, amp)
 	return shade(c, 1 + amp * (rand() * 2 - 1))
 end
@@ -177,10 +134,6 @@ local function put(xs, ys, n, c, lod)
 	addPath(asset, p)
 end
 
--- A polygon kept as point lists, so it can be emitted again moved and scaled (shadows, lit facets).
-local function shape(xs, ys)
-	return { xs = xs, ys = ys, n = #xs }
-end
 -- s moved by (dx, dy) and scaled by k about (cx, cy), emitted in color c.
 local function emitShape(s, c, lod, dx, dy, k, cx, cy)
 	local xs, ys = {}, {}
@@ -221,56 +174,8 @@ local function stoneShape(x, y, r, n, aspect, rot)
 	return shape(xs, ys)
 end
 
--- The two edges of a strip of width w along the polyline (px, py), tapering to its ends over taper of
--- its length. side 0 centers it on the line, -1 puts it above the line on screen, 1 below.
-local function stripSides(px, py, w, taper, side)
-	local n = #px
-	local left, right = {}, {}
-	for i = 1, n do
-		local ax, ay = px[max(1, i - 1)], py[max(1, i - 1)]
-		local bx, by = px[min(n, i + 1)], py[min(n, i + 1)]
-		local dx, dy = bx - ax, by - ay
-		local len = sqrt(dx * dx + dy * dy)
-		if len < 1e-9 then
-			dx, dy, len = 1, 0, 1
-		end
-		local nx, ny = -dy / len, dx / len
-		if side ~= 0 and ny < 0 then
-			nx, ny = -nx, -ny -- a one-sided strip's normal points down the screen
-		end
-		local t = (i - 1) / max(1, n - 1)
-		local f = min(1, min(t, 1 - t) / max(taper, 1e-6))
-		local h = w * f
-		local lo, hi
-		if side < 0 then
-			lo, hi = -h, 0
-		elseif side > 0 then
-			lo, hi = 0, h
-		else
-			lo, hi = -h * 0.5, h * 0.5
-		end
-		left[i] = { px[i] + nx * lo, py[i] + ny * lo }
-		right[i] = { px[i] + nx * hi, py[i] + ny * hi }
-	end
-	return left, right
-end
 
--- The part of a strip between points i0 and i1 as one polygon.
-local function stripPart(left, right, i0, i1)
-	local xs, ys = {}, {}
-	for i = i0, i1 do
-		xs[#xs + 1], ys[#ys + 1] = left[i][1], left[i][2]
-	end
-	for i = i1, i0, -1 do
-		xs[#xs + 1], ys[#ys + 1] = right[i][1], right[i][2]
-	end
-	return shape(xs, ys)
-end
 
-local function stripShape(px, py, w, taper, side)
-	local left, right = stripSides(px, py, w, taper, side)
-	return stripPart(left, right, 1, #px)
-end
 
 -- Fields and placement -------------------------------------------------------------------------
 

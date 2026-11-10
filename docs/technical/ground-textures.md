@@ -2,7 +2,7 @@
 
 Created: 2025-12-13
 Updated: 2026-11-01 (ground tile variants: tiles become SVG/Lua assets baked to texture arrays and mixed by a hex lattice in the shader, and the atlas goes away; spike results and the perf plan added. Later: the bank, the hex sampler and the macro texture are in the tile pass, the atlas is deleted, and the surfaces without art paint placeholder defs. Then: the bake runs each generator once, on the pool, and keeps its bakes in a disk cache the splash reads. Then: the tile pass back under main in every cell, through a leaner sampler, a cheaper land field, no ground under open water and hex blending from 16 px/m. Then: round 1 of the real art for the eight surfaces that painted placeholders, the grass family from `ground_grass.lua` and Dirt, Sand, Mud, Rock and Snow from one new generator, `ground_bare.lua`; the bank reads its cached defs side by side and the encode keeps a small mip's mean. Then: surface transitions specified, design only: baked heights in the ground arrays' alpha and a height contest that replaces the fringe and rim, pair parameters in the defs, and the band capped at the field's reach. Then: the heights are baked (WOR-559), the mip window is fitted and kept over per-mip equalization, and the grass family bakes from one seed group. Then: the height contest is built (WOR-560): the fringe and rim are deleted, every pair's band and shading come from the defs, the band reads a distance that stays continuous out to the field's reach, the grass family hashes its hex cells alike, and the field does less work a pixel, bit for bit. Then: round 2 of the bare surfaces' art, Rock, Mud, Sand and Snow redrawn from new `ground_bare.lua` layers (regions cut along spectral-field contours, joints, lichen colonies, sky-tinted puddles, ripple fragments, wind streaks), and the pair recipes retuned on the real edges, the grass family's band down to 0.2 m (WOR-561). Then: review fixes, the pair table stored as a triangle of 36 pairs, the shader's whole-number bias kept out of every sum a reordering compiler could fold it into, and the golden test run over negative tiles. Then: tested by hand and merged to main, #332 (tile variants) carried by #333 (surface blending), with the draft-state wording rewritten to what shipped)
-Status: Built and merged. Open items are in status.md under Ground Tile Follow-ups.
+Status: Built and merged. Open items are in Specboard under WOR-583, Ground tile follow-ups.
 
 The ground is painted by the tile pass: one quad per chunk whose fragment shader picks a land surface for every pixel, samples that surface's baked ground tiles, and paints water and shore over the result. Which surface a pixel gets is decided by the land field of [terrain-polygons-architecture.md](./organic-terrain/terrain-polygons-architecture.md) D16, so no surface boundary follows the tile grid. This doc covers the ground tile assets, the baker, how the shader samples them, and the per-chunk data the pass reads, and summarizes the field; the spec holds the field's details and defaults.
 
@@ -118,7 +118,7 @@ What's left cold is the render, and nearly all of it is the GPU finishing salal'
 
 ## LOD
 
-Built: Lua `path:setLod(N)` and the baked mip chain it feeds. Not built: the SVG `data-lod` attribute below and the salal load-from-string addition it needs (Ground Tile Follow-ups in status.md). Every shipped def is procedural, so none needs them yet.
+Built: Lua `path:setLod(N)` and the baked mip chain it feeds. Not built: the SVG `data-lod` attribute below and the salal load-from-string addition it needs (Specboard WOR-583, Ground tile follow-ups). Every shipped def is procedural, so none needs them yet.
 
 An SVG element, or a `<g>`, may carry `data-lod="N"`: draw it only where the screen shows at least N pixels per meter. The game's zoom runs 2 to 160 px/m, default 24. The attribute inherits, and an element's effective N is the largest on itself and its ancestors. An element without one is always drawn. A Lua path gets the same through `path:setLod(N)`, a new field on `GeneratedPath`.
 
@@ -773,7 +773,7 @@ Not taken: storing the arrays as plain RGBA8 to drop the encode (about 0.01, but
 
 ## Follow-ups
 
-Planned, tracked as Ground Tile Follow-ups in status.md. None blocks the shipped work.
+Planned, tracked in Specboard as WOR-583, Ground tile follow-ups. None blocks the shipped work.
 
 - SVG ground defs with the `data-lod` filter (LOD). salal's `loadSVG` takes a byte span since v0.37, so the filtered markup can load from memory.
 - BC3 or BC7 for the arrays (Open questions).

@@ -10,6 +10,7 @@
 #include "../EntityID.h"
 
 #include "assets/AssetRegistry.h"
+#include "assets/placement/DecimeterGrid.h"
 
 #include <glm/vec2.hpp>
 
@@ -39,14 +40,13 @@ namespace ecs {
 	};
 
 	/// Hash for world entity key (position + defNameId)
-	/// Uses quantized position (0.1m grid) combined with defNameId
+	/// Uses the position's cell on the 0.1 m grid (assets::decimeterCell) combined with defNameId
 	inline uint64_t hashWorldEntity(const glm::vec2& position, uint32_t defNameId) {
-		auto qx = static_cast<int32_t>(position.x * 10.0F);
-		auto qy = static_cast<int32_t>(position.y * 10.0F);
+		const assets::DecimeterCell cell = assets::decimeterCell(position);
 		// Pack defNameId and quantized position into 64-bit key
 		// This is more efficient than string hashing
 		// Cast through uint32_t to preserve bit pattern without sign extension
-		uint64_t posHash = (static_cast<uint64_t>(static_cast<uint32_t>(qx)) << 32) | static_cast<uint32_t>(qy);
+		uint64_t posHash = (static_cast<uint64_t>(static_cast<uint32_t>(cell.x)) << 32) | static_cast<uint32_t>(cell.y);
 		return posHash ^ (static_cast<uint64_t>(defNameId) * 0x9e3779b97f4a7c15ULL);
 	}
 
@@ -157,19 +157,6 @@ namespace ecs {
 
 		/// Sight radius in meters (MVP: simple circle, sees through walls)
 		float sightRadius = kDefaultSightRadius;
-
-		// --- Legacy API (string-based, for compatibility) ---
-
-		/// Hash function for world entity keys using string defName
-		/// @deprecated Use the uint32_t defNameId version instead
-		static uint64_t hashWorldEntity(const glm::vec2& position, const std::string& defName) {
-			auto qx = static_cast<int32_t>(position.x * 10.0F);
-			auto qy = static_cast<int32_t>(position.y * 10.0F);
-			// Cast through uint32_t to preserve bit pattern without sign extension
-			uint64_t posHash = (static_cast<uint64_t>(static_cast<uint32_t>(qx)) << 32) | static_cast<uint32_t>(qy);
-			uint64_t nameHash = std::hash<std::string>{}(defName);
-			return posHash ^ (nameHash + 0x9e3779b9 + (posHash << 6) + (posHash >> 2));
-		}
 
 		// --- Query Methods ---
 

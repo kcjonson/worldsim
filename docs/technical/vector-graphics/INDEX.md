@@ -77,7 +77,7 @@ See [architecture.md](./architecture.md) for complete system design.
 - **Vertex Shader Animation**: Wind displacement in shader (currently CPU-driven)
 - **Tiered System Integration**: Full Phase 3 optimization pass
 
-See `/docs/status.md` → "Deferred Epics" for details.
+Tracked in Specboard as WOR-49, Complex Flora CPU Optimization (deferred).
 
 ## Game Requirements Context
 

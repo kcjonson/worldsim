@@ -235,4 +235,4 @@ slider will let the player view and select the time of year, driven by orbit
 mechanics (axial tilt + orbital position). Seasonal snow cover ("how much snow is
 on the ground" right now, distinct from glaciers) should be **dynamic and computed
 at view/sim time, not baked into worldgen** — changing the season must not require a
-full planet regeneration. See the planned epic in `docs/status.md`.
+full planet regeneration. See the Specboard epic WOR-50, Season System.

@@ -146,6 +146,10 @@ namespace assets {
 		/// folder set (logged).
 		[[nodiscard]] std::filesystem::path resolveScriptPath(const AssetDefinition& def) const;
 
+		/// The folder of Lua files that run before every generator: lib/ in the shared scripts folder.
+		/// Empty when no shared scripts folder is set.
+		[[nodiscard]] std::filesystem::path preludeDir() const;
+
 		/// Parse a collision shape from an SVG file's <metadata><collision> block.
 		/// Simple (SVG-backed) assets can author a collider directly in the SVG; the
 		/// authored points are in SVG user units and are converted to the local-meter

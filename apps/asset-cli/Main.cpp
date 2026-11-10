@@ -1,6 +1,7 @@
 // asset-cli: headless command-line surface for the asset library.
 //
-// Commands: list, search, inspect, validate, render. Everything is
+// Commands: list, search, inspect (with triangle and vertex counts for the
+// def's template and each variant), validate, render. Everything is
 // machine-readable with --json. No window and no debug server, so many
 // invocations can run in parallel (agent loops, CI matrices).
 
@@ -16,6 +17,7 @@
 #include "utils/Log.h"
 #include "utils/ResourcePath.h"
 #include "vector/Types.h"
+#include "world/rendering/GroundTileBaker.h"
 
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
@@ -192,6 +194,45 @@ namespace {
 		return path.substr(0, dot) + suffix + path.substr(dot);
 	}
 
+	// --- mesh counts for inspect ---
+
+	// The mesh the game's template path draws for every instance of the def (getTemplate).
+	json templateCounts(const std::string& defName) {
+		const renderer::TessellatedMesh* mesh = AssetRegistry::Get().getTemplate(defName);
+		if (mesh == nullptr) {
+			return {{"triangles", nullptr}, {"vertices", nullptr}};
+		}
+		return {{"triangles", mesh->getTriangleCount()}, {"vertices", mesh->getVertexCount()}};
+	}
+
+	// One of a def's variants at the seed its renderer builds it with: the ground tile
+	// baker's variantSeed for a ground def, the variant index for the rest (groundcover).
+	json variantCounts(const AssetDefinition& def, uint32_t variant) {
+		const uint32_t seed =
+			def.role == assets::AssetRole::Ground ? worldview::GroundTileBaker::variantSeed(def.ground.seedGroup, variant) : variant;
+		std::vector<renderer::TessellatedMesh> meshes;
+		json								   row{{"seed", seed}, {"triangles", nullptr}, {"vertices", nullptr}};
+		if (AssetRegistry::Get().buildMeshes(def.defName, seed, meshes)) {
+			size_t triangles = 0;
+			size_t vertices = 0;
+			for (const auto& m : meshes) {
+				triangles += m.getTriangleCount();
+				vertices += m.getVertexCount();
+			}
+			row["triangles"] = triangles;
+			row["vertices"] = vertices;
+		}
+		return row;
+	}
+
+	std::string countsText(const json& counts) {
+		if (counts["triangles"].is_null()) {
+			return "no geometry";
+		}
+		return std::to_string(counts["triangles"].get<size_t>()) + " triangles, " + std::to_string(counts["vertices"].get<size_t>()) +
+			   " vertices";
+	}
+
 	// --- commands ---
 
 	int cmdList(const std::vector<std::string>& args) {
@@ -302,6 +343,16 @@ namespace {
 		out["scriptPath"] = d->scriptPath;
 		out["generatorName"] = d->generatorName;
 		out["groups"] = d->placement.groups;
+		out["mesh"] = templateCounts(*defName);
+		if (d->variantCount > 1) {
+			json variants = json::array();
+			for (uint32_t v = 0; v < d->variantCount; ++v) {
+				json row = variantCounts(*d, v);
+				row["variant"] = v;
+				variants.push_back(row);
+			}
+			out["variants"] = variants;
+		}
 		out["issues"] = warnings;
 
 		if (asJson) {
@@ -326,6 +377,13 @@ namespace {
 					std::cout << g << " ";
 				}
 				std::cout << "\n";
+			}
+			std::cout << "mesh:          " << countsText(out["mesh"]) << "\n";
+			if (out.contains("variants")) {
+				for (const auto& row : out["variants"]) {
+					std::cout << "  variant " << row["variant"].get<uint32_t>() << " (seed " << row["seed"].get<uint32_t>()
+							  << "): " << countsText(row) << "\n";
+				}
 			}
 			for (const auto& w : warnings) {
 				std::cout << "[" << w["severity"].get<std::string>() << "] " << w["field"].get<std::string>() << ": "

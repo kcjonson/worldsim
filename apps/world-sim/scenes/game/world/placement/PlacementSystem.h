@@ -15,6 +15,7 @@
 #include <math/Types.h>
 #include <world/camera/WorldCamera.h>
 
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <vector>
@@ -54,6 +55,7 @@ class PlacementSystem {
 		world::WorldCamera*		 camera;
 		assets::PlacementExecutor* placementExecutor; // owns harvestable resource pools
 		ecs::NavigationSystem*			 navigation;		  // world-position validity (isValidPosition)
+		uint64_t						 worldSeed;		  // for the traits of a spawned entity (computeTreeTraits)
 		Callbacks						 callbacks;
 	};
 
@@ -111,6 +113,7 @@ class PlacementSystem {
 	world::WorldCamera*		   camera = nullptr;
 	assets::PlacementExecutor* placementExecutor = nullptr;
 	ecs::NavigationSystem*			   navigation = nullptr;
+	uint64_t						   worldSeed = 0;
 	Callbacks						   callbacks;
 
 	PlacementMode placementMode;

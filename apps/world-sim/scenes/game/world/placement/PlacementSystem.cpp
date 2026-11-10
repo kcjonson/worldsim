@@ -2,6 +2,7 @@
 
 #include <assets/AssetRegistry.h>
 #include <assets/RecipeRegistry.h>
+#include <assets/TreeTraits.h>
 #include <assets/placement/PlacementExecutor.h>
 #include <ecs/components/Appearance.h>
 #include <ecs/components/Inventory.h>
@@ -24,6 +25,7 @@ namespace world_sim {
 		  camera(args.camera),
 		  placementExecutor(args.placementExecutor),
 		  navigation(args.navigation),
+		  worldSeed(args.worldSeed),
 		  callbacks(args.callbacks) {
 		// Initialize placement mode with callback to handle placement
 		placementMode = PlacementMode{PlacementMode::Args{.onPlace = [this](const std::string& defName, Foundation::Vec2 worldPos) {
@@ -200,11 +202,15 @@ namespace world_sim {
 
 		ecsWorld->addComponent<ecs::Position>(entity, ecs::Position{{worldPos.x, worldPos.y}});
 		ecsWorld->addComponent<ecs::Rotation>(entity, ecs::Rotation{0.0F});
-		ecsWorld->addComponent<ecs::Appearance>(entity, ecs::Appearance{defName, 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
-
-		// Check if this is a crafting station or storage container
 		auto&		assetRegistry = assets::AssetRegistry::Get();
 		const auto* assetDef = assetRegistry.getDefinition(defName);
+		ecs::Appearance appearance{defName, 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}};
+		if (assetDef != nullptr) {
+			appearance.traits = assets::computeTreeTraits(*assetDef, {worldPos.x, worldPos.y}, worldSeed);
+		}
+		ecsWorld->addComponent<ecs::Appearance>(entity, std::move(appearance));
+
+		// Check if this is a crafting station or storage container
 
 		if (assetDef != nullptr && assetDef->capabilities.craftable.has_value()) {
 			// Crafting station - add WorkQueue plus a material store Inventory. Colonists haul

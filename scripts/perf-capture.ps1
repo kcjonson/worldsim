@@ -29,6 +29,11 @@ function Get-Metrics {
     Invoke-RestMethod "$base/api/metrics" -TimeoutSec 5
 }
 
+# The depth-sorted upright stream's draws (trees and actors), a share of drawCalls and triangles
+function Get-Uprights {
+    Invoke-RestMethod "$base/api/state?what=uprights" -TimeoutSec 5
+}
+
 function Get-GpuHold {
     if ($NoGpuHold) { return $null }
     Invoke-RestMethod "$base/api/state?what=gpuhold" -TimeoutSec 5
@@ -64,11 +69,13 @@ function Sample-Scenario {
         Start-Sleep -Milliseconds $IntervalMs
         $m = Get-Metrics
         $hold = Get-GpuHold
+        $up = Get-Uprights
         $clocks = Get-GpuClocks
         $rows += [pscustomobject]@{
             fps = $m.fps; frameTimeMs = $m.frameTimeMs; frameTimeMaxMs = $m.frameTimeMaxMs
             p99Ms = $m.frameTime1PercentLow; spikes16 = $m.spikeCount16ms; spikes33 = $m.spikeCount33ms
             drawCalls = $m.drawCalls; triangles = $m.triangleCount; vertices = $m.vertexCount
+            uprightDrawCalls = $up.uprightDrawCalls; uprightTriangles = $up.uprightTriangles
             tileMs = $m.tileRenderMs; entityMs = $m.entityRenderMs; updateMs = $m.updateMs
             sceneUpdateMs = $m.sceneUpdateMs; sceneRenderMs = $m.sceneRenderMs; swapMs = $m.swapBuffersMs
             gpuMs = $m.gpuRenderMs; tileGpuMs = $m.tileGpuMs
@@ -81,10 +88,11 @@ function Sample-Scenario {
     $clockText = if ($null -eq $smi) { 'pstate=?' } else {
         "P0 {0}/{1} gr={2}MHz" -f ($Samples - $nonP0), $Samples, (Get-Median $rows.gpuClockMHz)
     }
-    Write-Host ("{0,-28} frame p50={1,6:F2}ms p99max={2,6:F2}ms gpu={3,6:F2}ms tileGpu={4,5:F2}ms tileMs={5,5:F2} entMs={6,5:F2} tris={7,9} chunks={8} {9}" -f
+    Write-Host ("{0,-28} frame p50={1,6:F2}ms p99max={2,6:F2}ms gpu={3,6:F2}ms tileGpu={4,5:F2}ms tileMs={5,5:F2} entMs={6,5:F2} tris={7,9} upDraws={8} upTris={9,8} chunks={10} {11}" -f
         $Name, (Get-Median $rows.frameTimeMs), ($rows.p99Ms | Measure-Object -Maximum).Maximum, (Get-Median $rows.gpuMs),
         (Get-Median $rows.tileGpuMs), (Get-Median $rows.tileMs), (Get-Median $rows.entityMs),
-        ($rows.triangles | Measure-Object -Maximum).Maximum, ($rows.chunks | Measure-Object -Maximum).Maximum, $clockText)
+        ($rows.triangles | Measure-Object -Maximum).Maximum, (Get-Median $rows.uprightDrawCalls), (Get-Median $rows.uprightTriangles),
+        ($rows.chunks | Measure-Object -Maximum).Maximum, $clockText)
     return [pscustomobject]@{ scenario = $Name; gpuHold = (-not $NoGpuHold); nonP0Samples = $nonP0; samples = $rows }
 }
 

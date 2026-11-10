@@ -330,8 +330,8 @@ anything real. Goldens get re-pinned.
 - Shelf-edge canyons, glacial troughs, clinoform detail (two segments stand in),
   Holocene transgression features.
 - Wave-driven coastline shaping (Ashton 2001, Sapoval 2004); a candidate follow-up.
-- The bathymetry "comb" from the crust-age depth field (status.md, Fluvial
-  Erosion) is separate; the shelf half of it goes away with the ramp.
+- The bathymetry "comb" from the crust-age depth field (a follow-up of the Fluvial
+  Erosion epic, WOR-1) is separate; the shelf half of it goes away with the ramp.
 
 ## Open questions
 

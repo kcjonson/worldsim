@@ -28,6 +28,7 @@
 // Thread Safety: NOT thread-safe. Use separate instances per thread for parallel generation.
 
 #include "assets/MotionDef.h"
+#include "assets/TreeTraits.h"
 
 #include <cstdint>
 #include <string>
@@ -73,6 +74,9 @@ namespace assets {
 		// animated; such entities render through the fast instanced path. The pointee is owned by
 		// the producer (DynamicEntityRenderSystem) for the frame; PlacedEntity only references it.
 		const std::vector<PartTransform>* partTransforms = nullptr;
+
+		// Age class and mesh variant (computeTreeTraits), set where the entity is made.
+		TreeTraits traits{};
 	};
 
 	/// Grid-based spatial index for efficient neighbor queries.
