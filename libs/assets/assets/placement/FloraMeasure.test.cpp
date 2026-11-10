@@ -144,7 +144,7 @@ namespace assets {
 		EXPECT_FALSE(floraPointWithinWorld(0.0F, std::numeric_limits<float>::infinity()));
 
 		// An oversized rect measures nothing and allocates no grid.
-		const FloraMeasurement m = measureFlora({0.0F, 0.0F, 100000000.0F, 0.001F}, {}, {}, {});
+		const FloraMeasurement m = measureFlora({0.0F, 0.0F, 100000000.0F, 0.001F}, {}, {}, {}, squareCrowns);
 		EXPECT_EQ(m.rectAreaM2, 0.0);
 		EXPECT_EQ(m.treeCount, 0U);
 	}
