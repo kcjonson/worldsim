@@ -273,6 +273,7 @@ No tool reports trees per area, canopy cover, or wood per area, and R9 and the y
 
 Trees draw in the depth-sorted stream, and a run breaks whenever the mesh changes. Today two species interleave; after this, up to 16 meshes per species do, so draw calls for visible trees rise toward one per tree.
 
+- The timed steps below were this epic's plan, written before 2026-11-10. Timed runs now follow the [testing README](../../testing/README.md#performance): scoped, after a machine-load check, a worse result unconfirmed unless the machine was idle, and no baselines with any activity on it. The noise-floor baseline below is the nightly batch's.
 - Baseline main twice with `scripts/perf-capture.ps1` for the noise floor, plus a forest view at the quickstart landing at zoom 1 and at 0.25, the furthest zoom (trees draw at every zoom). Record frame time, draw calls, and triangles, with trees counted apart (R11).
 - A/B R3 alone (variants wired, old generator) against that baseline. This isolates the draw-call cost from the new art's triangle cost.
 - Gate: no regression beyond noise in any cell. If R3 fails the gate, pack a def's variants into one vertex and index buffer and draw each by index range, so the run key goes back to the def. salal's backend already takes an index range for instanced draws; `drawInstanced` needs only to expose it. A def's variants must then fit 65,535 vertices together. Taken only on a measured failure.

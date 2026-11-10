@@ -249,9 +249,33 @@ If tests fail, fix the new code—don't revert to keeping both versions.
 **Testing:** `/docs/testing/README.md` is the strategy. Look for actual regressions, never pixel
 changes: no golden images or screenshot diffs. Before committing, run the relevant happy-path
 scenarios (`/docs/testing/scenarios/`) as a manual regression pass with the cheapest subagent
-fleet that can, and add steps when a feature lands. Rendering or sim-heavy changes also run the
-perf capture against `main`; performance is strict. Keep unit tests bounded: check for duplicates
+fleet that can, and add steps when a feature lands. Keep unit tests bounded: check for duplicates
 before adding.
+
+**⚠️ Timed perf: check the machine first, and distrust a worse result.** This machine runs several
+sessions at once and its CPU and GPU are often maxed by other work. Sessions have burned days on
+captures taken under load, then on re-runs chasing regressions that were never there.
+- A session may time its own work when the change calls for it, scoped to what it touched (the view
+  and zooms that could move, not the whole suite by reflex), and only when
+  `node scripts/machine-load.mjs` answers `idle` or `mostly-idle`. Run the check before the capture
+  and again after. On `busy`, don't time anything; the nightly batch will.
+- Know what the run costs before starting it: every capture launches the game on Kevin's desktop
+  and holds the machine. Decide the launches up front and stop when the question is answered.
+- Even with `main`, or faster, is a good result, loaded machine or not. Record it and move on. No
+  repeat to confirm.
+- Worse is ambiguous: it could be the change, or the machine. Unless both checks read `idle`, a
+  worse number is not a finding. Don't loop on re-runs, bisect, or start investigating. One more run
+  is fine once the check reads `idle`; otherwise write "worse under load, unconfirmed" in the PR's
+  `Perf:` line and the nightly batch settles it. Worse with both checks `idle` is real: act on it.
+- No new baselines from a run with any activity on the machine. A number goes into a doc or ledger
+  for later comparison only when both checks read `idle`. Faster under load means "no regression",
+  not a speedup to quote.
+- Put a `Perf:` line in the PR body: what could move, which views or zooms would show it, and what
+  was measured under which verdict, or `Perf: none`. Then merge on green CI as usual.
+- The nightly batch times `main` in the early morning once the machine is idle, and opens a draft
+  revert for a PR behind a major regression. Agents run it and decide what it covers; Kevin never
+  asks for a perf run. `/docs/testing/README.md` has the rule in full and
+  `/docs/testing/nightly-perf-batch.md` the batch (specced, not built yet).
 
 **Visual Verification:**
 - When user reports visual issues ("X doesn't appear", "layout is wrong")
