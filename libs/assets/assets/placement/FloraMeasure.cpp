@@ -123,6 +123,11 @@ namespace assets {
 
 	} // namespace
 
+	bool isTreeDef(const AssetDefinition& def) {
+		const auto& groups = def.placement.groups;
+		return std::find(groups.begin(), groups.end(), kTreeGroup) != groups.end();
+	}
+
 	double woodPerTree(const AssetDefinition& def) {
 		if (!def.capabilities.harvestable.has_value() || def.capabilities.harvestable->yieldDefName != "Wood") {
 			return 0.0;
@@ -150,7 +155,8 @@ namespace assets {
 			grid.markMeasured(area);
 		}
 
-		std::map<std::string, FloraDefMeasure> byDef;
+		std::map<std::string, FloraDefMeasure> treesByDef;
+		std::map<std::string, FloraDefMeasure> othersByDef;
 		std::vector<WorldPoint>				   worldRing;
 		for (const PlacedEntity* entity : entities) {
 			if (!entity->isTallOccluder) {
@@ -158,19 +164,20 @@ namespace assets {
 			}
 			const auto					traitIt = traits.find(entity->defName);
 			const FloraDefTraits* const def = traitIt != traits.end() ? &traitIt->second : nullptr;
+			const bool					isTree = def != nullptr && def->isTree;
 
 			const double x = entity->position.x;
 			const double y = entity->position.y;
 			const bool	 counted = contains(rect, x, y) &&
 								 std::any_of(loadedAreas.begin(), loadedAreas.end(), [&](const FloraRect& a) { return contains(a, x, y); });
 			if (counted) {
-				FloraDefMeasure& m = byDef[entity->defName];
+				FloraDefMeasure& m = (isTree ? treesByDef : othersByDef)[entity->defName];
 				m.defName = entity->defName;
 				m.count++;
 				m.woodPerTree = def != nullptr ? def->woodPerTree : 0.0;
 			}
 
-			if (def == nullptr || def->rings == nullptr) {
+			if (!isTree || def->rings == nullptr) {
 				continue;
 			}
 			// world = R(rotation) * (local * scale) + position, the static instance transform
@@ -191,12 +198,17 @@ namespace assets {
 		out.canopyCover = grid.coveredFraction();
 		const double perThousand = out.measuredAreaM2 > 0.0 ? kThousand / out.measuredAreaM2 : 0.0;
 		double		 wood = 0.0;
-		for (auto& [name, m] : byDef) {
+		for (auto& [name, m] : treesByDef) {
 			m.perThousandM2 = m.count * perThousand;
 			m.woodPerThousandM2 = m.count * m.woodPerTree * perThousand;
 			out.treeCount += m.count;
 			wood += m.count * m.woodPerTree;
 			out.defs.push_back(std::move(m));
+		}
+		for (auto& [name, m] : othersByDef) {
+			m.perThousandM2 = m.count * perThousand;
+			m.woodPerThousandM2 = m.count * m.woodPerTree * perThousand;
+			out.otherTallOccluders.push_back(std::move(m));
 		}
 		out.treesPerThousandM2 = out.treeCount * perThousand;
 		out.woodPerThousandM2 = wood * perThousand;

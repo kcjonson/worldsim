@@ -676,11 +676,12 @@ namespace world_sim {
 				continue;
 			}
 			assets::FloraDefTraits t;
-			if (const auto* sil = registry.getSilhouette(e->defName); sil != nullptr && sil->valid) {
-				t.rings = &sil->rings;
-			}
-			if (const auto* def = registry.getDefinition(e->defName); def != nullptr) {
+			if (const auto* def = registry.getDefinition(e->defName); def != nullptr && assets::isTreeDef(*def)) {
+				t.isTree = true;
 				t.woodPerTree = assets::woodPerTree(*def);
+				if (const auto* sil = registry.getSilhouette(e->defName); sil != nullptr && sil->valid) {
+					t.rings = &sil->rings;
+				}
 			}
 			traits.emplace(e->defName, t);
 		}
@@ -699,6 +700,12 @@ namespace world_sim {
 			json << (i == 0 ? "" : ",") << "{\"def\":\"" << jsonEscape(d.defName) << "\",\"count\":" << d.count
 				 << ",\"per1000m2\":" << d.perThousandM2 << ",\"woodPerTree\":" << d.woodPerTree
 				 << ",\"woodPer1000m2\":" << d.woodPerThousandM2 << "}";
+		}
+		json << "],\"otherTallOccluders\":[";
+		for (size_t i = 0; i < m.otherTallOccluders.size(); ++i) {
+			const assets::FloraDefMeasure& d = m.otherTallOccluders[i];
+			json << (i == 0 ? "" : ",") << "{\"def\":\"" << jsonEscape(d.defName) << "\",\"count\":" << d.count
+				 << ",\"per1000m2\":" << d.perThousandM2 << "}";
 		}
 		json << "]}";
 		return {.body = json.str()};

@@ -5,7 +5,9 @@
 // is here so it is testable without a renderer or a running game.
 //
 // A tree is a placed static with isTallOccluder set, the renderer's own tall/short
-// rule (kShortFloraMaxHeight). Canopy cover is the union of the trees' silhouettes
+// rule (kShortFloraMaxHeight), whose def is in the kTreeGroup placement group. Other
+// tall occluders (reeds, big rocks) are counted apart, outside the totals and the
+// cover. Canopy cover is the union of the trees' silhouettes
 // rasterised on a kFloraCellSizeMeters grid, sampled at cell centres, so crowns
 // that overlap are counted once.
 
@@ -26,6 +28,9 @@ namespace assets {
 	// moves by well under 0.1 points from where cell edges fall.
 	inline constexpr float kFloraCellSizeMeters = 0.1F;
 
+	// The placement group every tree def declares.
+	inline constexpr const char* kTreeGroup = "trees";
+
 	// Largest rect measured in one call (500 m x 500 m, 25 million cells).
 	inline constexpr double kFloraMaxRectAreaM2 = 250000.0;
 
@@ -38,9 +43,11 @@ namespace assets {
 		[[nodiscard]] double area() const { return static_cast<double>(maxX - minX) * static_cast<double>(maxY - minY); }
 	};
 
-	// What the measure needs from a def: its silhouette rings in the template-local
-	// millimetre frame (AssetSilhouette::rings) and the wood one tree yields.
+	// What the measure needs from a def: whether it is a tree (isTreeDef), its silhouette
+	// rings in the template-local millimetre frame (AssetSilhouette::rings), and the wood
+	// one tree yields.
 	struct FloraDefTraits {
+		bool							   isTree = false;
 		const std::vector<geometry::Ring>* rings = nullptr;
 		double							   woodPerTree = 0.0;
 	};
@@ -62,8 +69,12 @@ namespace assets {
 		double						 treesPerThousandM2 = 0.0;
 		double						 canopyCover = 0.0; // fraction of the measured area, 0 to 1
 		double						 woodPerThousandM2 = 0.0;
-		std::vector<FloraDefMeasure> defs; // by defName
+		std::vector<FloraDefMeasure> defs;				 // trees, by defName
+		std::vector<FloraDefMeasure> otherTallOccluders; // the rest, by defName; not in the totals or the cover
 	};
+
+	// Whether the def is in the kTreeGroup placement group.
+	[[nodiscard]] bool isTreeDef(const AssetDefinition& def);
 
 	// The wood one tree of this def yields: the midpoint of its resource pool when it has
 	// one, else of its per-harvest amount; 0 when it does not yield Wood.
@@ -71,10 +82,11 @@ namespace assets {
 
 	// Measures `entities` over `rect`. `loadedAreas` are the disjoint squares placement
 	// holds data for (loaded chunks); only their overlap with the rect is measured.
-	// Entities that are not tall occluders are skipped. A tree counts toward the def
-	// totals when its position is inside the rect and a loaded area; every tree passed
-	// adds its crown to the cover, so pass the trees near the rect, not only in it.
-	// A def missing from `traits` counts with no crown and no wood.
+	// Entities that are not tall occluders are skipped. A tall occluder is counted when
+	// its position is inside the rect and a loaded area, in `defs` when its def is a
+	// tree and in `otherTallOccluders` otherwise. Every tree passed adds its crown to the
+	// cover, so pass the trees near the rect, not only in it. A def missing from
+	// `traits` is not a tree.
 	[[nodiscard]] FloraMeasurement measureFlora(
 		const FloraRect&									   rect,
 		const std::vector<FloraRect>&						   loadedAreas,

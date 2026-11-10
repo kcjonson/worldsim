@@ -22,15 +22,20 @@ namespace assets {
 
 	} // namespace
 
-	TEST(FloraMeasure, CountsDensityCoverAndWoodWithoutDoubleCountingOverlap) {
+	TEST(FloraMeasure, CountsTreesDensityCoverAndWoodWithoutDoubleCountingOverlap) {
 		const std::unordered_map<std::string, FloraDefTraits> traits{
-			{"Oak", {.rings = &kSquareCrown, .woodPerTree = 25.0}},
-			{"Maple", {.rings = &kSquareCrown, .woodPerTree = 10.0}},
+			{"Oak", {.isTree = true, .rings = &kSquareCrown, .woodPerTree = 25.0}},
+			{"Maple", {.isTree = true, .rings = &kSquareCrown, .woodPerTree = 10.0}},
+			{"Rock", {.isTree = false, .rings = &kSquareCrown, .woodPerTree = 0.0}},
 		};
-		// Two oaks whose crowns overlap by 1 m x 2 m, one maple apart, and a short plant
-		// that is not a tree.
+		// Two oaks whose crowns overlap by 1 m x 2 m, one maple apart, a short plant, and a
+		// tall rock that is not a tree and stays out of the totals and the cover.
 		const std::vector<PlacedEntity> world{
-			tree("Oak", 5.0F, 5.0F), tree("Oak", 6.0F, 5.0F), tree("Maple", 15.0F, 5.0F), tree("Oak", 12.0F, 5.0F, false)
+			tree("Oak", 5.0F, 5.0F),
+			tree("Oak", 6.0F, 5.0F),
+			tree("Maple", 15.0F, 5.0F),
+			tree("Oak", 12.0F, 5.0F, false),
+			tree("Rock", 10.0F, 5.0F)
 		};
 		std::vector<const PlacedEntity*> entities;
 		for (const auto& e : world) {
@@ -51,6 +56,9 @@ namespace assets {
 		EXPECT_EQ(all.defs[1].count, 2U);
 		EXPECT_DOUBLE_EQ(all.defs[1].perThousandM2, 10.0);
 		EXPECT_DOUBLE_EQ(all.defs[1].woodPerThousandM2, 250.0);
+		ASSERT_EQ(all.otherTallOccluders.size(), 1U);
+		EXPECT_EQ(all.otherTallOccluders[0].defName, "Rock");
+		EXPECT_EQ(all.otherTallOccluders[0].count, 1U);
 
 		// Only the west half loaded: the maple is past it, and the area is honest about it.
 		const FloraMeasurement half = measureFlora(rect, {{0.0F, 0.0F, 10.0F, 10.0F}}, entities, traits);
