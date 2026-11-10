@@ -840,12 +840,18 @@ namespace ecs {
 	}
 
 	bool NavigationSystem::reaches(const Reach& reach, glm::vec2 goalMeters) const {
-		// No single region covers both endpoints (no mesh yet, off-area endpoint, or a
-		// cross-region pair): can't prove unreachable, so don't reject. Colonists beeline
-		// legitimately during startup/outdoor play; the agent moves toward the area and
-		// switches to in-region routing once both endpoints share a region.
-		if (!sharesStartRegion(reach, goalMeters)) {
+		// No mesh under the start, or the goal off every region: can't prove unreachable, and
+		// requestNavPath holds that route until a build covers it.
+		if (reach.startRegion < 0) {
 			return true;
+		}
+		const int goalRegion = regionContaining(goalMeters);
+		if (goalRegion < 0) {
+			return true;
+		}
+		// A goal in another built region: requestPath won't route between regions.
+		if (goalRegion != reach.startRegion) {
+			return false;
 		}
 		return gnav::reaches(regions[static_cast<std::size_t>(reach.startRegion)].navMesh, reach.from,
 							 nav::toMm(goalMeters), reach.belief);

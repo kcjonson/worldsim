@@ -46,6 +46,8 @@ namespace ecs {
 		float					 distanceToTarget = 0.0F;
 		// The builder already proved the target reachable (need sources), so selection skips its probe
 		bool					 targetReachable = false;
+		// Memory key of the remembered source a need option targets; 0 for none (ground, pack, work)
+		std::uint64_t			 sourceKey = 0;
 
 		// Crafting-specific fields (for Craft tasks)
 		std::string craftRecipeDefName;

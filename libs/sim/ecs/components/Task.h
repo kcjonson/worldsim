@@ -59,6 +59,13 @@ struct Task {
 	// NavigationSystem::generation() when the route was deferred (navState AwaitingMesh). The route
 	// is requested again once generation() moves off this value, i.e. a mesh build has landed.
 	std::uint64_t deferredNavGeneration = 0;
+	// NavigationSystem::generation() and Memory::beliefVersion when the route came back with no believed
+	// route (navState CantFindWayTo). The next decision records needSourceKey unreachable only while
+	// both still match, so the verdict never outlives the mesh and belief it was found under.
+	std::uint64_t blockedNavGeneration = 0;
+	std::uint64_t blockedBeliefVersion = 0;
+	// Memory key of the remembered source a FulfillNeed task is heading for; 0 for none (ground, pack).
+	std::uint64_t needSourceKey = 0;
 
 	/// Target position to move to
 	glm::vec2 targetPosition{0.0F, 0.0F};

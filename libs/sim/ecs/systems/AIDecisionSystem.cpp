@@ -1175,7 +1175,7 @@ namespace ecs {
 					// denial) invalidates it and clears movementTarget.active to stop the
 					// colonist instead of beelining through the believed wall.
 					const NavRequestOutcome outcome = requestNavPath(entity, task.targetPosition, position, memory, movementTarget);
-					applyNavOutcome(task, outcome);
+					applyNavOutcome(task, outcome, memory);
 					if (outcome == NavRequestOutcome::Routed) {
 						// Show "Re-routing" for ~30 ticks so the player sees the colonist react
 						// to a newly-discovered wall before the panel reverts to "Going to".
@@ -1201,7 +1201,7 @@ namespace ecs {
 				// again if the route still can't be planned.
 				movementTarget.active = true;
 				const NavRequestOutcome outcome = requestNavPath(entity, task.targetPosition, position, memory, movementTarget);
-				applyNavOutcome(task, outcome);
+				applyNavOutcome(task, outcome, memory);
 			}
 
 			// Chain-leg repath: a multi-phase task (Haul Pickup->Deposit, PlacePackaged
@@ -1218,7 +1218,7 @@ namespace ecs {
 			if (auto* navPath = world->getComponent<NavPath>(entity); task.state == TaskState::Moving &&
 				movementTarget.active && (navPath == nullptr || !navPath->valid)) {
 				const NavRequestOutcome outcome = requestNavPath(entity, task.targetPosition, position, memory, movementTarget);
-				applyNavOutcome(task, outcome);
+				applyNavOutcome(task, outcome, memory);
 			}
 
 			// Drain the Rerouting hold counter so "Re-routing" is a brief visible beat.
@@ -1527,8 +1527,8 @@ namespace ecs {
 
 		// Verdicts for sources in the colonist's own region are remembered while it stays in the same
 		// reach subtree of the same mesh, so one surrounded by unreachable sources doesn't test them all
-		// again every decision. A source in another region always passes (reaches() can't prove it
-		// unreachable) and is never remembered, since which region a point falls in moves on its own.
+		// again every decision. A source anywhere else is judged live (by which regions cover it, no
+		// mesh involved) and never remembered, since which region a point falls in moves on its own.
 		if (reach.has_value()) {
 			sourceReach.keep(
 				{.regionId = reach->startRegionId,
@@ -1538,10 +1538,24 @@ namespace ecs {
 				 .startTri = reach->from.root < 0 ? reach->from.startTri : -1},
 				2 * Memory::kMaxWorldEntities
 			);
+			// The route to the need source this colonist was heading for just came back with no believed
+			// route, though the forest let it through (a known wall's room, a passage the funnel can't
+			// take). Remember it unreachable like any other verdict so the walk moves on to the next
+			// source, but only if no mesh and no belief changed since the failure, or the verdict would
+			// outlive what it was true for.
+			if (currentTask.type == TaskType::FulfillNeed && currentTask.navState == NavState::CantFindWayTo &&
+				currentTask.needSourceKey != 0 && currentTask.blockedNavGeneration == m_navSystem->generation() &&
+				currentTask.blockedBeliefVersion == memory.beliefVersion &&
+				m_navSystem->sharesStartRegion(*reach, currentTask.targetPosition)) {
+				sourceReach.recordUnreachable(currentTask.needSourceKey);
+			}
 		}
 		const auto canReachSource = [&](uint64_t sourceKey, const glm::vec2& sourcePosition) {
-			return !reach.has_value() || !m_navSystem->sharesStartRegion(*reach, sourcePosition) ||
-				   sourceReach.reachable(sourceKey, sourcePosition, canReach);
+			if (!reach.has_value()) {
+				return true;
+			}
+			return m_navSystem->sharesStartRegion(*reach, sourcePosition) ? sourceReach.reachable(sourceKey, sourcePosition, canReach)
+																		   : canReach(sourcePosition);
 		};
 		// Drop a source already found unreachable before anything else looks at it.
 		const auto notKnownUnreachable = [&](uint64_t sourceKey, const KnownWorldEntity& known) {
@@ -1612,6 +1626,7 @@ namespace ecs {
 					option.targetDefNameId = foodSource->defNameId;
 					option.distanceToTarget = glm::distance(position.value, foodSource->position);
 					option.targetReachable = true;
+					option.sourceKey = hashWorldEntity(foodSource->position, foodSource->defNameId);
 					option.status = need.needsAttention() ? OptionStatus::Available : OptionStatus::Satisfied;
 					option.reason = formatOptionReason(option, needTypeName(needType));
 					if (option.status == OptionStatus::Available) {
@@ -1639,6 +1654,7 @@ namespace ecs {
 				option.targetDefNameId = nearest->defNameId;
 				option.distanceToTarget = glm::distance(position.value, nearest->position);
 				option.targetReachable = need.needsAttention();
+				option.sourceKey = hashWorldEntity(nearest->position, nearest->defNameId);
 
 				if (need.needsAttention()) {
 					option.status = OptionStatus::Available;
@@ -1703,6 +1719,7 @@ namespace ecs {
 				gatherOption.targetPosition = foodSource->position;
 				gatherOption.distanceToTarget = glm::distance(position.value, foodSource->position);
 				gatherOption.targetReachable = true;
+				gatherOption.sourceKey = hashWorldEntity(foodSource->position, foodSource->defNameId);
 				gatherOption.status = OptionStatus::Available;
 				gatherOption.reason = "Gathering food (inventory empty)";
 			} else {
@@ -1936,6 +1953,7 @@ namespace ecs {
 		task.needToFulfill = selected->needType;
 		task.targetPosition = selected->targetPosition.value_or(position.value);
 		task.reason = selected->reason;
+		task.needSourceKey = selected->sourceKey;
 
 		// Copy crafting-specific fields for Craft tasks
 		if (selected->taskType == TaskType::Craft) {
@@ -2024,7 +2042,7 @@ namespace ecs {
 			const Memory* memory = world->getComponent<Memory>(entity);
 			if (memory != nullptr) {
 				const NavRequestOutcome outcome = requestNavPath(entity, task.targetPosition, position, *memory, movementTarget);
-				applyNavOutcome(task, outcome);
+				applyNavOutcome(task, outcome, *memory);
 			}
 		}
 	}
@@ -2143,7 +2161,7 @@ namespace ecs {
 		return NavRequestOutcome::Routed;
 	}
 
-	void AIDecisionSystem::applyNavOutcome(Task& task, NavRequestOutcome outcome) const {
+	void AIDecisionSystem::applyNavOutcome(Task& task, NavRequestOutcome outcome, const Memory& memory) const {
 		task.navStateHold = 0;
 		switch (outcome) {
 			case NavRequestOutcome::Routed:
@@ -2157,7 +2175,9 @@ namespace ecs {
 				task.deferredNavGeneration = m_navSystem->generation();
 				return;
 			case NavRequestOutcome::Blocked:
-				task.navState = NavState::CantFindWayTo;
+				task.navState			   = NavState::CantFindWayTo;
+				task.blockedNavGeneration = m_navSystem->generation();
+				task.blockedBeliefVersion = memory.beliefVersion;
 				return;
 		}
 	}
@@ -2362,7 +2382,7 @@ namespace ecs {
 			// deferred-route retry runs ahead of the control gate, so the order resumes on its own
 			// once a mesh build covers it.
 			const NavRequestOutcome outcome = requestNavPath(entity, goal, *position, *memory, *movementTarget);
-			applyNavOutcome(*task, outcome);
+			applyNavOutcome(*task, outcome, *memory);
 		}
 		return goal;
 	}

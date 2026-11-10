@@ -42,6 +42,9 @@ namespace ecs {
 			return it != verdicts.end() && !it->second;
 		}
 
+		/// A route to this source failed under the current key: it's unreachable whatever a probe said.
+		void recordUnreachable(std::uint64_t sourceKey) { verdicts[sourceKey] = false; }
+
 		/// The remembered verdict for a source, running probe(position) the first time it's asked.
 		template <typename Probe>
 		[[nodiscard]] bool reachable(std::uint64_t sourceKey, const glm::vec2& position, Probe&& probe) {

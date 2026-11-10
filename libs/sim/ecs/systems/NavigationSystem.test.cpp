@@ -1986,7 +1986,7 @@ TEST_F(NavigationSystemTest, QueryDispatchSelectsRegionContainingPoint) {
 	EXPECT_FALSE(sys.requestPath(aPos, bPos, kAgentRadius).has_value())
 		<< "a cross-region path must hold (nullopt) in Phase 1";
 
-	// isReachable mirrors the hold: cross-region returns true ("can't prove unreachable").
-	EXPECT_TRUE(isReachable(sys, aPos, bPos, kAgentRadius))
-		<< "cross-region isReachable must not falsely reject";
+	// The pre-check matches requestPath: a goal in another built region is unreachable from here.
+	EXPECT_FALSE(isReachable(sys, aPos, bPos, kAgentRadius))
+		<< "a goal in another built region must not pass the pre-check";
 }

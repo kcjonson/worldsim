@@ -162,7 +162,7 @@ private:
 	/// Record a route request's outcome as the task's nav state. Only Blocked is "can't find a way".
 	/// Waiting defers the route (AwaitingMesh) and stamps the current nav generation, so update()
 	/// requests it again once the generation moves; Routed and Unmeshed are ordinary travel.
-	void applyNavOutcome(struct Task& task, NavRequestOutcome outcome) const;
+	void applyNavOutcome(struct Task& task, NavRequestOutcome outcome, const struct Memory& memory) const;
 
 	/// Format a human-readable reason for an option
 	[[nodiscard]] static std::string formatOptionReason(

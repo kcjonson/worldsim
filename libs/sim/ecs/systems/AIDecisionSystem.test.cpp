@@ -14,6 +14,7 @@
 #include "../World.h"
 #include "../components/Action.h"
 #include "../components/Appearance.h"
+#include "../components/Colonist.h"
 #include "../components/DecisionTrace.h"
 #include "../components/Inventory.h"
 #include "../components/Memory.h"
@@ -48,6 +49,7 @@
 #include <glm/geometric.hpp>
 #include <glm/vec2.hpp>
 
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -3691,6 +3693,121 @@ namespace ecs::test {
 		world->getComponent<Memory>(colonist)->rememberOpening(static_cast<std::uint64_t>(door));
 		ASSERT_TRUE(canReachBush(colonist)) << "knowing the door opens the bush up";
 		EXPECT_TRUE(hungerSelectedWithin(colonist)) << "the colonist kept the stale verdict and left the bush alone";
+	}
+
+	// The nearest known water sits in another built region. requestPath routes only within one region,
+	// so the pre-check has to say no; saying "can't prove unreachable" sent a thirsty colonist at that
+	// water over and over, each route coming back "no believed route", while it knew water it could
+	// reach (seen live: 13 game-hours at Thirst 0 beside the viewport's region).
+	TEST_F(AIDecisionFirstMeshTest, NeedSkipsSourceInAnotherRegion) {
+		// The colonist stands in the viewport's region (-60..60); another colonist 100 m out drives a
+		// second region (70..130) with a gap between them.
+		const glm::vec2 start{50.0F, 0.0F};
+		const glm::vec2 otherRegion{71.0F, 0.0F}; // in the far region, 21 m away
+		const glm::vec2 ownRegion{20.0F, 0.0F};	  // in its own region, 30 m away
+		const auto		farColonist = world->createEntity();
+		world->addComponent<Position>(farColonist, Position{{100.0F, 0.0F}});
+		world->addComponent<Colonist>(farColonist, Colonist{"B"});
+
+		const auto colonist = createColonist(start);
+		satisfyAllNeeds(*getNeeds(colonist));
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+		setNeedValue(colonist, NeedType::Thirst, 40.0F);
+		addKnownEntity(colonist, otherRegion, kWaterDefId, assets::CapabilityType::Drinkable);
+		addKnownEntity(colonist, ownRegion, kWaterDefId, assets::CapabilityType::Drinkable);
+
+		ASSERT_TRUE(pumpUntil(*nav, "both regions", [&] { return nav->builtRegions().size() == 2U; }));
+		ASSERT_FALSE(nav->requestPath(start, otherRegion, 0.3F).has_value()) << "no route between regions";
+		ASSERT_TRUE(nav->requestPath(start, ownRegion, 0.3F).has_value());
+
+		world->update(kTick);
+
+		const auto* thirst = findOption(*getTrace(colonist), [](const EvaluatedOption& o) {
+			return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Thirst;
+		});
+		ASSERT_NE(thirst, nullptr);
+		EXPECT_EQ(thirst->status, OptionStatus::Selected);
+		ASSERT_TRUE(thirst->targetPosition.has_value());
+		EXPECT_EQ(*thirst->targetPosition, ownRegion) << "the water in the other region can't be routed to";
+	}
+
+	// Water in a room whose walls the colonist knows: the forest the pre-check uses treats walls as
+	// open, so the room passes it, but the believed route fails. The failed route is remembered like any
+	// other verdict, so the colonist goes for the next water instead of retrying this one every decision,
+	// and tries it again once the mesh changes.
+	TEST_F(AIDecisionWallTest, FailedRouteSendsTheNeedToTheNextSource) {
+		const glm::vec2 inRoom{8.0F, 0.0F};
+		const glm::vec2 outside{-30.0F, 0.0F};
+		const std::array<geometry::Vec2i64, 4> corners{{{6000, -2000}, {10000, -2000}, {10000, 2000}, {6000, 2000}}};
+		std::vector<construction::SegmentId> walls;
+		for (size_t i = 0; i < corners.size(); ++i) {
+			const auto a = corners[i];
+			const auto b = corners[(i + 1) % corners.size()];
+			const auto commit = construction.commitSegment({a.x, a.y}, {b.x, b.y}, "Wood", "Standard", construction::kInvalidFoundation);
+			ASSERT_TRUE(commit.ok());
+			for (const auto id : commit.createdSegments) {
+				construction.setSegmentState(id, construction::FoundationState::Built);
+				walls.push_back(id);
+			}
+		}
+
+		const auto colonist = createColonist(kStart);
+		satisfyAllNeeds(*getNeeds(colonist));
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+		setNeedValue(colonist, NeedType::Thirst, 40.0F);
+		auto* memory = world->getComponent<Memory>(colonist);
+		for (const auto id : walls) {
+			memory->rememberSegment(static_cast<std::uint64_t>(id));
+		}
+		addKnownEntity(colonist, inRoom, kWaterDefId, assets::CapabilityType::Drinkable);
+		addKnownEntity(colonist, outside, kWaterDefId, assets::CapabilityType::Drinkable);
+
+		ASSERT_TRUE(pumpUntilMesh(*nav)) << "navmesh never built";
+		const geometry::nav::BeliefFilter belief{&memory->knownSegments, &memory->knownOpenings};
+		ASSERT_TRUE(isReachable(*nav, kStart, inRoom, 0.3F, belief)) << "the room must pass the pre-check";
+		ASSERT_FALSE(nav->requestPath(kStart, inRoom, 0.3F, belief).has_value()) << "and fail the believed route";
+
+		// Runs `ticks` updates and counts the decisions that chose each water.
+		const auto decide = [&](int ticks, int& choseRoom, int& choseOutside) {
+			float lastDecision = getTrace(colonist)->lastEvaluationTime;
+			for (int i = 0; i < ticks; ++i) {
+				world->update(kTick);
+				const auto* trace = getTrace(colonist);
+				if (trace->lastEvaluationTime == lastDecision) {
+					continue;
+				}
+				lastDecision = trace->lastEvaluationTime;
+				const auto* thirst = findOption(*trace, [](const EvaluatedOption& o) {
+					return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Thirst;
+				});
+				if (thirst != nullptr && thirst->status == OptionStatus::Selected) {
+					choseRoom += *thirst->targetPosition == inRoom ? 1 : 0;
+					choseOutside += *thirst->targetPosition == outside ? 1 : 0;
+				}
+			}
+		};
+
+		int choseRoom = 0;
+		int choseOutside = 0;
+		decide(20, choseRoom, choseOutside);
+		EXPECT_EQ(choseRoom, 1) << "the walled-in water is tried once, not every decision";
+		EXPECT_GE(choseOutside, 1) << "the colonist goes for the water it can reach";
+		EXPECT_EQ(getTask(colonist)->targetPosition, outside);
+
+		// A mesh change elsewhere in the region: the failed water is worth one more try.
+		const std::uint64_t before = nav->generation();
+		const auto			commit = construction.commitSegment({30000, 30000}, {32000, 30000}, "Wood", "Standard",
+																construction::kInvalidFoundation);
+		ASSERT_TRUE(commit.ok());
+		for (const auto id : commit.createdSegments) {
+			construction.setSegmentState(id, construction::FoundationState::Built);
+		}
+		ASSERT_TRUE(pumpUntil(*nav, "the wall-edit rebuild", [&] { return nav->generation() != before; }));
+		choseRoom = 0;
+		choseOutside = 0;
+		decide(20, choseRoom, choseOutside);
+		EXPECT_EQ(choseRoom, 1) << "after the mesh changed the walled-in water is tried again, once";
+		EXPECT_EQ(getTask(colonist)->targetPosition, outside);
 	}
 
 } // namespace ecs::test
