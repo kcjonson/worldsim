@@ -28,7 +28,6 @@
 #include "../components/Structure.h"
 #include "../components/StructureBlueprint.h"
 #include "../components/Task.h"
-#include "../components/ToiletLocationFinder.h"
 #include "../components/Transform.h"
 
 #include "assets/ActionTypeRegistry.h"
@@ -36,8 +35,6 @@
 #include "assets/ConstructionRegistry.h"
 #include "assets/PriorityConfig.h"
 #include "assets/RecipeRegistry.h"
-#include "assets/placement/PlacementExecutor.h"
-#include "assets/placement/SpatialIndex.h"
 
 #include <construction/ConstructionWorld.h>
 
@@ -3441,12 +3438,11 @@ namespace ecs::test {
 	} // namespace
 
 	// The running game's first decision happens before the async region build has produced a mesh.
-	// This wires a real NavigationSystem (all-land chunks unless a fixture swaps the sampler, a 60 m
-	// colonist region at the origin driven by bare Colonist-tagged entities, an empty construction
-	// world) plus MovementSystem and PhysicsSystem, so a test can let the AI decide with no mesh, settle
-	// the NavigationSystem alone (finishPendingBuilds: no sim time passes however long the build
-	// takes, and the AI sees the mesh on the next tick), and then check the colonist walks
-	// a route.
+	// This wires a real NavigationSystem (all-land chunks unless a fixture swaps the sampler, a
+	// viewport region at the origin, an empty construction world) plus MovementSystem and
+	// PhysicsSystem, so a test can let the AI decide with no mesh, settle the NavigationSystem alone
+	// (finishPendingBuilds: no sim time passes however long the build takes, and the AI sees the mesh
+	// on the next tick), and then check the colonist walks a route.
 	class AIDecisionFirstMeshTest : public AIDecisionSystemTest {
 	  protected:
 		void SetUp() override {
@@ -3461,7 +3457,7 @@ namespace ecs::test {
 			nav = &world->registerSystem<NavigationSystem>();
 			nav->setChunkManager(chunks.get());
 			nav->setConstructionWorld(&construction);
-			originDrivers = driveColonistRegion(*world, {0.0F, 0.0F}, 60.0F);
+			nav->setViewportRect({0.0F, 0.0F}, {60.0F, 60.0F});
 			world->getSystem<AIDecisionSystem>().setNavigationSystem(nav);
 			world->registerSystem<MovementSystem>();
 			world->registerSystem<PhysicsSystem>();
@@ -3476,14 +3472,6 @@ namespace ecs::test {
 
 		[[nodiscard]] virtual std::unique_ptr<world::IWorldSampler> makeSampler() const {
 			return std::make_unique<world::SyntheticWorldSampler>(7U, world::SyntheticMap{});
-		}
-
-		// Drops the origin region, so the regions are only the ones the test makes.
-		void releaseOriginRegion() {
-			for (const EntityID driver : originDrivers) {
-				world->destroyEntity(driver);
-			}
-			originDrivers.clear();
 		}
 
 		[[nodiscard]] bool followingRoute(EntityID colonist) {
@@ -3508,7 +3496,6 @@ namespace ecs::test {
 		std::unique_ptr<world::ChunkManager> chunks;
 		construction::ConstructionWorld		 construction;
 		NavigationSystem*							 nav = nullptr;
-		std::vector<EntityID>						 originDrivers;
 	};
 
 	// With no mesh an idle colonist (needs met, no known sources) has nothing it can navigate to, so
@@ -4009,7 +3996,7 @@ namespace ecs::test {
 	// water over and over, each route coming back "no believed route", while it knew water it could
 	// reach (seen live: 13 game-hours at Thirst 0 beside the viewport's region).
 	TEST_F(AIDecisionFirstMeshTest, NeedSkipsSourceInAnotherRegion) {
-		// The colonist stands in the origin region (-60..60); another colonist 100 m out drives a
+		// The colonist stands in the viewport's region (-60..60); another colonist 100 m out drives a
 		// second region (70..130) with a gap between them.
 		const glm::vec2 start{50.0F, 0.0F};
 		const glm::vec2 otherRegion{71.0F, 0.0F}; // in the far region, 21 m away
@@ -4129,13 +4116,13 @@ namespace ecs::test {
 
 		// The retry must come from the rebuild: same region, same centre, a new mesh.
 		const glm::vec2 here = world->getComponent<Position>(colonist)->value;
-		const auto		regionBefore = reachOf(*nav, here, 0.3F);
+		const auto		regionBefore = nav->reachFrom(here, 0.3F);
 		const auto		centreBefore = nav->builtRegions().front().center;
 		rebuildRegionMesh();
-		const auto regionAfter = reachOf(*nav, here, 0.3F);
+		const auto regionAfter = nav->reachFrom(here, 0.3F);
 		ASSERT_EQ(nav->builtRegions().size(), 1U);
-		EXPECT_EQ(regionAfter.regions.at(0).id, regionBefore.regions.at(0).id);
-		EXPECT_NE(regionAfter.regions.at(0).meshGeneration, regionBefore.regions.at(0).meshGeneration) << "the region's mesh was rebuilt";
+		EXPECT_EQ(regionAfter.startRegionId, regionBefore.startRegionId);
+		EXPECT_NE(regionAfter.startRegionGeneration, regionBefore.startRegionGeneration) << "the region's mesh was rebuilt";
 		EXPECT_EQ(nav->builtRegions().front().center, centreBefore) << "and the region didn't move";
 
 		choseRoom = 0;
@@ -4162,149 +4149,6 @@ namespace ecs::test {
 		EXPECT_EQ(getTask(colonist)->targetPosition, kOutside) << "the failure on the new mesh is recorded";
 	}
 
-	// Colonist regions overlap in normal play: a region keeps its rect until its driver nears the edge,
-	// while another colonist's region is built beside it. These tests build that on open land: a colonist
-	// B drives a region around the origin and then steps west without it moving (-30..30); a colonist C
-	// drives a second region east (16..76). The AI colonist (no Colonist tag, so he drives none) stands
-	// in the overlap with water only in the east.
-	class AIDecisionOverlapTest : public AIDecisionFirstMeshTest {
-	  protected:
-		void SetUp() override {
-			AIDecisionFirstMeshTest::SetUp();
-			releaseOriginRegion();
-			driver = world->createEntity();
-			world->addComponent<Position>(driver, Position{{0.0F, 0.0F}});
-			world->addComponent<Colonist>(driver, Colonist{"B"});
-			nav->finishPendingBuilds();
-			ASSERT_TRUE(hasRegionCentredAt(0));
-
-			world->getComponent<Position>(driver)->value = {-15.0F, 0.0F}; // 15 m inside: B's region stays put
-			const auto east = world->createEntity();
-			world->addComponent<Position>(east, Position{{46.0F, 0.0F}});
-			world->addComponent<Colonist>(east, Colonist{"C"});
-			nav->finishPendingBuilds();
-			ASSERT_TRUE(hasRegionCentredAt(46000) && hasRegionCentredAt(0));
-		}
-
-		[[nodiscard]] bool hasRegionCentredAt(std::int64_t xMm) const {
-			for (const auto& region : nav->builtRegions()) {
-				if (region.center.x == xMm && region.center.y == 0) {
-					return true;
-				}
-			}
-			return false;
-		}
-
-		EntityID driver = 0;
-		static constexpr glm::vec2 kInOverlap{25.0F, 0.0F}; // in both regions; B's (lower id) is its first
-		static constexpr glm::vec2 kEastOnly{45.0F, 0.0F};	// only in the east region
-	};
-
-	// The live case: the colonist stands in both regions, the water is 20 m away in only one of them.
-	// Resolving each point to its first region put them in different regions and gave no route.
-	TEST_F(AIDecisionOverlapTest, NeedReachesSourceThroughTheRegionHoldingBoth) {
-		ASSERT_TRUE(nav->requestPath(kInOverlap, kEastOnly, 0.3F).has_value()) << "the east region holds both";
-
-		const auto colonist = createColonist(kInOverlap);
-		satisfyAllNeeds(*getNeeds(colonist));
-		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
-		setNeedValue(colonist, NeedType::Thirst, 40.0F);
-		addKnownEntity(colonist, kEastOnly, kWaterDefId, assets::CapabilityType::Drinkable);
-
-		world->update(kTick);
-		const auto* thirst = findOption(*getTrace(colonist), [](const EvaluatedOption& o) {
-			return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Thirst;
-		});
-		ASSERT_NE(thirst, nullptr);
-		EXPECT_EQ(thirst->status, OptionStatus::Selected);
-		EXPECT_TRUE(followingRoute(colonist)) << "the route through the east region was found";
-
-		// The region the route didn't use goes away (B walks off): the route still gets him there.
-		world->getComponent<Position>(driver)->value = {-300.0F, 0.0F};
-		bool arrived = false;
-		for (int i = 0; i < 200 && !arrived; ++i) {
-			world->update(kTick);
-			arrived = getTask(colonist)->state == TaskState::Arrived;
-		}
-		EXPECT_FALSE(hasRegionCentredAt(0)) << "B's old region was dropped";
-		EXPECT_TRUE(arrived) << "never reached the water";
-		EXPECT_LT(glm::distance(world->getComponent<Position>(colonist)->value, kEastOnly), 0.5F);
-	}
-
-	// Both points in both regions: the route comes from the first region (by id) holding both, every
-	// time, and the pre-check agrees.
-	TEST_F(AIDecisionOverlapTest, PairInSeveralRegionsRoutesTheSameEachTime) {
-		const glm::vec2 a{20.0F, 5.0F};
-		const glm::vec2 b{28.0F, -6.0F};
-		const auto		first = nav->requestPath(a, b, 0.3F);
-		ASSERT_TRUE(first.has_value());
-		for (int i = 0; i < 3; ++i) {
-			EXPECT_EQ(nav->requestPath(a, b, 0.3F), first);
-		}
-		EXPECT_TRUE(isReachable(*nav, a, b, 0.3F));
-		EXPECT_EQ(reachOf(*nav, a, 0.3F).regions.size(), 2U) << "the start is in both regions";
-	}
-
-	// The sim area is the colonist's own 30 m region.
-	class AIDecisionOffAreaTest : public AIDecisionFirstMeshTest {
-	  protected:
-		EntityID makeThirstyColonistWithItsOwnRegion() {
-			releaseOriginRegion();
-			const auto colonist = createColonist({0.0F, 0.0F});
-			world->addComponent<Colonist>(colonist, Colonist{"A"});
-			satisfyAllNeeds(*getNeeds(colonist));
-			world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
-			setNeedValue(colonist, NeedType::Thirst, 40.0F);
-			nav->finishPendingBuilds();
-			EXPECT_TRUE(nav->inSimArea({0.0F, 0.0F}));
-			return colonist;
-		}
-
-		[[nodiscard]] const EvaluatedOption* thirstOption(EntityID colonist) {
-			return findOption(*getTrace(colonist), [](const EvaluatedOption& o) {
-				return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Thirst;
-			});
-		}
-	};
-
-	// Water known only outside the sim area: the colonist walks to his region's edge, the region
-	// follows, and he gets there. Holding still for a build that would never come starved him.
-	TEST_F(AIDecisionOffAreaTest, ColonistWalksToAnOffAreaSource) {
-		const auto		colonist = makeThirstyColonistWithItsOwnRegion();
-		const glm::vec2 water{90.0F, 10.0F};
-		addKnownEntity(colonist, water, kWaterDefId, assets::CapabilityType::Drinkable);
-		ASSERT_FALSE(nav->inSimArea(water));
-
-		bool arrived = false;
-		for (int i = 0; i < 1500 && !arrived; ++i) {
-			world->update(kTick);
-			nav->finishPendingBuilds();
-			const Task* task = getTask(colonist);
-			arrived = task->state == TaskState::Arrived && task->targetPosition == water;
-		}
-		EXPECT_TRUE(arrived) << "stuck at (" << world->getComponent<Position>(colonist)->value.x << ", "
-							 << world->getComponent<Position>(colonist)->value.y << ")";
-		EXPECT_LT(glm::distance(world->getComponent<Position>(colonist)->value, water), 0.5F);
-	}
-
-	// An off-area source is the target only when nothing inside the area is reachable, however near.
-	TEST_F(AIDecisionOffAreaTest, InAreaSourceBeatsNearerOffAreaOne) {
-		const auto		colonist = makeThirstyColonistWithItsOwnRegion();
-		const glm::vec2 offArea{32.0F, 0.0F};	// 32 m, just outside the region
-		const glm::vec2 inArea{-27.0F, -27.0F}; // 38 m, inside it
-		addKnownEntity(colonist, offArea, kWaterDefId, assets::CapabilityType::Drinkable);
-		addKnownEntity(colonist, inArea, kWaterDefId, assets::CapabilityType::Drinkable);
-		ASSERT_FALSE(nav->inSimArea(offArea));
-		ASSERT_TRUE(nav->inSimArea(inArea));
-
-		world->update(kTick);
-		const auto* thirst = thirstOption(colonist);
-		ASSERT_NE(thirst, nullptr);
-		EXPECT_EQ(thirst->status, OptionStatus::Selected);
-		ASSERT_TRUE(thirst->targetPosition.has_value());
-		EXPECT_EQ(*thirst->targetPosition, inArea);
-	}
-
 	// A mesh swap in some other region (another colonist's, or the viewport's while the camera pans)
 	// changes nothing this colonist's verdicts depend on: the failure is still recorded and the
 	// colonist moves on, instead of retrying the walled-in water every time any region rebuilds.
@@ -4326,382 +4170,4 @@ namespace ecs::test {
 		EXPECT_EQ(getTask(colonist)->targetPosition, kOutside) << "the failure was dropped over an unrelated swap";
 	}
 
-	// Runs ticks (letting each update's builds land) until done() holds; returns whether it did.
-	template <typename Done>
-	[[nodiscard]] bool tickUntil(World& world, NavigationSystem& nav, int maxTicks, Done&& done) {
-		for (int i = 0; i < maxTicks; ++i) {
-			world.update(0.1F);
-			nav.finishPendingBuilds();
-			if (done()) {
-				return true;
-			}
-		}
-		return false;
-	}
-
-	// The player pans to a lake 100 m off: the water is in the camera's region, which no colonist query
-	// consults. No colonist region covers it, so he walks toward it rather than reading NoSource while
-	// the player watches the water.
-	TEST_F(AIDecisionOffAreaTest, ColonistWalksToASourceInTheCameraRegion) {
-		const auto		colonist = makeThirstyColonistWithItsOwnRegion();
-		const glm::vec2 water{100.0F, 0.0F};
-		nav->setViewportRect(water, {30.0F, 30.0F});
-		nav->finishPendingBuilds();
-		ASSERT_EQ(nav->builtRegions().size(), 2U);
-		ASSERT_FALSE(nav->inSimArea(water)) << "the camera region answers no colonist query";
-		addKnownEntity(colonist, water, kWaterDefId, assets::CapabilityType::Drinkable);
-
-		const bool arrived = tickUntil(*world, *nav, 1500, [&] {
-			const Task* task = getTask(colonist);
-			return task->state == TaskState::Arrived && task->targetPosition == water;
-		});
-		EXPECT_TRUE(arrived) << "stuck at (" << world->getComponent<Position>(colonist)->value.x << ", "
-							 << world->getComponent<Position>(colonist)->value.y << ")";
-	}
-
-	// A colonist stopped at the end of an edge leg (his movement off) whose next replan finds a route
-	// must start walking it. A route he never follows froze him on a task kept as "the same".
-	TEST_F(AIDecisionOffAreaTest, ReplanOntoAStoppedColonistStartsHimMoving) {
-		const auto		colonist = makeThirstyColonistWithItsOwnRegion();
-		const glm::vec2 water{80.0F, 0.0F};
-		addKnownEntity(colonist, water, kWaterDefId, assets::CapabilityType::Drinkable);
-		world->update(kTick);
-		auto* navPath = world->getComponent<NavPath>(colonist);
-		ASSERT_NE(navPath, nullptr);
-		ASSERT_TRUE(navPath->valid && navPath->endsShortOfGoal) << "the first leg heads for the region's edge";
-
-		// What MovementSystem leaves at the end of the leg.
-		navPath->current = navPath->waypoints.size();
-		getMovementTarget(colonist)->active = false;
-
-		// Any mesh swap replans the leg.
-		const std::uint64_t before = nav->generation();
-		const auto			commit = construction.commitSegment({-20000, -20000}, {-18000, -20000}, "Wood", "Standard",
-																construction::kInvalidFoundation);
-		ASSERT_TRUE(commit.ok());
-		nav->finishPendingBuilds();
-		ASSERT_NE(nav->generation(), before);
-		world->update(kTick);
-		EXPECT_TRUE(getMovementTarget(colonist)->active) << "the replanned route was never followed";
-	}
-
-	// The camera left on a colonist whose water is 115 m off (the live stall): his region was merged with
-	// the camera's and clamped around a centre the camera pinned, so it couldn't follow him and he stood
-	// short of the water at Thirst 0. His region is his own now, and it follows him there.
-	TEST_F(AIDecisionOffAreaTest, CameraLeftOnHimDoesNotStopHisWalk) {
-		releaseOriginRegion();
-		nav->setViewportRect({0.0F, 0.0F}, {64.0F, 64.0F});
-		const auto colonist = createColonist({0.0F, 0.0F});
-		world->addComponent<Colonist>(colonist, Colonist{"A"});
-		satisfyAllNeeds(*getNeeds(colonist));
-		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
-		setNeedValue(colonist, NeedType::Thirst, 40.0F);
-		nav->finishPendingBuilds();
-		ASSERT_EQ(nav->builtRegions().size(), 2U);
-		const glm::vec2 water{-115.0F, 0.0F};
-		addKnownEntity(colonist, water, kWaterDefId, assets::CapabilityType::Drinkable);
-
-		const bool arrived = tickUntil(*world, *nav, 1500, [&] {
-			const Task* task = getTask(colonist);
-			return task->state == TaskState::Arrived && task->targetPosition == water;
-		});
-		EXPECT_TRUE(arrived) << "stuck at (" << world->getComponent<Position>(colonist)->value.x << ", "
-							 << world->getComponent<Position>(colonist)->value.y << "), task "
-							 << static_cast<int>(getTask(colonist)->navState);
-	}
-
-	// The two-river world, with the colonist driving his own 30 m region.
-	class AIDecisionRiverWalkTest : public AIDecisionRiverTest {
-	  protected:
-		EntityID makeThirstyColonistWithItsOwnRegion() {
-			releaseOriginRegion();
-			const auto colonist = createColonist(kStart);
-			world->addComponent<Colonist>(colonist, Colonist{"A"});
-			satisfyAllNeeds(*getNeeds(colonist));
-			world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
-			setNeedValue(colonist, NeedType::Thirst, 40.0F);
-			nav->finishPendingBuilds();
-			EXPECT_TRUE(nav->inSimArea(kStart));
-			return colonist;
-		}
-	};
-
-	// Water past his region's edge, across a river: each leg toward it ends on his side of the river
-	// and no leg gets him closer. The walk ends, the water is remembered unreachable, and he goes for
-	// the other water he knows, in another direction.
-	TEST_F(AIDecisionRiverWalkTest, WalkBlockedByWaterEndsAndTheNextSourceIsUsed) {
-		const auto		colonist = makeThirstyColonistWithItsOwnRegion();
-		const glm::vec2 acrossRiver{0.0F, 40.0F}; // past his region (|y| <= 30) and the river at y = 20
-		const glm::vec2 alongBand{50.0F, 0.0F};	  // past his region too, but on his side of both rivers
-		addKnownEntity(colonist, acrossRiver, kWaterDefId, assets::CapabilityType::Drinkable);
-		addKnownEntity(colonist, alongBand, kWaterDefId, assets::CapabilityType::Drinkable);
-
-		int		  choseAcross = 0; // times the colonist took up a task for it, not decisions that kept one
-		glm::vec2 lastTarget{0.0F, 0.0F};
-		const bool arrived = tickUntil(*world, *nav, 1500, [&] {
-			const Task* task = getTask(colonist);
-			if (task->targetPosition == acrossRiver && lastTarget != acrossRiver) {
-				++choseAcross;
-			}
-			lastTarget = task->targetPosition;
-			return task->state == TaskState::Arrived && task->targetPosition == alongBand;
-		});
-		EXPECT_TRUE(arrived) << "never reached the water on his side, at (" << world->getComponent<Position>(colonist)->value.x
-							 << ", " << world->getComponent<Position>(colonist)->value.y << ")";
-		EXPECT_GE(choseAcross, 1) << "the nearer water across the river is tried first";
-		EXPECT_LE(choseAcross, 3) << "and then given up on, not retried every decision";
-	}
-
-	// The only water he knows is far across the river, beyond every region he could get: once no step
-	// toward it is possible from the bank, the walk ends as no route, and Thirst reads NoSource instead
-	// of him standing on the bank forever.
-	TEST_F(AIDecisionRiverWalkTest, WalkWithNoStepLeftEnds) {
-		const auto		colonist = makeThirstyColonistWithItsOwnRegion();
-		const glm::vec2 farAcross{60.0F, 200.0F};
-		addKnownEntity(colonist, farAcross, kWaterDefId, assets::CapabilityType::Drinkable);
-
-		const bool gaveUp = tickUntil(*world, *nav, 1500, [&] {
-			const auto* thirst = findOption(*getTrace(colonist), [](const EvaluatedOption& o) {
-				return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Thirst;
-			});
-			return thirst != nullptr && thirst->status == OptionStatus::NoSource;
-		});
-		const glm::vec2 at = world->getComponent<Position>(colonist)->value;
-		EXPECT_TRUE(gaveUp) << "still walking at (" << at.x << ", " << at.y << ")";
-		EXPECT_LT(std::abs(at.y), kRiverY - kRiverHalfWidth) << "he never left his side of the river";
-	}
-
-	// Legs that finish without getting him closer (something holds him in place; here the test puts him
-	// back after every leg) end the walk after kEdgeWalkMaxStalledLegs of them, though a step toward the
-	// water is always on offer.
-	TEST_F(AIDecisionOffAreaTest, LegsThatGetHimNoCloserEndTheWalk) {
-		const auto		colonist = makeThirstyColonistWithItsOwnRegion();
-		const glm::vec2 home{0.0F, 0.0F};
-		const glm::vec2 water{90.0F, 0.0F};
-		addKnownEntity(colonist, water, kWaterDefId, assets::CapabilityType::Drinkable);
-
-		int	 finishedLegs = 0;
-		bool ended		  = false;
-		for (int i = 0; i < 400 && !ended; ++i) {
-			if (auto* navPath = world->getComponent<NavPath>(colonist);
-				navPath != nullptr && navPath->valid && navPath->endsShortOfGoal && navPath->current < navPath->waypoints.size()) {
-				navPath->current = navPath->waypoints.size();
-				getMovementTarget(colonist)->active = false;
-				++finishedLegs;
-
-			}
-			world->getComponent<Position>(colonist)->value = home;
-			world->update(kTick);
-			const Task* task   = getTask(colonist);
-			const auto* thirst = findOption(*getTrace(colonist), [](const EvaluatedOption& o) {
-				return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Thirst;
-			});
-			ended = (task->targetPosition == water && task->navState == NavState::CantFindWayTo) ||
-					(thirst != nullptr && thirst->status == OptionStatus::NoSource);
-
-		}
-		EXPECT_TRUE(ended) << "the walk never ended after " << finishedLegs << " legs that got him nowhere";
-		EXPECT_GE(finishedLegs, 3) << "it ended before the stalled legs ran out";
-	}
-
-	// A right-click outside every colonist region (on ground the player sees in the camera's region) is
-
-	// taken: it snaps against the camera's mesh, and the order walks him there like any other goal.
-	TEST_F(AIDecisionOffAreaTest, MoveOrderOutsideHisRegionsWalksHimThere) {
-		const auto colonist = makeThirstyColonistWithItsOwnRegion();
-		setNeedValue(colonist, NeedType::Thirst, 100.0F);
-		const glm::vec2 click{90.0F, 5.0F};
-		nav->setViewportRect(click, {30.0F, 30.0F});
-		nav->finishPendingBuilds();
-		ASSERT_EQ(nav->builtRegions().size(), 2U);
-		ASSERT_FALSE(nav->inSimArea(click));
-
-		auto& ai = world->getSystem<AIDecisionSystem>();
-		ai.enterControl(colonist);
-		const auto routed = ai.issuePlayerMoveOrder(colonist, click);
-		ASSERT_TRUE(routed.has_value()) << "the order was dropped";
-		EXPECT_LT(glm::distance(*routed, click), 0.5F);
-
-		const bool arrived = tickUntil(*world, *nav, 1500, [&] { return getTask(colonist)->state == TaskState::Arrived; });
-		const glm::vec2 at = world->getComponent<Position>(colonist)->value;
-		EXPECT_TRUE(arrived) << "stuck at (" << at.x << ", " << at.y << ")";
-		EXPECT_LT(glm::distance(at, *routed), 0.5F);
-	}
-
-	// Where to relieve himself is a colonist's own choice: the camera's region, which holds better
-	// spots past the edge of his, must not change it. Food he knows around him pushes the best spot
-	// east, past his region's edge at x = 30.
-	TEST_F(AIDecisionOffAreaTest, ToiletSpotIsTheSameWhereverTheCameraIs) {
-		const auto colonist = makeThirstyColonistWithItsOwnRegion();
-		const glm::vec2 at{20.0F, 0.0F}; // 10 m inside his region's edge: it stays put
-		world->getComponent<Position>(colonist)->value = at;
-		for (const glm::vec2 food : {glm::vec2{10.0F, 0.0F}, glm::vec2{15.0F, 0.0F}, glm::vec2{20.0F, 0.0F},
-									 glm::vec2{20.0F, 5.0F}, glm::vec2{20.0F, -5.0F}}) {
-			addKnownEntity(colonist, food, kBerryBushDefId, assets::CapabilityType::Edible);
-		}
-		const Memory& memory = *world->getComponent<Memory>(colonist);
-		const auto	  spot = [&] {
-			   return findToiletLocation(at, *chunks, *nav, *world, memory, assets::AssetRegistry::Get());
-		};
-		const std::optional<glm::vec2> noCamera = spot();
-		ASSERT_TRUE(noCamera.has_value());
-		EXPECT_LE(noCamera->x, 30.0F) << "a spot outside every colonist region";
-
-		nav->setViewportRect({40.0F, 0.0F}, {30.0F, 30.0F});
-		nav->finishPendingBuilds();
-		ASSERT_EQ(nav->builtRegions().size(), 2U);
-		EXPECT_EQ(spot(), noCamera) << "the camera's region changed where he relieves himself";
-	}
-
-	// A right-click on ground no region holds (past the camera region's 64 m, which the player can see
-	// zoomed out) keeps its point and walks him toward it, a region at a time, instead of being dropped.
-	TEST_F(AIDecisionOffAreaTest, MoveOrderInNoRegionWalksHimThere) {
-		const auto colonist = makeThirstyColonistWithItsOwnRegion();
-		setNeedValue(colonist, NeedType::Thirst, 100.0F);
-		const glm::vec2 click{100.0F, 20.0F};
-		ASSERT_FALSE(nav->isValidPosition(click));
-		ASSERT_FALSE(nav->nearestValidPosition(click, 0.3F).has_value()) << "the click must be in no region at all";
-
-		auto& ai = world->getSystem<AIDecisionSystem>();
-		ai.enterControl(colonist);
-		const auto routed = ai.issuePlayerMoveOrder(colonist, click);
-		ASSERT_TRUE(routed.has_value()) << "the order was dropped";
-		EXPECT_EQ(*routed, click);
-
-		const bool arrived = tickUntil(*world, *nav, 1500, [&] { return getTask(colonist)->state == TaskState::Arrived; });
-		const glm::vec2 at = world->getComponent<Position>(colonist)->value;
-		EXPECT_TRUE(arrived) << "stuck at (" << at.x << ", " << at.y << ")";
-		EXPECT_LT(glm::distance(at, click), 0.5F);
-	}
-
-	// A harvest target whose own collision carves a hole in the mesh, beyond his regions: walked toward
-	// with its centre, then, once a region holding him covers it, resolved to the walkable point beside
-	// it (routeGoalFor), where he arrives.
-	TEST_F(AIDecisionOffAreaTest, FarTargetInItsOwnHoleIsReachedBesideIt) {
-		auto& registry = assets::AssetRegistry::Get();
-		assets::AssetDefinition stick;
-		stick.defName	  = "HoleStick";
-		stick.label		  = "HoleStick";
-		stick.handsRequired = 1;
-		stick.category	  = assets::ItemCategory::RawMaterial;
-		stick.capabilities.carryable = assets::CarryableCapability{1};
-		stick.itemProperties		 = assets::ItemProperties{};
-		stick.itemProperties->stackSize = 100;
-		stick.itemProperties->massKg	= 0.1F;
-		registry.registerTestDefinition(std::move(stick));
-		assets::AssetDefinition tree;
-		tree.defName							 = "Flora_HoleTree";
-		tree.label								 = "Flora_HoleTree";
-		tree.collision.type						 = assets::CollisionShapeType::Rect;
-		tree.collision.halfExtentsMeters		 = {0.8F, 0.8F};
-		tree.capabilities.harvestable			 = assets::HarvestableCapability{};
-		tree.capabilities.harvestable->yieldDefName = "HoleStick";
-		tree.capabilities.harvestable->requiredToolType = "";
-		registry.registerTestDefinition(std::move(tree));
-		const uint32_t treeId  = registry.getDefNameId("Flora_HoleTree");
-		const uint32_t stickId = registry.getDefNameId("HoleStick");
-
-		const glm::vec2						 treeAt{70.0F, 0.0F};
-		assets::PlacementExecutor			 executor(registry);
-		std::unordered_set<world::ChunkCoordinate> processed;
-		const world::ChunkCoordinate		 coord = world::worldToChunk({treeAt.x, treeAt.y});
-		assets::SpatialIndex				 index;
-		assets::PlacedEntity				 placed;
-		placed.defName	= "Flora_HoleTree";
-		placed.position = treeAt;
-		index.insert(placed);
-		assets::AsyncChunkPlacementResult result;
-		result.coord		= coord;
-		result.spatialIndex = std::move(index);
-		executor.storeChunkResult(std::move(result));
-		processed.insert(coord);
-		nav->setPlacementData(&executor, &processed);
-
-		const auto colonist = makeThirstyColonistWithItsOwnRegion();
-		satisfyAllNeeds(*getNeeds(colonist));
-		addKnownEntity(colonist, treeAt, treeId, assets::CapabilityType::Harvestable);
-		GoalTask craft;
-		craft.type				  = TaskType::Craft;
-		craft.owner				  = GoalOwner::CraftingGoalSystem;
-		craft.destinationPosition = {0.0F, 0.0F};
-		craft.targetAmount		  = 1;
-		craft.status			  = GoalStatus::Blocked;
-		const uint64_t craftId	  = GoalTaskRegistry::Get().createGoal(std::move(craft));
-		GoalTask harvest;
-		harvest.type				= TaskType::Harvest;
-		harvest.owner				= GoalOwner::CraftingGoalSystem;
-		harvest.destinationPosition = {0.0F, 0.0F};
-		harvest.yieldDefNameId		= stickId;
-		harvest.targetAmount		= 1;
-		harvest.parentGoalId		= craftId;
-		harvest.status				= GoalStatus::Available;
-		GoalTaskRegistry::Get().createGoal(std::move(harvest));
-
-		bool	   sawCovered = false;
-		const bool arrived	  = tickUntil(*world, *nav, 1500, [&] {
-			   sawCovered = sawCovered || nav->inSimArea(treeAt);
-			   const Task* task = getTask(colonist);
-			   return task->type == TaskType::Harvest && task->state == TaskState::Arrived;
-		   });
-		const glm::vec2 at = world->getComponent<Position>(colonist)->value;
-		ASSERT_TRUE(sawCovered);
-		EXPECT_FALSE(nav->isOnMesh(treeAt)) << "the tree must carve its own hole for this test to mean anything";
-		EXPECT_TRUE(arrived) << "never arrived; at (" << at.x << ", " << at.y << ")";
-		EXPECT_LT(glm::distance(at, treeAt), 1.5F);
-		nav->setPlacementData(nullptr, nullptr);
-	}
-
-	// A harvest target beyond his regions is taken and walked toward, not dropped as NoSource for
-
-
-	// lying outside every colonist region.
-	TEST_F(AIDecisionOffAreaTest, HarvestTargetBeyondHisRegionsIsWalkedTo) {
-		auto& registry = assets::AssetRegistry::Get();
-		auto [bushId, stickId] = registerHarvestableYielding(registry, "Flora_FarBush", "FarStick");
-		const auto colonist = makeThirstyColonistWithItsOwnRegion();
-		satisfyAllNeeds(*getNeeds(colonist));
-		const glm::vec2 bush{70.0F, 0.0F};
-		addKnownEntity(colonist, bush, bushId, assets::CapabilityType::Harvestable);
-		ASSERT_FALSE(nav->inSimArea(bush));
-
-		GoalTask craft;
-		craft.type = TaskType::Craft;
-		craft.owner = GoalOwner::CraftingGoalSystem;
-		craft.destinationPosition = {0.0F, 0.0F};
-		craft.targetAmount = 1;
-		craft.status = GoalStatus::Blocked;
-		const uint64_t craftId = GoalTaskRegistry::Get().createGoal(std::move(craft));
-		GoalTask harvest;
-		harvest.type = TaskType::Harvest;
-		harvest.owner = GoalOwner::CraftingGoalSystem;
-		harvest.destinationPosition = {0.0F, 0.0F};
-		harvest.yieldDefNameId = stickId;
-		harvest.targetAmount = 1;
-		harvest.parentGoalId = craftId;
-		harvest.status = GoalStatus::Available;
-		GoalTaskRegistry::Get().createGoal(std::move(harvest));
-
-		world->update(kTick);
-		const auto* option = findOption(*getTrace(colonist), [](const EvaluatedOption& o) { return o.taskType == TaskType::Harvest; });
-		ASSERT_NE(option, nullptr);
-		EXPECT_EQ(option->status, OptionStatus::Selected);
-
-		float	   closest = glm::distance(world->getComponent<Position>(colonist)->value, bush);
-		bool	   arrived = false;
-		const bool near	   = tickUntil(*world, *nav, 1500, [&] {
-			   closest = std::min(closest, glm::distance(world->getComponent<Position>(colonist)->value, bush));
-			   const Task* task = getTask(colonist);
-			   arrived = arrived || (task->type == TaskType::Harvest && task->state == TaskState::Arrived);
-
-			   return arrived;
-		   });
-		EXPECT_TRUE(near) << "never arrived; got no closer than " << closest << " m";
-
-
-		EXPECT_LT(closest, 1.0F) << "arrived at (" << world->getComponent<Position>(colonist)->value.x << ", "
-								 << world->getComponent<Position>(colonist)->value.y << ") for a target at ("
-								 << getTask(colonist)->targetPosition.x << ", " << getTask(colonist)->targetPosition.y << ")";
-	}
-
 } // namespace ecs::test
-

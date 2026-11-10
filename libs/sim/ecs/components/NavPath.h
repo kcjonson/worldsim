@@ -25,10 +25,6 @@ struct NavPath {
 	std::uint64_t builtBeliefVersion = 0; // Memory::beliefVersion at plan time
 	std::uint64_t builtNavVersion = 0;	  // NavigationSystem::generation() at plan time
 
-	// The route ends at the sim area's edge, short of an off-area goal: reaching its end stops the
-	// colonist without arriving, and the route stays valid so a nav generation change re-plans it.
-	bool endsShortOfGoal = false;
-
 	[[nodiscard]] bool done() const { return !valid || current >= waypoints.size(); }
 };
 

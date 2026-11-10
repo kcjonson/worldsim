@@ -33,27 +33,25 @@ namespace ecs {
 	const assets::AssetRegistry&  registry,
 	assets::CapabilityType		  capability);
 
-/// A remembered source, its rank and its squared distance, as findNearestReachableWithCapability orders them.
+/// A remembered source and its squared distance, as findNearestReachableWithCapability orders them.
 struct SourceCandidate {
-	std::uint8_t			rank;
 	float					distSq;
 	uint64_t				key;
 	const KnownWorldEntity* entity;
 };
 
-/// Find the best known world entity with `capability` that `accept(memoryKey, entity)` admits and
-/// `reachable(memoryKey, position)` confirms: lowest `rank(entity)` first, then nearest, then lowest
-/// memory key, so the pick is deterministic. One pass over Memory's capability index collects the
+/// Find the nearest known world entity with `capability` that `accept(memoryKey, entity)` admits and
+/// `reachable(memoryKey, position)` confirms. One pass over Memory's capability index collects the
 /// accepted candidates into `scratch` (caller-owned and reused, so no allocation once it has grown to
-/// fit), then pops them in that order until `reachable` admits one. Every accepted candidate is tried
-/// before the answer is nullopt: O(n + k log n) for the k-th, plus k `reachable` calls.
-template <typename Accept, typename Rank, typename Reachable>
+/// fit), then pops them nearest first, ties broken by memory key so the pick is deterministic, until
+/// `reachable` admits one. Every accepted candidate is tried before the answer is nullopt: O(n + k log n)
+/// for the k-th nearest, plus k `reachable` calls.
+template <typename Accept, typename Reachable>
 [[nodiscard]] std::optional<KnownWorldEntity> findNearestReachableWithCapability(
 	const Memory&				  memory,
 	assets::CapabilityType		  capability,
 	const glm::vec2&			  fromPosition,
 	Accept&&					  accept,
-	Rank&&						  rank,
 	Reachable&&					  reachable,
 	std::vector<SourceCandidate>& scratch) {
 	scratch.clear();
@@ -63,24 +61,24 @@ template <typename Accept, typename Rank, typename Reachable>
 			continue;
 		}
 		const glm::vec2 diff = entity->position - fromPosition;
-		scratch.push_back({rank(*entity), glm::dot(diff, diff), key, entity});
+		scratch.push_back({glm::dot(diff, diff), key, entity});
 	}
-	const auto worse = [](const SourceCandidate& a, const SourceCandidate& b) {
-		return std::tie(a.rank, a.distSq, a.key) > std::tie(b.rank, b.distSq, b.key);
+	const auto farther = [](const SourceCandidate& a, const SourceCandidate& b) {
+		return std::tie(a.distSq, a.key) > std::tie(b.distSq, b.key);
 	};
-	std::make_heap(scratch.begin(), scratch.end(), worse);
+	std::make_heap(scratch.begin(), scratch.end(), farther);
 	while (!scratch.empty()) {
-		std::pop_heap(scratch.begin(), scratch.end(), worse);
-		const SourceCandidate best = scratch.back();
+		std::pop_heap(scratch.begin(), scratch.end(), farther);
+		const SourceCandidate nearest = scratch.back();
 		scratch.pop_back();
-		if (reachable(best.key, best.entity->position)) {
-			return *best.entity;
+		if (reachable(nearest.key, nearest.entity->position)) {
+			return *nearest.entity;
 		}
 	}
 	return std::nullopt;
 }
 
-// Find the entity that minimizes total trip: start -> entity -> destination
+/// Find the entity that minimizes total trip: start -> entity -> destination
 /// For multi-leg tasks (gather then deliver, pickup then haul)
 /// @param memory The colonist's memory to search
 /// @param fromPosition The starting position (colonist)

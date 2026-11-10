@@ -37,7 +37,7 @@ namespace ecs {
 	///
 	/// @param colonistPos Current colonist world position
 	/// @param chunkManager For the shore rule (the chunk's water rings)
-	/// @param navigation Walkability authority (NavigationSystem::isOnMesh, colonist regions only)
+	/// @param navigation Walkability authority (NavigationSystem::isValidPosition)
 	/// @param ecsWorld Reserved for future use (currently unused)
 	/// @param memory Colonist memory for querying known bio piles and food sources
 	/// @param registry Asset registry for capability lookups

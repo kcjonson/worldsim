@@ -69,7 +69,7 @@ constexpr float kFoodAvoidanceRadius = 15.0F;   // Distance to avoid from food
 
 	// Rule 1: somewhere a colonist can stand. Water (the terrain rings) and anything
 	// else off the nav mesh is out.
-	if (!navigation.isOnMesh(pos)) {
+	if (!navigation.isValidPosition(pos)) {
 		return false;
 	}
 
