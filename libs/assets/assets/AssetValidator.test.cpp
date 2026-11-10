@@ -429,6 +429,27 @@ TEST(AssetValidatorTest, GroundFieldsOnOtherRolesAreWarnings) {
 	EXPECT_TRUE(hasIssue(AssetValidator::validate(t.root, ""), Severity::Warning, "period"));
 }
 
+TEST(AssetValidatorTest, AgeClassesAndPlacementScaleFollowTheSchema) {
+	const auto validateTree = [](const std::string& inner) {
+		TempAssets t;
+		t.writeXml("Tree", oneDef("<defName>Tree</defName><assetType>simple</assetType><svgPath>tree.svg</svgPath>" + inner));
+		t.writeFile("Tree/tree.svg", "<svg/>");
+		return AssetValidator::validate(t.root, "");
+	};
+	const std::string sapling = R"(<ageClass name="sapling" weight="0.25" variants="4" yieldScale="0.25" workScale="0.35"/>)";
+	const std::string mature = R"(<ageClass name="mature" weight="0.75" variants="8"/>)";
+
+	EXPECT_EQ(validateTree("<ageClasses>" + sapling + mature + R"(</ageClasses><placement><scale min="0.93" max="1.07"/></placement>)").errorCount(), 0);
+
+	// Weights off 1, both <ageClasses> and <variantCount>, a duplicate name, an empty name, no variants.
+	EXPECT_TRUE(hasMessageContaining(validateTree("<ageClasses>" + sapling + R"(<ageClass name="mature" weight="0.7" variants="8"/></ageClasses>)"), Severity::Error, "sum to 1"));
+	EXPECT_TRUE(hasMessageContaining(validateTree("<ageClasses>" + sapling + mature + "</ageClasses><variantCount>4</variantCount>"), Severity::Error, "variantCount"));
+	EXPECT_TRUE(hasMessageContaining(validateTree("<ageClasses>" + sapling + R"(<ageClass name="sapling" weight="0.75" variants="8"/></ageClasses>)"), Severity::Error, "duplicate"));
+	EXPECT_TRUE(hasMessageContaining(validateTree("<ageClasses>" + sapling + R"(<ageClass name="" weight="0.75" variants="8"/></ageClasses>)"), Severity::Error, "empty"));
+	EXPECT_TRUE(hasMessageContaining(validateTree("<ageClasses>" + sapling + R"(<ageClass name="mature" weight="0.75" variants="0"/></ageClasses>)"), Severity::Error, "variants"));
+	EXPECT_TRUE(hasIssue(validateTree(R"(<placement><scale min="1.1" max="0.9"/></placement>)"), Severity::Error, "scale"));
+}
+
 // Guards the shipped library against validation errors, and prints any issues
 // (warnings included) so regressions are visible in test output.
 TEST(AssetValidatorTest, RealAssetLibraryHasNoErrors) {

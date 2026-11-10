@@ -105,7 +105,7 @@ Sim and tools:
 - Weights sum to 1 (validator error otherwise). With the numbers above the mean yield is 0.97 of today's, so the wood economy holds.
 - `<ageClasses>` replaces `<variantCount>` on a def that has it; the validator rejects both together.
 - The generator receives `ageClass` (name, new) and `variantIndex` (existing, now set) as Lua globals. The generation seed for (def, age class, variant) comes from ground tiles' `variantSeed` hash, shared, and Lua seeds from that alone; the `seed + variantIndex` sum goes.
-- A def may set its placement scale range (trees: 0.93 to 1.07, D3). It replaces the shared range for that def and draws the same number of random values, so nothing else moves.
+- A def may set its placement scale range, `<placement><scale min="0.93" max="1.07"/>` (trees: 0.93 to 1.07, D3). It replaces the shared range for that def and draws the same number of random values, so nothing else moves.
 - `growthStage` in `conifer.lua` and `palm.lua` stays as it is. When those generators get age classes in the later epic, `ageClass` replaces it.
 
 ### R3 Variant meshes on every tree path
@@ -284,7 +284,7 @@ Trees draw in the depth-sorted stream, and a run breaks whenever the mesh change
 
 ## Testing
 
-- Unit, bounded: traits are deterministic for (def, position, seed) and hit the age weights within tolerance over 10,000 positions; placement of non-tree entities is byte-identical before and after for a fixed seed; per-age collision rect is variant-independent; harvest amount and work scale by age class.
+- Unit, bounded: traits are deterministic for (def, position, seed) and hit the age weights within tolerance over 10,000 positions; placement of non-tree entities is byte-identical before and after for a fixed seed (a hash golden, checked only with MSVC's standard library, whose distributions the hashes were captured from); per-age collision rect is variant-independent; harvest amount and work scale by age class.
 - Asset-manager: every age class and variant of oak, maple, and birch renders with zero validation errors. Kevin approves the grids before rollout.
 - `asset-cli render` produces the greyscale silhouette grids for the two acceptance checks below, headless.
 - Acceptance for variety: any two variants of one species and age class are tellable apart by silhouette alone at game zoom, in greyscale.

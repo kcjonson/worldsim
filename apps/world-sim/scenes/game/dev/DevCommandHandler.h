@@ -104,8 +104,10 @@ namespace world_sim {
 		// reason, target, extension (0 unless an Add onto a built foundation), entity, area.
 		std::string devFoundationEdit(const app::DevRequest& cmd);
 		// flora?rect=x0,y0,x1,y1 (world metres, default the camera's view): the trees in the rect
-		// per def, canopy cover, and expected wood (assets::measureFlora). A route, not a state
-		// view, because a state provider is given no query parameters.
+		// per def and age class, canopy cover, and expected wood (assets::measureFlora). With
+		// age=<name>&near=x,y (and optionally def=) it lists the nearest trees of that age class
+		// instead (assets::nearestTreesOfAge). A route, not a state view, because a state
+		// provider is given no query parameters.
 		app::DevResponse devFlora(const app::DevRequest& cmd);
 		void		devWalls(const app::DevRequest& cmd);
 		void		devOpening(const app::DevRequest& cmd);

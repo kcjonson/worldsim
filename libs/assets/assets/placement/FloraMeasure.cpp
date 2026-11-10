@@ -175,6 +175,16 @@ namespace assets {
 				m.defName = entity->defName;
 				m.count++;
 				m.woodPerTree = def != nullptr ? def->woodPerTree : 0.0;
+				if (isTree && !def->ageClassNames.empty()) {
+					if (m.ageClasses.empty()) {
+						for (const std::string& name : def->ageClassNames) {
+							m.ageClasses.push_back({.name = name});
+						}
+					}
+					if (entity->traits.ageClass < m.ageClasses.size()) {
+						m.ageClasses[entity->traits.ageClass].count++;
+					}
+				}
 			}
 
 			if (!isTree || def->rings == nullptr) {
@@ -200,6 +210,9 @@ namespace assets {
 		double		 wood = 0.0;
 		for (auto& [name, m] : treesByDef) {
 			m.perThousandM2 = m.count * perThousand;
+			for (FloraAgeMeasure& age : m.ageClasses) {
+				age.perThousandM2 = age.count * perThousand;
+			}
 			m.woodPerThousandM2 = m.count * m.woodPerTree * perThousand;
 			out.treeCount += m.count;
 			wood += m.count * m.woodPerTree;
@@ -213,6 +226,39 @@ namespace assets {
 		out.treesPerThousandM2 = out.treeCount * perThousand;
 		out.woodPerThousandM2 = wood * perThousand;
 		return out;
+	}
+
+	std::vector<FloraTreeSighting> nearestTreesOfAge(
+		glm::vec2											   near,
+		const std::string&									   ageClass,
+		const std::string&									   defName,
+		size_t											   limit,
+		const std::vector<const PlacedEntity*>&				   entities,
+		const std::unordered_map<std::string, FloraDefTraits>& traits
+	) {
+		std::vector<FloraTreeSighting> found;
+		for (const PlacedEntity* entity : entities) {
+			if (!entity->isTallOccluder || (!defName.empty() && entity->defName != defName)) {
+				continue;
+			}
+			const auto traitIt = traits.find(entity->defName);
+			if (traitIt == traits.end() || !traitIt->second.isTree) {
+				continue;
+			}
+			const std::vector<std::string>& names = traitIt->second.ageClassNames;
+			if (entity->traits.ageClass >= names.size() || names[entity->traits.ageClass] != ageClass) {
+				continue;
+			}
+			const double dx = static_cast<double>(entity->position.x) - near.x;
+			const double dy = static_cast<double>(entity->position.y) - near.y;
+			found.push_back({entity->defName, entity->position, ageClass, entity->traits.variant, std::sqrt(dx * dx + dy * dy)});
+		}
+		const size_t kept = std::min(limit, found.size());
+		std::partial_sort(found.begin(), found.begin() + static_cast<std::ptrdiff_t>(kept), found.end(), [](const FloraTreeSighting& a, const FloraTreeSighting& b) {
+			return a.distance < b.distance;
+		});
+		found.resize(kept);
+		return found;
 	}
 
 } // namespace assets

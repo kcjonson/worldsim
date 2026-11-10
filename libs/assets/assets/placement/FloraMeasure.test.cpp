@@ -12,11 +12,12 @@ namespace assets {
 		// A 2 m x 2 m crown centred on the trunk, in the template-local millimetre frame.
 		const std::vector<geometry::Ring> kSquareCrown{{{-1000, -1000}, {1000, -1000}, {1000, 1000}, {-1000, 1000}}};
 
-		PlacedEntity tree(const std::string& defName, float x, float y, bool tall = true) {
+		PlacedEntity tree(const std::string& defName, float x, float y, bool tall = true, uint8_t ageClass = 0) {
 			PlacedEntity e;
 			e.defName = defName;
 			e.position = {x, y};
 			e.isTallOccluder = tall;
+			e.traits.ageClass = ageClass;
 			return e;
 		}
 
@@ -67,6 +68,52 @@ namespace assets {
 		EXPECT_EQ(half.treeCount, 2U);
 		EXPECT_DOUBLE_EQ(half.treesPerThousandM2, 20.0);
 		EXPECT_NEAR(half.canopyCover, 6.0 / 100.0, 1e-9);
+	}
+
+	// Trees of a def with age classes are counted per class too, and the nearest-of-age
+	// query lists one class, nearest first, filtered by def when asked.
+	TEST(FloraMeasure, CountsAgeClassesAndFindsTheNearestOfAnAge) {
+		const std::unordered_map<std::string, FloraDefTraits> traits{
+			{"Oak", {.isTree = true, .rings = &kSquareCrown, .woodPerTree = 25.0, .ageClassNames = {"sapling", "mature", "veteran"}}},
+			{"Maple", {.isTree = true, .rings = &kSquareCrown, .woodPerTree = 10.0, .ageClassNames = {"sapling", "mature", "veteran"}}},
+			{"Pine", {.isTree = true, .rings = &kSquareCrown, .woodPerTree = 10.0}},
+		};
+		const std::vector<PlacedEntity> world{
+			tree("Oak", 5.0F, 5.0F, true, 0),
+			tree("Oak", 9.0F, 5.0F, true, 2),
+			tree("Oak", 2.0F, 5.0F, true, 0),
+			tree("Maple", 16.0F, 5.0F, true, 0),
+			tree("Pine", 3.0F, 3.0F),
+		};
+		std::vector<const PlacedEntity*> entities;
+		for (const auto& e : world) {
+			entities.push_back(&e);
+		}
+		const FloraRect rect{0.0F, 0.0F, 20.0F, 10.0F};
+
+		const FloraMeasurement m = measureFlora(rect, {rect}, entities, traits);
+		ASSERT_EQ(m.defs.size(), 3U);
+		const FloraDefMeasure& oak = m.defs[1];
+		ASSERT_EQ(oak.defName, "Oak");
+		ASSERT_EQ(oak.ageClasses.size(), 3U);
+		EXPECT_EQ(oak.ageClasses[0].name, "sapling");
+		EXPECT_EQ(oak.ageClasses[0].count, 2U);
+		EXPECT_DOUBLE_EQ(oak.ageClasses[0].perThousandM2, 10.0);
+		EXPECT_EQ(oak.ageClasses[1].count, 0U);
+		EXPECT_EQ(oak.ageClasses[2].count, 1U);
+		EXPECT_TRUE(m.defs[2].ageClasses.empty()); // Pine has none
+
+		const auto saplings = nearestTreesOfAge({10.0F, 5.0F}, "sapling", "", kFloraNearestMax, entities, traits);
+		ASSERT_EQ(saplings.size(), 3U);
+		EXPECT_EQ(saplings[0].defName, "Oak");
+		EXPECT_FLOAT_EQ(saplings[0].position.x, 5.0F);
+		EXPECT_EQ(saplings[1].defName, "Maple");
+		EXPECT_EQ(saplings[2].ageClass, "sapling");
+		EXPECT_DOUBLE_EQ(saplings[2].distance, 8.0);
+
+		EXPECT_EQ(nearestTreesOfAge({10.0F, 5.0F}, "sapling", "Maple", kFloraNearestMax, entities, traits).size(), 1U);
+		EXPECT_EQ(nearestTreesOfAge({10.0F, 5.0F}, "sapling", "", 1, entities, traits).size(), 1U);
+		EXPECT_EQ(nearestTreesOfAge({10.0F, 5.0F}, "veteran", "", kFloraNearestMax, entities, traits).front().position.x, 9.0F);
 	}
 
 } // namespace assets
