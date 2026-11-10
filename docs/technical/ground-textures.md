@@ -32,7 +32,7 @@ This is the original plan's two tiers as they shipped: the ground tiles are the 
 
 ## Ground tile assets
 
-A ground tile is an asset with the role `ground`. Defs live at `assets/world/ground/<Surface>/<Surface>.xml`, under the scanned root, with the file stem matching the folder (the registry requires it). The asset-manager lists `ground/` as a category with no extra work.
+A ground tile is an asset with the role `ground`. Defs live at `assets/world/ground/<Surface>/<Surface>.xml`, under the scanned root, with the file stem matching the folder (the registry requires it). The asset-manager lists `ground/` as a category with no extra work. Its Vectors view draws each preview's still art once into a render target and shows that, since a tile is a few hundred thousand triangles and the view shows it fifteen times (the 3x3 tiling and six variants): a frame there uploads under 1 MB where drawing the meshes uploaded 334 MB.
 
 ```xml
 <asset>
@@ -778,7 +778,6 @@ Planned, tracked in Specboard as WOR-583, Ground tile follow-ups. None blocks th
 - SVG ground defs with the `data-lod` filter (LOD). salal's `loadSVG` takes a byte span since v0.37, so the filtered markup can load from memory.
 - BC3 or BC7 for the arrays (Open questions).
 - A 4.1 core context from salal. The tile shaders are GLSL 4.10 and salal asks for 3.3; NVIDIA and macOS accept that, a strict driver may not (Shader).
-- The asset-manager Vectors view draws a ground def's tile about 15 times a frame (3.4 million quads, 334 MB uploaded). Drawing the previews once into render targets would take that to nothing between changes.
 
 ## Later
 

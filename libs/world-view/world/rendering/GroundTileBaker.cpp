@@ -1,6 +1,7 @@
 #include "world/rendering/GroundTileBaker.h"
 
 #include "world/rendering/GroundTileCache.h"
+#include "world/rendering/ScreenStateGuard.h"
 
 #include <assets/AssetDefinition.h>
 #include <assets/AssetRegistry.h>
@@ -41,29 +42,6 @@ namespace worldview {
 			}();
 			return indices;
 		}
-
-		// Puts the screen's coordinate system and viewport back when a render is done. RenderTarget::end()
-		// already rebinds the target below it; the projection the batch draws with is this.
-		class ScreenStateGuard {
-		  public:
-			explicit ScreenStateGuard(Renderer::CoordinateSystem* restore)
-				: coordinateSystem(restore) {
-				Renderer::Primitives::getViewport(width, height);
-			}
-			~ScreenStateGuard() {
-				Renderer::Primitives::setCoordinateSystem(coordinateSystem);
-				Renderer::Primitives::setViewport(width, height);
-			}
-			ScreenStateGuard(const ScreenStateGuard&) = delete;
-			ScreenStateGuard& operator=(const ScreenStateGuard&) = delete;
-			ScreenStateGuard(ScreenStateGuard&&) = delete;
-			ScreenStateGuard& operator=(ScreenStateGuard&&) = delete;
-
-		  private:
-			Renderer::CoordinateSystem* coordinateSystem;
-			int							width = 0;
-			int							height = 0;
-		};
 
 		// The level's triangles in render pixels, unshared (3 vertices each) and in paint order, the ones
 		// that miss the target dropped. buildPaths has already put every path that crosses the tile edge
@@ -365,13 +343,13 @@ namespace worldview {
 
 		std::vector<ground::Plane> planes(variants.size());
 		const auto				   filter = [&](size_t first, size_t last) {
-			  for (size_t v = first; v < last; ++v) {
-				  ground::Plane gray(renderSize, renderSize);
-				  for (size_t i = 0; i < gray.values.size(); ++i) {
-					  gray.values[i] = static_cast<float>(drawn[v][i * 4]) / 255.0F;
-				  }
-				  planes[v] = ground::blurWrapped(ground::boxDownsample(gray, kHeightSupersample), kHeightBlurSigma);
-			  }
+			for (size_t v = first; v < last; ++v) {
+				ground::Plane gray(renderSize, renderSize);
+				for (size_t i = 0; i < gray.values.size(); ++i) {
+					gray.values[i] = static_cast<float>(drawn[v][i * 4]) / 255.0F;
+				}
+				planes[v] = ground::blurWrapped(ground::boxDownsample(gray, kHeightSupersample), kHeightBlurSigma);
+			}
 		};
 		if (args.pool != nullptr) {
 			args.pool->parallelFor(0, variants.size(), 1, filter);
@@ -386,7 +364,8 @@ namespace worldview {
 		return true;
 	}
 
-	std::optional<GroundVariantBake> GroundTileBaker::bakeVariant(const GroundTileBake& bake, const GroundVariantPaths& variantPaths) const {
+	std::optional<GroundVariantBake>
+	GroundTileBaker::bakeVariant(const GroundTileBake& bake, const GroundVariantPaths& variantPaths) const {
 		const auto		  start = Clock::now();
 		GroundVariantBake out;
 		out.variant = variantPaths.variant;
