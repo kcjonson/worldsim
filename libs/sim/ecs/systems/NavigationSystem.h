@@ -310,9 +310,15 @@ class NavigationSystem : public ISystem {
 
 	// True while any region's build is in flight. update() launches every build its gates
 	// call for before it returns, so false right after an update means the system has
-	// settled: with the same inputs, no later update changes a mesh. Tests use it to tell
-	// a build still landing from one that will never start.
+	// settled: with the same inputs, no later update changes a mesh.
 	[[nodiscard]] bool isBuilding() const;
+
+	// Blocks until the system settles: evaluates the region rebuild gates against the
+	// current inputs, launches what they call for, waits for every in-flight build, swaps
+	// each in as update() would, and repeats until no gate fires. Advances nothing else;
+	// isBuilding() is false when it returns. For hosts that want repeatable results
+	// (tests, the headless sim), never the game, whose frames must not wait on a build.
+	void finishPendingBuilds();
 
 	// Monotonic count of mesh swaps across all regions. A stored NavPath stamps this at plan
 	// time so the replan loop can detect "the world rebuilt under me", and a deferred route

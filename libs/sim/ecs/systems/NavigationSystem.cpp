@@ -723,6 +723,22 @@ namespace ecs {
 		reconcileRegions(desired);
 	}
 
+	void NavigationSystem::finishPendingBuilds() {
+		// update() launches every build its gates call for, so once it leaves nothing in
+		// flight the gates are quiet against the current inputs.
+		for (update(0.0F); isBuilding(); update(0.0F)) {
+			for (SimulationRegion& region : regions) {
+				if (region.future.valid()) {
+					region.future.wait();
+				}
+			}
+		}
+		for (std::future<geometry::nav::NavMesh>& build : retiringBuilds) {
+			build.wait();
+		}
+		retiringBuilds.clear();
+	}
+
 	int NavigationSystem::regionContaining(glm::vec2 meters) const {
 		const geometry::Vec2i64 pMm = nav::toMm(meters);
 		for (std::size_t r = 0; r < regions.size(); ++r) {

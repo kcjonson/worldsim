@@ -6,7 +6,6 @@
 #include "ActionSystem.h"
 #include "MovementSystem.h"
 #include "NavigationSystem.h"
-#include "NavigationSystem.test.h"
 #include "PhysicsSystem.h"
 
 #include "../GoalTaskRegistry.h"
@@ -3200,8 +3199,8 @@ namespace ecs::test {
 	// The running game's first decision happens before the async region build has produced a mesh.
 	// This wires a real NavigationSystem (all-land chunks, a viewport region at the origin, an empty
 	// construction world) plus MovementSystem and PhysicsSystem, so a test can let the AI decide with
-	// no mesh, pump the NavigationSystem alone until the build lands (pumpUntilMesh: no sim time
-	// passes however long the runner takes, and the AI sees the mesh on the next tick), and then
+	// no mesh, settle the NavigationSystem alone (finishPendingBuilds: no sim time
+	// passes however long the build takes, and the AI sees the mesh on the next tick), and then
 	// check the colonist walks a route.
 	class AIDecisionFirstMeshTest : public AIDecisionSystemTest {
 	  protected:
@@ -3263,7 +3262,8 @@ namespace ecs::test {
 		EXPECT_FLOAT_EQ(getTrace(colonist)->lastEvaluationTime, firstEvaluation)
 			<< "a parked colonist must not re-decide every frame";
 
-		ASSERT_TRUE(pumpUntilMesh(*nav)) << "navmesh never built";
+		nav->finishPendingBuilds();
+		ASSERT_TRUE(nav->hasMesh()) << "navmesh never built";
 
 		bool walking = false;
 		for (int i = 0; i < kTicksAfterMesh && !walking; ++i) {
@@ -3302,7 +3302,8 @@ namespace ecs::test {
 		ASSERT_FALSE(getMovementTarget(colonist)->active) << "the route is held until a mesh exists";
 		EXPECT_EQ(task->navState, NavState::AwaitingMesh) << "the held route shows as waiting, not traveling";
 
-		ASSERT_TRUE(pumpUntilMesh(*nav)) << "navmesh never built";
+		nav->finishPendingBuilds();
+		ASSERT_TRUE(nav->hasMesh()) << "navmesh never built";
 
 		bool routed = false;
 		for (int i = 0; i < kTicksAfterMesh && !routed; ++i) {

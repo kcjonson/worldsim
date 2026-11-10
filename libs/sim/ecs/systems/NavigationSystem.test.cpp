@@ -1,5 +1,4 @@
 #include "NavigationSystem.h"
-#include "NavigationSystem.test.h"
 
 #include "AIDecisionSystem.h"
 #include "../World.h"
@@ -249,7 +248,8 @@ TEST_F(NavigationSystemTest, PathThroughDoorSucceeds) {
 	wireArea(sys);
 	sys.setConstructionWorld(&cw);
 
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built";
 
 	std::optional<std::vector<glm::vec2>> path = sys.requestPath(kOutside, kInside, kAgentRadius);
 	ASSERT_TRUE(path.has_value());
@@ -267,7 +267,8 @@ TEST_F(NavigationSystemTest, WindowBlocksPath) {
 	wireArea(sys);
 	sys.setConstructionWorld(&cw);
 
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built";
 	EXPECT_FALSE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value());
 }
 
@@ -281,7 +282,8 @@ TEST_F(NavigationSystemTest, NoOpeningBlocksPath) {
 	wireArea(sys);
 	sys.setConstructionWorld(&cw);
 
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built";
 	EXPECT_FALSE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value());
 }
 
@@ -296,7 +298,8 @@ TEST_F(NavigationSystemTest, RebuildOnVersionChangeOpensPath) {
 	wireArea(sys);
 	sys.setConstructionWorld(&cw);
 
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "initial navmesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "initial navmesh never built";
 	ASSERT_FALSE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value())
 		<< "closed room should block the path";
 
@@ -308,9 +311,8 @@ TEST_F(NavigationSystemTest, RebuildOnVersionChangeOpensPath) {
 	ASSERT_TRUE(cw.setOpeningState(op, FoundationState::Built));
 	ASSERT_NE(cw.version(), before);
 
-	EXPECT_TRUE(pumpUntil(sys, "the door to open the path", [&] {
-		return sys.requestPath(kOutside, kInside, kAgentRadius).has_value();
-	})) << "door rebuild never opened the path";
+	sys.finishPendingBuilds();
+	EXPECT_TRUE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value()) << "door rebuild never opened the path";
 }
 
 // Rebuild the other direction: an open (door) room is pathable; setting the door
@@ -325,7 +327,8 @@ TEST_F(NavigationSystemTest, RebuildSealsRoomWhenDoorRemoved) {
 	wireArea(sys);
 	sys.setConstructionWorld(&cw);
 
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "initial navmesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "initial navmesh never built";
 	ASSERT_TRUE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value())
 		<< "door room should be pathable";
 
@@ -338,9 +341,8 @@ TEST_F(NavigationSystemTest, RebuildSealsRoomWhenDoorRemoved) {
 	}
 	ASSERT_NE(cw.version(), before);
 
-	EXPECT_TRUE(pumpUntil(sys, "the room to seal", [&] {
-		return !sys.requestPath(kOutside, kInside, kAgentRadius).has_value();
-	})) << "blueprinting the door never re-sealed the room";
+	sys.finishPendingBuilds();
+	EXPECT_TRUE(!sys.requestPath(kOutside, kInside, kAgentRadius).has_value()) << "blueprinting the door never re-sealed the room";
 }
 
 // Deferred wiring: pumping update() before the ConstructionWorld is set must NOT
@@ -363,7 +365,8 @@ TEST_F(NavigationSystemTest, ConstructionWorldWiredAfterUpdatesStillBuilds) {
 	// Wiring the world now must still trigger the first build and a path solve.
 	wireArea(sys);
 	sys.setConstructionWorld(&cw);
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built after deferred wiring";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built after deferred wiring";
 	EXPECT_TRUE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value());
 }
 
@@ -396,7 +399,8 @@ TEST_F(NavigationSystemTest, BeliefFilterGatesQueryVsTruth) {
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	wireArea(sys);
 	sys.setConstructionWorld(&cw);
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built";
 
 	// Truth query (default filter) routes through the actual door: a path exists.
 	EXPECT_TRUE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value())
@@ -444,7 +448,8 @@ TEST_F(NavigationSystemTest, IsReachableTrueForReachableGoal) {
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	wireArea(sys);
 	sys.setConstructionWorld(&cw);
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built";
 
 	EXPECT_TRUE(sys.isReachable(kOutside, kInside, kAgentRadius));
 	EXPECT_TRUE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value());
@@ -459,7 +464,8 @@ TEST_F(NavigationSystemTest, IsReachableFalseForWalledOffGoal) {
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	wireArea(sys);
 	sys.setConstructionWorld(&cw);
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built";
 
 	// reachable() should detect the disconnected component and return false.
 	EXPECT_FALSE(sys.isReachable(kOutside, kInside, kAgentRadius));
@@ -489,7 +495,8 @@ TEST_F(NavigationSystemTest, GenerationBumpsOnMeshSwap) {
 	sys.setConstructionWorld(&cw);
 
 	EXPECT_EQ(sys.generation(), 0u) << "no mesh yet => generation 0";
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "initial navmesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "initial navmesh never built";
 	const std::uint64_t afterFirst = sys.generation();
 	EXPECT_GT(afterFirst, 0u) << "first mesh swap should bump generation";
 
@@ -497,7 +504,8 @@ TEST_F(NavigationSystemTest, GenerationBumpsOnMeshSwap) {
 	OpeningId op = cw.addOpening(south, 0.5F, "Door", "Wood");
 	ASSERT_NE(op, kInvalidOpening);
 	ASSERT_TRUE(cw.setOpeningState(op, FoundationState::Built));
-	EXPECT_TRUE(pumpUntil(sys, "the rebuild swap", [&] { return sys.generation() > afterFirst; }))
+	sys.finishPendingBuilds();
+	EXPECT_TRUE(sys.generation() > afterFirst)
 		<< "rebuild swap should bump generation again";
 }
 
@@ -516,11 +524,13 @@ TEST_F(NavigationSystemTest, GenerationMovesWhenALaggingRegionSwaps) {
 	EntityID a = world.createEntity();
 	world.addComponent<Position>(a, Position{glm::vec2{0.0F, 0.0F}});
 	world.addComponent<Colonist>(a, Colonist{"A"});
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "region A never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "region A never built";
 	for (std::int64_t edit = 0; edit < 2; ++edit) {
 		const std::uint64_t before = sys.generation();
 		buildWall(cw, {10000 + edit * 2000, 10000}, {11000 + edit * 2000, 10000});
-		ASSERT_TRUE(pumpUntil(sys, "the wall-edit rebuild", [&] { return sys.generation() != before; }))
+		sys.finishPendingBuilds();
+		ASSERT_NE(sys.generation(), before)
 			<< "wall edit " << edit << " never rebuilt region A";
 	}
 
@@ -529,7 +539,8 @@ TEST_F(NavigationSystemTest, GenerationMovesWhenALaggingRegionSwaps) {
 	EntityID b = world.createEntity();
 	world.addComponent<Position>(b, Position{glm::vec2{100.0F, 0.0F}});
 	world.addComponent<Colonist>(b, Colonist{"B"});
-	ASSERT_TRUE(pumpUntil(sys, "region B", [&] { return sys.builtRegions().size() == 2U; }))
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.builtRegions().size() == 2U)
 		<< "region B never built";
 	EXPECT_NE(sys.generation(), beforeB) << "region B's first mesh swap left generation() unchanged";
 }
@@ -551,7 +562,8 @@ TEST_F(NavigationSystemTest, NavQueryStatsPopulatedOnPath) {
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	wireArea(sys);
 	sys.setConstructionWorld(&cw);
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built";
 
 	sys.resetNavQueryStats();
 	EXPECT_EQ(sys.navQueryStats().totalQueries, 0u);
@@ -580,7 +592,8 @@ TEST_F(NavigationSystemTest, MeshRebuildClearsRraCaches) {
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	wireArea(sys);
 	sys.setConstructionWorld(&cw);
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "initial navmesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "initial navmesh never built";
 
 	// Before: sealed room. A query that locates a goal triangle creates a cache for it
 	// (even though the path itself is unreachable -- locate succeeds on the floor goal).
@@ -595,9 +608,8 @@ TEST_F(NavigationSystemTest, MeshRebuildClearsRraCaches) {
 	ASSERT_NE(op, kInvalidOpening);
 	ASSERT_TRUE(cw.setOpeningState(op, FoundationState::Built));
 
-	ASSERT_TRUE(pumpUntil(sys, "the door to open the path", [&] {
-		return sys.generation() != genBefore && sys.requestPath(kOutside, kInside, kAgentRadius).has_value();
-	})) << "door rebuild never opened the path";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.generation() != genBefore && sys.requestPath(kOutside, kInside, kAgentRadius).has_value()) << "door rebuild never opened the path";
 	EXPECT_GT(sys.generation(), genBefore) << "mesh swapped";
 
 	// After the swap the path is reachable AND correct. The cache map was cleared on the
@@ -634,7 +646,8 @@ TEST_F(NavigationSystemTest, RraCacheMapIsBounded) {
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	wireArea(sys);
 	sys.setConstructionWorld(&cw);
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built";
 
 	// Collect the distinct goal triangles a fine grid of goal points maps to; this is the
 	// number of cache entries an UNBOUNDED map would create.
@@ -699,20 +712,17 @@ TEST_F(NavigationSystemTest, ZoomOutRebuildExpandsArea) {
 
 	// First push: 30 m (min clamp, covers origin room).
 	pushArea(sys, {0, 0}, 30000);
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "initial mesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "initial mesh never built";
 	const std::uint64_t gen1 = sys.generation();
 	const Aabb aabb1 = meshAabb(firstMesh(sys));
 
 	// Zoom out: 100 m (> 20% bigger than 30 m after clamping stays 100 m).
 	pushArea(sys, {0, 0}, 100000);
-	EXPECT_TRUE(pumpUntil(sys, "a larger mesh", [&] {
-		if (sys.generation() == gen1) {
-			return false;
-		}
-		const Aabb aabb2 = meshAabb(firstMesh(sys));
-		return (aabb2.maxX - aabb2.minX) > (aabb1.maxX - aabb1.minX)
-			|| (aabb2.maxY - aabb2.minY) > (aabb1.maxY - aabb1.minY);
-	})) << "zoom-out rebuild should produce a larger mesh AABB";
+	sys.finishPendingBuilds();
+	const Aabb aabb2 = meshAabb(firstMesh(sys));
+	EXPECT_TRUE((aabb2.maxX - aabb2.minX) > (aabb1.maxX - aabb1.minX)
+		|| (aabb2.maxY - aabb2.minY) > (aabb1.maxY - aabb1.minY)) << "zoom-out rebuild should produce a larger mesh AABB";
 	EXPECT_GT(sys.generation(), gen1) << "generation must bump on zoom-out rebuild";
 }
 
@@ -729,20 +739,17 @@ TEST_F(NavigationSystemTest, ZoomInRebuildShrinksArea) {
 
 	// First push: 100 m.
 	pushArea(sys, {0, 0}, 100000);
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "initial mesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "initial mesh never built";
 	const std::uint64_t gen1 = sys.generation();
 	const Aabb aabb1 = meshAabb(firstMesh(sys));
 
 	// Zoom in: 50 m (50% of 100 m -> delta 50% > 20% threshold).
 	pushArea(sys, {0, 0}, 50000);
-	EXPECT_TRUE(pumpUntil(sys, "a smaller mesh", [&] {
-		if (sys.generation() == gen1) {
-			return false;
-		}
-		const Aabb aabb2 = meshAabb(firstMesh(sys));
-		return (aabb2.maxX - aabb2.minX) < (aabb1.maxX - aabb1.minX)
-			|| (aabb2.maxY - aabb2.minY) < (aabb1.maxY - aabb1.minY);
-	})) << "zoom-in rebuild should produce a smaller mesh AABB";
+	sys.finishPendingBuilds();
+	const Aabb aabb2 = meshAabb(firstMesh(sys));
+	EXPECT_TRUE((aabb2.maxX - aabb2.minX) < (aabb1.maxX - aabb1.minX)
+		|| (aabb2.maxY - aabb2.minY) < (aabb1.maxY - aabb1.minY)) << "zoom-in rebuild should produce a smaller mesh AABB";
 	EXPECT_GT(sys.generation(), gen1) << "generation must bump on zoom-in rebuild";
 }
 
@@ -760,13 +767,15 @@ TEST_F(NavigationSystemTest, PanPastEdgeMarginTriggersRebuild) {
 
 	// First build centered at origin with 60 m radius (built rect [-60 m, 60 m]).
 	pushArea(sys, {0, 0}, 60000);
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "initial mesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "initial mesh never built";
 	const std::uint64_t gen1 = sys.generation();
 
 	// Pan the viewport center to 55 m: that is within kEdgeMarginMm (8 m) of the +60 m
 	// edge, so the driver crosses the margin and the region must recenter/rebuild.
 	pushArea(sys, {55000, 0}, 60000);
-	EXPECT_TRUE(pumpUntil(sys, "the recenter rebuild", [&] { return sys.generation() != gen1; }))
+	sys.finishPendingBuilds();
+	EXPECT_NE(sys.generation(), gen1)
 		<< "pan past the edge margin must trigger a rebuild";
 }
 
@@ -782,7 +791,8 @@ TEST_F(NavigationSystemTest, PanWithinMarginNoRebuild) {
 	sys.setConstructionWorld(&cw);
 
 	pushArea(sys, {0, 0}, 60000);
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "initial mesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "initial mesh never built";
 	const std::uint64_t gen1 = sys.generation();
 
 	// Pan to 5 m (driver stays ~55 m from the +60 m edge, well past the 8 m margin) and a
@@ -808,7 +818,8 @@ TEST_F(NavigationSystemTest, HalfExtentClampedToMin) {
 
 	// Request 1 m: should be clamped to kMinSimHalfExtentMm (30 m).
 	pushArea(sys, {0, 0}, 1000);
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "clamped-to-min mesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "clamped-to-min mesh never built";
 	// The mesh should span at least the minimum area (30 m each side).
 	const Aabb a = meshAabb(firstMesh(sys));
 	EXPECT_GE(a.maxX - a.minX, NavigationSystem::kMinSimHalfExtentMm)
@@ -827,7 +838,8 @@ TEST_F(NavigationSystemTest, HalfExtentClampedToMax) {
 
 	// Request 2000 m (2 000 000 mm): should be clamped to kMaxSimHalfExtentMm (64 m).
 	pushArea(sys, {0, 0}, 2000000);
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "clamped-to-max mesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "clamped-to-max mesh never built";
 	// The mesh AABB should not exceed kMaxSimHalfExtentMm * 2 on any axis.
 	const Aabb a = meshAabb(firstMesh(sys));
 	const std::int64_t span = std::max(a.maxX - a.minX, a.maxY - a.minY);
@@ -865,7 +877,8 @@ TEST_F(NavigationSystemTest, InAreaPlacementCompletionTriggersRebuild) {
 	sys.setPlacementData(&executor, &processed);
 	sys.setConstructionWorld(&cw);
 
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "initial navmesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "initial navmesh never built";
 	const std::uint64_t gen1	  = sys.generation();
 	const std::size_t	triBefore = firstMesh(sys).triangles.size();
 
@@ -886,7 +899,8 @@ TEST_F(NavigationSystemTest, InAreaPlacementCompletionTriggersRebuild) {
 	executor.storeChunkResult(std::move(result));
 	processed.insert(coord);
 
-	ASSERT_TRUE(pumpUntil(sys, "the placement-driven rebuild", [&] { return sys.generation() != gen1; }))
+	sys.finishPendingBuilds();
+	ASSERT_NE(sys.generation(), gen1)
 		<< "in-area placement completion must trigger a rebuild";
 	EXPECT_GT(sys.generation(), gen1) << "generation must bump on the placement-driven rebuild";
 	// The late tree is now carved in: the obstacle changed the triangulation.
@@ -929,7 +943,8 @@ TEST_F(NavigationSystemTest, FootprintOverTreeIsBuildableButNotOnMesh) {
 	sys.setPlacementData(&executor, &processed);
 	sys.setConstructionWorld(&cw);
 
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "initial navmesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "initial navmesh never built";
 
 	// A small footprint square centered on the tree (inside the ~0.9 m carved hole).
 	const std::vector<glm::vec2> footprint{
@@ -981,7 +996,8 @@ TEST_F(NavigationSystemTest, InAreaEntityRemovalTriggersRebuildAndReclaimsHole) 
 	sys.setPlacementData(&executor, &processed);
 	sys.setConstructionWorld(&cw);
 
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "initial navmesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "initial navmesh never built";
 	const std::uint64_t gen1		 = sys.generation();
 	const std::size_t	triWithTree	 = firstMesh(sys).triangles.size();
 
@@ -989,7 +1005,8 @@ TEST_F(NavigationSystemTest, InAreaEntityRemovalTriggersRebuildAndReclaimsHole) 
 	// unchanged -- the removal epoch is the sole trigger for the rebuild.
 	ASSERT_TRUE(executor.removeEntity(coord, treeAt, "Test_NavFellTree")) << "tree must be removed from the index";
 
-	ASSERT_TRUE(pumpUntil(sys, "the removal-driven rebuild", [&] { return sys.generation() != gen1; }))
+	sys.finishPendingBuilds();
+	ASSERT_NE(sys.generation(), gen1)
 		<< "an in-area entity removal must trigger a rebuild (reclaim the trunk hole)";
 	EXPECT_GT(sys.generation(), gen1) << "generation must bump on the removal-driven rebuild";
 	// Hole reclaimed: the mesh with the tree gone differs from the mesh with it carved in.
@@ -1035,7 +1052,8 @@ TEST_F(NavigationSystemTest, InSimAreaTrueInsideFalseOutside) {
 
 	// 60 m area at origin: covers roughly (-60 m, -60 m) to (+60 m, +60 m).
 	pushArea(sys, {0, 0}, 60000);
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built";
 
 	// A point well inside the area.
 	EXPECT_TRUE(sys.inSimArea({0.0F, 0.0F}));
@@ -1067,7 +1085,8 @@ TEST_F(NavigationSystemTest, IsValidPositionTrueOnWalkableFaceFalseOnWaterAndOff
 	sys.setChunkManager(chunks.get());
 	pushArea(sys, {0, 0}, 60000); // 60 m region (clamped to 64) covers origin and the patch
 	sys.setConstructionWorld(&cw);
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built";
 
 	// A clearly-land point near origin sits on a walkable face: VALID.
 	const glm::vec2 land{2.0F, 2.0F};
@@ -1122,7 +1141,8 @@ TEST_F(NavigationSystemTest, LandAroundWaterPinchedAtAChunkCornerIsValid) {
 	sys.setChunkManager(chunks.get());
 	pushArea(sys, {5330, 4200}, 64000);
 	sys.setConstructionWorld(&cw);
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built";
 
 	for (const glm::vec2 land : {glm::vec2{15.0F, 15.0F}, glm::vec2{-15.0F, -15.0F}, glm::vec2{3.0F, -3.0F}, glm::vec2{-3.0F, 3.0F},
 								 glm::vec2{40.0F, 30.0F}, glm::vec2{-30.0F, -20.0F}}) {
@@ -1195,7 +1215,8 @@ TEST_F(NavigationSystemTest, GroupSpawnPointsFromWaterDropAllLandOnWalkableGroun
 	ConstructionWorld cw;
 	sys.setConstructionWorld(&cw);
 	pushArea(sys, {40000, 40000}, 40000);
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built";
 
 	EXPECT_TRUE(sys.isValidPosition(spawn.center)) << "the clearing center is on land";
 	for (std::size_t i = 0; i < spawn.points.size(); ++i) {
@@ -1324,7 +1345,8 @@ TEST_F(NavigationSystemTest, IsAreaWalkableTrueWhenWhollyOnLand) {
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	auto chunks = wireWaterPatch(sys, cw);
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built";
 
 	// A 4 m square wholly on land (well clear of the pond).
 	const std::vector<glm::vec2> onLand{{4.0F, 4.0F}, {8.0F, 4.0F}, {8.0F, 8.0F}, {4.0F, 8.0F}};
@@ -1339,7 +1361,8 @@ TEST_F(NavigationSystemTest, IsAreaWalkableFalseWhenFootprintSpansWater) {
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	auto chunks = wireWaterPatch(sys, cw);
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built";
 
 	// Corners straddle the pond horizontally: x=28 and x=52 are LAND (12 m from its center,
 	// past its 10.5 m rim), but the footprint's middle (and its top/bottom edges) crosses the water.
@@ -1356,7 +1379,8 @@ TEST_F(NavigationSystemTest, IsAreaWalkableFalseWhenFootprintEnclosesWaterPond) 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	auto chunks = wireWaterPatch(sys, cw);
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built";
 
 	// A big square whose corners AND edges are all on land but that fully encloses the
 	// pond. Only the INTERIOR grid sampling can catch this -- the edge pass alone would
@@ -1378,7 +1402,8 @@ TEST_F(NavigationSystemTest, WaterBlocksBuildabilityUnlikeTrees) {
 	World			  world;
 	NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
 	auto			  chunks = wireWaterPatch(sys, cw);
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built";
 
 	const std::vector<glm::vec2> spanning{{28.0F, 38.0F}, {52.0F, 38.0F}, {52.0F, 42.0F}, {28.0F, 42.0F}};
 	const std::vector<glm::vec2> enclosing{{28.0F, 28.0F}, {52.0F, 28.0F}, {52.0F, 52.0F}, {28.0F, 52.0F}};
@@ -1396,7 +1421,8 @@ TEST_F(NavigationSystemTest, IsSegmentAndPolylineWalkableCatchWaterCrossing) {
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	auto chunks = wireWaterPatch(sys, cw);
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built";
 
 	// A wall segment fully on land is walkable.
 	EXPECT_TRUE(sys.isSegmentWalkable({4.0F, 4.0F}, {8.0F, 4.0F})) << "an all-land segment must be walkable";
@@ -1435,7 +1461,8 @@ TEST_F(NavigationSystemTest, DevSpawnGuardRefusesOffMeshCreatesOnValid) {
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	wireArea(sys); // ChunkManager (all land) + 60 m region at origin
 	sys.setConstructionWorld(&cw);
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built";
 
 	// The guard the dev verbs run before any createEntity. createNothing == refused.
 	auto guardedSpawn = [&](glm::vec2 at) -> bool {
@@ -1478,7 +1505,8 @@ TEST_F(NavigationSystemTest, IsReachableTrueForOffAreaGoal) {
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	wireArea(sys);
 	sys.setConstructionWorld(&cw);
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built";
 
 	// Confirm in-area walled-off goal IS false (baseline: the closed room blocks it).
 	EXPECT_FALSE(sys.isReachable(kOutside, kInside, kAgentRadius))
@@ -1621,7 +1649,8 @@ TEST_F(NavigationSystemTest, OffMeshColonistSnappedOntoMesh) {
 	wireArea(nav);
 	nav.setPlacementData(&executor, &processed);
 	nav.setConstructionWorld(&cw);
-	ASSERT_TRUE(pumpUntilMesh(nav)) << "navmesh never built";
+	nav.finishPendingBuilds();
+	ASSERT_TRUE(nav.hasMesh()) << "navmesh never built";
 
 	AIDecisionSystem& ai = world.registerSystem<AIDecisionSystem>(
 		assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), 1234u);
@@ -1662,7 +1691,8 @@ TEST_F(NavigationSystemTest, RecoverySnapClearsWallCollisionBand) {
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	wireArea(sys);
 	sys.setConstructionWorld(&cw);
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built";
 
 	const float kWallHalfThickness = 0.10F; // Wood/Standard, from materials.xml
 	const float kClearance		   = kWallHalfThickness + kAgentRadius; // 0.40 m
@@ -1698,7 +1728,8 @@ TEST_F(NavigationSystemTest, OffRegionColonistNotRelocated) {
 	NavigationSystem& nav = world.registerSystem<NavigationSystem>();
 	wireArea(nav); // viewport region at origin, 60 m
 	nav.setConstructionWorld(&cw);
-	ASSERT_TRUE(pumpUntilMesh(nav)) << "navmesh never built";
+	nav.finishPendingBuilds();
+	ASSERT_TRUE(nav.hasMesh()) << "navmesh never built";
 
 	AIDecisionSystem& ai = world.registerSystem<AIDecisionSystem>(
 		assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), 1234u);
@@ -1731,7 +1762,8 @@ TEST_F(NavigationSystemTest, FindValidPositionNearOpenGroundReturnsPointAtDistan
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	wireArea(sys);
 	sys.setConstructionWorld(&cw);
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built";
 
 	const glm::vec2 origin{2.0F, 2.0F};
 	ASSERT_TRUE(sys.isOnMesh(origin)) << "origin must be on open ground for the premise";
@@ -1754,7 +1786,8 @@ TEST_F(NavigationSystemTest, FindValidPositionNearInPocketFallsBackToNearestWalk
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	auto chunks = wireWaterPatch(sys, cw); // pond at world (40,40)
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built";
 
 	// Center of the pond: in-region but off-mesh, and a 1 m ring around it is wholly
 	// inside the water, 5.5 m or more from any shore, so no ring sample is walkable -> Tier-3 fallback.
@@ -1782,7 +1815,8 @@ TEST_F(NavigationSystemTest, FindValidPositionNearPushedFallbackStaysOnMesh) {
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	auto chunks = wireWaterPatch(sys, cw); // pond at world (40,40), region [-60, 60] on both axes
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built";
 
 	// The region's farthest corner, (-60, -60), is 141.4 m from the origin, so a 150 m ring clears
 	// the region and every ring sample is off-mesh -> the Tier-3 push fires.
@@ -1809,7 +1843,8 @@ TEST_F(NavigationSystemTest, FindValidPositionNearIsDeterministic) {
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	wireArea(sys);
 	sys.setConstructionWorld(&cw);
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built";
 
 	const glm::vec2 origin{3.0F, 3.0F};
 	const std::optional<glm::vec2> a = sys.findValidPositionNear(origin, 1.0F, {0.5F, 0.5F});
@@ -1827,7 +1862,8 @@ TEST_F(NavigationSystemTest, FindValidPositionNearHonorsPreferredDirOnOpenGround
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	wireArea(sys);
 	sys.setConstructionWorld(&cw);
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built";
 
 	const glm::vec2 origin{2.0F, 2.0F};
 	const float		minDist = 2.0F;
@@ -1844,7 +1880,8 @@ TEST_F(NavigationSystemTest, FindValidPositionNearOutsideRegionReturnsNullopt) {
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	wireArea(sys); // 60 m region at origin
 	sys.setConstructionWorld(&cw);
-	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+	sys.finishPendingBuilds();
+	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built";
 
 	const glm::vec2 farAway{500.0F, 500.0F};
 	ASSERT_FALSE(sys.inSimArea(farAway)) << "test point must be outside every region";
@@ -1905,6 +1942,37 @@ TEST(SimAreaClusteringTest, EmptyInputYieldsNoRegions) {
 	EXPECT_TRUE(clusterAabbs({}).empty());
 }
 
+// finishPendingBuilds launches what the gates call for, waits for every region, and swaps
+// each in; with nothing pending it changes nothing.
+TEST_F(NavigationSystemTest, FinishPendingBuildsSettlesEveryRegion) {
+	ConstructionWorld cw;
+
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(m_chunks.get());
+	sys.setConstructionWorld(&cw);
+	for (const glm::vec2 at : {glm::vec2{0.0F, 0.0F}, glm::vec2{100.0F, 0.0F}}) {
+		EntityID colonist = world.createEntity();
+		world.addComponent<Position>(colonist, Position{at});
+		world.addComponent<Colonist>(colonist, Colonist{"C"});
+	}
+
+	sys.finishPendingBuilds();
+	EXPECT_FALSE(sys.isBuilding());
+	EXPECT_EQ(sys.regionCount(), 2u);
+	EXPECT_EQ(sys.builtRegions().size(), 2u) << "every gated region has its mesh";
+
+	const std::uint64_t settled = sys.generation();
+	sys.finishPendingBuilds();
+	EXPECT_FALSE(sys.isBuilding());
+	EXPECT_EQ(sys.generation(), settled) << "nothing pending: no build launched, no mesh swapped";
+
+	buildWall(cw, {5000, 5000}, {8000, 5000});
+	sys.finishPendingBuilds();
+	EXPECT_FALSE(sys.isBuilding());
+	EXPECT_GT(sys.generation(), settled) << "the wall edit's rebuild landed before returning";
+}
+
 // --- Query dispatch by position (point -> correct region) ---------------------
 //
 // Two colonists far enough apart drive two disjoint regions. A query dispatches to the
@@ -1930,10 +1998,9 @@ TEST_F(NavigationSystemTest, QueryDispatchSelectsRegionContainingPoint) {
 	world.addComponent<Position>(b, Position{bPos});
 	world.addComponent<Colonist>(b, Colonist{"B"});
 
-	// No viewport pushed: regions come solely from the two colonists. Pump until both
-	// regions have built their meshes.
-	ASSERT_TRUE(pumpUntil(sys, "two built regions", [&] { return sys.builtRegions().size() == 2u; }))
-		<< "two disjoint colonists must produce two built regions";
+	// No viewport pushed: regions come solely from the two colonists.
+	sys.finishPendingBuilds();
+	ASSERT_EQ(sys.builtRegions().size(), 2u) << "two disjoint colonists must produce two built regions";
 
 	// Each colonist's position is inside SOME built region; a point between them (50 m) is
 	// covered by neither (the squares are 30 m half-extent, so they reach to +/-30 m).
