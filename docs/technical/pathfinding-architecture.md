@@ -94,33 +94,46 @@ The Tier-2 mesh is no longer a single camera-tracked arrangement. `NavigationSys
 two-tier model the tier table sketches.
 
 **Multi-region sim area (Phase 1).** Each tick `NavigationSystem` reads colonist `Position`s and
-the viewport rect (`GameScene` pushes the rect as plain data, it no longer drives the mesh),
-builds a square region per driver, **clusters overlapping squares into merged regions**, and
-self-gates rebuilds off the render clock: a region recenters only when one of its drivers nears
-the region-rect edge or its obstacle inputs change. A stationary colonist under a held camera
-triggers zero rebuilds; panning far spawns a separate viewport region instead of dragging a
-colonist's region with it. Point queries (`nearestPathablePoint` / `inSimArea`) select the first
-region (by id) containing the point; `isOnMesh` asks every region holding it, since overlapping
-regions can disagree while one has rebuilt and the other hasn't. Mesh queries use the rect the
-served mesh was built for (`meshRect`, set at its swap), not the rect of a build still in flight.
-Built regions overlap in normal play (a region keeps its rect until its driver nears the edge,
-while a neighbor is built beside it), so pair queries dispatch by pair: `requestPath` routes
-through each built region whose rect holds both endpoints, in id order, until one finds a route
-(not ordered by freshest inputs: `builtVersion` describes the build in flight, not the served
-mesh), and `reachFrom` keeps a reach root for every built region holding the start so `reaches`
-passes a goal when any region holding both lets it through. A goal no region holding the colonist
-covers (off every region, or only in a region he isn't in, like the viewport's over a far lake) is
-walked toward: he routes to the reachable point in his regions nearest it (`stagingPointToward`,
-inside the recenter margin), his region follows him, and the mesh swap re-plans the same goal until
-a region holding him covers it. If his region can't follow (a cluster merged with the viewport and
-clamped at its max size), the next leg is asked for on the re-evaluation cadence; a leg that gets
-him nowhere, or three finished legs that get him no closer, end the walk as no route, so a need
-moves on to its next source and retries this one when his reach changes. A region asked to recenter
-onto the rect it already has doesn't rebuild unless its obstacle inputs changed. A colonist outside
-every region holds. RRA* caches are keyed by region id plus goal triangle. Recovery (snap an off-mesh colonist back onto a face) fires only for a colonist
-*inside* a region but off a face; a colonist no region covers is left where he stands. That last
-rule fixes the camera-pan freeze (panning used to drag the mesh off a colonist, who was then
-"off-mesh" and got snapped into the river).
+the viewport rect (`GameScene` pushes the rect as plain data, it no longer drives the mesh) and
+keeps two kinds of region, with the owner stored on each. **Colonist regions** come from colonist
+positions alone: each colonist drives a 30 m square, and overlapping squares cluster into one
+region while the cluster fits the 128 m max (`clusterColonists`); a square that would push a
+cluster past it starts another, overlapping one. No colonist region is clamped below its
+colonists, so each sits at least 30 m inside his. The **camera region** follows the viewport and is
+never merged with a colonist region (decided 2026-11-10: merged, a colonist's region was pinned and
+clamped by the camera, which capped how far he could walk while the player watched him and made the
+region rebuild every time a build landed). Rebuilds self-gate off the render clock: a region
+recenters only when one of its drivers nears its edge or its obstacle inputs change, so a
+stationary colonist under a held camera triggers zero rebuilds, and moving the camera rebuilds only
+the camera region. A region asked to recenter onto the rect it already has doesn't rebuild unless
+its obstacle inputs changed. Mesh queries use the rect the served mesh was built for (`meshRect`,
+set at its swap), not the rect of a build still in flight. Where the camera region overlaps a
+colonist region that ground is meshed twice; the colonist's 30 m region costs 10-25 ms a build on
+the forested quickstart, against about 300 ms for a 64 m region.
+
+**Query dispatch.** Colonist queries (`requestPath`, `reachFrom`/`reaches`/`coversGoal`/
+`stagingPointToward`, `inSimArea`, `isOnMesh`, `nearestPathablePoint` and so the recovery snap,
+`isBuildingAround`) consult colonist regions only, so where the camera is never changes what a
+colonist can reach. Colonist regions can overlap (a region keeps its rect until a driver nears the
+edge, while a neighbour is built beside it), so each mesh carries a `MeshStamp` (the construction
+version and placement removal epoch it was built from, set at its swap), and a point or pair is
+answered by the built regions holding it whose stamp is the newest among them, in id order: a pair
+is routed through each such region holding both ends until one finds a route, `reaches` passes a
+goal when one of them lets it through, and a point goes to the first of them. A stale mesh never
+overrides a fresher one; regions on equal stamps were built from the same world. A goal no colonist
+region holding him covers (off every region, or only in the camera's) is walked toward: he routes
+to the reachable point in his regions nearest it (`stagingPointToward`, inside the recenter margin),
+his region follows him, and the mesh swap re-plans the same goal until a region holding him covers
+it. A leg that gets him nowhere, or three finished legs that get him no closer, end the walk as no
+route, so a need moves on to its next source and retries this one when his reach changes. The edge
+walk is a stand-in for Phase 2 below, not a long-range router: it only sees what his 30 m region
+sees, so water or walls that need a wider detour end it. A colonist outside every colonist region
+holds. RRA* caches are keyed by region id plus goal triangle, so a point in two regions has a cache
+in each and a swap clears only its own region's. Recovery (snap an off-mesh colonist back onto a
+face) fires only for a colonist *inside* a colonist region but off a face; a colonist no colonist
+region covers is left where he stands. That rule fixed the camera-pan freeze (panning used to drag
+the mesh off a colonist, who was then "off-mesh" and got snapped into the river); with colonist
+regions the camera can't move, it can't recur.
 
 **The two-tier plan.** Phase 1 (above) is the per-driver dynamic mesh for full-fidelity local
 nav. **Phase 2** (planned) adds a STATIC coarse global **geography mesh**: big impassables only
@@ -130,11 +143,12 @@ of the Tier 0/1 "loaded-but-far" idea for the colony's own space. A position out
 region's mesh is not interactively placeable yet; Phase 2 extends reach there.
 
 **`isValidPosition`: the one runtime walkability predicate.** `NavigationSystem::isValidPosition`
-is a thin wrapper over `isOnMesh`: a point is valid IFF it sits on a walkable nav face inside an
-active sim region. This is the single canonical predicate every world-positioning path respects
-(One Path Rule) — dev spawn / give-loose / colonist / teleport and build-placement preview (the
-ghost reads validity from the mesh each frame, goes red off-mesh, blocks the click). All ad-hoc
-checks were deleted.
+is true IFF a point sits on a walkable nav face in ANY active sim region holding it, colonist or
+camera, so placement works wherever the player looks. This is the single canonical predicate every
+world-positioning path respects (One Path Rule): dev spawn / give-loose / teleport and
+build-placement preview (the ghost reads validity from the mesh each frame, goes red off-mesh,
+blocks the click), and the area/segment/polyline walkability checks sample it. `isOnMesh` is the
+same face test scoped to colonist regions, for colonist recovery. All ad-hoc checks were deleted.
 
 **World-data-vs-runtime boundary (load-bearing).** The 3D world/planet data exists ONLY to spawn
 chunk data at initial load and during chunk generation. It is NOT read at runtime for anything

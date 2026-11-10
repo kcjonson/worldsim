@@ -101,7 +101,7 @@ namespace {
 		return south;
 	}
 
-	// First built region's mesh. The viewport-tracking tests drive a single region, so the
+	// First built region's mesh. These tests drive a single region, so the
 	// first built region IS that region's mesh. Returns a shared empty mesh when none built.
 	const geometry::nav::NavMesh& firstMesh(const NavigationSystem& sys) {
 		static const geometry::nav::NavMesh kEmpty;
@@ -191,13 +191,13 @@ namespace {
 		}
 		void TearDown() override { ConstructionRegistry::Get().clear(); }
 
-		// Wire the area build (chunks + a 60 m viewport region at origin) onto a system in
+		// Wire the area build (chunks + a 60 m colonist region at origin) onto a system in
 		// addition to its ConstructionWorld, so the test exercises the simulation-region
-		// path. The viewport drives a single region centered at origin; the 3x5 m origin
-		// room sits well inside it.
-		void wireArea(NavigationSystem& sys) {
+		// path. Colonist drivers make it, since colonist queries consult colonist regions
+		// only; the 3x5 m origin room sits well inside it.
+		void wireArea(World& world, NavigationSystem& sys) {
 			sys.setChunkManager(m_chunks.get());
-			pushArea(sys, {0, 0}, 60000); // 60 m -- covers the origin room comfortably
+			(void)driveColonistRegion(world, {0.0F, 0.0F}, 60.0F);
 		}
 
 		// Push an explicit viewport region (used by viewport-tracking tests). The viewport
@@ -247,7 +247,7 @@ TEST_F(NavigationSystemTest, PathThroughDoorSucceeds) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	wireArea(sys);
+	wireArea(world, sys);
 	sys.setConstructionWorld(&cw);
 
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
@@ -265,7 +265,7 @@ TEST_F(NavigationSystemTest, WindowBlocksPath) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	wireArea(sys);
+	wireArea(world, sys);
 	sys.setConstructionWorld(&cw);
 
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
@@ -279,7 +279,7 @@ TEST_F(NavigationSystemTest, NoOpeningBlocksPath) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	wireArea(sys);
+	wireArea(world, sys);
 	sys.setConstructionWorld(&cw);
 
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
@@ -294,7 +294,7 @@ TEST_F(NavigationSystemTest, RebuildOnVersionChangeOpensPath) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	wireArea(sys);
+	wireArea(world, sys);
 	sys.setConstructionWorld(&cw);
 
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "initial navmesh never built";
@@ -323,7 +323,7 @@ TEST_F(NavigationSystemTest, RebuildSealsRoomWhenDoorRemoved) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	wireArea(sys);
+	wireArea(world, sys);
 	sys.setConstructionWorld(&cw);
 
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "initial navmesh never built";
@@ -362,7 +362,7 @@ TEST_F(NavigationSystemTest, ConstructionWorldWiredAfterUpdatesStillBuilds) {
 	ASSERT_FALSE(sys.hasMesh());
 
 	// Wiring the world now must still trigger the first build and a path solve.
-	wireArea(sys);
+	wireArea(world, sys);
 	sys.setConstructionWorld(&cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built after deferred wiring";
 	EXPECT_TRUE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value());
@@ -395,7 +395,7 @@ TEST_F(NavigationSystemTest, BeliefFilterGatesQueryVsTruth) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	wireArea(sys);
+	wireArea(world, sys);
 	sys.setConstructionWorld(&cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
@@ -443,7 +443,7 @@ TEST_F(NavigationSystemTest, IsReachableTrueForReachableGoal) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	wireArea(sys);
+	wireArea(world, sys);
 	sys.setConstructionWorld(&cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
@@ -458,7 +458,7 @@ TEST_F(NavigationSystemTest, IsReachableFalseForWalledOffGoal) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	wireArea(sys);
+	wireArea(world, sys);
 	sys.setConstructionWorld(&cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
@@ -486,7 +486,7 @@ TEST_F(NavigationSystemTest, GenerationBumpsOnMeshSwap) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	wireArea(sys);
+	wireArea(world, sys);
 	sys.setConstructionWorld(&cw);
 
 	EXPECT_EQ(sys.generation(), 0u) << "no mesh yet => generation 0";
@@ -535,32 +535,245 @@ TEST_F(NavigationSystemTest, GenerationMovesWhenALaggingRegionSwaps) {
 	EXPECT_NE(sys.generation(), beforeB) << "region B's first mesh swap left generation() unchanged";
 }
 
-// A colonist's square merged with the viewport's into a region clamped to its max size, its centre
-// pinned by the viewport: the colonist stands inside the region's edge margin, so every update asks for
-// a recenter, and the recenter lands on the rect the region already has. Rebuilding that gives the
-// same mesh, and did so every time a build landed, for as long as he stood there.
-TEST_F(NavigationSystemTest, DriverHeldInAClampedRegionDoesNotRebuildIt) {
+// --- Colonist regions are independent of the camera --------------------------
+//
+// The camera's region is never merged with a colonist's, and colonist queries consult colonist
+// regions only. Merged, a colonist's region was pinned by the camera and clamped: he couldn't walk
+// past the far side of the view, and standing at its edge made it rebuild every time a build landed.
+
+namespace {
+	std::vector<NavigationSystem::RegionView> colonistRegions(const NavigationSystem& sys) {
+		std::vector<NavigationSystem::RegionView> out;
+		for (const NavigationSystem::RegionView& r : sys.builtRegions()) {
+			if (r.owner == RegionOwner::Colonists) {
+				out.push_back(r);
+			}
+		}
+		return out;
+	}
+
+	EntityID addColonistDriver(World& world, glm::vec2 at) {
+		const EntityID c = world.createEntity();
+		world.addComponent<Position>(c, Position{at});
+		world.addComponent<Colonist>(c, Colonist{"C"});
+		return c;
+	}
+
+	// Pumps until nothing is building and `regions` regions (the camera's too, when pushed) have a mesh.
+	[[nodiscard]] bool pumpUntilSettled(NavigationSystem& sys, std::size_t regions) {
+		return pumpUntil(sys, "every region built", [&] { return sys.builtRegions().size() == regions && !sys.isBuilding(); });
+	}
+} // namespace
+
+// The same colonist and walls with no camera, the camera over him (zoomed out, so its square takes
+// in his), on him, and far away: his region's rect and every colonist answer are the same.
+TEST_F(NavigationSystemTest, ColonistAnswersAreTheSameWhereverTheCameraIs) {
+	struct Answers {
+		std::vector<std::pair<geometry::Vec2i64, std::int64_t>> rects;
+		std::vector<std::optional<std::vector<glm::vec2>>>		paths;
+		std::vector<bool>										reach;
+		std::vector<bool>										covered;
+		std::vector<bool>										inArea;
+		std::vector<bool>										onMesh;
+	};
+	const glm::vec2				 colonistAt{10.0F, 0.0F};
+	const std::vector<glm::vec2> points{kOutside, kInside, {35.0F, 5.0F}, {39.5F, 0.0F}, {70.0F, 0.0F}, {-25.0F, 20.0F}};
+
+	auto run = [&](std::optional<std::pair<glm::vec2, float>> camera) {
+		ConstructionWorld cw;
+		buildRoom(cw, /*withOpening=*/true, /*pathableOpening=*/true);
+		World			  world;
+		NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+		sys.setChunkManager(m_chunks.get());
+		sys.setConstructionWorld(&cw);
+		if (camera.has_value()) {
+			sys.setViewportRect(camera->first, {camera->second, camera->second});
+		}
+		(void)addColonistDriver(world, colonistAt);
+		EXPECT_TRUE(pumpUntilSettled(sys, camera.has_value() ? 2U : 1U));
+
+		Answers a;
+		for (const NavigationSystem::RegionView& r : colonistRegions(sys)) {
+			a.rects.emplace_back(r.center, r.halfExtent);
+		}
+		for (const glm::vec2 from : points) {
+			const NavigationSystem::Reach reach = reachOf(sys, from, kAgentRadius);
+			a.inArea.push_back(sys.inSimArea(from));
+			a.onMesh.push_back(sys.isOnMesh(from));
+			for (const glm::vec2 to : points) {
+				a.paths.push_back(sys.requestPath(from, to, kAgentRadius));
+				a.reach.push_back(sys.reaches(reach, to));
+				a.covered.push_back(sys.coversGoal(reach, to));
+			}
+		}
+		return a;
+	};
+
+	const Answers none = run(std::nullopt);
+	ASSERT_EQ(none.rects.size(), 1U);
+	EXPECT_EQ(none.rects[0].first, nav::toMm(colonistAt));
+	EXPECT_EQ(none.rects[0].second, NavigationSystem::kSimRadiusMm);
+	for (const auto& camera : {std::pair{glm::vec2{40.0F, 0.0F}, 64.0F}, std::pair{glm::vec2{10.0F, 0.0F}, 30.0F},
+							   std::pair{glm::vec2{-400.0F, 0.0F}, 30.0F}}) {
+		const Answers with = run(camera);
+		EXPECT_EQ(with.rects, none.rects) << "camera at " << camera.first.x;
+		EXPECT_EQ(with.paths, none.paths) << "camera at " << camera.first.x;
+		EXPECT_EQ(with.reach, none.reach) << "camera at " << camera.first.x;
+		EXPECT_EQ(with.covered, none.covered) << "camera at " << camera.first.x;
+		EXPECT_EQ(with.inArea, none.inArea) << "camera at " << camera.first.x;
+		EXPECT_EQ(with.onMesh, none.onMesh) << "camera at " << camera.first.x;
+	}
+}
+
+// Panning and zooming moves only the camera's region: the colonist's is never rebuilt or moved.
+TEST_F(NavigationSystemTest, MovingTheCameraNeverRebuildsAColonistRegion) {
 	ConstructionWorld cw;
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	sys.setChunkManager(m_chunks.get());
 	sys.setConstructionWorld(&cw);
-	pushArea(sys, {40000, 0}, 64000); // viewport square -24..104 m
+	sys.setViewportRect({0.0F, 0.0F}, {40.0F, 40.0F});
+	(void)addColonistDriver(world, {0.0F, 0.0F});
+	ASSERT_TRUE(pumpUntilSettled(sys, 2U));
+	const NavigationSystem::RegionView before = colonistRegions(sys).at(0);
 
-	// His square (-80..-20 m) overlaps it: union -80..104 m, clamped to 64 m around x = 12, so the
-	// region spans -52..76 m and he is 2 m inside its west edge.
-	EntityID colonist = world.createEntity();
-	world.addComponent<Position>(colonist, Position{glm::vec2{-50.0F, 0.0F}});
-	world.addComponent<Colonist>(colonist, Colonist{"A"});
-	ASSERT_TRUE(pumpUntil(sys, "the merged region", [&] { return sys.inSimArea({-50.0F, 0.0F}) && !sys.isBuilding(); }));
-	ASSERT_EQ(sys.builtRegions().size(), 1U);
+	const std::vector<std::pair<glm::vec2, float>> views{
+		{{20.0F, 0.0F}, 40.0F}, {{60.0F, 10.0F}, 64.0F}, {{-30.0F, -30.0F}, 100.0F}, {{0.0F, 0.0F}, 30.0F}, {{300.0F, 0.0F}, 50.0F}};
+	for (const auto& [center, half] : views) {
+		sys.setViewportRect(center, {half, half});
+		(void)pumpUntil(sys, "the camera region", [&] { return !sys.isBuilding(); });
+		const std::vector<NavigationSystem::RegionView> now = colonistRegions(sys);
+		ASSERT_EQ(now.size(), 1U);
+		EXPECT_EQ(now[0].meshGeneration, before.meshGeneration) << "camera at " << center.x << " rebuilt his region";
+		EXPECT_EQ(now[0].center, before.center);
+		EXPECT_EQ(now[0].halfExtent, before.halfExtent);
+	}
+}
 
+// A colonist in his region's edge margin recenters it once, onto a rect he sits deep inside, and it
+// doesn't rebuild again while he stands there. Three colonists in a 110 m chain (once one region,
+// clamped, with the outer two in its margin) get regions that hold each of them deep inside.
+TEST_F(NavigationSystemTest, ColonistAtHisRegionEdgeDoesNotKeepRebuildingIt) {
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(m_chunks.get());
+	sys.setConstructionWorld(&cw);
+	sys.setViewportRect({40.0F, 0.0F}, {64.0F, 64.0F});
+	const EntityID colonist = addColonistDriver(world, {0.0F, 0.0F});
+	ASSERT_TRUE(pumpUntilSettled(sys, 2U));
+
+	world.getComponent<Position>(colonist)->value = {25.0F, 0.0F}; // 5 m from the east edge
+	ASSERT_TRUE(pumpUntil(sys, "the recenter", [&] {
+		return colonistRegions(sys).at(0).center == nav::toMm(glm::vec2{25.0F, 0.0F}) && !sys.isBuilding();
+	}));
+	const std::uint64_t recentered = colonistRegions(sys).at(0).meshGeneration;
+	for (int i = 0; i < 30; ++i) {
+		world.getComponent<Position>(colonist)->value = {25.0F + 0.05F * static_cast<float>(i % 2), 0.0F};
+		sys.update(0.0F);
+		(void)pumpUntil(sys, "any build", [&] { return !sys.isBuilding(); });
+	}
+	EXPECT_EQ(colonistRegions(sys).at(0).meshGeneration, recentered) << "his region kept rebuilding";
+
+	(void)addColonistDriver(world, {80.0F, 0.0F});
+	(void)addColonistDriver(world, {135.0F, 0.0F});
+	ASSERT_TRUE(pumpUntil(sys, "the chain's regions", [&] { return colonistRegions(sys).size() == 2U && !sys.isBuilding(); }));
 	const std::uint64_t settled = sys.generation();
 	for (int i = 0; i < 30; ++i) {
 		sys.update(0.0F);
 		(void)pumpUntil(sys, "any build", [&] { return !sys.isBuilding(); });
 	}
-	EXPECT_EQ(sys.generation(), settled) << "the region kept rebuilding the rect it already had";
+	EXPECT_EQ(sys.generation(), settled) << "a region kept rebuilding with a colonist at its edge";
+	for (const float x : {25.0F, 80.0F, 135.0F}) {
+		EXPECT_TRUE(sys.inSimArea({x, 0.0F})) << "colonist at " << x << " is outside every colonist region";
+	}
+}
+
+// Two colonist regions overlap, and a room is built in the overlap with the goal inside it. Until
+// both rebuild, one mesh has the room and the other doesn't: the answer is the fresh one's, never
+// a route through the room's walls from the stale one.
+TEST_F(NavigationSystemTest, StaleOverlappingRegionNeverOverridesAFreshOne) {
+	ConstructionWorld cw;
+	// Pillars only region A covers, so its rebuild is the slower one.
+	for (int px = 0; px < 10; ++px) {
+		for (int py = 0; py < 10; ++py) {
+			const std::int64_t cx = -55000 + px * 2200;
+			const std::int64_t cy = -55000 + py * 2200;
+			buildWall(cw, {cx, cy}, {cx + 400, cy});
+			buildWall(cw, {cx + 400, cy}, {cx + 400, cy + 400});
+			buildWall(cw, {cx + 400, cy + 400}, {cx, cy + 400});
+			buildWall(cw, {cx, cy + 400}, {cx, cy});
+		}
+	}
+
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(m_chunks.get());
+	sys.setConstructionWorld(&cw);
+	(void)driveColonistRegion(world, {0.0F, 0.0F}, 60.0F); // A: -60..60
+	(void)addColonistDriver(world, {85.0F, 0.0F});		   // B: 55..115, too far to cluster with A
+	ASSERT_TRUE(pumpUntilSettled(sys, 2U));
+
+	const glm::vec2 outside{57.5F, -4.0F};
+	const glm::vec2 inside{57.5F, 0.0F};
+	ASSERT_TRUE(sys.requestPath(outside, inside, kAgentRadius).has_value());
+	ASSERT_EQ(reachOf(sys, outside, kAgentRadius).regions.size(), 2U) << "the start is in both regions";
+
+	const auto gens = [&] {
+		std::vector<std::uint64_t> g;
+		for (const NavigationSystem::RegionView& r : colonistRegions(sys)) {
+			g.push_back(r.meshGeneration);
+		}
+		return g;
+	};
+	const std::vector<std::uint64_t> before = gens();
+	buildWall(cw, {55500, -2000}, {59500, -2000});
+	buildWall(cw, {59500, -2000}, {59500, 2000});
+	buildWall(cw, {59500, 2000}, {55500, 2000});
+	buildWall(cw, {55500, 2000}, {55500, -2000});
+
+	bool sawSplit = false;
+	for (;;) {
+		sys.update(0.0F);
+		const std::vector<std::uint64_t> now	  = gens();
+		const bool						 aSwapped = now[0] != before[0];
+		const bool						 bSwapped = now[1] != before[1];
+		if (aSwapped != bSwapped) {
+			sawSplit = true;
+			EXPECT_FALSE(sys.requestPath(outside, inside, kAgentRadius).has_value()) << "the stale mesh routed into the room";
+			EXPECT_FALSE(isReachable(sys, outside, inside, kAgentRadius)) << "the stale mesh passed the pre-check";
+			EXPECT_TRUE(sys.isOnMesh(inside)) << "the room's floor is walkable on the fresh mesh";
+		}
+		if (aSwapped && bSwapped) {
+			break;
+		}
+		ASSERT_TRUE(sys.isBuilding()) << "a region never rebuilt for the room";
+	}
+	EXPECT_TRUE(sawSplit) << "both regions swapped in the same update; the stale window was never seen";
+	EXPECT_FALSE(sys.requestPath(outside, inside, kAgentRadius).has_value());
+	EXPECT_FALSE(isReachable(sys, outside, inside, kAgentRadius));
+}
+
+// The camera's region serves placement checks but no colonist query.
+TEST_F(NavigationSystemTest, CameraRegionServesPlacementButNoColonistQuery) {
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(m_chunks.get());
+	sys.setConstructionWorld(&cw);
+	pushArea(sys, {0, 0}, 60000);
+	ASSERT_TRUE(pumpUntilMesh(sys));
+
+	const glm::vec2 a{2.0F, 2.0F};
+	const glm::vec2 b{10.0F, -5.0F};
+	EXPECT_TRUE(sys.isValidPosition(a)) << "placement in the camera region";
+	EXPECT_TRUE(sys.isAreaWalkable({{1.0F, 1.0F}, {3.0F, 1.0F}, {3.0F, 3.0F}}));
+	EXPECT_TRUE(sys.findValidPositionNear(a, 1.0F).has_value());
+	EXPECT_FALSE(sys.inSimArea(a));
+	EXPECT_FALSE(sys.isOnMesh(a));
+	EXPECT_FALSE(sys.requestPath(a, b, kAgentRadius).has_value());
+	EXPECT_TRUE(reachOf(sys, a, kAgentRadius).regions.empty());
+	EXPECT_FALSE(sys.nearestPathablePoint(a).has_value());
 }
 
 // A Reach names its start region by stable id and that region's own swap count, which is what the
@@ -611,7 +824,7 @@ TEST_F(NavigationSystemTest, NavQueryStatsPopulatedOnPath) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	wireArea(sys);
+	wireArea(world, sys);
 	sys.setConstructionWorld(&cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
@@ -640,7 +853,7 @@ TEST_F(NavigationSystemTest, MeshRebuildClearsRraCaches) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	wireArea(sys);
+	wireArea(world, sys);
 	sys.setConstructionWorld(&cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "initial navmesh never built";
 
@@ -694,7 +907,7 @@ TEST_F(NavigationSystemTest, RraCacheMapIsBounded) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	wireArea(sys);
+	wireArea(world, sys);
 	sys.setConstructionWorld(&cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
@@ -923,7 +1136,7 @@ TEST_F(NavigationSystemTest, InAreaPlacementCompletionTriggersRebuild) {
 
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	wireArea(sys); // ChunkManager + 60 m area at origin (clamped to 64 m)
+	wireArea(world, sys); // ChunkManager + 60 m area at origin (clamped to 64 m)
 	sys.setPlacementData(&executor, &processed);
 	sys.setConstructionWorld(&cw);
 
@@ -987,7 +1200,7 @@ TEST_F(NavigationSystemTest, FootprintOverTreeIsBuildableButNotOnMesh) {
 	ConstructionWorld cw;
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	wireArea(sys);
+	wireArea(world, sys);
 	sys.setPlacementData(&executor, &processed);
 	sys.setConstructionWorld(&cw);
 
@@ -1039,7 +1252,7 @@ TEST_F(NavigationSystemTest, InAreaEntityRemovalTriggersRebuildAndReclaimsHole) 
 	ConstructionWorld cw;
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	wireArea(sys);
+	wireArea(world, sys);
 	sys.setPlacementData(&executor, &processed);
 	sys.setConstructionWorld(&cw);
 
@@ -1078,8 +1291,9 @@ TEST_F(NavigationSystemTest, InSimAreaFalseBeforeBuild) {
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	sys.setChunkManager(m_chunks.get());
 	sys.setConstructionWorld(&cw);
-	// Push an area but don't pump -- no mesh built yet.
-	pushArea(sys, {0, 0}, 60000);
+	// A colonist region wanted but not pumped -- no mesh built yet.
+	(void)driveColonistRegion(world, {0.0F, 0.0F}, 60.0F);
+	sys.update(0.0F);
 
 	ASSERT_FALSE(sys.hasMesh());
 	// Origin is inside the requested area but the built area doesn't exist yet.
@@ -1095,22 +1309,21 @@ TEST_F(NavigationSystemTest, InSimAreaTrueInsideFalseOutside) {
 	sys.setChunkManager(m_chunks.get());
 	sys.setConstructionWorld(&cw);
 
-	// 60 m area at origin: covers roughly (-60 m, -60 m) to (+60 m, +60 m).
-	pushArea(sys, {0, 0}, 60000);
+	// 60 m colonist region at origin: (-60 m, -60 m) to (+60 m, +60 m).
+	(void)driveColonistRegion(world, {0.0F, 0.0F}, 60.0F);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
 	// A point well inside the area.
 	EXPECT_TRUE(sys.inSimArea({0.0F, 0.0F}));
 	EXPECT_TRUE(sys.inSimArea({30.0F, 30.0F}));  // exactly on the edge is <=, so inside
-	// A point clearly outside the area (100 m from center, area half-extent is 60 m
-	// but the system clamps that to kMaxSimHalfExtentMm = 64 m, so 100 m is outside).
+	// A point clearly outside the area (100 m from center, half-extent 60 m).
 	EXPECT_FALSE(sys.inSimArea({100.0F, 0.0F}));
 	EXPECT_FALSE(sys.inSimArea({0.0F, 100.0F}));
 }
 
 // --- isValidPosition: the canonical spawn/placement validity predicate ----------
 //
-// isValidPosition delegates to isOnMesh: a position is valid IFF it sits on a walkable
+// isValidPosition: a position is valid IFF it sits on a walkable
 // nav face inside an active region. A walkable face is valid; a water face inside the
 // region is invalid; a point no region covers is invalid (can't place off-mesh yet).
 
@@ -1127,7 +1340,7 @@ TEST_F(NavigationSystemTest, IsValidPositionTrueOnWalkableFaceFalseOnWaterAndOff
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	sys.setChunkManager(chunks.get());
-	pushArea(sys, {0, 0}, 60000); // 60 m region (clamped to 64) covers origin and the patch
+	(void)driveColonistRegion(world, {0.0F, 0.0F}, 60.0F); // covers origin and the patch
 	sys.setConstructionWorld(&cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
@@ -1365,17 +1578,16 @@ TEST_F(NavigationSystemTest, GroupSpawnPointsNeverLandsInsideBuiltWallBand) {
 namespace {
 	// Set up a system over the water-patch world + a 60 m origin region with a built mesh.
 	// Returns the ChunkManager the caller must keep alive for the system's lifetime.
-	std::unique_ptr<world::ChunkManager> wireWaterPatch(NavigationSystem& sys, ConstructionWorld& cw) {
+	std::unique_ptr<world::ChunkManager> wireWaterPatch(World& world, NavigationSystem& sys, ConstructionWorld& cw) {
 		auto chunks = std::make_unique<world::ChunkManager>(std::make_unique<WaterPatchSampler>());
 		chunks->setLoadRadius(2);
 		chunks->setUnloadRadius(4);
 		chunks->update({0.0F, 0.0F});
 		chunks->finishPendingGeneration();
 		sys.setChunkManager(chunks.get());
-		// 60 m region at origin (clamped to 64), exactly as the existing water-patch test
-		// wires it: covers the origin land AND the pond. (Viewport center/
-		// half in meters; mirrors NavigationSystemTest::pushArea, inlined for a free helper.)
-		sys.setViewportRect(glm::vec2{0.0F, 0.0F}, glm::vec2{60.0F, 60.0F});
+		// 60 m colonist region at origin, as the existing water-patch test wires it: covers the
+		// origin land AND the pond.
+		(void)driveColonistRegion(world, {0.0F, 0.0F}, 60.0F);
 		sys.setConstructionWorld(&cw);
 		return chunks;
 	}
@@ -1385,7 +1597,7 @@ TEST_F(NavigationSystemTest, IsAreaWalkableTrueWhenWhollyOnLand) {
 	ConstructionWorld cw;
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	auto chunks = wireWaterPatch(sys, cw);
+	auto chunks = wireWaterPatch(world, sys, cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
 	// A 4 m square wholly on land (well clear of the pond).
@@ -1400,7 +1612,7 @@ TEST_F(NavigationSystemTest, IsAreaWalkableFalseWhenFootprintSpansWater) {
 	ConstructionWorld cw;
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	auto chunks = wireWaterPatch(sys, cw);
+	auto chunks = wireWaterPatch(world, sys, cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
 	// Corners straddle the pond horizontally: x=28 and x=52 are LAND (12 m from its center,
@@ -1417,7 +1629,7 @@ TEST_F(NavigationSystemTest, IsAreaWalkableFalseWhenFootprintEnclosesWaterPond) 
 	ConstructionWorld cw;
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	auto chunks = wireWaterPatch(sys, cw);
+	auto chunks = wireWaterPatch(world, sys, cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
 	// A big square whose corners AND edges are all on land but that fully encloses the
@@ -1439,7 +1651,7 @@ TEST_F(NavigationSystemTest, WaterBlocksBuildabilityUnlikeTrees) {
 	ConstructionWorld cw;
 	World			  world;
 	NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
-	auto			  chunks = wireWaterPatch(sys, cw);
+	auto			  chunks = wireWaterPatch(world, sys, cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
 	const std::vector<glm::vec2> spanning{{28.0F, 38.0F}, {52.0F, 38.0F}, {52.0F, 42.0F}, {28.0F, 42.0F}};
@@ -1457,7 +1669,7 @@ TEST_F(NavigationSystemTest, IsSegmentAndPolylineWalkableCatchWaterCrossing) {
 	ConstructionWorld cw;
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	auto chunks = wireWaterPatch(sys, cw);
+	auto chunks = wireWaterPatch(world, sys, cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
 	// A wall segment fully on land is walkable.
@@ -1495,7 +1707,7 @@ TEST_F(NavigationSystemTest, DevSpawnGuardRefusesOffMeshCreatesOnValid) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	wireArea(sys); // ChunkManager (all land) + 60 m region at origin
+	wireArea(world, sys); // ChunkManager (all land) + 60 m region at origin
 	sys.setConstructionWorld(&cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
@@ -1538,7 +1750,7 @@ TEST_F(NavigationSystemTest, IsReachableTrueForOffAreaGoal) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	wireArea(sys);
+	wireArea(world, sys);
 	sys.setConstructionWorld(&cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
@@ -1633,7 +1845,7 @@ TEST(NavPathStalenessTest, DetectsBeliefAndNavDrift) {
 // pure predicate in AIDecisionSystem.test.cpp's OffMeshRecoveryResolutionTest.
 //
 // Helper: spawn a minimal colonist entity at `at` (no Colonist tag, so it does not drive
-// its own region -- the viewport region under test is what covers it).
+// its own region -- the colonist region wireArea makes is what covers it).
 namespace {
 	EntityID spawnRecoverableColonist(World& world, glm::vec2 at) {
 		EntityID c = world.createEntity();
@@ -1681,7 +1893,7 @@ TEST_F(NavigationSystemTest, OffMeshColonistSnappedOntoMesh) {
 
 	World world;
 	NavigationSystem& nav = world.registerSystem<NavigationSystem>();
-	wireArea(nav);
+	wireArea(world, nav);
 	nav.setPlacementData(&executor, &processed);
 	nav.setConstructionWorld(&cw);
 	ASSERT_TRUE(pumpUntilMesh(nav)) << "navmesh never built";
@@ -1723,7 +1935,7 @@ TEST_F(NavigationSystemTest, RecoverySnapClearsWallCollisionBand) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	wireArea(sys);
+	wireArea(world, sys);
 	sys.setConstructionWorld(&cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
@@ -1759,7 +1971,7 @@ TEST_F(NavigationSystemTest, OffRegionColonistNotRelocated) {
 
 	World world;
 	NavigationSystem& nav = world.registerSystem<NavigationSystem>();
-	wireArea(nav); // viewport region at origin, 60 m
+	wireArea(world, nav); // colonist region at origin, 60 m
 	nav.setConstructionWorld(&cw);
 	ASSERT_TRUE(pumpUntilMesh(nav)) << "navmesh never built";
 
@@ -1792,7 +2004,7 @@ TEST_F(NavigationSystemTest, FindValidPositionNearOpenGroundReturnsPointAtDistan
 	ConstructionWorld cw; // empty: open walkable terrain over the origin region
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	wireArea(sys);
+	wireArea(world, sys);
 	sys.setConstructionWorld(&cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
@@ -1816,7 +2028,7 @@ TEST_F(NavigationSystemTest, FindValidPositionNearInPocketFallsBackToNearestWalk
 	ConstructionWorld cw;
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	auto chunks = wireWaterPatch(sys, cw); // pond at world (40,40)
+	auto chunks = wireWaterPatch(world, sys, cw); // pond at world (40,40)
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
 	// Center of the pond: in-region but off-mesh, and a 1 m ring around it is wholly
@@ -1844,7 +2056,7 @@ TEST_F(NavigationSystemTest, FindValidPositionNearPushedFallbackStaysOnMesh) {
 	ConstructionWorld cw;
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	auto chunks = wireWaterPatch(sys, cw); // pond at world (40,40), region [-60, 60] on both axes
+	auto chunks = wireWaterPatch(world, sys, cw); // pond at world (40,40), region [-60, 60] on both axes
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
 	// The region's farthest corner, (-60, -60), is 141.4 m from the origin, so a 150 m ring clears
@@ -1870,7 +2082,7 @@ TEST_F(NavigationSystemTest, FindValidPositionNearIsDeterministic) {
 	ConstructionWorld cw;
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	wireArea(sys);
+	wireArea(world, sys);
 	sys.setConstructionWorld(&cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
@@ -1888,7 +2100,7 @@ TEST_F(NavigationSystemTest, FindValidPositionNearHonorsPreferredDirOnOpenGround
 	ConstructionWorld cw;
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	wireArea(sys);
+	wireArea(world, sys);
 	sys.setConstructionWorld(&cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
@@ -1905,7 +2117,7 @@ TEST_F(NavigationSystemTest, FindValidPositionNearOutsideRegionReturnsNullopt) {
 	ConstructionWorld cw;
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	wireArea(sys); // 60 m region at origin
+	wireArea(world, sys); // 60 m region at origin
 	sys.setConstructionWorld(&cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
@@ -1915,57 +2127,55 @@ TEST_F(NavigationSystemTest, FindValidPositionNearOutsideRegionReturnsNullopt) {
 		<< "an origin no region covers must return nullopt";
 }
 
-// --- AABB clustering (overlap -> merge, disjoint -> separate) -----------------
+// --- Colonist clustering (overlap -> merge while it fits, else separate) ------
 //
-// clusterAabbs is the pure clustering primitive the sim-area computation builds on:
-// any two squares that overlap (directly or transitively) collapse into their shared
-// bounding box; disjoint squares stay separate. These exercise it without an ECS world.
+// clusterColonists builds the colonist regions from positions alone: overlapping squares merge
+// while the cluster fits the max region size, so a region is never clamped below its colonists.
 
-TEST(SimAreaClusteringTest, OverlappingBoxesMergeIntoBoundingBox) {
-	// Two squares that overlap in x and y -> one cluster spanning both.
-	const SimAabb a{0, 0, 100, 100};
-	const SimAabb b{50, 50, 150, 150};
-	const std::vector<SimAabb> merged = clusterAabbs({a, b});
-	ASSERT_EQ(merged.size(), 1u) << "overlapping squares must merge into one region";
-	EXPECT_EQ(merged[0].minX, 0);
-	EXPECT_EQ(merged[0].minY, 0);
-	EXPECT_EQ(merged[0].maxX, 150);
-	EXPECT_EQ(merged[0].maxY, 150) << "the merged rect is the bounding box of both inputs";
+namespace {
+	constexpr std::int64_t kR = NavigationSystem::kSimRadiusMm;
 }
 
-TEST(SimAreaClusteringTest, DisjointBoxesStaySeparate) {
-	// Two squares with a clear gap on both axes -> two separate clusters.
-	const SimAabb a{0, 0, 100, 100};
-	const SimAabb b{1000, 1000, 1100, 1100};
-	const std::vector<SimAabb> clusters = clusterAabbs({a, b});
-	EXPECT_EQ(clusters.size(), 2u) << "disjoint squares must stay separate regions";
+TEST(SimAreaClusteringTest, OverlappingSquaresMergeIntoBoundingBox) {
+	const std::vector<DesiredRegion> c = NavigationSystem::clusterColonists({{0, 0}, {40000, 20000}});
+	ASSERT_EQ(c.size(), 1U);
+	EXPECT_EQ(c[0].rect.minX, -kR);
+	EXPECT_EQ(c[0].rect.maxX, 40000 + kR);
+	EXPECT_EQ(c[0].rect.maxY, 20000 + kR);
+	EXPECT_EQ(c[0].drivers.size(), 2U);
+	EXPECT_EQ(c[0].owner, RegionOwner::Colonists);
 }
 
-TEST(SimAreaClusteringTest, TransitiveChainMergesAllThree) {
-	// A overlaps B, B overlaps C, A does NOT overlap C: all three still collapse to one,
-	// because the union-find sweep absorbs C through B.
-	const SimAabb a{0, 0, 100, 100};
-	const SimAabb b{80, 0, 180, 100};
-	const SimAabb c{160, 0, 260, 100};
-	const std::vector<SimAabb> merged = clusterAabbs({a, b, c});
-	ASSERT_EQ(merged.size(), 1u) << "a transitive overlap chain must merge to one region";
-	EXPECT_EQ(merged[0].minX, 0);
-	EXPECT_EQ(merged[0].maxX, 260);
+TEST(SimAreaClusteringTest, DisjointSquaresStaySeparate) {
+	EXPECT_EQ(NavigationSystem::clusterColonists({{0, 0}, {100000, 0}}).size(), 2U);
+}
+
+// A chain whose bounding box would pass the max region size splits; every colonist keeps at least
+// kSimRadiusMm between him and his cluster's edge, which is what keeps him out of its edge margin.
+TEST(SimAreaClusteringTest, ChainPastTheMaxSizeSplitsAndEveryColonistSitsDeepInside) {
+	const std::vector<geometry::Vec2i64> chain{{0, 0}, {55000, 0}, {110000, 0}, {165000, 0}};
+	const std::vector<DesiredRegion>	 c = NavigationSystem::clusterColonists(chain);
+	EXPECT_EQ(c.size(), 2U);
+	for (const DesiredRegion& region : c) {
+		EXPECT_LE(region.rect.maxX - region.rect.minX, 2 * NavigationSystem::kMaxSimHalfExtentMm);
+		for (const geometry::Vec2i64& p : region.drivers) {
+			EXPECT_GE(std::min(p.x - region.rect.minX, region.rect.maxX - p.x), kR);
+		}
+	}
 }
 
 TEST(SimAreaClusteringTest, OrderIndependent) {
-	// The same inputs in a different order produce the same clustering.
-	const SimAabb a{0, 0, 100, 100};
-	const SimAabb b{80, 0, 180, 100};
-	const SimAabb c{1000, 1000, 1100, 1100};
-	const std::vector<SimAabb> m1 = clusterAabbs({a, b, c});
-	const std::vector<SimAabb> m2 = clusterAabbs({c, b, a});
-	EXPECT_EQ(m1.size(), m2.size());
-	EXPECT_EQ(m1.size(), 2u) << "{a,b} merge, c separate -> two regions regardless of order";
+	const std::vector<DesiredRegion> a = NavigationSystem::clusterColonists({{0, 0}, {55000, 0}, {110000, 0}});
+	const std::vector<DesiredRegion> b = NavigationSystem::clusterColonists({{110000, 0}, {0, 0}, {55000, 0}});
+	ASSERT_EQ(a.size(), b.size());
+	for (std::size_t i = 0; i < a.size(); ++i) {
+		EXPECT_EQ(a[i].rect.minX, b[i].rect.minX);
+		EXPECT_EQ(a[i].rect.maxX, b[i].rect.maxX);
+	}
 }
 
-TEST(SimAreaClusteringTest, EmptyInputYieldsNoRegions) {
-	EXPECT_TRUE(clusterAabbs({}).empty());
+TEST(SimAreaClusteringTest, NoColonistsNoRegions) {
+	EXPECT_TRUE(NavigationSystem::clusterColonists({}).empty());
 }
 
 // --- Query dispatch by position (point -> correct region) ---------------------

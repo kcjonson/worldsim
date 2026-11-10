@@ -32,6 +32,10 @@ namespace ecs {
 	namespace {
 		namespace gnav = geometry::nav;
 
+		const char* ownerName(RegionOwner owner) {
+			return owner == RegionOwner::Camera ? "camera" : "colonists";
+		}
+
 		// Squared distance and closest-point-on-segment, in meters. Used by
 		// nearestPathablePoint; kept local and free of glm free functions.
 		float dist2(glm::vec2 a, glm::vec2 b) {
@@ -309,31 +313,36 @@ namespace ecs {
 		}
 	} // namespace
 
-	std::vector<SimAabb> clusterAabbs(const std::vector<SimAabb>& boxes) {
-		// Union-find over overlap. Small n (a handful of colonists + one viewport), so an
-		// O(n^2) merge with a fixed-point sweep is plenty and stays order-independent.
-		std::vector<SimAabb> clusters;
-		clusters.reserve(boxes.size());
-		for (const SimAabb& b : boxes) {
-			SimAabb merged	  = b;
-			bool	mergedAny = true;
-			// Repeatedly absorb any existing cluster the (growing) box overlaps, removing
-			// it from the list, until no more overlaps -- so a box bridging two clusters
-			// collapses all three into one.
+	std::vector<DesiredRegion> NavigationSystem::clusterColonists(std::vector<geometry::Vec2i64> positions) {
+		std::ranges::sort(positions, [](const geometry::Vec2i64& a, const geometry::Vec2i64& b) {
+			return a.x != b.x ? a.x < b.x : a.y < b.y;
+		});
+		constexpr std::int64_t kMaxSpanMm = 2 * kMaxSimHalfExtentMm;
+		auto fits = [](const SimAabb& r) { return r.maxX - r.minX <= kMaxSpanMm && r.maxY - r.minY <= kMaxSpanMm; };
+
+		// A handful of colonists, so absorbing overlapping clusters to a fixed point is plenty.
+		std::vector<DesiredRegion> clusters;
+		for (const geometry::Vec2i64& p : positions) {
+			DesiredRegion merged;
+			merged.rect = {p.x - kSimRadiusMm, p.y - kSimRadiusMm, p.x + kSimRadiusMm, p.y + kSimRadiusMm};
+			merged.drivers.push_back(p);
+			bool mergedAny = true;
 			while (mergedAny) {
 				mergedAny = false;
 				for (std::size_t i = 0; i < clusters.size();) {
-					if (merged.overlaps(clusters[i])) {
-						merged.unionWith(clusters[i]);
-						clusters[i] = clusters.back();
-						clusters.pop_back();
+					SimAabb grown = merged.rect;
+					grown.unionWith(clusters[i].rect);
+					if (merged.rect.overlaps(clusters[i].rect) && fits(grown)) {
+						merged.rect = grown;
+						merged.drivers.insert(merged.drivers.end(), clusters[i].drivers.begin(), clusters[i].drivers.end());
+						clusters.erase(clusters.begin() + static_cast<std::ptrdiff_t>(i));
 						mergedAny = true;
 					} else {
 						++i;
 					}
 				}
 			}
-			clusters.push_back(merged);
+			clusters.push_back(std::move(merged));
 		}
 		return clusters;
 	}
@@ -404,66 +413,28 @@ namespace ecs {
 		return false;
 	}
 
-	std::vector<NavigationSystem::DesiredRegion> NavigationSystem::computeDesiredRegions() const {
-		// A driver is a point (colonist position or viewport center) and its own square.
-		struct Driver {
-			geometry::Vec2i64 center;
-			SimAabb			  box;
-		};
-		std::vector<Driver> drivers;
-
-		// One square per colonist: center +/- kSimRadiusMm. ECS view is colonist-only; the
-		// world is always wired when this runs in-game (null only in headless tests with no
-		// colonists, where the viewport drives the regions instead).
+	std::vector<DesiredRegion> NavigationSystem::computeDesiredRegions() const {
+		std::vector<geometry::Vec2i64> colonists;
 		if (world != nullptr) {
 			for (auto [entity, position, colonist] : world->view<Position, Colonist>()) {
 				(void)entity;
 				(void)colonist;
-				const geometry::Vec2i64 c = nav::toMm(position.value);
-				drivers.push_back(
-					{c, {c.x - kSimRadiusMm, c.y - kSimRadiusMm, c.x + kSimRadiusMm, c.y + kSimRadiusMm}});
+				colonists.push_back(nav::toMm(position.value));
 			}
 		}
+		std::vector<DesiredRegion> desired = clusterColonists(std::move(colonists));
 
-		// One square for the viewport, half-extents clamped so a zoomed-out viewport doesn't
-		// ask for an unbuildable region. The viewport square is independent of any colonist
-		// square; clustering merges them only when they actually overlap.
+		// The camera's square, half-extents clamped so a zoomed-out viewport doesn't ask for an
+		// unbuildable region. Its own region whatever it overlaps.
 		if (haveViewport) {
 			const geometry::Vec2i64 c  = nav::toMm(viewportCenterM);
 			const std::int64_t		hx = clampHalfExtent(
 				 static_cast<std::int64_t>(std::llround(static_cast<double>(viewportHalfM.x) * 1000.0)));
 			const std::int64_t hy = clampHalfExtent(
 				static_cast<std::int64_t>(std::llround(static_cast<double>(viewportHalfM.y) * 1000.0)));
-			drivers.push_back({c, {c.x - hx, c.y - hy, c.x + hx, c.y + hy}});
+			desired.push_back({.rect = {c.x - hx, c.y - hy, c.x + hx, c.y + hy}, .drivers = {c}, .owner = RegionOwner::Camera});
 		}
-
-		// Cluster the driver squares (transitive overlap -> one bounding rect), carrying each
-		// driver's center into its cluster. Same union-find sweep as clusterAabbs, but on
-		// DesiredRegion so the driver points ride along for the self-gate.
-		std::vector<DesiredRegion> clusters;
-		for (const Driver& dr : drivers) {
-			DesiredRegion merged;
-			merged.rect = dr.box;
-			merged.drivers.push_back(dr.center);
-			bool mergedAny = true;
-			while (mergedAny) {
-				mergedAny = false;
-				for (std::size_t i = 0; i < clusters.size();) {
-					if (merged.rect.overlaps(clusters[i].rect)) {
-						merged.rect.unionWith(clusters[i].rect);
-						merged.drivers.insert(merged.drivers.end(), clusters[i].drivers.begin(),
-											  clusters[i].drivers.end());
-						clusters[i] = std::move(clusters.back());
-						clusters.pop_back();
-						mergedAny = true;
-					} else {
-						++i;
-					}
-				}
-			}
-			clusters.push_back(std::move(merged));
-		}
-		return clusters;
+		return desired;
 	}
 
 	void NavigationSystem::launchBuild(SimulationRegion& region) {
@@ -524,6 +495,8 @@ namespace ecs {
 			}
 			region.navMesh = region.future.get(); // swap the new mesh in; old mesh is dropped
 			region.meshRect = region.launchedRect;
+			// One build in flight per region, so the launch snapshot still describes this mesh.
+			region.meshStamp = {.constructionVersion = region.builtVersion, .removalEpoch = region.builtRemovalEpoch};
 			region.future	= {};
 			++region.meshGeneration;
 			++meshGeneration;
@@ -589,7 +562,7 @@ namespace ecs {
 			const std::int64_t wantHalf =
 				clampHalfExtent(std::max(desired[d].rect.halfExtentX(), desired[d].rect.halfExtentY()));
 			for (std::size_t r = 0; r < regions.size(); ++r) {
-				if (regionMatched[r]) {
+				if (regionMatched[r] || regions[r].owner != desired[d].owner) {
 					continue;
 				}
 				const SimAabb have	  = regions[r].rect();
@@ -636,7 +609,7 @@ namespace ecs {
 			int			 best		= -1;
 			std::int64_t bestDistSq = 0;
 			for (std::size_t r = 0; r < regions.size(); ++r) {
-				if (regionMatched[r] || !regions[r].rect().overlaps(want)) {
+				if (regionMatched[r] || regions[r].owner != desired[d].owner || !regions[r].rect().overlaps(want)) {
 					continue;
 				}
 				const std::int64_t dx	  = regions[r].center.x - wantCenter.x;
@@ -659,9 +632,9 @@ namespace ecs {
 					continue;
 				}
 				// "Recentering" onto the rect it already has: a driver held inside the margin of a
-				// region that can't move toward it (a merged cluster clamped to the max size, its centre
-				// pinned by the other drivers). Rebuilding would make the same mesh again, every time a
-				// build lands, forever; only an obstacle-input change warrants one.
+				// region clamped below its cluster (to the loaded-chunk extent). Rebuilding would make
+				// the same mesh again, every time a build lands, forever; only an obstacle-input change
+				// warrants one.
 				if (region.center == wantCenter && region.halfExtent == wantHalf) {
 					if (regionObstaclesChanged(region)) {
 						launchBuild(region);
@@ -672,19 +645,20 @@ namespace ecs {
 				region.halfExtent = wantHalf;
 				launchBuild(region);
 				// Permanent region-lifecycle diagnostic (recenter onto a moved driver/viewport).
-				LOG_DEBUG(Engine, "[NavBuild] region %d recenter -> (%lld, %lld) half=%lld", region.id,
-						 static_cast<long long>(wantCenter.x), static_cast<long long>(wantCenter.y),
-						 static_cast<long long>(wantHalf));
+				LOG_DEBUG(Engine, "[NavBuild] region %d (%s) recenter -> (%lld, %lld) half=%lld", region.id,
+						 ownerName(region.owner), static_cast<long long>(wantCenter.x),
+						 static_cast<long long>(wantCenter.y), static_cast<long long>(wantHalf));
 			} else {
 				SimulationRegion region;
 				region.id		  = nextRegionId++;
+				region.owner	  = desired[d].owner;
 				region.center	  = wantCenter;
 				region.halfExtent = wantHalf;
 				launchBuild(region);
 				// Permanent region-lifecycle diagnostic (new simulation region created).
-				LOG_DEBUG(Engine, "[NavBuild] region %d NEW -> (%lld, %lld) half=%lld", region.id,
-						 static_cast<long long>(wantCenter.x), static_cast<long long>(wantCenter.y),
-						 static_cast<long long>(wantHalf));
+				LOG_DEBUG(Engine, "[NavBuild] region %d (%s) NEW -> (%lld, %lld) half=%lld", region.id,
+						 ownerName(region.owner), static_cast<long long>(wantCenter.x),
+						 static_cast<long long>(wantCenter.y), static_cast<long long>(wantHalf));
 				regions.push_back(std::move(region));
 				regionMatched.push_back(true);
 			}
@@ -735,14 +709,28 @@ namespace ecs {
 		reconcileRegions(desired);
 	}
 
-	int NavigationSystem::regionContaining(glm::vec2 meters) const {
-		const geometry::Vec2i64 pMm = nav::toMm(meters);
+	int NavigationSystem::regionAt(geometry::Vec2i64 mm, RegionScope scope) const {
+		int best = -1;
 		for (std::size_t r = 0; r < regions.size(); ++r) {
-			if (regions[r].hasMesh() && regions[r].meshRect.contains(pMm)) {
-				return static_cast<int>(r);
+			const SimulationRegion& region = regions[r];
+			if (!region.hasMesh() || !region.meshRect.contains(mm) ||
+				(scope == RegionScope::Colonists && region.owner != RegionOwner::Colonists)) {
+				continue;
+			}
+			if (best < 0) {
+				best = static_cast<int>(r);
+				continue;
+			}
+			const SimulationRegion& held = regions[static_cast<std::size_t>(best)];
+			if (held.owner != region.owner) {
+				if (region.owner == RegionOwner::Colonists) {
+					best = static_cast<int>(r);
+				}
+			} else if (region.meshStamp > held.meshStamp) {
+				best = static_cast<int>(r);
 			}
 		}
-		return -1;
+		return best;
 	}
 
 	bool NavigationSystem::hasMesh() const {
@@ -763,37 +751,50 @@ namespace ecs {
 		out.reserve(regions.size());
 		for (const SimulationRegion& r : regions) {
 			if (r.hasMesh()) {
-				out.push_back({&r.navMesh, r.center, r.halfExtent});
+				out.push_back({.mesh = &r.navMesh,
+							   .center = r.center,
+							   .halfExtent = r.halfExtent,
+							   .owner = r.owner,
+							   .meshGeneration = r.meshGeneration});
 			}
 		}
 		return out;
 	}
 
 	bool NavigationSystem::inSimArea(glm::vec2 meters) const {
-		return regionContaining(meters) >= 0;
+		return regionAt(nav::toMm(meters), RegionScope::Colonists) >= 0;
 	}
 
 	bool NavigationSystem::isBuildingAround(glm::vec2 meters) const {
 		const geometry::Vec2i64 mm = nav::toMm(meters);
-		return std::any_of(regions.begin(), regions.end(),
-						   [&](const SimulationRegion& region) { return region.future.valid() && region.rect().contains(mm); });
+		return std::any_of(regions.begin(), regions.end(), [&](const SimulationRegion& region) {
+			return region.owner == RegionOwner::Colonists && region.future.valid() && region.rect().contains(mm);
+		});
 	}
 
 	std::optional<std::vector<glm::vec2>>
 	NavigationSystem::requestPath(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
 								  gnav::BeliefFilter belief) const {
-		// Dispatch by pair: try each built region whose rect holds both endpoints, in creation
-		// (ascending id) order, until one routes. Regions overlap, so the region a point
-		// resolves to alone can lack the other endpoint while another region's mesh holds both.
-		// No region holding both -> no route (requestNavPath reports it Blocked; long-range
-		// routing across regions is Phase 2).
+		// Dispatch by pair: the built colonist regions holding both endpoints, newest stamp only, in
+		// ascending id, until one routes. No region holding both -> no route (requestNavPath reports
+		// it Blocked; long-range routing across regions is Phase 2).
 		const geometry::Vec2i64 startMm = nav::toMm(startMeters);
 		const geometry::Vec2i64 goalMm	= nav::toMm(goalMeters);
 		const std::int64_t radiusMm =
 			static_cast<std::int64_t>(std::llround(static_cast<double>(agentRadiusMeters) * 1000.0));
 
+		auto holdsPair = [&](const SimulationRegion& region) {
+			return region.owner == RegionOwner::Colonists && region.hasMesh() && region.meshRect.contains(startMm) &&
+				   region.meshRect.contains(goalMm);
+		};
+		MeshStamp newest;
 		for (const SimulationRegion& region : regions) {
-			if (!region.hasMesh() || !region.meshRect.contains(startMm) || !region.meshRect.contains(goalMm)) {
+			if (holdsPair(region)) {
+				newest = std::max(newest, region.meshStamp);
+			}
+		}
+		for (const SimulationRegion& region : regions) {
+			if (!holdsPair(region) || region.meshStamp != newest) {
 				continue;
 			}
 			const gnav::NavMesh& navMesh = region.navMesh;
@@ -844,12 +845,13 @@ namespace ecs {
 			static_cast<std::int64_t>(std::llround(static_cast<double>(agentRadiusMeters) * 1000.0));
 		for (std::size_t r = 0; r < regions.size(); ++r) {
 			const SimulationRegion& region = regions[r];
-			if (!region.hasMesh() || !region.meshRect.contains(startMm)) {
+			if (region.owner != RegionOwner::Colonists || !region.hasMesh() || !region.meshRect.contains(startMm)) {
 				continue;
 			}
 			out.regions.push_back({.index = static_cast<int>(r),
 								   .id = region.id,
 								   .meshGeneration = region.meshGeneration,
+								   .stamp = region.meshStamp,
 								   .rect = region.meshRect,
 								   .from = gnav::reachFrom(region.navMesh, startMm, radiusMm, belief)});
 		}
@@ -868,11 +870,17 @@ namespace ecs {
 		if (reach.regions.empty() || !coversGoal(reach, goalMeters)) {
 			return true;
 		}
-		// A region holding both points whose forest lets it through; none is the sound reject
-		// requestPath agrees with.
+		// A newest-stamped region holding both points whose forest lets it through; none is the sound
+		// reject requestPath agrees with.
 		const geometry::Vec2i64 goalMm = nav::toMm(goalMeters);
+		MeshStamp				newest;
 		for (const RegionReach& r : reach.regions) {
-			if (r.rect.contains(goalMm) &&
+			if (r.rect.contains(goalMm)) {
+				newest = std::max(newest, r.stamp);
+			}
+		}
+		for (const RegionReach& r : reach.regions) {
+			if (r.rect.contains(goalMm) && r.stamp == newest &&
 				gnav::reaches(regions[static_cast<std::size_t>(r.index)].navMesh, r.from, goalMm, reach.belief)) {
 				return true;
 			}
@@ -953,7 +961,7 @@ namespace ecs {
 
 		// Whole-segment walkability under a per-point predicate: both endpoints plus every interior
 		// sample at the footprint pitch must pass. Templated on the predicate so the SAME sampling
-		// serves the region-dispatched runtime check (isOnMesh) and a one-off terrain-only mesh check.
+		// serves the region-dispatched runtime check (isValidPosition) and a one-off terrain-only mesh check.
 		template <typename OnMesh>
 		bool segmentWalkableUnder(const OnMesh& onMesh, glm::vec2 a, glm::vec2 b) {
 			if (!onMesh(a) || !onMesh(b)) {
@@ -1055,8 +1063,11 @@ namespace ecs {
 	} // namespace
 
 	bool NavigationSystem::isOnMesh(glm::vec2 meters) const {
-		// Any region holding the point: overlapping regions can disagree while one has rebuilt and the
-		// other hasn't, and a point on the fresh mesh must not read as stranded against the stale one.
+		const int r = regionAt(nav::toMm(meters), RegionScope::Colonists);
+		return r >= 0 && pointOnNavMesh(regions[static_cast<std::size_t>(r)].navMesh, meters);
+	}
+
+	bool NavigationSystem::isValidPosition(glm::vec2 meters) const {
 		const geometry::Vec2i64 mm = nav::toMm(meters);
 		return std::any_of(regions.begin(), regions.end(), [&](const SimulationRegion& region) {
 			return region.hasMesh() && region.meshRect.contains(mm) && pointOnNavMesh(region.navMesh, meters);
@@ -1064,18 +1075,18 @@ namespace ecs {
 	}
 
 	bool NavigationSystem::isSegmentWalkable(glm::vec2 aMeters, glm::vec2 bMeters) const {
-		// Region-dispatched per-point authority (isOnMesh) under the shared segment sampler: both
+		// The per-point authority (isValidPosition) under the shared segment sampler: both
 		// endpoints plus every interior sample at the footprint pitch on walkable mesh. The interior
 		// samples catch a water sliver the endpoints straddle.
-		return segmentWalkableUnder([this](glm::vec2 p) { return isOnMesh(p); }, aMeters, bMeters);
+		return segmentWalkableUnder([this](glm::vec2 p) { return isValidPosition(p); }, aMeters, bMeters);
 	}
 
 	bool NavigationSystem::isPolylineWalkable(const std::vector<glm::vec2>& ptsMeters) const {
-		return polylineWalkableUnder([this](glm::vec2 p) { return isOnMesh(p); }, ptsMeters);
+		return polylineWalkableUnder([this](glm::vec2 p) { return isValidPosition(p); }, ptsMeters);
 	}
 
 	bool NavigationSystem::isAreaWalkable(const std::vector<glm::vec2>& polygonMeters) const {
-		return areaWalkableUnder([this](glm::vec2 p) { return isOnMesh(p); }, polygonMeters);
+		return areaWalkableUnder([this](glm::vec2 p) { return isValidPosition(p); }, polygonMeters);
 	}
 
 	geometry::nav::NavMesh NavigationSystem::buildTerrainOnlyMesh(geometry::Vec2i64 center, std::int64_t radius) const {
@@ -1143,7 +1154,7 @@ namespace ecs {
 		// point (so the live preview agrees with the commit gate). Fall back to the runtime-mesh point
 		// check when the build inputs aren't wired.
 		if (chunkManager == nullptr || constructionWorld == nullptr) {
-			return isOnMesh(meters);
+			return isValidPosition(meters);
 		}
 		const geometry::Vec2i64 p	 = nav::toMm(meters);
 		const gnav::NavMesh&	mesh = terrainMeshCovering(p, p);
@@ -1252,7 +1263,7 @@ namespace ecs {
 	}
 
 	std::optional<glm::vec2> NavigationSystem::nearestPathablePoint(glm::vec2 meters) const {
-		const int r = regionContaining(meters);
+		const int r = regionAt(nav::toMm(meters), RegionScope::Colonists);
 		if (r < 0) {
 			return std::nullopt; // off every region: caller leaves the colonist put
 		}
@@ -1260,7 +1271,7 @@ namespace ecs {
 	}
 
 	std::optional<glm::vec2> NavigationSystem::nearestPathablePoint(glm::vec2 meters, float agentRadiusMeters) const {
-		const int region = regionContaining(meters);
+		const int region = regionAt(nav::toMm(meters), RegionScope::Colonists);
 		if (region < 0) {
 			return std::nullopt; // off every region: caller leaves the colonist put
 		}
@@ -1302,9 +1313,9 @@ namespace ecs {
 	std::optional<glm::vec2>
 	NavigationSystem::findValidPositionNear(glm::vec2 origin, float minDistMeters, glm::vec2 preferredDir) const {
 		// Tier 1: must start inside a region (otherwise there is no mesh to place against, same
-		// gate as nearestPathablePoint). Candidate validity below is the per-point isOnMesh, which
+		// gate as nearestPathablePoint). Candidate validity below is the per-point isValidPosition, which
 		// locates against the containing region's mesh itself, so no separate locate is needed here.
-		const int region = regionContaining(origin);
+		const int region = regionAt(nav::toMm(origin), RegionScope::All);
 		if (region < 0) {
 			return std::nullopt;
 		}
@@ -1325,7 +1336,7 @@ namespace ecs {
 		// at `dir` and steps through kRingSamples evenly spaced angles, so the angle set and its
 		// order are fixed -- deterministic, no RNG. First on-mesh sample wins.
 		const glm::vec2 preferred = origin + dir * minDist;
-		if (isOnMesh(preferred)) {
+		if (isValidPosition(preferred)) {
 			return preferred;
 		}
 		constexpr int kRingSamples	 = 32;
@@ -1334,7 +1345,7 @@ namespace ecs {
 		for (int i = 1; i < kRingSamples; ++i) {
 			const float a = baseAngle + kTwoPi * (static_cast<float>(i) / static_cast<float>(kRingSamples));
 			const glm::vec2 cand{origin.x + minDist * std::cos(a), origin.y + minDist * std::sin(a)};
-			if (isOnMesh(cand)) {
+			if (isValidPosition(cand)) {
 				return cand;
 			}
 		}
@@ -1360,7 +1371,7 @@ namespace ecs {
 		// requestPath to an off-mesh target would reject, stalling the consumer.
 		const glm::vec2 outDir = (awayLen > 1e-6F) ? glm::vec2{away.x / awayLen, away.y / awayLen} : dir;
 		const glm::vec2 pushed = origin + outDir * minDist;
-		return isOnMesh(pushed) ? pushed : *nearest;
+		return isValidPosition(pushed) ? pushed : *nearest;
 	}
 
 } // namespace ecs

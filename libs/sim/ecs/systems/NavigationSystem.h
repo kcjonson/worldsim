@@ -2,13 +2,11 @@
 
 // NavigationSystem - owns the per-region navmeshes and answers path queries (Nav B3).
 //
-// The sim area follows the THINGS THAT NEED SIMULATION (colonists) plus WHERE THE
-// PLAYER IS LOOKING (the viewport), not the camera alone. Each ECS tick the system
-// reads colonist positions (Position + Colonist) and the viewport rect pushed by the
-// scene as plain data, builds a square AABB per driver (center +/- kSimRadiusMm) plus
-// the viewport AABB, and clusters overlapping AABBs into merged bounding rectangles.
-// Each cluster is a SimulationRegion with its own fine nav mesh. Disjoint drivers ->
-// separate regions; overlapping drivers -> one merged region.
+// Regions have an explicit owner. COLONIST regions follow the colonists: each colonist drives a
+// square (position +/- kSimRadiusMm), and overlapping squares cluster into one region while the
+// cluster fits the max region size; nothing else moves, resizes or rebuilds them. The CAMERA
+// region follows the viewport rect the scene pushes as plain data. It is never merged with a
+// colonist region; the two may overlap. Each region has its own fine nav mesh.
 //
 // The build ingests only the obstacles inside a region's rect, so a forested world
 // (tens of thousands of loaded trees) still builds fast because a region holds only
@@ -18,18 +16,20 @@
 // runs ON the main thread, producing a self-contained NavMeshInput the worker owns by
 // value. While a region's rebuild is in flight its OLD mesh keeps serving queries.
 //
-// Self-gating: nav generation is OFF the render clock. A region rebuilds only when its
-// driver nears the region edge (a margin inside the rect), its obstacle inputs change
+// Self-gating: nav generation is OFF the render clock. A region rebuilds only when one of
+// its drivers nears the region edge (a margin inside the rect), its obstacle inputs change
 // (construction version, the in-area chunks' terrain polygon versions, or their
-// processed-placement state), or it is brand new. A
-// slow/stationary colonist with the camera held still keeps every gate shut -> no
-// rebuild. Panning/zooming the camera moves only the viewport region, never a
-// colonist's region.
+// processed-placement state), or it is brand new. A stationary colonist with the camera held
+// still keeps every gate shut. Panning/zooming moves only the camera region.
 //
-// Point queries (nearestPathablePoint / inSimArea) dispatch by position: the first region (by
-// id) whose rect contains the point; isOnMesh asks every region holding it. Pair queries (requestPath, reachFrom +
-// reaches) dispatch by pair: a region whose rect contains BOTH points, since regions overlap.
-// No region holding both -> no route; long-range routing across regions is Phase 2.
+// Query dispatch. Colonist queries (requestPath, reachFrom/reaches/coversGoal/stagingPointToward,
+// inSimArea, isOnMesh, nearestPathablePoint, isBuildingAround) consult colonist regions only, so
+// where the camera is never changes a colonist's answer. Where colonist regions overlap, a point
+// or pair is answered by the built regions holding it whose meshes reflect the newest world edits
+// (MeshStamp), in id order: a stale mesh never overrides a fresher one. Placement checks
+// (isValidPosition, the walkable area/segment/polyline family, findValidPositionNear) consult
+// every region, colonist regions first, so the player can place where he looks. No region holding
+// both ends of a pair -> no route; long-range routing across regions is Phase 2.
 
 #include "../ISystem.h"
 
@@ -93,11 +93,25 @@ struct SimAabb {
 	}
 };
 
-/// Cluster a set of square AABBs into merged bounding rectangles: any two that overlap
-/// (directly or transitively) collapse into their shared bounding box; disjoint inputs
-/// stay separate. Order-independent. Exposed (free function) so the clustering is unit-
-/// testable without a live ECS world.
-[[nodiscard]] std::vector<SimAabb> clusterAabbs(const std::vector<SimAabb>& boxes);
+/// Who a region exists for; see the dispatch rule at the top of this file.
+enum class RegionOwner : std::uint8_t { Colonists, Camera };
+
+/// The world edits a served mesh reflects. Both counters only grow, so a greater stamp is a mesh
+/// built from a later world.
+struct MeshStamp {
+	std::uint64_t constructionVersion = 0;
+	std::uint64_t removalEpoch		  = 0;
+
+	auto operator<=>(const MeshStamp&) const = default;
+};
+
+/// A region wanted this tick: its rect, the driver points that fell in it (colonist positions, or
+/// the viewport centre) and whose it is.
+struct DesiredRegion {
+	SimAabb						   rect;
+	std::vector<geometry::Vec2i64> drivers;
+	RegionOwner					   owner = RegionOwner::Colonists;
+};
 
 /// Caches per-region navmeshes built from live world data and serves path queries.
 ///
@@ -151,12 +165,12 @@ class NavigationSystem : public ISystem {
 	// --- Queries (synchronous, dispatched to the region containing the point) -
 
 	// Taut polyline in world meters from start to goal for a disc agent of the given
-	// radius, or nullopt when no built region's rect holds BOTH endpoints (long-range routing
-	// across regions is Phase 2) or no such region's mesh has a route. Built regions overlap in
-	// normal play (a region keeps its rect until its driver nears the edge), so a pair is routed
-	// through every region holding both, in creation order (ascending region id), until one
-	// finds a route. Agent clearance is honored: the radius is passed straight through to
-	// geometry::nav::pathThrough.
+	// radius, or nullopt when no built colonist region's rect holds BOTH endpoints (long-range
+	// routing across regions is Phase 2) or no such region's mesh has a route. Colonist regions
+	// can overlap (a region keeps its rect until a driver nears the edge), so a pair is routed
+	// through the regions holding both whose MeshStamp is the newest among them, in ascending id,
+	// until one finds a route. Agent clearance is honored: the radius is passed straight through
+	// to geometry::nav::pathThrough.
 	//
 	// `belief` is applied at query time against the region's truth mesh (not a second
 	// mesh): a default (empty) BeliefFilter routes over truth, while a filter built from
@@ -167,10 +181,10 @@ class NavigationSystem : public ISystem {
 				geometry::nav::BeliefFilter belief = {}) const;
 
 	// Sound reachability pre-filter, split at the start so many goals from one start cost one
-	// start-side climb per region: reachFrom locates the start in every built region whose rect
-	// holds it and finds its reach root in each one's forest (geometry::nav::reachFrom); reaches()
-	// tests a goal against each of those regions that also holds it, with a locate and an
-	// O(log n) subtree check, so it agrees with requestPath's pair dispatch.
+	// start-side climb per region: reachFrom locates the start in every built colonist region whose
+	// rect holds it and finds its reach root in each one's forest (geometry::nav::reachFrom);
+	// reaches() tests a goal against those of them that also hold it and carry the newest MeshStamp
+	// among them, with a locate and an O(log n) subtree check, so it agrees with requestPath.
 	//
 	// Semantics are asymmetric by design:
 	//   false => DEFINITELY unreachable (a region holding the start covers the goal and none of
@@ -190,11 +204,12 @@ class NavigationSystem : public ISystem {
 		int						 index = -1; // into the region list this frame
 		std::int32_t			 id = -1;	 // stable across frames, unlike the index
 		std::uint64_t			 meshGeneration = 0;
+		MeshStamp				 stamp;
 		SimAabb					 rect; // the rect its mesh covers
 		geometry::nav::ReachFrom from;
 	};
 	struct Reach {
-		std::vector<RegionReach>	regions; // every built region holding the start, by ascending id
+		std::vector<RegionReach>	regions; // every built colonist region holding the start, by ascending id
 		geometry::nav::BeliefFilter belief;
 	};
 	// Fills `out`, reusing its storage.
@@ -216,24 +231,25 @@ class NavigationSystem : public ISystem {
 	static constexpr std::int64_t kStagingInsetMm	   = 2000; // 2 m
 	static constexpr std::int64_t kStagingSampleStepMm = 1000; // 1 m
 	static constexpr std::int64_t kStagingMinLegMm	   = 500;  // 0.5 m
-	// LOD seam predicate: true when `meters` falls inside some BUILT region rect. Outside
-	// every built region the caller treats movement as the no-mesh beeline (LOD1 coarse
-	// routing is Phase 2). False when no region has been built yet.
+	// LOD seam predicate: true when `meters` falls inside some BUILT colonist region rect. A
+	// colonist outside every one holds (LOD1 coarse routing is Phase 2). False when no colonist
+	// region has been built yet.
 	[[nodiscard]] bool inSimArea(glm::vec2 meters) const;
 
-	// Is a build in flight for a region whose rect (as launched) holds this point? A colonist standing
-	// at his region's edge waits for it, since its swap re-plans his route.
+	// Is a build in flight for a colonist region whose rect (as launched) holds this point? A
+	// colonist standing at his region's edge waits for it, since its swap re-plans his route.
 	[[nodiscard]] bool isBuildingAround(glm::vec2 meters) const;
 
-	// True when `meters` lies on walkable mesh in some region that contains it (regions overlap,
-	// and one may have rebuilt while another hasn't). False when the point is off-mesh in every
-	// region holding it (e.g. a colonist that beelined into a
-	// water hole) or when no region covers it. Lets a path failure distinguish a stranded
-	// colonist (recover by snapping back onto land) from one merely walled off.
+	// True when `meters` lies on walkable mesh in the colonist region that answers for it (the
+	// newest-stamped built colonist region holding it, lowest id first). False when it is off a
+	// walkable face there (e.g. a colonist that beelined into a water hole) or when no colonist
+	// region covers it. Lets a path failure distinguish a stranded colonist (recover by snapping
+	// back onto land) from one merely walled off.
 	[[nodiscard]] bool isOnMesh(glm::vec2 meters) const;
 
 	// Canonical world-position validity for spawn/placement/teleport. A position is VALID
-	// IFF it sits on a WALKABLE NAV FACE inside an ACTIVE sim region -- exactly isOnMesh.
+	// IFF it sits on a WALKABLE NAV FACE in ANY active sim region holding it, of either owner, so
+	// the player can place in the camera region.
 	//
 	// CONSTRAINT: validity is owned entirely by the runtime nav mesh. The 3D world/terrain
 	// source is load-time / chunk-generation data and is NOT consulted here. A position
@@ -241,7 +257,7 @@ class NavigationSystem : public ISystem {
 	// outside an active mesh yet. (A future Phase 2 coarse global geography mesh will extend
 	// this to unsimulated space.) This is the ONE predicate every world-positioning path
 	// goes through; do not reintroduce ad-hoc terrain/isWaterAt checks elsewhere.
-	[[nodiscard]] bool isValidPosition(glm::vec2 meters) const { return isOnMesh(meters); }
+	[[nodiscard]] bool isValidPosition(glm::vec2 meters) const;
 
 	// Whole-FOOTPRINT validity for an area structure (a foundation polygon). True IFF
 	// EVERY part of the closed polygon -- vertices, edges, and interior -- sits on
@@ -278,7 +294,7 @@ class NavigationSystem : public ISystem {
 
 	// Single-point buildability: the per-vertex / live-cursor counterpart of isAreaBuildable, against
 	// the same cached terrain-only mesh. True over clearable entities (trees/rocks) and over a built
-	// wall face; false only on water or an off-mesh gap. Falls back to isOnMesh when the build inputs
+	// wall face; false only on water or an off-mesh gap. Falls back to isValidPosition when the build inputs
 	// aren't wired (headless/tests).
 	[[nodiscard]] bool isPointBuildable(glm::vec2 meters) const;
 
@@ -312,9 +328,9 @@ class NavigationSystem : public ISystem {
 	// O(1)-ish locateTriangle probes -- cheap enough for a per-frame live preview.
 	static constexpr std::int64_t kFootprintSampleStepMm = 500; // 0.5 m
 
-	// Nearest walkable point in the region that contains `meters`, or nullopt when no
-	// region covers it / that region has no walkable floor. Used to snap a stranded
-	// (off-mesh, in-region) colonist back onto pathable ground.
+	// Nearest walkable point in the colonist region that answers for `meters` (as isOnMesh), or
+	// nullopt when no colonist region covers it / that region has no walkable floor. Used to snap
+	// a stranded (off-mesh, in-region) colonist back onto pathable ground.
 	[[nodiscard]] std::optional<glm::vec2> nearestPathablePoint(glm::vec2 meters) const;
 
 	// Like nearestPathablePoint, but the returned point also clears the BUILT-wall
@@ -341,8 +357,10 @@ class NavigationSystem : public ISystem {
 	// run of boxes fans out instead of stacking); a zero vector falls back to {1,0} so the
 	// result stays canonical. The search: a single candidate at origin + minDist*dir, then a
 	// ring of fixed angles at that radius, then a fallback that pushes the nearest walkable
-	// point out to minDist. nullopt only when `origin` is outside every region or its region
-	// has no walkable floor at all -- whenever any walkable floor exists, the result is non-null.
+	// point out to minDist. The mesh searched is the first built region holding `origin`, colonist
+	// regions before the camera's, then newest stamp; candidates are checked with isValidPosition.
+	// nullopt only when `origin` is outside every region or that region has no walkable floor at
+	// all -- whenever any walkable floor exists, the result is non-null.
 	[[nodiscard]] std::optional<glm::vec2>
 	findValidPositionNear(glm::vec2 origin, float minDistMeters = 1.0F, glm::vec2 preferredDir = {0.0F, 0.0F}) const;
 
@@ -387,6 +405,8 @@ class NavigationSystem : public ISystem {
 		const geometry::nav::NavMesh* mesh;
 		geometry::Vec2i64			  center;
 		std::int64_t				  halfExtent;
+		RegionOwner					  owner;
+		std::uint64_t				  meshGeneration; // this region's own swap count
 	};
 	// Snapshot of every region that currently has a non-empty mesh.
 	[[nodiscard]] std::vector<RegionView> builtRegions() const;
@@ -399,28 +419,25 @@ class NavigationSystem : public ISystem {
 	// Maximum half-extent: bounds the build cost. Kept small for now because a 200 m area
 	// in a dense forest is thousands of trees and stalls the off-thread build.
 	static constexpr std::int64_t kMaxSimHalfExtentMm = 64000; // 64 m
-	// Half-extent of a colonist's own sim square (center +/- this). The square is the
-	// minimum so the colonist always sits well inside a clamped region.
+	// Half-extent of a colonist's own sim square (center +/- this).
 	static constexpr std::int64_t kSimRadiusMm = kMinSimHalfExtentMm; // 30 m
-	// Driver travel (mm) that triggers a region re-center: a driver this far from the
-	// region center recenters it. Below it the gate stays shut (hysteresis vs lerp noise).
-	static constexpr std::int64_t kRecenterThresholdMm = 20000; // 20 m
 	// Margin applied to the camera's visible half-diagonal for scroll/zoom headroom.
 	// GameScene multiplies the half-diagonal by this before calling setViewportRect.
 	static constexpr float kViewportMargin = 1.3F;
 
-  private:
-	// A clustered region this tick: the merged bounding rect plus the driver points
-	// (colonist centers + viewport center) that fell in it. The driver points drive the
-	// self-gate: a region is recentered only when one of its drivers nears the rect edge.
-	struct DesiredRegion {
-		SimAabb						   rect;
-		std::vector<geometry::Vec2i64> drivers;
-	};
+	// The colonist regions wanted for these colonist positions. Each colonist's square joins every
+	// cluster it overlaps (directly or through others) as long as the merged rect stays within
+	// 2 * kMaxSimHalfExtentMm on both axes; a square that would push a cluster past that starts or
+	// joins another, overlapping one. So no cluster is ever clamped, and every colonist sits at
+	// least kSimRadiusMm inside his cluster's rect. Positions are taken in sorted order, so the
+	// result depends only on the set of positions.
+	[[nodiscard]] static std::vector<DesiredRegion> clusterColonists(std::vector<geometry::Vec2i64> positions);
 
-	// Per-cluster navmesh + its build state. One per merged region this tick.
+  private:
+	// Per-cluster navmesh + its build state.
 	struct SimulationRegion {
 		std::int32_t			 id		   = 0;	  // stable across rebuilds; RRA cache key prefix
+		RegionOwner				 owner	   = RegionOwner::Colonists;
 		geometry::Vec2i64		 center{0, 0};	  // center (mm) of the last build launched; the served mesh may be older
 		std::int64_t			 halfExtent = 0;  // half-extent (mm) of the last build launched, likewise
 		geometry::nav::NavMesh	 navMesh;		  // current queryable mesh (empty = building)
@@ -429,6 +446,7 @@ class NavigationSystem : public ISystem {
 		std::uint64_t			 builtAreaChunkSignature = 0;		   // areaChunkSignature at launch
 		std::uint64_t			 builtRemovalEpoch		 = UINT64_MAX; // PlacementExecutor::removalEpoch at launch
 		std::uint64_t			 meshGeneration			 = 0;		   // bumped on this region's mesh swap
+		MeshStamp				 meshStamp;							   // the world edits the served mesh reflects
 		// The rect the served mesh was built for (set at its swap), and the one the build in flight was
 		// launched for. Mesh queries use meshRect: center/halfExtent move at launch, before the mesh does.
 		SimAabb					 meshRect;
@@ -440,16 +458,16 @@ class NavigationSystem : public ISystem {
 		}
 	};
 
-	// Compute the desired regions this tick from colonist squares + the viewport square,
-	// clustered. Each carries its merged rect and the driver points that fell in it.
+	// The desired regions this tick: the colonist clusters (clusterColonists) and, when a viewport
+	// was pushed, the camera's own square.
 	[[nodiscard]] std::vector<DesiredRegion> computeDesiredRegions() const;
 
-	// Diff desired regions against current ones: a desired region whose drivers all sit
-	// comfortably (>= kEdgeMarginMm) inside an overlapping existing region keeps that
-	// region untouched (self-gate -- no rebuild unless its obstacles changed); otherwise
-	// recenter/resize the best-overlapping region and rebuild, or spawn a new one. A
-	// region whose build is still running recenters once it lands. Regions no longer
-	// wanted are dropped. Launches/relaunches async builds where needed.
+	// Diff desired regions against current ones of the same owner: a desired region whose drivers
+	// all sit comfortably (>= kEdgeMarginMm) inside an existing region keeps that region untouched
+	// (self-gate -- no rebuild unless its obstacles changed); otherwise recenter/resize the
+	// best-overlapping region and rebuild, or spawn a new one. A region whose build is still
+	// running recenters once it lands. Regions no longer wanted are dropped. Launches/relaunches
+	// async builds where needed.
 	void reconcileRegions(const std::vector<DesiredRegion>& desired);
 
 	// Drain any finished region builds (swap meshes in, bump generations, clear that
@@ -493,10 +511,13 @@ class NavigationSystem : public ISystem {
 	// has finished entity placement. Either part is left out when its source isn't wired.
 	[[nodiscard]] std::uint64_t areaChunkSignature(geometry::Vec2i64 center, std::int64_t halfExtent) const;
 
-	// Locate the index of the built region whose rect contains `meters`, or -1. When
-	// rects overlap (a merge in progress) the first match wins; queries are well-defined
-	// because a merged region covers the union, so any covering region answers correctly.
-	[[nodiscard]] int regionContaining(glm::vec2 meters) const;
+	// Which regions a query consults: colonist regions only, or every region with colonist ones first.
+	enum class RegionScope : std::uint8_t { Colonists, All };
+
+	// Index of the built region that answers a point query at `mm`, or -1: among the built regions in
+	// `scope` whose mesh rect holds it, colonist before camera, then the newest MeshStamp, then the
+	// lowest id.
+	[[nodiscard]] int regionAt(geometry::Vec2i64 mm, RegionScope scope) const;
 
 	// Margin (mm) inside a region rect: a driver closer than this to the edge triggers a
 	// recenter. Keeps a colonist comfortably away from the off-mesh boundary.
