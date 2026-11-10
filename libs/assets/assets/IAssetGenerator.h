@@ -53,8 +53,8 @@ struct GeneratedAsset {
 	std::vector<GeneratedPath> paths;
 
 	// Collision footprint emitted by the generator script (asset:setCollisionRect).
-	// Captured eagerly at load so nav/collision see it without running the full
-	// render pipeline. Unset means the generator declared no collision.
+	// Captured at load (per age class, from its variant 0) so nav/collision see it without
+	// running the full render pipeline. Unset means the generator declared no collision.
 	std::optional<CollisionShape> emittedCollision;
 
 	void clear() {

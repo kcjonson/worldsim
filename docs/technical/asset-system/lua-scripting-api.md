@@ -138,7 +138,13 @@ asset:setPosition(x, y)
 asset:setRotation(radians)
 asset:setScale(s)      -- uniform
 asset:setScale(sx, sy) -- non-uniform
+
+-- Declare the rect collider (local meters): half width, half height, center x, center y.
+-- Non-positive half-extents are ignored.
+asset:setCollisionRect(halfW, halfH, cx, cy)
 ```
+
+The collider is per age class: the loader keeps the rect from each class's variant 0, so a script may read `ageClass` to size it (a sapling's trunk is thinner than a veteran's). It must not depend on `variantIndex` or the seed; `asset-cli validate --render-smoke` fails a def whose rect differs between two variants of one class.
 
 ### VectorPath
 

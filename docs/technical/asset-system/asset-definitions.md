@@ -306,6 +306,8 @@ A tree def can split into age classes. Each placed tree gets one age class and o
 
 A def with both `<ageClasses>` and `<variantCount>` is a validation error, as is any broken attribute above; the loader then ignores the whole block. A def without `<ageClasses>` has one age class of `variantCount` variants. Nothing reads the yield and work scales or draws per variant yet.
 
+Collision is per age class. A generator's `asset:setCollisionRect` is captured from each class's variant 0 while the variants are prewarmed at load, and `AssetDefinition::collisionFor(ageClass)` answers with it (a def without `<ageClasses>` answers for class 0). An XML `<collision>` or SVG metadata collider applies to every class and wins over the generator. The rect may not depend on the variant: `asset-cli validate --render-smoke` generates variants 0 and 1 of each class with two or more and fails the def, naming the class, if they differ.
+
 ### Variation Elements
 
 | Element | Description |

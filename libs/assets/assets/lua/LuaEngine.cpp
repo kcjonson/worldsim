@@ -280,7 +280,7 @@ namespace assets {
 				return asset.paths.back();
 			},
 			// Declare a rectangular collision footprint (local meters). Center
-			// defaults to the asset origin. Captured eagerly at load so nav sees it.
+			// defaults to the asset origin. Captured per age class at load so nav sees it.
 			"setCollisionRect",
 			[](GeneratedAsset& asset, float halfWidthMeters, float halfHeightMeters, float centerXMeters, float centerYMeters) {
 				if (halfWidthMeters <= 0.0F || halfHeightMeters <= 0.0F) {

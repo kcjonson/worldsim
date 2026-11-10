@@ -182,6 +182,12 @@ namespace assets {
 		/// @return false when the def isn't procedural or its generator fails (logged)
 		bool buildPaths(const std::string& defName, uint32_t seed, TessellatedPaths& outPaths, float maxPixelsPerMeter = kFullDetail);
 
+		/// Adds an error to `report` for each age class of a def whose generator emits a different
+		/// collision rect for two of its variants: the rect is per age class, so it may not depend on
+		/// the variant. Generates variants 0 and 1 of each class that has two or more; runs a
+		/// generator, so it is for the render smoke, not for load.
+		void checkCollisionVariantIndependence(ValidationReport& report);
+
 		/// Where a def's generator script is on disk: its scriptPath, with @shared/ resolved against
 		/// the shared scripts folder. Empty when the def names no script, or a @shared/ one with no
 		/// folder set (logged).
@@ -322,6 +328,7 @@ namespace assets {
 		struct BuiltTemplate {
 			std::optional<renderer::TessellatedMesh> mesh;
 			std::string								 error; // why a procedural template has no mesh
+			std::optional<CollisionShape>			 collision; // what the generator emitted via asset:setCollisionRect
 		};
 		struct TemplateEntry {
 			std::optional<renderer::TessellatedMesh> mesh;
@@ -340,6 +347,7 @@ namespace assets {
 
 		/// Builds every variant of each def with age classes, in parallel, before the first chunk
 		/// asks for one. A variant over kMaxMeshVertices is an error in the validation report.
+		/// Each class's collision rect is taken from its variant 0 (unless the def authors one).
 		void prewarmTreeVariants();
 
 		/// Drops every template, silhouette, and resolved motion.

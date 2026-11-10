@@ -1150,29 +1150,32 @@ namespace assets {
 					const float maxX = rectNode.attribute("maxX").as_float(0.0F);
 					const float maxY = rectNode.attribute("maxY").as_float(0.0F);
 					if (maxX > minX && maxY > minY) {
-						def.collision.type			   = CollisionShapeType::Rect;
-						def.collision.offsetMeters	   = {(minX + maxX) * 0.5F, (minY + maxY) * 0.5F};
-						def.collision.halfExtentsMeters = {(maxX - minX) * 0.5F, (maxY - minY) * 0.5F};
+						CollisionShape rect;
+						rect.type			   = CollisionShapeType::Rect;
+						rect.offsetMeters	   = {(minX + maxX) * 0.5F, (minY + maxY) * 0.5F};
+						rect.halfExtentsMeters = {(maxX - minX) * 0.5F, (maxY - minY) * 0.5F};
+						def.setCollisionAllClasses(rect);
 					} else {
 						LOG_WARNING(Engine, "AssetDef '%s' <collision><rect> is degenerate (max <= min); ignoring", def.defName.c_str());
 					}
 				} else if (polygonNode) {
+					CollisionShape polygon;
 					for (pugi::xml_node ptNode : polygonNode.children("point")) {
-						def.collision.pointsMeters.push_back({
+						polygon.pointsMeters.push_back({
 							ptNode.attribute("x").as_float(0.0F),
 							ptNode.attribute("y").as_float(0.0F),
 						});
 					}
-					if (def.collision.pointsMeters.size() < 3) {
+					if (polygon.pointsMeters.size() < 3) {
 						LOG_WARNING(
 							Engine,
 							"AssetDef '%s' <collision><polygon> has fewer than 3 points (%zu); ignoring",
 							def.defName.c_str(),
-							def.collision.pointsMeters.size()
+							polygon.pointsMeters.size()
 						);
-						def.collision.pointsMeters.clear();
 					} else {
-						def.collision.type = CollisionShapeType::Polygon;
+						polygon.type = CollisionShapeType::Polygon;
+						def.setCollisionAllClasses(polygon);
 					}
 				} else {
 					LOG_WARNING(Engine, "AssetDef '%s' has <collision> with no valid <rect> or <polygon>; ignoring", def.defName.c_str());
@@ -1194,13 +1197,16 @@ namespace assets {
 		// this is cheap) so nav/collision see the rect at load instead of racing the
 		// first lazy render. XML <collision> always wins; skip capture when set. Ground tiles
 		// never collide, and their generators are the heaviest scripts, so they are skipped too.
+		// A def with <ageClasses> is skipped as well: prewarmTreeVariants takes each class's rect
+		// from the variant 0 it generates anyway.
 		for (const std::string& name : loadedNames) {
 			auto it = definitions.find(name);
 			if (it == definitions.end()) {
 				continue;
 			}
 			AssetDefinition& def = it->second;
-			if (def.collision.blocks() || def.assetType != AssetType::Procedural || def.role == AssetRole::Ground) {
+			if (def.collisionFor(0).blocks() || def.assetType != AssetType::Procedural || def.role == AssetRole::Ground ||
+				!def.ageClasses.empty()) {
 				continue;
 			}
 			GeneratedAsset tmp;
@@ -1209,7 +1215,7 @@ namespace assets {
 				continue;
 			}
 			if (tmp.emittedCollision.has_value()) {
-				def.collision = *tmp.emittedCollision;
+				def.setCollision(0, *tmp.emittedCollision);
 			}
 		}
 
@@ -1231,7 +1237,7 @@ namespace assets {
 			}
 			std::string resolvedSvgPath = def.resolvePath(def.svgPath).string();
 			if (auto shape = loadCollisionFromSvgMetadata(resolvedSvgPath, def.worldHeight)) {
-				def.collision = *shape;
+				def.setCollisionAllClasses(*shape);
 			}
 		}
 
@@ -1512,7 +1518,8 @@ namespace assets {
 				LOG_ERROR(Engine, "%s", out.error.c_str());
 				return out;
 			}
-			mesh = std::move(meshes.front());
+			mesh		  = std::move(meshes.front());
+			out.collision = std::move(asset.emittedCollision);
 		}
 
 		out.mesh = std::move(mesh);
@@ -1597,13 +1604,13 @@ namespace assets {
 
 	void AssetRegistry::prewarmTreeVariants() {
 		struct Job {
-			const AssetDefinition* def = nullptr;
-			TreeTraits			   traits;
-			bool				   mature = false;
-			BuiltTemplate		   built;
+			AssetDefinition* def = nullptr;
+			TreeTraits		 traits;
+			bool			 mature = false;
+			BuiltTemplate	 built;
 		};
 		std::vector<Job> jobs;
-		for (const auto& [name, def] : definitions) {
+		for (auto& [name, def] : definitions) {
 			if (def.ageClasses.empty() || def.assetType != AssetType::Procedural) {
 				continue;
 			}
@@ -1641,6 +1648,9 @@ namespace assets {
 			if (!job.built.error.empty()) {
 				m_validationReport.add(Severity::Error, job.def->defName, "ageClasses", job.built.error, "");
 			}
+			if (job.traits.variant == 0 && job.built.collision.has_value() && !job.def->collisionFor(job.traits.ageClass).blocks()) {
+				job.def->setCollision(job.traits.ageClass, *job.built.collision);
+			}
 			insertTemplate(*job.def, job.traits, std::move(job.built));
 		}
 		LOG_INFO(
@@ -1649,6 +1659,47 @@ namespace assets {
 			jobs.size(),
 			std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count()
 		);
+	}
+
+	void AssetRegistry::checkCollisionVariantIndependence(ValidationReport& report) {
+		std::vector<const AssetDefinition*> defs;
+		for (const auto& [name, def] : definitions) {
+			if (!def.ageClasses.empty() && def.assetType == AssetType::Procedural) {
+				defs.push_back(&def);
+			}
+		}
+		std::sort(defs.begin(), defs.end(), [](const AssetDefinition* a, const AssetDefinition* b) { return a->defName < b->defName; });
+
+		for (const AssetDefinition* def : defs) {
+			for (size_t a = 0; a < def->ageClasses.size(); ++a) {
+				if (def->ageClasses[a].variants < 2) {
+					continue;
+				}
+				std::optional<CollisionShape> first;
+				bool						  differs = false;
+				for (uint16_t v = 0; v < 2; ++v) {
+					const TreeTraits traits{.ageClass = static_cast<uint8_t>(a), .variant = v};
+					GeneratedAsset	 asset;
+					if (!generateAsset(def->defName, generationSeed(*def, traits), asset, traits)) {
+						break; // prewarm already reported the failed generation
+					}
+					if (v == 0) {
+						first = std::move(asset.emittedCollision);
+					} else {
+						differs = first != asset.emittedCollision;
+					}
+				}
+				if (differs) {
+					report.add(
+						Severity::Error,
+						def->defName,
+						"collision",
+						"age class '" + def->ageClasses[a].name + "' emits a different collision rect for variants 0 and 1; the rect must not depend on the variant",
+						""
+					);
+				}
+			}
+		}
 	}
 
 	const AssetSilhouette* AssetRegistry::getSilhouette(const std::string& defName, TreeTraits traits) {

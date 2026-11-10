@@ -455,6 +455,7 @@ namespace {
 					report.add(Severity::Error, name, "render", "Asset produced no geometry (render smoke test)", "");
 				}
 			}
+			AssetRegistry::Get().checkCollisionVariantIndependence(report);
 		}
 
 		if (asJson) {

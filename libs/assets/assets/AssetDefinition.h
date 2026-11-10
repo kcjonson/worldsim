@@ -4,6 +4,7 @@
 // Data structures for asset definitions parsed from XML.
 // Designed for C++ generators now with Lua drop-in compatibility later.
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <filesystem>
@@ -318,6 +319,8 @@ namespace assets {
 
 		[[nodiscard]] bool blocks() const { return type != CollisionShapeType::None; }
 
+		bool operator==(const CollisionShape&) const = default;
+
 		// The 4 local corners (CCW), available to consumers that want the corner form.
 		[[nodiscard]] std::array<glm::vec2, 4> rectCornersLocal() const {
 			const glm::vec2 c  = offsetMeters;
@@ -431,7 +434,9 @@ namespace assets {
 		std::vector<AgeClass>			  ageClasses;
 		GroundParams					  ground;			// Only meaningful when role == Ground
 
-		CollisionShape collision; // Physical footprint for navmesh/collision; default None = doesn't block
+		// Physical footprint for navmesh/collision, one per age class (one entry when the def has no
+		// <ageClasses>); empty = doesn't block. Read it through collisionFor, write it through setCollision.
+		std::vector<CollisionShape> collisions;
 
 		// Item category and carrying
 		ItemCategory category = ItemCategory::None; // What type of item (for storage matching, UI grouping)
@@ -444,6 +449,24 @@ namespace assets {
 		/// Check if this entity is edible when in inventory
 		[[nodiscard]] bool isEdible() const {
 			return itemProperties.has_value() && itemProperties->isEdible();
+		}
+
+		/// The footprint of an instance of the given age class; None when the def has no footprint
+		/// or the class is out of range. A def without age classes answers for class 0.
+		[[nodiscard]] const CollisionShape& collisionFor(uint8_t ageClass) const {
+			static const CollisionShape kNone;
+			return ageClass < collisions.size() ? collisions[ageClass] : kNone;
+		}
+
+		/// Sets the footprint of one age class (class 0 for a def without age classes).
+		void setCollision(uint8_t ageClass, CollisionShape shape) {
+			collisions.resize(std::max<size_t>(ageClasses.size(), 1U));
+			collisions.at(ageClass) = std::move(shape);
+		}
+
+		/// Sets every age class to the same footprint: what a def authors in XML or SVG metadata.
+		void setCollisionAllClasses(const CollisionShape& shape) {
+			collisions.assign(std::max<size_t>(ageClasses.size(), 1U), shape);
 		}
 
 		/// Check if this definition uses a Lua script generator

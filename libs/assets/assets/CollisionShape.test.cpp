@@ -99,8 +99,8 @@ TEST(CollisionShapeTest, AbsentCollisionIsNone) {
 	const AssetDefinition* def = reg.getDefinition("TestAsset");
 	ASSERT_NE(def, nullptr);
 
-	EXPECT_EQ(def->collision.type, CollisionShapeType::None);
-	EXPECT_FALSE(def->collision.blocks());
+	EXPECT_EQ(def->collisionFor(0).type, CollisionShapeType::None);
+	EXPECT_FALSE(def->collisionFor(0).blocks());
 }
 
 TEST(CollisionShapeTest, RectParsesMinMaxToCenterAndHalfExtents) {
@@ -113,13 +113,13 @@ TEST(CollisionShapeTest, RectParsesMinMaxToCenterAndHalfExtents) {
 	const AssetDefinition* def = reg.getDefinition("TestAsset");
 	ASSERT_NE(def, nullptr);
 
-	EXPECT_EQ(def->collision.type, CollisionShapeType::Rect);
+	EXPECT_EQ(def->collisionFor(0).type, CollisionShapeType::Rect);
 	// center = ((min+max)/2), halfExtents = ((max-min)/2)
-	EXPECT_FLOAT_EQ(def->collision.offsetMeters.x, 0.2F);
-	EXPECT_FLOAT_EQ(def->collision.offsetMeters.y, 0.3F);
-	EXPECT_FLOAT_EQ(def->collision.halfExtentsMeters.x, 0.4F);
-	EXPECT_FLOAT_EQ(def->collision.halfExtentsMeters.y, 0.2F);
-	EXPECT_TRUE(def->collision.blocks());
+	EXPECT_FLOAT_EQ(def->collisionFor(0).offsetMeters.x, 0.2F);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).offsetMeters.y, 0.3F);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).halfExtentsMeters.x, 0.4F);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).halfExtentsMeters.y, 0.2F);
+	EXPECT_TRUE(def->collisionFor(0).blocks());
 }
 
 TEST(CollisionShapeTest, RectInvertedOrDegenerateIsNone) {
@@ -133,8 +133,8 @@ TEST(CollisionShapeTest, RectInvertedOrDegenerateIsNone) {
 	const AssetDefinition* def = reg.getDefinition("TestAsset");
 	ASSERT_NE(def, nullptr);
 
-	EXPECT_EQ(def->collision.type, CollisionShapeType::None);
-	EXPECT_FALSE(def->collision.blocks());
+	EXPECT_EQ(def->collisionFor(0).type, CollisionShapeType::None);
+	EXPECT_FALSE(def->collisionFor(0).blocks());
 }
 
 TEST(CollisionShapeTest, RectCornersLocalAreCcw) {
@@ -183,13 +183,13 @@ TEST(CollisionShapeTest, PolygonParsesPoints) {
 	const AssetDefinition* def = reg.getDefinition("TestAsset");
 	ASSERT_NE(def, nullptr);
 
-	EXPECT_EQ(def->collision.type, CollisionShapeType::Polygon);
-	ASSERT_EQ(def->collision.pointsMeters.size(), 3U);
-	EXPECT_FLOAT_EQ(def->collision.pointsMeters[0].x, 0.0F);
-	EXPECT_FLOAT_EQ(def->collision.pointsMeters[1].x, 1.0F);
-	EXPECT_FLOAT_EQ(def->collision.pointsMeters[2].x, 0.5F);
-	EXPECT_FLOAT_EQ(def->collision.pointsMeters[2].y, 1.0F);
-	EXPECT_TRUE(def->collision.blocks());
+	EXPECT_EQ(def->collisionFor(0).type, CollisionShapeType::Polygon);
+	ASSERT_EQ(def->collisionFor(0).pointsMeters.size(), 3U);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).pointsMeters[0].x, 0.0F);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).pointsMeters[1].x, 1.0F);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).pointsMeters[2].x, 0.5F);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).pointsMeters[2].y, 1.0F);
+	EXPECT_TRUE(def->collisionFor(0).blocks());
 }
 
 TEST(CollisionShapeTest, PolygonTooFewPointsIsNone) {
@@ -210,8 +210,8 @@ TEST(CollisionShapeTest, PolygonTooFewPointsIsNone) {
 	const AssetDefinition* def = reg.getDefinition("TestAsset");
 	ASSERT_NE(def, nullptr);
 
-	EXPECT_EQ(def->collision.type, CollisionShapeType::None);
-	EXPECT_FALSE(def->collision.blocks());
+	EXPECT_EQ(def->collisionFor(0).type, CollisionShapeType::None);
+	EXPECT_FALSE(def->collisionFor(0).blocks());
 }
 
 TEST(CollisionShapeTest, EmptyCollisionBlockIsNone) {
@@ -224,8 +224,8 @@ TEST(CollisionShapeTest, EmptyCollisionBlockIsNone) {
 	const AssetDefinition* def = reg.getDefinition("TestAsset");
 	ASSERT_NE(def, nullptr);
 
-	EXPECT_EQ(def->collision.type, CollisionShapeType::None);
-	EXPECT_FALSE(def->collision.blocks());
+	EXPECT_EQ(def->collisionFor(0).type, CollisionShapeType::None);
+	EXPECT_FALSE(def->collisionFor(0).blocks());
 }
 
 // End-to-end: the tree defs carry no XML <collision>, so these exercise the
@@ -243,13 +243,13 @@ TEST(CollisionShapeTest, OakTreeHasRectHalfExtent0_1) {
 
 	reg.clearDefinitions();
 	reg.setSharedScriptsPath(p / "assets" / "shared" / "scripts");
-	reg.loadDefinitions((oak / "OakTree.xml").string());
+	reg.loadDefinitionsFromFolder(oak.string());
 
 	const AssetDefinition* def = reg.getDefinition("Flora_TreeOak");
 	ASSERT_NE(def, nullptr);
-	EXPECT_EQ(def->collision.type, CollisionShapeType::Rect);
-	EXPECT_FLOAT_EQ(def->collision.halfExtentsMeters.x, 0.1F);
-	EXPECT_FLOAT_EQ(def->collision.halfExtentsMeters.y, 0.1F);
+	EXPECT_EQ(def->collisionFor(0).type, CollisionShapeType::Rect);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).halfExtentsMeters.x, 0.1F);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).halfExtentsMeters.y, 0.1F);
 }
 
 TEST(CollisionShapeTest, MapleTreeHasRectHalfExtent0_075) {
@@ -264,13 +264,13 @@ TEST(CollisionShapeTest, MapleTreeHasRectHalfExtent0_075) {
 
 	reg.clearDefinitions();
 	reg.setSharedScriptsPath(p / "assets" / "shared" / "scripts");
-	reg.loadDefinitions((maple / "MapleTree.xml").string());
+	reg.loadDefinitionsFromFolder(maple.string());
 
 	const AssetDefinition* def = reg.getDefinition("Flora_TreeMaple");
 	ASSERT_NE(def, nullptr);
-	EXPECT_EQ(def->collision.type, CollisionShapeType::Rect);
-	EXPECT_FLOAT_EQ(def->collision.halfExtentsMeters.x, 0.075F);
-	EXPECT_FLOAT_EQ(def->collision.halfExtentsMeters.y, 0.075F);
+	EXPECT_EQ(def->collisionFor(0).type, CollisionShapeType::Rect);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).halfExtentsMeters.x, 0.075F);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).halfExtentsMeters.y, 0.075F);
 }
 
 TEST(CollisionShapeTest, PalmTreeHasRectHalfExtent0_06) {
@@ -289,9 +289,9 @@ TEST(CollisionShapeTest, PalmTreeHasRectHalfExtent0_06) {
 
 	const AssetDefinition* def = reg.getDefinition("Flora_TreePalm");
 	ASSERT_NE(def, nullptr);
-	EXPECT_EQ(def->collision.type, CollisionShapeType::Rect);
-	EXPECT_FLOAT_EQ(def->collision.halfExtentsMeters.x, 0.06F);
-	EXPECT_FLOAT_EQ(def->collision.halfExtentsMeters.y, 0.06F);
+	EXPECT_EQ(def->collisionFor(0).type, CollisionShapeType::Rect);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).halfExtentsMeters.x, 0.06F);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).halfExtentsMeters.y, 0.06F);
 }
 
 TEST(CollisionShapeTest, PineTreeHasRectHalfExtent0_09) {
@@ -310,9 +310,9 @@ TEST(CollisionShapeTest, PineTreeHasRectHalfExtent0_09) {
 
 	const AssetDefinition* def = reg.getDefinition("Flora_TreePine");
 	ASSERT_NE(def, nullptr);
-	EXPECT_EQ(def->collision.type, CollisionShapeType::Rect);
-	EXPECT_FLOAT_EQ(def->collision.halfExtentsMeters.x, 0.09F);
-	EXPECT_FLOAT_EQ(def->collision.halfExtentsMeters.y, 0.09F);
+	EXPECT_EQ(def->collisionFor(0).type, CollisionShapeType::Rect);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).halfExtentsMeters.x, 0.09F);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).halfExtentsMeters.y, 0.09F);
 }
 
 TEST(CollisionShapeTest, RectDegenerateYIsNone) {
@@ -326,8 +326,8 @@ TEST(CollisionShapeTest, RectDegenerateYIsNone) {
 	const AssetDefinition* def = reg.getDefinition("TestAsset");
 	ASSERT_NE(def, nullptr);
 
-	EXPECT_EQ(def->collision.type, CollisionShapeType::None);
-	EXPECT_FALSE(def->collision.blocks());
+	EXPECT_EQ(def->collisionFor(0).type, CollisionShapeType::None);
+	EXPECT_FALSE(def->collisionFor(0).blocks());
 }
 
 TEST(CollisionShapeTest, XmlCollisionWinsOverLuaEmit) {
@@ -365,9 +365,9 @@ TEST(CollisionShapeTest, XmlCollisionWinsOverLuaEmit) {
 	ASSERT_NE(def, nullptr);
 
 	// XML half-extents are 0.1; Lua would have emitted 0.25. XML must win.
-	EXPECT_EQ(def->collision.type, CollisionShapeType::Rect);
-	EXPECT_FLOAT_EQ(def->collision.halfExtentsMeters.x, 0.1F);
-	EXPECT_FLOAT_EQ(def->collision.halfExtentsMeters.y, 0.1F);
+	EXPECT_EQ(def->collisionFor(0).type, CollisionShapeType::Rect);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).halfExtentsMeters.x, 0.1F);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).halfExtentsMeters.y, 0.1F);
 }
 
 TEST(CollisionShapeTest, LuaDegenerateRectIsNone) {
@@ -407,8 +407,8 @@ TEST(CollisionShapeTest, LuaDegenerateRectIsNone) {
 	ASSERT_NE(def, nullptr);
 
 	// The guard in setCollisionRect should have rejected the zero-area rect.
-	EXPECT_EQ(def->collision.type, CollisionShapeType::None);
-	EXPECT_FALSE(def->collision.blocks());
+	EXPECT_EQ(def->collisionFor(0).type, CollisionShapeType::None);
+	EXPECT_FALSE(def->collisionFor(0).blocks());
 }
 
 TEST(CollisionShapeTest, BerryBushHasNoCollision) {
@@ -430,8 +430,8 @@ TEST(CollisionShapeTest, BerryBushHasNoCollision) {
 	ASSERT_FALSE(names.empty());
 	const AssetDefinition* def = reg.getDefinition(names[0]);
 	ASSERT_NE(def, nullptr);
-	EXPECT_EQ(def->collision.type, CollisionShapeType::None);
-	EXPECT_FALSE(def->collision.blocks());
+	EXPECT_EQ(def->collisionFor(0).type, CollisionShapeType::None);
+	EXPECT_FALSE(def->collisionFor(0).blocks());
 }
 
 // SVG <metadata> collision: an aabb authored in SVG user units converts to a
@@ -457,12 +457,12 @@ TEST(CollisionShapeTest, SvgMetadataAabbToRect) {
 	const AssetDefinition* def = reg.getDefinition("TestAsset");
 	ASSERT_NE(def, nullptr);
 
-	EXPECT_EQ(def->collision.type, CollisionShapeType::Rect);
-	EXPECT_FLOAT_EQ(def->collision.offsetMeters.x, 0.0F);
-	EXPECT_FLOAT_EQ(def->collision.offsetMeters.y, 0.1F);
-	EXPECT_FLOAT_EQ(def->collision.halfExtentsMeters.x, 0.3F);
-	EXPECT_FLOAT_EQ(def->collision.halfExtentsMeters.y, 0.3F);
-	EXPECT_TRUE(def->collision.blocks());
+	EXPECT_EQ(def->collisionFor(0).type, CollisionShapeType::Rect);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).offsetMeters.x, 0.0F);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).offsetMeters.y, 0.1F);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).halfExtentsMeters.x, 0.3F);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).halfExtentsMeters.y, 0.3F);
+	EXPECT_TRUE(def->collisionFor(0).blocks());
 }
 
 // SVG metadata wins over an XML <collision> for simple assets.
@@ -482,10 +482,10 @@ TEST(CollisionShapeTest, SvgMetadataWinsOverXml) {
 	const AssetDefinition* def = reg.getDefinition("TestAsset");
 	ASSERT_NE(def, nullptr);
 
-	EXPECT_EQ(def->collision.type, CollisionShapeType::Rect);
+	EXPECT_EQ(def->collisionFor(0).type, CollisionShapeType::Rect);
 	// SVG-derived half-extents (0.5), not the XML's 0.05.
-	EXPECT_FLOAT_EQ(def->collision.halfExtentsMeters.x, 0.5F);
-	EXPECT_FLOAT_EQ(def->collision.halfExtentsMeters.y, 0.5F);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).halfExtentsMeters.x, 0.5F);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).halfExtentsMeters.y, 0.5F);
 }
 
 // A degenerate SVG aabb (zero extent) yields no collider.
@@ -503,8 +503,8 @@ TEST(CollisionShapeTest, SvgMetadataDegenerateIsNone) {
 	const AssetDefinition* def = reg.getDefinition("TestAsset");
 	ASSERT_NE(def, nullptr);
 
-	EXPECT_EQ(def->collision.type, CollisionShapeType::None);
-	EXPECT_FALSE(def->collision.blocks());
+	EXPECT_EQ(def->collisionFor(0).type, CollisionShapeType::None);
+	EXPECT_FALSE(def->collisionFor(0).blocks());
 }
 
 // SVG polygon metadata -> Polygon collider with each vertex in local meters.
@@ -526,14 +526,14 @@ TEST(CollisionShapeTest, SvgMetadataPolygon) {
 	const AssetDefinition* def = reg.getDefinition("TestAsset");
 	ASSERT_NE(def, nullptr);
 
-	EXPECT_EQ(def->collision.type, CollisionShapeType::Polygon);
-	ASSERT_EQ(def->collision.pointsMeters.size(), 3U);
-	EXPECT_FLOAT_EQ(def->collision.pointsMeters[0].x, 0.0F);
-	EXPECT_FLOAT_EQ(def->collision.pointsMeters[0].y, -0.5F);
-	EXPECT_FLOAT_EQ(def->collision.pointsMeters[1].x, 0.5F);
-	EXPECT_FLOAT_EQ(def->collision.pointsMeters[1].y, 0.5F);
-	EXPECT_FLOAT_EQ(def->collision.pointsMeters[2].x, -0.5F);
-	EXPECT_TRUE(def->collision.blocks());
+	EXPECT_EQ(def->collisionFor(0).type, CollisionShapeType::Polygon);
+	ASSERT_EQ(def->collisionFor(0).pointsMeters.size(), 3U);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).pointsMeters[0].x, 0.0F);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).pointsMeters[0].y, -0.5F);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).pointsMeters[1].x, 0.5F);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).pointsMeters[1].y, 0.5F);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).pointsMeters[2].x, -0.5F);
+	EXPECT_TRUE(def->collisionFor(0).blocks());
 }
 
 // Real-asset smoke: the shipped BigRock declares its collider in SVG metadata,
@@ -553,18 +553,18 @@ TEST(CollisionShapeTest, BigRockHasRectFromSvgMetadata) {
 
 	const AssetDefinition* def = reg.getDefinition("BigRock");
 	ASSERT_NE(def, nullptr);
-	EXPECT_EQ(def->collision.type, CollisionShapeType::Rect);
-	EXPECT_TRUE(def->collision.blocks());
+	EXPECT_EQ(def->collisionFor(0).type, CollisionShapeType::Rect);
+	EXPECT_TRUE(def->collisionFor(0).blocks());
 	// A tree-sized footprint: non-trivial half-extents, well under the 1.5 m height.
-	EXPECT_GT(def->collision.halfExtentsMeters.x, 0.1F);
-	EXPECT_GT(def->collision.halfExtentsMeters.y, 0.1F);
-	EXPECT_LT(def->collision.halfExtentsMeters.x, 0.75F);
-	EXPECT_LT(def->collision.halfExtentsMeters.y, 0.9F);
+	EXPECT_GT(def->collisionFor(0).halfExtentsMeters.x, 0.1F);
+	EXPECT_GT(def->collisionFor(0).halfExtentsMeters.y, 0.1F);
+	EXPECT_LT(def->collisionFor(0).halfExtentsMeters.x, 0.75F);
+	EXPECT_LT(def->collisionFor(0).halfExtentsMeters.y, 0.9F);
 	// The aabb is authored symmetric about the silhouette bbox center, so the Rect
 	// lands centered on the entity (offset ~ origin). This is what makes the
 	// cyan asset-manager overlay sit on the boulder.
-	EXPECT_NEAR(def->collision.offsetMeters.x, 0.0F, 0.1F);
-	EXPECT_NEAR(def->collision.offsetMeters.y, 0.0F, 0.1F);
+	EXPECT_NEAR(def->collisionFor(0).offsetMeters.x, 0.0F, 0.1F);
+	EXPECT_NEAR(def->collisionFor(0).offsetMeters.y, 0.0F, 0.1F);
 }
 
 // A simple (SVG-backed) asset with no <metadata> block in its SVG but a <collision>
@@ -598,10 +598,93 @@ TEST(CollisionShapeTest, SvgNoMetadataKeepsXmlCollision) {
 	ASSERT_NE(def, nullptr);
 
 	// XML rect must still be present -- SVG eager pass must not have cleared it.
-	EXPECT_EQ(def->collision.type, CollisionShapeType::Rect);
-	EXPECT_FLOAT_EQ(def->collision.offsetMeters.x, 0.0F);
-	EXPECT_FLOAT_EQ(def->collision.offsetMeters.y, 0.0F);
-	EXPECT_FLOAT_EQ(def->collision.halfExtentsMeters.x, 0.3F);
-	EXPECT_FLOAT_EQ(def->collision.halfExtentsMeters.y, 0.2F);
-	EXPECT_TRUE(def->collision.blocks());
+	EXPECT_EQ(def->collisionFor(0).type, CollisionShapeType::Rect);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).offsetMeters.x, 0.0F);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).offsetMeters.y, 0.0F);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).halfExtentsMeters.x, 0.3F);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).halfExtentsMeters.y, 0.2F);
+	EXPECT_TRUE(def->collisionFor(0).blocks());
+}
+
+namespace {
+
+	// A two-class tree (sapling, mature; two variants each) whose generator draws a triangle and
+	// sets its rect from `rectLua`, a Lua statement that may read ageClass and variantIndex.
+	void writeAgedTree(TempAssets& t, const std::string& defName, const std::string& rectLua) {
+		const fs::path dir = t.root / defName;
+		fs::create_directories(dir);
+		std::ofstream(dir / "gen.lua") << "local p = Path()\n"
+										  "p:addVertex(0, 0) p:addVertex(1, 0) p:addVertex(0, 1)\n"
+										  "asset:addPath(p)\n"
+										+ rectLua + "\n";
+		std::ofstream(dir / (defName + ".xml")) << "<?xml version=\"1.0\"?><AssetDefinitions><AssetDef>"
+												   "<defName>"
+												+ defName
+												+ "</defName><assetType>procedural</assetType>"
+												  "<generator><scriptPath>gen.lua</scriptPath></generator>"
+												  "<ageClasses>"
+												  "<ageClass name=\"sapling\" weight=\"0.4\" variants=\"2\"/>"
+												  "<ageClass name=\"mature\" weight=\"0.6\" variants=\"2\"/>"
+												  "</ageClasses></AssetDef></AssetDefinitions>";
+	}
+
+} // namespace
+
+// The rect is captured per age class, from each class's variant 0.
+TEST(CollisionShapeTest, LuaRectIsCapturedPerAgeClass) {
+	auto&	   reg = AssetRegistry::Get();
+	TempAssets t;
+	writeAgedTree(t, "PerClass", "asset:setCollisionRect(ageClass == 'mature' and 0.4 or 0.1, 0.2, 0, 0.05)");
+
+	reg.clearDefinitions();
+	reg.loadDefinitionsFromFolder(t.root.string());
+	const AssetDefinition* def = reg.getDefinition("PerClass");
+	ASSERT_NE(def, nullptr);
+
+	EXPECT_EQ(def->collisionFor(0).type, CollisionShapeType::Rect);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).halfExtentsMeters.x, 0.1F);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).offsetMeters.y, 0.05F);
+	EXPECT_EQ(def->collisionFor(1).type, CollisionShapeType::Rect);
+	EXPECT_FLOAT_EQ(def->collisionFor(1).halfExtentsMeters.x, 0.4F);
+	EXPECT_FALSE(def->collisionFor(2).blocks());
+}
+
+// An XML <collision> applies to every age class and wins over the generator.
+TEST(CollisionShapeTest, XmlRectCoversEveryAgeClass) {
+	auto&	   reg = AssetRegistry::Get();
+	TempAssets t;
+	writeAgedTree(t, "XmlAged", "asset:setCollisionRect(0.4, 0.4, 0, 0)");
+	const fs::path xml = t.root / "XmlAged" / "XmlAged.xml";
+	std::ofstream(xml) << "<?xml version=\"1.0\"?><AssetDefinitions><AssetDef>"
+						  "<defName>XmlAged</defName><assetType>procedural</assetType>"
+						  "<generator><scriptPath>gen.lua</scriptPath></generator>"
+						  "<ageClasses><ageClass name=\"sapling\" weight=\"0.4\" variants=\"1\"/>"
+						  "<ageClass name=\"mature\" weight=\"0.6\" variants=\"1\"/></ageClasses>"
+						  "<collision><rect minX=\"-0.1\" minY=\"-0.1\" maxX=\"0.1\" maxY=\"0.1\"/></collision>"
+						  "</AssetDef></AssetDefinitions>";
+
+	reg.clearDefinitions();
+	reg.loadDefinitionsFromFolder(t.root.string());
+	const AssetDefinition* def = reg.getDefinition("XmlAged");
+	ASSERT_NE(def, nullptr);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).halfExtentsMeters.x, 0.1F);
+	EXPECT_FLOAT_EQ(def->collisionFor(1).halfExtentsMeters.x, 0.1F);
+}
+
+// The render smoke fails a def whose rect differs between two variants of one age class, and
+// names the def and the class; a rect that differs only between classes passes.
+TEST(CollisionShapeTest, VariantDependentRectFailsSmokeCheck) {
+	auto&	   reg = AssetRegistry::Get();
+	TempAssets t;
+	writeAgedTree(t, "Steady", "asset:setCollisionRect(ageClass == 'mature' and 0.4 or 0.1, 0.2, 0, 0)");
+	writeAgedTree(t, "Drifting", "asset:setCollisionRect(ageClass == 'mature' and 0.1 + 0.1 * variantIndex or 0.1, 0.2, 0, 0)");
+
+	reg.clearDefinitions();
+	reg.loadDefinitionsFromFolder(t.root.string());
+	ValidationReport report;
+	reg.checkCollisionVariantIndependence(report);
+
+	ASSERT_EQ(report.errorCount(), 1);
+	EXPECT_EQ(report.issues[0].defName, "Drifting");
+	EXPECT_NE(report.issues[0].message.find("'mature'"), std::string::npos);
 }

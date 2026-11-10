@@ -123,8 +123,8 @@ Sim and tools:
 
 ### R4 Collision per age class
 
-- The generator's `asset:setCollisionRect` is captured per age class at load, where the one eager capture runs today. It must not depend on the variant; `asset-cli validate --render-smoke` generates two variants of each age class and fails the def if their rects differ (the XML validator never runs a generator).
-- `NavInputBuilder` and `StaticRectCollisionSystem` read the rect for the entity's age class.
+- The generator's `asset:setCollisionRect` is captured per age class at load. For a def with `<ageClasses>` the capture is `prewarmTreeVariants` taking each class's variant 0, and the eager capture skips the def; a def without them keeps the one eager capture, stored as class 0. One accessor, `AssetDefinition::collisionFor(ageClass)`, replaces the def-level rect. XML and SVG-metadata colliders apply to every class. It must not depend on the variant; `asset-cli validate --render-smoke` calls `AssetRegistry::checkCollisionVariantIndependence`, which generates variants 0 and 1 of each age class with two or more and fails the def, naming the class, if their rects differ (the XML validator never runs a generator).
+- `NavInputBuilder` and `StaticRectCollisionSystem` read the rect for the entity's age class (`PlacedEntity::traits`). The asset manager's collider outline draws class 0, as it draws the default traits.
 
 ### R5 Generator
 
