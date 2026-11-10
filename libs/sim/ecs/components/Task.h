@@ -72,6 +72,9 @@ struct Task {
 	// to it, and how many finished legs since then got him no closer. Reset with the task.
 	float		 edgeWalkBestDistance = std::numeric_limits<float>::max();
 	std::uint8_t edgeWalkStalledLegs = 0;
+	// Seconds he has stood at the end of a finished edge leg with no next leg asked for. Its own clock,
+	// not timeSinceEvaluation, which direct control zeroes every frame.
+	float edgeLegWaitSeconds = 0.0F;
 
 	/// Target position to move to
 	glm::vec2 targetPosition{0.0F, 0.0F};
@@ -149,7 +152,9 @@ struct Task {
 		deferredNavGeneration = 0;
 		edgeWalkBestDistance = std::numeric_limits<float>::max();
 		edgeWalkStalledLegs = 0;
+		edgeLegWaitSeconds = 0.0F;
 		targetPosition = glm::vec2{0.0F, 0.0F};
+
 		needToFulfill = NeedType::Count;
 		harvestTargetEntityId = 0;
 		harvestGoalId = 0;

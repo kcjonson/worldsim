@@ -4165,7 +4165,29 @@ namespace ecs::test {
 		EXPECT_LT(std::abs(at.y), kRiverY - kRiverHalfWidth) << "he never left his side of the river";
 	}
 
+	// Under direct control, an order to ground far across the river (in no region) ends as no route
+	// within a few legs, with nothing else rebuilding: the edge-leg retry keeps its own clock, since
+	// control zeroes timeSinceEvaluation every frame and he would otherwise stand at the bank showing
+	// "Going to" for good.
+	TEST_F(AIDecisionRiverWalkTest, ControlledOrderAcrossTheRiverEnds) {
+		const auto colonist = makeThirstyColonistWithItsOwnRegion();
+		satisfyAllNeeds(*getNeeds(colonist));
+		auto& ai = world->getSystem<AIDecisionSystem>();
+		ai.enterControl(colonist);
+		const glm::vec2 farAcross{60.0F, 200.0F};
+		ASSERT_FALSE(nav->nearestValidPosition(farAcross, 0.3F).has_value()) << "the click must be in no region";
+		ASSERT_TRUE(ai.issuePlayerMoveOrder(colonist, farAcross).has_value());
+
+		const bool ended = tickUntil(*world, *nav, 300, [&] { return getTask(colonist)->navState == NavState::CantFindWayTo; });
+		const glm::vec2 at = world->getComponent<Position>(colonist)->value;
+		EXPECT_TRUE(ended) << "still going at (" << at.x << ", " << at.y << "), nav state "
+						   << static_cast<int>(getTask(colonist)->navState);
+		EXPECT_LT(std::abs(at.y), kRiverY - kRiverHalfWidth) << "he crossed the river";
+		EXPECT_EQ(nav->builtRegions().size(), 1U) << "another region rebuilt; the test needs his alone";
+	}
+
 	// Legs that finish without getting him closer (something holds him in place; here the test puts him
+
 	// back after every leg) end the walk after kEdgeWalkMaxStalledLegs of them, though a step toward the
 	// water is always on offer.
 	TEST_F(AIDecisionOffAreaTest, LegsThatGetHimNoCloserEndTheWalk) {
@@ -4266,81 +4288,134 @@ namespace ecs::test {
 		EXPECT_LT(glm::distance(at, click), 0.5F);
 	}
 
-	// A harvest target whose own collision carves a hole in the mesh, beyond his regions: walked toward
-	// with its centre, then, once a region holding him covers it, resolved to the walkable point beside
-	// it (routeGoalFor), where he arrives.
-	TEST_F(AIDecisionOffAreaTest, FarTargetInItsOwnHoleIsReachedBesideIt) {
-		auto& registry = assets::AssetRegistry::Get();
-		assets::AssetDefinition stick;
-		stick.defName	  = "HoleStick";
-		stick.label		  = "HoleStick";
-		stick.handsRequired = 1;
-		stick.category	  = assets::ItemCategory::RawMaterial;
-		stick.capabilities.carryable = assets::CarryableCapability{1};
-		stick.itemProperties		 = assets::ItemProperties{};
-		stick.itemProperties->stackSize = 100;
-		stick.itemProperties->massKg	= 0.1F;
-		registry.registerTestDefinition(std::move(stick));
-		assets::AssetDefinition tree;
-		tree.defName							 = "Flora_HoleTree";
-		tree.label								 = "Flora_HoleTree";
-		tree.collision.type						 = assets::CollisionShapeType::Rect;
-		tree.collision.halfExtentsMeters		 = {0.8F, 0.8F};
-		tree.capabilities.harvestable			 = assets::HarvestableCapability{};
-		tree.capabilities.harvestable->yieldDefName = "HoleStick";
-		tree.capabilities.harvestable->requiredToolType = "";
-		registry.registerTestDefinition(std::move(tree));
-		const uint32_t treeId  = registry.getDefNameId("Flora_HoleTree");
-		const uint32_t stickId = registry.getDefNameId("HoleStick");
+	// Trees whose collision carves holes in the nav mesh, the first of them a harvest target with a
+	// work order behind it and known to the colonist.
+	class AIDecisionHoleTreeTest : public AIDecisionOffAreaTest {
+	  protected:
+		void TearDown() override {
+			nav->setPlacementData(nullptr, nullptr);
+			AIDecisionOffAreaTest::TearDown();
+		}
 
-		const glm::vec2						 treeAt{70.0F, 0.0F};
-		assets::PlacementExecutor			 executor(registry);
-		std::unordered_set<world::ChunkCoordinate> processed;
-		const world::ChunkCoordinate		 coord = world::worldToChunk({treeAt.x, treeAt.y});
-		assets::SpatialIndex				 index;
-		assets::PlacedEntity				 placed;
-		placed.defName	= "Flora_HoleTree";
-		placed.position = treeAt;
-		index.insert(placed);
-		assets::AsyncChunkPlacementResult result;
-		result.coord		= coord;
-		result.spatialIndex = std::move(index);
-		executor.storeChunkResult(std::move(result));
-		processed.insert(coord);
-		nav->setPlacementData(&executor, &processed);
+		void placeTrees(const std::vector<glm::vec2>& at, glm::vec2 halfExtents) {
+			auto&					registry = assets::AssetRegistry::Get();
+			assets::AssetDefinition stick;
+			stick.defName					= "HoleStick";
+			stick.label						= "HoleStick";
+			stick.handsRequired				= 1;
+			stick.category					= assets::ItemCategory::RawMaterial;
+			stick.capabilities.carryable	= assets::CarryableCapability{1};
+			stick.itemProperties			= assets::ItemProperties{};
+			stick.itemProperties->stackSize = 100;
+			stick.itemProperties->massKg	= 0.1F;
+			registry.registerTestDefinition(std::move(stick));
+			assets::AssetDefinition tree;
+			tree.defName									= "Flora_HoleTree";
+			tree.label										= "Flora_HoleTree";
+			tree.collision.type								= assets::CollisionShapeType::Rect;
+			tree.collision.halfExtentsMeters				= halfExtents;
+			tree.capabilities.harvestable					= assets::HarvestableCapability{};
+			tree.capabilities.harvestable->yieldDefName		= "HoleStick";
+			tree.capabilities.harvestable->requiredToolType = "";
+			registry.registerTestDefinition(std::move(tree));
+			treeId	= registry.getDefNameId("Flora_HoleTree");
+			stickId = registry.getDefNameId("HoleStick");
 
+			placement = std::make_unique<assets::PlacementExecutor>(registry);
+			std::unordered_map<world::ChunkCoordinate, assets::SpatialIndex> byChunk;
+			for (const glm::vec2 p : at) {
+				assets::PlacedEntity placed;
+				placed.defName	= "Flora_HoleTree";
+				placed.position = p;
+				byChunk[world::worldToChunk({p.x, p.y})].insert(placed);
+			}
+			for (auto& [coord, index] : byChunk) {
+				assets::AsyncChunkPlacementResult result;
+				result.coord		= coord;
+				result.spatialIndex = std::move(index);
+				placement->storeChunkResult(std::move(result));
+				placedChunks.insert(coord);
+			}
+			nav->setPlacementData(placement.get(), &placedChunks);
+		}
+
+		void wantHarvest() {
+			GoalTask craft;
+			craft.type				  = TaskType::Craft;
+			craft.owner				  = GoalOwner::CraftingGoalSystem;
+			craft.destinationPosition = {0.0F, 0.0F};
+			craft.targetAmount		  = 1;
+			craft.status			  = GoalStatus::Blocked;
+			const uint64_t craftId	  = GoalTaskRegistry::Get().createGoal(std::move(craft));
+			GoalTask harvest;
+			harvest.type				= TaskType::Harvest;
+			harvest.owner				= GoalOwner::CraftingGoalSystem;
+			harvest.destinationPosition = {0.0F, 0.0F};
+			harvest.yieldDefNameId		= stickId;
+			harvest.targetAmount		= 1;
+			harvest.parentGoalId		= craftId;
+			harvest.status				= GoalStatus::Available;
+			GoalTaskRegistry::Get().createGoal(std::move(harvest));
+		}
+
+		// Ticks until he arrives on the harvest, checking every tick that the task still stores the
+		// tree's centre (the route end is resolved per request, never written back).
+		[[nodiscard]] bool arrivesOnHarvestOf(EntityID colonist, glm::vec2 treeAt) {
+			return tickUntil(*world, *nav, 1500, [&] {
+				const Task* task = getTask(colonist);
+				if (task->type == TaskType::Harvest) {
+					EXPECT_EQ(task->targetPosition, treeAt) << "the stored target moved";
+				}
+				return task->type == TaskType::Harvest && task->state == TaskState::Arrived;
+			});
+		}
+
+		std::unique_ptr<assets::PlacementExecutor>	placement;
+		std::unordered_set<world::ChunkCoordinate>	placedChunks;
+		uint32_t									treeId	= 0;
+		uint32_t									stickId = 0;
+	};
+
+	// A harvest target in its own hole, beyond his regions: walked toward with its centre, then, once a
+	// region holding him covers it, routed to the walkable point beside it (routeGoalFor), where he
+	// arrives.
+	TEST_F(AIDecisionHoleTreeTest, FarTargetInItsOwnHoleIsReachedBesideIt) {
+		const glm::vec2 treeAt{70.0F, 0.0F};
+		placeTrees({treeAt}, {0.8F, 0.8F});
 		const auto colonist = makeThirstyColonistWithItsOwnRegion();
 		satisfyAllNeeds(*getNeeds(colonist));
 		addKnownEntity(colonist, treeAt, treeId, assets::CapabilityType::Harvestable);
-		GoalTask craft;
-		craft.type				  = TaskType::Craft;
-		craft.owner				  = GoalOwner::CraftingGoalSystem;
-		craft.destinationPosition = {0.0F, 0.0F};
-		craft.targetAmount		  = 1;
-		craft.status			  = GoalStatus::Blocked;
-		const uint64_t craftId	  = GoalTaskRegistry::Get().createGoal(std::move(craft));
-		GoalTask harvest;
-		harvest.type				= TaskType::Harvest;
-		harvest.owner				= GoalOwner::CraftingGoalSystem;
-		harvest.destinationPosition = {0.0F, 0.0F};
-		harvest.yieldDefNameId		= stickId;
-		harvest.targetAmount		= 1;
-		harvest.parentGoalId		= craftId;
-		harvest.status				= GoalStatus::Available;
-		GoalTaskRegistry::Get().createGoal(std::move(harvest));
+		wantHarvest();
 
-		bool	   sawCovered = false;
-		const bool arrived	  = tickUntil(*world, *nav, 1500, [&] {
-			   sawCovered = sawCovered || nav->inSimArea(treeAt);
-			   const Task* task = getTask(colonist);
-			   return task->type == TaskType::Harvest && task->state == TaskState::Arrived;
-		   });
-		const glm::vec2 at = world->getComponent<Position>(colonist)->value;
-		ASSERT_TRUE(sawCovered);
+		const bool		arrived = arrivesOnHarvestOf(colonist, treeAt);
+		const glm::vec2 at		= world->getComponent<Position>(colonist)->value;
 		EXPECT_FALSE(nav->isOnMesh(treeAt)) << "the tree must carve its own hole for this test to mean anything";
 		EXPECT_TRUE(arrived) << "never arrived; at (" << at.x << ", " << at.y << ")";
 		EXPECT_LT(glm::distance(at, treeAt), 1.5F);
-		nav->setPlacementData(nullptr, nullptr);
+	}
+
+	// The target's centre is 2.6 m inside his region, so covered, but the walkable point beside it (a
+	// second tree closes the west side) is 1.7 m inside, where no route may end. Coverage is judged at
+	// that point, so he edge-walks until his region holds it, instead of asking for a route the router
+	// refuses and standing on a task kept as "the same".
+	TEST_F(AIDecisionHoleTreeTest, CoverageIsJudgedWhereTheRouteEnds) {
+		const glm::vec2 treeAt{27.4F, 0.0F};
+		placeTrees({treeAt, {25.9F, 0.0F}}, {0.8F, 2.0F});
+		const auto colonist = makeThirstyColonistWithItsOwnRegion();
+		satisfyAllNeeds(*getNeeds(colonist));
+		addKnownEntity(colonist, treeAt, treeId, assets::CapabilityType::Harvestable);
+		wantHarvest();
+		const auto besideIt = nav->nearestPathablePoint(treeAt, 0.3F);
+		ASSERT_TRUE(besideIt.has_value());
+		ASSERT_GT(besideIt->x, 28.0F) << "the walkable point beside it must be in the 2 m band at the east edge";
+		ASSERT_TRUE(nav->coversGoal(reachOf(*nav, {0.0F, 0.0F}, 0.3F), treeAt));
+
+		const bool		arrived = arrivesOnHarvestOf(colonist, treeAt);
+		const glm::vec2 at		= world->getComponent<Position>(colonist)->value;
+		EXPECT_TRUE(arrived) << "never arrived; at (" << at.x << ", " << at.y << "), nav state "
+							 << static_cast<int>(getTask(colonist)->navState);
+		EXPECT_LT(glm::distance(at, treeAt), 1.5F);
+		EXPECT_GT(at.x, treeAt.x) << "he stood on the walled-off west side";
 	}
 
 	// A harvest target beyond his regions is taken and walked toward, not dropped as NoSource for

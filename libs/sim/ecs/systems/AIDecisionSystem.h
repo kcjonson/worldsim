@@ -88,11 +88,13 @@ public:
 	/// update() re-selects autonomously from a clean slate.
 	void releaseControl(EntityID entity);
 
-	/// Issue a player walk order to a (controlled) colonist. An unwalkable goal (water, inside a
-	/// wall, off the sim area) snaps to the nearest pathable point. Sets a Moving task and resolves
-	/// a navmesh route through the normal pipeline (so vision-driven repath and the arrival hand-off
-	/// work for free). Returns the goal actually routed to (post-snap), or nullopt if nothing
-	/// reachable is near the click (no order issued).
+	/// Issue a player walk order to a (controlled) colonist. A click off a walkable face in some nav
+	/// region (water, inside a wall) snaps to the nearest walkable point there; a click no region holds
+	/// keeps its point and is walked toward. Sets a Moving task and resolves a navmesh route through
+	/// the normal pipeline (so vision-driven repath and the arrival hand-off work for free). Returns the
+	/// goal ordered (post-snap), or nullopt only for an entity without Position, Task or MovementTarget
+	/// (logged).
+
 	[[nodiscard]] std::optional<glm::vec2> issuePlayerMoveOrder(EntityID entity, glm::vec2 worldGoal);
 
 	[[nodiscard]] int priority() const override { return 60; }
@@ -165,13 +167,13 @@ private:
 	void applyNavOutcome(struct Task& task, NavRequestOutcome outcome) const;
 
 	/// Where a route to `target` for a task of `type` ends, judged on colonist regions: `target` itself,
-	/// or for an adjacent-satisfied task (Harvest, Build, Deconstruct, a move order) off a walkable face,
-	/// the nearest walkable point. nullopt when that snap finds no floor. Both the option evaluation
-	/// and requestNavPath resolve through it, so a target is decided one way.
-	[[nodiscard]] std::optional<glm::vec2> routeGoalFor(TaskType type, glm::vec2 target) const;
+	/// or for an adjacent-satisfied task (Harvest, Build, Deconstruct, a move order) off a walkable face
+	/// in a colonist region, the nearest walkable point clear of built walls by `agentRadius`. nullopt
+	/// when that snap finds no floor. The task stores its target unresolved; the option evaluation's
+	/// reach test and requestNavPath's route both go to this point.
+	[[nodiscard]] std::optional<glm::vec2> routeGoalFor(TaskType type, glm::vec2 target, float agentRadius) const;
 
 	/// Walking toward a goal no region holding the colonist covers, one edge leg at a time: has he
-
 	/// finished kEdgeWalkMaxStalledLegs legs in a row without getting kEdgeWalkMinProgressMeters
 	/// closer? Then the walk is over (water in the way, a region that can't follow him).
 	[[nodiscard]] bool stalledWalkingToward(EntityID entity, const glm::vec2& goal, const struct Position& position);

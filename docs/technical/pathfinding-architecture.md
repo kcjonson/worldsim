@@ -14,7 +14,7 @@ From the game, not from the literature:
 
 1. **Vector-native.** The entire world is vector geometry: terrain features, freeform polygon buildings, even moving entities. Navigation should consume exact geometry, not rasterize it away.
 2. **Agents take up space (hard requirement).** Colonists, animals, and raiders cannot overlap. Doorway congestion, queues at chokepoints, and crowd pressure should emerge from agents being physical.
-3. **Infinite world.** Chunks stream around the camera (512 m, load radius 2 today); nav data can only exist for loaded space. Yet agents must traverse unloaded space: the signature scenario is a raid party crossing the globe to the settlement.
+3. **Infinite world.** Chunks stream around the camera (512 m, load radius 1 today); nav data can only exist for loaded space. Yet agents must traverse unloaded space: the signature scenario is a raid party crossing the globe to the settlement.
 4. **The raid scenario end-to-end:** route from anywhere on the planet → arrive near the settlement → coordinate an approach as a group → pick targets → navigate interiors through doors. Section 6 traces it through every tier.
 5. **Colony-sim scale.** Dozens to low hundreds of exact agents near the action; arbitrarily many abstract parties far away.
 6. **Plays well with the engine:** TimeSystem speed multipliers (up to 10x), determinism-friendly (multiplayer future), async-friendly (TaskPool exists), and the construction contract (walls publish exact band polygons, openings publish portals, shared clearance constant, nav version counter).
@@ -26,7 +26,8 @@ From the game, not from the literature:
 |------|------|--------|
 | Movement | Straight-line beeline to `MovementTarget`; no obstacles, no collision; a colonist will happily walk into an unloaded chunk and keep going | `libs/sim/ecs/systems/MovementSystem.cpp`, `PhysicsSystem.cpp` |
 | Agent geometry | No radius/footprint component exists anywhere | ECS components |
-| Chunk streaming | 512 m chunks, load radius 2 (5×5 around camera), unload radius 4, async generation, ~4 MB tile data per chunk; **camera-anchored only**, nothing keeps chunks loaded around colonists | `libs/world/world/chunk/ChunkManager.{h,cpp}` |
+| Chunk streaming | 512 m chunks, load radius 1 (3×3 around camera), unload radius 2,
+ async generation, ~4 MB tile data per chunk; **camera-anchored only**, nothing keeps chunks loaded around colonists | `libs/world/world/chunk/ChunkManager.{h,cpp}` |
 | Terrain data | Per-tile `Surface` (Grass/Dirt/Water/Rock/...) in flat arrays per chunk; no passability or move-cost concept yet | `libs/world/world/chunk/Chunk.h` |
 | Planet graph | **The whole generated planet is resident in RAM.** `SphereGrid::neighbors(TileId)` gives hex adjacency; `PlanetSampler::sampleAt(x,y)` gives biome/elevation/water/containing-hex for any world position, loaded or not. Hex width ~4.3 km at n=256 (≈100 chunks per hex) | `libs/worldgen/worldgen/grid/SphereGrid.h`, `sampling/PlanetSampler.h` |
 | Simulation LOD | None. Every system updates every entity every frame regardless of distance | ECS systems |
@@ -129,20 +130,21 @@ goal when one of them lets it through, and a point goes to the first of them. A 
 overrides a fresher one. Equal stamps don't mean the same world: the stamp leaves out chunk
 readiness (a chunk finishing its terrain or placement), which is a per-area hash with no order, so
 two overlapping regions on one stamp can briefly differ there until the late chunk rebuilds them
-both, a few frames. A route goal counts as in a region only 2 m or more inside its rect; nearer the edge the mesh's
-border can leave it off every face.
- A goal no colonist
-region holding him covers (off every region, or only in the camera's) is walked toward: he routes
+both, a few frames. A route goal counts as in a region only 2 m or more inside its rect; nearer
+the edge the mesh's border can leave it off every face. A goal no colonist region holding him
+covers (off every region, or only in the camera's) is walked toward: he routes
 to the reachable point in his regions nearest it (`stagingPointToward`, inside the recenter margin),
 his region follows him, and the mesh swap re-plans the same goal until a region holding him covers
-it. A harvest, build or deconstruct target walked toward keeps its centre until a region holding
-him covers it, and only then resolves to where its route ends (`routeGoalFor`, used by both the
-option evaluation and `requestNavPath`): the walkable point beside it when it's off a face. Haul
-and craft targets never snap, since their actions check the exact point. A player's move order
-snaps against every region (he clicks what he sees); a click no region holds, like visible ground
-past the camera region's 64 m, keeps its point. Either way it's walked toward and resolved the same
-way. Staging points sit 3 m inside a region's rect and a route goal must be 2 m inside, so the
-mm-to-float round trip far from the origin can't push a leg's end out of its own region. A leg that
+it. A task stores its target as chosen (a harvest, build or deconstruct target's centre); where its
+route ends is resolved by `routeGoalFor` each time, for the option evaluation's reach test and for
+`requestNavPath`'s route alike: once a colonist region holds a target that's off a face, the
+walkable point beside it, clear of built walls by his radius. Coverage is judged at that resolved
+point. Haul and craft targets never snap, since their actions check the exact point. A player's
+move order snaps against every region (he clicks what he sees); a click no region holds, like
+visible ground past the camera region's 64 m, keeps its point. Either way it's walked toward and
+resolved the same way. Staging points, and every sample walked back from one, sit 3 m inside a
+region's rect while a route goal must be 2 m inside, so the mm-to-float round trip far from the
+origin can't push a leg's end out of its own region. A leg that
 gets him nowhere, or three finished legs that get him no closer, end the walk as no
 route, so a need moves on to its next source and retries this one when his reach changes. The edge
 walk is a stand-in for Phase 2 below, not a long-range router: it only sees what his 30 m region

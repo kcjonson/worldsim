@@ -705,8 +705,10 @@ namespace {
 			}
 
 			// Entity selection on a release.
-			// Right-click while a controlled colonist is selected: walk it to the clicked point
-			// (snapped to the nearest walkable spot inside issuePlayerMoveOrder). Return before the
+			// Right-click while a controlled colonist is selected: walk it toward the clicked point
+			// (issuePlayerMoveOrder snaps a click off a walkable face in a nav region; one in no region
+			// is walked toward as is, and the order ends as no route if he can't get there). Return before the
+
 			// selection dispatch so right-click never changes the selection or falls through.
 			if (event.mouseButton == foundation::MouseButton::Right && m_controlledColonist != 0) {
 				const auto worldPt = m_camera->screenToWorld(event.position.x, event.position.y, logicalW, logicalH, kPixelsPerMeter);
