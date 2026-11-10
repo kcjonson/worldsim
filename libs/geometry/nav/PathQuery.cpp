@@ -136,7 +136,7 @@ namespace geometry::nav {
 			return belief.knownSegments == nullptr ? mesh.truthForest : mesh.terrainForest;
 		}
 
-		// The sound reject shared by reachable() and pathThrough()'s short-circuit. Both
+		// pathThrough()'s sound short-circuit, the same test reaches() makes. Both
 		// triangles are already located and known traversable. Returns true when the
 		// forest PROVES no disc of `diameterMm` can get from startTri to goalTri:
 		// different component (any diameter), or the path bottleneck < the diameter.
@@ -282,11 +282,6 @@ namespace geometry::nav {
 			}
 		}
 		return -1;
-	}
-
-	bool reachable(const NavMesh& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
-				   BeliefFilter belief) {
-		return reaches(mesh, reachFrom(mesh, start, agentRadiusMm, belief), goal, belief);
 	}
 
 	ReachFrom reachFrom(const NavMesh& mesh, const Vec2i64& start, std::int64_t agentRadiusMm, BeliefFilter belief) {

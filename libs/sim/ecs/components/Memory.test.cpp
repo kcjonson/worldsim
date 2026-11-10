@@ -8,6 +8,7 @@
 // first touch after relocation erased a freed node — heap corruption that
 // crashed the game whenever a second colonist spawned.
 
+#include "DecisionTrace.h"
 #include "Memory.h"
 #include "MemoryQueries.h"
 
@@ -161,26 +162,34 @@ TEST(MemoryComponent, ClearResetsLru) {
 	EXPECT_EQ(m.worldEntityCount(), 32U);
 }
 
+
+namespace {
+
+	constexpr auto	   kSourceCapability = assets::CapabilityType::Harvestable;
+	constexpr uint16_t kSourceMask = 1U << static_cast<unsigned>(kSourceCapability);
+
+	const auto anySource = [](uint64_t, const ecs::KnownWorldEntity&) { return true; };
+
+} // namespace
+
 // Two sources at the same distance resolve by memory key, whichever was remembered first, so every
 // machine picks the same one.
 TEST(MemoryQueries, NearestSourceTieBreaksOnKeyNotInsertionOrder) {
 	const glm::vec2 east{3.0F, 0.0F};
 	const glm::vec2 north{0.0F, 3.0F};
 	const glm::vec2 expected = ecs::hashWorldEntity(east, kDefId) < ecs::hashWorldEntity(north, kDefId) ? east : north;
-	const auto		anySource = [](const ecs::KnownWorldEntity&) { return true; };
-	const auto		anywhere = [](const glm::vec2&) { return true; };
+	const auto		anywhere = [](uint64_t, const glm::vec2&) { return true; };
 	std::vector<ecs::SourceCandidate> scratch;
 
 	ecs::Memory eastFirst;
-	ASSERT_TRUE(eastFirst.rememberWorldEntity(east, kDefId, kMask));
-	ASSERT_TRUE(eastFirst.rememberWorldEntity(north, kDefId, kMask));
+	ASSERT_TRUE(eastFirst.rememberWorldEntity(east, kDefId, kSourceMask));
+	ASSERT_TRUE(eastFirst.rememberWorldEntity(north, kDefId, kSourceMask));
 	ecs::Memory northFirst;
-	ASSERT_TRUE(northFirst.rememberWorldEntity(north, kDefId, kMask));
-	ASSERT_TRUE(northFirst.rememberWorldEntity(east, kDefId, kMask));
+	ASSERT_TRUE(northFirst.rememberWorldEntity(north, kDefId, kSourceMask));
+	ASSERT_TRUE(northFirst.rememberWorldEntity(east, kDefId, kSourceMask));
 
-	const auto capability = static_cast<assets::CapabilityType>(0);
-	const auto a = ecs::findNearestReachableWithCapability(eastFirst, capability, {0.0F, 0.0F}, anySource, anywhere, scratch);
-	const auto b = ecs::findNearestReachableWithCapability(northFirst, capability, {0.0F, 0.0F}, anySource, anywhere, scratch);
+	const auto a = ecs::findNearestReachableWithCapability(eastFirst, kSourceCapability, {0.0F, 0.0F}, anySource, anywhere, scratch);
+	const auto b = ecs::findNearestReachableWithCapability(northFirst, kSourceCapability, {0.0F, 0.0F}, anySource, anywhere, scratch);
 	ASSERT_TRUE(a.has_value());
 	ASSERT_TRUE(b.has_value());
 	EXPECT_EQ(a->position, expected);
@@ -193,17 +202,15 @@ TEST(MemoryQueries, NearestReachableSourceWalksEveryCandidate) {
 	ecs::Memory memory;
 	constexpr size_t kSources = 12;
 	for (size_t i = 0; i < kSources; ++i) {
-		ASSERT_TRUE(memory.rememberWorldEntity(posFor(i + 1), kDefId, kMask));
+		ASSERT_TRUE(memory.rememberWorldEntity(posFor(i + 1), kDefId, kSourceMask));
 	}
-	const glm::vec2 farthest = posFor(kSources);
-	const auto		anySource = [](const ecs::KnownWorldEntity&) { return true; };
+	const glm::vec2					  farthest = posFor(kSources);
 	std::vector<ecs::SourceCandidate> scratch;
-	const auto capability = static_cast<assets::CapabilityType>(0);
 
 	size_t	   tested = 0;
 	const auto found = ecs::findNearestReachableWithCapability(
-		memory, capability, {0.0F, 0.0F}, anySource,
-		[&](const glm::vec2& p) {
+		memory, kSourceCapability, {0.0F, 0.0F}, anySource,
+		[&](uint64_t, const glm::vec2& p) {
 			++tested;
 			return p == farthest;
 		},
@@ -214,7 +221,53 @@ TEST(MemoryQueries, NearestReachableSourceWalksEveryCandidate) {
 	EXPECT_EQ(tested, kSources) << "each candidate tested once, nearest first";
 
 	EXPECT_FALSE(ecs::findNearestReachableWithCapability(
-					 memory, capability, {0.0F, 0.0F}, anySource, [](const glm::vec2&) { return false; }, scratch
+					 memory, kSourceCapability, {0.0F, 0.0F}, anySource, [](uint64_t, const glm::vec2&) { return false; },
+					 scratch
 	)
 					 .has_value());
+}
+
+// The reach memo: a colonist among unreachable sources tests each one once. Learning a new source
+// tests only that one, and a changed key (a nav rebuild here) tests them all again.
+TEST(MemoryQueries, SourceReachMemoTestsEachSourceOncePerKey) {
+	ecs::Memory memory;
+	constexpr size_t kSources = 8;
+	for (size_t i = 0; i < kSources; ++i) {
+		ASSERT_TRUE(memory.rememberWorldEntity(posFor(i + 1), kDefId, kSourceMask));
+	}
+	std::vector<ecs::SourceCandidate> scratch;
+	ecs::SourceReachMemo			  memo;
+	size_t							  probes = 0;
+	glm::vec2						  reachableSource{-1000.0F, -1000.0F}; // nothing reachable yet
+
+	const auto query = [&](const ecs::SourceReachMemo::Key& key) {
+		memo.keep(key, 2 * ecs::Memory::kMaxWorldEntities);
+		return ecs::findNearestReachableWithCapability(
+			memory, kSourceCapability, {0.0F, 0.0F}, anySource,
+			[&](uint64_t sourceKey, const glm::vec2& position) {
+				return memo.reachable(sourceKey, position, [&](const glm::vec2& p) {
+					++probes;
+					return p == reachableSource;
+				});
+			},
+			scratch
+		);
+	};
+
+	const ecs::SourceReachMemo::Key meshA{.navReachVersion = 1, .beliefVersion = 0, .startRegion = 0, .reachRoot = 5};
+	EXPECT_FALSE(query(meshA).has_value());
+	EXPECT_EQ(probes, kSources) << "the first decision tests every source";
+	EXPECT_FALSE(query(meshA).has_value());
+	EXPECT_EQ(probes, kSources) << "the next decision tests none";
+
+	reachableSource = posFor(kSources + 1);
+	ASSERT_TRUE(memory.rememberWorldEntity(reachableSource, kDefId, kSourceMask));
+	const auto learned = query(meshA);
+	ASSERT_TRUE(learned.has_value()) << "a newly learned reachable source is found";
+	EXPECT_EQ(learned->position, reachableSource);
+	EXPECT_EQ(probes, kSources + 1) << "only the new source is tested";
+
+	const ecs::SourceReachMemo::Key meshB{.navReachVersion = 2, .beliefVersion = 0, .startRegion = 0, .reachRoot = 5};
+	EXPECT_TRUE(query(meshB).has_value());
+	EXPECT_EQ(probes, 2 * kSources + 2) << "a nav rebuild tests every source again, nearest first, up to the reachable one";
 }

@@ -165,24 +165,21 @@ class NavigationSystem : public ISystem {
 	requestPath(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
 				geometry::nav::BeliefFilter belief = {}) const;
 
-	// Sound reachability pre-filter against the region containing both endpoints:
-	// delegates to geometry::nav::reachable (O(log n) component + bottleneck check).
+	// Sound reachability pre-filter against the region containing both endpoints, split at the
+	// start so many goals from one start cost one start-side climb: reachFrom locates the start
+	// and finds its reach root in the region's forest (geometry::nav::reachFrom), and reaches()
+	// tests a goal with a region lookup, a locate and an O(log n) subtree check.
 	//
 	// Semantics are asymmetric by design:
 	//   false => DEFINITELY unreachable (disconnected component or bottleneck < disc).
 	//   true  => MAYBE reachable (over-approximation). Caller runs requestPath for certainty.
 	//
-	// No-region / cross-region policy: when no single region covers both endpoints this
+	// No-region / cross-region policy: when no single region covers both endpoints reaches()
 	// returns true ("can't prove unreachable"). Colonists legitimately beeline while the
 	// mesh is building or when operating outside any sim region; a goal-validity
 	// pre-filter must not reject everything in that window.
-	[[nodiscard]] bool isReachable(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
-								   geometry::nav::BeliefFilter belief = {}) const;
-
-	// isReachable split at the start, for testing many goals from one start: reachFrom does the
-	// start-side work once, reaches() answers isReachable(start, goal) for each goal with a region
-	// lookup, a locate and an O(log n) forest check. Valid until the next update() (a region
-	// rebuild invalidates it); the belief's sets must outlive it.
+	//
+	// A Reach is valid while reachVersion() is unchanged; the belief's sets must outlive it.
 	struct Reach {
 		int							startRegion = -1; // -1: no region covers the start, every goal passes
 		geometry::nav::ReachFrom	from;
@@ -191,6 +188,10 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] Reach reachFrom(glm::vec2 startMeters, float agentRadiusMeters,
 								  geometry::nav::BeliefFilter belief = {}) const;
 	[[nodiscard]] bool	reaches(const Reach& reach, glm::vec2 goalMeters) const;
+
+	// Changes whenever reaches() could answer differently for the same start and goal: a mesh
+	// swap, a region recentering (its rect moves before the new mesh lands), or a region dropped.
+	[[nodiscard]] std::uint64_t reachVersion() const { return regionsReachVersion; }
 
 	// LOD seam predicate: true when `meters` falls inside some BUILT region rect. Outside
 	// every built region the caller treats movement as the no-mesh beeline (LOD1 coarse
@@ -499,6 +500,9 @@ class NavigationSystem : public ISystem {
 
 	// Bumped on every region's mesh swap; see generation().
 	std::uint64_t meshGeneration = 0;
+
+	// See reachVersion().
+	std::uint64_t regionsReachVersion = 0;
 
 	// Cached terrain-only mesh for placement buildability (isAreaBuildable / isPointBuildable). Built
 	// on demand over a generous area so a whole drawing gesture reuses one build; invalidated when a

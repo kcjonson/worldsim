@@ -78,10 +78,12 @@ namespace geometry::nav {
 	PathResult pathThrough(const NavMesh& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
 						   BeliefFilter belief = {}, RraCache* rra = nullptr);
 
-	// Sound, cheap reachability test (P3.3): can a disc of radius agentRadiusMm
-	// POSSIBLY get from start to goal under `belief`? Uses the precomputed
-	// reachability forest (component + bottleneck via LCA), so it rejects a
-	// provably-unreachable goal in O(log n) without running the full A*.
+	// Sound, cheap reachability test (P3.3): can a disc of radius agentRadiusMm POSSIBLY get from
+	// start to goal under `belief`? Uses the precomputed reachability forest, so it rejects a
+	// provably-unreachable goal without running A*. reachFrom does the start-side work once
+	// (locate, endpoint gate, the disc's reach root in the forest); reaches() tests one goal against
+	// it with a locate and an O(log n) subtree check, so many goals from one start cost one climb.
+	// Pass reaches() the belief reachFrom took.
 	//
 	// Semantics are asymmetric and that asymmetry is the point:
 	//   false => DEFINITELY unreachable (off-mesh, an untraversable endpoint, a
@@ -92,13 +94,6 @@ namespace geometry::nav {
 	//
 	// belief.knownSegments == nullptr selects the truth forest (AI goal validity);
 	// otherwise the terrain forest, whose disconnect is sound for every belief.
-	bool reachable(const NavMesh& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
-				   BeliefFilter belief = {});
-
-	// reachable() split at the start: reachFrom does the start-side work once (locate, endpoint
-	// gate, the disc's reach root in the forest), and reaches() tests one goal against it with a
-	// locate and an O(log n) subtree check. reachable(s, g) == reaches(reachFrom(s), g), so many
-	// goals from one start cost one start-side climb. Pass reaches() the belief reachFrom took.
 	struct ReachFrom {
 		std::int32_t startTri = -1; // -1: off-mesh or untraversable start, reaches nothing
 		std::int32_t root	  = -1; // forest node whose subtree the disc can reach; -1 for a non-node start

@@ -3458,9 +3458,9 @@ namespace ecs::test {
 			EXPECT_TRUE(pumpUntilMesh(*nav)) << "navmesh never built";
 			const auto*						  memory = world->getComponent<Memory>(colonist);
 			const geometry::nav::BeliefFilter belief{&memory->knownSegments, &memory->knownOpenings};
-			EXPECT_FALSE(nav->isReachable(kStart, northBank(0.0F), kAgentRadius, belief)) << "the north bank must be unreachable";
-			EXPECT_FALSE(nav->isReachable(kStart, southBank(0.0F), kAgentRadius, belief)) << "the south bank must be unreachable";
-			EXPECT_TRUE(nav->isReachable(kStart, kReachable, kAgentRadius, belief));
+			EXPECT_FALSE(isReachable(*nav, kStart, northBank(0.0F), kAgentRadius, belief)) << "the north bank must be unreachable";
+			EXPECT_FALSE(isReachable(*nav, kStart, southBank(0.0F), kAgentRadius, belief)) << "the south bank must be unreachable";
+			EXPECT_TRUE(isReachable(*nav, kStart, kReachable, kAgentRadius, belief));
 			return colonist;
 		}
 
@@ -3564,7 +3564,9 @@ namespace ecs::test {
 			ASSERT_NE(option, nullptr);
 			EXPECT_NE(option->status, OptionStatus::NoSource) << static_cast<int>(need);
 			ASSERT_TRUE(option->targetPosition.has_value());
-			EXPECT_EQ(*option->targetPosition, kStart) << static_cast<int>(need) << " uses the ground where it stands";
+			// Wherever the ground fallback picks, it's on the colonist's side of both rivers.
+			EXPECT_LT(std::abs(option->targetPosition->y), kRiverY - kRiverHalfWidth)
+				<< static_cast<int>(need) << " targets ground the colonist can reach, not the source across the river";
 		}
 	}
 

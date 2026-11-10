@@ -525,6 +525,7 @@ namespace ecs {
 			region.future	= {};
 			++region.meshGeneration;
 			++meshGeneration;
+			++regionsReachVersion;
 
 			std::size_t walkable = 0;
 			std::size_t floor	 = 0;
@@ -658,6 +659,7 @@ namespace ecs {
 				}
 				region.center	  = wantCenter;
 				region.halfExtent = wantHalf;
+				++regionsReachVersion; // the old mesh now answers for a moved rect
 				launchBuild(region);
 				// Permanent region-lifecycle diagnostic (recenter onto a moved driver/viewport).
 				LOG_DEBUG(Engine, "[NavBuild] region %d recenter -> (%lld, %lld) half=%lld", region.id,
@@ -699,6 +701,7 @@ namespace ecs {
 			// Permanent region-lifecycle diagnostic (region torn down, no longer wanted).
 			LOG_DEBUG(Engine, "[NavBuild] region %d dropped", goneId);
 			regions.erase(regions.begin() + static_cast<std::ptrdiff_t>(r));
+			++regionsReachVersion;
 		}
 	}
 
@@ -817,11 +820,6 @@ namespace ecs {
 			waypoints.push_back(nav::toMeters(p));
 		}
 		return waypoints;
-	}
-
-	bool NavigationSystem::isReachable(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
-									   gnav::BeliefFilter belief) const {
-		return reaches(reachFrom(startMeters, agentRadiusMeters, belief), goalMeters);
 	}
 
 	NavigationSystem::Reach NavigationSystem::reachFrom(glm::vec2 startMeters, float agentRadiusMeters,

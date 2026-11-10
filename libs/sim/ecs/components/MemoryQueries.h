@@ -40,11 +40,12 @@ struct SourceCandidate {
 	const KnownWorldEntity* entity;
 };
 
-/// Find the nearest known world entity with `capability` that `accept` admits and `reachable` confirms.
-/// One pass over Memory's capability index collects the accepted candidates into `scratch` (caller-owned
-/// and reused, so no allocation once it has grown to fit), then pops them nearest first, ties broken by
-/// memory key so the pick is deterministic, until `reachable` admits one. Every accepted candidate is
-/// tried before the answer is nullopt: O(n + k log n) for the k-th nearest, plus k `reachable` calls.
+/// Find the nearest known world entity with `capability` that `accept(memoryKey, entity)` admits and
+/// `reachable(memoryKey, position)` confirms. One pass over Memory's capability index collects the
+/// accepted candidates into `scratch` (caller-owned and reused, so no allocation once it has grown to
+/// fit), then pops them nearest first, ties broken by memory key so the pick is deterministic, until
+/// `reachable` admits one. Every accepted candidate is tried before the answer is nullopt: O(n + k log n)
+/// for the k-th nearest, plus k `reachable` calls.
 template <typename Accept, typename Reachable>
 [[nodiscard]] std::optional<KnownWorldEntity> findNearestReachableWithCapability(
 	const Memory&				  memory,
@@ -56,7 +57,7 @@ template <typename Accept, typename Reachable>
 	scratch.clear();
 	for (uint64_t key : memory.getEntitiesWithCapability(capability)) {
 		const auto* entity = memory.getWorldEntity(key);
-		if (entity == nullptr || !accept(*entity)) {
+		if (entity == nullptr || !accept(key, *entity)) {
 			continue;
 		}
 		const glm::vec2 diff = entity->position - fromPosition;
@@ -68,10 +69,10 @@ template <typename Accept, typename Reachable>
 	std::make_heap(scratch.begin(), scratch.end(), farther);
 	while (!scratch.empty()) {
 		std::pop_heap(scratch.begin(), scratch.end(), farther);
-		const KnownWorldEntity& nearest = *scratch.back().entity;
+		const SourceCandidate nearest = scratch.back();
 		scratch.pop_back();
-		if (reachable(nearest.position)) {
-			return nearest;
+		if (reachable(nearest.key, nearest.entity->position)) {
+			return *nearest.entity;
 		}
 	}
 	return std::nullopt;

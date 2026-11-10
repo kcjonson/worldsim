@@ -232,21 +232,9 @@ namespace geometry::nav {
 	// no face is dropped, however its rings touch, pinch, or nest.
 	NavMesh buildNavMesh(const NavMeshInput& input);
 
-	// Are triangles triA and triB in the same component of `forest` (connected
-	// ignoring width)? False if either index is out of range or is a non-node for
-	// the forest's predicate. O(1).
-	bool reachableInForest(const ReachabilityForest& forest, std::int32_t triA, std::int32_t triB);
-
-	// The bottleneck between triA and triB in `forest`: the max over paths of the min
-	// edge capacity (the widest disc DIAMETER any path between them admits). Returns 0
-	// when disconnected (or an endpoint is a non-node), kUnconstrainedWidth when
-	// triA == triB. The sound reject is `diameter > bottleneck => unreachable`.
-	// O(log n) via binary-lifting LCA over the reconstruction tree.
-	std::int64_t bottleneckInForest(const ReachabilityForest& forest, std::int32_t triA, std::int32_t triB);
-
 	// The reconstruction-tree node whose subtree is every triangle a disc of `diameterMm` can
 	// POSSIBLY reach from `tri`: tri's highest ancestor whose capacity admits the disc. A goal
-	// triangle is under it iff bottleneck(tri, goal) >= diameterMm. -1 when tri is a non-node.
+	// triangle is under it iff the widest disc any path from tri to it admits is >= diameterMm. -1 when tri is a non-node.
 	// O(log n).
 	std::int32_t reachRootInForest(const ReachabilityForest& forest, std::int32_t tri, std::int64_t diameterMm);
 

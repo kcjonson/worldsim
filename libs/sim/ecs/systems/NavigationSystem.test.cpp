@@ -224,7 +224,7 @@ TEST_F(NavigationSystemTest, NoMeshBeforeBuildReturnsNullopt) {
 	EXPECT_FALSE(sys.hasMesh());
 	EXPECT_FALSE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value());
 	// No-mesh policy: isReachable cannot prove unreachable, so it returns true.
-	EXPECT_TRUE(sys.isReachable(kOutside, kInside, kAgentRadius));
+	EXPECT_TRUE(isReachable(sys, kOutside, kInside, kAgentRadius));
 }
 
 // update() with nothing wired is a safe no-op, and a query still returns nullopt.
@@ -254,7 +254,7 @@ TEST_F(NavigationSystemTest, PathThroughDoorSucceeds) {
 	std::optional<std::vector<glm::vec2>> path = sys.requestPath(kOutside, kInside, kAgentRadius);
 	ASSERT_TRUE(path.has_value());
 	EXPECT_GE(path->size(), 2u); // at least start..goal
-	EXPECT_TRUE(sys.isReachable(kOutside, kInside, kAgentRadius));
+	EXPECT_TRUE(isReachable(sys, kOutside, kInside, kAgentRadius));
 }
 
 // A window (non-pathable opening) leaves the wall solid: no path.
@@ -446,7 +446,7 @@ TEST_F(NavigationSystemTest, IsReachableTrueForReachableGoal) {
 	sys.setConstructionWorld(&cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
-	EXPECT_TRUE(sys.isReachable(kOutside, kInside, kAgentRadius));
+	EXPECT_TRUE(isReachable(sys, kOutside, kInside, kAgentRadius));
 	EXPECT_TRUE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value());
 }
 
@@ -462,7 +462,7 @@ TEST_F(NavigationSystemTest, IsReachableFalseForWalledOffGoal) {
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
 	// reachable() should detect the disconnected component and return false.
-	EXPECT_FALSE(sys.isReachable(kOutside, kInside, kAgentRadius));
+	EXPECT_FALSE(isReachable(sys, kOutside, kInside, kAgentRadius));
 	// requestPath must also return nullopt (short-circuit already there via pathThrough).
 	EXPECT_FALSE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value());
 }
@@ -473,7 +473,7 @@ TEST_F(NavigationSystemTest, IsReachableTrueWhenNoMesh) {
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 
 	ASSERT_FALSE(sys.hasMesh());
-	EXPECT_TRUE(sys.isReachable(kOutside, kInside, kAgentRadius));
+	EXPECT_TRUE(isReachable(sys, kOutside, kInside, kAgentRadius));
 	// requestPath is still nullopt with no mesh.
 	EXPECT_FALSE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value());
 }
@@ -492,13 +492,16 @@ TEST_F(NavigationSystemTest, GenerationBumpsOnMeshSwap) {
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "initial navmesh never built";
 	const std::uint64_t afterFirst = sys.generation();
 	EXPECT_GT(afterFirst, 0u) << "first mesh swap should bump generation";
+	const std::uint64_t reachAfterFirst = sys.reachVersion();
 
-	// A geometry change forces a rebuild; the swap-in bumps generation again.
+	// A geometry change forces a rebuild; the swap-in bumps generation again, and reachVersion with
+	// it, so cached reach verdicts (the AI's SourceReachMemo) are dropped.
 	OpeningId op = cw.addOpening(south, 0.5F, "Door", "Wood");
 	ASSERT_NE(op, kInvalidOpening);
 	ASSERT_TRUE(cw.setOpeningState(op, FoundationState::Built));
 	EXPECT_TRUE(pumpUntil(sys, "the rebuild swap", [&] { return sys.generation() > afterFirst; }))
 		<< "rebuild swap should bump generation again";
+	EXPECT_GT(sys.reachVersion(), reachAfterFirst) << "a mesh swap must invalidate cached reach verdicts";
 }
 
 // Every region's mesh swap moves generation(), including one whose own swap count lags another
@@ -1481,17 +1484,17 @@ TEST_F(NavigationSystemTest, IsReachableTrueForOffAreaGoal) {
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
 	// Confirm in-area walled-off goal IS false (baseline: the closed room blocks it).
-	EXPECT_FALSE(sys.isReachable(kOutside, kInside, kAgentRadius))
+	EXPECT_FALSE(isReachable(sys, kOutside, kInside, kAgentRadius))
 		<< "in-area closed-room goal should be false (baseline for this test)";
 
 	// Now try a goal far outside the built area: must return true ("can't prove unreachable").
 	const glm::vec2 offAreaGoal{200.0F, 200.0F}; // well outside 60 m area
-	EXPECT_TRUE(sys.isReachable(kOutside, offAreaGoal, kAgentRadius))
+	EXPECT_TRUE(isReachable(sys, kOutside, offAreaGoal, kAgentRadius))
 		<< "off-area goal must return true (can't prove unreachable)";
 
 	// Also true when START is off-area.
 	const glm::vec2 offAreaStart{200.0F, 0.0F};
-	EXPECT_TRUE(sys.isReachable(offAreaStart, kInside, kAgentRadius))
+	EXPECT_TRUE(isReachable(sys, offAreaStart, kInside, kAgentRadius))
 		<< "off-area start must return true (can't prove unreachable)";
 }
 
@@ -1952,6 +1955,6 @@ TEST_F(NavigationSystemTest, QueryDispatchSelectsRegionContainingPoint) {
 		<< "a cross-region path must hold (nullopt) in Phase 1";
 
 	// isReachable mirrors the hold: cross-region returns true ("can't prove unreachable").
-	EXPECT_TRUE(sys.isReachable(aPos, bPos, kAgentRadius))
+	EXPECT_TRUE(isReachable(sys, aPos, bPos, kAgentRadius))
 		<< "cross-region isReachable must not falsely reject";
 }

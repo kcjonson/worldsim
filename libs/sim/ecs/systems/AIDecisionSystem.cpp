@@ -1521,8 +1521,28 @@ namespace ecs {
 		const auto canReach = [&](const glm::vec2& target) {
 			return !reach.has_value() || m_navSystem->reaches(*reach, target);
 		};
-		const auto anywhere = [](const glm::vec2&) { return true; };
-		const auto anySource = [](const KnownWorldEntity&) { return true; };
+
+		// Known sources' verdicts are remembered while the colonist stays in the same reach subtree,
+		// so one surrounded by unreachable sources doesn't test them all again every decision.
+		if (reach.has_value()) {
+			trace.sourceReach.keep(
+				{.navReachVersion = m_navSystem->reachVersion(),
+				 .beliefVersion = memory.beliefVersion,
+				 .startRegion = reach->startRegion,
+				 .reachRoot = reach->from.root,
+				 .startTri = reach->from.root < 0 ? reach->from.startTri : -1},
+				2 * Memory::kMaxWorldEntities
+			);
+		}
+		const auto canReachSource = [&](uint64_t sourceKey, const glm::vec2& sourcePosition) {
+			return !reach.has_value() || trace.sourceReach.reachable(sourceKey, sourcePosition, canReach);
+		};
+		// Drop a source already found unreachable before anything else looks at it.
+		const auto notKnownUnreachable = [&](uint64_t sourceKey, const KnownWorldEntity&) {
+			return !reach.has_value() || !trace.sourceReach.knownUnreachable(sourceKey);
+		};
+		const auto anywhere = [](uint64_t, const glm::vec2&) { return true; };
+		const auto anySource = [](uint64_t, const KnownWorldEntity&) { return true; };
 
 		// A need targets the nearest remembered source the colonist can reach, so known sources across
 		// a river don't hide a reachable one farther off.
@@ -1538,8 +1558,10 @@ namespace ecs {
 		if (!packHasFood) {
 			foodSource = findNeedSource(
 				assets::CapabilityType::Harvestable,
-				[this](const KnownWorldEntity& known) { return yieldsEdibleFood(m_registry, known.defNameId); },
-				canReach
+				[&](uint64_t sourceKey, const KnownWorldEntity& known) {
+					return notKnownUnreachable(sourceKey, known) && yieldsEdibleFood(m_registry, known.defNameId);
+				},
+				canReachSource
 			);
 		}
 
@@ -1602,7 +1624,7 @@ namespace ecs {
 			// Standard handling for other needs
 			auto capability = needToCapability(needType);
 			// A satisfied need only shows its nearest source, so it spends no reachability tests.
-			const auto nearest = need.needsAttention() ? findNeedSource(capability, anySource, canReach)
+			const auto nearest = need.needsAttention() ? findNeedSource(capability, notKnownUnreachable, canReachSource)
 													   : findNeedSource(capability, anySource, anywhere);
 
 			if (nearest.has_value()) {
@@ -1857,7 +1879,8 @@ namespace ecs {
 					option.status = OptionStatus::NoSource; // off every active region: don't commit
 					continue;
 				}
-				option.targetPosition = snapped;
+				option.targetPosition  = snapped;
+				option.targetReachable = false; // a moved target is tested where it now is
 			}
 			if (needsTarget && !option.targetReachable && !canReach(option.targetPosition.value())) {
 				option.status = OptionStatus::NoSource; // unreachable: skip it rather than freeze on it
