@@ -1280,16 +1280,20 @@ namespace {
 			});
 
 			// Every ground drop -- a felled tree's uncarried remainder, craft overflow, a stowed
-			// tool, a cancelled build site's salvage -- snaps to a walkable nav point before it
-			// lands, so a drop whose raw origin sits in a river / off-mesh (a tree felled on a
-			// bank) ends up on solid ground instead of in the water. findValidPositionNear is the
-			// one primitive for this; the snap lives here, at the two drop funnels (loose pile,
-			// packaged item), so no upstream drop site needs its own nav check (One-Path). It is
+			// tool, a cancelled build site's salvage -- lands on a walkable nav point. An origin
+			// already on the mesh is kept as is: findValidPositionNear always lands at least its
+			// min distance away, which would push a drop off the colonist's feet and possibly
+			// across a wall. Only an off-mesh origin (a tree felled on a river bank) is searched
+			// for solid ground. The snap lives here, at the two drop funnels (loose pile, packaged
+			// item), so no upstream drop site needs its own nav check (One-Path). The search is
 			// deterministic (no RNG, canonical +X bias) and returns nullopt only when no mesh
 			// covers the origin -- then we keep the raw origin so a drop never hard-fails.
 			auto snapDropToGround = [&navSystem](float x, float y) -> glm::vec2 {
-				const std::optional<glm::vec2> onGround = navSystem.findValidPositionNear({x, y}, 1.0F);
-				return onGround.value_or(glm::vec2{x, y});
+				const glm::vec2 origin{x, y};
+				if (navSystem.isValidPosition(origin)) {
+					return origin;
+				}
+				return navSystem.findValidPositionNear(origin, 1.0F).value_or(origin);
 			};
 
 			// Crafted FURNITURE comes out PACKAGED and auto-installs a short distance off the
@@ -1737,16 +1741,22 @@ namespace {
 			const auto*	   def = registry.getDefinition(defName);
 			const uint32_t cap = (def != nullptr && def->itemProperties.has_value()) ? def->itemProperties->stackSize : UINT32_MAX;
 
-			std::unordered_map<std::string, float> radiusByDef;
+			// Computed at each pile's own scale: the dynamic transform re-centers by the unscaled bbox
+			// center, so the footprint isn't linear in scale and a scale-1 radius can't be multiplied.
+			std::unordered_map<std::string, std::pair<Foundation::Rect, worldview::PileItem>> layoutInputsByDef;
 			auto pileRadius = [&](const std::string& pileDef, float scale) {
-				auto it = radiusByDef.find(pileDef);
-				if (it == radiusByDef.end()) {
-					const float unitScaleRadius = worldview::pileFootprintRadius(
-						worldview::templateBounds(registry.getTemplate(pileDef)), 1.0F, worldview::pileItem(registry.getDefinition(pileDef))
-					);
-					it = radiusByDef.emplace(pileDef, unitScaleRadius).first;
+				auto it = layoutInputsByDef.find(pileDef);
+				if (it == layoutInputsByDef.end()) {
+					it = layoutInputsByDef
+							 .emplace(
+								 pileDef,
+								 std::make_pair(
+									 worldview::templateBounds(registry.getTemplate(pileDef)), worldview::pileItem(registry.getDefinition(pileDef))
+								 )
+							 )
+							 .first;
 				}
-				return it->second * scale;
+				return worldview::pileFootprintRadius(it->second.first, scale, it->second.second);
 			};
 
 			// Every pile and crate, not a radius around the drop: the spiral has no fixed reach, so

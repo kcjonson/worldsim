@@ -1749,10 +1749,9 @@ TEST_F(FellingTest, HeldAxeFallsBackToPackWhenBeltFull) {
 }
 
 // Regression: a wood-carrying colonist tasked with a PlacePackaged (no empty-hands
-// precondition) must not duplicate the armful. clearHandsForTwoHandedPickup once dropped
-// each hand independently, so a 14-Wood armful (same stack mirrored across both hands)
-// dropped 28 -- and as per-unit packaged items, not a single loose pile. The mirror-aware
-// path now drops the armful ONCE, as one haulable resource pile of exactly 14.
+// precondition) must not duplicate the armful. A 14-Wood armful is one stack mirrored across
+// both hands, so clearing each hand on its own would get rid of 28. The armful is put away or,
+// with no storage in reach (as here), dropped ONCE, as one loose pile of exactly 14.
 TEST_F(FellingTest, PickupPackagedDropsHeldWoodArmfulOnceNotTwice) {
 	auto  colonist = createColonist({1.0F, 1.0F});
 	auto* inventory = world->getComponent<Inventory>(colonist);
@@ -1794,21 +1793,38 @@ TEST_F(FellingTest, FullOrNonAcceptingBoxInReachStillDrops) {
 	EXPECT_EQ(lastDropQty, 14U);
 }
 
-// A box within reach but on the far side of a built wall can't be reached, so the armful drops.
-TEST_F(FellingTest, BoxBehindWallIsIgnored) {
-	const std::filesystem::path root =
-		std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path().parent_path();
-	assets::ConstructionRegistry::Get().clear();
-	ASSERT_TRUE(assets::ConstructionRegistry::Get().load((root / "assets" / "config" / "construction").string()));
-
-	construction::ConstructionWorld cw;
-	const auto wall = cw.commitSegment({1500, 0}, {1500, 3000}, "Wood", "Standard", construction::kInvalidFoundation);
-	ASSERT_TRUE(wall.ok());
-	for (construction::SegmentId id : wall.createdSegments) {
-		cw.setSegmentState(id, construction::FoundationState::Built);
+// Store-first past built walls: the fixture owns the ConstructionWorld (it outlives the world's
+// VisionSystem, which holds a pointer to it) and the global ConstructionRegistry it needs.
+class FellingWallTest : public FellingTest {
+  protected:
+	void SetUp() override {
+		FellingTest::SetUp();
+		const std::filesystem::path root =
+			std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path().parent_path();
+		assets::ConstructionRegistry::Get().clear();
+		ASSERT_TRUE(assets::ConstructionRegistry::Get().load((root / "assets" / "config" / "construction").string()));
+		world->registerSystem<VisionSystem>().setConstructionWorld(&constructionWorld);
 	}
-	world->registerSystem<VisionSystem>().setConstructionWorld(&cw);
 
+	void TearDown() override {
+		FellingTest::TearDown();
+		assets::ConstructionRegistry::Get().clear();
+	}
+
+	void buildWall(geometry::Vec2i64 a, geometry::Vec2i64 b) {
+		const auto wall = constructionWorld.commitSegment(a, b, "Wood", "Standard", construction::kInvalidFoundation);
+		ASSERT_TRUE(wall.ok());
+		for (construction::SegmentId id : wall.createdSegments) {
+			constructionWorld.setSegmentState(id, construction::FoundationState::Built);
+		}
+	}
+
+	construction::ConstructionWorld constructionWorld;
+};
+
+// A box within reach but on the far side of a built wall can't be reached, so the armful drops.
+TEST_F(FellingWallTest, BoxBehindWallIsIgnored) {
+	buildWall({1500, 0}, {1500, 3000});
 	auto	 colonist = createColonist({1.0F, 1.0F});
 	EntityID box = createBox({2.0F, 1.0F}, 4);
 	pickUpPackagedHoldingWood(colonist);
@@ -1816,7 +1832,50 @@ TEST_F(FellingTest, BoxBehindWallIsIgnored) {
 	EXPECT_EQ(world->getComponent<Inventory>(box)->getQuantity("Wood"), 0U);
 	EXPECT_EQ(dropCalls, 1);
 	EXPECT_EQ(lastDropQty, 14U);
-	assets::ConstructionRegistry::Get().clear();
+}
+
+// A wall nearby that doesn't stand between the colonist and the box leaves the box reachable.
+TEST_F(FellingWallTest, WallNotBetweenColonistAndBoxKeepsBoxReachable) {
+	buildWall({0, 2000}, {3000, 2000});
+	auto	 colonist = createColonist({1.0F, 1.0F});
+	EntityID box = createBox({2.0F, 1.0F}, 4);
+	pickUpPackagedHoldingWood(colonist);
+
+	EXPECT_EQ(world->getComponent<Inventory>(box)->getQuantity("Wood"), 14U);
+	EXPECT_EQ(dropCalls, 0);
+}
+
+// Reach for a tool stowed to free the hands starts at the colonist, not at the tree: a box at the
+// colonist's feet takes the axe even though the tree stands well out of reach.
+TEST_F(FellingTest, StowedAxeGoesIntoBoxNearColonistNotNearTree) {
+	assets::AssetDefinition axeDef;
+	axeDef.defName = "Axe";
+	axeDef.label = "Axe";
+	axeDef.handsRequired = 1;
+	axeDef.category = assets::ItemCategory::Tool;
+	axeDef.toolType = "Axe";
+	axeDef.itemProperties = assets::ItemProperties{};
+	axeDef.itemProperties->stackSize = 1;
+	axeDef.itemProperties->massKg = 1.5F;
+	assets::AssetRegistry::Get().registerTestDefinition(std::move(axeDef));
+
+	auto  colonist = createColonist({5.0F, 5.0F}); // fell() puts the tree at (1, 1)
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	inventory->rightHand = ItemStack{"Axe", 1};
+	inventory->belt[0] = ItemStack{"Filler", 1};
+	inventory->belt[1] = ItemStack{"Filler", 1};
+	inventory->maxCapacity = 0; // no pack room: the axe has to be put away or dropped
+	EntityID box = createBox({5.5F, 5.0F}, 4);
+	*world->getComponent<StorageConfiguration>(box) = StorageConfiguration::createAcceptAll({assets::ItemCategory::Tool});
+
+	fell(colonist, 30);
+
+	inventory = world->getComponent<Inventory>(colonist); // the box's Inventory may have moved the storage
+	EXPECT_EQ(world->getComponent<Inventory>(box)->getQuantity("Axe"), 1U) << "Axe put in the box beside the colonist";
+	EXPECT_FALSE(inventory->isHolding("Axe"));
+	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 14U);
+	EXPECT_EQ(dropCalls, 1) << "Only the wood remainder drops";
+	EXPECT_EQ(lastDropDef, "Wood");
 }
 
 // A box beyond reach is ignored: the colonist doesn't walk to put the armful away.

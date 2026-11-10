@@ -124,7 +124,11 @@ namespace {
 	worldview::PackagedLayout packagedLayoutFor(const ecs::Appearance& appearance, glm::vec2 entityPos) {
 		auto& registry = assets::AssetRegistry::Get();
 		return worldview::packagedLayout(
-			entityPos, appearance.defName, appearance.colorTint, worldview::templateBounds(registry.getTemplate(appearance.defName))
+			entityPos,
+			appearance.defName,
+			appearance.scale,
+			appearance.colorTint,
+			worldview::templateBounds(registry.getTemplate(appearance.defName))
 		);
 	}
 
@@ -337,7 +341,7 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 	}
 
 	// Priority 1.6: Check ECS storage containers (entities with Inventory but no
-	// WorkQueue). Packaged ones test the crate + item sprite; placed ones test their own
+	// WorkQueue). Packaged ones test the crate layers + item; placed ones test their own
 	// silhouette. Centroid pre-cull first, same as the other dynamic types.
 	float		  closestStorageDist = kSelectionRadius;
 	ecs::EntityID closestStorage = 0;
@@ -384,32 +388,36 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 	// Priority 1.8: Loose ground piles (ResourceStack). Same centroid pre-cull, then the
 	// silhouette of every sprite the pile draws. A single log or tool is a small target, so a
 	// click within kPilePickSlop of the pile center also hits (like kWallPickSlopMm for thin
-	// walls). Nearest containing pile wins.
-	float		  closestPileDist = kSelectionRadius;
-	ecs::EntityID closestPile = 0;
+	// walls), but only when no pile's sprites contain the click, so slop around a small pile
+	// never steals a click on a big neighbour's sprite. Nearest pile wins within each kind.
+	float		  closestHitDist = kSelectionRadius;
+	ecs::EntityID closestHit = 0;
+	float		  closestSlopDist = kPilePickSlop;
+	ecs::EntityID closestSlop = 0;
 
 	for (auto [entity, pos, appearance, stack] : ecsWorld->view<ecs::Position, ecs::Appearance, ecs::ResourceStack>()) {
 		const float dx = pos.value.x - worldPos.x;
 		const float dy = pos.value.y - worldPos.y;
 		const float dist = std::sqrt(dx * dx + dy * dy);
-		if (dist >= closestPileDist) {
+		if (dist < closestSlopDist) {
+			closestSlopDist = dist;
+			closestSlop = entity;
+		}
+		if (dist >= closestHitDist) {
 			continue;
 		}
-		bool under = dist < kPilePickSlop;
-		if (!under) {
-			const worldview::PileLayout pile = pileLayoutFor(appearance, stack.quantity, pos.value);
-			for (std::size_t i = 0; i < pile.count && !under; ++i) {
-				under = placedUnderClick(pile.sprites[i], worldPos, kPilePickSlop);
-			}
+		const worldview::PileLayout pile = pileLayoutFor(appearance, stack.quantity, pos.value);
+		bool						under = false;
+		for (std::size_t i = 0; i < pile.count && !under; ++i) {
+			under = placedUnderClick(pile.sprites[i], worldPos, kPilePickSlop);
 		}
-		if (!under) {
-			continue;
+		if (under) {
+			closestHitDist = dist;
+			closestHit = entity;
 		}
-		closestPileDist = dist;
-		closestPile = entity;
 	}
 
-	if (closestPile != 0) {
+	if (const ecs::EntityID closestPile = closestHit != 0 ? closestHit : closestSlop; closestPile != 0) {
 		auto* pos = ecsWorld->getComponent<ecs::Position>(closestPile);
 		auto* appearance = ecsWorld->getComponent<ecs::Appearance>(closestPile);
 		if (pos != nullptr && appearance != nullptr) {
@@ -782,6 +790,7 @@ worldview::SelectionOutline SelectionSystem::buildEntityOutline() const {
 			const assets::PlacedEntity& sprite = pile.sprites[i];
 			appendWorldRingsMm(sil->rings, worldview::staticInstanceTransform(sprite.position, sprite.rotation, sprite.scale), compositeMm);
 		}
+		canonicalAnchorY = pile.sprites[pile.count - 1].anchorY; // the front-most sprite's key
 	} else {
 		// Colonists, crafting stations, and placed furniture all resolve from the ECS.
 		ecs::EntityID entityId = 0;
@@ -816,6 +825,7 @@ worldview::SelectionOutline SelectionSystem::buildEntityOutline() const {
 					appendWorldRingsMm(sil->rings, worldview::staticInstanceTransform(sub->position, sub->rotation, sub->scale), compositeMm);
 				}
 			}
+			canonicalAnchorY = pl.crateFront.anchorY;
 		} else {
 			// Non-packaged dynamic entity: the facing sprite's silhouette at the dynamic
 			// (bbox-centered) transform.
@@ -845,8 +855,9 @@ worldview::SelectionOutline SelectionSystem::buildEntityOutline() const {
 
 	outline.valid = !outline.worldRings.empty();
 	if (outline.valid) {
-		// Canonical placement anchorY when we have it (world entities), else the silhouette
-		// ground-contact (dynamic entities, whose sprite bottom == the silhouette bottom).
+		// Canonical sprite anchorY when we have it (world entities, piles, packaged crates; a
+		// unioned ring's maxY can land under the sprite's key), else the silhouette ground-contact
+		// (dynamic entities, whose sprite bottom == the silhouette bottom).
 		outline.anchorY = (canonicalAnchorY != kNoY) ? canonicalAnchorY : maxY;
 		outline.rgba	= {1.0F, 0.85F, 0.0F, 0.9F};
 		outline.widthPx = kOutlineWidthPx;

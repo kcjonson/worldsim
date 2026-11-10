@@ -132,6 +132,56 @@ TEST(ResourcePileDropsTests, AvoidsPackagedCrateFootprint) {
 	expectSpawnsClear(plan, 0.3F);
 }
 
+// A second drop at a full origin pile fills the partial overflow pile the first drop left on ring 1.
+TEST(ResourcePileDropsTests, TopsUpPartialRingOnePileBeforeSpawning) {
+	const float						  step = 2.0F * kWoodRadius + kGroundClearanceGap;
+	const std::vector<GroundOccupant> nearby{
+		{{0.0F, 0.0F}, kWoodRadius, 40, true},
+		{{step * std::cos(0.5236F), step * std::sin(0.5236F)}, kWoodRadius, 7, true},
+	};
+	const auto plan = resourcePileDrops(40, 5, {0.0F, 0.0F}, kWoodRadius, nearby);
+	EXPECT_TRUE(plan.spawns.empty());
+	ASSERT_EQ(plan.topUps.size(), 1U);
+	EXPECT_EQ(plan.topUps[0].first, 1U);
+	EXPECT_EQ(plan.topUps[0].second, 5U);
+}
+
+// A same-item pile just past the merge radius is left alone when the origin spot is free.
+TEST(ResourcePileDropsTests, IgnoresPileOutsideMergeRadiusWhenOriginFree) {
+	constexpr float					  kSmallRadius = 0.2F;
+	const std::vector<GroundOccupant> nearby{{{kPileMergeRadius + 0.05F, 0.0F}, kSmallRadius, 3, true}};
+	const auto						  plan = resourcePileDrops(40, 5, {0.0F, 0.0F}, kSmallRadius, nearby);
+	EXPECT_TRUE(plan.topUps.empty());
+	ASSERT_EQ(plan.spawns.size(), 1U);
+	EXPECT_FLOAT_EQ(plan.spawns[0].first.x, 0.0F);
+	EXPECT_FLOAT_EQ(plan.spawns[0].first.y, 0.0F);
+}
+
+// Ring top-ups go nearest first, whatever order the occupants arrive in.
+TEST(ResourcePileDropsTests, RingTopUpsFillNearestFirst) {
+	const std::vector<GroundOccupant> nearby{
+		{{0.0F, 1.3F}, kWoodRadius, 30, true},
+		{{0.0F, 0.0F}, kWoodRadius, 40, true},
+		{{1.2F, 0.0F}, kWoodRadius, 35, true},
+	};
+	const auto plan = resourcePileDrops(40, 15, {0.0F, 0.0F}, kWoodRadius, nearby);
+	EXPECT_TRUE(plan.spawns.empty());
+	ASSERT_EQ(plan.topUps.size(), 2U);
+	EXPECT_EQ(plan.topUps[0].first, 2U);
+	EXPECT_EQ(plan.topUps[0].second, 5U);
+	EXPECT_EQ(plan.topUps[1].first, 0U);
+	EXPECT_EQ(plan.topUps[1].second, 10U);
+}
+
+// With no ground anywhere the search still ends, on the first ring past the walkable search.
+TEST(ResourcePileDropsTests, NoGroundAnywhereStillLandsPastWalkableSearch) {
+	const auto plan = resourcePileDrops(40, 10, {0.0F, 0.0F}, kWoodRadius, {}, [](glm::vec2) { return false; });
+	ASSERT_EQ(plan.spawns.size(), 1U);
+	EXPECT_EQ(plan.spawns[0].second, 10U);
+	const float step = 2.0F * kWoodRadius + kGroundClearanceGap;
+	EXPECT_NEAR(dist(plan.spawns[0].first, {0.0F, 0.0F}), static_cast<float>(kWalkableSearchRings) * step, 1e-3F);
+}
+
 // A spot off walkable ground is skipped while the walkable search lasts.
 TEST(ResourcePileDropsTests, SkipsSpotsOffGround) {
 	const auto plan = resourcePileDrops(40, 10, {0.0F, 0.0F}, kWoodRadius, {}, [](glm::vec2 p) { return p.x > 0.5F; });

@@ -53,6 +53,7 @@
 // Priority 58: after BuildGoalSystem (57), before AIDecisionSystem (60), so a
 // freshly emitted goal is visible the same frame the AI evaluates.
 
+#include "../DropResourceCallback.h"
 #include "../EntityID.h"
 #include "../ISystem.h"
 #include "../components/StructureBlueprint.h"
@@ -179,7 +180,6 @@ namespace ecs {
 		/// ground. Fired when a cancelled/demolished blueprint dumps its staged delivered[] materials
 		/// so they are not lost. Wired to the SAME shared drop helper GameScene gives ActionSystem's
 		/// drop-resource callback, so there is one ground-pile spawn path.
-		using DropResourceCallback = std::function<void(const std::string&, float, float, uint32_t)>;
 		void setDropResourceCallback(DropResourceCallback callback) { m_onDropResource = std::move(callback); }
 
 		/// Drop every construction goal a blueprint owns (the umbrella and its phase

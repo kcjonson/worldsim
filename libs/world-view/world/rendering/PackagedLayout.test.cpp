@@ -1,6 +1,10 @@
 #include "world/rendering/PackagedLayout.h"
 
+#include "assets/placement/WorldDepthSort.h"
+
 #include <gtest/gtest.h>
+
+#include <vector>
 
 using namespace worldview;
 
@@ -23,7 +27,7 @@ namespace {
 
 // Draw order is back crate, item, front crate, all on one ground baseline.
 TEST(PackagedLayout, BackItemFrontShareBaseline) {
-	const auto pl = packagedLayout({3.0F, 7.0F}, "BasicBox", {1, 1, 1, 1}, Foundation::Rect{0.0F, 0.0F, 0.857F, 0.6F});
+	const auto pl = packagedLayout({3.0F, 7.0F}, "BasicBox", 1.0F, {1, 1, 1, 1}, Foundation::Rect{0.0F, 0.0F, 0.857F, 0.6F});
 	EXPECT_EQ(pl.crateBack.defName, "PackagingCrate");
 	EXPECT_EQ(pl.crateFront.defName, "PackagingCrateFront");
 	EXPECT_FLOAT_EQ(pl.crateBack.anchorY, 7.0F);
@@ -36,7 +40,7 @@ TEST(PackagedLayout, BackItemFrontShareBaseline) {
 // A wide item is shrunk uniformly to fit inside the posts, centered, bottom on the crate floor.
 TEST(PackagedLayout, WideItemFitsInsideCrate) {
 	const Foundation::Rect bounds{-0.6F, -1.0F, 1.6F, 0.5F}; // off-origin template bbox
-	const auto			   pl = packagedLayout({0.0F, 0.0F}, "Bench", {1, 1, 1, 1}, bounds);
+	const auto			   pl = packagedLayout({0.0F, 0.0F}, "Bench", 1.0F, {1, 1, 1, 1}, bounds);
 	const Box			   box = itemBox(pl.item, bounds);
 	const float			   crateLeft = -kCrateWidth * 0.5F;
 	const float			   crateTop = -kCrateHeight;
@@ -52,6 +56,37 @@ TEST(PackagedLayout, WideItemFitsInsideCrate) {
 
 // A small item is never blown up to fill the crate.
 TEST(PackagedLayout, SmallItemKeepsItsSize) {
-	const auto pl = packagedLayout({0.0F, 0.0F}, "Stool", {1, 1, 1, 1}, Foundation::Rect{0.0F, 0.0F, 0.3F, 0.3F});
+	const auto pl = packagedLayout({0.0F, 0.0F}, "Stool", 1.0F, {1, 1, 1, 1}, Foundation::Rect{0.0F, 0.0F, 0.3F, 0.3F});
 	EXPECT_FLOAT_EQ(pl.item.scale, 1.0F);
+	const auto half = packagedLayout({0.0F, 0.0F}, "Stool", 0.5F, {1, 1, 1, 1}, Foundation::Rect{0.0F, 0.0F, 0.3F, 0.3F});
+	EXPECT_FLOAT_EQ(half.item.scale, 0.5F) << "drawn at its placed size, not the crate's";
+}
+
+// The layout's three sprites go through the real depth sort with an unrelated entity on the
+// same baseline ahead of them, and still come out back, item, front.
+TEST(PackagedLayout, LayersStayOrderedThroughDepthSort) {
+	const auto			 pl = packagedLayout({2.0F, 5.0F}, "BasicBox", 1.0F, {1, 1, 1, 1}, Foundation::Rect{0.0F, 0.0F, 0.857F, 0.6F});
+	assets::PlacedEntity other;
+	other.defName = "Rock";
+	other.anchorY = pl.item.anchorY;
+
+	std::vector<assets::DepthSortItem> items = {
+		{other.anchorY, &other, false},
+		{pl.crateBack.anchorY, &pl.crateBack, false},
+		{pl.item.anchorY, &pl.item, false},
+		{pl.crateFront.anchorY, &pl.crateFront, false},
+	};
+	assets::sortByAnchorY(items);
+
+	ASSERT_EQ(items.size(), 4U);
+	auto indexOf = [&](const assets::PlacedEntity* e) {
+		for (int i = 0; i < static_cast<int>(items.size()); ++i) {
+			if (items[i].entity == e) {
+				return i;
+			}
+		}
+		return -1;
+	};
+	EXPECT_LT(indexOf(&pl.crateBack), indexOf(&pl.item));
+	EXPECT_LT(indexOf(&pl.item), indexOf(&pl.crateFront));
 }

@@ -44,7 +44,7 @@ void DynamicEntityRenderSystem::update(float deltaTime) {
         // item, front: equal anchorY + the stable depth sort keep that order.
         if (packaged != nullptr) {
             const worldview::PackagedLayout pl = worldview::packagedLayout(
-                pos.value, appearance.defName, appearance.colorTint,
+                pos.value, appearance.defName, appearance.scale, appearance.colorTint,
                 worldview::templateBounds(assetRegistry.getTemplate(appearance.defName))
             );
             renderData.push_back(pl.crateBack);

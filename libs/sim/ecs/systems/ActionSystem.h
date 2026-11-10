@@ -6,6 +6,7 @@
 // Actions have duration and apply effects when complete.
 // See /docs/design/game-systems/colonists/needs.md for design details.
 
+#include "../DropResourceCallback.h"
 #include "../EntityID.h"
 #include "../ISystem.h"
 
@@ -46,10 +47,8 @@ public:
 	using SpawnPackagedAtCallback = std::function<void(const std::string& defName, glm::vec2 stationPos)>;
 	void setSpawnPackagedAtCallback(SpawnPackagedAtCallback callback) { m_onSpawnPackagedAt = std::move(callback); }
 
-	/// Set callback for dropping `quantity` loose units on the ground. Every loose drop goes
-	/// through here (fell remainder, hand overflow, stowed-tool drop): the app lands them as
-	/// ResourceStack piles, merged into same-def piles already at the spot, hauled away later.
-	using DropResourceCallback = std::function<void(const std::string& defName, float x, float y, uint32_t quantity)>;
+	/// Set callback for dropping loose units on the ground (fell remainder, hand overflow,
+	/// stowed-tool drop).
 	void setDropResourceCallback(DropResourceCallback callback) { m_onDropResource = std::move(callback); }
 
 	/// Set callback for removing harvested entities from the world
@@ -135,6 +134,7 @@ private:
 	/// Complete an action and apply effects
 	void completeAction(
 		EntityID entity,
+		const struct Position& position,
 		struct Action& action,
 		struct NeedsComponent& needs,
 		struct Task& task,
@@ -146,9 +146,11 @@ private:
 	void applyNeedEffect(const struct Action& action, struct NeedsComponent& needs);
 
 	/// Apply a completed collection effect (Pickup/Harvest): pool-withdraw vs single-shot,
-	/// source removal/cooldown, and harvest-goal delivery recording.
+	/// source removal/cooldown, and harvest-goal delivery recording. `colonistPosition` is where
+	/// a tool stowed to free the hands is put away or dropped from (reach starts at the colonist).
 	void applyCollectionEffect(
 		const struct Action& action,
+		glm::vec2 colonistPosition,
 		struct Task& task,
 		struct Inventory& inventory,
 		struct Memory& memory

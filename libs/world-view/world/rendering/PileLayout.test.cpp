@@ -67,6 +67,19 @@ TEST(PileLayout, FootprintHoldsFullPile) {
 	}
 	EXPECT_GT(radius, 0.535F) << "at least half of one log's width";
 
+	// At half scale the heap's row offsets shrink with the sprites, and the footprint still holds it.
+	const float halfRadius = worldview::pileFootprintRadius(bounds, 0.5F, wood);
+	const auto	half = pileLayout({0.0F, 0.0F}, "Wood", 0.5F, {1, 1, 1, 1}, bounds, wood, 40);
+	EXPECT_LT(halfRadius, radius);
+	EXPECT_NEAR(half.sprites[1].position.y - half.sprites[0].position.y, 0.5F * (full.sprites[1].position.y - full.sprites[0].position.y), 1e-5F);
+	for (std::size_t i = 0; i < half.count; ++i) {
+		const glm::vec2 lo = half.sprites[i].position;
+		const glm::vec2 hi = lo + 0.5F * glm::vec2{bounds.width, bounds.height};
+		for (const glm::vec2 corner : {lo, hi, glm::vec2{lo.x, hi.y}, glm::vec2{hi.x, lo.y}}) {
+			EXPECT_LE(std::sqrt(corner.x * corner.x + corner.y * corner.y), halfRadius + 1e-5F);
+		}
+	}
+
 	const float single = worldview::pileFootprintRadius(Foundation::Rect{-0.2F, -0.1F, 0.4F, 0.2F}, 1.0F, {0.3F, 1});
 	EXPECT_NEAR(single, std::hypot(0.2F, 0.1F), 1e-5F);
 }

@@ -165,10 +165,16 @@ namespace world_sim {
 				m_ctx.ui->pushNotification("Dev", "Unknown asset: " + material, ui::ToastSeverity::Warning);
 				return;
 			}
+			// Spawning a furniture or station def would make a live box/station that is also a pile.
+			if (!def->itemProperties.has_value()) {
+				LOG_WARNING(Game, "[DevAPI] give loose: '%s' is not an item", material.c_str());
+				m_ctx.ui->pushNotification("Dev", "Not an item: " + material, ui::ToastSeverity::Warning);
+				return;
+			}
 			// Each new pile is cleared against every pile already placed, so the pile count (not
 			// the unit count) is what a big n costs.
 			constexpr uint32_t kMaxLoosePiles = 50;
-			const uint32_t	   stackSize = def->itemProperties.has_value() ? def->itemProperties->stackSize : 0U;
+			const uint32_t	   stackSize = def->itemProperties->stackSize;
 			const uint32_t	   piles = stackSize == 0 ? 1U : (n - 1U) / stackSize + 1U;
 			if (piles > kMaxLoosePiles) {
 				LOG_WARNING(Game, "[DevAPI] give loose: %u '%s' is %u piles, over the %u limit", n, material.c_str(), piles, kMaxLoosePiles);

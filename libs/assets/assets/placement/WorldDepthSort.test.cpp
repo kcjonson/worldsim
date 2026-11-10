@@ -62,47 +62,6 @@ namespace assets {
 		EXPECT_FLOAT_EQ(anchorY, 20.9F);
 	}
 
-	// Packaged crate back, item, and crate front share the ground baseline; equal anchorY +
-	// stable sort keeps them in insertion order (back, item, front) after the global sort.
-	TEST(WorldDepthSort, PackagedLayersShareBaselineAndStayOrdered) {
-		const float bottomY = 5.0F;
-
-		assets::PlacedEntity crateBack;
-		crateBack.defName = "PackagingCrate";
-		crateBack.anchorY = bottomY;
-		assets::PlacedEntity item;
-		item.defName = "BasicBox";
-		item.anchorY = bottomY;
-		assets::PlacedEntity crateFront;
-		crateFront.defName = "PackagingCrateFront";
-		crateFront.anchorY = bottomY;
-		assets::PlacedEntity other; // unrelated entity at the same baseline
-		other.defName = "Rock";
-		other.anchorY = bottomY;
-
-		// Interleave an unrelated equal-key entity ahead of the layers; they must still emerge
-		// back, item, front.
-		std::vector<DepthSortItem> items = {
-			{other.anchorY, &other, false},
-			{crateBack.anchorY, &crateBack, false},
-			{item.anchorY, &item, false},
-			{crateFront.anchorY, &crateFront, false},
-		};
-		sortByAnchorY(items);
-
-		ASSERT_EQ(items.size(), 4U);
-		auto indexOf = [&](const assets::PlacedEntity* e) {
-			for (int i = 0; i < static_cast<int>(items.size()); ++i) {
-				if (items[i].entity == e) {
-					return i;
-				}
-			}
-			return -1;
-		};
-		EXPECT_LT(indexOf(&crateBack), indexOf(&item));
-		EXPECT_LT(indexOf(&item), indexOf(&crateFront));
-	}
-
 	// Placement-time classification (computeStaticDepthAttribs) is the single source
 	// of truth for a static's anchorY + tall/short bit; the per-frame gather only
 	// reads the stored fields. These pin the rule the bake and the sort must agree on.

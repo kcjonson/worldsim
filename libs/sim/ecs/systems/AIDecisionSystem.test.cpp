@@ -2486,7 +2486,20 @@ namespace ecs::test {
 			harvestAction.defName = "Harvest";
 			harvestAction.needsHands = true;
 			assets::ActionTypeRegistry::Get().registerTestAction(std::move(harvestAction));
+
+			// Capture drops through the real callback the handler fires.
+			world->getSystem<AIDecisionSystem>().setDropResourceCallback(
+				[this](const std::string& defName, float /*x*/, float /*y*/, uint32_t quantity) {
+					++dropCalls;
+					droppedDef = defName;
+					droppedQty = quantity;
+				}
+			);
 		}
+
+		std::string droppedDef;
+		uint32_t	droppedQty = 0;
+		int			dropCalls = 0;
 
 		void TearDown() override {
 			assets::ActionTypeRegistry::Get().clear();
@@ -2555,18 +2568,6 @@ namespace ecs::test {
 		auto* inventory = world->getComponent<Inventory>(colonist);
 		ASSERT_NE(inventory, nullptr);
 
-		// Capture drops through the real callback the handler fires.
-		std::string droppedDef;
-		uint32_t	droppedQty = 0;
-		int			dropCalls = 0;
-		world->getSystem<AIDecisionSystem>().setDropResourceCallback(
-			[&](const std::string& defName, float /*x*/, float /*y*/, uint32_t quantity) {
-				++dropCalls;
-				droppedDef = defName;
-				droppedQty = quantity;
-			}
-		);
-
 		// Belt full and backpack saturated to its slot capacity: no stow target remains.
 		inventory->belt[0] = ItemStack{"Knife", 1};
 		inventory->belt[1] = ItemStack{"Hammer", 1};
@@ -2585,6 +2586,35 @@ namespace ecs::test {
 		EXPECT_EQ(dropCalls, 1) << "Axe dropped via the drop callback";
 		EXPECT_EQ(droppedDef, "Axe");
 		EXPECT_EQ(droppedQty, 1U);
+	}
+
+	// A two-hand armful is one stack mirrored across both hands: an interrupted haul drops it once,
+	// all 14 units, not once per hand.
+	TEST_F(ChainInterruptionFixture, InterruptedTwoHandArmfulDropsOnceWithWholeQuantity) {
+		assets::AssetDefinition woodDef;
+		woodDef.defName = "Wood";
+		woodDef.label = "Wood";
+		woodDef.handsRequired = 2;
+		woodDef.category = assets::ItemCategory::RawMaterial;
+		woodDef.itemProperties = assets::ItemProperties{};
+		woodDef.itemProperties->stackSize = 40;
+		woodDef.itemProperties->massKg = 2.5F;
+		assets::AssetRegistry::Get().registerTestDefinition(std::move(woodDef));
+
+		auto  colonist = createColonist({5.0F, 5.0F});
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		ASSERT_NE(inventory, nullptr);
+		inventory->leftHand = ItemStack{"Wood", 14};
+		inventory->rightHand = ItemStack{"Wood", 14};
+
+		auto* task = armMidHaulCarryingAxe(colonist);
+		task->haulItemDefName = "Wood";
+		interruptForHarvest(colonist, *task);
+
+		EXPECT_FALSE(inventory->isHolding("Wood")) << "Both hands freed";
+		EXPECT_EQ(dropCalls, 1) << "Armful dropped once, not once per hand";
+		EXPECT_EQ(droppedDef, "Wood");
+		EXPECT_EQ(droppedQty, 14U);
 	}
 
 	TEST_F(AIDecisionSystemTest, TaskFirstActionNeedsHandsMapping) {

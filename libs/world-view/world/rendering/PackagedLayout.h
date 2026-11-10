@@ -35,18 +35,19 @@ namespace worldview {
 	};
 
 	/// The packaged item at `posValue` (bottom-center of the crate). `itemBounds` is the item
-	/// template's local bounds (templateBounds): the item is uniformly scaled down to fit the
-	/// crate's opening (never up), centered horizontally, resting on the crate floor. All three
-	/// sprites share the ground baseline as anchorY; equal keys + the stable depth sort keep
-	/// them in build order (back, item, front).
-	[[nodiscard]] inline PackagedLayout
-	packagedLayout(glm::vec2 posValue, const std::string& itemDefName, glm::vec4 itemColorTint, const Foundation::Rect& itemBounds) {
+	/// template's local bounds (templateBounds): the item is drawn at `itemScale` (its placed size)
+	/// or smaller, uniformly shrunk to fit the crate's opening, centered horizontally, resting on
+	/// the crate floor. All three sprites share the ground baseline as anchorY; equal keys + the
+	/// stable depth sort keep them in build order (back, item, front).
+	[[nodiscard]] inline PackagedLayout packagedLayout(
+		glm::vec2 posValue, const std::string& itemDefName, float itemScale, glm::vec4 itemColorTint, const Foundation::Rect& itemBounds
+	) {
 		const float		bottomY = posValue.y;
 		const glm::vec2 crateTopLeft{posValue.x - kCrateWidth * 0.5F, bottomY - kCrateHeight};
 
 		const float openingWidth = (kCrateInnerRight - kCrateInnerLeft) - 2.0F * kCrateItemMargin;
 		const float openingHeight = (kCrateFloorY - kCrateInnerTop) - kCrateItemMargin;
-		float		fit = 1.0F;
+		float		fit = itemScale;
 		if (itemBounds.width > 0.0F) {
 			fit = std::min(fit, openingWidth / itemBounds.width);
 		}

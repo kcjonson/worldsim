@@ -60,6 +60,8 @@ struct PileDropPlan {
 /// least the two footprint radii plus kGroundClearanceGap, so dissimilar items never overlay.
 /// For the first kWalkableSearchRings rings a spot must also pass `isGround` (when given);
 /// past them clearance alone decides, so a drop on a tiny patch of ground still lands.
+/// Before ring N (N >= 1) opens a new pile, same-item piles out to that ring's radius are
+/// topped up, nearest first, so repeated drops fill the overflow piles earlier drops left.
 ///
 /// A stackCap of 0 or UINT32_MAX means unbounded: everything lands in one pile.
 [[nodiscard]] inline PileDropPlan resourcePileDrops(
@@ -83,38 +85,52 @@ struct PileDropPlan {
 		return dx * dx + dy * dy;
 	};
 
-	std::vector<std::size_t> mergeable;
+	// Same-item piles nearest the origin first; each is topped up at most once.
+	std::vector<std::size_t> sameDefByDistance;
 	for (std::size_t i = 0; i < nearby.size(); ++i) {
-		if (nearby[i].sameDef && distSq(nearby[i].position, origin) <= kPileMergeRadius * kPileMergeRadius) {
-			mergeable.push_back(i);
+		if (nearby[i].sameDef) {
+			sameDefByDistance.push_back(i);
 		}
 	}
-	std::sort(mergeable.begin(), mergeable.end(), [&](std::size_t a, std::size_t b) {
+	std::sort(sameDefByDistance.begin(), sameDefByDistance.end(), [&](std::size_t a, std::size_t b) {
 		const float da = distSq(nearby[a].position, origin);
 		const float db = distSq(nearby[b].position, origin);
 		return da != db ? da < db : a < b;
 	});
-	for (std::size_t i : mergeable) {
-		if (remaining == 0) {
-			break;
+	std::size_t topUpCursor = 0;
+	auto		topUpWithin = [&](float reach) {
+		for (; topUpCursor < sameDefByDistance.size() && remaining > 0; ++topUpCursor) {
+			const std::size_t i = sameDefByDistance[topUpCursor];
+			if (distSq(nearby[i].position, origin) > reach * reach) {
+				return;
+			}
+			const uint32_t room = unbounded ? remaining : (nearby[i].quantity < stackCap ? stackCap - nearby[i].quantity : 0U);
+			const uint32_t added = room < remaining ? room : remaining;
+			if (added > 0) {
+				plan.topUps.emplace_back(i, added);
+				remaining -= added;
+			}
 		}
-		const uint32_t room = unbounded ? remaining : (nearby[i].quantity < stackCap ? stackCap - nearby[i].quantity : 0U);
-		const uint32_t added = room < remaining ? room : remaining;
-		if (added > 0) {
-			plan.topUps.emplace_back(i, added);
-			remaining -= added;
-		}
-	}
+	};
+	topUpWithin(kPileMergeRadius);
 
 	std::vector<GroundOccupant> occupied = nearby;
 	constexpr float				kPi = 3.14159265358979323846F;
-	constexpr float				kMinStep = 0.05F;  // a zero-size footprint still steps outward
-	constexpr float				kEpsilon = 1e-4F;  // float slack on a ring whose spacing is exactly the step
+	constexpr float				kMinStep = 0.05F;		   // a zero-size footprint still steps outward
+	constexpr float				kEpsilon = 1e-4F;		   // float slack on a ring whose spacing is exactly the step
+	constexpr float				kRingReachEpsilon = 1e-3F; // a pile an earlier drop put on this ring still counts as on it
 	const float					step = std::max(2.0F * footprintRadius + kGroundClearanceGap, kMinStep);
 
 	for (uint32_t ring = 0; remaining > 0; ++ring) {
 		const uint32_t slotsInRing = (ring == 0) ? 1U : 6U * ring;
 		const float	   radius = static_cast<float>(ring) * step;
+		// Fill the partial piles earlier drops left out to this ring before opening a new one.
+		if (ring > 0) {
+			topUpWithin(radius + kRingReachEpsilon);
+			if (remaining == 0) {
+				break;
+			}
+		}
 		// Half-slot angular offset per ring so successive rings don't line up radially.
 		const float baseAngle = (ring == 0) ? 0.0F : (kPi / static_cast<float>(slotsInRing));
 		for (uint32_t slot = 0; slot < slotsInRing && remaining > 0; ++slot) {

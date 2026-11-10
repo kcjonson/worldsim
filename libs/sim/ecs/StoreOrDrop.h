@@ -5,12 +5,13 @@
 // its pack (hand clearing, stowing a tool for an armful, a chain-interrupted carry, crafted
 // output that doesn't fit) goes through storeOrDrop, so the rule lives in one place.
 
+#include "DropResourceCallback.h"
+
 #include "assets/AssetDefinition.h" // ItemCategory
 
 #include <glm/vec2.hpp>
 
 #include <cstdint>
-#include <functional>
 #include <string>
 
 namespace ecs {
@@ -32,14 +33,11 @@ namespace ecs {
 		const StorageConfiguration& config, const Inventory& inventory, const std::string& defName, assets::ItemCategory category
 	);
 
-	/// Same signature as the systems' drop-resource callbacks: lay `quantity` loose units on the
-	/// ground at (x, y).
-	using DropResourceCallback = std::function<void(const std::string& defName, float x, float y, uint32_t quantity)>;
-
-	/// Get rid of `quantity` units of `defName` at `position`: deposit as much as fits into placed
-	/// storage within kStoreWithinReachMeters (nearest first; not Packaged, not a crafting
-	/// station, not behind a built wall), then drop the rest through `drop`. Safe inside a system's view loop: it only
-	/// mutates existing Inventory components and the drop callback enqueues. Returns units stored.
+	/// Get rid of `quantity` units of `defName` held by a colonist standing at `position`: deposit
+	/// as much as fits into placed storage within kStoreWithinReachMeters (nearest first; not
+	/// Packaged, not a crafting station, not behind a built wall), then drop the rest through
+	/// `drop`. Safe inside a system's view loop: it only mutates existing Inventory components and
+	/// the drop callback enqueues. Returns units stored.
 	uint32_t storeOrDrop(
 		World& world, const std::string& defName, uint32_t quantity, glm::vec2 position, const DropResourceCallback& drop
 	);

@@ -82,7 +82,8 @@ namespace worldview {
 	) {
 		// Rows stepped in Y, overlapping so each front row covers the bottom of the one behind
 		// (reads as a stack, not a scatter), with a small alternating X stagger. Units of the
-		// item's worldHeight, so a 0.4 m log heaps 5 deep inside ~0.5 m.
+		// item's worldHeight times `scale`, so a 0.4 m log heaps 5 deep inside ~0.5 m and the
+		// whole heap (and its footprint radius) scales linearly with the sprites.
 		constexpr float								  kRowStep = 0.3F;
 		constexpr std::array<float, kMaxPileSprites> kStagger{0.0F, 0.12F, -0.10F, 0.08F, -0.12F};
 
@@ -91,11 +92,12 @@ namespace worldview {
 
 		PileLayout out;
 		out.count = pileSpriteCount(quantity, item.stackSize);
+		const float unit = item.worldHeight * scale;
 		const float firstRow = -0.5F * static_cast<float>(out.count - 1) * kRowStep;
 		for (std::size_t i = 0; i < out.count; ++i) {
 			const glm::vec2 center{
-				posValue.x + kStagger[i] * item.worldHeight,
-				posValue.y + (firstRow + static_cast<float>(i) * kRowStep) * item.worldHeight,
+				posValue.x + kStagger[i] * unit,
+				posValue.y + (firstRow + static_cast<float>(i) * kRowStep) * unit,
 			};
 			assets::PlacedEntity& sprite = out.sprites[i];
 			sprite.defName = defName;
