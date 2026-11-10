@@ -6,6 +6,7 @@
 
 #include "../GoalTaskRegistry.h"
 #include "../InventoryMass.h"
+#include "../StoreOrDrop.h"
 #include "../World.h"
 #include "TimeSystem.h"
 #include "../components/Action.h"
@@ -17,6 +18,7 @@
 #include "../components/Packaged.h"
 #include "../components/ResourceStack.h"
 #include "../components/Skills.h"
+#include "../components/StorageConfiguration.h"
 #include "../components/Structure.h"
 #include "../components/StructureBlueprint.h"
 #include "../components/Task.h"
@@ -1582,6 +1584,45 @@ class FellingTest : public ::testing::Test {
 		world->update(2.0F); // complete (duration 1s)
 	}
 
+	// Seat a 14-unit Wood armful (mirrored across both hands) on the colonist at (1, 1), then run
+	// a PickupPackaged of a shelf there, which has to free both hands of the wood. Returns the shelf.
+	EntityID pickUpPackagedHoldingWood(EntityID colonist) {
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		inventory->leftHand = ItemStack{"Wood", 14};
+		inventory->rightHand = ItemStack{"Wood", 14};
+
+		auto packaged = world->createEntity();
+		world->addComponent<Position>(packaged, Position{{1.0F, 1.0F}});
+		world->addComponent<Appearance>(packaged, Appearance{"BasicShelf", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+		world->addComponent<Packaged>(packaged, Packaged{glm::vec2{5.0F, 5.0F}, false});
+
+		auto* task = world->getComponent<Task>(colonist);
+		task->type = TaskType::PlacePackaged;
+		task->state = TaskState::Arrived;
+		task->placePackagedEntityId = static_cast<uint64_t>(packaged);
+		task->placeSourcePosition = {1.0F, 1.0F};
+		task->placeTargetPosition = {5.0F, 5.0F};
+		task->targetPosition = {1.0F, 1.0F};
+
+		auto* action = world->getComponent<Action>(colonist);
+		*action = Action::PickupPackaged(static_cast<uint64_t>(packaged), {1.0F, 1.0F});
+
+		world->update(0.1F); // start
+		world->update(2.0F); // complete (PickupPackaged duration 1.5s) -> clears hands, picks up shelf
+		return packaged;
+	}
+
+	// A placed storage box at `position` taking RawMaterial, with `slots` slots.
+	EntityID createBox(glm::vec2 position, uint32_t slots) {
+		auto box = world->createEntity();
+		world->addComponent<Position>(box, Position{position});
+		Inventory store;
+		store.maxCapacity = slots;
+		world->addComponent<Inventory>(box, std::move(store));
+		world->addComponent<StorageConfiguration>(box, StorageConfiguration::createAcceptAll({assets::ItemCategory::RawMaterial}));
+		return box;
+	}
+
 	std::unique_ptr<World> world;
 	int					   dropCalls = 0;
 	int					   removeCalls = 0;
@@ -1709,30 +1750,7 @@ TEST_F(FellingTest, HeldAxeFallsBackToPackWhenBeltFull) {
 TEST_F(FellingTest, PickupPackagedDropsHeldWoodArmfulOnceNotTwice) {
 	auto  colonist = createColonist({1.0F, 1.0F});
 	auto* inventory = world->getComponent<Inventory>(colonist);
-	// Hands hold a 14-unit Wood armful, mirrored across both hands.
-	inventory->leftHand = ItemStack{"Wood", 14};
-	inventory->rightHand = ItemStack{"Wood", 14};
-	ASSERT_EQ(handHeldQuantity(*inventory, "Wood"), 14U);
-
-	// A packaged shelf to pick up at the colonist's position.
-	auto packaged = world->createEntity();
-	world->addComponent<Position>(packaged, Position{{1.0F, 1.0F}});
-	world->addComponent<Appearance>(packaged, Appearance{"BasicShelf", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
-	world->addComponent<Packaged>(packaged, Packaged{glm::vec2{5.0F, 5.0F}, false});
-
-	auto* task = world->getComponent<Task>(colonist);
-	task->type = TaskType::PlacePackaged;
-	task->state = TaskState::Arrived;
-	task->placePackagedEntityId = static_cast<uint64_t>(packaged);
-	task->placeSourcePosition = {1.0F, 1.0F};
-	task->placeTargetPosition = {5.0F, 5.0F};
-	task->targetPosition = {1.0F, 1.0F};
-
-	auto* action = world->getComponent<Action>(colonist);
-	*action = Action::PickupPackaged(static_cast<uint64_t>(packaged), {1.0F, 1.0F});
-
-	world->update(0.1F); // start
-	world->update(2.0F); // complete (PickupPackaged duration 1.5s) -> clears hands, picks up shelf
+	const EntityID packaged = pickUpPackagedHoldingWood(colonist);
 
 	// The held Wood dropped exactly once, as a single loose pile of all 14 units.
 	EXPECT_EQ(dropCalls, 1) << "Armful dropped once, not once per hand";
@@ -1743,6 +1761,58 @@ TEST_F(FellingTest, PickupPackagedDropsHeldWoodArmfulOnceNotTwice) {
 	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 0U) << "Wood cleared from both hands";
 	ASSERT_TRUE(inventory->carryingPackagedEntity.has_value());
 	EXPECT_EQ(inventory->carryingPackagedEntity.value(), static_cast<uint64_t>(packaged));
+}
+
+// Store-first: a box within reach with room takes the freed armful; nothing lands on the ground.
+TEST_F(FellingTest, FreedArmfulGoesIntoBoxWithinReach) {
+	auto	 colonist = createColonist({1.0F, 1.0F});
+	EntityID box = createBox({2.0F, 1.0F}, 4);
+	pickUpPackagedHoldingWood(colonist);
+
+	EXPECT_EQ(world->getComponent<Inventory>(box)->getQuantity("Wood"), 14U);
+	EXPECT_EQ(dropCalls, 0) << "Stored, not dropped";
+}
+
+// A full box, or one whose rules don't take the item, leaves the drop as the only option.
+TEST_F(FellingTest, FullOrNonAcceptingBoxInReachStillDrops) {
+	auto	 colonist = createColonist({1.0F, 1.0F});
+	EntityID full = createBox({1.5F, 1.0F}, 1);
+	world->getComponent<Inventory>(full)->addItem("Wood", 40);
+	EntityID picky = createBox({1.0F, 1.5F}, 4);
+	*world->getComponent<StorageConfiguration>(picky) = StorageConfiguration::createAcceptAll({assets::ItemCategory::Food});
+	pickUpPackagedHoldingWood(colonist);
+
+	EXPECT_EQ(world->getComponent<Inventory>(full)->getQuantity("Wood"), 40U);
+	EXPECT_EQ(world->getComponent<Inventory>(picky)->getQuantity("Wood"), 0U);
+	EXPECT_EQ(dropCalls, 1);
+	EXPECT_EQ(lastDropQty, 14U);
+}
+
+// A box beyond reach is ignored: the colonist doesn't walk to put the armful away.
+TEST_F(FellingTest, BoxOutOfReachIsIgnored) {
+	auto	 colonist = createColonist({1.0F, 1.0F});
+	EntityID far = createBox({1.0F + kStoreWithinReachMeters + 0.5F, 1.0F}, 4);
+	pickUpPackagedHoldingWood(colonist);
+
+	EXPECT_EQ(world->getComponent<Inventory>(far)->getQuantity("Wood"), 0U);
+	EXPECT_EQ(dropCalls, 1);
+	EXPECT_EQ(lastDropQty, 14U);
+}
+
+// Partial room splits the armful: the box fills to its stack cap and the rest drops. A packaged
+// box right at the colonist's feet isn't set down yet, so it takes nothing.
+TEST_F(FellingTest, PartialRoomSplitsBetweenBoxAndGround) {
+	auto	 colonist = createColonist({1.0F, 1.0F});
+	EntityID box = createBox({1.5F, 1.0F}, 1);
+	world->getComponent<Inventory>(box)->addItem("Wood", 30);
+	EntityID packagedBox = createBox({1.0F, 1.0F}, 4);
+	world->addComponent<Packaged>(packagedBox, Packaged{});
+	pickUpPackagedHoldingWood(colonist);
+
+	EXPECT_EQ(world->getComponent<Inventory>(box)->getQuantity("Wood"), 40U) << "Box filled to Wood's 40 cap";
+	EXPECT_EQ(world->getComponent<Inventory>(packagedBox)->getQuantity("Wood"), 0U);
+	EXPECT_EQ(dropCalls, 1);
+	EXPECT_EQ(lastDropQty, 4U) << "14 - 10 stored = 4 dropped";
 }
 
 // =============================================================================

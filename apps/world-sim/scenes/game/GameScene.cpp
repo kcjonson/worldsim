@@ -43,6 +43,9 @@
 #include <world/rendering/ChunkRenderer.h>
 #include <world/rendering/EntityRenderer.h>
 #include <world/rendering/GroundTileBank.h>
+#include <world/rendering/PackagedLayout.h> // crate footprint (drop spacing)
+#include <world/rendering/PileLayout.h>	   // pile footprint (drop spacing)
+#include <world/rendering/TemplateBounds.h>
 
 #include <assets/AssetRegistry.h>
 #include <assets/RecipeRegistry.h>
@@ -94,11 +97,13 @@
 #include <world/rendering/DynamicEntityRenderSystem.h>
 
 #include <cstdlib>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <random>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -559,7 +564,8 @@ namespace {
 			});
 
 			// Dev/test command + readback handler. All the systems it pokes now exist; it
-			// borrows the colonist-spawn helper (also used at world init) via a callback.
+			// borrows the colonist-spawn helper (also used at world init) and the loose-drop path
+			// via callbacks.
 			m_devHandler = std::make_unique<world_sim::DevCommandHandler>(world_sim::DevCommandContext{
 				.world = ecsWorld.get(),
 				.drawing = m_drawingSystem.get(),
@@ -572,6 +578,9 @@ namespace {
 				.landingLatDeg = m_landingLatDeg,
 				.landingLonDeg = m_landingLonDeg,
 				.spawnColonist = [this](glm::vec2 pos, const std::string& name) { return spawnColonist(pos, name); },
+				.dropLoose = [this](const std::string& defName, float x, float y, uint32_t quantity) {
+					dropResourcePiles(defName, x, y, quantity);
+				},
 			});
 			m_devRegistrations = m_devHandler->registerWith(owner->devServer());
 
@@ -878,8 +887,8 @@ namespace {
 			// Drain deferred drops AFTER the ECS update, for the same reason as the removals above:
 			// spawnEntity grows the component pools and a synchronous spawn from inside a system's
 			// view loop (a colonist freeing its hands, a fell's uncarried remainder) would reallocate
-			// and dangle that view's bound refs. A packaged item spawns one entity with a Packaged
-			// tag; a resource pile routes through dropResourcePiles (stack-capped split).
+			// and dangle that view's bound refs. Crafted furniture spawns one entity with a Packaged
+			// tag; a loose drop routes through dropResourcePiles (merge, then stack-capped split).
 			if (!m_pendingSpawns.empty()) {
 				for (const PendingSpawn& spawn : m_pendingSpawns) {
 					if (spawn.packaged) {
@@ -904,6 +913,15 @@ namespace {
 					}
 				}
 				m_pendingSpawns.clear();
+			}
+
+			// A selected pile drains away as colonists haul from it; when it's gone, the
+			// selection goes with it (isAlive first: a recycled index could carry another
+			// entity's ResourceStack).
+			if (const auto* pileSel = std::get_if<world_sim::ResourcePileSelection>(&m_selectionSystem->current());
+				pileSel != nullptr
+				&& (!ecsWorld->isAlive(pileSel->entityId) || !ecsWorld->hasComponent<ecs::ResourceStack>(pileSel->entityId))) {
+				m_selectionSystem->clearSelection();
 			}
 
 			// Feed the current selection's room id to the overlay so it can draw the
@@ -1274,15 +1292,6 @@ namespace {
 				return onGround.value_or(glm::vec2{x, y});
 			};
 
-			// Wire up ActionSystem to drop non-backpackable items on the ground as packaged.
-			// These callbacks fire from inside the ActionSystem view loop, so they only ENQUEUE;
-			// the real spawnEntity runs at the pending-spawn drain after ecsWorld->update() (see
-			// m_pendingSpawns) to avoid reallocating component pools out from under the live view.
-			actionSystem.setDropItemCallback([this, snapDropToGround](const std::string& defName, float x, float y) {
-				const glm::vec2 at = snapDropToGround(x, y);
-				m_pendingSpawns.push_back({defName, at.x, at.y, 0, /*packaged=*/true, std::nullopt});
-			});
-
 			// Crafted FURNITURE comes out PACKAGED and auto-installs a short distance off the
 			// station via the existing PlacePackaged flow (it must not seat in the colonist's
 			// hands or stack on the station). Resolve a walkable spot >= 1 m away; the aim rotates
@@ -1304,18 +1313,17 @@ namespace {
 				}
 			});
 
-			// Drop a loose, haulable resource pile (felling remainder, or a cancelled build site's
-			// staged materials). Unlike the crafting drop above, this pile is NOT packaged: a
-			// per-entity ResourceStack holds the count and it is immediately haulable. Both the
-			// ActionSystem fell-remainder drop and the ConstructionSystem cancelled-site drop fire
-			// from inside their system's view loop, so both ENQUEUE; the drain runs dropResourcePiles
-			// (the single pile-split spawn path) after ecsWorld->update().
+			// Every loose drop (felling remainder, hand overflow, a stowed tool, a chain-interrupted
+			// carry, a cancelled build site's staged materials) lands as a ResourceStack pile, not
+			// Packaged. The callbacks fire from inside their system's view loop, so they ENQUEUE; the
+			// drain runs dropResourcePiles (the single loose-drop path) after ecsWorld->update().
 			auto enqueueResourceDrop = [this, snapDropToGround](const std::string& defName, float x, float y, uint32_t quantity) {
 				const glm::vec2 at = snapDropToGround(x, y);
 				m_pendingSpawns.push_back({defName, at.x, at.y, quantity, /*packaged=*/false});
 			};
 			actionSystem.setDropResourceCallback(enqueueResourceDrop);
 			constructionSystem.setDropResourceCallback(enqueueResourceDrop);
+			aiDecisionSystem.setDropResourceCallback(enqueueResourceDrop);
 
 			// Wire up ActionSystem to remove harvested entities (destructive harvest)
 			actionSystem.setRemoveEntityCallback([this](const std::string& defName, float x, float y) {
@@ -1717,21 +1725,77 @@ namespace {
 			LOG_INFO(Game, "Canceled job '%s' at station '%s'", recipeDefName.c_str(), stationSel->defName.c_str());
 		}
 
-		/// Spawn a loose, haulable resource pile of `quantity` x `defName` at (x, y). A pile is capped
-		/// at the item's own stackSize, so an over-cap drop splits into several piles scattered to
-		/// distinct spots (within the 0.25 m pickup epsilon two piles would alias). No def / no
-		/// itemProperties means unbounded -> a single pile. Each pile is a ResourceStack entity (not
-		/// Packaged): immediately haulable. The SINGLE ground-pile drop path; ActionSystem (felling
-		/// remainder) and ConstructionSystem (cancelled-site materials) both route through it.
+		/// Lay `quantity` x `defName` on the ground at (x, y) as loose, haulable ResourceStack piles
+		/// (not Packaged). Same-def piles near the spot are topped up to the item's stackSize first,
+		/// then the rest spawns as new stack-capped piles on walkable spots clear of every pile and
+		/// packaged crate around (footprints from the shared layouts, so spacing matches what's
+		/// drawn). No def / no itemProperties means unbounded -> one pile. The SINGLE loose-drop
+		/// path: every sim drop callback, the cancelled site's salvage, and the dev `give
+		/// where=loose` route through it.
 		void dropResourcePiles(const std::string& defName, float x, float y, uint32_t quantity) {
-			const auto*	   def = assets::AssetRegistry::Get().getDefinition(defName);
+			auto&		   registry = assets::AssetRegistry::Get();
+			const auto*	   def = registry.getDefinition(defName);
 			const uint32_t cap = (def != nullptr && def->itemProperties.has_value()) ? def->itemProperties->stackSize : UINT32_MAX;
-			const auto	   piles = ecs::resourcePileDrops(cap, quantity, {x, y});
-			for (const auto& [pos, qty] : piles) {
+
+			std::unordered_map<std::string, float> radiusByDef;
+			auto pileRadius = [&](const std::string& pileDef, float scale) {
+				auto it = radiusByDef.find(pileDef);
+				if (it == radiusByDef.end()) {
+					const float unitScaleRadius = worldview::pileFootprintRadius(
+						worldview::templateBounds(registry.getTemplate(pileDef)), 1.0F, worldview::pileItem(registry.getDefinition(pileDef))
+					);
+					it = radiusByDef.emplace(pileDef, unitScaleRadius).first;
+				}
+				return it->second * scale;
+			};
+
+			// Wide enough to hold anything a drop's spiral could reach before it finds clear ground.
+			constexpr float					 kNearbyRadius = 10.0F;
+			auto							 isNear = [x, y](glm::vec2 p) {
+				  const float dx = p.x - x;
+				  const float dy = p.y - y;
+				  return dx * dx + dy * dy <= kNearbyRadius * kNearbyRadius;
+			};
+			std::vector<ecs::GroundOccupant> nearby;
+			std::vector<ecs::ResourceStack*> nearbyStacks;
+			for (auto [entity, pos, appearance, stack] : ecsWorld->view<ecs::Position, ecs::Appearance, ecs::ResourceStack>()) {
+				if (!isNear(pos.value)) {
+					continue;
+				}
+				nearby.push_back({pos.value, pileRadius(appearance.defName, appearance.scale), stack.quantity, appearance.defName == defName});
+				nearbyStacks.push_back(&stack);
+			}
+			for (auto [entity, pos, packaged] : ecsWorld->view<ecs::Position, ecs::Packaged>()) {
+				const glm::vec2 center = worldview::packagedFootprintCenter(pos.value);
+				if (packaged.beingCarried || !isNear(center)) {
+					continue;
+				}
+				nearby.push_back({center, worldview::kPackagedFootprintRadius, 0, false});
+			}
+
+			const auto& nav = ecsWorld->getSystem<ecs::NavigationSystem>();
+			std::function<bool(glm::vec2)> isGround;
+			if (nav.isValidPosition({x, y})) {
+				isGround = [&nav](glm::vec2 p) { return nav.isValidPosition(p); };
+			}
+			const auto plan = ecs::resourcePileDrops(cap, quantity, {x, y}, pileRadius(defName, 1.0F), nearby, isGround);
+			for (const auto& [index, added] : plan.topUps) {
+				nearbyStacks[index]->quantity += added;
+			}
+			for (const auto& [pos, qty] : plan.spawns) {
 				auto entity = m_placementSystem->spawnEntity(defName, {pos.x, pos.y});
 				ecsWorld->addComponent<ecs::ResourceStack>(entity, ecs::ResourceStack{qty});
 			}
-			LOG_INFO(Game, "Dropped %u x '%s' as %zu stacks at (%.1f, %.1f)", quantity, defName.c_str(), piles.size(), x, y);
+			LOG_INFO(
+				Game,
+				"Dropped %u x '%s' at (%.1f, %.1f): topped up %zu piles, spawned %zu",
+				quantity,
+				defName.c_str(),
+				x,
+				y,
+				plan.topUps.size(),
+				plan.spawns.size()
+			);
 		}
 
 		/// Mark a structure's ECS blueprint for deconstruction. ConstructionSystem then emits a
@@ -2085,12 +2149,12 @@ namespace {
 		// never destroyEntity mid-view-iteration (deconstruct callback, demolish).
 		std::vector<ecs::EntityID> m_pendingEntityRemoval;
 
-		// Drops requested from inside the ActionSystem view loop (a colonist stows a held tool to
-		// free its hands, or a fell drops its uncarried remainder). spawnEntity grows the component
-		// pools, which would reallocate and dangle the live view's bound refs -- so the drop
-		// callbacks ENQUEUE here and the real spawn happens at the drain below, after
-		// ecsWorld->update(), next to the removal drain. `packaged` items spawn one entity with a
-		// Packaged tag; resource piles route through dropResourcePiles (stack-capped split).
+		// Drops requested from inside a system's view loop (a colonist stows a held tool to free
+		// its hands, a fell drops its uncarried remainder, crafted furniture comes off a station).
+		// spawnEntity grows the component pools, which would reallocate and dangle the live view's
+		// bound refs -- so the callbacks ENQUEUE here and the real spawn happens at the drain,
+		// after ecsWorld->update(), next to the removal drain. `packaged` is crafted furniture
+		// only (one entity with a Packaged tag); loose drops route through dropResourcePiles.
 		struct PendingSpawn {
 			std::string defName;
 			float		x = 0.0F;
@@ -2100,7 +2164,7 @@ namespace {
 			// Auto-place target for a packaged spawn (a crafted furniture box). When set, the
 			// entity spawns AT this point with Packaged.targetPosition wired, so BuildGoalSystem
 			// raises the place goal immediately (no manual [Place]). nullopt -> the player-driven
-			// path (spawn in place, await a [Place] click) for a manually dropped packaged item.
+			// path (spawn in place, await a [Place] click) when no nav mesh covers the station.
 			std::optional<glm::vec2> targetPosition;
 		};
 		std::vector<PendingSpawn> m_pendingSpawns;

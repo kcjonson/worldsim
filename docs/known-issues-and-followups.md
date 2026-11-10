@@ -158,10 +158,11 @@ placement is resolved by `NavigationSystem::isAreaWalkable` (PR #241).
   output with a full pack, cancelled foundations) can land in the river because there is no
   valid-position-aware drop. `findValidPositionNear` (designed in #240, not yet built) is the
   fix; build it with its first consumer (craft-with-full-pack drop / box placement).
-- [ ] **Dev-tools spawn: confusing options + unstacked items** — STILL OPEN. Destination labels
-  aren't explained; "colonist" still accepts coordinates; spawning N items makes N separate stacks.
-  Note: the off-mesh spawn refusal WAS added in #241 (invalid positions are rejected). Remaining:
-  UX labels, `colonist` dest semantics, spawn-N-as-one-stack.
+- [ ] **Dev-tools spawn: confusing options** — STILL OPEN. Destination labels aren't explained;
+  "colonist" still accepts coordinates. Note: the off-mesh spawn refusal WAS added in #241
+  (invalid positions are rejected), and `give where=loose` now drops N units as stack-capped
+  ResourceStack piles through the one loose-drop path (merging into piles already there), not
+  N packaged entities. Remaining: UX labels, `colonist` dest semantics.
 - [ ] **Colonist directional sprites are mirrored** — STILL OPEN. Up looks down, left looks right.
   Direction-to-sprite mapping (or an axis) is inverted in the colonist render / animation path
   (the data-driven `<motion>` work).

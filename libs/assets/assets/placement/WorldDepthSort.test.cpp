@@ -62,44 +62,45 @@ namespace assets {
 		EXPECT_FLOAT_EQ(anchorY, 20.9F);
 	}
 
-	// Packaged crate + item share the ground baseline; equal anchorY + stable sort
-	// keeps the crate (added first) behind the item after the global sort.
-	TEST(WorldDepthSort, PackagedPairSharesBaselineAndStaysOrdered) {
+	// Packaged crate back, item, and crate front share the ground baseline; equal anchorY +
+	// stable sort keeps them in insertion order (back, item, front) after the global sort.
+	TEST(WorldDepthSort, PackagedLayersShareBaselineAndStayOrdered) {
 		const float bottomY = 5.0F;
 
-		assets::PlacedEntity crate;
-		crate.defName = "PackagingCrate";
-		crate.anchorY = bottomY; // == computeAnchorY(bottomY, 0, 1)
+		assets::PlacedEntity crateBack;
+		crateBack.defName = "PackagingCrate";
+		crateBack.anchorY = bottomY;
 		assets::PlacedEntity item;
 		item.defName = "BasicBox";
 		item.anchorY = bottomY;
+		assets::PlacedEntity crateFront;
+		crateFront.defName = "PackagingCrateFront";
+		crateFront.anchorY = bottomY;
 		assets::PlacedEntity other; // unrelated entity at the same baseline
 		other.defName = "Rock";
 		other.anchorY = bottomY;
 
-		EXPECT_FLOAT_EQ(crate.anchorY, item.anchorY);
-
-		// Interleave an unrelated equal-key entity ahead of the pair; the pair must
-		// still emerge crate-before-item.
+		// Interleave an unrelated equal-key entity ahead of the layers; they must still emerge
+		// back, item, front.
 		std::vector<DepthSortItem> items = {
 			{other.anchorY, &other, false},
-			{crate.anchorY, &crate, false},
+			{crateBack.anchorY, &crateBack, false},
 			{item.anchorY, &item, false},
+			{crateFront.anchorY, &crateFront, false},
 		};
 		sortByAnchorY(items);
 
-		ASSERT_EQ(items.size(), 3U);
-		int crateIdx = -1;
-		int itemIdx = -1;
-		for (int i = 0; i < static_cast<int>(items.size()); ++i) {
-			if (items[i].entity == &crate) {
-				crateIdx = i;
+		ASSERT_EQ(items.size(), 4U);
+		auto indexOf = [&](const assets::PlacedEntity* e) {
+			for (int i = 0; i < static_cast<int>(items.size()); ++i) {
+				if (items[i].entity == e) {
+					return i;
+				}
 			}
-			if (items[i].entity == &item) {
-				itemIdx = i;
-			}
-		}
-		EXPECT_LT(crateIdx, itemIdx);
+			return -1;
+		};
+		EXPECT_LT(indexOf(&crateBack), indexOf(&item));
+		EXPECT_LT(indexOf(&item), indexOf(&crateFront));
 	}
 
 	// Placement-time classification (computeStaticDepthAttribs) is the single source

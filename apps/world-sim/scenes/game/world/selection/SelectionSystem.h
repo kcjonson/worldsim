@@ -6,6 +6,7 @@
 // - Priority 1.0: Colonists (highest)
 // - Priority 1.5: Crafting stations
 // - Priority 1.6: Storage containers
+// - Priority 1.8: Loose ground piles (ResourceStack)
 // - Priority 2.0: World entities (placed assets)
 // - Priority 2.3: Openings (above the wall they sit on, below entities/furniture)
 // - Priority 2.5: Wall segments (above foundations, below entities/furniture)
@@ -43,6 +44,7 @@ namespace SelectionPriority {
 	constexpr float kColonist = 1.0F;
 	constexpr float kCraftingStation = 1.5F;
 	constexpr float kStorageContainer = 1.6F;
+	constexpr float kResourcePile = 1.8F; // loose ground piles, above the static world they lie on
 	constexpr float kWorldEntity = 2.0F;
 	constexpr float kOpening = 2.3F;	 // above the wall it sits on, below entities/furniture
 	constexpr float kWallSegment = 2.5F; // above the host foundation, below entities/furniture
@@ -149,6 +151,17 @@ class SelectionSystem {
 	/// not handleClick so the next same-spot click starts fresh.
 	void resetCycleState();
 
+	// A composite outline (packaged crate + item, a pile's sprites) unions its parts' world rings
+	// into one. buildEntityOutline runs every frame, so the last input and result are kept and the
+	// boolean only reruns when the parts change.
+	mutable std::vector<geometry::Ring> compositeOutlineInput;
+	mutable std::vector<geometry::Ring> compositeOutlineRings;
+
+	/// One outline for several overlapping sprites: fold `worldRingsMm` (world-space mm) pairwise
+	/// through geometry::unionRings until no pair merges. A pair it rejects (disjoint, touching at
+	/// a point, or enclosing a hole) stays two rings and both are stroked.
+	[[nodiscard]] const std::vector<geometry::Ring>& unionCompositeRings(std::vector<geometry::Ring> worldRingsMm) const;
+
 	// Broad-phase pick radii only (centroid pre-cull / spatial query); the precise
 	// silhouette test decides the actual hit. Dynamic ECS types scan globally and
 	// pre-cull to kSelectionRadius; world entities widen to kWorldEntitySelectRadius so
@@ -164,6 +177,10 @@ class SelectionSystem {
 	// target, so a click within this radius of the centerline still hits. mm,
 	// max'd against the segment's half-thickness so a thick wall uses its own face.
 	static constexpr std::int64_t kWallPickSlopMm = 300; // 0.3 m, matches edge-snap slop
+
+	// Pick slop for loose ground piles: a click within this many meters of the pile center
+	// hits even off the sprites, so a lone small item stays clickable.
+	static constexpr float kPilePickSlop = 0.3F;
 
 	// Two clicks within this screen-space distance (logical px) count as the "same
 	// spot" and advance the cycle rather than starting a fresh selection.

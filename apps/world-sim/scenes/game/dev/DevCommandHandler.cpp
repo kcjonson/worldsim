@@ -24,7 +24,6 @@
 #include <ecs/components/Inventory.h>
 #include <ecs/components/Movement.h>
 #include <ecs/components/Needs.h>
-#include <ecs/components/Packaged.h>
 #include <ecs/components/StorageConfiguration.h>
 #include <ecs/components/Structure.h>
 #include <ecs/components/StructureBlueprint.h>
@@ -169,19 +168,9 @@ namespace world_sim {
 			if (!requireValidPosition(at, "give loose")) {
 				return;
 			}
-			// Each packaged item is its own entity (no ground stacks); cap so a big N can't spawn thousands.
-			constexpr uint32_t kMaxLoose = 50;
-			const uint32_t	   count = n < kMaxLoose ? n : kMaxLoose;
-			for (uint32_t i = 0; i < count; ++i) {
-				const Foundation::Vec2 off = spreadOffset(static_cast<long>(i), static_cast<long>(count), 1.0F);
-				const ecs::EntityID	   entity = m_ctx.placement->spawnEntity(material, {at.x + off.x, at.y + off.y});
-				m_ctx.world->addComponent<ecs::Packaged>(entity, ecs::Packaged{});
-			}
-			if (n > kMaxLoose) {
-				LOG_WARNING(Game, "[DevAPI] give loose: capped %u -> %u entities", n, kMaxLoose);
-			}
-			LOG_INFO(Game, "[DevAPI] give: dropped %u loose '%s' near (%.1f, %.1f)", count, material.c_str(), at.x, at.y);
-			m_ctx.ui->pushNotification("Dev", "Dropped " + std::to_string(count) + " " + material, ui::ToastSeverity::Info);
+			m_ctx.dropLoose(material, at.x, at.y, n);
+			LOG_INFO(Game, "[DevAPI] give: dropped %u loose '%s' at (%.1f, %.1f)", n, material.c_str(), at.x, at.y);
+			m_ctx.ui->pushNotification("Dev", "Dropped " + std::to_string(n) + " " + material, ui::ToastSeverity::Info);
 			return;
 		}
 

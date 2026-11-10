@@ -2557,11 +2557,13 @@ namespace ecs::test {
 
 		// Capture drops through the real callback the handler fires.
 		std::string droppedDef;
+		uint32_t	droppedQty = 0;
 		int			dropCalls = 0;
-		world->getSystem<AIDecisionSystem>().setDropItemCallback(
-			[&](const std::string& defName, float /*x*/, float /*y*/) {
+		world->getSystem<AIDecisionSystem>().setDropResourceCallback(
+			[&](const std::string& defName, float /*x*/, float /*y*/, uint32_t quantity) {
 				++dropCalls;
 				droppedDef = defName;
+				droppedQty = quantity;
 			}
 		);
 
@@ -2582,6 +2584,7 @@ namespace ecs::test {
 		EXPECT_FALSE(inventory->hasItem("Axe")) << "Backpack was full, Axe not stowed";
 		EXPECT_EQ(dropCalls, 1) << "Axe dropped via the drop callback";
 		EXPECT_EQ(droppedDef, "Axe");
+		EXPECT_EQ(droppedQty, 1U);
 	}
 
 	TEST_F(AIDecisionSystemTest, TaskFirstActionNeedsHandsMapping) {
