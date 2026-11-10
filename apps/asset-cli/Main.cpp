@@ -378,9 +378,9 @@ namespace {
 		out["groups"] = d->placement.groups;
 		if (drawsTemplates(*d)) {
 			out["templates"] = templateTable(*d);
-		} else if (d->variantCount > 1) {
+		} else {
 			json variants = json::array();
-			for (uint32_t v = 0; v < d->variantCount; ++v) {
+			for (uint32_t v = 0; v < std::max<uint32_t>(d->variantCount, 1U); ++v) {
 				json row = variantCounts(*d, v);
 				row["variant"] = v;
 				variants.push_back(row);
