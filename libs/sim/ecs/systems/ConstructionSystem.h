@@ -82,6 +82,7 @@ namespace ecs {
 	class World;
 	struct Structure;				 // defined in components/Structure.h
 	enum class GoalStatus : uint8_t; // defined in GoalTaskRegistry.h
+	struct FootprintBounds;			 // defined in GoalTaskRegistry.h
 
 	/// Pure phase-decision result, independent of ECS/placement wiring so it can be
 	/// unit-tested directly. Tells the system what the blueprint's phase SHOULD be and
@@ -195,7 +196,11 @@ namespace ecs {
 		uint32_t creditMaterialToSites(const std::string& defName, uint32_t amount);
 
 	  private:
-		/// True if no Harvestable placed entity overlaps the foundation's footprint AABB.
+		/// The foundation's footprint AABB in world meters: the one definition of "inside the
+		/// footprint" for both the clear gate and the clear goal a colonist serves.
+		[[nodiscard]] FootprintBounds footprintBounds(uint64_t foundationId) const;
+
+		/// True if no Harvestable placed entity lies in the foundation's footprintBounds.
 		/// v1 clearing rule (see header): only Harvestable blockers gate clearing.
 		[[nodiscard]] bool isFootprintClear(uint64_t foundationId) const;
 
@@ -251,9 +256,9 @@ namespace ecs {
 		/// True (ungated) when there is no ConstructionWorld wired (headless contexts).
 		[[nodiscard]] bool deconstructDependentsCleared(const Structure& structure) const;
 
-		/// Emit a clear-Harvest CHILD under the umbrella for Harvestable blockers on the
-		/// footprint. Reuses the Harvest goal shape (yield = whatever the blocker yields) so
-		/// chopping a tree both clears the site and produces Wood for the manifest.
+		/// Emit a clear-Harvest CHILD under the umbrella, served by any Harvestable a colonist
+		/// knows inside the footprint. Each served harvest removes its blocker and retires the
+		/// goal; the next pass re-emits while the footprint still holds one.
 		void emitClearGoals(EntityID blueprintEntity, uint64_t foundationId, uint64_t umbrellaGoalId);
 
 		/// Emit a Harvest+Haul CHILD chain per outstanding material under the umbrella

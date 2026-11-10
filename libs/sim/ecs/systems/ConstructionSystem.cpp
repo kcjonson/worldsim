@@ -204,6 +204,11 @@ namespace ecs {
 		}
 	}
 
+	FootprintBounds ConstructionSystem::footprintBounds(uint64_t foundationId) const {
+		const auto aabb = m_constructionWorld->footprintAabb(foundationId);
+		return {geometry::dequantize(aabb.min), geometry::dequantize(aabb.max)};
+	}
+
 	bool ConstructionSystem::isFootprintClear(uint64_t foundationId) const {
 		if (m_constructionWorld == nullptr || m_placementExecutor == nullptr || m_processedChunks == nullptr) {
 			// No placement data wired: treat as clear so the lifecycle still progresses
@@ -211,11 +216,11 @@ namespace ecs {
 			return true;
 		}
 
-		const auto	aabb = m_constructionWorld->footprintAabb(foundationId);
-		const float minX = geometry::dequantize(aabb.min).x;
-		const float minY = geometry::dequantize(aabb.min).y;
-		const float maxX = geometry::dequantize(aabb.max).x;
-		const float maxY = geometry::dequantize(aabb.max).y;
+		const FootprintBounds bounds = footprintBounds(foundationId);
+		const float			  minX = bounds.min.x;
+		const float			  minY = bounds.min.y;
+		const float			  maxX = bounds.max.x;
+		const float			  maxY = bounds.max.y;
 
 		auto& assetRegistry = assets::AssetRegistry::Get();
 
@@ -288,84 +293,33 @@ namespace ecs {
 		}
 
 		auto& registry = GoalTaskRegistry::Get();
-		auto& assetRegistry = assets::AssetRegistry::Get();
 
-		// One clear Harvest CHILD per blueprint is enough: it requests the yield of the blockers
-		// (e.g. Wood from trees), which AIDecision serves against any matching harvestable on the
-		// site. Chopping clears the footprint AND feeds the Wood manifest. The child hangs under
-		// the umbrella (parentGoalId set) so it is owned/cleaned alongside the blueprint without
-		// fighting the umbrella for the single-top-level-per-destination slot; the actual harvest
-		// target is a tree the colonist knows about.
+		// One clear Harvest CHILD per blueprint, served by any harvestable a colonist knows inside the
+		// footprint; each such harvest removes its blocker. The goal keeps one identity until the
+		// footprint is empty (update() then retires it via retireChildGoals), so several colonists
+		// clearing different blockers never see it vanish under them. The yield stays with the
+		// colonist; once materials are due, the per-material Haul carries any of it the site needs.
+		// The child hangs under the umbrella (parentGoalId set) so it is owned/cleaned alongside the
+		// blueprint without fighting the umbrella for the single-top-level-per-destination slot.
 		for (const auto* g : registry.getGoalsByOwner(GoalOwner::ConstructionGoalSystem)) {
-			if (g->destinationEntity == blueprintEntity && g->type == TaskType::Harvest && g->parentGoalId.has_value() &&
-				g->parentGoalId.value() == umbrellaGoalId) {
-				return; // a clear/material Harvest child is already active for this blueprint
+			if (g->destinationEntity == blueprintEntity && g->clearFootprint.has_value()) {
+				return;
 			}
 		}
 
-		// Find the dominant yield among footprint blockers so the Harvest goal has a concrete
-		// yieldDefNameId for AIDecision to match.
-		const auto	aabb = m_constructionWorld->footprintAabb(foundationId);
-		const float minX = geometry::dequantize(aabb.min).x;
-		const float minY = geometry::dequantize(aabb.min).y;
-		const float maxX = geometry::dequantize(aabb.max).x;
-		const float maxY = geometry::dequantize(aabb.max).y;
-
-		uint32_t  yieldDefNameId = 0;
-		glm::vec2 blockerPos{(minX + maxX) * 0.5F, (minY + maxY) * 0.5F};
-
-		constexpr float kChunkWorldSize = static_cast<float>(world::kChunkSize);
-		const int32_t	chunkMinX = static_cast<int32_t>(std::floor(minX / kChunkWorldSize));
-		const int32_t	chunkMaxX = static_cast<int32_t>(std::floor(maxX / kChunkWorldSize));
-		const int32_t	chunkMinY = static_cast<int32_t>(std::floor(minY / kChunkWorldSize));
-		const int32_t	chunkMaxY = static_cast<int32_t>(std::floor(maxY / kChunkWorldSize));
-
-		for (int32_t cy = chunkMinY; cy <= chunkMaxY && yieldDefNameId == 0; ++cy) {
-			for (int32_t cx = chunkMinX; cx <= chunkMaxX && yieldDefNameId == 0; ++cx) {
-				world::ChunkCoordinate coord{cx, cy};
-				if (m_processedChunks->find(coord) == m_processedChunks->end()) {
-					continue;
-				}
-				const auto* chunkIndex = m_placementExecutor->getChunkIndex(coord);
-				if (chunkIndex == nullptr) {
-					continue;
-				}
-				for (const auto* placed : chunkIndex->queryRect(minX, minY, maxX, maxY)) {
-					const uint32_t defNameId = assetRegistry.getDefNameId(placed->defName);
-					if (defNameId == 0) {
-						continue;
-					}
-					const auto* def = assetRegistry.getDefinition(placed->defName);
-					if (def != nullptr && def->capabilities.harvestable.has_value()) {
-						yieldDefNameId = assetRegistry.getDefNameId(def->capabilities.harvestable->yieldDefName);
-						blockerPos = placed->position;
-						break;
-					}
-				}
-			}
-		}
-
-		if (yieldDefNameId == 0) {
-			return; // nothing concrete to clear (race with removal); next tick re-evaluates
-		}
+		const FootprintBounds bounds = footprintBounds(foundationId);
 
 		GoalTask clearGoal;
 		clearGoal.type = TaskType::Harvest;
 		clearGoal.owner = GoalOwner::ConstructionGoalSystem;
 		clearGoal.destinationEntity = blueprintEntity;
-		clearGoal.destinationPosition = blockerPos;
-		clearGoal.acceptedDefNameIds = {yieldDefNameId};
-		clearGoal.targetAmount = 1; // clear at least one blocker per pass; re-emitted while not clear
-		clearGoal.yieldDefNameId = yieldDefNameId;
+		clearGoal.destinationPosition = bounds.center();
+		clearGoal.targetAmount = 1; // never credited: the goal stands until the footprint is clear
+		clearGoal.clearFootprint = bounds;
 		clearGoal.parentGoalId = umbrellaGoalId; // child of the umbrella: skips the destination guard
 		clearGoal.status = GoalStatus::Available;
 		registry.createGoal(std::move(clearGoal));
-		LOG_DEBUG(
-			Engine,
-			"[Construction] Emitted clear Harvest goal for blueprint %u (yield %u)",
-			static_cast<uint32_t>(blueprintEntity),
-			yieldDefNameId
-		);
+		LOG_DEBUG(Engine, "[Construction] Emitted clear Harvest goal for blueprint %u", static_cast<uint32_t>(blueprintEntity));
 	}
 
 	void ConstructionSystem::emitMaterialGoals(EntityID blueprintEntity, const StructureBlueprint& blueprint, uint64_t umbrellaGoalId) {
@@ -774,10 +728,8 @@ namespace ecs {
 			if (child->destinationEntity != blueprintEntity) {
 				continue;
 			}
-			// Material children carry a chainId (the Harvest/Haul delivery chain); the clear-Harvest
-			// child does not. When keeping material children, retire only the chain-less clear goal.
-			const bool isMaterialChild = child->chainId.has_value();
-			if (keepMaterialChildren && isMaterialChild) {
+			// When keeping material children, retire only the clear goal.
+			if (keepMaterialChildren && !child->clearFootprint.has_value()) {
 				continue;
 			}
 			toRemove.push_back(child->id);

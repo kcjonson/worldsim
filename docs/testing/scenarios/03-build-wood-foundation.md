@@ -28,8 +28,10 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=colonists"
 # -> colonists[0].x, colonists[0].y  (note as BX, BY)
 ```
 
-Choose a ~3x3 area on valid land that has at least one or two trees standing on it (the natural
-forest usually provides this). Note the corner coordinates as `FX0,FY0` and `FX1,FY1`.
+Choose a ~3x3 area on valid land that has at least one or two trees and a berry bush
+(`Flora_BerryBush`) standing on it (the forest around the Quick Start landing usually provides
+this). They must be world-generated: `/api/dev/spawn` makes runtime entities the clearing gate
+doesn't see. Note the corner coordinates as `FX0,FY0` and `FX1,FY1`.
 
 Blueprint the foundation (built=0 queues the colonist to build it):
 
@@ -63,7 +65,16 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 # -> wait until phase != "Clearing"
 ```
 
-2. Phase moves to `AwaitingMaterials`. Bob chops nearby trees and provisions wood:
+2. The berry bush on the footprint is cleared too: it disappears after one harvest (it doesn't
+   regrow in place), even when Bob's arms are already full of wood, and Bob never shows
+   `Delivering Berry to build site`:
+
+```
+curl.exe "http://127.0.0.1:<PORT>/api/state?what=colonists"
+# -> colonists[0].action never "Delivering Berry to build site"
+```
+
+3. Phase moves to `AwaitingMaterials`. Bob chops nearby trees and provisions wood:
 
 ```
 curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
@@ -71,7 +82,7 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 # -> foundations[0].delivered.Wood increases over time
 ```
 
-3. Phase moves to `UnderConstruction` once materials are delivered. Bob builds:
+4. Phase moves to `UnderConstruction` once materials are delivered. Bob builds:
 
 ```
 curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
@@ -79,7 +90,7 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 # -> foundations[0].progress increases toward 1.0
 ```
 
-4. Keep Bob's needs up every ~2 real minutes:
+5. Keep Bob's needs up every ~2 real minutes:
 
 ```
 curl.exe "http://127.0.0.1:<PORT>/api/dev/need?colonist=<BOB_ID>&need=Hunger&value=95"
@@ -87,7 +98,7 @@ curl.exe "http://127.0.0.1:<PORT>/api/dev/need?colonist=<BOB_ID>&need=Thirst&val
 curl.exe "http://127.0.0.1:<PORT>/api/dev/need?colonist=<BOB_ID>&need=Energy&value=95"
 ```
 
-5. Poll until foundation is `Built` at `progress == 1.0`:
+6. Poll until foundation is `Built` at `progress == 1.0`:
 
 ```
 curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"

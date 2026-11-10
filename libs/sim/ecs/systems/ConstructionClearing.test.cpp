@@ -1,0 +1,349 @@
+// Foundation footprint clearing, end to end: ConstructionSystem emits the clear goal from the real
+// footprint and placement index, AIDecisionSystem picks the work, ActionSystem harvests and removes
+// the blocker from the index. Movement is skipped: a colonist arrives the moment it takes a task.
+
+#include "AIDecisionSystem.h"
+#include "ActionSystem.h"
+#include "ConstructionSystem.h"
+
+#include "../GoalTaskRegistry.h"
+#include "../InventoryMass.h"
+#include "../World.h"
+#include "../components/Action.h"
+#include "../components/DecisionTrace.h"
+#include "../components/Inventory.h"
+#include "../components/Memory.h"
+#include "../components/Movement.h"
+#include "../components/Needs.h"
+#include "../components/Structure.h"
+#include "../components/StructureBlueprint.h"
+#include "../components/Task.h"
+#include "../components/Transform.h"
+
+#include <assets/AssetRegistry.h>
+#include <assets/PriorityConfig.h>
+#include <assets/RecipeRegistry.h>
+#include <assets/placement/PlacementExecutor.h>
+#include <assets/placement/SpatialIndex.h>
+#include <construction/ConstructionWorld.h>
+#include <world/chunk/ChunkCoordinate.h>
+
+#include <gtest/gtest.h>
+
+#include <algorithm>
+#include <memory>
+#include <unordered_set>
+#include <vector>
+
+namespace ecs::test {
+
+	namespace {
+		constexpr const char* kTree = "Flora_ClearTestTree";
+		constexpr const char* kBush = "Flora_ClearTestBush";
+
+		class FootprintClearingTest : public ::testing::Test {
+		  protected:
+			void SetUp() override {
+				GoalTaskRegistry::Get().clear();
+				assets::PriorityConfig::Get().clear();
+				auto& registry = assets::AssetRegistry::Get();
+				registry.clearDefinitions();
+
+				// Wood as the game has it: a two-hand armful, 2.5 kg a unit, so 14 fill the arms.
+				assets::AssetDefinition wood;
+				wood.defName = "Wood";
+				wood.label = "Wood";
+				wood.handsRequired = 2;
+				wood.category = assets::ItemCategory::RawMaterial;
+				wood.itemProperties = assets::ItemProperties{};
+				wood.itemProperties->stackSize = 40;
+				wood.itemProperties->massKg = 2.5F;
+				registry.registerTestDefinition(std::move(wood));
+
+				assets::AssetDefinition tree;
+				tree.defName = kTree;
+				tree.label = "Clear Test Tree";
+				assets::HarvestableCapability cap;
+				cap.yieldDefName = "Wood";
+				cap.amountMin = 20; // more than one armful, as an oak's 20-30
+				cap.amountMax = 20;
+				cap.durability = 10.0F;
+				cap.destructive = true;
+				tree.capabilities.harvestable = cap;
+				registry.registerTestDefinition(std::move(tree));
+
+				// A berry bush: one-hand yield, regrows rather than falling, and slower to strip than
+				// the tree is to fell, so a tree clear finishes while a bush clear is still underway.
+				// Edible as the other suites register it: assets::getEdibleItemNames() caches the edible
+				// set on first call for the whole process, and the AI here may be the first caller.
+				assets::AssetDefinition berry;
+				berry.defName = "Berry";
+				berry.label = "Berry";
+				berry.handsRequired = 1;
+				berry.capabilities.carryable = assets::CarryableCapability{1};
+				berry.itemProperties = assets::ItemProperties{};
+				berry.itemProperties->stackSize = 200;
+				berry.itemProperties->massKg = 0.15F;
+				berry.itemProperties->edible = assets::EdibleCapability{0.3F, assets::CapabilityQuality::Normal, true};
+				registry.registerTestDefinition(std::move(berry));
+
+				assets::AssetDefinition bush;
+				bush.defName = kBush;
+				bush.label = "Clear Test Bush";
+				assets::HarvestableCapability bushCap;
+				bushCap.yieldDefName = "Berry";
+				bushCap.amountMin = 3;
+				bushCap.amountMax = 3;
+				bushCap.durability = 30.0F;
+				bushCap.destructive = false;
+				bushCap.regrowthTime = 60.0F;
+				bush.capabilities.harvestable = bushCap;
+				registry.registerTestDefinition(std::move(bush));
+
+				world = std::make_unique<World>();
+				world->registerSystem<AIDecisionSystem>(registry, assets::RecipeRegistry::Get(), 42);
+				auto& action = world->registerSystem<ActionSystem>();
+				action.setRemoveEntityCallback([this](const std::string& defName, float x, float y) {
+					executor.removeEntity(world::worldToChunk({x, y}), {x, y}, defName);
+				});
+				action.setDropResourceCallback([this](const std::string& /*defName*/, float /*x*/, float /*y*/, uint32_t /*qty*/) {
+					++piles;
+				});
+				construction = &world->registerSystem<ConstructionSystem>();
+				construction->setConstructionWorld(&topology);
+				construction->setPlacementData(&executor, &processed);
+
+				// An 8 m square foundation blueprint, CCW in integer mm.
+				geometry::Ring					   ring{{0, 0}, {8000, 0}, {8000, 8000}, {0, 8000}};
+				const construction::CommitResult foundation = topology.commitFoundation(std::move(ring), "wood");
+				EXPECT_TRUE(foundation.ok());
+				site = world->createEntity();
+				world->addComponent<Position>(site, Position{{4.0F, 4.0F}});
+				world->addComponent<Structure>(site, Structure{StructureKind::Foundation, foundation.id});
+				StructureBlueprint bp;
+				bp.phase = StructureBlueprint::BuildPhase::Clearing;
+				bp.required = {{"Wood", 10}};
+				bp.workTotal = 50.0F;
+				world->addComponent<StructureBlueprint>(site, std::move(bp));
+			}
+
+			void TearDown() override {
+				world.reset();
+				GoalTaskRegistry::Get().clear();
+				assets::AssetRegistry::Get().clearDefinitions();
+			}
+
+			/// Plant trees (and berry bushes) in the placement index, as world generation would.
+			void plantTrees(const std::vector<glm::vec2>& at, const std::vector<glm::vec2>& bushes = {}) {
+				const world::ChunkCoordinate coord = world::worldToChunk({at.front().x, at.front().y});
+				assets::SpatialIndex		 index;
+				for (const glm::vec2& pos : at) {
+					assets::PlacedEntity tree;
+					tree.defName = kTree;
+					tree.position = pos;
+					index.insert(tree);
+				}
+				for (const glm::vec2& pos : bushes) {
+					assets::PlacedEntity bush;
+					bush.defName = kBush;
+					bush.position = pos;
+					index.insert(bush);
+				}
+				assets::AsyncChunkPlacementResult result;
+				result.coord = coord;
+				result.spatialIndex = std::move(index);
+				executor.storeChunkResult(std::move(result));
+				processed.insert(coord);
+			}
+
+			EntityID createColonist(glm::vec2 position, const std::vector<glm::vec2>& knownTrees) {
+				auto entity = world->createEntity();
+				world->addComponent<Position>(entity, Position{position});
+				world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
+				world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
+				world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+				world->addComponent<Inventory>(entity, Inventory::createForColonist());
+				world->addComponent<Task>(entity, Task{});
+				world->addComponent<Action>(entity, Action{});
+				world->addComponent<DecisionTrace>(entity, DecisionTrace{});
+				Memory memory;
+				for (const glm::vec2& pos : knownTrees) {
+					remember(memory, pos);
+				}
+				world->addComponent<Memory>(entity, std::move(memory));
+				return entity;
+			}
+
+			static void remember(Memory& memory, glm::vec2 pos, const char* defName = kTree) {
+				auto&		   registry = assets::AssetRegistry::Get();
+				const uint32_t id = registry.getDefNameId(defName);
+				memory.rememberWorldEntity(pos, id, registry.getCapabilityMask(id));
+			}
+
+			bool treeStands(glm::vec2 pos, const char* defName = kTree) const {
+				const auto* index = executor.getChunkIndex(world::worldToChunk({pos.x, pos.y}));
+				return index != nullptr && index->hasNearby(pos, 0.1F, defName);
+			}
+
+			/// Run frames, arriving each colonist at its task target at once (unless `held`, who stays
+			/// on the way), until `done` holds.
+			template <typename Done> bool runUntil(Done done, int maxFrames = 3000, EntityID held = kInvalidEntity) {
+				for (int frame = 0; frame < maxFrames; ++frame) {
+					world->update(0.016F);
+					for (auto [entity, task, pos] : world->view<Task, Position>()) {
+						if (task.state == TaskState::Moving && entity != held) {
+							pos.value = task.targetPosition;
+							task.state = TaskState::Arrived;
+						}
+					}
+					if (done()) {
+						return true;
+					}
+				}
+				return false;
+			}
+
+			StructureBlueprint::BuildPhase phase() { return world->getComponent<StructureBlueprint>(site)->phase; }
+
+			std::unique_ptr<World>				   world;
+			ConstructionSystem*					   construction = nullptr;
+			construction::ConstructionWorld		   topology;
+			assets::PlacementExecutor			   executor{assets::AssetRegistry::Get()};
+			std::unordered_set<world::ChunkCoordinate> processed;
+			EntityID							   site = kInvalidEntity;
+			int									   piles = 0;
+		};
+	} // namespace
+
+	// Felling the first tree fills the colonist's arms (14 of its 20 Wood, the rest drops). The second
+	// clear must still be offered and still fell the tree, or the site never leaves Clearing.
+	TEST_F(FootprintClearingTest, ColonistWithFullArmsClearsTheWholeFootprint) {
+		const std::vector<glm::vec2> trees{{2.0F, 2.0F}, {6.0F, 6.0F}};
+		plantTrees(trees);
+		auto colonist = createColonist({1.0F, 1.0F}, trees);
+
+		ASSERT_TRUE(runUntil([&] { return !treeStands(trees[0]) || !treeStands(trees[1]); })) << "the first clear fells a tree";
+		ASSERT_EQ(ecs::cargoUnitsThatFit(*world->getComponent<Inventory>(colonist), assets::AssetRegistry::Get(), "Wood"), 0U)
+			<< "precondition: the first fell filled his arms";
+
+		EXPECT_TRUE(runUntil([&] { return phase() == StructureBlueprint::BuildPhase::AwaitingMaterials; }))
+			<< "the second tree is felled with full arms and the site leaves Clearing";
+		EXPECT_FALSE(treeStands(trees[0]));
+		EXPECT_FALSE(treeStands(trees[1]));
+		EXPECT_EQ(piles, 2) << "each fell drops what didn't fit as one pile";
+	}
+
+	// The clear goal names no single blocker: when one blocker goes some other way (a craft Harvest
+	// fells it), the goal is served by the next one.
+	TEST_F(FootprintClearingTest, ClearGoalOutlivesABlockerRemovedElsewhere) {
+		const std::vector<glm::vec2> trees{{2.0F, 2.0F}, {6.0F, 6.0F}};
+		plantTrees(trees);
+		auto colonist = createColonist({1.0F, 1.0F}, {});
+
+		ASSERT_TRUE(runUntil([] { return !GoalTaskRegistry::Get().getGoalsOfType(TaskType::Harvest).empty(); }))
+			<< "precondition: the blocked site emits its clear goal";
+
+		// The first tree goes some other way; the colonist only ever learns about the second.
+		executor.removeEntity(world::worldToChunk({trees[0].x, trees[0].y}), trees[0], kTree);
+		remember(*world->getComponent<Memory>(colonist), trees[1]);
+
+		EXPECT_TRUE(runUntil([&] { return phase() == StructureBlueprint::BuildPhase::AwaitingMaterials; }))
+			<< "the remaining blocker serves the standing clear goal";
+		EXPECT_FALSE(treeStands(trees[1]));
+	}
+
+	// The first blocker in the index is one the colonist has never seen. A blocker he does know, in the
+	// same footprint, must not hide behind it: he clears that one (discovery gating still holds for the first).
+	TEST_F(FootprintClearingTest, KnownBlockerIsClearedWhileAnUnknownOneStands) {
+		const std::vector<glm::vec2> trees{{2.0F, 2.0F}, {6.0F, 6.0F}};
+		plantTrees(trees);
+		createColonist({1.0F, 1.0F}, {trees[1]});
+
+		EXPECT_TRUE(runUntil([&] { return !treeStands(trees[1]); })) << "the known blocker is cleared";
+		EXPECT_TRUE(treeStands(trees[0])) << "the unknown blocker is left for when someone sees it";
+		EXPECT_EQ(phase(), StructureBlueprint::BuildPhase::Clearing);
+	}
+
+	// A material Harvest (not a clear) feeds the site through construction's own per-material Haul:
+	// completing it creates no second Haul, and the Wood still lands on the manifest.
+	TEST_F(FootprintClearingTest, MaterialHarvestDeliversThroughTheSiteHaulAlone) {
+		const glm::vec2 tree{12.0F, 12.0F}; // outside the footprint: the site is clear from the start
+		plantTrees({tree});
+		createColonist({11.0F, 11.0F}, {tree});
+
+		size_t mostHauls = 0;
+		const bool built = runUntil([&] {
+			mostHauls = std::max(mostHauls, GoalTaskRegistry::Get().getGoalsOfType(TaskType::Haul).size());
+			return world->getComponent<StructureBlueprint>(site)->materialsComplete();
+		});
+		EXPECT_TRUE(built) << "the felled Wood reaches the site";
+		EXPECT_EQ(mostHauls, 1U) << "only construction's own Haul; the completed Harvest creates none";
+	}
+
+
+	// Two colonists clear different blockers in one footprint. The tree falls while the other
+	// colonist is still on his way to the bush; that must not end his clear (same task, same goal),
+	// and both blockers end up removed.
+	TEST_F(FootprintClearingTest, FirstClearToFinishDoesNotResetAnother) {
+		const glm::vec2 tree{2.0F, 2.0F};
+		const glm::vec2 bush{6.0F, 6.0F};
+		plantTrees({tree}, {bush});
+		createColonist({1.0F, 1.0F}, {tree});
+		auto stripper = createColonist({30.0F, 30.0F}, {});
+		remember(*world->getComponent<Memory>(stripper), bush, kBush);
+		world->getComponent<Inventory>(stripper)->addItem("Berry", 5); // fed: he strips the bush only to clear it
+
+		ASSERT_TRUE(runUntil([&] { return !treeStands(tree); }, 3000, stripper)) << "precondition: the tree is felled first";
+		const Task* task = world->getComponent<Task>(stripper);
+		ASSERT_EQ(task->type, TaskType::Harvest) << "precondition: he is on his way to the bush";
+		const uint64_t goalId = task->harvestGoalId;
+
+		bool kept = true;
+		runUntil(
+			[&] {
+				kept = kept && task->type == TaskType::Harvest && task->harvestGoalId == goalId;
+				return false;
+			},
+			60,
+			stripper
+		);
+		EXPECT_TRUE(kept) << "the tree falling must not reset his clear";
+
+		EXPECT_TRUE(runUntil([&] { return phase() == StructureBlueprint::BuildPhase::AwaitingMaterials; })) << "both are cleared";
+		EXPECT_FALSE(treeStands(tree));
+		EXPECT_FALSE(treeStands(bush, kBush));
+	}
+
+	// A colonist who reaches his blocker only after another blocker was cleared still clears it: the
+	// harvest he started on that clear removes the bush rather than leaving it to regrow.
+	TEST_F(FootprintClearingTest, ClearStartedAfterAnotherBlockerFellStillRemovesItsBlocker) {
+		const glm::vec2 tree{2.0F, 2.0F};
+		const glm::vec2 bush{6.0F, 6.0F};
+		plantTrees({tree}, {bush});
+		createColonist({1.0F, 1.0F}, {tree});
+		auto stripper = createColonist({30.0F, 30.0F}, {});
+		remember(*world->getComponent<Memory>(stripper), bush, kBush);
+		world->getComponent<Inventory>(stripper)->addItem("Berry", 5); // fed: he strips the bush only to clear it
+
+		ASSERT_TRUE(runUntil([&] { return !treeStands(tree); }, 3000, stripper)) << "precondition: the tree is felled first";
+		auto* task = world->getComponent<Task>(stripper);
+		ASSERT_EQ(task->type, TaskType::Harvest) << "precondition: he is on his way to the bush";
+		const uint64_t goalId = task->harvestGoalId;
+
+		// He arrives right after the tree fell.
+		world->getComponent<Position>(stripper)->value = task->targetPosition;
+		task->state = TaskState::Arrived;
+
+		bool harvested = false;
+		bool sameClear = true;
+		ASSERT_TRUE(runUntil([&] {
+			const bool harvesting = world->getComponent<Action>(stripper)->type == ActionType::Harvest;
+			sameClear = sameClear && (harvested || harvesting || task->harvestGoalId == goalId);
+			harvested = harvested || harvesting;
+			return harvested && !harvesting;
+		})) << "he harvests the bush";
+		EXPECT_TRUE(sameClear) << "on the clear he set out on";
+		EXPECT_FALSE(treeStands(bush, kBush)) << "that harvest removed the bush";
+	}
+
+} // namespace ecs::test

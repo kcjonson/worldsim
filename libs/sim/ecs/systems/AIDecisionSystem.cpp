@@ -494,15 +494,24 @@ namespace ecs {
 							// Both craft and construction deposits MOVE the carried material into the
 							// destination (station store or blueprint manifest), so the pack empties on
 							// delivery; the next tick the colonist carries 0 and this option drops out.
-							// Just gate on carrying something.
 
-							// Storage destinations are slot-counted: the goal's availableCapacity() is a
-							// free-slot count, not an item count, so size the carry-in by the box's real
-							// per-item headroom (addableCount: stack room + freeSlots * stackSize), exactly
-							// as the loose-pile path does. Craft/construction destinations meter at deposit
-							// time, so the goal's availableCapacity() bounds them correctly.
+							// Size the carry-in by what the destination can actually take, and offer
+							// nothing at 0 (a deposit of 0 would repeat forever):
+							//  - A build site takes only what its manifest still lacks (remaining), so an
+							//    unrequired or already-satisfied item has no option.
+							//  - Storage destinations are slot-counted: the goal's availableCapacity() is a
+							//    free-slot count, not an item count, so use the box's real per-item headroom
+							//    (addableCount: stack room + freeSlots * stackSize), as the loose-pile path does.
+							//  - Craft destinations meter at deposit time; the goal's availableCapacity()
+							//    bounds them.
 							uint32_t haulCap = goal->availableCapacity();
-							if (isStorageStockingHaul) {
+							if (isConstructionHaul) {
+								const auto* blueprint = world != nullptr ? world->getComponent<StructureBlueprint>(goal->destinationEntity) : nullptr;
+								haulCap = blueprint != nullptr ? std::min(haulCap, blueprint->remaining(itemDefName)) : 0U;
+								if (haulCap == 0) {
+									continue; // the site needs no more of this item
+								}
+							} else if (isStorageStockingHaul) {
 								const auto* destInv = world != nullptr ? world->getComponent<Inventory>(goal->destinationEntity) : nullptr;
 								haulCap = destInv != nullptr ? destInv->addableCount(itemDefName) : 0U;
 								if (haulCap == 0) {
@@ -799,8 +808,9 @@ namespace ecs {
 			}
 		}
 
-		/// Evaluate harvest options by querying Harvest goals from GoalTaskRegistry
-		/// Goal-driven: Goals define WHAT items are needed (via yieldDefNameId), Memory provides harvestable sources
+		/// Evaluate harvest options by querying Harvest goals from GoalTaskRegistry.
+		/// Goal-driven: a goal names the item it needs (yieldDefNameId), or for a construction clear the
+		/// footprint whose harvestables it removes (clearFootprint); Memory provides the sources.
 		/// @param registry Asset registry for capability and definition lookups
 		/// @param memory Colonist memory (known entities)
 		/// @param position Colonist position
@@ -829,9 +839,11 @@ namespace ecs {
 					continue;
 				}
 
-				// For Harvest goals, yieldDefNameId tells us what item is needed
-				// We need to find harvestable entities in memory that yield this item
-				if (goal->yieldDefNameId == 0) {
+				// A clear goal is served by any harvestable inside its footprint, whatever it yields.
+				// Every other Harvest goal names the item it needs (yieldDefNameId) and is served by a
+				// harvestable that yields it.
+				const bool clearing = goal->clearFootprint.has_value();
+				if (!clearing && goal->yieldDefNameId == 0) {
 					continue; // No yield specified
 				}
 
@@ -856,6 +868,10 @@ namespace ecs {
 						continue;
 					}
 
+					if (clearing && !goal->clearFootprint->contains(knownEntity.position)) {
+						continue; // a clear only removes what stands in its footprint
+					}
+
 					// Check what this harvestable yields
 					const auto& defName = registry.getDefName(knownEntity.defNameId);
 					const auto* def = registry.getDefinition(defName);
@@ -865,7 +881,7 @@ namespace ecs {
 
 					// Get the yield defNameId for this harvestable
 					uint32_t yieldDefNameId = registry.getDefNameId(def->capabilities.harvestable->yieldDefName);
-					if (yieldDefNameId != goal->yieldDefNameId) {
+					if (!clearing && yieldDefNameId != goal->yieldDefNameId) {
 						continue; // Yields different item than what goal needs
 					}
 
@@ -882,10 +898,11 @@ namespace ecs {
 					// pick the harvest, collect 0 ("Collected 0 of N ... carry-limited"), re-evaluate,
 					// and pick the same harvest again -- an infinite chop-nothing loop. Skip the
 					// option when no unit fits (no stack/slot headroom and no carry weight), leaving
-					// the harvest for a trip when the colonist has room.
+					// the harvest for a trip when the colonist has room. A clear is exempt: it removes the
+					// blocker whatever fits and drops the rest, so a full pack never stalls a site.
 					const std::string& yieldName = def->capabilities.harvestable->yieldDefName;
-					if (ecs::cargoUnitsThatFit(inventory, registry, yieldName) == 0 ||
-						inventory.addableCount(yieldName) == 0) {
+					if (!clearing && (ecs::cargoUnitsThatFit(inventory, registry, yieldName) == 0 ||
+									  inventory.addableCount(yieldName) == 0)) {
 						continue;
 					}
 
@@ -907,7 +924,7 @@ namespace ecs {
 					harvestOption.distanceToTarget = tripDistance;
 					harvestOption.harvestTargetEntityId = key; // The world entity ID
 					harvestOption.harvestGoalId = goal->id;
-					harvestOption.harvestYieldDefNameId = goal->yieldDefNameId;
+					harvestOption.harvestYieldDefNameId = yieldDefNameId;
 					// Tiebreak on (goal, target) so two equidistant harvestables feeding the same
 					// goal still resolve deterministically, not by memory's hash order.
 					harvestOption.tiebreakId = goal->id ^ (key << 1);
@@ -922,12 +939,12 @@ namespace ecs {
 
 					// Build reason string from friendly labels, not raw defNames ("Oak Tree", not
 					// "Flora_TreeOak"). Falls back to the defName if a label is missing.
-					const auto&		  yieldDefName = registry.getDefName(goal->yieldDefNameId);
+					const auto&		  yieldDefName = registry.getDefName(yieldDefNameId);
 					const auto*		  yieldDef = registry.getDefinition(yieldDefName);
 					const std::string srcLabel = !def->label.empty() ? def->label : defName;
 					const std::string yieldLabel =
 						(yieldDef != nullptr && !yieldDef->label.empty()) ? yieldDef->label : yieldDefName;
-					harvestOption.reason = "Cutting " + srcLabel + " for " + yieldLabel;
+					harvestOption.reason = clearing ? "Clearing " + srcLabel + " from build site" : "Cutting " + srcLabel + " for " + yieldLabel;
 
 					trace.options.push_back(harvestOption);
 				}
@@ -1369,8 +1386,7 @@ namespace ecs {
 				const bool carryingTwoHandLoad = task.type == TaskType::Haul && !task.haulItemDefName.empty() &&
 					ecs::itemIsTwoHand(m_registry, task.haulItemDefName) && inventory.isHolding(task.haulItemDefName);
 				if (shouldSwitch && !currentHaulUnreachable && carryingTwoHandLoad && selected != nullptr) {
-					// Case 1: a Harvest of the same yield (e.g. clearing a footprint emits a Harvest for the
-					// blockers' Wood). Held regardless of tier -- the chop->drop->chop loop it forms is the
+					// Case 1: a Harvest of the same yield (e.g. a construction material Harvest for Wood). Held regardless of tier -- the chop->drop->chop loop it forms is the
 					// original two-hand-drop bug this guard was built for.
 					const bool sameYieldHarvest = selected->taskType == TaskType::Harvest &&
 						selected->harvestYieldDefNameId == m_registry.getDefNameId(task.haulItemDefName);

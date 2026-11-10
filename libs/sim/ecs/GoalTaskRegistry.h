@@ -44,6 +44,16 @@ namespace ecs {
 		ConstructionGoalSystem, // Foundation lifecycle: clear Harvest, deliver Harvest/Haul, Build goals
 	};
 
+	/// A blueprint footprint's bounds in world meters. contains() is the same inclusive test
+	/// SpatialIndex::queryRect applies, so "inside the footprint" means one thing everywhere.
+	struct FootprintBounds {
+		glm::vec2 min{0.0F, 0.0F};
+		glm::vec2 max{0.0F, 0.0F};
+
+		[[nodiscard]] bool contains(glm::vec2 p) const { return p.x >= min.x && p.x <= max.x && p.y >= min.y && p.y <= max.y; }
+		[[nodiscard]] glm::vec2 center() const { return (min + max) * 0.5F; }
+	};
+
 	/// A goal-level task (e.g., "Storage wants rocks", "Crafting needs wood")
 	///
 	/// Key difference from old item-level tasks:
@@ -78,6 +88,10 @@ namespace ecs {
 
 		// For Harvest goals: what item type is yielded when harvesting completes
 		uint32_t yieldDefNameId = 0; // e.g., Tree yields Wood
+
+		// Construction clear Harvest: any harvestable inside this footprint serves it, whatever it
+		// yields, and the harvest removes it (clearing removes what stands there, regrowing or not).
+		std::optional<FootprintBounds> clearFootprint;
 
 		// For Craft goals: identity of the recipe this goal's child hierarchy was built for.
 		// Hash of the recipe defName. When a station's next job switches to a different
