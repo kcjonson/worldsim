@@ -38,25 +38,12 @@
 #include <utils/Log.h>
 
 #include <algorithm>
-#include <atomic>
 #include <cmath>
 #include <numbers>
 
 namespace ecs {
 
 	namespace {
-
-		/// Global chain ID counter for generating unique chain identifiers.
-		/// Starts at 1 so that 0 can represent "no chain" in optional contexts.
-		/// NOTE: This variable intentionally has internal linkage by living in an anonymous
-		/// namespace inside this .cpp file. Do not move this definition into a header, or
-		/// each translation unit would get its own counter and chain IDs could collide.
-		std::atomic<uint64_t> g_nextChainId{1};
-
-		/// Generate a unique chain ID for multi-step tasks
-		[[nodiscard]] uint64_t generateChainId() {
-			return g_nextChainId.fetch_add(1, std::memory_order_relaxed);
-		}
 
 		/// Map NeedType to the CapabilityType that fulfills it
 		[[nodiscard]] assets::CapabilityType needToCapability(NeedType need) {
@@ -1948,7 +1935,7 @@ namespace ecs {
 				task.chainStep = 1; // Haul is step 1 of the Harvest→Haul chain
 			} else {
 				// Standalone haul - generate new chain ID for Pickup→Deposit
-				task.chainId = generateChainId();
+				task.chainId = GoalTaskRegistry::Get().allocateChainId();
 				task.chainStep = 0;
 			}
 		}
@@ -1962,7 +1949,7 @@ namespace ecs {
 			// For place tasks, target is initially the source position (pickup first)
 			task.targetPosition = task.placeSourcePosition;
 			// Assign chain ID and start at step 0 (Pickup phase)
-			task.chainId = generateChainId();
+			task.chainId = GoalTaskRegistry::Get().allocateChainId();
 			task.chainStep = 0;
 		}
 

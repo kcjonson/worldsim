@@ -113,8 +113,12 @@ namespace ecs {
 		// Singleton access
 		static GoalTaskRegistry& Get();
 
-		// Clear all goals (for game restart)
+		// Clear all goals and restart the chain id counter (for game restart)
 		void clear();
+
+		/// A new chain id, unique until the next clear(). Chain ids link the steps of one multi-step
+		/// job (Harvest -> Haul, Pickup -> Deposit) across goals and tasks; 0 is never handed out.
+		uint64_t allocateChainId() { return nextChainId++; }
 
 		// --- Goal Management (called by goal systems: StorageGoalSystem, CraftingGoalSystem, etc.) ---
 
@@ -222,6 +226,8 @@ namespace ecs {
 
 		// Next goal ID
 		uint64_t nextGoalId = 1;
+
+		uint64_t nextChainId = 1;
 
 		// Internal helpers
 		void addToIndices(const GoalTask& goal);

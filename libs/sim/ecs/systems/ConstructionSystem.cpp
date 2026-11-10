@@ -24,15 +24,6 @@
 
 namespace ecs {
 
-	namespace {
-		// Chain id source for linking Harvest -> Haul material chains, matching
-		// CraftingGoalSystem's local generator (continuity bonus for the cutter-hauler).
-		uint64_t generateChainId() {
-			static uint64_t nextChainId = 1;
-			return nextChainId++;
-		}
-	} // namespace
-
 	uint32_t constructionHarvestDemand(uint32_t remaining, uint32_t carried, uint32_t carryCapacity) {
 		// Per-trip target: chop up to what the site still needs, but never more than one
 		// trip's worth can carry. A colonist's stack caps at carryCapacity, so for a manifest
@@ -447,7 +438,7 @@ namespace ecs {
 			} else if (harvest != nullptr && harvest->chainId.has_value()) {
 				chainId = harvest->chainId.value();
 			} else {
-				chainId = generateChainId();
+				chainId = GoalTaskRegistry::Get().allocateChainId();
 			}
 
 			const uint32_t carried = carriedAmount(defName);

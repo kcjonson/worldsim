@@ -21,12 +21,6 @@
 namespace ecs {
 
 	namespace {
-		// Generate a unique chain ID for linking Harvest → Haul tasks
-		uint64_t generateChainId() {
-			static uint64_t nextChainId = 1;
-			return nextChainId++;
-		}
-
 		// Stable, non-zero identity for a recipe defName (used to detect recipe swaps).
 		uint32_t recipeIdentity(const std::string& recipeDefName) {
 			if (recipeDefName.empty()) {
@@ -270,7 +264,7 @@ namespace ecs {
 					bool canHarvest = canItemBeHarvested(assetRegistry, input.defName);
 
 					// Generate chain ID to link Harvest → Haul (for continuity bonus)
-					uint64_t chainId = generateChainId();
+					uint64_t chainId = GoalTaskRegistry::Get().allocateChainId();
 
 					// Resolve this input against colony state (any colonist):
 					//  - already carried in a pack -> Haul it straight into the station (deliver it,
