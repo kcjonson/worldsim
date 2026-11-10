@@ -30,10 +30,14 @@ namespace assets {
 
 	void WorldDepthGather::gather(const RenderContext& ctx, std::vector<DepthSortItem>& out, bool backgroundOnFastPath) {
 		out.clear();
-		// Padded by the farthest a tall template draws from its origin, so a crown reaching into
-		// the view from a trunk outside it is gathered.
+		// Padded by the farthest any template draws from its origin: statics, dynamic entities, and
+		// the batched fallback's short flora are all culled by origin against this rect.
 		const VisibleBounds vis = computeVisibleBounds(
-			ctx.camera, ctx.viewportWidth, ctx.viewportHeight, ctx.pixelsPerMeter, AssetRegistry::Get().maxTallReachMeters()
+			ctx.camera,
+			ctx.viewportWidth,
+			ctx.viewportHeight,
+			ctx.pixelsPerMeter,
+			entityCullMarginMeters(AssetRegistry::Get().maxReachMeters())
 		);
 
 		// Visible static occluders, gathered live from the placement index (same

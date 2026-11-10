@@ -118,7 +118,7 @@ Sim and tools:
 - Tall or short routing (`kShortFloraMaxHeight`) is decided per def from its mature variant 0 (D9), at both sites that decide it today.
 - The depth key for a def with a collision rect is the rect's lower edge, the trunk foot, which `world-depth-sorting.md` already allows. Otherwise R7's shadow, flare, and tufts would move every tree forward in the sort. Not built with R3: today's oak and maple draw their trunk foot up to 1.1 m south of the rect, so this waits for R5's generator.
 - The silhouette skips triangles under 0.5 alpha, so shadows are not part of the outline or the hit area.
-- The gather margin and the selection broad phase use the registry's largest tall-entity extent, not 2 m and 8 m. Without this, R9's trees pop in at the screen edges. As built, the selection broad phase uses the largest extent of any template but groundcover (`maxReachMeters`), since short selectables such as bushes must stay clickable where no tree is loaded.
+- The gather margin and the selection broad phase use the registry's largest template extent, not 2 m and 8 m. Without this, R9's trees pop in at the screen edges. As built, both use the largest extent of any template but groundcover (`maxReachMeters`), since short selectables such as bushes must stay clickable, and short sprites drawn, where no tree is loaded. The gather states its floor once, `entityCullMarginMeters` in `RenderContext.h`: the reach, never under the 2 m it had before.
 - Asset-manager detail view shows one row per age class, using the same (age class, variant) keys the game uses and one scale across the rows, so a sapling looks small beside a veteran. Not built with R3; its own task.
 
 ### R4 Collision per age class

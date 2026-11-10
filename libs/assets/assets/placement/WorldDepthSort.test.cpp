@@ -6,6 +6,7 @@
 #include "assets/placement/WorldDepthSort.h"
 
 #include "assets/placement/FloraRouting.h"
+#include "assets/placement/RenderContext.h"
 
 #include <vector/Types.h>
 
@@ -166,6 +167,21 @@ namespace assets {
 			EXPECT_EQ(once[i].entity, twice[i].entity);
 			EXPECT_FLOAT_EQ(once[i].anchorY, twice[i].anchorY);
 		}
+	}
+
+	// The gather's padding: the largest template reach, never under the 2 m every path had before
+	// reach-based margins, so a wide short template still gathers with no tall one loaded.
+	TEST(WorldDepthSort, VisibleBoundsPadByAtLeastTwoMetersAndByAWiderReach) {
+		const world::WorldCamera camera;
+		const VisibleBounds		 base  = computeVisibleBounds(camera, 800, 600, 16.0F, 0.0F);
+		const auto				 padOf = [&](float reachMeters) {
+			 const VisibleBounds vis = computeVisibleBounds(camera, 800, 600, 16.0F, entityCullMarginMeters(reachMeters));
+			 EXPECT_FLOAT_EQ(base.minX - vis.minX, vis.maxX - base.maxX);
+			 return base.minX - vis.minX;
+		};
+		EXPECT_FLOAT_EQ(padOf(0.0F), 2.0F);
+		EXPECT_FLOAT_EQ(padOf(1.5F), 2.0F);
+		EXPECT_FLOAT_EQ(padOf(6.5F), 6.5F);
 	}
 
 } // namespace assets

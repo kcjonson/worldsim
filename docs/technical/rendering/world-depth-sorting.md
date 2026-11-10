@@ -90,7 +90,7 @@ Added with tree variety (`docs/technical/asset-system/tree-variety.md`, R3). Eve
 
 Tall or short is decided per def, not per instance: `AssetRegistry::isTallDef` measures the def's mature variant 0, unscaled, against `kShortFloraMaxHeight` (`FloraRouting.h`). Placement stores the answer in `isTallOccluder` and the bake skips exactly the entities that have it set, so the two can't disagree.
 
-The visible-rect gather is padded by `AssetRegistry::maxTallReachMeters`, the farthest any tall template draws from its origin times its def's largest placement scale, instead of a fixed 2 m. Trees whose crowns reach into the view from a trunk outside it are gathered.
+The visible-rect gather is padded by `entityCullMarginMeters(AssetRegistry::maxReachMeters())` (`RenderContext.h`): the farthest any non-groundcover template draws from its origin times its def's largest placement scale, never under 2 m. Statics, dynamic entities, and the batched fallback's short flora are all culled by origin against it, so a wide crown whose trunk is outside the view is still gathered.
 
 ## Walls & foundations as ECS entities
 
