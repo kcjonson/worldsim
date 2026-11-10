@@ -23,6 +23,7 @@ add_library(assets
     assets/placement/PlacementExecutor.cpp
     assets/placement/BakedEntityMesh.cpp
     assets/placement/WorldDepthSort.cpp
+    assets/placement/FloraMeasure.cpp
 )
 
 target_include_directories(assets
