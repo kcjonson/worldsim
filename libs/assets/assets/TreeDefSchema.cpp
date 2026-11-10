@@ -26,15 +26,26 @@ namespace assets {
 			return value;
 		}
 
+		// parseNumber for an attribute stored as a float: nullopt when the value is beyond the
+		// float range or a nonzero value would narrow to zero.
+		std::optional<double> parseFloatNumber(const pugi::xml_attribute& attr) {
+			const std::optional<double> value = parseNumber(attr);
+			if (!value.has_value() || std::abs(*value) > std::numeric_limits<float>::max() ||
+				(*value != 0.0 && static_cast<float>(*value) == 0.0F)) {
+				return std::nullopt;
+			}
+			return value;
+		}
+
 		// A positive scale attribute; 1 when left out.
 		std::optional<float> readScaleFactor(const pugi::xml_node& node, const char* name, std::vector<TreeDefIssue>& issues) {
 			const pugi::xml_attribute attr = node.attribute(name);
 			if (!attr) {
 				return 1.0F;
 			}
-			const std::optional<double> value = parseNumber(attr);
+			const std::optional<double> value = parseFloatNumber(attr);
 			if (!value.has_value() || *value <= 0.0) {
-				issues.push_back({"ageClass", std::string(name) + " must be a number above 0", attr.value()});
+				issues.push_back({"ageClass", std::string(name) + " must be a number above 0 that a float can hold", attr.value()});
 				return std::nullopt;
 			}
 			return static_cast<float>(*value);
@@ -65,9 +76,9 @@ namespace assets {
 				issues.push_back({"ageClass", "duplicate age class name", ageClass.name});
 			}
 
-			const std::optional<double> weight = parseNumber(node.attribute("weight"));
+			const std::optional<double> weight = parseFloatNumber(node.attribute("weight"));
 			if (!weight.has_value() || *weight <= 0.0) {
-				issues.push_back({"ageClass", "weight must be a number above 0", node.attribute("weight").value()});
+				issues.push_back({"ageClass", "weight must be a number above 0 that a float can hold", node.attribute("weight").value()});
 			} else {
 				ageClass.weight = static_cast<float>(*weight);
 				weightSum += *weight;
@@ -108,12 +119,12 @@ namespace assets {
 		if (!node) {
 			return std::nullopt;
 		}
-		const std::optional<double> min = parseNumber(node.attribute("min"));
-		const std::optional<double> max = parseNumber(node.attribute("max"));
+		const std::optional<double> min = parseFloatNumber(node.attribute("min"));
+		const std::optional<double> max = parseFloatNumber(node.attribute("max"));
 		if (!min.has_value() || !max.has_value() || *min <= 0.0 || *max < *min) {
 			issues.push_back(
 				{"scale",
-				 "<scale> needs numbers min and max with 0 < min <= max",
+				 "<scale> needs numbers min and max a float can hold with 0 < min <= max",
 				 std::string(node.attribute("min").value()) + "," + node.attribute("max").value()}
 			);
 			return std::nullopt;

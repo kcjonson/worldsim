@@ -36,8 +36,17 @@ namespace assets {
 	// The placement group every tree def declares.
 	inline constexpr const char* kTreeGroup = "trees";
 
-	// Largest rect measured in one call (500 m x 500 m, 25 million cells).
-	inline constexpr double kFloraMaxRectAreaM2 = 250000.0;
+	// Largest rect measured in one call: each side at most 500 m, and at most 25 million
+	// cells in all, counted as the grid counts them (floraAxisCells). A thin rect still
+	// gets a cell per axis, so its area alone does not bound the grid.
+	inline constexpr float	  kFloraMaxSpanMeters = 500.0F;
+	inline constexpr int64_t kFloraMaxCells = 25000000;
+
+	// Largest world coordinate (either axis, either sign) a flora query accepts: 2^24 m, where
+	// a float stops holding whole metres, so the 1 m tile grid is no longer addressable. It is
+	// 32,768 chunks out, far inside int32 for world::worldToChunk, and leaves room for the
+	// crown padding and the near search half-size added to a query before it is gathered.
+	inline constexpr float kFloraMaxCoordMeters = 16777216.0F;
 
 	// Most trees one nearest-of-age query lists.
 	inline constexpr size_t kFloraNearestMax = 20;
@@ -100,6 +109,19 @@ namespace assets {
 		std::vector<FloraDefMeasure> otherTallOccluders; // the rest, by defName; not in the totals or the cover
 	};
 
+	// The cells a grid spends on one axis of `spanMeters`: the ceil of span over the cell
+	// size, and at least one. The cover grid and floraRectWithinLimits both count with this.
+	[[nodiscard]] int64_t floraAxisCells(float spanMeters);
+
+	// Whether the point is finite and within kFloraMaxCoordMeters of the origin on both axes.
+	// Check it before converting a query position to a chunk.
+	[[nodiscard]] bool floraPointWithinWorld(float x, float y);
+
+	// Whether `rect` can be measured: both corners within the world (floraPointWithinWorld),
+	// above zero on both axes (so not inverted), each side at most kFloraMaxSpanMeters, and
+	// at most kFloraMaxCells cells in all. Check it before gathering anything for the rect.
+	[[nodiscard]] bool floraRectWithinLimits(const FloraRect& rect);
+
 	// Whether the def is in the kTreeGroup placement group.
 	[[nodiscard]] bool isTreeDef(const AssetDefinition& def);
 
@@ -111,9 +133,11 @@ namespace assets {
 	// holds data for (loaded chunks); only their overlap with the rect is measured.
 	// Entities that are not tall occluders are skipped. A tall occluder is counted when
 	// its position is inside the rect and a loaded area, in `defs` when its def is a
-	// tree and in `otherTallOccluders` otherwise. Every tree passed adds its crown (from
-	// `crowns`) to the cover, so pass the trees near the rect, not only in it. A def
-	// missing from `traits` is not a tree.
+	// tree and in `otherTallOccluders` otherwise. Every tree passed adds its crown to the
+	// cover, so pass the trees near the rect, not only in it. A def missing from
+	// `traits` is not a tree. A rect that fails floraRectWithinLimits is a precondition
+	// violation: it allocates nothing and returns a default-constructed (empty)
+	// measurement, never a truncated one.
 	[[nodiscard]] FloraMeasurement measureFlora(
 		const FloraRect&									   rect,
 		const std::vector<FloraRect>&						   loadedAreas,

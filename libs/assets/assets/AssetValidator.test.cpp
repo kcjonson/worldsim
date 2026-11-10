@@ -448,6 +448,14 @@ TEST(AssetValidatorTest, AgeClassesAndPlacementScaleFollowTheSchema) {
 	EXPECT_TRUE(hasMessageContaining(validateTree("<ageClasses>" + sapling + R"(<ageClass name="" weight="0.75" variants="8"/></ageClasses>)"), Severity::Error, "empty"));
 	EXPECT_TRUE(hasMessageContaining(validateTree("<ageClasses>" + sapling + R"(<ageClass name="mature" weight="0.75" variants="0"/></ageClasses>)"), Severity::Error, "variants"));
 	EXPECT_TRUE(hasIssue(validateTree(R"(<placement><scale min="1.1" max="0.9"/></placement>)"), Severity::Error, "scale"));
+
+	// Finite doubles that do not survive being stored as a float: out of range, or narrowing to zero.
+	EXPECT_TRUE(hasIssue(validateTree(R"(<placement><scale min="1e-50" max="1.2"/></placement>)"), Severity::Error, "scale"));
+	EXPECT_TRUE(hasIssue(validateTree(R"(<placement><scale min="1" max="1e40"/></placement>)"), Severity::Error, "scale"));
+	EXPECT_TRUE(hasIssue(validateTree(R"(<placement><scale min="1e-50" max="1e40"/></placement>)"), Severity::Error, "scale"));
+	EXPECT_TRUE(hasMessageContaining(validateTree("<ageClasses>" + mature + R"(<ageClass name="sapling" weight="1e-50" variants="4"/></ageClasses>)"), Severity::Error, "weight"));
+	EXPECT_TRUE(hasMessageContaining(validateTree("<ageClasses>" + mature + R"(<ageClass name="sapling" weight="0.25" variants="4" yieldScale="1e-50"/></ageClasses>)"), Severity::Error, "yieldScale"));
+	EXPECT_TRUE(hasMessageContaining(validateTree("<ageClasses>" + mature + R"(<ageClass name="sapling" weight="0.25" variants="4" workScale="1e40"/></ageClasses>)"), Severity::Error, "workScale"));
 }
 
 // Guards the shipped library against validation errors, and prints any issues

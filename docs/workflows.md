@@ -38,9 +38,8 @@ When you complete significant work (features, refactors, major fixes):
    - Edit `docs/development-log/README.md`
    - Add link under appropriate date section (newest first)
 
-4. **Update status.md:**
-   - Mark completed tasks
-   - Update "Current Focus" if applicable
+4. **Update Specboard:**
+   - Note the outcome on the item and set its status
 
 **Key principle:** Development log entries are immutable history. Don't edit old entries — create new ones if things change.
 
@@ -274,4 +273,4 @@ Full protocol: `/docs/technical/debugging-strategy.md`
 | View dev log | `docs/development-log/README.md` |
 | Check MVP scope | `docs/design/mvp-scope.md` |
 | Library decisions | `docs/technical/library-decisions.md` |
-| Project status | `docs/status.md` |
+| Project status | Specboard (board: Worldsim) |

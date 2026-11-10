@@ -19,8 +19,6 @@ The outcome of a planning session is an **epic with an attached requirements doc
 
 File bugs and chores directly as you hit them. Full workflow: the `specboard:whats-next` plugin skill; personal preferences in the claude-config repo's `specboard.md`.
 
-**Transition:** `/docs/status.md` is still the live checklist and is maintained in parallel until the Specboard ingest is verified. Don't drop it yet — Specboard is becoming the source of truth, but both run for now.
-
 ## Development Standards
 
 **You are a professional game developer working on a production-quality game.**
@@ -33,9 +31,9 @@ File bugs and chores directly as you hit them. Full workflow: the `specboard:wha
    - Are you on the correct branch? You most likely need to be on main
 
 1. **Read documentation first**
-   - `/docs/status.md` - Current project state
-   - Keep explicit todos and work items in this list, with checkboxes
-   - Update this document before and after doing any work
+   - The Specboard item you are working on (`/whats-next`), and its linked spec
+   - Keep explicit todos and work items in Specboard: child items for tracked work, the item's checklist for scratch todos
+   - Update the item before and after doing any work
    - Relevant technical design documents
    - Product specifications if implementing features
 
@@ -200,7 +198,7 @@ If tests fail, fix the new code—don't revert to keeping both versions.
 ## Documentation System
 
 ### When Asked "What are we working on?" or "Where are we?"
-→ Check `/docs/status.md` FIRST
+→ Run `/whats-next` (Specboard, board: Worldsim)
 
 ### For Technical Implementation Details
 → Check `/docs/technical/INDEX.md` for list of design documents
@@ -305,7 +303,7 @@ When you make code changes and need to verify visually:
 
 | When You Need... | Check... |
 |------------------|----------|
-| Current project status | `/docs/status.md` |
+| Current project status | Specboard (`/whats-next`) |
 | Detailed implementation notes | `/docs/development-log/` (individual entry files) |
 | Game design & requirements | `/docs/design/INDEX.md` |
 | How to add a new library | `/docs/workflows.md` |
@@ -314,87 +312,14 @@ When you make code changes and need to verify visually:
 | Coding standards | `/docs/technical/cpp-coding-standards.md` |
 | Engine patterns to use | `/docs/technical/INDEX.md` (Engine Patterns section) |
 
-## Status.md Format and Workflow
-
-### Structure: Epic/Story/Task Hierarchy
-
-`/docs/status.md` is a **CHECKLIST-ONLY** document. NO long-form content, architectural decisions, or detailed rationale.
-
-**Format:**
-- **Epic** → **Story** → **Task** → **Sub-task** (max 3 levels of nesting)
-- Template provided at top of status.md
-- Use terminology: Epic (top level), Story (major feature), Task (implementation step), Sub-task (detail)
-
-**Required Fields for Each Epic:**
-```markdown
-## Epic Title
-**Spec/Documentation:** /path/to/doc.md or /path/to/folder/
-**Dependencies:** Other Epic Name (if applicable)
-**Status:** ready | in progress | blocked | needs spec
-
-**Tasks:**
-- [ ] Story Title
-  - [ ] Task Title
-    - [ ] Sub-task Title
-```
-
-**Sections in status.md:**
-1. **Recently Completed Epics** - Last 4 completed (with ALL tasks marked [x])
-2. **In Progress Epics** - Currently active work (at least one task incomplete)
-3. **Planned Epics** - Future work
-4. **Blockers & Issues** - Current problems
-
-### When to Update status.md
-
-**Before starting work:**
-1. Find or create the relevant Epic
-2. Mark the Story/Task you're working on as in-progress (mental note or comment)
-3. Check Dependencies field for prerequisite work
-
-**After completing a task:**
-1. Mark task as [x]
-2. If all tasks in an Epic are complete, mark Epic as complete
-3. Update Last Updated timestamp
-
-**When Epic is complete:**
-1. Move Epic to "Recently Completed Epics" section
-2. If more than 4 completed epics, remove oldest from status.md (archived in development log)
-3. Create a new entry file in `/docs/development-log/entries/`:
-   - Filename: `YYYY-MM-DD-epic-name-slug.md`
-   - Include: summary, what was accomplished, files modified, technical decisions, next steps
-   - See `/docs/development-log/README.md` for template
-
-### Content Placement Rules
-
-**status.md contains:**
-- ✅ Checklists (Epic/Story/Task/Sub-task)
-- ✅ Status indicators (ready/in progress/blocked/needs spec)
-- ✅ Dependencies between epics
-- ✅ Performance targets (as success criteria)
-- ✅ Blockers & issues
-
-**status.md does NOT contain:**
-- ❌ Architectural decisions (→ development log entry if short, technical docs if long)
-- ❌ Implementation rationale (→ development log entry or technical docs)
-- ❌ Detailed technical discussion (→ technical docs)
-- ❌ Long-form content or paragraphs (→ development log entry or technical docs)
-- ❌ Historical "Recent Decisions" lists (→ development log entries)
-- ❌ Notes section (→ notes go in the spec/documentation for each epic)
-
-**Where architectural content goes:**
-- **Short decisions** (<1 paragraph): Development log entry
-- **Long decisions** (>1 paragraph): Relevant technical doc (e.g., `/docs/technical/architecture.md`)
-- **Rationale and context**: Development log entry or technical docs
-- **Performance targets**: Can stay in status.md as success criteria for epics
-
 ## After Significant Work
 
-### Update `/docs/status.md`:
-- Mark completed tasks with `[x]`
-- Update "Blockers & Issues" if any
-- Update "Last Updated" timestamp
-- When Epic complete, move to "Recently Completed" and create a development log entry
-- Notes belong in the spec/documentation for each epic, NOT in status.md
+### Update Specboard:
+- Note the outcome on the item, link the branch and PR, and set its status
+- File follow-ups and bugs found along the way as their own items
+- Blockers go on the item as blockers, with a reason
+- When an epic is complete, create a development log entry
+- Notes that outlive the work belong in the epic's spec, not in the item's activity log
 
 ### Create development log entry (for significant work):
 Create a new file in `/docs/development-log/entries/` with format `YYYY-MM-DD-topic-slug.md`:
@@ -405,7 +330,7 @@ Create a new file in `/docs/development-log/entries/` with format `YYYY-MM-DD-to
 
 See `/docs/development-log/README.md` for the full template.
 
-**IMPORTANT**: Detailed implementation decisions, technical rationale, and design choices go in development log entries, NOT status.md. The development log is the detailed historical record; status.md is only the current snapshot of project state.
+**IMPORTANT**: Detailed implementation decisions, technical rationale, and design choices go in development log entries, not Specboard items. The development log is the detailed historical record; Specboard is the current state of the work.
 
 
 ### Workflow: After Writing Code

@@ -83,20 +83,51 @@ namespace assets {
 	LuaEngine::LuaEngine(LuaEngine&&) noexcept = default;
 	LuaEngine& LuaEngine::operator=(LuaEngine&&) noexcept = default;
 
-	std::vector<std::filesystem::path> LuaEngine::preludeFiles(const std::filesystem::path& dir) {
+	PreludeFiles LuaEngine::preludeFiles(const std::filesystem::path& dir) {
 		namespace fs = std::filesystem;
-		std::vector<fs::path> files;
-		std::error_code		  ec;
-		if (dir.empty() || !fs::is_directory(dir, ec)) {
-			return files;
+		PreludeFiles	result;
+		std::error_code ec;
+		const auto		fail = [&result, &dir, &ec](const char* what) {
+			   result.files.clear();
+			   result.error = std::string("Failed to ") + what + " prelude folder " + dir.string() + ": " + ec.message();
+			   return result;
+		};
+		if (dir.empty()) {
+			return result;
 		}
-		for (const fs::directory_entry& entry : fs::directory_iterator(dir, ec)) {
-			if (entry.is_regular_file(ec) && entry.path().extension() == ".lua") {
-				files.push_back(entry.path());
+		const fs::file_status status = fs::status(dir, ec);
+		// MSVC reports a missing path through ec as well as file_type::not_found; libstdc++ and libc++ only the type.
+		if (status.type() == fs::file_type::not_found || ec == std::errc::no_such_file_or_directory) {
+			return result;
+		}
+		if (ec) {
+			return fail("check");
+		}
+		if (status.type() != fs::file_type::directory) {
+			result.error = "Prelude path is not a folder: " + dir.string();
+			return result;
+		}
+		fs::directory_iterator it(dir, ec);
+		if (ec) {
+			return fail("open");
+		}
+		for (; it != fs::directory_iterator(); it.increment(ec)) {
+			if (ec) {
+				break;
+			}
+			const bool regular = it->is_regular_file(ec);
+			if (ec) {
+				break;
+			}
+			if (regular && it->path().extension() == ".lua") {
+				result.files.push_back(it->path());
 			}
 		}
-		std::sort(files.begin(), files.end(), [](const fs::path& a, const fs::path& b) { return a.filename() < b.filename(); });
-		return files;
+		if (ec) {
+			return fail("read");
+		}
+		std::sort(result.files.begin(), result.files.end(), [](const fs::path& a, const fs::path& b) { return a.filename() < b.filename(); });
+		return result;
 	}
 
 	bool LuaEngine::initialize(std::filesystem::path preludeDir) {
@@ -328,7 +359,13 @@ namespace assets {
 	}
 
 	bool LuaEngine::runPrelude() {
-		for (const std::filesystem::path& file : preludeFiles(m_preludeDir)) {
+		const PreludeFiles prelude = preludeFiles(m_preludeDir);
+		if (!prelude.error.empty()) {
+			m_lastError = prelude.error;
+			LOG_ERROR(Engine, "%s", m_lastError.c_str());
+			return false;
+		}
+		for (const std::filesystem::path& file : prelude.files) {
 			std::ifstream in(file, std::ios::binary);
 			if (!in.is_open()) {
 				m_lastError = "Failed to open prelude file: " + file.string();
