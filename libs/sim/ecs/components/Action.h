@@ -148,6 +148,11 @@ namespace ecs {
 		/// If destroySource is false and this > 0, entity enters cooldown (regrowth)
 		float regrowthTime = 0.0F;
 
+		/// Construction footprint clear: the source is removed by this action whatever kind it is
+		/// (regrowing, pooled) and however much the colonist can carry; the uncarried yield drops
+		/// as a loose pile.
+		bool clearsSource = false;
+
 		/// Storage-to-storage pull only (ActionType::Withdraw): the SOURCE box entity to take items
 		/// FROM. When non-zero the collection removes `quantity` of `itemDefName` from that box's
 		/// Inventory (clamped to the live quantity) instead of touching a ground entity; the pile/pool/

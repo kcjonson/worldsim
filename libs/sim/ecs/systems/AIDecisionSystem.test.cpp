@@ -2792,31 +2792,27 @@ namespace ecs::test {
 		EXPECT_NE(task->type, TaskType::Haul) << "a full storage offers no haul; addableCount is 0";
 	}
 
-	// A build site takes only what its manifest still lacks. A construction Haul for an item the
-	// blueprint doesn't require (Berry from a clear harvest) or has already satisfied (Plank)
-	// offers no delivery: the deposit would record 0 and the colonist would repeat it forever.
-	TEST_F(AIDecisionSystemTest, NoBuildSiteDeliveryForUnneededOrSatisfiedItem) {
-		auto& registry = assets::AssetRegistry::Get();
-		for (const char* name : {"Berry", "Plank"}) {
-			assets::AssetDefinition def;
-			def.defName = name;
-			def.label = name;
-			def.handsRequired = 1;
-			def.capabilities.carryable = assets::CarryableCapability{1};
-			def.itemProperties = assets::ItemProperties{};
-			def.itemProperties->stackSize = 50;
-			def.itemProperties->massKg = 0.1F;
-			registry.registerTestDefinition(std::move(def));
-		}
+	// A build site takes only what its manifest still lacks. Material credited straight onto the
+	// site (as /api/dev/give does) leaves construction's Haul goal counter open until its next
+	// refresh; that stale goal must offer no delivery, or the deposit records 0 and repeats forever.
+	TEST_F(AIDecisionSystemTest, NoBuildSiteDeliveryForSatisfiedItem) {
+		auto&					registry = assets::AssetRegistry::Get();
+		assets::AssetDefinition plank;
+		plank.defName = "Plank";
+		plank.label = "Plank";
+		plank.handsRequired = 1;
+		plank.capabilities.carryable = assets::CarryableCapability{1};
+		plank.itemProperties = assets::ItemProperties{};
+		plank.itemProperties->stackSize = 50;
+		plank.itemProperties->massKg = 0.1F;
+		registry.registerTestDefinition(std::move(plank));
 
 		auto colonist = createColonist({0.0F, 0.0F});
 		setNeedValue(colonist, NeedType::Hunger, 100.0F);
 		setNeedValue(colonist, NeedType::Thirst, 100.0F);
 		setNeedValue(colonist, NeedType::Energy, 100.0F);
 		setNeedValue(colonist, NeedType::Bladder, 100.0F);
-		auto* inventory = world->getComponent<Inventory>(colonist);
-		inventory->addItem("Berry", 3);
-		inventory->addItem("Plank", 3);
+		world->getComponent<Inventory>(colonist)->addItem("Plank", 3);
 
 		auto site = world->createEntity();
 		world->addComponent<Position>(site, Position{{4.0F, 0.0F}});
@@ -2826,40 +2822,28 @@ namespace ecs::test {
 		blueprint.delivered = {{"Plank", 4}};
 		world->addComponent<StructureBlueprint>(site, std::move(blueprint));
 
-		for (const char* name : {"Berry", "Plank"}) {
-			GoalTask haul;
-			haul.type = TaskType::Haul;
-			haul.owner = GoalOwner::ConstructionGoalSystem;
-			haul.destinationEntity = site;
-			haul.destinationPosition = {4.0F, 0.0F};
-			haul.acceptedDefNameIds = {registry.getDefNameId(name)};
-			haul.targetAmount = 3; // a goal counter that still reads open
-			haul.parentGoalId = 999;
-			haul.status = GoalStatus::Available;
-			GoalTaskRegistry::Get().createGoal(std::move(haul));
-		}
+		GoalTask haul;
+		haul.type = TaskType::Haul;
+		haul.owner = GoalOwner::ConstructionGoalSystem;
+		haul.destinationEntity = site;
+		haul.destinationPosition = {4.0F, 0.0F};
+		haul.acceptedDefNameIds = {registry.getDefNameId("Plank")};
+		haul.targetAmount = 4; // sized before the site was credited
+		haul.parentGoalId = 999;
+		haul.status = GoalStatus::Available;
+		GoalTaskRegistry::Get().createGoal(std::move(haul));
 
 		world->update(0.016F);
 
 		auto* task = getTask(colonist);
 		ASSERT_NE(task, nullptr);
-		EXPECT_NE(task->type, TaskType::Haul) << "the site needs neither item, so no delivery is offered";
+		EXPECT_NE(task->type, TaskType::Haul) << "the site already has every Plank it needs";
 	}
 
-	// A construction clear Harvest names one blocker; only that harvestable may serve it, since the
-	// harvest removes its source. A same-yield bush nearer the colonist is not offered.
-	TEST_F(AIDecisionSystemTest, ClearHarvestTargetsOnlyItsBlocker) {
+	// A construction clear Harvest is served by any harvestable inside its footprint, whatever it
+	// yields, and by nothing outside it. A bush nearer the colonist but outside is not offered.
+	TEST_F(AIDecisionSystemTest, ClearHarvestOffersOnlyHarvestablesInsideItsFootprint) {
 		auto& registry = assets::AssetRegistry::Get();
-
-		assets::AssetDefinition berryDef;
-		berryDef.defName = "Berry";
-		berryDef.label = "Berry";
-		berryDef.handsRequired = 1;
-		berryDef.capabilities.carryable = assets::CarryableCapability{1};
-		berryDef.itemProperties = assets::ItemProperties{};
-		berryDef.itemProperties->stackSize = 50;
-		berryDef.itemProperties->massKg = 0.1F;
-		registry.registerTestDefinition(std::move(berryDef));
 
 		assets::AssetDefinition bushDef;
 		bushDef.defName = "Flora_TestBush";
@@ -2878,19 +2862,17 @@ namespace ecs::test {
 		setNeedValue(colonist, NeedType::Energy, 100.0F);
 		setNeedValue(colonist, NeedType::Bladder, 100.0F);
 
-		const glm::vec2 nearBush{1.0F, 0.0F};
-		const glm::vec2 blocker{20.0F, 0.0F};
-		addKnownEntity(colonist, nearBush, bushId, assets::CapabilityType::Harvestable);
-		addKnownEntity(colonist, blocker, bushId, assets::CapabilityType::Harvestable);
+		const glm::vec2 outside{1.0F, 0.0F};
+		const glm::vec2 inside{20.0F, 0.0F};
+		addKnownEntity(colonist, outside, bushId, assets::CapabilityType::Harvestable);
+		addKnownEntity(colonist, inside, bushId, assets::CapabilityType::Harvestable);
 
 		GoalTask clear;
 		clear.type = TaskType::Harvest;
 		clear.owner = GoalOwner::ConstructionGoalSystem;
-		clear.destinationPosition = blocker;
-		clear.acceptedDefNameIds = {registry.getDefNameId("Berry")};
-		clear.yieldDefNameId = registry.getDefNameId("Berry");
+		clear.destinationPosition = {20.0F, 0.0F};
 		clear.targetAmount = 1;
-		clear.clearsFootprint = true;
+		clear.clearFootprint = FootprintBounds{{16.0F, -4.0F}, {24.0F, 4.0F}};
 		clear.status = GoalStatus::Available;
 		GoalTaskRegistry::Get().createGoal(std::move(clear));
 
@@ -2899,7 +2881,7 @@ namespace ecs::test {
 		auto* task = getTask(colonist);
 		ASSERT_NE(task, nullptr);
 		ASSERT_EQ(task->type, TaskType::Harvest);
-		EXPECT_EQ(task->harvestTargetEntityId, hashWorldEntity(blocker, bushId)) << "only the named blocker serves a clear";
+		EXPECT_EQ(task->harvestTargetEntityId, hashWorldEntity(inside, bushId)) << "only a blocker inside the footprint serves a clear";
 	}
 
 	// A craft fetch must not be offered when the colonist is at/over its carry-weight cap: the

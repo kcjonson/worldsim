@@ -2845,13 +2845,29 @@ class ClearHarvestTest : public ::testing::Test {
 		bush.capabilities.harvestable = cap;
 		registry.registerTestDefinition(std::move(bush));
 
+		// A pooled shrub (WoodyBush-style): non-destructive with a finite resource pool.
+		assets::AssetDefinition shrub;
+		shrub.defName = "Flora_TestPoolShrub";
+		shrub.label = "Test Pool Shrub";
+		cap.regrowthTime = 0.0F;
+		cap.totalResourceMin = 5;
+		cap.totalResourceMax = 5;
+		shrub.capabilities.harvestable = cap;
+		registry.registerTestDefinition(std::move(shrub));
+
 		auto& action = world->registerSystem<ActionSystem>();
+		action.setDecrementResourceCallback([this](const std::string& /*defName*/, float /*x*/, float /*y*/, uint32_t requested) {
+			const uint32_t removed = std::min(requested, pool);
+			pool -= removed;
+			return ActionSystem::ResourceDraw{removed, pool == 0};
+		});
 		action.setRemoveEntityCallback([this](const std::string& /*defName*/, float /*x*/, float /*y*/) { ++removeCalls; });
 		action.setEntityCooldownCallback([this](const std::string& /*defName*/, float /*x*/, float /*y*/, float /*seconds*/) {
 			++cooldownCalls;
 		});
-		action.setDropResourceCallback([this](const std::string& /*defName*/, float /*x*/, float /*y*/, uint32_t /*qty*/) {
+		action.setDropResourceCallback([this](const std::string& /*defName*/, float /*x*/, float /*y*/, uint32_t qty) {
 			++dropCalls;
+			droppedQuantity += qty;
 		});
 		action.setDropItemCallback([this](const std::string& /*defName*/, float /*x*/, float /*y*/) { ++dropCalls; });
 	}
@@ -2864,7 +2880,7 @@ class ClearHarvestTest : public ::testing::Test {
 
 	/// A colonist standing at the bush with a Harvest task serving the site's clear goal, as
 	/// ConstructionSystem::emitClearGoals emits it (child of the umbrella Build goal).
-	EntityID createClearingColonist() {
+	EntityID createClearingColonist(const char* sourceDefName = "Flora_TestBerryBush") {
 		auto& assetRegistry = assets::AssetRegistry::Get();
 		auto& goals = GoalTaskRegistry::Get();
 
@@ -2886,7 +2902,7 @@ class ClearHarvestTest : public ::testing::Test {
 		clear.acceptedDefNameIds = {berryId};
 		clear.targetAmount = 1;
 		clear.yieldDefNameId = berryId;
-		clear.clearsFootprint = true;
+		clear.clearFootprint = FootprintBounds{bushPos - glm::vec2{2.0F, 2.0F}, bushPos + glm::vec2{2.0F, 2.0F}};
 		clear.parentGoalId = umbrellaId;
 		clear.status = GoalStatus::Available;
 		clearGoalId = goals.createGoal(std::move(clear));
@@ -2899,7 +2915,7 @@ class ClearHarvestTest : public ::testing::Test {
 		world->addComponent<Inventory>(entity, Inventory::createForColonist());
 		world->addComponent<Action>(entity, Action{});
 
-		const uint32_t bushId = assetRegistry.getDefNameId("Flora_TestBerryBush");
+		const uint32_t bushId = assetRegistry.getDefNameId(sourceDefName);
 		Memory memory;
 		memory.rememberWorldEntity(bushPos, bushId, assetRegistry.getCapabilityMask(bushId));
 		world->addComponent<Memory>(entity, std::move(memory));
@@ -2927,6 +2943,8 @@ class ClearHarvestTest : public ::testing::Test {
 	int					   removeCalls = 0;
 	int					   cooldownCalls = 0;
 	int					   dropCalls = 0;
+	uint32_t			   droppedQuantity = 0;
+	uint32_t			   pool = 5;
 };
 
 // The clear harvest's yield (berries) is not a site material; construction emits its own
@@ -2952,6 +2970,34 @@ TEST_F(ClearHarvestTest, ClearHarvestOfRegrowingBushRemovesItOnce) {
 	EXPECT_EQ(dropCalls, 0) << "a one-hand yield that fits drops nothing";
 	const uint32_t bushId = assets::AssetRegistry::Get().getDefNameId("Flora_TestBerryBush");
 	EXPECT_FALSE(world->getComponent<Memory>(colonist)->knowsWorldEntity(bushPos, bushId)) << "the harvester forgets it";
+}
+
+
+// A clear doesn't depend on carry room: with the pack full, the bush is still removed, the whole
+// yield drops as one pile, and the clear goal retires so the site can move on.
+TEST_F(ClearHarvestTest, ClearWithFullPackRemovesBushAndDropsTheYield) {
+	auto  colonist = createClearingColonist();
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	inventory->addItem("TestBerry", ecs::cargoUnitsThatFit(*inventory, assets::AssetRegistry::Get(), "TestBerry"));
+	ASSERT_EQ(ecs::cargoUnitsThatFit(*inventory, assets::AssetRegistry::Get(), "TestBerry"), 0U) << "precondition: pack full";
+	harvest();
+
+	EXPECT_EQ(removeCalls, 1) << "the bush is removed with nothing carried off";
+	EXPECT_EQ(dropCalls, 1);
+	EXPECT_EQ(droppedQuantity, 3U) << "the whole yield drops as one pile";
+	EXPECT_EQ(GoalTaskRegistry::Get().getGoal(clearGoalId), nullptr) << "the clear goal retires on removal, not on carried yield";
+}
+
+// A pooled shrub is cleared in one pass: the clear takes the whole pool (what fits into the pack,
+// the rest as a pile) and removes the shrub, instead of one carry's worth per pass until depleted.
+TEST_F(ClearHarvestTest, PoolSourceClearRemovesShrubInOnePass) {
+	auto colonist = createClearingColonist("Flora_TestPoolShrub");
+	harvest();
+
+	EXPECT_EQ(removeCalls, 1) << "the shrub is removed on the first clear";
+	EXPECT_EQ(pool, 0U) << "the whole pool was taken";
+	EXPECT_EQ(world->getComponent<Inventory>(colonist)->getQuantity("TestBerry") + droppedQuantity, 5U) << "nothing is created or lost";
+	EXPECT_EQ(GoalTaskRegistry::Get().getGoal(clearGoalId), nullptr);
 }
 
 } // namespace ecs::test
