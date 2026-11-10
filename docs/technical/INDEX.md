@@ -96,6 +96,7 @@ Applications:
 | [Developer Server](./observability/developer-server.md) | HTTP/SSE streaming from applications |
 | [Developer Client](./observability/developer-client.md) | External TypeScript/Vite web app |
 | [UI Inspection](./observability/ui-inspection.md) | UI hierarchy and hover inspection |
+| [sim-cli](./sim-cli.md) | Spec: headless colonist sim over a shared SimSession; command scripts, decision history, determinism, scenario ctests |
 
 ### Vector Graphics System
 

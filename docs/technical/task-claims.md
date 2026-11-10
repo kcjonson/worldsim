@@ -607,7 +607,9 @@ are measured against an evaluator that already scales with goals, not memory.
 ## Testing
 
 The multi-colonist regression vehicle is the headless sim-cli ([Sim CLI](./sim-cli.md), WOR-603),
-built before this work. Its scenarios for this spec:
+built before this work. Its scenarios for this spec are `.sim` files under
+`apps/sim-cli/scenarios/`, each registered as a ctest entry (label `scenario`) with its determinism
+rerun ([scenario format](./sim-cli.md#scenarios)):
 
 - two colonists, one tree;
 - last ingredient unit (one loose unit, two colonists, a recipe short by one);
