@@ -1,5 +1,6 @@
 #include "world/rendering/GroundTileBaker.h"
 
+#include "world/rendering/Bc3.h"
 #include "world/rendering/GroundTileCache.h"
 #include "world/rendering/ScreenStateGuard.h"
 
@@ -107,6 +108,21 @@ namespace worldview {
 			const double n = static_cast<double>(image.texels.size());
 			const double average = sum / n;
 			return static_cast<float>(std::sqrt(std::max(0.0, (sumSquares / n) - (average * average))));
+		}
+
+		// The RMS difference of two RGBA8 images' color channels, in 8-bit codes.
+		float rgbRms(std::span<const uint8_t> a, std::span<const uint8_t> b) {
+			if (a.size() != b.size() || a.empty()) {
+				return 0.0F;
+			}
+			double sumSquares = 0.0;
+			for (size_t i = 0; i < a.size(); ++i) {
+				if (i % 4 != 3) {
+					const double d = static_cast<double>(a[i]) - static_cast<double>(b[i]);
+					sumSquares += d * d;
+				}
+			}
+			return static_cast<float>(std::sqrt(sumSquares / (static_cast<double>(a.size()) * 0.75)));
 		}
 
 		void appendf(std::string& out, const char* format, auto... values) {
@@ -438,7 +454,13 @@ namespace worldview {
 			sample.heightSpread = heightSpread(decoded);
 			sample.contrast = ground::windowedRmsContrast(decoded);
 			sample.referenceContrast = ground::windowedRmsContrast(reference);
-			out.mips.push_back({.size = size, .rgba = std::move(encoded.rgba)});
+			std::vector<uint8_t>	   bc3 = encodeBc3(encoded.rgba, size, size);
+			const std::vector<uint8_t> bc3Rgba = decodeBc3(bc3, size, size);
+			sample.bc3DeltaE = ground::deltaE76(
+				glm::vec3(ground::mean(ground::decodeSrgb8({.width = size, .height = size, .rgba = bc3Rgba}))), sample.mean
+			);
+			sample.bc3Rms = rgbRms(encoded.rgba, bc3Rgba);
+			out.mips.push_back({.size = size, .rgba = std::move(encoded.rgba), .bc3 = std::move(bc3)});
 			out.samples.push_back(sample);
 			out.filterMs += msSince(phase);
 		}
@@ -521,6 +543,8 @@ namespace worldview {
 				m.meshCount = std::max(m.meshCount, s.meshCount);
 				m.renderMs += s.renderMs / static_cast<double>(variants.size());
 				m.heightSpread += s.heightSpread / static_cast<float>(variants.size());
+				m.bc3DeltaE = std::max(m.bc3DeltaE, s.bc3DeltaE);
+				m.bc3Rms = std::max(m.bc3Rms, s.bc3Rms);
 				for (int c = 0; c < 3; ++c) {
 					const float base = std::max(s0.mean[c], 1e-6F);
 					m.meanErrorPercent = std::max(m.meanErrorPercent, 100.0F * std::abs(s.mean[c] - s0.mean[c]) / base);
@@ -582,11 +606,13 @@ namespace worldview {
 				filterMs / n
 			);
 		}
-		appendf(out, "mip  size  render       verts  meshes   rnd ms  mean%%  dE0   dEprev  spread  contrast   lock%%  h sd\n");
+		appendf(
+			out, "mip  size  render       verts  meshes   rnd ms  mean%%  dE0   dEprev  spread  contrast   lock%%  h sd  bc3 dE  rms\n"
+		);
 		for (const GroundMipMetrics& m : bake.metrics) {
 			appendf(
 				out,
-				"%3d  %4d  %4d (%dx)  %7zu  %6zu  %7.1f  %5.2f  %4.2f  %6.2f  %6.2f  %3.0f-%3.0f%%  %5.2f  %4.2f",
+				"%3d  %4d  %4d (%dx)  %7zu  %6zu  %7.1f  %5.2f  %4.2f  %6.2f  %6.2f  %3.0f-%3.0f%%  %5.2f  %4.2f  %6.2f  %4.1f",
 				m.level,
 				m.size,
 				m.renderSize,
@@ -601,7 +627,9 @@ namespace worldview {
 				static_cast<double>(m.contrastRatioMin * 100.0F),
 				static_cast<double>(m.contrastRatioMax * 100.0F),
 				static_cast<double>(m.lockShiftPercent),
-				static_cast<double>(m.heightSpread)
+				static_cast<double>(m.heightSpread),
+				static_cast<double>(m.bc3DeltaE),
+				static_cast<double>(m.bc3Rms)
 			);
 			if (m.failures() > 0) {
 				out += "  FAIL:";

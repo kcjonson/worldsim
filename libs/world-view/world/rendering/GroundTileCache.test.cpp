@@ -6,6 +6,8 @@
 
 #include "world/rendering/GroundTileCache.h"
 
+#include "world/rendering/Bc3.h"
+
 #include <assets/AssetRegistry.h>
 
 #include <gtest/gtest.h>
@@ -79,6 +81,7 @@ namespace {
 				for (int i = 0; i < size * size * 4; ++i) {
 					mip.rgba.push_back(static_cast<uint8_t>((i * 7) + (level * 13) + v));
 				}
+				mip.bc3 = encodeBc3(mip.rgba, size, size);
 				variant.samples.push_back({
 					.renderSize = size * 8,
 					.supersample = 8,
@@ -89,6 +92,8 @@ namespace {
 					.referenceContrast = 0.6F,
 					.lockShift = glm::vec3(0.01F),
 					.heightSpread = 0.25F + (0.01F * static_cast<float>(level)),
+					.bc3DeltaE = 0.1F * static_cast<float>(level + 1),
+					.bc3Rms = 2.0F + static_cast<float>(v),
 				});
 			}
 		}
@@ -118,6 +123,8 @@ TEST(GroundTileCacheTest, AStoredBakeComesBackWhole) {
 		for (size_t k = 0; k < 6; ++k) {
 			EXPECT_EQ(loaded->variants[v].mips[k].size, stored.variants[v].mips[k].size);
 			EXPECT_EQ(loaded->variants[v].mips[k].rgba, stored.variants[v].mips[k].rgba) << "variant " << v << " mip " << k;
+			EXPECT_EQ(loaded->variants[v].mips[k].bc3, stored.variants[v].mips[k].bc3) << "variant " << v << " mip " << k;
+			EXPECT_EQ(loaded->variants[v].samples[k].bc3Rms, stored.variants[v].samples[k].bc3Rms);
 			EXPECT_EQ(loaded->variants[v].samples[k].mean, stored.variants[v].samples[k].mean);
 			EXPECT_EQ(loaded->variants[v].samples[k].vertexCount, stored.variants[v].samples[k].vertexCount);
 			EXPECT_EQ(loaded->variants[v].samples[k].referenceContrast, stored.variants[v].samples[k].referenceContrast);

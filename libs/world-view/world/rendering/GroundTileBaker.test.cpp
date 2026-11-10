@@ -8,6 +8,7 @@
 #include "world/rendering/GroundTileBaker.h"
 
 #include "BaseShader.h"
+#include "world/rendering/Bc3.h"
 #include "world/rendering/GlTest.test.h"
 #include "world/rendering/GroundTileBank.h"
 #include "world/rendering/GroundTileCache.h"
@@ -175,6 +176,8 @@ TEST(GroundTileBakerTest, BakesAWrappedChainAndDropsLodPaths) {
 	for (size_t k = 0; k < v.mips.size(); ++k) {
 		EXPECT_EQ(v.mips[k].size, 32 >> k);
 		EXPECT_EQ(v.mips[k].rgba.size(), static_cast<size_t>(v.mips[k].size) * v.mips[k].size * 4);
+		// What the bank uploads: the mip as BC3, down to the 1x1 level's one padded block.
+		EXPECT_EQ(v.mips[k].bc3.size(), bc3Bytes(v.mips[k].size, v.mips[k].size));
 	}
 	EXPECT_EQ(v.samples[0].renderSize, 256);
 	EXPECT_EQ(v.samples[2].renderSize, 32);

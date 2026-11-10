@@ -7,7 +7,7 @@
 // out at the mip its author chose. Each is drawn once into a target covering exactly one period (the paths that cross the tile edge
 // are already repeated, so the target's clip is the wrap), supersampled (8x8 for mips 0 and 1, 4x4
 // below), Kaiser-downsampled in linear light with an anti-ringing clamp (GroundTileFilter.h), mean-locked
-// to a filtered copy of mip 0, and encoded to sRGB 8-bit for GL_SRGB8_ALPHA8. Alpha is each texel's
+// to a filtered copy of mip 0, encoded to sRGB 8-bit, and that to BC3 for the bank (Bc3.h). Alpha is each texel's
 // height: every path drawn once more at mip 0 in flat gray at its height (2x2 supersampled, blurred half
 // a texel), ranked over the def's variants to a uniform histogram, and Kaiser-filtered down the chain. A
 // def whose files haven't changed since its last bake comes from the disk cache instead
@@ -50,10 +50,11 @@ namespace worldview {
 	class GroundTileCache;
 
 	/// One mip of one variant: sRGB color and linear height in alpha, 8 bits a channel, rows top to
-	/// bottom, size x size.
+	/// bottom, size x size; and the same as BC3 blocks (Bc3.h), which is what the bank uploads.
 	struct GroundMip {
 		int					 size = 0;
 		std::vector<uint8_t> rgba;
+		std::vector<uint8_t> bc3;
 	};
 
 	/// What the bake drew and measured on one mip of one variant.
@@ -68,6 +69,8 @@ namespace worldview {
 		float	  referenceContrast = 0.0F; // the same of Ref_k, the Kaiser downsample of mip 0
 		glm::vec3 lockShift{0.0F};			// what the mean lock moved: Ref_k's linear mean minus the render's
 		float	  heightSpread = 0.0F;		// standard deviation of the encoded mip's heights (alpha, 0 to 1)
+		float	  bc3DeltaE = 0.0F;			// CIE76 of the BC3 decode's mean against the encoded mip's
+		float	  bc3Rms = 0.0F;			// RMS of the BC3 decode against the encoded mip, 8-bit codes over RGB
 	};
 
 	/// One variant's generator output or SVG, tessellated: what every mip of it is drawn from.
@@ -114,6 +117,8 @@ namespace worldview {
 		float  contrastRatioMax = 1.0F; // and highest
 		float  lockShiftPercent = 0.0F; // the mean lock's shift over mip 0's mean, per channel
 		float  heightSpread = 0.0F;		// the heights' standard deviation, averaged over variants
+		float  bc3DeltaE = 0.0F;		// what BC3 does to the mean, worst variant; reported, not a check
+		float  bc3Rms = 0.0F;			// and to the texels
 
 		[[nodiscard]] bool meanOk() const { return meanErrorPercent <= kMeanTolerancePercent; }
 		[[nodiscard]] bool deltaEOk() const { return deltaEToMip0 < kDeltaELimit && deltaEToPrevious < kDeltaELimit; }
