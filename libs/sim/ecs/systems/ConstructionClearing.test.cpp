@@ -15,6 +15,7 @@
 #include "../components/Memory.h"
 #include "../components/Movement.h"
 #include "../components/Needs.h"
+#include "../components/SourceReachMemo.h"
 #include "../components/Structure.h"
 #include "../components/StructureBlueprint.h"
 #include "../components/Task.h"
@@ -167,6 +168,7 @@ namespace ecs::test {
 				world->addComponent<Task>(entity, Task{});
 				world->addComponent<Action>(entity, Action{});
 				world->addComponent<DecisionTrace>(entity, DecisionTrace{});
+				world->addComponent<SourceReachMemo>(entity, SourceReachMemo{});
 				Memory memory;
 				for (const glm::vec2& pos : knownTrees) {
 					remember(memory, pos);
