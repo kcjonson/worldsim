@@ -62,8 +62,7 @@ namespace worldview {
 	} // namespace
 
 	GroundTileBank::GroundTileBank(const Args& newArgs)
-		: args(newArgs),
-		  cache(GroundTileCache::defaultDirectory()) {}
+		: args(newArgs) {}
 
 	GroundTileBank::~GroundTileBank() {
 		for (size_t i = 0; i < arrayCount; ++i) {
@@ -88,7 +87,10 @@ namespace worldview {
 
 	GroundTileBaker GroundTileBank::baker() const {
 		return GroundTileBaker(
-			{.restoreCoordinateSystem = args.restoreCoordinateSystem, .maxRenderSize = maxRenderSize, .pool = pool.get(), .cache = &cache}
+			{.restoreCoordinateSystem = args.restoreCoordinateSystem,
+			 .maxRenderSize = maxRenderSize,
+			 .pool = pool.get(),
+			 .cache = args.cache}
 		);
 	}
 

@@ -4,14 +4,19 @@
 #include <assets/AssetBootstrap.h>
 #include <assets/AssetRegistry.h>
 #include <assets/AssetValidator.h>
+#include <storage/UserDirectories.h>
+#include <world/AppIdentity.h>
 #include <world/rendering/GroundTileBank.h>
+#include <world/rendering/GroundTileCache.h>
 
 #include <cassert>
 #include <memory>
+#include <optional>
 
 namespace world_sim {
 
 	namespace {
+		std::optional<worldview::GroundTileCache>  g_groundCache;
 		std::unique_ptr<worldview::GroundTileBank> g_groundTiles;
 	} // namespace
 
@@ -19,13 +24,15 @@ namespace world_sim {
 		// Async only on the normal splash path; a --scene override loads synchronously so
 		// the jumped-to scene has assets ready before its onEnter.
 		assets::initializeAssetSystem(!hasSceneArg);
-		g_groundTiles = std::make_unique<worldview::GroundTileBank>(
-			worldview::GroundTileBank::Args{.restoreCoordinateSystem = &app.coordinateSystem()}
-		);
+		g_groundCache = worldview::GroundTileCache::inUserData(app::userDataDir(worldview::kOrganization, worldview::kGameName));
+		g_groundTiles = std::make_unique<worldview::GroundTileBank>(worldview::GroundTileBank::Args{
+			.restoreCoordinateSystem = &app.coordinateSystem(), .cache = g_groundCache.has_value() ? &*g_groundCache : nullptr
+		});
 	}
 
 	void shutdownResources() {
 		g_groundTiles.reset();
+		g_groundCache.reset();
 	}
 
 	worldview::GroundTileBank& groundTiles() {

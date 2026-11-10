@@ -158,8 +158,10 @@ namespace worldview {
 			const GroundTileCache* cache = nullptr;
 		};
 
-		/// Part of every cache key: bump it when the bake draws or filters differently, so the bakes on
-		/// disk from before are dropped.
+		/// Part of every cache key, for worldsim's own bake code: this baker, its filters and the paths it
+		/// draws (TessellatedPaths, AssetRegistry::buildPaths). Bump it when any of them draws or filters
+		/// differently, so the bakes on disk from before miss. salal's version and LuaEngine::kApiVersion
+		/// are in the key on their own.
 		static constexpr uint32_t kVersion = 3;
 		static constexpr int	  kMaxMipLevels = 7;	 // mips 0 to 6
 		static constexpr float	  kMeanLockSigma = 2.0F; // texels of the mip being locked

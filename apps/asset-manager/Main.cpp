@@ -10,6 +10,7 @@
 #include <assets/AssetBootstrap.h>
 #include <platform/Platform.h>
 #include <theme/Fonts.h>
+#include <world/AppIdentity.h>
 
 #include <cstdio>
 #include <memory>
@@ -40,7 +41,8 @@ int main(int argc, char* argv[]) {
 		return 1;
 	}
 	std::unique_ptr<app::App> app = app::App::create(
-		{.applicationName = "asset-manager",
+		{.organization = worldview::kOrganization,
+		 .applicationName = "asset-manager",
 		 .frame = {.frameCapHz = 120},
 		 .baseShader = base_shader::source(),
 		 .fontAtlases = theme::kFontAtlases,
