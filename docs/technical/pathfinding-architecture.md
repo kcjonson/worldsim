@@ -99,11 +99,17 @@ builds a square region per driver, **clusters overlapping squares into merged re
 self-gates rebuilds off the render clock: a region recenters only when one of its drivers nears
 the region-rect edge or its obstacle inputs change. A stationary colonist under a held camera
 triggers zero rebuilds; panning far spawns a separate viewport region instead of dragging a
-colonist's region with it. Queries dispatch by position: `requestPath` / `reachFrom` + `reaches` /
-`isOnMesh` / `nearestPathablePoint` / `inSimArea` select the region containing the point.
-`requestPath` holds when the endpoints fall in different regions or outside all regions
-(long-range routing across unsimulated space is Phase 2). RRA* caches are keyed by region id plus
-goal triangle. Recovery (snap an off-mesh colonist back onto a face) fires only for a colonist
+colonist's region with it. Point queries (`isOnMesh` / `nearestPathablePoint` / `inSimArea`)
+select the first region (by id) containing the point. Built regions overlap in normal play (a
+region keeps its rect until its driver nears the edge, while a neighbor is built beside it), so pair
+queries dispatch by pair: `requestPath` routes through each built region whose rect holds both
+endpoints, in id order, until one finds a route, and `reachFrom` keeps a reach root for every built
+region holding the start so `reaches` passes a goal when any region holding both lets it through.
+No region holding both is no route (long-range routing across regions is Phase 2). A goal outside
+every region is walked toward: the colonist routes to the edge of its region nearest the goal
+(`stagingPointToward`, inside the recenter margin), its region follows it, and the mesh swap
+re-plans the same goal until a build covers it. A colonist outside every region holds. RRA* caches
+are keyed by region id plus goal triangle. Recovery (snap an off-mesh colonist back onto a face) fires only for a colonist
 *inside* a region but off a face; a colonist no region covers is left where he stands. That last
 rule fixes the camera-pan freeze (panning used to drag the mesh off a colonist, who was then
 "off-mesh" and got snapped into the river).
