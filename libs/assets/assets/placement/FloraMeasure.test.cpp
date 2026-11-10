@@ -69,4 +69,17 @@ namespace assets {
 		EXPECT_NEAR(half.canopyCover, 6.0 / 100.0, 1e-9);
 	}
 
+	TEST(FloraMeasure, RectLimitsBoundTheGridNotJustTheArea) {
+		EXPECT_TRUE(floraRectWithinLimits({0.0F, 0.0F, 500.0F, 500.0F}));
+		EXPECT_FALSE(floraRectWithinLimits({0.0F, 0.0F, 100000000.0F, 0.001F})); // ~100,000 m2 but a billion cells
+		EXPECT_FALSE(floraRectWithinLimits({0.0F, 0.0F, 501.0F, 10.0F}));
+		EXPECT_FALSE(floraRectWithinLimits({0.0F, 0.0F, 0.0F, 10.0F}));
+		EXPECT_FALSE(floraRectWithinLimits({10.0F, 10.0F, 0.0F, 0.0F}));
+
+		// An oversized rect measures nothing and allocates no grid.
+		const FloraMeasurement m = measureFlora({0.0F, 0.0F, 100000000.0F, 0.001F}, {}, {}, {});
+		EXPECT_EQ(m.rectAreaM2, 0.0);
+		EXPECT_EQ(m.treeCount, 0U);
+	}
+
 } // namespace assets

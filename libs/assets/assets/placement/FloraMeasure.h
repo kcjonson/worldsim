@@ -31,8 +31,11 @@ namespace assets {
 	// The placement group every tree def declares.
 	inline constexpr const char* kTreeGroup = "trees";
 
-	// Largest rect measured in one call (500 m x 500 m, 25 million cells).
-	inline constexpr double kFloraMaxRectAreaM2 = 250000.0;
+	// Largest rect measured in one call: each side at most 500 m, and at most 25 million
+	// cells in all, counted as the grid counts them (floraAxisCells). A thin rect still
+	// gets a cell per axis, so its area alone does not bound the grid.
+	inline constexpr float	  kFloraMaxSpanMeters = 500.0F;
+	inline constexpr int64_t kFloraMaxCells = 25000000;
 
 	struct FloraRect {
 		float minX = 0.0F;
@@ -73,6 +76,15 @@ namespace assets {
 		std::vector<FloraDefMeasure> otherTallOccluders; // the rest, by defName; not in the totals or the cover
 	};
 
+	// The cells a grid spends on one axis of `spanMeters`: the ceil of span over the cell
+	// size, and at least one. The cover grid and floraRectWithinLimits both count with this.
+	[[nodiscard]] int64_t floraAxisCells(float spanMeters);
+
+	// Whether `rect` can be measured: finite, above zero on both axes (so not inverted),
+	// each side at most kFloraMaxSpanMeters, and at most kFloraMaxCells cells in all.
+	// Check it before gathering anything for the rect.
+	[[nodiscard]] bool floraRectWithinLimits(const FloraRect& rect);
+
 	// Whether the def is in the kTreeGroup placement group.
 	[[nodiscard]] bool isTreeDef(const AssetDefinition& def);
 
@@ -86,7 +98,9 @@ namespace assets {
 	// its position is inside the rect and a loaded area, in `defs` when its def is a
 	// tree and in `otherTallOccluders` otherwise. Every tree passed adds its crown to the
 	// cover, so pass the trees near the rect, not only in it. A def missing from
-	// `traits` is not a tree.
+	// `traits` is not a tree. A rect that fails floraRectWithinLimits is a precondition
+	// violation: it allocates nothing and returns a default-constructed (empty)
+	// measurement, never a truncated one.
 	[[nodiscard]] FloraMeasurement measureFlora(
 		const FloraRect&									   rect,
 		const std::vector<FloraRect>&						   loadedAreas,

@@ -114,7 +114,9 @@ namespace worldview {
 				return;
 			}
 			stats.uprightDrawCalls++;
-			stats.uprightTriangles += static_cast<uint32_t>(m_animIndices.size() / 3);
+			// The batch renderer draws each submitted triangle as two (a quad with a repeated
+			// corner) and counts it so; match that or this undercounts against the total.
+			stats.uprightTriangles += static_cast<uint32_t>(m_animIndices.size() / 3) * 2;
 			Renderer::Primitives::drawTriangles(Renderer::Primitives::TrianglesArgs{
 				.vertices = m_animVertices.data(),
 				.indices = m_animIndices.data(),
