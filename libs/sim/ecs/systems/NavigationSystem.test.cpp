@@ -2418,7 +2418,7 @@ TEST_F(NavigationSystemTest, FinishPendingBuildsIsANoOpUntilAnInputChanges) {
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	sys.setConstructionWorld(&cw);
-	wireArea(sys);
+	wireArea(world, sys);
 	sys.finishPendingBuilds();
 	ASSERT_TRUE(sys.hasMesh());
 
