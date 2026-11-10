@@ -79,14 +79,24 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=colonists"
 # -> colonists[0].cargoKg > 0
 ```
 
-3. Poll the box inventory as Bob hauls armfuls:
+3. Look at the stump after the fell: the remainder is one compact heap of logs lying bare, no crate under it.
+
+4. Click the heap: one gold outline goes around the whole heap and the panel shows Wood, `Quantity: N` and `Mass: <N x 2.5> kg`.
+
+5. Keep it selected while Bob hauls: the quantity drops each trip, and the panel closes when the heap is gone.
+
+6. Drop a different item on a wood heap, `/api/dev/give?material=SmallStone&n=5&where=loose&at=<heap x>,<heap y>`: the stones land beside the heap, clear of it, not on top.
+
+7. Spawn a second box 1 m from the stocked one (`/api/dev/spawn?def=BasicBox&at=<BX+9>,<BY>&n=1&scatter=0`), give Bob wood in hand (`/api/dev/give?material=Wood&n=10&where=colonist&slot=hands`), then click the new box, press its **Move** button, and click a spot a few meters away. When Bob lifts the crated box he puts the wood in the stocked box (`what=storage` Wood rises by 10) and no heap appears where he picked it up.
+
+8. Poll the box inventory as Bob hauls armfuls:
 
 ```
 curl.exe "http://127.0.0.1:<PORT>/api/state?what=storage"
 # -> storages[0].inventory.Wood climbs with each deposit trip
 ```
 
-4. Keep Bob's needs up every ~2 real minutes:
+9. Keep Bob's needs up every ~2 real minutes:
 
 ```
 curl.exe "http://127.0.0.1:<PORT>/api/dev/need?colonist=<BOB_ID>&need=Hunger&value=95"
@@ -94,7 +104,7 @@ curl.exe "http://127.0.0.1:<PORT>/api/dev/need?colonist=<BOB_ID>&need=Thirst&val
 curl.exe "http://127.0.0.1:<PORT>/api/dev/need?colonist=<BOB_ID>&need=Energy&value=95"
 ```
 
-5. Poll until box reaches or exceeds 200 Wood:
+10. Poll until box reaches or exceeds 200 Wood:
 
 ```
 curl.exe "http://127.0.0.1:<PORT>/api/state?what=storage"
@@ -131,5 +141,6 @@ belt-stow regression in [../regressions.md](../regressions.md)).
 ## Notes
 
 Wood is a two-hand bulk item (stack 40, 2.5 kg). An armful is weight-limited by Bob's strength;
-expect several trips to reach 200. Each fell produces a loose ground stack at the stump;
+expect several trips to reach 200. Each fell produces a loose ground stack at the stump (one
+pile, drawn as 1 to 5 logs by how full it is; a second drop on the same spot tops it up);
 subsequent haul trips deplete it before Bob moves to the next tree.

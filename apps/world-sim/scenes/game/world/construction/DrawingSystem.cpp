@@ -2142,8 +2142,7 @@ namespace world_sim {
 			.position = toScreen(cursor_) + Foundation::Vec2{14.0F, -22.0F},
 			.scale = 0.8F,
 			.color = invalidColor_,
-			.shadowColor = {0.0F, 0.0F, 0.0F, 0.8F},
-			.shadowOffset = {1.0F, 1.0F},
+			.shadow = Foundation::BoxShadow{.color = {0.0F, 0.0F, 0.0F, 0.8F}, .blur = 0.0F, .offset = {1.0F, 1.0F}},
 			.id = "drawing_edit_reason",
 			.key = 906,
 		});

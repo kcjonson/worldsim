@@ -16,7 +16,7 @@ From the product owner, not the literature:
 2. **Precise, hole-free hit area for all selectable assets.** The clickable region is the asset's actual filled shape, with internal holes eliminated — a click landing in a canopy gap still selects. Today world entities have *no* indicator and a loose 2 m centroid-radius hit-test.
 3. **Whole clump selectable.** For an asset that renders as several disjoint blobs (scattered flowers), a click in the bare gap between blobs still selects it. (PO decision — see §7.)
 4. **Reusable for shadows.** The flattened outer silhouette is computed and cached so a later shadow pass can reuse it. Shadows themselves are out of scope.
-5. **Applies to all SVG-asset-backed selectables:** world entities (trees/flora/rocks), colonists, crafting stations, and furniture (including packaged). Construction selectables (walls, openings, foundations, rooms) already hit-test and outline on exact topology geometry and are left untouched.
+5. **Applies to all SVG-asset-backed selectables:** world entities (trees/flora/rocks), colonists, crafting stations, furniture (including packaged), and loose ground piles (`ResourceStack` entities: hit-test and outline every sprite of the shared `pileLayout`, plus a 0.3 m pick slop around the pile center so a lone small item stays clickable; priority sits after furniture and before static world entities). Construction selectables (walls, openings, foundations, rooms) already hit-test and outline on exact topology geometry and are left untouched.
 
 ## 2. Current State (Baseline)
 
@@ -88,7 +88,7 @@ The #1 shared risk is the hit-test inverse or the outline forward-map drifting f
 - **Static / baked** (`BakedEntityMesh`): `world = R(rot)·(local·scale) + position`, **no centering**.
 - **Dynamic / ECS** (`DynamicEntityRenderSystem`): `world = local·scale + position + centerOffset`, **rotation forced 0**, where `centerOffset = -(min+max)/2`. Note `getTemplate` returns `nullptr` for a 0-shape asset and `centerOffset` silently stays 0 — the inverse must reproduce that exact behavior.
 
-`assetInstanceTransform` provides forward (local→world) and inverse (world→local mm) for both conventions, consumed by `BakedEntityMesh`, `DynamicEntityRenderSystem`, the outline, and the hit-test. The duplicated `centerOffset` math in `DynamicEntityRenderSystem` is deleted (one source of truth). A `packagedLayout` helper is extracted the same way (crate + shrunk-item offsets/scale) so the packaged composite matches the sprite. Round-trip tests (`world→local→world`) per convention, including the nullptr-template path and the `FacingDirection` suffix.
+`assetInstanceTransform` provides forward (local→world) and inverse (world→local mm) for both conventions, consumed by `BakedEntityMesh`, `DynamicEntityRenderSystem`, the outline, and the hit-test. The duplicated `centerOffset` math in `DynamicEntityRenderSystem` is deleted (one source of truth). A `packagedLayout` helper is extracted the same way (crate back, item fitted inside from its template bounds, crate front) so the packaged composite matches the sprite. Round-trip tests (`world→local→world`) per convention, including the nullptr-template path and the `FacingDirection` suffix.
 
 ## 7. Whole-clump hit area (PO decision)
 
@@ -100,7 +100,7 @@ The **outline still strokes the exact `outerRings`** (each visible bloom gets a 
 
 Broad phase stays a cheap cull but must be widened: today's single-chunk `queryRadius(2m)` would cull a click on a big canopy far from its trunk anchor before the precise test runs, and a tree whose anchor sits in an adjacent chunk but whose canopy overhangs the clicked point lives in the neighbor's index. So: size the broad-phase radius from the **registry's max silhouette half-extent** (per-`defName` max-extent keeps small assets tight) and query the click chunk **plus its 8 neighbors**.
 
-Narrow phase replaces the centroid `dist < kSelectionRadius` accept for colonist / station / furniture / world-entity with `pointInPolygon(assetInstanceTransform⁻¹(click), hitRegion)`. Packaged furniture tests crate-ring OR item-ring at their `packagedLayout` transforms. `kSelectionRadius` survives **only** as the broad-phase radius; the accept comparisons and the generic `kIndicatorRadius` circle are deleted (one-path).
+Narrow phase replaces the centroid `dist < kSelectionRadius` accept for colonist / station / furniture / world-entity with `pointInPolygon(assetInstanceTransform⁻¹(click), hitRegion)`. Packaged furniture tests crate back, item, and crate front at their `packagedLayout` transforms. `kSelectionRadius` survives **only** as the broad-phase radius; the accept comparisons and the generic `kIndicatorRadius` circle are deleted (one-path).
 
 **Overlapping entities cycle (PO decision).** With canopy-sized hit areas, overlapping tree canopies are the norm. `gatherCandidates` pushes **every** world entity whose `hitRegion` contains the click (not just the closest anchor), ordered topmost-first so repeated clicks step front-to-back through the existing cycle machinery. "Topmost" = entity draw/sort order (the depth-sort anchorY), falling back to smallest-area-containing on ties. `candidateKey` (currently quantized position) is extended to disambiguate co-located entities.
 
@@ -111,7 +111,7 @@ Stroke each transformed `outerRing` in screen space with `Primitives::drawLine` 
 - **Thickness:** constant **screen-space** pixels (zoom-independent) with **min/max px clamps**, and the vertex join-dots gated on `width` vs edge length so a tiny flower doesn't blob into a solid dot and a big tree's outline still reads as thick.
 - **Z-order — respect depth-sort (PO decision).** The outline is **not** a flat top pass. It draws in the entity render layer at the *selected entity's* sort key (anchorY, from world-depth-sorting Story A), so a nearer tree correctly occludes a farther selection's outline. This couples the epic to Story A / PR #248.
 - **`WorldEntitySelection` branch (new).** Re-resolve the live `PlacedEntity` by `defName`+`position` each frame to recover rotation/scale; if the entity was felled/moved (chopping triggers a nav rebuild), the selection is stale — draw nothing.
-- **Packaged:** union the crate + item rings via `RingBoolean::unionRings` (its exact 2-ring reference use) into one clean outline; on reject (item floats above the crate, disjoint) stroke both.
+- **Composite outlines (packaged, piles):** one outline around the whole thing. `SelectionSystem::unionCompositeRings` maps every part's silhouette rings to world millimeters (packaged: crate back, item, crate front; pile: every `pileLayout` sprite) and folds them pairwise through `RingBoolean::unionRings` until no pair merges. With the item fitted inside the crate the result is the crate's silhouette; a pile's sprites overlap by construction and merge into one ring. A pair the union rejects (disjoint, pinch, would-hole) stays two rings and both are stroked. The last input and result are cached, so a still selection doesn't rerun the boolean every frame.
 
 ## 10. Animated colonists (PO decision: rest-pose for v1)
 

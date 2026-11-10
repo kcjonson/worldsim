@@ -6,6 +6,7 @@
 #include <ecs/components/FacingDirection.h>
 #include <ecs/components/Movement.h>
 #include <ecs/components/Packaged.h>
+#include <ecs/components/ResourceStack.h>
 #include <ecs/components/Transform.h>
 
 #include "assets/AssetRegistry.h"
@@ -13,6 +14,8 @@
 #include "assets/placement/WorldDepthSort.h"		// computeAnchorY (canonical ground-contact rule)
 #include "world/rendering/AssetInstanceTransform.h" // shared local<->world affine (no drift)
 #include "world/rendering/PackagedLayout.h"			// shared crate+item placement (no drift)
+#include "world/rendering/PileLayout.h"				// shared loose-pile placement (no drift)
+#include "world/rendering/TemplateBounds.h"
 
 #include <cmath>
 #include <unordered_map>
@@ -36,18 +39,17 @@ void DynamicEntityRenderSystem::update(float deltaTime) {
             continue;
         }
 
-        // For packaged entities (not being carried), render crate-behind-item via the
-        // shared layout so the packaged hit-test/outline match the drawn sprite.
+        // Packaged furniture (not being carried): the item inside a two-layer crate via the
+        // shared layout, so the packaged hit-test/outline match the drawn sprites. Pushed back,
+        // item, front: equal anchorY + the stable depth sort keep that order.
         if (packaged != nullptr) {
-            float itemWorldHeight = 0.6F; // fallback
-            if (const auto* itemDef = assetRegistry.getDefinition(appearance.defName)) {
-                itemWorldHeight = itemDef->worldHeight;
-            }
             const worldview::PackagedLayout pl = worldview::packagedLayout(
-                pos.value, appearance.defName, appearance.scale, appearance.colorTint, itemWorldHeight
+                pos.value, appearance.defName, appearance.scale, appearance.colorTint,
+                worldview::templateBounds(assetRegistry.getTemplate(appearance.defName, {}))
             );
-            renderData.push_back(pl.crate); // crate first: drawn behind the item
+            renderData.push_back(pl.crateBack);
             renderData.push_back(pl.item);
+            renderData.push_back(pl.crateFront);
             continue;
         }
 
@@ -66,22 +68,22 @@ void DynamicEntityRenderSystem::update(float deltaTime) {
 
         // Re-center the mesh on its bbox (entity position is the center) and derive the
         // world transform through the shared helper so render, outline, and hit-test agree.
-        glm::vec2   boundsCenter{0.0F, 0.0F};
-        float       meshMaxY = 0.0F;  // Bottom-most local-Y (feet); drives the depth anchor
-        const auto* mesh	 = assetRegistry.getTemplate(placed.templateId);
-        if (mesh != nullptr && !mesh->vertices.empty()) {
-            float minX = mesh->vertices[0].x;
-            float maxX = mesh->vertices[0].x;
-            float minY = mesh->vertices[0].y;
-            float maxY = mesh->vertices[0].y;
-            for (const auto& v : mesh->vertices) {
-                minX = std::min(minX, v.x);
-                maxX = std::max(maxX, v.x);
-                minY = std::min(minY, v.y);
-                maxY = std::max(maxY, v.y);
+        const auto*            mesh   = assetRegistry.getTemplate(placed.templateId);
+        const Foundation::Rect bounds = worldview::templateBounds(mesh);
+        const glm::vec2        boundsCenter{bounds.x + bounds.width * 0.5F, bounds.y + bounds.height * 0.5F};
+        const float            meshMaxY = bounds.y + bounds.height; // Bottom-most local-Y (feet); drives the depth anchor
+
+        // Loose ground pile: a heap of sprites sized by its count, laid out by the shared pile
+        // layout so the hit-test and outline match what's drawn.
+        if (const auto* stack = world->getComponent<ecs::ResourceStack>(entity)) {
+            const worldview::PileLayout pile = worldview::pileLayout(
+                pos.value, defName, placed.templateId, appearance.scale, appearance.colorTint, bounds,
+                worldview::pileItem(assetRegistry.getDefinition(appearance.defName)), stack->quantity
+            );
+            for (std::size_t i = 0; i < pile.count; ++i) {
+                renderData.push_back(pile.sprites[i]);
             }
-            boundsCenter = {(minX + maxX) * 0.5F, (minY + maxY) * 0.5F};
-            meshMaxY	 = maxY;
+            continue;
         }
 
         placed.position = worldview::dynamicInstanceTransform(pos.value, appearance.scale, boundsCenter).origin;

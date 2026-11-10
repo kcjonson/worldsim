@@ -67,6 +67,7 @@ namespace ecs {
 
 	void ActionSystem::applyCollectionEffect(
 		const Action& action,
+		glm::vec2	  colonistPosition,
 		Task&		  task,
 		Inventory&	  inventory,
 		Memory&		  memory
@@ -110,7 +111,7 @@ namespace ecs {
 			// violate the two-hand invariant, then the deposit leg's removeFromHands would find empty
 			// hands and strand the good -- breaking the Wood box-to-box case.
 			if (ecs::itemIsTwoHand(harvestRegistry, collEff.itemDefName)) {
-				stowHeldToolsForArmful(inventory, collEff.sourcePosition);
+				stowHeldToolsForArmful(inventory, colonistPosition);
 				added = ecs::addArmful(inventory, harvestRegistry, collEff.itemDefName, removed);
 			} else {
 				added = inventory.addItem(collEff.itemDefName, removed);
@@ -153,7 +154,7 @@ namespace ecs {
 			if (ecs::itemIsTwoHand(harvestRegistry, collEff.itemDefName)) {
 				// A two-hand armful needs both hands; stow any held one-hand tool (belt -> pack -> drop)
 				// so an axe in hand doesn't block the lift.
-				stowHeldToolsForArmful(inventory, collEff.sourcePosition);
+				stowHeldToolsForArmful(inventory, colonistPosition);
 				added = ecs::addArmful(inventory, harvestRegistry, collEff.itemDefName, requested);
 			} else {
 				const uint32_t fit = ecs::cargoUnitsThatFit(inventory, harvestRegistry, collEff.itemDefName);
@@ -248,7 +249,7 @@ namespace ecs {
 				// Felling yields a two-hand armful (wood) that needs both hands. If the colonist
 				// crafted/holds a one-hand axe, it sits in a hand and would block the lift; stow it
 				// (belt -> pack -> drop) first so the wood goes into the hands rather than dropping.
-				stowHeldToolsForArmful(inventory, collEff.sourcePosition);
+				stowHeldToolsForArmful(inventory, colonistPosition);
 				added = ecs::addArmful(inventory, harvestRegistry, collEff.itemDefName, collEff.quantity);
 
 				const uint32_t remainder = collEff.quantity - added;

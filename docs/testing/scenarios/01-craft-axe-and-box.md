@@ -103,6 +103,9 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=storage"
 # -> at least one entry with defName=BasicBox
 ```
 
+7. Before Bob installs the new box, look at it beside the station: the box sits inside a side-view open wooden crate, its top showing above the low front slats.
+8. Click the crated box: one gold outline traces the crate, not separate outlines for crate and box.
+
 ---
 
 ## Expected state

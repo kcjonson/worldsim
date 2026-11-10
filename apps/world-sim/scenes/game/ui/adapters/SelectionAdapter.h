@@ -67,6 +67,15 @@ using ResourceQueryCallback = std::function<std::optional<uint32_t>(const std::s
 	const std::function<void()>& onConfigure = {}
 );
 
+/// Convert a loose ground pile into panel content: the item's label, its live quantity,
+/// and total mass when the item has itemProperties. Read live from the entity's
+/// ResourceStack so the panel tracks a colonist hauling from it.
+[[nodiscard]] PanelContent adaptResourcePile(
+	const ecs::World& world,
+	const assets::AssetRegistry& registry,
+	const ResourcePileSelection& selection
+);
+
 /// Foundation panel action callbacks, each nullable.
 struct FoundationActions {
 	std::function<void()> onDemolish;		  ///< Plain Demolish
