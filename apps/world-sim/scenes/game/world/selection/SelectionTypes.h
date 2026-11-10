@@ -6,6 +6,8 @@
 // - NoSelection: Nothing selected (panel hidden)
 // - ColonistSelection: An ECS colonist entity
 // - WorldEntitySelection: A placed world entity (bush, tree, etc.)
+// - CraftingStationSelection / FurnitureSelection: ECS stations and storage furniture
+// - ResourcePileSelection: A loose ground pile (ECS entity with a ResourceStack)
 // - WallSegmentSelection: A construction wall segment (ConstructionWorld topology)
 // - FoundationSelection: A construction foundation (ConstructionWorld topology)
 
@@ -47,6 +49,14 @@ struct FurnitureSelection {
 	std::string		 defName;	  // Asset definition name (e.g., "BasicShelf")
 	Foundation::Vec2 position;	  // World position
 	bool			 isPackaged;  // True if has Packaged component
+};
+
+/// A loose ground pile (ECS entity with a ResourceStack) is selected. Quantity is read
+/// live from the entity, so the panel tracks a colonist hauling from it.
+struct ResourcePileSelection {
+	ecs::EntityID	 entityId; // ECS entity ID
+	std::string		 defName;  // Item definition name (e.g., "Wood")
+	Foundation::Vec2 position; // World position
 };
 
 /// A construction foundation is selected. Geometry, material, and state are
@@ -91,6 +101,7 @@ using Selection = std::variant<
 	WorldEntitySelection,
 	CraftingStationSelection,
 	FurnitureSelection,
+	ResourcePileSelection,
 	WallSegmentSelection,
 	OpeningSelection,
 	FoundationSelection,

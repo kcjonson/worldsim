@@ -26,7 +26,6 @@
 #include <ecs/components/Inventory.h>
 #include <ecs/components/Movement.h>
 #include <ecs/components/Needs.h>
-#include <ecs/components/Packaged.h>
 #include <ecs/components/StorageConfiguration.h>
 #include <ecs/components/Structure.h>
 #include <ecs/components/StructureBlueprint.h>
@@ -170,28 +169,35 @@ namespace world_sim {
 		}
 
 		if (where == "loose") {
-			if (assets::AssetRegistry::Get().getDefinition(material) == nullptr) {
+			const auto* def = assets::AssetRegistry::Get().getDefinition(material);
+			if (def == nullptr) {
 				LOG_WARNING(Game, "[DevAPI] give loose: unknown asset '%s'", material.c_str());
 				m_ctx.ui->pushNotification("Dev", "Unknown asset: " + material, ui::ToastSeverity::Warning);
+				return;
+			}
+			// Spawning a furniture or station def would make a live box/station that is also a pile.
+			if (!def->itemProperties.has_value()) {
+				LOG_WARNING(Game, "[DevAPI] give loose: '%s' is not an item", material.c_str());
+				m_ctx.ui->pushNotification("Dev", "Not an item: " + material, ui::ToastSeverity::Warning);
+				return;
+			}
+			// Each new pile is cleared against every pile already placed, so the pile count (not
+			// the unit count) is what a big n costs.
+			constexpr uint32_t kMaxLoosePiles = 50;
+			const uint32_t	   stackSize = def->itemProperties->stackSize;
+			const uint32_t	   piles = stackSize == 0 ? 1U : (n - 1U) / stackSize + 1U;
+			if (piles > kMaxLoosePiles) {
+				LOG_WARNING(Game, "[DevAPI] give loose: %u '%s' is %u piles, over the %u limit", n, material.c_str(), piles, kMaxLoosePiles);
+				m_ctx.ui->pushNotification("Dev", "Too many: " + std::to_string(piles) + " piles of " + material, ui::ToastSeverity::Warning);
 				return;
 			}
 			const Foundation::Vec2 at = parsePoint(param(cmd, "at"));
 			if (!requireValidPosition(at, "give loose")) {
 				return;
 			}
-			// Each packaged item is its own entity (no ground stacks); cap so a big N can't spawn thousands.
-			constexpr uint32_t kMaxLoose = 50;
-			const uint32_t	   count = n < kMaxLoose ? n : kMaxLoose;
-			for (uint32_t i = 0; i < count; ++i) {
-				const Foundation::Vec2 off = spreadOffset(static_cast<long>(i), static_cast<long>(count), 1.0F);
-				const ecs::EntityID	   entity = m_ctx.placement->spawnEntity(material, {at.x + off.x, at.y + off.y});
-				m_ctx.world->addComponent<ecs::Packaged>(entity, ecs::Packaged{});
-			}
-			if (n > kMaxLoose) {
-				LOG_WARNING(Game, "[DevAPI] give loose: capped %u -> %u entities", n, kMaxLoose);
-			}
-			LOG_INFO(Game, "[DevAPI] give: dropped %u loose '%s' near (%.1f, %.1f)", count, material.c_str(), at.x, at.y);
-			m_ctx.ui->pushNotification("Dev", "Dropped " + std::to_string(count) + " " + material, ui::ToastSeverity::Info);
+			m_ctx.dropLoose(material, at.x, at.y, n);
+			LOG_INFO(Game, "[DevAPI] give: dropped %u loose '%s' at (%.1f, %.1f)", n, material.c_str(), at.x, at.y);
+			m_ctx.ui->pushNotification("Dev", "Dropped " + std::to_string(n) + " " + material, ui::ToastSeverity::Info);
 			return;
 		}
 

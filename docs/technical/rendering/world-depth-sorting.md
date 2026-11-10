@@ -48,7 +48,8 @@ Add `float anchorY` to `assets::PlacedEntity` = the bottom-most (max) world-Y of
 Per-type derivation reconciles the two current position conventions into one rule:
 - **Static occluders** (trees, bushes, rocks): `anchorY = position.y + templateMaxY * scale`. Optionally snap to the `CollisionShape` trunk-base rect bottom (`offsetMeters.y + halfExtentsMeters.y`) where an asset defines one. Computed where tall occluders are gathered for the sorted stream, not baked into the frozen mesh.
 - **Dynamic colonists**: feet, `anchorY = position.y + meshMaxY * scale`, reusing the mesh bbox min/max already scanned in `DynamicEntityRenderSystem`.
-- **Packaged items / crates**: the existing bottom baseline. Keep crate-behind-item intra-pair order after the global sort (equal or epsilon-separated `anchorY`).
+- **Packaged furniture**: three sprites from `packagedLayout`, crate back, item (fitted inside), crate front, all with `anchorY` = the crate's bottom baseline. Equal keys + the stable sort keep that build order after the global sort, so the item draws inside the crate.
+- **Loose ground piles** (`ResourceStack`): each of the pile's 1-5 sprites (`pileLayout`) is its own renderable with the colonist rule applied at that sprite's offset center, so the back rows sort behind the front rows and the heap interleaves correctly with anything standing in it.
 
 Ties break by stable sort (prior order preserved); add a deterministic secondary key (defName or entity id) if a stable order across frames is needed.
 
@@ -105,7 +106,7 @@ Either way, removing the committed-construction draw from the post-entity overla
 - **Canopy vertical extent.** A single base-Y compare is an approximation. It resolves the target case correctly, but where two wide canopies overlap across a large base-Y gap there can be minor ordering artifacts. Accepted for Phase 1.
 - **Overlapping/identical bases.** Stable sort keeps deterministic order; define the secondary tie-break.
 - **Animated colonists.** Must fold into the ordered stream while preserving per-part deformation and the 16-bit index-overflow flush.
-- **Crate + item pair.** Preserve intra-pair order (crate behind item) after the global sort.
+- **Crate layers + item.** Preserve the back, item, front order after the global sort.
 - **Multi-tile objects.** Point-anchor only in Phase 1; footprint occluders deferred.
 - **Sort direction.** Confirm +Y is toward-viewer / lower-on-screen and that there is no GL row-flip on the on-screen world FBO path (the PNG readback path flips, the on-screen path must not), so the sort direction is correct.
 
