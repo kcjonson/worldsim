@@ -208,8 +208,7 @@ namespace {
 	// One of a def's variants at the seed its renderer builds it with: the ground tile
 	// baker's variantSeed for a ground def, the variant index for the rest (groundcover).
 	json variantCounts(const AssetDefinition& def, uint32_t variant) {
-		const uint32_t seed =
-			def.role == assets::AssetRole::Ground ? worldview::GroundTileBaker::variantSeed(def.ground.seedGroup, variant) : variant;
+		const uint32_t seed = def.role == assets::AssetRole::Ground ? worldview::GroundTileBaker::variantSeed(def, variant) : variant;
 		std::vector<renderer::TessellatedMesh> meshes;
 		json								   row{{"seed", seed}, {"triangles", nullptr}, {"vertices", nullptr}};
 		if (AssetRegistry::Get().buildMeshes(def.defName, seed, meshes)) {
@@ -324,7 +323,10 @@ namespace {
 		}
 		const bool asJson = hasFlag(args, "--json");
 
-		const std::string resolvedSvg = d->svgPath.empty() ? "" : d->resolvePath(d->svgPath).string();
+		std::vector<std::string> resolvedSvgs;
+		for (const std::string& svgPath : d->svgPaths) {
+			resolvedSvgs.push_back(d->resolvePath(svgPath).string());
+		}
 
 		json warnings = json::array();
 		for (const auto& issue : AssetRegistry::Get().getValidationReport().issues) {
@@ -338,8 +340,8 @@ namespace {
 		out["label"] = d->label;
 		out["type"] = typeName(d->assetType);
 		out["worldHeight"] = d->worldHeight;
-		out["svgPath"] = d->svgPath;
-		out["resolvedSvgPath"] = resolvedSvg;
+		out["svgPaths"] = d->svgPaths;
+		out["resolvedSvgPaths"] = resolvedSvgs;
 		out["scriptPath"] = d->scriptPath;
 		out["generatorName"] = d->generatorName;
 		out["groups"] = d->placement.groups;
@@ -362,8 +364,8 @@ namespace {
 			std::cout << "label:         " << d->label << "\n";
 			std::cout << "type:          " << typeName(d->assetType) << "\n";
 			std::cout << "worldHeight:   " << d->worldHeight << "\n";
-			if (!d->svgPath.empty()) {
-				std::cout << "svgPath:       " << d->svgPath << "  ->  " << resolvedSvg << "\n";
+			for (size_t i = 0; i < d->svgPaths.size(); ++i) {
+				std::cout << "svgPath:       " << d->svgPaths[i] << "  ->  " << resolvedSvgs[i] << "\n";
 			}
 			if (!d->scriptPath.empty()) {
 				std::cout << "scriptPath:    " << d->scriptPath << "\n";

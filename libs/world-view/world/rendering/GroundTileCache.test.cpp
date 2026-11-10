@@ -1,5 +1,5 @@
 // The ground bake's disk cache: a stored bake comes back byte for byte, the key moves when the def's
-// script does or its XML is reloaded and the old key's bake stays beside the new one, every def name and
+// script or one of its SVGs does or its XML is reloaded and the old key's bake stays beside the new one, every def name and
 // key gets a safe file of its own, a damaged file is ignored until the next store rewrites it, and a store
 // past the cap evicts the least recently used. No GL: the bake is made up. GroundTileBaker.test.cpp runs
 // the cache behind a real bake.
@@ -177,6 +177,41 @@ TEST(GroundTileCacheTest, TheKeyFollowsTheLoadedDefAndTheScript) {
 
 	fs::remove(t.root / "Tile" / "gen.lua");
 	EXPECT_FALSE(keyNow().has_value()) << "no script, nothing to key a bake on";
+	registry.clearDefinitions();
+}
+
+TEST(GroundTileCacheTest, AnSvgDefsKeyFollowsEachSvgOnDisk) {
+	const TempDir	  t;
+	auto&			  registry = assets::AssetRegistry::Get();
+	const std::string svg =
+		"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1 1\"><rect width=\"1\" height=\"1\" fill=\"#808080\"/></svg>";
+	t.write(
+		"Tile/Tile.xml",
+		"<?xml version=\"1.0\"?><AssetDefinitions><AssetDef><defName>Ground_CacheTest</defName><role>ground</role>"
+		"<assetType>simple</assetType><svgPath>a.svg</svgPath><svgPath>b.svg</svgPath>"
+		"<surface>Snow</surface><period>1</period><pixelsPerMeter>32</pixelsPerMeter></AssetDef></AssetDefinitions>"
+	);
+	t.write("Tile/a.svg", svg);
+	t.write("Tile/b.svg", svg);
+	registry.clearDefinitions();
+	registry.loadDefinitionsFromFolder(t.root.string());
+	const auto keyNow = [&registry]() {
+		return GroundTileCache::keyFor(*registry.getDefinition("Ground_CacheTest"), 4096);
+	};
+	const uint64_t original = keyNow().value();
+
+	// The bake reads its SVGs from disk on every run, so an edit to any of them moves the key at once.
+	t.write("Tile/b.svg", svg + "\n<!-- edited -->");
+	const uint64_t edited = keyNow().value();
+	EXPECT_NE(edited, original);
+	t.write("Tile/a.svg", svg + "\n<!-- edited -->");
+	EXPECT_NE(keyNow().value(), edited) << "the first SVG as well as the second";
+	t.write("Tile/a.svg", svg);
+	t.write("Tile/b.svg", svg);
+	EXPECT_EQ(keyNow().value(), original) << "the same bytes, the same key";
+
+	fs::remove(t.root / "Tile" / "b.svg");
+	EXPECT_FALSE(keyNow().has_value()) << "a missing SVG, nothing to key a bake on";
 	registry.clearDefinitions();
 }
 

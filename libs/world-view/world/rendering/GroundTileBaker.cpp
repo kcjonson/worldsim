@@ -120,9 +120,12 @@ namespace worldview {
 	GroundTileBaker::GroundTileBaker(const Args& newArgs)
 		: args(newArgs) {}
 
-	uint32_t GroundTileBaker::variantSeed(const std::string& seedGroup, uint32_t variant) {
+	uint32_t GroundTileBaker::variantSeed(const assets::AssetDefinition& def, uint32_t variant) {
+		if (def.assetType == assets::AssetType::Simple) {
+			return variant;
+		}
 		uint32_t h = 2166136261U; // FNV-1a over the group
-		for (const char c : seedGroup) {
+		for (const char c : def.ground.seedGroup) {
 			h ^= static_cast<uint8_t>(c);
 			h *= 16777619U;
 		}
@@ -303,7 +306,7 @@ namespace worldview {
 		const auto build = [&](size_t first, size_t last) {
 			for (size_t v = first; v < last; ++v) {
 				variants[v].variant = static_cast<uint32_t>(v);
-				variants[v].seed = variantSeed(def->ground.seedGroup, static_cast<uint32_t>(v));
+				variants[v].seed = variantSeed(*def, static_cast<uint32_t>(v));
 				built[v] = registry.buildPaths(bake.defName, variants[v].seed, variants[v].paths, density) ? 1 : 0;
 			}
 		};
@@ -316,7 +319,7 @@ namespace worldview {
 
 		for (uint32_t v = 0; v < count; ++v) {
 			if (built[v] == 0) {
-				LOG_ERROR(Engine, "GroundTileBaker: '%s' variant %u's generator failed", bake.defName.c_str(), v);
+				LOG_ERROR(Engine, "GroundTileBaker: '%s' variant %u's paths failed to build", bake.defName.c_str(), v);
 				return std::nullopt;
 			}
 		}

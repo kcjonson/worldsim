@@ -247,6 +247,22 @@ namespace worldview {
 			}
 			mix(assets::LuaEngine::kApiVersion);
 		}
+		if (def.assetType == assets::AssetType::Simple) {
+			// An SVG def reads its variants' files on every bake, so they are keyed as they are now.
+			mix(static_cast<uint64_t>(def.svgPaths.size()));
+			for (const std::string& svgPath : def.svgPaths) {
+				const fs::path							  file = def.resolvePath(svgPath);
+				const std::optional<std::vector<uint8_t>> bytes = readBytes(file);
+				if (!bytes.has_value()) {
+					LOG_WARNING(
+						Engine, "GroundTileCache: can't read %s's SVG %s; not caching it", def.defName.c_str(), file.string().c_str()
+					);
+					return std::nullopt;
+				}
+				mixText(svgPath);
+				mixBytes(*bytes);
+			}
+		}
 		return h;
 	}
 

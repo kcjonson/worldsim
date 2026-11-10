@@ -2,6 +2,7 @@
 
 #include "assets/AssetDefinition.h"
 #include "assets/GroundLayer.h"
+#include "assets/GroundSvg.h"
 #include "assets/GroundTint.h"
 #include "assets/TreeDefSchema.h"
 
@@ -11,8 +12,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
+#include <iterator>
 #include <map>
 #include <set>
+#include <span>
 #include <string>
 #include <unordered_map>
 
@@ -63,12 +67,45 @@ namespace assets {
 		constexpr int	 kMinGroundPixelsPerMeter = 16;
 		constexpr int	 kMaxGroundPixelsPerMeter = 512;
 
+		// An SVG ground def's SVGs, each read the way the bake reads it (GroundSvg.h). A file that can't be
+		// read is left to the svgPath check, which reports it missing.
+		void validateGroundSvgs(
+			const pugi::xml_node& assetDef,
+			const std::string&	  defName,
+			const fs::path&		  assetFolder,
+			float				  periodMeters,
+			uint32_t			  pixelsPerMeter,
+			ValidationReport&	  report
+		) {
+			for (const pugi::xml_node svgNode : assetDef.children("svgPath")) {
+				const std::string svgPath = svgNode.text().as_string();
+				const fs::path	  file = (assetFolder / svgPath).lexically_normal();
+				std::ifstream	  in(file, std::ios::binary);
+				if (svgPath.empty() || !in) {
+					continue;
+				}
+				const std::string		 bytes{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+				std::vector<std::string> issues;
+				static_cast<void>(readGroundSvg(
+					{.svg = std::as_bytes(std::span(bytes)),
+					 .periodMeters = periodMeters,
+					 .pixelsPerMeter = pixelsPerMeter,
+					 .name = file.string()},
+					issues
+				));
+				for (const std::string& issue : issues) {
+					report.add(Severity::Error, defName, "svgPath", svgPath + ": " + issue, file.string());
+				}
+			}
+		}
+
 		// Ground defs are baked into texture arrays, so their settings have hard limits (GroundLayer.h).
 		// `surfaceToDef` carries the surfaces already claimed across files, to catch two defs painting one,
 		// and `layerSizes` each layer size in use and the first def using it, for the bank's array count.
 		void validateGroundDef(
 			const pugi::xml_node&						  assetDef,
 			const std::string&							  defName,
+			const fs::path&								  assetFolder,
 			std::unordered_map<std::string, std::string>& surfaceToDef,
 			std::map<int, std::string>&					  layerSizes,
 			ValidationReport&							  report
@@ -83,17 +120,9 @@ namespace assets {
 				report.add(Severity::Error, defName, "surface", "Another ground def already paints this surface", claimed.first->second + " and " + defName);
 			}
 
-			// The baker draws a ground def through AssetRegistry::buildPaths, which only runs generators.
-			// Loading an SVG per variant (with data-lod) is planned in docs/technical/ground-textures.md.
-			if (isSimpleAssetType(assetDef.child("assetType").text().as_string())) {
-				report.add(
-					Severity::Error,
-					defName,
-					"assetType",
-					"SVG ground defs aren't supported yet; use assetType procedural with a generator",
-					"simple"
-				);
-			}
+			const bool	 svgDef = isSimpleAssetType(assetDef.child("assetType").text().as_string());
+			const auto	 svgNodes = assetDef.children("svgPath");
+			const size_t svgCount = static_cast<size_t>(std::distance(svgNodes.begin(), svgNodes.end()));
 
 			const GroundParams defaults;
 
@@ -137,16 +166,52 @@ namespace assets {
 			}
 
 			const pugi::xml_node variantNode = assetDef.child("variantCount");
-			if (variantNode) {
-				if (!groundVariantCountSupported(variantNode.text().as_llong(0))) {
+			if (svgDef) {
+				// The SVG list is the variant list.
+				if (svgCount == 0) {
+					report.add(
+						Severity::Error,
+						defName,
+						"svgPath",
+						"An SVG ground def (assetType simple) needs one or more <svgPath>s, one a variant"
+					);
+				} else if (!groundVariantCountSupported(static_cast<int64_t>(svgCount))) {
 					report.add(
 						Severity::Error,
 						defName,
 						"variantCount",
-						"variantCount must be from 1 to " + std::to_string(kMaxGroundVariants) + " for a ground def",
+						"An SVG ground def bakes 1 to " + std::to_string(kMaxGroundVariants) + " variants, one an <svgPath>",
+						std::to_string(svgCount) + " <svgPath>s"
+					);
+				}
+				if (variantNode && variantNode.text().as_llong(-1) != static_cast<long long>(svgCount)) {
+					report.add(
+						Severity::Error,
+						defName,
+						"variantCount",
+						"An SVG ground def's variants are its <svgPath>s; leave <variantCount> out or make it their count (" +
+							std::to_string(svgCount) + ")",
 						variantNode.text().as_string()
 					);
 				}
+				if (periodValid) {
+					validateGroundSvgs(
+						assetDef,
+						defName,
+						assetFolder,
+						static_cast<float>(period),
+						pixelsValid ? static_cast<uint32_t>(pixelsPerMeter) : defaults.pixelsPerMeter,
+						report
+					);
+				}
+			} else if (variantNode && !groundVariantCountSupported(variantNode.text().as_llong(0))) {
+				report.add(
+					Severity::Error,
+					defName,
+					"variantCount",
+					"variantCount must be from 1 to " + std::to_string(kMaxGroundVariants) + " for a ground def",
+					variantNode.text().as_string()
+				);
 			}
 
 			const std::string rotate = assetDef.child("rotate").text().as_string();
@@ -282,7 +347,7 @@ namespace assets {
 				}
 
 				if (isGroundRole(role)) {
-					validateGroundDef(assetDef, defName, groundSurfaceToDef, groundLayerSizes, report);
+					validateGroundDef(assetDef, defName, assetFolder, groundSurfaceToDef, groundLayerSizes, report);
 				} else {
 					for (const char* field : {"surface", "period", "pixelsPerMeter", "rotate", "macro", "seedGroup", "transition"}) {
 						if (assetDef.child(field)) {
@@ -291,9 +356,22 @@ namespace assets {
 					}
 				}
 
-				// svgPath must resolve to a real file.
-				const std::string svgPath = assetDef.child("svgPath").text().as_string();
-				if (!svgPath.empty()) {
+				// Each svgPath must resolve to a real file. Only a ground def's are a list (its variants).
+				int svgCount = 0;
+				for (const pugi::xml_node svgNode : assetDef.children("svgPath")) {
+					const std::string svgPath = svgNode.text().as_string();
+					if (++svgCount == 2 && !isGroundRole(role)) {
+						report.add(
+							Severity::Warning,
+							defName,
+							"svgPath",
+							"Only a ground def reads more than one <svgPath>; the loader draws the first",
+							svgPath
+						);
+					}
+					if (svgPath.empty()) {
+						continue;
+					}
 					const fs::path resolved = (assetFolder / svgPath).lexically_normal();
 					referencedSvgs.insert(resolved.string());
 					if (!pathExists(resolved)) {

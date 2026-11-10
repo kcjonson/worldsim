@@ -1,7 +1,7 @@
 // The ground tile baker end to end on a small def: the mip chain's shape, the registry's wrap across the tile edge, a setLod path
-// leaving the coarse mips, heights in alpha by paint order or setHeight, tiled renders matching one big
-// one, a bake on the pool matching one in turn, and the disk cache giving a bake back until the script
-// changes. Needs a GL 3.3 context; skips on a
+// leaving the coarse mips, heights in alpha by paint order or setHeight, an SVG def baking each of its SVGs
+// as a variant, tiled renders matching one big one, a bake on the pool matching one in turn, and the disk
+// cache giving a bake back until the script changes. Needs a GL 3.3 context; skips on a
 // headless box, like the other GL tests. The filters and the cache file have their own tests
 // (GroundTileFilter.test.cpp, GroundTileCache.test.cpp).
 
@@ -147,9 +147,19 @@ asset:addPath(fine)
 } // namespace
 
 TEST(GroundTileBakerTest, SeedsAreSaltedBySeedGroupAndVariant) {
-	EXPECT_NE(GroundTileBaker::variantSeed("grass", 0), GroundTileBaker::variantSeed("grass", 1));
-	EXPECT_NE(GroundTileBaker::variantSeed("grass", 0), GroundTileBaker::variantSeed("Ground_Snow", 0));
-	EXPECT_EQ(GroundTileBaker::variantSeed("grass", 3), GroundTileBaker::variantSeed("grass", 3)) << "one group, one layout a variant";
+	const auto defIn = [](const char* seedGroup, assets::AssetType type) {
+		assets::AssetDefinition def;
+		def.assetType = type;
+		def.ground.seedGroup = seedGroup;
+		return def;
+	};
+	const assets::AssetDefinition grass = defIn("grass", assets::AssetType::Procedural);
+	const assets::AssetDefinition snow = defIn("Ground_Snow", assets::AssetType::Procedural);
+	EXPECT_NE(GroundTileBaker::variantSeed(grass, 0), GroundTileBaker::variantSeed(grass, 1));
+	EXPECT_NE(GroundTileBaker::variantSeed(grass, 0), GroundTileBaker::variantSeed(snow, 0));
+	EXPECT_EQ(GroundTileBaker::variantSeed(grass, 3), GroundTileBaker::variantSeed(defIn("grass", assets::AssetType::Procedural), 3))
+		<< "one group, one layout a variant";
+	EXPECT_EQ(GroundTileBaker::variantSeed(defIn("grass", assets::AssetType::Simple), 3), 3U) << "an SVG def's seed picks its SVG";
 	EXPECT_EQ(GroundTileBaker::mipCount(512), 7) << "capped at mip 6";
 	EXPECT_EQ(GroundTileBaker::mipCount(32), 6) << "32 down to 1";
 	EXPECT_EQ(GroundTileBaker::supersampleFor(1), 8);
@@ -242,6 +252,60 @@ TEST(GroundTileBakerTest, HeightsRankByPaintOrderUnlessSet) {
 	for (size_t k = 1; k < v.mips.size(); ++k) {
 		EXPECT_NEAR(meanHeight(v.mips[k]), meanHeight(mip0), 1.0 / 255.0) << "mip " << k;
 	}
+	registry.clearDefinitions();
+}
+
+TEST(GroundTileBakerTest, AnSvgDefBakesEachSvgAsAVariant) {
+	GlFixture gl;
+	SKIP_OR_FAIL_WITHOUT_GL(gl);
+	// The Lua test def drawn as SVG, with a square sunk to height 0, and a second SVG of one flat color. The
+	// width and height are a preview size; the viewBox is the tile in meters.
+	const TempDir t;
+	t.write(
+		"Tile/Tile.xml",
+		"<?xml version=\"1.0\"?><AssetDefinitions><AssetDef><defName>Ground_BakeTest</defName><role>ground</role>"
+		"<assetType>simple</assetType><svgPath>a.svg</svgPath><svgPath>b.svg</svgPath>"
+		"<surface>Snow</surface><period>1</period><pixelsPerMeter>32</pixelsPerMeter>"
+		"</AssetDef></AssetDefinitions>"
+	);
+	t.write(
+		"Tile/a.svg",
+		"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"256\" height=\"256\" viewBox=\"0 0 1 1\">\n"
+		"  <rect width=\"1\" height=\"1\" fill=\"#1a1a1a\"/>\n"
+		"  <rect x=\"0.875\" y=\"0.375\" width=\"0.25\" height=\"0.25\" fill=\"#e6e6e6\"/>\n"
+		"  <rect x=\"0.625\" y=\"0.625\" width=\"0.25\" height=\"0.25\" fill=\"#808080\" data-height=\"0\"/>\n"
+		"  <g data-lod=\"20\"><rect x=\"0.4375\" y=\"0.4375\" width=\"0.125\" height=\"0.125\" fill=\"#e61a1a\"/></g>\n"
+		"</svg>\n"
+	);
+	t.write(
+		"Tile/b.svg",
+		"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1 1\"><rect width=\"1\" height=\"1\" fill=\"#336699\"/></svg>\n"
+	);
+	auto& registry = assets::AssetRegistry::Get();
+	registry.clearDefinitions();
+	registry.loadDefinitionsFromFolder(t.root.string());
+	for (const assets::ValidationIssue& issue : registry.getValidationReport().issues) {
+		EXPECT_NE(issue.defName, "Ground_BakeTest") << issue.field << ": " << issue.message;
+	}
+
+	const std::optional<GroundTileBake> bake = GroundTileBaker({}).bakeDef("Ground_BakeTest");
+	ASSERT_TRUE(bake.has_value());
+	ASSERT_EQ(bake->variants.size(), 2U) << "one variant an SVG";
+	const GroundMip& mip0 = bake->variants[0].mips[0];
+	const float		 light = ground::srgbToLinear(230.0F / 255.0F);
+	EXPECT_NEAR(linearAt(mip0, 30, 16, 1), light, 0.01F) << "the light square inside the right edge";
+	EXPECT_NEAR(linearAt(mip0, 1, 16, 1), light, 0.01F) << "and the part past it, wrapped in at the left";
+	EXPECT_NEAR(linearAt(mip0, 1, 3, 1), ground::srgbToLinear(26.0F / 255.0F), 0.005F) << "the base above it";
+	EXPECT_NEAR(linearAt(mip0, 16, 16, 0), light, 0.01F) << "the data-lod=\"20\" square is in mip 0";
+	EXPECT_LT(linearAt(bake->variants[0].mips[1], 8, 8, 0), 0.5F * light) << "and gone from mip 1";
+
+	const auto heightAt = [&mip0](int x, int y) {
+		return mip0.rgba[((static_cast<size_t>(y) * mip0.size) + x) * 4 + 3];
+	};
+	EXPECT_LT(heightAt(24, 24), heightAt(1, 3)) << "the data-height=\"0\" square under the base painted before it";
+	EXPECT_LT(heightAt(1, 3), heightAt(30, 16)) << "the base under the square painted over it";
+
+	EXPECT_NEAR(linearAt(bake->variants[1].mips[0], 5, 5, 2), ground::srgbToLinear(153.0F / 255.0F), 0.005F) << "variant 1 is b.svg";
 	registry.clearDefinitions();
 }
 
