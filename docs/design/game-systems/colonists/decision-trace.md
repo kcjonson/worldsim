@@ -147,7 +147,7 @@ void AIDecisionSystem::buildDecisionTrace(
 
         // Check memory for fulfillment source
         auto capability = needToCapability(needType);
-        auto nearest = findNearestWithCapability(memory, m_registry, capability, position.value);
+        auto nearest = findNeedSource(capability, acceptAll, need.needsAttention());
 
         if (nearest.has_value()) {
             option.targetPosition = nearest->position;
@@ -218,14 +218,18 @@ The DecisionTrace respects the memory constraint:
 ### Query Pattern
 
 ```cpp
-// Uses existing MemoryQueries functions
-auto nearest = findNearestWithCapability(
-    memory,           // Colonist's personal memory
-    m_registry,       // For capability lookup
-    capability,       // Edible, Drinkable, etc.
-    position.value    // Colonist position
+// The nearest remembered source the colonist can reach, probed nearest first
+auto nearest = findNearestReachableWithCapability(
+    memory,                 // Colonist's personal memory
+    capability,             // Harvestable, Drinkable, etc.
+    position.value,         // Colonist position
+    accept,                 // Hunger: the harvestable's yield is edible
+    reachable,              // NavigationSystem::isReachable; empty when the need is satisfied or there is no mesh
+    kMaxSourceReachChecks   // At most this many reachability probes per option (4)
 );
 ```
+
+A known source the colonist can't reach (across a river, say) is skipped for the next nearest. The Hunger option and the gather-food option share one food source: the nearest reachable known harvestable whose yield is edible. If none of the nearest four known sources is reachable, the option is `NoSource`.
 
 ---
 

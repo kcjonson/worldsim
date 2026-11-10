@@ -40,6 +40,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <functional>
 #include <numbers>
 
 namespace ecs {
@@ -174,6 +175,18 @@ namespace ecs {
 			}
 			return false;
 		}
+
+		/// Does harvesting this definition yield something edible? Not every harvestable is food
+		/// (WoodyBush yields Stick, Reed yields PlantFiber).
+		[[nodiscard]] bool yieldsEdibleFood(const assets::AssetRegistry& registry, uint32_t defNameId) {
+			const auto* def = registry.getDefinition(registry.getDefName(defNameId));
+			return def != nullptr && def->capabilities.harvestable.has_value() &&
+				   assets::isItemEdible(def->capabilities.harvestable->yieldDefName);
+		}
+
+		/// How many remembered sources one need option may probe for reachability, nearest first,
+		/// before it gives up on them. Each probe is one NavigationSystem::isReachable.
+		constexpr size_t kMaxSourceReachChecks = 4;
 
 		/// Skill names for work types
 		constexpr const char* kSkillFarming = "Farming";
@@ -1495,6 +1508,43 @@ namespace ecs {
 	) {
 		trace.clear();
 
+		// Agent footprint + belief for every reachability check below (need sources, reachable-wander
+		// generation and the option filter).
+		float agentRadius = 0.3F;
+		if (const auto* ar = world->getComponent<AgentRadius>(entity)) {
+			agentRadius = ar->radiusMeters;
+		}
+		const geometry::nav::BeliefFilter belief{&memory.knownSegments, &memory.knownOpenings};
+		const bool						  haveMesh = (m_navSystem != nullptr) && m_navSystem->hasMesh();
+
+		// A need targets the nearest remembered source the colonist can reach, so a nearer one across
+		// a river doesn't hide a reachable one farther off. Only a source the colonist would act on
+		// now is probed; a satisfied need just shows its nearest.
+		const std::function<bool(const glm::vec2&)> canReach = [&](const glm::vec2& target) {
+			return m_navSystem->isReachable(position.value, target, agentRadius, belief);
+		};
+		const auto findNeedSource = [&](assets::CapabilityType							   capability,
+										const std::function<bool(const KnownWorldEntity&)>& accept,
+										bool												   actingNow) {
+			return findNearestReachableWithCapability(
+				memory, capability, position.value, accept,
+				haveMesh && actingNow ? canReach : std::function<bool(const glm::vec2&)>{}, kMaxSourceReachChecks
+			);
+		};
+
+		// With an empty pack, the one food source both the Hunger option and the gather-food option
+		// target: the nearest reachable remembered harvestable whose yield is edible. The gather
+		// option is always on offer with an empty pack, so it is always probed.
+		const bool						packHasFood = hasEdibleFood(inventory);
+		std::optional<KnownWorldEntity> foodSource;
+		if (!packHasFood) {
+			foodSource = findNeedSource(
+				assets::CapabilityType::Harvestable,
+				[this](const KnownWorldEntity& known) { return yieldsEdibleFood(m_registry, known.defNameId); },
+				true
+			);
+		}
+
 		// Evaluate each actionable need type
 		for (auto needType : NeedsComponent::kActionableNeeds) {
 			const auto& need = needs.get(needType);
@@ -1515,7 +1565,7 @@ namespace ecs {
 			// Special handling for hunger: check inventory first
 			if (needType == NeedType::Hunger) {
 				// First priority: eat from inventory if we have any edible food
-				if (hasEdibleFood(inventory)) {
+				if (packHasFood) {
 					// Food in inventory - eat at current position (no movement needed)
 					option.targetPosition = position.value;
 					option.distanceToTarget = 0.0F;
@@ -1529,32 +1579,21 @@ namespace ecs {
 					continue;
 				}
 
-				// Second priority: find harvestable food source
-				auto harvestable =
-					findNearestWithCapability(memory, m_registry, assets::CapabilityType::Harvestable, position.value);
-				if (harvestable.has_value()) {
-					// Check if this harvestable yields edible food
-					const auto& defName = m_registry.getDefName(harvestable->defNameId);
-					const auto* def = m_registry.getDefinition(defName);
-					if (def != nullptr && def->capabilities.harvestable.has_value()) {
-						const auto& harvestCap = def->capabilities.harvestable.value();
-						// Check if yield is any edible item (data-driven check)
-						if (assets::isItemEdible(harvestCap.yieldDefName)) {
-							option.targetPosition = harvestable->position;
-							option.targetDefNameId = harvestable->defNameId;
-							option.distanceToTarget = glm::distance(position.value, harvestable->position);
-							option.status = need.needsAttention() ? OptionStatus::Available : OptionStatus::Satisfied;
-							option.reason = formatOptionReason(option, needTypeName(needType));
-							if (option.status == OptionStatus::Available) {
-								option.reason += " (harvest)";
-							}
-							trace.options.push_back(option);
-							continue;
-						}
+				// Second priority: harvest the known food source
+				if (foodSource.has_value()) {
+					option.targetPosition = foodSource->position;
+					option.targetDefNameId = foodSource->defNameId;
+					option.distanceToTarget = glm::distance(position.value, foodSource->position);
+					option.status = need.needsAttention() ? OptionStatus::Available : OptionStatus::Satisfied;
+					option.reason = formatOptionReason(option, needTypeName(needType));
+					if (option.status == OptionStatus::Available) {
+						option.reason += " (harvest)";
 					}
+					trace.options.push_back(option);
+					continue;
 				}
 
-				// No food in inventory and no harvestable food source found
+				// No food in inventory and no reachable food source known
 				option.status = need.needsAttention() ? OptionStatus::NoSource : OptionStatus::Satisfied;
 				option.reason = formatOptionReason(option, needTypeName(needType));
 				trace.options.push_back(option);
@@ -1563,7 +1602,9 @@ namespace ecs {
 
 			// Standard handling for other needs
 			auto capability = needToCapability(needType);
-			auto nearest = findNearestWithCapability(memory, m_registry, capability, position.value);
+			auto nearest = findNeedSource(
+				capability, [](const KnownWorldEntity&) { return true; }, need.needsAttention()
+			);
 
 			if (nearest.has_value()) {
 				option.targetPosition = nearest->position;
@@ -1617,31 +1658,7 @@ namespace ecs {
 
 		// Add "Gather Food" work option (tier 7)
 		// Only show if colonist has no food in inventory
-		if (!hasEdibleFood(inventory)) {
-			// Look for harvestable food sources that yield EDIBLE items
-			// (not all harvestables yield food - e.g., WoodyBush → Stick, Reed → PlantFiber)
-			std::optional<KnownWorldEntity> edibleHarvestable;
-			float							nearestEdibleDist = std::numeric_limits<float>::max();
-
-			for (const auto& [key, entity] : memory.knownWorldEntities) {
-				if (!m_registry.hasCapability(entity.defNameId, assets::CapabilityType::Harvestable)) {
-					continue;
-				}
-				// Check if this harvestable yields edible food
-				const auto& defName = m_registry.getDefName(entity.defNameId);
-				const auto* def = m_registry.getDefinition(defName);
-				if (def != nullptr && def->capabilities.harvestable.has_value()) {
-					const auto& harvestCap = def->capabilities.harvestable.value();
-					if (assets::isItemEdible(harvestCap.yieldDefName)) {
-						float dist = glm::distance(position.value, entity.position);
-						if (dist < nearestEdibleDist) {
-							nearestEdibleDist = dist;
-							edibleHarvestable = KnownWorldEntity{entity.defNameId, entity.position};
-						}
-					}
-				}
-			}
-
+		if (!packHasFood) {
 			EvaluatedOption gatherOption;
 			gatherOption.taskType = TaskType::FulfillNeed; // Reuse FulfillNeed for now
 			gatherOption.needType = NeedType::Hunger;	   // Will trigger Harvest action
@@ -1653,9 +1670,9 @@ namespace ecs {
 			gatherOption.skillLevel = farmSkillLevel;
 			gatherOption.skillBonus = farmSkillBonus;
 
-			if (edibleHarvestable.has_value()) {
-				gatherOption.targetPosition = edibleHarvestable->position;
-				gatherOption.distanceToTarget = nearestEdibleDist;
+			if (foodSource.has_value()) {
+				gatherOption.targetPosition = foodSource->position;
+				gatherOption.distanceToTarget = glm::distance(position.value, foodSource->position);
 				gatherOption.status = OptionStatus::Available;
 				gatherOption.reason = "Gathering food (inventory empty)";
 			} else {
@@ -1746,15 +1763,6 @@ namespace ecs {
 
 		// Place packaged items at target locations
 		evaluatePlacePackagedOptions(world, position.value, inventory, trace);
-
-		// Agent footprint + belief for the reachability checks below (reachable-wander generation
-		// and the option filter). Defined once here so both uses share them.
-		float agentRadius = 0.3F;
-		if (const auto* ar = world->getComponent<AgentRadius>(entity)) {
-			agentRadius = ar->radiusMeters;
-		}
-		const geometry::nav::BeliefFilter belief{&memory.knownSegments, &memory.knownOpenings};
-		const bool						  haveMesh = (m_navSystem != nullptr) && m_navSystem->hasMesh();
 
 		// Firm "can I actually navigate right now?" gate. An idle wander picks a random point;
 		// with no navmesh yet (the costly startup window) the colonist has no idea what's walkable,

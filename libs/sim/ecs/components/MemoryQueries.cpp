@@ -7,6 +7,7 @@
 
 #include <cmath>
 #include <limits>
+#include <utility>
 
 namespace ecs {
 
@@ -28,32 +29,48 @@ namespace ecs {
 		return result;
 	}
 
-	std::optional<KnownWorldEntity> findNearestWithCapability(
-		const Memory& memory,
-		const assets::AssetRegistry& /*registry*/,
-		assets::CapabilityType capability,
-		const glm::vec2&	   fromPosition
+	std::optional<KnownWorldEntity> findNearestReachableWithCapability(
+		const Memory&										memory,
+		assets::CapabilityType								capability,
+		const glm::vec2&									fromPosition,
+		const std::function<bool(const KnownWorldEntity&)>& accept,
+		const std::function<bool(const glm::vec2&)>&		reachable,
+		size_t												maxReachChecks
 	) {
-		std::optional<KnownWorldEntity> nearest;
-		float							minDistSq = std::numeric_limits<float>::max();
-
-		// Use capability index for O(1) set access
 		const auto& entityKeys = memory.getEntitiesWithCapability(capability);
 
-		for (uint64_t key : entityKeys) {
-			const auto* entity = memory.getWorldEntity(key);
-			if (entity != nullptr) {
-				glm::vec2 diff = entity->position - fromPosition;
-				float	  distSq = glm::dot(diff, diff); // Squared distance avoids sqrt
-
-				if (distSq < minDistSq) {
-					minDistSq = distSq;
-					nearest = *entity;
+		// One pass per reachability check, each taking the nearest candidate ordered after the one the
+		// previous pass rejected. The usual case (the nearest is reachable) is a single pass with no
+		// candidate buffer, and `accept` only runs on a candidate that would beat the pass's best.
+		std::optional<std::pair<float, uint64_t>> rejected;
+		for (size_t check = 0; check < maxReachChecks; ++check) {
+			const KnownWorldEntity*	   next = nullptr;
+			std::pair<float, uint64_t> nextOrder{std::numeric_limits<float>::max(), 0};
+			for (uint64_t key : entityKeys) {
+				const auto* entity = memory.getWorldEntity(key);
+				if (entity == nullptr) {
+					continue;
 				}
+				const glm::vec2					 diff = entity->position - fromPosition;
+				const std::pair<float, uint64_t> order{glm::dot(diff, diff), key};
+				if ((rejected.has_value() && order <= *rejected) || (next != nullptr && order >= nextOrder)) {
+					continue;
+				}
+				if (!accept(*entity)) {
+					continue;
+				}
+				next = entity;
+				nextOrder = order;
 			}
+			if (next == nullptr) {
+				return std::nullopt;
+			}
+			if (!reachable || reachable(next->position)) {
+				return *next;
+			}
+			rejected = nextOrder;
 		}
-
-		return nearest;
+		return std::nullopt;
 	}
 
 	std::optional<KnownWorldEntity> findOptimalForTrip(

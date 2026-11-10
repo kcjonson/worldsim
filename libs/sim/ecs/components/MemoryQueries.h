@@ -28,17 +28,17 @@ namespace ecs {
 	const assets::AssetRegistry&  registry,
 	assets::CapabilityType		  capability);
 
-/// Find the nearest known world entity with a specific capability
-/// @param memory The colonist's memory to search
-/// @param registry Asset registry for capability lookups
-/// @param capability The capability type to search for
-/// @param fromPosition The position to measure distance from
-/// @returns The nearest matching entity, or nullopt if none found
-[[nodiscard]] std::optional<KnownWorldEntity> findNearestWithCapability(
-	const Memory&						  memory,
-	const assets::AssetRegistry&  registry,
-	assets::CapabilityType		  capability,
-	const glm::vec2&					  fromPosition);
+/// Find the nearest known world entity with `capability` that `accept` admits and `reachable` confirms.
+/// Candidates are tried nearest first (ties broken by memory key, so the pick is deterministic), and
+/// `reachable` is asked about at most `maxReachChecks` of them; past that bound the query returns
+/// nullopt rather than probing every remembered source. An empty `reachable` admits every candidate.
+[[nodiscard]] std::optional<KnownWorldEntity> findNearestReachableWithCapability(
+	const Memory&										  memory,
+	assets::CapabilityType								  capability,
+	const glm::vec2&									  fromPosition,
+	const std::function<bool(const KnownWorldEntity&)>&	  accept,
+	const std::function<bool(const glm::vec2&)>&		  reachable,
+	size_t												  maxReachChecks);
 
 /// Find the entity that minimizes total trip: start -> entity -> destination
 /// For multi-leg tasks (gather then deliver, pickup then haul)
