@@ -32,6 +32,7 @@ add_library(sim
     construction/SnapEngine.cpp
     nav/NavInputBuilder.cpp
     vision/GeometryIndex.cpp
+    session/EntityFactory.cpp
 )
 
 target_include_directories(sim

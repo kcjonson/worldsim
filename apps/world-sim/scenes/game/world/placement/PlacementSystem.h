@@ -19,11 +19,8 @@
 #include <string>
 #include <vector>
 
-namespace assets {
-	class PlacementExecutor;
-}
-
 namespace ecs {
+	class EntityFactory;
 	class NavigationSystem;
 }
 
@@ -52,7 +49,7 @@ class PlacementSystem {
 	struct Args {
 		ecs::World*						 world;
 		world::WorldCamera*		 camera;
-		assets::PlacementExecutor* placementExecutor; // owns harvestable resource pools
+		ecs::EntityFactory*				 factory;
 		ecs::NavigationSystem*			 navigation;		  // world-position validity (isValidPosition)
 		Callbacks						 callbacks;
 	};
@@ -102,14 +99,10 @@ class PlacementSystem {
 
 	// --- Entity Spawning (public for ActionSystem callback) ---
 
-	/// Spawn a placed entity with appropriate components
-	/// Used by placement workflow and by dropItemCallback for crafted items
-	ecs::EntityID spawnEntity(const std::string& defName, Foundation::Vec2 worldPos);
-
   private:
 	ecs::World*						   ecsWorld = nullptr;
 	world::WorldCamera*		   camera = nullptr;
-	assets::PlacementExecutor* placementExecutor = nullptr;
+	ecs::EntityFactory* factory = nullptr;
 	ecs::NavigationSystem*			   navigation = nullptr;
 	Callbacks						   callbacks;
 

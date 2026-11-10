@@ -1,28 +1,19 @@
 #include "PlacementSystem.h"
 
-#include <assets/AssetRegistry.h>
 #include <assets/RecipeRegistry.h>
-#include <assets/placement/PlacementExecutor.h>
 #include <ecs/components/Appearance.h>
-#include <ecs/components/Inventory.h>
 #include <ecs/components/Packaged.h>
-#include <ecs/components/StorageConfiguration.h>
-#include <ecs/components/Transform.h>
-#include <ecs/components/WorkQueue.h>
 #include <ecs/systems/NavigationSystem.h>
+#include <session/EntityFactory.h>
 #include <primitives/Primitives.h>
 #include <utils/Log.h>
-#include <world/chunk/ChunkCoordinate.h>
-
-#include <bit>
-#include <random>
 
 namespace world_sim {
 
 	PlacementSystem::PlacementSystem(const Args& args)
 		: ecsWorld(args.world),
 		  camera(args.camera),
-		  placementExecutor(args.placementExecutor),
+		  factory(args.factory),
 		  navigation(args.navigation),
 		  callbacks(args.callbacks) {
 		// Initialize placement mode with callback to handle placement
@@ -55,8 +46,7 @@ namespace world_sim {
 					relocatingEntityId = ecs::EntityID{0};
 				}
 			} else {
-				// Spawning new entity
-				spawnEntity(defName, worldPos);
+				factory->createWorldEntity(defName, {worldPos.x, worldPos.y});
 			}
 		}}};
 	}
@@ -187,84 +177,6 @@ namespace world_sim {
 				}
 			}
 		}
-	}
-
-	ecs::EntityID PlacementSystem::spawnEntity(const std::string& defName, Foundation::Vec2 worldPos) {
-		if (ecsWorld == nullptr) {
-			LOG_ERROR(Game, "PlacementSystem: no world set");
-			return ecs::EntityID{0};
-		}
-
-		// Create ECS entity with components needed for rendering
-		auto entity = ecsWorld->createEntity();
-
-		ecsWorld->addComponent<ecs::Position>(entity, ecs::Position{{worldPos.x, worldPos.y}});
-		ecsWorld->addComponent<ecs::Rotation>(entity, ecs::Rotation{0.0F});
-		ecsWorld->addComponent<ecs::Appearance>(entity, ecs::Appearance{defName, 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
-
-		// Check if this is a crafting station or storage container
-		auto&		assetRegistry = assets::AssetRegistry::Get();
-		const auto* assetDef = assetRegistry.getDefinition(defName);
-
-		if (assetDef != nullptr && assetDef->capabilities.craftable.has_value()) {
-			// Crafting station - add WorkQueue plus a material store Inventory. Colonists haul
-			// recipe inputs INTO this store during provisioning (like a build site holds its
-			// delivered materials), and the Craft action consumes them from here.
-			ecsWorld->addComponent<ecs::WorkQueue>(entity, ecs::WorkQueue{});
-			ecsWorld->addComponent<ecs::Inventory>(entity, ecs::Inventory::createForStorage());
-			LOG_INFO(Game, "Spawned station '%s' at (%.1f, %.1f) with WorkQueue and material store", defName.c_str(), worldPos.x, worldPos.y);
-		} else if (assetDef != nullptr && assetDef->capabilities.storage.has_value()) {
-			// Storage container - add Inventory configured from StorageCapability
-			const auto&	   storageCap = assetDef->capabilities.storage.value();
-			ecs::Inventory inventory{};
-			inventory.maxCapacity = storageCap.maxCapacity; // slot count; per-stack cap is each item's own stackSize
-			ecsWorld->addComponent<ecs::Inventory>(entity, inventory);
-
-			// Add StorageConfiguration - default to accepting all categories the container supports
-			// If acceptedCategories is empty (accepts all), use createAcceptEverything()
-			// Otherwise, create config from the specific categories
-			ecs::StorageConfiguration config;
-			if (storageCap.acceptedCategories.empty()) {
-				config = ecs::StorageConfiguration::createAcceptEverything();
-			} else {
-				config = ecs::StorageConfiguration::createAcceptAll(storageCap.acceptedCategories);
-			}
-			ecsWorld->addComponent<ecs::StorageConfiguration>(entity, config);
-
-			LOG_INFO(
-				Game,
-				"Spawned storage '%s' at (%.1f, %.1f) with Inventory (capacity=%u) and %zu storage rules",
-				defName.c_str(),
-				worldPos.x,
-				worldPos.y,
-				storageCap.maxCapacity,
-				config.getRuleCount()
-			);
-		} else {
-			LOG_INFO(Game, "Spawned '%s' at (%.1f, %.1f)", defName.c_str(), worldPos.x, worldPos.y);
-		}
-
-		// Harvestables with a resource pool need that pool seeded, exactly like the chunk
-		// placement path does (PlacementExecutor::storeChunkResult). Without this a dev- or
-		// tool-placed tree has no wood to give and a chop withdraws nothing.
-		if (placementExecutor != nullptr && assetDef != nullptr && assetDef->capabilities.harvestable.has_value()) {
-			const auto& harv = assetDef->capabilities.harvestable.value();
-			if (harv.totalResourceMin > 0 && harv.totalResourceMax > 0) {
-				// Position-seeded so a given spot rolls the same amount across runs, without a
-				// shared RNG. Mix the raw IEEE-754 bits (std::hash<float> is implementation-defined
-				// and not stable across platforms); a deterministic bit mix keeps it reproducible.
-				const uint32_t bx = std::bit_cast<uint32_t>(worldPos.x);
-				const uint32_t by = std::bit_cast<uint32_t>(worldPos.y);
-				const uint32_t seed = (bx * 0x9E3779B9U) ^ (by + 0x85EBCA6BU + (bx << 6) + (bx >> 2));
-				std::mt19937   rng(seed);
-				std::uniform_int_distribution<uint32_t> dist(harv.totalResourceMin, harv.totalResourceMax);
-				const uint32_t initialCount = dist(rng);
-				const auto	   coord = world::worldToChunk({worldPos.x, worldPos.y});
-				placementExecutor->initResourceCount(coord, {worldPos.x, worldPos.y}, defName, initialCount);
-			}
-		}
-
-		return entity;
 	}
 
 } // namespace world_sim

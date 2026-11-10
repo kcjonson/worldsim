@@ -53,30 +53,20 @@
 #include <ecs/SystemSeeds.h>
 #include <ecs/World.h>
 #include <ecs/components/Action.h>
-#include <ecs/components/AgentRadius.h>
-#include <ecs/components/AnimationState.h>
 #include <ecs/components/Appearance.h>
-#include <ecs/components/Attributes.h>
-#include <ecs/components/Colonist.h>
 #include <ecs/components/Colony.h>
-#include <ecs/components/DecisionTrace.h>
-#include <ecs/components/FacingDirection.h>
-#include <ecs/components/Inventory.h>
-#include <ecs/components/Knowledge.h>
-#include <ecs/components/Memory.h>
 #include <ecs/components/Movement.h>
 #include <ecs/components/Needs.h>
 #include <ecs/components/Packaged.h>
-#include <ecs/components/ResourceStack.h>
 #include <ecs/components/Room.h>
 #include <ecs/components/Skills.h>
 #include <ecs/components/Structure.h>
 #include <ecs/components/StructureBlueprint.h>
 #include <ecs/components/StructureHealth.h>
-#include <ecs/components/Task.h>
 #include <ecs/components/Transform.h>
 #include <ecs/components/WorkQueue.h>
 #include <ecs/systems/AIDecisionSystem.h>
+#include <session/EntityFactory.h>
 #include <ecs/systems/ActionSystem.h>
 #include <ecs/systems/BuildGoalSystem.h>
 #include <ecs/systems/CollisionSystem.h>
@@ -97,7 +87,6 @@
 #include <cstdlib>
 #include <memory>
 #include <optional>
-#include <random>
 #include <sstream>
 #include <string>
 #include <unordered_set>
@@ -332,7 +321,7 @@ namespace {
 			m_placementSystem = std::make_unique<world_sim::PlacementSystem>(world_sim::PlacementSystem::Args{
 				.world = ecsWorld.get(),
 				.camera = m_camera.get(),
-				.placementExecutor = m_placementExecutor.get(),
+				.factory = m_entityFactory.get(),
 				.navigation = &ecsWorld->getSystem<ecs::NavigationSystem>(),
 				.callbacks = {
 					.onShowBuildMenu = [this](const std::vector<world_sim::BuildMenuItem>& items) { gameUI->showBuildMenu(items); },
@@ -469,7 +458,7 @@ namespace {
 						for (const auto& [defName, qty] : blueprint->delivered) {
 							const auto salvageQty = static_cast<uint32_t>(std::floor(static_cast<float>(qty) * refundPercent / 100.0F));
 							if (salvageQty > 0) {
-								dropResourcePiles(defName, dropPos.x, dropPos.y, salvageQty);
+								m_entityFactory->dropResourcePiles(defName, dropPos, salvageQty);
 							}
 						}
 					}
@@ -559,12 +548,10 @@ namespace {
 				}}
 			});
 
-			// Dev/test command + readback handler. All the systems it pokes now exist; it
-			// borrows the colonist-spawn helper (also used at world init) via a callback.
+			// Dev/test command + readback handler. All the systems it pokes now exist.
 			m_devHandler = std::make_unique<world_sim::DevCommandHandler>(world_sim::DevCommandContext{
 				.world = ecsWorld.get(),
 				.drawing = m_drawingSystem.get(),
-				.placement = m_placementSystem.get(),
 				.selection = m_selectionSystem.get(),
 				.ui = gameUI.get(),
 				.chunks = m_chunkManager.get(),
@@ -572,7 +559,7 @@ namespace {
 				.planet = m_planet,
 				.landingLatDeg = m_landingLatDeg,
 				.landingLonDeg = m_landingLonDeg,
-				.spawnColonist = [this](glm::vec2 pos, const std::string& name) { return spawnColonist(pos, name); },
+				.factory = m_entityFactory.get(),
 			});
 			m_devRegistrations = m_devHandler->registerWith(owner->devServer());
 
@@ -877,7 +864,7 @@ namespace {
 			}
 
 			// Drain deferred drops AFTER the ECS update, for the same reason as the removals above:
-			// spawnEntity grows the component pools and a synchronous spawn from inside a system's
+			// creating an entity grows the component pools, and a synchronous spawn from inside a system's
 			// view loop (a colonist freeing its hands, a fell's uncarried remainder) would reallocate
 			// and dangle that view's bound refs. A packaged item spawns one entity with a Packaged
 			// tag; a resource pile routes through dropResourcePiles (stack-capped split).
@@ -888,20 +875,17 @@ namespace {
 						// the station: the colonist walks over and installs it via PlacePackaged.
 						// targetPosition wired here -> BuildGoalSystem raises the place goal next
 						// frame. nullopt -> spawn in place, await the player's [Place] click.
-						const glm::vec2 spawnAt = spawn.targetPosition.has_value() ? *spawn.targetPosition : glm::vec2{spawn.x, spawn.y};
-						auto			entity = m_placementSystem->spawnEntity(spawn.defName, spawnAt);
-						ecs::Packaged	packaged;
-						packaged.targetPosition = spawn.targetPosition;
-						ecsWorld->addComponent<ecs::Packaged>(entity, packaged);
+						m_entityFactory->createPackaged(spawn.defName, {spawn.x, spawn.y}, spawn.targetPosition);
 						if (spawn.targetPosition.has_value()) {
 							LOG_INFO(
-								Game, "Spawned packaged '%s' at (%.1f, %.1f) - auto-placing", spawn.defName.c_str(), spawnAt.x, spawnAt.y
+								Game, "Spawned packaged '%s' at (%.1f, %.1f) - auto-placing", spawn.defName.c_str(), spawn.targetPosition->x,
+								spawn.targetPosition->y
 							);
 						} else {
 							LOG_INFO(Game, "Spawned packaged '%s' - awaiting placement", spawn.defName.c_str());
 						}
 					} else {
-						dropResourcePiles(spawn.defName, spawn.x, spawn.y, spawn.quantity);
+						m_entityFactory->dropResourcePiles(spawn.defName, {spawn.x, spawn.y}, spawn.quantity);
 					}
 				}
 				m_pendingSpawns.clear();
@@ -1194,6 +1178,7 @@ namespace {
 			LOG_INFO(Game, "Initializing ECS World");
 
 			ecsWorld = std::make_unique<ecs::World>();
+			m_entityFactory = std::make_unique<ecs::EntityFactory>(*ecsWorld, *m_placementExecutor);
 
 			std::random_device entropy;
 			const uint64_t	   sessionSeed = (uint64_t{entropy()} << 32) | entropy();
@@ -1283,7 +1268,7 @@ namespace {
 
 			// Wire up ActionSystem to drop non-backpackable items on the ground as packaged.
 			// These callbacks fire from inside the ActionSystem view loop, so they only ENQUEUE;
-			// the real spawnEntity runs at the pending-spawn drain after ecsWorld->update() (see
+			// the entity is created at the pending-spawn drain after ecsWorld->update() (see
 			// m_pendingSpawns) to avoid reallocating component pools out from under the live view.
 			actionSystem.setDropItemCallback([this, snapDropToGround](const std::string& defName, float x, float y) {
 				const glm::vec2 at = snapDropToGround(x, y);
@@ -1410,17 +1395,14 @@ namespace {
 			// own, spread apart so members don't stack. An empty party (Quick Start, direct
 			// scene jumps) spawns the single default colonist.
 			if (m_party.empty()) {
-				spawnColonist(landing.points.front(), "Bob");
+				m_entityFactory->createColonist(landing.points.front(), "Bob", ecs::EntityFactory::starterSkills());
 			} else {
 				for (size_t i = 0; i < m_party.size(); ++i) {
-					const auto entity = spawnColonist(landing.points[i], m_party[i].name);
-					// Replace the default starting skills with the member's rolled set.
-					if (auto* skills = ecsWorld->getComponent<ecs::Skills>(entity)) {
-						skills->clear();
-						for (const auto& [skillName, level] : m_party[i].skills) {
-							skills->setLevel(skillName, level);
-						}
+					ecs::Skills skills;
+					for (const auto& [skillName, level] : m_party[i].skills) {
+						skills.setLevel(skillName, level);
 					}
+					m_entityFactory->createColonist(landing.points[i], m_party[i].name, std::move(skills));
 				}
 			}
 
@@ -1522,52 +1504,6 @@ namespace {
 				center.y,
 				touchedChunks.size()
 			);
-		}
-
-		/// Spawn a new colonist entity at the given position.
-		ecs::EntityID spawnColonist(glm::vec2 newPosition, const std::string& newName) {
-			auto entity = ecsWorld->createEntity();
-
-			ecsWorld->addComponent<ecs::Position>(entity, ecs::Position{newPosition});
-			ecsWorld->addComponent<ecs::Rotation>(entity, ecs::Rotation{0.0F});
-			ecsWorld->addComponent<ecs::Velocity>(entity, ecs::Velocity{{0.0F, 0.0F}});
-			ecsWorld->addComponent<ecs::MovementTarget>(entity, ecs::MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-			ecsWorld->addComponent<ecs::FacingDirection>(entity, ecs::FacingDirection{}); // Default: Down
-			ecsWorld->addComponent<ecs::AnimationState>(entity, ecs::AnimationState{});	  // Walk-cycle phase
-			ecsWorld->addComponent<ecs::Appearance>(entity, ecs::Appearance{"Colonist", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
-			ecsWorld->addComponent<ecs::Colonist>(entity, ecs::Colonist{newName});
-			ecsWorld->addComponent<ecs::NeedsComponent>(entity, ecs::NeedsComponent::createDefault());
-
-			// Roll static attributes (0-20), seeded per-entity so colonists vary
-			// deterministically. Only Strength is consumed today: it sets hand-carry
-			// capacity. The other attributes are placeholders for upcoming systems.
-			ecs::Attributes attributes;
-			std::mt19937	attrRng(static_cast<uint32_t>(entity));
-			attributes.strength = std::uniform_real_distribution<float>(6.0F, 14.0F)(attrRng);
-			ecsWorld->addComponent<ecs::Attributes>(entity, attributes);
-
-			// Carry weight scales with Strength (an average colonist lands at the prior 35kg).
-			auto inventory = ecs::Inventory::createForColonist();
-			inventory.carryCapacityKg = ecs::Attributes::carryCapacityKg(attributes.strength);
-			ecsWorld->addComponent<ecs::Inventory>(entity, std::move(inventory));
-			ecsWorld->addComponent<ecs::Knowledge>(entity, ecs::Knowledge{});
-			ecsWorld->addComponent<ecs::Memory>(entity, ecs::Memory{.owner = entity});
-			ecsWorld->addComponent<ecs::Task>(entity, ecs::Task{});
-			ecsWorld->addComponent<ecs::DecisionTrace>(entity, ecs::DecisionTrace{});
-			ecsWorld->addComponent<ecs::Action>(entity, ecs::Action{});
-			ecsWorld->addComponent<ecs::AgentRadius>(entity, ecs::AgentRadius{});
-
-			// Add skills with default starting values
-			// Skills range 0-20 (see SkillLevels in Skills.h)
-			ecs::Skills skills;
-			skills.setLevel("Farming", 3.0F);	   // Novice farmer
-			skills.setLevel("Crafting", 2.0F);	   // Novice crafter
-			skills.setLevel("Construction", 1.0F); // Barely trained builder
-			// Medicine: 0 (untrained) - omitted from map
-			ecsWorld->addComponent<ecs::Skills>(entity, std::move(skills));
-
-			LOG_INFO(Game, "Spawned colonist '%s' at (%.1f, %.1f)", newName.c_str(), newPosition.x, newPosition.y);
-			return entity;
 		}
 
 		/// Launch async tasks for newly loaded chunks.
@@ -1722,23 +1658,6 @@ namespace {
 			// Remove the job
 			workQueue->removeJob(recipeDefName);
 			LOG_INFO(Game, "Canceled job '%s' at station '%s'", recipeDefName.c_str(), stationSel->defName.c_str());
-		}
-
-		/// Spawn a loose, haulable resource pile of `quantity` x `defName` at (x, y). A pile is capped
-		/// at the item's own stackSize, so an over-cap drop splits into several piles scattered to
-		/// distinct spots (within the 0.25 m pickup epsilon two piles would alias). No def / no
-		/// itemProperties means unbounded -> a single pile. Each pile is a ResourceStack entity (not
-		/// Packaged): immediately haulable. The SINGLE ground-pile drop path; ActionSystem (felling
-		/// remainder) and ConstructionSystem (cancelled-site materials) both route through it.
-		void dropResourcePiles(const std::string& defName, float x, float y, uint32_t quantity) {
-			const auto*	   def = assets::AssetRegistry::Get().getDefinition(defName);
-			const uint32_t cap = (def != nullptr && def->itemProperties.has_value()) ? def->itemProperties->stackSize : UINT32_MAX;
-			const auto	   piles = ecs::resourcePileDrops(cap, quantity, {x, y});
-			for (const auto& [pos, qty] : piles) {
-				auto entity = m_placementSystem->spawnEntity(defName, {pos.x, pos.y});
-				ecsWorld->addComponent<ecs::ResourceStack>(entity, ecs::ResourceStack{qty});
-			}
-			LOG_INFO(Game, "Dropped %u x '%s' as %zu stacks at (%.1f, %.1f)", quantity, defName.c_str(), piles.size(), x, y);
 		}
 
 		/// Mark a structure's ECS blueprint for deconstruction. ConstructionSystem then emits a
@@ -2040,6 +1959,7 @@ namespace {
 
 		// ECS World containing all dynamic entities
 		std::unique_ptr<ecs::World> ecsWorld;
+		std::unique_ptr<ecs::EntityFactory> m_entityFactory;
 
 		// Async chunk processor (shared implementation with GameLoadingScene)
 		std::unique_ptr<assets::AsyncChunkProcessor> m_asyncProcessor;
@@ -2093,7 +2013,7 @@ namespace {
 		std::vector<ecs::EntityID> m_pendingEntityRemoval;
 
 		// Drops requested from inside the ActionSystem view loop (a colonist stows a held tool to
-		// free its hands, or a fell drops its uncarried remainder). spawnEntity grows the component
+		// free its hands, or a fell drops its uncarried remainder). Creating an entity grows the component
 		// pools, which would reallocate and dangle the live view's bound refs -- so the drop
 		// callbacks ENQUEUE here and the real spawn happens at the drain below, after
 		// ecsWorld->update(), next to the removal drain. `packaged` items spawn one entity with a

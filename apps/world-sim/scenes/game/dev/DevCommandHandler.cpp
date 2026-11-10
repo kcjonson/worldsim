@@ -2,7 +2,6 @@
 
 #include "scenes/game/ui/GameUI.h"
 #include "scenes/game/world/construction/DrawingSystem.h"
-#include "scenes/game/world/placement/PlacementSystem.h"
 #include "scenes/game/world/selection/SelectionSystem.h"
 #include "scenes/game/world/selection/SelectionTypes.h"
 
@@ -24,7 +23,6 @@
 #include <ecs/components/Inventory.h>
 #include <ecs/components/Movement.h>
 #include <ecs/components/Needs.h>
-#include <ecs/components/Packaged.h>
 #include <ecs/components/StorageConfiguration.h>
 #include <ecs/components/Structure.h>
 #include <ecs/components/StructureBlueprint.h>
@@ -34,6 +32,7 @@
 #include <ecs/systems/ConstructionSystem.h>
 #include <ecs/systems/NavigationSystem.h>
 #include <ecs/systems/TimeSystem.h>
+#include <session/EntityFactory.h>
 
 #include <assets/RecipeRegistry.h>
 
@@ -174,8 +173,7 @@ namespace world_sim {
 			const uint32_t	   count = n < kMaxLoose ? n : kMaxLoose;
 			for (uint32_t i = 0; i < count; ++i) {
 				const Foundation::Vec2 off = spreadOffset(static_cast<long>(i), static_cast<long>(count), 1.0F);
-				const ecs::EntityID	   entity = m_ctx.placement->spawnEntity(material, {at.x + off.x, at.y + off.y});
-				m_ctx.world->addComponent<ecs::Packaged>(entity, ecs::Packaged{});
+				m_ctx.factory->createPackaged(material, {at.x + off.x, at.y + off.y}, std::nullopt);
 			}
 			if (n > kMaxLoose) {
 				LOG_WARNING(Game, "[DevAPI] give loose: capped %u -> %u entities", n, kMaxLoose);
@@ -257,7 +255,7 @@ namespace world_sim {
 			if (!placed.has_value()) {
 				continue;
 			}
-			m_ctx.placement->spawnEntity(def, {placed->x, placed->y});
+			m_ctx.factory->createWorldEntity(def, *placed);
 			++spawned;
 		}
 		LOG_INFO(Game, "[DevAPI] spawn: %ld/%ld x '%s' near (%.1f, %.1f)", spawned, n, def.c_str(), at.x, at.y);
@@ -276,7 +274,7 @@ namespace world_sim {
 		for (long i = 0; i < n; ++i) {
 			const Foundation::Vec2 off = spreadOffset(i, n, n > 1 ? 1.0F : 0.0F);
 			const std::string	   name = (n == 1) ? baseName : baseName + std::to_string(i + 1);
-			m_ctx.spawnColonist({at.x + off.x, at.y + off.y}, name);
+			m_ctx.factory->createColonist({at.x + off.x, at.y + off.y}, name, ecs::EntityFactory::starterSkills());
 		}
 		LOG_INFO(Game, "[DevAPI] colonist: spawned %ld at (%.1f, %.1f)", n, at.x, at.y);
 		m_ctx.ui->pushNotification("Dev", "Spawned " + std::to_string(n) + " colonist(s)", ui::ToastSeverity::Info);

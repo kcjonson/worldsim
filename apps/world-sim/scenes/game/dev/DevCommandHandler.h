@@ -15,7 +15,6 @@
 #include <glm/vec2.hpp>
 
 #include <cstdint>
-#include <functional>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -23,6 +22,7 @@
 #include <vector>
 
 namespace ecs {
+	class EntityFactory;
 	class World;
 	class NavigationSystem;
 	struct Inventory;
@@ -41,17 +41,14 @@ namespace worldgen {
 namespace world_sim {
 
 	class DrawingSystem;
-	class PlacementSystem;
 	class SelectionSystem;
 	class GameUI;
 
-	/// Non-owning pointers to the game systems the dev verbs act on, plus the colonist-spawn
-	/// helper that lives on GameScene (it is also used at world init). GameScene outlives the
+	/// Non-owning pointers to the game systems the dev verbs act on. GameScene outlives the
 	/// handler, so the raw pointers are safe for the handler's lifetime.
 	struct DevCommandContext {
 		ecs::World*					 world = nullptr;
 		world_sim::DrawingSystem*	 drawing = nullptr;
-		world_sim::PlacementSystem*	 placement = nullptr;
 		world_sim::SelectionSystem*	 selection = nullptr;
 		world_sim::GameUI*			 ui = nullptr;
 		world::ChunkManager* chunks = nullptr;
@@ -64,7 +61,7 @@ namespace world_sim {
 		double landingLatDeg = 0.0;
 		double landingLonDeg = 0.0;
 
-		std::function<ecs::EntityID(glm::vec2, const std::string&)> spawnColonist;
+		ecs::EntityFactory* factory = nullptr;
 	};
 
 	/// The dev verbs and world-state views. Read+write surface for /api/dev/<verb> and
