@@ -43,7 +43,8 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y make cmake clang \
           libxmu-dev libxi-dev libgl-dev libxrandr-dev libxinerama-dev \
-          libxcursor-dev libx11-dev
+          libxcursor-dev libx11-dev \
+          xvfb libgl1-mesa-dri libglx-mesa0 mesa-utils
 
     - name: Setup sccache
       uses: mozilla-actions/sccache-action@v0.0.10
@@ -74,13 +75,22 @@ jobs:
     - name: sccache stats
       run: sccache --show-stats
 
+    # Puts the software renderer and GL version in the log, so a GL test failure
+    # below can be read against what Mesa actually gave the run.
+    - name: Show software GL
+      run: LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a -s "-screen 0 1280x1024x24" glxinfo -B
+
     # Gating step: every unit-test target except benchmarks and the heavy
     # worldgen bucket (which runs in tests-heavy.yml). -j4 matches the runner's
-    # cores; the per-lib test exes are independent.
+    # cores; the per-lib test exes are independent. The GL tests (SurfaceFieldGolden,
+    # GroundTileBaker, AssetRenderer) run on Mesa llvmpipe behind Xvfb, and
+    # WORLDSIM_REQUIRE_GL makes them fail instead of skip if no context comes up.
     - name: Run fast tests
       run: |
         cd build
-        ctest -j4 --output-on-failure -E "(benchmarks|worldgen-tests-heavy)"
+        LIBGL_ALWAYS_SOFTWARE=1 WORLDSIM_REQUIRE_GL=1 \
+          xvfb-run -a -s "-screen 0 1280x1024x24" \
+          ctest -j4 --output-on-failure -E "(benchmarks|worldgen-tests-heavy)"
 
     - name: Upload test results
       if: always()
