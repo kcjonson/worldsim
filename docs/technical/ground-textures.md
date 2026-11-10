@@ -779,7 +779,7 @@ Planned, tracked as Ground Tile Follow-ups in status.md. None blocks the shipped
 - BC3 or BC7 for the arrays (Open questions).
 - `SurfaceFieldGolden` on CI. There is no GL context there today, so the C++ and GLSL twins are only compared on the dev box; a software GL (Mesa llvmpipe on Linux) would let CI run it.
 - A 4.1 core context from salal. The tile shaders are GLSL 4.10 and salal asks for 3.3; NVIDIA and macOS accept that, a strict driver may not (Shader).
-- The asset-manager Bake view's speed: about 2.5 times slower than the splash bake, and 13.8 s in a run under contention.
+- The asset-manager Bake view's speed, which waits on salal: a cold Ground_Grass bake takes 11.8 s there and 3.3 s on the splash. salal's stream buffer (`GLBackend::updateBuffer`) orphans its whole high-water size on every upload and never shrinks. A ground def opens in the Vectors view, which draws its tile about 15 times a frame (3.4 million quads, 334 MB), so the batch's buffer grows to 669 MB and each of the bake's flushes, about ten a dense render, reallocates all of it (the heights step goes from 0.4 to 2.4 s, a variant's render from 0.19 to 1.0 s). Sizing each orphan to its upload (`std::bit_ceil(bytes)`) brought the view to 3.3 to 3.7 s and left the splash at 3.3 s. The fix is a salal change and a tag bump.
 
 ## Later
 

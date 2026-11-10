@@ -1025,7 +1025,7 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 - [ ] Have salal request a 4.1 core context; the tile shaders are GLSL 4.10 and salal asks for 3.3, which NVIDIA and macOS accept and a strict driver may not
 - [x] A per-user ground bake cache directory; it sits beside the exe today, so a read-only install re-bakes every launch
 - [x] Put the salal tag and a Lua API version in the ground bake cache key; only a manual `GroundTileBaker::kVersion` bump covers engine changes today
-- [ ] Asset-manager Bake view speed: about 2.5x slower than the splash bake, and a run under contention measured 13.8 s
+- [ ] Asset-manager Bake view speed (11.8 s against the splash's 3.3 s): blocked on salal, whose stream buffer orphans its high-water size (669 MB after a ground def's Vectors view) on every flush
 
 ---
 
