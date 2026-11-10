@@ -7,7 +7,7 @@
 //
 // Built once the asset registry has loaded, on the GL thread and outside any frame, a step a call, so a
 // scene can keep drawing between them: begin(), then bakeNext() until it returns false. The first step
-// looks every def up in the disk cache (GroundTileCache, beside the exe) at once, on the pool. A step
+// looks every def up in the disk cache (Args::cache) at once, on the pool. A step
 // uploads every def in a row that the cache held, and at the first it didn't, builds that def's paths
 // on the pool and draws and ranks their heights; each later step bakes and uploads one of its variants,
 // and the last stores the def in the cache. A step that fails or throws fails its def with the reason in
@@ -16,7 +16,6 @@
 #include "world/chunk/SurfaceField.h"
 #include "world/rendering/GroundPairs.h"
 #include "world/rendering/GroundTileBaker.h"
-#include "world/rendering/GroundTileCache.h"
 
 #include <assets/AssetDefinition.h>
 #include <assets/GroundLayer.h>
@@ -49,6 +48,9 @@ namespace worldview {
 		struct Args {
 			/// The app's coordinate system, put back after each offscreen render.
 			Renderer::CoordinateSystem* restoreCoordinateSystem = nullptr;
+			/// Where bakes are kept between runs, which the app makes in its per-user data directory
+			/// (GroundTileCache::inUserData); without one every def bakes from its generator.
+			const GroundTileCache* cache = nullptr;
 		};
 
 		/// One GL_TEXTURE_2D_ARRAY: every layer the same size, every level baked from the vectors.
@@ -132,7 +134,6 @@ namespace worldview {
 		void fail(std::string line);
 
 		Args									  args;
-		GroundTileCache							  cache;
 		std::unique_ptr<foundation::TaskPool>	  pool;
 		std::array<Array, kMaxArrays>			  arrayTable{};
 		size_t									  arrayCount = 0;

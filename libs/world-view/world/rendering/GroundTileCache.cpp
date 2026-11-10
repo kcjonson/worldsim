@@ -1,12 +1,15 @@
 #include "world/rendering/GroundTileCache.h"
 
+#include "SalalVersion.h"
+
 #include <assets/AssetDefinition.h>
 #include <assets/AssetRegistry.h>
+#include <assets/lua/LuaEngine.h>
 #include <utils/Log.h>
-#include <utils/ResourcePath.h>
 #include <utils/WorldHash.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -15,6 +18,13 @@
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#include <vector>
+
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace worldview {
 
@@ -24,6 +34,23 @@ namespace worldview {
 
 		constexpr uint32_t kMagic = 0x54475357U; // "WSGT" read as little-endian bytes
 		constexpr uint32_t kFormatVersion = 2;	 // the file layout below; part of the key
+		constexpr auto	   kStaleTemporary = std::chrono::hours(1);
+		constexpr char	   kTemporaryExtension[] = ".tmp";
+
+		uint64_t processId() {
+#ifdef _WIN32
+			return static_cast<uint64_t>(_getpid());
+#else
+			return static_cast<uint64_t>(getpid());
+#endif
+		}
+
+		// <path>.<pid>.<n>.tmp: this process's own, n counting its stores, so two apps storing one def at
+		// once never write one file.
+		fs::path temporaryFor(const fs::path& path) {
+			static std::atomic<uint64_t> made{0};
+			return fs::path(path).concat("." + std::to_string(processId()) + "." + std::to_string(made++) + kTemporaryExtension);
+		}
 
 		std::optional<std::vector<uint8_t>> readBytes(const fs::path& path) {
 			std::error_code	 ec;
@@ -136,14 +163,19 @@ namespace worldview {
 
 	} // namespace
 
-	GroundTileCache::GroundTileCache(std::filesystem::path newDirectory)
-		: directory(std::move(newDirectory)) {}
+	GroundTileCache::GroundTileCache(std::filesystem::path newDirectory, uintmax_t newMaxBytes)
+		: directory(std::move(newDirectory)),
+		  maxBytes(newMaxBytes) {}
 
-	std::filesystem::path GroundTileCache::defaultDirectory() {
-		return Foundation::getExecutableDir() / "cache" / "ground";
+	std::optional<GroundTileCache> GroundTileCache::inUserData(const std::filesystem::path& userDataDir) {
+		if (userDataDir.empty()) {
+			LOG_WARNING(Engine, "GroundTileCache: no per-user data directory, so no disk cache; every ground def bakes from its generator");
+			return std::nullopt;
+		}
+		return GroundTileCache(userDataDir / "cache" / "ground");
 	}
 
-	std::filesystem::path GroundTileCache::pathFor(const std::string& defName) const {
+	std::filesystem::path GroundTileCache::pathFor(const std::string& defName, uint64_t key) const {
 		constexpr size_t kMaxStem = 48;
 		std::string		 stem;
 		for (const char c : defName.substr(0, kMaxStem)) {
@@ -151,8 +183,8 @@ namespace worldview {
 			stem += safe ? c : '_';
 		}
 		const uint64_t h = foundation::hashBytes(defName.data(), defName.size());
-		char		   suffix[16];
-		std::snprintf(suffix, sizeof(suffix), "-%08x", static_cast<uint32_t>(h ^ (h >> 32)));
+		char		   suffix[32];
+		std::snprintf(suffix, sizeof(suffix), "-%08x-%016llx", static_cast<uint32_t>(h ^ (h >> 32)), static_cast<unsigned long long>(key));
 		return directory / (stem + suffix + ".gtile");
 	}
 
@@ -169,6 +201,7 @@ namespace worldview {
 
 		mix(kFormatVersion);
 		mix(GroundTileBaker::kVersion);
+		mixText(kSalalVersion);
 		mixText(def.defName);
 		mixText(def.ground.seedGroup);
 		mix(def.variantCount);
@@ -194,15 +227,19 @@ namespace worldview {
 				return std::nullopt;
 			}
 			mixBytes(*bytes);
+			mix(assets::LuaEngine::kApiVersion);
 		}
 		return h;
 	}
 
 	std::optional<GroundTileBake> GroundTileCache::load(const assets::AssetDefinition& def, uint64_t key) const {
 		const auto	   start = std::chrono::steady_clock::now();
-		const fs::path path = pathFor(def.defName);
+		const fs::path path = pathFor(def.defName, key);
 		std::error_code ec;
 		if (!fs::exists(path, ec)) {
+			LOG_INFO(
+				Engine, "GroundTileCache: no bake of %s under its current key (%s); baking it", def.defName.c_str(), path.string().c_str()
+			);
 			return std::nullopt;
 		}
 		const std::optional<std::vector<uint8_t>> bytes = readBytes(path);
@@ -222,8 +259,7 @@ namespace worldview {
 			return damaged("not a ground bake");
 		}
 		if (r.get<uint64_t>() != key) {
-			LOG_INFO(Engine, "GroundTileCache: %s changed since its cached bake; baking again", def.defName.c_str());
-			return std::nullopt;
+			return damaged("under another key than its name says");
 		}
 		if (checksum(body) != storedChecksum) {
 			return damaged("damaged (checksum)");
@@ -257,6 +293,8 @@ namespace worldview {
 		if (!r.atEnd()) {
 			return damaged("the wrong size");
 		}
+		// What eviction goes by; a file it can't touch is only evicted sooner.
+		fs::last_write_time(path, fs::file_time_type::clock::now(), ec);
 		bake.metrics = GroundTileBaker::measure(bake.variants);
 		bake.totalMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
 		return bake;
@@ -280,8 +318,8 @@ namespace worldview {
 		}
 		w.put(checksum(w.bytes));
 
-		const fs::path	path = pathFor(bake.defName);
-		const fs::path	temporary = fs::path(path).concat(".tmp");
+		const fs::path	path = pathFor(bake.defName, key);
+		const fs::path	temporary = temporaryFor(path);
 		std::error_code ec;
 		fs::create_directories(directory, ec);
 		{
@@ -299,7 +337,66 @@ namespace worldview {
 			fs::remove(temporary, ec);
 			return false;
 		}
+		evict(path);
 		return true;
+	}
+
+	void GroundTileCache::evict(const std::filesystem::path& kept) const {
+		struct Bake {
+			fs::path		   path;
+			fs::file_time_type written;
+			uintmax_t		   bytes = 0;
+		};
+		std::vector<Bake>		 bakes;
+		uintmax_t				 total = 0;
+		const fs::file_time_type staleBefore = fs::file_time_type::clock::now() - kStaleTemporary;
+		// Windows refuses while another process has the file open; it's tried again on the next store.
+		const auto deleteFile = [](const fs::path& path) {
+			std::error_code ec;
+			fs::remove(path, ec);
+			if (ec) {
+				LOG_DEBUG(Engine, "GroundTileCache: can't delete %s (%s); leaving it", path.string().c_str(), ec.message().c_str());
+			}
+			return !ec;
+		};
+
+		std::error_code ec;
+		for (fs::directory_iterator it(directory, ec), end; !ec && it != end; it.increment(ec)) {
+			const fs::directory_entry& entry = *it;
+			std::error_code			   entryEc;
+			if (!entry.is_regular_file(entryEc)) {
+				continue;
+			}
+			const fs::file_time_type written = entry.last_write_time(entryEc);
+			if (entryEc) {
+				continue;
+			}
+			const fs::path extension = entry.path().extension();
+			if (extension == kTemporaryExtension) {
+				if (written < staleBefore) {
+					deleteFile(entry.path());
+				}
+				continue;
+			}
+			const uintmax_t bytes = entry.file_size(entryEc);
+			if (extension != ".gtile" || entryEc) {
+				continue;
+			}
+			total += bytes;
+			if (entry.path() != kept) {
+				bakes.push_back({.path = entry.path(), .written = written, .bytes = bytes});
+			}
+		}
+
+		std::sort(bakes.begin(), bakes.end(), [](const Bake& a, const Bake& b) { return a.written < b.written; });
+		for (const Bake& bake : bakes) {
+			if (total <= maxBytes) {
+				break;
+			}
+			if (deleteFile(bake.path)) {
+				total -= bake.bytes;
+			}
+		}
 	}
 
 } // namespace worldview
