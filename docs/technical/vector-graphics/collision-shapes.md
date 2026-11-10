@@ -53,9 +53,12 @@ world-AABB fast path.
    capture the emitted rect, so nav sees the collider before the first render
    instead of racing it. A def with `<ageClasses>` is skipped there:
    `prewarmTreeVariants` takes each class's rect from the variant 0 it
-   generates anyway. The rect is per age class and must not depend on the
-   variant; `asset-cli validate --render-smoke` checks variants 0 and 1 of each
-   class (`AssetRegistry::checkCollisionVariantIndependence`).
+   generates anyway, and both `loadDefinitions` and `loadDefinitionsFromFolder`
+   end in it, so a def loaded from a single file gets its rects too. The rect
+   is per age class and must not depend on the variant; `asset-cli validate
+   --render-smoke` checks variants 0 and 1 of each class, a def without
+   `<ageClasses>` counting as class 0 of `variantCount` variants
+   (`AssetRegistry::checkCollisionVariantIndependence`).
 
 2. **XML manual override.** `<collision><rect minX="" minY="" maxX="" maxY=""/></collision>`
    parses to center + half-extents (degenerate `max <= min` is rejected to

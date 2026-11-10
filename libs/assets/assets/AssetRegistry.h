@@ -182,9 +182,10 @@ namespace assets {
 		/// @return false when the def isn't procedural or its generator fails (logged)
 		bool buildPaths(const std::string& defName, uint32_t seed, TessellatedPaths& outPaths, float maxPixelsPerMeter = kFullDetail);
 
-		/// Adds an error to `report` for each age class of a def whose generator emits a different
-		/// collision rect for two of its variants: the rect is per age class, so it may not depend on
-		/// the variant. Generates variants 0 and 1 of each class that has two or more; runs a
+		/// Adds an error to `report` for each age class of a procedural def whose generator emits a
+		/// different collision rect for two of its variants: the rect is per age class, so it may not
+		/// depend on the variant. A def without <ageClasses> is one implicit class 0 of variantCount
+		/// variants. Generates variants 0 and 1 of each class that has two or more; runs a
 		/// generator, so it is for the render smoke, not for load.
 		void checkCollisionVariantIndependence(ValidationReport& report);
 
@@ -345,10 +346,16 @@ namespace assets {
 		/// key first, that one's id. Resolves the def's routing first, outside the lock.
 		uint32_t insertTemplate(const AssetDefinition& def, TreeTraits traits, BuiltTemplate built);
 
-		/// Builds every variant of each def with age classes, in parallel, before the first chunk
-		/// asks for one. A variant over kMaxMeshVertices is an error in the validation report.
+		/// Parses one XML file into `definitions`, appending the names it defined to `loadedNames`.
+		/// Runs the per-def collision passes that need no age classes; leaves each aged def's
+		/// templates and rects to prewarmTreeVariants.
+		bool parseDefinitions(const std::string& xmlPath, std::vector<std::string>& loadedNames);
+
+		/// Builds every variant of each named def with age classes, in parallel, before the first
+		/// chunk asks for one. A variant over kMaxMeshVertices is an error in the validation report.
 		/// Each class's collision rect is taken from its variant 0 (unless the def authors one).
-		void prewarmTreeVariants();
+		/// Both load entry points end here, so a def is complete however it was loaded.
+		void prewarmTreeVariants(const std::vector<std::string>& defNames);
 
 		/// Drops every template, silhouette, and resolved motion.
 		void clearCaches();

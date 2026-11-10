@@ -728,6 +728,13 @@ namespace assets {
 	}
 
 	bool AssetRegistry::loadDefinitions(const std::string& xmlPath) {
+		std::vector<std::string> loadedNames;
+		const bool				 loaded = parseDefinitions(xmlPath, loadedNames);
+		prewarmTreeVariants(loadedNames);
+		return loaded;
+	}
+
+	bool AssetRegistry::parseDefinitions(const std::string& xmlPath, std::vector<std::string>& loadedNames) {
 		namespace fs = std::filesystem;
 
 		pugi::xml_document	   doc;
@@ -749,7 +756,7 @@ namespace assets {
 		}
 
 		int loadedCount = 0;
-		std::vector<std::string> loadedNames;
+		const size_t firstNew = loadedNames.size();
 		for (pugi::xml_node defNode : root.children("AssetDef")) {
 			AssetDefinition def;
 
@@ -1198,12 +1205,13 @@ namespace assets {
 		// first lazy render. XML <collision> always wins; skip capture when set. Ground tiles
 		// never collide, and their generators are the heaviest scripts, so they are skipped too.
 		// A def with <ageClasses> is skipped as well: prewarmTreeVariants takes each class's rect
-		// from the variant 0 it generates anyway.
-		for (const std::string& name : loadedNames) {
-			auto it = definitions.find(name);
+		// from the variant 0 it generates anyway, after the whole load has parsed.
+		for (size_t n = firstNew; n < loadedNames.size(); ++n) {
+			auto it = definitions.find(loadedNames[n]);
 			if (it == definitions.end()) {
 				continue;
 			}
+			const std::string& name = it->first;
 			AssetDefinition& def = it->second;
 			if (def.collisionFor(0).blocks() || def.assetType != AssetType::Procedural || def.role == AssetRole::Ground ||
 				!def.ageClasses.empty()) {
@@ -1226,8 +1234,8 @@ namespace assets {
 		// without forcing a render, sees the collider before the first lazy
 		// getTemplate. loadCollisionFromSvgMetadata bails cheaply when there's no
 		// metadata, so assets without a collider pay only a file open + parse.
-		for (const std::string& name : loadedNames) {
-			auto it = definitions.find(name);
+		for (size_t n = firstNew; n < loadedNames.size(); ++n) {
+			auto it = definitions.find(loadedNames[n]);
 			if (it == definitions.end()) {
 				continue;
 			}
@@ -1243,10 +1251,10 @@ namespace assets {
 
 		// Eager motion resolution (simple assets declaring a <motion> file): resolve + cache + log
 		// now, so the animation system finds it ready and any parse/pivot problems surface at load.
-		for (const std::string& name : loadedNames) {
-			auto it = definitions.find(name);
+		for (size_t n = firstNew; n < loadedNames.size(); ++n) {
+			auto it = definitions.find(loadedNames[n]);
 			if (it != definitions.end() && !it->second.motionPath.empty()) {
-				getMotion(name);
+				getMotion(it->first);
 			}
 		}
 
@@ -1276,6 +1284,7 @@ namespace assets {
 
 		size_t totalLoaded = 0;
 		size_t filesProcessed = 0;
+		std::vector<std::string> loadedNames;
 
 		// Recursively iterate through all files in the folder
 		// Only load "primary" XML files that match the FolderName/FolderName.xml pattern
@@ -1308,7 +1317,7 @@ namespace assets {
 				filesProcessed++;
 				size_t beforeCount = definitions.size();
 
-				if (loadDefinitions(entry.path().string())) {
+				if (parseDefinitions(entry.path().string(), loadedNames)) {
 					size_t loaded = definitions.size() - beforeCount;
 					totalLoaded += loaded;
 					LOG_DEBUG(Engine, "Loaded %zu definitions from %s", loaded, entry.path().string().c_str());
@@ -1337,7 +1346,7 @@ namespace assets {
 		// Validate on load so the game (at launch) and the Asset Manager share one
 		// report. No GL; safe on the load worker thread.
 		m_validationReport = AssetValidator::validate(folderPath, m_sharedScriptsPath);
-		prewarmTreeVariants();
+		prewarmTreeVariants(loadedNames);
 		LOG_INFO(
 			Engine, "Asset validation: %d error(s), %d warning(s)", m_validationReport.errorCount(), m_validationReport.warningCount()
 		);
@@ -1602,7 +1611,7 @@ namespace assets {
 		return m_templates[id - 1]->defTall;
 	}
 
-	void AssetRegistry::prewarmTreeVariants() {
+	void AssetRegistry::prewarmTreeVariants(const std::vector<std::string>& defNames) {
 		struct Job {
 			AssetDefinition* def = nullptr;
 			TreeTraits		 traits;
@@ -1610,7 +1619,12 @@ namespace assets {
 			BuiltTemplate	 built;
 		};
 		std::vector<Job> jobs;
-		for (auto& [name, def] : definitions) {
+		for (const std::string& name : defNames) {
+			const auto found = definitions.find(name);
+			if (found == definitions.end()) {
+				continue;
+			}
+			AssetDefinition& def = found->second;
 			if (def.ageClasses.empty() || def.assetType != AssetType::Procedural) {
 				continue;
 			}
@@ -1664,15 +1678,18 @@ namespace assets {
 	void AssetRegistry::checkCollisionVariantIndependence(ValidationReport& report) {
 		std::vector<const AssetDefinition*> defs;
 		for (const auto& [name, def] : definitions) {
-			if (!def.ageClasses.empty() && def.assetType == AssetType::Procedural) {
+			if (def.assetType == AssetType::Procedural && def.role != AssetRole::Ground) {
 				defs.push_back(&def);
 			}
 		}
 		std::sort(defs.begin(), defs.end(), [](const AssetDefinition* a, const AssetDefinition* b) { return a->defName < b->defName; });
 
 		for (const AssetDefinition* def : defs) {
-			for (size_t a = 0; a < def->ageClasses.size(); ++a) {
-				if (def->ageClasses[a].variants < 2) {
+			// A def without <ageClasses> is one implicit class 0 of variantCount variants.
+			const size_t classCount = def->ageClasses.empty() ? 1 : def->ageClasses.size();
+			for (size_t a = 0; a < classCount; ++a) {
+				const uint32_t variants = def->ageClasses.empty() ? def->variantCount : def->ageClasses[a].variants;
+				if (variants < 2) {
 					continue;
 				}
 				std::optional<CollisionShape> first;
@@ -1681,7 +1698,7 @@ namespace assets {
 					const TreeTraits traits{.ageClass = static_cast<uint8_t>(a), .variant = v};
 					GeneratedAsset	 asset;
 					if (!generateAsset(def->defName, generationSeed(*def, traits), asset, traits)) {
-						break; // prewarm already reported the failed generation
+						break; // the load already reported the failed generation
 					}
 					if (v == 0) {
 						first = std::move(asset.emittedCollision);
@@ -1690,11 +1707,12 @@ namespace assets {
 					}
 				}
 				if (differs) {
+					const std::string className = def->ageClasses.empty() ? "0" : "'" + def->ageClasses[a].name + "'";
 					report.add(
 						Severity::Error,
 						def->defName,
 						"collision",
-						"age class '" + def->ageClasses[a].name + "' emits a different collision rect for variants 0 and 1; the rect must not depend on the variant",
+						"age class " + className + " emits a different collision rect for variants 0 and 1; the rect must not depend on the variant",
 						""
 					);
 				}

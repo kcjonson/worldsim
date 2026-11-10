@@ -243,13 +243,18 @@ TEST(CollisionShapeTest, OakTreeHasRectHalfExtent0_1) {
 
 	reg.clearDefinitions();
 	reg.setSharedScriptsPath(p / "assets" / "shared" / "scripts");
-	reg.loadDefinitionsFromFolder(oak.string());
+	reg.loadDefinitions((oak / "OakTree.xml").string());
 
 	const AssetDefinition* def = reg.getDefinition("Flora_TreeOak");
 	ASSERT_NE(def, nullptr);
 	EXPECT_EQ(def->collisionFor(0).type, CollisionShapeType::Rect);
 	EXPECT_FLOAT_EQ(def->collisionFor(0).halfExtentsMeters.x, 0.1F);
 	EXPECT_FLOAT_EQ(def->collisionFor(0).halfExtentsMeters.y, 0.1F);
+	// Loaded as one file, every age class still gets its rect.
+	ASSERT_FALSE(def->ageClasses.empty());
+	for (size_t a = 0; a < def->ageClasses.size(); ++a) {
+		EXPECT_TRUE(def->collisionFor(static_cast<uint8_t>(a)).blocks()) << "age class " << def->ageClasses[a].name;
+	}
 }
 
 TEST(CollisionShapeTest, MapleTreeHasRectHalfExtent0_075) {
@@ -264,7 +269,7 @@ TEST(CollisionShapeTest, MapleTreeHasRectHalfExtent0_075) {
 
 	reg.clearDefinitions();
 	reg.setSharedScriptsPath(p / "assets" / "shared" / "scripts");
-	reg.loadDefinitionsFromFolder(maple.string());
+	reg.loadDefinitions((maple / "MapleTree.xml").string());
 
 	const AssetDefinition* def = reg.getDefinition("Flora_TreeMaple");
 	ASSERT_NE(def, nullptr);
@@ -628,6 +633,22 @@ namespace {
 												  "</ageClasses></AssetDef></AssetDefinitions>";
 	}
 
+	// The same, without <ageClasses>: one implicit class of two variants.
+	void writeImplicitTree(TempAssets& t, const std::string& defName, const std::string& rectLua) {
+		const fs::path dir = t.root / defName;
+		fs::create_directories(dir);
+		std::ofstream(dir / "gen.lua") << "local p = Path()\n"
+										  "p:addVertex(0, 0) p:addVertex(1, 0) p:addVertex(0, 1)\n"
+										  "asset:addPath(p)\n"
+										+ rectLua + "\n";
+		std::ofstream(dir / (defName + ".xml")) << "<?xml version=\"1.0\"?><AssetDefinitions><AssetDef>"
+												   "<defName>"
+												+ defName
+												+ "</defName><assetType>procedural</assetType>"
+												  "<generator><scriptPath>gen.lua</scriptPath></generator>"
+												  "<variantCount>2</variantCount></AssetDef></AssetDefinitions>";
+	}
+
 } // namespace
 
 // The rect is captured per age class, from each class's variant 0.
@@ -647,6 +668,20 @@ TEST(CollisionShapeTest, LuaRectIsCapturedPerAgeClass) {
 	EXPECT_EQ(def->collisionFor(1).type, CollisionShapeType::Rect);
 	EXPECT_FLOAT_EQ(def->collisionFor(1).halfExtentsMeters.x, 0.4F);
 	EXPECT_FALSE(def->collisionFor(2).blocks());
+}
+
+// A def loaded from its one file, not through a folder, still gets a rect for every age class.
+TEST(CollisionShapeTest, SingleFileLoadCapturesEveryAgeClass) {
+	auto&	   reg = AssetRegistry::Get();
+	TempAssets t;
+	writeAgedTree(t, "OneFile", "asset:setCollisionRect(ageClass == 'mature' and 0.4 or 0.1, 0.2, 0, 0.05)");
+
+	reg.clearDefinitions();
+	ASSERT_TRUE(reg.loadDefinitions((t.root / "OneFile" / "OneFile.xml").string()));
+	const AssetDefinition* def = reg.getDefinition("OneFile");
+	ASSERT_NE(def, nullptr);
+	EXPECT_FLOAT_EQ(def->collisionFor(0).halfExtentsMeters.x, 0.1F);
+	EXPECT_FLOAT_EQ(def->collisionFor(1).halfExtentsMeters.x, 0.4F);
 }
 
 // An XML <collision> applies to every age class and wins over the generator.
@@ -678,13 +713,18 @@ TEST(CollisionShapeTest, VariantDependentRectFailsSmokeCheck) {
 	TempAssets t;
 	writeAgedTree(t, "Steady", "asset:setCollisionRect(ageClass == 'mature' and 0.4 or 0.1, 0.2, 0, 0)");
 	writeAgedTree(t, "Drifting", "asset:setCollisionRect(ageClass == 'mature' and 0.1 + 0.1 * variantIndex or 0.1, 0.2, 0, 0)");
+	writeImplicitTree(t, "SteadyFlat", "asset:setCollisionRect(0.1, 0.2, 0, 0)");
+	writeImplicitTree(t, "DriftingFlat", "asset:setCollisionRect(0.1 + 0.1 * variantIndex, 0.2, 0, 0)");
 
 	reg.clearDefinitions();
 	reg.loadDefinitionsFromFolder(t.root.string());
 	ValidationReport report;
 	reg.checkCollisionVariantIndependence(report);
 
-	ASSERT_EQ(report.errorCount(), 1);
+	ASSERT_EQ(report.errorCount(), 2);
+	// Sorted by def name.
 	EXPECT_EQ(report.issues[0].defName, "Drifting");
 	EXPECT_NE(report.issues[0].message.find("'mature'"), std::string::npos);
+	EXPECT_EQ(report.issues[1].defName, "DriftingFlat");
+	EXPECT_NE(report.issues[1].message.find("age class 0 "), std::string::npos);
 }
