@@ -1877,7 +1877,7 @@ namespace ecs {
 		if (selected == nullptr) {
 			// Nothing to navigate to right now -- typically all needs are met and the navmesh isn't
 			// built yet, so the idle wander was withheld on purpose (can't navigate). Hold: stand in
-			// place, movement off, velocity zeroed. state=Moving (not Arrived) keeps shouldReEvaluate
+			// place, movement off. state=Moving (not Arrived) keeps shouldReEvaluate
 			// from re-deciding every frame; the periodic re-eval still fires, and a Wander with
 			// movement off never counts as the same task, so the colonist takes the first real
 			// option that re-eval offers once the mesh lands.
@@ -1887,9 +1887,6 @@ namespace ecs {
 			task.targetPosition	  = position.value;
 			task.reason			  = "Waiting for the area to settle";
 			movementTarget.active = false;
-			if (auto* velocity = world->getComponent<Velocity>(entity)) {
-				velocity->value = {0.0F, 0.0F};
-			}
 			return;
 		}
 
@@ -2008,7 +2005,7 @@ namespace ecs {
 		// A navmesh exists as a system but hasn't finished building yet -- the costly startup
 		// window while chunks stream in. NOTHING moves without a navmesh: dead-reckoning toward a
 		// goal with no idea what's walkable is exactly what stranded and stalled colonists. HOLD
-		// here -- deactivate movement and zero velocity -- instead of beelining blind. The task
+		// here -- deactivate movement -- instead of beelining blind. The task
 		// stays, deferred (applyNavOutcome): update()'s deferred-route retry requests the same
 		// goal again once the first mesh lands. The periodic re-eval does NOT pick it back up; it
 		// re-selects the same option and keeps the task as it stands.
@@ -2017,9 +2014,6 @@ namespace ecs {
 				navPath->valid = false;
 			}
 			movementTarget.active = false;
-			if (auto* velocity = world->getComponent<Velocity>(entity)) {
-				velocity->value = {0.0F, 0.0F};
-			}
 			LOG_DEBUG(Engine, "[Nav] Entity %llu: no mesh yet, holding (nothing moves without a navmesh)",
 				static_cast<unsigned long long>(entity));
 			return NavRequestOutcome::Waiting;
@@ -2029,7 +2023,7 @@ namespace ecs {
 		// answer the query (the off-area leg is beyond LOD0, and there is no coarse far-field graph
 		// yet). A colonist may NOT slide blind toward an off-area goal -- that is the beeline this
 		// architecture forbids. HOLD instead, exactly like the no-mesh case: deactivate movement,
-		// zero velocity, invalidate any stale route. The deferred-route retry requests it again
+		// invalidate any stale route. The deferred-route retry requests it again
 		// after each region build lands, so it routes once a build covers both endpoints.
 		//
 		// FUTURE LOD1: path to the area edge via LOD0, hand off to a coarse regional graph for the
@@ -2039,9 +2033,6 @@ namespace ecs {
 				navPath->valid = false;
 			}
 			movementTarget.active = false;
-			if (auto* velocity = world->getComponent<Velocity>(entity)) {
-				velocity->value = {0.0F, 0.0F};
-			}
 			LOG_DEBUG(Engine, "[Nav] Entity %llu: off-area endpoint, holding (no LOD0 route to (%.2f, %.2f))",
 				static_cast<unsigned long long>(entity), goal.x, goal.y);
 			return NavRequestOutcome::Waiting;
@@ -2070,12 +2061,6 @@ namespace ecs {
 				navPath->valid = false;
 			}
 			movementTarget.active = false;
-			// MovementSystem skips entities with an inactive target, so it won't zero the
-			// velocity for us -- do it here, or the colonist coasts on its last velocity
-			// straight into the wall it just refused to path through.
-			if (auto* velocity = world->getComponent<Velocity>(entity)) {
-				velocity->value = {0.0F, 0.0F};
-			}
 			LOG_DEBUG(Engine, "[Nav] Entity %llu: no believed route to (%.2f, %.2f), stopping",
 				static_cast<unsigned long long>(entity), goal.x, goal.y);
 			return NavRequestOutcome::Blocked;
@@ -2254,9 +2239,6 @@ namespace ecs {
 		}
 		if (auto* mt = world->getComponent<MovementTarget>(entity)) {
 			mt->active = false;
-		}
-		if (auto* velocity = world->getComponent<Velocity>(entity)) {
-			velocity->value = {0.0F, 0.0F};
 		}
 	}
 

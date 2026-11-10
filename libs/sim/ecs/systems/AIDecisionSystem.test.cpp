@@ -41,11 +41,14 @@
 #include <world/chunk/ChunkSampleResult.h>
 #include <world/chunk/IWorldSampler.h>
 
+#include <worldgen/sampling/PondNetwork2D.h>
+
 #include <gtest/gtest.h>
 
 #include <glm/geometric.hpp>
 #include <glm/vec2.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <memory>
@@ -3296,6 +3299,184 @@ namespace ecs::test {
 		}
 		const glm::vec2 now = world->getComponent<Position>(colonist)->value;
 		EXPECT_LT(glm::distance(now, bush), glm::distance(start, bush) - 0.5F) << "the colonist walks toward the bush";
+	}
+
+	// =============================================================================
+	// Need actions started in place
+	// =============================================================================
+
+	namespace {
+		// Open grassland with one pond at (40, 40); its rim is at most 10.5 m from the center.
+		constexpr worldgen::PondNetwork2D::Pond kSlidePond{
+			.cx = 40.0, .cy = 40.0, .radius = 8.0F, .phaseA = 0.0F, .phaseB = 0.0F, .depth = 120};
+
+		class PondSampler : public world::IWorldSampler {
+		  public:
+			[[nodiscard]] world::ChunkSampleResult sampleChunk(world::ChunkCoordinate coord) const override {
+				world::ChunkSampleResult r = world::makeUniformChunkSampleResult(
+					world::BiomeWeights::single(world::Biome::TemperateGrassland), 1.0F);
+				if (coord.x >= -1 && coord.x <= 1 && coord.y >= -1 && coord.y <= 1) {
+					r.pondBlobs.push_back(kSlidePond);
+				}
+				return r;
+			}
+			[[nodiscard]] float	   sampleElevation(world::WorldPosition) const override { return 1.0F; }
+			[[nodiscard]] uint64_t getWorldSeed() const override { return 7U; }
+		};
+	} // namespace
+
+	// The whole frame pipeline a need action runs through: AI, nav, movement, physics, and actions,
+	// over a built mesh. A ground-fallback need action (Sleep, Eat from inventory, Toilet) starts in
+	// place with the movement target switched off, so whatever velocity the colonist was walking at
+	// when it decided must not carry it anywhere for the action's duration.
+	class NeedActionInPlaceTest : public AIDecisionSystemTest {
+	  protected:
+		void SetUp() override {
+			AIDecisionSystemTest::SetUp();
+
+			chunks = std::make_unique<world::ChunkManager>(std::make_unique<PondSampler>());
+			chunks->setLoadRadius(2);
+			chunks->setUnloadRadius(4);
+			chunks->update({0.0F, 0.0F});
+			chunks->finishPendingGeneration();
+
+			nav = &world->registerSystem<NavigationSystem>();
+			nav->setChunkManager(chunks.get());
+			nav->setConstructionWorld(&construction);
+			nav->setViewportRect({0.0F, 0.0F}, {60.0F, 60.0F});
+			world->getSystem<AIDecisionSystem>().setNavigationSystem(nav);
+			world->registerSystem<MovementSystem>();
+			world->registerSystem<PhysicsSystem>();
+			world->registerSystem<ActionSystem>();
+			ASSERT_TRUE(pumpUntilMesh(*nav)) << "navmesh never built";
+		}
+
+		void TearDown() override {
+			AIDecisionSystemTest::TearDown();
+			chunks.reset();
+		}
+
+		EntityID createActingColonist(glm::vec2 position) {
+			const auto colonist = createColonist(position);
+			world->addComponent<Action>(colonist, Action{});
+			satisfyAllNeeds(*getNeeds(colonist));
+			return colonist;
+		}
+
+		// Lets an idle colonist pick a wander and walk it until it is actually moving.
+		[[nodiscard]] bool walkUntilMoving(EntityID colonist) {
+			for (int i = 0; i < 20; ++i) {
+				world->update(kTick);
+				if (glm::length(world->getComponent<Velocity>(colonist)->value) > 0.5F) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		struct Stillness {
+			float maxDrift = 0.0F;
+			float maxSpeed = 0.0F;
+			int	  ticks = 0;
+		};
+
+		// Steps the world until the colonist's action ends, measuring how far it strays from `spot`.
+		Stillness stepThroughAction(EntityID colonist, glm::vec2 spot) {
+			const auto* action = world->getComponent<Action>(colonist);
+			Stillness	result;
+			while (action->isActive() && result.ticks < 200) {
+				world->update(kTick);
+				++result.ticks;
+				result.maxDrift =
+					std::max(result.maxDrift, glm::distance(world->getComponent<Position>(colonist)->value, spot));
+				result.maxSpeed = std::max(result.maxSpeed, glm::length(world->getComponent<Velocity>(colonist)->value));
+			}
+			return result;
+		}
+
+		static constexpr float kTick = 0.1F;
+
+		std::unique_ptr<world::ChunkManager> chunks;
+		construction::ConstructionWorld		 construction;
+		NavigationSystem*					 nav = nullptr;
+	};
+
+	TEST_F(NeedActionInPlaceTest, SleepStartedMidStrideStaysPut) {
+		const auto colonist = createActingColonist({0.0F, 0.0F});
+		ASSERT_TRUE(walkUntilMoving(colonist)) << "the colonist never set off on its wander";
+
+		getNeeds(colonist)->get(NeedType::Energy).value = 20.0F;
+		world->update(kTick);
+		const Task*	  task = getTask(colonist);
+		const Action* action = world->getComponent<Action>(colonist);
+		ASSERT_EQ(task->needToFulfill, NeedType::Energy);
+		ASSERT_TRUE(action->isActive());
+		ASSERT_EQ(action->type, ActionType::Sleep);
+		const glm::vec2 bedSpot = task->targetPosition;
+
+		const Stillness still = stepThroughAction(colonist, bedSpot);
+		EXPECT_FALSE(action->isActive()) << "the sleep never finished";
+		EXPECT_EQ(still.maxSpeed, 0.0F) << "the sleeper kept a walking velocity";
+		EXPECT_LT(still.maxDrift, 1e-4F) << "the sleeper slid away from where it lay down";
+		EXPECT_FLOAT_EQ(getNeeds(colonist)->energy().value, 50.0F) << "ground sleep restores 30, every time";
+	}
+
+	TEST_F(NeedActionInPlaceTest, ToiletStartedMidStrideLeavesBioPileUnderColonist) {
+		const auto colonist = createActingColonist({0.0F, 0.0F});
+		ASSERT_TRUE(walkUntilMoving(colonist)) << "the colonist never set off on its wander";
+
+		getNeeds(colonist)->get(NeedType::Digestion).value = 20.0F;
+		world->update(kTick);
+		const Task*	  task = getTask(colonist);
+		const Action* action = world->getComponent<Action>(colonist);
+		ASSERT_TRUE(action->isActive());
+		ASSERT_EQ(action->type, ActionType::Toilet);
+		const glm::vec2 squatSpot = task->targetPosition;
+
+		const Stillness still = stepThroughAction(colonist, squatSpot);
+		EXPECT_FALSE(action->isActive()) << "the toilet action never finished";
+		EXPECT_EQ(still.maxSpeed, 0.0F) << "the colonist kept a walking velocity";
+		EXPECT_LT(still.maxDrift, 1e-4F) << "the colonist slid away mid-action";
+
+		std::optional<glm::vec2> bioPile;
+		for (auto [entity, position, appearance] : world->view<Position, Appearance>()) {
+			if (appearance.defName == "Misc_BioPile") {
+				bioPile = position.value;
+			}
+		}
+		ASSERT_TRUE(bioPile.has_value()) << "no BioPile spawned";
+		EXPECT_LT(glm::distance(*bioPile, squatSpot), 1e-4F) << "the BioPile isn't where the colonist squatted";
+		EXPECT_LT(glm::distance(*bioPile, world->getComponent<Position>(colonist)->value), 1e-4F)
+			<< "the BioPile isn't under the colonist when it gets up";
+	}
+
+	// A critical sleeper that slides into water is snapped back ashore, which clears its task, so it
+	// re-decides; still sliding, it goes straight back in. The sleep must hold one decision throughout.
+	TEST_F(NeedActionInPlaceTest, CriticalSleeperDoesNotReDecideEveryTick) {
+		const glm::vec2 shore{28.0F, 40.0F}; // land, a couple of metres west of the pond
+		ASSERT_TRUE(nav->isOnMesh(shore));
+		const auto colonist = createActingColonist(shore);
+		world->getComponent<Velocity>(colonist)->value = {2.0F, 0.0F}; // mid-stride, heading for the water
+
+		getNeeds(colonist)->get(NeedType::Energy).value = 5.0F;
+		world->update(kTick);
+		const Task*	  task = getTask(colonist);
+		const Action* action = world->getComponent<Action>(colonist);
+		ASSERT_EQ(task->needToFulfill, NeedType::Energy);
+		ASSERT_TRUE(action->isActive());
+		ASSERT_EQ(action->type, ActionType::Sleep);
+
+		int		  decisions = 0;
+		glm::vec2 decidedSpot = task->targetPosition;
+		for (int i = 0; i < 200 && action->isActive(); ++i) {
+			world->update(kTick);
+			if (task->targetPosition != decidedSpot) {
+				++decisions;
+				decidedSpot = task->targetPosition;
+			}
+		}
+		EXPECT_FALSE(action->isActive()) << "the sleep never finished";
+		EXPECT_LE(decisions, 1) << "the sleeper re-decided " << decisions << " times during one sleep";
 	}
 
 } // namespace ecs::test

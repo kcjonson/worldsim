@@ -56,7 +56,11 @@ void MovementSystem::update(float deltaTime) {
     // Process all entities with movement targets
     for (auto [entity, pos, vel, target] :
          world->view<Position, Velocity, MovementTarget>()) {
+        // An inactive target means standing still, whoever switched it off (arrival here, an
+        // in-place need action, a nav hold, taking control). Zeroing here, before PhysicsSystem
+        // integrates, is the one stop: a colonist never coasts on the last stride's velocity.
         if (!target.active) {
+            vel.value = {0.0f, 0.0f};
             continue;
         }
 

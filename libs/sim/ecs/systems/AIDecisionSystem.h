@@ -138,7 +138,7 @@ private:
 	///
 	/// MOVEMENT INVARIANT: a colonist moves ONLY by following a NavPath. There is no straight-line
 	/// "beeline" toward a goal without a route. When a path can't be produced, this STOPS the
-	/// colonist (clears movementTarget.active, zeros velocity) rather than sliding it blind:
+	/// colonist (clears movementTarget.active, which MovementSystem stops) rather than sliding it blind:
 	///   - no mesh yet (startup window): hold, deferred until a mesh build lands;
 	///   - endpoint outside the built sim area (beyond LOD0): hold, deferred the same way;
 	///   - mesh present but belief admits no route (a believed wall): stop, re-decide.
