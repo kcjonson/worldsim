@@ -27,7 +27,7 @@ constexpr char kMagic[4] = {'W', 'S', 'P', 'L'};
 constexpr uint32_t kFormatVersion = 4;
 // Subdivision cap is shared with PlanetParams::validate() so file loads and
 // generation reject the same out-of-range n. Raise kMaxGridSubdivision only once
-// the mmap/streamed planet database exists (see status.md).
+// the mmap/streamed planet database exists (Specboard WOR-368).
 constexpr uint32_t kMaxPlateCount = 1u << 16;
 
 struct Writer {
