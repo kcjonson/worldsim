@@ -6,6 +6,7 @@ add_library(world
     world/chunk/NoiseLattice.cpp
     world/chunk/TilePostProcessor.cpp
     world/chunk/MockWorldSampler.cpp
+    world/chunk/SyntheticWorldSampler.cpp
     world/chunk/GeneratedWorldSampler.cpp
     world/chunk/ApronField.cpp
     world/chunk/SurfaceField.cpp

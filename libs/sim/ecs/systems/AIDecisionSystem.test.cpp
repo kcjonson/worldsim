@@ -34,11 +34,8 @@
 
 #include <construction/ConstructionWorld.h>
 
-#include <world/Biome.h>
-#include <world/BiomeWeights.h>
 #include <world/chunk/ChunkManager.h>
-#include <world/chunk/ChunkSampleResult.h>
-#include <world/chunk/IWorldSampler.h>
+#include <world/chunk/SyntheticWorldSampler.h>
 
 #include <gtest/gtest.h>
 
@@ -3183,19 +3180,6 @@ namespace ecs::test {
 		EXPECT_EQ(task->navState, NavState::Traveling);
 	}
 
-	namespace {
-		// Every tile grassland, so the region around the origin is open walkable ground.
-		class OpenLandSampler : public world::IWorldSampler {
-		  public:
-			[[nodiscard]] world::ChunkSampleResult sampleChunk(world::ChunkCoordinate) const override {
-				return world::makeUniformChunkSampleResult(
-					world::BiomeWeights::single(world::Biome::TemperateGrassland), 1.0F);
-			}
-			[[nodiscard]] float	   sampleElevation(world::WorldPosition) const override { return 1.0F; }
-			[[nodiscard]] uint64_t getWorldSeed() const override { return 7U; }
-		};
-	} // namespace
-
 	// The running game's first decision happens before the async region build has produced a mesh.
 	// This wires a real NavigationSystem (all-land chunks, a viewport region at the origin, an empty
 	// construction world) plus MovementSystem and PhysicsSystem, so a test can let the AI decide with
@@ -3207,7 +3191,7 @@ namespace ecs::test {
 		void SetUp() override {
 			AIDecisionSystemTest::SetUp();
 
-			chunks = std::make_unique<world::ChunkManager>(std::make_unique<OpenLandSampler>());
+			chunks = std::make_unique<world::ChunkManager>(std::make_unique<world::SyntheticWorldSampler>(7U, world::SyntheticMap{}));
 			chunks->setLoadRadius(2);
 			chunks->setUnloadRadius(4);
 			chunks->update({0.0F, 0.0F});

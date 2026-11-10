@@ -24,11 +24,8 @@
 
 #include <nav/PathQuery.h>
 
-#include <world/Biome.h>
-#include <world/BiomeWeights.h>
 #include <world/chunk/ChunkManager.h>
-#include <world/chunk/ChunkSampleResult.h>
-#include <world/chunk/IWorldSampler.h>
+#include <world/chunk/SyntheticWorldSampler.h>
 #include <worldgen/sampling/PondNetwork2D.h>
 
 #include <algorithm>
@@ -112,38 +109,23 @@ namespace {
 	const glm::vec2 kInside{2.0F, 1.5F};
 	constexpr float kAgentRadius = 0.3F; // 0.3 m radius fits the 0.9 m door
 
-	// All-land sampler: every tile is grassland, so the area build never invents water
-	// obstacles around the origin room. (The area water predicate keys off Lake/Ocean.)
-	class LandSampler : public world::IWorldSampler {
-	  public:
-		[[nodiscard]] world::ChunkSampleResult sampleChunk(world::ChunkCoordinate) const override {
-			return world::makeUniformChunkSampleResult(
-				world::BiomeWeights::single(world::Biome::TemperateGrassland), 1.0F);
-		}
-		[[nodiscard]] float	   sampleElevation(world::WorldPosition) const override { return 1.0F; }
-		[[nodiscard]] uint64_t getWorldSeed() const override { return 7u; }
-	};
+	constexpr uint64_t kWorldSeed = 7;
 
-	// Mostly-land sampler with one pond: a blob of water centred at (40, 40), radius 8 m wobbled
-	// by its rim sinusoids to 5.5..10.5 m (8 m due west, so its west shore is x = 32). Lets a
-	// test assert isValidPosition is false on a real water face inside the region while a nearby
-	// land face is valid. Every chunk around the origin carries the pond, as a world sampler's
-	// gather would.
+	// All land: every tile is grassland, so the area build never invents water obstacles
+	// around the origin room.
+	std::unique_ptr<world::IWorldSampler> landSampler() {
+		return std::make_unique<world::SyntheticWorldSampler>(kWorldSeed, world::SyntheticMap{});
+	}
+
+	// Mostly land with one pond: a blob of water centred at (40, 40), radius 8 m wobbled by its
+	// rim sinusoids to 5.5..10.5 m (8 m due west, so its west shore is x = 32). Lets a test assert
+	// isValidPosition is false on a real water face inside the region while a nearby land face is
+	// valid.
 	constexpr worldgen::PondNetwork2D::Pond kPatchPond{.cx = 40.0, .cy = 40.0, .radius = 8.0F, .phaseA = 0.0F, .phaseB = 0.0F, .depth = 120};
 
-	class WaterPatchSampler : public world::IWorldSampler {
-	  public:
-		[[nodiscard]] world::ChunkSampleResult sampleChunk(world::ChunkCoordinate coord) const override {
-			world::ChunkSampleResult r = world::makeUniformChunkSampleResult(
-				world::BiomeWeights::single(world::Biome::TemperateGrassland), 1.0F);
-			if (coord.x >= -1 && coord.x <= 1 && coord.y >= -1 && coord.y <= 1) {
-				r.pondBlobs.push_back(kPatchPond);
-			}
-			return r;
-		}
-		[[nodiscard]] float	   sampleElevation(world::WorldPosition) const override { return 1.0F; }
-		[[nodiscard]] uint64_t getWorldSeed() const override { return 7u; }
-	};
+	std::unique_ptr<world::IWorldSampler> waterPatchSampler() {
+		return std::make_unique<world::SyntheticWorldSampler>(kWorldSeed, world::SyntheticMap{.pond = kPatchPond});
+	}
 
 	// The pond's least rim radius, which is how far its center is from the nearest shore.
 	float patchPondNearestShore() {
@@ -158,19 +140,12 @@ namespace {
 	// chunks around it. Each chunk clips its navRing piece to its own square, and the
 	// pieces meet at the corner: with only the diagonal chunks (0,0) and (-1,-1)
 	// generated, the region's water is two pieces touching at one point.
-	class CornerPondSampler : public world::IWorldSampler {
-	  public:
-		[[nodiscard]] world::ChunkSampleResult sampleChunk(world::ChunkCoordinate coord) const override {
-			world::ChunkSampleResult r = world::makeUniformChunkSampleResult(
-				world::BiomeWeights::single(world::Biome::TemperateGrassland), 1.0F);
-			if (coord.x >= -1 && coord.x <= 0 && coord.y >= -1 && coord.y <= 0) {
-				r.pondBlobs.push_back({.cx = 0.0, .cy = 0.0, .radius = 10.0F, .phaseA = 0.7F, .phaseB = 2.1F, .depth = 120});
-			}
-			return r;
-		}
-		[[nodiscard]] float	   sampleElevation(world::WorldPosition) const override { return 1.0F; }
-		[[nodiscard]] uint64_t getWorldSeed() const override { return 7u; }
-	};
+	std::unique_ptr<world::IWorldSampler> cornerPondSampler() {
+		return std::make_unique<world::SyntheticWorldSampler>(
+			kWorldSeed,
+			world::SyntheticMap{.pond = worldgen::PondNetwork2D::Pond{.cx = 0.0, .cy = 0.0, .radius = 10.0F, .phaseA = 0.7F, .phaseB = 2.1F, .depth = 120}}
+		);
+	}
 
 	class NavigationSystemTest : public ::testing::Test {
 	  protected:
@@ -181,7 +156,7 @@ namespace {
 			// A ready chunk region (all land) and a 60 m simulation area at the origin, so
 			// the NavigationSystem build runs through the SIMULATION-AREA path. The origin
 			// room (0..4 m x 0..3 m) sits well inside the area.
-			m_chunks = std::make_unique<world::ChunkManager>(std::make_unique<LandSampler>());
+			m_chunks = std::make_unique<world::ChunkManager>(landSampler());
 			m_chunks->setLoadRadius(2);
 			m_chunks->setUnloadRadius(4);
 			m_chunks->update({0.0F, 0.0F});
@@ -1072,7 +1047,7 @@ TEST_F(NavigationSystemTest, InSimAreaTrueInsideFalseOutside) {
 
 TEST_F(NavigationSystemTest, IsValidPositionTrueOnWalkableFaceFalseOnWaterAndOffMesh) {
 	// Mostly-land world with a pond at (40,40) inside the origin chunk.
-	auto chunks = std::make_unique<world::ChunkManager>(std::make_unique<WaterPatchSampler>());
+	auto chunks = std::make_unique<world::ChunkManager>(waterPatchSampler());
 	chunks->setLoadRadius(2);
 	chunks->setUnloadRadius(4);
 	chunks->update({0.0F, 0.0F});
@@ -1110,7 +1085,7 @@ TEST_F(NavigationSystemTest, IsValidPositionTrueOnWalkableFaceFalseOnWaterAndOff
 // pieces touching at the corner alone, and the land around them has a pinched boundary.
 // That land must still be walkable (WOR-493: the whole region read unwalkable).
 TEST_F(NavigationSystemTest, LandAroundWaterPinchedAtAChunkCornerIsValid) {
-	auto chunks = std::make_unique<world::ChunkManager>(std::make_unique<CornerPondSampler>());
+	auto chunks = std::make_unique<world::ChunkManager>(cornerPondSampler());
 	chunks->setLoadRadius(0);
 	chunks->setUnloadRadius(8);
 	chunks->update({100.0F, 100.0F});	// chunk (0, 0)
@@ -1156,7 +1131,7 @@ TEST_F(NavigationSystemTest, LandAroundWaterPinchedAtAChunkCornerIsValid) {
 // The landing snap: before any sim region or construction world exists, a drop point in
 // the water moves to the nearest walkable terrain beside it, and a land point stays put.
 TEST_F(NavigationSystemTest, NearestTerrainWalkablePointLeavesWaterBeforeAnyRegion) {
-	auto chunks = std::make_unique<world::ChunkManager>(std::make_unique<WaterPatchSampler>());
+	auto chunks = std::make_unique<world::ChunkManager>(waterPatchSampler());
 	chunks->setLoadRadius(2);
 	chunks->setUnloadRadius(4);
 	chunks->update({0.0F, 0.0F});
@@ -1192,7 +1167,7 @@ TEST_F(NavigationSystemTest, NearestTerrainWalkablePointLeavesWaterBeforeAnyRegi
 // others, and near the drop. Checked against the runtime mesh built afterwards, the same
 // isValidPosition the recovery snap would otherwise have to fix.
 TEST_F(NavigationSystemTest, GroupSpawnPointsFromWaterDropAllLandOnWalkableGround) {
-	auto chunks = std::make_unique<world::ChunkManager>(std::make_unique<WaterPatchSampler>());
+	auto chunks = std::make_unique<world::ChunkManager>(waterPatchSampler());
 	chunks->setLoadRadius(2);
 	chunks->setUnloadRadius(4);
 	chunks->update({0.0F, 0.0F});
@@ -1319,13 +1294,13 @@ TEST_F(NavigationSystemTest, GroupSpawnPointsNeverLandsInsideBuiltWallBand) {
 // Vertex-only validity is insufficient: a footprint can have every corner on land yet
 // span water, or fully enclose a water pond. These predicates sample edges + interior
 // (isAreaWalkable) or the centerline (isSegmentWalkable) so any off-mesh part rejects.
-// All use the WaterPatchSampler's pond at (40,40), at most 10.5 m from its center to any shore.
+// All use waterPatchSampler()'s pond at (40,40), at most 10.5 m from its center to any shore.
 
 namespace {
 	// Set up a system over the water-patch world + a 60 m origin region with a built mesh.
 	// Returns the ChunkManager the caller must keep alive for the system's lifetime.
 	std::unique_ptr<world::ChunkManager> wireWaterPatch(NavigationSystem& sys, ConstructionWorld& cw) {
-		auto chunks = std::make_unique<world::ChunkManager>(std::make_unique<WaterPatchSampler>());
+		auto chunks = std::make_unique<world::ChunkManager>(waterPatchSampler());
 		chunks->setLoadRadius(2);
 		chunks->setUnloadRadius(4);
 		chunks->update({0.0F, 0.0F});

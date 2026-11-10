@@ -13,8 +13,7 @@
 #include <construction/ConstructionWorld.h>
 #include <world/chunk/ChunkCoordinate.h>
 #include <world/chunk/ChunkManager.h>
-#include <world/chunk/ChunkSampleResult.h>
-#include <world/chunk/IWorldSampler.h>
+#include <world/chunk/SyntheticWorldSampler.h>
 #include <world/chunk/TerrainPolygonQuery.h>
 
 #include <glm/geometric.hpp>
@@ -159,20 +158,12 @@ namespace {
 
 	// Grassland with a pond in chunk (0, 0), centred at (48, 52) with radius 20 m (its rim
 	// sinusoids put the south shore at y = 32 and the rest 13.7..26.3 m out).
-	class LakeSampler : public world::IWorldSampler {
-	  public:
-		[[nodiscard]] world::ChunkSampleResult sampleChunk(ChunkCoordinate coord) const override {
-			world::ChunkSampleResult r = world::makeUniformChunkSampleResult(
-				world::BiomeWeights::single(world::Biome::TemperateGrassland), 1.0F
-			);
-			if (coord.x >= -1 && coord.x <= 1 && coord.y >= -1 && coord.y <= 1) {
-				r.pondBlobs.push_back({.cx = 48.0, .cy = 52.0, .radius = 20.0F, .phaseA = 1.5708F, .phaseB = 1.5708F, .depth = 120});
-			}
-			return r;
-		}
-		[[nodiscard]] float	   sampleElevation(world::WorldPosition) const override { return 1.0F; }
-		[[nodiscard]] uint64_t getWorldSeed() const override { return 11u; }
-	};
+	std::unique_ptr<world::IWorldSampler> lakeSampler() {
+		return std::make_unique<world::SyntheticWorldSampler>(
+			11u,
+			world::SyntheticMap{.pond = worldgen::PondNetwork2D::Pond{.cx = 48.0, .cy = 52.0, .radius = 20.0F, .phaseA = 1.5708F, .phaseB = 1.5708F, .depth = 120}}
+		);
+	}
 
 } // namespace
 
@@ -620,7 +611,7 @@ TEST_F(VisionSystemTest, ShoreNeverReconciled) {
 // is remembered as the drinkable Terrain_Shore, and none beyond it; each stands
 // on land at the water's edge.
 TEST_F(VisionSystemTest, ShorePointsInSightAreRemembered) {
-	world::ChunkManager chunks(std::make_unique<LakeSampler>());
+	world::ChunkManager chunks(lakeSampler());
 	chunks.setLoadRadius(0);
 	chunks.update({48.0F, 48.0F});
 	chunks.finishPendingGeneration();
