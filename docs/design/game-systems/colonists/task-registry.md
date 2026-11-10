@@ -61,7 +61,7 @@ INFINITE WORLD
 │           LAYER 1: Global Task Registry                      │
 │  Tasks for entities known to ANY colonist                   │
 │  - Sourced from: Union of all Memory components             │
-│  - Updated when: Memory changes (discover, forget)          │
+│  - Updated when: goal systems poll colony memory (throttled)│
 │  - Bounded by: Total colonist memory capacity               │
 └─────────────────────────────────────────────────────────────┘
                               │
@@ -87,86 +87,23 @@ INFINITE WORLD
 
 ## Layer 1: Global Task Registry
 
-### Data Structure
+### Data structure
 
-```cpp
-/// A task that exists because at least one colonist knows about it
-struct GlobalTask {
-    // Identity
-    EntityID targetEntity;        // Entity this task operates on
-    TaskType type;                // Harvest, Haul, Craft, Build, etc.
-    uint32_t defNameId;           // For filtering/display
+The registry is `GoalTaskRegistry` (`libs/sim/ecs/GoalTaskRegistry.h`), one `GoalTask` per goal:
+type, destination, accepted items, target and delivered counts in items, owning goal system,
+parent goal (a Harvest or Haul feeding a Craft), status (`Available`, `Blocked`, `NoSource`), and
+a chain id linking a Harvest to the Haul it spawns. Goals hold no reservations and no `knownBy`
+set. Which colonist is working a goal, and how much is on its way, comes from the claims on
+colonists' tasks ([Task Claims](../../../technical/task-claims.md)).
 
-    // Location (from Memory, not entity query)
-    glm::vec2 position;
+### Keeping it current
 
-    // Which colonists know about this task's target
-    std::unordered_set<EntityID> knownBy;
-
-    // For multi-target tasks (e.g., haul: source → destination)
-    std::optional<EntityID> secondaryTarget;
-    std::optional<glm::vec2> secondaryPosition;
-
-    // Reservation
-    std::optional<EntityID> reservedBy;
-    float reservedAt;
-
-    // Task chain
-    std::optional<uint64_t> chainId;
-    uint8_t chainStep;
-
-    // Metadata
-    float createdAt;
-};
-```
-
-### Memory-Driven Updates
-
-The registry updates based on Memory changes, NOT entity spawning:
-
-| Memory Event | Action |
-|--------------|--------|
-| Colonist discovers entity with `Harvestable` | Add/update task, add colonist to `knownBy` |
-| Colonist discovers loose item (`Carryable`) | Add/update haul task |
-| Colonist forgets entity (LRU eviction) | Remove colonist from `knownBy` |
-| `knownBy` becomes empty | Remove task entirely |
-| Entity is destroyed | Remove task, notify all colonists to forget |
-
-### Building the Registry
-
-Two approaches, both valid:
-
-**Option A: Maintain incrementally (recommended)**
-```cpp
-// Called when any colonist's Memory changes
-void TaskRegistry::onMemoryUpdated(EntityID colonist, const Memory& memory) {
-    // Scan this colonist's known entities
-    for (const auto& [posHash, entities] : memory.worldEntities) {
-        for (const auto& entity : entities) {
-            if (hasWorkCapability(entity.defNameId)) {
-                addOrUpdateTask(entity, colonist);
-            }
-        }
-    }
-    // Remove tasks this colonist no longer knows about
-    pruneTasksNotIn(colonist, memory);
-}
-```
-
-**Option B: Rebuild periodically**
-```cpp
-// Called every N seconds (less efficient but simpler)
-void TaskRegistry::rebuildFromMemories(World& world) {
-    tasks.clear();
-    for (auto [entity, memory] : world.view<Memory>()) {
-        for (const auto& knownEntity : memory.getAllKnown()) {
-            if (hasWorkCapability(knownEntity.defNameId)) {
-                addOrUpdateTask(knownEntity, entity);
-            }
-        }
-    }
-}
-```
+Goal systems (`StorageGoalSystem`, `CraftingGoalSystem`, `ConstructionSystem`, `BuildGoalSystem`)
+create, update, and retire goals, and re-resolve sources against colony knowledge (the union of
+colonist memories, read through each Memory's capability index) on a throttle. Memory does not
+notify the registry when a colonist discovers or forgets something; polling is the model. A goal
+whose only known source is forgotten by everyone goes `NoSource` on the next poll and re-resolves
+when someone discovers a new one.
 
 ---
 
@@ -185,7 +122,8 @@ def get_tasks_for_colonist(colonist, registry):
     # Further filtering...
     tasks = [t for t in tasks if colonist.work_prefs.is_enabled(t.type)]
     tasks = [t for t in tasks if colonist.skills.can_do(t.required_skill)]
-    tasks = [t for t in tasks if not t.reserved or t.reserved_by == colonist.id]
+    # Claims: subtract what other colonists' tasks have claimed (see Task Claims)
+    tasks = [t for t in tasks if available_after_claims(t, colonist) > 0]
 
     return tasks
 ```
@@ -221,8 +159,8 @@ The UI shows tasks from Layer 1 (all known tasks), with annotations:
 
 ### Status Indicators
 
-- **Available**: No reservation, at least one colonist can do it
-- **Reserved/In Progress**: Colonist assigned
+- **Available**: Unclaimed sources remain, at least one colonist can do it
+- **In Progress**: Colonists hold claims toward the goal (shown with their names)
 - **Far**: All knowing colonists are far away
 - **Blocked**: Known but nobody can do it (skill locked, work disabled)
 
@@ -240,7 +178,7 @@ The UI shows tasks from Layer 1 (all known tasks), with annotations:
 | Goal Source | Task Type | Validity Condition |
 |-------------|-----------|-------------------|
 | Storage with capacity | Haul | Storage accepts item type + colonist knows loose item location |
-| Crafting recipe queued | Gather | Recipe needs material + colonist knows source |
+| Crafting recipe queued | Harvest / Haul | Recipe needs material + colonist knows source |
 | Need below threshold | FulfillNeed | Colonist knows resource that fulfills need |
 | Build order placed | Haul/PlacePackaged | Structure needs materials + colonist knows source |
 
@@ -276,12 +214,12 @@ Without a destination, a Haul task is meaningless.
 
 **Solution:** Tasks exist at the GOAL level, not the ITEM level.
 
-### Two-Level Model: Tasks vs Reservations
+### Two-Level Model: Tasks vs Claims
 
 | Level | Scope | Count | Purpose |
 |-------|-------|-------|---------|
 | **Task** | Goal | O(goals) | "Storage X wants rocks" |
-| **Reservation** | Item | O(colonists working) | "Bob is hauling rock@(5,3)" |
+| **Claim** | Item, on a colonist's task | O(colonists working) | "Bob's task will take 5 rocks from the pile at (5,3)" |
 
 ### How 5 Colonists Work in Parallel
 
@@ -298,31 +236,22 @@ Task: "Fill Storage with rocks" (1 task, goal-level)
  (50 rocks)  (49 avail)  (48 avail) (47 avail)
      │          │          │          │
      ▼          ▼          ▼          ▼
- Reserves    Reserves    Reserves   Reserves
+ Claims      Claims      Claims     Claims
  rock@(5,3)  rock@(8,7)  rock@(12,4) rock@(3,9)
 ```
 
 **Key insight:**
 - The **TASK** is shared (1 per storage, goal-level)
-- The **RESERVATION** is per-item (prevents conflicts)
-- Memory tracks what's known; reservations track what's claimed
+- The **CLAIM** is per-item and lives on the colonist's own task (prevents conflicts)
+- Memory tracks what's known; claims track what's committed
 
 ### Data Model
 
-```cpp
-struct GoalTask {
-    EntityID destination;           // Storage entity
-    TaskType type;                  // Haul, Gather, etc.
-    std::vector<uint32_t> acceptsDefNameIds;  // Item types accepted
-
-    // Reservations: which items are currently being worked
-    // Key = item location hash, Value = colonist working it
-    std::unordered_map<uint64_t, EntityID> reservations;
-
-    // Computed: how many items are available (known - reserved)
-    size_t availableCount() const;
-};
-```
+The goal holds no claims. A colonist's `Task` carries its claim list (source quantity, inbound at
+the destination, in-flight toward the goal), and a claim index derived from all tasks answers
+"how much of this goal is in flight" and "who holds this pile". Clearing or destroying a task
+removes its claims with no release step. Data shapes, chain claims, and availability formulas are
+in [Task Claims](../../../technical/task-claims.md).
 
 ### Task Resolution Flow
 
@@ -333,13 +262,13 @@ struct GoalTask {
 2. Bob considers task → checks his Memory for matching items
                 │
                 ▼
-3. Finds 50 rocks known, 2 already reserved by others → 48 available
+3. Finds 50 rocks known, 2 already claimed by others' tasks → 48 available
                 │
                 ▼
-4. Bob picks closest available rock → adds reservation
+4. Bob picks closest available rock → his task records its claims
                 │
                 ▼
-5. Bob hauls rock, deposits → removes reservation
+5. Bob hauls rock, deposits → task ends, its claims go with it
                 │
                 ▼
 6. Task still exists if storage still has capacity
@@ -363,34 +292,31 @@ The task list shows GOALS with availability status:
 |-------|------------|
 | Storage created with capacity | Task created |
 | Storage filled completely | Task removed |
-| Colonist reserves item | Reservation added, available count decreases |
-| Colonist deposits item | Reservation removed, storage capacity decreases |
-| All known items reserved/hauled | Task shows "blocked" until more discovered |
-| New item discovered | Available count increases |
+| Colonist accepts work | Its task records claims, available count decreases, in-progress count increases |
+| Colonist picks up | Source claim drops, inbound and in-flight stay |
+| Colonist deposits item | Task ends with its claims, storage stock rises |
+| Colonist abandons, is bumped, or is taken over | Task cleared, claims gone, available count recovers |
+| All known items claimed/hauled | Task shows "all known sources claimed" until more discovered |
+| New item discovered | Available count increases on the next goal poll |
 
 ---
 
-## Reservation System
+## Claims
 
-### Purpose
+Two colonists must not walk to the same tree or both fetch the last unit a recipe needs. The
+rules, in brief (full design in [Task Claims](../../../technical/task-claims.md)):
 
-Prevent multiple colonists from walking to the same task.
+1. A colonist's task records claims for its whole planned chain when it accepts the work, and
+   rewrites them as steps complete.
+2. Only a colonist that knows a target can claim it; claims on anything a colonist knows about
+   are visible to every colonist.
+3. Claims end with the task. There are no release calls and no timeout.
+4. Critical needs and player orders bump a claim holder; ordinary work never bumps ordinary work.
+5. Claims are checked against the world when the task runs. Finding the target gone or taken is
+   normal re-planning.
 
-### Rules
-
-1. **Reserve on selection:** When colonist selects a task, mark it reserved
-2. **Only knowers can reserve:** Colonist must be in `knownBy` to reserve
-3. **Release on completion:** When task finishes, release reservation
-4. **Release on abandonment:** If colonist switches to higher-priority task
-5. **Timeout:** If no progress for 10 seconds, release
-
-### Edge Case: Reserved but Forgotten
-
-If a colonist reserves a task then forgets the target (LRU eviction while moving):
-
-1. Colonist should re-discover target when they arrive (within sight range)
-2. If somehow they don't, task becomes unreserved on timeout
-3. Another colonist who knows about it can take over
+A colonist that forgets its target while walking (LRU eviction) keeps its claim, because the
+claim is on its task, and re-sees the target on arrival.
 
 ---
 
@@ -418,7 +344,7 @@ Compare to old discovery-driven model:
 |--------|-------------|-------|
 | Memory | Discovered entities | ~10,000 per colonist (LRU) |
 | Tasks | Active goals | ~200 (storage + crafting + needs) |
-| Reservations | Colonists working | ~50 (one per colonist) |
+| Claims | Colonists working | a handful per colonist |
 
 ### Practical Numbers
 
@@ -427,7 +353,7 @@ Most colonies will have:
 - 10-50 storage containers
 - 5-20 active crafting recipes
 - **~50-100 active tasks** (goal-level)
-- **~5-20 active reservations** (item-level)
+- **~10-100 active claims** (item-level, on colonists' tasks)
 
 ### Spatial Indexing
 
@@ -445,28 +371,10 @@ auto bobTasks = filterByKnownBy(nearbyTasks, bobEntityId);
 
 ### Memory System (Source of Truth)
 
-Memory drives task existence. Changes to implement:
-
-```cpp
-// In Memory component or system
-void Memory::onEntityDiscovered(const DiscoveredEntity& entity) {
-    // Existing logic...
-    addWorldEntity(posHash, entity);
-
-    // NEW: Notify task registry
-    if (hasWorkCapability(entity.defNameId)) {
-        TaskRegistry::Get().onEntityDiscovered(ownerEntityId, entity);
-    }
-}
-
-void Memory::onEntityForgotten(const DiscoveredEntity& entity) {
-    // Existing logic...
-    removeWorldEntity(posHash, entity);
-
-    // NEW: Notify task registry
-    TaskRegistry::Get().onEntityForgotten(ownerEntityId, entity);
-}
-```
+Memory is the source of what is known, and nothing is pushed from it. Goal systems read colony
+knowledge (every colonist's Memory, through its capability index) on their throttled poll to
+resolve sources and retire stale goals; each colonist's evaluators read its own Memory when it
+decides.
 
 ### AIDecisionSystem
 
@@ -518,7 +426,8 @@ When colonist discovers wolf → "Tame Wolf" task appears in registry (if coloni
 
 ## Related Documents
 
-- [Task Generation Architecture](../../technical/task-generation-architecture.md) — Event-driven vs periodic deep dive
+- [Task Generation Architecture](../../../technical/task-generation-architecture.md): goal sources, polling, UI vs AI priority
+- [Task Claims](../../../technical/task-claims.md): claims on colonist tasks, the derived claim index, bumping
 - [Priority Config](./priority-config.md) — Priority formula and tunable weights
 - [Task Chains](./task-chains.md) — Multi-step tasks
 - [Work Priorities](./work-priorities.md) — Per-colonist work preferences

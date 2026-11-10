@@ -237,9 +237,6 @@ Formula: `bandBase + (10 - userPriority) * step`
 
     <!-- How often colonists re-evaluate tasks (seconds), unchanged -->
     <reEvalInterval>0.5</reEvalInterval>
-
-    <!-- Reservation timeout: release if no progress (seconds), unchanged -->
-    <reservationTimeout>10.0</reservationTimeout>
   </Thresholds>
 
   <!-- Hauling-specific tuning to avoid the "hauling problem" -->
@@ -381,7 +378,6 @@ public:
     // Thresholds
     int16_t getTaskSwitchThreshold() const;
     float   getReEvalInterval() const;
-    float   getReservationTimeout() const;
 
 private:
     std::unordered_map<std::string, int> taskTiers;  // per-task-type base tier (arbitration)

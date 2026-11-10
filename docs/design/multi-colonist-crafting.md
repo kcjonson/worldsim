@@ -11,7 +11,7 @@ When two or more colonists are available and there is a single work order:
 - How do we avoid DUPLICATING cut / harvest / haul tasks between colonists (two colonists both felling the same tree, or both hauling the same need)? Implies some claim or reservation so a need already in progress is not re-picked.
 - Interaction with the existing model: a need resolves to one Haul/Harvest goal with finite `availableCapacity`; today a brief double-pickup self-corrects via `recordDelivery`, with no reservation by design. Decide whether multi-colonist provisioning needs real reservation, or the capacity model is enough.
 
-These are open questions, not yet decided.
+Answered in [Task Claims](../technical/task-claims.md): requirements divide across colonists, each cut or fetch records in-flight and inbound claims against the craft goal so no need is picked twice, and the capacity model alone was not enough.
 
 ## 2. Workstation ownership during crafting (DECIDED)
 Only one colonist performs the craft of a given work order. The model for an in-progress craft:
@@ -23,9 +23,8 @@ Only one colonist performs the craft of a given work order. The model for an in-
 - d) **World visual state.** The workstation asset gets a distinct in-use visual (for example, the crafting bench shows work-in-progress sitting on it), so the state reads in the world, not just in the UI.
 
 ### Edge cases to resolve (planning round)
-- Assigned colonist dies, is incapacitated, or is permanently drafted away: the station should free up and the work order become re-assignable. Define the release path.
+The release path and claim timing are specified as the craft binding in [Task Claims](../technical/task-claims.md): bound at the first craft action, released on job completion or cancellation, crafter death, incapacitation, direct player control, or a craft started elsewhere.
 - What, if anything, outranks the high finish-priority (immediate danger, mental break, starvation)? An in-progress craft should yield to genuine emergencies but otherwise win.
-- When does the claim happen: at work-order start (provisioning begins) or at the first craft action (materials staged)? Leaning toward claiming the station at the first craft action, so provisioning can still parallelize across colonists per section 1, and the station is only locked once someone is actually crafting.
 
 ## Out of scope
 Single-colonist behavior (the current PR #240 work). This spec is implemented in a later pass after that lands.

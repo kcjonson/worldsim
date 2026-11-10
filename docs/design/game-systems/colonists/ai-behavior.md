@@ -100,9 +100,9 @@ Each colonist has a visible queue showing current and pending tasks. The queue i
 
 ---
 
-## Reservation System
+## Claims
 
-When a colonist decides to use a resource, they "reserve" it. Others skip reserved resources. This prevents two colonists walking to the same berry bush.
+When a colonist accepts work, its task claims what it will use: the berry bush, the units it will take from a pile, the room it will fill in a box. Other colonists see those claims and pick something else, so two colonists never walk to the same berry bush. Critical needs and player orders can take over a work claim; ordinary work never does. See [Task Claims](../../../technical/task-claims.md).
 
 ---
 
