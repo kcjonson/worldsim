@@ -64,14 +64,14 @@ namespace ecs {
 
 		auto& harvestRegistry = assets::AssetRegistry::Get();
 
-		// Cap this withdrawal by what the colonist can actually take this action: the carry
-		// weight (tools are equipment and don't count) AND the backpack's stack/slot headroom.
-		// Clamping by both means the pool below is only debited by what truly lands in the
-		// inventory, so a tree's wood is conserved. At the limit `wanted` is 0: take nothing
-		// and leave the source for the next trip rather than dropping items on the floor.
-		const uint32_t massFit = ecs::cargoUnitsThatFit(inventory, harvestRegistry, collEff.itemDefName);
-		const uint32_t slotFit = inventory.addableCount(collEff.itemDefName);
-		const uint32_t wanted = std::min({collEff.quantity, massFit, slotFit});
+		// Cap this withdrawal by what the colonist can actually take this action: the carry weight
+		// (tools are equipment and don't count), and the pack's stack/slot headroom or, for a two-hand
+		// good, the armful's. Clamping by it means a pool is only debited by what truly lands in the
+		// inventory, so a tree's wood is conserved. At the limit `wanted` is 0: take nothing and leave
+		// the source for the next trip rather than dropping items on the floor.
+		const uint32_t room =
+			ecs::pickupUnitsThatFit(inventory, harvestRegistry, collEff.itemDefName, ecs::carriedCargoMassKg(inventory, harvestRegistry));
+		const uint32_t wanted = std::min(collEff.quantity, room);
 
 		uint32_t added = 0;
 
@@ -118,7 +118,7 @@ namespace ecs {
 		// Inventory, not a ground entity. removeItem clamps to the box's live quantity, so a concurrent
 		// second colonist that beat us to it just withdraws less and the AI re-evaluates next tick -- the
 		// same self-correcting race handling the loose pickup relies on. Add exactly what we removed to
-		// the colonist (sized by carry weight + slots via `wanted`). This intercepts before every ground
+		// the colonist (sized by pickupUnitsThatFit via `wanted`). This intercepts before every ground
 		// path; a Withdraw never touches a pile, pool, or single-shot source.
 		if (collEff.sourceStorageId != 0) {
 			const auto sourceBox = static_cast<EntityID>(collEff.sourceStorageId);
@@ -186,8 +186,7 @@ namespace ecs {
 				stowHeldToolsForArmful(inventory, colonistPosition);
 				added = ecs::addArmful(inventory, harvestRegistry, collEff.itemDefName, requested);
 			} else {
-				const uint32_t fit = ecs::cargoUnitsThatFit(inventory, harvestRegistry, collEff.itemDefName);
-				added = inventory.addItem(collEff.itemDefName, std::min(requested, fit));
+				added = inventory.addItem(collEff.itemDefName, std::min(requested, room));
 			}
 
 			pile.stack->quantity -= added; // mutate the live component so the pile tracks what is left
@@ -227,7 +226,7 @@ namespace ecs {
 			// yield) and the rest drops. The source must still stand before its pool pays, as for a
 			// single-shot source. Removing the source erases its pool, so the removal follows the draw.
 			const uint32_t	  request = collEff.clearsSource ? UINT32_MAX : wanted;
-			const uint32_t	  packRoom = collEff.clearsSource ? std::min(massFit, slotFit) : wanted;
+			const uint32_t	  packRoom = collEff.clearsSource ? room : wanted;
 			const SourceState state = takeSource(SourceTake::Keep);
 			if (state != SourceState::Ready) {
 				if (state == SourceState::OnCooldown && collEff.clearsSource) {

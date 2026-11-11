@@ -2083,6 +2083,56 @@ class LoosePileHaulTest : public ::testing::Test {
 	std::vector<EntityID>  pendingRemoval;
 };
 
+// A two-hand good rides in the hands, so a pack with every slot taken by other goods doesn't stop
+// it. With empty hands and a full pack, the no-room gate offers Wood, and the real Withdraw and the
+// real ground Pickup each lift the armful the gate promised (weight binds: 10 kg of pack leaves 25 kg,
+// 10 Wood). A Withdraw that took nothing here ended the haul and the AI offered it again forever.
+TEST_F(LoosePileHaulTest, FullPackStillTakesATwoHandArmful) {
+	auto&		   registry = assets::AssetRegistry::Get();
+	const auto fillPack = [](Inventory& inventory) {
+		for (uint32_t slot = 0; slot < inventory.maxCapacity; ++slot) {
+			ASSERT_EQ(inventory.addItem("PackFiller" + std::to_string(slot), 1), 1U); // unregistered: 1 kg each
+		}
+		ASSERT_EQ(inventory.getSlotCount(), inventory.maxCapacity);
+		ASSERT_EQ(inventory.addableCount("Wood"), 0U) << "precondition: no pack slot takes Wood";
+	};
+	constexpr uint32_t kArmful = 10; // (35 kg - 10 kg of filler) / 2.5 kg
+
+	// Box-to-box pull leg: the Withdraw.
+	const glm::vec2 boxPos{1.0F, 1.0F};
+	const EntityID	box = world->createEntity();
+	world->addComponent<Position>(box, Position{boxPos});
+	world->addComponent<Inventory>(box, Inventory::createForStorage());
+	world->getComponent<Inventory>(box)->addItem("Wood", 30);
+
+	const EntityID puller = createColonist(boxPos);
+	auto*		   pullerInventory = world->getComponent<Inventory>(puller);
+	fillPack(*pullerInventory);
+	EXPECT_EQ(pickupUnitsThatFit(*pullerInventory, registry, "Wood", carriedCargoMassKg(*pullerInventory, registry)), kArmful)
+		<< "the gate offers the pull";
+
+	auto* task = world->getComponent<Task>(puller);
+	task->type = TaskType::Harvest;
+	task->state = TaskState::Arrived;
+	task->targetPosition = boxPos;
+	*world->getComponent<Action>(puller) = Action::Withdraw("Wood", UINT32_MAX, static_cast<uint64_t>(box), boxPos);
+	world->update(0.1F);
+	world->update(1.0F);
+	EXPECT_EQ(handHeldQuantity(*pullerInventory, "Wood"), kArmful) << "the Withdraw lifts the armful the gate promised";
+	EXPECT_EQ(world->getComponent<Inventory>(box)->getQuantity("Wood"), 30U - kArmful) << "the box gives up exactly that";
+
+	// Loose-pile haul leg: the ground Pickup.
+	const glm::vec2 pilePos{8.0F, 8.0F};
+	const EntityID	pile = spawnPile(16, pilePos);
+	const EntityID	hauler = createColonist(pilePos);
+	auto*			haulerInventory = world->getComponent<Inventory>(hauler);
+	fillPack(*haulerInventory);
+	EXPECT_EQ(pickupUnitsThatFit(*haulerInventory, registry, "Wood", carriedCargoMassKg(*haulerInventory, registry)), kArmful);
+	pickUpPile(hauler, pilePos);
+	EXPECT_EQ(handHeldQuantity(*haulerInventory, "Wood"), kArmful) << "the Pickup lifts the armful the gate promised";
+	EXPECT_EQ(world->getComponent<ResourceStack>(pile)->quantity, 16U - kArmful);
+}
+
 // A 16-unit pile, colonist cap 35: the first Pickup lifts 14 (floor(35/2.5)) into the hands and
 // the pile drops to 2 with the entity still present; a second Pickup lifts the last 2, the stack
 // hits 0, and the pile entity is removed.

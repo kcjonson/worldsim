@@ -173,18 +173,26 @@ namespace ecs {
 		return toRemove;
 	}
 
+	/// Units of `defName` an armful of it in the hands has room for, by weight and stack cap; whether
+	/// the hands are free for it is the caller's question. An armful is one stack, bounded by carry
+	/// weight AND the item's stackSize, whichever binds first (for wood weight binds well below 40).
+	/// `carriedKg` is carriedCargoMassKg(inv).
+	[[nodiscard]] inline uint32_t
+	armfulRoom(const Inventory& inv, const assets::AssetRegistry& registry, const std::string& defName, float carriedKg) {
+		const auto*	   def		= registry.getDefinition(defName);
+		const uint32_t stackCap = (def != nullptr && def->itemProperties.has_value()) ? def->itemProperties->stackSize : UINT32_MAX;
+		const uint32_t held		= handHeldQuantity(inv, defName);
+		if (held >= stackCap) {
+			return 0;
+		}
+		return std::min(stackCap - held, massUnitsThatFit(inv.carryCapacityKg - carriedKg, registry.getItemMassKg(defName), UINT32_MAX));
+	}
+
 	/// Add a weight-limited armful of a two-hand material to the hands: grow an armful of the
 	/// same material already held, or seat a new one (which needs both hands free). Clamps to
-	/// the carry-weight cap and keeps the two-hand mirror in sync. Returns the amount lifted.
+	/// armfulRoom and keeps the two-hand mirror in sync. Returns the amount lifted.
 	inline uint32_t addArmful(Inventory& inv, const assets::AssetRegistry& registry, const std::string& defName, uint32_t quantity) {
-		// An armful is one stack: bounded by carry weight AND the item's stackSize (the carry rule
-		// is weight-or-count, whichever binds first). For wood weight binds well below 40, so the
-		// stack cap only bites for lighter materials. Unknown/unbounded items fall back to weight.
-		const auto*	   def		 = registry.getDefinition(defName);
-		const uint32_t stackCap	 = (def != nullptr && def->itemProperties.has_value()) ? def->itemProperties->stackSize : UINT32_MAX;
-		const uint32_t held		 = handHeldQuantity(inv, defName);
-		const uint32_t stackRoom = (held >= stackCap) ? 0U : stackCap - held;
-		const uint32_t lifted	 = std::min({quantity, cargoUnitsThatFit(inv, registry, defName), stackRoom});
+		const uint32_t lifted = std::min(quantity, armfulRoom(inv, registry, defName, carriedCargoMassKg(inv, registry)));
 		if (lifted == 0) {
 			return 0;
 		}
@@ -203,13 +211,16 @@ namespace ecs {
 		return lifted;
 	}
 
-	/// How many units of `defName` a pickup could lift right now, as the Pickup and Withdraw effects
-	/// lift them: a two-hand good as an armful (growing one of the same good, or seating a new one once
-	/// held one-hand items are stowed, so an armful of another good blocks it), anything else into the
-	/// pack, bounded by weight and slot room. Zero means a pickup now would collect nothing.
-	[[nodiscard]] inline uint32_t pickupUnitsThatFit(const Inventory& inv, const assets::AssetRegistry& registry, const std::string& defName) {
-		const uint32_t byWeight = cargoUnitsThatFit(inv, registry, defName);
+	/// How many units of `defName` a pickup could lift right now: a two-hand good as an armful (growing
+	/// one of the same good, or seating a new one once held one-hand items are stowed, so an armful of
+	/// another good blocks it; pack slots don't bound it), anything else into the pack, bounded by weight
+	/// and slot room. Zero means a pickup now would collect nothing. The Pickup and Withdraw effects size
+	/// their take with this, so the AI's no-room gate and what they lift are one rule.
+	/// `carriedKg` is carriedCargoMassKg(inv), passed so a caller asking about several items sums it once.
+	[[nodiscard]] inline uint32_t
+	pickupUnitsThatFit(const Inventory& inv, const assets::AssetRegistry& registry, const std::string& defName, float carriedKg) {
 		if (!itemIsTwoHand(registry, defName)) {
+			const uint32_t byWeight = massUnitsThatFit(inv.carryCapacityKg - carriedKg, registry.getItemMassKg(defName), UINT32_MAX);
 			return std::min(byWeight, inv.addableCount(defName));
 		}
 		for (const auto* hand : {&inv.leftHand, &inv.rightHand}) {
@@ -217,10 +228,7 @@ namespace ecs {
 				return 0;
 			}
 		}
-		const auto*	   def		= registry.getDefinition(defName);
-		const uint32_t stackCap = (def != nullptr && def->itemProperties.has_value()) ? def->itemProperties->stackSize : UINT32_MAX;
-		const uint32_t held		= handHeldQuantity(inv, defName);
-		return held >= stackCap ? 0U : std::min(byWeight, stackCap - held);
+		return armfulRoom(inv, registry, defName, carriedKg);
 	}
 
 	/// Stow any ONE-hand items held in the hands out of the way so both hands are free for a

@@ -588,7 +588,7 @@ namespace ecs {
 							}
 							// Only fetch what the pickup can actually lift; one that adds 0 would be
 							// re-issued every tick. The craft stays pending until the colonist has room.
-							if (ecs::pickupUnitsThatFit(inventory, registry, itemDefName) == 0) {
+							if (ecs::pickupUnitsThatFit(inventory, registry, itemDefName, ecs::carriedCargoMassKg(inventory, registry)) == 0) {
 								pushNoRoom(*goal, itemDefName, "Fetching " + itemDefName + " for crafting");
 								continue;
 							}
@@ -648,7 +648,7 @@ namespace ecs {
 					if (storageHeadroom == 0) {
 						return; // storage can't take any more of this item, skip it
 					}
-					if (ecs::pickupUnitsThatFit(inventory, registry, itemDefName) == 0) {
+					if (ecs::pickupUnitsThatFit(inventory, registry, itemDefName, ecs::carriedCargoMassKg(inventory, registry)) == 0) {
 						pushNoRoom(*goal, itemDefName, "Hauling " + itemDefName + " to storage");
 						return;
 					}
@@ -733,7 +733,7 @@ namespace ecs {
 							if (perTrip == 0) {
 								continue; // colonist can't carry a single unit of this item
 							}
-							const bool roomNow = ecs::pickupUnitsThatFit(inventory, registry, itemDefName) > 0;
+							const bool roomNow = ecs::pickupUnitsThatFit(inventory, registry, itemDefName, ecs::carriedCargoMassKg(inventory, registry)) > 0;
 
 							for (auto [srcEntity, srcConfig, srcInv, srcPos] : world->view<StorageConfiguration, Inventory, Position>()) {
 								if (srcEntity == destEntity) {
