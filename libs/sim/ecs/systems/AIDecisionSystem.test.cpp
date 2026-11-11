@@ -3483,7 +3483,8 @@ namespace ecs::test {
 	}
 
 	// A construction clear Harvest is served by any harvestable inside its footprint, whatever it
-	// yields, and by nothing outside it. A bush nearer the colonist but outside is not offered.
+	// yields, and by nothing outside it. A bush nearer the colonist but outside is not offered; a bush
+	// and a tree inside are, though they yield different items.
 	TEST_F(AIDecisionSystemTest, ClearHarvestOffersOnlyHarvestablesInsideItsFootprint) {
 		auto& registry = assets::AssetRegistry::Get();
 
@@ -3497,6 +3498,13 @@ namespace ecs::test {
 		bushDef.capabilities.harvestable = cap;
 		registry.registerTestDefinition(std::move(bushDef));
 		const uint32_t bushId = registry.getDefNameId("Flora_TestBush");
+		assets::AssetDefinition treeDef;
+		treeDef.defName = "Flora_TestTree";
+		treeDef.label = "Test Tree";
+		treeDef.capabilities.harvestable = assets::HarvestableCapability{};
+		treeDef.capabilities.harvestable->yieldDefName = "Wood";
+		registry.registerTestDefinition(std::move(treeDef));
+		const uint32_t treeId = registry.getDefNameId("Flora_TestTree");
 
 		auto colonist = createColonist({0.0F, 0.0F});
 		setNeedValue(colonist, NeedType::Hunger, 100.0F);
@@ -3506,8 +3514,10 @@ namespace ecs::test {
 
 		const glm::vec2 outside{1.0F, 0.0F};
 		const glm::vec2 inside{20.0F, 0.0F};
+		const glm::vec2 treeInside{22.0F, 0.0F};
 		addKnownEntity(colonist, outside, bushId, assets::CapabilityType::Harvestable);
 		addKnownEntity(colonist, inside, bushId, assets::CapabilityType::Harvestable);
+		addKnownEntity(colonist, treeInside, treeId, assets::CapabilityType::Harvestable);
 
 		GoalTask clear;
 		clear.type = TaskType::Harvest;
@@ -3524,6 +3534,160 @@ namespace ecs::test {
 		ASSERT_NE(task, nullptr);
 		ASSERT_EQ(task->type, TaskType::Harvest);
 		EXPECT_EQ(task->harvestTargetEntityId, hashWorldEntity(inside, bushId)) << "only a blocker inside the footprint serves a clear";
+		std::vector<uint64_t> offered;
+		for (const auto& option : getTrace(colonist)->options) {
+			if (option.taskType == TaskType::Harvest) {
+				offered.push_back(option.harvestTargetEntityId);
+			}
+		}
+		std::sort(offered.begin(), offered.end());
+		std::vector<uint64_t> expected{hashWorldEntity(inside, bushId), hashWorldEntity(treeInside, treeId)};
+		std::sort(expected.begin(), expected.end());
+		EXPECT_EQ(offered, expected) << "both blockers inside, and nothing else";
+	}
+
+	// Two defs that yield the same item both serve a harvest goal for it, and a third that yields
+	// something else isn't looked at: the goal visits only the entries of the defs that give its item.
+	TEST_F(AIDecisionSystemTest, HarvestGoalSeesEveryDefThatYieldsItsItem) {
+		auto&	   registry = assets::AssetRegistry::Get();
+		const auto registerFlora = [&](const char* name, const char* yield) {
+			assets::AssetDefinition def;
+			def.defName = name;
+			def.label = name;
+			def.capabilities.harvestable = assets::HarvestableCapability{};
+			def.capabilities.harvestable->yieldDefName = yield;
+			registry.registerTestDefinition(std::move(def));
+			return registry.getDefNameId(name);
+		};
+		assets::AssetDefinition wood;
+		wood.defName = "Wood";
+		wood.label = "Wood";
+		wood.itemProperties = assets::ItemProperties{};
+		wood.itemProperties->stackSize = 40;
+		wood.itemProperties->massKg = 0.1F;
+		registry.registerTestDefinition(std::move(wood));
+		const uint32_t woodId = registry.getDefNameId("Wood");
+		const uint32_t oakId = registerFlora("Flora_Oak", "Wood");
+		const uint32_t pineId = registerFlora("Flora_Pine", "Wood");
+		const uint32_t bushId = registerFlora("Flora_Bush", "Berry");
+
+		auto colonist = createColonist({0.0F, 0.0F});
+		satisfyAllNeeds(*getNeeds(colonist));
+		addKnownEntity(colonist, {3.0F, 0.0F}, oakId, assets::CapabilityType::Harvestable);
+		addKnownEntity(colonist, {0.0F, 3.0F}, pineId, assets::CapabilityType::Harvestable);
+		addKnownEntity(colonist, {0.0F, -3.0F}, pineId, assets::CapabilityType::Harvestable);
+		for (int i = 0; i < 10; ++i) {
+			addKnownEntity(colonist, {-3.0F - static_cast<float>(i), 0.0F}, bushId, assets::CapabilityType::Harvestable);
+		}
+
+		GoalTask harvest;
+		harvest.type = TaskType::Harvest;
+		harvest.owner = GoalOwner::CraftingGoalSystem;
+		harvest.yieldDefNameId = woodId;
+		harvest.destinationPosition = {0.0F, 0.0F};
+		harvest.targetAmount = 5;
+		harvest.status = GoalStatus::Available;
+		GoalTaskRegistry::Get().createGoal(std::move(harvest));
+
+#ifdef DEVELOPMENT_BUILD
+		const uint64_t visitsBefore = workSourceVisits();
+#endif
+		world->update(0.016F);
+
+		std::vector<uint32_t> cut;
+		for (const auto& option : getTrace(colonist)->options) {
+			if (option.taskType == TaskType::Harvest) {
+				EXPECT_EQ(option.harvestYieldDefNameId, woodId);
+				cut.push_back(*option.targetDefNameId);
+			}
+		}
+		std::sort(cut.begin(), cut.end());
+		std::vector<uint32_t> expected{oakId, pineId, pineId};
+		std::sort(expected.begin(), expected.end());
+		EXPECT_EQ(cut, expected) << "the oak and both pines, no bush";
+#ifdef DEVELOPMENT_BUILD
+		EXPECT_EQ(workSourceVisits() - visitsBefore, 3U) << "the bushes are never visited";
+#endif
+	}
+
+	// A category goal takes every carryable of its category plus the items it names, each pile once
+	// however the goal names it (in its category, named too, or named twice), and visits no other
+	// item. A goal naming one item twice offers each pile of it once too.
+	TEST_F(AIDecisionSystemTest, HaulGoalsOfferEachPileOnce) {
+		auto&	   registry = assets::AssetRegistry::Get();
+		const auto registerItem = [&](const char* name, assets::ItemCategory category) {
+			assets::AssetDefinition def;
+			def.defName = name;
+			def.label = name;
+			def.handsRequired = 1;
+			def.category = category;
+			def.capabilities.carryable = assets::CarryableCapability{1};
+			def.itemProperties = assets::ItemProperties{};
+			def.itemProperties->stackSize = 40;
+			def.itemProperties->massKg = 0.1F;
+			registry.registerTestDefinition(std::move(def));
+			return registry.getDefNameId(name);
+		};
+		const uint32_t pelletId = registerItem("Pellet", assets::ItemCategory::RawMaterial);
+		const uint32_t breadId = registerItem("Bread", assets::ItemCategory::Food);
+		const uint32_t trinketId = registerItem("Trinket", assets::ItemCategory::Tool);
+
+		auto colonist = createColonist({0.0F, 0.0F});
+		satisfyAllNeeds(*getNeeds(colonist));
+		addKnownEntity(colonist, {2.0F, 0.0F}, pelletId, assets::CapabilityType::Carryable);
+		addKnownEntity(colonist, {3.0F, 0.0F}, pelletId, assets::CapabilityType::Carryable);
+		addKnownEntity(colonist, {0.0F, 2.0F}, breadId, assets::CapabilityType::Carryable);
+		for (int i = 0; i < 10; ++i) {
+			addKnownEntity(colonist, {-2.0F - static_cast<float>(i), 0.0F}, trinketId, assets::CapabilityType::Carryable);
+		}
+
+		const auto makeBox = [&](glm::vec2 at) {
+			auto box = world->createEntity();
+			world->addComponent<Position>(box, Position{at});
+			world->addComponent<Inventory>(box, Inventory::createForStorage());
+			return box;
+		};
+		const glm::vec2 categoryAt{4.0F, 4.0F};
+		const glm::vec2 namedAt{-4.0F, 4.0F};
+		GoalTask category;
+		category.type = TaskType::Haul;
+		category.owner = GoalOwner::StorageGoalSystem;
+		category.destinationEntity = makeBox(categoryAt);
+		category.destinationPosition = categoryAt;
+		category.acceptedCategory = assets::ItemCategory::RawMaterial;
+		category.acceptedDefNameIds = {breadId, pelletId, breadId};
+		category.targetAmount = 5;
+		category.status = GoalStatus::Available;
+		const uint64_t categoryGoal = GoalTaskRegistry::Get().createGoal(std::move(category));
+		GoalTask named;
+		named.type = TaskType::Haul;
+		named.owner = GoalOwner::StorageGoalSystem;
+		named.destinationEntity = makeBox(namedAt);
+		named.destinationPosition = namedAt;
+		named.acceptedDefNameIds = {pelletId, pelletId};
+		named.targetAmount = 5;
+		named.status = GoalStatus::Available;
+		const uint64_t namedGoal = GoalTaskRegistry::Get().createGoal(std::move(named));
+
+#ifdef DEVELOPMENT_BUILD
+		const uint64_t visitsBefore = workSourceVisits();
+#endif
+		world->update(0.016F);
+
+		const auto& options = getTrace(colonist)->options;
+		const auto	offered = [&](uint64_t goal, const char* item) {
+			 return std::count_if(options.begin(), options.end(), [&](const EvaluatedOption& o) {
+				 return o.taskType == TaskType::Haul && o.haulGoalId == goal && o.haulItemDefName == item;
+			 });
+		};
+		EXPECT_EQ(offered(categoryGoal, "Pellet"), 2) << "in the category and named: each pile once";
+		EXPECT_EQ(offered(categoryGoal, "Bread"), 1) << "named twice: one option";
+		EXPECT_EQ(offered(categoryGoal, "Trinket"), 0) << "another category";
+		EXPECT_EQ(offered(namedGoal, "Pellet"), 2) << "named twice: each pile once";
+		EXPECT_EQ(offered(namedGoal, "Bread"), 0);
+#ifdef DEVELOPMENT_BUILD
+		EXPECT_EQ(workSourceVisits() - visitsBefore, 2U + 1U + 2U) << "the trinkets are never visited";
+#endif
 	}
 
 	// A craft fetch must not be offered when the colonist is at/over its carry-weight cap: the

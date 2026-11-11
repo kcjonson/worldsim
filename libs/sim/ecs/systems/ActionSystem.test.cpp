@@ -1015,8 +1015,7 @@ TEST_F(ActionSystemGoalTest, CraftFetchFromPileTakesOnlyRemainingNeedLeavesRest)
 	auto pile = world->createEntity();
 	world->addComponent<Position>(pile, Position{pilePos});
 	world->addComponent<Appearance>(pile, Appearance{"SmallStone", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
-	world->addComponent<ResourceStack>(pile, ResourceStack{7});
-	world->getSystem<ActionSystem>().loosePiles().add(pile, assets::AssetRegistry::Get().getDefNameId("SmallStone"), pilePos);
+	makeLoosePile(*world, pile, assets::AssetRegistry::Get().getDefNameId("SmallStone"), pilePos, 7);
 
 	auto colonist = createColonist(pilePos);
 	auto* memory = world->getComponent<Memory>(colonist);
@@ -2015,12 +2014,12 @@ class LoosePileHaulTest : public ::testing::Test {
 
 		auto& action = world->registerSystem<ActionSystem>(kTestRngSeed);
 		// Mirror GameScene: a drained pile is removed by its exact entity id (not a position
-		// scan), so two same-material piles can never alias.
-		action.setRemoveEntityByIdCallback([this, &action](EntityID entity) {
+		// scan), so two same-material piles can never alias. The game queues it and its drain
+		// destroys it the same way, after the update.
+		action.setRemoveEntityByIdCallback([this](EntityID entity) {
 			++removeCalls;
 			lastRemovedEntity = entity;
-			action.loosePiles().remove(entity);
-			world->destroyEntity(entity);
+			pendingRemoval.push_back(entity);
 		});
 	}
 
@@ -2048,8 +2047,7 @@ class LoosePileHaulTest : public ::testing::Test {
 		auto entity = world->createEntity();
 		world->addComponent<Position>(entity, Position{pos});
 		world->addComponent<Appearance>(entity, Appearance{"Wood", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
-		world->addComponent<ResourceStack>(entity, ResourceStack{count});
-		world->getSystem<ActionSystem>().loosePiles().add(entity, assets::AssetRegistry::Get().getDefNameId("Wood"), pos);
+		makeLoosePile(*world, entity, assets::AssetRegistry::Get().getDefNameId("Wood"), pos, count);
 		return entity;
 	}
 
@@ -2068,11 +2066,21 @@ class LoosePileHaulTest : public ::testing::Test {
 
 		world->update(0.1F); // start
 		world->update(1.0F); // complete (Pickup duration 0.5s)
+		drainRemovals();
+	}
+
+	/// The game's deferred removal drain.
+	void drainRemovals() {
+		for (EntityID entity : pendingRemoval) {
+			destroyWorldEntity(*world, entity);
+		}
+		pendingRemoval.clear();
 	}
 
 	std::unique_ptr<World> world;
 	int					   removeCalls = 0;
 	EntityID			   lastRemovedEntity = kInvalidEntity;
+	std::vector<EntityID>  pendingRemoval;
 };
 
 // A 16-unit pile, colonist cap 35: the first Pickup lifts 14 (floor(35/2.5)) into the hands and
@@ -2109,38 +2117,62 @@ TEST_F(LoosePileHaulTest, ArmfulDrainsPileAcrossTwoPickupsThenRemoves) {
 	EXPECT_FALSE(world->isAlive(pile)) << "Pile entity destroyed once drained to zero";
 }
 
-// Two same-material piles sit almost on top of each other, 0.1 m apart. Draining
-// ONE to zero must destroy that exact entity and leave the other intact -- a position-keyed
-// removal could orphan the emptied pile or delete the still-loaded one. Both piles here hold a
-// small count (5) so whichever findLoosePile matches first drains fully in one pickup, and the
-// removal must target that exact entity id; the other pile's count stays untouched.
-TEST_F(LoosePileHaulTest, TwoPilesAtSamePositionRemovesOnlyTheDrainedEntity) {
+// Two Wood piles in one 0.1 m cell share the world key a colonist remembers that spot by. Both stay
+// filed: the first pickup drains one and removes exactly it, the second pickup finds the other, and
+// only then is the cell empty. An index that let the later pile replace the earlier lost it for good.
+TEST_F(LoosePileHaulTest, TwoPilesInOneCellDrainOneAfterTheOther) {
 	const glm::vec2 pilePos{1.0F, 1.0F};
-	// Both close to each other and the pickup position. 5 < the 14-unit armful cap, so a
-	// single pickup empties whichever pile is matched first (no need to know view order up front).
-	EntityID pileA = spawnPile(5, pilePos);
-	EntityID pileB = spawnPile(5, {pilePos.x + 0.1F, pilePos.y});
+	const EntityID	pileA = spawnPile(5, pilePos);
+	const EntityID	pileB = spawnPile(5, {pilePos.x + 0.04F, pilePos.y});
+	const uint32_t	woodId = assets::AssetRegistry::Get().getDefNameId("Wood");
+	const auto&		piles = world->getSystem<ActionSystem>().loosePiles();
+	ASSERT_EQ(hashWorldEntity(pilePos, woodId), hashWorldEntity({pilePos.x + 0.04F, pilePos.y}, woodId));
+	ASSERT_EQ(piles.size(), 2U);
 
-	auto colonist = createColonist(pilePos);
-
-	pickUpPile(colonist, pilePos);
-
+	auto  colonist = createColonist(pilePos);
 	auto* inventory = world->getComponent<Inventory>(colonist);
-	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 5U) << "The matched pile's 5 units were lifted in one armful";
 
-	// Exactly one pile drained to zero and was removed by id; the other is fully intact.
-	const bool aDrained = !world->isAlive(pileA);
-	const EntityID drained = aDrained ? pileA : pileB;
-	const EntityID survivor = aDrained ? pileB : pileA;
+	// 5 is under the 14-unit armful cap, so one pickup empties whichever pile the index gives first.
+	pickUpPile(colonist, pilePos);
+	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 5U);
+	const EntityID drained = world->isAlive(pileA) ? pileB : pileA;
+	const EntityID survivor = drained == pileA ? pileB : pileA;
+	EXPECT_EQ(removeCalls, 1);
+	EXPECT_EQ(lastRemovedEntity, drained) << "the removal names the pile that drained";
+	EXPECT_FALSE(world->isAlive(drained));
+	ASSERT_TRUE(world->isAlive(survivor));
+	EXPECT_EQ(world->getComponent<ResourceStack>(survivor)->quantity, 5U) << "the other pile is untouched";
+	EXPECT_EQ(piles.find(woodId, pilePos), survivor) << "and still filed under the cell";
 
-	EXPECT_EQ(removeCalls, 1) << "Exactly one pile was removed";
-	EXPECT_EQ(lastRemovedEntity, drained) << "The removed entity is the one that drained to zero";
-	EXPECT_FALSE(world->isAlive(drained)) << "Drained pile destroyed";
+	inventory->leftHand.reset();
+	inventory->rightHand.reset();
+	pickUpPile(colonist, pilePos);
+	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 5U);
+	EXPECT_EQ(removeCalls, 2);
+	EXPECT_EQ(lastRemovedEntity, survivor);
+	EXPECT_FALSE(world->isAlive(survivor));
+	EXPECT_EQ(piles.size(), 0U);
+}
 
-	ASSERT_TRUE(world->isAlive(survivor)) << "The other pile survives - not aliased by position";
-	auto* survivorStack = world->getComponent<ResourceStack>(survivor);
-	ASSERT_NE(survivorStack, nullptr);
-	EXPECT_EQ(survivorStack->quantity, 5U) << "Survivor's count is untouched";
+// The game files a dropped pile and unfiles it in its deferred removal drain through the same two
+// functions this fixture uses, whatever queued the removal: a drained pile, a dev kill, or an
+// entity that was never a pile.
+TEST_F(LoosePileHaulTest, DropFilesAPileAndTheDrainUnfilesIt) {
+	const glm::vec2 pilePos{3.0F, 3.0F};
+	const uint32_t	woodId = assets::AssetRegistry::Get().getDefNameId("Wood");
+	const auto&		piles = world->getSystem<ActionSystem>().loosePiles();
+
+	const EntityID pile = spawnPile(7, pilePos);
+	EXPECT_EQ(piles.find(woodId, pilePos), pile);
+	EXPECT_EQ(world->getComponent<ResourceStack>(pile)->quantity, 7U);
+
+	const EntityID other = world->createEntity();
+	pendingRemoval = {other, pile};
+	drainRemovals();
+	EXPECT_FALSE(world->isAlive(pile));
+	EXPECT_FALSE(world->isAlive(other));
+	EXPECT_EQ(piles.find(woodId, pilePos), kInvalidEntity);
+	EXPECT_EQ(piles.size(), 0U);
 }
 
 // The remembered pile is gone (another hauler emptied it) and a second Wood pile stands 0.2 m away,
@@ -2155,7 +2187,6 @@ TEST_F(LoosePileHaulTest, PileIndexMissTakesNothingFromANeighbour) {
 	const uint32_t woodId = registry.getDefNameId("Wood");
 
 	assets::PlacementExecutor executor{registry};
-	std::vector<EntityID>	  pendingRemoval;
 	world->getSystem<ActionSystem>().setTakeSourceCallback(
 		[&](const std::string& defName, float x, float y, ActionSystem::SourceTake take, float seconds) {
 			return takeWorldSource(executor, *world, pendingRemoval, defName, {x, y}, take, seconds);

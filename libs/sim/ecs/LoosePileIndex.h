@@ -2,8 +2,8 @@
 
 // Loose ground piles (ResourceStack entities) by world key, the key Memory files the pile under:
 // hashWorldEntity(position, defNameId). A pickup from a remembered pile finds it with one lookup
-// instead of a scan of every pile. ActionSystem owns the one instance; whoever spawns a pile adds it
-// and whoever destroys one removes it.
+// instead of a scan of every pile. ActionSystem owns the one instance; piles enter it through
+// makeLoosePile and leave it through destroyWorldEntity (WorldSource.h), which the game and tests share.
 
 #include "EntityID.h"
 #include "components/Memory.h"

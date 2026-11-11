@@ -84,8 +84,8 @@ public:
 	using RemoveEntityByIdCallback = std::function<void(EntityID entity)>;
 	void setRemoveEntityByIdCallback(RemoveEntityByIdCallback callback) { m_onRemoveEntityById = std::move(callback); }
 
-	/// The loose ground piles a pickup draws from. Whoever spawns a pile adds it here and whoever
-	/// destroys one removes it.
+	/// The loose ground piles a pickup draws from, filed by makeLoosePile and unfiled by
+	/// destroyWorldEntity.
 	[[nodiscard]] LoosePileIndex& loosePiles() { return m_loosePiles; }
 
 	/// Result of withdrawing from a harvestable's resource pool.

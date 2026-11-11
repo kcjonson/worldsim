@@ -885,7 +885,6 @@ namespace {
 			// destroys here instead of calling destroyEntity mid-iteration, which
 			// would swap-and-pop the component pools out from under a live view.
 			if (!m_pendingEntityRemoval.empty()) {
-				auto& loosePiles = ecsWorld->getSystem<ecs::ActionSystem>().loosePiles();
 				for (ecs::EntityID entity : m_pendingEntityRemoval) {
 					// Drop control if the controlled colonist is being destroyed, so a recycled
 					// entity index can't later resolve m_controlledColonist to a different live entity.
@@ -893,8 +892,7 @@ namespace {
 						m_controlledColonist = 0;
 						m_moveMarkerTtl = 0.0F;
 					}
-					loosePiles.remove(entity);
-					ecsWorld->destroyEntity(entity);
+					ecs::destroyWorldEntity(*ecsWorld, entity);
 				}
 				m_pendingEntityRemoval.clear();
 			}
@@ -1780,12 +1778,9 @@ namespace {
 			for (const auto& [index, added] : plan.topUps) {
 				nearbyStacks[index]->quantity += added;
 			}
-			auto&		   loosePiles = ecsWorld->getSystem<ecs::ActionSystem>().loosePiles();
 			const uint32_t defNameId = registry.getDefNameId(defName);
 			for (const auto& [pos, qty] : plan.spawns) {
-				auto entity = m_placementSystem->spawnEntity(defName, {pos.x, pos.y});
-				ecsWorld->addComponent<ecs::ResourceStack>(entity, ecs::ResourceStack{qty});
-				loosePiles.add(entity, defNameId, pos);
+				ecs::makeLoosePile(*ecsWorld, m_placementSystem->spawnEntity(defName, {pos.x, pos.y}), defNameId, pos, qty);
 			}
 			LOG_INFO(
 				Game,

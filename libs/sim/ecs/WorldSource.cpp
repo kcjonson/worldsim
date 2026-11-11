@@ -19,6 +19,20 @@ namespace ecs {
 		return placement.regrowthReadyAt(at, defNameId, simulationSeconds(world));
 	}
 
+	void makeLoosePile(World& world, EntityID entity, uint32_t defNameId, glm::vec2 position, uint32_t quantity) {
+		world.addComponent<ResourceStack>(entity, ResourceStack{quantity});
+		if (auto* actions = world.tryGetSystem<ActionSystem>()) {
+			actions->loosePiles().add(entity, defNameId, position);
+		}
+	}
+
+	void destroyWorldEntity(World& world, EntityID entity) {
+		if (auto* actions = world.tryGetSystem<ActionSystem>()) {
+			actions->loosePiles().remove(entity);
+		}
+		world.destroyEntity(entity);
+	}
+
 	ActionSystem::SourceState takeWorldSource(
 		assets::PlacementExecutor& placement,
 		World&					   world,
