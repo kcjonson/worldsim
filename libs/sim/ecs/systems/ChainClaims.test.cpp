@@ -6,6 +6,7 @@
 #include "AIDecisionSystem.h"
 #include "ActionSystem.h"
 #include "ChainClaims.h"
+#include "CollisionSystem.h"
 #include "CraftingGoalSystem.h"
 #include "MovementSystem.h"
 #include "PhysicsSystem.h"
@@ -16,6 +17,7 @@
 #include "../World.h"
 #include "../WorldSource.h"
 #include "../components/Action.h"
+#include "../components/AgentRadius.h"
 #include "../components/Appearance.h"
 #include "../components/DecisionTrace.h"
 #include "../components/Inventory.h"
@@ -3475,6 +3477,116 @@ namespace ecs::test {
 		ASSERT_EQ(getTask(sleeper)->needToFulfill, NeedType::Hunger);
 		ASSERT_TRUE(getTask(sleeper)->suspended.has_value());
 		EXPECT_EQ(ai->claimIndex().inFlight(root, stoneId, {}), 3U);
+	}
+
+	// =============================================================================
+	// Colonists bound for one point: separation keeps them apart, so no more than one of them can stand
+	// on it. Each must still act once it is within reach of the point, or both stand there for good.
+	// =============================================================================
+
+	class CrowdedTargetTest : public ChainClaimsTest {
+	  protected:
+		void SetUp() override {
+			ChainClaimsTest::SetUp();
+			time = &world->registerSystem<TimeSystem>();
+			world->registerSystem<MovementSystem>();
+			world->registerSystem<PhysicsSystem>();
+			world->registerSystem<CollisionSystem>();
+		}
+
+		EntityID walker(glm::vec2 position) {
+			const EntityID colonist = createColonist(position);
+			world->addComponent<AgentRadius>(colonist, AgentRadius{});
+			return colonist;
+		}
+
+		template <typename Done> bool runUntil(Done done, int maxFrames = 600) {
+			for (int frame = 0; frame < maxFrames; ++frame) {
+				world->update(0.1F);
+				if (done()) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		TimeSystem* time = nullptr;
+	};
+
+	TEST_F(CrowdedTargetTest, TwoCarriersBothDepositAtOneStation) {
+		for (const GameSpeed speed : {GameSpeed::Normal, GameSpeed::Fast}) {
+			SCOPED_TRACE(static_cast<int>(speed));
+			time->setSpeed(speed);
+			GoalTaskRegistry::Get().clear();
+			assets::RecipeRegistry::Get().clear();
+			const glm::vec2 stationPos{0.0F, 6.0F};
+			const EntityID	station = world->createEntity();
+			world->addComponent<Position>(station, Position{stationPos});
+			assets::RecipeDef recipe;
+			recipe.defName = "Recipe_Kit";
+			recipe.label = recipe.defName;
+			recipe.inputs.push_back({"Stone", 0, 2});
+			recipe.inputs.push_back({"Stick", 0, 1});
+			assets::RecipeRegistry::Get().registerTestRecipe(recipe);
+			world->addComponent<WorkQueue>(station).addJob(recipe.defName, 1);
+			world->addComponent<Inventory>(station, Inventory::createForStorage());
+			GoalTask craft;
+			craft.type = TaskType::Craft;
+			craft.owner = GoalOwner::CraftingGoalSystem;
+			craft.destinationEntity = station;
+			craft.destinationPosition = stationPos;
+			craft.status = GoalStatus::Blocked;
+			GoalTaskRegistry::Get().createGoal(std::move(craft));
+
+			// Equally far on either side, so they come in together.
+			const EntityID stoneCarrier = walker({-4.0F, 6.0F});
+			const EntityID stickCarrier = walker({4.0F, 6.0F});
+			world->getComponent<Inventory>(stoneCarrier)->addItem("Stone", 2);
+			world->getComponent<Inventory>(stickCarrier)->addItem("Stick", 1);
+
+			const auto* store = world->getComponent<Inventory>(station);
+			const bool	delivered =
+				runUntil([&] { return store->getQuantity("Stone") == 2 && store->getQuantity("Stick") == 1; });
+			EXPECT_TRUE(delivered) << "station holds " << store->getQuantity("Stone") << " stone and " << store->getQuantity("Stick")
+								   << " stick; the carriers stand "
+								   << glm::distance(world->getComponent<Position>(stoneCarrier)->value, stationPos) << " m and "
+								   << glm::distance(world->getComponent<Position>(stickCarrier)->value, stationPos) << " m from it";
+			world->destroyEntity(stoneCarrier);
+			world->destroyEntity(stickCarrier);
+			world->destroyEntity(station);
+		}
+	}
+
+	TEST_F(CrowdedTargetTest, ThreeThirstyColonistsAllDrinkAtOneShorePoint) {
+		assets::AssetDefinition water;
+		water.defName = "Water";
+		water.label = "Water";
+		assets::AssetRegistry::Get().registerTestDefinition(std::move(water));
+		for (const GameSpeed speed : {GameSpeed::Normal, GameSpeed::Fast}) {
+			SCOPED_TRACE(static_cast<int>(speed));
+			time->setSpeed(speed);
+			const glm::vec2		   shore{0.0F, 6.0F};
+			std::vector<EntityID> drinkers;
+			for (const glm::vec2 start : {glm::vec2{-4.0F, 6.0F}, glm::vec2{4.0F, 6.0F}, glm::vec2{0.0F, 2.0F}}) {
+				const EntityID colonist = walker(start);
+				world->getComponent<NeedsComponent>(colonist)->get(NeedType::Thirst).value = 8.0F;
+				remember(colonist, shore, "Water", assets::CapabilityType::Drinkable);
+				drinkers.push_back(colonist);
+			}
+
+			const bool allDrank = runUntil([&] {
+				return std::all_of(drinkers.begin(), drinkers.end(), [&](EntityID colonist) {
+					return world->getComponent<NeedsComponent>(colonist)->get(NeedType::Thirst).value > 50.0F;
+				});
+			});
+			EXPECT_TRUE(allDrank);
+			for (const EntityID colonist : drinkers) {
+				EXPECT_GT(world->getComponent<NeedsComponent>(colonist)->get(NeedType::Thirst).value, 50.0F)
+					<< "colonist " << colonist << " stands " << glm::distance(world->getComponent<Position>(colonist)->value, shore)
+					<< " m from the shore point";
+				world->destroyEntity(colonist);
+			}
+		}
 	}
 
 } // namespace ecs::test

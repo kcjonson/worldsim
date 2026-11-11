@@ -21,9 +21,23 @@
 
 #include <utils/Log.h>
 
+#include <glm/geometric.hpp>
+
 #include <limits>
 
 namespace ecs {
+
+	namespace {
+		// Within this of its task's target a colonist acts. Colonists bound for one point (a station, a shore
+		// point) push one another apart, so no more than one could ever reach the point itself. Inside the
+		// haul and placement legs' 0.5 m tolerance, so a leg that arrives this way is at its source or target.
+		constexpr float kActionReachMeters = 0.4F;
+
+		bool actsOnArrival(TaskType type) {
+			return type == TaskType::FulfillNeed || type == TaskType::Craft || type == TaskType::Haul || type == TaskType::PlacePackaged ||
+				   type == TaskType::Harvest || type == TaskType::Build || type == TaskType::Deconstruct;
+		}
+	} // namespace
 
 	void ActionSystem::update(float deltaTime) {
 		// Actions advance on game time, so fast-forward (3x/10x) speeds up work and pause
@@ -47,16 +61,22 @@ namespace ecs {
 		for (auto [entity, position, task, action, needs, memory, inventory] :
 			 world->view<Position, Task, Action, NeedsComponent, Memory, Inventory>()) {
 
-			// Only process entities that have arrived at their destination
+			if (task.state == TaskState::Moving && actsOnArrival(task.type) &&
+				glm::distance(position.value, task.targetPosition) <= kActionReachMeters) {
+				task.state = TaskState::Arrived;
+				if (auto* movementTarget = world->getComponent<MovementTarget>(entity)) {
+					movementTarget->active = false;
+				}
+				if (auto* navPath = world->getComponent<NavPath>(entity)) {
+					navPath->valid = false;
+				}
+			}
+
 			if (task.state != TaskState::Arrived) {
 				continue;
 			}
 
-			// Only process actionable tasks (FulfillNeed, Craft, Haul, PlacePackaged,
-			// Harvest, Build, Deconstruct)
-			if (task.type != TaskType::FulfillNeed && task.type != TaskType::Craft &&
-				task.type != TaskType::Haul && task.type != TaskType::PlacePackaged && task.type != TaskType::Harvest &&
-				task.type != TaskType::Build && task.type != TaskType::Deconstruct) {
+			if (!actsOnArrival(task.type)) {
 				// For non-actionable tasks like Wander, just clear when arrived
 				task.clear();
 				task.timeSinceEvaluation = 0.0F;
