@@ -143,15 +143,20 @@ namespace ecs {
 			}
 
 			// Walls and openings have no clear phase: they sit on a cleared, built host, so
-			// the footprint is clear by construction. A foundation queries its footprint only while
-			// clearing; once clear it stays so (editing the footprint puts it back to Clearing).
-			const bool clearing = !isWall && !isOpening && blueprint.phase == StructureBlueprint::BuildPhase::Clearing;
-			if (clearing && !gatheredSpawned) {
+			// the footprint is clear by construction. A foundation queries its footprint while clearing,
+			// and once more as its materials complete, on the way into UnderConstruction: flora placed
+			// after the site left Clearing (a chunk processed late) sends it back to Clearing then.
+			// Between the two it is not rescanned (editing the footprint puts it back to Clearing).
+			const bool materialsDone = blueprint.materialsComplete();
+			const bool isFoundation = !isWall && !isOpening;
+			const bool checkFootprint =
+				isFoundation && (blueprint.phase == StructureBlueprint::BuildPhase::Clearing ||
+								 (blueprint.phase == StructureBlueprint::BuildPhase::AwaitingMaterials && materialsDone));
+			if (checkFootprint && !gatheredSpawned) {
 				gatherSpawnedHarvestables();
 				gatheredSpawned = true;
 			}
-			const bool footprintClear = !clearing || isFootprintClear(graphId);
-			const bool materialsDone = blueprint.materialsComplete();
+			const bool footprintClear = !checkFootprint || isFootprintClear(graphId);
 
 			const ConstructionDecision decision = decideConstructionPhase(blueprint, footprintClear, materialsDone);
 
@@ -252,13 +257,11 @@ namespace ecs {
 
 		for (int32_t cy = chunkMinY; cy <= chunkMaxY; ++cy) {
 			for (int32_t cx = chunkMinX; cx <= chunkMaxX; ++cx) {
+				// A chunk whose flora isn't placed yet may hold a blocker: not known clear, so the site waits.
 				world::ChunkCoordinate coord{cx, cy};
-				if (m_processedChunks->find(coord) == m_processedChunks->end()) {
-					continue;
-				}
-				const auto* chunkIndex = m_placementExecutor->getChunkIndex(coord);
+				const auto* chunkIndex = m_processedChunks->contains(coord) ? m_placementExecutor->getChunkIndex(coord) : nullptr;
 				if (chunkIndex == nullptr) {
-					continue;
+					return false;
 				}
 				for (const auto* placed : chunkIndex->queryRect(minX, minY, maxX, maxY)) {
 					if (bounds.blockedBy(assetRegistry, assetRegistry.getDefNameId(placed->defName), placed->position)) {

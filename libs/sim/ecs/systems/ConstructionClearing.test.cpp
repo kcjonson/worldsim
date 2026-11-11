@@ -161,6 +161,14 @@ namespace ecs::test {
 				processed.insert(coord);
 			}
 
+			/// Place the chunk under `at` with nothing growing in it, as world generation would for bare ground.
+			void placeBareChunk(glm::vec2 at) {
+				assets::AsyncChunkPlacementResult result;
+				result.coord = world::worldToChunk({at.x, at.y});
+				processed.insert(result.coord);
+				executor.storeChunkResult(std::move(result));
+			}
+
 			EntityID createColonist(glm::vec2 position, const std::vector<glm::vec2>& knownTrees) {
 				auto entity = world->createEntity();
 				world->addComponent<Position>(entity, Position{position});
@@ -281,6 +289,7 @@ namespace ecs::test {
 	// takes it, through the same take-source the game wires.
 	TEST_F(FootprintClearingTest, SpawnedBlockerIsClearedLikePlacedFlora) {
 		const glm::vec2 at{6.0F, 6.0F};
+		placeBareChunk(at);
 		const EntityID	bush = world->createEntity();
 		world->addComponent<Position>(bush, Position{at});
 		world->addComponent<Appearance>(bush, Appearance{kBush});
@@ -358,6 +367,39 @@ namespace ecs::test {
 
 		EXPECT_TRUE(runUntil([&] { return phase() == StructureBlueprint::BuildPhase::AwaitingMaterials; })) << "both are cleared";
 		EXPECT_FALSE(treeStands(tree));
+	}
+
+	// A footprint over a chunk whose flora isn't placed yet is not known to be clear: the site waits in
+	// Clearing, and moves on once the chunk is placed and holds nothing.
+	TEST_F(FootprintClearingTest, SiteOverAnUnplacedChunkWaitsInClearing) {
+		EXPECT_FALSE(runUntil([&] { return phase() != StructureBlueprint::BuildPhase::Clearing; }, 300))
+			<< "nothing placed under the footprint yet";
+		placeBareChunk({4.0F, 4.0F});
+		EXPECT_TRUE(runUntil([&] { return phase() == StructureBlueprint::BuildPhase::AwaitingMaterials; }, 300));
+	}
+
+	// Past Clearing the footprint is not rescanned each pass, but it is checked once more as the materials
+	// complete: a tree placed under it after the site left Clearing sends it back to Clearing instead of
+	// into UnderConstruction.
+	TEST_F(FootprintClearingTest, BlockerFoundEnteringConstructionReturnsTheSiteToClearing) {
+		placeBareChunk({4.0F, 4.0F});
+		ASSERT_TRUE(runUntil([&] { return phase() == StructureBlueprint::BuildPhase::AwaitingMaterials; }, 300));
+
+		plantTrees({{3.0F, 3.0F}}); // the chunk's flora, placed late
+		runUntil([] { return false; }, 120);
+		EXPECT_EQ(phase(), StructureBlueprint::BuildPhase::AwaitingMaterials) << "no rescan while awaiting materials";
+
+		world->getComponent<StructureBlueprint>(site)->delivered = {{"Wood", 10}};
+		bool built = false;
+		runUntil(
+			[&] {
+				built = built || phase() == StructureBlueprint::BuildPhase::UnderConstruction;
+				return phase() == StructureBlueprint::BuildPhase::Clearing;
+			},
+			300
+		);
+		EXPECT_FALSE(built) << "never entered UnderConstruction over the tree";
+		EXPECT_EQ(phase(), StructureBlueprint::BuildPhase::Clearing);
 	}
 
 } // namespace ecs::test

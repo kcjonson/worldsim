@@ -20,11 +20,13 @@
 //
 //   Clearing           -> emit Harvest goals for choppable entities sitting on
 //                         the footprint; advance to AwaitingMaterials once the
-//                         footprint is clear. (Foundations only.)
+//                         footprint is known clear (every chunk under it placed).
+//                         (Foundations only.)
 //   AwaitingMaterials  -> emit a Harvest+Haul chain per outstanding material (Wood
 //                         from trees, hauled to the site where the deposit records it
 //                         directly onto the blueprint's delivered[] manifest); advance
-//                         to UnderConstruction once materialsComplete().
+//                         to UnderConstruction once materialsComplete(), after one more
+//                         footprint check (a blocker found then sends it back to Clearing).
 //   UnderConstruction  -> emit one Build goal; ActionSystem's Build action
 //                         advances workDone. Multiple colonists may build the
 //                         same blueprint concurrently.
@@ -210,12 +212,14 @@ namespace ecs {
 		};
 
 		/// Collect every spawned harvestable into m_spawnedHarvestables, once per pass that has a
-		/// site still clearing, so each site's check is a scan of those few rather than of every entity.
+		/// site to check (clearing, or entering UnderConstruction), so each site's check is a scan of
+		/// those few rather than of every entity.
 		void gatherSpawnedHarvestables();
 
 		/// True while nothing in the world blocks the footprint (FootprintBounds::blockedBy), placed
 		/// flora and spawned harvestables (m_spawnedHarvestables, gathered this pass) alike: the set
-		/// the clear goal is served by.
+		/// the clear goal is served by. A footprint over a chunk whose flora isn't placed yet is not known
+		/// clear and reads false.
 		[[nodiscard]] bool isFootprintClear(uint64_t foundationId) const;
 
 		/// True once the wall segment's host foundation is Built. Walls draw on a
