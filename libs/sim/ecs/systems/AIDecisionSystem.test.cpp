@@ -142,6 +142,11 @@ namespace ecs::test {
 		/// Get the current task for an entity
 		Task* getTask(EntityID entity) { return world->getComponent<Task>(entity); }
 
+#ifdef DEVELOPMENT_BUILD
+		/// Memory entries the work evaluators have looked at so far.
+		uint64_t workSourceVisits() { return world->getSystem<AIDecisionSystem>().m_workSources.visits; }
+#endif
+
 		/// Drive the private chain-interruption handler directly. This fixture is a friend of
 		/// AIDecisionSystem (derived fixtures are not), so the seam lives here.
 		void callHandleChainInterruption(
@@ -813,31 +818,87 @@ namespace ecs::test {
 		}
 	}
 
+	// A memory near capacity, almost all of it water no work goal wants: the need is still found, and
+	// the work evaluators look only at the remembered wood and trees a goal can use.
 	TEST_F(AIDecisionSystemTest, FindsANeedSourceInALargeMemory) {
-		auto colonist = createColonist({0.0F, 0.0F});
+		auto& registry = assets::AssetRegistry::Get();
+		assets::AssetDefinition wood;
+		wood.defName = "Wood";
+		wood.label = "Wood";
+		wood.category = assets::ItemCategory::RawMaterial;
+		wood.capabilities.carryable = assets::CarryableCapability{1};
+		wood.itemProperties = assets::ItemProperties{};
+		wood.itemProperties->stackSize = 40;
+		wood.itemProperties->massKg = 0.1F;
+		registry.registerTestDefinition(std::move(wood));
+		assets::AssetDefinition tree;
+		tree.defName = "Tree";
+		tree.label = "Tree";
+		tree.capabilities.harvestable = assets::HarvestableCapability{};
+		tree.capabilities.harvestable->yieldDefName = "Wood";
+		registry.registerTestDefinition(std::move(tree));
+		const uint32_t woodId = registry.getDefNameId("Wood");
+		const uint32_t treeId = registry.getDefNameId("Tree");
 
-		// Fill memory with many entities - use Drinkable for simpler path
-		constexpr int kNumEntities = 1000;
-		for (int i = 0; i < kNumEntities; ++i) {
+		const glm::vec2 boxPos{0.0F, 6.0F};
+		const EntityID	box = makeStorageBox(boxPos, "Box", "Wood", ecs::StoragePriority::Medium);
+		makeUmbrellaGoal(box, boxPos, woodId);
+		GoalTask harvest;
+		harvest.type = TaskType::Harvest;
+		harvest.owner = GoalOwner::CraftingGoalSystem;
+		harvest.yieldDefNameId = woodId;
+		harvest.destinationPosition = {0.0F, 6.0F};
+		harvest.targetAmount = 5;
+		harvest.status = GoalStatus::Available;
+		GoalTaskRegistry::Get().createGoal(std::move(harvest));
+
+		// Two colonists remember the same 3 piles and 2 trees; one also remembers 9,990 waters.
+		constexpr int kPiles = 3;
+		constexpr int kTrees = 2;
+		constexpr int kWaters = 9990;
+		const EntityID lean = createColonist({0.0F, 0.0F});
+		const EntityID full = createColonist({0.0F, 0.0F});
+		for (EntityID colonist : {lean, full}) {
+			for (int i = 0; i < kPiles; ++i) {
+				addKnownEntity(colonist, {3.0F + static_cast<float>(i), 0.0F}, woodId, assets::CapabilityType::Carryable);
+			}
+			for (int i = 0; i < kTrees; ++i) {
+				addKnownEntity(colonist, {-3.0F - static_cast<float>(i), 0.0F}, treeId, assets::CapabilityType::Harvestable);
+			}
+			setNeedValue(colonist, NeedType::Hunger, 100.0F);
+			setNeedValue(colonist, NeedType::Thirst, 40.0F);
+			setNeedValue(colonist, NeedType::Energy, 100.0F);
+			setNeedValue(colonist, NeedType::Bladder, 100.0F);
+		}
+		for (int i = 0; i < kWaters; ++i) {
 			addKnownEntity(
-				colonist,
-				{static_cast<float>(i), static_cast<float>(i)},
-				kWaterDefId + static_cast<uint32_t>(i),
-				assets::CapabilityType::Drinkable
+				full, {static_cast<float>(i), static_cast<float>(i)}, kWaterDefId + static_cast<uint32_t>(i), assets::CapabilityType::Drinkable
 			);
 		}
+		ASSERT_EQ(world->getComponent<Memory>(full)->worldEntityCount(), static_cast<size_t>(kPiles + kTrees + kWaters));
 
-		setNeedValue(colonist, NeedType::Hunger, 100.0F);
-		setNeedValue(colonist, NeedType::Thirst, 40.0F);
-		setNeedValue(colonist, NeedType::Energy, 100.0F);
-		setNeedValue(colonist, NeedType::Bladder, 100.0F);
-
+#ifdef DEVELOPMENT_BUILD
+		const uint64_t visitsBefore = workSourceVisits();
+#endif
 		world->update(0.016F);
 
 		// Should have found an entity and created task
-		auto* task = getTask(colonist);
+		auto* task = getTask(full);
 		ASSERT_NE(task, nullptr);
 		EXPECT_EQ(task->type, TaskType::FulfillNeed);
+
+		for (EntityID colonist : {lean, full}) {
+			const auto& options = getTrace(colonist)->options;
+			EXPECT_EQ(std::count_if(options.begin(), options.end(), [](const EvaluatedOption& o) { return o.taskType == TaskType::Haul; }), kPiles);
+			EXPECT_EQ(std::count_if(options.begin(), options.end(), [](const EvaluatedOption& o) { return o.taskType == TaskType::Harvest; }), kTrees);
+		}
+
+#ifdef DEVELOPMENT_BUILD
+		// Per colonist: each capability index is collected once, and each goal visits only the sources
+		// of its item. The 9,990 waters add nothing.
+		constexpr uint64_t kPerColonist = (kPiles + kTrees) + kPiles + kTrees;
+		EXPECT_EQ(workSourceVisits() - visitsBefore, 2 * kPerColonist);
+#endif
 	}
 
 	// =============================================================================

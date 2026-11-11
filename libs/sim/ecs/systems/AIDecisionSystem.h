@@ -18,6 +18,7 @@
 #include "../components/MemoryQueries.h"
 #include "../components/Needs.h"
 #include "../components/Task.h"
+#include "WorkSources.h"
 
 #include <functional>
 #include <glm/vec2.hpp>
@@ -209,6 +210,9 @@ private:
 
 	/// Reused candidate storage for need-source queries, so a decision allocates nothing once it has grown
 	std::vector<SourceCandidate> sourceScratch;
+
+	/// The deciding colonist's remembered work sources, reused across colonists
+	WorkSources m_workSources;
 
 	/// SourceReachMemo::Key::stamp() of the colonist being decided this update (0 without a mesh)
 	std::uint64_t reachStamp = 0;
