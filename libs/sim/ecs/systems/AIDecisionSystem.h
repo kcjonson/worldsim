@@ -178,11 +178,6 @@ private:
 	/// requests it again once the generation moves; Routed and Unmeshed are ordinary travel.
 	void applyNavOutcome(struct Task& task, NavRequestOutcome outcome) const;
 
-	/// Format a human-readable reason for an option
-	[[nodiscard]] static std::string formatOptionReason(
-		const struct EvaluatedOption& option,
-		const char* needName);
-
 	/// Handle chain interruption when switching away from a mid-chain task
 	/// Stows 1-handed items to backpack, drops 2-handed items or packaged entities.
 	/// @param entity Entity ID for logging

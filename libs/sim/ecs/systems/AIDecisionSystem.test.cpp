@@ -1197,7 +1197,7 @@ namespace ecs::test {
 
 		ASSERT_NE(hungerOption, nullptr);
 		EXPECT_EQ(hungerOption->status, OptionStatus::NoSource);
-		EXPECT_TRUE(hungerOption->reason.find("no known source") != std::string::npos);
+		EXPECT_TRUE(describeOption(*world, *hungerOption).find("no known source") != std::string::npos);
 	}
 
 	TEST_F(AIDecisionSystemTest, TraceShowsSatisfiedForHighNeeds) {
@@ -1343,9 +1343,8 @@ namespace ecs::test {
 		auto* task = getTask(colonist);
 		ASSERT_NE(task, nullptr);
 
-		// Store initial selection summary
-		std::string initialSummary = trace->selectionSummary;
-		EXPECT_FALSE(initialSummary.empty());
+		ASSERT_NE(trace->getSelected(), nullptr);
+		EXPECT_FALSE(describeOption(*world, *trace->getSelected()).empty());
 
 		// Trigger re-evaluation by simulating arrival
 		task->state = TaskState::Arrived;
@@ -1353,7 +1352,8 @@ namespace ecs::test {
 
 		// Trace should be rebuilt (may have same or different summary)
 		// The key is that it's still valid
-		EXPECT_FALSE(trace->selectionSummary.empty());
+		ASSERT_NE(trace->getSelected(), nullptr);
+		EXPECT_FALSE(describeOption(*world, *trace->getSelected()).empty());
 		EXPECT_EQ(trace->options.size(), 6u); // Still has all options (5 needs + wander, no Gather Food since has food)
 	}
 
@@ -2089,7 +2089,7 @@ namespace ecs::test {
 		// withdraw from A as a challenger: the trace shows it as no room instead.
 		EXPECT_EQ(findPullOption(*getTrace(colonist)), nullptr) << "no withdraw a full armful couldn't take";
 		const auto* noRoom = findOption(*getTrace(colonist), [](const EvaluatedOption& o) {
-			return o.taskType == TaskType::Haul && o.status == OptionStatus::NoRoom && o.haulItemDefName == "Wood";
+			return o.taskType == TaskType::Haul && o.status == OptionStatus::NoRoom && o.haulItemDefNameId == assets::AssetRegistry::Get().getDefNameId("Wood");
 		});
 		EXPECT_NE(noRoom, nullptr) << "the trace says why the pull isn't offered";
 
@@ -3421,7 +3421,7 @@ namespace ecs::test {
 
 		const auto statusOf = [&](const char* item) {
 			const auto* option = findOption(*getTrace(colonist), [&](const EvaluatedOption& o) {
-				return o.taskType == TaskType::Haul && o.haulItemDefName == item;
+				return o.taskType == TaskType::Haul && o.haulItemDefNameId == assets::AssetRegistry::Get().getDefNameId(item);
 			});
 			return option != nullptr ? std::optional<OptionStatus>{option->status} : std::nullopt;
 		};
@@ -3738,7 +3738,7 @@ namespace ecs::test {
 		const auto& options = getTrace(colonist)->options;
 		const auto	offered = [&](uint64_t goal, const char* item) {
 			 return std::count_if(options.begin(), options.end(), [&](const EvaluatedOption& o) {
-				 return o.taskType == TaskType::Haul && o.haulGoalId == goal && o.haulItemDefName == item;
+				 return o.taskType == TaskType::Haul && o.haulGoalId == goal && o.haulItemDefNameId == assets::AssetRegistry::Get().getDefNameId(item);
 			 });
 		};
 		EXPECT_EQ(offered(categoryGoal, "Pellet"), 2) << "in the category and named: each pile once";

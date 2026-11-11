@@ -27,6 +27,7 @@ add_library(sim
     ecs/GoalTaskRegistry.cpp
     ecs/StoreOrDrop.cpp
     ecs/WorldSource.cpp
+    ecs/components/DecisionTrace.cpp
     ecs/components/MemoryQueries.cpp
     ecs/components/ToiletLocationFinder.cpp
     construction/ConstructionWorld.cpp

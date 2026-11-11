@@ -77,27 +77,6 @@ namespace ecs {
 			return assets::CapabilityType::Edible;
 		}
 
-		/// Get a human-readable name for a need type (for debug logging)
-		[[nodiscard]] const char* needTypeName(NeedType need) {
-			switch (need) {
-				case NeedType::Hunger:
-					return "Hunger";
-				case NeedType::Thirst:
-					return "Thirst";
-				case NeedType::Energy:
-					return "Energy";
-				case NeedType::Bladder:
-					return "Bladder";
-				case NeedType::Digestion:
-					return "Digestion";
-				case NeedType::Count:
-					break;
-			}
-			// All valid NeedTypes must be handled above - hitting this is a bug
-			LOG_ERROR(Engine, "needTypeName: unhandled NeedType %d", static_cast<int>(need));
-			return "Unknown";
-		}
-
 		/// Get the first action defName for a task type (for chain interruption checks)
 		/// Maps TaskType (+ NeedType for FulfillNeed) to the action that will be triggered first.
 		/// Returns string_view to avoid allocation - all values are compile-time constants.
@@ -302,7 +281,7 @@ namespace ecs {
 		}
 
 		/// Check if an option matches the current task (for the hysteresis margin)
-		[[nodiscard]] bool isOptionCurrentTask(const EvaluatedOption& option, const Task& currentTask) {
+		[[nodiscard]] bool isOptionCurrentTask(const EvaluatedOption& option, const Task& currentTask, uint32_t currentHaulItemId) {
 			if (!currentTask.isActive() || option.status != OptionStatus::Available) {
 				return false;
 			}
@@ -317,7 +296,7 @@ namespace ecs {
 					return option.craftRecipeDefName == currentTask.craftRecipeDefName &&
 						   option.stationEntityId == currentTask.targetStationId;
 				case TaskType::Haul:
-					return option.haulItemDefName == currentTask.haulItemDefName &&
+					return option.haulItemDefNameId == currentHaulItemId &&
 						   option.haulTargetStorageId == currentTask.haulTargetStorageId;
 				case TaskType::PlacePackaged:
 					return option.placePackagedEntityId == currentTask.placePackagedEntityId;
@@ -339,8 +318,9 @@ namespace ecs {
 		/// @param world ECS world (to read a stocking haul's destination box priority); may be null
 		/// @param option The option to populate (skillBonus already set by its evaluator)
 		/// @param currentTask Current colonist task (for the hysteresis margin)
+		/// @param currentHaulItemId The current task's haul item, interned (0 when not hauling)
 		/// @param currentTime Current game time (for task age calculation)
-		void populatePriorityBonuses(World* world, EvaluatedOption& option, const Task& currentTask, float currentTime) {
+		void populatePriorityBonuses(World* world, EvaluatedOption& option, const Task& currentTask, uint32_t currentHaulItemId, float currentTime) {
 			const auto& priorityConfig = assets::PriorityConfig::Get();
 
 			// Categorical tier first: it is compared before any score term.
@@ -365,7 +345,7 @@ namespace ecs {
 
 			// Hysteresis margin: stick the in-progress option so a same-tier challenger must beat it
 			// by more than this to win (prevents thrashing). Only matters within a tier.
-			if (isOptionCurrentTask(option, currentTask)) {
+			if (isOptionCurrentTask(option, currentTask, currentHaulItemId)) {
 				option.hysteresisBonus = priorityConfig.getInProgressBonus();
 			}
 
@@ -380,9 +360,9 @@ namespace ecs {
 				const auto* destConfig = world->getComponent<StorageConfiguration>(destEntity);
 				if (destConfig != nullptr) {
 					const auto& reg = assets::AssetRegistry::Get();
-					const auto* itemDef = reg.getDefinition(option.haulItemDefName);
+					const auto* itemDef = reg.getDefinitionById(option.haulItemDefNameId);
 					if (itemDef != nullptr) {
-						const StoragePriority destPriority = destConfig->getPriorityFor(option.haulItemDefName, itemDef->category);
+						const StoragePriority destPriority = destConfig->getPriorityFor(itemDef->defName, itemDef->category);
 						const auto rank = static_cast<int16_t>(static_cast<uint8_t>(destPriority)); // 0..3
 						option.storagePriorityBias = static_cast<int16_t>(rank * priorityConfig.getStoragePriorityWeight());
 					}
@@ -459,21 +439,21 @@ namespace ecs {
 
 			// A haul whose pickup would lift nothing right now (pack full, hands busy with another load):
 			// not available, so the colonist doesn't repeat a pickup that collects nothing. The trace
-			// shows the item and why from haulItemDefName and the status, so the reason is a fixed string.
-			const auto pushNoRoom = [&](const GoalTask& goal, const std::string& itemDefName, const char* reason) {
+			// shows the item and why from haulItemDefNameId and the status, so the reason is a fixed string.
+			const auto pushNoRoom = [&](const GoalTask& goal, uint32_t itemDefNameId, const char* reason) {
 				EvaluatedOption option;
 				option.taskType = TaskType::Haul;
 				option.needType = NeedType::Count;
 				option.needValue = 100.0F;
 				option.threshold = 0.0F;
-				option.haulItemDefName = itemDefName;
+				option.haulItemDefNameId = itemDefNameId;
 				option.haulGoalId = goal.id;
 				option.status = OptionStatus::NoRoom;
 				option.reason = reason;
 				trace.options.push_back(std::move(option));
 			};
 
-			const auto pushLooseHaul = [&](const GoalTask& goal, const CarrySource& source, const std::string& itemDefName, uint32_t quantity,
+			const auto pushLooseHaul = [&](const GoalTask& goal, const CarrySource& source, uint32_t itemDefNameId, uint32_t quantity,
 										   bool craftFetch) {
 				const KnownWorldEntity& looseItem = *source.entity;
 				EvaluatedOption			option;
@@ -484,7 +464,7 @@ namespace ecs {
 				option.targetPosition = looseItem.position;
 				option.targetDefNameId = looseItem.defNameId;
 				option.distanceToTarget = glm::distance(position, looseItem.position) + glm::distance(looseItem.position, goal.destinationPosition);
-				option.haulItemDefName = itemDefName;
+				option.haulItemDefNameId = itemDefNameId;
 				option.haulQuantity = quantity;
 				option.haulSourcePosition = looseItem.position;
 				option.haulTargetStorageId = static_cast<uint64_t>(goal.destinationEntity);
@@ -497,7 +477,7 @@ namespace ecs {
 				// deterministically rather than by memory's hash order.
 				option.tiebreakId = goal.id ^ (source.key << 1);
 				option.status = OptionStatus::Available;
-				option.reason = craftFetch ? "Fetching " + itemDefName + " for crafting" : "Hauling " + itemDefName + " to storage";
+				option.reason = craftFetch ? "Fetching {} for crafting" : "Hauling {} to storage";
 				trace.options.push_back(std::move(option));
 			};
 
@@ -524,12 +504,12 @@ namespace ecs {
 						// Only fetch what the pickup can actually lift; one that adds 0 would be
 						// re-issued every tick. The craft stays pending until the colonist has room.
 						if (pickupRoom(itemDefName) == 0) {
-							pushNoRoom(*goal, itemDefName, "Fetching for crafting");
+							pushNoRoom(*goal, *acceptedIt, "Fetching for crafting ({}: no room to carry it)");
 							continue;
 						}
 						const uint32_t quantity = std::min(need, ecs::cargoUnitsPerTrip(registry, itemDefName, inventory.carryCapacityKg));
 						for (const CarrySource& source : sources.carryablesOf(*acceptedIt)) {
-							pushLooseHaul(*goal, source, itemDefName, quantity, /*craftFetch=*/true);
+							pushLooseHaul(*goal, source, *acceptedIt, quantity, /*craftFetch=*/true);
 						}
 					}
 					continue;
@@ -547,12 +527,12 @@ namespace ecs {
 					}
 					const auto& itemDefName = registry.getDefName(itemDefNameId);
 					if (pickupRoom(itemDefName) == 0) {
-						pushNoRoom(*goal, itemDefName, "Hauling to storage");
+						pushNoRoom(*goal, itemDefNameId, "Hauling to storage ({}: no room to carry it)");
 						return;
 					}
 					const uint32_t quantity = std::min(need, ecs::cargoUnitsPerTrip(registry, itemDefName, inventory.carryCapacityKg));
 					for (const CarrySource& source : sources.carryablesOf(itemDefNameId)) {
-						pushLooseHaul(*goal, source, itemDefName, quantity, /*craftFetch=*/false);
+						pushLooseHaul(*goal, source, itemDefNameId, quantity, /*craftFetch=*/false);
 					}
 				};
 				if (goal->acceptedCategory != assets::ItemCategory::None) {
@@ -638,7 +618,7 @@ namespace ecs {
 							roomNow = pickupRoom(itemDefName) > 0;
 						}
 						if (!*roomNow) {
-							pushNoRoom(*goal, itemDefName, "Pulling from lower-priority storage");
+							pushNoRoom(*goal, acceptedId, "Pulling from lower-priority storage ({}: no room to carry it)");
 							break; // one line says it for every source box
 						}
 
@@ -651,7 +631,7 @@ namespace ecs {
 						pullOption.targetPosition = srcPos.value;
 						pullOption.targetDefNameId = acceptedId;
 						pullOption.distanceToTarget = glm::distance(position, srcPos.value) + glm::distance(srcPos.value, goal->destinationPosition);
-						pullOption.haulItemDefName = itemDefName;
+						pullOption.haulItemDefNameId = acceptedId;
 						pullOption.haulQuantity = qty;
 						pullOption.haulSourcePosition = srcPos.value;
 						pullOption.haulSourceStorageId = static_cast<uint64_t>(srcEntity);
@@ -664,7 +644,7 @@ namespace ecs {
 						// Deterministic tiebreak on (umbrella goal, source box), independent of view order.
 						pullOption.tiebreakId = goal->id ^ (static_cast<uint64_t>(srcEntity) << 1);
 						pullOption.status = OptionStatus::Available;
-						pullOption.reason = "Pulling " + itemDefName + " from lower-priority storage";
+						pullOption.reason = "Pulling {} from lower-priority storage";
 						trace.options.push_back(std::move(pullOption));
 					}
 				}
@@ -724,7 +704,7 @@ namespace ecs {
 					 option.targetPosition = root.destinationPosition;
 					 option.targetDefNameId = item;
 					 option.distanceToTarget = glm::distance(position, root.destinationPosition);
-					 option.haulItemDefName = itemDefName;
+					 option.haulItemDefNameId = item;
 					 option.haulQuantity = quantity;
 					 option.haulSourcePosition = position; // already carrying
 					 option.haulTargetStorageId = static_cast<uint64_t>(root.destinationEntity);
@@ -737,9 +717,9 @@ namespace ecs {
 					 option.servesStorageStocking = storage;
 					 option.tiebreakId = root.id ^ (static_cast<uint64_t>(item) << 1);
 					 option.status = OptionStatus::Available;
-					 option.reason = root.type == TaskType::Build ? "Delivering " + itemDefName + " to build site"
-									 : storage					   ? "Stocking " + itemDefName + " into storage"
-																   : "Delivering " + itemDefName + " to crafting station";
+					 option.reason = root.type == TaskType::Build ? "Delivering {} to build site"
+									 : storage					   ? "Stocking {} into storage"
+																   : "Delivering {} to crafting station";
 					 trace.options.push_back(std::move(option));
 				 }
 			};
@@ -814,7 +794,6 @@ namespace ecs {
 					if (clearing && !goal->clearFootprint->blockedBy(registry, knownEntity.defNameId, knownEntity.position)) {
 						continue;
 					}
-					const auto*	   def = source.def;
 					const uint32_t yieldDefNameId = source.yieldDefNameId;
 
 					// Score by the full provisioning round-trip (colonist -> harvestable -> destination), not just
@@ -848,13 +827,7 @@ namespace ecs {
 					harvestOption.skillLevel = farmSkillLevel;
 					harvestOption.skillBonus = farmSkillBonus;
 
-					// Build reason string from friendly labels, not raw defNames ("Oak Tree", not
-					// "Flora_TreeOak"). Falls back to the defName if a label is missing.
-					const auto*		  yieldDef = source.yieldDef;
-					const std::string srcLabel = !def->label.empty() ? def->label : registry.getDefName(knownEntity.defNameId);
-					const std::string yieldLabel =
-						(yieldDef != nullptr && !yieldDef->label.empty()) ? yieldDef->label : registry.getDefName(yieldDefNameId);
-					harvestOption.reason = clearing ? "Clearing " + srcLabel + " from build site" : "Cutting " + srcLabel + " for " + yieldLabel;
+					harvestOption.reason = clearing ? "Clearing {} from build site" : "Cutting {} for {}";
 
 					trace.options.push_back(harvestOption);
 				}
@@ -964,7 +937,7 @@ namespace ecs {
 		/// @param trace Output decision trace
 		void evaluatePlacePackagedOptions(World* world, const glm::vec2& position, const Inventory& inventory, DecisionTrace& trace) {
 			// Find packaged items with targetPosition set (awaiting colonist delivery)
-			for (auto [packagedEntity, packagedPos, packaged, packagedAppearance] : world->view<Position, Packaged, Appearance>()) {
+			for ([[maybe_unused]] auto [packagedEntity, packagedPos, packaged, appearance] : world->view<Position, Packaged, Appearance>()) {
 				// Only consider items with a target position set
 				if (!packaged.targetPosition.has_value()) {
 					continue;
@@ -1005,7 +978,7 @@ namespace ecs {
 				placeOption.placeTargetPosition = targetPos;
 				placeOption.tiebreakId = static_cast<uint64_t>(packagedEntity);
 				placeOption.status = OptionStatus::Available;
-				placeOption.reason = isCarryingThis ? "Delivering " + packagedAppearance.defName : "Placing " + packagedAppearance.defName;
+				placeOption.reason = isCarryingThis ? "Delivering {}" : "Placing {}";
 				trace.options.push_back(placeOption);
 			}
 		}
@@ -1650,11 +1623,7 @@ namespace ecs {
 					option.targetPosition = position.value;
 					option.distanceToTarget = 0.0F;
 					option.status = need.needsAttention() ? OptionStatus::Available : OptionStatus::Satisfied;
-					option.reason = formatOptionReason(option, needTypeName(needType));
-					// Add special marker to indicate this is from inventory
-					if (option.status == OptionStatus::Available) {
-						option.reason += " (from inventory)";
-					}
+					option.reason = "from inventory";
 					trace.options.push_back(option);
 					continue;
 				}
@@ -1667,10 +1636,7 @@ namespace ecs {
 					option.targetReachable = true;
 					option.sourceKey = hashWorldEntity(foodSource->position, foodSource->defNameId);
 					option.status = need.needsAttention() ? OptionStatus::Available : OptionStatus::Satisfied;
-					option.reason = formatOptionReason(option, needTypeName(needType));
-					if (option.status == OptionStatus::Available) {
-						option.reason += " (harvest)";
-					}
+					option.reason = "harvest";
 					trace.options.push_back(option);
 					continue;
 				}
@@ -1681,14 +1647,12 @@ namespace ecs {
 					option.targetDefNameId = regrowingFood->defNameId;
 					option.distanceToTarget = glm::distance(position.value, regrowingFood->position);
 					option.status = OptionStatus::Regrowing;
-					option.reason = formatOptionReason(option, needTypeName(needType));
 					trace.options.push_back(option);
 					continue;
 				}
 
 				// No food in inventory and no reachable food source known
 				option.status = need.needsAttention() ? OptionStatus::NoSource : OptionStatus::Satisfied;
-				option.reason = formatOptionReason(option, needTypeName(needType));
 				trace.options.push_back(option);
 				continue;
 			}
@@ -1748,7 +1712,6 @@ namespace ecs {
 				option.status = need.needsAttention() ? OptionStatus::NoSource : OptionStatus::Satisfied;
 			}
 
-			option.reason = formatOptionReason(option, needTypeName(needType));
 			trace.options.push_back(option);
 		}
 
@@ -1840,10 +1803,10 @@ namespace ecs {
 			// option is the crafting WORK, workable only once the station holds every input.
 			if (hasAllInputs) {
 				craftOption.status = OptionStatus::Available;
-				craftOption.reason = "Crafting " + recipe->label;
+				craftOption.reason = "Crafting {}";
 			} else {
 				craftOption.status = OptionStatus::NoSource;
-				craftOption.reason = "Crafting " + recipe->label + " (awaiting materials)";
+				craftOption.reason = "Crafting {} (awaiting materials)";
 			}
 
 			trace.options.push_back(craftOption);
@@ -1905,8 +1868,9 @@ namespace ecs {
 		// Populate the (tier, score) key for all options: classify tier, compute the within-tier
 		// score (distance factor, skill, age, hysteresis). Goal createdAt is always 0, so a goal's age is
 		// m_elapsedTime, monotonic, which is all the within-tier age term needs.
+		const uint32_t currentHaulItemId = currentTask.type == TaskType::Haul ? m_registry.getDefNameId(currentTask.haulItemDefName) : 0U;
 		for (auto& option : trace.options) {
-			populatePriorityBonuses(world, option, currentTask, m_elapsedTime);
+			populatePriorityBonuses(world, option, currentTask, currentHaulItemId, m_elapsedTime);
 		}
 
 		// Sort by the lexicographic (tier asc, score desc, tiebreakId asc) key. Tier is categorical
@@ -1939,7 +1903,6 @@ namespace ecs {
 				const auto* goal = GoalTaskRegistry::Get().getGoal(option.harvestGoalId);
 				if (goal == nullptr || !goal->clearFootprint.has_value()) {
 					option.status = OptionStatus::Regrowing;
-					option.reason += " (regrowing)";
 					continue;
 				}
 			}
@@ -1980,7 +1943,6 @@ namespace ecs {
 				continue;
 			}
 			option.status = OptionStatus::Selected;
-			trace.selectionSummary = "Selected: " + option.reason;
 			break;
 		}
 
@@ -2016,7 +1978,7 @@ namespace ecs {
 		task.type = selected->taskType;
 		task.needToFulfill = selected->needType;
 		task.targetPosition = selected->targetPosition.value_or(position.value);
-		task.reason = selected->reason;
+		task.reason = describeOption(*world, *selected);
 		task.needSourceKey = selected->sourceKey;
 
 		// Copy crafting-specific fields for Craft tasks
@@ -2042,7 +2004,7 @@ namespace ecs {
 
 		// Copy hauling-specific fields for Haul tasks
 		if (selected->taskType == TaskType::Haul) {
-			task.haulItemDefName = selected->haulItemDefName;
+			task.haulItemDefName = m_registry.getDefName(selected->haulItemDefNameId);
 			task.haulQuantity = selected->haulQuantity;
 			task.haulSourcePosition = selected->haulSourcePosition.value_or(glm::vec2{0.0F, 0.0F});
 			task.haulSourceStorageId = selected->haulSourceStorageId;
@@ -2221,33 +2183,6 @@ namespace ecs {
 
 	std::optional<double> AIDecisionSystem::sourceRegrowingUntil(uint32_t defNameId, glm::vec2 position) const {
 		return onSourceRegrowth ? onSourceRegrowth(defNameId, position, m_simulationNow) : std::nullopt;
-	}
-
-	std::string AIDecisionSystem::formatOptionReason(const EvaluatedOption& option, const char* needName) {
-		if (option.taskType == TaskType::Wander) {
-			return "All needs satisfied";
-		}
-
-		std::string reason = needName;
-		reason += " at " + std::to_string(static_cast<int>(option.needValue)) + "%";
-
-		if (option.status == OptionStatus::NoSource) {
-			reason += " (no known source)";
-		} else if (option.status == OptionStatus::Regrowing) {
-			reason += " (source regrowing)";
-		} else if (option.needValue < 10.0F) {
-			reason += " (critical)";
-		} else if (option.status == OptionStatus::Available || option.status == OptionStatus::Selected) {
-			if (option.distanceToTarget > 0.0F) {
-				reason += " (" + std::to_string(static_cast<int>(option.distanceToTarget)) + "m away)";
-			} else if (option.targetPosition.has_value()) {
-				reason += " (using ground)";
-			}
-		} else if (option.status == OptionStatus::Satisfied) {
-			reason += " (satisfied)";
-		}
-
-		return reason;
 	}
 
 	void AIDecisionSystem::handleChainInterruption(

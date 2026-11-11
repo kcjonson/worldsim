@@ -30,6 +30,8 @@ namespace ecs {
 		Satisfied  // Need above threshold, no action needed
 	};
 
+	class World;
+
 	/// A single evaluated task option in the decision trace
 	struct EvaluatedOption {
 		TaskType taskType = TaskType::None;
@@ -56,7 +58,7 @@ namespace ecs {
 		uint64_t	stationEntityId = 0;
 
 		// Hauling-specific fields (for Haul tasks)
-		std::string				 haulItemDefName;		  // Item to haul
+		uint32_t				 haulItemDefNameId = 0;	  // Item to haul
 		uint32_t				 haulQuantity = 1;		  // Quantity to haul
 		std::optional<glm::vec2> haulSourcePosition;	  // Where to pick up from
 		uint64_t				 haulSourceStorageId = 0; // Source box entity ID for a storage->storage pull (0 = loose/inventory source)
@@ -123,8 +125,10 @@ namespace ecs {
 		// stable id it has (goal id, station/entity id, etc.); higherPriority() breaks ties on it.
 		uint64_t tiebreakId = 0;
 
-		// Human-readable explanation for UI
-		std::string reason;
+		// What the option is, as a fixed literal: a std::format string whose {} take the option's own
+		// names (the item, the source and its yield, the recipe), which describeOption fills when the
+		// trace is drawn, so evaluating an option builds no string. Need options give a qualifier only.
+		const char* reason = "";
 
 		/// Compose the within-tier score from its breakdown fields. Score orders options WITHIN one
 		/// tier only (tier is compared first), so it never needs to encode categorical priority.
@@ -160,15 +164,8 @@ namespace ecs {
 		/// Timestamp of last evaluation (game time in seconds)
 		float lastEvaluationTime = 0.0F;
 
-		/// Summary of why the current task was selected
-		std::string selectionSummary;
-
-		/// Clear the trace for re-evaluation
-		void clear() {
-			options.clear();
-			selectionSummary.clear();
-			// Note: lastEvaluationTime is set by the system after building
-		}
+		/// Clear the trace for re-evaluation (lastEvaluationTime is set by the system after building)
+		void clear() { options.clear(); }
 
 		/// Get the currently selected option (first with Selected status)
 		[[nodiscard]] const EvaluatedOption* getSelected() const {
@@ -183,5 +180,10 @@ namespace ecs {
 		/// Get number of options to display (capped by kMaxDisplayedOptions)
 		[[nodiscard]] size_t displayCount() const { return std::min(options.size(), kMaxDisplayedOptions); }
 	};
+
+	/// The option as the player reads it ("Cutting Oak Tree for Wood", "Hunger at 40% (12m away)"),
+	/// composed from its fixed reason and ids. Built when drawn or when the option is accepted, never
+	/// while options are evaluated.
+	[[nodiscard]] std::string describeOption(const World& world, const EvaluatedOption& option);
 
 } // namespace ecs

@@ -1,0 +1,106 @@
+#include "DecisionTrace.h"
+
+#include "../World.h"
+#include "Appearance.h"
+
+#include "assets/AssetRegistry.h"
+#include "assets/RecipeRegistry.h"
+
+#include <format>
+
+namespace ecs {
+
+	namespace {
+
+		const char* needName(NeedType need) {
+			switch (need) {
+				case NeedType::Hunger:
+					return "Hunger";
+				case NeedType::Thirst:
+					return "Thirst";
+				case NeedType::Energy:
+					return "Energy";
+				case NeedType::Bladder:
+					return "Bladder";
+				case NeedType::Digestion:
+					return "Digestion";
+				case NeedType::Hygiene:
+				case NeedType::Recreation:
+				case NeedType::Temperature:
+				case NeedType::Count:
+					break;
+			}
+			return "Unknown";
+		}
+
+		/// A definition's label, or its name when it has none.
+		const std::string& labelOf(const assets::AssetRegistry& registry, uint32_t defNameId) {
+			const auto* def = registry.getDefinitionById(defNameId);
+			return def != nullptr && !def->label.empty() ? def->label : registry.getDefName(defNameId);
+		}
+
+		bool isGatherFoodSentinel(const EvaluatedOption& option) {
+			return option.needValue >= 100.0F && option.threshold == 0.0F;
+		}
+
+		std::string describeNeed(const EvaluatedOption& option) {
+			std::string text = std::format("{} at {}%", needName(option.needType), static_cast<int>(option.needValue));
+			if (option.status == OptionStatus::NoSource && !option.targetPosition.has_value()) {
+				text += " (no known source)";
+			} else if (option.status == OptionStatus::Regrowing) {
+				text += " (source regrowing)";
+			} else if (option.needValue < 10.0F) {
+				text += " (critical)";
+			} else if (option.status == OptionStatus::Satisfied) {
+				text += " (satisfied)";
+			} else if (option.distanceToTarget > 0.0F) {
+				text += std::format(" ({}m away)", static_cast<int>(option.distanceToTarget));
+			} else if (option.targetPosition.has_value()) {
+				text += " (using ground)";
+			}
+			const bool actionable = option.status == OptionStatus::Available || option.status == OptionStatus::Selected;
+			if (actionable && *option.reason != '\0') {
+				text += std::format(" ({})", option.reason);
+			}
+			return text;
+		}
+
+	} // namespace
+
+	std::string describeOption(const World& world, const EvaluatedOption& option) {
+		const auto& registry = assets::AssetRegistry::Get();
+		switch (option.taskType) {
+			case TaskType::FulfillNeed:
+				return isGatherFoodSentinel(option) ? std::string(option.reason) : describeNeed(option);
+			case TaskType::Haul:
+				return std::vformat(option.reason, std::make_format_args(registry.getDefName(option.haulItemDefNameId)));
+			case TaskType::Harvest: {
+				const std::string& source = labelOf(registry, option.targetDefNameId.value_or(0));
+				const std::string& yield = labelOf(registry, option.harvestYieldDefNameId);
+				std::string		   text = std::vformat(option.reason, std::make_format_args(source, yield));
+				if (option.status == OptionStatus::Regrowing) {
+					text += " (regrowing)";
+				}
+				return text;
+			}
+			case TaskType::Craft: {
+				const auto*		   recipe = assets::RecipeRegistry::Get().getRecipe(option.craftRecipeDefName);
+				const std::string& label = recipe != nullptr ? recipe->label : option.craftRecipeDefName;
+				return std::vformat(option.reason, std::make_format_args(label));
+			}
+			case TaskType::PlacePackaged: {
+				const auto*		   appearance = world.getComponent<Appearance>(static_cast<EntityID>(option.placePackagedEntityId));
+				static const std::string kUnknown = "item";
+				const std::string& name = appearance != nullptr ? appearance->defName : kUnknown;
+				return std::vformat(option.reason, std::make_format_args(name));
+			}
+			case TaskType::Build:
+			case TaskType::Deconstruct:
+			case TaskType::Wander:
+			case TaskType::None:
+				break;
+		}
+		return option.reason;
+	}
+
+} // namespace ecs

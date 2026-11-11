@@ -95,8 +95,8 @@ namespace world_sim {
 		std::vector<Line> linesOf(const ecs::World& world, ecs::EntityID colonistId) {
 			std::vector<Line>		  lines;
 			const ecs::DecisionTrace* trace = world.getComponent<ecs::DecisionTrace>(colonistId);
-			if (trace != nullptr && !trace->selectionSummary.empty()) {
-				lines.push_back(status("selection_summary", trace->selectionSummary, LineStatus::Active));
+			if (const ecs::EvaluatedOption* selected = trace != nullptr ? trace->getSelected() : nullptr) {
+				lines.push_back(status("selection_summary", "Selected: " + ecs::describeOption(world, *selected), LineStatus::Active));
 			}
 
 			lines.push_back(header("current_header", "Current"));
@@ -132,10 +132,7 @@ namespace world_sim {
 					if (!seen.insert(key).second) {
 						key += std::format("_{}", lines.size());
 					}
-					// A no-room haul's reason is fixed; the item it can't carry is composed in here.
-					const std::string reason = option.status == ecs::OptionStatus::NoRoom
-												   ? std::format("{} ({}: no room to carry it)", option.reason, option.haulItemDefName)
-												   : option.reason;
+					const std::string reason = ecs::describeOption(world, option);
 					lines.push_back(status(
 						key,
 						std::format("[T{} {}] {} - score {}", option.tier, tierLabel(option.tier), reason, static_cast<int>(option.score)),
