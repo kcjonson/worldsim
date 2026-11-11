@@ -219,6 +219,11 @@ public:
 	/// Set callback for dropping loose units on the ground when a chain is interrupted.
 	void setDropResourceCallback(DropResourceCallback callback) { onDropResource = std::move(callback); }
 
+	/// Where packaged furniture a colonist sets down at his feet (`at`) lands: walkable ground off every
+	/// unbuilt footprint, by the loose-drop rule. Unwired (unit contexts with no world behind them), at his feet.
+	using SetDownSpotCallback = std::function<glm::vec2(glm::vec2 at)>;
+	void setSetDownSpotCallback(SetDownSpotCallback callback) { onSetDownSpot = std::move(callback); }
+
 	/// When a harvestable the colonist remembers is ready to give its yield again while it regrows from
 	/// an earlier cut, on the simulation clock; nullopt when it is ready now. Colonists read the live
 	/// state of sources they already know, as they read claims; this never reveals a source. Asked
@@ -455,6 +460,9 @@ private:
 
 	/// Callback for dropping items on the ground (when chain is interrupted)
 	DropResourceCallback onDropResource = nullptr;
+
+	/// Callback placing a set-down packaged item on valid ground
+	SetDownSpotCallback onSetDownSpot = nullptr;
 
 	/// Callback asking the world when a remembered harvestable is ready to give again
 	SourceRegrowthCallback onSourceRegrowth = nullptr;

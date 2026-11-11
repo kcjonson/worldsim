@@ -2882,9 +2882,10 @@ namespace ecs {
 			task.placePackagedEntityId = selected->placePackagedEntityId;
 			task.placeSourcePosition = selected->placeSourcePosition.value_or(glm::vec2{0.0F, 0.0F});
 			task.placeTargetPosition = selected->placeTargetPosition.value_or(glm::vec2{0.0F, 0.0F});
-			// For place tasks, target is initially the source position (pickup first)
-			task.targetPosition = task.placeSourcePosition;
-			task.chainStep = 0;
+			// The pickup leg first, unless he already carries it: then his pickup spot is stale and he
+			// goes straight to the placement.
+			task.targetPosition = selected->carryingPackaged ? task.placeTargetPosition : task.placeSourcePosition;
+			task.chainStep = selected->carryingPackaged ? 1 : 0;
 		}
 
 		movementTarget.target = task.targetPosition;
@@ -3131,11 +3132,12 @@ namespace ecs {
 		if (selected.taskType == TaskType::FulfillNeed && !selected.gathersFood && !taskFirstActionNeedsHands(selected.taskType, selected.needType)) {
 			return;
 		}
-		// Set down as the packaged item it is, where he stands: the placement, once offered again, picks it
-		// up from here.
-		const auto packaged = static_cast<EntityID>(carried);
+		// Set down as the packaged item it is, where he stands or on the nearest valid ground off a site:
+		// the placement, once offered again, picks it up from there.
+		const auto		packaged = static_cast<EntityID>(carried);
+		const glm::vec2 setDownAt = onSetDownSpot ? onSetDownSpot(position.value) : position.value;
 		if (auto* packagedPos = world->getComponent<Position>(packaged)) {
-			packagedPos->value = position.value;
+			packagedPos->value = setDownAt;
 		}
 		if (auto* state = world->getComponent<Packaged>(packaged)) {
 			state->beingCarried = false;
@@ -3146,7 +3148,7 @@ namespace ecs {
 		inventory.rightHand.reset();
 		LOG_INFO(
 			Engine, "[AI] Entity %llu: set down packaged entity %llu at (%.1f, %.1f)", static_cast<unsigned long long>(entity),
-			static_cast<unsigned long long>(carried), position.value.x, position.value.y
+			static_cast<unsigned long long>(carried), setDownAt.x, setDownAt.y
 		);
 	}
 

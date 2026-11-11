@@ -560,6 +560,65 @@ namespace ecs::test {
 		EXPECT_EQ(getTask(colonist)->placeSourcePosition, stoodAt) << "picked up where it was set down";
 	}
 
+	// Furniture set down where a site will be built goes to the nearest valid ground off every site
+	// instead, by the loose-drop rule the world answers with.
+	TEST_F(ChainClaimsTest, FurnitureSetDownOnASiteGoesToGroundOffIt) {
+		registerItem("Shelf", 2, 12.0F);
+		const FootprintBounds site{{4.0F, 0.0F}, {7.0F, 3.0F}};
+		const auto			  onSite = [site](glm::vec2 p) { return site.contains(p); };
+		const auto			  isGround = [](glm::vec2 p) { return p.x < 9.0F; };
+		ai->setSetDownSpotCallback([&](glm::vec2 at) {
+			return resourcePileDrops(1, 1, at, 0.6F, {}, isGround, onSite).spawns.front().first;
+		});
+		const glm::vec2 itemPos{3.0F, 0.0F};
+		const EntityID	shelf = world->createEntity();
+		world->addComponent<Position>(shelf, Position{itemPos});
+		world->addComponent<Appearance>(shelf, Appearance{"Shelf", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+		world->addComponent<Packaged>(shelf, Packaged{.targetPosition = glm::vec2{8.0F, 0.0F}});
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		decide(colonist);
+		act(colonist, itemPos);
+		ASSERT_EQ(world->getComponent<Inventory>(colonist)->carryingPackagedEntity, static_cast<uint64_t>(shelf));
+
+		const glm::vec2 stoodAt{5.0F, 1.0F};
+		ASSERT_TRUE(onSite(stoodAt));
+		world->getComponent<Position>(colonist)->value = stoodAt;
+		world->getComponent<Packaged>(shelf)->targetPosition.reset();
+		decide(colonist);
+		ASSERT_FALSE(world->getComponent<Packaged>(shelf)->beingCarried);
+		const glm::vec2 setDown = world->getComponent<Position>(shelf)->value;
+		EXPECT_FALSE(onSite(setDown)) << "set down at (" << setDown.x << ", " << setDown.y << ")";
+		EXPECT_TRUE(isGround(setDown));
+	}
+
+	// A colonist who picks the placement again while still holding the furniture (after a need kept it
+	// in hand, a release from control) heads straight for the spot, not back to where he picked it up.
+	TEST_F(ChainClaimsTest, ReselectingAPlacementWhileCarryingGoesStraightToTheSpot) {
+		registerItem("Shelf", 2, 12.0F);
+		const glm::vec2 itemPos{3.0F, 0.0F};
+		const glm::vec2 spot{8.0F, 0.0F};
+		const EntityID	shelf = world->createEntity();
+		world->addComponent<Position>(shelf, Position{itemPos});
+		world->addComponent<Appearance>(shelf, Appearance{"Shelf", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+		world->addComponent<Packaged>(shelf, Packaged{.targetPosition = spot});
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		decide(colonist);
+		act(colonist, itemPos);
+		ASSERT_EQ(world->getComponent<Inventory>(colonist)->carryingPackagedEntity, static_cast<uint64_t>(shelf));
+
+		getTask(colonist)->clear();
+		world->getComponent<Position>(colonist)->value = {5.0F, 4.0F};
+		decide(colonist);
+		ASSERT_EQ(getTask(colonist)->type, TaskType::PlacePackaged);
+		EXPECT_EQ(getTask(colonist)->targetPosition, spot);
+		EXPECT_EQ(getTask(colonist)->chainStep, 1U);
+		EXPECT_EQ(world->getComponent<MovementTarget>(colonist)->target, spot);
+
+		act(colonist, spot);
+		EXPECT_FALSE(world->hasComponent<Packaged>(shelf)) << "installed at the spot";
+		EXPECT_EQ(world->getComponent<Position>(shelf)->value, spot);
+	}
+
 	// A colonist carrying one packaged item sees another only as an item to go and pick up: held by
 	// whoever is on its way to it, never as one it is already delivering.
 	TEST_F(ChainClaimsTest, CarryingOnePackagedItemDoesNotMakeAnotherOneDelivering) {
