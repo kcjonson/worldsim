@@ -2,6 +2,7 @@
 // Handles XML parsing with pugixml and asset generation.
 
 #include "assets/AssetRegistry.h"
+#include "assets/GroundSvg.h"
 #include "assets/SvgPathNodes.h"
 #include "assets/TreeDefSchema.h"
 #include "assets/VariantSeed.h"
@@ -23,8 +24,10 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iterator>
 #include <limits>
+#include <span>
 #include <sstream>
 
 namespace assets {
@@ -497,6 +500,35 @@ namespace assets {
 			asset.paths = std::move(wrapped);
 		}
 
+		/// The SVG of an SVG ground def's variant that `seed` picks (seed modulo their count), read as the paths a
+		/// generator draws. Logs and returns false when the file can't be read or breaks a ground SVG rule, which
+		/// the validator reports too.
+		bool readGroundSvgVariant(const AssetDefinition& def, uint32_t seed, GeneratedAsset& out) {
+			if (def.svgPaths.empty()) {
+				LOG_ERROR(Engine, "Ground AssetDef '%s' is an SVG def with no <svgPath>", def.defName.c_str());
+				return false;
+			}
+			const std::string file = def.resolvePath(def.svgPaths[seed % def.svgPaths.size()]).string();
+			std::ifstream	  in(file, std::ios::binary);
+			if (!in) {
+				LOG_ERROR(Engine, "Ground AssetDef '%s' can't read its SVG %s", def.defName.c_str(), file.c_str());
+				return false;
+			}
+			const std::string		 bytes{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+			std::vector<std::string> issues;
+			out = readGroundSvg(
+				{.svg = std::as_bytes(std::span(bytes)),
+				 .periodMeters = def.ground.periodMeters,
+				 .pixelsPerMeter = def.ground.pixelsPerMeter,
+				 .name = file},
+				issues
+			);
+			for (const std::string& issue : issues) {
+				LOG_ERROR(Engine, "Ground AssetDef '%s' %s: %s", def.defName.c_str(), file.c_str(), issue.c_str());
+			}
+			return issues.empty();
+		}
+
 		/// SVG curve-flattening tolerance. Shared by every loadSVG call so the render
 		/// path and the collision path flatten identically.
 		constexpr float kSvgCurveTolerance = 0.5F;
@@ -791,8 +823,10 @@ namespace assets {
 				}
 			}
 
-			// SVG path and world height (for simple assets)
-			def.svgPath = defNode.child_value("svgPath");
+			// SVG paths and world height (for simple assets)
+			for (const pugi::xml_node svgNode : defNode.children("svgPath")) {
+				def.svgPaths.emplace_back(svgNode.child_value());
+			}
 			def.motionPath = defNode.child_value("motion"); // optional animation clips file
 			def.worldHeight = static_cast<float>(defNode.child("worldHeight").text().as_double(1.0));
 
@@ -926,9 +960,12 @@ namespace assets {
 				}
 			}
 
-			// Variant count
+			// Variant count; an SVG ground def's SVG list is its variant list
 			const bool isGround = def.role == AssetRole::Ground;
 			def.variantCount = static_cast<uint32_t>(defNode.child("variantCount").text().as_uint(isGround ? kGroundDefaultVariantCount : 1));
+			if (isGround && def.assetType == AssetType::Simple) {
+				def.variantCount = static_cast<uint32_t>(def.svgPaths.size());
+			}
 			if (isGround) {
 				parseGroundParams(defNode, def);
 			}
@@ -1233,17 +1270,17 @@ namespace assets {
 		// home for SVG assets). Runs eagerly at load so nav, which reads collision
 		// without forcing a render, sees the collider before the first lazy
 		// getTemplate. loadCollisionFromSvgMetadata bails cheaply when there's no
-		// metadata, so assets without a collider pay only a file open + parse.
+		// metadata, so assets without a collider pay only a file open + parse. Ground tiles never collide.
 		for (size_t n = firstNew; n < loadedNames.size(); ++n) {
 			auto it = definitions.find(loadedNames[n]);
 			if (it == definitions.end()) {
 				continue;
 			}
 			AssetDefinition& def = it->second;
-			if (def.assetType != AssetType::Simple || def.svgPath.empty()) {
+			if (def.assetType != AssetType::Simple || def.svgPaths.empty() || def.role == AssetRole::Ground) {
 				continue;
 			}
-			std::string resolvedSvgPath = def.resolvePath(def.svgPath).string();
+			std::string resolvedSvgPath = def.resolvePath(def.svgPaths.front()).string();
 			if (auto shape = loadCollisionFromSvgMetadata(resolvedSvgPath, def.worldHeight)) {
 				def.setCollisionAllClasses(*shape);
 			}
@@ -1470,18 +1507,19 @@ namespace assets {
 		renderer::TessellatedMesh mesh;
 
 		if (def.assetType == AssetType::Simple) {
-			if (def.svgPath.empty()) {
+			if (def.svgPaths.empty()) {
 				LOG_ERROR(Engine, "Simple asset %s has no svgPath", def.defName.c_str());
 				return out;
 			}
 
 			// Resolve SVG path relative to asset folder
-			std::string resolvedSvgPath = def.resolvePath(def.svgPath).string();
-			LOG_DEBUG(Engine, "Resolved SVG path: %s -> %s", def.svgPath.c_str(), resolvedSvgPath.c_str());
+			const std::string& svgPath = def.svgPaths.front();
+			std::string		   resolvedSvgPath = def.resolvePath(svgPath).string();
+			LOG_DEBUG(Engine, "Resolved SVG path: %s -> %s", svgPath.c_str(), resolvedSvgPath.c_str());
 
 			std::vector<renderer::LoadedSVGShape> shapes;
 			if (!renderer::loadSVG(resolvedSvgPath, kSvgCurveTolerance, shapes)) {
-				LOG_ERROR(Engine, "Failed to load SVG: %s (resolved from %s)", resolvedSvgPath.c_str(), def.svgPath.c_str());
+				LOG_ERROR(Engine, "Failed to load SVG: %s (resolved from %s)", resolvedSvgPath.c_str(), svgPath.c_str());
 				return out;
 			}
 
@@ -1794,7 +1832,7 @@ namespace assets {
 
 		MotionDef			   resolved; // stays empty unless resolution fully succeeds
 		const AssetDefinition* def = getDefinition(defName);
-		if (def != nullptr && !def->motionPath.empty() && def->assetType == AssetType::Simple && !def->svgPath.empty()) {
+		if (def != nullptr && !def->motionPath.empty() && def->assetType == AssetType::Simple && !def->svgPaths.empty()) {
 			// Resolve the motion file path (@shared/<...> or relative to the asset folder).
 			std::filesystem::path motionFile;
 			const std::string&	  mp = def->motionPath;
@@ -1810,7 +1848,7 @@ namespace assets {
 				LOG_WARNING(Engine, "[Motion] %s: failed to parse %s", defName.c_str(), motionFile.string().c_str());
 			} else {
 				// Load the SVG for the meter frame (scaleFactor) and the authored node coordinates.
-				const std::string					  svgFile = def->resolvePath(def->svgPath).string();
+				const std::string					  svgFile = def->resolvePath(def->svgPaths.front()).string();
 				std::vector<renderer::LoadedSVGShape> shapes;
 				pugi::xml_document					  svgDoc;
 				const bool							  svgOk =
@@ -1964,14 +2002,20 @@ namespace assets {
 
 	bool AssetRegistry::buildPaths(const std::string& defName, uint32_t seed, TessellatedPaths& outPaths, float maxPixelsPerMeter) {
 		outPaths = {};
+		const AssetDefinition* def = getDefinition(defName);
+		if (def == nullptr) {
+			LOG_ERROR(Engine, "buildPaths: definition not found: %s", defName.c_str());
+			return false;
+		}
 		const auto	   start = std::chrono::steady_clock::now();
 		GeneratedAsset asset;
-		if (!generateAsset(defName, seed, asset)) {
+		const bool drawn = def->role == AssetRole::Ground && def->assetType == AssetType::Simple ? readGroundSvgVariant(*def, seed, asset)
+																								 : generateAsset(defName, seed, asset);
+		if (!drawn) {
 			return false;
 		}
 		outPaths.generateMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
 
-		const AssetDefinition* def = getDefinition(defName);
 		if (def->role == AssetRole::Ground) {
 			rankUnsetHeights(asset); // before the wrap, so a copy keeps its original's rank
 			wrapGroundPaths(asset, def->ground.periodMeters);
@@ -1991,8 +2035,8 @@ namespace assets {
 			return false;
 		}
 
-		// Simple assets are a single drawing; reuse the cached, normalized template.
-		if (def->assetType == AssetType::Simple) {
+		// A simple asset other than a ground tile is one drawing; reuse the cached, normalized template.
+		if (def->assetType == AssetType::Simple && def->role != AssetRole::Ground) {
 			const renderer::TessellatedMesh* tmpl = getTemplate(defName, TreeTraits{});
 			if (tmpl == nullptr || tmpl->vertices.empty()) {
 				return false;
@@ -2001,7 +2045,7 @@ namespace assets {
 			return true;
 		}
 
-		// Procedural assets: generate this seed's form fresh (uncached) and tessellate.
+		// Procedural assets and ground tiles: this seed's form fresh (uncached), tessellated.
 		TessellatedPaths paths;
 		return buildPaths(defName, seed, paths, pixelsPerMeter) && paths.meshesAt(pixelsPerMeter, outMeshes);
 	}

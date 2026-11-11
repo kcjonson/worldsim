@@ -2,7 +2,7 @@
 
 // The baked ground tiles every land surface paints with (docs/technical/ground-textures.md, "Baker").
 // Each ground def's variants are baked by GroundTileBaker into sRGB mip chains and uploaded into
-// GL_TEXTURE_2D_ARRAYs (GL_SRGB8_ALPHA8, every level, GL_REPEAT, trilinear), one array per layer size,
+// GL_TEXTURE_2D_ARRAYs (BC3 with sRGB color, every level, GL_REPEAT, trilinear), one array per layer size,
 // with a per-surface table of where its layers sit and how the tile shader samples them.
 //
 // Built once the asset registry has loaded, on the GL thread and outside any frame, a step a call, so a
