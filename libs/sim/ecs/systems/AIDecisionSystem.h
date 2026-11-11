@@ -66,7 +66,9 @@ struct RootItem {
 /// each (box, item) is read from the world once per update; every colonist then takes its own claim
 /// exclusion out of the claim index on top. Box contents change outside an AI update, except when a
 /// colonist inside one puts goods away in a box within reach (storeOrDrop); the AI then refreshes that
-/// box. An open table stamped with the update, so a warm cache allocates nothing.
+/// box. It also holds each (box, item)'s configured StoragePriority, which only the player changes,
+/// read the first time an option asks for it. An open table stamped with the update, so a warm cache
+/// allocates nothing.
 class BoxRoomCache {
   public:
 	/// A new update: every slot of the last one reads as empty and none counts toward the load, so the
@@ -83,6 +85,10 @@ class BoxRoomCache {
 	/// The box's room for `item`, or nullopt when the box has no Inventory.
 	[[nodiscard]] std::optional<Room> get(World& world, const assets::AssetRegistry& registry, EntityID box, uint32_t item);
 
+	/// The box's StoragePriority for `item` (StorageConfiguration::getPriorityFor), or nullopt when the box
+	/// has no StorageConfiguration or the item no definition.
+	[[nodiscard]] std::optional<StoragePriority> priority(World& world, const assets::AssetRegistry& registry, EntityID box, uint32_t item);
+
 	/// Read again, from the world, every item of this update's entries for `box`.
 	void refresh(World& world, const assets::AssetRegistry& registry, EntityID box);
 
@@ -90,6 +96,8 @@ class BoxRoomCache {
 	/// (box, item) pairs read from the world since construction; tests read it to show each is read once
 	/// per update, and an item no source offers not at all.
 	uint64_t readOut = 0;
+	/// (box, item) priorities read from the world since construction.
+	uint64_t priorityReadOut = 0;
 	[[nodiscard]] size_t capacity() const { return slots.size(); }
 #endif
 
@@ -98,10 +106,15 @@ class BoxRoomCache {
 		uint64_t pass = 0;
 		EntityID box = kInvalidEntity;
 		uint32_t item = 0;
+		bool	 roomRead = false;
 		bool	 hasStore = false;
 		Room	 room;
+		bool						   priorityRead = false;
+		std::optional<StoragePriority> priority;
 	};
-	void read(World& world, const assets::AssetRegistry& registry, Slot& slot);
+	/// This update's slot for (box, item), added unread when it has none.
+	Slot& slotFor(EntityID box, uint32_t item);
+	void  read(World& world, const assets::AssetRegistry& registry, Slot& slot);
 	uint64_t		  pass = 1;
 	uint32_t		  used = 0;
 	std::vector<Slot> slots;

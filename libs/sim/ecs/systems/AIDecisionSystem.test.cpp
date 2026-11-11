@@ -155,6 +155,7 @@ namespace ecs::test {
 		/// Boxes the colony's box knowledge has worked out so far.
 		uint64_t colonyStorageWorkedOut() { return world->getSystem<AIDecisionSystem>().m_colonyStorage.workedOut; }
 		uint64_t boxRoomsReadOut() { return world->getSystem<AIDecisionSystem>().m_boxRooms.readOut; }
+		uint64_t boxPrioritiesReadOut() { return world->getSystem<AIDecisionSystem>().m_boxRooms.priorityReadOut; }
 
 		/// Remaining needs the AI has worked out so far.
 		uint64_t needsWorkedOut() { return world->getSystem<AIDecisionSystem>().m_needs.computed; }
@@ -916,6 +917,7 @@ namespace ecs::test {
 #ifdef DEVELOPMENT_BUILD
 		const uint64_t workedOutBefore = colonyStorageWorkedOut();
 		const uint64_t roomsBefore = boxRoomsReadOut();
+		const uint64_t prioritiesBefore = boxPrioritiesReadOut();
 #endif
 		world->update(0.016F);
 
@@ -939,6 +941,8 @@ namespace ecs::test {
 		EXPECT_EQ(colonyStorageWorkedOut() - workedOutBefore, 2U);
 		// The high box's room for Wood is read from the world once for the hundred colonists.
 		EXPECT_EQ(boxRoomsReadOut() - roomsBefore, 1U);
+		// Its priority for Wood, which orders every colonist's pull within the tier, is read once too.
+		EXPECT_EQ(boxPrioritiesReadOut() - prioritiesBefore, 1U);
 #endif
 	}
 

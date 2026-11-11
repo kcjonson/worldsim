@@ -378,14 +378,15 @@ namespace ecs {
 		/// taskAgeBonus, hysteresisBonus), then composes option.score. skillBonus is set by the
 		/// evaluators. The chain bonus is GONE: a mid-chain provisioning task is tier 4 instead.
 		/// @param world ECS world (to read a stocking haul's destination box priority)
+		/// @param boxes This update's box cache, holding each (box, item)'s priority
 		/// @param option The option to populate (skillBonus already set by its evaluator)
 		/// @param currentTask Current colonist task (for the hysteresis margin)
 		/// @param currentHaulItemId The current task's haul item, interned (0 when not hauling)
 		/// @param currentTime Current game time (for task age calculation)
 		/// @param baseTiers Each task type's base tier
 		void populatePriorityBonuses(
-			World& world, EvaluatedOption& option, const Task& currentTask, uint32_t currentHaulItemId, float currentTime,
-			const AIDecisionSystem::BaseTiers& baseTiers
+			World& world, BoxRoomCache& boxes, const assets::AssetRegistry& registry, EvaluatedOption& option, const Task& currentTask,
+			uint32_t currentHaulItemId, float currentTime, const AIDecisionSystem::BaseTiers& baseTiers
 		) {
 			const auto& priorityConfig = assets::PriorityConfig::Get();
 
@@ -428,16 +429,9 @@ namespace ecs {
 			const uint64_t	destBox = stockedBy != nullptr ? static_cast<uint64_t>(stockedBy->destinationEntity) : option.haulDestinationId;
 			const uint32_t	stockedItem = stockedBy != nullptr ? option.harvestYieldDefNameId : option.haulItemDefNameId;
 			if (option.servesStorageStocking && destBox != 0) {
-				const auto destEntity = static_cast<EntityID>(destBox);
-				const auto* destConfig = world.getComponent<StorageConfiguration>(destEntity);
-				if (destConfig != nullptr) {
-					const auto& reg = assets::AssetRegistry::Get();
-					const auto* itemDef = reg.getDefinitionById(stockedItem);
-					if (itemDef != nullptr) {
-						const StoragePriority destPriority = destConfig->getPriorityFor(itemDef->defName, itemDef->category);
-						const auto rank = static_cast<int16_t>(static_cast<uint8_t>(destPriority)); // 0..3
-						option.storagePriorityBias = static_cast<int16_t>(rank * priorityConfig.getStoragePriorityWeight());
-					}
+				if (const auto destPriority = boxes.priority(world, registry, static_cast<EntityID>(destBox), stockedItem)) {
+					const auto rank = static_cast<int16_t>(static_cast<uint8_t>(*destPriority)); // 0..3
+					option.storagePriorityBias = static_cast<int16_t>(rank * priorityConfig.getStoragePriorityWeight());
 				}
 			}
 
@@ -1351,7 +1345,7 @@ namespace ecs {
 
 	} // namespace
 
-	std::optional<BoxRoomCache::Room> BoxRoomCache::get(World& world, const assets::AssetRegistry& registry, EntityID box, uint32_t item) {
+	BoxRoomCache::Slot& BoxRoomCache::slotFor(EntityID box, uint32_t item) {
 		if ((used + 1) * 2 > slots.size()) {
 			std::vector<Slot> old;
 			old.swap(slots);
@@ -1372,19 +1366,42 @@ namespace ecs {
 		size_t		 index = std::hash<uint64_t>{}((static_cast<uint64_t>(box) * 0x9E3779B97F4A7C15ULL) ^ item) & mask;
 		for (; slots[index].pass == pass; index = (index + 1) & mask) {
 			if (slots[index].box == box && slots[index].item == item) {
-				return slots[index].hasStore ? std::optional<Room>{slots[index].room} : std::nullopt;
+				return slots[index];
 			}
 		}
 		Slot& slot = slots[index];
 		slot = {.pass = pass, .box = box, .item = item};
 		++used;
-		read(world, registry, slot);
+		return slot;
+	}
+
+	std::optional<BoxRoomCache::Room> BoxRoomCache::get(World& world, const assets::AssetRegistry& registry, EntityID box, uint32_t item) {
+		Slot& slot = slotFor(box, item);
+		if (!slot.roomRead) {
+			read(world, registry, slot);
+		}
 		return slot.hasStore ? std::optional<Room>{slot.room} : std::nullopt;
+	}
+
+	std::optional<StoragePriority> BoxRoomCache::priority(World& world, const assets::AssetRegistry& registry, EntityID box, uint32_t item) {
+		Slot& slot = slotFor(box, item);
+		if (!slot.priorityRead) {
+#ifdef DEVELOPMENT_BUILD
+			++priorityReadOut;
+#endif
+			slot.priorityRead = true;
+			const auto* config = world.getComponent<StorageConfiguration>(box);
+			const auto* itemDef = registry.getDefinitionById(item);
+			if (config != nullptr && itemDef != nullptr) {
+				slot.priority = config->getPriorityFor(itemDef->defName, itemDef->category);
+			}
+		}
+		return slot.priority;
 	}
 
 	void BoxRoomCache::refresh(World& world, const assets::AssetRegistry& registry, EntityID box) {
 		for (Slot& slot : slots) {
-			if (slot.pass == pass && slot.box == box) {
+			if (slot.pass == pass && slot.box == box && slot.roomRead) {
 				read(world, registry, slot);
 			}
 		}
@@ -1394,6 +1411,7 @@ namespace ecs {
 #ifdef DEVELOPMENT_BUILD
 		++readOut;
 #endif
+		slot.roomRead = true;
 		const auto* store = world.getComponent<Inventory>(slot.box);
 		slot.hasStore = store != nullptr;
 		if (store == nullptr) {
@@ -2707,7 +2725,7 @@ namespace ecs {
 		// m_elapsedTime, monotonic, which is all the within-tier age term needs.
 		const uint32_t currentHaulItemId = currentTask.type == TaskType::Haul ? currentTask.haulItemDefNameId : 0U;
 		for (auto& option : trace.options) {
-			populatePriorityBonuses(*world, option, currentTask, currentHaulItemId, m_elapsedTime, m_baseTiers);
+			populatePriorityBonuses(*world, m_boxRooms, m_registry, option, currentTask, currentHaulItemId, m_elapsedTime, m_baseTiers);
 		}
 
 		// Sort by the lexicographic (tier asc, score desc, tiebreakId asc) key. Tier is categorical
