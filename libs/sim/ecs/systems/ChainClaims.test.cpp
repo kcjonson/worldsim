@@ -1125,6 +1125,71 @@ namespace ecs::test {
 		EXPECT_EQ(cutting(first) + cutting(second), 1);
 	}
 
+	/// A colonist between two cuts of a gathering for `site`: its task is the next cut, toward a tree it
+	/// has not reached, and it holds an armful of three wood under that cut's cargo claims.
+	class ArmfulBetweenCutsTest : public ChainClaimsTest {
+	  protected:
+		void SetUp() override {
+			ChainClaimsTest::SetUp();
+			ai->setDropResourceCallback([this](const std::string&, float, float, uint32_t quantity) { dropped += quantity; });
+			gathered = constructionSite({0.0F, 30.0F}, "Wood", 10);
+			colonist = createColonist({0.0F, 0.0F});
+			auto& inventory = *world->getComponent<Inventory>(colonist);
+			ASSERT_EQ(ecs::addArmful(inventory, assets::AssetRegistry::Get(), "Wood", 3), 3U);
+			Task& task = *getTask(colonist);
+			task.type = TaskType::Harvest;
+			task.state = TaskState::Moving;
+			task.targetPosition = {50.0F, 50.0F};
+			task.harvestTargetEntityId = 1;
+			task.harvestYieldDefNameId = woodId;
+			task.priorityTier = 4;
+			task.instanceId = GoalTaskRegistry::Get().allocateClaimSeq();
+			task.claimSeq = task.instanceId;
+			ASSERT_TRUE(task.claims.push(Claim::inbound(static_cast<uint64_t>(gathered.blueprint), woodId, 3)));
+			ASSERT_TRUE(task.claims.push(Claim::inFlight(gathered.umbrella, woodId, 3)));
+		}
+
+		uint32_t heldWood() { return ecs::availableQuantity(*world->getComponent<Inventory>(colonist), "Wood"); }
+
+		Site	 gathered{};
+		EntityID colonist = kInvalidEntity;
+		uint32_t dropped = 0;
+	};
+
+	// Another site nearer by wants the same wood (its cut, or the armful carried there) and is picked: no
+	// leg of this gathering, so the colonist keeps its armful and its leg rather than dropping the wood.
+	TEST_F(ArmfulBetweenCutsTest, AnotherSitesPickDoesNotDropTheArmful) {
+		registerHarvestable("Oak", "Wood", 2, 2);
+		const Site other = constructionSite({3.0F, 0.0F}, "Wood", 10);
+		GoalTask cut;
+		cut.type = TaskType::Harvest;
+		cut.owner = GoalOwner::ConstructionGoalSystem;
+		cut.destinationEntity = other.blueprint;
+		cut.destinationPosition = {3.0F, 0.0F};
+		cut.yieldDefNameId = woodId;
+		cut.parentGoalId = other.umbrella;
+		GoalTaskRegistry::Get().createGoal(std::move(cut));
+		remember(colonist, {2.0F, 0.0F}, "Oak", assets::CapabilityType::Harvestable);
+
+		decide(colonist);
+		const EvaluatedOption* chosen = world->getComponent<DecisionTrace>(colonist)->getSelected();
+		ASSERT_NE(chosen, nullptr);
+		ASSERT_TRUE(chosen->taskType == TaskType::Harvest || chosen->haulGoalId == other.umbrella) << "a pick for the other site";
+		EXPECT_EQ(getTask(colonist)->targetPosition, glm::vec2(50.0F, 50.0F)) << "the leg it was on is kept";
+		EXPECT_EQ(heldWood(), 3U);
+		EXPECT_EQ(dropped, 0U);
+	}
+
+	// The root is gone and nothing else is on offer: the armful is not walked off with on a wander.
+	TEST_F(ArmfulBetweenCutsTest, ALostRootDoesNotSendTheArmfulWandering) {
+		GoalTaskRegistry::Get().removeGoal(gathered.umbrella);
+		decide(colonist);
+		ASSERT_EQ(world->getComponent<DecisionTrace>(colonist)->getSelected()->taskType, TaskType::Wander);
+		EXPECT_EQ(getTask(colonist)->type, TaskType::Harvest) << "the wander does not take the armful along";
+		EXPECT_EQ(heldWood(), 3U);
+		EXPECT_EQ(dropped, 0U);
+	}
+
 	// =============================================================================
 	// Batching: a colonist gathering for a root fills its trip before walking (task-claims.md,
 	// Batching). Colonists walk (MovementSystem and PhysicsSystem, no mesh: direct steering) and every

@@ -1643,7 +1643,9 @@ namespace ecs {
 				// drop it -- whether to fetch MORE of the very item it's already carrying (a withdraw/drop
 				// loop that never provisions the destination) or to wander off idle with the load still in
 				// hand. Hold the delivery so it completes; the colonist
-				// re-evaluates with empty hands once the load is deposited.
+				// re-evaluates with empty hands once the load is deposited. The armful is what is guarded,
+				// whatever leg carries it: a haul, or a cut between two others of a gathering, which holds the
+				// earlier cuts' goods under its cargo claims.
 				//
 				// Two escapes/limits keep this from ever pinning a colonist on a stuck haul:
 				//   - It never fires when the delivery itself has no believed route to its destination
@@ -1652,13 +1654,14 @@ namespace ecs {
 				//     dropping for an emergency is acceptable. Only same-or-lower-priority challengers
 				//     (the opportunistic pull, idle Wander) are blocked.
 				const bool currentHaulUnreachable = (task.navState == NavState::CantFindWayTo);
-				const bool carryingTwoHandLoad = task.type == TaskType::Haul && !task.haulItemDefName.empty() &&
-					ecs::itemIsTwoHand(m_registry, task.haulItemDefName) && inventory.isHolding(task.haulItemDefName);
+				const uint32_t	   chainGoods = chainItem(m_registry, task);
+				const std::string& chainGoodsName = m_registry.getDefName(chainGoods);
+				const bool		   carryingTwoHandLoad = chainGoods != 0 && (task.type == TaskType::Haul || taskCargo(m_registry, task) > 0) &&
+											   ecs::itemIsTwoHand(m_registry, chainGoodsName) && inventory.isHolding(chainGoodsName);
 				if (shouldSwitch && !handedCargo && !currentHaulUnreachable && carryingTwoHandLoad && selected != nullptr) {
 					// Case 1: a Harvest of the same yield (e.g. a construction material Harvest for Wood). Held regardless of tier -- the chop->drop->chop loop it forms is the
 					// original two-hand-drop bug this guard was built for.
-					const bool sameYieldHarvest = selected->taskType == TaskType::Harvest &&
-						selected->harvestYieldDefNameId == m_registry.getDefNameId(task.haulItemDefName);
+					const bool sameYieldHarvest = selected->taskType == TaskType::Harvest && selected->harvestYieldDefNameId == chainGoods;
 					// Case 2: ANY same-or-lower-priority challenger. A two-hand carry must finish its deposit
 					// before taking on any task that does not outrank it -- idle Wander (tier 7) included. Two
 					// ways this fires: (a) the storage-priority pull, where mid-carry evaluateHaulOptions'
