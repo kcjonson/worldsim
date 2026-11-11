@@ -29,6 +29,13 @@ namespace assets {
 
 namespace ecs {
 
+	class World;
+
+	/// What a storage root's need is measured against: the stock colonists may haul in (the item's
+	/// configured max, or physical room when none is set), or what cutting stocks it toward (the
+	/// configured minimum). Craft and construction roots have one target and ignore it.
+	enum class NeedBasis : uint8_t { Stock, Harvest };
+
 	/// Goal status for task hierarchy and dependency tracking
 	enum class GoalStatus : uint8_t {
 		Available,		 // Can be worked on now
@@ -224,6 +231,15 @@ namespace ecs {
 		/// The root of `goalId`'s hierarchy (itself when it has no parent): the goal in-flight claims
 		/// count toward. 0 when `goalId` is not a goal.
 		[[nodiscard]] uint64_t rootOf(uint64_t goalId) const;
+
+		/// How many more of an item root goal `rootGoalId` needs, in items: its target minus what has
+		/// landed at its destination (task-claims.md, Remaining need). A craft's target is the bill of
+		/// materials of its station's next job against the station store; a construction umbrella's is
+		/// the blueprint manifest against delivered[], while the umbrella accepts the item; a storage
+		/// umbrella's is per `basis` against what the box holds, never past its physical room. Read
+		/// from the world on each call, so a deposit or a consumed input shows at once. In-flight is
+		/// not subtracted here (ClaimIndex::inFlight is). 0 for anything else.
+		[[nodiscard]] uint32_t remainingNeed(World& world, uint64_t rootGoalId, uint32_t itemDefNameId, NeedBasis basis) const;
 
 		/// Remove a goal and all its children (cascade delete)
 		void removeGoalWithChildren(uint64_t goalId);

@@ -1,8 +1,54 @@
 #include "GoalTaskRegistry.h"
 
+#include "StoreOrDrop.h"
+#include "World.h"
+#include "components/Inventory.h"
+#include "components/StorageConfiguration.h"
+#include "components/StructureBlueprint.h"
+#include "components/WorkQueue.h"
+
 #include <assets/AssetRegistry.h>
+#include <assets/RecipeRegistry.h>
+
+#include <algorithm>
 
 namespace ecs {
+
+	namespace {
+
+		uint32_t craftNeed(World& world, EntityID station, const std::string& item) {
+			const auto*		   queue = world.getComponent<WorkQueue>(station);
+			const CraftingJob* job = queue != nullptr ? queue->getNextJob() : nullptr;
+			const auto*		   recipe = job != nullptr ? assets::RecipeRegistry::Get().getRecipe(job->recipeDefName) : nullptr;
+			if (recipe == nullptr) {
+				return 0;
+			}
+			const auto*	   store = world.getComponent<Inventory>(station);
+			const uint32_t inStore = store != nullptr ? store->getQuantity(item) : 0U;
+			for (const auto& input : recipe->inputs) {
+				if (input.defName == item) {
+					return input.count > inStore ? input.count - inStore : 0U;
+				}
+			}
+			return 0;
+		}
+
+		uint32_t storageNeed(World& world, EntityID box, const std::string& item, NeedBasis basis) {
+			const auto* config = world.getComponent<StorageConfiguration>(box);
+			const auto* inventory = world.getComponent<Inventory>(box);
+			const auto* def = assets::AssetRegistry::Get().getDefinition(item);
+			if (config == nullptr || inventory == nullptr || def == nullptr) {
+				return 0;
+			}
+			if (basis == NeedBasis::Stock) {
+				return storageRoomFor(*config, *inventory, item, def->category);
+			}
+			const uint32_t minimum = config->getMinAmountFor(item, def->category);
+			const uint32_t held = inventory->getQuantity(item);
+			return minimum > held ? std::min(minimum - held, inventory->addableCount(item)) : 0U;
+		}
+
+	} // namespace
 
 	bool FootprintBounds::blockedBy(const assets::AssetRegistry& registry, uint32_t defNameId, glm::vec2 p) const {
 		return registry.hasCapability(defNameId, assets::CapabilityType::Harvestable) && contains(p);
@@ -138,6 +184,33 @@ namespace ecs {
 			it = parent;
 		}
 		return it->first;
+	}
+
+	uint32_t GoalTaskRegistry::remainingNeed(World& world, uint64_t rootGoalId, uint32_t itemDefNameId, NeedBasis basis) const {
+		const auto it = goals.find(rootGoalId);
+		if (it == goals.end() || it->second.parentGoalId.has_value() || itemDefNameId == 0) {
+			return 0;
+		}
+		const GoalTask&	   root = it->second;
+		const std::string& item = assets::AssetRegistry::Get().getDefName(itemDefNameId);
+		switch (root.owner) {
+			case GoalOwner::CraftingGoalSystem:
+				return root.type == TaskType::Craft ? craftNeed(world, root.destinationEntity, item) : 0U;
+			case GoalOwner::ConstructionGoalSystem: {
+				const auto& accepted = root.acceptedDefNameIds;
+				const auto* blueprint = world.getComponent<StructureBlueprint>(root.destinationEntity);
+				if (root.type != TaskType::Build || blueprint == nullptr ||
+					std::find(accepted.begin(), accepted.end(), itemDefNameId) == accepted.end()) {
+					return 0;
+				}
+				return blueprint->remaining(item);
+			}
+			case GoalOwner::StorageGoalSystem:
+				return storageNeed(world, root.destinationEntity, item, basis);
+			case GoalOwner::BuildGoalSystem:
+				return 0;
+		}
+		return 0;
 	}
 
 	const GoalTask* GoalTaskRegistry::getGoal(uint64_t goalId) const {
