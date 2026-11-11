@@ -18,6 +18,11 @@ namespace assets {
 	/// view, 8 px/m at zoom 3 (GameScene asserts the two agree).
 	inline constexpr float kReferencePixelsPerMeter = 24.0F;
 
+	/// A level may reach at most this factor times its template's reference level's reach. The cull
+	/// margin and the selection broad phase read the reference level, so they are widened by it, and
+	/// the render smoke fails a def whose level goes past it.
+	inline constexpr float kLevelReachMargin = 1.1F;
+
 	/// The level a screen density draws: the highest level at or below it, else the lowest. 0 for a def
 	/// with no levels (its one mesh). `levels` is ascending.
 	[[nodiscard]] inline uint8_t detailLevelFor(std::span<const float> levels, float pixelsPerMeter) {

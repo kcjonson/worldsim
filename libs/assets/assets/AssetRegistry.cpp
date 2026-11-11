@@ -1583,7 +1583,8 @@ namespace assets {
 		const bool isMature	   = traits == templateTraits(def, matureTraits(def));
 		const bool defTall =
 			isMature ? routesTall(built.mesh.has_value() ? meshHeight(*built.mesh) : 0.0F, groundcover) : isTallDef(def.defName);
-		const float reach = built.mesh.has_value() ? meshReach(*built.mesh) * def.placement.scale.max : 0.0F;
+		const float levelMargin = def.detailLevels.empty() ? 1.0F : kLevelReachMargin;
+		const float reach = built.mesh.has_value() ? meshReach(*built.mesh) * def.placement.scale.max * levelMargin : 0.0F;
 
 		uint32_t id = 0;
 		{
@@ -1859,7 +1860,23 @@ namespace assets {
 			for (; i < end; ++i) {
 				if (!jobs[i].built.error.empty()) {
 					report.add(Severity::Error, def.defName, "detailLevels", jobs[i].built.error, "");
-				} else if (reference.built.error.empty() && jobs[i].built.collision != reference.built.collision) {
+					continue;
+				}
+				if (reference.built.error.empty() && reference.built.mesh.has_value() && jobs[i].built.mesh.has_value()) {
+					const float levelReach = meshReach(*jobs[i].built.mesh);
+					const float referenceReach = meshReach(*reference.built.mesh);
+					if (levelReach > referenceReach * kLevelReachMargin) {
+						report.add(
+							Severity::Error,
+							def.defName,
+							"detailLevels",
+							describeTemplate(def, traits, jobs[i].level) + " reaches " + std::to_string(levelReach) + " m, past " + std::to_string(kLevelReachMargin) +
+								" times its reference level's " + std::to_string(referenceReach) + " m; the cull margin is read at the reference level",
+							""
+						);
+					}
+				}
+				if (reference.built.error.empty() && jobs[i].built.collision != reference.built.collision) {
 					report.add(
 						Severity::Error,
 						def.defName,

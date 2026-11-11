@@ -132,7 +132,8 @@ namespace assets {
 		/// The farthest any drawn point of a template but groundcover reaches from its origin,
 		/// times the def's largest placement scale, over every template built so far: how far
 		/// from its origin an entity can draw or be clicked. Every placed static has its
-		/// template built at placement, so this covers what can be on screen.
+		/// template built at placement, so this covers what can be on screen. A def with
+		/// <detailLevels> is measured at its reference level and widened by kLevelReachMargin.
 		[[nodiscard]] float maxReachMeters() const { return m_maxReach.load(std::memory_order_relaxed); }
 
 		/// Get the resolved motion (animation clips) for a def, or nullptr if it declares none.
@@ -226,7 +227,8 @@ namespace assets {
 		/// Builds every template (each age class and variant) of each def with <detailLevels> at every
 		/// level, in parallel, and adds an error to `report` for a def with no level at
 		/// kReferencePixelsPerMeter, and for a level whose generator fails (an oversize mesh
-		/// included) or whose collision rect differs from the reference level's. For the render
+		/// included), whose collision rect differs from the reference level's, or whose reach is past
+		/// kLevelReachMargin times the reference level's. For the render
 		/// smoke, not for load.
 		void checkDetailLevels(ValidationReport& report);
 

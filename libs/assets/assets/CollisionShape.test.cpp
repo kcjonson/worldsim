@@ -2,6 +2,7 @@
 
 #include "assets/AssetDefinition.h"
 #include "assets/AssetRegistry.h"
+#include "assets/DetailLevels.h"
 
 #include <gtest/gtest.h>
 
@@ -689,6 +690,24 @@ namespace {
 												+ extraXml + "</AssetDef></AssetDefinitions>";
 	}
 
+	// A one-class tree whose triangle reaches `lowReach` meters below the reference density and 1 at
+	// and above it, with levels 4 and 24.
+	void writeReachTree(TempAssets& t, const std::string& defName, const std::string& lowReach) {
+		const fs::path dir = t.root / defName;
+		fs::create_directories(dir);
+		std::ofstream(dir / "gen.lua") << "local r = detailPxPerMeter < 24 and " + lowReach + " or 1\n"
+										  "local p = Path()\n"
+										  "p:addVertex(0, 0) p:addVertex(r, 0) p:addVertex(0, 1)\n"
+										  "asset:addPath(p)\n";
+		std::ofstream(dir / (defName + ".xml")) << "<?xml version=\"1.0\"?><AssetDefinitions><AssetDef>"
+												   "<defName>"
+												+ defName
+												+ "</defName><assetType>procedural</assetType>"
+												  "<generator><scriptPath>gen.lua</scriptPath></generator>"
+												  "<variantCount>1</variantCount>"
+												  "<detailLevels>4, 24</detailLevels></AssetDef></AssetDefinitions>";
+	}
+
 } // namespace
 
 // The rect is captured per age class, from each class's variant 0.
@@ -811,4 +830,30 @@ TEST(CollisionShapeTest, ReferenceDensityAndImplicitClassFailSmokeCheck) {
 		EXPECT_EQ(report.issues[i].defName, "Drifting");
 		EXPECT_NE(report.issues[i].message.find("variant " + std::to_string(i - 1) + " at 4 px/m"), std::string::npos) << report.issues[i].message;
 	}
+}
+
+// A level may reach up to kLevelReachMargin times the reference level's; past it fails the render
+// smoke, naming the level and both reaches. The registry's reach is the reference level's times the
+// margin, so a level within it is never culled early.
+TEST(CollisionShapeTest, LevelReachPastTheMarginFailsSmokeCheck) {
+	auto&	   reg = AssetRegistry::Get();
+	TempAssets t;
+	writeReachTree(t, "Within", "1.05");
+	writeReachTree(t, "Past", "1.2");
+
+	reg.clearDefinitions();
+	reg.loadDefinitionsFromFolder(t.root.string());
+	ValidationReport report;
+	reg.checkDetailLevels(report);
+
+	ASSERT_EQ(report.errorCount(), 1);
+	EXPECT_EQ(report.issues[0].defName, "Past");
+	EXPECT_NE(report.issues[0].message.find("at 4 px/m"), std::string::npos) << report.issues[0].message;
+	EXPECT_NE(report.issues[0].message.find("reaches 1.2"), std::string::npos) << report.issues[0].message;
+	EXPECT_NE(report.issues[0].message.find("reference level's 1.0"), std::string::npos) << report.issues[0].message;
+
+	const AssetDefinition* within = reg.getDefinition("Within");
+	ASSERT_NE(within, nullptr);
+	ASSERT_NE(reg.getTemplate(reg.templateId("Within", AssetRegistry::matureTraits(*within))), nullptr);
+	EXPECT_NEAR(reg.maxReachMeters(), 1.0F * within->placement.scale.max * kLevelReachMargin, 1e-5F);
 }
