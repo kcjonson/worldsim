@@ -31,14 +31,6 @@ namespace ecs {
 	[[nodiscard]] std::optional<double>
 	worldSourceRegrowingUntil(assets::PlacementExecutor& placement, uint32_t defNameId, glm::vec2 at, double now);
 
-	/// Take the source `defName` at `at` from the world and report what it was just before: Gone if
-	/// neither the placement index nor a live spawned entity holds it (a loose pile, a ResourceStack,
-	/// never counts: piles are LoosePileIndex's), OnCooldown if it stands but is
-	/// regrowing, Ready otherwise. Remove takes a placed source out of the index at once and queues a
-	/// spawned one on `pendingRemoval` (the caller destroys it after the update, never inside a view),
-	/// erasing its cooldown and resource pool either way; a spawned entity already queued there reads
-	/// as Gone. Regrow starts its regrowth, `regrowthSeconds` on the simulation clock, unless one is
-	/// running. Keep changes nothing.
 	/// Make `entity`, already spawned at `position` with the item's Appearance, a loose pile of
 	/// `quantity` x `defNameId` and file it in the ActionSystem's pile index.
 	void makeLoosePile(World& world, EntityID entity, uint32_t defNameId, glm::vec2 position, uint32_t quantity);
@@ -47,6 +39,14 @@ namespace ecs {
 	/// of the pile index first if it is a pile.
 	void destroyWorldEntity(World& world, EntityID entity);
 
+	/// Take the source `defName` at `at` from the world and report what it was just before: Gone if
+	/// neither the placement index nor a live spawned entity holds it (a loose pile, a ResourceStack,
+	/// never counts: piles are LoosePileIndex's), OnCooldown if it stands but is
+	/// regrowing, Ready otherwise. Remove takes a placed source out of the index at once and queues a
+	/// spawned one on `pendingRemoval` (the caller destroys it after the update, never inside a view),
+	/// erasing its cooldown and resource pool either way; a spawned entity already queued there reads
+	/// as Gone. Regrow starts its regrowth, `regrowthSeconds` on the simulation clock, unless one is
+	/// running. Keep changes nothing.
 	[[nodiscard]] ActionSystem::SourceState takeWorldSource(
 		assets::PlacementExecutor& placement,
 		World&					   world,

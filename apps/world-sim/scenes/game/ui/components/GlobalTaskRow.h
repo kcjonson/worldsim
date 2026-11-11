@@ -16,7 +16,6 @@ namespace world_sim {
 		struct Args {
 			UI_COMMON_ARGS
 			adapters::GlobalTaskDisplayData task;
-			bool							showKnownBy = true;
 		};
 
 		explicit GlobalTaskRow(const Args& args);
@@ -32,7 +31,6 @@ namespace world_sim {
 		void show();
 
 		adapters::GlobalTaskDisplayData task;
-		bool							showKnownBy;
 		ui::Ref<ui::Text>				description;
 		ui::Ref<ui::Text>				where;
 		ui::Ref<ui::Text>				line2;

@@ -129,11 +129,8 @@ namespace ecs {
 		// Hash of the recipe defName. When a station's next job switches to a different
 		// recipe, this changes and the child Harvest/Haul goals are rebuilt. 0 = not a Craft
 		// goal (or no recipe).
-		uint32_t recipeNameId = 0;
+		uint32_t recipeNameHash = 0;
 	};
-
-	/// Filter predicate for goal queries
-	using GoalFilter = std::function<bool(const GoalTask&)>;
 
 	/// Global registry of goal-level tasks
 	/// Singleton - access via GoalTaskRegistry::Get()
@@ -206,12 +203,6 @@ namespace ecs {
 				}
 			}
 		}
-
-		/// Get all goals matching a filter
-		[[nodiscard]] std::vector<const GoalTask*> getGoalsMatching(const GoalFilter& filter) const;
-
-		/// Get goals within radius of a position
-		[[nodiscard]] std::vector<const GoalTask*> getGoalsInRadius(const glm::vec2& center, float radius) const;
 
 		/// Get total count of goals
 		[[nodiscard]] size_t goalCount() const { return goals.size(); }

@@ -4,20 +4,8 @@
 // Tunable weights for task priority calculations loaded from XML.
 // Last in the config load order - depends on WorkTypeRegistry.
 //
-// TWO PRIORITY CONCEPTS (don't confuse them):
-//
-// 1. Colonist Work Type Preference (1-9):
-//    Each colonist has a 1-9 preference per work category.
-//    "Bob prefers Farming (2) over Hauling (7)"
-//    -> Use userPriorityToBase() to convert to internal priority
-//
-// 2. Goal Priority (set on buildings/entities):
-//    Storage containers, crafting stations can be marked urgent.
-//    "This storage needs filling NOW"
-//    -> Adds bonus to all tasks targeting that goal
-//
-// Players do NOT set priority on individual tasks.
-// Tasks inherit priority from goals + colonist preferences + situational bonuses.
+// The AI arbitrates by a lexicographic (tier, score) key: <TaskTiers> gives each task type its base
+// tier, and the <Bonuses> weights make up the within-tier score.
 //
 // See /docs/design/game-systems/colonists/priority-config.md for design details.
 
@@ -27,19 +15,6 @@
 #include <vector>
 
 namespace assets {
-
-	/// Distance bonus calculation config
-	struct DistanceBonusConfig {
-		float	optimalDistance = 5.0F;		// Distance at which bonus is maximum
-		float	maxPenaltyDistance = 50.0F; // Distance at which penalty is maximum
-		int16_t maxBonus = 50;				// Bonus for optimal distance
-		int16_t maxPenalty = 50;			// Penalty for max distance
-	};
-
-	/// Chain continuation config
-	struct ChainBonusConfig {
-		int16_t bonus = 2000; // Bonus for continuing a chain
-	};
 
 	/// In-progress task config.
 	/// Repurposed for the (tier, score) arbitration as the within-tier hysteresis margin: the
@@ -133,38 +108,13 @@ namespace assets {
 		/// added without a tier fails loud rather than defaulting silently.
 		[[nodiscard]] bool validateTaskTiers(const std::vector<std::string>& requiredTypeNames, std::vector<std::string>& missingOut) const;
 
-		// --- Priority Band Queries (work-type DISPLAY priority; not the AI arbitration) ---
-
-		/// Get base priority for a band by name
-		/// @param bandName Band name (e.g., "Critical", "WorkHigh")
-		/// @return Base priority value, or 0 if not found
-		[[nodiscard]] int16_t getBandBase(const std::string& bandName) const;
-
-		/// Convert colonist's work type preference (1-9) to base priority.
-		/// This is the per-colonist preference for a work category, NOT a per-task priority.
-		/// Example: Bob has Farming=2, Hauling=7. When evaluating tasks, his Farming
-		/// tasks get higher base priority than Hauling tasks.
-		/// @param userPriority Colonist's preference for this work type (1=prefer, 9=avoid)
-		/// @return Base priority in Work bands (WorkHigh/Medium/Low)
-		[[nodiscard]] int16_t userPriorityToBase(uint8_t userPriority) const;
-
 		// --- Bonus Calculations ---
-
-		/// Calculate distance bonus/penalty (legacy +-50 range; retained for the work-type display
-		/// priority path, NOT used by the (tier, score) arbitration).
-		/// @param distance Distance to task target
-		/// @return Bonus (positive) or penalty (negative)
-		[[nodiscard]] int16_t calculateDistanceBonus(float distance) const;
 
 		/// Calculate the within-tier distance factor for the (tier, score) arbitration: a strong,
 		/// monotonically-decreasing nearest-source term. factor(d) = maxFactor * max(0, 1 - d/maxDistance).
 		/// @param distance Distance to task target (meters)
 		/// @return Distance factor in [0, maxFactor]
 		[[nodiscard]] float calculateDistanceFactor(float distance) const;
-
-		/// Get chain continuation bonus
-		/// @return Chain bonus value
-		[[nodiscard]] int16_t getChainBonus() const;
 
 		/// Get in-progress task bonus
 		/// @return In-progress bonus value
@@ -181,9 +131,7 @@ namespace assets {
 
 		// --- Config Getters ---
 
-		[[nodiscard]] const DistanceBonusConfig&   getDistanceConfig() const { return distanceConfig; }
 		[[nodiscard]] const DistanceFactorConfig&  getDistanceFactorConfig() const { return distanceFactorConfig; }
-		[[nodiscard]] const ChainBonusConfig&	   getChainConfig() const { return chainConfig; }
 		[[nodiscard]] const InProgressBonusConfig& getInProgressConfig() const { return inProgressConfig; }
 		[[nodiscard]] const StoragePriorityConfig& getStoragePriorityConfig() const { return storagePriorityConfig; }
 		[[nodiscard]] const TaskAgeBonusConfig&	   getTaskAgeConfig() const { return taskAgeConfig; }
@@ -200,14 +148,8 @@ namespace assets {
 		/// Get all category names sorted by tier order
 		[[nodiscard]] const std::vector<std::string>& getCategoryOrder() const { return categoryOrder; }
 
-		/// Get tier for a category (or 999 if not found)
-		[[nodiscard]] float getCategoryTier(const std::string& categoryName) const;
-
 	  private:
 		PriorityConfig();
-
-		/// Parse bands from XML node
-		void parseBands(const void* node);
 
 		/// Parse per-task-type tier table from XML node
 		void parseTaskTiers(const void* node);
@@ -226,19 +168,11 @@ namespace assets {
 
 		// --- Storage ---
 
-		/// Priority bands by name (work-type display priority)
-		std::unordered_map<std::string, int16_t> bands;
-
 		/// Per-task-type base tier for the (tier, score) arbitration (lower number = higher priority)
 		std::unordered_map<std::string, int> taskTiers;
 
-		/// User priority step size
-		int16_t userPriorityStep = 100;
-
 		/// Bonus configs
-		DistanceBonusConfig	  distanceConfig;
 		DistanceFactorConfig  distanceFactorConfig;
-		ChainBonusConfig	  chainConfig;
 		InProgressBonusConfig inProgressConfig;
 		StoragePriorityConfig storagePriorityConfig;
 		TaskAgeBonusConfig	  taskAgeConfig;
@@ -248,8 +182,7 @@ namespace assets {
 		uint64_t m_generation = 1;
 
 		/// Work category order (sorted by tier)
-		std::vector<std::string>			   categoryOrder;
-		std::unordered_map<std::string, float> categoryTiers;
+		std::vector<std::string> categoryOrder;
 	};
 
 } // namespace assets

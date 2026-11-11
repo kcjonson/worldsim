@@ -178,18 +178,6 @@ namespace ecs {
 			return knownWorldEntities.find(key) != knownWorldEntities.end();
 		}
 
-		/// Check if a world entity at position with defName is known (string version)
-		/// @deprecated Use the defNameId version for better performance
-		[[nodiscard]] bool knowsWorldEntity(const glm::vec2& position, const std::string& defName) const {
-			// Convert to defNameId to use the same hash as rememberWorldEntity
-			auto&	 registry = assets::AssetRegistry::Get();
-			uint32_t defNameId = registry.getDefNameId(defName);
-			if (defNameId == 0) {
-				return false; // Unknown defName
-			}
-			return knowsWorldEntity(position, defNameId);
-		}
-
 		/// Check if a dynamic entity is known
 		[[nodiscard]] bool knowsDynamicEntity(EntityID entityId) const {
 			return knownDynamicEntities.find(entityId) != knownDynamicEntities.end();
@@ -239,18 +227,6 @@ namespace ecs {
 			// Add to LRU list (tail = newest)
 			lru.map[key] = lruLinkTail(key);
 			return true; // New discovery
-		}
-
-		/// Add a world entity to memory (string version, converts to ID)
-		/// @deprecated Use the defNameId version for better performance
-		void rememberWorldEntity(const glm::vec2& position, const std::string& defName) {
-			auto&	 registry = assets::AssetRegistry::Get();
-			uint32_t defNameId = registry.getDefNameId(defName);
-			if (defNameId == 0) {
-				return; // Unknown defName
-			}
-			uint16_t capabilityMask = registry.getCapabilityMask(defNameId);
-			rememberWorldEntity(position, defNameId, capabilityMask);
 		}
 
 		/// Add or update a dynamic entity in memory

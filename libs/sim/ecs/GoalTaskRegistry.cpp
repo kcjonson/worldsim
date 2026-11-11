@@ -311,32 +311,6 @@ namespace ecs {
 		return result;
 	}
 
-	std::vector<const GoalTask*> GoalTaskRegistry::getGoalsMatching(const GoalFilter& filter) const {
-		std::vector<const GoalTask*> result;
-
-		for (const auto& [goalId, goal] : goals) {
-			if (filter(goal)) {
-				result.push_back(&goal);
-			}
-		}
-
-		return result;
-	}
-
-	std::vector<const GoalTask*> GoalTaskRegistry::getGoalsInRadius(const glm::vec2& center, float radius) const {
-		std::vector<const GoalTask*> result;
-		float						 radiusSq = radius * radius;
-
-		for (const auto& [goalId, goal] : goals) {
-			float dx = goal.destinationPosition.x - center.x;
-			float dy = goal.destinationPosition.y - center.y;
-			if (dx * dx + dy * dy <= radiusSq) {
-				result.push_back(&goal);
-			}
-		}
-
-		return result;
-	}
 
 	size_t GoalTaskRegistry::goalCount(TaskType type) const {
 		auto it = typeToGoals.find(type);

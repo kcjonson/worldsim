@@ -141,7 +141,7 @@ Each claim carries a target-kind tag, because the three key spaces overlap as ra
 | Entity | `EntityID` | storage box, crafting station, blueprint, packaged item, colonist |
 | Goal | `GoalTask::id` | craft, storage umbrella, construction umbrella |
 
-The Memory key is what the harvest path stores in `Task::harvestTargetEntityId`, so claims on
+The Memory key is what the harvest path stores in `Task::harvestTargetKey`, so claims on
 remembered things use the key every colonist computes for the same object. A pile is both a WorldKey
 (how colonists know it) and an `EntityID` (its `ResourceStack`); claims use the WorldKey, and
 `LoosePileIndex` (below) resolves it to the pile entity.
@@ -1037,7 +1037,7 @@ Done, each deleted in the same change that replaced it, per the no-legacy rule:
   `ColonyStorageKnowledge` (the colony-wide rule itself stays).
 - The adapter's per-goal colonist scan, in favor of one read of the current tasks per refresh.
 - The comments that said there was no reservation system (`enterControl`, the storage-pull gate), and
-  the "world entity ID" comment on `harvestTargetEntityId`.
+  the "world entity ID" comment on `harvestTargetKey`.
 
 ---
 

@@ -22,7 +22,7 @@ namespace ecs {
 		/// carry of the yield. Over-estimating only makes another colonist briefly see less available;
 		/// under-estimating would let it re-cut.
 		uint32_t mostPerCut(const assets::AssetRegistry& registry, const Memory& memory, const Inventory& inventory, const Task& task) {
-			const KnownWorldEntity* source = memory.getWorldEntity(task.harvestTargetEntityId);
+			const KnownWorldEntity* source = memory.getWorldEntity(task.harvestTargetKey);
 			if (source == nullptr) {
 				return 0;
 			}
@@ -116,7 +116,7 @@ namespace ecs {
 			case TaskType::Harvest: {
 				const uint32_t item = task.harvestYieldDefNameId;
 				const uint32_t handedOver = takeCargoClaims(task, item);
-				push(task, Claim::use(TargetKind::WorldKey, task.harvestTargetEntityId));
+				push(task, Claim::use(TargetKind::WorldKey, task.harvestTargetKey));
 				// A footprint clear removes what stands there and brings nothing toward a need.
 				const GoalTask* goal = goals.getGoal(task.harvestGoalId);
 				if (goal == nullptr || goal->clearFootprint.has_value() || item == 0) {
@@ -160,7 +160,7 @@ namespace ecs {
 					// A pile pickup that took a gathering over delivers what it carries with what it lifts.
 					task.haulQuantity += handedOver;
 				}
-				push(task, Claim::inbound(task.haulTargetStorageId, item, task.haulQuantity));
+				push(task, Claim::inbound(task.haulDestinationId, item, task.haulQuantity));
 				push(task, Claim::inFlight(root, item, task.haulQuantity));
 				break;
 			}
@@ -269,7 +269,7 @@ namespace ecs {
 		if (!carries || root == nullptr || root->id != task.suspended->rootGoalId || chainItem(task) != task.suspended->itemDefNameId) {
 			return false;
 		}
-		const uint64_t destination = task.type == TaskType::Haul ? task.haulTargetStorageId : static_cast<uint64_t>(root->destinationEntity);
+		const uint64_t destination = task.type == TaskType::Haul ? task.haulDestinationId : static_cast<uint64_t>(root->destinationEntity);
 		return std::any_of(task.suspended->claims.begin(), task.suspended->claims.end(), [&](const Claim& claim) {
 			return claim.kind() == ClaimKind::Inbound && claim.target() == destination;
 		});

@@ -177,7 +177,6 @@ namespace ecs {
 		constexpr const char* kSkillFarming = "Farming";
 		constexpr const char* kSkillCrafting = "Crafting";
 		constexpr const char* kSkillConstruction = "Construction";
-		constexpr const char* kSkillMedicine = "Medicine";
 
 		/// Skill bonus calculation constants (from priority-config.md)
 		constexpr float	  kSkillBonusMultiplier = 10.0F;
@@ -290,10 +289,9 @@ namespace ecs {
 				case TaskType::Harvest:
 					return option.servesActiveWorkOrder ? kTierActiveWorkOrder : baseTier;
 				case TaskType::PlacePackaged:
-					// Serving a work order, or already carrying the item (the in-transit case: old
-					// needValue>100 sentinel set by evaluatePlacePackagedOptions). Either way it's
-					// committed delivery -> tier 4, so a carrying colonist isn't rerouted mid-carry.
-					return (option.servesActiveWorkOrder || option.needValue > 100.0F) ? kTierActiveWorkOrder : baseTier;
+					// Serving a work order, or already carrying the item: either way it's committed
+					// delivery -> tier 4, so a carrying colonist isn't rerouted mid-carry.
+					return (option.servesActiveWorkOrder || option.carryingPackaged) ? kTierActiveWorkOrder : baseTier;
 				case TaskType::Craft:
 				case TaskType::Build:
 				case TaskType::Deconstruct:
@@ -330,11 +328,11 @@ namespace ecs {
 						   option.stationEntityId == currentTask.targetStationId;
 				case TaskType::Haul:
 					return option.haulItemDefNameId == currentHaulItemId &&
-						   option.haulTargetStorageId == currentTask.haulTargetStorageId;
+						   option.haulDestinationId == currentTask.haulDestinationId;
 				case TaskType::PlacePackaged:
 					return option.placePackagedEntityId == currentTask.placePackagedEntityId;
 				case TaskType::Harvest:
-					return option.harvestTargetEntityId == currentTask.harvestTargetEntityId &&
+					return option.harvestTargetKey == currentTask.harvestTargetKey &&
 						   option.harvestGoalId == currentTask.harvestGoalId;
 				case TaskType::Build:
 				case TaskType::Deconstruct:
@@ -379,14 +377,14 @@ namespace ecs {
 		/// Sets option.tier (classifyTier) and the within-tier score breakdown (distanceFactor,
 		/// taskAgeBonus, hysteresisBonus), then composes option.score. skillBonus is set by the
 		/// evaluators. The chain bonus is GONE: a mid-chain provisioning task is tier 4 instead.
-		/// @param world ECS world (to read a stocking haul's destination box priority); may be null
+		/// @param world ECS world (to read a stocking haul's destination box priority)
 		/// @param option The option to populate (skillBonus already set by its evaluator)
 		/// @param currentTask Current colonist task (for the hysteresis margin)
 		/// @param currentHaulItemId The current task's haul item, interned (0 when not hauling)
 		/// @param currentTime Current game time (for task age calculation)
 		/// @param baseTiers Each task type's base tier
 		void populatePriorityBonuses(
-			World* world, EvaluatedOption& option, const Task& currentTask, uint32_t currentHaulItemId, float currentTime,
+			World& world, EvaluatedOption& option, const Task& currentTask, uint32_t currentHaulItemId, float currentTime,
 			const AIDecisionSystem::BaseTiers& baseTiers
 		) {
 			const auto& priorityConfig = assets::PriorityConfig::Get();
@@ -427,11 +425,11 @@ namespace ecs {
 			const GoalTask* stockedBy = option.taskType == TaskType::Harvest && option.servesStorageStocking
 											? GoalTaskRegistry::Get().getGoal(option.harvestGoalId)
 											: nullptr;
-			const uint64_t	destBox = stockedBy != nullptr ? static_cast<uint64_t>(stockedBy->destinationEntity) : option.haulTargetStorageId;
+			const uint64_t	destBox = stockedBy != nullptr ? static_cast<uint64_t>(stockedBy->destinationEntity) : option.haulDestinationId;
 			const uint32_t	stockedItem = stockedBy != nullptr ? option.harvestYieldDefNameId : option.haulItemDefNameId;
-			if (option.servesStorageStocking && destBox != 0 && world != nullptr) {
+			if (option.servesStorageStocking && destBox != 0) {
 				const auto destEntity = static_cast<EntityID>(destBox);
-				const auto* destConfig = world->getComponent<StorageConfiguration>(destEntity);
+				const auto* destConfig = world.getComponent<StorageConfiguration>(destEntity);
 				if (destConfig != nullptr) {
 					const auto& reg = assets::AssetRegistry::Get();
 					const auto* itemDef = reg.getDefinitionById(stockedItem);
@@ -681,7 +679,7 @@ namespace ecs {
 				option.haulQuantity = quantity;
 				option.haulSourcePosition = looseItem.position;
 				option.haulSourceKey = source.key;
-				option.haulTargetStorageId = static_cast<uint64_t>(goal.destinationEntity);
+				option.haulDestinationId = static_cast<uint64_t>(goal.destinationEntity);
 				option.haulTargetPosition = goal.destinationPosition;
 				option.haulGoalId = goal.id;
 				// Fetching loose stock to provision a started craft is committed work (tier 4), so a far
@@ -778,7 +776,7 @@ namespace ecs {
 					pullOption.haulQuantity = qty;
 					pullOption.haulSourcePosition = srcPos;
 					pullOption.haulSourceStorageId = static_cast<uint64_t>(srcEntity);
-					pullOption.haulTargetStorageId = static_cast<uint64_t>(destEntity);
+					pullOption.haulDestinationId = static_cast<uint64_t>(destEntity);
 					pullOption.haulTargetPosition = goal.destinationPosition;
 					pullOption.haulGoalId = goal.id;
 					// A pull tops up a box toward its config: opportunistic stocking (tier 6), ordered
@@ -1046,11 +1044,11 @@ namespace ecs {
 					option.haulItemDefNameId = kind.item;
 					option.haulQuantity = quantity;
 					option.haulSourcePosition = position; // already carrying
-					option.haulTargetStorageId = static_cast<uint64_t>(root.destinationEntity);
+					option.haulDestinationId = static_cast<uint64_t>(root.destinationEntity);
 					option.haulTargetPosition = root.destinationPosition;
 					option.haulGoalId = root.id;
 					option.haulFromInventory = true;
-					if (supply.delivering(root.id, kind.item) && supply.task.haulTargetStorageId == static_cast<uint64_t>(root.destinationEntity)) {
+					if (supply.delivering(root.id, kind.item) && supply.task.haulDestinationId == static_cast<uint64_t>(root.destinationEntity)) {
 						option.gatheringRank = kRankChosenDelivery;
 					}
 					// Craft and construction deliveries provision an active work order (tier 4); filling a
@@ -1204,7 +1202,7 @@ namespace ecs {
 					harvestOption.targetPosition = knownEntity.position;
 					harvestOption.targetDefNameId = knownEntity.defNameId;
 					harvestOption.distanceToTarget = tripDistance;
-					harvestOption.harvestTargetEntityId = key; // the Memory key, not an ECS id
+					harvestOption.harvestTargetKey = key; // the Memory key, not an ECS id
 					harvestOption.harvestGoalId = goal->id;
 					harvestOption.harvestYieldDefNameId = yieldDefNameId;
 					// Tiebreak on (goal, target) so two equidistant harvestables feeding the same
@@ -1268,15 +1266,7 @@ namespace ecs {
 		/// Goal-driven: ConstructionSystem emits a Build goal once a blueprint's materials are
 		/// staged. We surface it only while the blueprint is actually UnderConstruction (the
 		/// phase ActionSystem's Build action requires), targeting the goal's work slot.
-		void evaluateBuildOptions(
-			World*			 world,
-			const glm::vec2& position,
-			const WorkSkills& skills,
-			DecisionTrace&	 trace
-		) {
-			if (world == nullptr) {
-				return;
-			}
+		void evaluateBuildOptions(World& world, const glm::vec2& position, const WorkSkills& skills, DecisionTrace& trace) {
 			auto& goalRegistry = GoalTaskRegistry::Get();
 
 			goalRegistry.forEachGoalOfType(TaskType::Build, [&](const GoalTask& buildGoal) {
@@ -1285,7 +1275,7 @@ namespace ecs {
 					return;
 				}
 				const auto blueprintEntity = static_cast<EntityID>(goal->destinationEntity);
-				const auto* blueprint = world->getComponent<StructureBlueprint>(blueprintEntity);
+				const auto* blueprint = world.getComponent<StructureBlueprint>(blueprintEntity);
 				if (blueprint == nullptr ||
 					blueprint->phase != StructureBlueprint::BuildPhase::UnderConstruction) {
 					return; // not ready to build (cleared/awaiting materials/complete)
@@ -1320,10 +1310,7 @@ namespace ecs {
 		/// only while the blueprint still has work to undo (workDone > 0, the bound ActionSystem's
 		/// Deconstruct action counts down). Deconstruct is Construction work, so it uses the same
 		/// skill and priority tier as Build.
-		void evaluateDeconstructOptions(World* world, const glm::vec2& position, const WorkSkills& skills, DecisionTrace& trace) {
-			if (world == nullptr) {
-				return;
-			}
+		void evaluateDeconstructOptions(World& world, const glm::vec2& position, const WorkSkills& skills, DecisionTrace& trace) {
 			auto& goalRegistry = GoalTaskRegistry::Get();
 
 			goalRegistry.forEachGoalOfType(TaskType::Deconstruct, [&](const GoalTask& deconstructGoal) {
@@ -1332,7 +1319,7 @@ namespace ecs {
 					return;
 				}
 				const auto	blueprintEntity = static_cast<EntityID>(goal->destinationEntity);
-				const auto* blueprint = world->getComponent<StructureBlueprint>(blueprintEntity);
+				const auto* blueprint = world.getComponent<StructureBlueprint>(blueprintEntity);
 				if (blueprint == nullptr || blueprint->workDone <= 0.0F) {
 					return; // nothing to tear down (already removed, or no work invested)
 				}
@@ -1392,7 +1379,7 @@ namespace ecs {
 					// Phase 2: Already carrying - go to placement target
 					placeOption.targetPosition = targetPos;
 					placeOption.distanceToTarget = glm::distance(position, targetPos);
-					placeOption.needValue = 150.0F; // Higher priority than most needs
+					placeOption.carryingPackaged = true;
 				} else {
 					// Phase 1: Need to pick up - go to source
 					placeOption.targetPosition = packagedPos.value;
@@ -1668,7 +1655,7 @@ namespace ecs {
 			}
 
 			// Check if we should re-evaluate (uses current timer value)
-			if (!shouldReEvaluate(task, needs, action, movementTarget.active)) {
+			if (!shouldReEvaluate(task, needs, movementTarget.active)) {
 				// Only increment timer when NOT re-evaluating (timer tracks time since last eval)
 				task.timeSinceEvaluation += deltaTime;
 				continue;
@@ -1867,7 +1854,7 @@ namespace ecs {
 					// Clear and assign new task
 					task.clear();
 					task.timeSinceEvaluation = 0.0F;
-					selectTaskFromTrace(entity, task, movementTarget, *trace, position);
+					selectTaskFromTrace(entity, task, movementTarget, *trace, position, memory);
 					task.priorityTier = newTier; // Store the (tier, score) key for future comparisons
 					task.priority = newScore;
 					acceptClaims(entity, task, memory, inventory, handedCargo);
@@ -1983,12 +1970,7 @@ namespace ecs {
 		m_claims.append(entity, task);
 	}
 
-	bool AIDecisionSystem::shouldReEvaluate(
-		const Task&			  task,
-		const NeedsComponent& needs,
-		const Action* /*action (reserved for future interruptability checks)*/,
-		bool				  movementTargetActive
-	) {
+	bool AIDecisionSystem::shouldReEvaluate(const Task& task, const NeedsComponent& needs, bool movementTargetActive) {
 		// Always re-evaluate if no active task
 		if (!task.isActive()) {
 			return true;
@@ -2039,7 +2021,7 @@ namespace ecs {
 		// Idle Wander with a LIVE target is freely preemptible: re-evaluate every tick so any higher-tier
 		// task is taken the instant it appears, with no commitment lag. isSameTask keeps the wander target
 		// from thrashing (nothing better -> stays on the same leg), so discovery is preserved; this trades
-		// a per-tick decision-trace rebuild for that responsiveness, acceptable at current colony scale.
+		// a per-tick decision-trace rebuild for that responsiveness.
 		// Real work (tiers 1-6) keeps its periodic throttle above. Gate on an ACTIVE target so the
 		// no-option HOLD (selectTaskFromTrace parks a Wander with movement OFF when nothing is reachable)
 		// stays on the periodic throttle instead of rebuilding the trace every frame while standing still.
@@ -2453,7 +2435,7 @@ namespace ecs {
 						   m_navSystem != nullptr) {
 					// For toilet needs, try smart location finder
 					// A spot whose route already failed is no spot: go where the colonist stands instead.
-					auto location = findToiletLocation(position.value, *m_chunkManager, *m_navSystem, *world, memory, m_registry);
+					auto location = findToiletLocation(position.value, *m_chunkManager, *m_navSystem, memory);
 					// Asked at every decision while the need waits behind other work: say only when the answer moves.
 					if (location != sourceReach.lastToiletSpot) {
 						sourceReach.lastToiletSpot = location;
@@ -2614,10 +2596,10 @@ namespace ecs {
 		evaluateHarvestOptions(m_workSources, supply, pickupRoom, position.value, workSkills, m_offeredPiles, trace);
 
 		// Build staged construction blueprints (goal-driven)
-		evaluateBuildOptions(world, position.value, workSkills, trace);
+		evaluateBuildOptions(*world, position.value, workSkills, trace);
 
 		// Deconstruct demolishing structures (goal-driven, same tier as Build)
-		evaluateDeconstructOptions(world, position.value, workSkills, trace);
+		evaluateDeconstructOptions(*world, position.value, workSkills, trace);
 
 		// Place packaged items at target locations
 		evaluatePlacePackagedOptions(world, supply, position.value, inventory, trace);
@@ -2663,7 +2645,7 @@ namespace ecs {
 		// m_elapsedTime, monotonic, which is all the within-tier age term needs.
 		const uint32_t currentHaulItemId = currentTask.type == TaskType::Haul ? currentTask.haulItemDefNameId : 0U;
 		for (auto& option : trace.options) {
-			populatePriorityBonuses(world, option, currentTask, currentHaulItemId, m_elapsedTime, m_baseTiers);
+			populatePriorityBonuses(*world, option, currentTask, currentHaulItemId, m_elapsedTime, m_baseTiers);
 		}
 
 		// Sort by the lexicographic (tier asc, score desc, tiebreakId asc) key. Tier is categorical
@@ -2732,7 +2714,7 @@ namespace ecs {
 				// sorted ahead of the carry-in are not tested afresh at every decision while the colonist
 				// gathers and deposits.
 				const glm::vec2 target = *option.targetPosition;
-				const bool		reachable = option.targetReachable || (option.taskType == TaskType::Harvest ? canReachSource(option.harvestTargetEntityId, target)
+				const bool		reachable = option.targetReachable || (option.taskType == TaskType::Harvest ? canReachSource(option.harvestTargetKey, target)
 																	   : option.haulSourceKey != 0		 ? canReachSource(option.haulSourceKey, target)
 																										 : canReach(target));
 				if (!reachable) {
@@ -2765,7 +2747,8 @@ namespace ecs {
 		Task&				 task,
 		MovementTarget&		 movementTarget,
 		const DecisionTrace& trace,
-		const Position&		 position
+		const Position&		 position,
+		const Memory&		 memory
 	) {
 		const auto* selected = trace.getSelected();
 		if (selected == nullptr) {
@@ -2802,7 +2785,7 @@ namespace ecs {
 		// Copy harvest-specific fields for Harvest tasks. A cut toward a root becomes its own deposit leg
 		// when it lands (ActionSystem::carryHarvestIn).
 		if (selected->taskType == TaskType::Harvest) {
-			task.harvestTargetEntityId = selected->harvestTargetEntityId;
+			task.harvestTargetKey = selected->harvestTargetKey;
 			task.harvestGoalId = selected->harvestGoalId;
 			task.harvestYieldDefNameId = selected->harvestYieldDefNameId;
 		}
@@ -2820,7 +2803,7 @@ namespace ecs {
 			task.haulQuantity = selected->haulQuantity;
 			task.haulSourcePosition = selected->haulSourcePosition.value_or(glm::vec2{0.0F, 0.0F});
 			task.haulSourceStorageId = selected->haulSourceStorageId;
-			task.haulTargetStorageId = selected->haulTargetStorageId;
+			task.haulDestinationId = selected->haulDestinationId;
 			task.haulGoalId = selected->haulGoalId;
 			task.haulTargetPosition = selected->haulTargetPosition.value_or(glm::vec2{0.0F, 0.0F});
 			task.haulFromInventory = selected->haulFromInventory;
@@ -2856,13 +2839,8 @@ namespace ecs {
 		} else {
 			movementTarget.active = true;
 			task.state = TaskState::Moving;
-			// Memory is a required component on every AI entity (it's in update()'s view),
-			// so it's always present here; plan the route over the colonist's belief.
-			const Memory* memory = world->getComponent<Memory>(entity);
-			if (memory != nullptr) {
-				const NavRequestOutcome outcome = requestNavPath(entity, task.targetPosition, position, *memory, movementTarget);
-				applyNavOutcome(entity, task, outcome);
-			}
+			const NavRequestOutcome outcome = requestNavPath(entity, task.targetPosition, position, memory, movementTarget);
+			applyNavOutcome(entity, task, outcome);
 		}
 	}
 
@@ -3073,7 +3051,7 @@ namespace ecs {
 			}
 
 			auto dropped = inventory.putDown(item);
-			if (dropped.has_value() && dropped->quantity > 0 && world != nullptr) {
+			if (dropped.has_value() && dropped->quantity > 0) {
 				ecs::storeOrDrop(*world, dropped->defName, dropped->quantity, position.value, onDropResource, [this](EntityID box) { boxChanged(box); });
 			}
 		}

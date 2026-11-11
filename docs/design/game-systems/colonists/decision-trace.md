@@ -259,16 +259,9 @@ A known source the colonist can't reach (across a river, say) is skipped for the
 
 ## UI Display
 
-### Configuration
-
-```cpp
-// In DecisionTrace.h or a config header
-constexpr size_t kMaxDisplayedOptions = 10;  // Configurable for future expansion
-```
-
 ### Task Queue Panel
 
-The EntityInfoPanel displays up to `kMaxDisplayedOptions` items from the trace:
+The EntityInfoPanel displays the options from the trace:
 
 ```
 ┌─────────────────────────────────────┐

@@ -211,7 +211,7 @@ struct Task {
 	NeedType needToFulfill = NeedType::Count;
 
 	/// For Harvest tasks: target to harvest and goal context
-	uint64_t harvestTargetEntityId = 0;	   // Memory key of the harvestable (tree, bush), not an ECS id
+	uint64_t harvestTargetKey = 0;	   // Memory key of the harvestable (tree, bush), not an ECS id
 	uint64_t harvestGoalId = 0;			   // Goal ID this harvest is contributing to
 	uint32_t harvestYieldDefNameId = 0;	   // What item type will be yielded
 
@@ -223,7 +223,7 @@ struct Task {
 	uint32_t	haulItemDefNameId = 0;			   // Item being hauled, interned
 	uint32_t	haulQuantity = 1;				   // Quantity to haul
 	uint64_t	haulSourceStorageId = 0;		   // Entity ID of the source box for a storage->storage pull (0 = loose/inventory source)
-	uint64_t	haulTargetStorageId = 0;		   // Entity ID of the storage container (destination)
+	uint64_t	haulDestinationId = 0;		   // Entity the goods go to: a storage box, a build site, or a crafting station
 	uint64_t	haulGoalId = 0;					   // Goal ID being fulfilled (for cleanup on completion)
 	glm::vec2	haulSourcePosition{0.0F, 0.0F};	   // Position of the source item
 	glm::vec2	haulTargetPosition{0.0F, 0.0F};	   // Position of the storage container
@@ -293,7 +293,7 @@ struct Task {
 		needItemDefNameId = 0;
 		needQuantity = 0;
 		needSourceStorageId = 0;
-		harvestTargetEntityId = 0;
+		harvestTargetKey = 0;
 		harvestGoalId = 0;
 		harvestYieldDefNameId = 0;
 		craftRecipeDefName.clear();
@@ -301,7 +301,7 @@ struct Task {
 		haulItemDefNameId = 0;
 		haulQuantity = 1;
 		haulSourceStorageId = 0;
-		haulTargetStorageId = 0;
+		haulDestinationId = 0;
 		haulGoalId = 0;
 		haulSourcePosition = glm::vec2{0.0F, 0.0F};
 		haulTargetPosition = glm::vec2{0.0F, 0.0F};

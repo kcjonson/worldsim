@@ -33,12 +33,9 @@ constexpr float kFoodProximityPenalty = 20.0F;  // Penalty per nearby food sourc
 constexpr float kFoodAvoidanceRadius = 15.0F;   // Distance to avoid from food
 
 /// Collect positions of known waste entities (bio piles) from memory
-[[nodiscard]] std::vector<glm::vec2> collectBioPilePositions(
-	const Memory& memory,
-	const assets::AssetRegistry& registry
-) {
+[[nodiscard]] std::vector<glm::vec2> collectBioPilePositions(const Memory& memory) {
 	std::vector<glm::vec2> positions;
-	auto wastes = findKnownWithCapability(memory, registry, assets::CapabilityType::Waste);
+	auto wastes = findKnownWithCapability(memory, assets::CapabilityType::Waste);
 	for (const auto& entity : wastes) {
 		positions.push_back(entity.position);
 	}
@@ -46,12 +43,9 @@ constexpr float kFoodAvoidanceRadius = 15.0F;   // Distance to avoid from food
 }
 
 /// Collect positions of known edible entities from memory
-[[nodiscard]] std::vector<glm::vec2> collectFoodPositions(
-	const Memory& memory,
-	const assets::AssetRegistry& registry
-) {
+[[nodiscard]] std::vector<glm::vec2> collectFoodPositions(const Memory& memory) {
 	std::vector<glm::vec2> positions;
-	auto edibles = findKnownWithCapability(memory, registry, assets::CapabilityType::Edible);
+	auto edibles = findKnownWithCapability(memory, assets::CapabilityType::Edible);
 	for (const auto& entity : edibles) {
 		positions.push_back(entity.position);
 	}
@@ -122,14 +116,12 @@ std::optional<glm::vec2> findToiletLocation(
 	const glm::vec2& colonistPos,
 	const world::ChunkManager& chunkManager,
 	const NavigationSystem& navigation,
-	World& /*ecsWorld*/,
 	const Memory& memory,
-	const assets::AssetRegistry& registry,
 	float searchRadius
 ) {
 	// Collect known BioPile and food positions for scoring (from memory)
-	auto bioPilePositions = collectBioPilePositions(memory, registry);
-	auto foodPositions = collectFoodPositions(memory, registry);
+	auto bioPilePositions = collectBioPilePositions(memory);
+	auto foodPositions = collectFoodPositions(memory);
 
 	// Track best candidate
 	std::optional<glm::vec2> bestPosition;

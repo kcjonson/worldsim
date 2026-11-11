@@ -1453,20 +1453,6 @@ namespace ecs::test {
 		}
 	}
 
-	TEST_F(AIDecisionSystemTest, TraceDisplayCountRespectsCap) {
-		auto colonist = createColonist({0.0F, 0.0F});
-
-		world->update(0.016F);
-
-		auto* trace = getTrace(colonist);
-		ASSERT_NE(trace, nullptr);
-
-		// displayCount should be at most kMaxDisplayedOptions
-		EXPECT_LE(trace->displayCount(), kMaxDisplayedOptions);
-		// And equal to actual size when below cap
-		EXPECT_EQ(trace->displayCount(), trace->options.size());
-	}
-
 	TEST_F(AIDecisionSystemTest, TraceClearedOnReEvaluation) {
 		auto colonist = createColonist({0.0F, 0.0F});
 
@@ -1701,22 +1687,6 @@ namespace ecs::test {
 		EXPECT_FALSE(EvaluatedOption::higherPriority(wander, gatherFood));
 	}
 
-	TEST_F(AIDecisionSystemTest, IsActionableReturnsCorrectly) {
-		EvaluatedOption option;
-
-		option.status = OptionStatus::Selected;
-		EXPECT_TRUE(option.isActionable());
-
-		option.status = OptionStatus::Available;
-		EXPECT_TRUE(option.isActionable());
-
-		option.status = OptionStatus::NoSource;
-		EXPECT_FALSE(option.isActionable());
-
-		option.status = OptionStatus::Satisfied;
-		EXPECT_FALSE(option.isActionable());
-	}
-
 	TEST_F(AIDecisionSystemTest, TraceCriticalNeedHasHighestPriority) {
 		auto colonist = createColonist({0.0F, 0.0F});
 
@@ -1947,7 +1917,7 @@ namespace ecs::test {
 		const auto* pull = findPullOption(*getTrace(colonist));
 		ASSERT_NE(pull, nullptr) << "a high box should pull Wood from a low box";
 		EXPECT_EQ(pull->haulSourceStorageId, static_cast<uint64_t>(lowBox));
-		EXPECT_EQ(pull->haulTargetStorageId, static_cast<uint64_t>(highBox));
+		EXPECT_EQ(pull->haulDestinationId, static_cast<uint64_t>(highBox));
 		EXPECT_TRUE(pull->servesStorageStocking);
 	}
 
@@ -2031,7 +2001,7 @@ namespace ecs::test {
 		const auto* selected = getTrace(colonist)->getSelected();
 		ASSERT_NE(selected, nullptr);
 		EXPECT_EQ(selected->haulSourceStorageId, static_cast<uint64_t>(lowBox));
-		EXPECT_EQ(selected->haulTargetStorageId, static_cast<uint64_t>(critBox))
+		EXPECT_EQ(selected->haulDestinationId, static_cast<uint64_t>(critBox))
 			<< "the Critical destination outranks the High one within tier 6";
 	}
 
@@ -2117,17 +2087,17 @@ namespace ecs::test {
 		world->update(0.016F);
 
 		const auto* medPull = findOption(*getTrace(colonist), [medBox](const EvaluatedOption& o) {
-			return o.haulSourceStorageId != 0 && o.haulTargetStorageId == static_cast<uint64_t>(medBox);
+			return o.haulSourceStorageId != 0 && o.haulDestinationId == static_cast<uint64_t>(medBox);
 		});
 		const auto* critPull = findOption(*getTrace(colonist), [critBox](const EvaluatedOption& o) {
-			return o.haulSourceStorageId != 0 && o.haulTargetStorageId == static_cast<uint64_t>(critBox);
+			return o.haulSourceStorageId != 0 && o.haulDestinationId == static_cast<uint64_t>(critBox);
 		});
 		ASSERT_NE(medPull, nullptr);
 		ASSERT_NE(critPull, nullptr);
 		EXPECT_EQ(medPull->tier, 6) << "stocking pulls stay at tier 6";
 		EXPECT_EQ(critPull->tier, 6) << "stocking pulls stay at tier 6";
 		EXPECT_GT(critPull->score, medPull->score) << "Critical destination outscores Medium within the tier";
-		EXPECT_EQ(getTrace(colonist)->getSelected()->haulTargetStorageId, static_cast<uint64_t>(critBox));
+		EXPECT_EQ(getTrace(colonist)->getSelected()->haulDestinationId, static_cast<uint64_t>(critBox));
 	}
 
 	// 8. Discovery-gating: the source box is NOT in any colonist's memory -> no pull option (no god-view).
@@ -2218,7 +2188,7 @@ namespace ecs::test {
 		task->haulQuantity = 14;
 		task->haulSourceStorageId = static_cast<uint64_t>(srcBox);
 		task->haulSourcePosition = srcPos;
-		task->haulTargetStorageId = static_cast<uint64_t>(destBox);
+		task->haulDestinationId = static_cast<uint64_t>(destBox);
 		task->haulTargetPosition = destPos;
 		task->haulFromInventory = false;
 		task->targetPosition = destPos; // the deposit leg targets B; the fresh pull option targets A
@@ -2239,7 +2209,7 @@ namespace ecs::test {
 		// The colonist must HOLD the in-flight delivery: still hauling the same Wood to box B, with the
 		// armful still in hands. No switch, no drop loop.
 		EXPECT_EQ(task->type, TaskType::Haul) << "stays on the haul (did not switch tasks)";
-		EXPECT_EQ(task->haulTargetStorageId, static_cast<uint64_t>(destBox)) << "still delivering to the dest box";
+		EXPECT_EQ(task->haulDestinationId, static_cast<uint64_t>(destBox)) << "still delivering to the dest box";
 		EXPECT_FLOAT_EQ(task->targetPosition.x, destPos.x) << "still targeting the deposit leg, not re-pointed at A";
 		EXPECT_TRUE(inventory->isHolding("Wood")) << "the two-hand armful stayed in hands (not dropped)";
 		EXPECT_EQ(ecs::handHeldQuantity(*inventory, "Wood"), 14U) << "the full armful is intact -- nothing dropped";
@@ -2299,7 +2269,7 @@ namespace ecs::test {
 		task->haulQuantity = 14;
 		task->haulSourceStorageId = static_cast<uint64_t>(srcBox);
 		task->haulSourcePosition = srcPos;
-		task->haulTargetStorageId = static_cast<uint64_t>(destBox);
+		task->haulDestinationId = static_cast<uint64_t>(destBox);
 		task->haulTargetPosition = destPos;
 		task->haulFromInventory = false;
 		task->targetPosition = destPos;
@@ -2316,14 +2286,14 @@ namespace ecs::test {
 		ASSERT_NE(selected, nullptr);
 		EXPECT_EQ(selected->taskType, TaskType::Haul) << "the armful's carry-in to B outranks Wander";
 		EXPECT_TRUE(selected->haulFromInventory);
-		EXPECT_EQ(selected->haulTargetStorageId, static_cast<uint64_t>(destBox));
+		EXPECT_EQ(selected->haulDestinationId, static_cast<uint64_t>(destBox));
 		EXPECT_EQ(selected->haulQuantity, 7U) << "sized to what B still takes";
 
 		// It is the delivery the colonist is already on: kept as it is, not cleared and re-selected.
 		EXPECT_EQ(task->type, TaskType::Haul);
 		EXPECT_FALSE(task->haulFromInventory) << "the deposit leg was kept, not replaced by a fresh carry-in";
 		EXPECT_EQ(task->chainStep, 1);
-		EXPECT_EQ(task->haulTargetStorageId, static_cast<uint64_t>(destBox)) << "still delivering to the dest box";
+		EXPECT_EQ(task->haulDestinationId, static_cast<uint64_t>(destBox)) << "still delivering to the dest box";
 		EXPECT_FLOAT_EQ(task->targetPosition.x, destPos.x) << "still targeting the deposit leg (box B)";
 		EXPECT_TRUE(inventory->isHolding("Wood")) << "the two-hand armful stayed in hands (not stranded by a wander)";
 		EXPECT_EQ(ecs::handHeldQuantity(*inventory, "Wood"), 14U) << "the full armful is intact -- nothing dropped";
@@ -2395,7 +2365,7 @@ namespace ecs::test {
 		task->haulQuantity = carried;
 		task->haulSourceStorageId = static_cast<uint64_t>(srcBox);
 		task->haulSourcePosition = srcPos;
-		task->haulTargetStorageId = static_cast<uint64_t>(destBox);
+		task->haulDestinationId = static_cast<uint64_t>(destBox);
 		task->haulTargetPosition = destPos;
 		task->haulFromInventory = false;
 		task->targetPosition = destPos;
@@ -2440,13 +2410,13 @@ namespace ecs::test {
 		auto* task = getTask(colonist);
 		ASSERT_NE(task, nullptr);
 		ASSERT_EQ(task->type, TaskType::Harvest) << "colonist commits to the stocking harvest";
-		const uint64_t committedTarget = task->harvestTargetEntityId;
+		const uint64_t committedTarget = task->harvestTargetKey;
 		ASSERT_NE(committedTarget, 0U) << "a concrete harvest target was selected";
 
 		// Second re-eval with the equidistant sibling still present: the in-progress target holds.
 		// Its +50 hysteresis margin is unbeatable by an equal-distance, equal-skill challenger.
 		world->update(0.5F);
-		EXPECT_EQ(task->harvestTargetEntityId, committedTarget)
+		EXPECT_EQ(task->harvestTargetKey, committedTarget)
 			<< "an equidistant same-tier sibling must not overcome the hysteresis margin (no thrash)";
 
 		// Now introduce a clearly-closer source (5 m vs 30 m: 25 m closer, far beyond the ~10 m margin).
@@ -2454,7 +2424,7 @@ namespace ecs::test {
 		addKnownEntity(colonist, {5.0F, 0.0F}, bushId, assets::CapabilityType::Harvestable);  // C
 		world->update(0.5F);
 		EXPECT_EQ(task->type, TaskType::Harvest);
-		EXPECT_NE(task->harvestTargetEntityId, committedTarget)
+		EXPECT_NE(task->harvestTargetKey, committedTarget)
 			<< "a clearly-closer same-tier target overcomes hysteresis and wins the switch";
 	}
 
@@ -2722,7 +2692,7 @@ namespace ecs::test {
 		const auto* selected = trace->getSelected();
 		ASSERT_NE(selected, nullptr);
 		EXPECT_EQ(selected->taskType, TaskType::Harvest);
-		EXPECT_EQ(selected->harvestTargetEntityId, hashWorldEntity(readySticks, stickBushId)) << "the work harvests the ready bush";
+		EXPECT_EQ(selected->harvestTargetKey, hashWorldEntity(readySticks, stickBushId)) << "the work harvests the ready bush";
 		EXPECT_LE(readinessAsked, 4) << "asked only of the candidates that would otherwise win";
 	}
 
@@ -2755,7 +2725,7 @@ namespace ecs::test {
 		addKnownEntity(colonist, far, berryBushId, assets::CapabilityType::Harvestable);
 		const auto hungerTarget = [&]() -> std::optional<glm::vec2> {
 			const auto* hunger = findOption(*getTrace(colonist), isHungerNeedOption);
-			return hunger != nullptr && hunger->isActionable() ? hunger->targetPosition : std::nullopt;
+			return hunger != nullptr && (hunger->status == OptionStatus::Selected || hunger->status == OptionStatus::Available) ? hunger->targetPosition : std::nullopt;
 		};
 		const auto decide = [&] {
 			getTask(colonist)->timeSinceEvaluation = 1.0F;
@@ -3497,7 +3467,7 @@ namespace ecs::test {
 		ASSERT_NE(task, nullptr);
 		ASSERT_EQ(task->type, TaskType::Haul) << "colonist takes the storage haul when all needs are met";
 		EXPECT_EQ(assets::AssetRegistry::Get().getDefName(task->haulItemDefNameId), "Pellet");
-		EXPECT_EQ(task->haulTargetStorageId, static_cast<uint64_t>(storage));
+		EXPECT_EQ(task->haulDestinationId, static_cast<uint64_t>(storage));
 		EXPECT_EQ(task->haulQuantity, 200U)
 			<< "sized by the storage's addableCount (5 slots x 40 stack = 200), not the 5-slot count";
 		EXPECT_GT(task->haulQuantity, 5U) << "not capped at the free-slot count";
@@ -3623,7 +3593,7 @@ namespace ecs::test {
 		ASSERT_EQ(task->type, TaskType::Haul);
 		EXPECT_TRUE(task->haulFromInventory);
 		EXPECT_EQ(assets::AssetRegistry::Get().getDefName(task->haulItemDefNameId), "Ballast");
-		EXPECT_EQ(task->haulTargetStorageId, static_cast<uint64_t>(storage));
+		EXPECT_EQ(task->haulDestinationId, static_cast<uint64_t>(storage));
 		EXPECT_EQ(task->haulQuantity, 20U);
 
 		world->getComponent<Position>(colonist)->value = boxAt;
@@ -3784,11 +3754,11 @@ namespace ecs::test {
 		auto* task = getTask(colonist);
 		ASSERT_NE(task, nullptr);
 		ASSERT_EQ(task->type, TaskType::Harvest);
-		EXPECT_EQ(task->harvestTargetEntityId, hashWorldEntity(inside, bushId)) << "only a blocker inside the footprint serves a clear";
+		EXPECT_EQ(task->harvestTargetKey, hashWorldEntity(inside, bushId)) << "only a blocker inside the footprint serves a clear";
 		std::vector<uint64_t> offered;
 		for (const auto& option : getTrace(colonist)->options) {
 			if (option.taskType == TaskType::Harvest) {
-				offered.push_back(option.harvestTargetEntityId);
+				offered.push_back(option.harvestTargetKey);
 			}
 		}
 		std::sort(offered.begin(), offered.end());

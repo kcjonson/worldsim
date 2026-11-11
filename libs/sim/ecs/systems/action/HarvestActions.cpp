@@ -317,18 +317,17 @@ namespace ecs {
 		}
 	}
 
-	void ActionSystem::startHarvestAction(Task& task, Action& action, const Position& position, Memory& memory, const Inventory& inventory) {
-		(void)position; // the harvest target is the remembered entity, not the colonist's stand point
+	void ActionSystem::startHarvestAction(Task& task, Action& action, Memory& memory, const Inventory& inventory) {
 		auto& registry = assets::AssetRegistry::Get();
 
 		// Goal-driven harvest: locate the harvestable DIRECTLY by the memory key the evaluator chose
-		// (harvestTargetEntityId == the knownWorldEntities key from evaluateHarvestOptions), NOT by a
+		// (harvestTargetKey == the knownWorldEntities key from evaluateHarvestOptions), NOT by a
 		// proximity search around task.targetPosition. The stand point is snapped to an adjacent
 		// reachable nav face (tree centers are navmesh holes), so it sits >0.5 m from the tree; a
 		// proximity scan finds nothing, forgets the (live) entry, and the AI re-selects -> the
 		// phantom-harvest loop. Keying on the id harvests the exact tree the evaluator picked,
 		// regardless of how far the stand point is from it.
-		auto it = memory.knownWorldEntities.find(task.harvestTargetEntityId);
+		auto it = memory.knownWorldEntities.find(task.harvestTargetKey);
 		if (it == memory.knownWorldEntities.end()) {
 			// The chosen entity is gone from memory (consumed, forgotten, evicted). Clear the action
 			// so the AI re-resolves to another source or retires -- never fall back to a proximity
@@ -336,7 +335,7 @@ namespace ecs {
 			LOG_DEBUG(
 				Engine,
 				"[Action] Harvest target %llu no longer in memory (goal %llu) - clearing for re-resolve",
-				static_cast<unsigned long long>(task.harvestTargetEntityId),
+				static_cast<unsigned long long>(task.harvestTargetKey),
 				static_cast<unsigned long long>(task.harvestGoalId)
 			);
 			action.clear();

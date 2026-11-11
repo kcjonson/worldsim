@@ -101,7 +101,7 @@ namespace ecs {
 			uint64_t	   craftId = 0;
 			if (const auto* existingGoal = goalRegistry.getGoalByDestination(entity)) {
 				craftId = existingGoal->id;
-				if (existingGoal->recipeNameId != recipeId) {
+				if (existingGoal->recipeNameHash != recipeId) {
 					// The next job is a different recipe: the old children provision the old inputs.
 					std::vector<uint64_t> oldChildIds;
 					for (const auto* child : goalRegistry.getChildGoals(craftId)) {
@@ -110,7 +110,7 @@ namespace ecs {
 					for (uint64_t childId : oldChildIds) {
 						goalRegistry.removeGoalWithChildren(childId);
 					}
-					goalRegistry.updateGoal(craftId, [&](GoalTask& goal) { goal.recipeNameId = recipeId; });
+					goalRegistry.updateGoal(craftId, [&](GoalTask& goal) { goal.recipeNameHash = recipeId; });
 				}
 			} else {
 				GoalTask craftGoal;
@@ -119,7 +119,7 @@ namespace ecs {
 				craftGoal.destinationEntity = entity;
 				craftGoal.destinationPosition = position.value;
 				craftGoal.status = GoalStatus::Blocked;
-				craftGoal.recipeNameId = recipeId;
+				craftGoal.recipeNameHash = recipeId;
 				craftId = goalRegistry.createGoal(std::move(craftGoal));
 			}
 

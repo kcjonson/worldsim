@@ -421,7 +421,7 @@ target still happens within one or two re-eval cycles.
   Done / Abort-and-re-resolve / Retire lifecycle. On target invalidation, attempt to locate
   another valid target of the same goal before retiring.
 - In the Harvest evaluator in `AIDecisionSystem`: locate the target by entity ID
-  (`harvestTargetEntityId`), not by proximity. If the entity is absent from memory or the
+  (`harvestTargetKey`), not by proximity. If the entity is absent from memory or the
   world, mark the option as `NoSource` rather than re-queuing to a random nearby entity.
 - In `StorageGoalSystem::reconcileStockingHarvests`: retire a stocking-harvest goal when
   the storage minimum is already met or the source entity is gone.

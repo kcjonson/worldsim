@@ -18,21 +18,13 @@
 #include <tuple>
 #include <vector>
 
-namespace assets {
-	class AssetRegistry;
-}
-
 namespace ecs {
 
 /// Find all known world entities with a specific capability type
 /// @param memory The colonist's memory to search
-/// @param registry Asset registry for capability lookups
 /// @param capability The capability type to search for
 /// @returns Vector of known entities with the capability
-[[nodiscard]] std::vector<KnownWorldEntity> findKnownWithCapability(
-	const Memory&						  memory,
-	const assets::AssetRegistry&  registry,
-	assets::CapabilityType		  capability);
+[[nodiscard]] std::vector<KnownWorldEntity> findKnownWithCapability(const Memory& memory, assets::CapabilityType capability);
 
 /// A source and its squared distance, as nearestReachable orders them. A remembered world entity has
 /// `entity`; a storage box the colony knows has `storage` instead, `key` its world key, `item` what it is
@@ -100,21 +92,5 @@ template <typename Accept, typename Reachable>
 	const auto found = nearestReachable(scratch, [&](const SourceCandidate& candidate) { return reachable(candidate.key, candidate.position); });
 	return found.has_value() ? std::optional<KnownWorldEntity>{*found->entity} : std::nullopt;
 }
-
-/// Count how many known entities have a specific capability
-[[nodiscard]] size_t countKnownWithCapability(
-	const Memory&						  memory,
-	const assets::AssetRegistry&  registry,
-	assets::CapabilityType		  capability);
-
-/// Find the nutrition value for an edible entity at a target position
-/// @param memory The colonist's memory to search
-/// @param registry Asset registry for capability lookups
-/// @param targetPos Position to search at (with tolerance)
-/// @returns Nutrition value (0.0-1.0) or nullopt if no edible found
-[[nodiscard]] std::optional<float> findNutritionAtPosition(
-	const Memory&						  memory,
-	const assets::AssetRegistry&  registry,
-	const glm::vec2&					  targetPos);
 
 } // namespace ecs

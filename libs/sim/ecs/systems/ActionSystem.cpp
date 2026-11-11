@@ -121,7 +121,7 @@ namespace ecs {
 				advanceConstructionWork(scaledDt, action);
 			} else {
 				// Process the action
-				processAction(scaledDt, action, needs, task);
+				processAction(scaledDt, action);
 			}
 
 			// Update WorkQueue progress for craft actions (for UI progress bar)
@@ -182,7 +182,7 @@ namespace ecs {
 
 		// Handle Harvest tasks (goal-driven harvesting for crafting materials)
 		if (task.type == TaskType::Harvest) {
-			startHarvestAction(task, action, position, memory, inventory);
+			startHarvestAction(task, action, memory, inventory);
 			return;
 		}
 
@@ -190,10 +190,7 @@ namespace ecs {
 		startNeedAction(task, action, position, memory, needs, inventory);
 	}
 
-	void ActionSystem::processAction(float deltaTime, Action& action, NeedsComponent& needs, Task& task) {
-		(void)needs; // Not used during in-progress phase
-		(void)task;	 // Not used during in-progress phase
-
+	void ActionSystem::processAction(float deltaTime, Action& action) {
 		// Update elapsed time
 		action.elapsed += deltaTime;
 
@@ -468,10 +465,10 @@ namespace ecs {
 		task.haulFromInventory = true;
 		task.haulSourceStorageId = 0;
 		task.haulSourcePosition = position.value;
-		task.haulTargetStorageId = static_cast<uint64_t>(root->destinationEntity);
+		task.haulDestinationId = static_cast<uint64_t>(root->destinationEntity);
 		task.haulTargetPosition = root->destinationPosition;
 		task.haulGoalId = rootId;
-		task.harvestTargetEntityId = 0;
+		task.harvestTargetKey = 0;
 		task.harvestGoalId = 0;
 		task.harvestYieldDefNameId = 0;
 		task.reason = "Delivering " + itemDefName;

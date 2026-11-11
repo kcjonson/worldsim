@@ -397,10 +397,10 @@ namespace ecs::test {
 		const auto use = claimOf(task, ClaimKind::Use);
 		ASSERT_TRUE(use.has_value());
 		EXPECT_EQ(use->targetKind(), TargetKind::WorldKey);
-		EXPECT_EQ(use->target(), task.harvestTargetEntityId);
+		EXPECT_EQ(use->target(), task.harvestTargetKey);
 		EXPECT_EQ(claimOf(task, ClaimKind::InFlight)->target(), root);
 		EXPECT_EQ(claimOf(task, ClaimKind::InFlight)->quantity(), 3U) << "amountMax, under the need and the carry";
-		EXPECT_EQ(ai->claimIndex().useHolder({.kind = TargetKind::WorldKey, .key = task.harvestTargetEntityId}, {})->colonist, colonist);
+		EXPECT_EQ(ai->claimIndex().useHolder({.kind = TargetKind::WorldKey, .key = task.harvestTargetKey}, {})->colonist, colonist);
 
 		act(colonist, bushPos);
 		const uint32_t cut = ecs::availableQuantity(*world->getComponent<Inventory>(colonist), "Stick");
@@ -679,9 +679,9 @@ namespace ecs::test {
 		ASSERT_TRUE(task.suspended->claims.push(Claim::inbound(static_cast<uint64_t>(site.blueprint), stoneId, 2)));
 		ASSERT_TRUE(task.suspended->claims.push(Claim::inFlight(site.umbrella, stoneId, 2)));
 
-		task.haulTargetStorageId = static_cast<uint64_t>(site.blueprint) + 1;
+		task.haulDestinationId = static_cast<uint64_t>(site.blueprint) + 1;
 		EXPECT_FALSE(adoptsSuspended(task));
-		task.haulTargetStorageId = static_cast<uint64_t>(site.blueprint);
+		task.haulDestinationId = static_cast<uint64_t>(site.blueprint);
 		EXPECT_TRUE(adoptsSuspended(task));
 	}
 
@@ -785,7 +785,7 @@ namespace ecs::test {
 		ASSERT_EQ(world->getComponent<Inventory>(box)->getQuantity("Wood"), 8U) << "put away in the box within reach";
 		const EvaluatedOption* toBox = nullptr;
 		for (const EvaluatedOption& option : world->getComponent<DecisionTrace>(hauler)->options) {
-			if (option.taskType == TaskType::Haul && option.haulTargetStorageId == static_cast<uint64_t>(box)) {
+			if (option.taskType == TaskType::Haul && option.haulDestinationId == static_cast<uint64_t>(box)) {
 				toBox = &option;
 			}
 		}
@@ -927,7 +927,7 @@ namespace ecs::test {
 
 		decide(colonist);
 		ASSERT_EQ(getTask(colonist)->type, TaskType::Haul);
-		EXPECT_EQ(getTask(colonist)->haulTargetStorageId, static_cast<uint64_t>(high));
+		EXPECT_EQ(getTask(colonist)->haulDestinationId, static_cast<uint64_t>(high));
 	}
 
 	// The task panel lists a storage goal only while a colonist is offered work toward it: a box that
@@ -1197,7 +1197,7 @@ namespace ecs::test {
 			const Task& task = *getTask(colonist);
 			ASSERT_EQ(task.type, TaskType::Haul) << "decision " << decision;
 			EXPECT_TRUE(task.haulFromInventory);
-			EXPECT_EQ(task.haulTargetStorageId, static_cast<uint64_t>(site.blueprint));
+			EXPECT_EQ(task.haulDestinationId, static_cast<uint64_t>(site.blueprint));
 		}
 		const auto& options = world->getComponent<DecisionTrace>(colonist)->options;
 		EXPECT_TRUE(std::any_of(options.begin(), options.end(), [](const EvaluatedOption& option) {
@@ -1455,7 +1455,7 @@ namespace ecs::test {
 			task.type = TaskType::Harvest;
 			task.state = TaskState::Moving;
 			task.targetPosition = {50.0F, 50.0F};
-			task.harvestTargetEntityId = 1;
+			task.harvestTargetKey = 1;
 			task.harvestYieldDefNameId = woodId;
 			task.priorityTier = 4;
 			task.instanceId = GoalTaskRegistry::Get().allocateClaimSeq();
@@ -1872,7 +1872,7 @@ namespace ecs::test {
 		world->addComponent<Skills>(other, Skills{}).setLevel("Farming", 0.0F);
 
 		decideAll({other, colonist});
-		ASSERT_EQ(getTask(other)->harvestTargetEntityId, hashWorldEntity(taken, assets::AssetRegistry::Get().getDefNameId("Reed")));
+		ASSERT_EQ(getTask(other)->harvestTargetKey, hashWorldEntity(taken, assets::AssetRegistry::Get().getDefNameId("Reed")));
 		// Walk until the colonist has decided again with its first cut in hand.
 		ASSERT_TRUE(walkUntil(site, colonist, [&] {
 			const EvaluatedOption* chosen = world->getComponent<DecisionTrace>(colonist)->getSelected();
@@ -1945,7 +1945,7 @@ namespace ecs::test {
 			return task.type == TaskType::Harvest && claimOf(task, ClaimKind::Inbound).has_value();
 		}));
 		const uint64_t nextKey = hashWorldEntity(next, assets::AssetRegistry::Get().getDefNameId("Reed"));
-		ASSERT_EQ(getTask(colonist)->harvestTargetEntityId, nextKey);
+		ASSERT_EQ(getTask(colonist)->harvestTargetKey, nextKey);
 		const uint64_t gathering = getTask(colonist)->instanceId;
 
 		// No nav regions in this headless world, so the failed route is set by hand, as requestNavPath
@@ -1963,7 +1963,7 @@ namespace ecs::test {
 		rememberReeds(other, {next});
 		decide(other);
 		ASSERT_EQ(getTask(other)->type, TaskType::Harvest);
-		EXPECT_EQ(getTask(other)->harvestTargetEntityId, nextKey);
+		EXPECT_EQ(getTask(other)->harvestTargetKey, nextKey);
 
 		ASSERT_TRUE(walkUntil(site, colonist, [&] { return delivered(site) == 6 && carriedFibre(colonist) + carriedFibre(other) == 0; }, 1500))
 			<< "delivered " << delivered(site);
@@ -2064,7 +2064,7 @@ namespace ecs::test {
 		task.type = TaskType::Harvest;
 		task.state = TaskState::Moving;
 		task.targetPosition = {50.0F, 50.0F};
-		task.harvestTargetEntityId = 1;
+		task.harvestTargetKey = 1;
 		task.harvestYieldDefNameId = fibreId;
 		task.priorityTier = 4;
 		task.instanceId = GoalTaskRegistry::Get().allocateClaimSeq();
@@ -2552,7 +2552,7 @@ namespace ecs::test {
 
 		decide(other);
 		EXPECT_EQ(getTask(other)->type, TaskType::Harvest) << "the stranded colonist's bush is offered";
-		EXPECT_EQ(getTask(other)->harvestTargetEntityId, hashWorldEntity(bushPos, assets::AssetRegistry::Get().getDefNameId("StickBush")));
+		EXPECT_EQ(getTask(other)->harvestTargetKey, hashWorldEntity(bushPos, assets::AssetRegistry::Get().getDefNameId("StickBush")));
 		EXPECT_NE(getTask(stuck)->type, TaskType::Harvest) << "and the stranded colonist, seeing it taken, lets it go";
 	}
 
@@ -2719,7 +2719,7 @@ namespace ecs::test {
 		const EntityID worker = createColonist({0.0F, 0.0F});
 		remember(worker, heldBush, "BerryBush", assets::CapabilityType::Harvestable);
 		decide(worker);
-		ASSERT_EQ(getTask(worker)->harvestTargetEntityId, hashWorldEntity(heldBush, bushId));
+		ASSERT_EQ(getTask(worker)->harvestTargetKey, hashWorldEntity(heldBush, bushId));
 
 		const EntityID hungry = createColonist({0.0F, 1.0F});
 		const EntityID idle = createColonist({0.0F, -1.0F});

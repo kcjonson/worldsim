@@ -40,10 +40,14 @@ namespace ecs::test {
 			return out;
 		}
 
-		// Every lookup the registry offers must describe the same goal set getGoalsMatching walks.
+		// Every lookup the registry offers must describe the same goal set, every goal being of one type.
 		static void expectIndexesAgreeWithGoalSet() {
-			auto&	   registry = GoalTaskRegistry::Get();
-			const auto all = registry.getGoalsMatching([](const GoalTask&) { return true; });
+			auto&						 registry = GoalTaskRegistry::Get();
+			std::vector<const GoalTask*> all;
+			for (size_t type = 0; type <= static_cast<size_t>(TaskType::Wander); ++type) {
+				const auto ofType = registry.getGoalsOfType(static_cast<TaskType>(type));
+				all.insert(all.end(), ofType.begin(), ofType.end());
+			}
 			EXPECT_EQ(all.size(), registry.goalCount());
 
 			std::map<GoalOwner, std::set<uint64_t>> byOwner;

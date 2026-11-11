@@ -185,14 +185,13 @@ private:
 	/// Check if entity should re-evaluate its current task
 	/// @param task Current task
 	/// @param needs Current needs component
-	/// @param action Optional action component (nullptr if entity has no Action component)
 	/// @param movementTargetActive Whether the entity's MovementTarget is active (walking to a point);
 	///        a moving Wander re-evaluates every tick only when true, so the no-option hold (movement off)
 	///        keeps its periodic throttle
-	[[nodiscard]] bool shouldReEvaluate(const struct Task& task, const struct NeedsComponent& needs, const struct Action* action, bool movementTargetActive);
+	[[nodiscard]] bool shouldReEvaluate(const struct Task& task, const struct NeedsComponent& needs, bool movementTargetActive);
 
-	/// Build decision trace by evaluating all options
-	/// Populates the trace with all needs + wander, sorted by priority
+	/// Build the decision trace: every need, work, and idle option the colonist has, sorted by the
+	/// (tier, score) key, with the best reachable one marked Selected
 	/// @param currentTask Current task (used to preserve target when already pursuing a need)
 	/// @param inventory Colonist inventory (for checking food availability)
 	/// @param skills Optional colonist skills (for skill bonus calculation)
@@ -208,13 +207,15 @@ private:
 		struct SourceReachMemo& sourceReach,
 		struct DecisionTrace& trace);
 
-	/// Select task from the decision trace (picks first Selected option)
+	/// Select task from the decision trace (picks first Selected option); a route is planned over
+	/// `memory`, the colonist's belief
 	void selectTaskFromTrace(
 		EntityID entity,
 		struct Task& task,
 		struct MovementTarget& movementTarget,
 		const struct DecisionTrace& trace,
-		const struct Position& position);
+		const struct Position& position,
+		const struct Memory& memory);
 
 	/// Resolve a navmesh path to `goal` for `entity` and attach it as a NavPath, planning over
 	/// the colonist's structural belief (its known segments/openings). On success the NavPath is
@@ -261,9 +262,8 @@ private:
 	/// Switching away from a task that carries its chain's goods (past its pickup, or a cut with cargo):
 	/// a one-hand item is stowed to the belt, then the backpack, else dropped; a two-hand armful is
 	/// dropped when the selected task's first action needs free hands (a carry-in of what it holds does
-	/// not). When the new task is a need and the
-	/// colonist keeps the goods, the task becomes its suspended record (task-claims.md, interruption by
-	/// the colonist's own needs).
+	/// not). When the new task is a need and the colonist keeps the goods, the task becomes its
+	/// suspended record (task-claims.md, interruption by the colonist's own needs).
 	void handleChainInterruption(
 		EntityID entity,
 		Task& task,

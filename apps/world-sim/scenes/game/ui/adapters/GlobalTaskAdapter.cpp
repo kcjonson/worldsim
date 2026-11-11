@@ -77,7 +77,6 @@ namespace world_sim::adapters {
 				return "";
 			}
 
-			// For now, just show generic context - could be enhanced with recipe name
 			return " (for crafting)";
 		}
 
@@ -321,9 +320,6 @@ namespace world_sim::adapters {
 				data.isUnassigned = true;
 			}
 
-			// Known by - for goals, all colonists who know items that can fulfill
-			data.knownBy = ""; // Goal-driven: fulfilled by Memory queries, not tracked per-goal
-
 			data.taskTypePriority = getTaskTypePriority(goal.type);
 
 			return data;
@@ -351,37 +347,23 @@ namespace world_sim::adapters {
 
 	} // anonymous namespace
 
-	std::vector<GlobalTaskDisplayData> getGlobalTasks(ecs::World& world, const glm::vec2& cameraCenter) {
-		return goalsForDisplay(world, cameraCenter);
-	}
-
-	std::vector<GlobalTaskDisplayData> getTasksForColonist(ecs::World& world, const glm::vec2& colonistPosition) {
-		return goalsForDisplay(world, colonistPosition);
+	std::vector<GlobalTaskDisplayData> getGlobalTasks(ecs::World& world, const glm::vec2& referencePosition) {
+		return goalsForDisplay(world, referencePosition);
 	}
 
 	void sortTasksForDisplay(std::vector<GlobalTaskDisplayData>& tasks) {
 		std::sort(tasks.begin(), tasks.end(), [](const GlobalTaskDisplayData& a, const GlobalTaskDisplayData& b) {
-			// 1. "Mine" tasks first (for colonist view)
-			if (a.isMine != b.isMine) {
-				return a.isMine;
-			}
-
-			// 2. Reserved tasks first
-			if (a.isReserved != b.isReserved) {
-				return a.isReserved;
-			}
-
-			// 3. By task type priority
+			// 1. By task type priority
 			if (a.taskTypePriority != b.taskTypePriority) {
 				return a.taskTypePriority < b.taskTypePriority;
 			}
 
-			// 4. By distance (closer first)
+			// 2. By distance (closer first)
 			if (std::abs(a.distanceValue - b.distanceValue) > 0.5F) {
 				return a.distanceValue < b.distanceValue;
 			}
 
-			// 5. Stable sort by ID
+			// 3. Stable sort by ID
 			return a.id < b.id;
 		});
 	}

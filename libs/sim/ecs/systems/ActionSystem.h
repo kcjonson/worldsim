@@ -153,12 +153,7 @@ private:
 	void makeRoomToEat(struct Inventory& inventory, const struct Task& task, const std::string& food, uint32_t meal, glm::vec2 position);
 
 	/// Process an in-progress action
-	void processAction(
-		float deltaTime,
-		struct Action& action,
-		struct NeedsComponent& needs,
-		struct Task& task
-	);
+	void processAction(float deltaTime, struct Action& action);
 
 	/// Complete an action and apply effects
 	void completeAction(
@@ -235,13 +230,7 @@ private:
 	/// Start a harvest action for goal-driven harvesting (crafting materials)
 	/// Finds harvestable at target position that yields the required item type.
 	/// Memory is mutable so a vanished target can be forgotten (prevents re-selection).
-	void startHarvestAction(
-		struct Task& task,
-		struct Action& action,
-		const struct Position& position,
-		struct Memory& memory,
-		const struct Inventory& inventory
-	);
+	void startHarvestAction(struct Task& task, struct Action& action, struct Memory& memory, const struct Inventory& inventory);
 
 	/// Start a haul action (pickup from source, then deposit to storage)
 	/// Memory is mutable so a vanished pickup target can be forgotten.

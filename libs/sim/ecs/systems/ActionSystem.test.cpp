@@ -651,7 +651,7 @@ TEST_F(ActionSystemGoalTest, HarvestBecomesItsDepositLegAndDeliversTheYield) {
 	ASSERT_EQ(task->type, TaskType::Haul) << "the task carries on as its deposit leg";
 	EXPECT_TRUE(task->haulFromInventory);
 	EXPECT_EQ(task->haulGoalId, craftId);
-	EXPECT_EQ(task->haulTargetStorageId, static_cast<uint64_t>(station));
+	EXPECT_EQ(task->haulDestinationId, static_cast<uint64_t>(station));
 	EXPECT_EQ(task->haulQuantity, 2U) << "capped at what the root still needs; the third stick is uncommitted";
 	EXPECT_EQ(task->state, TaskState::Moving);
 	EXPECT_EQ(task->targetPosition, glm::vec2(5.0F, 0.0F));
@@ -728,7 +728,7 @@ TEST_F(ActionSystemGoalTest, WithdrawPullsFromSourceBoxThenDepositsIntoDestBox) 
 	task->haulQuantity = 5;
 	task->haulSourceStorageId = static_cast<uint64_t>(srcBox);
 	task->haulSourcePosition = srcPos;
-	task->haulTargetStorageId = static_cast<uint64_t>(destBox);
+	task->haulDestinationId = static_cast<uint64_t>(destBox);
 	task->haulTargetPosition = destPos;
 	task->haulFromInventory = false;
 	task->targetPosition = srcPos;
@@ -827,7 +827,7 @@ TEST_F(ActionSystemGoalTest, WithdrawTwoHandWoodRidesInHandsThenDepositsIntoDest
 	task->haulQuantity = 5;
 	task->haulSourceStorageId = static_cast<uint64_t>(srcBox);
 	task->haulSourcePosition = srcPos;
-	task->haulTargetStorageId = static_cast<uint64_t>(destBox);
+	task->haulDestinationId = static_cast<uint64_t>(destBox);
 	task->haulTargetPosition = destPos;
 	task->haulFromInventory = false;
 	task->targetPosition = srcPos;
@@ -931,7 +931,7 @@ TEST_F(ActionSystemGoalTest, CraftDepositMetersToRecipeNeedAndKeepsSurplus) {
 	task->haulGoalId = haulId;
 	task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("PlantFiber");
 	task->haulQuantity = 1;
-	task->haulTargetStorageId = static_cast<uint64_t>(station);
+	task->haulDestinationId = static_cast<uint64_t>(station);
 	task->haulTargetPosition = stationPos;
 	task->haulFromInventory = true;
 	task->targetPosition = stationPos;
@@ -997,7 +997,7 @@ TEST_F(ActionSystemGoalTest, CraftFetchFromPileTakesOnlyRemainingNeedLeavesRest)
 	task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("SmallStone");
 	task->haulQuantity = 2;
 	task->haulSourcePosition = pilePos;
-	task->haulTargetStorageId = 0;
+	task->haulDestinationId = 0;
 	task->haulTargetPosition = {5.0F, 0.0F};
 	task->haulFromInventory = false;
 	task->targetPosition = pilePos;
@@ -1144,7 +1144,7 @@ TEST_F(ActionSystemGoalTest, LooseFetchHaulCommitsToDepositAndCreditsCraftStatio
 	task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("SmallStone");
 	task->haulQuantity = 1;
 	task->haulSourcePosition = sourcePos;
-	task->haulTargetStorageId = static_cast<uint64_t>(station);
+	task->haulDestinationId = static_cast<uint64_t>(station);
 	task->haulTargetPosition = stationPos;
 	task->haulFromInventory = false;
 	task->targetPosition = sourcePos; // phase 1: at the source
@@ -1189,7 +1189,7 @@ TEST_F(ActionSystemGoalTest, LooseFetchHaulCommitsToDepositAndCreditsCraftStatio
 	task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("SmallStone");
 	task->haulQuantity = 1;
 	task->haulSourcePosition = stationPos; // already here, no pickup
-	task->haulTargetStorageId = static_cast<uint64_t>(station);
+	task->haulDestinationId = static_cast<uint64_t>(station);
 	task->haulTargetPosition = stationPos;
 	task->haulFromInventory = true; // deliver-from-inventory deposit
 	task->targetPosition = stationPos;
@@ -1311,7 +1311,7 @@ TEST_F(ActionSystemGoalTest, LooseFetchPicksUpWhenSourceOverlapsStation) {
 	task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("SmallStone");
 	task->haulQuantity = 1;
 	task->haulSourcePosition = sourcePos;
-	task->haulTargetStorageId = static_cast<uint64_t>(station);
+	task->haulDestinationId = static_cast<uint64_t>(station);
 	task->haulTargetPosition = stationPos;
 	task->haulFromInventory = false;
 	task->targetPosition = sourcePos;
@@ -1392,7 +1392,7 @@ TEST_F(ActionSystemGoalTest, CarryingAtSourceRedirectsToDepositInsteadOfDeadlock
 	task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("Wood");
 	task->haulQuantity = 10;
 	task->haulSourcePosition = sourcePos;
-	task->haulTargetStorageId = static_cast<uint64_t>(box);
+	task->haulDestinationId = static_cast<uint64_t>(box);
 	task->haulTargetPosition = boxPos;
 	task->haulFromInventory = false;
 	task->targetPosition = sourcePos; // arrived at the source while carrying
@@ -2919,7 +2919,8 @@ class ActionSystemHarvestTimeTest : public ::testing::Test {
 		world->addComponent<Skills>(entity, std::move(skills));
 
 		Memory memory;
-		memory.rememberWorldEntity(treePos, "Flora_TestTree"); // string overload interns + masks
+		const uint32_t treeId = assets::AssetRegistry::Get().getDefNameId("Flora_TestTree");
+		memory.rememberWorldEntity(treePos, treeId, assets::AssetRegistry::Get().getCapabilityMask(treeId));
 		world->addComponent<Memory>(entity, std::move(memory));
 
 		Task task;
@@ -2928,7 +2929,7 @@ class ActionSystemHarvestTimeTest : public ::testing::Test {
 		task.targetPosition = treePos;
 		// startHarvestAction now locates the harvestable by id (the memory key), not by proximity,
 		// so the task must carry the key the evaluator would have stored for this tree.
-		task.harvestTargetEntityId = ecs::hashWorldEntity(treePos, registry.getDefNameId("Flora_TestTree"));
+		task.harvestTargetKey = ecs::hashWorldEntity(treePos, registry.getDefNameId("Flora_TestTree"));
 		task.harvestYieldDefNameId = registry.getDefNameId("TestWood");
 		world->addComponent<Task>(entity, std::move(task));
 
@@ -2969,7 +2970,7 @@ TEST_F(ActionSystemHarvestTimeTest, ConvertsDurabilityToSecondsAtSkillTen) {
 // Harvest locate-by-entity-id (NOT 0.5 m proximity) -- the phantom-harvest-loop fix
 // =============================================================================
 //
-// startHarvestAction must locate the harvestable by task.harvestTargetEntityId (the
+// startHarvestAction must locate the harvestable by task.harvestTargetKey (the
 // knownWorldEntities key the evaluator chose), not by re-scanning memory for an entity within
 // 0.5 m of task.targetPosition. The stabilization PR snaps a harvest target to an ADJACENT
 // reachable nav point (tree centers are navmesh holes), so task.targetPosition is offset from
@@ -3009,7 +3010,7 @@ class ActionSystemHarvestLocateTest : public ::testing::Test {
 		world.reset();
 	}
 
-	/// A colonist whose Harvest task is keyed to the tree at `treePos` by harvestTargetEntityId,
+	/// A colonist whose Harvest task is keyed to the tree at `treePos` by harvestTargetKey,
 	/// while its targetPosition is the SNAPPED stand point `standPos` (>0.5 m from the tree).
 	/// Seeds memory with the tree so the lookup resolves.
 	EntityID createHarvesterTargetingId(glm::vec2 treePos, glm::vec2 standPos) {
@@ -3037,7 +3038,7 @@ class ActionSystemHarvestLocateTest : public ::testing::Test {
 		task.type = TaskType::Harvest;
 		task.state = TaskState::Arrived;
 		task.targetPosition = standPos; // the snapped stand point, NOT the tree
-		task.harvestTargetEntityId = ecs::hashWorldEntity(treePos, treeDefNameId); // the memory key
+		task.harvestTargetKey = ecs::hashWorldEntity(treePos, treeDefNameId); // the memory key
 		task.harvestYieldDefNameId = registry.getDefNameId("TestWood");
 		world->addComponent<Task>(entity, std::move(task));
 
@@ -3049,7 +3050,7 @@ class ActionSystemHarvestLocateTest : public ::testing::Test {
 
 // The keystone: the tree is 5 m from the snapped stand point (10x the old 0.5 m tolerance), yet
 // the harvest must still start, sourcing from the tree's position -- proving the locate keys on
-// harvestTargetEntityId, not proximity to targetPosition.
+// harvestTargetKey, not proximity to targetPosition.
 TEST_F(ActionSystemHarvestLocateTest, HarvestsByEntityIdWhenTargetPositionIsSnappedAway) {
 	const glm::vec2 treePos{20.0F, 20.0F};
 	const glm::vec2 standPos{25.0F, 20.0F}; // 5 m away -- far outside the old 0.5 m proximity window
@@ -3225,7 +3226,7 @@ class ClearHarvestTest : public ::testing::Test {
 		task.state = TaskState::Arrived;
 		task.targetPosition = bushPos + glm::vec2{1.0F, 0.0F};
 		task.harvestGoalId = goalId;
-		task.harvestTargetEntityId = hashWorldEntity(bushPos, bushId);
+		task.harvestTargetKey = hashWorldEntity(bushPos, bushId);
 		task.harvestYieldDefNameId = berryId;
 		world->addComponent<Task>(entity, std::move(task));
 		return entity;

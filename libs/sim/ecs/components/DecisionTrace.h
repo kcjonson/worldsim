@@ -18,9 +18,6 @@
 
 namespace ecs {
 
-	/// Maximum number of options to display in the UI (configurable for future expansion)
-	constexpr size_t kMaxDisplayedOptions = 10;
-
 	/// Status of an evaluated task option
 	enum class OptionStatus : uint8_t {
 		Selected,  // This is the current task
@@ -74,18 +71,19 @@ namespace ecs {
 		std::optional<glm::vec2> haulSourcePosition;	  // Where to pick up from
 		uint64_t				 haulSourceStorageId = 0; // Source box entity ID for a storage->storage pull (0 = loose/inventory source)
 		uint64_t				 haulSourceKey = 0;		  // Memory key of a loose pile source, 0 for any other
-		uint64_t				 haulTargetStorageId = 0; // Storage container entity ID
+		uint64_t				 haulDestinationId = 0; // Entity the goods go to: a box, a build site, or a station
 		std::optional<glm::vec2> haulTargetPosition;	  // Where to deposit
 		uint64_t				 haulGoalId = 0;		  // Goal being fulfilled
 		bool					 haulFromInventory = false; // Source is colonist inventory (craft-material haul)
 
 		// PlacePackaged-specific fields (for PlacePackaged tasks)
 		uint64_t				 placePackagedEntityId = 0; // Entity ID of packaged item
+		bool					 carryingPackaged = false;	// The colonist already carries it: committed delivery (tier 4)
 		std::optional<glm::vec2> placeSourcePosition;		// Where the packaged item is
 		std::optional<glm::vec2> placeTargetPosition;		// Where to place it
 
 		// Harvest-specific fields (for Harvest tasks)
-		uint64_t harvestTargetEntityId = 0;	 // Memory key of the harvestable (tree, bush), not an ECS id
+		uint64_t harvestTargetKey = 0;	 // Memory key of the harvestable (tree, bush), not an ECS id
 		uint64_t harvestGoalId = 0;			 // Goal being fulfilled
 		uint32_t harvestYieldDefNameId = 0;	 // What item will be yielded
 
@@ -178,9 +176,6 @@ namespace ecs {
 			}
 			return a.tiebreakId < b.tiebreakId;
 		}
-
-		/// Check if this option can be executed (has a valid target or fallback)
-		[[nodiscard]] bool isActionable() const { return status == OptionStatus::Selected || status == OptionStatus::Available; }
 	};
 
 	/// Decision trace component - captures the full decision context
@@ -203,9 +198,6 @@ namespace ecs {
 			}
 			return nullptr;
 		}
-
-		/// Get number of options to display (capped by kMaxDisplayedOptions)
-		[[nodiscard]] size_t displayCount() const { return std::min(options.size(), kMaxDisplayedOptions); }
 	};
 
 	/// The option as the player reads it ("Cutting Oak Tree for Wood", "Hunger at 40% (12m away)"),

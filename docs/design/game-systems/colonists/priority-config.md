@@ -10,7 +10,7 @@
 
 Task priority is calculated using a lexicographic `(tier: int, score: float)` key. Tier is compared first (lower number = higher priority) and is inviolable; a far tier-4 option always beats a near tier-5 one. Score orders options within the same tier only. All score weights and tier assignments are defined in `assets/config/work/priority-tuning.xml`, allowing tuning without code changes.
 
-The numeric bands documented below (`Critical 30000`, `Needs 10000`, etc.) **no longer drive AI arbitration**; they have been replaced by the tier integer. The bands and `getBandBase()` survive only for the separate work-type **display-priority** path (the global task list UI), which is unchanged. See [Colonist Task Arbitration](../../../technical/colonist-task-arbitration.md) for the full implementation.
+The numeric bands of the earlier design (`Critical 30000`, `Needs 10000`, etc.) were replaced by the tier integer and are gone, config and accessors both: nothing read them. See [Colonist Task Arbitration](../../../technical/colonist-task-arbitration.md) for the full implementation.
 
 **Design Goal:** Make priority tuning a data-driven process. When testers report "colonists walk too far for low-priority tasks," designers can adjust distance penalties without programmer involvement.
 
@@ -31,7 +31,7 @@ Each colonist has a personal preference for each work category:
 
 - **Lower number = colonist prefers this work**
 - Set per-colonist in the work priorities UI
-- Maps to Work bands via `UserPriorityMapping` (see below)
+- Not implemented yet: no colonist carries a preference and nothing reads one
 - Affects which *type* of work a colonist gravitates toward
 
 ### 2. Goal Priority (Buildings/Entities)
@@ -77,51 +77,6 @@ score = distanceFactor      // dominant: 300 * max(0, 1 - d/60), nearest source 
 
 `chainBonus` (+2000) is gone; a chain step is classified at tier 4 (active work order), not scored higher within tier 6. `inProgressBonus` is gone; it is replaced by the `hysteresisBonus` (50) applied within the same tier only. `kWorkOrderProvisionFloor` and `kStorageStockingFloor` are deleted; tiers make them unnecessary.
 
-### Display priority (UI task list only)
-
-For the global task list (no colonist context), a separate display-priority path is unchanged:
-
-```
-displayPriority = basePriority - distancePenalty(distance)
-```
-
-`basePriority` here comes from `getBandBase()` / the `<Bands>` section of `priority-tuning.xml`, which survives solely for this display path. (There is no `distancePenaltyMultiplier` config field; the display penalty is a simple monotonic function of distance.)
-
----
-
-## Priority Bands (display path only)
-
-These bands are **display-priority only**; they drive the global task list UI, not AI arbitration. AI arbitration uses the tier integer from `<TaskTiers>` instead. Colonist work type preferences (1-9) still map into the Work bands for display purposes.
-
-| Band Name | Base Value | Description |
-|-----------|------------|-------------|
-| Critical | 30000 | Life-threatening (< 10% need) |
-| PlayerDraft | 20000 | Direct player command to colonist |
-| Needs | 10000 | Actionable needs (below threshold) |
-| WorkHigh | 5000 | Colonist preference 1-3 (prefers) |
-| WorkMedium | 3000 | Colonist preference 4-6 (neutral) |
-| WorkLow | 1000 | Colonist preference 7-9 (avoids) |
-| Idle | 0 | Wander (fallback) |
-
-### Colonist Work Type Preference Mapping
-
-Each colonist's 1-9 work type preference maps into the Work bands.
-This is NOT per-task priority — it's the colonist's preference for work categories.
-
-```
-User Priority 1 → WorkHigh + 800 = 5800
-User Priority 2 → WorkHigh + 700 = 5700
-User Priority 3 → WorkHigh + 600 = 5600
-User Priority 4 → WorkMedium + 500 = 3500
-User Priority 5 → WorkMedium + 400 = 3400
-User Priority 6 → WorkMedium + 300 = 3300
-User Priority 7 → WorkLow + 200 = 1200
-User Priority 8 → WorkLow + 100 = 1100
-User Priority 9 → WorkLow + 0 = 1000
-```
-
-Formula: `bandBase + (10 - userPriority) * step`
-
 ---
 
 ## Config File Format
@@ -131,39 +86,6 @@ Formula: `bandBase + (10 - userPriority) * step`
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <PriorityTuning>
-  <!-- Priority bands: work-type DISPLAY priority only (NOT the AI arbitration tiers) -->
-  <Bands>
-    <Band name="Critical" base="30000">
-      <description>Life-threatening situations (critical needs)</description>
-    </Band>
-    <Band name="PlayerDraft" base="20000">
-      <description>Direct player control overrides</description>
-    </Band>
-    <Band name="Needs" base="10000">
-      <description>Actionable needs below seek threshold</description>
-    </Band>
-    <Band name="WorkHigh" base="5000">
-      <description>User priority 1-3 work tasks</description>
-    </Band>
-    <Band name="WorkMedium" base="3000">
-      <description>User priority 4-6 work tasks</description>
-    </Band>
-    <Band name="WorkLow" base="1000">
-      <description>User priority 7-9 work tasks</description>
-    </Band>
-    <Band name="Idle" base="0">
-      <description>Wander and idle behaviors</description>
-    </Band>
-  </Bands>
-
-  <!-- User priority (1-9) to band mapping -->
-  <UserPriorityMapping>
-    <bandAssignment priority="1-3" band="WorkHigh"/>
-    <bandAssignment priority="4-6" band="WorkMedium"/>
-    <bandAssignment priority="7-9" band="WorkLow"/>
-    <stepSize>100</stepSize>
-  </UserPriorityMapping>
-
   <!-- Work category tier ordering (for simple mode) -->
   <WorkCategoryOrder>
     <Category name="Emergency" tier="1"/>
@@ -187,18 +109,6 @@ Formula: `bandBase + (10 - userPriority) * step`
         to the skill/age terms and allowed distant tasks to win via bonuses.
       </description>
     </Distance>
-
-    <!-- Chain continuation: chain steps are classified at tier 4 (active work order),
-         not scored higher within tier 6. The +2000 score term is deleted;
-         servesActiveWorkOrder == true drives the tier assignment instead. -->
-    <ChainContinuation>
-      <bonus>0</bonus>
-      <description>
-        SUPERSEDED: chain bonus is now a tier-4 classification, not a score term.
-        A provisioning haul/harvest with servesActiveWorkOrder=true is assigned
-        tier 4 rather than tier 6; no score inflation needed or applied.
-      </description>
-    </ChainContinuation>
 
     <!-- In-progress: within-tier hysteresis margin (replaces the old cross-tier bonus) -->
     <InProgress>
@@ -348,15 +258,10 @@ public:
     bool validateTaskTiers(const std::vector<std::string>& requiredTypeNames,
                            std::vector<std::string>& missingOut) const; // fail-loud at load
 
-    // Band queries (work-type DISPLAY priority only, not the AI arbitration)
-    int16_t getBandBase(const std::string& bandName) const;
-    int16_t userPriorityToBase(uint8_t userPriority) const;
-
     // Within-tier score terms
     float   calculateDistanceFactor(float distance) const; // dominant: 300*max(0,1-d/60)
     int16_t calculateTaskAgeBonus(float taskAge) const;
     int16_t getInProgressBonus() const;                    // within-tier hysteresis margin (50)
-    int16_t calculateDistanceBonus(float distance) const;  // legacy +-50; display path only
 
     // Thresholds
     int16_t getTaskSwitchThreshold() const;
@@ -364,7 +269,6 @@ public:
 
 private:
     std::unordered_map<std::string, int> taskTiers;  // per-task-type base tier (arbitration)
-    std::unordered_map<std::string, int16_t> bands;  // display-priority bands
     DistanceFactorConfig  distanceFactorConfig;
     InProgressBonusConfig inProgressConfig;
     TaskAgeBonusConfig    taskAgeConfig;

@@ -240,12 +240,12 @@ namespace ecs {
 		// is identified by its WorkQueue, since it also carries an Inventory store just like a plain
 		// storage container does.
 		if (task.haulFromInventory) {
-			const auto targetEntity = static_cast<EntityID>(task.haulTargetStorageId);
+			const auto targetEntity = static_cast<EntityID>(task.haulDestinationId);
 			const bool targetIsCraftStation = world->hasComponent<WorkQueue>(targetEntity);
 			action = Action::Deposit(
 				haulItem,
 				task.haulQuantity,
-				task.haulTargetStorageId,
+				task.haulDestinationId,
 				task.haulTargetPosition,
 				/*deliverToCraftStation=*/targetIsCraftStation
 			);
@@ -257,7 +257,7 @@ namespace ecs {
 				targetIsCraftStation													? "crafting station"
 				: world->hasComponent<StructureBlueprint>(targetEntity) ? "build site"
 																		: "storage box",
-				static_cast<unsigned long long>(task.haulTargetStorageId)
+				static_cast<unsigned long long>(task.haulDestinationId)
 			);
 			return;
 		}
@@ -371,12 +371,12 @@ namespace ecs {
 		} else if (carryingHaulItem && atTarget) {
 			// Phase 2: carrying the item and at the destination - do Deposit.
 			// First validate storage is still valid (not packaged/being moved)
-			auto storageEntity = static_cast<EntityID>(task.haulTargetStorageId);
+			auto storageEntity = static_cast<EntityID>(task.haulDestinationId);
 			if (world->hasComponent<Packaged>(storageEntity)) {
 				LOG_WARNING(
 					Engine,
 					"[Action] Haul aborted: storage %llu is packaged (being moved)",
-					static_cast<unsigned long long>(task.haulTargetStorageId)
+					static_cast<unsigned long long>(task.haulDestinationId)
 				);
 				task.clear();
 				action.clear();
@@ -391,7 +391,7 @@ namespace ecs {
 			action = Action::Deposit(
 				haulItem,
 				task.haulQuantity,
-				task.haulTargetStorageId,
+				task.haulDestinationId,
 				task.haulTargetPosition,
 				/*deliverToCraftStation=*/toCraftStation
 			);
@@ -400,7 +400,7 @@ namespace ecs {
 				"[Action] Haul phase 2: Deposit %u x %s into storage %llu",
 				task.haulQuantity,
 				haulItem.c_str(),
-				static_cast<unsigned long long>(task.haulTargetStorageId)
+				static_cast<unsigned long long>(task.haulDestinationId)
 			);
 		} else if (carryingHaulItem) {
 			// Carrying the haul item but standing somewhere other than the destination -- the
