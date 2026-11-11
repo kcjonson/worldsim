@@ -140,6 +140,11 @@ namespace ecs {
 		/// job (Harvest -> Haul, Pickup -> Deposit) across goals and tasks; 0 is never handed out.
 		uint64_t allocateChainId() { return nextChainId++; }
 
+		/// The next claim sequence number, unique until the next clear(). A task takes one at acceptance as
+		/// both its claim instance id and its claim sequence (task-claims.md); 0 is never handed out. It
+		/// lives here, beside the chain id counter, because it is colony state a save must keep.
+		uint64_t allocateClaimSeq() { return nextClaimSeq++; }
+
 		// --- Goal Management (called by goal systems: StorageGoalSystem, CraftingGoalSystem, etc.) ---
 
 		/// Create a new goal task
@@ -216,6 +221,10 @@ namespace ecs {
 		/// Get all child goals of a parent goal
 		[[nodiscard]] std::vector<const GoalTask*> getChildGoals(uint64_t parentId) const;
 
+		/// The root of `goalId`'s hierarchy (itself when it has no parent): the goal in-flight claims
+		/// count toward. 0 when `goalId` is not a goal.
+		[[nodiscard]] uint64_t rootOf(uint64_t goalId) const;
+
 		/// Remove a goal and all its children (cascade delete)
 		void removeGoalWithChildren(uint64_t goalId);
 
@@ -248,6 +257,8 @@ namespace ecs {
 		uint64_t nextGoalId = 1;
 
 		uint64_t nextChainId = 1;
+
+		uint64_t nextClaimSeq = 1;
 
 		// Internal helpers
 		void addToIndices(const GoalTask& goal);

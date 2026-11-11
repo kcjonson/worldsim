@@ -12,6 +12,7 @@
 // See /docs/design/game-systems/colonists/ai-behavior.md for the design intent.
 // See /docs/design/game-systems/colonists/decision-trace.md for task queue display.
 
+#include "../ClaimIndex.h"
 #include "../DropResourceCallback.h"
 #include "../EntityID.h"
 #include "../ISystem.h"
@@ -88,10 +89,9 @@ public:
 
 	/// Enter direct player control: suspend this colonist's autonomous task selection. While the
 	/// PlayerControlled tag is present, update() skips task (re)selection, so the colonist stands
-	/// and waits until the player issues a move order. Abandons the current task and stops; there
-	/// is no reservation system, so clearing the task is the whole "release its work" story, and
-	/// any carried items ride along (handled normally once control is released). Vision is a
-	/// separate system and keeps running.
+	/// and waits until the player issues a move order. Abandons the current task and its suspended
+	/// record, whose claims go with them, so the work returns to the pool at once; any carried items
+	/// ride along uncommitted. Vision is a separate system and keeps running.
 	void enterControl(EntityID entity);
 
 	/// Leave direct player control: remove the tag and clear the player-issued task so the next
@@ -104,6 +104,10 @@ public:
 	/// work for free). Returns the goal actually routed to (post-snap), or nullopt if nothing
 	/// reachable is near the click (no order issued).
 	[[nodiscard]] std::optional<glm::vec2> issuePlayerMoveOrder(EntityID entity, glm::vec2 worldGoal);
+
+	/// Every colonist's claims, as of the last update in which a colonist decided. Readers outside
+	/// this system (the task panel) see it that stale.
+	[[nodiscard]] const ClaimIndex& claimIndex() const { return m_claims; }
 
 	[[nodiscard]] int priority() const override { return 60; }
 	[[nodiscard]] const char* name() const override { return "AIDecision"; }
@@ -182,6 +186,8 @@ private:
 	/// Handle chain interruption when switching away from a mid-chain task
 	/// Stows 1-handed items to backpack, drops 2-handed items or packaged entities.
 	/// @param entity Entity ID for logging
+	/// When the new task is a need and the colonist keeps a haul's goods, the haul becomes the task's
+	/// suspended record (task-claims.md, interruption by the colonist's own needs).
 	/// @param task Current task (must be mid-chain: chainId set, chainStep > 0)
 	/// @param inventory Colonist inventory to modify
 	/// @param position Colonist position (for dropping items)
@@ -189,11 +195,19 @@ private:
 	/// @param newNeedType Need type for FulfillNeed tasks
 	void handleChainInterruption(
 		EntityID entity,
-		const Task& task,
+		Task& task,
 		struct Inventory& inventory,
 		const struct Position& position,
 		TaskType newTaskType,
 		NeedType newNeedType);
+
+	/// A just-accepted task takes its instance id and records its chain's claims; its suspended record
+	/// is kept (a need), adopted (the carry-in of the same goods), or discarded (anything else). The
+	/// result is appended to the index so colonists deciding later this update see it.
+	void acceptClaims(EntityID entity, Task& task, const struct Memory& memory, const struct Inventory& inventory);
+
+	/// Rebuild the claim index the first time a colonist decides in this update.
+	void ensureClaimIndex();
 
 	const assets::AssetRegistry& m_registry;
 	const assets::RecipeRegistry& m_recipeRegistry;
@@ -218,6 +232,15 @@ private:
 
 	/// The storage boxes the colony knows, worked out at most once per update
 	ColonyStorageKnowledge m_colonyStorage;
+
+	/// Every task's claims: rebuilt when the first colonist decides in an update, then appended to by
+	/// each acceptance in it.
+	ClaimIndex m_claims;
+	bool	   m_claimsBuilt = false;
+#ifdef DEVELOPMENT_BUILD
+	/// The validator's fresh rebuild, kept so it reuses its storage.
+	ClaimIndex m_claimsCheck;
+#endif
 
 	/// SourceReachMemo::Key::stamp() of the colonist being decided this update (0 without a mesh)
 	std::uint64_t reachStamp = 0;

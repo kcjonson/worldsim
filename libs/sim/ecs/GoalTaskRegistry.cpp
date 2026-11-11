@@ -21,6 +21,7 @@ namespace ecs {
 		parentToChildren.clear();
 		nextGoalId = 1;
 		nextChainId = 1;
+		nextClaimSeq = 1;
 	}
 
 	uint64_t GoalTaskRegistry::createGoal(GoalTask goal) {
@@ -122,6 +123,21 @@ namespace ecs {
 				}
 			}
 		}
+	}
+
+	uint64_t GoalTaskRegistry::rootOf(uint64_t goalId) const {
+		auto it = goals.find(goalId);
+		if (it == goals.end()) {
+			return 0;
+		}
+		while (it->second.parentGoalId.has_value()) {
+			const auto parent = goals.find(it->second.parentGoalId.value());
+			if (parent == goals.end()) {
+				break;
+			}
+			it = parent;
+		}
+		return it->first;
 	}
 
 	const GoalTask* GoalTaskRegistry::getGoal(uint64_t goalId) const {

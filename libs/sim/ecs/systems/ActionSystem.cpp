@@ -2,6 +2,7 @@
 
 #include "../InventoryMass.h"
 #include "../World.h"
+#include "ChainClaims.h"
 #include "TimeSystem.h"
 #include "../components/Action.h"
 #include "../components/Appearance.h"
@@ -267,6 +268,10 @@ namespace ecs {
 				return;
 			}
 
+			// The source claim is spent; what is now carried is what the deposit leg commits. The
+			// pickup leg starts without the item in hand, so all of it was just lifted.
+			claimsToDeliveryLeg(task, ecs::availableQuantity(inventory, task.haulItemDefName));
+
 			// Phase 1 complete (Pickup, or Withdraw for a storage->storage pull) - hand off to phase 2
 			// (Deposit). Re-point the task at the deposit goal and set it Moving; the colonist drives
 			// itself to the station. The deposit leg is the SAME haul task, so AIDecisionSystem keeps it
@@ -303,6 +308,9 @@ namespace ecs {
 			// Phase 1 complete (PickupPackaged) - clear hands, pick up entity, then move to phase 2
 			// Hand clearing: stow items to backpack, drop if can't fit
 			clearHandsForTwoHandedPickup(inventory, action.targetPosition);
+
+			// The packaged item is possessed now; nobody else can take it.
+			claimsToDeliveryLeg(task, 0);
 
 			// Get the packaged entity from the effect
 			if (action.hasPlacePackagedEffect()) {

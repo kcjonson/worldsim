@@ -157,7 +157,7 @@ namespace ecs::test {
 		/// Drive the private chain-interruption handler directly. This fixture is a friend of
 		/// AIDecisionSystem (derived fixtures are not), so the seam lives here.
 		void callHandleChainInterruption(
-			EntityID entity, const Task& task, Inventory& inventory, const Position& position,
+			EntityID entity, Task& task, Inventory& inventory, const Position& position,
 			TaskType newTaskType, NeedType newNeedType
 		) {
 			world->getSystem<AIDecisionSystem>().handleChainInterruption(
@@ -3117,7 +3117,7 @@ namespace ecs::test {
 		}
 
 		// Drive the real handler for a switch to a hands-needing Harvest task.
-		void interruptForHarvest(EntityID colonist, const Task& task) {
+		void interruptForHarvest(EntityID colonist, Task& task) {
 			auto* inventory = world->getComponent<Inventory>(colonist);
 			auto* position = world->getComponent<Position>(colonist);
 			callHandleChainInterruption(colonist, task, *inventory, *position, TaskType::Harvest, NeedType::Count);

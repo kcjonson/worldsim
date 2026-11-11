@@ -140,25 +140,35 @@ struct Claim {
     uint32_t   itemDefNameId;   // 0 for Use and Slot
     uint32_t   quantity;        // 1 for Use and Slot
     uint16_t   slotIndex;       // numbered slots (builder positions); kAnySlot otherwise
-};
+};                              // built only through per-kind factories, which fix targetKind
+
 
 struct SuspendedWork {          // one interrupted work task, kept across a need
     uint64_t instanceId;        // the interrupted task's id, kept so its claims stay its own
     uint64_t claimSeq;
     uint64_t rootGoalId;
     uint32_t itemDefNameId;
-    ClaimList claims;           // inbound and in-flight for the goods still held
+    ClaimList<2> claims;        // that item's inbound and in-flight, for the goods still held
 };
 
 // On Task:
 uint64_t instanceId;            // assigned at acceptance, never reused
 uint64_t claimSeq;              // acceptance order, for deterministic tie-breaks
-ClaimList claims;               // fixed-capacity inline array; a chain holds at most a handful
+ClaimList<4> claims;            // fixed-capacity inline array; a chain holds at most three
 std::optional<SuspendedWork> suspended;
 ```
 
 `ClaimList` is a fixed-capacity array with a count. There is no small-vector type in worldsim or
-salal today, and one is not needed for a bound this small.
+salal today, and one is not needed for a bound this small. Overfilling one is a programming error and
+aborts in development builds. Both ids come from one counter: at acceptance a task takes the next
+claim sequence number as its instance id and its sequence alike; only an adopted record keeps older
+ones.
+
+A `Claim` is built only through one factory per kind, which fixes the key space (Use and
+SourceQuantity name theirs, Slot and Inbound are Entity, InFlight is Goal), so no claim can be filed
+where its queries never look. A target's `kAnySlot` is its one unnumbered slot (a station) and
+conflicts with every slot on that target, numbered or not; two numbered slots (builder positions)
+conflict only with themselves.
 
 Inbound and in-flight look redundant for a haul but guard different limits. Inbound protects the
 destination's physical capacity (two hauls into one box must fit in it together; today they can
@@ -237,7 +247,7 @@ Craft provisioning, construction delivery, and storage stocking.
 | Harvest completes | The task converts to its deposit leg. Use drops. In-flight becomes the units landed, capped at the root's remaining need net of other tasks' in-flight; Inbound(destination, yield, same) is added |
 | Deposit | all drop with the task |
 
-E is the source's maximum yield (`amountMax`, or the remaining pool for a pooled source), capped
+E is the source's most per cut (`amountMax`; a pooled source gives at most that per cut too), capped
 by what fits in the colonist's carry and by the root's remaining need. Over-estimating only makes
 another colonist briefly see less available; under-estimating brings back the over-harvest this
 spec removes. Units landed beyond the capped need are carried uncommitted; overflow that drops at
@@ -251,7 +261,7 @@ Loose pile to storage, loose pile to a crafting station store (craft fetch), and
 | Step | Claims held |
 |---|---|
 | Accept | SourceQuantity(source, item, Q), Inbound(destination, item, Q), In-flight(root, item, Q) |
-| Pickup or withdraw | SourceQuantity drops. Inbound and In-flight become the units lifted, capped at Q |
+| Pickup or withdraw | SourceQuantity drops. Inbound and In-flight become the units lifted, capped at Q. Arriving at the source already carrying the item skips the pickup and rewrites the same way, to what is carried |
 | Deposit | all drop with the task |
 
 A box-to-box pull's source claim counts against the box's drainable quantity (stock above its own
@@ -284,6 +294,11 @@ provisioning path was deleted; the claims follow what the code runs.)
 
 Use(patient), Slot(medical bed). Pickup drops the Use; the bed slot stays until deposit.
 
+### Build-site clear
+
+A construction clear Harvest records Use(source) only: it removes what stands in the footprint and
+brings nothing toward a need, so it has no in-flight.
+
 ### Build and Deconstruct
 
 No claims now; any number of colonists may work an UnderConstruction blueprint. Builder slots
@@ -291,7 +306,8 @@ No claims now; any number of colonists may work an UnderConstruction blueprint. 
 
 ### Need tasks
 
-Eat records Use on a bush or SourceQuantity of one meal on a pile or box. Drink takes no claim
+Eat records Use on a bush or SourceQuantity of one meal on a pile or box; food already in the pack is
+possessed and takes none, and the gather-food option claims its bush like Eat. Drink takes no claim
 from unbounded water. Sleep and toilet slots come with beds and toilets.
 
 ---
@@ -398,6 +414,8 @@ The colonist stows or drops carried goods as today (`handleChainInterruption`, d
 `needsHands` and `handsRequired`; see [Task Chains](../design/game-systems/colonists/task-chains.md)).
 A suspended record is created only when the interrupting selection is a need task:
 
+- Only a haul past its source holds goods of its own (no Use or SourceQuantity left); a placement's
+  packaged item has no root to carry it toward, so it leaves no record.
 - If the colonist keeps the goods (stowed, or the need does not use hands), the interrupted work
   becomes the suspended record: its instance id, claim sequence, root goal, item, and claims
   rewritten to Inbound and In-flight for the goods held (nothing on sources not yet reached).
@@ -494,7 +512,7 @@ debug level; they are expected.
 ```
 use:        target -> holder (instance id, colonist, tier, seq)
 source:     target -> [(instance id, item, quantity, tier, seq)], total per item
-slot:       (target, slotIndex) -> [holder]; bindings included
+slot:       target -> [holder with slotIndex]; bindings included
 inbound:    destination -> per item quantity, and slots promised (boxes)
 inFlight:   (root goal, item) -> quantity, with per-instance entries for self-exclusion
 byColonist: colonist -> its claims, current and suspended
@@ -509,10 +527,15 @@ bumping, the trace, and player orders); a colonist's claims (for the UI).
 At the start of each `AIDecisionSystem::update` in which any colonist will evaluate, the index is
 rebuilt from every colonist's task and suspended record plus every craft binding. Within the update
 each selection appends its new claims, so a colonist deciding later in the same update sees what an
-earlier one just took. Tasks cleared later in the same update (off-mesh recovery at
-`AIDecisionSystem.cpp:1126` and `:1141`, the switch path at `:1387`, action failures) leave their
-entries in the appended index until the next rebuild. That staleness only over-claims: another
-colonist may skip a free item for one update, and nothing is double-booked.
+earlier one just took. Every rewrite inside the update goes through the index, so the subset rule
+needs no exception for a live instance: the switch path retires the abandoned task's instance (unless
+it just became the suspended record), a new record replaces that instance's entries with its smaller
+ones, an adopted record is appended under its own instance id after its old entries are retired
+(never counted twice), and a discarded record or `enterControl` retires its instance. Tasks
+cleared any other way later in the same update (the off-mesh recovery) leave their entries in the
+appended index until the next rebuild; ActionSystem's rewrites and clears land between updates, so
+the next rebuild reads them. That staleness only over-claims: another colonist may skip a free item
+for one update, and nothing is double-booked.
 
 Cost: dozens to low hundreds of colonists, each holding at most a handful of claims, is a few
 hundred to a couple of thousand entries into flat, reused storage, against scoring that already
@@ -550,7 +573,8 @@ else holds.
 
 Claims are not saved separately. What is saved (when save lands) is the data they derive from: each
 colonist's `Task` with its claim list, instance id, sequence number, tier, and suspended record; the
-claim sequence counter; and each station's craft binding and job ids. On load the index is rebuilt
+claim sequence counter (kept on `GoalTaskRegistry` beside the chain id counter, the colony state a
+save will hold); and each station's craft binding and job ids. On load the index is rebuilt
 and the validator runs once in debug builds. There is nothing to purge, because there is no
 separate store to disagree with.
 
@@ -564,8 +588,10 @@ data.
 
 - Task list availability per root and item: "N available (M in progress)". N is the unclaimed
   quantity of sources the colony knows about, capped at the root's remaining need; M is in-flight.
-- Worker: the colonist(s) holding claims toward the root, from the index, replacing the adapter's
-  scan of every colonist's task.
+- Worker: the colonist(s) holding in-flight claims toward the root for an item the row names (any
+  item for a row naming none, the Build umbrella or a category box), from the index, replacing the
+  adapter's per-goal colonist scan. A clear row has no worker, and the Build umbrella shows only
+  material deliveries until builder slots give builders a claim.
 - `knownBy`: colonists whose memory holds at least one unclaimed source for the root, computed on
   the panel's throttle through Memory's capability index.
 - Per-colonist task list: roots for which that colonist knows an unclaimed source.
@@ -654,8 +680,9 @@ Unit tests by behavior, in the existing suites (`AIDecisionSystem.test.cpp`, `Ac
   destruction, and a craft at another station.
 - Storage remaining need is item-counted and matches the box's per-item room.
 
-The debug validator runs at the end of every AI update in development builds (`DEVELOPMENT_BUILD`)
-and asserts: a fresh rebuild is a subset of the appended index, and every surplus entry belongs to an
+The debug validator runs at the end of every AI update that rebuilt the index, in development builds
+(`DEVELOPMENT_BUILD`), so every test that runs the AI runs it, and aborts on a violation. It
+asserts: a fresh rebuild is a subset of the appended index, and every surplus entry belongs to an
 instance id that no live task or suspended record holds (a task cleared this update); entries compare
 by holder instance, kind, target, item, and slot with quantities summed, not by tier, which
 `isSameTask` may change within the update; no target is over-subscribed except by

@@ -15,6 +15,7 @@
 #include "../../components/Task.h"
 #include "../../components/Transform.h"
 #include "../../components/WorkQueue.h"
+#include "../ChainClaims.h"
 
 #include "assets/AssetRegistry.h"
 #include "assets/RecipeRegistry.h"
@@ -501,6 +502,7 @@ namespace ecs {
 			task.targetPosition = task.haulTargetPosition;
 			task.state = TaskState::Moving; // Must be Moving for MovementSystem to re-arrive at the destination
 			++task.chainStep;
+			claimsToDeliveryLeg(task, ecs::availableQuantity(inventory, task.haulItemDefName));
 
 			if (auto* movementTarget = world->getComponent<MovementTarget>(entity)) {
 				movementTarget->target = task.haulTargetPosition;

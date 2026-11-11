@@ -26,6 +26,7 @@
 #include "../components/ToiletLocationFinder.h"
 #include "../components/Transform.h"
 #include "../components/WorkQueue.h"
+#include "ChainClaims.h"
 #include "NavigationSystem.h"
 #include "TimeSystem.h"
 #include "WorkSources.h"
@@ -716,7 +717,7 @@ namespace ecs {
 				// destination box pulls items UP from strictly-lower-priority boxes. The strict-< gate is
 				// the load-bearing invariant: items flow monotonically up the 4-level ladder
 				// (Low<Medium<High<Critical), never sideways or down, which makes A->B->A cycles
-				// impossible with no reservation system.
+				// impossible.
 				if (world != nullptr && goal->owner == GoalOwner::StorageGoalSystem) {
 					const auto destEntity = goal->destinationEntity;
 					const auto* destConfig = world->getComponent<StorageConfiguration>(destEntity);
@@ -1101,6 +1102,7 @@ namespace ecs {
 		// the time goes unread; a world that wires it has a TimeSystem.
 		m_simulationNow = onSourceRegrowth ? simulationSeconds(*world) : 0.0;
 		m_colonyStorage.invalidate();
+		m_claimsBuilt = false;
 
 		// Process all entities with the required components
 		for (auto [entity, position, needs, memory, task, movementTarget, inventory] :
@@ -1278,6 +1280,8 @@ namespace ecs {
 				// Get optional Skills component for skill bonus calculation
 				auto* skills = world->getComponent<Skills>(entity);
 
+				ensureClaimIndex();
+
 				// Build full decision trace (always, for UI updates)
 				buildDecisionTrace(entity, position, needs, memory, task, inventory, skills, *sourceReach, *trace);
 
@@ -1414,12 +1418,19 @@ namespace ecs {
 						handleChainInterruption(entity, task, inventory, position, selected->taskType, selected->needType);
 					}
 
+					// The abandoned task's claims leave the index now, unless it just became the
+					// suspended record, so a colonist deciding later this update sees them free.
+					if (!task.suspended || task.suspended->instanceId != task.instanceId) {
+						m_claims.retire(task.instanceId);
+					}
+
 					// Clear and assign new task
 					task.clear();
 					task.timeSinceEvaluation = 0.0F;
 					selectTaskFromTrace(entity, task, movementTarget, *trace, position);
 					task.priorityTier = newTier; // Store the (tier, score) key for future comparisons
 					task.priority = newScore;
+					acceptClaims(entity, task, memory, inventory);
 
 					LOG_INFO(
 						Engine,
@@ -1434,6 +1445,42 @@ namespace ecs {
 				}
 			}
 		}
+
+#ifdef DEVELOPMENT_BUILD
+		if (m_claimsBuilt) {
+			if (const auto violation = m_claims.findViolation(*world, m_claimsCheck)) {
+				LOG_ERROR(Engine, "[AI] Claim index violation: %s", violation->c_str());
+				std::abort();
+			}
+		}
+#endif
+	}
+
+	void AIDecisionSystem::ensureClaimIndex() {
+		if (!m_claimsBuilt) {
+			m_claims.rebuild(*world);
+			m_claimsBuilt = true;
+		}
+	}
+
+	void AIDecisionSystem::acceptClaims(EntityID entity, Task& task, const Memory& memory, const Inventory& inventory) {
+		const uint64_t seq = GoalTaskRegistry::Get().allocateClaimSeq();
+		task.instanceId = seq;
+		task.claimSeq = seq;
+		recordChainClaims(m_registry, memory, inventory, task);
+
+		// The record's claims are already indexed under its own instance id, so adopting or discarding
+		// it goes through the index rather than appending it again.
+		if (task.suspended && task.type != TaskType::FulfillNeed) {
+			const uint64_t recordId = task.suspended->instanceId;
+			if (adoptsSuspended(m_registry, task)) {
+				adoptSuspended(task);
+			} else {
+				task.discardSuspended();
+				m_claims.retire(recordId);
+			}
+		}
+		m_claims.append(entity, task);
 	}
 
 	bool AIDecisionSystem::shouldReEvaluate(
@@ -2287,15 +2334,34 @@ namespace ecs {
 
 	void AIDecisionSystem::handleChainInterruption(
 		EntityID		entity,
-		const Task&		task,
+		Task&			task,
 		Inventory&		inventory,
 		const Position& position,
 		TaskType		newTaskType,
 		NeedType		newNeedType
 	) {
+		// A need interrupting a haul whose goods the colonist keeps leaves the haul as its suspended
+		// record, so the goods stay committed to where they were going. Called on every path that keeps
+		// them; a drop keeps none, and the pile it leaves is an ordinary source with no claims.
+		const auto keepGoods = [&]() {
+			if (newTaskType != TaskType::FulfillNeed) {
+				return;
+			}
+			auto record = suspendableWork(m_registry, task, ecs::availableQuantity(inventory, task.haulItemDefName));
+			if (!record) {
+				return;
+			}
+			if (task.suspended) {
+				m_claims.retire(task.suspended->instanceId);
+			}
+			task.suspended = std::move(record);
+			m_claims.suspend(entity, task);
+		};
+
 		// Check if new task's first action needs hands
 		if (!taskFirstActionNeedsHands(newTaskType, newNeedType)) {
 			// New task doesn't need hands - colonist can keep carrying
+			keepGoods();
 			return;
 		}
 
@@ -2307,6 +2373,7 @@ namespace ecs {
 			// Verify item is actually in hands before operating
 			if (!inventory.isHolding(task.haulItemDefName)) {
 				LOG_WARNING(Engine, "[AI] Entity %llu: chain interrupted but not holding %s", entityId, task.haulItemDefName.c_str());
+				keepGoods(); // a carry-in's goods ride in the pack, not the hands
 				return;
 			}
 
@@ -2319,10 +2386,12 @@ namespace ecs {
 				if (inventory.stowToBelt(task.haulItemDefName)) {
 					inventory.putDown(task.haulItemDefName);
 					LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, stowed %s to belt", entityId, task.haulItemDefName.c_str());
+					keepGoods();
 					return;
 				}
 				if (inventory.stowToBackpack(task.haulItemDefName)) {
 					LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, stowed %s to backpack", entityId, task.haulItemDefName.c_str());
+					keepGoods();
 					return;
 				}
 				// Belt and backpack full - fall through to drop
@@ -2370,10 +2439,14 @@ namespace ecs {
 		if (world->getComponent<PlayerControlled>(entity) == nullptr) {
 			world->addComponent<PlayerControlled>(entity);
 		}
-		// Abandon the current task. There is no reservation/claim system (goals are re-evaluated
-		// fresh each tick), so clearing the task fully releases its work back to the pool; any
-		// carried items stay with the colonist and are handled normally once control is released.
+		// Abandon the current task and its suspended record. Their claims go with them, so the work
+		// returns to the pool at once; carried items stay with the colonist, uncommitted.
 		if (auto* task = world->getComponent<Task>(entity)) {
+			m_claims.retire(task->instanceId);
+			if (task->suspended) {
+				m_claims.retire(task->suspended->instanceId);
+			}
+			task->discardSuspended();
 			task->clear();
 			task->timeSinceEvaluation = 0.0F;
 		}

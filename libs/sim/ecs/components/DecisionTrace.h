@@ -62,7 +62,7 @@ namespace ecs {
 		uint64_t				 haulSourceStorageId = 0; // Source box entity ID for a storage->storage pull (0 = loose/inventory source)
 		uint64_t				 haulTargetStorageId = 0; // Storage container entity ID
 		std::optional<glm::vec2> haulTargetPosition;	  // Where to deposit
-		uint64_t				 haulGoalId = 0;		  // Goal being fulfilled (for reservation)
+		uint64_t				 haulGoalId = 0;		  // Goal being fulfilled
 		bool					 haulFromInventory = false; // Source is colonist inventory (craft-material haul)
 
 		// PlacePackaged-specific fields (for PlacePackaged tasks)
@@ -71,8 +71,8 @@ namespace ecs {
 		std::optional<glm::vec2> placeTargetPosition;		// Where to place it
 
 		// Harvest-specific fields (for Harvest tasks)
-		uint64_t harvestTargetEntityId = 0;	 // Entity ID of harvestable (tree, bush)
-		uint64_t harvestGoalId = 0;			 // Goal being fulfilled (for reservation)
+		uint64_t harvestTargetEntityId = 0;	 // Memory key of the harvestable (tree, bush), not an ECS id
+		uint64_t harvestGoalId = 0;			 // Goal being fulfilled
 		uint32_t harvestYieldDefNameId = 0;	 // What item will be yielded
 
 		// Build-specific fields (for Build tasks)
