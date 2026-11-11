@@ -1079,18 +1079,27 @@ namespace geometry::nav {
 			if (narrow(funnel, step)) {
 				return;
 			}
-			const bool rightCrossesLeft = area2(funnel.apex, funnel.right, step.right) <= 0.0 && !same(funnel.apex, funnel.right) &&
-										  area2(funnel.apex, funnel.left, step.right) <= 0.0;
-			const Vec2d		   bound = rightCrossesLeft ? funnel.left : funnel.right;
-			const std::int32_t from	 = rightCrossesLeft ? funnel.leftFrom : funnel.rightFrom;
+			// The bound the string-pull bends at: the left one when the step's right end
+			// crosses it; else the right one, which is the step's own right end when that end
+			// tightened the cone before the left end crossed it.
+			const bool		   rightTightens	= area2(funnel.apex, funnel.right, step.right) <= 0.0;
+			const bool		   rightCrossesLeft = rightTightens && !same(funnel.apex, funnel.right) && area2(funnel.apex, funnel.left, step.right) <= 0.0;
+			const Vec2d		   bound			= rightCrossesLeft ? funnel.left : (rightTightens ? step.right : funnel.right);
+			const std::int32_t from				= rightCrossesLeft ? funnel.leftFrom : (rightTightens ? step.label : funnel.rightFrom);
+			replay.assign(1, step);
+			if (area2(a, b, bound) >= 0.0 && area2(a, b, funnel.apex) >= 0.0) {
+				pull(funnel, replay, nullptr);
+				return;
+			}
+			// Bending at the step's own end leaves no portal after it to resume with.
 			replay.clear();
-			if (area2(a, b, bound) < 0.0 || area2(a, b, funnel.apex) < 0.0) {
+			if (from != step.label) {
 				for (std::int32_t at = li; at > 0 && at != from; at = scratch.labels[static_cast<std::size_t>(at)].cameFrom) {
 					replay.push_back(scratch.labels[static_cast<std::size_t>(at)].entry);
 				}
 				std::reverse(replay.begin(), replay.end());
+				replay.push_back(step);
 			}
-			replay.push_back(step);
 			funnel.length += distanceD(funnel.apex, bound);
 			funnel.apex		 = bound;
 			funnel.left		 = bound;

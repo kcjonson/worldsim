@@ -1340,3 +1340,98 @@ TEST(PathQuery, ShortestWalksWrapWallEnds) {
 	::testing::Test::RecordProperty("longer", longer);
 	::testing::Test::RecordProperty("worstExcessPermille", std::to_string(1000.0 * worst));
 }
+
+// The same layouts for a disc of the colonists' radius, against the referee with every rect
+// grown by the radius: its walks keep the radius from each rect, rounding a corner on the
+// grown square's corner where the disc could cut the arc, so it is no shorter than the
+// disc's shortest walk. A walk longer than it by more than kDiscSlackMm took a longer
+// corridor than it needed.
+TEST(PathQuery, ShortestDiscWalksWrapWallEnds) {
+	constexpr std::int64_t kRadius		= 300;
+	constexpr double	   kDiscSlackMm = 4.0;
+	int					   checked		= 0;
+	int					   longer		= 0;
+	double				   worst		= 0.0;
+	double				   worstMm		= 0.0;
+	for (std::uint32_t seed = 0; seed < 600; ++seed) {
+		std::mt19937			rng(seed);
+		const std::vector<Rect> rects = wallAndPosts(rng);
+		bool					touch = false;
+		for (std::size_t i = 0; i < rects.size(); ++i) {
+			for (std::size_t j = 0; j < i; ++j) {
+				const Rect& p = rects[i];
+				const Rect& q = rects[j];
+				touch		  = touch || !(p.x1 < q.x0 || q.x1 < p.x0 || p.y1 < q.y0 || q.y1 < p.y0);
+			}
+		}
+		if (touch) {
+			continue;
+		}
+		std::vector<Rect> grown;
+		for (const Rect& r : rects) {
+			grown.push_back({r.x0 - kRadius, r.y0 - kRadius, r.x1 + kRadius, r.y1 + kRadius});
+		}
+		const NavMesh m = buildRefereeMesh(rects);
+		for (int pair = 0; pair < 20; ++pair) {
+			const Vec2i64 a{between(rng, 1, 5999), between(rng, 1, 3999)};
+			const Vec2i64 b{between(rng, 1, 5999), between(rng, 1, 3999)};
+			// Ends a radius clear of the box too: its corners keep a disc off as rect corners do.
+			bool inside = std::min({a.x, a.y, b.x, b.y}) < kRadius || std::max(a.x, b.x) > 6000 - kRadius || std::max(a.y, b.y) > 4000 - kRadius;
+			for (const Rect& r : grown) {
+				for (const Vec2i64& p : {a, b}) {
+					inside = inside || (p.x >= r.x0 && p.x <= r.x1 && p.y >= r.y0 && p.y <= r.y1);
+				}
+			}
+			if (inside) {
+				continue;
+			}
+			const PathResult walk  = pathThrough(m, a, b, kRadius);
+			const double	 bound = refereeLength(grown, a, b);
+			if (!walk.reachable || std::isinf(bound)) {
+				continue;
+			}
+			++checked;
+			const double excess = walkLength(walk) - bound;
+			EXPECT_LE(excess, kDiscSlackMm) << "seed " << seed << " from (" << a.x << ", " << a.y << ") to (" << b.x << ", " << b.y << ")";
+			longer += excess > kDiscSlackMm ? 1 : 0;
+			worst	= std::max(worst, excess / bound);
+			worstMm = std::max(worstMm, excess);
+		}
+	}
+	EXPECT_GT(checked, 1000);
+	::testing::Test::RecordProperty("pairs", checked);
+	::testing::Test::RecordProperty("longer", longer);
+	::testing::Test::RecordProperty("worstExcessPermille", std::to_string(1000.0 * worst));
+	::testing::Test::RecordProperty("worstExcessMm", std::to_string(worstMm));
+}
+// A portal between two corners no longer than the disc is wide pulls in to its midpoint.
+// When the funnel bends there, it bends at that point, the portal's own end, not at the
+// cone's older right bound: bending at the old bound charges the corridor a detour it never
+// walks, its score stops being a lower bound, and a dearer corridor wins. Here trees priced
+// at 3 stand in a row with 200 mm between trunks (a disc of radius 300 squeezes through at
+// their price) beside a wall and posts of trees; with the bend at the old bound the search
+// returned a walk costing 4136 mm where one costing 2783 mm exists (layout 827, pair 5).
+TEST(PathQuery, APointPortalBendsAtItself) {
+	std::mt19937			rng(827);
+	const std::vector<Rect> rects = wallAndPosts(rng);
+	NavMeshInput			in;
+	in.detailTags = {kTreeTag};
+	in.polygons.push_back({{{0, 0}, {6000, 0}, {6000, 4000}, {0, 4000}}, false, 1});
+	for (const Rect& r : rects) {
+		in.polygons.push_back(treeRect(r.x0, r.y0, r.x1, r.y1));
+	}
+	for (std::int64_t x = 500; x < 5500; x += 450) {
+		in.polygons.push_back(treeRect(x, 3050, x + 250, 3300));
+	}
+	const NavMesh  m	   = buildNavMesh(in);
+	const TagPrice trees[] = {{kTreeTag, 3.0}};
+	Vec2i64		   a;
+	Vec2i64		   b;
+	for (int pair = 0; pair <= 5; ++pair) {
+		a = {between(rng, 1, 5999), between(rng, 1, 3999)};
+		b = {between(rng, 1, 5999), between(rng, 1, 3999)};
+	}
+	const PathResult walk = pathThrough(m, a, b, 300, pricedBy(trees));
+	ASSERT_TRUE(walk.reachable);
+	EXPECT_LE(walk.cost, 2784.0) << "from (" << a.x << ", " << a.y << ") to (" << b.x << ", " << b.y << ")";
+}
