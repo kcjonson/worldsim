@@ -6,6 +6,8 @@
 #include "AIDecisionSystem.h"
 #include "ActionSystem.h"
 #include "ChainClaims.h"
+#include "CraftingGoalSystem.h"
+#include "StorageGoalSystem.h"
 #include "../GoalTaskRegistry.h"
 #include "../InventoryMass.h"
 #include "../World.h"
@@ -18,6 +20,7 @@
 #include "../components/Movement.h"
 #include "../components/Needs.h"
 #include "../components/Packaged.h"
+#include "../components/ResourceStack.h"
 #include "../components/SourceReachMemo.h"
 #include "../components/StorageConfiguration.h"
 #include "../components/StructureBlueprint.h"
@@ -605,6 +608,190 @@ namespace ecs::test {
 		EXPECT_EQ(indexedClaimsOf(controlled), 0U);
 		EXPECT_EQ(indexedClaimsOf(destroyed), 0U);
 		EXPECT_EQ(ai->claimIndex().inFlight(site.umbrella, stoneId, {}), 0U);
+	}
+
+	// =============================================================================
+	// Whole flows: the goal systems, the AI, and the actions run together. Movement is skipped: a
+	// colonist arrives the moment it heads somewhere. Each asserts outcomes, never which colonist won.
+	// =============================================================================
+
+	class ChainFlowTest : public ChainClaimsTest {
+	  protected:
+		void SetUp() override {
+			ChainClaimsTest::SetUp();
+			world->registerSystem<StorageGoalSystem>();
+			world->registerSystem<CraftingGoalSystem>();
+		}
+
+		/// Run frames, arriving each colonist at its task target at once, until `done` holds.
+		template <typename Done> bool runUntil(Done done, int maxFrames = 6000) {
+			for (int frame = 0; frame < maxFrames; ++frame) {
+				world->update(0.016F);
+				for (auto [entity, task, position] : world->view<Task, Position>()) {
+					(void)entity;
+					if (task.state == TaskState::Moving) {
+						position.value = task.targetPosition;
+						task.state = TaskState::Arrived;
+					}
+				}
+				if (done()) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		EntityID makeStation(glm::vec2 position, const std::vector<assets::RecipeInput>& inputs, uint32_t units) {
+			assets::RecipeDef recipe;
+			recipe.defName = "Recipe_Flow";
+			recipe.label = recipe.defName;
+			recipe.workAmount = 10.0F;
+			recipe.inputs = inputs;
+			recipe.outputs.push_back({"Berry", 0, 1});
+			assets::RecipeRegistry::Get().registerTestRecipe(recipe);
+			const EntityID station = world->createEntity();
+			world->addComponent<Position>(station, Position{position});
+			world->addComponent<WorkQueue>(station).addJob(recipe.defName, units);
+			world->addComponent<Inventory>(station, Inventory::createForStorage());
+			return station;
+		}
+
+		EntityID makePile(glm::vec2 position, uint32_t item, uint32_t quantity) {
+			const EntityID pile = world->createEntity();
+			world->addComponent<Position>(pile, Position{position});
+			makeLoosePile(*world, pile, item, position, quantity);
+			return pile;
+		}
+
+		uint32_t carried(EntityID colonist, const char* item) {
+			return ecs::availableQuantity(*world->getComponent<Inventory>(colonist), item);
+		}
+	};
+
+	// A two-unit craft provisioned from a fetched input (stone from a pile) and a harvested one (sticks
+	// cut from a bush) runs to 2/2: each unit's need returns when the previous one consumes the store
+	// (the multi-unit stall), and the fetches never take more stone than the units need (over-fetching).
+	TEST_F(ChainFlowTest, MultiUnitCraftWithFetchedAndHarvestedInputsCompletes) {
+		const EntityID station = makeStation({0.0F, 6.0F}, {{"Stone", 0, 2}, {"Stick", 0, 2}}, 2);
+		const glm::vec2 pilePos{3.0F, 0.0F};
+		const EntityID	pile = makePile(pilePos, stoneId, 10);
+		const EntityID	colonist = createColonist({0.0F, 0.0F});
+		remember(colonist, pilePos, "Stone", assets::CapabilityType::Carryable);
+		remember(colonist, {-3.0F, 0.0F}, "StickBush", assets::CapabilityType::Harvestable);
+
+		auto& queue = *world->getComponent<WorkQueue>(station);
+		ASSERT_TRUE(runUntil([&] { return queue.getNextJob() == nullptr; })) << "both units crafted, no stall";
+		EXPECT_EQ(world->getComponent<ResourceStack>(pile)->quantity, 6U) << "exactly the four stones the two units used";
+		EXPECT_EQ(carried(colonist, "Stone"), 0U);
+		EXPECT_EQ(world->getComponent<Inventory>(station)->getQuantity("Stone"), 0U);
+	}
+
+	// Stocking cuts toward the box's minimum; known loose stock then fills it to its maximum and never past.
+	TEST_F(ChainFlowTest, StockingFillsToTheMinimumAndHaulingNeverPassesTheMaximum) {
+		const glm::vec2 boxPos{0.0F, 8.0F};
+		const EntityID	box = world->createEntity();
+		world->addComponent<Position>(box, Position{boxPos});
+		world->addComponent<Appearance>(box, Appearance{"Box", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+		world->addComponent<Inventory>(box, Inventory::createForStorage());
+		StorageConfiguration config;
+		config.addRule(StorageRule{.defName = "Stick", .category = assets::ItemCategory::RawMaterial, .minAmount = 4, .maxAmount = 7});
+		world->addComponent<StorageConfiguration>(box, std::move(config));
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		remember(colonist, {-3.0F, 0.0F}, "StickBush", assets::CapabilityType::Harvestable);
+		const auto stored = [&] { return world->getComponent<Inventory>(box)->getQuantity("Stick"); };
+
+		uint32_t most = 0;
+		ASSERT_TRUE(runUntil([&] {
+			most = std::max(most, stored());
+			return stored() >= 4;
+		})) << "cutting stocks the box to its minimum";
+		ASSERT_TRUE(runUntil([&] {
+			most = std::max(most, stored());
+			return GoalTaskRegistry::Get().goalCount(TaskType::Harvest) == 0 && !getTask(colonist)->isActive();
+		})) << "the stocking harvest retires once the minimum is met";
+
+		const glm::vec2 pilePos{3.0F, 0.0F};
+		makePile(pilePos, stickId, 20);
+		remember(colonist, pilePos, "Stick", assets::CapabilityType::Carryable);
+		ASSERT_TRUE(runUntil([&] {
+			most = std::max(most, stored());
+			return stored() == 7;
+		})) << "known stock fills the box to its maximum";
+		runUntil([&] {
+			most = std::max(most, stored());
+			return false;
+		}, 600);
+		EXPECT_EQ(stored(), 7U);
+		EXPECT_EQ(most, 7U) << "never past the maximum";
+	}
+
+	// A colonist carrying goods to a site is interrupted by hunger, eats, and then carries the same goods in.
+	TEST_F(ChainFlowTest, ColonistInterruptedByANeedMidHaulResumesWithTheGoods) {
+		const glm::vec2 sitePos{0.0F, 6.0F};
+		const Site		site = constructionSite(sitePos, "Stone", 4);
+		const EntityID	colonist = createColonist({0.0F, 0.0F});
+		auto&			inventory = *world->getComponent<Inventory>(colonist);
+		inventory.addItem("Stone", 4);
+		inventory.addItem("Berry", 1);
+
+		decide(colonist);
+		Task& task = *getTask(colonist);
+		ASSERT_EQ(task.type, TaskType::Haul);
+		const uint64_t haul = task.instanceId;
+		world->getComponent<NeedsComponent>(colonist)->get(NeedType::Hunger).value = 5.0F;
+		decide(colonist);
+		ASSERT_EQ(task.type, TaskType::FulfillNeed);
+		ASSERT_TRUE(task.suspended.has_value());
+
+		uint64_t deliveredBy = 0;
+		ASSERT_TRUE(runUntil([&] {
+			if (task.type == TaskType::Haul) {
+				deliveredBy = task.instanceId;
+			}
+			return world->getComponent<StructureBlueprint>(site.blueprint)->remaining("Stone") == 0;
+		})) << "the goods reach the site";
+		EXPECT_EQ(deliveredBy, haul) << "the carry-in adopted the interrupted haul";
+		EXPECT_EQ(carried(colonist, "Stone"), 0U);
+		EXPECT_GT(world->getComponent<NeedsComponent>(colonist)->get(NeedType::Hunger).value, 5.0F) << "and it ate";
+	}
+
+	// Two colonists serve one craft that needs three stones from a pile both know. In-flight keeps the
+	// second from fetching what the first is bringing: the station gets exactly three, the pile loses
+	// exactly three, and nobody is left holding a fourth.
+	TEST_F(ChainFlowTest, TwoColonistsServingOneGoalNeverOverDeliver) {
+		const EntityID	station = makeStation({0.0F, 6.0F}, {{"Stone", 0, 3}}, 1);
+		const glm::vec2 pilePos{3.0F, 0.0F};
+		const EntityID	pile = makePile(pilePos, stoneId, 10);
+		const EntityID	first = createColonist({0.0F, 0.0F});
+		const EntityID	second = createColonist({0.5F, 0.0F});
+		for (EntityID colonist : {first, second}) {
+			remember(colonist, pilePos, "Stone", assets::CapabilityType::Carryable);
+		}
+		const auto* store = world->getComponent<Inventory>(station);
+
+		// The goal systems poll on a throttle; run until someone takes the fetch.
+		ASSERT_TRUE(runUntil([&] { return getTask(first)->type == TaskType::Haul || getTask(second)->type == TaskType::Haul; }, 200));
+		const auto fetching = [&](EntityID colonist) { return getTask(colonist)->type == TaskType::Haul ? 1 : 0; };
+		EXPECT_EQ(fetching(first) + fetching(second), 1) << "the second sees the first's in-flight and fetches nothing";
+
+		ASSERT_TRUE(runUntil([&] { return store->getQuantity("Stone") >= 3 || world->getComponent<WorkQueue>(station)->getNextJob() == nullptr; }));
+		EXPECT_EQ(world->getComponent<ResourceStack>(pile)->quantity, 7U) << "exactly three left the pile";
+		EXPECT_EQ(carried(first, "Stone") + carried(second, "Stone"), 0U) << "nobody holds a fourth";
+	}
+
+	// Two colonists, one bush, a craft short two sticks: the first cut's expected yield covers the need,
+	// so the second does not cut too.
+	TEST_F(ChainFlowTest, TwoColonistsDoNotBothCutWhatOneCutCovers) {
+		makeStation({0.0F, 6.0F}, {{"Stick", 0, 2}}, 1);
+		const EntityID first = createColonist({0.0F, 0.0F});
+		const EntityID second = createColonist({0.5F, 0.0F});
+		for (EntityID colonist : {first, second}) {
+			remember(colonist, {-3.0F, 0.0F}, "StickBush", assets::CapabilityType::Harvestable);
+			remember(colonist, {3.0F, 0.0F}, "StickBush", assets::CapabilityType::Harvestable);
+		}
+		const auto cutting = [&](EntityID colonist) { return getTask(colonist)->type == TaskType::Harvest ? 1 : 0; };
+		ASSERT_TRUE(runUntil([&] { return cutting(first) + cutting(second) > 0; }, 200));
+		EXPECT_EQ(cutting(first) + cutting(second), 1);
 	}
 
 } // namespace ecs::test

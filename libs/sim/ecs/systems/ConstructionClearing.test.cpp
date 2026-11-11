@@ -5,6 +5,7 @@
 #include "AIDecisionSystem.h"
 #include "ActionSystem.h"
 #include "ConstructionSystem.h"
+#include "TimeSystem.h"
 
 #include "../GoalTaskRegistry.h"
 #include "../InventoryMass.h"
@@ -251,6 +252,26 @@ namespace ecs::test {
 		EXPECT_FALSE(treeStands(trees[0]));
 		EXPECT_FALSE(treeStands(trees[1]));
 		EXPECT_EQ(piles, 2) << "each fell drops what didn't fit as one pile";
+	}
+
+	// The whole site lifecycle, end to end: a tree in the footprint is cleared, two materials (Wood
+	// from a tree outside, Berry from a bush) are cut and each cut carries itself to the site, and the
+	// colonist then builds it.
+	TEST_F(FootprintClearingTest, SiteIsClearedSuppliedWithTwoMaterialsAndBuilt) {
+		world->registerSystem<TimeSystem>(); // the bush regrows on the game clock
+		auto& blueprint = *world->getComponent<StructureBlueprint>(site);
+		blueprint.required = {{"Wood", 10}, {"Berry", 3}};
+		const glm::vec2 blocker{2.0F, 2.0F};
+		const glm::vec2 tree{12.0F, 12.0F};
+		const glm::vec2 bush{12.0F, 2.0F};
+		plantTrees({blocker, tree}, {bush});
+		const EntityID colonist = createColonist({1.0F, 1.0F}, {blocker, tree});
+		remember(*world->getComponent<Memory>(colonist), bush, kBush);
+
+		ASSERT_TRUE(runUntil([&] { return phase() == StructureBlueprint::BuildPhase::AwaitingMaterials; })) << "the footprint is cleared";
+		EXPECT_FALSE(treeStands(blocker));
+		ASSERT_TRUE(runUntil([&] { return phase() == StructureBlueprint::BuildPhase::Complete; }, 20000)) << "supplied and built";
+		EXPECT_TRUE(blueprint.materialsComplete());
 	}
 
 	// The clear goal names no single blocker: when one blocker goes some other way (a craft Harvest
