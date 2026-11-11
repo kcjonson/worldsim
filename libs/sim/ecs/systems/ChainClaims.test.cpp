@@ -8,6 +8,7 @@
 #include "ChainClaims.h"
 #include "CraftingGoalSystem.h"
 #include "MovementSystem.h"
+#include "NavigationSystem.h"
 #include "PhysicsSystem.h"
 #include "StorageGoalSystem.h"
 #include "TimeSystem.h"
@@ -33,13 +34,19 @@
 #include "../components/WorkQueue.h"
 #include "assets/ActionTypeRegistry.h"
 #include "assets/AssetRegistry.h"
+#include "assets/ConstructionRegistry.h"
 #include "assets/PriorityConfig.h"
 #include "assets/RecipeRegistry.h"
+
+#include <construction/ConstructionWorld.h>
+#include <world/chunk/ChunkManager.h>
+#include <world/chunk/SyntheticWorldSampler.h>
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <array>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -3475,6 +3482,131 @@ namespace ecs::test {
 		ASSERT_EQ(getTask(sleeper)->needToFulfill, NeedType::Hunger);
 		ASSERT_TRUE(getTask(sleeper)->suspended.has_value());
 		EXPECT_EQ(ai->claimIndex().inFlight(root, stoneId, {}), 3U);
+	}
+
+	// The failed-route rule (ClaimIndex::addCurrent) on routes a NavigationSystem plans over real ground,
+	// where the tests above set the nav state by hand.
+	class ClaimsOnRealRoutesTest : public ChainClaimsTest {
+	  protected:
+		void SetUp() override {
+			assets::ConstructionRegistry::Get().clear();
+			const std::filesystem::path root =
+				std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path().parent_path();
+			ASSERT_TRUE(assets::ConstructionRegistry::Get().load((root / "assets" / "config" / "construction").string()));
+			ChainClaimsTest::SetUp();
+			world->registerSystem<TimeSystem>();
+			nav = &world->registerSystem<NavigationSystem>();
+			nav->setChunkManager(openLand());
+			nav->setConstructionWorld(&construction);
+			nav->setViewportRect({0.0F, 0.0F}, {60.0F, 60.0F});
+			ai->setNavigationSystem(nav);
+			world->registerSystem<MovementSystem>();
+			world->registerSystem<PhysicsSystem>();
+			nav->finishPendingBuilds();
+			ASSERT_TRUE(nav->hasMesh());
+		}
+
+		void TearDown() override {
+			ChainClaimsTest::TearDown();
+			assets::ConstructionRegistry::Get().clear();
+		}
+
+		// Generated once per process: nothing here writes to it.
+		static world::ChunkManager* openLand() {
+			static const std::unique_ptr<world::ChunkManager> chunks = [] {
+				auto manager = std::make_unique<world::ChunkManager>(std::make_unique<world::SyntheticWorldSampler>(7U, world::SyntheticMap{}));
+				manager->setLoadRadius(2);
+				manager->setUnloadRadius(4);
+				manager->update({0.0F, 0.0F});
+				manager->finishPendingGeneration();
+				return manager;
+			}();
+			return chunks.get();
+		}
+
+		// Built walls around [min, max] (millimetres) that `colonist` knows. Returns the west side's segments.
+		std::vector<construction::SegmentId> wallIn(geometry::Vec2i64 min, geometry::Vec2i64 max, EntityID colonist) {
+			const std::array<geometry::Vec2i64, 4> corners{{{max.x, min.y}, max, {min.x, max.y}, min}};
+			std::vector<construction::SegmentId>	 west;
+			geometry::Vec2i64						 from = min;
+			for (const geometry::Vec2i64 to : corners) {
+				const auto commit = construction.commitSegment(from, to, "Wood", "Standard", construction::kInvalidFoundation);
+				EXPECT_TRUE(commit.ok());
+				for (const auto id : commit.createdSegments) {
+					construction.setSegmentState(id, construction::FoundationState::Built);
+					world->getComponent<Memory>(colonist)->rememberSegment(static_cast<std::uint64_t>(id));
+					if (to == min) {
+						west.push_back(id);
+					}
+				}
+				from = to;
+			}
+			return west;
+		}
+
+		static constexpr float		  kTick = 0.1F;
+		construction::ConstructionWorld construction;
+		NavigationSystem*				nav = nullptr;
+	};
+
+	// A hauler past his pickup is walled off from the station mid-walk. While his route fails he holds
+	// Inbound and InFlight for the stones he carries and nothing else, and every AI update's validator
+	// passes (it aborts on a violation); once a wall comes down he delivers them.
+	TEST_F(ClaimsOnRealRoutesTest, AHaulerWalledOffMidWalkKeepsOnlyHisCargoClaimedThenDelivers) {
+		const glm::vec2 stationPos{8.0F, 0.0F};
+		const glm::vec2 pilePos{-6.0F, 0.0F};
+		const EntityID	station = world->createEntity();
+		world->addComponent<Position>(station, Position{stationPos});
+		const uint64_t root = craftRoot(station, stationPos, "Stone", 3);
+		childGoal(TaskType::Haul, root, station, stationPos, stoneId);
+		const EntityID pile = world->createEntity();
+		world->addComponent<Position>(pile, Position{pilePos});
+		makeLoosePile(*world, pile, stoneId, pilePos, 3);
+		const EntityID hauler = createColonist({-7.0F, 0.0F});
+		remember(hauler, pilePos, "Stone", assets::CapabilityType::Carryable);
+
+		const auto carried = [&] { return ecs::availableQuantity(*world->getComponent<Inventory>(hauler), "Stone"); };
+		for (int tick = 0; tick < 200 && carried() < 3; ++tick) {
+			world->update(kTick);
+		}
+		ASSERT_EQ(carried(), 3U) << "he never lifted the pile";
+		ASSERT_EQ(getTask(hauler)->type, TaskType::Haul);
+		ASSERT_EQ(getTask(hauler)->chainStep, 1U);
+		ASSERT_EQ(getTask(hauler)->navState, NavState::Traveling);
+
+		const auto west = wallIn({6000, -2000}, {10000, 2000}, hauler);
+		ASSERT_FALSE(west.empty());
+		const auto delivering = [&] { return getTask(hauler)->type == TaskType::Haul && getTask(hauler)->navState == NavState::Traveling; };
+		for (int tick = 0; tick < 100 && delivering(); ++tick) {
+			world->update(kTick);
+		}
+		ASSERT_FALSE(delivering()) << "the route through the known walls never failed";
+
+		for (int tick = 0; tick < 20; ++tick) {
+			world->update(kTick);
+			ASSERT_EQ(carried(), 3U) << "tick " << tick;
+			size_t held = 0;
+			ai->claimIndex().forEachClaim([&](const Claim& claim, const ClaimHolder& holder) {
+				if (holder.colonist != hauler) {
+					return;
+				}
+				++held;
+				EXPECT_TRUE(claim.kind() == ClaimKind::Inbound || claim.kind() == ClaimKind::InFlight) << "tick " << tick;
+				EXPECT_EQ(claim.itemDefNameId(), stoneId) << "tick " << tick;
+			});
+			ASSERT_GT(held, 0U) << "tick " << tick;
+			ASSERT_EQ(ai->claimIndex().inFlight(root, stoneId, {}), 3U) << "tick " << tick;
+			ASSERT_EQ(ai->claimIndex().inboundItems(station, stoneId, {}), 3U) << "tick " << tick;
+		}
+
+		for (const auto id : west) {
+			ASSERT_TRUE(construction.removeSegment(id));
+		}
+		for (int tick = 0; tick < 300 && world->getComponent<Inventory>(station)->getQuantity("Stone") < 3; ++tick) {
+			world->update(kTick);
+		}
+		EXPECT_EQ(world->getComponent<Inventory>(station)->getQuantity("Stone"), 3U) << "he never delivered once the wall was down";
+		EXPECT_EQ(carried(), 0U);
 	}
 
 } // namespace ecs::test
