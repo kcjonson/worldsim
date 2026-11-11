@@ -27,7 +27,7 @@ namespace ecs {
 		if (!m_registry->hasCapability(defNameId, assets::CapabilityType::Carryable)) {
 			return nullptr;
 		}
-		const assets::AssetDefinition* def = m_registry->getDefinition(m_registry->getDefName(defNameId));
+		const assets::AssetDefinition* def = m_registry->getDefinitionById(defNameId);
 		if (def == nullptr) {
 			return nullptr;
 		}
@@ -86,7 +86,7 @@ namespace ecs {
 		}
 		resolved = HarvestDef{};
 		resolved.evaluation = m_evaluation;
-		const assets::AssetDefinition* def = m_registry->getDefinition(m_registry->getDefName(defNameId));
+		const assets::AssetDefinition* def = m_registry->getDefinitionById(defNameId);
 		if (def == nullptr || !def->capabilities.harvestable.has_value()) {
 			return resolved;
 		}
@@ -95,7 +95,7 @@ namespace ecs {
 		const uint32_t yieldId = m_registry->getDefNameId(yieldName);
 		resolved.def = def;
 		resolved.yieldDefNameId = yieldId;
-		resolved.yieldDef = m_registry->getDefinition(m_registry->getDefName(yieldId));
+		resolved.yieldDef = m_registry->getDefinitionById(yieldId);
 		resolved.holdsTool = ecs::inventoryHoldsToolType(*m_inventory, *m_registry, harvestable.requiredToolType);
 		resolved.yieldFits = ecs::cargoUnitsThatFit(*m_inventory, *m_registry, yieldName) != 0 && m_inventory->addableCount(yieldName) != 0;
 		return resolved;
@@ -117,7 +117,7 @@ namespace ecs {
 	std::span<const HarvestSource> WorkSources::harvestablesYielding(uint32_t yieldDefNameId) {
 		m_harvest.clear();
 		// The tool and carry gates are per def, so a colonist that can't cut a def visits none of it.
-		for (uint32_t defNameId : m_registry->harvestablesYielding(m_registry->getDefName(yieldDefNameId))) {
+		for (uint32_t defNameId : m_registry->harvestablesYielding(yieldDefNameId)) {
 			const HarvestDef& resolved = harvestDef(defNameId);
 			if (resolved.def != nullptr && resolved.holdsTool && resolved.yieldFits) {
 				appendHarvestables(defNameId, resolved);

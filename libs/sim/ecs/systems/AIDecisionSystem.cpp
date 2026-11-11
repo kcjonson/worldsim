@@ -172,7 +172,7 @@ namespace ecs {
 		/// Does harvesting this definition yield something edible? Not every harvestable is food
 		/// (WoodyBush yields Stick, Reed yields PlantFiber).
 		[[nodiscard]] bool yieldsEdibleFood(const assets::AssetRegistry& registry, uint32_t defNameId) {
-			const auto* def = registry.getDefinition(registry.getDefName(defNameId));
+			const auto* def = registry.getDefinitionById(defNameId);
 			return def != nullptr && def->capabilities.harvestable.has_value() &&
 				   assets::isItemEdible(def->capabilities.harvestable->yieldDefName);
 		}
@@ -696,7 +696,7 @@ namespace ecs {
 			std::sort(carried.begin(), carried.end());
 			carried.erase(std::unique(carried.begin(), carried.end()), carried.end());
 			std::erase_if(carried, [&](uint32_t item) {
-				const auto* def = registry.getDefinition(registry.getDefName(item));
+				const auto* def = registry.getDefinitionById(item);
 				return item == 0 || def == nullptr || def->category == assets::ItemCategory::Tool;
 			});
 			if (carried.empty()) {

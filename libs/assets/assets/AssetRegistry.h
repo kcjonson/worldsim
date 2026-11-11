@@ -79,6 +79,10 @@ namespace assets {
 		/// @return Pointer to definition, or nullptr if not found
 		const AssetDefinition* getDefinition(const std::string& defName) const;
 
+		/// The definition an interned id names, or nullptr (an invalid id, or a synthetic definition).
+		/// One vector read, for loops that hold ids.
+		[[nodiscard]] const AssetDefinition* getDefinitionById(uint32_t id) const;
+
 		/// The template id of a def's mesh for an instance with `traits`, building the template the
 		/// first time. One template per (def, age class, variant): a simple (SVG) asset is one
 		/// drawing, and groundcover renders its variants itself, so both map every traits value to
@@ -277,9 +281,9 @@ namespace assets {
 		/// item on every platform. Kept with the definitions: cleared and rebuilt with them.
 		[[nodiscard]] const std::vector<std::string>& edibleItemNames() const { return m_edibleItemNames; }
 
-		/// Ids of the harvestable definitions whose harvest yields `yieldDefName`, ascending; empty when
-		/// none does. Kept with the definitions: cleared and rebuilt with them.
-		[[nodiscard]] const std::vector<uint32_t>& harvestablesYielding(const std::string& yieldDefName) const;
+		/// Ids of the harvestable definitions whose harvest yields the item `yieldDefNameId`, ascending;
+		/// empty when none does. Kept with the definitions: cleared and rebuilt with them.
+		[[nodiscard]] const std::vector<uint32_t>& harvestablesYielding(uint32_t yieldDefNameId) const;
 
 		/// Mass of one unit of an item, in kilograms. Returns 1.0 for unknown/non-item defs
 		/// so carry-weight math always has a sane positive divisor.
@@ -388,11 +392,20 @@ namespace assets {
 		// Sorted names of the inventory-edible definitions; see edibleItemNames().
 		std::vector<std::string> m_edibleItemNames;
 
-		// Yield defName -> ascending ids of the harvestables that yield it; see harvestablesYielding().
+		// Definition by interned id, beside m_idToDefName; nullptr for id 0 and synthetic definitions.
+		// Node addresses in `definitions` are stable, so these stay valid until a definition is erased.
+		std::vector<const AssetDefinition*> m_idToDefinition;
+
+		// Yield defName -> ascending ids of the harvestables that yield it. Keyed by name because a
+		// harvestable can be registered before its yield has an id; m_harvestablesByYieldId mirrors it
+		// by yield id once the yield has one, and is what harvestablesYielding() reads.
 		std::unordered_map<std::string, std::vector<uint32_t>> m_harvestablesByYield;
+		std::vector<std::vector<uint32_t>>					   m_harvestablesByYieldId;
 
 		/// File `id` under its harvest yield (if any), keeping the list ascending.
 		void indexHarvestYield(const AssetDefinition& def, uint32_t id);
+		/// Copy the harvestables filed under `yieldDefName` to its id's entry, when it has an id.
+		void mirrorYieldById(const std::string& yieldDefName);
 
 		// Path to shared scripts folder (for @shared/ prefix resolution)
 		std::filesystem::path m_sharedScriptsPath;

@@ -28,7 +28,7 @@ namespace ecs {
 			if (source == nullptr) {
 				return 0;
 			}
-			const auto* def = registry.getDefinition(registry.getDefName(source->defNameId));
+			const auto* def = registry.getDefinitionById(source->defNameId);
 			if (def == nullptr || !def->capabilities.harvestable.has_value()) {
 				return 0;
 			}

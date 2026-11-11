@@ -113,7 +113,13 @@ namespace {
 		const auto byYield = harvestablesByYieldScan(reg);
 		ASSERT_FALSE(byYield.empty()) << "the shipped library has harvestables";
 		for (const auto& [yield, ids] : byYield) {
-			EXPECT_EQ(reg.harvestablesYielding(yield), ids) << yield;
+			const uint32_t yieldId = reg.getDefNameId(yield);
+			if (yieldId != 0) {
+				EXPECT_EQ(reg.harvestablesYielding(yieldId), ids) << yield;
+			}
+		}
+		for (const std::string& name : reg.getDefinitionNames()) {
+			EXPECT_EQ(reg.getDefinitionById(reg.getDefNameId(name)), reg.getDefinition(name)) << name;
 		}
 	}
 
@@ -132,10 +138,11 @@ TEST(AssetRegistryYieldIndexTest, MatchesDefinitionsAcrossReload) {
 
 	ASSERT_GT(reg.loadDefinitionsFromFolder(world.string()), 0U);
 	expectYieldIndexMatchesScan(reg);
-	const std::string someYield = harvestablesByYieldScan(reg).begin()->first;
+	const uint32_t someYield = reg.getDefNameId(harvestablesByYieldScan(reg).begin()->first);
 
 	reg.clear();
 	EXPECT_TRUE(reg.harvestablesYielding(someYield).empty()) << "clear() empties the index";
+	EXPECT_EQ(reg.getDefinitionById(someYield), nullptr);
 
 	ASSERT_GT(reg.loadDefinitionsFromFolder(world.string()), 0U);
 	expectYieldIndexMatchesScan(reg);
@@ -143,25 +150,33 @@ TEST(AssetRegistryYieldIndexTest, MatchesDefinitionsAcrossReload) {
 	reg.clear();
 }
 
-// A test definition registered again with another yield moves to that yield's list.
+// A test definition registered again with another yield moves to that yield's list, and a yield
+// registered after its harvestable still finds it.
 TEST(AssetRegistryYieldIndexTest, ReregisteredDefinitionMovesToItsNewYield) {
 	auto& reg = AssetRegistry::Get();
 	reg.clearDefinitions();
-	const auto registerBush = [&](const std::string& yield) {
-		AssetDefinition bush;
-		bush.defName = "Test_YieldBush";
-		bush.capabilities.harvestable = HarvestableCapability{};
-		bush.capabilities.harvestable->yieldDefName = yield;
-		reg.registerTestDefinition(std::move(bush));
+	const auto registerDef = [&](const std::string& name, const std::string& yield) {
+		AssetDefinition def;
+		def.defName = name;
+		if (!yield.empty()) {
+			def.capabilities.harvestable = HarvestableCapability{};
+			def.capabilities.harvestable->yieldDefName = yield;
+		}
+		reg.registerTestDefinition(std::move(def));
 	};
 
-	registerBush("Test_YieldA");
+	registerDef("Test_YieldA", "");
+	registerDef("Test_YieldBush", "Test_YieldA");
 	const uint32_t id = reg.getDefNameId("Test_YieldBush");
-	EXPECT_EQ(reg.harvestablesYielding("Test_YieldA"), std::vector<uint32_t>{id});
-	registerBush("Test_YieldB");
-	EXPECT_TRUE(reg.harvestablesYielding("Test_YieldA").empty());
-	EXPECT_EQ(reg.harvestablesYielding("Test_YieldB"), std::vector<uint32_t>{id});
+	const uint32_t yieldA = reg.getDefNameId("Test_YieldA");
+	EXPECT_EQ(reg.harvestablesYielding(yieldA), std::vector<uint32_t>{id});
+	registerDef("Test_YieldBush", "Test_YieldB");
+	EXPECT_TRUE(reg.harvestablesYielding(yieldA).empty());
+	registerDef("Test_YieldB", "");
+	const uint32_t yieldB = reg.getDefNameId("Test_YieldB");
+	EXPECT_EQ(reg.harvestablesYielding(yieldB), std::vector<uint32_t>{id}) << "filed before the yield had an id";
+	EXPECT_EQ(reg.getDefinitionById(id), reg.getDefinition("Test_YieldBush"));
 
 	reg.clearDefinitions();
-	EXPECT_TRUE(reg.harvestablesYielding("Test_YieldB").empty());
+	EXPECT_TRUE(reg.harvestablesYielding(yieldB).empty());
 }
