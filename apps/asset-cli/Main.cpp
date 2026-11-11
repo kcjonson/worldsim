@@ -52,17 +52,21 @@ namespace {
 		"Commands:\n"
 		"  list [--type simple|procedural] [--group <name>] [--json]\n"
 		"  search <query> [--json]\n"
-		"  inspect <defName> [--json]\n"
+		"  inspect <defName> [--param name=value ...] [--json]\n"
 		"  validate [--json] [--render-smoke]\n"
-		"  render <defName> --out <file.png> [--size WxH] [--bg r,g,b,a] [--seed N] [--samples N]\n"
+		"  render <defName> --out <file.png> [--size WxH] [--bg r,g,b,a] [--seed N] [--samples N] [--param name=value ...]\n"
 		"  render <defName> --out <file.png> (--grid | --age a,b,... [--seed s,t,...] [--pairs N]) [--silhouette] [--ppm N] [--bg r,g,b,a]\n"
+		"         [--param name=value ...]\n"
 		"\n"
 		"render with --seed alone fits one generator run to --size. --grid draws every template the game\n"
 		"draws (age classes as rows, variants as columns); --age runs the generator at each age from 0 to 1\n"
 		"(columns) for each seed (rows, default 0), or with --pairs N the i-th age with the i-th seed, N to a\n"
 		"row. Both draw at one scale, --ppm pixels a metre (default\n"
 		"48). --silhouette fills what the selection silhouette keeps in one flat grey, on white unless --bg\n"
-		"is given.\n";
+		"is given.\n"
+		"\n"
+		"--param name=value (repeatable) sets one of the def's generator params for this run of inspect or\n"
+		"render, as if its XML said so.\n";
 
 	// --- argument helpers ---
 
@@ -81,7 +85,7 @@ namespace {
 
 	// Flags that consume the following argument as their value.
 	bool flagTakesValue(const std::string& flag) {
-		static const char* kValueFlags[] = {"--type", "--group", "--out", "--size", "--bg", "--seed", "--samples", "--age", "--ppm", "--pairs"};
+		static const char* kValueFlags[] = {"--type", "--group", "--out", "--size", "--bg", "--seed", "--samples", "--age", "--ppm", "--pairs", "--param"};
 		for (const char* vf : kValueFlags) {
 			if (flag == vf) {
 				return true;
@@ -132,6 +136,41 @@ namespace {
 		}
 		AssetRegistry::Get().loadDefinitionsFromFolder(assetsRoot);
 		return true;
+	}
+
+	using ParamSets = std::vector<std::pair<std::string, std::string>>;
+
+	// Every --param name=value, in order; nullopt (reported) when one has no name or no '='.
+	std::optional<ParamSets> paramSets(const std::vector<std::string>& args) {
+		ParamSets sets;
+		for (size_t i = 0; i + 1 < args.size(); ++i) {
+			if (args[i] != "--param") {
+				continue;
+			}
+			const std::string& pair = args[++i];
+			const size_t	   eq = pair.find('=');
+			if (eq == std::string::npos || eq == 0) {
+				std::cerr << "error: --param takes name=value, got '" << pair << "'\n";
+				return std::nullopt;
+			}
+			sets.emplace_back(pair.substr(0, eq), pair.substr(eq + 1));
+		}
+		return sets;
+	}
+
+	// Registers the def again with `sets` written over its generator params. The library is cleared
+	// first, so no template built from the XML's params at load outlives the change; the def is all
+	// that stays registered.
+	void applyParams(const AssetDefinition& def, const ParamSets& sets) {
+		if (sets.empty()) {
+			return;
+		}
+		AssetDefinition changed = def;
+		for (const auto& [name, value] : sets) {
+			changed.params.setString(name.c_str(), value);
+		}
+		AssetRegistry::Get().clear();
+		AssetRegistry::Get().registerTestDefinition(std::move(changed));
 	}
 
 	std::vector<std::string> sortedDefNames() {
@@ -357,6 +396,10 @@ namespace {
 			std::cerr << "error: inspect needs a defName\n";
 			return kUsage;
 		}
+		const auto sets = paramSets(args);
+		if (!sets) {
+			return kUsage;
+		}
 		if (!loadLibrary()) {
 			return kFailure;
 		}
@@ -367,14 +410,17 @@ namespace {
 		}
 		const bool asJson = hasFlag(args, "--json");
 
-		const std::string resolvedSvg = d->svgPath.empty() ? "" : d->resolvePath(d->svgPath).string();
-
+		// The load's validation report, read before --param clears the library.
 		json warnings = json::array();
 		for (const auto& issue : AssetRegistry::Get().getValidationReport().issues) {
 			if (issue.defName == *defName) {
 				warnings.push_back({{"severity", severityName(issue.severity)}, {"field", issue.field}, {"message", issue.message}});
 			}
 		}
+		applyParams(*d, *sets);
+		d = AssetRegistry::Get().getDefinition(*defName);
+
+		const std::string resolvedSvg = d->svgPath.empty() ? "" : d->resolvePath(d->svgPath).string();
 
 		json out;
 		out["defName"] = d->defName;
@@ -546,6 +592,10 @@ namespace {
 		const bool				silhouette = hasFlag(args, "--silhouette");
 		const auto				bgArg = flagValue(args, "--bg");
 		const Foundation::Color bg = (silhouette && !bgArg) ? Foundation::Color(1.0F, 1.0F, 1.0F, 1.0F) : parseColor(bgArg);
+		const auto				sets = paramSets(args);
+		if (!sets) {
+			return kUsage;
+		}
 
 		if (!loadLibrary()) {
 			return kFailure;
@@ -556,6 +606,8 @@ namespace {
 			std::cerr << "error: no such defName: " << defName << "\n";
 			return kNotFound;
 		}
+		applyParams(*def, *sets);
+		def = registry.getDefinition(defName);
 
 		std::vector<std::vector<const renderer::TessellatedMesh*>> rows;
 		std::vector<std::unique_ptr<renderer::TessellatedMesh>>	   built;
@@ -673,13 +725,20 @@ namespace {
 			}
 		}
 
+		const auto sets = paramSets(args);
+		if (!sets) {
+			return kUsage;
+		}
+
 		if (!loadLibrary()) {
 			return kFailure;
 		}
-		if (AssetRegistry::Get().getDefinition(*defName) == nullptr) {
+		const AssetDefinition* def = AssetRegistry::Get().getDefinition(*defName);
+		if (def == nullptr) {
 			std::cerr << "error: no such defName: " << *defName << "\n";
 			return kNotFound;
 		}
+		applyParams(*def, *sets);
 
 		if (!initGl()) {
 			std::cerr << "error: could not create an OpenGL context (need a GPU/display)\n";

@@ -478,17 +478,33 @@ local function reachOut(n)
 end
 reachOut(root)
 
+-- ---- level of detail -----------------------------------------------------------------------------
+-- A mesh is cut for one screen density, detailPxPerMeter (the camera's 8 px/m times its zoom), and is
+-- drawn from there up to the next level's. Everything it draws is sized to what that density shows:
+-- a mark (a leaf, or leaves merged into one) is about kMarkPx pixels long and never finer than
+-- kFinestLeaf, and wood under kWoodPx pixels wide is left out. The structure (skeleton, clumps, light)
+-- is the same at every density; only how finely it is cut changes.
+
+local ppm = max(0.5, getFloat("detailPxPerMeter", 24))
+local kMarkPx, kWoodPx = 2.7, 0.6
+local kFinestLeaf, kCoarsestLeaf = 0.053, 0.1125
+local mark = max(kFinestLeaf, kMarkPx / ppm)
+-- Leaves stop growing at kCoarsestLeaf, past which they would overrun their sprays; coarser marks are
+-- that layout's leaves merged, so every coarse level shows one layout and keeps its outline and tone.
+local leafLen = min(mark, kCoarsestLeaf)
+local mergeReach = max(0, mark - leafLen) * 0.5
+
 -- ---- foliage -------------------------------------------------------------------------------------
 -- Leaves hang in sprays along the outer shoots, the last foliageDepth meters before each tip. Each
--- shoot carries sprays by its length (sprayDensity a meter, times the detail level), each spray a few
--- leaf marks fanned outward from its clump. The leaf mark shrinks as detail rises so the crown covers
--- the same: detail sets how finely the crown is cut, not how full it is. A spray belongs to its shoot
--- and draws from that shoot's stream, so as the tree grows it stays where it was and new shoots bring
--- their own in; a spray past the foliage depth fades out, smallest first.
+-- shoot carries sprays by its length (sprayDensity a meter for a leafSize leaf, more for a smaller
+-- one), each spray a few leaf marks fanned outward from its clump. Spray density falls as the leaf
+-- grows so the crown covers the same, and a larger leaf reaches back inward from where the finest
+-- would end, so the outline stays put: the leaf size sets how finely the crown is cut, not how full
+-- or how wide it is. A spray belongs to its shoot and draws from that shoot's stream, so as the tree
+-- grows it stays where it was and new shoots bring their own in; a spray past the foliage depth fades
+-- out, smallest first.
 
-local detail = max(0.25, getFloat("foliageDetail", 1.8))
-local leafLen = getFloat("leafSize", 0.15) / sqrt(detail)
-local sprayDensity = getFloat("sprayDensity", 22) * detail
+local sprayDensity = getFloat("sprayDensity", 22) * (getFloat("leafSize", 0.15) / leafLen) ^ 2
 local leavesLo, leavesHi = getFloatRange("sprayLeaves", 4, 7)
 local kMaxLeaves = 9
 local foliageDepth = getFloat("foliageDepth", 0.26) * crownWidth + 0.06
@@ -568,7 +584,7 @@ for _, n in ipairs(nodes) do
 				local outAngle = math.atan(fy - sy, fx - sx) + sprayTurn
 				local depth = depthOf(ax, ay, az)
 				local back = depth < depthOf(bx, by, bz)
-				local spray = { back = back, x = sx, y = sy, key = depth + 0.12 * tone }
+				local spray = { back = back, x = sx, y = sy, key = depth + 0.12 * tone, shoot = n }
 				sprays[#sprays + 1] = spray
 				for j = 1, leafCount do
 					local d1, d2, d3, d4, d5 = draws[j * 5 - 4], draws[j * 5 - 3], draws[j * 5 - 2], draws[j * 5 - 1], draws[j * 5]
@@ -577,10 +593,13 @@ for _, n in ipairs(nodes) do
 					local ca, sa = cos(a), sin(a) + 0.35
 					local al = sqrt(ca * ca + sa * sa)
 					local len = leafLen * (0.75 + 0.45 * d2) * (0.4 + 0.6 * size)
-					local spread = leafLen * 0.55
+					local spread = kFinestLeaf * 0.55
+					-- the stalk sits back, so the tip lands most of the way back to where the finest leaf's would
+					local sink = len * (1 - kFinestLeaf / leafLen) * 0.6
+					ca, sa = ca / al, sa / al
 					leaves[#leaves + 1] = {
-						x = sx + (d3 - 0.5) * spread, y = sy + (d4 - 0.5) * spread * 0.8,
-						dx = ca / al, dy = sa / al, len = len, wide = 1.2 - 0.4 * d2,
+						x = sx + (d3 - 0.5) * spread - ca * sink, y = sy + (d4 - 0.5) * spread * 0.8 - sa * sink,
+						dx = ca, dy = sa, len = len, wide = 1.2 - 0.4 * d2,
 						tone = tone + (d5 - 0.5) * 0.14,
 						key = depth + 0.12 * tone - 0.25 * smooth(0.5, 0.8, inner) + (d5 - 0.5) * 0.01,
 						back = back, jitter = sprayJ, spray = spray,
@@ -589,6 +608,47 @@ for _, n in ipairs(nodes) do
 			end
 		end
 	end
+end
+
+-- A shoot that kept its leaves where its neighbours lost theirs is a speck beside the crown: a spray
+-- with fewer than kCrowd leaves of other shoots within kLonely of it goes.
+do
+	local kLonely, kCrowd = 2 * leafLen, 8
+	local grid = {}
+	local function cellOf(x, y)
+		return floor(x / kLonely) * 8192 + floor(y / kLonely)
+	end
+	for _, l in ipairs(leaves) do
+		local k = cellOf(l.x, l.y)
+		grid[k] = grid[k] or {}
+		grid[k][#grid[k] + 1] = l
+	end
+	for _, s in ipairs(sprays) do
+		local gx, gy, near = floor(s.x / kLonely), floor(s.y / kLonely), 0
+		for i = -1, 1 do
+			for j = -1, 1 do
+				for _, l in ipairs(grid[(gx + i) * 8192 + gy + j] or {}) do
+					if l.spray.shoot ~= s.shoot and (l.x - s.x) ^ 2 + (l.y - s.y) ^ 2 < kLonely * kLonely then
+						near = near + 1
+					end
+				end
+				if near >= kCrowd then
+					break
+				end
+			end
+			if near >= kCrowd then
+				break
+			end
+		end
+		s.lonely = near < kCrowd
+	end
+	local kept = {}
+	for _, l in ipairs(leaves) do
+		if not l.spray.lonely then
+			kept[#kept + 1] = l
+		end
+	end
+	leaves = kept
 end
 
 -- Palette: the species' four tones, turned for this individual (hue, saturation and value from its
@@ -650,15 +710,14 @@ do
 		for i = #leaves, 1, -1 do
 			local l = leaves[i]
 			if l.back == back then
-				local hidden = true
+				local open = 0
 				for _, p in ipairs(kProbe) do
 					if not filled[at(l, p[1], p[2])] then
-						hidden = false
-						break
+						open = open + 1
 					end
 				end
-				l.hidden = hidden
-				if not hidden then
+				l.hidden, l.shows = open == 0, open / #kProbe
+				if open > 0 then
 					for _, p in ipairs(kFill) do
 						filled[at(l, p[1], p[2])] = true
 					end
@@ -668,76 +727,123 @@ do
 	end
 end
 
--- ---- drawing -----------------------------------------------------------------------------------
--- The foliage comes in two stacks over one layout. The near stack is every leaf that shows. The far
--- stack draws each spray as one mark, its outline the reach of its leaves and its colour their mean,
--- for a view too far out to tell leaves apart: the same silhouette and the same mean tone at about half
--- the triangles. foliageStack picks which one a mesh carries.
+-- ---- marks -------------------------------------------------------------------------------------
+-- What the foliage draws: every leaf that shows, or, where a mark is coarser than a leaf, leaves merged.
+-- Taken in drawing order, a leaf joins the nearest mark on its side of the wood whose first leaf lies
+-- within mergeReach of it on screen, or starts one. A merged mark is the outline of its leaves (their
+-- reach from its first leaf in kSides directions) in the mean colour of those that show, drawn at their
+-- mean depth: the same silhouette and tone as its leaves, as finely as the density can show.
 
-local function drawNear(back)
+local marks = {}
+if mergeReach == 0 then
 	for _, l in ipairs(leaves) do
-		if l.back == back and not l.hidden then
-			shape.emit(shape.leaf(l.x, l.y, l.dx, l.dy, l.len, l.wide, pointed), leafColor(l.tone, l.jitter))
-		end
-	end
-end
-
-local function drawFar(back)
-	local kSides = 7
-	for _, s in ipairs(sprays) do
-		s.reach, s.lin, s.shown = {}, { 0, 0, 0 }, 0
-		for k = 1, kSides do
-			s.reach[k] = leafLen * 0.3
-		end
-	end
-	for _, l in ipairs(leaves) do
-		local s = l.spray
-		local tx, ty = l.x + l.dx * l.len - s.x, l.y + l.dy * l.len - s.y
-		for k = 1, kSides do
-			local a = (k - 1) * 2 * pi / kSides
-			s.reach[k] = max(s.reach[k], (tx * cos(a) + ty * sin(a)) * 0.85)
-		end
 		if not l.hidden then
-			local lin = color.toLinear(leafColor(l.tone, l.jitter))
-			s.lin[1], s.lin[2], s.lin[3] = s.lin[1] + lin[1], s.lin[2] + lin[2], s.lin[3] + lin[3]
-			s.shown = s.shown + 1
+			marks[#marks + 1] = l
 		end
 	end
-	local order = {}
-	for _, s in ipairs(sprays) do
-		if s.back == back and s.shown > 0 then
-			order[#order + 1] = s
+else
+	-- the reach outline overshoots its leaves more the more of them it spans, so it is drawn smaller
+	local kSides, kShrink = 7, 1 - 0.3 * mergeReach / (mergeReach + leafLen)
+	local dirX, dirY = {}, {}
+	for k = 1, kSides do
+		dirX[k], dirY[k] = cos((k - 1) * 2 * pi / kSides), sin((k - 1) * 2 * pi / kSides)
+	end
+	local grid, merged = {}, {}
+	for _, l in ipairs(leaves) do
+		local lx0, ly0 = l.x + l.dx * l.len * 0.5, l.y + l.dy * l.len * 0.5
+		local gx, gy = floor(lx0 / mergeReach), floor(ly0 / mergeReach)
+		local m, best = nil, mergeReach * mergeReach
+		for i = -1, 1 do
+			for j = -1, 1 do
+				for _, c in ipairs(grid[(gx + i) * 8192 + gy + j] or {}) do
+					local d = (c.x - lx0) ^ 2 + (c.y - ly0) ^ 2
+					if c.back == l.back and d < best then
+						m, best = c, d
+					end
+				end
+			end
+		end
+		if not m then
+			m = { x = lx0, y = ly0, back = l.back, reach = {}, lin = { 0, 0, 0 }, shown = 0, key = 0, count = 0, first = l }
+			for k = 1, kSides do
+				m.reach[k] = 0
+			end
+			local cell = gx * 8192 + gy
+			grid[cell] = grid[cell] or {}
+			grid[cell][#grid[cell] + 1] = m
+			merged[#merged + 1] = m
+		end
+		local len, nx, ny = l.len, -l.dy * l.len * l.wide * 0.28, l.dx * l.len * l.wide * 0.28
+		local sx, sy = l.x + l.dx * len * 0.42, l.y + l.dy * len * 0.42
+		local ptsX = { l.x, l.x + l.dx * len, sx + nx, sx - nx }
+		local ptsY = { l.y, l.y + l.dy * len, sy + ny, sy - ny }
+		for p = 1, 4 do
+			local ox, oy = ptsX[p] - m.x, ptsY[p] - m.y
+			for k = 1, kSides do
+				m.reach[k] = max(m.reach[k], ox * dirX[k] + oy * dirY[k])
+			end
+		end
+		m.key, m.count = m.key + l.key, m.count + 1
+		if not l.hidden then
+			local lin, w = color.toLinear(leafColor(l.tone, l.jitter)), l.shows * len * len
+			m.lin[1], m.lin[2], m.lin[3] = m.lin[1] + lin[1] * w, m.lin[2] + lin[2] * w, m.lin[3] + lin[3] * w
+			m.shown = m.shown + w
 		end
 	end
-	table.sort(order, function(a, b)
+	for _, m in ipairs(merged) do
+		if m.count == 1 then
+			if not m.first.hidden then
+				marks[#marks + 1] = m.first
+			end
+		elseif m.shown > 0 then
+			local xs, ys = {}, {}
+			for k = 1, kSides do
+				local r = max(leafLen * 0.2, m.reach[k] * kShrink)
+				xs[k], ys[k] = m.x + dirX[k] * r, m.y + dirY[k] * r
+			end
+			local s = 1 / m.shown
+			marks[#marks + 1] = {
+				back = m.back, key = m.key / m.count, polygon = shape.polygon(xs, ys),
+				color = color.toSrgb({ m.lin[1] * s, m.lin[2] * s, m.lin[3] * s }),
+			}
+		end
+	end
+	table.sort(marks, function(a, b)
 		return a.key < b.key
 	end)
-	for _, s in ipairs(order) do
-		local xs, ys = {}, {}
-		for k = 1, kSides do
-			local a = (k - 1) * 2 * pi / kSides
-			xs[k], ys[k] = s.x + cos(a) * s.reach[k], s.y + sin(a) * s.reach[k]
+end
+
+-- ---- drawing -----------------------------------------------------------------------------------
+
+local function drawMarks(back)
+	for _, m in ipairs(marks) do
+		if m.back == back then
+			if m.polygon then
+				shape.emit(m.polygon, m.color)
+			else
+				shape.emit(shape.leaf(m.x, m.y, m.dx, m.dy, m.len, m.wide, pointed), leafColor(m.tone, m.jitter))
+			end
 		end
-		local m = 1 / s.shown
-		shape.emit(shape.polygon(xs, ys), color.toSrgb({ s.lin[1] * m, s.lin[2] * m, s.lin[3] * m }))
 	end
 end
 
-local drawLeaves = getString("foliageStack", "near") == "far" and drawFar or drawNear
-
--- 1. contact shadow
+-- 1. contact shadow, once it is a pixel across
 stream(6)
-lib.foot.contactShadow(trunkWidth, shadowTone, 0.18)
+if trunkWidth * 1.4 * ppm >= 1 then
+	lib.foot.contactShadow(trunkWidth, shadowTone, 0.18)
+end
 
 -- 2. the leaves on the far side of their shoots
-drawLeaves(true)
+drawMarks(true)
 
 -- 3. the wood: one bark-coloured shape traced around the skeleton. Each axis follows a shoot out
 -- through its strongest child, drawn as a strip that tapers by the pipe rule (about twice real, so it
 -- reads at game zoom) and starts inside the axis it grows from. In one colour with no outline the
 -- strips read as one shape. The near leaves cover it, so limbs show below the crown and through its
--- gaps.
-local minWidth = 0.014
+-- gaps. A limb narrower than kWoodPx pixels is left out (the trunk always reaches the crown), and a
+-- strip keeps a point only kSegPx pixels on from the last it kept.
+local minWidth = max(0.014, kWoodPx / ppm)
+local kSegPx = 2
 local function widthOf(n)
 	return trunkWidth * 0.5 * sqrt(n.area / max(1, stem.area))
 end
@@ -751,6 +857,15 @@ local function strongest(n)
 	return best
 end
 local function strip(px, py, pw)
+	local step = kSegPx / ppm
+	local kx, ky, kw = { px[1] }, { py[1] }, { pw[1] }
+	for i = 2, #px do
+		local last = #kx
+		if i == #px or (px[i] - kx[last]) ^ 2 + (py[i] - ky[last]) ^ 2 >= step * step then
+			kx[last + 1], ky[last + 1], kw[last + 1] = px[i], py[i], pw[i]
+		end
+	end
+	px, py, pw = kx, ky, kw
 	local count = #px
 	local left, right = {}, {}
 	for i = 1, count do
@@ -783,7 +898,7 @@ do
 			pw[1] = widthOf(axis.child)
 		end
 		local n = axis.child
-		while n and widthOf(n) >= minWidth * 0.7 do
+		while n and (n == stem or widthOf(n) >= minWidth * 0.7) do
 			px[#px + 1], py[#py + 1] = project(n)
 			pw[#pw + 1] = widthOf(n)
 			local next = strongest(n)
@@ -794,12 +909,15 @@ do
 			end
 			n = next
 		end
-		pw[#pw] = pw[#pw] * 0.4 -- a shoot ends in a point, not a cut
+		if not n then
+			pw[#pw] = pw[#pw] * 0.4 -- a shoot ends in a point, not a cut; one left out for its width ends where it was
+		end
 		strip(px, py, pw)
 	end
-	-- root spurs: a few short buttresses where the trunk meets the ground, longer as the tree ages
+	-- root spurs: a few short buttresses where the trunk meets the ground, longer as the tree ages,
+	-- once they are a pixel wide
 	stream(9)
-	local spurs = floor(uniform(2, 3.999))
+	local spurs = trunkWidth * 0.22 * ppm >= 1 and floor(uniform(2, 3.999)) or 0
 	for i = 1, spurs do
 		local side = (i % 2 == 0) and 1 or -1
 		local reach = trunkWidth * (0.1 + 0.3 * flare) * uniform(0.7, 1.1)
@@ -808,8 +926,15 @@ do
 		strip({ fx, fx + side * reach * 0.6, fx + side * reach }, { -trunkWidth * (0.35 + 0.3 * flare), -trunkWidth * 0.08, drop },
 			{ trunkWidth * 0.22, trunkWidth * 0.12, trunkWidth * 0.03 })
 	end
-	-- dieback: a dying clump's limb runs on bare past its leaves, to its highest tip and beyond
+	-- dieback: a dying clump's limb runs on bare past its leaves, to its highest tip and beyond, where
+	-- it is wide enough to show
+	local bare = {}
 	for _, c in ipairs(dying) do
+		if widthOf(c.node) * ppm >= kWoodPx then
+			bare[#bare + 1] = c
+		end
+	end
+	for _, c in ipairs(bare) do
 		local tip = c.tips[1]
 		for _, t in ipairs(c.tips) do
 			if select(2, project(t)) < select(2, project(tip)) then
@@ -836,4 +961,4 @@ do
 end
 
 -- 4. the leaves on the near side of their shoots, dark and deep first, lit last
-drawLeaves(false)
+drawMarks(false)

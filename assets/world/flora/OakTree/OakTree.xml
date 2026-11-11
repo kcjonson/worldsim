@@ -29,9 +29,11 @@
         <stemRise>0.4</stemRise>
         <crownDepth>0.26</crownDepth>
         <clusterSize>0.13</clusterSize>
-        <!-- How finely the crown is cut into leaves: about 1,100 triangles for a mature oak at 0.45,
-             2,900 at 1.8, 9,800 at 8. The leaf mark is leafSize / sqrt(foliageDetail) meters. -->
-        <foliageDetail>1.8</foliageDetail>
+        <!-- The screen density in pixels a meter the mesh is cut for (the camera's 8 px/m times its zoom):
+             leaves about 2.7 px long, never under 0.053 m, merged into coarser marks below about 24, and
+             wood under 0.6 px left out. 24 is the default zoom. A mid-age oak is about 25 triangles at 2,
+             230 at 8, 2,600 at 24 and 8,200 at 80. -->
+        <detailPxPerMeter>24</detailPxPerMeter>
         <lobes>rounded</lobes>
         <growingOld>stagHeaded</growingOld>
         <foliageShade>#4a6a2e</foliageShade>
