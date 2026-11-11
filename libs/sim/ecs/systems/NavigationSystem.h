@@ -39,6 +39,7 @@
 // stale just the routes whose rest crosses the new trees; flora leaving only opens ground and
 // marks nobody.
 
+#include "../EntityID.h"
 #include "../ISystem.h"
 
 #include <core/Vec2i64.h>
@@ -52,6 +53,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <glm/vec2.hpp>
 #include <map>
 #include <memory>
@@ -136,8 +138,28 @@ class NavigationSystem : public ISystem {
 	// routes over truth, a filter built from a colonist's known segments/openings routes over
 	// what that colonist REMEMBERS. The filter holds pointers into the caller's sets and is
 	// consumed synchronously.
-	[[nodiscard]] std::optional<std::vector<glm::vec2>>
-	requestPath(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters, geometry::nav::BeliefFilter belief = {}) const;
+	//
+	// An Autonomous route (a colonist's own choice) whose goal lies in the start's reach square is
+	// searched inside that square, so it agrees with reaches() and nothing the camera loads changes
+	// it. An Ordered route (the player's) is searched wherever the meshed ground goes. Either is
+	// capped in expansions.
+	// A requester's replans toward the same goal keep the confinement (or none) its first plan had,
+	// while its start stays inside it; a new goal, or its route ending, starts afresh.
+	//
+	// When the nav search gives up in priced ground (more expansions than the structural walk
+	// warrants, see kNavExpansionFloor), the route is the structural walk, through the flora at its
+	// price.
+	enum class RouteKind { Autonomous, Ordered };
+	[[nodiscard]] std::optional<std::vector<glm::vec2>> requestPath(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
+																	geometry::nav::BeliefFilter belief = {},
+																	RouteKind kind = RouteKind::Autonomous,
+																	EntityID requester = kInvalidEntity) const;
+	// The nav search's expansion cap, kNavExpansionFloor and kNavExpansionsPerStructural by default;
+	// tests set a small one to make it give up.
+	void setNavExpansionCap(std::uint32_t floor, std::uint32_t perStructural) {
+		navExpansionFloor		   = floor;
+		navExpansionsPerStructural = perStructural;
+	}
 
 	// What a colonist can reach on its own, and how far it walks there: a walk on the structural
 	// mesh (no flora, so the camera changes nothing) under the colonist's belief, confined to the
@@ -149,8 +171,8 @@ class NavigationSystem : public ISystem {
 	//   A goal off meshed ground inside the square: "maybe" while its chunk is loaded (its ground is
 	//   on the way), unreachable otherwise.
 	// startCell (the start, kReachCellMm to a step) and startRegionGeneration (a stamp that moves
-	// only when the structural mesh changes in a chunk the square touches) together say when a
-	// verdict from here still holds. A Reach is used within one frame; the belief's sets must
+	// when the structural content of a chunk the square touches changes, or its ground is meshed)
+	// together say when a walk from here still holds. A Reach is used within one frame; the belief's sets must
 	// outlive it.
 	struct Reach {
 		bool						onGround = false;
@@ -158,6 +180,9 @@ class NavigationSystem : public ISystem {
 		std::int64_t				radiusMm			  = 0;
 		std::int64_t				startCell			  = 0;
 		std::uint64_t				startRegionGeneration = 0;
+		// No chunk the square touches is loaded with its ground still to mesh. While one is, a walk
+		// that fails may only be waiting on it: "not now", which is never remembered.
+		bool						settled = true;
 		geometry::nav::BeliefFilter belief;
 	};
 	[[nodiscard]] Reach reachFrom(glm::vec2 startMeters, float agentRadiusMeters, geometry::nav::BeliefFilter belief = {}) const;
@@ -170,9 +195,10 @@ class NavigationSystem : public ISystem {
 	// colonist's to keep (SourceReachMemo). Anything outside is unreachable on its own and only a
 	// player's order sends a colonist there.
 	[[nodiscard]] bool sharesStartRegion(const Reach& reach, glm::vec2 goalMeters) const;
-	// The structural stamp behind an unreachable verdict found at `anchor`: it moves when the
-	// structural mesh changes in a chunk touching the anchor's square grown by kAutonomousReachMm,
-	// which holds every square a colonist still inside the anchor's square reaches over.
+	// The structural stamp behind a route that failed at `anchor`: it moves when the structural
+	// content (walls, doors, water) changes in a chunk touching the anchor's square grown by
+	// kAutonomousReachMm, which holds every square a colonist still inside the anchor's square walks
+	// over. Ground arriving or leaving doesn't move it, so nothing the camera loads or drops does.
 	[[nodiscard]] std::uint64_t verdictStamp(glm::vec2 anchor) const;
 	// `here` is inside the square around `anchor`.
 	[[nodiscard]] static bool inSquareOf(glm::vec2 anchor, glm::vec2 here);
@@ -186,6 +212,9 @@ class NavigationSystem : public ISystem {
 	// for each the structural search expanded (see requestPath).
 	static constexpr std::uint32_t kNavExpansionFloor		   = 4000;
 	static constexpr std::uint32_t kNavExpansionsPerStructural = 16;
+	// A route's builtNavVersion once marked stale (flora landed across it, no clear point ahead): a
+	// value generation() never takes, so no re-stamp reads it as current.
+	static constexpr std::uint64_t kStaleRoute = std::numeric_limits<std::uint64_t>::max();
 
 	// True when `meters` is on meshed ground (inside a ready chunk that has been meshed), water
 	// and walls included.
@@ -261,9 +290,11 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] std::optional<glm::vec2> nearestPathablePoint(glm::vec2 meters) const;
 
 	// Where a colonist at `from` stands to work a target at `target` (a tree, a bush): when a
-	// collider is placed there, the point just outside it, its disc clear, nearest `from` that is
-	// clear ground on the structural mesh; with none, the target itself when it is clear ground, else
-	// the nearest that is. The same on camera and off. nullopt off meshed ground.
+	// collider is placed there, the point just outside it nearest `from` that is clear ground on the
+	// structural mesh, its disc clear of every collider, else (a tree in a thicket) the nearest that is
+	// at least ground a mover crosses; with no collider, the target itself when it is clear ground,
+	// else the nearest that is. The same on camera and off. nullopt off meshed ground, or with every
+	// point round the collider in water or a wall.
 	[[nodiscard]] std::optional<glm::vec2> standPointBeside(glm::vec2 target, glm::vec2 from, float agentRadiusMeters) const;
 
 	// Like nearestPathablePoint (clear ground), but the returned point also clears the BUILT-wall
@@ -514,20 +545,37 @@ class NavigationSystem : public ISystem {
 	// The anchors as of this tick, and the chunks they hold (within the anchor load range).
 	void							collectAnchors();
 	[[nodiscard]] bool				anchorHolds(world::ChunkCoordinate coord) const;
-	// A structural change in the chunks meeting [lo, hi] (metres): counted against those chunks for
-	// the reach stamps, and against generation() when an anchor holds one. Closing ground also
-	// leaves the routes it crosses stale (restampRoutes).
-	void noteStructural(glm::vec2 lo, glm::vec2 hi, bool closes);
+	// A structural change in the chunks meeting [lo, hi] (metres). Every one moves generation() when
+	// an anchor holds one of those chunks, and one that closes ground leaves the routes it crosses
+	// stale (restampRoutes). A change of content (a wall, a door, a chunk's water) is counted against
+	// the chunks for the reach stamps; ground arriving or leaving is not, since ground in a colonist's
+	// square is never dropped and ground outside it changes no walk of its.
+	enum class StructuralChange { Opens, Closes, GroundArrives, GroundLeaves };
+	void noteStructural(glm::vec2 lo, glm::vec2 hi, StructuralChange change);
+	// The chunk's ground is in the meshes (gathered and joined).
+	[[nodiscard]] bool groundMeshed(world::ChunkCoordinate coord) const;
+	// A chunk the box touches is loaded but its ground isn't meshed yet.
+	[[nodiscard]] bool groundPendingIn(const geometry::RectMm& box) const;
 	// As a join moves generation(), the routes current before it that no closing box crosses are
 	// stamped current.
 	void restampRoutes(const std::vector<std::pair<glm::vec2, glm::vec2>>& closed) const;
-	[[nodiscard]] std::uint64_t					chunkStamp(const geometry::RectMm& box) const;
+	// The structural content of the chunks the box touches, and with withGround which of them have
+	// their ground meshed.
+	enum class StampGround { Without, With };
+	[[nodiscard]] std::uint64_t chunkStamp(const geometry::RectMm& box, StampGround withGround) const;
 	[[nodiscard]] static geometry::RectMm		squareAround(const geometry::Vec2i64& centerMm);
 	// The viewport rect, half extents clamped to [kMinSimHalfExtentMm, kMaxSimHalfExtentMm].
 	[[nodiscard]] Rect viewportRect() const;
 	void			   updateDetail();
 	// The ring of the tree collider placed nearest `meters` that holds it, if any.
-	[[nodiscard]] std::optional<geometry::nav::NavInputPolygon> treeColliderAt(glm::vec2 meters, float reachMeters = 0.0F) const;
+	// A placed tree's collider: its box's centre and the distance from there to a corner. Tested as the
+	// padded box in the tree's own frame, the same box the nav mesh's tree ring has (a polygon
+	// collider by its bounding box), with no allocation.
+	struct TreeCollider {
+		glm::vec2 centre{0.0F, 0.0F};
+		float	  extent = 0.0F;
+	};
+	[[nodiscard]] std::optional<TreeCollider> treeColliderAt(glm::vec2 meters, float reachMeters = 0.0F) const;
 	// The BeliefFilter a movement query runs with: `belief` with flora priced (the one place).
 	[[nodiscard]] static geometry::nav::BeliefFilter pricedFor(geometry::nav::BeliefFilter belief);
 	// Marks stale the routes whose rest comes within the mover's radius of a tree that landed in
@@ -614,6 +662,14 @@ class NavigationSystem : public ISystem {
 	// update() keeps only the routes some mover holds, so it never outgrows the movers and one
 	// tick's queries.
 	mutable std::unordered_map<std::uint64_t, std::vector<glm::vec2>> pricedRoutes;
+	struct RouteScope {
+		geometry::Vec2i64				goalMm;
+		RouteKind						kind = RouteKind::Autonomous;
+		std::optional<geometry::RectMm> within;
+	};
+	mutable std::unordered_map<EntityID, RouteScope> routeScopes; // by requester
+	std::uint32_t									 navExpansionFloor			= kNavExpansionFloor;
+	std::uint32_t									 navExpansionsPerStructural = kNavExpansionsPerStructural;
 	// The boxes of the trees that landed in the joined jobs, for markCrossedRoutes.
 	std::vector<std::pair<glm::vec2, glm::vec2>> floraLanded;
 

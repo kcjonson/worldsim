@@ -3207,3 +3207,152 @@ TEST_F(NavigationSystemTest, LongMoveOrderKeepsItsGroundWhileTheCameraWanders) {
 	EXPECT_EQ(visited.size(), 20u);
 	EXPECT_LT(glm::distance(position.value, to), 0.3F) << "never arrived";
 }
+
+// --- What the camera can't move ---------------------------------------------------------------
+
+// A failed route recorded at a spot 172 m from chunk (1, 0), the colonist since walked 120 m west
+// (still in the spot's square): the chunk is in the band the anchor's stamp covers (256 m round the
+// spot) but neither loaded nor kept by the colonist's own anchor (292 m off). The camera loads the
+// chunk and then wanders 20 chunks east, so the kept-unloaded budget drops its ground. Neither moves the anchor's stamp, the colonist's
+// reach key or generation(); a wall built in the chunk while it is loaded does move the stamp.
+TEST_F(NavigationSystemTest, CameraGroundComingAndGoingLeavesTheVerdictStamp) {
+	auto chunks = std::make_unique<world::ChunkManager>(landSampler());
+	chunks->setLoadRadius(0);
+	chunks->setUnloadRadius(0);
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(chunks.get());
+	sys.setConstructionWorld(&cw);
+	const glm::vec2 at{340.0F, 256.0F};
+	const glm::vec2 colonistAt{220.0F, 256.0F};
+	addColonist(world, colonistAt, "Keeper");
+	std::vector<world::WorldPosition> anchors;
+	const auto						  stand = [&](int i) {
+		 anchors.clear();
+		 sys.appendAnchors(anchors);
+		 chunks->update({256.0F + 512.0F * static_cast<float>(i), 256.0F}, anchors);
+		 chunks->finishPendingGeneration();
+		 step(world, sys);
+		 settle(sys);
+	};
+	stand(0);
+	const std::uint64_t verdict	   = sys.verdictStamp(at);
+	const std::uint64_t key		   = sys.reachFrom(colonistAt, kAgentRadius).startRegionGeneration;
+	const std::uint64_t generation = sys.generation();
+
+	stand(1);
+	ASSERT_TRUE(sys.inSimArea({768.0F, 256.0F})) << "the camera brought chunk (1, 0) in";
+	EXPECT_EQ(sys.verdictStamp(at), verdict);
+	EXPECT_EQ(sys.reachFrom(colonistAt, kAgentRadius).startRegionGeneration, key);
+	EXPECT_EQ(sys.generation(), generation);
+	for (int i = 2; i < 22; ++i) {
+		stand(i);
+	}
+	ASSERT_FALSE(sys.inSimArea({768.0F, 256.0F})) << "the budget dropped chunk (1, 0)";
+	ASSERT_TRUE(sys.inSimArea(colonistAt)) << "the colonist's own ground stays";
+	EXPECT_EQ(sys.verdictStamp(at), verdict) << "ground leaving moved the stamp";
+	EXPECT_EQ(sys.reachFrom(colonistAt, kAgentRadius).startRegionGeneration, key);
+	EXPECT_EQ(sys.generation(), generation);
+
+	stand(1);
+	buildWall(cw, {700000, 200000}, {704000, 200000});
+	stand(1);
+	EXPECT_NE(sys.verdictStamp(at), verdict) << "a wall in the band";
+}
+
+// --- A search that gives up -------------------------------------------------------------------
+
+// On camera a thick stand is in the nav mesh. With the expansion cap shrunk so the search gives up,
+// the route is the structural walk through the stand at its price, and the colonist walks it and
+// arrives.
+TEST_F(NavigationSystemTest, GivenUpSearchWalksTheStructuralRouteThroughTheForest) {
+	registerTree("Test_NavCapTree", 0.3F);
+	WalkRig				   rig({20.0F, 20.0F});
+	std::vector<glm::vec2> stand;
+	for (float x = 10.0F; x < 30.0F; x += 1.5F) {
+		for (float y = 2.0F; y < 38.0F; y += 1.5F) {
+			stand.emplace_back(x, y);
+		}
+	}
+	placeTrees(rig.executor, rig.processed, "Test_NavCapTree", stand);
+	rig.start();
+	ASSERT_FALSE(meshClear(rig.nav, stand[40])) << "the stand is in the mesh";
+	rig.nav.setNavExpansionCap(1, 0);
+	const glm::vec2 goal{38.0F, 20.5F};
+	const EntityID	walker = rig.walker({2.0F, 20.5F}, goal);
+	ASSERT_TRUE(rig.world.getComponent<NavPath>(walker)->valid) << "the gave-up search left no route";
+	EXPECT_TRUE(rig.pricedRoute(walker)) << "the structural route is marked as crossing flora";
+	const glm::vec2& at = rig.world.getComponent<Position>(walker)->value;
+	for (int i = 0; i < 2000 && glm::distance(at, goal) > 0.3F; ++i) {
+		rig.world.update(0.016F);
+	}
+	EXPECT_LT(glm::distance(at, goal), 0.3F) << "never arrived";
+}
+
+// --- A replan keeps its first confinement ------------------------------------------------------
+
+// A wall 20 m north of the start with its only gap 124 m east. Planned from the start the walk to a
+// goal 40 m north is confined to the start's square, which holds the gap. A replan from 100 m west
+// keeps that square, so it still finds the 350 m detour; a fresh plan from there, confined to its own
+// square (which ends 28 m east), finds none.
+TEST_F(NavigationSystemTest, ReplanKeepsTheFirstPlansConfinement) {
+	ConstructionWorld cw;
+	buildWall(cw, {-300000, 20000}, {120000, 20000});
+	buildWall(cw, {128500, 20000}, {300000, 20000});
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setConstructionWorld(&cw);
+	wireArea(sys);
+	settle(sys);
+	const glm::vec2 start{0.0F, 0.0F};
+	const glm::vec2 replanFrom{-100.0F, 0.0F};
+	const glm::vec2 goal{0.0F, 40.0F};
+	const EntityID	colonist = world.createEntity();
+	const auto		inStartSquare = [](const std::vector<glm::vec2>& route) {
+		 return std::all_of(route.begin(), route.end(), [](glm::vec2 p) { return std::abs(p.x) <= 128.0F && std::abs(p.y) <= 128.0F; });
+	};
+
+	const auto first = sys.requestPath(start, goal, kAgentRadius, {}, NavigationSystem::RouteKind::Autonomous, colonist);
+	ASSERT_TRUE(first.has_value());
+	EXPECT_TRUE(inStartSquare(*first));
+	EXPECT_FALSE(sys.requestPath(replanFrom, goal, kAgentRadius).has_value()) << "a fresh plan from there has the gap";
+	const auto replan = sys.requestPath(replanFrom, goal, kAgentRadius, {}, NavigationSystem::RouteKind::Autonomous, colonist);
+	ASSERT_TRUE(replan.has_value()) << "the replan lost the first plan's square";
+	EXPECT_TRUE(inStartSquare(*replan));
+	EXPECT_GT(lengthOf(*replan), 300.0F);
+}
+
+// --- Stale stays stale ---------------------------------------------------------------------------
+
+// A route a tree landed across is stale; an unrelated wall job, which restamps the routes it doesn't
+// cross, leaves it stale.
+TEST_F(NavigationSystemTest, StaleRouteStaysStaleThroughAnUnrelatedWallJob) {
+	registerTree("Test_NavStaleTree", 0.3F);
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	placeTrees(executor, processed, "Test_NavStaleTree", {{-20.0F, 40.0F}});
+
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys);
+	sys.setPlacementData(&executor, &processed);
+	sys.setConstructionWorld(&cw);
+	settle(sys);
+	const EntityID hit	  = routedMover(world, sys, {1.0F, 40.0F}, {31.0F, 40.0F});
+	const EntityID missed = routedMover(world, sys, {1.0F, 10.0F}, {31.0F, 10.0F});
+	placeTrees(executor, processed, "Test_NavStaleTree", {{10.0F, 40.0F}});
+	step(world, sys);
+	step(world, sys);
+	ASSERT_TRUE(stale(world, sys, hit));
+	ASSERT_FALSE(stale(world, sys, missed));
+
+	const std::uint64_t before = sys.generation();
+	buildWall(cw, {-40000, -40000}, {-36000, -40000}); // far from both routes
+	step(world, sys);
+	settle(sys);
+	ASSERT_NE(sys.generation(), before) << "the wall job is anchored";
+	EXPECT_TRUE(stale(world, sys, hit)) << "the restamp read the stale mark as current";
+	EXPECT_FALSE(stale(world, sys, missed));
+}

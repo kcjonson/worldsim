@@ -318,9 +318,8 @@ TEST(MemoryQueries, NearestSourceIsByWalkNotStraightLine) {
 }
 
 // The reach memo: a colonist among unreachable sources tests each one twice (to kWalkStretch times its
-// straight line, then in full), and never again under the anchor, even as
-// it moves (a new key with the anchor held). Learning a new source tests only that one, and a changed
-// anchor (a nav change here) tests them all again.
+// straight line, then in full), and never again under the key. Learning a new source tests only that
+// one, and a changed key (a nav change here) tests them all again.
 TEST(MemoryQueries, SourceReachMemoTestsEachSourceOncePerKey) {
 	ecs::Memory memory;
 	constexpr size_t kSources = 8;
@@ -347,14 +346,11 @@ TEST(MemoryQueries, SourceReachMemoTestsEachSourceOncePerKey) {
 	};
 
 	const ecs::SourceReachMemo::Key	   meshA{.startCell = 5, .reachGeneration = 1, .beliefVersion = 0};
-	const ecs::SourceReachMemo::Key	   movedA{.startCell = 6, .reachGeneration = 1, .beliefVersion = 0};
 	const ecs::SourceReachMemo::Anchor anchorA{.at = {0.0F, 0.0F}, .structural = 1, .beliefVersion = 0};
 	EXPECT_FALSE(query(meshA, anchorA).has_value());
 	EXPECT_EQ(probes, 2 * kSources) << "the first decision tests every source, stretched then in full";
 	EXPECT_FALSE(query(meshA, anchorA).has_value());
 	EXPECT_EQ(probes, 2 * kSources) << "the next decision tests none";
-	EXPECT_FALSE(query(movedA, anchorA).has_value());
-	EXPECT_EQ(probes, 2 * kSources) << "nor one a step on, the anchor held";
 
 	reachableSource = posFor(kSources + 1);
 	ASSERT_TRUE(memory.rememberWorldEntity(reachableSource, kDefId, kSourceMask));
@@ -369,4 +365,32 @@ TEST(MemoryQueries, SourceReachMemoTestsEachSourceOncePerKey) {
 	EXPECT_TRUE(query(meshB, anchorB).has_value());
 	EXPECT_GE(probes - before, kSources + 1) << "a nav change tests every source again, stretched, and the reachable one is taken";
 	EXPECT_LE(probes - before, 2 * kSources + 1) << "the ones nearer than its walk once more, bounded by it";
+}
+
+// A failed route is held under the anchor, not the key: a step on (a new key, the anchor held) it
+// still reads unreachable and isn't walked; a new anchor forgets it.
+TEST(MemoryQueries, SourceReachMemoHoldsFailedRoutesUnderTheAnchor) {
+	ecs::SourceReachMemo			   memo;
+	constexpr uint64_t				   kSource = 77;
+	const glm::vec2					   at{10.0F, 0.0F};
+	int								   probes = 0;
+	const auto						   probe  = [&](const glm::vec2& p, float) {
+		 ++probes;
+		 return std::optional<float>(glm::length(p));
+	};
+	const ecs::SourceReachMemo::Key	   here{.startCell = 5, .reachGeneration = 1};
+	const ecs::SourceReachMemo::Key	   stepOn{.startCell = 6, .reachGeneration = 1};
+	const ecs::SourceReachMemo::Anchor anchor{.at = {0.0F, 0.0F}, .structural = 1};
+	const ecs::SourceReachMemo::Anchor moved{.at = {200.0F, 0.0F}, .structural = 1};
+
+	memo.keep(here, anchor, 16);
+	ASSERT_TRUE(memo.reachable(kSource, at, probe));
+	memo.recordFailedRoute(kSource);
+	memo.keep(stepOn, anchor, 16);
+	EXPECT_TRUE(memo.knownUnreachable(kSource));
+	EXPECT_FALSE(memo.reachable(kSource, at, probe));
+	EXPECT_EQ(probes, 1) << "a failed route was walked again";
+	memo.keep(stepOn, moved, 16);
+	EXPECT_FALSE(memo.knownUnreachable(kSource));
+	EXPECT_TRUE(memo.reachable(kSource, at, probe));
 }

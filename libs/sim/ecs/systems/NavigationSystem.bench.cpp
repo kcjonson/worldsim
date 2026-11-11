@@ -782,9 +782,8 @@ namespace {
 	// Reach against route (nav-mesh-variable-resolution.md section 10): over random pairs in the
 	// colony's reach square, the structural walk's verdict (walkDistance) against the confined route's
 	// (requestPath), under the same belief. range(0): 0 no belief, 1 a belief knowing a doorless room's
-	// walls, with a quarter of the goals inside it. Counts both ways of disagreeing, and times the
-	// walk, the failing belief route into the room, and one decision's pick among 40 remembered
-	// sources with the reach memo cold and warm.
+	// walls, with a quarter of the goals inside it. Counts both ways of disagreeing, and times one
+	// walkDistance call (mean and worst) and the failing belief route into the room.
 	void BM_ReachAgainstRoute(benchmark::State& state) {
 		const bool						  room = state.range(0) != 0;
 		std::unordered_set<std::uint64_t> knownSegments;
@@ -826,6 +825,7 @@ namespace {
 			int	   reachOnly  = 0; // reach says yes, the route fails
 			int	   routeOnly  = 0; // reach says no, a route exists
 			double walkUs	  = 0.0;
+			double walkMaxUs  = 0.0;
 			double walkFailUs = 0.0;
 			int	   walkFails  = 0;
 			for (int i = 0; i < 400; ++i) {
@@ -840,6 +840,7 @@ namespace {
 				const bool				walk  = rig.nav.walkDistance(rig.nav.reachFrom(a, kAgentRadius, belief), b).has_value();
 				const double			us	  = std::chrono::duration<double, std::micro>(Clock::now() - start).count();
 				walkUs += us;
+				walkMaxUs = std::max(walkMaxUs, us);
 				if (!walk) {
 					walkFailUs += us;
 					++walkFails;
@@ -860,6 +861,7 @@ namespace {
 			state.counters["reachOnly"]		 = reachOnly;
 			state.counters["routeOnly"]		 = routeOnly;
 			state.counters["walkMeanUs"]	 = walkUs / std::max(pairs, 1);
+			state.counters["walkMaxUs"]		 = walkMaxUs;
 			state.counters["walkFailMeanUs"] = walkFailUs / std::max(walkFails, 1);
 
 			if (room) {
@@ -870,42 +872,109 @@ namespace {
 				state.counters["roomRouted"]   = routed ? 1.0 : 0.0;
 			}
 
-			// One decision's pick: 40 remembered sources within 100 m of the colony, nearest by walk.
+		}
+	}
+
+	// One need decision's pick of a source, as AIDecisionSystem makes it (findNearestReachableWithCapability
+	// through the colonist's SourceReachMemo onto walkDistance), among range(0) remembered sources
+	// scattered within 100 m of the colony, the river among them. Cold: a fresh memo each decision, as
+	// after the colonist moves 2 m or the mesh near it changes. Warm: the memo kept, as between
+	// decisions standing still. Times one whole pick and counts the walkDistance calls it makes.
+	void BM_NeedDecision(benchmark::State& state) {
+		const int sources = static_cast<int>(state.range(0));
+		for (auto _ : state) {
+			Rig rig(0);
+			colony(rig);
+			rig.settle();
+			TickStats warmup;
+			rig.ticks(warmup, 4);
+			rig.settle();
+			std::uint32_t seed = 23;
+			auto		  unit = [&seed] {
+				 seed = hashU32(seed + 0x9e3779b9U);
+				 return static_cast<float>(seed & 0xFFFFFFU) / static_cast<float>(0xFFFFFFU);
+			};
 			ecs::Memory memory;
-			for (int i = 0; i < 40; ++i) {
+			for (int i = 0; i < sources; ++i) {
 				memory.rememberWorldEntity(kColony + glm::vec2{(unit() - 0.5F) * 200.0F, (unit() - 0.5F) * 200.0F}, 7, 1);
 			}
 			const auto						   capability = static_cast<assets::CapabilityType>(0);
 			std::vector<ecs::SourceCandidate>  scratch;
-			const ecs::NavigationSystem::Reach reach = rig.nav.reachFrom(kColony, kAgentRadius, belief);
+			const ecs::NavigationSystem::Reach reach = rig.nav.reachFrom(kColony, kAgentRadius);
 			const ecs::SourceReachMemo::Key	   key{.startCell = reach.startCell, .reachGeneration = reach.startRegionGeneration};
 			const ecs::SourceReachMemo::Anchor anchor{.at = kColony, .structural = rig.nav.verdictStamp(kColony)};
+			int								   walks  = 0;
 			const auto						   decide = [&](ecs::SourceReachMemo& memo) {
 				  memo.keep(key, anchor, 2 * ecs::Memory::kMaxWorldEntities);
 				  return ecs::findNearestReachableWithCapability(
 					  memory, capability, kColony, [](uint64_t, const ecs::KnownWorldEntity&) { return true; },
 					  [&](uint64_t sourceKey, const glm::vec2& at, float maxWalk) {
-						  return memo.walk(sourceKey, at, maxWalk, [&](const glm::vec2& p, float bound) { return rig.nav.walkDistance(reach, p, bound); });
+						  return memo.walk(sourceKey, at, maxWalk, [&](const glm::vec2& p, float bound) {
+							  ++walks;
+							  return rig.nav.walkDistance(reach, p, bound);
+						  });
 					  },
-					  [&](uint64_t, const glm::vec2&) { return true; }, scratch
+					  [&](uint64_t sourceKey, const glm::vec2&) { return !memo.knownUnreachable(sourceKey); }, scratch
 				  );
 			};
 			constexpr int kDecisions = 50;
 			double		  coldUs	 = 0.0;
+			double		  coldMaxUs	 = 0.0;
 			for (int i = 0; i < kDecisions; ++i) {
 				ecs::SourceReachMemo	fresh;
 				const Clock::time_point start = Clock::now();
 				benchmark::DoNotOptimize(decide(fresh));
-				coldUs += std::chrono::duration<double, std::micro>(Clock::now() - start).count();
+				const double us = std::chrono::duration<double, std::micro>(Clock::now() - start).count();
+				coldUs += us;
+				coldMaxUs = std::max(coldMaxUs, us);
 			}
+			state.counters["walksPerColdDecision"] = static_cast<double>(walks) / kDecisions;
 			ecs::SourceReachMemo kept;
 			benchmark::DoNotOptimize(decide(kept));
+			walks							  = 0;
 			const Clock::time_point warmStart = Clock::now();
 			for (int i = 0; i < kDecisions; ++i) {
 				benchmark::DoNotOptimize(decide(kept));
 			}
-			state.counters["decisionColdUs"] = coldUs / kDecisions;
-			state.counters["decisionWarmUs"] = std::chrono::duration<double, std::micro>(Clock::now() - warmStart).count() / kDecisions;
+			state.counters["walksPerWarmDecision"] = static_cast<double>(walks) / kDecisions;
+			state.counters["sources"]			   = sources;
+			state.counters["decisionColdMeanUs"]   = coldUs / kDecisions;
+			state.counters["decisionColdMaxUs"]	   = coldMaxUs;
+			state.counters["decisionWarmMeanUs"] = std::chrono::duration<double, std::micro>(Clock::now() - warmStart).count() / kDecisions;
+		}
+	}
+
+	// The build tool's per-frame cursor checks in the forest: isAreaWalkable over a 4 m square
+	// footprint and isPolylineWalkable over a 20 m wall line, each sampled every 0.5 m, at 200 spots
+	// round the colony. Reports one frame's pair of checks.
+	void BM_CursorCheck(benchmark::State& state) {
+		for (auto _ : state) {
+			Rig rig(0);
+			colony(rig);
+			rig.settle();
+			std::uint32_t seed = 31;
+			auto		  unit = [&seed] {
+				 seed = hashU32(seed + 0x9e3779b9U);
+				 return static_cast<float>(seed & 0xFFFFFFU) / static_cast<float>(0xFFFFFFU);
+			};
+			constexpr int kFrames = 200;
+			double		  totalUs = 0.0;
+			double		  maxUs	  = 0.0;
+			int			  clear	  = 0;
+			for (int i = 0; i < kFrames; ++i) {
+				const glm::vec2				 at = kColony + glm::vec2{(unit() - 0.5F) * 60.0F, (unit() - 0.5F) * 30.0F};
+				const std::vector<glm::vec2> footprint{at, at + glm::vec2{4.0F, 0.0F}, at + glm::vec2{4.0F, 4.0F}, at + glm::vec2{0.0F, 4.0F}};
+				const std::vector<glm::vec2> wall{at, at + glm::vec2{20.0F, 0.0F}};
+				const Clock::time_point		 start = Clock::now();
+				clear += rig.nav.isAreaWalkable(footprint) ? 1 : 0;
+				clear += rig.nav.isPolylineWalkable(wall) ? 1 : 0;
+				const double us = std::chrono::duration<double, std::micro>(Clock::now() - start).count();
+				totalUs += us;
+				maxUs = std::max(maxUs, us);
+			}
+			state.counters["frameMeanUs"] = totalUs / kFrames;
+			state.counters["frameMaxUs"]  = maxUs;
+			state.counters["clear"]		  = clear;
 		}
 	}
 
@@ -1021,6 +1090,8 @@ BENCHMARK(BM_Crowd20)->Args({0, 0})->Args({0, 2})->Args({1, 0})->Args({1, 2})->I
 BENCHMARK(BM_ReplanPan)->Arg(0)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_RequestPath)->Args({0, 0, 1})->Args({1, 0, 1})->Args({0, 0, 0})->Args({1, 0, 0})->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ReachAgainstRoute)->Arg(0)->Arg(1)->Iterations(1)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_NeedDecision)->Arg(1)->Arg(5)->Arg(40)->Iterations(1)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_CursorCheck)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_TwoGroupsApart)->Arg(0)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_WallEditMeshedChunks)->Args({2, 0})->Args({5, 0})->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_RealChunksGround)->Arg(0)->Arg(2)->Iterations(1)->Unit(benchmark::kMillisecond);

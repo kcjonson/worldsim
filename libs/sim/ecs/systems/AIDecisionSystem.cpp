@@ -2197,23 +2197,25 @@ namespace ecs {
 
 		// Verdicts for sources in the colonist's reach square are remembered (SourceReachMemo), so one
 		// surrounded by unreachable sources doesn't test them all again every decision. A source outside
-		// the square is unreachable on its own and never remembered.
+		// the square is unreachable on its own and never remembered. While ground in the square is still
+		// to mesh (reach->settled false) a failed walk may only be waiting on it: nothing is remembered,
+		// that source is passed over for this decision only, and the stamp is 0, so a route that failed
+		// meanwhile is a fresh pick, never a recorded failure.
 		reachStamp = 0;
 		if (reach.has_value()) {
 			const SourceReachMemo::Anchor anchor = verdictAnchor(*m_navSystem, &sourceReach, position.value, memory);
-			reachStamp = anchor.stamp();
+			reachStamp = reach->settled ? anchor.stamp() : 0;
 			sourceReach.keep(reachKey(*reach, memory), anchor, 2 * Memory::kMaxWorldEntities);
 			// The route to the target this colonist was heading for (a need source, a toilet spot, a work
 			// site) just came back with no believed route, though its reach let it through (a squeeze
-			// between trees the structural mesh doesn't hold, a search that gave up). Remember it
-			// unreachable like any other verdict so the next decision picks something else instead of
-			// re-deciding the same target every frame, but only under the anchor it failed under, or
-			// the verdict would outlive what it was true for. Wherever the target is: one outside the
-			// square reads unreachable anyway, and an unrecorded failure would keep the task and its
-			// claims. A wander point is random, so there's nothing to remember.
+			// between trees the structural mesh doesn't hold). Remember the failure so the next decision
+			// picks something else instead of re-deciding the same target every frame, but only under
+			// the anchor it failed under, or it would outlive what it was true for. Wherever the target
+			// is: one outside the square reads unreachable anyway, and an unrecorded failure would keep
+			// the task and its claims. A wander point is random, so there's nothing to remember.
 			if (currentTask.type != TaskType::Wander && currentTask.navState == NavState::CantFindWayTo &&
 				currentTask.blockedReachStamp == reachStamp) {
-				sourceReach.recordUnreachable(routeTargetKey(currentTask.needSourceKey, currentTask.targetPosition));
+				sourceReach.recordFailedRoute(routeTargetKey(currentTask.needSourceKey, currentTask.targetPosition));
 			}
 		}
 		// A target whose route already failed under the current anchor; one outside the square is judged
@@ -2229,7 +2231,7 @@ namespace ecs {
 									 : std::optional<float>(glm::distance(position.value, target));
 		};
 		const auto walkToSource = [&](uint64_t sourceKey, const glm::vec2& sourcePosition, float maxWalk) {
-			return reach.has_value() && m_navSystem->sharesStartRegion(*reach, sourcePosition)
+			return reach.has_value() && reach->settled && m_navSystem->sharesStartRegion(*reach, sourcePosition)
 					   ? sourceReach.walk(sourceKey, sourcePosition, maxWalk, walkTo)
 					   : walkTo(sourcePosition, maxWalk);
 		};
@@ -2237,8 +2239,9 @@ namespace ecs {
 			if (!reach.has_value()) {
 				return true;
 			}
-			return m_navSystem->sharesStartRegion(*reach, sourcePosition) ? sourceReach.reachable(sourceKey, sourcePosition, walkTo)
-																		   : canReach(sourcePosition);
+			return reach->settled && m_navSystem->sharesStartRegion(*reach, sourcePosition)
+					   ? sourceReach.reachable(sourceKey, sourcePosition, walkTo)
+					   : canReach(sourcePosition);
 		};
 		// Drop a source already found unreachable before anything else looks at it.
 		const auto notKnownUnreachable = [&](uint64_t sourceKey, const KnownWorldEntity& known) {
@@ -2795,15 +2798,16 @@ namespace ecs {
 			const bool snapEligible = option.taskType == TaskType::Harvest ||
 									  option.taskType == TaskType::Build || option.taskType == TaskType::Deconstruct;
 			if (haveMesh && needsTarget && snapEligible) {
-				// nullopt means the target is off meshed ground: drop the option to NoSource so the
-				// colonist prefers a reachable nearby source and never commits to a target it would
-				// hold on forever. Harvest finds its tree by the memory key, not by where it stands.
+				// nullopt means the target is off meshed ground, or every spot round it is water or a
+				// wall: drop the option to NoSource so the colonist prefers a reachable nearby source and
+				// never commits to a target it would hold on forever. Harvest finds its tree by the
+				// memory key, not by where it stands.
 				const glm::vec2 centre = option.targetPosition.value();
 				const auto snapped = option.taskType == TaskType::Harvest
 										 ? m_navSystem->standPointBeside(centre, position.value, agentRadius)
 										 : m_navSystem->nearestPathablePoint(centre);
 				if (!snapped.has_value()) {
-					option.status = OptionStatus::NoSource; // off every active region: don't commit
+					option.status = OptionStatus::NoSource; // nowhere to stand: don't commit
 					continue;
 				}
 				option.targetPosition  = snapped;
@@ -3004,7 +3008,11 @@ namespace ecs {
 		// synchronously inside requestPath, so there's no lifetime hazard.
 		const geometry::nav::BeliefFilter belief{&memory.knownSegments, &memory.knownOpenings};
 
-		auto path = m_navSystem->requestPath(position.value, goal, radius, belief);
+		// A controlled colonist moves only on the player's orders.
+		const NavigationSystem::RouteKind kind = world->getComponent<PlayerControlled>(entity) != nullptr
+													 ? NavigationSystem::RouteKind::Ordered
+													 : NavigationSystem::RouteKind::Autonomous;
+		auto path = m_navSystem->requestPath(position.value, goal, radius, belief, kind, entity);
 		if (!path.has_value()) {
 			// A mesh exists but the colonist's belief admits no route: a believed wall cuts the
 			// corridor. STOP rather than beeline dishonestly through that wall -- clear
