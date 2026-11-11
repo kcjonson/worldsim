@@ -1,6 +1,7 @@
 # sim-cli
 
-Status: Spec (planning)
+Status: Spec. Phase 1 steps 1 to 5 (groundwork in the sim and test code) are built; steps 6 to 10,
+including `apps/sim-cli` itself, and phase 2 are not.
 Created: 2026-11-09
 Epic: WOR-603 (takes the non-Rust parts of WOR-471: headless mode, fixed timestep in the host, one
 seeded RNG path)
@@ -11,8 +12,9 @@ time or from a script, reads state back as JSON, and asks why a colonist chose w
 testing today means the windowed game (a GPU, the 1.3 GiB quickstart planet, one instance at a time,
 real time) poked over a dev HTTP API that answers "ok" to most refusals and cannot show a decision.
 
-The tool is built before the [task claims](./task-claims.md) implementation, so claims are developed
-and tested against it. Phase 1 is the smallest tool that supports that work.
+The plan was to build the tool before the [task claims](./task-claims.md) implementation and test
+claims against it. That order did not hold: claims are built (tested by the `libs/sim` unit and flow
+tests) and the tool is not. Phase 1 is the smallest tool that supports multi-colonist testing.
 
 **MVP Status:** See [MVP Scope](../design/mvp-scope.md). Developer tooling; no player-facing feature.
 
@@ -427,7 +429,7 @@ else to stdout.
 | `paused` | `wait` while speed is 0 (game time cannot advance) |
 | `timeout` | `wait until` reached its timeout |
 | `expect-failed`, `invariant-failed` | an assertion failed |
-| `not-available` | a view whose data does not exist yet (`claims` before the claims epic) |
+| `not-available` | a view whose data does not exist yet |
 
 ### Verbs
 
@@ -494,7 +496,7 @@ are lists over colonists and take `colonist=` to narrow to one. Item maps (`inve
 | `trace` | per colonist: `evaluatedAt`, `cause`, `options[]`, and `history[]`, newest first, `history=` entries (default 8) |
 | `memory` | per colonist: `count`, `entries[]` (`def`, `x`, `y`, `name`), `knows[]` defs, `recipes[]` unlocked; `def=` filters, `n=` caps entries |
 | `goals` | `GoalTaskRegistry` contents: `id`, `type`, `owner`, `parent`, `item`, `quantity`, `remaining`, `target{}`, `status` |
-| `claims` | the claim index of [task claims](./task-claims.md#the-claim-index): per target its claimants and quantities, per colonist its claims; `not-available` until that epic lands |
+| `claims` | the claim index of [task claims](./task-claims.md#the-claim-index): per target its claims and their top holder, and per colonist the claims on its task and suspended record (read from the tasks; the index keeps no per-colonist list or claimant list) |
 | `stations`, `storage` | today's shapes, plus `name` |
 | `entities` | named entities: `name`, `def`, `x`, `y`, `exists`, `store` (`static` or `ecs`), `resources` |
 | `events` | the event ring: `tick`, `minutes`, `kind`, `colonist`, `entity`, `detail`; `since=<tick>` |
@@ -506,7 +508,7 @@ are lists over colonists and take `colonist=` to narrow to one. Item maps (`inve
 
 `trace.options[]` fields: `task`, `need`, `status`, `code` (the reason code), `reason` (prose), `tier`,
 `score`, `breakdown{distance, skill, age, hysteresis, storageBias}`, `target{x, y, def, entity, name}`,
-`goal`, `station`, `item`, `quantity`, and `claimedBy` once claims exist.
+`goal`, `station`, `item`, `quantity`, and `claimedBy` (a Reserved option's holder).
 
 `target.name` resolves through the task's or option's id fields, not its position, because the
 position is snapped to an adjacent nav point for harvest and build targets. Each kind uses its own
@@ -581,12 +583,12 @@ latest evaluation. This epic adds:
   `kReEvalInterval`, AIDecisionSystem.h:200), `critical-need` (a need below its critical threshold
   while the colonist isn't already handling a critical need), and `wander` (a moving Wander
   re-evaluates every tick). Crossing a need's seek threshold is not a trigger; a non-critical need is
-  noticed at the next timer evaluation. Later triggers (`bumped` from claims, a player order) add
+  noticed at the next timer evaluation. Later triggers (`bumped`, once claims bumping is built; a player order) add
   causes as they add branches.
 
-The task claims epic adds `Reserved` and the bumped marker, as its
-[player-facing output](./task-claims.md#player-facing-output) section defines; the trace view shows
-them when they exist.
+The task claims work added the `Reserved` status with its holder ([player-facing
+output](./task-claims.md#player-facing-output)); the trace view shows it. The bumped marker comes with
+bumping, which is planned.
 
 A `DecisionHistory` component on each colonist keeps a fixed ring of the last 32 decision records. A
 record is written when the selected task changes or a task ends, never for an evaluation that keeps
@@ -684,8 +686,8 @@ ordinary evaluation, not a critical interrupt; the script doesn't assert which t
 
 ### Worked example: two colonists, one tree, harvest goal of 1
 
-This is the claims epic's acceptance case. Both colonists cut the same tree today, so it lands and is
-registered with the claims implementation, not in this epic; it is here to show the tool covers it.
+This is the claims epic's acceptance case. Claims are built, so the two colonists no longer cut the
+same tree; the scenario lands with the tool, to show it covers the case.
 
 ```
 # One tree, one unit of wood wanted: exactly one colonist cuts it.
@@ -752,7 +754,7 @@ the load, so it holds before and after that fix.
 | Inventory full | pack filled with stone, harvest goal | no pickup beyond capacity; the colonist hauls or drops instead of looping | 1 |
 
 The manual scenario docs stay as the game's regression pass. 01 and 02 gain `.sim` versions in phase
-1; 03 and 04 in phase 2. The claims epic adds its five multi-colonist scenarios
+1; 03 and 04 in phase 2. The claims work adds its multi-colonist scenarios
 ([task claims testing](./task-claims.md#testing)); `give where=station` and `spawn resources=` exist
 so they can stage "the last ingredient unit" and "the last berries".
 
@@ -935,7 +937,7 @@ When sim-cli exists (not before):
 
 ## Related documents
 
-- [Task Claims](./task-claims.md): the claims this tool is built to test, the claim index the `claims` view
+- [Task Claims](./task-claims.md): the claims this tool tests, the claim index the `claims` view
   shows, and the trace statuses it adds.
 - [Colonist Task Arbitration](./colonist-task-arbitration.md): tiers and scores the trace reports.
 - [Decision Trace](../design/game-systems/colonists/decision-trace.md): the player-facing trace.

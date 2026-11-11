@@ -130,10 +130,13 @@ Design basis: [Multi-colonist Crafting](../design/multi-colonist-crafting.md) §
 "Finishing is very high priority. Completing an in-progress craft outranks starting new work
 by a wide margin, so if the assigned colonist leaves to sleep or eat, they come back and finish
 it before taking on anything new. The station stays reserved for that colonist across the
-interruption." Tier-4 stickiness is the mechanism that delivers this. A tier-5 actionable need
-(eat, sleep) never preempts tier 4; only a need that goes critical (tier 2, below ~10%) does, and
-the colonist then returns to their active work order, which matches the spec's "comes back and
-finishes" intent.
+interruption." Tier-4 stickiness is the mechanism that delivers the priority half of this. A tier-5
+actionable need (eat, sleep) never preempts tier 4; only a need that goes critical (tier 2, below
+~10%) does, and the colonist then returns to their active work order if it is still the best option.
+The station reservation half is not built: a crafter holds its station only through the Slot claim
+its Craft task takes at selection, which goes with the task when it leaves for the need, so another
+colonist may take the station meanwhile. The craft binding that would keep it is planned in
+[Task Claims](./task-claims.md#craft-binding-planned).
 
 This resolves the apparent tension with `ai-behavior.md`'s "Actionable Needs above Gather Food"
 ordering: that document's tier-6 "Gather Food / work" slot is what this spec calls
@@ -304,8 +307,8 @@ tasks land — that mapping is deferred (see open questions).
 ### [Task Registry System](../design/game-systems/colonists/task-registry.md)
 
 Records the goal-driven `GlobalTaskRegistry` (tasks generated from goals, not discovery),
-discovery-gating (undiscovered entities generate no tasks), and the reservation mechanism
-(Phase 3, unwired).
+discovery-gating (undiscovered entities generate no tasks), and claims on colonist tasks in place of
+reservations.
 
 **Honor:** unchanged. `servesActiveWorkOrder` lives on GoalTasks in the registry. Discovery
 gating is unaffected. Reservations are specified separately as claims on colonist tasks ([Task Claims](./task-claims.md)).
@@ -537,7 +540,7 @@ is visible.
 - [Task Chains](../design/game-systems/colonists/task-chains.md) — multi-step task
   continuation; the chain-becomes-tier-lock decision here supersedes the chainBonus approach.
 - [Task Registry System](../design/game-systems/colonists/task-registry.md) — goal-driven
-  task generation and reservations; unchanged by this spec.
+  task generation; claims are in [Task Claims](./task-claims.md); unchanged by this spec.
 - [Crafting & Material Provisioning — Technical Architecture](./crafting-provisioning-architecture.md)
   — the servesActiveWorkOrder classifier and the predecessor floor mechanism.
 - [Task Generation Architecture](./task-generation-architecture.md) — the two priority

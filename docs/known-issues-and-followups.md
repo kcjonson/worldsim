@@ -100,13 +100,13 @@ Navmesh build perf:
 - [x] **Face classification step 4b** (adj. low) — `NavMesh.cpp:762-797` — O(faces×blockedRings) point-in-polygon with no spatial pruning; cache each `BlockedRing`'s AABB. Done (WOR-493): one sample per face, each ring rejected by its bounding box first.
 
 AI hot-path scans:
-- [ ] **Craft-fetch scans full 10k memory map** (adj. medium) — `AIDecisionSystem.cpp:374-380` — use the existing `getEntitiesWithCapability(Carryable)` index instead of walking `knownWorldEntities`; same pattern in `evaluateHarvestOptions` (~568).
+- [x] **Craft-fetch scans full 10k memory map** (done on integration/colonist-survival: work sources come from Memory's per-def key lists, so a goal visits only the entries of the defs that give its item, harvests included) (adj. medium) — `AIDecisionSystem.cpp:374-380` — use the existing `getEntitiesWithCapability(Carryable)` index instead of walking `knownWorldEntities`; same pattern in `evaluateHarvestOptions` (~568).
 - [ ] **Stranded colonist re-runs full trace every frame** (adj. medium) — `AIDecisionSystem.cpp:1064-1066` — `CantFindWayTo` bypasses the 0.5s throttle; keep the fast first frame, then fall back to `kReEvalInterval`.
 
 Meter-accounting cluster (all verifier-downgraded; narrow windows):
 - [x] **Haul→Harvest swap conflates two `deliveredAmount` meters** (moot: WOR-46 step 6 deleted goal counters) (adj. medium) — `CraftingGoalSystem.cpp:173-174` — on swap reset `deliveredAmount=0`, `targetAmount=old->availableCapacity()`.
 - [ ] **Deposit metered against station's current head-job recipe** (adj. low) — `HaulActions.cpp:34-49` — meter against the Haul goal's own remaining need; self-heals via re-resolution today.
-- [ ] **Haul advances to deposit when pickup collected nothing** (adj. low) — `ActionSystem.cpp:223-252` — add an `added==0` guard (verifier note: the "source vanished" path actually mints phantom items, not a wasted trip).
+- [x] **Haul advances to deposit when pickup collected nothing** (done on integration/colonist-survival: a pickup or withdraw that lifts nothing ends the haul at the source) (adj. low) — `ActionSystem.cpp:223-252` — add an `added==0` guard (verifier note: the "source vanished" path actually mints phantom items, not a wasted trip).
 
 Concurrency:
 - [ ] **Pass-2 recenter blocks main thread on in-flight future** (adj. medium) — `NavigationSystem.cpp:401` — move-assign over a live `std::async` future blocks in its destructor; guard with `if (!region.future.valid()) launchBuild(region)` like Pass 1.
@@ -121,7 +121,7 @@ Test coverage:
 - [ ] **`[NavBuild]` logs at INFO** — `NavigationSystem.cpp:288,296,332,444,453,479` — build-timing/lifecycle telemetry that spams on pan; lower to `LOG_DEBUG` (lower only, never raise existing DEBUG).
 - [ ] **Long single functions wanting internal helpers** — `CraftingGoalSystem::update` (~223 lines), `HaulActions.cpp` `applyDepositEffect`/`startHaulAction` (~178/~168), `NavMesh.cpp` width/portal-capacity cluster — no file split needed.
 - [ ] **Copy-pasted bounce-leftover block** — `HaulActions.cpp:109-113,151-155,179-183` (4th at 219-223 differs: `removed` not `leftover`) — extract a helper.
-- [ ] **Near-duplicate chain-leg handoff blocks** — `ActionSystem.cpp:231-242` vs `301-312` — extract `handOffToNextLeg`.
+- [x] **Near-duplicate chain-leg handoff blocks** (done on integration/colonist-survival: every way into a deposit leg goes through `ActionSystem::headToDeposit`) — `ActionSystem.cpp:231-242` vs `301-312` — extract `handOffToNextLeg`.
 - [ ] **Harvest item-add bypasses `giveItemToColonist` + dup two-hand dispatch** — `HarvestActions.cpp:110-115,196-234` — refactor nit only; the cargo-to-backpack divergence is intentional (not the high-severity bug it was filed as). (Both two-hand branches now call `stowHeldToolsForArmful` before `addArmful`, so the held-axe-blocks-armful case is handled even though the add still goes through the dedicated path.)
 - [ ] **Misleading `terrainTraversable` name** — `NavMesh.h:151` — pure triangle classifier, trips grep-based boundary audits; rename or annotate.
 - [ ] **`RealYConfluence_Bisect_*` investigation scaffolding** — `NavMesh.test.cpp:1049-1168` — six "run on the buggy baseline" tests asserting only `floor > 0` on subsets of the main test; collapse or remove.
@@ -134,7 +134,7 @@ Test coverage:
 - [x] **`LockFreeRingBuffer::peekAt` torn-read race** — `LockFreeRingBuffer.h:55-64` — dev-only debug SSE path, worst case a garbled log line; add seqlock re-validation or document the caller contract. (Same race surfaced under correctness/memory-safety/concurrency; worker-thread-logging variant is temporary `[NavBuild]` instrumentation already slated for stripping.) Moot: the file is gone with engine's DebugServer; salal's dev server keeps its log ring under a lock.
 - [ ] **`onExit` resets ecsWorld while NavOverlay/DevCommandHandler hold raw nav pointers** — `GameScene.cpp:931-944` — unreachable after `onExit` (implicit dtor order is safe); reset them alongside `m_placementSystem` for consistency.
 - [ ] **Off-mesh recovery can teleport-loop on colony origin** — `AIDecisionSystem.cpp:832-847` — guard the origin snap with `isOnMesh(*m_colonyOrigin)`; only bites when the whole local mesh is degenerate.
-- [ ] **Off-mesh recovery clears in-flight craft-haul without dropping/re-crediting** — `AIDecisionSystem.cpp:826-847` — self-healing today; document the intentional clear-and-keep vs chain-interruption clear-and-drop asymmetry.
+- [x] **Off-mesh recovery clears in-flight craft-haul without dropping/re-crediting** (moot on integration/colonist-survival: there are no delivery counters to re-credit; the recovery retires the task's claims and the carried goods are offered back by carry-in from possession) — `AIDecisionSystem.cpp:826-847` — still worth documenting the intentional clear-and-keep vs chain-interruption clear-and-drop asymmetry.
 
 ## Before flipping #240 to ready
 - [ ] Strip the `[NavBuild]` / `[NavDiag]` debug instrumentation (kept per the debug protocol until the fixes are user-confirmed).

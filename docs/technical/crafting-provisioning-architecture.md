@@ -67,6 +67,14 @@ The amount a colonist takes depends on where the material comes from:
 
 So: harvest = take all you can carry; pile/storage pickup = take only what's needed.
 
+A colonist gathering for one root batches: after a cut lands it decides again at once, and takes a
+known loose pile of the input, then a further cut, before the carry-in, until his trip is full, he
+carries what the root still needs, or no other ready, reachable, unreserved source is known. A top-up
+cut is taken only while the room left fits the smaller of the source's largest yield and what the
+root still wants ([Task Claims](./task-claims.md#batching)). A two-hand armful that no root wants and
+no claim holds is put down where the colonist stands when he next wanders, so it can't block every
+pickup with a full carry.
+
 A carry gate guards both harvest and craft-fetch: when a pickup of the item would lift nothing now
 (`pickupUnitsThatFit` is 0: no carry weight, no stack or slot headroom, or hands busy with another
 armful), the goal shows a `NoRoom` row instead of an option. Without it an over-weight or full
@@ -93,7 +101,9 @@ one child per way of getting it, re-resolved on every poll:
 - **known stock** to a **Haul**,
 - **known harvestable source** to a **Harvest**,
 - **both** to both, so a bush that is regrowing or reserved never hides a known pile of the input
-  (fell overflow, goods dropped by an interruption), and the colonist picks between them by trip,
+  (fell overflow, goods dropped by an interruption). A known pile always comes first: while one is
+  offered, a fresh cut for the same root and input ranks below every other option in its tier,
+  whatever the two trips,
 - **neither** to a `NoSource` "waiting (none found)" need that re-resolves to Cut/Haul once a
   colonist discovers a source (`GoalStatus::NoSource`).
 
@@ -116,10 +126,10 @@ Single-colonist crafting was made reliable by fixing the blockers that let a que
   material in a *different* station's store as "carried", so the input resolved to a fetch Haul that
   could never source it, stranding a second craft. That scan is gone: goods on their way are the
   in-flight claims at the root, held only by tasks that carry or will cut them.
-- **Provisioning that serves an active work order floors above idle Wander.** A craft-provisioning
+- **Provisioning that serves an active work order outranks idle Wander.** A craft-provisioning
   Haul/Harvest priority collapsed below Wander once its source was far (distance penalty), so a
-  colonist abandoned a half-provisioned craft and wandered. A `servesActiveWorkOrder` flag plus a
-  priority floor keeps provisioning above Wander.
+  colonist abandoned a half-provisioned craft and wandered. A `servesActiveWorkOrder` flag now
+  classifies that provisioning at tier 4, above Wander's tier 7 whatever the distance.
 - **Every child re-resolves, each way on its own.** A fetch Haul born `Available` from known loose
   stock that was then consumed/forgotten produced no AI option and stranded the craft, and a Harvest
   child once never turned back into a fetch, so an input whose bushes were all regrowing idled beside
@@ -134,15 +144,17 @@ Single-colonist crafting was made reliable by fixing the blockers that let a que
 ## 6. Open follow-ups
 
 - **Prefer-nearest-source provisioning** (efficiency, not correctness): with natural ground-scatter
-  everywhere, a craft prefers fetching far scattered stock over cutting an adjacent source.
-  Completion is guaranteed by the priority floor plus re-resolve; the round-trips are just long.
+  everywhere, a craft prefers fetching far scattered stock over cutting an adjacent source, now by
+  rule (a known pile demotes the cut). Completion is guaranteed by tier 4 plus re-resolve; the
+  round-trips are just long. Whether piles should win at any distance is for the owner to confirm.
 - **Consolidate all item-add sites onto `giveItemToColonist`** (harvest-yield and pickup still add
   directly).
 - **Multi-colonist crafting** is a deferred spec ([multi-colonist-crafting.md](../design/multi-colonist-crafting.md)).
   The station-store model with metered deposits is the substrate it builds on; provisioning across
   colonists is coordinated by claims ([Task Claims](./task-claims.md)): several colonists may
   provision one order, each fetch and cut counted at the root, and a station selected for Craft is
-  held by its crafter's slot claim.
+  held by its crafter's slot claim only while that Craft task lives; a crafter who leaves to eat or
+  sleep before the craft starts loses it (the craft binding that would keep it is planned).
 
 ## 7. Related Documents
 

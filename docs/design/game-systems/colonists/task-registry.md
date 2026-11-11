@@ -71,7 +71,7 @@ INFINITE WORLD
 │  Tasks THIS colonist can do                                 │
 │  - Filtered by: This colonist's Memory (must know target)   │
 │  - Filtered by: Work preferences (enabled categories)       │
-│  - Scored with: distance, skill bonus, chain bonus          │
+│  - Scored with: tier, distance, skill bonus, task age       │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼ (aggregated for UI)
@@ -79,7 +79,7 @@ INFINITE WORLD
 │          LAYER 3: UI Task List                               │
 │  What tasks exist colony-wide (for player visibility)       │
 │  - Shows all tasks known to any colonist                    │
-│  - Per-task: which colonists can do it (know about it)      │
+│  - Per-task: who is working it, and its status             │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -111,28 +111,17 @@ when someone discovers a new one.
 
 ### Key Difference from Layer 1
 
-Layer 1 shows tasks **any colonist** knows about.
-Layer 2 filters to tasks **this specific colonist** knows about.
+Layer 1 holds goals the colony as a whole has.
+Layer 2 is what **this specific colonist** can act on.
 
-```python
-def get_tasks_for_colonist(colonist, registry):
-    # Only tasks THIS colonist knows about
-    tasks = [t for t in registry.all_tasks if colonist.id in t.known_by]
-
-    # Further filtering...
-    tasks = [t for t in tasks if colonist.work_prefs.is_enabled(t.type)]
-    tasks = [t for t in tasks if colonist.skills.can_do(t.required_skill)]
-    # Claims: subtract what other colonists' tasks have claimed (see Task Claims)
-    tasks = [t for t in tasks if available_after_claims(t, colonist) > 0]
-
-    return tasks
-```
-
-### Why Both Filters?
-
-**Layer 1 filter (knownBy):** Performance — don't score thousands of tasks the colonist can't do anyway.
-
-**Layer 2 filter (this colonist's Memory):** Correctness — final verification that colonist actually knows the target.
+There is no `knownBy` set on goals and no filter by it. Each colonist's evaluators walk every goal of
+each type in the registry (a few hundred at most) and, for each, visit only the entries of its own
+Memory for the defs that give the goal's item (Memory's per-def lists). A goal for which it remembers
+no source yields no option. What other colonists' tasks have claimed is taken out of what is left
+(see [Task Claims](../../../technical/task-claims.md)), so a source others take whole shows as at
+most one Reserved row instead of an option. A cut is offered only when the colonist holds the tool it
+needs and one unit of the yield fits; skills add to the score but filter nothing. Work-type
+preferences ([Work Priorities](./work-priorities.md)) do not filter options today.
 
 ---
 
@@ -140,29 +129,30 @@ def get_tasks_for_colonist(colonist, registry):
 
 ### What the Player Sees
 
-The UI shows tasks from Layer 1 (all known tasks), with annotations:
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│ Colony Tasks                                     [Filter ▼] │
-├─────────────────────────────────────────────────────────────┤
-│ 🫐 Harvest Berry Bush       (10, 15)   📍 5m    ⏳ Available │
-│    Known by: Bob, Alice                                     │
-│                                                             │
-│ 📦 Haul Stick → Storage     (8, 12)    📍 3m    🔒 Bob      │
-│    Known by: Bob                                            │
-│                                                             │
-│ 🫐 Harvest Berry Bush       (45, 32)   📍 40m   ⚠️ Far      │
-│    Known by: Alice only                                     │
-└─────────────────────────────────────────────────────────────┘
-```
+The "Tasks (N)" panel lists Layer 1 goals that have something to do
+(`apps/world-sim/scenes/game/ui/adapters/GlobalTaskAdapter.cpp`): Harvest, Haul, Build, Craft, and
+PlacePackaged goals, each with a description ("Cut for Wood", "Haul Wood", "Haul Materials", "Build
+structure", "Craft", "Place Item", with "(for crafting)" on a craft's children), the destination's
+position, and its distance from the camera center. A storage goal with nothing to do (a box with no
+room for anything it accepts, a stocking cut whose minimum is met) is left out while the goal stays.
+The colonist view's task tab shows the same rows measured from the colonist; it is not filtered to
+what that colonist knows.
 
 ### Status Indicators
 
-- **Available**: Unclaimed sources remain, at least one colonist can do it
-- **In Progress**: Colonists hold claims toward the goal (shown with their names)
-- **Far**: All knowing colonists are far away
-- **Blocked**: Known but nobody can do it (skill locked, work disabled)
+- **Working <name>**: a colonist's current task serves the row. One name, even when several colonists
+  serve it. A cut or a haul names the goal it was picked through; a carry-in names its root; a Build,
+  Craft, or placement row names whoever works its entity.
+- **Building <name> (N%)**, **Ready to build (N%)**, **Needs materials**: a Build umbrella, from its
+  blueprint's phase and progress; "Needs materials" names whoever is delivering, if anyone.
+- **Blocked**: a Craft waiting for its materials, with "landed/required materials".
+- **Waiting (no source found)**: the goal is `NoSource`.
+- **Available (far)**: nobody works it and it is more than 50 m away.
+- **Unassigned**: nobody works it.
+
+Planned, not built: a "Known by" line, per-item "N available (M in progress)" counts, a per-colonist
+filter, and distinct blocked reasons such as "all known sources claimed" ([Task
+Claims](../../../technical/task-claims.md#player-facing-output)).
 
 ---
 
@@ -276,28 +266,22 @@ in [Task Claims](../../../technical/task-claims.md).
 
 ### UI Display
 
-The task list shows GOALS with availability status:
-
-```
-┌────────────────────────────────────────────┐
-│ Fill Storage Crate              (5, 10)    │
-│ ✓ Rocks: 48 available (2 in progress)      │
-│ ⚠ Wood: blocked (none known)               │
-└────────────────────────────────────────────┘
-```
+The task list shows GOALS, one row each, with the status above. Per-item availability counts ("48
+available (2 in progress)") are planned, not built.
 
 ### Task Lifecycle
 
 | Event | Task State |
 |-------|------------|
-| Storage created with capacity | Task created |
-| Storage filled completely | Task removed |
-| Colonist accepts work | Its task records claims, available count decreases, in-progress count increases |
+| Storage given rules | Umbrella goal created |
+| Storage filled completely | Umbrella goal stays (goods on their way keep counting toward it); the panel hides it until it wants something again |
+| Storage rules removed, or storage gone | Umbrella goal and its children removed |
+| Colonist accepts work | Its task records claims; other colonists see less available |
 | Colonist picks up | Source claim drops, inbound and in-flight stay |
 | Colonist deposits item | Task ends with its claims, storage stock rises |
-| Colonist abandons, is bumped, or is taken over | Task cleared, claims gone, available count recovers |
-| All known items claimed/hauled | Task shows "all known sources claimed" until more discovered |
-| New item discovered | Available count increases on the next goal poll |
+| Colonist abandons work or is taken over | Task cleared, claims gone, the work is available again |
+| All known sources claimed | No option for other colonists; their trace shows a Reserved row for the nearest one |
+| New item discovered | The discovering colonist's next decision offers it |
 
 ---
 
@@ -311,7 +295,9 @@ rules, in brief (full design in [Task Claims](../../../technical/task-claims.md)
 2. Only a colonist that knows a target can claim it; claims on anything a colonist knows about
    are visible to every colonist.
 3. Claims end with the task. There are no release calls and no timeout.
-4. Critical needs and player orders bump a claim holder; ordinary work never bumps ordinary work.
+4. Nobody takes over another colonist's claim (bumping is planned, not built). The one exception
+   is food: a hungry colonist may take food another colonist's work, idle gathering, or less urgent
+   hunger holds, and prefers food nobody holds.
 5. Claims are checked against the world when the task runs. Finding the target gone or taken is
    normal re-planning.
 
@@ -357,13 +343,8 @@ Most colonies will have:
 
 ### Spatial Indexing
 
-Still useful for per-colonist queries:
-
-```cpp
-// "Find tasks within 50m of Bob that Bob knows about"
-auto nearbyTasks = registry.getTasksInRadius(bobPosition, 50.0f);
-auto bobTasks = filterByKnownBy(nearbyTasks, bobEntityId);
-```
+The registry has no spatial query and no `knownBy` filter. Goals are few, so each colonist walks
+them all; what scales with exploration is Memory, which each goal reads through its per-def lists.
 
 ---
 
@@ -427,7 +408,7 @@ When colonist discovers wolf → "Tame Wolf" task appears in registry (if coloni
 ## Related Documents
 
 - [Task Generation Architecture](../../../technical/task-generation-architecture.md): goal sources, polling, UI vs AI priority
-- [Task Claims](../../../technical/task-claims.md): claims on colonist tasks, the derived claim index, bumping
+- [Task Claims](../../../technical/task-claims.md): claims on colonist tasks, the derived claim index (bumping planned)
 - [Priority Config](./priority-config.md) — Priority formula and tunable weights
 - [Task Chains](./task-chains.md) — Multi-step tasks
 - [Work Priorities](./work-priorities.md) — Per-colonist work preferences
