@@ -76,6 +76,10 @@ TEST(DetailLevelsTest, SchemaReadsAscendingDensitiesOnAProceduralDef) {
 	EXPECT_TRUE(issues.empty());
 	EXPECT_TRUE(parse("<AssetDef><assetType>procedural</assetType></AssetDef>", issues).empty());
 	EXPECT_TRUE(issues.empty()) << "no levels is one mesh, not an issue";
+	// The loader reads a def with no <assetType>, or any spelling but simple, as procedural.
+	EXPECT_EQ(parse("<AssetDef><detailLevels>4, 24</detailLevels></AssetDef>", issues), (std::vector<float>{4.0F, 24.0F}));
+	EXPECT_EQ(parse("<AssetDef><assetType>Procedural</assetType><detailLevels>4, 24</detailLevels></AssetDef>", issues), (std::vector<float>{4.0F, 24.0F}));
+	EXPECT_TRUE(issues.empty());
 
 	for (const char* bad : {
 			 "<AssetDef><assetType>procedural</assetType><detailLevels>4, 2</detailLevels></AssetDef>",
@@ -85,6 +89,7 @@ TEST(DetailLevelsTest, SchemaReadsAscendingDensitiesOnAProceduralDef) {
 			 "<AssetDef><assetType>procedural</assetType><detailLevels></detailLevels></AssetDef>",
 			 "<AssetDef><assetType>procedural</assetType><detailLevels>1,2,3,4,5,6,7,8,9</detailLevels></AssetDef>",
 			 "<AssetDef><assetType>simple</assetType><detailLevels>2, 4</detailLevels></AssetDef>",
+			 "<AssetDef><assetType>Simple</assetType><detailLevels>2, 4</detailLevels></AssetDef>",
 		 }) {
 		issues.clear();
 		EXPECT_TRUE(parse(bad, issues).empty()) << bad;

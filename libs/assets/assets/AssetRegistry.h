@@ -223,9 +223,11 @@ namespace assets {
 		/// generator, so it is for the render smoke, not for load.
 		void checkCollisionVariantIndependence(ValidationReport& report);
 
-		/// Builds every template of each def with age classes and <detailLevels> at every level, in
-		/// parallel, and adds an error to `report` for a level whose generator fails or whose collision
-		/// rect differs from the reference level's. For the render smoke, not for load.
+		/// Builds every template (each age class and variant) of each def with <detailLevels> at every
+		/// level, in parallel, and adds an error to `report` for a def with no level at
+		/// kReferencePixelsPerMeter, and for a level whose generator fails (an oversize mesh
+		/// included) or whose collision rect differs from the reference level's. For the render
+		/// smoke, not for load.
 		void checkDetailLevels(ValidationReport& report);
 
 		/// Writes `params` over a def's generator params, as if its XML said so, and drops every built

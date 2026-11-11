@@ -673,7 +673,7 @@ namespace {
 	}
 
 	// The same, without <ageClasses>: one implicit class of two variants.
-	void writeImplicitTree(TempAssets& t, const std::string& defName, const std::string& rectLua) {
+	void writeImplicitTree(TempAssets& t, const std::string& defName, const std::string& rectLua, const std::string& extraXml = "") {
 		const fs::path dir = t.root / defName;
 		fs::create_directories(dir);
 		std::ofstream(dir / "gen.lua") << "local p = Path()\n"
@@ -685,7 +685,8 @@ namespace {
 												+ defName
 												+ "</defName><assetType>procedural</assetType>"
 												  "<generator><scriptPath>gen.lua</scriptPath></generator>"
-												  "<variantCount>2</variantCount></AssetDef></AssetDefinitions>";
+												  "<variantCount>2</variantCount>"
+												+ extraXml + "</AssetDef></AssetDefinitions>";
 	}
 
 } // namespace
@@ -785,5 +786,29 @@ TEST(CollisionShapeTest, LevelDependentRectFailsSmokeCheck) {
 	for (const auto& issue : report.issues) {
 		EXPECT_EQ(issue.defName, "Drifting");
 		EXPECT_NE(issue.message.find("at 4 px/m"), std::string::npos) << issue.message;
+	}
+}
+
+// The render smoke fails a def with no level at the reference density, and covers defs without
+// <ageClasses>: every variant of the implicit class is built at every level.
+TEST(CollisionShapeTest, ReferenceDensityAndImplicitClassFailSmokeCheck) {
+	auto&	   reg = AssetRegistry::Get();
+	TempAssets t;
+	writeImplicitTree(t, "Drifting", "asset:setCollisionRect(0.1 + detailPxPerMeter / 1000, 0.2, 0, 0)", "<detailLevels>4, 24</detailLevels>");
+	writeImplicitTree(t, "NoReference", "asset:setCollisionRect(0.1, 0.2, 0, 0)", "<detailLevels>4, 40</detailLevels>");
+	writeImplicitTree(t, "Steady", "asset:setCollisionRect(0.1, 0.2, 0, 0)", "<detailLevels>4, 24</detailLevels>");
+
+	reg.clearDefinitions();
+	reg.loadDefinitionsFromFolder(t.root.string());
+	ValidationReport report;
+	reg.checkDetailLevels(report);
+
+	ASSERT_EQ(report.errorCount(), 3);
+	// NoReference is caught before anything is built; then Drifting's two variants, each off at level 4.
+	EXPECT_EQ(report.issues[0].defName, "NoReference");
+	EXPECT_NE(report.issues[0].message.find("reference density"), std::string::npos) << report.issues[0].message;
+	for (size_t i = 1; i < 3; ++i) {
+		EXPECT_EQ(report.issues[i].defName, "Drifting");
+		EXPECT_NE(report.issues[i].message.find("variant " + std::to_string(i - 1) + " at 4 px/m"), std::string::npos) << report.issues[i].message;
 	}
 }

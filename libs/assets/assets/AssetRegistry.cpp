@@ -31,6 +31,7 @@
 #include <limits>
 #include <span>
 #include <sstream>
+#include <unordered_set>
 
 namespace assets {
 
@@ -194,17 +195,6 @@ namespace assets {
 	}
 
 	namespace {
-
-		AssetType parseAssetType(const char* str) {
-			if (str == nullptr) {
-				return AssetType::Procedural;
-			}
-			std::string s(str);
-			if (s == "simple" || s == "Simple") {
-				return AssetType::Simple;
-			}
-			return AssetType::Procedural;
-		}
 
 		AssetComplexity parseComplexity(const char* str) {
 			if (str == nullptr) {
@@ -1703,8 +1693,13 @@ namespace assets {
 			bool			 mature = false;
 			BuiltTemplate	 built;
 		};
+		// A name parsed twice (two files defining one def) is prewarmed once.
+		std::vector<std::string> names = defNames;
+		std::sort(names.begin(), names.end());
+		names.erase(std::unique(names.begin(), names.end()), names.end());
+
 		std::vector<Job> jobs;
-		for (const std::string& name : defNames) {
+		for (const std::string& name : names) {
 			const auto found = definitions.find(name);
 			if (found == definitions.end()) {
 				continue;
@@ -1813,18 +1808,35 @@ namespace assets {
 		};
 		std::vector<std::string> names;
 		for (const auto& [name, def] : definitions) {
-			if (def.assetType == AssetType::Procedural && !def.ageClasses.empty() && !def.detailLevels.empty()) {
+			if (!def.detailLevels.empty()) {
 				names.push_back(name);
 			}
 		}
 		std::sort(names.begin(), names.end());
 
-		std::vector<Job> jobs;
+		std::vector<Job>			 jobs;
+		std::unordered_set<uint32_t> queued;
 		for (const std::string& name : names) {
 			const AssetDefinition& def = definitions.at(name);
-			for (size_t a = 0; a < def.ageClasses.size(); ++a) {
-				for (uint16_t v = 0; v < def.ageClasses[a].variants; ++v) {
+			if (std::find(def.detailLevels.begin(), def.detailLevels.end(), kReferencePixelsPerMeter) == def.detailLevels.end()) {
+				report.add(
+					Severity::Error,
+					name,
+					"detailLevels",
+					"no level is cut at the reference density, " + std::to_string(static_cast<int>(kReferencePixelsPerMeter)) +
+						" px/m, which the template's collision, reach, and silhouette are read at",
+					""
+				);
+			}
+			// A def without <ageClasses> is one implicit class 0 of variantCount variants.
+			const size_t classCount = def.ageClasses.empty() ? 1 : def.ageClasses.size();
+			for (size_t a = 0; a < classCount; ++a) {
+				const uint32_t variants = def.ageClasses.empty() ? def.variantCount : def.ageClasses[a].variants;
+				for (uint16_t v = 0; v < variants; ++v) {
 					const uint32_t id = templateId(name, {.ageClass = static_cast<uint8_t>(a), .variant = v});
+					if (!queued.insert(id).second) {
+						continue; // traits the def maps onto a template already queued
+					}
 					for (size_t level = 0; id != 0 && level < def.detailLevels.size(); ++level) {
 						jobs.push_back({.templateId = id, .level = static_cast<uint8_t>(level)});
 					}

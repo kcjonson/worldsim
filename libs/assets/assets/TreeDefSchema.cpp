@@ -169,8 +169,7 @@ namespace assets {
 			return {};
 		}
 		const std::string text = node.text().as_string();
-		const std::string assetType = defNode.child("assetType").text().as_string();
-		if (assetType != "procedural") {
+		if (parseAssetType(defNode.child_value("assetType")) != AssetType::Procedural) {
 			issues.push_back({"detailLevels", "only a procedural def's generator can cut a mesh for a density", text});
 			return {};
 		}
