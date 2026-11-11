@@ -335,6 +335,12 @@ deposits keep the rules from
 [Crafting & Material Provisioning](./crafting-provisioning-architecture.md): the colonist deposits
 exactly what is needed and keeps the rest, which holds no claim.
 
+A two-hand armful kept this way, or left when its root is gone, fills the colonist's carry, so every
+haul and cut reads no room. A colonist about to wander while holding a two-hand armful under no claim
+(no task or suspended record carries it) that no root it knows wants (no carry-in of it is offered)
+puts it down where it stands through the drop path, which merges it into a pile at the spot; the pile
+is an ordinary source with no claims, hauled once a root wants it. One-hand surplus stays in the pack.
+
 ### Chain_PlaceItem
 
 Accept records Use(packaged entity). Pickup drops it (the item is now possessed). The placement

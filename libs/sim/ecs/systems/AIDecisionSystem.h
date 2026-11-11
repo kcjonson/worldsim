@@ -250,6 +250,10 @@ private:
 	/// @param position Colonist position (for dropping items)
 	/// @param newTaskType Type of new task being switched to
 	/// @param newNeedType Need type for FulfillNeed tasks
+	/// About to wander holding a two-hand armful under no claim that no root it knows wants: put it down
+	/// as a loose pile (the drop path, which merges it into a pile at the spot).
+	void putDownUnwantedArmful(const Task& task, Inventory& inventory, const Position& position, const DecisionTrace& trace);
+
 	/// A colonist put goods away in `box` inside this update: what the caches hold for it is read again.
 	void boxChanged(EntityID box);
 

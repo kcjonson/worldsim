@@ -1740,6 +1740,9 @@ namespace ecs {
 					task.priorityTier = newTier; // Store the (tier, score) key for future comparisons
 					task.priority = newScore;
 					acceptClaims(entity, task, memory, inventory, handedCargo);
+					if (task.type == TaskType::Wander) {
+						putDownUnwantedArmful(task, inventory, position, *trace);
+					}
 
 					LOG_INFO(
 						Engine,
@@ -2933,6 +2936,28 @@ namespace ecs {
 				position.value.x,
 				position.value.y
 			);
+		}
+	}
+
+	void AIDecisionSystem::putDownUnwantedArmful(const Task& task, Inventory& inventory, const Position& position, const DecisionTrace& trace) {
+		if (!inventory.leftHand.has_value() || !ecs::itemIsTwoHand(m_registry, inventory.leftHand->defName)) {
+			return;
+		}
+		// An armful fills the carry, so every haul and cut would read no room: one under no claim that no
+		// root he knows wants is put down where he stands, a pile any colonist can haul once a root wants it.
+		const std::string name = inventory.leftHand->defName;
+		const uint32_t	  item = m_registry.getDefNameId(name);
+		const bool	   recorded = task.suspended.has_value() && task.suspended->itemDefNameId == item;
+		const bool	   wanted = std::any_of(trace.options.begin(), trace.options.end(), [item](const EvaluatedOption& option) {
+			  return option.taskType == TaskType::Haul && option.haulFromInventory && option.haulItemDefNameId == item;
+		  });
+		if (recorded || wanted) {
+			return;
+		}
+		const auto dropped = inventory.putDown(name);
+		if (dropped.has_value() && dropped->quantity > 0 && onDropResource) {
+			onDropResource(dropped->defName, position.value.x, position.value.y, dropped->quantity);
+			LOG_DEBUG(Engine, "[AI] Put down %u x %s nobody wants", dropped->quantity, dropped->defName.c_str());
 		}
 	}
 

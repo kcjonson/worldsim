@@ -736,6 +736,55 @@ namespace ecs::test {
 		EXPECT_EQ(toBox->haulQuantity, 2U) << "the box takes ten, and holds eight now";
 	}
 
+	// A full armful of wood nobody wants fills the colonist's carry, so every haul reads no room. It puts
+	// the armful down before it wanders, takes the stone haul at its next decision, and the wood pile is
+	// hauled once a box wants wood.
+	TEST_F(ChainClaimsTest, AnArmfulNobodyWantsIsPutDown) {
+		struct Drop {
+			glm::vec2 at;
+			uint32_t  quantity;
+		};
+		std::vector<Drop> drops;
+		ai->setDropResourceCallback([&](const std::string&, float x, float y, uint32_t quantity) { drops.push_back({{x, y}, quantity}); });
+		const glm::vec2 boxPos{0.0F, 10.0F};
+		const EntityID	box = makeBox(boxPos, StoragePriority::Medium);
+		storageGoal(box, boxPos);
+		const glm::vec2 stonePos{5.0F, 0.0F};
+		const EntityID	stone = world->createEntity();
+		world->addComponent<Position>(stone, Position{stonePos});
+		makeLoosePile(*world, stone, stoneId, stonePos, 4);
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		remember(colonist, stonePos, "Stone", assets::CapabilityType::Carryable);
+		auto& inventory = *world->getComponent<Inventory>(colonist);
+		ASSERT_EQ(ecs::addArmful(inventory, assets::AssetRegistry::Get(), "Wood", 14), 14U);
+
+		decide(colonist);
+		EXPECT_EQ(getTask(colonist)->type, TaskType::Wander);
+		ASSERT_EQ(drops.size(), 1U);
+		EXPECT_EQ(drops.front().quantity, 14U);
+		EXPECT_EQ(ecs::availableQuantity(inventory, "Wood"), 0U);
+
+		getTask(colonist)->clear();
+		decide(colonist);
+		EXPECT_EQ(getTask(colonist)->type, TaskType::Haul);
+		EXPECT_EQ(getTask(colonist)->haulItemDefName, "Stone") << "free hands take other work";
+
+		const EntityID wood = world->createEntity();
+		world->addComponent<Position>(wood, Position{drops.front().at});
+		makeLoosePile(*world, wood, woodId, drops.front().at, drops.front().quantity);
+		const EntityID other = createColonist({0.0F, 1.0F});
+		remember(other, drops.front().at, "Wood", assets::CapabilityType::Carryable);
+		world->getComponent<StorageConfiguration>(box)->addRule(
+			StorageRule{.defName = "Wood", .category = assets::ItemCategory::RawMaterial, .priority = StoragePriority::Medium}
+		);
+		GoalTaskRegistry::Get().updateGoal(GoalTaskRegistry::Get().getGoalByDestination(box)->id, [&](GoalTask& goal) {
+			goal.acceptedDefNameIds.push_back(woodId);
+		});
+		decide(other);
+		EXPECT_EQ(getTask(other)->type, TaskType::Haul);
+		EXPECT_EQ(getTask(other)->haulItemDefName, "Wood") << "the pile is hauled once a root wants it";
+	}
+
 	TEST_F(ChainClaimsTest, PlayerControlAndDestructionLeaveNoClaims) {
 		const glm::vec2 sitePos{0.0F, 6.0F};
 		const Site		site = constructionSite(sitePos, "Stone", 20);
