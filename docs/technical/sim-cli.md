@@ -122,8 +122,8 @@ Code that runs between steps or inside system callbacks and needs a deferred cha
 session: `queueRemoval(entity)` puts an entity on the removal drain, and `factory()` gives the
 `EntityFactory`, whose `dropResourcePiles` is the one ground-pile path. The phase-1 structure
 callbacks that stay in GameScene use exactly these: the extension merge (GameScene.cpp:434), opening
-teardown (:496), and blueprint teardown (:518) call `queueRemoval`, and the salvage drop (:471) calls
-`factory().dropResourcePiles`.
+teardown (:496), and blueprint teardown (:518) call `queueRemoval`, and the salvage drop (:471) queues a
+pending spawn, since it fires inside ActionSystem's view loop.
 
 ### pumpStreaming() and step(dt)
 
@@ -144,10 +144,12 @@ camera and render parts removed:
    chunk update and chunk processing (:849); the rect is plain data that nav reads only in its own
    `update`, so pushing it before `pumpStreaming()` changes nothing.
 2. `pumpStreaming()`.
-3. `world.update(dt)` (:859). The render system, if the host registered one, runs here at priority
-   900 after every sim system.
-4. Drain entity removals, emitting an entity-removed notice for each.
-5. Drain pending spawns through `EntityFactory`.
+3. `world.update(dt)` (:859). Inside it, a drain system at priority 800 (after ActionSystem, the last
+   system that queues) drains entity removals, emitting an entity-removed notice for each, then pending
+   spawns through `EntityFactory`. It runs inside the tick because NavigationSystem joins its patch job
+   in its own `update` and launches the next in `endTick`: after `world.update` returns, a drop's
+   ground probe would wait for that job. The render system, if the host registered one, runs at
+   priority 900 after it.
 
 The game keeps passing its real frame dt. sim-cli passes a constant `dt = 1 / hz`.
 
@@ -277,7 +279,7 @@ moved: `select`, `tunable`, `landing`, `tunables`, `gpuhold`, and in phase 1 the
 | Today | Becomes | Deleted |
 |---|---|---|
 | `GameScene::initializeECS` registration and sim callback wiring | `SimSession` construction | the GameScene code, and its toast lambdas (events replace them) |
-| `processNewChunks`, `cleanupUnloadedChunks`, both drains in `GameScene::update` | `SimSession::pumpStreaming` and `step` | the GameScene functions, `m_pendingSpawns`, `m_pendingEntityRemoval`, `PendingSpawn` |
+| `processNewChunks`, `cleanupUnloadedChunks`, `GameScene::drainDeferredEdits` and its `DeferredEditsSystem` | `SimSession::pumpStreaming` and `step` | the GameScene functions, `m_pendingSpawns`, `m_pendingEntityRemoval`, `PendingSpawn` |
 | Loading scene's chunk polling, placement launch, and bake hand-off | `SimSession::pumpStreaming` | the loading scene's `asyncProcessor` and its loop |
 | `prepareLandingClearing`, `clearLandingArea` | `SimSession::land(rawSpawn, crew)`, returning spawn points, colonist ids, and changed chunks | the GameScene functions |
 | `spawnColonist`, `PlacementSystem::spawnEntity`, `dropResourcePiles` | `EntityFactory` | all three |
