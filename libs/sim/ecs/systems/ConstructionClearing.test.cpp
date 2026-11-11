@@ -76,8 +76,7 @@ namespace ecs::test {
 
 				// A berry bush: one-hand yield, regrows rather than falling, and slower to strip than
 				// the tree is to fell, so a tree clear finishes while a bush clear is still underway.
-				// Edible as the other suites register it: assets::getEdibleItemNames() caches the edible
-				// set on first call for the whole process, and the AI here may be the first caller.
+				// Edible like the real berry, so a colonist holding some counts as carrying food.
 				assets::AssetDefinition berry;
 				berry.defName = "Berry";
 				berry.label = "Berry";

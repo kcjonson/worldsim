@@ -45,7 +45,7 @@ namespace ecs {
 		switch (task.needToFulfill) {
 			case NeedType::Hunger: {
 				// Priority 1: Check inventory for any edible food (data-driven)
-				for (const auto& edibleItemName : assets::getEdibleItemNames()) {
+				for (const auto& edibleItemName : registry.edibleItemNames()) {
 					if (inventory.hasItem(edibleItemName)) {
 						// Get nutrition from item properties
 						auto  edibleInfo = assets::getEdibleItemInfo(edibleItemName);

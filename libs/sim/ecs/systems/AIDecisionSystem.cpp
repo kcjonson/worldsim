@@ -155,8 +155,8 @@ namespace ecs {
 		}
 
 		/// Check if inventory contains any edible food item
-		[[nodiscard]] bool hasEdibleFood(const Inventory& inventory) {
-			for (const auto& edibleItemName : assets::getEdibleItemNames()) {
+		[[nodiscard]] bool hasEdibleFood(const assets::AssetRegistry& registry, const Inventory& inventory) {
+			for (const auto& edibleItemName : registry.edibleItemNames()) {
 				if (inventory.hasItem(edibleItemName)) {
 					return true;
 				}
@@ -1581,7 +1581,7 @@ namespace ecs {
 		// With an empty pack, the one food source both the Hunger option and the gather-food option
 		// target: the nearest reachable remembered harvestable whose yield is edible. The gather
 		// option is on offer whenever the pack is empty, so this is probed even when Hunger is met.
-		const bool						packHasFood = hasEdibleFood(inventory);
+		const bool						packHasFood = hasEdibleFood(m_registry, inventory);
 		std::optional<KnownWorldEntity> foodSource;
 		if (!packHasFood) {
 			foodSource = findNeedSource(

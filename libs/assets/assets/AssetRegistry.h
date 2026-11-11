@@ -273,6 +273,10 @@ namespace assets {
 		/// Check if a defName ID has a specific capability
 		[[nodiscard]] bool hasCapability(uint32_t id, CapabilityType capability) const;
 
+		/// Every item that is edible in an inventory, sorted by name so a scan over it picks the same
+		/// item on every platform. Kept with the definitions: cleared and rebuilt with them.
+		[[nodiscard]] const std::vector<std::string>& edibleItemNames() const { return m_edibleItemNames; }
+
 		/// Mass of one unit of an item, in kilograms. Returns 1.0 for unknown/non-item defs
 		/// so carry-weight math always has a sane positive divisor.
 		[[nodiscard]] float getItemMassKg(const std::string& defName) const;
@@ -376,6 +380,9 @@ namespace assets {
 
 		// Pre-computed capability masks by ID (for O(1) capability checks). 16-bit: 9 capability types.
 		std::vector<uint16_t> m_capabilityMasks;
+
+		// Sorted names of the inventory-edible definitions; see edibleItemNames().
+		std::vector<std::string> m_edibleItemNames;
 
 		// Path to shared scripts folder (for @shared/ prefix resolution)
 		std::filesystem::path m_sharedScriptsPath;
