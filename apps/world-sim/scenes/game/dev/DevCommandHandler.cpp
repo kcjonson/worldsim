@@ -32,6 +32,7 @@
 #include <ecs/components/StructureHealth.h>
 #include <ecs/components/Transform.h>
 #include <ecs/components/WorkQueue.h>
+#include <ecs/systems/ActionSystem.h>
 #include <ecs/systems/ConstructionSystem.h>
 #include <ecs/systems/NavigationSystem.h>
 #include <ecs/systems/TimeSystem.h>
@@ -520,6 +521,9 @@ namespace world_sim {
 		const auto* colonistSel = std::get_if<world_sim::ColonistSelection>(&m_ctx.selection->current());
 		if (colonistSel != nullptr && colonistSel->entityId == id) {
 			m_ctx.selection->clearSelection();
+		}
+		if (auto* actions = m_ctx.world->tryGetSystem<ecs::ActionSystem>()) {
+			actions->loosePiles().remove(id);
 		}
 		m_ctx.world->destroyEntity(id);
 		LOG_INFO(Game, "[DevAPI] kill: removed #%llu", static_cast<unsigned long long>(id));

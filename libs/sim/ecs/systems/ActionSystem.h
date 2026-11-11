@@ -9,6 +9,7 @@
 #include "../DropResourceCallback.h"
 #include "../EntityID.h"
 #include "../ISystem.h"
+#include "../LoosePileIndex.h"
 
 #include <glm/vec2.hpp>
 
@@ -79,9 +80,13 @@ public:
 	/// Set callback for removing a specific world entity by id.
 	/// Used when the system already holds the exact entity to remove (a drained loose pile),
 	/// so the app removes that entity directly instead of re-scanning by position - two
-	/// same-material piles within the match epsilon would otherwise alias each other.
+	/// same-material piles in one cell would otherwise alias each other.
 	using RemoveEntityByIdCallback = std::function<void(EntityID entity)>;
 	void setRemoveEntityByIdCallback(RemoveEntityByIdCallback callback) { m_onRemoveEntityById = std::move(callback); }
+
+	/// The loose ground piles a pickup draws from. Whoever spawns a pile adds it here and whoever
+	/// destroys one removes it.
+	[[nodiscard]] LoosePileIndex& loosePiles() { return m_loosePiles; }
 
 	/// Result of withdrawing from a harvestable's resource pool.
 	struct ResourceDraw {
@@ -294,6 +299,9 @@ private:
 
 	/// Callback for removing a specific world entity by id (drained loose pile)
 	RemoveEntityByIdCallback m_onRemoveEntityById = nullptr;
+
+	/// Every loose ground pile by world key
+	LoosePileIndex m_loosePiles;
 
 	/// Callback for decrementing entity resource count
 	DecrementResourceCallback m_onDecrementResource = nullptr;

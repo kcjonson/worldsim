@@ -4,7 +4,6 @@
 #include "../../InventoryMass.h"
 #include "../../World.h"
 #include "../../components/Action.h"
-#include "../../components/Appearance.h"
 #include "../../components/Inventory.h"
 #include "../../components/Memory.h"
 #include "../../components/ResourceStack.h"
@@ -29,27 +28,16 @@ namespace ecs {
 			ResourceStack* stack = nullptr;
 		};
 
-		/// Find a loose ground pile of `defName` at `pos`: a world entity whose Appearance
-		/// defName matches and which carries a ResourceStack. Matches by position within the
-		/// same epsilon GameScene's remove-callback uses (~0.25 m). Returns the matched entity
-		/// id and its live ResourceStack, so a drained pile is removed by exact id rather than
-		/// re-scanned by position (two same-material piles inside the epsilon would alias).
-		[[nodiscard]] LoosePile findLoosePile(World* world, const std::string& defName, glm::vec2 pos) {
-			if (world == nullptr) {
+		/// Find the loose ground pile of `defNameId` filed at `pos`'s world key (the key Memory
+		/// remembers it under). Returns the entity id and its live ResourceStack, so a drained pile
+		/// is removed by exact id.
+		[[nodiscard]] LoosePile findLoosePile(World* world, const LoosePileIndex& piles, uint32_t defNameId, glm::vec2 pos) {
+			const EntityID entity = piles.find(defNameId, pos);
+			if (world == nullptr || !world->isAlive(entity)) {
 				return {};
 			}
-			constexpr float kMatchEps = 0.25F;
-			for (auto [entity, entPos, appearance, stack] : world->view<Position, Appearance, ResourceStack>()) {
-				if (appearance.defName != defName) {
-					continue;
-				}
-				const float dx = entPos.value.x - pos.x;
-				const float dy = entPos.value.y - pos.y;
-				if (dx * dx + dy * dy <= kMatchEps * kMatchEps) {
-					return {entity, &stack};
-				}
-			}
-			return {};
+			ResourceStack* stack = world->getComponent<ResourceStack>(entity);
+			return stack != nullptr ? LoosePile{entity, stack} : LoosePile{};
 		}
 
 		/// Does `sourceDefName` harvest from a finite resource pool (trees) rather than being
@@ -181,7 +169,7 @@ namespace ecs {
 		// loose-pile path. A tree-fell yields "Wood" from "Flora_Tree..."; its source differs, so it
 		// must NOT be diverted here -- otherwise a pile sitting on the fell spot would hijack the chop.
 		const LoosePile pile = (collEff.sourceDefName == collEff.itemDefName)
-								   ? findLoosePile(world, collEff.itemDefName, collEff.sourcePosition)
+								   ? findLoosePile(world, m_loosePiles, harvestRegistry.getDefNameId(collEff.itemDefName), collEff.sourcePosition)
 								   : LoosePile{};
 		if (pile.stack) {
 			// A pickup from a ground pile takes only what was REQUESTED (collEff.quantity, the
@@ -204,7 +192,7 @@ namespace ecs {
 
 			if (pile.stack->quantity == 0) {
 				// Remove the exact entity we drained, not the first pile matching this position:
-				// two same-material piles within the match epsilon would otherwise alias.
+				// two same-material piles in one cell would otherwise alias.
 				if (m_onRemoveEntityById) {
 					m_onRemoveEntityById(pile.entity);
 				}

@@ -1014,6 +1014,7 @@ TEST_F(ActionSystemGoalTest, CraftFetchFromPileTakesOnlyRemainingNeedLeavesRest)
 	world->addComponent<Position>(pile, Position{pilePos});
 	world->addComponent<Appearance>(pile, Appearance{"SmallStone", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
 	world->addComponent<ResourceStack>(pile, ResourceStack{7});
+	world->getSystem<ActionSystem>().loosePiles().add(pile, assets::AssetRegistry::Get().getDefNameId("SmallStone"), pilePos);
 
 	auto colonist = createColonist(pilePos);
 	auto* memory = world->getComponent<Memory>(colonist);
@@ -2012,10 +2013,11 @@ class LoosePileHaulTest : public ::testing::Test {
 
 		auto& action = world->registerSystem<ActionSystem>(kTestRngSeed);
 		// Mirror GameScene: a drained pile is removed by its exact entity id (not a position
-		// scan), so two same-material piles within the match epsilon can never alias.
-		action.setRemoveEntityByIdCallback([this](EntityID entity) {
+		// scan), so two same-material piles can never alias.
+		action.setRemoveEntityByIdCallback([this, &action](EntityID entity) {
 			++removeCalls;
 			lastRemovedEntity = entity;
+			action.loosePiles().remove(entity);
 			world->destroyEntity(entity);
 		});
 	}
@@ -2045,6 +2047,7 @@ class LoosePileHaulTest : public ::testing::Test {
 		world->addComponent<Position>(entity, Position{pos});
 		world->addComponent<Appearance>(entity, Appearance{"Wood", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
 		world->addComponent<ResourceStack>(entity, ResourceStack{count});
+		world->getSystem<ActionSystem>().loosePiles().add(entity, assets::AssetRegistry::Get().getDefNameId("Wood"), pos);
 		return entity;
 	}
 
@@ -2104,14 +2107,14 @@ TEST_F(LoosePileHaulTest, ArmfulDrainsPileAcrossTwoPickupsThenRemoves) {
 	EXPECT_FALSE(world->isAlive(pile)) << "Pile entity destroyed once drained to zero";
 }
 
-// Two same-material piles sit on top of each other (within the 0.25 m match epsilon). Draining
+// Two same-material piles sit almost on top of each other, 0.1 m apart. Draining
 // ONE to zero must destroy that exact entity and leave the other intact -- a position-keyed
 // removal could orphan the emptied pile or delete the still-loaded one. Both piles here hold a
 // small count (5) so whichever findLoosePile matches first drains fully in one pickup, and the
 // removal must target that exact entity id; the other pile's count stays untouched.
 TEST_F(LoosePileHaulTest, TwoPilesAtSamePositionRemovesOnlyTheDrainedEntity) {
 	const glm::vec2 pilePos{1.0F, 1.0F};
-	// Both within epsilon of each other and the pickup position. 5 < the 14-unit armful cap, so a
+	// Both close to each other and the pickup position. 5 < the 14-unit armful cap, so a
 	// single pickup empties whichever pile is matched first (no need to know view order up front).
 	EntityID pileA = spawnPile(5, pilePos);
 	EntityID pileB = spawnPile(5, {pilePos.x + 0.1F, pilePos.y});
