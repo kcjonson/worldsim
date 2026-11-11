@@ -4149,6 +4149,38 @@ namespace ecs::test {
 		EXPECT_EQ(getTask(colonist)->targetPosition, kOutside);
 	}
 
+	// A work target behind the known walls fails its route like a need source and is remembered the same
+	// way, keyed by its stand point, so the colonist moves on instead of re-deciding it every frame.
+	TEST_F(AIDecisionWalledWaterTest, FailedWorkRouteIsRememberedToo) {
+		const auto colonist = makeThirstyColonistWithWalledWater();
+		satisfyAllNeeds(*getNeeds(colonist));
+		auto& registry = assets::AssetRegistry::Get();
+		addKnownEntity(colonist, kInRoom, registerBerryBush(registry), assets::CapabilityType::Harvestable);
+		GoalTask cut;
+		cut.type = TaskType::Harvest;
+		cut.destinationEntity = world->createEntity();
+		cut.destinationPosition = kStart;
+		cut.yieldDefNameId = registry.getDefNameId("Berry");
+		cut.targetAmount = 5;
+		cut.status = GoalStatus::Available;
+		GoalTaskRegistry::Get().createGoal(std::move(cut));
+
+		int	  choseCut = 0;
+		float lastDecision = getTrace(colonist)->lastEvaluationTime;
+		for (int i = 0; i < 20; ++i) {
+			world->update(kTick);
+			const auto* trace = getTrace(colonist);
+			if (trace->lastEvaluationTime == lastDecision) {
+				continue;
+			}
+			lastDecision = trace->lastEvaluationTime;
+			const auto* selected = trace->getSelected();
+			choseCut += selected != nullptr && selected->taskType == TaskType::Harvest ? 1 : 0;
+		}
+		EXPECT_EQ(choseCut, 1) << "the walled-in cut is tried once, not every decision";
+		EXPECT_NE(getTask(colonist)->type, TaskType::Harvest);
+	}
+
 	// A mesh swap landing between the failed route and the next decision: the failure was found on the
 	// old mesh, so it isn't recorded, and the source is simply tried again on the new one.
 	TEST_F(AIDecisionWalledWaterTest, FailureBeforeAMeshSwapIsNotRecorded) {

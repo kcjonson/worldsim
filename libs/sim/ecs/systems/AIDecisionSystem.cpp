@@ -181,6 +181,13 @@ namespace ecs {
 					.startTri = reach.from.root < 0 ? reach.from.startTri : -1};
 		}
 
+		/// The key a failed route is remembered under in SourceReachMemo: the Memory key of a remembered
+		/// source, else the target point itself (a toilet spot, a work site's stand point), quantized
+		/// like Memory keys so the same point picked again maps to the same verdict.
+		[[nodiscard]] std::uint64_t routeTargetKey(std::uint64_t sourceKey, const glm::vec2& target) {
+			return sourceKey != 0 ? sourceKey : hashWorldEntity(target, 0);
+		}
+
 		/// Skill names for work types
 		constexpr const char* kSkillFarming = "Farming";
 		constexpr const char* kSkillCrafting = "Crafting";
@@ -1543,17 +1550,22 @@ namespace ecs {
 			const SourceReachMemo::Key key = reachKey(*reach, memory);
 			reachStamp = key.stamp();
 			sourceReach.keep(key, 2 * Memory::kMaxWorldEntities);
-			// The route to the need source this colonist was heading for just came back with no believed
-			// route, though the forest let it through (a known wall's room, a passage the funnel can't
-			// take). Remember it unreachable like any other verdict so the walk moves on to the next
-			// source, but only under the key it failed under, or the verdict would outlive what it was
-			// true for.
-			if (currentTask.type == TaskType::FulfillNeed && currentTask.navState == NavState::CantFindWayTo &&
-				currentTask.needSourceKey != 0 && currentTask.blockedReachStamp == reachStamp &&
-				m_navSystem->sharesStartRegion(*reach, currentTask.targetPosition)) {
-				sourceReach.recordUnreachable(currentTask.needSourceKey);
+			// The route to the target this colonist was heading for (a need source, a toilet spot, a work
+			// site) just came back with no believed route, though the forest let it through (a known
+			// wall's room, a passage the funnel can't take). Remember it unreachable like any other
+			// verdict so the next decision picks something else instead of re-deciding the same target
+			// every frame, but only under the key it failed under, or the verdict would outlive what it
+			// was true for. A wander point is random, so there's nothing to remember.
+			if (currentTask.type != TaskType::Wander && currentTask.navState == NavState::CantFindWayTo &&
+				currentTask.blockedReachStamp == reachStamp && m_navSystem->sharesStartRegion(*reach, currentTask.targetPosition)) {
+				sourceReach.recordUnreachable(routeTargetKey(currentTask.needSourceKey, currentTask.targetPosition));
 			}
 		}
+		// A target whose route already failed under the current key; one in another region is judged live.
+		const auto routeFailed = [&](std::uint64_t sourceKey, const glm::vec2& target) {
+			return reach.has_value() && sourceReach.knownUnreachable(routeTargetKey(sourceKey, target)) &&
+				   m_navSystem->sharesStartRegion(*reach, target);
+		};
 		const auto canReachSource = [&](uint64_t sourceKey, const glm::vec2& sourcePosition) {
 			if (!reach.has_value()) {
 				return true;
@@ -1672,7 +1684,7 @@ namespace ecs {
 					option.status = OptionStatus::Satisfied;
 					option.targetPosition = position.value;
 					option.distanceToTarget = 0.0F;
-				} else if (alreadyPursuingThisNeed) {
+				} else if (alreadyPursuingThisNeed && !routeFailed(0, currentTask.targetPosition)) {
 					// Preserve existing target to avoid "chasing" a moving target
 					option.targetPosition = currentTask.targetPosition;
 					option.distanceToTarget = glm::distance(position.value, currentTask.targetPosition);
@@ -1680,8 +1692,9 @@ namespace ecs {
 				} else if ((needType == NeedType::Bladder || needType == NeedType::Digestion) && m_chunkManager != nullptr &&
 						   m_navSystem != nullptr) {
 					// For toilet needs, try smart location finder
+					// A spot whose route already failed is no spot: go where the colonist stands instead.
 					auto location = findToiletLocation(position.value, *m_chunkManager, *m_navSystem, *world, memory, m_registry);
-					if (location.has_value()) {
+					if (location.has_value() && !routeFailed(0, *location)) {
 						option.targetPosition = *location;
 						option.distanceToTarget = glm::distance(position.value, *location);
 						option.status = OptionStatus::Available;
@@ -1911,6 +1924,10 @@ namespace ecs {
 			}
 			if (needsTarget && !option.targetReachable && !canReach(option.targetPosition.value())) {
 				option.status = OptionStatus::NoSource; // unreachable: skip it rather than freeze on it
+				continue;
+			}
+			if (needsTarget && routeFailed(option.sourceKey, option.targetPosition.value())) {
+				option.status = OptionStatus::NoSource; // its route already failed under this key
 				continue;
 			}
 			option.status = OptionStatus::Selected;
