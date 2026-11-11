@@ -598,7 +598,7 @@ On later selections:
 - another need task keeps the record;
 - the carry-in-from-possession option for the record's root, item, and destination, or a further
   cut for that root and item, adopts it: the new task takes the record's instance id, sequence, and
-  claims;
+  claims (a build-site clear is no cut toward a need and never adopts one, even of the same site);
 - any other selection (other work, Wander, a player move) discards it, so a stale record never
   holds a goal's in-flight.
 

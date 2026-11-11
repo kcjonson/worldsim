@@ -259,8 +259,11 @@ namespace ecs {
 		}
 		const auto&		goals = GoalTaskRegistry::Get();
 		const uint64_t	goalId = task.type == TaskType::Haul ? task.haulGoalId : task.harvestGoalId;
+		const GoalTask* goal = goals.getGoal(goalId);
 		const GoalTask* root = goals.getGoal(goals.rootOf(goalId));
-		const bool		carries = (task.type == TaskType::Haul && task.haulFromInventory) || task.type == TaskType::Harvest;
+		// A build-site clear brings nothing toward a need, so it never carries a gathering's goods on.
+		const bool carries = (task.type == TaskType::Haul && task.haulFromInventory) ||
+							 (task.type == TaskType::Harvest && goal != nullptr && !goal->clearFootprint.has_value());
 		if (!carries || root == nullptr || root->id != task.suspended->rootGoalId || chainItem(registry, task) != task.suspended->itemDefNameId) {
 			return false;
 		}
