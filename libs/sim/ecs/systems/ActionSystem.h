@@ -12,6 +12,7 @@
 
 #include <glm/vec2.hpp>
 
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <random>
@@ -50,10 +51,28 @@ public:
 	/// stowed-tool drop).
 	void setDropResourceCallback(DropResourceCallback callback) { m_onDropResource = std::move(callback); }
 
-	/// Set callback for removing harvested entities from the world
-	/// Called when a destructive harvest completes (entity should be removed)
-	using RemoveEntityCallback = std::function<void(const std::string& defName, float x, float y)>;
-	void setRemoveEntityCallback(RemoveEntityCallback callback) { m_onRemoveEntity = std::move(callback); }
+	/// What a harvest or pickup found its source to be at the moment it completed.
+	enum class SourceState : uint8_t {
+		Gone,		// already removed (another colonist's cut or clear, a fell): yields nothing
+		Ready,		// standing and harvestable: yields
+		OnCooldown, // standing but regrowing from an earlier cut: yields nothing
+	};
+
+	/// How a completing harvest or pickup leaves its source.
+	enum class SourceTake : uint8_t {
+		Remove, // felled, picked up, or cleared
+		Regrow, // cut: starts its regrowth cooldown, unless it is already on one
+		Keep,	// left as it is
+	};
+
+	/// Set callback that takes a harvested or picked-up source from the world as the action completes,
+	/// returning the state it was in just before. The world is the truth at completion: a source
+	/// already gone or regrowing pays nothing, whatever the task expected when it set out, so two
+	/// colonists finishing on one plant never both get its yield. `regrowthSeconds` is read for Regrow.
+	/// Unwired (unit contexts with no world behind them), every source reads Ready.
+	using TakeSourceCallback =
+		std::function<SourceState(const std::string& defName, float x, float y, SourceTake take, float regrowthSeconds)>;
+	void setTakeSourceCallback(TakeSourceCallback callback) { m_onTakeSource = std::move(callback); }
 
 	/// Set callback for removing a specific world entity by id.
 	/// Used when the system already holds the exact entity to remove (a drained loose pile),
@@ -61,11 +80,6 @@ public:
 	/// same-material piles within the match epsilon would otherwise alias each other.
 	using RemoveEntityByIdCallback = std::function<void(EntityID entity)>;
 	void setRemoveEntityByIdCallback(RemoveEntityByIdCallback callback) { m_onRemoveEntityById = std::move(callback); }
-
-	/// Set callback for setting harvest cooldown on entities
-	/// Called when a non-destructive harvest completes (entity enters regrowth)
-	using SetCooldownCallback = std::function<void(const std::string& defName, float x, float y, float cooldownSeconds)>;
-	void setEntityCooldownCallback(SetCooldownCallback callback) { m_onSetCooldown = std::move(callback); }
 
 	/// Result of withdrawing from a harvestable's resource pool.
 	struct ResourceDraw {
@@ -272,14 +286,11 @@ private:
 	/// Callback for dropping loose units as a ground pile
 	DropResourceCallback m_onDropResource = nullptr;
 
-	/// Callback for removing harvested entities from world
-	RemoveEntityCallback m_onRemoveEntity = nullptr;
+	/// Callback taking a harvested or picked-up source from the world
+	TakeSourceCallback m_onTakeSource = nullptr;
 
 	/// Callback for removing a specific world entity by id (drained loose pile)
 	RemoveEntityByIdCallback m_onRemoveEntityById = nullptr;
-
-	/// Callback for setting harvest cooldown on entities
-	SetCooldownCallback m_onSetCooldown = nullptr;
 
 	/// Callback for decrementing entity resource count
 	DecrementResourceCallback m_onDecrementResource = nullptr;

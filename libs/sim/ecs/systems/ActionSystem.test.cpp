@@ -1552,10 +1552,15 @@ class FellingTest : public ::testing::Test {
 				lastDropQty = quantity;
 			}
 		);
-		action.setRemoveEntityCallback([this](const std::string& defName, float /*x*/, float /*y*/) {
-			++removeCalls;
-			lastRemoveDef = defName;
-		});
+		action.setTakeSourceCallback(
+			[this](const std::string& defName, float /*x*/, float /*y*/, ActionSystem::SourceTake take, float /*seconds*/) {
+				if (take == ActionSystem::SourceTake::Remove) {
+					++removeCalls;
+					lastRemoveDef = defName;
+				}
+				return ActionSystem::SourceState::Ready;
+			}
+		);
 	}
 
 	void TearDown() override {
@@ -3023,10 +3028,23 @@ class ClearHarvestTest : public ::testing::Test {
 			pool -= removed;
 			return ActionSystem::ResourceDraw{removed, pool == 0};
 		});
-		action.setRemoveEntityCallback([this](const std::string& /*defName*/, float /*x*/, float /*y*/) { ++removeCalls; });
-		action.setEntityCooldownCallback([this](const std::string& /*defName*/, float /*x*/, float /*y*/, float /*seconds*/) {
-			++cooldownCalls;
-		});
+		// The bush as the world holds it: taking it changes what the next finisher finds.
+		action.setTakeSourceCallback(
+			[this](const std::string& /*defName*/, float /*x*/, float /*y*/, ActionSystem::SourceTake take, float /*seconds*/) {
+				const ActionSystem::SourceState was = sourceState;
+				if (was == ActionSystem::SourceState::Gone) {
+					return was;
+				}
+				if (take == ActionSystem::SourceTake::Remove) {
+					++removeCalls;
+					sourceState = ActionSystem::SourceState::Gone;
+				} else if (take == ActionSystem::SourceTake::Regrow && was == ActionSystem::SourceState::Ready) {
+					++cooldownCalls;
+					sourceState = ActionSystem::SourceState::OnCooldown;
+				}
+				return was;
+			}
+		);
 		action.setDropResourceCallback([this](const std::string& /*defName*/, float /*x*/, float /*y*/, uint32_t qty) {
 			++dropCalls;
 			droppedQuantity += qty;
@@ -3066,8 +3084,14 @@ class ClearHarvestTest : public ::testing::Test {
 		clear.parentGoalId = umbrellaId;
 		clear.status = GoalStatus::Available;
 		clearGoalId = goals.createGoal(std::move(clear));
+		return addHarvester(clearGoalId, sourceDefName);
+	}
 
-		auto entity = world->createEntity();
+	/// A colonist standing at the bush with a Harvest task on `goalId`.
+	EntityID addHarvester(uint64_t goalId, const char* sourceDefName = "Flora_TestBerryBush") {
+		auto&		   assetRegistry = assets::AssetRegistry::Get();
+		const uint32_t berryId = assetRegistry.getDefNameId("TestBerry");
+		auto		   entity = world->createEntity();
 		world->addComponent<Position>(entity, Position{bushPos + glm::vec2{1.0F, 0.0F}});
 		world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 		world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
@@ -3084,7 +3108,7 @@ class ClearHarvestTest : public ::testing::Test {
 		task.type = TaskType::Harvest;
 		task.state = TaskState::Arrived;
 		task.targetPosition = bushPos + glm::vec2{1.0F, 0.0F};
-		task.harvestGoalId = clearGoalId;
+		task.harvestGoalId = goalId;
 		task.harvestTargetEntityId = hashWorldEntity(bushPos, bushId);
 		task.harvestYieldDefNameId = berryId;
 		world->addComponent<Task>(entity, std::move(task));
@@ -3105,7 +3129,51 @@ class ClearHarvestTest : public ::testing::Test {
 	int					   dropCalls = 0;
 	uint32_t			   droppedQuantity = 0;
 	uint32_t			   pool = 5;
+	ActionSystem::SourceState sourceState = ActionSystem::SourceState::Ready;
 };
+
+// Two colonists finish clearing the same bush in one update. The world pays the bush's yield once:
+// the first to complete takes it, the second finds it gone and gets nothing.
+TEST_F(ClearHarvestTest, TwoFinishersOnOneBushShareASingleYield) {
+	auto first = createClearingColonist();
+	auto second = addHarvester(clearGoalId);
+	harvest();
+
+	const uint32_t total = world->getComponent<Inventory>(first)->getQuantity("TestBerry") +
+						   world->getComponent<Inventory>(second)->getQuantity("TestBerry");
+	EXPECT_EQ(total, 3U) << "one yield between them";
+	EXPECT_EQ(removeCalls, 1);
+	EXPECT_EQ(dropCalls, 0) << "the late finisher drops nothing either";
+	const uint32_t bushId = assets::AssetRegistry::Get().getDefNameId("Flora_TestBerryBush");
+	EXPECT_FALSE(world->getComponent<Memory>(second)->knowsWorldEntity(bushPos, bushId)) << "the late finisher forgets it";
+}
+
+// A bush on its regrowth cooldown has nothing to give: cutting it pays nothing and leaves its timer
+// alone; clearing it (below) removes it with no yield.
+TEST_F(ClearHarvestTest, RegrowingBushPaysNoYield) {
+	GoalTask cut;
+	cut.type = TaskType::Harvest;
+	cut.destinationEntity = world->createEntity();
+	cut.yieldDefNameId = assets::AssetRegistry::Get().getDefNameId("TestBerry");
+	cut.targetAmount = 10;
+	cut.status = GoalStatus::Available;
+	auto cutter = addHarvester(GoalTaskRegistry::Get().createGoal(std::move(cut)));
+
+	sourceState = ActionSystem::SourceState::OnCooldown;
+	harvest();
+	EXPECT_EQ(world->getComponent<Inventory>(cutter)->getQuantity("TestBerry"), 0U) << "a cut of a regrowing bush";
+	EXPECT_EQ(cooldownCalls, 0) << "its regrowth timer is left alone";
+}
+
+TEST_F(ClearHarvestTest, ClearOfARegrowingBushRemovesItWithNoYield) {
+	auto colonist = createClearingColonist();
+	sourceState = ActionSystem::SourceState::OnCooldown;
+	harvest();
+
+	EXPECT_EQ(removeCalls, 1) << "the clear still removes it";
+	EXPECT_EQ(world->getComponent<Inventory>(colonist)->getQuantity("TestBerry"), 0U);
+	EXPECT_EQ(dropCalls, 0) << "and nothing drops";
+}
 
 // Clearing a footprint removes what stands in it: a regrowing bush is removed (not put on a
 // regrowth cooldown it would survive), the colonist yields once, and nothing drops to the ground.

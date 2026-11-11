@@ -87,14 +87,27 @@ namespace ecs {
 
 		uint32_t added = 0;
 
-		const auto removeSource = [&]() {
-			if (m_onRemoveEntity) {
-				m_onRemoveEntity(collEff.sourceDefName, collEff.sourcePosition.x, collEff.sourcePosition.y);
+		// Take the source from the world and report what it was just before; a source that is gone,
+		// whoever took it, is forgotten so the colonist doesn't walk back to it.
+		const auto takeSource = [&](SourceTake take) {
+			const SourceState state =
+				m_onTakeSource
+					? m_onTakeSource(collEff.sourceDefName, collEff.sourcePosition.x, collEff.sourcePosition.y, take, collEff.regrowthTime)
+					: SourceState::Ready;
+			if (take == SourceTake::Remove || state == SourceState::Gone) {
+				memory.forgetWorldEntity(collEff.sourcePosition, harvestRegistry.getDefNameId(collEff.sourceDefName));
 			}
-			memory.forgetWorldEntity(collEff.sourcePosition, harvestRegistry.getDefNameId(collEff.sourceDefName));
-			LOG_DEBUG(
-				Engine, "[Action] Removed source %s at (%.1f, %.1f)", collEff.sourceDefName.c_str(), collEff.sourcePosition.x, collEff.sourcePosition.y
-			);
+			if (state != SourceState::Ready) {
+				LOG_DEBUG(
+					Engine,
+					"[Action] Source %s at (%.1f, %.1f) was %s at completion: no yield",
+					collEff.sourceDefName.c_str(),
+					collEff.sourcePosition.x,
+					collEff.sourcePosition.y,
+					state == SourceState::Gone ? "gone" : "regrowing"
+				);
+			}
+			return state;
 		};
 
 		// Yield the colonist couldn't carry off drops beside the source as one loose, haulable pile.
@@ -237,7 +250,7 @@ namespace ecs {
 					inventory.getQuantity(collEff.itemDefName)
 				);
 				if (draw.depleted || collEff.clearsSource) {
-					removeSource();
+					takeSource(SourceTake::Remove);
 				}
 			} else {
 				LOG_DEBUG(
@@ -250,7 +263,8 @@ namespace ecs {
 			}
 		} else {
 			// Single-shot source: take what fits, then remove it (destructive) or start its
-			// regrowth cooldown.
+			// regrowth cooldown. The source is taken from the world first and pays only if it was
+			// still standing and not regrowing, so a later finisher on the same plant gets nothing.
 			//
 			// Two-hand bulk goods (a felled tree's wood) ride in the hands as a weight-limited
 			// armful, never the backpack. Felling is one destructive action: whatever the
@@ -258,22 +272,21 @@ namespace ecs {
 			// always falls -- even if the colonist's hands were already full (added == 0), the
 			// whole yield still drops and the source is removed, so no wood is lost and no stump
 			// lingers. Everything else (one-hand) stacks into the pack and only touches the
-			// source when something was actually collected, except a footprint clear, which
-			// removes it regardless and drops what doesn't fit, like a fell.
+			// source when something fits, except a footprint clear, which removes it regardless
+			// and drops what doesn't fit, like a fell.
 			const bool isTwoHand = ecs::itemIsTwoHand(harvestRegistry, collEff.itemDefName);
 
-			bool destroySource = false;
-			bool regrowSource = false;
-
 			if (isTwoHand) {
-				// Felling yields a two-hand armful (wood) that needs both hands. If the colonist
-				// crafted/holds a one-hand axe, it sits in a hand and would block the lift; stow it
-				// (belt -> pack -> drop) first so the wood goes into the hands rather than dropping.
-				stowHeldToolsForArmful(inventory, colonistPosition);
-				added = ecs::addArmful(inventory, harvestRegistry, collEff.itemDefName, collEff.quantity);
-				dropUncarried(collEff.quantity - added);
-				// A fell completes regardless of how much landed in hands; bulk goods never regrow.
-				destroySource = collEff.destroySource || collEff.clearsSource;
+				// A fell completes regardless of how much lands in hands; bulk goods never regrow.
+				const bool fells = collEff.destroySource || collEff.clearsSource;
+				if (takeSource(fells ? SourceTake::Remove : SourceTake::Keep) == SourceState::Ready) {
+					// Felling yields a two-hand armful (wood) that needs both hands. If the colonist
+					// crafted/holds a one-hand axe, it sits in a hand and would block the lift; stow it
+					// (belt -> pack -> drop) first so the wood goes into the hands rather than dropping.
+					stowHeldToolsForArmful(inventory, colonistPosition);
+					added = ecs::addArmful(inventory, harvestRegistry, collEff.itemDefName, collEff.quantity);
+					dropUncarried(collEff.quantity - added);
+				}
 			} else {
 				// A loose-item fetch (source IS the material, e.g. picking up a SmallStone) yields
 				// only that one entity's carryable count -- never more than is physically there, even
@@ -287,48 +300,22 @@ namespace ecs {
 						take = std::min(take, srcDef->capabilities.carryable->quantity);
 					}
 				}
-				added = inventory.addItem(collEff.itemDefName, take);
-				if (collEff.clearsSource) {
-					dropUncarried(collEff.quantity - added);
-					destroySource = true;
-				} else {
-					destroySource = added > 0 && collEff.destroySource;
-					regrowSource = added > 0 && !collEff.destroySource && collEff.regrowthTime > 0.0F;
+				SourceTake leaves = SourceTake::Keep;
+				if (collEff.clearsSource || collEff.destroySource) {
+					leaves = SourceTake::Remove;
+				} else if (collEff.regrowthTime > 0.0F) {
+					leaves = SourceTake::Regrow;
+				}
+				if ((take > 0 || collEff.clearsSource) && takeSource(leaves) == SourceState::Ready) {
+					added = inventory.addItem(collEff.itemDefName, take);
+					if (collEff.clearsSource) {
+						dropUncarried(collEff.quantity - added);
+					}
 				}
 			}
 
-			if (added < collEff.quantity) {
-				// Carry/slot-limited below the full yield -- expected, not an error.
-				LOG_INFO(
-					Engine, "[Action] Collected %u of %u x %s (carry-limited)", added, collEff.quantity, collEff.itemDefName.c_str()
-				);
-			} else {
-				LOG_INFO(Engine, "[Action] Collected %u x %s", added, collEff.itemDefName.c_str());
-			}
-
-			if (destroySource) {
-				removeSource();
-			} else if (regrowSource) {
-				if (m_onSetCooldown) {
-					m_onSetCooldown(collEff.sourceDefName, collEff.sourcePosition.x, collEff.sourcePosition.y, collEff.regrowthTime);
-					LOG_DEBUG(
-						Engine,
-						"[Action] Set cooldown on %s at (%.1f, %.1f) for %.1fs",
-						collEff.sourceDefName.c_str(),
-						collEff.sourcePosition.x,
-						collEff.sourcePosition.y,
-						collEff.regrowthTime
-					);
-				} else {
-					LOG_WARNING(
-						Engine,
-						"[Action] No cooldown callback set - source entity %s at (%.1f, %.1f) cooldown NOT applied",
-						collEff.sourceDefName.c_str(),
-						collEff.sourcePosition.x,
-						collEff.sourcePosition.y
-					);
-				}
-			}
+			// Below the full yield when carry- or slot-limited, or the source was gone or regrowing.
+			LOG_INFO(Engine, "[Action] Collected %u of %u x %s", added, collEff.quantity, collEff.itemDefName.c_str());
 		}
 
 		// For goal-driven Harvest tasks, update the GoalTaskRegistry. Record only what actually landed

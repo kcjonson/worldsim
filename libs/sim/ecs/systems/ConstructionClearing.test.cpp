@@ -105,9 +105,21 @@ namespace ecs::test {
 				world = std::make_unique<World>();
 				world->registerSystem<AIDecisionSystem>(registry, assets::RecipeRegistry::Get(), kTestRngSeed);
 				auto& action = world->registerSystem<ActionSystem>(kTestRngSeed);
-				action.setRemoveEntityCallback([this](const std::string& defName, float x, float y) {
-					executor.removeEntity(world::worldToChunk({x, y}), {x, y}, defName);
-				});
+				action.setTakeSourceCallback(
+					[this](const std::string& defName, float x, float y, ActionSystem::SourceTake take, float seconds) {
+						const auto coord = world::worldToChunk({x, y});
+						if (!treeStands({x, y}, defName.c_str())) {
+							return ActionSystem::SourceState::Gone;
+						}
+						const bool regrowing = executor.isEntityOnCooldown(coord, {x, y}, defName);
+						if (take == ActionSystem::SourceTake::Remove) {
+							executor.removeEntity(coord, {x, y}, defName);
+						} else if (take == ActionSystem::SourceTake::Regrow && !regrowing) {
+							executor.setEntityCooldown(coord, {x, y}, defName, seconds);
+						}
+						return regrowing ? ActionSystem::SourceState::OnCooldown : ActionSystem::SourceState::Ready;
+					}
+				);
 				action.setDropResourceCallback([this](const std::string& /*defName*/, float /*x*/, float /*y*/, uint32_t /*qty*/) {
 					++piles;
 				});

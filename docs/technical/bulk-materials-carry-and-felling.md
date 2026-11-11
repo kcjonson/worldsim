@@ -153,7 +153,8 @@ first). Not code — engine touch-points are named so the work is concrete.
   current per-chop value so a fell stays ~15 s at base rate — see PR #216).
 - Harvest completion (`ActionSystem::completeAction`, collection branch): trees route through the
   single-shot path; take the weight-limited armful into hands, **drop the remainder** as a loose
-  stack (§6), then destroy via `m_onRemoveEntity`. The pool branch (`m_onDecrementResource`) is
+  stack (§6), then destroy via `m_onTakeSource` (which takes the tree first and pays nothing if
+  another colonist already felled it). The pool branch (`m_onDecrementResource`) is
   no longer used by trees; keep it only if another pooled source remains, else remove it (no dead
   paths).
 - Acceptance: one harvest action destroys the tree; the colonist carries an armful; leftover wood
