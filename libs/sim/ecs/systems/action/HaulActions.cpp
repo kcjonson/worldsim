@@ -271,8 +271,8 @@ namespace ecs {
 		// fetch every tick -- an infinite "deposit nothing -> refetch" loop that strands the
 		// craft half-provisioned.
 		const auto*	   haulItemDef = registry.getDefinition(task.haulItemDefName);
-		const uint32_t cargoHeld =
-			haulCargo(task, ecs::availableQuantity(inventory, task.haulItemDefName), haulItemDef != nullptr && haulItemDef->isEdible());
+		const uint32_t cargoHeld = cargoToward(task, GoalTaskRegistry::Get().rootOf(task.haulGoalId), registry.getDefNameId(task.haulItemDefName),
+											   ecs::availableQuantity(inventory, task.haulItemDefName), haulItemDef != nullptr && haulItemDef->isEdible());
 		// A pile pickup that took a gathering over still lifts its own share beside the goods its claims
 		// already carry; only goods beyond those mean the pickup is skipped.
 		const auto sourceClaim = std::find_if(task.claims.begin(), task.claims.end(), [](const Claim& claim) {

@@ -306,7 +306,15 @@ wants beyond what is carried; otherwise he delivers. So a trip of ten taking cut
 nine rather than spending a fourth plant on one unit, and no tree is felled for a sliver of its wood.
 A cut can still land more than fits (the first cut of a trip into a small pack), and the surplus drops
 as a pile. A source that is regrowing, unreachable, or reserved is passed over at selection, so the
-carry-in is taken as soon as no source is left. A landed cut is decided again at once rather than after a step
+carry-in is taken as soon as no source is left.
+
+Once he has chosen to deliver, he delivers. A delivery leg that a landed cut or pickup has just
+become is open: the decision that follows weighs it against the next leg. Once a decision keeps or
+selects it (`Task::deliveryChosen`), the colonist is no longer gathering for that root: no cut or pile
+toward it ranks as a leg of the trip, and the chosen carry-in ranks above every other option in its
+tier, so a source that regrows or is released on the walk in, or on the arrival frame before the
+deposit starts, does not turn him back. A build-site clear brings nothing toward a need and is never
+a leg of a gathering. A landed cut is decided again at once rather than after a step
 toward the destination. While it gathers, the colonist's in-flight toward the root covers what it
 carries plus the cut it has accepted, so another colonist does not cut what those cover, and the
 cargo moves from task to task under one instance id with no window in which it is uncommitted. A

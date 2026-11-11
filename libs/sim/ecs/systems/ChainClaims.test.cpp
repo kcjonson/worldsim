@@ -1563,6 +1563,66 @@ namespace ecs::test {
 	}
 
 	// A partly full trip whose other sources are regrowing or reserved is delivered as it is.
+	// Once the colonist has chosen to carry its cut in, a reed that becomes ready on the way does not turn
+	// it back: the chosen carry-in outranks a top-up cut for the same site.
+	TEST_F(ChainWalkTest, AChosenCarryInIsNotTurnedBackByAReadySource) {
+		const Site		site = fibreSite({0.0F, 12.0F}, 20);
+		const glm::vec2 later{4.0F, 0.0F};
+		const EntityID	colonist = createColonist({0.0F, 0.0F});
+		rememberReeds(colonist, {{2.0F, 0.0F}, later});
+		cut.push_back(later); // regrowing until the colonist is on its way
+		ASSERT_TRUE(walkUntil(site, colonist, [&] {
+			const Task& task = *getTask(colonist);
+			return task.type == TaskType::Haul && task.deliveryChosen;
+		}));
+		std::erase(cut, later);
+		decide(colonist);
+		const Task& task = *getTask(colonist);
+		EXPECT_EQ(task.type, TaskType::Haul);
+		EXPECT_TRUE(task.haulFromInventory);
+		EXPECT_EQ(task.targetPosition, glm::vec2(0.0F, 12.0F));
+		const EvaluatedOption* ready = optionOf(colonist, TaskType::Harvest, OptionStatus::Available);
+		ASSERT_NE(ready, nullptr) << "the ready reed is on offer";
+		EXPECT_EQ(ready->gatheringRank, 0) << "but no longer as a leg of the trip";
+	}
+
+	// A need between two cuts keeps the cut's goods as its suspended record, and the next cut adopts them;
+	// taking the colonist under player control then leaves no claim, and the goods with the colonist.
+	TEST_F(ChainWalkTest, ANeedBetweenCutsKeepsTheGoodsForTheNextCut) {
+		const Site	   site = fibreSite({0.0F, 12.0F}, 20);
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		rememberReeds(colonist, {{2.0F, 0.0F}, {4.0F, 0.0F}, {6.0F, 0.0F}});
+		ASSERT_TRUE(walkUntil(site, colonist, [&] {
+			const Task& task = *getTask(colonist);
+			return task.type == TaskType::Harvest && claimOf(task, ClaimKind::Inbound).has_value();
+		}));
+		Task&		   task = *getTask(colonist);
+		const uint64_t gathering = task.instanceId;
+
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+		world->getComponent<NeedsComponent>(colonist)->get(NeedType::Hunger).value = 5.0F;
+		decide(colonist);
+		ASSERT_EQ(task.type, TaskType::FulfillNeed);
+		ASSERT_TRUE(task.suspended.has_value());
+		EXPECT_EQ(task.suspended->instanceId, gathering);
+		EXPECT_EQ(cargoOnClaims(task.suspended->claims, site.umbrella, fibreId), 3U) << "the cut's goods, not its uncut yield";
+		EXPECT_EQ(ai->claimIndex().inFlight(site.umbrella, fibreId, {}), 3U);
+
+		world->getComponent<Inventory>(colonist)->removeItem("Berry", 1);
+		world->getComponent<NeedsComponent>(colonist)->get(NeedType::Hunger).value = 100.0F;
+		task.clear();
+		decide(colonist);
+		ASSERT_EQ(task.type, TaskType::Harvest);
+		EXPECT_EQ(task.instanceId, gathering) << "the next cut adopts the record";
+		EXPECT_FALSE(task.suspended.has_value());
+		EXPECT_EQ(claimOf(task, ClaimKind::Inbound)->quantity(), 3U);
+
+		ai->enterControl(colonist);
+		EXPECT_EQ(indexedClaimsOf(colonist), 0U);
+		EXPECT_EQ(ai->claimIndex().inFlight(site.umbrella, fibreId, {}), 0U);
+		EXPECT_EQ(carriedFibre(colonist), 3U) << "the goods stay with the colonist";
+	}
+
 	TEST_F(ChainWalkTest, APartlyFullTripIsDeliveredWhenNoOtherSourceIsFree) {
 		const Site		site = fibreSite({0.0F, 12.0F}, 20);
 		const glm::vec2 own{2.0F, 0.0F};

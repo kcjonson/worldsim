@@ -322,12 +322,18 @@ namespace ecs {
 		constexpr int8_t kRankDemotedCut = -1; // a fresh cut for a root and item a known pile also serves
 		constexpr int8_t kRankFurtherCut = 1;  // a cut toward the root the colonist gathers for
 		constexpr int8_t kRankLoosePile = 2;   // a pile toward the root the colonist gathers for
+		constexpr int8_t kRankChosenDelivery = 3; // the carry-in the colonist has chosen to walk
 
 		/// The cargo `task` hands to `selected` when it is the next leg of the same gathering: a cut, a
 		/// pile pickup, or the carry-in, for the root and item the task carries goods toward.
 		[[nodiscard]] std::optional<SuspendedWork> nextGatheringLeg(const EvaluatedOption& selected, const Task& task) {
 			const auto& goals = GoalTaskRegistry::Get();
 			if (selected.taskType == TaskType::Harvest) {
+				// A clear brings nothing toward a need, so it is never a leg of a gathering.
+				const GoalTask* goal = goals.getGoal(selected.harvestGoalId);
+				if (goal == nullptr || goal->clearFootprint.has_value()) {
+					return std::nullopt;
+				}
 				return handOverCargo(task, goals.rootOf(selected.harvestGoalId), selected.harvestYieldDefNameId);
 			}
 			const bool pileLeg = selected.haulSourceStorageId == 0 && selected.gatheringRank == kRankLoosePile;
@@ -454,7 +460,15 @@ namespace ecs {
 			}
 			/// Is the colonist gathering for this root and item: does its task or suspended record carry
 			/// goods toward it?
-			[[nodiscard]] bool gathersFor(uint64_t root, uint32_t item) const { return claimedCargo(task, root, item) > 0; }
+			/// Once it has chosen to carry the goods in, it is delivering them, not gathering.
+			[[nodiscard]] bool gathersFor(uint64_t root, uint32_t item) const {
+				return !delivering(root, item) && claimedCargo(task, root, item) > 0;
+			}
+			/// Has the colonist chosen to walk its goods of this item to this root?
+			[[nodiscard]] bool delivering(uint64_t root, uint32_t item) const {
+				return task.deliveryChosen && task.type == TaskType::Haul && GoalTaskRegistry::Get().rootOf(task.haulGoalId) == root &&
+					   registry.getDefNameId(task.haulItemDefName) == item;
+			}
 			/// What the colonist carries of the item that it would deliver to this root; its own food is not.
 			[[nodiscard]] uint32_t cargo(uint64_t root, uint32_t item) const {
 				const uint32_t held = ecs::availableQuantity(inventory, registry.getDefName(item));
@@ -961,6 +975,9 @@ namespace ecs {
 					option.haulTargetPosition = root.destinationPosition;
 					option.haulGoalId = root.id;
 					option.haulFromInventory = true;
+					if (supply.delivering(root.id, kind.item) && supply.task.haulTargetStorageId == static_cast<uint64_t>(root.destinationEntity)) {
+						option.gatheringRank = kRankChosenDelivery;
+					}
 					// Craft and construction deliveries provision an active work order (tier 4); filling a
 					// box is stocking, strictly below work orders (tier 6).
 					option.servesActiveWorkOrder = !storage;
@@ -1695,6 +1712,8 @@ namespace ecs {
 
 				if (isSameTask) {
 					task.timeSinceEvaluation = 0.0F; // Reset timer, we did evaluate
+					// Keeping a delivery leg is choosing to deliver: a top-up cut no longer turns it back.
+					task.deliveryChosen = task.deliveryChosen || (task.type == TaskType::Haul && task.chainStep == 1);
 					// Update the (tier, score) key even when staying on the same task (the score can
 					// change, e.g. PlacePackaged promotes to tier 4 when the colonist starts carrying).
 					task.priorityTier = newTier;
@@ -1740,6 +1759,7 @@ namespace ecs {
 					task.priorityTier = newTier; // Store the (tier, score) key for future comparisons
 					task.priority = newScore;
 					acceptClaims(entity, task, memory, inventory, handedCargo);
+					task.deliveryChosen = task.type == TaskType::Haul && task.chainStep == 1;
 					if (task.type == TaskType::Wander) {
 						putDownUnwantedArmful(task, inventory, position, *trace);
 					}
@@ -2574,7 +2594,12 @@ namespace ecs {
 				option.targetPosition  = snapped;
 				option.targetReachable = false; // a moved target is tested where it now is
 			}
-			if (needsTarget && !option.targetReachable && !canReach(option.targetPosition.value())) {
+			// A cut's reach is remembered under its source like a need's, so the flagged cuts sorted ahead of
+			// the carry-in are not tested afresh at every decision while the colonist cuts and deposits.
+			const bool reachable = option.targetReachable || (option.taskType == TaskType::Harvest
+																  ? canReachSource(option.harvestTargetEntityId, option.targetPosition.value())
+																  : canReach(option.targetPosition.value()));
+			if (needsTarget && !reachable) {
 				option.status = OptionStatus::NoSource; // unreachable: skip it rather than freeze on it
 				continue;
 			}

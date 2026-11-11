@@ -68,10 +68,6 @@ namespace ecs {
 	/// The rest of its food is its own provisions, never cargo (task-claims.md, Provisions).
 	[[nodiscard]] uint32_t cargoToward(const Task& task, uint64_t rootGoalId, uint32_t itemDefNameId, uint32_t held, bool edible);
 
-	/// What a haul may deliver of the `held` units of its item: all of anything but food; of food, only
-	/// what its Inbound carries, and none while it has still to take its own from a source.
-	[[nodiscard]] uint32_t haulCargo(const Task& task, uint32_t held, bool edible);
-
 	/// The cargo claims `task` hands to the next leg of the same gathering (a further cut, or the
 	/// carry-in), with its instance id and sequence, so goods carried between two cuts are never
 	/// uncommitted (task-claims.md, Batching). Nothing when it carries none of the item toward the root.

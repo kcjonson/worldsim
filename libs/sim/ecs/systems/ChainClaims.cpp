@@ -62,20 +62,6 @@ namespace ecs {
 		return edible ? std::min(held, claimedCargo(task, rootGoalId, itemDefNameId)) : held;
 	}
 
-	uint32_t haulCargo(const Task& task, uint32_t held, bool edible) {
-		if (!edible) {
-			return held;
-		}
-		uint32_t inbound = 0;
-		for (const Claim& claim : task.claims) {
-			if (claim.kind() == ClaimKind::SourceQuantity) {
-				return 0;
-			}
-			inbound += claim.kind() == ClaimKind::Inbound ? claim.quantity() : 0U;
-		}
-		return std::min(held, inbound);
-	}
-
 	std::optional<SuspendedWork> handOverCargo(const Task& task, uint64_t rootGoalId, uint32_t itemDefNameId) {
 		const uint32_t cargo = cargoOnClaims(task.claims, rootGoalId, itemDefNameId);
 		if (cargo == 0 || task.instanceId == 0) {

@@ -231,6 +231,11 @@ struct Task {
 	/// straight to its destination (a station store, a build site, a box) to deposit them.
 	bool haulFromInventory = false;
 
+	/// A delivery leg the AI has kept or chosen: the colonist has chosen to carry its goods in, so no
+	/// further leg of a gathering turns it back (task-claims.md, Batching). A leg a landed cut or pickup
+	/// just became is not chosen until the decision that follows keeps it.
+	bool deliveryChosen = false;
+
 	/// For Build/Deconstruct tasks: the blueprint entity whose StructureBlueprint is
 	/// advanced. The target position (build work slot) is carried in targetPosition.
 	uint64_t buildBlueprintEntityId = 0;
@@ -300,6 +305,7 @@ struct Task {
 		haulSourcePosition = glm::vec2{0.0F, 0.0F};
 		haulTargetPosition = glm::vec2{0.0F, 0.0F};
 		haulFromInventory = false;
+		deliveryChosen = false;
 		buildBlueprintEntityId = 0;
 		placePackagedEntityId = 0;
 		placeSourcePosition = glm::vec2{0.0F, 0.0F};
