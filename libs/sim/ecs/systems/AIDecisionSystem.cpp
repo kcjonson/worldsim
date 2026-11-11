@@ -2150,6 +2150,7 @@ namespace ecs {
 	) {
 		trace.clear();
 		const WorkSkills workSkills = WorkSkills::of(skills);
+		PickupRoom		 pickupRoom(inventory, m_registry);
 
 		// Agent footprint + belief for every reachability check below (need sources, reachable-wander
 		// generation and the option filter).
@@ -2573,10 +2574,7 @@ namespace ecs {
 
 			// Gathering is idle work, not a meal: it makes no room, so a pack with none for the yield
 			// would cut nothing and come back to the same bush.
-			const auto gatherHasRoom = [&] {
-				const std::string& yield = m_registry.getDefName(edibleYieldOf(m_registry, gatherSource->entity->defNameId));
-				return ecs::pickupUnitsThatFit(inventory, m_registry, yield, ecs::carriedCargoMassKg(inventory, m_registry)) > 0;
-			};
+			const auto gatherHasRoom = [&] { return pickupRoom(edibleYieldOf(m_registry, gatherSource->entity->defNameId)) > 0; };
 			if (gatherSource.has_value()) {
 				gatherOption.targetPosition = gatherSource->position;
 				gatherOption.distanceToTarget = glm::distance(position.value, gatherSource->position);
@@ -2651,7 +2649,6 @@ namespace ecs {
 		// Goal-driven work: fetch goods for storage and crafts, carry in what the colonist holds, cut
 		// for what a root still needs (tier 4 when serving an active work order, else tier 6).
 		const RootSupply supply{*world, m_needs, m_claims, self, currentTask, inventory, m_registry, m_loosePiles, m_boxRooms};
-		PickupRoom		 pickupRoom(inventory, m_registry);
 		m_workSources.begin(memory, m_registry, inventory);
 		m_offeredPiles.clear();
 		const PileReach pileReach{.nav = m_navSystem, .reach = reach.has_value() ? &*reach : nullptr, .memo = &sourceReach};
