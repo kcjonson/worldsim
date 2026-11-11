@@ -1,6 +1,7 @@
 # Nav mesh: one mesh, variable resolution
 
-**Status:** Draft, not approved. No implementation starts until it is.
+**Status:** In progress. Go-ahead given 2026-11-10; each open question in section 8 is settled before the step that depends on it.
+**Epic:** WOR-702 (Nav mesh: one mesh, variable resolution)
 **Created:** 2026-11-10
 **Replaces, once built:** the "As built: multi-region sim area" section of [pathfinding-architecture.md](./pathfinding-architecture.md), and its rule that agents are never mesh obstacles (risk 7)
 **Fixes:** WOR-644 (Pathing can't route between two points on connected ground when nav regions overlap), WOR-645 (Chunk streaming follows the camera, so panning away unloads the colony's chunks)
@@ -418,13 +419,37 @@ numbers allow.
 | Path length on the same pairs | benchmark | Equal to today's result to the millimetre |
 | Frame time, three views | `scripts/perf-capture.ps1`, once, at the end on the parent branch | No gross regression |
 
+**Memory (estimate, from struct sizes and the measured triangle counts; measured in steps 4 and 5)**
+
+A triangle on the mesh is about 200 bytes: the 136-byte `NavTriangle`, plus its share of
+vertices, the locate index, and the per-edge ring lists. A structural-layer triangle is about
+500 bytes, because the two reachability forests ride on it. Today every triangle pays the
+larger figure.
+
+| Ground | Triangles | Memory |
+|---|---|---|
+| Open chunk, no water | a handful | negligible |
+| Chunk with a river through it | 1,200 to 4,500 (scaled from two measured 128 m regions) | 0.6 to 2.2 MB |
+| Chunk full of shoreline | up to about 18,000 | up to about 9 MB |
+| One tree | about 8 (measured) | about 1.6 KB |
+| A 128 m forest view, 640 trees | about 5,000 (measured) | about 1 MB |
+| A whole forest chunk, all viewed, 10,000 trees | about 87,000 (measured) | about 17 MB |
+
+Ten loaded chunks, three with rivers, forest biome: about 10 MB when only the screen has
+detail, about 40 MB once the player has looked over two chunks' worth of forest, about 180 MB
+if every chunk is dense forest and all of it has been viewed. Tile data for the same ten
+chunks is about 20 MB. Flora is nearly all of it, so the flora budget in section 4.4 is the
+control: 64 MB holds about 40,000 trees. `NavTriangle` is mostly 64-bit fields holding a
+sentinel, and packing it could halve the figure; measure before making that a step.
+
 **Launch budget:** one for the baseline, one after step 5 to confirm the saving off camera,
 one after step 7 for footprints under a crowd. The final three-view capture runs once on the
 parent branch after the merge, with the rest of that branch's regression pass.
 
 ## 7. Steps
 
-Each is its own commit series, compiles, has targeted tests, and reports its numbers.
+Each is its own commit series, compiles, has targeted tests, and reports its numbers. Steps 0
+to 7 are tracked as WOR-703 to WOR-710, in order, under the epic.
 
 0. **Baseline.** The benchmark (done), the two debug-log additions, the one in-game capture.
 1. **Arrangement broad phase.** Replace the all-pairs loop with a uniform grid over segment bounds. Output must be byte-identical to today's on every fixture, which the canonical arrangement makes checkable. A win for main on its own, and what makes a chunk's first mesh affordable.
