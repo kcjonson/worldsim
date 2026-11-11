@@ -451,8 +451,9 @@ back to its seek threshold at the item's nutrition, at least one unit (with Berr
 a seek threshold of 50%, one berry above 20% hunger, two below), capped by what a pile or box has left
 for this colonist; what the pack holds does not size it. It is sized again whenever the colonist
 re-decides and keeps the task, and its claim on a pile or box follows. A hunger task does not re-decide
-just because its need turned critical (that trigger is skipped while the colonist already serves a
-need); the periodic re-evaluation picks it up. Between two foods in one box at the same distance, the
+the moment its need turns critical (the crossing-into-critical trigger is skipped while the colonist
+already serves a critical need, and the hunger task he is on now is one); his next decision on the
+0.5 s interval re-sizes the meal. Between two foods in one box at the same distance, the
 lower item id is taken first. A bush is cut whole, because a cut gives what it gives; a pile or box
 gives the meal and no more, because stored food is the colony's and anything taken past the meal
 would become one colonist's provisions, out of everyone else's reach. The pickup or withdraw ends the
@@ -767,8 +768,9 @@ re-sees the target on arrival, within sight range. All of these log at debug lev
 
 A colonist whose route to its target has failed (`NavState::CantFindWayTo`) holds, while it stays
 failed, only the claims on goods it already carries. A failure toward a target in another nav region is
-not remembered as a reach verdict, so the colonist may re-select the same work every frame and
-`isSameTask` keeps it; without this rule its pile, bush, slot, or box room would read as taken for as
+not remembered as a reach verdict, so the colonist may re-select the same work at each decision and
+`isSameTask` keeps it (the first decision after a route fails comes at once, and if that one's route
+fails too the next comes on the 0.5 s interval; see [AI Behavior](../design/game-systems/colonists/ai-behavior.md#when-a-colonist-decides)); without this rule its pile, bush, slot, or box room would read as taken for as
 long as it stands there. What it has not reached is dropped: source quantity, Use, and slot claims, and
 the part of an in-flight not yet landed (a cut's expected yield). What it carries keeps its Inbound and
 In-flight, up to its cargo by the one cargo rule (`cargoOnClaims`): a haul past its pickup, or a cut

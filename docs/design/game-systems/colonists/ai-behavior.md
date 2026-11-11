@@ -147,6 +147,24 @@ See [Task Registry](./task-registry.md) for GlobalTaskRegistry architecture and 
 
 ---
 
+## When a colonist decides
+
+A colonist runs the selection above on an event, and otherwise every 0.5 s (`AIDecisionSystem::kReEvalInterval`), whatever he is doing. `AIDecisionSystem::shouldReEvaluate` holds the triggers.
+
+He decides at once when:
+
+- he has no task (he just spawned, or finished or dropped one);
+- he has arrived where his task leads. While an action runs there he decides every frame, which keeps the panel's trace current; the action is only interrupted by a higher tier;
+- the action system asks for a decision now: after a landed cut, or a pickup by a colonist already carrying goods from earlier legs of the same gathering;
+- a need crosses into critical, unless he already serves a critical need. The crossing is measured against the needs that were critical at his last decision (`Task::criticalNeedsAtDecision`, one bit per need), so a need set critical directly by a dev verb or a test counts as a crossing, and one already critical when he spawns or finishes another task is caught by the no-task event;
+- his route fails (`NavState::CantFindWayTo`), once. If the decision that follows picks a target whose route fails too, the next decision waits for the interval (`Task::routeFailureDecided`).
+
+A walking idle wander also decides every frame, so anything better is taken the moment it appears.
+
+Everything that persists runs on the interval: a critical need with nothing reachable to serve it, a route that keeps failing, a wait on regrowing food, food another eater holds. A critical need or a failed route no longer re-decides every frame for as long as it lasts. He never freezes either; each interval he looks again and takes whatever has become available.
+
+---
+
 ## Related Documents
 
 - [Needs System](./needs.md): What triggers Tiers 2 and 5

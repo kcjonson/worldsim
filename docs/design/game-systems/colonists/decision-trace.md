@@ -27,7 +27,7 @@ The Decision Trace system captures **why** a colonist chose their current task a
 
 ### Component: DecisionTrace
 
-Added to colonists alongside Task component. Updated each time AIDecisionSystem re-evaluates.
+Added to colonists alongside Task component. Updated each time AIDecisionSystem re-evaluates: at once on an event (no task, arrival, a need crossing into critical, a route failing) and otherwise every 0.5 s; see [AI Behavior](./ai-behavior.md#when-a-colonist-decides). `lastEvaluationTime` stamps each one.
 
 ```cpp
 struct EvaluatedOption {
