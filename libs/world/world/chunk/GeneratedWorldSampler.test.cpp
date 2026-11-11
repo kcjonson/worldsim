@@ -27,7 +27,11 @@ using namespace world;
 namespace {
 
 using river_test::carveRiver;
+using river_test::CarvedRiverWorld;
+using river_test::makeCarvedRiverWorld;
 using river_test::makeSemiDesertWorld;
+using river_test::RealRiverWorld;
+using river_test::realRiverWorld;
 
 uint32_t countWater(const Chunk& chunk) {
     uint32_t water = 0;
@@ -93,49 +97,22 @@ uint8_t referenceDepthFromWidth(float fullWidthMeters) {
 } // namespace
 
 TEST(GeneratedWorldSamplerRivers, RiverChainProducesWaterInChunk) {
-    using namespace worldgen;
-    auto world = makeSemiDesertWorld();
-
-    // Land exactly on a river tile so the channel passes through the origin chunk.
-    const TileId source = world->grid->fromLatLon(0.0, 0.0);
-    const TileId mouth = world->grid->fromLatLon(0.0, 40.0);
-    carveRiver(*world, source, mouth);
-
-    double lat = 0.0;
-    double lon = 0.0;
-    world->grid->latLonOf(source, lat, lon);
-
-    GeneratedWorldSampler sampler(world, lat, lon);
-    ChunkSampleResult result = sampler.sampleChunk(ChunkCoordinate(0, 0));
-    EXPECT_FALSE(result.riverSegments.empty()) << "river segments should be gathered for the origin chunk";
-
-    auto chunk = generateChunk(ChunkCoordinate(0, 0), std::move(result), sampler.getWorldSeed());
-    EXPECT_GT(countWater(*chunk), 0u) << "the river should paint water tiles in the chunk";
+    // The landing sits exactly on a river tile, so the channel passes through the origin chunk.
+    const Chunk& chunk = *realRiverWorld().chunks.at({0, 0});
+    EXPECT_FALSE(chunk.biomeData().riverSegments.empty()) << "river segments should be gathered for the origin chunk";
+    EXPECT_GT(countWater(chunk), 0u) << "the river should paint water tiles in the chunk";
 }
 
 TEST(GeneratedWorldSamplerRivers, RiverWaterCarriesDepthFromWidth) {
-    using namespace worldgen;
-    auto world = makeSemiDesertWorld();
+    const Chunk& chunk = *realRiverWorld().chunks.at({0, 0});
 
-    const TileId source = world->grid->fromLatLon(0.0, 0.0);
-    const TileId mouth = world->grid->fromLatLon(0.0, 40.0);
-    carveRiver(*world, source, mouth); // flow 80, widening downstream
-
-    double lat = 0.0;
-    double lon = 0.0;
-    world->grid->latLonOf(source, lat, lon);
-
-    GeneratedWorldSampler sampler(world, lat, lon);
-    ChunkSampleResult result = sampler.sampleChunk(ChunkCoordinate(0, 0));
-    auto chunk = generateChunk(ChunkCoordinate(0, 0), std::move(result), sampler.getWorldSeed());
-
-    // The carved river is wide (flow >= 80), so its water tiles must carry a
-    // deeper cosmetic depth than the shallow-stream floor.
+    // The carved river is wide (flow 80, widening downstream), so its water tiles
+    // must carry a deeper cosmetic depth than the shallow-stream floor.
     uint8_t maxDepth = 0;
     bool anyWater = false;
     for (uint16_t y = 0; y < kChunkSize; ++y) {
         for (uint16_t x = 0; x < kChunkSize; ++x) {
-            const auto& tile = chunk->getTile(x, y);
+            const auto& tile = chunk.getTile(x, y);
             if (tile.surface != Surface::Water) continue;
             anyWater = true;
             maxDepth = std::max(maxDepth, tile.waterDepth);
@@ -201,20 +178,10 @@ TEST(GeneratedWorldSamplerRivers, NoDrainageMeansNoWater) {
 // and the test requires at least one tile the floored rule would have made water
 // and the true rule doesn't, so it proves the floor is really gone.
 TEST(GeneratedWorldSamplerRivers, TileWaterMatchesTrueWidthRule) {
-    using namespace worldgen;
-    auto world = makeSemiDesertWorld();
-
     // A wide trunk (flow 80, widening downstream) with headwater feeders that
     // now taper to a true sub-tile trickle -- exactly where the moved floor
     // matters.
-    const TileId source = world->grid->fromLatLon(0.0, 0.0);
-    const TileId mouth = world->grid->fromLatLon(0.0, 40.0);
-    carveRiver(*world, source, mouth);
-
-    double lat = 0.0;
-    double lon = 0.0;
-    world->grid->latLonOf(source, lat, lon);
-    GeneratedWorldSampler sampler(world, lat, lon);
+    const RealRiverWorld& real = realRiverWorld();
 
     // A few chunks along the trunk and around its headwater feeders (chunk (0,0)
     // sits on the source, where the headwater springs fan out and taper).
@@ -227,12 +194,20 @@ TEST(GeneratedWorldSamplerRivers, TileWaterMatchesTrueWidthRule) {
     bool sawTileOnlyTheFloorCovered = false;
     for (size_t ci = 0; ci < coords.size(); ++ci) {
         const ChunkCoordinate coord = coords[ci];
-        ChunkSampleResult result = sampler.sampleChunk(coord);
+        // The shared river world holds every chunk here but (0, 1); that one is generated
+        // from the same carved world the same way.
+        std::unique_ptr<Chunk> generated;
+        const auto shared = real.chunks.find({coord.x, coord.y});
+        if (shared == real.chunks.end()) {
+            const CarvedRiverWorld carved = makeCarvedRiverWorld();
+            const GeneratedWorldSampler sampler(carved.world, carved.landingLat, carved.landingLon);
+            generated = generateChunk(coord, sampler.sampleChunk(coord), sampler.getWorldSeed());
+        }
+        const Chunk* chunk = generated ? generated.get() : shared->second.get();
+        const ChunkSampleResult& result = chunk->biomeData();
         for (const auto& s : result.riverSegments) {
             if (s.halfWidth0 < 0.8f || s.halfWidth1 < 0.8f) sawSubFloorSegment = true;
         }
-
-        auto chunk = generateChunk(coord, result, sampler.getWorldSeed());
 
         const WorldPosition origin = coord.origin();
 

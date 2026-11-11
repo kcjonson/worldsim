@@ -3202,6 +3202,19 @@ namespace ecs::test {
 			[[nodiscard]] float	   sampleElevation(world::WorldPosition) const override { return 1.0F; }
 			[[nodiscard]] uint64_t getWorldSeed() const override { return 7U; }
 		};
+
+		// Generated once per process: NavigationSystem only reads its ChunkManager.
+		world::ChunkManager* openLandChunks() {
+			static const std::unique_ptr<world::ChunkManager> chunks = [] {
+				auto c = std::make_unique<world::ChunkManager>(std::make_unique<OpenLandSampler>());
+				c->setLoadRadius(2);
+				c->setUnloadRadius(4);
+				c->update({0.0F, 0.0F});
+				c->finishPendingGeneration();
+				return c;
+			}();
+			return chunks.get();
+		}
 	} // namespace
 
 	// The running game's first decision happens before the async region build has produced a mesh.
@@ -3215,26 +3228,13 @@ namespace ecs::test {
 		void SetUp() override {
 			AIDecisionSystemTest::SetUp();
 
-			chunks = std::make_unique<world::ChunkManager>(std::make_unique<OpenLandSampler>());
-			chunks->setLoadRadius(2);
-			chunks->setUnloadRadius(4);
-			chunks->update({0.0F, 0.0F});
-			chunks->finishPendingGeneration();
-
 			nav = &world->registerSystem<NavigationSystem>();
-			nav->setChunkManager(chunks.get());
+			nav->setChunkManager(openLandChunks());
 			nav->setConstructionWorld(&construction);
 			nav->setViewportRect({0.0F, 0.0F}, {60.0F, 60.0F});
 			world->getSystem<AIDecisionSystem>().setNavigationSystem(nav);
 			world->registerSystem<MovementSystem>();
 			world->registerSystem<PhysicsSystem>();
-		}
-
-		void TearDown() override {
-			// The base resets the world first, and its NavigationSystem waits out any in-flight build
-			// before the chunks and construction world go away.
-			AIDecisionSystemTest::TearDown();
-			chunks.reset();
 		}
 
 		[[nodiscard]] bool followingRoute(EntityID colonist) {
@@ -3245,7 +3245,8 @@ namespace ecs::test {
 		static constexpr float kTick = 0.1F;
 		static constexpr int   kTicksAfterMesh = 20; // 2 s, four kReEvalInterval (0.5 s) periods
 
-		std::unique_ptr<world::ChunkManager> chunks;
+		// The base TearDown resets the world, and its NavigationSystem waits out any in-flight
+		// build, before this member goes away.
 		construction::ConstructionWorld		 construction;
 		NavigationSystem*							 nav = nullptr;
 	};

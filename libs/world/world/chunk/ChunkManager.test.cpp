@@ -17,6 +17,8 @@ class ChunkManagerTest : public ::testing::Test {
 	}
 
 	static constexpr uint64_t kTestSeed = 12345;
+	// Each loaded chunk generates its 262k tiles on a worker and the manager's
+	// destructor waits for them, so a test loads only as many chunks as it checks.
 	std::unique_ptr<ChunkManager> manager;
 };
 
@@ -44,13 +46,14 @@ TEST_F(ChunkManagerTest, DefaultUnloadRadius) {
 // ============================================================================
 
 TEST_F(ChunkManagerTest, UpdateLoadsChunksAtOrigin) {
+	manager->setLoadRadius(0);
 	manager->update(WorldPosition(0.0F, 0.0F));
 
-	// With radius 2, should have 5x5 = 25 chunks
 	EXPECT_GT(manager->loadedChunkCount(), 0);
 }
 
 TEST_F(ChunkManagerTest, UpdateLoadsCenterChunk) {
+	manager->setLoadRadius(0);
 	manager->update(WorldPosition(256.0F, 256.0F));
 
 	// Center chunk (0, 0) should be loaded
@@ -67,19 +70,19 @@ TEST_F(ChunkManagerTest, LoadsCorrectNumberOfChunks) {
 }
 
 TEST_F(ChunkManagerTest, LoadRadiusAffectsChunkCount) {
-	manager->setLoadRadius(2);
-	manager->update(WorldPosition(0.0F, 0.0F));
-
-	size_t countRadius2 = manager->loadedChunkCount();
-
-	// Reset
-	manager = std::make_unique<ChunkManager>(std::make_unique<MockWorldSampler>(kTestSeed));
 	manager->setLoadRadius(1);
 	manager->update(WorldPosition(0.0F, 0.0F));
 
 	size_t countRadius1 = manager->loadedChunkCount();
 
-	EXPECT_GT(countRadius2, countRadius1);
+	// Reset
+	manager = std::make_unique<ChunkManager>(std::make_unique<MockWorldSampler>(kTestSeed));
+	manager->setLoadRadius(0);
+	manager->update(WorldPosition(0.0F, 0.0F));
+
+	size_t countRadius0 = manager->loadedChunkCount();
+
+	EXPECT_GT(countRadius1, countRadius0);
 }
 
 TEST_F(ChunkManagerTest, GetChunkReturnsNullForUnloaded) {
@@ -90,6 +93,7 @@ TEST_F(ChunkManagerTest, GetChunkReturnsNullForUnloaded) {
 }
 
 TEST_F(ChunkManagerTest, GetChunkReturnsLoadedChunk) {
+	manager->setLoadRadius(0);
 	manager->update(WorldPosition(256.0F, 256.0F));
 
 	const Chunk* chunk = manager->getChunk(ChunkCoordinate(0, 0));
@@ -97,6 +101,7 @@ TEST_F(ChunkManagerTest, GetChunkReturnsLoadedChunk) {
 }
 
 TEST_F(ChunkManagerTest, LoadedChunksHaveCorrectCoordinate) {
+	manager->setLoadRadius(0);
 	manager->update(WorldPosition(256.0F, 256.0F));
 
 	const Chunk* chunk = manager->getChunk(ChunkCoordinate(0, 0));
@@ -111,8 +116,8 @@ TEST_F(ChunkManagerTest, LoadedChunksHaveCorrectCoordinate) {
 
 TEST_F(ChunkManagerTest, MovingCameraUnloadsDistantChunks) {
 	// First load at origin
-	manager->setLoadRadius(1);
-	manager->setUnloadRadius(2);
+	manager->setLoadRadius(0);
+	manager->setUnloadRadius(1);
 	manager->update(WorldPosition(0.0F, 0.0F));
 
 	// Chunk at origin should be loaded
@@ -129,7 +134,7 @@ TEST_F(ChunkManagerTest, MovingCameraUnloadsDistantChunks) {
 }
 
 TEST_F(ChunkManagerTest, ChunksWithinUnloadRadiusRemain) {
-	manager->setLoadRadius(1);
+	manager->setLoadRadius(0);
 	manager->setUnloadRadius(3);
 	manager->update(WorldPosition(256.0F, 256.0F));
 
@@ -145,6 +150,7 @@ TEST_F(ChunkManagerTest, ChunksWithinUnloadRadiusRemain) {
 // ============================================================================
 
 TEST_F(ChunkManagerTest, CenterChunkUpdatesWithCamera) {
+	manager->setLoadRadius(0);
 	manager->update(WorldPosition(0.0F, 0.0F));
 	EXPECT_EQ(manager->centerChunk(), ChunkCoordinate(0, 0));
 
@@ -183,7 +189,7 @@ TEST_F(ChunkManagerTest, GetLoadedChunksConstVersion) {
 // ============================================================================
 
 TEST_F(ChunkManagerTest, GetVisibleChunksBasic) {
-	manager->setLoadRadius(2);
+	manager->setLoadRadius(0);
 	manager->update(WorldPosition(256.0F, 256.0F));
 
 	// Query a rectangle that covers chunk (0, 0)
@@ -223,7 +229,7 @@ TEST_F(ChunkManagerTest, SetUnloadRadius) {
 // ============================================================================
 
 TEST_F(ChunkManagerTest, LoadAtNegativeCoordinates) {
-	manager->setLoadRadius(1);
+	manager->setLoadRadius(0);
 	manager->update(WorldPosition(-256.0F, -256.0F));
 
 	// Chunk (-1, -1) should be loaded
