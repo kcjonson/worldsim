@@ -149,7 +149,7 @@ int16_t calculateTaskAgeBonus(float taskAge, const TaskAgeConfig& config) {
 }
 ```
 
-In the game the age is not a goal's own: no goal system stamps `createdAt` (it stays 0), so the age is the AI clock (`AIDecisionSystem::m_elapsedTime`, real seconds since the session started) and every Haul and Harvest option with a goal gets the same term. It reaches +100 after 100 real minutes and orders nothing against other goals.
+In the game the age is not a goal's own: no goal system stamps `createdAt` (it stays 0), so the age is the AI clock (`AIDecisionSystem::m_elapsedTime`, real seconds since the session started) and every Available Haul and Harvest option with a goal gets the same term; other options get none. It reaches +100 after 100 real minutes and orders nothing against other goals.
 
 ---
 
@@ -158,11 +158,11 @@ In the game the age is not a goal's own: no goal system stamps `createdAt` (it s
 The "hauling problem" (from RimWorld) is colonists hauling everything before other work, walking across the map for low-value items. Nothing hauling-specific guards against it; the general `(tier, score)` key does, as follows.
 
 1. **Tier.** A Haul or Harvest serving an active work order (`servesActiveWorkOrder`: provisioning a build or a craft) is tier 4; any other, storage stocking included, keeps its base tier 6. A PlacePackaged serving a work order or already carried is tier 4. Tier 6 loses to every need (tier 5, or 2 when critical) and to work orders, so an opportunistic haul only happens when nothing above it is available (`classifyTier`).
-2. **Gathering rank, within a tier and before the score** (`EvaluatedOption::gatheringRank`): a loose pile toward a root the colonist gathers for (2), then a further cut toward it (1), then everything else, the carry-in included (0), then a fresh cut toward a root and item a known pile also serves (-1). A colonist fills its trip before walking it in, and takes a pile before cutting another plant.
+2. **Gathering rank, within a tier and before the score** (`EvaluatedOption::gatheringRank`): the carry-in the colonist has already chosen to walk (3, `kRankChosenDelivery`), then a loose pile toward a root it gathers for (2), then a further cut toward it (1), then everything else, a carry-in not yet chosen included (0), then a fresh cut toward a root and item a known pile also serves (-1). A colonist fills its trip before walking it in, and takes a pile before cutting another plant.
 3. **Score, within a tier and rank** (`populatePriorityBonuses`, `EvaluatedOption::computeScore`), the sum of:
    - distance factor, `300 * max(0, 1 - d / 60)`, so the nearest reachable source wins;
    - skill bonus, `min(skillLevel * 10, 100)`;
-   - task age, the same for every goal today (see Task Age Bonus);
+   - task age, for a Haul or Harvest option with a goal whose status is Available only, and the same for every such option today (see Task Age Bonus);
    - hysteresis, +50 on the option the colonist is already doing;
    - storage priority, for a stocking option only: the destination box's priority for the item (Low 0 to Critical 3) times `<StoragePriority><weight>` (300), so a higher-priority box beats a nearer lower one.
 4. **Ties** break on `tiebreakId`, a stable id, never container order.

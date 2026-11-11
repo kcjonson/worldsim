@@ -1,6 +1,6 @@
 # Vision and line of sight: technical architecture
 
-**Status:** Partly built. Wall occlusion, visibility polygons with the outdoor fast path and per-observer caching, structure-as-observable discovery, stale-memory reconciliation, and door and window transparency ship in `VisionSystem` and `libs/geometry/visibility`. Witnessing and a `canSee` query for the AI are not built, and player visibility is a separate epic (D5). The GeometryIndex shipped as vision's own (`libs/sim/vision/GeometryIndex`), built from the same construction graph nav reads and with the same opening gaps, not as one index both consume (D1).
+**Status:** Partly built. Wall occlusion, visibility polygons with the outdoor fast path and per-observer caching, structure-as-observable discovery, stale-memory reconciliation, and door and window transparency ship in `VisionSystem` and `libs/geometry/visibility`. Witnessing and a `canSee` query for the AI are not built, and player visibility is a separate epic (D5). The GeometryIndex shipped as vision's own (`libs/sim/vision/GeometryIndex`), built from the same construction graph nav reads, not as one index both consume (D1). The two differ at windows: a door is a gap for sight and movement, a window a gap for sight only, where nav keeps the wall band solid.
 **Created:** 2026-06-12
 **Companion to:** [Pathfinding Architecture](./pathfinding-architecture.md) (shared geometry substrate; vision is belief's write path)
 

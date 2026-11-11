@@ -18,7 +18,8 @@ Navigation here is the region model: independent per-region meshes, built on `st
 | 1 | Frame delta: time since the last frame start, clamped to `[0, maxFrameDelta]` (0.25 s, `FrameConfig` in `AppConfig.h`); the first frame's delta is 0. The previous frame's metrics close here, so its time includes its pacing | `App::beginFrame` | every frame |
 | 2 | Platform events into the input queue; resize | `App::pollEvents` | every frame |
 | 3 | Dev server, pre-frame: every parked control (`exit`, `pause`, `resume`, `step`, `vsync`, `scene`, `reload`, `capture`, and the game's `camera` and `gpuhold`) and every `/api/dev/<verb>` route runs here on the main thread, then injected input is taken unless the App is paused. An `exit` ends the frame here | `App::devServerPreFrame`, `DevServer::servePreFrame` | every frame; work only when something is parked |
-| 4 | Input routed: the top scene's ui, then debug layers, then `GameScene::handleEvent` for what the ui didn't take. Only debug layers see input while the App is paused | `App::dispatchEvents` | every frame |
+| 3a | The frame's input state taken from the accumulator | `App::readFrameInput` | every frame |
+| 4 | Input routed: each event goes to the debug layers first; one they don't take goes, unless the App is paused, to the top scene's ui, then to `GameScene::handleEvent` | `App::dispatchEvents` | every frame |
 | 5 | Scene switches applied (not while paused) | `App::applySceneChanges` | every frame |
 | 6 | Fixed ticks at `fixedStep` (1/60 s), at most 8 a frame. `GameScene` has no `fixedUpdate`, so in worldsim these only move the accumulator | `App::runFixedTicks` | every frame, no effect |
 | 7 | The top scene's `update(FrameContext{dt})`, then its ui's update, then debug layers. Skipped while the App is paused | `App::updateScenes` | every frame unless the App is paused |
@@ -83,7 +84,7 @@ Clocks: **F** frame count; **R** real seconds (the frame delta, unscaled, still 
 |---|---|---|---|---|---|
 | Game clock | `TimeSystem::update` | every frame | `kSpeedMultipliers` {0, 1, 3, 10}, `baseTimeScale` 1 game minute per real second (`TimeSystem.h`) | G | stops |
 | Vision | `VisionSystem::update` | every 5th frame, every observer in that frame; the counter starts at 5, so frames 1, 6, 11, ... | `m_updateInterval` 5 (`VisionSystem.h`) | F | runs |
-| Needs decay | `NeedsDecaySystem::update` | every frame | `decayRate` 1 % per game minute (`Needs.h`) | G | stops |
+| Needs decay | `NeedsDecaySystem::update` | every frame | per-need `decayRate`, 0.01 to 0.12 % per game minute (`NeedsComponent::createDefault`, table below) | G | stops |
 | Nav mesh swap and region gates | `NavigationSystem::update` | every frame; a region rebuilds only when a driver comes within `kEdgeMarginMm` (8 m) of its edge, its size changes by more than `kSizeChangeThreshold` (20 %), its obstacles change (construction version, the chunks it covers or their placement state, the placement removal epoch), or it is new | `kSimRadiusMm` 30 m per colonist, viewport half-extent clamped to `kMaxSimHalfExtentMm` 64 m (`NavigationSystem.h`) | F | runs |
 | Nav region build | `NavigationSystem::launchBuild` | when a gate fires; the input is gathered on the main thread, the mesh built on a `std::async` worker | none | W | runs |
 | Storage goals | `StorageGoalSystem::update` | every 60th frame | `updateFrameInterval` 60 (`StorageGoalSystem.h`) | F | runs |
@@ -171,9 +172,9 @@ The decision's readers: the `DecisionTrace` component, read the same frame by `T
 | Task and movement target | AI at 60 | Movement 100, Physics 200, `ActionSystem` 350 | the same frame: a target at the colonist's own position is Arrived at once and its action starts the same frame |
 | Arrival | Movement (0.1 m from the last waypoint); `ActionSystem` (0.4 m from the target, after the collision pushes) | AI condition 2, `ActionSystem` | `ActionSystem` the same frame; AI the next frame |
 | Route requests | AI, synchronous A* on the main thread (`NavigationSystem::requestPath`) | Movement | the same frame |
-| Route outcomes | `AIDecisionSystem::applyNavOutcome`: Traveling, `AwaitingMesh` with the generation, `CantFindWayTo` | AI's next decision, the info panel | next frame |
+| Route outcomes | `AIDecisionSystem::applyNavOutcome`: Traveling, `AwaitingMesh` with the generation, `CantFindWayTo` | the info panel (`GameUI::update`, after the ECS in the same `GameScene::update`); the AI | the info panel the same frame; the AI at its next decision |
 | Placed-obstacle removals | `ecs::takeWorldSource` in `ActionSystem` removes the entity from the placement index at once and bumps its removal epoch | the covering region's gate | the next frame's nav update launches the rebuild; the mesh changes when that build lands, frames later |
-| Removals and spawns | `ActionSystem` callbacks (350), structure callbacks, input handlers, dev routes | the drains after `World::update` | in-tick producers the same frame, after the render collect, so the render data shows the change a frame later; out-of-tick producers at the next frame's drain; the AI sees a drop next frame, a colonist's memory only after a vision pass |
+| Removals and spawns | `ActionSystem` callbacks (350); the structure callbacks wired on `ActionSystem` and `ConstructionSystem` (58); `enqueueResourceDrop`, wired on `ActionSystem`, `ConstructionSystem`, and `AIDecisionSystem` (60) | the drains after `World::update` | the same frame, after the render collect, so the render data shows the change a frame later; the AI sees a drop next frame, a colonist's memory only after a vision pass. Not everything is deferred: the dev `kill` route calls `ecs::destroyWorldEntity` directly at step 3, and the salvage drop inside the structure-deconstructed callback calls `dropResourcePiles` directly, mid-tick |
 | Packaged spawn target | the craft-completion callback calls `NavigationSystem::findValidPositionNear` at 350; spawn at the drain | `BuildGoalSystem` | at its next poll, up to 30 frames later |
 | Regrowth clock | `takeWorldSource` stamps `simulationSeconds` at 350 | AI, which reads it once at its update's start | next frame |
 | Chunk generation | a `std::async` worker generates the tiles | `ChunkManager::update` retires the future; placement launch checks `isReady` | the frame the poll sees it, before the ECS |
@@ -202,14 +203,27 @@ Frame rate is at most 120 (the cap), and with vsync on (the default) 60 on a 60 
 
 What changes with frame rate: vision, the goal polls, construction, the Rerouting hold, collision pushes per second, and every per-frame AI state (decisions per second double from 60 to 120 fps). What changes with game speed: every R and F rate, measured in game time; G rates are fixed in game time.
 
-Worked examples, at the default walking speed (2 m/s) and need decay (1 % per game minute):
+Colonists get `NeedsComponent::createDefault()` (`Needs.h`); the `Need` struct's own default of 1 % per game minute is used by nothing in the game. Rates are % per game minute; a need is sought below its seek threshold and critical below its critical one. Only the first five are actionable (`kActionableNeeds`), and the AI's critical tier uses a fixed 10 (`kCriticalNeedThreshold`), so hygiene's 15 matters only where `Need::isCritical` is read.
+
+| Need | Decay | Seek | Critical |
+|---|---|---|---|
+| Hunger | 0.08 | 50 | 10 |
+| Thirst | 0.12 | 50 | 10 |
+| Energy | 0.05 | 30 | 10 |
+| Bladder | 0.03 | 30 | 10 |
+| Digestion | 0.02 | 30 | 10 |
+| Hygiene | 0.015 | 40 | 15 |
+| Recreation | 0.01 | 30 | 10 |
+| Temperature | 0 | 40 | 15 |
+
+Worked examples, at the default walking speed (2 m/s) and the fastest decay (thirst, 0.12 % per game minute):
 
 | AI interval, 0.5 s real | 1x | 3x | 10x |
 |---|---|---|---|
 | simulation seconds (game minutes) | 0.5 | 1.5 | 5 |
 | on the day clock | 30 s | 90 s | 5 min |
 | metres walked | 1 | 3 | 10 |
-| need lost | 0.5 % | 1.5 % | 5 % |
+| thirst lost | 0.06 % | 0.18 % | 0.6 % |
 
 | Vision, every 5 frames | 60 fps | 120 fps |
 |---|---|---|
@@ -249,7 +263,7 @@ Ranked by how likely a rate or order change breaks something.
 4. The claim index is only as fresh as the last frame someone decided. `ActionSystem::carryHarvestIn` reads whatever is there, and the development check runs only on frames that built the index. The design accepts over-claiming for a frame ([Task Claims](./task-claims.md)); fewer per-frame deciders means more frames on an older index.
 5. Periodic work lands on the same frames. Vision does every observer in one frame. Storage and crafting share frames, and place goals and construction coincide with them every 60th frame (all four counters start at 0); vision fires on frames 1 mod 5, so it never shares a frame with them. AI timers reset on the frame a colonist decides, so a landing party, and colonists that decide on one event, re-decide on the same frame every 0.5 s. Read frame-time spikes with `ecsSystems` in `/api/metrics` rather than the average.
 6. Nav costs land on the main thread outside the build. `NavigationSystem::launchBuild` gathers the region's input on the main thread (logged per build as `[NavBuild] ... buildInput`), and dropping a region with two retired builds still running waits for one. A mesh change (a wall, a felled tree, a chunk finishing placement) reaches queries only when the rebuild lands, so routes plan on the old mesh for those frames.
-7. One-frame and longer delays that change outcomes. A completed action leaves the colonist idle for the rest of its frame. Movement sets Arrived one frame and the AI sees it the next. A drop is drawn a frame late and reaches memory only after a vision pass. A crafted package waits up to 30 frames for its place goal. The Rerouting label lasts 30 AI updates, 0.5 s at 60 fps and 0.25 s at 120.
+7. One-frame and longer delays that change outcomes. A completed action leaves the colonist idle for the rest of its frame. Movement sets Arrived one frame and the AI sees it the next. A drop is drawn a frame late and reaches memory only after a vision pass; the two direct paths (dev `kill`, the salvage drop) skip the drain, so code that assumes every removal and spawn is deferred is wrong. A crafted package waits up to 30 frames for its place goal. The Rerouting label lasts 30 AI updates, 0.5 s at 60 fps and 0.25 s at 120.
 8. Frame-rate dependence of physical behaviour. The collision systems push positions per frame with no dt, so separation is twice as fast in real time at 120 fps and ten times weaker relative to walking at 10x. `MovementSystem` caps fast-forward steps so a waypoint isn't skipped, but `ActionSystem`'s 0.4 m arrival is checked after the push from a step that can be 0.33 m (10x at 60 fps).
 
 ## What cannot be observed
