@@ -11,6 +11,7 @@
 #include "../../components/Movement.h"
 #include "../../components/NavPath.h"
 #include "../../components/Packaged.h"
+#include "../../components/StorageConfiguration.h"
 #include "../../components/StructureBlueprint.h"
 #include "../../components/Task.h"
 #include "../../components/Transform.h"
@@ -156,16 +157,25 @@ namespace ecs {
 					static_cast<unsigned long long>(depEff.storageEntityId)
 				);
 			} else if (auto* storageInv = world->getComponent<Inventory>(storageEntity)) {
-				uint32_t added = storageInv->addItem(depEff.itemDefName, removed);
+				// A box takes what its configuration still wants, never past an item's configured max, and
+				// what fits; the colonist keeps the rest.
+				uint32_t takes = removed;
+				if (const auto* config = world->getComponent<StorageConfiguration>(storageEntity)) {
+					const auto* itemDef = registry.getDefinition(depEff.itemDefName);
+					takes = std::min(
+						removed,
+						storageRoomFor(*config, *storageInv, depEff.itemDefName, itemDef != nullptr ? itemDef->category : assets::ItemCategory::None)
+					);
+				}
+				uint32_t added = storageInv->addItem(depEff.itemDefName, takes);
 				if (added < removed) {
-					// Storage full - put remaining back in colonist inventory
 					uint32_t leftover = removed - added;
 					if (twoHand) {
 						ecs::addArmful(inventory, registry, depEff.itemDefName, leftover);
 					} else {
 						inventory.addItem(depEff.itemDefName, leftover);
 					}
-					LOG_WARNING(Engine, "[Action] Storage full: deposited %u of %u x %s", added, removed, depEff.itemDefName.c_str());
+					LOG_DEBUG(Engine, "[Action] Storage took %u of %u x %s; the rest stays carried", added, removed, depEff.itemDefName.c_str());
 				} else {
 					LOG_INFO(
 						Engine,

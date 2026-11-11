@@ -2204,13 +2204,12 @@ namespace ecs::test {
 		EXPECT_EQ(ecs::handHeldQuantity(*inventory, "Wood"), 14U) << "the full armful is intact -- nothing dropped";
 	}
 
-	// 9b. Two-hand carry holds against idle Wander when no pull is left (the second-haul abandonment).
-	//     Same mid-carry setup as #9, but the source box is drained to its OWN min so the pull-source
-	//     scan offers NOTHING. With needs met and no haul option, the top option is Wander (tier 7).
-	//     The old guard only blocked a same-tier *Haul*, so Wander -- not a Haul -- slipped past and the
-	//     colonist walked off carrying the un-stowable armful indefinitely (dest box stalls, Wood
-	//     stranded in hands). The broadened guard (ANY same-or-lower-priority challenger) must HOLD the
-	//     delivery against Wander so the deposit completes.
+	// 9b. A two-hand carry finishes its delivery when the source is drained mid-carry (the second-haul
+	//     abandonment). Same mid-carry setup as #9, but the source box is drained to its OWN min so the
+	//     pull-source scan offers NOTHING, while box B still wants Wood. The colonist once walked off
+	//     carrying the un-stowable armful indefinitely (dest box stalls, Wood stranded in hands). The
+	//     armful's carry-in is the same task as the deposit leg it is on, so it is kept, nothing drops,
+	//     and the deposit stops at B's configured max with the surplus still carried.
 	TEST_F(AIDecisionSystemTest, TwoHandPullHoldsAgainstWanderWhenSourceDrainedMidCarry) {
 		auto& registry = assets::AssetRegistry::Get();
 		// REAL two-hand Wood (handsRequired==2): rides in both hands, can't stow -> a switch drops it.
@@ -2232,9 +2231,8 @@ namespace ecs::test {
 		const glm::vec2 srcPos{2.0F, 0.0F};
 		const glm::vec2 destPos{4.0F, 0.0F};
 		const EntityID srcBox = makeStorageBox(srcPos, "Box", "Wood", ecs::StoragePriority::Low, /*qty=*/8, /*min=*/8);
-		// Dest B (High) sits at its max, so it wants nothing more: no carry-in of the armful is offered
-		// either, and Wander is the top option. The guard is what holds the delivery.
-		const EntityID destBox = makeStorageBox(destPos, "Box", "Wood", ecs::StoragePriority::High, /*qty=*/13, /*min=*/20, /*max=*/13);
+		// Dest B (High) holds 13 and takes up to 20: it still wants 7 of the 14 carried.
+		const EntityID destBox = makeStorageBox(destPos, "Box", "Wood", ecs::StoragePriority::High, /*qty=*/13, /*min=*/20, /*max=*/20);
 
 		// Colonist mid-carry: a two-hand Wood armful in hands, task on its deposit leg (phase 2) to B.
 		auto colonist = createColonist(srcPos);
@@ -2271,21 +2269,35 @@ namespace ecs::test {
 
 		world->update(0.016F);
 
-		// The bug's trigger must be present: the source offers no pull, so Wander is the top option.
+		// The bug's trigger must be present: the source offers no pull.
 		ASSERT_EQ(findPullOption(*getTrace(colonist)), nullptr)
 			<< "source drained to its min -> no pull option offered (the trigger for the Wander abandonment)";
 		const auto* selected = getTrace(colonist)->getSelected();
 		ASSERT_NE(selected, nullptr);
-		EXPECT_EQ(selected->taskType, TaskType::Wander)
-			<< "with needs met and no haul, the highest-ranked option is idle Wander (tier 7)";
+		EXPECT_EQ(selected->taskType, TaskType::Haul) << "the armful's carry-in to B outranks Wander";
+		EXPECT_TRUE(selected->haulFromInventory);
+		EXPECT_EQ(selected->haulTargetStorageId, static_cast<uint64_t>(destBox));
+		EXPECT_EQ(selected->haulQuantity, 7U) << "sized to what B still takes";
 
-		// The colonist must HOLD the in-flight delivery despite Wander outranking it: still hauling Wood
-		// to box B, armful still in hands. NOT switched to Wander, NOT carrying the load off forever.
-		EXPECT_EQ(task->type, TaskType::Haul) << "did NOT switch to Wander -- the two-hand carry is held to finish";
+		// It is the delivery the colonist is already on: kept as it is, not cleared and re-selected.
+		EXPECT_EQ(task->type, TaskType::Haul);
+		EXPECT_FALSE(task->haulFromInventory) << "the deposit leg was kept, not replaced by a fresh carry-in";
+		EXPECT_EQ(task->chainStep, 1);
 		EXPECT_EQ(task->haulTargetStorageId, static_cast<uint64_t>(destBox)) << "still delivering to the dest box";
 		EXPECT_FLOAT_EQ(task->targetPosition.x, destPos.x) << "still targeting the deposit leg (box B)";
 		EXPECT_TRUE(inventory->isHolding("Wood")) << "the two-hand armful stayed in hands (not stranded by a wander)";
 		EXPECT_EQ(ecs::handHeldQuantity(*inventory, "Wood"), 14U) << "the full armful is intact -- nothing dropped";
+
+		// Arrived at B, the deposit stops at B's max and the rest stays in hand.
+		world->registerSystem<ActionSystem>(kTestRngSeed);
+		world->addComponent<Action>(colonist, Action{});
+		world->getComponent<Position>(colonist)->value = destPos;
+		task->state = TaskState::Arrived;
+		for (int frame = 0; frame < 20 && task->type == TaskType::Haul; ++frame) {
+			world->update(0.25F);
+		}
+		EXPECT_EQ(world->getComponent<Inventory>(destBox)->getQuantity("Wood"), 20U) << "never past the configured max";
+		EXPECT_EQ(ecs::handHeldQuantity(*inventory, "Wood"), 7U) << "the surplus stays carried";
 	}
 
 	// 9c. The broadening must NOT over-hold: a strictly-HIGHER-tier challenger (a critical need, tier 2)
@@ -3547,6 +3559,61 @@ namespace ecs::test {
 		EXPECT_TRUE(statusOf("Pellet") == OptionStatus::Available || statusOf("Pellet") == OptionStatus::Selected);
 		EXPECT_TRUE(statusOf("Plank") == OptionStatus::Available || statusOf("Plank") == OptionStatus::Selected);
 		EXPECT_EQ(getTask(colonist)->type, TaskType::Haul) << "and the colonist takes one";
+	}
+
+	// Goods a colonist carries that a box wants are delivered to it: a pack full of Ballast goes into a
+	// box that takes raw materials.
+	TEST_F(AIDecisionSystemTest, CarriedGoodsABoxWantsAreDelivered) {
+		auto&					registry = assets::AssetRegistry::Get();
+		assets::AssetDefinition ballast;
+		ballast.defName = "Ballast";
+		ballast.label = "Ballast";
+		ballast.handsRequired = 1;
+		ballast.category = assets::ItemCategory::RawMaterial;
+		ballast.capabilities.carryable = assets::CarryableCapability{1};
+		ballast.itemProperties = assets::ItemProperties{};
+		ballast.itemProperties->stackSize = 40;
+		ballast.itemProperties->massKg = 1.5F;
+		registry.registerTestDefinition(std::move(ballast));
+		world->registerSystem<ActionSystem>(kTestRngSeed);
+
+		auto colonist = createColonist({0.0F, 0.0F});
+		world->addComponent<Action>(colonist, Action{});
+		satisfyAllNeeds(*getNeeds(colonist));
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		inventory->addItem("Ballast", 20);
+
+		const glm::vec2 boxAt{4.0F, 0.0F};
+		auto			storage = world->createEntity();
+		world->addComponent<Position>(storage, Position{boxAt});
+		Inventory storageInv;
+		storageInv.maxCapacity = 5;
+		world->addComponent<Inventory>(storage, storageInv);
+		world->addComponent<StorageConfiguration>(storage, StorageConfiguration::createAcceptAll({assets::ItemCategory::RawMaterial}));
+		GoalTask goal;
+		goal.type = TaskType::Haul;
+		goal.owner = GoalOwner::StorageGoalSystem;
+		goal.destinationEntity = storage;
+		goal.destinationPosition = boxAt;
+		goal.acceptedCategory = assets::ItemCategory::RawMaterial;
+		goal.status = GoalStatus::Available;
+		GoalTaskRegistry::Get().createGoal(std::move(goal));
+
+		world->update(0.016F);
+		auto* task = getTask(colonist);
+		ASSERT_EQ(task->type, TaskType::Haul);
+		EXPECT_TRUE(task->haulFromInventory);
+		EXPECT_EQ(task->haulItemDefName, "Ballast");
+		EXPECT_EQ(task->haulTargetStorageId, static_cast<uint64_t>(storage));
+		EXPECT_EQ(task->haulQuantity, 20U);
+
+		world->getComponent<Position>(colonist)->value = boxAt;
+		task->state = TaskState::Arrived;
+		for (int frame = 0; frame < 20 && task->type == TaskType::Haul; ++frame) {
+			world->update(0.25F);
+		}
+		EXPECT_EQ(world->getComponent<Inventory>(storage)->getQuantity("Ballast"), 20U);
+		EXPECT_EQ(inventory->getQuantity("Ballast"), 0U);
 	}
 
 	// A storage that is genuinely full (no free slot AND every stack at its cap) offers no haul:
@@ -4957,8 +5024,7 @@ namespace ecs::test {
 		auto& registry = assets::AssetRegistry::Get();
 		addKnownEntity(colonist, kInRoom, registerBerryBush(registry), assets::CapabilityType::Harvestable);
 		// A station whose job needs berries, and the Harvest child that cuts for it. The colonist's own
-		// berry would be carried in instead, so it has none.
-		world->getComponent<Inventory>(colonist)->removeItem("Berry", 1);
+		// berry is its provisions, never the station's.
 		assets::RecipeDef recipe;
 		recipe.defName = "Recipe_BerryNeed";
 		recipe.label = recipe.defName;
