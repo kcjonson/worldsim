@@ -60,6 +60,17 @@ namespace worldview {
 		constexpr int32_t kGroundHexColumns = 128;
 		constexpr int32_t kGroundHexRows	= 148;
 
+		// The forest floor (ground-textures.md, "Forest floor"): at full canopy weight the grass
+		// family's sRGB color is multiplied toward leaf litter, Grass's tile mean (80.2, 105.9, 48.6)
+		// to about (75, 80, 37), 9 L* darker and 15 degrees of hue toward brown, by this strength.
+		constexpr float				   kForestFloorStrength = 1.0F;
+		constexpr std::array<float, 3> kForestFloorLitter	= {75.0F / 80.2F, 80.0F / 105.9F, 37.0F / 48.6F};
+
+		bool isGrassFamily(world::Surface surface) {
+			return surface == world::Surface::Grass || surface == world::Surface::GrassTall || surface == world::Surface::GrassShort ||
+				   surface == world::Surface::GrassMeadow;
+		}
+
 		/// u_groundLayers.w: how land.glsl turns a hex cell's tile.
 		int groundRotateCode(assets::GroundRotate rotate) {
 			switch (rotate) {
@@ -213,6 +224,7 @@ namespace worldview {
 		loc.groundParams = glGetUniformLocation(program, "u_groundParams");
 		loc.groundTintBase = glGetUniformLocation(program, "u_groundTintBase");
 		loc.groundTintLush = glGetUniformLocation(program, "u_groundTintLush");
+		loc.groundFloorTint = glGetUniformLocation(program, "u_groundFloorTint");
 		loc.groundSeed = glGetUniformLocation(program, "u_groundSeed");
 		loc.groundCellOrigin = glGetUniformLocation(program, "u_groundCellOrigin");
 		loc.groundMacroValue = glGetUniformLocation(program, "u_groundMacroValue");
@@ -519,6 +531,7 @@ namespace worldview {
 		std::array<float, kCount * 4> params{};
 		std::array<float, kCount * 3> tintBase{};
 		std::array<float, kCount * 3> tintLush{};
+		std::array<float, kCount * 3> floorTint{};
 		std::array<float, kCount>	  mipLevels{};
 		const float					  bias = *groundLook.lodBias;
 		const float					  macroAmp = *groundLook.macroAmp;
@@ -538,12 +551,15 @@ namespace worldview {
 			for (size_t c = 0; c < 3; ++c) {
 				tintBase[id * 3 + c] = 1.0F + amp * (s.macro.dry[c] - 1.0F);
 				tintLush[id * 3 + c] = amp * (s.macro.lush[c] - s.macro.dry[c]);
+				floorTint[id * 3 + c] =
+					isGrassFamily(static_cast<world::Surface>(id)) ? 1.0F + kForestFloorStrength * (kForestFloorLitter[c] - 1.0F) : 1.0F;
 			}
 		}
 		glUniform4iv(loc.groundLayers, static_cast<GLsizei>(kCount), layers.data());
 		glUniform4fv(loc.groundParams, static_cast<GLsizei>(kCount), params.data());
 		glUniform3fv(loc.groundTintBase, static_cast<GLsizei>(kCount), tintBase.data());
 		glUniform3fv(loc.groundTintLush, static_cast<GLsizei>(kCount), tintLush.data());
+		glUniform3fv(loc.groundFloorTint, static_cast<GLsizei>(kCount), floorTint.data());
 		std::array<float, kLandPairFloats> pairs{};
 		packGroundPairs(groundTiles->pairs(), mipLevels, 1.0F / screenPixelsPerMeter, pairs);
 		glUniform4fv(loc.landPair, static_cast<GLsizei>(kLandPairs * kLandPairVec4s), pairs.data());

@@ -23,6 +23,7 @@
 #include <assets/TaskChainRegistry.h>
 #include <assets/WorkTypeRegistry.h>
 #include <assets/placement/AsyncChunkProcessor.h>
+#include <assets/placement/CanopyCover.h>
 #include <assets/placement/PlacementExecutor.h>
 #include <ecs/GoalTaskRegistry.h>
 #include <graphics/Color.h>
@@ -341,7 +342,9 @@ namespace {
 			worldState->landingLatDeg = startConfig->landingLatDeg;
 			worldState->landingLonDeg = startConfig->landingLonDeg;
 			worldState->party = std::move(startConfig->party);
-			worldState->chunkManager = std::make_unique<world::ChunkManager>(std::move(sampler));
+			worldState->chunkManager = std::make_unique<world::ChunkManager>(
+				std::move(sampler), assets::canopyCoverFromDefinitions(assets::AssetRegistry::Get())
+			);
 
 			// Only load 3×3 grid (center + 8 adjacent) - chunks are large!
 			worldState->chunkManager->setLoadRadius(1);

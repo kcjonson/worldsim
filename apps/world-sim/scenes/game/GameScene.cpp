@@ -52,6 +52,7 @@
 #include <assets/DetailLevels.h>
 #include <assets/RecipeRegistry.h>
 #include <assets/placement/AsyncChunkProcessor.h>
+#include <assets/placement/CanopyCover.h>
 #include <assets/placement/PlacementExecutor.h>
 
 // ECS
@@ -156,7 +157,7 @@ namespace {
 
 				// Create world systems
 				auto sampler = std::make_unique<world::MockWorldSampler>(kDefaultWorldSeed);
-				m_chunkManager = std::make_unique<world::ChunkManager>(std::move(sampler));
+				m_chunkManager = std::make_unique<world::ChunkManager>(std::move(sampler), assets::canopyCoverFromDefinitions(assets::AssetRegistry::Get()));
 
 				m_camera = std::make_unique<world::WorldCamera>();
 				m_camera->setPanSpeed(200.0F);

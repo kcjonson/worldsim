@@ -40,7 +40,7 @@ Generators:
 - `deciduous.lua` draws its trunk foot 0.4 to 1.1 m south of the origin while its collision rect sits at the origin, so today the trunk a colonist walks around is not where the trunk is drawn.
 
 Placement:
-- A grove field already shapes forests: domain-warped value noise at 105 m, a pure function of world position and seed (`PlacementExecutor.cpp`). Its low tail thins spawn chance to 12% (glades); its high tail tightens spacing to 55% (thickets).
+- A grove field already shapes forests: domain-warped value noise at 105 m, a pure function of world position and seed (`world/generation/GroveField.h`, which the forest floor reads too). Its low tail thins spawn chance to 12% (glades); its high tail tightens spacing to 55% (thickets).
 - `spaced` spacing checks only the same def in the same chunk. Oak, maple, and birch would be placed with no regard for each other.
 - `<avoids>` and `<affinity>` strengths are computed and then only compared against zero, so they do nothing. Only `<requires>` has an effect.
 - One candidate is tried per 4 m x 4 m block per def, so a def tops out at 62.5 per 1,000 m2.

@@ -1,8 +1,9 @@
 #include "PlacementExecutor.h"
 
-#include "GroveField.h"
+#include "world/generation/GroveField.h"
 
 #include "assets/AssetRegistry.h"
+#include "assets/placement/CanopyCover.h"
 
 #include <world/chunk/Chunk.h>
 
@@ -588,7 +589,7 @@ TEST(PlacementExecutorTests, CrownSpacedTreesKeepTheirCrownsApart) {
 		}
 		return 0.5F * (maxX - minX);
 	};
-	const float k = registry.getDefinition("Flora_TreeOak")->placement.crownSpacing * (1.0F - grove::kThicketTighten);
+	const float k = registry.getDefinition("Flora_TreeOak")->placement.crownSpacing * (1.0F - world::grove::kThicketTighten);
 	const SpatialIndex* index = executor.getChunkIndex({0, 0});
 	for (const PlacedEntity& e : result.entities) {
 		const float r = crown(e);
@@ -866,4 +867,27 @@ TEST(PlacementExecutorTests, DefScaleRangeMovesOnlyThatDefsScale) {
 		}
 	}
 	EXPECT_GT(oaks, 100U);
+}
+
+// The forest floor's canopy cover comes from the tree defs: a biome the trees stand in densely is
+// closed canopy, one with lone trees is open land, and non-trees (rocks) count for nothing.
+TEST(PlacementExecutorTests, CanopyCoverComesFromTheTreeDefs) {
+	auto& registry = AssetRegistry::Get();
+	registerGoldenDefs(registry);
+	AssetDefinition pine = makeFloraDef("Cover_Pine", world::Biome::MontaneForest, Distribution::Spaced, 0.2F, 3.0F);
+	pine.placement.groups = {"trees"};
+	registry.registerTestDefinition(pine);
+	AssetDefinition oak = *registry.getDefinition("Golden_Oak");
+	oak.placement.groups = {"trees"};
+	registry.registerTestDefinition(oak);
+	AssetDefinition maple = *registry.getDefinition("Golden_Maple");
+	maple.placement.groups = {"trees"};
+	registry.registerTestDefinition(maple);
+
+	const world::grove::CanopyCover cover = canopyCoverFromDefinitions(registry);
+	EXPECT_EQ(cover.at(world::Biome::TemperateDeciduousForest), 1.0F); // (0.45 + 0.40) / 16 a m2
+	EXPECT_EQ(cover.at(world::Biome::TemperateGrassland), 0.0F);		  // a lone maple, 0.01 / 16
+	EXPECT_NEAR(cover.at(world::Biome::MontaneForest), (0.2F / 16.0F - kCanopyOpenDensity) / (kCanopyClosedDensity - kCanopyOpenDensity), 1e-6F);
+	EXPECT_EQ(cover.at(world::Biome::HotDesert), 0.0F);
+	registry.clear();
 }

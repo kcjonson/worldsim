@@ -8,10 +8,17 @@
 // broad middle is normal forest, densest toward its high end. The same noise at about a
 // fifth of the size opens small gaps inside stands, and per-tree traits read it at another
 // size for the age field.
+//
+// The canopy weight reads the same terms for the ground: the forest floor (litter and
+// shade) lies where the trees stand, so trees and floor agree by construction.
 
+#include "world/Biome.h"
+
+#include <array>
+#include <cstddef>
 #include <cstdint>
 
-namespace assets::grove {
+namespace world::grove {
 
 	inline constexpr float kFeatureMeters = 105.0F; // grove, glade, and thicket scale
 	inline constexpr float kGladeSpawnMin = 0.12F;	// glade floor: fraction of base spawn chance
@@ -43,4 +50,26 @@ namespace assets::grove {
 	/// kGapFeatureMeters through the gap band.
 	[[nodiscard]] float gapWeight(float worldX, float worldY, uint64_t seed);
 
-} // namespace assets::grove
+	// The forest floor follows the canopy: its edge sits partway up the glade band, where the
+	// trees have thinned to about a third of a stand's, and crosses it over a few meters; inside,
+	// the loose forest near the edge carries less floor than a stand core, and the small gaps
+	// stay greener.
+	inline constexpr float kFloorEdgeLo = 0.36F; // grove field below this has no floor (the glade)
+	inline constexpr float kFloorEdgeHi = 0.42F; // the floor's edge is complete here
+	inline constexpr float kFloorLoose = 0.55F;	 // floor at the edge, against 1 where the glade band ends
+	inline constexpr float kFloorInGap = 0.25F;	 // floor left in the middle of a small gap
+
+	/// How much forest each biome carries, 0 (none: open land) to 1 (closed canopy), from the tree
+	/// defs that place there (assets::canopyCoverFromDefinitions). Indexed by Biome.
+	struct CanopyCover {
+		std::array<float, static_cast<size_t>(Biome::Count)> byBiome{};
+
+		[[nodiscard]] float at(Biome biome) const { return byBiome[static_cast<size_t>(biome)]; }
+	};
+
+	/// The forest floor's weight at a world position, 0 (open ground) to 1 (a stand's full
+	/// floor), for a biome whose canopy cover is `cover`: exactly 0 where cover is 0 or the grove
+	/// field opens a glade.
+	[[nodiscard]] float canopyWeight(float worldX, float worldY, uint64_t seed, float cover);
+
+} // namespace world::grove

@@ -7,8 +7,9 @@
 
 namespace world {
 
-	ChunkManager::ChunkManager(std::unique_ptr<IWorldSampler> sampler)
-		: m_sampler(std::move(sampler)) {}
+	ChunkManager::ChunkManager(std::unique_ptr<IWorldSampler> sampler, grove::CanopyCover canopyCover)
+		: m_sampler(std::move(sampler)),
+		  m_canopyCover(canopyCover) {}
 
 	void ChunkManager::update(WorldPosition cameraCenter) {
 		// Integrate any chunks whose generation worker finished
@@ -96,7 +97,7 @@ namespace world {
 		ChunkSampleResult sampleResult = m_sampler->sampleChunk(coord);
 
 		// Create chunk with sampled data
-		auto chunk = std::make_unique<Chunk>(coord, std::move(sampleResult), m_sampler->getWorldSeed());
+		auto chunk = std::make_unique<Chunk>(coord, std::move(sampleResult), m_sampler->getWorldSeed(), m_canopyCover);
 
 		// Generate the 262k tiles on a worker thread: this takes tens of ms per
 		// chunk and used to hitch the frame when scrolling crossed a chunk row.

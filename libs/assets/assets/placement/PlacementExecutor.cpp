@@ -1,6 +1,6 @@
 #include "PlacementExecutor.h"
 
-#include "GroveField.h"
+#include "world/generation/GroveField.h"
 
 #include "assets/AssetRegistry.h"
 #include "assets/TreeTraits.h"
@@ -338,9 +338,9 @@ namespace assets {
 				float groveG = 0.0F;
 				float effectiveChance = bp->spawnChance;
 				if (bp->distribution == Distribution::Spaced) {
-					groveG = grove::groveValue(tileWorldX, tileWorldY, context.worldSeed);
-					const float open = grove::gladeWeight(groveG) * grove::gapWeight(tileWorldX, tileWorldY, context.worldSeed);
-					effectiveChance *= grove::kGladeSpawnMin + (1.0F - grove::kGladeSpawnMin) * open;
+					groveG = world::grove::groveValue(tileWorldX, tileWorldY, context.worldSeed);
+					const float open = world::grove::gladeWeight(groveG) * world::grove::gapWeight(tileWorldX, tileWorldY, context.worldSeed);
+					effectiveChance *= world::grove::kGladeSpawnMin + (1.0F - world::grove::kGladeSpawnMin) * open;
 				}
 				if (chanceDist(rng) >= effectiveChance) {
 					continue; // Spawn chance failed
@@ -405,7 +405,7 @@ namespace assets {
 						// instance of any type (makes a "spaced" stand pack to a natural canopy
 						// instead of random clumps). In thicket cores (grove field high tail)
 						// both tighten so small patches read denser than the forest.
-						const float tighten = 1.0F - grove::kThicketTighten * grove::thicketWeight(groveG);
+						const float tighten = 1.0F - world::grove::kThicketTighten * world::grove::thicketWeight(groveG);
 						const float effMinDist = bp->spacing.minDistance * tighten;
 						if (effMinDist > 0.0F && chunkIndex.hasNearby(position, effMinDist, defName)) {
 							break;
