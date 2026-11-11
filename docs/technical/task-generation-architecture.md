@@ -84,7 +84,7 @@ A task requires BOTH:
 | Source | Goal systems (Storage, Needs, Crafting) | Task + reference point | Task + colonist state |
 | Changes when | Goal created/fulfilled | Reference point moves | Colonist moves/changes |
 | Includes colonist bonuses | N/A | No | Yes |
-| Update frequency | Goal-system poll (throttled) | 4-10 Hz | 0.5s per colonist |
+| Update frequency | Goal-system poll, every 30 or 60 frames | Global task list every 0.2 s of real time | On an event, else every 0.5 s of real time |
 
 ---
 
@@ -94,7 +94,7 @@ A task requires BOTH:
 
 **How it works:**
 ```cpp
-// Every 0.5s per colonist
+// Each time a colonist decides
 void buildDecisionTrace(EntityID colonist, ...) {
     for (auto& knownEntity : memory.getAll()) {
         if (hasWorkCapability(knownEntity)) {
@@ -170,7 +170,7 @@ Goal systems (Storage, Crafting, Construction, Build)
          │
          ├──────────────────────────────────┐
          │                                  │
-         ▼ [ON-DEMAND at selection]         ▼ [THROTTLED 4-10 Hz]
+         ▼ [ON-DEMAND at selection]         ▼ [EVERY 0.2 s, REAL TIME]
 ┌─────────────────────────────┐    ┌─────────────────────────────┐
 │  Colonist Selection         │    │  UI Display                 │
 │  - Filter by this colonist  │    │  - All goals (any colonist) │
@@ -235,9 +235,9 @@ Player can choose:
 
 | Component | Update Trigger | Frequency |
 |-----------|----------------|-----------|
-| Goal existence and source resolution | Goal-system poll | Throttled per goal system |
-| Colonist Selection Priority | Task selection | 0.5s (kReEvalInterval) |
-| UI Display Priority | UI frame | 4-10 Hz (100-250ms) |
+| Goal existence and source resolution | Goal-system poll | Frame counts: storage and crafting every 60 frames, place goals and construction every 30 (1 s and 0.5 s at 60 fps, half that at 120) |
+| Colonist Selection Priority | Task selection | On an event, else every 0.5 s of real time (`kReEvalInterval`); see [When a colonist decides](../design/game-systems/colonists/ai-behavior.md#when-a-colonist-decides) |
+| UI Display Priority | `GlobalTaskListModel::refresh` | Every 0.2 s of real time; the resources panel every 0.5 s, the selected colonist's task list on each of its decisions |
 | Claim index | Derived from tasks | Rebuilt at the first colonist decision of each AI update ([Task Claims](./task-claims.md)) |
 
 ---
@@ -294,10 +294,10 @@ Compare to old discovery-driven model:
 
 | Operation | Frequency | Cost |
 |-----------|-----------|------|
-| Goal-system poll | Throttled, per goal system | O(goals x matching sources, via capability index) |
+| Goal-system poll | Every 30 or 60 frames, per goal system | O(goals x matching sources, via capability index) |
 | Claim index rebuild | Per AI update with evaluations | O(colonists x claims per task) |
-| Per-colonist scoring | 0.5s per colonist | O(T_goals) — now ~200, not ~100,000 |
-| UI aggregation | 10 Hz | O(T_goals) sort — trivial at ~200 tasks |
+| Per-colonist scoring | Each decision: every frame while the colonist acts, is idle, or walks a wander; else on an event or every 0.5 s | O(T_goals), about 200, not about 100,000 |
+| UI aggregation | Every 0.2 s of real time | O(T_goals) sort, small at about 200 tasks |
 
 ---
 
@@ -340,8 +340,8 @@ Alice also picks harvest (tier wins), but with less skill bonus.
 | How do colonists avoid duplicate work? | Claims on their own tasks, read through a derived index ([Task Claims](./task-claims.md)) |
 | How many tasks can exist? | ~200 (bounded by goals, not discovered entities) |
 | Does UI include colonist bonuses? | **No** — just base priority + distance |
-| When do we calculate colonist priority? | At selection time (0.5s interval) |
-| How does UI stay ordered? | Throttled refresh (4-10 Hz) by tier + distance |
+| When do we calculate colonist priority? | At selection time, each time the colonist decides ([When a colonist decides](../design/game-systems/colonists/ai-behavior.md#when-a-colonist-decides)) |
+| How does UI stay ordered? | A refresh every 0.2 s of real time, by tier + distance |
 | How do we scale to infinite world? | Tasks bounded by goals; Memory bounded by LRU per colonist |
 
 ---

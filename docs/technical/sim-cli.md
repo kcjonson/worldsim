@@ -89,7 +89,7 @@ so no state that outlives a session may affect the next one; see
 [Process statics](#process-statics).
 
 The game holds an untaken session only inside `GameWorldState`'s pending slot
-(GameWorldState.cpp:8). The loading scene discards any pending state with `Take()` before it
+(`GameWorldState::s_pending`). The loading scene discards any pending state with `Take()` before it
 constructs a session, and cancelling a load destroys the state it built, so a stale session never
 trips the one-session assert.
 
@@ -97,15 +97,15 @@ trips the one-session assert.
 
 | Owned | Today in |
 |---|---|
-| `ecs::World` with the 16 sim systems registered in priority order, and their callback wiring | `GameScene::initializeECS` (GameScene.cpp:1192-1370) |
+| `ecs::World` with the 16 sim systems registered in priority order, and their callback wiring | `GameScene::initializeECS` |
 | `world::ChunkManager` built from an `IWorldSampler` the host passes in | GameLoadingScene, GameWorldState |
 | `assets::PlacementExecutor`, `AsyncChunkProcessor`, the processed-chunk set | GameLoadingScene, GameScene |
-| `construction::ConstructionWorld` (ownership only in phase 1) | `DrawingSystem` (GameScene.cpp:347) |
-| Pending entity removals and pending spawns, and their drains | GameScene.cpp:865-907 |
-| Colony origin and the landing clearing | GameScene.cpp:1380-1400, 1444-1518 |
-| The packaged-spawn fan-out counter | GameScene.cpp:1295, 2110 |
+| `construction::ConstructionWorld` (ownership only in phase 1) | `DrawingSystem` (`DrawingSystem::world()`) |
+| Pending entity removals and pending spawns, and their drains | `GameScene::update`, after the ECS update (`m_pendingEntityRemoval`, `m_pendingSpawns`) |
+| Colony origin and the landing clearing | `GameScene::initializeECS` (the origin), `prepareLandingClearing`, `clearLandingArea` |
+| The packaged-spawn fan-out counter | `GameScene::m_packagedSpawnSeq`, read in the craft-completion callback |
 | `EntityFactory` | `GameScene::spawnColonist`, `PlacementSystem::spawnEntity`, `GameScene::dropResourcePiles` |
-| The session seed and the per-system seeds derived from it | `GameScene::initializeECS` (GameScene.cpp:1228-1231, `ecs::deriveSystemSeeds` in SystemSeeds.h) |
+| The session seed and the per-system seeds derived from it | `GameScene::initializeECS` (`ecs::deriveSystemSeeds` in SystemSeeds.h) |
 | An event ring (see [Views](#views)) and per-system timing accumulators | none |
 
 Inputs a host sets before a step: the chunk focus (a world position the chunk manager loads around)
@@ -114,15 +114,15 @@ events, entity-removed notices, changed-chunk notices, and chunk mesh bakes when
 bake stage.
 
 Changed-chunk notices come only from the edits that release render caches today: the landing
-clearing (GameScene.cpp:1506). A felled tree or a harvested bush leaves its chunk's baked mesh alone,
+clearing (`GameScene::clearLandingArea`). A felled tree or a harvested bush leaves its chunk's baked mesh alone,
 as it does today; making those edits re-bake is out of scope, and emitting a notice for them would
 add re-bake work to the game's frame.
 
 Code that runs between steps or inside system callbacks and needs a deferred change calls the
 session: `queueRemoval(entity)` puts an entity on the removal drain, and `factory()` gives the
 `EntityFactory`, whose `dropResourcePiles` is the one ground-pile path. The phase-1 structure
-callbacks that stay in GameScene use exactly these: the extension merge (GameScene.cpp:434), opening
-teardown (:496), and blueprint teardown (:518) call `queueRemoval`, and the salvage drop (:471) calls
+callbacks that stay in GameScene use exactly these: the extension merge, opening
+teardown, and blueprint teardown (all wired in `GameScene::onEnter`) call `queueRemoval`, and the salvage drop calls
 `factory().dropResourcePiles`.
 
 ### pumpStreaming() and step(dt)
@@ -131,27 +131,26 @@ teardown (:496), and blueprint teardown (:518) call `queueRemoval`, and the salv
 
 1. `chunkManager.update(focus)`.
 2. Process new chunks: integrate finished placement tasks, hand any finished bakes to the output
-   queue, launch placement for newly loaded chunks (today `processNewChunks`, GameScene.cpp:853,
-   :1568).
-3. Unload placement data for unloaded chunks (today `cleanupUnloadedChunks`, :856).
+   queue, launch placement for newly loaded chunks (today `GameScene::processNewChunks`).
+3. Unload placement data for unloaded chunks (today `GameScene::cleanupUnloadedChunks`).
 
 The loading scene calls `pumpStreaming()` each frame and drains bakes for upload, which is what it
-does by hand today (GameLoadingScene.cpp:406-445); it never ticks the world. `step(dt)` is
-`pumpStreaming()` followed by the rest of the game's update sequence (GameScene.cpp:831-907) with the
+does by hand today (`GameLoadingScene::loadChunks` and `placeEntities`); it never ticks the world. `step(dt)` is
+`pumpStreaming()` followed by the rest of the game's update sequence (`GameScene::update`) with the
 camera and render parts removed:
 
 1. Push the viewport rect into `NavigationSystem::setViewportRect`. Today this happens between the
-   chunk update and chunk processing (:849); the rect is plain data that nav reads only in its own
+   chunk update and chunk processing; the rect is plain data that nav reads only in its own
    `update`, so pushing it before `pumpStreaming()` changes nothing.
 2. `pumpStreaming()`.
-3. `world.update(dt)` (:859). The render system, if the host registered one, runs here at priority
+3. `world.update(dt)`. The render system, if the host registered one, runs here at priority
    900 after every sim system.
 4. Drain entity removals, emitting an entity-removed notice for each.
 5. Drain pending spawns through `EntityFactory`.
 
 The game keeps passing its real frame dt. sim-cli passes a constant `dt = 1 / hz`.
 
-`AsyncChunkProcessor` bakes entity meshes on its worker today (AsyncChunkProcessor.h:133-143). The
+`AsyncChunkProcessor` bakes entity meshes on its worker today (the task `AsyncChunkProcessor::launchTask` starts). The
 bake becomes a stage the host supplies when constructing the session: the game passes it, sim-cli
 passes none, and nothing else in the processor changes.
 
@@ -162,11 +161,11 @@ passes none, and nothing else in the processor changes.
 1. `ChunkManager::finishPendingGeneration()`.
 2. Launch placement for every ready chunk not yet processed, `AsyncChunkProcessor::waitAll()`, then
    integrate.
-3. `NavigationSystem::finishPendingBuilds()` (NavigationSystem.cpp:727): evaluate the region rebuild
+3. `NavigationSystem::finishPendingBuilds()`: evaluate the region rebuild
    gates against current inputs, launch what they call for, wait for every in-flight build (they run
    on `std::async`), swap each in through the same path `update()` uses to drain finished
-   builds, and repeat until no gate fires. It advances nothing else; `isBuilding()` is false when it
-   returns.
+   builds, and repeat until no gate fires, then wait for the builds of dropped regions still running. It
+   advances nothing else; `isBuilding()` is false when it returns.
 
 sim-cli calls `settle()` after every tick and after every command that changes the world. The game
 never calls it. The trade is deliberate: repeatable results matter more here than modelling latency.
@@ -175,8 +174,8 @@ What settling hides, so nobody mistakes a passing scenario for coverage of it:
 
 - The pre-mesh window. In the game the first decisions happen before any region mesh exists and
   colonists hold or recover; in sim-cli a mesh is always present.
-- Mesh staleness after a change. A felled tree or a dropped pile leaves the old mesh serving queries
-  for several frames in the game; in sim-cli the next tick sees the rebuilt mesh. Deferred-route
+- Mesh staleness after a change. A felled tree or a wall built or torn down leaves the old mesh serving
+  queries until the region rebuild lands in the game, frames later; in sim-cli the next tick sees the rebuilt mesh. Deferred-route
   retries keyed on mesh generation, and replans after a mid-route rebuild, behave differently.
 - Chunk streaming and placement pop-in, and anything ordered by which worker finished first.
 - Frame-time variance.
@@ -191,25 +190,25 @@ tools (`PlacementSystem`, `DrawingSystem`), overlays, renderers, the GPU hold, p
 dev server adapter. It registers `DynamicEntityRenderSystem` on `session.world()` after construction.
 Each frame it updates the camera, sets the session's focus and viewport, calls `step(dt)`, then drains
 events into toasts, drains removal notices (dropping selection and control of a removed colonist,
-today GameScene.cpp:869-873), releases baked render caches for changed chunks, and renders.
+today in `GameScene::update`'s removal drain), releases baked render caches for changed chunks, and renders.
 
 In phase 1 the structure callbacks stay in GameScene, wired onto the session's `ActionSystem`,
 `ConstructionSystem`, and `RoomDetectionSystem` against the session-owned `ConstructionWorld`
-(GameScene.cpp:364-535), because they call into `DrawingSystem` (extension merges) and toast. They
+(wired in `GameScene::onEnter`), because they call into `DrawingSystem` (extension merges) and toast. They
 reach session state only through `queueRemoval` and `factory()`, above. Phase 2 moves them into the
 session with the construction commit paths.
 
 GameLoadingScene constructs the session (after config load, with the planet's
 `GeneratedWorldSampler`) and drives loading through `pumpStreaming()`. `GameWorldState` carries the
 session instead of the chunk manager, placement executor, and processed set. GameScene's
-no-preloaded-state fallback (GameScene.cpp:144-181) constructs a session over `MockWorldSampler`.
+no-preloaded-state fallback (in `GameScene::onEnter`) constructs a session over `MockWorldSampler`.
 
 ### EntityFactory
 
 One place that builds every kind of entity the sim creates at runtime, used by the session's drains,
 the landing, the shared commands, and the game's placement tool:
 
-- `createColonist(position, name, skills)`: today's `GameScene::spawnColonist` (GameScene.cpp:1521-1564),
+- `createColonist(position, name, skills)`: today's `GameScene::spawnColonist`,
   including the entity-id-seeded attribute roll.
 - `createWorldEntity(def, position)`: today's `PlacementSystem::spawnEntity` (station `WorkQueue` and
   store, storage `Inventory` and `StorageConfiguration`), minus its harvestable-pool branch (see
@@ -217,14 +216,14 @@ the landing, the shared commands, and the game's placement tool:
 - `placeStatic(def, position, rotation, resources)` (new): insert a static entity into a processed
   chunk's placement index, the way world generation does, and seed its resource count (rolled from
   the def's range by position, as `spawnEntity` rolls it today, unless `resources` is given).
-- `dropResourcePiles(def, position, quantity)`: today's `GameScene::dropResourcePiles` (:1726), the one
+- `dropResourcePiles(def, position, quantity)`: today's `GameScene::dropResourcePiles`, the one
   ground-pile path.
 - `createPackaged(def, position, target)`: the packaged branch of the spawn drain.
 
 `PlacementExecutor` gains the insert, and its removal epoch becomes an edit epoch bumped by inserts as
-well, so nav regions rebuild over an inserted obstacle (NavigationSystem.cpp:396-401, :484-486). An
+well, so nav regions rebuild over an inserted obstacle (`NavigationSystem::regionObstaclesChanged`, and the epoch snapshot in `launchBuild`). An
 insert into a chunk that has not finished placement is rejected: integration replaces the chunk's
-whole index (`m_chunkIndices[coord] = ...`, PlacementExecutor.cpp:688), so the inserted entity would
+whole index (`PlacementExecutor::storeChunkResult` assigns `m_chunkIndices[result.coord]`), so the inserted entity would
 vanish. Inserted statics live in the chunk's index like generated ones, so unloading the chunk drops
 them, and reloading it regenerates only what placement rules produce. In sim-cli the focus never
 moves, so nothing unloads; in the game a dev-spawned tree is lost when its chunk streams out.
@@ -236,7 +235,7 @@ Asset definitions and recipes already load without GL through `assets::initializ
 through `assets::loadWorkConfig(configRoot)` (libs/assets/assets/WorkConfig.cpp, done in build step 2):
 action types, task chains, work types, priority tuning with the required-tier check, construction, and
 cross-validation, returning the errors rather than logging them. The loading scene calls it
-(GameLoadingScene.cpp:327) and clears `GoalTaskRegistry` itself; that one sim-side line moves to
+(`GameLoadingScene::initializeWorldSystems`) and clears `GoalTaskRegistry` itself; that one sim-side line moves to
 session construction. sim-cli takes `--config-root <dir>` (default: the staged
 `assets/config`) so a sweep can point it at a patched copy.
 
@@ -250,7 +249,7 @@ namespace-scope, excluding `const` and `constexpr`), with a verdict on each:
 | Chain id counter | Done (build step 3): the three per-system `nextChainId` statics became one `GoalTaskRegistry` counter; WOR-46 later deleted chain ids, which nothing read. The registry's claim sequence counter, which `clear()` resets at session construction, is the one left. |
 | `GoalTaskRegistry` instance | Cleared at session construction. |
 | Work-config registries (`ActionTypeRegistry`, `TaskChainRegistry`, `WorkTypeRegistry`, `PriorityConfig`, `ConstructionRegistry`) and `ConfigValidator::errors` | Cleared and reloaded by `loadWorkConfig`. |
-| `AssetRegistry`, `RecipeRegistry`, `GeneratorRegistry` | Loaded once per process; definitions don't change between sessions. The synthetic `Terrain_Shore` def is registered idempotently (`AssetRegistry::registerSyntheticDefinition`, called from VisionSystem.cpp:87), so ids match across sessions. |
+| `AssetRegistry`, `RecipeRegistry`, `GeneratorRegistry` | Loaded once per process; definitions don't change between sessions. The synthetic `Terrain_Shore` def is registered idempotently (`AssetRegistry::registerSyntheticDefinition`, called from `VisionSystem::ensureTerrainDefinitionsRegistered`), so ids match across sessions. |
 | The edible item list | No static: `AssetRegistry::edibleItemNames()` is built with the definitions and cleared with them. |
 | `GameWorldState::s_pending` (app) | Handled by the loading scene, above. |
 
@@ -281,7 +280,7 @@ moved: `select`, `tunable`, `landing`, `tunables`, `gpuhold`, and in phase 1 the
 | Loading scene's chunk polling, placement launch, and bake hand-off | `SimSession::pumpStreaming` | the loading scene's `asyncProcessor` and its loop |
 | `prepareLandingClearing`, `clearLandingArea` | `SimSession::land(rawSpawn, crew)`, returning spawn points, colonist ids, and changed chunks | the GameScene functions |
 | `spawnColonist`, `PlacementSystem::spawnEntity`, `dropResourcePiles` | `EntityFactory` | all three |
-| The ECS-entity scans for spawned harvestables in the take-source callback (GameScene.cpp:1371-1384) and in `ConstructionSystem::isFootprintClear`, and the harvestable-pool branch of `spawnEntity` (PlacementSystem.cpp:253-270) | nothing: every harvestable def is static (below) | all three |
+| The ECS-entity scans for spawned harvestables in the take-source path (`ecs::takeWorldSource`, WorldSource.cpp) and in `ConstructionSystem::isFootprintClear`, and the harvestable-pool branch of `PlacementSystem::spawnEntity` | nothing: every harvestable def is static (below) | all three |
 | `DevCommandHandler` verb bodies, `nearestColonist` and friends, `parsePoint`, `jsonEscape` | `SimCommands` | the moved bodies and helpers |
 | Off-area and unreachable options relabeled `NoSource` | `OffArea` and `Unreachable` statuses | the relabels |
 
@@ -298,21 +297,21 @@ counter; `GameLoadingScene::loadWorkConfigs` became `assets::loadWorkConfig`; an
 
 A `SyntheticWorldSampler` in libs/world implements `IWorldSampler` from a small parameter set. The
 test suites already carry several hand-written samplers of this kind (`OpenLandSampler` in
-AIDecisionSystem.test.cpp:3163, `LandSampler` and `WaterPatchSampler` in NavigationSystem.test.cpp,
+AIDecisionSystem.test.cpp, `LandSampler` and `WaterPatchSampler` in NavigationSystem.test.cpp,
 `LakeSampler` in VisionSystem.test.cpp); suites that only need flat land or one pond move to it when
 touched.
 
 | Parameter | Default | Meaning |
 |---|---|---|
 | `seed` | required | the session seed; also the sampler's world seed |
-| `speed` | required | game speed 0 to 3, as the dev `time` verb (multipliers 0, 1, 3, 10; TimeSystem.h:103) |
+| `speed` | required | game speed 0 to 3, as the dev `time` verb (multipliers 0, 1, 3, 10; `TimeSystem::kSpeedMultipliers`) |
 | `biome` | `TemperateGrassland` | every tile's biome |
 | `water` | `none` | `none` or `pond` |
 | `pond` | `40,0,15` | pond center x, y and radius in meters, when `water=pond` |
 | `flora` | `none` | `none` places nothing at chunk processing; `generated` runs the biome's placement rules |
 | `origin` | `0,0` | colony origin and chunk focus |
 | `area` | `60` | half-extent in meters of the fixed viewport square at the origin (nav clamps it to 64) |
-| `chunks` | `1` | chunk load radius around the origin (512 m chunks); 1 to 2, and 0 is rejected because nav clamps a region's half-extent to the load radius and 0 clamps it to nothing (NavigationSystem.cpp:356-362) |
+| `chunks` | `1` | chunk load radius around the origin (512 m chunks); 1 to 2, and 0 is rejected because nav clamps a region's half-extent to the load radius and 0 clamps it to nothing (`NavigationSystem::clampHalfExtent`) |
 | `hz` | `60` | ticks per real second; `dt = 1 / hz` |
 | `clock` | `06:00` | starting time of day |
 
@@ -325,14 +324,14 @@ ready.
 
 ### Water and shore
 
-Water comes from a pond blob (`ChunkSampleResult::pondBlobs`, ChunkSampleResult.h:133), the same
+Water comes from a pond blob (`ChunkSampleResult::pondBlobs`), the same
 primitive the nav and vision tests use for exact water. The sampler adds the pond to every chunk its
 rim can touch, as a world sampler's gather would. A half-plane lake through biome blending
 (LakeShoreTestWorld.h) gives a shore bent by edge noise and interpolated across 512 m chunk corners,
 which is realistic and useless for placing a colonist 4 m from the water.
 
 Drinking needs no new code. `VisionSystem` pass 3 remembers `Terrain_Shore` points sampled along each
-chunk's water rings (`terrainPolygons().shorePoints`, VisionSystem.cpp:403-436) as Drinkable. The
+chunk's water rings (`terrainPolygons().shorePoints`, read in `VisionSystem::update`) as Drinkable. The
 `shore` anchor (below) is the realized shore point nearest the origin, read from those same points, so
 a script and the colonist agree on where the water is.
 
@@ -341,14 +340,14 @@ a script and the colonist agree on where the water is.
 Two stores hold world things, and which one a thing lives in decides what sees it:
 
 - The placement index (`PlacementExecutor`'s per-chunk `SpatialIndex`) holds static world entities.
-  Nav builds obstacles only from the index (`buildInput`, NavInputBuilder.h:152, flora via
+  Nav builds obstacles only from the index (`nav::buildInput` in NavInputBuilder.h, flora via
   `floraRingFor`), and `StaticRectCollisionSystem` reads only the index. Vision pass 1 reads it,
   harvest decrements and removes through it.
 - ECS entities with `Appearance` hold runtime things: stations, storage, piles, packaged items,
   colonists. Vision pass 2 reads them.
 
 A static def is a def with biome placement rules (`placement.biomes` non-empty), the same test that
-puts a def into the placement spawn order (PlacementExecutor.cpp:104-106). Today that is every flora
+puts a def into the placement spawn order (`PlacementExecutor::buildDependencyGraph`). Today that is every flora
 def, the rocks, and `SmallStone`; stations, storage, and items without placement rules
 (`CraftingSpot`, `BasicBox`, `Wood`, `Berry`) are not static. Every def with a harvestable capability
 is static.
@@ -392,7 +391,9 @@ Positions: `x,y`, or an anchor, or an anchor plus an offset: `shore+(-4,0)`. Anc
 `shore`, and any entity name. Where a verb acts on the entity nearest a position (`storage`, `craft`,
 `give where=storage|station`), a bare name selects that entity itself, not whatever is nearest to its
 position. Durations are game time: `30m`, `2h`, `1d`, and a bare number is minutes (as `time skip`
-reads it today). Colonist selectors (`colonist=`) take an entity id or a name; a name that matches
+reads it today). One game minute is one second of simulation time (`TimeSystem::simulationSeconds`,
+the sum of `dt * effectiveTimeScale()`), so at speed 1 a game minute takes one real second, or one
+second of ticks at `dt = 1 / hz`. Colonist selectors (`colonist=`) take an entity id or a name; a name that matches
 more than one live colonist is rejected as `ambiguous`.
 
 The session keeps a name table mapping each name to an ECS id or to an index entity's key (position
@@ -436,7 +437,7 @@ else to stdout.
 Verbs marked CLI exist only in sim-cli; the game's frame loop owns time and its world comes from the
 planet. The rest are in the shared dispatcher and reach the game's dev API too. Required parameters are
 in the second column; optional ones, with their defaults, in the third. Where the dev API defaults a
-parameter that picks what to act on (`give`'s `material=Wood` and `n=100`, DevCommandHandler.cpp:146-147;
+parameter that picks what to act on (`give`'s `material=Wood` and `n=100`, `DevCommandHandler::devGive`;
 `craft`'s `recipe=Recipe_AxePrimitive`), the shared verb requires it instead.
 
 | Verb | Required | Optional | Reply on ok | Rejections |
@@ -466,7 +467,7 @@ Notes on the new and changed verbs:
 - `give where=pile` drops `ResourceStack` piles through `EntityFactory::dropResourcePiles`, split at the
   item's stack size. `where=loose` keeps making packaged items. `where=station` adds to a crafting
   station's material store (its `Inventory`), which nothing can fill today (`give where=storage` finds
-  only entities with `StorageConfiguration`, DevCommandHandler.cpp:765), so a scenario can stage a
+  only entities with `StorageConfiguration`, `DevCommandHandler::nearestStorageEntity`), so a scenario can stage a
   recipe one unit short. `colonist=` selects the target colonist directly instead of the nearest to
   `at`.
 - `kill` queues the removal and drains it at once (commands run between ticks), so the removal path and
@@ -476,7 +477,7 @@ Notes on the new and changed verbs:
   a scenario seeds stale memory. With `radius` it remembers every index entity, ECS entity with
   `Appearance`, and shore point within that distance of the colonist, ignoring occlusion.
 - `discover recipe=` learns every input def of the recipe in the colonist's `Knowledge`, which is what
-  unlocks a non-innate recipe today (VisionSystem.cpp:40-71).
+  unlocks a non-innate recipe today (`checkForRecipeUnlock` in VisionSystem.cpp).
 - `always` registers an invariant checked after every tick (after settling) until `always clear`. A
   failure ends the current `step` or `wait` with `invariant-failed`, naming the tick.
 - `wait until` evaluates the expression after each tick and settle; `timeout` is game time. `wait for`
@@ -514,7 +515,7 @@ are lists over colonists and take `colonist=` to narrow to one. Item maps (`inve
 position is snapped to an adjacent nav point for harvest and build targets. Each kind uses its own
 field: `harvestTargetKey` (a Memory world-entity key, the hash of position and def, not an ECS
 id; the name table keeps index entities by the same key), `targetStationId`, `haulSourceStorageId`,
-`haulDestinationId`, `placePackagedEntityId`, and `buildBlueprintEntityId` (Task.h:70-99).
+`haulDestinationId`, `placePackagedEntityId`, and `buildBlueprintEntityId` (all on `Task`, Task.h).
 
 Phase-1 event kinds: `colonist-spawned`, `entity-spawned`, `entity-removed`, `task-started`,
 `task-ended` (with outcome), `need-seek` and `need-critical` (threshold crossings, both directions),
@@ -579,10 +580,14 @@ latest evaluation. This epic adds:
   prose reason. Scripts match codes; the UI shows prose.
 - The cause of each evaluation, one per trigger in `AIDecisionSystem::shouldReEvaluate`: `no-task`
   (no active task: never had one, or the last one ended or was cleared), `arrived` (task reached its
-  target), `cant-find-way` (nav stopped the colonist), `timer` (the 0.5 s re-evaluation interval,
-  `kReEvalInterval`, AIDecisionSystem.h:200), `critical-need` (a need below its critical threshold
-  while the colonist isn't already handling a critical need), and `wander` (a moving Wander
-  re-evaluates every tick). Crossing a need's seek threshold is not a trigger; a non-critical need is
+  target; it holds for the whole action, so an acting colonist decides every tick), `cant-find-way`
+  (nav stopped the colonist; once, and a pick that fails again waits for the timer, `Task::routeFailureDecided`),
+  `timer` (the 0.5 s re-evaluation interval, `AIDecisionSystem::kReEvalInterval`, in real seconds; also
+  how `ActionSystem` asks for a decision on the next tick, by setting the timer to its maximum),
+  `critical-need` (a need that became critical since the last decision, `Task::criticalNeedsAtDecision`,
+  while the colonist isn't serving a critical need; one that stays critical waits for the timer), and
+  `wander` (a moving Wander with an active movement target re-evaluates every tick; a held one waits
+  for the timer). Crossing a need's seek threshold is not a trigger; a non-critical need is
   noticed at the next timer evaluation. Later triggers (`bumped`, once claims bumping is built; a player order) add
   causes as they add branches.
 
@@ -614,7 +619,7 @@ What makes it hold:
   constructor argument. Each system's seed is derived from the session seed with a fixed mix
   (splitmix64 of the seed and a per-system constant, `ecs::deriveSystemSeeds`). The game draws one
   session seed at new game, logs it at info level, and passes it; sim-cli takes it from `world seed=`. Other RNG in the sim is already seeded by position or entity
-  id (PlacementSystem.cpp:249-259, GameScene.cpp:1534-1539) and stays so.
+  id (the resource roll in `PlacementSystem::spawnEntity`, the attribute roll in `GameScene::spawnColonist`) and stays so.
 - Settling after every tick removes thread timing from chunk generation, placement, and nav builds.
 - A constant `dt` and a pinned speed.
 - No camera: the viewport and chunk focus are fixed at the origin.
@@ -623,7 +628,7 @@ What makes it hold:
 What can still break it, and is what the test is for: iteration over an unordered container whose
 insertion history differs between runs, hashing a pointer, reading uninitialized fields, and any
 wall-clock read inside a system. `EvaluatedOption::tiebreakId` already guards option order against
-hash order (DecisionTrace.h:118-124).
+hash order (`EvaluatedOption::higherPriority`).
 
 The digest is a 64-bit FNV-1a over a canonical serialization in which every float is written as the
 hex of its bits, never as a decimal JSON number. It covers:
@@ -854,10 +859,10 @@ independent of each other.
    - 7b. Chunk manager, processor, and placement ownership move into the session, with `pumpStreaming`,
      `settle`, and the bake stage; GameLoadingScene and `GameWorldState` move onto it; the session clears
      `GoalTaskRegistry` and asserts one live session. Also: panning far enough to stream and unload
-     chunks; return to menu and start a second game; the direct-scene fallback (GameScene.cpp:144-181).
+     chunks; return to menu and start a second game; the direct-scene fallback (in `GameScene::onEnter`).
      Test: the in-process two-sessions-same-digest test (with a minimal digest).
    - 7c. `land(rawSpawn, crew)` with changed-chunk notices. Also: a fresh Quick Start landing and a
-     custom-party landing (the skills override path, GameScene.cpp:1408-1417).
+     custom-party landing (the skills override in `GameScene::initializeECS`'s landing spawn).
    - 7d. Events replace the toast lambdas (recipe unlocked, item crafted). Also: craft one item and
      unlock one recipe in the game and see both toasts.
 8. Shared commands. libs/sim/session/SimCommands.{h,cpp} and SimViews.{h,cpp}: the moved verbs with real
@@ -892,11 +897,11 @@ independent of each other.
 
 These are out of scope here and need their own tickets; each changes what a scenario can assert.
 
-- AI timers advance on raw `deltaTime`, not game-scaled time (`m_elapsedTime` at AIDecisionSystem.cpp:1077,
-  `timeSinceEvaluation` at :1239), while needs, actions, and movement scale by game speed. A colonist
+- AI timers advance on raw `deltaTime`, not game-scaled time (`m_elapsedTime` and
+  `timeSinceEvaluation`, both advanced in `AIDecisionSystem::update`), while needs, actions, and movement scale by game speed. A colonist
   re-evaluates ten times less often per game minute at speed 3 than at speed 1, so results depend on
   speed. Scenarios pin a speed in `world` until this is fixed (decided as a separate ticket).
-- Vision and the goal systems throttle by frame count (VisionSystem.h:134-135 every 5 frames; frame
+- Vision and the goal systems throttle by frame count (`VisionSystem::m_updateInterval`, every 5 frames; frame
   counters in StorageGoalSystem, CraftingGoalSystem, BuildGoalSystem, ConstructionSystem), so the tick
   rate matters as well as the speed. Scenarios keep the default 60 Hz.
 - A static entity spawned at runtime lives in its chunk's placement index, so it is gone when that
@@ -943,6 +948,7 @@ When sim-cli exists (not before):
 - [Decision Trace](../design/game-systems/colonists/decision-trace.md): the player-facing trace.
 - [Pathfinding Architecture](./pathfinding-architecture.md): sim regions, the validity predicate,
   `findValidPositionNear`.
+- [Main Loop Timing](./main-loop-timing.md): the tick `step(dt)` reproduces, its order, and which rates follow frames, real time, or game time.
 - [Vision Architecture](./vision-architecture.md): discovery, shore points.
 - [Entity Placement](./entity-placement-system.md): the placement index.
 - [Testing](../testing/README.md): the project's testing strategy and the manual scenarios.
