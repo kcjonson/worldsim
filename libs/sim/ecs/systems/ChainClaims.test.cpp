@@ -824,6 +824,47 @@ namespace ecs::test {
 		EXPECT_EQ(getTask(other)->haulItemDefName, "Wood") << "the pile is hauled once a root wants it";
 	}
 
+	// The task panel lists a storage goal only while a colonist is offered work toward it: a box that
+	// wants stone when no loose stone is known, or one with room for a category nobody has any of, has
+	// nothing to do.
+	TEST_F(ChainClaimsTest, AStorageGoalHasWorkOnlyWhileAColonistIsOfferedSome) {
+		const glm::vec2 boxPos{0.0F, 10.0F};
+		const EntityID	box = makeBox(boxPos, StoragePriority::Medium);
+		const uint64_t	umbrella = storageGoal(box, boxPos);
+		const EntityID	furnitureBox = makeBox({10.0F, 10.0F}, StoragePriority::Medium);
+		world->getComponent<StorageConfiguration>(furnitureBox)->rules = StorageConfiguration::createAcceptEverything().rules;
+		GoalTask anyFurniture;
+		anyFurniture.type = TaskType::Haul;
+		anyFurniture.owner = GoalOwner::StorageGoalSystem;
+		anyFurniture.destinationEntity = furnitureBox;
+		anyFurniture.destinationPosition = {10.0F, 10.0F};
+		anyFurniture.acceptedCategory = assets::ItemCategory::Furniture;
+		const uint64_t furnitureUmbrella = GoalTaskRegistry::Get().createGoal(std::move(anyFurniture));
+		const auto	   hasWork = [&](uint64_t goal) {
+			return goalHasWork(*GoalTaskRegistry::Get().getGoal(goal), goalsWithOfferedWork(*world));
+		};
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+
+		decide(colonist);
+		EXPECT_FALSE(hasWork(umbrella)) << "no stone is known";
+		EXPECT_FALSE(hasWork(furnitureUmbrella));
+
+		const glm::vec2 stonePos{5.0F, 0.0F};
+		const EntityID	stone = world->createEntity();
+		world->addComponent<Position>(stone, Position{stonePos});
+		makeLoosePile(*world, stone, stoneId, stonePos, 4);
+		remember(colonist, stonePos, "Stone", assets::CapabilityType::Carryable);
+		decide(colonist);
+		EXPECT_TRUE(hasWork(umbrella));
+		EXPECT_FALSE(hasWork(furnitureUmbrella)) << "nobody knows any furniture";
+
+		getTask(colonist)->clear();
+		world->getComponent<StorageConfiguration>(box)->rules.front().maxAmount = 3;
+		world->getComponent<Inventory>(box)->addItem("Stone", 3);
+		decide(colonist);
+		EXPECT_FALSE(hasWork(umbrella)) << "the box is at its max";
+	}
+
 	TEST_F(ChainClaimsTest, PlayerControlAndDestructionLeaveNoClaims) {
 		const glm::vec2 sitePos{0.0F, 6.0F};
 		const Site		site = constructionSite(sitePos, "Stone", 20);

@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <span>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -256,11 +257,17 @@ namespace ecs {
 	/// remaining need, and what a deposit into the station is metered to.
 	[[nodiscard]] uint32_t craftStationNeed(World& world, EntityID station, uint32_t itemDefNameId);
 
-	/// Whether a goal has anything to do now, for the task panel. A storage umbrella stays while its box
-	/// has rules, full or not, so it has work only while it needs an item it names or has room for its
-	/// category; a stocking cut only while its box is short of the minimum. Every other goal exists only
-	/// while it has work: its goal system retires it.
-	[[nodiscard]] bool goalHasWork(World& world, const GoalTask& goal);
+	/// The goals some colonist's last decision offered work toward, sorted: an option for the goal that it
+	/// chose, could take, could not lift for now, or saw held by another colonist. Read from each
+	/// colonist's decision trace, as stale as that.
+	[[nodiscard]] std::vector<uint64_t> goalsWithOfferedWork(World& world);
+
+	/// Whether a goal has anything to do now, for the task panel, given goalsWithOfferedWork. A storage
+	/// umbrella stays while its box has rules, full or not, and a stocking cut until its goal system
+	/// retires it, so either has work only while some colonist is offered work toward it: a box that
+	/// wants wood when no loose wood is known has none. Every other goal exists only while it has work:
+	/// its goal system retires it.
+	[[nodiscard]] bool goalHasWork(const GoalTask& goal, std::span<const uint64_t> offered);
 
 	/// GoalTaskRegistry::remainingNeed answered once per (root, item, basis) for one pass, filled the
 	/// first time each is asked. A pass is one AI update. Deposits and consumed inputs land in

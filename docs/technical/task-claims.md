@@ -859,8 +859,12 @@ Built:
   root); a build, craft, or placement names the entity it works, so the Build umbrella names its
   builder, a Craft row its crafter, and a clear row its clearer. A row shows one name even when several
   colonists serve it: the first colonist found in view order. A suspended record is not current work.
-- The panel lists only goals with something to do (`goalHasWork`): a full box, and a stocking cut whose
-  minimum is met, drop out of the list while their goals stay.
+- The panel lists only goals with something to do (`goalHasWork`): a storage umbrella or stocking cut
+  shows only while some colonist's last decision offered work toward it (`goalsWithOfferedWork`: an
+  option for it chosen, available, held by another colonist, or blocked only by the colonist's own
+  carry). A full box, a box that wants an item nobody knows a loose source of, a box with room for a
+  category nobody has any of, and a stocking cut whose minimum is met all drop out while their goals
+  stay.
 - Decision trace: a Reserved option status naming the holder, "(reserved by Alice)", or for a Craft
   option "(station in use by Alice)", from the index's top-holder lookups.
 

@@ -331,16 +331,17 @@ namespace world_sim::adapters {
 
 		/// Every goal row with something to do, Cut/Haul/Build reading as a chain per site and
 		/// Craft/PlacePackaged rounding it out. Build is the umbrella (the destination holder), so a site
-		/// shows its build step, not just its material children. A full box keeps its umbrella and is left
-		/// out until it wants something again.
+		/// shows its build step, not just its material children. A box keeps its umbrella while it has rules
+		/// and is left out until some colonist is offered work toward it.
 		std::vector<GlobalTaskDisplayData> goalsForDisplay(ecs::World& world, const glm::vec2& referencePosition) {
 			auto&							   registry = ecs::GoalTaskRegistry::Get();
 			std::vector<GlobalTaskDisplayData> result;
 			const Workers					   workers = workersFromTasks(world);
+			const std::vector<uint64_t>		   offered = ecs::goalsWithOfferedWork(world);
 			for (ecs::TaskType type :
 				 {ecs::TaskType::Harvest, ecs::TaskType::Haul, ecs::TaskType::Build, ecs::TaskType::Craft, ecs::TaskType::PlacePackaged}) {
 				for (const auto* goal : registry.getGoalsOfType(type)) {
-					if (ecs::goalHasWork(world, *goal)) {
+					if (ecs::goalHasWork(*goal, offered)) {
 						result.push_back(goalToDisplayData(registry, *goal, referencePosition, &world, &workers));
 					}
 				}
