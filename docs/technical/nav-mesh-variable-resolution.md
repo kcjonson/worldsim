@@ -38,7 +38,7 @@ Kevin's rules for this system, 2026-11-10. Everything below is judged against th
 | Area | Today | After |
 |---|---|---|
 | Storage | A list of rectangles: a 60 m square per colonist, one for the viewport, overlapping ones merged, re-squared, clamped to 128 m. Each has its own complete mesh | One mesh keyed by fixed world cells |
-| Change | Any trigger rebuilds a whole rectangle. A wall edit or a felled tree anywhere rebuilds every rectangle (global counters) | The cells a changed obstacle touches are re-derived, nothing else |
+| Change | Any trigger rebuilds a whole rectangle. A wall edit or a felled tree anywhere rebuilds every rectangle (global counters) | The triangles around a changed obstacle are patched, nothing else |
 | Repeated work | Built rectangles overlap; a recenter re-meshes mostly unchanged ground; the placement mesh is a third copy | A cell at a given level and content is built once and kept |
 | Connectivity | A path needs both ends in one rectangle. Another rectangle reads unreachable, no rectangle holds | Paths cross cells. Reachability covers all loaded ground |
 | Detail | Every tree, everywhere a rectangle exists | Fine cells where the view or gameplay needs them, coarse elsewhere |
@@ -75,9 +75,10 @@ other segment, and repeats the whole pass until nothing splits
 cost of a build, and nearly all of that is asking whether tree A's edges touch tree B's
 edges for trees 100 m apart.
 
-Two consequences shape the design. The triangulation is not the expensive part, so there is
-little to win by patching triangles incrementally. And the cost is superlinear in how much goes
-into one build, so small builds are disproportionately cheap even before the loop is fixed.
+Two consequences shape the design. The expensive part is finding which segments interact, not
+triangulating, so a change that already knows what it touches (one tree's own edges) can skip
+nearly all of the cost. And the cost is superlinear in how much goes into one build, so small
+builds are disproportionately cheap even before the loop is fixed.
 
 ### 2.2 Not measured yet
 
@@ -99,7 +100,7 @@ What was found, and what this design takes from each.
 | Unreal per-area navmesh resolution ([docs](https://dev.epicgames.com/documentation/en-us/unreal-engine/navigation-mesh-resolutions-user-guide)) | Resolution there is voxel size, and low resolution can delete real paths | Not a precedent. Our levels differ by which obstacle classes are in, never by geometric precision |
 | Godot region connection ([docs](https://docs.godotengine.org/en/4.2/tutorials/navigation/navigation_connecting_navmesh.html)) | Regions join cleanly only when edge vertices coincide exactly; margin heuristics fail on partial overlaps | Seams are exact shared integer vertices |
 | Factorio FFF-317 ([post](https://cf-www.factorio.com/blog/post/fff-317)) | The chunk-component abstraction ignores entities, so placing buildings never touches it; only terrain changes do | Reachability is computed without flora, so detail changes never touch it |
-| Kallmann, dynamic CDT and Local Clearance Triangulations ([TOG 2014](http://graphics.ucmerced.edu/papers/14-tog-lct.pdf)) | Local insert and remove with reference-counted constraints. Floating point with an epsilon. Local updates beat a global pass only when under roughly a quarter to a half of the vertices change | Considered for in-cell edits and deferred (section 4.4) |
+| Kallmann, dynamic CDT and Local Clearance Triangulations ([TOG 2014](http://graphics.ucmerced.edu/papers/14-tog-lct.pdf)) | Local insert and remove with reference-counted constraints. Floating point with an epsilon. Local updates beat a global pass only when under roughly a quarter to a half of the vertices change | In-place edits for single obstacles, with our exact integer predicates and per-edge ring lists (4.4.1, 4.4.2); whole-cell derive for bulk changes |
 | Demyen and Buro ([AAAI 2006](https://cdn.aaai.org/AAAI/2006/AAAI06-148.pdf)); Kallmann on the same measure | A corridor width depends on the nearest obstacle in a wedge, which can sit outside any patched region. Kallmann reports the measure is wrong in some CDT cases | Widths are bounded by a maximum clearance and invalidated one cell around a patch |
 | jdxdev RTS series ([part 2](https://www.jdxdev.com/blog/2021/07/06/rts-pathfinding-2-dynamic-navmesh-with-constrained-delaunay-triangles/), [part 3](https://www.jdxdev.com/blog/2021/12/07/rts-pathfinding-3-variable-agent-size-smoke-tests-navmesh-fixes/)) | A hobby project, one informal timing. Updating subsets took longer to get right than the first mesh; overlapping obstacles were the trap | Crossings are resolved on the integer grid by the existing arrangement, per cell, before triangulation |
 | CGAL, snap rounding ([docs](https://doc.cgal.org/latest/Snap_rounding_2/index.html)) | Exact predicates don't cover constraint crossings; a snapped intersection can land on the wrong side of a nearby edge | Same conclusion |
@@ -170,24 +171,60 @@ The mesh persists. Events change it a cell at a time:
 | Event | Effect |
 |---|---|
 | A chunk becomes ready | Its cells get coarse forms |
-| A wall or door is built or removed | The coarse and fine forms of the cells its rings touch are re-derived |
-| A tree is felled, a node depleted, flora grows a collider | The fine forms of the cells it touches are re-derived, if they exist |
-| Detail turns on for a cell | Its fine form is built, or taken from the cache |
+| A tree is felled, a node depleted | Removed in place from the fine forms that hold it (4.4.1) |
+| A wall or door is removed | Removed in place from the coarse and fine forms that hold it |
+| A wall or door is built, flora gains a collider | Added in place (4.4.2) |
+| Detail turns on for a cell | Its fine form is derived, or taken from the cache |
 | Detail turns off | Its fine form moves to the cache. Nothing is rebuilt |
 | A chunk unloads | Its cells are dropped |
 
-Re-deriving a cell runs the existing exact pipeline (arrangement, constrained Delaunay, face
-classification) on that cell's rings. Crossing and overlapping rings are resolved on the
-integer grid by the arrangement, which is where every dynamic CDT in the literature gets hurt.
+Deriving a whole cell runs the existing exact pipeline (arrangement, constrained Delaunay,
+face classification) on that cell's rings. It happens when a cell or a level first appears. A
+single obstacle changing never derives a cell.
 
-Editing triangles inside a cell (insert or remove one obstacle's constraints) was considered
-and is deferred. The triangulation is under 2% of a build, a 32 m cell is about 40 trees, no
-engine ships sub-tile patching, and the sources that built it say it took longer than the mesh
-itself. If a measured cell patch turns out too slow after step 1, it comes back as its own
-step behind the same patch interface.
+#### 4.4.1 Removing an obstacle
 
-Rule 2 holds because cells are keyed by coordinate, level, and content version. Two requesters
-of the same ground get the same cell.
+A tree's base is a ring, usually a rect. Its vertices are mesh vertices and its edges are
+constrained triangle edges. Felling it touches the triangles around those vertices and nothing
+else.
+
+1. Every constrained edge carries the list of rings that put it there; the arrangement already produces this. The tree's id comes off its edges. An edge whose list is now empty stops being a constraint. An edge another ring also covers stays one.
+2. A vertex with no constrained edge left, and not on a seam, is deleted: the triangles around it come out and the hole is retriangulated (Delaunay vertex deletion).
+3. Freed edges are legalized with flips, so the result is still constrained Delaunay.
+4. The new triangles are classified. Normally they join the floor around them; where another ring still covers the spot they keep that ring's tag.
+5. Corridor widths within the maximum clearance of the hole are invalidated, since a width can depend on an obstacle outside the triangles that changed. The locate buckets over the hole are refreshed.
+
+Nothing global moves. Reachability reads the coarse form, which a tree is not in. No stored
+path can be broken by ground opening up; a path that would now be shorter is found at its next
+replan.
+
+Removal makes no new points. Every vertex involved already exists on the integer grid, so
+every decision is one of the exact predicates the builder uses today. That is why this
+direction is safe where insertion needs care.
+
+Three cases need the list, not the picture of an isolated rect:
+
+- **Shared edges and vertices.** Two overlapping trunks, a trunk against a waterline, a trunk on a cell border. The per-edge ring list is what keeps the neighbour's edge when one of them goes.
+- **Crossing points.** Where the tree's edge crossed another ring, the arrangement split both at a rounded point. That vertex stays on the other ring after the tree is gone. Taking it out would move the other ring's edge by up to a millimetre and reopen the rounding question. It is tidied the next time the cell is derived.
+- **Co-circular points.** The four corners of a rect lie on one circle, so Delaunay has a free choice of diagonal there, and a patched cell can differ from a freshly derived one in which diagonals it picked. Walkable ground, face tags, and reachability are identical. So the test oracle is at the face level: after any sequence of removals, the cell's constraints and classified faces equal a fresh derive of the same content.
+
+#### 4.4.2 Adding an obstacle
+
+Adding is the harder direction, because a new ring can cross edges that are already there, and
+a crossing point has to be rounded to the grid.
+
+The triangles under the new ring, and under any ring it crosses, are cut out along existing
+edges. That hole, with its boundary held fixed, goes through the same arrangement and
+triangulation a cell does, and the result is spliced back. For a tree that touches nothing the
+hole is the handful of triangles its rect overlaps. Crossings are resolved by the arrangement,
+on the integer grid, the way they are today. A cell is the same operation with the hole as big
+as the cell.
+
+A new obstacle can break stored paths, so paths crossing the hole's triangles replan (4.7), and
+a new wall also changes the coarse form and so reachability.
+
+Rule 2 holds because cells are keyed by coordinate and level, and every change after a cell's
+first derive is a patch. Two requesters of the same ground get the same cell.
 
 ### 4.5 Coverage and chunks
 
@@ -329,9 +366,13 @@ Each is its own commit series, compiles, has targeted tests, and reports its num
 3. **Cell store.** The mesh becomes cells with seams and cross-cell queries, fine everywhere today's regions are, so behaviour is comparable. 3a is the geometry (cell container, seam links, A*, funnel, locate, and widths across cells, tested and benchmarked against the single-mesh result). 3b moves `NavigationSystem` onto it and deletes regions. Cell size is fixed here.
 4. **Coarse forms and reachability.** Coarse forms for all loaded chunks, built with the chunk. Forests and RRA* move to coarse. Placement reads coarse. WOR-644 closes here: a colonist's reach no longer has an input the camera can touch.
 5. **Detail by request.** Fine forms only under detail requests. The two-rect rule, the cache, per-cell path versions, the forward snap, the collision gate.
-6. **Movers.** The route system comes out of `AIDecisionSystem`. A wandering deer uses it.
+6. **Remove in place.** Felling a tree or removing a wall patches the triangles around it (4.4.1). Tested against a fresh derive at the face level on every fixture, with trees removed one at a time in several orders, including overlapping trunks and trunks on water edges and seams.
+7. **Add in place.** A built wall or a new collider cuts and re-derives only its hole (4.4.2).
+8. **Movers.** The route system comes out of `AIDecisionSystem`. A wandering deer uses it.
 
-Step 6 doesn't depend on 3 to 5 and can move earlier.
+Until steps 6 and 7 land, a single-obstacle change derives its cell. Each of those steps
+replaces that for its direction; nothing is left behind as a second path. Step 8 doesn't
+depend on 3 to 7 and can move earlier.
 
 ## 8. Open questions
 
