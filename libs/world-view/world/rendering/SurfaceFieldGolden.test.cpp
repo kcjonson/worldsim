@@ -11,7 +11,7 @@
 // distance to the painted boundary, and a third the far-zoom LOD (D16 step 7) under
 // the pixel it is drawn at.
 //
-// Needs a GL 3.3 context; skips on a headless box, like the other GL tests.
+// Needs a GL 4.1 context; skips on a headless box, like the other GL tests.
 
 #include "world/chunk/SurfaceField.h"
 #include "world/rendering/GlTest.test.h"
@@ -156,7 +156,7 @@ void main() {
 		return shader;
 	}
 
-	// A hidden GL 3.3 core context for the test's lifetime; `ok` is false on a
+	// A hidden GL 4.1 core context for the test's lifetime; `ok` is false on a
 	// headless box.
 	struct GlContext {
 		GLFWwindow* window = nullptr;

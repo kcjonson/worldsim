@@ -224,7 +224,9 @@ namespace {
 } // namespace
 
 TEST(AssetValidatorTest, SvgGroundDefIsClean) {
+	// What sits in <defs> is never drawn, so a <use> or <text> there is no error.
 	const ValidationReport r = validateSvgGround(tileSvg(
+		"<defs><text>note</text><use href=\"#a\"/></defs>\n"
 		"<g data-lod=\"16\" data-height=\"0.4\"><path d=\"M 3.9 2 C 4.3 2 4.3 2.4 3.9 2.4 Z\" fill=\"#405020\" data-height=\"0.9\"/></g>\n"
 	));
 	EXPECT_EQ(r.errorCount() + r.warningCount(), 0);
@@ -236,6 +238,8 @@ TEST(AssetValidatorTest, SvgGroundDefsVariantsAreItsSvgs) {
 	EXPECT_TRUE(hasIssue(validateSvgGround(tileSvg(), 2, "<variantCount>3</variantCount>"), Severity::Error, "variantCount"));
 	EXPECT_TRUE(hasIssue(validateSvgGround(tileSvg(), 33), Severity::Error, "variantCount"));
 	EXPECT_EQ(validateSvgGround(tileSvg(), 32).errorCount(), 0);
+	EXPECT_TRUE(hasMessageContaining(validateSvgGround(tileSvg(), 1, "<svgPath></svgPath>"), Severity::Error, "empty <svgPath>"))
+		<< "an empty path is a variant that can never load";
 }
 
 TEST(AssetValidatorTest, SvgGroundDefRejectsWhatTheBakeCantDraw) {
@@ -257,6 +261,13 @@ TEST(AssetValidatorTest, SvgGroundDefRejectsWhatTheBakeCantDraw) {
 		{tileSvg("<path d=\"M 0 0 H 2 V 2 H 0 Z M 0.5 0.5 H 1 V 1 H 0.5 Z\" fill=\"#000\"/>\n"), "has 2 outlines"},
 		{tileSvg("<text x=\"1\" y=\"1\">moss</text>\n"), "<text> on line 4 is never drawn"},
 		{tileSvg("<rect width=\"1\" height=\"1\" clip-path=\"url(#c)\"/>\n"), "has a clip-path"},
+		{tileSvg("<rect width=\"1\" height=\"1\" style=\"fill:#000; mask : url(#m)\"/>\n"), "has a mask"},
+		{tileSvg("<use href=\"#a\"/>\n"), "<use> on line 4 is never drawn"},
+		{tileSvg("<image href=\"a.png\" width=\"1\" height=\"1\"/>\n"), "<image> on line 4 is never drawn"},
+		{tileSvg("<svg width=\"1\" height=\"1\"><rect width=\"1\" height=\"1\"/></svg>\n"), "is a nested <svg>"},
+		{tileSvg("<style>.a{fill:#000}</style>\n<rect class=\"a\" width=\"1\" height=\"1\"/>\n"), "is a style sheet"},
+		{tileSvg("<rect width=\"1\" height=\"1\" fill=\"url(#none)\"/>\n"), "draws nothing"},
+		{tileSvg("<rect width=\"1\" height=\"1\" filter=\"url(#blur)\"/>\n"), "has a filter"},
 		{"<svg viewBox=\"0 0 4 4\"><rect></svg>", "not well-formed XML"},
 		{"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 4 4\"/>", "draws no shapes"},
 	};

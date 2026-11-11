@@ -61,6 +61,40 @@ namespace worldview {
 			return p;
 		}
 
+		// For an 8-bit value, the two codes `bits` wide whose two-thirds point (2 heavy + light) / 3 decodes
+		// nearest to it, the closest such pair first so another decoder's rounding moves it least.
+		struct SingleColor {
+			int heavy = 0; // the endpoint weighted two thirds
+			int light = 0;
+		};
+
+		const std::array<SingleColor, 256>& singleColor(int bits) {
+			static const auto build = [](int width) {
+				const int  top = (1 << width) - 1;
+				const auto expand = [width](int c) {
+					return width == 5 ? (c << 3) | (c >> 2) : (c << 2) | (c >> 4);
+				};
+				std::array<SingleColor, 256> table{};
+				for (int v = 0; v < 256; ++v) {
+					int best = std::numeric_limits<int>::max();
+					for (int a = 0; a <= top; ++a) {
+						for (int b = 0; b <= top; ++b) {
+							const int score =
+								(std::abs((((2 * expand(a)) + expand(b) + 1) / 3) - v) * 1024) + std::abs(expand(a) - expand(b));
+							if (score < best) {
+								best = score;
+								table[static_cast<size_t>(v)] = {.heavy = a, .light = b};
+							}
+						}
+					}
+				}
+				return table;
+			};
+			static const std::array<SingleColor, 256> five = build(5);
+			static const std::array<SingleColor, 256> six = build(6);
+			return bits == 5 ? five : six;
+		}
+
 		// Each texel's nearest palette entry, packed two bits a texel, and the squared error.
 		uint32_t assignColors(const Block& texels, uint16_t c0, uint16_t c1, int64_t& error) {
 			const std::array<std::array<int, 3>, 4> p = palette(c0, c1);
@@ -103,23 +137,25 @@ namespace worldview {
 			}
 			mean = mean * (1.0F / 16.0F);
 
-			// The principal axis of the block's colors, by power iteration on their covariance.
+			// The principal axis of the block's colors, by power iteration on their covariance. It starts
+			// from the texel furthest from the mean, which the covariance never maps to zero; the bounding
+			// box's diagonal can be orthogonal to every deviation (a block half red, half green).
 			std::array<float, 6> cov{}; // rr rg rb gg gb bb
-			Rgb					 lo{255.0F, 255.0F, 255.0F};
-			Rgb					 hi{0.0F, 0.0F, 0.0F};
+			Rgb					 axis;
+			float				 furthest = 0.0F;
 			for (const auto& t : texels) {
-				const Rgb c{static_cast<float>(t[0]), static_cast<float>(t[1]), static_cast<float>(t[2])};
-				const Rgb d = c - mean;
+				const Rgb d = Rgb{static_cast<float>(t[0]), static_cast<float>(t[1]), static_cast<float>(t[2])} - mean;
 				cov[0] += d.r * d.r;
 				cov[1] += d.r * d.g;
 				cov[2] += d.r * d.b;
 				cov[3] += d.g * d.g;
 				cov[4] += d.g * d.b;
 				cov[5] += d.b * d.b;
-				lo = {std::min(lo.r, c.r), std::min(lo.g, c.g), std::min(lo.b, c.b)};
-				hi = {std::max(hi.r, c.r), std::max(hi.g, c.g), std::max(hi.b, c.b)};
+				if (dot(d, d) > furthest) {
+					furthest = dot(d, d);
+					axis = d;
+				}
 			}
-			Rgb axis = hi - lo;
 			for (int iteration = 0; iteration < 8; ++iteration) {
 				const Rgb next{
 					(cov[0] * axis.r) + (cov[1] * axis.g) + (cov[2] * axis.b),
@@ -189,6 +225,22 @@ namespace worldview {
 				c1 = n1;
 				indices = nextIndices;
 				error = nextError;
+			}
+
+			// A block flatter than one RGB565 step rounds both endpoints to one code, which moves a whole
+			// flat area by up to half a step the same way; the pair of codes whose two-thirds point lands
+			// on the block's mean holds it to about a code.
+			const SingleColor& r = singleColor(5)[static_cast<size_t>(std::clamp(std::lround(mean.r), 0L, 255L))];
+			const SingleColor& g = singleColor(6)[static_cast<size_t>(std::clamp(std::lround(mean.g), 0L, 255L))];
+			const SingleColor& b = singleColor(5)[static_cast<size_t>(std::clamp(std::lround(mean.b), 0L, 255L))];
+			const auto		   s0 = static_cast<uint16_t>((r.heavy << 11) | (g.heavy << 5) | b.heavy);
+			const auto		   s1 = static_cast<uint16_t>((r.light << 11) | (g.light << 5) | b.light);
+			int64_t			   singleError = 0;
+			const uint32_t	   singleIndices = assignColors(texels, s0, s1, singleError);
+			if (singleError < error) {
+				c0 = s0;
+				c1 = s1;
+				indices = singleIndices;
 			}
 			orderEndpoints(c0, c1, indices);
 			if (c0 == c1) {

@@ -67,19 +67,20 @@ namespace assets {
 		constexpr int	 kMinGroundPixelsPerMeter = 16;
 		constexpr int	 kMaxGroundPixelsPerMeter = 512;
 
-		// An SVG ground def's SVGs, each read the way the bake reads it (GroundSvg.h). A file that can't be
-		// read is left to the svgPath check, which reports it missing.
-		void validateGroundSvgs(
-			const pugi::xml_node& assetDef,
-			const std::string&	  defName,
-			const fs::path&		  assetFolder,
-			float				  periodMeters,
-			uint32_t			  pixelsPerMeter,
-			ValidationReport&	  report
-		) {
-			for (const pugi::xml_node svgNode : assetDef.children("svgPath")) {
+		struct GroundSvgsArgs {
+			pugi::xml_node	   assetDef;
+			const std::string& defName;
+			const fs::path&	   assetFolder;
+			float			   periodMeters = 0.0F;
+			uint32_t		   pixelsPerMeter = 0;
+		};
+
+		// An SVG ground def's SVGs, each read the way the bake reads it (GroundSvg.h). An empty path or a
+		// file that can't be read is left to the svgPath check, which reports it.
+		void validateGroundSvgs(const GroundSvgsArgs& args, ValidationReport& report) {
+			for (const pugi::xml_node svgNode : args.assetDef.children("svgPath")) {
 				const std::string svgPath = svgNode.text().as_string();
-				const fs::path	  file = (assetFolder / svgPath).lexically_normal();
+				const fs::path	  file = (args.assetFolder / svgPath).lexically_normal();
 				std::ifstream	  in(file, std::ios::binary);
 				if (svgPath.empty() || !in) {
 					continue;
@@ -88,13 +89,13 @@ namespace assets {
 				std::vector<std::string> issues;
 				static_cast<void>(readGroundSvg(
 					{.svg = std::as_bytes(std::span(bytes)),
-					 .periodMeters = periodMeters,
-					 .pixelsPerMeter = pixelsPerMeter,
+					 .periodMeters = args.periodMeters,
+					 .pixelsPerMeter = args.pixelsPerMeter,
 					 .name = file.string()},
 					issues
 				));
 				for (const std::string& issue : issues) {
-					report.add(Severity::Error, defName, "svgPath", svgPath + ": " + issue, file.string());
+					report.add(Severity::Error, args.defName, "svgPath", svgPath + ": " + issue, file.string());
 				}
 			}
 		}
@@ -196,11 +197,11 @@ namespace assets {
 				}
 				if (periodValid) {
 					validateGroundSvgs(
-						assetDef,
-						defName,
-						assetFolder,
-						static_cast<float>(period),
-						pixelsValid ? static_cast<uint32_t>(pixelsPerMeter) : defaults.pixelsPerMeter,
+						{.assetDef = assetDef,
+						 .defName = defName,
+						 .assetFolder = assetFolder,
+						 .periodMeters = static_cast<float>(period),
+						 .pixelsPerMeter = pixelsValid ? static_cast<uint32_t>(pixelsPerMeter) : defaults.pixelsPerMeter},
 						report
 					);
 				}
@@ -370,6 +371,7 @@ namespace assets {
 						);
 					}
 					if (svgPath.empty()) {
+						report.add(Severity::Error, defName, "svgPath", "An empty <svgPath> names no file", assetFolder.string());
 						continue;
 					}
 					const fs::path resolved = (assetFolder / svgPath).lexically_normal();

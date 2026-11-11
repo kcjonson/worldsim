@@ -167,7 +167,11 @@ namespace asset_manager {
 		  animated(args.animated),
 		  collider(args.collider),
 		  tiles(std::max(1, args.tiles)),
-		  coordinateSystem(args.coordinateSystem) {}
+		  coordinateSystem(args.coordinateSystem) {
+		// A layout pass runs between the frame's update and its render, so a thumbnail the tree or the
+		// detail pane just built draws its picture before its first frame instead of a frame late.
+		setOnLayout([this](ui::Component&) { refreshPicture(); });
+	}
 
 	void AssetThumbnail::clearCache() {
 		MeshCache& cache = meshCache();
@@ -244,9 +248,17 @@ namespace asset_manager {
 		return true;
 	}
 
-	bool AssetThumbnail::moves() const {
-		return animated && sourceBounds.width > 0.0F && sourceBounds.height > 0.0F &&
-			   assets::AssetRegistry::Get().getMotion(defName) != nullptr;
+	const assets::MotionClip* AssetThumbnail::motionClip() const {
+		if (!animated || sourceBounds.width <= 0.0F || sourceBounds.height <= 0.0F) {
+			return nullptr;
+		}
+		const assets::MotionDef* motion = assets::AssetRegistry::Get().getMotion(defName);
+		if (motion == nullptr || motion->clips.empty()) {
+			return nullptr;
+		}
+		const assets::MotionClip* walk = motion->findClip("walk");
+		const assets::MotionClip* chosen = walk != nullptr ? walk : &motion->clips.front();
+		return chosen->drivers.empty() ? nullptr : chosen;
 	}
 
 	// Replays fitToRect (see renderer::fitToRect): scale to fit the source bounds into this box
@@ -283,16 +295,10 @@ namespace asset_manager {
 			pictureStale = true;
 		}
 		if (mesh != nullptr && !mesh->meshes.empty()) {
-			if (moves()) {
-				// Sweep the motion's first clip (walk when it has one) over time, posing the part vertex
-				// ranges in the fitted preview space.
-				const assets::MotionDef*							   motion = assets::AssetRegistry::Get().getMotion(defName);
-				const assets::MotionClip*							   walk = motion->findClip("walk");
-				const assets::MotionClip*							   motionClip = (walk != nullptr) ? walk : &motion->clips.front();
+			if (const assets::MotionClip* motion = motionClip()) {
+				// Sweep the clip's phase over time, posing the part vertex ranges in the fitted preview space.
 				std::unordered_map<std::string, assets::PartTransform> xforms;
-				if (!motionClip->drivers.empty()) {
-					assets::evaluateClip(*motionClip, sweepPhase(), xforms);
-				}
+				assets::evaluateClip(*motion, sweepPhase(), xforms);
 				drawMeshes(xforms, opacity(), drawKey());
 			} else {
 				if (pictureStale) {
@@ -307,10 +313,22 @@ namespace asset_manager {
 	}
 
 	void AssetThumbnail::update(float /*dt*/) {
-		if (!pictureStale || mesh == nullptr || mesh->meshes.empty() || moves()) {
+		refreshPicture();
+	}
+
+	void AssetThumbnail::refreshPicture() {
+		if (ensureMesh()) {
+			pictureStale = true;
+		}
+		if (!pictureStale || mesh == nullptr || mesh->meshes.empty() || motionClip() != nullptr) {
 			return;
 		}
 		pictureStale = false;
+		if (coordinateSystem == nullptr) {
+			// The pass couldn't put the screen's projection back without it.
+			LOG_ERROR(Engine, "AssetThumbnail: %s has no coordinate system to draw its picture with", defName.c_str());
+			return;
+		}
 		// A ground tile's copies are one clipped square, so the picture is that square; anything else is the box.
 		const Foundation::Rect region = clip.value_or(Foundation::Rect{0.0F, 0.0F, fetchedSize.x, fetchedSize.y});
 		const int			   width = std::max(1, static_cast<int>(std::lround(region.width * fetchedScale)));

@@ -10,6 +10,7 @@ add_library(world-view
     world/rendering/GroundTileCache.cpp
     world/rendering/GroundTileFilter.cpp
     world/rendering/InstancedEntityRenderer.cpp
+    world/rendering/ScreenStateGuard.cpp
     world/rendering/BatchedEntityRenderer.cpp
     world/rendering/TemplateMeshCache.cpp
     world/rendering/DynamicEntityRenderSystem.cpp

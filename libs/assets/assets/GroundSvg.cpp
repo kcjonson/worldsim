@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <charconv>
 #include <cmath>
 #include <cstdio>
@@ -23,6 +24,8 @@ namespace assets {
 		// The elements NanoSVG draws, each into one shape at most, and ones an author might expect drawn that it skips.
 		constexpr std::array<std::string_view, 7> kDrawables = {"path", "rect", "circle", "ellipse", "line", "polyline", "polygon"};
 		constexpr std::array<std::string_view, 3> kUndrawn = {"use", "text", "image"};
+		// Containers NanoSVG draws the content of as plain shapes, or doesn't apply, wherever they sit.
+		constexpr std::array<std::string_view, 6> kUnsupported = {"symbol", "clipPath", "mask", "pattern", "marker", "filter"};
 
 		/// The text as a finite number, surrounding whitespace allowed.
 		std::optional<float> parseNumber(const char* text) {
@@ -38,6 +41,36 @@ namespace assets {
 				return std::nullopt;
 			}
 			return value;
+		}
+
+		std::string_view trimmed(std::string_view text) {
+			while (!text.empty() && std::isspace(static_cast<unsigned char>(text.front())) != 0) {
+				text.remove_prefix(1);
+			}
+			while (!text.empty() && std::isspace(static_cast<unsigned char>(text.back())) != 0) {
+				text.remove_suffix(1);
+			}
+			return text;
+		}
+
+		// Whether an element sets `property` to anything but none, as an attribute or in its inline style:
+		// moving a property into style="" mustn't slip it past the check.
+		bool setsProperty(pugi::xml_node node, std::string_view property) {
+			if (const pugi::xml_attribute attribute = node.attribute(std::string(property).c_str())) {
+				return trimmed(attribute.value()) != "none";
+			}
+			std::string_view style = node.attribute("style").value();
+			while (!style.empty()) {
+				const size_t		   end = std::min(style.find(';'), style.size());
+				const std::string_view declaration = style.substr(0, end);
+				style.remove_prefix(std::min(end + 1, style.size()));
+				const size_t colon = declaration.find(':');
+				if (colon != std::string_view::npos && trimmed(declaration.substr(0, colon)) == property &&
+					trimmed(declaration.substr(colon + 1)) != "none") {
+					return true;
+				}
+			}
+			return false;
 		}
 
 		/// A viewBox's four numbers, separated by whitespace or commas.
@@ -75,14 +108,15 @@ namespace assets {
 			struct Shape {
 				float				 minPixelsPerMeter = 0.0F;
 				std::optional<float> height;
-				std::string			 where; // the element as its author finds it
+				std::string			 where;			  // the element as its author finds it
+				bool				 defined = false; // under <defs>, which NanoSVG never draws
 			};
 
 			Walk(std::span<const std::byte> newSource, std::vector<std::string>& newIssues)
 				: source(newSource),
 				  issues(newIssues) {}
 
-			void visit(pugi::xml_node node, float minPixelsPerMeter, std::optional<float> height) {
+			void visit(pugi::xml_node node, float minPixelsPerMeter, std::optional<float> height, bool defined) {
 				if (const pugi::xml_attribute lod = node.attribute("data-lod")) {
 					const std::optional<float> value = parseNumber(lod.value());
 					if (!value.has_value() || *value < 0.0F) {
@@ -102,16 +136,26 @@ namespace assets {
 					}
 				}
 				const std::string_view name = node.name();
-				if (std::find(kUndrawn.begin(), kUndrawn.end(), name) != kUndrawn.end()) {
+				defined = defined || name == "defs";
+				if (!defined && std::find(kUndrawn.begin(), kUndrawn.end(), name) != kUndrawn.end()) {
 					issues.push_back(where(node) + " is never drawn; ground art is paths and basic shapes");
 				}
-				for (const char* ignored : {"clip-path", "mask"}) {
-					if (node.attribute(ignored)) {
+				if (name == "svg" && node.parent().type() != pugi::node_document) {
+					issues.push_back(where(node) + " is a nested <svg>, which rescales the whole tile; ground art is one <svg>");
+				}
+				if (name == "style") {
+					issues.push_back(where(node) + " is a style sheet, which the loader doesn't read; set each shape's fill on it");
+				}
+				if (std::find(kUnsupported.begin(), kUnsupported.end(), name) != kUnsupported.end()) {
+					issues.push_back(where(node) + " isn't drawn the way a browser draws it; ground art is paths and basic shapes");
+				}
+				for (const char* ignored : {"clip-path", "mask", "filter"}) {
+					if (setsProperty(node, ignored)) {
 						issues.push_back(where(node) + " has a " + ignored + ", which the bake ignores");
 					}
 				}
 				if (std::find(kDrawables.begin(), kDrawables.end(), name) != kDrawables.end()) {
-					shapes.push_back({.minPixelsPerMeter = minPixelsPerMeter, .height = height, .where = where(node)});
+					shapes.push_back({.minPixelsPerMeter = minPixelsPerMeter, .height = height, .where = where(node), .defined = defined});
 					pugi::xml_attribute id = node.attribute("id");
 					if (!id) {
 						id = node.append_attribute("id");
@@ -120,7 +164,7 @@ namespace assets {
 				}
 				for (const pugi::xml_node child : node.children()) {
 					if (child.type() == pugi::node_element) {
-						visit(child, minPixelsPerMeter, height);
+						visit(child, minPixelsPerMeter, height, defined);
 					}
 				}
 			}
@@ -193,7 +237,7 @@ namespace assets {
 		root.remove_attribute("height");
 
 		Walk walk(args.svg, issues);
-		walk.visit(root, 0.0F, std::nullopt);
+		walk.visit(root, 0.0F, std::nullopt, false);
 
 		TextWriter written;
 		doc.save(written, "", pugi::format_raw | pugi::format_no_declaration);
@@ -204,6 +248,7 @@ namespace assets {
 			return out;
 		}
 
+		std::vector<bool> drawn(walk.shapes.size(), false);
 		for (renderer::LoadedSVGShape& shape : shapes) {
 			const std::string& id = shape.id;
 			size_t			   index = 0;
@@ -212,6 +257,7 @@ namespace assets {
 				issues.push_back("a shape the reader can't trace to its element (id \"" + id + "\")");
 				continue;
 			}
+			drawn[index] = true;
 			const Walk::Shape& source = walk.shapes[index];
 			const bool		   gradient = shape.gradient.type != renderer::GradientFill::Type::None;
 			if (shape.hasStroke) {
@@ -235,6 +281,12 @@ namespace assets {
 			path.minPixelsPerMeter = source.minPixelsPerMeter;
 			path.height = source.height;
 			out.addPath(std::move(path));
+		}
+		// NanoSVG drops a shape whose fill it can't resolve (a pattern, a dangling url()) without a word.
+		for (size_t i = 0; i < walk.shapes.size(); ++i) {
+			if (!drawn[i] && !walk.shapes[i].defined) {
+				issues.push_back(walk.shapes[i].where + " draws nothing; give it a fill color");
+			}
 		}
 		return out;
 	}

@@ -164,8 +164,8 @@ namespace worldview {
 		};
 
 		/// Part of every cache key, for worldsim's own bake code: this baker, its filters and the paths it
-		/// draws (TessellatedPaths, AssetRegistry::buildPaths, readGroundSvg). Bump it when any of them draws or filters
-		/// differently, so the bakes on disk from before miss. salal's version and LuaEngine::kApiVersion
+		/// draws (TessellatedPaths, AssetRegistry::buildPaths, readGroundSvg) and the BC3 encoder (Bc3.h). Bump it when any
+		/// of them draws, filters or encodes differently, so the bakes on disk from before miss. salal's version and LuaEngine::kApiVersion
 		/// are in the key on their own.
 		static constexpr uint32_t kVersion = 3;
 		static constexpr int	  kMaxMipLevels = 7;	 // mips 0 to 6

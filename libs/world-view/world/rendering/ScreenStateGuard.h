@@ -1,7 +1,5 @@
 #pragma once
 
-#include <primitives/Primitives.h>
-
 namespace Renderer {
 	class CoordinateSystem;
 }
@@ -13,14 +11,8 @@ namespace worldview {
 	// this. Taken before the target's begin(), so the viewport it saves is the screen's.
 	class ScreenStateGuard {
 	  public:
-		explicit ScreenStateGuard(Renderer::CoordinateSystem* restore)
-			: coordinateSystem(restore) {
-			Renderer::Primitives::getViewport(width, height);
-		}
-		~ScreenStateGuard() {
-			Renderer::Primitives::setCoordinateSystem(coordinateSystem);
-			Renderer::Primitives::setViewport(width, height);
-		}
+		explicit ScreenStateGuard(Renderer::CoordinateSystem* restore);
+		~ScreenStateGuard();
 		ScreenStateGuard(const ScreenStateGuard&) = delete;
 		ScreenStateGuard& operator=(const ScreenStateGuard&) = delete;
 		ScreenStateGuard(ScreenStateGuard&&) = delete;

@@ -1,7 +1,7 @@
 // The ground tile baker end to end on a small def: the mip chain's shape, the registry's wrap across the tile edge, a setLod path
 // leaving the coarse mips, heights in alpha by paint order or setHeight, an SVG def baking each of its SVGs
 // as a variant, tiled renders matching one big one, a bake on the pool matching one in turn, and the disk
-// cache giving a bake back until the script changes. Needs a GL 3.3 context; skips on a
+// cache giving a bake back until the script changes. Needs a GL 4.1 context; skips on a
 // headless box, like the other GL tests. The filters and the cache file have their own tests
 // (GroundTileFilter.test.cpp, GroundTileCache.test.cpp).
 
@@ -153,8 +153,8 @@ TEST(GroundTileBakerTest, SeedsAreSaltedBySeedGroupAndVariant) {
 	const assets::AssetDefinition snow = defIn("Ground_Snow", assets::AssetType::Procedural);
 	EXPECT_NE(GroundTileBaker::variantSeed(grass, 0), GroundTileBaker::variantSeed(grass, 1));
 	EXPECT_NE(GroundTileBaker::variantSeed(grass, 0), GroundTileBaker::variantSeed(snow, 0));
-	EXPECT_EQ(GroundTileBaker::variantSeed(grass, 3), GroundTileBaker::variantSeed(defIn("grass", assets::AssetType::Procedural), 3))
-		<< "one group, one layout a variant";
+	EXPECT_EQ(GroundTileBaker::variantSeed(grass, 3), assets::variantSeed("grass", 3))
+		<< "a generator's seed is the shared hash of its group, the same as the trees use";
 	EXPECT_EQ(GroundTileBaker::variantSeed(defIn("grass", assets::AssetType::Simple), 3), 3U) << "an SVG def's seed picks its SVG";
 	EXPECT_EQ(GroundTileBaker::mipCount(512), 7) << "capped at mip 6";
 	EXPECT_EQ(GroundTileBaker::mipCount(32), 6) << "32 down to 1";
@@ -518,4 +518,41 @@ TEST(GroundTileBankTest, AThrowingStepFailsItsDefWithTheMessageAndTheBakeMovesOn
 	}
 	EXPECT_TRUE(named) << "the def and what it threw are in the bank's errors, for the splash to show";
 	registry.clearDefinitions();
+}
+
+// The bank's BC3 arrays take every level of every variant, the 2x2 and 1x1 levels' single padded
+// blocks included, without a GL error; the driver reads them back as BC3 with sRGB color.
+TEST(GroundTileBankTest, UploadsEveryLevelAsBc3) {
+	GlFixture gl;
+	SKIP_OR_FAIL_WITHOUT_GL(gl);
+	const TempDir t;
+	loadTestDef(t);
+	while (glGetError() != GL_NO_ERROR) {}
+
+	GroundTileBank bank({});
+	int			   steps = 0;
+	while (bank.bakeNext()) {
+		ASSERT_LT(++steps, 16);
+	}
+	EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+	for (const std::string& line : bank.errors()) {
+		EXPECT_EQ(line.find("Ground_BakeTest"), std::string::npos) << line; // the other surfaces' missing defs are expected
+	}
+	ASSERT_EQ(bank.arrays().size(), 1U);
+	const GroundTileBank::Array& array = bank.arrays()[0];
+	EXPECT_EQ(array.layers, 2);
+	ASSERT_EQ(array.levels, 6);
+	glBindTexture(GL_TEXTURE_2D_ARRAY, array.texture);
+	for (int level = 0; level < array.levels; ++level) {
+		GLint format = 0;
+		GLint bytes = 0;
+		glGetTexLevelParameteriv(GL_TEXTURE_2D_ARRAY, level, GL_TEXTURE_INTERNAL_FORMAT, &format);
+		glGetTexLevelParameteriv(GL_TEXTURE_2D_ARRAY, level, GL_TEXTURE_COMPRESSED_IMAGE_SIZE, &bytes);
+		const int size = 32 >> level;
+		EXPECT_EQ(format, GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT) << "level " << level;
+		EXPECT_EQ(static_cast<size_t>(bytes), bc3Bytes(size, size) * 2) << "level " << level;
+	}
+	glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+	EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+	assets::AssetRegistry::Get().clearDefinitions();
 }

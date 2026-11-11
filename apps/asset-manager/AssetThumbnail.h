@@ -8,9 +8,10 @@
 // tiles x tiles, edge to edge, to show its seams. Meshes are cached across thumbnails, the least recently
 // fetched dropped past a byte budget.
 //
-// Art that doesn't move is drawn once into a render target, in update(), and each frame draws that
-// picture: a ground tile is hundreds of thousands of triangles, and a ground def's detail shows it
-// fifteen times. Only an animated preview of an asset with a motion draws its meshes every frame.
+// Art that doesn't move is drawn once into a render target, in the layout pass that places the thumbnail
+// or the update after it changes, and each frame draws that picture: a ground tile is hundreds of
+// thousands of triangles, and a ground def's detail shows it fifteen times. Only an animated preview of
+// an asset whose motion clip drives a part draws its meshes every frame.
 
 #include <graphics/Rect.h>
 #include <resources/RenderTarget.h>
@@ -31,6 +32,7 @@ namespace Renderer {
 }
 
 namespace assets {
+	struct MotionClip;
 	struct PartTransform;
 }
 
@@ -47,8 +49,8 @@ namespace asset_manager {
 			bool		animated = false; // sweep the asset's motion clip (the detail preview; the tree's stay still)
 			bool		collider = false;
 			int			tiles = 1; // a ground tile repeated tiles x tiles; other assets ignore it
-			/// The app's, whose pixel ratio says how many device pixels a ground tile's square covers (1 a
-			/// logical pixel without one), and which is put back after drawing the picture offscreen.
+			/// The app's, required: its pixel ratio says how many device pixels the picture needs, and it is
+			/// put back after the picture is drawn offscreen (there's no picture without it, logged).
 			Renderer::CoordinateSystem* coordinateSystem = nullptr;
 		};
 
@@ -70,8 +72,11 @@ namespace asset_manager {
 		[[nodiscard]] float pixelScale() const;
 		// Fetches the mesh when what it was built for changed; true when it did.
 		bool ensureMesh();
-		// Whether this preview poses the asset's motion each frame, so it can't be drawn once.
-		[[nodiscard]] bool moves() const;
+		// The clip this preview poses each frame (walk, else the first), so it can't be drawn once; null for
+		// still art, a tree row, or a clip that drives nothing.
+		[[nodiscard]] const assets::MotionClip* motionClip() const;
+		// Draws the picture again when the mesh changed and the art is still.
+		void			   refreshPicture();
 		void			   drawMeshes(const std::unordered_map<std::string, assets::PartTransform>& xforms, float fade, int32_t key);
 		void			   drawPicture();
 		void			   drawCollider();
