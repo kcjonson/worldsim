@@ -1817,7 +1817,8 @@ namespace ecs {
 					task.priority = newScore;
 					acceptClaims(entity, task, memory, inventory, handedCargo);
 					task.deliveryChosen = task.type == TaskType::Haul && task.chainStep == 1;
-					if (task.type == TaskType::Wander) {
+					// Both idle outcomes, a wander and gathering food, let go of an armful nobody wants.
+					if (task.type == TaskType::Wander || (selected != nullptr && selected->gathersFood)) {
 						putDownUnwantedArmful(inventory, position, *trace);
 					}
 

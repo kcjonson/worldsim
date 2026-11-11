@@ -383,8 +383,8 @@ from [Crafting & Material Provisioning](./crafting-provisioning-architecture.md)
 deposits exactly what is needed and keeps the rest, which holds no claim.
 
 A two-hand armful kept this way, or left when its root is gone, fills the colonist's carry, so every
-haul and cut reads no room. A colonist about to wander while holding a two-hand armful that no root it
-knows wants (no carry-in of it is offered) puts it down where it stands through the drop path, which
+haul and cut reads no room. A colonist about to idle, by wandering or by gathering food, while holding a
+two-hand armful that no root it knows wants (no carry-in of it is offered) puts it down where it stands through the drop path, which
 merges it into a pile at the spot (`AIDecisionSystem::putDownUnwantedArmful`); the pile is an ordinary
 source with no claims, hauled once a root wants it. One-hand surplus stays in the pack. A carried
 packaged item is never put down as a pile (Chain_PlaceItem, below).
@@ -943,8 +943,6 @@ Behaviour the code has that no doc should promise otherwise, kept here until fix
 - A crafter that leaves for a need before its Craft action starts loses the station (the binding is
   planned, not built).
 - The panel names one worker per row, so a row several colonists serve reads as one colonist's.
-- An unwanted two-hand armful is put down only when the colonist selects Wander; a colonist that idles
-  by gathering food (tier 7, ranked above Wander) carries it until it wanders.
 - A colonist whose every pack slot, belt slot, and hand holds a tool can't make room to eat and picks
   the same source again.
 - Interrupting a sleeping colonist for a higher tier leaves the Sleep action active (the switch path

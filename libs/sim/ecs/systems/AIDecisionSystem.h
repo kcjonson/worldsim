@@ -242,8 +242,9 @@ private:
 	/// goods it carries; routed again, all its claims.
 	void applyNavOutcome(EntityID entity, struct Task& task, NavRequestOutcome outcome);
 
-	/// About to wander holding a two-hand armful that no root it knows wants: put it down as a loose pile
-	/// (the drop path, which merges it into a pile at the spot). A carried packaged item is never one.
+	/// About to wander or gather food holding a two-hand armful that no root it knows wants: put it down as
+	/// a loose pile (the drop path, which merges it into a pile at the spot). A carried packaged item is
+	/// never one.
 	void putDownUnwantedArmful(Inventory& inventory, const Position& position, const DecisionTrace& trace);
 
 	/// Switching to anything but placing the packaged item it carries, or a need its hands are free for:

@@ -504,6 +504,24 @@ namespace ecs::test {
 		EXPECT_TRUE(task.claims.empty()) << "a carried item is possessed";
 	}
 
+	// Idling by gathering food (ranked above a wander) lets go of an armful nobody wants just as a wander
+	// does: he does not pick berries with his arms full of wood.
+	TEST_F(ChainClaimsTest, AnArmfulNobodyWantsIsPutDownToGatherFood) {
+		uint32_t dropped = 0;
+		ai->setDropResourceCallback([&](const std::string&, float, float, uint32_t quantity) { dropped += quantity; });
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		remember(colonist, {4.0F, 0.0F}, "BerryBush", assets::CapabilityType::Harvestable);
+		auto& inventory = *world->getComponent<Inventory>(colonist);
+		ASSERT_EQ(ecs::addArmful(inventory, assets::AssetRegistry::Get(), "Wood", 4), 4U);
+
+		decide(colonist);
+		const EvaluatedOption* chosen = world->getComponent<DecisionTrace>(colonist)->getSelected();
+		ASSERT_NE(chosen, nullptr);
+		ASSERT_TRUE(chosen->gathersFood);
+		EXPECT_EQ(dropped, 4U);
+		EXPECT_EQ(ecs::availableQuantity(inventory, "Wood"), 0U);
+	}
+
 	// Furniture whose placement is cancelled while it is carried is set down where the colonist stands, as
 	// the packaged item it is: never dropped as a loose pile of its name, never left marked carried with
 	// empty hands. Placed again, it is picked up from there.
