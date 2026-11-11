@@ -553,6 +553,16 @@ On later selections:
 - any other selection (other work, Wander, a player move) discards it, so a stale record never
   holds a goal's in-flight.
 
+Sleep releases the hold. A record keeps its goods and can still be adopted when the colonist wakes,
+but while the colonist sleeps (its task is the Sleep need) the record counts as no in-flight and no
+inbound for anyone else, so another colonist is offered the fetch or cut those goods would have
+covered. Sleep is long, and a goal should not wait out a night on goods lying in a pack. A record
+kept by eating, drinking, or the toilet keeps counting, and the rule follows the task holding the
+record, whatever created it: a record kept through a meal stops counting if the colonist then sleeps,
+and counts again once it wakes. Awake, the carry-in adopts the record if the root still wants the
+goods; if the other colonist's delivery covered the need, no carry-in is offered, the next selection
+discards the record, and the goods stay carried until a carry-in to storage takes them.
+
 Work preempted by other work (tier 4 over tier 6, or a same-tier switch past the hysteresis margin)
 keeps no record; its claims end with the task, and carried goods are uncommitted until the colonist
 picks carry-in from possession.

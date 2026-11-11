@@ -1700,6 +1700,11 @@ namespace ecs {
 			}
 			task.discardSuspended();
 		}
+		// A record kept by a need is indexed again: it holds nothing while the colonist sleeps, and holds
+		// again once a need other than sleep keeps it.
+		if (task.suspended) {
+			m_claims.suspend(entity, task);
+		}
 		recordChainClaims(*world, m_needs, m_claims, m_registry, memory, inventory, task);
 		m_claims.append(entity, task);
 	}

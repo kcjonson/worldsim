@@ -88,7 +88,9 @@ namespace ecs {
 	}
 
 	void ClaimIndex::addSuspended(EntityID colonist, const Task& task) {
-		if (!task.suspended) {
+		// Sleep is long: while the colonist sleeps its record keeps the goods but holds nothing, so
+		// another colonist may bring what the record would have.
+		if (!task.suspended || (task.type == TaskType::FulfillNeed && task.needToFulfill == NeedType::Energy)) {
 			return;
 		}
 		// A record has no tier of its own; it ranks with the task holding it, and possessed goods are

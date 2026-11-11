@@ -77,7 +77,9 @@ namespace ecs {
 		void append(EntityID colonist, const Task& task);
 
 		/// The current task of `colonist` has just become its suspended record, with smaller or equal
-		/// claims under the same instance id: replace that instance's entries with the record's.
+		/// claims under the same instance id: replace that instance's entries with the record's. Also
+		/// re-files a kept record when the task holding it changes, since a sleeping colonist's record
+		/// holds nothing.
 		void suspend(EntityID colonist, const Task& task);
 
 		/// Drop every entry of `instanceId` (a discarded record, or a task released outside an AI

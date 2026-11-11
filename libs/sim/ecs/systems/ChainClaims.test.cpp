@@ -798,13 +798,13 @@ namespace ecs::test {
 		ASSERT_EQ(task.type, TaskType::Haul);
 		const uint64_t delivery = task.instanceId;
 
-		world->getComponent<NeedsComponent>(colonist)->get(NeedType::Energy).value = 5.0F;
+		world->getComponent<NeedsComponent>(colonist)->get(NeedType::Bladder).value = 5.0F;
 		decide(colonist);
 		ASSERT_EQ(task.type, TaskType::FulfillNeed);
 		ASSERT_TRUE(task.suspended.has_value());
-		EXPECT_EQ(ai->claimIndex().inFlight(stock.umbrella, berryId, {}), 3U) << "the berries stay the box's while it rests";
+		EXPECT_EQ(ai->claimIndex().inFlight(stock.umbrella, berryId, {}), 3U) << "the berries stay the box's while it sees to the need (sleep would release them)";
 
-		world->getComponent<NeedsComponent>(colonist)->get(NeedType::Energy).value = 100.0F;
+		world->getComponent<NeedsComponent>(colonist)->get(NeedType::Bladder).value = 100.0F;
 		task.clear();
 		decide(colonist);
 		ASSERT_EQ(task.type, TaskType::Haul);
@@ -2034,6 +2034,93 @@ namespace ecs::test {
 		act(hauler, pilePos);
 		EXPECT_FALSE(getTask(hauler)->isActive()) << "the haul ends at an empty pile";
 		EXPECT_EQ(world->getComponent<Inventory>(hauler)->getQuantity("Berry"), 0U);
+	}
+
+	// =============================================================================
+	// Sleep releases the hold: a colonist that falls asleep carrying goods for a root keeps them as its
+	// suspended record, but while it sleeps the record holds no in-flight or inbound, so another colonist
+	// is offered the fetch. Awake, the record is adopted if the root still wants the goods, and discarded
+	// otherwise.
+	// =============================================================================
+
+	class SleepReleaseTest : public ChainClaimsTest {
+	  protected:
+		void SetUp() override {
+			ChainClaimsTest::SetUp();
+			station = world->createEntity();
+			world->addComponent<Position>(station, Position{stationPos});
+			root = craftRoot(station, stationPos, "Stone", 3);
+			childGoal(TaskType::Haul, root, station, stationPos, stoneId);
+			sleeper = createColonist({0.0F, 0.0F});
+			world->getComponent<Inventory>(sleeper)->addItem("Stone", 3);
+		}
+
+		/// The sleeper takes the carry-in, then falls asleep with the stones.
+		void carryThenSleep() {
+			decide(sleeper);
+			ASSERT_EQ(getTask(sleeper)->type, TaskType::Haul);
+			ASSERT_TRUE(getTask(sleeper)->haulFromInventory);
+			carryIn = getTask(sleeper)->instanceId;
+			world->getComponent<NeedsComponent>(sleeper)->get(NeedType::Energy).value = 5.0F;
+			decide(sleeper);
+			ASSERT_EQ(getTask(sleeper)->needToFulfill, NeedType::Energy);
+			ASSERT_TRUE(getTask(sleeper)->suspended.has_value());
+			ASSERT_EQ(getTask(sleeper)->suspended->instanceId, carryIn);
+		}
+
+		/// The sleep ends as ActionSystem ends it, and the colonist decides awake.
+		void wake() {
+			getTask(sleeper)->clear();
+			world->getComponent<NeedsComponent>(sleeper)->get(NeedType::Energy).value = 100.0F;
+			decide(sleeper);
+		}
+
+		const glm::vec2 stationPos{0.0F, 6.0F};
+		EntityID		station = kInvalidEntity;
+		EntityID		sleeper = kInvalidEntity;
+		uint64_t		root = 0;
+		uint64_t		carryIn = 0;
+	};
+
+	TEST_F(SleepReleaseTest, AnotherColonistIsOfferedWhatASleeperCarries) {
+		carryThenSleep();
+		EXPECT_EQ(indexedClaimsOf(sleeper), 0U) << "asleep, its record holds nothing";
+		EXPECT_EQ(ai->claimIndex().inFlight(root, stoneId, {}), 0U);
+
+		const glm::vec2 pilePos{3.0F, 0.0F};
+		const EntityID	other = createColonist({0.5F, 0.0F});
+		remember(other, pilePos, "Stone", assets::CapabilityType::Carryable);
+		decide(other);
+		ASSERT_EQ(getTask(other)->type, TaskType::Haul);
+		EXPECT_EQ(getTask(other)->haulQuantity, 3U) << "the whole need is offered";
+
+		// Awake, the need is covered by the other's fetch: no carry-in is offered and the record goes.
+		wake();
+		EXPECT_FALSE(getTask(sleeper)->suspended.has_value());
+		EXPECT_NE(getTask(sleeper)->instanceId, carryIn);
+		EXPECT_EQ(world->getComponent<Inventory>(sleeper)->getQuantity("Stone"), 3U) << "the surplus stays carried";
+	}
+
+	TEST_F(SleepReleaseTest, AWokenColonistDeliversWhatIsStillWanted) {
+		carryThenSleep();
+		wake();
+		const Task& task = *getTask(sleeper);
+		ASSERT_EQ(task.type, TaskType::Haul);
+		EXPECT_TRUE(task.haulFromInventory);
+		EXPECT_EQ(task.instanceId, carryIn) << "the carry-in adopted the record";
+		EXPECT_EQ(ai->claimIndex().inFlight(root, stoneId, {}), 3U);
+	}
+
+	// A need other than sleep keeps the record holding, as before.
+	TEST_F(SleepReleaseTest, ARecordKeptByEatingStillHolds) {
+		decide(sleeper);
+		ASSERT_EQ(getTask(sleeper)->type, TaskType::Haul);
+		world->getComponent<Inventory>(sleeper)->addItem("Berry", 1);
+		world->getComponent<NeedsComponent>(sleeper)->get(NeedType::Hunger).value = 5.0F;
+		decide(sleeper);
+		ASSERT_EQ(getTask(sleeper)->needToFulfill, NeedType::Hunger);
+		ASSERT_TRUE(getTask(sleeper)->suspended.has_value());
+		EXPECT_EQ(ai->claimIndex().inFlight(root, stoneId, {}), 3U);
 	}
 
 } // namespace ecs::test
