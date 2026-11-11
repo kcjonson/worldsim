@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cassert>
 #include <iterator>
+#include <numeric>
 #include <set>
 #include <sstream>
 #include <utility>
@@ -184,14 +185,26 @@ namespace geometry::nav {
 		}
 	}
 
-	// --- LocateGrid --------------------------------------------------------------
+	// --- BoxGrid -----------------------------------------------------------------
 
-	std::size_t PatchableMesh::LocateGrid::CellHash::operator()(const CellKey& k) const {
-		const std::uint64_t h = static_cast<std::uint64_t>(k.x) * 0x9E3779B97F4A7C15ULL ^ static_cast<std::uint64_t>(k.y);
-		return static_cast<std::size_t>(h ^ (h >> 29));
-	}
+	namespace {
 
-	int PatchableMesh::LocateGrid::levelFor(const Vec2i64& lo, const Vec2i64& hi) {
+		constexpr std::uint64_t kEmptySlot = ~std::uint64_t{0};
+		constexpr int			kCellBits  = 29;
+		constexpr std::int64_t	kCellRange = std::int64_t{1} << (kCellBits - 1);
+		constexpr std::uint64_t kCellMask  = (std::uint64_t{1} << kCellBits) - 1;
+
+		std::uint64_t mixKey(std::uint64_t k) {
+			k ^= k >> 33;
+			k *= 0xFF51AFD7ED558CCDULL;
+			k ^= k >> 33;
+			k *= 0xC4CEB9FE1A85EC53ULL;
+			return k ^ (k >> 33);
+		}
+
+	} // namespace
+
+	int PatchableMesh::BoxGrid::levelFor(const Vec2i64& lo, const Vec2i64& hi) {
 		const std::int64_t side	 = std::max(hi.x - lo.x, hi.y - lo.y);
 		int				   level = 0;
 		while (level < kLevels - 1 && (kBaseCell << level) < side) {
@@ -200,80 +213,207 @@ namespace geometry::nav {
 		return level;
 	}
 
-	void PatchableMesh::LocateGrid::insert(std::int32_t tri, const Vec2i64& lo, const Vec2i64& hi) {
-		const int		   level = levelFor(lo, hi);
-		const std::int64_t cell	 = kBaseCell << level;
-		for (std::int64_t cy = floorDiv(lo.y, cell); cy <= floorDiv(hi.y, cell); ++cy) {
-			for (std::int64_t cx = floorDiv(lo.x, cell); cx <= floorDiv(hi.x, cell); ++cx) {
-				levels[static_cast<std::size_t>(level)][{cx, cy}].push_back(tri);
-			}
-		}
-		++levelCounts[static_cast<std::size_t>(level)];
+	std::uint64_t PatchableMesh::BoxGrid::keyOf(int level, std::int64_t cx, std::int64_t cy) {
+		assert(cx >= -kCellRange && cx < kCellRange && cy >= -kCellRange && cy < kCellRange && "BoxGrid: cell out of range");
+		return (static_cast<std::uint64_t>(level) << (2 * kCellBits)) | ((static_cast<std::uint64_t>(cx + kCellRange) & kCellMask) << kCellBits) |
+			   (static_cast<std::uint64_t>(cy + kCellRange) & kCellMask);
 	}
 
-	void PatchableMesh::LocateGrid::erase(std::int32_t tri, const Vec2i64& lo, const Vec2i64& hi) {
+	std::size_t PatchableMesh::BoxGrid::home(std::uint64_t key) const {
+		return static_cast<std::size_t>(mixKey(key)) & (slotKeys.size() - 1);
+	}
+
+	std::int32_t PatchableMesh::BoxGrid::find(std::uint64_t key) const {
+		if (slotKeys.empty()) {
+			return -1;
+		}
+		for (std::size_t i = home(key);; i = (i + 1) & (slotKeys.size() - 1)) {
+			if (slotKeys[i] == key) {
+				return slotCells[i];
+			}
+			if (slotKeys[i] == kEmptySlot) {
+				return -1;
+			}
+		}
+	}
+
+	std::int32_t PatchableMesh::BoxGrid::findOrAdd(std::uint64_t key, int level) {
+		if (2 * (occupied + 1) > slotKeys.size()) {
+			const std::size_t		   capacity = std::max<std::size_t>(64, 2 * slotKeys.size());
+			std::vector<std::uint64_t> oldKeys	= std::move(slotKeys);
+			std::vector<std::int32_t>  oldCells = std::move(slotCells);
+			slotKeys.assign(capacity, kEmptySlot);
+			slotCells.assign(capacity, -1);
+			for (std::size_t i = 0; i < oldKeys.size(); ++i) {
+				if (oldKeys[i] == kEmptySlot) {
+					continue;
+				}
+				std::size_t j = home(oldKeys[i]);
+				while (slotKeys[j] != kEmptySlot) {
+					j = (j + 1) & (capacity - 1);
+				}
+				slotKeys[j]	 = oldKeys[i];
+				slotCells[j] = oldCells[i];
+			}
+		}
+		std::size_t i = home(key);
+		while (slotKeys[i] != kEmptySlot) {
+			if (slotKeys[i] == key) {
+				return slotCells[i];
+			}
+			i = (i + 1) & (slotKeys.size() - 1);
+		}
+		std::int32_t cell = 0;
+		if (!freeCells.empty()) {
+			cell = freeCells.back();
+			freeCells.pop_back();
+		} else {
+			cell = static_cast<std::int32_t>(cells.size());
+			cells.emplace_back();
+		}
+		Cell& c		= cells[static_cast<std::size_t>(cell)];
+		c.key		= key;
+		c.levelSlot = static_cast<std::int32_t>(levelCells[static_cast<std::size_t>(level)].size());
+		levelCells[static_cast<std::size_t>(level)].push_back(cell);
+		levelMask |= std::uint64_t{1} << level;
+		slotKeys[i]	 = key;
+		slotCells[i] = cell;
+		++occupied;
+		return cell;
+	}
+
+	// Backward-shift deletion keeps every probe run unbroken without tombstones.
+	void PatchableMesh::BoxGrid::dropCell(std::int32_t cell, int level) {
+		const std::uint64_t key	 = cells[static_cast<std::size_t>(cell)].key;
+		const std::size_t	mask = slotKeys.size() - 1;
+		std::size_t			i	 = home(key);
+		while (slotKeys[i] != key) {
+			i = (i + 1) & mask;
+		}
+		for (std::size_t j = (i + 1) & mask; slotKeys[j] != kEmptySlot; j = (j + 1) & mask) {
+			if (((j - home(slotKeys[j])) & mask) >= ((j - i) & mask)) {
+				slotKeys[i]	 = slotKeys[j];
+				slotCells[i] = slotCells[j];
+				i			 = j;
+			}
+		}
+		slotKeys[i]	 = kEmptySlot;
+		slotCells[i] = -1;
+		--occupied;
+
+		std::vector<std::int32_t>& onLevel = levelCells[static_cast<std::size_t>(level)];
+		const std::int32_t		   slot	   = cells[static_cast<std::size_t>(cell)].levelSlot;
+		onLevel[static_cast<std::size_t>(slot)]					  = onLevel.back();
+		cells[static_cast<std::size_t>(onLevel.back())].levelSlot = slot;
+		onLevel.pop_back();
+		if (onLevel.empty()) {
+			levelMask &= ~(std::uint64_t{1} << level);
+		}
+		cells[static_cast<std::size_t>(cell)].levelSlot = -1;
+		freeCells.push_back(cell);
+	}
+
+	void PatchableMesh::BoxGrid::insert(std::int32_t id, const Vec2i64& lo, const Vec2i64& hi) {
 		const int		   level = levelFor(lo, hi);
-		const std::int64_t cell	 = kBaseCell << level;
-		Level&			   map	 = levels[static_cast<std::size_t>(level)];
-		for (std::int64_t cy = floorDiv(lo.y, cell); cy <= floorDiv(hi.y, cell); ++cy) {
-			for (std::int64_t cx = floorDiv(lo.x, cell); cx <= floorDiv(hi.x, cell); ++cx) {
-				auto it = map.find({cx, cy});
-				assert(it != map.end());
-				std::vector<std::int32_t>& list = it->second;
-				auto					   pos	= std::find(list.begin(), list.end(), tri);
-				assert(pos != list.end());
-				*pos = list.back();
-				list.pop_back();
-				if (list.empty()) {
-					map.erase(it);
+		const std::int64_t side	 = kBaseCell << level;
+		for (std::int64_t cy = floorDiv(lo.y, side); cy <= floorDiv(hi.y, side); ++cy) {
+			for (std::int64_t cx = floorDiv(lo.x, side); cx <= floorDiv(hi.x, side); ++cx) {
+				const std::int32_t cell = findOrAdd(keyOf(level, cx, cy), level);
+				cells[static_cast<std::size_t>(cell)].entries.push_back({id, lo, hi});
+			}
+		}
+	}
+
+	void PatchableMesh::BoxGrid::erase(std::int32_t id, const Vec2i64& lo, const Vec2i64& hi) {
+		const int		   level = levelFor(lo, hi);
+		const std::int64_t side	 = kBaseCell << level;
+		for (std::int64_t cy = floorDiv(lo.y, side); cy <= floorDiv(hi.y, side); ++cy) {
+			for (std::int64_t cx = floorDiv(lo.x, side); cx <= floorDiv(hi.x, side); ++cx) {
+				const std::int32_t cell = find(keyOf(level, cx, cy));
+				assert(cell >= 0);
+				std::vector<Entry>& entries = cells[static_cast<std::size_t>(cell)].entries;
+				auto				pos		= std::find_if(entries.begin(), entries.end(), [&](const Entry& e) { return e.id == id; });
+				assert(pos != entries.end());
+				*pos = entries.back();
+				entries.pop_back();
+				if (entries.empty()) {
+					dropCell(cell, level);
 				}
 			}
 		}
-		--levelCounts[static_cast<std::size_t>(level)];
 	}
 
+	namespace {
+
+		template <typename Entries, typename Visit>
+		void visitOverlapping(const Entries& entries, const Vec2i64& lo, const Vec2i64& hi, std::int64_t scale, Visit& visit) {
+			for (const auto& e : entries) {
+				if (e.lo.x * scale <= hi.x && lo.x <= e.hi.x * scale && e.lo.y * scale <= hi.y && lo.y <= e.hi.y * scale) {
+					visit(e.id);
+				}
+			}
+		}
+
+	} // namespace
+
 	template <typename Visit>
-	void PatchableMesh::LocateGrid::forEachInBox(const Vec2i64& lo, const Vec2i64& hi, std::int64_t scale, Visit visit) const {
+	void PatchableMesh::BoxGrid::forEachInBox(const Vec2i64& lo, const Vec2i64& hi, std::int64_t scale, Visit visit) const {
 		for (int level = 0; level < kLevels; ++level) {
-			if (levelCounts[static_cast<std::size_t>(level)] == 0) {
+			if ((levelMask >> level & 1) == 0) {
 				continue;
 			}
-			const Level&	   map	= levels[static_cast<std::size_t>(level)];
-			const std::int64_t cell = (kBaseCell << level) * scale;
-			const std::int64_t x0	= floorDiv(lo.x, cell);
-			const std::int64_t x1	= floorDiv(hi.x, cell);
-			const std::int64_t y0	= floorDiv(lo.y, cell);
-			const std::int64_t y1	= floorDiv(hi.y, cell);
-			const double	   span = static_cast<double>(x1 - x0 + 1) * static_cast<double>(y1 - y0 + 1);
-			if (span > static_cast<double>(map.size())) {
-				for (const auto& [key, list] : map) {
-					if (key.x >= x0 && key.x <= x1 && key.y >= y0 && key.y <= y1) {
-						for (std::int32_t t : list) {
-							visit(t);
-						}
+			const std::vector<std::int32_t>& onLevel = levelCells[static_cast<std::size_t>(level)];
+			const std::int64_t				 side	 = (kBaseCell << level) * scale;
+			const std::int64_t				 x0		 = floorDiv(lo.x, side);
+			const std::int64_t				 x1		 = floorDiv(hi.x, side);
+			const std::int64_t				 y0		 = floorDiv(lo.y, side);
+			const std::int64_t				 y1		 = floorDiv(hi.y, side);
+			const double					 span	 = static_cast<double>(x1 - x0 + 1) * static_cast<double>(y1 - y0 + 1);
+			if (span > static_cast<double>(onLevel.size())) {
+				for (std::int32_t cell : onLevel) {
+					const Cell&		   c  = cells[static_cast<std::size_t>(cell)];
+					const std::int64_t cx = static_cast<std::int64_t>(c.key >> kCellBits & kCellMask) - kCellRange;
+					const std::int64_t cy = static_cast<std::int64_t>(c.key & kCellMask) - kCellRange;
+					if (cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1) {
+						visitOverlapping(c.entries, lo, hi, scale, visit);
 					}
 				}
 				continue;
 			}
 			for (std::int64_t cy = y0; cy <= y1; ++cy) {
 				for (std::int64_t cx = x0; cx <= x1; ++cx) {
-					auto it = map.find({cx, cy});
-					if (it == map.end()) {
-						continue;
-					}
-					for (std::int32_t t : it->second) {
-						visit(t);
+					const std::int32_t cell = find(keyOf(level, cx, cy));
+					if (cell >= 0) {
+						visitOverlapping(cells[static_cast<std::size_t>(cell)].entries, lo, hi, scale, visit);
 					}
 				}
 			}
 		}
 	}
 
-	template <typename Visit> void PatchableMesh::LocateGrid::forEachEntry(Visit visit) const {
-		for (const Level& map : levels) {
-			for (const auto& [key, list] : map) {
-				for (std::int32_t t : list) {
-					visit(t);
+	template <typename Visit> void PatchableMesh::BoxGrid::forEachAtPoint(const Vec2i64& p, std::int64_t scale, Visit visit) const {
+		for (int level = 0; level < kLevels; ++level) {
+			if ((levelMask >> level & 1) == 0) {
+				continue;
+			}
+			const std::int64_t side = (kBaseCell << level) * scale;
+			const std::int32_t cell = find(keyOf(level, floorDiv(p.x, side), floorDiv(p.y, side)));
+			if (cell < 0) {
+				continue;
+			}
+			for (const Entry& e : cells[static_cast<std::size_t>(cell)].entries) {
+				if (e.lo.x * scale <= p.x && p.x <= e.hi.x * scale && e.lo.y * scale <= p.y && p.y <= e.hi.y * scale && visit(e.id)) {
+					return;
+				}
+			}
+		}
+	}
+
+	template <typename Visit> void PatchableMesh::BoxGrid::forEachEntry(Visit visit) const {
+		for (const std::vector<std::int32_t>& onLevel : levelCells) {
+			for (std::int32_t cell : onLevel) {
+				for (const Entry& e : cells[static_cast<std::size_t>(cell)].entries) {
+					visit(e.id);
 				}
 			}
 		}
@@ -299,15 +439,28 @@ namespace geometry::nav {
 	}
 
 	std::int32_t PatchableMesh::locateScaled(const Vec2i64& p, std::int64_t scale) const {
+		// A point strictly inside a triangle is in no other, so that one answers at once;
+		// a point on an edge or vertex takes the lowest id of every triangle holding it.
 		std::int32_t best = -1;
-		grid.forEachInBox(p, p, scale, [&](std::int32_t t) {
-			if (best >= 0 && t >= best) {
-				return;
-			}
+		grid.forEachAtPoint(p, scale, [&](std::int32_t t) {
 			const NavTriangle& tri = tris[static_cast<std::size_t>(t)];
-			if (insideOrOn(verts[tri.v[0]] * scale, verts[tri.v[1]] * scale, verts[tri.v[2]] * scale, p)) {
+			const Vec2i64	   a   = verts[tri.v[0]] * scale;
+			const Vec2i64	   b   = verts[tri.v[1]] * scale;
+			const Vec2i64	   c   = verts[tri.v[2]] * scale;
+			const Orientation  ab  = orientation(a, b, p);
+			const Orientation  bc  = orientation(b, c, p);
+			const Orientation  ca  = orientation(c, a, p);
+			if (ab == Orientation::Clockwise || bc == Orientation::Clockwise || ca == Orientation::Clockwise) {
+				return false;
+			}
+			if (ab == Orientation::CounterClockwise && bc == Orientation::CounterClockwise && ca == Orientation::CounterClockwise) {
+				best = t;
+				return true;
+			}
+			if (best < 0 || t < best) {
 				best = t;
 			}
+			return false;
 		});
 		return best;
 	}
@@ -317,30 +470,68 @@ namespace geometry::nav {
 	}
 
 	template <typename Visit> void PatchableMesh::forEachLiveInBox(const Vec2i64& lo, const Vec2i64& hi, Visit visit) const {
-		std::vector<std::int32_t> found;
-		grid.forEachInBox(lo, hi, 1, [&](std::int32_t t) { found.push_back(t); });
-		std::sort(found.begin(), found.end());
-		found.erase(std::unique(found.begin(), found.end()), found.end());
-		for (std::int32_t t : found) {
-			Vec2i64 tLo;
-			Vec2i64 tHi;
-			triangleBox(t, tLo, tHi);
-			if (boxesOverlap(lo, hi, tLo, tHi)) {
-				visit(t);
-			}
+		// A triangle sits in up to four cells; the stamp visits it once. Callers only
+		// gather into sets, so the order (the grid's) does not reach any result.
+		assert(!boxQueryOpen && "PatchableMesh: nested box query");
+		boxQueryOpen = true;
+		if (visitStamp.size() < tris.size()) {
+			visitStamp.resize(tris.size(), 0);
 		}
+		if (++stamp == 0) {
+			std::fill(visitStamp.begin(), visitStamp.end(), 0);
+			stamp = 1;
+		}
+		grid.forEachInBox(lo, hi, 1, [&](std::int32_t t) {
+			if (visitStamp[static_cast<std::size_t>(t)] == stamp) {
+				return;
+			}
+			visitStamp[static_cast<std::size_t>(t)] = stamp;
+			visit(t);
+		});
+		boxQueryOpen = false;
 	}
 
 	template <typename Visit> void PatchableMesh::forEachAroundVertex(std::uint32_t v, Visit visit) const {
-		const Vec2i64& p = verts[v];
-		forEachLiveInBox(p, p, [&](std::int32_t t) {
+		// Each level has one cell holding the point, and a triangle on the vertex is in
+		// the one of its level, so every triangle comes up once.
+		grid.forEachAtPoint(verts[v], 1, [&](std::int32_t t) {
 			const NavTriangle& tri = tris[static_cast<std::size_t>(t)];
 			for (int i = 0; i < 3; ++i) {
 				if (tri.v[i] == v) {
 					visit(t, i);
 				}
 			}
+			return false;
 		});
+	}
+
+	// The mesh boundary runs along bounds edges, so a box clear of every bounds ring's
+	// edges is clear of it (the margin covers how far snap rounding bends them).
+	bool PatchableMesh::nearBoundsEdge(const Vec2i64& lo, const Vec2i64& hi) const {
+		for (RingId r : ringsInBox(lo, hi)) {
+			const NavInputPolygon& poly = rings[static_cast<std::size_t>(r)].polygon;
+			if (poly.blocked) {
+				continue;
+			}
+			for (std::int32_t e = 0; e < static_cast<std::int32_t>(poly.ring.size()); ++e) {
+				Vec2i64 eLo = edgeStart(poly.ring, e);
+				Vec2i64 eHi = eLo;
+				growBox(eLo, eHi, edgeEnd(poly.ring, e));
+				if (boxesOverlap(lo, hi, eLo, eHi)) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	// Live rings whose outline box overlaps the box, ascending.
+	std::vector<RingId> PatchableMesh::ringsInBox(const Vec2i64& lo, const Vec2i64& hi) const {
+		std::vector<RingId> found;
+		ringGrid.forEachInBox(lo, hi, 1, [&](std::int32_t r) { found.push_back(r); });
+		std::sort(found.begin(), found.end());
+		found.erase(std::unique(found.begin(), found.end()), found.end());
+		return found;
 	}
 
 	const std::vector<EdgeSource>& PatchableMesh::edgeSources(std::int32_t tri, int edge) const {
@@ -574,8 +765,8 @@ namespace geometry::nav {
 		bool						removed(RingId r) const;
 
 		void addToS(const EdgeSource& z);
-		void pullOffGround(const Vec2i64& a, const Vec2i64& b);
-		void pullAtVertex(std::uint32_t v, const Vec2i64& p, const std::vector<std::pair<EdgeSource, bool>>& xs);
+		void pullOffGround(const Vec2i64& a, const Vec2i64& b, bool boundsEdge);
+		void pullAtVertex(std::uint32_t v, const Vec2i64& p, const std::vector<std::pair<EdgeSource, bool>>& xs, bool takeStar);
 		void walkNewOutlines();
 		void closeS();
 		bool deriveOnce();
@@ -643,48 +834,54 @@ namespace geometry::nav {
 	// The mesh shows every interaction on kept ground, but a segment that reaches off
 	// ground can meet a hanging ring there, and the rounded crossing can still land on
 	// ground. Off ground and near its edge the registry stands in: every blocked ring
-	// edge whose original comes within two snap reaches joins s. Bounds edges never
-	// need it, since every point of one borders its own ground.
-	void PatchableMesh::Patch::pullOffGround(const Vec2i64& a, const Vec2i64& b) {
+	// edge whose original comes within two snap reaches joins s. A bounds edge runs along
+	// the boundary, so it always asks the registry, but it never pulls the boundary
+	// pieces beside it: those are bounds edges too, which the mesh shows whole, and
+	// pulling them would walk the whole border.
+	void PatchableMesh::Patch::pullOffGround(const Vec2i64& a, const Vec2i64& b, bool boundsEdge) {
 		const Vec2i64 reach{kSnapReachMm, kSnapReachMm};
 		Vec2i64		  lo = a;
 		Vec2i64		  hi = a;
 		growBox(lo, hi, b);
-		lo				  = lo - reach;
-		hi				  = hi + reach;
-		bool nearBoundary = false;
-		m.forEachLiveInBox(lo, hi, [&](std::int32_t t) {
-			const NavTriangle& tri = m.tris[static_cast<std::size_t>(t)];
-			for (int e = 0; e < 3; ++e) {
-				if (tri.neighbor[static_cast<std::size_t>(e)] >= 0) {
-					continue;
-				}
-				const Vec2i64& p   = m.verts[tri.v[static_cast<std::size_t>(e)]];
-				const Vec2i64& q   = m.verts[tri.v[static_cast<std::size_t>(next3(e))]];
-				Vec2i64		   eLo = p;
-				Vec2i64		   eHi = p;
-				growBox(eLo, eHi, q);
-				if (!boxesOverlap(lo, hi, eLo, eHi)) {
-					continue;
-				}
-				nearBoundary = true;
-				// Off ground a segment can still end on the boundary, at a vertex with
-				// no piece of it on the mesh.
-				if (segmentsWithin(a, b, p, q, 2 * kSnapReachMm)) {
-					for (const EdgeSource& z : m.edgeSources(t, e)) {
-						addToS(z);
+		lo = lo - reach;
+		hi = hi + reach;
+		if (!boundsEdge && m.nearBoundsEdge(lo - reach, hi + reach)) {
+			bool nearBoundary = false;
+			m.forEachLiveInBox(lo, hi, [&](std::int32_t t) {
+				const NavTriangle& tri = m.tris[static_cast<std::size_t>(t)];
+				for (int e = 0; e < 3; ++e) {
+					if (tri.neighbor[static_cast<std::size_t>(e)] >= 0) {
+						continue;
+					}
+					const Vec2i64& p   = m.verts[tri.v[static_cast<std::size_t>(e)]];
+					const Vec2i64& q   = m.verts[tri.v[static_cast<std::size_t>(next3(e))]];
+					Vec2i64		   eLo = p;
+					Vec2i64		   eHi = p;
+					growBox(eLo, eHi, q);
+					if (!boxesOverlap(lo, hi, eLo, eHi)) {
+						continue;
+					}
+					nearBoundary = true;
+					// Off ground a segment can still end on the boundary, at a vertex with
+					// no piece of it on the mesh.
+					if (segmentsWithin(a, b, p, q, 2 * kSnapReachMm)) {
+						for (const EdgeSource& z : m.edgeSources(t, e)) {
+							addToS(z);
+						}
 					}
 				}
-			}
-		});
-		if (!nearBoundary && m.locateScaled(a + b, 2) >= 0) {
+			});
+			if (!nearBoundary && m.locateScaled(a + b, 2) >= 0) {
+				return;
+				}
+		} else if (!boundsEdge && m.locateScaled(a + b, 2) >= 0) {
 			return;
 		}
 		lo = lo - reach;
 		hi = hi + reach;
-		for (RingId r = 0; r < static_cast<RingId>(m.rings.size()); ++r) {
+		for (RingId r : m.ringsInBox(lo, hi)) {
 			const RegisteredRing& reg = m.rings[static_cast<std::size_t>(r)];
-			if (!reg.live || !reg.polygon.blocked || changes.count(r) != 0 || !boxesOverlap(reg.lo, reg.hi, lo, hi)) {
+			if (!reg.polygon.blocked || changes.count(r) != 0) {
 				continue;
 			}
 			const std::vector<Vec2i64>& outline = reg.polygon.ring;
@@ -699,8 +896,11 @@ namespace geometry::nav {
 	}
 
 	void PatchableMesh::Patch::begin(const PatchEdits& edits) {
-		auto setNew = [](Change& c, NavInputPolygon polygon) {
+		auto setNew = [&](Change& c, NavInputPolygon polygon) {
 			assert(polygon.ring.size() >= 3 && "PatchableMesh: a ring needs three vertices");
+			if (!polygon.blocked) {
+				polygon.ring = splitLongEdges(polygon.ring, m.maxBoundsEdgeMm);
+			}
 			c.hasNew  = true;
 			c.polygon = std::move(polygon);
 			c.sample  = sampleRing(c.polygon);
@@ -743,9 +943,9 @@ namespace geometry::nav {
 			if (!c.hasNew || c.polygon.blocked) {
 				continue;
 			}
-			for (RingId r = 0; r < static_cast<RingId>(m.rings.size()); ++r) {
+			for (RingId r : m.ringsInBox(c.lo, c.hi)) {
 				const RegisteredRing& reg = m.rings[static_cast<std::size_t>(r)];
-				if (!reg.live || changes.count(r) != 0 || !boxesOverlap(reg.lo, reg.hi, c.lo, c.hi)) {
+				if (changes.count(r) != 0) {
 					continue;
 				}
 				testRings.insert(r);
@@ -766,8 +966,11 @@ namespace geometry::nav {
 	// both it and each x touching v there: a corner of neither, or of one only, means one
 	// split the other at v.
 	void PatchableMesh::Patch::pullAtVertex(
-		std::uint32_t v, const Vec2i64& p, const std::vector<std::pair<EdgeSource, bool>>& xs) {
+		std::uint32_t v, const Vec2i64& p, const std::vector<std::pair<EdgeSource, bool>>& xs, bool takeStar) {
 		m.forEachAroundVertex(v, [&](std::int32_t t, int i) {
+			if (takeStar) {
+				hole.insert(t);
+			}
 			for (int e : {i, prev3(i)}) {
 				for (const EdgeSource& z : m.edgeSources(t, e)) {
 					if (s.count(z) != 0) {
@@ -799,7 +1002,7 @@ namespace geometry::nav {
 				if (a == b) {
 					continue;
 				}
-				pullOffGround(a, b);
+				pullOffGround(a, b, !c.polygon.blocked);
 				Vec2i64 lo = a;
 				Vec2i64 hi = a;
 				growBox(lo, hi, b);
@@ -829,7 +1032,7 @@ namespace geometry::nav {
 					for (int k = 0; k < 3; ++k) {
 						const Vec2i64& p = pts[static_cast<std::size_t>(k)];
 						if (onClosedSegment(p, a, b)) {
-							pullAtVertex(tri.v[static_cast<std::size_t>(k)], p, {{{id, e}, p == a || p == b}});
+							pullAtVertex(tri.v[static_cast<std::size_t>(k)], p, {{{id, e}, p == a || p == b}}, false);
 						}
 					}
 				});
@@ -864,7 +1067,7 @@ namespace geometry::nav {
 			const Vec2i64 a = edgeStart(oldOutline(x.ring), x.edge);
 			const Vec2i64 b = edgeEnd(oldOutline(x.ring), x.edge);
 			if (a != b) {
-				pullOffGround(a, b);
+				pullOffGround(a, b, !m.rings[static_cast<std::size_t>(x.ring)].polygon.blocked);
 			}
 			auto it = m.halfEdgesOf.find(sourceKey(x));
 			if (it == m.halfEdgesOf.end()) {
@@ -885,8 +1088,7 @@ namespace geometry::nav {
 			// The whole star of each vertex: one that goes must not stay on the boundary.
 			for (std::uint32_t v : ends) {
 				const Vec2i64& p = m.verts[v];
-				m.forEachAroundVertex(v, [&](std::int32_t t, int) { hole.insert(t); });
-				pullAtVertex(v, p, {{x, isOriginalEndpoint(oldOutline(x.ring), x.edge, p)}});
+				pullAtVertex(v, p, {{x, isOriginalEndpoint(oldOutline(x.ring), x.edge, p)}}, true);
 			}
 		}
 	}
@@ -1051,23 +1253,34 @@ namespace geometry::nav {
 		}
 
 		// Old vertices the re-derived edges reach, and the old triangles they enter.
-		std::map<std::size_t, std::vector<std::pair<EdgeSource, bool>>> touching;
+		struct Touch {
+			std::uint32_t vertex = 0; // old mesh vertex
+			EdgeSource	  source;
+			bool		  corner = false;
+			auto		  operator<=>(const Touch&) const = default;
+		};
+		std::vector<Touch> touching;
 		for (const ArrangementEdge& ae : arrangement.edges) {
 			const Vec2i64& p = arrangement.vertices[ae.from];
 			const Vec2i64& q = arrangement.vertices[ae.to];
 			bool		   derived = false;
 			for (std::int64_t local : ae.provenance) {
-				if (!fromS(local)) {
-					continue;
-				}
-				derived						 = true;
-				const EdgeSource&			 x		 = segments[static_cast<std::size_t>(local)].source;
-				const std::vector<Vec2i64>& outline = newPolygon(x.ring).ring;
-				touching[ae.from].push_back({x, isOriginalEndpoint(outline, x.edge, p)});
-				touching[ae.to].push_back({x, isOriginalEndpoint(outline, x.edge, q)});
+				derived = derived || fromS(local);
 			}
 			if (!derived) {
 				continue;
+			}
+			for (const Vec2i64& end : {p, q}) {
+				auto old = m.vertexAt.find(end);
+				if (old == m.vertexAt.end()) {
+					continue;
+				}
+				for (std::int64_t local : ae.provenance) {
+					if (fromS(local)) {
+						const EdgeSource& x = segments[static_cast<std::size_t>(local)].source;
+						touching.push_back({old->second, x, isOriginalEndpoint(newPolygon(x.ring).ring, x.edge, end)});
+					}
+				}
 			}
 			Vec2i64 lo = p;
 			Vec2i64 hi = p;
@@ -1083,14 +1296,16 @@ namespace geometry::nav {
 				}
 			});
 		}
-		for (const auto& [vi, xs] : touching) {
-			const Vec2i64& p  = arrangement.vertices[vi];
-			auto		   it = m.vertexAt.find(p);
-			if (it == m.vertexAt.end()) {
-				continue;
+		std::sort(touching.begin(), touching.end());
+		std::vector<std::pair<EdgeSource, bool>> xs;
+		for (std::size_t i = 0; i < touching.size();) {
+			const std::uint32_t v = touching[i].vertex;
+			xs.clear();
+			for (; i < touching.size() && touching[i].vertex == v; ++i) {
+				xs.push_back({touching[i].source, touching[i].corner});
 			}
 			const std::size_t before = s.size();
-			pullAtVertex(it->second, p, xs);
+			pullAtVertex(v, m.verts[v], xs, false);
 			grew = grew || s.size() != before;
 		}
 		return !grew;
@@ -1105,6 +1320,13 @@ namespace geometry::nav {
 			constraints.push_back({static_cast<std::uint32_t>(ae.from), static_cast<std::uint32_t>(ae.to)});
 		}
 		cdt = buildConstrainedDelaunay(arrangement.vertices, constraints);
+
+		std::vector<const SampleRing*> newBounds;
+		for (const auto& [id, c] : changes) {
+			if (c.hasNew && !c.polygon.blocked) {
+				newBounds.push_back(&c.sample);
+			}
+		}
 
 		// Faces of the hole triangulation: flood across unconstrained edges.
 		const std::int32_t cdtCount = static_cast<std::int32_t>(cdt.triangles.size());
@@ -1152,8 +1374,8 @@ namespace geometry::nav {
 				continue;
 			}
 			face.kind = FaceKind::Sink;
-			for (const auto& [id, c] : changes) {
-				if (c.hasNew && !c.polygon.blocked && ringContainsSample(c.sample, sample3)) {
+			for (const SampleRing* bounds : newBounds) {
+				if (ringContainsSample(*bounds, sample3)) {
 					face.kind = FaceKind::NewGround;
 				}
 			}
@@ -1347,11 +1569,15 @@ namespace geometry::nav {
 		// Commit the registry; covers acquired below read the new tags.
 		for (auto& [id, c] : changes) {
 			RegisteredRing& reg = m.rings[static_cast<std::size_t>(id)];
+			if (reg.live) {
+				m.ringGrid.erase(id, reg.lo, reg.hi);
+			}
 			if (!c.hasNew) {
 				reg = {};
 				m.freeRings.push_back(id);
 				continue;
 			}
+			m.ringGrid.insert(id, c.lo, c.hi);
 			reg.polygon = std::move(c.polygon);
 			reg.sample	= std::move(c.sample);
 			reg.lo		= c.lo;
@@ -1429,7 +1655,11 @@ namespace geometry::nav {
 		}
 		out.freedTriangles = reuse;
 
-		// New triangles take the hole's ids first.
+		// New triangles take the hole's ids first. A face's triangles share one cover and
+		// an edge's two sides one source list, each interned once.
+		std::vector<std::int32_t> faceCover(faces.size(), -1);
+		std::vector<std::int32_t> edgeList(arrangement.edges.size(), -1);
+		std::vector<std::int64_t> edgeProvenance(arrangement.edges.size(), kNoProvenance);
 		std::vector<std::int32_t> newId(static_cast<std::size_t>(cdtCount), -1);
 		std::size_t				  nextReuse = 0;
 		for (std::int32_t t = 0; t < cdtCount; ++t) {
@@ -1456,8 +1686,13 @@ namespace geometry::nav {
 			nt.neighbor		  = {-1, -1, -1};
 			nt.edgeProvenance = {kNoProvenance, kNoProvenance, kNoProvenance};
 			nt.edgeOpening	  = {kNoOpening, kNoOpening, kNoOpening};
-			const LocalFace& face = faces[static_cast<std::size_t>(faceOf[static_cast<std::size_t>(t)])];
-			const std::int32_t coverId = m.acquireCover(face.cover);
+			const std::int32_t f	   = faceOf[static_cast<std::size_t>(t)];
+			std::int32_t&	   coverId = faceCover[static_cast<std::size_t>(f)];
+			if (coverId < 0) {
+				coverId = m.acquireCover(faces[static_cast<std::size_t>(f)].cover);
+			} else {
+				m.covers.retain(coverId);
+			}
 			nt.faceBlocker			   = m.coverTags[static_cast<std::size_t>(coverId)].blocker;
 			nt.faceOpening			   = m.coverTags[static_cast<std::size_t>(coverId)].opening;
 			m.tris[static_cast<std::size_t>(id)]		  = nt;
@@ -1475,7 +1710,10 @@ namespace geometry::nav {
 		}
 
 		// Adjacency and ring sources.
-		std::vector<std::uint8_t> linked(fixed.size(), 0);
+		// The hole's own edges are constrained Delaunay already; only an edge it shares
+		// with a kept triangle can need a flip.
+		std::vector<std::uint8_t>				  linked(fixed.size(), 0);
+		std::vector<std::pair<std::int32_t, int>> boundaryEdges;
 		for (std::int32_t t = 0; t < cdtCount; ++t) {
 			const std::int32_t id = newId[static_cast<std::size_t>(t)];
 			if (id < 0) {
@@ -1494,22 +1732,30 @@ namespace geometry::nav {
 					nt.neighbor[static_cast<std::size_t>(e)]	   = fx.outside;
 					m.tris[static_cast<std::size_t>(fx.outside)].neighbor[static_cast<std::size_t>(fx.outsideEdge)] = id;
 					linked[static_cast<std::size_t>(f)]			   = 1;
+					boundaryEdges.push_back({id, e});
 				} else {
 					assert(c >= 0 && "PatchableMesh: kept ground ends at an unconstrained edge");
 				}
 				if (c < 0) {
 					continue;
 				}
-				const std::vector<EdgeSource> list = sourcesOf(c);
-				if (list.empty()) {
-					continue;
+				std::int32_t& listId = edgeList[static_cast<std::size_t>(c)];
+				if (listId < 0) {
+					const std::vector<EdgeSource> list = sourcesOf(c);
+					if (list.empty()) {
+						continue;
+					}
+					std::int64_t provenance = m.rings[static_cast<std::size_t>(list.front().ring)].polygon.provenanceId;
+					for (const EdgeSource& z : list) {
+						provenance = std::min(provenance, m.rings[static_cast<std::size_t>(z.ring)].polygon.provenanceId);
+					}
+					edgeProvenance[static_cast<std::size_t>(c)] = provenance;
+					listId										= m.sourceLists.acquire(list);
+				} else {
+					m.sourceLists.retain(listId);
 				}
-				std::int64_t provenance = m.rings[static_cast<std::size_t>(list.front().ring)].polygon.provenanceId;
-				for (const EdgeSource& z : list) {
-					provenance = std::min(provenance, m.rings[static_cast<std::size_t>(z.ring)].polygon.provenanceId);
-				}
-				nt.edgeProvenance[static_cast<std::size_t>(e)] = provenance;
-				m.setEdgeSources(id, e, m.sourceLists.acquire(list));
+				nt.edgeProvenance[static_cast<std::size_t>(e)] = edgeProvenance[static_cast<std::size_t>(c)];
+				m.setEdgeSources(id, e, listId);
 			}
 		}
 		for (std::size_t f = 0; f < fixed.size(); ++f) {
@@ -1527,19 +1773,15 @@ namespace geometry::nav {
 			}
 		}
 
-		std::vector<std::pair<std::int32_t, int>> stack;
 		for (std::int32_t id : out.newTriangles) {
 			Vec2i64 tLo;
 			Vec2i64 tHi;
 			m.triangleBox(id, tLo, tHi);
 			m.grid.insert(id, tLo, tHi);
 			reportBox(id);
-			for (int e = 0; e < 3; ++e) {
-				stack.push_back({id, e});
-			}
 		}
 		std::vector<std::int32_t> flipped;
-		m.legalize(stack, flipped);
+		m.legalize(boundaryEdges, flipped);
 		for (std::int32_t t : flipped) {
 			reportBox(t);
 		}
@@ -1554,6 +1796,38 @@ namespace geometry::nav {
 	}
 
 	// --- Public edits ---------------------------------------------------------------
+
+	std::vector<Vec2i64> splitLongEdges(const std::vector<Vec2i64>& outline, std::int64_t maxEdgeMm) {
+		if (maxEdgeMm <= 0) {
+			return outline;
+		}
+		std::vector<Vec2i64> out;
+		for (std::size_t i = 0; i < outline.size(); ++i) {
+			const Vec2i64& a = outline[i];
+			const Vec2i64& b = outline[(i + 1) % outline.size()];
+			out.push_back(a);
+			const Vec2i64 d = b - a;
+			const Int128  length2 = dot(d, d);
+			std::int64_t  pieces  = 1;
+			while (Int128::product(pieces * maxEdgeMm, pieces * maxEdgeMm) < length2) {
+				++pieces;
+			}
+			const std::int64_t steps = std::gcd(d.x < 0 ? -d.x : d.x, d.y < 0 ? -d.y : d.y);
+			if (steps == 0) {
+				continue;
+			}
+			const Vec2i64 step{d.x / steps, d.y / steps};
+			std::int64_t  previous = 0;
+			for (std::int64_t k = 1; k < pieces; ++k) {
+				const std::int64_t at = k * steps / pieces;
+				if (at > previous && at < steps) {
+					out.push_back(a + step * at);
+					previous = at;
+				}
+			}
+		}
+		return out;
+	}
 
 	PatchReport PatchableMesh::applyPatch(const PatchEdits& edits) {
 		Patch patch(*this, edits);
@@ -1818,6 +2092,28 @@ namespace geometry::nav {
 		if (deadInGrid) {
 			return "locate index holds a dead triangle";
 		}
+		std::size_t liveRings = 0;
+		for (RingId r = 0; r < ringSlots(); ++r) {
+			const RegisteredRing& reg = rings[static_cast<std::size_t>(r)];
+			if (!reg.live) {
+				continue;
+			}
+			++liveRings;
+			const std::vector<RingId> found = ringsInBox(reg.lo, reg.hi);
+			if (!std::binary_search(found.begin(), found.end(), r)) {
+				fail() << "ring index misses ring " << r;
+				return err.str();
+			}
+		}
+		std::size_t indexedRings = 0;
+		bool		deadRing	 = false;
+		ringGrid.forEachEntry([&](std::int32_t r) {
+			++indexedRings;
+			deadRing = deadRing || r < 0 || r >= ringSlots() || !rings[static_cast<std::size_t>(r)].live;
+		});
+		if (deadRing || indexedRings < liveRings) {
+			return "ring index holds a dead ring";
+		}
 
 		// Each ring edge is a chain of pieces: no fork, and an end that is not an original
 		// corner is on the mesh boundary.
@@ -1834,8 +2130,14 @@ namespace geometry::nav {
 				}
 			}
 		}
+		std::vector<std::uint64_t> keys;
 		for (const auto& [key, list] : halfEdgesOf) {
-			const EdgeSource z{static_cast<RingId>(key >> 32), static_cast<std::int32_t>(key & 0xFFFFFFFFULL)};
+			keys.push_back(key);
+		}
+		std::sort(keys.begin(), keys.end()); // the first violation reported is the same everywhere
+		for (const std::uint64_t key : keys) {
+			const std::vector<std::int32_t>& list = halfEdgesOf.at(key);
+			const EdgeSource				 z{static_cast<RingId>(key >> 32), static_cast<std::int32_t>(key & 0xFFFFFFFFULL)};
 			std::map<std::uint32_t, std::set<std::uint32_t>> adjacent;
 			for (std::int32_t h : list) {
 				const NavTriangle& tri = tris[static_cast<std::size_t>(h / 3)];
@@ -1933,9 +2235,9 @@ namespace geometry::nav {
 			const NavTriangle&	tri		= tris[static_cast<std::size_t>(best)];
 			const Vec2i64		sample3 = verts[tri.v[0]] + verts[tri.v[1]] + verts[tri.v[2]];
 			std::vector<RingId> exact;
-			for (RingId r = 0; r < ringSlots(); ++r) {
-				const RegisteredRing& reg = rings[static_cast<std::size_t>(r)];
-				if (reg.live && ringContainsSample(reg.sample, sample3)) {
+			const Vec2i64		sampleLo{floorDiv(sample3.x, 3), floorDiv(sample3.y, 3)};
+			for (RingId r : ringsInBox(sampleLo, sampleLo + Vec2i64{1, 1})) {
+				if (ringContainsSample(rings[static_cast<std::size_t>(r)].sample, sample3)) {
 					exact.push_back(r);
 				}
 			}

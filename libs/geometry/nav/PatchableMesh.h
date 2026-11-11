@@ -69,8 +69,19 @@ namespace geometry::nav {
 		std::int32_t			  passes = 0; // re-derivations until the boundary held
 	};
 
+	// The outline with every edge longer than maxEdgeMm cut into near-equal pieces at
+	// lattice points on it, so each piece is exactly on the original edge (on an axis-
+	// aligned side, every millimetre). An edge whose lattice is too coarse keeps fewer
+	// cuts. maxEdgeMm 0 returns the outline whole.
+	std::vector<Vec2i64> splitLongEdges(const std::vector<Vec2i64>& outline, std::int64_t maxEdgeMm);
+
 	class PatchableMesh {
 	  public:
+		// A bounds ring enters the mesh with its edges split to at most maxBoundsEdgeMm
+		// (splitLongEdges), and ring() returns that outline. A patch re-derives a changed
+		// edge whole, so this bounds the cost of a ring crossing a long chunk side.
+		explicit PatchableMesh(std::int64_t maxBoundsEdgeMm = 0) : maxBoundsEdgeMm(maxBoundsEdgeMm) {}
+
 		RingId		addRing(const NavInputPolygon& ring);
 		void		removeRing(RingId ring);
 		void		moveRing(RingId ring, const std::vector<Vec2i64>& outline);
@@ -104,6 +115,7 @@ namespace geometry::nav {
 		  public:
 			std::int32_t acquire(const Value& value);
 			void		 release(std::int32_t id);
+			void		 retain(std::int32_t id) { ++refs[static_cast<std::size_t>(id)]; }
 
 			const Value& get(std::int32_t id) const { return values[static_cast<std::size_t>(id)]; }
 			std::int32_t slots() const { return static_cast<std::int32_t>(values.size()); }
@@ -116,38 +128,55 @@ namespace geometry::nav {
 			std::map<Value, std::int32_t> ids;
 		};
 
-		// Point location: a hash grid per level, cell side kBaseCell << level. A triangle
+		// Boxes by id, for point location and box queries: a grid per level, cell side
+		// kBaseCell << level, every level's cells in one open-addressed hash table. An id
 		// sits in the level whose cell is at least its box's larger side, in the up to
 		// four cells its box overlaps.
-		class LocateGrid {
+		class BoxGrid {
 		  public:
 			static constexpr int		  kLevels	= 40;
 			static constexpr std::int64_t kBaseCell = 256;
 
-			void insert(std::int32_t tri, const Vec2i64& lo, const Vec2i64& hi);
-			void erase(std::int32_t tri, const Vec2i64& lo, const Vec2i64& hi);
+			void insert(std::int32_t id, const Vec2i64& lo, const Vec2i64& hi);
+			void erase(std::int32_t id, const Vec2i64& lo, const Vec2i64& hi);
 
-			// Visits every triangle registered in a cell the box overlaps, the box given in
-			// `scale` times mesh space; a triangle in several such cells is visited once per cell.
+			// Visits every id whose box overlaps the box, the box given in `scale` times mesh
+			// space; an id in several cells the box overlaps is visited once per cell.
 			template <typename Visit> void forEachInBox(const Vec2i64& lo, const Vec2i64& hi, std::int64_t scale, Visit visit) const;
+
+			// Visits the ids whose box holds p (in `scale` times mesh space), finest level
+			// first, until `visit` returns true. Each comes up once.
+			template <typename Visit> void forEachAtPoint(const Vec2i64& p, std::int64_t scale, Visit visit) const;
 
 			template <typename Visit> void forEachEntry(Visit visit) const;
 
 		  private:
-			struct CellKey {
-				std::int64_t x = 0;
-				std::int64_t y = 0;
-				bool		 operator==(const CellKey&) const = default;
+			// The box rides along so a query rejects an entry without touching its owner.
+			struct Entry {
+				std::int32_t id = -1;
+				Vec2i64		 lo;
+				Vec2i64		 hi;
 			};
-			struct CellHash {
-				std::size_t operator()(const CellKey& k) const;
+			struct Cell {
+				std::uint64_t	   key = 0;
+				std::vector<Entry> entries;
+				std::int32_t	   levelSlot = -1; // position in levelCells
 			};
-			using Level = std::unordered_map<CellKey, std::vector<std::int32_t>, CellHash>;
 
-			static int levelFor(const Vec2i64& lo, const Vec2i64& hi);
+			static int			 levelFor(const Vec2i64& lo, const Vec2i64& hi);
+			static std::uint64_t keyOf(int level, std::int64_t cx, std::int64_t cy);
+			std::size_t			 home(std::uint64_t key) const;
+			std::int32_t		 find(std::uint64_t key) const;
+			std::int32_t		 findOrAdd(std::uint64_t key, int level);
+			void				 dropCell(std::int32_t cell, int level);
 
-			std::array<Level, kLevels>		  levels;
-			std::array<std::int32_t, kLevels> levelCounts{};
+			std::vector<std::uint64_t>					   slotKeys; // kEmptySlot or a cell key
+			std::vector<std::int32_t>					   slotCells;
+			std::size_t									   occupied = 0;
+			std::vector<Cell>							   cells;
+			std::vector<std::int32_t>					   freeCells;
+			std::array<std::vector<std::int32_t>, kLevels> levelCells;
+			std::uint64_t								   levelMask = 0; // levels holding any id
 		};
 
 		struct VertexHash {
@@ -161,6 +190,8 @@ namespace geometry::nav {
 		template <typename Visit> void forEachLiveInBox(const Vec2i64& lo, const Vec2i64& hi, Visit visit) const;
 		template <typename Visit> void forEachAroundVertex(std::uint32_t v, Visit visit) const;
 		void triangleBox(std::int32_t t, Vec2i64& lo, Vec2i64& hi) const;
+		std::vector<RingId> ringsInBox(const Vec2i64& lo, const Vec2i64& hi) const;
+		bool				nearBoundsEdge(const Vec2i64& lo, const Vec2i64& hi) const;
 
 		std::int32_t acquireCover(const std::vector<RingId>& ringSet);
 		void		 setEdgeSources(std::int32_t t, int e, std::int32_t sourceId);
@@ -171,6 +202,7 @@ namespace geometry::nav {
 
 		static std::uint64_t sourceKey(const EdgeSource& s);
 
+		std::int64_t				maxBoundsEdgeMm = 0;
 		std::vector<RegisteredRing> rings;
 		std::vector<RingId>			freeRings;
 
@@ -193,7 +225,12 @@ namespace geometry::nav {
 		// Every half-edge (t * 3 + e) each original ring edge lies under.
 		std::unordered_map<std::uint64_t, std::vector<std::int32_t>> halfEdgesOf;
 
-		LocateGrid	grid;
+		mutable std::vector<std::uint32_t> visitStamp; // per triangle, for box queries
+		mutable std::uint32_t			   stamp		= 0;
+		mutable bool					   boxQueryOpen = false;
+
+		BoxGrid		grid;	   // live triangles
+		BoxGrid		ringGrid;  // live rings, by outline box
 		PatchReport report;
 	};
 

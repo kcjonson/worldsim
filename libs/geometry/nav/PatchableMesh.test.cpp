@@ -380,21 +380,24 @@ namespace {
 		return ring;
 	}
 
-	// Applies a patch to the mesh and the model together.
+	// Applies a patch to the mesh and the model together. The model takes each ring as
+	// registered, so a split bounds outline is what the from-scratch build sees too.
 	struct Harness {
+		explicit Harness(std::int64_t maxBoundsEdgeMm = 0) : mesh(maxBoundsEdgeMm) {}
+
 		PatchableMesh mesh;
 		Model		  model;
 
 		PatchReport apply(const PatchEdits& edits) {
 			PatchReport report = mesh.applyPatch(edits);
-			for (std::size_t i = 0; i < edits.adds.size(); ++i) {
-				model[report.added[i]] = edits.adds[i];
+			for (RingId r : report.added) {
+				model[r] = mesh.ring(r).polygon;
 			}
 			for (RingId r : edits.removes) {
 				model.erase(r);
 			}
 			for (const RingMove& move : edits.moves) {
-				model[move.ring].ring = move.outline;
+				model[move.ring] = mesh.ring(move.ring).polygon;
 			}
 			return report;
 		}
@@ -440,9 +443,9 @@ namespace {
 		return f;
 	}
 
-	void runFixtureSequence(const Fixture& fixture, std::uint32_t seed, int checkEvery) {
+	void runFixtureSequence(const Fixture& fixture, std::uint32_t seed, int checkEvery, std::int64_t maxBoundsEdgeMm = 0) {
 		std::mt19937 rng(seed);
-		Harness		 h;
+		Harness		 h(maxBoundsEdgeMm);
 		{
 			PatchEdits edits;
 			edits.adds = fixture.base;
@@ -553,7 +556,7 @@ namespace {
 	// arrangement's parity is counted into builderMismatchStates.
 	void runSoup(std::uint32_t seed, int steps, int& builderMismatchStates) {
 		std::mt19937 rng(seed);
-		Harness		 h;
+		Harness		 h(seed % 2 == 0 ? 7 : 0); // even seeds split the 20 and 40 mm sides
 		// Two chunk squares sharing x = 20; the second arrives part way through, and
 		// sometimes leaves and comes back.
 		const NavInputPolygon west		= bounds(rect(0, 0, 20, 40));
@@ -759,6 +762,23 @@ TEST(PatchableMesh, FixtureControlMatchesFreshBuild) {
 
 TEST(PatchableMesh, FixtureRealRingsMatchesFreshBuild) {
 	runFixtureSequence(realRingsFixture(), 37, 6);
+}
+
+TEST(PatchableMesh, FixtureRealRingsWithSplitBoundsMatchesFreshBuild) {
+	runFixtureSequence(realRingsFixture(), 41, 8, 16000);
+}
+
+TEST(PatchableMesh, SplitLongEdgesCutsOnTheEdge) {
+	EXPECT_EQ(splitLongEdges(rect(0, 0, 10, 4), 0), rect(0, 0, 10, 4));
+	EXPECT_EQ(splitLongEdges(rect(0, 0, 10, 4), 4),
+			  (std::vector<Vec2i64>{{0, 0}, {3, 0}, {6, 0}, {10, 0}, {10, 4}, {7, 4}, {4, 4}, {0, 4}}));
+	// A diagonal edge cuts only at its lattice points: (0, 0)-(9, 6) has them every (3, 2).
+	const std::vector<Vec2i64> diagonal = splitLongEdges({{0, 0}, {9, 6}, {0, 6}}, 4);
+	EXPECT_EQ(diagonal, (std::vector<Vec2i64>{{0, 0}, {3, 2}, {6, 4}, {9, 6}, {6, 6}, {3, 6}, {0, 6}, {0, 3}}));
+	Harness h(4);
+	const RingId bounds = h.add(NavInputPolygon{rect(0, 0, 10, 4), false, kBorder});
+	EXPECT_EQ(h.mesh.ring(bounds).polygon.ring.size(), 8U);
+	EXPECT_TRUE(matchesFresh(h.mesh, h.model));
 }
 
 // Tiny coordinates, so rings overlap, share edges, touch at corners, nest, and hang off
