@@ -164,6 +164,62 @@ TEST(MemoryComponent, ClearResetsLru) {
 
 namespace {
 
+	/// Every remembered key sits in its def's list at its defSlot, and the lists hold nothing else.
+	void expectDefListsMatch(const ecs::Memory& m) {
+		size_t listed = 0;
+		for (const auto& [defNameId, keys] : m.worldEntitiesByDef) {
+			listed += keys.size();
+			for (size_t slot = 0; slot < keys.size(); ++slot) {
+				const ecs::KnownWorldEntity* entity = m.getWorldEntity(keys[slot]);
+				ASSERT_NE(entity, nullptr) << "def " << defNameId << " lists a forgotten key";
+				EXPECT_EQ(entity->defNameId, defNameId);
+				EXPECT_EQ(entity->defSlot, slot);
+			}
+		}
+		EXPECT_EQ(listed, m.worldEntityCount());
+	}
+
+} // namespace
+
+// The per-def key lists follow every remember, forget, eviction, copy, and clear.
+TEST(MemoryComponent, DefListsFollowRememberForgetAndEvict) {
+	constexpr uint32_t kOtherDefId = 8;
+	ecs::Memory		   m;
+	for (size_t i = 0; i < 20; ++i) {
+		m.rememberWorldEntity(posFor(i), i % 2 == 0 ? kDefId : kOtherDefId, kMask);
+	}
+	EXPECT_EQ(m.worldEntitiesOfDef(kDefId).size(), 10U);
+	EXPECT_EQ(m.worldEntitiesOfDef(kOtherDefId).size(), 10U);
+	EXPECT_TRUE(m.worldEntitiesOfDef(99).empty());
+
+	// Forget the first, a middle, and the last of one def: each swap-removal re-slots the moved key.
+	m.forgetWorldEntity(posFor(0), kDefId);
+	m.forgetWorldEntity(posFor(10), kDefId);
+	m.forgetWorldEntity(posFor(18), kDefId);
+	EXPECT_EQ(m.worldEntitiesOfDef(kDefId).size(), 7U);
+	expectDefListsMatch(m);
+
+	ecs::Memory copy = m;
+	copy.forgetWorldEntity(posFor(1), kOtherDefId);
+	expectDefListsMatch(copy);
+	expectDefListsMatch(m);
+
+	// Fill to capacity and overflow: evictions leave the lists in step.
+	for (size_t i = 100; m.worldEntityCount() < ecs::Memory::kMaxWorldEntities; ++i) {
+		m.rememberWorldEntity(posFor(i), kOtherDefId, kMask);
+	}
+	m.rememberWorldEntity({-10.0F, 0.0F}, kDefId, kMask);
+	m.rememberWorldEntity({-20.0F, 0.0F}, kDefId, kMask);
+	EXPECT_EQ(m.worldEntityCount(), ecs::Memory::kMaxWorldEntities);
+	expectDefListsMatch(m);
+
+	m.clear();
+	EXPECT_TRUE(m.worldEntitiesOfDef(kDefId).empty());
+	expectDefListsMatch(m);
+}
+
+namespace {
+
 	constexpr auto	   kSourceCapability = assets::CapabilityType::Harvestable;
 	constexpr uint16_t kSourceMask = 1U << static_cast<unsigned>(kSourceCapability);
 

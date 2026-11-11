@@ -31,27 +31,6 @@ namespace ecs {
 			return id == 0 ? 1U : id; // never collide with the "no recipe" sentinel
 		}
 
-		// Check if any asset definition has a harvestable that yields the given item type
-		// This determines if the item CAN be obtained through harvesting
-		bool canItemBeHarvested(const assets::AssetRegistry& assetRegistry, const std::string& itemDefName) {
-			// Iterate all asset definitions to find harvestables that yield this item
-			for (const auto& defName : assetRegistry.getDefinitionNames()) {
-				const auto* def = assetRegistry.getDefinition(defName);
-				if (def == nullptr) {
-					continue;
-				}
-
-				// Check if this definition is harvestable and yields the item we need
-				if (def->capabilities.harvestable.has_value()) {
-					if (def->capabilities.harvestable->yieldDefName == itemDefName) {
-						return true;
-					}
-				}
-			}
-
-			return false;
-		}
-
 		// Colony "availability" = the union of colonist memories. Knowledge is per-colonist (no
 		// god-view), but a craft goal is colony-level, so we resolve against what ANY colonist knows.
 		// A goal created from this is still only fulfilled by a colonist that actually remembers the
@@ -261,7 +240,7 @@ namespace ecs {
 					}
 
 					// Check if this input can come from harvestable sources
-					bool canHarvest = canItemBeHarvested(assetRegistry, input.defName);
+					bool canHarvest = !assetRegistry.harvestablesYielding(input.defName).empty();
 
 					// Generate chain ID to link Harvest → Haul (for continuity bonus)
 					uint64_t chainId = GoalTaskRegistry::Get().allocateChainId();

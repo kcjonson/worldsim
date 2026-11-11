@@ -569,8 +569,8 @@ namespace ecs {
 							if (std::find(goal->acceptedDefNameIds.begin(), acceptedIt, *acceptedIt) != acceptedIt) {
 								continue; // a repeated id names the same sources
 							}
-							const auto stock = sources.carryablesOf(*acceptedIt);
-							if (stock.empty()) {
+							const auto* itemDef = sources.knownCarryable(*acceptedIt);
+							if (itemDef == nullptr) {
 								continue;
 							}
 							const auto& itemDefName = registry.getDefName(*acceptedIt);
@@ -583,7 +583,6 @@ namespace ecs {
 							if (goal->deliveredAmount + carried >= goal->targetAmount) {
 								continue;
 							}
-							const auto* itemDef = stock.front().def;
 							if (!itemDef->capabilities.carryable.has_value()) {
 								continue;
 							}
@@ -593,8 +592,7 @@ namespace ecs {
 								pushNoRoom(*goal, itemDefName, "Fetching " + itemDefName + " for crafting");
 								continue;
 							}
-							sources.countVisits(stock.size());
-							for (const CarrySource& source : stock) {
+							for (const CarrySource& source : sources.carryablesOf(*acceptedIt)) {
 								const KnownWorldEntity& looseItem = *source.entity;
 								const uint64_t			key = source.key;
 
@@ -629,9 +627,10 @@ namespace ecs {
 					continue;
 				}
 
-				// Loose piles the colonist remembers, one run of sources per accepted item.
-				const auto emitLooseHauls = [&](std::span<const CarrySource> run) {
-					const auto& itemDefName = registry.getDefName(run.front().defNameId);
+				// Loose piles the colonist remembers of one accepted item. The destination and carry gates
+				// come first, so a full box or a full pack visits none of them.
+				const auto emitLooseHauls = [&](uint32_t itemDefNameId) {
+					const auto& itemDefName = registry.getDefName(itemDefNameId);
 					// Size the trip by what the DESTINATION storage can actually accept of this
 					// specific item -- its stack headroom plus free-slot * stackSize
 					// (addableCount), not the goal's slot count. A storage with 3 free slots takes
@@ -654,8 +653,7 @@ namespace ecs {
 						return;
 					}
 					const uint32_t haulQuantity = std::min(storageHeadroom, ecs::cargoUnitsPerTrip(registry, itemDefName, inventory.carryCapacityKg));
-					sources.countVisits(run.size());
-					for (const CarrySource& source : run) {
+					for (const CarrySource& source : sources.carryablesOf(itemDefNameId)) {
 						const KnownWorldEntity& looseItem = *source.entity;
 						// Calculate trip distance: colonist -> item -> goal destination
 						float tripDistance = glm::distance(position, looseItem.position) +
@@ -685,26 +683,20 @@ namespace ecs {
 				};
 				if (goal->acceptedCategory != assets::ItemCategory::None) {
 					// A category goal takes any carryable of its category, plus the items it names.
-					const auto all = sources.carryables();
-					for (auto run = all.begin(); run != all.end();) {
-						const uint32_t defNameId = run->defNameId;
-						const auto	   runEnd = std::find_if(run, all.end(), [defNameId](const CarrySource& s) { return s.defNameId != defNameId; });
-						const bool accepted = run->def->category == goal->acceptedCategory ||
+					for (uint32_t defNameId : sources.knownCarryableDefs()) {
+						const bool accepted = sources.knownCarryable(defNameId)->category == goal->acceptedCategory ||
 											  std::find(goal->acceptedDefNameIds.begin(), goal->acceptedDefNameIds.end(), defNameId) != goal->acceptedDefNameIds.end();
 						if (accepted) {
-							emitLooseHauls({run, runEnd});
-						} else {
-							sources.countVisits(static_cast<uint64_t>(runEnd - run));
+							emitLooseHauls(defNameId);
 						}
-						run = runEnd;
 					}
 				} else {
 					for (auto acceptedIt = goal->acceptedDefNameIds.begin(); acceptedIt != goal->acceptedDefNameIds.end(); ++acceptedIt) {
 						if (std::find(goal->acceptedDefNameIds.begin(), acceptedIt, *acceptedIt) != acceptedIt) {
 							continue; // a repeated id names the same sources
 						}
-						if (const auto run = sources.carryablesOf(*acceptedIt); !run.empty()) {
-							emitLooseHauls(run);
+						if (sources.knownCarryable(*acceptedIt) != nullptr) {
+							emitLooseHauls(*acceptedIt);
 						}
 					}
 				}
@@ -876,8 +868,7 @@ namespace ecs {
 
 				// A clear is served by what blocks its footprint, the same test the build gate applies; any
 				// other goal by the harvestables that yield its item.
-				const auto candidates = clearing ? sources.harvestables() : sources.harvestablesYielding(goal->yieldDefNameId);
-				sources.countVisits(candidates.size());
+				const auto candidates = clearing ? sources.clearableHarvestables() : sources.harvestablesYielding(goal->yieldDefNameId);
 				for (const HarvestSource& source : candidates) {
 					const KnownWorldEntity& knownEntity = *source.entity;
 					const uint64_t			key = source.key;
@@ -886,25 +877,6 @@ namespace ecs {
 					}
 					const auto*	   def = source.def;
 					const uint32_t yieldDefNameId = source.yieldDefNameId;
-
-					// Tool gate: chopping a tree needs the colonist to already hold the right
-					// tool (e.g. an axe). Colonists never fetch or equip tools on their own, so
-					// a tool-less colonist simply never sees this harvest as an option.
-					if (!source.holdsTool) {
-						continue;
-					}
-
-					// Carry gate (mirrors the craft-fetch gate above): the harvest yield must fit.
-					// applyCollectionEffect clamps the take to carry weight AND backpack slots; at
-					// the cap it adds 0. Emitting the option anyway makes a full/over-weight colonist
-					// pick the harvest, collect 0 ("Collected 0 of N ... carry-limited"), re-evaluate,
-					// and pick the same harvest again -- an infinite chop-nothing loop. Skip the
-					// option when no unit fits (no stack/slot headroom and no carry weight), leaving
-					// the harvest for a trip when the colonist has room. A clear is exempt: it removes the
-					// blocker whatever fits and drops the rest, so a full pack never stalls a site.
-					if (!clearing && !source.yieldFits) {
-						continue;
-					}
 
 					// Score by the full provisioning round-trip (colonist -> harvestable -> destination), not just
 					// colonist -> harvestable, so the source nearest where the yield is needed (the crafting

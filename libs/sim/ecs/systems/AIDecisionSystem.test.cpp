@@ -941,10 +941,75 @@ namespace ecs::test {
 		}
 
 #ifdef DEVELOPMENT_BUILD
-		// Per colonist: each capability index is collected once, and each goal visits only the sources
-		// of its item. The 9,990 waters add nothing.
-		constexpr uint64_t kPerColonist = (kPiles + kTrees) + kPiles + kTrees;
+		// Per colonist: each goal visits only the sources of its item. The 9,990 waters add nothing.
+		constexpr uint64_t kPerColonist = kPiles + kTrees;
 		EXPECT_EQ(workSourceVisits() - visitsBefore, 2 * kPerColonist);
+#endif
+	}
+
+	// A goal the colonist can't serve visits none of its sources: a full box, a pack with no room, and
+	// a cut without the tool are each settled before any remembered pile or tree is looked at.
+	TEST_F(AIDecisionSystemTest, WorkGatesComeBeforeTheSources) {
+		auto&					registry = assets::AssetRegistry::Get();
+		assets::AssetDefinition wood;
+		wood.defName = "Wood";
+		wood.label = "Wood";
+		wood.category = assets::ItemCategory::RawMaterial;
+		wood.capabilities.carryable = assets::CarryableCapability{1};
+		wood.itemProperties = assets::ItemProperties{};
+		wood.itemProperties->stackSize = 40;
+		wood.itemProperties->massKg = 0.1F;
+		registry.registerTestDefinition(std::move(wood));
+		assets::AssetDefinition tree;
+		tree.defName = "Tree";
+		tree.label = "Tree";
+		tree.capabilities.harvestable = assets::HarvestableCapability{};
+		tree.capabilities.harvestable->yieldDefName = "Wood";
+		tree.capabilities.harvestable->requiredToolType = "Axe";
+		registry.registerTestDefinition(std::move(tree));
+		const uint32_t woodId = registry.getDefNameId("Wood");
+		const uint32_t treeId = registry.getDefNameId("Tree");
+
+		const glm::vec2 fullPos{0.0F, 6.0F};
+		const glm::vec2 roomyPos{0.0F, -6.0F};
+		const EntityID	fullBox = makeStorageBox(fullPos, "Box", "Wood", ecs::StoragePriority::High, /*qty=*/50 * 40);
+		ASSERT_EQ(world->getComponent<Inventory>(fullBox)->addableCount("Wood"), 0U);
+		const EntityID roomyBox = makeStorageBox(roomyPos, "Box", "Wood", ecs::StoragePriority::High);
+		makeUmbrellaGoal(fullBox, fullPos, woodId);
+		makeUmbrellaGoal(roomyBox, roomyPos, woodId);
+		GoalTask harvest;
+		harvest.type = TaskType::Harvest;
+		harvest.owner = GoalOwner::CraftingGoalSystem;
+		harvest.yieldDefNameId = woodId;
+		harvest.destinationPosition = roomyPos;
+		harvest.targetAmount = 5;
+		harvest.status = GoalStatus::Available;
+		GoalTaskRegistry::Get().createGoal(std::move(harvest));
+
+		// No axe, and a pack that can't take a single unit.
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		world->getComponent<Inventory>(colonist)->carryCapacityKg = 0.0F;
+		for (int i = 0; i < 20; ++i) {
+			addKnownEntity(colonist, {3.0F + static_cast<float>(i), 0.0F}, woodId, assets::CapabilityType::Carryable);
+			addKnownEntity(colonist, {-3.0F - static_cast<float>(i), 0.0F}, treeId, assets::CapabilityType::Harvestable);
+		}
+
+#ifdef DEVELOPMENT_BUILD
+		const uint64_t visitsBefore = workSourceVisits();
+#endif
+		world->update(0.016F);
+
+		const auto& options = getTrace(colonist)->options;
+		EXPECT_EQ(std::count_if(options.begin(), options.end(), [](const EvaluatedOption& o) { return o.taskType == TaskType::Harvest; }), 0);
+		// The roomy box's goal says why it can't be served; the full box's says nothing.
+		const auto hauls = std::count_if(options.begin(), options.end(), [](const EvaluatedOption& o) { return o.taskType == TaskType::Haul; });
+		const auto noRoom = std::count_if(options.begin(), options.end(), [](const EvaluatedOption& o) {
+			return o.taskType == TaskType::Haul && o.status == OptionStatus::NoRoom;
+		});
+		EXPECT_EQ(hauls, 1);
+		EXPECT_EQ(noRoom, 1);
+#ifdef DEVELOPMENT_BUILD
+		EXPECT_EQ(workSourceVisits() - visitsBefore, 0U);
 #endif
 	}
 

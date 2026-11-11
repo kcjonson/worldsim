@@ -277,6 +277,10 @@ namespace assets {
 		/// item on every platform. Kept with the definitions: cleared and rebuilt with them.
 		[[nodiscard]] const std::vector<std::string>& edibleItemNames() const { return m_edibleItemNames; }
 
+		/// Ids of the harvestable definitions whose harvest yields `yieldDefName`, ascending; empty when
+		/// none does. Kept with the definitions: cleared and rebuilt with them.
+		[[nodiscard]] const std::vector<uint32_t>& harvestablesYielding(const std::string& yieldDefName) const;
+
 		/// Mass of one unit of an item, in kilograms. Returns 1.0 for unknown/non-item defs
 		/// so carry-weight math always has a sane positive divisor.
 		[[nodiscard]] float getItemMassKg(const std::string& defName) const;
@@ -383,6 +387,12 @@ namespace assets {
 
 		// Sorted names of the inventory-edible definitions; see edibleItemNames().
 		std::vector<std::string> m_edibleItemNames;
+
+		// Yield defName -> ascending ids of the harvestables that yield it; see harvestablesYielding().
+		std::unordered_map<std::string, std::vector<uint32_t>> m_harvestablesByYield;
+
+		/// File `id` under its harvest yield (if any), keeping the list ascending.
+		void indexHarvestYield(const AssetDefinition& def, uint32_t id);
 
 		// Path to shared scripts folder (for @shared/ prefix resolution)
 		std::filesystem::path m_sharedScriptsPath;

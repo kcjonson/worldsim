@@ -583,9 +583,11 @@ Measured on the perf capture against `main` on the same machine, plus unit bench
   beyond run-to-run noise in the desert perf view, and in a two-colonist run of scenario 02.
 - Index rebuild is under 5% of `AIDecisionSystem::update` in a benchmark of 200 colonists and 300
   goals (extend `HandlesMultipleColonistsEfficiently`), with no heap allocation in steady state.
-- No per-goal full-memory scans. Evaluators iterate Memory's capability index
-  (`getEntitiesWithCapability`, Carryable for piles and Harvestable for sources), and the per-def
-  yield lookup is resolved once per def, not per entity per goal. Extend
+- No per-goal full-memory scans. Memory keeps each def's keys beside its capability index
+  (`worldEntitiesOfDef`, one push per remember, one swap-remove per forget), so a goal visits only
+  the entries of the defs that give its item: the item itself for a haul, the registry's
+  `harvestablesYielding` defs for a harvest. The per-def gates (storage headroom, room to carry,
+  the tool and the yield fit) are answered once per def before any entry is visited. Extend
   `MemoryCapacityDoesNotAffectDecisionSpeed` with 10,000 remembered entities that match no goal:
   decision time stays within noise of an empty memory.
 - Live pile quantity is one keyed lookup through the WorldKey-to-pile map, not a scan of piles.

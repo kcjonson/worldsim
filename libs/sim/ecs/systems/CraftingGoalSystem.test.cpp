@@ -422,7 +422,7 @@ TEST_F(MultiSystemGoalTest, HarvestableInputCreatesHarvestNotHaul) {
 	woodDef.itemProperties->stackSize = 40;
 	assetReg.registerTestDefinition(std::move(woodDef));
 
-	// A harvestable that yields Wood makes canItemBeHarvested("Wood") true.
+	// A harvestable that yields Wood makes Wood harvestable.
 	assets::AssetDefinition treeDef;
 	treeDef.defName = "TestTree";
 	treeDef.label = "Test Tree";
