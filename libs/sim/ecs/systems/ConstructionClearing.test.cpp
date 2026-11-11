@@ -309,8 +309,9 @@ namespace ecs::test {
 
 
 	// Two colonists clear different blockers in one footprint. The tree falls while the other
-	// colonist is still on his way to the bush; that must not end his clear (same task, same goal),
-	// and both blockers end up removed.
+	// colonist is still on his way to the bush; that must not end his clear (same task, same goal).
+	// Reaching the bush only after the tree fell, the harvest he starts on that clear removes the bush
+	// rather than leaving it to regrow, and the site leaves Clearing.
 	TEST_F(FootprintClearingTest, FirstClearToFinishDoesNotResetAnother) {
 		const glm::vec2 tree{2.0F, 2.0F};
 		const glm::vec2 bush{6.0F, 6.0F};
@@ -321,7 +322,7 @@ namespace ecs::test {
 		world->getComponent<Inventory>(stripper)->addItem("Berry", 5); // fed: he strips the bush only to clear it
 
 		ASSERT_TRUE(runUntil([&] { return !treeStands(tree); }, 3000, stripper)) << "precondition: the tree is felled first";
-		const Task* task = world->getComponent<Task>(stripper);
+		auto* task = world->getComponent<Task>(stripper);
 		ASSERT_EQ(task->type, TaskType::Harvest) << "precondition: he is on his way to the bush";
 		const uint64_t goalId = task->harvestGoalId;
 
@@ -336,31 +337,8 @@ namespace ecs::test {
 		);
 		EXPECT_TRUE(kept) << "the tree falling must not reset his clear";
 
-		EXPECT_TRUE(runUntil([&] { return phase() == StructureBlueprint::BuildPhase::AwaitingMaterials; })) << "both are cleared";
-		EXPECT_FALSE(treeStands(tree));
-		EXPECT_FALSE(treeStands(bush, kBush));
-	}
-
-	// A colonist who reaches his blocker only after another blocker was cleared still clears it: the
-	// harvest he started on that clear removes the bush rather than leaving it to regrow.
-	TEST_F(FootprintClearingTest, ClearStartedAfterAnotherBlockerFellStillRemovesItsBlocker) {
-		const glm::vec2 tree{2.0F, 2.0F};
-		const glm::vec2 bush{6.0F, 6.0F};
-		plantTrees({tree}, {bush});
-		createColonist({1.0F, 1.0F}, {tree});
-		auto stripper = createColonist({30.0F, 30.0F}, {});
-		remember(*world->getComponent<Memory>(stripper), bush, kBush);
-		world->getComponent<Inventory>(stripper)->addItem("Berry", 5); // fed: he strips the bush only to clear it
-
-		ASSERT_TRUE(runUntil([&] { return !treeStands(tree); }, 3000, stripper)) << "precondition: the tree is felled first";
-		auto* task = world->getComponent<Task>(stripper);
-		ASSERT_EQ(task->type, TaskType::Harvest) << "precondition: he is on his way to the bush";
-		const uint64_t goalId = task->harvestGoalId;
-
-		// He arrives right after the tree fell.
 		world->getComponent<Position>(stripper)->value = task->targetPosition;
 		task->state = TaskState::Arrived;
-
 		bool harvested = false;
 		bool sameClear = true;
 		ASSERT_TRUE(runUntil([&] {
@@ -371,6 +349,9 @@ namespace ecs::test {
 		})) << "he harvests the bush";
 		EXPECT_TRUE(sameClear) << "on the clear he set out on";
 		EXPECT_FALSE(treeStands(bush, kBush)) << "that harvest removed the bush";
+
+		EXPECT_TRUE(runUntil([&] { return phase() == StructureBlueprint::BuildPhase::AwaitingMaterials; })) << "both are cleared";
+		EXPECT_FALSE(treeStands(tree));
 	}
 
 } // namespace ecs::test

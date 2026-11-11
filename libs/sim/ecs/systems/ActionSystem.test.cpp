@@ -3177,7 +3177,7 @@ TEST_F(ClearHarvestTest, TwoFinishersOnOneBushShareASingleYield) {
 }
 
 // A bush on its regrowth cooldown has nothing to give: cutting it pays nothing and leaves its timer
-// alone; clearing it (below) removes it with no yield.
+// alone, and clearing it removes it, still with no yield.
 TEST_F(ClearHarvestTest, RegrowingBushPaysNoYield) {
 	GoalTask cut;
 	cut.type = TaskType::Harvest;
@@ -3191,15 +3191,11 @@ TEST_F(ClearHarvestTest, RegrowingBushPaysNoYield) {
 	harvest();
 	EXPECT_EQ(world->getComponent<Inventory>(cutter)->getQuantity("TestBerry"), 0U) << "a cut of a regrowing bush";
 	EXPECT_EQ(cooldownCalls, 0) << "its regrowth timer is left alone";
-}
 
-TEST_F(ClearHarvestTest, ClearOfARegrowingBushRemovesItWithNoYield) {
-	auto colonist = createClearingColonist();
-	sourceState = ActionSystem::SourceState::OnCooldown;
+	auto clearer = createClearingColonist();
 	harvest();
-
 	EXPECT_EQ(removeCalls, 1) << "the clear still removes it";
-	EXPECT_EQ(world->getComponent<Inventory>(colonist)->getQuantity("TestBerry"), 0U);
+	EXPECT_EQ(world->getComponent<Inventory>(clearer)->getQuantity("TestBerry"), 0U) << "a clear of a regrowing bush";
 	EXPECT_EQ(dropCalls, 0) << "and nothing drops";
 }
 

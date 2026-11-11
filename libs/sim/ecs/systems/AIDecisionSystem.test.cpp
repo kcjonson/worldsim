@@ -3813,27 +3813,16 @@ namespace ecs::test {
 		static constexpr float	   kAgentRadius = 0.3F;
 	};
 
-	// A berry patch across the river: the four nearest known bushes are all on the north bank.
-	TEST_F(AIDecisionRiverTest, FoodSkipsEveryUnreachableNearerSourceOnOneComponent) {
+	// Berry patches across both rivers: the six nearest known bushes are unreachable, four on the north
+	// bank and two on the south, so the walk passes several sources on each of two components.
+	TEST_F(AIDecisionRiverTest, FoodSkipsEveryUnreachableNearerSource) {
 		const uint32_t berryBushId = registerBerryBush(assets::AssetRegistry::Get());
 		const auto	   colonist = makeColonistBetweenRivers();
 		setNeedValue(colonist, NeedType::Hunger, 40.0F);
 		for (const float x : {0.0F, 2.0F, -2.0F, 4.0F}) {
 			addKnownEntity(colonist, northBank(x), berryBushId, assets::CapabilityType::Harvestable);
 		}
-		addKnownEntity(colonist, kReachable, berryBushId, assets::CapabilityType::Harvestable);
-
-		world->update(kTick);
-		expectFoodGoesToReachable(colonist);
-	}
-
-	// The same with the unreachable bushes split across two components, the north and south banks.
-	TEST_F(AIDecisionRiverTest, FoodSkipsUnreachableSourcesOnTwoComponents) {
-		const uint32_t berryBushId = registerBerryBush(assets::AssetRegistry::Get());
-		const auto	   colonist = makeColonistBetweenRivers();
-		setNeedValue(colonist, NeedType::Hunger, 40.0F);
 		for (const float x : {0.0F, 3.0F}) {
-			addKnownEntity(colonist, northBank(x), berryBushId, assets::CapabilityType::Harvestable);
 			addKnownEntity(colonist, southBank(x), berryBushId, assets::CapabilityType::Harvestable);
 		}
 		addKnownEntity(colonist, kReachable, berryBushId, assets::CapabilityType::Harvestable);
