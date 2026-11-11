@@ -266,10 +266,21 @@ Triangles can still differ where four points lie on one circle, which the corner
 do: Delaunay has a free choice of diagonal there. Walkable ground, tags, and reachability don't
 depend on it.
 
-This is a target that step 3's oracle tests. Crossing points are rounded to the millimetre, and
-a rounded point can land on a third edge; if some such cascade makes exact equality depend on
-order, the fallback is equality of walkable ground and tags, and the case gets written down
-here.
+**Tested in step 3, and it holds.** `PatchableMesh`'s tests compare every patched state with a
+from-scratch arrangement of the same rings: vertices and constrained edges, with the rings on
+each, are equal exactly. That is true on the three game fixtures through random adds, removes,
+moves, and re-adds, and on 12,000 states of adversarial input (rings a few millimetres across,
+overlapping, nested, sharing edges, hanging off loaded ground, two chunk squares arriving and
+leaving in either order).
+
+Getting there found three things:
+
+- **A bug in the arrangement, on main today.** A segment's cut points were sorted by coordinate, and a rounded crossing sits off its line, so two cuts could come out in the wrong order along the segment. The edge then zigzagged and forked. Fixed, with a test; nav output on the game fixtures is unchanged.
+- **Rings can meet off loaded ground.** A new ring can cross a ring that hangs over the edge of the mesh, out where there are no triangles, and the rounded crossing can land back on the mesh. The mesh can't show that, so where a changed edge reaches off ground or near its edge the ring registry is asked instead.
+- **The builder's tags depend on which triangle it samples.** `buildNavMesh` tags a face by testing one point of its largest triangle against each ring's original outline. After rounding, a face can straddle an original outline by a fraction of a millimetre, so the tag can depend on the triangulation. It showed in a third of the adversarial states and in none of the game fixtures. The patched mesh doesn't have the problem: it gets tags by counting ring edges crossed, never by sampling. The builder is left as it is until step 4 decides what still uses it.
+
+One assumption is not proven: the off-ground rule treats rounding as moving an edge at most
+2 mm from its original line. It held across the sweep.
 
 **The cost of whole edges.** A long edge that many things cross pulls all of them into the
 hole. A chunk's side is 512 m. Step 3 measures a patch that crosses a chunk border; if it
