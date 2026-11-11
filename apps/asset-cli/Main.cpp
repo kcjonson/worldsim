@@ -14,6 +14,7 @@
 #include "BaseShader.h"
 #include "backend/gl/GLBackend.h"
 #include "graphics/Color.h"
+#include "PngEncoder.h"
 #include "primitives/Primitives.h"
 #include "utils/Log.h"
 #include "utils/ResourcePath.h"
@@ -28,6 +29,7 @@
 #include <cctype>
 #include <cstdio>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -52,7 +54,14 @@ namespace {
 		"  search <query> [--json]\n"
 		"  inspect <defName> [--json]\n"
 		"  validate [--json] [--render-smoke]\n"
-		"  render <defName> --out <file.png> [--size WxH] [--bg r,g,b,a] [--seed N] [--samples N]\n";
+		"  render <defName> --out <file.png> [--size WxH] [--bg r,g,b,a] [--seed N] [--samples N]\n"
+		"  render <defName> --out <file.png> (--grid | --age a,b,... [--seed s,t,...]) [--silhouette] [--ppm N] [--bg r,g,b,a]\n"
+		"\n"
+		"render with --seed alone fits one generator run to --size. --grid draws every template the game\n"
+		"draws (age classes as rows, variants as columns); --age runs the generator at each age from 0 to 1\n"
+		"(columns) for each seed (rows, default 0). Both draw at one scale, --ppm pixels a metre (default\n"
+		"48). --silhouette fills what the selection silhouette keeps in one flat grey, on white unless --bg\n"
+		"is given.\n";
 
 	// --- argument helpers ---
 
@@ -71,7 +80,7 @@ namespace {
 
 	// Flags that consume the following argument as their value.
 	bool flagTakesValue(const std::string& flag) {
-		static const char* kValueFlags[] = {"--type", "--group", "--out", "--size", "--bg", "--seed", "--samples"};
+		static const char* kValueFlags[] = {"--type", "--group", "--out", "--size", "--bg", "--seed", "--samples", "--age", "--ppm"};
 		for (const char* vf : kValueFlags) {
 			if (flag == vf) {
 				return true;
@@ -479,6 +488,115 @@ namespace {
 		return report.errorCount() > 0 ? kFailure : kOk;
 	}
 
+	std::vector<float> parseNumbers(const std::string& list) {
+		std::vector<float> out;
+		size_t			   start = 0;
+		while (start <= list.size()) {
+			const size_t comma = std::min(list.find(',', start), list.size());
+			out.push_back(std::stof(list.substr(start, comma - start)));
+			start = comma + 1;
+		}
+		return out;
+	}
+
+	// A sheet at one scale: every template the game draws for the def (--grid: age classes as rows,
+	// variants as columns), or the generator run at each of --age's ages (columns) for each of --seed's
+	// seeds (rows).
+	int renderSheet(const std::string& defName, const std::string& out, const std::vector<std::string>& args) {
+		const bool grid = hasFlag(args, "--grid");
+		const auto ageArg = flagValue(args, "--age");
+		if (grid == ageArg.has_value()) {
+			std::cerr << "error: a sheet is either --grid or --age <a,b,...>\n";
+			return kUsage;
+		}
+		if (flagValue(args, "--size") || flagValue(args, "--samples") || (grid && flagValue(args, "--seed"))) {
+			std::cerr << "error: a sheet is sized by --ppm, and --grid draws the game's own seeds\n";
+			return kUsage;
+		}
+		float			   ppm = 48.0F;
+		std::vector<float> ages;
+		std::vector<float> seeds{0.0F};
+		try {
+			if (const auto ppmArg = flagValue(args, "--ppm")) {
+				ppm = std::stof(*ppmArg);
+			}
+			if (ageArg) {
+				ages = parseNumbers(*ageArg);
+			}
+			if (const auto seedArg = flagValue(args, "--seed")) {
+				seeds = parseNumbers(*seedArg);
+			}
+		} catch (const std::exception&) {
+			ppm = 0.0F;
+		}
+		if (!(ppm > 0.0F) || std::any_of(ages.begin(), ages.end(), [](float a) { return a < 0.0F || a > 1.0F; }) ||
+			std::any_of(seeds.begin(), seeds.end(), [](float v) { return v < 0.0F; })) {
+			std::cerr << "error: --ppm must be positive, --age a list of numbers from 0 to 1, --seed a list of non-negative integers\n";
+			return kUsage;
+		}
+		const bool				silhouette = hasFlag(args, "--silhouette");
+		const auto				bgArg = flagValue(args, "--bg");
+		const Foundation::Color bg = (silhouette && !bgArg) ? Foundation::Color(1.0F, 1.0F, 1.0F, 1.0F) : parseColor(bgArg);
+
+		if (!loadLibrary()) {
+			return kFailure;
+		}
+		AssetRegistry&		   registry = AssetRegistry::Get();
+		const AssetDefinition* def = registry.getDefinition(defName);
+		if (def == nullptr) {
+			std::cerr << "error: no such defName: " << defName << "\n";
+			return kNotFound;
+		}
+
+		std::vector<std::vector<const renderer::TessellatedMesh*>> rows;
+		std::vector<std::unique_ptr<renderer::TessellatedMesh>>	   built;
+		if (grid) {
+			const size_t classes = std::max<size_t>(def->ageClasses.size(), 1);
+			for (size_t a = 0; a < classes; ++a) {
+				auto&		   row = rows.emplace_back();
+				const uint32_t variants = def->ageClasses.empty() ? std::max<uint32_t>(def->variantCount, 1U) : def->ageClasses[a].variants;
+				for (uint32_t v = 0; v < (def->assetType == AssetType::Simple ? 1U : variants); ++v) {
+					row.push_back(registry.getTemplate(defName, {.ageClass = static_cast<uint8_t>(a), .variant = static_cast<uint16_t>(v)}));
+				}
+				std::cout << "  row " << (a + 1) << ": " << (def->ageClasses.empty() ? defName : def->ageClasses[a].name) << ", " << row.size()
+						  << " variants\n";
+			}
+		} else {
+			// The generator reads its age from the def's `age` param, so the def is registered again with it set.
+			const AssetDefinition original = *def;
+			for (const float seed : seeds) {
+				auto& row = rows.emplace_back();
+				for (const float age : ages) {
+					AssetDefinition aged = original;
+					aged.params.setFloat("age", age);
+					registry.registerTestDefinition(aged);
+					auto mesh = std::make_unique<renderer::TessellatedMesh>();
+					if (!registry.buildMesh(defName, static_cast<uint32_t>(seed), *mesh)) {
+						std::cerr << "error: " << defName << " at age " << age << " seed " << seed << " drew nothing\n";
+						return kFailure;
+					}
+					std::cout << "  seed " << static_cast<uint32_t>(seed) << " age " << age << ": " << mesh->getTriangleCount() << " triangles, "
+							  << mesh->getVertexCount() << " vertices\n";
+					row.push_back(built.emplace_back(std::move(mesh)).get());
+				}
+			}
+			registry.registerTestDefinition(original);
+		}
+
+		if (!initGl()) {
+			std::cerr << "error: could not create an OpenGL context (need a GPU/display)\n";
+			return kFailure;
+		}
+		const assets::RenderedImage image = assets::renderMeshSheet(rows, ppm, bg, silhouette);
+		shutdownGl();
+		if (image.pixels.empty() || !Renderer::writePngToFile(image.pixels.data(), image.width, image.height, out)) {
+			std::cerr << "error: could not render " << defName << " to " << out << "\n";
+			return kFailure;
+		}
+		std::cout << "wrote " << out << " (" << image.width << "x" << image.height << ")\n";
+		return kOk;
+	}
+
 	int cmdRender(const std::vector<std::string>& args) {
 		const auto defName = positional(args);
 		if (!defName) {
@@ -489,6 +607,9 @@ namespace {
 		if (!out) {
 			std::cerr << "error: render needs --out <file.png>\n";
 			return kUsage;
+		}
+		if (hasFlag(args, "--grid") || flagValue(args, "--age") || hasFlag(args, "--silhouette")) {
+			return renderSheet(*defName, *out, args);
 		}
 
 		int w = 256;
