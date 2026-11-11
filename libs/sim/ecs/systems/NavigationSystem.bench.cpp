@@ -663,6 +663,31 @@ namespace {
 		}
 	}
 
+	// A wall built once every loaded chunk's ground is meshed: its job carries the structural forest
+	// rebuild over all of it. range(0) is the chunk load radius around the forest's middle: 2 meshes
+	// 25 chunks, 5 meshes 121 (the most the system holds is the loaded chunks plus
+	// kKeptUnloadedChunks).
+	void BM_WallEditMeshedChunks(benchmark::State& state) {
+		const auto radius = static_cast<std::int32_t>(state.range(0));
+		world::ChunkManager chunks(std::make_unique<ForestRiverSampler>());
+		chunks.setLoadRadius(radius);
+		chunks.setUnloadRadius(radius + 2);
+		chunks.update({768.0F, 768.0F});
+		chunks.finishPendingGeneration();
+		for (auto _ : state) {
+			Rig rig(state.range(1), &chunks);
+			rig.nav.setPlacementData(nullptr, nullptr);
+			rig.settle();
+			begin();
+			rig.wall(kColony + glm::vec2{12.0F, 8.0F}, kColony + glm::vec2{20.0F, 8.0F}, false);
+			TickStats stats;
+			rig.ticks(stats, 10);
+			end();
+			stats.report(state);
+		}
+		state.counters["chunks"] = static_cast<double>(chunks.loadedChunkCount());
+	}
+
 	// The 25 real chunks around the Quick Start landing spawn, ground only, ticked until settled.
 	void BM_RealChunksGround(benchmark::State& state) {
 		// A worktree has no planets/ of its own unless it is junctioned; WORLDSIM_PLANET names the file.
@@ -729,4 +754,5 @@ BENCHMARK(BM_ColonistsWalk)->Arg(0)->Arg(2)->Iterations(1)->Unit(benchmark::kMil
 BENCHMARK(BM_Crowd20)->Args({0, 0})->Args({0, 2})->Args({1, 0})->Args({1, 2})->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_RequestPath)->Args({0, 0})->Args({1, 0})->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_TwoGroupsApart)->Arg(0)->Iterations(1)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_WallEditMeshedChunks)->Args({2, 0})->Args({5, 0})->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_RealChunksGround)->Arg(0)->Arg(2)->Iterations(1)->Unit(benchmark::kMillisecond);

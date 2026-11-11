@@ -436,9 +436,6 @@ namespace ecs {
 			return a.openingId == b.openingId && a.a == b.a && a.b == b.b && a.clearWidthMm == b.clearWidthMm;
 		}
 
-		gnav::PatchableMeshArgs meshArgs() {
-			return {.maxBoundsEdgeMm = NavigationSystem::kMaxBoundsEdgeMm};
-		}
 	} // namespace
 
 	// A thread that runs one job at a time, handed over by start() and waited for by wait().
@@ -521,8 +518,8 @@ namespace ecs {
 	}
 
 	NavigationSystem::NavigationSystem()
-		: detailMesh(meshArgs()),
-		  structural(meshArgs()),
+		: detailMesh({.maxBoundsEdgeMm = kNavMaxBoundsEdgeMm}),
+		  structural({.maxBoundsEdgeMm = kStructuralMaxBoundsEdgeMm}),
 		  navWorker(std::make_unique<Worker>()),
 		  structuralWorker(std::make_unique<Worker>()) {}
 
@@ -534,7 +531,7 @@ namespace ecs {
 		placement		= executor;
 		processedChunks = processed;
 		if (executor != nullptr) {
-			executor->takeRemovals();
+			static_cast<void>(executor->takeRemovals());
 		}
 	}
 
@@ -577,7 +574,7 @@ namespace ecs {
 	void NavigationSystem::update(float /*deltaTime*/) {
 		settle();
 		if (chunkManager != nullptr) {
-			gather(kFloraRingsPerTick, kFloraRemovalsPerTick, kChunkGroundPerTick);
+			gather(kFloraRingsPerTick, kFloraRemovalsPerTick, kGroundVerticesPerTick);
 		}
 	}
 
@@ -595,12 +592,12 @@ namespace ecs {
 		} while (chunkManager != nullptr && isBuilding());
 	}
 
-	void NavigationSystem::gather(std::size_t addBudget, std::size_t removeBudget, std::size_t groundBudget) {
+	void NavigationSystem::gather(std::size_t addBudget, std::size_t removeBudget, std::size_t groundVertexBudget) {
 		const std::vector<Rect> rects = wantedRects();
 		queueRemovedFlora();
 		dropFloraOfLostChunks();
 		gatherWalls();
-		gatherGround(groundBudget, rects, nullptr);
+		gatherGround(groundVertexBudget, rects, nullptr);
 		scanFlora(rects);
 		gatherFlora(addBudget, removeBudget, rects);
 	}
@@ -779,20 +776,87 @@ namespace ecs {
 
 	// --- Ground ------------------------------------------------------------------
 
-	void NavigationSystem::gatherGround(std::size_t budget, const std::vector<Rect>& rects, const Rect* within) {
-		struct Candidate {
-			std::int64_t		   priority;
-			world::ChunkCoordinate coord;
-			const world::Chunk*	   chunk;
-		};
-		std::vector<Candidate> candidates;
+	namespace {
+		constexpr gnav::RingId kGatheredRing = -2; // in a gathered patch, its id not yet known
+
+		bool gathered(gnav::RingId id) { return id != gnav::kNoRing; }
+
+		// A chunk's square enters the nav mesh with its sides cut to kNavMaxBoundsEdgeMm, so that
+		// is how many vertices it brings.
+		constexpr std::size_t kSquareVertices = static_cast<std::size_t>(4 * kChunkMm / NavigationSystem::kNavMaxBoundsEdgeMm);
+
+		std::size_t waterVertices(const std::vector<gnav::NavInputPolygon>& water) {
+			std::size_t vertices = 0;
+			for (const gnav::NavInputPolygon& ring : water) {
+				vertices += ring.ring.size();
+			}
+			return vertices;
+		}
+	} // namespace
+
+	void NavigationSystem::noteLoadedChunks() {
+		std::unordered_set<world::ChunkCoordinate> loaded;
 		for (const world::Chunk* chunk : std::as_const(*chunkManager).getLoadedChunks()) {
+			loaded.insert(chunk->coordinate());
 			if (!chunk->isReady()) {
 				continue;
 			}
-			const world::ChunkCoordinate coord = chunk->coordinate();
-			const auto					 it	   = ground.find(coord);
-			if (it != ground.end() && it->second.terrainVersion == chunk->terrainPolygons().version) {
+			const world::ChunkTerrainPolygons& polys = chunk->terrainPolygons();
+			auto [it, added]						 = ground.try_emplace(chunk->coordinate());
+			ChunkGround&					   g	 = it->second;
+			g.loaded								 = true;
+			if (added || !gathered(g.square.nav)) {
+				g.terrainVersion = polys.version;
+				continue;
+			}
+			if (g.terrainVersion == polys.version) {
+				continue;
+			}
+
+			// Terrain changed under meshed ground: its old water comes out and the new water goes in,
+			// in one patch per mesh.
+			gnav::PatchEdits navEdits;
+			gnav::PatchEdits structuralEdits;
+			for (const RingPair& water : g.water) {
+				navEdits.removes.push_back(water.nav);
+				structuralEdits.removes.push_back(water.structural);
+			}
+			nav::appendChunkWater(polys, navEdits.adds);
+			structuralEdits.adds = navEdits.adds;
+			g.water.assign(navEdits.adds.size(), {kGatheredRing, kGatheredRing});
+			g.terrainVersion = polys.version;
+			++groundVersion;
+			gatheredNav.patches.push_back(std::move(navEdits));
+			gatheredNav.onPatched.emplace_back([&g](const std::vector<RingId>& ids, double) {
+				for (std::size_t k = 0; k < ids.size(); ++k) {
+					g.water[k].nav = ids[k];
+				}
+			});
+			gatheredStructural.patches.push_back(std::move(structuralEdits));
+			gatheredStructural.onPatched.emplace_back([&g](const std::vector<RingId>& ids, double) {
+				for (std::size_t k = 0; k < ids.size(); ++k) {
+					g.water[k].structural = ids[k];
+				}
+			});
+		}
+		for (auto& [coord, g] : ground) {
+			if (g.loaded && !loaded.contains(coord)) {
+				g.loaded	 = false;
+				g.unloadedAt = ++unloadTicker;
+			}
+		}
+	}
+
+	void NavigationSystem::gatherGround(std::size_t vertexBudget, const std::vector<Rect>& rects, const Rect* within) {
+		noteLoadedChunks();
+
+		struct Candidate {
+			std::int64_t		   priority;
+			world::ChunkCoordinate coord;
+		};
+		std::vector<Candidate> candidates;
+		for (const auto& [coord, g] : ground) {
+			if (!g.loaded || gathered(g.square.nav)) {
 				continue;
 			}
 			const geometry::Vec2i64 lo = nav::chunkOriginMm(coord);
@@ -807,64 +871,130 @@ namespace ecs {
 				const std::int64_t		d = std::max(std::abs(geometry::floorDiv(c.x, kChunkMm) - coord.x), std::abs(geometry::floorDiv(c.y, kChunkMm) - coord.y));
 				priority				  = r == 0 ? d : std::min(priority, d);
 			}
-			candidates.push_back({priority, coord, chunk});
+			candidates.push_back({priority, coord});
 		}
 		std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
 			return a.priority != b.priority ? a.priority < b.priority : ChunkLess{}(a.coord, b.coord);
 		});
 
-		const std::size_t count = std::min(budget, candidates.size());
-		if (within == nullptr) {
-			groundPending = candidates.size() - count;
-		}
-		for (std::size_t i = 0; i < count; ++i) {
-			const Candidate&				   c	 = candidates[i];
-			ChunkGround&					   g	 = ground[c.coord];
-			const world::ChunkTerrainPolygons& polys = c.chunk->terrainPolygons();
-			const bool						   isNew = g.square.nav == gnav::kNoRing;
+		// Open chunks share a tick until their vertices would pass the budget; a chunk with water
+		// is the costliest kind of job there is, so it goes alone.
+		const bool	unlimited = vertexBudget == kUnlimited;
+		std::size_t taken	  = 0;
+		for (const Candidate& c : candidates) {
+			std::vector<gnav::NavInputPolygon> water;
+			nav::appendChunkWater(chunkManager->getChunk(c.coord)->terrainPolygons(), water);
+			const std::size_t cost = kSquareVertices + waterVertices(water);
+			if (taken > 0 && !unlimited && (!water.empty() || cost > vertexBudget)) {
+				break;
+			}
+			vertexBudget -= std::min(cost, vertexBudget);
+			++taken;
 
+			ChunkGround& g = ground[c.coord];
+			g.square	   = {kGatheredRing, kGatheredRing};
+			g.water.assign(water.size(), {kGatheredRing, kGatheredRing});
+			++groundVersion;
 			gnav::PatchEdits navEdits;
-			if (isNew) {
-				navEdits.adds.push_back(nav::chunkSquare(c.coord));
-			}
-			nav::appendChunkWater(polys, navEdits.adds);
+			navEdits.adds.push_back(nav::chunkSquare(c.coord));
+			navEdits.adds.insert(navEdits.adds.end(), water.begin(), water.end());
 			gnav::PatchEdits structuralEdits = navEdits;
-			for (const RingPair& water : g.water) {
-				navEdits.removes.push_back(water.nav);
-				structuralEdits.removes.push_back(water.structural);
-			}
-			const std::size_t rings = navEdits.adds.size();
-			g.terrainVersion		= polys.version;
+			const std::size_t rings			 = navEdits.adds.size();
 
 			// The nav mesh's time is held for the structural mesh's sink, which collects second and
 			// logs both.
 			auto navMs = std::make_shared<double>(0.0);
 			gatheredNav.patches.push_back(std::move(navEdits));
-			gatheredNav.onPatched.emplace_back([&g, isNew, navMs](const std::vector<RingId>& added, double ms) {
-				const std::size_t first = isNew ? 1 : 0;
-				if (isNew) {
-					g.square.nav = added[0];
-				}
-				g.water.assign(added.size() - first, {});
-				for (std::size_t k = first; k < added.size(); ++k) {
-					g.water[k - first].nav = added[k];
+			gatheredNav.onPatched.emplace_back([&g, navMs](const std::vector<RingId>& ids, double ms) {
+				g.square.nav = ids[0];
+				for (std::size_t k = 1; k < ids.size(); ++k) {
+					g.water[k - 1].nav = ids[k];
 				}
 				*navMs = ms;
 			});
 			gatheredStructural.patches.push_back(std::move(structuralEdits));
-			gatheredStructural.onPatched.emplace_back([&g, isNew, navMs, coord = c.coord, rings](const std::vector<RingId>& added, double ms) {
-				const std::size_t first = isNew ? 1 : 0;
-				if (isNew) {
-					g.square.structural = added[0];
-				}
-				for (std::size_t k = first; k < added.size(); ++k) {
-					g.water[k - first].structural = added[k];
+			gatheredStructural.onPatched.emplace_back([&g, navMs, coord = c.coord, rings, cost](const std::vector<RingId>& ids, double ms) {
+				g.square.structural = ids[0];
+				for (std::size_t k = 1; k < ids.size(); ++k) {
+					g.water[k - 1].structural = ids[k];
 				}
 				// Permanent nav-mesh work diagnostic: one chunk's ground (square and water) entering
 				// both meshes. DEBUG, dev-tools log server.
-				LOG_DEBUG(Engine, "[NavBuild] ground (%d, %d) nav %.3f ms structural %.3f ms rings %zu", coord.x, coord.y, *navMs, ms, rings);
+				LOG_DEBUG(Engine, "[NavBuild] ground (%d, %d) nav %.3f ms structural %.3f ms rings %zu vertices %zu", coord.x, coord.y,
+						  *navMs, ms, rings, cost);
 			});
+			if (!water.empty() && !unlimited) {
+				break;
+			}
 		}
+		if (within != nullptr) {
+			return;
+		}
+		// Ground leaves a chunk a tick, on a tick no ground arrived.
+		groundPending = candidates.size() - taken + dropUnloadedGround(unlimited ? kUnlimited : (taken > 0 ? 0 : 1));
+	}
+
+	bool NavigationSystem::hasStructures(world::ChunkCoordinate coord) const {
+		const geometry::Vec2i64 lo = nav::chunkOriginMm(coord);
+		const geometry::Vec2i64 hi{lo.x + kChunkMm, lo.y + kChunkMm};
+		const auto				inside = [&](const geometry::Vec2i64& p) { return p.x >= lo.x && p.x <= hi.x && p.y >= lo.y && p.y <= hi.y; };
+		return std::any_of(walls.begin(), walls.end(), [&](const WallRing& wall) { return std::any_of(wall.polygon.ring.begin(), wall.polygon.ring.end(), inside); }) ||
+			   std::any_of(doors.begin(), doors.end(), [&](const WallDoor& door) { return inside(door.portal.a); });
+	}
+
+	std::size_t NavigationSystem::dropUnloadedGround(std::size_t maxChunks) {
+		// Past the budget, the chunks unloaded longest ago that hold no walls or doors lose their
+		// ground, up to maxChunks of them, one patch per chunk, oldest first. Returns how many more
+		// are still to go.
+		std::vector<std::pair<std::uint64_t, world::ChunkCoordinate>> unloaded;
+		for (const auto& [coord, g] : ground) {
+			if (!g.loaded) {
+				unloaded.emplace_back(g.unloadedAt, coord);
+			}
+		}
+		std::sort(unloaded.begin(), unloaded.end(), [](const auto& a, const auto& b) { return a.first < b.first; }); // unloadedAt is unique
+		std::size_t kept	 = unloaded.size();
+		std::size_t taken	 = 0;
+		std::size_t leftOver = 0;
+		for (const auto& [at, coord] : unloaded) {
+			if (kept <= kKeptUnloadedChunks) {
+				break;
+			}
+			if (hasStructures(coord)) {
+				continue;
+			}
+			--kept;
+			ChunkGround& g = ground[coord];
+			if (!gathered(g.square.nav)) {
+				ground.erase(coord);
+				continue;
+			}
+			if (taken == maxChunks) {
+				++leftOver;
+				continue;
+			}
+			++taken;
+			gnav::PatchEdits navEdits;
+			gnav::PatchEdits structuralEdits;
+			navEdits.removes.push_back(g.square.nav);
+			structuralEdits.removes.push_back(g.square.structural);
+			for (const RingPair& water : g.water) {
+				navEdits.removes.push_back(water.nav);
+				structuralEdits.removes.push_back(water.structural);
+			}
+			ground.erase(coord);
+			++groundVersion;
+			gatheredNav.patches.push_back(std::move(navEdits));
+			gatheredNav.onPatched.emplace_back([](const std::vector<RingId>&, double) {});
+			gatheredStructural.patches.push_back(std::move(structuralEdits));
+			gatheredStructural.onPatched.emplace_back([](const std::vector<RingId>&, double) {});
+		}
+		return leftOver;
+	}
+
+	bool NavigationSystem::chunkGroundMeshed(world::ChunkCoordinate coord) const {
+		const auto it = ground.find(coord);
+		return it != ground.end() && gathered(it->second.square.nav);
 	}
 
 	// --- Flora ---------------------------------------------------------------------
@@ -924,15 +1054,15 @@ namespace ecs {
 			ranges.push_back({geometry::floorDiv(r.lo.x, kFloraCellMm), geometry::floorDiv(r.lo.y, kFloraCellMm),
 							  geometry::floorDiv(r.hi.x, kFloraCellMm), geometry::floorDiv(r.hi.y, kFloraCellMm)});
 		}
-		// Ground only ever grows, so its size can't alias; the processed set can (one chunk leaves
-		// as another arrives), so it is compared whole.
+		// groundVersion moves whenever ground comes in, changes or goes out, so it can't alias; the
+		// processed set can (one chunk leaves as another arrives), so it is compared whole.
 		const std::unordered_set<world::ChunkCoordinate> noneProcessed;
 		const std::unordered_set<world::ChunkCoordinate>& processed = processedChunks != nullptr ? *processedChunks : noneProcessed;
-		if (ranges == scannedRanges && ground.size() == scannedGround && processed == scannedProcessed) {
+		if (ranges == scannedRanges && groundVersion == scannedGround && processed == scannedProcessed) {
 			return;
 		}
 		scannedRanges	 = ranges;
-		scannedGround	 = ground.size();
+		scannedGround	 = groundVersion;
 		scannedProcessed = processed;
 
 		std::unordered_set<std::int64_t> wanted;
@@ -946,7 +1076,7 @@ namespace ecs {
 						continue;
 					}
 					const world::ChunkCoordinate chunk = cellChunk(cell);
-					if (!ground.contains(chunk) || !floraChunkUsable(chunk)) {
+					if (!chunkGroundMeshed(chunk) || !floraChunkUsable(chunk)) {
 						continue;
 					}
 					// One cell owns each entity, by its position in [lo, lo + cell).

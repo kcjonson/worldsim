@@ -1128,6 +1128,132 @@ TEST_F(NavigationSystemTest, SameScenarioSameMeshesAndPaths) {
 	EXPECT_EQ(first.sys.generation(), second.sys.generation());
 }
 
+// --- Kept-unloaded ground ---------------------------------------------------------
+
+namespace {
+	// A camera that loads one chunk at a time (load 0, unload 0), stepping east along chunk row 0.
+	struct ChunkWalk {
+		std::unique_ptr<world::ChunkManager> chunks = std::make_unique<world::ChunkManager>(landSampler());
+
+		ChunkWalk() {
+			chunks->setLoadRadius(0);
+			chunks->setUnloadRadius(0);
+		}
+
+		static glm::vec2 centre(int i) { return {256.0F + 512.0F * static_cast<float>(i), 256.0F}; }
+
+		void stand(int i) {
+			chunks->update({centre(i).x, centre(i).y});
+			chunks->finishPendingGeneration();
+		}
+	};
+
+	std::size_t meshedChunks(const NavigationSystem& sys, int count) {
+		std::size_t meshed = 0;
+		for (int i = 0; i < count; ++i) {
+			meshed += sys.inSimArea(ChunkWalk::centre(i)) ? 1 : 0;
+		}
+		return meshed;
+	}
+} // namespace
+
+// Ground stays meshed for at most kKeptUnloadedChunks unloaded chunks; past that the ones unloaded
+// longest ago lose it.
+TEST_F(NavigationSystemTest, KeptUnloadedGroundIsBounded) {
+	ChunkWalk		  walk;
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(walk.chunks.get());
+	sys.setConstructionWorld(&cw);
+
+	const int steps = static_cast<int>(NavigationSystem::kKeptUnloadedChunks) + 4;
+	for (int i = 0; i < steps; ++i) {
+		walk.stand(i);
+		settle(sys);
+	}
+	EXPECT_EQ(meshedChunks(sys, steps), NavigationSystem::kKeptUnloadedChunks + 1) << "the loaded chunk and the kept ones";
+	for (int i = 0; i < 3; ++i) {
+		EXPECT_FALSE(sys.inSimArea(ChunkWalk::centre(i))) << "chunk " << i << " was unloaded longest ago";
+	}
+	EXPECT_TRUE(sys.inSimArea(ChunkWalk::centre(steps - 1 - static_cast<int>(NavigationSystem::kKeptUnloadedChunks))));
+
+	// A dropped chunk that loads again meshes again.
+	walk.stand(0);
+	settle(sys);
+	EXPECT_TRUE(sys.inSimArea(ChunkWalk::centre(0)));
+}
+
+// A chunk with walls on it keeps its ground however long ago it unloaded.
+TEST_F(NavigationSystemTest, WalledChunkKeepsItsGround) {
+	ChunkWalk		  walk;
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(walk.chunks.get());
+	sys.setConstructionWorld(&cw);
+
+	walk.stand(0);
+	buildWall(cw, {200000, 200000}, {204000, 200000});
+	settle(sys);
+	const int steps = static_cast<int>(NavigationSystem::kKeptUnloadedChunks) + 4;
+	for (int i = 1; i < steps; ++i) {
+		walk.stand(i);
+		settle(sys);
+	}
+	EXPECT_TRUE(sys.inSimArea(ChunkWalk::centre(0))) << "the walled chunk kept its ground";
+	EXPECT_FALSE(sys.inSimArea(ChunkWalk::centre(1))) << "the next oldest went in its place";
+	EXPECT_EQ(meshedChunks(sys, steps), NavigationSystem::kKeptUnloadedChunks + 1);
+}
+
+// Going back to a chunk whose ground was kept patches nothing.
+TEST_F(NavigationSystemTest, RevisitInsideTheBudgetMeshesNothing) {
+	ChunkWalk		  walk;
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(walk.chunks.get());
+	sys.setConstructionWorld(&cw);
+
+	walk.stand(0);
+	settle(sys);
+	walk.stand(1);
+	settle(sys);
+	ASSERT_EQ(walk.chunks->getChunk({0, 0}), nullptr) << "chunk 0 unloaded";
+	const std::uint64_t generation = sys.generation();
+
+	walk.stand(0);
+	settle(sys);
+	EXPECT_EQ(sys.generation(), generation) << "the revisit patched something";
+	EXPECT_TRUE(sys.inSimArea(ChunkWalk::centre(0)));
+	EXPECT_TRUE(sys.inSimArea(ChunkWalk::centre(1))) << "and the chunk just left is kept";
+}
+
+// A tick that patches the structural mesh several times (a chunk's ground and a wall) moves the
+// reach key once.
+TEST_F(NavigationSystemTest, ReachKeyMovesOncePerStructuralJob) {
+	auto chunks = std::make_unique<world::ChunkManager>(landSampler());
+	chunks->setLoadRadius(0);
+	chunks->setUnloadRadius(8);
+	chunks->update({256.0F, 256.0F});
+	chunks->finishPendingGeneration();
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(chunks.get());
+	sys.setConstructionWorld(&cw);
+	settle(sys);
+	const std::uint64_t key = sys.reachFrom({256.0F, 256.0F}, kAgentRadius).startRegionGeneration;
+
+	chunks->update({768.0F, 256.0F});
+	chunks->finishPendingGeneration();
+	buildWall(cw, {100000, 100000}, {104000, 100000});
+	buildWall(cw, {100000, 110000}, {104000, 110000});
+	step(world, sys);
+	ASSERT_TRUE(sys.inSimArea({768.0F, 256.0F})) << "the new chunk came in this tick";
+	EXPECT_EQ(sys.reachFrom({256.0F, 256.0F}, kAgentRadius).startRegionGeneration, key + 1);
+}
+
 // --- Meshed ground: inSimArea, validity, water ---------------------------------
 
 TEST_F(NavigationSystemTest, InSimAreaFalseBeforeBuild) {

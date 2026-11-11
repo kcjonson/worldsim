@@ -10,13 +10,16 @@
 //  - structural: the same without flora. Reachability (its forests), placement buildability and
 //    the landing search read it, so neither the camera nor a felled tree changes what is reachable.
 // Neither mesh is ever rebuilt. Each update() diffs what should be in them against what is and
-// gathers the difference as patches, in a fixed order, under per-tick COUNT budgets (never a
-// time budget, so which tick a ring enters doesn't depend on frame time):
+// gathers the difference as patches, in a fixed order, under per-tick count and vertex budgets
+// (never a time budget, so which tick a ring enters doesn't depend on frame time):
 //  1. Felled trees (PlacementExecutor::takeRemovals) and the flora of chunks whose placement
-//     went away are queued for removal; a chunk that unloads keeps its ground.
+//     went away are queued for removal.
 //  2. Walls and doors, diffed by content whenever ConstructionWorld::version moves, all at once.
-//  3. Ground: kChunkGroundPerTick ready chunks whose ground is missing or whose terrain polygon
-//     version moved, nearest a mover or the view first. Each chunk is one patch per mesh.
+//  3. Ground: ready chunks whose ground is missing, nearest a mover or the view first, one patch
+//     per chunk per mesh: open chunks share a tick up to kGroundVerticesPerTick ring vertices, a
+//     chunk with water goes alone. A chunk whose terrain changes has its water re-derived. A chunk
+//     that unloads keeps its ground, up to kKeptUnloadedChunks of them; past that the one unloaded
+//     longest ago without walls or doors loses it, one chunk a tick, on a tick no ground arrives.
 //  4. Flora: the rects scanned for colliders in kFloraCellMm cells; up to kFloraRemovalsPerTick
 //     removals and kFloraRingsPerTick adds, one patch per cell, adds nearest a rect centre first.
 // endTick() hands the tick's patches to two worker threads, one per mesh, after every system has
@@ -284,15 +287,23 @@ class NavigationSystem : public ISystem {
 	// held so a tick's flora job stays near kJobBudgetMs on the worker; removals are cheaper per
 	// ring and mostly a lost chunk's flora far from every mover, so they get their own, larger,
 	// budget and never hold adds back.
-	static constexpr double		 kJobBudgetMs			= 2.0;
-	static constexpr std::size_t kFloraRingsPerTick		= 32;
-	static constexpr std::size_t kFloraRemovalsPerTick	= 128;
-	static constexpr std::size_t kChunkGroundPerTick	= 1;
+	static constexpr double		 kJobBudgetMs		   = 2.0;
+	static constexpr std::size_t kFloraRingsPerTick	   = 32;
+	static constexpr std::size_t kFloraRemovalsPerTick = 128;
+	// Open chunks (no water) share a tick until their squares' vertices would pass this; a chunk
+	// with water always goes alone. Two open chunks (128 vertices each), so a tick's worst ground
+	// job is no longer than one chunk with shoreline at today's costs; three measured longer.
+	static constexpr std::size_t kGroundVerticesPerTick = 256;
+	// Unloaded chunks whose ground stays meshed, so going back to them meshes nothing. Beyond
+	// it, the chunk unloaded longest ago without walls or doors loses its ground.
+	static constexpr std::size_t kKeptUnloadedChunks = 16;
 	// Flora is scanned in square cells of this side, aligned to chunk squares; a cell is scanned
 	// once and stays scanned until its chunk's placement goes away.
 	static constexpr std::int64_t kFloraCellMm = 16000;
-	// Chunk sides enter the meshes split to this (decision 8 in the spec).
-	static constexpr std::int64_t kMaxBoundsEdgeMm = 16000;
+	// Chunk sides enter each mesh split to this (decision 8 in the spec). The structural mesh's
+	// spacing sets its triangle count, and so its forest rebuild, apart from the nav mesh's.
+	static constexpr std::int64_t kNavMaxBoundsEdgeMm		 = 16000;
+	static constexpr std::int64_t kStructuralMaxBoundsEdgeMm = 16000;
 
   private:
 	using RingId = geometry::nav::RingId;
@@ -309,10 +320,18 @@ class NavigationSystem : public ISystem {
 		}
 	};
 
+	struct Rect {
+		geometry::Vec2i64 lo;
+		geometry::Vec2i64 hi;
+	};
+
+	// A ready chunk the system has seen, and its ground: kNoRing until gathered.
 	struct ChunkGround {
 		RingPair			  square;
 		std::vector<RingPair> water;
 		std::uint32_t		  terrainVersion = 0;
+		bool				  loaded		 = true;
+		std::uint64_t		  unloadedAt	 = 0; // order of unloading
 	};
 
 	struct WallRing {
@@ -344,10 +363,6 @@ class NavigationSystem : public ISystem {
 		std::int64_t cell = 0;
 	};
 
-	struct Rect {
-		geometry::Vec2i64 lo;
-		geometry::Vec2i64 hi;
-	};
 	// A rect's flora cells, inclusive.
 	struct CellRange {
 		std::int64_t minX = 0;
@@ -383,7 +398,7 @@ class NavigationSystem : public ISystem {
 
 	// One tick's patches with the given budgets into the gathered jobs; finishPendingBuilds runs
 	// it unbudgeted.
-	void gather(std::size_t addBudget, std::size_t removeBudget, std::size_t groundBudget);
+	void gather(std::size_t addBudget, std::size_t removeBudget, std::size_t groundVertexBudget);
 	// Hand `gathered` to the workers. No-op when it is empty.
 	void submit();
 	// Wait for the workers and, once per job, publish what it changed (generation counters, RRA*
@@ -399,9 +414,15 @@ class NavigationSystem : public ISystem {
 	void							dropFloraOfLostChunks();
 	[[nodiscard]] bool				floraChunkUsable(world::ChunkCoordinate coord) const;
 	void							gatherWalls();
-	// Up to `budget` ready chunks whose ground is missing or stale, nearest a rect first; only
-	// chunks meeting `within` when it is given.
-	void gatherGround(std::size_t budget, const std::vector<Rect>& rects, const Rect* within);
+	// Ground in and out: new and reloaded chunks are noted, a chunk whose terrain changed has its
+	// water re-derived, then chunks go in, nearest a rect first, within `vertexBudget`, and chunks
+	// past the kept-unloaded budget come out. Only chunks meeting `within` go in when it is given,
+	// and nothing comes out.
+	void						gatherGround(std::size_t vertexBudget, const std::vector<Rect>& rects, const Rect* within);
+	void						noteLoadedChunks();
+	std::size_t					dropUnloadedGround(std::size_t maxChunks);
+	[[nodiscard]] bool			hasStructures(world::ChunkCoordinate coord) const;
+	[[nodiscard]] bool			chunkGroundMeshed(world::ChunkCoordinate coord) const;
 	void scanFlora(const std::vector<Rect>& rects);
 	void gatherFlora(std::size_t addBudget, std::size_t removeBudget, const std::vector<Rect>& rects);
 
@@ -418,7 +439,9 @@ class NavigationSystem : public ISystem {
 	geometry::nav::PatchableMesh structural;
 
 	std::map<world::ChunkCoordinate, ChunkGround, ChunkLess> ground;
-	std::size_t												  groundPending = 0;
+	std::size_t												  groundPending = 0; // chunks left to come in or go out
+	std::uint64_t											  groundVersion = 0; // moves whenever ground comes in, changes or goes out
+	std::uint64_t											  unloadTicker	= 0;
 
 	std::uint64_t		  wallsVersion = UINT64_MAX;
 	std::vector<WallRing> walls;
@@ -430,7 +453,7 @@ class NavigationSystem : public ISystem {
 	std::unordered_set<std::int64_t>			scannedCells;
 	std::set<world::ChunkCoordinate, ChunkLess> floraChunks; // chunks with a scanned cell
 	std::vector<CellRange>						scannedRanges;
-	std::size_t									scannedGround = 0;
+	std::uint64_t								scannedGround = 0;
 	std::unordered_set<world::ChunkCoordinate>	scannedProcessed;
 
 	// The patches gathered and not yet handed to the workers, and the ones they are running or
