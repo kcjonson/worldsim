@@ -28,7 +28,12 @@ namespace theme {
 	void apply(ui::Context& context) {
 		ui::ThemeLoad load = ui::Theme::load({.tokens = &tokenTable(), .fontFamilies = fontFamilyNames()});
 		for (const ui::dtcg::Diagnostic& diagnostic : load.diagnostics) {
-			LOG_WARNING(UI, "theme: %s: %s", diagnostic.path.c_str(), diagnostic.message.c_str());
+			// The infos are the ui styles worldsim restyles on purpose (styles.button, styles.tab and the rest).
+			if (diagnostic.severity == ui::dtcg::Diagnostic::Severity::Info) {
+				LOG_DEBUG(UI, "theme: %s: %s", diagnostic.path.c_str(), diagnostic.message.c_str());
+			} else {
+				LOG_WARNING(UI, "theme: %s: %s", diagnostic.path.c_str(), diagnostic.message.c_str());
+			}
 		}
 		context.setTheme(std::move(load.theme));
 		context.icons().add(iconAtlas());

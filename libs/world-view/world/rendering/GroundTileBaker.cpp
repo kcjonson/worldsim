@@ -1,6 +1,8 @@
 #include "world/rendering/GroundTileBaker.h"
 
+#include "world/rendering/Bc3.h"
 #include "world/rendering/GroundTileCache.h"
+#include "world/rendering/ScreenStateGuard.h"
 
 #include <assets/AssetDefinition.h>
 #include <assets/AssetRegistry.h>
@@ -42,29 +44,6 @@ namespace worldview {
 			}();
 			return indices;
 		}
-
-		// Puts the screen's coordinate system and viewport back when a render is done. RenderTarget::end()
-		// already rebinds the target below it; the projection the batch draws with is this.
-		class ScreenStateGuard {
-		  public:
-			explicit ScreenStateGuard(Renderer::CoordinateSystem* restore)
-				: coordinateSystem(restore) {
-				Renderer::Primitives::getViewport(width, height);
-			}
-			~ScreenStateGuard() {
-				Renderer::Primitives::setCoordinateSystem(coordinateSystem);
-				Renderer::Primitives::setViewport(width, height);
-			}
-			ScreenStateGuard(const ScreenStateGuard&) = delete;
-			ScreenStateGuard& operator=(const ScreenStateGuard&) = delete;
-			ScreenStateGuard(ScreenStateGuard&&) = delete;
-			ScreenStateGuard& operator=(ScreenStateGuard&&) = delete;
-
-		  private:
-			Renderer::CoordinateSystem* coordinateSystem;
-			int							width = 0;
-			int							height = 0;
-		};
 
 		// The level's triangles in render pixels, unshared (3 vertices each) and in paint order, the ones
 		// that miss the target dropped. buildPaths has already put every path that crosses the tile edge
@@ -132,6 +111,21 @@ namespace worldview {
 			return static_cast<float>(std::sqrt(std::max(0.0, (sumSquares / n) - (average * average))));
 		}
 
+		// The RMS difference of two RGBA8 images' color channels, in 8-bit codes.
+		float rgbRms(std::span<const uint8_t> a, std::span<const uint8_t> b) {
+			if (a.size() != b.size() || a.empty()) {
+				return 0.0F;
+			}
+			double sumSquares = 0.0;
+			for (size_t i = 0; i < a.size(); ++i) {
+				if (i % 4 != 3) {
+					const double d = static_cast<double>(a[i]) - static_cast<double>(b[i]);
+					sumSquares += d * d;
+				}
+			}
+			return static_cast<float>(std::sqrt(sumSquares / (static_cast<double>(a.size()) * 0.75)));
+		}
+
 		void appendf(std::string& out, const char* format, auto... values) {
 			char line[256];
 			std::snprintf(line, sizeof(line), format, values...);
@@ -142,6 +136,10 @@ namespace worldview {
 
 	GroundTileBaker::GroundTileBaker(const Args& newArgs)
 		: args(newArgs) {}
+
+	uint32_t GroundTileBaker::variantSeed(const assets::AssetDefinition& def, uint32_t variant) {
+		return def.assetType == assets::AssetType::Simple ? variant : assets::variantSeed(def.ground.seedGroup, variant);
+	}
 
 	int GroundTileBaker::layerSize(const assets::AssetDefinition& def) {
 		const assets::GroundLayer layer = assets::groundLayer(def.ground.periodMeters, def.ground.pixelsPerMeter);
@@ -317,7 +315,7 @@ namespace worldview {
 		const auto build = [&](size_t first, size_t last) {
 			for (size_t v = first; v < last; ++v) {
 				variants[v].variant = static_cast<uint32_t>(v);
-				variants[v].seed = assets::variantSeed(def->ground.seedGroup, static_cast<uint32_t>(v));
+				variants[v].seed = variantSeed(*def, static_cast<uint32_t>(v));
 				built[v] = registry.buildPaths(bake.defName, variants[v].seed, variants[v].paths, density) ? 1 : 0;
 			}
 		};
@@ -330,7 +328,7 @@ namespace worldview {
 
 		for (uint32_t v = 0; v < count; ++v) {
 			if (built[v] == 0) {
-				LOG_ERROR(Engine, "GroundTileBaker: '%s' variant %u's generator failed", bake.defName.c_str(), v);
+				LOG_ERROR(Engine, "GroundTileBaker: '%s' variant %u's paths failed to build", bake.defName.c_str(), v);
 				return std::nullopt;
 			}
 		}
@@ -448,7 +446,13 @@ namespace worldview {
 			sample.heightSpread = heightSpread(decoded);
 			sample.contrast = ground::windowedRmsContrast(decoded);
 			sample.referenceContrast = ground::windowedRmsContrast(reference);
-			out.mips.push_back({.size = size, .rgba = std::move(encoded.rgba)});
+			std::vector<uint8_t>	   bc3 = encodeBc3(encoded.rgba, size, size);
+			const std::vector<uint8_t> bc3Rgba = decodeBc3(bc3, size, size);
+			sample.bc3DeltaE = ground::deltaE76(
+				glm::vec3(ground::mean(ground::decodeSrgb8({.width = size, .height = size, .rgba = bc3Rgba}))), sample.mean
+			);
+			sample.bc3Rms = rgbRms(encoded.rgba, bc3Rgba);
+			out.mips.push_back({.size = size, .rgba = std::move(encoded.rgba), .bc3 = std::move(bc3)});
 			out.samples.push_back(sample);
 			out.filterMs += msSince(phase);
 		}
@@ -531,6 +535,8 @@ namespace worldview {
 				m.meshCount = std::max(m.meshCount, s.meshCount);
 				m.renderMs += s.renderMs / static_cast<double>(variants.size());
 				m.heightSpread += s.heightSpread / static_cast<float>(variants.size());
+				m.bc3DeltaE = std::max(m.bc3DeltaE, s.bc3DeltaE);
+				m.bc3Rms = std::max(m.bc3Rms, s.bc3Rms);
 				for (int c = 0; c < 3; ++c) {
 					const float base = std::max(s0.mean[c], 1e-6F);
 					m.meanErrorPercent = std::max(m.meanErrorPercent, 100.0F * std::abs(s.mean[c] - s0.mean[c]) / base);
@@ -592,11 +598,13 @@ namespace worldview {
 				filterMs / n
 			);
 		}
-		appendf(out, "mip  size  render       verts  meshes   rnd ms  mean%%  dE0   dEprev  spread  contrast   lock%%  h sd\n");
+		appendf(
+			out, "mip  size  render       verts  meshes   rnd ms  mean%%  dE0   dEprev  spread  contrast   lock%%  h sd  bc3 dE  rms\n"
+		);
 		for (const GroundMipMetrics& m : bake.metrics) {
 			appendf(
 				out,
-				"%3d  %4d  %4d (%dx)  %7zu  %6zu  %7.1f  %5.2f  %4.2f  %6.2f  %6.2f  %3.0f-%3.0f%%  %5.2f  %4.2f",
+				"%3d  %4d  %4d (%dx)  %7zu  %6zu  %7.1f  %5.2f  %4.2f  %6.2f  %6.2f  %3.0f-%3.0f%%  %5.2f  %4.2f  %6.2f  %4.1f",
 				m.level,
 				m.size,
 				m.renderSize,
@@ -611,7 +619,9 @@ namespace worldview {
 				static_cast<double>(m.contrastRatioMin * 100.0F),
 				static_cast<double>(m.contrastRatioMax * 100.0F),
 				static_cast<double>(m.lockShiftPercent),
-				static_cast<double>(m.heightSpread)
+				static_cast<double>(m.heightSpread),
+				static_cast<double>(m.bc3DeltaE),
+				static_cast<double>(m.bc3Rms)
 			);
 			if (m.failures() > 0) {
 				out += "  FAIL:";
