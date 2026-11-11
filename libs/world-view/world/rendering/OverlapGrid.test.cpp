@@ -2,6 +2,9 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
+#include <limits>
+
 namespace worldview {
 
 	TEST(OverlapGrid, OverlappingFootprintsCollide) {
@@ -44,6 +47,16 @@ namespace worldview {
 		EXPECT_GT(off.x0, off.x1);
 		grid.mark(off, 2);
 		EXPECT_EQ(grid.latest(grid.cellsOf({0.0F, 0.0F}, {99.0F, 99.0F})), 0U);
+	}
+
+	// cellsOf's floor is std::floor's, so a footprint covers the cells it did.
+	TEST(OverlapGrid, FloorOfIsStdFloor) {
+		for (const float v : {0.0F, -0.0F, 0.25F, -0.25F, 1.0F, -1.0F, 2.5F, -2.5F, 767.999F, -0.999F, 8388607.5F, -8388607.5F,
+							  8388608.0F, -16777216.0F, 3.0e9F, -3.0e9F}) {
+			EXPECT_EQ(OverlapGrid::floorOf(v), std::floor(v)) << v;
+		}
+		EXPECT_TRUE(std::isnan(OverlapGrid::floorOf(std::numeric_limits<float>::quiet_NaN())));
+		EXPECT_EQ(OverlapGrid::floorOf(std::numeric_limits<float>::infinity()), std::numeric_limits<float>::infinity());
 	}
 
 	TEST(OverlapGrid, ANewFrameStartsEmpty) {

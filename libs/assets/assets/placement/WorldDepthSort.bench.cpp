@@ -1,7 +1,7 @@
 // Per-frame CPU cost of the world 2.5D depth stream. Two things are measured:
 //
 //  1. BM_WorldDepthSort_GatherAndSort - the merge + stable_sort baseline (mirrors
-//     ZSort.bench.cpp): derive an anchorY, push a light {anchorY, ptr, animated}
+//     ZSort.bench.cpp): derive an anchorY, push a light {anchorY, ptr}
 //     item, stable_sort ascending. This is the part that scales with visible count.
 //
 //  2. The gather itself, old vs new, to quantify the perf-hardening change that
@@ -38,6 +38,8 @@ namespace {
 	using assets::meshYExtent;
 	using assets::routesTall;
 	using assets::sortByAnchorY;
+	using assets::Upright;
+	using assets::uprightOf;
 
 	// Representative visible-entity counts: a normal scene, a busy one, and the
 	// observed dense zoom-out (~34k).
@@ -123,17 +125,18 @@ namespace {
 static void BM_WorldDepthSort_GatherAndSort(benchmark::State& state) {
 	const int				   n = static_cast<int>(state.range(0));
 	std::vector<PlacedEntity>  entities = makeEntities(n);
+	std::vector<Upright>	   uprights;
+	for (const auto& e : entities) {
+		uprights.push_back(uprightOf(e));
+	}
 	std::vector<DepthSortItem> items;
 	items.reserve(static_cast<size_t>(n));
 
 	for (auto _ : state) {
 		items.clear();
-		int i = 0;
-		for (const auto& e : entities) {
-			const float anchorY = computeAnchorY(e.position.y, e.rotation, e.scale);
-			const bool	animated = (i % 20) == 0; // ~5% actors interleave
-			items.push_back({anchorY, &e, animated});
-			++i;
+		for (size_t i = 0; i < entities.size(); ++i) {
+			const PlacedEntity& e = entities[i];
+			items.push_back({computeAnchorY(e.position.y, e.rotation, e.scale), &uprights[i]});
 		}
 		sortByAnchorY(items);
 		benchmark::DoNotOptimize(items.data());
@@ -146,16 +149,21 @@ BENCHMARK(BM_WorldDepthSort_GatherAndSort)->Arg(kMinEntities)->Arg(kMidEntities)
 // NEW gather: read the precomputed anchorY + isTallOccluder, skip non-tall, push, sort.
 static void BM_WorldDepthGather_PrecomputedRead(benchmark::State& state) {
 	Scene					   scene = makeScene(static_cast<int>(state.range(0)));
+	std::vector<Upright>	   uprights;
+	for (const auto& e : scene.entities) {
+		uprights.push_back(uprightOf(e));
+	}
 	std::vector<DepthSortItem> items;
 	items.reserve(scene.entities.size());
 
 	for (auto _ : state) {
 		items.clear();
-		for (const auto& e : scene.entities) {
+		for (size_t i = 0; i < scene.entities.size(); ++i) {
+			const PlacedEntity& e = scene.entities[i];
 			if (!e.isTallOccluder) {
 				continue;
 			}
-			items.push_back({e.anchorY, &e, false});
+			items.push_back({e.anchorY, &uprights[i]});
 		}
 		sortByAnchorY(items);
 		benchmark::DoNotOptimize(items.data());
@@ -169,12 +177,17 @@ BENCHMARK(BM_WorldDepthGather_PrecomputedRead)->Arg(kMinEntities)->Arg(kMidEntit
 // extent map) + height calc before it can skip short flora, then anchorY + push + sort.
 static void BM_WorldDepthGather_PerEntityLookup(benchmark::State& state) {
 	Scene					   scene = makeScene(static_cast<int>(state.range(0)));
+	std::vector<Upright>	   uprights;
+	for (const auto& e : scene.entities) {
+		uprights.push_back(uprightOf(e));
+	}
 	std::vector<DepthSortItem> items;
 	items.reserve(scene.entities.size());
 
 	for (auto _ : state) {
 		items.clear();
-		for (const auto& e : scene.entities) {
+		for (size_t i = 0; i < scene.entities.size(); ++i) {
+			const PlacedEntity& e = scene.entities[i];
 			if (scene.groundcoverNames.count(e.defName) != 0) {
 				continue;
 			}
@@ -188,7 +201,7 @@ static void BM_WorldDepthGather_PerEntityLookup(benchmark::State& state) {
 			if (worldHeight < kShortFloraMaxHeight) {
 				continue;
 			}
-			items.push_back({computeAnchorY(e.position.y, ext.maxY, e.scale), &e, false});
+			items.push_back({computeAnchorY(e.position.y, ext.maxY, e.scale), &uprights[i]});
 		}
 		sortByAnchorY(items);
 		benchmark::DoNotOptimize(items.data());

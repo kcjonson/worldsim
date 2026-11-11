@@ -14,7 +14,6 @@
 #include "world/rendering/RunPlanner.h"
 #include "world/rendering/SelectionOutline.h"
 #include "world/rendering/TemplateLevelBuilder.h"
-#include "world/rendering/TemplateMeshCache.h"
 
 #include <graphics/Color.h>
 #include <math/Types.h>
@@ -124,20 +123,23 @@ class InstancedEntityRenderer {
 	}
 
 	static constexpr uint32_t kNoUse = UINT32_MAX;
+	static constexpr uint32_t kNoSlot = UINT32_MAX;
 
-	// Per template id: its def's detail levels and which are on the GPU, and what this frame
-	// settled for it once, at its first entity: the level it wants, and the slot it draws and
-	// its LevelStats::uses entry.
+	// Per template id: its registry mesh (the reference level's) and def's detail levels, which
+	// levels are on the GPU, and what this frame settled for it once, at its first instanced
+	// entity: the slot it draws, that mesh's bounds, and its LevelStats::uses entry.
 	struct TemplateLevels {
-		std::span<const float>	densities; // empty: one level, 0
-		uint8_t					reference = 0;
-		uint8_t					readyMask = 0; // bit i: level i is Ready
-		bool					resolved = false;
-		uint8_t					wanted = 0;
-		uint64_t				wantedFrame = 0;
-		uint64_t				drawFrame = 0;
-		std::optional<uint32_t> drawSlot; // none: no level is ready
-		uint32_t				use = kNoUse;
+		const renderer::TessellatedMesh* mesh = nullptr; // the registry's; null: nothing to draw
+		std::span<const float>			 densities;		 // empty: one level, 0
+		uint8_t							 reference = 0;
+		uint8_t							 readyMask = 0; // bit i: level i is Ready
+		bool							 resolved = false;
+		uint64_t						 frame = 0;
+		uint32_t						 drawSlot = kNoSlot; // kNoSlot: no level is ready
+		Foundation::Vec2				 boundsMin{0.0F, 0.0F};
+		Foundation::Vec2				 boundsMax{0.0F, 0.0F};
+		float							 radius = 0.0F;
+		uint32_t						 use = kNoUse;
 	};
 	std::vector<TemplateLevels> templateLevels;
 
@@ -145,17 +147,6 @@ class InstancedEntityRenderer {
 	std::deque<uint32_t> uploadQueue; // slot indices in Waiting, oldest first
 	uint64_t			 frameIndex = 0;
 	LevelStats			 lastLevelStats;
-
-	// One entity of the stream, classified and, when instanced, bounded on the screen.
-	enum class ItemKind : uint8_t { Skip, Animated, Instanced };
-	struct ItemBounds {
-		Renderer::InstanceData instance; // what its run draws it with
-		OverlapGrid::Cells cells;		 // the overlap grid cells it covers
-		bool small = false;				 // at most kUnorderedFootprintPixels across
-		uint32_t		 slot = 0;	// the mesh slot it draws
-		ItemKind		 kind = ItemKind::Skip;
-	};
-	std::vector<ItemBounds> itemBounds;
 
 	// This frame's runs, by the index the planner gave them; the planner says the order they draw in.
 	struct Run {
@@ -165,9 +156,6 @@ class InstancedEntityRenderer {
 	std::vector<Run> runs;
 	uint32_t		 runCount = 0;
 	RunPlanner		 planner;
-
-	// Memoized reference template meshes (by template id)
-	TemplateMeshCache templateCache;
 
 	// Per-frame CPU geometry for animated entities (per-part deformed, so not GPU-instanceable):
 	// their parts are transformed on the CPU and flushed at their sorted position.
@@ -179,15 +167,19 @@ class InstancedEntityRenderer {
 	// entity-backed is selected). Drawn at its anchorY inside emitSorted.
 	SelectionOutline selectionOutline;
 
-	/// A template's detail levels, read from the registry the first time.
+	/// A template's mesh and detail levels, read from the registry the first time.
 	TemplateLevels& levelsOf(uint32_t templateId);
+
+	/// Settles a template's level for this frame, at its first instanced entity: asks for the level
+	/// the camera's density picks and the reference level, and draws the nearest one that is ready.
+	void settleLevel(uint32_t templateId, TemplateLevels& levels, LevelStats& levelStats);
 
 	/// The slot of a template's level, made on first use.
 	MeshSlot& slotAt(uint32_t index);
 
 	/// Asks for a template's level this frame: the reference level is the registry's mesh, queued
 	/// for upload; another goes to the level builder until it comes back.
-	void want(uint32_t templateId, uint8_t level, const renderer::TessellatedMesh& referenceMesh);
+	void want(uint32_t templateId, uint8_t level);
 
 	/// Takes the level builder's finished meshes, then uploads waiting meshes within the budget.
 	void collectAndUpload();

@@ -70,18 +70,19 @@ TEST(PackagedLayout, LayersStayOrderedThroughDepthSort) {
 	other.defName = "Rock";
 	other.anchorY = pl.item.anchorY;
 
-	std::vector<assets::DepthSortItem> items = {
-		{other.anchorY, &other, false},
-		{pl.crateBack.anchorY, &pl.crateBack, false},
-		{pl.item.anchorY, &pl.item, false},
-		{pl.crateFront.anchorY, &pl.crateFront, false},
+	const std::vector<assets::Upright> uprights = {
+		assets::uprightOf(other), assets::uprightOf(pl.crateBack), assets::uprightOf(pl.item), assets::uprightOf(pl.crateFront)
 	};
+	std::vector<assets::DepthSortItem> items;
+	for (const assets::Upright& upright : uprights) {
+		items.push_back({upright.anchorY, &upright});
+	}
 	assets::sortByAnchorY(items);
 
 	ASSERT_EQ(items.size(), 4U);
 	auto indexOf = [&](const assets::PlacedEntity* e) {
 		for (int i = 0; i < static_cast<int>(items.size()); ++i) {
-			if (items[i].entity == e) {
+			if (items[i].upright->entity == e) {
 				return i;
 			}
 		}

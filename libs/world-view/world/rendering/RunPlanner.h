@@ -38,15 +38,17 @@ class RunPlanner {
 	[[nodiscard]] uint32_t splits() const { return splitCount; }
 
   private:
-	// A draw's place on the timeline as a grid key: 1 + layer * meshCount + the mesh's order. Keys
-	// grow with depth order, so a cell's largest key is the latest place drawn over it.
-	[[nodiscard]] uint32_t keyOf(uint32_t layer, uint32_t order) const { return 1 + (layer * meshBound) + order; }
+	// A draw's place on the timeline as a grid key: 1 + layer * meshBound + the mesh's order, meshBound
+	// the power of two at or above the mesh count so a key splits by shift and mask. Keys grow with
+	// depth order, so a cell's largest key is the latest place drawn over it.
+	[[nodiscard]] uint32_t keyOf(uint32_t layer, uint32_t order) const { return 1 + (layer << meshShift) + order; }
 
 	// Every entity marks `all`; only those not small mark `large`. A large entity reads `all`, a small one `large`.
 	OverlapGrid all;
 	OverlapGrid large;
 
 	uint32_t meshBound = 1;
+	uint32_t meshShift = 0;
 
 	// Per mesh, its order this frame (kNone before it first appears); per order, the mesh, its draws
 	// by layer (kNone: none), and the close count when it last opened a draw.

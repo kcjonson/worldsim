@@ -55,11 +55,26 @@ namespace assets {
 	};
 	[[nodiscard]] MeshYExtent meshYExtent(const renderer::TessellatedMesh* mesh);
 
+	// One upright of the stream, with what culling, sorting and drawing read copied out of its entity,
+	// so a frame walks these instead of the entities scattered over the spatial index's cells.
+	struct Upright {
+		float				anchorY = 0.0F;
+		glm::vec2			position{0.0F, 0.0F};
+		float				rotation = 0.0F;
+		float				scale = 1.0F;
+		glm::vec4			colorTint{1.0F, 1.0F, 1.0F, 1.0F};
+		uint32_t			templateId = 0;
+		bool				isAnimated = false; // per-part deformed colonist -> CPU path, breaks instanced runs
+		const PlacedEntity* entity = nullptr;
+	};
+
+	/// The upright an entity draws as; animated when it carries part transforms.
+	[[nodiscard]] Upright uprightOf(const PlacedEntity& entity);
+
 	// One sortable reference into the merged upright-occluder + actor stream.
 	struct DepthSortItem {
-		float						anchorY = 0.0F;
-		const assets::PlacedEntity* entity = nullptr;
-		bool						isAnimated = false; // per-part deformed colonist -> CPU path, breaks instanced runs
+		float		   anchorY = 0.0F;
+		const Upright* upright = nullptr;
 	};
 
 	// Stable ascending sort by anchorY. Submission order == depth order; stable so
@@ -78,35 +93,33 @@ namespace assets {
 	// backgroundOnFastPath == false (batched fallback, which has no separate
 	// background): every static is included so nothing is dropped.
 	//
-	// Each chunk's statics are kept sorted between frames, rebuilt when its index changes,
-	// so a frame culls those lists and merges them instead of querying and sorting every
-	// static in view. The result is the same sequence a stable sort of the chunks' queries,
-	// in (y, x) chunk order, then the dynamic entities, would give.
+	// Each chunk's statics are kept as Uprights sorted between frames, rebuilt when its index
+	// changes, so a frame culls the stretch of each list the view's rows can reach and merges
+	// them instead of querying and sorting every static in view. The result is the same sequence
+	// a stable sort of the chunks' queries, in (y, x) chunk order, then the dynamic entities,
+	// would give. Its items point into the gather, valid until the next gather.
 	class WorldDepthGather {
 	  public:
 		void gather(const RenderContext& ctx, std::vector<DepthSortItem>& out, bool backgroundOnFastPath);
 
 	  private:
-		// One static of a chunk, with what culling and sorting read copied out of the entity.
-		struct Static {
-			float				anchorY = 0.0F;
-			glm::vec2			position{0.0F, 0.0F};
-			const PlacedEntity* entity = nullptr;
-		};
 		// A chunk's statics as of an index version, stable-sorted by anchorY from the index's
-		// query order, and the box their positions span.
+		// query order, the box their positions span, and the farthest any anchorY is from its
+		// position's y.
 		struct ChunkStatics {
 			const SpatialIndex* index = nullptr;
 			uint64_t			version = 0;
 			bool				tallOnly = false;
+			float				anchorReach = 0.0F;
 			uint64_t			usedFrame = 0;
 			glm::vec2			min{0.0F, 0.0F};
 			glm::vec2			max{0.0F, 0.0F};
-			std::vector<Static> statics;
+			std::vector<Upright> statics;
 		};
 		std::unordered_map<world::ChunkCoordinate, ChunkStatics> chunks;
 		std::vector<world::ChunkCoordinate>						 orderedChunks;
 		std::vector<size_t>										 segmentEnds; // per chunk, where its items end in out
+		std::vector<Upright>									 dynamics;	  // this frame's visible dynamic entities
 		uint64_t												 frame = 0;
 
 		/// The chunk's sorted statics, rebuilt when its index is new or has changed.
