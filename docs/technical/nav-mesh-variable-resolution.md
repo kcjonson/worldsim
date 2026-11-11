@@ -174,6 +174,7 @@ The mesh persists. Events change it a cell at a time:
 | A tree is felled, a node depleted | Removed in place from the fine forms that hold it (4.4.1) |
 | A wall or door is removed | Removed in place from the coarse and fine forms that hold it |
 | A wall or door is built, flora gains a collider | Added in place (4.4.2) |
+| A large object moves | One hole over its old and new footprints is re-derived (4.4.3) |
 | Detail turns on for a cell | Its fine form is derived, or taken from the cache |
 | Detail turns off | Its fine form moves to the cache. Nothing is rebuilt |
 | A chunk unloads | Its cells are dropped |
@@ -222,6 +223,29 @@ as the cell.
 
 A new obstacle can break stored paths, so paths crossing the hole's triangles replan (4.7), and
 a new wall also changes the coarse form and so reachability.
+
+#### 4.4.3 Moving an obstacle
+
+A move is the same operation with one hole covering both footprints.
+
+1. Find the triangles the old footprint and the new footprint intersect, plus those under any ring either one crosses.
+2. Take the closed loop of existing edges around that set as the hole's boundary and hold it fixed.
+3. Re-derive only the inside, from the rings that touch the hole with the object at its new position, and splice it back.
+
+Because the inside is derived from rings and not from the old triangles, a move cleans up after
+itself: crossing points the object made at its old position are gone, so nothing piles up
+along its track the way stray vertices do in Kallmann's repeated-move tests. An object that
+straddles a seam makes a hole in both cells and the seam between them is relinked.
+
+Motion adds four things a one-off edit doesn't have:
+
+- **Rate.** Patching on every tick of continuous motion is a per-tick cost. The object patches when it has moved a set distance or stops, and between patches other movers avoid it by collision. The distance is tuned from a measurement.
+- **Reachability.** A large mobile object is structural, so it is in the coarse form and each patch can open or close a gap. A whole-forest rebuild per patch is too much, so the first mobile obstacle is what forces reachability to be per cell with a portal graph on top (4.7).
+- **Paths.** Each patch replans the movers whose remaining route crosses the hole, and only those.
+- **Who is underneath.** A mover standing where the object arrives is inside a blocked face and takes the snap in 4.8.
+
+Nothing in the game moves as a mesh obstacle today, so this is built with the first one, on
+top of steps 6 and 7.
 
 Rule 2 holds because cells are keyed by coordinate and level, and every change after a cell's
 first derive is a patch. Two requesters of the same ground get the same cell.
