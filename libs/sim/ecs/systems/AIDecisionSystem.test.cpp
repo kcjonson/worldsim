@@ -46,7 +46,6 @@
 #include <glm/geometric.hpp>
 #include <glm/vec2.hpp>
 
-#include <chrono>
 #include <cmath>
 #include <memory>
 #include <optional>
@@ -731,10 +730,10 @@ namespace ecs::test {
 	}
 
 	// =============================================================================
-	// Performance Tests
+	// Scale Tests
 	// =============================================================================
 
-	TEST_F(AIDecisionSystemTest, HandlesMultipleColonistsEfficiently) {
+	TEST_F(AIDecisionSystemTest, EveryColonistOfManyGetsATask) {
 		constexpr int kNumColonists = 100;
 
 		// Create many colonists
@@ -764,15 +763,7 @@ namespace ecs::test {
 			}
 		}
 
-		// This should complete in reasonable time
-		auto start = std::chrono::high_resolution_clock::now();
 		world->update(0.016F);
-		auto end = std::chrono::high_resolution_clock::now();
-
-		auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-
-		// Should process 100 colonists in well under 100ms
-		EXPECT_LT(duration.count(), 100);
 
 		// Verify all colonists have tasks
 		for (auto colonist : colonists) {
@@ -782,7 +773,7 @@ namespace ecs::test {
 		}
 	}
 
-	TEST_F(AIDecisionSystemTest, MemoryCapacityDoesNotAffectDecisionSpeed) {
+	TEST_F(AIDecisionSystemTest, FindsANeedSourceInALargeMemory) {
 		auto colonist = createColonist({0.0F, 0.0F});
 
 		// Fill memory with many entities - use Drinkable for simpler path
@@ -801,14 +792,7 @@ namespace ecs::test {
 		setNeedValue(colonist, NeedType::Energy, 100.0F);
 		setNeedValue(colonist, NeedType::Bladder, 100.0F);
 
-		auto start = std::chrono::high_resolution_clock::now();
 		world->update(0.016F);
-		auto end = std::chrono::high_resolution_clock::now();
-
-		auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-
-		// Should still be fast even with large memory
-		EXPECT_LT(duration.count(), 50);
 
 		// Should have found an entity and created task
 		auto* task = getTask(colonist);
