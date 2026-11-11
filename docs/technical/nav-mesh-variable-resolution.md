@@ -39,10 +39,10 @@ Kevin's rules for this system, 2026-11-10. Everything below is judged against th
 
 | Area | Today | After |
 |---|---|---|
-| Storage | A list of rectangles: a 60 m square per colonist, one for the viewport, overlapping ones merged, re-squared, clamped to 128 m. Each has its own complete mesh | One persistent mesh over all loaded ground. The only partition is the chunk |
+| Storage | A list of rectangles: a 60 m square per colonist, one for the viewport, overlapping ones merged, re-squared, clamped to 128 m. Each has its own complete mesh | One persistent mesh over every chunk that has been loaded. Unloading a chunk lowers its resolution and keeps its mesh |
 | Change | Any trigger rebuilds a whole rectangle. A wall edit or a felled tree anywhere rebuilds every rectangle (global counters) | The triangles around a changed obstacle are patched, nothing else |
 | Repeated work | Built rectangles overlap; a recenter re-meshes mostly unchanged ground; the placement mesh is a third copy | An obstacle enters the mesh once and leaves it once |
-| Connectivity | A path needs both ends in one rectangle. Another rectangle reads unreachable, no rectangle holds | Paths cross all loaded ground |
+| Connectivity | A path needs both ends in one rectangle. Another rectangle reads unreachable, no rectangle holds | Paths cross all meshed ground |
 | Detail | Every tree, everywhere a rectangle exists | Flora enters the mesh the first time an area needs it, and blocks only where detail is on |
 | Camera | Drives a rectangle like a colonist does, so it reshapes and can stall colonist coverage | Turns detail on and off. Nothing else |
 | Movers | Colonists only, and not in the mesh | Anything with a position and a clearance, each with a footprint in the mesh |
@@ -122,7 +122,7 @@ has a forward-only rule. Section 4.7 is new.
 
 ### 4.1 One mesh
 
-The nav mesh is a single triangulation of all loaded ground. It is created once and lives as
+The nav mesh is a single triangulation of every chunk that has been loaded. It is created once and lives as
 long as the game does. Triangles and vertices have stable ids; a patch frees some and allocates
 others, and every id it didn't touch still means what it meant.
 
@@ -136,13 +136,29 @@ them to do. A patch is already smaller than any cell. An obstacle enters the mes
 there is nothing to key or cache. And a grid of cell borders would only add triangles, plus a
 seam problem where a detailed cell meets a plain one.
 
-**The chunk is the one partition, and it already exists.** Ground arrives and leaves a chunk
-at a time, so each chunk's square is a ring of constrained edges in the mesh. A chunk loading
-adds its square and its terrain; a chunk unloading removes every triangle inside its square.
-Vertices on a border between two loaded chunks are shared, exactly, because it is one mesh.
-Ground that isn't loaded has no triangles. The same borders keep every geometric test local,
-so exact arithmetic never spans more than neighbouring chunks no matter how far apart two
-loaded areas are.
+**The chunk is the one partition, and it already exists.** Ground arrives a chunk at a time,
+so each chunk's square is a ring of constrained edges in the mesh. Vertices on a border
+between two chunks are shared, exactly, because it is one mesh, and paths and patches cross it
+like any other edge. In that narrow sense the chunk is a cell: it is the unit ground arrives
+in, the unit its first mesh is built in, and the unit memory is reclaimed in. It is never the
+unit a change is applied in.
+
+The borders do one more job. The triangulation's in-circle test is exact only while the points
+involved are within about 2^30 mm of each other, and a planet is bigger than that. With chunk
+borders in the mesh no triangle is larger than a chunk, so every test is local however far
+apart two meshed areas are.
+
+**Unloading a chunk lowers its resolution; it does not remove its mesh.** A chunk that unloads
+gives back its tiles and its placed entities, so its flora and footprints come out of the
+mesh. Its structural triangles stay: shoreline, walls, doors. The mesh therefore covers every
+chunk that has ever been loaded, at full resolution where something is simulating or looking
+and at structural resolution everywhere else, and it stays one connected thing as the camera
+and the colony move apart. A chunk that reloads does not get its structural mesh built again.
+
+Structural triangles are reclaimed only under a memory budget, starting with chunks that hold
+no built structures and were loaded longest ago. Open ground costs two triangles a chunk, so
+the budget is about chunks with a lot of shoreline; what they cost is measured in step 4.
+Ground that has never been loaded has no triangles.
 
 ### 4.2 Obstacle classes and the structural layer
 
@@ -181,7 +197,8 @@ anything outside its hole.
 | A wall or door is built, flora first enters an area, flora gains a collider | Add (4.3.2) |
 | A mover's footprint or a large object moves | Move (4.3.3) |
 | A chunk loads | Its square and terrain rings are added; on its generation worker for the structural layer |
-| A chunk unloads | The triangles inside its square are removed |
+| A chunk unloads | Its detail obstacles are removed (4.3.1). Its structural triangles stay |
+| The mesh passes its memory budget | The oldest unloaded chunks without structures lose their triangles |
 
 A structural change applies the same operation to the structural layer.
 
@@ -279,7 +296,9 @@ behaviour difference.
 
 ### 4.5 Coverage and chunks
 
-The mesh covers every loaded chunk. A chunk's structural layer depends only on its terrain
+The mesh covers every chunk that has been loaded and not reclaimed (4.1). A route can be
+planned across unloaded ground that is still meshed; the chunks along it load as the mover's
+anchor reaches them. A chunk's structural layer depends only on its terrain
 polygons, which are already built on the chunk's generation worker, so it is built there too
 and arrives with the chunk. This is the one place a whole chunk's rings go through the
 arrangement at once, which is why the quadratic loop still has to go (step 1).
@@ -291,13 +310,13 @@ camera, so panning away unloads the colony's chunks). Placement runs for anchore
 same as for camera chunks, because colonists harvest off camera.
 
 So a mover always has mesh under it and around it, and "off area, holding" stops existing
-inside loaded ground. Two groups of movers in loaded areas that don't touch are not joined by
-mesh in this epic; see 4.10.
+inside meshed ground. Two groups of movers are joined by mesh when the ground between them has
+been loaded at some point. Where it never has, they are not joined in this epic; see 4.10.
 
 ### 4.6 Queries
 
 - **Path.** Triangle A* over the nav mesh, then the funnel, with the per-agent filter deciding which tagged faces block: belief for walls, the detail flag for flora and footprints, ownership for the agent's own footprint.
-- **Reachability.** The existing width-aware forests (truth and terrain), on the structural layer of all loaded chunks. They change when a chunk loads or unloads or a structural obstacle changes. Rebuild cost is measured in step 4. If it is over budget, or once a large mobile object exists, the forests are kept per chunk with a portal graph across chunk borders (the FFF-317 shape), so a change repairs one chunk.
+- **Reachability.** The existing width-aware forests (truth and terrain), on the structural layer of all meshed chunks. They change when a chunk is first meshed or reclaimed, or a structural obstacle changes. Rebuild cost is measured in step 4. If it is over budget, or once a large mobile object exists, the forests are kept per chunk with a portal graph across chunk borders (the FFF-317 shape), so a change repairs one chunk.
 - **Heuristic.** RRA* runs on the structural layer, so one reverse search per goal still serves every agent and survives every detail patch.
 - **Detail that seals.** Structural-reachable must mean reachable, so detail cannot be a hard wall where there is no way around. Open question 1 in section 8.
 - **Locate.** A spatial index over triangles, updated by each patch for its hole.
@@ -361,7 +380,7 @@ second client and the test that nothing colonist-shaped leaked in.
 
 ### 4.10 World scale
 
-The nav mesh covers loaded ground. Beyond it, two things are planned and neither is this epic:
+The nav mesh covers ground that has been loaded. Beyond it, two things are planned and neither is this epic:
 
 - The static geography mesh, unchanged from the pathfinding doc.
 - A landmass check so nothing ever tries to path off an island: flood the planet's land hexes from the colony's hex once at load and keep the set. The single-hex-island test case falls out of it. At the quickstart resolution the planet has about 42 million hexes, so this is a bounded flood from the colony, not a table for the whole planet. It has no consumer until goals can lie outside loaded ground, so it is filed as a follow-up and built with that consumer.
