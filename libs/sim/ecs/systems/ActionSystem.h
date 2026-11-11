@@ -68,7 +68,9 @@ public:
 	/// Set callback that takes a harvested or picked-up source from the world as the action completes,
 	/// returning the state it was in just before. The world is the truth at completion: a source
 	/// already gone or regrowing pays nothing, whatever the task expected when it set out, so two
-	/// colonists finishing on one plant never both get its yield. `regrowthSeconds` is read for Regrow.
+	/// colonists finishing on one plant never both get its yield. A single-shot source is taken before
+	/// it pays; a pooled one is checked with Keep before its pool is drawn, then removed (its pool with
+	/// it) once the draw empties the pool or a clear takes it. `regrowthSeconds` is read for Regrow.
 	/// Unwired (unit contexts with no world behind them), every source reads Ready.
 	using TakeSourceCallback =
 		std::function<SourceState(const std::string& defName, float x, float y, SourceTake take, float regrowthSeconds)>;
@@ -88,9 +90,10 @@ public:
 	};
 
 	/// Set callback for withdrawing from an entity's resource pool.
-	/// Called when harvesting an entity with a resource pool. `requested` is how many yield
-	/// units the colonist wants this chop; the callback removes up to that from the pool and
-	/// reports how many it actually took plus whether the pool is now empty.
+	/// Called when harvesting an entity with a resource pool, only once the take-source callback has
+	/// found the source still standing. `requested` is how many yield units the colonist wants this
+	/// chop; the callback removes up to that from the pool and reports how many it actually took plus
+	/// whether the pool is now empty.
 	using DecrementResourceCallback = std::function<ResourceDraw(const std::string& defName, float x, float y, uint32_t requested)>;
 	void setDecrementResourceCallback(DecrementResourceCallback callback) { m_onDecrementResource = std::move(callback); }
 

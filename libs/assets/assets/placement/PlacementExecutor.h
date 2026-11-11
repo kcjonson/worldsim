@@ -160,12 +160,16 @@ namespace assets {
 		/// Remove chunk data (call when chunk is unloaded)
 		void unloadChunk(world::ChunkCoordinate coord);
 
-		/// Remove an entity at the specified position
+		/// Remove an entity at the specified position, with its cooldown and resource pool
 		/// @param coord Chunk coordinate containing the entity
 		/// @param position World position of the entity
 		/// @param defName DefName of the entity to remove
 		/// @return true if entity was found and removed
 		bool removeEntity(world::ChunkCoordinate coord, glm::vec2 position, const std::string& defName);
+
+		/// Erase an entity's cooldown and resource pool. removeEntity does this for placed flora; a
+		/// runtime-spawned harvestable (an ECS entity in no chunk index) is forgotten here when taken.
+		void forgetEntityState(glm::vec2 position, const std::string& defName);
 
 		/// Set an entity on cooldown (for regrowth after non-destructive harvest)
 		/// @param position World position of the entity

@@ -48,6 +48,7 @@ namespace ecs {
 				placement.removeEntity(coord, at, defName);
 			} else {
 				pendingRemoval.push_back(spawned);
+				placement.forgetEntityState(at, defName);
 			}
 		} else if (take == Take::Regrow && !regrowing) {
 			placement.setEntityCooldown(at, defName, regrowthSeconds);

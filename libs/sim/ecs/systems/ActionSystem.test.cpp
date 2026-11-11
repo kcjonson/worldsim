@@ -3243,4 +3243,23 @@ TEST_F(ClearHarvestTest, PoolSourceClearRemovesShrubInOnePass) {
 	EXPECT_EQ(dropCalls, 0) << "nothing drops when it all fits";
 }
 
+// A pool pays only while its shrub stands: one removed some other way (another colonist's clear)
+// gives a cut finishing on it nothing, and its pool is not drawn.
+TEST_F(ClearHarvestTest, PoolOfAGoneShrubPaysNothing) {
+	GoalTask cut;
+	cut.type = TaskType::Harvest;
+	cut.destinationEntity = world->createEntity();
+	cut.yieldDefNameId = assets::AssetRegistry::Get().getDefNameId("TestBerry");
+	cut.targetAmount = 10;
+	cut.status = GoalStatus::Available;
+	cut.owner = GoalOwner::CraftingGoalSystem;
+	auto cutter = addHarvester(GoalTaskRegistry::Get().createGoal(std::move(cut)), "Flora_TestPoolShrub");
+
+	sourceState = ActionSystem::SourceState::Gone;
+	harvest();
+	EXPECT_EQ(world->getComponent<Inventory>(cutter)->getQuantity("TestBerry"), 0U);
+	EXPECT_EQ(pool, 5U) << "the pool is not drawn";
+	EXPECT_EQ(dropCalls, 0);
+}
+
 } // namespace ecs::test

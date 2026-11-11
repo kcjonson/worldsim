@@ -24,8 +24,9 @@ namespace ecs {
 	/// Take the source `defName` at `at` from the world and report what it was just before: Gone if
 	/// neither the placement index nor a live spawned entity holds it, OnCooldown if it stands but is
 	/// regrowing, Ready otherwise. Remove takes a placed source out of the index at once and queues a
-	/// spawned one on `pendingRemoval` (the caller destroys it after the update, never inside a view);
-	/// a spawned entity already queued there reads as Gone. Regrow starts the regrowth cooldown unless
+	/// spawned one on `pendingRemoval` (the caller destroys it after the update, never inside a view),
+	/// erasing its cooldown and resource pool either way; a spawned entity already queued there reads
+	/// as Gone. Regrow starts the regrowth cooldown unless
 	/// one is running. Keep changes nothing.
 	[[nodiscard]] ActionSystem::SourceState takeWorldSource(
 		assets::PlacementExecutor& placement,

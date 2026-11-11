@@ -639,6 +639,16 @@ TEST(PlacementExecutorTests, EntityStateIsPerEntityNotPerTile) {
 	EXPECT_EQ(executor.decrementResourceCount(cut, "BerryBush", 5), 5U);
 	EXPECT_FALSE(executor.getResourceCount(cut, "BerryBush").has_value());
 	EXPECT_EQ(executor.getResourceCount(neighbour, "BerryBush"), 5U) << "the other bush keeps its own pool";
+
+	// Removing an entity takes its cooldown and pool with it, so neither outlives the plant.
+	AsyncChunkPlacementResult chunk;
+	chunk.coord = world::worldToChunk({neighbour.x, neighbour.y});
+	chunk.spatialIndex.insert({"BerryBush", neighbour});
+	executor.storeChunkResult(std::move(chunk));
+	executor.setEntityCooldown(neighbour, "BerryBush", 60.0F);
+	ASSERT_TRUE(executor.removeEntity(world::worldToChunk({neighbour.x, neighbour.y}), neighbour, "BerryBush"));
+	EXPECT_FALSE(executor.isEntityOnCooldown(neighbour, "BerryBush"));
+	EXPECT_FALSE(executor.getResourceCount(neighbour, "BerryBush").has_value());
 }
 
 // ============================================================================

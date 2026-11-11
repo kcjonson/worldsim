@@ -663,6 +663,7 @@ namespace assets {
 
 		bool removed = it->second.remove(position, defName);
 		if (removed) {
+			forgetEntityState(position, defName);
 			// A removed flora obstacle changes the nav obstacle set: bump the epoch so the
 			// NavigationSystem rebuilds the covering region and reclaims the trunk hole as
 			// walkable ground.
@@ -678,6 +679,12 @@ namespace assets {
 			);
 		}
 		return removed;
+	}
+
+	void PlacementExecutor::forgetEntityState(glm::vec2 position, const std::string& defName) {
+		const EntityStateKey key = makeEntityStateKey(position, defName);
+		m_cooldowns.erase(key);
+		m_resourceCounts.erase(key);
 	}
 
 	void PlacementExecutor::setEntityCooldown(glm::vec2 position, const std::string& defName, float cooldownSeconds) {

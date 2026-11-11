@@ -234,10 +234,16 @@ namespace ecs {
 			// Withdraw only what the colonist can carry; the pool clamps to its own contents and
 			// reports depletion, so a bush's sticks are conserved across trips. A clear takes the
 			// whole pool in one pass and removes the bush: the pack takes all that fits (not one cut's
-			// yield) and the rest drops.
-			const uint32_t request = collEff.clearsSource ? UINT32_MAX : wanted;
-			const uint32_t packRoom = collEff.clearsSource ? std::min(massFit, slotFit) : wanted;
-			if (request > 0) {
+			// yield) and the rest drops. The source must still stand before its pool pays, as for a
+			// single-shot source. Removing the source erases its pool, so the removal follows the draw.
+			const uint32_t	  request = collEff.clearsSource ? UINT32_MAX : wanted;
+			const uint32_t	  packRoom = collEff.clearsSource ? std::min(massFit, slotFit) : wanted;
+			const SourceState state = takeSource(SourceTake::Keep);
+			if (state != SourceState::Ready) {
+				if (state == SourceState::OnCooldown && collEff.clearsSource) {
+					takeSource(SourceTake::Remove); // a clear still removes a regrowing source, with no yield
+				}
+			} else if (request > 0) {
 				const ResourceDraw draw =
 					m_onDecrementResource(collEff.sourceDefName, collEff.sourcePosition.x, collEff.sourcePosition.y, request);
 				added = inventory.addItem(collEff.itemDefName, std::min(draw.removed, packRoom));
