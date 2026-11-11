@@ -40,6 +40,7 @@ const kGithubInputs = [".github/workflows/tests.yml", ".github/actions"];
 const kSchedulingProperties = new Set(["TIMEOUT", "PROCESSORS", "COST", "RESOURCE_LOCK", "RUN_SERIAL", "LABELS"]);
 
 const kKeyLength = 20;
+const kSetFile = "set.json";
 
 function fail(message) {
 	console.error(`test-select: ${message}`);
@@ -493,9 +494,12 @@ function record(opts) {
 	for (const [file, marker] of keep) fs.writeFileSync(path.join(markersDir, file), JSON.stringify(marker, null, 1));
 
 	const digest = sha256([...keep.keys()].sort().join("\n")).slice(0, kKeyLength);
+	// Written even for an empty set, so a run where nothing passed still has a file to cache and
+	// replaces the set it restored; otherwise the next run would skip on the stale passes.
+	fs.writeFileSync(path.join(markersDir, kSetFile), JSON.stringify({ digest, markers: [...keep.keys()].sort() }, null, 1));
 	console.log(`${keep.size} markers, set ${digest}`);
 	appendSummary(["| Test | Result | Marker |", "|---|---|---|", ...rows, "", `Marker set \`${digest}\`.`, ""].join("\n"));
-	setOutputs({ digest, count: String(keep.size) });
+	setOutputs({ digest });
 }
 
 const { command, opts } = parseArgs(process.argv.slice(2));

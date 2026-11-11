@@ -69,7 +69,8 @@ A pass is a marker file named for the test and its key, kept in the Actions cach
 (`test-markers-linux-`, `test-markers-windows-`). A run restores the newest set on its branch,
 else main's, skips each test whose marker is there, and saves a new set when it changed: one
 marker for each test that passed in this run or was skipped on a valid one, nothing else, so a
-failed, cancelled, or missing test never has one. On a pull request the checkout is the merge
+failed, cancelled, or missing test never has one. A run where nothing passed saves an empty set
+too, so the passes it restored don't outlive it. On a pull request the checkout is the merge
 commit, so keys describe the merged tree.
 
 **Declaring data dirs.** A test that reads repo files at run time (through `__FILE__`, say) names

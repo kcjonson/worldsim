@@ -145,7 +145,7 @@ jobs:
 
     - name: Save test markers
       if: >-
-        (success() || failure()) && steps.record.outcome == 'success' && steps.record.outputs.count != '0' &&
+        (success() || failure()) && steps.record.outcome == 'success' &&
         !startsWith(steps.restore.outputs.cache-matched-key, format('test-markers-linux-{0}-', steps.record.outputs.digest))
       uses: actions/cache/save@v4
       with:
@@ -266,7 +266,7 @@ jobs:
 
     - name: Save test markers
       if: >-
-        (success() || failure()) && steps.record.outcome == 'success' && steps.record.outputs.count != '0' &&
+        (success() || failure()) && steps.record.outcome == 'success' &&
         !startsWith(steps.restore.outputs.cache-matched-key, format('test-markers-windows-{0}-', steps.record.outputs.digest))
       uses: actions/cache/save@v4
       with:
