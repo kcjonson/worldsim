@@ -39,42 +39,6 @@ namespace geometry::nav {
 			return acc.sign() < 0 ? Int128(0) - acc : acc;
 		}
 
-		// An input ring as face classification reads it: scaled by 3, the space in
-		// which a triangle's centroid (a+b+c)/3 is the exact integer point a+b+c.
-		struct SampleRing {
-			std::vector<Vec2i64> ring3;
-			Vec2i64				 lo3;
-			Vec2i64				 hi3;
-			std::int64_t		 provenance		= kNoProvenance;
-			std::int64_t		 opening		= kNoOpening;
-			bool				 holeCapable	= false;	 // water: even-odd containment parity
-			Int128				 areaDoubledAbs = Int128(0); // smallest-containing ranking (unscaled)
-		};
-
-		SampleRing sampleRing(const NavInputPolygon& poly) {
-			SampleRing r;
-			r.ring3.reserve(poly.ring.size());
-			for (const Vec2i64& p : poly.ring) {
-				r.ring3.push_back(p * 3);
-			}
-			r.lo3 = r.ring3.front();
-			r.hi3 = r.ring3.front();
-			for (const Vec2i64& p : r.ring3) {
-				r.lo3 = {std::min(r.lo3.x, p.x), std::min(r.lo3.y, p.y)};
-				r.hi3 = {std::max(r.hi3.x, p.x), std::max(r.hi3.y, p.y)};
-			}
-			r.provenance	 = poly.provenanceId;
-			r.opening		 = poly.openingId;
-			r.holeCapable	 = poly.holeCapable;
-			r.areaDoubledAbs = signedAreaDoubledAbs(poly.ring);
-			return r;
-		}
-
-		bool contains(const SampleRing& r, const Vec2i64& p3) {
-			return p3.x >= r.lo3.x && p3.x <= r.hi3.x && p3.y >= r.lo3.y && p3.y <= r.hi3.y &&
-				   pointInPolygon(p3, r.ring3) == PointInPolygon::Inside;
-		}
-
 		// A face of the arrangement: the triangles one flood fill reaches without
 		// crossing a constraint. Its largest triangle supplies the classification
 		// sample, well inside the face even when snap rounding moved an arrangement
@@ -512,6 +476,72 @@ namespace geometry::nav {
 
 	} // namespace
 
+	SampleRing sampleRing(const NavInputPolygon& poly) {
+		SampleRing r;
+		r.ring3.reserve(poly.ring.size());
+		for (const Vec2i64& p : poly.ring) {
+			r.ring3.push_back(p * 3);
+		}
+		r.lo3 = r.ring3.front();
+		r.hi3 = r.ring3.front();
+		for (const Vec2i64& p : r.ring3) {
+			r.lo3 = {std::min(r.lo3.x, p.x), std::min(r.lo3.y, p.y)};
+			r.hi3 = {std::max(r.hi3.x, p.x), std::max(r.hi3.y, p.y)};
+		}
+		r.blocked		 = poly.blocked;
+		r.provenance	 = poly.provenanceId;
+		r.opening		 = poly.openingId;
+		r.holeCapable	 = poly.holeCapable;
+		r.areaDoubledAbs = signedAreaDoubledAbs(poly.ring);
+		return r;
+	}
+
+	bool ringContainsSample(const SampleRing& r, const Vec2i64& p3) {
+		return p3.x >= r.lo3.x && p3.x <= r.hi3.x && p3.y >= r.lo3.y && p3.y <= r.hi3.y &&
+			   pointInPolygon(p3, r.ring3) == PointInPolygon::Inside;
+	}
+
+	FaceTags classifyCover(const std::vector<const SampleRing*>& containing) {
+		Int128		 bestSolidArea(0);
+		bool		 solidTagged  = false;
+		std::int64_t solidBlocker = kNoBlocker;
+		std::int64_t solidOpening = kNoOpening;
+
+		Int128		 bestWaterArea(0);
+		bool		 waterTagged  = false;
+		int			 waterDepth	  = 0;
+		std::int64_t waterBlocker = kNoBlocker;
+		std::int64_t waterOpening = kNoOpening;
+
+		for (const SampleRing* br : containing) {
+			const Int128& area = br->areaDoubledAbs;
+			if (br->holeCapable) {
+				++waterDepth;
+				if (!waterTagged || area < bestWaterArea) {
+					bestWaterArea = area;
+					waterBlocker  = br->provenance;
+					waterOpening  = br->opening;
+					waterTagged	  = true;
+				}
+			} else {
+				if (!solidTagged || area < bestSolidArea) {
+					bestSolidArea = area;
+					solidBlocker  = br->provenance;
+					solidOpening  = br->opening;
+					solidTagged	  = true;
+				}
+			}
+		}
+
+		if (solidTagged) {
+			return {solidBlocker, solidOpening};
+		}
+		if (waterDepth % 2 == 1) {
+			return {waterBlocker, waterOpening};
+		}
+		return {};
+	}
+
 	std::int32_t reachRootInForest(const ReachabilityForest& f, std::int32_t tri, std::int64_t diameterMm) {
 		if (tri < 0 || tri >= static_cast<std::int32_t>(f.component.size()) || f.component[tri] < 0) {
 			return -1;
@@ -636,18 +666,8 @@ namespace geometry::nav {
 		// Outside, never boundary. Faces outside every walkable bound are discarded.
 		// In-bounds faces are KEPT whether or not they sit inside a blocked ring: the
 		// whole region is triangulated, wall interiors included, so a belief query can
-		// optimistically path through an unseen wall.
-		//
-		// Splits SOLID rings (flora, walls: solid containment) from HOLE-CAPABLE rings
-		// (water: even-odd containment parity):
-		//   SOLID: the smallest-area containing ring wins (a door-span footprint is
-		//   strictly smaller than its flank bands, so it wins over the enclosing wall).
-		//   HOLE-CAPABLE: count how many contain the point (depth). A water body emits a
-		//   CCW outer boundary plus CW land-island holes as SEPARATE blocked rings; a
-		//   point inside an even number of them is land (outer+island = 2), inside an odd
-		//   number is genuine water (open water = 1, a pond on the island = 3). Disjoint
-		//   water bodies never nest, so only one body's rings ever contain a given point.
-		//   A solid obstacle always blocks, even sitting over water.
+		// optimistically path through an unseen wall. classifyCover holds the rule.
+		std::vector<const SampleRing*> containing;
 		for (MeshFace& face : faces) {
 			if (face.touchesFrame) {
 				continue;
@@ -655,7 +675,7 @@ namespace geometry::nav {
 			const CdtTriangle& s	   = cdt.triangles[static_cast<std::size_t>(face.sampleTri)];
 			const Vec2i64	   sample3 = cdt.vertices[s.v[0]] + cdt.vertices[s.v[1]] + cdt.vertices[s.v[2]];
 			for (const SampleRing& border : borderRings) {
-				if (contains(border, sample3)) {
+				if (ringContainsSample(border, sample3)) {
 					face.inBounds = true;
 					break;
 				}
@@ -663,49 +683,15 @@ namespace geometry::nav {
 			if (!face.inBounds) {
 				continue;
 			}
-
-			Int128		 bestSolidArea(0);
-			bool		 solidTagged  = false;
-			std::int64_t solidBlocker = kNoBlocker;
-			std::int64_t solidOpening = kNoOpening;
-
-			Int128		 bestWaterArea(0);
-			bool		 waterTagged  = false;
-			int			 waterDepth	  = 0;
-			std::int64_t waterBlocker = kNoBlocker;
-			std::int64_t waterOpening = kNoOpening;
-
+			containing.clear();
 			for (const SampleRing& br : blockedRings) {
-				if (!contains(br, sample3)) {
-					continue;
-				}
-				const Int128& area = br.areaDoubledAbs;
-				if (br.holeCapable) {
-					++waterDepth;
-					if (!waterTagged || area < bestWaterArea) {
-						bestWaterArea = area;
-						waterBlocker  = br.provenance;
-						waterOpening  = br.opening;
-						waterTagged	  = true;
-					}
-				} else {
-					if (!solidTagged || area < bestSolidArea) {
-						bestSolidArea = area;
-						solidBlocker  = br.provenance;
-						solidOpening  = br.opening;
-						solidTagged	  = true;
-					}
+				if (ringContainsSample(br, sample3)) {
+					containing.push_back(&br);
 				}
 			}
-
-			if (solidTagged) {
-				face.blocker = solidBlocker; // a real obstacle always blocks, even over water
-				face.opening = solidOpening;
-			} else if (waterDepth % 2 == 1) {
-				face.blocker = waterBlocker; // odd depth: genuine water
-				face.opening = waterOpening;
-			}
-			// else even depth (incl. 0): floor -- leave kNoBlocker/kNoOpening.
+			const FaceTags tags = classifyCover(containing);
+			face.blocker		= tags.blocker;
+			face.opening		= tags.opening;
 		}
 
 		// 5. Keep the in-bounds faces' triangles (floor AND wall interiors), copying each

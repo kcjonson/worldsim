@@ -154,6 +154,43 @@ namespace geometry::nav {
 		return !isCommonKnowledgeTerrainFace(t); // floor or any wall is open
 	}
 
+	// --- Face classification ------------------------------------------------------
+	// What ground a point is: the one rule buildNavMesh and PatchableMesh both tag
+	// faces by. A face is sampled at one exact interior point, its sample triangle's
+	// centroid, held as the integer point a+b+c in 3x space.
+
+	// An input ring as classification reads it: scaled by 3, with its box.
+	struct SampleRing {
+		std::vector<Vec2i64> ring3;
+		Vec2i64				 lo3;
+		Vec2i64				 hi3;
+		bool				 blocked		= false;
+		std::int64_t		 provenance		= kNoProvenance;
+		std::int64_t		 opening		= kNoOpening;
+		bool				 holeCapable	= false;
+		Int128				 areaDoubledAbs = Int128(0); // smallest-containing ranking (unscaled)
+	};
+
+	SampleRing sampleRing(const NavInputPolygon& poly);
+
+	// Strictly inside: a sample on the ring's boundary is outside it.
+	bool ringContainsSample(const SampleRing& ring, const Vec2i64& sample3);
+
+	struct FaceTags {
+		std::int64_t blocker = kNoBlocker;
+		std::int64_t opening = kNoOpening;
+	};
+
+	// Tags of in-bounds ground inside exactly the blocked rings `containing`, given in
+	// input order (the order breaks ties between equal areas). SOLID rings (flora,
+	// walls) go by solid containment: the smallest-area one wins, so a door-span
+	// footprint beats the wall band around it. HOLE-CAPABLE rings (water) go by
+	// nesting parity: a water body arrives as a CCW outer boundary plus CW land-island
+	// holes, separate rings, so odd depth is water (open water 1, a pond on an island
+	// 3) and even depth is land; disjoint bodies never nest. A solid ring blocks even
+	// over water.
+	FaceTags classifyCover(const std::vector<const SampleRing*>& containing);
+
 	// Uniform-grid spatial index over the triangle set, built by buildNavMesh.
 	// Each cell stores the indices of candidate triangles whose AABBs overlap it,
 	// in ascending order so locateTriangle reproduces the linear scan's lowest-index
