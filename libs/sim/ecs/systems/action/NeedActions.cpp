@@ -18,7 +18,9 @@
 #include <utils/Log.h>
 
 #include <algorithm>
+#include <cmath>
 #include <iterator>
+#include <optional>
 #include <random>
 
 namespace ecs {
@@ -82,10 +84,10 @@ namespace ecs {
 							action.clear();
 							break;
 						}
-						makeRoomToEat(inventory, food, position.value);
+						makeRoomToEat(inventory, task, food, task.needQuantity, position.value);
 						action = Action::Withdraw(food, task.needQuantity, task.needSourceStorageId, task.targetPosition);
 					} else {
-						makeRoomToEat(inventory, food, position.value);
+						makeRoomToEat(inventory, task, food, task.needQuantity, position.value);
 						action = Action::Pickup(food, task.needQuantity, task.targetPosition, food);
 					}
 					LOG_DEBUG(Engine, "[Action] Taking %u x %s to eat", task.needQuantity, food.c_str());
@@ -110,7 +112,7 @@ namespace ecs {
 						// the yield would leave the bush standing ready and bring him back to it. Gathering
 						// food sizes no meal and makes no room.
 						if (task.needQuantity > 0) {
-							makeRoomToEat(inventory, harvestCap.yieldDefName, position.value);
+							makeRoomToEat(inventory, task, harvestCap.yieldDefName, task.needQuantity, position.value);
 						}
 
 						// Calculate random yield within range using proper RNG
@@ -200,27 +202,137 @@ namespace ecs {
 		}
 	}
 
-	void ActionSystem::makeRoomToEat(Inventory& inventory, const std::string& food, glm::vec2 position) {
-		auto& registry = assets::AssetRegistry::Get();
-		const auto isFood = [&](const std::string& defName) {
+	void ActionSystem::makeRoomToEat(Inventory& inventory, const Task& task, const std::string& food, uint32_t meal, glm::vec2 position) {
+		auto&		   registry = assets::AssetRegistry::Get();
+		const uint32_t claimedItem = task.suspended ? task.suspended->itemDefNameId : 0U;
+		const bool	   twoHandFood = ecs::itemIsTwoHand(registry, food);
+		const float	   foodMassKg = registry.getItemMassKg(food);
+		const auto*	   foodDef = registry.getDefinition(food);
+		const uint32_t foodStackCap = foodDef != nullptr && foodDef->itemProperties.has_value() ? foodDef->itemProperties->stackSize : UINT32_MAX;
+
+		const auto isTool = [&](const std::string& defName) {
 			const auto* def = registry.getDefinition(defName);
-			return def != nullptr && def->isEdible();
+			return def != nullptr && def->category == assets::ItemCategory::Tool;
 		};
-		while (ecs::pickupUnitsThatFit(inventory, registry, food, ecs::carriedCargoMassKg(inventory, registry)) == 0) {
-			const auto stack = std::find_if(inventory.items.rbegin(), inventory.items.rend(), [&](const ItemStack& item) { return !isFood(item.defName); });
-			if (stack != inventory.items.rend()) {
-				const ItemStack putAway = *stack;
-				inventory.items.erase(std::next(stack).base());
-				ecs::storeOrDrop(*world, putAway.defName, putAway.quantity, position, m_onDropResource);
-				LOG_DEBUG(Engine, "[Action] Put away %u x %s to make room to eat", putAway.quantity, putAway.defName.c_str());
-				continue;
+		// Tools are equipment and never go; food is not in the way of food.
+		const auto mayGo = [&](const std::string& defName) {
+			const auto* def = registry.getDefinition(defName);
+			return def == nullptr || (!isTool(defName) && !def->isEdible());
+		};
+		// Goods a suspended record carries are under claims, and go only once nothing else is left.
+		const auto underClaim = [&](const std::string& defName) { return claimedItem != 0 && registry.getDefNameId(defName) == claimedItem; };
+		const auto putAway = [&](const std::string& defName, uint32_t quantity) {
+			ecs::storeOrDrop(*world, defName, quantity, position, m_onDropResource);
+			LOG_DEBUG(Engine, "[Action] Put away %u x %s to make room to eat", quantity, defName.c_str());
+		};
+		// The last pack stack that may go, under no claim first.
+		const auto packStackToGo = [&]() -> std::optional<size_t> {
+			for (const bool claimed : {false, true}) {
+				for (size_t index = inventory.items.size(); index-- > 0;) {
+					const ItemStack& stack = inventory.items[index];
+					if (mayGo(stack.defName) && underClaim(stack.defName) == claimed) {
+						return index;
+					}
+				}
 			}
-			const bool handsHoldCargo = (inventory.leftHand.has_value() && !isFood(inventory.leftHand->defName)) ||
-										(inventory.rightHand.has_value() && !isFood(inventory.rightHand->defName));
-			if (!handsHoldCargo) {
+			return std::nullopt;
+		};
+
+		for (;;) {
+			const float carriedKg = ecs::carriedCargoMassKg(inventory, registry);
+			if (ecs::pickupUnitsThatFit(inventory, registry, food, carriedKg) >= meal) {
 				return;
 			}
-			clearHandsForTwoHandedPickup(inventory, position);
+
+			// A slot: a pack stack for one-hand food, or the hands another armful holds for a two-hand one.
+			uint32_t slotRoom = 0;
+			if (twoHandFood) {
+				const std::optional<ItemStack>& held = inventory.leftHand.has_value() ? inventory.leftHand : inventory.rightHand;
+				if (held.has_value() && held->defName != food && ecs::itemIsTwoHand(registry, held->defName)) {
+					if (!mayGo(held->defName)) {
+						return;
+					}
+					const ItemStack armful = *held;
+					ecs::removeFromHands(inventory, armful.defName, armful.quantity);
+					putAway(armful.defName, armful.quantity);
+					continue;
+				}
+				const uint32_t heldFood = ecs::handHeldQuantity(inventory, food);
+				slotRoom = heldFood < foodStackCap ? foodStackCap - heldFood : 0U;
+			} else {
+				slotRoom = inventory.addableCount(food);
+				if (slotRoom < meal) {
+					if (const auto index = packStackToGo()) {
+						const ItemStack stack = inventory.items[*index];
+						inventory.items.erase(inventory.items.begin() + static_cast<std::ptrdiff_t>(*index));
+						putAway(stack.defName, stack.quantity);
+						continue;
+					}
+					// Only tools hold the pack's slots: one moved to the belt or a free hand frees a slot
+					// and keeps the tool.
+					const auto tool = std::find_if(inventory.items.rbegin(), inventory.items.rend(), [&](const ItemStack& stack) {
+						return stack.quantity == 1 && isTool(stack.defName) && !ecs::itemIsTwoHand(registry, stack.defName);
+					});
+					if (tool != inventory.items.rend() && (inventory.beltHasFreeSlot() || inventory.freeHandCount() > 0)) {
+						const std::string name = tool->defName;
+						inventory.items.erase(std::next(tool).base());
+						if (!inventory.stowToBelt(name)) {
+							(inventory.rightHand.has_value() ? inventory.leftHand : inventory.rightHand) = ItemStack{name, 1};
+						}
+						continue;
+					}
+				}
+			}
+
+			// Weight: free what the meal (or what the slots let in) needs, and no more.
+			const uint32_t target = std::min(meal, slotRoom);
+			const uint32_t byWeight = ecs::massUnitsThatFit(inventory.carryCapacityKg - carriedKg, foodMassKg, UINT32_MAX);
+			if (target == 0 || byWeight >= target) {
+				return;
+			}
+			const float needKg = static_cast<float>(target) * foodMassKg - (inventory.carryCapacityKg - carriedKg);
+			const auto	unitsFor = [&](const ItemStack& stack) {
+				 const float mass = registry.getItemMassKg(stack.defName);
+				 return std::min(stack.quantity, std::max(1U, static_cast<uint32_t>(std::ceil(needKg / mass))));
+			};
+			bool freed = false;
+			for (const bool claimed : {false, true}) {
+				for (size_t index = inventory.items.size(); !freed && index-- > 0;) {
+					ItemStack& stack = inventory.items[index];
+					if (!mayGo(stack.defName) || underClaim(stack.defName) != claimed || registry.getItemMassKg(stack.defName) <= 0.0F) {
+						continue;
+					}
+					const std::string name = stack.defName;
+					const uint32_t	  units = unitsFor(stack);
+					stack.quantity -= units;
+					if (stack.quantity == 0) {
+						inventory.items.erase(inventory.items.begin() + static_cast<std::ptrdiff_t>(index));
+					}
+					putAway(name, units);
+					freed = true;
+				}
+				for (std::optional<ItemStack>* hand : {&inventory.leftHand, &inventory.rightHand}) {
+					if (freed || !hand->has_value() || !mayGo((*hand)->defName) || underClaim((*hand)->defName) != claimed ||
+						registry.getItemMassKg((*hand)->defName) <= 0.0F) {
+						continue;
+					}
+					const std::string name = (*hand)->defName;
+					const uint32_t	  units = unitsFor(**hand);
+					if (ecs::itemIsTwoHand(registry, name)) {
+						ecs::removeFromHands(inventory, name, units); // keeps the two hands' mirror
+					} else if (((*hand)->quantity -= units) == 0) {
+						hand->reset();
+					}
+					putAway(name, units);
+					freed = true;
+				}
+				if (freed) {
+					break;
+				}
+			}
+			if (!freed) {
+				return;
+			}
 		}
 	}
 

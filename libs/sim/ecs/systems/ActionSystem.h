@@ -144,10 +144,13 @@ private:
 		struct Inventory& inventory
 	);
 
-	/// A hungry colonist about to take a meal from a bush, pile, or box with no room for one unit of it puts
-	/// away what it carries that is not food (the pack's last stack first, then its hands) through the
-	/// usual store-or-drop rule, until one fits or nothing is left to put away.
-	void makeRoomToEat(struct Inventory& inventory, const std::string& food, glm::vec2 position);
+	/// A hungry colonist about to take `meal` units of `food` from a bush, pile, or box makes room for
+	/// them, freeing only what limits it and no more than the meal needs. A slot: the pack's last stack
+	/// that is neither a tool nor food goes whole, or failing that a pack tool moves to the belt or a
+	/// free hand. Weight: just enough units of such goods, pack (last stack first) then hands. Goods its
+	/// suspended record carries go only once nothing else can. What goes is put away by the store-or-drop
+	/// rule; tools never go.
+	void makeRoomToEat(struct Inventory& inventory, const struct Task& task, const std::string& food, uint32_t meal, glm::vec2 position);
 
 	/// Process an in-progress action
 	void processAction(

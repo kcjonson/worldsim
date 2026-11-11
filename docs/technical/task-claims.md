@@ -397,10 +397,24 @@ task and the next decision eats from the pack, the way a harvest does.
 
 A full pack never stops a colonist eating, whatever kind the source is. No room is checked when the
 food is chosen; the take itself (the cut of a bush, the pickup from a pile, the withdraw from a box)
-starts by making room, at the source, through one rule (`ActionSystem::makeRoomToEat`): it puts away
-what the colonist carries that is not food (the pack's last stack, then its hands) by the
-store-or-drop rule. Without it a cut into a pack with no room takes nothing, the bush stays ready, and
-the colonist picks it again forever. Gathering food for the larder is idle work, not a meal: it makes
+starts by making room, at the source, through one rule (`ActionSystem::makeRoomToEat`). Without it a
+cut into a pack with no room takes nothing, the bush stays ready, and the colonist picks it again
+forever. Making room frees what limits the take and no more than the meal needs, and never costs a
+tool (equipment) or food:
+
+- a slot (the pack has no stack room for the meal): the pack's last stack that is neither a tool nor
+  food goes whole; if only tools hold the slots, one moves to a free belt slot or a free hand, which
+  keeps it;
+- weight: just enough units of such goods to carry the meal (or what the slots let in), from the pack's
+  last stack first, then the hands; tools weigh nothing as cargo and are never touched;
+- goods under no claim go before cargo a suspended record carries, which goes only when nothing else
+  can.
+
+What goes is put in a box within reach that takes it, else dropped as a pile where the colonist stands
+(`storeOrDrop`); a record that loses goods this way shrinks to what is left before the next index
+rebuild. If every pack slot holds a tool and the belt and hands are full too, no room can be made: the
+eat action eats from the pack only, so the take lifts nothing and he picks the source again. That is a
+known limit: it takes a tool in every pack slot, belt slot, and hand (fourteen on a colonist today). Gathering food for the larder is idle work, not a meal: it makes
 no room, so it is offered only while the pack has room for one unit of the yield.
 
 What a pile or box has left for a hungry colonist is its live count less the shares of eaters at

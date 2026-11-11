@@ -2404,6 +2404,98 @@ namespace ecs::test {
 		EXPECT_EQ(cut, std::vector<glm::vec2>{bushPos}) << "one bush cut, once";
 	}
 
+	// Making room to eat frees what limits the pack and no more, and never costs a tool.
+	class MakeRoomToEatTest : public HungerWalkTest {
+	  protected:
+		void SetUp() override {
+			HungerWalkTest::SetUp();
+			assets::AssetDefinition axe;
+			axe.defName = "Axe";
+			axe.label = "Axe";
+			axe.handsRequired = 1;
+			axe.category = assets::ItemCategory::Tool;
+			axe.itemProperties = assets::ItemProperties{};
+			axe.itemProperties->stackSize = 1;
+			axe.itemProperties->massKg = 2.0F;
+			assets::AssetRegistry::Get().registerTestDefinition(std::move(axe));
+		}
+
+		Inventory& pack(EntityID colonist) { return *world->getComponent<Inventory>(colonist); }
+		bool	   holdsAxe(EntityID colonist) {
+			  const Inventory& inventory = pack(colonist);
+			  return inventory.hasItem("Axe") || std::any_of(inventory.belt.begin(), inventory.belt.end(), [](const auto& slot) {
+						 return slot.has_value() && slot->defName == "Axe";
+					 }) || inventory.isHolding("Axe");
+		}
+	};
+
+	// No slot for a berry: the stone's slot is freed, not the axe's.
+	TEST_F(MakeRoomToEatTest, AFullPackGivesUpGoodsNotItsTool) {
+		const EntityID colonist = hungryColonist({0.0F, 0.0F}, 30.0F);
+		pack(colonist).maxCapacity = 2;
+		pack(colonist).addItem("Stone", 3);
+		pack(colonist).addItem("Axe", 1);
+		berryPile({4.0F, 0.0F}, 3, {colonist});
+
+		ASSERT_TRUE(walkUntil([&] { return hunger(colonist) >= 50.0F; }));
+		EXPECT_TRUE(pack(colonist).hasItem("Axe")) << "the axe stays packed";
+		EXPECT_EQ(pack(colonist).getQuantity("Stone"), 0U);
+	}
+
+	// Every slot holds a tool: one moves to the belt, so the meal fits and the tool is kept.
+	TEST_F(MakeRoomToEatTest, APackOfToolsMovesOneToTheBelt) {
+		const EntityID colonist = hungryColonist({0.0F, 0.0F}, 30.0F);
+		pack(colonist).maxCapacity = 1;
+		pack(colonist).addItem("Axe", 1);
+		berryPile({4.0F, 0.0F}, 3, {colonist});
+
+		ASSERT_TRUE(walkUntil([&] { return hunger(colonist) >= 50.0F; }));
+		EXPECT_TRUE(holdsAxe(colonist));
+	}
+
+	// Weight is the limit: one stone is enough to free for one berry, so the rest stay, and the axe,
+	// which weighs nothing as cargo, is not touched.
+	TEST_F(MakeRoomToEatTest, OverweightGivesUpJustEnoughForTheMeal) {
+		const EntityID colonist = hungryColonist({0.0F, 0.0F}, 30.0F);
+		pack(colonist).carryCapacityKg = 5.0F;
+		pack(colonist).addItem("Stone", 10);
+		pack(colonist).addItem("Axe", 1);
+		const auto& registry = assets::AssetRegistry::Get();
+		ASSERT_EQ(ecs::pickupUnitsThatFit(pack(colonist), registry, "Berry", ecs::carriedCargoMassKg(pack(colonist), registry)), 0U);
+		const EntityID pile = berryPile({4.0F, 0.0F}, 3, {colonist});
+
+		ASSERT_TRUE(walkUntil([&] { return hunger(colonist) >= 50.0F; }));
+		EXPECT_EQ(world->getComponent<ResourceStack>(pile)->quantity, 2U) << "a meal of one";
+		EXPECT_EQ(pack(colonist).getQuantity("Stone"), 9U) << "one stone freed the weight one berry needs";
+		EXPECT_TRUE(pack(colonist).hasItem("Axe"));
+	}
+
+	// Goods under no claim go first: a critically hungry colonist carrying stones toward a craft keeps
+	// them (its suspended record's cargo) and puts away the stick, though the stones are the last stack.
+	TEST_F(MakeRoomToEatTest, ClaimedCargoGoesLast) {
+		const glm::vec2 stationPos{0.0F, 30.0F};
+		const EntityID	station = world->createEntity();
+		world->addComponent<Position>(station, Position{stationPos});
+		const uint64_t root = craftRoot(station, stationPos, "Stone", 3);
+		childGoal(TaskType::Haul, root, station, stationPos, stoneId);
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		pack(colonist).maxCapacity = 2;
+		pack(colonist).addItem("Stick", 1);
+		pack(colonist).addItem("Stone", 3);
+		decide(colonist);
+		ASSERT_EQ(getTask(colonist)->type, TaskType::Haul);
+		ASSERT_TRUE(getTask(colonist)->haulFromInventory);
+		const EntityID pile = berryPile({4.0F, 0.0F}, 3, {colonist});
+		world->getComponent<NeedsComponent>(colonist)->get(NeedType::Hunger).value = 5.0F;
+
+		ASSERT_TRUE(walkUntil([&] { return pack(colonist).hasItem("Berry"); }));
+		EXPECT_EQ(world->getComponent<ResourceStack>(pile)->quantity, 1U) << "a meal of two";
+		EXPECT_EQ(pack(colonist).getQuantity("Stick"), 0U) << "the stick was under no claim";
+		EXPECT_EQ(pack(colonist).getQuantity("Stone"), 3U) << "the stones the carry-in claims stay";
+		ASSERT_TRUE(walkUntil([&] { return world->getComponent<Inventory>(station)->getQuantity("Stone") == 3U; }))
+			<< "and are delivered once it has eaten";
+	}
+
 	// Gathering food is idle work and makes no room: with a pack that has none for a berry, it is not
 	// offered, so he never walks to a bush he would cut nothing from.
 	TEST_F(HungerWalkTest, GatheringFoodNeedsRoomForTheYield) {
