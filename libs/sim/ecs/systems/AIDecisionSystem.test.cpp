@@ -32,6 +32,7 @@
 #include "../components/StructureBlueprint.h"
 #include "../components/Task.h"
 #include "../components/Transform.h"
+#include "../components/WorkQueue.h"
 
 #include "assets/ActionTypeRegistry.h"
 #include "assets/AssetRegistry.h"
@@ -103,6 +104,7 @@ namespace ecs::test {
 		void TearDown() override {
 			// Clean up test definitions
 			assets::AssetRegistry::Get().clearDefinitions();
+			assets::RecipeRegistry::Get().clear();
 			GoalTaskRegistry::Get().clear();
 			world.reset();
 		}
@@ -215,9 +217,37 @@ namespace ecs::test {
 			haul.destinationEntity = destBox;
 			haul.destinationPosition = destPos;
 			haul.acceptedDefNameIds = {itemDefNameId};
-			haul.targetAmount = 10;
 			haul.status = GoalStatus::Available;
 			return GoalTaskRegistry::Get().createGoal(std::move(haul));
+		}
+
+		/// A storage box at `pos` stocking `item` toward `minAmount`, its umbrella, and the stocking
+		/// Harvest child StorageGoalSystem raises for it. Returns the Harvest goal's id.
+		uint64_t makeStockingHarvest(glm::vec2 pos, const std::string& item, uint32_t minAmount = 10) {
+			const uint32_t itemId = assets::AssetRegistry::Get().getDefNameId(item);
+			const EntityID box = makeStorageBox(pos, "Box", item, ecs::StoragePriority::Medium, 0, minAmount);
+			GoalTask	   harvest;
+			harvest.type = TaskType::Harvest;
+			harvest.owner = GoalOwner::StorageGoalSystem;
+			harvest.destinationEntity = box;
+			harvest.destinationPosition = pos;
+			harvest.acceptedDefNameIds = {itemId};
+			harvest.yieldDefNameId = itemId;
+			harvest.parentGoalId = makeUmbrellaGoal(box, pos, itemId);
+			harvest.status = GoalStatus::Available;
+			return GoalTaskRegistry::Get().createGoal(std::move(harvest));
+		}
+
+		/// Queue a job at `station` whose recipe needs `count` of `item`, with an empty store, so the
+		/// station's Craft root needs them.
+		void makeStationNeed(EntityID station, const std::string& item, uint32_t count) {
+			assets::RecipeDef recipe;
+			recipe.defName = "Recipe_Need_" + item;
+			recipe.label = recipe.defName;
+			recipe.inputs.push_back({item, 0, count});
+			assets::RecipeRegistry::Get().registerTestRecipe(recipe);
+			world->addComponent<WorkQueue>(station).addJob(recipe.defName, 1);
+			world->addComponent<Inventory>(station, Inventory::createForStorage());
 		}
 
 		std::unique_ptr<World> world;
@@ -896,16 +926,7 @@ namespace ecs::test {
 		const uint32_t treeId = registry.getDefNameId("Tree");
 
 		const glm::vec2 boxPos{0.0F, 6.0F};
-		const EntityID	box = makeStorageBox(boxPos, "Box", "Wood", ecs::StoragePriority::Medium);
-		makeUmbrellaGoal(box, boxPos, woodId);
-		GoalTask harvest;
-		harvest.type = TaskType::Harvest;
-		harvest.owner = GoalOwner::CraftingGoalSystem;
-		harvest.yieldDefNameId = woodId;
-		harvest.destinationPosition = {0.0F, 6.0F};
-		harvest.targetAmount = 5;
-		harvest.status = GoalStatus::Available;
-		GoalTaskRegistry::Get().createGoal(std::move(harvest));
+		makeStockingHarvest(boxPos, "Wood");
 
 		// Two colonists remember the same 3 piles and 2 trees; one also remembers 9,990 waters.
 		constexpr int kPiles = 3;
@@ -982,15 +1003,14 @@ namespace ecs::test {
 		const glm::vec2 roomyPos{0.0F, -6.0F};
 		const EntityID	fullBox = makeStorageBox(fullPos, "Box", "Wood", ecs::StoragePriority::High, /*qty=*/50 * 40);
 		ASSERT_EQ(world->getComponent<Inventory>(fullBox)->addableCount("Wood"), 0U);
-		const EntityID roomyBox = makeStorageBox(roomyPos, "Box", "Wood", ecs::StoragePriority::High);
+		const EntityID roomyBox = makeStorageBox(roomyPos, "Box", "Wood", ecs::StoragePriority::High, /*qty=*/0, /*min=*/10);
 		makeUmbrellaGoal(fullBox, fullPos, woodId);
-		makeUmbrellaGoal(roomyBox, roomyPos, woodId);
 		GoalTask harvest;
 		harvest.type = TaskType::Harvest;
-		harvest.owner = GoalOwner::CraftingGoalSystem;
+		harvest.owner = GoalOwner::StorageGoalSystem;
 		harvest.yieldDefNameId = woodId;
 		harvest.destinationPosition = roomyPos;
-		harvest.targetAmount = 5;
+		harvest.parentGoalId = makeUmbrellaGoal(roomyBox, roomyPos, woodId);
 		harvest.status = GoalStatus::Available;
 		GoalTaskRegistry::Get().createGoal(std::move(harvest));
 
@@ -1658,6 +1678,7 @@ namespace ecs::test {
 
 		const auto station = world->createEntity();
 		world->addComponent<Position>(station, Position{{4.0F, 0.0F}});
+		makeStationNeed(station, "WorkStick", 2);
 
 		// Parent Craft goal + its child Harvest goal (the provisioning step).
 		GoalTask craft;
@@ -1665,7 +1686,6 @@ namespace ecs::test {
 		craft.owner = GoalOwner::CraftingGoalSystem;
 		craft.destinationEntity = station;
 		craft.destinationPosition = {4.0F, 0.0F};
-		craft.targetAmount = 2;
 		craft.status = GoalStatus::Blocked;
 		const uint64_t craftId = GoalTaskRegistry::Get().createGoal(std::move(craft));
 
@@ -1675,7 +1695,6 @@ namespace ecs::test {
 		harvest.destinationEntity = station;
 		harvest.destinationPosition = {4.0F, 0.0F};
 		harvest.yieldDefNameId = stickId;
-		harvest.targetAmount = 2;
 		harvest.parentGoalId = craftId;
 		harvest.status = GoalStatus::Available;
 		GoalTaskRegistry::Get().createGoal(std::move(harvest));
@@ -1700,20 +1719,10 @@ namespace ecs::test {
 		satisfyAllNeeds(*getNeeds(colonist));
 		addKnownEntity(colonist, {2.0F, 0.0F}, bushId, assets::CapabilityType::Harvestable);
 
-		auto storage = world->createEntity();
-		world->addComponent<Position>(storage, Position{{4.0F, 0.0F}});
-
 		// A stocking harvest: StorageGoalSystem chops to fill a box toward its minimum. No Craft/Build
-		// parent, so servesActiveWorkOrder is false and it stays at the opportunistic base tier.
-		GoalTask harvest;
-		harvest.type = TaskType::Harvest;
-		harvest.owner = GoalOwner::StorageGoalSystem;
-		harvest.destinationEntity = storage;
-		harvest.destinationPosition = {4.0F, 0.0F};
-		harvest.yieldDefNameId = stickId;
-		harvest.targetAmount = 5;
-		harvest.status = GoalStatus::Available;
-		GoalTaskRegistry::Get().createGoal(std::move(harvest));
+		// root, so servesActiveWorkOrder is false and it stays at the opportunistic base tier.
+		(void)stickId;
+		makeStockingHarvest({4.0F, 0.0F}, "StockStick");
 
 		world->update(0.016F);
 
@@ -2118,11 +2127,12 @@ namespace ecs::test {
 		const uint32_t boxDefId = registry.getDefNameId("Box");
 
 		// Source A (Low) is at its OWN min (held == minAmount == 8) -> 0 drainable -> NO pull offered.
-		// Dest B (High) still wants Wood. Mirrors the in-game state after the FIRST haul drained A to min.
 		const glm::vec2 srcPos{2.0F, 0.0F};
 		const glm::vec2 destPos{4.0F, 0.0F};
 		const EntityID srcBox = makeStorageBox(srcPos, "Box", "Wood", ecs::StoragePriority::Low, /*qty=*/8, /*min=*/8);
-		const EntityID destBox = makeStorageBox(destPos, "Box", "Wood", ecs::StoragePriority::High, /*qty=*/13, /*min=*/20);
+		// Dest B (High) sits at its max, so it wants nothing more: no carry-in of the armful is offered
+		// either, and Wander is the top option. The guard is what holds the delivery.
+		const EntityID destBox = makeStorageBox(destPos, "Box", "Wood", ecs::StoragePriority::High, /*qty=*/13, /*min=*/20, /*max=*/13);
 
 		// Colonist mid-carry: a two-hand Wood armful in hands, task on its deposit leg (phase 2) to B.
 		auto colonist = createColonist(srcPos);
@@ -2268,17 +2278,8 @@ namespace ecs::test {
 		addKnownEntity(colonist, {0.0F, 30.0F}, bushId, assets::CapabilityType::Harvestable);  // B
 
 		// A stocking goal makes both bushes Available tier-6 harvest options.
-		auto storage = world->createEntity();
-		world->addComponent<Position>(storage, Position{{2.0F, 2.0F}});
-		GoalTask harvest;
-		harvest.type = TaskType::Harvest;
-		harvest.owner = GoalOwner::StorageGoalSystem;
-		harvest.destinationEntity = storage;
-		harvest.destinationPosition = {2.0F, 2.0F};
-		harvest.yieldDefNameId = stickId;
-		harvest.targetAmount = 99;
-		harvest.status = GoalStatus::Available;
-		GoalTaskRegistry::Get().createGoal(std::move(harvest));
+		(void)stickId;
+		makeStockingHarvest({2.0F, 2.0F}, "HystStick", /*minAmount=*/100);
 
 		// First re-eval: the system commits to one of the two equidistant bushes (deterministic via
 		// tiebreakId). Capture that target; it is now the in-progress option.
@@ -2440,12 +2441,12 @@ namespace ecs::test {
 		// A work order wanting sticks: a tier-4 Harvest of the nearer bush.
 		const auto station = world->createEntity();
 		world->addComponent<Position>(station, Position{{6.0F, 0.0F}});
+		makeStationNeed(station, "WorkStick", 2);
 		GoalTask craft;
 		craft.type = TaskType::Craft;
 		craft.owner = GoalOwner::CraftingGoalSystem;
 		craft.destinationEntity = station;
 		craft.destinationPosition = {6.0F, 0.0F};
-		craft.targetAmount = 2;
 		craft.status = GoalStatus::Blocked;
 		const uint64_t craftId = GoalTaskRegistry::Get().createGoal(std::move(craft));
 		GoalTask harvest;
@@ -2454,7 +2455,6 @@ namespace ecs::test {
 		harvest.destinationEntity = station;
 		harvest.destinationPosition = {6.0F, 0.0F};
 		harvest.yieldDefNameId = stickId;
-		harvest.targetAmount = 2;
 		harvest.parentGoalId = craftId;
 		harvest.status = GoalStatus::Available;
 		GoalTaskRegistry::Get().createGoal(std::move(harvest));
@@ -2538,11 +2538,11 @@ namespace ecs::test {
 		// A work order wanting sticks, so a tier-4 Harvest outranks the tier-5 hunger.
 		const auto station = world->createEntity();
 		world->addComponent<Position>(station, Position{{0.0F, 0.0F}});
+		makeStationNeed(station, "WorkStick", 2);
 		GoalTask craft;
 		craft.type = TaskType::Craft;
 		craft.owner = GoalOwner::CraftingGoalSystem;
 		craft.destinationEntity = station;
-		craft.targetAmount = 2;
 		craft.status = GoalStatus::Blocked;
 		const uint64_t craftId = GoalTaskRegistry::Get().createGoal(std::move(craft));
 		GoalTask harvest;
@@ -2550,7 +2550,6 @@ namespace ecs::test {
 		harvest.owner = GoalOwner::CraftingGoalSystem;
 		harvest.destinationEntity = station;
 		harvest.yieldDefNameId = stickId;
-		harvest.targetAmount = 2;
 		harvest.parentGoalId = craftId;
 		harvest.status = GoalStatus::Available;
 		GoalTaskRegistry::Get().createGoal(std::move(harvest));
@@ -3294,7 +3293,6 @@ namespace ecs::test {
 		goal.owner = GoalOwner::ConstructionGoalSystem;
 		goal.destinationEntity = blueprint;
 		goal.destinationPosition = {3.0F, 0.0F};
-		goal.targetAmount = 1;
 		goal.status = GoalStatus::Available;
 		GoalTaskRegistry::Get().createGoal(std::move(goal));
 
@@ -3349,6 +3347,7 @@ namespace ecs::test {
 		Inventory storageInv;
 		storageInv.maxCapacity = 5;
 		world->addComponent<Inventory>(storage, storageInv);
+		world->addComponent<StorageConfiguration>(storage, StorageConfiguration::createAcceptAll({assets::ItemCategory::RawMaterial}));
 
 		GoalTask goal;
 		goal.type = TaskType::Haul;
@@ -3356,7 +3355,6 @@ namespace ecs::test {
 		goal.destinationEntity = storage;
 		goal.destinationPosition = {4.0F, 0.0F};
 		goal.acceptedCategory = assets::ItemCategory::RawMaterial;
-		goal.targetAmount = 5; // free-slot count, must NOT cap the haul
 		goal.status = GoalStatus::Available;
 		GoalTaskRegistry::Get().createGoal(std::move(goal));
 
@@ -3407,13 +3405,17 @@ namespace ecs::test {
 		Inventory storageInv;
 		storageInv.maxCapacity = 5;
 		world->addComponent<Inventory>(storage, storageInv);
+		// It takes Pellet and Plank only, so the Ballast and Logs the colonist carries are not stocked into it.
+		StorageConfiguration storageConfig;
+		storageConfig.addRule(StorageRule{.defName = "Pellet", .category = assets::ItemCategory::RawMaterial});
+		storageConfig.addRule(StorageRule{.defName = "Plank", .category = assets::ItemCategory::RawMaterial});
+		world->addComponent<StorageConfiguration>(storage, std::move(storageConfig));
 		GoalTask goal;
 		goal.type = TaskType::Haul;
 		goal.owner = GoalOwner::StorageGoalSystem;
 		goal.destinationEntity = storage;
 		goal.destinationPosition = {4.0F, 0.0F};
 		goal.acceptedCategory = assets::ItemCategory::RawMaterial;
-		goal.targetAmount = 5;
 		goal.status = GoalStatus::Available;
 		GoalTaskRegistry::Get().createGoal(std::move(goal));
 
@@ -3479,6 +3481,7 @@ namespace ecs::test {
 		storageInv.addItem("Pellet", 80);
 		ASSERT_EQ(storageInv.addableCount("Pellet"), 0U);
 		world->addComponent<Inventory>(storage, storageInv);
+		world->addComponent<StorageConfiguration>(storage, StorageConfiguration::createAcceptAll({assets::ItemCategory::RawMaterial}));
 
 		GoalTask goal;
 		goal.type = TaskType::Haul;
@@ -3486,7 +3489,6 @@ namespace ecs::test {
 		goal.destinationEntity = storage;
 		goal.destinationPosition = {4.0F, 0.0F};
 		goal.acceptedCategory = assets::ItemCategory::RawMaterial;
-		goal.targetAmount = 0;
 		goal.status = GoalStatus::Available;
 		GoalTaskRegistry::Get().createGoal(std::move(goal));
 
@@ -3533,7 +3535,6 @@ namespace ecs::test {
 		haul.destinationEntity = site;
 		haul.destinationPosition = {4.0F, 0.0F};
 		haul.acceptedDefNameIds = {registry.getDefNameId("Plank")};
-		haul.targetAmount = 4; // sized before the site was credited
 		haul.parentGoalId = 999;
 		haul.status = GoalStatus::Available;
 		GoalTaskRegistry::Get().createGoal(std::move(haul));
@@ -3586,7 +3587,6 @@ namespace ecs::test {
 		clear.type = TaskType::Harvest;
 		clear.owner = GoalOwner::ConstructionGoalSystem;
 		clear.destinationPosition = {20.0F, 0.0F};
-		clear.targetAmount = 1;
 		clear.clearFootprint = FootprintBounds{{16.0F, -4.0F}, {24.0F, 4.0F}};
 		clear.status = GoalStatus::Available;
 		GoalTaskRegistry::Get().createGoal(std::move(clear));
@@ -3626,6 +3626,7 @@ namespace ecs::test {
 		wood.defName = "Wood";
 		wood.label = "Wood";
 		wood.itemProperties = assets::ItemProperties{};
+		wood.category = assets::ItemCategory::RawMaterial;
 		wood.itemProperties->stackSize = 40;
 		wood.itemProperties->massKg = 0.1F;
 		registry.registerTestDefinition(std::move(wood));
@@ -3643,14 +3644,7 @@ namespace ecs::test {
 			addKnownEntity(colonist, {-3.0F - static_cast<float>(i), 0.0F}, bushId, assets::CapabilityType::Harvestable);
 		}
 
-		GoalTask harvest;
-		harvest.type = TaskType::Harvest;
-		harvest.owner = GoalOwner::CraftingGoalSystem;
-		harvest.yieldDefNameId = woodId;
-		harvest.destinationPosition = {0.0F, 0.0F};
-		harvest.targetAmount = 5;
-		harvest.status = GoalStatus::Available;
-		GoalTaskRegistry::Get().createGoal(std::move(harvest));
+		makeStockingHarvest({0.0F, 0.0F}, "Wood");
 
 #ifdef DEVELOPMENT_BUILD
 		const uint64_t visitsBefore = workSourceVisits();
@@ -3704,10 +3698,15 @@ namespace ecs::test {
 			addKnownEntity(colonist, {-2.0F - static_cast<float>(i), 0.0F}, trinketId, assets::CapabilityType::Carryable);
 		}
 
-		const auto makeBox = [&](glm::vec2 at) {
+		const auto makeBox = [&](glm::vec2 at, std::vector<StorageRule> rules) {
 			auto box = world->createEntity();
 			world->addComponent<Position>(box, Position{at});
 			world->addComponent<Inventory>(box, Inventory::createForStorage());
+			StorageConfiguration config;
+			for (StorageRule& rule : rules) {
+				config.addRule(std::move(rule));
+			}
+			world->addComponent<StorageConfiguration>(box, std::move(config));
 			return box;
 		};
 		const glm::vec2 categoryAt{4.0F, 4.0F};
@@ -3715,20 +3714,19 @@ namespace ecs::test {
 		GoalTask category;
 		category.type = TaskType::Haul;
 		category.owner = GoalOwner::StorageGoalSystem;
-		category.destinationEntity = makeBox(categoryAt);
+		category.destinationEntity = makeBox(categoryAt, {StorageRule{.defName = "*", .category = assets::ItemCategory::RawMaterial},
+														  StorageRule{.defName = "Bread", .category = assets::ItemCategory::Food}});
 		category.destinationPosition = categoryAt;
 		category.acceptedCategory = assets::ItemCategory::RawMaterial;
 		category.acceptedDefNameIds = {breadId, pelletId, breadId};
-		category.targetAmount = 5;
 		category.status = GoalStatus::Available;
 		const uint64_t categoryGoal = GoalTaskRegistry::Get().createGoal(std::move(category));
 		GoalTask named;
 		named.type = TaskType::Haul;
 		named.owner = GoalOwner::StorageGoalSystem;
-		named.destinationEntity = makeBox(namedAt);
+		named.destinationEntity = makeBox(namedAt, {StorageRule{.defName = "Pellet", .category = assets::ItemCategory::RawMaterial}});
 		named.destinationPosition = namedAt;
 		named.acceptedDefNameIds = {pelletId, pelletId};
-		named.targetAmount = 5;
 		named.status = GoalStatus::Available;
 		const uint64_t namedGoal = GoalTaskRegistry::Get().createGoal(std::move(named));
 
@@ -3817,13 +3815,13 @@ namespace ecs::test {
 		// Craft goal needs 2 SmallStone; its child craft-haul goal is Available to fetch.
 		const auto station = world->createEntity();
 		world->addComponent<Position>(station, Position{{4.0F, 0.0F}});
+		makeStationNeed(station, "SmallStone", 2);
 
 		GoalTask craft;
 		craft.type = TaskType::Craft;
 		craft.owner = GoalOwner::CraftingGoalSystem;
 		craft.destinationEntity = station;
 		craft.destinationPosition = {4.0F, 0.0F};
-		craft.targetAmount = 2;
 		craft.status = GoalStatus::Blocked;
 		const uint64_t craftId = GoalTaskRegistry::Get().createGoal(std::move(craft));
 
@@ -3833,7 +3831,6 @@ namespace ecs::test {
 		haul.destinationEntity = station;
 		haul.destinationPosition = {4.0F, 0.0F};
 		haul.acceptedDefNameIds = {stoneId};
-		haul.targetAmount = 2;
 		haul.parentGoalId = craftId;
 		haul.status = GoalStatus::Available;
 		GoalTaskRegistry::Get().createGoal(std::move(haul));
@@ -3909,9 +3906,16 @@ namespace ecs::test {
 		// The colonist remembers a harvestable bush yielding Stick.
 		addKnownEntity(colonist, {2.0F, 0.0F}, bushId, assets::CapabilityType::Harvestable);
 
-		// A Harvest goal wanting Stick, available.
+		// A craft wanting Stick, and its Harvest child, available.
 		const auto station = world->createEntity();
 		world->addComponent<Position>(station, Position{{4.0F, 0.0F}});
+		makeStationNeed(station, "Stick", 2);
+		GoalTask craft;
+		craft.type = TaskType::Craft;
+		craft.owner = GoalOwner::CraftingGoalSystem;
+		craft.destinationEntity = station;
+		craft.destinationPosition = {4.0F, 0.0F};
+		craft.status = GoalStatus::Blocked;
 
 		GoalTask harvest;
 		harvest.type = TaskType::Harvest;
@@ -3920,7 +3924,7 @@ namespace ecs::test {
 		harvest.destinationPosition = {4.0F, 0.0F};
 		harvest.acceptedDefNameIds = {stickId};
 		harvest.yieldDefNameId = stickId;
-		harvest.targetAmount = 2;
+		harvest.parentGoalId = GoalTaskRegistry::Get().createGoal(std::move(craft));
 		harvest.status = GoalStatus::Available;
 		GoalTaskRegistry::Get().createGoal(std::move(harvest));
 
@@ -4850,14 +4854,31 @@ namespace ecs::test {
 		satisfyAllNeeds(*getNeeds(colonist));
 		auto& registry = assets::AssetRegistry::Get();
 		addKnownEntity(colonist, kInRoom, registerBerryBush(registry), assets::CapabilityType::Harvestable);
+		// A station whose job needs berries, and the Harvest child that cuts for it. The colonist's own
+		// berry would be carried in instead, so it has none.
+		world->getComponent<Inventory>(colonist)->removeItem("Berry", 1);
+		assets::RecipeDef recipe;
+		recipe.defName = "Recipe_BerryNeed";
+		recipe.label = recipe.defName;
+		recipe.inputs.push_back({"Berry", 0, 3});
+		assets::RecipeRegistry::Get().registerTestRecipe(recipe);
+		const EntityID station = world->createEntity();
+		world->addComponent<WorkQueue>(station).addJob(recipe.defName, 1);
+		world->addComponent<Inventory>(station, Inventory::createForStorage());
+		GoalTask craft;
+		craft.type = TaskType::Craft;
+		craft.owner = GoalOwner::CraftingGoalSystem;
+		craft.destinationEntity = station;
+		craft.destinationPosition = kStart;
+		craft.status = GoalStatus::Blocked;
 		GoalTask cut;
 		cut.type = TaskType::Harvest;
-		cut.destinationEntity = world->createEntity();
+		cut.destinationEntity = station;
 		cut.destinationPosition = kStart;
 		cut.yieldDefNameId = registry.getDefNameId("Berry");
-		cut.targetAmount = 5;
 		cut.status = GoalStatus::Available;
 		cut.owner = GoalOwner::CraftingGoalSystem;
+		cut.parentGoalId = GoalTaskRegistry::Get().createGoal(std::move(craft));
 		GoalTaskRegistry::Get().createGoal(std::move(cut));
 
 		int	  choseCut = 0;

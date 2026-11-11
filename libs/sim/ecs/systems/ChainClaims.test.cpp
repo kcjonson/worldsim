@@ -23,6 +23,7 @@
 #include "../components/StructureBlueprint.h"
 #include "../components/Task.h"
 #include "../components/Transform.h"
+#include "../components/WorkQueue.h"
 #include "assets/ActionTypeRegistry.h"
 #include "assets/AssetRegistry.h"
 #include "assets/PriorityConfig.h"
@@ -82,6 +83,7 @@ namespace ecs::test {
 		}
 
 		void TearDown() override {
+			assets::RecipeRegistry::Get().clear();
 			assets::ActionTypeRegistry::Get().clear();
 			assets::AssetRegistry::Get().clearDefinitions();
 			GoalTaskRegistry::Get().clear();
@@ -163,15 +165,13 @@ namespace ecs::test {
 			goal.destinationEntity = box;
 			goal.destinationPosition = position;
 			goal.acceptedDefNameIds = {stoneId};
-			goal.targetAmount = 10;
 			return GoalTaskRegistry::Get().createGoal(std::move(goal));
 		}
 
-		/// A blueprint wanting `wood` Wood, its construction umbrella, and the material's Haul child.
+		/// A blueprint wanting `needed` of `item`, and its construction umbrella with the material due.
 		struct Site {
 			EntityID blueprint;
 			uint64_t umbrella;
-			uint64_t haul;
 		};
 		Site constructionSite(glm::vec2 position, const std::string& item, uint32_t needed) {
 			const EntityID blueprint = world->createEntity();
@@ -187,35 +187,31 @@ namespace ecs::test {
 			umbrella.owner = GoalOwner::ConstructionGoalSystem;
 			umbrella.destinationEntity = blueprint;
 			umbrella.destinationPosition = position;
-			umbrella.targetAmount = 1;
+			umbrella.acceptedDefNameIds = {assets::AssetRegistry::Get().getDefNameId(item)};
 			umbrella.status = GoalStatus::Blocked;
-			const uint64_t umbrellaId = goals.createGoal(std::move(umbrella));
-
-			GoalTask haul;
-			haul.type = TaskType::Haul;
-			haul.owner = GoalOwner::ConstructionGoalSystem;
-			haul.destinationEntity = blueprint;
-			haul.destinationPosition = position;
-			haul.acceptedDefNameIds = {assets::AssetRegistry::Get().getDefNameId(item)};
-			haul.targetAmount = needed;
-			haul.parentGoalId = umbrellaId;
-			haul.chainId = goals.allocateChainId();
-			return {blueprint, umbrellaId, goals.createGoal(std::move(haul))};
+			return {blueprint, goals.createGoal(std::move(umbrella))};
 		}
 
-		/// A crafting station's Craft root.
-		uint64_t craftRoot(EntityID station, glm::vec2 position) {
+		/// A crafting station's Craft root, its next job needing `count` of `item`.
+		uint64_t craftRoot(EntityID station, glm::vec2 position, const std::string& item, uint32_t count) {
+			assets::RecipeDef recipe;
+			recipe.defName = "Recipe_" + item;
+			recipe.label = recipe.defName;
+			recipe.inputs.push_back({item, 0, count});
+			assets::RecipeRegistry::Get().registerTestRecipe(recipe);
+			world->addComponent<WorkQueue>(station).addJob(recipe.defName, 1);
+			world->addComponent<Inventory>(station, Inventory::createForStorage());
+
 			GoalTask craft;
 			craft.type = TaskType::Craft;
 			craft.owner = GoalOwner::CraftingGoalSystem;
 			craft.destinationEntity = station;
 			craft.destinationPosition = position;
-			craft.targetAmount = 5;
 			craft.status = GoalStatus::Blocked;
 			return GoalTaskRegistry::Get().createGoal(std::move(craft));
 		}
 
-		uint64_t childGoal(TaskType type, uint64_t root, EntityID destination, glm::vec2 position, uint32_t item, uint32_t amount) {
+		uint64_t childGoal(TaskType type, uint64_t root, EntityID destination, glm::vec2 position, uint32_t item) {
 			GoalTask child;
 			child.type = type;
 			child.owner = GoalOwner::CraftingGoalSystem;
@@ -223,9 +219,7 @@ namespace ecs::test {
 			child.destinationPosition = position;
 			child.acceptedDefNameIds = {item};
 			child.yieldDefNameId = type == TaskType::Harvest ? item : 0;
-			child.targetAmount = amount;
 			child.parentGoalId = root;
-			child.chainId = GoalTaskRegistry::Get().allocateChainId();
 			return GoalTaskRegistry::Get().createGoal(std::move(child));
 		}
 
@@ -287,13 +281,15 @@ namespace ecs::test {
 		EXPECT_EQ(claimOf(task, ClaimKind::InFlight)->target(), goal);
 		EXPECT_EQ(ai->claimIndex().sourceClaimed({.kind = TargetKind::WorldKey, .key = hashWorldEntity(pilePos, stoneId)}, stoneId, {}), q);
 
-		// The pickup lifts the asset's 5: the source claim is spent and the rest follows the goods.
+		// The pickup lifts what was claimed, here the whole pile: the source claim is spent and the rest
+		// follows the goods.
+		ASSERT_GE(q, 8U) << "the box's room and one trip; the live pile caps it at pickup";
 		act(colonist, pilePos);
 		ASSERT_EQ(task.type, TaskType::Haul);
-		ASSERT_EQ(ecs::availableQuantity(*world->getComponent<Inventory>(colonist), "Stone"), 5U);
+		ASSERT_EQ(ecs::availableQuantity(*world->getComponent<Inventory>(colonist), "Stone"), 8U);
 		EXPECT_FALSE(claimOf(task, ClaimKind::SourceQuantity).has_value());
-		EXPECT_EQ(claimOf(task, ClaimKind::Inbound)->quantity(), std::min(q, 5U));
-		EXPECT_EQ(claimOf(task, ClaimKind::InFlight)->quantity(), std::min(q, 5U));
+		EXPECT_EQ(claimOf(task, ClaimKind::Inbound)->quantity(), 8U);
+		EXPECT_EQ(claimOf(task, ClaimKind::InFlight)->quantity(), 8U);
 
 		act(colonist, boxPos);
 		EXPECT_FALSE(task.isActive());
@@ -338,8 +334,8 @@ namespace ecs::test {
 		const glm::vec2 pilePos{3.0F, 0.0F};
 		const EntityID	station = world->createEntity();
 		world->addComponent<Position>(station, Position{stationPos});
-		const uint64_t root = craftRoot(station, stationPos);
-		childGoal(TaskType::Haul, root, station, stationPos, stoneId, 2);
+		const uint64_t root = craftRoot(station, stationPos, "Stone", 2);
+		childGoal(TaskType::Haul, root, station, stationPos, stoneId);
 		const EntityID pile = world->createEntity();
 		world->addComponent<Position>(pile, Position{pilePos});
 		makeLoosePile(*world, pile, stoneId, pilePos, 8);
@@ -355,15 +351,16 @@ namespace ecs::test {
 		EXPECT_EQ(ai->claimIndex().inFlight(root, stoneId, {}), 2U);
 	}
 
-	// A cut claims its source and expects its largest yield toward the root; the claims end with the
-	// task when the cut completes (the deposit leg is not part of this step).
+	// A cut claims its source and expects its largest yield toward the root. When it lands the task
+	// becomes its own deposit leg: the Use drops, In-flight and Inbound follow what was cut, and the
+	// deposit ends them with the task.
 	TEST_F(ChainClaimsTest, HarvestForAGoalClaimsTheSourceAndItsExpectedYield) {
 		const glm::vec2 stationPos{0.0F, 6.0F};
 		const glm::vec2 bushPos{3.0F, 0.0F};
 		const EntityID	station = world->createEntity();
 		world->addComponent<Position>(station, Position{stationPos});
-		const uint64_t root = craftRoot(station, stationPos);
-		childGoal(TaskType::Harvest, root, station, stationPos, stickId, 5);
+		const uint64_t root = craftRoot(station, stationPos, "Stick", 5);
+		childGoal(TaskType::Harvest, root, station, stationPos, stickId);
 		const EntityID colonist = createColonist({0.0F, 0.0F});
 		remember(colonist, bushPos, "StickBush", assets::CapabilityType::Harvestable);
 
@@ -379,9 +376,19 @@ namespace ecs::test {
 		EXPECT_EQ(ai->claimIndex().useHolder({.kind = TargetKind::WorldKey, .key = task.harvestTargetEntityId}, {})->colonist, colonist);
 
 		act(colonist, bushPos);
-		EXPECT_GT(ecs::availableQuantity(*world->getComponent<Inventory>(colonist), "Stick"), 0U);
+		const uint32_t cut = ecs::availableQuantity(*world->getComponent<Inventory>(colonist), "Stick");
+		ASSERT_GT(cut, 0U);
+		ASSERT_EQ(task.type, TaskType::Haul) << "the cut carries itself in";
+		EXPECT_FALSE(claimOf(task, ClaimKind::Use).has_value());
+		EXPECT_EQ(claimOf(task, ClaimKind::InFlight)->target(), root);
+		EXPECT_EQ(claimOf(task, ClaimKind::InFlight)->quantity(), cut);
+		EXPECT_EQ(claimOf(task, ClaimKind::Inbound)->target(), static_cast<uint64_t>(station));
+		EXPECT_EQ(claimOf(task, ClaimKind::Inbound)->quantity(), cut);
+
+		act(colonist, stationPos);
 		EXPECT_FALSE(task.isActive());
 		EXPECT_TRUE(task.claims.empty());
+		EXPECT_EQ(world->getComponent<Inventory>(station)->getQuantity("Stick"), cut);
 	}
 
 	TEST_F(ChainClaimsTest, BuildSiteClearClaimsOnlyItsSource) {
@@ -393,7 +400,6 @@ namespace ecs::test {
 		clear.owner = GoalOwner::ConstructionGoalSystem;
 		clear.destinationEntity = site.blueprint;
 		clear.destinationPosition = sitePos;
-		clear.targetAmount = 1;
 		clear.clearFootprint = FootprintBounds{.min = {3.0F, 3.0F}, .max = {6.0F, 6.0F}};
 		clear.parentGoalId = site.umbrella;
 		GoalTaskRegistry::Get().createGoal(std::move(clear));
@@ -532,7 +538,7 @@ namespace ecs::test {
 		ASSERT_TRUE(task.suspended.has_value());
 
 		// The site no longer wants the goods: the next pick is Wander, and the record goes.
-		GoalTaskRegistry::Get().removeGoal(site.haul);
+		GoalTaskRegistry::Get().updateGoal(site.umbrella, [](GoalTask& goal) { goal.acceptedDefNameIds.clear(); });
 		inventory.removeItem("Berry", 1);
 		world->getComponent<NeedsComponent>(colonist)->get(NeedType::Hunger).value = 100.0F;
 		task.clear();

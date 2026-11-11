@@ -1,5 +1,6 @@
 #include "ChainClaims.h"
 
+#include "../ClaimIndex.h"
 #include "../GoalTaskRegistry.h"
 #include "../InventoryMass.h"
 #include "../components/Inventory.h"
@@ -18,10 +19,11 @@ namespace ecs {
 		}
 
 		/// What one cut of the remembered harvestable can bring in: its most per cut, capped by what the
-		/// colonist can carry of the yield and by what the goal still wants. Over-estimating only makes
-		/// another colonist briefly see less available; under-estimating would let it re-cut.
-		uint32_t expectedYield(const assets::AssetRegistry& registry, const Memory& memory, const Inventory& inventory, const Task& task,
-							   const GoalTask& goal) {
+		/// colonist can carry of the yield and by what the root still needs that nobody else is bringing.
+		/// Over-estimating only makes another colonist briefly see less available; under-estimating
+		/// would let it re-cut.
+		uint32_t expectedYield(World& world, const ClaimIndex& claims, const assets::AssetRegistry& registry, const Memory& memory,
+							   const Inventory& inventory, const Task& task, const GoalTask& root) {
 			const KnownWorldEntity* source = memory.getWorldEntity(task.harvestTargetEntityId);
 			if (source == nullptr) {
 				return 0;
@@ -32,12 +34,27 @@ namespace ecs {
 			}
 			const std::string& yieldDefName = registry.getDefName(task.harvestYieldDefNameId);
 			const uint32_t	   room = ecs::pickupUnitsThatFit(inventory, registry, yieldDefName, ecs::carriedCargoMassKg(inventory, registry));
-			return std::min({def->capabilities.harvestable->amountMax, room, goal.availableCapacity()});
+			const uint32_t need =
+				rootAvailable(world, claims, root.id, task.harvestYieldDefNameId, harvestBasis(root), ClaimExclusion::of(task));
+			return std::min({def->capabilities.harvestable->amountMax, room, need});
 		}
 
 	} // namespace
 
-	void recordChainClaims(const assets::AssetRegistry& registry, const Memory& memory, const Inventory& inventory, Task& task) {
+	uint32_t
+	rootAvailable(World& world, const ClaimIndex& claims, uint64_t rootGoalId, uint32_t itemDefNameId, NeedBasis basis, ClaimExclusion exclude) {
+		const uint32_t need = GoalTaskRegistry::Get().remainingNeed(world, rootGoalId, itemDefNameId, basis);
+		const uint32_t inFlight = need > 0 ? claims.inFlight(rootGoalId, itemDefNameId, exclude) : 0U;
+		return need > inFlight ? need - inFlight : 0U;
+	}
+
+	NeedBasis harvestBasis(const GoalTask& root) {
+		return root.owner == GoalOwner::StorageGoalSystem ? NeedBasis::Harvest : NeedBasis::Stock;
+	}
+
+	void recordChainClaims(
+		World& world, const ClaimIndex& claims, const assets::AssetRegistry& registry, const Memory& memory, const Inventory& inventory, Task& task
+	) {
 		const auto& goals = GoalTaskRegistry::Get();
 		switch (task.type) {
 			case TaskType::Harvest: {
@@ -47,8 +64,12 @@ namespace ecs {
 				if (goal == nullptr || goal->clearFootprint.has_value() || task.harvestYieldDefNameId == 0) {
 					break;
 				}
-				if (const uint32_t expected = expectedYield(registry, memory, inventory, task, *goal); expected > 0) {
-					push(task, Claim::inFlight(goals.rootOf(goal->id), task.harvestYieldDefNameId, expected));
+				const GoalTask* root = goals.getGoal(goals.rootOf(goal->id));
+				if (root == nullptr) {
+					break;
+				}
+				if (const uint32_t expected = expectedYield(world, claims, registry, memory, inventory, task, *root); expected > 0) {
+					push(task, Claim::inFlight(root->id, task.harvestYieldDefNameId, expected));
 				}
 				break;
 			}
@@ -101,6 +122,12 @@ namespace ecs {
 		task.claims.eraseIf([](const Claim& claim) {
 			return claim.kind() == ClaimKind::Use || claim.kind() == ClaimKind::SourceQuantity || claim.quantity() == 0;
 		});
+	}
+
+	void harvestToDeliveryLeg(Task& task, uint64_t rootGoalId, EntityID destination, uint32_t itemDefNameId, uint32_t quantity) {
+		task.claims.clear();
+		push(task, Claim::inbound(static_cast<uint64_t>(destination), itemDefNameId, quantity));
+		push(task, Claim::inFlight(rootGoalId, itemDefNameId, quantity));
 	}
 
 	std::optional<SuspendedWork> suspendableWork(const assets::AssetRegistry& registry, const Task& task, uint32_t held) {

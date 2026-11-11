@@ -22,13 +22,12 @@ namespace ecs::test {
 		void TearDown() override { GoalTaskRegistry::Get().clear(); }
 
 		static uint64_t make(
-			TaskType type, GoalOwner owner, EntityID destination, std::optional<uint64_t> parent = std::nullopt, uint32_t target = 0) {
+			TaskType type, GoalOwner owner, EntityID destination, std::optional<uint64_t> parent = std::nullopt) {
 			GoalTask goal;
 			goal.type = type;
 			goal.owner = owner;
 			goal.destinationEntity = destination;
 			goal.parentGoalId = parent;
-			goal.targetAmount = target;
 			return GoalTaskRegistry::Get().createGoal(std::move(goal));
 		}
 
@@ -99,40 +98,6 @@ namespace ecs::test {
 		registry.clear();
 		EXPECT_EQ(registry.allocateChainId(), first);
 		EXPECT_EQ(registry.allocateChainId(), second);
-	}
-
-	// Pinned: only a Haul child credits its parent Craft; a Harvest child's delivery stays on itself.
-	TEST_F(GoalTaskRegistryTest, RecordDeliveryCreditsParentCraftOnlyForHaulChildren) {
-		auto& registry = GoalTaskRegistry::Get();
-
-		const uint64_t craft = make(TaskType::Craft, GoalOwner::CraftingGoalSystem, 10, std::nullopt, 4);
-		registry.updateGoal(craft, [](GoalTask& goal) { goal.status = GoalStatus::Blocked; });
-		const uint64_t harvest = make(TaskType::Harvest, GoalOwner::CraftingGoalSystem, 10, craft, 4);
-		const uint64_t haul = make(TaskType::Haul, GoalOwner::CraftingGoalSystem, 10, craft, 4);
-
-		registry.recordDelivery(harvest, 2);
-		EXPECT_EQ(registry.getGoal(harvest)->deliveredAmount, 2U);
-		EXPECT_EQ(registry.getGoal(craft)->deliveredAmount, 0U);
-
-		registry.recordDelivery(haul, 3);
-		EXPECT_EQ(registry.getGoal(haul)->deliveredAmount, 3U);
-		EXPECT_EQ(registry.getGoal(craft)->deliveredAmount, 3U);
-		EXPECT_EQ(registry.getGoal(craft)->status, GoalStatus::Blocked);
-
-		registry.recordDelivery(haul, 1);
-		EXPECT_EQ(registry.getGoal(craft)->deliveredAmount, 4U);
-		EXPECT_EQ(registry.getGoal(craft)->status, GoalStatus::Available) << "the craft leaves Blocked once materials are met";
-	}
-
-	TEST_F(GoalTaskRegistryTest, RecordDeliveryOfZeroChangesNothing) {
-		auto& registry = GoalTaskRegistry::Get();
-
-		const uint64_t craft = make(TaskType::Craft, GoalOwner::CraftingGoalSystem, 10, std::nullopt, 4);
-		const uint64_t haul = make(TaskType::Haul, GoalOwner::CraftingGoalSystem, 10, craft, 4);
-		registry.recordDelivery(haul, 0);
-
-		EXPECT_EQ(registry.getGoal(haul)->deliveredAmount, 0U);
-		EXPECT_EQ(registry.getGoal(craft)->deliveredAmount, 0U);
 	}
 
 	// Pinned: removal cascades through grandchildren and leaves unrelated goals and their indexes alone.

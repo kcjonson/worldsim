@@ -1,11 +1,13 @@
 #include "GlobalTaskAdapter.h"
 
 #include <assets/AssetRegistry.h>
+#include <assets/RecipeRegistry.h>
 #include <ecs/GoalTaskRegistry.h>
 #include <ecs/World.h>
 #include <ecs/components/Colonist.h>
 #include <ecs/components/StructureBlueprint.h>
 #include <ecs/components/Task.h>
+#include <ecs/components/WorkQueue.h>
 #include <ecs/systems/AIDecisionSystem.h>
 
 #include <algorithm>
@@ -221,6 +223,27 @@ namespace world_sim::adapters {
 			return colonist != nullptr ? colonist->name : std::string{};
 		}
 
+		/// A Craft goal's materials as {landed, required} for its station's next job: the recipe's total
+		/// inputs, and how many of them the root no longer needs.
+		std::pair<uint32_t, uint32_t> craftMaterials(ecs::World& world, const ecs::GoalTask& goal) {
+			const auto*				 queue = world.getComponent<ecs::WorkQueue>(goal.destinationEntity);
+			const ecs::CraftingJob* job = queue != nullptr ? queue->getNextJob() : nullptr;
+			const auto*				 recipe = job != nullptr ? assets::RecipeRegistry::Get().getRecipe(job->recipeDefName) : nullptr;
+			if (recipe == nullptr) {
+				return {0, 0};
+			}
+			const auto& registry = ecs::GoalTaskRegistry::Get();
+			uint32_t	required = 0;
+			uint32_t	missing = 0;
+			for (const auto& input : recipe->inputs) {
+				required += input.count;
+				missing += registry.remainingNeed(
+					world, goal.id, assets::AssetRegistry::Get().getDefNameId(input.defName), ecs::NeedBasis::Stock
+				);
+			}
+			return {required - std::min(missing, required), required};
+		}
+
 		/// Convert goal to display data
 		GlobalTaskDisplayData goalToDisplayData(
 			const ecs::GoalTaskRegistry& goalRegistry,
@@ -271,11 +294,13 @@ namespace world_sim::adapters {
 					data.statusDetail = std::format("{}%", pct);
 				}
 			}
-			// Status based on GoalStatus (only goals with capacity reach here; callers filter
-			// out completed ones).
+			// Status based on GoalStatus. A goal exists only while there is work toward it.
 			else if (goal.status == ecs::GoalStatus::Blocked) {
 				data.status = "Blocked";
-				data.statusDetail = std::format("{}/{} materials", goal.deliveredAmount, goal.targetAmount);
+				if (world != nullptr && goal.type == ecs::TaskType::Craft) {
+					const auto [landed, required] = craftMaterials(*world, goal);
+					data.statusDetail = std::format("{}/{} materials", landed, required);
+				}
 				data.isBlocked = true;
 			} else if (goal.status == ecs::GoalStatus::NoSource) {
 				data.status = "Waiting (no source found)";
@@ -300,52 +325,30 @@ namespace world_sim::adapters {
 			return data;
 		}
 
+		/// Every goal row, Cut/Haul/Build reading as a chain per site and Craft/PlacePackaged rounding it
+		/// out. Build is the umbrella (the destination holder), so a site shows its build step, not just
+		/// its material children. Goal systems retire what is satisfied, so every goal is shown.
+		std::vector<GlobalTaskDisplayData> goalsForDisplay(ecs::World& world, const glm::vec2& referencePosition) {
+			auto&							   registry = ecs::GoalTaskRegistry::Get();
+			std::vector<GlobalTaskDisplayData> result;
+			const Workers					   workers = workersFromClaims(world);
+			for (ecs::TaskType type :
+				 {ecs::TaskType::Harvest, ecs::TaskType::Haul, ecs::TaskType::Build, ecs::TaskType::Craft, ecs::TaskType::PlacePackaged}) {
+				for (const auto* goal : registry.getGoalsOfType(type)) {
+					result.push_back(goalToDisplayData(registry, *goal, referencePosition, &world, &workers));
+				}
+			}
+			return result;
+		}
+
 	} // anonymous namespace
 
 	std::vector<GlobalTaskDisplayData> getGlobalTasks(ecs::World& world, const glm::vec2& cameraCenter) {
-		auto& registry = ecs::GoalTaskRegistry::Get();
-
-		std::vector<GlobalTaskDisplayData> result;
-		const Workers					   workers = workersFromClaims(world);
-
-		// Cut/Haul/Build read as a chain per site; Craft/PlacePackaged round it out. Build is the
-		// umbrella goal (the destination holder) so a site shows its build step, not just the
-		// material children. Skip completed ones (no remaining capacity).
-		for (ecs::TaskType type : {ecs::TaskType::Harvest, ecs::TaskType::Haul, ecs::TaskType::Build, ecs::TaskType::Craft,
-								   ecs::TaskType::PlacePackaged}) {
-			for (const auto* goal : registry.getGoalsOfType(type)) {
-				if (goal->availableCapacity() > 0) {
-					result.push_back(goalToDisplayData(registry, *goal, cameraCenter, &world, &workers));
-				}
-			}
-		}
-
-		return result;
+		return goalsForDisplay(world, cameraCenter);
 	}
 
-	std::vector<GlobalTaskDisplayData> getTasksForColonist(const glm::vec2& colonistPosition) {
-		auto& registry = ecs::GoalTaskRegistry::Get();
-
-		std::vector<GlobalTaskDisplayData> result;
-
-		for (const auto* goal : registry.getGoalsOfType(ecs::TaskType::Harvest)) {
-			if (goal->availableCapacity() == 0) continue;
-			result.push_back(goalToDisplayData(registry, *goal, colonistPosition, nullptr, nullptr));
-		}
-		for (const auto* goal : registry.getGoalsOfType(ecs::TaskType::Haul)) {
-			if (goal->availableCapacity() == 0) continue;
-			result.push_back(goalToDisplayData(registry, *goal, colonistPosition, nullptr, nullptr));
-		}
-		for (const auto* goal : registry.getGoalsOfType(ecs::TaskType::Craft)) {
-			if (goal->availableCapacity() == 0) continue;
-			result.push_back(goalToDisplayData(registry, *goal, colonistPosition, nullptr, nullptr));
-		}
-		for (const auto* goal : registry.getGoalsOfType(ecs::TaskType::PlacePackaged)) {
-			if (goal->availableCapacity() == 0) continue;
-			result.push_back(goalToDisplayData(registry, *goal, colonistPosition, nullptr, nullptr));
-		}
-
-		return result;
+	std::vector<GlobalTaskDisplayData> getTasksForColonist(ecs::World& world, const glm::vec2& colonistPosition) {
+		return goalsForDisplay(world, colonistPosition);
 	}
 
 	void sortTasksForDisplay(std::vector<GlobalTaskDisplayData>& tasks) {

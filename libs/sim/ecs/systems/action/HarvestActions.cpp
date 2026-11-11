@@ -59,7 +59,6 @@ namespace ecs {
 	void ActionSystem::applyCollectionEffect(
 		const Action& action,
 		glm::vec2	  colonistPosition,
-		Task&		  task,
 		Inventory&	  inventory,
 		Memory&		  memory
 	) {
@@ -314,28 +313,6 @@ namespace ecs {
 
 			// Below the full yield when carry- or slot-limited, or the source was gone or regrowing.
 			LOG_INFO(Engine, "[Action] Collected %u of %u x %s", added, collEff.quantity, collEff.itemDefName.c_str());
-		}
-
-		// For goal-driven Harvest tasks, update the GoalTaskRegistry. Record only what actually landed
-		// in inventory, so the goal's progress reflects real items the colonist now carries. A clear
-		// goal records nothing: it stands until the footprint is empty, so colonists clearing other
-		// blockers in it keep their task, and ConstructionSystem retires it then.
-		auto&		goalRegistry = GoalTaskRegistry::Get();
-		const auto* goal = (task.type == TaskType::Harvest && task.harvestGoalId != 0) ? goalRegistry.getGoal(task.harvestGoalId) : nullptr;
-		if (goal != nullptr && !goal->clearFootprint.has_value() && added > 0) {
-			goalRegistry.recordDelivery(task.harvestGoalId, added);
-
-			goal = goalRegistry.getGoal(task.harvestGoalId);
-			if (goal != nullptr && goal->availableCapacity() == 0) {
-				// Harvest done: the material is in the colonist's inventory now, so the Haul that
-				// carries it to the station can be created here (not up front), then the goal is retired.
-				// Construction emits its own per-material Hauls sized to the manifest, so its Harvests
-				// spawn none.
-				if (goal->owner != GoalOwner::ConstructionGoalSystem) {
-					goalRegistry.createHaulForCompletedHarvest(task.harvestGoalId);
-				}
-				goalRegistry.removeGoal(task.harvestGoalId);
-			}
 		}
 	}
 

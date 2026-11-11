@@ -141,36 +141,6 @@ namespace ecs {
 		}
 	}
 
-	void GoalTaskRegistry::recordDelivery(uint64_t goalId, uint32_t amount) {
-		if (amount == 0) {
-			return;
-		}
-
-		auto it = goals.find(goalId);
-		if (it == goals.end()) {
-			return;
-		}
-
-		it->second.deliveredAmount += amount;
-
-		// Credit the parent Craft goal too: its target is the total material count, and a
-		// material reaches the station only when a Haul child deposits it there. Harvest
-		// deliveries land in the colonist's inventory, not the station, so they must NOT
-		// credit the parent (that would double-count once the matching Haul completes).
-		// Once materials are satisfied, the Craft leaves Blocked so the crafting work
-		// itself can be picked up.
-		if (it->second.type == TaskType::Haul && it->second.parentGoalId.has_value()) {
-			auto parentIt = goals.find(it->second.parentGoalId.value());
-			if (parentIt != goals.end() && parentIt->second.type == TaskType::Craft) {
-				parentIt->second.deliveredAmount += amount;
-				if (parentIt->second.status == GoalStatus::Blocked &&
-					parentIt->second.deliveredAmount >= parentIt->second.targetAmount) {
-					parentIt->second.status = GoalStatus::Available;
-				}
-			}
-		}
-	}
-
 	uint64_t GoalTaskRegistry::rootOf(uint64_t goalId) const {
 		auto it = goals.find(goalId);
 		if (it == goals.end()) {
@@ -407,31 +377,6 @@ namespace ecs {
 		for (uint64_t id : toRemove) {
 			removeGoal(id);
 		}
-	}
-
-	uint64_t GoalTaskRegistry::createHaulForCompletedHarvest(uint64_t harvestGoalId) {
-		auto it = goals.find(harvestGoalId);
-		if (it == goals.end() || it->second.type != TaskType::Harvest) {
-			return 0;
-		}
-
-		const GoalTask& harvest = it->second;
-		GoalTask		haul;
-		haul.type = TaskType::Haul;
-		haul.owner = harvest.owner;
-		haul.destinationEntity = harvest.destinationEntity;
-		haul.destinationPosition = harvest.destinationPosition;
-		haul.destinationDefNameId = harvest.destinationDefNameId;
-		haul.acceptedDefNameIds = harvest.acceptedDefNameIds;
-		haul.acceptedCategory = harvest.acceptedCategory;
-		haul.targetAmount = harvest.targetAmount;
-		haul.deliveredAmount = 0;
-		haul.createdAt = harvest.createdAt;
-		haul.parentGoalId = harvest.parentGoalId;
-		haul.status = GoalStatus::Available;
-		haul.chainId = harvest.chainId;
-
-		return createGoal(std::move(haul));
 	}
 
 } // namespace ecs

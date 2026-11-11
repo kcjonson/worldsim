@@ -163,16 +163,24 @@ private:
 		struct Memory& memory
 	);
 
+	/// Hand a haul over to its deposit leg: point the task, its MovementTarget, and a fresh route at the
+	/// destination. The one handoff every way into the deposit leg takes; claims are rewritten by the caller.
+	void headToDeposit(EntityID entity, struct Task& task);
+
+	/// A goal's cut has landed: turn the Harvest task into the deposit leg that carries the yield to its
+	/// root's destination, committing what the root still needs that no other task is bringing. False
+	/// (the task ends) when the cut brings nothing toward a root: a clear, nothing carried, or no need.
+	bool carryHarvestIn(EntityID entity, const struct Position& position, struct Task& task, const struct Inventory& inventory);
+
 	/// Apply a completed action's need-restoration effect (primary + side effect).
 	void applyNeedEffect(const struct Action& action, struct NeedsComponent& needs);
 
 	/// Apply a completed collection effect (Pickup/Harvest): pool-withdraw vs single-shot,
-	/// source removal/cooldown, and harvest-goal delivery recording. `colonistPosition` is where
+	/// source removal/cooldown. `colonistPosition` is where
 	/// a tool stowed to free the hands is put away or dropped from (reach starts at the colonist).
 	void applyCollectionEffect(
 		const struct Action& action,
 		glm::vec2 colonistPosition,
-		struct Task& task,
 		struct Inventory& inventory,
 		struct Memory& memory
 	);
@@ -187,7 +195,7 @@ private:
 	void applyCraftingEffect(const struct Action& action, struct Inventory& inventory);
 
 	/// Apply a completed deposit effect (storage deposit or deliver-to-craft-station).
-	void applyDepositEffect(const struct Action& action, struct Task& task, struct Inventory& inventory);
+	void applyDepositEffect(const struct Action& action, struct Inventory& inventory);
 
 	/// Apply a completed construction progress effect (Build/Deconstruct completion signal).
 	void applyProgressEffect(const struct Action& action);

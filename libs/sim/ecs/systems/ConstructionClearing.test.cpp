@@ -306,9 +306,9 @@ namespace ecs::test {
 		EXPECT_FALSE(world->isAlive(bush));
 	}
 
-	// A material Harvest (not a clear) feeds the site through construction's own per-material Haul:
-	// completing it creates no second Haul, and the Wood still lands on the manifest.
-	TEST_F(FootprintClearingTest, MaterialHarvestDeliversThroughTheSiteHaulAlone) {
+	// A material Harvest (not a clear) carries its own Wood to the site: no Haul goal exists at any
+	// point, and the Wood lands on the manifest.
+	TEST_F(FootprintClearingTest, MaterialHarvestCarriesItsYieldToTheSite) {
 		const glm::vec2 tree{12.0F, 12.0F}; // outside the footprint: the site is clear from the start
 		plantTrees({tree});
 		createColonist({11.0F, 11.0F}, {tree});
@@ -319,7 +319,7 @@ namespace ecs::test {
 			return world->getComponent<StructureBlueprint>(site)->materialsComplete();
 		});
 		EXPECT_TRUE(built) << "the felled Wood reaches the site";
-		EXPECT_EQ(mostHauls, 1U) << "only construction's own Haul; the completed Harvest creates none";
+		EXPECT_EQ(mostHauls, 0U) << "the cut is its own deposit leg; no Haul goal is raised for it";
 	}
 
 
