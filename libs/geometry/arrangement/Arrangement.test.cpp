@@ -390,7 +390,87 @@ namespace {
 		}
 	}
 
+	Vec2i64 transposed(const Vec2i64& p, bool transpose) {
+		return transpose ? Vec2i64{p.y, p.x} : p;
+	}
+
+	// A T-touch at every integer x (or y): a unit stem arriving from the low side
+	// ends on a short perpendicular segment's interior, and nothing touches that
+	// point from the high side. Whatever the broad phase's cell size, some of these
+	// touch points lie exactly on a cell boundary with the stem in the cell below.
+	std::vector<InputSegment> lowSideTouchLattice(bool transpose) {
+		std::vector<InputSegment> segs;
+		std::int64_t			  id = 0;
+		for (std::int64_t row = 0; row < 8; ++row) {
+			const std::int64_t y = 4 * row;
+			for (std::int64_t x = 1 + row % 2; x <= 40; x += 2) {
+				segs.push_back({transposed({x - 1, y}, transpose), transposed({x, y}, transpose), id++});
+				segs.push_back({transposed({x, y - 1}, transpose), transposed({x, y + 1}, transpose), id++});
+			}
+		}
+		return segs;
+	}
+
+	// One long segment over a field of short crossing segments spread across many cells.
+	std::vector<InputSegment> longOverShorts(const Vec2i64& from, const Vec2i64& to) {
+		std::vector<InputSegment> segs;
+		std::int64_t			  id = 0;
+		for (std::int64_t x = 0; x < 2000; x += 100) {
+			for (std::int64_t y = 0; y < 2000; y += 100) {
+				segs.push_back({{x + 10, y + 3}, {x + 70, y + 91}, id++});
+				segs.push_back({{x + 5, y + 80}, {x + 90, y + 20}, id++});
+			}
+		}
+		segs.push_back({from, to, id});
+		return segs;
+	}
+
+	// Two random tangles millions of mm apart along x: a lopsided extent the grid
+	// must cap rather than cut into millions of columns.
+	std::vector<InputSegment> farClusters() {
+		std::mt19937								rng(0xFA12);
+		std::uniform_int_distribution<std::int64_t> coord(0, 40);
+		std::vector<InputSegment>					segs;
+		for (const std::int64_t ox : {std::int64_t{0}, std::int64_t{6000000}}) {
+			for (int i = 0; i < 60; ++i) {
+				segs.push_back({{ox + coord(rng), coord(rng)}, {ox + coord(rng), coord(rng)}, i});
+			}
+		}
+		return segs;
+	}
+
+	// Every segment on one line, overlapping and nested, so the extent is zero on
+	// one axis.
+	std::vector<InputSegment> collinearOverlaps(bool transpose) {
+		std::vector<InputSegment> segs;
+		for (std::int64_t i = 0; i < 40; ++i) {
+			segs.push_back({transposed({i * 37, 500}, transpose), transposed({i * 37 + 150 + i % 7 * 20, 500}, transpose), i});
+		}
+		return segs;
+	}
+
 } // namespace
+
+TEST(Arrangement, BroadPhaseInputsResolveClean) {
+	struct Case {
+		const char*				  name;
+		std::vector<InputSegment> segs;
+	};
+	const std::vector<Case> cases = {
+		{"low-side touches on x", lowSideTouchLattice(false)},
+		{"low-side touches on y", lowSideTouchLattice(true)},
+		{"long horizontal over shorts", longOverShorts({-50, 1037}, {2050, 1037})},
+		{"long diagonal over shorts", longOverShorts({-50, -40}, {2050, 2013})},
+		{"far clusters", farClusters()},
+		{"collinear overlaps on a horizontal", collinearOverlaps(false)},
+		{"collinear overlaps on a vertical", collinearOverlaps(true)},
+	};
+	for (const Case& c : cases) {
+		const Arrangement arr = buildArrangement(c.segs);
+		EXPECT_TRUE(noVertexInteriorToAnyEdge(arr)) << c.name;
+		EXPECT_TRUE(edgesCleanlyDisjoint(arr)) << c.name;
+	}
+}
 
 // The navmesh triangulates the arrangement's edges as constraints, so ring input
 // must come out as a planar straight-line graph. A ring vertex resting on another
@@ -426,4 +506,46 @@ TEST(Arrangement, RingsSharingCollinearSubEdgeYieldPslg) {
 	EXPECT_EQ(arr.edges[sharedUpper].provenance, (std::vector<std::int64_t>{1, 2}));
 	EXPECT_TRUE(hasEdge(arr, {1000, 0}, {1000, 200}));
 	EXPECT_TRUE(hasEdge(arr, {1000, 800}, {1000, 1200}));
+}
+
+// Two crossings on one segment round to points sharing an x, off the segment's line:
+// (11.74, 25.96) to (12, 26) and (12.26, 25.04) to (12, 25). The segment runs toward
+// -x, +y, so its chain must reach (12, 25) first. Ordered by coordinates the chain
+// zigzagged back through (12, 26), and the ring it belonged to forked.
+TEST(Arrangement, RoundedCutsSharingAnXFollowTheSegment) {
+	const std::vector<InputSegment> segs = {
+		{{14, 22}, {10, 29}, 1},
+		{{20, 21}, {10, 27}, 2},
+		{{10, 27}, {25, 14}, 3},
+	};
+	const Arrangement arr = buildArrangement(segs);
+	EXPECT_TRUE(hasEdge(arr, {14, 22}, {12, 25})) << canonical(arr);
+	EXPECT_TRUE(hasEdge(arr, {12, 25}, {12, 26})) << canonical(arr);
+	EXPECT_TRUE(hasEdge(arr, {12, 26}, {10, 29})) << canonical(arr);
+	EXPECT_FALSE(hasEdge(arr, {14, 22}, {12, 26})) << canonical(arr);
+}
+
+// Splits are taken from the current pieces, not the originals, so each level of
+// cascading rounding can move a piece another 0.71 mm from its original line. Four
+// nearly parallel segments and two crossers drift past 2 mm. This pins that the
+// arrangement has no 2 mm drift bound; PatchableMesh's off-ground reach allows for it.
+TEST(Arrangement, RepeatedRoundingDriftsPastTwoMillimetres) {
+	const std::vector<InputSegment> segs = {
+		{{2, 3}, {1586, 5}, 0},	   {{3, 3}, {1589, 4}, 1},	  {{4, 1}, {1589, 6}, 2},
+		{{5, 0}, {1589, 3}, 3},	   {{970, -50}, {994, 60}, 4}, {{1420, -50}, {1375, 60}, 5},
+	};
+	const Arrangement arr	= buildArrangement(segs);
+	bool			  pastTwo = false;
+	for (const ArrangementEdge& e : arr.edges) {
+		for (std::int64_t p : e.provenance) {
+			const InputSegment& s	= segs[static_cast<std::size_t>(p)];
+			const Vec2i64		dir = s.b - s.a;
+			for (const std::size_t v : {e.from, e.to}) {
+				// distance^2 > 4 mm^2  <=>  cross^2 > 4 * |dir|^2
+				const Int128 off = cross(dir, arr.vertices[v] - s.a);
+				pastTwo			 = pastTwo || Int128::compareSquareToProduct(off, Int128(4), dot(dir, dir)) > 0;
+			}
+		}
+	}
+	EXPECT_TRUE(pastTwo) << canonical(arr);
 }

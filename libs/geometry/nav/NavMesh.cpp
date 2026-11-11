@@ -4,13 +4,17 @@
 #include "../core/Int128.h"
 #include "../predicates/Predicates.h"
 #include "../triangulation/ConstrainedDelaunay.h"
+#include "PathQuery.h"
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <map>
+#include <span>
 #include <unordered_map>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -37,42 +41,6 @@ namespace geometry::nav {
 				acc = acc + cross(ring[i], ring[(i + 1) % n]);
 			}
 			return acc.sign() < 0 ? Int128(0) - acc : acc;
-		}
-
-		// An input ring as face classification reads it: scaled by 3, the space in
-		// which a triangle's centroid (a+b+c)/3 is the exact integer point a+b+c.
-		struct SampleRing {
-			std::vector<Vec2i64> ring3;
-			Vec2i64				 lo3;
-			Vec2i64				 hi3;
-			std::int64_t		 provenance		= kNoProvenance;
-			std::int64_t		 opening		= kNoOpening;
-			bool				 holeCapable	= false;	 // water: even-odd containment parity
-			Int128				 areaDoubledAbs = Int128(0); // smallest-containing ranking (unscaled)
-		};
-
-		SampleRing sampleRing(const NavInputPolygon& poly) {
-			SampleRing r;
-			r.ring3.reserve(poly.ring.size());
-			for (const Vec2i64& p : poly.ring) {
-				r.ring3.push_back(p * 3);
-			}
-			r.lo3 = r.ring3.front();
-			r.hi3 = r.ring3.front();
-			for (const Vec2i64& p : r.ring3) {
-				r.lo3 = {std::min(r.lo3.x, p.x), std::min(r.lo3.y, p.y)};
-				r.hi3 = {std::max(r.hi3.x, p.x), std::max(r.hi3.y, p.y)};
-			}
-			r.provenance	 = poly.provenanceId;
-			r.opening		 = poly.openingId;
-			r.holeCapable	 = poly.holeCapable;
-			r.areaDoubledAbs = signedAreaDoubledAbs(poly.ring);
-			return r;
-		}
-
-		bool contains(const SampleRing& r, const Vec2i64& p3) {
-			return p3.x >= r.lo3.x && p3.x <= r.hi3.x && p3.y >= r.lo3.y && p3.y <= r.hi3.y &&
-				   pointInPolygon(p3, r.ring3) == PointInPolygon::Inside;
 		}
 
 		// A face of the arrangement: the triangles one flood fill reaches without
@@ -110,18 +78,20 @@ namespace geometry::nav {
 		// incident obstacle edges (no bare point obstacles); the paper's edge-based
 		// search therefore captures every obstacle the disc must round.
 
-		bool isCommonKnowledgeBlocked(std::int64_t faceBlocker) {
-			return faceBlocker < 0 && faceBlocker != kNoBlocker;
+		// A width search may be asked to treat some terrain tags as open ground (a path
+		// query's priced flora): those faces are no obstacle to it.
+		bool isCommonKnowledgeBlocked(std::int64_t faceBlocker, std::span<const std::int64_t> openTags) {
+			return faceBlocker < 0 && faceBlocker != kNoBlocker && std::find(openTags.begin(), openTags.end(), faceBlocker) == openTags.end();
 		}
 
 		// Edge e of triangle ti is an obstacle edge iff exactly one of the two faces it
 		// separates is common-knowledge-blocked (the boundary of a water/flora region).
 		// A mesh-boundary edge (neighbor == -1) has no obstacle face outside it, so a
 		// floor border is not an obstacle edge (scope: terrain/flora only).
-		bool isObstacleEdge(const NavMesh& mesh, std::int32_t ti, int e) {
-			const bool self	 = isCommonKnowledgeBlocked(mesh.triangles[ti].faceBlocker);
-			const std::int32_t nb = mesh.triangles[ti].neighbor[e];
-			const bool other = nb < 0 ? false : isCommonKnowledgeBlocked(mesh.triangles[nb].faceBlocker);
+		bool isObstacleEdge(const NavView& view, std::int32_t ti, int e, std::span<const std::int64_t> openTags) {
+			const bool		   self	 = isCommonKnowledgeBlocked(view.triangle(ti).faceBlocker, openTags);
+			const std::int32_t nb	 = view.triangle(ti).neighbor[static_cast<std::size_t>(e)];
+			const bool		   other = nb < 0 ? false : isCommonKnowledgeBlocked(view.triangle(nb).faceBlocker, openTags);
 			return self != other;
 		}
 
@@ -201,30 +171,39 @@ namespace geometry::nav {
 			return floorSqrtRational(cross(uv, uc), den); // perpendicular, foot interior
 		}
 
-		std::int64_t minWidth(std::int64_t a, std::int64_t b) {
-			return a < b ? a : b;
+		// floor(|d|) < bound, decided on squares: no root is taken.
+		// A fresh mark for one search's triangles.
+		void beginWidthSearch(const NavView& view, WidthSearch& search) {
+			search.visited.growTo(static_cast<std::size_t>(view.triangleSlots()));
+			// A wrapped stamp would match marks left by searches long ago.
+			if (++search.stamp == 0) {
+				search.visited.zero();
+				search.stamp = 1;
+			}
 		}
 
-		// Per-query scratch for the width search: a generation stamp per triangle so the
-		// recursion never re-enters a triangle within one CalculateWidth call. Demyen
-		// proves (Thm 4.3.4/4.3.6) a CDT width search never revisits a triangle, so this
-		// only fires as a defensive guard against a non-Delaunay sliver, where it
-		// terminates safely without dropping any reachable obstacle (an already-visited
-		// triangle was fully explored from this apex). One buffer is reused across the
-		// whole build via an incrementing stamp, so there is no per-call clearing.
-		struct WidthScratch {
-			std::vector<std::int32_t> visited; // visited[ti] == stamp -> seen this query
-			std::int32_t			  stamp = 0;
-		};
+		bool lengthBelow(const Vec2i64& d, std::int64_t bound) {
+			return dot(d, d) < Int128::product(bound, bound);
+		}
+
+		// floor(distance from c to the line through u and v) < bound, on squares:
+		// cross^2 < bound^2 * |uv|^2.
+		bool lineDistanceBelow(const Vec2i64& c, const Vec2i64& u, const Vec2i64& v, std::int64_t bound) {
+			const Vec2i64 uv = v - u;
+			return Int128::compareSquareToProduct(cross(uv, c - u), Int128::product(bound, bound), dot(uv, uv)) < 0;
+		}
 
 		// Demyen Algorithm 2: SearchWidth. Walk across non-obstacle edges from apex C,
 		// bounded above by the closest obstacle found so far (`bound`, a floored mm
 		// distance), returning the tightened bound. `ti`/`e` is the edge being entered.
-		std::int64_t searchWidth(
-			const NavMesh& mesh, WidthScratch& scratch, const Vec2i64& c, std::int32_t ti, int e, std::int64_t bound) {
-			const NavTriangle& tri = mesh.triangles[ti];
-			const Vec2i64&	   u   = mesh.vertices[tri.v[e]];
-			const Vec2i64&	   v   = mesh.vertices[tri.v[(e + 1) % 3]];
+		// The visited stamp only guards against a non-Delaunay sliver: Demyen proves (Thm
+		// 4.3.4/4.3.6) a CDT width search never revisits a triangle, and an already-visited
+		// triangle was fully explored from this apex, so no obstacle is dropped.
+		std::int64_t searchWidth(const NavView& view, WidthSearch& scratch, const Vec2i64& c, std::int32_t ti, int e, std::int64_t bound,
+								 std::span<const std::int64_t> openTags) {
+			const NavTriangle& tri = view.triangle(ti);
+			const Vec2i64&	   u   = view.vertex(tri.v[static_cast<std::size_t>(e)]);
+			const Vec2i64&	   v   = view.vertex(tri.v[static_cast<std::size_t>((e + 1) % 3)]);
 
 			// Prune: if the foot of the perpendicular from C to line UV is outside the
 			// segment, no obstacle reachable across this edge is in the wedge (Demyen
@@ -232,12 +211,12 @@ namespace geometry::nav {
 			if (obtuseAt(c, u, v) || obtuseAt(c, v, u)) {
 				return bound;
 			}
-			const std::int64_t d = floorDistancePointToSegment(c, u, v);
-			if (d >= bound) {
+			// The foot is on the segment here, so its distance is the line distance.
+			if (!lineDistanceBelow(c, u, v, bound)) {
 				return bound; // nothing closer this way
 			}
-			if (isObstacleEdge(mesh, ti, e)) {
-				return d; // closest obstacle is this constrained edge
+			if (isObstacleEdge(view, ti, e, openTags)) {
+				return floorDistancePointToSegment(c, u, v); // closest obstacle is this constrained edge
 			}
 			// Unconstrained: recurse into the opposite triangle's two other edges.
 			const std::int32_t nb = tri.neighbor[e];
@@ -248,7 +227,7 @@ namespace geometry::nav {
 				return bound; // already explored from this apex (loop guard)
 			}
 			scratch.visited[nb] = scratch.stamp;
-			const NavTriangle& opp = mesh.triangles[nb];
+			const NavTriangle& opp = view.triangle(nb);
 			int back = -1;
 			for (int k = 0; k < 3; ++k) {
 				if (opp.neighbor[k] == ti) {
@@ -260,57 +239,9 @@ namespace geometry::nav {
 				return bound; // adjacency inconsistency; bail safely
 			}
 			std::int64_t out = bound;
-			out = searchWidth(mesh, scratch, c, nb, (back + 1) % 3, out);
-			out = searchWidth(mesh, scratch, c, nb, (back + 2) % 3, out);
+			out = searchWidth(view, scratch, c, nb, (back + 1) % 3, out, openTags);
+			out = searchWidth(view, scratch, c, nb, (back + 2) % 3, out, openTags);
 			return out;
-		}
-
-		// Demyen Algorithm 3: CalculateWidth, for the edge pair meeting at apex v[apex]
-		// of triangle ti. Edges incident to the apex are `apex` and `(apex+2)%3`; the
-		// opposite edge c is `(apex+1)%3`, between base vertices A=v[(apex+1)%3] and
-		// B=v[(apex+2)%3]. Returns the floored max disc diameter (mm), or
-		// kUnconstrainedWidth when no common-knowledge obstacle pinches the passage.
-		std::int64_t calculateEdgePairWidth(const NavMesh& mesh, WidthScratch& scratch, std::int32_t ti, int apex) {
-			const NavTriangle& tri = mesh.triangles[ti];
-			const int		   cEdge = (apex + 1) % 3; // edge opposite the apex
-			const Vec2i64&	   c	 = mesh.vertices[tri.v[apex]];
-			const Vec2i64&	   a	 = mesh.vertices[tri.v[cEdge]];			// base vertex A
-			const Vec2i64&	   b	 = mesh.vertices[tri.v[(apex + 2) % 3]]; // base vertex B
-
-			// A base vertex bounds the width only if it is an obstacle vertex, i.e. an
-			// endpoint of an incident obstacle edge. Edge cEdge = (A,B); edge `apex` =
-			// (C,A)? No: edge `apex` is (v[apex], v[apex+1]) = (C, A); edge (apex+2)%3 is
-			// (v[apex+2], v[apex]) = (B, C). So A is shared by edges cEdge and apex; B is
-			// shared by edges cEdge and (apex+2)%3.
-			const bool aObstacle = isObstacleEdge(mesh, ti, cEdge) || isObstacleEdge(mesh, ti, apex);
-			const bool bObstacle = isObstacleEdge(mesh, ti, cEdge) || isObstacleEdge(mesh, ti, (apex + 2) % 3);
-
-			std::int64_t d = kUnconstrainedWidth;
-			if (aObstacle) {
-				const Vec2i64 ca = a - c;
-				d = minWidth(d, floorSqrtSquared(dot(ca, ca)));
-			}
-			if (bObstacle) {
-				const Vec2i64 cb = b - c;
-				d = minWidth(d, floorSqrtSquared(dot(cb, cb)));
-			}
-
-			// Case 1: an obtuse base angle means the nearer base vertex is the closest
-			// obstacle in the wedge and the search must not cross edge c (it would leave
-			// the wedge). The bound above already captured that vertex.
-			if (obtuseAt(c, a, b) || obtuseAt(c, b, a)) {
-				return d;
-			}
-			// Case 2: opposite edge constrained -> perpendicular distance to it (which is
-			// <= either base-vertex distance, the foot being interior here).
-			if (isObstacleEdge(mesh, ti, cEdge)) {
-				return minWidth(d, floorDistancePointToSegment(c, a, b));
-			}
-			// Case 3: opposite edge unconstrained -> search across it (the start triangle
-			// is marked visited so the search never re-enters it).
-			++scratch.stamp;
-			scratch.visited[ti] = scratch.stamp;
-			return searchWidth(mesh, scratch, c, ti, cEdge, d);
 		}
 
 		// --- Width-aware reachability forest (P3.3) ----------------------------------
@@ -318,21 +249,13 @@ namespace geometry::nav {
 		// geometric edge capacities; they differ only in which triangles are nodes (the
 		// traversability predicate). See NavMesh.h ReachabilityForest for the contract.
 
-		// A portal between two triangles, with its sound disc-diameter capacity. Built
-		// once over all interior edges, then filtered per forest by the node predicate.
-		struct PortalEdge {
-			std::int32_t triA = -1; // lower triangle index (canonical owner of the edge)
-			std::int32_t triB = -1; // higher triangle index
-			std::int64_t cap  = kUnconstrainedWidth;
-		};
-
 		// T-side capacity of portal edge `e` in triangle `ti`: the widest disc that can
 		// cross the portal THROUGH ti. The disc enters via one of ti's OTHER two edges
 		// and pivots about one of the portal's two endpoints (local vertices e and
 		// (e+1)%3), so it may use the wider of the two apex widths; the max is the sound
 		// upper bound (Demyen edge-pair width is keyed by apex).
-		std::int64_t portalSideCap(const NavMesh& mesh, std::int32_t ti, int e) {
-			const NavTriangle& t  = mesh.triangles[ti];
+		std::int64_t portalSideCap(const NavView& view, std::int32_t ti, int e) {
+			const NavTriangle& t  = view.triangle(ti);
 			const std::int64_t w0 = t.edgePairWidthMm[e];
 			const std::int64_t w1 = t.edgePairWidthMm[(e + 1) % 3];
 			return w0 > w1 ? w0 : w1;
@@ -342,19 +265,19 @@ namespace geometry::nav {
 		// side's capacity and the door clear width when the edge is a door portal. A
 		// door span has unconstrained Demyen widths (walls are not common-knowledge
 		// obstacles), so the door clear width is what binds there -- hence in the min.
-		std::int64_t portalCapacity(const NavMesh& mesh, std::int32_t t1, int eInT1, std::int32_t t2) {
-			const NavTriangle& tri1	   = mesh.triangles[t1];
+		std::int64_t portalCapacity(const NavView& view, std::int32_t t1, int eInT1, std::int32_t t2) {
+			const NavTriangle& tri1	   = view.triangle(t1);
 			const std::int32_t backEdge = [&]() {
 				for (int k = 0; k < 3; ++k) {
-					if (mesh.triangles[t2].neighbor[k] == t1) {
+					if (view.triangle(t2).neighbor[static_cast<std::size_t>(k)] == t1) {
 						return k;
 					}
 				}
 				return -1;
 			}();
-			std::int64_t cap = portalSideCap(mesh, t1, eInT1);
+			std::int64_t cap = portalSideCap(view, t1, eInT1);
 			if (backEdge >= 0) {
-				cap = std::min(cap, portalSideCap(mesh, t2, backEdge));
+				cap = std::min(cap, portalSideCap(view, t2, backEdge));
 			}
 			if (tri1.edgeOpening[eInT1] != kNoOpening) {
 				cap = std::min(cap, tri1.edgeClearWidthMm[eInT1]);
@@ -362,155 +285,431 @@ namespace geometry::nav {
 			return cap;
 		}
 
-		// Union-find over triangle leaves, with the merge-tree node id carried on each
-		// set so a union can wire the new internal node's children. find() uses path
-		// compression; union is by the caller's deterministic edge order (no rank), so
-		// the tree shape is reproducible.
-		struct ForestBuilder {
-			std::vector<std::int32_t> parent;	 // DSU parent over leaves [0,n)
-			std::vector<std::int32_t> setNode;	 // current merge-tree root node for each DSU set
-			std::vector<std::int64_t> nodeCap;	 // capacity stored at each merge-tree node
-			std::vector<std::int32_t> nodeLeft;	 // left child of each internal node (-1 for leaves)
-			std::vector<std::int32_t> nodeRight; // right child of each internal node (-1 for leaves)
-
-			std::int32_t find(std::int32_t x) {
-				while (parent[x] != x) {
-					parent[x] = parent[parent[x]];
-					x		  = parent[x];
+		// One forest from the portals in Kruskal order (capacity descending, then lower
+		// triA, then lower triB, for a reproducible tree), over the triangles `node` marks;
+		// a portal joins only when both its triangles are nodes. Union-find with path
+		// halving, union by that order (no rank), so the tree shape is reproducible: each
+		// union makes an internal node holding the portal's capacity, parent of the two
+		// merged subtree roots.
+		void buildForest(const std::vector<ForestScratch::Portal>& order, const std::vector<std::uint8_t>& node, ForestScratch& s,
+						 ReachabilityForest& forest) {
+			const std::int32_t		   n		  = static_cast<std::int32_t>(node.size());
+			std::vector<std::int32_t>& parent	  = s.parent;
+			std::vector<std::int32_t>& setNode	  = s.setNode; // merge-tree root of each set
+			std::vector<std::int32_t>& nodeParent = s.nodeParent;
+			parent.resize(static_cast<std::size_t>(n));
+			setNode.resize(static_cast<std::size_t>(n));
+			nodeParent.resize(static_cast<std::size_t>(n));
+			for (std::int32_t i = 0; i < n; ++i) {
+				parent[static_cast<std::size_t>(i)]		= i;
+				setNode[static_cast<std::size_t>(i)]	= i;
+				nodeParent[static_cast<std::size_t>(i)] = i;
+			}
+			auto find = [&](std::int32_t x) {
+				while (parent[static_cast<std::size_t>(x)] != x) {
+					parent[static_cast<std::size_t>(x)] = parent[static_cast<std::size_t>(parent[static_cast<std::size_t>(x)])];
+					x									= parent[static_cast<std::size_t>(x)];
 				}
 				return x;
-			}
-		};
-
-		// Build one forest from the node predicate and the shared portal list. Edges are
-		// processed in DESCENDING capacity (Kruskal max-spanning-forest); ties break by
-		// (cap desc, lower triA, lower triB) for a reproducible tree. Only edges whose
-		// BOTH endpoints are nodes participate. Returns the populated ReachabilityForest.
-		template <typename NodePredicate>
-		ReachabilityForest buildForest(
-			const NavMesh& mesh, const std::vector<PortalEdge>& portals, NodePredicate isNode) {
-			const std::int32_t n = static_cast<std::int32_t>(mesh.triangles.size());
-
-			ForestBuilder fb;
-			fb.parent.resize(n);
-			fb.setNode.resize(n);
-			// Leaves first; internal nodes appended on each union. At most n-1 unions, so
-			// reserve 2n-1 to avoid reallocation invalidating nothing (we store indices).
-			fb.nodeCap.assign(n, kUnconstrainedWidth);
-			fb.nodeLeft.assign(n, -1);
-			fb.nodeRight.assign(n, -1);
-			fb.nodeCap.reserve(static_cast<std::size_t>(2) * n);
-			fb.nodeLeft.reserve(static_cast<std::size_t>(2) * n);
-			fb.nodeRight.reserve(static_cast<std::size_t>(2) * n);
-			for (std::int32_t i = 0; i < n; ++i) {
-				fb.parent[i]  = i;
-				fb.setNode[i] = i; // each traversable leaf starts as its own merge-tree root
-			}
-
-			// Filter to participating edges (both endpoints are nodes), then sort by the
-			// deterministic Kruskal order. Non-node triangles never appear, so they stay
-			// singleton sets and get component -1 below.
-			std::vector<PortalEdge> edges;
-			edges.reserve(portals.size());
-			for (const PortalEdge& pe : portals) {
-				if (isNode(mesh.triangles[pe.triA]) && isNode(mesh.triangles[pe.triB])) {
-					edges.push_back(pe);
+			};
+			forest.nodeCap.assign(static_cast<std::size_t>(n), kUnconstrainedWidth);
+			for (const ForestScratch::Portal& pe : order) {
+				if (node[static_cast<std::size_t>(pe.triA)] == 0 || node[static_cast<std::size_t>(pe.triB)] == 0) {
+					continue;
 				}
-			}
-			std::sort(edges.begin(), edges.end(), [](const PortalEdge& a, const PortalEdge& b) {
-				if (a.cap != b.cap) {
-					return a.cap > b.cap; // descending capacity
-				}
-				if (a.triA != b.triA) {
-					return a.triA < b.triA; // then lower triangle index
-				}
-				return a.triB < b.triB; // then lower neighbor index
-			});
-
-			for (const PortalEdge& pe : edges) {
-				const std::int32_t ra = fb.find(pe.triA);
-				const std::int32_t rb = fb.find(pe.triB);
+				const std::int32_t ra = find(pe.triA);
+				const std::int32_t rb = find(pe.triB);
 				if (ra == rb) {
-					continue; // already connected; this edge closes a cycle
+					continue;
 				}
-				// New internal node merging the two subtree roots at this edge's capacity.
-				const std::int32_t node = static_cast<std::int32_t>(fb.nodeCap.size());
-				fb.nodeCap.push_back(pe.cap);
-				fb.nodeLeft.push_back(fb.setNode[ra]);
-				fb.nodeRight.push_back(fb.setNode[rb]);
-				// Union (attach rb's set under ra) and route the set's merge-tree root to
-				// the new internal node.
-				fb.parent[rb]  = ra;
-				fb.setNode[ra] = node;
+				const std::int32_t merged = static_cast<std::int32_t>(forest.nodeCap.size());
+				forest.nodeCap.push_back(pe.cap);
+				nodeParent.push_back(merged);
+				nodeParent[static_cast<std::size_t>(setNode[static_cast<std::size_t>(ra)])] = merged;
+				nodeParent[static_cast<std::size_t>(setNode[static_cast<std::size_t>(rb)])] = merged;
+				parent[static_cast<std::size_t>(rb)]										 = ra;
+				setNode[static_cast<std::size_t>(ra)]										 = merged;
 			}
-
-			// Assemble the ReachabilityForest: node capacities, then component ids and
-			// binary-lifting LCA tables over the reconstruction-tree forest.
-			ReachabilityForest forest;
-			forest.nodeCap = std::move(fb.nodeCap);
 			const std::int32_t nodeCount = static_cast<std::int32_t>(forest.nodeCap.size());
 
-			// Parent of each merge-tree node (roots point to themselves), from the
-			// child links recorded during the unions. depth via a root-down pass.
-			std::vector<std::int32_t> nodeParent(nodeCount);
-			for (std::int32_t i = 0; i < nodeCount; ++i) {
-				nodeParent[i] = i; // default: root
-			}
-			for (std::int32_t i = n; i < nodeCount; ++i) {
-				nodeParent[fb.nodeLeft[i]]  = i;
-				nodeParent[fb.nodeRight[i]] = i;
-			}
-
-			// depth[]: roots have depth 0; a child is parent depth + 1. Processing nodes
-			// in DESCENDING id is a valid topological order because every internal node
-			// has a HIGHER id than both its children (created after them), so a parent's
-			// depth is finalized before any child reads it.
-			forest.depth.assign(nodeCount, 0);
+			// Every internal node has a higher id than its children, so a descending pass
+			// sees a parent before its children: depth and root come down from it.
+			std::vector<std::int32_t>& root = s.root;
+			root.resize(static_cast<std::size_t>(nodeCount));
+			forest.depth.resize(static_cast<std::size_t>(nodeCount));
+			std::int32_t maxDepth = 0;
 			for (std::int32_t i = nodeCount - 1; i >= 0; --i) {
-				if (nodeParent[i] != i) {
-					forest.depth[i] = forest.depth[nodeParent[i]] + 1;
+				const std::int32_t p = nodeParent[static_cast<std::size_t>(i)];
+				if (p == i) {
+					forest.depth[static_cast<std::size_t>(i)] = 0;
+					root[static_cast<std::size_t>(i)]		  = i;
+				} else {
+					forest.depth[static_cast<std::size_t>(i)] = forest.depth[static_cast<std::size_t>(p)] + 1;
+					root[static_cast<std::size_t>(i)]		  = root[static_cast<std::size_t>(p)];
+					maxDepth								  = std::max(maxDepth, forest.depth[static_cast<std::size_t>(i)]);
 				}
 			}
 
-			// Binary-lifting table. levels = ceil(log2(maxDepth+1)); at least 1 so up[0]
-			// always exists. up[0] is the direct parent (root -> itself).
-			std::int32_t maxDepth = 0;
-			for (std::int32_t i = 0; i < nodeCount; ++i) {
-				maxDepth = std::max(maxDepth, forest.depth[i]);
-			}
+			// Binary lifting: levels = ceil(log2(maxDepth + 1)), at least 1; up[0] is the
+			// parent, a root's its own.
 			std::int32_t levels = 1;
 			while ((1 << levels) <= maxDepth) {
 				++levels;
 			}
 			forest.levels = levels;
-			forest.up.assign(static_cast<std::size_t>(levels), std::vector<std::int32_t>(nodeCount));
-			for (std::int32_t i = 0; i < nodeCount; ++i) {
-				forest.up[0][i] = nodeParent[i];
-			}
-			for (std::int32_t k = 1; k < levels; ++k) {
-				for (std::int32_t i = 0; i < nodeCount; ++i) {
-					forest.up[k][i] = forest.up[k - 1][forest.up[k - 1][i]];
+			forest.up.resize(static_cast<std::size_t>(levels));
+			forest.up[0].assign(nodeParent.begin(), nodeParent.end());
+			for (std::size_t k = 1; k < static_cast<std::size_t>(levels); ++k) {
+				const std::vector<std::int32_t>& below = forest.up[k - 1];
+				std::vector<std::int32_t>&		 up	   = forest.up[k];
+				up.resize(static_cast<std::size_t>(nodeCount));
+				for (std::size_t i = 0; i < static_cast<std::size_t>(nodeCount); ++i) {
+					up[i] = below[static_cast<std::size_t>(below[i])];
 				}
 			}
 
-			// component[]: a traversable leaf's component is its reconstruction-tree
-			// root; a non-traversable leaf (never a node) is -1 (isolated/unreachable).
-			forest.component.assign(n, -1);
+			// A node leaf's component is its tree's root; a non-node is -1.
+			forest.component.resize(static_cast<std::size_t>(n));
 			for (std::int32_t i = 0; i < n; ++i) {
-				if (!isNode(mesh.triangles[i])) {
-					continue;
-				}
-				std::int32_t r = i;
-				for (std::int32_t k = levels - 1; k >= 0; --k) {
-					r = forest.up[k][r]; // climb to the root (overshoot stops at root via self-loop)
-				}
-				forest.component[i] = r;
+				forest.component[static_cast<std::size_t>(i)] = node[static_cast<std::size_t>(i)] != 0 ? root[static_cast<std::size_t>(i)] : -1;
 			}
+		}
+	} // namespace
 
-			return forest;
+	namespace {
+
+		// Visits each triangle round corner `corner` of triangle ti with its own corner on that
+		// vertex, both ways round from ti, until `visit` returns true; says whether it did.
+		template <typename Visit> bool anyInStar(const NavView& view, std::int32_t ti, int corner, Visit visit) {
+			const std::uint32_t v		 = view.triangle(ti).v[static_cast<std::size_t>(corner)];
+			auto				cornerOf = [&](std::int32_t t) {
+				   const NavTriangle& tri = view.triangle(t);
+				   return tri.v[0] == v ? 0 : (tri.v[1] == v ? 1 : 2);
+			};
+			if (visit(ti, corner)) {
+				return true;
+			}
+			for (const int turn : {2, 0}) {
+				std::int32_t cur = ti;
+				for (int guard = 0; guard < 256; ++guard) {
+					const std::int32_t nb = view.triangle(cur).neighbor[static_cast<std::size_t>((cornerOf(cur) + turn) % 3)];
+					if (nb < 0) {
+						break;
+					}
+					if (nb == ti) {
+						return false; // closed round: every triangle seen
+					}
+					cur = nb;
+					if (visit(cur, cornerOf(cur))) {
+						return true;
+					}
+				}
+			}
+			return false;
+		}
+
+		// Does an obstacle edge meet corner `corner` of triangle ti? The answers for this mesh
+		// state are kept in `search`, one set with nothing open and one with the view's
+		// detail tags open (the only two a width reads).
+		bool isObstacleVertex(const NavView& view, WidthSearch& search, std::int32_t ti, int corner, std::span<const std::int64_t> openTags) {
+			if (search.vertexOwner != view.owner || search.vertexEpoch != view.epoch()) {
+				search.vertexOwner = view.owner;
+				search.vertexEpoch = view.epoch();
+				if (++search.vertexStamp == 0) {
+					for (ScratchArray<std::uint32_t>& seen : search.vertexSeen) {
+						seen.zero();
+					}
+					search.vertexStamp = 1;
+				}
+			}
+			const std::size_t set = openTags.empty() ? 0 : 1;
+			search.vertexSeen[set].growTo(view.vertices.size());
+			search.vertexObstacle[set].growTo(view.vertices.size());
+			const std::uint32_t v = view.triangle(ti).v[static_cast<std::size_t>(corner)];
+			if (search.vertexSeen[set][v] != search.vertexStamp) {
+				search.vertexSeen[set][v]	  = search.vertexStamp;
+				search.vertexObstacle[set][v] = anyInStar(view, ti, corner, [&](std::int32_t t, int i) {
+					return isObstacleEdge(view, t, i, openTags) || isObstacleEdge(view, t, (i + 2) % 3, openTags);
+				}) ? 1 : 0;
+			}
+			return search.vertexObstacle[set][v] != 0;
+		}
+
+		// Demyen Algorithm 3, CalculateWidth, for the edge pair meeting at apex v[apex]:
+		// edges apex (C, A) and (apex+2)%3 (B, C), opposite edge (apex+1)%3 (A, B), faces
+		// tagged one of `openTags` read as open ground. A base vertex bounds the width only
+		// when it is an obstacle vertex, and an edge's obstacle status is read only when the
+		// edge is nearer than the bound, which keeps every read within maxClearanceMm of the
+		// apex. Whether a base vertex is one is read from this triangle's edges, or, with
+		// `wholeStar`, from every edge that meets it: this triangle's edges miss an
+		// obstacle that only touches the vertex from outside it (a rock's tip), and the
+		// width comes out too wide. Stored full widths still read the triangle's edges (the
+		// bounds-split oracle holds them equal across tilings); the structural width, which
+		// opens squeezes, reads the whole star.
+		std::int64_t wedgeWidthMm(const NavView& view, WidthSearch& search, std::int32_t ti, int apex, std::int64_t maxClearanceMm,
+								  std::span<const std::int64_t> openTags, bool wholeStar) {
+			const NavTriangle& tri	  = view.triangle(ti);
+			const int		   cEdge  = (apex + 1) % 3;
+			const int		   bEdge  = (apex + 2) % 3;
+			const Vec2i64&	   c	  = view.vertex(tri.v[static_cast<std::size_t>(apex)]);
+			const Vec2i64&	   a	  = view.vertex(tri.v[static_cast<std::size_t>(cEdge)]);
+			const Vec2i64&	   b	  = view.vertex(tri.v[static_cast<std::size_t>(bEdge)]);
+			auto			   capped = [&](std::int64_t d) { return d >= maxClearanceMm ? kUnconstrainedWidth : d; };
+
+			std::int64_t d = maxClearanceMm;
+			auto obstacleVertex = [&](int k, int edgeIn) {
+				return wholeStar ? isObstacleVertex(view, search, ti, k, openTags)
+								 : isObstacleEdge(view, ti, cEdge, openTags) || isObstacleEdge(view, ti, edgeIn, openTags);
+			};
+			if (lengthBelow(a - c, d) && obstacleVertex(cEdge, apex)) {
+				d = floorSqrtSquared(dot(a - c, a - c));
+			}
+			if (lengthBelow(b - c, d) && obstacleVertex(bEdge, bEdge)) {
+				d = floorSqrtSquared(dot(b - c, b - c));
+			}
+			// An obtuse base angle: the nearer base vertex is the closest obstacle in the
+			// wedge, and crossing the opposite edge would leave it.
+			if (obtuseAt(c, a, b) || obtuseAt(c, b, a)) {
+				return capped(d);
+			}
+			if (lineDistanceBelow(c, a, b, d) && isObstacleEdge(view, ti, cEdge, openTags)) {
+				return capped(floorDistancePointToSegment(c, a, b));
+			}
+			beginWidthSearch(view, search);
+			search.visited[static_cast<std::size_t>(ti)] = search.stamp;
+			return capped(searchWidth(view, search, c, ti, cEdge, d, openTags));
+		}
+
+		// The widest disc centred on a free apex, with `openTags` read as open ground: it
+		// crosses both edges there, so the passage admits it if it fits. Its clearance is the
+		// distance to the nearest obstacle all round: an obstacle vertex of the star, or
+		// what the wedge search finds across each star triangle's far edge. 0 at an
+		// obstacle vertex; kUnconstrainedWidth from maxClearanceMm on.
+		std::int64_t freeApexWidthMm(const NavView& view, WidthSearch& search, std::int32_t ti, int apex, std::int64_t maxClearanceMm,
+									 std::span<const std::int64_t> openTags) {
+			if (isObstacleVertex(view, search, ti, apex, openTags)) {
+				return 0;
+			}
+			std::vector<std::pair<std::int32_t, int>>& star = search.star;
+			star.clear();
+			anyInStar(view, ti, apex, [&](std::int32_t t, int i) {
+				star.push_back({t, i});
+				return false;
+			});
+			const Vec2i64&	   c	 = view.vertex(view.triangle(ti).v[static_cast<std::size_t>(apex)]);
+			const std::int64_t bound = maxClearanceMm / 2 + maxClearanceMm % 2;
+			std::int64_t	   d	 = bound;
+			for (const auto& [t, i] : star) {
+				const NavTriangle& tri = view.triangle(t);
+				for (const int k : {(i + 1) % 3, (i + 2) % 3}) {
+					const Vec2i64& x = view.vertex(tri.v[static_cast<std::size_t>(k)]);
+					if (lengthBelow(x - c, d) && isObstacleVertex(view, search, t, k, openTags)) {
+						d = floorSqrtSquared(dot(x - c, x - c));
+					}
+				}
+			}
+			beginWidthSearch(view, search);
+			for (const auto& [t, i] : star) {
+				search.visited[static_cast<std::size_t>(t)] = search.stamp;
+			}
+			for (const auto& [t, i] : star) {
+				d = searchWidth(view, search, c, t, (i + 1) % 3, d, openTags);
+			}
+			return d >= bound ? kUnconstrainedWidth : 2 * d;
 		}
 
 	} // namespace
+
+	std::int64_t corridorWidthMm(const NavView& viewIn, WidthSearch& search, std::int32_t ti, int apex, std::int64_t maxClearanceMm) {
+		const NavView view = viewIn.resolved();
+		return wedgeWidthMm(view, search, ti, apex, maxClearanceMm, {}, false);
+	}
+
+	ApexWidths apexWidthsMm(const NavView& viewIn, WidthSearch& search, std::int32_t ti, int apex, std::int64_t maxClearanceMm,
+							std::int64_t maxSqueezeMm) {
+		const NavView view = viewIn.resolved();
+		ApexWidths out;
+		out.full = wedgeWidthMm(view, search, ti, apex, maxClearanceMm, {}, false);
+		if (view.detailTags == nullptr || view.detailTags->empty() || out.full == kUnconstrainedWidth) {
+			out.structural = out.full;
+			return out;
+		}
+		const std::span<const std::int64_t> detail(*view.detailTags);
+		const std::int64_t					cap = std::min(maxClearanceMm, maxSqueezeMm);
+		std::int64_t						structural = wedgeWidthMm(view, search, ti, apex, cap, detail, true);
+		// An apex that only detail made an obstacle vertex is free once detail is open, and
+		// the wedge measure is too narrow there. One free already is left to the wedge
+		// measure, as the full width leaves it: what narrows it there is not detail.
+		if (structural != kUnconstrainedWidth && isObstacleVertex(view, search, ti, apex, {})) {
+			structural = std::max(structural, freeApexWidthMm(view, search, ti, apex, cap, detail));
+		}
+		out.structural = structural == kUnconstrainedWidth && cap < maxClearanceMm ? cap : structural;
+		return out;
+	}
+
+	std::uint64_t nextMeshGeneration() {
+		static std::atomic<std::uint64_t> next{1};
+		return next.fetch_add(1, std::memory_order_relaxed);
+	}
+
+	NavView navView(const NavMesh& mesh) {
+		NavView view;
+		view.vertices.of(mesh.vertices);
+		view.triangles.of(mesh.triangles);
+		view.owner			 = &mesh;
+		view.locateIn		 = [](const void* owner, const Vec2i64& p) { return locateTriangle(*static_cast<const NavMesh*>(owner), p); };
+		view.forestIn		 = [](const void* owner, bool truth) {
+			   const NavMesh& mesh = *static_cast<const NavMesh*>(owner);
+			   return truth ? &mesh.truthForest : &mesh.terrainForest;
+		};
+		view.widthsCurrentIn = [](const void*) { return true; };
+		view.epochIn		 = [](const void* owner) { return static_cast<const NavMesh*>(owner)->generation; };
+		view.detailTags		 = &mesh.detailTags;
+		view.resolveIn		 = [](const void* owner, NavView& v) {
+			const NavMesh& m = *static_cast<const NavMesh*>(owner);
+			v.vertices.of(m.vertices);
+			v.triangles.of(m.triangles);
+		};
+		return view;
+	}
+
+	// Every interior portal edge once, owned by its lower live triangle, with its sound
+	// disc-diameter capacity, put in Kruskal order once for both forests. Where the two
+	// predicates pick the same nodes (no wall without a door) the forests are equal, and
+	// the terrain forest is a copy.
+	void buildReachabilityForests(const NavView& viewIn, ForestScratch& scratch, ReachabilityForests& out) {
+		const NavView view = viewIn.resolved();
+		using Portal		 = ForestScratch::Portal;
+		const std::int32_t n = view.triangleSlots();
+		scratch.truthNode.assign(static_cast<std::size_t>(n), 0);
+		scratch.terrainNode.assign(static_cast<std::size_t>(n), 0);
+		std::vector<Portal>& portals = scratch.portals;
+		portals.clear();
+		std::int64_t maxFinite = INT64_MIN;
+		std::int64_t minFinite = INT64_MAX;
+		for (std::int32_t ti = 0; ti < n; ++ti) {
+			if (!view.isLive(ti)) {
+				continue;
+			}
+			const NavTriangle& tri					 = view.triangle(ti);
+			scratch.truthNode[static_cast<std::size_t>(ti)]	 = truthTraversable(tri) ? 1 : 0;
+			scratch.terrainNode[static_cast<std::size_t>(ti)] = terrainTraversable(tri) ? 1 : 0;
+			const std::size_t first					 = portals.size();
+			for (int e = 0; e < 3; ++e) {
+				const std::int32_t nb = tri.neighbor[static_cast<std::size_t>(e)];
+				if (nb < 0 || nb <= ti) {
+					continue;
+				}
+				const std::int64_t cap = portalCapacity(view, ti, e, nb);
+				if (cap != kUnconstrainedWidth) {
+					maxFinite = std::max(maxFinite, cap);
+					minFinite = std::min(minFinite, cap);
+				}
+				portals.push_back({ti, nb, cap});
+			}
+			std::sort(portals.begin() + static_cast<std::ptrdiff_t>(first), portals.end(),
+					  [](const Portal& a, const Portal& b) { return a.triB < b.triB; });
+		}
+
+		// Kruskal order (capacity descending, then triA, then triB): portals are in
+		// (triA, triB) order, so a stable LSD radix sort on a key that ascends as the
+		// capacity descends finishes it. Unconstrained is key 0, the widest finite 1.
+		auto keyOf = [&](const Portal& p) -> std::uint64_t {
+			return p.cap == kUnconstrainedWidth ? 0 : static_cast<std::uint64_t>(maxFinite) - static_cast<std::uint64_t>(p.cap) + 1;
+		};
+		const std::uint64_t maxKey = maxFinite == INT64_MIN ? 0 : static_cast<std::uint64_t>(maxFinite) - static_cast<std::uint64_t>(minFinite) + 1;
+		std::vector<Portal>* from  = &portals;
+		std::vector<Portal>* to	   = &scratch.sorted;
+		to->resize(portals.size());
+		for (int shift = 0; shift < 64 && (maxKey >> shift) != 0; shift += 8) {
+			std::array<std::size_t, 257> start{};
+			for (const Portal& p : *from) {
+				++start[((keyOf(p) >> shift) & 0xFF) + 1];
+			}
+			for (std::size_t d = 0; d < 256; ++d) {
+				start[d + 1] += start[d];
+			}
+			for (const Portal& p : *from) {
+				(*to)[start[(keyOf(p) >> shift) & 0xFF]++] = p;
+			}
+			std::swap(from, to);
+		}
+
+		buildForest(*from, scratch.truthNode, scratch, out.truth);
+		if (scratch.truthNode == scratch.terrainNode) {
+			out.terrain = out.truth;
+		} else {
+			buildForest(*from, scratch.terrainNode, scratch, out.terrain);
+		}
+	}
+
+	ReachabilityForests buildReachabilityForests(const NavView& view) {
+		ForestScratch		scratch;
+		ReachabilityForests out;
+		buildReachabilityForests(view, scratch, out);
+		return out;
+	}
+
+	SampleRing sampleRing(const NavInputPolygon& poly) {
+		SampleRing r;
+		r.ring3.reserve(poly.ring.size());
+		for (const Vec2i64& p : poly.ring) {
+			r.ring3.push_back(p * 3);
+		}
+		r.lo3 = r.ring3.front();
+		r.hi3 = r.ring3.front();
+		for (const Vec2i64& p : r.ring3) {
+			r.lo3 = {std::min(r.lo3.x, p.x), std::min(r.lo3.y, p.y)};
+			r.hi3 = {std::max(r.hi3.x, p.x), std::max(r.hi3.y, p.y)};
+		}
+		r.blocked		 = poly.blocked;
+		r.provenance	 = poly.provenanceId;
+		r.opening		 = poly.openingId;
+		r.holeCapable	 = poly.holeCapable;
+		r.areaDoubledAbs = signedAreaDoubledAbs(poly.ring);
+		return r;
+	}
+
+	bool ringContainsSample(const SampleRing& r, const Vec2i64& p3) {
+		return p3.x >= r.lo3.x && p3.x <= r.hi3.x && p3.y >= r.lo3.y && p3.y <= r.hi3.y &&
+			   pointInPolygon(p3, r.ring3) == PointInPolygon::Inside;
+	}
+
+	FaceTags classifyCover(const std::vector<const SampleRing*>& containing) {
+		// Smallest area first; equal areas by content.
+		auto ranksBefore = [](const SampleRing& a, const SampleRing& b) {
+			if (a.areaDoubledAbs != b.areaDoubledAbs) {
+				return a.areaDoubledAbs < b.areaDoubledAbs;
+			}
+			return std::tie(a.provenance, a.opening, a.ring3) < std::tie(b.provenance, b.opening, b.ring3);
+		};
+		const SampleRing* solid		 = nullptr;
+		const SampleRing* water		 = nullptr;
+		int				  waterDepth = 0;
+		for (const SampleRing* br : containing) {
+			if (br->holeCapable) {
+				++waterDepth;
+				if (water == nullptr || ranksBefore(*br, *water)) {
+					water = br;
+				}
+			} else if (solid == nullptr || ranksBefore(*br, *solid)) {
+				solid = br;
+			}
+		}
+		const bool		   solidTagged	= solid != nullptr;
+		const std::int64_t solidBlocker = solidTagged ? solid->provenance : kNoBlocker;
+		const std::int64_t solidOpening = solidTagged ? solid->opening : kNoOpening;
+		const std::int64_t waterBlocker = water != nullptr ? water->provenance : kNoBlocker;
+		const std::int64_t waterOpening = water != nullptr ? water->opening : kNoOpening;
+
+		if (solidTagged) {
+			return {solidBlocker, solidOpening};
+		}
+		if (waterDepth % 2 == 1) {
+			return {waterBlocker, waterOpening};
+		}
+		return {};
+	}
 
 	std::int32_t reachRootInForest(const ReachabilityForest& f, std::int32_t tri, std::int64_t diameterMm) {
 		if (tri < 0 || tri >= static_cast<std::int32_t>(f.component.size()) || f.component[tri] < 0) {
@@ -636,18 +835,8 @@ namespace geometry::nav {
 		// Outside, never boundary. Faces outside every walkable bound are discarded.
 		// In-bounds faces are KEPT whether or not they sit inside a blocked ring: the
 		// whole region is triangulated, wall interiors included, so a belief query can
-		// optimistically path through an unseen wall.
-		//
-		// Splits SOLID rings (flora, walls: solid containment) from HOLE-CAPABLE rings
-		// (water: even-odd containment parity):
-		//   SOLID: the smallest-area containing ring wins (a door-span footprint is
-		//   strictly smaller than its flank bands, so it wins over the enclosing wall).
-		//   HOLE-CAPABLE: count how many contain the point (depth). A water body emits a
-		//   CCW outer boundary plus CW land-island holes as SEPARATE blocked rings; a
-		//   point inside an even number of them is land (outer+island = 2), inside an odd
-		//   number is genuine water (open water = 1, a pond on the island = 3). Disjoint
-		//   water bodies never nest, so only one body's rings ever contain a given point.
-		//   A solid obstacle always blocks, even sitting over water.
+		// optimistically path through an unseen wall. classifyCover holds the rule.
+		std::vector<const SampleRing*> containing;
 		for (MeshFace& face : faces) {
 			if (face.touchesFrame) {
 				continue;
@@ -655,7 +844,7 @@ namespace geometry::nav {
 			const CdtTriangle& s	   = cdt.triangles[static_cast<std::size_t>(face.sampleTri)];
 			const Vec2i64	   sample3 = cdt.vertices[s.v[0]] + cdt.vertices[s.v[1]] + cdt.vertices[s.v[2]];
 			for (const SampleRing& border : borderRings) {
-				if (contains(border, sample3)) {
+				if (ringContainsSample(border, sample3)) {
 					face.inBounds = true;
 					break;
 				}
@@ -663,49 +852,15 @@ namespace geometry::nav {
 			if (!face.inBounds) {
 				continue;
 			}
-
-			Int128		 bestSolidArea(0);
-			bool		 solidTagged  = false;
-			std::int64_t solidBlocker = kNoBlocker;
-			std::int64_t solidOpening = kNoOpening;
-
-			Int128		 bestWaterArea(0);
-			bool		 waterTagged  = false;
-			int			 waterDepth	  = 0;
-			std::int64_t waterBlocker = kNoBlocker;
-			std::int64_t waterOpening = kNoOpening;
-
+			containing.clear();
 			for (const SampleRing& br : blockedRings) {
-				if (!contains(br, sample3)) {
-					continue;
-				}
-				const Int128& area = br.areaDoubledAbs;
-				if (br.holeCapable) {
-					++waterDepth;
-					if (!waterTagged || area < bestWaterArea) {
-						bestWaterArea = area;
-						waterBlocker  = br.provenance;
-						waterOpening  = br.opening;
-						waterTagged	  = true;
-					}
-				} else {
-					if (!solidTagged || area < bestSolidArea) {
-						bestSolidArea = area;
-						solidBlocker  = br.provenance;
-						solidOpening  = br.opening;
-						solidTagged	  = true;
-					}
+				if (ringContainsSample(br, sample3)) {
+					containing.push_back(&br);
 				}
 			}
-
-			if (solidTagged) {
-				face.blocker = solidBlocker; // a real obstacle always blocks, even over water
-				face.opening = solidOpening;
-			} else if (waterDepth % 2 == 1) {
-				face.blocker = waterBlocker; // odd depth: genuine water
-				face.opening = waterOpening;
-			}
-			// else even depth (incl. 0): floor -- leave kNoBlocker/kNoOpening.
+			const FaceTags tags = classifyCover(containing);
+			face.blocker		= tags.blocker;
+			face.opening		= tags.opening;
 		}
 
 		// 5. Keep the in-bounds faces' triangles (floor AND wall interiors), copying each
@@ -793,17 +948,19 @@ namespace geometry::nav {
 			}
 		}
 
-		// 8. Corridor widths. For every triangle and every apex vertex, compute the
-		// Demyen-Buro width of the passage between the two edges meeting at that apex
-		// (max disc diameter vs common-knowledge obstacles). This needs the finished
-		// adjacency and face tags, so it runs last. Belief-dependent walls are excluded
-		// (see calculateEdgePairWidth / NavMesh.h).
-		WidthScratch widthScratch;
-		widthScratch.visited.assign(result.triangles.size(), 0);
-		widthScratch.stamp = 0; // first ++stamp makes 1; initial visited[] of 0 never matches
-		for (std::int32_t ti = 0; ti < static_cast<std::int32_t>(result.triangles.size()); ++ti) {
-			for (int apex = 0; apex < 3; ++apex) {
-				result.triangles[ti].edgePairWidthMm[apex] = calculateEdgePairWidth(result, widthScratch, ti, apex);
+		// 8. Corridor widths for every triangle and apex, uncapped. They need the
+		// finished adjacency and face tags.
+		{
+			result.detailTags = input.detailTags;
+			const NavView view = navView(result);
+			WidthSearch	  search;
+			for (std::int32_t ti = 0; ti < static_cast<std::int32_t>(result.triangles.size()); ++ti) {
+				NavTriangle& tri = result.triangles[static_cast<std::size_t>(ti)];
+				for (int apex = 0; apex < 3; ++apex) {
+					const ApexWidths w							 = apexWidthsMm(view, search, ti, apex, kUnconstrainedWidth, kUnconstrainedWidth);
+					tri.edgePairWidthMm[static_cast<std::size_t>(apex)]	 = w.full;
+					tri.structuralWidthMm[static_cast<std::size_t>(apex)] = w.structural;
+				}
 			}
 		}
 
@@ -885,31 +1042,11 @@ namespace geometry::nav {
 			}
 		}
 
-		// 10. Width-aware reachability forests. Collect every interior portal edge once
-		// (canonical owner = the lower triangle index, so each shared edge is listed a
-		// single time) with its sound disc-diameter capacity, then build the truth and
-		// terrain forests over that one capacity set. This needs finished adjacency,
-		// widths, and door tags, so it runs last.
-		{
-			std::vector<PortalEdge> portals;
-			portals.reserve(result.triangles.size() * 3 / 2);
-			for (std::int32_t ti = 0; ti < static_cast<std::int32_t>(result.triangles.size()); ++ti) {
-				const NavTriangle& tri = result.triangles[ti];
-				for (int e = 0; e < 3; ++e) {
-					const std::int32_t nb = tri.neighbor[e];
-					if (nb < 0 || nb <= ti) {
-						continue; // boundary, or already listed from the lower-index side
-					}
-					PortalEdge pe;
-					pe.triA = ti;
-					pe.triB = nb;
-					pe.cap	= portalCapacity(result, ti, e, nb);
-					portals.push_back(pe);
-				}
-			}
-			result.truthForest	 = buildForest(result, portals, truthTraversable);
-			result.terrainForest = buildForest(result, portals, terrainTraversable);
-		}
+		// 10. Width-aware reachability forests; they need finished adjacency, widths, and
+		// door tags.
+		ReachabilityForests forests = buildReachabilityForests(navView(result));
+		result.truthForest			= std::move(forests.truth);
+		result.terrainForest		= std::move(forests.terrain);
 
 		return result;
 	}

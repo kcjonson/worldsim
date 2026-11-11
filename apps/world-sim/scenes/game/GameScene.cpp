@@ -185,8 +185,8 @@ namespace {
 				m_placementExecutor->initialize();
 				LOG_INFO(Game, "PlacementExecutor initialized with %zu entity types", m_placementExecutor->getSpawnOrder().size());
 
-				// Initial chunk load (entity placement happens async in update())
-				m_chunkManager->update(m_camera->position());
+				// Initial chunk load (entity placement happens async in update()); no movers exist yet
+				m_chunkManager->update(m_camera->position(), {});
 
 				LOG_INFO(Game, "World initialized with seed %llu", kDefaultWorldSeed);
 			}
@@ -854,14 +854,15 @@ namespace {
 			auto updateStart = Clock::now();
 
 			m_camera->update(dt);
-			m_chunkManager->update(m_camera->position());
 
-			// Feed the viewport rect to NavigationSystem as PLAIN DATA -- the scene no
-			// longer drives the navmesh. NavigationSystem owns the sim area: it tracks the
-			// colonists plus this viewport, clusters them into regions, and self-gates the
-			// rebuilds off the render clock. The visible rect (expanded by kViewportMargin
-			// for scroll/zoom headroom) is the camera's contribution; the system clamps the
-			// half-extents and decides internally when a region needs (re)building.
+			// Every mover anchors the chunks around it, so panning away never unloads the colony
+			anchorPositions.clear();
+			ecsWorld->getSystem<ecs::NavigationSystem>().appendMoverPositions(anchorPositions);
+			m_chunkManager->update(m_camera->position(), anchorPositions);
+
+			// Feed the viewport rect to NavigationSystem as plain data: it asks for flora
+			// detail there, as each colonist does around itself. The visible rect is expanded
+			// by kViewportMargin for scroll/zoom headroom; the system clamps the half-extents.
 			{
 				int vpW = 0;
 				int vpH = 0;
@@ -1278,6 +1279,7 @@ namespace {
 			// Tier-3 flora-rect safety net gathers placed rects locally each frame.
 			auto& staticRectCollisionSystem = ecsWorld->getSystem<ecs::StaticRectCollisionSystem>();
 			staticRectCollisionSystem.setPlacementData(m_placementExecutor.get());
+			staticRectCollisionSystem.setDetailSource(&navSystem);
 
 			// Wire up AIDecisionSystem with chunk manager for toilet location queries
 			auto& aiDecisionSystem = ecsWorld->getSystem<ecs::AIDecisionSystem>();
@@ -1424,16 +1426,16 @@ namespace {
 		static constexpr float kSpawnClearance = 0.3F;
 
 		/// Turn the raw drop point into guaranteed-clear, on-mesh spawns for a crew of `crewSize`:
-		///  1. pick the points on the terrain-only nav mesh (the chunks' water rings, no entities):
+		///  1. pick the points on the structural nav mesh (the chunks' water rings, no entities):
 		///     the clearing center is the nearest spot to the drop whose whole party ring stands on
 		///     clear ground, so the ring never straddles a shore, and each member's point is clear
 		///     ground of its own, kPartyMinSeparation from the others;
 		///  2. clear the placed entities (trees/rocks) within kLandingClearRadius of every point so
 		///     nothing is triangulated as an obstacle on top of a colonist.
-		/// Runs at ECS init, BEFORE the first sim-region build, so the removed obstacles never enter
-		/// the mesh input and the crew drops onto open ground.
+		/// Runs at ECS init, before any flora enters the nav mesh, so the removed obstacles never
+		/// do and the crew drops onto open ground.
 		[[nodiscard]] ecs::NavigationSystem::GroupSpawn
-		prepareLandingClearing(glm::vec2 rawSpawn, size_t crewSize, const ecs::NavigationSystem& navSystem) {
+		prepareLandingClearing(glm::vec2 rawSpawn, size_t crewSize, ecs::NavigationSystem& navSystem) {
 			ecs::NavigationSystem::GroupSpawn landing =
 				navSystem.groupSpawnPoints(rawSpawn, crewSize, kPartyRingRadius, kPartyMinSeparation, kSpawnClearance);
 			if (landing.center != rawSpawn) {
@@ -2095,6 +2097,8 @@ namespace {
 		std::unique_ptr<world::ChunkManager>		 m_chunkManager;
 		std::unique_ptr<world::WorldCamera>			 m_camera;
 		glm::vec2									 m_spawnPosition{0.0F, 0.0F};
+		// The movers' positions handed to the chunk manager each frame; a member so the frame reuses its storage.
+		std::vector<world::WorldPosition> anchorPositions;
 
 		// Direct player control of a colonist. m_controlledColonist is the entity currently driven
 		// by the player (0 = none); it is always the selected colonist (control is released when the

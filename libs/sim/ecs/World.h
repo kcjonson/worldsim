@@ -175,6 +175,9 @@ public:
             system->update(deltaTime);
         }
 #endif
+        for (auto& system : systems) {
+            system->endTick();
+        }
     }
 
     /// Get timing information from last update (for profiling)

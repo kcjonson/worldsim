@@ -1,7 +1,10 @@
 #include "StaticRectCollisionSystem.h"
 
+#include "NavigationSystem.h"
+
 #include "../World.h"
 #include "../components/AgentRadius.h"
+#include "../components/NavPath.h"
 #include "../components/Transform.h"
 
 #include <assets/AssetDefinition.h>
@@ -89,7 +92,7 @@ std::optional<glm::vec2> resolveCenterAgainstRect(glm::vec2 center, float cleara
 }
 
 void StaticRectCollisionSystem::update(float /*deltaTime*/) {
-	if (m_placement == nullptr) {
+	if (m_placement == nullptr || detail == nullptr) {
 		return; // not wired (e.g. headless tests, early init): nothing to collide with
 	}
 
@@ -106,6 +109,12 @@ void StaticRectCollisionSystem::update(float /*deltaTime*/) {
 	for (int iter = 0; iter < 2; ++iter) {
 		for (auto [entity, pos, radius] : world->view<Position, AgentRadius>()) {
 			glm::vec2 p = pos.value;
+			if (!detail->detailOnAt(p)) {
+				continue;
+			}
+			if (const NavPath* path = world->getComponent<NavPath>(entity); path != nullptr && !path->done() && detail->routeCrossesPricedFaces(*path)) {
+				continue; // walking through flora on purpose, at its price
+			}
 
 			// --- Gather the nearby rects locally (position tiles == meters) ---
 			rects.clear();
@@ -131,7 +140,8 @@ void StaticRectCollisionSystem::update(float /*deltaTime*/) {
 						index->queryRect(boxMinX, boxMinY, boxMaxX, boxMaxY);
 					for (const assets::PlacedEntity* e : hits) {
 						const assets::AssetDefinition* def = registry.getDefinition(e->defName);
-						if (def == nullptr || def->collision.type != assets::CollisionShapeType::Rect) {
+						if (def == nullptr || def->collision.type != assets::CollisionShapeType::Rect ||
+							!detail->floraInNavMesh({cx, cy}, *e)) {
 							continue;
 						}
 						rects.push_back(orientedRectFor(*e, def->collision));

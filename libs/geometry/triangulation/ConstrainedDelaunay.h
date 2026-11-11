@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 // Constrained Delaunay triangulation of a planar straight-line graph, exact on the
@@ -50,5 +51,25 @@ namespace geometry {
 	// corners inside int64; world coordinates sit many orders of magnitude inside that.
 	ConstrainedDelaunay buildConstrainedDelaunay(
 		const std::vector<Vec2i64>& vertices, const std::vector<std::array<std::uint32_t, 2>>& constraints);
+
+	// Working storage buildConstrainedDelaunay keeps between calls.
+	class CdtWorkspace {
+	  public:
+		CdtWorkspace();
+		~CdtWorkspace();
+		CdtWorkspace(CdtWorkspace&& other) noexcept;
+		CdtWorkspace& operator=(CdtWorkspace&& other) noexcept;
+
+		struct Storage;
+		Storage& storage() { return *store; }
+
+	  private:
+		std::unique_ptr<Storage> store;
+	};
+
+	// The same triangulation, written into out and built in the workspace, both reused
+	// so a caller that builds many allocates little.
+	void buildConstrainedDelaunay(const std::vector<Vec2i64>& vertices, const std::vector<std::array<std::uint32_t, 2>>& constraints,
+								  CdtWorkspace& workspace, ConstrainedDelaunay& out);
 
 } // namespace geometry

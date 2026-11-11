@@ -10,12 +10,14 @@
 
 #include <core/Vec2i64.h>
 #include <nav/NavMesh.h>
+#include <nav/PatchableMesh.h>
 #include <nav/PathQuery.h>
 #include <polygon/Polygon.h>
 #include <predicates/Predicates.h>
 
 #include <world/Biome.h>
 #include <world/BiomeWeights.h>
+#include <world/chunk/Chunk.h>
 #include <world/chunk/ChunkManager.h>
 #include <world/chunk/ChunkSampleResult.h>
 #include <world/chunk/IWorldSampler.h>
@@ -25,7 +27,9 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -97,7 +101,7 @@ namespace {
 } // namespace
 
 // ---------------------------------------------------------------------------
-// Water (terrain rings, D9)
+// Ground: chunk squares and their water (terrain rings, D9)
 // ---------------------------------------------------------------------------
 
 namespace {
@@ -105,8 +109,6 @@ namespace {
 	using world::ChunkTerrainPolygons;
 	using world::TerrainRing;
 	using world::TerrainRingKind;
-
-	constexpr std::int64_t kM = 1000; // mm per meter
 
 	Vec2i64 meters(double x, double y) {
 		return {std::llround(x * 1000.0), std::llround(y * 1000.0)};
@@ -130,48 +132,49 @@ namespace {
 		return t;
 	}
 
-	// Hand-built chunk ring sets standing in for ready chunks; a coordinate with no
-	// entry reads as a missing / not-ready chunk.
+	// Hand-built chunk ring sets standing in for ready chunks.
 	struct FakeTerrain {
-		std::unordered_map<world::ChunkCoordinate, ChunkTerrainPolygons> chunks;
+		std::map<std::pair<std::int32_t, std::int32_t>, ChunkTerrainPolygons> chunks;
 
-		ChunkTerrainPolygons& at(world::ChunkCoordinate coord) {
-			ChunkTerrainPolygons& p = chunks[coord];
-			p.version				= std::max<std::uint32_t>(p.version, 1);
-			return p;
-		}
-
-		[[nodiscard]] TerrainPolygonsLookup lookup() const {
-			return [this](world::ChunkCoordinate coord) -> const ChunkTerrainPolygons* {
-				auto it = chunks.find(coord);
-				return it == chunks.end() ? nullptr : &it->second;
-			};
-		}
+		ChunkTerrainPolygons& at(world::ChunkCoordinate coord) { return chunks[{coord.x, coord.y}]; }
 	};
 
-	std::vector<NavInputPolygon> waterFor(Vec2i64 centerMm, std::int64_t radiusMm, const FakeTerrain& terrain) {
-		std::vector<NavInputPolygon> out;
-		appendWaterObstacles(centerMm, radiusMm, terrain.lookup(), out);
-		return out;
-	}
-
-	NavMesh meshFor(Vec2i64 centerMm, std::int64_t radiusMm, const FakeTerrain& terrain) {
-		NavMeshInput input;
-		input.polygons.push_back(
-			borderRing({centerMm.x - radiusMm, centerMm.y - radiusMm}, {centerMm.x + radiusMm, centerMm.y + radiusMm}));
-		appendWaterObstacles(centerMm, radiusMm, terrain.lookup(), input.polygons);
-		return geometry::nav::buildNavMesh(input);
+	// Each chunk's ground (its square and water) in one mesh, as NavigationSystem adds it.
+	geometry::nav::PatchableMesh meshFor(const FakeTerrain& terrain) {
+		geometry::nav::PatchableMesh mesh({.maxBoundsEdgeMm = 64000});
+		geometry::nav::PatchEdits	 edits;
+		for (const auto& [coord, polygons] : terrain.chunks) {
+			edits.adds.push_back(chunkSquare({coord.first, coord.second}));
+			appendChunkWater(polygons, edits.adds);
+		}
+		mesh.applyPatch(edits);
+		mesh.rebuildForests();
+		EXPECT_EQ(mesh.validate(), "");
+		return mesh;
 	}
 
 	// Walkable = on a triangle that isn't common-knowledge terrain (water).
-	bool walkableAt(const NavMesh& mesh, Vec2i64 p) {
-		const std::int32_t tri = geometry::nav::locateTriangle(mesh, p);
-		return tri >= 0 && geometry::nav::terrainTraversable(mesh.triangles[static_cast<std::size_t>(tri)]);
+	bool walkableAt(const geometry::nav::PatchableMesh& mesh, Vec2i64 p) {
+		const std::int32_t tri = mesh.locate(p);
+		return tri >= 0 && geometry::nav::terrainTraversable(mesh.triangles()[static_cast<std::size_t>(tri)]);
 	}
 
-	Vec2i64 triCentroid(const NavMesh& m, const geometry::nav::NavTriangle& t) {
-		return {(m.vertices[t.v[0]].x + m.vertices[t.v[1]].x + m.vertices[t.v[2]].x) / 3,
-				(m.vertices[t.v[0]].y + m.vertices[t.v[1]].y + m.vertices[t.v[2]].y) / 3};
+	geometry::nav::PathResult pathOn(const geometry::nav::PatchableMesh& mesh, Vec2i64 a, Vec2i64 b) {
+		return geometry::nav::pathThrough(mesh.view(), a, b, 300);
+	}
+
+	// Every live triangle, as its corners and its tags.
+	template <typename Visit> void forEachLive(const geometry::nav::PatchableMesh& mesh, Visit visit) {
+		for (std::int32_t t = 0; t < static_cast<std::int32_t>(mesh.triangles().size()); ++t) {
+			if (mesh.triangleLive(t)) {
+				const geometry::nav::NavTriangle& tri = mesh.triangles()[static_cast<std::size_t>(t)];
+				visit(Ring{mesh.vertices()[tri.v[0]], mesh.vertices()[tri.v[1]], mesh.vertices()[tri.v[2]]}, tri);
+			}
+		}
+	}
+
+	Vec2i64 centroid(const Ring& tri) {
+		return {(tri[0].x + tri[1].x + tri[2].x) / 3, (tri[0].y + tri[1].y + tri[2].y) / 3};
 	}
 
 	bool strictlyInside(Vec2i64 p, const Ring& r) {
@@ -190,14 +193,23 @@ namespace {
 
 } // namespace
 
+TEST(NavInputBuilder, ChunkSquare_IsTheChunksBoundsUnblocked) {
+	const NavInputPolygon square = chunkSquare({1, -2});
+	EXPECT_FALSE(square.blocked);
+	EXPECT_EQ(square.provenanceId, kProvenanceBorder);
+	EXPECT_TRUE(isCcw(square.ring));
+	EXPECT_EQ(*std::min_element(square.ring.begin(), square.ring.end()), meters(512, -1024));
+	EXPECT_EQ(*std::max_element(square.ring.begin(), square.ring.end()), meters(1024, -512));
+}
+
 TEST(NavInputBuilder, Water_EmitsBlockingRingsWithProvenanceAndHoleCapability) {
-	FakeTerrain			  terrain;
-	ChunkTerrainPolygons& c = terrain.at({0, 0});
+	ChunkTerrainPolygons c;
 	c.navRings.push_back(terrainRing(box(100, 100, 200, 200), TerrainRingKind::Waterline));
 	c.navRings.push_back(terrainRing(box(140, 140, 160, 160, /*clockwise=*/true), TerrainRingKind::Waterline));
 	c.navRings.push_back(terrainRing(box(120, 80, 124, 100), TerrainRingKind::Channel));
 
-	const std::vector<NavInputPolygon> water = waterFor(meters(150, 150), 80 * kM, terrain);
+	std::vector<NavInputPolygon> water;
+	appendChunkWater(c, water);
 	ASSERT_EQ(water.size(), 3u);
 	for (const NavInputPolygon& p : water) {
 		EXPECT_TRUE(p.blocked);
@@ -217,75 +229,60 @@ TEST(NavInputBuilder, Water_LakeWithIsland_IslandWalkableLakeBlocked) {
 	c.navRings.push_back(terrainRing(box(100, 100, 200, 200), TerrainRingKind::Waterline));
 	c.navRings.push_back(terrainRing(box(140, 140, 160, 160, true), TerrainRingKind::Waterline));
 
-	const NavMesh mesh = meshFor(meters(150, 150), 70 * kM, terrain);
-	ASSERT_FALSE(mesh.triangles.empty());
+	const geometry::nav::PatchableMesh mesh = meshFor(terrain);
 	EXPECT_TRUE(walkableAt(mesh, meters(150, 150))) << "the island is land (even depth)";
 	EXPECT_FALSE(walkableAt(mesh, meters(120, 150))) << "open lake water blocks";
 	EXPECT_TRUE(walkableAt(mesh, meters(90, 150))) << "the shore outside the lake is land";
-	EXPECT_FALSE(geometry::nav::pathThrough(mesh, meters(150, 150), meters(90, 150), 300).reachable)
-		<< "the island is cut off by water";
+	EXPECT_FALSE(pathOn(mesh, meters(150, 150), meters(90, 150)).reachable) << "the island is cut off by water";
 }
 
-// The lake covers the whole area (water exiting every side): the ring is clipped to
-// the area rect, and only the island inside it is land.
-TEST(NavInputBuilder, Water_LakeCoveringArea_OnlyIslandWalkable) {
+// The lake covers the whole chunk: only the island inside it is land.
+TEST(NavInputBuilder, Water_LakeCoveringChunk_OnlyIslandWalkable) {
 	FakeTerrain			  terrain;
 	ChunkTerrainPolygons& c = terrain.at({0, 0});
 	c.navRings.push_back(terrainRing(box(0, 0, 512, 512), TerrainRingKind::Waterline));
 	c.navRings.push_back(terrainRing(box(240, 240, 270, 270, true), TerrainRingKind::Waterline));
 
-	const Vec2i64	   center = meters(256, 256);
-	const std::int64_t radius = 40 * kM;
-	for (const NavInputPolygon& p : waterFor(center, radius, terrain)) {
-		for (const Vec2i64& v : p.ring) {
-			EXPECT_GE(v.x, center.x - radius);
-			EXPECT_LE(v.x, center.x + radius);
-			EXPECT_GE(v.y, center.y - radius);
-			EXPECT_LE(v.y, center.y + radius);
-		}
-	}
-	const NavMesh mesh = meshFor(center, radius, terrain);
+	const geometry::nav::PatchableMesh mesh = meshFor(terrain);
 	EXPECT_TRUE(walkableAt(mesh, meters(255, 255)));
 	EXPECT_FALSE(walkableAt(mesh, meters(230, 255)));
 	EXPECT_FALSE(walkableAt(mesh, meters(280, 280)));
+	EXPECT_FALSE(walkableAt(mesh, meters(1, 1)));
 }
 
-// Two chunks' clipped navRings meet along x = 512 m with bit-identical border
-// corners, and each side splits the border edge at its own extra vertex. The
-// arrangement must merge the coincident constraint edges: no floor inside the lake
-// (no gap), and the triangles tile the area exactly (no sliver, no overlap).
+// Two chunks' navRings meet along x = 512 m with bit-identical border corners, each side
+// splitting the border edge at its own extra vertex, and each chunk's square splitting it every
+// 16 m. In one mesh the coincident edges merge: no floor inside the lake (no gap), and the
+// triangles tile both chunks exactly (no sliver, no overlap).
 TEST(NavInputBuilder, Water_LakeAcrossChunkBorder_NoGapNoSliver) {
 	FakeTerrain terrain;
-	terrain.at({0, 0}).navRings.push_back(terrainRing(
-		{meters(470, 230), meters(512, 230), meters(512, 250), meters(512, 290), meters(470, 290)}, TerrainRingKind::Waterline));
-	terrain.at({1, 0}).navRings.push_back(terrainRing(
-		{meters(512, 230), meters(550, 230), meters(550, 290), meters(512, 290), meters(512, 271)}, TerrainRingKind::Waterline));
+	terrain.at({0, 0}).navRings.push_back(
+		terrainRing({meters(470, 230), meters(512, 230), meters(512, 250), meters(512, 290), meters(470, 290)}, TerrainRingKind::Waterline));
+	terrain.at({1, 0}).navRings.push_back(
+		terrainRing({meters(512, 230), meters(550, 230), meters(550, 290), meters(512, 290), meters(512, 271)}, TerrainRingKind::Waterline));
 
-	const Vec2i64	   center = meters(512, 260);
-	const std::int64_t radius = 64 * kM;
-	const NavMesh	   mesh	  = meshFor(center, radius, terrain);
-	ASSERT_FALSE(mesh.triangles.empty());
-
-	const Ring lake	   = box(470, 230, 550, 290);
-	double	   areaMm2 = 0.0;
-	for (const geometry::nav::NavTriangle& t : mesh.triangles) {
-		const Ring tri = {mesh.vertices[t.v[0]], mesh.vertices[t.v[1]], mesh.vertices[t.v[2]]};
+	const geometry::nav::PatchableMesh mesh	   = meshFor(terrain);
+	const Ring						   lake	   = box(470, 230, 550, 290);
+	double							   areaMm2 = 0.0;
+	forEachLive(mesh, [&](const Ring& tri, const geometry::nav::NavTriangle& t) {
 		areaMm2 += signedArea2(tri) / 2.0;
-		if (strictlyInside(triCentroid(mesh, t), lake)) {
+		if (strictlyInside(centroid(tri), lake)) {
 			EXPECT_FALSE(geometry::nav::isFloorFace(t)) << "floor inside the lake: a gap at the chunk border";
 		}
-	}
-	EXPECT_NEAR(areaMm2 / 1e6, 128.0 * 128.0, 1e-6) << "triangles must tile the area exactly";
+	});
+	EXPECT_NEAR(areaMm2 / 1e6, 2.0 * 512.0 * 512.0, 1e-3) << "triangles must tile both chunks exactly";
 	for (double y : {231.0, 250.0, 260.0, 271.0, 289.0}) {
 		EXPECT_FALSE(walkableAt(mesh, meters(511.999, y)));
+		EXPECT_FALSE(walkableAt(mesh, meters(512.0, y)));
 		EXPECT_FALSE(walkableAt(mesh, meters(512.001, y)));
 	}
 	EXPECT_TRUE(walkableAt(mesh, meters(512, 300)));
+	EXPECT_TRUE(pathOn(mesh, meters(500, 310), meters(530, 310)).reachable) << "land crosses the border";
 }
 
-// Channel and Pond rings are solid and overlap each other (a confluence) and the
-// Waterline rings (a mouth running into a lake, a channel crossing an island). An
-// overlap must never flip parity into a walkable hole.
+// Channel and Pond rings are solid and overlap each other (a confluence) and the Waterline rings
+// (a mouth running into a lake, a channel crossing an island). An overlap must never flip parity
+// into a walkable hole.
 TEST(NavInputBuilder, Water_ConfluenceAndMouthOverlaps_NeverWalkable) {
 	FakeTerrain			  terrain;
 	ChunkTerrainPolygons& c		 = terrain.at({0, 0});
@@ -300,11 +297,10 @@ TEST(NavInputBuilder, Water_ConfluenceAndMouthOverlaps_NeverWalkable) {
 	c.navRings.push_back(terrainRing(feeder, TerrainRingKind::Channel));
 	c.navRings.push_back(terrainRing(pond, TerrainRingKind::Pond));
 
-	const NavMesh mesh = meshFor(meters(250, 240), 80 * kM, terrain);
-	ASSERT_FALSE(mesh.triangles.empty());
-	int islandFloor = 0;
-	for (const geometry::nav::NavTriangle& t : mesh.triangles) {
-		const Vec2i64 p		  = triCentroid(mesh, t);
+	const geometry::nav::PatchableMesh mesh		   = meshFor(terrain);
+	int								   islandFloor = 0;
+	forEachLive(mesh, [&](const Ring& tri, const geometry::nav::NavTriangle& t) {
+		const Vec2i64 p		  = centroid(tri);
 		const bool	  inSolid = strictlyInside(p, trunk) || strictlyInside(p, feeder) || strictlyInside(p, pond);
 		const bool	  inLake  = strictlyInside(p, lake) && !strictlyInside(p, island);
 		if (inSolid || inLake) {
@@ -312,7 +308,7 @@ TEST(NavInputBuilder, Water_ConfluenceAndMouthOverlaps_NeverWalkable) {
 		} else if (strictlyInside(p, island) && geometry::nav::isFloorFace(t)) {
 			++islandFloor;
 		}
-	}
+	});
 	EXPECT_GT(islandFloor, 0) << "the island beside the channel stays land";
 	EXPECT_FALSE(walkableAt(mesh, meters(248, 183))) << "the confluence overlap blocks";
 	EXPECT_FALSE(walkableAt(mesh, meters(250, 210))) << "the mouth overlap blocks";
@@ -322,9 +318,8 @@ TEST(NavInputBuilder, Water_ConfluenceAndMouthOverlaps_NeverWalkable) {
 	EXPECT_TRUE(walkableAt(mesh, meters(230, 170)));
 }
 
-// A river narrows below kFordableWidthM: the wide piece blocks, the fordable piece
-// is not emitted, and the two share a straight butt cut. The walkable side of the
-// cut is reachable, and a colonist wades straight across the creek.
+// A river narrows below kFordableWidthM: the wide piece blocks, the fordable piece is not
+// emitted, and the two share a straight butt cut. A colonist wades straight across the creek.
 TEST(NavInputBuilder, Water_FordableCreek_WalkableAcrossBlockingPieceBlocks) {
 	FakeTerrain			  terrain;
 	ChunkTerrainPolygons& c = terrain.at({0, 0});
@@ -333,79 +328,33 @@ TEST(NavInputBuilder, Water_FordableCreek_WalkableAcrossBlockingPieceBlocks) {
 	c.navRings.push_back(terrainRing(wide, TerrainRingKind::Channel));
 	c.navRings.push_back(terrainRing(creek, TerrainRingKind::Channel, /*blocksMovement=*/false));
 
-	const Vec2i64					   center = meters(160, 100);
-	const std::int64_t				   radius = 40 * kM;
-	const std::vector<NavInputPolygon> water  = waterFor(center, radius, terrain);
+	std::vector<NavInputPolygon> water;
+	appendChunkWater(c, water);
 	ASSERT_EQ(water.size(), 1u) << "only the blocking piece reaches nav";
 
-	const NavMesh mesh = meshFor(center, radius, terrain);
+	const geometry::nav::PatchableMesh mesh = meshFor(terrain);
 	EXPECT_FALSE(walkableAt(mesh, meters(140, 100))) << "the wide river blocks";
 	EXPECT_FALSE(walkableAt(mesh, meters(149.9, 100)));
 	EXPECT_TRUE(walkableAt(mesh, meters(150.1, 100))) << "just past the butt cut is walkable";
 	EXPECT_TRUE(walkableAt(mesh, meters(170, 100))) << "the creek bed is walkable";
 
-	const geometry::nav::PathResult across = geometry::nav::pathThrough(mesh, meters(175, 94), meters(175, 106), 300);
+	const geometry::nav::PathResult across = pathOn(mesh, meters(175, 94), meters(175, 106));
 	ASSERT_TRUE(across.reachable);
 	EXPECT_LT(pathLengthM(across), 12.5) << "wading straight across, not around";
 
-	// Across the wide piece the only way over is around its east end, through the creek.
-	const geometry::nav::PathResult around = geometry::nav::pathThrough(mesh, meters(140, 90), meters(140, 110), 300);
+	const geometry::nav::PathResult around = pathOn(mesh, meters(140, 90), meters(140, 110));
 	ASSERT_TRUE(around.reachable);
 	EXPECT_GT(pathLengthM(around), 20.0) << "the blocking piece forces the detour to the ford";
 }
 
-// A neighbor that is missing or still generating contributes nothing: its side of
-// the area reads as land, even where its (future) rings would put water.
-TEST(NavInputBuilder, Water_MissingNeighborReadsAsLand) {
+// A neighbour that was never loaded has no ground: no triangle there, water or land.
+TEST(NavInputBuilder, Water_MissingNeighbourHasNoGround) {
 	FakeTerrain terrain;
 	terrain.at({0, 0}).navRings.push_back(terrainRing(box(480, 200, 512, 300), TerrainRingKind::Waterline));
 
-	const NavMesh mesh = meshFor(meters(512, 250), 64 * kM, terrain);
+	const geometry::nav::PatchableMesh mesh = meshFor(terrain);
 	EXPECT_FALSE(walkableAt(mesh, meters(500, 250)));
-	EXPECT_TRUE(walkableAt(mesh, meters(530, 250))) << "chunk (1,0) is not ready: land";
-}
-
-TEST(NavInputBuilder, WaterSignature_FoldsEveryChunkVersion) {
-	// The area straddles x = 512 m: its range is chunks (0,0) and (1,0).
-	FakeTerrain terrain;
-	terrain.at({0, 0});
-	const Vec2i64		center	  = meters(512, 256);
-	const std::int64_t	radius	  = 64 * kM;
-	const std::uint64_t oneReady  = waterSignature(center, radius, terrain.lookup());
-	EXPECT_EQ(waterSignature(center, radius, terrain.lookup()), oneReady);
-
-	// The neighbor becoming ready registers.
-	terrain.at({1, 0});
-	const std::uint64_t base = waterSignature(center, radius, terrain.lookup());
-	EXPECT_NE(base, oneReady);
-
-	terrain.chunks[{0, 0}].version = 2;
-	const std::uint64_t oneBumped  = waterSignature(center, radius, terrain.lookup());
-	EXPECT_NE(oneBumped, base);
-
-	// With (0,0) already at 2, (1,0) moving 1 -> 2 must still register (a max would not).
-	terrain.chunks[{1, 0}].version = 2;
-	const std::uint64_t bothBumped = waterSignature(center, radius, terrain.lookup());
-	EXPECT_NE(bothBumped, oneBumped);
-
-	// A chunk outside the range doesn't.
-	terrain.at({0, -1}).version = 7;
-	EXPECT_EQ(waterSignature(center, radius, terrain.lookup()), bothBumped);
-}
-
-TEST(NavInputBuilder, AreaChunkRange_CoversAreaPlusOneTile) {
-	// [511, 513] m plus the 1 m margin reaches chunks 0 and 1 on x; y stays in chunk 0.
-	AreaChunkRange r = areaChunkRange(meters(512, 256), 1 * kM);
-	EXPECT_EQ(r.min.x, 0);
-	EXPECT_EQ(r.max.x, 1);
-	EXPECT_EQ(r.min.y, 0);
-	EXPECT_EQ(r.max.y, 0);
-	// Negative coordinates floor, not truncate.
-	r = areaChunkRange(meters(-10, -600), 5 * kM);
-	EXPECT_EQ(r.min.x, -1);
-	EXPECT_EQ(r.max.x, -1);
-	EXPECT_EQ(r.min.y, -2);
-	EXPECT_EQ(r.max.y, -2);
+	EXPECT_LT(mesh.locate(meters(530, 250)), 0) << "chunk (1,0) was never meshed";
 }
 
 // ---------------------------------------------------------------------------
@@ -419,6 +368,19 @@ class NavFloraTest : public ::testing::Test {
 	void SetUp() override { AssetRegistry::Get().clearDefinitions(); }
 	void TearDown() override { AssetRegistry::Get().clearDefinitions(); }
 };
+
+namespace {
+	// Every blocking ring the index's entities give, in its stable order.
+	std::vector<NavInputPolygon> floraOf(const SpatialIndex& index, const AssetRegistry& registry) {
+		std::vector<NavInputPolygon> out;
+		for (const PlacedEntity& e : index.allEntities()) {
+			if (std::optional<NavInputPolygon> ring = floraRingFor(e, registry)) {
+				out.push_back(std::move(*ring));
+			}
+		}
+		return out;
+	}
+} // namespace
 
 TEST_F(NavFloraTest, RectEntity_EmitsPaddedQuad) {
 	AssetRegistry& reg = AssetRegistry::Get();
@@ -435,7 +397,7 @@ TEST_F(NavFloraTest, RectEntity_EmitsPaddedQuad) {
 	e.scale = 1.0F;
 	index.insert(e);
 
-	std::vector<NavInputPolygon> polys = extractFloraObstacles(index, reg);
+	std::vector<NavInputPolygon> polys = floraOf(index, reg);
 	ASSERT_EQ(polys.size(), 1u);
 	EXPECT_TRUE(polys[0].blocked);
 	EXPECT_EQ(polys[0].provenanceId, kProvenanceTree);
@@ -479,7 +441,7 @@ TEST_F(NavFloraTest, RectEntity_RotationProducesOrientedQuad) {
 	e.rotation = 3.14159265358979323846F / 4.0F; // 45 degrees
 	index.insert(e);
 
-	std::vector<NavInputPolygon> polys = extractFloraObstacles(index, reg);
+	std::vector<NavInputPolygon> polys = floraOf(index, reg);
 	ASSERT_EQ(polys.size(), 1u);
 	ASSERT_EQ(polys[0].ring.size(), 4u);
 	EXPECT_TRUE(isCcw(polys[0].ring));
@@ -534,7 +496,7 @@ TEST_F(NavFloraTest, NoCollision_EmitsNothing) {
 	e.position = {5.0F, 5.0F};
 	index.insert(e);
 
-	EXPECT_TRUE(extractFloraObstacles(index, reg).empty());
+	EXPECT_TRUE(floraOf(index, reg).empty());
 }
 
 // ---------------------------------------------------------------------------
@@ -768,345 +730,66 @@ TEST_F(NavEndToEndTest, NoOpeningBlocksPath) {
 }
 
 // ---------------------------------------------------------------------------
-// Area-scoped buildInput (Phase A: simulation-area nav build)
+// Real chunk generation across a seam
 // ---------------------------------------------------------------------------
 
 namespace {
 
-	using assets::AsyncChunkPlacementResult;
-	using assets::PlacementExecutor;
 	using world::Biome;
 	using world::BiomeWeights;
 	using world::ChunkCoordinate;
 	using world::ChunkManager;
 	using world::ChunkSampleResult;
 	using world::IWorldSampler;
-	using world::kChunkSize;
 	using world::WorldPosition;
 
-	// A sampler whose tiles are all Lake (water) inside a chosen set of chunk
-	// coordinates and land (TemperateGrassland) everywhere else. Drives the area
-	// build's water predicate deterministically without leaning on noise.
+	// All tiles Lake (water) inside a chosen set of chunks, land (TemperateGrassland) elsewhere.
 	class WaterRegionSampler : public IWorldSampler {
 	  public:
 		explicit WaterRegionSampler(std::vector<ChunkCoordinate> waterChunks)
 			: m_waterChunks(std::move(waterChunks)) {}
 
 		[[nodiscard]] ChunkSampleResult sampleChunk(ChunkCoordinate coord) const override {
-			const Biome b = isWaterChunk(coord) ? Biome::Lake : Biome::TemperateGrassland;
-			return world::makeUniformChunkSampleResult(BiomeWeights::single(b), 1.0F);
+			const bool water = std::find(m_waterChunks.begin(), m_waterChunks.end(), coord) != m_waterChunks.end();
+			return world::makeUniformChunkSampleResult(BiomeWeights::single(water ? Biome::Lake : Biome::TemperateGrassland), 1.0F);
 		}
 
 		[[nodiscard]] float	   sampleElevation(WorldPosition) const override { return 1.0F; }
 		[[nodiscard]] uint64_t getWorldSeed() const override { return 99u; }
 
 	  private:
-		[[nodiscard]] bool isWaterChunk(ChunkCoordinate coord) const {
-			for (const ChunkCoordinate& c : m_waterChunks) {
-				if (c == coord) {
-					return true;
-				}
-			}
-			return false;
-		}
 		std::vector<ChunkCoordinate> m_waterChunks;
 	};
 
-	// Stand up a ChunkManager with the given sampler, load+finish a generous radius
-	// around the origin so every chunk the area touches is ready.
-	std::unique_ptr<ChunkManager> readyChunks(std::unique_ptr<IWorldSampler> sampler, int loadRadius = 3) {
-		auto mgr = std::make_unique<ChunkManager>(std::move(sampler));
-		mgr->setLoadRadius(loadRadius);
-		mgr->setUnloadRadius(loadRadius + 2);
-		mgr->update({0.0F, 0.0F});
-		mgr->finishPendingGeneration();
-		return mgr;
-	}
-
-	// Generating a ready region is most of an area test's cost and buildInput writes nothing
-	// a test can observe in it, so each region is generated once per process and shared.
-	ChunkManager* landChunks() {
-		static const std::unique_ptr<ChunkManager> mgr = readyChunks(std::make_unique<WaterRegionSampler>(std::vector<ChunkCoordinate>{}));
-		return mgr.get();
-	}
-
-	// Chunks (0,0) and (1,0) are one lake; everything else is land.
-	ChunkManager* twoChunkLakeChunks() {
-		static const std::unique_ptr<ChunkManager> mgr =
-			readyChunks(std::make_unique<WaterRegionSampler>(std::vector<ChunkCoordinate>{{0, 0}, {1, 0}}));
-		return mgr.get();
-	}
-
-	// Count the blocked flora rings (provenance tree) in an input.
-	int countFlora(const NavMeshInput& input) {
-		int n = 0;
-		for (const NavInputPolygon& p : input.polygons) {
-			if (p.provenanceId == kProvenanceTree) {
-				++n;
-			}
-		}
-		return n;
-	}
-
-	// The single unblocked border ring.
-	const NavInputPolygon* findBorder(const NavMeshInput& input) {
-		for (const NavInputPolygon& p : input.polygons) {
-			if (!p.blocked && p.provenanceId == kProvenanceBorder) {
-				return &p;
-			}
-		}
-		return nullptr;
-	}
-
 } // namespace
 
-// The border ring exactly matches the requested area AABB.
-TEST_F(NavFloraTest, Area_BorderEqualsAreaBounds) {
-	ChunkManager* mgr = landChunks();
-	PlacementExecutor placement(AssetRegistry::Get());
-	ConstructionWorld cw;
+// Real generation: chunks (0,0) and (1,0) are one lake, so each gives its navRings clipped to its
+// own square, meeting along x = 512 m. Their ground in one mesh has no floor sliver at the seam.
+TEST(NavInputBuilder, Water_GeneratedLakeAcrossChunkSeamHasNoGap) {
+	auto mgr = std::make_unique<ChunkManager>(std::make_unique<WaterRegionSampler>(std::vector<ChunkCoordinate>{{0, 0}, {1, 0}}));
+	mgr->setLoadRadius(1);
+	mgr->setUnloadRadius(3);
+	mgr->update({512.0F, 256.0F});
+	mgr->finishPendingGeneration();
 
-	const Vec2i64	   center{100000, 100000};
-	const std::int64_t radius = 60000;
-	NavMeshInput	   input  = buildInput(center, radius, *mgr, placement, AssetRegistry::Get(), cw,
-										   ConstructionRegistry::Get());
-
-	const NavInputPolygon* border = findBorder(input);
-	ASSERT_NE(border, nullptr);
-	ASSERT_EQ(border->ring.size(), 4u);
-	std::int64_t minX = border->ring[0].x;
-	std::int64_t minY = border->ring[0].y;
-	std::int64_t maxX = border->ring[0].x;
-	std::int64_t maxY = border->ring[0].y;
-	for (const Vec2i64& v : border->ring) {
-		minX = std::min(minX, v.x);
-		minY = std::min(minY, v.y);
-		maxX = std::max(maxX, v.x);
-		maxY = std::max(maxY, v.y);
-	}
-	EXPECT_EQ(minX, center.x - radius);
-	EXPECT_EQ(minY, center.y - radius);
-	EXPECT_EQ(maxX, center.x + radius);
-	EXPECT_EQ(maxY, center.y + radius);
-}
-
-// includeFlora=false omits tree/rock entity obstacles (the terrain-only placement mesh): the same
-// area that emits flora rings by default emits none when flora is excluded, while the walkable border
-// ring is still produced. This is the seam NavigationSystem::isAreaBuildable builds on so a footprint
-// over clearable entities reads as buildable while water and off-mesh gaps block.
-TEST_F(NavFloraTest, Area_ExcludesFloraWhenNotRequested) {
-	AssetRegistry&	reg = AssetRegistry::Get();
-	AssetDefinition tree;
-	tree.defName					 = "Test_ExcludeTree";
-	tree.collision.type				 = CollisionShapeType::Rect;
-	tree.collision.halfExtentsMeters = {0.2F, 0.2F};
-	reg.registerTestDefinition(tree);
-
-	ChunkManager*			  mgr = landChunks();
-	PlacementExecutor placement(reg);
-
-	AsyncChunkPlacementResult result;
-	result.coord = world::worldToChunk({256.0F, 256.0F});
-	for (int i = 0; i < 4; ++i) {
-		PlacedEntity e;
-		e.defName  = "Test_ExcludeTree";
-		e.position = {256.0F + static_cast<float>(i), 256.0F};
-		result.spatialIndex.insert(e);
-	}
-	placement.storeChunkResult(std::move(result));
-
-	ConstructionWorld  cw;
-	const Vec2i64	   center{256000, 256000};
-	const std::int64_t radius = 20000;
-
-	const NavMeshInput withFlora   = buildInput(center, radius, *mgr, placement, reg, cw, ConstructionRegistry::Get(), true);
-	const NavMeshInput terrainOnly = buildInput(center, radius, *mgr, placement, reg, cw, ConstructionRegistry::Get(), false);
-
-	EXPECT_GT(countFlora(withFlora), 0) << "default build emits the in-area trees";
-	EXPECT_EQ(countFlora(terrainOnly), 0) << "includeFlora=false emits no tree rings";
-	EXPECT_NE(findBorder(terrainOnly), nullptr) << "the walkable border is still produced";
-}
-
-// The area scopes flora: trees are placed across several chunks, most far outside
-// the area; the build emits rings ONLY for the in-area trees, bounded (not all).
-TEST_F(NavFloraTest, Area_ScopesFloraToInAreaTrees) {
-	AssetRegistry& reg = AssetRegistry::Get();
-	AssetDefinition tree;
-	tree.defName			   = "Test_AreaTree";
-	tree.collision.type			   = CollisionShapeType::Rect;
-	tree.collision.halfExtentsMeters = {0.2F, 0.2F};
-	reg.registerTestDefinition(tree);
-
-	ChunkManager* mgr = landChunks();
-	PlacementExecutor placement(reg);
-
-	// Lay a grid of trees over chunks (0,0) and (1,0): one every 8 m across a wide
-	// span (covers x in [0, 1024) m, y in [0, 512) m). The area is a small box, so
-	// only a handful fall inside it. Trees are split into their owning chunk's index.
-	int totalTrees = 0;
-	std::unordered_map<ChunkCoordinate, AsyncChunkPlacementResult> byChunk;
-	for (int ty = 0; ty < 512; ty += 8) {
-		for (int tx = 0; tx < 1024; tx += 8) {
-			const WorldPosition wp{static_cast<float>(tx), static_cast<float>(ty)};
-			const ChunkCoordinate coord = world::worldToChunk(wp);
-			AsyncChunkPlacementResult& r = byChunk[coord];
-			r.coord = coord;
-			PlacedEntity e;
-			e.defName  = "Test_AreaTree";
-			e.position = {wp.x, wp.y};
-			r.spatialIndex.insert(e);
-			++totalTrees;
-		}
-	}
-	for (auto& [coord, result] : byChunk) {
-		placement.storeChunkResult(std::move(result));
-	}
-	ASSERT_GT(totalTrees, 1000) << "scenario must place many trees so scoping is meaningful";
-
-	ConstructionWorld cw;
-	// Small area centered at (256, 256) m: a 20 m half-extent box [236, 276] m on each
-	// axis -> a 40 m square holds ~ (40/8)^2 = 25 trees, far below the total.
-	const Vec2i64	   center{256000, 256000};
-	const std::int64_t radius = 20000;
-	NavMeshInput	   input  = buildInput(center, radius, *mgr, placement, reg, cw, ConstructionRegistry::Get());
-
-	const int flora = countFlora(input);
-	EXPECT_GT(flora, 0) << "in-area trees must be emitted";
-	EXPECT_LT(flora, totalTrees / 4) << "the area must NOT ingest all loaded trees";
-
-	// Every emitted flora ring centroid sits within a tile of the area (queryRect can
-	// return entities slightly outside its bounds since cells are 4 m, but never far).
-	for (const NavInputPolygon& p : input.polygons) {
-		if (p.provenanceId != kProvenanceTree) {
-			continue;
-		}
-		std::int64_t cx = 0;
-		std::int64_t cy = 0;
-		for (const Vec2i64& v : p.ring) {
-			cx += v.x;
-			cy += v.y;
-		}
-		cx /= static_cast<std::int64_t>(p.ring.size());
-		cy /= static_cast<std::int64_t>(p.ring.size());
-		EXPECT_GE(cx, center.x - radius - 8000);
-		EXPECT_LE(cx, center.x + radius + 8000);
-		EXPECT_GE(cy, center.y - radius - 8000);
-		EXPECT_LE(cy, center.y + radius + 8000);
-	}
-}
-
-// Real generation: chunks (0,0) and (1,0) are one lake, so each gives its navRings
-// clipped to its own square, meeting along x = 512 m. The area straddles that seam
-// deep inside the lake: every triangle is water, with no floor sliver at the border.
-// An area over chunks that were never loaded gives no water at all.
-TEST_F(NavFloraTest, Area_LakeAcrossChunkSeamHasNoGap) {
-	ChunkManager*	  mgr = twoChunkLakeChunks();
-	PlacementExecutor placement(AssetRegistry::Get());
-	ConstructionWorld cw;
-
-	const Vec2i64	   center{512000, 256000};
-	const std::int64_t radius = 64000;
-	NavMeshInput	   input  = buildInput(center, radius, *mgr, placement, AssetRegistry::Get(), cw, ConstructionRegistry::Get());
-
-	int waterRings = 0;
-	for (const NavInputPolygon& p : input.polygons) {
-		if (p.provenanceId == kProvenanceWater) {
-			++waterRings;
-		}
+	FakeTerrain terrain;
+	int			waterRings = 0;
+	for (const ChunkCoordinate coord : {ChunkCoordinate{0, 0}, ChunkCoordinate{1, 0}}) {
+		const world::Chunk* chunk = mgr->getChunk(coord);
+		ASSERT_NE(chunk, nullptr);
+		ASSERT_TRUE(chunk->isReady());
+		terrain.at(coord) = chunk->terrainPolygons();
+		std::vector<NavInputPolygon> water;
+		appendChunkWater(chunk->terrainPolygons(), water);
+		waterRings += static_cast<int>(water.size());
 	}
 	EXPECT_GE(waterRings, 2) << "each chunk contributes its own clipped rings";
 
-	const NavMesh mesh = geometry::nav::buildNavMesh(input);
-	ASSERT_FALSE(mesh.triangles.empty());
-	for (const geometry::nav::NavTriangle& t : mesh.triangles) {
-		EXPECT_FALSE(geometry::nav::isFloorFace(t)) << "floor inside the lake at the chunk seam";
-	}
-
-	std::vector<NavInputPolygon> far;
-	appendWaterObstacles({5 * 512000 + 256000, 256000}, radius, readyTerrainPolygons(*mgr), far);
-	EXPECT_TRUE(far.empty()) << "an unloaded chunk reads as land";
-}
-
-// Two builds of an unchanged world produce byte-identical inputs (deterministic
-// ordering: border, water, flora (chunks (x,y) sorted, entities (pos,defName)
-// sorted), walls).
-TEST_F(NavFloraTest, Area_DeterministicOrdering) {
-	AssetRegistry& reg = AssetRegistry::Get();
-	AssetDefinition tree;
-	tree.defName			   = "Test_DetTree";
-	tree.collision.type			   = CollisionShapeType::Rect;
-	tree.collision.halfExtentsMeters = {0.2F, 0.2F};
-	reg.registerTestDefinition(tree);
-
-	// The area ends short of chunk (1,0), so only chunk (0,0)'s lake enters it.
-	ChunkManager* mgr = twoChunkLakeChunks();
-	PlacementExecutor placement(reg);
-
-	std::unordered_map<ChunkCoordinate, AsyncChunkPlacementResult> byChunk;
-	for (int ty = 100; ty < 400; ty += 10) {
-		for (int tx = 100; tx < 400; tx += 10) {
-			const WorldPosition wp{static_cast<float>(tx), static_cast<float>(ty)};
-			const ChunkCoordinate coord = world::worldToChunk(wp);
-			AsyncChunkPlacementResult& r = byChunk[coord];
-			r.coord = coord;
-			PlacedEntity e;
-			e.defName  = "Test_DetTree";
-			e.position = {wp.x, wp.y};
-			r.spatialIndex.insert(e);
+	const geometry::nav::PatchableMesh mesh = meshFor(terrain);
+	const Ring						   seam = box(448, 192, 576, 320);
+	forEachLive(mesh, [&](const Ring& tri, const geometry::nav::NavTriangle& t) {
+		if (strictlyInside(centroid(tri), seam)) {
+			EXPECT_FALSE(geometry::nav::isFloorFace(t)) << "floor inside the lake at the chunk seam";
 		}
-	}
-	for (auto& [coord, result] : byChunk) {
-		placement.storeChunkResult(std::move(result));
-	}
-
-	ConstructionWorld cw;
-	const Vec2i64	   center{256000, 256000};
-	const std::int64_t radius = 200000;
-	NavMeshInput a = buildInput(center, radius, *mgr, placement, reg, cw, ConstructionRegistry::Get());
-	NavMeshInput b = buildInput(center, radius, *mgr, placement, reg, cw, ConstructionRegistry::Get());
-
-	ASSERT_EQ(a.polygons.size(), b.polygons.size());
-	for (std::size_t i = 0; i < a.polygons.size(); ++i) {
-		EXPECT_EQ(a.polygons[i].blocked, b.polygons[i].blocked);
-		EXPECT_EQ(a.polygons[i].provenanceId, b.polygons[i].provenanceId);
-		ASSERT_EQ(a.polygons[i].ring.size(), b.polygons[i].ring.size()) << "ring " << i;
-		for (std::size_t k = 0; k < a.polygons[i].ring.size(); ++k) {
-			EXPECT_EQ(a.polygons[i].ring[k].x, b.polygons[i].ring[k].x);
-			EXPECT_EQ(a.polygons[i].ring[k].y, b.polygons[i].ring[k].y);
-		}
-	}
-}
-
-// Walls entirely outside the area are dropped; a wall crossing into the area is kept.
-TEST_F(NavWallTest, Area_DropsWallsOutsideArea) {
-	ChunkManager* mgr = landChunks();
-	PlacementExecutor placement(AssetRegistry::Get());
-
-	ConstructionWorld cw;
-	// One wall inside the area, one far outside it.
-	buildWall(cw, {250000, 256000}, {262000, 256000}); // inside
-	buildWall(cw, {800000, 800000}, {812000, 800000}); // far outside
-
-	const Vec2i64	   center{256000, 256000};
-	const std::int64_t radius = 20000;
-	NavMeshInput	   input  = buildInput(center, radius, *mgr, placement, AssetRegistry::Get(), cw,
-										   ConstructionRegistry::Get());
-
-	const Vec2i64 minMm{center.x - radius, center.y - radius};
-	const Vec2i64 maxMm{center.x + radius, center.y + radius};
-	for (const NavInputPolygon& p : input.polygons) {
-		if (p.provenanceId <= 0) {
-			continue; // skip border/water/flora; walls carry positive segment ids
-		}
-		// Every kept wall ring must have at least one vertex within (or straddling) the
-		// area on each axis -- i.e. it is not entirely on one outside side.
-		bool allLeft = true, allRight = true, allBelow = true, allAbove = true;
-		for (const Vec2i64& v : p.ring) {
-			allLeft	 = allLeft && (v.x < minMm.x);
-			allRight = allRight && (v.x > maxMm.x);
-			allBelow = allBelow && (v.y < minMm.y);
-			allAbove = allAbove && (v.y > maxMm.y);
-		}
-		EXPECT_FALSE(allLeft || allRight || allBelow || allAbove) << "an out-of-area wall ring was kept";
-	}
+	});
 }

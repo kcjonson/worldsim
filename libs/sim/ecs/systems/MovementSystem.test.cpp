@@ -123,6 +123,101 @@ TEST_F(MovementTimeScaleTest, FastForwardFollowsNavPathAndArrives) {
 	EXPECT_TRUE(world->getComponent<NavPath>(entity)->done()) << "the path is fully consumed";
 }
 
+// A route through trees has corners a few centimetres apart, closer than one tick's stride. The
+// stride is spent along the route through every corner it reaches, so the mover never overshoots a
+// corner and steps back to it, and covers speed times dt each tick. A 0.1 s tick makes the 0.2 m
+// stride longer than the corner advance radius, as in the game at low frame rates.
+TEST_F(MovementTimeScaleTest, DenseCornersAreWalkedWithoutSteppingBack) {
+	timeSystem->setSpeed(GameSpeed::Normal);
+	constexpr float kLongDt = 0.1F;
+	const glm::vec2 goal{3.0F, 0.0F};
+	auto			entity = createMover({0.0F, 0.0F}, goal);
+	NavPath			path;
+	for (int i = 1; i <= 10; ++i) {
+		path.waypoints.push_back({0.5F + 0.05F * static_cast<float>(i), i % 2 == 0 ? 0.0F : 0.01F});
+	}
+	path.waypoints.push_back(goal);
+	path.valid = true;
+	world->addComponent<NavPath>(entity, path);
+
+	const auto* pos	  = world->getComponent<Position>(entity);
+	glm::vec2	last  = pos->value;
+	const float stride = 2.0F * kLongDt;
+	for (int i = 0; i < 12; ++i) {
+		world->update(kLongDt);
+		ASSERT_GE(pos->value.x, last.x) << "tick " << i << ": stepped back";
+		EXPECT_NEAR(glm::distance(pos->value, last), stride, 0.05F * stride) << "tick " << i;
+		last = pos->value;
+	}
+	EXPECT_GT(pos->value.x, 1.1F) << "through the corners at full speed";
+}
+
+// At 10x the stride is a metre a tick: it runs through dense corners and stops on the goal, never
+// past it.
+TEST_F(MovementTimeScaleTest, FastForwardThroughDenseCornersStopsOnTheGoal) {
+	timeSystem->setSpeed(GameSpeed::VeryFast);
+	const glm::vec2 goal{3.0F, 0.0F};
+	auto			entity = createMover({0.0F, 0.0F}, goal);
+	NavPath			path;
+	for (int i = 1; i <= 10; ++i) {
+		path.waypoints.push_back({0.5F + 0.05F * static_cast<float>(i), i % 2 == 0 ? 0.0F : 0.01F});
+	}
+	path.waypoints.push_back(goal);
+	path.valid = true;
+	world->addComponent<NavPath>(entity, path);
+
+	const auto* pos	 = world->getComponent<Position>(entity);
+	float		last = pos->value.x;
+	const int	ticks = [&] {
+		  for (int i = 1; i <= 100; ++i) {
+			  world->update(kDt);
+			  EXPECT_GE(pos->value.x, last) << "tick " << i;
+			  EXPECT_LE(pos->value.x, goal.x + 1e-4F) << "tick " << i << ": past the goal";
+			  last = pos->value.x;
+			  if (!world->getComponent<MovementTarget>(entity)->active) {
+				  return i;
+			  }
+		  }
+		  return -1;
+	}();
+	EXPECT_GT(ticks, 0) << "arrives";
+	EXPECT_LT(glm::distance(pos->value, goal), 0.1F);
+}
+
+// Paused, a mover on a route doesn't move, and still faces where it is going.
+TEST_F(MovementTimeScaleTest, PausedRouteHoldsStill) {
+	timeSystem->setSpeed(GameSpeed::Paused);
+	auto	entity = createMover({0.0F, 0.0F}, {0.0F, 5.0F});
+	NavPath path;
+	path.waypoints = {{0.0F, 5.0F}};
+	path.valid	   = true;
+	world->addComponent<NavPath>(entity, path);
+	world->addComponent<FacingDirection>(entity, FacingDirection{});
+	for (int i = 0; i < 10; ++i) {
+		world->update(kDt);
+	}
+	EXPECT_EQ(world->getComponent<Position>(entity)->value, glm::vec2(0.0F, 0.0F));
+	EXPECT_EQ(world->getComponent<FacingDirection>(entity)->direction, CardinalDirection::Down);
+	EXPECT_TRUE(world->getComponent<MovementTarget>(entity)->active);
+}
+
+// A single far waypoint is walked as before: speed times dt a tick straight at it, arriving on it.
+TEST_F(MovementTimeScaleTest, SingleWaypointIsWalkedStraight) {
+	timeSystem->setSpeed(GameSpeed::Normal);
+	auto	entity = createMover({0.0F, 0.0F}, kTarget);
+	NavPath path;
+	path.waypoints = {kTarget};
+	path.valid	   = true;
+	world->addComponent<NavPath>(entity, path);
+
+	const auto* pos = world->getComponent<Position>(entity);
+	world->update(kDt);
+	EXPECT_NEAR(pos->value.x, 2.0F * kDt, 1e-5F);
+	EXPECT_FLOAT_EQ(pos->value.y, 0.0F);
+	EXPECT_GT(runToArrival(entity, kDt, 1000), 0);
+	EXPECT_LT(glm::distance(pos->value, kTarget), 0.1F);
+}
+
 // World +Y draws lower on screen, so a mover heading +Y faces the camera (the _down sprite) and one
 // heading -Y shows its back (_up). Guards the inverted quantization that rendered the back of the
 // head while walking toward the viewer.

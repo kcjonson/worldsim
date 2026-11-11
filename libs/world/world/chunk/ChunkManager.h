@@ -1,8 +1,8 @@
 #pragma once
 
 // ChunkManager - Manages chunk loading, unloading, and caching.
-// Loads chunks around the camera position and unloads distant chunks.
-// Uses an LRU-like eviction strategy based on distance from camera.
+// Chunks load around the camera and around simulation anchors (every active
+// mover), and unload only when neither the camera nor any anchor holds them.
 
 #include "world/chunk/Chunk.h"
 #include "world/chunk/ChunkCoordinate.h"
@@ -12,17 +12,24 @@
 #include <cstdint>
 #include <future>
 #include <memory>
+#include <span>
 #include <unordered_map>
 #include <vector>
 
 namespace world {
 
-/// Manages chunk loading and caching based on camera position.
-/// Chunks are loaded in a radius around the camera and unloaded when distant.
+/// Manages chunk loading and caching around the camera and simulation anchors.
+/// The camera loads chunks within loadRadius() chunks of its own and keeps them
+/// within unloadRadius(). Each anchor loads every chunk within anchorLoadRange()
+/// metres of it and keeps every chunk within anchorKeepRange() metres. A chunk
+/// unloads only when nothing holds it and its generation is not in flight.
 class ChunkManager {
   public:
+	static constexpr float kDefaultAnchorLoadRangeMeters = 128.0F;
+	static constexpr float kDefaultAnchorKeepRangeMeters = 256.0F;
+
 	/// Create a chunk manager with the given world sampler
-	explicit ChunkManager(std::unique_ptr<IWorldSampler> sampler);
+	explicit ChunkManager(std::unique_ptr<IWorldSampler> worldSampler);
 
 	// Non-copyable
 	ChunkManager(const ChunkManager&) = delete;
@@ -34,12 +41,13 @@ class ChunkManager {
 
 	~ChunkManager() = default;
 
-	/// Update loaded chunks based on camera position.
-	/// Loads new chunks within load radius, unloads chunks outside unload radius.
+	/// Load what the camera and the anchors reach, unload what none of them holds.
 	/// Tile generation runs on worker threads; chunks become isReady() over the
-	/// next few updates.
+	/// next few updates. Runs every frame; the anchors are reduced to the chunks
+	/// they cover before any map lookup, so many anchors in one chunk cost one.
 	/// @param cameraCenter World position of camera center
-	void update(WorldPosition cameraCenter);
+	/// @param anchors World positions of the simulation anchors (active movers)
+	void update(WorldPosition cameraCenter, std::span<const WorldPosition> anchors = {});
 
 	/// Block until all in-flight generation completes.
 	/// For tests and loading flows; gameplay uses incremental polling in update().
@@ -57,32 +65,43 @@ class ChunkManager {
 	[[nodiscard]] std::vector<const Chunk*> getVisibleChunks(WorldPosition minCorner, WorldPosition maxCorner) const;
 
 	/// Get number of loaded chunks
-	[[nodiscard]] size_t loadedChunkCount() const { return m_chunks.size(); }
+	[[nodiscard]] size_t loadedChunkCount() const { return chunks.size(); }
 
 	/// The seed the world sampler generates from
-	[[nodiscard]] uint64_t worldSeed() const { return m_sampler->getWorldSeed(); }
+	[[nodiscard]] uint64_t worldSeed() const { return sampler->getWorldSeed(); }
 
-	/// Get the current center chunk (where camera is)
-	[[nodiscard]] ChunkCoordinate centerChunk() const { return m_centerChunk; }
+	/// The camera's chunk as of the last update
+	[[nodiscard]] ChunkCoordinate centerChunk() const { return cameraChunk; }
 
-	/// Configuration
-	void setLoadRadius(int32_t radius) { m_loadRadius = radius; }
-	void setUnloadRadius(int32_t radius) { m_unloadRadius = radius; }
-	[[nodiscard]] int32_t loadRadius() const { return m_loadRadius; }
-	[[nodiscard]] int32_t unloadRadius() const { return m_unloadRadius; }
+	/// Configuration. Camera radii are in chunks (Chebyshev); anchor ranges are in
+	/// world metres, measured per axis from the anchor to the chunk's square.
+	void setLoadRadius(int32_t radius) { cameraLoadRadius = radius; }
+	void setUnloadRadius(int32_t radius) { cameraUnloadRadius = radius; }
+	void setAnchorLoadRange(float meters) { anchorLoadRange = meters; }
+	void setAnchorKeepRange(float meters) { anchorKeepRange = meters; }
+	[[nodiscard]] int32_t loadRadius() const { return cameraLoadRadius; }
+	[[nodiscard]] int32_t unloadRadius() const { return cameraUnloadRadius; }
+	[[nodiscard]] float	  anchorLoadRangeMeters() const { return anchorLoadRange; }
+	[[nodiscard]] float	  anchorKeepRangeMeters() const { return anchorKeepRange; }
 
   private:
-	std::unique_ptr<IWorldSampler> m_sampler;
-	std::unordered_map<ChunkCoordinate, std::unique_ptr<Chunk>> m_chunks;
-	ChunkCoordinate m_centerChunk{0, 0};
+	std::unique_ptr<IWorldSampler>								sampler;
+	std::unordered_map<ChunkCoordinate, std::unique_ptr<Chunk>> chunks;
+	ChunkCoordinate												cameraChunk{0, 0};
 
-	// Load radius: chunks within this distance from center are loaded
-	// Default: 2 chunks in each direction = 5×5 grid = 25 chunks
-	int32_t m_loadRadius = 2;
+	// Default 2 chunks in each direction = 5x5 grid
+	int32_t cameraLoadRadius = 2;
 
-	// Unload radius: chunks beyond this distance are unloaded
-	// Default: 4 chunks = gives some hysteresis to prevent thrashing
-	int32_t m_unloadRadius = 4;
+	// Larger than the load radius so a camera pacing a chunk border doesn't thrash
+	int32_t cameraUnloadRadius = 4;
+
+	float anchorLoadRange = kDefaultAnchorLoadRangeMeters;
+	float anchorKeepRange = kDefaultAnchorKeepRangeMeters;
+
+	/// Chunks the anchors load and keep this update, sorted and unique. Members so
+	/// the per-frame reduction reuses its storage.
+	std::vector<ChunkCoordinate> anchorLoadChunks;
+	std::vector<ChunkCoordinate> anchorKeepChunks;
 
 	/// An in-flight tile generation task.
 	struct Generation {
@@ -91,10 +110,10 @@ class ChunkManager {
 		std::chrono::steady_clock::time_point requested;
 	};
 
-	/// In-flight tile generation tasks. Chunks are inserted into m_chunks
+	/// In-flight tile generation tasks. Chunks are inserted into chunks
 	/// immediately but stay !isReady() until their worker finishes; consumers
 	/// gate on isReady(). Chunks in this list must not be unloaded.
-	std::vector<Generation> m_generating;
+	std::vector<Generation> generating;
 
 	/// Load a single chunk (tile generation runs on a worker thread)
 	void loadChunk(ChunkCoordinate coord);
@@ -105,8 +124,11 @@ class ChunkManager {
 	/// Whether a chunk's generation task is still in flight
 	[[nodiscard]] bool isGenerating(ChunkCoordinate coord) const;
 
-	/// Unload chunks outside the unload radius
-	void unloadDistantChunks(ChunkCoordinate center);
+	/// Reduce the anchors to anchorLoadChunks and anchorKeepChunks
+	void gatherAnchorChunks(std::span<const WorldPosition> anchors);
+
+	/// Unload chunks neither the camera nor an anchor holds
+	void unloadUnheldChunks();
 };
 
 }  // namespace world

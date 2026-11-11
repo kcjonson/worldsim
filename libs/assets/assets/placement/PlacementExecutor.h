@@ -62,6 +62,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace world {
@@ -202,14 +203,18 @@ namespace assets {
 		///         is erased, so a following getResourceCount() returns nullopt (= depleted).
 		uint32_t decrementResourceCount(glm::vec2 position, const std::string& defName, uint32_t requested);
 
-		/// Monotonic counter bumped every time a placed entity is removed from a chunk index
-		/// (a destructive harvest felling a tree, a depleted resource node). The nav mesh
-		/// gathers its flora obstacle rings from the LIVE chunk indices, so a removal must
-		/// force the covering region to rebuild -- otherwise the felled tree's trunk hole
-		/// lingers in the mesh and that tile never becomes walkable. NavigationSystem folds
-		/// this epoch into its rebuild gate; chunk membership and the construction version
-		/// alone don't see an in-chunk entity removal.
-		[[nodiscard]] uint64_t removalEpoch() const { return m_removalEpoch; }
+		/// One entity removeEntity took out of a chunk index, by the identity removeEntity takes.
+		struct RemovedEntity {
+			world::ChunkCoordinate coord;
+			glm::vec2			   position;
+			std::string			   defName;
+		};
+
+		/// The entities removed since the last call (a destructive harvest felling a tree, a
+		/// depleted resource node), oldest first, and forgets them. The nav mesh holds a ring per
+		/// blocking entity and takes out just the removed ones; chunk membership alone doesn't
+		/// show an in-chunk removal. Its one reader takes them every tick, which bounds the list.
+		[[nodiscard]] std::vector<RemovedEntity> takeRemovals() { return std::exchange(m_removals, {}); }
 
 		/// Get spawn order (for debugging/testing)
 		[[nodiscard]] const std::vector<std::string>& getSpawnOrder() const { return m_spawnOrder; }
@@ -229,8 +234,7 @@ namespace assets {
 		// Per-chunk spatial indices
 		std::unordered_map<world::ChunkCoordinate, SpatialIndex> m_chunkIndices;
 
-		// Bumped on every successful entity removal; see removalEpoch().
-		uint64_t m_removalEpoch = 0;
+		std::vector<RemovedEntity> m_removals;
 
 		/// One entity's identity for its cooldown and resource pool: its placed position on the 0.1 m
 		/// grid colonist Memory keys it by, and its interned def id. Two bushes of one def in the same tile

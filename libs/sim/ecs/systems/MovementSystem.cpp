@@ -12,7 +12,9 @@
 
 #include <utils/Log.h>
 
+#include <algorithm>
 #include <cmath>
+#include <vector>
 #include <glm/geometric.hpp>
 
 namespace ecs {
@@ -34,8 +36,9 @@ float clampStepSpeed(float speed, float distance, float scaledDt, bool fastForwa
 
 void MovementSystem::update(float deltaTime) {
     // Movement runs on game time: PhysicsSystem scales the integration step by the same factor, and
-    // we cap each step here so fast-forward can't overshoot a waypoint (see clampStepSpeed). At 1x
-    // and in tests without a TimeSystem, timeScale is 1.0 and nothing below changes.
+    // a route's step is spent along it so fast-forward can't overshoot a waypoint; the direct
+    // movement below caps its step the same way (see clampStepSpeed). At 1x and in tests without a
+    // TimeSystem, timeScale is 1.0.
     float timeScale = 1.0F;
     if (auto* timeSystem = world->tryGetSystem<TimeSystem>()) {
         timeScale = timeSystem->effectiveTimeScale();
@@ -71,38 +74,48 @@ void MovementSystem::update(float deltaTime) {
         // headless test harness, which wires no NavigationSystem and so builds no mesh.
         auto* navPath = world->getComponent<NavPath>(entity);
         if (navPath != nullptr && navPath->valid && !navPath->done()) {
-            glm::vec2 waypoint = navPath->waypoints[navPath->current];
-            glm::vec2 toWaypoint = waypoint - pos.value;
-            float distance = glm::length(toWaypoint);
+            const std::vector<glm::vec2>& waypoints = navPath->waypoints;
+            const auto isFinal = [&] { return navPath->current + 1 >= waypoints.size(); };
 
-            const bool isFinal = (navPath->current + 1 >= navPath->waypoints.size());
-            const float threshold = isFinal ? kArrivalThreshold : kWaypointAdvance;
-
-            if (distance < threshold) {
+            if (isFinal() && glm::distance(pos.value, waypoints[navPath->current]) < kArrivalThreshold) {
+                // Reached the goal: same arrival hand-off the direct-movement block performs.
                 ++navPath->current;
-                if (navPath->done()) {
-                    // Reached the goal: same arrival hand-off the direct-movement block performs.
-                    vel.value = {0.0f, 0.0f};
-                    target.active = false;
-                    navPath->valid = false;
+                vel.value = {0.0f, 0.0f};
+                target.active = false;
+                navPath->valid = false;
 
-                    if (auto* task = world->getComponent<Task>(entity)) {
-                        if (task->state == TaskState::Moving) {
-                            task->state = TaskState::Arrived;
-                        }
+                if (auto* task = world->getComponent<Task>(entity)) {
+                    if (task->state == TaskState::Moving) {
+                        task->state = TaskState::Arrived;
                     }
-                    continue;
                 }
-                // Re-aim at the next waypoint this same frame.
-                waypoint = navPath->waypoints[navPath->current];
-                toWaypoint = waypoint - pos.value;
-                distance = glm::length(toWaypoint);
+                continue;
+            }
+            // Corners within the advance radius of where it stands count as rounded.
+            while (!isFinal() && glm::distance(pos.value, waypoints[navPath->current]) < kWaypointAdvance) {
+                ++navPath->current;
             }
 
-            if (distance > 0.0001f) {
-                vel.value = (toWaypoint / distance) * clampStepSpeed(target.speed, distance, scaledDt, fastForward);
+            // This frame's stride is spent along the route, through every corner it reaches, so
+            // corners closer together than a stride (a route threading trees) are walked, never
+            // overshot and stepped back to; the stride ends on the final waypoint, not past it.
+            float     left = target.speed * scaledDt;
+            glm::vec2 at = pos.value;
+            while (!isFinal() && glm::distance(at, waypoints[navPath->current]) <= left) {
+                left -= glm::distance(at, waypoints[navPath->current]);
+                at = waypoints[navPath->current];
+                ++navPath->current;
+            }
+            const glm::vec2 toWaypoint = waypoints[navPath->current] - at;
+            const float     distance = glm::length(toWaypoint);
+            const glm::vec2 end = distance > 0.0001f ? at + toWaypoint * (std::min(left, distance) / distance) : at;
+            if (scaledDt > 0.0f) {
+                vel.value = (end - pos.value) / scaledDt;
             } else {
-                vel.value = {0.0f, 0.0f};
+                // Paused: nothing moves, but the mover still faces where it is going.
+                const glm::vec2 heading = waypoints[navPath->current] - pos.value;
+                const float     headingLength = glm::length(heading);
+                vel.value = headingLength > 0.0001f ? heading * (target.speed / headingLength) : glm::vec2{0.0f, 0.0f};
             }
             continue;
         }

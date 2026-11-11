@@ -26,9 +26,15 @@
 // Velocity stays PhysicsSystem's. A position-only correction is enough for a
 // safety net and avoids fighting the mover.
 //
-// The PlacementExecutor is injected by the caller (null => no-op). Rects are
-// gathered LOCALLY per agent each frame from placement (no caching, no nav
-// coupling): query the chunks around the agent for rect-collision entities, keep
+// DETAIL GATE (nav-mesh-variable-resolution 4.7): a mover is pushed out of flora only where
+// NavigationSystem::detailOnAt says detail is on, and only once that tree is in the nav mesh
+// (NavigationSystem::floraInNavMesh): the forward snap moves a mover out of a tree it finds itself in
+// before this system ever sees it, so the two never disagree about a tree. A mover following a route
+// that walks through flora at its price (NavigationSystem::routeCrossesPricedFaces) is let through.
+// Off camera, movers walk through trees; the camera decides detail, never outcomes.
+//
+// The PlacementExecutor and the NavigationSystem are injected by the caller (either null => no-op). Rects are
+// gathered LOCALLY per agent each frame from placement (no caching): query the chunks around the agent for rect-collision entities, keep
 // only those whose AssetDefinition has CollisionShapeType::Rect.
 
 #include "../ISystem.h"
@@ -42,6 +48,8 @@ namespace assets {
 }
 
 namespace ecs {
+
+class NavigationSystem;
 
 // The nav flora pad in meters (nav::kFloraColliderPadMm / 1000). Exposed
 // here for tests that want to assert on the expected boundary without depending
@@ -83,9 +91,11 @@ class StaticRectCollisionSystem : public ISystem {
 	// Setter injection, mirroring WallCollisionSystem. Null until wired (e.g.
 	// headless tests, early init): update() is a no-op.
 	void setPlacementData(const assets::PlacementExecutor* placement) { m_placement = placement; }
+	void setDetailSource(const NavigationSystem* navigation) { detail = navigation; }
 
   private:
 	const assets::PlacementExecutor* m_placement = nullptr;
+	const NavigationSystem*			 detail		 = nullptr;
 };
 
 } // namespace ecs
