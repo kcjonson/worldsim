@@ -236,7 +236,7 @@ namespace assets {
 		// the frozen index copies for the gather to read directly. Traits draw nothing from rng.
 		auto record = [&](PlacedEntity& entity, const ResolvedTemplate& tmpl) {
 			entity.anchorY = assets::computeAnchorY(
-				entity.position.y, assets::anchorLocalY(def, entity.traits.ageClass, tmpl.extent.maxY), entity.scale
+				entity.position.y, assets::anchorLocalY(def, entity.traits.ageClass, tmpl.extent), entity.scale
 			);
 			entity.isTallOccluder = isTall;
 			chunkIndex.insert(entity);

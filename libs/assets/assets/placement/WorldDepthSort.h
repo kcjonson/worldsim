@@ -42,18 +42,21 @@ namespace assets {
 		return originWorldY + anchorLocalY * scale;
 	}
 
-	// The local-Y of a renderable's ground-contact line: the lower edge of its def's
-	// footprint for that age class (a tree's trunk foot) when it has one, else the
-	// mesh's bottom-most local-Y. A footprint wins so what a tree draws below its foot
-	// (contact shadow, root flare, grass) does not pull it forward in the sort.
-	[[nodiscard]] float anchorLocalY(const AssetDefinition* def, uint8_t ageClass, float meshMaxLocalY);
-
 	// Local-space Y extent (min, max) of a template mesh; {0, 0} for null / empty.
 	struct MeshYExtent {
 		float minY = 0.0F;
 		float maxY = 0.0F;
 	};
 	[[nodiscard]] MeshYExtent meshYExtent(const renderer::TessellatedMesh* mesh);
+
+	// The mesh-local Y of a renderable's ground-contact line: the lower edge of its def's
+	// footprint for that age class (a tree's trunk foot) when it has one, else the mesh's
+	// bottom-most local-Y. A footprint wins so what a tree draws below its foot (contact
+	// shadow, root flare, grass) does not pull it forward in the sort. A simple (SVG) def's
+	// footprint is authored about its drawing's bbox centre (SvgMeterFrame) and a procedural
+	// def's in its mesh's own frame; both come back in the mesh's frame, the one the
+	// renderable's position is the origin of.
+	[[nodiscard]] float anchorLocalY(const AssetDefinition* def, uint8_t ageClass, MeshYExtent mesh);
 
 	// One upright of the stream, with what culling, sorting and drawing read copied out of its entity,
 	// so a frame walks these instead of the entities scattered over the spatial index's cells.

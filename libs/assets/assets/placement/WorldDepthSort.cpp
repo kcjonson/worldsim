@@ -26,27 +26,28 @@ namespace assets {
 		return ext;
 	}
 
-	float anchorLocalY(const AssetDefinition* def, uint8_t ageClass, float meshMaxLocalY) {
+	float anchorLocalY(const AssetDefinition* def, uint8_t ageClass, MeshYExtent mesh) {
 		if (def == nullptr) {
-			return meshMaxLocalY;
+			return mesh.maxY;
 		}
 		const CollisionShape& footprint = def->collisionFor(ageClass);
+		const float			  frameY = def->assetType == AssetType::Simple ? (mesh.minY + mesh.maxY) * 0.5F : 0.0F;
 		switch (footprint.type) {
 			case CollisionShapeType::Rect:
-				return footprint.offsetMeters.y + footprint.halfExtentsMeters.y;
+				return frameY + footprint.offsetMeters.y + footprint.halfExtentsMeters.y;
 			case CollisionShapeType::Polygon:
 				if (!footprint.pointsMeters.empty()) {
 					float lowest = footprint.pointsMeters.front().y;
 					for (const glm::vec2& p : footprint.pointsMeters) {
 						lowest = std::max(lowest, p.y);
 					}
-					return lowest;
+					return frameY + lowest;
 				}
-				return meshMaxLocalY;
+				return mesh.maxY;
 			case CollisionShapeType::None:
-				return meshMaxLocalY;
+				return mesh.maxY;
 		}
-		return meshMaxLocalY;
+		return mesh.maxY;
 	}
 
 	Upright uprightOf(const PlacedEntity& entity) {

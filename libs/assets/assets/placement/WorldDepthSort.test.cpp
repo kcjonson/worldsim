@@ -15,6 +15,8 @@
 
 #include <gtest/gtest.h>
 
+#include <filesystem>
+#include <fstream>
 #include <vector>
 
 namespace assets {
@@ -76,13 +78,45 @@ namespace assets {
 		tree.ageClasses = {{.name = "sapling", .weight = 0.5F, .variants = 1}, {.name = "mature", .weight = 0.5F, .variants = 1}};
 		tree.setCollision(0, {.type = CollisionShapeType::Rect, .offsetMeters = {0.0F, 0.0F}, .halfExtentsMeters = {0.04F, 0.04F}});
 		tree.setCollision(1, {.type = CollisionShapeType::Rect, .offsetMeters = {0.0F, 0.05F}, .halfExtentsMeters = {0.1F, 0.1F}});
-		EXPECT_FLOAT_EQ(anchorLocalY(&tree, 0, 0.6F), 0.04F);
-		EXPECT_FLOAT_EQ(anchorLocalY(&tree, 1, 0.6F), 0.15F);
-		EXPECT_FLOAT_EQ(computeAnchorY(10.0F, anchorLocalY(&tree, 1, 0.6F), 2.0F), 10.3F);
+		const MeshYExtent mesh{.minY = -3.0F, .maxY = 0.6F};
+		EXPECT_FLOAT_EQ(anchorLocalY(&tree, 0, mesh), 0.04F);
+		EXPECT_FLOAT_EQ(anchorLocalY(&tree, 1, mesh), 0.15F);
+		EXPECT_FLOAT_EQ(computeAnchorY(10.0F, anchorLocalY(&tree, 1, mesh), 2.0F), 10.3F);
 
 		const AssetDefinition bush;
-		EXPECT_FLOAT_EQ(anchorLocalY(&bush, 0, 0.6F), 0.6F);
-		EXPECT_FLOAT_EQ(anchorLocalY(nullptr, 0, 0.6F), 0.6F);
+		EXPECT_FLOAT_EQ(anchorLocalY(&bush, 0, mesh), 0.6F);
+		EXPECT_FLOAT_EQ(anchorLocalY(nullptr, 0, mesh), 0.6F);
+	}
+
+	// A simple (SVG) def's metadata collider is authored about the drawing's bbox centre, and its
+	// mesh is drawn from the SVG's origin; the anchor is the collider's lower edge where the mesh
+	// draws it. The drawing spans y 10 to 100 at 1.5 m, so 1/60 m a unit, and the collider's lower
+	// edge is y 70: 70/60 m below the origin, not the 0.25 m below the bbox centre it is authored at.
+	TEST(WorldDepthSort, SimpleDefAnchorsAtItsMetadataColliderInTheMeshFrame) {
+		namespace fs = std::filesystem;
+		const fs::path root = fs::temp_directory_path() / "world_depth_sort_simple_anchor";
+		fs::remove_all(root);
+		fs::create_directories(root / "Boulder");
+		std::ofstream(root / "Boulder" / "boulder.svg")
+			<< "<?xml version=\"1.0\"?><svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 200 200\" width=\"200\" height=\"200\">"
+			   "<metadata><collision><shape type=\"aabb\" min=\"10,40\" max=\"50,70\"/></collision></metadata>"
+			   "<path d=\"M0,10 L60,10 L60,100 L0,100 Z\" fill=\"#808080\"/></svg>";
+		std::ofstream(root / "Boulder" / "Boulder.xml")
+			<< "<?xml version=\"1.0\"?><AssetDefinitions><AssetDef><defName>Boulder</defName><assetType>simple</assetType>"
+			   "<svgPath>boulder.svg</svgPath><worldHeight>1.5</worldHeight></AssetDef></AssetDefinitions>";
+
+		AssetRegistry& registry = AssetRegistry::Get();
+		registry.clearDefinitions();
+		registry.loadDefinitionsFromFolder(root.string());
+		const AssetDefinition* def = registry.getDefinition("Boulder");
+		ASSERT_NE(def, nullptr);
+		ASSERT_EQ(def->collisionFor(0).type, CollisionShapeType::Rect);
+		const MeshYExtent mesh = meshYExtent(registry.getTemplate("Boulder", {}));
+		EXPECT_NEAR(mesh.maxY, 100.0F / 60.0F, 1e-5F);
+		EXPECT_NEAR(anchorLocalY(def, 0, mesh), 70.0F / 60.0F, 1e-5F);
+
+		registry.clearDefinitions();
+		fs::remove_all(root);
 	}
 
 	// Tall or short routing is one answer per def, from its mature variant 0 at its
