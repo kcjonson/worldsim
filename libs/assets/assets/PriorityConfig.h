@@ -36,12 +36,6 @@ namespace assets {
 		int16_t maxPenalty = 50;			// Penalty for max distance
 	};
 
-	/// Skill bonus calculation config
-	struct SkillBonusConfig {
-		int16_t multiplier = 10; // Skill level * multiplier
-		int16_t maxBonus = 100;	 // Cap for skill bonus
-	};
-
 	/// Chain continuation config
 	struct ChainBonusConfig {
 		int16_t bonus = 2000; // Bonus for continuing a chain
@@ -117,6 +111,9 @@ namespace assets {
 		/// Clear all loaded config (reset to defaults)
 		void clear();
 
+		/// Moves on every load and clear, so a reader that caches values can tell they may have changed.
+		[[nodiscard]] uint64_t generation() const { return m_generation; }
+
 		// --- Task Tier Queries (arbitration) ---
 
 		/// Get the base tier for a task type by name (lower number = higher priority).
@@ -165,11 +162,6 @@ namespace assets {
 		/// @return Distance factor in [0, maxFactor]
 		[[nodiscard]] float calculateDistanceFactor(float distance) const;
 
-		/// Calculate skill bonus
-		/// @param skillLevel Colonist's skill level (0-20)
-		/// @return Skill bonus
-		[[nodiscard]] int16_t calculateSkillBonus(float skillLevel) const;
-
 		/// Get chain continuation bonus
 		/// @return Chain bonus value
 		[[nodiscard]] int16_t getChainBonus() const;
@@ -191,7 +183,6 @@ namespace assets {
 
 		[[nodiscard]] const DistanceBonusConfig&   getDistanceConfig() const { return distanceConfig; }
 		[[nodiscard]] const DistanceFactorConfig&  getDistanceFactorConfig() const { return distanceFactorConfig; }
-		[[nodiscard]] const SkillBonusConfig&	   getSkillConfig() const { return skillConfig; }
 		[[nodiscard]] const ChainBonusConfig&	   getChainConfig() const { return chainConfig; }
 		[[nodiscard]] const InProgressBonusConfig& getInProgressConfig() const { return inProgressConfig; }
 		[[nodiscard]] const StoragePriorityConfig& getStoragePriorityConfig() const { return storagePriorityConfig; }
@@ -247,13 +238,14 @@ namespace assets {
 		/// Bonus configs
 		DistanceBonusConfig	  distanceConfig;
 		DistanceFactorConfig  distanceFactorConfig;
-		SkillBonusConfig	  skillConfig;
 		ChainBonusConfig	  chainConfig;
 		InProgressBonusConfig inProgressConfig;
 		StoragePriorityConfig storagePriorityConfig;
 		TaskAgeBonusConfig	  taskAgeConfig;
 		HaulingTuningConfig	  haulingConfig;
 		TimingConfig		  timingConfig;
+
+		uint64_t m_generation = 1;
 
 		/// Work category order (sorted by tier)
 		std::vector<std::string>			   categoryOrder;

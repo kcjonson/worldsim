@@ -70,6 +70,7 @@ namespace assets {
 		// falling back to a C++ default. A default-constructed PriorityConfig (unit tests that never
 		// load XML) keeps the constructor's defaults; only this file-load path is authoritative.
 		taskTiers.clear();
+		++m_generation;
 
 		// Parse sections
 		if (auto bandsNode = root.child("Bands")) {
@@ -107,6 +108,7 @@ namespace assets {
 	}
 
 	void PriorityConfig::clear() {
+		++m_generation;
 		bands.clear();
 		bands["Critical"] = 30000;
 		bands["PlayerDraft"] = 20000;
@@ -122,7 +124,6 @@ namespace assets {
 		userPriorityStep = 100;
 		distanceConfig = DistanceBonusConfig{};
 		distanceFactorConfig = DistanceFactorConfig{};
-		skillConfig = SkillBonusConfig{};
 		chainConfig = ChainBonusConfig{};
 		inProgressConfig = InProgressBonusConfig{};
 		storagePriorityConfig = StoragePriorityConfig{};
@@ -216,11 +217,6 @@ namespace assets {
 		return distanceFactorConfig.maxFactor * (1.0F - distance / distanceFactorConfig.maxDistance);
 	}
 
-	int16_t PriorityConfig::calculateSkillBonus(float skillLevel) const {
-		int16_t bonus = static_cast<int16_t>(skillLevel * static_cast<float>(skillConfig.multiplier));
-		return std::min(bonus, skillConfig.maxBonus);
-	}
-
 	int16_t PriorityConfig::getChainBonus() const {
 		return chainConfig.bonus;
 	}
@@ -304,16 +300,6 @@ namespace assets {
 			}
 			if (auto n = distNode.child("maxPenalty")) {
 				distanceConfig.maxPenalty = static_cast<int16_t>(n.text().as_int(50));
-			}
-		}
-
-		// Skill
-		if (auto skillNode = node.child("Skill")) {
-			if (auto n = skillNode.child("multiplier")) {
-				skillConfig.multiplier = static_cast<int16_t>(n.text().as_int(10));
-			}
-			if (auto n = skillNode.child("maxBonus")) {
-				skillConfig.maxBonus = static_cast<int16_t>(n.text().as_int(100));
 			}
 		}
 

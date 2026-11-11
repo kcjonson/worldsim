@@ -116,12 +116,6 @@
       <maxPenalty>50</maxPenalty>
     </Distance>
 
-    <!-- Skill bonus: skilled colonists prefer work they're good at -->
-    <Skill>
-      <multiplier>10</multiplier>
-      <maxBonus>100</maxBonus>
-    </Skill>
-
     <!-- Chain continuation: work-type display priority path only. The AI arbitration no longer
          uses a chain score bonus; a mid-chain provisioning task is classified at tier 4 instead. -->
     <ChainContinuation>

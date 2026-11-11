@@ -23,6 +23,7 @@
 #include "GoalSystemHelpers.h"
 #include "WorkSources.h"
 
+#include <array>
 #include <functional>
 #include <glm/vec2.hpp>
 #include <optional>
@@ -172,6 +173,9 @@ public:
 	[[nodiscard]] const ClaimIndex& claimIndex() const { return m_claims; }
 
 	[[nodiscard]] int priority() const override { return 60; }
+
+	/// PriorityConfig's base tier of each TaskType, indexed by the type
+	using BaseTiers = std::array<int, static_cast<size_t>(TaskType::Wander) + 1>;
 	[[nodiscard]] const char* name() const override { return "AIDecision"; }
 
 private:
@@ -342,6 +346,10 @@ private:
 	/// The validator's fresh rebuild, kept so it reuses its storage.
 	ClaimIndex m_claimsCheck;
 #endif
+
+	/// The base tiers as of PriorityConfig::generation() m_baseTiersGeneration, read again when it moves
+	BaseTiers m_baseTiers{};
+	uint64_t  m_baseTiersGeneration = 0;
 
 	/// SourceReachMemo::Key::stamp() of the colonist being decided this update (0 without a mesh)
 	std::uint64_t reachStamp = 0;

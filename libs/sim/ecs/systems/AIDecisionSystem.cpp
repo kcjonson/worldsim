@@ -192,17 +192,37 @@ namespace ecs {
 		constexpr float	  kSkillBonusMultiplier = 10.0F;
 		constexpr int16_t kSkillBonusMax = 100;
 
-		/// Calculate skill bonus for priority scoring
-		/// @param skills The colonist's skills (may be nullptr if no Skills component)
-		/// @param skillName The skill to look up
-		/// @return {skillLevel, skillBonus} pair
-		[[nodiscard]] std::pair<float, int16_t> calculateSkillBonus(const Skills* skills, const char* skillName) {
-			if (skills == nullptr || skillName == nullptr) {
-				return {0.0F, 0};
+		/// A colonist's level in one skill and the score bonus it gives.
+		struct SkillBonus {
+			float	level = 0.0F;
+			int16_t bonus = 0;
+
+			[[nodiscard]] static SkillBonus of(const Skills* skills, const std::string& skillName) {
+				if (skills == nullptr) {
+					return {};
+				}
+				const float level = skills->getLevel(skillName);
+				return {level, static_cast<int16_t>(std::min(level * kSkillBonusMultiplier, static_cast<float>(kSkillBonusMax)))};
 			}
-			float	skillLevel = skills->getLevel(skillName);
-			int16_t bonus = static_cast<int16_t>(std::min(skillLevel * kSkillBonusMultiplier, static_cast<float>(kSkillBonusMax)));
-			return {skillLevel, bonus};
+		};
+
+		/// The bonus of each skill a work option scores with, looked up once per decision.
+		struct WorkSkills {
+			SkillBonus farming;
+			SkillBonus crafting;
+			SkillBonus construction;
+
+			[[nodiscard]] static WorkSkills of(const Skills* skills) {
+				static const std::string kFarming = kSkillFarming;
+				static const std::string kCrafting = kSkillCrafting;
+				static const std::string kConstruction = kSkillConstruction;
+				return {SkillBonus::of(skills, kFarming), SkillBonus::of(skills, kCrafting), SkillBonus::of(skills, kConstruction)};
+			}
+		};
+
+		void applySkill(EvaluatedOption& option, const SkillBonus& skill) {
+			option.skillLevel = skill.level;
+			option.skillBonus = skill.bonus;
 		}
 
 		/// Config name for a TaskType, used to look up its BASE tier in PriorityConfig's TaskTiers
@@ -231,6 +251,14 @@ namespace ecs {
 			return "None";
 		}
 
+		/// PriorityConfig's base tier of every TaskType, by its config name.
+		void readBaseTiers(AIDecisionSystem::BaseTiers& tiers) {
+			const auto& config = assets::PriorityConfig::Get();
+			for (size_t type = 0; type < tiers.size(); ++type) {
+				tiers[type] = config.getTaskTier(taskTypeConfigName(static_cast<TaskType>(type)));
+			}
+		}
+
 		/// Arbitration tier promotion thresholds. Named so the classifier rules mirror the spec
 		/// table directly rather than hiding magic numbers.
 		constexpr int	kTierCriticalNeed = 2; // a need past its critical threshold
@@ -251,8 +279,8 @@ namespace ecs {
 		///                  else                   -> config base (6)
 		///   Craft/Build/Deconstruct               -> config base (4)
 		///   Wander                                -> config base (7)
-		[[nodiscard]] int classifyTier(const EvaluatedOption& option) {
-			const int baseTier = assets::PriorityConfig::Get().getTaskTier(taskTypeConfigName(option.taskType));
+		[[nodiscard]] int classifyTier(const EvaluatedOption& option, const AIDecisionSystem::BaseTiers& baseTiers) {
+			const int baseTier = baseTiers[static_cast<size_t>(option.taskType)];
 
 			switch (option.taskType) {
 				case TaskType::FulfillNeed: {
@@ -287,11 +315,11 @@ namespace ecs {
 
 		/// The tier a need's option takes (classifyTier's FulfillNeed rule): critical, actionable, or idle
 		/// while the need is met.
-		[[nodiscard]] int needTier(const Need& need) {
+		[[nodiscard]] int needTier(const Need& need, const AIDecisionSystem::BaseTiers& baseTiers) {
 			if (!need.needsAttention()) {
 				return kTierIdle;
 			}
-			return need.value < kCriticalNeedThreshold ? kTierCriticalNeed : assets::PriorityConfig::Get().getTaskTier("FulfillNeed");
+			return need.value < kCriticalNeedThreshold ? kTierCriticalNeed : baseTiers[static_cast<size_t>(TaskType::FulfillNeed)];
 		}
 
 		/// Check if an option matches the current task (for the hysteresis margin)
@@ -365,11 +393,15 @@ namespace ecs {
 		/// @param currentTask Current colonist task (for the hysteresis margin)
 		/// @param currentHaulItemId The current task's haul item, interned (0 when not hauling)
 		/// @param currentTime Current game time (for task age calculation)
-		void populatePriorityBonuses(World* world, EvaluatedOption& option, const Task& currentTask, uint32_t currentHaulItemId, float currentTime) {
+		/// @param baseTiers Each task type's base tier
+		void populatePriorityBonuses(
+			World* world, EvaluatedOption& option, const Task& currentTask, uint32_t currentHaulItemId, float currentTime,
+			const AIDecisionSystem::BaseTiers& baseTiers
+		) {
 			const auto& priorityConfig = assets::PriorityConfig::Get();
 
 			// Categorical tier first: it is compared before any score term.
-			option.tier = classifyTier(option);
+			option.tier = classifyTier(option, baseTiers);
 
 			// Wander is the idle floor; no nearest-source preference applies. It never sets
 			// distanceToTarget, so the distance factor would otherwise compute to its MAX (~300) and
@@ -1065,7 +1097,7 @@ namespace ecs {
 		/// @param supply What each root still wants, for this colonist
 		/// @param pickupRoom What a pickup of the yield would lift now
 		/// @param position Colonist position
-		/// @param skills Optional skills component for skill bonus calculation
+		/// @param skills The colonist's skill bonuses
 		/// @param trace Output decision trace
 		void evaluateHarvestOptions(
 			const assets::AssetRegistry& registry,
@@ -1073,7 +1105,7 @@ namespace ecs {
 			const RootSupply&			 supply,
 			PickupRoom&					 pickupRoom,
 			const glm::vec2&			 position,
-			const Skills*				 skills,
+			const WorkSkills&			 skills,
 			std::span<const RootItem>	 offeredPiles,
 			DecisionTrace&				 trace
 		) {
@@ -1196,9 +1228,7 @@ namespace ecs {
 					harvestOption.reservedBy = reservedBy;
 
 					// Harvesting uses Farming skill
-					auto [farmSkillLevel, farmSkillBonus] = calculateSkillBonus(skills, kSkillFarming);
-					harvestOption.skillLevel = farmSkillLevel;
-					harvestOption.skillBonus = farmSkillBonus;
+					applySkill(harvestOption, skills.farming);
 
 					harvestOption.reason = clearing ? "Clearing {} from build site" : "Cutting {} for {}";
 
@@ -1255,7 +1285,7 @@ namespace ecs {
 		void evaluateBuildOptions(
 			World*			 world,
 			const glm::vec2& position,
-			const Skills*	 skills,
+			const WorkSkills& skills,
 			DecisionTrace&	 trace
 		) {
 			if (world == nullptr) {
@@ -1291,9 +1321,7 @@ namespace ecs {
 				buildOption.servesActiveWorkOrder = true;
 				buildOption.status = OptionStatus::Available;
 
-				auto [buildSkillLevel, buildSkillBonus] = calculateSkillBonus(skills, kSkillConstruction);
-				buildOption.skillLevel = buildSkillLevel;
-				buildOption.skillBonus = buildSkillBonus;
+				applySkill(buildOption, skills.construction);
 				buildOption.reason = "Building structure";
 
 				trace.options.push_back(buildOption);
@@ -1306,7 +1334,7 @@ namespace ecs {
 		/// only while the blueprint still has work to undo (workDone > 0, the bound ActionSystem's
 		/// Deconstruct action counts down). Deconstruct is Construction work, so it uses the same
 		/// skill and priority tier as Build.
-		void evaluateDeconstructOptions(World* world, const glm::vec2& position, const Skills* skills, DecisionTrace& trace) {
+		void evaluateDeconstructOptions(World* world, const glm::vec2& position, const WorkSkills& skills, DecisionTrace& trace) {
 			if (world == nullptr) {
 				return;
 			}
@@ -1337,9 +1365,7 @@ namespace ecs {
 				deconstructOption.servesActiveWorkOrder = true;
 				deconstructOption.status = OptionStatus::Available;
 
-				auto [deconstructSkillLevel, deconstructSkillBonus] = calculateSkillBonus(skills, kSkillConstruction);
-				deconstructOption.skillLevel = deconstructSkillLevel;
-				deconstructOption.skillBonus = deconstructSkillBonus;
+				applySkill(deconstructOption, skills.construction);
 				deconstructOption.reason = "Deconstructing structure";
 
 				trace.options.push_back(deconstructOption);
@@ -1476,6 +1502,10 @@ namespace ecs {
 		// Only the regrowth callback reports a regrowing source, so without it no food wait is set and
 		// the time goes unread; a world that wires it has a TimeSystem.
 		m_simulationNow = onSourceRegrowth ? simulationSeconds(*world) : 0.0;
+		if (const uint64_t generation = assets::PriorityConfig::Get().generation(); generation != m_baseTiersGeneration) {
+			readBaseTiers(m_baseTiers);
+			m_baseTiersGeneration = generation;
+		}
 		m_colonyStorage.invalidate();
 		m_needs.invalidate();
 		m_boxRooms.invalidate();
@@ -2062,6 +2092,7 @@ namespace ecs {
 		DecisionTrace&		  trace
 	) {
 		trace.clear();
+		const WorkSkills workSkills = WorkSkills::of(skills);
 
 		// Agent footprint + belief for every reachability check below (need sources, reachable-wander
 		// generation and the option filter).
@@ -2151,7 +2182,7 @@ namespace ecs {
 		// nearest free bush.
 		const ClaimExclusion self = ClaimExclusion::of(currentTask);
 		const Need&			 hunger = needs.get(NeedType::Hunger);
-		const int			 hungerTier = needTier(hunger);
+		const int			 hungerTier = needTier(hunger, m_baseTiers);
 		const auto			 eats = [hungerTier](const ClaimHolder& holder) {
 			return holder.taskType == TaskType::FulfillNeed && holder.tier < kTierIdle && holder.tier <= hungerTier;
 		};
@@ -2474,9 +2505,7 @@ namespace ecs {
 			gatherOption.gathersFood = true;
 
 			// Harvesting uses Farming skill
-			auto [farmSkillLevel, farmSkillBonus] = calculateSkillBonus(skills, kSkillFarming);
-			gatherOption.skillLevel = farmSkillLevel;
-			gatherOption.skillBonus = farmSkillBonus;
+			applySkill(gatherOption, workSkills.farming);
 
 			// Gathering is idle work, not a meal: it makes no room, so a pack with none for the yield
 			// would cut nothing and come back to the same bush.
@@ -2561,9 +2590,7 @@ namespace ecs {
 			craftOption.tiebreakId = static_cast<uint64_t>(stationEntity);
 
 			// Calculate skill bonus for crafting
-			auto [craftSkillLevel, craftSkillBonus] = calculateSkillBonus(skills, kSkillCrafting);
-			craftOption.skillLevel = craftSkillLevel;
-			craftOption.skillBonus = craftSkillBonus;
+			applySkill(craftOption, workSkills.crafting);
 
 			// Provisioning the materials is the goal-driven Harvest/Haul options' job; the Craft
 			// option is the crafting WORK, workable only once the station holds every input.
@@ -2596,13 +2623,13 @@ namespace ecs {
 			world, m_registry, m_workSources, m_colonyStorage, supply, pickupRoom, inventory, position.value, pileReach, m_offeredPiles, trace
 		);
 		evaluateCarryInOptions(supply, m_carried, position.value, trace);
-		evaluateHarvestOptions(m_registry, m_workSources, supply, pickupRoom, position.value, skills, m_offeredPiles, trace);
+		evaluateHarvestOptions(m_registry, m_workSources, supply, pickupRoom, position.value, workSkills, m_offeredPiles, trace);
 
 		// Build staged construction blueprints (goal-driven)
-		evaluateBuildOptions(world, position.value, skills, trace);
+		evaluateBuildOptions(world, position.value, workSkills, trace);
 
 		// Deconstruct demolishing structures (goal-driven, same tier as Build)
-		evaluateDeconstructOptions(world, position.value, skills, trace);
+		evaluateDeconstructOptions(world, position.value, workSkills, trace);
 
 		// Place packaged items at target locations
 		evaluatePlacePackagedOptions(world, supply, position.value, inventory, trace);
@@ -2648,7 +2675,7 @@ namespace ecs {
 		// m_elapsedTime, monotonic, which is all the within-tier age term needs.
 		const uint32_t currentHaulItemId = currentTask.type == TaskType::Haul ? m_registry.getDefNameId(currentTask.haulItemDefName) : 0U;
 		for (auto& option : trace.options) {
-			populatePriorityBonuses(world, option, currentTask, currentHaulItemId, m_elapsedTime);
+			populatePriorityBonuses(world, option, currentTask, currentHaulItemId, m_elapsedTime, m_baseTiers);
 		}
 
 		// Sort by the lexicographic (tier asc, score desc, tiebreakId asc) key. Tier is categorical

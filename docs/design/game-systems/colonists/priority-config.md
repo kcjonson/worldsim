@@ -188,13 +188,6 @@ Formula: `bandBase + (10 - userPriority) * step`
       </description>
     </Distance>
 
-    <!-- Skill bonus: skilled colonists prefer work they're good at -->
-    <Skill>
-      <multiplier>10</multiplier>
-      <maxBonus>100</maxBonus>
-      <formula>min(skillLevel * multiplier, maxBonus)</formula>
-    </Skill>
-
     <!-- Chain continuation: chain steps are classified at tier 4 (active work order),
          not scored higher within tier 6. The +2000 score term is deleted;
          servesActiveWorkOrder == true drives the tier assignment instead. -->
@@ -284,18 +277,9 @@ The old `±50 distanceBonus` range was too narrow relative to the skill/age term
 
 ### Skill Bonus
 
-Skilled colonists naturally gravitate toward work they're good at.
+Skilled colonists naturally gravitate toward work they're good at. The bonus is `min(skillLevel * 10, 100)`, fixed in AIDecisionSystem (not tuned in the XML), and each skill's bonus is worked out once per decision.
 
-```cpp
-int16_t calculateSkillBonus(float skillLevel, const SkillConfig& config) {
-    return std::min(
-        static_cast<int16_t>(skillLevel * config.multiplier),
-        config.maxBonus
-    );
-}
-```
-
-**Examples (multiplier=10, max=100):**
+**Examples:**
 - Skill level 0: +0
 - Skill level 5: +50
 - Skill level 8: +80
@@ -370,7 +354,6 @@ public:
 
     // Within-tier score terms
     float   calculateDistanceFactor(float distance) const; // dominant: 300*max(0,1-d/60)
-    int16_t calculateSkillBonus(float skillLevel) const;
     int16_t calculateTaskAgeBonus(float taskAge) const;
     int16_t getInProgressBonus() const;                    // within-tier hysteresis margin (50)
     int16_t calculateDistanceBonus(float distance) const;  // legacy +-50; display path only
@@ -383,7 +366,6 @@ private:
     std::unordered_map<std::string, int> taskTiers;  // per-task-type base tier (arbitration)
     std::unordered_map<std::string, int16_t> bands;  // display-priority bands
     DistanceFactorConfig  distanceFactorConfig;
-    SkillBonusConfig      skillConfig;
     InProgressBonusConfig inProgressConfig;
     TaskAgeBonusConfig    taskAgeConfig;
     HaulingTuningConfig   haulingConfig;
