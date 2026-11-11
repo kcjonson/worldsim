@@ -2,6 +2,7 @@ add_library(world-view
     world/rendering/ChunkRenderer.cpp
     world/rendering/EntityRenderer.cpp
     world/rendering/BakedChunkRenderer.cpp
+    world/rendering/Bc3.cpp
     world/rendering/GroundcoverRenderer.cpp
     world/rendering/GroundPairs.cpp
     world/rendering/GroundTileBank.cpp
@@ -9,6 +10,7 @@ add_library(world-view
     world/rendering/GroundTileCache.cpp
     world/rendering/GroundTileFilter.cpp
     world/rendering/InstancedEntityRenderer.cpp
+    world/rendering/ScreenStateGuard.cpp
     world/rendering/BatchedEntityRenderer.cpp
     world/rendering/TemplateMeshCache.cpp
     world/rendering/DynamicEntityRenderSystem.cpp

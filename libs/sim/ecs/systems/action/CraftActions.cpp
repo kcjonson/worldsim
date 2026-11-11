@@ -1,6 +1,7 @@
 #include "../ActionSystem.h"
 
 #include "../../InventoryMass.h"
+#include "../../StoreOrDrop.h"
 #include "../../World.h"
 #include "../../components/Action.h"
 #include "../../components/Inventory.h"
@@ -74,18 +75,14 @@ namespace ecs {
 			const uint32_t carried = ecs::giveItemToColonist(
 				inventory, assetRegistry, itemName, count,
 				[&](const std::string& def, uint32_t qty) {
-					// Overflow drops as a loose ground pile (the harvest overflow mechanism), at the
+					// Overflow goes into storage within reach, else a loose ground pile at the
 					// colonist's position -- which is on the mesh, so the pile is reachable/haulable.
-					if (m_onDropResource) {
-						m_onDropResource(def, dropPos.x, dropPos.y, qty);
-					} else {
-						LOG_WARNING(Engine, "[Action] Crafted %s overflow but no drop callback set (lost)", def.c_str());
-					}
+					ecs::storeOrDrop(*world, def, qty, dropPos, m_onDropResource);
 				}
 			);
 			const uint32_t dropped = count - carried;
 			if (dropped > 0) {
-				LOG_INFO(Engine, "[Action] Crafted %u x %s (%u carried, %u dropped - no room)", count, itemName.c_str(), carried, dropped);
+				LOG_INFO(Engine, "[Action] Crafted %u x %s (%u carried, %u stored nearby or dropped - no room)", count, itemName.c_str(), carried, dropped);
 			} else {
 				LOG_INFO(Engine, "[Action] Crafted %u x %s (added to inventory)", carried, itemName.c_str());
 			}

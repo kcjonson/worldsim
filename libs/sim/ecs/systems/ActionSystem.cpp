@@ -138,7 +138,7 @@ namespace ecs {
 					actionTypeName(action.type),
 					restoreAmount
 				);
-				completeAction(entity, action, needs, task, inventory, memory);
+				completeAction(entity, position, action, needs, task, inventory, memory);
 			}
 		}
 	}
@@ -198,7 +198,15 @@ namespace ecs {
 		}
 	}
 
-	void ActionSystem::completeAction(EntityID entity, Action& action, NeedsComponent& needs, Task& task, Inventory& inventory, Memory& memory) {
+	void ActionSystem::completeAction(
+		EntityID		entity,
+		const Position& position,
+		Action&			action,
+		NeedsComponent& needs,
+		Task&			task,
+		Inventory&		inventory,
+		Memory&			memory
+	) {
 		// Apply effects based on variant type
 		if (action.hasNeedEffect()) {
 			applyNeedEffect(action, needs);
@@ -206,7 +214,7 @@ namespace ecs {
 
 		// Handle collection effects (Pickup, Harvest)
 		if (action.hasCollectionEffect()) {
-			applyCollectionEffect(action, task, inventory, memory);
+			applyCollectionEffect(action, position.value, task, inventory, memory);
 		}
 
 		// Handle consumption effects (Eat action)

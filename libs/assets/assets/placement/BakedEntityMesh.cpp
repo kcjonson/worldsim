@@ -67,17 +67,17 @@ namespace assets {
 			uint32_t vertexOffset = 0;
 
 			for (const auto* entity : bin) {
-				const auto* templateMesh = getTemplate(entity->defName);
+				// Tall occluders draw live in the Y-sorted upright stream, not baked.
+				if (entity->isTallOccluder) {
+					continue;
+				}
+				const auto* templateMesh = getTemplate(*entity);
 				if (templateMesh == nullptr) {
 					continue;
 				}
 
 				float entityScale = entity->scale;
 				float worldHeight = templateHeight(templateMesh) * entityScale;
-				// Tall occluders draw live in the Y-sorted upright stream, not baked.
-				if (worldHeight >= kShortFloraMaxHeight) {
-					continue;
-				}
 				auto& bucket = subChunk.floraMesh;
 				bucket.maxEntityHeight = std::max(bucket.maxEntityHeight, worldHeight);
 

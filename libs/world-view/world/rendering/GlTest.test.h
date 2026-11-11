@@ -6,6 +6,8 @@
 // the same test fails with the call that didn't come up, so a broken software GL
 // can't turn the whole GL suite into silent skips.
 
+#include "world/rendering/GlVersion.h"
+
 // GLFW's functions only; each test includes GLEW before any GL header.
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
@@ -36,6 +38,22 @@ namespace worldsim::test {
 			return glfwInit() == GLFW_TRUE ? std::string() : "glfwInit failed: " + glfwLastError();
 		}();
 		return failure;
+	}
+
+	/// A hidden window with the context worldsim asks for everywhere (GlVersion.h); null, with GLFW's
+	/// error in `failure`, where the driver can't make one.
+	inline GLFWwindow* createHiddenWindow(int size, const char* title, std::string& failure) {
+		glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, worldview::kGlMajor);
+		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, worldview::kGlMinor);
+		glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+		glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
+		GLFWwindow* window = glfwCreateWindow(size, size, title, nullptr, nullptr);
+		if (window == nullptr) {
+			failure = "glfwCreateWindow failed for a " + std::to_string(worldview::kGlMajor) + "." + std::to_string(worldview::kGlMinor) +
+					  " core forward-compatible context: " + glfwLastError();
+		}
+		return window;
 	}
 
 } // namespace worldsim::test

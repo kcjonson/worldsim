@@ -33,6 +33,9 @@ vcpkg_installed/
 .DS_Store
 *.dSYM/
 
+# Nightly perf batch: state, build copies, raw captures (docs/testing/nightly-perf-batch.md)
+perf-results/nightly/
+
 # Test outputs
 *.png
 *.jpg

@@ -10,6 +10,7 @@
 #include <ecs/components/Mood.h>
 #include <ecs/components/Needs.h>
 #include <ecs/components/PlayerControlled.h>
+#include <ecs/components/ResourceStack.h>
 #include <ecs/components/Room.h>
 #include <ecs/components/StorageConfiguration.h>
 #include <ecs/components/StructureBlueprint.h>
@@ -127,6 +128,11 @@ namespace world_sim {
 						return std::nullopt;
 					}
 					return adaptFurniture(registry, sel);
+				} else if constexpr (std::is_same_v<T, ResourcePileSelection>) {
+					if (!world.isAlive(sel.entityId) || world.getComponent<ecs::ResourceStack>(sel.entityId) == nullptr) {
+						return std::nullopt;
+					}
+					return adaptResourcePile(world, registry, sel);
 				} else if constexpr (std::is_same_v<T, RoomSelection>) {
 					// Rooms need the RoomDetectionSystem records (not available on this
 					// path); EntityInfoModel::refresh resolves the record and calls
@@ -332,6 +338,27 @@ namespace world_sim {
 			);
 		}
 
+		return content;
+	}
+
+	PanelContent adaptResourcePile(
+		const ecs::World&			 world,
+		const assets::AssetRegistry& registry,
+		const ResourcePileSelection& selection
+	) {
+		PanelContent content;
+		const auto*	 def = registry.getDefinition(selection.defName);
+		content.title = (def != nullptr && !def->label.empty()) ? def->label : selection.defName;
+
+		const auto*	   stack = world.getComponent<ecs::ResourceStack>(selection.entityId);
+		const uint32_t quantity = (stack != nullptr) ? stack->quantity : 0U;
+		content.slots.push_back(TextSlot{"Quantity", std::to_string(quantity)});
+
+		if (def != nullptr && def->itemProperties.has_value()) {
+			std::ostringstream oss;
+			oss << std::fixed << std::setprecision(1) << def->itemProperties->massKg * static_cast<float>(quantity) << " kg";
+			content.slots.push_back(TextSlot{"Mass", oss.str()});
+		}
 		return content;
 	}
 

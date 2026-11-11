@@ -66,6 +66,11 @@
       </relationships>
     </placement>
 
-    <variantCount>15</variantCount>
+    <!-- Age class by world position (tree-variety.md R1, R2). Weights sum to 1; each class has its own mesh variants. -->
+    <ageClasses>
+      <ageClass name="sapling" weight="0.25" variants="4" yieldScale="0.25" workScale="0.35"/>
+      <ageClass name="mature"  weight="0.55" variants="8" yieldScale="1.0"  workScale="1.0"/>
+      <ageClass name="veteran" weight="0.20" variants="4" yieldScale="1.8"  workScale="1.6"/>
+    </ageClasses>
   </AssetDef>
 </AssetDefinitions>

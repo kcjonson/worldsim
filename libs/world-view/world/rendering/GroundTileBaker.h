@@ -1,13 +1,13 @@
 #pragma once
 
 // Bakes a ground def's tile variants into CPU-side mip chains (docs/technical/ground-textures.md,
-// "Baker", "LOD" and "Heights in alpha"). Each variant's generator runs once and each of its paths is
-// tessellated once (AssetRegistry::buildPaths, every variant at once on the pool); every mip is then drawn
-// from those paths at that mip's density, so a path tagged with setLod drops out at the mip its author
-// chose. Each is drawn once into a target covering exactly one period (the paths that cross the tile edge
+// "Baker", "LOD" and "Heights in alpha"). Each variant's generator runs once, or its SVG is read once, and
+// each of its paths is tessellated once (AssetRegistry::buildPaths, every variant at once on the pool); every
+// mip is then drawn from those paths at that mip's density, so a path tagged with setLod or data-lod drops
+// out at the mip its author chose. Each is drawn once into a target covering exactly one period (the paths that cross the tile edge
 // are already repeated, so the target's clip is the wrap), supersampled (8x8 for mips 0 and 1, 4x4
 // below), Kaiser-downsampled in linear light with an anti-ringing clamp (GroundTileFilter.h), mean-locked
-// to a filtered copy of mip 0, and encoded to sRGB 8-bit for GL_SRGB8_ALPHA8. Alpha is each texel's
+// to a filtered copy of mip 0, encoded to sRGB 8-bit, and that to BC3 for the bank (Bc3.h). Alpha is each texel's
 // height: every path drawn once more at mip 0 in flat gray at its height (2x2 supersampled, blurred half
 // a texel), ranked over the def's variants to a uniform histogram, and Kaiser-filtered down the chain. A
 // def whose files haven't changed since its last bake comes from the disk cache instead
@@ -50,10 +50,11 @@ namespace worldview {
 	class GroundTileCache;
 
 	/// One mip of one variant: sRGB color and linear height in alpha, 8 bits a channel, rows top to
-	/// bottom, size x size.
+	/// bottom, size x size; and the same as BC3 blocks (Bc3.h), which is what the bank uploads.
 	struct GroundMip {
 		int					 size = 0;
 		std::vector<uint8_t> rgba;
+		std::vector<uint8_t> bc3;
 	};
 
 	/// What the bake drew and measured on one mip of one variant.
@@ -68,9 +69,11 @@ namespace worldview {
 		float	  referenceContrast = 0.0F; // the same of Ref_k, the Kaiser downsample of mip 0
 		glm::vec3 lockShift{0.0F};			// what the mean lock moved: Ref_k's linear mean minus the render's
 		float	  heightSpread = 0.0F;		// standard deviation of the encoded mip's heights (alpha, 0 to 1)
+		float	  bc3DeltaE = 0.0F;			// CIE76 of the BC3 decode's mean against the encoded mip's
+		float	  bc3Rms = 0.0F;			// RMS of the BC3 decode against the encoded mip, 8-bit codes over RGB
 	};
 
-	/// One variant's generator output, tessellated: what every mip of it is drawn from.
+	/// One variant's generator output or SVG, tessellated: what every mip of it is drawn from.
 	struct GroundVariantPaths {
 		uint32_t				 variant = 0;
 		uint32_t				 seed = 0;
@@ -114,6 +117,8 @@ namespace worldview {
 		float  contrastRatioMax = 1.0F; // and highest
 		float  lockShiftPercent = 0.0F; // the mean lock's shift over mip 0's mean, per channel
 		float  heightSpread = 0.0F;		// the heights' standard deviation, averaged over variants
+		float  bc3DeltaE = 0.0F;		// what BC3 does to the mean, worst variant; reported, not a check
+		float  bc3Rms = 0.0F;			// and to the texels
 
 		[[nodiscard]] bool meanOk() const { return meanErrorPercent <= kMeanTolerancePercent; }
 		[[nodiscard]] bool deltaEOk() const { return deltaEToMip0 < kDeltaELimit && deltaEToPrevious < kDeltaELimit; }
@@ -159,8 +164,8 @@ namespace worldview {
 		};
 
 		/// Part of every cache key, for worldsim's own bake code: this baker, its filters and the paths it
-		/// draws (TessellatedPaths, AssetRegistry::buildPaths). Bump it when any of them draws or filters
-		/// differently, so the bakes on disk from before miss. salal's version and LuaEngine::kApiVersion
+		/// draws (TessellatedPaths, AssetRegistry::buildPaths, readGroundSvg) and the BC3 encoder (Bc3.h). Bump it when any
+		/// of them draws, filters or encodes differently, so the bakes on disk from before miss. salal's version and LuaEngine::kApiVersion
 		/// are in the key on their own.
 		static constexpr uint32_t kVersion = 3;
 		static constexpr int	  kMaxMipLevels = 7;	 // mips 0 to 6
@@ -170,9 +175,10 @@ namespace worldview {
 
 		explicit GroundTileBaker(const Args& args);
 
-		/// The generator seed of a def's variant, salted by its seed group (the def's name unless it names
-		/// one), so two defs' variant 0 differ unless they share a group.
-		[[nodiscard]] static uint32_t variantSeed(const std::string& seedGroup, uint32_t variant);
+		/// The seed a def's variant is built from (AssetRegistry::buildPaths). A generator's is salted by the
+		/// def's seed group (its name unless it names one), so two defs' variant 0 differ unless they share a
+		/// group; an SVG def's is the variant, which picks its SVG.
+		[[nodiscard]] static uint32_t variantSeed(const assets::AssetDefinition& def, uint32_t variant);
 		/// Texels along a layer's edge at mip 0: period x pixelsPerMeter. 0 when that isn't a whole number
 		/// from 1 to assets::kMaxGroundLayerSize (assets/GroundLayer.h, which AssetValidator checks too).
 		[[nodiscard]] static int layerSize(const assets::AssetDefinition& def);
@@ -187,8 +193,8 @@ namespace worldview {
 		/// (assets/GroundLayer.h); nothing is allocated or generated before that check.
 		[[nodiscard]] std::optional<GroundTileBake> begin(const std::string& defName) const;
 
-		/// Every variant's paths, one generator run and one tessellation each, all at once on the pool;
-		/// sets bake.pathsMs. Nullopt (logged) when a generator fails.
+		/// Every variant's paths, one generator run or SVG read and one tessellation each, all at once on the
+		/// pool; sets bake.pathsMs. Nullopt (logged) when a generator fails or an SVG breaks a rule.
 		[[nodiscard]] std::optional<std::vector<GroundVariantPaths>> buildPaths(GroundTileBake& bake) const;
 
 		/// Every variant's mip 0 heights, drawn from its paths and ranked over all of them, into each one's

@@ -28,6 +28,7 @@
 // Thread Safety: NOT thread-safe. Use separate instances per thread for parallel generation.
 
 #include "assets/MotionDef.h"
+#include "assets/TreeTraits.h"
 
 #include <cstdint>
 #include <string>
@@ -57,22 +58,28 @@ namespace assets {
 		// re-deriving it per frame. Not baked into the per-chunk mesh.
 		float		anchorY = 0.0F;
 
-		// True when this static is a tall upright occluder: worldHeight
-		// (== (templateMaxY - templateMinY) * scale) >= kShortFloraMaxHeight and the
-		// def is not groundcover. These are the statics WorldDepthGather pulls off
-		// the baked/instanced background to interleave with actors in the Y-sorted
-		// stream; short flora stays baked and groundcover renders instanced.
-		// Computed once at placement time with the same threshold BakedEntityMesh
-		// bakes by, so the tall/short partition is identical either way. Always
-		// false for dynamic entities: they are gathered unconditionally and must
-		// never be taken for a static occluder.
+		// True when this static's def routes tall (AssetRegistry::isTallDef: its mature
+		// variant 0 is at least kShortFloraMaxHeight and it is not groundcover). These are
+		// the statics WorldDepthGather pulls off the baked/instanced background to
+		// interleave with actors in the Y-sorted stream; short flora stays baked and
+		// groundcover renders instanced. Set once at placement; the bake skips exactly
+		// these. Always false for dynamic entities: they are gathered unconditionally and
+		// must never be taken for a static occluder.
 		bool		isTallOccluder = false;
+
+		// The template this instance draws (AssetRegistry::templateId of defName and traits),
+		// resolved once where the entity is made so the renderers key meshes and instanced runs
+		// by an integer. 0 = nothing to draw.
+		uint32_t	templateId = 0;
 
 		// Optional per-part animation transforms (meter/template space), one entry per MeshPart
 		// of this entity's template, by index (identity where a part isn't driven). Null = not
 		// animated; such entities render through the fast instanced path. The pointee is owned by
 		// the producer (DynamicEntityRenderSystem) for the frame; PlacedEntity only references it.
 		const std::vector<PartTransform>* partTransforms = nullptr;
+
+		// Age class and mesh variant (computeTreeTraits), set where the entity is made.
+		TreeTraits traits{};
 	};
 
 	/// Grid-based spatial index for efficient neighbor queries.

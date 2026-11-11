@@ -1206,7 +1206,7 @@ quickstart planet, vsync off. Three views: the landing river and its fordable fe
 (540, 131480). Each figure is the median of nine samples once the view has settled. The frame
 pacer caps the game at 120 fps (8.33 ms) and has no switch, so GPU cost comes from timestamp
 queries: `/api/metrics` reports `gpuRenderMs` (the scene) and `tileGpuMs` (the ground and
-water pass), and `scripts/perf-capture.ps1` records both. The before/after capture pair is in
+water pass), and `scripts/perf.mjs capture` records both. The before/after capture pair is in
 `perf-results/capture-2026-09-26-wor463-*.json`; "before" is main at 9153fc44, the last
 commit before the shader work (WOR-460), with the same GPU timers. That pair predates the
 script's default bump to nine and was taken with 7 idle samples per scenario (25 for the
@@ -1232,7 +1232,7 @@ These numbers were taken with the GPU at P0 (1890 to 1950 MHz). On light views t
 it to P3 or P2 (1035 to 1410 MHz) and the same pass reads 1.4 to 2.1 ms instead of about 0.95, so
 an unpinned capture compares clocks, not code. The river rows at zoom 20 and 8 above were P0
 readings; unpinned captures read 1.3 to 2.1 ms there. Hold P0 for any capture you compare against
-this table, which `scripts/perf-capture.ps1` does with the game's GPU hold (WOR-553);
+this table, which `scripts/perf.mjs capture` does with the game's GPU hold (WOR-553);
 [ground-textures.md](../ground-textures.md#clock-state) has the measurements.
 
 **The frame, river view** (the heaviest), frame p50 / p99 max and scene GPU, ms:
@@ -1280,7 +1280,7 @@ the workers keep up; the far edge of a zoom 0.25 view is still blank, because it
 wide and the chunk manager keeps one chunk around the camera's (1536 m), and flora appears
 when placement lands (140 to 550 ms a chunk).
 
-**Per-tile biome edges (WOR-558).** Measured on the 120 chunks `scripts/perf-capture.ps1`
+**Per-tile biome edges (WOR-558).** Measured on the 120 chunks `scripts/perf.mjs capture`
 generates across the three views, the branch tip before (85cd4799) against after, worker ms:
 
 | | Median | p90 | Max |

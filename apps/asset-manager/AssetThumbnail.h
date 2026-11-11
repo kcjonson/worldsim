@@ -7,8 +7,14 @@
 // and clipped to it, built at the detail its square shows on screen, and with `tiles` above 1 it is drawn
 // tiles x tiles, edge to edge, to show its seams. Meshes are cached across thumbnails, the least recently
 // fetched dropped past a byte budget.
+//
+// Art that doesn't move is drawn once into a render target, in the layout pass that places the thumbnail
+// or the update after it changes, and each frame draws that picture: a ground tile is hundreds of
+// thousands of triangles, and a ground def's detail shows it fifteen times. Only an animated preview of
+// an asset whose motion clip drives a part draws its meshes every frame.
 
 #include <graphics/Rect.h>
+#include <resources/RenderTarget.h>
 #include <ui/Component.h>
 #include <vector/Types.h>
 
@@ -18,10 +24,16 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace Renderer {
 	class CoordinateSystem;
+}
+
+namespace assets {
+	struct MotionClip;
+	struct PartTransform;
 }
 
 namespace asset_manager {
@@ -37,9 +49,9 @@ namespace asset_manager {
 			bool		animated = false; // sweep the asset's motion clip (the detail preview; the tree's stay still)
 			bool		collider = false;
 			int			tiles = 1; // a ground tile repeated tiles x tiles; other assets ignore it
-			/// The app's, whose pixel ratio says how many device pixels a ground tile's square covers; 1 a
-			/// logical pixel without one.
-			const Renderer::CoordinateSystem* coordinateSystem = nullptr;
+			/// The app's, required: its pixel ratio says how many device pixels the picture needs, and it is
+			/// put back after the picture is drawn offscreen (there's no picture without it, logged).
+			Renderer::CoordinateSystem* coordinateSystem = nullptr;
 		};
 
 		explicit AssetThumbnail(const Args& args);
@@ -52,14 +64,22 @@ namespace asset_manager {
 		[[nodiscard]] const char* typeName() const override { return "AssetThumbnail"; }
 
 	  protected:
+		void update(float dt) override;
 		void render() override;
 
 	  private:
 		// Device pixels a ui unit: the ui's scale times the window's pixel ratio.
 		[[nodiscard]] float pixelScale() const;
-		void				ensureMesh();
-		void				drawMeshes();
-		void				drawCollider();
+		// Fetches the mesh when what it was built for changed; true when it did.
+		bool ensureMesh();
+		// The clip this preview poses each frame (walk, else the first), so it can't be drawn once; null for
+		// still art, a tree row, or a clip that drives nothing.
+		[[nodiscard]] const assets::MotionClip* motionClip() const;
+		// Draws the picture again when the mesh changed and the art is still.
+		void			   refreshPicture();
+		void			   drawMeshes(const std::unordered_map<std::string, assets::PartTransform>& xforms, float fade, int32_t key);
+		void			   drawPicture();
+		void			   drawCollider();
 		// A point in raw asset-mesh space, or relative to the asset's bbox centre, in this box, by the
 		// fitToRect math the preview applied to the mesh.
 		[[nodiscard]] Foundation::Vec2 meshToLocal(const glm::vec2& point) const;
@@ -70,7 +90,9 @@ namespace asset_manager {
 		bool								 animated;
 		bool								 collider;
 		int									 tiles;
-		const Renderer::CoordinateSystem*	 coordinateSystem;
+		Renderer::CoordinateSystem*			 coordinateSystem;
+		Renderer::RenderTarget				 picture; // the still art at fetchedSize, in device pixels
+		bool								 pictureStale = true;
 		int									 repeat = 1;						   // tiles, once the asset turns out to be a ground tile
 		std::shared_ptr<const ThumbnailMesh> mesh;								   // shared with the cache, which may drop it first
 		Foundation::Rect					 sourceBounds{0.0F, 0.0F, 0.0F, 0.0F}; // framed region of the current asset

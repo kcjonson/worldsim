@@ -6,6 +6,7 @@
 // Actions have duration and apply effects when complete.
 // See /docs/design/game-systems/colonists/needs.md for design details.
 
+#include "../DropResourceCallback.h"
 #include "../EntityID.h"
 #include "../ISystem.h"
 
@@ -34,11 +35,6 @@ public:
 	using ItemCraftedCallback = std::function<void(const std::string& itemLabel)>;
 	void setItemCraftedCallback(ItemCraftedCallback callback) { m_onItemCrafted = std::move(callback); }
 
-	/// Set callback for dropping items on the ground
-	/// Called when colonist crafts an item that can't fit in inventory (handsRequired >= 2)
-	using DropItemCallback = std::function<void(const std::string& defName, float x, float y)>;
-	void setDropItemCallback(DropItemCallback callback) { m_onDropItem = std::move(callback); }
-
 	/// Set callback for spawning a crafted FURNITURE output as a PACKAGED entity at the station.
 	/// Furniture (ItemCategory::Furniture) is never seated in the colonist's hands like a tool or
 	/// resource: it comes out packaged and is installed a short distance off the station via the
@@ -50,11 +46,8 @@ public:
 	using SpawnPackagedAtCallback = std::function<void(const std::string& defName, glm::vec2 stationPos)>;
 	void setSpawnPackagedAtCallback(SpawnPackagedAtCallback callback) { m_onSpawnPackagedAt = std::move(callback); }
 
-	/// Set callback for dropping a loose, haulable resource pile of `quantity` units.
-	/// Called when a fell yields more than the colonist could carry off: the remainder lands
-	/// as a single ground entity carrying a ResourceStack, hauled away in later armfuls. Unlike
-	/// DropItemCallback (crafted output awaiting placement), this pile is not Packaged.
-	using DropResourceCallback = std::function<void(const std::string& defName, float x, float y, uint32_t quantity)>;
+	/// Set callback for dropping loose units on the ground (fell remainder, hand overflow,
+	/// stowed-tool drop).
 	void setDropResourceCallback(DropResourceCallback callback) { m_onDropResource = std::move(callback); }
 
 	/// Set callback for removing harvested entities from the world
@@ -140,6 +133,7 @@ private:
 	/// Complete an action and apply effects
 	void completeAction(
 		EntityID entity,
+		const struct Position& position,
 		struct Action& action,
 		struct NeedsComponent& needs,
 		struct Task& task,
@@ -151,9 +145,11 @@ private:
 	void applyNeedEffect(const struct Action& action, struct NeedsComponent& needs);
 
 	/// Apply a completed collection effect (Pickup/Harvest): pool-withdraw vs single-shot,
-	/// source removal/cooldown, and harvest-goal delivery recording.
+	/// source removal/cooldown, and harvest-goal delivery recording. `colonistPosition` is where
+	/// a tool stowed to free the hands is put away or dropped from (reach starts at the colonist).
 	void applyCollectionEffect(
 		const struct Action& action,
+		glm::vec2 colonistPosition,
 		struct Task& task,
 		struct Inventory& inventory,
 		struct Memory& memory
@@ -247,7 +243,8 @@ private:
 	/// Stow any held ONE-hand tool out of the hands (belt -> pack -> drop) so both hands are free
 	/// for a two-hand armful (wood). Called just before lifting an armful at harvest/haul time so a
 	/// crafted axe in hand doesn't block the pickup. A one-hand tool the belt/pack can't take is
-	/// dropped loose at `dropPosition` via m_onDropItem. A two-hand item already held is left alone.
+	/// put in storage within reach, else dropped loose at `dropPosition` (ecs::storeOrDrop). A two-hand
+	/// item already held is left alone.
 	void stowHeldToolsForArmful(
 		struct Inventory& inventory,
 		glm::vec2 dropPosition
@@ -269,13 +266,10 @@ private:
 	/// Callback for item crafted notifications
 	ItemCraftedCallback m_onItemCrafted = nullptr;
 
-	/// Callback for dropping items on the ground (non-backpackable items)
-	DropItemCallback m_onDropItem = nullptr;
-
 	/// Callback for spawning a crafted furniture output as a packaged entity at the station
 	SpawnPackagedAtCallback m_onSpawnPackagedAt = nullptr;
 
-	/// Callback for dropping a loose, haulable resource pile (felling remainder)
+	/// Callback for dropping loose units as a ground pile
 	DropResourceCallback m_onDropResource = nullptr;
 
 	/// Callback for removing harvested entities from world

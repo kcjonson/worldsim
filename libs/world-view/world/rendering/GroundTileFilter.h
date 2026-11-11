@@ -41,8 +41,8 @@ namespace worldview::ground {
 		}
 	};
 
-	/// sRGB color and linear alpha, 8 bits a channel, rows top to bottom: what the runtime uploads as
-	/// GL_SRGB8_ALPHA8.
+	/// sRGB color and linear alpha, 8 bits a channel, rows top to bottom: what the baker encodes to BC3
+	/// for the runtime.
 	struct Srgb8Image {
 		int					 width = 0;
 		int					 height = 0;

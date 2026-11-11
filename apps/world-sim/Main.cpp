@@ -11,6 +11,7 @@
 #include <theme/Fonts.h>
 #include <utils/Log.h>
 #include <world/AppIdentity.h>
+#include <world/rendering/GlVersion.h>
 
 #include <cstdio>
 #include <memory>
@@ -37,7 +38,8 @@ int main(int argc, char* argv[]) {
 		return 1;
 	}
 
-	std::unique_ptr<app::Platform> platform = app::createGlfwPlatform({.title = kTitle});
+	std::unique_ptr<app::Platform> platform =
+		app::createGlfwPlatform({.title = kTitle, .glVersion = {.major = worldview::kGlMajor, .minor = worldview::kGlMinor}});
 	if (platform == nullptr) {
 		return 1;
 	}

@@ -65,7 +65,7 @@ std::vector<PreparedAsset> prepareSamples(const std::string& defName, const Rect
 
 Internally:
 
-- **Simple asset:** reuse the existing cached `getTemplate(defName)`. It already loads the SVG and normalizes to `worldHeight`. The seed is irrelevant; a simple asset is one drawing.
+- **Simple asset:** reuse the existing cached template (`getTemplate(defName, {})`; a simple asset has one whatever its traits). It already loads the SVG and normalizes to `worldHeight`. The seed is irrelevant; a simple asset is one drawing.
 - **Procedural asset:** do not use `getTemplate`. It is hard-coded to seed 42 and memoized, so it yields exactly one form. Call `generateAsset(defName, seed, out)` directly (this is what `TreeScene` does to make 40 distinct trees), then tessellate with `tessellateAsset`. Vary the seed to sample the generator's range; fix the seed for a reproducible render. Determinism is real: `generateAsset` reseeds Lua's RNG with the seed on every call, so the same seed gives byte-identical paths.
 - **Fit to frame:** procedural output is in unnormalized generator space and even the normalized templates are centered meters, with no fit helper anywhere today. Add `computeBounds(const TessellatedMesh&) -> Rect` and `fitToRect(TessellatedMesh&, srcBounds, dstRect)` to `renderer` (geometry math on a renderer type, no asset dependency). Geometry prep computes bounds, fits to the target rect in pixel space, and returns the transformed mesh.
 
@@ -102,7 +102,7 @@ Because the CLI is a short-lived, server-less process with its own context, N in
 
 ## Asset enumeration and inspection
 
-The registry already exposes the browse and inspect surface. The tool walks `getDefinitionNames()` (sort it; the backing store is unordered) and calls `getDefinition(name)` for the full parsed `AssetDefinition`. Resource paths come off the def: `svgPath`, `scriptPath`, `generatorName`, resolved with `def->resolvePath`, plus the manual `@shared/` handling that `generateAsset` does (the tool must replicate that prefix logic to show the real Lua path). Groups come from `getGroups()` / `getGroupMembers()`.
+The registry already exposes the browse and inspect surface. The tool walks `getDefinitionNames()` (sort it; the backing store is unordered) and calls `getDefinition(name)` for the full parsed `AssetDefinition`. Resource paths come off the def: `svgPaths`, `scriptPath`, `generatorName`, resolved with `def->resolvePath`, plus the manual `@shared/` handling that `generateAsset` does (the tool must replicate that prefix logic to show the real Lua path). Groups come from `getGroups()` / `getGroupMembers()`.
 
 The inspector model is the parsed def, the resolved resource paths, the asset's groups and placement rules, the raw file text shown beside the parsed view, and the warnings for that def from the validation report (see below). Documented-but-ignored fields are shown as warnings, not silently dropped.
 

@@ -7,8 +7,10 @@
 #include "assets/IAssetGenerator.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <string>
+#include <vector>
 
 // Forward declare sol types to avoid header pollution
 namespace sol {
@@ -16,6 +18,12 @@ class state;
 }
 
 namespace assets {
+
+/// The prelude files found in a folder, or why they could not be listed (error is empty on success).
+struct PreludeFiles {
+	std::vector<std::filesystem::path> files;
+	std::string						   error;
+};
 
 /// Lua scripting engine for procedural asset generation.
 /// Provides a sandboxed Lua environment with access to asset generation APIs.
@@ -35,11 +43,19 @@ class LuaEngine {
 	LuaEngine(LuaEngine&&) noexcept;
 	LuaEngine& operator=(LuaEngine&&) noexcept;
 
-	/// Initialize the Lua state and register API bindings
-	/// @return true if initialization succeeded
-	bool initialize();
+	/// The prelude: every .lua file directly in dir, sorted by file name. No files, and no error, when dir is
+	/// empty or missing. A dir that is not a folder, or any filesystem error while listing it, sets error
+	/// (naming the path) and leaves files empty. The ground bake cache keys these files, so it reads the
+	/// same list the engine runs.
+	[[nodiscard]] static PreludeFiles preludeFiles(const std::filesystem::path& dir);
 
-	/// Execute a generator script file
+	/// Initialize the Lua state and register API bindings
+	/// @param preludeDir Folder of prelude scripts that run before each generator (see preludeFiles)
+	/// @return true if initialization succeeded
+	bool initialize(std::filesystem::path preludeDir = {});
+
+	/// Execute a generator script file, after the prelude. A prelude file that cannot be read or
+	/// fails to run fails the call, with the file named in getLastError.
 	/// @param scriptPath Path to the Lua script
 	/// @param ctx Generation context (seed, variant)
 	/// @param params Parameters from asset definition
@@ -65,7 +81,11 @@ class LuaEngine {
 	/// Set up a sandboxed environment for script execution
 	void setupSandbox();
 
+	/// Run the prelude files in the state; false (m_lastError set, logged) at the first that fails
+	bool runPrelude();
+
 	std::unique_ptr<sol::state> m_lua;
+	std::filesystem::path m_preludeDir;
 	bool m_initialized = false;
 	std::string m_lastError;
 };

@@ -12,6 +12,7 @@
 #include <sol/sol.hpp>
 
 #include <cmath>
+#include <algorithm>
 #include <cstdint>
 #include <fstream>
 #include <limits>
@@ -82,10 +83,58 @@ namespace assets {
 	LuaEngine::LuaEngine(LuaEngine&&) noexcept = default;
 	LuaEngine& LuaEngine::operator=(LuaEngine&&) noexcept = default;
 
-	bool LuaEngine::initialize() {
+	PreludeFiles LuaEngine::preludeFiles(const std::filesystem::path& dir) {
+		namespace fs = std::filesystem;
+		PreludeFiles	result;
+		std::error_code ec;
+		const auto		fail = [&result, &dir, &ec](const char* what) {
+			   result.files.clear();
+			   result.error = std::string("Failed to ") + what + " prelude folder " + dir.string() + ": " + ec.message();
+			   return result;
+		};
+		if (dir.empty()) {
+			return result;
+		}
+		const fs::file_status status = fs::status(dir, ec);
+		// MSVC reports a missing path through ec as well as file_type::not_found; libstdc++ and libc++ only the type.
+		if (status.type() == fs::file_type::not_found || ec == std::errc::no_such_file_or_directory) {
+			return result;
+		}
+		if (ec) {
+			return fail("check");
+		}
+		if (status.type() != fs::file_type::directory) {
+			result.error = "Prelude path is not a folder: " + dir.string();
+			return result;
+		}
+		fs::directory_iterator it(dir, ec);
+		if (ec) {
+			return fail("open");
+		}
+		for (; it != fs::directory_iterator(); it.increment(ec)) {
+			if (ec) {
+				break;
+			}
+			const bool regular = it->is_regular_file(ec);
+			if (ec) {
+				break;
+			}
+			if (regular && it->path().extension() == ".lua") {
+				result.files.push_back(it->path());
+			}
+		}
+		if (ec) {
+			return fail("read");
+		}
+		std::sort(result.files.begin(), result.files.end(), [](const fs::path& a, const fs::path& b) { return a.filename() < b.filename(); });
+		return result;
+	}
+
+	bool LuaEngine::initialize(std::filesystem::path preludeDir) {
 		if (m_initialized) {
 			return true;
 		}
+		m_preludeDir = std::move(preludeDir);
 
 		try {
 			m_lua = std::make_unique<sol::state>();
@@ -309,6 +358,33 @@ namespace assets {
 		LOG_DEBUG(Engine, "Lua sandbox configured");
 	}
 
+	bool LuaEngine::runPrelude() {
+		const PreludeFiles prelude = preludeFiles(m_preludeDir);
+		if (!prelude.error.empty()) {
+			m_lastError = prelude.error;
+			LOG_ERROR(Engine, "%s", m_lastError.c_str());
+			return false;
+		}
+		for (const std::filesystem::path& file : prelude.files) {
+			std::ifstream in(file, std::ios::binary);
+			if (!in.is_open()) {
+				m_lastError = "Failed to open prelude file: " + file.string();
+				LOG_ERROR(Engine, "%s", m_lastError.c_str());
+				return false;
+			}
+			std::stringstream buffer;
+			buffer << in.rdbuf();
+			auto result = m_lua->script(buffer.str(), [](lua_State*, sol::protected_function_result pfr) { return pfr; }, "@" + file.string());
+			if (!result.valid()) {
+				sol::error err = result;
+				m_lastError = "Prelude file " + file.string() + " failed: " + err.what();
+				LOG_ERROR(Engine, "%s", m_lastError.c_str());
+				return false;
+			}
+		}
+		return true;
+	}
+
 	bool LuaEngine::executeGenerator(
 		const std::string&		 scriptPath,
 		const GenerationContext& ctx,
@@ -337,15 +413,20 @@ namespace assets {
 			// Set up the context for this execution
 			(*m_lua)["seed"] = ctx.seed;
 			(*m_lua)["variantIndex"] = ctx.variantIndex;
+			if (ctx.ageClass.has_value()) {
+				(*m_lua)["ageClass"] = *ctx.ageClass;
+			} else {
+				(*m_lua)["ageClass"] = sol::lua_nil;
+			}
 			if (ctx.periodMeters.has_value()) {
 				(*m_lua)["period"] = *ctx.periodMeters;
 			} else {
 				(*m_lua)["period"] = sol::lua_nil;
 			}
 
-			// Seed the random number generator using sol2's type-safe method
-			// (avoids string concatenation which could be a code injection risk)
-			(*m_lua)["math"]["randomseed"](ctx.seed + ctx.variantIndex);
+			// Seed from the seed alone: it is already distinct per variant (AssetRegistry::generationSeed).
+			// sol2's call, not a built string, so nothing is injected.
+			(*m_lua)["math"]["randomseed"](ctx.seed);
 
 			// Create helper functions to access params
 			// NOTE: These lambdas capture `params` and `outAsset` by reference. This is safe
@@ -370,6 +451,10 @@ namespace assets {
 			// Clear and expose the output asset
 			outAsset.clear();
 			(*m_lua)["asset"] = &outAsset;
+
+			if (!runPrelude()) {
+				return false;
+			}
 
 			// Execute the script
 			auto result = m_lua->script(script, [](lua_State*, sol::protected_function_result pfr) { return pfr; });
