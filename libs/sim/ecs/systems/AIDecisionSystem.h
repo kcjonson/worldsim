@@ -23,6 +23,7 @@
 #include <glm/vec2.hpp>
 #include <optional>
 #include <random>
+#include <string>
 #include <vector>
 
 namespace assets {
@@ -73,6 +74,14 @@ public:
 
 	/// Set callback for dropping loose units on the ground when a chain is interrupted.
 	void setDropResourceCallback(DropResourceCallback callback) { onDropResource = std::move(callback); }
+
+	/// Whether a harvestable the colonist remembers is ready to give its yield (not regrowing from an
+	/// earlier cut). Colonists read the live state of sources they already know, as they read claims;
+	/// this never reveals a source. Asked lazily, only of the candidate that would otherwise win, so a
+	/// regrowing bush is passed over for the next option and taken again once it is ready.
+	/// Unwired (unit contexts with no world behind them), every source is ready.
+	using SourceReadyCallback = std::function<bool(const std::string& defName, glm::vec2 position)>;
+	void setSourceReadyCallback(SourceReadyCallback callback) { onSourceReady = std::move(callback); }
 
 	/// Enter direct player control: suspend this colonist's autonomous task selection. While the
 	/// PlayerControlled tag is present, update() skips task (re)selection, so the colonist stands
@@ -221,6 +230,12 @@ private:
 
 	/// Callback for dropping items on the ground (when chain is interrupted)
 	DropResourceCallback onDropResource = nullptr;
+
+	/// Callback asking the world whether a remembered harvestable is ready to give
+	SourceReadyCallback onSourceReady = nullptr;
+
+	/// onSourceReady for a remembered source of `defNameId` at `position`; true when unwired
+	[[nodiscard]] bool sourceReady(uint32_t defNameId, glm::vec2 position) const;
 };
 
 } // namespace ecs

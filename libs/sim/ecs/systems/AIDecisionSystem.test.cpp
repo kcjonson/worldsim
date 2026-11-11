@@ -2327,6 +2327,73 @@ namespace ecs::test {
 		EXPECT_EQ(gather->status, OptionStatus::NoSource);
 	}
 
+	// A remembered bush on its regrowth cooldown has nothing to give. A hungry colonist passes it over
+	// for a ready bush farther off, and a work order's Harvest does the same, showing the skipped
+	// source as regrowing on the trace.
+	TEST_F(AIDecisionSystemTest, RegrowingSourceIsPassedOverForAReadyOne) {
+		auto&			registry = assets::AssetRegistry::Get();
+		const uint32_t	berryBushId = registerBerryBush(registry);
+		auto [stickBushId, stickId] = registerHarvestableYielding(registry, "Flora_WorkBush", "WorkStick");
+		const glm::vec2 regrowingBerries{2.0F, 0.0F};
+		const glm::vec2 readyBerries{5.0F, 0.0F};
+		const glm::vec2 regrowingSticks{0.0F, 2.0F};
+		const glm::vec2 readySticks{0.0F, 5.0F};
+		int				readinessAsked = 0;
+		world->getSystem<AIDecisionSystem>().setSourceReadyCallback([&](const std::string& /*defName*/, glm::vec2 at) {
+			++readinessAsked;
+			return at != regrowingBerries && at != regrowingSticks;
+		});
+
+		auto colonist = createColonist({0.0F, 0.0F});
+		satisfyAllNeeds(*getNeeds(colonist));
+		setNeedValue(colonist, NeedType::Hunger, 40.0F);
+		addKnownEntity(colonist, regrowingBerries, berryBushId, assets::CapabilityType::Harvestable);
+		addKnownEntity(colonist, readyBerries, berryBushId, assets::CapabilityType::Harvestable);
+		addKnownEntity(colonist, regrowingSticks, stickBushId, assets::CapabilityType::Harvestable);
+		addKnownEntity(colonist, readySticks, stickBushId, assets::CapabilityType::Harvestable);
+
+		// A work order wanting sticks, so a tier-4 Harvest outranks the tier-5 hunger.
+		const auto station = world->createEntity();
+		world->addComponent<Position>(station, Position{{0.0F, 0.0F}});
+		GoalTask craft;
+		craft.type = TaskType::Craft;
+		craft.owner = GoalOwner::CraftingGoalSystem;
+		craft.destinationEntity = station;
+		craft.targetAmount = 2;
+		craft.status = GoalStatus::Blocked;
+		const uint64_t craftId = GoalTaskRegistry::Get().createGoal(std::move(craft));
+		GoalTask harvest;
+		harvest.type = TaskType::Harvest;
+		harvest.owner = GoalOwner::CraftingGoalSystem;
+		harvest.destinationEntity = station;
+		harvest.yieldDefNameId = stickId;
+		harvest.targetAmount = 2;
+		harvest.parentGoalId = craftId;
+		harvest.status = GoalStatus::Available;
+		GoalTaskRegistry::Get().createGoal(std::move(harvest));
+
+		world->update(0.016F);
+
+		auto* trace = getTrace(colonist);
+		ASSERT_NE(trace, nullptr);
+		const auto* hunger = findOption(*trace, isHungerNeedOption);
+		ASSERT_NE(hunger, nullptr);
+		ASSERT_TRUE(hunger->targetPosition.has_value());
+		EXPECT_EQ(*hunger->targetPosition, readyBerries) << "hunger passes over the nearer, regrowing bush";
+		EXPECT_EQ(hunger->status, OptionStatus::Available);
+
+		const auto* skipped = findOption(*trace, [&](const EvaluatedOption& o) {
+			return o.taskType == TaskType::Harvest && o.targetPosition == regrowingSticks;
+		});
+		ASSERT_NE(skipped, nullptr);
+		EXPECT_EQ(skipped->status, OptionStatus::Regrowing) << "the trace says why the nearer bush was skipped";
+		const auto* selected = trace->getSelected();
+		ASSERT_NE(selected, nullptr);
+		EXPECT_EQ(selected->taskType, TaskType::Harvest);
+		EXPECT_EQ(selected->harvestTargetEntityId, hashWorldEntity(readySticks, stickBushId)) << "the work harvests the ready bush";
+		EXPECT_LE(readinessAsked, 4) << "asked only of the candidates that would otherwise win";
+	}
+
 	// =============================================================================
 	// Integration Tests with ActionSystem - Bug Reproduction
 	// =============================================================================
@@ -2480,6 +2547,51 @@ namespace ecs::test {
 
 		auto* needs = getNeeds(colonist);
 		EXPECT_GT(needs->hunger().value, initialHunger) << "Hunger should have been restored by eat action";
+	}
+
+	/// A hungry colonist whose only known food is a bush on its regrowth cooldown neither starts a
+	/// harvest that would pay nothing nor stalls: it takes its next option, and harvests the bush once
+	/// it is ready again.
+	TEST_F(AIActionIntegrationTest, RegrowingOnlyFoodIsHarvestedOnceReady) {
+		auto&					registry = assets::AssetRegistry::Get();
+		assets::AssetDefinition bush;
+		bush.defName = "Flora_BerryBush";
+		bush.label = "Berry Bush";
+		bush.capabilities.harvestable = assets::HarvestableCapability{};
+		bush.capabilities.harvestable->yieldDefName = "Berry";
+		bush.capabilities.harvestable->regrowthTime = 60.0F;
+		registry.registerTestDefinition(std::move(bush));
+		const uint32_t bushId = registry.getDefNameId("Flora_BerryBush");
+
+		// Standing at the bush, so a hunger task arrives at once and its harvest starts.
+		auto colonist = createColonist({0.0F, 0.0F});
+		world->getComponent<Memory>(colonist)->rememberWorldEntity({0.0F, 0.0F}, bushId, registry.getCapabilityMask(bushId));
+		setNeedValue(colonist, NeedType::Hunger, 40.0F);
+		setNeedValue(colonist, NeedType::Thirst, 100.0F);
+		setNeedValue(colonist, NeedType::Energy, 100.0F);
+		setNeedValue(colonist, NeedType::Bladder, 100.0F);
+		bool regrowing = true;
+		world->getSystem<AIDecisionSystem>().setSourceReadyCallback([&](const std::string& /*defName*/, glm::vec2 /*at*/) {
+			return !regrowing;
+		});
+
+		for (int frame = 0; frame < 20; ++frame) {
+			world->update(0.1F);
+			ASSERT_NE(getAction(colonist)->type, ActionType::Harvest) << "no harvest of a regrowing bush, frame " << frame;
+		}
+		EXPECT_TRUE(getTask(colonist)->isActive()) << "it took another option rather than standing idle";
+		const auto& options = world->getComponent<DecisionTrace>(colonist)->options;
+		EXPECT_TRUE(std::ranges::any_of(options, [](const EvaluatedOption& o) {
+			return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Hunger && o.status == OptionStatus::Regrowing;
+		})) << "the trace shows the food it is waiting on";
+
+		regrowing = false;
+		bool harvested = false;
+		for (int frame = 0; frame < 20 && !harvested; ++frame) {
+			world->update(0.1F);
+			harvested = getAction(colonist)->type == ActionType::Harvest;
+		}
+		EXPECT_TRUE(harvested) << "the bush is harvested once it is ready";
 	}
 
 	/// Test that a colonist can complete a full need-fulfill cycle:

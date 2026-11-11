@@ -74,8 +74,8 @@ namespace ecs {
 						assets::isItemEdible(def->capabilities.harvestable->yieldDefName)) {
 						const auto& harvestCap = def->capabilities.harvestable.value();
 
-						// Memory still holds a bush on its regrowth cooldown, so a colonist can arrive at
-						// one; the world then pays nothing at completion (applyCollectionEffect).
+						// The decision passes over a regrowing bush, but one another colonist cut while this
+						// one walked over still pays nothing at completion (applyCollectionEffect).
 
 						// Calculate random yield within range using proper RNG
 						uint32_t yield = harvestCap.amountMin;

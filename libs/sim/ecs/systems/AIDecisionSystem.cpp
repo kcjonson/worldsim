@@ -1588,17 +1588,29 @@ namespace ecs {
 		};
 
 		// With an empty pack, the one food source both the Hunger option and the gather-food option
-		// target: the nearest reachable remembered harvestable whose yield is edible. The gather
-		// option is on offer whenever the pack is empty, so this is probed even when Hunger is met.
+		// target: the nearest reachable remembered harvestable whose yield is edible and that is ready
+		// to give it. The gather option is on offer whenever the pack is empty, so this is probed even
+		// when Hunger is met. Readiness is asked of candidates nearest first, only until one is chosen;
+		// the nearest reachable one passed over for regrowing is kept to show why the colonist waits.
 		const bool						packHasFood = hasEdibleFood(m_registry, inventory);
 		std::optional<KnownWorldEntity> foodSource;
+		std::optional<KnownWorldEntity> regrowingFood;
 		if (!packHasFood) {
 			foodSource = findNeedSource(
 				assets::CapabilityType::Harvestable,
 				[&](uint64_t sourceKey, const KnownWorldEntity& known) {
 					return notKnownUnreachable(sourceKey, known) && yieldsEdibleFood(m_registry, known.defNameId);
 				},
-				canReachSource
+				[&](uint64_t sourceKey, const glm::vec2& sourcePosition) {
+					const KnownWorldEntity* known = memory.getWorldEntity(sourceKey);
+					if (known != nullptr && !sourceReady(known->defNameId, sourcePosition)) {
+						if (!regrowingFood.has_value() && canReachSource(sourceKey, sourcePosition)) {
+							regrowingFood = *known;
+						}
+						return false;
+					}
+					return canReachSource(sourceKey, sourcePosition);
+				}
 			);
 		}
 
@@ -1648,6 +1660,17 @@ namespace ecs {
 					if (option.status == OptionStatus::Available) {
 						option.reason += " (harvest)";
 					}
+					trace.options.push_back(option);
+					continue;
+				}
+
+				// The only reachable food known is regrowing: wait on it, taking other options meanwhile
+				if (regrowingFood.has_value() && need.needsAttention()) {
+					option.targetPosition = regrowingFood->position;
+					option.targetDefNameId = regrowingFood->defNameId;
+					option.distanceToTarget = glm::distance(position.value, regrowingFood->position);
+					option.status = OptionStatus::Regrowing;
+					option.reason = formatOptionReason(option, needTypeName(needType));
 					trace.options.push_back(option);
 					continue;
 				}
@@ -1739,6 +1762,11 @@ namespace ecs {
 				gatherOption.sourceKey = hashWorldEntity(foodSource->position, foodSource->defNameId);
 				gatherOption.status = OptionStatus::Available;
 				gatherOption.reason = "Gathering food (inventory empty)";
+			} else if (regrowingFood.has_value()) {
+				gatherOption.targetPosition = regrowingFood->position;
+				gatherOption.distanceToTarget = glm::distance(position.value, regrowingFood->position);
+				gatherOption.status = OptionStatus::Regrowing;
+				gatherOption.reason = "Food source regrowing";
 			} else {
 				gatherOption.status = OptionStatus::NoSource;
 				gatherOption.reason = "No food source known";
@@ -1894,6 +1922,18 @@ namespace ecs {
 				continue;
 			}
 			const bool needsTarget = option.taskType != TaskType::Wander && option.targetPosition.has_value();
+			// A harvest of a regrowing source would pay nothing at completion: pass it over for the next
+			// option, and it is chosen again once ready. A clear removes its source whatever its state.
+			// Asked before the snap moves the target off the source's own position.
+			if (option.taskType == TaskType::Harvest && needsTarget && option.targetDefNameId.has_value() &&
+				!sourceReady(*option.targetDefNameId, *option.targetPosition)) {
+				const auto* goal = GoalTaskRegistry::Get().getGoal(option.harvestGoalId);
+				if (goal == nullptr || !goal->clearFootprint.has_value()) {
+					option.status = OptionStatus::Regrowing;
+					option.reason += " (regrowing)";
+					continue;
+				}
+			}
 			// Snap only the task types whose action looks its target up by entity/footprint and so
 			// is satisfied by arriving ADJACENT: Harvest (incl. footprint clearing), Build, and
 			// Deconstruct. Their stored target is a CENTER that can sit in a navmesh hole -- a tree
@@ -2188,6 +2228,10 @@ namespace ecs {
 		}
 	}
 
+	bool AIDecisionSystem::sourceReady(uint32_t defNameId, glm::vec2 position) const {
+		return !onSourceReady || onSourceReady(m_registry.getDefName(defNameId), position);
+	}
+
 	std::string AIDecisionSystem::formatOptionReason(const EvaluatedOption& option, const char* needName) {
 		if (option.taskType == TaskType::Wander) {
 			return "All needs satisfied";
@@ -2198,6 +2242,8 @@ namespace ecs {
 
 		if (option.status == OptionStatus::NoSource) {
 			reason += " (no known source)";
+		} else if (option.status == OptionStatus::Regrowing) {
+			reason += " (source regrowing)";
 		} else if (option.needValue < 10.0F) {
 			reason += " (critical)";
 		} else if (option.status == OptionStatus::Available || option.status == OptionStatus::Selected) {

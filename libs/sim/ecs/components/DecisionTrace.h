@@ -25,6 +25,7 @@ namespace ecs {
 		Selected,  // This is the current task
 		Available, // Could do this, but lower priority
 		NoSource,  // Need exists but no known entity in memory
+		Regrowing, // The known source is regrowing: skipped now, chosen again once it is ready
 		Satisfied  // Need above threshold, no action needed
 	};
 
