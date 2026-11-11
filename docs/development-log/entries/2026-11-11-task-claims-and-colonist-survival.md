@@ -168,7 +168,7 @@ names as targets.
 - [Decision Trace](../../design/game-systems/colonists/decision-trace.md)
 - [Crafting & Material Provisioning](../../technical/crafting-provisioning-architecture.md)
 - [Sim CLI](../../technical/sim-cli.md)
-- [Scenario 11: Colonists eat](../../testing/scenarios/11-colonists-eat.md)
+- [Scenario 12: Colonists eat](../../testing/scenarios/12-colonists-eat.md)
 
 ## Next Steps
 

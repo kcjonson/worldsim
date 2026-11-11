@@ -36,8 +36,8 @@ namespace {
 
 	// An axis-aligned rect centered at `center` with the given half-extents (no
 	// rotation, unit scale equivalent).
-	OrientedRect axisAlignedRect(glm::vec2 center, glm::vec2 halfExtents) {
-		OrientedRect rect;
+	nav::OrientedRect axisAlignedRect(glm::vec2 center, glm::vec2 halfExtents) {
+		nav::OrientedRect rect;
 		rect.center		 = center;
 		rect.axisX		 = {1.0F, 0.0F};
 		rect.axisY		 = {0.0F, 1.0F};
@@ -45,10 +45,10 @@ namespace {
 		return rect;
 	}
 
-	OrientedRect rotatedRect(glm::vec2 center, glm::vec2 halfExtents, float angle) {
+	nav::OrientedRect rotatedRect(glm::vec2 center, glm::vec2 halfExtents, float angle) {
 		const float	 c = std::cos(angle);
 		const float	 s = std::sin(angle);
-		OrientedRect rect;
+		nav::OrientedRect rect;
 		rect.center		 = center;
 		rect.axisX		 = {c, s};
 		rect.axisY		 = {-s, c};
@@ -64,14 +64,14 @@ namespace {
 
 // A center well outside the inflated rect is not touched.
 TEST(StaticRectResolveTest, OutsideReturnsNullopt) {
-	const OrientedRect rect = axisAlignedRect({0.0F, 0.0F}, {0.3F, 0.3F});
+	const nav::OrientedRect rect = axisAlignedRect({0.0F, 0.0F}, {0.3F, 0.3F});
 	EXPECT_FALSE(resolveCenterAgainstRect({5.0F, 5.0F}, kClearance, rect).has_value());
 }
 
 // A center just inside the inflated +X face is pushed to exactly halfExtent+clearance
 // along X, y unchanged.
 TEST(StaticRectResolveTest, JustInsidePlusXPushedToBoundary) {
-	const OrientedRect rect = axisAlignedRect({0.0F, 0.0F}, {0.3F, 0.3F});
+	const nav::OrientedRect rect = axisAlignedRect({0.0F, 0.0F}, {0.3F, 0.3F});
 	const float		   ex	= 0.3F + kClearance;
 	// Slightly inside the +X boundary, well within the band in Y (so X is least pen).
 	const glm::vec2 start{ex - 0.01F, 0.0F};
@@ -84,7 +84,7 @@ TEST(StaticRectResolveTest, JustInsidePlusXPushedToBoundary) {
 
 // A center deep inside an axis-aligned rect is pushed out the NEAREST face.
 TEST(StaticRectResolveTest, DeepInsidePushedNearestFace) {
-	const OrientedRect rect = axisAlignedRect({0.0F, 0.0F}, {0.3F, 0.3F});
+	const nav::OrientedRect rect = axisAlignedRect({0.0F, 0.0F}, {0.3F, 0.3F});
 	// Closer to the +X face than to +Y: x penetration is smaller.
 	const glm::vec2 start{0.2F, 0.05F};
 
@@ -101,7 +101,7 @@ TEST(StaticRectResolveTest, RotatedRectPushesAlongOrientedFace) {
 	const float		   angle = 0.5235987756F; // 30 degrees
 	const glm::vec2	   center{2.0F, -1.0F};
 	const glm::vec2	   half{0.4F, 0.15F};
-	const OrientedRect rect = rotatedRect(center, half, angle);
+	const nav::OrientedRect rect = rotatedRect(center, half, angle);
 
 	// Start a point a little inside the +axisX inflated face: local coords
 	// (lx slightly less than ex, ly small so X is least penetration).
@@ -123,7 +123,7 @@ TEST(StaticRectResolveTest, RotatedRectPushesAlongOrientedFace) {
 // axis with sign +. For a wider-than-tall rect, Y is the smaller half-extent so the
 // Y penetration is least -> push +Y.
 TEST(StaticRectResolveTest, ExactCenterDeterministicPush) {
-	const OrientedRect rect = axisAlignedRect({0.0F, 0.0F}, {0.4F, 0.2F});
+	const nav::OrientedRect rect = axisAlignedRect({0.0F, 0.0F}, {0.4F, 0.2F});
 	auto			   corrected = resolveCenterAgainstRect({0.0F, 0.0F}, kClearance, rect);
 	ASSERT_TRUE(corrected.has_value());
 	// penX = 0.4+c, penY = 0.2+c -> penY < penX -> push along +Y to 0.2+c.
@@ -200,8 +200,7 @@ TEST_F(StaticRectCollisionSystemTest, AgentInsideRectIsPushedOut) {
 	AssetRegistry&	reg = AssetRegistry::Get();
 	AssetDefinition tree;
 	tree.defName					 = "Test_StaticRectTree";
-	tree.collision.type				 = CollisionShapeType::Rect;
-	tree.collision.halfExtentsMeters = {0.3F, 0.3F};
+	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.3F, 0.3F}});
 	reg.registerTestDefinition(tree);
 
 	PlacementExecutor executor(reg);
@@ -232,8 +231,8 @@ TEST_F(StaticRectCollisionSystemTest, AgentInsideRectIsPushedOut) {
 	// aligned, so check the agent escaped the inflated AABB.
 	auto* nearPos = world.getComponent<Position>(near);
 	ASSERT_NE(nearPos, nullptr);
-	const float ex	  = tree.collision.halfExtentsMeters.x + kStaticRectClearanceMeters;
-	const float ey	  = tree.collision.halfExtentsMeters.y + kStaticRectClearanceMeters;
+	const float ex	  = tree.collisionFor(0).halfExtentsMeters.x + kStaticRectClearanceMeters;
+	const float ey	  = tree.collisionFor(0).halfExtentsMeters.y + kStaticRectClearanceMeters;
 	const float dx	  = std::abs(nearPos->value.x - treeAt.x);
 	const float dy	  = std::abs(nearPos->value.y - treeAt.y);
 	EXPECT_TRUE(dx >= ex - 1e-4F || dy >= ey - 1e-4F) << "agent center still inside inflated rect";
@@ -245,13 +244,52 @@ TEST_F(StaticRectCollisionSystemTest, AgentInsideRectIsPushedOut) {
 	EXPECT_FLOAT_EQ(farPos->value.y, farStart.y);
 }
 
+// The rect an agent hits is the one of the entity's age class: an agent 0.2 m off the trunk is
+// clear of a sapling's rect (half-extent 0.1 m) and inside a mature tree's (0.3 m).
+TEST_F(StaticRectCollisionSystemTest, RectFollowsAgeClass) {
+	AssetRegistry&	reg = AssetRegistry::Get();
+	AssetDefinition tree;
+	tree.defName	= "Test_StaticRectAged";
+	tree.ageClasses = {{.name = "sapling", .weight = 0.5F, .variants = 1}, {.name = "mature", .weight = 0.5F, .variants = 1}};
+	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.1F, 0.1F}});
+	tree.setCollision(1, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.3F, 0.3F}});
+	reg.registerTestDefinition(tree);
+
+	for (const uint8_t ageClass : {uint8_t{0}, uint8_t{1}}) {
+		PlacementExecutor executor(reg);
+		const glm::vec2					   treeAt{20.0F, 20.0F};
+		const world::ChunkCoordinate coord = world::worldToChunk({treeAt.x, treeAt.y});
+		SpatialIndex					   index;
+		PlacedEntity					   pe;
+		pe.defName		= "Test_StaticRectAged";
+		pe.position		= treeAt;
+		pe.traits.ageClass = ageClass;
+		index.insert(pe);
+		assets::AsyncChunkPlacementResult result;
+		result.coord		= coord;
+		result.spatialIndex = std::move(index);
+		executor.storeChunkResult(std::move(result));
+
+		World			world;
+		const glm::vec2 start{treeAt.x + 0.2F, treeAt.y};
+		EntityID		agent = spawnAgent(world, start);
+		wire(world, executor, treeAt).update(0.0F);
+
+		const glm::vec2 end = world.getComponent<Position>(agent)->value;
+		if (ageClass == 0) {
+			EXPECT_FLOAT_EQ(end.x, start.x);
+		} else {
+			EXPECT_GT(end.x, start.x);
+		}
+	}
+}
+
 // Same setup run twice yields an identical corrected position (determinism).
 TEST_F(StaticRectCollisionSystemTest, DeterministicCorrection) {
 	AssetRegistry&	reg = AssetRegistry::Get();
 	AssetDefinition tree;
 	tree.defName					 = "Test_StaticRectTreeDet";
-	tree.collision.type				 = CollisionShapeType::Rect;
-	tree.collision.halfExtentsMeters = {0.3F, 0.3F};
+	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.3F, 0.3F}});
 	reg.registerTestDefinition(tree);
 
 	auto buildExecutor = [&](PlacementExecutor& executor) {
@@ -287,11 +325,11 @@ TEST_F(StaticRectCollisionSystemTest, DeterministicCorrection) {
 
 // --- Non-unit scale regression (the bug guard) --------------------------------
 
-// Before the fix, orientedRectFor scaled the half-extent THEN added the unscaled
+// Before the fix, the collision box scaled the half-extent THEN added the unscaled
 // 0.05 m pad, producing world boundary = scale*halfExtent + 0.05. The nav built
 // scale*(halfExtent + 0.05). At scale 0.8 the collision boundary was 0.01 m OUTSIDE
 // the nav boundary, spuriously pushing agents on valid nav routes. After the fix
-// both sides compute scale*(halfExtent + 0.05), so boundaries coincide.
+// both read nav::placedObstacleBox, scale*(halfExtent + 0.05), so boundaries coincide.
 //
 // Rect halfExtents {0.3, 0.3}, scale 0.8:
 //   expected boundary = 0.8 * (0.3 + 0.05) = 0.28 m from center on each axis.
@@ -299,8 +337,7 @@ TEST_F(StaticRectCollisionSystemTest, NonUnitScaleRegressionJustOutside) {
 	AssetRegistry&	reg = AssetRegistry::Get();
 	AssetDefinition tree;
 	tree.defName					 = "Test_ScaleRect_JustOutside";
-	tree.collision.type				 = CollisionShapeType::Rect;
-	tree.collision.halfExtentsMeters = {0.3F, 0.3F};
+	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.3F, 0.3F}});
 	reg.registerTestDefinition(tree);
 
 	const glm::vec2					   treeAt{50.0F, 50.0F};
@@ -348,8 +385,7 @@ TEST_F(StaticRectCollisionSystemTest, AgentInQueryBoxButOutsideObbNotMoved) {
 	AssetRegistry&	reg = AssetRegistry::Get();
 	AssetDefinition tree;
 	tree.defName					 = "Test_ScaleRect_InBox";
-	tree.collision.type				 = CollisionShapeType::Rect;
-	tree.collision.halfExtentsMeters = {0.3F, 0.3F};
+	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.3F, 0.3F}});
 	reg.registerTestDefinition(tree);
 
 	const glm::vec2					   treeAt{30.0F, 30.0F};
@@ -385,9 +421,9 @@ TEST_F(StaticRectCollisionSystemTest, NonRectCollisionIgnored) {
 	AssetRegistry&	reg = AssetRegistry::Get();
 	AssetDefinition poly;
 	poly.defName		  = "Test_PolyCollision_Ignored";
-	poly.collision.type	  = CollisionShapeType::Polygon;
-	poly.collision.pointsMeters = {
-		{-1.0F, -1.0F}, {1.0F, -1.0F}, {1.0F, 1.0F}, {-1.0F, 1.0F}};
+	poly.setCollision(
+		0, {.type = CollisionShapeType::Polygon, .pointsMeters = {{-1.0F, -1.0F}, {1.0F, -1.0F}, {1.0F, 1.0F}, {-1.0F, 1.0F}}}
+	);
 	reg.registerTestDefinition(poly);
 
 	const glm::vec2					   treeAt{40.0F, 40.0F};
@@ -424,8 +460,7 @@ TEST_F(StaticRectCollisionSystemTest, PushedOnlyWhereDetailIsOn) {
 	AssetRegistry&	reg = AssetRegistry::Get();
 	AssetDefinition tree;
 	tree.defName					 = "Test_StaticRectTreeDetail";
-	tree.collision.type				 = CollisionShapeType::Rect;
-	tree.collision.halfExtentsMeters = {0.3F, 0.3F};
+	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.3F, 0.3F}});
 	reg.registerTestDefinition(tree);
 
 	const glm::vec2				 treeAt{20.0F, 20.0F};
@@ -465,8 +500,7 @@ TEST_F(StaticRectCollisionSystemTest, TreeNotYetInNavMeshIsNotPushed) {
 	AssetRegistry&	reg = AssetRegistry::Get();
 	AssetDefinition tree;
 	tree.defName					 = "Test_StaticRectTreeLate";
-	tree.collision.type				 = CollisionShapeType::Rect;
-	tree.collision.halfExtentsMeters = {0.3F, 0.3F};
+	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.3F, 0.3F}});
 	reg.registerTestDefinition(tree);
 
 	const glm::vec2	  treeAt{20.0F, 20.0F};
@@ -487,4 +521,40 @@ TEST_F(StaticRectCollisionSystemTest, TreeNotYetInNavMeshIsNotPushed) {
 	executor.storeChunkResult(std::move(result));
 	sys.update(0.0F);
 	EXPECT_EQ(world.getComponent<Position>(agent)->value, inside);
+}
+
+// A tree mirrored by a negative scale is collided with like any other: its box is the same size
+// (|scale| times the padded half extents), its offset mirrored through its position, the box the mesh
+// ring is built from (nav::placedObstacleBox).
+TEST_F(StaticRectCollisionSystemTest, MirroredTreeIsCollidedWith) {
+	AssetRegistry&	reg = AssetRegistry::Get();
+	AssetDefinition tree;
+	tree.defName					 = "Test_MirroredRect";
+	tree.setCollision(0, {.type = CollisionShapeType::Rect, .offsetMeters = {0.5F, 0.0F}, .halfExtentsMeters = {0.3F, 0.3F}});
+	reg.registerTestDefinition(tree);
+
+	const glm::vec2				 treeAt{50.0F, 50.0F};
+	const world::ChunkCoordinate coord = world::worldToChunk({treeAt.x, treeAt.y});
+	PlacementExecutor			 executor(reg);
+	{
+		SpatialIndex index;
+		PlacedEntity pe;
+		pe.defName	= "Test_MirroredRect";
+		pe.position = treeAt;
+		pe.scale	= -1.0F;
+		index.insert(pe);
+		assets::AsyncChunkPlacementResult result;
+		result.coord		= coord;
+		result.spatialIndex = std::move(index);
+		executor.storeChunkResult(std::move(result));
+	}
+
+	// Mirrored, the box's centre is 0.5 m WEST of the tree; an agent 0.1 m east of that centre is
+	// inside it and is pushed out east, to the box's side 0.35 m from its centre.
+	const glm::vec2 boxCentre{treeAt.x - 0.5F, treeAt.y};
+	World			world;
+	const EntityID	agent = spawnAgent(world, boxCentre + glm::vec2{0.1F, 0.0F});
+	wire(world, executor, treeAt).update(0.0F);
+	EXPECT_NEAR(world.getComponent<Position>(agent)->value.x, boxCentre.x + 0.3F + kStaticRectClearanceMeters, 1e-4F)
+		<< "the mirrored tree was not collided with";
 }

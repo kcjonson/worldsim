@@ -40,10 +40,11 @@ Everything lives in one global table, `lib`, with one sub-table per file:
 
 | File | Table | Holds |
 |------|-------|-------|
-| `num.lua` | `lib.num` | `clamp` (doubles; the global `clamp` the engine binds is a float one) |
+| `num.lua` | `lib.num` | `clamp` (doubles; the global `clamp` the engine binds is a float one), `smoothstep`, `curve` (a monotone cubic through points, straight on past the ends), `curveParam` (a curve param written `x:y, x:y`) |
 | `random.lua` | `lib.random` | `uniform`, `signed`, `gauss`, `lognormal`, `stream(id)` (reseeds `math.random` from the variant's seed and an id, one stream per stage) |
 | `color.lua` | `lib.color` | `parseHex`, `hex`, `toLinear`, `toSrgb`, `luminance`, `shade`, `mixLinear`, `mixSrgb`, `toHsv`, `fromHsv`, `tone` |
-| `shape.lua` | `lib.shape` | `polygon`, `stripSides`, `stripPart`, `strip` (a tapered strip along a polyline), `upFan` (a grass tuft), `up` |
+| `shape.lua` | `lib.shape` | `polygon`, `stripSides`, `stripPart`, `strip` (a tapered strip along a polyline), `upFan` (a grass tuft), `up`, `lobed` (a lobed blob), `emit` (adds a polygon to the asset) |
+| `foot.lua` | `lib.foot` | `contactShadow` (where a plant meets the ground) |
 | `bark.lua` | `lib.bark` | `texturedTrunk` |
 
 A script that calls a helper often can alias it once at the top (`local clamp = lib.num.clamp`). Moving a helper into the prelude must not change what a generator draws, so keep its arithmetic and its random draw order as they were.
@@ -60,6 +61,7 @@ The engine sets these globals before the prelude runs:
 | `variantIndex` | Which variant of its age class is being drawn, from 0. Set for every template the game draws (`AssetRegistry::templateId`). Generators drawn by seed alone (ground tiles, groundcover, `asset-cli render --seed`) see 0. |
 | `ageClass` | The age class name (`"sapling"`, `"mature"`, `"veteran"`) for a def with `<ageClasses>`, and nil for any other def. |
 | `period` | A ground def's `<period>` in metres; nil for other roles. |
+| `detailPxPerMeter` | The screen density, pixels a metre, of the `<detailLevels>` level being built ([asset-definitions.md](./asset-definitions.md#detail-levels)); nil for a def without levels. A seed-only build (`asset-cli render --seed`, the asset-manager previews) gets the reference level's. |
 
 A template's seed comes from `AssetRegistry::generationSeed`: 0 for a def with a single variant, otherwise the hash ground tiles use (`assets::variantSeed`, `VariantSeed.h`) of the def name and age class name (`Flora_TreeOak:mature`), at the variant index. A def without age classes hashes its name alone. The seed is a pure function of (def, age class, variant), so a variant draws the same mesh every load.
 
@@ -70,8 +72,7 @@ Every generator script must define a `generate` function:
 ```lua
 -- assets/world/flora/MapleTree/generate.lua
 
--- Load shared utilities (by name, not path)
-local branch = require("branch_utils")
+-- Shared helpers come from the prelude (lib.*); require is not available
 
 -- Called once per variant during pre-generation
 -- @param params  Table of parameters from asset definition
@@ -138,7 +139,13 @@ asset:setPosition(x, y)
 asset:setRotation(radians)
 asset:setScale(s)      -- uniform
 asset:setScale(sx, sy) -- non-uniform
+
+-- Declare the rect collider (local meters): half width, half height, center x, center y.
+-- Non-positive half-extents are ignored.
+asset:setCollisionRect(halfW, halfH, cx, cy)
 ```
+
+The collider is per age class: the loader keeps the rect from each class's variant 0, so a script may read `ageClass` to size it (a sapling's trunk is thinner than a veteran's). It must not depend on `variantIndex` or the seed; `asset-cli validate --render-smoke` fails a def whose rect differs between two variants of one class.
 
 ### VectorPath
 
@@ -291,157 +298,22 @@ myLeaf:setRotation(rng:angle())
 asset:addChild(myLeaf)
 ```
 
-## Example: Deciduous Tree Generator
+## Example: deciduous tree generator
+
+`assets/shared/scripts/deciduous.lua` is the working example; oak and maple run it with different params. It reads one `age` from 0 to 1 (the `age` param when set, else the `ageClass` global mapped to an age at the top of the script), grows a branch skeleton for that long, hangs sprays of leaf marks along the outer shoots, and draws the crown, trunk, and ground contact through the prelude. Its shape, in brief:
 
 ```lua
--- assets/world/flora/OakTree/generate.lua
--- Generates deciduous trees using Weber & Penn-style branching
+local age = lib.num.clamp(getFloat("age", ({ sapling = 0.15, mature = 0.55, veteran = 0.9 })[ageClass] or 0.55), 0, 1)
+local trunkWidth = lib.num.curve(lib.num.curveParam("trunkWidth", "0.15:0.18, 0.55:0.45, 0.9:0.72"), age)
+asset:setCollisionRect(trunkWidth / 2, trunkWidth / 2, 0, 0) -- from the age only, never the variant
 
--- Load shared utilities (by name)
-local branch_utils = require("branch_utils")
+lib.random.stream(3)          -- each stage draws from its own stream
+-- ... grow the skeleton, one stream per shoot, then group its tips into clumps and hang sprays of leaves on the outer shoots ...
 
-function generate(params, rng)
-    local asset = VectorAsset.new()
-
-    -- Parse parameters with defaults
-    local trunkHeight = rng:range(params.trunkHeightRange[1], params.trunkHeightRange[2])
-    local trunkWidth = rng:range(params.trunkWidthRange[1], params.trunkWidthRange[2])
-    local branchLevels = rng:rangeInt(params.branchLevels[1], params.branchLevels[2])
-    local leafDensity = params.leafDensity or 0.7
-
-    -- Colors
-    local barkColor = Color.hex(params.barkColor or "#5D4037")
-    local leafBaseColor = Color.hex(params.leafColorRange.base or "#228B22")
-
-    -- Generate trunk
-    local trunk = generateTrunk(trunkHeight, trunkWidth, barkColor, rng)
-    asset:addPath(trunk)
-
-    -- Store branch endpoints for leaves
-    local endpoints = {}
-
-    -- Generate branches
-    local trunkTop = Vec2.new(0, -trunkHeight)
-    generateBranches(asset, trunkTop, Vec2.new(0, -1), trunkWidth * 0.7,
-                     branchLevels, params, barkColor, endpoints, rng)
-
-    -- Add leaves at endpoints (load local SVG)
-    if params.leafSvg then
-        local leafTemplate = loadSvg(params.leafSvg)  -- Local: oak_leaf.svg
-        for _, endpoint in ipairs(endpoints) do
-            addLeavesAtPoint(asset, leafTemplate, endpoint, leafBaseColor,
-                            leafDensity, params.leafColorRange, rng)
-        end
-    end
-
-    return asset
-end
-
-function generateTrunk(height, width, color, rng)
-    local path = VectorPath.new()
-
-    -- Slight taper and curve for organic look
-    local wobble = rng:range(0.05, 0.15)
-    local midWidth = width * (1 + wobble)
-
-    path:moveTo(-width/2, 0)  -- bottom left
-    path:cubicTo(-midWidth/2, -height*0.3,
-                 -width*0.4, -height*0.7,
-                 -width*0.3, -height)  -- top left
-    path:lineTo(width*0.3, -height)    -- top right
-    path:cubicTo(width*0.4, -height*0.7,
-                 midWidth/2, -height*0.3,
-                 width/2, 0)            -- bottom right
-    path:close()
-
-    path:setFill(color)
-    return path
-end
-
-function generateBranches(asset, startPos, direction, width, depth, params, color, endpoints, rng)
-    if depth <= 0 or width < 0.5 then
-        -- Terminal branch - store for leaves
-        table.insert(endpoints, { pos = startPos, dir = direction })
-        return
-    end
-
-    -- Branch parameters
-    local length = width * rng:range(4, 7)
-    local angle = math.atan2(direction.y, direction.x)
-
-    -- Create branch path
-    local branch = createBranchPath(startPos, angle, length, width, color, rng)
-    asset:addPath(branch)
-
-    -- Calculate branch endpoint
-    local endPos = startPos + direction * length
-
-    -- Spawn child branches
-    local numChildren = rng:rangeInt(2, 4)
-    local baseAngle = rng:range(params.branchAngleRange[1], params.branchAngleRange[2])
-
-    for i = 1, numChildren do
-        local childAngle = angle + math.rad(baseAngle * (i - (numChildren+1)/2))
-        childAngle = childAngle + rng:range(-0.2, 0.2)  -- randomize
-
-        local childDir = Vec2.new(math.cos(childAngle), math.sin(childAngle))
-        local childWidth = width * rng:range(0.5, 0.7)
-
-        generateBranches(asset, endPos, childDir, childWidth, depth - 1,
-                        params, color, endpoints, rng)
-    end
-end
-
-function createBranchPath(start, angle, length, width, color, rng)
-    local path = VectorPath.new()
-
-    -- Create tapered branch shape
-    local endWidth = width * 0.6
-    local perpAngle = angle + math.pi/2
-
-    local dx = math.cos(angle) * length
-    local dy = math.sin(angle) * length
-    local px = math.cos(perpAngle)
-    local py = math.sin(perpAngle)
-
-    path:moveTo(start.x - px * width/2, start.y - py * width/2)
-    path:lineTo(start.x + dx - px * endWidth/2, start.y + dy - py * endWidth/2)
-    path:lineTo(start.x + dx + px * endWidth/2, start.y + dy + py * endWidth/2)
-    path:lineTo(start.x + px * width/2, start.y + py * width/2)
-    path:close()
-
-    path:setFill(color)
-    return path
-end
-
-function addLeavesAtPoint(asset, template, endpoint, baseColor, density, colorRange, rng)
-    local numLeaves = math.floor(10 * density * rng:range(0.7, 1.3))
-
-    for i = 1, numLeaves do
-        local leaf = template:clone()
-
-        -- Random position around endpoint
-        local offsetDist = rng:range(2, 8)
-        local offsetAngle = rng:angle()
-        local x = endpoint.pos.x + math.cos(offsetAngle) * offsetDist
-        local y = endpoint.pos.y + math.sin(offsetAngle) * offsetDist
-
-        leaf:setPosition(x, y)
-        leaf:setRotation(rng:angle())
-        leaf:setScale(rng:range(0.7, 1.3))
-
-        -- Color variation
-        local hueShift = rng:range(colorRange.hueShift[1], colorRange.hueShift[2])
-        local leafColor = baseColor:hueShift(hueShift)
-
-        -- Apply color to all paths in leaf
-        for _, path in ipairs(leaf:getPaths()) do
-            path:setFill(leafColor)
-        end
-
-        asset:addChild(leaf)
-    end
-end
+lib.random.stream(6)
+lib.foot.contactShadow(trunkWidth, lib.color.hex("contactShadow", "#1d2616"), 0.18)
+-- ... the wood as one shape: tapered strips along the skeleton's axes, all in one bark colour ...
+lib.shape.emit(lib.shape.leaf(x, y, dx, dy, len, wide, pointed), tone) -- one leaf mark of a spray
 ```
 
 ## Sandbox Restrictions

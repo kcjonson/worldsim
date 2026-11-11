@@ -29,7 +29,7 @@ namespace {
 	using geometry::nav::NavMeshInput;
 
 	constexpr std::int64_t kProvenanceWater	 = -1;
-	constexpr std::int64_t kProvenanceTree	 = -2;
+	constexpr std::int64_t kProvenancePlaced	 = -2;
 	constexpr std::int64_t kProvenanceBorder = -3;
 
 	enum class Fixture { ManyTrees, Control, RealRings };
@@ -48,7 +48,7 @@ namespace {
 		in.polygons.push_back(NavInputPolygon{td::realBorderRing(), false, kProvenanceBorder});
 		in.polygons.push_back(NavInputPolygon{td::realWaterRing(), true, kProvenanceWater, kNoOpening, true});
 		for (const std::vector<Vec2i64>& tree : td::realTreeRings()) {
-			in.polygons.push_back(NavInputPolygon{tree, true, kProvenanceTree});
+			in.polygons.push_back(NavInputPolygon{tree, true, kProvenancePlaced});
 		}
 		return in;
 	}
@@ -67,7 +67,7 @@ namespace {
 
 	std::int64_t treeCount(const NavMeshInput& in) {
 		return std::count_if(in.polygons.begin(), in.polygons.end(), [](const NavInputPolygon& p) {
-			return p.provenanceId == kProvenanceTree;
+			return p.provenanceId == kProvenancePlaced;
 		});
 	}
 
@@ -76,7 +76,7 @@ namespace {
 		NavMeshInput out;
 		std::int64_t kept = 0;
 		for (const NavInputPolygon& p : in.polygons) {
-			if (p.provenanceId == kProvenanceTree) {
+			if (p.provenanceId == kProvenancePlaced) {
 				if (kept >= keep) {
 					continue;
 				}

@@ -1,6 +1,8 @@
 #include "InstancedEntityRenderer.h"
 
+#include <assets/AssetRegistry.h>
 #include <primitives/Primitives.h>
+#include <utils/Log.h>
 #include <vector/Types.h>
 
 #include <algorithm>
@@ -8,27 +10,132 @@
 
 namespace worldview {
 
-	InstancedEntityRenderer::MeshSlot& InstancedEntityRenderer::meshSlot(uint32_t templateId, const renderer::TessellatedMesh& mesh) {
-		if (templateId >= m_meshSlots.size()) {
-			m_meshSlots.resize(static_cast<size_t>(templateId) + 1);
+	InstancedEntityRenderer::TemplateLevels& InstancedEntityRenderer::levelsOf(uint32_t templateId) {
+		if (templateId >= templateLevels.size()) {
+			templateLevels.resize(static_cast<size_t>(templateId) + 1);
 		}
-		MeshSlot& slot = m_meshSlots[templateId];
-		if (!slot.uploaded) {
-			slot.handle = Renderer::Primitives::uploadInstancedMesh(mesh, kInitialInstanceCapacity);
-			slot.capacity = kInitialInstanceCapacity;
-			slot.triangles = static_cast<uint32_t>(mesh.getTriangleCount());
-			if (!mesh.vertices.empty()) {
-				slot.boundsMin = mesh.vertices.front();
-				slot.boundsMax = mesh.vertices.front();
-			}
-			for (const auto& v : mesh.vertices) {
-				slot.boundsMin = {std::min(slot.boundsMin.x, v.x), std::min(slot.boundsMin.y, v.y)};
-				slot.boundsMax = {std::max(slot.boundsMax.x, v.x), std::max(slot.boundsMax.y, v.y)};
-				slot.radius = std::max(slot.radius, std::sqrt((v.x * v.x) + (v.y * v.y)));
-			}
-			slot.uploaded = true;
+		TemplateLevels& levels = templateLevels[templateId];
+		if (!levels.resolved) {
+			levels.densities = assets::AssetRegistry::Get().detailLevels(templateId);
+			levels.reference = assets::referenceDetailLevel(levels.densities);
+			levels.mesh = assets::AssetRegistry::Get().getTemplate(templateId);
+			levels.resolved = true;
 		}
-		return slot;
+		return levels;
+	}
+
+	InstancedEntityRenderer::MeshSlot& InstancedEntityRenderer::slotAt(uint32_t index) {
+		if (index >= meshSlots.size()) {
+			meshSlots.resize(static_cast<size_t>(index) + 1);
+		}
+		return meshSlots[index];
+	}
+
+	void InstancedEntityRenderer::want(uint32_t templateId, uint8_t level) {
+		const uint32_t index = slotIndex(templateId, level);
+		MeshSlot&	   slot = slotAt(index);
+		if (slot.wantedFrame == frameIndex) {
+			return;
+		}
+		slot.wantedFrame = frameIndex;
+		if (slot.state == SlotState::Absent) {
+			const TemplateLevels& levels = levelsOf(templateId);
+			if (level == levels.reference) {
+				// Uploaded now, outside the budget, so a template draws on the frame it first appears.
+				slot.registryMesh = levels.mesh;
+				upload(index);
+				return;
+			}
+			slot.state = SlotState::Requested;
+		}
+		if (slot.state == SlotState::Requested) {
+			levelBuilder.want(templateId, level);
+		}
+	}
+
+	void InstancedEntityRenderer::collectAndUpload() {
+		for (TemplateLevelBuilder::Finished& done : levelBuilder.takeFinished()) {
+			const uint32_t index = slotIndex(done.templateId, done.level);
+			MeshSlot&	   slot = slotAt(index);
+			if (!done.mesh.has_value() || done.mesh->vertices.empty()) {
+				LOG_ERROR(Engine, "Template %u has no mesh at detail level %u", done.templateId, static_cast<unsigned>(done.level));
+				slot.state = SlotState::Failed;
+				continue;
+			}
+			slot.builtMesh = std::move(done.mesh);
+			slot.state = SlotState::Waiting;
+			uploadQueue.push_back(index);
+		}
+
+		uint32_t uploadedVertices = 0;
+		while (!uploadQueue.empty()) {
+			MeshSlot&						 slot = meshSlots[uploadQueue.front()];
+			const renderer::TessellatedMesh& mesh = *slot.mesh();
+			const auto						 vertices = static_cast<uint32_t>(mesh.vertices.size());
+			if (uploadedVertices > 0 && uploadedVertices + vertices > kUploadVertexBudget) {
+				break;
+			}
+			const uint32_t index = uploadQueue.front();
+			uploadQueue.pop_front();
+			uploadedVertices += vertices;
+			upload(index);
+		}
+	}
+
+	void InstancedEntityRenderer::upload(uint32_t index) {
+		MeshSlot&						 slot = meshSlots[index];
+		const renderer::TessellatedMesh& mesh = *slot.mesh();
+		const uint32_t					 templateId = index / static_cast<uint32_t>(assets::kMaxDetailLevels);
+		const auto						 level = static_cast<uint8_t>(index % assets::kMaxDetailLevels);
+		slot.handle = Renderer::Primitives::uploadInstancedMesh(mesh, kInitialInstanceCapacity);
+		if (!slot.handle.isValid()) {
+			LOG_ERROR(Engine, "Template %u failed to upload at detail level %u", templateId, static_cast<unsigned>(level));
+			release(index, SlotState::Failed);
+			return;
+		}
+		slot.capacity = kInitialInstanceCapacity;
+		slot.triangles = static_cast<uint32_t>(mesh.getTriangleCount());
+		slot.boundsMin = mesh.vertices.front();
+		slot.boundsMax = mesh.vertices.front();
+		slot.radius = 0.0F;
+		for (const auto& v : mesh.vertices) {
+			slot.boundsMin = {std::min(slot.boundsMin.x, v.x), std::min(slot.boundsMin.y, v.y)};
+			slot.boundsMax = {std::max(slot.boundsMax.x, v.x), std::max(slot.boundsMax.y, v.y)};
+			slot.radius = std::max(slot.radius, std::sqrt((v.x * v.x) + (v.y * v.y)));
+		}
+		slot.state = SlotState::Ready;
+		slot.lastDrawnFrame = frameIndex;
+		levelsOf(templateId).readyMask |= static_cast<uint8_t>(1U << level);
+	}
+
+	void InstancedEntityRenderer::release(uint32_t index, SlotState state) {
+		MeshSlot& slot = meshSlots[index];
+		slot.handle = {};
+		slot.builtMesh.reset();
+		slot.capacity = 0;
+		slot.state = state;
+		TemplateLevels& levels = templateLevels[index / assets::kMaxDetailLevels];
+		levels.readyMask = static_cast<uint8_t>(levels.readyMask & ~(1U << (index % assets::kMaxDetailLevels)));
+	}
+
+	void InstancedEntityRenderer::evictStale() {
+		uint32_t resident = 0;
+		size_t	 bytes = 0;
+		for (uint32_t index = 0; index < meshSlots.size(); ++index) {
+			MeshSlot& slot = meshSlots[index];
+			if (slot.state != SlotState::Ready || !slot.builtMesh.has_value()) {
+				continue; // reference levels stay while the registry keeps their template
+			}
+			if (frameIndex - slot.lastDrawnFrame > kEvictAfterFrames) {
+				release(index, SlotState::Absent);
+				continue;
+			}
+			++resident;
+			bytes += (slot.builtMesh->vertices.size() * (sizeof(Foundation::Vec2) + sizeof(Foundation::Color))) +
+					 (slot.builtMesh->indices.size() * sizeof(uint16_t)) + (static_cast<size_t>(slot.capacity) * sizeof(Renderer::InstanceData));
+		}
+		lastLevelStats.residentLevels = resident;
+		lastLevelStats.residentBytes = bytes;
 	}
 
 	void InstancedEntityRenderer::emitAnimated(
@@ -56,20 +163,49 @@ namespace worldview {
 		for (size_t i = 0; i < animVerts.size(); ++i) {
 			const float worldX = animVerts[i].x * entityScale + entity.position.x;
 			const float worldY = animVerts[i].y * entityScale + entity.position.y;
-			m_animVertices.emplace_back((worldX - camX) * scale + halfViewW, (worldY - camY) * scale + halfViewH);
+			animVertices.emplace_back((worldX - camX) * scale + halfViewW, (worldY - camY) * scale + halfViewH);
 			if (hasMeshColors) {
 				const auto& mc = mesh->colors[i];
-				m_animColors.emplace_back(
+				animColors.emplace_back(
 					mc.r * entity.colorTint.r, mc.g * entity.colorTint.g, mc.b * entity.colorTint.b, mc.a * entity.colorTint.a
 				);
 			} else {
-				m_animColors.emplace_back(entity.colorTint.r, entity.colorTint.g, entity.colorTint.b, entity.colorTint.a);
+				animColors.emplace_back(entity.colorTint.r, entity.colorTint.g, entity.colorTint.b, entity.colorTint.a);
 			}
 		}
 		for (const auto idx : mesh->indices) {
-			m_animIndices.push_back(static_cast<uint16_t>(animVertexBase + idx));
+			animIndices.push_back(static_cast<uint16_t>(animVertexBase + idx));
 		}
 		animVertexBase += static_cast<uint32_t>(animVerts.size());
+	}
+
+	void InstancedEntityRenderer::settleLevel(uint32_t templateId, TemplateLevels& levels, LevelStats& levelStats) {
+		levels.frame = frameIndex;
+		const uint8_t wanted = assets::detailLevelFor(levels.densities, levelStats.screenPixelsPerMeter);
+		want(templateId, levels.reference); // the fallback of last resort
+		want(templateId, wanted);
+
+		const std::optional<uint8_t> level = assets::nearestReadyLevel(levels.readyMask, wanted);
+		levels.drawSlot = level.has_value() ? slotIndex(templateId, *level) : kNoSlot;
+		levels.use = kNoUse;
+		if (!level.has_value()) {
+			return;
+		}
+		MeshSlot& slot = meshSlots[levels.drawSlot];
+		slot.lastDrawnFrame = frameIndex;
+		levels.boundsMin = slot.boundsMin;
+		levels.boundsMax = slot.boundsMax;
+		levels.radius = slot.radius;
+		if (!levels.densities.empty()) {
+			const float density = levels.densities[*level];
+			auto		use = std::find_if(levelStats.uses.begin(), levelStats.uses.end(), [&](const LevelStats::Use& u) {
+				   return u.pixelsPerMeter == density;
+			   });
+			if (use == levelStats.uses.end()) {
+				use = levelStats.uses.insert(levelStats.uses.end(), LevelStats::Use{.pixelsPerMeter = density});
+			}
+			levels.use = static_cast<uint32_t>(use - levelStats.uses.begin());
+		}
 	}
 
 	void InstancedEntityRenderer::emitSorted(const std::vector<assets::DepthSortItem>& items, const assets::RenderContext& ctx, RenderStats& stats) {
@@ -87,77 +223,25 @@ namespace worldview {
 		const float			   halfViewH = static_cast<float>(ctx.viewportHeight) * 0.5F;
 		const Renderer::Primitives::WorldCamera camera{.position = {camX, camY}, .zoom = zoom, .pixelsPerMeter = ctx.pixelsPerMeter};
 
-		m_animVertices.clear();
-		m_animColors.clear();
-		m_animIndices.clear();
+		++frameIndex;
+		animVertices.clear();
+		animColors.clear();
+		animIndices.clear();
 		uint32_t animVertexBase = 0;
 
-		// Classify and bound every entity first: the overlap grid is sized to the
-		// instanced entities' extent and cells to their mean size.
-		m_itemBounds.resize(items.size());
-		Foundation::Vec2 extentMin{0.0F, 0.0F};
-		Foundation::Vec2 extentMax{0.0F, 0.0F};
-		float			 sizeSum = 0.0F;
-		uint32_t		 instancedCount = 0;
-		for (size_t i = 0; i < items.size(); ++i) {
-			const assets::DepthSortItem& item = items[i];
-			ItemBounds&					 bounds = m_itemBounds[i];
-			bounds.kind = ItemKind::Skip;
-			const assets::PlacedEntity& entity = *item.entity;
-			const auto*					templateMesh = m_templateCache.get(entity.templateId);
-			if (templateMesh == nullptr) {
-				continue;
-			}
-			if (item.isAnimated && entity.partTransforms != nullptr && !entity.partTransforms->empty() && !templateMesh->parts.empty()) {
-				bounds.kind = ItemKind::Animated;
-				continue;
-			}
-			const MeshSlot& slot = meshSlot(entity.templateId, *templateMesh);
-			if (!slot.handle.isValid()) {
-				continue;
-			}
-			// The shader places a vertex at position + rotate(vertex * scale).
-			const Foundation::Vec2 position{entity.position.x, entity.position.y};
-			if (entity.rotation == 0.0F) {
-				const Foundation::Vec2 a = slot.boundsMin * entity.scale;
-				const Foundation::Vec2 b = slot.boundsMax * entity.scale;
-				bounds.min = position + Foundation::Vec2{std::min(a.x, b.x), std::min(a.y, b.y)};
-				bounds.max = position + Foundation::Vec2{std::max(a.x, b.x), std::max(a.y, b.y)};
-			} else {
-				const float r = slot.radius * std::abs(entity.scale);
-				bounds.min = position - Foundation::Vec2{r, r};
-				bounds.max = position + Foundation::Vec2{r, r};
-			}
-			bounds.kind = ItemKind::Instanced;
-			if (instancedCount == 0) {
-				extentMin = bounds.min;
-				extentMax = bounds.max;
-			}
-			extentMin = {std::min(extentMin.x, bounds.min.x), std::min(extentMin.y, bounds.min.y)};
-			extentMax = {std::max(extentMax.x, bounds.max.x), std::max(extentMax.y, bounds.max.y)};
-			sizeSum += std::max(bounds.max.x - bounds.min.x, bounds.max.y - bounds.min.y);
-			++instancedCount;
-		}
+		// Take what the level builder finished and upload it within budget first, so the walk below
+		// draws every level that is ready: a level other than the reference first wanted in this
+		// frame's walk draws from a later frame, and its template draws the nearest ready level until
+		// then. A reference level uploads in the walk, the first time its template is drawn.
+		collectAndUpload();
 
-		uint32_t gridW = 1;
-		uint32_t gridH = 1;
-		float	 cellSize = 1.0F;
-		if (instancedCount > 0) {
-			const float extentW = extentMax.x - extentMin.x;
-			const float extentH = extentMax.y - extentMin.y;
-			const auto	maxSide = static_cast<float>(kMaxOverlapGridSide);
-			cellSize = std::max({sizeSum / static_cast<float>(instancedCount), extentW / maxSide, extentH / maxSide, 1.0e-3F});
-			gridW = std::clamp(static_cast<uint32_t>(std::ceil(extentW / cellSize)), 1U, kMaxOverlapGridSide);
-			gridH = std::clamp(static_cast<uint32_t>(std::ceil(extentH / cellSize)), 1U, kMaxOverlapGridSide);
-		}
-		m_overlapGrid.assign(static_cast<size_t>(gridW) * gridH, 0);
-		auto cellOf = [&](float v, float origin, uint32_t cells) {
-			return std::min(static_cast<uint32_t>(std::max((v - origin) / cellSize, 0.0F)), cells - 1);
-		};
-
-		m_latestRunOfTemplate.assign(m_meshSlots.size(), 0);
-		m_runCount = 0;
-		m_firstOpenRun = 0;
+		// The items were gathered before this, so every template they name has an id the registry
+		// has handed out, and every slot the walk can draw is below this bound.
+		const uint32_t		   slotBound = (assets::AssetRegistry::Get().templateCount() + 1) * static_cast<uint32_t>(assets::kMaxDetailLevels);
+		LevelStats			   levelStats{.screenPixelsPerMeter = scale};
+		const Foundation::Vec2 screenOffset{halfViewW - (camX * scale), halfViewH - (camY * scale)};
+		planner.beginFrame(ctx.viewportWidth, ctx.viewportHeight, slotBound);
+		runCount = 0;
 
 		// drawInstanced draws immediately; the CPU triangle batch only draws when the
 		// BatchRenderer is flushed. To keep depth order we draw every open run before an
@@ -165,91 +249,61 @@ namespace worldview {
 		// out (drawTriangles + flush) before the next instanced entity opens or joins a run
 		// (so the anim sits behind it). Only one of the two kinds is ever pending at a time.
 		auto flushRuns = [&]() {
-			for (uint32_t r = m_firstOpenRun; r < m_runCount; ++r) {
-				Run&	   run = m_runs[r];
-				MeshSlot&  slot = m_meshSlots[run.templateId]; // made by meshSlot when the entity was bounded
+			for (const uint32_t r : planner.close()) {
+				Run&	   run = runs[r];
+				MeshSlot&  slot = meshSlots[run.slot];
 				const auto count = static_cast<uint32_t>(run.instances.size());
-				if (count > slot.capacity) {
+				if (slot.state == SlotState::Ready && count > slot.capacity) {
 					uint32_t capacity = slot.capacity;
 					while (capacity < count) {
 						capacity *= 2;
 					}
-					slot.handle = Renderer::Primitives::uploadInstancedMesh(*m_templateCache.get(run.templateId), capacity);
+					slot.handle = Renderer::Primitives::uploadInstancedMesh(*slot.mesh(), capacity);
 					slot.capacity = capacity;
+					if (!slot.handle.isValid()) {
+						// Its template settles on another ready level from the next frame.
+						LOG_ERROR(Engine, "Mesh slot %u failed to grow to %u instances; that level is dropped", run.slot, capacity);
+						release(run.slot, SlotState::Failed);
+					}
 				}
-				if (slot.handle.isValid()) {
+				if (slot.state == SlotState::Ready) {
 					Renderer::Primitives::drawInstanced(slot.handle, run.instances.data(), count, camera);
 					stats.uprightDrawCalls++;
 					stats.uprightTriangles += count * slot.triangles;
 				}
 				run.instances.clear();
 			}
-			m_firstOpenRun = m_runCount;
 		};
 
-		// An entity joins its template's latest open run only if no entity in a run after
-		// that one shares a grid cell with it: those are drawn after the run but sit behind
-		// this entity in depth, so the two must not overlap. Otherwise it opens a new run.
-		auto addInstanced = [&](const assets::PlacedEntity& entity, const ItemBounds& bounds) {
-			const uint32_t x0 = cellOf(bounds.min.x, extentMin.x, gridW);
-			const uint32_t x1 = cellOf(bounds.max.x, extentMin.x, gridW);
-			const uint32_t y0 = cellOf(bounds.min.y, extentMin.y, gridH);
-			const uint32_t y1 = cellOf(bounds.max.y, extentMin.y, gridH);
-			uint32_t	   latestCovering = 0;
-			for (uint32_t y = y0; y <= y1; ++y) {
-				for (uint32_t x = x0; x <= x1; ++x) {
-					latestCovering = std::max(latestCovering, m_overlapGrid[(static_cast<size_t>(y) * gridW) + x]);
-				}
-			}
-			uint32_t   runKey = m_latestRunOfTemplate[entity.templateId]; // 1 + run index
-			const bool joinable = runKey > m_firstOpenRun && latestCovering <= runKey;
-			if (!joinable) {
-				if (m_runCount == m_runs.size()) {
-					m_runs.emplace_back();
-				}
-				m_runs[m_runCount].templateId = entity.templateId;
-				runKey = ++m_runCount;
-				m_latestRunOfTemplate[entity.templateId] = runKey;
-			}
-			m_runs[runKey - 1].instances.emplace_back(
-				Foundation::Vec2(entity.position.x, entity.position.y), entity.rotation, entity.scale, entity.colorTint
-			);
-			// Every covered cell held at most runKey, so runKey is now the latest there.
-			for (uint32_t y = y0; y <= y1; ++y) {
-				for (uint32_t x = x0; x <= x1; ++x) {
-					m_overlapGrid[(static_cast<size_t>(y) * gridW) + x] = runKey;
-				}
-			}
-		};
 		auto flushAnim = [&]() {
-			if (m_animIndices.empty()) {
+			if (animIndices.empty()) {
 				return;
 			}
 			stats.uprightDrawCalls++;
 			// The batch renderer draws each submitted triangle as two (a quad with a repeated
 			// corner) and counts it so; match that or this undercounts against the total.
-			stats.uprightTriangles += static_cast<uint32_t>(m_animIndices.size() / 3) * 2;
+			stats.uprightTriangles += static_cast<uint32_t>(animIndices.size() / 3) * 2;
 			Renderer::Primitives::drawTriangles(Renderer::Primitives::TrianglesArgs{
-				.vertices = m_animVertices.data(),
-				.indices = m_animIndices.data(),
-				.vertexCount = m_animVertices.size(),
-				.indexCount = m_animIndices.size(),
-				.colors = m_animColors.data()
+				.vertices = animVertices.data(),
+				.indices = animIndices.data(),
+				.vertexCount = animVertices.size(),
+				.indexCount = animIndices.size(),
+				.colors = animColors.data()
 			});
 			Renderer::Primitives::flush(); // draw now, at this sorted position
-			m_animVertices.clear();
-			m_animColors.clear();
-			m_animIndices.clear();
+			animVertices.clear();
+			animColors.clear();
+			animIndices.clear();
 			animVertexBase = 0;
 		};
 
 		// Stroke the selected entity's outline (world-space rings -> screen) and flush
 		// it now, so it sits at this depth in the stream and nearer entities occlude it.
 		auto drawOutline = [&]() {
-			if (!m_selectionOutline.valid) {
+			if (!selectionOutline.valid) {
 				return;
 			}
-			const auto&				so = m_selectionOutline;
+			const auto&				so = selectionOutline;
 			const Foundation::Color col{so.rgba.r, so.rgba.g, so.rgba.b, so.rgba.a};
 			for (const auto& ring : so.worldRings) {
 				const size_t n = ring.size();
@@ -274,44 +328,97 @@ namespace worldview {
 			Renderer::Primitives::flush(); // draw at this sorted position
 		};
 
+		// One walk of the stream: each upright is classified, bounded on the screen by the level its
+		// template draws this frame, and placed in a run as it comes.
 		bool outlineInjected = false;
-		for (size_t i = 0; i < items.size(); ++i) {
-			const assets::DepthSortItem& item = items[i];
+		for (const assets::DepthSortItem& item : items) {
 			// Inject the outline right before the first entity strictly nearer than it,
 			// so everything at-or-behind its depth draws first (and it occludes them),
 			// and everything nearer draws after (occluding it).
-			if (!outlineInjected && m_selectionOutline.valid && item.anchorY > m_selectionOutline.anchorY) {
+			if (!outlineInjected && selectionOutline.valid && item.anchorY > selectionOutline.anchorY) {
 				flushRuns();
 				flushAnim();
 				drawOutline();
 				outlineInjected = true;
 			}
 
-			const ItemBounds&			bounds = m_itemBounds[i];
-			const assets::PlacedEntity& entity = *item.entity;
-			if (bounds.kind == ItemKind::Instanced) {
-				flushAnim(); // draw any pending anim behind this entity
-				addInstanced(entity, bounds);
-				stats.entities++;
-			} else if (bounds.kind == ItemKind::Animated) {
+			const assets::Upright& upright = *item.upright;
+			const uint32_t		   templateId = upright.templateId;
+			TemplateLevels&		   levels =
+				  templateId < templateLevels.size() && templateLevels[templateId].resolved ? templateLevels[templateId] : levelsOf(templateId);
+			const renderer::TessellatedMesh* templateMesh = levels.mesh;
+			if (templateMesh == nullptr) {
+				continue;
+			}
+			if (upright.isAnimated && !templateMesh->parts.empty()) {
 				// Animated entities carry per-part transforms; they can't be GPU-instanced
 				// (each has unique deformed geometry), so emit them on the CPU triangle path.
 				flushRuns(); // draw the open runs behind this actor
-				const auto* templateMesh = m_templateCache.get(entity.templateId);
 				// Keep the CPU batch inside the 16-bit index space.
 				if (animVertexBase + static_cast<uint32_t>(templateMesh->vertices.size()) > 65535U) {
 					flushAnim();
 				}
-				emitAnimated(entity, templateMesh, camX, camY, scale, halfViewW, halfViewH, animVertexBase);
+				emitAnimated(*upright.entity, templateMesh, camX, camY, scale, halfViewW, halfViewH, animVertexBase);
 				stats.entities++;
+				continue;
 			}
+
+			if (levels.frame != frameIndex) {
+				settleLevel(templateId, levels, levelStats);
+			}
+			if (levels.drawSlot == kNoSlot) {
+				continue;
+			}
+			if (levels.use != kNoUse) {
+				++levelStats.uses[levels.use].instances;
+			}
+
+			// The shader places a vertex at position + rotate(vertex * scale), and the camera
+			// maps world to screen by scale and offset alone.
+			const Foundation::Vec2 position{upright.position.x, upright.position.y};
+			Foundation::Vec2	   worldMin;
+			Foundation::Vec2	   worldMax;
+			if (upright.rotation == 0.0F) {
+				const Foundation::Vec2 a = levels.boundsMin * upright.scale;
+				const Foundation::Vec2 b = levels.boundsMax * upright.scale;
+				worldMin = position + Foundation::Vec2{std::min(a.x, b.x), std::min(a.y, b.y)};
+				worldMax = position + Foundation::Vec2{std::max(a.x, b.x), std::max(a.y, b.y)};
+			} else {
+				const float r = levels.radius * std::abs(upright.scale);
+				worldMin = position - Foundation::Vec2{r, r};
+				worldMax = position + Foundation::Vec2{r, r};
+			}
+			const Foundation::Vec2 pixelMin = (worldMin * scale) + screenOffset;
+			const Foundation::Vec2 pixelMax = (worldMax * scale) + screenOffset;
+			const bool			   small = std::max(pixelMax.x - pixelMin.x, pixelMax.y - pixelMin.y) <= kUnorderedFootprintPixels;
+
+			flushAnim(); // draw any pending anim behind this entity
+			const uint32_t slot = levels.drawSlot;
+			const uint32_t r = planner.place(slot, planner.cellsOf(pixelMin, pixelMax), small);
+			if (r == runCount) {
+				if (runCount == runs.size()) {
+					runs.emplace_back();
+				}
+				runs[runCount++].slot = slot;
+			}
+			runs[r].instances.emplace_back(position, upright.rotation, upright.scale, upright.colorTint);
+			stats.entities++;
 		}
 
 		flushRuns();
 		flushAnim();
+		stats.uprightOverlapSplits += planner.splits();
 		if (!outlineInjected) {
 			drawOutline(); // frontmost selection: draw last, on top of everything
 		}
+
+		levelBuilder.endFrame();
+		std::sort(levelStats.uses.begin(), levelStats.uses.end(), [](const LevelStats::Use& a, const LevelStats::Use& b) {
+			return a.pixelsPerMeter < b.pixelsPerMeter;
+		});
+		levelStats.pendingRequests = static_cast<uint32_t>(levelBuilder.pending() + uploadQueue.size());
+		lastLevelStats = std::move(levelStats);
+		evictStale();
 	}
 
 } // namespace worldview

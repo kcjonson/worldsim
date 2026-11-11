@@ -1,9 +1,11 @@
 #pragma once
 
+#include "../core/RectMm.h"
 #include "../core/Vec2i64.h"
 #include "NavMesh.h"
 
 #include <cstdint>
+#include <limits>
 #include <span>
 #include <unordered_set>
 #include <vector>
@@ -25,9 +27,37 @@
 
 namespace geometry::nav {
 
+	// How a path query ended: a path found; no path at all (off-mesh, an endpoint on
+	// ground this belief cannot stand on or outside PathLimits::within, or every corridor
+	// tried and none reaches); or a limit reached with corridors still untried, so a path
+	// may exist past the limit.
+	enum class PathStop { Found, NoPath, LimitReached };
+
+	// Bounds on one path query, each off by default.
+	struct PathLimits {
+		// Give up once no corridor still open can cost this or less. Scores are lower
+		// bounds on cost, so a path costing at most this is still found, and one costing
+		// more than a millimetre past it is never returned: the cap is inclusive to within
+		// a millimetre, since scores bound the unrounded walk and the cost is the rounded
+		// one's.
+		double maxCost = std::numeric_limits<double>::infinity();
+		// Confine the walk to this closed rectangle, whatever the triangulation: a path is
+		// found exactly when one exists on the ground the rectangle's interior covers (as
+		// on the mesh cut to it), and every point of the walk lies in the rectangle. It
+		// bounds the disc's centre, not the disc: the rectangle's sides are no obstacle to
+		// keep the radius from. A start or goal outside it is NoPath.
+		const RectMm* within = nullptr;
+		// Give up after this many expansions (PathResult::expansions); 0 is no limit. A
+		// goal popped once the count is reached is still tried, so a path accepted there
+		// is Found, with one expansion over the count.
+		std::uint32_t maxExpansions = 0;
+	};
+
 	struct PathResult {
 		bool				 reachable = false; // false => no path (off-mesh or disconnected)
 		std::vector<Vec2i64> points;			// taut polyline start..goal in mm; empty when !reachable
+		PathStop			 stop	   = PathStop::NoPath;
+		std::uint32_t		 expansions = 0; // nodesExpanded, as PathLimits::maxExpansions counts it
 
 		// Search instrumentation: how hard the search worked. nodesExpanded counts
 		// labels popped and closed (each expanded once); peakOpenSet
@@ -45,7 +75,7 @@ namespace geometry::nav {
 		// taut walk; inside a corridor the path does not bend away from priced faces to
 		// save cost.
 		double cost = 0.0;
-		// The walk runs through a face crossed at a price (flora it pushes through, a
+		// The walk runs through a face crossed at a price (detail it pushes through, a
 		// waiting mover's footprint): the caller acts on it before the mover sets off.
 		bool crossesPricedFaces = false;
 	};
@@ -60,7 +90,7 @@ namespace geometry::nav {
 	//                                seen is treated as ABSENT (path goes straight
 	//                                through it); a seen wall blocks unless the agent
 	//                                also knows a door through it.
-	// A negative faceBlocker is a common-knowledge terrain sentinel (water/tree, or a
+	// A negative faceBlocker is a common-knowledge terrain sentinel (water/placed obstacle, or a
 	// junction with no incident-wall id) and always blocks, filter or not. A junction
 	// tagged with a positive incident-wall segment id is belief-gated like that wall.
 	//
@@ -104,11 +134,11 @@ namespace geometry::nav {
 	// at its exact string-pulled length (or cost), so it returns the shortest walk of the
 	// corridors it keeps (see PathQuery.cpp's label cap).
 	PathResult pathThrough(const NavMesh& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
-						   BeliefFilter belief = {});
+						   const BeliefFilter& belief = {}, const PathLimits& limits = {});
 	// Any mesh through its view (see NavView). Without forests in the view the
 	// reachability pre-check is skipped and the A* decides alone.
 	PathResult pathThrough(const NavView& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
-						   BeliefFilter belief = {});
+						   const BeliefFilter& belief = {}, const PathLimits& limits = {});
 
 	// Sound, cheap reachability test (P3.3): can a disc of radius agentRadiusMm POSSIBLY get from
 	// start to goal under `belief`? Uses the precomputed reachability forest, so it rejects a

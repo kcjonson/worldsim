@@ -273,6 +273,14 @@ namespace assets {
 		/// Build dependency graph from asset definitions
 		void buildDependencyGraph();
 
+		/// Crown radius in meters by template id, for the templates of crown-spaced defs placed in
+		/// one chunk (PlacementParams::crownSpacing); 0 for any other template. `largest` is the
+		/// biggest radius held.
+		struct CrownRadii {
+			std::unordered_map<uint32_t, float> byTemplate;
+			float								largest = 0.0F;
+		};
+
 		/// Place all entities of a given type in a chunk
 		void placeEntityType(
 			const std::string&			  defName,
@@ -280,6 +288,7 @@ namespace assets {
 			SpatialIndex&				  chunkIndex,
 			const IAdjacentChunkProvider* adjacentProvider,
 			std::mt19937&				  rng,
+			CrownRadii&					  crowns,
 			std::vector<PlacedEntity>&	  outEntities
 		) const;
 

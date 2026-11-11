@@ -4,6 +4,7 @@
 #include "../components/AgentRadius.h"
 #include "../components/Colonist.h"
 #include "../components/NavPath.h"
+#include "../components/Task.h"
 #include "../components/Transform.h"
 
 #include "nav/NavCoords.h"
@@ -23,9 +24,11 @@
 #include <world/chunk/Chunk.h>
 #include <world/chunk/ChunkManager.h>
 
+#include <glm/common.hpp>
 #include <glm/geometric.hpp>
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <chrono>
 #include <cmath>
@@ -52,8 +55,8 @@ namespace ecs {
 
 		constexpr std::size_t  kUnlimited	  = std::numeric_limits<std::size_t>::max();
 		constexpr std::int64_t kChunkMm		  = static_cast<std::int64_t>(world::kChunkSize) * geometry::kMillimetersPerMeter;
-		constexpr std::int64_t kCellsPerChunk = kChunkMm / NavigationSystem::kFloraCellMm;
-		static_assert(kCellsPerChunk * NavigationSystem::kFloraCellMm == kChunkMm, "flora cells tile a chunk");
+		constexpr std::int64_t kCellsPerChunk = kChunkMm / NavigationSystem::kDetailCellMm;
+		static_assert(kCellsPerChunk * NavigationSystem::kDetailCellMm == kChunkMm, "detail cells tile a chunk");
 
 		double msSince(Clock::time_point start) {
 			return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
@@ -68,10 +71,10 @@ namespace ecs {
 			return {static_cast<std::int32_t>(geometry::floorDiv(cellX(key), kCellsPerChunk)),
 					static_cast<std::int32_t>(geometry::floorDiv(cellY(key), kCellsPerChunk))};
 		}
-		// The scan cell that owns a placed entity: [lo, lo + side) on each axis, as scanFlora tests
+		// The scan cell that owns a placed entity: [lo, lo + side) on each axis, as scanDetail tests
 		// it (the side is a power of two in metres, so the division is exact).
 		std::int64_t cellOfEntity(glm::vec2 position) {
-			constexpr float kSide = static_cast<float>(NavigationSystem::kFloraCellMm / geometry::kMillimetersPerMeter);
+			constexpr float kSide = static_cast<float>(NavigationSystem::kDetailCellMm / geometry::kMillimetersPerMeter);
 			return cellKey(static_cast<std::int64_t>(std::floor(position.x / kSide)), static_cast<std::int64_t>(std::floor(position.y / kSide)));
 		}
 		constexpr std::int64_t kFirstCell = std::numeric_limits<std::int64_t>::min();
@@ -196,14 +199,32 @@ namespace ecs {
 			return tri >= 0 && faceOk(mesh.triangles()[static_cast<std::size_t>(tri)]);
 		}
 
-		// Walkable for the most optimistic belief: only common-knowledge terrain (water, trees) blocks.
+		// Walkable for the most optimistic belief: only common-knowledge terrain (water, placed obstacles) blocks.
 		bool terrainWalkable(const gnav::PatchableMesh& mesh, glm::vec2 meters) {
 			return pointOnFace(mesh, meters, [](const gnav::NavTriangle& t) { return gnav::terrainTraversable(t); });
 		}
 
-		// Ground a mover may stand on: terrain-walkable, or a tree, which movement prices.
+		// The detail obstacle kinds, by the tag their rings carry: what walking a metre through one
+		// costs. Each is in the nav mesh only (the structural mesh never holds detail), only where a
+		// wanted rect brings it, and priced, never walled. One kind so far, every placed entity's
+		// collider whatever the entity is.
+		constexpr gnav::TagPrice kDetailKinds[] = {{.tag = nav::kProvenancePlaced, .multiplier = NavigationSystem::kDetailPassMultiplier}};
+
+		bool isDetailTag(std::int64_t tag) {
+			return std::any_of(std::begin(kDetailKinds), std::end(kDetailKinds), [tag](const gnav::TagPrice& kind) { return kind.tag == tag; });
+		}
+
+		std::vector<std::int64_t> detailTags() {
+			std::vector<std::int64_t> tags;
+			for (const gnav::TagPrice& kind : kDetailKinds) {
+				tags.push_back(kind.tag);
+			}
+			return tags;
+		}
+
+		// Ground a mover may stand on: terrain-walkable, or detail, which movement prices.
 		bool moverFace(const gnav::NavTriangle& t) {
-			return gnav::terrainTraversable(t) || t.faceBlocker == nav::kProvenanceTree;
+			return gnav::terrainTraversable(t) || isDetailTag(t.faceBlocker);
 		}
 
 		// Walkable in truth: a solid wall face blocks, a door's span passes.
@@ -527,19 +548,19 @@ namespace ecs {
 		job.ms		 = msSince(start);
 	}
 
-	bool NavigationSystem::FloraKey::operator<(const FloraKey& o) const {
+	bool NavigationSystem::DetailKey::operator<(const DetailKey& o) const {
 		if (chunk.y != o.chunk.y || chunk.x != o.chunk.x) {
 			return ChunkLess{}(chunk, o.chunk);
 		}
 		return std::tie(cell, xBits, yBits, defName) < std::tie(o.cell, o.xBits, o.yBits, o.defName);
 	}
 
-	NavigationSystem::NavigationSystem(std::size_t floraRingBudget)
-		: detailMesh({.maxBoundsEdgeMm = kMaxBoundsEdgeMm, .detailTags = {nav::kProvenanceTree}}),
+	NavigationSystem::NavigationSystem(std::size_t detailRingBudget)
+		: detailMesh({.maxBoundsEdgeMm = kMaxBoundsEdgeMm, .detailTags = detailTags()}),
 		  structural({.maxBoundsEdgeMm = kMaxBoundsEdgeMm}),
 		  navWorker(std::make_unique<Worker>()),
 		  structuralWorker(std::make_unique<Worker>()),
-		  floraRingBudget(floraRingBudget) {}
+		  detailRingBudget(detailRingBudget) {}
 
 	NavigationSystem::~NavigationSystem() {
 		join();
@@ -558,30 +579,122 @@ namespace ecs {
 		wallsVersion	  = UINT64_MAX;
 	}
 
-	void NavigationSystem::appendMoverPositions(std::vector<world::WorldPosition>& out) const {
+	void NavigationSystem::appendAnchors(std::vector<world::WorldPosition>& out) const {
 		// Null only in headless tests with no colonists.
 		if (world == nullptr) {
 			return;
 		}
-		for (auto [entity, position, colonist] : world->view<Position, Colonist>()) {
+		// Every mover the AI drives (a colonist), and the goal of one waiting for a mesh: its ground
+		// has to come for the wait to end.
+		for (auto [entity, position, task] : world->view<Position, Task>()) {
 			(void)entity;
-			(void)colonist;
 			out.emplace_back(position.value.x, position.value.y);
+			if (task.state == TaskState::Moving && task.navState == NavState::AwaitingMesh) {
+				out.emplace_back(task.targetPosition.x, task.targetPosition.y);
+			}
+		}
+		// A route's rest, so the ground under it stays loaded and meshed: no two anchors along it
+		// farther apart than half the load range, so every chunk it crosses is held.
+		const float spacing = anchorLoadRangeMeters() / 2.0F;
+		for (auto [entity, position, path] : world->view<Position, NavPath>()) {
+			(void)entity;
+			if (path.done()) {
+				continue;
+			}
+			glm::vec2 from = position.value;
+			for (std::size_t next = path.current; next < path.waypoints.size(); ++next) {
+				const glm::vec2 to	   = path.waypoints[next];
+				const float		length = std::sqrt(dist2(from, to));
+				const int		pieces = std::max(1, static_cast<int>(std::ceil(length / spacing)));
+				for (int i = 1; i <= pieces; ++i) {
+					const glm::vec2 p = from + (to - from) * (static_cast<float>(i) / static_cast<float>(pieces));
+					out.emplace_back(p.x, p.y);
+				}
+				from = to;
+			}
 		}
 	}
 
 	std::vector<NavigationSystem::Rect> NavigationSystem::wantedRects() const {
-		std::vector<Rect>				  rects;
-		std::vector<world::WorldPosition> movers;
-		appendMoverPositions(movers);
-		for (const world::WorldPosition& mover : movers) {
-			const geometry::Vec2i64 c = nav::toMm(glm::vec2{mover.x, mover.y});
-			rects.push_back({{c.x - kSimRadiusMm, c.y - kSimRadiusMm}, {c.x + kSimRadiusMm, c.y + kSimRadiusMm}});
+		if (!haveViewport) {
+			return {};
 		}
-		if (haveViewport) {
-			rects.push_back(viewportRect());
+		return {viewportRect()};
+	}
+
+	void NavigationSystem::collectAnchors() {
+		std::vector<world::WorldPosition> held;
+		appendAnchors(held);
+		anchors.clear();
+		anchorChunks.clear();
+		const float range = anchorLoadRangeMeters();
+		for (const world::WorldPosition& p : held) {
+			anchors.emplace_back(p.x, p.y);
+			const world::ChunkCoordinate lo = world::worldToChunk({p.x - range, p.y - range});
+			const world::ChunkCoordinate hi = world::worldToChunk({p.x + range, p.y + range});
+			for (std::int32_t cy = lo.y; cy <= hi.y; ++cy) {
+				for (std::int32_t cx = lo.x; cx <= hi.x; ++cx) {
+					anchorChunks.insert({cx, cy});
+				}
+			}
 		}
-		return rects;
+	}
+
+	bool NavigationSystem::anchorHolds(world::ChunkCoordinate coord) const {
+		return anchorChunks.contains(coord);
+	}
+
+	void NavigationSystem::noteStructural(glm::vec2 lo, glm::vec2 hi, StructuralChange change) {
+		const bool					 content = change == StructuralChange::Opens || change == StructuralChange::Closes;
+		const world::ChunkCoordinate a		 = world::worldToChunk({lo.x, lo.y});
+		const world::ChunkCoordinate b		 = world::worldToChunk({hi.x, hi.y});
+		for (std::int32_t cy = a.y; cy <= b.y; ++cy) {
+			for (std::int32_t cx = a.x; cx <= b.x; ++cx) {
+				if (content) {
+					gatheredStructural.structuralChunks.push_back({cx, cy});
+				}
+				gatheredStructural.anchored = gatheredStructural.anchored || anchorHolds({cx, cy});
+			}
+		}
+		if (change == StructuralChange::Closes || change == StructuralChange::GroundLeaves) {
+			gatheredStructural.blockingBoxes.emplace_back(lo, hi);
+		}
+	}
+
+	bool NavigationSystem::groundMeshed(world::ChunkCoordinate coord) const {
+		const auto it = ground.find(coord);
+		return it != ground.end() && it->second.square.structural >= 0; // a gathered patch has no ring id yet
+	}
+
+	void NavigationSystem::forChunksMeeting(const geometry::RectMm& box, const std::function<void(world::ChunkCoordinate)>& visit) {
+		static_assert(world::kTileSize == 1.0F, "a chunk's side in mm assumes 1 m tiles");
+		constexpr std::int64_t kChunkMm = static_cast<std::int64_t>(world::kChunkSize) * geometry::kMillimetersPerMeter;
+		// Chunk c's interior (c * side, (c + 1) * side) meets (min, max) when c * side < max and
+		// (c + 1) * side > min.
+		const auto first = [](std::int64_t min) { return static_cast<std::int32_t>(geometry::floorDiv(min, kChunkMm)); };
+		const auto last	 = [](std::int64_t max) { return static_cast<std::int32_t>(geometry::floorDiv(max - 1, kChunkMm)); };
+		for (std::int32_t cy = first(box.min.y); cy <= last(box.max.y); ++cy) {
+			for (std::int32_t cx = first(box.min.x); cx <= last(box.max.x); ++cx) {
+				visit({cx, cy});
+			}
+		}
+	}
+
+	bool NavigationSystem::groundMeshedThrough(const geometry::RectMm& box) const {
+		bool meshed = true;
+		forChunksMeeting(box, [&](world::ChunkCoordinate coord) {
+			if (groundMeshed(coord)) {
+				return;
+			}
+			meshed = false;
+			// Every chunk the square meets is within the colonist's anchor load range, so its ground is
+			// on the way; one the chunk manager hasn't loaded either is noted once, in case it never is.
+			const bool loaded = chunkManager != nullptr && std::as_const(*chunkManager).getChunk(coord) != nullptr;
+			if (!loaded && unmeshedReported.insert(coord).second) {
+				LOG_DEBUG(Engine, "[Nav] reach square meets chunk (%d, %d), not loaded yet: its colonists read unsettled until it is", coord.x, coord.y);
+			}
+		});
+		return meshed;
 	}
 
 	NavigationSystem::Rect NavigationSystem::viewportRect() const {
@@ -602,7 +715,7 @@ namespace ecs {
 		markStrayedRoutes();
 		snapMovers();
 		if (chunkManager != nullptr) {
-			gather(kFloraRingsPerTick, kFloraRemovalsPerTick, kFloraCellsPerTick, kGroundVerticesPerTick);
+			gather(kDetailRingsPerTick, kDetailRemovalsPerTick, kDetailCellsPerTick, kGroundVerticesPerTick);
 		}
 	}
 
@@ -621,14 +734,15 @@ namespace ecs {
 	}
 
 	void NavigationSystem::gather(std::size_t addBudget, std::size_t removeBudget, std::size_t cellBudget, std::size_t groundVertexBudget) {
+		collectAnchors();
 		const std::vector<Rect> rects = wantedRects();
-		queueRemovedFlora();
-		dropFloraOfLostChunks();
+		queueRemovedDetail();
+		dropDetailOfLostChunks();
 		gatherWalls();
 		gatherGround(groundVertexBudget, rects, nullptr);
-		scanFlora(rects);
-		trimFlora(rects, removeBudget);
-		gatherFlora(addBudget, removeBudget, cellBudget, rects);
+		scanDetail(rects);
+		trimDetail(rects, removeBudget);
+		gatherDetail(addBudget, removeBudget, cellBudget, rects);
 	}
 
 	void NavigationSystem::submit() {
@@ -667,7 +781,15 @@ namespace ecs {
 		navStats.navPatches += runningNav.patches.size();
 		navStats.structuralPatches += runningStructural.patches.size();
 		if (!runningStructural.empty()) {
-			++structuralGeneration;
+			for (const world::ChunkCoordinate coord : runningStructural.structuralChunks) {
+				++chunkStructuralVersion[coord];
+			}
+			// Ground the camera alone holds changes no colonist's route or wait. Routes are restamped
+			// here, not on the next tick, since a query may join mid-frame and the AI reads them next.
+			if (runningStructural.anchored) {
+				++structuralGeneration;
+				restampRoutes(runningStructural.blockingBoxes);
+			}
 		}
 		const double longest = std::max(runningNav.ms, runningStructural.ms);
 		// Permanent nav-mesh work diagnostic: one tick's job on each mesh's worker (of which the
@@ -696,7 +818,7 @@ namespace ecs {
 		}
 		join();
 		collected = true;
-		floraLanded.insert(floraLanded.end(), runningNav.floraAddBoxes.begin(), runningNav.floraAddBoxes.end());
+		detailLanded.insert(detailLanded.end(), runningNav.detailAddBoxes.begin(), runningNav.detailAddBoxes.end());
 		for (MeshJob* job : {&runningNav, &runningStructural}) {
 			for (std::size_t i = 0; i < job->onPatched.size(); ++i) {
 				job->onPatched[i](job->added[i], job->patchMs[i]);
@@ -711,6 +833,23 @@ namespace ecs {
 		submit();
 		collect();
 	}
+
+	namespace {
+		std::pair<glm::vec2, glm::vec2> ringBoxM(const gnav::NavInputPolygon& polygon) {
+			geometry::Vec2i64 lo = polygon.ring.front();
+			geometry::Vec2i64 hi = polygon.ring.front();
+			for (const geometry::Vec2i64& p : polygon.ring) {
+				lo = {std::min(lo.x, p.x), std::min(lo.y, p.y)};
+				hi = {std::max(hi.x, p.x), std::max(hi.y, p.y)};
+			}
+			return {nav::toMeters(lo), nav::toMeters(hi)};
+		}
+
+		std::pair<glm::vec2, glm::vec2> portalBoxM(const gnav::DoorPortal& portal) {
+			return {nav::toMeters({std::min(portal.a.x, portal.b.x), std::min(portal.a.y, portal.b.y)}),
+					nav::toMeters({std::max(portal.a.x, portal.b.x), std::max(portal.a.y, portal.b.y)})};
+		}
+	} // namespace
 
 	// --- Walls and doors -------------------------------------------------------
 
@@ -744,6 +883,8 @@ namespace ecs {
 			}
 			navEdits.removes.push_back(wall.ids.nav);
 			structuralEdits.removes.push_back(wall.ids.structural);
+			const auto [lo, hi] = ringBoxM(wall.polygon);
+			noteStructural(lo, hi, StructuralChange::Opens);
 		}
 		const std::size_t firstAdded = next.size();
 		for (std::size_t i = 0; i < polys.size(); ++i) {
@@ -758,6 +899,10 @@ namespace ecs {
 		}
 		walls = std::move(next);
 
+		for (std::size_t k = firstAdded; k < walls.size(); ++k) {
+			const auto [lo, hi] = ringBoxM(walls[k].polygon);
+			noteStructural(lo, hi, StructuralChange::Closes);
+		}
 		if (!navEdits.adds.empty() || !navEdits.removes.empty()) {
 			gatheredNav.patches.push_back(std::move(navEdits));
 			gatheredNav.onPatched.emplace_back([this, firstAdded](const std::vector<RingId>& added, double) {
@@ -789,6 +934,8 @@ namespace ecs {
 			}
 			gatheredNav.doorRemoves.push_back(door.nav);
 			gatheredStructural.doorRemoves.push_back(door.structural);
+			const auto [lo, hi] = portalBoxM(door.portal);
+			noteStructural(lo, hi, StructuralChange::Closes);
 		}
 		const std::size_t firstDoor = nextDoors.size();
 		for (std::size_t i = 0; i < portals.size(); ++i) {
@@ -797,6 +944,8 @@ namespace ecs {
 			}
 			gatheredNav.doorAdds.push_back(portals[i]);
 			gatheredStructural.doorAdds.push_back(portals[i]);
+			const auto [lo, hi] = portalBoxM(portals[i]);
+			noteStructural(lo, hi, StructuralChange::Opens);
 			nextDoors.push_back({portals[i], -1, -1});
 		}
 		doors = std::move(nextDoors);
@@ -820,6 +969,12 @@ namespace ecs {
 		constexpr gnav::RingId kGatheredRing = -2; // in a gathered patch, its id not yet known
 
 		bool gathered(gnav::RingId id) { return id != gnav::kNoRing; }
+
+		std::pair<glm::vec2, glm::vec2> chunkBoxM(world::ChunkCoordinate coord) {
+			const geometry::Vec2i64 lo = nav::chunkOriginMm(coord);
+			// Just inside the far sides, so the box meets this chunk and not its neighbours.
+			return {nav::toMeters(lo), nav::toMeters({lo.x + kChunkMm - 1, lo.y + kChunkMm - 1})};
+		}
 
 		// A chunk's square enters the meshes with its sides cut to kMaxBoundsEdgeMm, so that is how
 		// many vertices it brings.
@@ -866,6 +1021,10 @@ namespace ecs {
 			g.water.assign(navEdits.adds.size(), {kGatheredRing, kGatheredRing});
 			g.terrainVersion = polys.version;
 			++groundVersion;
+			{
+				const auto [lo, hi] = chunkBoxM(chunk->coordinate());
+				noteStructural(lo, hi, StructuralChange::Closes);
+			}
 			gatheredNav.patches.push_back(std::move(navEdits));
 			gatheredNav.onPatched.emplace_back([&g](const std::vector<RingId>& ids, double) {
 				for (std::size_t k = 0; k < ids.size(); ++k) {
@@ -904,12 +1063,25 @@ namespace ecs {
 			if (within != nullptr && (hi.x < within->lo.x || lo.x > within->hi.x || hi.y < within->lo.y || lo.y > within->hi.y)) {
 				continue;
 			}
-			// Nearest a rect first, by Chebyshev distance in chunks to the rect's centre chunk.
-			std::int64_t priority = 0;
-			for (std::size_t r = 0; r < rects.size(); ++r) {
-				const geometry::Vec2i64 c{(rects[r].lo.x + rects[r].hi.x) / 2, (rects[r].lo.y + rects[r].hi.y) / 2};
-				const std::int64_t		d = std::max(std::abs(geometry::floorDiv(c.x, kChunkMm) - coord.x), std::abs(geometry::floorDiv(c.y, kChunkMm) - coord.y));
-				priority				  = r == 0 ? d : std::min(priority, d);
+			// Ground an anchor holds first, nearest an anchor first, so panning the camera never holds
+			// a colonist's ground back; then the camera's, nearest the view first. Distances are
+			// Chebyshev, in chunks.
+			const auto chunksTo = [&coord](glm::vec2 at) {
+				const world::ChunkCoordinate c = world::worldToChunk({at.x, at.y});
+				return static_cast<std::int64_t>(std::max(std::abs(c.x - coord.x), std::abs(c.y - coord.y)));
+			};
+			constexpr std::int64_t kCameraOnly = std::int64_t{1} << 32;
+			std::int64_t		   priority	   = kCameraOnly;
+			if (anchorHolds(coord)) {
+				for (const glm::vec2 anchor : anchors) {
+					priority = std::min(priority, chunksTo(anchor));
+				}
+			} else {
+				std::int64_t nearest = rects.empty() ? 0 : std::numeric_limits<std::int64_t>::max();
+				for (const Rect& r : rects) {
+					nearest = std::min(nearest, chunksTo(nav::toMeters({(r.lo.x + r.hi.x) / 2, (r.lo.y + r.hi.y) / 2})));
+				}
+				priority = kCameraOnly + nearest;
 			}
 			candidates.push_back({priority, coord});
 		}
@@ -940,6 +1112,10 @@ namespace ecs {
 			g.square	   = {kGatheredRing, kGatheredRing};
 			g.water.assign(water.size(), {kGatheredRing, kGatheredRing});
 			++groundVersion;
+			{
+				const auto [lo, hi] = chunkBoxM(c.coord);
+				noteStructural(lo, hi, StructuralChange::GroundArrives);
+			}
 			gnav::PatchEdits navEdits;
 			navEdits.adds.push_back(nav::chunkSquare(c.coord));
 			navEdits.adds.insert(navEdits.adds.end(), water.begin(), water.end());
@@ -1057,7 +1233,7 @@ namespace ecs {
 			if (kept <= kKeptUnloadedChunks) {
 				break;
 			}
-			if (holdsConstruction(coord)) {
+			if (holdsConstruction(coord) || anchorHolds(coord)) {
 				continue;
 			}
 			--kept;
@@ -1081,6 +1257,10 @@ namespace ecs {
 			}
 			ground.erase(coord);
 			++groundVersion;
+			{
+				const auto [lo, hi] = chunkBoxM(coord);
+				noteStructural(lo, hi, StructuralChange::GroundLeaves);
+			}
 			gatheredNav.patches.push_back(std::move(navEdits));
 			gatheredNav.onPatched.emplace_back([](const std::vector<RingId>&, double) {});
 			gatheredStructural.patches.push_back(std::move(structuralEdits));
@@ -1094,60 +1274,60 @@ namespace ecs {
 		return it != ground.end() && gathered(it->second.square.nav);
 	}
 
-	// --- Flora ---------------------------------------------------------------------
+	// --- Detail ---------------------------------------------------------------------
 
-	bool NavigationSystem::floraChunkUsable(world::ChunkCoordinate coord) const {
+	bool NavigationSystem::detailChunkUsable(world::ChunkCoordinate coord) const {
 		return placement != nullptr && chunkManager->getChunk(coord) != nullptr && placement->getChunkIndex(coord) != nullptr &&
 			   (processedChunks == nullptr || processedChunks->contains(coord));
 	}
 
-	void NavigationSystem::queueRemovedFlora() {
+	void NavigationSystem::queueRemovedDetail() {
 		if (placement == nullptr) {
 			return;
 		}
 		for (const assets::PlacementExecutor::RemovedEntity& entry : placement->takeRemovals()) {
-			const FloraKey key{entry.coord, cellOfEntity(entry.position), std::bit_cast<std::uint32_t>(entry.position.x),
+			const DetailKey key{entry.coord, cellOfEntity(entry.position), std::bit_cast<std::uint32_t>(entry.position.x),
 							   std::bit_cast<std::uint32_t>(entry.position.y), entry.defName};
-			if (const auto it = floraInMesh.find(key); it != floraInMesh.end()) {
-				floraRemovals.push_back(it->second);
-				floraInMesh.erase(it);
+			if (const auto it = detailInMesh.find(key); it != detailInMesh.end()) {
+				detailRemovals.push_back(it->second);
+				detailInMesh.erase(it);
 			} else {
-				floraAdds.erase(key);
+				detailAdds.erase(key);
 			}
 		}
 	}
 
-	void NavigationSystem::dropFloraOfLostChunks() {
-		for (auto chunkIt = floraChunks.begin(); chunkIt != floraChunks.end();) {
+	void NavigationSystem::dropDetailOfLostChunks() {
+		for (auto chunkIt = detailChunks.begin(); chunkIt != detailChunks.end();) {
 			const world::ChunkCoordinate coord = *chunkIt;
-			if (floraChunkUsable(coord)) {
+			if (detailChunkUsable(coord)) {
 				++chunkIt;
 				continue;
 			}
 			// In key order, which is by cell, so the removals batch into one patch per cell.
-			const FloraKey first{coord, kFirstCell, 0, 0, {}};
-			for (auto it = floraInMesh.lower_bound(first); it != floraInMesh.end() && it->first.chunk == coord;) {
-				floraRemovals.push_back(it->second);
-				it = floraInMesh.erase(it);
+			const DetailKey first{coord, kFirstCell, 0, 0, {}};
+			for (auto it = detailInMesh.lower_bound(first); it != detailInMesh.end() && it->first.chunk == coord;) {
+				detailRemovals.push_back(it->second);
+				it = detailInMesh.erase(it);
 			}
-			for (auto it = floraAdds.lower_bound(first); it != floraAdds.end() && it->first.chunk == coord;) {
-				it = floraAdds.erase(it);
+			for (auto it = detailAdds.lower_bound(first); it != detailAdds.end() && it->first.chunk == coord;) {
+				it = detailAdds.erase(it);
 			}
 			std::erase_if(scannedCells, [coord](std::int64_t cell) { return cellChunk(cell) == coord; });
 			std::erase_if(cellLastWanted, [coord](const auto& entry) { return cellChunk(entry.first) == coord; });
-			chunkIt = floraChunks.erase(chunkIt);
+			chunkIt = detailChunks.erase(chunkIt);
 		}
 	}
 
-	void NavigationSystem::scanFlora(const std::vector<Rect>& rects) {
+	void NavigationSystem::scanDetail(const std::vector<Rect>& rects) {
 		if (placement == nullptr) {
 			return;
 		}
 		std::vector<CellRange> ranges;
 		ranges.reserve(rects.size());
 		for (const Rect& r : rects) {
-			ranges.push_back({geometry::floorDiv(r.lo.x, kFloraCellMm), geometry::floorDiv(r.lo.y, kFloraCellMm),
-							  geometry::floorDiv(r.hi.x, kFloraCellMm), geometry::floorDiv(r.hi.y, kFloraCellMm)});
+			ranges.push_back({geometry::floorDiv(r.lo.x, kDetailCellMm), geometry::floorDiv(r.lo.y, kDetailCellMm),
+							  geometry::floorDiv(r.hi.x, kDetailCellMm), geometry::floorDiv(r.hi.y, kDetailCellMm)});
 		}
 		// groundVersion moves whenever ground comes in, changes or goes out, so it can't alias; the
 		// processed set can (one chunk leaves as another arrives), so it is compared whole.
@@ -1172,52 +1352,52 @@ namespace ecs {
 						continue;
 					}
 					const world::ChunkCoordinate chunk = cellChunk(cell);
-					if (!chunkGroundMeshed(chunk) || !floraChunkUsable(chunk)) {
+					if (!chunkGroundMeshed(chunk) || !detailChunkUsable(chunk)) {
 						continue;
 					}
 					// One cell owns each entity, by its position in [lo, lo + cell).
-					const float lox	 = static_cast<float>(cx * kFloraCellMm / geometry::kMillimetersPerMeter);
-					const float loy	 = static_cast<float>(cy * kFloraCellMm / geometry::kMillimetersPerMeter);
-					const float side = static_cast<float>(kFloraCellMm / geometry::kMillimetersPerMeter);
+					const float lox	 = static_cast<float>(cx * kDetailCellMm / geometry::kMillimetersPerMeter);
+					const float loy	 = static_cast<float>(cy * kDetailCellMm / geometry::kMillimetersPerMeter);
+					const float side = static_cast<float>(kDetailCellMm / geometry::kMillimetersPerMeter);
 					for (const assets::PlacedEntity* e : placement->getChunkIndex(chunk)->queryRect(lox, loy, lox + side, loy + side)) {
 						if (e->position.x < lox || e->position.x >= lox + side || e->position.y < loy || e->position.y >= loy + side) {
 							continue;
 						}
-						FloraKey key{chunk, cell, std::bit_cast<std::uint32_t>(e->position.x), std::bit_cast<std::uint32_t>(e->position.y), e->defName};
-						if (floraInMesh.contains(key) || floraAdds.contains(key)) {
+						DetailKey key{chunk, cell, std::bit_cast<std::uint32_t>(e->position.x), std::bit_cast<std::uint32_t>(e->position.y), e->defName};
+						if (detailInMesh.contains(key) || detailAdds.contains(key)) {
 							continue;
 						}
-						std::optional<gnav::NavInputPolygon> ring = nav::floraRingFor(*e, registry);
+						std::optional<gnav::NavInputPolygon> ring = nav::placedObstacleRing(*e, registry);
 						if (!ring.has_value()) {
 							continue;
 						}
-						floraAdds.emplace(std::move(key), PendingFlora{std::move(*ring), cell});
+						detailAdds.emplace(std::move(key), PendingDetail{std::move(*ring), cell});
 					}
 					scannedCells.insert(cell);
 					cellLastWanted[cell] = tickCount;
-					floraChunks.insert(chunk);
+					detailChunks.insert(chunk);
 				}
 			}
 		}
-		// Flora still queued in a cell nothing wants any more is dropped, and the cell scanned
+		// Detail still queued in a cell nothing wants any more is dropped, and the cell scanned
 		// again if it is wanted later.
-		for (auto it = floraAdds.begin(); it != floraAdds.end();) {
+		for (auto it = detailAdds.begin(); it != detailAdds.end();) {
 			if (wanted.contains(it->second.cell)) {
 				++it;
 				continue;
 			}
 			scannedCells.erase(it->second.cell);
 			cellLastWanted.erase(it->second.cell);
-			it = floraAdds.erase(it);
+			it = detailAdds.erase(it);
 		}
 	}
 
-	void NavigationSystem::gatherFlora(std::size_t addBudget, std::size_t removeBudget, std::size_t cellBudget, const std::vector<Rect>& rects) {
+	void NavigationSystem::gatherDetail(std::size_t addBudget, std::size_t removeBudget, std::size_t cellBudget, const std::vector<Rect>& rects) {
 		// Removals, oldest first, one patch per run of one cell: a patch's width refresh covers the
 		// box around everything it changed, so a patch spread over a chunk would refresh the chunk.
-		std::size_t removeCount = std::min(removeBudget, floraRemovals.size());
+		std::size_t removeCount = std::min(removeBudget, detailRemovals.size());
 		for (std::size_t i = 0, cells = 0; i < removeCount; ++i) {
-			if (i == 0 || floraRemovals[i].cell != floraRemovals[i - 1].cell) {
+			if (i == 0 || detailRemovals[i].cell != detailRemovals[i - 1].cell) {
 				if (++cells > cellBudget) {
 					removeCount = i;
 				}
@@ -1226,31 +1406,31 @@ namespace ecs {
 		for (std::size_t first = 0; first < removeCount;) {
 			std::size_t		 last = first;
 			gnav::PatchEdits edits;
-			for (; last < removeCount && floraRemovals[last].cell == floraRemovals[first].cell; ++last) {
-				edits.removes.push_back(floraRemovals[last].ring);
+			for (; last < removeCount && detailRemovals[last].cell == detailRemovals[first].cell; ++last) {
+				edits.removes.push_back(detailRemovals[last].ring);
 			}
 			gatheredNav.patches.push_back(std::move(edits));
 			gatheredNav.onPatched.emplace_back([](const std::vector<RingId>&, double) {});
 			first = last;
 		}
-		floraRemovals.erase(floraRemovals.begin(), floraRemovals.begin() + static_cast<std::ptrdiff_t>(removeCount));
+		detailRemovals.erase(detailRemovals.begin(), detailRemovals.begin() + static_cast<std::ptrdiff_t>(removeCount));
 
-		if (addBudget == 0 || floraAdds.empty()) {
+		if (addBudget == 0 || detailAdds.empty()) {
 			return;
 		}
-		// Cells nearest a rect centre first, a cell's flora together, map order within a cell.
+		// Cells nearest a rect centre first, a cell's detail together, map order within a cell.
 		struct Ranked {
 			std::int64_t							   priority;
 			std::int64_t							   cell;
 			std::size_t								   order;
-			std::map<FloraKey, PendingFlora>::iterator it;
+			std::map<DetailKey, PendingDetail>::iterator it;
 		};
 		std::vector<Ranked> ranked;
-		ranked.reserve(floraAdds.size());
+		ranked.reserve(detailAdds.size());
 		std::size_t order = 0;
-		for (auto it = floraAdds.begin(); it != floraAdds.end(); ++it) {
+		for (auto it = detailAdds.begin(); it != detailAdds.end(); ++it) {
 			const std::int64_t		cell = it->second.cell;
-			const geometry::Vec2i64 cellCenter{cellX(cell) * kFloraCellMm + kFloraCellMm / 2, cellY(cell) * kFloraCellMm + kFloraCellMm / 2};
+			const geometry::Vec2i64 cellCenter{cellX(cell) * kDetailCellMm + kDetailCellMm / 2, cellY(cell) * kDetailCellMm + kDetailCellMm / 2};
 			std::int64_t			priority = std::numeric_limits<std::int64_t>::max();
 			for (const Rect& r : rects) {
 				priority = std::min(priority, dist2Mm(cellCenter, {(r.lo.x + r.hi.x) / 2, (r.lo.y + r.hi.y) / 2}));
@@ -1275,7 +1455,7 @@ namespace ecs {
 		for (std::size_t first = 0; first < ranked.size();) {
 			std::size_t			  last = first;
 			gnav::PatchEdits	  edits;
-			std::vector<FloraKey> keys;
+			std::vector<DetailKey> keys;
 			for (; last < ranked.size() && ranked[last].cell == ranked[first].cell; ++last) {
 				const std::vector<geometry::Vec2i64>& ring = ranked[last].it->second.ring.ring;
 				geometry::Vec2i64					  lo   = ring.front();
@@ -1284,27 +1464,27 @@ namespace ecs {
 					lo = {std::min(lo.x, p.x), std::min(lo.y, p.y)};
 					hi = {std::max(hi.x, p.x), std::max(hi.y, p.y)};
 				}
-				gatheredNav.floraAddBoxes.emplace_back(nav::toMeters(lo), nav::toMeters(hi));
+				gatheredNav.detailAddBoxes.emplace_back(nav::toMeters(lo), nav::toMeters(hi));
 				edits.adds.push_back(std::move(ranked[last].it->second.ring));
 				keys.push_back(ranked[last].it->first);
-				floraAdds.erase(ranked[last].it);
+				detailAdds.erase(ranked[last].it);
 			}
 			gatheredNav.patches.push_back(std::move(edits));
 			gatheredNav.onPatched.emplace_back(
 				[this, keys = std::move(keys), cell = ranked[first].cell](const std::vector<RingId>& added, double) {
 					for (std::size_t k = 0; k < keys.size(); ++k) {
-						floraInMesh.emplace(keys[k], FloraRing{added[k], cell});
+						detailInMesh.emplace(keys[k], DetailRing{added[k], cell});
 					}
 				});
 			first = last;
 		}
 	}
 
-	// --- Detail, the forward snap and the flora budget ---------------------------------
+	// --- Detail, the forward snap and the detail budget --------------------------------
 
 	namespace {
 		std::int64_t cellAt(const geometry::Vec2i64& p) {
-			return cellKey(geometry::floorDiv(p.x, NavigationSystem::kFloraCellMm), geometry::floorDiv(p.y, NavigationSystem::kFloraCellMm));
+			return cellKey(geometry::floorDiv(p.x, NavigationSystem::kDetailCellMm), geometry::floorDiv(p.y, NavigationSystem::kDetailCellMm));
 		}
 
 		// The part of a..b inside lo..hi, as parameters along it, or nothing.
@@ -1334,9 +1514,9 @@ namespace ecs {
 		}
 
 		bool cellMeetsRect(std::int64_t cell, const geometry::Vec2i64& lo, const geometry::Vec2i64& hi) {
-			const std::int64_t x = cellX(cell) * NavigationSystem::kFloraCellMm;
-			const std::int64_t y = cellY(cell) * NavigationSystem::kFloraCellMm;
-			return x <= hi.x && x + NavigationSystem::kFloraCellMm >= lo.x && y <= hi.y && y + NavigationSystem::kFloraCellMm >= lo.y;
+			const std::int64_t x = cellX(cell) * NavigationSystem::kDetailCellMm;
+			const std::int64_t y = cellY(cell) * NavigationSystem::kDetailCellMm;
+			return x <= hi.x && x + NavigationSystem::kDetailCellMm >= lo.x && y <= hi.y && y + NavigationSystem::kDetailCellMm >= lo.y;
 		}
 	} // namespace
 
@@ -1356,8 +1536,8 @@ namespace ecs {
 		std::erase_if(detailCells, [&](std::int64_t cell) { return !cellMeetsRect(cell, keepLo, keepHi); });
 		const geometry::Vec2i64 onLo{view.lo.x - kDetailOnMarginMm, view.lo.y - kDetailOnMarginMm};
 		const geometry::Vec2i64 onHi{view.hi.x + kDetailOnMarginMm, view.hi.y + kDetailOnMarginMm};
-		for (std::int64_t cy = geometry::floorDiv(onLo.y, kFloraCellMm); cy <= geometry::floorDiv(onHi.y, kFloraCellMm); ++cy) {
-			for (std::int64_t cx = geometry::floorDiv(onLo.x, kFloraCellMm); cx <= geometry::floorDiv(onHi.x, kFloraCellMm); ++cx) {
+		for (std::int64_t cy = geometry::floorDiv(onLo.y, kDetailCellMm); cy <= geometry::floorDiv(onHi.y, kDetailCellMm); ++cy) {
+			for (std::int64_t cx = geometry::floorDiv(onLo.x, kDetailCellMm); cx <= geometry::floorDiv(onHi.x, kDetailCellMm); ++cx) {
 				detailCells.insert(cellKey(cx, cy));
 			}
 		}
@@ -1368,8 +1548,7 @@ namespace ecs {
 	}
 
 	gnav::BeliefFilter NavigationSystem::pricedFor(gnav::BeliefFilter belief) {
-		static constexpr gnav::TagPrice kFloraPrices[] = {{.tag = nav::kProvenanceTree, .multiplier = kFloraPassMultiplier}};
-		belief.prices								   = kFloraPrices;
+		belief.prices = kDetailKinds;
 		return belief;
 	}
 
@@ -1392,6 +1571,20 @@ namespace ecs {
 	}
 
 	void NavigationSystem::forgetDroppedRoutes() {
+		// A requester's confinement lasts while its task does, or with no task instance while its route
+		// does; then it's forgotten. A scope planned before its task had an instance id is the task's
+		// first route, and is that instance's from here on.
+		for (auto it = routeScopes.begin(); it != routeScopes.end();) {
+			const bool	   alive = world != nullptr && world->isAlive(it->first);
+			const Task*	   task	 = alive ? world->getComponent<Task>(it->first) : nullptr;
+			const NavPath* path	 = alive ? world->getComponent<NavPath>(it->first) : nullptr;
+			if (it->second.instance == 0 && task != nullptr && task->instanceId != 0) {
+				it->second.instance = task->instanceId;
+			}
+			const bool held = it->second.instance != 0 ? task != nullptr && task->instanceId == it->second.instance
+													   : path != nullptr && !path->done();
+			it				= held ? std::next(it) : routeScopes.erase(it);
+		}
 		if (pricedRoutes.empty()) {
 			return;
 		}
@@ -1408,16 +1601,16 @@ namespace ecs {
 	}
 
 	void NavigationSystem::markCrossedRoutes() {
-		if (floraLanded.empty()) {
+		if (detailLanded.empty()) {
 			return;
 		}
-		const std::vector<std::pair<glm::vec2, glm::vec2>> landed = std::move(floraLanded);
-		floraLanded.clear();
+		const std::vector<std::pair<glm::vec2, glm::vec2>> landed = std::move(detailLanded);
+		detailLanded.clear();
 		if (world == nullptr) {
 			return;
 		}
-		// A piece of route that comes within the mover's radius of a new tree's box crosses it:
-		// trees that were already there are no news to a route planned past or through them.
+		// A piece of route that comes within the mover's radius of a new obstacle's box crosses it:
+		// obstacles that were already there are no news to a route planned past or through them.
 		const auto crosses = [&](glm::vec2 a, glm::vec2 b, float radius) {
 			return std::any_of(landed.begin(), landed.end(), [&](const std::pair<glm::vec2, glm::vec2>& box) {
 				return clipToRect(a, b, box.first - glm::vec2{radius}, box.second + glm::vec2{radius}).has_value();
@@ -1433,10 +1626,39 @@ namespace ecs {
 			glm::vec2		   from	  = position.value;
 			for (std::size_t next = path.current; next < path.waypoints.size(); ++next) {
 				if (crosses(from, path.waypoints[next], radius)) {
-					path.builtNavVersion = current - 1;
+					path.builtNavVersion = kStaleRoute;
 					break;
 				}
 				from = path.waypoints[next];
+			}
+		}
+	}
+
+	void NavigationSystem::restampRoutes(const std::vector<std::pair<glm::vec2, glm::vec2>>& closed) const {
+		if (world == nullptr) {
+			return;
+		}
+		const std::uint64_t previous = structuralGeneration - 1;
+		// A route current before the change stays current unless ground closed across its rest.
+		for (auto [entity, position, path] : world->view<Position, NavPath>()) {
+			if (!path.valid || path.builtNavVersion != previous) {
+				continue;
+			}
+			const AgentRadius* agent  = world->getComponent<AgentRadius>(entity);
+			const float		   radius = agent != nullptr ? agent->radiusMeters : AgentRadius{}.radiusMeters;
+			bool			   crossed = false;
+			glm::vec2		   from	   = position.value;
+			for (std::size_t next = path.current; next < path.waypoints.size() && !crossed; ++next) {
+				for (const auto& [lo, hi] : closed) {
+					if (clipToRect(from, path.waypoints[next], lo - glm::vec2{radius}, hi + glm::vec2{radius}).has_value()) {
+						crossed = true;
+						break;
+					}
+				}
+				from = path.waypoints[next];
+			}
+			if (!crossed) {
+				path.builtNavVersion = structuralGeneration;
 			}
 		}
 	}
@@ -1459,14 +1681,14 @@ namespace ecs {
 			const float		len2 = dist2(from, to);
 			const float		t	 = len2 > 0.0F ? std::clamp(glm::dot(position.value - from, leg) / len2, 0.0F, 1.0F) : 0.0F;
 			if (dist2(position.value, from + leg * t) > kOff2) {
-				path.builtNavVersion = current - 1;
+				path.builtNavVersion = kStaleRoute;
 			}
 		}
 	}
 
-	bool NavigationSystem::floraInNavMesh(world::ChunkCoordinate chunk, const assets::PlacedEntity& entity) const {
-		return floraInMesh.contains(
-			FloraKey{chunk, cellOfEntity(entity.position), std::bit_cast<std::uint32_t>(entity.position.x), std::bit_cast<std::uint32_t>(entity.position.y),
+	bool NavigationSystem::placedObstacleInNavMesh(world::ChunkCoordinate chunk, const assets::PlacedEntity& entity) const {
+		return detailInMesh.contains(
+			DetailKey{chunk, cellOfEntity(entity.position), std::bit_cast<std::uint32_t>(entity.position.x), std::bit_cast<std::uint32_t>(entity.position.y),
 					 entity.defName});
 	}
 
@@ -1476,7 +1698,7 @@ namespace ecs {
 		}
 		// A route is planned over what the mover remembers, so it can run through a wall it hasn't
 		// seen: a candidate has to be walkable in truth, its disc clear on all sides, and the walk
-		// stops at the first face that blocks in truth for a reason other than flora (a wall, water,
+		// stops at the first face that blocks in truth for a reason other than detail (a wall, water,
 		// unmeshed ground). Nothing past that is a candidate. The disc is sampled out to its rim at
 		// the snap step along 8 rays, so a wall band thinner than the radius can't fall between.
 		const float step = static_cast<float>(kSnapStepMm) / static_cast<float>(geometry::kMillimetersPerMeter);
@@ -1503,11 +1725,11 @@ namespace ecs {
 				return true;
 			}
 			const gnav::NavTriangle& t = detailMesh.triangles()[static_cast<std::size_t>(tri)];
-			return !gnav::truthTraversable(t) && t.faceBlocker != nav::kProvenanceTree;
+			return !gnav::truthTraversable(t) && !isDetailTag(t.faceBlocker);
 		};
 
-		// Only where detail is on is a mover pushed out of a tree, and so snapped out of one. A
-		// mover whose route walks through flora on purpose, at its price, is left to it.
+		// Only where detail is on is a mover pushed out of a placed obstacle, and so snapped out of one.
+		// A mover whose route walks through detail on purpose, at its price, is left to it.
 		const std::uint64_t current = generation();
 		for (auto [entity, position, colonist] : world->view<Position, Colonist>()) {
 			(void)colonist;
@@ -1515,7 +1737,7 @@ namespace ecs {
 				continue;
 			}
 			const std::int32_t tri = detailMesh.locate(nav::toMm(position.value));
-			if (tri < 0 || detailMesh.triangles()[static_cast<std::size_t>(tri)].faceBlocker != nav::kProvenanceTree) {
+			if (tri < 0 || !isDetailTag(detailMesh.triangles()[static_cast<std::size_t>(tri)].faceBlocker)) {
 				continue;
 			}
 			NavPath* path = world->getComponent<NavPath>(entity);
@@ -1529,8 +1751,30 @@ namespace ecs {
 			// waypoint it is steering for, then on through the rest. Points behind it are never
 			// candidates; with none ahead it stays put and its route goes stale, so the AI replans.
 			if (path == nullptr || path->done()) {
-				if (const std::optional<glm::vec2> nearest = nearestPathablePoint(position.value, radius)) {
-					position.value = *nearest;
+				// Without a route: the nearest point, out in rings of the snap step, that the route case
+				// would take: walkable in truth with its clearance, reached in a straight line that
+				// crosses no wall or water, so it stays on its own side of a wall.
+				const auto reachable = [&](glm::vec2 to) {
+					const int steps = std::max(1, static_cast<int>(std::ceil(std::sqrt(dist2(position.value, to)) / step)));
+					for (int i = 1; i <= steps; ++i) {
+						if (stopsTheWalk(position.value + (to - position.value) * (static_cast<float>(i) / static_cast<float>(steps)))) {
+							return false;
+						}
+					}
+					return true;
+				};
+				constexpr int	kSpokes	  = 16;
+				constexpr float kMaxReach = 4.0F;
+				bool			snapped	  = false;
+				for (float r = step; r <= kMaxReach && !snapped; r += step) {
+					for (int k = 0; k < kSpokes && !snapped; ++k) {
+						const float		angle = 6.2831853F * static_cast<float>(k) / static_cast<float>(kSpokes);
+						const glm::vec2 spot  = position.value + r * glm::vec2{std::cos(angle), std::sin(angle)};
+						if (clearFor(spot, radius) && reachable(spot)) {
+							position.value = spot;
+							snapped		   = true;
+						}
+					}
 				}
 				continue;
 			}
@@ -1554,18 +1798,18 @@ namespace ecs {
 				from = to;
 			}
 			if (!moved) {
-				path->builtNavVersion = current - 1;
+				path->builtNavVersion = kStaleRoute;
 			}
 		}
 	}
 
-	void NavigationSystem::trimFlora(const std::vector<Rect>& rects, std::size_t removeBudget) {
-		if (trimQueue.empty() && floraInMesh.size() <= floraRingBudget) {
+	void NavigationSystem::trimDetail(const std::vector<Rect>& rects, std::size_t removeBudget) {
+		if (trimQueue.empty() && detailInMesh.size() <= detailRingBudget) {
 			return;
 		}
-		// Cells that may lose their flora: out of every wanted rect, out of the detail keep rect,
+		// Cells that may lose their detail: out of every wanted rect, out of the detail keep rect,
 		// and not detail-on. The choice is over scanned cells, never the rings, and each cell's
-		// rings are one range of floraInMesh, so what the main thread spends is the cells once per
+		// rings are one range of detailInMesh, so what the main thread spends is the cells once per
 		// trim and the rings that leave, a removal budget's worth a tick.
 		std::optional<Rect> keep;
 		if (haveViewport) {
@@ -1590,25 +1834,25 @@ namespace ecs {
 				trimQueue.push_back(cell);
 			}
 		}
-		const std::size_t target  = floraRingBudget - floraRingBudget / 8;
+		const std::size_t target  = detailRingBudget - detailRingBudget / 8;
 		std::size_t		  removed = 0;
-		while (!trimQueue.empty() && floraInMesh.size() > target && removed < removeBudget) {
+		while (!trimQueue.empty() && detailInMesh.size() > target && removed < removeBudget) {
 			const std::int64_t cell = trimQueue.back();
 			trimQueue.pop_back();
 			if (spared(cell) || !cellLastWanted.contains(cell)) {
 				continue; // wanted again, or its chunk went, since it was queued
 			}
 			const world::ChunkCoordinate chunk = cellChunk(cell);
-			for (auto it = floraInMesh.lower_bound(FloraKey{chunk, cell, 0, 0, {}});
-				 it != floraInMesh.end() && it->first.chunk == chunk && it->first.cell == cell;) {
-				floraRemovals.push_back(it->second);
-				it = floraInMesh.erase(it);
+			for (auto it = detailInMesh.lower_bound(DetailKey{chunk, cell, 0, 0, {}});
+				 it != detailInMesh.end() && it->first.chunk == chunk && it->first.cell == cell;) {
+				detailRemovals.push_back(it->second);
+				it = detailInMesh.erase(it);
 				++removed;
 			}
 			scannedCells.erase(cell);
 			cellLastWanted.erase(cell);
 		}
-		if (floraInMesh.size() <= target) {
+		if (detailInMesh.size() <= target) {
 			trimQueue.clear();
 		}
 	}
@@ -1716,7 +1960,7 @@ namespace ecs {
 
 	bool NavigationSystem::isBuilding() const {
 		join();
-		return groundPending > 0 || !floraAdds.empty() || !floraRemovals.empty() || !trimQueue.empty() || !gatheredNav.empty() ||
+		return groundPending > 0 || !detailAdds.empty() || !detailRemovals.empty() || !trimQueue.empty() || !gatheredNav.empty() ||
 			   !gatheredStructural.empty();
 	}
 
@@ -1758,7 +2002,8 @@ namespace ecs {
 	}
 
 	std::optional<std::vector<glm::vec2>>
-	NavigationSystem::requestPath(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters, gnav::BeliefFilter belief) const {
+	NavigationSystem::requestPath(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters, gnav::BeliefFilter belief,
+								  RouteKind kind, EntityID requester) const {
 		join();
 		if (detailMesh.liveTriangleCount() == 0) {
 			return std::nullopt;
@@ -1767,17 +2012,65 @@ namespace ecs {
 		const geometry::Vec2i64 goalMm	= nav::toMm(goalMeters);
 		const std::int64_t		radius	= radiusMm(agentRadiusMeters);
 
-		// The structural mesh's walkable ground holds the nav mesh's and its corridors are no
-		// narrower, so its forest rejecting the goal proves there is no path; without it an
-		// unreachable goal floods the A* over its whole component of the nav mesh, which has no
-		// forest of its own.
-		const gnav::NavView structuralView = structural.view();
-		if (!gnav::reaches(structuralView, gnav::reachFrom(structuralView, startMm, radius, belief), goalMm, belief)) {
+		// An autonomous route (a colonist's own choice) is always confined, to the square round where
+		// its task's first route started, the ground its anchor held when it chose: a goal outside it
+		// has no route. A player's order isn't confined. Every later route of the same task (its next
+		// leg, a replan) keeps the kind and the square the first had, so a detour or a second leg that
+		// choice approved never fails because the square moved with the colonist, nor turns into
+		// another kind of route when control changes hands. A task's first route is planned before its
+		// instance id is given (the AI routes, then takes its claims), so the first instance to ask
+		// takes up a scope that has none. A requester with no task instance (an order, a test) is held
+		// to one goal instead. A start pushed out of the square by no more than
+		// the mover's radius keeps it; one farther out (a teleport) takes the square round where it
+		// now stands.
+		const auto inside = [](const geometry::RectMm& r, const geometry::Vec2i64& p) {
+			return p.x >= r.min.x && p.x <= r.max.x && p.y >= r.min.y && p.y <= r.max.y;
+		};
+		const auto grown = [](const geometry::RectMm& r, std::int64_t by) {
+			return geometry::RectMm{{r.min.x - by, r.min.y - by}, {r.max.x + by, r.max.y + by}};
+		};
+		const Task*	   task		= requester != kInvalidEntity && world != nullptr ? world->getComponent<Task>(requester) : nullptr;
+		const uint64_t instance = task != nullptr ? task->instanceId : 0;
+		RouteScope	   scope{instance, goalMm, kind, kind == RouteKind::Autonomous ? std::optional(squareAround(startMm)) : std::nullopt};
+		if (requester != kInvalidEntity) {
+			const auto held = routeScopes.find(requester);
+			if (held != routeScopes.end() &&
+				(instance != 0 ? held->second.instance == instance || held->second.instance == 0
+							   : held->second.instance == 0 && held->second.goalMm == goalMm)) {
+				scope.kind	 = held->second.kind;
+				scope.within = held->second.within;
+				if (scope.within.has_value() && !inside(grown(*scope.within, radius), startMm)) {
+					scope.within = squareAround(startMm);
+				}
+			}
+			routeScopes[requester] = scope;
+		}
+		std::optional<geometry::RectMm> within = scope.within;
+		if (within.has_value() && !inside(*within, startMm)) {
+			within = grown(*within, radius);
+		}
+		const geometry::RectMm* confine = within.has_value() ? &*within : nullptr;
+
+		// The structural mesh holds the nav mesh's ground without detail, so where it has no walk
+		// under this belief (its known walls block) the nav mesh has none either: no nav search.
+		const gnav::PathResult walk = gnav::pathThrough(structural.view(), startMm, goalMm, radius, belief, {.within = confine});
+		if (walk.stop != gnav::PathStop::Found) {
 			return std::nullopt;
 		}
 
-		const gnav::PathResult result = gnav::pathThrough(detailMesh.view(), startMm, goalMm, radius, pricedFor(belief));
-		if (!result.reachable) {
+		// Detail only makes the nav search's corridors finer and its walk dearer, so it needs some
+		// multiple of the structural search's expansions. Past that it is lost in priced ground, and
+		// the route is the structural walk itself, through the detail at its price, as it would be off
+		// camera: so a route exists on camera exactly when it does off it.
+		const std::uint32_t	   cap	  = navExpansionFloor + navExpansionsPerStructural * walk.expansions;
+		gnav::PathResult	   result = gnav::pathThrough(detailMesh.view(), startMm, goalMm, radius, pricedFor(belief),
+														  {.within = confine, .maxExpansions = cap});
+		if (result.stop == gnav::PathStop::LimitReached) {
+			LOG_DEBUG(Engine, "[Nav] path query gave up after %u expansions (structural %u) from (%.2f, %.2f) to (%.2f, %.2f): walking the structural route",
+					  result.expansions, walk.expansions, startMeters.x, startMeters.y, goalMeters.x, goalMeters.y);
+			result					  = walk;
+			result.crossesPricedFaces = passesPlacedObstacle(result.points, radius);
+		} else if (!result.reachable) {
 			return std::nullopt;
 		}
 		++navStats.totalQueries;
@@ -1801,33 +2094,118 @@ namespace ecs {
 		return waypoints;
 	}
 
+	float NavigationSystem::anchorLoadRangeMeters() const {
+		return chunkManager != nullptr ? chunkManager->anchorLoadRangeMeters() : world::ChunkManager::kDefaultAnchorLoadRangeMeters;
+	}
+
+	std::int64_t NavigationSystem::autonomousReachMm() const {
+		return std::llround(static_cast<double>(anchorLoadRangeMeters()) * static_cast<double>(geometry::kMillimetersPerMeter));
+	}
+
+	geometry::RectMm NavigationSystem::squareAround(const geometry::Vec2i64& centerMm) const {
+		const std::int64_t half = autonomousReachMm();
+		return {{centerMm.x - half, centerMm.y - half}, {centerMm.x + half, centerMm.y + half}};
+	}
+
+	std::uint64_t NavigationSystem::chunkStamp(const geometry::RectMm& box, StampGround withGround) const {
+		std::uint64_t stamp = 1469598103934665603ULL;
+		forChunksMeeting(box, [&](world::ChunkCoordinate coord) {
+			const auto			it		= chunkStructuralVersion.find(coord);
+			const std::uint64_t version = it != chunkStructuralVersion.end() ? it->second : 0;
+			stamp						= (stamp ^ version) * 1099511628211ULL;
+			if (withGround == StampGround::With) {
+				stamp = (stamp ^ (groundMeshed(coord) ? 1U : 0U)) * 1099511628211ULL;
+			}
+		});
+		return stamp;
+	}
+
 	NavigationSystem::Reach NavigationSystem::reachFrom(glm::vec2 startMeters, float agentRadiusMeters, gnav::BeliefFilter belief) const {
 		join();
 		Reach reach;
-		reach.belief = belief;
-		if (structural.locate(nav::toMm(startMeters)) < 0) {
+		reach.belief				= belief;
+		reach.startMm				= nav::toMm(startMeters);
+		reach.radiusMm				= radiusMm(agentRadiusMeters);
+		reach.square				= squareAround(reach.startMm);
+		reach.onGround				= structural.locate(reach.startMm) >= 0;
+		reach.startCell				= cellKey(geometry::floorDiv(reach.startMm.x, kReachCellMm), geometry::floorDiv(reach.startMm.y, kReachCellMm));
+		reach.startRegionGeneration = chunkStamp(reach.square, StampGround::With);
+		reach.settled				= groundMeshedThrough(reach.square);
+		return reach;
+	}
+
+	NavigationSystem::Reach NavigationSystem::taskReachFrom(glm::vec2 startMeters, float agentRadiusMeters, gnav::BeliefFilter belief,
+															EntityID requester) const {
+		Reach		reach = reachFrom(startMeters, agentRadiusMeters, belief);
+		const Task* task  = world != nullptr ? world->getComponent<Task>(requester) : nullptr;
+		const auto	held  = routeScopes.find(requester);
+		if (task == nullptr || task->instanceId == 0 || held == routeScopes.end() || held->second.instance != task->instanceId ||
+			!held->second.within.has_value()) {
 			return reach;
 		}
-		reach.startRegion			= 0;
-		reach.startRegionId			= 0;
-		reach.startRegionGeneration = structuralGeneration;
-		reach.from = gnav::reachFrom(structural.view(), nav::toMm(startMeters), radiusMm(agentRadiusMeters), belief);
+		const geometry::RectMm& r		= *held->second.within;
+		const geometry::RectMm	grown{{r.min.x - reach.radiusMm, r.min.y - reach.radiusMm}, {r.max.x + reach.radiusMm, r.max.y + reach.radiusMm}};
+		const auto				inside = [&](const geometry::RectMm& box) {
+			   return reach.startMm.x >= box.min.x && reach.startMm.x <= box.max.x && reach.startMm.y >= box.min.y && reach.startMm.y <= box.max.y;
+		};
+		if (!inside(grown)) {
+			return reach;
+		}
+		// The same rect requestPath confines this task's routes to (grown by the radius for a start
+		// pushed just outside it), so reach and route agree for the task's own goals.
+		reach.square				= inside(r) ? r : grown;
+		reach.taskScoped			= true;
+		reach.startRegionGeneration = chunkStamp(reach.square, StampGround::With);
+		reach.settled				= groundMeshedThrough(reach.square);
 		return reach;
 	}
 
 	bool NavigationSystem::sharesStartRegion(const Reach& reach, glm::vec2 goalMeters) const {
+		const geometry::Vec2i64 goal = nav::toMm(goalMeters);
+		return reach.onGround && goal.x >= reach.square.min.x && goal.x <= reach.square.max.x && goal.y >= reach.square.min.y &&
+			   goal.y <= reach.square.max.y;
+	}
+
+	std::uint64_t NavigationSystem::verdictStamp(glm::vec2 anchor) const {
 		join();
-		return reach.startRegion >= 0 && structural.locate(nav::toMm(goalMeters)) >= 0;
+		const geometry::Vec2i64 c = nav::toMm(anchor);
+		const std::int64_t		kHalf = 2 * autonomousReachMm();
+		return chunkStamp({{c.x - kHalf, c.y - kHalf}, {c.x + kHalf, c.y + kHalf}}, StampGround::Without);
+	}
+
+	bool NavigationSystem::inSquareOf(glm::vec2 anchor, glm::vec2 here) const {
+		const geometry::Vec2i64 a = nav::toMm(anchor);
+		const geometry::Vec2i64 h = nav::toMm(here);
+		return std::abs(h.x - a.x) <= autonomousReachMm() && std::abs(h.y - a.y) <= autonomousReachMm();
+	}
+
+	std::optional<float> NavigationSystem::walkDistance(const Reach& reach, glm::vec2 goalMeters, float maxWalk) const {
+		join();
+		const geometry::Vec2i64 goal	 = nav::toMm(goalMeters);
+		const float				straight = std::sqrt(dist2(nav::toMeters(reach.startMm), goalMeters));
+		if (!reach.onGround) {
+			return straight; // can't prove anything from off the ground
+		}
+		const geometry::RectMm& square = reach.square;
+		if (goal.x < square.min.x || goal.x > square.max.x || goal.y < square.min.y || goal.y > square.max.y) {
+			return std::nullopt;
+		}
+		if (structural.locate(goal) < 0) {
+			// Off meshed ground: maybe, while its ground is on the way.
+			const bool coming = chunkManager == nullptr || std::as_const(*chunkManager).getChunk(world::worldToChunk({goalMeters.x, goalMeters.y})) != nullptr;
+			return coming && straight <= maxWalk ? std::optional<float>(straight) : std::nullopt;
+		}
+		const gnav::PathResult walk = gnav::pathThrough(
+			structural.view(), reach.startMm, goal, reach.radiusMm, reach.belief,
+			{.maxCost = static_cast<double>(maxWalk) * static_cast<double>(geometry::kMillimetersPerMeter), .within = &square});
+		if (walk.stop != gnav::PathStop::Found) {
+			return std::nullopt;
+		}
+		return static_cast<float>(walk.cost / static_cast<double>(geometry::kMillimetersPerMeter));
 	}
 
 	bool NavigationSystem::reaches(const Reach& reach, glm::vec2 goalMeters) const {
-		if (reach.startRegion < 0) {
-			return true;
-		}
-		if (!sharesStartRegion(reach, goalMeters)) {
-			return chunkManager == nullptr || std::as_const(*chunkManager).getChunk(world::worldToChunk({goalMeters.x, goalMeters.y})) != nullptr;
-		}
-		return gnav::reaches(structural.view(), reach.from, nav::toMm(goalMeters), reach.belief);
+		return walkDistance(reach, goalMeters).has_value();
 	}
 
 	bool NavigationSystem::isOnMesh(glm::vec2 meters) const {
@@ -1837,7 +2215,161 @@ namespace ecs {
 
 	bool NavigationSystem::isValidPosition(glm::vec2 meters) const {
 		join();
-		return terrainWalkable(detailMesh, meters);
+		return pointOnFace(detailMesh, meters, moverFace) && !placedObstacleAt(meters).has_value();
+	}
+
+	std::optional<NavigationSystem::PlacedObstacle> NavigationSystem::placedObstacleAt(glm::vec2 meters, float reachMeters) const {
+		if (placement == nullptr) {
+			return std::nullopt;
+		}
+		// Colliders are found by their entity's centre, so the box reaches past the largest one.
+		constexpr float				 kColliderReach = 4.0F;
+		const float					 reach			= kColliderReach + reachMeters;
+		const world::ChunkCoordinate lo				= world::worldToChunk({meters.x - reach, meters.y - reach});
+		const world::ChunkCoordinate hi				= world::worldToChunk({meters.x + reach, meters.y + reach});
+		const assets::AssetRegistry& registry		= assets::AssetRegistry::Get();
+		const geometry::Vec2i64		 p				= nav::toMm(meters);
+		std::optional<PlacedObstacle>	 nearest;
+		float						 nearestD2 = 0.0F;
+		for (std::int32_t cy = lo.y; cy <= hi.y; ++cy) {
+			for (std::int32_t cx = lo.x; cx <= hi.x; ++cx) {
+				const assets::SpatialIndex* index = placement->getChunkIndex({cx, cy});
+				if (index == nullptr) {
+					continue;
+				}
+				for (const assets::PlacedEntity* e : index->queryRect(meters.x - reach, meters.y - reach, meters.x + reach, meters.y + reach)) {
+					if (!nav::placedObstacleOutline(*e, registry, colliderScratch)) {
+						continue;
+					}
+					const bool holds = geometry::pointInPolygon(p, colliderScratch) != geometry::PointInPolygon::Outside;
+					if (reachMeters <= 0.0F && !holds) {
+						continue;
+					}
+					const float d2 = dist2(meters, e->position);
+					if (nearest.has_value() && d2 >= nearestD2) {
+						continue;
+					}
+					glm::vec2 centre{0.0F, 0.0F};
+					for (const geometry::Vec2i64& v : colliderScratch) {
+						centre += nav::toMeters(v);
+					}
+					centre /= static_cast<float>(colliderScratch.size());
+					float extent2 = 0.0F;
+					for (const geometry::Vec2i64& v : colliderScratch) {
+						extent2 = std::max(extent2, dist2(centre, nav::toMeters(v)));
+					}
+					nearest	  = PlacedObstacle{centre, std::sqrt(extent2)};
+					nearestD2 = d2;
+				}
+			}
+		}
+		return nearest;
+	}
+
+	bool NavigationSystem::passesPlacedObstacle(const std::vector<geometry::Vec2i64>& points, std::int64_t radius) const {
+		if (placement == nullptr) {
+			return false;
+		}
+		// Each segment against the outline of every placed obstacle in the nav mesh near it: within the radius
+		// when it crosses an edge or starts inside, or an edge comes that close. Exact, so no obstacle
+		// however narrow is missed between samples.
+		using P						  = glm::dvec2;
+		const auto pointToSegment2	  = [](P p, P a, P b) {
+			   const P		d	 = b - a;
+			   const double len2 = glm::dot(d, d);
+			   const double t	 = len2 > 0.0 ? std::clamp(glm::dot(p - a, d) / len2, 0.0, 1.0) : 0.0;
+			   const P		q	 = a + d * t - p;
+			   return glm::dot(q, q);
+		};
+		const auto cross = [](P o, P a, P b) { return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x); };
+		const auto segmentsWithin = [&](P a, P b, P c, P d, double r2) {
+			const double d1 = cross(c, d, a);
+			const double d2 = cross(c, d, b);
+			const double d3 = cross(a, b, c);
+			const double d4 = cross(a, b, d);
+			if (((d1 > 0.0 && d2 < 0.0) || (d1 < 0.0 && d2 > 0.0)) && ((d3 > 0.0 && d4 < 0.0) || (d3 < 0.0 && d4 > 0.0))) {
+				return true;
+			}
+			return std::min({pointToSegment2(a, c, d), pointToSegment2(b, c, d), pointToSegment2(c, a, b), pointToSegment2(d, a, b)}) <= r2;
+		};
+		const assets::AssetRegistry& registry = assets::AssetRegistry::Get();
+		const double				 r2		  = static_cast<double>(radius) * static_cast<double>(radius);
+		// Placed entities are found by their centre, so the box reaches past the largest collider.
+		constexpr float kColliderReach = 4.0F;
+		for (std::size_t k = 1; k < points.size(); ++k) {
+			const P			a{static_cast<double>(points[k - 1].x), static_cast<double>(points[k - 1].y)};
+			const P			b{static_cast<double>(points[k].x), static_cast<double>(points[k].y)};
+			const glm::vec2 lo = glm::min(nav::toMeters(points[k - 1]), nav::toMeters(points[k])) -
+								 glm::vec2{kColliderReach + static_cast<float>(radius) / 1000.0F};
+			const glm::vec2 hi = glm::max(nav::toMeters(points[k - 1]), nav::toMeters(points[k])) +
+								 glm::vec2{kColliderReach + static_cast<float>(radius) / 1000.0F};
+			const world::ChunkCoordinate cLo = world::worldToChunk({lo.x, lo.y});
+			const world::ChunkCoordinate cHi = world::worldToChunk({hi.x, hi.y});
+			for (std::int32_t cy = cLo.y; cy <= cHi.y; ++cy) {
+				for (std::int32_t cx = cLo.x; cx <= cHi.x; ++cx) {
+					const assets::SpatialIndex* index = placement->getChunkIndex({cx, cy});
+					if (index == nullptr) {
+						continue;
+					}
+					for (const assets::PlacedEntity* e : index->queryRect(lo.x, lo.y, hi.x, hi.y)) {
+						if (!placedObstacleInNavMesh({cx, cy}, *e) || !nav::placedObstacleOutline(*e, registry, colliderScratch)) {
+							continue;
+						}
+						if (geometry::pointInPolygon(points[k - 1], colliderScratch) != geometry::PointInPolygon::Outside) {
+							return true;
+						}
+						for (std::size_t v = 0; v < colliderScratch.size(); ++v) {
+							const geometry::Vec2i64& c = colliderScratch[v];
+							const geometry::Vec2i64& d = colliderScratch[(v + 1) % colliderScratch.size()];
+							if (segmentsWithin(a, b, {static_cast<double>(c.x), static_cast<double>(c.y)},
+											   {static_cast<double>(d.x), static_cast<double>(d.y)}, r2)) {
+								return true;
+							}
+						}
+					}
+				}
+			}
+		}
+		return false;
+	}
+
+	std::optional<glm::vec2> NavigationSystem::standPointBeside(glm::vec2 target, glm::vec2 from, float agentRadiusMeters) const {
+		join();
+		if (structural.locate(nav::toMm(target)) < 0) {
+			return std::nullopt;
+		}
+		const auto walkable = [&](glm::vec2 p) { return truthWalkable(structural, p); };
+		const auto clear	= [&](glm::vec2 p) { return walkable(p) && !placedObstacleAt(p).has_value(); };
+		const std::optional<PlacedObstacle> collider = placedObstacleAt(target, 0.05F);
+		if (!collider.has_value()) {
+			if (clear(target)) {
+				return target;
+			}
+			return nearestFaceOnMesh(structural, target, [](const gnav::NavTriangle& t) { return gnav::truthTraversable(t); });
+		}
+		// Round the collider at the disc's radius out from it, nearest the colonist first: a spot clear
+		// of every collider, else (an obstacle among others) one that is at least ground a mover can cross,
+		// inside a neighbour's collider, which a route reaches through the detail at its price.
+		const float								 standOff = collider->extent + agentRadiusMeters + 0.05F;
+		constexpr int							 kSpots	  = 32;
+		std::array<std::pair<float, glm::vec2>, kSpots> spots;
+		for (int k = 0; k < kSpots; ++k) {
+			const float		angle = 6.2831853F * static_cast<float>(k) / static_cast<float>(kSpots);
+			const glm::vec2 spot  = collider->centre + standOff * glm::vec2{std::cos(angle), std::sin(angle)};
+			spots[static_cast<std::size_t>(k)] = {dist2(spot, from), spot};
+		}
+		std::sort(spots.begin(), spots.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+		for (const auto& [d2, spot] : spots) {
+			if (clear(spot)) {
+				return spot;
+			}
+		}
+		for (const auto& [d2, spot] : spots) {
+			if (walkable(spot)) {
+				return spot;
+			}
+		}
+		return std::nullopt;
 	}
 
 	bool NavigationSystem::isSegmentWalkable(glm::vec2 aMeters, glm::vec2 bMeters) const {
@@ -1872,7 +2404,15 @@ namespace ecs {
 
 	std::optional<glm::vec2> NavigationSystem::nearestPathablePoint(glm::vec2 meters) const {
 		join();
-		return nearestFaceOnMesh(detailMesh, meters, [](const gnav::NavTriangle& t) { return gnav::terrainTraversable(t); });
+		const std::optional<glm::vec2> nearest =
+			terrainWalkable(detailMesh, meters)
+				? std::optional<glm::vec2>(meters)
+				: nearestFaceOnMesh(detailMesh, meters, [](const gnav::NavTriangle& t) { return gnav::terrainTraversable(t); });
+		// A placed obstacle the mesh doesn't hold is still in the way: step out of its collider.
+		if (!nearest.has_value() || !placedObstacleAt(*nearest).has_value()) {
+			return nearest;
+		}
+		return standPointBeside(*nearest, meters, 0.0F);
 	}
 
 	std::optional<glm::vec2> NavigationSystem::nearestPathablePoint(glm::vec2 meters, float agentRadiusMeters) const {

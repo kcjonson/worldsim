@@ -4,8 +4,23 @@ Match the game's existing flora, not generic flat-vector art. The look: cel-shad
 
 ## Style statement (the target — keep this in spirit on every asset)
 
-Hand-painted 2D game-asset illustration of plants/foliage for a top-down colony sim (RimWorld-ish). Stylized, no photorealism. Soft cel-shading in two or three flat tonal steps PLUS gentle ambient occlusion in the recesses where forms meet. Soft, irregular, organic edges — never geometric or hard-cornered — with a strong readable silhouette. Foliage reads as a handful of DEFINED LEAF-CLUSTER shapes (lobes/clumps with their own light and shadow), NOT individual leaves and NOT a single smooth dome (a plain dome reads too simplistic). A THIN darker rim, a few px wide, around the form. Muted, earthy, slightly desaturated palette. Light consistently from the upper-left. Single centered object, no ground, no cast shadow. Trees: a couple of branches may show through gaps in the canopy.
+Hand-painted 2D game-asset illustration of plants/foliage for a top-down colony sim (RimWorld-ish). Stylized, no photorealism. Soft cel-shading in two or three flat tonal steps PLUS gentle ambient occlusion in the recesses where forms meet. Soft, irregular, organic edges — never geometric or hard-cornered — with a strong readable silhouette. Foliage reads as a handful of DEFINED LEAF-CLUSTER shapes (lobes/clumps with their own light and shadow), NOT individual leaves and NOT a single smooth dome (a plain dome reads too simplistic). A THIN darker rim, a few px wide, around the form. Muted, earthy, slightly desaturated palette. Light consistently from the upper-left. Single centered object, no ground, no cast shadow beyond a small contact shadow where it meets the ground. Trees: a couple of branches may show through gaps in the canopy.
 
+## Deciduous trees: what `deciduous.lua` draws now
+
+Revised 2026-11-10 (round three) after the owner rejected crowns built from a handful of lobed leaf masses ("no tree has a canopy of circles"). For deciduous trees this section wins over the rest of this guide (the outline rim, the backing, the leaf-cluster-blob recipe, the three-tone cel recipe, and the trunk-stub rule); pine and palm still follow the rest until they are redrawn the same way.
+
+- The crown is made of leaves, never of clump shapes. Leaves hang in sprays along the outer shoots of the skeleton, the last `foliageDepth` of the crown width before each tip; a spray is 4 to 7 small leaf marks (a blunt five-point leaf, or a kite for `lobes=pointed`) fanned outward from its clump and tipped a little toward the ground. The silhouette is the union of the leaves, so it is ragged at leaf scale. No shape is ever drawn for a clump or for the crown.
+- Detail follows one number, `detailPxPerMeter`: the screen density the mesh is cut for (the camera shows 8 px/m times its zoom, so 2 to 160 over the zoom range; the XML default is 24, the default zoom). A mesh cut for P is meant to be drawn from P up to the next level (2, 8, 24, 80 proposed; a level at 4 would steady the 4 to 8 band). Everything drawn is sized to what P can show:
+  - The mark is about 6 px long (the old 2.7 px grown with the 2.25x trees), never under 0.09 m (as fine as the oldest oak's P 80 mesh stays under 65,535 vertices; 14 px at 160 px/m; about 16,000 triangles for a mid-age oak). Sprays per meter of shoot scale with the inverse square of the leaf, so the crown covers the same at every level, and a larger leaf's stalk sits back so its tip lands most of the way to where the finest leaf's would, so the outline stays put. Leaves stop growing at 0.25 m (P 24, about 3,700 triangles). Coarser marks are that layout's leaves merged: nearest within half the extra size, each merged mark the reach outline of its leaves in seven directions, coloured by their linear mean weighted by how much of each shows, at their mean depth. So every coarse level is one layout and keeps its clumps, outline and mean tone; at 8 px/m a mid-age oak is about 290 triangles, at 2 about 27.
+  - Wood under 0.6 px wide is left out (the trunk always reaches the crown), a strip keeps a point only 2 px on from the last, an axis cut for its width ends blunt, and root spurs, dead stag-headed limbs and the contact shadow are drawn only once they are a pixel wide. At 2 px/m the trunk is one tapered quad.
+  - A spray with fewer than eight leaves of other shoots within two leaf lengths is dropped as a speck.
+  - Skeleton, clumps and light do not read the density, so the same individual has one structure at every level; only leaf-level randomness differs. The collision rect is set before any of it. Leaves the leaves above already hide are dropped.
+- Light is from the upper left and above. A leaf's tone comes from three roundnesses (the tuft at its shoot's end, its clump, the whole crown) facing that light, its height in the crown, and how far in from the tip it hangs (deep is dark), quantized to the individual's four tones with a small per-spray value step. Lit leaves sort on top of their neighbours and deep ones under, so clumps read bright on top, dark beneath, with a dark broken interior.
+- The low inside of the crown holds no leaves, so the trunk is seen dividing into boughs. A young tree's sprays are thinned so it reads as a stem carrying a few sprays, not a ball.
+- The wood is one flat bark shape traced around the skeleton (about twice real thickness, narrower than the collision rect's trunk), with a crook partway up the stem and two or three short root spurs that lengthen with age. Leaves on the far side of their shoot are drawn before it, the rest after, so limbs cross the gaps. Dead limbs of a stag-headed oak run on bare past the leaves.
+- No outline, no rim, no backing. Contact shadow only (alpha about 0.18).
+- Oak palette `#4a6a2e #5b7f36 #729a43 #93b85a` (shade, base, light, highlight), bark `#5c4b3d`. Every individual turns its palette by up to +/-14 degrees of hue and scales saturation by up to 18% and value by up to 10%.
 ## Compose masses FROM shapes — not a background with details painted on top
 
 THE most common failure, avoid it: drawing one smooth canopy blob and then painting clusters, highlights, and dark spots on top of it. That always reads flat and simplistic no matter how much you pile on. Complexity is not the amount of stuff added to a background — it is the structure of the form itself.
@@ -41,7 +56,7 @@ The cap is NEVER a concentric ring centered on the base, that reads as a shiny e
 
 ## Layered cel-shade construction (every part)
 
-No ground shadow — the game doesn't use them. Build each mass from back to front in tonal steps:
+Contact shadow only: no drop shadow and no canopy shadow. Where a plant meets the ground, a small lobed patch at its foot (see Palette, `lib.foot` in the prelude) and, for a tree, a root flare. Build each mass from back to front in tonal steps:
 1. **Outline** — a clean dark border around the whole mass. Put an SVG `stroke` (+`stroke-width`) on the shape; the renderer tessellates strokes now. A group `stroke` outlines each child path, not the union, so to get ONE outline around many overlapping shapes, draw an expanded dark copy of the silhouette behind them instead.
 2. **Dark rim** — the part's silhouette in the darkest tone (base x ~0.7).
 3. **Base** — the main mid tone, slightly inset from the rim.
@@ -52,7 +67,7 @@ Light comes from the upper-left, consistently. The view is 3/4 top-down (see bel
 
 ## Per-subject view rules
 
-The engine's canonical view is 3/4 top-down (see `deciduous.lua`: "canopy viewed from above, trunk visible extending downward"). Apply per growth form:
+The engine's canonical view is 3/4 top-down (see `deciduous.lua`: ground depth foreshortened, height rising up the screen, the crown seen from above with the trunk below it). Apply per growth form:
 
 - **Trees** — 3/4 top-down, leaning OVERHEAD: you look DOWN onto the canopy. The canopy is the dominant mass and reads as a rounded crown seen from above (a roughly round, full footprint, NOT a thin flat band on a stick and NOT a tall side-on bush), dome-shaded so the lit top surface faces up-and-left. The trunk is only a SMALL stub barely peeking below the canopy's front edge, the canopy overlaps and hides most of it. Light top-center-left, darker lower/far rim.
   - **Limbs are THICK.** Where a limb shows (at the trunk-canopy join or through a gap) draw it chunky and tapering, roughly half to two-thirds the trunk's width at its base, never a thin stick. A big tree has substantial limbs; sticks read as twigs against the canopy mass.
@@ -103,17 +118,11 @@ Variants (swap the foliage hue, keep structure):
 
 Fruit/berry accents: red `#c41e1e` / `0.77,0.12,0.12`, blue `#3a5a8a`, orange `#d4762a`.
 
-Ground shadow: `#1d2616` at ~0.22-0.30 alpha (slightly green-black, not pure grey).
+Contact shadow: `#1d2616` at 0.15-0.3 alpha (slightly green-black, not pure grey), at most 1.5 trunk widths across; lighter if it reads as a blot. Under 0.5 alpha it stays out of the selection silhouette.
 
 ## Life stages
 
-Scale the same construction across growth:
-- Seedling: ~20-30% size, sparse canopy (skip the mid/highlight layers), thin stem.
-- Sapling: ~50-70% size, fuller but still open.
-- Mature: full size and full layering.
-- Dead / stump: trunk only, or a bare branch silhouette in the Dead palette.
-
-Drive this from a `growthStage` param (scale radius/height, gate canopy-layer count and fruit). Pair with the seasonal palettes above for a full stage x season set.
+A young tree and an old one are different trees, not one tree scaled. `deciduous.lua` grows a branch skeleton for longer the older the tree (one `age` from 0 to 1), so a young tree is a thin stem under a small, upright crown with no lit caps, a grown one has full layering, and an old oak pulls in and goes stag-headed, its dead limbs, the same wood, standing bare past its crown. Size, trunk width, cluster count and the rest are smooth functions of that age. `conifer.lua` and `palm.lua` still scale one construction by a `growthStage` param. Pair with the seasonal palettes above for a full stage x season set.
 
 ## SVG template (simple assets)
 
@@ -135,7 +144,7 @@ For a tree as simple SVG, add a `#trunk` group (two brown tones) below a `#canop
 
 ## Recolor / variation
 
-Runtime variation lives in the **Lua** generator (jitter the palette base per variant, vary radii/counts), as `deciduous.lua` does. Static SVG fills are baked; for a static asset that needs a few distinct looks, author separate variant SVGs rather than expecting runtime recolor.
+Runtime variation lives in the **Lua** generator (jitter the palette base per variant, vary radii/counts), as `deciduous.lua` does (up to 14 degrees of hue, 18% of saturation and 10% of value from the seed, so neighbours differ and the species still reads). Static SVG fills are baked; for a static asset that needs a few distinct looks, author separate variant SVGs rather than expecting runtime recolor.
 
 (If a future renderer change adds CSS-variable color slots to SVG, the layered groups above map cleanly onto per-part slots: one slot per group, defaults = the base tone, engine drives the rim/mid/highlight as ratios. Not implemented yet; don't ship assets that depend on it.)
 

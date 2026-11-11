@@ -1435,3 +1435,182 @@ TEST(PathQuery, APointPortalBendsAtItself) {
 	ASSERT_TRUE(walk.reachable);
 	EXPECT_LE(walk.cost, 2784.0) << "from (" << a.x << ", " << a.y << ") to (" << b.x << ", " << b.y << ")";
 }
+
+// --- Limits on a query ----------------------------------------------------------
+
+// maxCost: a path costing at most the cap (to within a millimetre) is the path found
+// without one; a cap further below its cost returns no path and says the limit stopped it; a goal walled off returns NoPath
+// when everything that could reach it cost under the cap, LimitReached when the cap cut
+// corridors off first.
+TEST(PathQuery, MaxCostFindsPathsWithinItAndNoOthers) {
+	const NavMesh	 m = hedgeMesh(200);
+	const TagPrice	 trees[] = {{kTreeTag, 2.0}};
+	const Vec2i64	 start{10100, 4000};
+	const Vec2i64	 goal{10100, 8000};
+	const PathResult free	 = pathThrough(m, start, goal, 300, pricedBy(trees));
+	ASSERT_EQ(free.stop, PathStop::Found);
+	for (const double cap : {free.cost - 0.5, free.cost, free.cost * 2.0}) {
+		const PathResult capped = pathThrough(m, start, goal, 300, pricedBy(trees), {.maxCost = cap});
+		EXPECT_EQ(capped.stop, PathStop::Found);
+		EXPECT_EQ(capped.points, free.points);
+		EXPECT_DOUBLE_EQ(capped.cost, free.cost);
+	}
+	const PathResult under = pathThrough(m, start, goal, 300, pricedBy(trees), {.maxCost = free.cost - 1.5});
+	EXPECT_EQ(under.stop, PathStop::LimitReached);
+	EXPECT_FALSE(under.reachable);
+	EXPECT_TRUE(under.points.empty());
+
+	NavMeshInput in;
+	in.polygons.push_back({{{0, 0}, {10000, 0}, {10000, 10000}, {0, 10000}}, false, 1});
+	in.polygons.push_back({{{3000, 3000}, {7000, 3000}, {7000, 7000}, {3000, 7000}}, true, -5});
+	in.polygons.push_back({{{3000, 3000}, {7000, 3000}, {7000, 3200}, {3000, 3200}}, true, -6});
+	const NavMesh  walled = buildNavMesh(in);
+	const Vec2i64 inside{5000, 5000};
+	// The rock fills the square: the goal is on it, an untraversable face, so NoPath at once.
+	EXPECT_EQ(pathThrough(walled, {1000, 1000}, inside, 0, {}, {.maxCost = 1.0}).stop, PathStop::NoPath);
+}
+
+// A goal sealed in a room the belief knows: the open set runs dry (NoPath) with no cap or
+// a cap above everything reachable, and a low cap stops it first (LimitReached).
+TEST(PathQuery, SealedGoalStopsOnTheCapOrRunsDry) {
+	const NavMesh					  m = buildNavMesh(buildBoxRoom(/*withDoor=*/false));
+	std::unordered_set<std::uint64_t> segs{static_cast<std::uint64_t>(kSegS), static_cast<std::uint64_t>(kSegN), static_cast<std::uint64_t>(kSegW),
+										   static_cast<std::uint64_t>(kSegE)};
+	std::unordered_set<std::uint64_t> noOps;
+	const BeliefFilter				  belief{&segs, &noOps};
+	const PathResult				  dry = pathThrough(m, kOutside, kInside, 0, belief);
+	EXPECT_EQ(dry.stop, PathStop::NoPath);
+	EXPECT_EQ(pathThrough(m, kOutside, kInside, 0, belief, {.maxCost = 1.0e9}).stop, PathStop::NoPath);
+	const PathResult capped = pathThrough(m, kOutside, kInside, 0, belief, {.maxCost = 10.0});
+	EXPECT_EQ(capped.stop, PathStop::LimitReached);
+	EXPECT_LE(capped.expansions, dry.expansions);
+}
+
+// maxExpansions: the same query stops at the same place every time, after exactly that
+// many expansions; a limit above what the search needs changes nothing.
+TEST(PathQuery, MaxExpansionsStopsDeterministically) {
+	const NavMesh	 m	  = buildRefereeMesh(refereeRects());
+	const Vec2i64	 a{200, 200};
+	const Vec2i64	 b{5800, 3800};
+	const PathResult full = pathThrough(m, a, b, 0);
+	ASSERT_EQ(full.stop, PathStop::Found);
+	ASSERT_GT(full.expansions, 4u);
+	EXPECT_EQ(full.expansions, static_cast<std::uint32_t>(full.nodesExpanded));
+	const PathResult cut  = pathThrough(m, a, b, 0, {}, {.maxExpansions = 4});
+	const PathResult again = pathThrough(m, a, b, 0, {}, {.maxExpansions = 4});
+	EXPECT_EQ(cut.stop, PathStop::LimitReached);
+	EXPECT_EQ(cut.expansions, 4u);
+	EXPECT_EQ(again.expansions, cut.expansions);
+	EXPECT_EQ(again.peakOpenSet, cut.peakOpenSet);
+	const PathResult roomy = pathThrough(m, a, b, 0, {}, {.maxExpansions = full.expansions + 1});
+	EXPECT_EQ(roomy.stop, PathStop::Found);
+	EXPECT_EQ(roomy.points, full.points);
+	EXPECT_EQ(roomy.nodesExpanded, full.nodesExpanded);
+	// The goal accepted on the pop after the count: Found, not stopped. Exactly at the
+	// count it is found as without one.
+	const PathResult exact = pathThrough(m, a, b, 0, {}, {.maxExpansions = full.expansions});
+	EXPECT_EQ(exact.stop, PathStop::Found);
+	EXPECT_EQ(exact.points, full.points);
+	const PathResult atGoal = pathThrough(m, a, b, 0, {}, {.maxExpansions = full.expansions - 1});
+	EXPECT_EQ(atGoal.stop, PathStop::Found);
+	EXPECT_EQ(atGoal.points, full.points);
+	EXPECT_EQ(atGoal.expansions, full.expansions);
+}
+
+// within: confined to the left of two squares that share a side, a query answers as on a
+// mesh of the left square alone (the right one empty, so no width reads differ); a goal
+// reached only by a way through the right square is NoPath; an end outside is NoPath.
+// Limits that bind nothing change no result or count.
+TEST(PathQuery, WithinAnswersAsTheMeshCutToTheBox) {
+	auto posts = [](NavMeshInput& in) {
+		for (std::int64_t x = 1000; x < 9000; x += 1500) {
+			for (std::int64_t y = 1000; y < 9000; y += 1700) {
+				in.polygons.push_back({{{x, y}, {x + 500, y}, {x + 500, y + 400}, {x, y + 400}}, true, -7});
+			}
+		}
+		// A wall across the left square but for a gap at its right end, against the side.
+		in.polygons.push_back({{{0, 5000}, {9000, 5000}, {9000, 5300}, {0, 5300}}, true, -8});
+	};
+	NavMeshInput two;
+	two.polygons.push_back({{{0, 0}, {10000, 0}, {10000, 10000}, {0, 10000}}, false, 1});
+	two.polygons.push_back({{{10000, 0}, {20000, 0}, {20000, 10000}, {10000, 10000}}, false, 1});
+	posts(two);
+	NavMeshInput one;
+	one.polygons.push_back({{{0, 0}, {10000, 0}, {10000, 10000}, {0, 10000}}, false, 1});
+	posts(one);
+	const NavMesh mTwo = buildNavMesh(two);
+	const NavMesh mOne = buildNavMesh(one);
+	const RectMm  left{{0, 0}, {10000, 10000}};
+	int			  compared = 0;
+	for (const auto& [a, b] : std::vector<std::pair<Vec2i64, Vec2i64>>{{{500, 500}, {9500, 9500}}, {{800, 2600}, {7000, 8900}}, {{9800, 200}, {300, 9800}}}) {
+		for (const std::int64_t radius : {0, 300}) {
+			const PathResult cut	 = pathThrough(mOne, a, b, radius);
+			const PathResult within = pathThrough(mTwo, a, b, radius, {}, {.within = &left});
+			EXPECT_EQ(within.stop, cut.stop);
+			EXPECT_EQ(within.points, cut.points) << "from (" << a.x << ", " << a.y << ") radius " << radius;
+			++compared;
+		}
+	}
+	EXPECT_EQ(compared, 6);
+
+	// The wall reaches the side: crossing it means leaving the left square.
+	NavMeshInput sealedTwo = two;
+	sealedTwo.polygons.back() = {{{0, 5000}, {10000, 5000}, {10000, 5300}, {0, 5300}}, true, -8};
+	const NavMesh sealed = buildNavMesh(sealedTwo);
+	EXPECT_EQ(pathThrough(sealed, {500, 500}, {500, 9500}, 0).stop, PathStop::Found);
+	EXPECT_EQ(pathThrough(sealed, {500, 500}, {500, 9500}, 0, {}, {.within = &left}).stop, PathStop::NoPath);
+	EXPECT_EQ(pathThrough(mTwo, {500, 500}, {15000, 500}, 0, {}, {.within = &left}).stop, PathStop::NoPath);
+
+	const RectMm	 all{{0, 0}, {20000, 10000}};
+	const PathResult plain = pathThrough(mTwo, {500, 500}, {15000, 9500}, 300);
+	const PathResult loose = pathThrough(mTwo, {500, 500}, {15000, 9500}, 300, {}, {.maxCost = plain.cost * 4.0, .within = &all, .maxExpansions = 1000000});
+	EXPECT_EQ(loose.points, plain.points);
+	EXPECT_EQ(loose.nodesExpanded, plain.nodesExpanded);
+	EXPECT_EQ(loose.peakOpenSet, plain.peakOpenSet);
+	EXPECT_DOUBLE_EQ(loose.cost, plain.cost);
+}
+
+// within bounds the walk, not the triangles it enters: a spike of wall up from the floor
+// of a big triangular field leaves one way round, over its tip, and the two big triangles
+// either side of it meet a box below the tip. The box must still shut that way: NoPath.
+// A box that takes in the tip changes nothing, every point inside.
+TEST(PathQuery, WithinShutsAWayOutsideTheBoxThroughTrianglesThatMeetIt) {
+	auto field = [](std::vector<Vec2i64> border) {
+		NavMeshInput in;
+		in.polygons.push_back({std::move(border), false, 1});
+		in.polygons.push_back({{{19900, 0}, {20100, 0}, {20000, 8000}}, true, -8});
+		return buildNavMesh(in);
+	};
+	const NavMesh m = field({{0, 0}, {40000, 0}, {20000, 20000}});
+	const Vec2i64 a{5000, 2000};
+	const Vec2i64 b{35000, 2000};
+	const RectMm  low{{0, 0}, {40000, 7000}};
+	const RectMm  high{{0, 0}, {40000, 9000}};
+	const NavMesh cut = field({{0, 0}, {40000, 0}, {31000, 9000}, {9000, 9000}});
+	auto		  inside = [](const PathResult& r, const RectMm& box) {
+		 for (const Vec2i64& p : r.points) {
+			 if (p.x < box.min.x || p.x > box.max.x || p.y < box.min.y || p.y > box.max.y) {
+				 return false;
+			 }
+		 }
+		 return true;
+	};
+	for (const std::int64_t radius : {0, 300}) {
+		const PathResult open = pathThrough(m, a, b, radius);
+		ASSERT_EQ(open.stop, PathStop::Found);
+		EXPECT_FALSE(inside(open, low)) << "the way round must leave the low box for the case to bind";
+		EXPECT_EQ(pathThrough(m, a, b, radius, {}, {.within = &low}).stop, PathStop::NoPath) << "radius " << radius;
+		// The tip rounded inside the high box: the walk without it. The cut mesh pulls the
+		// rounding in along other portals (the clearance caveat), so it matches exactly
+		// only for a point walker.
+		const PathResult boxed = pathThrough(m, a, b, radius, {}, {.within = &high});
+		const PathResult onCut = pathThrough(cut, a, b, radius);
+		ASSERT_EQ(boxed.stop, PathStop::Found);
+		ASSERT_EQ(onCut.stop, PathStop::Found);
+		EXPECT_EQ(boxed.points, open.points) << "radius " << radius;
+		if (radius == 0) {
+			EXPECT_EQ(boxed.points, onCut.points);
+		}
+		EXPECT_TRUE(inside(boxed, high));
+	}
+}

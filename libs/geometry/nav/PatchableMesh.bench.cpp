@@ -27,11 +27,12 @@
 
 namespace {
 
+	using geometry::RectMm;
 	using geometry::Vec2i64;
 	using namespace geometry::nav;
 
 	constexpr std::int64_t kProvenanceWater	 = -1;
-	constexpr std::int64_t kProvenanceTree	 = -2;
+	constexpr std::int64_t kProvenancePlaced	 = -2;
 	constexpr std::int64_t kProvenanceBorder = -3;
 
 	enum class Fixture { ManyTrees, Control, RealRings };
@@ -48,13 +49,13 @@ namespace {
 			rings.base.push_back(NavInputPolygon{td::realBorderRing(), false, kProvenanceBorder});
 			rings.base.push_back(NavInputPolygon{td::realWaterRing(), true, kProvenanceWater, kNoOpening, true});
 			for (const std::vector<Vec2i64>& tree : td::realTreeRings()) {
-				rings.trees.push_back(NavInputPolygon{tree, true, kProvenanceTree});
+				rings.trees.push_back(NavInputPolygon{tree, true, kProvenancePlaced});
 			}
 			return rings;
 		}
 		for (const td::DumpRing& r : f == Fixture::ManyTrees ? td::manyTreesDump() : td::controlDump()) {
 			NavInputPolygon poly{r.ring, r.blocked, r.provenanceId, kNoOpening, r.holeCapable};
-			(r.provenanceId == kProvenanceTree ? rings.trees : rings.base).push_back(std::move(poly));
+			(r.provenanceId == kProvenancePlaced ? rings.trees : rings.base).push_back(std::move(poly));
 		}
 		return rings;
 	}
@@ -176,7 +177,7 @@ namespace {
 
 	// The fixture fully loaded, each tree under its current id.
 	struct Loaded {
-		explicit Loaded(std::int64_t maxBoundsEdgeMm = 0) : mesh({.maxBoundsEdgeMm = maxBoundsEdgeMm, .detailTags = {kProvenanceTree}}) {}
+		explicit Loaded(std::int64_t maxBoundsEdgeMm = 0) : mesh({.maxBoundsEdgeMm = maxBoundsEdgeMm, .detailTags = {kProvenancePlaced}}) {}
 
 		Rings						 rings;
 		PatchableMesh				 mesh;
@@ -349,7 +350,7 @@ namespace {
 				if (at.x >= bandWidth || at.y + y0 + 1000 >= side) {
 					continue;
 				}
-				rings.trees.push_back(NavInputPolygon{translated(tree.ring, Vec2i64{-lo.x - bandWidth / 2, -lo.y + y0}), true, kProvenanceTree});
+				rings.trees.push_back(NavInputPolygon{translated(tree.ring, Vec2i64{-lo.x - bandWidth / 2, -lo.y + y0}), true, kProvenancePlaced});
 			}
 		}
 		return rings;
@@ -404,7 +405,7 @@ namespace {
 			runFootprint(state, l.mesh, pathAlong(from, 21), Refresh::Untimed);
 			return;
 		}
-		NavInputPolygon tree{straddlingRect(l, x, lo.y, hi.y), true, kProvenanceTree};
+		NavInputPolygon tree{straddlingRect(l, x, lo.y, hi.y), true, kProvenancePlaced};
 		if (what == 3) {
 			const std::int64_t y = tree.ring.front().y;
 			tree				 = NavInputPolygon{rect(x - 4000, y, x + 4000, y + 200), true, 40};
@@ -567,7 +568,7 @@ namespace {
 				out.push_back(NavInputPolygon{translated(td::realWaterRing(), by), true, kProvenanceWater, kNoOpening, true});
 				if (fill == Fill::WaterTrees) {
 					for (const std::vector<Vec2i64>& tree : td::realTreeRings()) {
-						out.push_back(NavInputPolygon{translated(tree, by), true, kProvenanceTree});
+						out.push_back(NavInputPolygon{translated(tree, by), true, kProvenancePlaced});
 					}
 				}
 			}
@@ -741,7 +742,7 @@ namespace {
 		Vec2i64 lo;
 		Vec2i64 hi;
 		boxOf(l.rings.base.front().ring, lo, hi);
-		const NavInputPolygon tree{straddlingRect(l, kind == 0 ? lo.x : hi.x, lo.y, hi.y), true, kProvenanceTree};
+		const NavInputPolygon tree{straddlingRect(l, kind == 0 ? lo.x : hi.x, lo.y, hi.y), true, kProvenancePlaced};
 		PatchTally			  tally;
 		for (auto _ : state) {
 			const PatchReport r = timedPatch(state, l.mesh, adding({tree}));
@@ -811,7 +812,7 @@ namespace {
 	enum class Between { Nothing, OtherMesh, TwoOtherMeshes };
 
 	struct RequestShape {
-		PatchableMesh						 detail{{.maxBoundsEdgeMm = 16000, .detailTags = {kProvenanceTree}}};
+		PatchableMesh						 detail{{.maxBoundsEdgeMm = 16000, .detailTags = {kProvenancePlaced}}};
 		std::vector<Vec2i64>				 goals;
 		std::vector<std::pair<Vec2i64, int>> starts; // start, goal index
 	};
@@ -834,7 +835,7 @@ namespace {
 		std::int64_t mid = (lo.x + hi.x) / 2;
 		const bool	 chunks = colony == Colony::ChunkMiddle || colony == Colony::ChunkSide;
 		if (colony != Colony::Anywhere) {
-			s.detail = PatchableMesh({.maxBoundsEdgeMm = 64000, .detailTags = {kProvenanceTree}});
+			s.detail = PatchableMesh({.maxBoundsEdgeMm = 64000, .detailTags = {kProvenancePlaced}});
 		}
 		if (chunks) {
 			const std::int64_t tile = hi.x - lo.x;
@@ -894,7 +895,7 @@ namespace {
 	}
 
 	// The game's flora price: trees cost 50 times their length; anything else stays blocked.
-	constexpr TagPrice kTreePrices[] = {{kProvenanceTree, 50.0}};
+	constexpr TagPrice kTreePrices[] = {{kProvenancePlaced, 50.0}};
 
 	void BM_RequestShape(benchmark::State& state, Fixture f, Pricing p, Between between, Colony colony = Colony::Anywhere) {
 		RequestShape s;
@@ -907,7 +908,7 @@ namespace {
 		for (std::size_t i = 0; i < others.size(); ++i) {
 			const std::int64_t side = 20000 + 4000 * static_cast<std::int64_t>(i);
 			untimedPatch(others[i], adding({NavInputPolygon{rect(0, 0, side, side), false, kProvenanceBorder},
-											NavInputPolygon{rect(side / 3, side / 3, side / 2, side / 2), true, kProvenanceTree}}));
+											NavInputPolygon{rect(side / 3, side / 3, side / 2, side / 2), true, kProvenancePlaced}}));
 		}
 		const int otherQueries = between == Between::Nothing ? 0 : (between == Between::OtherMesh ? 1 : 2);
 		std::int64_t nodes	   = 0;
@@ -944,11 +945,11 @@ namespace {
 		const Vec2i64 g{(lo.x + hi.x) / 2, (lo.y + hi.y) / 2};
 		for (const auto& r : {rect(g.x - 2000, g.y - 2000, g.x + 2000, g.y - 1600), rect(g.x - 2000, g.y + 1600, g.x + 2000, g.y + 2000),
 							  rect(g.x - 2000, g.y - 2000, g.x - 1600, g.y + 2000), rect(g.x + 1600, g.y - 2000, g.x + 2000, g.y + 2000)}) {
-			rings.trees.push_back(NavInputPolygon{r, true, kProvenanceTree});
+			rings.trees.push_back(NavInputPolygon{r, true, kProvenancePlaced});
 		}
 		std::vector<NavInputPolygon> all = rings.base;
 		all.insert(all.end(), rings.trees.begin(), rings.trees.end());
-		PatchableMesh mesh({.detailTags = {kProvenanceTree}});
+		PatchableMesh mesh({.detailTags = {kProvenancePlaced}});
 		untimedPatch(mesh, adding(all));
 		BeliefFilter belief;
 		belief.prices = kTreePrices;
@@ -1013,7 +1014,7 @@ namespace {
 		Vec2i64			   lo;
 		Vec2i64			   hi;
 		boxOf(td::realBorderRing(), lo, hi);
-		PatchableMesh				 mesh({.maxBoundsEdgeMm = 64000, .detailTags = {kProvenanceTree}});
+		PatchableMesh				 mesh({.maxBoundsEdgeMm = 64000, .detailTags = {kProvenancePlaced}});
 		std::vector<NavInputPolygon> ground{NavInputPolygon{rect(0, 0, tiles * kRealTileMm, tiles * kRealTileMm), false, kProvenanceBorder}};
 		std::vector<NavInputPolygon> moving;
 		for (std::int64_t b = 0; b < tiles; ++b) {
@@ -1024,7 +1025,7 @@ namespace {
 					ground.push_back(NavInputPolygon{translated(td::realWaterRing(), by), true, kProvenanceWater, kNoOpening, true});
 				}
 				for (const std::vector<Vec2i64>& tree : td::realTreeRings()) {
-					NavInputPolygon ring{translated(tree, by), true, kProvenanceTree};
+					NavInputPolygon ring{translated(tree, by), true, kProvenancePlaced};
 					Vec2i64			tLo;
 					Vec2i64			tHi;
 					boxOf(ring.ring, tLo, tHi);
@@ -1081,7 +1082,7 @@ namespace {
 				ground.push_back(NavInputPolygon{translated(td::realWaterRing(), by), true, kProvenanceWater, kNoOpening, true});
 				std::vector<std::vector<NavInputPolygon>> tileRows(8);
 				for (const std::vector<Vec2i64>& tree : td::realTreeRings()) {
-					NavInputPolygon ring{translated(tree, by), true, kProvenanceTree};
+					NavInputPolygon ring{translated(tree, by), true, kProvenancePlaced};
 					Vec2i64			tLo;
 					Vec2i64			tHi;
 					boxOf(ring.ring, tLo, tHi);
@@ -1099,7 +1100,7 @@ namespace {
 		double		total = 0.0;
 		std::size_t slots = 0;
 		for (auto _ : state) {
-			PatchableMesh mesh({.maxBoundsEdgeMm = 64000, .detailTags = {kProvenanceTree}});
+			PatchableMesh mesh({.maxBoundsEdgeMm = 64000, .detailTags = {kProvenancePlaced}});
 			untimedPatch(mesh, adding(ground));
 			worst = 0.0;
 			total = 0.0;
@@ -1119,6 +1120,168 @@ namespace {
 		state.counters["slots"]	  = static_cast<double>(slots);
 		state.counters["meanUs"]  = 1e6 * total / static_cast<double>(rows.size());
 		state.counters["worstUs"] = 1e6 * worst;
+	}
+
+	// --- Limits on a query -------------------------------------------------------------
+
+	// tiles x tiles of realRings' 128 m tile (water, and trees unless `trees` is false)
+	// under one bounds square split every 64 m, trees detail-class: the game's ground.
+	void loadTiledGround(PatchableMesh& mesh, std::int64_t tiles, bool trees, std::vector<NavInputPolygon> extra = {}) {
+		namespace td = geometry::nav::testdata;
+		Vec2i64		 lo;
+		Vec2i64		 hi;
+		boxOf(td::realBorderRing(), lo, hi);
+		std::vector<NavInputPolygon> ground{NavInputPolygon{rect(0, 0, tiles * kRealTileMm, tiles * kRealTileMm), false, kProvenanceBorder}};
+		for (std::int64_t b = 0; b < tiles; ++b) {
+			for (std::int64_t a = 0; a < tiles; ++a) {
+				const Vec2i64 by{a * kRealTileMm - lo.x, b * kRealTileMm - lo.y};
+				ground.push_back(NavInputPolygon{translated(td::realWaterRing(), by), true, kProvenanceWater, kNoOpening, true});
+				if (trees) {
+					for (const std::vector<Vec2i64>& tree : td::realTreeRings()) {
+						ground.push_back(NavInputPolygon{translated(tree, by), true, kProvenancePlaced});
+					}
+				}
+			}
+		}
+		ground.insert(ground.end(), extra.begin(), extra.end());
+		untimedPatch(mesh, adding(ground));
+	}
+
+	// A goal the belief knows is walled in: a 6 m room of four known wall segments in the
+	// middle of tiles x tiles of forested ground, trees priced as the game prices them, and
+	// starts 30 to 60 m off. The search can only fail. Limit: 0 none, 1 maxExpansions 2000,
+	// 2 within a 256 m square round the start.
+	void BM_WalledGoal(benchmark::State& state, int limit) {
+		const std::int64_t tiles = state.range(0);
+		PatchableMesh	   mesh({.maxBoundsEdgeMm = 64000, .detailTags = {kProvenancePlaced}});
+		const std::int64_t side = tiles * kRealTileMm;
+		// The room's centre: open floor near the middle, found on a trial mesh of the tile.
+		Vec2i64			   g{side / 2, side / 2};
+		{
+			PatchableMesh trial({.maxBoundsEdgeMm = 64000, .detailTags = {kProvenancePlaced}});
+			loadTiledGround(trial, tiles, true);
+			std::mt19937 rng(5);
+			auto		 clear = [&](const Vec2i64& p) {
+				for (std::int64_t dy = -4000; dy <= 4000; dy += 500) {
+					for (std::int64_t dx = -4000; dx <= 4000; dx += 500) {
+						const std::int32_t t = trial.locate(p + Vec2i64{dx, dy});
+						if (t < 0 || !isFloorFace(trial.triangles()[static_cast<std::size_t>(t)])) {
+							return false;
+						}
+					}
+				}
+				return true;
+			};
+			while (!clear(g)) {
+				g = {side / 2 + static_cast<std::int64_t>(rng() % 60000) - 30000, side / 2 + static_cast<std::int64_t>(rng() % 60000) - 30000};
+			}
+		}
+		constexpr std::int64_t kHalf = 3000;
+		constexpr std::int64_t kWall = 200;
+		std::vector<NavInputPolygon> walls{
+			NavInputPolygon{rect(g.x - kHalf, g.y - kHalf, g.x + kHalf, g.y - kHalf + kWall), true, 101},
+			NavInputPolygon{rect(g.x - kHalf, g.y + kHalf - kWall, g.x + kHalf, g.y + kHalf), true, 102},
+			NavInputPolygon{rect(g.x - kHalf, g.y - kHalf, g.x - kHalf + kWall, g.y + kHalf), true, 103},
+			NavInputPolygon{rect(g.x + kHalf - kWall, g.y - kHalf, g.x + kHalf, g.y + kHalf), true, 104}};
+		loadTiledGround(mesh, tiles, true, walls);
+		mesh.rebuildForests();
+		std::unordered_set<std::uint64_t> known{101, 102, 103, 104};
+		std::unordered_set<std::uint64_t> noDoors;
+		BeliefFilter					  belief{&known, &noDoors};
+		belief.prices = kTreePrices;
+		std::mt19937		 rng(17);
+		std::vector<Vec2i64> starts;
+		while (starts.size() < 8) {
+			const double  angle = static_cast<double>(rng() % 6283) / 1000.0;
+			const double  dist	= 30000.0 + static_cast<double>(rng() % 30000);
+			const Vec2i64 p{g.x + static_cast<std::int64_t>(dist * std::cos(angle)), g.y + static_cast<std::int64_t>(dist * std::sin(angle))};
+			const std::int32_t t = mesh.locate(p);
+			if (t >= 0 && isFloorFace(mesh.triangles()[static_cast<std::size_t>(t)])) {
+				starts.push_back(p);
+			}
+		}
+		double		  expansions = 0.0;
+		int			  limited	 = 0;
+		for (auto _ : state) {
+			double total = 0.0;
+			expansions	 = 0.0;
+			limited		 = 0;
+			for (const Vec2i64& s : starts) {
+				const RectMm box{s - Vec2i64{128000, 128000}, s + Vec2i64{128000, 128000}};
+				PathLimits	 limits;
+				if (limit == 1) {
+					limits.maxExpansions = 2000;
+				} else if (limit == 2) {
+					limits.within = &box;
+				}
+				PathResult r;
+				total += secondsOf([&] { r = pathThrough(mesh.view(), s, g, 300, belief, limits); });
+				expansions += r.expansions;
+				limited += r.stop == PathStop::LimitReached ? 1 : 0;
+				benchmark::DoNotOptimize(r);
+			}
+			state.SetIterationTime(total);
+		}
+		state.counters["slots"]		  = static_cast<double>(mesh.triangles().size());
+		state.counters["usPerQuery"]  = benchmark::Counter(static_cast<double>(starts.size()) * static_cast<double>(state.iterations()),
+														   benchmark::Counter::kIsRate | benchmark::Counter::kInvert);
+		state.counters["expansions"] = expansions / static_cast<double>(starts.size());
+		state.counters["limited"]	  = limited;
+	}
+
+	// The game's walking-distance question on its structural mesh (water, no trees, 64 m
+	// sides): pairs 10 to 120 m apart, confined to a square round the start (256 m, or 64 m
+	// to make the square bind), the cost
+	// capped at `capTimes` the straight line. Time per query by how it ended: found, stopped
+	// on the cap, or no path inside the square.
+	void BM_WalkingDistance(benchmark::State& state, double capTimes, std::int64_t boxHalfMm) {
+		const std::int64_t tiles = 5;
+		PatchableMesh	   mesh({.maxBoundsEdgeMm = 64000});
+		loadTiledGround(mesh, tiles, false);
+		mesh.rebuildForests();
+		const std::int64_t side = tiles * kRealTileMm;
+		std::mt19937	   rng(29);
+		auto			   floor = [&](const Vec2i64& p) {
+			const std::int32_t t = mesh.locate(p);
+			return t >= 0 && isFloorFace(mesh.triangles()[static_cast<std::size_t>(t)]);
+		};
+		std::vector<std::pair<Vec2i64, Vec2i64>> pairs;
+		while (pairs.size() < 64) {
+			const Vec2i64 a{20000 + static_cast<std::int64_t>(rng() % static_cast<std::uint32_t>(side - 40000)),
+							20000 + static_cast<std::int64_t>(rng() % static_cast<std::uint32_t>(side - 40000))};
+			const double  angle = static_cast<double>(rng() % 6283) / 1000.0;
+			const double  dist	= 10000.0 + static_cast<double>(rng() % 110000);
+			const Vec2i64 b{a.x + static_cast<std::int64_t>(dist * std::cos(angle)), a.y + static_cast<std::int64_t>(dist * std::sin(angle))};
+			if (floor(a) && floor(b)) {
+				pairs.push_back({a, b});
+			}
+		}
+		std::array<double, 3> seconds{};
+		std::array<int, 3>	  count{};
+		for (auto _ : state) {
+			seconds = {};
+			count	= {};
+			double total = 0.0;
+			for (const auto& [a, b] : pairs) {
+				const RectMm box{a - Vec2i64{boxHalfMm, boxHalfMm}, a + Vec2i64{boxHalfMm, boxHalfMm}};
+				const double straight = std::hypot(static_cast<double>(b.x - a.x), static_cast<double>(b.y - a.y));
+				PathResult	 r;
+				const double took = secondsOf([&] { r = pathThrough(mesh.view(), a, b, 300, {}, {.maxCost = capTimes * straight, .within = &box}); });
+				const int	 kind = r.stop == PathStop::Found ? 0 : (r.stop == PathStop::LimitReached ? 1 : 2);
+				seconds[static_cast<std::size_t>(kind)] += took;
+				++count[static_cast<std::size_t>(kind)];
+				total += took;
+				benchmark::DoNotOptimize(r);
+			}
+			state.SetIterationTime(total);
+		}
+		const char* names[] = {"found", "cap", "box"};
+		for (std::size_t k = 0; k < 3; ++k) {
+			state.counters[std::string(names[k]) + "N"]	   = count[k];
+			state.counters[std::string(names[k]) + "UsEach"] = count[k] > 0 ? 1e6 * seconds[k] / count[k] : 0.0;
+		}
+		state.counters["usPerQuery"] = benchmark::Counter(static_cast<double>(pairs.size()) * static_cast<double>(state.iterations()),
+														  benchmark::Counter::kIsRate | benchmark::Counter::kInvert);
 	}
 
 } // namespace
@@ -1218,6 +1381,13 @@ BENCHMARK_CAPTURE(BM_LargeTree, squares_shoreline_add, 1, true, true)->UseManual
 BENCHMARK_CAPTURE(BM_LargeBoundsTree, tiled_border, 0)->UseManualTime()->Unit(benchmark::kMicrosecond);
 BENCHMARK_CAPTURE(BM_LargeBoundsTree, squares_shared_side, 1)->UseManualTime()->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_MeshGrowsWorstPatch)->Arg(10)->Iterations(1)->UseManualTime()->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_WalledGoal, unlimited, 0)->Arg(3)->Arg(6)->Arg(9)->UseManualTime()->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_WalledGoal, maxExpansions2000, 1)->Arg(3)->Arg(6)->Arg(9)->UseManualTime()->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_WalledGoal, within256m, 2)->Arg(3)->Arg(6)->Arg(9)->UseManualTime()->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_WalkingDistance, cap1x, 1.0, 128000)->UseManualTime()->Unit(benchmark::kMicrosecond);
+BENCHMARK_CAPTURE(BM_WalkingDistance, cap2x, 2.0, 128000)->UseManualTime()->Unit(benchmark::kMicrosecond);
+BENCHMARK_CAPTURE(BM_WalkingDistance, cap4x, 4.0, 128000)->UseManualTime()->Unit(benchmark::kMicrosecond);
+BENCHMARK_CAPTURE(BM_WalkingDistance, cap4x_box64m, 4.0, 32000)->UseManualTime()->Unit(benchmark::kMicrosecond);
 BENCHMARK_CAPTURE(BM_FloraCellsEnter, twoCells, 2, false)->Arg(1)->Arg(3)->Arg(9)->UseManualTime()->Unit(benchmark::kMicrosecond);
 BENCHMARK_CAPTURE(BM_FloraCellsEnter, twoCells_openTile, 2, true)->Arg(1)->Arg(3)->Arg(9)->UseManualTime()->Unit(benchmark::kMicrosecond);
 BENCHMARK_CAPTURE(BM_FloraCellsEnter, loneTree_openTile, 0, true)->Arg(1)->Arg(3)->Arg(9)->UseManualTime()->Unit(benchmark::kMicrosecond);

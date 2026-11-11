@@ -87,49 +87,27 @@ The hard requirement, decomposed:
 
 **Agent shape: routing vs collision (decided 2026-06-23).** Collision (this tier) uses the agent's real, possibly non-circular, per-direction footprint: a long creature is a long thin rectangle, and `FacingDirection` already drives four directional sprites. Routing (Tiers 1 and 2), though, reduces each agent to a scalar clearance equal to half its narrow cross-section, because facing follows velocity, so a creature moving down a corridor presents its narrow side and the long body trails the head along the routed path (articulated). The funnel and the reachability widths therefore consume one scalar (`AgentRadius.radiusMeters`, reread as half the narrow width), not a bounding circle (a snake's bounding circle is huge, so it could enter nothing) and not a fixed set of size classes. Per-direction collision shapes, and deriving the routing clearance from an asset's collision shape, are Tier-3 and asset work, not the router's concern. A resting agent sprawled across a path is a *dynamic* obstacle for crowd avoidance (P5), never baked into the static mesh.
 
-### As built: multi-region sim area, runtime validity, and beeline removal (2026-06-28)
+### As built: runtime validity and beeline removal (2026-06-28)
 
-The Tier-2 mesh is no longer a single camera-tracked arrangement. `NavigationSystem` owns a
-**collection of regions** that follow the colonists plus the viewport, the first half of the
-two-tier model the tier table sketches.
+The multi-region sim area this section used to describe (a square region per colonist and one for
+the viewport, rebuilt whole) is gone. Its replacement is one persistent mesh patched in place,
+specified in [nav-mesh-variable-resolution.md](./nav-mesh-variable-resolution.md): ground loads and
+meshes around anchors (colonists, their routes and waiting goals) whatever the camera does, the
+camera only brings flora in, and a colonist's own reach and routing are confined to a square of
+half-side the anchor load range around it. That spec's section 10 is what was built.
 
-**Multi-region sim area (Phase 1).** Each tick `NavigationSystem` reads colonist `Position`s and
-the viewport rect (`GameScene` pushes the rect as plain data, it no longer drives the mesh),
-builds a square region per driver, **clusters overlapping squares into merged regions**, and
-self-gates rebuilds off the render clock: a region recenters only when one of its drivers nears
-the region-rect edge or its obstacle inputs change. A stationary colonist under a held camera
-triggers zero rebuilds; panning far spawns a separate viewport region instead of dragging a
-colonist's region with it. Queries dispatch by position: `requestPath` / `reachFrom` + `reaches` /
-`isOnMesh` / `nearestPathablePoint` / `inSimArea` select the region containing the point.
-`requestPath` holds when the endpoints fall in different regions or outside all regions
-(long-range routing across unsimulated space is Phase 2). RRA* caches are keyed by region id plus
-goal triangle. Recovery (snap an off-mesh colonist back onto a face) fires only for a colonist
-*inside* a region but off a face; a colonist no region covers is left where he stands. That last
-rule fixes the camera-pan freeze (panning used to drag the mesh off a colonist, who was then
-"off-mesh" and got snapped into the river).
-
-**The two-tier plan.** Phase 1 (above) is the per-driver dynamic mesh for full-fidelity local
-nav. **Phase 2** (planned) adds a STATIC coarse global **geography mesh**: big impassables only
-(rivers as polylines, no assets), built once per chunk and never recalculated, for long-range
-routing across unsimulated space, plus skip-nav-for-stationary agents. This is the concrete shape
-of the Tier 0/1 "loaded-but-far" idea for the colony's own space. A position outside every active
-region's mesh is not interactively placeable yet; Phase 2 extends reach there.
-
-**`isValidPosition`: the one runtime walkability predicate.** `NavigationSystem::isValidPosition`
-is a thin wrapper over `isOnMesh`: a point is valid IFF it sits on a walkable nav face inside an
-active sim region. This is the single canonical predicate every world-positioning path respects
-(One Path Rule) — dev spawn / give-loose / colonist / teleport and build-placement preview (the
-ghost reads validity from the mesh each frame, goes red off-mesh, blocks the click). All ad-hoc
-checks were deleted.
+**`isValidPosition`: the one runtime validity predicate.** A point is valid when it is meshed
+ground a mover may stand on, not water and not inside a tree's collider (read from the placement
+data, on camera or off). Every world-positioning path respects it (One Path Rule): dev spawn,
+give-loose, colonist, teleport and the build-placement preview.
 
 **World-data-vs-runtime boundary (load-bearing).** The 3D world/planet data exists ONLY to spawn
 chunk data at initial load and during chunk generation. It is NOT read at runtime for anything
 else. Runtime walkability / "is this a valid world position" is a nav-mesh query, never a
 world-data query: do NOT reach back into `terrainTraversable` / `isWaterAt` to answer validity.
 The nav mesh already bakes in water, obstacles, clearance, and connectivity, so it is the single
-runtime authority; this keeps a clean load-time-vs-runtime separation. The active-mesh-only
-constraint (a point outside every active region is not placeable until Phase 2) is documented in a
-code comment at the predicate.
+runtime authority; this keeps a clean load-time-vs-runtime separation. A point off meshed ground is not
+placeable.
 
 **Vector, not tile/grid.** Runtime positions are continuous and walkability is polygonal nav
 faces. No "tile" or grid math for runtime positioning or validity. Entity occupancy and collision

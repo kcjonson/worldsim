@@ -25,6 +25,7 @@ struct GenerationContext {
 	uint32_t variantIndex = 0;	// Which variant of its age class is being generated
 	std::optional<std::string> ageClass;	// The age class's name; unset for a def without <ageClasses>
 	std::optional<float> periodMeters;		// A ground def's <period>, the tile a variant covers; unset for other roles
+	std::optional<float> detailPxPerMeter;	// The screen density of the <detailLevels> level being built; unset without levels
 };
 
 /// A single path (filled polygon) in a generated asset
@@ -53,8 +54,8 @@ struct GeneratedAsset {
 	std::vector<GeneratedPath> paths;
 
 	// Collision footprint emitted by the generator script (asset:setCollisionRect).
-	// Captured eagerly at load so nav/collision see it without running the full
-	// render pipeline. Unset means the generator declared no collision.
+	// Captured at load (per age class, from its variant 0) so nav/collision see it without
+	// running the full render pipeline. Unset means the generator declared no collision.
 	std::optional<CollisionShape> emittedCollision;
 
 	void clear() {

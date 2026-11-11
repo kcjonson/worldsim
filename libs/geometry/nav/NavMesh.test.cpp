@@ -890,7 +890,7 @@ TEST(NavMesh, DisjointWaterBodiesParity) {
 TEST(NavMesh, SolidObstacleOverWaterStaysBlocked) {
 	constexpr std::int64_t kProvenanceWater = -1;
 	constexpr std::int64_t kProvenanceBorder = -3;
-	constexpr std::int64_t kProvenanceTree	= -2;
+	constexpr std::int64_t kProvenancePlaced	= -2;
 
 	NavMeshInput in;
 	in.polygons.push_back(
@@ -902,7 +902,7 @@ TEST(NavMesh, SolidObstacleOverWaterStaysBlocked) {
 		NavInputPolygon{{{3000, 3000}, {7000, 3000}, {7000, 7000}, {3000, 7000}}, true, kProvenanceWater, kNoOpening, true});
 	// Solid flora (NOT holeCapable) on the island.
 	in.polygons.push_back(
-		NavInputPolygon{{{4500, 4500}, {5500, 4500}, {5500, 5500}, {4500, 5500}}, true, kProvenanceTree});
+		NavInputPolygon{{{4500, 4500}, {5500, 4500}, {5500, 5500}, {4500, 5500}}, true, kProvenancePlaced});
 
 	NavMesh m = buildNavMesh(in);
 	ASSERT_FALSE(m.triangles.empty());
@@ -911,7 +911,7 @@ TEST(NavMesh, SolidObstacleOverWaterStaysBlocked) {
 	int inTree = 0;
 	for (const NavTriangle& t : m.triangles) {
 		if (pointInPolygon(centroid(m.vertices, t.v), tree) == PointInPolygon::Inside) {
-			EXPECT_EQ(t.faceBlocker, kProvenanceTree) << "a solid obstacle over walkable water-island land must stay blocked";
+			EXPECT_EQ(t.faceBlocker, kProvenancePlaced) << "a solid obstacle over walkable water-island land must stay blocked";
 			++inTree;
 		}
 	}
@@ -1081,7 +1081,7 @@ TEST(NavMesh, RealYConfluence_OpenGrassIsFloor) {
 	constexpr std::int64_t kProvenanceWater	 = -1;
 	constexpr std::int64_t kProvenanceBorder = -3;
 
-	constexpr std::int64_t kProvenanceTree = -2;
+	constexpr std::int64_t kProvenancePlaced = -2;
 
 	// Fixture-integrity guard: the captured rings have known sizes (border quad, 564-vertex
 	// water loop, 637 tree colliders). A truncated or partially-edited NavMeshRealRings.test.h
@@ -1096,7 +1096,7 @@ TEST(NavMesh, RealYConfluence_OpenGrassIsFloor) {
 		NavInputPolygon{testdata::realWaterRing(), true, kProvenanceWater, kNoOpening, true});
 	// The 637 scattered tree colliders on the open grass -- solid (not holeCapable).
 	for (const std::vector<Vec2i64>& tree : testdata::realTreeRings()) {
-		in.polygons.push_back(NavInputPolygon{tree, true, kProvenanceTree});
+		in.polygons.push_back(NavInputPolygon{tree, true, kProvenancePlaced});
 	}
 
 	NavMesh m = buildNavMesh(in);

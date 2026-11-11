@@ -1,9 +1,9 @@
-#include "GroveField.h"
+#include "world/generation/GroveField.h"
 
 #include <algorithm>
 #include <cmath>
 
-namespace assets::grove {
+namespace world::grove {
 
 	namespace {
 
@@ -66,4 +66,28 @@ namespace assets::grove {
 		return smooth01(kGladeBandLo, kGladeBandHi, grove);
 	}
 
-} // namespace assets::grove
+	float gapWeight(float worldX, float worldY, uint64_t seed) {
+		constexpr uint64_t kGapSalt = 0x6A9F1E1DULL;
+		return smooth01(kGapBandLo, kGapBandHi, warpedNoise(worldX, worldY, kGapFeatureMeters, seed ^ kGapSalt));
+	}
+
+	float spawnScale(float grove, float worldX, float worldY, uint64_t seed) {
+		const float open = gladeWeight(grove) * gapWeight(worldX, worldY, seed);
+		return kGladeSpawnMin + (1.0F - kGladeSpawnMin) * open;
+	}
+
+	float canopyWeight(float worldX, float worldY, uint64_t seed, float cover) {
+		if (cover <= 0.0F) {
+			return 0.0F;
+		}
+		const float grove = groveValue(worldX, worldY, seed);
+		const float edge = smooth01(kFloorEdgeLo, kFloorEdgeHi, grove);
+		if (edge <= 0.0F) {
+			return 0.0F;
+		}
+		const float stand = kFloorLoose + (1.0F - kFloorLoose) * gladeWeight(grove);
+		const float gap = kFloorInGap + (1.0F - kFloorInGap) * gapWeight(worldX, worldY, seed);
+		return cover * edge * stand * gap;
+	}
+
+} // namespace world::grove

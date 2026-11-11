@@ -40,57 +40,65 @@ namespace nav {
 		}
 	}
 
-	std::optional<gnav::NavInputPolygon> floraRingFor(const assets::PlacedEntity& e, const assets::AssetRegistry& registry) {
-		const assets::AssetDefinition* def = registry.getDefinition(e.defName);
-		if (def == nullptr || !def->collision.blocks()) {
+	std::optional<gnav::NavInputPolygon> placedObstacleRing(const assets::PlacedEntity& e, const assets::AssetRegistry& registry) {
+		geometry::Ring ring;
+		if (!placedObstacleOutline(e, registry, ring)) {
 			return std::nullopt;
 		}
+		return gnav::NavInputPolygon{std::move(ring), true, kProvenancePlaced};
+	}
 
-		const float c  = std::cos(e.rotation);
-		const float s  = std::sin(e.rotation);
-		const float sc = e.scale;
-		// Local-space point (meters) -> world mm: scale, rotate, translate by the
-		// entity position (which is in tiles == meters). The single trig step is
-		// rounded to mm at the boundary, matching the module's rounding policy.
-		auto toWorldMm = [&](glm::vec2 local) -> geometry::Vec2i64 {
-			const float lx = local.x * sc;
-			const float ly = local.y * sc;
-			const float wx = e.position.x + (lx * c - ly * s);
-			const float wy = e.position.y + (lx * s + ly * c);
-			return toMm({wx, wy});
-		};
+	std::optional<OrientedRect> placedObstacleBox(const assets::PlacedEntity& e, const assets::CollisionShape& collision) {
+		if (collision.type != assets::CollisionShapeType::Rect) {
+			return std::nullopt;
+		}
+		const float		c	= std::cos(e.rotation);
+		const float		s	= std::sin(e.rotation);
+		const float		pad = static_cast<float>(kPlacedObstaclePadMm) / static_cast<float>(kTileMm);
+		const glm::vec2 off = collision.offsetMeters * e.scale;
+		OrientedRect	box;
+		box.center		= e.position + glm::vec2{off.x * c - off.y * s, off.x * s + off.y * c};
+		box.axisX		= {c, s};
+		box.axisY		= {-s, c};
+		box.halfExtents = std::abs(e.scale) * (collision.halfExtentsMeters + glm::vec2{pad, pad});
+		return box;
+	}
 
-		geometry::Ring ring;
-		if (def->collision.type == assets::CollisionShapeType::Rect) {
-			// The rect's 4 corners (local meters), half-extents inflated outward by
-			// the pad so the agent clears the trunk, then transformed -- so entity
-			// rotation turns it into an oriented quad (OBB) rather than an AABB.
-			const float		padMeters = static_cast<float>(kFloraColliderPadMm) / static_cast<float>(kTileMm);
-			const glm::vec2 c		  = def->collision.offsetMeters;
-			const float		hx		  = def->collision.halfExtentsMeters.x + padMeters;
-			const float		hy		  = def->collision.halfExtentsMeters.y + padMeters;
+	bool placedObstacleOutline(const assets::PlacedEntity& e, const assets::AssetRegistry& registry, geometry::Ring& ring) {
+		ring.clear();
+		const assets::AssetDefinition* def = registry.getDefinition(e.defName);
+		if (def == nullptr) {
+			return false;
+		}
+		const assets::CollisionShape& collision = def->collisionFor(e.traits.ageClass);
+		if (!collision.blocks()) {
+			return false;
+		}
+
+		if (collision.type == assets::CollisionShapeType::Rect) {
+			const OrientedRect box = *placedObstacleBox(e, collision);
 			ring.reserve(4);
-			ring.push_back(toWorldMm({c.x - hx, c.y - hy}));
-			ring.push_back(toWorldMm({c.x + hx, c.y - hy}));
-			ring.push_back(toWorldMm({c.x + hx, c.y + hy}));
-			ring.push_back(toWorldMm({c.x - hx, c.y + hy}));
-		} else if (def->collision.type == assets::CollisionShapeType::Polygon) {
-			ring.reserve(def->collision.pointsMeters.size());
-			for (const glm::vec2& p : def->collision.pointsMeters) {
-				ring.push_back(toWorldMm(p));
+			for (const glm::vec2 corner : {glm::vec2{-1.0F, -1.0F}, glm::vec2{1.0F, -1.0F}, glm::vec2{1.0F, 1.0F}, glm::vec2{-1.0F, 1.0F}}) {
+				ring.push_back(toMm(box.center + box.axisX * (corner.x * box.halfExtents.x) + box.axisY * (corner.y * box.halfExtents.y)));
+			}
+		} else if (collision.type == assets::CollisionShapeType::Polygon) {
+			const float c  = std::cos(e.rotation);
+			const float s  = std::sin(e.rotation);
+			const float sc = e.scale;
+			ring.reserve(collision.pointsMeters.size());
+			for (const glm::vec2& p : collision.pointsMeters) {
+				const glm::vec2 l = p * sc;
+				ring.push_back(toMm({e.position.x + (l.x * c - l.y * s), e.position.y + (l.x * s + l.y * c)}));
 			}
 		}
 
 		// A negative entity scale would flip winding; normalize so blocked rings
 		// are CCW like the rest, and drop anything degenerate.
 		if (ring.size() < 3) {
-			return std::nullopt;
+			return false;
 		}
 		geometry::ensureCounterClockwise(ring);
-		if (geometry::windingOrder(ring) == geometry::Winding::Degenerate) {
-			return std::nullopt;
-		}
-		return gnav::NavInputPolygon{std::move(ring), true, kProvenanceTree};
+		return geometry::windingOrder(ring) != geometry::Winding::Degenerate;
 	}
 
 	void extractWalls(const construction::ConstructionWorld& world, const assets::ConstructionRegistry& registry,

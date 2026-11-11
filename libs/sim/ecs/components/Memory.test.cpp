@@ -14,6 +14,7 @@
 
 #include <gtest/gtest.h>
 
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -234,6 +235,7 @@ TEST(MemoryQueries, NearestSourceTieBreaksOnKeyNotInsertionOrder) {
 	const glm::vec2 north{0.0F, 3.0F};
 	const glm::vec2 expected = ecs::hashWorldEntity(east, kDefId) < ecs::hashWorldEntity(north, kDefId) ? east : north;
 	const auto		anywhere = [](uint64_t, const glm::vec2&) { return true; };
+	const auto		straight = [](uint64_t, const glm::vec2& p, float) { return std::optional<float>(glm::length(p)); };
 	std::vector<ecs::SourceCandidate> scratch;
 
 	ecs::Memory eastFirst;
@@ -243,8 +245,8 @@ TEST(MemoryQueries, NearestSourceTieBreaksOnKeyNotInsertionOrder) {
 	ASSERT_TRUE(northFirst.rememberWorldEntity(north, kDefId, kSourceMask));
 	ASSERT_TRUE(northFirst.rememberWorldEntity(east, kDefId, kSourceMask));
 
-	const auto a = ecs::findNearestReachableWithCapability(eastFirst, kSourceCapability, {0.0F, 0.0F}, anySource, anywhere, scratch);
-	const auto b = ecs::findNearestReachableWithCapability(northFirst, kSourceCapability, {0.0F, 0.0F}, anySource, anywhere, scratch);
+	const auto a = ecs::findNearestReachableWithCapability(eastFirst, kSourceCapability, {0.0F, 0.0F}, anySource, straight, anywhere, scratch);
+	const auto b = ecs::findNearestReachableWithCapability(northFirst, kSourceCapability, {0.0F, 0.0F}, anySource, straight, anywhere, scratch);
 	ASSERT_TRUE(a.has_value());
 	ASSERT_TRUE(b.has_value());
 	EXPECT_EQ(a->position, expected);
@@ -263,27 +265,61 @@ TEST(MemoryQueries, NearestReachableSourceWalksEveryCandidate) {
 	std::vector<ecs::SourceCandidate> scratch;
 
 	size_t	   tested = 0;
-	const auto found = ecs::findNearestReachableWithCapability(
-		memory, kSourceCapability, {0.0F, 0.0F}, anySource,
-		[&](uint64_t, const glm::vec2& p) {
-			++tested;
-			return p == farthest;
-		},
-		scratch
-	);
+	const auto found  = ecs::findNearestReachableWithCapability(
+		 memory, kSourceCapability, {0.0F, 0.0F}, anySource,
+		 [&](uint64_t, const glm::vec2& p, float) {
+			 ++tested;
+			 return p == farthest ? std::optional<float>(glm::length(p)) : std::nullopt;
+		 },
+		 [&](uint64_t, const glm::vec2& p) { return p == farthest; }, scratch
+	 );
 	ASSERT_TRUE(found.has_value());
 	EXPECT_EQ(found->position, farthest);
-	EXPECT_EQ(tested, kSources) << "each candidate tested once, nearest first";
+	EXPECT_GE(tested, kSources) << "each candidate walked";
+	EXPECT_LE(tested, 2 * kSources) << "to twice its straight line, then at most once more";
 
 	EXPECT_FALSE(ecs::findNearestReachableWithCapability(
-					 memory, kSourceCapability, {0.0F, 0.0F}, anySource, [](uint64_t, const glm::vec2&) { return false; },
-					 scratch
+					 memory, kSourceCapability, {0.0F, 0.0F}, anySource, [](uint64_t, const glm::vec2&, float) { return std::optional<float>{}; },
+					 [](uint64_t, const glm::vec2&) { return false; }, scratch
 	)
 					 .has_value());
 }
 
-// The reach memo: a colonist among unreachable sources tests each one once. Learning a new source
-// tests only that one, and a changed key (a nav rebuild here) tests them all again.
+// The pick is by walk: a source 10 m off in a straight line but a 100 m walk round loses to one 40 m
+// off that is a 40 m walk. A first walk goes to twice the straight line, the next in full or only as
+// far as the best walk found, and a candidate no nearer in a straight line than the best walk is never
+// walked.
+TEST(MemoryQueries, NearestSourceIsByWalkNotStraightLine) {
+	ecs::Memory		memory;
+	const glm::vec2 acrossRiver{10.0F, 0.0F};
+	const glm::vec2 behind{-40.0F, 0.0F};
+	const glm::vec2 farAway{0.0F, 90.0F};
+	for (const glm::vec2 p : {acrossRiver, behind, farAway}) {
+		ASSERT_TRUE(memory.rememberWorldEntity(p, kDefId, kSourceMask));
+	}
+	std::vector<ecs::SourceCandidate> scratch;
+	std::vector<std::pair<glm::vec2, float>> asked;
+	const auto walk = [&](uint64_t, const glm::vec2& p, float maxWalk) {
+		asked.emplace_back(p, maxWalk);
+		const float length = p == acrossRiver ? 100.0F : glm::length(p);
+		return length <= maxWalk ? std::optional<float>(length) : std::nullopt;
+	};
+	const auto found = ecs::findNearestReachableWithCapability(
+		memory, kSourceCapability, {0.0F, 0.0F}, anySource, walk, [](uint64_t, const glm::vec2&) { return true; }, scratch
+	);
+	ASSERT_TRUE(found.has_value());
+	EXPECT_EQ(found->position, behind);
+	// The near one first, to twice its straight line (20 m: longer, so keyed at 20 m, still nearer than
+	// the one behind), then in full (100 m), then the one behind only as far as that (40 m found).
+	ASSERT_EQ(asked.size(), 3u) << "the far source is never walked";
+	EXPECT_EQ(asked[0], std::pair(acrossRiver, 20.0F));
+	EXPECT_EQ(asked[1], std::pair(acrossRiver, std::numeric_limits<float>::infinity()));
+	EXPECT_EQ(asked[2], std::pair(behind, 100.0F));
+}
+
+// The reach memo: a colonist among unreachable sources tests each one twice (to kWalkStretch times its
+// straight line, then in full), and never again under the key. Learning a new source tests only that
+// one, and a changed key (a nav change here) tests them all again.
 TEST(MemoryQueries, SourceReachMemoTestsEachSourceOncePerKey) {
 	ecs::Memory memory;
 	constexpr size_t kSources = 8;
@@ -295,34 +331,66 @@ TEST(MemoryQueries, SourceReachMemoTestsEachSourceOncePerKey) {
 	size_t							  probes = 0;
 	glm::vec2						  reachableSource{-1000.0F, -1000.0F}; // nothing reachable yet
 
-	const auto query = [&](const ecs::SourceReachMemo::Key& key) {
-		memo.keep(key, 2 * ecs::Memory::kMaxWorldEntities);
+	const auto query = [&](const ecs::SourceReachMemo::Key& key, const ecs::SourceReachMemo::Anchor& anchor) {
+		memo.keep(key, anchor, 2 * ecs::Memory::kMaxWorldEntities);
 		return ecs::findNearestReachableWithCapability(
 			memory, kSourceCapability, {0.0F, 0.0F}, anySource,
-			[&](uint64_t sourceKey, const glm::vec2& position) {
-				return memo.reachable(sourceKey, position, [&](const glm::vec2& p) {
+			[&](uint64_t sourceKey, const glm::vec2& position, float maxWalk) {
+				return memo.walk(sourceKey, position, maxWalk, [&](const glm::vec2& p, float) {
 					++probes;
-					return p == reachableSource;
+					return p == reachableSource ? std::optional<float>(glm::length(p)) : std::nullopt;
 				});
 			},
-			scratch
+			[&](uint64_t sourceKey, const glm::vec2&) { return memo.knownReachable(sourceKey); }, scratch
 		);
 	};
 
-	const ecs::SourceReachMemo::Key meshA{.regionId = 0, .regionGeneration = 1, .beliefVersion = 0, .reachRoot = 5};
-	EXPECT_FALSE(query(meshA).has_value());
-	EXPECT_EQ(probes, kSources) << "the first decision tests every source";
-	EXPECT_FALSE(query(meshA).has_value());
-	EXPECT_EQ(probes, kSources) << "the next decision tests none";
+	const ecs::SourceReachMemo::Key	   meshA{.startCell = 5, .reachGeneration = 1, .beliefVersion = 0};
+	const ecs::SourceReachMemo::Anchor anchorA{.at = {0.0F, 0.0F}, .structural = 1, .beliefVersion = 0};
+	EXPECT_FALSE(query(meshA, anchorA).has_value());
+	EXPECT_EQ(probes, 2 * kSources) << "the first decision tests every source, stretched then in full";
+	EXPECT_FALSE(query(meshA, anchorA).has_value());
+	EXPECT_EQ(probes, 2 * kSources) << "the next decision tests none";
 
 	reachableSource = posFor(kSources + 1);
 	ASSERT_TRUE(memory.rememberWorldEntity(reachableSource, kDefId, kSourceMask));
-	const auto learned = query(meshA);
+	const auto learned = query(meshA, anchorA);
 	ASSERT_TRUE(learned.has_value()) << "a newly learned reachable source is found";
 	EXPECT_EQ(learned->position, reachableSource);
-	EXPECT_EQ(probes, kSources + 1) << "only the new source is tested";
+	EXPECT_EQ(probes, 2 * kSources + 1) << "only the new source is tested";
 
-	const ecs::SourceReachMemo::Key meshB{.regionId = 0, .regionGeneration = 2, .beliefVersion = 0, .reachRoot = 5};
-	EXPECT_TRUE(query(meshB).has_value());
-	EXPECT_EQ(probes, 2 * kSources + 2) << "a nav rebuild tests every source again, nearest first, up to the reachable one";
+	const ecs::SourceReachMemo::Key	   meshB{.startCell = 5, .reachGeneration = 2, .beliefVersion = 0};
+	const ecs::SourceReachMemo::Anchor anchorB{.at = {0.0F, 0.0F}, .structural = 2, .beliefVersion = 0};
+	const size_t before = probes;
+	EXPECT_TRUE(query(meshB, anchorB).has_value());
+	EXPECT_GE(probes - before, kSources + 1) << "a nav change tests every source again, stretched, and the reachable one is taken";
+	EXPECT_LE(probes - before, 2 * kSources + 1) << "the ones nearer than its walk once more, bounded by it";
+}
+
+// A failed route is held under the anchor, not the key: a step on (a new key, the anchor held) it
+// still reads unreachable and isn't walked; a new anchor forgets it.
+TEST(MemoryQueries, SourceReachMemoHoldsFailedRoutesUnderTheAnchor) {
+	ecs::SourceReachMemo			   memo;
+	constexpr uint64_t				   kSource = 77;
+	const glm::vec2					   at{10.0F, 0.0F};
+	int								   probes = 0;
+	const auto						   probe  = [&](const glm::vec2& p, float) {
+		 ++probes;
+		 return std::optional<float>(glm::length(p));
+	};
+	const ecs::SourceReachMemo::Key	   here{.startCell = 5, .reachGeneration = 1};
+	const ecs::SourceReachMemo::Key	   stepOn{.startCell = 6, .reachGeneration = 1};
+	const ecs::SourceReachMemo::Anchor anchor{.at = {0.0F, 0.0F}, .structural = 1};
+	const ecs::SourceReachMemo::Anchor moved{.at = {200.0F, 0.0F}, .structural = 1};
+
+	memo.keep(here, anchor, 16);
+	ASSERT_TRUE(memo.reachable(kSource, at, probe));
+	memo.recordFailedRoute(kSource);
+	memo.keep(stepOn, anchor, 16);
+	EXPECT_TRUE(memo.knownUnreachable(kSource));
+	EXPECT_FALSE(memo.reachable(kSource, at, probe));
+	EXPECT_EQ(probes, 1) << "a failed route was walked again";
+	memo.keep(stepOn, moved, 16);
+	EXPECT_FALSE(memo.knownUnreachable(kSource));
+	EXPECT_TRUE(memo.reachable(kSource, at, probe));
 }

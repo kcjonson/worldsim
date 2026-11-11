@@ -115,3 +115,53 @@ function shape.upFan(xs, ys, x, y, k, dir, spread, len, bend, hubHalf, fill, wit
 	xs[n], ys[n] = x + hubHalf * 1.5, y
 	return n
 end
+
+-- A lobed blob around (cx, cy): n points at even angles from rot, every other one pulled in to notch of
+-- the radius, so the outline is a ring of rounded lobes (notch near 1) or points (notch well under 1).
+-- Each radius is jittered by up to jitter of itself; squash scales y. Draws n random numbers.
+function shape.lobed(cx, cy, r, n, notch, jitter, rot, squash)
+	local xs, ys = {}, {}
+	for i = 1, n do
+		local a = rot + (i - 1) * 2 * math.pi / n
+		local rr = r * (i % 2 == 0 and notch or 1) * (1 + (math.random() * 2 - 1) * jitter)
+		xs[i], ys[i] = cx + cos(a) * rr, cy + sin(a) * rr * squash
+	end
+	return shape.polygon(xs, ys)
+end
+
+-- A leaf mark from its stalk at (x, y) along the unit direction (dx, dy), len long and wide times its
+-- usual width: a kite when pointed, else a broad blunt leaf with one shoulder fuller than the other, so
+-- leaves in a spray don't stamp.
+function shape.leaf(x, y, dx, dy, len, wide, pointed)
+	local nx, ny = -dy * len * wide, dx * len * wide
+	local ux, uy = dx * len, dy * len
+	local function at(a, b)
+		return x + ux * a + nx * b, y + uy * a + ny * b
+	end
+	local xs, ys = {}, {}
+	if pointed then
+		xs[1], ys[1] = at(0, 0)
+		xs[2], ys[2] = at(0.42, -0.26)
+		xs[3], ys[3] = at(1, 0)
+		xs[4], ys[4] = at(0.42, 0.26)
+	else
+		xs[1], ys[1] = at(0, 0)
+		xs[2], ys[2] = at(0.36, -0.3)
+		xs[3], ys[3] = at(0.84, -0.2)
+		xs[4], ys[4] = at(1, 0.04)
+		xs[5], ys[5] = at(0.55, 0.3)
+	end
+	return shape.polygon(xs, ys)
+end
+
+-- Adds poly to the asset in color c, a {r, g, b} table, at alpha (1 when nil).
+function shape.emit(poly, c, alpha)
+	local p = Path()
+	for i = 1, poly.n do
+		p:addVertex(poly.xs[i], poly.ys[i])
+	end
+	p:setColor(c[1], c[2], c[3], alpha or 1)
+	p:close()
+	asset:addPath(p)
+end
+

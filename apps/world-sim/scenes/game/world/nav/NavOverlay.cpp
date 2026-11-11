@@ -13,7 +13,7 @@ namespace world_sim {
 
 	namespace {
 		// Mesh wireframe color-coded by walkability: green = walkable ground, red = blocked
-		// (water / tree / wall). A glance confirms whether the navmesh classifies land vs water
+		// (water / placed obstacle / wall). A glance confirms whether the navmesh classifies land vs water
 		// correctly. Bright magenta routes read over both.
 		constexpr Foundation::Color kWalkableEdge{1.0F, 0.95F, 0.15F, 0.75F}; // bright yellow: reads on grass AND water
 		constexpr Foundation::Color kBlockedEdge{0.95F, 0.2F, 0.2F, 0.6F};	  // red

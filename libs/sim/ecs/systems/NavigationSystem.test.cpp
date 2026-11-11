@@ -103,6 +103,14 @@ namespace {
 		return south;
 	}
 
+	// Ground the nav mesh holds clear: on it, and neither water nor a tree in it. Tests that watch flora
+	// come into and leave the mesh read it, where isValidPosition reads trees from the placement data.
+	bool meshClear(const NavigationSystem& sys, glm::vec2 meters) {
+		const geometry::nav::PatchableMesh& mesh = sys.navMesh();
+		const std::int32_t					tri	 = mesh.locate(nav::toMm(meters));
+		return tri >= 0 && geometry::nav::terrainTraversable(mesh.triangles()[static_cast<std::size_t>(tri)]);
+	}
+
 	// Both meshes pass their full consistency check.
 	void expectMeshesValid(const NavigationSystem& sys) {
 		EXPECT_EQ(sys.navMesh().validate(), "") << "nav mesh";
@@ -189,8 +197,7 @@ namespace {
 	void registerTree(const std::string& defName, float halfExtent) {
 		AssetDefinition tree;
 		tree.defName					 = defName;
-		tree.collision.type				 = CollisionShapeType::Rect;
-		tree.collision.halfExtentsMeters = {halfExtent, halfExtent};
+		tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {halfExtent, halfExtent}});
 		AssetRegistry::Get().registerTestDefinition(tree);
 	}
 
@@ -240,6 +247,7 @@ namespace {
 		const EntityID e = world.createEntity();
 		world.addComponent<Position>(e, Position{at});
 		world.addComponent<Colonist>(e, Colonist{name});
+		world.addComponent<Task>(e, Task{});
 		return e;
 	}
 
@@ -499,18 +507,22 @@ TEST_F(NavigationSystemTest, IsReachableForUnmeshedGoalDependsOnItsChunk) {
 
 	const std::unique_ptr<world::ChunkManager> wider = readyChunks(landSampler(), {0.0F, 0.0F}, 3);
 	sys.setChunkManager(wider.get()); // chunk (3, 0) is loaded now, its ground not meshed yet
-	const glm::vec2 coming{1700.0F, 10.0F};
+	const glm::vec2 edge{1530.0F, 10.0F};	// chunk (2, 0), meshed
+	const glm::vec2 coming{1560.0F, 10.0F}; // chunk (3, 0), 30 m on
+	ASSERT_TRUE(sys.inSimArea(edge));
 	ASSERT_FALSE(sys.inSimArea(coming));
-	EXPECT_TRUE(isReachable(sys, kOutside, coming, kAgentRadius)) << "a goal whose ground is on the way";
+	EXPECT_TRUE(isReachable(sys, edge, coming, kAgentRadius)) << "a goal whose ground is on the way";
 }
 
-// generation() bumps on the tick that first meshes ground and on every later patch.
+// generation() bumps on the tick that first meshes ground an anchor holds and on every later patch
+// there.
 TEST_F(NavigationSystemTest, GenerationBumpsOnPatch) {
 	ConstructionWorld cw;
 	SegmentId		  south = buildRoom(cw, /*withOpening=*/false, /*pathableOpening=*/false);
 
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	addColonist(world, kOutside, "Anchor");
 	wireArea(sys);
 	sys.setConstructionWorld(&cw);
 
@@ -540,16 +552,16 @@ TEST_F(NavigationSystemTest, ReachKeyMovesWithAPatch) {
 	settle(sys);
 
 	const NavigationSystem::Reach first = sys.reachFrom({0.0F, 0.0F}, kAgentRadius);
-	EXPECT_EQ(first.startRegion, 0);
-	EXPECT_EQ(first.startRegionId, 0);
-	EXPECT_TRUE(sys.sharesStartRegion(first, {300.0F, 0.0F})) << "all meshed ground is one region";
+	EXPECT_TRUE(first.onGround);
+	EXPECT_TRUE(sys.sharesStartRegion(first, {100.0F, 0.0F})) << "meshed ground in the reach square";
+	EXPECT_FALSE(sys.sharesStartRegion(first, {300.0F, 0.0F})) << "meshed ground outside it";
 	EXPECT_FALSE(sys.sharesStartRegion(first, kUnmeshed));
-	EXPECT_EQ(sys.reachFrom(kUnmeshed, kAgentRadius).startRegion, -1);
+	EXPECT_FALSE(sys.reachFrom(kUnmeshed, kAgentRadius).onGround);
 
 	buildWall(cw, {10000, 10000}, {11000, 10000});
 	step(world, sys);
 	const NavigationSystem::Reach after = sys.reachFrom({0.0F, 0.0F}, kAgentRadius);
-	EXPECT_EQ(after.startRegionId, first.startRegionId);
+	EXPECT_EQ(after.startCell, first.startCell);
 	EXPECT_NE(after.startRegionGeneration, first.startRegionGeneration) << "the patch left the reach key unchanged";
 }
 
@@ -609,16 +621,16 @@ TEST_F(NavigationSystemTest, ViewportFloraRectIsClamped) {
 
 	pushArea(sys, {0, 0}, 1000);
 	settle(sys);
-	EXPECT_FALSE(sys.isValidPosition(insideMin)) << "the 1 m view still asks for flora within 30 m";
-	EXPECT_TRUE(sys.isValidPosition(outsideMin)) << "and no farther";
+	EXPECT_FALSE(meshClear(sys, insideMin)) << "the 1 m view still asks for flora within 30 m";
+	EXPECT_TRUE(meshClear(sys, outsideMin)) << "and no farther";
 
 	pushArea(sys, {0, 0}, 2000000);
 	settle(sys);
-	EXPECT_FALSE(sys.isValidPosition(insideMax)) << "the 2 km view asks for flora within 64 m";
-	EXPECT_TRUE(sys.isValidPosition(outsideMax)) << "and no farther";
+	EXPECT_FALSE(meshClear(sys, insideMax)) << "the 2 km view asks for flora within 64 m";
+	EXPECT_TRUE(meshClear(sys, outsideMax)) << "and no farther";
 }
 
-// Flora enters at most kFloraRingsPerTick rings a tick, nearest the view first, and
+// Flora enters at most kDetailRingsPerTick rings a tick, nearest the view first, and
 // finishPendingBuilds takes in the rest.
 TEST_F(NavigationSystemTest, FloraEntersWithinTheBudget) {
 	registerTree("Test_NavBudgetTree", 0.3F);
@@ -640,14 +652,14 @@ TEST_F(NavigationSystemTest, FloraEntersWithinTheBudget) {
 	sys.setConstructionWorld(&cw);
 
 	auto inMesh = [&] {
-		return static_cast<std::size_t>(std::count_if(trees.begin(), trees.end(), [&](glm::vec2 t) { return !sys.isValidPosition(t); }));
+		return static_cast<std::size_t>(std::count_if(trees.begin(), trees.end(), [&](glm::vec2 t) { return !meshClear(sys, t); }));
 	};
 	step(world, sys);
 	ASSERT_TRUE(sys.inSimArea({1.0F, 1.0F})) << "the viewport's chunk is meshed first";
-	EXPECT_EQ(inMesh(), NavigationSystem::kFloraRingsPerTick) << "the first tick takes in one budget of flora";
-	EXPECT_FALSE(sys.isValidPosition({1.5F, 1.5F})) << "nearest the view centre first";
+	EXPECT_EQ(inMesh(), NavigationSystem::kDetailRingsPerTick) << "the first tick takes in one budget of flora";
+	EXPECT_FALSE(meshClear(sys, {1.5F, 1.5F})) << "nearest the view centre first";
 	step(world, sys);
-	EXPECT_EQ(inMesh(), 2 * NavigationSystem::kFloraRingsPerTick);
+	EXPECT_EQ(inMesh(), 2 * NavigationSystem::kDetailRingsPerTick);
 	EXPECT_TRUE(sys.isBuilding());
 
 	settle(sys);
@@ -669,12 +681,12 @@ TEST_F(NavigationSystemTest, LatePlacementBringsItsFloraIn) {
 	sys.setConstructionWorld(&cw);
 	settle(sys);
 	const glm::vec2 treeAt{10.0F, 10.0F};
-	ASSERT_TRUE(sys.isValidPosition(treeAt));
+	ASSERT_TRUE(meshClear(sys, treeAt));
 	const std::uint64_t before = sys.generation();
 
 	placeTrees(executor, processed, "Test_NavLatePlaceTree", {treeAt});
 	settle(sys);
-	EXPECT_FALSE(sys.isValidPosition(treeAt)) << "the late tree is in the mesh";
+	EXPECT_FALSE(meshClear(sys, treeAt)) << "the late tree is in the mesh";
 	EXPECT_EQ(sys.generation(), before) << "flora landing marks routes one by one, never every route";
 }
 
@@ -760,14 +772,14 @@ TEST_F(NavigationSystemTest, FelledTreePatchesOnlyItsHole) {
 	step(world, sys);
 	EXPECT_EQ(sys.navQueryStats().navPatches, 1u) << "the felled tree is patched out on the next tick";
 	EXPECT_FALSE(sys.isBuilding());
-	EXPECT_TRUE(sys.isValidPosition(treeAt)) << "the trunk's ground is walkable";
+	EXPECT_TRUE(meshClear(sys, treeAt)) << "the trunk's ground is walkable";
 	const auto open = sys.requestPath(kOutside, kInside, kAgentRadius);
 	ASSERT_TRUE(open.has_value());
 	NavPath openPath;
 	openPath.waypoints = *open;
 	openPath.valid	   = true;
 	EXPECT_FALSE(sys.routeCrossesPricedFaces(openPath)) << "the doorway is open ground";
-	EXPECT_FALSE(sys.isValidPosition({30.0F, 30.0F})) << "the other tree stays";
+	EXPECT_FALSE(meshClear(sys, {30.0F, 30.0F})) << "the other tree stays";
 	for (const Kept& k : far) {
 		ASSERT_TRUE(mesh.triangleLive(k.id)) << "triangle " << k.id;
 		for (int i = 0; i < 3; ++i) {
@@ -789,6 +801,7 @@ TEST_F(NavigationSystemTest, GenerationAndReachKeyIgnoreFloraPatches) {
 	ConstructionWorld cw;
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	addColonist(world, {0.0F, 0.0F}, "Anchor");
 	wireArea(sys);
 	sys.setPlacementData(&executor, &processed);
 	sys.setConstructionWorld(&cw);
@@ -798,14 +811,14 @@ TEST_F(NavigationSystemTest, GenerationAndReachKeyIgnoreFloraPatches) {
 
 	ASSERT_TRUE(executor.removeEntity(world::worldToChunk({treeAt.x, treeAt.y}), treeAt, "Test_NavReachKeyTree"));
 	step(world, sys);
-	ASSERT_TRUE(sys.isValidPosition(treeAt)) << "the felled tree was patched out";
+	ASSERT_TRUE(meshClear(sys, treeAt)) << "the felled tree was patched out";
 	EXPECT_EQ(sys.generation(), generation) << "a flora patch moved the generation";
 	EXPECT_EQ(sys.reachFrom({0.0F, 0.0F}, kAgentRadius).startRegionGeneration, before.startRegionGeneration)
 		<< "a flora patch moved the reach key";
 
 	placeTrees(executor, processed, "Test_NavReachKeyTree", {{-14.0F, 10.0F}}); // late placement in chunk (-1, 0)
 	step(world, sys);
-	ASSERT_FALSE(sys.isValidPosition({-14.0F, 10.0F})) << "the late tree is in";
+	ASSERT_FALSE(meshClear(sys, {-14.0F, 10.0F})) << "the late tree is in";
 	EXPECT_EQ(sys.generation(), generation);
 	EXPECT_EQ(sys.reachFrom({0.0F, 0.0F}, kAgentRadius).startRegionGeneration, before.startRegionGeneration);
 
@@ -830,7 +843,7 @@ TEST_F(NavigationSystemTest, LostChunkRemovalsDontHoldBackAdds) {
 			ahead.push_back({-200.0F - 3.0F * static_cast<float>(i), 200.0F + 3.0F * static_cast<float>(j)});
 		}
 	}
-	ASSERT_GT(lost.size(), NavigationSystem::kFloraRemovalsPerTick);
+	ASSERT_GT(lost.size(), NavigationSystem::kDetailRemovalsPerTick);
 	placeTrees(executor, processed, "Test_NavLostTree", lost);
 
 	ConstructionWorld cw;
@@ -842,7 +855,7 @@ TEST_F(NavigationSystemTest, LostChunkRemovalsDontHoldBackAdds) {
 	sys.setViewportRect({228.0F, 214.0F}, {60.0F, 60.0F});
 	settle(sys);
 	auto inMesh = [&](const std::vector<glm::vec2>& trees) {
-		return static_cast<std::size_t>(std::count_if(trees.begin(), trees.end(), [&](glm::vec2 t) { return !sys.isValidPosition(t); }));
+		return static_cast<std::size_t>(std::count_if(trees.begin(), trees.end(), [&](glm::vec2 t) { return !meshClear(sys, t); }));
 	};
 	ASSERT_EQ(inMesh(lost), lost.size());
 
@@ -854,10 +867,10 @@ TEST_F(NavigationSystemTest, LostChunkRemovalsDontHoldBackAdds) {
 	sys.resetNavQueryStats();
 	step(world, sys);
 	EXPECT_GT(inMesh(ahead), 0u) << "adds went ahead of the backlog";
-	EXPECT_LE(inMesh(ahead), NavigationSystem::kFloraRingsPerTick);
+	EXPECT_LE(inMesh(ahead), NavigationSystem::kDetailRingsPerTick);
 	EXPECT_LT(inMesh(lost), lost.size()) << "removals drained alongside";
-	EXPECT_GE(inMesh(lost), lost.size() - NavigationSystem::kFloraRemovalsPerTick) << "under their own budget";
-	EXPECT_LE(sys.navQueryStats().navPatches, 2 * NavigationSystem::kFloraCellsPerTick) << "a few cells each way";
+	EXPECT_GE(inMesh(lost), lost.size() - NavigationSystem::kDetailRemovalsPerTick) << "under their own budget";
+	EXPECT_LE(sys.navQueryStats().navPatches, 2 * NavigationSystem::kDetailCellsPerTick) << "a few cells each way";
 
 	settle(sys);
 	EXPECT_EQ(inMesh(lost), 0u);
@@ -881,8 +894,8 @@ TEST_F(NavigationSystemTest, PlacementSwapInOneTickIsScanned) {
 	sys.setPlacementData(&executor, &processed);
 	sys.setConstructionWorld(&cw);
 	settle(sys);
-	ASSERT_FALSE(sys.isValidPosition(leaving));
-	ASSERT_TRUE(sys.isValidPosition(arriving));
+	ASSERT_FALSE(meshClear(sys, leaving));
+	ASSERT_TRUE(meshClear(sys, arriving));
 
 	executor.unloadChunk({-1, 0});
 	processed.erase(ChunkCoordinate{-1, 0});
@@ -890,8 +903,8 @@ TEST_F(NavigationSystemTest, PlacementSwapInOneTickIsScanned) {
 	placeTrees(executor, processed, "Test_NavSwapTree", {arriving});
 	ASSERT_EQ(processed.size(), size + 1);
 	settle(sys);
-	EXPECT_TRUE(sys.isValidPosition(leaving)) << "the leaving chunk's flora is gone";
-	EXPECT_FALSE(sys.isValidPosition(arriving)) << "the arriving chunk's flora is in";
+	EXPECT_TRUE(meshClear(sys, leaving)) << "the leaving chunk's flora is gone";
+	EXPECT_FALSE(meshClear(sys, arriving)) << "the arriving chunk's flora is in";
 }
 
 // A query sees exactly the patches gathered through the previous tick: update() gathers, the job
@@ -900,6 +913,7 @@ TEST_F(NavigationSystemTest, QueriesSeePatchesFromEndTickOn) {
 	ConstructionWorld cw;
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	addColonist(world, kOutside, "Anchor");
 	wireArea(sys);
 	sys.setConstructionWorld(&cw);
 	settle(sys);
@@ -921,8 +935,9 @@ TEST_F(NavigationSystemTest, QueriesSeePatchesFromEndTickOn) {
 
 // --- One mesh ------------------------------------------------------------------
 
-// WOR-644: two colonists far apart, the camera elsewhere and then over one of them. Their
-// ground is one mesh, so a path between them exists and reaches() agrees.
+// WOR-644: two colonists far apart, the camera elsewhere and then over one of them. Their ground is
+// one mesh, so a route between them (a player's order) exists either way; each is outside the other's
+// autonomous reach, so reaches() says no.
 TEST_F(NavigationSystemTest, ColonistsFarApartRouteToEachOther) {
 	ConstructionWorld cw;
 	World			  world;
@@ -936,13 +951,13 @@ TEST_F(NavigationSystemTest, ColonistsFarApartRouteToEachOther) {
 
 	pushArea(sys, {-300000, 300000}, 40000);
 	settle(sys);
-	EXPECT_TRUE(sys.requestPath(a, b, kAgentRadius).has_value()) << "camera elsewhere";
-	EXPECT_TRUE(isReachable(sys, a, b, kAgentRadius));
+	EXPECT_TRUE(sys.requestPath(a, b, kAgentRadius, {}, NavigationSystem::RouteKind::Ordered).has_value()) << "camera elsewhere";
+	EXPECT_FALSE(isReachable(sys, a, b, kAgentRadius));
 
 	pushArea(sys, {140000, 0}, 40000);
 	settle(sys);
-	EXPECT_TRUE(sys.requestPath(a, b, kAgentRadius).has_value()) << "camera over one colonist";
-	EXPECT_TRUE(isReachable(sys, a, b, kAgentRadius));
+	EXPECT_TRUE(sys.requestPath(a, b, kAgentRadius, {}, NavigationSystem::RouteKind::Ordered).has_value()) << "camera over one colonist";
+	EXPECT_FALSE(isReachable(sys, a, b, kAgentRadius));
 	EXPECT_EQ(sys.builtRegions().size(), 1u);
 }
 
@@ -995,7 +1010,7 @@ TEST_F(NavigationSystemTest, UnloadedChunkKeepsItsGround) {
 	sys.setConstructionWorld(&cw);
 	sys.setViewportRect({256.0F, 256.0F}, {40.0F, 40.0F});
 	settle(sys);
-	ASSERT_FALSE(sys.isValidPosition(treeAt)) << "the tree is in";
+	ASSERT_FALSE(meshClear(sys, treeAt)) << "the tree is in";
 
 	// The camera moves a chunk east: (0, 0) unloads, as GameScene drops its placement.
 	chunks->update({768.0F, 256.0F});
@@ -1005,8 +1020,8 @@ TEST_F(NavigationSystemTest, UnloadedChunkKeepsItsGround) {
 	processed.erase(ChunkCoordinate{0, 0});
 	settle(sys);
 	EXPECT_TRUE(sys.inSimArea(treeAt)) << "the unloaded chunk's ground stays";
-	EXPECT_TRUE(sys.isValidPosition(treeAt)) << "its flora left with its placement";
-	EXPECT_TRUE(sys.requestPath({100.0F, 100.0F}, {700.0F, 300.0F}, kAgentRadius).has_value()) << "routable across it";
+	EXPECT_TRUE(meshClear(sys, treeAt)) << "its flora left with its placement";
+	EXPECT_TRUE(sys.requestPath({100.0F, 100.0F}, {700.0F, 300.0F}, kAgentRadius, {}, NavigationSystem::RouteKind::Ordered).has_value()) << "an order routes across it";
 
 	// Back with the same terrain version: no ground patch.
 	const std::uint64_t before = sys.generation();
@@ -1191,8 +1206,9 @@ TEST_F(NavigationSystemTest, RevisitInsideTheBudgetMeshesNothing) {
 	EXPECT_TRUE(sys.inSimArea(ChunkWalk::centre(1))) << "and the chunk just left is kept";
 }
 
-// A tick that patches the structural mesh several times (a chunk's ground and a wall) moves the
-// reach key once.
+// A tick that patches the structural mesh in a chunk the reach square touches moves the reach key;
+// a quiet tick after it leaves it, and ground arriving in a chunk the square doesn't touch never moves
+// it.
 TEST_F(NavigationSystemTest, ReachKeyMovesOncePerStructuralJob) {
 	auto chunks = std::make_unique<world::ChunkManager>(landSampler());
 	chunks->setLoadRadius(0);
@@ -1209,11 +1225,17 @@ TEST_F(NavigationSystemTest, ReachKeyMovesOncePerStructuralJob) {
 
 	chunks->update({768.0F, 256.0F});
 	chunks->finishPendingGeneration();
+	step(world, sys);
+	ASSERT_TRUE(sys.inSimArea({768.0F, 256.0F})) << "the new chunk came in";
+	EXPECT_EQ(sys.reachFrom({256.0F, 256.0F}, kAgentRadius).startRegionGeneration, key) << "its chunk is outside the square";
+
 	buildWall(cw, {100000, 100000}, {104000, 100000});
 	buildWall(cw, {100000, 110000}, {104000, 110000});
 	step(world, sys);
-	ASSERT_TRUE(sys.inSimArea({768.0F, 256.0F})) << "the new chunk came in this tick";
-	EXPECT_EQ(sys.reachFrom({256.0F, 256.0F}, kAgentRadius).startRegionGeneration, key + 1);
+	const std::uint64_t walled = sys.reachFrom({256.0F, 256.0F}, kAgentRadius).startRegionGeneration;
+	EXPECT_NE(walled, key) << "walls in a chunk the square touches";
+	step(world, sys);
+	EXPECT_EQ(sys.reachFrom({256.0F, 256.0F}, kAgentRadius).startRegionGeneration, walled);
 }
 
 // --- Meshed ground: inSimArea, validity, water ---------------------------------
@@ -1259,15 +1281,15 @@ TEST_F(NavigationSystemTest, IsValidPositionTrueOnWalkableFaceFalseOnWaterAndOff
 
 	const glm::vec2 land{2.0F, 2.0F};
 	ASSERT_TRUE(sys.inSimArea(land));
-	EXPECT_TRUE(sys.isValidPosition(land)) << "a walkable land face must be a valid position";
+	EXPECT_TRUE(meshClear(sys, land)) << "a walkable land face must be a valid position";
 
 	const glm::vec2 water{40.0F, 40.0F};
 	ASSERT_TRUE(sys.inSimArea(water)) << "water is meshed ground";
-	EXPECT_FALSE(sys.isValidPosition(water)) << "the water ring must not be a walkable face";
-	EXPECT_FALSE(sys.isValidPosition(water));
+	EXPECT_FALSE(meshClear(sys, water)) << "the water ring must not be a walkable face";
+	EXPECT_FALSE(meshClear(sys, water));
 
 	ASSERT_FALSE(sys.inSimArea(kUnmeshed));
-	EXPECT_FALSE(sys.isValidPosition(kUnmeshed)) << "a point off meshed ground must be invalid";
+	EXPECT_FALSE(meshClear(sys, kUnmeshed)) << "a point off meshed ground must be invalid";
 }
 
 // Only the diagonal chunks around a corner are loaded, so water crossing that corner arrives as
@@ -1304,10 +1326,10 @@ TEST_F(NavigationSystemTest, LandAroundWaterPinchedAtAChunkCornerIsValid) {
 	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built";
 
 	for (const glm::vec2 land : {glm::vec2{15.0F, 15.0F}, glm::vec2{-15.0F, -15.0F}, glm::vec2{40.0F, 30.0F}, glm::vec2{-30.0F, -20.0F}}) {
-		EXPECT_TRUE(sys.isValidPosition(land)) << "land at (" << land.x << ", " << land.y << ") must be a valid position";
+		EXPECT_TRUE(meshClear(sys, land)) << "land at (" << land.x << ", " << land.y << ") must be a valid position";
 	}
 	for (const glm::vec2 water : {glm::vec2{3.0F, 3.0F}, glm::vec2{-3.0F, -3.0F}}) {
-		EXPECT_FALSE(sys.isValidPosition(water)) << "the pond at (" << water.x << ", " << water.y << ") must not be";
+		EXPECT_FALSE(meshClear(sys, water)) << "the pond at (" << water.x << ", " << water.y << ") must not be";
 	}
 	for (const glm::vec2 unloaded : {glm::vec2{3.0F, -3.0F}, glm::vec2{-3.0F, 3.0F}}) {
 		EXPECT_FALSE(sys.inSimArea(unloaded)) << "a chunk never loaded has no ground";
@@ -1327,8 +1349,8 @@ TEST_F(NavigationSystemTest, WaterAcrossChunkBordersHasNoSeam) {
 
 	for (const float along : {-3.0F, -1.0F, 1.0F, 3.0F}) {
 		for (const float off : {-0.002F, 0.0F, 0.002F}) {
-			EXPECT_FALSE(sys.isValidPosition({off, along})) << "seam on x = 0 at y = " << along;
-			EXPECT_FALSE(sys.isValidPosition({along, off})) << "seam on y = 0 at x = " << along;
+			EXPECT_FALSE(meshClear(sys, {off, along})) << "seam on x = 0 at y = " << along;
+			EXPECT_FALSE(meshClear(sys, {along, off})) << "seam on y = 0 at x = " << along;
 		}
 	}
 	EXPECT_FALSE(isReachable(sys, {-30.0F, 0.0F}, {0.5F, 0.5F}, kAgentRadius)) << "the pond's middle is water on every side";
@@ -1388,13 +1410,13 @@ TEST_F(NavigationSystemTest, GroupSpawnPointsFromWaterDropAllLandOnWalkableGroun
 	pushArea(sys, {40000, 40000}, 40000);
 	settle(sys);
 
-	EXPECT_TRUE(sys.isValidPosition(spawn.center)) << "the clearing center is on land";
+	EXPECT_TRUE(meshClear(sys, spawn.center)) << "the clearing center is on land";
 	for (std::size_t i = 0; i < spawn.points.size(); ++i) {
 		const glm::vec2 p = spawn.points[i];
-		EXPECT_TRUE(sys.isValidPosition(p)) << "member " << i << " at (" << p.x << ", " << p.y << ") is not walkable";
+		EXPECT_TRUE(meshClear(sys, p)) << "member " << i << " at (" << p.x << ", " << p.y << ") is not walkable";
 		for (int k = 0; k < 8; ++k) {
 			const float angle = 6.2831853F * static_cast<float>(k) / 8.0F;
-			EXPECT_TRUE(sys.isValidPosition(p + glm::vec2{std::cos(angle), std::sin(angle)} * kClearance)) << "member " << i << "'s disc reaches the water";
+			EXPECT_TRUE(meshClear(sys, p + glm::vec2{std::cos(angle), std::sin(angle)} * kClearance)) << "member " << i << "'s disc reaches the water";
 		}
 		for (std::size_t j = 0; j < i; ++j) {
 			EXPECT_GE(glm::distance(p, spawn.points[j]), kSeparation - 1e-4F) << "members " << j << " and " << i << " stack";
@@ -1405,7 +1427,7 @@ TEST_F(NavigationSystemTest, GroupSpawnPointsFromWaterDropAllLandOnWalkableGroun
 	const NavigationSystem::GroupSpawn crowd = sys.groupSpawnPoints(drop, 12, kRing, kSeparation, kClearance);
 	ASSERT_EQ(crowd.points.size(), 12U);
 	for (std::size_t i = 0; i < crowd.points.size(); ++i) {
-		EXPECT_TRUE(sys.isValidPosition(crowd.points[i]));
+		EXPECT_TRUE(meshClear(sys, crowd.points[i]));
 		for (std::size_t j = 0; j < i; ++j) {
 			EXPECT_GE(glm::distance(crowd.points[i], crowd.points[j]), kSeparation - 1e-4F);
 		}
@@ -1496,7 +1518,7 @@ TEST_F(NavigationSystemTest, IsAreaWalkableTrueWhenWhollyOnLand) {
 
 	const std::vector<glm::vec2> onLand{{4.0F, 4.0F}, {8.0F, 4.0F}, {8.0F, 8.0F}, {4.0F, 8.0F}};
 	for (const auto& v : onLand) {
-		ASSERT_TRUE(sys.isValidPosition(v));
+		ASSERT_TRUE(meshClear(sys, v));
 	}
 	EXPECT_TRUE(sys.isAreaWalkable(onLand)) << "a footprint wholly on land must be walkable";
 }
@@ -1509,9 +1531,9 @@ TEST_F(NavigationSystemTest, IsAreaWalkableFalseWhenFootprintSpansWater) {
 	settle(sys);
 
 	const std::vector<glm::vec2> spanning{{28.0F, 38.0F}, {52.0F, 38.0F}, {52.0F, 42.0F}, {28.0F, 42.0F}};
-	ASSERT_TRUE(sys.isValidPosition(spanning[0]));
-	ASSERT_TRUE(sys.isValidPosition(spanning[1]));
-	ASSERT_FALSE(sys.isValidPosition({40.0F, 40.0F}));
+	ASSERT_TRUE(meshClear(sys, spanning[0]));
+	ASSERT_TRUE(meshClear(sys, spanning[1]));
+	ASSERT_FALSE(meshClear(sys, {40.0F, 40.0F}));
 	EXPECT_FALSE(sys.isAreaWalkable(spanning)) << "a footprint spanning water must be rejected";
 }
 
@@ -1524,9 +1546,9 @@ TEST_F(NavigationSystemTest, IsAreaWalkableFalseWhenFootprintEnclosesWaterPond) 
 
 	const std::vector<glm::vec2> enclosing{{28.0F, 28.0F}, {52.0F, 28.0F}, {52.0F, 52.0F}, {28.0F, 52.0F}};
 	for (const auto& v : enclosing) {
-		ASSERT_TRUE(sys.isValidPosition(v));
+		ASSERT_TRUE(meshClear(sys, v));
 	}
-	ASSERT_FALSE(sys.isValidPosition({40.0F, 40.0F}));
+	ASSERT_FALSE(meshClear(sys, {40.0F, 40.0F}));
 	EXPECT_FALSE(sys.isAreaWalkable(enclosing)) << "a footprint enclosing a water pond must be rejected";
 }
 
@@ -1570,7 +1592,7 @@ TEST_F(NavigationSystemTest, IsValidPositionFalseBeforeAnyMesh) {
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 
 	ASSERT_FALSE(sys.hasMesh());
-	EXPECT_FALSE(sys.isValidPosition({0.0F, 0.0F}));
+	EXPECT_FALSE(meshClear(sys, {0.0F, 0.0F}));
 }
 
 // Dev-spawn refusal contract: every dev verb that places an entity guards on isValidPosition and,
@@ -1586,7 +1608,7 @@ TEST_F(NavigationSystemTest, DevSpawnGuardRefusesOffMeshCreatesOnValid) {
 	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built";
 
 	auto guardedSpawn = [&](glm::vec2 at) -> bool {
-		if (!sys.isValidPosition(at)) {
+		if (!meshClear(sys, at)) {
 			return false;
 		}
 		const EntityID e = world.createEntity();
@@ -1729,7 +1751,7 @@ TEST_F(NavigationSystemTest, ColonistInATreeIsNotStranded) {
 	AIDecisionSystem& ai = world.registerSystem<AIDecisionSystem>(assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), 1234u);
 	ai.setNavigationSystem(&nav);
 	ai.setColonyOrigin(glm::vec2{0.0F, 0.0F});
-	ASSERT_FALSE(nav.isValidPosition(treeAt)) << "the tree is not clear ground";
+	ASSERT_FALSE(meshClear(nav, treeAt)) << "the tree is not clear ground";
 	ASSERT_TRUE(nav.isOnMesh(treeAt)) << "but a mover may stand in it";
 
 	EntityID colonist = spawnRecoverableColonist(world, treeAt);
@@ -1756,7 +1778,7 @@ TEST_F(NavigationSystemTest, RecoverySnapClearsWallCollisionBand) {
 	const glm::vec2				   nearWall{2.0F, 0.15F};
 	const std::optional<glm::vec2> clearSnap = sys.nearestPathablePoint(nearWall, kAgentRadius);
 	ASSERT_TRUE(clearSnap.has_value());
-	EXPECT_TRUE(sys.isValidPosition(*clearSnap));
+	EXPECT_TRUE(meshClear(sys, *clearSnap));
 	EXPECT_GE(std::abs(clearSnap->y), kClearance) << "band-aware snap landed inside the wall collision band";
 	EXPECT_LT(std::abs(nearWall.y), kClearance) << "test setup: the input point should start inside the band";
 }
@@ -1797,12 +1819,12 @@ TEST_F(NavigationSystemTest, FindValidPositionNearOpenGroundReturnsPointAtDistan
 	settle(sys);
 
 	const glm::vec2 origin{2.0F, 2.0F};
-	ASSERT_TRUE(sys.isValidPosition(origin));
+	ASSERT_TRUE(meshClear(sys, origin));
 
 	const float					   minDist = 1.5F;
 	const std::optional<glm::vec2> result  = sys.findValidPositionNear(origin, minDist);
 	ASSERT_TRUE(result.has_value());
-	EXPECT_TRUE(sys.isValidPosition(*result));
+	EXPECT_TRUE(meshClear(sys, *result));
 	EXPECT_NE(*result, origin);
 	const float dist = glm::distance(origin, *result);
 	EXPECT_GE(dist, minDist - 0.01F);
@@ -1820,12 +1842,12 @@ TEST_F(NavigationSystemTest, FindValidPositionNearInPocketFallsBackToNearestWalk
 
 	const glm::vec2 origin{40.0F, 40.0F};
 	ASSERT_TRUE(sys.inSimArea(origin));
-	ASSERT_FALSE(sys.isValidPosition(origin));
+	ASSERT_FALSE(meshClear(sys, origin));
 
 	const float					   minDist = 1.0F;
 	const std::optional<glm::vec2> result  = sys.findValidPositionNear(origin, minDist);
 	ASSERT_TRUE(result.has_value());
-	EXPECT_TRUE(sys.isValidPosition(*result));
+	EXPECT_TRUE(meshClear(sys, *result));
 	EXPECT_GE(glm::distance(origin, *result), minDist - 0.01F);
 }
 
@@ -1841,15 +1863,15 @@ TEST_F(NavigationSystemTest, FindValidPositionNearPushedFallbackStaysOnMesh) {
 
 	const glm::vec2 origin{40.0F, 40.0F};
 	const float		minDist = 2200.0F;
-	ASSERT_FALSE(sys.isValidPosition(origin));
+	ASSERT_FALSE(meshClear(sys, origin));
 	const std::optional<glm::vec2> nearest = sys.findValidPositionNear(origin, 0.0F);
 	ASSERT_TRUE(nearest.has_value());
 	ASSERT_LT(glm::distance(origin, *nearest), minDist);
-	ASSERT_FALSE(sys.isValidPosition(origin + (*nearest - origin) / glm::distance(origin, *nearest) * minDist)) << "the push must land off the mesh";
+	ASSERT_FALSE(meshClear(sys, origin + (*nearest - origin) / glm::distance(origin, *nearest) * minDist)) << "the push must land off the mesh";
 
 	const std::optional<glm::vec2> result = sys.findValidPositionNear(origin, minDist);
 	ASSERT_TRUE(result.has_value());
-	EXPECT_TRUE(sys.isValidPosition(*result)) << "the pushed fallback must be re-validated on mesh";
+	EXPECT_TRUE(meshClear(sys, *result)) << "the pushed fallback must be re-validated on mesh";
 }
 
 TEST_F(NavigationSystemTest, FindValidPositionNearIsDeterministic) {
@@ -1903,6 +1925,7 @@ TEST_F(NavigationSystemTest, FinishPendingBuildsIsANoOpUntilAnInputChanges) {
 
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	addColonist(world, {6.0F, 6.0F}, "Anchor");
 	sys.setConstructionWorld(&cw);
 	wireArea(sys);
 	settle(sys);
@@ -1985,7 +2008,7 @@ namespace {
 			sys->setConstructionWorld(&cw);
 			placeTrees(executor, processed, "Test_NavSnapTree", {kTree});
 			settle(*sys);
-			ASSERT_FALSE(sys->isValidPosition(kTree));
+			ASSERT_FALSE(meshClear(*sys, kTree));
 		}
 
 		static constexpr glm::vec2 kTree{10.0F, 10.0F};
@@ -2027,7 +2050,7 @@ TEST_F(ForwardSnapTest, RouteBlockedAheadIsReplannedFromWhereItStands) {
 	for (int i = 0; i < 3; ++i) {
 		step(world, *sys);
 	}
-	ASSERT_FALSE(sys->isValidPosition(across)) << "the tree across the route is in";
+	ASSERT_FALSE(meshClear(*sys, across)) << "the tree across the route is in";
 	EXPECT_EQ(world.getComponent<Position>(colonist)->value, at);
 	ASSERT_TRUE(path.valid);
 	EXPECT_EQ(path.builtNavVersion, sys->generation()) << "not replanned";
@@ -2035,7 +2058,7 @@ TEST_F(ForwardSnapTest, RouteBlockedAheadIsReplannedFromWhereItStands) {
 	for (std::size_t k = 0; k + 1 < path.waypoints.size(); ++k) {
 		for (int i = 0; i <= 20; ++i) {
 			const glm::vec2 p = path.waypoints[k] + (path.waypoints[k + 1] - path.waypoints[k]) * (static_cast<float>(i) / 20.0F);
-			EXPECT_TRUE(sys->isValidPosition(p)) << "the new route crosses the tree at (" << p.x << ", " << p.y << ")";
+			EXPECT_TRUE(meshClear(*sys, p)) << "the new route crosses the tree at (" << p.x << ", " << p.y << ")";
 		}
 	}
 }
@@ -2047,7 +2070,7 @@ TEST_F(ForwardSnapTest, InsideTreeWithRouteMovesForward) {
 	const EntityID	colonist = routedColonist(world, at, {{6.0F, 10.0F}, {14.0F, 10.0F}, {14.0F, 16.0F}});
 	step(world, *sys);
 	const glm::vec2 now = world.getComponent<Position>(colonist)->value;
-	EXPECT_TRUE(sys->isValidPosition(now));
+	EXPECT_TRUE(meshClear(*sys, now));
 	EXPECT_FLOAT_EQ(now.y, 10.0F) << "on the route";
 	EXPECT_GT(now.x, kTree.x + 0.8F + kAgentRadius) << "past the tree with its clearance";
 	EXPECT_LT(now.x, kTree.x + 0.8F + kAgentRadius + 0.3F) << "the first clear point, not a later one";
@@ -2085,7 +2108,7 @@ TEST_F(ForwardSnapTest, InsideTreeWithoutRouteTakesNearestWalkable) {
 	const EntityID	colonist = routedColonist(world, at, {});
 	step(world, *sys);
 	const glm::vec2 now = world.getComponent<Position>(colonist)->value;
-	EXPECT_TRUE(sys->isValidPosition(now));
+	EXPECT_TRUE(meshClear(*sys, now));
 	EXPECT_LT(glm::distance(now, at), 1.5F) << "the nearest walkable point, not a far one";
 }
 
@@ -2199,7 +2222,7 @@ TEST_F(NavigationSystemTest, FloraBudgetHoldsWhilePanning) {
 	view(-900.0F);
 	settle(sys);
 
-	const auto inMesh = [&](glm::vec2 t) { return sys.inSimArea(t) && !sys.isValidPosition(t); };
+	const auto inMesh = [&](glm::vec2 t) { return sys.inSimArea(t) && !meshClear(sys, t); };
 	std::vector<bool> was(trees.size());
 	for (std::size_t k = 0; k < trees.size(); ++k) {
 		was[k] = inMesh(trees[k]);
@@ -2218,7 +2241,7 @@ TEST_F(NavigationSystemTest, FloraBudgetHoldsWhilePanning) {
 				}
 				was[k] = now;
 			}
-			ASSERT_LE(count, kBudget + NavigationSystem::kFloraRingsPerTick) << "view at " << x;
+			ASSERT_LE(count, kBudget + NavigationSystem::kDetailRingsPerTick) << "view at " << x;
 		}
 	}
 	EXPECT_FALSE(inMesh(trees.front())) << "the far end of the pan was trimmed";
@@ -2243,13 +2266,14 @@ TEST_F(NavigationSystemTest, TerrainChangeOnMeshedChunkRederivesItsWater) {
 	ConstructionWorld						   cw;
 	World									   world;
 	NavigationSystem&						   sys = world.registerSystem<NavigationSystem>();
+	addColonist(world, {20.0F, 20.0F}, "Anchor");
 	sys.setChunkManager(chunks.get());
 	sys.setConstructionWorld(&cw);
 	settle(sys);
 	const glm::vec2 pond{40.0F, 40.0F};
 	const glm::vec2 land{20.0F, 20.0F};
-	ASSERT_FALSE(sys.isValidPosition(pond));
-	ASSERT_TRUE(sys.isValidPosition(land));
+	ASSERT_FALSE(meshClear(sys, pond));
+	ASSERT_TRUE(meshClear(sys, land));
 	const std::int32_t	navTriangles		= sys.navMesh().liveTriangleCount();
 	const std::int32_t	structuralTriangles = sys.structuralMesh().liveTriangleCount();
 	const std::uint64_t generation			= sys.generation();
@@ -2263,8 +2287,8 @@ TEST_F(NavigationSystemTest, TerrainChangeOnMeshedChunkRederivesItsWater) {
 	step(world, sys);
 	EXPECT_EQ(sys.generation(), generation + 1) << "re-derived in one tick";
 	EXPECT_FALSE(sys.isBuilding());
-	EXPECT_FALSE(sys.isValidPosition(pond)) << "the pond still blocks";
-	EXPECT_TRUE(sys.isValidPosition(land));
+	EXPECT_FALSE(meshClear(sys, pond)) << "the pond still blocks";
+	EXPECT_TRUE(meshClear(sys, land));
 	EXPECT_EQ(sys.navMesh().liveTriangleCount(), navTriangles);
 	EXPECT_EQ(sys.structuralMesh().liveTriangleCount(), structuralTriangles);
 }
@@ -2282,7 +2306,7 @@ TEST_F(NavigationSystemTest, GroundDroppedWhileItsFloraRemovalsAreQueued) {
 			trees.push_back({ChunkWalk::centre(0).x - 14.25F + 1.5F * static_cast<float>(i), ChunkWalk::centre(0).y - 14.25F + 1.5F * static_cast<float>(j)});
 		}
 	}
-	ASSERT_GT(trees.size(), 3 * NavigationSystem::kFloraRemovalsPerTick);
+	ASSERT_GT(trees.size(), 3 * NavigationSystem::kDetailRemovalsPerTick);
 	placeTrees(executor, processed, "Test_NavDropTree", trees);
 
 	ChunkWalk		  walk;
@@ -2308,7 +2332,7 @@ TEST_F(NavigationSystemTest, GroundDroppedWhileItsFloraRemovalsAreQueued) {
 	}
 	stand(0);
 	settle(sys);
-	ASSERT_EQ(std::count_if(trees.begin(), trees.end(), [&](glm::vec2 t) { return !sys.isValidPosition(t); }), static_cast<std::ptrdiff_t>(trees.size()));
+	ASSERT_EQ(std::count_if(trees.begin(), trees.end(), [&](glm::vec2 t) { return !meshClear(sys, t); }), static_cast<std::ptrdiff_t>(trees.size()));
 
 	stand(walled + 1);
 	step(world, sys);
@@ -2342,7 +2366,7 @@ TEST_F(NavigationSystemTest, WaterBeyondTheTreeStopsTheSnap) {
 	sys.setConstructionWorld(&cw);
 	sys.setViewportRect({40.0F, 40.0F}, {60.0F, 60.0F});
 	settle(sys);
-	ASSERT_FALSE(sys.isValidPosition({40.0F, 40.0F})) << "the pond";
+	ASSERT_FALSE(meshClear(sys, {40.0F, 40.0F})) << "the pond";
 
 	const glm::vec2 at{30.8F, 40.0F};
 	const EntityID	colonist = routedColonist(world, at, {{26.0F, 40.0F}, {48.0F, 40.0F}, {54.0F, 40.0F}});
@@ -2399,19 +2423,19 @@ TEST_F(NavigationSystemTest, RemovalsArePatchedPerCell) {
 	sys.setPlacementData(&executor, &processed);
 	sys.setConstructionWorld(&cw);
 	settle(sys);
-	ASSERT_TRUE(std::none_of(trees.begin(), trees.end(), [&](glm::vec2 t) { return sys.isValidPosition(t); }));
+	ASSERT_TRUE(std::none_of(trees.begin(), trees.end(), [&](glm::vec2 t) { return meshClear(sys, t); }));
 
 	executor.unloadChunk({0, 0});
 	processed.erase(ChunkCoordinate{0, 0});
 	sys.resetNavQueryStats();
 	step(world, sys);
-	for (int i = 0; i < 4 && sys.isBuilding(); ++i) { // kFloraCellsPerTick cells a tick
+	for (int i = 0; i < 4 && sys.isBuilding(); ++i) { // kDetailCellsPerTick cells a tick
 		step(world, sys);
 	}
 	ASSERT_FALSE(sys.isBuilding());
 	EXPECT_EQ(sys.navQueryStats().navPatches, 3u);
 	EXPECT_EQ(sys.navQueryStats().structuralPatches, 0u) << "flora is in the nav mesh only";
-	EXPECT_TRUE(std::all_of(trees.begin(), trees.end(), [&](glm::vec2 t) { return sys.isValidPosition(t); })) << "all removed";
+	EXPECT_TRUE(std::all_of(trees.begin(), trees.end(), [&](glm::vec2 t) { return meshClear(sys, t); })) << "all removed";
 }
 
 // Swapping the ConstructionWorld for another at the same version still re-reads the walls: the old
@@ -2520,12 +2544,10 @@ namespace {
 	}
 } // namespace
 
-// A walker left standing in a tree off camera (no snap, no collision there) with a route the tree
-// made stale: the AI replans from where it stands, which a priced tree allows, so the stranded
-// recovery never fires; the new route walks out through the tree at its price and the walker
-// carries on to its goal, its move order kept, never stepping back. It stands past the trunk's
-// middle, so the cheapest way out is on ahead.
-TEST_F(NavigationSystemTest, WalkerLeftInATreeReplansAndWalksOut) {
+// Off camera a tree landing on a walker never enters the mesh (only the view brings flora in), so
+// nothing replans, snaps or pushes: the walker goes straight on through it to its goal, its move
+// order kept, never stepping back, and the stranded recovery never fires.
+TEST_F(NavigationSystemTest, WalkerOffCameraWalksStraightThroughATree) {
 	registerTree("Test_NavLeftInTree", 0.4F);
 	WalkRig rig({-300.0F, 300.0F});
 	rig.start();
@@ -2550,9 +2572,10 @@ TEST_F(NavigationSystemTest, WalkerLeftInATreeReplansAndWalksOut) {
 		throughTheTree = throughTheTree || rig.pricedRoute(colonist);
 		lastX		   = position.value.x;
 	}
-	EXPECT_FALSE(rig.nav.isValidPosition(treeAt)) << "the tree is in the mesh";
+	EXPECT_TRUE(meshClear(rig.nav, treeAt)) << "the tree stays out of the mesh off camera";
+	EXPECT_FALSE(rig.nav.isValidPosition(treeAt)) << "though it is placed there";
 	EXPECT_FALSE(rig.nav.detailOnAt(treeAt));
-	EXPECT_TRUE(throughTheTree) << "the replan walked out through the tree";
+	EXPECT_FALSE(throughTheTree) << "no route had to price it";
 	EXPECT_LT(glm::distance(position.value, goal), 0.3F) << "never got there";
 }
 
@@ -2651,9 +2674,9 @@ TEST_F(NavigationSystemTest, ReachAndPathAgreeOnAGoalSealedByFlora) {
 	}
 }
 
-// Trimming a cell's flora off camera never changes whether a pair across it is reachable or has a
-// path; it only straightens routes, so a length stays the same or gets shorter, within what two
-// triangulations of the same ground may differ by (2% and two radii).
+// The view brings a stand into the mesh and moves on; the budget trims it. That never changes whether
+// a pair across it is reachable or has a path; it only straightens routes, so a length stays the same
+// or gets shorter, within what two triangulations of the same ground may differ by (2% and two radii).
 TEST_F(NavigationSystemTest, TrimmingFloraOnlyShortensRoutes) {
 	registerTree("Test_NavTrimTree", 0.3F);
 	PlacementExecutor					executor(AssetRegistry::Get());
@@ -2676,10 +2699,9 @@ TEST_F(NavigationSystemTest, TrimmingFloraOnlyShortensRoutes) {
 	sys.setChunkManager(landChunks());
 	sys.setPlacementData(&executor, &processed);
 	sys.setConstructionWorld(&cw);
-	sys.setViewportRect({-600.0F, -600.0F}, {30.0F, 30.0F});
-	const EntityID mover = addColonist(world, {20.0F, 20.0F}, "Keeper");
+	sys.setViewportRect({20.0F, 20.0F}, {30.0F, 30.0F});
 	settle(sys);
-	ASSERT_TRUE(std::none_of(here.begin(), here.end(), [&](glm::vec2 t) { return sys.isValidPosition(t); })) << "the trees are in";
+	ASSERT_TRUE(std::none_of(here.begin(), here.end(), [&](glm::vec2 t) { return meshClear(sys, t); })) << "the trees are in";
 
 	std::vector<std::pair<glm::vec2, glm::vec2>> pairs;
 	std::uint32_t								 seed = 11;
@@ -2703,10 +2725,11 @@ TEST_F(NavigationSystemTest, TrimmingFloraOnlyShortensRoutes) {
 	};
 	const std::vector<Answer> before = answers();
 
-	world.getComponent<Position>(mover)->value = {316.0F, 316.0F};
+	sys.setViewportRect({316.0F, 316.0F}, {30.0F, 30.0F});
+	step(world, sys); // detail moves with the view
 	settle(sys);
 	settle(sys); // the trim runs as the next gather finds the mesh over its budget
-	ASSERT_TRUE(std::all_of(here.begin(), here.end(), [&](glm::vec2 t) { return sys.isValidPosition(t); })) << "the trees were trimmed";
+	ASSERT_TRUE(std::all_of(here.begin(), here.end(), [&](glm::vec2 t) { return meshClear(sys, t); })) << "the trees were trimmed";
 	const std::vector<Answer> after = answers();
 
 	int identical = 0;
@@ -2768,7 +2791,7 @@ TEST_F(NavigationSystemTest, TreeLandingMarksOnlyTheRoutesItCrosses) {
 	placeTrees(executor, processed, "Test_NavMarkTree", {{10.0F, 26.0F}, {10.0F, 40.0F}});
 	step(world, sys);
 	step(world, sys);
-	ASSERT_FALSE(sys.isValidPosition({10.0F, 26.0F})) << "the trees are in";
+	ASSERT_FALSE(meshClear(sys, {10.0F, 26.0F})) << "the trees are in";
 	EXPECT_EQ(sys.generation(), generation);
 	EXPECT_FALSE(stale(world, sys, missed)) << "a tree 6 m off the route replanned it";
 	EXPECT_TRUE(stale(world, sys, hit)) << "a tree across the route didn't";
@@ -2797,7 +2820,7 @@ TEST_F(NavigationSystemTest, PanningFloraMarksOnlyRoutesItTouches) {
 	sys.setConstructionWorld(&cw);
 	sys.setViewportRect({0.0F, -300.0F}, {30.0F, 30.0F});
 	settle(sys);
-	ASSERT_TRUE(sys.isValidPosition(stand[5])) << "the stand isn't in yet";
+	ASSERT_TRUE(meshClear(sys, stand[5])) << "the stand isn't in yet";
 	const EntityID crossing = routedMover(world, sys, {199.0F, -10.0F}, {199.0F, 30.0F});
 	const EntityID clear	= routedMover(world, sys, {150.0F, 200.0F}, {270.0F, 200.0F});
 	const std::uint64_t generation = sys.generation();
@@ -2808,7 +2831,7 @@ TEST_F(NavigationSystemTest, PanningFloraMarksOnlyRoutesItTouches) {
 		step(world, sys);
 		clearMarked = clearMarked || stale(world, sys, clear);
 	}
-	ASSERT_FALSE(sys.isValidPosition({199.0F, 1.0F})) << "the stand streamed in";
+	ASSERT_FALSE(meshClear(sys, {199.0F, 1.0F})) << "the stand streamed in";
 	EXPECT_EQ(sys.generation(), generation);
 	EXPECT_TRUE(stale(world, sys, crossing));
 	EXPECT_FALSE(clearMarked);
@@ -2867,7 +2890,7 @@ TEST_F(NavigationSystemTest, OldTreeOnARouteIsNoNewsWhenAnotherLands) {
 	sys.setViewportRect({8.0F, 8.0F}, {30.0F, 30.0F});
 	sys.setPlacementData(&executor, &processed);
 	sys.setConstructionWorld(&cw);
-	const auto in = [&](glm::vec2 t) { return sys.inSimArea(t) && !sys.isValidPosition(t); };
+	const auto in = [&](glm::vec2 t) { return sys.inSimArea(t) && !meshClear(sys, t); };
 	for (int i = 0; i < 20 && !in(old); ++i) {
 		step(world, sys);
 	}
@@ -2902,7 +2925,7 @@ TEST_F(NavigationSystemTest, TreeOverhangingItsCellMarksARouteNextDoor) {
 	placeTrees(executor, processed, "Test_NavEdgeTree", {edgeTree});
 	step(world, sys);
 	step(world, sys);
-	ASSERT_FALSE(sys.isValidPosition(edgeTree)) << "the tree is in";
+	ASSERT_FALSE(meshClear(sys, edgeTree)) << "the tree is in";
 	EXPECT_TRUE(stale(world, sys, mover)) << "the tree lies across the route";
 }
 
@@ -2917,7 +2940,7 @@ TEST_F(ForwardSnapTest, IdleColonistBesideAWallStaysOnItsSide) {
 	step(world, *sys);
 	const glm::vec2 now = world.getComponent<Position>(colonist)->value;
 	EXPECT_NE(now, at) << "snapped out of the tree";
-	EXPECT_TRUE(sys->isValidPosition(now));
+	EXPECT_TRUE(meshClear(*sys, now));
 	EXPECT_LT(now.x, 10.9F - 0.1F - kAgentRadius) << "on its own side and out of the wall's band";
 }
 
@@ -3068,16 +3091,18 @@ TEST_F(NavigationSystemTest, WaterInGroundThatIsntComingIsSkipped) {
 	EXPECT_NE(thirst->status, OptionStatus::Selected) << "no reachable source";
 }
 
-// Knowing that nearer water and a farther source on meshed ground, the colonist takes the farther.
+// Knowing that nearer water and a farther source on meshed ground, both in its reach square, the
+// colonist takes the farther.
 TEST_F(NavigationSystemTest, FartherReachableWaterBeatsNearerWaterInGroundThatIsntComing) {
-	WalkRig rig({1000.0F, 0.0F});
+	WalkRig rig({1500.0F, 0.0F});
 	rig.start();
-	const glm::vec2 gone{1700.0F, 0.0F};   // chunk (3, 0), beyond the loaded radius
-	const glm::vec2 meshed{-900.0F, 0.0F}; // chunk (-2, 0)
+	const glm::vec2 at{1530.0F, 10.0F};
+	const glm::vec2 gone{1560.0F, 10.0F};	// chunk (3, 0), beyond the loaded radius, 30 m off
+	const glm::vec2 meshed{1450.0F, 10.0F}; // chunk (2, 0), 80 m off
 	ASSERT_EQ(landChunks()->getChunk(world::worldToChunk({gone.x, gone.y})), nullptr);
 	ASSERT_TRUE(rig.nav.inSimArea(meshed));
 
-	const EntityID colonist = needyColonist(rig, {1000.0F, 0.0F}, NeedType::Thirst, 10.0F);
+	const EntityID colonist = needyColonist(rig, at, NeedType::Thirst, 10.0F);
 	rememberWater(rig.world, colonist, gone);
 	rememberWater(rig.world, colonist, meshed);
 	rig.world.update(0.1F);
@@ -3087,4 +3112,415 @@ TEST_F(NavigationSystemTest, FartherReachableWaterBeatsNearerWaterInGroundThatIs
 	ASSERT_TRUE(thirst->targetPosition.has_value());
 	EXPECT_EQ(*thirst->targetPosition, meshed);
 	EXPECT_NE(rig.world.getComponent<Task>(colonist)->navState, NavState::AwaitingMesh);
+}
+
+// --- What a structural change re-requests -----------------------------------------------------
+
+// A wall built in an anchored chunk, far from a mover's route, moves generation() (so a goal waiting
+// for its ground is asked again) but restamps the route, so nobody replans; a wall across the route
+// makes that one stale. Ground arriving in a chunk only the camera holds moves neither.
+TEST_F(NavigationSystemTest, StructuralChangesReRequestOnlyTheRoutesTheyCross) {
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(landChunks());
+	sys.setConstructionWorld(&cw);
+	sys.setViewportRect({0.0F, 0.0F}, {30.0F, 30.0F});
+	settle(sys);
+	const EntityID		walker	   = routedMover(world, sys, {0.0F, 0.0F}, {60.0F, 0.0F});
+	const std::uint64_t generation = sys.generation();
+
+	const std::unique_ptr<world::ChunkManager> wider = readyChunks(landSampler(), {0.0F, 0.0F}, 3);
+	sys.setChunkManager(wider.get());
+	settle(sys);
+	ASSERT_TRUE(sys.inSimArea({1700.0F, 10.0F})) << "the camera-only ring is meshed";
+	EXPECT_EQ(sys.generation(), generation) << "camera-only ground moved the generation";
+	EXPECT_FALSE(stale(world, sys, walker));
+
+	buildWall(cw, {20000, 40000}, {40000, 40000}); // 40 m off the route, in the walker's chunk
+	step(world, sys);
+	settle(sys);
+	EXPECT_NE(sys.generation(), generation) << "a waiting goal here would be asked again";
+	EXPECT_FALSE(stale(world, sys, walker)) << "a wall off the route replanned it";
+
+	buildWall(cw, {30000, -5000}, {30000, 5000}); // across it
+	step(world, sys);
+	settle(sys);
+	EXPECT_TRUE(stale(world, sys, walker)) << "a wall across the route didn't";
+}
+
+// --- Anchored ground stays -----------------------------------------------------------------------
+
+// A player sends a colonist 700 m east over ground only the camera had loaded, then the camera pans
+// 3 km away and wanders over 20 chunks there. The route anchors its ground, so the chunk manager keeps
+// it loaded and the nav mesh keeps it meshed, and the colonist arrives.
+TEST_F(NavigationSystemTest, LongMoveOrderKeepsItsGroundWhileTheCameraWanders) {
+	auto chunks = std::make_unique<world::ChunkManager>(landSampler());
+	chunks->setLoadRadius(1);
+	chunks->setUnloadRadius(1);
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& nav = world.registerSystem<NavigationSystem>();
+	nav.setChunkManager(chunks.get());
+	nav.setConstructionWorld(&cw);
+	std::vector<world::WorldPosition> anchors;
+	glm::vec2						  camera{768.0F, 256.0F}; // chunk (1, 0): chunks 0 to 2 load
+	const auto						  stream = [&]() {
+		 anchors.clear();
+		 nav.appendAnchors(anchors);
+		 chunks->update({camera.x, camera.y}, anchors);
+		 chunks->finishPendingGeneration();
+		 nav.setViewportRect(camera, {30.0F, 30.0F});
+	};
+	const glm::vec2 from{400.0F, 256.0F};
+	const glm::vec2 to{1100.0F, 256.0F};
+	const EntityID	colonist = spawnRecoverableColonist(world, from);
+	world.addComponent<Colonist>(colonist, Colonist{"Walker"});
+	world.addComponent<AgentRadius>(colonist, AgentRadius{kAgentRadius, 1.0F});
+	stream();
+	settle(nav);
+	auto& ai = world.registerSystem<AIDecisionSystem>(AssetRegistry::Get(), assets::RecipeRegistry::Get(), 1234u);
+	ai.setNavigationSystem(&nav);
+	world.registerSystem<MovementSystem>();
+	world.registerSystem<PhysicsSystem>();
+	NeedsComponent& needs = *world.getComponent<NeedsComponent>(colonist);
+	for (const NeedType need : {NeedType::Hunger, NeedType::Thirst, NeedType::Energy, NeedType::Bladder, NeedType::Digestion}) {
+		needs.get(need).value = 100.0F;
+	}
+	ai.enterControl(colonist);
+	ASSERT_TRUE(ai.issuePlayerMoveOrder(colonist, to).has_value());
+	world.update(0.05F);
+	ASSERT_TRUE(world.getComponent<NavPath>(colonist)->valid) << "no route east";
+
+	std::unordered_set<std::int32_t> visited;
+	Position&						 position = *world.getComponent<Position>(colonist);
+	for (int tick = 0; tick < 12000 && glm::distance(position.value, to) > 0.3F; ++tick) {
+		const int i = 6 + (tick / 100) % 20; // chunks 6 to 25 of row 0, 3 to 13 km east
+		camera		= {256.0F + 512.0F * static_cast<float>(i), 256.0F};
+		visited.insert(i);
+		stream();
+		world.update(0.05F);
+		ASSERT_TRUE(nav.inSimArea({position.value.x + 20.0F, 256.0F}) || glm::distance(position.value, to) < 20.0F)
+			<< "the ground ahead was dropped at tick " << tick;
+	}
+	EXPECT_EQ(visited.size(), 20u);
+	EXPECT_LT(glm::distance(position.value, to), 0.3F) << "never arrived";
+}
+
+// --- What the camera can't move ---------------------------------------------------------------
+
+// A failed route recorded at a spot 172 m from chunk (1, 0), the colonist since walked 120 m west
+// (still in the spot's square): the chunk is in the band the anchor's stamp covers (256 m round the
+// spot) but neither loaded nor kept by the colonist's own anchor (292 m off). The camera loads the
+// chunk and then wanders 20 chunks east, so the kept-unloaded budget drops its ground. Neither moves the anchor's stamp, the colonist's
+// reach key or generation(); a wall built in the chunk while it is loaded does move the stamp.
+TEST_F(NavigationSystemTest, CameraGroundComingAndGoingLeavesTheVerdictStamp) {
+	auto chunks = std::make_unique<world::ChunkManager>(landSampler());
+	chunks->setLoadRadius(0);
+	chunks->setUnloadRadius(0);
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(chunks.get());
+	sys.setConstructionWorld(&cw);
+	const glm::vec2 at{340.0F, 256.0F};
+	const glm::vec2 colonistAt{220.0F, 256.0F};
+	addColonist(world, colonistAt, "Keeper");
+	std::vector<world::WorldPosition> anchors;
+	const auto						  stand = [&](int i) {
+		 anchors.clear();
+		 sys.appendAnchors(anchors);
+		 chunks->update({256.0F + 512.0F * static_cast<float>(i), 256.0F}, anchors);
+		 chunks->finishPendingGeneration();
+		 step(world, sys);
+		 settle(sys);
+	};
+	stand(0);
+	const std::uint64_t verdict	   = sys.verdictStamp(at);
+	const std::uint64_t key		   = sys.reachFrom(colonistAt, kAgentRadius).startRegionGeneration;
+	const std::uint64_t generation = sys.generation();
+
+	stand(1);
+	ASSERT_TRUE(sys.inSimArea({768.0F, 256.0F})) << "the camera brought chunk (1, 0) in";
+	EXPECT_EQ(sys.verdictStamp(at), verdict);
+	EXPECT_EQ(sys.reachFrom(colonistAt, kAgentRadius).startRegionGeneration, key);
+	EXPECT_EQ(sys.generation(), generation);
+	for (int i = 2; i < 22; ++i) {
+		stand(i);
+	}
+	ASSERT_FALSE(sys.inSimArea({768.0F, 256.0F})) << "the budget dropped chunk (1, 0)";
+	ASSERT_TRUE(sys.inSimArea(colonistAt)) << "the colonist's own ground stays";
+	EXPECT_EQ(sys.verdictStamp(at), verdict) << "ground leaving moved the stamp";
+	EXPECT_EQ(sys.reachFrom(colonistAt, kAgentRadius).startRegionGeneration, key);
+	EXPECT_EQ(sys.generation(), generation);
+
+	stand(1);
+	buildWall(cw, {700000, 200000}, {704000, 200000});
+	stand(1);
+	EXPECT_NE(sys.verdictStamp(at), verdict) << "a wall in the band";
+}
+
+// --- A search that gives up -------------------------------------------------------------------
+
+// On camera a thick stand is in the nav mesh. With the expansion cap shrunk so the search gives up,
+// the route is the structural walk through the stand at its price, and the colonist walks it and
+// arrives.
+TEST_F(NavigationSystemTest, GivenUpSearchWalksTheStructuralRouteThroughTheForest) {
+	registerTree("Test_NavCapTree", 0.3F);
+	WalkRig				   rig({20.0F, 20.0F});
+	std::vector<glm::vec2> stand;
+	for (float x = 10.0F; x < 30.0F; x += 1.5F) {
+		for (float y = 2.0F; y < 38.0F; y += 1.5F) {
+			stand.emplace_back(x, y);
+		}
+	}
+	placeTrees(rig.executor, rig.processed, "Test_NavCapTree", stand);
+	rig.start();
+	ASSERT_FALSE(meshClear(rig.nav, stand[40])) << "the stand is in the mesh";
+	rig.nav.setNavExpansionCap(1, 0);
+	const glm::vec2 goal{38.0F, 20.5F};
+	const EntityID	walker = rig.walker({2.0F, 20.5F}, goal);
+	ASSERT_TRUE(rig.world.getComponent<NavPath>(walker)->valid) << "the gave-up search left no route";
+	EXPECT_TRUE(rig.pricedRoute(walker)) << "the structural route is marked as crossing flora";
+	const glm::vec2& at = rig.world.getComponent<Position>(walker)->value;
+	for (int i = 0; i < 2000 && glm::distance(at, goal) > 0.3F; ++i) {
+		rig.world.update(0.016F);
+	}
+	EXPECT_LT(glm::distance(at, goal), 0.3F) << "never arrived";
+
+	const EntityID clearOfTrees = rig.walker({2.0F, 45.0F}, {38.0F, 45.0F});
+	ASSERT_TRUE(rig.world.getComponent<NavPath>(clearOfTrees)->valid);
+	EXPECT_FALSE(rig.pricedRoute(clearOfTrees)) << "a fallback route clear of the stand is marked as crossing flora";
+}
+
+// --- A replan keeps its first confinement ------------------------------------------------------
+
+// A wall 20 m north of the start with its only gap 124 m east. Planned from the start the walk to a
+// goal 40 m north is confined to the start's square, which holds the gap. A replan from 100 m west
+// keeps that square, so it still finds the 350 m detour; a fresh plan from there, confined to its own
+// square (which ends 28 m east), finds none.
+TEST_F(NavigationSystemTest, ReplanKeepsTheFirstPlansConfinement) {
+	ConstructionWorld cw;
+	buildWall(cw, {-300000, 20000}, {120000, 20000});
+	buildWall(cw, {128500, 20000}, {300000, 20000});
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setConstructionWorld(&cw);
+	wireArea(sys);
+	settle(sys);
+	const glm::vec2 start{0.0F, 0.0F};
+	const glm::vec2 replanFrom{-100.0F, 0.0F};
+	const glm::vec2 goal{0.0F, 40.0F};
+	const EntityID	colonist = world.createEntity();
+	const auto		inStartSquare = [](const std::vector<glm::vec2>& route) {
+		 return std::all_of(route.begin(), route.end(), [](glm::vec2 p) { return std::abs(p.x) <= 128.0F && std::abs(p.y) <= 128.0F; });
+	};
+
+	const auto first = sys.requestPath(start, goal, kAgentRadius, {}, NavigationSystem::RouteKind::Autonomous, colonist);
+	ASSERT_TRUE(first.has_value());
+	EXPECT_TRUE(inStartSquare(*first));
+	EXPECT_FALSE(sys.requestPath(replanFrom, goal, kAgentRadius).has_value()) << "a fresh plan from there has the gap";
+	const auto replan = sys.requestPath(replanFrom, goal, kAgentRadius, {}, NavigationSystem::RouteKind::Autonomous, colonist);
+	ASSERT_TRUE(replan.has_value()) << "the replan lost the first plan's square";
+	EXPECT_TRUE(inStartSquare(*replan));
+	EXPECT_GT(lengthOf(*replan), 300.0F);
+}
+
+// The same walls. A replan from a few centimetres outside the first square (pushed there by
+// collision) keeps it; one from 180 m west (a teleport) takes the square round where it stands, which
+// doesn't hold the gap: no route, never an unconfined search. An autonomous goal outside the start's
+// square has no route on a first plan either; an order there does.
+TEST_F(NavigationSystemTest, AutonomousRoutesAreAlwaysConfined) {
+	ConstructionWorld cw;
+	buildWall(cw, {-300000, 20000}, {120000, 20000});
+	buildWall(cw, {128500, 20000}, {300000, 20000});
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setConstructionWorld(&cw);
+	wireArea(sys);
+	settle(sys);
+	const glm::vec2 goal{0.0F, 40.0F};
+	const EntityID	colonist = world.createEntity();
+	using Kind				 = NavigationSystem::RouteKind;
+	ASSERT_TRUE(sys.requestPath({0.0F, 0.0F}, goal, kAgentRadius, {}, Kind::Autonomous, colonist).has_value());
+	EXPECT_TRUE(sys.requestPath({-128.2F, 0.0F}, goal, kAgentRadius, {}, Kind::Autonomous, colonist).has_value())
+		<< "pushed 0.2 m out of the square";
+	EXPECT_FALSE(sys.requestPath({-180.0F, 0.0F}, goal, kAgentRadius, {}, Kind::Autonomous, colonist).has_value())
+		<< "teleported 52 m out: its own square, without the gap";
+	EXPECT_FALSE(sys.requestPath({0.0F, 0.0F}, {200.0F, 0.0F}, kAgentRadius).has_value()) << "a goal 200 m off, on its own";
+	EXPECT_TRUE(sys.requestPath({0.0F, 0.0F}, {200.0F, 0.0F}, kAgentRadius, {}, Kind::Ordered).has_value()) << "ordered there";
+}
+
+// A wall 20 m north with its only gap 200 m east, out of the start's square. A route keeps the kind its
+// first plan had: an order replanned as if autonomous (control released) still routes through the gap,
+// and an autonomous route replanned as if ordered (control taken) still finds none.
+TEST_F(NavigationSystemTest, ARoutesKindIsFixedByItsFirstPlan) {
+	ConstructionWorld cw;
+	buildWall(cw, {-300000, 20000}, {196000, 20000});
+	buildWall(cw, {204500, 20000}, {400000, 20000});
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setConstructionWorld(&cw);
+	wireArea(sys);
+	settle(sys);
+	const glm::vec2 goal{0.0F, 40.0F};
+	using Kind = NavigationSystem::RouteKind;
+
+	const EntityID ordered = world.createEntity();
+	ASSERT_TRUE(sys.requestPath({0.0F, 0.0F}, goal, kAgentRadius, {}, Kind::Ordered, ordered).has_value());
+	EXPECT_TRUE(sys.requestPath({50.0F, 0.0F}, goal, kAgentRadius, {}, Kind::Autonomous, ordered).has_value())
+		<< "control released, the order still routes round";
+	EXPECT_FALSE(sys.requestPath({50.0F, 0.0F}, goal, kAgentRadius, {}, Kind::Autonomous, world.createEntity()).has_value())
+		<< "a colonist's own plan from there has no gap";
+
+	const EntityID autonomous = world.createEntity();
+	EXPECT_FALSE(sys.requestPath({0.0F, 0.0F}, goal, kAgentRadius, {}, Kind::Autonomous, autonomous).has_value());
+	EXPECT_FALSE(sys.requestPath({0.0F, 0.0F}, goal, kAgentRadius, {}, Kind::Ordered, autonomous).has_value())
+		<< "control taken, the colonist's own route stays confined";
+}
+
+// Settled means every chunk whose interior meets the square's has meshed ground, loaded or not. A
+// colonist exactly 128 m from chunk (1, 0) has a square that only touches that chunk's side: it is
+// settled with the chunk unloaded, and the chunk's ground coming in moves nothing it reads. A
+// millimetre nearer, the square meets the unloaded chunk: not settled until its ground lands.
+TEST_F(NavigationSystemTest, SettledCountsEveryChunkTheSquareMeets) {
+	auto chunks = std::make_unique<world::ChunkManager>(landSampler());
+	chunks->setLoadRadius(0);
+	chunks->setUnloadRadius(0);
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(chunks.get());
+	sys.setConstructionWorld(&cw);
+	const auto stand = [&] {
+		chunks->update({256.0F, 256.0F});
+		chunks->finishPendingGeneration();
+		settle(sys);
+	};
+	stand();
+	const glm::vec2 edge{384.0F, 256.0F};
+	const glm::vec2 inside{384.001F, 256.0F};
+	ASSERT_EQ(chunks->getChunk({1, 0}), nullptr);
+	EXPECT_TRUE(sys.reachFrom(edge, kAgentRadius).settled);
+	EXPECT_FALSE(sys.reachFrom(inside, kAgentRadius).settled) << "an unloaded chunk the square meets";
+	const std::uint64_t key = sys.reachFrom(edge, kAgentRadius).startRegionGeneration;
+
+	chunks->setLoadRadius(1);
+	chunks->setUnloadRadius(1);
+	stand();
+	ASSERT_TRUE(sys.inSimArea({700.0F, 256.0F}));
+	EXPECT_EQ(sys.reachFrom(edge, kAgentRadius).startRegionGeneration, key) << "a chunk only touching the square";
+	EXPECT_TRUE(sys.reachFrom(inside, kAgentRadius).settled);
+}
+
+// --- Stale stays stale ---------------------------------------------------------------------------
+
+// A route a tree landed across is stale; an unrelated wall job, which restamps the routes it doesn't
+// cross, leaves it stale.
+TEST_F(NavigationSystemTest, StaleRouteStaysStaleThroughAnUnrelatedWallJob) {
+	registerTree("Test_NavStaleTree", 0.3F);
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	placeTrees(executor, processed, "Test_NavStaleTree", {{-20.0F, 40.0F}});
+
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys);
+	sys.setPlacementData(&executor, &processed);
+	sys.setConstructionWorld(&cw);
+	settle(sys);
+	const EntityID hit	  = routedMover(world, sys, {1.0F, 40.0F}, {31.0F, 40.0F});
+	const EntityID missed = routedMover(world, sys, {1.0F, 10.0F}, {31.0F, 10.0F});
+	placeTrees(executor, processed, "Test_NavStaleTree", {{10.0F, 40.0F}});
+	step(world, sys);
+	step(world, sys);
+	ASSERT_TRUE(stale(world, sys, hit));
+	ASSERT_FALSE(stale(world, sys, missed));
+
+	const std::uint64_t before = sys.generation();
+	buildWall(cw, {-40000, -40000}, {-36000, -40000}); // far from both routes
+	step(world, sys);
+	settle(sys);
+	ASSERT_NE(sys.generation(), before) << "the wall job is anchored";
+	EXPECT_TRUE(stale(world, sys, hit)) << "the restamp read the stale mark as current";
+	EXPECT_FALSE(stale(world, sys, missed));
+}
+
+// The clear-ground test and the mesh read one outline (nav::placedObstacleOutline): a collider set off its
+// entity's centre and mirrored by a negative scale lands on the same side for both.
+TEST_F(NavigationSystemTest, ClearGroundAndTheMeshAgreeOnAMirroredCollider) {
+	AssetDefinition tree;
+	tree.defName					 = "Test_NavMirroredTree";
+	tree.setCollision(0, {.type = CollisionShapeType::Rect, .offsetMeters = {0.8F, 0.0F}, .halfExtentsMeters = {0.3F, 0.3F}});
+	AssetRegistry::Get().registerTestDefinition(tree);
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	assets::AsyncChunkPlacementResult	placed;
+	placed.coord = world::worldToChunk({20.0F, 20.0F});
+	PlacedEntity mirrored;
+	mirrored.defName  = "Test_NavMirroredTree";
+	mirrored.position = {20.0F, 20.0F};
+	mirrored.scale	  = -1.0F;
+	placed.spatialIndex.insert(mirrored);
+	executor.storeChunkResult(std::move(placed));
+	processed.insert(world::worldToChunk({20.0F, 20.0F}));
+
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys);
+	sys.setPlacementData(&executor, &processed);
+	sys.setConstructionWorld(&cw);
+	sys.setViewportRect({20.0F, 20.0F}, {30.0F, 30.0F});
+	settle(sys);
+	step(world, sys);
+	settle(sys);
+	for (const glm::vec2 p : {glm::vec2{19.2F, 20.0F}, glm::vec2{20.8F, 20.0F}}) {
+		EXPECT_EQ(sys.isValidPosition(p), meshClear(sys, p)) << "at (" << p.x << ", " << p.y << ")";
+	}
+	EXPECT_FALSE(meshClear(sys, {19.2F, 20.0F})) << "the mirrored collider is in the mesh";
+}
+
+// A task's routes keep the square round where its first route started, planned before the task had
+// its instance id: its next leg, 200 m from that leg's start, routes, and so does a replan halfway
+// along it, inside the square. A new task from the pickup gets the square round the pickup, which
+// doesn't hold the far end.
+TEST_F(NavigationSystemTest, ATasksLegsAndReplansKeepItsFirstSquare) {
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys);
+	settle(sys);
+	const EntityID colonist = world.createEntity();
+	world.addComponent<Task>(colonist, Task{});
+	const auto inFirstSquare = [](const std::vector<glm::vec2>& route) {
+		return std::all_of(route.begin(), route.end(), [](glm::vec2 p) { return std::abs(p.x) <= 128.0F && std::abs(p.y) <= 128.0F; });
+	};
+	ASSERT_TRUE(sys.requestPath({0.0F, 0.0F}, {-100.0F, 0.0F}, kAgentRadius, {}, NavigationSystem::RouteKind::Autonomous, colonist).has_value());
+	world.getComponent<Task>(colonist)->instanceId = 7; // its claims, taken after its first route
+
+	const auto leg = sys.requestPath({-100.0F, 0.0F}, {100.0F, 0.0F}, kAgentRadius, {}, NavigationSystem::RouteKind::Autonomous, colonist);
+	ASSERT_TRUE(leg.has_value()) << "the second leg had no route";
+	EXPECT_TRUE(inFirstSquare(*leg));
+	const auto replan = sys.requestPath({-20.0F, 0.0F}, {100.0F, 0.0F}, kAgentRadius, {}, NavigationSystem::RouteKind::Autonomous, colonist);
+	ASSERT_TRUE(replan.has_value());
+	EXPECT_TRUE(inFirstSquare(*replan));
+
+	world.getComponent<Task>(colonist)->instanceId = 8;
+	EXPECT_FALSE(sys.requestPath({-100.0F, 0.0F}, {100.0F, 0.0F}, kAgentRadius, {}, NavigationSystem::RouteKind::Autonomous, colonist).has_value())
+		<< "a new task's square is round where it starts";
+}
+
+// A sapling 0.04 m across, 0.2 m off a fallback route's line, is within the walker's radius of it:
+// the route is marked as crossing flora however narrow the trunk.
+TEST_F(NavigationSystemTest, FallbackRoutePastANarrowTrunkIsMarked) {
+	registerTree("Test_NavSapling", 0.02F);
+	WalkRig rig({20.0F, 20.0F});
+	placeTrees(rig.executor, rig.processed, "Test_NavSapling", {{20.03F, 20.2F}});
+	rig.start();
+	ASSERT_FALSE(meshClear(rig.nav, {20.03F, 20.2F})) << "the sapling is in the mesh";
+	rig.nav.setNavExpansionCap(1, 0);
+	const EntityID walker = rig.walker({2.0F, 20.0F}, {38.0F, 20.0F});
+	ASSERT_TRUE(rig.world.getComponent<NavPath>(walker)->valid);
+	EXPECT_TRUE(rig.pricedRoute(walker)) << "the sapling was missed";
 }

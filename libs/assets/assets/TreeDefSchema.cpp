@@ -1,7 +1,10 @@
 #include "TreeDefSchema.h"
 
+#include "assets/DetailLevels.h"
+
 #include <pugixml.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -130,6 +133,76 @@ namespace assets {
 			return std::nullopt;
 		}
 		return PlacementScale{static_cast<float>(*min), static_cast<float>(*max)};
+	}
+
+	std::optional<uint16_t> readSamplePitch(const pugi::xml_node& defNode, std::vector<TreeDefIssue>& issues) {
+		const pugi::xml_node node = defNode.child("placement").child("samplePitch");
+		if (!node) {
+			return std::nullopt;
+		}
+		const std::string text = node.text().as_string();
+		if (text != "1" && text != "2" && text != "4") {
+			issues.push_back({"samplePitch", "<samplePitch> must be 1, 2 or 4 meters", text});
+			return std::nullopt;
+		}
+		return static_cast<uint16_t>(text[0] - '0');
+	}
+
+	std::optional<float> readCrownSpacing(const pugi::xml_node& defNode, std::vector<TreeDefIssue>& issues) {
+		const pugi::xml_node node = defNode.child("placement").child("crownSpacing");
+		if (!node) {
+			return std::nullopt;
+		}
+		const std::string text = node.text().as_string();
+		char*			  end = nullptr;
+		const double	  value = std::strtod(text.c_str(), &end);
+		if (end == text.c_str() || *end != '\0' || !std::isfinite(value) || value <= 0.0 || value > 2.0) {
+			issues.push_back({"crownSpacing", "<crownSpacing> must be a number above 0 and at most 2", text});
+			return std::nullopt;
+		}
+		return static_cast<float>(value);
+	}
+
+	std::vector<float> readDetailLevels(const pugi::xml_node& defNode, std::vector<TreeDefIssue>& issues) {
+		const pugi::xml_node node = defNode.child("detailLevels");
+		if (!node) {
+			return {};
+		}
+		const std::string text = node.text().as_string();
+		if (parseAssetType(defNode.child_value("assetType")) != AssetType::Procedural) {
+			issues.push_back({"detailLevels", "only a procedural def's generator can cut a mesh for a density", text});
+			return {};
+		}
+
+		std::vector<float> levels;
+		bool			   valid = true;
+		size_t			   start = 0;
+		while (valid && start <= text.size()) {
+			const size_t	  comma = std::min(text.find(',', start), text.size());
+			const std::string item = text.substr(start, comma - start);
+			const char*		  first = item.c_str();
+			while (*first == ' ' || *first == '\t' || *first == '\n' || *first == '\r') {
+				++first;
+			}
+			char*		 end = nullptr;
+			const double value = std::strtod(first, &end);
+			while (end != nullptr && (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r')) {
+				++end;
+			}
+			valid = end != first && *end == '\0' && std::isfinite(value) && value > 0.0 && value <= std::numeric_limits<float>::max() &&
+					(levels.empty() || static_cast<float>(value) > levels.back());
+			levels.push_back(static_cast<float>(value));
+			start = comma + 1;
+		}
+		if (!valid || levels.size() > kMaxDetailLevels) {
+			issues.push_back(
+				{"detailLevels",
+				 "must list 1 to " + std::to_string(kMaxDetailLevels) + " pixels-a-meter densities above 0, strictly ascending, comma separated",
+				 text}
+			);
+			return {};
+		}
+		return levels;
 	}
 
 } // namespace assets

@@ -31,37 +31,13 @@ namespace {
 	// Generous fixed half-size margin added to the query box (meters). It MUST
 	// exceed the largest collider half-extent + clearance so queryRect (which
 	// filters by entity CENTER) never misses a rect whose body overlaps the agent
-	// while its center sits outside the unpadded box. Trunk rects are <= 0.1 m
+	// while its center sits outside the unpadded box. Collider rects here are <= 0.1 m
 	// half-extent, so 2 m is safe with wide headroom.
 	constexpr float kStaticRectQueryMarginMeters = 2.0F;
 
-	// Build the world-meters OBB for a placed entity from its transform and the
-	// def's collision rect (offset = local center, halfExtents = local half size).
-	// Mirrors nav floraRingFor / toWorldMm exactly: pad in LOCAL space first, then
-	// scale, then rotate, then translate -- so the world boundary is
-	// scale*(halfExtent + pad) on both axes, matching the navmesh obstacle boundary
-	// at ALL scales. The returned OBB is pre-inflated; callers pass clearance 0.
-	OrientedRect orientedRectFor(const assets::PlacedEntity& e, const assets::CollisionShape& collision) {
-		const float cosR      = std::cos(e.rotation);
-		const float sinR      = std::sin(e.rotation);
-		const float sc        = e.scale;
-		const float padMeters = static_cast<float>(nav::kFloraColliderPadMm) / 1000.0F;
-
-		// rotate(v) = {v.x*cosR - v.y*sinR, v.x*sinR + v.y*cosR}
-		const glm::vec2 off = collision.offsetMeters * sc;
-		const glm::vec2 rotatedOffset{off.x * cosR - off.y * sinR, off.x * sinR + off.y * cosR};
-
-		OrientedRect rect;
-		rect.center      = e.position + rotatedOffset;
-		rect.axisX       = {cosR, sinR};
-		rect.axisY       = {-sinR, cosR};
-		rect.halfExtents = sc * (collision.halfExtentsMeters + glm::vec2{padMeters, padMeters});
-		return rect;
-	}
-
 } // namespace
 
-std::optional<glm::vec2> resolveCenterAgainstRect(glm::vec2 center, float clearance, const OrientedRect& rect) {
+std::optional<glm::vec2> resolveCenterAgainstRect(glm::vec2 center, float clearance, const nav::OrientedRect& rect) {
 	const glm::vec2 d  = center - rect.center;
 	const float		lx = glm::dot(d, rect.axisX);
 	const float		ly = glm::dot(d, rect.axisY);
@@ -97,11 +73,11 @@ void StaticRectCollisionSystem::update(float /*deltaTime*/) {
 	}
 
 	const assets::AssetRegistry& registry = assets::AssetRegistry::Get();
-	// The OBB from orientedRectFor is pre-inflated by the nav flora pad (already
+	// The box from nav::placedObstacleBox is pre-inflated by the placed-obstacle pad (already
 	// baked into halfExtents), so the query box needs only the spatial margin.
 	const float boxHalf = kStaticRectQueryMarginMeters;
 
-	std::vector<OrientedRect> rects; // reused per agent
+	std::vector<nav::OrientedRect> rects; // reused per agent
 
 	// Two relaxation iterations so an agent wedged between two adjacent rects
 	// settles against both (iteration 1 clears the deepest, iteration 2 re-projects
@@ -113,7 +89,7 @@ void StaticRectCollisionSystem::update(float /*deltaTime*/) {
 				continue;
 			}
 			if (const NavPath* path = world->getComponent<NavPath>(entity); path != nullptr && !path->done() && detail->routeCrossesPricedFaces(*path)) {
-				continue; // walking through flora on purpose, at its price
+				continue; // walking through detail on purpose, at its price
 			}
 
 			// --- Gather the nearby rects locally (position tiles == meters) ---
@@ -140,11 +116,13 @@ void StaticRectCollisionSystem::update(float /*deltaTime*/) {
 						index->queryRect(boxMinX, boxMinY, boxMaxX, boxMaxY);
 					for (const assets::PlacedEntity* e : hits) {
 						const assets::AssetDefinition* def = registry.getDefinition(e->defName);
-						if (def == nullptr || def->collision.type != assets::CollisionShapeType::Rect ||
-							!detail->floraInNavMesh({cx, cy}, *e)) {
+						if (def == nullptr || !detail->placedObstacleInNavMesh({cx, cy}, *e)) {
 							continue;
 						}
-						rects.push_back(orientedRectFor(*e, def->collision));
+						// Rect colliders only: a polygon one is in the nav mesh but not pushed against here.
+						if (const std::optional<nav::OrientedRect> box = nav::placedObstacleBox(*e, def->collisionFor(e->traits.ageClass))) {
+							rects.push_back(*box);
+						}
 					}
 				}
 			}
@@ -155,15 +133,15 @@ void StaticRectCollisionSystem::update(float /*deltaTime*/) {
 
 			// Deterministic ordering: resolve in a fixed (center x, then y) order so
 			// the accumulated push-out is independent of queryRect/chunk layout.
-			std::sort(rects.begin(), rects.end(), [](const OrientedRect& l, const OrientedRect& r) {
+			std::sort(rects.begin(), rects.end(), [](const nav::OrientedRect& l, const nav::OrientedRect& r) {
 				if (l.center.x != r.center.x) {
 					return l.center.x < r.center.x;
 				}
 				return l.center.y < r.center.y;
 			});
 
-			for (const OrientedRect& rect : rects) {
-				// clearance 0: the OBB is already pre-inflated by the nav flora pad.
+			for (const nav::OrientedRect& rect : rects) {
+				// clearance 0: the OBB is already pre-inflated by the placed-obstacle pad.
 				std::optional<glm::vec2> corrected = resolveCenterAgainstRect(p, 0.0F, rect);
 				if (corrected.has_value()) {
 					p = *corrected;

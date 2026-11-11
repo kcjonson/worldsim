@@ -7,70 +7,115 @@
 
 #include <glm/vec2.hpp>
 
+#include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace ecs {
 
-	/// Reach verdicts for sources in the colonist's own nav region, by Memory key. Such a verdict depends
-	/// on the source's position, that region's mesh, the colonist's structural belief and which reach
-	/// subtree the colonist stands in, not on where in the subtree it stands or on what else it
-	/// remembers. So verdicts hold while the key does, and a colonist among unreachable sources tests each
-	/// one once, not every decision. A source in another region is never held here: the region a point
-	/// falls in can change without this region's mesh changing.
+	/// What a colonist has found about the targets it remembers in its own reach square
+	/// (NavigationSystem::Reach), by Memory key, kept two ways.
+	///
+	/// A walk, its length or "none" (within a bound, or at any length), is a function of where the
+	/// colonist stands, the structural mesh in its square and its belief, so it is held under a Key:
+	/// the start to a NavigationSystem::kReachCellMm step, the stamp of the structural content of the
+	/// chunks its square touches, and the belief version. It is cheap to walk again.
+	///
+	/// A route that failed where the walk said yes is the rare disagreement, and picking that target
+	/// again would only fail again, so it is held under an Anchor: the spot it failed at, the stamp of
+	/// the structural content a colonist anywhere in that spot's square could walk over
+	/// (NavigationSystem::verdictStamp) and the belief version. It holds while the colonist stays in
+	/// the anchor's square and neither changes, so a colonist wandering about one spot doesn't pick the
+	/// failed target again.
 	struct SourceReachMemo {
 		struct Key {
-			std::int32_t  regionId = -1;		 // NavigationSystem::Reach::startRegionId
-			std::uint64_t regionGeneration = 0; // that region's mesh swap count
-			std::uint64_t beliefVersion = 0;	 // Memory::beliefVersion
-			std::int32_t  reachRoot = -1;
-			std::int32_t  startTri = -1; // set only without a reach root: such a start reaches just its own triangle
+			std::int64_t  startCell = 0;		// NavigationSystem::Reach::startCell
+			std::uint64_t reachGeneration = 0; // NavigationSystem::Reach::startRegionGeneration
+			std::uint64_t beliefVersion = 0;	// Memory::beliefVersion
 			bool		  operator==(const Key&) const = default;
+		};
 
-			/// A fingerprint of the key, small enough to stamp on a task: equal keys, equal stamps.
+		struct Anchor {
+			glm::vec2	  at{0.0F, 0.0F};
+			std::uint64_t structural = 0;	 // NavigationSystem::verdictStamp(at)
+			std::uint64_t beliefVersion = 0; // Memory::beliefVersion
+			bool		  operator==(const Anchor&) const = default;
+
+			/// A fingerprint, small enough to stamp on a task: equal anchors, equal stamps.
 			[[nodiscard]] std::uint64_t stamp() const {
 				std::uint64_t h = 1469598103934665603ULL;
-				for (const std::uint64_t v : {static_cast<std::uint64_t>(regionId), regionGeneration, beliefVersion,
-											  static_cast<std::uint64_t>(reachRoot), static_cast<std::uint64_t>(startTri)}) {
+				for (const std::uint64_t v : {static_cast<std::uint64_t>(std::bit_cast<std::uint32_t>(at.x)),
+											  static_cast<std::uint64_t>(std::bit_cast<std::uint32_t>(at.y)), structural, beliefVersion}) {
 					h = (h ^ v) * 1099511628211ULL;
 				}
 				return h;
 			}
 		};
 
-		/// Forget every verdict when the key changes, or once verdicts (forgotten sources' included)
-		/// pass maxVerdicts.
-		void keep(const Key& next, std::size_t maxVerdicts) {
-			if (key != next || verdicts.size() > maxVerdicts) {
-				verdicts.clear();
-				key = next;
+		/// Forget the walks when the key changes and the failed routes when the anchor does, or either
+		/// once it passes maxVerdicts (forgotten sources' included).
+		void keep(const Key& nextKey, const Anchor& nextAnchor, std::size_t maxVerdicts) {
+			if (key != nextKey || walks.size() > maxVerdicts) {
+				walks.clear();
+				key = nextKey;
+			}
+			if (anchor != nextAnchor || failedRoutes.size() > maxVerdicts) {
+				failedRoutes.clear();
+				anchor = nextAnchor;
 			}
 		}
 
-		/// A source already found unreachable under the current key, so a query can drop it up front.
+		/// Where the failed routes were found, until the first keep().
+		[[nodiscard]] const std::optional<Anchor>& heldAnchor() const { return anchor; }
+
+		/// A source already found unreachable, by a walk under the current key or a route under the
+		/// current anchor, so a query can drop it up front.
 		[[nodiscard]] bool knownUnreachable(std::uint64_t sourceKey) const {
-			const auto it = verdicts.find(sourceKey);
-			return it != verdicts.end() && !it->second;
+			if (failedRoutes.contains(sourceKey)) {
+				return true;
+			}
+			const auto it = walks.find(sourceKey);
+			return it != walks.end() && !it->second.walk.has_value() && it->second.bound == kAnyWalk;
 		}
 
 		/// A source already found reachable under the current key.
 		[[nodiscard]] bool knownReachable(std::uint64_t sourceKey) const {
-			const auto it = verdicts.find(sourceKey);
-			return it != verdicts.end() && it->second;
+			const auto it = walks.find(sourceKey);
+			return it != walks.end() && it->second.walk.has_value();
 		}
-		/// A route to this source failed under the current key: it's unreachable whatever a probe said.
-		void recordUnreachable(std::uint64_t sourceKey) { verdicts[sourceKey] = false; }
 
-		/// The remembered verdict for a source, running probe(position) the first time it's asked.
+		/// A route to this source failed under the current anchor: it's unreachable whatever a walk says.
+		void recordFailedRoute(std::uint64_t sourceKey) { failedRoutes.insert(sourceKey); }
+
+		/// The walk to a source no longer than maxWalk, running probe(position, maxWalk) when what is
+		/// held doesn't answer it.
+		template <typename Probe>
+		[[nodiscard]] std::optional<float> walk(std::uint64_t sourceKey, const glm::vec2& position, float maxWalk, Probe&& probe) {
+			if (failedRoutes.contains(sourceKey)) {
+				return std::nullopt;
+			}
+			const auto it = walks.find(sourceKey);
+			if (it != walks.end()) {
+				if (it->second.walk.has_value()) {
+					return *it->second.walk <= maxWalk ? it->second.walk : std::nullopt;
+				}
+				if (it->second.bound >= maxWalk) {
+					return std::nullopt;
+				}
+			}
+			const std::optional<float> found = probe(position, maxWalk);
+			walks[sourceKey]				 = {found, maxWalk};
+			return found;
+		}
+
+		/// Whether a source can be walked to at all, as walk() with no bound.
 		template <typename Probe>
 		[[nodiscard]] bool reachable(std::uint64_t sourceKey, const glm::vec2& position, Probe&& probe) {
-			const auto [it, added] = verdicts.try_emplace(sourceKey, false);
-			if (added) {
-				it->second = probe(position);
-			}
-			return it->second;
+			return walk(sourceKey, position, kAnyWalk, probe).has_value();
 		}
 
 		/// Set when the last food search found every edible source the colonist remembers regrowing:
@@ -94,8 +139,15 @@ namespace ecs {
 		}
 
 	  private:
-		std::optional<Key>						key;
-		std::unordered_map<std::uint64_t, bool> verdicts;
+		static constexpr float kAnyWalk = std::numeric_limits<float>::infinity();
+		struct Verdict {
+			std::optional<float> walk;	 // metres, when one was found
+			float				 bound = 0.0F; // the longest walk asked about
+		};
+		std::optional<Key>							key;
+		std::unordered_map<std::uint64_t, Verdict> walks;
+		std::optional<Anchor>						anchor;
+		std::unordered_set<std::uint64_t>			failedRoutes;
 	};
 
 } // namespace ecs

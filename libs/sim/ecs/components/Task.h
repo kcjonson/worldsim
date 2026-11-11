@@ -186,12 +186,13 @@ struct Task {
 	// zero means the Rerouting display window has elapsed (revert to Traveling).
 	std::uint8_t navStateHold = 0;
 	// NavigationSystem::generation() when the route was deferred (navState AwaitingMesh). The route
-	// is requested again once generation() moves off this value, i.e. a mesh build has landed.
+	// is requested again once generation() moves off this value: a structural build has landed in
+	// ground an anchor holds, and the waiting goal is one (NavigationSystem::appendAnchors).
 	std::uint64_t deferredNavGeneration = 0;
-	// SourceReachMemo::Key::stamp() of the colonist's reach when the route came back with no believed
-	// route (navState CantFindWayTo). The next decision records needSourceKey unreachable only while its
-	// own key still stamps the same, so the verdict never outlives the meshes and belief it was found
-	// under, and a swap in some unrelated region doesn't stop it being recorded.
+	// SourceReachMemo::Anchor::stamp() of the colonist's verdicts when the route came back with no
+	// believed route (navState CantFindWayTo). The next decision records needSourceKey unreachable only
+	// while its own anchor still stamps the same, so the verdict never outlives the structural mesh and
+	// belief it was found under, and a change outside the anchor's reach doesn't stop it being recorded.
 	std::uint64_t blockedReachStamp = 0;
 	// Memory key of the remembered source a FulfillNeed task is heading for; 0 for none (ground, pack).
 	// Copied from the selected EvaluatedOption::sourceKey, kept on the task so a failed route can name it.
