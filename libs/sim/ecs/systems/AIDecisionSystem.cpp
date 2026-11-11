@@ -422,6 +422,7 @@ namespace ecs {
 		/// @param world ECS world (to read a destination storage's live inventory for haul sizing)
 		/// @param registry Asset registry for capability lookups
 		/// @param sources The colonist's remembered loose items, by item
+		/// @param storageKnowledge The boxes the colony knows, this update
 		/// @param inventory Colonist inventory (for craft-material hauls)
 		/// @param position Colonist position
 		/// @param trace Output decision trace
@@ -429,6 +430,7 @@ namespace ecs {
 			World*								 world,
 			const assets::AssetRegistry& registry,
 			WorkSources&						 sources,
+			ColonyStorageKnowledge&				 storageKnowledge,
 			const Inventory&					 inventory,
 			const glm::vec2&					 position,
 			DecisionTrace&						 trace
@@ -742,7 +744,7 @@ namespace ecs {
 								}
 								// Discovery-gating: the colony must KNOW the source box (no god-view),
 								// mirroring how a loose pickup is gated on the pile being in memory.
-								if (!ecs::colonyKnowsStorageEntity(world, registry, srcEntity)) {
+								if (!storageKnowledge.knows(*world, registry, srcEntity)) {
 									continue;
 								}
 								// Don't drain the source below ITS OWN configured minimum for this item.
@@ -1086,6 +1088,7 @@ namespace ecs {
 	void AIDecisionSystem::update(float deltaTime) {
 		// Advance this system's monotonic clock (used for lastEvaluationTime + within-tier task age).
 		m_elapsedTime += deltaTime;
+		m_colonyStorage.invalidate();
 
 		// Process all entities with the required components
 		for (auto [entity, position, needs, memory, task, movementTarget, inventory] :
@@ -1833,7 +1836,7 @@ namespace ecs {
 		// harvested craft materials from inventory to crafting stations
 		// (tier per option: tier 4 when serving an active work order, else tier 6)
 		m_workSources.begin(memory, m_registry, inventory);
-		evaluateHaulOptions(world, m_registry, m_workSources, inventory, position.value, trace);
+		evaluateHaulOptions(world, m_registry, m_workSources, m_colonyStorage, inventory, position.value, trace);
 
 		// Harvest resources for crafting (goal-driven)
 		evaluateHarvestOptions(m_registry, m_workSources, position.value, skills, trace);

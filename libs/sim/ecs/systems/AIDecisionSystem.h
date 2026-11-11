@@ -18,6 +18,7 @@
 #include "../components/MemoryQueries.h"
 #include "../components/Needs.h"
 #include "../components/Task.h"
+#include "GoalSystemHelpers.h"
 #include "WorkSources.h"
 
 #include <functional>
@@ -213,6 +214,9 @@ private:
 
 	/// The deciding colonist's remembered work sources, reused across colonists
 	WorkSources m_workSources;
+
+	/// The storage boxes the colony knows, worked out at most once per update
+	ColonyStorageKnowledge m_colonyStorage;
 
 	/// SourceReachMemo::Key::stamp() of the colonist being decided this update (0 without a mesh)
 	std::uint64_t reachStamp = 0;

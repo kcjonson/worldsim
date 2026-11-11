@@ -51,7 +51,7 @@ using QueueRecipeCallback = std::function<void(const std::string& recipeDefName,
 /// True iff the colony knows a source the engine pull would actually use to fill `destBox` with
 /// `itemDefName`: a loose pile or known harvestable yield in Memory, OR a strictly-lower-priority
 /// storage box that holds the item and that the colony has seen. Mirrors evaluateHaulOptions'
-/// source gate (strict-< getPriorityFor on the item's category + colonyKnowsStorageEntity) so the
+/// source gate (strict-< getPriorityFor on the item's category + ColonyStorageKnowledge) so the
 /// affordance never claims a source the pull wouldn't use, or vice versa.
 [[nodiscard]] bool isStorageSourceKnown(ecs::World& world, ecs::EntityID destBox, const std::string& itemDefName);
 

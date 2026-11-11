@@ -145,6 +145,9 @@ namespace ecs::test {
 #ifdef DEVELOPMENT_BUILD
 		/// Memory entries the work evaluators have looked at so far.
 		uint64_t workSourceVisits() { return world->getSystem<AIDecisionSystem>().m_workSources.visits; }
+
+		/// Times the colony's box knowledge has been worked out so far.
+		uint64_t colonyStorageBuilds() { return world->getSystem<AIDecisionSystem>().m_colonyStorage.builds; }
 #endif
 
 		/// Drive the private chain-interruption handler directly. This fixture is a friend of
@@ -172,7 +175,7 @@ namespace ecs::test {
 
 		/// Build a storage box entity: StorageConfiguration (one rule for `item` at `priority` with the
 		/// given min/max) + Inventory (createForStorage, pre-filled with `initialQty`) + Position +
-		/// Appearance (defName `boxDef`, a registered Storage def so colonyKnowsStorageEntity can key it).
+		/// Appearance (defName `boxDef`, a registered Storage def so ColonyStorageKnowledge can key it).
 		EntityID makeStorageBox(
 			glm::vec2 pos, const std::string& boxDef, const std::string& item, ecs::StoragePriority priority,
 			uint32_t initialQty = 0, uint32_t minAmount = 0, uint32_t maxAmount = 0
@@ -781,6 +784,31 @@ namespace ecs::test {
 	TEST_F(AIDecisionSystemTest, EveryColonistOfManyGetsATask) {
 		constexpr int kNumColonists = 100;
 
+		// A low box holding Wood and a high box wanting it, both known to every colonist, so each
+		// colonist's evaluation asks whether the colony knows the source box.
+		auto&					registry = assets::AssetRegistry::Get();
+		assets::AssetDefinition wood;
+		wood.defName = "Wood";
+		wood.label = "Wood";
+		wood.category = assets::ItemCategory::RawMaterial;
+		wood.capabilities.carryable = assets::CarryableCapability{1};
+		wood.itemProperties = assets::ItemProperties{};
+		wood.itemProperties->stackSize = 100;
+		wood.itemProperties->massKg = 0.1F;
+		registry.registerTestDefinition(std::move(wood));
+		assets::AssetDefinition boxDef;
+		boxDef.defName = "Box";
+		boxDef.label = "Box";
+		boxDef.capabilities.storage = assets::StorageCapability{};
+		registry.registerTestDefinition(std::move(boxDef));
+		const uint32_t	woodId = registry.getDefNameId("Wood");
+		const uint32_t	boxDefId = registry.getDefNameId("Box");
+		const glm::vec2 lowPos{2.0F, -4.0F};
+		const glm::vec2 highPos{6.0F, -4.0F};
+		const EntityID	lowBox = makeStorageBox(lowPos, "Box", "Wood", ecs::StoragePriority::Low, /*qty=*/10);
+		const EntityID	highBox = makeStorageBox(highPos, "Box", "Wood", ecs::StoragePriority::High);
+		makeUmbrellaGoal(highBox, highPos, woodId);
+
 		// Create many colonists
 		std::vector<EntityID> colonists;
 		colonists.reserve(kNumColonists);
@@ -807,7 +835,14 @@ namespace ecs::test {
 				);
 			}
 		}
+		for (auto colonist : colonists) {
+			addKnownEntity(colonist, lowPos, boxDefId, assets::CapabilityType::Storage);
+			addKnownEntity(colonist, highPos, boxDefId, assets::CapabilityType::Storage);
+		}
 
+#ifdef DEVELOPMENT_BUILD
+		const uint64_t buildsBefore = colonyStorageBuilds();
+#endif
 		world->update(0.016F);
 
 		// Verify all colonists have tasks
@@ -815,7 +850,16 @@ namespace ecs::test {
 			auto* task = getTask(colonist);
 			ASSERT_NE(task, nullptr);
 			EXPECT_TRUE(task->isActive());
+			const auto& options = getTrace(colonist)->options;
+			EXPECT_TRUE(std::any_of(options.begin(), options.end(), [lowBox](const EvaluatedOption& o) {
+				return o.haulSourceStorageId == static_cast<uint64_t>(lowBox);
+			})) << "every colonist is offered the pull from the known low box";
 		}
+
+#ifdef DEVELOPMENT_BUILD
+		// The colony's box knowledge is worked out once for the update, not once per colonist.
+		EXPECT_EQ(colonyStorageBuilds() - buildsBefore, 1U);
+#endif
 	}
 
 	// A memory near capacity, almost all of it water no work goal wants: the need is still found, and
@@ -1611,7 +1655,7 @@ namespace ecs::test {
 	// =============================================================================
 	// A higher-priority destination box pulls items UP from strictly-lower-priority boxes. The
 	// helpers below register a one-hand carryable item and build storage boxes (StorageConfiguration
-	// + Inventory + Position + Appearance) whose Appearance defName resolves so colonyKnowsStorageEntity
+	// + Inventory + Position + Appearance) whose Appearance defName resolves so ColonyStorageKnowledge
 	// can key the box in memory.
 
 	namespace {
@@ -1632,7 +1676,7 @@ namespace ecs::test {
 		}
 
 		// Register a storage container asset def (Storage capability). One def is shared by all boxes
-		// in a test; its defName is what colonyKnowsStorageEntity resolves from a box's Appearance.
+		// in a test; its defName is what ColonyStorageKnowledge resolves from a box's Appearance.
 		void registerStorageDef(assets::AssetRegistry& registry, const std::string& defName) {
 			assets::AssetDefinition box;
 			box.defName = defName;

@@ -9,6 +9,7 @@
 #include "../components/Inventory.h"
 #include "../components/Memory.h"
 #include "../components/Needs.h"
+#include "../components/StorageConfiguration.h"
 #include "../components/Transform.h"
 
 #include <assets/AssetDefinition.h>
@@ -16,32 +17,60 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <unordered_set>
 
 namespace ecs {
 
-	/// Does any colonist remember this storage box? A storage-to-storage pull may only source from a
-	/// box the colony actually knows about (no god-view), mirroring how a loose pickup is gated on the
-	/// pile being in memory. A box is recorded in memory by its Appearance defName + Position (the same
-	/// key VisionSystem's Pass 2 uses when it sees the box), so resolve those from the entity and test
-	/// every colonist's memory. A colony-placed/-built box is normally already in memory.
-	[[nodiscard]] inline bool colonyKnowsStorageEntity(World* world, const assets::AssetRegistry& reg, EntityID box) {
-		const auto* appearance = world->getComponent<Appearance>(box);
-		const auto* boxPos = world->getComponent<Position>(box);
-		if (appearance == nullptr || boxPos == nullptr) {
-			return false;
+	/// The storage boxes any colonist remembers. A storage-to-storage pull may only source from a box
+	/// the colony actually knows about (no god-view), mirroring how a loose pickup is gated on the pile
+	/// being in memory. A box is recorded in memory by its Appearance defName + Position (the same key
+	/// VisionSystem's Pass 2 uses when it sees the box). A colony-placed/-built box is normally already
+	/// in memory.
+	///
+	/// The answer for every box is worked out on the first question after invalidate(), one probe of
+	/// each colonist's memory per box, and later questions are a set lookup.
+	class ColonyStorageKnowledge {
+	  public:
+		void invalidate() { m_built = false; }
+
+		[[nodiscard]] bool knows(World& world, const assets::AssetRegistry& reg, EntityID box) {
+			if (!m_built) {
+				build(world, reg);
+			}
+			return m_known.contains(box);
 		}
-		const uint32_t defNameId = reg.getDefNameId(appearance->defName);
-		if (defNameId == 0) {
-			return false;
-		}
-		for (auto [colonist, memory] : world->view<Memory>()) {
-			(void)colonist;
-			if (memory.knowsWorldEntity(boxPos->value, defNameId)) {
-				return true;
+
+#ifdef DEVELOPMENT_BUILD
+		/// Builds since construction; tests read it to show the walk runs once per AI update.
+		uint64_t builds = 0;
+#endif
+
+	  private:
+		void build(World& world, const assets::AssetRegistry& reg) {
+			m_built = true;
+			m_known.clear();
+#ifdef DEVELOPMENT_BUILD
+			++builds;
+#endif
+			for (auto [box, config, appearance, boxPos] : world.view<StorageConfiguration, Appearance, Position>()) {
+				(void)config;
+				const uint32_t defNameId = reg.getDefNameId(appearance.defName);
+				if (defNameId == 0) {
+					continue;
+				}
+				for (auto [colonist, memory] : world.view<Memory>()) {
+					(void)colonist;
+					if (memory.knowsWorldEntity(boxPos.value, defNameId)) {
+						m_known.insert(box);
+						break;
+					}
+				}
 			}
 		}
-		return false;
-	}
+
+		bool						 m_built = false;
+		std::unordered_set<EntityID> m_known;
+	};
 
 	/// Does any colonist remember a harvestable whose yield is this item (e.g. a tree for Wood)?
 	/// Colony "availability" = the union of colonist memories (no god-view). A goal created from
