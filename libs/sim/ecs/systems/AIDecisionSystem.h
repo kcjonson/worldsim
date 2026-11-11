@@ -59,10 +59,11 @@ struct RootItem {
 };
 
 /// What a storage box offers each item before inbound claims are taken out: the headroom in that
-/// item's partial stacks, its stack size, and the box's free slots. None of it depends on who asks, and
-/// box contents change only outside an AI update, so each (box, item) is read from the world once per
-/// update; every colonist then takes its own claim exclusion out of the claim index on top. An open
-/// table stamped with the update, so a warm cache allocates nothing.
+/// item's partial stacks, its stack size, and the box's free slots. None of it depends on who asks, so
+/// each (box, item) is read from the world once per update; every colonist then takes its own claim
+/// exclusion out of the claim index on top. Box contents change outside an AI update, except when a
+/// colonist inside one puts goods away in a box within reach (storeOrDrop); the AI then refreshes that
+/// box. An open table stamped with the update, so a warm cache allocates nothing.
 class BoxRoomCache {
   public:
 	/// A new update: every slot of the last one reads as empty and none counts toward the load, so the
@@ -79,6 +80,9 @@ class BoxRoomCache {
 	/// The box's room for `item`, or nullopt when the box has no Inventory.
 	[[nodiscard]] std::optional<Room> get(World& world, const assets::AssetRegistry& registry, EntityID box, uint32_t item);
 
+	/// Read again, from the world, every item of this update's entries for `box`.
+	void refresh(World& world, const assets::AssetRegistry& registry, EntityID box);
+
 #ifdef DEVELOPMENT_BUILD
 	/// (box, item) pairs read from the world since construction; tests read it to show each is read once
 	/// per update, and an item no source offers not at all.
@@ -94,6 +98,7 @@ class BoxRoomCache {
 		bool	 hasStore = false;
 		Room	 room;
 	};
+	void read(World& world, const assets::AssetRegistry& registry, Slot& slot);
 	uint64_t		  pass = 1;
 	uint32_t		  used = 0;
 	std::vector<Slot> slots;
@@ -245,6 +250,9 @@ private:
 	/// @param position Colonist position (for dropping items)
 	/// @param newTaskType Type of new task being switched to
 	/// @param newNeedType Need type for FulfillNeed tasks
+	/// A colonist put goods away in `box` inside this update: what the caches hold for it is read again.
+	void boxChanged(EntityID box);
+
 	void handleChainInterruption(
 		EntityID entity,
 		Task& task,
@@ -301,9 +309,9 @@ private:
 	/// The roots and items the deciding colonist was offered a loose pile for, reused across colonists
 	std::vector<RootItem> m_offeredPiles;
 
-	/// One edible item a storage box the colony knows holds. Box contents don't change inside an AI
-	/// update (deposits and withdrawals are ActionSystem's), so the list is worked out the first time a
-	/// hungry colonist asks in an update and shared by every one after.
+	/// One edible item a storage box the colony knows holds, worked out the first time a hungry colonist
+	/// asks in an update and shared by every one after. Deposits and withdrawals are ActionSystem's; a
+	/// colonist putting goods away inside the update (boxChanged) has it worked out again.
 	struct FoodBox {
 		EntityID  box = kInvalidEntity;
 		glm::vec2 position{0.0F, 0.0F};

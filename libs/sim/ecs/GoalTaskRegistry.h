@@ -263,13 +263,17 @@ namespace ecs {
 	[[nodiscard]] bool goalHasWork(World& world, const GoalTask& goal);
 
 	/// GoalTaskRegistry::remainingNeed answered once per (root, item, basis) for one pass, filled the
-	/// first time each is asked. A pass is one AI update: every deposit and every consumed input lands
-	/// in ActionSystem or a goal system, never inside it, so nothing it reads changes until the next
-	/// invalidate(). Callers outside the pass (the deposit leg, a deposit) ask remainingNeed itself.
-	/// The table keeps its storage across passes, so a warm pass allocates nothing.
+	/// first time each is asked. A pass is one AI update. Deposits and consumed inputs land in
+	/// ActionSystem or a goal system, outside it; the one thing inside it that changes a need is a
+	/// colonist putting goods away in a box within reach as it drops a chain (storeOrDrop), and the AI
+	/// then refreshes that box's root. Callers outside the pass (the deposit leg, a deposit) ask
+	/// remainingNeed itself. The table keeps its storage across passes, so a warm pass allocates nothing.
 	class RemainingNeedCache {
 	  public:
 		void invalidate();
+
+		/// Work out again, from the world, every entry of this pass for `rootGoalId`.
+		void refresh(World& world, uint64_t rootGoalId);
 
 		[[nodiscard]] uint32_t get(World& world, uint64_t rootGoalId, uint32_t itemDefNameId, NeedBasis basis);
 

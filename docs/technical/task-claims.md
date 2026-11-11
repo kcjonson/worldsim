@@ -393,7 +393,7 @@ The regrowing-food wait (`SourceReachMemo::FoodWait`) covers harvestables only: 
 edible harvestable the colonist knows is regrowing, and while it holds those are not searched again.
 Piles and boxes are searched at every decision of a hungry colonist, so a box that gains berries, or
 a pile that appears, ends the wait at once. The boxes holding food are worked out once per AI update
-and shared by every hungry colonist; box contents change only in ActionSystem.
+and shared by every hungry colonist, and again when a colonist puts goods away in a box inside the update.
 
 A hungry colonist reads a bush as taken only when the holder will eat from it and is at least as
 urgent: a Hunger task whose tier is no higher a number than its own (lower tier wins, equal tiers keep
@@ -468,9 +468,11 @@ of goals or colonists. The AI, the goal systems, the deposit leg, and the UI all
 
 The AI asks it per goal, per item, per deciding colonist, so it reads it through a per-update cache
 (`RemainingNeedCache`): each (root, item, basis) is worked out the first time any colonist asks in
-that update and read from the cache after, in reused storage that allocates nothing once warm. That is
-safe because no deposit and no consumed input lands inside an AI update; ActionSystem and the goal
-systems run outside it. Only the in-flight exclusion and the colonist's own goods are worked out per
+that update and read from the cache after, in reused storage that allocates nothing once warm. Deposits
+and consumed inputs land in ActionSystem and the goal systems, outside it. The one change inside an AI
+update is a colonist dropping a chain for a need, which puts its goods away in a box within reach
+(`storeOrDrop`); the AI then works out again what it cached for that box (its root's needs, its room,
+and the boxes holding food), so later deciders and the colonist's own claims read the box as it is. Only the in-flight exclusion and the colonist's own goods are worked out per
 decision. ActionSystem (the deposit leg's commit, a deposit) never reads the cache: other deposits
 may have landed earlier in the same ActionSystem update, so it reads `remainingNeed` itself.
 

@@ -681,6 +681,61 @@ namespace ecs::test {
 		EXPECT_EQ(ai->claimIndex().inFlight(site.umbrella, woodId, {}), 0U);
 	}
 
+	// A colonist interrupted beside a wood box puts its armful away there inside an AI update; a second
+	// colonist deciding later in that update sizes its haul to the room the box has left, not what it had
+	// when the first colonist decided.
+	TEST_F(ChainClaimsTest, GoodsPutAwayInsideAnUpdateShowInLaterDecisions) {
+		assets::ActionTypeDef eat;
+		eat.defName = "Eat";
+		eat.needsHands = true;
+		assets::ActionTypeRegistry::Get().registerTestAction(std::move(eat));
+
+		const glm::vec2 boxPos{1.0F, 0.0F};
+		const EntityID	box = world->createEntity();
+		world->addComponent<Position>(box, Position{boxPos});
+		world->addComponent<Appearance>(box, Appearance{"Box", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+		world->addComponent<Inventory>(box, Inventory::createForStorage());
+		StorageConfiguration config;
+		config.addRule(StorageRule{.defName = "Wood", .category = assets::ItemCategory::RawMaterial, .priority = StoragePriority::Medium, .maxAmount = 10});
+		world->addComponent<StorageConfiguration>(box, std::move(config));
+		GoalTask umbrella;
+		umbrella.type = TaskType::Haul;
+		umbrella.owner = GoalOwner::StorageGoalSystem;
+		umbrella.destinationEntity = box;
+		umbrella.destinationPosition = boxPos;
+		umbrella.acceptedDefNameIds = {woodId};
+		GoalTaskRegistry::Get().createGoal(std::move(umbrella));
+
+		constructionSite({0.0F, 6.0F}, "Wood", 10);
+		const EntityID carrier = createColonist({0.0F, 0.0F});
+		auto&		   inventory = *world->getComponent<Inventory>(carrier);
+		inventory.leftHand = ItemStack{"Wood", 8};
+		inventory.rightHand = ItemStack{"Wood", 8};
+		inventory.addItem("Berry", 1);
+		decide(carrier);
+		ASSERT_EQ(getTask(carrier)->type, TaskType::Haul);
+
+		const glm::vec2 pilePos{0.0F, -5.0F};
+		const EntityID	pile = world->createEntity();
+		world->addComponent<Position>(pile, Position{pilePos});
+		makeLoosePile(*world, pile, woodId, pilePos, 10);
+		const EntityID hauler = createColonist({0.0F, -3.0F});
+		remember(hauler, pilePos, "Wood", assets::CapabilityType::Carryable);
+
+		world->getComponent<NeedsComponent>(carrier)->get(NeedType::Hunger).value = 5.0F;
+		decideAll({carrier, hauler});
+		ASSERT_EQ(getTask(carrier)->type, TaskType::FulfillNeed);
+		ASSERT_EQ(world->getComponent<Inventory>(box)->getQuantity("Wood"), 8U) << "put away in the box within reach";
+		const EvaluatedOption* toBox = nullptr;
+		for (const EvaluatedOption& option : world->getComponent<DecisionTrace>(hauler)->options) {
+			if (option.taskType == TaskType::Haul && option.haulTargetStorageId == static_cast<uint64_t>(box)) {
+				toBox = &option;
+			}
+		}
+		ASSERT_NE(toBox, nullptr);
+		EXPECT_EQ(toBox->haulQuantity, 2U) << "the box takes ten, and holds eight now";
+	}
+
 	TEST_F(ChainClaimsTest, PlayerControlAndDestructionLeaveNoClaims) {
 		const glm::vec2 sitePos{0.0F, 6.0F};
 		const Site		site = constructionSite(sitePos, "Stone", 20);

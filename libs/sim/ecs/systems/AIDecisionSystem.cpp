@@ -1344,18 +1344,30 @@ namespace ecs {
 		Slot& slot = slots[index];
 		slot = {.pass = pass, .box = box, .item = item};
 		++used;
+		read(world, registry, slot);
+		return slot.hasStore ? std::optional<Room>{slot.room} : std::nullopt;
+	}
+
+	void BoxRoomCache::refresh(World& world, const assets::AssetRegistry& registry, EntityID box) {
+		for (Slot& slot : slots) {
+			if (slot.pass == pass && slot.box == box) {
+				read(world, registry, slot);
+			}
+		}
+	}
+
+	void BoxRoomCache::read(World& world, const assets::AssetRegistry& registry, Slot& slot) {
 #ifdef DEVELOPMENT_BUILD
 		++readOut;
 #endif
-		const auto* store = world.getComponent<Inventory>(box);
+		const auto* store = world.getComponent<Inventory>(slot.box);
+		slot.hasStore = store != nullptr;
 		if (store == nullptr) {
-			return std::nullopt;
+			return;
 		}
-		const std::string& name = registry.getDefName(item);
-		slot.hasStore = true;
+		const std::string& name = registry.getDefName(slot.item);
 		slot.room = {.stack = {.partialRoom = store->partialStackRoom(name), .stackSize = Inventory::itemStackSize(name)},
 					 .freeSlots = store->freeSlots()};
-		return slot.room;
 	}
 
 	AIDecisionSystem::AIDecisionSystem(
@@ -2893,7 +2905,7 @@ namespace ecs {
 
 			auto dropped = inventory.putDown(item);
 			if (dropped.has_value() && dropped->quantity > 0 && world != nullptr) {
-				ecs::storeOrDrop(*world, dropped->defName, dropped->quantity, position.value, onDropResource);
+				ecs::storeOrDrop(*world, dropped->defName, dropped->quantity, position.value, onDropResource, [this](EntityID box) { boxChanged(box); });
 			}
 			return;
 		}
@@ -2922,6 +2934,14 @@ namespace ecs {
 				position.value.y
 			);
 		}
+	}
+
+	void AIDecisionSystem::boxChanged(EntityID box) {
+		m_boxRooms.refresh(*world, m_registry, box);
+		if (const GoalTask* root = GoalTaskRegistry::Get().getGoalByDestination(box)) {
+			m_needs.refresh(*world, root->id);
+		}
+		m_foodBoxesBuilt = false;
 	}
 
 	void AIDecisionSystem::enterControl(EntityID entity) {

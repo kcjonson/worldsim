@@ -238,6 +238,14 @@ namespace ecs {
 		return value;
 	}
 
+	void RemainingNeedCache::refresh(World& world, uint64_t rootGoalId) {
+		for (Slot& slot : m_slots) {
+			if (slot.pass == m_pass && slot.root == rootGoalId) {
+				slot.value = GoalTaskRegistry::Get().remainingNeed(world, slot.root, slot.item, slot.basis);
+			}
+		}
+	}
+
 	void RemainingNeedCache::grow() {
 		std::vector<Slot> old;
 		old.swap(m_slots);
