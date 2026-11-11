@@ -243,6 +243,24 @@ namespace ecs::test {
 			}
 		}
 
+		/// One AI update in which every colonist named decides, in view order.
+		void decideAll(std::initializer_list<EntityID> colonists) {
+			for (EntityID colonist : colonists) {
+				getTask(colonist)->timeSinceEvaluation = 1.0F;
+			}
+			ai->update(0.016F);
+		}
+
+		/// The first option in the colonist's trace of this type and status, or nullptr.
+		const EvaluatedOption* optionOf(EntityID colonist, TaskType type, OptionStatus status) const {
+			for (const EvaluatedOption& option : world->getComponent<DecisionTrace>(colonist)->options) {
+				if (option.taskType == type && option.status == status) {
+					return &option;
+				}
+			}
+			return nullptr;
+		}
+
 		size_t indexedClaimsOf(EntityID colonist) const {
 			size_t count = 0;
 			ai->claimIndex().forEachClaim([&](const Claim&, const ClaimHolder& holder) { count += holder.colonist == colonist ? 1 : 0; });
@@ -287,7 +305,7 @@ namespace ecs::test {
 
 		// The pickup lifts what was claimed, here the whole pile: the source claim is spent and the rest
 		// follows the goods.
-		ASSERT_GE(q, 8U) << "the box's room and one trip; the live pile caps it at pickup";
+		ASSERT_EQ(q, 8U) << "the live pile caps the fetch, under the box's room and one trip";
 		act(colonist, pilePos);
 		ASSERT_EQ(task.type, TaskType::Haul);
 		ASSERT_EQ(ecs::availableQuantity(*world->getComponent<Inventory>(colonist), "Stone"), 8U);
@@ -878,6 +896,334 @@ namespace ecs::test {
 		const auto cutting = [&](EntityID colonist) { return getTask(colonist)->type == TaskType::Harvest ? 1 : 0; };
 		ASSERT_TRUE(runUntil([&] { return cutting(first) + cutting(second) > 0; }, 200));
 		EXPECT_EQ(cutting(first) + cutting(second), 1);
+	}
+
+	// =============================================================================
+	// The AI respects claims: what others hold is subtracted while a colonist decides, and a target
+	// taken whole is shown Reserved, naming its holder. Positions are real and nothing teleports; each
+	// update runs the validator.
+	// =============================================================================
+
+	// A cut and a whole-pile fetch, each re-decided while the colonist walks: its own claims are left
+	// out of what it reads, so it never sees its own target as taken and drops it.
+	TEST_F(ChainClaimsTest, AClaimantKeepsItsTargetAcrossReevaluations) {
+		const glm::vec2 stationPos{0.0F, 6.0F};
+		const glm::vec2 bushPos{4.0F, 0.0F};
+		const EntityID	station = world->createEntity();
+		world->addComponent<Position>(station, Position{stationPos});
+		const uint64_t root = craftRoot(station, stationPos, "Stick", 20);
+		childGoal(TaskType::Harvest, root, station, stationPos, stickId);
+		const EntityID cutter = createColonist({0.0F, 0.0F});
+		remember(cutter, bushPos, "StickBush", assets::CapabilityType::Harvestable);
+
+		const glm::vec2 boxPos{0.0F, -10.0F};
+		const glm::vec2 pilePos{-4.0F, 0.0F};
+		const EntityID	box = makeBox(boxPos, StoragePriority::Medium);
+		storageGoal(box, boxPos);
+		const EntityID pile = world->createEntity();
+		world->addComponent<Position>(pile, Position{pilePos});
+		makeLoosePile(*world, pile, stoneId, pilePos, 8);
+		const EntityID hauler = createColonist({0.0F, 0.0F});
+		remember(hauler, pilePos, "Stone", assets::CapabilityType::Carryable);
+
+		decideAll({cutter, hauler});
+		const Task& cut = *getTask(cutter);
+		const Task& haul = *getTask(hauler);
+		ASSERT_EQ(cut.type, TaskType::Harvest);
+		ASSERT_EQ(haul.type, TaskType::Haul);
+		ASSERT_EQ(haul.haulQuantity, 8U) << "the whole pile";
+		const uint64_t cutInstance = cut.instanceId;
+		const uint64_t haulInstance = haul.instanceId;
+
+		for (int step = 1; step <= 4; ++step) {
+			const float t = static_cast<float>(step) / 5.0F;
+			world->getComponent<Position>(cutter)->value = bushPos * t;
+			world->getComponent<Position>(hauler)->value = pilePos * t;
+			decideAll({cutter, hauler});
+			EXPECT_EQ(cut.instanceId, cutInstance) << "step " << step;
+			EXPECT_EQ(haul.instanceId, haulInstance) << "step " << step;
+			EXPECT_EQ(optionOf(cutter, TaskType::Harvest, OptionStatus::Reserved), nullptr);
+			EXPECT_EQ(optionOf(hauler, TaskType::Haul, OptionStatus::Reserved), nullptr);
+			const EvaluatedOption* own = optionOf(hauler, TaskType::Haul, OptionStatus::Selected);
+			ASSERT_NE(own, nullptr);
+			EXPECT_EQ(own->haulQuantity, 8U) << "its own claim on the pile is not subtracted";
+		}
+	}
+
+	// Two colonists, one bush, a craft that needs far more than one cut: in-flight would let both cut,
+	// the Use claim does not. The second sees the bush Reserved by the first and takes other work.
+	TEST_F(ChainClaimsTest, TwoColonistsOneTreeOneCutsTheOtherWorksElsewhere) {
+		const glm::vec2 stationPos{0.0F, 6.0F};
+		const glm::vec2 bushPos{3.0F, 0.0F};
+		const EntityID	station = world->createEntity();
+		world->addComponent<Position>(station, Position{stationPos});
+		const uint64_t root = craftRoot(station, stationPos, "Stick", 20);
+		childGoal(TaskType::Harvest, root, station, stationPos, stickId);
+
+		const glm::vec2 boxPos{0.0F, -8.0F};
+		const glm::vec2 pilePos{-3.0F, 0.0F};
+		const EntityID	box = makeBox(boxPos, StoragePriority::Medium);
+		storageGoal(box, boxPos);
+		const EntityID pile = world->createEntity();
+		world->addComponent<Position>(pile, Position{pilePos});
+		makeLoosePile(*world, pile, stoneId, pilePos, 4);
+
+		const EntityID first = createColonist({0.0F, 0.0F});
+		const EntityID second = createColonist({0.5F, 0.0F});
+		for (EntityID colonist : {first, second}) {
+			remember(colonist, bushPos, "StickBush", assets::CapabilityType::Harvestable);
+			remember(colonist, pilePos, "Stone", assets::CapabilityType::Carryable);
+		}
+
+		decideAll({first, second});
+		const auto cutting = [&](EntityID colonist) { return getTask(colonist)->type == TaskType::Harvest; };
+		ASSERT_EQ(cutting(first) + cutting(second), 1) << "exactly one cuts";
+		const EntityID cutter = cutting(first) ? first : second;
+		const EntityID other = cutter == first ? second : first;
+		EXPECT_EQ(getTask(other)->type, TaskType::Haul) << "the other takes other work";
+		const EvaluatedOption* reserved = optionOf(other, TaskType::Harvest, OptionStatus::Reserved);
+		ASSERT_NE(reserved, nullptr) << "the bush is shown, not hidden";
+		EXPECT_EQ(reserved->reservedBy, cutter);
+		EXPECT_EQ(optionOf(other, TaskType::Harvest, OptionStatus::Available), nullptr);
+	}
+
+	// A craft short three stones, one loose stone known to two colonists: the fetch is sized to the one
+	// unit there is, and the other colonist sees it Reserved instead of walking to an empty pile.
+	TEST_F(ChainClaimsTest, TheLastUnitOfAnIngredientIsFetchedOnce) {
+		const glm::vec2 stationPos{0.0F, 6.0F};
+		const glm::vec2 pilePos{3.0F, 0.0F};
+		const EntityID	station = world->createEntity();
+		world->addComponent<Position>(station, Position{stationPos});
+		const uint64_t root = craftRoot(station, stationPos, "Stone", 3);
+		childGoal(TaskType::Haul, root, station, stationPos, stoneId);
+		const EntityID pile = world->createEntity();
+		world->addComponent<Position>(pile, Position{pilePos});
+		makeLoosePile(*world, pile, stoneId, pilePos, 1);
+		const EntityID first = createColonist({0.0F, 0.0F});
+		const EntityID second = createColonist({0.5F, 0.0F});
+		for (EntityID colonist : {first, second}) {
+			remember(colonist, pilePos, "Stone", assets::CapabilityType::Carryable);
+		}
+
+		decideAll({first, second});
+		const auto fetching = [&](EntityID colonist) { return getTask(colonist)->type == TaskType::Haul; };
+		ASSERT_EQ(fetching(first) + fetching(second), 1) << "exactly one fetches";
+		const EntityID fetcher = fetching(first) ? first : second;
+		const EntityID other = fetcher == first ? second : first;
+		EXPECT_EQ(getTask(fetcher)->haulQuantity, 1U) << "no more than the pile holds";
+		EXPECT_EQ(ai->claimIndex().inFlight(root, stoneId, {}), 1U);
+		const EvaluatedOption* reserved = optionOf(other, TaskType::Haul, OptionStatus::Reserved);
+		ASSERT_NE(reserved, nullptr);
+		EXPECT_EQ(reserved->reservedBy, fetcher);
+
+		// Later decisions agree.
+		decide(other);
+		EXPECT_NE(getTask(other)->type, TaskType::Haul);
+	}
+
+	// Three colonists, three different items, a box with one free slot: inbound slots are shared, so
+	// only one haul is accepted.
+	TEST_F(ChainClaimsTest, ThreeHaulsOfThreeItemsShareOneFreeSlot) {
+		registerItem("Clay", 1, 0.5F, 5);
+		const uint32_t clayId = assets::AssetRegistry::Get().getDefNameId("Clay");
+		const glm::vec2 boxPos{0.0F, 10.0F};
+		const EntityID	box = world->createEntity();
+		world->addComponent<Position>(box, Position{boxPos});
+		world->addComponent<Appearance>(box, Appearance{"Box", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+		auto store = Inventory::createForStorage();
+		store.maxCapacity = 1;
+		world->addComponent<Inventory>(box, std::move(store));
+		StorageConfiguration config;
+		for (const char* item : {"Stone", "Stick", "Clay"}) {
+			config.addRule(StorageRule{.defName = item, .category = assets::ItemCategory::RawMaterial});
+		}
+		world->addComponent<StorageConfiguration>(box, std::move(config));
+		GoalTask goal;
+		goal.type = TaskType::Haul;
+		goal.owner = GoalOwner::StorageGoalSystem;
+		goal.destinationEntity = box;
+		goal.destinationPosition = boxPos;
+		goal.acceptedDefNameIds = {stoneId, stickId, clayId};
+		GoalTaskRegistry::Get().createGoal(std::move(goal));
+
+		std::vector<EntityID> haulers;
+		const std::pair<const char*, uint32_t> items[] = {{"Stone", stoneId}, {"Stick", stickId}, {"Clay", clayId}};
+		for (size_t i = 0; i < 3; ++i) {
+			const glm::vec2 pilePos{-4.0F + 4.0F * static_cast<float>(i), 0.0F};
+			const EntityID	pile = world->createEntity();
+			world->addComponent<Position>(pile, Position{pilePos});
+			makeLoosePile(*world, pile, items[i].second, pilePos, 5);
+			const EntityID colonist = createColonist({pilePos.x, -1.0F});
+			remember(colonist, pilePos, items[i].first, assets::CapabilityType::Carryable);
+			haulers.push_back(colonist);
+		}
+
+		decideAll({haulers[0], haulers[1], haulers[2]});
+		int hauling = 0;
+		for (EntityID colonist : haulers) {
+			hauling += getTask(colonist)->type == TaskType::Haul ? 1 : 0;
+		}
+		EXPECT_EQ(hauling, 1) << "one free slot takes one item's haul";
+		EXPECT_EQ(ai->claimIndex().inboundSlots(box, {}, [](uint32_t) { return InboundStackRoom{.partialRoom = 0, .stackSize = 40}; }), 1U);
+	}
+
+	// A pile of 100 and two haulers, each carrying at most 70 a trip: the second's fetch is sized to
+	// what the first left, and together they never claim more than the pile holds.
+	TEST_F(ChainClaimsTest, TwoHaulersSplitAPileUpToItsQuantity) {
+		const glm::vec2 boxPos{0.0F, 10.0F};
+		const glm::vec2 pilePos{4.0F, 0.0F};
+		const EntityID	box = makeBox(boxPos, StoragePriority::Medium);
+		storageGoal(box, boxPos);
+		const EntityID pile = world->createEntity();
+		world->addComponent<Position>(pile, Position{pilePos});
+		makeLoosePile(*world, pile, stoneId, pilePos, 100);
+		const EntityID first = createColonist({0.0F, 0.0F});
+		const EntityID second = createColonist({0.5F, 0.0F});
+		const EntityID third = createColonist({1.0F, 0.0F});
+		for (EntityID colonist : {first, second, third}) {
+			remember(colonist, pilePos, "Stone", assets::CapabilityType::Carryable);
+		}
+
+		decide(first);
+		const uint32_t firstTakes = getTask(first)->haulQuantity;
+		ASSERT_LT(firstTakes, 100U) << "one trip can't take the whole pile";
+		decide(second);
+		ASSERT_EQ(getTask(second)->type, TaskType::Haul);
+		EXPECT_EQ(getTask(second)->haulQuantity, 100U - firstTakes) << "sized to what the first left";
+		const ClaimTarget source{.kind = TargetKind::WorldKey, .key = hashWorldEntity(pilePos, stoneId)};
+		EXPECT_EQ(ai->claimIndex().sourceClaimed(source, stoneId, {}), 100U);
+
+		decide(third);
+		EXPECT_NE(getTask(third)->type, TaskType::Haul) << "nothing left to claim";
+		ASSERT_NE(optionOf(third, TaskType::Haul, OptionStatus::Reserved), nullptr);
+	}
+
+	// One cut covers the craft; while the cutter carries it in, the source's Use has dropped but the
+	// in-flight still covers the need, so nobody cuts again.
+	TEST_F(ChainClaimsTest, NobodyRecutsWhileACutIsCarriedIn) {
+		registerHarvestable("FullBush", "Stick", 3, 3);
+		const glm::vec2 stationPos{0.0F, 6.0F};
+		const glm::vec2 bushPos{3.0F, 0.0F};
+		const EntityID	station = world->createEntity();
+		world->addComponent<Position>(station, Position{stationPos});
+		const uint64_t root = craftRoot(station, stationPos, "Stick", 3);
+		childGoal(TaskType::Harvest, root, station, stationPos, stickId);
+		const EntityID cutter = createColonist({0.0F, 0.0F});
+		const EntityID other = createColonist({0.0F, 1.0F});
+		for (EntityID colonist : {cutter, other}) {
+			remember(colonist, bushPos, "FullBush", assets::CapabilityType::Harvestable);
+			remember(colonist, {-3.0F, 0.0F}, "FullBush", assets::CapabilityType::Harvestable);
+		}
+
+		decide(cutter);
+		const Task& task = *getTask(cutter);
+		ASSERT_EQ(task.type, TaskType::Harvest);
+		act(cutter, task.targetPosition);
+		ASSERT_EQ(task.type, TaskType::Haul) << "the cut is being carried in";
+		ASSERT_FALSE(claimOf(task, ClaimKind::Use).has_value()) << "the source is free, the need is not";
+		ASSERT_EQ(claimOf(task, ClaimKind::InFlight)->quantity(), 3U);
+
+		for (int frame = 0; frame < 3; ++frame) {
+			decide(other);
+			EXPECT_NE(getTask(other)->type, TaskType::Harvest) << "frame " << frame;
+			EXPECT_EQ(optionOf(other, TaskType::Harvest, OptionStatus::Available), nullptr);
+		}
+	}
+
+	// A bush held by a colonist who then takes player control, or dies, is offered again at once.
+	TEST_F(ChainClaimsTest, ASourceIsFreedWhenItsHolderTakesControlOrDies) {
+		const glm::vec2 stationPos{0.0F, 6.0F};
+		const glm::vec2 bushPos{3.0F, 0.0F};
+		const EntityID	station = world->createEntity();
+		world->addComponent<Position>(station, Position{stationPos});
+		const uint64_t root = craftRoot(station, stationPos, "Stick", 20);
+		childGoal(TaskType::Harvest, root, station, stationPos, stickId);
+		const EntityID first = createColonist({0.0F, 0.0F});
+		const EntityID second = createColonist({0.5F, 0.0F});
+		for (EntityID colonist : {first, second}) {
+			remember(colonist, bushPos, "StickBush", assets::CapabilityType::Harvestable);
+		}
+
+		decide(first);
+		ASSERT_EQ(getTask(first)->type, TaskType::Harvest);
+		decide(second);
+		ASSERT_NE(getTask(second)->type, TaskType::Harvest);
+
+		ai->enterControl(first);
+		decide(second);
+		ASSERT_EQ(getTask(second)->type, TaskType::Harvest) << "free once its holder is under player control";
+
+		ai->releaseControl(first);
+		decide(first);
+		ASSERT_NE(getTask(first)->type, TaskType::Harvest);
+		world->destroyEntity(second);
+		decide(first);
+		EXPECT_EQ(getTask(first)->type, TaskType::Harvest) << "free once its holder is gone";
+	}
+
+	// Two colonists at one station with every input in its store: the first's Craft selection holds the
+	// station's slot, and the second sees it in use.
+	TEST_F(ChainClaimsTest, AStationsSlotIsHeldByTheCrafterThatSelectedIt) {
+		const glm::vec2 stationPos{0.0F, 6.0F};
+		const EntityID	station = world->createEntity();
+		world->addComponent<Position>(station, Position{stationPos});
+		craftRoot(station, stationPos, "Stone", 2);
+		world->getComponent<Inventory>(station)->addItem("Stone", 2);
+		const EntityID first = createColonist({0.0F, 0.0F});
+		const EntityID second = createColonist({0.5F, 0.0F});
+
+		decideAll({first, second});
+		const auto crafting = [&](EntityID colonist) { return getTask(colonist)->type == TaskType::Craft; };
+		ASSERT_EQ(crafting(first) + crafting(second), 1);
+		const EntityID crafter = crafting(first) ? first : second;
+		const EntityID other = crafter == first ? second : first;
+		const EvaluatedOption* reserved = optionOf(other, TaskType::Craft, OptionStatus::Reserved);
+		ASSERT_NE(reserved, nullptr);
+		EXPECT_EQ(reserved->reservedBy, crafter);
+	}
+
+	// A hungry colonist's food is held only by someone who will eat it. A bush a worker is cutting for a
+	// craft is still its food (no worse off than before claims); a bush another hungry colonist is
+	// walking to is Reserved, and it looks for other food.
+	TEST_F(ChainClaimsTest, OnlyAnotherEaterHoldsAHungryColonistsFood) {
+		const glm::vec2 stationPos{0.0F, 8.0F};
+		const glm::vec2 bushPos{3.0F, 0.0F};
+		const uint32_t	berryId = assets::AssetRegistry::Get().getDefNameId("Berry");
+		const EntityID	station = world->createEntity();
+		world->addComponent<Position>(station, Position{stationPos});
+		const uint64_t root = craftRoot(station, stationPos, "Berry", 20);
+		childGoal(TaskType::Harvest, root, station, stationPos, berryId);
+
+		const EntityID worker = createColonist({0.0F, 0.0F});
+		const EntityID hungry = createColonist({0.0F, 1.0F});
+		const EntityID alsoHungry = createColonist({0.0F, -1.0F});
+		for (EntityID colonist : {worker, hungry, alsoHungry}) {
+			remember(colonist, bushPos, "BerryBush", assets::CapabilityType::Harvestable);
+		}
+		decide(worker);
+		ASSERT_EQ(getTask(worker)->type, TaskType::Harvest);
+
+		world->getComponent<NeedsComponent>(hungry)->get(NeedType::Hunger).value = 30.0F;
+		decide(hungry);
+		ASSERT_EQ(getTask(hungry)->type, TaskType::FulfillNeed);
+		EXPECT_EQ(getTask(hungry)->needSourceKey, hashWorldEntity(bushPos, assets::AssetRegistry::Get().getDefNameId("BerryBush")))
+			<< "a work claim never keeps a hungry colonist from known food";
+
+		world->getComponent<NeedsComponent>(alsoHungry)->get(NeedType::Hunger).value = 30.0F;
+		decide(alsoHungry);
+		EXPECT_NE(getTask(alsoHungry)->type, TaskType::FulfillNeed) << "the only bush is someone else's meal";
+		const EvaluatedOption* reserved = optionOf(alsoHungry, TaskType::FulfillNeed, OptionStatus::Reserved);
+		ASSERT_NE(reserved, nullptr);
+		EXPECT_EQ(reserved->reservedBy, hungry);
+
+		// A second bush, farther off: the second hungry colonist, now starving, goes there instead (the
+		// work order would outrank a routine meal).
+		const glm::vec2 farBush{-6.0F, 0.0F};
+		remember(alsoHungry, farBush, "BerryBush", assets::CapabilityType::Harvestable);
+		world->getComponent<NeedsComponent>(alsoHungry)->get(NeedType::Hunger).value = 5.0F;
+		decide(alsoHungry);
+		ASSERT_EQ(getTask(alsoHungry)->type, TaskType::FulfillNeed);
+		EXPECT_EQ(getTask(alsoHungry)->needSourceKey, hashWorldEntity(farBush, assets::AssetRegistry::Get().getDefNameId("BerryBush")));
 	}
 
 } // namespace ecs::test

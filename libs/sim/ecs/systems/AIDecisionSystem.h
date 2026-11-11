@@ -41,6 +41,7 @@ class ChunkManager;
 
 namespace ecs {
 
+class LoosePileIndex;
 class NavigationSystem;
 
 namespace test {
@@ -227,6 +228,10 @@ private:
 
 	/// The storage boxes the colony knows, worked out at most once per update
 	ColonyStorageKnowledge m_colonyStorage;
+
+	/// ActionSystem's piles by world key, for a remembered pile's live count; read once per update,
+	/// null in a world without an ActionSystem (a pile's count is then unknown)
+	const LoosePileIndex* m_loosePiles = nullptr;
 
 	/// Every task's claims: rebuilt when the first colonist decides in an update, then appended to by
 	/// each acceptance in it.

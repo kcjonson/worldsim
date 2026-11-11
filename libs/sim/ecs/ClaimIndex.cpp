@@ -74,7 +74,9 @@ namespace ecs {
 	}
 
 	void ClaimIndex::addCurrent(EntityID colonist, const Task& task) {
-		const ClaimHolder holder{.colonist = colonist, .instanceId = task.instanceId, .claimSeq = task.claimSeq, .tier = tierOf(task)};
+		const ClaimHolder holder{
+			.colonist = colonist, .instanceId = task.instanceId, .claimSeq = task.claimSeq, .tier = tierOf(task), .taskType = task.type
+		};
 		for (const Claim& claim : task.claims) {
 			add(claim, holder);
 		}
@@ -91,6 +93,7 @@ namespace ecs {
 			.instanceId = task.suspended->instanceId,
 			.claimSeq = task.suspended->claimSeq,
 			.tier = tierOf(task),
+			.taskType = TaskType::Haul,
 			.suspended = true,
 		};
 		for (const Claim& claim : task.suspended->claims) {
@@ -193,6 +196,10 @@ namespace ecs {
 		forEachUnder(keyOf(KeyTag::Source, source.kind, source.key, itemDefNameId), exclude,
 					 [&](const Entry& entry) { total += entry.claim.quantity(); });
 		return total > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(total);
+	}
+
+	std::optional<ClaimHolder> ClaimIndex::sourceHolder(ClaimTarget source, uint32_t itemDefNameId, ClaimExclusion exclude) const {
+		return topHolder(keyOf(KeyTag::Source, source.kind, source.key, itemDefNameId), exclude, [](const Claim&) { return true; });
 	}
 
 	uint32_t ClaimIndex::inboundItems(EntityID destination, uint32_t itemDefNameId, ClaimExclusion exclude) const {

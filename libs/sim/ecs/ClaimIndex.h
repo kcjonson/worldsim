@@ -48,6 +48,7 @@ namespace ecs {
 		uint64_t instanceId = 0;
 		uint64_t claimSeq = 0;
 		uint8_t	 tier = 7; // the holding task's priorityTier at index time; lower is higher rank
+		TaskType taskType = TaskType::None; // what the holding task is doing (a record is a Haul)
 		bool	 suspended = false;
 	};
 
@@ -84,6 +85,9 @@ namespace ecs {
 		/// Units of `item` other tasks will take from `source`.
 		[[nodiscard]] uint32_t sourceClaimed(ClaimTarget source, uint32_t itemDefNameId, ClaimExclusion exclude) const;
 
+		/// The highest-ranked other task taking `item` from `source`, if any.
+		[[nodiscard]] std::optional<ClaimHolder> sourceHolder(ClaimTarget source, uint32_t itemDefNameId, ClaimExclusion exclude) const;
+
 		/// Units of `item` other tasks will deposit at `destination`.
 		[[nodiscard]] uint32_t inboundItems(EntityID destination, uint32_t itemDefNameId, ClaimExclusion exclude) const;
 
@@ -97,6 +101,18 @@ namespace ecs {
 
 		/// The highest-ranked other holder of a Use target, if any.
 		[[nodiscard]] std::optional<ClaimHolder> useHolder(ClaimTarget target, ClaimExclusion exclude) const;
+
+		/// The highest-ranked other holder of a Use target that accept(holder) admits, if any.
+		template <typename Accept>
+		[[nodiscard]] std::optional<ClaimHolder> useHolderWhere(ClaimTarget target, ClaimExclusion exclude, Accept&& accept) const {
+			std::optional<ClaimHolder> best;
+			forEachUnder(keyOf(KeyTag::Use, target.kind, target.key, 0), exclude, [&](const Entry& entry) {
+				if (accept(entry.holder) && (!best || outranks(entry.holder, *best))) {
+					best = entry.holder;
+				}
+			});
+			return best;
+		}
 
 		/// The highest-ranked other holder of slot `slotIndex` on `target`, if any. kAnySlot, the
 		/// target's one unnumbered slot, conflicts with every slot on the target, numbered or not.

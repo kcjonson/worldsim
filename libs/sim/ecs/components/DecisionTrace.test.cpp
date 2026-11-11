@@ -5,6 +5,7 @@
 
 #include "../World.h"
 #include "Appearance.h"
+#include "Colonist.h"
 #include "assets/AssetRegistry.h"
 #include "assets/RecipeRegistry.h"
 
@@ -87,6 +88,46 @@ namespace ecs::test {
 		place.placePackagedEntityId = crate;
 		place.reason = "Placing {}";
 		EXPECT_EQ(describeOption(world, place), "Placing Crate");
+	}
+
+	TEST_F(DecisionTraceTextTest, AReservedOptionNamesItsHolder) {
+		const EntityID alice = world.createEntity();
+		world.addComponent<Colonist>(alice, Colonist{"Alice"});
+
+		EvaluatedOption cut;
+		cut.taskType = TaskType::Harvest;
+		cut.targetDefNameId = treeId;
+		cut.harvestYieldDefNameId = woodId;
+		cut.reason = "Cutting {} for {}";
+		cut.status = OptionStatus::Reserved;
+		cut.reservedBy = alice;
+		EXPECT_EQ(describeOption(world, cut), "Cutting Oak Tree for Wood log (reserved by Alice)");
+
+		EvaluatedOption craft;
+		craft.taskType = TaskType::Craft;
+		craft.craftRecipeDefName = "Recipe_Axe";
+		craft.reason = "Crafting {}";
+		craft.status = OptionStatus::Reserved;
+		craft.reservedBy = alice;
+		EXPECT_EQ(describeOption(world, craft), "Crafting Stone Axe (station in use by Alice)");
+
+		EvaluatedOption hunger;
+		hunger.taskType = TaskType::FulfillNeed;
+		hunger.needType = NeedType::Hunger;
+		hunger.needValue = 40.0F;
+		hunger.threshold = 50.0F;
+		hunger.status = OptionStatus::Reserved;
+		hunger.reservedBy = alice;
+		hunger.targetPosition = glm::vec2{4.0F, 0.0F};
+		hunger.distanceToTarget = 4.0F;
+		EXPECT_EQ(describeOption(world, hunger), "Hunger at 40% (reserved by Alice)");
+
+		EvaluatedOption gather = hunger;
+		gather.needValue = 100.0F;
+		gather.threshold = 0.0F;
+		gather.reason = "Food source";
+		gather.reservedBy = world.createEntity();
+		EXPECT_EQ(describeOption(world, gather), "Food source (reserved by another colonist)") << "a holder with no name";
 	}
 
 	TEST_F(DecisionTraceTextTest, NeedOptionsReadTheirLevelAndWhere) {

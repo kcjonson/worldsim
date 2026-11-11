@@ -90,7 +90,6 @@ namespace ecs {
 		/// against it; see ecs::carriedCargoMassKg. Caps how much a colonist hauls per trip.
 		float carryCapacityKg = 35.0F;
 
-	  private:
 		/// Per-stack cap for `defName`: the item's stackSize, or unbounded (UINT32_MAX) when
 		/// the def is unknown or carries no itemProperties. Unbounded (not 1) is intentional:
 		/// entities and unregistered defNames aren't stack-limited, and registry-free tests
@@ -112,7 +111,18 @@ namespace ecs {
 			return used < maxCapacity ? maxCapacity - used : 0U;
 		}
 
-	  public:
+		/// Headroom left in the existing stacks of the item: what addItem tops up before it opens a slot.
+		[[nodiscard]] uint32_t partialStackRoom(const std::string& defName) const {
+			const uint32_t cap = itemStackSize(defName);
+			uint64_t	   total = 0;
+			for (const auto& stack : items) {
+				if (stack.defName == defName && stack.quantity < cap) {
+					total += cap - stack.quantity;
+				}
+			}
+			return total > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(total);
+		}
+
 		// ============================================================================
 		// Query Methods
 		// ============================================================================
@@ -130,14 +140,8 @@ namespace ecs {
 		/// Callers that withdraw from a finite source (a tree's resource pool) must clamp by this
 		/// so they never pull more than the backpack can hold.
 		[[nodiscard]] uint32_t addableCount(const std::string& defName) const {
-			const uint32_t cap = itemStackSize(defName);
-			uint64_t	   total = 0; // 64-bit accumulate: the freeSlots * cap term overflows uint32 for an unbounded cap (existing-stack headroom can't)
-			for (const auto& stack : items) {
-				if (stack.defName == defName && stack.quantity < cap) {
-					total += cap - stack.quantity;
-				}
-			}
-			total += static_cast<uint64_t>(freeSlots()) * cap;
+			// 64-bit: the freeSlots * cap term overflows uint32 for an unbounded cap
+			const uint64_t total = partialStackRoom(defName) + static_cast<uint64_t>(freeSlots()) * itemStackSize(defName);
 			return total > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(total);
 		}
 

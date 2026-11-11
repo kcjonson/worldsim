@@ -4,6 +4,7 @@
 // Captures why a colonist chose their current task and what alternatives exist.
 // See /docs/design/game-systems/colonists/decision-trace.md for design details.
 
+#include "../EntityID.h"
 #include "Needs.h"
 #include "Task.h"
 
@@ -27,6 +28,7 @@ namespace ecs {
 		NoSource,  // Need exists but no known entity in memory
 		Regrowing, // The known source is regrowing: skipped now, chosen again once it is ready
 		NoRoom,	   // The colonist can't lift any of the item now (pack full, or hands busy with another load)
+		Reserved,  // Another colonist's claim holds the source, station, or item (reservedBy names it)
 		Satisfied  // Need above threshold, no action needed
 	};
 
@@ -130,6 +132,9 @@ namespace ecs {
 		// trace is drawn, so evaluating an option builds no string. Need options give a qualifier only.
 		const char* reason = "";
 
+		// Reserved: the highest-ranked other colonist whose claim holds the target.
+		EntityID reservedBy = kInvalidEntity;
+
 		/// Compose the within-tier score from its breakdown fields. Score orders options WITHIN one
 		/// tier only (tier is compared first), so it never needs to encode categorical priority.
 		/// distanceFactor dominates; skill and age refine; hysteresis sticks the in-progress option.
@@ -182,7 +187,7 @@ namespace ecs {
 	};
 
 	/// The option as the player reads it ("Cutting Oak Tree for Wood", "Hunger at 40% (12m away)"),
-	/// composed from its fixed reason and ids. Built when drawn or when the option is accepted, never
+	/// composed from its fixed reason and ids, naming the holder when it is Reserved. Built when drawn or when the option is accepted, never
 	/// while options are evaluated.
 	[[nodiscard]] std::string describeOption(const World& world, const EvaluatedOption& option);
 

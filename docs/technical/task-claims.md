@@ -313,6 +313,13 @@ Eat records Use on a bush or SourceQuantity of one meal on a pile or box; food a
 possessed and takes none, and the gather-food option claims its bush like Eat. Drink takes no claim
 from unbounded water. Sleep and toilet slots come with beds and toilets.
 
+A hungry colonist reads a bush as taken only when the holder will eat from it: a Hunger task at tier
+2 or 5. A work claim (a cut toward a goal) or the idle gather-food option does not hold food against a
+need, so the hungry colonist still targets that bush and both claim it until bumping (step 8) flags
+the worker; before claims both walked to it anyway, so nobody is worse off. The gather-food option is
+idle work and gives way to any holder. Colonists can starve only if they never find food: a Reserved
+food source is always one another colonist is about to eat, for one harvest.
+
 ---
 
 ## Availability
@@ -327,14 +334,18 @@ vanish, `isSameTask` would fail, and the switch path would clear the task.
 - What a colonist would still go and get (fetch or cut) also nets out what it carries of the item:
   its own goods are already on their way, so it delivers them before cutting more.
 - Source available = live quantity - claimed quantity, for source quantity claims; a Use target is
-  available when no other task holds it.
+  available when no other task holds it. Use is exclusive for every cut, clears included: several
+  colonists may clear one site, each its own plant.
 - Destination available, station store or blueprint: the store is sized to the bill of materials or
   manifest, so remaining need minus inbound is the capacity check.
-- Destination available, storage box (item X) = stack room in existing X stacks not already promised
-  to inbound X, plus (free slots - slots promised to all inbound) x stackSize(X). Inbound at a box
-  is converted to slots per destination: each inbound item first fills its own partial stacks, the
-  rest needs ceil(rest / stackSize) slots. Different items share the box's free slots, so three
-  hauls of three items cannot all count on the same last slot.
+- Destination available, storage box (item X) = room in X's own stacks (its existing partial stacks
+  plus the slots its own inbound already opens, less inbound X), plus (free slots - slots promised to
+  all inbound) x stackSize(X). Inbound at a box is converted to slots per destination: each inbound
+  item first fills its own partial stacks, the rest needs ceil(rest / stackSize) slots. Different
+  items share the box's free slots, so three hauls of three items cannot all count on the same last
+  slot. The tail of a slot promised to X counts as room for more X; only other items lose it.
+- A harvest toward a storage root checks the same destination room for its yield before it is
+  offered, though it holds no inbound until its cut lands.
 
 An option's quantity is the minimum of root, source, and destination availability and the
 colonist's carry. Equivalent to ONI's remaining need = target - stored - outstanding in-flight.
@@ -366,6 +377,10 @@ whether the colonist knows the source exists; it does not store counts. This is 
 less realistic than colonists remembering what they last saw in a pile, chosen because remembered
 counts cost memory and update traffic and the pickup check corrects any error anyway. It may be
 revisited; it is not the intended end state.
+
+A remembered pile the world cannot find (taken since it was seen) has no count to read. It is offered
+at the wanted size while no other task claims it, so one colonist walks over and corrects the stale
+memory on arrival, and Reserved once someone has.
 
 Live counts need a keyed lookup. Today a pile is found by scanning every `ResourceStack` entity
 (`findLoosePile`, `HarvestActions.cpp:36-51`), which would make each option O(piles). A world-side
@@ -523,7 +538,7 @@ debug level; they are expected.
 ## The claim index
 
 ```
-use:        target -> holder (instance id, colonist, tier, seq)
+use:        target -> holder (instance id, colonist, tier, seq, task type)
 source:     target -> [(instance id, item, quantity, tier, seq)], total per item
 slot:       target -> [holder with slotIndex]; bindings included
 inbound:    destination -> per item quantity, and slots promised (boxes)
@@ -577,8 +592,13 @@ whole memory map for each goal. Before scoring, collapse equivalent options to t
 (root, item): the nearest available source by trip distance. ONI collapses equivalent undriven fetch
 chores to the best per type for the same reason; it matters more for cost than lookup speed,
 because it bounds the trace by goals and items rather than by remembered sources. The trace keeps
-the selected option, plus at most one Reserved row per (root, item) for a better source someone
+the selected option, plus at most one Reserved row per (goal, item) for a better source someone
 else holds.
+
+Built so far: the Reserved row. Each (goal, item) shows at most one, the nearest source others' claims
+take whole, and only when no source offered is nearer. The collapse of available options is not built:
+the selection walks options in order and passes over unreachable ones, so collapsing to the nearest
+before reachability is known would lose the fallback to the next source.
 
 ---
 
@@ -701,7 +721,8 @@ asserts: a fresh rebuild is a subset of the appended index, and every surplus en
 instance id that no live task or suspended record holds (a task cleared this update); entries compare
 by holder instance, kind, target, item, and slot with quantities summed, not by tier, which
 `isSameTask` may change within the update; no target is over-subscribed except by
-claims flagged bumped; every Inbound has a matching In-flight on the same task; every binding names a
+claims flagged bumped (checked once bumping lands: until then a hungry colonist's Use legitimately
+shares a bush with a work claim); every Inbound has a matching In-flight on the same task; every binding names a
 live crafter bound nowhere else and a queued job id; no claim belongs to an inactive task. In-flight
 is not checked against remaining need: the need can drop under goods already on their way by means
 no claim controls (a player lowers a box's max, a dev give fills a site), and the deposit then keeps

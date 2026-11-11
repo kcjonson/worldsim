@@ -82,6 +82,24 @@ namespace ecs::test {
 		EXPECT_EQ(index.sourceClaimed(kPileTarget, kWood, self), 3U);
 		EXPECT_FALSE(index.useHolder(kTreeTarget, self).has_value());
 		EXPECT_EQ(index.useHolder(kTreeTarget, {.current = 2})->instanceId, 1U);
+		EXPECT_EQ(index.sourceHolder(kPileTarget, kWood, self)->instanceId, 2U);
+		EXPECT_EQ(index.sourceHolder(kPileTarget, kWood, {})->instanceId, 1U) << "lower instance id ranks first on a tie";
+		EXPECT_FALSE(index.sourceHolder(kPileTarget, kStone, {}).has_value());
+	}
+
+	// A filtered holder query passes over holders the filter rejects, however they rank.
+	TEST(ClaimIndexTest, UseHolderWhereSkipsHoldersTheFilterRejects) {
+		World		   world;
+		const EntityID worker = addColonist(world, {.instanceId = 1, .tier = 4, .claims = {Claim::use(TargetKind::WorldKey, kTree)}});
+		const EntityID eater = addColonist(world, {.instanceId = 2, .tier = 5, .claims = {Claim::use(TargetKind::WorldKey, kTree)}});
+		world.getComponent<Task>(eater)->type = TaskType::FulfillNeed;
+
+		ClaimIndex index;
+		index.rebuild(world);
+		const auto eats = [](const ClaimHolder& holder) { return holder.taskType == TaskType::FulfillNeed; };
+		EXPECT_EQ(index.useHolder(kTreeTarget, {})->colonist, worker) << "the worker ranks first";
+		EXPECT_EQ(index.useHolderWhere(kTreeTarget, {}, eats)->colonist, eater);
+		EXPECT_FALSE(index.useHolderWhere(kTreeTarget, {.current = 2}, eats).has_value());
 	}
 
 	TEST(ClaimIndexTest, ClearedTaskContributesNothing) {
