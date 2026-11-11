@@ -184,8 +184,9 @@ private:
 
 	/// Record a route request's outcome as the task's nav state. Only Blocked is "can't find a way".
 	/// Waiting defers the route (AwaitingMesh) and stamps the current nav generation, so update()
-	/// requests it again once the generation moves; Routed and Unmeshed are ordinary travel.
-	void applyNavOutcome(struct Task& task, NavRequestOutcome outcome) const;
+	/// requests it again once the generation moves; Routed and Unmeshed are ordinary travel. Entering
+	/// or leaving the failed state takes the task's claims out of this update's index or puts them back.
+	void applyNavOutcome(EntityID entity, struct Task& task, NavRequestOutcome outcome);
 
 	/// Handle chain interruption when switching away from a mid-chain task
 	/// Stows 1-handed items to backpack, drops 2-handed items or packaged entities.

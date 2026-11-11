@@ -74,6 +74,11 @@ namespace ecs {
 	}
 
 	void ClaimIndex::addCurrent(EntityID colonist, const Task& task) {
+		// A colonist whose route to its target failed holds nothing while it stays failed: it may
+		// re-select the same stranded work every frame, and others must not see that work as taken.
+		if (task.navState == NavState::CantFindWayTo) {
+			return;
+		}
 		const ClaimHolder holder{
 			.colonist = colonist, .instanceId = task.instanceId, .claimSeq = task.claimSeq, .tier = tierOf(task), .taskType = task.type
 		};

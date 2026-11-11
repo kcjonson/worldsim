@@ -1355,7 +1355,7 @@ namespace ecs {
 					// denial) invalidates it and clears movementTarget.active to stop the
 					// colonist instead of beelining through the believed wall.
 					const NavRequestOutcome outcome = requestNavPath(entity, task.targetPosition, position, memory, movementTarget);
-					applyNavOutcome(task, outcome);
+					applyNavOutcome(entity, task, outcome);
 					if (outcome == NavRequestOutcome::Routed) {
 						// Show "Re-routing" for ~30 ticks so the player sees the colonist react
 						// to a newly-discovered wall before the panel reverts to "Going to".
@@ -1381,7 +1381,7 @@ namespace ecs {
 				// again if the route still can't be planned.
 				movementTarget.active = true;
 				const NavRequestOutcome outcome = requestNavPath(entity, task.targetPosition, position, memory, movementTarget);
-				applyNavOutcome(task, outcome);
+				applyNavOutcome(entity, task, outcome);
 			}
 
 			// Chain-leg repath: a multi-phase task (Haul Pickup->Deposit, PlacePackaged
@@ -1398,7 +1398,7 @@ namespace ecs {
 			if (auto* navPath = world->getComponent<NavPath>(entity); task.state == TaskState::Moving &&
 				movementTarget.active && (navPath == nullptr || !navPath->valid)) {
 				const NavRequestOutcome outcome = requestNavPath(entity, task.targetPosition, position, memory, movementTarget);
-				applyNavOutcome(task, outcome);
+				applyNavOutcome(entity, task, outcome);
 			}
 
 			// Drain the Rerouting hold counter so "Re-routing" is a brief visible beat.
@@ -2374,7 +2374,7 @@ namespace ecs {
 			const Memory* memory = world->getComponent<Memory>(entity);
 			if (memory != nullptr) {
 				const NavRequestOutcome outcome = requestNavPath(entity, task.targetPosition, position, *memory, movementTarget);
-				applyNavOutcome(task, outcome);
+				applyNavOutcome(entity, task, outcome);
 			}
 		}
 	}
@@ -2484,22 +2484,33 @@ namespace ecs {
 		return NavRequestOutcome::Routed;
 	}
 
-	void AIDecisionSystem::applyNavOutcome(Task& task, NavRequestOutcome outcome) const {
+	void AIDecisionSystem::applyNavOutcome(EntityID entity, Task& task, NavRequestOutcome outcome) {
+		const bool wasFailed = task.navState == NavState::CantFindWayTo;
 		task.navStateHold = 0;
 		switch (outcome) {
 			case NavRequestOutcome::Routed:
 			case NavRequestOutcome::Unmeshed:
 				task.navState = NavState::Traveling;
-				return;
+				break;
 			case NavRequestOutcome::Waiting:
 				// Only requestNavPath's hold branches return Waiting, and both run with a
 				// NavigationSystem wired.
 				task.navState = NavState::AwaitingMesh;
 				task.deferredNavGeneration = m_navSystem->generation();
-				return;
+				break;
 			case NavRequestOutcome::Blocked:
 				task.navState = NavState::CantFindWayTo;
-				return;
+				break;
+		}
+		// A failed route holds no claims (ClaimIndex::addCurrent): colonists deciding later this update
+		// see its work free while it stays failed, and taken again once a route succeeds.
+		const bool failed = task.navState == NavState::CantFindWayTo;
+		if (m_claimsBuilt && failed != wasFailed) {
+			if (failed) {
+				m_claims.retire(task.instanceId);
+			} else {
+				m_claims.append(entity, task);
+			}
 		}
 	}
 
@@ -2704,7 +2715,7 @@ namespace ecs {
 			// deferred-route retry runs ahead of the control gate, so the order resumes on its own
 			// once a mesh build covers it.
 			const NavRequestOutcome outcome = requestNavPath(entity, goal, *position, *memory, *movementTarget);
-			applyNavOutcome(*task, outcome);
+			applyNavOutcome(entity, *task, outcome);
 		}
 		return goal;
 	}

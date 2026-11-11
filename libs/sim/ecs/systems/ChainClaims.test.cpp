@@ -1528,6 +1528,74 @@ namespace ecs::test {
 		EXPECT_EQ(getTask(first)->type, TaskType::Harvest) << "free once its holder is gone";
 	}
 
+	// A colonist whose route to its claimed bush has failed (in another region, where no verdict is
+	// remembered, so it keeps re-selecting the same cut) holds nothing while it stays failed: another
+	// colonist is offered the bush and takes it.
+	TEST_F(ChainClaimsTest, AColonistWhoseRouteFailedHoldsNoClaims) {
+		const glm::vec2 stationPos{0.0F, 6.0F};
+		const glm::vec2 bushPos{3.0F, 0.0F};
+		const EntityID	station = world->createEntity();
+		world->addComponent<Position>(station, Position{stationPos});
+		const uint64_t root = craftRoot(station, stationPos, "Stick", 20);
+		childGoal(TaskType::Harvest, root, station, stationPos, stickId);
+		const EntityID stuck = createColonist({0.0F, 0.0F});
+		const EntityID other = createColonist({0.5F, 0.0F});
+		for (EntityID colonist : {stuck, other}) {
+			remember(colonist, bushPos, "StickBush", assets::CapabilityType::Harvestable);
+		}
+		decide(stuck);
+		ASSERT_EQ(getTask(stuck)->type, TaskType::Harvest);
+		const uint64_t instance = getTask(stuck)->instanceId;
+
+		// No route under the reach it stands in now (no mesh here: stamp 0), so a re-decision keeps the task.
+		getTask(stuck)->navState = NavState::CantFindWayTo; // as requestNavPath leaves a Blocked route: stopped
+		world->getComponent<MovementTarget>(stuck)->active = false;
+		getTask(stuck)->blockedReachStamp = 0;
+		decide(stuck);
+		ASSERT_EQ(getTask(stuck)->instanceId, instance) << "it keeps re-selecting the same cut";
+		EXPECT_EQ(indexedClaimsOf(stuck), 0U);
+
+		decide(other);
+		EXPECT_EQ(getTask(other)->type, TaskType::Harvest) << "the stranded colonist's bush is offered";
+		EXPECT_EQ(getTask(other)->harvestTargetEntityId, hashWorldEntity(bushPos, assets::AssetRegistry::Get().getDefNameId("StickBush")));
+		EXPECT_NE(getTask(stuck)->type, TaskType::Harvest) << "and the stranded colonist, seeing it taken, lets it go";
+	}
+
+	// The same stranded colonist, with nobody else wanting the bush: once its route succeeds (the reach it
+	// failed under has changed, so it picks again and is routed), its claims are back and others see the
+	// bush taken.
+	TEST_F(ChainClaimsTest, AFailedRouteThatSucceedsTakesItsClaimsBack) {
+		const glm::vec2 stationPos{0.0F, 6.0F};
+		const glm::vec2 bushPos{3.0F, 0.0F};
+		const EntityID	station = world->createEntity();
+		world->addComponent<Position>(station, Position{stationPos});
+		const uint64_t root = craftRoot(station, stationPos, "Stick", 20);
+		childGoal(TaskType::Harvest, root, station, stationPos, stickId);
+		const EntityID stuck = createColonist({0.0F, 0.0F});
+		remember(stuck, bushPos, "StickBush", assets::CapabilityType::Harvestable);
+		decide(stuck);
+		ASSERT_EQ(getTask(stuck)->type, TaskType::Harvest);
+		getTask(stuck)->navState = NavState::CantFindWayTo; // as requestNavPath leaves a Blocked route: stopped
+		world->getComponent<MovementTarget>(stuck)->active = false;
+		getTask(stuck)->blockedReachStamp = 0;
+		decide(stuck);
+		ASSERT_EQ(indexedClaimsOf(stuck), 0U);
+
+		getTask(stuck)->blockedReachStamp = 1; // failed under a reach it no longer stands in
+		decide(stuck);
+		ASSERT_EQ(getTask(stuck)->type, TaskType::Harvest);
+		EXPECT_EQ(getTask(stuck)->navState, NavState::Traveling);
+		EXPECT_GT(indexedClaimsOf(stuck), 0U);
+
+		const EntityID other = createColonist({0.5F, 0.0F});
+		remember(other, bushPos, "StickBush", assets::CapabilityType::Harvestable);
+		decide(other);
+		EXPECT_NE(getTask(other)->type, TaskType::Harvest);
+		const EvaluatedOption* reserved = optionOf(other, TaskType::Harvest, OptionStatus::Reserved);
+		ASSERT_NE(reserved, nullptr);
+		EXPECT_EQ(reserved->reservedBy, stuck);
+	}
+
 	// Two colonists at one station with every input in its store: the first's Craft selection holds the
 	// station's slot, and the second sees it in use.
 	TEST_F(ChainClaimsTest, AStationsSlotIsHeldByTheCrafterThatSelectedIt) {

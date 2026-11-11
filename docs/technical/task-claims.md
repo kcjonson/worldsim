@@ -600,6 +600,17 @@ A colonist whose target is evicted from memory while it travels keeps its claim 
 the task, not in memory) and re-sees the target on arrival, within sight range. All of these log at
 debug level; they are expected.
 
+A colonist whose route to its target has failed (`NavState::CantFindWayTo`) holds no claims while it
+stays failed. A failure toward a target in another nav region is not remembered as a reach verdict,
+so the colonist may re-select the same work every frame and `isSameTask` keeps it; without this rule
+its pile, bush, slot, or box room would read as taken for as long as it stands there. The index leaves
+such a task's current claims out (`ClaimIndex::addCurrent`, which the rebuild and every append share,
+so the validator's fresh rebuild agrees), and `applyNavOutcome` retires them the moment a route fails
+inside an update and appends them again when a later route for the same task succeeds. Another
+colonist is offered the work meanwhile; if it takes it, the stranded colonist sees it taken at its next
+decision and lets it go, and if nobody does, its claims return with its next successful route. Its
+suspended record is not affected: those goods are possessed.
+
 ---
 
 ## The claim index
