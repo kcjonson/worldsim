@@ -1,52 +1,45 @@
 #pragma once
 
-// NavigationSystem - owns the per-region navmeshes and answers path queries (Nav B3).
+// NavigationSystem - the game's one nav mesh and the queries over it
+// (nav-mesh-variable-resolution.md, step 4).
 //
-// The sim area follows the THINGS THAT NEED SIMULATION (colonists) plus WHERE THE
-// PLAYER IS LOOKING (the viewport), not the camera alone. Each ECS tick the system
-// reads colonist positions (Position + Colonist) and the viewport rect pushed by the
-// scene as plain data, builds a square AABB per driver (center +/- kSimRadiusMm) plus
-// the viewport AABB, and clusters overlapping AABBs into merged bounding rectangles.
-// Each cluster is a SimulationRegion with its own fine nav mesh. Disjoint drivers ->
-// separate regions; overlapping drivers -> one merged region.
-//
-// The build ingests only the obstacles inside a region's rect, so a forested world
-// (tens of thousands of loaded trees) still builds fast because a region holds only
-// ~1-2k. Per region the expensive triangulation (geometry::nav::buildNavMesh) runs on
-// a std::async worker; the cheap-but-not-thread-safe extraction that reads live game
-// state (nav::buildInput, which walks ConstructionWorld -- NOT thread-safe)
-// runs ON the main thread, producing a self-contained NavMeshInput the worker owns by
-// value. While a region's rebuild is in flight its OLD mesh keeps serving queries.
-//
-// Self-gating: nav generation is OFF the render clock. A region rebuilds only when its
-// driver nears the region edge (a margin inside the rect), its obstacle inputs change
-// (construction version, the in-area chunks' terrain polygon versions, or their
-// processed-placement state), or it is brand new. A
-// slow/stationary colonist with the camera held still keeps every gate shut -> no
-// rebuild. Panning/zooming the camera moves only the viewport region, never a
-// colonist's region.
-//
-// Queries (requestPath / isReachable / isOnMesh / nearestPathablePoint / inSimArea)
-// dispatch by position: select the region whose rect contains the query point, then
-// query that region's mesh. requestPath holds (returns nullopt) when start and goal
-// fall in different regions or the goal lies outside all regions -- long-range routing
-// across unsimulated space is Phase 2.
+// Two persistent geometry::nav::PatchableMesh instances cover every chunk that has been loaded:
+//  - navMesh: each ready chunk's square and water, built walls and doors, and flora around each
+//    mover (Position + Colonist) and the viewport. Paths, on-mesh and walkability, recovery
+//    snaps and nearby placement read it.
+//  - structural: the same without flora. Reachability (its forests), placement buildability and
+//    the landing search read it, so neither the camera nor a felled tree changes what is reachable.
+// Neither mesh is ever rebuilt. Each update() diffs what should be in them against what is and
+// patches the difference on the main thread, in a fixed order, under per-tick COUNT budgets
+// (never a time budget, so which tick a ring enters doesn't depend on frame time):
+//  1. Felled trees (PlacementExecutor::removals) and the flora of chunks whose placement went
+//     away are queued for removal; a chunk that unloads keeps its ground.
+//  2. Walls and doors, diffed by content whenever ConstructionWorld::version moves, all at once.
+//  3. Ground: kChunkGroundPerTick ready chunks whose ground is missing or whose terrain polygon
+//     version moved, nearest a mover or the view first. Each chunk is one patch per mesh.
+//  4. Flora: the rects scanned for colliders in kFloraCellMm cells; up to kFloraRingsPerTick
+//     removals and then adds, nearest a rect centre first, in one nav-mesh patch.
+// After a tick's patches: refreshWidths on the nav mesh, rebuildForests on the structural mesh,
+// the RRA* caches dropped, generation() bumped. Points on meshed ground route to each other
+// wherever they are.
 
 #include "../ISystem.h"
 
 #include <core/Vec2i64.h>
 
 #include <nav/NavMesh.h>
+#include <nav/PatchableMesh.h>
 #include <nav/PathQuery.h>
 #include <nav/RraCache.h>
 
 #include <world/chunk/ChunkCoordinate.h>
 
-#include <algorithm>
 #include <cstdint>
-#include <future>
+#include <set>
 #include <glm/vec2.hpp>
+#include <map>
 #include <optional>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -65,51 +58,15 @@ namespace world {
 
 namespace ecs {
 
-/// A square world-mm AABB in absolute coordinates. Used for the per-driver squares,
-/// the viewport square, and the merged region rects. int64 because absolute world mm
-/// can exceed float's exact-integer range -- a colonist 1 km out is 1e6 mm, well past
-/// float's 2^24 exact limit, so the clustering math must not lose mm precision.
-struct SimAabb {
-	std::int64_t minX = 0;
-	std::int64_t minY = 0;
-	std::int64_t maxX = 0;
-	std::int64_t maxY = 0;
-
-	[[nodiscard]] geometry::Vec2i64 center() const { return {(minX + maxX) / 2, (minY + maxY) / 2}; }
-	[[nodiscard]] std::int64_t		halfExtentX() const { return (maxX - minX) / 2; }
-	[[nodiscard]] std::int64_t		halfExtentY() const { return (maxY - minY) / 2; }
-
-	[[nodiscard]] bool contains(geometry::Vec2i64 p) const {
-		return p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY;
-	}
-	// Overlap test (touching counts as overlap so adjacent squares merge).
-	[[nodiscard]] bool overlaps(const SimAabb& o) const {
-		return minX <= o.maxX && maxX >= o.minX && minY <= o.maxY && maxY >= o.minY;
-	}
-	void unionWith(const SimAabb& o) {
-		minX = std::min(minX, o.minX);
-		minY = std::min(minY, o.minY);
-		maxX = std::max(maxX, o.maxX);
-		maxY = std::max(maxY, o.maxY);
-	}
-};
-
-/// Cluster a set of square AABBs into merged bounding rectangles: any two that overlap
-/// (directly or transitively) collapse into their shared bounding box; disjoint inputs
-/// stay separate. Order-independent. Exposed (free function) so the clustering is unit-
-/// testable without a live ECS world.
-[[nodiscard]] std::vector<SimAabb> clusterAabbs(const std::vector<SimAabb>& boxes);
-
-/// Caches per-region navmeshes built from live world data and serves path queries.
+/// Holds the nav mesh and its structural layer, patched from live world data, and serves path
+/// and placement queries.
 ///
-/// Priority 51: below the AI/goal band (those sit at 50-60) so a mesh swapped in this
-/// frame is queryable by the goal systems the SAME frame, yet still above any system
-/// that might mutate the world mid-frame. The actual rebuild is async, so this slot
-/// only governs when a just-finished mesh becomes visible to queries.
+/// Priority 51: below the AI/goal band (those sit at 50-60) so a patch applied this frame is
+/// queryable by the goal systems the SAME frame, yet still above any system that might mutate
+/// the world mid-frame.
 class NavigationSystem : public ISystem {
   public:
-	NavigationSystem() = default;
-	~NavigationSystem() override;
+	NavigationSystem();
 
 	NavigationSystem(const NavigationSystem&) = delete;
 	NavigationSystem& operator=(const NavigationSystem&) = delete;
@@ -123,240 +80,162 @@ class NavigationSystem : public ISystem {
 
 	void setChunkManager(world::ChunkManager* manager) { chunkManager = manager; }
 
-	// Push the viewport rect (world meters) for this tick. GameScene calls this every
-	// frame after camera->update() with the camera's visible rect expanded by
-	// kViewportMargin. This is PLAIN DATA: the scene no longer drives the navmesh -- the
-	// system decides internally, off the render clock, whether the viewport region needs
-	// (re)building. Without a pushed viewport the area is colonist-only.
+	// The viewport rect (world meters) for this tick, which asks for flora detail like a mover
+	// does. GameScene pushes it every frame with the camera's visible rect expanded by
+	// kViewportMargin. Without one, only movers ask.
 	void setViewportRect(glm::vec2 centerMeters, glm::vec2 halfExtentMeters) {
-		viewportCenterM	   = centerMeters;
-		viewportHalfM	   = halfExtentMeters;
-		haveViewport	   = true;
+		viewportCenterM = centerMeters;
+		viewportHalfM	= halfExtentMeters;
+		haveViewport	= true;
 	}
 
-	// Append the positions of the movers (Position + Colonist) that drive the regions.
+	// Append the positions of the movers (Position + Colonist) that ask for flora detail.
 	// The same set anchors chunk streaming: the scene hands it to ChunkManager::update.
 	void appendMoverPositions(std::vector<world::WorldPosition>& out) const;
 
-	// Same signature VisionSystem uses. `processed` is the set of chunks that have
-	// finished entity placement; it grows as spawn-ring chunks complete after the first
-	// build. It does NOT gate the gather (the area sweep reads chunk readiness directly
-	// through the ChunkManager); instead it drives the per-region rebuild gate -- when a
-	// chunk overlapping a BUILT region joins (or leaves) this set, that region's in-area
-	// obstacle set changed and its mesh must rebuild.
-	void setPlacementData(
-		assets::PlacementExecutor*						  executor,
-		const std::unordered_set<world::ChunkCoordinate>* processed) {
-		placement = executor;
-		processedChunks = processed;
-	}
+	// Flora comes from `executor`'s chunk indices, and only for chunks in `processed` (the
+	// chunks that have finished entity placement; null reads every indexed chunk as finished).
+	// Removals the executor made before this call are not looked at.
+	void setPlacementData(assets::PlacementExecutor* executor, const std::unordered_set<world::ChunkCoordinate>* processed);
 
 	void setConstructionWorld(const construction::ConstructionWorld* world) { constructionWorld = world; }
 
-	// --- Queries (synchronous, dispatched to the region containing the point) -
+	// --- Queries ---------------------------------------------------------------
 
-	// Taut polyline in world meters from start to goal for a disc agent of the given
-	// radius, or nullopt when there is no region covering BOTH endpoints, the endpoints
-	// fall in DIFFERENT regions (long-range routing is Phase 2), or the goal is
-	// unreachable within the shared region. Agent clearance is honored: the radius is
-	// passed straight through to geometry::nav::pathThrough.
+	// Taut polyline in world meters from start to goal for a disc agent of the given radius, or
+	// nullopt when either end is off meshed ground or no route exists. The structural forest
+	// rejects a provably unreachable goal before the A* runs.
 	//
-	// `belief` is applied at query time against the region's truth mesh (not a second
-	// mesh): a default (empty) BeliefFilter routes over truth, while a filter built from
-	// a colonist's known segments/openings routes over what that colonist REMEMBERS. The
-	// filter holds pointers into the caller's sets and is consumed synchronously.
+	// `belief` is applied at query time against the truth mesh: a default (empty) BeliefFilter
+	// routes over truth, a filter built from a colonist's known segments/openings routes over
+	// what that colonist REMEMBERS. The filter holds pointers into the caller's sets and is
+	// consumed synchronously.
 	[[nodiscard]] std::optional<std::vector<glm::vec2>>
-	requestPath(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
-				geometry::nav::BeliefFilter belief = {}) const;
+	requestPath(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters, geometry::nav::BeliefFilter belief = {}) const;
 
-	// Sound reachability pre-filter against the region containing both endpoints, split at the
-	// start so many goals from one start cost one start-side climb: reachFrom locates the start
-	// and finds its reach root in the region's forest (geometry::nav::reachFrom), and reaches()
-	// tests a goal with a region lookup, a locate and an O(log n) subtree check.
-	//
-	// Semantics are asymmetric by design:
+	// Sound reachability pre-filter on the structural mesh, split at the start so many goals from
+	// one start cost one start-side climb: reachFrom locates the start and finds its reach root in
+	// the forest (geometry::nav::reachFrom), reaches() tests a goal with a locate and an O(log n)
+	// subtree check.
 	//   false => DEFINITELY unreachable (disconnected component or bottleneck < disc).
-	//   true  => MAYBE reachable (over-approximation). Caller runs requestPath for certainty.
+	//   true  => MAYBE reachable. Caller runs requestPath for certainty.
+	// A start or goal off meshed ground answers true ("can't prove unreachable").
 	//
-	// No-region / off-area policy: when no region covers the start, or none covers the goal,
-	// reaches() returns true ("can't prove unreachable"). The mesh may still be building, and
-	// requestNavPath holds such a route and retries it after each build; a goal-validity
-	// pre-filter must not reject everything in that window.
-	//
-	// Cross-region policy: a goal in a different BUILT region than the start is false.
-	// requestPath routes only within one region (Phase 1), so the route would come back
-	// "no believed route" and a colonist picking that goal again would never get there.
-	//
-	// A Reach is used within one frame (the next update() may move or drop regions); the belief's
-	// sets must outlive it. For a goal sharesStartRegion() admits, reaches() depends only on the start
-	// region's mesh, which startRegionId and startRegionGeneration identify across frames.
+	// startRegion is 0 when the start is on meshed ground, -1 otherwise; startRegionId is 0 and
+	// startRegionGeneration is generation() then. A Reach is used within one frame; the belief's
+	// sets must outlive it.
 	struct Reach {
-		int							startRegion = -1;	// index this frame; -1: no region covers the start
-		std::int32_t				startRegionId = -1; // stable across frames, unlike the index
-		std::uint64_t				startRegionGeneration = 0; // the start region's mesh swap count
+		int							startRegion			  = -1;
+		std::int32_t				startRegionId		  = -1;
+		std::uint64_t				startRegionGeneration = 0;
 		geometry::nav::ReachFrom	from;
 		geometry::nav::BeliefFilter belief;
 	};
-	[[nodiscard]] Reach reachFrom(glm::vec2 startMeters, float agentRadiusMeters,
-								  geometry::nav::BeliefFilter belief = {}) const;
+	[[nodiscard]] Reach reachFrom(glm::vec2 startMeters, float agentRadiusMeters, geometry::nav::BeliefFilter belief = {}) const;
 	[[nodiscard]] bool	reaches(const Reach& reach, glm::vec2 goalMeters) const;
-	// Does the region holding the start also hold this goal? Only for such a goal does reaches()
-	// consult the mesh; for any other its answer follows from which regions cover the two points.
+	// The start is on meshed ground and so is the goal: reaches() consults the mesh for it.
 	[[nodiscard]] bool sharesStartRegion(const Reach& reach, glm::vec2 goalMeters) const;
 
-	// LOD seam predicate: true when `meters` falls inside some BUILT region rect. Outside
-	// every built region the caller treats movement as the no-mesh beeline (LOD1 coarse
-	// routing is Phase 2). False when no region has been built yet.
+	// True when `meters` is on meshed ground (inside a ready chunk that has been meshed), water
+	// and walls included.
 	[[nodiscard]] bool inSimArea(glm::vec2 meters) const;
 
-	// True when `meters` lies on walkable mesh inside the region that contains it. False
-	// when the point is off-mesh within its region (e.g. a colonist that beelined into a
-	// water hole) or when no region covers it. Lets a path failure distinguish a stranded
-	// colonist (recover by snapping back onto land) from one merely walled off.
+	// True when `meters` lies on a walkable face of the nav mesh: not water, not a tree; any wall
+	// face reads open (terrain-optimistic). False off meshed ground. Lets a path failure tell a
+	// stranded colonist (recover by snapping back onto land) from one merely walled off.
 	[[nodiscard]] bool isOnMesh(glm::vec2 meters) const;
 
-	// Canonical world-position validity for spawn/placement/teleport. A position is VALID
-	// IFF it sits on a WALKABLE NAV FACE inside an ACTIVE sim region -- exactly isOnMesh.
-	//
-	// CONSTRAINT: validity is owned entirely by the runtime nav mesh. The 3D world/terrain
-	// source is load-time / chunk-generation data and is NOT consulted here. A position
-	// outside every active region's mesh is simply NOT placeable for now: you cannot place
-	// outside an active mesh yet. (A future Phase 2 coarse global geography mesh will extend
-	// this to unsimulated space.) This is the ONE predicate every world-positioning path
-	// goes through; do not reintroduce ad-hoc terrain/isWaterAt checks elsewhere.
+	// Canonical world-position validity for spawn/placement/teleport: exactly isOnMesh. Validity
+	// is owned by the runtime nav mesh; the 3D world source is load-time data and is not consulted.
+	// This is the ONE predicate every world-positioning path goes through; do not reintroduce
+	// ad-hoc terrain/isWaterAt checks elsewhere.
 	[[nodiscard]] bool isValidPosition(glm::vec2 meters) const { return isOnMesh(meters); }
 
-	// Whole-FOOTPRINT validity for an area structure (a foundation polygon). True IFF
-	// EVERY part of the closed polygon -- vertices, edges, and interior -- sits on
-	// walkable nav mesh. A footprint whose corners are on land but that spans a river,
-	// or whose edge/interior clips a water hole or off-mesh gap, is REJECTED. Built on
-	// the same per-point authority as isValidPosition (locateTriangle + terrainTraversable):
-	// it samples every edge at <= kFootprintSampleStepMm and the interior on a grid of the
-	// same pitch, requiring all samples to be walkable. No world/terrain/water source reads.
-	// `polygonMeters` is the ring in world meters (no repeated closing vertex needed). A
-	// ring of fewer than 3 points validates only its points. This is the ONE area predicate
-	// for placement; the UI build tool and the dev verbs both go through it.
+	// Whole-FOOTPRINT validity for an area structure (a foundation polygon). True IFF EVERY part
+	// of the closed polygon -- vertices, edges, and interior -- sits on walkable nav mesh: every
+	// edge sampled at <= kFootprintSampleStepMm and the interior on a grid of the same pitch. A
+	// ring of fewer than 3 points validates only its points.
 	[[nodiscard]] bool isAreaWalkable(const std::vector<glm::vec2>& polygonMeters) const;
 
-	// Whole-CENTERLINE validity for a linear structure (a wall segment / chain edge). True
-	// IFF the segment a->b lies entirely on walkable mesh: both endpoints plus every sample
-	// along it at <= kFootprintSampleStepMm. The chain variant requires every consecutive
-	// pair to pass. Wall thickness is not separately modeled here (the centerline at fine
-	// spacing is the gate); same per-point authority and sampling pitch as isAreaWalkable.
+	// Whole-CENTERLINE validity for a linear structure: both endpoints plus every sample along
+	// a->b at <= kFootprintSampleStepMm on walkable mesh.
 	[[nodiscard]] bool isSegmentWalkable(glm::vec2 aMeters, glm::vec2 bMeters) const;
 
-	// Whole-chain variant of isSegmentWalkable: every consecutive (pts[i], pts[i+1]) edge
-	// must lie entirely on walkable mesh. A chain of one point validates just that point;
-	// empty is trivially true. Used for the wall tool's full chain and the /api/dev/walls verb.
+	// Every consecutive (pts[i], pts[i+1]) edge passes isSegmentWalkable. One point validates
+	// just it; empty is trivially true. Used for the wall tool's chain and the /api/dev/walls verb.
 	[[nodiscard]] bool isPolylineWalkable(const std::vector<glm::vec2>& ptsMeters) const;
 
-	// Whole-FOOTPRINT BUILDABILITY for an area structure. Like isAreaWalkable, but validated against
-	// a TERRAIN-ONLY mesh (geography + built walls, no tree/rock entity obstacles) built on demand
-	// over the footprint's local area. Clearable entities (trees/rocks) read as buildable here
-	// (ConstructionSystem turns them into clear tasks) and so does every wall face; only water and
-	// off-mesh gaps block. This is the placement gate for the build tool -- wall conflicts are
-	// ConstructionValidator's job, not this predicate. isAreaWalkable stays the pure on-mesh
-	// predicate; falls back to it when the nav build inputs aren't wired (headless/tests).
+	// Whole-FOOTPRINT BUILDABILITY: isAreaWalkable's sampling against the structural mesh, where
+	// trees and rocks are absent (ConstructionSystem turns them into clear tasks) and every wall
+	// face reads open (wall conflicts are ConstructionValidator's job). Only water and ground
+	// that isn't meshed block. The placement gate for the build tool.
 	[[nodiscard]] bool isAreaBuildable(const std::vector<glm::vec2>& polygonMeters) const;
 
-	// Single-point buildability: the per-vertex / live-cursor counterpart of isAreaBuildable, against
-	// the same cached terrain-only mesh. True over clearable entities (trees/rocks) and over a built
-	// wall face; false only on water or an off-mesh gap. Falls back to isOnMesh when the build inputs
-	// aren't wired (headless/tests).
+	// Single-point buildability, the per-vertex / live-cursor counterpart of isAreaBuildable.
 	[[nodiscard]] bool isPointBuildable(glm::vec2 meters) const;
 
-	// `meters` itself when it is walkable on the terrain-only mesh (water and built walls
-	// block, trees and rocks don't), else the nearest point that is, within the cached
-	// terrain area around it. Needs only the chunk manager, so it answers before any sim
-	// region exists: the landing uses it to move a drop point off the water. nullopt when
-	// the chunks aren't wired or the area holds no walkable ground.
+	// `meters` itself when it is walkable in truth on the structural mesh (water and built walls
+	// block, trees and rocks don't), else the nearest point that is. nullopt when no ground is
+	// meshed.
 	[[nodiscard]] std::optional<glm::vec2> nearestTerrainWalkablePoint(glm::vec2 meters) const;
 
-	// Where a landing party of `count` stands, judged on the terrain-only mesh like
-	// nearestTerrainWalkablePoint (so it answers before any sim region exists).
+	// Where a landing party of `count` stands, judged on the structural mesh like
+	// nearestTerrainWalkablePoint.
 	struct GroupSpawn {
 		glm::vec2			   center; // the group's anchor (clearing center, colony origin)
 		std::vector<glm::vec2> points; // one per member, in order
 	};
-	// The center is the nearest point to `drop` (searched outward in rings) whose whole
-	// member ring -- `count` points spaced evenly on a circle of `ringRadiusMeters`, or the
-	// center alone for one member -- is clear ground, so the ring never straddles a shore.
-	// Clear means walkable at the point and at `clearanceMeters` around it (an agent's disc
-	// fits). Every member then stands on its ring point when that point is clear and at least
-	// `minSeparationMeters` from the members already placed, else on the nearest spot around
-	// it that is; each point is valid on its own. With no chunks wired (headless), the center
-	// is `drop` and the points are the raw ring.
-	[[nodiscard]] GroupSpawn groupSpawnPoints(glm::vec2 drop, std::size_t count, float ringRadiusMeters,
-											  float minSeparationMeters, float clearanceMeters) const;
+	// First brings walls and the ground of the ready chunks the search can touch into the meshes
+	// (the landing runs before the first update). The center is the nearest point to `drop`
+	// (searched outward in rings) whose whole member ring -- `count` points spaced evenly on a
+	// circle of `ringRadiusMeters`, or the center alone for one member -- is clear ground, so the
+	// ring never straddles a shore. Clear means walkable at the point and at `clearanceMeters`
+	// around it. Every member then stands on its ring point when that point is clear and at least
+	// `minSeparationMeters` from the members already placed, else on the nearest spot around it
+	// that is. With no chunks wired, the center is `drop` and the points are the raw ring.
+	[[nodiscard]] GroupSpawn groupSpawnPoints(glm::vec2 drop, std::size_t count, float ringRadiusMeters, float minSeparationMeters,
+											  float clearanceMeters);
 
 	// Sampling pitch (mm) for the whole-footprint / whole-centerline walkability checks.
 	// 0.5 m is fine enough to catch a ~1-tile water sliver between two on-land vertices.
-	// Footprints are small, so even a dense interior grid at this pitch is a few hundred
-	// O(1)-ish locateTriangle probes -- cheap enough for a per-frame live preview.
 	static constexpr std::int64_t kFootprintSampleStepMm = 500; // 0.5 m
 
-	// Nearest walkable point in the region that contains `meters`, or nullopt when no
-	// region covers it / that region has no walkable floor. Used to snap a stranded
-	// (off-mesh, in-region) colonist back onto pathable ground.
+	// Nearest walkable point to `meters`, or nullopt when it is off meshed ground or no face is
+	// walkable. Snaps a stranded (off-mesh, on meshed ground) colonist back onto pathable ground.
 	[[nodiscard]] std::optional<glm::vec2> nearestPathablePoint(glm::vec2 meters) const;
 
-	// Like nearestPathablePoint, but the returned point also clears the BUILT-wall
-	// collision bands for an agent of radius `agentRadiusMeters` (the same
-	// halfThickness + radius clearance WallCollisionSystem enforces). Recovery snaps
-	// MUST use this: the bare nearest-walkable point sits on the walkable-face edge,
-	// only halfThickness from a wall centerline, i.e. INSIDE the collision band -- so
-	// WallCollisionSystem would shove the just-snapped colonist straight back off-mesh,
-	// and the two systems oscillate (the colonist-wall-trap bug). This finds a point
-	// that is BOTH on a walkable face AND outside every built band, so neither system
-	// has anything left to correct. Falls back to the nearest band-clear walkable
-	// triangle interior when the closest pocket is too thin to hold the agent (so a
-	// colonist trapped in a sub-clearance sliver recovers to the roomy side). nullopt
-	// only when no region covers `meters` or the region has no walkable floor at all.
+	// Like nearestPathablePoint, but the returned point also clears the BUILT-wall collision bands
+	// for an agent of radius `agentRadiusMeters` (the halfThickness + radius clearance
+	// WallCollisionSystem enforces), so the two systems never push a snapped colonist back and
+	// forth (the colonist-wall-trap bug). Falls back to the nearest band-clear walkable triangle
+	// interior when the closest pocket is too thin to hold the agent.
 	[[nodiscard]] std::optional<glm::vec2> nearestPathablePoint(glm::vec2 meters, float agentRadiusMeters) const;
 
-	// A walkable point at least `minDistMeters` away from `origin`, used to place a thing a
-	// short distance OFF the spot that produced it (a crafted furniture box coming out of a
-	// station, an item that must not drop into a river). Returns meters, like
-	// nearestPathablePoint; deterministic (no RNG, a fixed angle set with a fixed start, a
-	// deterministic tiebreak) so the same inputs always yield the same point.
-	//
-	// `preferredDir` biases the first candidate (e.g. away from the crafting colonist so a
-	// run of boxes fans out instead of stacking); a zero vector falls back to {1,0} so the
-	// result stays canonical. The search: a single candidate at origin + minDist*dir, then a
-	// ring of fixed angles at that radius, then a fallback that pushes the nearest walkable
-	// point out to minDist. nullopt only when `origin` is outside every region or its region
-	// has no walkable floor at all -- whenever any walkable floor exists, the result is non-null.
+	// A walkable point at least `minDistMeters` away from `origin`, used to place a thing a short
+	// distance OFF the spot that produced it. Deterministic: a single candidate at
+	// origin + minDist*dir, then a ring of fixed angles at that radius, then the nearest walkable
+	// point pushed out to minDist when that stays on mesh. `preferredDir` biases the first
+	// candidate; a zero vector falls back to {1,0}. nullopt only when `origin` is off meshed
+	// ground or no face is walkable.
 	[[nodiscard]] std::optional<glm::vec2>
 	findValidPositionNear(glm::vec2 origin, float minDistMeters = 1.0F, glm::vec2 preferredDir = {0.0F, 0.0F}) const;
 
-	// True when ANY region has a built, non-empty mesh. (A region whose first build is
-	// still in flight does not count until it lands.)
+	// True once any ground is meshed.
 	[[nodiscard]] bool hasMesh() const;
 
-	// True while any region's build is in flight. update() launches every build its gates
-	// call for before it returns, so false right after an update means the system has
-	// settled: with the same inputs, no later update changes a mesh.
+	// True while anything is queued: ground, flora adds or removals. update() applies walls the
+	// tick it sees them, so false right after an update means the system has settled.
 	[[nodiscard]] bool isBuilding() const;
 
-	// Blocks until the system settles: evaluates the region rebuild gates against the
-	// current inputs, launches what they call for, waits for every in-flight build, swaps
-	// each in as update() would, and repeats until no gate fires. Advances nothing else;
-	// isBuilding() is false when it returns. It reads only chunks that are ready now, so a
-	// caller settles chunk generation (ChunkManager::finishPendingGeneration) and placement
-	// first. For hosts that want repeatable results (tests, the headless sim), never the
-	// game, whose frames must not wait on a build. A wait longer than a minute logs
-	// a warning naming the regions still building and keeps waiting.
+	// Drains every queue with no budget, repeating until nothing is left: the same patches
+	// update() would apply over several ticks. It reads only chunks that are ready now, so a
+	// caller settles chunk generation and placement first. For tests and the headless sim, never
+	// the game.
 	void finishPendingBuilds();
 
-	// Monotonic count of mesh swaps across all regions. A stored NavPath stamps this at plan
-	// time so the replan loop can detect "the world rebuilt under me", and a deferred route
-	// waits on it to move. Stays 0 until the first mesh lands. Every region's swap bumps it,
-	// so no rebuild goes unseen; the stamp is conservative across regions, which only costs
-	// an occasional redundant replan.
+	// Monotonic count of ticks that patched either mesh. A stored NavPath stamps it at plan time
+	// so the replan loop sees "the mesh changed under me", and a deferred route waits on it.
 	[[nodiscard]] std::uint64_t generation() const { return meshGeneration; }
-
-	// Number of regions currently tracked (building or built). For tests/overlay.
-	[[nodiscard]] std::size_t regionCount() const { return regions.size(); }
 
 	// Cumulative A* instrumentation since the last resetNavQueryStats() (P3.5).
 	struct NavQueryStats {
@@ -366,189 +245,152 @@ class NavigationSystem : public ISystem {
 		std::int64_t  lastPeakOpenSet	 = 0;
 	};
 	[[nodiscard]] const NavQueryStats& navQueryStats() const { return navStats; }
-	void						   resetNavQueryStats() { navStats = {}; }
+	void							   resetNavQueryStats() { navStats = {}; }
 
-	// Number of live RRA* reverse-search caches across all regions (keyed by region id +
-	// goal triangle). For tests/overlay: confirms the cap and generation-bump invalidation.
+	// Live RRA* reverse-search caches (one per goal triangle), dropped on every nav-mesh patch.
 	[[nodiscard]] std::size_t rraCacheCount() const { return rraCaches.size(); }
 
-	// --- Region access for the debug overlay -----------------------------------
+	// The meshes, for the debug overlay and tests. Dead triangle slots must be skipped
+	// (PatchableMesh::triangleLive).
+	[[nodiscard]] const geometry::nav::PatchableMesh& navMesh() const { return detailMesh; }
+	[[nodiscard]] const geometry::nav::PatchableMesh& structuralMesh() const { return structural; }
 
-	// A built region's mesh + rect, for the NavOverlay wireframe.
+	// The meshed ground as one square, or none before any ground is meshed.
 	struct RegionView {
-		const geometry::nav::NavMesh* mesh;
-		geometry::Vec2i64			  center;
-		std::int64_t				  halfExtent;
+		geometry::Vec2i64 center;
+		std::int64_t	  halfExtent;
 	};
-	// Snapshot of every region that currently has a non-empty mesh.
 	[[nodiscard]] std::vector<RegionView> builtRegions() const;
 
-	// Public constants referenced by GameScene (viewport margin) and tests (clamp bounds).
-	//
-	// Minimum half-extent: large enough to cover typical indoor rooms and short outdoor
-	// paths even at maximum zoom-in.
+	// Flora detail rects. A mover asks for its square (center +/- kSimRadiusMm); the viewport for
+	// its rect with each half extent clamped to [kMinSimHalfExtentMm, kMaxSimHalfExtentMm].
 	static constexpr std::int64_t kMinSimHalfExtentMm = 30000; // 30 m
-	// Maximum half-extent: bounds the build cost. Kept small for now because a 200 m area
-	// in a dense forest is thousands of trees and stalls the off-thread build.
 	static constexpr std::int64_t kMaxSimHalfExtentMm = 64000; // 64 m
-	// Half-extent of a colonist's own sim square (center +/- this). The square is the
-	// minimum so the colonist always sits well inside a clamped region.
-	static constexpr std::int64_t kSimRadiusMm = kMinSimHalfExtentMm; // 30 m
-	// Driver travel (mm) that triggers a region re-center: a driver this far from the
-	// region center recenters it. Below it the gate stays shut (hysteresis vs lerp noise).
-	static constexpr std::int64_t kRecenterThresholdMm = 20000; // 20 m
-	// Margin applied to the camera's visible half-diagonal for scroll/zoom headroom.
-	// GameScene multiplies the half-diagonal by this before calling setViewportRect.
+	static constexpr std::int64_t kSimRadiusMm		  = kMinSimHalfExtentMm;
+	// Margin GameScene applies to the camera's visible half extents before setViewportRect.
 	static constexpr float kViewportMargin = 1.3F;
 
+	// Count budgets per update(), from sim-benchmarks (NavigationSystem.bench.cpp).
+	static constexpr std::size_t kFloraRingsPerTick	 = 4;
+	static constexpr std::size_t kChunkGroundPerTick = 1;
+	// Flora is scanned in square cells of this side, aligned to chunk squares; a cell is scanned
+	// once and stays scanned until its chunk's placement goes away.
+	static constexpr std::int64_t kFloraCellMm = 16000;
+	// Chunk sides enter the meshes split to this (decision 8 in the spec).
+	static constexpr std::int64_t kMaxBoundsEdgeMm = 16000;
+
   private:
-	// A clustered region this tick: the merged bounding rect plus the driver points
-	// (colonist centers + viewport center) that fell in it. The driver points drive the
-	// self-gate: a region is recentered only when one of its drivers nears the rect edge.
-	struct DesiredRegion {
-		SimAabb						   rect;
-		std::vector<geometry::Vec2i64> drivers;
+	using RingId = geometry::nav::RingId;
+	using DoorId = geometry::nav::DoorId;
+
+	struct RingPair {
+		RingId nav		  = geometry::nav::kNoRing;
+		RingId structural = geometry::nav::kNoRing;
 	};
 
-	// Per-cluster navmesh + its build state. One per merged region this tick.
-	struct SimulationRegion {
-		std::int32_t			 id		   = 0;	  // stable across rebuilds; RRA cache key prefix
-		geometry::Vec2i64		 center{0, 0};	  // BUILT center (mm)
-		std::int64_t			 halfExtent = 0;  // BUILT half-extent (mm)
-		geometry::nav::NavMesh	 navMesh;		  // current queryable mesh (empty = building)
-		std::future<geometry::nav::NavMesh> future; // in-flight build (valid only while running)
-		std::uint64_t			 builtVersion			 = UINT64_MAX; // ConstructionWorld::version at launch
-		std::uint64_t			 builtAreaChunkSignature = 0;		   // areaChunkSignature at launch
-		std::uint64_t			 builtRemovalEpoch		 = UINT64_MAX; // PlacementExecutor::removalEpoch at launch
-		std::uint64_t			 meshGeneration			 = 0;		   // bumped on this region's mesh swap
-
-		[[nodiscard]] bool hasMesh() const { return !navMesh.triangles.empty(); }
-		[[nodiscard]] SimAabb rect() const {
-			return {center.x - halfExtent, center.y - halfExtent, center.x + halfExtent, center.y + halfExtent};
+	struct ChunkLess {
+		bool operator()(const world::ChunkCoordinate& a, const world::ChunkCoordinate& b) const {
+			return a.y != b.y ? a.y < b.y : a.x < b.x;
 		}
 	};
 
-	// Compute the desired regions this tick from colonist squares + the viewport square,
-	// clustered. Each carries its merged rect and the driver points that fell in it.
-	[[nodiscard]] std::vector<DesiredRegion> computeDesiredRegions() const;
+	struct ChunkGround {
+		RingPair			  square;
+		std::vector<RingPair> water;
+		std::uint32_t		  terrainVersion = 0;
+	};
 
-	// Diff desired regions against current ones: a desired region whose drivers all sit
-	// comfortably (>= kEdgeMarginMm) inside an overlapping existing region keeps that
-	// region untouched (self-gate -- no rebuild unless its obstacles changed); otherwise
-	// recenter/resize the best-overlapping region and rebuild, or spawn a new one. A
-	// region whose build is still running recenters once it lands. Regions no longer
-	// wanted are dropped. Launches/relaunches async builds where needed.
-	void reconcileRegions(const std::vector<DesiredRegion>& desired);
+	struct WallRing {
+		geometry::nav::NavInputPolygon polygon;
+		RingPair					   ids;
+	};
+	struct WallDoor {
+		geometry::nav::DoorPortal portal;
+		DoorId					  nav		 = -1;
+		DoorId					  structural = -1;
+	};
 
-	// Drain any finished region builds (swap meshes in, bump generations, clear that
-	// region's RRA caches).
-	void drainFinishedBuilds();
+	// A placed entity by the identity PlacementExecutor removes it by. Ordered chunk first, so
+	// one chunk's entries are a contiguous range.
+	struct FloraKey {
+		world::ChunkCoordinate chunk;
+		std::uint32_t		   xBits = 0;
+		std::uint32_t		   yBits = 0;
+		std::string			   defName;
+		bool				   operator<(const FloraKey& o) const;
+	};
+	struct PendingFlora {
+		geometry::nav::NavInputPolygon ring;
+		geometry::Vec2i64			   centerMm;
+		std::int64_t				   cell = 0;
+	};
 
-	// Move a dropped region's in-flight build into retiringBuilds. First erases any
-	// already-finished entries; if the list is still at kMaxRetiringBuilds, waits on the
-	// oldest and removes it before appending. Bounds retiringBuilds without blocking the
-	// common case -- regions are few, so the cap only bites under pathological camera
-	// churn (drop a region, spawn a new one, repeat, every frame).
-	void retireBuild(std::future<geometry::nav::NavMesh> build);
+	struct Rect {
+		geometry::Vec2i64 lo;
+		geometry::Vec2i64 hi;
+	};
+	// A rect's flora cells, inclusive.
+	struct CellRange {
+		std::int64_t minX = 0;
+		std::int64_t minY = 0;
+		std::int64_t maxX = 0;
+		std::int64_t maxY = 0;
+		bool		 operator==(const CellRange&) const = default;
+	};
 
-	// Launch (or relaunch) the async build for `region` over its current center/extent.
-	// Snapshots input on the main thread; the worker owns it by value.
-	void launchBuild(SimulationRegion& region);
+	// One step of update() with the given budgets; finishPendingBuilds runs it unbudgeted.
+	void tick(std::size_t floraBudget, std::size_t groundBudget);
 
-	// Build a TERRAIN-ONLY navmesh (border + water + walls, no flora entities) over the square area
-	// centered at `center` with half-extent `radius` (world mm), for placement validation. Runs
-	// synchronously on the caller's (main) thread -- buildInput reads the non-thread-safe
-	// ConstructionWorld -- but the footprint-sized area keeps it cheap. Requires chunkManager and
-	// constructionWorld; callers guard for null.
-	[[nodiscard]] geometry::nav::NavMesh buildTerrainOnlyMesh(geometry::Vec2i64 center, std::int64_t radius) const;
+	[[nodiscard]] std::vector<Rect> wantedRects() const;
+	void							queueRemovedFlora();
+	void							dropFloraOfLostChunks();
+	[[nodiscard]] bool				floraChunkUsable(world::ChunkCoordinate coord) const;
+	void							syncWalls();
+	// Up to `budget` ready chunks whose ground is missing or stale, nearest a rect first; only
+	// chunks meeting `within` when it is given.
+	void patchGround(std::size_t budget, const std::vector<Rect>& rects, const Rect* within);
+	void scanFlora(const std::vector<Rect>& rects);
+	void patchFlora(std::size_t budget, const std::vector<Rect>& rects);
+	// Refresh widths and forests after a tick's patches, drop the RRA* caches, bump generation().
+	void finishTick();
 
-	// The cached terrain-only placement mesh, (re)built to cover [minMm, maxMm] and kept current with
-	// the construction world. Reused across a drawing gesture (many vertex/cursor probes plus the
-	// commit re-check); rebuilt only when the query leaves the cached area or a wall changes. Requires
-	// chunkManager and constructionWorld.
-	[[nodiscard]] const geometry::nav::NavMesh& terrainMeshCovering(geometry::Vec2i64 minMm, geometry::Vec2i64 maxMm) const;
-
-	// True if `region` must (re)build: never built, world version changed, a driver
-	// nears its edge (handled by the caller before this), or areaChunkSignature changed
-	// (an in-area chunk's terrain rings or placement state).
-	[[nodiscard]] bool regionObstaclesChanged(const SimulationRegion& region) const;
-
-	// Clamp a requested half-extent to [min, max] and to the loaded-chunk extent.
-	[[nodiscard]] std::int64_t clampHalfExtent(std::int64_t requested) const;
-
-	// Hash of what the area's obstacles depend on per chunk (nav::areaChunkRange):
-	// each chunk's terrain polygon version (nav::waterSignature) and whether it
-	// has finished entity placement. Either part is left out when its source isn't wired.
-	[[nodiscard]] std::uint64_t areaChunkSignature(geometry::Vec2i64 center, std::int64_t halfExtent) const;
-
-	// Locate the index of the built region whose rect contains `meters`, or -1. When
-	// rects overlap (a merge in progress) the first match wins; queries are well-defined
-	// because a merged region covers the union, so any covering region answers correctly.
-	[[nodiscard]] int regionContaining(glm::vec2 meters) const;
-
-	// Margin (mm) inside a region rect: a driver closer than this to the edge triggers a
-	// recenter. Keeps a colonist comfortably away from the off-mesh boundary.
-	static constexpr std::int64_t kEdgeMarginMm = 8000; // 8 m
-	// Half-extent fractional change that triggers a region resize (0.20 = 20%). A zoom
-	// in/out past this rebuilds the region at the new size; small jitter stays gated.
-	static constexpr double kSizeChangeThreshold = 0.20;
-
-	world::ChunkManager*							  chunkManager	   = nullptr;
-	assets::PlacementExecutor*						  placement		   = nullptr;
-	const std::unordered_set<world::ChunkCoordinate>* processedChunks  = nullptr;
+	world::ChunkManager*							  chunkManager		= nullptr;
+	assets::PlacementExecutor*						  placement			= nullptr;
+	const std::unordered_set<world::ChunkCoordinate>* processedChunks	= nullptr;
 	const construction::ConstructionWorld*			  constructionWorld = nullptr;
 
-	std::vector<SimulationRegion> regions;
-	std::int32_t				  nextRegionId = 0;
-
-	// Cap on retiringBuilds. Regions are few, so this only fills under pathological
-	// camera churn (drop a region, spawn a new one, repeat, every frame); 2 is enough
-	// headroom for normal play to never hit it.
-	static constexpr std::size_t kMaxRetiringBuilds = 2;
-
-	// Builds of dropped regions still running. A std::async future blocks in its
-	// destructor, so they are kept here until they finish instead of stalling the frame.
-	// Bounded to kMaxRetiringBuilds by retireBuild(), which waits on the oldest once the
-	// cap is hit rather than letting the list grow without limit.
-	std::vector<std::future<geometry::nav::NavMesh>> retiringBuilds;
-
-	// Viewport rect pushed by the scene (world meters). haveViewport is false until the
-	// first setViewportRect call (headless tests run colonist-only).
 	glm::vec2 viewportCenterM{0.0F, 0.0F};
 	glm::vec2 viewportHalfM{0.0F, 0.0F};
 	bool	  haveViewport = false;
 
-	// Bumped on every region's mesh swap; see generation().
-	std::uint64_t meshGeneration = 0;
+	geometry::nav::PatchableMesh detailMesh;
+	geometry::nav::PatchableMesh structural;
 
-	// Cached terrain-only mesh for placement buildability (isAreaBuildable / isPointBuildable). Built
-	// on demand over a generous area so a whole drawing gesture reuses one build; invalidated when a
-	// query falls outside it or the construction world changes (walls). Mutable: filled by const
-	// queries. Main-thread only (DrawingSystem), like the buildInput it wraps.
-	static constexpr std::int64_t  kTerrainCacheHalfExtentMm = 48000; // 48 m default gesture area
-	static constexpr std::int64_t  kTerrainCacheMarginMm	   = 4000;	 // slack so the footprint sits inside
-	mutable geometry::nav::NavMesh terrainMesh_;
-	mutable geometry::Vec2i64	   terrainMeshCenter_{0, 0};
-	mutable std::int64_t		   terrainMeshHalfExtent_		   = 0;
-	mutable std::uint64_t		   terrainMeshConstructionVersion_ = UINT64_MAX;
-	mutable std::uint64_t		   terrainMeshChunkSignature_	   = UINT64_MAX;
+	std::map<world::ChunkCoordinate, ChunkGround, ChunkLess> ground;
+	std::size_t												  groundPending = 0;
 
-	// Resumable RRA* reverse-search caches, keyed by (regionId, goalTriangle). Triangle
-	// indices are per-region and invalidated by a rebuild, so an entry is dropped when its
-	// region's mesh swaps. Bounded by kMaxRraCaches (wholesale clear on overflow).
-	struct RraKey {
-		std::int32_t region;
-		std::int32_t goalTri;
-		bool operator==(const RraKey& o) const { return region == o.region && goalTri == o.goalTri; }
-	};
-	struct RraKeyHash {
-		std::size_t operator()(const RraKey& k) const {
-			return (static_cast<std::size_t>(static_cast<std::uint32_t>(k.region)) << 32)
-				 ^ static_cast<std::size_t>(static_cast<std::uint32_t>(k.goalTri));
-		}
-	};
-	static constexpr std::size_t kMaxRraCaches = 64;
-	mutable std::unordered_map<RraKey, geometry::nav::RraCache, RraKeyHash> rraCaches;
+	std::uint64_t		  wallsVersion = UINT64_MAX;
+	std::vector<WallRing> walls;
+	std::vector<WallDoor> doors;
+
+	std::map<FloraKey, RingId>					floraInMesh;
+	std::map<FloraKey, PendingFlora>			floraAdds;
+	std::vector<RingId>							floraRemovals;
+	std::unordered_set<std::int64_t>			scannedCells;
+	std::set<world::ChunkCoordinate, ChunkLess> floraChunks; // chunks with a scanned cell
+	std::vector<CellRange>						scannedRanges;
+	std::size_t									scannedGround	 = 0;
+	std::size_t									scannedProcessed = 0;
+	std::size_t									removalsSeen	 = 0;
+
+	bool		  navPatched		= false;
+	bool		  structuralPatched = false;
+	double		  navPatchMs		= 0.0;
+	double		  structuralPatchMs = 0.0;
+	std::uint64_t meshGeneration	= 0;
+
+	mutable std::unordered_map<std::int32_t, geometry::nav::RraCache> rraCaches;
+	static constexpr std::size_t									   kMaxRraCaches = 64;
 
 	mutable NavQueryStats navStats;
 };

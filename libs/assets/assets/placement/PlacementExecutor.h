@@ -201,14 +201,19 @@ namespace assets {
 		///         is erased, so a following getResourceCount() returns nullopt (= depleted).
 		uint32_t decrementResourceCount(world::ChunkCoordinate coord, glm::vec2 position, const std::string& defName, uint32_t requested);
 
-		/// Monotonic counter bumped every time a placed entity is removed from a chunk index
-		/// (a destructive harvest felling a tree, a depleted resource node). The nav mesh
-		/// gathers its flora obstacle rings from the LIVE chunk indices, so a removal must
-		/// force the covering region to rebuild -- otherwise the felled tree's trunk hole
-		/// lingers in the mesh and that tile never becomes walkable. NavigationSystem folds
-		/// this epoch into its rebuild gate; chunk membership and the construction version
-		/// alone don't see an in-chunk entity removal.
-		[[nodiscard]] uint64_t removalEpoch() const { return m_removalEpoch; }
+		/// One entity removeEntity took out of a chunk index, by the identity removeEntity takes.
+		struct RemovedEntity {
+			world::ChunkCoordinate coord;
+			glm::vec2			   position;
+			std::string			   defName;
+		};
+
+		/// Every entity removed so far (a destructive harvest felling a tree, a depleted
+		/// resource node), oldest first. The nav mesh holds a ring per blocking entity and
+		/// takes out just the removed ones, reading the entries past the count it has seen;
+		/// chunk membership alone doesn't show an in-chunk removal. Never shrinks: one entry
+		/// per felled tree or emptied node over a session.
+		[[nodiscard]] const std::vector<RemovedEntity>& removals() const { return m_removals; }
 
 		/// Get spawn order (for debugging/testing)
 		[[nodiscard]] const std::vector<std::string>& getSpawnOrder() const { return m_spawnOrder; }
@@ -228,8 +233,7 @@ namespace assets {
 		// Per-chunk spatial indices
 		std::unordered_map<world::ChunkCoordinate, SpatialIndex> m_chunkIndices;
 
-		// Bumped on every successful entity removal; see removalEpoch().
-		uint64_t m_removalEpoch = 0;
+		std::vector<RemovedEntity> m_removals;
 
 		/// Entity cooldown key - uniquely identifies an entity for cooldown tracking
 		/// Uses quantized position (integer tile coordinates) for reliable hashing

@@ -500,6 +500,34 @@ namespace {
 		runFirstBuild(state, tiledControl(state.range(0)));
 	}
 
+	// A chunk's ground as the game adds it: one 512 m bounds square, sides split to 16 m,
+	// with realRings' water tiled 4 x 4 over it, in one patch (structural only, no trees).
+	void BM_PatchChunkGround(benchmark::State& state) {
+		namespace td = geometry::nav::testdata;
+		Vec2i64 lo;
+		Vec2i64 hi;
+		boxOf(td::realBorderRing(), lo, hi);
+		const std::int64_t			 side = hi.x - lo.x;
+		std::vector<NavInputPolygon> ground{NavInputPolygon{rect(lo.x, lo.y, lo.x + 4 * side, lo.y + 4 * side), false, kProvenanceBorder}};
+		std::size_t					 waterVerts = 0;
+		for (std::int64_t j = 0; j < 4; ++j) {
+			for (std::int64_t i = 0; i < 4; ++i) {
+				ground.push_back(NavInputPolygon{translated(td::realWaterRing(), {i * side, j * side}), true, kProvenanceWater, kNoOpening, true});
+				waterVerts += ground.back().ring.size();
+			}
+		}
+		const PatchEdits edits = adding(ground);
+		std::size_t		 tris  = 0;
+		for (auto _ : state) {
+			PatchableMesh mesh({.maxBoundsEdgeMm = 16000});
+			timedPatch(state, mesh, edits);
+			tris = static_cast<std::size_t>(mesh.liveTriangleCount());
+		}
+		state.counters["sideM"]		 = static_cast<double>(4 * side) / 1000.0;
+		state.counters["waterVerts"] = static_cast<double>(waterVerts);
+		state.counters["tris"]		 = static_cast<double>(tris);
+	}
+
 	// --- Point location -------------------------------------------------------------
 
 	std::vector<Vec2i64> randomPoints(const Rings& rings, std::size_t n) {
@@ -649,6 +677,7 @@ BENCHMARK_CAPTURE(BM_PatchFirstBuild, manyTrees, Fixture::ManyTrees)->UseManualT
 BENCHMARK_CAPTURE(BM_PatchFirstBuild, control, Fixture::Control)->UseManualTime()->Unit(benchmark::kMillisecond);
 BENCHMARK_CAPTURE(BM_PatchFirstBuild, realRings, Fixture::RealRings)->UseManualTime()->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_PatchFirstBuildTiled)->Arg(2)->Arg(4)->UseManualTime()->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_PatchChunkGround)->UseManualTime()->Unit(benchmark::kMillisecond);
 
 BENCHMARK_CAPTURE(BM_LocatePatchable, manyTrees, Fixture::ManyTrees)->Unit(benchmark::kMicrosecond);
 BENCHMARK_CAPTURE(BM_LocatePatchable, control, Fixture::Control)->Unit(benchmark::kMicrosecond);

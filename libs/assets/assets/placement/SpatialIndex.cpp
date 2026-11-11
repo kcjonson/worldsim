@@ -13,36 +13,37 @@ namespace assets {
 		++m_entityCount;
 	}
 
-	bool SpatialIndex::remove(glm::vec2 position, const std::string& defName) {
-		int64_t key = getCellKey(position);
-		auto	cellIt = m_cells.find(key);
+	const PlacedEntity* SpatialIndex::find(glm::vec2 position, const std::string& defName) const {
+		const auto cellIt = m_cells.find(getCellKey(position));
 		if (cellIt == m_cells.end()) {
-			return false;
+			return nullptr;
 		}
-
-		auto& entities = cellIt->second;
 		// Small tolerance for floating point comparison
 		constexpr float kEpsilon = 0.001F;
-
-		for (auto it = entities.begin(); it != entities.end(); ++it) {
-			// Match by defName and approximate position
-			if (it->defName == defName) {
-				glm::vec2 diff = it->position - position;
-				float	  distSq = diff.x * diff.x + diff.y * diff.y;
-				if (distSq < kEpsilon * kEpsilon) {
-					entities.erase(it);
-					--m_entityCount;
-
-					// Remove empty cell to keep map clean
-					if (entities.empty()) {
-						m_cells.erase(cellIt);
-					}
-					return true;
-				}
+		for (const PlacedEntity& entity : cellIt->second) {
+			const glm::vec2 diff = entity.position - position;
+			if (entity.defName == defName && diff.x * diff.x + diff.y * diff.y < kEpsilon * kEpsilon) {
+				return &entity;
 			}
 		}
+		return nullptr;
+	}
 
-		return false;
+	bool SpatialIndex::remove(glm::vec2 position, const std::string& defName) {
+		const PlacedEntity* found = find(position, defName);
+		if (found == nullptr) {
+			return false;
+		}
+		const auto cellIt	= m_cells.find(getCellKey(position));
+		auto&	   entities = cellIt->second;
+		entities.erase(entities.begin() + (found - entities.data()));
+		--m_entityCount;
+
+		// Remove empty cell to keep map clean
+		if (entities.empty()) {
+			m_cells.erase(cellIt);
+		}
+		return true;
 	}
 
 	void SpatialIndex::clear() {

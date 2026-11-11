@@ -3,14 +3,10 @@
 #include "NavCoords.h"
 
 #include "construction/OpeningGeometry.h"
-#include "world/chunk/Chunk.h"
 
-#include <contour/ClipRing.h>
-#include <core/IntegerDivision.h>
 #include <core/Vec2i64.h>
 #include <offset/WallOffset.h>
 #include <polygon/Polygon.h>
-#include <utils/WorldHash.h>
 
 #include <algorithm>
 #include <cmath>
@@ -28,87 +24,20 @@ namespace nav {
 		constexpr std::int64_t kTileMm	= geometry::kMillimetersPerMeter; // 1 tile == 1 m == 1000 mm
 		constexpr std::int64_t kChunkMm = static_cast<std::int64_t>(world::kChunkSize) * kTileMm;
 
-		std::int32_t floorDivChunk(std::int64_t mm) {
-			return static_cast<std::int32_t>(geometry::floorDiv(mm, kChunkMm));
-		}
-
-		// The part of `ring` inside `area`. Most rings of a 512 m chunk miss a sim
-		// area entirely or sit wholly inside it, so the bounding box settles those
-		// without walking the clip.
-		std::vector<geometry::Ring> clipToArea(const geometry::Ring& ring, const geometry::RectMm& area) {
-			geometry::Vec2i64 lo = ring.front();
-			geometry::Vec2i64 hi = ring.front();
-			for (const geometry::Vec2i64& p : ring) {
-				lo = {std::min(lo.x, p.x), std::min(lo.y, p.y)};
-				hi = {std::max(hi.x, p.x), std::max(hi.y, p.y)};
-			}
-			if (hi.x <= area.min.x || lo.x >= area.max.x || hi.y <= area.min.y || lo.y >= area.max.y) {
-				return {};
-			}
-			if (lo.x >= area.min.x && hi.x <= area.max.x && lo.y >= area.min.y && hi.y <= area.max.y) {
-				return {ring};
-			}
-			return geometry::clipRingToRect(ring, area);
-		}
-
 	} // namespace
 
-	AreaChunkRange areaChunkRange(geometry::Vec2i64 areaCenterMm, std::int64_t areaRadiusMm) {
-		return {
-			{floorDivChunk(areaCenterMm.x - areaRadiusMm - kTileMm), floorDivChunk(areaCenterMm.y - areaRadiusMm - kTileMm)},
-			{floorDivChunk(areaCenterMm.x + areaRadiusMm + kTileMm), floorDivChunk(areaCenterMm.y + areaRadiusMm + kTileMm)},
-		};
+	gnav::NavInputPolygon chunkSquare(world::ChunkCoordinate coord) {
+		const geometry::Vec2i64 lo{static_cast<std::int64_t>(coord.x) * kChunkMm, static_cast<std::int64_t>(coord.y) * kChunkMm};
+		return borderRing(lo, {lo.x + kChunkMm, lo.y + kChunkMm});
 	}
 
-	TerrainPolygonsLookup readyTerrainPolygons(const world::ChunkManager& chunks) {
-		return [&chunks](world::ChunkCoordinate coord) -> const world::ChunkTerrainPolygons* {
-			const world::Chunk* chunk = chunks.getChunk(coord);
-			return (chunk != nullptr && chunk->isReady()) ? &chunk->terrainPolygons() : nullptr;
-		};
-	}
-
-	void appendWaterObstacles(geometry::Vec2i64 areaCenterMm, std::int64_t areaRadiusMm, const TerrainPolygonsLookup& polygonsOf,
-							  std::vector<gnav::NavInputPolygon>& out) {
-		if (areaRadiusMm <= 0) {
-			return;
-		}
-		// navRings end at their chunk square, so a ring can reach far past the area.
-		// Clipping to the area keeps the arrangement's input proportional to the
-		// area; the clip lands its crossings exactly on the border ring's edges.
-		const geometry::RectMm area{{areaCenterMm.x - areaRadiusMm, areaCenterMm.y - areaRadiusMm},
-									{areaCenterMm.x + areaRadiusMm, areaCenterMm.y + areaRadiusMm}};
-		const AreaChunkRange   range = areaChunkRange(areaCenterMm, areaRadiusMm);
-		for (std::int32_t cy = range.min.y; cy <= range.max.y; ++cy) {
-			for (std::int32_t cx = range.min.x; cx <= range.max.x; ++cx) {
-				const world::ChunkTerrainPolygons* polygons = polygonsOf({cx, cy});
-				if (polygons == nullptr) {
-					continue;
-				}
-				for (const world::TerrainRing& terrain : polygons->navRings) {
-					if (!terrain.blocksMovement || terrain.ring.size() < 3) {
-						continue;
-					}
-					for (geometry::Ring& piece : clipToArea(terrain.ring, area)) {
-						out.push_back({std::move(piece), true, kProvenanceWater, gnav::kNoOpening, terrain.holeCapable});
-					}
-				}
+	void appendChunkWater(const world::ChunkTerrainPolygons& polygons, std::vector<gnav::NavInputPolygon>& out) {
+		for (const world::TerrainRing& terrain : polygons.navRings) {
+			if (!terrain.blocksMovement || terrain.ring.size() < 3) {
+				continue;
 			}
+			out.push_back({terrain.ring, true, kProvenanceWater, gnav::kNoOpening, terrain.holeCapable});
 		}
-	}
-
-	std::uint64_t waterSignature(geometry::Vec2i64 areaCenterMm, std::int64_t areaRadiusMm, const TerrainPolygonsLookup& polygonsOf) {
-		const AreaChunkRange range = areaChunkRange(areaCenterMm, areaRadiusMm);
-		std::uint64_t		 sig   = foundation::kFnvOffset;
-		for (std::int32_t cy = range.min.y; cy <= range.max.y; ++cy) {
-			for (std::int32_t cx = range.min.x; cx <= range.max.x; ++cx) {
-				const world::ChunkTerrainPolygons* polygons = polygonsOf({cx, cy});
-				const std::uint64_t				   coord	= (static_cast<std::uint64_t>(static_cast<std::uint32_t>(cx)) << 32U) |
-												  static_cast<std::uint64_t>(static_cast<std::uint32_t>(cy));
-				sig = foundation::hashCombine(sig, coord);
-				sig = foundation::hashCombine(sig, polygons != nullptr ? polygons->version : 0U);
-			}
-		}
-		return sig;
 	}
 
 	std::optional<gnav::NavInputPolygon> floraRingFor(const assets::PlacedEntity& e, const assets::AssetRegistry& registry) {
@@ -162,20 +91,6 @@ namespace nav {
 			return std::nullopt;
 		}
 		return gnav::NavInputPolygon{std::move(ring), true, kProvenanceTree};
-	}
-
-	std::vector<gnav::NavInputPolygon> extractFloraObstacles(const assets::SpatialIndex& index, const assets::AssetRegistry& registry) {
-		std::vector<gnav::NavInputPolygon> out;
-
-		// allEntities() returns copies; iterate in its stable order for determinism.
-		std::vector<assets::PlacedEntity> entities = index.allEntities();
-		for (const assets::PlacedEntity& e : entities) {
-			std::optional<gnav::NavInputPolygon> poly = floraRingFor(e, registry);
-			if (poly.has_value()) {
-				out.push_back(std::move(*poly));
-			}
-		}
-		return out;
 	}
 
 	void extractWalls(const construction::ConstructionWorld& world, const assets::ConstructionRegistry& registry,
@@ -385,97 +300,6 @@ namespace nav {
 		};
 		geometry::ensureCounterClockwise(ring);
 		return {std::move(ring), false, kProvenanceBorder};
-	}
-
-	namespace {
-
-		// True when every vertex of `ring` lies strictly outside the AABB on the SAME
-		// side (all left of minMm.x, or all right of maxMm.x, or all below, or all
-		// above). That is a sufficient (not exact) separation test: a ring crossing a
-		// corner without any vertex inside still has vertices on both sides of an axis,
-		// so it is kept. Cheap and never drops a ring that touches the area.
-		bool ringEntirelyOutside(const geometry::Ring& ring, geometry::Vec2i64 minMm, geometry::Vec2i64 maxMm) {
-			bool allLeft  = true;
-			bool allRight = true;
-			bool allBelow = true;
-			bool allAbove = true;
-			for (const geometry::Vec2i64& p : ring) {
-				allLeft	 = allLeft && (p.x < minMm.x);
-				allRight = allRight && (p.x > maxMm.x);
-				allBelow = allBelow && (p.y < minMm.y);
-				allAbove = allAbove && (p.y > maxMm.y);
-			}
-			return allLeft || allRight || allBelow || allAbove;
-		}
-
-	} // namespace
-
-	gnav::NavMeshInput buildInput(geometry::Vec2i64 areaCenterMm, std::int64_t areaRadiusMm, world::ChunkManager& chunks,
-								  const assets::PlacementExecutor& placement, const assets::AssetRegistry& assetReg,
-								  const construction::ConstructionWorld& world, const assets::ConstructionRegistry& cfg, bool includeFlora) {
-		gnav::NavMeshInput input;
-
-		const geometry::Vec2i64 minMm{areaCenterMm.x - areaRadiusMm, areaCenterMm.y - areaRadiusMm};
-		const geometry::Vec2i64 maxMm{areaCenterMm.x + areaRadiusMm, areaCenterMm.y + areaRadiusMm};
-
-		// 1) Border: the one unblocked rectangle covering the whole area.
-		input.polygons.push_back(borderRing(minMm, maxMm));
-
-		// 2) Water: the ready chunks' blocking terrain rings, clipped to the area.
-		appendWaterObstacles(areaCenterMm, areaRadiusMm, readyTerrainPolygons(chunks), input.polygons);
-
-		// 3) Flora (entities): the clearable tree/rock obstacles. Skipped when includeFlora is
-		// false (the terrain-only placement mesh) so they don't read as off-mesh holes there.
-		// Only the chunks overlapping the area AABB are visited, and within each only the entities
-		// queryRect returns for the area's tile bounds -- never allEntities(). Chunks are visited
-		// in (x,y) order and the per-chunk entities sorted by (position, defName) so the emission
-		// order is stable regardless of queryRect's layout.
-		if (includeFlora) {
-			const AreaChunkRange range		  = areaChunkRange(areaCenterMm, areaRadiusMm);
-			const float			 areaTileMinX = static_cast<float>(minMm.x) / static_cast<float>(kTileMm);
-			const float			 areaTileMinY = static_cast<float>(minMm.y) / static_cast<float>(kTileMm);
-			const float			 areaTileMaxX = static_cast<float>(maxMm.x) / static_cast<float>(kTileMm);
-			const float			 areaTileMaxY = static_cast<float>(maxMm.y) / static_cast<float>(kTileMm);
-			for (std::int32_t cy = range.min.y; cy <= range.max.y; ++cy) {
-				for (std::int32_t cx = range.min.x; cx <= range.max.x; ++cx) {
-					const assets::SpatialIndex* index = placement.getChunkIndex({cx, cy});
-					if (index == nullptr) {
-						continue;
-					}
-					std::vector<const assets::PlacedEntity*> hits =
-						index->queryRect(areaTileMinX, areaTileMinY, areaTileMaxX, areaTileMaxY);
-					std::sort(hits.begin(), hits.end(), [](const assets::PlacedEntity* l, const assets::PlacedEntity* r) {
-						if (l->position.x != r->position.x) {
-							return l->position.x < r->position.x;
-						}
-						if (l->position.y != r->position.y) {
-							return l->position.y < r->position.y;
-						}
-						return l->defName < r->defName;
-					});
-					for (const assets::PlacedEntity* e : hits) {
-						std::optional<gnav::NavInputPolygon> poly = floraRingFor(*e, assetReg);
-						if (poly.has_value()) {
-							input.polygons.push_back(std::move(*poly));
-						}
-					}
-				}
-			}
-		}
-
-		// 4) Walls: extract over the whole construction world, then drop bands/junctions
-		// whose ring is entirely outside the area AABB. Door portals are kept as-is: the
-		// later vision pass needs every opening it can see, and the portal list is small.
-		std::vector<gnav::NavInputPolygon> wallPolys;
-		extractWalls(world, cfg, wallPolys, input.doors);
-		for (gnav::NavInputPolygon& p : wallPolys) {
-			if (ringEntirelyOutside(p.ring, minMm, maxMm)) {
-				continue;
-			}
-			input.polygons.push_back(std::move(p));
-		}
-
-		return input;
 	}
 
 } // namespace nav

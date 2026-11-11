@@ -1,32 +1,27 @@
 #pragma once
 
-// NavInputBuilder: turn live game data (the chunks' terrain water rings, blocking
-// flora, built walls and doors) into the geometry layer's navmesh input
-// (geometry::nav::NavMeshInput). These are PURE functions: they read game state
-// and emit tagged rings/portals in integer millimeters, no ECS, no async, no
-// caching (NavigationSystem caches and rebuilds against version counters). The
-// meters<->mm boundary is crossed only via NavCoords.h.
+// NavInputBuilder: turn live game data (a chunk's square and terrain water rings, a placed
+// entity's collider, built walls and doors) into the tagged rings and door portals the
+// geometry layer's nav meshes take (geometry::nav::NavInputPolygon, DoorPortal). These are
+// PURE functions: they read game state and emit rings in integer millimeters, no ECS, no
+// caching (NavigationSystem keeps the meshes and patches them). The meters<->mm boundary is
+// crossed only via NavCoords.h.
 //
-// A NavMeshInput needs at least one unblocked polygon (the walkable border) plus
-// the blocked obstacle rings. Provenance ids tag each obstacle's origin so a later
-// pass can attribute a triangle edge to its source: negative sentinels for the
-// engine-synthesized obstacles (water/tree/border/junction), positive +segmentId
-// for wall bands.
+// Provenance ids tag each obstacle's origin so a triangle edge can be attributed to its
+// source: negative sentinels for the engine-synthesized obstacles (water/tree/border/junction),
+// positive +segmentId for wall bands.
 
 #include "world/chunk/ChunkCoordinate.h"
-#include "world/chunk/ChunkManager.h"
 #include "world/chunk/TerrainPolygons.h"
 
 #include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
-#include <assets/placement/PlacementExecutor.h>
 #include <assets/placement/SpatialIndex.h>
 #include <construction/ConstructionWorld.h>
 
 #include <nav/NavMesh.h>
 
 #include <cstdint>
-#include <functional>
 #include <optional>
 #include <vector>
 
@@ -44,45 +39,20 @@ namespace nav {
 	// small inflation keeps the agent clear of the trunk rather than grazing it.
 	constexpr std::int64_t kFloraColliderPadMm = 50;
 
-	// --- Water -------------------------------------------------------------------
+	// --- Ground ------------------------------------------------------------------
 	//
-	// Water is the chunks' terrain polygon rings (terrain-polygons D1, D9), never
-	// tiles: each chunk's navRings, already clipped to its 512 m square, so two
-	// chunks meet along bit-identical border edges.
+	// A chunk's ground is its square (the walkable bounds ring) and its water. Water is the
+	// chunk's terrain polygon navRings, never tiles (terrain-polygons D1, D9), already clipped
+	// to the chunk's 512 m square, so two neighbours' water meets along bit-identical border
+	// edges and never overlaps.
 
-	// The chunks a nav area reads, inclusive on both corners: every chunk whose
-	// square meets the area rect [center - r, center + r] grown by one tile. The
-	// water gather and NavigationSystem's rebuild signature both walk exactly this
-	// range, so they can't disagree about which chunks matter.
-	struct AreaChunkRange {
-		world::ChunkCoordinate min;
-		world::ChunkCoordinate max;
-	};
-	[[nodiscard]] AreaChunkRange areaChunkRange(geometry::Vec2i64 areaCenterMm, std::int64_t areaRadiusMm);
+	// The chunk's square: a CCW ring, blocked=false, provenance=kProvenanceBorder.
+	[[nodiscard]] geometry::nav::NavInputPolygon chunkSquare(world::ChunkCoordinate coord);
 
-	// A chunk's terrain polygons, or null when the chunk is missing or not ready
-	// (it then reads as land and contributes nothing).
-	using TerrainPolygonsLookup = std::function<const world::ChunkTerrainPolygons*(world::ChunkCoordinate)>;
-
-	// The lookup over a live ChunkManager: ready chunks only, since a chunk still
-	// generating is writing its polygons on the worker.
-	[[nodiscard]] TerrainPolygonsLookup readyTerrainPolygons(const world::ChunkManager& chunks);
-
-	// Appends the water obstacles for the area: every navRing with blocksMovement
-	// of every chunk in areaChunkRange, clipped to the area rect (orientation kept,
-	// so a Waterline island stays a CW hole), as blocked NavInputPolygons with
-	// kProvenanceWater and the ring's holeCapable. Fordable channel pieces
-	// (blocksMovement false) are skipped. Chunks are visited in (y, x) order and
-	// rings in stored order, so the output is deterministic.
-	void appendWaterObstacles(geometry::Vec2i64 areaCenterMm, std::int64_t areaRadiusMm, const TerrainPolygonsLookup& polygonsOf,
-							  std::vector<geometry::nav::NavInputPolygon>& out);
-
-	// Hash of every (chunk coordinate, terrain polygon version) pair over
-	// areaChunkRange, a missing or not-ready chunk folding in version 0. Folded,
-	// not maxed: one chunk already at version 2 can't mask another moving 1 -> 2.
-	// Any chunk rebuild or readiness change in the area changes it.
-	[[nodiscard]] std::uint64_t waterSignature(geometry::Vec2i64 areaCenterMm, std::int64_t areaRadiusMm,
-											   const TerrainPolygonsLookup& polygonsOf);
+	// Appends every navRing with blocksMovement as a blocked ring with kProvenanceWater and
+	// the ring's holeCapable, orientation kept (a Waterline island stays a CW hole), in
+	// stored order. Fordable channel pieces (blocksMovement false) are skipped.
+	void appendChunkWater(const world::ChunkTerrainPolygons& polygons, std::vector<geometry::nav::NavInputPolygon>& out);
 
 	// --- Flora -------------------------------------------------------------------
 
@@ -90,18 +60,9 @@ namespace nav {
 	// blocking collision shape, transformed into world mm by the entity's position
 	// (tiles), rotation, and scale. Rect -> a padded oriented quad; Polygon -> its
 	// points transformed. Returns nullopt when the entity has no blocking collision
-	// (most flora) or the resulting ring is degenerate. This is the single per-entity
-	// code path shared by both the legacy index sweep and the area-scoped build, so
-	// rounding/winding/pad stay identical between them.
+	// (most flora) or the resulting ring is degenerate.
 	[[nodiscard]] std::optional<geometry::nav::NavInputPolygon>
 	floraRingFor(const assets::PlacedEntity& entity, const assets::AssetRegistry& registry);
-
-	// One blocked ring per placed entity whose AssetDefinition has a blocking
-	// collision shape, transformed into world mm by the entity's position (tiles),
-	// rotation, and scale. Rect -> a padded oriented quad; Polygon -> its points
-	// transformed. Entities with no collision shape (most flora) emit nothing.
-	[[nodiscard]] std::vector<geometry::nav::NavInputPolygon>
-	extractFloraObstacles(const assets::SpatialIndex& index, const assets::AssetRegistry& registry);
 
 	// --- Walls / doors -----------------------------------------------------------
 
@@ -120,37 +81,7 @@ namespace nav {
 	// --- Border ------------------------------------------------------------------
 
 	// The walkable bounds: a CCW rectangle ring [minMm, maxMm], blocked=false,
-	// provenance=kProvenanceBorder. The one unblocked polygon every NavMeshInput
-	// needs.
+	// provenance=kProvenanceBorder.
 	[[nodiscard]] geometry::nav::NavInputPolygon borderRing(geometry::Vec2i64 minMm, geometry::Vec2i64 maxMm);
-
-	// --- Assembler ---------------------------------------------------------------
-
-	// Area-scoped assembler: build a NavMeshInput for the square AABB centered at
-	// `areaCenterMm` with half-extent `areaRadiusMm` (both world-absolute mm). Unlike
-	// the chunk-set overload this ingests ONLY the obstacles touching the area, so the
-	// triangulation cost is bounded by area size, not by the loaded region (a forested
-	// world has tens of thousands of trees loaded but only ~1-2k inside a 120 m box).
-	//
-	// Emission order is fixed for determinism (two builds of an unchanged world are
-	// byte-identical): border, then water, then flora, then walls.
-	//  - Border: the single unblocked rectangle [center-r, center+r].
-	//  - Water: appendWaterObstacles over the ready chunks (missing/not-ready
-	//    chunks read as land).
-	//  - Flora: only the chunks overlapping the area AABB are visited, and within each
-	//    only entities returned by queryRect over the area's tile bounds; chunks are
-	//    visited in (x,y) order and the per-chunk entities are sorted by (position,
-	//    defName) so the order is stable regardless of queryRect's internal layout.
-	//  - Walls: extractWalls over the whole construction world, then rings entirely
-	//    outside the area AABB are dropped (door portals touching the area are kept).
-	//
-	// `includeFlora` gates ONLY the flora step. Pass false to build a geography-and-structures
-	// mesh (border, water, walls) with no tree/rock entity obstacles -- the terrain-only mesh
-	// placement validation runs against, so a footprint over clearable entities (which become
-	// clear tasks) still reads as buildable while water and off-mesh gaps block.
-	[[nodiscard]] geometry::nav::NavMeshInput buildInput(geometry::Vec2i64 areaCenterMm, std::int64_t areaRadiusMm,
-														 world::ChunkManager& chunks, const assets::PlacementExecutor& placement,
-														 const assets::AssetRegistry& assetReg, const construction::ConstructionWorld& world,
-														 const assets::ConstructionRegistry& cfg, bool includeFlora = true);
 
 } // namespace nav

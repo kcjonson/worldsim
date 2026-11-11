@@ -857,12 +857,9 @@ namespace {
 			ecsWorld->getSystem<ecs::NavigationSystem>().appendMoverPositions(anchorPositions);
 			m_chunkManager->update(m_camera->position(), anchorPositions);
 
-			// Feed the viewport rect to NavigationSystem as PLAIN DATA -- the scene no
-			// longer drives the navmesh. NavigationSystem owns the sim area: it tracks the
-			// colonists plus this viewport, clusters them into regions, and self-gates the
-			// rebuilds off the render clock. The visible rect (expanded by kViewportMargin
-			// for scroll/zoom headroom) is the camera's contribution; the system clamps the
-			// half-extents and decides internally when a region needs (re)building.
+			// Feed the viewport rect to NavigationSystem as plain data: it asks for flora
+			// detail there, as each colonist does around itself. The visible rect is expanded
+			// by kViewportMargin for scroll/zoom headroom; the system clamps the half-extents.
 			{
 				int vpW = 0;
 				int vpH = 0;
@@ -1467,16 +1464,16 @@ namespace {
 		static constexpr float kSpawnClearance = 0.3F;
 
 		/// Turn the raw drop point into guaranteed-clear, on-mesh spawns for a crew of `crewSize`:
-		///  1. pick the points on the terrain-only nav mesh (the chunks' water rings, no entities):
+		///  1. pick the points on the structural nav mesh (the chunks' water rings, no entities):
 		///     the clearing center is the nearest spot to the drop whose whole party ring stands on
 		///     clear ground, so the ring never straddles a shore, and each member's point is clear
 		///     ground of its own, kPartyMinSeparation from the others;
 		///  2. clear the placed entities (trees/rocks) within kLandingClearRadius of every point so
 		///     nothing is triangulated as an obstacle on top of a colonist.
-		/// Runs at ECS init, BEFORE the first sim-region build, so the removed obstacles never enter
-		/// the mesh input and the crew drops onto open ground.
+		/// Runs at ECS init, before any flora enters the nav mesh, so the removed obstacles never
+		/// do and the crew drops onto open ground.
 		[[nodiscard]] ecs::NavigationSystem::GroupSpawn
-		prepareLandingClearing(glm::vec2 rawSpawn, size_t crewSize, const ecs::NavigationSystem& navSystem) {
+		prepareLandingClearing(glm::vec2 rawSpawn, size_t crewSize, ecs::NavigationSystem& navSystem) {
 			ecs::NavigationSystem::GroupSpawn landing =
 				navSystem.groupSpawnPoints(rawSpawn, crewSize, kPartyRingRadius, kPartyMinSeparation, kSpawnClearance);
 			if (landing.center != rawSpawn) {

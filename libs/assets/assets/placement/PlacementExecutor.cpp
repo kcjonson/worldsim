@@ -672,23 +672,25 @@ namespace assets {
 			return false;
 		}
 
-		bool removed = it->second.remove(position, defName);
-		if (removed) {
-			// A removed flora obstacle changes the nav obstacle set: bump the epoch so the
-			// NavigationSystem rebuilds the covering region and reclaims the trunk hole as
-			// walkable ground.
-			++m_removalEpoch;
-			LOG_DEBUG(
-				Engine,
-				"PlacementExecutor: Removed entity %s at (%.1f, %.1f) in chunk (%d, %d)",
-				defName.c_str(),
-				position.x,
-				position.y,
-				coord.x,
-				coord.y
-			);
+		const PlacedEntity* found = it->second.find(position, defName);
+		if (found == nullptr) {
+			return false;
 		}
-		return removed;
+		// The log records the stored position: the match allows 1 mm of slack, and the entry is
+		// how the nav mesh finds the entity's ring.
+		const glm::vec2 stored = found->position;
+		it->second.remove(stored, defName);
+		m_removals.push_back({coord, stored, defName});
+		LOG_DEBUG(
+			Engine,
+			"PlacementExecutor: Removed entity %s at (%.1f, %.1f) in chunk (%d, %d)",
+			defName.c_str(),
+			position.x,
+			position.y,
+			coord.x,
+			coord.y
+		);
+		return true;
 	}
 
 	void PlacementExecutor::setEntityCooldown(world::ChunkCoordinate coord, glm::vec2 position,
