@@ -101,7 +101,7 @@ namespace ecs {
 
 		if (remaining > 0) {
 			if (drop) {
-				drop(defName, position.x, position.y, remaining);
+				drop(defName, position.x, position.y, remaining, position);
 			} else {
 				LOG_WARNING(Engine, "[Action] Cannot drop %u x %s - drop callback not configured (lost)", remaining, defName.c_str());
 			}

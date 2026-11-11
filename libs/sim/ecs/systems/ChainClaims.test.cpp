@@ -508,7 +508,7 @@ namespace ecs::test {
 	// does: he does not pick berries with his arms full of wood.
 	TEST_F(ChainClaimsTest, AnArmfulNobodyWantsIsPutDownToGatherFood) {
 		uint32_t dropped = 0;
-		ai->setDropResourceCallback([&](const std::string&, float, float, uint32_t quantity) { dropped += quantity; });
+		ai->setDropResourceCallback([&](const std::string&, float, float, uint32_t quantity, glm::vec2) { dropped += quantity; });
 		const EntityID colonist = createColonist({0.0F, 0.0F});
 		remember(colonist, {4.0F, 0.0F}, "BerryBush", assets::CapabilityType::Harvestable);
 		auto& inventory = *world->getComponent<Inventory>(colonist);
@@ -528,7 +528,7 @@ namespace ecs::test {
 	TEST_F(ChainClaimsTest, FurnitureWhosePlacementIsCancelledIsSetDownPackaged) {
 		registerItem("Shelf", 2, 12.0F);
 		uint32_t loosePiles = 0;
-		ai->setDropResourceCallback([&](const std::string&, float, float, uint32_t quantity) { loosePiles += quantity; });
+		ai->setDropResourceCallback([&](const std::string&, float, float, uint32_t quantity, glm::vec2) { loosePiles += quantity; });
 		const glm::vec2 itemPos{3.0F, 0.0F};
 		const EntityID	shelf = world->createEntity();
 		world->addComponent<Position>(shelf, Position{itemPos});
@@ -558,6 +558,65 @@ namespace ecs::test {
 		decide(colonist);
 		ASSERT_EQ(getTask(colonist)->type, TaskType::PlacePackaged);
 		EXPECT_EQ(getTask(colonist)->placeSourcePosition, stoodAt) << "picked up where it was set down";
+	}
+
+	// Furniture set down where a site will be built goes to the nearest valid ground off every site
+	// instead, by the loose-drop rule the world answers with.
+	TEST_F(ChainClaimsTest, FurnitureSetDownOnASiteGoesToGroundOffIt) {
+		registerItem("Shelf", 2, 12.0F);
+		const FootprintBounds site{{4.0F, 0.0F}, {7.0F, 3.0F}};
+		const auto			  onSite = [site](glm::vec2 p) { return site.contains(p); };
+		const auto			  isGround = [](glm::vec2 p) { return p.x < 9.0F; };
+		ai->setSetDownSpotCallback([&](glm::vec2 at) {
+			return resourcePileDrops(1, 1, at, 0.6F, {}, isGround, onSite).spawns.front().first;
+		});
+		const glm::vec2 itemPos{3.0F, 0.0F};
+		const EntityID	shelf = world->createEntity();
+		world->addComponent<Position>(shelf, Position{itemPos});
+		world->addComponent<Appearance>(shelf, Appearance{"Shelf", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+		world->addComponent<Packaged>(shelf, Packaged{.targetPosition = glm::vec2{8.0F, 0.0F}});
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		decide(colonist);
+		act(colonist, itemPos);
+		ASSERT_EQ(world->getComponent<Inventory>(colonist)->carryingPackagedEntity, static_cast<uint64_t>(shelf));
+
+		const glm::vec2 stoodAt{5.0F, 1.0F};
+		ASSERT_TRUE(onSite(stoodAt));
+		world->getComponent<Position>(colonist)->value = stoodAt;
+		world->getComponent<Packaged>(shelf)->targetPosition.reset();
+		decide(colonist);
+		ASSERT_FALSE(world->getComponent<Packaged>(shelf)->beingCarried);
+		const glm::vec2 setDown = world->getComponent<Position>(shelf)->value;
+		EXPECT_FALSE(onSite(setDown)) << "set down at (" << setDown.x << ", " << setDown.y << ")";
+		EXPECT_TRUE(isGround(setDown));
+	}
+
+	// A colonist who picks the placement again while still holding the furniture (after a need kept it
+	// in hand, a release from control) heads straight for the spot, not back to where he picked it up.
+	TEST_F(ChainClaimsTest, ReselectingAPlacementWhileCarryingGoesStraightToTheSpot) {
+		registerItem("Shelf", 2, 12.0F);
+		const glm::vec2 itemPos{3.0F, 0.0F};
+		const glm::vec2 spot{8.0F, 0.0F};
+		const EntityID	shelf = world->createEntity();
+		world->addComponent<Position>(shelf, Position{itemPos});
+		world->addComponent<Appearance>(shelf, Appearance{"Shelf", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+		world->addComponent<Packaged>(shelf, Packaged{.targetPosition = spot});
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		decide(colonist);
+		act(colonist, itemPos);
+		ASSERT_EQ(world->getComponent<Inventory>(colonist)->carryingPackagedEntity, static_cast<uint64_t>(shelf));
+
+		getTask(colonist)->clear();
+		world->getComponent<Position>(colonist)->value = {5.0F, 4.0F};
+		decide(colonist);
+		ASSERT_EQ(getTask(colonist)->type, TaskType::PlacePackaged);
+		EXPECT_EQ(getTask(colonist)->targetPosition, spot);
+		EXPECT_EQ(getTask(colonist)->chainStep, 1U);
+		EXPECT_EQ(world->getComponent<MovementTarget>(colonist)->target, spot);
+
+		act(colonist, spot);
+		EXPECT_FALSE(world->hasComponent<Packaged>(shelf)) << "installed at the spot";
+		EXPECT_EQ(world->getComponent<Position>(shelf)->value, spot);
 	}
 
 	// A colonist carrying one packaged item sees another only as an item to go and pick up: held by
@@ -716,7 +775,7 @@ namespace ecs::test {
 		eat.needsHands = true;
 		assets::ActionTypeRegistry::Get().registerTestAction(std::move(eat));
 		int drops = 0;
-		ai->setDropResourceCallback([&](const std::string&, float, float, uint32_t) { ++drops; });
+		ai->setDropResourceCallback([&](const std::string&, float, float, uint32_t, glm::vec2) { ++drops; });
 
 		const glm::vec2 sitePos{0.0F, 6.0F};
 		const Site		site = constructionSite(sitePos, "Wood", 10);
@@ -802,7 +861,7 @@ namespace ecs::test {
 			uint32_t  quantity;
 		};
 		std::vector<Drop> drops;
-		ai->setDropResourceCallback([&](const std::string&, float x, float y, uint32_t quantity) { drops.push_back({{x, y}, quantity}); });
+		ai->setDropResourceCallback([&](const std::string&, float x, float y, uint32_t quantity, glm::vec2) { drops.push_back({{x, y}, quantity}); });
 		const glm::vec2 boxPos{0.0F, 10.0F};
 		const EntityID	box = makeBox(boxPos, StoragePriority::Medium);
 		storageGoal(box, boxPos);
@@ -851,7 +910,7 @@ namespace ecs::test {
 		pickup.needsHands = true;
 		assets::ActionTypeRegistry::Get().registerTestAction(std::move(pickup));
 		uint32_t dropped = 0;
-		ai->setDropResourceCallback([&](const std::string&, float, float, uint32_t quantity) { dropped += quantity; });
+		ai->setDropResourceCallback([&](const std::string&, float, float, uint32_t quantity, glm::vec2) { dropped += quantity; });
 		const glm::vec2 boxPos{0.0F, 10.0F};
 		const EntityID	box = makeBox(boxPos, StoragePriority::Medium);
 		world->getComponent<StorageConfiguration>(box)->addRule(
@@ -963,6 +1022,13 @@ namespace ecs::test {
 		decide(colonist);
 		EXPECT_TRUE(hasWork(umbrella));
 		EXPECT_FALSE(hasWork(furnitureUmbrella)) << "nobody knows any furniture";
+
+		ai->enterControl(colonist);
+		decide(colonist);
+		EXPECT_FALSE(hasWork(umbrella)) << "a controlled colonist is offered nothing";
+		ai->releaseControl(colonist);
+		decide(colonist);
+		EXPECT_TRUE(hasWork(umbrella)) << "offered again once released";
 
 		getTask(colonist)->clear();
 		world->getComponent<StorageConfiguration>(box)->rules.front().maxAmount = 3;
@@ -1446,7 +1512,7 @@ namespace ecs::test {
 	  protected:
 		void SetUp() override {
 			ChainClaimsTest::SetUp();
-			ai->setDropResourceCallback([this](const std::string&, float, float, uint32_t quantity) { dropped += quantity; });
+			ai->setDropResourceCallback([this](const std::string&, float, float, uint32_t quantity, glm::vec2) { dropped += quantity; });
 			gathered = constructionSite({0.0F, 30.0F}, "Wood", 10);
 			colonist = createColonist({0.0F, 0.0F});
 			auto& inventory = *world->getComponent<Inventory>(colonist);
@@ -1564,7 +1630,7 @@ namespace ecs::test {
 			ai->setSourceRegrowthCallback([this](uint32_t, glm::vec2 at, double) {
 				return std::find(cut.begin(), cut.end(), at) != cut.end() ? std::optional<double>{1.0e9} : std::nullopt;
 			});
-			actions->setDropResourceCallback([this](const std::string& defName, float x, float y, uint32_t quantity) {
+			actions->setDropResourceCallback([this](const std::string& defName, float x, float y, uint32_t quantity, glm::vec2) {
 				drops.push_back({assets::AssetRegistry::Get().getDefNameId(defName), {x, y}, quantity});
 			});
 		}

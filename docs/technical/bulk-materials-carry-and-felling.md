@@ -208,9 +208,12 @@ first). Not code — engine touch-points are named so the work is concrete.
   `worldview::pileFootprintRadius` in `PileLayout.h` (the circle around a FULL pile of the item,
   so top-ups never outgrow it) and `kPackagedFootprintRadius` in `PackagedLayout.h` (half the
   crate's diagonal, centered on the crate box). `GameScene::dropResourcePiles` gathers every pile
-  and crate. When the drop origin is on the mesh it passes the nav mesh's `isValidPosition` as
-  the ground test for the first `kWalkableSearchRings` rings, past which clearance alone decides
-  so a drop always lands; an off-mesh origin gets no ground test. `ResourceStack.h` holds only
+  and crate. It always passes the nav mesh's `isValidPosition` as the ground test and every
+  unbuilt footprint as ground to keep: the origin itself must pass (a river bank or a wall band
+  doesn't), the search runs `kWalkableSearchRings` rings around the origin, then as many around
+  the drop's fallback (where the goods came from: the worker for a harvest, a moved pile's old
+  spot), and only past both does clearance alone decide, from the fallback, so a drop where no
+  mesh is loaded still lands. `ResourceStack.h` holds only
   the merge radius, the gap, and the ring count; tuning is deferred. Deterministic, no RNG.
 - Visual: `worldview::pileLayout` (`libs/world-view/world/rendering/PileLayout.h`) draws a pile
   as 1 sprite for a single unit, otherwise ceil(fill x 5) sprites clamped to 2..5 (one per unit

@@ -378,14 +378,15 @@ namespace ecs {
 		/// taskAgeBonus, hysteresisBonus), then composes option.score. skillBonus is set by the
 		/// evaluators. The chain bonus is GONE: a mid-chain provisioning task is tier 4 instead.
 		/// @param world ECS world (to read a stocking haul's destination box priority)
+		/// @param boxes This update's box cache, holding each (box, item)'s priority
 		/// @param option The option to populate (skillBonus already set by its evaluator)
 		/// @param currentTask Current colonist task (for the hysteresis margin)
 		/// @param currentHaulItemId The current task's haul item, interned (0 when not hauling)
 		/// @param currentTime Current game time (for task age calculation)
 		/// @param baseTiers Each task type's base tier
 		void populatePriorityBonuses(
-			World& world, EvaluatedOption& option, const Task& currentTask, uint32_t currentHaulItemId, float currentTime,
-			const AIDecisionSystem::BaseTiers& baseTiers
+			World& world, BoxRoomCache& boxes, const assets::AssetRegistry& registry, EvaluatedOption& option, const Task& currentTask,
+			uint32_t currentHaulItemId, float currentTime, const AIDecisionSystem::BaseTiers& baseTiers
 		) {
 			const auto& priorityConfig = assets::PriorityConfig::Get();
 
@@ -428,16 +429,9 @@ namespace ecs {
 			const uint64_t	destBox = stockedBy != nullptr ? static_cast<uint64_t>(stockedBy->destinationEntity) : option.haulDestinationId;
 			const uint32_t	stockedItem = stockedBy != nullptr ? option.harvestYieldDefNameId : option.haulItemDefNameId;
 			if (option.servesStorageStocking && destBox != 0) {
-				const auto destEntity = static_cast<EntityID>(destBox);
-				const auto* destConfig = world.getComponent<StorageConfiguration>(destEntity);
-				if (destConfig != nullptr) {
-					const auto& reg = assets::AssetRegistry::Get();
-					const auto* itemDef = reg.getDefinitionById(stockedItem);
-					if (itemDef != nullptr) {
-						const StoragePriority destPriority = destConfig->getPriorityFor(itemDef->defName, itemDef->category);
-						const auto rank = static_cast<int16_t>(static_cast<uint8_t>(destPriority)); // 0..3
-						option.storagePriorityBias = static_cast<int16_t>(rank * priorityConfig.getStoragePriorityWeight());
-					}
+				if (const auto destPriority = boxes.priority(world, registry, static_cast<EntityID>(destBox), stockedItem)) {
+					const auto rank = static_cast<int16_t>(static_cast<uint8_t>(*destPriority)); // 0..3
+					option.storagePriorityBias = static_cast<int16_t>(rank * priorityConfig.getStoragePriorityWeight());
 				}
 			}
 
@@ -1351,7 +1345,7 @@ namespace ecs {
 
 	} // namespace
 
-	std::optional<BoxRoomCache::Room> BoxRoomCache::get(World& world, const assets::AssetRegistry& registry, EntityID box, uint32_t item) {
+	BoxRoomCache::Slot& BoxRoomCache::slotFor(EntityID box, uint32_t item) {
 		if ((used + 1) * 2 > slots.size()) {
 			std::vector<Slot> old;
 			old.swap(slots);
@@ -1372,19 +1366,42 @@ namespace ecs {
 		size_t		 index = std::hash<uint64_t>{}((static_cast<uint64_t>(box) * 0x9E3779B97F4A7C15ULL) ^ item) & mask;
 		for (; slots[index].pass == pass; index = (index + 1) & mask) {
 			if (slots[index].box == box && slots[index].item == item) {
-				return slots[index].hasStore ? std::optional<Room>{slots[index].room} : std::nullopt;
+				return slots[index];
 			}
 		}
 		Slot& slot = slots[index];
 		slot = {.pass = pass, .box = box, .item = item};
 		++used;
-		read(world, registry, slot);
+		return slot;
+	}
+
+	std::optional<BoxRoomCache::Room> BoxRoomCache::get(World& world, const assets::AssetRegistry& registry, EntityID box, uint32_t item) {
+		Slot& slot = slotFor(box, item);
+		if (!slot.roomRead) {
+			read(world, registry, slot);
+		}
 		return slot.hasStore ? std::optional<Room>{slot.room} : std::nullopt;
+	}
+
+	std::optional<StoragePriority> BoxRoomCache::priority(World& world, const assets::AssetRegistry& registry, EntityID box, uint32_t item) {
+		Slot& slot = slotFor(box, item);
+		if (!slot.priorityRead) {
+#ifdef DEVELOPMENT_BUILD
+			++priorityReadOut;
+#endif
+			slot.priorityRead = true;
+			const auto* config = world.getComponent<StorageConfiguration>(box);
+			const auto* itemDef = registry.getDefinitionById(item);
+			if (config != nullptr && itemDef != nullptr) {
+				slot.priority = config->getPriorityFor(itemDef->defName, itemDef->category);
+			}
+		}
+		return slot.priority;
 	}
 
 	void BoxRoomCache::refresh(World& world, const assets::AssetRegistry& registry, EntityID box) {
 		for (Slot& slot : slots) {
-			if (slot.pass == pass && slot.box == box) {
+			if (slot.pass == pass && slot.box == box && slot.roomRead) {
 				read(world, registry, slot);
 			}
 		}
@@ -1394,6 +1411,7 @@ namespace ecs {
 #ifdef DEVELOPMENT_BUILD
 		++readOut;
 #endif
+		slot.roomRead = true;
 		const auto* store = world.getComponent<Inventory>(slot.box);
 		slot.hasStore = store != nullptr;
 		if (store == nullptr) {
@@ -2707,7 +2725,7 @@ namespace ecs {
 		// m_elapsedTime, monotonic, which is all the within-tier age term needs.
 		const uint32_t currentHaulItemId = currentTask.type == TaskType::Haul ? currentTask.haulItemDefNameId : 0U;
 		for (auto& option : trace.options) {
-			populatePriorityBonuses(*world, option, currentTask, currentHaulItemId, m_elapsedTime, m_baseTiers);
+			populatePriorityBonuses(*world, m_boxRooms, m_registry, option, currentTask, currentHaulItemId, m_elapsedTime, m_baseTiers);
 		}
 
 		// Sort by the lexicographic (tier asc, score desc, tiebreakId asc) key. Tier is categorical
@@ -2882,9 +2900,10 @@ namespace ecs {
 			task.placePackagedEntityId = selected->placePackagedEntityId;
 			task.placeSourcePosition = selected->placeSourcePosition.value_or(glm::vec2{0.0F, 0.0F});
 			task.placeTargetPosition = selected->placeTargetPosition.value_or(glm::vec2{0.0F, 0.0F});
-			// For place tasks, target is initially the source position (pickup first)
-			task.targetPosition = task.placeSourcePosition;
-			task.chainStep = 0;
+			// The pickup leg first, unless he already carries it: then his pickup spot is stale and he
+			// goes straight to the placement.
+			task.targetPosition = selected->carryingPackaged ? task.placeTargetPosition : task.placeSourcePosition;
+			task.chainStep = selected->carryingPackaged ? 1 : 0;
 		}
 
 		movementTarget.target = task.targetPosition;
@@ -3131,11 +3150,12 @@ namespace ecs {
 		if (selected.taskType == TaskType::FulfillNeed && !selected.gathersFood && !taskFirstActionNeedsHands(selected.taskType, selected.needType)) {
 			return;
 		}
-		// Set down as the packaged item it is, where he stands: the placement, once offered again, picks it
-		// up from here.
-		const auto packaged = static_cast<EntityID>(carried);
+		// Set down as the packaged item it is, where he stands or on the nearest valid ground off a site:
+		// the placement, once offered again, picks it up from there.
+		const auto		packaged = static_cast<EntityID>(carried);
+		const glm::vec2 setDownAt = onSetDownSpot ? onSetDownSpot(position.value) : position.value;
 		if (auto* packagedPos = world->getComponent<Position>(packaged)) {
-			packagedPos->value = position.value;
+			packagedPos->value = setDownAt;
 		}
 		if (auto* state = world->getComponent<Packaged>(packaged)) {
 			state->beingCarried = false;
@@ -3146,7 +3166,7 @@ namespace ecs {
 		inventory.rightHand.reset();
 		LOG_INFO(
 			Engine, "[AI] Entity %llu: set down packaged entity %llu at (%.1f, %.1f)", static_cast<unsigned long long>(entity),
-			static_cast<unsigned long long>(carried), position.value.x, position.value.y
+			static_cast<unsigned long long>(carried), setDownAt.x, setDownAt.y
 		);
 	}
 
@@ -3167,7 +3187,7 @@ namespace ecs {
 		}
 		const auto dropped = inventory.putDown(name);
 		if (dropped.has_value() && dropped->quantity > 0 && onDropResource) {
-			onDropResource(dropped->defName, position.value.x, position.value.y, dropped->quantity);
+			onDropResource(dropped->defName, position.value.x, position.value.y, dropped->quantity, position.value);
 			LOG_DEBUG(Engine, "[AI] Put down %u x %s nobody wants", dropped->quantity, dropped->defName.c_str());
 		}
 	}
@@ -3195,6 +3215,11 @@ namespace ecs {
 			task->discardSuspended();
 			task->clear();
 			task->timeSinceEvaluation = 0.0F;
+		}
+		// He decides nothing while controlled, so his last trace would keep offering its work to the
+		// task panel (goalsWithOfferedWork) until release.
+		if (auto* trace = world->getComponent<DecisionTrace>(entity)) {
+			trace->clear();
 		}
 		// Clear any in-progress action too. Unlike the normal task-switch path (which is gated so a
 		// non-interruptable Eat/Drink/Toilet is never abandoned), taking control unconditionally

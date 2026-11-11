@@ -16,6 +16,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -31,7 +32,7 @@ struct ResourceStack {
 // Ground-drop spacing. Tuning is deferred; these are the only knobs.
 inline constexpr float	  kPileMergeRadius = 1.0F;	   // a same-item pile this close to the drop is topped up
 inline constexpr float	  kGroundClearanceGap = 0.1F; // kept between the footprints of two things on the ground
-inline constexpr uint32_t kWalkableSearchRings = 12;  // rings checked against isGround before clearance alone decides
+inline constexpr uint32_t kWalkableSearchRings = 12;  // rings searched for ground around the origin, then around the fallback
 
 /// Something already on the ground near a drop: the center and radius of its drawn footprint,
 /// and, for a pile, what it holds and whether it is the dropped item (only a same-item pile can
@@ -58,10 +59,12 @@ struct PileDropPlan {
 /// dropped item's own footprint, so overflow piles of one item sit side by side. A spot is
 /// clear when its distance to every occupant (and every pile this drop already placed) is at
 /// least the two footprint radii plus kGroundClearanceGap, so dissimilar items never overlay.
-/// For the first kWalkableSearchRings rings a spot must also pass `isGround` (when given);
-/// past them clearance alone decides, so a drop on a tiny patch of ground still lands.
-/// Before ring N (N >= 1) opens a new pile, same-item piles out to that ring's radius are
-/// topped up, nearest first, so repeated drops fill the overflow piles earlier drops left.
+/// When `isGround` is given a spot must also pass it, origin included: the search runs
+/// kWalkableSearchRings rings around the origin, then as many around `fallback` (where the
+/// goods came from, when it differs from the origin), and only then lays the rest by
+/// clearance alone, spiralling from the fallback, so a drop where no ground is known still lands.
+/// Before ring N (N >= 1) of the origin opens a new pile, same-item piles out to that ring's
+/// radius are topped up, nearest first, so repeated drops fill the overflow piles earlier drops left.
 /// A spot where `kept` holds (ground a site will be built on) is never used, on any ring.
 ///
 /// A stackCap of 0 or UINT32_MAX means unbounded: everything lands in one pile.
@@ -72,7 +75,8 @@ struct PileDropPlan {
 	float								   footprintRadius,
 	const std::vector<GroundOccupant>&	   nearby,
 	const std::function<bool(glm::vec2)>& isGround = {},
-	const std::function<bool(glm::vec2)>& kept = {}
+	const std::function<bool(glm::vec2)>& kept = {},
+	std::optional<glm::vec2>			   fallback = std::nullopt
 ) {
 	PileDropPlan plan;
 	if (totalQty == 0) {
@@ -123,39 +127,54 @@ struct PileDropPlan {
 	constexpr float				kRingReachEpsilon = 1e-3F; // a pile an earlier drop put on this ring still counts as on it
 	const float					step = std::max(2.0F * footprintRadius + kGroundClearanceGap, kMinStep);
 
-	for (uint32_t ring = 0; remaining > 0; ++ring) {
-		const uint32_t slotsInRing = (ring == 0) ? 1U : 6U * ring;
-		const float	   radius = static_cast<float>(ring) * step;
-		// Fill the partial piles earlier drops left out to this ring before opening a new one.
-		if (ring > 0) {
-			topUpWithin(radius + kRingReachEpsilon);
-			if (remaining == 0) {
-				break;
-			}
-		}
-		// Half-slot angular offset per ring so successive rings don't line up radially.
-		const float baseAngle = (ring == 0) ? 0.0F : (kPi / static_cast<float>(slotsInRing));
-		for (uint32_t slot = 0; slot < slotsInRing && remaining > 0; ++slot) {
-			const float		angle = baseAngle + (2.0F * kPi * static_cast<float>(slot) / static_cast<float>(slotsInRing));
-			const glm::vec2 pos{origin.x + radius * std::cos(angle), origin.y + radius * std::sin(angle)};
+	constexpr uint32_t			kUnboundedRings = UINT32_MAX;
 
-			bool clear = true;
-			for (const GroundOccupant& other : occupied) {
-				const float minDist = footprintRadius + other.radius + kGroundClearanceGap - kEpsilon;
-				if (distSq(pos, other.position) < minDist * minDist) {
-					clear = false;
-					break;
+	const auto spiral = [&](glm::vec2 center, uint32_t ringLimit, bool checkGround, bool topUpRings) {
+		for (uint32_t ring = 0; remaining > 0 && ring < ringLimit; ++ring) {
+			const uint32_t slotsInRing = (ring == 0) ? 1U : 6U * ring;
+			const float	   radius = static_cast<float>(ring) * step;
+			// Fill the partial piles earlier drops left out to this ring before opening a new one.
+			if (topUpRings && ring > 0) {
+				topUpWithin(radius + kRingReachEpsilon);
+				if (remaining == 0) {
+					return;
 				}
 			}
-			if (!clear || (isGround && ring < kWalkableSearchRings && !isGround(pos)) || (kept && kept(pos))) {
-				continue;
+			// Half-slot angular offset per ring so successive rings don't line up radially.
+			const float baseAngle = (ring == 0) ? 0.0F : (kPi / static_cast<float>(slotsInRing));
+			for (uint32_t slot = 0; slot < slotsInRing && remaining > 0; ++slot) {
+				const float		angle = baseAngle + (2.0F * kPi * static_cast<float>(slot) / static_cast<float>(slotsInRing));
+				const glm::vec2 pos{center.x + radius * std::cos(angle), center.y + radius * std::sin(angle)};
+
+				bool clear = true;
+				for (const GroundOccupant& other : occupied) {
+					const float minDist = footprintRadius + other.radius + kGroundClearanceGap - kEpsilon;
+					if (distSq(pos, other.position) < minDist * minDist) {
+						clear = false;
+						break;
+					}
+				}
+				if (!clear || (checkGround && !isGround(pos)) || (kept && kept(pos))) {
+					continue;
+				}
+				const uint32_t qty = (unbounded || remaining < stackCap) ? remaining : stackCap;
+				plan.spawns.emplace_back(pos, qty);
+				occupied.push_back({pos, footprintRadius, qty, true});
+				remaining -= qty;
 			}
-			const uint32_t qty = (unbounded || remaining < stackCap) ? remaining : stackCap;
-			plan.spawns.emplace_back(pos, qty);
-			occupied.push_back({pos, footprintRadius, qty, true});
-			remaining -= qty;
 		}
+	};
+
+	if (!isGround) {
+		spiral(origin, kUnboundedRings, false, true);
+		return plan;
 	}
+	spiral(origin, kWalkableSearchRings, true, true);
+	const glm::vec2 from = fallback.value_or(origin);
+	if (from != origin) {
+		spiral(from, kWalkableSearchRings, true, false);
+	}
+	spiral(from, kUnboundedRings, false, false);
 	return plan;
 }
 

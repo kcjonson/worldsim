@@ -203,12 +203,15 @@ namespace ecs {
 			std::string defName;
 			uint32_t	quantity;
 			glm::vec2	to;
+			glm::vec2	from;
 		};
 		std::vector<Moved> moved;
 		for (auto [pile, stack, position, appearance] : world->view<ResourceStack, Position, Appearance>()) {
 			for (const FootprintBounds& site : m_sitesToClearOfPiles) {
 				if (stack.quantity > 0 && site.contains(position.value)) {
-					moved.push_back({pile, appearance.defName, stack.quantity, site.nearestOutside(position.value, kPileMoveMargin)});
+					moved.push_back(
+						{pile, appearance.defName, stack.quantity, site.nearestOutside(position.value, kPileMoveMargin), position.value}
+					);
 					break;
 				}
 			}
@@ -216,7 +219,9 @@ namespace ecs {
 		m_sitesToClearOfPiles.clear();
 		for (const Moved& move : moved) {
 			destroyWorldEntity(*world, move.pile);
-			m_onDropResource(move.defName, move.to.x, move.to.y, move.quantity);
+			// The old spot is on the site, so the drop never lands there: it is where the search for
+			// ground restarts when none lies past the nearest edge.
+			m_onDropResource(move.defName, move.to.x, move.to.y, move.quantity, move.from);
 			LOG_DEBUG(
 				Engine, "[Construction] Moved %u x %s off a site about to be built, to (%.1f, %.1f)", move.quantity, move.defName.c_str(), move.to.x,
 				move.to.y
@@ -512,7 +517,7 @@ namespace ecs {
 		if (m_onDropResource) {
 			for (const auto& [defName, qty] : blueprint.delivered) {
 				if (qty > 0) {
-					m_onDropResource(defName, dropPos.x, dropPos.y, qty);
+					m_onDropResource(defName, dropPos.x, dropPos.y, qty, dropPos);
 				}
 			}
 		}

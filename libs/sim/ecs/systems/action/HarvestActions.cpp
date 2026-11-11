@@ -110,7 +110,7 @@ namespace ecs {
 				return;
 			}
 			const glm::vec2 at = collEff.dropAt.value_or(collEff.sourcePosition);
-			m_onDropResource(collEff.itemDefName, at.x, at.y, quantity);
+			m_onDropResource(collEff.itemDefName, at.x, at.y, quantity, colonistPosition);
 			LOG_INFO(Engine, "[Action] Dropped loose pile of %u x %s at (%.1f, %.1f)", quantity, collEff.itemDefName.c_str(), at.x, at.y);
 		};
 

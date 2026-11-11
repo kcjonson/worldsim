@@ -71,35 +71,14 @@ struct DecisionTrace {
 
 ### Priority Calculation
 
-Options are sorted by a priority score using the int16 priority band system (see [Priority Config](./priority-config.md)):
+Options are sorted by a lexicographic key (see [Priority Config](./priority-config.md)), `EvaluatedOption::higherPriority`:
 
-```cpp
-int16_t calculateOptionPriority(const EvaluatedOption& option) {
-    // Priority bands from priority-config.md
-    constexpr int16_t kCriticalBand = 30000;
-    constexpr int16_t kNeedsBand = 10000;
-    constexpr int16_t kIdleBand = 0;
+1. `tier`, lower first. The base tier per task type comes from `<TaskTiers>` in `priority-tuning.xml`; `classifyTier` promotes a need below 10% to tier 2 and provisioning that serves an active work order (or furniture already carried) to tier 4, and puts gathering food, a satisfied need, and Wander at tier 7.
+2. `gatheringRank`, higher first (a cut that continues a gathering trip).
+3. `score`, higher first, compared only within a tier: `distanceFactor + skillBonus + taskAgeBonus + hysteresisBonus + storagePriorityBias`.
+4. `tiebreakId`, lower first, so equal options resolve the same way on every machine.
 
-    // Critical needs (< 10%) get highest priority
-    if (option.needValue < 10.0f) {
-        return kCriticalBand + static_cast<int16_t>(10.0f - option.needValue);  // 30000-30010
-    }
-    // Actionable needs (below seek threshold)
-    else if (option.needValue < option.threshold) {
-        return kNeedsBand + static_cast<int16_t>(option.threshold - option.needValue);  // 10000-10050ish
-    }
-    // Wander (only if no needs require attention)
-    else if (option.taskType == TaskType::Wander) {
-        return kIdleBand;  // 0
-    }
-    // Satisfied needs
-    else {
-        return -1;  // Won't be selected
-    }
-}
-```
-
-**Note:** When work tasks are available, they use the WorkHigh/WorkMedium/WorkLow bands (5000/3000/1000). Needs above threshold don't compete with work.
+No score can lift an option across a tier boundary, so a hungry colonist (tier 5) finishes a work-order delivery (tier 4) before eating, and a critically hungry one (tier 2) stops for food.
 
 ---
 
@@ -407,5 +386,5 @@ Bumping is not built, so no trace shows a "bumped by" row.
 - [Memory System](./memory.md) — Constrains what colonists know about
 - [Needs System](./needs.md) — Need thresholds and decay
 - [MVP Scope](../../mvp-scope.md) — Task queue display requirements
-- [Priority Config](./priority-config.md) — int16 priority bands and bonus formulas
+- [Priority Config](./priority-config.md): tiers and the in-tier score terms
 - [Task Registry](./task-registry.md) — Global task list (future: GlobalTaskListView)
