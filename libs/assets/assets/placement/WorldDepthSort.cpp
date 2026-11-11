@@ -22,6 +22,29 @@ namespace assets {
 		return ext;
 	}
 
+	float anchorLocalY(const AssetDefinition* def, uint8_t ageClass, float meshMaxLocalY) {
+		if (def == nullptr) {
+			return meshMaxLocalY;
+		}
+		const CollisionShape& footprint = def->collisionFor(ageClass);
+		switch (footprint.type) {
+			case CollisionShapeType::Rect:
+				return footprint.offsetMeters.y + footprint.halfExtentsMeters.y;
+			case CollisionShapeType::Polygon:
+				if (!footprint.pointsMeters.empty()) {
+					float lowest = footprint.pointsMeters.front().y;
+					for (const glm::vec2& p : footprint.pointsMeters) {
+						lowest = std::max(lowest, p.y);
+					}
+					return lowest;
+				}
+				return meshMaxLocalY;
+			case CollisionShapeType::None:
+				return meshMaxLocalY;
+		}
+		return meshMaxLocalY;
+	}
+
 	void sortByAnchorY(std::vector<DepthSortItem>& items) {
 		std::stable_sort(items.begin(), items.end(), [](const DepthSortItem& a, const DepthSortItem& b) {
 			return a.anchorY < b.anchorY;

@@ -5,6 +5,8 @@
 
 #include "assets/placement/WorldDepthSort.h"
 
+#include "assets/AssetDefinition.h"
+
 #include "assets/placement/FloraRouting.h"
 #include "assets/placement/RenderContext.h"
 
@@ -63,6 +65,23 @@ namespace assets {
 		const float						scale = 1.0F;
 		const float						anchorY = computeAnchorY(placedPositionY, ext.maxY, scale);
 		EXPECT_FLOAT_EQ(anchorY, 20.9F);
+	}
+
+	// A def with a footprint anchors at the footprint's lower edge for the instance's age class (a
+	// tree's trunk foot), not at the lowest thing it draws (contact shadow, grass); without one, at the
+	// mesh's bottom.
+	TEST(WorldDepthSort, AnchorFollowsFootprintLowerEdge) {
+		AssetDefinition tree;
+		tree.ageClasses = {{.name = "sapling", .weight = 0.5F, .variants = 1}, {.name = "mature", .weight = 0.5F, .variants = 1}};
+		tree.setCollision(0, {.type = CollisionShapeType::Rect, .offsetMeters = {0.0F, 0.0F}, .halfExtentsMeters = {0.04F, 0.04F}});
+		tree.setCollision(1, {.type = CollisionShapeType::Rect, .offsetMeters = {0.0F, 0.05F}, .halfExtentsMeters = {0.1F, 0.1F}});
+		EXPECT_FLOAT_EQ(anchorLocalY(&tree, 0, 0.6F), 0.04F);
+		EXPECT_FLOAT_EQ(anchorLocalY(&tree, 1, 0.6F), 0.15F);
+		EXPECT_FLOAT_EQ(computeAnchorY(10.0F, anchorLocalY(&tree, 1, 0.6F), 2.0F), 10.3F);
+
+		const AssetDefinition bush;
+		EXPECT_FLOAT_EQ(anchorLocalY(&bush, 0, 0.6F), 0.6F);
+		EXPECT_FLOAT_EQ(anchorLocalY(nullptr, 0, 0.6F), 0.6F);
 	}
 
 	// Tall or short routing is one answer per def, from its mature variant 0 at its

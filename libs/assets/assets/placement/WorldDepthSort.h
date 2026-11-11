@@ -15,6 +15,7 @@
 
 #include "assets/placement/SpatialIndex.h"
 
+#include <cstdint>
 #include <vector>
 
 namespace renderer {
@@ -28,16 +29,22 @@ namespace assets {
 	// PlacementExecutor and other heavy deps) out of this widely-included header. The
 	// include lives in WorldDepthSort.cpp, where gather() is defined.
 	struct RenderContext;
+	struct AssetDefinition;
 
-	// Canonical anchorY rule: the bottom-most (max) world-Y of a renderable's mesh,
-	// i.e. its ground-contact line. One formula reconciles the two position
-	// conventions (static: position == mesh origin, trunk base near +local-Y;
-	// dynamic: position re-centered to the mesh bbox): the origin's world-Y plus
-	// the mesh's max local-Y scaled by the entity scale. Larger draws later / in
-	// front.
-	[[nodiscard]] inline float computeAnchorY(float originWorldY, float meshMaxLocalY, float scale) {
-		return originWorldY + meshMaxLocalY * scale;
+	// Canonical anchorY rule: the world-Y of a renderable's ground-contact line. One
+	// formula reconciles the two position conventions (static: position == mesh
+	// origin; dynamic: position re-centered to the mesh bbox): the origin's world-Y
+	// plus the contact line's local-Y (anchorLocalY) scaled by the entity scale.
+	// Larger draws later / in front.
+	[[nodiscard]] inline float computeAnchorY(float originWorldY, float anchorLocalY, float scale) {
+		return originWorldY + anchorLocalY * scale;
 	}
+
+	// The local-Y of a renderable's ground-contact line: the lower edge of its def's
+	// footprint for that age class (a tree's trunk foot) when it has one, else the
+	// mesh's bottom-most local-Y. A footprint wins so what a tree draws below its foot
+	// (contact shadow, root flare, grass) does not pull it forward in the sort.
+	[[nodiscard]] float anchorLocalY(const AssetDefinition* def, uint8_t ageClass, float meshMaxLocalY);
 
 	// Local-space Y extent (min, max) of a template mesh; {0, 0} for null / empty.
 	struct MeshYExtent {

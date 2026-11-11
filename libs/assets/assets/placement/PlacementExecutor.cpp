@@ -178,7 +178,9 @@ namespace assets {
 				tmpl.resolved = true;
 			}
 			entity.templateId = tmpl.id;
-			entity.anchorY = assets::computeAnchorY(entity.position.y, tmpl.extent.maxY, entity.scale);
+			entity.anchorY = assets::computeAnchorY(
+				entity.position.y, assets::anchorLocalY(def, entity.traits.ageClass, tmpl.extent.maxY), entity.scale
+			);
 			entity.isTallOccluder = isTall;
 			chunkIndex.insert(entity);
 			outEntities.push_back(entity);
