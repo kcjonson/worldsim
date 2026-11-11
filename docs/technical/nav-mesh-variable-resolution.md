@@ -314,6 +314,14 @@ dozen segments), which is the price of spreading the work over ticks on the main
 Point location is about 0.25 us against 0.08 us for the builder's static grid. Whether that
 matters depends on how often the game locates per tick, which step 4 measures.
 
+**Queries on the patched mesh** (step 3). Path queries, the heuristic, corridor widths, and the
+reachability forests read a mesh through one view type, so each has one implementation whether
+the mesh was built or patched.
+
+- Paths through a patched mesh match the builder's in verdict and in length to the millimetre, on the fixtures and on wall-and-door inputs, at agent radii from 0 to 1.5 m. Query time and nodes expanded are the same (2.54 ms against 2.58 ms for 96 queries on one fixture).
+- Corridor widths are capped at 4 m of clearance and recomputed on request, not inside each patch: computing them in the patch added 100 to 240% to a lone tree. A corner's width is recomputed only when a patch came within that width of the corner. One request serves any number of patches, so the game asks once per tick after its patches.
+- A reachability forest rebuild is about 0.13 us per triangle: 0.03 to 0.1 ms for a 128 m region's structural layer, 0.67 ms for a 512 m one. So the structural layer rebuilds its forests whole when a wall or door changes, and the per-chunk portal graph in 4.6 is not needed yet.
+
 **The cost of whole edges.** A long edge that many things cross pulls all of them into the
 hole. A chunk's side is 512 m. Measured in step 3: adding a tree across a 512 m shared side
 with trees along it takes about 1 ms and rebuilds about 200 triangles. So chunk squares enter
@@ -580,6 +588,10 @@ decided, why, and how to undo it.
 8. **Chunk sides enter the mesh split into 16 m edges.** Measured: a patch across a whole 512 m side costs about 1 ms, across a 16 m piece about 0.17 ms. Cost: about 128 more vertices per chunk, so an open chunk is a few hundred triangles, not two. One mesh parameter; 0 turns it off.
 9. **Off-ground reach raised from 2 mm to 8 mm.** The 2 mm bound on rounding drift was disproved (4.3.2). Reaching further only makes a hole slightly larger. The sound fix is filed separately.
 10. **Step 3 gate on batched detail entry is read as a total against the builder, and small batches miss it by design.** One patch of all trees beats the builder; batches of 16 cost 25 to 30% more in total. Spreading the work over ticks is the point, so the per-tick budget decides the batch size in step 5, not this gate.
+
+11. **Corridor widths are recomputed on request, once per tick, not inside each patch.** Measured: inside the patch they double or triple a lone tree's cost. The mesh refuses to hand out a query view while widths are stale, so a missed refresh is an assert, not a wrong path.
+12. **Clearance cap of 4 m.** Widths at or above it read as unconstrained, which is exact for any agent up to 2 m radius. Today's only agent is 0.3 m. One mesh parameter.
+13. **Forests rebuild whole.** At 0.13 us per triangle a structural-layer rebuild is well under a millisecond at current sizes, so no per-chunk repair is built.
 
 **Defaults for the open questions in section 8**, applied when the step that needs each is
 reached, each isolated as one constant or one function so it can be changed in one place:
