@@ -154,6 +154,7 @@ namespace ecs::test {
 
 		/// Boxes the colony's box knowledge has worked out so far.
 		uint64_t colonyStorageWorkedOut() { return world->getSystem<AIDecisionSystem>().m_colonyStorage.workedOut; }
+		uint64_t boxRoomsReadOut() { return world->getSystem<AIDecisionSystem>().m_boxRooms.readOut; }
 
 		/// Remaining needs the AI has worked out so far.
 		uint64_t needsWorkedOut() { return world->getSystem<AIDecisionSystem>().m_needs.computed; }
@@ -818,6 +819,37 @@ namespace ecs::test {
 	// Scale Tests
 	// =============================================================================
 
+#ifdef DEVELOPMENT_BUILD
+	// A box wanting an item nobody knows a source of, and no lower-priority box holding it: its room is
+	// never read, however many items it names.
+	TEST_F(AIDecisionSystemTest, AStorageBoxWithNoSourceIsNeverMeasured) {
+		auto&					registry = assets::AssetRegistry::Get();
+		assets::AssetDefinition wood;
+		wood.defName = "Wood";
+		wood.label = "Wood";
+		wood.category = assets::ItemCategory::RawMaterial;
+		wood.capabilities.carryable = assets::CarryableCapability{1};
+		wood.itemProperties = assets::ItemProperties{};
+		wood.itemProperties->stackSize = 100;
+		registry.registerTestDefinition(std::move(wood));
+		assets::AssetDefinition boxDef;
+		boxDef.defName = "Box";
+		boxDef.label = "Box";
+		boxDef.capabilities.storage = assets::StorageCapability{};
+		registry.registerTestDefinition(std::move(boxDef));
+		const glm::vec2 boxPos{6.0F, -4.0F};
+		const EntityID	box = makeStorageBox(boxPos, "Box", "Wood", ecs::StoragePriority::High);
+		makeUmbrellaGoal(box, boxPos, registry.getDefNameId("Wood"));
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		addKnownEntity(colonist, boxPos, registry.getDefNameId("Box"), assets::CapabilityType::Storage);
+
+		const uint64_t before = boxRoomsReadOut();
+		world->update(0.016F);
+		ASSERT_TRUE(getTask(colonist)->isActive());
+		EXPECT_EQ(boxRoomsReadOut(), before);
+	}
+#endif
+
 	TEST_F(AIDecisionSystemTest, EveryColonistOfManyGetsATask) {
 		constexpr int kNumColonists = 100;
 
@@ -882,6 +914,7 @@ namespace ecs::test {
 
 #ifdef DEVELOPMENT_BUILD
 		const uint64_t workedOutBefore = colonyStorageWorkedOut();
+		const uint64_t roomsBefore = boxRoomsReadOut();
 #endif
 		world->update(0.016F);
 
@@ -903,6 +936,8 @@ namespace ecs::test {
 		// Each box asked about is worked out once for the update, not once per colonist, and the box
 		// holding no Wood is never worked out at all.
 		EXPECT_EQ(colonyStorageWorkedOut() - workedOutBefore, 2U);
+		// The high box's room for Wood is read from the world once for the hundred colonists.
+		EXPECT_EQ(boxRoomsReadOut() - roomsBefore, 1U);
 #endif
 	}
 

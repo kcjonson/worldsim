@@ -778,6 +778,12 @@ Measured on the perf capture against `main` on the same machine, plus unit bench
   rather than per goal-system poll, so the answer is never staler than the memories it reads. The
   storage dialog's model keeps another for its known-source affordance, invalidated per refresh and
   shared by every rule it checks. Warm, neither memo allocates.
+- A storage box's room for an item is measured only when it is used: after the amount the box still
+  wants is known to be more than zero, and, for a pull, once a source box qualifies. What the box
+  itself offers (an item's partial-stack headroom and stack size, looked up by id, and the box's free
+  slots) does not depend on who asks and is read from the world once per (box, item) per AI update
+  (`BoxRoomCache`, stamped with the update, allocation-free when warm); each colonist takes its own
+  claim exclusion out of the index on top.
 - Trace size per colonist is bounded by roots times accepted items after dedup, not by remembered
   sources.
 - The UI's availability and `knownBy` run on the panel throttle, never per frame, and also use the

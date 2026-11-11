@@ -442,6 +442,7 @@ namespace ecs {
 			const Inventory&			 inventory;
 			const assets::AssetRegistry& registry;
 			const LoosePileIndex*		 piles;
+			BoxRoomCache&				 boxRooms;
 
 			[[nodiscard]] uint32_t available(uint64_t root, uint32_t item, NeedBasis basis) const {
 				return rootAvailable(needs.get(world, root, item, basis), claims, root, item, self);
@@ -480,21 +481,18 @@ namespace ecs {
 			/// slots no inbound item has been promised, in stacks of the item. Three hauls of three items
 			/// can't all count on one last slot.
 			[[nodiscard]] uint32_t storageRoom(EntityID box, uint32_t item) const {
-				const auto* store = world.getComponent<Inventory>(box);
-				if (store == nullptr) {
+				const auto room = boxRooms.get(world, registry, box, item);
+				if (!room.has_value()) {
 					return 0;
 				}
-				const auto stackRoom = [&](uint32_t id) {
-					const std::string& name = registry.getDefName(id);
-					return InboundStackRoom{.partialRoom = store->partialStackRoom(name), .stackSize = Inventory::itemStackSize(name)};
-				};
-				const InboundStackRoom own = stackRoom(item);
+				const auto stackRoom = [&](uint32_t id) { return boxRooms.get(world, registry, box, id)->stack; };
+				const InboundStackRoom own = room->stack;
 				const uint64_t		   stack = own.stackSize == 0 ? UINT32_MAX : own.stackSize;
 				const uint64_t		   inbound = claims.inboundItems(box, item, self);
 				const uint64_t		   ownSlots = inbound > own.partialRoom ? (inbound - own.partialRoom + stack - 1) / stack : 0;
 				const uint64_t		   ownRoom = own.partialRoom + ownSlots * stack - inbound;
 				const uint32_t		   promised = claims.inboundSlots(box, self, stackRoom);
-				const uint64_t		   free = store->freeSlots() > promised ? store->freeSlots() - promised : 0U;
+				const uint64_t		   free = room->freeSlots > promised ? room->freeSlots - promised : 0U;
 				return static_cast<uint32_t>(std::min<uint64_t>(ownRoom + free * stack, UINT32_MAX));
 			}
 		};
@@ -629,10 +627,10 @@ namespace ecs {
 			};
 
 			// The pull from strictly lower-priority boxes for one item a storage umbrella names, wanting
-			// `destRoom` more of it (storage priority, Phase 2). The strict-< gate is the load-bearing
+			// `destWant()` more of it, asked only once a source box qualifies (storage priority, Phase 2). The strict-< gate is the load-bearing
 			// invariant: items flow monotonically up the 4-level ladder (Low<Medium<High<Critical), never
 			// sideways or down, which makes A->B->A cycles impossible.
-			const auto emitPulls = [&](const GoalTask& goal, const StorageConfiguration& destConfig, uint32_t acceptedId, uint32_t destRoom) {
+			const auto emitPulls = [&](const GoalTask& goal, const StorageConfiguration& destConfig, uint32_t acceptedId, const auto& destWant) {
 				const auto& itemDefName = registry.getDefName(acceptedId);
 				const auto* itemDef = registry.getDefinitionById(acceptedId);
 				if (itemDef == nullptr) {
@@ -715,6 +713,10 @@ namespace ecs {
 						reserved.reserved(trip, PullSource{srcEntity, srcPos.value});
 						continue;
 					}
+					const uint32_t destRoom = destWant();
+					if (destRoom == 0) {
+						break; // every slot the box has left is promised to goods already on their way
+					}
 					const uint32_t qty = std::min({drainable - claimed, destRoom, perTrip});
 
 					if (!roomNow.has_value()) {
@@ -728,7 +730,7 @@ namespace ecs {
 					reserved.offered(trip);
 					pushPull(srcEntity, srcPos.value, qty, kInvalidEntity);
 				}
-				if (reserved.shown() && roomNow.value_or(true)) {
+				if (reserved.shown() && roomNow.value_or(true) && destWant() > 0) {
 					const auto holder = supply.claims.sourceHolder(
 						{.kind = TargetKind::Entity, .key = static_cast<uint64_t>(reserved.source->box)}, acceptedId, supply.self
 					);
@@ -777,15 +779,29 @@ namespace ecs {
 					return;
 				}
 
-				// What the box still wants of an item and has room for, net of what is on its way: asked
-				// once per item, for its loose piles and its pulls alike.
-				const auto wantOf = [&](uint32_t itemDefNameId) {
-					const uint32_t want = supply.toAcquire(goal.id, itemDefNameId, NeedBasis::Stock);
-					return want > 0 ? std::min(want, supply.storageRoom(goal.destinationEntity, itemDefNameId)) : 0U;
+				// What the box still wants of an item and has room for, net of what is on its way. The want
+				// is asked first; the room only once a source of the item is known, and then once, for its
+				// loose piles and its pulls alike.
+				struct DestWant {
+					const RootSupply& supply;
+					EntityID		  box;
+					uint32_t		  item;
+					uint32_t		  want;
+					mutable std::optional<uint32_t> room;
+					uint32_t operator()() const {
+						if (!room.has_value()) {
+							room = std::min(want, supply.storageRoom(box, item));
+						}
+						return *room;
+					}
 				};
 				// Loose piles the colonist remembers of one accepted item. The need and carry gates come
 				// first, so a full box or a full pack visits none of them.
-				const auto emitLooseHauls = [&](uint32_t itemDefNameId, uint32_t want) {
+				const auto emitLooseHauls = [&](uint32_t itemDefNameId, const DestWant& destWant) {
+					const uint32_t want = destWant();
+					if (want == 0) {
+						return;
+					}
 					const auto& itemDefName = registry.getDefName(itemDefNameId);
 					if (pickupRoom(itemDefName) == 0) {
 						pushNoRoom(goal, itemDefNameId, "Hauling to storage ({}: no room to carry it)");
@@ -804,14 +820,14 @@ namespace ecs {
 					if (!registry.hasCapability(*acceptedIt, assets::CapabilityType::Carryable)) {
 						continue;
 					}
-					const uint32_t want = wantOf(*acceptedIt);
-					if (want == 0) {
+					const DestWant destWant{supply, goal.destinationEntity, *acceptedIt, supply.toAcquire(goal.id, *acceptedIt, NeedBasis::Stock)};
+					if (destWant.want == 0) {
 						continue;
 					}
 					if (sources.knownCarryable(*acceptedIt) != nullptr) {
-						emitLooseHauls(*acceptedIt, want);
+						emitLooseHauls(*acceptedIt, destWant);
 					}
-					emitPulls(goal, *destConfig, *acceptedIt, want);
+					emitPulls(goal, *destConfig, *acceptedIt, destWant);
 				}
 				// A category goal also takes loose piles of any other carryable of its category.
 				if (goal.acceptedCategory != assets::ItemCategory::None) {
@@ -820,8 +836,9 @@ namespace ecs {
 							std::find(named.begin(), named.end(), defNameId) != named.end()) {
 							continue;
 						}
-						if (const uint32_t want = wantOf(defNameId); want > 0) {
-							emitLooseHauls(defNameId, want);
+						const DestWant destWant{supply, goal.destinationEntity, defNameId, supply.toAcquire(goal.id, defNameId, NeedBasis::Stock)};
+						if (destWant.want > 0) {
+							emitLooseHauls(defNameId, destWant);
 						}
 					}
 				}
@@ -1234,6 +1251,50 @@ namespace ecs {
 
 	} // namespace
 
+	std::optional<BoxRoomCache::Room> BoxRoomCache::get(World& world, const assets::AssetRegistry& registry, EntityID box, uint32_t item) {
+		if ((used + 1) * 2 > slots.size()) {
+			std::vector<Slot> old;
+			old.swap(slots);
+			slots.assign(std::max<size_t>(64, old.size() * 2), Slot{});
+			used = 0;
+			for (const Slot& slot : old) {
+				if (slot.pass == pass) {
+					get(world, registry, slot.box, slot.item);
+				}
+			}
+		}
+		const size_t mask = slots.size() - 1;
+		size_t		 index = std::hash<uint64_t>{}((static_cast<uint64_t>(box) * 0x9E3779B97F4A7C15ULL) ^ item) & mask;
+		for (; slots[index].pass == pass; index = (index + 1) & mask) {
+			if (slots[index].box == box && slots[index].item == item) {
+				return slots[index].hasStore ? std::optional<Room>{slots[index].room} : std::nullopt;
+			}
+		}
+		Slot& slot = slots[index];
+		slot = {.pass = pass, .box = box, .item = item};
+		++used;
+#ifdef DEVELOPMENT_BUILD
+		++readOut;
+#endif
+		const auto* store = world.getComponent<Inventory>(box);
+		if (store == nullptr) {
+			return std::nullopt;
+		}
+		const auto*		   def = registry.getDefinitionById(item);
+		const uint32_t	   stackSize = def != nullptr && def->itemProperties.has_value() ? def->itemProperties->stackSize : UINT32_MAX;
+		const std::string& name = registry.getDefName(item);
+		uint64_t		   partial = 0;
+		for (const ItemStack& stack : store->items) {
+			if (stack.quantity < stackSize && stack.defName == name) {
+				partial += stackSize - stack.quantity;
+			}
+		}
+		slot.hasStore = true;
+		slot.room = {.stack = {.partialRoom = static_cast<uint32_t>(std::min<uint64_t>(partial, UINT32_MAX)), .stackSize = stackSize},
+					 .freeSlots = store->freeSlots()};
+		return slot.room;
+	}
+
 	AIDecisionSystem::AIDecisionSystem(
 		const assets::AssetRegistry&  registry,
 		const assets::RecipeRegistry& recipeRegistry,
@@ -1251,6 +1312,7 @@ namespace ecs {
 		m_simulationNow = onSourceRegrowth ? simulationSeconds(*world) : 0.0;
 		m_colonyStorage.invalidate();
 		m_needs.invalidate();
+		m_boxRooms.invalidate();
 		m_claimsBuilt = false;
 		m_foodBoxesBuilt = false;
 		auto* actionSystem = world->tryGetSystem<ActionSystem>();
@@ -2310,7 +2372,7 @@ namespace ecs {
 		}
 		// Goal-driven work: fetch goods for storage and crafts, carry in what the colonist holds, cut
 		// for what a root still needs (tier 4 when serving an active work order, else tier 6).
-		const RootSupply supply{*world, m_needs, m_claims, self, currentTask, inventory, m_registry, m_loosePiles};
+		const RootSupply supply{*world, m_needs, m_claims, self, currentTask, inventory, m_registry, m_loosePiles, m_boxRooms};
 		PickupRoom		 pickupRoom(inventory, m_registry);
 		m_workSources.begin(memory, m_registry, inventory);
 		evaluateHaulOptions(world, m_registry, m_workSources, m_colonyStorage, supply, pickupRoom, inventory, position.value, trace);

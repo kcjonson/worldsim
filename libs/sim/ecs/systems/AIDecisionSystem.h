@@ -52,6 +52,41 @@ struct CarriedKind {
 	bool	 edible = false;
 };
 
+/// What a storage box offers each item before inbound claims are taken out: the headroom in that
+/// item's partial stacks, its stack size, and the box's free slots. None of it depends on who asks, and
+/// box contents change only outside an AI update, so each (box, item) is read from the world once per
+/// update; every colonist then takes its own claim exclusion out of the claim index on top. An open
+/// table stamped with the update, so a warm cache allocates nothing.
+class BoxRoomCache {
+  public:
+	void invalidate() { ++pass; }
+
+	struct Room {
+		InboundStackRoom stack;
+		uint32_t		 freeSlots = 0;
+	};
+	/// The box's room for `item`, or nullopt when the box has no Inventory.
+	[[nodiscard]] std::optional<Room> get(World& world, const assets::AssetRegistry& registry, EntityID box, uint32_t item);
+
+#ifdef DEVELOPMENT_BUILD
+	/// (box, item) pairs read from the world since construction; tests read it to show each is read once
+	/// per update, and an item no source offers not at all.
+	uint64_t readOut = 0;
+#endif
+
+  private:
+	struct Slot {
+		uint64_t pass = 0;
+		EntityID box = kInvalidEntity;
+		uint32_t item = 0;
+		bool	 hasStore = false;
+		Room	 room;
+	};
+	uint64_t		  pass = 1;
+	uint32_t		  used = 0;
+	std::vector<Slot> slots;
+};
+
 namespace test {
 class AIDecisionSystemTest;
 }
@@ -244,6 +279,9 @@ private:
 
 	/// Every root's remaining need, worked out at most once per (root, item, basis) per update
 	RemainingNeedCache m_needs;
+
+	/// Each storage box's room per item, read from the world at most once per update
+	BoxRoomCache m_boxRooms;
 
 	/// The deciding colonist's carried kinds, reused across colonists
 	std::vector<CarriedKind> m_carried;
