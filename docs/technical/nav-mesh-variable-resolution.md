@@ -224,61 +224,78 @@ anything outside its hole.
 
 A structural change applies the same operation to the structural layer.
 
-#### 4.3.1 Remove
+#### 4.3.1 One mechanism: re-derive a hole from the rings
 
-A tree's base is a ring, usually a rect. Its vertices are mesh vertices and its edges are
-constrained triangle edges. Felling it touches the triangles around those vertices and nothing
-else.
+Remove, add, and move are the same act. Pick the ring edges whose geometry is in question, cut
+out the triangles along them, and rebuild that hole from the rings' original outlines. Remove
+leaves a ring out, add puts one in, move does both in one hole. An earlier draft removed a tree
+by deleting its vertices one at a time; one mechanism replaces that, so there is one code path
+and the property in 4.3.2.
 
-1. The tree's id comes off the ring list of each of its edges. An edge whose list is now empty stops being a constraint. An edge another ring also covers stays one.
-2. A vertex with no constrained edge left, and not on a chunk border, is deleted: the triangles around it come out and the hole is retriangulated (Delaunay vertex deletion).
-3. Freed edges are legalized with flips, so the result is still constrained Delaunay.
-4. The new triangles are tagged from the faces around the hole and the ring lists on the edges between. Normally they join the floor; where another ring still covers the spot they keep its tag.
-5. Corridor widths within the maximum clearance of the hole are invalidated, since a width can depend on an obstacle outside the triangles that changed. The locate index over the hole is refreshed.
+The mesh keeps three things to make it possible:
 
-Nothing global moves. Reachability reads the structural layer, which a tree is not in. No
-stored path can be broken by ground opening up; a path that would now be shorter is found at
-its next replan.
+- **A ring registry.** Every ring in the mesh, under a stable id, with its original outline, its class, and its tags.
+- **Sources on each constrained edge.** The list of (ring, which edge of that ring) that put the edge there. A piece of edge two rings share lists both.
+- **A cover set on each triangle.** The set of rings the triangle lies inside, stored once and shared by every triangle with the same set. Floor, water, wall, tree, and door tags are computed from the set by the rule the builder uses today (the smallest solid ring wins; water goes by nesting parity), so that rule exists in one place.
 
-Removal makes no new points. Every vertex involved already exists on the integer grid, so every
-decision is one of the exact predicates the builder uses today.
+The patch:
 
-Three cases need the ring lists and not the picture of an isolated rect:
+1. **Start set.** The original edges of the ring being added, removed, or moved.
+2. **Closure.** An original edge joins the set when an edge in the set crosses it, touches it, or shares a split point with it. Edges join whole, corner to corner, never as pieces.
+3. **The hole.** The triangles along the current pieces of every edge in the set, plus the triangles under a ring being added. The mesh edges around that set are the boundary, held fixed.
+4. **Re-derive.** The set's original edges, without the removed ring and with the new one, go through the arrangement and triangulation a first build uses, together with the fixed edges in and around the hole. If that splits a fixed edge, or an edge leaves the hole, the edge it hit joins the set, the hole grows, and this step repeats. The boundary is checked, never assumed.
+5. **Splice and tag.** New triangles take the freed ids. Cover sets flood in from one seed, changing at each constrained edge by the rings on that edge; the seed is one exact point-in-ring test.
+6. **Legalize.** Unconstrained edges on the hole's boundary are flipped until the mesh is constrained Delaunay again.
+7. **Tell the rest.** Corridor widths within the maximum clearance of the hole are invalidated, the locate index over the hole is refreshed, and movers whose remaining route crosses the hole replan (4.6).
 
-- **Shared edges and vertices.** Two overlapping trunks, a trunk against a waterline, a trunk on a chunk border. The list keeps the neighbour's edge when one of them goes.
-- **Crossing points.** Where the tree's edge crossed another ring, the arrangement split both at a rounded point. That vertex stays on the other ring after the tree is gone. Taking it out would move the other ring's edge by up to a millimetre and reopen the rounding question. The next add or move whose hole covers it tidies it.
-- **Co-circular points.** The four corners of a rect lie on one circle, so Delaunay has a free choice of diagonal there. The mesh's triangles therefore depend on the order of edits. Its walkable ground, face tags, and reachability do not.
+The triangle walk under a new ring is the local replacement for the all-pairs loop, and the
+flood in step 5 replaces the builder's test of every face against every ring, which from
+reading the code is where a large first build's remaining time goes.
 
-#### 4.3.2 Add
+#### 4.3.2 The mesh does not remember its history
 
-Adding is the harder direction, because a new ring can cross edges that are already there, and
-a crossing point has to be rounded to the grid.
+Because every edge in a hole is re-derived from its ring's original outline, with everything
+it crosses, the vertices and constrained edges after any sequence of patches are meant to be
+exactly the ones a from-scratch build of the same rings produces. Three things follow:
 
-1. Walk the triangles under the new ring. That finds every constrained edge it crosses or touches. This walk is the local replacement for the all-pairs loop.
-2. The hole is those triangles plus the triangles under any ring it crosses, bounded by a closed loop of existing edges. The boundary is held fixed.
-3. The constrained edges inside the hole, with their ring lists, and the new ring go through the same arrangement and triangulation a chunk's first mesh does. The result is spliced in, and its triangles are tagged as in removal.
-4. Widths near the hole are invalidated and the locate index refreshed.
-5. Movers whose remaining route crosses the hole replan (4.6).
+- **The oracle is exact.** A test can compare the patched mesh's vertices, constrained edges, and tags with a fresh build, with no tolerance.
+- **Save and load agree.** Ground rebuilt from its rings on load is the ground the running game had.
+- **Nothing piles up.** Crossing points a mover's footprint made at its old position are gone after the move. A felled tree leaves no stray vertex on the shoreline it overlapped.
 
-For a tree that touches nothing the hole is the few triangles its rect overlaps, and the
-arrangement has four segments in it. From the measured triangulation cost, a tree is tens of
-microseconds (*estimate*, confirmed or not in step 3).
+Triangles can still differ where four points lie on one circle, which the corners of every rect
+do: Delaunay has a free choice of diagonal there. Walkable ground, tags, and reachability don't
+depend on it.
 
-Flora entering an area for the first time is many adds. Adds whose holes overlap merge into
-one hole, and the batch is spread over ticks inside the patch budget, nearest the view centre
-first.
+This is a target that step 3's oracle tests. Crossing points are rounded to the millimetre, and
+a rounded point can land on a third edge; if some such cascade makes exact equality depend on
+order, the fallback is equality of walkable ground and tags, and the case gets written down
+here.
 
-#### 4.3.3 Move
+**The cost of whole edges.** A long edge that many things cross pulls all of them into the
+hole. A chunk's side is 512 m. Step 3 measures a patch that crosses a chunk border; if it
+costs, chunk squares enter the mesh divided into shorter edges.
 
-A move is an add and a remove with one hole covering both footprints.
+#### 4.3.3 What each operation adds
 
-1. Find the triangles the old footprint and the new footprint intersect, plus those under any ring either one crosses.
-2. Take the closed loop of existing edges around that set as the boundary and hold it fixed.
-3. Re-derive only the inside, with the object at its new position, and splice it back.
+**Remove.** The start set is the ring's edges. No new points are needed beyond re-rounding the
+crossings of edges it had split. Reachability reads the structural layer, which a tree is not
+in, and no stored path can be broken by ground opening up; a path that would now be shorter is
+found at its next replan.
 
-Because the inside is derived from the rings and not from the old triangles, a move cleans up
-after itself. Crossing points the object made at its old position are gone, so nothing piles up
-along its track.
+**Add.** The start set is the new ring's edges, and the walk under them finds what they cross.
+For a tree that touches nothing the hole is the few triangles its rect overlaps and the
+arrangement has four segments in it. From the measured triangulation cost that is tens of
+microseconds (*estimate*, confirmed or not in step 3). Flora entering an area for the first
+time is many adds: adds whose holes overlap merge into one hole, and the batch is spread over
+ticks inside the patch budget, nearest the view centre first.
+
+**Move.** One hole over the old footprint and the new one, re-derived with the object at its
+new position.
+
+**A chunk's square** is a ring like any other, of the class that makes ground exist: a triangle
+is kept only if its cover set holds one. Adding a square meshes new ground and joins it to its
+neighbours along their shared side; a ring that hung over the edge of loaded ground is
+completed then.
 
 **Mover footprints.** Every mover has a footprint ring, sized from its clearance. It is a
 detail-class obstacle that blocks every mover but its owner: the path query already filters
