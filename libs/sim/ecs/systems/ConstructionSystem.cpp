@@ -91,6 +91,7 @@ namespace ecs {
 		}
 
 		m_activeBlueprintCount = 0;
+		bool gatheredSpawned = false;
 
 		for (auto [entity, structure, blueprint] : world->view<Structure, StructureBlueprint>()) {
 			// Foundations, walls, and openings all flow through; rooms are not blueprints yet.
@@ -142,8 +143,14 @@ namespace ecs {
 			}
 
 			// Walls and openings have no clear phase: they sit on a cleared, built host, so
-			// the footprint is clear by construction. Foundations query their footprint.
-			const bool footprintClear = isWall || isOpening || isFootprintClear(graphId);
+			// the footprint is clear by construction. A foundation queries its footprint only while
+			// clearing; once clear it stays so (editing the footprint puts it back to Clearing).
+			const bool clearing = !isWall && !isOpening && blueprint.phase == StructureBlueprint::BuildPhase::Clearing;
+			if (clearing && !gatheredSpawned) {
+				gatherSpawnedHarvestables();
+				gatheredSpawned = true;
+			}
+			const bool footprintClear = !clearing || isFootprintClear(graphId);
 			const bool materialsDone = blueprint.materialsComplete();
 
 			const ConstructionDecision decision = decideConstructionPhase(blueprint, footprintClear, materialsDone);
@@ -201,6 +208,18 @@ namespace ecs {
 		return {geometry::dequantize(aabb.min), geometry::dequantize(aabb.max)};
 	}
 
+	void ConstructionSystem::gatherSpawnedHarvestables() {
+		m_spawnedHarvestables.clear();
+		const auto& assetRegistry = assets::AssetRegistry::Get();
+		for (auto [entity, position, appearance] : world->view<Position, Appearance>()) {
+			(void)entity;
+			const uint32_t defNameId = assetRegistry.getDefNameId(appearance.defName);
+			if (assetRegistry.hasCapability(defNameId, assets::CapabilityType::Harvestable)) {
+				m_spawnedHarvestables.push_back({defNameId, position.value});
+			}
+		}
+	}
+
 	bool ConstructionSystem::isFootprintClear(uint64_t foundationId) const {
 		if (m_constructionWorld == nullptr) {
 			// No topology wired (unit/headless contexts): there is no footprint to clear.
@@ -210,11 +229,8 @@ namespace ecs {
 		const FootprintBounds bounds = footprintBounds(foundationId);
 		auto&				  assetRegistry = assets::AssetRegistry::Get();
 
-		// Runtime-spawned harvestables are ECS entities a colonist remembers like placed flora, so
-		// they block the site and serve its clear goal the same way.
-		for (auto [entity, position, appearance] : world->view<Position, Appearance>()) {
-			(void)entity;
-			if (bounds.blockedBy(assetRegistry, assetRegistry.getDefNameId(appearance.defName), position.value)) {
+		for (const SpawnedHarvestable& spawned : m_spawnedHarvestables) {
+			if (bounds.blockedBy(assetRegistry, spawned.defNameId, spawned.position)) {
 				return false;
 			}
 		}

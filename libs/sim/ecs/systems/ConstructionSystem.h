@@ -58,6 +58,8 @@
 #include "../ISystem.h"
 #include "../components/StructureBlueprint.h"
 
+#include <glm/vec2.hpp>
+
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -200,8 +202,20 @@ namespace ecs {
 		/// footprint" for both the clear gate and the clear goal a colonist serves.
 		[[nodiscard]] FootprintBounds footprintBounds(uint64_t foundationId) const;
 
+		/// A runtime-spawned harvestable (an ECS entity, not in the placement index): a colonist
+		/// remembers it like placed flora, so it blocks a site and serves its clear goal the same way.
+		struct SpawnedHarvestable {
+			uint32_t  defNameId = 0;
+			glm::vec2 position{0.0F, 0.0F};
+		};
+
+		/// Collect every spawned harvestable into m_spawnedHarvestables, once per pass that has a
+		/// site still clearing, so each site's check is a scan of those few rather than of every entity.
+		void gatherSpawnedHarvestables();
+
 		/// True while nothing in the world blocks the footprint (FootprintBounds::blockedBy), placed
-		/// flora and runtime-spawned entities alike: the set the clear goal is served by.
+		/// flora and spawned harvestables (m_spawnedHarvestables, gathered this pass) alike: the set
+		/// the clear goal is served by.
 		[[nodiscard]] bool isFootprintClear(uint64_t foundationId) const;
 
 		/// True once the wall segment's host foundation is Built. Walls draw on a
@@ -306,6 +320,9 @@ namespace ecs {
 		std::unordered_set<EntityID> m_warnedNoDeconstructCallback;
 
 		size_t m_activeBlueprintCount = 0;
+
+		// This pass's spawned harvestables, gathered by the first site still clearing (reused storage)
+		std::vector<SpawnedHarvestable> m_spawnedHarvestables;
 
 		// Throttle like the other goal systems: lifecycle changes are slow relative to frames.
 		int					 m_frameCounter = 0;
