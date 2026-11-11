@@ -90,10 +90,10 @@ INFINITE WORLD
 ### Data structure
 
 The registry is `GoalTaskRegistry` (`libs/sim/ecs/GoalTaskRegistry.h`), one `GoalTask` per goal:
-type, destination, accepted items, target and delivered counts in items, owning goal system,
-parent goal (a Harvest or Haul feeding a Craft), status (`Available`, `Blocked`, `NoSource`), and
-a chain id linking a Harvest to the Haul it spawns. Goals hold no reservations and no `knownBy`
-set. Which colonist is working a goal, and how much is on its way, comes from the claims on
+type, destination, accepted items, owning goal system, parent goal (a Harvest or Haul feeding a
+Craft), and status (`Available`, `Blocked`, `NoSource`). How much more a goal wants is its root's
+remaining need, read from the world (`GoalTaskRegistry::remainingNeed`), never a counter on the goal.
+Goals hold no reservations and no `knownBy` set. Which colonist is working a goal, and how much is on its way, comes from the claims on
 colonists' tasks ([Task Claims](../../../technical/task-claims.md)).
 
 ### Keeping it current

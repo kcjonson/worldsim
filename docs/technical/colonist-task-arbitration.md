@@ -41,7 +41,7 @@ hysteresis margin.
 
 This fixes: the harvest loop ("no harvestable entity found" stale-target cycle); "colonist
 won't reliably finish the queued job"; the "colonist chops a tree 70 m away over an
-adjacent one" efficiency issue; the multi-unit craft stall (deliveredAmount staleness); and
+adjacent one" efficiency issue; the multi-unit craft stall (a goal counter gone stale); and
 the category-ordering fragility where adding a new task type can corrupt global ordering.
 
 ---
@@ -241,12 +241,11 @@ Specific fixes this covers:
 - **Queued craft abandonment**: tier-4 stickiness keeps the colonist on the active work
   order; re-resolution surfaces the next provisioning step automatically when an ingredient
   source changes.
-- **Multi-unit craft stall** (`CraftingGoalSystem.cpp:332-341`): `deliveredAmount` is never
-  decremented after unit 1 consumes the station store, so the same-recipe branch sees
-  `deliveredAmount >= targetAmount` and never rebuilds the Haul/Harvest children — a
-  multi-unit craft hangs after the first unit. Fix: recompute `deliveredAmount` from the
-  live station store each tick rather than accumulating it. Same never-stall family as the
-  harvest loop; folded into this epic, not tracked separately.
+- **Multi-unit craft stall**: a counter of delivered goods on the Craft goal was never
+  decremented after unit 1 consumed the station store, so the goal looked provisioned and a
+  multi-unit craft hung after the first unit. Resolved by WOR-46 step 6: goals keep no counters,
+  and a root's remaining need is read from the station store on every ask
+  ([Task Claims](./task-claims.md#remaining-need)). Same never-stall family as the harvest loop.
 
 Invariant: a goal **never loops** — it completes, re-resolves to another valid target, or retires.
 
@@ -423,9 +422,8 @@ target still happens within one or two re-eval cycles.
   world, mark the option as `NoSource` rather than re-queuing to a random nearby entity.
 - In `StorageGoalSystem::reconcileStockingHarvests`: retire a stocking-harvest goal when
   the storage minimum is already met or the source entity is gone.
-- In `CraftingGoalSystem` (lines 332-341): recompute `deliveredAmount` from the live station
-  store each tick rather than accumulating it. This prevents the multi-unit craft stall where
-  the same-recipe branch incorrectly sees the already-consumed first unit still counted.
+- In `CraftingGoalSystem`: an input's remaining need is read from the live station store
+  (`GoalTaskRegistry::remainingNeed`), so a consumed first unit is never still counted.
 - Confirm Abort triggers on: entity gone (destroyed or unloaded), entity forgotten by the
   colonist's memory system, target no longer reachable (returns `NoSource` from the
   reachability check), or minimum already satisfied (storage goal).

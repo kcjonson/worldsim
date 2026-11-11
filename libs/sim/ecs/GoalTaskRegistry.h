@@ -122,16 +122,12 @@ namespace ecs {
 		// Singleton access
 		static GoalTaskRegistry& Get();
 
-		// Clear all goals and restart the chain id counter (for game restart)
+		// Clear all goals and restart the id counters (for game restart)
 		void clear();
-
-		/// A new chain id, unique until the next clear(). Chain ids link the steps of one multi-step
-		/// job (Harvest -> Haul, Pickup -> Deposit) across goals and tasks; 0 is never handed out.
-		uint64_t allocateChainId() { return nextChainId++; }
 
 		/// The next claim sequence number, unique until the next clear(). A task takes one at acceptance as
 		/// both its claim instance id and its claim sequence (task-claims.md); 0 is never handed out. It
-		/// lives here, beside the chain id counter, because it is colony state a save must keep.
+		/// lives here because it is colony state a save must keep.
 		uint64_t allocateClaimSeq() { return nextClaimSeq++; }
 
 		// --- Goal Management (called by goal systems: StorageGoalSystem, CraftingGoalSystem, etc.) ---
@@ -248,14 +244,17 @@ namespace ecs {
 		// Next goal ID
 		uint64_t nextGoalId = 1;
 
-		uint64_t nextChainId = 1;
-
 		uint64_t nextClaimSeq = 1;
 
 		// Internal helpers
 		void addToIndices(const GoalTask& goal);
 		void removeFromIndices(const GoalTask& goal);
 	};
+
+	/// How many more of an item a crafting station's next job needs: the recipe's count less what the
+	/// station store holds, 0 when the item is no input of it or nothing is queued. A craft root's
+	/// remaining need, and what a deposit into the station is metered to.
+	[[nodiscard]] uint32_t craftStationNeed(World& world, EntityID station, uint32_t itemDefNameId);
 
 	/// GoalTaskRegistry::remainingNeed answered once per (root, item, basis) for one pass, filled the
 	/// first time each is asked. A pass is one AI update: every deposit and every consumed input lands

@@ -87,18 +87,18 @@ namespace ecs::test {
 		}
 	};
 
-	// A second session in the same process must hand out the same chain ids as the first.
-	TEST_F(GoalTaskRegistryTest, ChainIdsRestartAfterClear) {
+	// A second session in the same process must hand out the same claim sequence numbers as the first.
+	TEST_F(GoalTaskRegistryTest, ClaimSequenceRestartsAfterClear) {
 		auto& registry = GoalTaskRegistry::Get();
 
-		const uint64_t first = registry.allocateChainId();
-		const uint64_t second = registry.allocateChainId();
+		const uint64_t first = registry.allocateClaimSeq();
+		const uint64_t second = registry.allocateClaimSeq();
 		EXPECT_NE(first, 0U);
 		EXPECT_NE(first, second);
 
 		registry.clear();
-		EXPECT_EQ(registry.allocateChainId(), first);
-		EXPECT_EQ(registry.allocateChainId(), second);
+		EXPECT_EQ(registry.allocateClaimSeq(), first);
+		EXPECT_EQ(registry.allocateClaimSeq(), second);
 	}
 
 	// Pinned: removal cascades through grandchildren and leaves unrelated goals and their indexes alone.

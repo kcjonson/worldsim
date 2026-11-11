@@ -330,7 +330,7 @@ namespace ecs {
 		/// Does the task hold goods of its chain: a haul or placement past its pickup, or a cut carrying
 		/// what earlier cuts landed?
 		[[nodiscard]] bool carriesChainGoods(const Task& task) {
-			if (task.chainId.has_value() && task.chainStep > 0) {
+			if (task.chainStep > 0) {
 				return true;
 			}
 			return task.type == TaskType::Harvest &&
@@ -2332,7 +2332,6 @@ namespace ecs {
 			// Standard hauls go to the source first (pickup), then the destination.
 			task.targetPosition = task.haulFromInventory ? task.haulTargetPosition : task.haulSourcePosition;
 			// Pickup (step 0) then Deposit (step 1); goods already carried start at the deposit leg.
-			task.chainId = GoalTaskRegistry::Get().allocateChainId();
 			task.chainStep = task.haulFromInventory ? 1 : 0;
 		}
 
@@ -2344,8 +2343,6 @@ namespace ecs {
 			task.placeTargetPosition = selected->placeTargetPosition.value_or(glm::vec2{0.0F, 0.0F});
 			// For place tasks, target is initially the source position (pickup first)
 			task.targetPosition = task.placeSourcePosition;
-			// Assign chain ID and start at step 0 (Pickup phase)
-			task.chainId = GoalTaskRegistry::Get().allocateChainId();
 			task.chainStep = 0;
 		}
 

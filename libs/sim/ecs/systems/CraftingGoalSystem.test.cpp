@@ -448,11 +448,11 @@ TEST_F(MultiSystemGoalTest, HarvestableInputCreatesHarvestNotHaul) {
 	EXPECT_EQ(registry.goalCount(TaskType::Craft), 1U) << "one craft goal for the station";
 	EXPECT_EQ(registry.goalCount(TaskType::Harvest), 1U) << "harvestable input gets a Harvest goal";
 	EXPECT_EQ(registry.goalCount(TaskType::Haul), 0U)
-	    << "no Haul exists until the cut completes (lazy haul)";
+	    << "no fetch Haul: the cut carries itself in";
 }
 
 // Regression: leftover material sitting in ANOTHER station's (or storage's) store must NOT count
-// as "carried stock". colonyCarriesStock once viewed every Inventory, so a stack stranded in a
+// as stock on its way. An earlier pack scan viewed every Inventory, so a stack stranded in a
 // second crafting station made the input resolve to a fetch Haul that can never source it (a
 // craft-material haul only delivers from a colonist's pack or a loose ground pile), stranding the
 // craft. It must still resolve to a Harvest of the known source.

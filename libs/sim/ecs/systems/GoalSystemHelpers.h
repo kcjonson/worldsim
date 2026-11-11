@@ -2,20 +2,17 @@
 
 // Shared helpers for the goal-generating systems (CraftingGoalSystem, StorageGoalSystem,
 // ConstructionSystem). Each was duplicated across two systems; this is the single home so
-// "does any colonist know a source" and "one trip's carry budget" have one definition.
+// "does any colonist know a source" and "does the colony know this box" have one definition.
 
 #include "../World.h"
 #include "../components/Appearance.h"
-#include "../components/Inventory.h"
 #include "../components/Memory.h"
-#include "../components/Needs.h"
 #include "../components/StorageConfiguration.h"
 #include "../components/Transform.h"
 
 #include <assets/AssetDefinition.h>
 #include <assets/AssetRegistry.h>
 
-#include <algorithm>
 #include <cstdint>
 #include <vector>
 
@@ -106,20 +103,6 @@ namespace ecs {
 			}
 		}
 		return false;
-	}
-
-	/// One trip's carry budget for sizing stocking/material harvests: the largest carry weight
-	/// among colonists (a max, not a sum or first-hit, so it's independent of view iteration order
-	/// and stays deterministic). Falls back to the colonist default in a headless/unit context with
-	/// no colonists yet.
-	[[nodiscard]] inline float colonistCarryCapacityKg(World* world) {
-		float capacity = 0.0F;
-		for (auto [entity, needs, inventory] : world->view<NeedsComponent, Inventory>()) {
-			(void)entity;
-			(void)needs;
-			capacity = std::max(capacity, inventory.carryCapacityKg);
-		}
-		return capacity > 0.0F ? capacity : Inventory::createForColonist().carryCapacityKg;
 	}
 
 } // namespace ecs

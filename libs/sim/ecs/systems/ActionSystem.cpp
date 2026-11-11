@@ -464,9 +464,6 @@ namespace ecs {
 		task.harvestYieldDefNameId = 0;
 		task.reason = "Delivering " + itemDefName;
 		harvestToDeliveryLeg(task, rootId, root->destinationEntity, item, quantity);
-		if (!task.chainId.has_value()) {
-			task.chainId = GoalTaskRegistry::Get().allocateChainId();
-		}
 		headToDeposit(entity, task);
 		// Decided again at once rather than after a step toward the destination: a further cut may come
 		// first (task-claims.md, Batching).

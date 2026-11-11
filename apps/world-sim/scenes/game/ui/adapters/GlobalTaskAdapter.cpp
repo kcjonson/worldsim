@@ -276,8 +276,7 @@ namespace world_sim::adapters {
 			// Who, if anyone, is actively working this goal right now.
 			const std::string worker = (world != nullptr && workers != nullptr) ? colonistWorkingGoal(*world, *workers, goal) : std::string{};
 
-			// Build umbrella: its material counters are unused (targetAmount is just a marker);
-			// the real progress lives on the blueprint's workDone. Surface that plus the worker.
+			// Build umbrella: its progress lives on the blueprint's workDone. Surface that plus the worker.
 			if (goal.type == ecs::TaskType::Build) {
 				int	 pct = 0;
 				bool underConstruction = false;

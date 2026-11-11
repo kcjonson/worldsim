@@ -245,7 +245,7 @@ namespace-scope, excluding `const` and `constexpr`), with a verdict on each:
 
 | Static | Verdict |
 |---|---|
-| Chain id counter | Done (build step 3): the three per-system `nextChainId` statics are one counter, `GoalTaskRegistry::allocateChainId`, which `clear()` resets at session construction. |
+| Chain id counter | Done (build step 3): the three per-system `nextChainId` statics became one `GoalTaskRegistry` counter; WOR-46 later deleted chain ids, which nothing read. The registry's claim sequence counter, which `clear()` resets at session construction, is the one left. |
 | `GoalTaskRegistry` instance | Cleared at session construction. |
 | Work-config registries (`ActionTypeRegistry`, `TaskChainRegistry`, `WorkTypeRegistry`, `PriorityConfig`, `ConstructionRegistry`) and `ConfigValidator::errors` | Cleared and reloaded by `loadWorkConfig`. |
 | `AssetRegistry`, `RecipeRegistry`, `GeneratorRegistry` | Loaded once per process; definitions don't change between sessions. The synthetic `Terrain_Shore` def is registered idempotently (`AssetRegistry::registerSyntheticDefinition`, called from VisionSystem.cpp:87), so ids match across sessions. |
@@ -490,7 +490,7 @@ are lists over colonists and take `colonist=` to narrow to one. Item maps (`inve
 | View | Contents |
 |---|---|
 | `colonists` | today's shape: `id`, `name`, `x`, `y`, `needs{}`, `action`, `inventory{}`, `hands{}`, `belt[]`, `cargoKg`, `carryCapacityKg` |
-| `task` | per colonist: `type`, `state`, `need`, `target{x, y, def, entity, name}`, `tier`, `score`, `chainId`, `chainStep`, `navState`, `reason` |
+| `task` | per colonist: `type`, `state`, `need`, `target{x, y, def, entity, name}`, `tier`, `score`, `chainStep`, `navState`, `reason` |
 | `trace` | per colonist: `evaluatedAt`, `cause`, `options[]`, and `history[]`, newest first, `history=` entries (default 8) |
 | `memory` | per colonist: `count`, `entries[]` (`def`, `x`, `y`, `name`), `knows[]` defs, `recipes[]` unlocked; `def=` filters, `n=` caps entries |
 | `goals` | `GoalTaskRegistry` contents: `id`, `type`, `owner`, `parent`, `item`, `quantity`, `remaining`, `target{}`, `status` |
@@ -629,12 +629,12 @@ hex of its bits, never as a decimal JSON number. It covers:
 - per colonist: position; every need's value; `Task` fields `type`, `state`, `needToFulfill`,
   `targetPosition`, `harvestTargetEntityId`, `targetStationId`, `craftRecipeDefName`,
   `haulItemDefName`, `haulQuantity`, `haulSourceStorageId`, `haulTargetStorageId`, `haulFromInventory`,
-  `placePackagedEntityId`, `buildBlueprintEntityId`, `chainId`, `priorityTier`, `navState`; `Action`
+  `placePackagedEntityId`, `buildBlueprintEntityId`, `chainStep`, `priorityTier`, `navState`; `Action`
   type; inventory (hands, belt, pack); Memory entry count; `Knowledge` defs;
 - every ECS entity's def and position, and each pile's `ResourceStack` quantity;
 - every storage and station inventory and work queue;
 - the placement index's entity count, edit epoch, and every static entity's resource count;
-- the goal registry and its chain id counter;
+- the goal registry and its claim sequence counter;
 - the clock and tick.
 
 sim-cli `run --digest-every=N --digest-out=<file>` appends one digest line (tick and hash) per N ticks.
@@ -827,7 +827,7 @@ independent of each other.
    loads the real config folder and reports no errors, unless ConfigValidator's tests already cover it.
 3. Done. Process statics. Move the three `nextChainId` statics into a `GoalTaskRegistry` counter reset by
    `clear()`; redo the [audit](#process-statics) against the code and fix anything else it finds.
-   Test: a GoalTaskRegistry case that chain ids restart after `clear()`.
+   Test: a GoalTaskRegistry case that its counter restarts after `clear()` (now the claim sequence).
 4. Done. `NavigationSystem::finishPendingBuilds()`. Add it and convert the 58 `pumpUntil`/`pumpUntilMesh`
    call sites; delete those helpers and their sleeps, and update the sim-tests TIMEOUT comment that
    refers to them. Checks that a rebuild does not happen keep their fixed frame counts.

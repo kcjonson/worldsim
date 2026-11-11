@@ -19,7 +19,6 @@
 #include "../ChainClaims.h"
 
 #include "assets/AssetRegistry.h"
-#include "assets/RecipeRegistry.h"
 
 #include <utils/Log.h>
 
@@ -28,36 +27,6 @@
 #include <utility>
 
 namespace ecs {
-
-	namespace {
-		// Remaining units of `itemDefName` a crafting station still needs for its current recipe:
-		// the recipe's required count minus what its store already holds (0 if already satisfied or
-		// the item isn't a recipe input). This is the crafting-station analogue of
-		// StructureBlueprint::remaining() -- both express "how much more does this destination need",
-		// the single concept the metered deposit below caps every delivery to so neither a build site
-		// nor a station ever banks surplus beyond its bill of materials.
-		uint32_t craftStationRemaining(World* world, EntityID station, const Inventory& store, const std::string& itemDefName) {
-			const auto* workQueue = world->getComponent<WorkQueue>(station);
-			if (workQueue == nullptr) {
-				return 0;
-			}
-			const CraftingJob* job = workQueue->getNextJob();
-			if (job == nullptr) {
-				return 0;
-			}
-			const auto* recipe = assets::RecipeRegistry::Get().getRecipe(job->recipeDefName);
-			if (recipe == nullptr) {
-				return 0;
-			}
-			for (const auto& input : recipe->inputs) {
-				if (input.defName == itemDefName) {
-					const uint32_t inStore = store.getQuantity(itemDefName);
-					return input.count > inStore ? input.count - inStore : 0U;
-				}
-			}
-			return 0;
-		}
-	} // namespace
 
 	void ActionSystem::applyDepositEffect(const Action& action, Inventory& inventory) {
 		const auto& depEff = action.depositEffect();
@@ -68,9 +37,9 @@ namespace ecs {
 		// Craft-material delivery, mirroring the build-site path: the material is MOVED from the
 		// colonist's pack/hands into the crafting station's own Inventory store. The colonist's
 		// pack empties; the station holds the staged materials, and the Craft action later
-		// consumes them from the station (not from the colonist). Crediting the Haul goal by what
-		// physically landed in the station lifts the parent Craft goal out of Blocked once every
-		// input is present, exactly as construction gates on materialsComplete().
+		// consumes them from the station (not from the colonist). What lands in the store is what the
+		// Craft root's remaining need reads, so once every input is present the goal system lifts the
+		// Craft goal out of Blocked, exactly as construction gates on materialsComplete().
 		if (depEff.deliverToCraftStation) {
 			const auto stationEntity = static_cast<EntityID>(depEff.storageEntityId);
 			auto*	   stationInv = world->getComponent<Inventory>(stationEntity);
@@ -91,7 +60,8 @@ namespace ecs {
 			// shortfall and keeps the rest on himself. Banking the excess would masquerade as
 			// available stock for later crafts and mis-route their provisioning.
 			const uint32_t carried = ecs::availableQuantity(inventory, depEff.itemDefName);
-			const uint32_t toDeposit = std::min({depEff.quantity, carried, craftStationRemaining(world, stationEntity, *stationInv, depEff.itemDefName)});
+			const uint32_t toDeposit =
+				std::min({depEff.quantity, carried, craftStationNeed(*world, stationEntity, registry.getDefNameId(depEff.itemDefName))});
 			if (toDeposit == 0) {
 				// Station already holds the full requirement for this input; keep the surplus carried.
 				LOG_DEBUG(Engine, "[Action] Craft deposit skipped: station %llu already has enough %s",
@@ -265,9 +235,9 @@ namespace ecs {
 		// Inventory-source haul: the colonist already carries the harvested items, so there is
 		// no ground pickup. It walks to the destination and deposits. Single-phase. The deposit
 		// mode depends on the destination: a build site (blueprint) records the material onto its
-		// manifest; a crafting station (WorkQueue) moves it into the station's own store and
-		// credits the parent Craft goal. The station is identified by its WorkQueue, since it now
-		// also carries an Inventory store just like a plain storage container does.
+		// manifest; a crafting station (WorkQueue) moves it into the station's own store. The station
+		// is identified by its WorkQueue, since it also carries an Inventory store just like a plain
+		// storage container does.
 		if (task.haulFromInventory) {
 			const auto targetEntity = static_cast<EntityID>(task.haulTargetStorageId);
 			const bool targetIsCraftStation = world->hasComponent<WorkQueue>(targetEntity);

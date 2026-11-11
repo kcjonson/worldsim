@@ -665,8 +665,7 @@ before reachability is known would lose the fallback to the next source.
 
 Claims are not saved separately. What is saved (when save lands) is the data they derive from: each
 colonist's `Task` with its claim list, instance id, sequence number, tier, and suspended record; the
-claim sequence counter (kept on `GoalTaskRegistry` beside the chain id counter, the colony state a
-save will hold); and each station's craft binding and job ids. On load the index is rebuilt
+claim sequence counter (kept on `GoalTaskRegistry`, the colony state a save will hold); and each station's craft binding and job ids. On load the index is rebuilt
 and the validator runs once in debug builds. There is nothing to purge, because there is no
 separate store to disagree with.
 
@@ -807,7 +806,8 @@ Deleted in the same change that replaces them, per the no-legacy rule:
   (`AIDecisionSystem.cpp:535-537`); the craft pickup sizing from `deliveredAmount + carried` in
   `HaulActions.cpp` (about lines 413-424).
 - Done (step 6): `createHaulForCompletedHarvest`, the chainId-tagged stocking carry-in Haul, and with it
-  `GoalTask::chainId`, construction's
+  `GoalTask::chainId` (and later `Task::chainId`, whose value nothing read, with the registry's chain id
+  counter), construction's
   per-material inventory-source Haul goals, and the three inventory-source haul paths in
   `evaluateHaulOptions`, replaced by the in-place deposit leg and carry-in from possession.
 - Done (step 6): goal counters (`targetAmount`/`deliveredAmount` on every goal, roots included), the storage

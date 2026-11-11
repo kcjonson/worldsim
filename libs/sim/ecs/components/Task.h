@@ -221,11 +221,8 @@ struct Task {
 	glm::vec2	haulSourcePosition{0.0F, 0.0F};	   // Position of the source item
 	glm::vec2	haulTargetPosition{0.0F, 0.0F};	   // Position of the storage container
 
-	/// For craft-material hauls: the colonist already carries the harvested items in its
-	/// inventory, so the haul skips the ground-pickup phase and just carries them to the
-	/// crafting station. The station has no storage container; "delivery" means the items
-	/// are present at the station, ready for the subsequent Craft action to consume from
-	/// inventory. The haul records its delivery (crediting the parent Craft goal) on arrival.
+	/// A carry-in: the colonist already carries the goods, so the haul skips the pickup and walks
+	/// straight to its destination (a station store, a build site, a box) to deposit them.
 	bool haulFromInventory = false;
 
 	/// For Build/Deconstruct tasks: the blueprint entity whose StructureBlueprint is
@@ -237,12 +234,10 @@ struct Task {
 	glm::vec2 placeSourcePosition{0.0F, 0.0F};	   // Where the packaged item currently is
 	glm::vec2 placeTargetPosition{0.0F, 0.0F};	   // Where to place it (from Packaged.targetPosition)
 
-	/// Task chain tracking (for multi-step tasks like pickup→deposit).
-	/// A mid-chain provisioning task (servesActiveWorkOrder) is classified at tier 4 in the
-	/// (tier, score) arbitration, which is what keeps a colonist on its provisioning chain (the
-	/// former +2000 chain score bonus is gone; see colonist-task-arbitration.md).
-	std::optional<uint64_t> chainId;  // Which chain this task belongs to (nullopt = not part of chain)
-	uint8_t chainStep = 0;			  // Step index within the chain (0 = first step)
+	/// Step within a two-leg chain (Haul pickup then deposit, PlacePackaged pickup then place): 0 on
+	/// the first leg, 1 once the goods are in hand. A mid-chain provisioning task is classified at
+	/// tier 4 in the (tier, score) arbitration (see colonist-task-arbitration.md).
+	uint8_t chainStep = 0;
 
 	/// Time since last decision re-evaluation (seconds)
 	float timeSinceEvaluation = 0.0F;
@@ -300,7 +295,6 @@ struct Task {
 		placePackagedEntityId = 0;
 		placeSourcePosition = glm::vec2{0.0F, 0.0F};
 		placeTargetPosition = glm::vec2{0.0F, 0.0F};
-		chainId.reset();
 		chainStep = 0;
 		priorityTier = 7;
 		priority = 0.0F;

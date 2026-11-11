@@ -192,7 +192,7 @@ private:
 	/// @param entity Entity ID for logging
 	/// When the new task is a need and the colonist keeps a haul's goods, the haul becomes the task's
 	/// suspended record (task-claims.md, interruption by the colonist's own needs).
-	/// @param task Current task (must be mid-chain: chainId set, chainStep > 0)
+	/// @param task Current task, carrying its chain's goods (past its pickup, or a cut with cargo)
 	/// @param inventory Colonist inventory to modify
 	/// @param position Colonist position (for dropping items)
 	/// @param newTaskType Type of new task being switched to

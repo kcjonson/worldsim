@@ -211,7 +211,7 @@ namespace ecs::test {
 			return box;
 		}
 
-		/// Create the ordinary umbrella Haul goal (StorageGoalSystem-owned, NO chainId) that a storage
+		/// Create the ordinary umbrella Haul goal (StorageGoalSystem-owned) that a storage
 		/// box raises when it wants items. This is the goal whose evaluation runs the pull scan.
 		uint64_t makeUmbrellaGoal(EntityID destBox, glm::vec2 destPos, uint32_t itemDefNameId) {
 			GoalTask haul;
@@ -2180,7 +2180,6 @@ namespace ecs::test {
 		task->haulTargetPosition = destPos;
 		task->haulFromInventory = false;
 		task->targetPosition = destPos; // the deposit leg targets B; the fresh pull option targets A
-		task->chainId = haulId;
 		task->chainStep = 1; // past the Withdraw leg
 		task->priorityTier = 6; // opportunistic stocking tier
 		task->timeSinceEvaluation = 1.0F; // > kReEvalInterval (0.5) -> force a re-eval this tick
@@ -2262,7 +2261,6 @@ namespace ecs::test {
 		task->haulTargetPosition = destPos;
 		task->haulFromInventory = false;
 		task->targetPosition = destPos;
-		task->chainId = haulId;
 		task->chainStep = 1;			   // past the Withdraw leg
 		task->priorityTier = 6;			   // opportunistic stocking tier
 		task->timeSinceEvaluation = 1.0F;  // > kReEvalInterval (0.5) -> force a re-eval this tick
@@ -2359,7 +2357,6 @@ namespace ecs::test {
 		task->haulTargetPosition = destPos;
 		task->haulFromInventory = false;
 		task->targetPosition = destPos;
-		task->chainId = haulId;
 		task->chainStep = 1;
 		task->priorityTier = 6;
 		task->timeSinceEvaluation = 1.0F;
@@ -3091,37 +3088,6 @@ namespace ecs::test {
 	// Task Chain Tests - Phase 5 Chain System
 	// ========================================================================
 
-	TEST_F(AIDecisionSystemTest, ChainIdAssignedToHaulTask) {
-		// Unit test: Verify Task component supports chainId and chainStep fields.
-		// NOTE: This tests the data structure, not the integration path. The actual
-		// chainId assignment happens in selectTaskFromTrace(), which is tested through
-		// full system update cycles in integration tests.
-		auto colonist = createColonist({0.0F, 0.0F});
-
-		auto* task = getTask(colonist);
-		ASSERT_NE(task, nullptr);
-
-		// Initially no chainId
-		EXPECT_FALSE(task->chainId.has_value());
-		EXPECT_EQ(task->chainStep, 0);
-
-		// Verify the Task struct can store chain data correctly
-		task->type = TaskType::Haul;
-		task->chainId = 42ULL;
-		task->chainStep = 0;
-		task->haulItemDefName = "Berry";
-		task->haulQuantity = 1;
-		task->haulSourcePosition = {5.0F, 5.0F};
-		task->haulTargetPosition = {10.0F, 10.0F};
-		task->targetPosition = task->haulSourcePosition;
-		task->state = TaskState::Moving;
-
-		// Verify chain data is stored correctly
-		EXPECT_TRUE(task->chainId.has_value());
-		EXPECT_EQ(task->chainId.value(), 42ULL);
-		EXPECT_EQ(task->chainStep, 0);
-	}
-
 	TEST_F(AIDecisionSystemTest, ChainHasNoScoreTermOnlyTierClassification) {
 		// The old +2000 chain SCORE bonus is GONE from arbitration. A mid-chain provisioning task is
 		// now a TIER-4 classification (servesActiveWorkOrder), not a score inflation. The
@@ -3160,7 +3126,6 @@ namespace ecs::test {
 
 		// Set up Haul task at step 0 (pickup phase)
 		task->type = TaskType::Haul;
-		task->chainId = 42ULL;
 		task->chainStep = 0;
 		EXPECT_EQ(task->chainStep, 0);
 
@@ -3222,7 +3187,6 @@ namespace ecs::test {
 		Task* armMidHaulCarryingAxe(EntityID colonist) {
 			auto* task = getTask(colonist);
 			task->type = TaskType::Haul;
-			task->chainId = 100ULL;
 			task->chainStep = 1;
 			task->haulItemDefName = "Axe";
 			task->state = TaskState::Moving;
@@ -3454,8 +3418,8 @@ namespace ecs::test {
 		addKnownEntity(colonist, {2.0F, 0.0F}, pelletId, assets::CapabilityType::Carryable);
 
 		// A 5-slot storage with an empty Inventory, plus the StorageGoalSystem-style Haul goal
-		// pointing at it. Its targetAmount mirrors the free-slot count (5) -- the value under test
-		// is that the PROPOSED haul is sized by addableCount (200), not this 5.
+		// pointing at it. The value under test is that the PROPOSED haul is sized by the box's room
+		// in items (200), not its 5 slots.
 		auto	  storage = world->createEntity();
 		world->addComponent<Position>(storage, Position{{4.0F, 0.0F}});
 		Inventory storageInv;

@@ -17,23 +17,6 @@ namespace ecs {
 
 	namespace {
 
-		uint32_t craftNeed(World& world, EntityID station, uint32_t itemDefNameId, const std::string& item) {
-			const auto*		   queue = world.getComponent<WorkQueue>(station);
-			const CraftingJob* job = queue != nullptr ? queue->getNextJob() : nullptr;
-			const auto*		   recipe = job != nullptr ? assets::RecipeRegistry::Get().getRecipe(job->recipeDefName) : nullptr;
-			if (recipe == nullptr) {
-				return 0;
-			}
-			for (const auto& input : recipe->inputs) {
-				if (input.defNameId == itemDefNameId) {
-					const auto*	   store = world.getComponent<Inventory>(station);
-					const uint32_t inStore = store != nullptr ? store->getQuantity(item) : 0U;
-					return input.count > inStore ? input.count - inStore : 0U;
-				}
-			}
-			return 0;
-		}
-
 		uint32_t storageNeed(World& world, EntityID box, uint32_t itemDefNameId, const std::string& item, NeedBasis basis) {
 			const auto* config = world.getComponent<StorageConfiguration>(box);
 			const auto* inventory = world.getComponent<Inventory>(box);
@@ -57,6 +40,23 @@ namespace ecs {
 
 	} // namespace
 
+	uint32_t craftStationNeed(World& world, EntityID station, uint32_t itemDefNameId) {
+		const auto*		   queue = world.getComponent<WorkQueue>(station);
+		const CraftingJob* job = queue != nullptr ? queue->getNextJob() : nullptr;
+		const auto*		   recipe = job != nullptr ? assets::RecipeRegistry::Get().getRecipe(job->recipeDefName) : nullptr;
+		if (recipe == nullptr) {
+			return 0;
+		}
+		for (const auto& input : recipe->inputs) {
+			if (input.defNameId == itemDefNameId) {
+				const auto*	   store = world.getComponent<Inventory>(station);
+				const uint32_t inStore = store != nullptr ? store->getQuantity(assets::AssetRegistry::Get().getDefName(itemDefNameId)) : 0U;
+				return input.count > inStore ? input.count - inStore : 0U;
+			}
+		}
+		return 0;
+	}
+
 	bool FootprintBounds::blockedBy(const assets::AssetRegistry& registry, uint32_t defNameId, glm::vec2 p) const {
 		return registry.hasCapability(defNameId, assets::CapabilityType::Harvestable) && contains(p);
 	}
@@ -73,7 +73,6 @@ namespace ecs {
 		ownerToGoals.clear();
 		parentToChildren.clear();
 		nextGoalId = 1;
-		nextChainId = 1;
 		nextClaimSeq = 1;
 	}
 
@@ -172,7 +171,7 @@ namespace ecs {
 		const std::string& item = assets::AssetRegistry::Get().getDefName(itemDefNameId);
 		switch (root.owner) {
 			case GoalOwner::CraftingGoalSystem:
-				return root.type == TaskType::Craft ? craftNeed(world, root.destinationEntity, itemDefNameId, item) : 0U;
+				return root.type == TaskType::Craft ? craftStationNeed(world, root.destinationEntity, itemDefNameId) : 0U;
 			case GoalOwner::ConstructionGoalSystem: {
 				const auto& accepted = root.acceptedDefNameIds;
 				const auto* blueprint = world.getComponent<StructureBlueprint>(root.destinationEntity);

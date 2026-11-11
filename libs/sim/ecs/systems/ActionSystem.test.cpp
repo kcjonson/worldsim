@@ -708,7 +708,7 @@ TEST_F(ActionSystemGoalTest, WithdrawPullsFromSourceBoxThenDepositsIntoDestBox) 
 	world->addComponent<Position>(destBox, Position{destPos});
 	world->addComponent<Inventory>(destBox, Inventory::createForStorage());
 
-	// The umbrella Haul goal (StorageGoalSystem, no chainId) wanting PlantFiber in the dest box.
+	// The umbrella Haul goal (StorageGoalSystem) wanting PlantFiber in the dest box.
 	GoalTask haul;
 	haul.type = TaskType::Haul;
 	haul.owner = GoalOwner::StorageGoalSystem;
@@ -807,7 +807,7 @@ TEST_F(ActionSystemGoalTest, WithdrawTwoHandWoodRidesInHandsThenDepositsIntoDest
 	world->addComponent<Position>(destBox, Position{destPos});
 	world->addComponent<Inventory>(destBox, Inventory::createForStorage());
 
-	// The umbrella Haul goal (StorageGoalSystem, no chainId) wanting Wood in the dest box.
+	// The umbrella Haul goal (StorageGoalSystem) wanting Wood in the dest box.
 	GoalTask haul;
 	haul.type = TaskType::Haul;
 	haul.owner = GoalOwner::StorageGoalSystem;
@@ -1148,7 +1148,6 @@ TEST_F(ActionSystemGoalTest, LooseFetchHaulCommitsToDepositAndCreditsCraftStatio
 	task->haulTargetPosition = stationPos;
 	task->haulFromInventory = false;
 	task->targetPosition = sourcePos; // phase 1: at the source
-	task->chainId = 42;
 	task->chainStep = 0;
 
 	// --- Phase 1: Pickup the loose stone ---
@@ -1362,7 +1361,7 @@ TEST_F(ActionSystemGoalTest, CarryingAtSourceRedirectsToDepositInsteadOfDeadlock
 	world->addComponent<Position>(box, Position{boxPos});
 	world->addComponent<Inventory>(box, Inventory::createForStorage());
 
-	// An ordinary storage Haul goal (StorageGoalSystem, no chainId) wanting Wood in the box.
+	// An ordinary storage Haul goal (StorageGoalSystem) wanting Wood in the box.
 	GoalTask haul;
 	haul.type = TaskType::Haul;
 	haul.owner = GoalOwner::StorageGoalSystem;
