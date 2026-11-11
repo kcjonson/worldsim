@@ -92,8 +92,9 @@ namespace ecs {
 					break;
 				}
 
-				// Priority 3: harvest the food source the decision chose, by its Memory key, so two
-				// sources at one spot can't swap places by memory's hash order.
+				// Priority 3: harvest the food source the decision chose (a bush to eat from, or to gather
+				// food from), by its Memory key, so two sources at one spot can't swap places by memory's
+				// hash order.
 				if (const KnownWorldEntity* entity = memory.getWorldEntity(task.needSourceKey);
 					entity != nullptr && registry.hasCapability(entity->defNameId, assets::CapabilityType::Harvestable)) {
 					const auto& defName = registry.getDefName(entity->defNameId);
@@ -104,6 +105,13 @@ namespace ecs {
 
 						// The decision passes over a regrowing bush, but one another colonist cut while this
 						// one walked over still pays nothing at completion (applyCollectionEffect).
+
+						// An eater makes room for its meal as at a pile or box; a pack that could take none of
+						// the yield would leave the bush standing ready and bring him back to it. Gathering
+						// food sizes no meal and makes no room.
+						if (task.needQuantity > 0) {
+							makeRoomToEat(inventory, harvestCap.yieldDefName, position.value);
+						}
 
 						// Calculate random yield within range using proper RNG
 						uint32_t yield = harvestCap.amountMin;

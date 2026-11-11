@@ -196,9 +196,10 @@ struct Task {
 	// Memory key of the remembered source a FulfillNeed task is heading for; 0 for none (ground, pack).
 	// Copied from the selected EvaluatedOption::sourceKey, kept on the task so a failed route can name it.
 	std::uint64_t needSourceKey = 0;
-	// Hunger from stored food: the item it takes and how many (one meal), from a loose pile
-	// (needSourceKey is the pile's) or, when needSourceStorageId is set, from that storage box.
-	// All 0 for a harvest, the pack, and every other need.
+	// Hunger: how many units are one meal, which the take makes room for. From stored food, also the
+	// item it takes, from a loose pile (needSourceKey is the pile's) or, when needSourceStorageId is
+	// set, from that storage box; a bush to eat from sets only the meal. All 0 when gathering food,
+	// eating from the pack, and for every other need.
 	std::uint32_t needItemDefNameId = 0;
 	std::uint32_t needQuantity = 0;
 	std::uint64_t needSourceStorageId = 0;

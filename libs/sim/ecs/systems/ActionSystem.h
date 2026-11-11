@@ -144,7 +144,7 @@ private:
 		struct Inventory& inventory
 	);
 
-	/// A hungry colonist about to take a meal from a pile or box with no room for one unit of it puts
+	/// A hungry colonist about to take a meal from a bush, pile, or box with no room for one unit of it puts
 	/// away what it carries that is not food (the pack's last stack first, then its hands) through the
 	/// usual store-or-drop rule, until one fits or nothing is left to put away.
 	void makeRoomToEat(struct Inventory& inventory, const std::string& food, glm::vec2 position);

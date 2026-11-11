@@ -2385,6 +2385,41 @@ namespace ecs::test {
 		EXPECT_EQ(world->getComponent<Inventory>(colonist)->getQuantity("Stone"), 0U) << "the stone was put away";
 	}
 
+	// Bushes are his only food and his pack has no room for a berry: the cut makes room as a pile or box
+	// would, so he eats from the first bush instead of coming back to it while it stands ready.
+	TEST_F(HungerWalkTest, AFullPackStillEatsFromABush) {
+		const glm::vec2 bushPos{4.0F, 0.0F};
+		const EntityID	colonist = hungryColonist({0.0F, 0.0F}, 30.0F);
+		auto&			pack = *world->getComponent<Inventory>(colonist);
+		pack.maxCapacity = 1;
+		pack.addItem("Stone", 3);
+		rememberBush(colonist, bushPos);
+		rememberBush(colonist, {-6.0F, 0.0F});
+
+		decide(colonist);
+		ASSERT_EQ(getTask(colonist)->needSourceKey, hashWorldEntity(bushPos, bushId));
+		EXPECT_GT(getTask(colonist)->needQuantity, 0U) << "a meal is sized whatever the pack holds";
+
+		ASSERT_TRUE(walkUntil([&] { return hunger(colonist) >= 50.0F; }));
+		EXPECT_EQ(cut, std::vector<glm::vec2>{bushPos}) << "one bush cut, once";
+	}
+
+	// Gathering food is idle work and makes no room: with a pack that has none for a berry, it is not
+	// offered, so he never walks to a bush he would cut nothing from.
+	TEST_F(HungerWalkTest, GatheringFoodNeedsRoomForTheYield) {
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		auto&		   pack = *world->getComponent<Inventory>(colonist);
+		pack.maxCapacity = 1;
+		pack.addItem("Stone", 3);
+		rememberBush(colonist, {4.0F, 0.0F});
+
+		decide(colonist);
+		EXPECT_NE(getTask(colonist)->type, TaskType::FulfillNeed);
+		const EvaluatedOption* gather = optionOf(colonist, TaskType::FulfillNeed, OptionStatus::NoRoom);
+		ASSERT_NE(gather, nullptr);
+		EXPECT_TRUE(gather->gathersFood);
+	}
+
 	// The same race decided at the pile: the starving colonist lifts the berries before the hauler gets
 	// there, and the hauler's pickup collects nothing, which ends its haul instead of walking an empty
 	// pack to the box.

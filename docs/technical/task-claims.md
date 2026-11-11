@@ -389,13 +389,19 @@ a ready harvestable whose yield is edible, a loose pile of an edible item it rem
 box the colony knows (the `ColonyStorageKnowledge` rule the box-to-box pull uses) that holds an edible
 item. A box's own minimum does not keep its food from a hungry colonist; stored food is the buffer
 between harvests. One meal is what takes the need back to its seek threshold at the item's
-nutrition, at least one unit, capped by what the source has left for this colonist and by what one
-pickup can lift (`pickupUnitsThatFit`, never below one). A bush is cut whole, as before, because a
-cut gives what it gives; a pile or box gives the meal and no more, because stored food is the
-colony's and anything taken past the meal would become one colonist's provisions, out of everyone
-else's reach. The pickup or withdraw ends the task and the next decision eats from the pack, the way
-a harvest does. A pack with no room for one unit still eats: the pickup first puts away what the
-colonist carries that is not food (the pack's last stack, then its hands) by the store-or-drop rule.
+nutrition, at least one unit, capped by what the source has left for this colonist; what the pack
+holds does not size it. A bush is cut whole, as before, because a cut gives what it gives; a pile or
+box gives the meal and no more, because stored food is the colony's and anything taken past the meal
+would become one colonist's provisions, out of everyone else's reach. The pickup or withdraw ends the
+task and the next decision eats from the pack, the way a harvest does.
+
+A full pack never stops a colonist eating, whatever kind the source is. No room is checked when the
+food is chosen; the take itself (the cut of a bush, the pickup from a pile, the withdraw from a box)
+starts by making room, at the source, through one rule (`ActionSystem::makeRoomToEat`): it puts away
+what the colonist carries that is not food (the pack's last stack, then its hands) by the
+store-or-drop rule. Without it a cut into a pack with no room takes nothing, the bush stays ready, and
+the colonist picks it again forever. Gathering food for the larder is idle work, not a meal: it makes
+no room, so it is offered only while the pack has room for one unit of the yield.
 
 What a pile or box has left for a hungry colonist is its live count less the shares of eaters at
 least as urgent. Work claims on food (a haul of berries to a box, a pull between boxes, a craft fetch)

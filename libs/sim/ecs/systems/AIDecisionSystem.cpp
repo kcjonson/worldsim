@@ -159,6 +159,13 @@ namespace ecs {
 				   assets::isItemEdible(def->capabilities.harvestable->yieldDefName);
 		}
 
+		/// The item a harvestable that yieldsEdibleFood gives, by id; 0 for anything else.
+		[[nodiscard]] uint32_t edibleYieldOf(const assets::AssetRegistry& registry, uint32_t defNameId) {
+			return yieldsEdibleFood(registry, defNameId)
+					   ? registry.getDefNameId(registry.getDefinitionById(defNameId)->capabilities.harvestable->yieldDefName)
+					   : 0U;
+		}
+
 		/// The memo key for a colonist's reach: what every remembered verdict, and a failed route, depends on.
 		[[nodiscard]] SourceReachMemo::Key reachKey(const NavigationSystem::Reach& reach, const Memory& memory) {
 			return {.regionId = reach.startRegionId,
@@ -2250,14 +2257,13 @@ namespace ecs {
 					option.sourceKey = source.key;
 					option.status = OptionStatus::Available;
 					option.reason = isBush(source) ? "harvest" : source.storage != kInvalidEntity ? "from storage" : "from a pile";
-					if (!isBush(source)) {
-						// A full pack still eats: the meal is sized to at least one unit, and the pickup makes
-						// room for it (ActionSystem::makeRoomToEat).
-						const uint32_t room = ecs::pickupUnitsThatFit(
-							inventory, m_registry, m_registry.getDefName(source.item), ecs::carriedCargoMassKg(inventory, m_registry)
-						);
+					// The meal is sized whatever the pack holds: a full pack still eats, because the take
+					// starts by making room for the meal (ActionSystem::makeRoomToEat), for every kind of source.
+					if (isBush(source)) {
+						option.needQuantity = mealOf(edibleYieldOf(m_registry, source.entity->defNameId));
+					} else {
 						option.needItemDefNameId = source.item;
-						option.needQuantity = std::min({mealOf(source.item), foodSource->left, std::max(room, 1U)});
+						option.needQuantity = std::min(mealOf(source.item), foodSource->left);
 						option.needSourceStorageId = static_cast<uint64_t>(source.storage);
 					}
 					trace.options.push_back(option);
@@ -2374,13 +2380,24 @@ namespace ecs {
 			gatherOption.skillLevel = farmSkillLevel;
 			gatherOption.skillBonus = farmSkillBonus;
 
+			// Gathering is idle work, not a meal: it makes no room, so a pack with none for the yield
+			// would cut nothing and come back to the same bush.
+			const auto gatherHasRoom = [&] {
+				const std::string& yield = m_registry.getDefName(edibleYieldOf(m_registry, gatherSource->entity->defNameId));
+				return ecs::pickupUnitsThatFit(inventory, m_registry, yield, ecs::carriedCargoMassKg(inventory, m_registry)) > 0;
+			};
 			if (gatherSource.has_value()) {
 				gatherOption.targetPosition = gatherSource->position;
 				gatherOption.distanceToTarget = glm::distance(position.value, gatherSource->position);
 				gatherOption.targetReachable = true;
 				gatherOption.sourceKey = gatherSource->key;
-				gatherOption.status = OptionStatus::Available;
-				gatherOption.reason = "Gathering food (inventory empty)";
+				if (gatherHasRoom()) {
+					gatherOption.status = OptionStatus::Available;
+					gatherOption.reason = "Gathering food (inventory empty)";
+				} else {
+					gatherOption.status = OptionStatus::NoRoom;
+					gatherOption.reason = "Gathering food (no room to carry it)";
+				}
 			} else if (heldBush.has_value()) {
 				gatherOption.targetPosition = heldBush->position;
 				gatherOption.distanceToTarget = glm::distance(position.value, heldBush->position);
