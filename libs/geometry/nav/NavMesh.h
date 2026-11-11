@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../core/PagedVector.h"
+#include "../core/ScratchArray.h"
 #include "../core/Vec2i64.h"
 
 #include <array>
@@ -110,7 +112,7 @@ namespace geometry::nav {
 		// detail, and a query that prices detail may squeeze through it. Where detail
 		// alone made the apex an obstacle vertex, a disc centred on it counts too, since
 		// the wedge measure is too narrow at a free apex. Equal to edgePairWidthMm when the
-		// mesh has no detail tags.
+		// mesh has no detail tags; capped at the mesh's squeeze width (apexWidthsMm).
 		std::array<std::int64_t, 3> structuralWidthMm = {kUnconstrainedWidth, kUnconstrainedWidth, kUnconstrainedWidth};
 		// Door clear width (mm) when edge i is a door portal, else kUnconstrainedWidth.
 		// Threaded from DoorPortal::clearWidthMm; the A* gates a door crossing by it.
@@ -295,23 +297,56 @@ namespace geometry::nav {
 	// never a live triangle's neighbour, and never a forest node.
 	//
 	// A view reads its owner as it is when used, never as it was when taken: forests,
-	// width currency, and the patch epoch come through the owner, so a view kept across
-	// a patch sees the patched mesh and its missing forests.
+	// width currency, and the patch epoch come through the owner, and every function
+	// taking a view reads the slot tables through resolved(), so a view kept across a
+	// patch sees the patched mesh and its missing forests.
+	// One of a mesh's slot tables as a view reads it: a NavMesh's contiguous vector or a
+	// PatchableMesh's pages (PagedVector), as the owner held it when the view was taken
+	// or last resolved (NavView::resolved).
+	template <typename T> struct ViewArray {
+		const T*		flat  = nullptr;
+		const T* const* pages = nullptr;
+		std::size_t		count = 0;
+
+		bool		set() const { return flat != nullptr || pages != nullptr; }
+		std::size_t size() const { return count; }
+		const T&	operator[](std::size_t i) const {
+			   return pages != nullptr ? pages[i >> PagedVector<T>::kPageShift][i & PagedVector<T>::kPageMask] : flat[i];
+		}
+		void of(const std::vector<T>& table) {
+			flat  = table.data();
+			pages = nullptr;
+			count = table.size();
+		}
+		void of(const PagedVector<T>& table) {
+			flat  = nullptr;
+			pages = table.pageTable();
+			count = table.size();
+		}
+	};
+
 	struct NavView {
-		const std::vector<Vec2i64>*		 vertices  = nullptr;
-		const std::vector<NavTriangle>*	 triangles = nullptr;
-		const std::vector<std::uint8_t>* live	   = nullptr; // null: every slot is live
-		const void*						 owner	   = nullptr;
+		ViewArray<Vec2i64>		vertices;
+		ViewArray<NavTriangle>	triangles;
+		ViewArray<std::uint8_t> live; // unset: every slot is live
+		const void*				owner = nullptr;
 		std::int32_t (*locateIn)(const void* owner, const Vec2i64& p)						= nullptr;
 		const ReachabilityForest* (*forestIn)(const void* owner, bool truth)				= nullptr;
 		bool (*widthsCurrentIn)(const void* owner)											= nullptr;
 		std::uint64_t (*epochIn)(const void* owner)											= nullptr;
+		void (*resolveIn)(const void* owner, NavView& view)									= nullptr;
 		const std::vector<std::int64_t>* detailTags											= nullptr; // the owner's; null: none
 
-		std::int32_t	   triangleSlots() const { return static_cast<std::int32_t>(triangles->size()); }
-		bool			   isLive(std::int32_t t) const { return live == nullptr || (*live)[static_cast<std::size_t>(t)] != 0; }
-		const NavTriangle& triangle(std::int32_t t) const { return (*triangles)[static_cast<std::size_t>(t)]; }
-		const Vec2i64&	   vertex(std::uint32_t v) const { return (*vertices)[v]; }
+		std::int32_t	   triangleSlots() const { return static_cast<std::int32_t>(triangles.size()); }
+		bool			   isLive(std::int32_t t) const { return !live.set() || live[static_cast<std::size_t>(t)] != 0; }
+		const NavTriangle& triangle(std::int32_t t) const { return triangles[static_cast<std::size_t>(t)]; }
+		const Vec2i64&	   vertex(std::uint32_t v) const { return vertices[v]; }
+		// This view with the owner's slot tables as they are now.
+		NavView resolved() const {
+			NavView view = *this;
+			resolveIn(owner, view);
+			return view;
+		}
 		std::int32_t	   locate(const Vec2i64& p) const { return locateIn(owner, p); }
 		// The truth or terrain forest over the live triangles; null when the owner has
 		// none current, and then a path query skips its forest pre-check.
@@ -357,9 +392,16 @@ namespace geometry::nav {
 
 	// Scratch for corridor-width searches, reused across calls.
 	struct WidthSearch {
-		std::vector<std::uint32_t>				  visited; // visited[t] == stamp: seen by the current search
+		ScratchArray<std::uint32_t>				  visited; // visited[t] == stamp: seen by the current search
 		std::uint32_t							  stamp = 0;
 		std::vector<std::pair<std::int32_t, int>> star; // an apex's triangles and their corners on it
+		// Which vertices an obstacle edge meets, kept for one mesh state (owner and epoch):
+		// [0] with nothing read as open, [1] with the detail tags open.
+		const void*								  vertexOwner = nullptr;
+		std::uint64_t							  vertexEpoch = 0;
+		std::uint32_t							  vertexStamp = 0;
+		std::array<ScratchArray<std::uint32_t>, 2> vertexSeen;
+		std::array<ScratchArray<std::uint8_t>, 2>  vertexObstacle;
 	};
 
 	// Demyen-Buro width at apex `apex` of triangle `tri`: the widest disc diameter (mm)
@@ -370,13 +412,16 @@ namespace geometry::nav {
 	std::int64_t corridorWidthMm(const NavView& view, WidthSearch& search, std::int32_t tri, int apex, std::int64_t maxClearanceMm);
 
 	// An apex's two stored widths (NavTriangle::edgePairWidthMm and structuralWidthMm),
-	// the second with the view's detail tags read as open ground. Both read nothing farther
-	// than maxClearanceMm from the apex.
+	// the second with the view's detail tags read as open ground. The full width reads
+	// nothing farther than maxClearanceMm from the apex; the structural one, which only
+	// decides squeezes, nothing farther than maxSqueezeMm (where it is lower), and reads
+	// maxSqueezeMm when it is at least that: a squeeze opens for discs up to that wide.
 	struct ApexWidths {
 		std::int64_t full		= kUnconstrainedWidth;
 		std::int64_t structural = kUnconstrainedWidth;
 	};
-	ApexWidths apexWidthsMm(const NavView& view, WidthSearch& search, std::int32_t tri, int apex, std::int64_t maxClearanceMm);
+	ApexWidths apexWidthsMm(const NavView& view, WidthSearch& search, std::int32_t tri, int apex, std::int64_t maxClearanceMm,
+							std::int64_t maxSqueezeMm);
 
 	// The reconstruction-tree node whose subtree is every triangle a disc of `diameterMm` can
 	// POSSIBLY reach from `tri`: tri's highest ancestor whose capacity admits the disc. A goal

@@ -176,7 +176,7 @@ namespace {
 
 	// The fixture fully loaded, each tree under its current id.
 	struct Loaded {
-		explicit Loaded(std::int64_t maxBoundsEdgeMm = 0) : mesh({.maxBoundsEdgeMm = maxBoundsEdgeMm}) {}
+		explicit Loaded(std::int64_t maxBoundsEdgeMm = 0) : mesh({.maxBoundsEdgeMm = maxBoundsEdgeMm, .detailTags = {kProvenanceTree}}) {}
 
 		Rings						 rings;
 		PatchableMesh				 mesh;
@@ -959,6 +959,128 @@ namespace {
 		state.counters["timePerSlot"] = benchmark::Counter(slots, benchmark::Counter::kIsIterationInvariantRate | benchmark::Counter::kInvert);
 	}
 
+	// --- Flora cells entering a large mesh -------------------------------------------
+
+	// tiles x tiles of realRings' 128 m tile (water and trees) under one bounds square, trees
+	// detail-class, the game's 64 m bounds sides. The trees of `cells` 16 m cells in the
+	// middle of tile (0, 0) (or one tree, for 0 cells) go out untimed and come back timed with the width refresh,
+	// which is the game's flora job; "refreshUs" is the refresh alone. Its cost must not
+	// depend on how much mesh lies elsewhere. With `openTile`, tile (0, 0) holds only those
+	// trees, on open ground, as an unforested chunk does.
+	void BM_FloraCellsEnter(benchmark::State& state, int cells, bool openTile) {
+		namespace td		   = geometry::nav::testdata;
+		const std::int64_t tiles = state.range(0);
+		Vec2i64			   lo;
+		Vec2i64			   hi;
+		boxOf(td::realBorderRing(), lo, hi);
+		PatchableMesh				 mesh({.maxBoundsEdgeMm = 64000, .detailTags = {kProvenanceTree}});
+		std::vector<NavInputPolygon> ground{NavInputPolygon{rect(0, 0, tiles * kRealTileMm, tiles * kRealTileMm), false, kProvenanceBorder}};
+		std::vector<NavInputPolygon> moving;
+		for (std::int64_t b = 0; b < tiles; ++b) {
+			for (std::int64_t a = 0; a < tiles; ++a) {
+				const Vec2i64 by{a * kRealTileMm - lo.x, b * kRealTileMm - lo.y};
+				const bool open = openTile && a == 0 && b == 0;
+				if (!open) {
+					ground.push_back(NavInputPolygon{translated(td::realWaterRing(), by), true, kProvenanceWater, kNoOpening, true});
+				}
+				for (const std::vector<Vec2i64>& tree : td::realTreeRings()) {
+					NavInputPolygon ring{translated(tree, by), true, kProvenanceTree};
+					Vec2i64			tLo;
+					Vec2i64			tHi;
+					boxOf(ring.ring, tLo, tHi);
+					const bool inCells = a == 0 && b == 0 && tLo.x >= 64000 && tLo.x < 64000 + 16000 * std::max(cells, 1) && tLo.y >= 64000 && tLo.y < 80000 &&
+											 (cells > 0 || moving.empty());
+					if (inCells) {
+						moving.push_back(std::move(ring));
+					} else if (!open) {
+						ground.push_back(std::move(ring));
+					}
+				}
+			}
+		}
+		untimedPatch(mesh, adding(ground));
+		double refreshSeconds = 0.0;
+		for (auto _ : state) {
+			const PatchReport in = untimedPatch(mesh, adding(moving));
+			PatchEdits		  out;
+			out.removes = in.added;
+			untimedPatch(mesh, out);
+			PatchReport back;
+			double		refresh = 0.0;
+			state.SetIterationTime(secondsOf([&] {
+				back	= mesh.applyPatch(adding(moving));
+				refresh = secondsOf([&] { mesh.refreshWidths(); });
+			}));
+			refreshSeconds += refresh;
+			PatchEdits again;
+			again.removes = back.added;
+			untimedPatch(mesh, again);
+		}
+		state.counters["slots"]		= static_cast<double>(mesh.triangles().size());
+		state.counters["trees"]		= static_cast<double>(moving.size());
+		state.counters["refreshUs"] = 1e6 * refreshSeconds / static_cast<double>(state.iterations());
+	}
+
+	// --- A mesh growing past its storage -------------------------------------------
+
+	// tiles x tiles of realRings' water under one bounds square, then their trees entering
+	// a 16 m cell row at a time (the game's flora jobs), each patch timed with its width
+	// refresh. The mesh grows through every size a slot table reallocates at; no patch may
+	// pay to copy the mesh, so the worst patch stays near the typical one.
+	void BM_MeshGrowsWorstPatch(benchmark::State& state) {
+		namespace td		   = geometry::nav::testdata;
+		const std::int64_t tiles = state.range(0);
+		Vec2i64			   lo;
+		Vec2i64			   hi;
+		boxOf(td::realBorderRing(), lo, hi);
+		std::vector<NavInputPolygon>			  ground{NavInputPolygon{rect(0, 0, tiles * kRealTileMm, tiles * kRealTileMm), false, kProvenanceBorder}};
+		std::vector<std::vector<NavInputPolygon>> rows;
+		for (std::int64_t b = 0; b < tiles; ++b) {
+			for (std::int64_t a = 0; a < tiles; ++a) {
+				const Vec2i64 by{a * kRealTileMm - lo.x, b * kRealTileMm - lo.y};
+				ground.push_back(NavInputPolygon{translated(td::realWaterRing(), by), true, kProvenanceWater, kNoOpening, true});
+				std::vector<std::vector<NavInputPolygon>> tileRows(8);
+				for (const std::vector<Vec2i64>& tree : td::realTreeRings()) {
+					NavInputPolygon ring{translated(tree, by), true, kProvenanceTree};
+					Vec2i64			tLo;
+					Vec2i64			tHi;
+					boxOf(ring.ring, tLo, tHi);
+					const std::int64_t row = std::clamp<std::int64_t>((tLo.y - b * kRealTileMm) / 16000, 0, 7);
+					tileRows[static_cast<std::size_t>(row)].push_back(std::move(ring));
+				}
+				for (std::vector<NavInputPolygon>& row : tileRows) {
+					if (!row.empty()) {
+						rows.push_back(std::move(row));
+					}
+				}
+			}
+		}
+		double		worst = 0.0;
+		double		total = 0.0;
+		std::size_t slots = 0;
+		for (auto _ : state) {
+			PatchableMesh mesh({.maxBoundsEdgeMm = 64000, .detailTags = {kProvenanceTree}});
+			untimedPatch(mesh, adding(ground));
+			worst = 0.0;
+			total = 0.0;
+			for (const std::vector<NavInputPolygon>& row : rows) {
+				const PatchEdits edits = adding(row);
+				const double	 took  = secondsOf([&] {
+					  mesh.applyPatch(edits);
+					  mesh.refreshWidths();
+				  });
+				worst				   = std::max(worst, took);
+				total += took;
+			}
+			slots = mesh.triangles().size();
+			state.SetIterationTime(total);
+		}
+		state.counters["patches"] = static_cast<double>(rows.size());
+		state.counters["slots"]	  = static_cast<double>(slots);
+		state.counters["meanUs"]  = 1e6 * total / static_cast<double>(rows.size());
+		state.counters["worstUs"] = 1e6 * worst;
+	}
+
 } // namespace
 
 #define PATCH_ROWS(name, fn, ...)                                                                                              \
@@ -1046,3 +1168,7 @@ BENCHMARK_CAPTURE(BM_LargeTree, tiled_shoreline_add, 0, true, true)->UseManualTi
 BENCHMARK_CAPTURE(BM_LargeTree, squares_shoreline_add, 1, true, true)->UseManualTime()->Unit(benchmark::kMicrosecond);
 BENCHMARK_CAPTURE(BM_LargeBoundsTree, tiled_border, 0)->UseManualTime()->Unit(benchmark::kMicrosecond);
 BENCHMARK_CAPTURE(BM_LargeBoundsTree, squares_shared_side, 1)->UseManualTime()->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_MeshGrowsWorstPatch)->Arg(10)->Iterations(1)->UseManualTime()->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_FloraCellsEnter, twoCells, 2, false)->Arg(1)->Arg(3)->Arg(9)->UseManualTime()->Unit(benchmark::kMicrosecond);
+BENCHMARK_CAPTURE(BM_FloraCellsEnter, twoCells_openTile, 2, true)->Arg(1)->Arg(3)->Arg(9)->UseManualTime()->Unit(benchmark::kMicrosecond);
+BENCHMARK_CAPTURE(BM_FloraCellsEnter, loneTree_openTile, 0, true)->Arg(1)->Arg(3)->Arg(9)->UseManualTime()->Unit(benchmark::kMicrosecond);

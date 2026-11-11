@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../core/IncrementalHashMap.h"
+#include "../core/PagedVector.h"
 #include "../core/Vec2i64.h"
 #include "NavMesh.h"
 
@@ -9,7 +11,6 @@
 #include <map>
 #include <memory>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 // A persistent nav mesh that takes ring edits as patches (nav-mesh-variable-resolution
@@ -83,6 +84,7 @@ namespace geometry::nav {
 
 	// Covers any agent the game could have: a 2 m radius, over six times the colonist's.
 	constexpr std::int64_t kDefaultMaxClearanceMm = 4000;
+	constexpr std::int64_t kDefaultMaxSqueezeMm	  = 2000;
 
 	struct PatchableMeshArgs {
 		// A bounds ring enters the mesh with its edges split to at most this
@@ -95,6 +97,9 @@ namespace geometry::nav {
 		std::int64_t maxClearanceMm = kDefaultMaxClearanceMm;
 		// The detail-class obstacle tags (NavMeshInput::detailTags).
 		std::vector<std::int64_t> detailTags;
+		// A priced squeeze past detail opens for discs up to this wide (apexWidthsMm): the
+		// structural width reads no farther, which keeps its refresh local in dense flora.
+		std::int64_t maxSqueezeMm = kDefaultMaxSqueezeMm;
 	};
 
 	class PatchableMesh {
@@ -103,8 +108,8 @@ namespace geometry::nav {
 
 		PatchReport applyPatch(const PatchEdits& edits);
 
-		const std::vector<Vec2i64>&		vertices() const { return verts; }
-		const std::vector<NavTriangle>& triangles() const { return tris; }
+		const PagedVector<Vec2i64>&		vertices() const { return verts; }
+		const PagedVector<NavTriangle>& triangles() const { return tris; }
 		bool							triangleLive(std::int32_t t) const { return live[static_cast<std::size_t>(t)] != 0; }
 		std::int32_t					liveTriangleCount() const { return liveTriangles; }
 
@@ -129,7 +134,7 @@ namespace geometry::nav {
 		// behind patches: a patch only records where it changed the mesh, and this brings
 		// every width up to date, once for all the patches since the last call.
 		void refreshWidths();
-		bool widthsCurrent() const { return pendingWidthBoxes.empty(); }
+		bool widthsCurrent() const { return freshWidthTriangles.empty() && pendingWidthSeeds.empty(); }
 
 		// Refreshes widths, then rebuilds both reachability forests from the live
 		// triangles. A patch or a door edit drops them, so the mesh has forests only when
@@ -159,17 +164,22 @@ namespace geometry::nav {
 			std::int32_t refCount(std::int32_t id) const { return refs[static_cast<std::size_t>(id)]; }
 
 		  private:
-			// Open addressing over ids by each value's hash: a lookup, or a fresh slot
-			// once the table and a freed value's storage have grown, allocates nothing.
-			std::size_t homeOf(std::uint64_t hash) const;
-			void		grow();
-
-			std::vector<Value>		   values; // a freed id keeps its value's capacity
-			std::vector<std::uint64_t> hashes; // per id
-			std::vector<std::int32_t>  refs;
-			std::vector<std::int32_t>  freeIds;
-			std::vector<std::int32_t>  table; // ids, -1 empty
-			std::size_t				   used = 0;
+			// Ids by each value's hash, the ids sharing a hash chained through sameHash:
+			// a lookup, or a fresh slot once a freed value's storage has grown, allocates
+			// nothing, and nothing grows by moving what is there.
+			struct HashOf {
+				std::uint64_t operator()(std::uint64_t hash) const {
+					hash ^= hash >> 31;
+					hash *= 0xBF58476D1CE4E5B9ULL;
+					return hash ^ (hash >> 29);
+				}
+			};
+			PagedVector<Value>										values; // a freed id keeps its value's capacity
+			PagedVector<std::uint64_t>								hashes; // per id
+			PagedVector<std::int32_t>								refs;
+			PagedVector<std::int32_t>								sameHash; // the next id with this id's hash, -1 none
+			std::vector<std::int32_t>								freeIds;
+			IncrementalHashMap<std::uint64_t, std::int32_t, HashOf> byHash; // the first id with a hash
 		};
 
 		// Boxes by id, for point location and box queries: a grid per level, cell side
@@ -196,7 +206,7 @@ namespace geometry::nav {
 
 		  private:
 			// A cell by level and full cell coordinates: no packing, so no coordinate the
-			// mesh can hold aliases another cell. Level -1 marks an empty slot.
+			// mesh can hold aliases another cell.
 			struct CellKey {
 				std::int64_t x	   = 0;
 				std::int64_t y	   = 0;
@@ -216,17 +226,17 @@ namespace geometry::nav {
 			};
 
 			static int			 levelFor(const Vec2i64& lo, const Vec2i64& hi);
-			std::size_t	 home(const CellKey& key) const;
 			std::int32_t find(const CellKey& key) const;
 			std::int32_t findOrAdd(const CellKey& key);
 			void				 dropCell(std::int32_t cell, int level);
 
-			std::vector<CellKey>						   slotKeys;
-			std::vector<std::int32_t>					   slotCells;
-			std::size_t									   occupied = 0;
-			std::vector<Cell>							   cells;
+			struct CellHash {
+				std::uint64_t operator()(const CellKey& key) const;
+			};
+			IncrementalHashMap<CellKey, std::int32_t, CellHash> table; // cell by key
+			PagedVector<Cell>								   cells;
 			std::vector<std::int32_t>					   freeCells;
-			std::array<std::vector<std::int32_t>, kLevels> levelCells;
+			std::array<PagedVector<std::int32_t>, kLevels> levelCells;
 			std::uint64_t								   levelMask = 0; // levels holding any id
 		};
 
@@ -280,19 +290,20 @@ namespace geometry::nav {
 
 		std::int64_t				maxBoundsEdgeMm = 0;
 		std::int64_t				maxClearanceMm	= kDefaultMaxClearanceMm;
+		std::int64_t				maxSqueezeMm	= kDefaultMaxSqueezeMm;
 		std::vector<std::int64_t>	detailTags;
-		std::vector<RegisteredRing> rings;
+		PagedVector<RegisteredRing> rings;
 		std::vector<RingId>			freeRings;
 
-		std::vector<Vec2i64>							verts;
-		std::vector<std::int32_t>						vertexUses; // live triangle corners on the vertex
+		PagedVector<Vec2i64>							verts;
+		PagedVector<std::int32_t>						vertexUses; // live triangle corners on the vertex
 		std::vector<std::uint32_t>						freeVertices;
-		std::unordered_map<Vec2i64, std::uint32_t, VertexHash> vertexAt;
+		IncrementalHashMap<Vec2i64, std::uint32_t, VertexHash> vertexAt;
 
-		std::vector<NavTriangle>				 tris;
-		std::vector<std::uint8_t>				 live;
-		std::vector<std::array<std::int32_t, 3>> edgeSourceIds; // interned source list, -1 unconstrained
-		std::vector<std::int32_t>				 coverIds;
+		PagedVector<NavTriangle>				 tris;
+		PagedVector<std::uint8_t>				 live;
+		PagedVector<std::array<std::int32_t, 3>> edgeSourceIds; // interned source list, -1 unconstrained
+		PagedVector<std::int32_t>				 coverIds;
 		std::vector<std::int32_t>				 freeTriangles;
 		std::int32_t							 liveTriangles = 0;
 
@@ -301,15 +312,15 @@ namespace geometry::nav {
 		std::vector<FaceTags>				 coverTags; // per cover id
 
 
-		mutable std::vector<std::uint32_t> visitStamp; // per triangle, for box queries
+		mutable ScratchArray<std::uint32_t> visitStamp; // per triangle, for box queries
 		mutable std::uint32_t			   stamp		= 0;
 		mutable bool					   boxQueryOpen = false;
 
 		BoxGrid					grid;		 // live triangles
 		BoxGrid					ringGrid;	 // live rings, by outline box
 		BoxGrid					edgeGrid;	 // live rings' edges, by segment box
-		std::vector<EdgeSource> edgeOf;		 // edge index id -> ring edge
-		std::vector<std::vector<std::int32_t>> pieces; // per edge index id: half-edges t * 3 + e
+		PagedVector<EdgeSource> edgeOf;		 // edge index id -> ring edge
+		PagedVector<std::vector<std::int32_t>> pieces; // per edge index id: half-edges t * 3 + e
 		std::vector<std::int32_t> freeEdgeIds;
 		PatchScratchSlot		patchScratch;
 
@@ -318,10 +329,26 @@ namespace geometry::nav {
 		std::vector<DoorId>										   freeDoors;
 		std::map<std::pair<Vec2i64, Vec2i64>, std::vector<DoorId>> doorsAt; // ascending ids per edge
 
-		WidthSearch								 widthSearch;
-		std::vector<std::pair<Vec2i64, Vec2i64>> pendingWidthBoxes;	  // one per patch since refreshWidths
-		std::vector<std::int32_t>				 freshWidthTriangles; // new or flipped since then
-		std::vector<std::int32_t>				 staleApexes;		  // refreshWidths scratch: 3 * t + apex
+		// An edge where unchanged ground (tri) meets what a patch changed (see refreshWidths).
+		struct WidthSeed {
+			std::int32_t tri = -1;
+			Vec2i64		 a;
+			Vec2i64		 b;
+		};
+		WidthSearch			   widthSearch;
+		std::vector<std::int32_t> freshWidthTriangles; // new or flipped since refreshWidths
+		std::vector<WidthSeed>	   pendingWidthSeeds;	// edges whose far side went since then
+		// refreshWidths scratch
+		std::vector<std::int32_t>							staleApexes; // 3 * t + apex
+		std::vector<WidthSeed>								widthSeeds;
+		std::vector<std::pair<std::uint64_t, std::int32_t>> seedBuckets;
+		std::vector<std::int32_t>							seedCellRuns;
+		std::vector<std::int32_t>							seedCellTable;
+		std::vector<std::int32_t>							widthWalk;
+		ScratchArray<std::uint32_t>							freshMark;
+		ScratchArray<std::uint32_t>							walkMark;
+		std::uint32_t										freshStamp = 0;
+		std::uint32_t										walkStamp  = 0;
 
 		ReachabilityForests forests;
 		ForestScratch		forestScratch;

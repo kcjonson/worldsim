@@ -377,39 +377,35 @@ namespace geometry::nav {
 		struct CornerMemo {
 			const void*				   owner = nullptr;
 			std::uint64_t			   epoch = 0;
-			std::vector<StarInfo>	   star;
-			std::vector<std::uint32_t> starStamp;
+			ScratchArray<StarInfo>		star;
+			ScratchArray<std::uint32_t> starStamp;
 			std::uint32_t			   state = 0;
 			// Round walls a corner depends on the query's belief, and whether one is hard
 			// (a corner without its priced faces) on its prices, so those answers last one
 			// query: stamped with the query, 1 a corner, 0 not.
-			std::vector<std::uint32_t> queryStamp;
-			std::vector<char>		   queryCorner;
-			std::vector<std::uint32_t> hardStamp;
-			std::vector<char>		   queryHard;
+			ScratchArray<std::uint32_t> queryStamp;
+			ScratchArray<char>			queryCorner;
+			ScratchArray<std::uint32_t> hardStamp;
+			ScratchArray<char>			queryHard;
 			std::uint32_t			   query = 0;
 
 			void begin(const NavView& mesh) {
-				if (queryStamp.size() < mesh.vertices->size()) {
-					queryStamp.resize(mesh.vertices->size(), 0);
-					queryCorner.resize(mesh.vertices->size(), 0);
-					hardStamp.resize(mesh.vertices->size(), 0);
-					queryHard.resize(mesh.vertices->size(), 0);
-				}
+				queryStamp.growTo(mesh.vertices.size());
+				queryCorner.growTo(mesh.vertices.size());
+				hardStamp.growTo(mesh.vertices.size());
+				queryHard.growTo(mesh.vertices.size());
 				if (++query == 0) {
-					std::fill(queryStamp.begin(), queryStamp.end(), 0);
-					std::fill(hardStamp.begin(), hardStamp.end(), 0);
+					queryStamp.zero();
+					hardStamp.zero();
 					query = 1;
 				}
-				if (star.size() < mesh.vertices->size()) {
-					star.resize(mesh.vertices->size());
-					starStamp.resize(mesh.vertices->size(), 0);
-				}
+				star.growTo(mesh.vertices.size());
+				starStamp.growTo(mesh.vertices.size());
 				if (owner != mesh.owner || epoch != mesh.epoch()) {
 					owner = mesh.owner;
 					epoch = mesh.epoch();
 					if (++state == 0) {
-						std::fill(starStamp.begin(), starStamp.end(), 0);
+						starStamp.zero();
 						state = 1;
 					}
 				}
@@ -756,8 +752,8 @@ namespace geometry::nav {
 		// query's when its stamp is the current one.
 		struct SearchScratch {
 			std::vector<Label>		   labels;
-			std::vector<StateLabels>   states;
-			std::vector<std::uint32_t> stamp;
+			ScratchArray<StateLabels>	states;
+			ScratchArray<std::uint32_t> stamp;
 			std::uint32_t			   current = 0;
 			std::vector<Portal>		   replay;
 			std::vector<std::int32_t>  corridor; // a winning corridor's triangles
@@ -778,12 +774,10 @@ namespace geometry::nav {
 		SearchScratch& searchScratch(std::size_t stateCount) {
 			thread_local SearchScratch scratch;
 			scratch.labels.clear();
-			if (scratch.stamp.size() < stateCount) {
-				scratch.stamp.resize(stateCount, 0);
-				scratch.states.resize(stateCount);
-			}
+			scratch.stamp.growTo(stateCount);
+			scratch.states.growTo(stateCount);
 			if (++scratch.current == 0) {
-				std::fill(scratch.stamp.begin(), scratch.stamp.end(), 0);
+				scratch.stamp.zero();
 				scratch.current = 1;
 			}
 			return scratch;
@@ -882,7 +876,8 @@ namespace geometry::nav {
 		return best;
 	}
 
-	ReachFrom reachFrom(const NavView& mesh, const Vec2i64& start, std::int64_t agentRadiusMm, BeliefFilter belief) {
+	ReachFrom reachFrom(const NavView& meshIn, const Vec2i64& start, std::int64_t agentRadiusMm, BeliefFilter belief) {
+		const NavView mesh = meshIn.resolved();
 		assert(forestFor(mesh, belief) != nullptr && "reachFrom: the mesh has no reachability forests");
 		ReachFrom from;
 		if (forestFor(mesh, belief) == nullptr) {
@@ -899,7 +894,8 @@ namespace geometry::nav {
 		return from;
 	}
 
-	bool reaches(const NavView& mesh, const ReachFrom& from, const Vec2i64& goal, BeliefFilter belief) {
+	bool reaches(const NavView& meshIn, const ReachFrom& from, const Vec2i64& goal, BeliefFilter belief) {
+		const NavView mesh = meshIn.resolved();
 		assert(forestFor(mesh, belief) != nullptr && "reaches: the mesh has no reachability forests");
 		if (forestFor(mesh, belief) == nullptr) {
 			return true; // nothing proves the goal unreachable
@@ -918,9 +914,10 @@ namespace geometry::nav {
 		return inForestSubtree(*forestFor(mesh, belief), from.root, goalTri);
 	}
 
-	PathResult pathThrough(const NavView& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
+	PathResult pathThrough(const NavView& meshIn, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
 						   BeliefFilter belief) {
-		PathResult result;
+		const NavView mesh = meshIn.resolved();
+		PathResult	  result;
 		assert(mesh.widthsCurrent() && "pathThrough: corridor widths lag behind a patch");
 		if (!mesh.widthsCurrent()) {
 			return result; // stale widths could route a disc through a gap it does not fit

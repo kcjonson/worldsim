@@ -26,6 +26,7 @@
 using geometry::Arrangement;
 using geometry::InputSegment;
 using geometry::Int128;
+using geometry::PagedVector;
 using geometry::Vec2i64;
 using namespace geometry::nav;
 
@@ -716,7 +717,7 @@ TEST(PatchableMesh, StableIdsOutsideTheHole) {
 	for (std::int64_t i = 0; i < 10; ++i) {
 		h.add(blocked(rect(5000 + i * 9000, 5000, 6000 + i * 9000, 6000)));
 	}
-	const std::vector<NavTriangle> before = h.mesh.triangles();
+	const PagedVector<NavTriangle> before = h.mesh.triangles();
 	std::vector<std::uint8_t>	   liveBefore;
 	for (std::int32_t t = 0; t < static_cast<std::int32_t>(before.size()); ++t) {
 		liveBefore.push_back(h.mesh.triangleLive(t) ? 1 : 0);
@@ -741,7 +742,7 @@ TEST(PatchableMesh, LocateTieBreaksOnCorners) {
 	Harness h;
 	h.add(bounds(rect(0, 0, 1000, 1000)));
 	h.add(blocked(rect(400, 400, 600, 600)));
-	const std::vector<NavTriangle>& tris = h.mesh.triangles();
+	const PagedVector<NavTriangle>& tris = h.mesh.triangles();
 	auto sortedCorners = [&](const NavTriangle& x) {
 		std::array<Vec2i64, 3> c{h.mesh.vertices()[x.v[0]], h.mesh.vertices()[x.v[1]], h.mesh.vertices()[x.v[2]]};
 		std::sort(c.begin(), c.end());
@@ -1609,7 +1610,7 @@ TEST(PatchableMesh, DoorEditsChangeTagsOnly) {
 	const WallsAndDoors input = wallsAndDoors();
 	Reached				r;
 	reach(r, input, 9);
-	const std::vector<NavTriangle> before = r.h.mesh.triangles();
+	const PagedVector<NavTriangle> before = r.h.mesh.triangles();
 	r.h.mesh.removeDoor(r.doorIds[1]);
 	EXPECT_FALSE(r.h.mesh.hasForests());
 	EXPECT_TRUE(r.h.mesh.validate().empty()) << r.h.mesh.validate();

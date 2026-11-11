@@ -6,7 +6,9 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cmath>
 #include <iterator>
+#include <limits>
 #include <numeric>
 #include <set>
 #include <span>
@@ -196,39 +198,13 @@ namespace geometry::nav {
 
 	} // namespace
 
-	template <typename Value> std::size_t PatchableMesh::InternTable<Value>::homeOf(std::uint64_t hash) const {
-		hash ^= hash >> 31;
-		hash *= 0xBF58476D1CE4E5B9ULL;
-		hash ^= hash >> 29;
-		return static_cast<std::size_t>(hash) & (table.size() - 1);
-	}
-
-	template <typename Value> void PatchableMesh::InternTable<Value>::grow() {
-		const std::size_t capacity = std::max<std::size_t>(64, 2 * table.size());
-		table.assign(capacity, -1);
-		for (std::size_t id = 0; id < values.size(); ++id) {
-			if (refs[id] == 0) {
-				continue;
-			}
-			std::size_t i = homeOf(hashes[id]);
-			while (table[i] >= 0) {
-				i = (i + 1) & (capacity - 1);
-			}
-			table[i] = static_cast<std::int32_t>(id);
-		}
-	}
-
 	template <typename Value> std::int32_t PatchableMesh::InternTable<Value>::acquire(const Value& value) {
-		if (2 * (used + 1) > table.size()) {
-			grow();
-		}
-		const std::uint64_t hash = hashValue(value);
-		std::size_t			i	 = homeOf(hash);
-		for (; table[i] >= 0; i = (i + 1) & (table.size() - 1)) {
-			const std::size_t at = static_cast<std::size_t>(table[i]);
-			if (hashes[at] == hash && values[at] == value) {
-				++refs[at];
-				return table[i];
+		const std::uint64_t hash  = hashValue(value);
+		std::int32_t*		first = byHash.find(hash);
+		for (std::int32_t at = first != nullptr ? *first : -1; at >= 0; at = sameHash[static_cast<std::size_t>(at)]) {
+			if (values[static_cast<std::size_t>(at)] == value) {
+				++refs[static_cast<std::size_t>(at)];
+				return at;
 			}
 		}
 		std::int32_t id = 0;
@@ -240,34 +216,41 @@ namespace geometry::nav {
 			values.emplace_back();
 			hashes.push_back(0);
 			refs.push_back(0);
+			sameHash.push_back(-1);
 		}
 		values[static_cast<std::size_t>(id)].assign(value.begin(), value.end());
 		hashes[static_cast<std::size_t>(id)] = hash;
 		refs[static_cast<std::size_t>(id)]	 = 1;
-		table[i]							 = id;
-		++used;
+		if (first != nullptr) {
+			sameHash[static_cast<std::size_t>(id)] = *first;
+			*first								   = id;
+		} else {
+			sameHash[static_cast<std::size_t>(id)] = -1;
+			byHash.insert(hash, id);
+		}
 		return id;
 	}
 
-	// Backward-shift deletion, as BoxGrid's, keeps every probe run unbroken.
 	template <typename Value> void PatchableMesh::InternTable<Value>::release(std::int32_t id) {
 		assert(refs[static_cast<std::size_t>(id)] > 0 && "InternTable: releasing a dead entry");
 		if (--refs[static_cast<std::size_t>(id)] != 0) {
 			return;
 		}
-		const std::size_t mask = table.size() - 1;
-		std::size_t		  i	   = homeOf(hashes[static_cast<std::size_t>(id)]);
-		while (table[i] != id) {
-			i = (i + 1) & mask;
-		}
-		for (std::size_t j = (i + 1) & mask; table[j] >= 0; j = (j + 1) & mask) {
-			if (((j - homeOf(hashes[static_cast<std::size_t>(table[j])])) & mask) >= ((j - i) & mask)) {
-				table[i] = table[j];
-				i		 = j;
+		const std::uint64_t hash  = hashes[static_cast<std::size_t>(id)];
+		std::int32_t*		first = byHash.find(hash);
+		if (*first == id) {
+			if (sameHash[static_cast<std::size_t>(id)] >= 0) {
+				*first = sameHash[static_cast<std::size_t>(id)];
+			} else {
+				byHash.erase(hash);
 			}
+		} else {
+			std::int32_t at = *first;
+			while (sameHash[static_cast<std::size_t>(at)] != id) {
+				at = sameHash[static_cast<std::size_t>(at)];
+			}
+			sameHash[static_cast<std::size_t>(at)] = sameHash[static_cast<std::size_t>(id)];
 		}
-		table[i] = -1;
-		--used;
 		values[static_cast<std::size_t>(id)].clear();
 		freeIds.push_back(id);
 	}
@@ -295,54 +278,21 @@ namespace geometry::nav {
 		return level;
 	}
 
-	std::size_t PatchableMesh::BoxGrid::home(const CellKey& key) const {
-		const std::uint64_t h = mixKey(static_cast<std::uint64_t>(key.x) ^ mixKey(static_cast<std::uint64_t>(key.y) ^
-																					  (static_cast<std::uint64_t>(key.level) << 58)));
-		return static_cast<std::size_t>(h) & (slotKeys.size() - 1);
+	std::uint64_t PatchableMesh::BoxGrid::CellHash::operator()(const CellKey& key) const {
+		return mixKey(static_cast<std::uint64_t>(key.x) ^ mixKey(static_cast<std::uint64_t>(key.y) ^ (static_cast<std::uint64_t>(key.level) << 58)));
 	}
 
 	std::int32_t PatchableMesh::BoxGrid::find(const CellKey& key) const {
-		if (slotKeys.empty()) {
-			return -1;
-		}
-		for (std::size_t i = home(key);; i = (i + 1) & (slotKeys.size() - 1)) {
-			if (slotKeys[i] == key) {
-				return slotCells[i];
-			}
-			if (slotKeys[i].level < 0) {
-				return -1;
-			}
-		}
+		const std::int32_t* cell = table.find(key);
+		return cell != nullptr ? *cell : -1;
 	}
 
 	std::int32_t PatchableMesh::BoxGrid::findOrAdd(const CellKey& key) {
-		const int level = key.level;
-		if (2 * (occupied + 1) > slotKeys.size()) {
-			const std::size_t		   capacity = std::max<std::size_t>(64, 2 * slotKeys.size());
-			std::vector<CellKey>	  oldKeys  = std::move(slotKeys);
-			std::vector<std::int32_t> oldCells = std::move(slotCells);
-			slotKeys.assign(capacity, CellKey{});
-			slotCells.assign(capacity, -1);
-			for (std::size_t i = 0; i < oldKeys.size(); ++i) {
-				if (oldKeys[i].level < 0) {
-					continue;
-				}
-				std::size_t j = home(oldKeys[i]);
-				while (slotKeys[j].level >= 0) {
-					j = (j + 1) & (capacity - 1);
-				}
-				slotKeys[j]	 = oldKeys[i];
-				slotCells[j] = oldCells[i];
-			}
+		if (const std::int32_t* found = table.find(key)) {
+			return *found;
 		}
-		std::size_t i = home(key);
-		while (slotKeys[i].level >= 0) {
-			if (slotKeys[i] == key) {
-				return slotCells[i];
-			}
-			i = (i + 1) & (slotKeys.size() - 1);
-		}
-		std::int32_t cell = 0;
+		const int	 level = key.level;
+		std::int32_t cell  = 0;
 		if (!freeCells.empty()) {
 			cell = freeCells.back();
 			freeCells.pop_back();
@@ -355,32 +305,13 @@ namespace geometry::nav {
 		c.levelSlot = static_cast<std::int32_t>(levelCells[static_cast<std::size_t>(level)].size());
 		levelCells[static_cast<std::size_t>(level)].push_back(cell);
 		levelMask |= std::uint64_t{1} << level;
-		slotKeys[i]	 = key;
-		slotCells[i] = cell;
-		++occupied;
+		table.insert(key, cell);
 		return cell;
 	}
 
-	// Backward-shift deletion keeps every probe run unbroken without tombstones.
 	void PatchableMesh::BoxGrid::dropCell(std::int32_t cell, int level) {
-		const CellKey	  key  = cells[static_cast<std::size_t>(cell)].key;
-		const std::size_t mask = slotKeys.size() - 1;
-		std::size_t			i	 = home(key);
-		while (slotKeys[i] != key) {
-			i = (i + 1) & mask;
-		}
-		for (std::size_t j = (i + 1) & mask; slotKeys[j].level >= 0; j = (j + 1) & mask) {
-			if (((j - home(slotKeys[j])) & mask) >= ((j - i) & mask)) {
-				slotKeys[i]	 = slotKeys[j];
-				slotCells[i] = slotCells[j];
-				i			 = j;
-			}
-		}
-		slotKeys[i]	 = CellKey{};
-		slotCells[i] = -1;
-		--occupied;
-
-		std::vector<std::int32_t>& onLevel = levelCells[static_cast<std::size_t>(level)];
+		table.erase(cells[static_cast<std::size_t>(cell)].key);
+		PagedVector<std::int32_t>& onLevel = levelCells[static_cast<std::size_t>(level)];
 		const std::int32_t		   slot	   = cells[static_cast<std::size_t>(cell)].levelSlot;
 		onLevel[static_cast<std::size_t>(slot)]					  = onLevel.back();
 		cells[static_cast<std::size_t>(onLevel.back())].levelSlot = slot;
@@ -441,7 +372,7 @@ namespace geometry::nav {
 			if ((levelMask >> level & 1) == 0) {
 				continue;
 			}
-			const std::vector<std::int32_t>& onLevel = levelCells[static_cast<std::size_t>(level)];
+			const PagedVector<std::int32_t>& onLevel = levelCells[static_cast<std::size_t>(level)];
 			const std::int64_t				 side	 = (kBaseCell << level) * scale;
 			const std::int64_t				 x0		 = floorDiv(lo.x, side);
 			const std::int64_t				 x1		 = floorDiv(hi.x, side);
@@ -487,7 +418,7 @@ namespace geometry::nav {
 	}
 
 	template <typename Visit> void PatchableMesh::BoxGrid::forEachEntry(Visit visit) const {
-		for (const std::vector<std::int32_t>& onLevel : levelCells) {
+		for (const PagedVector<std::int32_t>& onLevel : levelCells) {
 			for (std::int32_t cell : onLevel) {
 				for (const Entry& e : cells[static_cast<std::size_t>(cell)].entries) {
 					visit(e.id);
@@ -499,8 +430,7 @@ namespace geometry::nav {
 	// --- PatchableMesh helpers -------------------------------------------------------
 
 	std::size_t PatchableMesh::VertexHash::operator()(const Vec2i64& p) const {
-		const std::uint64_t h = static_cast<std::uint64_t>(p.x) * 0x9E3779B97F4A7C15ULL ^ static_cast<std::uint64_t>(p.y);
-		return static_cast<std::size_t>(h ^ (h >> 31));
+		return static_cast<std::size_t>(mixKey(static_cast<std::uint64_t>(p.x) ^ mixKey(static_cast<std::uint64_t>(p.y))));
 	}
 
 	const std::vector<std::int32_t>& PatchableMesh::piecesOf(const EdgeSource& s) const {
@@ -556,11 +486,9 @@ namespace geometry::nav {
 		// gather into sets, so the order (the grid's) does not reach any result.
 		assert(!boxQueryOpen && "PatchableMesh: nested box query");
 		boxQueryOpen = true;
-		if (visitStamp.size() < tris.size()) {
-			visitStamp.resize(tris.size(), 0);
-		}
+		visitStamp.growTo(tris.size());
 		if (++stamp == 0) {
-			std::fill(visitStamp.begin(), visitStamp.end(), 0);
+			visitStamp.zero();
 			stamp = 1;
 		}
 		grid.forEachInBox(lo, hi, 1, [&](std::int32_t t) {
@@ -1647,14 +1575,14 @@ namespace geometry::nav {
 				continue;
 			}
 			for (const Vec2i64& end : {p, q}) {
-				auto old = m.vertexAt.find(end);
-				if (old == m.vertexAt.end()) {
+				const std::uint32_t* old = m.vertexAt.find(end);
+				if (old == nullptr) {
 					continue;
 				}
 				for (std::int64_t local : ae.provenance) {
 					if (fromS(local)) {
 						const EdgeSource& x = segments[static_cast<std::size_t>(local)].source;
-						touching.push_back({old->second, x, isOriginalEndpoint(newPolygon(x.ring).ring, x.edge, end)});
+						touching.push_back({*old, x, isOriginalEndpoint(newPolygon(x.ring).ring, x.edge, end)});
 					}
 				}
 			}
@@ -1972,9 +1900,8 @@ namespace geometry::nav {
 					continue;
 				}
 				const Vec2i64& p  = cdt.vertices[lv];
-				auto		   it = m.vertexAt.find(p);
-				if (it != m.vertexAt.end()) {
-					meshVertex[lv] = it->second;
+				if (const std::uint32_t* found = m.vertexAt.find(p)) {
+					meshVertex[lv] = *found;
 					continue;
 				}
 				std::uint32_t id = 0;
@@ -1987,7 +1914,7 @@ namespace geometry::nav {
 					m.verts.push_back(p);
 					m.vertexUses.push_back(0);
 				}
-				m.vertexAt.emplace(p, id);
+				m.vertexAt.insert(p, id);
 				meshVertex[lv] = id;
 			}
 		}
@@ -2170,6 +2097,9 @@ namespace geometry::nav {
 		for (std::size_t f = 0; f < fixed.size(); ++f) {
 			if (fixed[f].boundary && linked[f] == 0) {
 				m.tris[static_cast<std::size_t>(fixed[f].outside)].neighbor[static_cast<std::size_t>(fixed[f].outsideEdge)] = -1;
+				// Ground beyond this edge is gone: widths near it change though no fresh
+				// triangle borders it.
+				m.pendingWidthSeeds.push_back({fixed[f].outside, m.verts[fixed[f].a], m.verts[fixed[f].b]});
 			}
 		}
 
@@ -2210,10 +2140,7 @@ namespace geometry::nav {
 		for (std::int32_t t : out.newTriangles) {
 			m.applyDoorTags(t);
 		}
-		if (boxSet) {
-			m.pendingWidthBoxes.push_back({lo, hi});
-			m.freshWidthTriangles.insert(m.freshWidthTriangles.end(), out.newTriangles.begin(), out.newTriangles.end());
-		}
+		m.freshWidthTriangles.insert(m.freshWidthTriangles.end(), out.newTriangles.begin(), out.newTriangles.end());
 	}
 
 	// --- Public edits ---------------------------------------------------------------
@@ -2251,7 +2178,7 @@ namespace geometry::nav {
 	}
 
 	PatchableMesh::PatchableMesh(const PatchableMeshArgs& args)
-		: maxBoundsEdgeMm(args.maxBoundsEdgeMm), maxClearanceMm(args.maxClearanceMm), detailTags(args.detailTags) {}
+		: maxBoundsEdgeMm(args.maxBoundsEdgeMm), maxClearanceMm(args.maxClearanceMm), maxSqueezeMm(args.maxSqueezeMm), detailTags(args.detailTags) {}
 
 	PatchReport PatchableMesh::applyPatch(const PatchEdits& edits) {
 		Patch patch(*this, edits);
@@ -2282,15 +2209,15 @@ namespace geometry::nav {
 
 	// The triangles on edge (a, b), if it is a mesh edge, take its tags again.
 	void PatchableMesh::retagEdge(const Vec2i64& a, const Vec2i64& b) {
-		auto va = vertexAt.find(a);
-		auto vb = vertexAt.find(b);
-		if (va == vertexAt.end() || vb == vertexAt.end()) {
+		const std::uint32_t* va = vertexAt.find(a);
+		const std::uint32_t* vb = vertexAt.find(b);
+		if (va == nullptr || vb == nullptr) {
 			return;
 		}
 		std::vector<std::int32_t> onEdge;
-		forEachAroundVertex(va->second, -1, [&](std::int32_t t, int i) {
+		forEachAroundVertex(*va, -1, [&](std::int32_t t, int i) {
 			const NavTriangle& tri = tris[static_cast<std::size_t>(t)];
-			if (tri.v[static_cast<std::size_t>(next3(i))] == vb->second || tri.v[static_cast<std::size_t>(prev3(i))] == vb->second) {
+			if (tri.v[static_cast<std::size_t>(next3(i))] == *vb || tri.v[static_cast<std::size_t>(prev3(i))] == *vb) {
 				onEdge.push_back(t);
 			}
 		});
@@ -2338,50 +2265,243 @@ namespace geometry::nav {
 		patchEpoch = nextMeshGeneration();
 	}
 
-	// Each patch since the last refresh left a box holding every triangle and adjacency
-	// it changed, and marked its new and flipped triangles, which get their widths from
-	// scratch. An unchanged triangle's width w at apex C (w read as maxClearanceMm when
-	// unconstrained) stays right unless a box comes within w of C: the obstacle at
-	// distance w is found through triangles inside the disc of radius w around C, none of
-	// them changed, and nothing nearer than w can appear outside the boxes
-	// (corridorWidthMm reads nothing farther than maxClearanceMm). So only those apexes
-	// are searched again.
+	namespace {
+
+		struct Vec2dW {
+			double x = 0.0;
+			double y = 0.0;
+		};
+
+		double cross2(const Vec2dW& o, const Vec2dW& a, const Vec2dW& b) {
+			return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+		}
+
+		double pointToSegment(const Vec2dW& p, const Vec2dW& a, const Vec2dW& b) {
+			const double dx	  = b.x - a.x;
+			const double dy	  = b.y - a.y;
+			const double len2 = dx * dx + dy * dy;
+			double		 u	  = len2 > 0.0 ? ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2 : 0.0;
+			u				  = std::clamp(u, 0.0, 1.0);
+			return std::hypot(p.x - (a.x + dx * u), p.y - (a.y + dy * u));
+		}
+
+		bool segmentsCross(const Vec2dW& a, const Vec2dW& b, const Vec2dW& c, const Vec2dW& d) {
+			const double d1 = cross2(c, d, a);
+			const double d2 = cross2(c, d, b);
+			const double d3 = cross2(a, b, c);
+			const double d4 = cross2(a, b, d);
+			return ((d1 <= 0.0 && d2 >= 0.0) || (d1 >= 0.0 && d2 <= 0.0)) && ((d3 <= 0.0 && d4 >= 0.0) || (d3 >= 0.0 && d4 <= 0.0));
+		}
+
+		// The least distance from segment [a, b] to the closed triangle, 0 where they meet.
+		double segmentToTriangle(const Vec2dW& a, const Vec2dW& b, const std::array<Vec2dW, 3>& t) {
+			const double area = cross2(t[0], t[1], t[2]);
+			auto		 inside = [&](const Vec2dW& p) {
+				const double s0 = cross2(t[0], t[1], p);
+				const double s1 = cross2(t[1], t[2], p);
+				const double s2 = cross2(t[2], t[0], p);
+				return area >= 0.0 ? (s0 >= 0.0 && s1 >= 0.0 && s2 >= 0.0) : (s0 <= 0.0 && s1 <= 0.0 && s2 <= 0.0);
+			};
+			if (inside(a) || inside(b)) {
+				return 0.0;
+			}
+			double least = std::numeric_limits<double>::infinity();
+			for (int k = 0; k < 3; ++k) {
+				const Vec2dW& p = t[static_cast<std::size_t>(k)];
+				const Vec2dW& q = t[static_cast<std::size_t>((k + 1) % 3)];
+				if (segmentsCross(a, b, p, q)) {
+					return 0.0;
+				}
+				least = std::min({least, pointToSegment(p, a, b), pointToSegment(a, p, q), pointToSegment(b, p, q)});
+			}
+			return least;
+		}
+
+	} // namespace
+
+	// A patch changes the mesh inside its hole and the triangles legalize flips: the
+	// triangles it leaves there (the fresh ones) get their widths from scratch. An
+	// unchanged apex C, its width w (read as maxClearanceMm when unconstrained), stays
+	// right unless its search can reach what changed: the search reads only triangles
+	// joined to C within the disc of radius w round C (corridorWidthMm reads nothing
+	// farther than maxClearanceMm), so a changed point P it reaches lies within w of C,
+	// on an edge where unchanged ground meets the changed region (a seed edge: a fresh
+	// triangle's edge to an unchanged one, or an edge whose far side the patch removed),
+	// and every triangle on the way lies within 2w of P. So the triangles within twice
+	// the clearance cap of a seed edge, found by walking adjacency out from the seeds,
+	// hold every apex to search again: those within their own width of a seed edge. The
+	// walk covers what changed and its margin, whatever the size of the mesh.
 	void PatchableMesh::refreshWidths() {
-		// Each box marks the apexes it can reach, judged on the widths before any is
-		// recomputed; then every marked apex is searched once.
 		std::vector<std::int32_t>& stale = staleApexes;
 		stale.clear();
+		freshMark.growTo(tris.size());
+		walkMark.growTo(tris.size());
+		if (++freshStamp == 0) {
+			freshMark.zero();
+			freshStamp = 1;
+		}
+		if (++walkStamp == 0) {
+			walkMark.zero();
+			walkStamp = 1;
+		}
+		auto isFresh = [&](std::int32_t t) { return freshMark[static_cast<std::size_t>(t)] == freshStamp; };
 		for (std::int32_t t : freshWidthTriangles) {
 			if (live[static_cast<std::size_t>(t)] != 0) {
-				stale.insert(stale.end(), {3 * t, 3 * t + 1, 3 * t + 2});
+				freshMark[static_cast<std::size_t>(t)] = freshStamp;
 			}
 		}
-		const Vec2i64 reach{maxClearanceMm, maxClearanceMm};
-		for (const auto& [lo, hi] : pendingWidthBoxes) {
-			forEachLiveInBox(lo - reach, hi + reach, [&](std::int32_t t) {
-				const NavTriangle& tri = tris[static_cast<std::size_t>(t)];
+		std::vector<WidthSeed>& seeds = widthSeeds;
+		seeds.clear();
+		for (std::int32_t t : freshWidthTriangles) {
+			if (live[static_cast<std::size_t>(t)] == 0) {
+				continue;
+			}
+			stale.insert(stale.end(), {3 * t, 3 * t + 1, 3 * t + 2});
+			const NavTriangle& tri = tris[static_cast<std::size_t>(t)];
+			for (int e = 0; e < 3; ++e) {
+				const std::int32_t nb = tri.neighbor[static_cast<std::size_t>(e)];
+				if (nb >= 0 && !isFresh(nb)) {
+					seeds.push_back({nb, verts[tri.v[static_cast<std::size_t>(e)]], verts[tri.v[static_cast<std::size_t>(next3(e))]]});
+				}
+			}
+		}
+		for (const WidthSeed& s : pendingWidthSeeds) {
+			if (live[static_cast<std::size_t>(s.tri)] != 0 && !isFresh(s.tri)) {
+				seeds.push_back(s);
+			}
+		}
+
+		// The seed edges bucketed on a grid of the walk's reach, each in every cell its box
+		// overlaps, as (cell, seed) sorted by cell.
+		const double	   walkReach = 2.0 * static_cast<double>(maxClearanceMm) + 4.0;
+		const std::int64_t cell		 = 2 * maxClearanceMm + 4;
+		auto			   cellKey	 = [](std::int64_t cx, std::int64_t cy) { return (static_cast<std::uint64_t>(cx) << 32) ^ (static_cast<std::uint64_t>(cy) & 0xFFFFFFFFULL); };
+		std::vector<std::pair<std::uint64_t, std::int32_t>>& buckets = seedBuckets;
+		buckets.clear();
+		for (std::int32_t i = 0; i < static_cast<std::int32_t>(seeds.size()); ++i) {
+			const WidthSeed& s = seeds[static_cast<std::size_t>(i)];
+			for (std::int64_t cy = floorDiv(std::min(s.a.y, s.b.y), cell); cy <= floorDiv(std::max(s.a.y, s.b.y), cell); ++cy) {
+				for (std::int64_t cx = floorDiv(std::min(s.a.x, s.b.x), cell); cx <= floorDiv(std::max(s.a.x, s.b.x), cell); ++cx) {
+					buckets.push_back({cellKey(cx, cy), i});
+				}
+			}
+		}
+		std::sort(buckets.begin(), buckets.end());
+		// Each occupied cell's run of the sorted buckets, found by an open-addressed table.
+		std::vector<std::int32_t>& runs = seedCellRuns; // begin index of each run, then buckets.size()
+		runs.clear();
+		for (std::size_t i = 0; i < buckets.size(); ++i) {
+			if (i == 0 || buckets[i].first != buckets[i - 1].first) {
+				runs.push_back(static_cast<std::int32_t>(i));
+			}
+		}
+		std::vector<std::int32_t>& table = seedCellTable; // run index, -1 empty
+		std::size_t				   size	 = 16;
+		while (size < 2 * runs.size()) {
+			size *= 2;
+		}
+		table.assign(size, -1);
+		auto slotOf = [&](std::uint64_t key) { return static_cast<std::size_t>((key * 0x9E3779B97F4A7C15ULL) >> 32) & (size - 1); };
+		for (std::size_t k = 0; k < runs.size(); ++k) {
+			std::size_t i = slotOf(buckets[static_cast<std::size_t>(runs[k])].first);
+			while (table[i] >= 0) {
+				i = (i + 1) & (size - 1);
+			}
+			table[i] = static_cast<std::int32_t>(k);
+		}
+		runs.push_back(static_cast<std::int32_t>(buckets.size()));
+		auto toD = [](const Vec2i64& p) { return Vec2dW{static_cast<double>(p.x), static_cast<double>(p.y)}; };
+		// Visits each seed whose box comes within `margin` of the box [lo, hi], until `visit`
+		// returns true: through the cells the box covers, or every seed when they are
+		// fewer than those cells.
+		auto forSeedsNear = [&](const Vec2i64& lo, const Vec2i64& hi, std::int64_t margin, auto visit) {
+			auto boxNear = [&](const WidthSeed& s) {
+				return std::min(s.a.x, s.b.x) - margin <= hi.x && lo.x <= std::max(s.a.x, s.b.x) + margin && std::min(s.a.y, s.b.y) - margin <= hi.y &&
+					   lo.y <= std::max(s.a.y, s.b.y) + margin;
+			};
+			const std::int64_t x0 = floorDiv(lo.x - margin, cell);
+			const std::int64_t x1 = floorDiv(hi.x + margin, cell);
+			const std::int64_t y0 = floorDiv(lo.y - margin, cell);
+			const std::int64_t y1 = floorDiv(hi.y + margin, cell);
+			if (static_cast<double>(x1 - x0 + 1) * static_cast<double>(y1 - y0 + 1) >= static_cast<double>(seeds.size())) {
+				for (const WidthSeed& s : seeds) {
+					if (boxNear(s) && visit(s)) {
+						return true;
+					}
+				}
+				return false;
+			}
+			for (std::int64_t cy = y0; cy <= y1; ++cy) {
+				for (std::int64_t cx = x0; cx <= x1; ++cx) {
+					const std::uint64_t key = cellKey(cx, cy);
+					for (std::size_t i = slotOf(key); table[i] >= 0; i = (i + 1) & (size - 1)) {
+						const std::size_t k = static_cast<std::size_t>(table[i]);
+						if (buckets[static_cast<std::size_t>(runs[k])].first != key) {
+							continue;
+						}
+						for (std::int32_t j = runs[k]; j < runs[k + 1]; ++j) {
+							const WidthSeed& s = seeds[static_cast<std::size_t>(buckets[static_cast<std::size_t>(j)].second)];
+							if (boxNear(s) && visit(s)) {
+								return true;
+							}
+						}
+						break;
+					}
+				}
+			}
+			return false;
+		};
+
+		std::vector<std::int32_t>& queue = widthWalk;
+		queue.clear();
+		for (const WidthSeed& s : seeds) {
+			if (walkMark[static_cast<std::size_t>(s.tri)] != walkStamp) {
+				walkMark[static_cast<std::size_t>(s.tri)] = walkStamp;
+				queue.push_back(s.tri);
+			}
+		}
+		for (std::size_t head = 0; head < queue.size(); ++head) {
+			const std::int32_t	   t   = queue[head];
+			const NavTriangle&	   tri = tris[static_cast<std::size_t>(t)];
+			std::array<Vec2dW, 3> pts{toD(verts[tri.v[0]]), toD(verts[tri.v[1]]), toD(verts[tri.v[2]])};
+			Vec2i64				   lo  = verts[tri.v[0]];
+			Vec2i64				   hi  = lo;
+			growBox(lo, hi, verts[tri.v[1]]);
+			growBox(lo, hi, verts[tri.v[2]]);
+			const bool near = forSeedsNear(lo, hi, cell, [&](const WidthSeed& s) { return segmentToTriangle(toD(s.a), toD(s.b), pts) <= walkReach; });
+			if (!near) {
+				continue;
+			}
+			if (!isFresh(t)) {
 				for (int apex = 0; apex < 3; ++apex) {
 					const Vec2i64& c = verts[tri.v[static_cast<std::size_t>(apex)]];
 					// The stored widths are floored: the obstacle can lie up to a millimetre
 					// farther. The structural width is the wider, reading farther.
-					const std::int64_t reachMm = std::min(std::max(tri.edgePairWidthMm[static_cast<std::size_t>(apex)], tri.structuralWidthMm[static_cast<std::size_t>(apex)]), maxClearanceMm) + 1;
-					const Vec2i64	   gap{std::max({lo.x - c.x, c.x - hi.x, std::int64_t{0}}), std::max({lo.y - c.y, c.y - hi.y, std::int64_t{0}})};
-					if (dot(gap, gap) < Int128::product(reachMm, reachMm)) {
+					const double reachMm =
+						static_cast<double>(std::min(std::max(tri.edgePairWidthMm[static_cast<std::size_t>(apex)], tri.structuralWidthMm[static_cast<std::size_t>(apex)]), maxClearanceMm)) + 2.0;
+					if (forSeedsNear(c, c, static_cast<std::int64_t>(reachMm) + 1, [&](const WidthSeed& s) { return pointToSegment(toD(c), toD(s.a), toD(s.b)) < reachMm; })) {
 						stale.push_back(3 * t + apex);
 					}
 				}
-			});
+			}
+			for (const std::int32_t nb : tri.neighbor) {
+				if (nb >= 0 && walkMark[static_cast<std::size_t>(nb)] != walkStamp) {
+					walkMark[static_cast<std::size_t>(nb)] = walkStamp;
+					queue.push_back(nb);
+				}
+			}
 		}
+
 		std::sort(stale.begin(), stale.end());
 		stale.erase(std::unique(stale.begin(), stale.end()), stale.end());
 		const NavView meshView = view();
 		for (std::int32_t a : stale) {
-			const ApexWidths w														 = apexWidthsMm(meshView, widthSearch, a / 3, a % 3, maxClearanceMm);
+			const ApexWidths w														 = apexWidthsMm(meshView, widthSearch, a / 3, a % 3, maxClearanceMm, maxSqueezeMm);
 			tris[static_cast<std::size_t>(a / 3)].edgePairWidthMm[static_cast<std::size_t>(a % 3)]	 = w.full;
 			tris[static_cast<std::size_t>(a / 3)].structuralWidthMm[static_cast<std::size_t>(a % 3)] = w.structural;
 		}
 		freshWidthTriangles.clear();
-		pendingWidthBoxes.clear();
+		pendingWidthSeeds.clear();
 	}
 
 	void PatchableMesh::rebuildForests() {
@@ -2392,9 +2512,9 @@ namespace geometry::nav {
 
 	NavView PatchableMesh::view() const {
 		NavView v;
-		v.vertices		  = &verts;
-		v.triangles		  = &tris;
-		v.live			  = &live;
+		v.vertices.of(verts);
+		v.triangles.of(tris);
+		v.live.of(live);
 		v.owner			  = this;
 		v.locateIn		  = [](const void* owner, const Vec2i64& p) { return static_cast<const PatchableMesh*>(owner)->locate(p); };
 		v.forestIn		  = [](const void* owner, bool truth) -> const ReachabilityForest* {
@@ -2407,6 +2527,12 @@ namespace geometry::nav {
 		v.widthsCurrentIn = [](const void* owner) { return static_cast<const PatchableMesh*>(owner)->widthsCurrent(); };
 		v.epochIn		  = [](const void* owner) { return static_cast<const PatchableMesh*>(owner)->epoch(); };
 		v.detailTags	  = &detailTags;
+		v.resolveIn		  = [](const void* owner, NavView& view) {
+			const PatchableMesh& mesh = *static_cast<const PatchableMesh*>(owner);
+			view.vertices.of(mesh.verts);
+			view.triangles.of(mesh.tris);
+			view.live.of(mesh.live);
+		};
 		return v;
 	}
 
@@ -2488,8 +2614,8 @@ namespace geometry::nav {
 				}
 				if (uses[v] > 0) {
 					++liveVertices;
-					auto it = vertexAt.find(verts[v]);
-					if (it == vertexAt.end() || it->second != v) {
+					const std::uint32_t* at = vertexAt.find(verts[v]);
+					if (at == nullptr || *at != v) {
 						fail() << "vertex " << v << " missing from the position lookup";
 						return err.str();
 					}
@@ -2802,12 +2928,12 @@ namespace geometry::nav {
 				if (locate(p) < 0) {
 					continue;
 				}
-				auto it = vertexAt.find(p);
-				if (it == vertexAt.end()) {
+				const std::uint32_t* at = vertexAt.find(p);
+				if (at == nullptr) {
 					fail() << "corner " << i << " of ring " << r << " is over ground but not a vertex";
 					return err.str();
 				}
-				if (onBoundary[it->second] != 0) {
+				if (onBoundary[*at] != 0) {
 					continue;
 				}
 				for (const std::int32_t edge : {i, (i + n - 1) % n}) {
@@ -2817,8 +2943,8 @@ namespace geometry::nav {
 					bool present = false;
 					for (std::int32_t h : piecesOf({r, edge})) {
 						const NavTriangle& tri = tris[static_cast<std::size_t>(h / 3)];
-						present = present || tri.v[static_cast<std::size_t>(h % 3)] == it->second ||
-								  tri.v[static_cast<std::size_t>(next3(h % 3))] == it->second;
+						present = present || tri.v[static_cast<std::size_t>(h % 3)] == *at ||
+								  tri.v[static_cast<std::size_t>(next3(h % 3))] == *at;
 					}
 					if (!present) {
 						fail() << "ring " << r << " edge " << edge << " is missing at its corner " << i;
@@ -2840,7 +2966,7 @@ namespace geometry::nav {
 				const NavTriangle& tri = tris[static_cast<std::size_t>(t)];
 				for (int e = 0; e < 3; ++e) {
 					if (widthsCurrent()) {
-						const ApexWidths w = apexWidthsMm(v, search, t, e, maxClearanceMm);
+						const ApexWidths w = apexWidthsMm(v, search, t, e, maxClearanceMm, maxSqueezeMm);
 						if (tri.edgePairWidthMm[static_cast<std::size_t>(e)] != w.full || tri.structuralWidthMm[static_cast<std::size_t>(e)] != w.structural) {
 							fail() << "triangle " << t << " apex " << e << " has a stale corridor width";
 							return err.str();
