@@ -1,8 +1,8 @@
 # Tree variety and world fit
 
-Status: spec, partly built. Created 2026-11-10; revised 2026-11-10 for continuous age.
+Status: spec, partly built. Created 2026-11-10; revised 2026-11-10 for continuous age, then for the leaf-spray crown, detail levels, forest size and density, and the forest floor (D24 to D29).
 
-Trees in a forest read as one tree at a few sizes. This spec makes each tree a distinct individual (shape, age, species), grows each species the way the real one branches, lets trees age and grow during play, roughly doubles tree size while thinning the forest, lets the player see through a crown that hides something, makes a tree's size matter to the wood economy, and redraws trees so they sit in the textured ground instead of on top of it.
+Trees in a forest read as one tree at a few sizes. This spec makes each tree a distinct individual (shape, age, species), grows each species the way the real one branches, lets trees age and grow during play, grows trees 2.25x and gathers them into dense stands with open glades, lets the player see through a crown that hides something, makes a tree's size matter to the wood economy, and redraws trees so they sit in the textured ground instead of on top of it.
 
 The aim is trees and forests more realistic than RimWorld's, held to what stays readable and fast. Form comes from botany (branching habit, crown shape, how a species ages, relative sizes). Absolute size and density are compressed to the game.
 
@@ -38,6 +38,14 @@ These landed under the first version of this spec, which had three named age cla
 - On a branch not yet merged when this was revised: the collision rect captured per age class during the prewarm, read through `AssetDefinition::collisionFor(ageClass)`, with `AssetRegistry::checkCollisionVariantIndependence` run by `asset-cli validate --render-smoke`. R4 keeps all of it, indexed by growth step.
 - Not built: R4 on main, R5 to R10, and yield by age (R8).
 
+Built later on 2026-11-10, on a stack of branches not yet merged, still on the three age classes (the continuous-age engine side is not built):
+
+- R5's skeleton generator in `deciduous.lua`, with the leaf-spray crown of D24. It maps the class to an age (sapling 0.15, mature 0.55, veteran 0.9); an `age` param wins when a def or tool sets one.
+- Detail levels (R13, D25): `<detailLevels>2, 4, 8, 24, 40, 80</detailLevels>` on oak and maple, the `detailPxPerMeter` global, `assets::detailLevelFor` and `kReferencePixelsPerMeter` (24) in `DetailLevels.h`, levels built on request off the main thread and released after 1,800 frames undrawn (`kEvictAfterFrames`, about 30 s at 60 fps).
+- Sizes and density (R9, D27): oak and maple at 2.25x, `<samplePitch>`, `<crownSpacing>`, the glade ramp and gap field, age weights 0.15, 0.6, 0.25.
+- The run planner and its overlap rules (D29), and per-chunk upright records walked in one pass.
+- The forest floor's weight and tint (R14, D28). Not its litter texture.
+
 ### Existing code this builds on
 
 From a survey of the render, asset, placement, and tool code on 2026-11-10. Each line is something to reuse or something the plan has to change.
@@ -58,7 +66,7 @@ Generators:
 - `deciduous.lua` draws its trunk foot 0.4 to 1.1 m south of the origin while its collision rect sits at the origin, so today the trunk a colonist walks around is not where the trunk is drawn.
 
 Placement:
-- A grove field already shapes forests: domain-warped value noise at 105 m, a pure function of world position and seed (`PlacementExecutor.cpp`). Its low tail thins spawn chance to 12% (glades); its high tail tightens spacing to 55% (thickets).
+- A grove field already shapes forests: domain-warped value noise at 105 m, a pure function of world position and seed (now `world/generation/GroveField.h`, which the forest floor reads too, R14). Its low tail thins spawn chance to 12% (glades); its high tail tightens spacing to 55% (thickets).
 - `spaced` spacing checks only the same def in the same chunk. Oak, maple, and birch would be placed with no regard for each other.
 - `<avoids>` and `<affinity>` strengths are computed and then only compared against zero, so they do nothing. Only `<requires>` has an effect.
 - One candidate is tried per 4 m x 4 m block per def, so a def tops out at 62.5 per 1,000 m2.
@@ -91,10 +99,10 @@ Sim and tools:
 | D4 | Variation between individuals of a species is discrete, correlated traits (crown form, condition), never per-parameter jitter. |
 | D5 | Species differ by growth habit first (R6), then palette, lobe style, and cluster density. This epic covers oak, maple, and a new birch. Pine and palm keep their generators and are rescaled only; growing them from a skeleton is a later epic. |
 | D6 | Wood yield and felling work scale with age class. Superseded by D18, 2026-11-10: the owner dropped named classes; yield and work follow the size the generator drew. |
-| D7 | Ground contact is a contact shadow at the trunk foot, a root flare, and grass tufts over the base. No canopy or drop shadow. Engine blob shadows stay with the Living Environment epic. |
+| D7 | Ground contact is a contact shadow at the trunk foot, a root flare, and grass tufts over the base. No canopy or drop shadow. Engine blob shadows stay with the Living Environment epic. Partly superseded by D28, 2026-11-10: a soft cast shadow under trees is planned as its own later piece (R15); the offset drop shadow stays deleted. |
 | D8 | Age is fixed for the life of the tree. No growth over time in this epic. Superseded by D17, 2026-11-10: the owner wants trees to update periodically as they age. |
 | D9 | A species uses one render path for all its age classes, chosen by its mature height. Superseded by D16, 2026-11-10: the same rule, chosen at the reference age, since there is no mature class. |
-| D10 | Scale and density are "open woodland": an oak crown at the reference age is 3.6 m (about 5x compressed from real), forest canopy cover targets 35%, and tree count roughly halves. No biome goes above 40% cover without a new decision, except thickets, which may reach 55% (R9). Decided 2026-11-10. |
+| D10 | Scale and density are "open woodland": an oak crown at the reference age is 3.6 m (about 5x compressed from real), forest canopy cover targets 35%, and tree count roughly halves. No biome goes above 40% cover without a new decision, except thickets, which may reach 55% (R9). Decided 2026-11-10. Superseded by D27, 2026-11-10, on cover and count: the 3.6 m oak crown stands (it is the 2.25x size), but stands are denser, not thinner. |
 | D11 | The generator grows a branch skeleton from a few per-species growth numbers and hangs foliage on the branch tips. Age is how long it grew. Concepts from Honda and Borchert-Honda; our own code, no library. |
 | D12 | A tree that hides an actor turns see-through: it is flattened offscreen and drawn at about 30% opacity. This reverses the canopy-fade cut in `world-depth-sorting.md`, because D10's crowns hide a colonist for seconds, and several at once. Render-only; the sim never reads it. |
 | D13 | Generators share helpers through a prelude the engine loads before each script (R5). In scope for this epic. Decided 2026-11-10. |
@@ -108,6 +116,12 @@ Sim and tools:
 | D21 | The mechanism's code is named for plants (R1, R2). Tree-specific parts, the skeleton generator, species, scale and density, and see-through crowns, keep tree names. |
 | D22 | The slow plant tick is deliberately coarse and has little to do until other inputs exist. Seasons and fruit are two later inputs that land in the same tick; both are out of scope here (R12). |
 | D23 | Wood does not depend on regrowth. The forest is effectively unbounded, so wood is not scarce; a colony that has cut what is near it goes further for more. Felled trees are not replanted or regrown, by design. Decided 2026-11-10 by the owner. |
+| D24 | A crown is sprays of small leaf marks hung along the outer shoots, each toned by how it faces a light from the upper left (bright tops, dark undersides and interior), with gaps that show the limbs. The outline comes from the leaves: no outline, no rim. The wood is one flat silhouette. All shading is drawn into the art; nothing is lit by a shader. Two rounds that built crowns from a handful of flat lobed leaf masses (about 176 triangles a tree) were rejected: no tree has a canopy of circles, and it needed far more detail. The flora style guide's drawing rules no longer bind trees. Decided 2026-11-10 by the owner. Supersedes R5's cluster foliage and R7's rim, caps, and flecks. |
+| D25 | Detail follows screen density. The camera shows 8 px/m times zoom, zoom 0.25 to 20, so 2 to 160 px/m, and art is judged across that range at true pixels, never at one zoom. The generator is cut for a target density; a def declares its levels; the engine draws the highest level at or below the current density. Entities and template ids carry no level, and everything that does not draw is pinned to the 24 px/m reference level. The finest accepted leaf mark was about 0.05 m on a tree of the old size, about 8.5 px at maximum zoom, and nothing finer is wanted. Decided 2026-11-10 (R13). |
+| D26 | Trees are live meshes, not baked to textures. The ground bakes its generator geometry to textures with a level per mip, and trees could too, but the owner's rule is to go without the bake and measure, and add baking only if live mesh levels cannot hold the perf targets. They hold (Performance plan). A bake would also cost texture memory per template, which pulls against many growth steps and individuals. Decided 2026-11-10 by the owner. |
+| D27 | Trees are 2.25x the first trees' size (an oak crown 3.6 m at mature), in stands of about 80 per 1,000 m2, about 25% crown cover measured on screen. From composited studies at 45, 80, 120, and 170 trees per 1,000 m2 and sizes 1x, 2.25x, and 3.5x: the old size never reads as forest (12% on-screen cover even at 170); 3.5x closes the canopy but hides colonists. At 80 a colonist deep in a stand is fully visible at the default zoom; from about 120 only 23 to 37% of him shows, so no denser forest without see-through trees (R10) first. Decided 2026-11-10 by the owner. Supersedes D10's 35% cover and halved count, R9's earlier open choice between 35% and today's density, and its "count halves, 1.8x yield" estimates (R8, R9). |
+| D28 | Under and between forest trees the grass is dialed back to a litter floor (leaf litter and shaded soil with scattered tufts, moss, low herbs); meadows, glades, and grassland keep today's grass exactly. Trees did not read against the grass: crowns are about 10 L* lighter already, but hue (about 4 degrees apart) and texture grain match and their value spread overlaps the grass speckle. Darkening the trees is a trap, since a mild darkening lands on the grass's value and hides them completely; darkening the ground near trees works best. Other top-down games keep a quiet, low-contrast ground and save contrast for objects, some let plants blend on purpose, and no source prescribes brown ground; the painter's rule (flat ground light, uprights dark) does not carry over to a view from above. The floor follows the canopy as a soft field from one function placement also reads. A soft cast shadow is a separate later piece drawn with the trees, stacking on the floor (R14, R15). Decided 2026-11-10 by the owner. |
+| D29 | Uprights that overlap on screen keep their draw order exactly; everything else shares draws. Each upright draw costs about 5 microseconds of GPU; triangles are not the limit. Entities at most 8 px across may draw in either order, and footprints that overlap by under a pixel may swap (119 of 5.3 million pixels differ at zoom 0.25, 15 at 0.5, none at 1 and 3). A depth buffer cannot replace the ordering without an engine change: instanced depth is fixed and depth testing is off. Rules in `rendering/world-depth-sorting.md`, "Submit in order". Decided 2026-11-10. |
 
 ## Requirements
 
@@ -149,10 +163,10 @@ Thousands of plants share GPU meshes, so a plant is drawn at the nearest of a fi
 - Step ages are spaced so each step is a similar visible change: from age 0 to 0.75 at equal ratios of crown width along the def's size curve (R9), which puts them closer together where the tree grows fastest, when young. The remaining steps cover old age at equal intervals of age, since old-age change is shape, not width. With 16 steps, starting split: 14 up to 0.75, two for old age at 0.875 and 1.0. For oak (0.4 m at age 0 to 4.9 m at 0.75) that is about 21% wider per step.
 - Each step owns the age range from halfway to the step below to halfway to the step above (halfway in log width below 0.75, in age above it).
 - `getTemplate(defName, traits)`; the cache key is (def, growth step, individual). A def that does not age keys on (def, 0, variant) as today.
-- Template count: 3 species x 16 steps x 8 individuals = 384. R5's triangle budget applies to each of them, and so does the prewarm.
+- Template count: 3 species x 16 steps x 8 individuals = 384. Each has a mesh per detail level (R13), and only the reference level is prewarmed.
 - Callers that take the traits: `TemplateMeshCache`, `InstancedEntityRenderer` (mesh handles and run key), `bakeChunkEntities`, the depth attributes at placement, `getSilhouette` (hit test and selection outline), and `DynamicEntityRenderSystem`. `GhostRenderer` previews placement defs only and passes default traits.
 - Templates of aging defs are generated before the first chunk needs them. `prewarmTreeVariants` already does this in parallel for the classed defs, with generation and tessellation outside the registry mutex. It is renamed `prewarmPlantVariants` and moves to (step, individual): 128 templates per species. Built for 32 classed variants it took about 11 ms, and the whole library load went from about 145 ms to 160 ms (asset-cli, RelWithDebInfo). Report the delta at 384 templates with the new generator. If it is more than the player would notice, reuse the ground tile disk cache's keying to store tessellated templates.
-- A template over 65,535 vertices is a load error naming the def, step, and individual, never a missing tree.
+- A template over 65,535 vertices is a load error naming the def, step, and individual, never a missing tree. The limit is per detail level's mesh (16-bit indices in the engine), and it sets the finest leaf mark (R13).
 - Instance capacity per mesh handle starts at 4,096 and doubles on demand (built). Handles are made on first draw, so only templates on screen hold one; 384 handles at 4,096 would be about 50 MB, and a view shows a fraction of them.
 - Tall or short routing (`kShortFloraMaxHeight`) is decided per def from its step at the reference age, individual 0 (D16), at both sites that decide it today. A seedling of a tall species stays on the tall path.
 - The depth key for a def with a collision rect is the rect's lower edge, the trunk foot, which `world-depth-sorting.md` already allows. Otherwise R7's shadow, flare, and tufts would move every tree forward in the sort. This waits for R5's generator, since today's oak and maple draw their trunk foot up to 1.1 m south of the rect.
@@ -170,13 +184,13 @@ Thousands of plants share GPU meshes, so a plant is drawn at the nearest of a fi
 
 ### R5 Generator
 
-`deciduous.lua` is rewritten on the recipe in `.claude/skills/flora-asset/references/style-and-view.md`; the old blob construction is deleted.
+`deciduous.lua` is rewritten skeleton first; the old blob construction is deleted. (It was to follow the recipe in `.claude/skills/flora-asset/references/style-and-view.md`; superseded by D24, that guide no longer binds trees.)
 
 It works skeleton first, so the crown's shape is a result of how the tree grew. It is driven by one number, `age`, the age fraction, and every size and form below is a smooth function of it.
 
 **Shared helpers first.** The engine gains a prelude: every `.lua` under `assets/shared/scripts/lib/` runs in each generator's state before the generator, and the cache keys that hash script bytes include it. The helpers five scripts copy today (clamp, random distributions, hex and tone mixing) move there once, with the pieces this generator needs: the tapered strip for limbs, random sub-streams per stage, the grass tuft, and `conifer.lua`'s textured bark. Each growth round and each other stage draws from its own sub-stream, so adding a draw in one cannot reshuffle the rest, and a tree drawn at one age and a little older is the same individual slightly grown.
 
-The rim is expanded dark copies of the cluster shapes, as `conifer.lua` does it, since Lua has no strokes. The trunk foot is at the origin, as in `conifer.lua` and `palm.lua`; today's oak and maple shift on screen by the old offset, and their collision finally sits under the drawn trunk.
+There is no rim (D24). The trunk foot is at the origin, as in `conifer.lua` and `palm.lua`; today's oak and maple shift on screen by the old offset, and their collision finally sits under the drawn trunk.
 
 **Skeleton.** Nodes carry a ground offset and a height; the 3/4 view comes from adding height to the up-screen offset, as the style guide already does. Growth runs in rounds from a single stem. In each round every live tip extends or forks by the species' numbers (R6). The number of rounds is a smooth function of age and may be fractional: the last round runs part-way, extending tips by its fractional part, so a slightly older tree has slightly longer tips and not a different skeleton.
 
@@ -189,12 +203,12 @@ The rim is expanded dark copies of the cluster shapes, as `conifer.lua` does it,
 
 A tree has at most 40 tips. The recursion is a few hundred operations per template.
 
-**Foliage.** Leaf clusters hang on branch tips, sized by the tip's vigour and the species' cluster size. Their union is the silhouette. Each cluster has a dark base, a mid tone, and a cap offset up-left; one dark rim sits behind the union and one darkest-tone backing shape fills holes. Tip height sets draw order and tone: low clusters first and darker, the highest get the caps. Limbs show only where shedding left a gap. A new cluster appears small at its tip and grows with the tip's vigour, so the cluster count rising by one is not a pop.
+**Foliage** (D24, built). Sprays of small leaf marks hang along the outer shoots; their union is the crown and its outline. Each mark is toned by how it faces the upper-left light: bright on top, dark on the undersides and in the interior. Gaps show the limbs, and the wood is one flat silhouette. A clump layout per individual groups the sprays, and every detail level draws the same skeleton and clump layout (R13). Superseded: leaf clusters with a dark base, mid tone, cap, rim, and backing shape.
 
 **Age is growth time**, so a young tree and an old tree are different shapes, not scales of one. Sizes are in R9. Starting ranges along the age fraction, each blending smoothly into the next:
 
-- 0 to 0.10: 1 to 3 rounds. Apical control starts forced high (every young tree has one leader) and eases to the species' value by 0.25. A thin stem, 1 to 5 clusters, no caps.
-- 0.10 to 0.35: 3 to 5 rounds. Clusters 5 to 10; caps and full layering come in from about 0.2. Trunk width reaches its R9 value at 0.35.
+- 0 to 0.10: 1 to 3 rounds. Apical control starts forced high (every young tree has one leader) and eases to the species' value by 0.25. A thin stem, 1 to 5 clusters.
+- 0.10 to 0.35: 3 to 5 rounds. Clusters 5 to 10. Trunk width reaches its R9 value at 0.35.
 - 0.35 to 0.75: 5 to 6.5 rounds at the species' numbers. Clusters 10 to 14, limbs heavier, trunk width still rising.
 - 0.75 to 1.0: rounds level off near 7. Apical control lowers and shedding and droop rise, then the species' own way of growing old (R6) comes in from about 0.8. Up to 15 clusters, heaviest limbs.
 
@@ -204,7 +218,7 @@ A tree has at most 40 tips. The recursion is a few hundred operations per templa
 - Randomness is seeded per individual; palette jitter is small (+/-3% per channel) so species identity holds.
 - The trunk foot sits at the origin and the trunk's collision rect depends on age only (R4).
 - The generator reports the step's wood and work factors (R8).
-- Budget: at the reference age a template tessellates to at most 1.5x the triangles of today's oak template, which `asset-cli inspect` reads as 102 triangles and 126 vertices (88 to 146 triangles across seeds 0 to 14); no step goes over 2x. Starting values.
+- Budget: superseded by D25 and R13. The old budget (at most 1.5x today's oak template, 102 triangles) cannot hold a leaf-spray crown; the limit is now the 65,535 vertices of each level's mesh, and the frame target (Performance plan).
 
 Left out on purpose: light competition between neighbours and crowns leaning away from each other (real and visible, but it makes one tree's shape depend on others, which breaks D15), and anything at leaf level.
 
@@ -241,11 +255,12 @@ The growth numbers are starting values. Published parameter sets exist for oak, 
 ### R7 World fit
 
 - Bark uses the style guide's browns (`#45301d #5a3f26 #73512f`). The orange-red trunk goes.
-- Limbs are not drawn over the canopy. One shows only through a ragged-form gap.
+- Limbs are not drawn over the canopy; they show through the gaps between sprays (D24).
 - Contact shadow: a small lobed patch at the trunk foot in `#1d2616` at 0.25 to 0.35 alpha, at most 1.5 trunk widths across. The offset drop shadow is deleted.
 - Root flare at the trunk base, and two to four grass tufts drawn over the trunk foot in the greens of `ground_grass.lua`.
-- Leaf-scale flecks: small lobed chips in the mid and highlight tones along cluster edges and on caps, inside the R5 triangle budget.
-- The style guide's "No ground shadow" rule is rewritten as "contact shadow only", and its `deciduous.lua` references updated.
+- Leaf-scale flecks: superseded by D24; the leaves are the crown.
+- The style guide's "No ground shadow" rule was to be rewritten as "contact shadow only". Superseded by D24: the guide no longer binds trees, so it says that instead and drops its `deciduous.lua` references.
+- Sitting in the ground is now mostly the forest floor's job (R14), with a cast shadow later (R15).
 
 ### R8 Yield and felling by size
 
@@ -255,11 +270,12 @@ The growth numbers are starting values. Published parameter sets exist for oak, 
 - Colonist memory keeps storing defName and position; age is computed when needed.
 - Task choice is unchanged: colonists still pick the nearest reachable tree. Preferring bigger trees is out of scope.
 - The selection panel for a tree shows its age in years and "Yields: ~N wood" for that tree. This replaces the "Growth: Mature" line in the `main-game-ui-design.md` mock.
-- With the reference yield raised about 1.8x (R9) to about 45 wood, an oak at age 0.75 yields about 85 wood, three piles at Wood's stack size of 40, and one at age 1 about 165. Large old trees are meant to be a prize; check hauling copes in the scenario. If old trees outweigh the economy, the wood factor takes a gentler exponent on cross-section. Starting values.
+- Large old trees are meant to be a prize; check hauling copes in the scenario. If old trees outweigh the economy, the wood factor takes a gentler exponent on cross-section.
+- The reference yield is open. The plan to raise it about 1.8x to about 45 wood rested on the count halving, which D27 reversed: yield per tree is unchanged so far (20 to 30 wood an oak), and wood per area roughly doubled (R9).
 
 ### R9 Scale and density
 
-Crown width follows a saturating curve of age: fast when young, slow when old. Each species' curve is a monotone interpolation through these anchors, drawn by the generator at this size (D16). The middle three are the sizes the first version of this spec gave its three classes, placed at the 10th, 50th, and 90th percentile ages. All are starting values.
+Size and density are D27's. Crown width follows a saturating curve of age: fast when young, slow when old. Each species' curve is a monotone interpolation through these anchors, drawn by the generator at this size (D16). The middle three are the sizes the first version of this spec gave its three classes, placed at the 10th, 50th, and 90th percentile ages. All are starting values.
 
 | Age fraction | 0 | 0.10 | 0.35 (reference) | 0.75 | 1.0 | Trunk width at 0.35 |
 |---|---|---|---|---|---|---|
@@ -273,14 +289,23 @@ Crown width follows a saturating curve of age: fast when young, slow when old. E
 - At the default zoom (24 px per metre) an oak crown at the reference age is 86 px, at 0.75 118 px, a colonist 24 px tall.
 - Birch is narrow but tall: its trunk is drawn longer than maple's, so on screen it stands about as high.
 - Pine and palm get the new sizes by changing their def params and spacing. Their generators are not touched, and they do not age.
-- TemperateDeciduousForest targets 35% canopy cover, within 5 points, at about 55 trees per 1,000 m2, measured in the grove field's normal band with R11's view. Starting spacing: oak 4.5 m, maple 3.5 m, birch 2.2 m, then spawn chances tuned to the target.
-- The grove field stays. Glades thin as they do today. Thickets may reach 55% cover, above D10's ceiling, on the grounds that they are rare, read as young growth (R1), and crowns go see-through (R10). Lower the thicket tightening if 55% is exceeded.
-- Spacing between species is new: a `spaced` def also rejects a spot within 1.5 m of any member of its group (`trees`), so trunks of different species never sit on top of each other. This is a rejection only, with no extra random draws. Making `<avoids>` and `<affinity>` strengths work as documented would change every biome's placement and is filed separately.
-- Spacing across chunk seams is an existing open bug and stays out of scope.
-- Other forest biomes are tuned to the same target, with the 40% ceiling of D10. Grassland keeps its count of lone trees.
-- Base yield and durability per tree rise so wood per 1,000 m2 of forest, and wood per unit of chopping work, stay within 10% of today's at founding. With about half the trees that is roughly 1.8x per tree. Today's is 800 wood per 1,000 m2 at the landing (R11's view, the 100 m square above). That baseline, like every measured number in this spec, was taken before trees had age or growth.
+- As built on the age classes (oak and maple, 2.25x the first trees, D27): crown width at sapling, mature, and veteran is oak 2.25, 3.6, 4.9 (5.0 at age 1) and maple 1.7, 2.7, 3.6 (3.78), a sapling at 0.62x of mature; trunks oak 0.25, 0.45, 0.72 and maple 0.19, 0.34, 0.5. The defs give these as curves over age with the classes at 0.15, 0.55, and 0.9, not the table's 0.10, 0.35, and 0.75, and the built trunks are thicker than the table's; the continuous-age work reconciles the two. The drawn crown reads about 0.7 of `crownWidth` across.
+
+Density (D27). Superseded: the target of 35% cover at about 55 trees per 1,000 m2, starting spacings of 4.5, 3.5, and 2.2 m, and a 1.5 m group rejection.
+
+- Baseline before this, measured at the landing's 100 m square: 378 trees (196 oak, 182 maple), 37.8 per 1,000 m2; ground canopy cover 7.39% with the old blob crowns and 1.79% with the new open crowns at the old size; 818 wood per 1,000 m2.
+- Target: stands of about 80 trees per 1,000 m2 and about 25% crown cover measured on screen, glades open, cores denser, edges looser, a few small gaps.
+- Built: `<samplePitch>2</samplePitch>`, a try every 2 m, which lifts the 62.5 per 1,000 m2 ceiling of 4 m blocks. `<crownSpacing>0.7</crownSpacing>`: any two crown-spaced trees, of any def, stand at least 0.7 x (r1 + r2) x (0.5 + 0.5 x rSmall / rLarge) apart, r from each template's drawn width, so equals keep to 0.7 of touching and a small tree may stand under a big one's edge; a thicket core tightens it to 0.55 of that. It is a rejection only, with no extra random draws; oak and maple dropped their `<avoids group="trees">`, which had no effect. A same-def `minDistance` of 1 m, spawn chance 0.28 each, age weights 0.15, 0.6, 0.25.
+- The grove field (`world/generation/GroveField.h`) stays, at 105 m. Its glade ramp runs 0.25 to 0.65, so density climbs from edge to core; thickets start at 0.70 and are full at 0.90. A gap field, the same noise at 22 m, opens small gaps over about 8% of a stand (gap band 0.28 to 0.40).
+- Measured bands, trees per 1,000 m2: glades 12 to 17, edges 33 to 56, stands 78 to 90, cores 90 to 117. The landing square reads 78.3, an all-forest 60 m square 95.0. R11's ground cover is 18 to 19%. Ground cover (silhouettes on the ground plane) and on-screen cover are different measures; the 25% target is on screen.
+- The landing clearing grew to 4.5 m so no crown covers the crew.
+- Consequences: maple outnumbers oak about 1.6 to 1 near the landing. Wood per 1,000 m2 roughly doubled, 818 to 1,616 (1,971 in the all-forest square), with yield per tree unchanged; the rebalance is open (R8). The vertex limit (65,535) forced the finest leaf mark from 0.053 m to 0.09 m (R13).
+- No denser forest without see-through trees (R10) first: from about 120 per 1,000 m2 only 23 to 37% of a colonist deep in a stand shows.
+- Thickets may exceed the stand cover on the grounds that they are rare, read as young growth (R1), and crowns go see-through (R10).
+- Spacing across chunk seams is an existing open bug and stays out of scope. Making `<avoids>` and `<affinity>` strengths work as documented would change every biome's placement and is filed separately.
+- Other forest biomes have not been measured against this target. Grassland keeps its count of lone trees.
 - Collision stays the trunk foot, so colonists walk under crowns.
-- Cover and wood per area rise slowly as a colony's forest ages (R12). The targets above are at founding.
+- Cover and wood per area rise slowly as a colony's forest ages (R12). The numbers above are at founding.
 
 Left for later: open-grown form (a lone tree's crown is about twice as wide as the same tree in a wood), and splitting trunk from crown in the depth sort so a colonist standing in front of a trunk does not draw over a crown that should be above them.
 
@@ -328,6 +353,56 @@ So the bulk of a forest looks the same from founding to the end of a colony, and
 - Cost: measure the tick at a loaded area of a few thousand trees, both the tick itself and the frame where many trees step at once (the first tick after a long skip). Nav rebuilds are the likely cost; if they dominate, batch a chunk's steps into one rebuild per tick.
 - `/api/dev/time?skip=` already skips game time, in minutes or hours (a year is 1440h). It gains a year unit, and a skip runs the aging tick once at its end, so the age strip can be checked in game and a long colony simulated.
 
+### R13 Detail levels
+
+Built (D25). Details of the schema are in `asset-definitions.md`, "Detail levels".
+
+- A def declares the screen densities its meshes are cut for, in px/m: `<detailLevels>2, 4, 8, 24, 40, 80</detailLevels>` on oak and maple. Up to 8 (`kMaxDetailLevels`), positive, strictly ascending. The 40 level was added with D27 to split the jump from 24 to 80.
+- The generator gets the level's density as the Lua global `detailPxPerMeter`. Leaf marks are about 6 px long at that density, never under 0.09 m; below about 24 px/m they merge into coarser marks in their visible mean tone; wood under 0.6 px is left out.
+- The engine draws the highest level at or below the camera's density, else the lowest (`assets::detailLevelFor`). Entities and template ids carry no level.
+- Everything that does not draw reads the 24 px/m reference level (`kReferencePixelsPerMeter`, the default view): collision, the picking and selection silhouette, the cull margin (`maxReachMeters`), tall routing, and the depth sort. A level's collision rect must equal the reference level's; `asset-cli validate --render-smoke` builds every level and fails one that differs.
+- Only the reference level is built at load. The others are built on request off the main thread when the camera first needs them, the nearest ready level drawing meanwhile, and a level not drawn for 1,800 frames (`kEvictAfterFrames`, about 30 s at 60 fps) is released.
+- Every level of an individual shares one skeleton and clump layout, so outline and mean tone hold across levels: per-level mean tone stays within about 2.5 points, single trees drift 2 to 7.
+- Counts for a mid-age oak: about 27 triangles at 2 px/m, 74 at 4, 290 at 8, 3,700 at 24, 7,600 at 40, 16,000 at 80. The oldest stay under about 48,000 vertices at 80.
+- The finest leaf mark is 0.09 m, about 14 px at maximum zoom (160 px/m), against the accepted 0.053 m and 8.5 px (D25). The 65,535-vertex mesh limit forced it once trees grew 2.25x. Open: accept 14 px, or split meshes.
+- Art is judged across 2 to 160 px/m at true pixels.
+
+### R14 Forest floor
+
+Decided (D28); weight and tint built, litter texture not. Mechanics are in `ground-textures.md`, "Forest floor".
+
+Contrast ladder studied (CIE L*; tree-vs-ground is the gain in tree contrast, boundary the step between floor and glade grass):
+
+| Floor | Tree vs ground | Boundary | Read |
+|---|---|---|---|
+| Thinned grass | +15 | 5 L* | not chosen |
+| Litter | +18 | 9 L*, about 15 degrees of hue | chosen |
+| Deep shade | +25 | 17 L* | reads as mud |
+
+- The floor follows the canopy as a soft field: full in dense stands, greener at the loose edge and in small gaps, fading over a few metres into a glade.
+- The canopy weight is written at chunk generation into the ground macro texture's unused alpha channel, from `world::grove::canopyWeight`, the one function placement also reads (grove field, stand, and gap terms times the biome's tree cover), so trees and floor agree and chunk borders show no seam. Biome tree cover is derived from the tree defs (`canopyCoverFromDefinitions`, candidate trees a square metre ramped from 0.005 to 0.02). No new terrain surface.
+- Weight: no floor below grove value 0.36, full edge at 0.42 (a fade of about 5 to 7 m); loose forest near the edge at 0.55 of a stand core's floor; small gaps keep 0.25.
+- Built: the weight and a tint on the grass family. Measured at the landing, zoom 3: the full floor is 8.6 L* darker and 13 degrees browner than glade grass (target 9 and 15). Glade pixels are bit-identical to before; placement is unchanged.
+- Next: the litter texture, a cover variant of the grass generator co-baked with the grass family and mixed by the existing height contest. Expected cost: about 2.7 MiB more ground texture, 2 to 3 s more cold bake (past the current load budget), under 2% of frame time in the mix zone.
+- Not built: the litter texture and contest; thinning the instanced grass tufts by the weight (today they keep their density and colour over the floor); a fade near water.
+- A felled area keeps its litter.
+
+### R15 Cast shadow
+
+Stub. A soft cast shadow under trees, drawn with the trees, stacking on the forest floor (D28). Not designed.
+
+## Open
+
+- The finest leaf: 14 px at maximum zoom (R13) is accepted, or meshes are split.
+- Up close trees read spindly (long bare trunk, small crown) and may need fuller crowns.
+- Species mix: maple outnumbers oak about 1.6 to 1 near the landing.
+- Wood yield per area, roughly doubled by D27 (R8, R9).
+- See-through trees (R10) before any denser forest.
+- The litter texture steps (R14) and cast shadows (R15).
+- An idle-machine perf capture.
+- The manual regression scenarios have not been run on the built stack.
+- The engine side of continuous age: everything above is still built on three age classes.
+
 ## Out of scope
 
 - A plant dying at the end of its lifespan, and regrowth after death. A plant at age fraction 1 stays old.
@@ -351,7 +426,7 @@ Trees draw in the depth-sorted stream, and a run breaks whenever the mesh change
 - Baseline main twice with `scripts/perf.mjs capture` for the noise floor, plus a forest view at the quickstart landing at zoom 1 and at 0.25, the furthest zoom (trees draw at every zoom). Record frame time, draw calls, and triangles, with trees counted apart (R11).
 - A/B R3 alone (templates wired, old generator) against that baseline. This isolates the draw-call cost from the new art's triangle cost.
 - Gate: no regression beyond noise in any cell. If R3 fails the gate, pack a def's templates into one vertex and index buffer and draw each by index range, so the run key goes back to the def. salal's backend already takes an index range for instanced draws; `drawInstanced` needs only to expose it. A def's templates must then fit 65,535 vertices together, which 128 templates per def will not, so it would need a 32-bit index or a base-vertex draw. Taken only on a measured failure.
-- Measured with R3 built for age classes (RelWithDebInfo, 3072x1728, landing forest at world 5,4, GPU held, read from `/api/metrics` and `/api/state?what=uprights`): GPU time tracked upright draws, about 5 microseconds each on main and on the branch alike. Forcing every tree to its def's mature variant 0 put zoom 1.5 back at 1,003 draws and 5.3 to 5.9 ms (main: 911 and 4.9 to 5.4), so the cost was the runs breaking between variants; the per-def tall routing added the other 10%. Restoring 50,000-instance buffers changed nothing on the GPU. The fix kept the variants and changed the run rule instead (`world-depth-sorting.md`, "Submit in order"): an entity joins its template's latest open run unless something in a later run may overlap it, so only overlapping pairs keep the painter's order. No salal change was needed.
+- Measured with R3 built for age classes (RelWithDebInfo, 3072x1728, landing forest at world 5,4, GPU held, read from `/api/metrics` and `/api/state?what=uprights`): GPU time tracked upright draws, about 5 microseconds each on main and on the branch alike. Forcing every tree to its def's mature variant 0 put zoom 1.5 back at 1,003 draws and 5.3 to 5.9 ms (main: 911 and 4.9 to 5.4), so the cost was the runs breaking between variants; the per-def tall routing added the other 10%. Restoring 50,000-instance buffers changed nothing on the GPU. The fix kept the variants and changed the run rule instead (`world-depth-sorting.md`, "Submit in order"): an entity joins its template's latest open run unless something in a later run may overlap it, so only overlapping pairs keep the painter's order. No salal change was needed. That rule is since replaced by the run planner (D29, below).
 
 | Zoom | GPU ms main | before fix | after fix | Upright draws main | before | after |
 |---|---|---|---|---|---|---|
@@ -362,12 +437,26 @@ Trees draw in the depth-sorted stream, and a run breaks whenever the mesh change
 | 0.25 | 117 | | 45 | 23,700 | | 9,220 |
 
 - Those numbers are for 16 templates per species. With 128, more runs may break where trees overlap; repeat the zoom 1.5 and 0.75 cells once the step-keyed templates are wired.
-- Prewarm: report load time at 384 templates (R3).
+- Prewarm: report load time at 384 templates (R3), reference level only (R13).
 - Aging tick: measure as R12 says, plus a frame-time trace across a tick at 10x.
-- If far zoom fails on triangles, gate the leaf flecks and caps with `path:setLod` and build the tree template per zoom band, which the registry already supports for ground tiles.
-- R9 cuts tree count about in half and raises covered pixels from 13.3% (measured, R11) to 35% of a forest view, each crown several layers deep. A/B the rescale on its own (old generator, new sizes and spacing): draw calls should fall, fill cost may rise. If fill fails the gate, the first lever is fewer full-size layers per cluster.
-- R10: measure a forest view with 20 colonists standing under crowns against the same view with none.
-- One full capture at the end with the new generator and all three species.
+- Superseded estimates: gating flecks and caps with `path:setLod` (replaced by detail levels, R13), and "R9 cuts tree count about in half" toward 35% cover (D27 doubled it instead).
+
+### Record, 2026-11-10
+
+Median frame ms against the 8.33 ms target, at the landing forest. 8.33 is the frame cap, so a cell at 8.33 meets the target. Every capture ran on a machine under load, so the milliseconds are soft; draw counts are exact.
+
+| Build | Zoom 3 | Zoom 1 | Zoom 0.5 | Zoom 0.25 |
+|---|---|---|---|---|
+| Main | | | 16.0 | 48.5 (9,274 draws) |
+| Detail levels, old size, draw merging fixed | 8.33 | 8.33 | 8.33 | 8.33 (550 draws; 0.83M upright triangles, 81.6M before levels) |
+| 2.25x, 80 per 1,000 m2 | | | 27.3 (5,411 draws) | 15.9 |
+| Run planner, half-pixel overlap tolerance | 8.33 (229 draws) | 8.33 | 8.33 (606 draws) | 12.5 (GPU 2.0 ms; CPU walks about 73,000 uprights) |
+| Per-chunk upright records, one pass | | | | upright CPU 8.6 to 4.0 ms; p99 15.1 to 8.33 |
+
+- Main misses the target at the two furthest zooms. Detail levels met it everywhere at the old size; the 2.25x rescale broke zoom 0.5 until the run planner, and zoom 0.25 reached it only with the last row.
+- The last pair is not clean: its after run was marked void for load, so the p50 at zoom 0.25 is soft. The image did not change (0 pixels differ at four zooms).
+- Each upright draw costs about 5 microseconds of GPU; triangles are not the limit (D29). Live mesh levels hold the targets, so trees are not baked (D26).
+- Still to take: an idle-machine capture of the full stack against main; R10 measured with 20 colonists standing under crowns against the same view with none; one full capture at the end with all three species.
 - `InstancedEntityRenderer::emitSorted` keys on the integer `templateId` already; keep it that way when the key moves to growth step.
 
 ## Testing
@@ -379,6 +468,8 @@ Trees draw in the depth-sorted stream, and a run breaks whenever the mesh change
 - Acceptance for variety: any two individuals of one species at the same age are tellable apart by silhouette alone at game zoom, in greyscale.
 - Acceptance for species: oak, maple, and birch are tellable apart in greyscale silhouette at the reference age, and each matches its "from above" row in R6, including the way it grows old.
 - Acceptance for scale: on the quickstart landing, canopy cover and trees per 1,000 m2 hit R9 at founding, and a colonist can walk the forest without leaving the player's sight.
+- Art, including every detail level, is judged across 2 to 160 px/m at true pixels (D25), never at one zoom.
+- Acceptance for the forest floor: trees read against the floor; glade pixels are unchanged; no seam at chunk borders.
 - Unit, bounded: the ghost trigger test (in front and overlapping ghosts; behind or clear does not).
 - Scenario: a new step in `01-craft-axe-and-box.md`, walk a colonist behind an old oak; the crown goes see-through while they are behind it and returns after, and clicking them through it selects them.
 - Scenarios: extend `01-craft-axe-and-box.md` (fell a young and an old tree found with R11's age range, wood counts differ as specified, selection panel shows age in years and yield), `06-asset-manager-browse.md` (age strips), and add a step that skips the clock forward several years and checks a young tree near the landing has grown, its collision and selection outline with it. Run 01 to 04 and 06 as the regression pass.
@@ -388,6 +479,8 @@ Trees draw in the depth-sorted stream, and a run breaks whenever the mesh change
 
 - `docs/technical/asset-system/asset-definitions.md` and `lua-scripting-api.md`: `<age>` and `<distribution>` in place of `<ageClasses>`, the `age` global in place of `ageClass`, the wood and work factor call.
 - `docs/technical/vector-graphics/collision-shapes.md`: collision per growth step.
+- `asset-definitions.md`, "Detail levels": its example still lists `2, 4, 8, 24, 80`; the defs use `2, 4, 8, 24, 40, 80`.
+- The flora skill: say the style guide does not bind trees (D24).
 - `docs/design/main-game-ui-design.md`: the tree panel mock shows "Age: N years" in place of "Growth: Mature".
 - `.claude/skills/flora-asset/references/`: style-and-view (shadow rule, generator description, the skeleton-first recipe driven by `age`), xml-schema, lua-api.
 - `docs/technical/rendering/world-depth-sorting.md`: its non-goal "canopy fade, cut not deferred" and "no canopy-fade phase" are superseded by R10; point it here.
