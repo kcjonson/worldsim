@@ -572,6 +572,88 @@ namespace {
 		state.SetItemsProcessed(static_cast<std::int64_t>(state.iterations() * kLocatePoints));
 	}
 
+	// --- Large meshes: per-patch work must not grow with the mesh ----------------------
+
+	// kind 0: control tiled 4x4 under one 512 m border. kind 1: four adjacent 512 m bounds
+	// squares, each holding that tiling. Bounds edges are split to 16 m, as in the game.
+	Rings largeRings(int kind) {
+		const Rings tile = tiledControl(4);
+		if (kind == 0) {
+			return tile;
+		}
+		Vec2i64 lo;
+		Vec2i64 hi;
+		boxOf(tile.base.front().ring, lo, hi);
+		const std::int64_t side = hi.x - lo.x;
+		Rings			   rings;
+		for (std::int64_t j = 0; j < 2; ++j) {
+			for (std::int64_t i = 0; i < 2; ++i) {
+				const Vec2i64 offset{i * side, j * side};
+				for (const NavInputPolygon& p : tile.base) {
+					NavInputPolygon moved = p;
+					moved.ring			  = translated(p.ring, offset);
+					rings.base.push_back(std::move(moved));
+				}
+				for (const NavInputPolygon& p : tile.trees) {
+					NavInputPolygon moved = p;
+					moved.ring			  = translated(p.ring, offset);
+					rings.trees.push_back(std::move(moved));
+				}
+			}
+		}
+		return rings;
+	}
+
+	// The first few lone or shoreline trees of the first tile, found without comparing
+	// every tree with every ring.
+	std::vector<std::size_t> firstTileTrees(const Loaded& l, bool shoreline) {
+		const std::size_t		 tileTrees = fixtureRings(Fixture::Control).trees.size();
+		std::vector<std::size_t> out;
+		for (std::size_t i = 0; i < tileTrees && out.size() < 24; ++i) {
+			const std::vector<Vec2i64>& tree = l.rings.trees[i].ring;
+			bool						near = false;
+			bool						crossesWater = false;
+			for (const NavInputPolygon& other : l.all) {
+				if (&other.ring == &l.all[l.rings.base.size() + i].ring || !boxesNear(tree, other.ring, 50) ||
+					(other.provenanceId == kProvenanceBorder && !ringsCross(tree, other.ring))) {
+					continue;
+				}
+				near		 = true;
+				crossesWater = crossesWater || (other.provenanceId == kProvenanceWater && ringsCross(tree, other.ring));
+			}
+			if (shoreline ? crossesWater : !near) {
+				out.push_back(i);
+			}
+		}
+		return out;
+	}
+
+	void BM_LargeTree(benchmark::State& state, int kind, bool shoreline, bool add) {
+		Loaded l(16000);
+		load(l, largeRings(kind));
+		cycleTrees(state, l, firstTileTrees(l, shoreline), add, Refresh::Untimed);
+		state.counters["tris"] = static_cast<double>(l.mesh.liveTriangleCount());
+	}
+
+	// A 0.6 m tree across the first square's west side (kind 0) or the side two squares
+	// share (kind 1), added and taken out again.
+	void BM_LargeBoundsTree(benchmark::State& state, int kind) {
+		Loaded l(16000);
+		load(l, largeRings(kind));
+		Vec2i64 lo;
+		Vec2i64 hi;
+		boxOf(l.rings.base.front().ring, lo, hi);
+		const NavInputPolygon tree{straddlingRect(l, kind == 0 ? lo.x : hi.x, lo.y, hi.y), true, kProvenanceTree};
+		PatchTally			  tally;
+		for (auto _ : state) {
+			const PatchReport r = timedPatch(state, l.mesh, adding({tree}));
+			tally.add(r);
+			untimedPatch(l.mesh, removing(r.added.front()));
+		}
+		tally.report(state);
+		state.counters["tris"] = static_cast<double>(l.mesh.liveTriangleCount());
+	}
+
 	// --- Path queries and forests ----------------------------------------------------
 
 	// Start/goal pairs from a fixed sequence; the same points on both meshes.
@@ -700,3 +782,12 @@ BENCHMARK_CAPTURE(BM_ForestRebuild, manyTrees_full, Fixture::ManyTrees, true)->U
 BENCHMARK_CAPTURE(BM_ForestRebuild, control_full, Fixture::Control, true)->Unit(benchmark::kMillisecond);
 BENCHMARK_CAPTURE(BM_ForestRebuild, realRings_full, Fixture::RealRings, true)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ForestRebuildTiledStructural)->Arg(2)->Arg(4)->Unit(benchmark::kMillisecond);
+
+BENCHMARK_CAPTURE(BM_LargeTree, tiled_lone_add, 0, false, true)->UseManualTime()->Unit(benchmark::kMicrosecond);
+BENCHMARK_CAPTURE(BM_LargeTree, tiled_lone_remove, 0, false, false)->UseManualTime()->Unit(benchmark::kMicrosecond);
+BENCHMARK_CAPTURE(BM_LargeTree, squares_lone_add, 1, false, true)->UseManualTime()->Unit(benchmark::kMicrosecond);
+BENCHMARK_CAPTURE(BM_LargeTree, squares_lone_remove, 1, false, false)->UseManualTime()->Unit(benchmark::kMicrosecond);
+BENCHMARK_CAPTURE(BM_LargeTree, tiled_shoreline_add, 0, true, true)->UseManualTime()->Unit(benchmark::kMicrosecond);
+BENCHMARK_CAPTURE(BM_LargeTree, squares_shoreline_add, 1, true, true)->UseManualTime()->Unit(benchmark::kMicrosecond);
+BENCHMARK_CAPTURE(BM_LargeBoundsTree, tiled_border, 0)->UseManualTime()->Unit(benchmark::kMicrosecond);
+BENCHMARK_CAPTURE(BM_LargeBoundsTree, squares_shared_side, 1)->UseManualTime()->Unit(benchmark::kMicrosecond);

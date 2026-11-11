@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <map>
 #include <unordered_map>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -460,19 +461,27 @@ namespace geometry::nav {
 		if (search.visited.size() < static_cast<std::size_t>(view.triangleSlots())) {
 			search.visited.resize(static_cast<std::size_t>(view.triangleSlots()), 0);
 		}
-		++search.stamp;
+		// A wrapped stamp would match marks left by searches long ago.
+		if (++search.stamp == 0) {
+			std::fill(search.visited.begin(), search.visited.end(), 0);
+			search.stamp = 1;
+		}
 		search.visited[static_cast<std::size_t>(ti)] = search.stamp;
 		return capped(searchWidth(view, search, c, ti, cEdge, d));
 	}
 
 	NavView navView(const NavMesh& mesh) {
 		NavView view;
-		view.vertices	   = &mesh.vertices;
-		view.triangles	   = &mesh.triangles;
-		view.locate		   = [](const void* owner, const Vec2i64& p) { return locateTriangle(*static_cast<const NavMesh*>(owner), p); };
-		view.owner		   = &mesh;
-		view.truthForest   = &mesh.truthForest;
-		view.terrainForest = &mesh.terrainForest;
+		view.vertices		 = &mesh.vertices;
+		view.triangles		 = &mesh.triangles;
+		view.owner			 = &mesh;
+		view.locateIn		 = [](const void* owner, const Vec2i64& p) { return locateTriangle(*static_cast<const NavMesh*>(owner), p); };
+		view.forestIn		 = [](const void* owner, bool truth) {
+			   const NavMesh& mesh = *static_cast<const NavMesh*>(owner);
+			   return truth ? &mesh.truthForest : &mesh.terrainForest;
+		};
+		view.widthsCurrentIn = [](const void*) { return true; };
+		view.epochIn		 = [](const void*) { return std::uint64_t{0}; };
 		return view;
 	}
 
@@ -522,36 +531,31 @@ namespace geometry::nav {
 	}
 
 	FaceTags classifyCover(const std::vector<const SampleRing*>& containing) {
-		Int128		 bestSolidArea(0);
-		bool		 solidTagged  = false;
-		std::int64_t solidBlocker = kNoBlocker;
-		std::int64_t solidOpening = kNoOpening;
-
-		Int128		 bestWaterArea(0);
-		bool		 waterTagged  = false;
-		int			 waterDepth	  = 0;
-		std::int64_t waterBlocker = kNoBlocker;
-		std::int64_t waterOpening = kNoOpening;
-
+		// Smallest area first; equal areas by content.
+		auto ranksBefore = [](const SampleRing& a, const SampleRing& b) {
+			if (a.areaDoubledAbs != b.areaDoubledAbs) {
+				return a.areaDoubledAbs < b.areaDoubledAbs;
+			}
+			return std::tie(a.provenance, a.opening, a.ring3) < std::tie(b.provenance, b.opening, b.ring3);
+		};
+		const SampleRing* solid		 = nullptr;
+		const SampleRing* water		 = nullptr;
+		int				  waterDepth = 0;
 		for (const SampleRing* br : containing) {
-			const Int128& area = br->areaDoubledAbs;
 			if (br->holeCapable) {
 				++waterDepth;
-				if (!waterTagged || area < bestWaterArea) {
-					bestWaterArea = area;
-					waterBlocker  = br->provenance;
-					waterOpening  = br->opening;
-					waterTagged	  = true;
+				if (water == nullptr || ranksBefore(*br, *water)) {
+					water = br;
 				}
-			} else {
-				if (!solidTagged || area < bestSolidArea) {
-					bestSolidArea = area;
-					solidBlocker  = br->provenance;
-					solidOpening  = br->opening;
-					solidTagged	  = true;
-				}
+			} else if (solid == nullptr || ranksBefore(*br, *solid)) {
+				solid = br;
 			}
 		}
+		const bool		   solidTagged	= solid != nullptr;
+		const std::int64_t solidBlocker = solidTagged ? solid->provenance : kNoBlocker;
+		const std::int64_t solidOpening = solidTagged ? solid->opening : kNoOpening;
+		const std::int64_t waterBlocker = water != nullptr ? water->provenance : kNoBlocker;
+		const std::int64_t waterOpening = water != nullptr ? water->opening : kNoOpening;
 
 		if (solidTagged) {
 			return {solidBlocker, solidOpening};

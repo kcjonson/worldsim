@@ -283,7 +283,7 @@ TEST(RraHeuristic, AdmissibleVsTrueForwardCost) {
 	const double n = static_cast<double>(m.triangles.size());
 	(void)n;
 	for (std::int32_t t = 0; t < static_cast<std::int32_t>(m.triangles.size()); ++t) {
-		const double h	  = rraHeuristic(cache, m, t);
+		const double h	  = rraHeuristic(cache, navView(m), t);
 		const double real = minTrueCostAtTri(trueCost, t);
 		if (std::isinf(real)) {
 			continue; // t cannot reach the goal through the forward graph: nothing to bound
@@ -311,11 +311,11 @@ TEST(RraHeuristic, ResumeMatchesFreshCache) {
 	shared.goalTri = goalTri;
 
 	for (std::int32_t t = 0; t < n; ++t) {
-		const double resumed = rraHeuristic(shared, m, t);
+		const double resumed = rraHeuristic(shared, navView(m), t);
 
 		RraCache fresh;
 		fresh.goalTri	 = goalTri;
-		const double cold = rraHeuristic(fresh, m, t);
+		const double cold = rraHeuristic(fresh, navView(m), t);
 
 		if (std::isinf(cold)) {
 			EXPECT_TRUE(std::isinf(resumed)) << "tri " << t << " cold=inf but resumed finite";
@@ -325,7 +325,7 @@ TEST(RraHeuristic, ResumeMatchesFreshCache) {
 	}
 
 	// Re-querying an already-settled triangle is stable (a pure table read).
-	const double again = rraHeuristic(shared, m, goalTri);
+	const double again = rraHeuristic(shared, navView(m), goalTri);
 	EXPECT_EQ(again, 0.0) << "goal triangle distance-to-goal is exactly 0";
 }
 
@@ -435,9 +435,9 @@ TEST(RraHeuristic, OneCacheServesTruthAndBeliefAndRadii) {
 	// goal-triangle distance is 0 and the start triangles have finite h under this cache.
 	const std::int32_t outTri = locateTriangle(m, outside);
 	ASSERT_GE(outTri, 0);
-	EXPECT_TRUE(std::isfinite(rraHeuristic(cache, m, outTri)))
+	EXPECT_TRUE(std::isfinite(rraHeuristic(cache, navView(m), outTri)))
 		<< "start is terrain-connected to goal: finite reverse distance";
-	EXPECT_EQ(rraHeuristic(cache, m, goalTri), 0.0);
+	EXPECT_EQ(rraHeuristic(cache, navView(m), goalTri), 0.0);
 }
 
 // --- Mismatched goal falls back to straight-line (no corruption) -------------

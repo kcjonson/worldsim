@@ -134,7 +134,7 @@ namespace geometry::nav {
 		// belief query never uses the truth forest, because an agent optimistically
 		// routing through unseen walls can reach triangles the truth forest walls off.
 		const ReachabilityForest* forestFor(const NavView& mesh, const BeliefFilter& belief) {
-			return belief.knownSegments == nullptr ? mesh.truthForest : mesh.terrainForest;
+			return mesh.forest(belief.knownSegments == nullptr);
 		}
 
 		// pathThrough()'s sound short-circuit, the same test reaches() makes. Both
@@ -182,10 +182,12 @@ namespace geometry::nav {
 			return kInf; // out of range: not a node
 		}
 
-		// First touch for this goal: size the tables and seed the reverse search with
-		// g[goalTri] = 0. Done lazily so constructing an RraCache is free; the work
-		// happens on the first heuristic query and persists (resumes) afterward.
-		if (!cache.initialized) {
+		// First touch for this goal, or the mesh changed since: size the tables and seed
+		// the reverse search with g[goalTri] = 0. A patch can grow the slots and reuse
+		// ids, so distances from another epoch are neither in range nor admissible; the
+		// cache only speeds the search, so starting over is always right.
+		if (!cache.initialized || cache.epoch != mesh.epoch()) {
+			cache.epoch = mesh.epoch();
 			cache.g.assign(static_cast<std::size_t>(n), kInf);
 			cache.settled.assign(static_cast<std::size_t>(n), 0);
 			cache.open = {};
@@ -288,7 +290,10 @@ namespace geometry::nav {
 	ReachFrom reachFrom(const NavView& mesh, const Vec2i64& start, std::int64_t agentRadiusMm, BeliefFilter belief) {
 		assert(forestFor(mesh, belief) != nullptr && "reachFrom: the mesh has no reachability forests");
 		ReachFrom from;
-		const std::int32_t startTri = mesh.locate(mesh.owner, start);
+		if (forestFor(mesh, belief) == nullptr) {
+			return from; // reaches() answers "maybe" without forests
+		}
+		const std::int32_t startTri = mesh.locate(start);
 		// A start on a face this belief cannot stand on reaches nothing, same as pathThrough's
 		// endpoint gate (e.g. start inside a wall the agent knows blocks).
 		if (startTri < 0 || !traversable(mesh.triangle(startTri), belief)) {
@@ -301,10 +306,13 @@ namespace geometry::nav {
 
 	bool reaches(const NavView& mesh, const ReachFrom& from, const Vec2i64& goal, BeliefFilter belief) {
 		assert(forestFor(mesh, belief) != nullptr && "reaches: the mesh has no reachability forests");
+		if (forestFor(mesh, belief) == nullptr) {
+			return true; // nothing proves the goal unreachable
+		}
 		if (from.startTri < 0) {
 			return false; // off-mesh or untraversable start
 		}
-		const std::int32_t goalTri = mesh.locate(mesh.owner, goal);
+		const std::int32_t goalTri = mesh.locate(goal);
 		if (goalTri < 0 || !traversable(mesh.triangle(goalTri), belief)) {
 			return false;
 		}
@@ -318,9 +326,13 @@ namespace geometry::nav {
 	PathResult pathThrough(const NavView& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
 						   BeliefFilter belief, RraCache* rra) {
 		PathResult result;
+		assert(mesh.widthsCurrent() && "pathThrough: corridor widths lag behind a patch");
+		if (!mesh.widthsCurrent()) {
+			return result; // stale widths could route a disc through a gap it does not fit
+		}
 
-		const std::int32_t startTri = mesh.locate(mesh.owner, start);
-		const std::int32_t goalTri	= mesh.locate(mesh.owner, goal);
+		const std::int32_t startTri = mesh.locate(start);
+		const std::int32_t goalTri	= mesh.locate(goal);
 		if (startTri < 0 || goalTri < 0) {
 			return result; // off-mesh
 		}
@@ -629,14 +641,6 @@ namespace geometry::nav {
 		result.reachable = true;
 		result.points	 = std::move(pts);
 		return result;
-	}
-
-} // namespace geometry::nav
-
-namespace geometry::nav {
-
-	double rraHeuristic(RraCache& cache, const NavMesh& mesh, std::int32_t tri) {
-		return rraHeuristic(cache, navView(mesh), tri);
 	}
 
 	ReachFrom reachFrom(const NavMesh& mesh, const Vec2i64& start, std::int64_t agentRadiusMm, BeliefFilter belief) {

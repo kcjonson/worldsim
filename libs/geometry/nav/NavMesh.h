@@ -181,8 +181,9 @@ namespace geometry::nav {
 		std::int64_t opening = kNoOpening;
 	};
 
-	// Tags of in-bounds ground inside exactly the blocked rings `containing`, given in
-	// input order (the order breaks ties between equal areas). SOLID rings (flora,
+	// Tags of in-bounds ground inside exactly the blocked rings `containing`, in any
+	// order: equal areas tie-break on content (provenance, then opening, then outline),
+	// so the answer never depends on input order or edit history. SOLID rings (flora,
 	// walls) go by solid containment: the smallest-area one wins, so a door-span
 	// footprint beats the wall band around it. HOLE-CAPABLE rings (water) go by
 	// nesting parity: a water body arrives as a CCW outer boundary plus CW land-island
@@ -273,21 +274,32 @@ namespace geometry::nav {
 	// locate a point among them. NavMesh and PatchableMesh each produce one, so each of
 	// those algorithms has one implementation. A slot `live` marks dead is never located,
 	// never a live triangle's neighbour, and never a forest node.
+	//
+	// A view reads its owner as it is when used, never as it was when taken: forests,
+	// width currency, and the patch epoch come through the owner, so a view kept across
+	// a patch sees the patched mesh and its missing forests.
 	struct NavView {
 		const std::vector<Vec2i64>*		 vertices  = nullptr;
 		const std::vector<NavTriangle>*	 triangles = nullptr;
 		const std::vector<std::uint8_t>* live	   = nullptr; // null: every slot is live
-		std::int32_t (*locate)(const void* owner, const Vec2i64& p) = nullptr;
-		const void* owner = nullptr;
-		// The reachability forests over these triangles; null when there are none, and
-		// then a path query skips its forest pre-check.
-		const ReachabilityForest* truthForest	= nullptr;
-		const ReachabilityForest* terrainForest = nullptr;
+		const void*						 owner	   = nullptr;
+		std::int32_t (*locateIn)(const void* owner, const Vec2i64& p)						= nullptr;
+		const ReachabilityForest* (*forestIn)(const void* owner, bool truth)				= nullptr;
+		bool (*widthsCurrentIn)(const void* owner)											= nullptr;
+		std::uint64_t (*epochIn)(const void* owner)											= nullptr;
 
 		std::int32_t	   triangleSlots() const { return static_cast<std::int32_t>(triangles->size()); }
 		bool			   isLive(std::int32_t t) const { return live == nullptr || (*live)[static_cast<std::size_t>(t)] != 0; }
 		const NavTriangle& triangle(std::int32_t t) const { return (*triangles)[static_cast<std::size_t>(t)]; }
 		const Vec2i64&	   vertex(std::uint32_t v) const { return (*vertices)[v]; }
+		std::int32_t	   locate(const Vec2i64& p) const { return locateIn(owner, p); }
+		// The truth or terrain forest over the live triangles; null when the owner has
+		// none current, and then a path query skips its forest pre-check.
+		const ReachabilityForest* forest(bool truth) const { return forestIn(owner, truth); }
+		// False while corridor widths lag behind a patch; queries read widths.
+		bool widthsCurrent() const { return widthsCurrentIn(owner); }
+		// Changes whenever the triangles or their tags do (RraCache keys on it).
+		std::uint64_t epoch() const { return epochIn(owner); }
 	};
 
 	NavView navView(const NavMesh& mesh);
@@ -303,8 +315,8 @@ namespace geometry::nav {
 
 	// Scratch for corridor-width searches, reused across calls.
 	struct WidthSearch {
-		std::vector<std::int32_t> visited; // visited[t] == stamp: seen by the current search
-		std::int32_t			  stamp = 0;
+		std::vector<std::uint32_t> visited; // visited[t] == stamp: seen by the current search
+		std::uint32_t			   stamp = 0;
 	};
 
 	// Demyen-Buro width at apex `apex` of triangle `tri`: the widest disc diameter (mm)

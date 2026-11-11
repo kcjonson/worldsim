@@ -7,6 +7,7 @@
 #include <compare>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -43,11 +44,12 @@ namespace geometry::nav {
 	};
 
 	struct RegisteredRing {
-		NavInputPolygon polygon; // original outline and tags
-		SampleRing		sample;
-		Vec2i64			lo;
-		Vec2i64			hi;
-		bool			live = false;
+		NavInputPolygon			  polygon; // original outline and tags
+		SampleRing				  sample;
+		Vec2i64					  lo;
+		Vec2i64					  hi;
+		std::vector<std::int32_t> edgeIds; // per outline edge, its id in the edge index
+		bool					  live = false;
 	};
 
 	struct RingMove {
@@ -133,9 +135,12 @@ namespace geometry::nav {
 		void rebuildForests();
 		bool hasForests() const { return forestsCurrent; }
 
-		// What path queries, RRA*, and forest builds read (see NavView), with the forests
-		// when the mesh has them. Widths must be current.
+		// What path queries, RRA*, and forest builds read (see NavView).
 		NavView view() const;
+
+		// Bumped by every patch and door edit: anything keyed by triangle id, like an
+		// RraCache, is stale once it moves.
+		std::uint64_t epoch() const { return patchEpoch; }
 
 		// Full consistency check; the first violation found, or empty.
 		std::string validate() const;
@@ -181,6 +186,14 @@ namespace geometry::nav {
 			template <typename Visit> void forEachEntry(Visit visit) const;
 
 		  private:
+			// A cell by level and full cell coordinates: no packing, so no coordinate the
+			// mesh can hold aliases another cell. Level -1 marks an empty slot.
+			struct CellKey {
+				std::int64_t x	   = 0;
+				std::int64_t y	   = 0;
+				std::int32_t level = -1;
+				bool		 operator==(const CellKey&) const = default;
+			};
 			// The box rides along so a query rejects an entry without touching its owner.
 			struct Entry {
 				std::int32_t id = -1;
@@ -188,19 +201,18 @@ namespace geometry::nav {
 				Vec2i64		 hi;
 			};
 			struct Cell {
-				std::uint64_t	   key = 0;
+				CellKey			   key;
 				std::vector<Entry> entries;
 				std::int32_t	   levelSlot = -1; // position in levelCells
 			};
 
 			static int			 levelFor(const Vec2i64& lo, const Vec2i64& hi);
-			static std::uint64_t keyOf(int level, std::int64_t cx, std::int64_t cy);
-			std::size_t			 home(std::uint64_t key) const;
-			std::int32_t		 find(std::uint64_t key) const;
-			std::int32_t		 findOrAdd(std::uint64_t key, int level);
+			std::size_t	 home(const CellKey& key) const;
+			std::int32_t find(const CellKey& key) const;
+			std::int32_t findOrAdd(const CellKey& key);
 			void				 dropCell(std::int32_t cell, int level);
 
-			std::vector<std::uint64_t>					   slotKeys; // kEmptySlot or a cell key
+			std::vector<CellKey>						   slotKeys;
 			std::vector<std::int32_t>					   slotCells;
 			std::size_t									   occupied = 0;
 			std::vector<Cell>							   cells;
@@ -215,12 +227,31 @@ namespace geometry::nav {
 
 		class Patch;
 		friend class Patch;
+		struct PatchScratch;
+
+		// A patch's working storage, kept between patches so one allocates little. A copied
+		// mesh starts with its own, empty.
+		struct PatchScratchSlot {
+			PatchScratchSlot();
+			PatchScratchSlot(const PatchScratchSlot& other);
+			PatchScratchSlot(PatchScratchSlot&& other) noexcept;
+			PatchScratchSlot& operator=(const PatchScratchSlot& other);
+			PatchScratchSlot& operator=(PatchScratchSlot&& other) noexcept;
+			~PatchScratchSlot();
+
+			std::unique_ptr<PatchScratch> scratch;
+		};
 
 		std::int32_t locateScaled(const Vec2i64& p, std::int64_t scale) const;
 		template <typename Visit> void forEachLiveInBox(const Vec2i64& lo, const Vec2i64& hi, Visit visit) const;
 		template <typename Visit> void forEachAroundVertex(std::uint32_t v, Visit visit) const;
 		void triangleBox(std::int32_t t, Vec2i64& lo, Vec2i64& hi) const;
 		std::vector<RingId> ringsInBox(const Vec2i64& lo, const Vec2i64& hi) const;
+		// found = every registered ring edge whose segment box overlaps the box, each once,
+		// ascending. ids is scratch.
+		void ringEdgesInBox(const Vec2i64& lo, const Vec2i64& hi, std::vector<std::int32_t>& ids, std::vector<EdgeSource>& found) const;
+		void					indexRingEdges(RingId ring);
+		void					unindexRingEdges(RingId ring);
 		bool				nearBoundsEdge(const Vec2i64& lo, const Vec2i64& hi) const;
 
 		std::int32_t acquireCover(const std::vector<RingId>& ringSet);
@@ -233,10 +264,10 @@ namespace geometry::nav {
 		std::int64_t pieceDeviationMm(RingId ring) const;
 		void		 applyDoorTags(std::int32_t t);
 		void		 retagEdge(const Vec2i64& a, const Vec2i64& b);
-		NavView		 meshView() const;
 		static std::pair<Vec2i64, Vec2i64> edgeKey(Vec2i64 a, Vec2i64 b);
 
-		static std::uint64_t sourceKey(const EdgeSource& s);
+		// The half-edges a registered ring edge lies under.
+		const std::vector<std::int32_t>& piecesOf(const EdgeSource& s) const;
 
 		std::int64_t				maxBoundsEdgeMm = 0;
 		std::int64_t				maxClearanceMm	= kDefaultMaxClearanceMm;
@@ -259,15 +290,18 @@ namespace geometry::nav {
 		InternTable<std::vector<RingId>>	 covers;
 		std::vector<FaceTags>				 coverTags; // per cover id
 
-		// Every half-edge (t * 3 + e) each original ring edge lies under.
-		std::unordered_map<std::uint64_t, std::vector<std::int32_t>> halfEdgesOf;
 
 		mutable std::vector<std::uint32_t> visitStamp; // per triangle, for box queries
 		mutable std::uint32_t			   stamp		= 0;
 		mutable bool					   boxQueryOpen = false;
 
-		BoxGrid grid;	  // live triangles
-		BoxGrid ringGrid; // live rings, by outline box
+		BoxGrid					grid;		 // live triangles
+		BoxGrid					ringGrid;	 // live rings, by outline box
+		BoxGrid					edgeGrid;	 // live rings' edges, by segment box
+		std::vector<EdgeSource> edgeOf;		 // edge index id -> ring edge
+		std::vector<std::vector<std::int32_t>> pieces; // per edge index id: half-edges t * 3 + e
+		std::vector<std::int32_t> freeEdgeIds;
+		PatchScratchSlot		patchScratch;
 
 		std::vector<DoorPortal>									   doors;
 		std::vector<std::uint8_t>								   doorLive;
@@ -277,9 +311,11 @@ namespace geometry::nav {
 		WidthSearch								 widthSearch;
 		std::vector<std::pair<Vec2i64, Vec2i64>> pendingWidthBoxes;	  // one per patch since refreshWidths
 		std::vector<std::int32_t>				 freshWidthTriangles; // new or flipped since then
+		std::vector<std::int32_t>				 staleApexes;		  // refreshWidths scratch: 3 * t + apex
 
 		ReachabilityForests forests;
 		bool				forestsCurrent = false;
+		std::uint64_t		patchEpoch	   = 0;
 	};
 
 } // namespace geometry::nav

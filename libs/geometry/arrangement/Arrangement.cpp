@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <map>
 #include <tuple>
 #include <vector>
 
@@ -13,13 +12,12 @@ namespace geometry {
 
 	namespace {
 
-		// A segment still being resolved. Carries the provenance accumulated so
-		// far; sub-segments inherit their parent's provenance, and coincident
-		// overlaps union it at dedup time.
+		// A segment still being resolved: a piece of one input segment, whose index
+		// it carries. Coincident pieces union their indices when edges are built.
 		struct WorkSegment {
-			Vec2i64					 a;
-			Vec2i64					 b;
-			std::vector<std::int64_t> provenance;
+			Vec2i64		 a;
+			Vec2i64		 b;
+			std::int64_t source = 0;
 		};
 
 		bool collinear(const Vec2i64& a, const Vec2i64& b, const Vec2i64& c) {
@@ -140,9 +138,8 @@ namespace geometry {
 			};
 		}
 
-		SegmentGrid buildSegmentGrid(const std::vector<Box>& boxes) {
-			SegmentGrid grid;
-			Vec2i64		lo = boxes.front().lo;
+		void buildSegmentGrid(const std::vector<Box>& boxes, SegmentGrid& grid, std::vector<std::size_t>& fill) {
+			Vec2i64 lo = boxes.front().lo;
 			Vec2i64		hi = boxes.front().hi;
 			for (const Box& b : boxes) {
 				lo = {std::min(lo.x, b.lo.x), std::min(lo.y, b.lo.y)};
@@ -179,7 +176,7 @@ namespace geometry {
 				grid.cellStart[c + 1] += grid.cellStart[c];
 			}
 			grid.entries.resize(grid.cellStart[cellCount]);
-			std::vector<std::size_t> fill(grid.cellStart.begin(), grid.cellStart.end() - 1);
+			fill.assign(grid.cellStart.begin(), grid.cellStart.end() - 1);
 			for (std::size_t i = 0; i < boxes.size(); ++i) {
 				const CellRange r = cellRangeOf(grid, boxes[i]);
 				for (std::int64_t cy = r.y0; cy <= r.y1; ++cy) {
@@ -188,19 +185,49 @@ namespace geometry {
 					}
 				}
 			}
-			return grid;
 		}
+
+		struct Piece {
+			std::size_t	 from;
+			std::size_t	 to;
+			std::int64_t source;
+			bool		 operator<(const Piece& o) const { return std::tie(from, to, source) < std::tie(o.from, o.to, o.source); }
+		};
 
 	} // namespace
 
-	Arrangement buildArrangement(const std::vector<InputSegment>& segments) {
+	struct ArrangementWorkspace::Storage {
 		std::vector<WorkSegment> work;
-		work.reserve(segments.size());
+		std::vector<WorkSegment> next;
+		std::vector<Box>		 boxes;
+		SegmentGrid				 grid;
+		std::vector<std::size_t> fill;
+		std::vector<std::size_t> lastSeen;
+		std::vector<Vec2i64>	 cuts;
+		std::vector<Piece>		 pieces;
+	};
+
+	ArrangementWorkspace::ArrangementWorkspace() : store(std::make_unique<Storage>()) {}
+	ArrangementWorkspace::~ArrangementWorkspace()											  = default;
+	ArrangementWorkspace::ArrangementWorkspace(ArrangementWorkspace&& other) noexcept			  = default;
+	ArrangementWorkspace& ArrangementWorkspace::operator=(ArrangementWorkspace&& other) noexcept = default;
+
+	Arrangement buildArrangement(const std::vector<InputSegment>& segments) {
+		ArrangementWorkspace workspace;
+		Arrangement			 out;
+		buildArrangement(segments, workspace, out);
+		return out;
+	}
+
+	void buildArrangement(const std::vector<InputSegment>& segments, ArrangementWorkspace& workspace, Arrangement& out) {
+		ArrangementWorkspace::Storage& ws	= workspace.storage();
+		std::vector<WorkSegment>&	   work = ws.work;
+		work.clear();
 		for (const InputSegment& in : segments) {
 			if (in.a == in.b) {
 				continue; // reject zero-length input
 			}
-			work.push_back({in.a, in.b, {in.index}});
+			work.push_back({in.a, in.b, in.index});
 		}
 
 		// Split to a fixpoint. Each pass gathers every interior incidence on each
@@ -210,25 +237,27 @@ namespace geometry {
 		// again. The loop terminates because every split strictly shortens a
 		// segment and points live on the finite integer-mm grid, so the supply of
 		// distinct interior points is bounded.
-		bool changed = !work.empty();
+		bool					  changed  = !work.empty();
+		std::vector<Vec2i64>&	  cuts	   = ws.cuts;
+		std::vector<WorkSegment>& next	   = ws.next;
+		std::vector<Box>&		  boxes	   = ws.boxes;
+		SegmentGrid&			  grid	   = ws.grid;
+		std::vector<std::size_t>& lastSeen = ws.lastSeen;
 		while (changed) {
 			changed = false;
-			std::vector<WorkSegment> next;
-			next.reserve(work.size());
-
-			std::vector<Box> boxes;
-			boxes.reserve(work.size());
+			next.clear();
+			boxes.clear();
 			for (const WorkSegment& s : work) {
 				boxes.push_back(boxOf(s));
 			}
-			const SegmentGrid		 grid = buildSegmentGrid(boxes);
-			std::vector<std::size_t> lastSeen(work.size(), SIZE_MAX);
+			buildSegmentGrid(boxes, grid, ws.fill);
+			lastSeen.assign(work.size(), SIZE_MAX);
 
 			for (std::size_t i = 0; i < work.size(); ++i) {
 				const WorkSegment& s = work[i];
 
-				std::vector<Vec2i64> cuts;
-				const CellRange		 r = cellRangeOf(grid, boxes[i]);
+				cuts.clear();
+				const CellRange r = cellRangeOf(grid, boxes[i]);
 				for (std::int64_t cy = r.y0; cy <= r.y1; ++cy) {
 					for (std::int64_t cx = r.x0; cx <= r.x1; ++cx) {
 						const auto cell = static_cast<std::size_t>(cy * grid.cols + cx);
@@ -266,12 +295,12 @@ namespace geometry {
 				Vec2i64 prev = s.a;
 				for (const Vec2i64& c : cuts) {
 					if (c != prev) {
-						next.push_back({prev, c, s.provenance});
+						next.push_back({prev, c, s.source});
 						prev = c;
 					}
 				}
 				if (s.b != prev) {
-					next.push_back({prev, s.b, s.provenance});
+					next.push_back({prev, s.b, s.source});
 				}
 				changed = true;
 			}
@@ -279,45 +308,48 @@ namespace geometry {
 			work.swap(next);
 		}
 
-		// Canonicalize vertices: collect unique points, sort, assign indices.
-		std::map<Vec2i64, std::size_t> vertexIndex;
+		// Canonicalize vertices: the unique points, sorted, indexed by position.
+		out.vertices.clear();
 		for (const WorkSegment& s : work) {
-			vertexIndex.emplace(s.a, 0);
-			vertexIndex.emplace(s.b, 0);
+			out.vertices.push_back(s.a);
+			out.vertices.push_back(s.b);
 		}
-		Arrangement out;
-		out.vertices.reserve(vertexIndex.size());
-		for (auto& [pt, idx] : vertexIndex) {
-			idx = out.vertices.size();
-			out.vertices.push_back(pt);
-		}
+		std::sort(out.vertices.begin(), out.vertices.end());
+		out.vertices.erase(std::unique(out.vertices.begin(), out.vertices.end()), out.vertices.end());
+		auto indexOf = [&](const Vec2i64& p) {
+			return static_cast<std::size_t>(std::lower_bound(out.vertices.begin(), out.vertices.end(), p) - out.vertices.begin());
+		};
 
-		// Build edges keyed by canonical {from,to} (from < to), merging the
-		// provenance of every work segment that maps onto the same vertex pair.
-		// This is where coincident edges collapse to one: two segments covering
-		// the same sub-segment land on the identical key and union provenance.
-		std::map<std::pair<std::size_t, std::size_t>, std::vector<std::int64_t>> edgeMap;
+		// Edges keyed by canonical {from,to} (from < to). Coincident pieces land on the
+		// same key, so sorting gathers them and their sources merge into one edge.
+		std::vector<Piece>& pieces = ws.pieces;
+		pieces.clear();
 		for (const WorkSegment& s : work) {
 			if (s.a == s.b) {
 				continue; // defensive: never emit zero-length
 			}
-			std::size_t u = vertexIndex[s.a];
-			std::size_t v = vertexIndex[s.b];
-			if (u > v) {
-				std::swap(u, v);
+			const std::size_t u = indexOf(s.a);
+			const std::size_t v = indexOf(s.b);
+			pieces.push_back({std::min(u, v), std::max(u, v), s.source});
+		}
+		std::sort(pieces.begin(), pieces.end());
+		// Edges left from the last build keep their provenance storage.
+		std::size_t edgeCount = 0;
+		for (std::size_t i = 0; i < pieces.size();) {
+			if (out.edges.size() == edgeCount) {
+				out.edges.emplace_back();
 			}
-			auto&					   prov = edgeMap[{u, v}];
-			prov.insert(prov.end(), s.provenance.begin(), s.provenance.end());
+			ArrangementEdge& edge = out.edges[edgeCount++];
+			edge.from			  = pieces[i].from;
+			edge.to				  = pieces[i].to;
+			edge.provenance.clear();
+			for (; i < pieces.size() && pieces[i].from == edge.from && pieces[i].to == edge.to; ++i) {
+				if (edge.provenance.empty() || edge.provenance.back() != pieces[i].source) {
+					edge.provenance.push_back(pieces[i].source);
+				}
+			}
 		}
-
-		out.edges.reserve(edgeMap.size());
-		for (auto& [key, prov] : edgeMap) {
-			std::sort(prov.begin(), prov.end());
-			prov.erase(std::unique(prov.begin(), prov.end()), prov.end());
-			out.edges.push_back({key.first, key.second, std::move(prov)});
-		}
-
-		return out;
+		out.edges.resize(edgeCount);
 	}
 
 } // namespace geometry

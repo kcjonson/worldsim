@@ -17,6 +17,7 @@
 #include <string>
 #include <unordered_set>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <random>
 #include <set>
@@ -1145,6 +1146,182 @@ TEST(PatchableMesh, FixtureQueriesMatchBuildNavMesh) {
 	}
 }
 
+namespace {
+
+	// realRings tiled k x k, under one bounds square over the whole tiling or under k x k
+	// adjacent squares, one per tile; bounds sides split to 16 m, as in the game.
+	struct TiledGround {
+		NavInputPolygon				 border; // the whole tiling's outline
+		std::vector<NavInputPolygon> squares;
+		std::vector<NavInputPolygon> rings;
+	};
+
+	TiledGround tiledRealRings(std::int64_t k) {
+		const Fixture tile = realRingsFixture();
+		Vec2i64		  lo   = tile.base.front().ring.front();
+		Vec2i64		  hi   = lo;
+		for (const Vec2i64& p : tile.base.front().ring) {
+			lo = {std::min(lo.x, p.x), std::min(lo.y, p.y)};
+			hi = {std::max(hi.x, p.x), std::max(hi.y, p.y)};
+		}
+		const std::int64_t side = hi.x - lo.x;
+		TiledGround		   g;
+		g.border = bounds(rect(lo.x, lo.y, lo.x + k * side, lo.y + k * side));
+		for (std::int64_t j = 0; j < k; ++j) {
+			for (std::int64_t i = 0; i < k; ++i) {
+				const Vec2i64 offset{i * side, j * side};
+				g.squares.push_back(bounds(rect(lo.x + offset.x, lo.y + offset.y, lo.x + offset.x + side, lo.y + offset.y + side)));
+				for (std::size_t b = 1; b < tile.base.size(); ++b) {
+					g.rings.push_back(tile.base[b]);
+					g.rings.back().ring = translated(g.rings.back().ring, offset);
+				}
+				for (const NavInputPolygon& tree : tile.trees) {
+					g.rings.push_back(tree);
+					g.rings.back().ring = translated(g.rings.back().ring, offset);
+				}
+			}
+		}
+		return g;
+	}
+
+	void loadGround(PatchableMesh& mesh, const std::vector<NavInputPolygon>& bounds, const std::vector<NavInputPolygon>& rings) {
+		PatchEdits edits;
+		edits.adds = bounds;
+		edits.adds.insert(edits.adds.end(), rings.begin(), rings.end());
+		mesh.applyPatch(edits);
+		mesh.refreshWidths();
+		mesh.rebuildForests();
+	}
+
+	// The widest disc diameter some path between the truth-forest triangles holding a
+	// and b admits; -1 when either is no node or they are apart.
+	std::int64_t bottleneckMm(const NavView& view, const Vec2i64& a, const Vec2i64& b) {
+		const ReachabilityForest& forest = *view.forest(true);
+		const std::int32_t		  ta	 = view.locate(a);
+		const std::int32_t		  tb	 = view.locate(b);
+		if (ta < 0 || tb < 0 || forest.component[static_cast<std::size_t>(ta)] < 0 ||
+			forest.component[static_cast<std::size_t>(ta)] != forest.component[static_cast<std::size_t>(tb)]) {
+			return -1;
+		}
+		std::int32_t node = ta;
+		while (!inForestSubtree(forest, node, tb)) {
+			node = forest.up[0][static_cast<std::size_t>(node)];
+		}
+		return forest.nodeCap[static_cast<std::size_t>(node)];
+	}
+
+	using Corners = std::array<Vec2i64, 3>;
+
+	Corners cornersOf(const PatchableMesh& mesh, std::int32_t t) {
+		const NavTriangle& tri = mesh.triangles()[static_cast<std::size_t>(t)];
+		Corners			   c{mesh.vertices()[tri.v[0]], mesh.vertices()[tri.v[1]], mesh.vertices()[tri.v[2]]};
+		std::sort(c.begin(), c.end());
+		return c;
+	}
+
+	// Internal bounds edges must not change an answer: the same rings under one bounds
+	// square and under a grid of adjacent squares give the same path verdicts, reach
+	// verdicts, and bottlenecks, and the same corridor width at every apex of a triangle
+	// both meshes have.
+	void expectBoundsSplitInvisible(std::int64_t k, std::uint32_t seed) {
+		const TiledGround g = tiledRealRings(k);
+		PatchableMesh	  whole({.maxBoundsEdgeMm = 16000});
+		PatchableMesh	  split({.maxBoundsEdgeMm = 16000});
+		loadGround(whole, {g.border}, g.rings);
+		loadGround(split, g.squares, g.rings);
+		ASSERT_TRUE(whole.validate().empty()) << whole.validate();
+		ASSERT_TRUE(split.validate().empty()) << split.validate();
+
+		const NavView						   wv = whole.view();
+		const NavView						   sv = split.view();
+		const std::vector<Vec2i64>			   points = samplePoints(g.border, 128, seed);
+		const std::unordered_set<std::uint64_t> noneKnown;
+		const BeliefFilter					   optimistic{&noneKnown, &noneKnown};
+		int									   lengths		  = 0;
+		int									   lengthDiffers  = 0;
+		std::int64_t						   worstDeltaMm	  = 0;
+		int									   verdictDiffers = 0;
+		int									   reachDiffers	  = 0;
+		int									   bottleneckDiffers = 0;
+		for (std::size_t i = 0; i + 1 < points.size(); i += 2) {
+			const Vec2i64& a = points[i];
+			const Vec2i64& b = points[i + 1];
+			if (bottleneckMm(wv, a, b) != bottleneckMm(sv, a, b)) {
+				++bottleneckDiffers;
+			}
+			for (const std::int64_t radius : kRadii) {
+				const PathResult w = pathThrough(wv, a, b, radius);
+				const PathResult s = pathThrough(sv, a, b, radius);
+				if (w.reachable != s.reachable) {
+					++verdictDiffers;
+				} else if (w.reachable) {
+					++lengths;
+					const std::int64_t delta = pathLengthMm(s) - pathLengthMm(w);
+					if (delta != 0) {
+						++lengthDiffers;
+						worstDeltaMm = std::abs(delta) > std::abs(worstDeltaMm) ? delta : worstDeltaMm;
+					}
+				}
+				for (const BeliefFilter& belief : {BeliefFilter{}, optimistic}) {
+					if (reaches(wv, reachFrom(wv, a, radius, belief), b, belief) != reaches(sv, reachFrom(sv, a, radius, belief), b, belief)) {
+						++reachDiffers;
+					}
+				}
+			}
+		}
+		// Lengths are recorded, not compared: the triangle A* orders its search by centroid
+		// distance, which the seams' vertices change, so it can settle on another corridor.
+		EXPECT_GT(lengths, 100);
+		::testing::Test::RecordProperty("pathLengthsDiffering", lengthDiffers);
+		::testing::Test::RecordProperty("worstSplitMinusWholeMm", std::to_string(worstDeltaMm));
+		EXPECT_EQ(verdictDiffers, 0);
+		EXPECT_EQ(reachDiffers, 0);
+		EXPECT_EQ(bottleneckDiffers, 0);
+
+		std::map<Corners, std::int32_t> wholeTriangles;
+		for (std::int32_t t = 0; t < static_cast<std::int32_t>(whole.triangles().size()); ++t) {
+			if (whole.triangleLive(t)) {
+				wholeTriangles.emplace(cornersOf(whole, t), t);
+			}
+		}
+		int shared		  = 0;
+		int widthsDiffer = 0;
+		for (std::int32_t t = 0; t < static_cast<std::int32_t>(split.triangles().size()); ++t) {
+			if (!split.triangleLive(t)) {
+				continue;
+			}
+			auto it = wholeTriangles.find(cornersOf(split, t));
+			if (it == wholeTriangles.end()) {
+				continue;
+			}
+			++shared;
+			const NavTriangle& st = split.triangles()[static_cast<std::size_t>(t)];
+			const NavTriangle& wt = whole.triangles()[static_cast<std::size_t>(it->second)];
+			for (int e = 0; e < 3; ++e) {
+				const Vec2i64& apex = split.vertices()[st.v[static_cast<std::size_t>(e)]];
+				for (int f = 0; f < 3; ++f) {
+					if (whole.vertices()[wt.v[static_cast<std::size_t>(f)]] == apex &&
+						wt.edgePairWidthMm[static_cast<std::size_t>(f)] != st.edgePairWidthMm[static_cast<std::size_t>(e)]) {
+						++widthsDiffer;
+					}
+				}
+			}
+		}
+		EXPECT_GT(shared, 1000);
+		EXPECT_EQ(widthsDiffer, 0) << "of " << shared << " shared triangles";
+		::testing::Test::RecordProperty("pathsCompared", lengths);
+	}
+
+} // namespace
+
+TEST(PatchableMesh, BoundsSplitTwoByTwoChangesNoAnswer) {
+	expectBoundsSplitInvisible(2, 61);
+}
+
+TEST(PatchableMesh, BoundsSplitFourByFourChangesNoAnswer) {
+	expectBoundsSplitInvisible(4, 62);
+}
+
 TEST(PatchableMesh, DoorEditsChangeTagsOnly) {
 	const WallsAndDoors input = wallsAndDoors();
 	Reached				r;
@@ -1179,8 +1356,8 @@ TEST(PatchableMesh, DeadSlotsAreUnreachable) {
 			continue;
 		}
 		++dead;
-		EXPECT_EQ(view.truthForest->component[static_cast<std::size_t>(t)], -1);
-		EXPECT_EQ(view.terrainForest->component[static_cast<std::size_t>(t)], -1);
+		EXPECT_EQ(view.forest(true)->component[static_cast<std::size_t>(t)], -1);
+		EXPECT_EQ(view.forest(false)->component[static_cast<std::size_t>(t)], -1);
 	}
 	EXPECT_GT(dead, 0);
 	EXPECT_TRUE(pathThrough(view, {1000, 1000}, {9000, 9000}, 300).reachable);
@@ -1211,4 +1388,215 @@ TEST(PatchableMesh, OneRefreshServesManyPatches) {
 	mesh.refreshWidths();
 	EXPECT_TRUE(mesh.widthsCurrent());
 	EXPECT_TRUE(mesh.validate().empty()) << mesh.validate();
+}
+
+// --- Review findings ---------------------------------------------------------------
+
+// A width search's visit stamp wraps after 2^32 searches on a long-lived mesh. A wrapped
+// stamp that still matched marks from earlier searches would skip triangles and widen
+// corridors; past the wrap every width must come out as before.
+TEST(PatchableMesh, WidthStampWrapKeepsWidths) {
+	const Fixture fixture = realRingsFixture();
+	Harness		  h;
+	PatchEdits	  edits;
+	edits.adds = fixture.base;
+	edits.adds.insert(edits.adds.end(), fixture.trees.begin(), fixture.trees.end());
+	h.apply(edits);
+	const NavView			  view = h.mesh.view();
+	WidthSearch				  search;
+	std::vector<std::int64_t> first;
+	for (std::int32_t t = 0; t < view.triangleSlots(); ++t) {
+		for (int apex = 0; view.isLive(t) && apex < 3; ++apex) {
+			first.push_back(corridorWidthMm(view, search, t, apex, kDefaultMaxClearanceMm));
+		}
+	}
+	// Cross the wrap with one search. Wrapped without clearing, the pass below would number
+	// its searches exactly as the first pass did and meet each search's own marks.
+	search.stamp = std::numeric_limits<std::uint32_t>::max();
+	for (std::int32_t t = 0; t < view.triangleSlots() && search.stamp == std::numeric_limits<std::uint32_t>::max(); ++t) {
+		for (int apex = 0; view.isLive(t) && apex < 3; ++apex) {
+			corridorWidthMm(view, search, t, apex, kDefaultMaxClearanceMm);
+		}
+	}
+	std::size_t i = 0;
+	for (std::int32_t t = 0; t < view.triangleSlots(); ++t) {
+		for (int apex = 0; view.isLive(t) && apex < 3; ++apex) {
+			ASSERT_EQ(corridorWidthMm(view, search, t, apex, kDefaultMaxClearanceMm), first[i++]) << "triangle " << t << " apex " << apex;
+		}
+	}
+}
+
+// RRA* on a patched mesh: the same path as without the cache, never more expansions.
+TEST(PatchableMesh, RraHeuristicOnPatchedMesh) {
+	const WallsAndDoors input = wallsAndDoors();
+	Reached				r;
+	reach(r, input, 31);
+	const NavView				view   = r.h.mesh.view();
+	const std::vector<Vec2i64>	points = samplePoints(input.base.front(), 40, 31);
+	int							guided = 0;
+	for (std::size_t i = 0; i + 1 < points.size(); i += 2) {
+		RraCache cache;
+		cache.goalTri				= view.locate(points[i + 1]);
+		const PathResult with		= pathThrough(view, points[i], points[i + 1], 300, {}, &cache);
+		const PathResult without	= pathThrough(view, points[i], points[i + 1], 300);
+		EXPECT_EQ(with.reachable, without.reachable);
+		if (with.reachable) {
+			EXPECT_EQ(pathLengthMm(with), pathLengthMm(without));
+			EXPECT_LE(with.nodesExpanded, without.nodesExpanded);
+			++guided;
+		}
+	}
+	EXPECT_GT(guided, 5);
+}
+
+// A cache kept across a patch that grows the slots and reuses ids starts over instead
+// of reading past its tables or trusting distances from the old triangles.
+TEST(PatchableMesh, RraCacheReusedAcrossPatch) {
+	const Fixture fixture = realRingsFixture();
+	Harness		  h;
+	PatchEdits	  base;
+	base.adds = fixture.base;
+	h.apply(base);
+	h.mesh.rebuildForests();
+	Vec2i64						start;
+	Vec2i64						goal;
+	const std::vector<Vec2i64>	points = samplePoints(fixture.base.front(), 60, 34);
+	for (std::size_t i = 0; i + 1 < points.size(); i += 2) {
+		if (pathThrough(h.mesh.view(), points[i], points[i + 1], 300).reachable && pathLengthMm(pathThrough(h.mesh.view(), points[i], points[i + 1], 300)) > 50000) {
+			start = points[i];
+			goal  = points[i + 1];
+			break;
+		}
+	}
+	RraCache cache;
+	cache.goalTri = h.mesh.view().locate(goal);
+	ASSERT_TRUE(pathThrough(h.mesh.view(), start, goal, 300, {}, &cache).reachable);
+	const std::size_t slotsBefore = h.mesh.triangles().size();
+	PatchEdits		  trees;
+	trees.adds = fixture.trees;
+	h.apply(trees);
+	h.mesh.rebuildForests();
+	ASSERT_GT(h.mesh.triangles().size(), slotsBefore);
+	cache.goalTri				 = h.mesh.view().locate(goal);
+	const PathResult reused		 = pathThrough(h.mesh.view(), start, goal, 300, {}, &cache);
+	const PathResult uncached	 = pathThrough(h.mesh.view(), start, goal, 300);
+	EXPECT_EQ(reused.reachable, uncached.reachable);
+	EXPECT_EQ(pathLengthMm(reused), pathLengthMm(uncached));
+	EXPECT_EQ(cache.g.size(), h.mesh.triangles().size());
+	EXPECT_EQ(cache.epoch, h.mesh.epoch());
+}
+
+// A view taken before a patch reads the patched mesh: no forests until they are
+// rebuilt, no path while widths lag, then the same answers as a fresh view.
+TEST(PatchableMesh, ViewTakenBeforePatch) {
+	const WallsAndDoors input = wallsAndDoors();
+	Reached				r;
+	reach(r, input, 32);
+	const NavView		 early = r.h.mesh.view();
+	const std::uint64_t	 epoch = r.h.mesh.epoch();
+	const Vec2i64		 a{1000, 1000};
+	const Vec2i64		 b{15000, 15000};
+	ASSERT_TRUE(pathThrough(early, a, b, 300).reachable);
+	PatchEdits moreTrees;
+	moreTrees.adds.push_back(blocked(rect(4000, 4000, 4600, 4500)));
+	r.h.mesh.applyPatch(moreTrees);
+	EXPECT_NE(early.epoch(), epoch);
+	EXPECT_EQ(early.forest(true), nullptr);
+	EXPECT_FALSE(early.widthsCurrent());
+	EXPECT_DEBUG_DEATH(EXPECT_FALSE(pathThrough(early, a, b, 300).reachable), "widths lag");
+	r.h.mesh.rebuildForests();
+	EXPECT_NE(early.forest(true), nullptr);
+	EXPECT_EQ(pathLengthMm(pathThrough(early, a, b, 300)), pathLengthMm(pathThrough(r.h.mesh.view(), a, b, 300)));
+}
+
+// Cell keys hold full coordinates: a mesh far out, at 2^39 and 2^40 mm, patches and
+// locates exactly as one near the origin.
+TEST(PatchableMesh, FarCoordinatesMatchFreshBuild) {
+	for (const std::int64_t offset : {std::int64_t{1} << 39, std::int64_t{1} << 40}) {
+		WallsAndDoors input = wallsAndDoors();
+		const Vec2i64 by{offset, offset / 2};
+		for (std::vector<NavInputPolygon>* list : {&input.base, &input.rings}) {
+			for (NavInputPolygon& p : *list) {
+				p.ring = translated(p.ring, by);
+			}
+		}
+		for (DoorPortal& d : input.doors) {
+			d.a = d.a + by;
+			d.b = d.b + by;
+		}
+		Reached r;
+		reach(r, input, 33);
+		ASSERT_TRUE(matchesFresh(r.h.mesh, r.h.model)) << "offset " << offset;
+		const NavMesh fresh = buildNavMesh(freshInput(r, input));
+		ASSERT_TRUE(tagsAndWidthsMatch(r.h.mesh, fresh, kDefaultMaxClearanceMm)) << "offset " << offset;
+		const PathResult far	= pathThrough(r.h.mesh.view(), Vec2i64{1000, 1000} + by, Vec2i64{15000, 15000} + by, 300);
+		const PathResult origin = pathThrough(fresh, Vec2i64{1000, 1000} + by, Vec2i64{15000, 15000} + by, 300);
+		EXPECT_TRUE(far.reachable);
+		EXPECT_EQ(pathLengthMm(far), pathLengthMm(origin));
+	}
+}
+
+// Two equal-area walls crossing: the junction's tag depends on the walls, never on
+// which was added first or re-added later, and buildNavMesh agrees.
+TEST(PatchableMesh, EqualAreaTieBreakIgnoresHistory) {
+	const NavInputPolygon across{rect(0, 900, 2000, 1100), true, 12};
+	const NavInputPolygon down{rect(900, 0, 1100, 2000), true, 11};
+	auto				  junctionTag = [](const PatchableMesh& mesh) {
+		 return mesh.triangles()[static_cast<std::size_t>(mesh.locate({1000, 1000}))].faceBlocker;
+	};
+	std::vector<std::int64_t> tags;
+	for (const bool acrossFirst : {true, false}) {
+		Harness h;
+		h.add(bounds(rect(-1000, -1000, 3000, 3000)));
+		const RingId first = h.add(acrossFirst ? across : down);
+		h.add(acrossFirst ? down : across);
+		tags.push_back(junctionTag(h.mesh));
+		PatchEdits out;
+		out.removes.push_back(first);
+		h.apply(out);
+		h.add(acrossFirst ? across : down);
+		tags.push_back(junctionTag(h.mesh));
+		ASSERT_TRUE(matchesFresh(h.mesh, h.model));
+	}
+	NavMeshInput in;
+	in.polygons = {bounds(rect(-1000, -1000, 3000, 3000)), across, down};
+	const NavMesh fresh = buildNavMesh(in);
+	tags.push_back(fresh.triangles[static_cast<std::size_t>(locateTriangle(fresh, {1000, 1000}))].faceBlocker);
+	std::swap(in.polygons[1], in.polygons[2]);
+	const NavMesh swapped = buildNavMesh(in);
+	tags.push_back(swapped.triangles[static_cast<std::size_t>(locateTriangle(swapped, {1000, 1000}))].faceBlocker);
+	for (const std::int64_t tag : tags) {
+		EXPECT_EQ(tag, 11);
+	}
+}
+
+// Misuse in release: a ring removed twice, or removed dead, is refused and leaves the
+// registry sound; reachability without forests answers "maybe" instead of crashing.
+TEST(PatchableMesh, MisuseIsRefusedInRelease) {
+	Harness h;
+	h.add(bounds(rect(0, 0, 10000, 10000)));
+	const RingId tree = h.add(blocked(rect(4000, 4000, 4500, 4500)));
+	PatchEdits	 twice;
+	twice.removes = {tree, tree};
+	EXPECT_DEBUG_DEATH(h.mesh.applyPatch(twice), "editing a dead ring");
+	EXPECT_DEBUG_DEATH(h.mesh.applyPatch(twice), "editing a dead ring");
+	h.mesh.refreshWidths();
+	EXPECT_TRUE(h.mesh.validate().empty()) << h.mesh.validate();
+	const RingId a = h.mesh.applyPatch([] {
+		PatchEdits e;
+		e.adds.push_back(blocked(rect(1000, 1000, 1500, 1500)));
+		return e;
+	}()).added.front();
+	const RingId b = h.mesh.applyPatch([] {
+		PatchEdits e;
+		e.adds.push_back(blocked(rect(7000, 7000, 7500, 7500)));
+		return e;
+	}()).added.front();
+	EXPECT_NE(a, b);
+	h.mesh.refreshWidths();
+	EXPECT_TRUE(h.mesh.validate().empty()) << h.mesh.validate();
+	ASSERT_FALSE(h.mesh.hasForests());
+	const NavView view = h.mesh.view();
+	EXPECT_DEBUG_DEATH(EXPECT_EQ(reachFrom(view, {100, 100}, 300).startTri, -1), "no reachability forests");
+	EXPECT_DEBUG_DEATH(EXPECT_TRUE(reaches(view, ReachFrom{}, {9000, 9000})), "no reachability forests");
 }

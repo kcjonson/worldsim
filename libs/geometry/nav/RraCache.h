@@ -45,7 +45,8 @@ namespace geometry::nav {
 	// NOT thread-safe: rraHeuristic() mutates the cache. NavigationSystem drives all
 	// queries from the single-threaded main loop, so no locking is needed.
 	struct RraCache {
-		std::int32_t goalTri = -1; // the goal triangle this reverse search targets
+		std::int32_t  goalTri = -1; // the goal triangle this reverse search targets
+		std::uint64_t epoch	  = 0;	// the mesh epoch g and settled were built against
 
 		std::vector<double> g;		 // distance-to-goal per triangle (+inf until reached)
 		std::vector<char>	settled; // 1 once a triangle's g is final (popped)
@@ -77,7 +78,6 @@ namespace geometry::nav {
 	// triangle (cache.goalTri == that goal); the caller (pathThrough / NavigationSystem)
 	// guarantees this. Cheap when `tri` is already settled (a table read); otherwise pops
 	// and expands reverse nodes until `tri` settles or the open-set empties.
-	double rraHeuristic(RraCache& cache, const NavMesh& mesh, std::int32_t tri);
 	double rraHeuristic(RraCache& cache, const NavView& mesh, std::int32_t tri);
 
 } // namespace geometry::nav
