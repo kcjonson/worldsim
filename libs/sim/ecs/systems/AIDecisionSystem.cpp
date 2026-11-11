@@ -1694,7 +1694,15 @@ namespace ecs {
 				const std::string& chainGoodsName = m_registry.getDefName(chainGoods);
 				const bool		   carryingTwoHandLoad = chainGoods != 0 && (task.type == TaskType::Haul || taskCargo(m_registry, task) > 0) &&
 											   ecs::itemIsTwoHand(m_registry, chainGoodsName) && inventory.isHolding(chainGoodsName);
-				if (shouldSwitch && !handedCargo && !currentHaulUnreachable && carryingTwoHandLoad && selected != nullptr) {
+				// A root that no longer wants the goods (no carry-in of them to it is offered) is no delivery
+				// to protect: the armful is let go like any other the colonist carries.
+				const auto rootStillWants = [&] {
+					return std::any_of(trace->options.begin(), trace->options.end(), [&](const EvaluatedOption& option) {
+						return option.taskType == TaskType::Haul && option.haulFromInventory && option.haulItemDefNameId == chainGoods &&
+							   claimedCargo(task, GoalTaskRegistry::Get().rootOf(option.haulGoalId), chainGoods) > 0;
+					});
+				};
+				if (shouldSwitch && !handedCargo && !currentHaulUnreachable && carryingTwoHandLoad && selected != nullptr && rootStillWants()) {
 					// Case 1: a Harvest of the same yield (e.g. a construction material Harvest for Wood). Held regardless of tier -- the chop->drop->chop loop it forms is the
 					// original two-hand-drop bug this guard was built for.
 					const bool sameYieldHarvest = selected->taskType == TaskType::Harvest && selected->harvestYieldDefNameId == chainGoods;

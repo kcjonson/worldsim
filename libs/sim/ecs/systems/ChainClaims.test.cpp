@@ -1323,13 +1323,28 @@ namespace ecs::test {
 		EXPECT_EQ(dropped, 0U);
 	}
 
-	// The root is gone and nothing else is on offer: the armful is not walked off with on a wander.
-	TEST_F(ArmfulBetweenCutsTest, ALostRootDoesNotSendTheArmfulWandering) {
+	// The root is gone and nothing else is on offer: no delivery is left to protect, so the cut is let go
+	// and the armful nobody wants is put down rather than walked off with on a wander.
+	TEST_F(ArmfulBetweenCutsTest, ALostRootPutsTheArmfulDown) {
 		GoalTaskRegistry::Get().removeGoal(gathered.umbrella);
 		decide(colonist);
-		ASSERT_EQ(world->getComponent<DecisionTrace>(colonist)->getSelected()->taskType, TaskType::Wander);
-		EXPECT_EQ(getTask(colonist)->type, TaskType::Harvest) << "the wander does not take the armful along";
+		EXPECT_EQ(getTask(colonist)->type, TaskType::Wander);
+		EXPECT_EQ(heldWood(), 0U);
+		EXPECT_EQ(dropped, 3U);
+	}
+
+	// A top-up cut that arrives to find its tree gone from memory starts nothing and ends there, holding
+	// no Arrived task the two-hand guard could keep; the armful is carried in at the next decision.
+	TEST_F(ArmfulBetweenCutsTest, ACutWhoseTreeIsGoneEndsAndTheArmfulIsCarriedIn) {
+		act(colonist, {50.0F, 50.0F});
+		EXPECT_FALSE(getTask(colonist)->isActive());
 		EXPECT_EQ(heldWood(), 3U);
+
+		decide(colonist);
+		const Task& task = *getTask(colonist);
+		EXPECT_EQ(task.type, TaskType::Haul);
+		EXPECT_TRUE(task.haulFromInventory);
+		EXPECT_EQ(task.haulGoalId, gathered.umbrella);
 		EXPECT_EQ(dropped, 0U);
 	}
 
@@ -1828,6 +1843,40 @@ namespace ecs::test {
 		EXPECT_EQ(indexedClaimsOf(colonist), 0U);
 		EXPECT_EQ(world->getComponent<Inventory>(box)->getQuantity("Fibre"), 0U);
 		EXPECT_EQ(carriedFibre(colonist) + onTheGround(fibreId), 3U * static_cast<uint32_t>(cut.size())) << "nothing cut is lost";
+	}
+
+	// With an armful of wood from his first cut he walks to a second tree, which is felled by someone else
+	// on the way: he carries in what he has instead of standing at the stump.
+	TEST_F(ChainWalkTest, ATreeGoneOnTheWayToATopUpCutSendsTheArmfulIn) {
+		assets::AssetDefinition pine;
+		pine.defName = "Pine";
+		pine.label = "Pine";
+		pine.capabilities.harvestable = assets::HarvestableCapability{};
+		pine.capabilities.harvestable->yieldDefName = "Wood";
+		pine.capabilities.harvestable->amountMin = 3;
+		pine.capabilities.harvestable->amountMax = 3;
+		pine.capabilities.harvestable->durability = 1.0F;
+		pine.capabilities.harvestable->regrowthTime = 600.0F;
+		assets::AssetRegistry::Get().registerTestDefinition(std::move(pine));
+		const Site site = constructionSite({0.0F, 12.0F}, "Wood", 10);
+		childOf(site, {0.0F, 12.0F}, woodId);
+		const EntityID	colonist = createColonist({0.0F, 0.0F});
+		const glm::vec2 second{6.0F, 0.0F};
+		remember(colonist, {2.0F, 0.0F}, "Pine", assets::CapabilityType::Harvestable);
+		remember(colonist, second, "Pine", assets::CapabilityType::Harvestable);
+		const auto heldWood = [&] { return ecs::availableQuantity(*world->getComponent<Inventory>(colonist), "Wood"); };
+
+		ASSERT_TRUE(run([&] {
+			const Task& task = *getTask(colonist);
+			return heldWood() == 3 && task.type == TaskType::Harvest && task.state == TaskState::Moving &&
+				   glm::distance(task.targetPosition, second) < 1.0F;
+		})) << "he never went on to the second tree";
+		world->getComponent<Memory>(colonist)->forgetWorldEntity(second, assets::AssetRegistry::Get().getDefNameId("Pine"));
+		felled.push_back(second);
+
+		ASSERT_TRUE(run([&] { return delivered(site) == 3; }, 600)) << "delivered " << delivered(site);
+		EXPECT_EQ(dropped, 0U);
+		EXPECT_EQ(heldWood(), 0U);
 	}
 
 	// His cut for a site has landed and a meal interrupts the carry-in, so the goods wait in his suspended

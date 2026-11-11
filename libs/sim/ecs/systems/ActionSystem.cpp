@@ -97,16 +97,20 @@ namespace ecs {
 					);
 				}
 
-				// Start-time chain handoff: a start routine can decline to start an action and
-				// instead re-point the task to its next leg (state flipped back to Moving), e.g. a
-				// haul that arrives at the SOURCE already carrying the item redirects to the deposit
-				// leg. The task must then drive itself to the new target; there is no action to
-				// process or complete this tick. Bail before the process/complete block below, which
-				// would otherwise "complete" the inactive (None) action and clear the task -- the
-				// behavior the OTHER no-action paths (pickup target gone) intentionally rely on to
-				// recover a stuck task. Gate strictly on Moving so only a deliberate handoff skips;
-				// a stall leaves the task Arrived and still falls through to that recovery.
-				if (!action.isActive() && task.state == TaskState::Moving) {
+				// A start routine that starts nothing has either handed the task to its next leg (a haul
+				// arriving at its source already carrying the item heads to the deposit, state Moving), or
+				// found it cannot be done (the target gone from memory or no longer what it was, the tool
+				// missing, a box packaged). A handoff drives itself on; anything else ends the task, so the
+				// colonist decides again instead of standing on an Arrived task with no action.
+				if (!action.isActive()) {
+					if (task.state != TaskState::Moving) {
+						LOG_DEBUG(
+							Engine, "[Action] Entity %llu: nothing to start for its task (type %d) - ending it",
+							static_cast<unsigned long long>(entity), static_cast<int>(task.type)
+						);
+						task.clear();
+						task.timeSinceEvaluation = 0.0F;
+					}
 					continue;
 				}
 			}
