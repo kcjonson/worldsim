@@ -12,6 +12,7 @@
 #include "world/chunk/TerrainDistanceField.h"
 #include "world/chunk/TerrainPolygons.h"
 #include "world/chunk/TileBiomes.h"
+#include "world/generation/GroveField.h"
 
 #include <array>
 #include <atomic>
@@ -134,8 +135,9 @@ class Chunk {
 	/// a seed: the world tile, whichever chunk asks.
 	[[nodiscard]] static uint32_t tileHash(ChunkCoordinate chunk, uint16_t localX, uint16_t localY, uint64_t seed);
 
-	/// Create a chunk with sampled biome data
-	Chunk(ChunkCoordinate coord, ChunkSampleResult biomeData, uint64_t worldSeed);
+	/// Create a chunk with sampled biome data. `canopyCover` sets the forest floor in the ground macro
+	/// texture (none by default).
+	Chunk(ChunkCoordinate coord, ChunkSampleResult biomeData, uint64_t worldSeed, grove::CanopyCover canopyCover = {});
 
 	/// Pre-compute all tiles in this chunk. Call once after construction.
 	/// Thread-safe: sets atomic flag when complete.
@@ -206,6 +208,7 @@ class Chunk {
 	ChunkCoordinate m_coord;
 	ChunkSampleResult m_biomeData;
 	uint64_t m_worldSeed;
+	grove::CanopyCover m_canopyCover;
 	mutable std::chrono::steady_clock::time_point m_lastAccessed;
 
 	/// Flat array of pre-computed tiles (512×512 = 262,144 tiles × 8 bytes = 2.0 MB)

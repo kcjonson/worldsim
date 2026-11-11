@@ -1,7 +1,7 @@
 #pragma once
 
 // Shared per-frame inputs for the entity render paths. The orchestrator
-// (EntityRenderer::renderInstanced) builds one RenderContext after bumping the
+// (EntityRenderer::renderFrame) builds one RenderContext after bumping the
 // frame counter and threads it through every sub-renderer, so they all see the
 // same camera, viewport, and frame. Mutable inout state (uniforms, stats) stays
 // in separate by-reference params; this struct is read-only.

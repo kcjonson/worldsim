@@ -406,7 +406,8 @@ namespace asset_manager {
 		if (def == nullptr) {
 			return;
 		}
-		if (!def->collision.blocks()) {
+		const assets::CollisionShape& collision = def->collisionFor(0);
+		if (!collision.blocks()) {
 			Foundation::Color faint = getContext()->getTheme().get(theme::tokens::theme::color::textFaint);
 			faint.a *= opacity();
 			Renderer::Primitives::drawText({
@@ -426,11 +427,11 @@ namespace asset_manager {
 		// in SVG <metadata>, converted to the bbox-centred frame (relative to the entity origin);
 		// procedural colliders are in the generator's mesh-coord frame.
 		std::vector<glm::vec2> points;
-		if (def->collision.type == assets::CollisionShapeType::Rect) {
-			const std::array<glm::vec2, 4> corners = def->collision.rectCornersLocal();
+		if (collision.type == assets::CollisionShapeType::Rect) {
+			const std::array<glm::vec2, 4> corners = collision.rectCornersLocal();
 			points.assign(corners.begin(), corners.end());
 		} else {
-			points = def->collision.pointsMeters;
+			points = collision.pointsMeters;
 		}
 		if (points.size() < 2) {
 			return;

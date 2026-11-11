@@ -1,6 +1,7 @@
 #include "SpatialIndex.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 
 namespace assets {
@@ -20,10 +21,25 @@ namespace assets {
 	SpatialIndex::SpatialIndex(float cellSize)
 		: m_cellSize(cellSize) {}
 
+	uint64_t SpatialIndex::nextVersion() {
+		static std::atomic<uint64_t> counter{0};
+		return counter.fetch_add(1, std::memory_order_relaxed) + 1;
+	}
+
 	void SpatialIndex::insert(const PlacedEntity& entity) {
-		int64_t key = getCellKey(entity.position);
-		m_cells[key].push_back(entity);
+		const auto [cellX, cellY] = getCellCoords(entity.position);
+		m_cells[getCellKey(cellX, cellY)].push_back(entity);
+		if (m_minCellX > m_maxCellX) {
+			m_minCellX = m_maxCellX = cellX;
+			m_minCellY = m_maxCellY = cellY;
+		} else {
+			m_minCellX = std::min(m_minCellX, cellX);
+			m_maxCellX = std::max(m_maxCellX, cellX);
+			m_minCellY = std::min(m_minCellY, cellY);
+			m_maxCellY = std::max(m_maxCellY, cellY);
+		}
 		++m_entityCount;
+		m_version.value = nextVersion();
 	}
 
 	bool SpatialIndex::remove(glm::vec2 position, const std::string& defName) {
@@ -40,6 +56,7 @@ namespace assets {
 		}
 		entities.erase(it);
 		--m_entityCount;
+		m_version.value = nextVersion();
 
 		// Remove empty cell to keep map clean
 		if (entities.empty()) {
@@ -57,6 +74,9 @@ namespace assets {
 	void SpatialIndex::clear() {
 		m_cells.clear();
 		m_entityCount = 0;
+		m_version.value = nextVersion();
+		m_minCellX = m_minCellY = 1;
+		m_maxCellX = m_maxCellY = 0;
 	}
 
 	std::vector<const PlacedEntity*> SpatialIndex::queryRadius(glm::vec2 center, float radius) const {
@@ -204,11 +224,13 @@ namespace assets {
 															 float maxX, float maxY) const {
 		std::vector<const PlacedEntity*> result;
 
-		// Calculate bounding box of cells to check
-		int32_t minCellX = static_cast<int32_t>(std::floor(minX / m_cellSize));
-		int32_t maxCellX = static_cast<int32_t>(std::floor(maxX / m_cellSize));
-		int32_t minCellY = static_cast<int32_t>(std::floor(minY / m_cellSize));
-		int32_t maxCellY = static_cast<int32_t>(std::floor(maxY / m_cellSize));
+		// The cells the rect covers, clipped to the occupied ones: a rect far larger than the
+		// index (a zoomed-out view queried per chunk) looks up only cells that can hold anything.
+		const auto	  cellOf = [this](float v) { return std::floor(v / m_cellSize); };
+		const int32_t minCellX = static_cast<int32_t>(std::max(cellOf(minX), static_cast<float>(m_minCellX)));
+		const int32_t maxCellX = static_cast<int32_t>(std::min(cellOf(maxX), static_cast<float>(m_maxCellX)));
+		const int32_t minCellY = static_cast<int32_t>(std::max(cellOf(minY), static_cast<float>(m_minCellY)));
+		const int32_t maxCellY = static_cast<int32_t>(std::min(cellOf(maxY), static_cast<float>(m_maxCellY)));
 
 		for (int32_t cx = minCellX; cx <= maxCellX; ++cx) {
 			for (int32_t cy = minCellY; cy <= maxCellY; ++cy) {

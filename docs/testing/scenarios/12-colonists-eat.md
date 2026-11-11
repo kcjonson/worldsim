@@ -1,4 +1,4 @@
-# Scenario 11: Colonists eat
+# Scenario 12: Colonists eat
 
 **Status:** draft  
 **Last verified:** not yet run

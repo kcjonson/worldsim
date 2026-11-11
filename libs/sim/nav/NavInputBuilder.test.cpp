@@ -424,8 +424,7 @@ TEST_F(NavFloraTest, RectEntity_EmitsPaddedQuad) {
 	AssetRegistry& reg = AssetRegistry::Get();
 	AssetDefinition tree;
 	tree.defName = "Test_NavTree";
-	tree.collision.type			   = CollisionShapeType::Rect;
-	tree.collision.halfExtentsMeters = {0.1F, 0.1F};
+	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.1F, 0.1F}});
 	reg.registerTestDefinition(tree);
 
 	SpatialIndex index(4.0F);
@@ -461,14 +460,50 @@ TEST_F(NavFloraTest, RectEntity_EmitsPaddedQuad) {
 	}
 }
 
+// The obstacle follows the entity's age class: a sapling and a mature tree of one def get their own rects.
+TEST_F(NavFloraTest, RectEntity_UsesItsAgeClassRect) {
+	AssetRegistry& reg = AssetRegistry::Get();
+	AssetDefinition tree;
+	tree.defName	= "Test_AgedNavTree";
+	tree.ageClasses = {{.name = "sapling", .weight = 0.5F, .variants = 1}, {.name = "mature", .weight = 0.5F, .variants = 1}};
+	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.1F, 0.1F}});
+	tree.setCollision(1, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.3F, 0.3F}});
+	reg.registerTestDefinition(tree);
+
+	SpatialIndex index(4.0F);
+	for (uint8_t ageClass = 0; ageClass < 2; ++ageClass) {
+		PlacedEntity e;
+		e.defName	  = "Test_AgedNavTree";
+		e.position	  = {10.0F + 10.0F * static_cast<float>(ageClass), 20.0F};
+		e.scale		  = 1.0F;
+		e.traits.ageClass = ageClass;
+		index.insert(e);
+	}
+
+	std::vector<NavInputPolygon> polys = extractFloraObstacles(index, reg);
+	ASSERT_EQ(polys.size(), 2u);
+	std::vector<std::int64_t> widths;
+	for (const NavInputPolygon& poly : polys) {
+		std::int64_t minX = poly.ring.front().x;
+		std::int64_t maxX = minX;
+		for (const Vec2i64& v : poly.ring) {
+			minX = std::min(minX, v.x);
+			maxX = std::max(maxX, v.x);
+		}
+		widths.push_back(maxX - minX);
+	}
+	std::sort(widths.begin(), widths.end());
+	EXPECT_EQ(widths[0], 300); // sapling: 2 * (0.1 m + 50 mm pad)
+	EXPECT_EQ(widths[1], 700); // mature: 2 * (0.3 m + 50 mm pad)
+}
+
 // A rotated entity turns the rect into an oriented quad (OBB): the 4 corners are
 // the rotated rect, not an axis-aligned box.
 TEST_F(NavFloraTest, RectEntity_RotationProducesOrientedQuad) {
 	AssetRegistry& reg = AssetRegistry::Get();
 	AssetDefinition tree;
 	tree.defName = "Test_NavRotTree";
-	tree.collision.type			   = CollisionShapeType::Rect;
-	tree.collision.halfExtentsMeters = {0.5F, 0.2F}; // non-square so rotation is visible
+	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.5F, 0.2F}}); // non-square so rotation is visible
 	reg.registerTestDefinition(tree);
 
 	SpatialIndex index(4.0F);
@@ -898,8 +933,7 @@ TEST_F(NavFloraTest, Area_ExcludesFloraWhenNotRequested) {
 	AssetRegistry&	reg = AssetRegistry::Get();
 	AssetDefinition tree;
 	tree.defName					 = "Test_ExcludeTree";
-	tree.collision.type				 = CollisionShapeType::Rect;
-	tree.collision.halfExtentsMeters = {0.2F, 0.2F};
+	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.2F, 0.2F}});
 	reg.registerTestDefinition(tree);
 
 	ChunkManager*			  mgr = landChunks();
@@ -933,8 +967,7 @@ TEST_F(NavFloraTest, Area_ScopesFloraToInAreaTrees) {
 	AssetRegistry& reg = AssetRegistry::Get();
 	AssetDefinition tree;
 	tree.defName			   = "Test_AreaTree";
-	tree.collision.type			   = CollisionShapeType::Rect;
-	tree.collision.halfExtentsMeters = {0.2F, 0.2F};
+	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.2F, 0.2F}});
 	reg.registerTestDefinition(tree);
 
 	ChunkManager* mgr = landChunks();
@@ -1034,8 +1067,7 @@ TEST_F(NavFloraTest, Area_DeterministicOrdering) {
 	AssetRegistry& reg = AssetRegistry::Get();
 	AssetDefinition tree;
 	tree.defName			   = "Test_DetTree";
-	tree.collision.type			   = CollisionShapeType::Rect;
-	tree.collision.halfExtentsMeters = {0.2F, 0.2F};
+	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.2F, 0.2F}});
 	reg.registerTestDefinition(tree);
 
 	// The area ends short of chunk (1,0), so only chunk (0,0)'s lake enters it.

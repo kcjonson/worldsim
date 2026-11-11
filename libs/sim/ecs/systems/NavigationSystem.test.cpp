@@ -882,8 +882,7 @@ TEST_F(NavigationSystemTest, InAreaPlacementCompletionTriggersRebuild) {
 	AssetRegistry&	reg = AssetRegistry::Get();
 	AssetDefinition tree;
 	tree.defName			   = "Test_NavLatePlaceTree";
-	tree.collision.type			   = CollisionShapeType::Rect;
-	tree.collision.halfExtentsMeters = {0.4F, 0.4F};
+	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.4F, 0.4F}});
 	reg.registerTestDefinition(tree);
 
 	// Empty placement to start: no trees stored, no chunks in the processed set, so the
@@ -937,8 +936,7 @@ TEST_F(NavigationSystemTest, FootprintOverTreeIsBuildableButNotOnMesh) {
 	AssetRegistry&	reg = AssetRegistry::Get();
 	AssetDefinition tree;
 	tree.defName					 = "Test_NavBuildableTree";
-	tree.collision.type				 = CollisionShapeType::Rect;
-	tree.collision.halfExtentsMeters = {0.4F, 0.4F};
+	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.4F, 0.4F}});
 	reg.registerTestDefinition(tree);
 
 	PlacementExecutor					executor(reg);
@@ -989,8 +987,7 @@ TEST_F(NavigationSystemTest, InAreaEntityRemovalTriggersRebuildAndReclaimsHole) 
 	AssetRegistry&	reg = AssetRegistry::Get();
 	AssetDefinition tree;
 	tree.defName					 = "Test_NavFellTree";
-	tree.collision.type				 = CollisionShapeType::Rect;
-	tree.collision.halfExtentsMeters = {0.4F, 0.4F};
+	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.4F, 0.4F}});
 	reg.registerTestDefinition(tree);
 
 	// Start WITH the tree placed and its chunk processed, so the first mesh carves the trunk.
@@ -1624,8 +1621,7 @@ TEST_F(NavigationSystemTest, OffMeshColonistSnappedOntoMesh) {
 	AssetRegistry&	reg = AssetRegistry::Get();
 	AssetDefinition tree;
 	tree.defName					 = "Test_NavRecoveryTree";
-	tree.collision.type				 = CollisionShapeType::Rect;
-	tree.collision.halfExtentsMeters = {0.8F, 0.8F};
+	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.8F, 0.8F}});
 	reg.registerTestDefinition(tree);
 
 	PlacementExecutor					executor(reg);

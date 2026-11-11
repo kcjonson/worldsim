@@ -33,7 +33,7 @@ namespace {
 	constexpr float kStaticRectQueryMarginMeters = 2.0F;
 
 	// Build the world-meters OBB for a placed entity from its transform and the
-	// def's collision rect (offset = local center, halfExtents = local half size).
+	// collision rect of its age class (offset = local center, halfExtents = local half size).
 	// Mirrors nav floraRingFor / toWorldMm exactly: pad in LOCAL space first, then
 	// scale, then rotate, then translate -- so the world boundary is
 	// scale*(halfExtent + pad) on both axes, matching the navmesh obstacle boundary
@@ -131,10 +131,14 @@ void StaticRectCollisionSystem::update(float /*deltaTime*/) {
 						index->queryRect(boxMinX, boxMinY, boxMaxX, boxMaxY);
 					for (const assets::PlacedEntity* e : hits) {
 						const assets::AssetDefinition* def = registry.getDefinition(e->defName);
-						if (def == nullptr || def->collision.type != assets::CollisionShapeType::Rect) {
+						if (def == nullptr) {
 							continue;
 						}
-						rects.push_back(orientedRectFor(*e, def->collision));
+						const assets::CollisionShape& collision = def->collisionFor(e->traits.ageClass);
+						if (collision.type != assets::CollisionShapeType::Rect) {
+							continue;
+						}
+						rects.push_back(orientedRectFor(*e, collision));
 					}
 				}
 			}

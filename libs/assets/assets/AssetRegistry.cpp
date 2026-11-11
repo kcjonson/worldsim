@@ -2,6 +2,7 @@
 // Handles XML parsing with pugixml and asset generation.
 
 #include "assets/AssetRegistry.h"
+#include "assets/DetailLevels.h"
 #include "assets/GroundSvg.h"
 #include "assets/SvgPathNodes.h"
 #include "assets/TreeDefSchema.h"
@@ -22,6 +23,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -29,6 +31,7 @@
 #include <limits>
 #include <span>
 #include <sstream>
+#include <unordered_set>
 
 namespace assets {
 
@@ -192,17 +195,6 @@ namespace assets {
 	}
 
 	namespace {
-
-		AssetType parseAssetType(const char* str) {
-			if (str == nullptr) {
-				return AssetType::Procedural;
-			}
-			std::string s(str);
-			if (s == "simple" || s == "Simple") {
-				return AssetType::Simple;
-			}
-			return AssetType::Procedural;
-		}
 
 		AssetComplexity parseComplexity(const char* str) {
 			if (str == nullptr) {
@@ -760,6 +752,13 @@ namespace assets {
 	}
 
 	bool AssetRegistry::loadDefinitions(const std::string& xmlPath) {
+		std::vector<std::string> loadedNames;
+		const bool				 loaded = parseDefinitions(xmlPath, loadedNames);
+		prewarmTreeVariants(loadedNames);
+		return loaded;
+	}
+
+	bool AssetRegistry::parseDefinitions(const std::string& xmlPath, std::vector<std::string>& loadedNames) {
 		namespace fs = std::filesystem;
 
 		pugi::xml_document	   doc;
@@ -781,7 +780,7 @@ namespace assets {
 		}
 
 		int loadedCount = 0;
-		std::vector<std::string> loadedNames;
+		const size_t firstNew = loadedNames.size();
 		for (pugi::xml_node defNode : root.children("AssetDef")) {
 			AssetDefinition def;
 
@@ -968,6 +967,13 @@ namespace assets {
 			if (const std::optional<PlacementScale> scale = readPlacementScale(defNode, treeIssues); scale.has_value()) {
 				def.placement.scale = *scale;
 			}
+			if (const std::optional<uint16_t> pitch = readSamplePitch(defNode, treeIssues); pitch.has_value()) {
+				def.placement.samplePitch = *pitch;
+			}
+			if (const std::optional<float> crown = readCrownSpacing(defNode, treeIssues); crown.has_value()) {
+				def.placement.crownSpacing = *crown;
+			}
+			def.detailLevels = readDetailLevels(defNode, treeIssues);
 			for (const TreeDefIssue& issue : treeIssues) {
 				LOG_WARNING(
 					Engine,
@@ -1187,29 +1193,32 @@ namespace assets {
 					const float maxX = rectNode.attribute("maxX").as_float(0.0F);
 					const float maxY = rectNode.attribute("maxY").as_float(0.0F);
 					if (maxX > minX && maxY > minY) {
-						def.collision.type			   = CollisionShapeType::Rect;
-						def.collision.offsetMeters	   = {(minX + maxX) * 0.5F, (minY + maxY) * 0.5F};
-						def.collision.halfExtentsMeters = {(maxX - minX) * 0.5F, (maxY - minY) * 0.5F};
+						CollisionShape rect;
+						rect.type			   = CollisionShapeType::Rect;
+						rect.offsetMeters	   = {(minX + maxX) * 0.5F, (minY + maxY) * 0.5F};
+						rect.halfExtentsMeters = {(maxX - minX) * 0.5F, (maxY - minY) * 0.5F};
+						def.setCollisionAllClasses(rect);
 					} else {
 						LOG_WARNING(Engine, "AssetDef '%s' <collision><rect> is degenerate (max <= min); ignoring", def.defName.c_str());
 					}
 				} else if (polygonNode) {
+					CollisionShape polygon;
 					for (pugi::xml_node ptNode : polygonNode.children("point")) {
-						def.collision.pointsMeters.push_back({
+						polygon.pointsMeters.push_back({
 							ptNode.attribute("x").as_float(0.0F),
 							ptNode.attribute("y").as_float(0.0F),
 						});
 					}
-					if (def.collision.pointsMeters.size() < 3) {
+					if (polygon.pointsMeters.size() < 3) {
 						LOG_WARNING(
 							Engine,
 							"AssetDef '%s' <collision><polygon> has fewer than 3 points (%zu); ignoring",
 							def.defName.c_str(),
-							def.collision.pointsMeters.size()
+							polygon.pointsMeters.size()
 						);
-						def.collision.pointsMeters.clear();
 					} else {
-						def.collision.type = CollisionShapeType::Polygon;
+						polygon.type = CollisionShapeType::Polygon;
+						def.setCollisionAllClasses(polygon);
 					}
 				} else {
 					LOG_WARNING(Engine, "AssetDef '%s' has <collision> with no valid <rect> or <polygon>; ignoring", def.defName.c_str());
@@ -1231,13 +1240,17 @@ namespace assets {
 		// this is cheap) so nav/collision see the rect at load instead of racing the
 		// first lazy render. XML <collision> always wins; skip capture when set. Ground tiles
 		// never collide, and their generators are the heaviest scripts, so they are skipped too.
-		for (const std::string& name : loadedNames) {
-			auto it = definitions.find(name);
+		// A def with <ageClasses> is skipped as well: prewarmTreeVariants takes each class's rect
+		// from the variant 0 it generates anyway, after the whole load has parsed.
+		for (size_t n = firstNew; n < loadedNames.size(); ++n) {
+			auto it = definitions.find(loadedNames[n]);
 			if (it == definitions.end()) {
 				continue;
 			}
+			const std::string& name = it->first;
 			AssetDefinition& def = it->second;
-			if (def.collision.blocks() || def.assetType != AssetType::Procedural || def.role == AssetRole::Ground) {
+			if (def.collisionFor(0).blocks() || def.assetType != AssetType::Procedural || def.role == AssetRole::Ground ||
+				!def.ageClasses.empty()) {
 				continue;
 			}
 			GeneratedAsset tmp;
@@ -1246,7 +1259,7 @@ namespace assets {
 				continue;
 			}
 			if (tmp.emittedCollision.has_value()) {
-				def.collision = *tmp.emittedCollision;
+				def.setCollision(0, *tmp.emittedCollision);
 			}
 		}
 
@@ -1257,8 +1270,8 @@ namespace assets {
 		// without forcing a render, sees the collider before the first lazy
 		// getTemplate. loadCollisionFromSvgMetadata bails cheaply when there's no
 		// metadata, so assets without a collider pay only a file open + parse. Ground tiles never collide.
-		for (const std::string& name : loadedNames) {
-			auto it = definitions.find(name);
+		for (size_t n = firstNew; n < loadedNames.size(); ++n) {
+			auto it = definitions.find(loadedNames[n]);
 			if (it == definitions.end()) {
 				continue;
 			}
@@ -1268,16 +1281,16 @@ namespace assets {
 			}
 			std::string resolvedSvgPath = def.resolvePath(def.svgPaths.front()).string();
 			if (auto shape = loadCollisionFromSvgMetadata(resolvedSvgPath, def.worldHeight)) {
-				def.collision = *shape;
+				def.setCollisionAllClasses(*shape);
 			}
 		}
 
 		// Eager motion resolution (simple assets declaring a <motion> file): resolve + cache + log
 		// now, so the animation system finds it ready and any parse/pivot problems surface at load.
-		for (const std::string& name : loadedNames) {
-			auto it = definitions.find(name);
+		for (size_t n = firstNew; n < loadedNames.size(); ++n) {
+			auto it = definitions.find(loadedNames[n]);
 			if (it != definitions.end() && !it->second.motionPath.empty()) {
-				getMotion(name);
+				getMotion(it->first);
 			}
 		}
 
@@ -1307,6 +1320,7 @@ namespace assets {
 
 		size_t totalLoaded = 0;
 		size_t filesProcessed = 0;
+		std::vector<std::string> loadedNames;
 
 		// Recursively iterate through all files in the folder
 		// Only load "primary" XML files that match the FolderName/FolderName.xml pattern
@@ -1339,7 +1353,7 @@ namespace assets {
 				filesProcessed++;
 				size_t beforeCount = definitions.size();
 
-				if (loadDefinitions(entry.path().string())) {
+				if (parseDefinitions(entry.path().string(), loadedNames)) {
 					size_t loaded = definitions.size() - beforeCount;
 					totalLoaded += loaded;
 					LOG_DEBUG(Engine, "Loaded %zu definitions from %s", loaded, entry.path().string().c_str());
@@ -1368,7 +1382,7 @@ namespace assets {
 		// Validate on load so the game (at launch) and the Asset Manager share one
 		// report. No GL; safe on the load worker thread.
 		m_validationReport = AssetValidator::validate(folderPath, m_sharedScriptsPath);
-		prewarmTreeVariants();
+		prewarmTreeVariants(loadedNames);
 		LOG_INFO(
 			Engine, "Asset validation: %d error(s), %d warning(s)", m_validationReport.errorCount(), m_validationReport.warningCount()
 		);
@@ -1417,12 +1431,18 @@ namespace assets {
 
 	namespace {
 		/// "Flora_TreeOak age class 'mature' variant 3", or "Flora_TreePine variant 3" without age classes.
-		std::string describeTemplate(const AssetDefinition& def, TreeTraits traits) {
+		std::string describeTemplate(const AssetDefinition& def, TreeTraits traits, uint8_t level) {
 			std::string out = def.defName;
 			if (!def.ageClasses.empty()) {
 				out += " age class '" + def.ageClasses[traits.ageClass].name + "'";
 			}
-			return out + " variant " + std::to_string(traits.variant);
+			out += " variant " + std::to_string(traits.variant);
+			if (level < def.detailLevels.size()) {
+				char density[32];
+				std::snprintf(density, sizeof(density), " at %g px/m", static_cast<double>(def.detailLevels[level]));
+				out += density;
+			}
+			return out;
 		}
 
 		/// Farthest vertex from the template origin, in meters.
@@ -1496,7 +1516,7 @@ namespace assets {
 		return {};
 	}
 
-	AssetRegistry::BuiltTemplate AssetRegistry::buildTemplate(const AssetDefinition& def, TreeTraits traits) {
+	AssetRegistry::BuiltTemplate AssetRegistry::buildTemplate(const AssetDefinition& def, TreeTraits traits, uint8_t level) {
 		BuiltTemplate			  out;
 		renderer::TessellatedMesh mesh;
 
@@ -1538,8 +1558,8 @@ namespace assets {
 		} else {
 			GeneratedAsset asset;
 			std::string scriptError;
-			if (!generateAsset(def.defName, generationSeed(def, traits), asset, traits, &scriptError)) {
-				out.error = "Failed to generate " + describeTemplate(def, traits) + (scriptError.empty() ? "" : ": " + scriptError);
+			if (!generateAsset(def.defName, generationSeed(def, traits), asset, traits, &scriptError, level)) {
+				out.error = "Failed to generate " + describeTemplate(def, traits, level) + (scriptError.empty() ? "" : ": " + scriptError);
 				LOG_ERROR(Engine, "%s", out.error.c_str());
 				return out;
 			}
@@ -1549,17 +1569,18 @@ namespace assets {
 			std::vector<renderer::TessellatedMesh> meshes;
 			const bool							   drawn = paths.meshesAt(kFullDetail, meshes);
 			if (meshes.size() > 1 || paths.oversizeVertices > 0) {
-				out.error = describeTemplate(def, traits) + " tessellates to " + std::to_string(paths.vertices.size() + paths.oversizeVertices) +
+				out.error = describeTemplate(def, traits, level) + " tessellates to " + std::to_string(paths.vertices.size() + paths.oversizeVertices) +
 							" vertices; a template mesh holds at most " + std::to_string(TessellatedPaths::kMaxMeshVertices);
 				LOG_ERROR(Engine, "%s", out.error.c_str());
 				return out;
 			}
 			if (!drawn) {
-				out.error = "Failed to tessellate " + describeTemplate(def, traits) + ": no geometry";
+				out.error = "Failed to tessellate " + describeTemplate(def, traits, level) + ": no geometry";
 				LOG_ERROR(Engine, "%s", out.error.c_str());
 				return out;
 			}
-			mesh = std::move(meshes.front());
+			mesh		  = std::move(meshes.front());
+			out.collision = std::move(asset.emittedCollision);
 		}
 
 		out.mesh = std::move(mesh);
@@ -1571,7 +1592,8 @@ namespace assets {
 		const bool isMature	   = traits == templateTraits(def, matureTraits(def));
 		const bool defTall =
 			isMature ? routesTall(built.mesh.has_value() ? meshHeight(*built.mesh) : 0.0F, groundcover) : isTallDef(def.defName);
-		const float reach = built.mesh.has_value() ? meshReach(*built.mesh) * def.placement.scale.max : 0.0F;
+		const float levelMargin = def.detailLevels.empty() ? 1.0F : kLevelReachMargin;
+		const float reach = built.mesh.has_value() ? meshReach(*built.mesh) * def.placement.scale.max * levelMargin : 0.0F;
 
 		uint32_t id = 0;
 		{
@@ -1580,7 +1602,9 @@ namespace assets {
 			if (!inserted) {
 				return it->second;
 			}
-			m_templates.push_back(std::make_unique<TemplateEntry>(TemplateEntry{std::move(built.mesh), defTall}));
+			m_templates.push_back(std::make_unique<TemplateEntry>(
+				TemplateEntry{.def = &def, .traits = traits, .mesh = std::move(built.mesh), .defTall = defTall}
+			));
 			id			= static_cast<uint32_t>(m_templates.size());
 			it->second = id;
 		}
@@ -1610,7 +1634,32 @@ namespace assets {
 				return it->second;
 			}
 		}
-		return insertTemplate(*def, *key, buildTemplate(*def, *key));
+		return insertTemplate(*def, *key, buildTemplate(*def, *key, referenceDetailLevel(def->detailLevels)));
+	}
+
+	std::span<const float> AssetRegistry::detailLevels(uint32_t templateId) const {
+		std::lock_guard<std::mutex> lock(templateCacheMutex);
+		if (templateId == 0 || templateId > m_templates.size()) {
+			return {};
+		}
+		return m_templates[templateId - 1]->def->detailLevels;
+	}
+
+	AssetRegistry::BuiltTemplate AssetRegistry::buildTemplateLevel(uint32_t templateId, uint8_t level) {
+		const AssetDefinition* def = nullptr;
+		TreeTraits			   traits;
+		{
+			std::lock_guard<std::mutex> lock(templateCacheMutex);
+			if (templateId == 0 || templateId > m_templates.size()) {
+				return {.error = "no template " + std::to_string(templateId)};
+			}
+			def = m_templates[templateId - 1]->def;
+			traits = m_templates[templateId - 1]->traits;
+		}
+		if (level >= std::max<size_t>(def->detailLevels.size(), 1)) {
+			return {.error = def->defName + " has no detail level " + std::to_string(level)};
+		}
+		return buildTemplate(*def, traits, level);
 	}
 
 	const renderer::TessellatedMesh* AssetRegistry::getTemplate(uint32_t templateId) const {
@@ -1623,6 +1672,11 @@ namespace assets {
 		}
 		const std::optional<renderer::TessellatedMesh>& mesh = m_templates[templateId - 1]->mesh;
 		return mesh.has_value() ? &*mesh : nullptr;
+	}
+
+	uint32_t AssetRegistry::templateCount() const {
+		std::lock_guard<std::mutex> lock(templateCacheMutex);
+		return static_cast<uint32_t>(m_templates.size());
 	}
 
 	const renderer::TessellatedMesh* AssetRegistry::getTemplate(const std::string& defName, TreeTraits traits) {
@@ -1642,15 +1696,25 @@ namespace assets {
 		return m_templates[id - 1]->defTall;
 	}
 
-	void AssetRegistry::prewarmTreeVariants() {
+	void AssetRegistry::prewarmTreeVariants(const std::vector<std::string>& defNames) {
 		struct Job {
-			const AssetDefinition* def = nullptr;
-			TreeTraits			   traits;
-			bool				   mature = false;
-			BuiltTemplate		   built;
+			AssetDefinition* def = nullptr;
+			TreeTraits		 traits;
+			bool			 mature = false;
+			BuiltTemplate	 built;
 		};
+		// A name parsed twice (two files defining one def) is prewarmed once.
+		std::vector<std::string> names = defNames;
+		std::sort(names.begin(), names.end());
+		names.erase(std::unique(names.begin(), names.end()), names.end());
+
 		std::vector<Job> jobs;
-		for (const auto& [name, def] : definitions) {
+		for (const std::string& name : names) {
+			const auto found = definitions.find(name);
+			if (found == definitions.end()) {
+				continue;
+			}
+			AssetDefinition& def = found->second;
 			if (def.ageClasses.empty() || def.assetType != AssetType::Procedural) {
 				continue;
 			}
@@ -1681,12 +1745,15 @@ namespace assets {
 		foundation::TaskPool pool;
 		pool.parallelFor(0, jobs.size(), 1, [&](size_t first, size_t last) {
 			for (size_t i = first; i < last; ++i) {
-				jobs[i].built = buildTemplate(*jobs[i].def, jobs[i].traits);
+				jobs[i].built = buildTemplate(*jobs[i].def, jobs[i].traits, referenceDetailLevel(jobs[i].def->detailLevels));
 			}
 		});
 		for (Job& job : jobs) {
 			if (!job.built.error.empty()) {
 				m_validationReport.add(Severity::Error, job.def->defName, "ageClasses", job.built.error, "");
+			}
+			if (job.traits.variant == 0 && job.built.collision.has_value() && !job.def->collisionFor(job.traits.ageClass).blocks()) {
+				job.def->setCollision(job.traits.ageClass, *job.built.collision);
 			}
 			insertTemplate(*job.def, job.traits, std::move(job.built));
 		}
@@ -1696,6 +1763,151 @@ namespace assets {
 			jobs.size(),
 			std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count()
 		);
+	}
+
+	void AssetRegistry::checkCollisionVariantIndependence(ValidationReport& report) {
+		std::vector<const AssetDefinition*> defs;
+		for (const auto& [name, def] : definitions) {
+			if (def.assetType == AssetType::Procedural && def.role != AssetRole::Ground) {
+				defs.push_back(&def);
+			}
+		}
+		std::sort(defs.begin(), defs.end(), [](const AssetDefinition* a, const AssetDefinition* b) { return a->defName < b->defName; });
+
+		for (const AssetDefinition* def : defs) {
+			// A def without <ageClasses> is one implicit class 0 of variantCount variants.
+			const size_t classCount = def->ageClasses.empty() ? 1 : def->ageClasses.size();
+			for (size_t a = 0; a < classCount; ++a) {
+				const uint32_t variants = def->ageClasses.empty() ? def->variantCount : def->ageClasses[a].variants;
+				if (variants < 2) {
+					continue;
+				}
+				std::optional<CollisionShape> first;
+				bool						  differs = false;
+				for (uint16_t v = 0; v < 2; ++v) {
+					const TreeTraits traits{.ageClass = static_cast<uint8_t>(a), .variant = v};
+					GeneratedAsset	 asset;
+					if (!generateAsset(def->defName, generationSeed(*def, traits), asset, traits)) {
+						break; // the load already reported the failed generation
+					}
+					if (v == 0) {
+						first = std::move(asset.emittedCollision);
+					} else {
+						differs = first != asset.emittedCollision;
+					}
+				}
+				if (differs) {
+					const std::string className = def->ageClasses.empty() ? "0" : "'" + def->ageClasses[a].name + "'";
+					report.add(
+						Severity::Error,
+						def->defName,
+						"collision",
+						"age class " + className + " emits a different collision rect for variants 0 and 1; the rect must not depend on the variant",
+						""
+					);
+				}
+			}
+		}
+	}
+
+	void AssetRegistry::checkDetailLevels(ValidationReport& report) {
+		struct Job {
+			uint32_t	  templateId = 0;
+			uint8_t		  level = 0;
+			BuiltTemplate built;
+		};
+		std::vector<std::string> names;
+		for (const auto& [name, def] : definitions) {
+			if (!def.detailLevels.empty()) {
+				names.push_back(name);
+			}
+		}
+		std::sort(names.begin(), names.end());
+
+		std::vector<Job>			 jobs;
+		std::unordered_set<uint32_t> queued;
+		for (const std::string& name : names) {
+			const AssetDefinition& def = definitions.at(name);
+			if (std::find(def.detailLevels.begin(), def.detailLevels.end(), kReferencePixelsPerMeter) == def.detailLevels.end()) {
+				report.add(
+					Severity::Error,
+					name,
+					"detailLevels",
+					"no level is cut at the reference density, " + std::to_string(static_cast<int>(kReferencePixelsPerMeter)) +
+						" px/m, which the template's collision, reach, and silhouette are read at",
+					""
+				);
+			}
+			// A def without <ageClasses> is one implicit class 0 of variantCount variants.
+			const size_t classCount = def.ageClasses.empty() ? 1 : def.ageClasses.size();
+			for (size_t a = 0; a < classCount; ++a) {
+				const uint32_t variants = def.ageClasses.empty() ? def.variantCount : def.ageClasses[a].variants;
+				for (uint16_t v = 0; v < variants; ++v) {
+					const uint32_t id = templateId(name, {.ageClass = static_cast<uint8_t>(a), .variant = v});
+					if (!queued.insert(id).second) {
+						continue; // traits the def maps onto a template already queued
+					}
+					for (size_t level = 0; id != 0 && level < def.detailLevels.size(); ++level) {
+						jobs.push_back({.templateId = id, .level = static_cast<uint8_t>(level)});
+					}
+				}
+			}
+		}
+		foundation::TaskPool pool;
+		pool.parallelFor(0, jobs.size(), 1, [&](size_t first, size_t last) {
+			for (size_t i = first; i < last; ++i) {
+				jobs[i].built = buildTemplateLevel(jobs[i].templateId, jobs[i].level);
+			}
+		});
+
+		// Each template's levels are consecutive jobs, so its reference level is found among them.
+		for (size_t i = 0; i < jobs.size();) {
+			const size_t		   end = i + detailLevels(jobs[i].templateId).size();
+			const AssetDefinition& def = *m_templates[jobs[i].templateId - 1]->def;
+			const TreeTraits	   traits = m_templates[jobs[i].templateId - 1]->traits;
+			const Job&			   reference = jobs[i + referenceDetailLevel(def.detailLevels)];
+			for (; i < end; ++i) {
+				if (!jobs[i].built.error.empty()) {
+					report.add(Severity::Error, def.defName, "detailLevels", jobs[i].built.error, "");
+					continue;
+				}
+				if (reference.built.error.empty() && reference.built.mesh.has_value() && jobs[i].built.mesh.has_value()) {
+					const float levelReach = meshReach(*jobs[i].built.mesh);
+					const float referenceReach = meshReach(*reference.built.mesh);
+					if (levelReach > referenceReach * kLevelReachMargin) {
+						report.add(
+							Severity::Error,
+							def.defName,
+							"detailLevels",
+							describeTemplate(def, traits, jobs[i].level) + " reaches " + std::to_string(levelReach) + " m, past " + std::to_string(kLevelReachMargin) +
+								" times its reference level's " + std::to_string(referenceReach) + " m; the cull margin is read at the reference level",
+							""
+						);
+					}
+				}
+				if (reference.built.error.empty() && jobs[i].built.collision != reference.built.collision) {
+					report.add(
+						Severity::Error,
+						def.defName,
+						"detailLevels",
+						describeTemplate(def, traits, jobs[i].level) + " emits a different collision rect than at its reference level; the rect must not depend on the level",
+						""
+					);
+				}
+			}
+		}
+	}
+
+	void AssetRegistry::overrideGeneratorParams(const std::string& defName, const std::vector<std::pair<std::string, std::string>>& params) {
+		const auto found = definitions.find(defName);
+		if (found == definitions.end()) {
+			LOG_ERROR(Engine, "Definition not found: %s", defName.c_str());
+			return;
+		}
+		for (const auto& [name, value] : params) {
+			found->second.params.setString(name.c_str(), value);
+		}
+		clearCaches();
 	}
 
 	const AssetSilhouette* AssetRegistry::getSilhouette(const std::string& defName, TreeTraits traits) {
@@ -1877,7 +2089,7 @@ namespace assets {
 	}
 
 	bool AssetRegistry::generateAsset(
-		const std::string& defName, uint32_t seed, GeneratedAsset& outAsset, TreeTraits traits, std::string* error
+		const std::string& defName, uint32_t seed, GeneratedAsset& outAsset, TreeTraits traits, std::string* error, std::optional<uint8_t> level
 	) {
 		const AssetDefinition* def = getDefinition(defName);
 		if (def == nullptr) {
@@ -1903,6 +2115,14 @@ namespace assets {
 		}
 		if (def->role == AssetRole::Ground) {
 			ctx.periodMeters = def->ground.periodMeters;
+		}
+		if (!def->detailLevels.empty()) {
+			const uint8_t built = level.value_or(referenceDetailLevel(def->detailLevels));
+			if (built >= def->detailLevels.size()) {
+				LOG_ERROR(Engine, "Asset %s has no detail level %u", defName.c_str(), static_cast<unsigned>(built));
+				return false;
+			}
+			ctx.detailPxPerMeter = def->detailLevels[built];
 		}
 		outAsset.clear();
 
@@ -1947,10 +2167,13 @@ namespace assets {
 			LOG_ERROR(Engine, "buildPaths: definition not found: %s", defName.c_str());
 			return false;
 		}
-		const auto	   start = std::chrono::steady_clock::now();
+		const auto					 start = std::chrono::steady_clock::now();
+		const std::optional<uint8_t> level =
+			std::isinf(maxPixelsPerMeter) ? std::nullopt : std::optional<uint8_t>(detailLevelFor(def->detailLevels, maxPixelsPerMeter));
 		GeneratedAsset asset;
-		const bool drawn = def->role == AssetRole::Ground && def->assetType == AssetType::Simple ? readGroundSvgVariant(*def, seed, asset)
-																								 : generateAsset(defName, seed, asset);
+		const bool drawn = def->role == AssetRole::Ground && def->assetType == AssetType::Simple
+							   ? readGroundSvgVariant(*def, seed, asset)
+							   : generateAsset(defName, seed, asset, {}, nullptr, level);
 		if (!drawn) {
 			return false;
 		}
@@ -1990,11 +2213,11 @@ namespace assets {
 		return buildPaths(defName, seed, paths, pixelsPerMeter) && paths.meshesAt(pixelsPerMeter, outMeshes);
 	}
 
-	bool AssetRegistry::buildMesh(const std::string& defName, uint32_t seed, renderer::TessellatedMesh& outMesh) {
+	bool AssetRegistry::buildMesh(const std::string& defName, uint32_t seed, renderer::TessellatedMesh& outMesh, float pixelsPerMeter) {
 		outMesh.clear();
 
 		std::vector<renderer::TessellatedMesh> meshes;
-		if (!buildMeshes(defName, seed, meshes)) {
+		if (!buildMeshes(defName, seed, meshes, pixelsPerMeter)) {
 			return false;
 		}
 		return takeSingleMesh(defName, meshes, outMesh);

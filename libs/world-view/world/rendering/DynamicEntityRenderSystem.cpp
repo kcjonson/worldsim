@@ -71,7 +71,7 @@ void DynamicEntityRenderSystem::update(float deltaTime) {
         const auto*            mesh   = assetRegistry.getTemplate(placed.templateId);
         const Foundation::Rect bounds = worldview::templateBounds(mesh);
         const glm::vec2        boundsCenter{bounds.x + bounds.width * 0.5F, bounds.y + bounds.height * 0.5F};
-        const float            meshMaxY = bounds.y + bounds.height; // Bottom-most local-Y (feet); drives the depth anchor
+        const assets::MeshYExtent meshY{.minY = bounds.y, .maxY = bounds.y + bounds.height}; // maxY: the feet
 
         // Loose ground pile: a heap of sprites sized by its count, laid out by the shared pile
         // layout so the hit-test and outline match what's drawn.
@@ -90,8 +90,10 @@ void DynamicEntityRenderSystem::update(float deltaTime) {
         placed.rotation = 0.0F;  // Dynamic entities don't rotate - use FacingDirection for sprites
         placed.scale = appearance.scale;
         placed.colorTint = appearance.colorTint;
-        // Feet (bottom-most world-Y) are the 2.5D depth anchor.
-        placed.anchorY = assets::computeAnchorY(placed.position.y, meshMaxY, placed.scale);
+        // Feet, or a footprint's lower edge (a tree's trunk foot), are the 2.5D depth anchor.
+        placed.anchorY = assets::computeAnchorY(
+            placed.position.y, assets::anchorLocalY(assetRegistry.getDefinition(defName), placed.traits.ageClass, meshY), placed.scale
+        );
 
         // Walk animation: advance this entity's phase from its movement speed and evaluate its
         // motion clip into per-part transforms (aligned to the template's MeshParts). Only entities

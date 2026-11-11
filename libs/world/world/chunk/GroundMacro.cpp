@@ -1,6 +1,7 @@
 #include "world/chunk/GroundMacro.h"
 
 #include "world/chunk/NoiseLattice.h"
+#include "world/generation/GroveField.h"
 
 #include <random/HashNoise.h>
 
@@ -34,8 +35,9 @@ namespace world {
 
 	} // namespace
 
-	void fillGroundMacro(ChunkCoordinate coord, uint64_t worldSeed, std::span<uint8_t> rgba) {
+	void fillGroundMacro(ChunkCoordinate coord, uint64_t worldSeed, std::span<const float> canopyCover, std::span<uint8_t> rgba) {
 		assert(rgba.size() == kGroundMacroBytes);
+		assert(canopyCover.size() == static_cast<size_t>(kGroundMacroSide) * kGroundMacroSide);
 		const int64_t	 originX = static_cast<int64_t>(coord.x) * kChunkSize;
 		const int64_t	 originY = static_cast<int64_t>(coord.y) * kChunkSize;
 		auto octave = [&](int32_t wavelengthM, int32_t field) {
@@ -62,7 +64,9 @@ namespace world {
 				texel[0] = unitByte(0.5F + kMixContrast * mix);
 				texel[1] = unitByte(0.5F + 0.5F * mid.at(i, j) / kValueRange);
 				texel[2] = unitByte(0.5F + 0.5F * fine.at(i, j) / kValueRange);
-				texel[3] = 255;
+				const float x = static_cast<float>(originX + static_cast<int64_t>(i) * kGroundMacroMetersPerTexel);
+				const float y = static_cast<float>(originY + static_cast<int64_t>(j) * kGroundMacroMetersPerTexel);
+				texel[3] = unitByte(grove::canopyWeight(x, y, worldSeed, canopyCover[static_cast<size_t>(j) * kGroundMacroSide + static_cast<size_t>(i)]));
 			}
 		}
 	}

@@ -12,16 +12,34 @@
     <generator>
       <!-- Shared script using @shared/ prefix -->
       <scriptPath>@shared/deciduous.lua</scriptPath>
+      <!-- Growth numbers, palette and sizes (tree-variety.md R5, R6, R9), the spec's starting values.
+           A maple forks into co-equal stems with paired limbs; old maples broaden and stay dense. -->
       <params>
-        <!-- Trunk dimensions in meters (scaled for top-down game view) -->
-        <trunkHeight>1.2</trunkHeight>
-        <trunkWidth>0.15</trunkWidth>
-        <!-- Canopy radius in meters -->
-        <canopyRadius>0.6</canopyRadius>
-        <!-- Number of visible branches -->
-        <branchCount>3</branchCount>
+        <!-- Crown across and trunk width in meters as curves over age (0 to 1), R9's maple column: 2.25x
+             the first trees, a sapling 0.62x of mature. The collision rect is half the trunk width. -->
+        <crownWidth>0.15:1.7, 0.55:2.7, 0.9:3.6, 1.0:3.78</crownWidth>
+        <trunkWidth>0.15:0.19, 0.55:0.34, 0.9:0.5</trunkWidth>
+        <apicalControl>0.45</apicalControl>
+        <buds>opposite</buds>
+        <branchAngle>40,50</branchAngle>
+        <lengthRatio>0.78</lengthRatio>
+        <mainLimbs>4,6</mainLimbs>
+        <shedding>0.12</shedding>
+        <droop>0.15</droop>
+        <stemRise>0.5</stemRise>
+        <crownDepth>0.4</crownDepth>
+        <clusterSize>0.2</clusterSize>
+        <lobes>pointed</lobes>
+        <growingOld>broadens</growingOld>
+        <foliageShade>#55712c</foliageShade>
+        <foliageBase>#678a34</foliageBase>
+        <foliageLight>#80a441</foliageLight>
+        <foliageHighlight>#a0c15a</foliageHighlight>
       </params>
     </generator>
+
+    <!-- The screen densities in pixels a meter a mesh is cut for, as the oak's (OakTree.xml). -->
+    <detailLevels>2, 4, 8, 24, 40, 80</detailLevels>
 
     <rendering>
       <!-- Trees are complex assets (individual tessellation) -->
@@ -32,8 +50,8 @@
 
     <!-- No animation for now (trees sway is future work) -->
 
-    <!-- Trunk-base collision comes from the generator (asset:setCollisionRect,
-         half-extent = trunkWidth/2 = 0.075m), captured eagerly at load. -->
+    <!-- Trunk-foot collision comes from the generator (asset:setCollisionRect, half the age
+         class's trunk width), captured per age class at load. -->
 
     <!-- Entity capabilities - felled for wood with an axe in one destructive action -->
     <!-- Whole-tree yield 14-22 wood (the old pool total, smaller than oak); the colonist takes a -->
@@ -43,20 +61,23 @@
                    destructive="true" requiresTool="Axe"/>
     </capabilities>
 
-    <!-- Per-biome placement configuration -->
+    <!-- Per-biome placement configuration; stands as the oak's (OakTree.xml) -->
     <placement>
+      <samplePitch>2</samplePitch>
+      <crownSpacing>0.7</crownSpacing>
+
       <!-- Forest: Common, spaced out -->
       <biome name="TemperateDeciduousForest">
-        <spawnChance>0.40</spawnChance>
+        <spawnChance>0.28</spawnChance>
         <distribution>spaced</distribution>
         <spacing>
-          <minDistance>2.8</minDistance>
+          <minDistance>1.0</minDistance>
         </spacing>
       </biome>
 
       <!-- Grassland: Occasional, well-spaced -->
       <biome name="TemperateGrassland">
-        <spawnChance>0.01</spawnChance>
+        <spawnChance>0.0025</spawnChance>
         <distribution>spaced</distribution>
         <spacing>
           <minDistance>12.0</minDistance>
@@ -72,20 +93,13 @@
         <group>wild_plants</group>
         <group>wood_sources</group>
       </groups>
-
-      <!-- Relationships with other entities -->
-      <relationships>
-        <!-- minDistance (spaced) owns maple-to-maple spacing; keep only a mild
-             cross-tree avoid so a mixed canopy intermixes without overlapping trunks. -->
-        <avoids group="trees" distance="2.5" penalty="0.7"/>
-      </relationships>
     </placement>
 
     <!-- Age class by world position (tree-variety.md R1, R2). Weights sum to 1; each class has its own mesh variants. -->
     <ageClasses>
-      <ageClass name="sapling" weight="0.25" variants="4" yieldScale="0.25" workScale="0.35"/>
-      <ageClass name="mature"  weight="0.55" variants="8" yieldScale="1.0"  workScale="1.0"/>
-      <ageClass name="veteran" weight="0.20" variants="4" yieldScale="1.8"  workScale="1.6"/>
+      <ageClass name="sapling" weight="0.15" variants="4" yieldScale="0.25" workScale="0.35"/>
+      <ageClass name="mature"  weight="0.60" variants="8" yieldScale="1.0"  workScale="1.0"/>
+      <ageClass name="veteran" weight="0.25" variants="4" yieldScale="1.8"  workScale="1.6"/>
     </ageClasses>
   </AssetDef>
 </AssetDefinitions>
