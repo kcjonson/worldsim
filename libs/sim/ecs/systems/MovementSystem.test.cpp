@@ -152,6 +152,55 @@ TEST_F(MovementTimeScaleTest, DenseCornersAreWalkedWithoutSteppingBack) {
 	EXPECT_GT(pos->value.x, 1.1F) << "through the corners at full speed";
 }
 
+// At 10x the stride is a metre a tick: it runs through dense corners and stops on the goal, never
+// past it.
+TEST_F(MovementTimeScaleTest, FastForwardThroughDenseCornersStopsOnTheGoal) {
+	timeSystem->setSpeed(GameSpeed::VeryFast);
+	const glm::vec2 goal{3.0F, 0.0F};
+	auto			entity = createMover({0.0F, 0.0F}, goal);
+	NavPath			path;
+	for (int i = 1; i <= 10; ++i) {
+		path.waypoints.push_back({0.5F + 0.05F * static_cast<float>(i), i % 2 == 0 ? 0.0F : 0.01F});
+	}
+	path.waypoints.push_back(goal);
+	path.valid = true;
+	world->addComponent<NavPath>(entity, path);
+
+	const auto* pos	 = world->getComponent<Position>(entity);
+	float		last = pos->value.x;
+	const int	ticks = [&] {
+		  for (int i = 1; i <= 100; ++i) {
+			  world->update(kDt);
+			  EXPECT_GE(pos->value.x, last) << "tick " << i;
+			  EXPECT_LE(pos->value.x, goal.x + 1e-4F) << "tick " << i << ": past the goal";
+			  last = pos->value.x;
+			  if (!world->getComponent<MovementTarget>(entity)->active) {
+				  return i;
+			  }
+		  }
+		  return -1;
+	}();
+	EXPECT_GT(ticks, 0) << "arrives";
+	EXPECT_LT(glm::distance(pos->value, goal), 0.1F);
+}
+
+// Paused, a mover on a route doesn't move, and still faces where it is going.
+TEST_F(MovementTimeScaleTest, PausedRouteHoldsStill) {
+	timeSystem->setSpeed(GameSpeed::Paused);
+	auto	entity = createMover({0.0F, 0.0F}, {0.0F, 5.0F});
+	NavPath path;
+	path.waypoints = {{0.0F, 5.0F}};
+	path.valid	   = true;
+	world->addComponent<NavPath>(entity, path);
+	world->addComponent<FacingDirection>(entity, FacingDirection{});
+	for (int i = 0; i < 10; ++i) {
+		world->update(kDt);
+	}
+	EXPECT_EQ(world->getComponent<Position>(entity)->value, glm::vec2(0.0F, 0.0F));
+	EXPECT_EQ(world->getComponent<FacingDirection>(entity)->direction, CardinalDirection::Down);
+	EXPECT_TRUE(world->getComponent<MovementTarget>(entity)->active);
+}
+
 // A single far waypoint is walked as before: speed times dt a tick straight at it, arriving on it.
 TEST_F(MovementTimeScaleTest, SingleWaypointIsWalkedStraight) {
 	timeSystem->setSpeed(GameSpeed::Normal);

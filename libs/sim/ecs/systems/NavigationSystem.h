@@ -325,6 +325,10 @@ class NavigationSystem : public ISystem {
 	static constexpr double		 kJobBudgetMs		   = 2.0;
 	static constexpr std::size_t kFloraRingsPerTick	   = 32;
 	static constexpr std::size_t kFloraRemovalsPerTick = 128;
+	// And in cells (one patch each): a patch's width refresh covers its cell and around it, about
+	// a millisecond for a 16 m cell of dense forest, which outweighs its rings. Adds and removals
+	// each touch at most this many cells a tick.
+	static constexpr std::size_t kFloraCellsPerTick = 2;
 	// Open chunks (no water) share a tick until their squares' vertices would pass this; a chunk
 	// with water always goes alone. Eight open chunks (32 vertices each at kMaxBoundsEdgeMm): five
 	// measured 3.7 ms against 6.3 for the dearest shoreline chunk alone, so eight stay under it.
@@ -343,8 +347,7 @@ class NavigationSystem : public ISystem {
 	// inside the detail keep rect, or in a cell a mover or the view wants.
 	static constexpr std::size_t kFloraRingBudget = 40000;
 	// A stranded mover is moved forward along its route to the first point this far apart that is
-	// walkable with its clearance. Routes are checked for crossing newly landed trees at the same
-	// pitch.
+	// walkable with its clearance.
 	static constexpr std::int64_t kSnapStepMm = 100;
 	// What walking a metre through a tree costs, in metres of open ground: 50
 	// makes a 0.6 m trunk cost a 30 m detour, so a mover goes round a tree when it can and through
@@ -396,10 +399,12 @@ class NavigationSystem : public ISystem {
 		DoorId					  structural = -1;
 	};
 
-	// A placed entity by the identity PlacementExecutor removes it by. Ordered chunk first, so
-	// one chunk's entries are a contiguous range.
+	// A placed entity by the identity PlacementExecutor removes it by, with the scan cell its
+	// position falls in. Ordered chunk first, then cell, so one chunk's entries are a contiguous
+	// range and so are one cell's.
 	struct FloraKey {
 		world::ChunkCoordinate chunk;
+		std::int64_t		   cell	 = 0;
 		std::uint32_t		   xBits = 0;
 		std::uint32_t		   yBits = 0;
 		std::string			   defName;
@@ -434,7 +439,7 @@ class NavigationSystem : public ISystem {
 		std::vector<geometry::nav::DoorPortal>								 doorAdds;
 		std::vector<DoorId>													 doorRemoves;
 		std::function<void(const std::vector<DoorId>&)>						 onDoorsAdded;
-		std::vector<std::int64_t>											 floraAddCells; // the cell of each flora add patch
+		std::vector<std::pair<glm::vec2, glm::vec2>>						 floraAddBoxes; // each added tree's box, metres
 
 		std::vector<std::vector<RingId>> added;
 		std::vector<double>				 patchMs;
@@ -451,7 +456,7 @@ class NavigationSystem : public ISystem {
 
 	// One tick's patches with the given budgets into the gathered jobs; finishPendingBuilds runs
 	// it unbudgeted.
-	void gather(std::size_t addBudget, std::size_t removeBudget, std::size_t groundVertexBudget);
+	void gather(std::size_t addBudget, std::size_t removeBudget, std::size_t cellBudget, std::size_t groundVertexBudget);
 	// Hand `gathered` to the workers. No-op when it is empty.
 	void submit();
 	// Wait for the workers and, once per job, publish what it changed (the generation counters).
@@ -468,7 +473,8 @@ class NavigationSystem : public ISystem {
 	void			   updateDetail();
 	// The BeliefFilter a movement query runs with: `belief` with flora priced (the one place).
 	[[nodiscard]] static geometry::nav::BeliefFilter pricedFor(geometry::nav::BeliefFilter belief);
-	// Marks stale the routes whose rest crosses a tree that landed in the joined jobs.
+	// Marks stale the routes whose rest comes within the mover's radius of a tree that landed in
+	// the joined jobs.
 	void markCrossedRoutes();
 	void forgetDroppedRoutes();
 	[[nodiscard]] static std::uint64_t routeKey(const std::vector<glm::vec2>& waypoints);
@@ -476,7 +482,9 @@ class NavigationSystem : public ISystem {
 	// truth, never past a wall or water on the way; with none, it stays and its route goes stale.
 	// Without a route it goes to the nearest walkable point.
 	void snapMovers();
-	void trimFlora(const std::vector<Rect>& rects);
+	// Over budget, queues the cells to trim, oldest out of a wanted rect first, then takes them
+	// out a few a tick: at most `removeBudget` rings' worth.
+	void trimFlora(const std::vector<Rect>& rects, std::size_t removeBudget);
 	void							queueRemovedFlora();
 	void							dropFloraOfLostChunks();
 	[[nodiscard]] bool				floraChunkUsable(world::ChunkCoordinate coord) const;
@@ -491,7 +499,7 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] bool			holdsConstruction(world::ChunkCoordinate coord) const;
 	[[nodiscard]] bool			chunkGroundMeshed(world::ChunkCoordinate coord) const;
 	void scanFlora(const std::vector<Rect>& rects);
-	void gatherFlora(std::size_t addBudget, std::size_t removeBudget, const std::vector<Rect>& rects);
+	void gatherFlora(std::size_t addBudget, std::size_t removeBudget, std::size_t cellBudget, const std::vector<Rect>& rects);
 
 	world::ChunkManager*							  chunkManager		= nullptr;
 	assets::PlacementExecutor*						  placement			= nullptr;
@@ -542,8 +550,8 @@ class NavigationSystem : public ISystem {
 	// update() keeps only the routes some mover holds, so it never outgrows the movers and one
 	// tick's queries.
 	mutable std::unordered_map<std::uint64_t, std::vector<glm::vec2>> pricedRoutes;
-	// Cells where flora landed in the joined jobs, for markCrossedRoutes.
-	std::unordered_set<std::int64_t> floraLandedCells;
+	// The boxes of the trees that landed in the joined jobs, for markCrossedRoutes.
+	std::vector<std::pair<glm::vec2, glm::vec2>> floraLanded;
 
 
 	mutable NavQueryStats navStats;
@@ -552,7 +560,8 @@ class NavigationSystem : public ISystem {
 	std::uint64_t							tickCount = 0;
 	std::unordered_set<std::int64_t>		detailCells;
 	std::optional<Rect>						detailFor; // the viewport rect detailCells were made for
-	std::unordered_map<std::int64_t, std::uint64_t> cellLastWanted; // tickCount when a scan last wanted the cell
+	std::unordered_map<std::int64_t, std::uint64_t> cellLastWanted;
+	std::vector<std::int64_t>						 trimQueue; // cells to trim, the next at the back // tickCount when a scan last wanted the cell
 };
 
 } // namespace ecs

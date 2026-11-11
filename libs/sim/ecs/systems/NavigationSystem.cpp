@@ -66,6 +66,13 @@ namespace ecs {
 			return {static_cast<std::int32_t>(geometry::floorDiv(cellX(key), kCellsPerChunk)),
 					static_cast<std::int32_t>(geometry::floorDiv(cellY(key), kCellsPerChunk))};
 		}
+		// The scan cell that owns a placed entity: [lo, lo + side) on each axis, as scanFlora tests
+		// it (the side is a power of two in metres, so the division is exact).
+		std::int64_t cellOfEntity(glm::vec2 position) {
+			constexpr float kSide = static_cast<float>(NavigationSystem::kFloraCellMm / geometry::kMillimetersPerMeter);
+			return cellKey(static_cast<std::int64_t>(std::floor(position.x / kSide)), static_cast<std::int64_t>(std::floor(position.y / kSide)));
+		}
+		constexpr std::int64_t kFirstCell = std::numeric_limits<std::int64_t>::min();
 
 		std::int64_t radiusMm(float meters) { return static_cast<std::int64_t>(std::llround(static_cast<double>(meters) * 1000.0)); }
 
@@ -522,11 +529,11 @@ namespace ecs {
 		if (chunk.y != o.chunk.y || chunk.x != o.chunk.x) {
 			return ChunkLess{}(chunk, o.chunk);
 		}
-		return std::tie(xBits, yBits, defName) < std::tie(o.xBits, o.yBits, o.defName);
+		return std::tie(cell, xBits, yBits, defName) < std::tie(o.cell, o.xBits, o.yBits, o.defName);
 	}
 
 	NavigationSystem::NavigationSystem(std::size_t floraRingBudget)
-		: detailMesh({.maxBoundsEdgeMm = kMaxBoundsEdgeMm}),
+		: detailMesh({.maxBoundsEdgeMm = kMaxBoundsEdgeMm, .detailTags = {nav::kProvenanceTree}}),
 		  structural({.maxBoundsEdgeMm = kMaxBoundsEdgeMm}),
 		  navWorker(std::make_unique<Worker>()),
 		  structuralWorker(std::make_unique<Worker>()),
@@ -592,7 +599,7 @@ namespace ecs {
 		markCrossedRoutes();
 		snapMovers();
 		if (chunkManager != nullptr) {
-			gather(kFloraRingsPerTick, kFloraRemovalsPerTick, kGroundVerticesPerTick);
+			gather(kFloraRingsPerTick, kFloraRemovalsPerTick, kFloraCellsPerTick, kGroundVerticesPerTick);
 		}
 	}
 
@@ -604,21 +611,21 @@ namespace ecs {
 		do {
 			settle();
 			if (chunkManager != nullptr) {
-				gather(kUnlimited, kUnlimited, kUnlimited);
+				gather(kUnlimited, kUnlimited, kUnlimited, kUnlimited);
 			}
 			settle();
 		} while (chunkManager != nullptr && isBuilding());
 	}
 
-	void NavigationSystem::gather(std::size_t addBudget, std::size_t removeBudget, std::size_t groundVertexBudget) {
+	void NavigationSystem::gather(std::size_t addBudget, std::size_t removeBudget, std::size_t cellBudget, std::size_t groundVertexBudget) {
 		const std::vector<Rect> rects = wantedRects();
 		queueRemovedFlora();
 		dropFloraOfLostChunks();
 		gatherWalls();
 		gatherGround(groundVertexBudget, rects, nullptr);
 		scanFlora(rects);
-		trimFlora(rects);
-		gatherFlora(addBudget, removeBudget, rects);
+		trimFlora(rects, removeBudget);
+		gatherFlora(addBudget, removeBudget, cellBudget, rects);
 	}
 
 	void NavigationSystem::submit() {
@@ -669,6 +676,15 @@ namespace ecs {
 				  runningNav.ms, runningStructural.ms, runningNav.finishMs, runningStructural.finishMs, waitMs, detailMesh.triangles().size(),
 				  structural.triangles().size(), runningNav.patches.size(), runningStructural.patches.size(),
 				  longest > kJobBudgetMs ? " over budget" : "");
+		// Permanent diagnostic for a job over budget: what each of its patches was and took.
+		if (longest > kJobBudgetMs) {
+			for (const auto& [mesh, job] : {std::pair{"nav", &runningNav}, std::pair{"structural", &runningStructural}}) {
+				for (std::size_t i = 0; i < job->patches.size(); ++i) {
+					LOG_DEBUG(Engine, "[NavBuild] patch %s %zu adds %zu removes %zu %.3f ms", mesh, i, job->patches[i].adds.size(),
+							  job->patches[i].removes.size(), job->patchMs[i]);
+				}
+			}
+		}
 	}
 
 	void NavigationSystem::collect() {
@@ -677,7 +693,7 @@ namespace ecs {
 		}
 		join();
 		collected = true;
-		floraLandedCells.insert(runningNav.floraAddCells.begin(), runningNav.floraAddCells.end());
+		floraLanded.insert(floraLanded.end(), runningNav.floraAddBoxes.begin(), runningNav.floraAddBoxes.end());
 		for (MeshJob* job : {&runningNav, &runningStructural}) {
 			for (std::size_t i = 0; i < job->onPatched.size(); ++i) {
 				job->onPatched[i](job->added[i], job->patchMs[i]);
@@ -1087,8 +1103,8 @@ namespace ecs {
 			return;
 		}
 		for (const assets::PlacementExecutor::RemovedEntity& entry : placement->takeRemovals()) {
-			const FloraKey key{entry.coord, std::bit_cast<std::uint32_t>(entry.position.x), std::bit_cast<std::uint32_t>(entry.position.y),
-							   entry.defName};
+			const FloraKey key{entry.coord, cellOfEntity(entry.position), std::bit_cast<std::uint32_t>(entry.position.x),
+							   std::bit_cast<std::uint32_t>(entry.position.y), entry.defName};
 			if (const auto it = floraInMesh.find(key); it != floraInMesh.end()) {
 				floraRemovals.push_back(it->second);
 				floraInMesh.erase(it);
@@ -1105,15 +1121,12 @@ namespace ecs {
 				++chunkIt;
 				continue;
 			}
-			// Queued by cell, so the removals batch into one patch per cell.
-			const FloraKey			  first{coord, 0, 0, {}};
-			std::vector<FloraRing> lost;
+			// In key order, which is by cell, so the removals batch into one patch per cell.
+			const FloraKey first{coord, kFirstCell, 0, 0, {}};
 			for (auto it = floraInMesh.lower_bound(first); it != floraInMesh.end() && it->first.chunk == coord;) {
-				lost.push_back(it->second);
+				floraRemovals.push_back(it->second);
 				it = floraInMesh.erase(it);
 			}
-			std::stable_sort(lost.begin(), lost.end(), [](const FloraRing& a, const FloraRing& b) { return a.cell < b.cell; });
-			floraRemovals.insert(floraRemovals.end(), lost.begin(), lost.end());
 			for (auto it = floraAdds.lower_bound(first); it != floraAdds.end() && it->first.chunk == coord;) {
 				it = floraAdds.erase(it);
 			}
@@ -1167,7 +1180,7 @@ namespace ecs {
 						if (e->position.x < lox || e->position.x >= lox + side || e->position.y < loy || e->position.y >= loy + side) {
 							continue;
 						}
-						FloraKey key{chunk, std::bit_cast<std::uint32_t>(e->position.x), std::bit_cast<std::uint32_t>(e->position.y), e->defName};
+						FloraKey key{chunk, cell, std::bit_cast<std::uint32_t>(e->position.x), std::bit_cast<std::uint32_t>(e->position.y), e->defName};
 						if (floraInMesh.contains(key) || floraAdds.contains(key)) {
 							continue;
 						}
@@ -1196,10 +1209,17 @@ namespace ecs {
 		}
 	}
 
-	void NavigationSystem::gatherFlora(std::size_t addBudget, std::size_t removeBudget, const std::vector<Rect>& rects) {
+	void NavigationSystem::gatherFlora(std::size_t addBudget, std::size_t removeBudget, std::size_t cellBudget, const std::vector<Rect>& rects) {
 		// Removals, oldest first, one patch per run of one cell: a patch's width refresh covers the
 		// box around everything it changed, so a patch spread over a chunk would refresh the chunk.
-		const std::size_t removeCount = std::min(removeBudget, floraRemovals.size());
+		std::size_t removeCount = std::min(removeBudget, floraRemovals.size());
+		for (std::size_t i = 0, cells = 0; i < removeCount; ++i) {
+			if (i == 0 || floraRemovals[i].cell != floraRemovals[i - 1].cell) {
+				if (++cells > cellBudget) {
+					removeCount = i;
+				}
+			}
+		}
 		for (std::size_t first = 0; first < removeCount;) {
 			std::size_t		 last = first;
 			gnav::PatchEdits edits;
@@ -1243,18 +1263,30 @@ namespace ecs {
 			ranked.resize(addCount);
 		}
 		std::sort(ranked.begin(), ranked.end(), before);
+		for (std::size_t i = 0, cells = 0; i < ranked.size(); ++i) {
+			if ((i == 0 || ranked[i].cell != ranked[i - 1].cell) && ++cells > cellBudget) {
+				ranked.resize(i);
+			}
+		}
 
 		for (std::size_t first = 0; first < ranked.size();) {
 			std::size_t			  last = first;
 			gnav::PatchEdits	  edits;
 			std::vector<FloraKey> keys;
 			for (; last < ranked.size() && ranked[last].cell == ranked[first].cell; ++last) {
+				const std::vector<geometry::Vec2i64>& ring = ranked[last].it->second.ring.ring;
+				geometry::Vec2i64					  lo   = ring.front();
+				geometry::Vec2i64					  hi   = ring.front();
+				for (const geometry::Vec2i64& p : ring) {
+					lo = {std::min(lo.x, p.x), std::min(lo.y, p.y)};
+					hi = {std::max(hi.x, p.x), std::max(hi.y, p.y)};
+				}
+				gatheredNav.floraAddBoxes.emplace_back(nav::toMeters(lo), nav::toMeters(hi));
 				edits.adds.push_back(std::move(ranked[last].it->second.ring));
 				keys.push_back(ranked[last].it->first);
 				floraAdds.erase(ranked[last].it);
 			}
 			gatheredNav.patches.push_back(std::move(edits));
-			gatheredNav.floraAddCells.push_back(ranked[first].cell);
 			gatheredNav.onPatched.emplace_back(
 				[this, keys = std::move(keys), cell = ranked[first].cell](const std::vector<RingId>& added, double) {
 					for (std::size_t k = 0; k < keys.size(); ++k) {
@@ -1373,39 +1405,20 @@ namespace ecs {
 	}
 
 	void NavigationSystem::markCrossedRoutes() {
-		const std::vector<std::int64_t> cells(floraLandedCells.begin(), floraLandedCells.end());
-		floraLandedCells.clear();
-		if (cells.empty() || world == nullptr || detailMesh.liveTriangleCount() == 0) {
+		if (floraLanded.empty()) {
 			return;
 		}
-		const float step = static_cast<float>(kSnapStepMm) / static_cast<float>(geometry::kMillimetersPerMeter);
-		const auto	onTree = [this](glm::vec2 p) {
-			 const std::int32_t tri = detailMesh.locate(nav::toMm(p));
-			 return tri >= 0 && detailMesh.triangles()[static_cast<std::size_t>(tri)].faceBlocker == nav::kProvenanceTree;
-		};
-		// Where a piece of the route lies in one of the cells, its centre line and the inner part of
-		// the mover's disc either side are sampled for a tree face; the rim is left out, so a route
-		// planned past a trunk at exactly the disc's clearance doesn't read as crossing it.
+		const std::vector<std::pair<glm::vec2, glm::vec2>> landed = std::move(floraLanded);
+		floraLanded.clear();
+		if (world == nullptr) {
+			return;
+		}
+		// A piece of route that comes within the mover's radius of a new tree's box crosses it:
+		// trees that were already there are no news to a route planned past or through them.
 		const auto crosses = [&](glm::vec2 a, glm::vec2 b, float radius) {
-			const glm::vec2 along = b - a;
-			const float		length = std::sqrt(dist2(a, b));
-			const glm::vec2 side   = length > 0.0F ? glm::vec2{-along.y, along.x} * (0.5F * radius / length) : glm::vec2{0.0F, 0.0F};
-			for (const std::int64_t cell : cells) {
-				const glm::vec2 lo{static_cast<float>(cellX(cell) * kFloraCellMm) / 1000.0F, static_cast<float>(cellY(cell) * kFloraCellMm) / 1000.0F};
-				const glm::vec2 hi = lo + glm::vec2{static_cast<float>(kFloraCellMm) / 1000.0F};
-				const std::optional<std::pair<float, float>> span = clipToRect(a, b, lo - glm::vec2{radius}, hi + glm::vec2{radius});
-				if (!span.has_value()) {
-					continue;
-				}
-				const int steps = std::max(1, static_cast<int>(std::ceil((span->second - span->first) * length / step)));
-				for (int i = 0; i <= steps; ++i) {
-					const glm::vec2 p = a + along * (span->first + (span->second - span->first) * static_cast<float>(i) / static_cast<float>(steps));
-					if (onTree(p) || onTree(p + side) || onTree(p - side)) {
-						return true;
-					}
-				}
-			}
-			return false;
+			return std::any_of(landed.begin(), landed.end(), [&](const std::pair<glm::vec2, glm::vec2>& box) {
+				return clipToRect(a, b, box.first - glm::vec2{radius}, box.second + glm::vec2{radius}).has_value();
+			});
 		};
 		const std::uint64_t current = generation();
 		for (auto [entity, position, path] : world->view<Position, NavPath>()) {
@@ -1427,7 +1440,8 @@ namespace ecs {
 
 	bool NavigationSystem::floraInNavMesh(world::ChunkCoordinate chunk, const assets::PlacedEntity& entity) const {
 		return floraInMesh.contains(
-			FloraKey{chunk, std::bit_cast<std::uint32_t>(entity.position.x), std::bit_cast<std::uint32_t>(entity.position.y), entity.defName});
+			FloraKey{chunk, cellOfEntity(entity.position), std::bit_cast<std::uint32_t>(entity.position.x), std::bit_cast<std::uint32_t>(entity.position.y),
+					 entity.defName});
 	}
 
 	void NavigationSystem::snapMovers() {
@@ -1489,7 +1503,7 @@ namespace ecs {
 			// waypoint it is steering for, then on through the rest. Points behind it are never
 			// candidates; with none ahead it stays put and its route goes stale, so the AI replans.
 			if (path == nullptr || path->done()) {
-				if (const std::optional<glm::vec2> nearest = nearestPathablePoint(position.value)) {
+				if (const std::optional<glm::vec2> nearest = nearestPathablePoint(position.value, radius)) {
 					position.value = *nearest;
 				}
 				continue;
@@ -1519,12 +1533,14 @@ namespace ecs {
 		}
 	}
 
-	void NavigationSystem::trimFlora(const std::vector<Rect>& rects) {
-		if (floraInMesh.size() <= floraRingBudget) {
+	void NavigationSystem::trimFlora(const std::vector<Rect>& rects, std::size_t removeBudget) {
+		if (trimQueue.empty() && floraInMesh.size() <= floraRingBudget) {
 			return;
 		}
 		// Cells that may lose their flora: out of every wanted rect, out of the detail keep rect,
-		// and not detail-on. Oldest out of a wanted rect first.
+		// and not detail-on. The choice is over scanned cells, never the rings, and each cell's
+		// rings are one range of floraInMesh, so what the main thread spends is the cells once per
+		// trim and the rings that leave, a removal budget's worth a tick.
 		std::optional<Rect> keep;
 		if (haveViewport) {
 			const Rect view = viewportRect();
@@ -1536,28 +1552,38 @@ namespace ecs {
 			}
 			return std::any_of(rects.begin(), rects.end(), [cell](const Rect& r) { return cellMeetsRect(cell, r.lo, r.hi); });
 		};
-		std::map<std::int64_t, std::vector<std::map<FloraKey, FloraRing>::iterator>> byCell;
-		for (auto it = floraInMesh.begin(); it != floraInMesh.end(); ++it) {
-			if (!spared(it->second.cell)) {
-				byCell[it->second.cell].push_back(it);
+		if (trimQueue.empty()) {
+			std::vector<std::pair<std::uint64_t, std::int64_t>> oldest;
+			for (const auto& [cell, wanted] : cellLastWanted) {
+				if (!spared(cell)) {
+					oldest.emplace_back(wanted, cell);
+				}
+			}
+			std::sort(oldest.begin(), oldest.end(), std::greater<>());
+			for (const auto& [wanted, cell] : oldest) {
+				trimQueue.push_back(cell);
 			}
 		}
-		std::vector<std::pair<std::uint64_t, std::int64_t>> oldest;
-		for (const auto& [cell, rings] : byCell) {
-			oldest.emplace_back(cellLastWanted[cell], cell);
-		}
-		std::sort(oldest.begin(), oldest.end());
-		const std::size_t target = floraRingBudget - floraRingBudget / 8;
-		for (const auto& [wanted, cell] : oldest) {
-			if (floraInMesh.size() <= target) {
-				break;
+		const std::size_t target  = floraRingBudget - floraRingBudget / 8;
+		std::size_t		  removed = 0;
+		while (!trimQueue.empty() && floraInMesh.size() > target && removed < removeBudget) {
+			const std::int64_t cell = trimQueue.back();
+			trimQueue.pop_back();
+			if (spared(cell) || !cellLastWanted.contains(cell)) {
+				continue; // wanted again, or its chunk went, since it was queued
 			}
-			for (const auto& it : byCell[cell]) {
+			const world::ChunkCoordinate chunk = cellChunk(cell);
+			for (auto it = floraInMesh.lower_bound(FloraKey{chunk, cell, 0, 0, {}});
+				 it != floraInMesh.end() && it->first.chunk == chunk && it->first.cell == cell;) {
 				floraRemovals.push_back(it->second);
-				floraInMesh.erase(it);
+				it = floraInMesh.erase(it);
+				++removed;
 			}
 			scannedCells.erase(cell);
 			cellLastWanted.erase(cell);
+		}
+		if (floraInMesh.size() <= target) {
+			trimQueue.clear();
 		}
 	}
 
@@ -1664,7 +1690,8 @@ namespace ecs {
 
 	bool NavigationSystem::isBuilding() const {
 		join();
-		return groundPending > 0 || !floraAdds.empty() || !floraRemovals.empty() || !gatheredNav.empty() || !gatheredStructural.empty();
+		return groundPending > 0 || !floraAdds.empty() || !floraRemovals.empty() || !trimQueue.empty() || !gatheredNav.empty() ||
+			   !gatheredStructural.empty();
 	}
 
 	std::uint64_t NavigationSystem::generation() const {

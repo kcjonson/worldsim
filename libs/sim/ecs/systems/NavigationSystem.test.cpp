@@ -843,9 +843,13 @@ TEST_F(NavigationSystemTest, LostChunkRemovalsDontHoldBackAdds) {
 	processed.erase(ChunkCoordinate{0, 0});
 	placeTrees(executor, processed, "Test_NavLostTree", ahead);
 	sys.setViewportRect({-228.0F, 214.0F}, {60.0F, 60.0F});
+	sys.resetNavQueryStats();
 	step(world, sys);
-	EXPECT_EQ(inMesh(ahead), NavigationSystem::kFloraRingsPerTick) << "adds went ahead of the backlog";
-	EXPECT_EQ(inMesh(lost), lost.size() - NavigationSystem::kFloraRemovalsPerTick) << "removals drained under their own budget";
+	EXPECT_GT(inMesh(ahead), 0u) << "adds went ahead of the backlog";
+	EXPECT_LE(inMesh(ahead), NavigationSystem::kFloraRingsPerTick);
+	EXPECT_LT(inMesh(lost), lost.size()) << "removals drained alongside";
+	EXPECT_GE(inMesh(lost), lost.size() - NavigationSystem::kFloraRemovalsPerTick) << "under their own budget";
+	EXPECT_LE(sys.navQueryStats().navPatches, 2 * NavigationSystem::kFloraCellsPerTick) << "a few cells each way";
 
 	settle(sys);
 	EXPECT_EQ(inMesh(lost), 0u);
@@ -2393,6 +2397,9 @@ TEST_F(NavigationSystemTest, RemovalsArePatchedPerCell) {
 	processed.erase(ChunkCoordinate{0, 0});
 	sys.resetNavQueryStats();
 	step(world, sys);
+	for (int i = 0; i < 4 && sys.isBuilding(); ++i) { // kFloraCellsPerTick cells a tick
+		step(world, sys);
+	}
 	ASSERT_FALSE(sys.isBuilding());
 	EXPECT_EQ(sys.navQueryStats().navPatches, 3u);
 	EXPECT_EQ(sys.navQueryStats().structuralPatches, 0u) << "flora is in the nav mesh only";
@@ -2829,4 +2836,100 @@ TEST_F(NavigationSystemTest, MoveOrderOntoATreeEndsBesideIt) {
 		}
 		EXPECT_LT(glm::distance(position.value, goal), 0.1F) << where << ": stopped on its goal";
 	}
+}
+
+// A route through a tree that was already there isn't news when another tree lands in the same
+// cell off the route: only the trees that just landed are checked.
+TEST_F(NavigationSystemTest, OldTreeOnARouteIsNoNewsWhenAnotherLands) {
+	registerTree("Test_NavOldTree", 0.3F);
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	const glm::vec2						old{1.0F, 8.0F};
+	std::vector<glm::vec2>				trees{old};
+	for (int i = 0; i < 70; ++i) { // after the old one in key order: they land over three ticks, the last after the route is planned
+		trees.push_back({12.0F + 0.05F * static_cast<float>(i), 1.0F + 0.2F * static_cast<float>(i)});
+	}
+	placeTrees(executor, processed, "Test_NavOldTree", trees);
+
+	const std::unique_ptr<world::ChunkManager> chunks = readyChunks(landSampler(), {256.0F, 256.0F}, 0); // one chunk: its ground lands at once
+	ConstructionWorld						   cw;
+	World									   world;
+	NavigationSystem&						   sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(chunks.get());
+	sys.setViewportRect({8.0F, 8.0F}, {30.0F, 30.0F});
+	sys.setPlacementData(&executor, &processed);
+	sys.setConstructionWorld(&cw);
+	const auto in = [&](glm::vec2 t) { return sys.inSimArea(t) && !sys.isValidPosition(t); };
+	for (int i = 0; i < 20 && !in(old); ++i) {
+		step(world, sys);
+	}
+	ASSERT_TRUE(in(old)) << "the old tree is in";
+	step(world, sys); // its landing is taken note of, and the next batch lands
+	ASSERT_FALSE(in(trees.back())) << "the last trees are still to come";
+	const EntityID mover = routedMover(world, sys, {1.0F, 0.5F}, {1.0F, 15.0F});
+	step(world, sys);
+	step(world, sys);
+	ASSERT_TRUE(in(trees.back())) << "the rest landed";
+	EXPECT_FALSE(stale(world, sys, mover)) << "a tree landing off the route replanned it";
+}
+
+// A tree just inside a cell's edge overhangs into the next cell by more than a mover's radius: a
+// route there, which never enters the tree's cell, is still marked when the tree lands.
+TEST_F(NavigationSystemTest, TreeOverhangingItsCellMarksARouteNextDoor) {
+	registerTree("Test_NavEdgeTree", 0.45F);
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	placeTrees(executor, processed, "Test_NavEdgeTree", {{-20.0F, 40.0F}}); // chunk (-1, 0), so (0, 0) arrives later
+
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys);
+	sys.setPlacementData(&executor, &processed);
+	sys.setConstructionWorld(&cw);
+	settle(sys);
+	const EntityID mover = routedMover(world, sys, {15.65F, 0.5F}, {15.65F, 15.0F}); // cell x in [0, 16)
+
+	const glm::vec2 edgeTree{16.05F, 8.0F}; // cell x in [16, 32), reaching back to 15.55
+	placeTrees(executor, processed, "Test_NavEdgeTree", {edgeTree});
+	step(world, sys);
+	step(world, sys);
+	ASSERT_FALSE(sys.isValidPosition(edgeTree)) << "the tree is in";
+	EXPECT_TRUE(stale(world, sys, mover)) << "the tree lies across the route";
+}
+
+// An idle colonist (no route) a tree lands on, beside a wall: the snap takes it to clear ground on
+// its own side of the wall and out of the wall's band, never into or past the wall.
+TEST_F(ForwardSnapTest, IdleColonistBesideAWallStaysOnItsSide) {
+	buildWall(cw, {10900, 5000}, {10900, 15000});
+	settle(*sys);
+	const glm::vec2 at{10.6F, 10.0F}; // in the tree (9.15 to 10.85), the wall 0.3 m east
+	const EntityID	colonist = routedColonist(world, at, {});
+	world.addComponent<AgentRadius>(colonist, AgentRadius{kAgentRadius, 1.0F});
+	step(world, *sys);
+	const glm::vec2 now = world.getComponent<Position>(colonist)->value;
+	EXPECT_NE(now, at) << "snapped out of the tree";
+	EXPECT_TRUE(sys->isValidPosition(now));
+	EXPECT_LT(now.x, 10.9F - 0.1F - kAgentRadius) << "on its own side and out of the wall's band";
+}
+
+// A wall whose centreline crosses a chunk with no vertex in it holds that chunk's ground like one
+// that ends there.
+TEST_F(NavigationSystemTest, WallCrossingAChunkKeepsItsGround) {
+	ChunkWalk		  walk;
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(walk.chunks.get());
+	sys.setConstructionWorld(&cw);
+
+	walk.stand(1);
+	buildWall(cw, nav::toMm(ChunkWalk::centre(0)), nav::toMm(ChunkWalk::centre(2))); // through chunk 1, ends in 0 and 2
+	settle(sys);
+	const int steps = static_cast<int>(NavigationSystem::kKeptUnloadedChunks) + 5;
+	for (int i = 3; i < 3 + steps; ++i) {
+		walk.stand(i);
+		settle(sys);
+	}
+	EXPECT_TRUE(sys.inSimArea(ChunkWalk::centre(1))) << "the chunk the wall crosses kept its ground";
 }
