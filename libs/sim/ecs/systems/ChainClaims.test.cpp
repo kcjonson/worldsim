@@ -21,6 +21,7 @@
 #include "../components/Needs.h"
 #include "../components/Packaged.h"
 #include "../components/ResourceStack.h"
+#include "../components/Skills.h"
 #include "../components/SourceReachMemo.h"
 #include "../components/StorageConfiguration.h"
 #include "../components/StructureBlueprint.h"
@@ -654,6 +655,45 @@ namespace ecs::test {
 		EXPECT_EQ(indexedClaimsOf(controlled), 0U);
 		EXPECT_EQ(indexedClaimsOf(destroyed), 0U);
 		EXPECT_EQ(ai->claimIndex().inFlight(site.umbrella, stoneId, {}), 0U);
+	}
+
+	// A colonist holding a full armful of wood, standing at a ready tree, skilled at cutting, with a
+	// site that wants far more: the cut would land nothing, so it carries in what it holds instead of
+	// cutting in place forever. Real positions and skill scoring, no arrival shortcut.
+	TEST_F(ChainClaimsTest, AColonistWithNoRoomDeliversInsteadOfCutting) {
+		registerHarvestable("WoodTree", "Wood", 2, 3);
+		const glm::vec2 sitePos{0.0F, 10.0F};
+		const glm::vec2 treePos{0.5F, 0.0F};
+		const Site		site = constructionSite(sitePos, "Wood", 60);
+		GoalTask		cut;
+		cut.type = TaskType::Harvest;
+		cut.owner = GoalOwner::ConstructionGoalSystem;
+		cut.destinationEntity = site.blueprint;
+		cut.destinationPosition = sitePos;
+		cut.yieldDefNameId = woodId;
+		cut.parentGoalId = site.umbrella;
+		GoalTaskRegistry::Get().createGoal(std::move(cut));
+
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		world->addComponent<Skills>(colonist, Skills{}).setLevel("Farming", 10.0F);
+		remember(colonist, treePos, "WoodTree", assets::CapabilityType::Harvestable);
+		auto&		   inventory = *world->getComponent<Inventory>(colonist);
+		const uint32_t armful = ecs::cargoUnitsPerTrip(assets::AssetRegistry::Get(), "Wood", inventory.carryCapacityKg);
+		inventory.leftHand = ItemStack{"Wood", armful};
+		inventory.rightHand = ItemStack{"Wood", armful};
+		ASSERT_EQ(ecs::pickupUnitsThatFit(inventory, assets::AssetRegistry::Get(), "Wood", ecs::carriedCargoMassKg(inventory, assets::AssetRegistry::Get())), 0U);
+
+		for (int decision = 0; decision < 3; ++decision) {
+			decide(colonist);
+			const Task& task = *getTask(colonist);
+			ASSERT_EQ(task.type, TaskType::Haul) << "decision " << decision;
+			EXPECT_TRUE(task.haulFromInventory);
+			EXPECT_EQ(task.haulTargetStorageId, static_cast<uint64_t>(site.blueprint));
+		}
+		const auto& options = world->getComponent<DecisionTrace>(colonist)->options;
+		EXPECT_TRUE(std::any_of(options.begin(), options.end(), [](const EvaluatedOption& option) {
+			return option.taskType == TaskType::Harvest && option.status == OptionStatus::NoRoom;
+		})) << "the cut shows why it is not taken";
 	}
 
 	// =============================================================================

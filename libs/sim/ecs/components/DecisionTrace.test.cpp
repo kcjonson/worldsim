@@ -67,6 +67,12 @@ namespace ecs::test {
 		cut.reason = "Clearing {} from build site";
 		cut.targetDefNameId = assets::AssetRegistry::Get().getDefNameId("Flora_Bare");
 		EXPECT_EQ(describeOption(world, cut), "Clearing Flora_Bare from build site") << "no label: the name";
+		EvaluatedOption cutNoRoom;
+		cutNoRoom.taskType = TaskType::Harvest;
+		cutNoRoom.harvestYieldDefNameId = woodId;
+		cutNoRoom.status = OptionStatus::NoRoom;
+		cutNoRoom.reason = "Cutting for {1} (no room to carry it)";
+		EXPECT_EQ(describeOption(world, cutNoRoom), "Cutting for Wood log (no room to carry it)");
 
 		EvaluatedOption craft;
 		craft.taskType = TaskType::Craft;

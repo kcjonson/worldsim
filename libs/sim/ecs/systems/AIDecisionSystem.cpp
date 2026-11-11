@@ -412,6 +412,28 @@ namespace ecs {
 			}
 		};
 
+		/// What one pickup of an item would lift now (InventoryMass's pickupUnitsThatFit, the rule the
+		/// Pickup and Withdraw effects size their take with), with what the colonist carries summed once,
+		/// on the first item asked about in a decision. Zero means going to get the item gains nothing.
+		class PickupRoom {
+		  public:
+			PickupRoom(const Inventory& inventory, const assets::AssetRegistry& registry)
+				: inventory(inventory),
+				  registry(registry) {}
+
+			[[nodiscard]] uint32_t operator()(const std::string& itemDefName) {
+				if (!carriedKg.has_value()) {
+					carriedKg = ecs::carriedCargoMassKg(inventory, registry);
+				}
+				return ecs::pickupUnitsThatFit(inventory, registry, itemDefName, *carriedKg);
+			}
+
+		  private:
+			const Inventory&			 inventory;
+			const assets::AssetRegistry& registry;
+			std::optional<float>		 carriedKg;
+		};
+
 		/// Evaluate haul options that go and get goods: loose piles and lower-priority boxes for a
 		/// storage umbrella, and remembered loose stock for a craft's fetch child. Each is sized to
 		/// what the root still wants (RootSupply::toAcquire) and one trip's carry. Goods already
@@ -422,20 +444,12 @@ namespace ecs {
 			WorkSources&				 sources,
 			ColonyStorageKnowledge&		 storageKnowledge,
 			const RootSupply&			 supply,
+			PickupRoom&					 pickupRoom,
 			const Inventory&			 inventory,
 			const glm::vec2&			 position,
 			DecisionTrace&				 trace
 		) {
 			auto& goalRegistry = GoalTaskRegistry::Get();
-
-			// What the colonist carries, summed once on the first carry gate asked this decision.
-			std::optional<float> carriedKg;
-			const auto			 pickupRoom = [&](const std::string& itemDefName) {
-				if (!carriedKg.has_value()) {
-					carriedKg = ecs::carriedCargoMassKg(inventory, registry);
-				}
-				return ecs::pickupUnitsThatFit(inventory, registry, itemDefName, *carriedKg);
-			};
 
 			// A haul whose pickup would lift nothing right now (pack full, hands busy with another load):
 			// not available, so the colonist doesn't repeat a pickup that collects nothing. The trace
@@ -745,6 +759,7 @@ namespace ecs {
 		/// @param registry Asset registry for capability and definition lookups
 		/// @param sources The colonist's remembered harvestables, by yield
 		/// @param supply What each root still wants, for this colonist
+		/// @param pickupRoom What a pickup of the yield would lift now
 		/// @param position Colonist position
 		/// @param skills Optional skills component for skill bonus calculation
 		/// @param trace Output decision trace
@@ -752,6 +767,7 @@ namespace ecs {
 			const assets::AssetRegistry& registry,
 			WorkSources&				 sources,
 			const RootSupply&			 supply,
+			PickupRoom&					 pickupRoom,
 			const glm::vec2&			 position,
 			const Skills*				 skills,
 			DecisionTrace&				 trace
@@ -776,6 +792,23 @@ namespace ecs {
 					continue;
 				}
 				if (!clearing && supply.toAcquire(root->id, goal->yieldDefNameId, harvestBasis(*root)) == 0) {
+					continue;
+				}
+				// A cut that would land nothing in the colonist's hands or pack (a full armful of something
+				// else, a full pack) brings nothing toward the root, and standing at the source it would win
+				// again every decision. A clear is exempt: it removes its blocker and drops what doesn't fit.
+				if (!clearing && pickupRoom(registry.getDefName(goal->yieldDefNameId)) == 0) {
+					EvaluatedOption noRoom;
+					noRoom.taskType = TaskType::Harvest;
+					noRoom.needType = NeedType::Count;
+					noRoom.needValue = 100.0F;
+					noRoom.threshold = 0.0F;
+					noRoom.harvestGoalId = goal->id;
+					noRoom.harvestYieldDefNameId = goal->yieldDefNameId;
+					noRoom.tiebreakId = goal->id;
+					noRoom.status = OptionStatus::NoRoom;
+					noRoom.reason = "Cutting for {1} (no room to carry it)";
+					trace.options.push_back(noRoom);
 					continue;
 				}
 
@@ -1815,10 +1848,11 @@ namespace ecs {
 		// Goal-driven work: fetch goods for storage and crafts, carry in what the colonist holds, cut
 		// for what a root still needs (tier 4 when serving an active work order, else tier 6).
 		const RootSupply supply{*world, m_claims, ClaimExclusion::of(currentTask), inventory, m_registry};
+		PickupRoom		 pickupRoom(inventory, m_registry);
 		m_workSources.begin(memory, m_registry, inventory);
-		evaluateHaulOptions(world, m_registry, m_workSources, m_colonyStorage, supply, inventory, position.value, trace);
+		evaluateHaulOptions(world, m_registry, m_workSources, m_colonyStorage, supply, pickupRoom, inventory, position.value, trace);
 		evaluateCarryInOptions(supply, position.value, trace);
-		evaluateHarvestOptions(m_registry, m_workSources, supply, position.value, skills, trace);
+		evaluateHarvestOptions(m_registry, m_workSources, supply, pickupRoom, position.value, skills, trace);
 
 		// Build staged construction blueprints (goal-driven)
 		evaluateBuildOptions(world, position.value, skills, trace);

@@ -1028,7 +1028,13 @@ namespace ecs::test {
 		world->update(0.016F);
 
 		const auto& options = getTrace(colonist)->options;
-		EXPECT_EQ(std::count_if(options.begin(), options.end(), [](const EvaluatedOption& o) { return o.taskType == TaskType::Harvest; }), 0);
+		// The cut is shown as no room, with no source behind it.
+		const auto harvests = std::count_if(options.begin(), options.end(), [](const EvaluatedOption& o) { return o.taskType == TaskType::Harvest; });
+		const auto harvestNoRoom = std::count_if(options.begin(), options.end(), [](const EvaluatedOption& o) {
+			return o.taskType == TaskType::Harvest && o.status == OptionStatus::NoRoom && !o.targetPosition.has_value();
+		});
+		EXPECT_EQ(harvests, 1);
+		EXPECT_EQ(harvestNoRoom, 1);
 		// The roomy box's goal says why it can't be served; the full box's says nothing.
 		const auto hauls = std::count_if(options.begin(), options.end(), [](const EvaluatedOption& o) { return o.taskType == TaskType::Haul; });
 		const auto noRoom = std::count_if(options.begin(), options.end(), [](const EvaluatedOption& o) {
